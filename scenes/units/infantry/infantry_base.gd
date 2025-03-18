@@ -56,7 +56,7 @@ func _ready():
 	selection_indicator.visible = false
 	
 	# Only process on the network owner or in single player
-	set_physics_process(not is_networked or is_network_owner())
+	set_physics_process(not is_networked or multiplayer.get_unique_id() == network_id)
 
 func _physics_process(delta):
 	if is_moving:
