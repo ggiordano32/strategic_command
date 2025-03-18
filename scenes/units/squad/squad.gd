@@ -27,10 +27,12 @@ var cover_system: CoverSystem
 
 func _ready():
 	# Only process on the network owner or in single player
-	set_process(not is_networked or is_network_owner())
+	set_process(not is_networked or multiplayer.get_unique_id() == network_id)
 	
 	# Connect to global events system
-	Events.register_squad(self)
+	if Engine.has_singleton("Events"):
+		var events = get_node("/root/Events")
+		events.register_squad(self)
 	
 	# Generate initial formation positions
 	_update_formation_positions()
