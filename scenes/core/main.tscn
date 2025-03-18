@@ -1,0 +1,63 @@
+[gd_scene format=3 uid="uid://3d38pa1fwl2r"]
+
+[node name="Main" type="Node2D"]
+
+[node name="IsometricMapManager" type="Node2D" parent="."]
+
+[node name="GroundLayer" type="TileMapLayer" parent="IsometricMapManager"]
+
+[node name="ObjectLayer" type="TileMapLayer" parent="IsometricMapManager"]
+
+[node name="BuildingLayer" type="TileMapLayer" parent="IsometricMapManager"]
+
+[node name="NavigationRegion2D" type="NavigationRegion2D" parent="."]
+
+[node name="YSort" type="Node2D" parent="."]
+
+[node name="Squads" type="Node2D" parent="YSort"]
+
+[node name="Buildings" type="Node2D" parent="YSort"]
+
+[node name="Props" type="Node2D" parent="YSort"]
+
+[node name="BuildingPlacer" type="Node2D" parent="."]
+
+[node name="BuildingPreview" type="Sprite2D" parent="BuildingPlacer"]
+
+[node name="ResourceManager" type="Node" parent="."]
+
+[node name="Camera2D" type="Camera2D" parent="."]
+
+[node name="UI" type="CanvasLayer" parent="."]
+
+[node name="SelectionRect" type="Control" parent="UI"]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 40.0
+offset_bottom = 40.0
+
+[node name="Hud" type="Control" parent="UI"]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 40.0
+offset_bottom = 40.0
+
+[node name="ResourcePanel" type="Panel" parent="UI/Hud"]
+layout_mode = 0
+offset_right = 40.0
+offset_bottom = 40.0
+
+[node name="SquadPanel" type="Panel" parent="UI/Hud"]
+layout_mode = 0
+offset_right = 40.0
+offset_bottom = 40.0
+
+[node name="BuildMenu" type="Panel" parent="UI/Hud"]
+layout_mode = 0
+offset_right = 40.0
+offset_bottom = 40.0
+
+[node name="Minimap" type="Control" parent="UI/Hud"]
+anchors_preset = 0
+offset_right = 40.0
+offset_bottom = 40.0

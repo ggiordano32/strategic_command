@@ -1,0 +1,3 @@
+[gd_scene format=3 uid="uid://vcnc0x5b32aq"]
+
+[node name="MultiplayerManager" type="Node2D"]
