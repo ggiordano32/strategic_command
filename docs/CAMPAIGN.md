@@ -448,6 +448,32 @@ and its armies disband.
 
 ## Later
 
-Vegetation and region-driven map generation; reinforcements arriving from
-the map edge; real walls and sieges; elephants, camels, chariots; both players
-sharing one empire; turn timeout enforcement (server); live co-op battles.
+Agreed order after milestone 4 (the server), from the user on 2026-10-05:
+
+1. **Battle maps with character.**
+   - Vegetation: forest zones that slow and disorder formations and blunt
+     missiles, drawn as trees that fade over units.
+   - Settlement battles on real city maps: buildings, walls, gates and
+     fortifications that funnel units. Each city's map comes from a fixed
+     seed stored with the settlement, so a city always looks the same and
+     players learn it. Wall and building levels from the campaign show up on
+     the map.
+   - Field battles between settlements stay randomised, generated from the
+     region's terrain kind.
+   - Ground colour varies by region (arid Africa and Iberia, green Gaul and
+     northern Italy, rocky Greece), on the campaign map and the battle map.
+   - Stronger height shading on the battle map so high and low ground read at
+     a glance (the contours alone are too subtle zoomed in).
+2. **Free movement on the campaign map.** Replace "one region per turn, and
+   entering attacks the settlement" with armies that have a movement range
+   and positions inside regions:
+   - an army can enter a region without attacking its settlement;
+   - armies block or intercept movement (zone of control), so a field army
+     can screen a city;
+   - reinforcement is by range: armies staged near each other support one
+     another in battle, and arrive from their map direction;
+   - attacking a settlement is a deliberate order.
+   This changes the state format and the AI; do it as its own milestone.
+3. Reinforcements arriving from the map edge; elephants, then camels,
+   chariots and war dogs; both players sharing one empire; live co-op
+   battles (milestone 5).
