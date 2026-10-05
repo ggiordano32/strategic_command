@@ -702,6 +702,39 @@ Per-soldier state is too large to stream, so only orders are sent.
 - Stack: a single Go binary with SQLite (HTTP for campaign saves, WebSocket
   for the battle relay), run in a container behind the existing reverse proxy.
 
+### Campaign server: as built (milestone 4, 2026-10-05)
+
+Details in `docs/SERVER.md`. In short:
+
+- Go 1.27 + SQLite (pure Go driver), one static binary that also serves the
+  web build (brotli: the 39 MB wasm goes out as 7 MB) and the telemetry
+  endpoint; Dockerfile, compose file and systemd unit for the Proxmox host.
+- Every state version is kept with what produced it (the submissions, or a
+  battle's outcome), so any version can be replayed, inspected or rolled
+  back to.
+- Identity: a 6-character join code (no lookalike characters, case-free)
+  claims the ally's seat and stops working once both seats are taken; each
+  device holds its own seat token; an 8-character device code (30 minutes)
+  moves a seat to another device. Optional server-wide invite key.
+- Turn flow: submit (replaceable, withdrawable); the last submitter's client
+  resolves and uploads; another open client resolves after a few seconds if
+  nobody did. One upload per version wins; the others adopt it.
+- Turn timeout: the deadline starts at the turn's first submission; after it
+  the waiting player may resolve without the absent one (who holds).
+- Pending battles: leases (2 minutes, heartbeats) so only one device
+  resolves a battle; with the ally's army in it the present player chooses
+  Wait for ally (pinged) or Take command (told); "Ask to join now" is the
+  live-battle invitation (the live battle itself is milestone 5). Results
+  are kept on the device until the server confirms them.
+- Live updates by long-poll (works through Caddy, in iOS Safari and in
+  Godot's HTTPRequest); an authenticated WebSocket echo endpoint is where the
+  milestone 5 relay will go.
+- Determinism safety net: a client re-runs every version another device
+  made from its parent and inputs and reports a different hash.
+- Discord notifications per campaign (your turn, waiting for you, turn
+  resolved with battles, take command, ping, deadline, won / lost), rate
+  limited, deduplicated, never blocking.
+
 ## 6. Platforms and tooling
 
 - Working model: design decisions are made in the main session; code

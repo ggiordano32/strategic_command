@@ -16,3 +16,6 @@ export_credentials.cfg
 /playtest_logs/
 /build_stamp.txt
 /.certs/
+
+# Campaign server data (tools/run_server.sh): database, backups, web cache
+/data/

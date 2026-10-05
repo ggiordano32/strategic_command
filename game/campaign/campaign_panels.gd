@@ -468,6 +468,9 @@ func _compare(mine: int, them: int) -> String:
 # -------------------------------------------------------------- battles ---
 
 func show_battles() -> void:
+	if s.online != null:
+		s.onl.show_battles()
+		return
 	var st: Dictionary = s.st
 	var list := CTurn.pending_for(st)
 	var box := Kit.vbox(10)
@@ -715,8 +718,9 @@ func show_objectives() -> void:
 		box.add_child(h)
 	box.add_child(Kit.label("You lose if %s loses all its regions." % ("either player's faction" if (st["humans"] as Array).size() > 1 else "your faction"), Kit.FONT, Kit.COL_BAD, true))
 	var t: Dictionary = st["settings"]
-	box.add_child(Kit.label("Settings: turn timeout %s (not enforced until the server exists), battles %s, AI aggression %d%%." % [
+	box.add_child(Kit.label("Settings: turn timeout %s (%s), battles %s, AI aggression %d%%." % [
 		"off" if int(t["turn_timeout_h"]) == 0 else "%d h" % int(t["turn_timeout_h"]),
+		"online campaigns: the server's setting, see Online" if s.online != null else "used by online campaigns only",
 		"always auto-resolved" if str(t["autoresolve"]) == "auto" else "your choice each time", int(t["ai_aggression"])], Kit.FONT_SMALL, Kit.COL_DIM, true))
 	s.show_dialog("Objectives", box, [["Close", Callable()]], 560)
 
@@ -785,10 +789,21 @@ func show_warnings(list: Array) -> void:
 
 func show_menu() -> void:
 	var box := Kit.vbox(8)
-	box.add_child(Kit.label("%s - %s. Saved automatically." % [str(s.st["name"]), CData.date_text(int(s.st["turn"]))], Kit.FONT, Color.WHITE, true))
+	if s.online != null:
+		box.add_child(Kit.label("%s - %s. Online: saved on the server." % [str(s.st["name"]), CData.date_text(int(s.st["turn"]))], Kit.FONT, Color.WHITE, true))
+	else:
+		box.add_child(Kit.label("%s - %s. Saved automatically." % [str(s.st["name"]), CData.date_text(int(s.st["turn"]))], Kit.FONT, Color.WHITE, true))
 	box.add_child(Kit.label("State %s" % CState.hash_text(s.st), Kit.FONT_SMALL, Kit.COL_DIM))
 	var fl := Kit.flow(8)
-	fl.add_child(Kit.button("Export save as text", func(): show_export(), 0))
+	if s.online != null:
+		fl.add_child(Kit.button("Online", func(): s.onl.show_online(), 0))
+	else:
+		fl.add_child(Kit.button("Export save as text", func(): show_export(), 0))
+		var net: Node = s.get_node_or_null("/root/Net")
+		if net != null and net.has_server() and str(s.st["phase"]) == "plan" and int(s.st["turn"]) >= 0:
+			var ob := Kit.button("Play online", func(): show_go_online(), 0)
+			ob.name = "menu_go_online"
+			fl.add_child(ob)
 	fl.add_child(Kit.button("Controls", func():
 		s.close_dialog()
 		s.controls_page.open(), 0))
@@ -796,6 +811,36 @@ func show_menu() -> void:
 	s.show_dialog("Campaign", box, [["Main menu", func():
 		s.save()
 		s.request_exit()], ["Back", Callable()]], 520)
+
+
+## Move a local campaign online: the current state becomes an online
+## campaign (this device plays the faction planning now; the other human
+## seat, if any, joins with the code). The local save stays as it is.
+func show_go_online() -> void:
+	var net: Node = s.get_node_or_null("/root/Net")
+	var box := Kit.vbox(8)
+	var hs: Array = s.st["humans"]
+	var me: int = s.f if s.f >= 0 else int(hs[0])
+	box.add_child(Kit.label("Upload this campaign to the server and play it online. You keep %s%s. Plans not yet ended are not uploaded. The local save stays on this device unchanged." % [
+		CData.faction_name(me), (", and your ally joins as %s with a code" % CData.faction_name(int(hs[1] if int(hs[0]) == me else hs[0]))) if hs.size() > 1 else ""], Kit.FONT, Color.WHITE, true))
+	var inv := LineEdit.new()
+	inv.placeholder_text = "Invite key (only if the server asks for one)"
+	inv.text = str(net.accounts.data.get("invite", "")) if net else ""
+	inv.custom_minimum_size = Vector2(300, 40)
+	box.add_child(inv)
+	var info := Kit.label("", Kit.FONT_SMALL, Kit.COL_BAD, true)
+	box.add_child(info)
+	s.show_dialog("Play online", box, [["Upload", func():
+		info.text = "Uploading..."
+		info.add_theme_color_override("font_color", Kit.COL_DIM)
+		var r: Dictionary = await net.create_campaign(s.st, me, {"invite": inv.text.strip_edges()})
+		if not r["ok"]:
+			info.add_theme_color_override("font_color", Kit.COL_BAD)
+			info.text = "Could not create it: %s" % (str(r["message"]) if str(r["message"]) != "" else str(r["error"]))
+			return
+		s._t("online_create", {"from": "local", "turn": int(s.st["turn"])})
+		s.set_meta("go_online", str(r["data"]["id"]))
+		s.request_exit()], ["Back", Callable()]], 560)
 
 
 func show_export() -> void:

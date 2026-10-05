@@ -1,6 +1,6 @@
 # Strategic Command — Status and Handover
 
-Last updated: 2026-10-05 (milestone 3 built). Read this first, then `docs/DESIGN.md` for the full
+Last updated: 2026-10-05 (milestone 4 built: server and online co-op). Read this first, then `docs/DESIGN.md` for the full
 design and `CLAUDE.md` for working rules. Update this file whenever a
 milestone lands or the plan changes.
 
@@ -23,7 +23,7 @@ anti-cheat and original art only if it proves fun.
 | Terrain height | Built, **not yet committed**, playtested ("feels good so far") |
 | Playtest round (HUD scale, stones, ammo, refill) | Built, **not yet committed**, not yet playtested |
 | 3. Minimal campaign | Built 2026-10-05, **not committed**, not yet playtested (see below) |
-| 4. Async backend (Go + SQLite) | Not started |
+| 4. Async backend (Go + SQLite) | Built 2026-10-05, **not committed**; tested end to end and in headless Chromium; port 8060 not yet switched to it; not yet played on phones |
 | 5. Live co-op battles (lockstep) | Not started |
 | 6. Depth (sieges, tech, more factions) | Not started |
 
@@ -51,7 +51,12 @@ anti-cheat and original art only if it proves fun.
 - **Tests** (`tests/`): determinism, benchmark, scripted input (needs a
   window), balance matchups across seeds.
 - **Tools** (`tools/`): web export, HTTPS dev server with telemetry logging,
-  playtest report, script warning check.
+  playtest report, script warning check, server build / run scripts.
+- **Server** (`server/`, milestone 4): one Go binary with SQLite that serves
+  the web build (brotli), the telemetry endpoint and the online co-op
+  campaign API; Discord notifications; Dockerfile and deployment files.
+  Reference: `docs/SERVER.md`. Client side: `game/net/`,
+  `game/campaign/online_ui.gd`.
 
 ### What has been proven
 
@@ -63,6 +68,48 @@ anti-cheat and original art only if it proves fun.
 - The touch control scheme works; the user likes it.
 
 ### In progress right now
+
+**Milestone 4, async backend and online co-op (built 2026-10-05,
+uncommitted).** Everything is in `docs/SERVER.md` (API, data model,
+concurrency, notifications, deployment, security) and `docs/CAMPAIGN.md`
+"Online play" (the screens). In short:
+- Server: Go 1.27.1 (installed at user level in `~/.local/go`, checksum
+  verified) + `modernc.org/sqlite`; static files with no-cache + ETag and
+  precompressed wasm (39.5 MB -> 7.1 MB brotli); telemetry identical to
+  `serve_web.py`; campaigns with every state version kept, join codes,
+  per-device seat tokens (hashed), device codes, submissions with
+  unsubmit, compare-and-swap uploads (one per version wins, an identical
+  replay is "already"), turn deadline from the first submission with forced
+  resolution, battle leases with heartbeats, Wait for ally / Take command /
+  Ask to join, per-seat session blobs, long-poll change feed, WebSocket echo
+  (milestone 5 relay goes there), history and rollback, determinism reports,
+  Discord webhook notifications (queued, rate limited, deduplicated),
+  invite key, rate limits, same-origin only, backups every 6 h.
+- Client: Online co-op / Join / Continue-with-badges on the main menu, the
+  share page, Submit turn and the waiting panel, the online battles list,
+  the Online dialog (device code, Discord, timeout, history, rollback),
+  Play online for a local campaign, offline cache, battle-result outbox,
+  determinism check of the ally's results. Local play unchanged.
+- Fixed on the way (affects every browser build): `main.gd` compared the
+  iOS check's result `== true`, but this Godot build returns a JS boolean as
+  an int, and int == bool is a runtime error that silently aborted the
+  start screen's `_ready` before the URL shortcuts (`?scenario=` etc.). Also
+  on the web `HTTPRequest` must not gunzip again what the browser already
+  decompressed.
+- Verified: `go test ./...` (API, races, timeouts, leases, rate limits,
+  notifier); `python3 tests/online_e2e.py` (two headless Godot clients, 10
+  turns, battles, a resolve race, a device switch, a forced turn, network
+  failures, Discord messages: PASS); `server/cmd/webcheck` (two headless
+  Chromium browsers on the web export: create, join, WebSocket echo,
+  submit, resolve, long-poll pickup: PASS); the container image builds and
+  runs (Podman). Screenshots `docs/screenshots/online_*.png`.
+- **Not yet done / next:** switch port 8060 to the Go server
+  (`docs/SERVER.md` section 3) and check WebSocket and long-poll through
+  Caddy on the real domain (the commands are there); play it on the Android
+  phone and the iPhone (share link, typing a code, device code to the
+  desktop, background tabs and long-poll on iOS Safari); decide on an invite
+  key before the link is shared; move to the Proxmox host. No token
+  revocation UI, no campaign deletion yet.
 
 **Milestone 3, campaign layer (built 2026-10-05, uncommitted, not yet
 playtested).** Everything is in `docs/CAMPAIGN.md` (as built: rules,
@@ -227,10 +274,8 @@ A tuning pass from playtest feedback (built, uncommitted):
    (reusing the unit book page), a few building chains, money and upkeep,
    war / peace / trade diplomacy, campaign AI, pending battles, auto-resolve,
    and battles launched from the map using the sim's result data.
-4. **Milestone 4, async backend:** a single Go binary with SQLite on the
-   user's Proxmox server: campaign save blob with optimistic versioning, turn
-   submission, WebSocket relay, Discord webhook pings. HTTPS with a real
-   certificate, which also unlocks home-screen install.
+4. **Milestone 4, async backend:** built 2026-10-05 (see above and
+   `docs/SERVER.md`); next: switch 8060, phone playtest, Proxmox.
 5. **Milestone 5, live co-op battles:** lockstep over the relay, unit gifting
    and gifting back, reinforcements, pause and speed by vote, desync recovery
    by snapshot.
@@ -277,6 +322,13 @@ godot --headless --script res://tests/matchups.gd -- --only=terrain  # terrain e
 godot --headless --script res://tests/matchups.gd -- --fair=50 --fair-terrain=4  # mirrored, symmetric hill map
 godot --script res://tests/input_test.gd        # needs a window
 tools/check_scripts.sh                           # GDScript warnings as errors
+
+# Server (milestone 4; see docs/SERVER.md)
+tools/build_server.sh --test                     # go vet + go test + build build/server/scserver
+tools/run_server.sh 8070                         # serve build/web + API + telemetry on a port
+python3 tests/online_e2e.py                      # two headless clients against a test server (~30 s)
+(cd server && PATH=$HOME/.local/go/bin:$PATH go run ./cmd/webcheck -url http://127.0.0.1:8070)
+                                                 # the web export in two headless Chromiums
 
 # Web build and playtest server
 tools/export_web.sh                              # writes build/web

@@ -1,0 +1,24 @@
+# Example: the server in a container on the Proxmox host, behind Caddy.
+#   docker compose -f server/deploy/docker-compose.yml up -d --build
+# (run from the repository root; the web build must exist in build/web).
+services:
+  scserver:
+    build:
+      context: ../..
+      dockerfile: server/Dockerfile
+    image: strategic-command:latest
+    restart: unless-stopped
+    ports:
+      - "8060:8060"            # Caddy: reverse_proxy <host>:8060
+    volumes:
+      - sc-data:/data          # campaigns.db, backups/, webcache/, playtest_logs/
+      # To deploy a new web build without rebuilding the image, mount it:
+      # - ../../build/web:/srv/web:ro
+    environment:
+      SC_INVITE_KEY: ""        # set to require an invite key for new campaigns
+      SC_TRUSTED_PROXY: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8"
+      SC_BACKUP_EVERY: "6h"
+      SC_BACKUP_KEEP: "12"
+    stop_grace_period: 30s
+volumes:
+  sc-data:

@@ -12,6 +12,11 @@ extends Node
 ## between; "session" (saved with the state, not part of it) holds the
 ## submissions made so far this turn, each player's unfinished plan and the
 ## turn each player last saw (for "since you last played").
+##
+## Online (milestone 4): `online` is the seat's game/net/online_campaign.gd;
+## online_ui.gd runs the turn flow against the server (Submit turn, waiting
+## for the ally, claims on battles, results uploaded instead of applied
+## locally). Local solo and hot-seat play are unchanged.
 
 signal exit_requested
 
@@ -33,6 +38,7 @@ const Battle := preload("res://game/battle.gd")
 const UnitBook := preload("res://game/unit_book.gd")
 const UnitEntry := preload("res://game/unit_entry.gd")
 const Controls := preload("res://game/controls.gd")
+const OnlineUI := preload("res://game/campaign/online_ui.gd")
 
 const ZOOM_MIN := 0.2
 const ZOOM_MAX := 2.5
@@ -81,6 +87,11 @@ var _resolver: AutoResolve = null
 var _progress: ProgressBar = null
 var _plan_start_ms := 0
 var _tele: Node = null
+var online = null              # game/net/online_campaign.gd when playing online
+var onl: OnlineUI = null
+var net_button: Button
+var wait_panel: PanelContainer
+var dialog_kind := ""          # what the open dialog is (online flow re-renders its own)
 
 # Gestures.
 var _touches := {}
@@ -116,7 +127,9 @@ func _ready() -> void:
 	ui.add_child(book)
 	controls_page = Controls.new()
 	ui.add_child(controls_page)
-	if not data.is_empty():
+	if online != null:
+		_load_online()
+	elif not data.is_empty():
 		_load_data()
 
 
@@ -126,6 +139,26 @@ func open(p_data: Dictionary, p_slot: String) -> void:
 	slot = p_slot
 	if is_inside_tree():
 		_load_data()
+
+
+## Open an online campaign (its controller has been created by Net; this
+## screen opens it).
+func open_online(oc) -> void:
+	online = oc
+	slot = ""
+	data = {"state": oc.st, "session": {"subs": [], "plans": {}, "seen": {}}}
+	if is_inside_tree():
+		_load_online()
+
+
+func _load_online() -> void:
+	onl = OnlineUI.new(self, online)
+	net_button.visible = true
+	st = online.st
+	_t("online_open", {"campaign": online.id, "f": online.f})
+	onl.step()
+	online.open()
+	call_deferred("_apply_debug_args")
 
 
 func _load_data() -> void:
@@ -145,7 +178,8 @@ func _load_data() -> void:
 
 ## Testing aids: --cam-zoom=Z --cam-region=key --close-dialog
 ## --select-region=key --select-army=N (Nth army of the player)
-## --plan-move=N:key --camp-attack=N:key --camp-fight --sim-turns=N --dialog=battles|summary|diplomacy|realm|goals|warnings
+## --plan-move=N:key --camp-attack=N:key --camp-fight --sim-turns=N --dialog-scroll=PX
+## --dialog=battles|summary|diplomacy|realm|goals|warnings|online
 func _apply_debug_args() -> void:
 	for a in OS.get_cmdline_user_args():
 		var v: String = a.get_slice("=", 1)
@@ -156,6 +190,9 @@ func _apply_debug_args() -> void:
 			focus_region(CData.region_index(v))
 		elif a == "--close-dialog":
 			close_dialog()
+		elif a.begins_with("--dialog-scroll="):
+			await get_tree().create_timer(1.5).timeout
+			dialog_scroll.scroll_vertical = int(v)  # testing aid
 		elif a == "--debug-xform":
 			print("world ", world.get_global_transform_with_canvas(), " overlay ", overlay.get_global_transform_with_canvas(), " vp ", _vp(), " zoom ", zoom, " off ", offset, " roma ", Geo.site(0), " -> ", overlay.to_screen(Geo.site(0)))
 		elif a.begins_with("--select-region="):
@@ -212,6 +249,10 @@ func _apply_debug_args() -> void:
 					panels.show_objectives()
 				"warnings":
 					panels.show_warnings(panels.warnings())
+				"online":
+					if onl != null:
+						await get_tree().create_timer(1.0).timeout
+						onl.show_online()
 
 
 func _t(kind: String, d: Dictionary) -> void:
@@ -224,6 +265,10 @@ func request_exit() -> void:
 
 
 func save() -> void:
+	if online != null:
+		if f >= 0 and not st.is_empty() and str(st.get("phase", "")) == "plan" and not online.i_submitted():
+			online.set_plan(orders)
+		return
 	if f >= 0:
 		data["session"]["plans"][str(f)] = orders.duplicate(true)
 	data["state"] = st
@@ -236,6 +281,9 @@ func save() -> void:
 ## Decide what happens next: game over, pending battles, the next player's
 ## planning (after a hand-over in hot seat), or resolving the turn.
 func _next_step() -> void:
+	if online != null:
+		onl.step()
+		return
 	close_dialog()
 	if str(st["phase"]) == "over":
 		f = -1
@@ -283,7 +331,13 @@ func _next_step() -> void:
 func _set_planner(p_f: int, start: bool) -> void:
 	f = p_f
 	orders = []
-	if data["session"]["plans"].has(str(f)):
+	if online != null:
+		orders = online.plan_orders()
+		var sub = online.session.get("submitted", {})
+		if online.i_submitted() and sub is Dictionary and int(sub.get("turn", -1)) == int(st["turn"]):
+			orders = (sub["orders"] as Array).duplicate(true)
+		start = false
+	elif data["session"]["plans"].has(str(f)):
 		orders = (data["session"]["plans"][str(f)] as Array).duplicate(true)
 	sel_army = -1
 	sel_region = -1
@@ -320,11 +374,17 @@ func _show_handover() -> void:
 func end_turn(skip_warnings: bool = false) -> void:
 	if f < 0 or not CTurn.pending_for(st).is_empty():
 		return
+	if online != null and online.i_submitted():
+		return
 	if not skip_warnings:
 		var warn := panels.warnings()
 		if not warn.is_empty():
 			panels.show_warnings(warn)
 			return
+	if online != null:
+		online.set_plan(orders)
+		onl.submit(orders.duplicate(true))
+		return
 	var sub := CTurn.submission(st, f, orders)
 	(data["session"]["subs"] as Array).append(sub)
 	data["session"]["plans"].erase(str(f))
@@ -513,6 +573,14 @@ func _build_ui() -> void:
 		if e is InputEventMouseButton and not e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
 			panels.show_faction())
 	top_box.add_child(top_label)
+	net_button = Kit.button("Online", func():
+		if onl != null:
+			onl.show_online(), 0)
+	net_button.name = "net_status"
+	net_button.visible = false
+	net_button.clip_text = true
+	net_button.custom_minimum_size.x = 96
+	top_box.add_child(net_button)
 	battles_button = Kit.button("Battles", func(): panels.show_battles(), 0)
 	top_box.add_child(battles_button)
 	top_box.add_child(Kit.button("Realm", func(): panels.show_faction(), 0))
@@ -554,6 +622,10 @@ func _build_ui() -> void:
 	end_button.offset_bottom = -8
 	end_button.custom_minimum_size = Vector2(130, 48)
 	ui.add_child(end_button)
+	wait_panel = Kit.panel(Color(0.1, 0.12, 0.1, 0.95), 8)
+	wait_panel.name = "wait_panel"
+	wait_panel.visible = false
+	ui.add_child(wait_panel)
 	# Cover (hand-over) and dialog.
 	cover = ColorRect.new()
 	cover.color = Color(0.06, 0.07, 0.06, 1.0)
@@ -625,6 +697,7 @@ func show_dialog(title: String, content: Control, buttons: Array, width: float =
 	dialog.reset_size()
 	dialog.position = (vp - dialog.size) * 0.5
 	dialog.visible = true
+	dialog_kind = ""
 	(dialog.get_meta("dim") as Control).visible = true
 	dialog_scroll.scroll_vertical = 0
 	call_deferred("_center_dialog")
@@ -709,6 +782,10 @@ func _refresh_top() -> void:
 	battles_button.text = "Battles (%d)" % nb if nb > 0 else "Battles"
 	battles_button.modulate = Color(1, 0.6, 0.5) if nb > 0 else Color(1, 1, 1)
 	end_button.disabled = nb > 0 or f < 0 or str(st["phase"]) == "over"
+	if onl != null:
+		var eb := onl.end_button_state()
+		end_button.text = str(eb[0])
+		end_button.disabled = bool(eb[1]) or nb > 0
 
 
 func _update_hint() -> void:
@@ -717,6 +794,8 @@ func _update_hint() -> void:
 		return
 	if not CTurn.pending_for(st).is_empty():
 		hint.text = "Resolve the pending battles first (Battles)."
+	elif online != null and online.i_submitted():
+		hint.text = "Turn submitted. You can look around; Unsubmit to change your orders."
 	elif sel_army >= 0:
 		hint.text = "Tap a highlighted region to move there (red: attack; dark: not allowed, tap for why). Tap it again to cancel."
 	else:
@@ -800,6 +879,11 @@ func auto_resolve(bid: int) -> void:
 	var b := CState.battle(st, bid)
 	if b.is_empty() or _resolver != null:
 		return
+	if online != null and not await onl.claim(bid, "auto"):
+		return
+	b = CState.battle(st, bid)
+	if b.is_empty() or _resolver != null:
+		return
 	_resolver = AutoResolve.new()
 	add_child(_resolver)
 	_resolver.start(st, b)
@@ -849,6 +933,10 @@ func _on_auto_done(outcome: Dictionary) -> void:
 
 
 func _apply_battle(bid: int, outcome: Dictionary) -> void:
+	if online != null:
+		onl.upload(bid, outcome)
+		_after_battle_refresh()
+		return
 	var before := (st["events"] as Array).size()
 	st = CTurn.apply_battle(st, bid, outcome)
 	save()
@@ -858,6 +946,11 @@ func _apply_battle(bid: int, outcome: Dictionary) -> void:
 
 func fight(bid: int) -> void:
 	var b := CState.battle(st, bid)
+	if b.is_empty() or battle != null:
+		return
+	if online != null and not await onl.claim(bid, "fight"):
+		return
+	b = CState.battle(st, bid)
 	if b.is_empty() or battle != null:
 		return
 	var hs := CRules.battle_humans(st, b)
@@ -874,6 +967,14 @@ func fight(bid: int) -> void:
 	_set_visible(false)
 	_t("campaign_battle_start", {"turn": int(st["turn"]), "region": int(b["r"]), "units": (_battle_built["map"] as Array).size()})
 	get_tree().root.add_child.call_deferred(battle)
+
+
+## Server changes that arrived during a battle are shown afterwards.
+func _after_battle_refresh() -> void:
+	if online != null and has_meta("refresh_after_battle"):
+		remove_meta("refresh_after_battle")
+		st = online.st
+		_replan()
 
 
 func _set_visible(on: bool) -> void:

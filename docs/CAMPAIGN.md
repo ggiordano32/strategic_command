@@ -40,7 +40,8 @@ a little worse than good play. No fleets, generals, politics or agents.
 format "strategic_command_campaign", version 1, name, seed, turn (0 = 280 BC
 summer), phase "plan" | "battles" | "over", rng, winner (-1, 1 won, 0 lost),
 settings {victory_regions 20, victory_capitals 3, turn_timeout_h 0|12|24|48|72
-  (stored, not enforced), autoresolve "ask"|"auto", ai_aggression 70|100|130},
+  (the initial value for online campaigns; the server enforces its own
+  copy, see SERVER.md), autoresolve "ask"|"auto", ai_aggression 70|100|130},
 humans [faction...]   (sorted; permanently allied: dip ALLIED)
 factions [{alive, treasury, next_army, income, upkeep, war_turns}]  (CData order)
 dip [8*8] 0 war / 1 peace / 2 trade / 3 allied;  dip_turn [8*8] turn of change
@@ -104,7 +105,7 @@ remaining}], garrison_pct}`, built from `BattleSim.result()` by
 
 Pending battles must be resolved (`apply_battle`) before the next turn can be
 planned; `resolve_turn` refuses while any is pending. A faction that submits
-nothing holds (the turn timeout will use this).
+nothing holds (the online turn timeout uses this: docs/SERVER.md).
 
 ## Map
 
@@ -399,12 +400,13 @@ and its armies disband.
 
 ## Screens
 
-- **Main menu:** New campaign / Continue (save list, delete) / Import; Battle
+- **Main menu:** New campaign / Online co-op / Join / Continue (online
+  campaigns with badges, then local saves) / Import; Battle
   sandbox (the battles, terrain, replay, tests); Unit book; Controls; UI size;
   Fullscreen.
 - **New campaign:** 1 or 2 players (any two factions), name, seed, win
-  target, great cities, turn timeout (stored only), battles ask / always
-  auto, AI calm / normal / aggressive.
+  target, great cities, turn timeout (used online), battles ask / always
+  auto, AI calm / normal / aggressive. Online mode: see "Online play".
 - **Map:** pan (drag, right / middle drag, W A S D / arrows), zoom (pinch,
   wheel, + / -) from the whole map to close up; territories tinted by owner;
   settlements sized by level, rings for walls, gold dot for great cities;
@@ -432,6 +434,50 @@ and its armies disband.
   order change, submission, resolution and battle; Continue lists them;
   Export gives one line of text (gzip + base64) to paste into Import on the
   other device.
+
+## Online play (milestone 4)
+
+As built 2026-10-05; the server side is in `docs/SERVER.md`.
+
+- **Main menu:** Online co-op (the new-campaign screen in online mode: tap
+  your faction, then your ally's; name, seed, settings incl. turn timeout;
+  Discord webhook and your Discord user id, both optional; an invite key if
+  the server asks), then a page with the join code (shown as ABC-DEF), the
+  share link `https://.../?join=CODE` with Copy buttons, and Open. **Join**:
+  type the code (case and dashes do not matter; 6 characters is a join code,
+  8 a device code) or open a link with `?join=` / `?link=`; the free seat is
+  shown with Play as <faction>. **Continue** lists the online campaigns with
+  live badges (Your turn, Waiting for <ally>, N battles pending, Resolving,
+  Waiting for your ally to join, Won, Lost, Offline) above the local saves;
+  Forget removes one from this device only. Local solo and hot-seat
+  campaigns are unchanged; a local campaign's Menu has **Play online**,
+  which uploads its current state as a new online campaign.
+- **Campaign screen online:** the top bar shows the status (tap: the Online
+  dialog). Plan as usual; plans in progress are saved to this seat's session
+  on the server (1.5 s after the last change), so a turn started on the phone
+  can be finished on the desktop. **Submit turn** replaces End turn. After
+  submitting, a panel says who is awaited (online now / last seen), the
+  deadline if any, with Unsubmit, Ping <ally> and, after the deadline,
+  Resolve without <ally>. When both are in, the turn resolves on its own
+  (the last submitter's device; the other after a few seconds if needed) and
+  both see the turn summary. Changes appear without refreshing (long-poll).
+- **Pending battles online:** your own: Auto-resolve or Fight (the device
+  takes a lease first; another device is told "Carthage is fighting this
+  battle now"); with your ally's army in it: Wait for ally (they are
+  pinged), Take command (they are told; then Auto-resolve / Fight), Ask to
+  join now. The result is kept on this device until the server has it (it
+  survives a closed page and is resent); if the ally resolved the battle
+  first, it is dropped with a note. The "always auto-resolve" setting
+  auto-resolves your own battles online too.
+- **Online dialog:** seats (online, submitted), the join code while a seat is
+  open, Get a device code (for your other device; also as a link), Discord
+  webhook / user id / Send test message, the turn timeout, "Check results on
+  this device" (the determinism check, on by default), History and rollback,
+  version / state hash / rules hash.
+- **Offline:** the last known state is cached on the device, so the map
+  opens and planning works without the server; the status says Offline and
+  everything syncs when it is back. A campaign of another state format is
+  refused with a message; a different rules hash shows a warning.
 
 ## Tests
 

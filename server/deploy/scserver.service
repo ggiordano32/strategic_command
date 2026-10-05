@@ -1,0 +1,32 @@
+# systemd unit for a VM or LXC without Docker.
+#   sudo useradd --system --home /var/lib/scserver --create-home scserver
+#   sudo install -m 755 build/server/scserver /usr/local/bin/scserver
+#   sudo mkdir -p /srv/strategic-command && sudo cp -r build/web /srv/strategic-command/web
+#   sudo cp server/deploy/scserver.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now scserver
+#   journalctl -u scserver -f
+[Unit]
+Description=Strategic Command game server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=scserver
+Group=scserver
+ExecStart=/usr/local/bin/scserver
+Environment=SC_ADDR=:8060
+Environment=SC_DATA_DIR=/var/lib/scserver
+Environment=SC_WEB_DIR=/srv/strategic-command/web
+Environment=SC_LOG_DIR=/var/lib/scserver/playtest_logs
+# Environment=SC_INVITE_KEY=change-me
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/scserver
+
+[Install]
+WantedBy=multi-user.target

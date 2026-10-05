@@ -1,0 +1,8 @@
+# Only the server sources and the web export go into the image.
+*
+!server/go.mod
+!server/go.sum
+!server/cmd/
+!server/internal/
+!build/web/
+server/cmd/webcheck/

@@ -14,6 +14,8 @@ const Saves := preload("res://game/campaign/saves.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const CState := preload("res://campaign/cstate.gd")
 const CData := preload("res://campaign/cdata.gd")
+const NetScript := preload("res://game/net/net.gd")
+const NetSelftest := preload("res://game/net/net_selftest.gd")
 ## Menu terrain choices for the playable battles: -1 = random from the seed.
 const TERRAIN_CHOICES := [-1, Terrain.K_FLAT, Terrain.K_ROLLING, Terrain.K_RIDGE,
 	Terrain.K_VALLEY, Terrain.K_HILL, Terrain.K_SLOPE]
@@ -34,13 +36,19 @@ var book: UnitBook
 var controls: Controls
 var campaign: CampaignScreen = null
 var _new_campaign: NewCampaign = null
-## Menu pages: "home", "sandbox", "continue", "import".
+## Menu pages: "home", "sandbox", "continue", "import", "join", "share".
 var _pages := {}
 var page := "home"
 var _continue_box: VBoxContainer
 var _import_edit: TextEdit
 var _import_info: Label
 var _ios_tab := false
+var _join_edit: LineEdit
+var _join_info: Label
+var _join_box: VBoxContainer
+var _share_box: VBoxContainer
+var _net_line: Label
+var _online_box: VBoxContainer
 
 
 var _shot_path := ""
@@ -97,7 +105,10 @@ func _ready() -> void:
 		# iPhone / iPad Safari in a browser tab cannot rotate a page to
 		# landscape; only the home-screen app can.
 		var ios = JavaScriptBridge.eval("(/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) && !(window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches)", true)
-		_ios_tab = ios == true
+		# JavaScriptBridge returns a JS boolean as a bool or an int depending on
+		# the engine version; `int == bool` is a runtime error that used to
+		# abort this _ready on every non-iOS browser.
+		_ios_tab = str(ios) in ["true", "1"]
 	for a in OS.get_cmdline_user_args():
 		if a == "--ios-tab":
 			_ios_tab = true  # testing aid
@@ -141,6 +152,12 @@ func _ready() -> void:
 			show_page(a.get_slice("=", 1))  # testing aid
 		elif a == "--new-campaign":
 			_new_campaign_page()  # testing aid
+		elif a == "--new-online":
+			_new_campaign_page(true)  # testing aid
+		elif a.begins_with("--open-online="):
+			_open_online(a.get_slice("=", 1))  # testing aid
+		elif a.begins_with("--share="):
+			_show_share(a.get_slice("=", 1).get_slice(":", 0), a.get_slice(":", 1))  # testing aid
 		elif a == "--controls":
 			controls.open()  # testing aid
 		elif a.begins_with("--campaign="):
@@ -160,6 +177,43 @@ func _ready() -> void:
 			var d2 := Saves.load_slot(sl2)
 			if not d2.is_empty():
 				_open_campaign(d2, sl2)
+	_check_server.call_deferred()
+	var net := _net()
+	if net != null and net.launch.has("nettest"):
+		var t := NetSelftest.new()
+		t.role = str(net.launch["nettest"])
+		t.params = net.launch.duplicate()
+		t.params["join"] = str(net.launch.get("join", ""))
+		add_child(t)
+	elif net != null and campaign == null:
+		if net.launch.has("link"):
+			_claim_device_code.call_deferred(str(net.launch["link"]))
+		elif net.launch.has("join"):
+			show_page("join")
+			_join_edit.text = NetScript.show_code(str(net.launch["join"]))
+			_join_find.call_deferred()
+
+
+func _net() -> Node:
+	return get_node_or_null("/root/Net")
+
+
+## Is the campaign server there? (A line on the home page says.)
+func _check_server() -> void:
+	var net := _net()
+	if net == null or _net_line == null:
+		return
+	if not net.has_server():
+		_net_line.text = "Online play needs the game server (open the game from its web address)."
+		return
+	_net_line.text = "Checking the game server..."
+	var ok: bool = await net.check_server()
+	if ok:
+		_net_line.text = "Online co-op ready." + (" A newer version of the game is on the server: reload the page." if net.new_build_available else "")
+		_net_line.add_theme_color_override("font_color", Kit.COL_GOOD if not net.new_build_available else Kit.COL_GOLD)
+	else:
+		_net_line.text = "The game server is not available: online play is off; local play works as usual."
+		_net_line.add_theme_color_override("font_color", Kit.COL_DIM)
 
 
 func _build_menu() -> Control:
@@ -169,6 +223,8 @@ func _build_menu() -> Control:
 	_pages["home"] = _build_home(bg)
 	_pages["continue"] = _build_continue(bg)
 	_pages["import"] = _build_import(bg)
+	_pages["join"] = _build_join(bg)
+	_pages["share"] = _build_share(bg)
 	var center := _scroll_page(bg)
 	_pages["sandbox"] = center.get_parent()
 	var vb := VBoxContainer.new()
@@ -271,17 +327,23 @@ func _build_home(bg: Control) -> Control:
 	var sub := Kit.label("The western Mediterranean, 280 BC", 15, Kit.COL_DIM)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vb.add_child(sub)
-	var camp := HBoxContainer.new()
-	camp.add_theme_constant_override("separation", 8)
-	camp.alignment = BoxContainer.ALIGNMENT_CENTER
+	var camp := HFlowContainer.new()
+	camp.add_theme_constant_override("h_separation", 8)
+	camp.add_theme_constant_override("v_separation", 8)
+	camp.alignment = FlowContainer.ALIGNMENT_CENTER
+	camp.custom_minimum_size.x = 640
 	vb.add_child(camp)
-	for d in [["New campaign", _new_campaign_page], ["Continue", show_page.bind("continue")],
+	for d in [["New campaign", _new_campaign_page.bind(false)], ["Online co-op", _new_campaign_page.bind(true)],
+			["Join", show_page.bind("join")], ["Continue", show_page.bind("continue")],
 			["Import", show_page.bind("import")]]:
 		var b := _menu_button(d[0], d[1])
-		b.custom_minimum_size = Vector2(190, 52)
+		b.custom_minimum_size = Vector2(150 if d[0] in ["Join", "Import"] else 190, 52)
 		b.add_theme_font_size_override("font_size", 17)
 		b.name = "home_" + str(d[0]).replace(" ", "_")
 		camp.add_child(b)
+	_net_line = Kit.label("", 13, Kit.COL_DIM)
+	_net_line.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vb.add_child(_net_line)
 	var row := HFlowContainer.new()
 	row.add_theme_constant_override("h_separation", 8)
 	row.add_theme_constant_override("v_separation", 8)
@@ -313,9 +375,15 @@ func _build_continue(bg: Control) -> Control:
 	scroll.custom_minimum_size = Vector2(560, 250)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	vb.add_child(scroll)
+	var both := Kit.vbox(8)
+	both.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(both)
+	_online_box = Kit.vbox(6)
+	_online_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	both.add_child(_online_box)
 	_continue_box = Kit.vbox(6)
 	_continue_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(_continue_box)
+	both.add_child(_continue_box)
 	vb.add_child(_menu_button("< Back", show_page.bind("home")))
 	return vb.get_parent().get_parent()
 
@@ -323,8 +391,11 @@ func _build_continue(bg: Control) -> Control:
 func _fill_continue() -> void:
 	for c in _continue_box.get_children():
 		c.queue_free()
+	_fill_online()
 	var list := Saves.list()
-	if list.is_empty():
+	if not list.is_empty() and _online_box.get_child_count() > 0:
+		_continue_box.add_child(Kit.label("On this device", 15, Kit.COL_GOLD))
+	if list.is_empty() and _online_box.get_child_count() == 0:
 		_continue_box.add_child(Kit.label("No saved campaigns yet.", 15, Kit.COL_DIM))
 	for m in list:
 		var h := Kit.hbox(6)
@@ -347,6 +418,57 @@ func _fill_continue() -> void:
 				del.text = "Sure?")
 		h.add_child(del)
 		_continue_box.add_child(h)
+
+
+## Online campaigns this device has a seat in, with live status badges.
+func _fill_online() -> void:
+	for c in _online_box.get_children():
+		c.queue_free()
+	var net := _net()
+	if net == null:
+		return
+	var list: Array = net.accounts.list()
+	if list.is_empty():
+		return
+	_online_box.add_child(Kit.label("Online", 15, Kit.COL_GOLD))
+	var badges := {}
+	for e in list:
+		var cid := str(e["id"])
+		var h := Kit.hbox(6)
+		var b := _menu_button("%s - %s" % [e.get("name", cid), CData.faction_name(int(e["f"]))], _open_online.bind(cid))
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.clip_text = true
+		b.name = "online_" + cid
+		h.add_child(b)
+		var badge := Kit.label("..." if net.has_server() else "Offline", 14, Kit.COL_DIM)
+		badge.custom_minimum_size.x = 150
+		badge.name = "badge"
+		badge.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		h.add_child(badge)
+		badges[cid] = badge
+		var del := Kit.button("Forget", Callable(), 80)
+		del.tooltip_text = "Remove this campaign from this device (it stays on the server; your ally keeps playing)."
+		del.pressed.connect(func():
+			if del.text == "Sure?":
+				net.accounts.remove(cid)
+				_fill_continue()
+			else:
+				del.text = "Sure?")
+		h.add_child(del)
+		_online_box.add_child(h)
+	if net.has_server():
+		_update_badges(badges)
+
+
+func _update_badges(labels: Dictionary) -> void:
+	var net := _net()
+	var got: Dictionary = await net.refresh_badges()
+	for cid in labels:
+		var l: Label = labels[cid]
+		if is_instance_valid(l) and got.has(cid):
+			l.text = str(got[cid]["text"])
+			l.add_theme_color_override("font_color", got[cid]["color"])
 
 
 func _build_import(bg: Control) -> Control:
@@ -379,6 +501,231 @@ func _do_import() -> void:
 	_open_campaign(d, sl)
 
 
+# ------------------------------------------------------------------ join ---
+
+func _build_join(bg: Control) -> Control:
+	var vb := _page_box(bg)
+	vb.add_child(Kit.label("Join a campaign", 22, Kit.COL_GOLD))
+	vb.add_child(Kit.label("Enter the join code from your ally, or a device code to continue your own campaign here.", 14, Kit.COL_DIM))
+	var h := Kit.hbox(8)
+	_join_edit = LineEdit.new()
+	_join_edit.name = "join_code"
+	_join_edit.placeholder_text = "ABC-DEF"
+	_join_edit.custom_minimum_size = Vector2(240, 52)
+	_join_edit.add_theme_font_size_override("font_size", 26)
+	_join_edit.max_length = 11
+	_join_edit.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_join_edit.virtual_keyboard_type = LineEdit.KEYBOARD_TYPE_DEFAULT
+	_join_edit.text_changed.connect(func(t: String):
+		var up: String = t.to_upper()
+		if up != t:
+			var c := _join_edit.caret_column
+			_join_edit.text = up
+			_join_edit.caret_column = c)
+	_join_edit.text_submitted.connect(func(_t): _join_find())
+	h.add_child(_join_edit)
+	var fb := _menu_button("Find", _join_find)
+	fb.name = "join_find"
+	fb.custom_minimum_size = Vector2(110, 52)
+	h.add_child(fb)
+	h.add_child(_menu_button("Paste", func():
+		_join_edit.text = DisplayServer.clipboard_get().strip_edges().to_upper().substr(0, 40)))
+	vb.add_child(h)
+	_join_info = Kit.label("", 14, Kit.COL_BAD, true)
+	_join_info.custom_minimum_size.x = 520
+	vb.add_child(_join_info)
+	_join_box = Kit.vbox(8)
+	vb.add_child(_join_box)
+	vb.add_child(_menu_button("< Back", show_page.bind("home")))
+	return vb.get_parent().get_parent()
+
+
+func _join_find() -> void:
+	var net := _net()
+	for c in _join_box.get_children():
+		c.queue_free()
+	var raw := _join_edit.text
+	# A whole link pasted: take its code.
+	for key in ["join=", "link="]:
+		if raw.to_lower().contains(key):
+			raw = raw.substr(raw.to_lower().find(key) + key.length()).get_slice("&", 0)
+	var code: String = NetScript.norm_code(raw)
+	if net == null or not net.has_server():
+		_join_info.text = "Online play needs the game server: open the game from its web address."
+		return
+	if not net.available and not await net.check_server():
+		_join_info.text = "The game server is not available right now, so online play is off. Local play works as usual."
+		return
+	if code.length() == 8:
+		_claim_device_code(code)
+		return
+	if code.length() != 6:
+		_join_info.text = "A join code has 6 characters, a device code 8 (letters and digits; no 0, 1, I, L, O, U or V)."
+		return
+	_join_info.add_theme_color_override("font_color", Kit.COL_DIM)
+	_join_info.text = "Looking..."
+	var r: Dictionary = await net.join_preview(code)
+	_join_info.add_theme_color_override("font_color", Kit.COL_BAD)
+	if not r["ok"]:
+		_join_info.text = _net_error(r, "No open campaign has that code. Check it with your ally (it stops working once both seats are taken).")
+		return
+	_join_info.text = ""
+	var d: Dictionary = CState.normalise(r["data"])
+	if int(d.get("format_version", 0)) != CState.VERSION:
+		_join_info.text = "That campaign was made by a different version of the game: reload the page to update."
+		return
+	_join_box.add_child(Kit.label("%s, turn %d." % [d.get("name", ""), int(d.get("turn", 0)) + 1], 17, Color.WHITE))
+	var free: Array = []
+	var taken: Array[String] = []
+	for seat in d["seats"]:
+		if bool(seat["claimed"]):
+			taken.append(str(seat["name"]))
+		else:
+			free.append(seat)
+	if not taken.is_empty():
+		_join_box.add_child(Kit.label("Playing already: " + ", ".join(taken) + ".", 14, Kit.COL_DIM))
+	if free.is_empty():
+		_join_box.add_child(Kit.label("Every seat is taken.", 15, Kit.COL_BAD))
+		return
+	var du := LineEdit.new()
+	du.placeholder_text = "Your Discord user id (optional, for @mentions)"
+	du.custom_minimum_size = Vector2(380, 40)
+	du.text = str(net.accounts.data.get("discord_user", ""))
+	_join_box.add_child(du)
+	var row := Kit.flow(8)
+	for seat in free:
+		var f := int(seat["f"])
+		var b := _menu_button("Play as %s" % seat["name"], func(): _join_seat(code, f, du.text.strip_edges()))
+		b.name = "join_seat_%d" % f
+		b.custom_minimum_size = Vector2(220, 52)
+		var img := Image.create(20, 20, false, Image.FORMAT_RGBA8)
+		img.fill(CData.faction_color(f))
+		b.icon = ImageTexture.create_from_image(img)
+		row.add_child(b)
+	_join_box.add_child(row)
+
+
+func _join_seat(code: String, f: int, discord_user: String) -> void:
+	var net := _net()
+	if discord_user != "":
+		net.accounts.set_value("discord_user", discord_user)
+	_join_info.add_theme_color_override("font_color", Kit.COL_DIM)
+	_join_info.text = "Joining..."
+	var r: Dictionary = await net.join(code, f, discord_user)
+	_join_info.add_theme_color_override("font_color", Kit.COL_BAD)
+	if not r["ok"]:
+		_join_info.text = _net_error(r, "Could not join.")
+		return
+	_join_info.text = ""
+	_tele_event("online_join", {"f": f})
+	_open_online(str(r["data"]["id"]))
+
+
+func _claim_device_code(code: String) -> void:
+	var net := _net()
+	if net == null:
+		return
+	show_page("join")
+	_join_edit.text = NetScript.show_code(code)
+	if not net.available and not await net.check_server():
+		_join_info.add_theme_color_override("font_color", Kit.COL_BAD)
+		_join_info.text = "The game server is not available right now, so online play is off. Local play works as usual."
+		return
+	_join_info.add_theme_color_override("font_color", Kit.COL_DIM)
+	_join_info.text = "Moving your campaign to this device..."
+	var r: Dictionary = await net.claim_link(code)
+	_join_info.add_theme_color_override("font_color", Kit.COL_BAD)
+	if not r["ok"]:
+		_join_info.text = _net_error(r, "That device code is unknown or has expired (codes last 30 minutes). Get a new one on the other device: Online > Get a device code.")
+		return
+	_join_info.text = ""
+	_tele_event("online_device_linked", {})
+	_open_online(str(r["data"]["id"]))
+
+
+func _net_error(r: Dictionary, fallback: String) -> String:
+	if r["network"]:
+		return "The game server cannot be reached. Check the connection and try again."
+	if int(r["status"]) == 429:
+		return "Too many tries: wait a few minutes."
+	if int(r["status"]) == 404 or str(r["error"]) == "bad_code":
+		return fallback
+	return str(r["message"]) if str(r["message"]) != "" else fallback
+
+
+func _tele_event(kind: String, d: Dictionary) -> void:
+	var tele := get_node_or_null("/root/Telemetry")
+	if tele != null:
+		tele.event(kind, d)
+
+
+# ------------------------------------------------------- share (created) ---
+
+func _build_share(bg: Control) -> Control:
+	var vb := _page_box(bg)
+	_share_box = vb
+	return vb.get_parent().get_parent()
+
+
+## After creating an online campaign: the join code and link for the ally.
+func _show_share(cid: String, code: String) -> void:
+	for c in _share_box.get_children():
+		c.queue_free()
+	var net := _net()
+	_share_box.add_child(Kit.label("Online campaign created", 22, Kit.COL_GOLD))
+	if code != "":
+		var link: String = net.join_link(code) if net else code
+		_share_box.add_child(Kit.label("Send your ally this join code, or the link:", 15, Color.WHITE))
+		var cl := Kit.label(NetScript.show_code(code), 40, Kit.COL_GOLD)
+		cl.name = "share_code"
+		cl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_share_box.add_child(cl)
+		var ll := Kit.label(link, 14, Kit.COL_DIM, true)
+		ll.custom_minimum_size.x = 520
+		ll.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_share_box.add_child(ll)
+		var row := Kit.flow(8)
+		row.alignment = FlowContainer.ALIGNMENT_CENTER
+		row.add_child(_menu_button("Copy link", func():
+			DisplayServer.clipboard_set(link)
+			_share_info("Link copied.")))
+		row.add_child(_menu_button("Copy code", func():
+			DisplayServer.clipboard_set(NetScript.show_code(code))
+			_share_info("Code copied.")))
+		_share_box.add_child(row)
+		_share_box.add_child(Kit.label("They open the link (or Join on the main menu and type the code). You can start planning now; the turn resolves when you have both submitted.", 13, Kit.COL_DIM, true))
+	_share_box.add_child(Kit.label("To continue on another of your devices later: in the campaign, Online > Get a device code.", 13, Kit.COL_DIM, true))
+	var info := Kit.label("", 13, Kit.COL_GOOD)
+	info.name = "share_info"
+	_share_box.add_child(info)
+	var ob := _menu_button("Open the campaign", _open_online.bind(cid))
+	ob.name = "share_open"
+	ob.custom_minimum_size = Vector2(240, 52)
+	_share_box.add_child(ob)
+	_menu.visible = true
+	show_page("share")
+
+
+func _share_info(t: String) -> void:
+	var l := _share_box.get_node_or_null("share_info")
+	if l != null:
+		l.text = t
+
+
+func _open_online(cid: String) -> void:
+	var net := _net()
+	if net == null or campaign != null:
+		return
+	var oc = net.open_campaign(cid)
+	if oc == null:
+		return
+	_menu.visible = false
+	campaign = CampaignScreen.new()
+	campaign.open_online(oc)
+	campaign.exit_requested.connect(_close_campaign)
+	get_tree().root.add_child.call_deferred(campaign)
+
+
 func show_page(p: String) -> void:
 	page = p
 	for k in _pages:
@@ -387,9 +734,14 @@ func show_page(p: String) -> void:
 		_fill_continue()
 
 
-func _new_campaign_page() -> void:
+func _new_campaign_page(online: bool = false) -> void:
 	_menu.visible = false
 	_new_campaign = NewCampaign.new()
+	_new_campaign.online = online
+	_new_campaign.created_online.connect(func(cid, code):
+		_new_campaign.queue_free()
+		_new_campaign = null
+		_show_share(cid, code))
 	_new_campaign.start.connect(func(d, sl):
 		_new_campaign.queue_free()
 		_new_campaign = null
@@ -413,11 +765,30 @@ func _open_campaign(d: Dictionary, sl: String) -> void:
 
 
 func _close_campaign() -> void:
+	var went_online := ""
 	if campaign != null:
+		if campaign.has_meta("go_online"):
+			went_online = str(campaign.get_meta("go_online"))
+		if campaign.online != null:
+			campaign.online.flush_session()
+			var net := _net()
+			if net != null:
+				net.close_campaign()
 		campaign.queue_free()
 		campaign = null
 	_menu.visible = true
 	show_page("home")
+	if went_online != "":
+		var net2 := _net()
+		var sm := {}
+		var code := ""
+		if net2 != null:
+			var e: Dictionary = net2.accounts.get_entry(went_online)
+			var r: Dictionary = await net2.api.call_api("GET", "/api/c/" + went_online, null, str(e.get("token", "")))
+			if r["ok"]:
+				sm = r["data"]
+				code = str(sm.get("join_code", ""))
+		_show_share(went_online, code)
 
 
 func _open_controls() -> void:

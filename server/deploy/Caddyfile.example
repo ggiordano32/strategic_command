@@ -1,0 +1,11 @@
+# Caddy in front of the server: the user's existing one-line site block is
+# all that is needed. reverse_proxy passes WebSocket upgrades through and
+# streams responses (long-polls are ordinary requests that answer within
+# 25 s; Caddy's default proxy timeouts are longer). Caddy adds
+# X-Forwarded-For; the server believes it from private / loopback peers
+# (SC_TRUSTED_PROXY), so per-IP rate limits see the real client.
+# The server already sends the 39 MB wasm brotli- or gzip-compressed, so no
+# `encode` directive is needed (Caddy would not re-encode it anyway).
+strategiccommand.ggior32.dev {
+	reverse_proxy 192.168.60.14:8060
+}
