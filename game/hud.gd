@@ -21,11 +21,15 @@ signal add_toggled(on: bool)
 signal orders_toggled(on: bool)
 signal book_pressed
 signal card_long_pressed(unit: int)
+signal deselect_pressed
+signal controls_pressed
 
+const TouchScroll := preload("res://game/touch_scroll.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Icons := preload("res://game/unit_icons.gd")
 const UnitBook := preload("res://game/unit_book.gd")
+const Controls := preload("res://game/controls.gd")
 const CONFIRM_SEC := 3.0
 const LONG_PRESS_SEC := 0.5
 const LONG_PRESS_SLOP := 14.0   # px the finger may wander during a long press
@@ -59,12 +63,17 @@ var refill_button: Button
 var withdraw_button: Button
 var withdraw_all_button: Button
 var add_button: Button
+var deselect_button: Button
+## Shift / Ctrl / Cmd was held when the last card was clicked.
+var card_mod_add := false
 var group_buttons: Dictionary = {}  # kind -> Button
 var cards_bar: PanelContainer
 var cards_box: HFlowContainer
 var bench_panel: PanelContainer
 var bench_label: Label
 var result_panel: PanelContainer
+var menu_button: Button
+var result_menu_button: Button
 var result_grid: GridContainer
 var result_title: Label
 var actions_box: HBoxContainer
@@ -78,6 +87,8 @@ var _top: HBoxContainer
 var _bottom: VBoxContainer
 var book: UnitBook
 var book_button: Button
+var controls_button: Button
+var controls: Controls
 # Long press on a card: unit, start time, start position; fired once.
 var _lp_unit := -1
 var _lp_start := 0.0
@@ -144,7 +155,11 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	withdraw_all_button.disabled = not interactive
 	var menu := _button("Menu", Vector2(62, BTN_H))
 	menu.pressed.connect(func(): menu_pressed.emit())
-	for b in [withdraw_all_button, book_button, orders_button, pause_button, speed_button, menu]:
+	menu_button = menu
+	controls_button = _button("Keys", Vector2(54, BTN_H))
+	controls_button.tooltip_text = "Controls: every touch, mouse and key input (F1)"
+	controls_button.pressed.connect(func(): controls_pressed.emit())
+	for b in [withdraw_all_button, book_button, controls_button, orders_button, pause_button, speed_button, menu]:
 		top.add_child(b)
 	_top = top
 	_ui_controls.append(top)
@@ -183,6 +198,11 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	add_button.toggled.connect(func(on: bool): add_toggled.emit(on))
 	add_button.disabled = not interactive
 	groups.add_child(add_button)
+	deselect_button = _button("None", Vector2(54, BTN_H))
+	deselect_button.tooltip_text = "Deselect all (Esc)"
+	deselect_button.pressed.connect(func(): deselect_pressed.emit())
+	deselect_button.disabled = not interactive
+	groups.add_child(deselect_button)
 	group_box = groups
 	_ui_controls.append(groups)
 	var spacer := Control.new()
@@ -294,7 +314,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	result_title.add_theme_font_size_override("font_size", 20)
 	result_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	rvb.add_child(result_title)
-	var rscroll := ScrollContainer.new()
+	var rscroll := TouchScroll.new()
 	rscroll.custom_minimum_size = Vector2(560, 240)
 	rscroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	rvb.add_child(rscroll)
@@ -310,6 +330,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	close.pressed.connect(func(): result_panel.visible = false)
 	var rmenu := _button("Back to menu", Vector2(160, BTN_H))
 	rmenu.pressed.connect(func(): menu_pressed.emit())
+	result_menu_button = rmenu
 	rbuttons.add_child(close)
 	rbuttons.add_child(rmenu)
 	_ui_controls.append(result_panel)
@@ -319,6 +340,9 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	book.side_color = Icons.SIDE_COLORS[player_side]
 	root.add_child(book)
 	_ui_controls.append(book)
+	controls = Controls.new()
+	root.add_child(controls)
+	_ui_controls.append(controls)
 
 
 ## Cards wrap into rows: as wide as fits up to CARD_MAX_W, at least
@@ -379,6 +403,8 @@ func _on_card_input(event: InputEvent, u: int) -> void:
 			return
 		if mb.button_index == MOUSE_BUTTON_LEFT:
 			if mb.pressed:
+				# Shift / Ctrl held at the click: add to the selection.
+				card_mod_add = mb.shift_pressed or mb.ctrl_pressed or mb.meta_pressed
 				_lp_unit = u
 				_lp_start = Time.get_ticks_msec() / 1000.0
 				_lp_pos = mb.global_position

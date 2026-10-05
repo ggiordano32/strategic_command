@@ -14,6 +14,8 @@ const OrderPreview := preload("res://game/order_preview.gd")
 const TerrainLayer := preload("res://game/terrain_layer.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const UT := preload("res://sim/unit_types.gd")
+const Controls := preload("res://game/controls.gd")
+const UiScale := preload("res://game/ui_scale.gd")
 
 const PX_PER_M := 10.0
 const M := 1024.0
@@ -42,6 +44,13 @@ var seed_value := 1
 ## Terrain kind for scenarios with generated terrain (Terrain.K_*), or -1
 ## for the scenario's own (random from the seed for the playable battles).
 var terrain_kind := -1
+## A ready-made scenario (campaign battles) used instead of scenario_id.
+var custom_scenario: Dictionary = {}
+## Campaign battle: leaving before the battle is decided needs a second tap
+## (the army withdraws and the battle counts as lost); the menu buttons
+## read "Back to campaign".
+var campaign_mode := false
+var _leave_confirm := 0.0
 
 var sim: BattleSim
 var camera: Camera2D
@@ -100,11 +109,40 @@ var _pinch_mid := Vector2.ZERO
 var _last_tap_time := -10.0
 var _last_tap_pos := Vector2.ZERO
 var _mouse_pan := false
+# Modifiers of the last left mouse press (Shift / Ctrl / Cmd add to the
+# selection; Alt starts a group move) - read from the event itself, which
+# is reliable in browsers where key state can be missed.
+var _mouse_add := false
+var _mouse_alt := false
+# Box select (mouse drag on empty ground with nothing selected).
+var _box := false
+# Group move: three fingers or Alt / G + drag. Units, their start anchors
+# and facings, the group centre (sim units), and the gesture's translation
+# (world px) and rotation (radians).
+var _gm := false            # ghost shown, orders on release
+var _gm_pending := false    # three fingers down, not yet past the threshold
+var _gm_mouse := false
+var _gm_units: Array[int] = []
+var _gm_base: Array = []
+var _gm_centre := Vector2.ZERO
+var _gm_move := Vector2.ZERO
+var _gm_rot := 0.0
+var _gm_start_mid := Vector2.ZERO
+var _gm_start_ang: Array = []
+var _gm_start_keys: Array = []
+var _gm_mouse_start := Vector2.ZERO
+# Long press on a unit on the field opens its unit book page.
+var _field_lp_start := -1.0
+var _paused_before_controls := false
+const GM_MOVE_PX := 24.0      # three-finger movement before the ghost appears
+const GM_TURN_RAD := 0.14     # ... or this much twist (8 degrees)
+const GM_STEP := PI / 12.0    # wheel / Q / E turn step (15 degrees)
+const PAN_SPEED := 900.0      # screen px per second for keyboard panning
 
 
 func _ready() -> void:
 	sim = BattleSim.new()
-	var scn := Scenarios.make(scenario_id)
+	var scn := custom_scenario if not custom_scenario.is_empty() else Scenarios.make(scenario_id)
 	if terrain_kind >= 0 and scn.has("terrain"):
 		scn["terrain"]["kind"] = terrain_kind
 	for a in OS.get_cmdline_user_args():
@@ -139,6 +177,9 @@ func _ready() -> void:
 	hud = Hud.new()
 	add_child(hud)
 	hud.build(sim, PLAYER_SIDE, interactive)
+	if campaign_mode:
+		hud.result_menu_button.text = "Back to campaign"
+		hud.menu_button.text = "Leave"
 	hud.set_stats_expanded(bench_mode)  # benchmarks show the full readout
 	_fit_camera()
 	hud.card_pressed.connect(_on_card)
@@ -161,6 +202,12 @@ func _ready() -> void:
 	hud.book_pressed.connect(func(): _open_book(-1, "book_open"))
 	hud.card_long_pressed.connect(func(u: int): _open_book(sim.u_type[u], "book_open_card"))
 	hud.book.closed.connect(_on_book_closed)
+	hud.deselect_pressed.connect(func():
+		_count("deselect_button")
+		_gm_cancel()
+		_select(-1))
+	hud.controls_pressed.connect(_open_controls)
+	hud.controls.closed.connect(func(): _set_paused(_paused_before_controls))
 	hud.orders_button.set_pressed_no_signal(show_all_orders)
 	hud.set_orders_text(show_all_orders)
 	overlay.show_all_orders = show_all_orders
@@ -221,6 +268,20 @@ func _apply_debug_args() -> void:
 		elif a.begins_with("--attack="):
 			# --attack=U:T orders unit U to attack (shoot) unit T.
 			_queue(BattleSim.make_attack_order(0, int(v.get_slice(":", 0)), int(v.get_slice(":", 1)), 0))
+		elif a.begins_with("--demo-ghost="):
+			# --demo-ghost=deg: the main line (no missiles) picked up as a
+			# group, moved 60 m ahead and turned; for screenshots.
+			_select(-1)
+			for u in sim.n_units:
+				if sim.u_side[u] == PLAYER_SIDE and sim.u_cls[u] != UT.CLS_MISSILE and sim.u_cls[u] != UT.CLS_ART:
+					if selection.is_empty():
+						_select(u)
+					else:
+						_toggle_in_selection(u)
+			_gm_begin()
+			_gm_rot = deg_to_rad(float(v))
+			_gm_move = Vector2(0, -60.0 * PX_PER_M)
+			_gm_update()
 		elif a == "--show-orders":
 			hud.orders_button.button_pressed = true
 		elif a == "--demo-orders":
@@ -240,8 +301,18 @@ func _on_orders_toggled(on: bool) -> void:
 
 
 func _on_menu() -> void:
+	if campaign_mode and sim.winner < 0 and _leave_confirm <= 0.0:
+		_leave_confirm = 3.0
+		hud.banner.text = "Leave? Your army withdraws (a defeat). Tap again."
+		hud.banner.visible = true
+		return
 	_end_scenario("menu")
 	exit_requested.emit()
+
+
+## True once the battle has a winner (a campaign result can be applied).
+func is_decided() -> bool:
+	return sim.winner >= 0
 
 
 ## Frame both armies in the part of the screen the HUD leaves clear (below
@@ -269,6 +340,10 @@ func _fit_camera() -> void:
 # ------------------------------------------------------------- stepping ---
 
 func _process(delta: float) -> void:
+	if _leave_confirm > 0.0:
+		_leave_confirm -= delta
+		if _leave_confirm <= 0.0 and sim.winner < 0:
+			hud.banner.visible = false
 	if not paused and not _bench_done:
 		_acc += delta * SPEEDS[speed_idx]
 		var steps := 0
@@ -283,6 +358,7 @@ func _process(delta: float) -> void:
 			soldiers.upload()
 			_upload_ms = (Time.get_ticks_usec() - t0) / 1000.0
 	soldiers.set_alpha(clampf(_acc / TICK_SEC, 0.0, 1.0))
+	_keys_held(delta)
 	orders.refresh()  # drop orders the sim has applied
 	# Redrawn every frame, paused or not, so order changes show at once.
 	overlay.zoom = camera.zoom.x
@@ -643,8 +719,9 @@ func _on_card(u: int) -> void:
 	if not interactive or sim.u_state[u] != BattleSim.U_READY:
 		_selection_changed()  # undo the card's toggle
 		return
-	_count("card_add" if add_mode else "card_select")
-	if add_mode:
+	var add := add_mode or hud.card_mod_add
+	_count("card_add" if add else "card_select")
+	if add:
 		_toggle_in_selection(u)
 		return
 	if selected == u and selection.size() == 1:
@@ -761,7 +838,21 @@ func _withdraw_all() -> void:
 
 
 func _shift_held() -> bool:
-	return Input.is_key_pressed(KEY_SHIFT)
+	return _mouse_add or Input.is_key_pressed(KEY_SHIFT) or Input.is_key_pressed(KEY_CTRL)
+
+
+func _open_controls() -> void:
+	_count("controls_open")
+	if not hud.controls.visible:
+		_paused_before_controls = paused
+		_set_paused(true)
+	hud.controls.open()
+	_gm_cancel()
+	overlay.preview_on = false
+	_dragging = false
+	_touches.clear()
+	_primary = -1
+	_gesture_multi = false
 
 
 func _tap(screen_pos: Vector2, double: bool) -> void:
@@ -853,18 +944,30 @@ func _pick_unit(w: Vector2) -> int:
 	var margin := int(2.5 * M)
 	var best := -1
 	var best_d := 0
+	# The symbol marker above each unit is a hit target first (generous on
+	# touch screens); a tap on a marker wins over a unit's ground box under
+	# it, since markers float over neighbouring units when zoomed out.
+	var mr := maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / camera.zoom.x)
+	var hit_k := 2.3 if UiScale.is_touch() else 1.7
+	var marker_r := int(mr * hit_k / PX_PER_M * M)
+	var lift := int(2.2 * mr / PX_PER_M * M)
 	for u in sim.n_units:
 		if sim.u_state[u] >= BattleSim.U_DESTROYED:
 			continue
-		# Unit marker (drawn above the centroid) also counts.
+		var mdx: int = x - sim.u_cx[u]
+		var mdy: int = y - (sim.u_cy[u] - lift)
+		var md := mdx * mdx + mdy * mdy
+		if md <= marker_r * marker_r and (best < 0 or md < best_d):
+			best = u
+			best_d = md
+	if best >= 0:
+		return best
+	for u in sim.n_units:
+		if sim.u_state[u] >= BattleSim.U_DESTROYED:
+			continue
 		var in_box: bool = x >= sim.u_minx[u] - margin and x <= sim.u_maxx[u] + margin \
 			and y >= sim.u_miny[u] - margin and y <= sim.u_maxy[u] + margin
-		var mdx: int = x - sim.u_cx[u]
-		var mr := maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / camera.zoom.x)
-		var mdy: int = y - (sim.u_cy[u] - int(2.2 * mr / PX_PER_M * M))
-		var marker_r := int(mr * 1.6 / PX_PER_M * M)
-		var on_marker := mdx * mdx + mdy * mdy <= marker_r * marker_r
-		if not in_box and not on_marker:
+		if not in_box:
 			continue
 		var dx: int = x - sim.u_cx[u]
 		var dy: int = y - sim.u_cy[u]
@@ -881,9 +984,32 @@ func _screen_to_world(p: Vector2) -> Vector2:
 	return get_canvas_transform().affine_inverse() * p
 
 
+func _input(event: InputEvent) -> void:
+	# Modifiers come from the mouse event itself (key state can be missed by
+	# the browser). The emulated touch of a click is handled at release, after
+	# this has run.
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed:
+			_mouse_add = mb.shift_pressed or mb.ctrl_pressed or mb.meta_pressed
+			_mouse_alt = mb.alt_pressed or Input.is_key_pressed(KEY_G)
+		if _gm and mb.pressed:
+			# While moving a group: wheel turns it, right click cancels.
+			if mb.button_index == MOUSE_BUTTON_WHEEL_UP:
+				_gm_turn(-GM_STEP)
+				get_viewport().set_input_as_handled()
+			elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+				_gm_turn(GM_STEP)
+				get_viewport().set_input_as_handled()
+			elif mb.button_index == MOUSE_BUTTON_RIGHT:
+				_count("group_move_cancelled")
+				_gm_cancel()
+				get_viewport().set_input_as_handled()
+
+
 func _unhandled_input(event: InputEvent) -> void:
-	if hud.book.visible:
-		return  # the book is modal; it handles its own keys
+	if hud.book.visible or hud.controls.visible:
+		return  # the book and the controls page are modal; they handle their own keys
 	if event is InputEventScreenTouch:
 		_on_touch(event)
 	elif event is InputEventScreenDrag:
@@ -895,6 +1021,14 @@ func _unhandled_input(event: InputEvent) -> void:
 			_zoom_at(mb.position, 1.15)
 		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
 			_zoom_at(mb.position, 1.0 / 1.15)
+		elif mb.button_index == MOUSE_BUTTON_RIGHT and mb.pressed:
+			# Right click on a unit (or its symbol): its unit book page.
+			var u := _pick_unit(_screen_to_world(mb.position))
+			if u >= 0:
+				_open_book(sim.u_type[u], "book_open_field")
+				return
+			_mouse_pan = true
+			_count("mouse_pan")
 		elif mb.button_index == MOUSE_BUTTON_RIGHT or mb.button_index == MOUSE_BUTTON_MIDDLE:
 			_mouse_pan = mb.pressed
 			if mb.pressed:
@@ -911,25 +1045,113 @@ func _unhandled_input(event: InputEvent) -> void:
 		camera.position += (event as InputEventPanGesture).delta * 8.0 / camera.zoom
 		_clamp_camera()
 	elif event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_SPACE:
+		_on_key(event as InputEventKey)
+
+
+## Keyboard shortcuts, from the controls table (game/controls.gd).
+func _on_key(e: InputEventKey) -> void:
+	var act := Controls.action_for_key(e, "battle")
+	if act != "":
+		_count("key_" + act)
+	match act:
+		"pause":
 			_toggle_pause()
-		elif event.keycode == KEY_ESCAPE:
-			_select(-1)
-		elif event.keycode == KEY_A and event.ctrl_pressed:
+		"speed_up":
+			speed_idx = mini(speed_idx + 1, SPEEDS.size() - 1)
+			_update_speed_text()
+		"speed_down":
+			speed_idx = maxi(speed_idx - 1, 0)
+			_update_speed_text()
+		"select_all":
 			_select_group("all")
+		"select_inf":
+			_select_group("inf")
+		"select_missile":
+			_select_group("missile")
+		"select_cav":
+			_select_group("cav")
+		"deselect":
+			if _gm or _gm_pending:
+				_count("group_move_cancelled")
+				_gm_cancel()
+			else:
+				_select(-1)
+		"run":
+			_toggle_run()
+		"halt":
+			_halt()
+		"fire":
+			_toggle_fire()
+		"skirmish":
+			_toggle_skirmish()
+		"deploy":
+			_toggle_deploy()
+		"refill":
+			_toggle_refill()
+		"orders_overlay":
+			hud.orders_button.button_pressed = not hud.orders_button.button_pressed
+		"group_rotate_left":
+			_gm_turn(-GM_STEP)
+		"group_rotate_right":
+			_gm_turn(GM_STEP)
+		"readout":
+			hud.set_stats_expanded(not hud.stats_expanded)
+		"book":
+			_open_book(sim.u_type[selected] if selected >= 0 else -1, "book_open_key")
+		"controls":
+			_open_controls()
+		"zoom_in":
+			_zoom_at(get_viewport_rect().size * 0.5, 1.25)
+		"zoom_out":
+			_zoom_at(get_viewport_rect().size * 0.5, 0.8)
+		"fullscreen":
+			if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN:
+				DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+			else:
+				DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
+
+
+## Held keys: W A S D / arrows pan.
+func _keys_held(delta: float) -> void:
+	if hud.book.visible or hud.controls.visible:
+		return
+	var v := Vector2.ZERO
+	if Controls.held("pan_left"):
+		v.x -= 1
+	if Controls.held("pan_right"):
+		v.x += 1
+	if Controls.held("pan_up"):
+		v.y -= 1
+	if Controls.held("pan_down"):
+		v.y += 1
+	if v != Vector2.ZERO:
+		camera.position += v * PAN_SPEED * delta / camera.zoom
+		_clamp_camera()
+	# Long press on a unit on the field: its unit book page.
+	if _primary >= 0 and not _dragging and not _gesture_multi and _field_lp_start > 0.0 \
+			and Time.get_ticks_msec() / 1000.0 - _field_lp_start >= hud.LONG_PRESS_SEC:
+		_field_lp_start = -1.0
+		var u := _pick_unit(_screen_to_world(_press_pos))
+		if u >= 0:
+			_open_book(sim.u_type[u], "book_open_longpress")
 
 
 func _on_touch(e: InputEventScreenTouch) -> void:
+	var is_mouse := e.device == InputEvent.DEVICE_ID_EMULATION
 	if e.pressed:
 		if hud.is_over_ui(e.position):
 			_count("touch_on_ui")
 			return
+		if not is_mouse:
+			_mouse_add = false
+			_mouse_alt = false
 		_touches[e.index] = e.position
 		if _touches.size() == 1:
 			_primary = e.index
 			_press_pos = e.position
 			_dragging = false
 			_gesture_multi = false
+			_field_lp_start = Time.get_ticks_msec() / 1000.0 if not is_mouse else -1.0
 		elif _touches.size() >= 2:
 			# Second finger: cancel any one-finger action, start pinch/pan.
 			if not _gesture_multi:
@@ -941,11 +1163,21 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 			_gesture_multi = true
 			_dragging = false
 			overlay.preview_on = false
+			_box_end(false)
+			if _touches.size() == 3 and not _gm and interactive and not selection.is_empty():
+				_gm_arm()
+			elif _touches.size() >= 4 and (_gm or _gm_pending):
+				_count("group_move_cancelled")
+				_gm_cancel()
 			_start_pinch()
 		return
 	if not _touches.has(e.index):
 		return
 	_touches.erase(e.index)
+	if _gm and not _gm_mouse:
+		# Lifting a finger places the group.
+		_gm_commit()
+	_gm_pending = false
 	if _gesture_multi:
 		if _touches.size() >= 2:
 			_start_pinch()
@@ -960,12 +1192,21 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 	var double := now - _last_tap_time < DOUBLE_TAP_SEC and e.position.distance_to(_last_tap_pos) < DOUBLE_TAP_DIST
 	if _dragging:
 		_dragging = false
+		if _gm and _gm_mouse:
+			_gm_commit()
+			return
+		if _box:
+			_box_end(true)
+			return
 		if not overlay.preview_on:
 			_count("pan_drag")
 		if overlay.preview_on:
 			overlay.preview_on = false
 			_finish_line(false)
 		return
+	if _field_lp_start < 0.0 and not is_mouse:
+		return  # the long press opened the unit book
+	_field_lp_start = -1.0
 	_tap(e.position, double)
 	if double:
 		_last_tap_time = -10.0
@@ -979,17 +1220,41 @@ func _on_drag(e: InputEventScreenDrag) -> void:
 		return
 	_touches[e.index] = e.position
 	if _gesture_multi:
+		if _gm_pending or _gm:
+			_gm_touch_update()
+			if _gm:
+				return
 		_update_pinch()
 		return
 	if e.index != _primary:
 		return
+	var is_mouse := e.device == InputEvent.DEVICE_ID_EMULATION
 	if not _dragging and e.position.distance_to(_press_pos) > DRAG_THRESHOLD:
 		_dragging = true
-		if not selection.is_empty() and interactive:
+		_field_lp_start = -1.0
+		if is_mouse and _mouse_alt and interactive and not selection.is_empty():
+			# Alt (or G) + drag: move the selection as it stands.
+			_gm_begin()
+			_gm_mouse = true
+			_gm_mouse_start = _press_pos
+			_count("alt_drag_move")
+		elif is_mouse and interactive and (selection.is_empty() or _mouse_add) and _pick_unit(_screen_to_world(_press_pos)) < 0:
+			# Mouse drag from empty ground with nothing selected (or Shift):
+			# box select.
+			_box = true
+			overlay.box_on = true
+			overlay.box_a = _screen_to_world(_press_pos)
+			_count("box_select")
+		elif not selection.is_empty() and interactive:
 			overlay.preview_on = true
 	if not _dragging:
 		return
-	if overlay.preview_on:
+	if _gm and _gm_mouse:
+		_gm_move = (e.position - _gm_mouse_start) / camera.zoom.x
+		_gm_update()
+	elif _box:
+		overlay.box_b = _screen_to_world(e.position)
+	elif overlay.preview_on:
 		overlay.preview_a = _screen_to_world(_press_pos)
 		overlay.preview_b = _screen_to_world(e.position)
 		overlay.preview_ok = overlay.preview_a.distance_to(overlay.preview_b) >= MIN_LINE_M * PX_PER_M
@@ -997,6 +1262,159 @@ func _on_drag(e: InputEventScreenDrag) -> void:
 		# No unit selected: one-finger drag pans.
 		camera.position -= e.relative / camera.zoom
 		_clamp_camera()
+
+
+# ------------------------------------------------------------ box select ---
+
+func _box_end(apply: bool) -> void:
+	if not _box:
+		return
+	_box = false
+	overlay.box_on = false
+	if not apply:
+		return
+	var rect := Rect2(overlay.box_a, overlay.box_b - overlay.box_a).abs()
+	if not _mouse_add:
+		_select(-1)
+	var any := false
+	for u in sim.n_units:
+		if sim.u_side[u] != PLAYER_SIDE or sim.u_state[u] != BattleSim.U_READY:
+			continue
+		var c := Vector2(sim.u_cx[u], sim.u_cy[u]) / M * PX_PER_M
+		if rect.has_point(c) and not selection.has(u):
+			if not any and selection.is_empty():
+				_select(u)
+			else:
+				_toggle_in_selection(u)
+			any = true
+
+
+# ----------------------------------------------------------- group move ---
+
+## Three fingers are down with units selected: remember where, and wait for
+## a clear movement or twist before showing the ghost (so a pinch that
+## briefly gains a third finger issues nothing).
+func _gm_arm() -> void:
+	_gm_pending = true
+	var keys := _touches.keys()
+	keys.sort()
+	_gm_start_keys = keys.slice(0, 3)
+	_gm_start_mid = _three_mid()
+	_gm_start_ang = []
+	for k in _gm_start_keys:
+		_gm_start_ang.append(((_touches[k] as Vector2) - _gm_start_mid).angle())
+
+
+func _three_mid() -> Vector2:
+	var m := Vector2.ZERO
+	for k in _gm_start_keys:
+		m += _touches[k]
+	return m / 3.0
+
+
+func _gm_touch_update() -> void:
+	for k in _gm_start_keys:
+		if not _touches.has(k):
+			return
+	var mid := _three_mid()
+	var rot := 0.0
+	for i in 3:
+		var a := ((_touches[_gm_start_keys[i]] as Vector2) - mid).angle()
+		rot += wrapf(a - float(_gm_start_ang[i]), -PI, PI)
+	rot /= 3.0
+	var move := mid - _gm_start_mid
+	if _gm_pending and (move.length() > GM_MOVE_PX or absf(rot) > GM_TURN_RAD):
+		_gm_pending = false
+		_gm_begin()
+		_count("three_finger_move")
+	if _gm:
+		_gm_move = move / camera.zoom.x
+		_gm_rot = rot
+		_gm_update()
+
+
+func _gm_begin() -> void:
+	_gm_units.clear()
+	_gm_base.clear()
+	var c := Vector2.ZERO
+	for u in selection:
+		if sim.u_state[u] != BattleSim.U_READY:
+			continue
+		_gm_units.append(u)
+		var b := {"ax": orders.value(u, "ax"), "ay": orders.value(u, "ay"), "face": orders.value(u, "face"),
+			"files": orders.value(u, "files")}
+		_gm_base.append(b)
+		c += Vector2(int(b["ax"]), int(b["ay"]))
+	if _gm_units.is_empty():
+		return
+	_gm_centre = c / _gm_units.size()
+	_gm_move = Vector2.ZERO
+	_gm_rot = 0.0
+	_gm = true
+	_gm_mouse = false
+	overlay.preview_on = false
+	_gm_update()
+
+
+func _gm_turn(step: float) -> void:
+	if not _gm:
+		return
+	_gm_rot += step
+	_count("group_rotate")
+	_gm_update()
+
+
+## Destination of each unit: its anchor rotated about the group centre and
+## moved; facing turned by the same angle; frontage kept.
+func _gm_dest() -> Array:
+	var out: Array = []
+	var turn := int(round(_gm_rot * 1024.0 / TAU))
+	var mv := _gm_move / PX_PER_M * M
+	for i in _gm_units.size():
+		var b: Dictionary = _gm_base[i]
+		var rel := Vector2(int(b["ax"]), int(b["ay"])) - _gm_centre
+		var p := _gm_centre + rel.rotated(_gm_rot) + mv
+		out.append({"unit": _gm_units[i], "x": int(p.x), "y": int(p.y),
+			"face": (int(b["face"]) + turn) & 1023, "files": int(b["files"])})
+	return out
+
+
+func _gm_update() -> void:
+	var gh: Array = []
+	for d in _gm_dest():
+		gh.append({"unit": d["unit"], "front": Vector2(d["x"], d["y"]) / M * PX_PER_M,
+			"face": d["face"], "files": d["files"]})
+	overlay.ghosts = gh
+	var deg := int(round(rad_to_deg(_gm_rot)))
+	overlay.ghost_hint = "turn %+d deg" % deg if deg != 0 else ""
+	overlay.queue_redraw()
+
+
+func _gm_commit() -> void:
+	if not _gm:
+		return
+	if _gm_move.length() * camera.zoom.x < 6.0 and absf(_gm_rot) < 0.03:
+		_gm_cancel()
+		return
+	if absf(_gm_rot) >= 0.03:
+		_count("group_rotate_placed")
+	for d in _gm_dest():
+		var u: int = d["unit"]
+		if sim.u_state[u] != BattleSim.U_READY:
+			continue
+		var width: int = BattleSim.files_to_width(int(d["files"]), sim.u_type[u])
+		_queue(BattleSim.make_move_order(0, u, int(d["x"]), int(d["y"]), int(d["face"]), width,
+			orders.value(u, "run")))
+	_gm_cancel()
+
+
+func _gm_cancel() -> void:
+	_gm = false
+	_gm_pending = false
+	_gm_mouse = false
+	overlay.ghosts = []
+	overlay.ghost_hint = ""
+	overlay.queue_redraw()
 
 
 func _two_touches() -> Array:

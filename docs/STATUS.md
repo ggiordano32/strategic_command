@@ -1,6 +1,6 @@
 # Strategic Command — Status and Handover
 
-Last updated: 2026-10-05. Read this first, then `docs/DESIGN.md` for the full
+Last updated: 2026-10-05 (milestone 3 built). Read this first, then `docs/DESIGN.md` for the full
 design and `CLAUDE.md` for working rules. Update this file whenever a
 milestone lands or the plan changes.
 
@@ -22,7 +22,7 @@ anti-cheat and original art only if it proves fun.
 | Artillery (bolt and stone throwers) | Committed (`49c1022`), not yet playtested |
 | Terrain height | Built, **not yet committed**, playtested ("feels good so far") |
 | Playtest round (HUD scale, stones, ammo, refill) | Built, **not yet committed**, not yet playtested |
-| 3. Minimal campaign | Not started |
+| 3. Minimal campaign | Built 2026-10-05, **not committed**, not yet playtested (see below) |
 | 4. Async backend (Go + SQLite) | Not started |
 | 5. Live co-op battles (lockstep) | Not started |
 | 6. Depth (sieges, tech, more factions) | Not started |
@@ -63,6 +63,48 @@ anti-cheat and original art only if it proves fun.
 - The touch control scheme works; the user likes it.
 
 ### In progress right now
+
+**Milestone 3, campaign layer (built 2026-10-05, uncommitted, not yet
+playtested).** Everything is in `docs/CAMPAIGN.md` (as built: rules,
+numbers, map and adjacency, tier table, state and order formats for
+milestone 4). In short:
+- `campaign/` pure deterministic rules: 36 regions, 45 land routes, 14 sea
+  lanes, 8 factions + 12 independent regions, two turns a year from 280 BC,
+  simultaneous orders then AI, economy with buildings / trade / upkeep /
+  debt / corruption, settlement growth, 7 building chains, recruitment by
+  building level and tier, replenishment, merge / split / disband, 12-unit
+  armies, reinforcements, garrisons and walls, conquest, retreat,
+  elimination, victory; campaign AI and diplomacy; state as one JSON blob
+  with a hash.
+- Unit tiers: 31 derived unit types (tiers 2-3 of the seven core lines plus
+  faction elites: principes, triarii, phalangites, silver shields,
+  companions, sacred band, hoplites, scutarii, Gallic nobles...), with
+  gold-chevron tier marks; the nine base types are unchanged (golden
+  digests unchanged).
+- `game/campaign/`: map screen (drawn coastlines, territories, routes,
+  armies, planned moves), region / army / realm / diplomacy / battles /
+  summary / goals panels, hot seat with hand-over, save slots with autosave,
+  export / import as text, new-campaign screen; battles fought in the
+  battle view or auto-resolved by the battle sim AI vs AI.
+- Main menu reorganised (Campaign / Battle sandbox / Unit book / Controls);
+  Controls page from one bindings table; battle additions: Shift / Ctrl
+  click multi-select (also on cards), symbol markers as hit targets first,
+  None (deselect) button, keyboard shortcuts, mouse drag-box select,
+  three-finger / Alt+drag (or G+drag) group move with rotation and ghost
+  preview, field long-press / right-click for the unit book.
+- Web: manifest + icons for install (no service worker, so never a stale
+  build); iPhone Safari tab told to use Share > Add to Home Screen.
+- Playtest fixes (2026-10-05, after the first phone playtest, which went
+  well): every list scrolls by dragging anywhere in it, buttons included
+  (`game/touch_scroll.gd`, used by all scroll areas; taps fire on release
+  only if the finger did not scroll; fling; long press on unit rows opens
+  the unit page; scroll bars thin on touch); neighbouring regions an army
+  cannot enter are shown dark and crossed, and tapping one explains why with
+  a Diplomacy shortcut; the region panel says whether its owner is at war or
+  peace with you. Test: `godot --resolution 1560x720 --script
+  res://tests/touch_scroll_test.gd`.
+- Needs: a phone playtest of everything above; three-finger gestures on real
+  phones; auto-resolve time on a phone; campaign pacing with real players.
 
 Playtest feedback round (2026-10-05, built, uncommitted):
 1. HUD scaled by device (`game/ui_scale.gd`: touch 0.88, mouse 0.82 CSS px
@@ -139,9 +181,11 @@ A tuning pass from playtest feedback (built, uncommitted):
   user's Caddy reverse proxy, which holds a real certificate and forwards
   plain HTTP to the dev server on port 8060. The dev server is not hardened
   and only lives as long as the session that started it.
-- The export's install (PWA) option is still off; with the real certificate
-  it can now be switched on, taking care that a cached build is never served
-  stale during playtesting.
+- Install support (2026-10-05): the export writes `manifest.json` and
+  192 / 512 px icons (tools/make_web_icons.gd), standalone, landscape. No
+  service worker: Godot's PWA worker answers from its cache first, which
+  could serve a stale build, so there is no offline play. Android Chrome
+  offers install without a worker (unverified on the user's phone).
 - A mild top/bottom bias may remain in mirrored AI battles (53-55% on some
   seed ranges, 50.6% on another). Settle before head-to-head play.
 - Deferred battle features: fatigue, horse archers, a manual brace
@@ -212,6 +256,18 @@ A tuning pass from playtest feedback (built, uncommitted):
 ## How to run things
 
 ```sh
+# Campaign tests
+godot --headless --script res://tests/campaign_test.gd      # rules, determinism, JSON
+godot --headless --script res://tests/campaign_sim.gd -- --seeds=6 --turns=60   # AI pacing
+godot --headless --script res://tests/campaign_solo.gd      # 20 turns of a player policy
+godot --headless --script res://tests/campaign_battles.gd   # auto-resolve timing, formula calibration
+godot --script res://tests/campaign_input_test.gd           # needs a window
+godot --headless --script res://tests/matchups.gd -- --only=tiers   # tier balance
+# Campaign testing aids: -- --campaign=rome[,greeks][:seed] --sim-turns=N
+#   --camp-attack=N:region --camp-fight --select-army=N --select-region=key
+#   --cam-zoom=Z --dialog=battles|summary|diplomacy|realm|goals --new-campaign
+#   --controls --ios-tab; battle: --demo-ghost=deg
+
 # Tests
 godot --headless --script res://tests/determinism_test.gd
 godot --headless --script res://tests/benchmark.gd

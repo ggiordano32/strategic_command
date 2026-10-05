@@ -815,6 +815,36 @@ hand-written (display-only fields in `sim/unit_types.gd`, never read by the
 sim). Long press (or right click) on a unit card opens its page without
 selecting or ordering anything.
 
+### Controls additions (2026-10-05, as built)
+
+- All inputs are listed in one table, `game/controls.gd` (action, section,
+  touch, mouse, default keys); the Controls page (main menu, battle "Keys",
+  campaign Menu, F1) renders it, and the battle and campaign keyboard
+  handling read their keys from it. No rebinding yet.
+- Shift / Ctrl / Cmd + click adds to the selection on the field and on
+  cards. It did not work before because cards ignored modifiers and the field
+  read the key state; modifiers are now read from the mouse event itself.
+- Symbol markers are hit targets first (radius 2.3x the marker on touch,
+  1.7x with a mouse), so a marker floating over a neighbouring unit selects
+  its own unit; long press (touch) or right click on a unit opens its book page.
+- "None" button with the group buttons deselects; Esc too.
+- Keys: Space / P pause, + / - speed, 1-4 and Ctrl+A group selects, R run,
+  H halt, F fire, K skirmish, Shift+D deploy, Y refill, O orders overlay,
+  W A S D / arrows pan, Page Up / Down zoom, B book, F3 readout, F11 fullscreen.
+- Mouse drag on empty ground with nothing selected (or with Shift) draws a
+  selection box; pan with right / middle drag or keys (left-drag pan with
+  nothing selected is gone on desktop; touch still pans with one finger).
+- Group move: three fingers on the screen with units selected; after 24 px
+  of movement or 8 degrees of twist a ghost of every unit's destination
+  (real frontage, depth and facing) follows the touches' centre and twist;
+  lifting a finger places the group (move orders keeping each unit's
+  frontage, relative position and facing), a fourth finger cancels, small
+  movements issue nothing. Desktop: Alt + left drag (or hold G and drag, for
+  systems where Alt-drag moves windows); wheel or Q / E turns 15 degrees;
+  right click or Esc cancels. Works paused (the usual order preview).
+  Telemetry counters three_finger_move, alt_drag_move, group_rotate,
+  group_rotate_placed, group_move_cancelled.
+
 ## 8. Art
 
 - Placeholder top-down sprites, tinted per faction, until the game is proven fun.

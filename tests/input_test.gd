@@ -18,6 +18,7 @@ extends SceneTree
 const Battle := preload("res://game/battle.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const UT := preload("res://sim/unit_types.gd")
+const Overlay := preload("res://game/overlay.gd")
 
 var battle: Battle
 var frame := 0
@@ -156,6 +157,45 @@ func _initialize() -> void:
 		_step_cards_desktop,
 		_step_cards_check_desktop,
 		_step_cards_restore,
+		# Battle controls (2026-10 additions).
+		_step_bc_start,
+		_step_bc_marker_click,
+		_step_bc_check_marker,
+		_step_bc_shift_click,
+		_step_bc_check_shift,
+		_step_bc_shift_card,
+		_step_bc_check_shift_card,
+		_step_bc_deselect,
+		_step_bc_check_deselect,
+		_step_bc_keys,
+		_step_bc_check_keys,
+		_step_bc_controls_open,
+		_step_bc_controls_check,
+		_step_bc_controls_closed,
+		_step_bc_three_pinch,
+		_step_bc_three_pinch_move,
+		_step_bc_three_pinch_up,
+		_step_bc_check_three_pinch,
+		_step_bc_three_down,
+		_step_bc_three_move,
+		_step_bc_check_three_ghost,
+		_step_bc_three_up,
+		_step_bc_check_three_orders,
+		_step_bc_three_cancel_down,
+		_step_bc_three_cancel_move,
+		_step_bc_three_cancel_fourth,
+		_step_bc_three_cancel_up,
+		_step_bc_check_three_cancel,
+		_step_bc_alt_down,
+		_step_bc_alt_drag,
+		_step_bc_alt_wheel,
+		_step_bc_check_alt_ghost,
+		_step_bc_alt_up,
+		_step_bc_check_alt_orders,
+		_step_bc_box_down,
+		_step_bc_box_drag,
+		_step_bc_box_up,
+		_step_bc_check_box,
 		_step_done,
 	]
 
@@ -945,6 +985,34 @@ func _step_check_menu_book_closed() -> void:
 	_check(not _menu.book.visible, "Close hides the menu's book")
 	steps.push_front(_step_terrain_cycle_check)
 	steps.push_front(_step_terrain_cycle)
+	steps.push_front(_step_menu_sandbox_check)
+	steps.push_front(_step_menu_sandbox)
+	steps.push_front(_step_menu_controls_check)
+	steps.push_front(_step_menu_controls)
+
+
+func _step_menu_controls() -> void:
+	for b in _menu.find_children("home_controls", "Button", true, false):
+		_tap_control(b)
+		return
+	_check(false, "menu has a Controls button")
+
+
+func _step_menu_controls_check() -> void:
+	_check(_menu.controls.visible, "Controls opens from the main menu")
+	_check(_menu.controls.find_children("*", "Label", true, false).size() > 60, "the Controls page lists the bindings")
+	_tap_control(_menu.controls.close_button)
+
+
+func _step_menu_sandbox() -> void:
+	_check(not _menu.controls.visible, "Close hides the Controls page")
+	for b in _menu.find_children("home_sandbox", "Button", true, false):
+		_tap_control(b)
+		return
+
+
+func _step_menu_sandbox_check() -> void:
+	_check(_menu.page == "sandbox", "Battle sandbox opens the sandbox page")
 
 
 # ---- terrain (menu) ----
@@ -1193,6 +1261,308 @@ func _step_cards_check_desktop() -> void:
 
 func _step_cards_restore() -> void:
 	root.content_scale_size = _cards_win_size
+
+
+# ---- battle controls ----
+
+var _bc: Array[int] = []   # player units of the skirmish
+var _bc_pending0 := 0
+var _bc_paused0 := false
+var _three := [Vector2.ZERO, Vector2.ZERO, Vector2.ZERO]
+
+
+func _mouse(pos: Vector2, pressed: bool, mods: Dictionary = {}, btn: MouseButton = MOUSE_BUTTON_LEFT) -> void:
+	var e := InputEventMouseButton.new()
+	e.button_index = btn
+	e.pressed = pressed
+	e.position = _vp_to_window(pos)
+	e.global_position = e.position
+	e.button_mask = MOUSE_BUTTON_MASK_LEFT if pressed and btn == MOUSE_BUTTON_LEFT else 0
+	e.shift_pressed = mods.get("shift", false)
+	e.alt_pressed = mods.get("alt", false)
+	Input.parse_input_event(e)
+
+
+func _mouse_move(pos: Vector2, rel: Vector2, mods: Dictionary = {}) -> void:
+	var e := InputEventMouseMotion.new()
+	e.position = _vp_to_window(pos)
+	e.global_position = e.position
+	e.relative = rel
+	e.button_mask = MOUSE_BUTTON_MASK_LEFT
+	e.alt_pressed = mods.get("alt", false)
+	Input.parse_input_event(e)
+
+
+func _key(code: Key, mods: Dictionary = {}) -> void:
+	for pressed in [true, false]:
+		var e := InputEventKey.new()
+		e.keycode = code
+		e.physical_keycode = code
+		e.pressed = pressed
+		e.ctrl_pressed = mods.get("ctrl", false)
+		Input.parse_input_event(e)
+
+
+func _marker_screen(u: int) -> Vector2:
+	var sim := battle.sim
+	var r := maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / battle.camera.zoom.x)
+	var w := Vector2(sim.u_cx[u], sim.u_cy[u]) / 1024.0 * Battle.PX_PER_M + Vector2(0, -r * 2.2)
+	return battle.get_canvas_transform() * w
+
+
+func _pending_moves() -> int:
+	var n := 0
+	for o in battle.sim.pending_orders:
+		if int(o["type"]) == BattleSim.ORDER_MOVE:
+			n += 1
+	return n
+
+
+func _step_bc_start() -> void:
+	if is_instance_valid(battle):
+		battle.queue_free()
+	battle = Battle.new()
+	battle.scenario_id = "battle_2000"
+	battle.seed_value = 11
+	root.add_child(battle)
+
+
+func _step_bc_marker_click() -> void:
+	battle._toggle_pause()
+	_bc.clear()
+	for u in battle.sim.n_units:
+		if battle.sim.u_side[u] == 0 and battle.sim.u_cls[u] == UT.CLS_INF:
+			_bc.append(u)
+	battle.camera.zoom = Vector2(0.35, 0.35)
+	_focus(battle.sim.u_cx[_bc[0]], battle.sim.u_cy[_bc[0]])
+	battle._select(-1)
+	_no_double_tap()
+	var p := _marker_screen(_bc[0])
+	_mouse(p, true)
+	_mouse(p, false)
+
+
+func _step_bc_check_marker() -> void:
+	_check(battle.selection == [_bc[0]], "clicking a unit's symbol marker selects it (%s)" % str(battle.selection))
+
+
+func _step_bc_shift_click() -> void:
+	_no_double_tap()
+	var p := _marker_screen(_bc[1])
+	_mouse(p, true, {"shift": true})
+	_mouse(p, false, {"shift": true})
+
+
+func _step_bc_check_shift() -> void:
+	_check(battle.selection.has(_bc[0]) and battle.selection.has(_bc[1]), "Shift+click adds a unit on the field (%s)" % str(battle.selection))
+
+
+func _step_bc_shift_card() -> void:
+	_no_double_tap()
+	var card: Control = battle.hud._cards[_bc[2]]
+	var p := card.get_global_rect().get_center()
+	_mouse(p, true, {"shift": true})
+	_mouse(p, false, {"shift": true})
+
+
+func _step_bc_check_shift_card() -> void:
+	_check(battle.selection.size() == 3 and battle.selection.has(_bc[2]), "Shift+click on a card adds it (%s)" % str(battle.selection))
+
+
+func _step_bc_deselect() -> void:
+	_tap_control(battle.hud.deselect_button)
+
+
+func _step_bc_check_deselect() -> void:
+	_check(battle.selection.is_empty(), "the None (deselect) button clears the selection")
+
+
+func _step_bc_keys() -> void:
+	_bc_paused0 = battle.paused
+	_key(KEY_SPACE)
+	_key(KEY_2)
+
+
+func _step_bc_check_keys() -> void:
+	_check(battle.paused != _bc_paused0, "Space toggles pause")
+	_check(battle.selection.size() >= 3, "key 2 selects the infantry (%d)" % battle.selection.size())
+	_key(KEY_SPACE)
+	_key(KEY_ESCAPE)
+
+
+func _step_bc_controls_open() -> void:
+	_check(battle.selection.is_empty(), "Escape deselects")
+	battle._set_paused(false)
+	_tap_control(battle.hud.controls_button)
+
+
+func _step_bc_controls_check() -> void:
+	_check(battle.hud.controls.visible and battle.paused, "Keys opens the controls page and pauses")
+	_tap_control(battle.hud.controls.close_button)
+
+
+func _step_bc_controls_closed() -> void:
+	_check(not battle.hud.controls.visible and not battle.paused, "closing the controls page restores the pause state")
+	battle._set_paused(true)
+	battle._select_group("all")
+	_bc_pending0 = _pending_moves()
+
+
+func _three_at(c: Vector2) -> void:
+	_three = [c + Vector2(-60, 0), c + Vector2(60, 0), c + Vector2(0, 50)]
+
+
+func _step_bc_three_pinch() -> void:
+	# Three fingers down then barely moving: nothing happens.
+	_three_at(get_root().get_visible_rect().size * 0.5)
+	for i in 3:
+		_touch(i, _vp_to_window(_three[i]), true)
+
+
+func _step_bc_three_pinch_move() -> void:
+	for i in 3:
+		_drag(i, _vp_to_window(_three[i] + Vector2(6, 0)), Vector2(6, 0))
+
+
+func _step_bc_three_pinch_up() -> void:
+	_check(battle.overlay.ghosts.is_empty(), "a tiny three-finger movement shows no ghost")
+	for i in 3:
+		_touch(i, _vp_to_window(_three[i] + Vector2(6, 0)), false)
+
+
+func _step_bc_check_three_pinch() -> void:
+	_check(_pending_moves() == _bc_pending0, "and issues no orders")
+
+
+func _step_bc_three_down() -> void:
+	_three_at(get_root().get_visible_rect().size * 0.5)
+	for i in 3:
+		_touch(i, _vp_to_window(_three[i]), true)
+
+
+func _step_bc_three_move() -> void:
+	# Move up 80 px and twist about 20 degrees, in a few steps.
+	var c: Vector2 = (_three[0] + _three[1] + _three[2]) / 3.0
+	for k in range(1, 5):
+		for i in 3:
+			var p: Vector2 = c + ((_three[i] as Vector2) - c).rotated(deg_to_rad(5.0 * k)) + Vector2(0, -20.0 * k)
+			_drag(i, _vp_to_window(p), Vector2.ZERO)
+
+
+func _step_bc_check_three_ghost() -> void:
+	_check(battle.overlay.ghosts.size() == battle.selection.size(), "three-finger drag shows a ghost per unit (%d)" % battle.overlay.ghosts.size())
+	_check(battle.overlay.ghost_hint.contains("turn"), "the twist turns the group (%s)" % battle.overlay.ghost_hint)
+
+
+func _step_bc_three_up() -> void:
+	_touch(2, _vp_to_window(_three[2]), false)
+	_touch(1, _vp_to_window(_three[1]), false)
+	_touch(0, _vp_to_window(_three[0]), false)
+
+
+func _step_bc_check_three_orders() -> void:
+	var n := _pending_moves() - _bc_pending0
+	_check(n == battle.selection.size(), "lifting a finger places the group: %d move orders" % n)
+	# Each unit turned by the same angle.
+	var ok := true
+	var turn := -1
+	for o in battle.sim.pending_orders:
+		if int(o["type"]) != BattleSim.ORDER_MOVE:
+			continue
+		var u: int = o["unit"]
+		var t: int = (int(o["facing"]) - battle.sim.u_face[u]) & 1023
+		if turn < 0:
+			turn = t
+		elif t != turn:
+			ok = false
+	_check(ok and turn > 20 and turn < 120, "every unit turned by the same angle (%d/1024)" % turn)
+	_bc_pending0 = _pending_moves()
+
+
+func _step_bc_three_cancel_down() -> void:
+	_step_bc_three_down()
+
+
+func _step_bc_three_cancel_move() -> void:
+	for i in 3:
+		_drag(i, _vp_to_window(_three[i] + Vector2(0, -60)), Vector2(0, -60))
+
+
+func _step_bc_three_cancel_fourth() -> void:
+	_check(not battle.overlay.ghosts.is_empty(), "ghost before the cancel")
+	_touch(3, _vp_to_window(_three[0] + Vector2(0, 120)), true)
+
+
+func _step_bc_three_cancel_up() -> void:
+	_check(battle.overlay.ghosts.is_empty(), "a fourth finger cancels the group move")
+	for i in 4:
+		_touch(i, _vp_to_window(_three[mini(i, 2)]), false)
+
+
+func _step_bc_check_three_cancel() -> void:
+	_check(_pending_moves() == _bc_pending0, "the cancelled move issues no orders")
+
+
+func _step_bc_alt_down() -> void:
+	_no_double_tap()
+	var c := get_root().get_visible_rect().size * 0.5
+	_three[0] = c
+	_mouse(c, true, {"alt": true})
+
+
+func _step_bc_alt_drag() -> void:
+	for k in range(1, 6):
+		_mouse_move(_three[0] + Vector2(12 * k, 0), Vector2(12, 0), {"alt": true})
+
+
+func _step_bc_alt_wheel() -> void:
+	_mouse(_three[0] + Vector2(60, 0), true, {}, MOUSE_BUTTON_WHEEL_DOWN)
+	_key(KEY_E)
+
+
+func _step_bc_check_alt_ghost() -> void:
+	_check(not battle.overlay.ghosts.is_empty() and battle.overlay.ghost_hint.contains("+30"),
+		"Alt+drag shows the ghost; wheel and E turn it 15 degrees each (%s)" % battle.overlay.ghost_hint)
+
+
+func _step_bc_alt_up() -> void:
+	_mouse(_three[0] + Vector2(60, 0), false, {"alt": true})
+
+
+func _step_bc_check_alt_orders() -> void:
+	var n := _pending_moves() - _bc_pending0
+	_check(n == battle.selection.size(), "releasing the Alt+drag issues the moves (%d)" % n)
+	battle._select(-1)
+
+
+func _step_bc_box_down() -> void:
+	_no_double_tap()
+	# A box around the first two infantry units, starting on empty ground.
+	var a := _unit_screen(_bc[0])
+	var b := _unit_screen(_bc[1])
+	var lo := Vector2(minf(a.x, b.x), minf(a.y, b.y)) - Vector2(10, 60)
+	_three[0] = lo
+	_three[1] = Vector2(maxf(a.x, b.x), maxf(a.y, b.y)) + Vector2(10, 10)
+	_mouse(_root_from_window(lo), true)
+
+
+func _root_from_window(p: Vector2) -> Vector2:
+	return root.get_final_transform().affine_inverse() * p
+
+
+func _step_bc_box_drag() -> void:
+	var a := _root_from_window(_three[0])
+	var b := _root_from_window(_three[1])
+	for k in range(1, 6):
+		_mouse_move(a.lerp(b, k / 5.0), (b - a) / 5.0)
+
+
+func _step_bc_box_up() -> void:
+	_mouse(_root_from_window(_three[1]), false)
+
+
+func _step_bc_check_box() -> void:
+	_check(battle.selection.has(_bc[0]) and battle.selection.has(_bc[1]), "a mouse drag box selects the units inside (%s)" % str(battle.selection))
 
 
 func _step_done() -> void:

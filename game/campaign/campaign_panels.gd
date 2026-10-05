@@ -1,0 +1,817 @@
+extends RefCounted
+## Panels and dialogs of the campaign screen (built on demand from the
+## preview state; every action goes back through the screen's order list):
+## region, army, realm (faction overview), diplomacy, pending battles, battle
+## result, turn summary, objectives, end-turn warnings, menu.
+
+const CData := preload("res://campaign/cdata.gd")
+const CState := preload("res://campaign/cstate.gd")
+const CRules := preload("res://campaign/crules.gd")
+const CTurn := preload("res://campaign/cturn.gd")
+const CBattle := preload("res://campaign/cbattle.gd")
+const UT := preload("res://sim/unit_types.gd")
+const Terrain := preload("res://sim/terrain.gd")
+const Kit := preload("res://game/campaign/ui_kit.gd")
+const Saves := preload("res://game/campaign/saves.gd")
+
+var s  # the campaign screen
+var _split_sel: Dictionary = {}  # army id -> Array of selected unit indices
+
+
+func _init(screen) -> void:
+	s = screen
+
+
+func _fc(f: int) -> Color:
+	return CData.faction_color(f)
+
+
+func _close_row(box: Container, title: String, col: Color) -> void:
+	var h := Kit.hbox(6)
+	var t := Kit.label(title, Kit.FONT_TITLE, col)
+	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	h.add_child(t)
+	var b := Kit.button("Close", func(): s.close_side(), 70)
+	b.name = "side_close"
+	h.add_child(b)
+	box.add_child(h)
+
+
+# --------------------------------------------------------------- region ---
+
+func region_panel(box: VBoxContainer, r: int) -> void:
+	var ps: Dictionary = s.ps
+	var f: int = s.f
+	var rd: Dictionary = CData.REGIONS[r]
+	var rs: Dictionary = ps["regions"][r]
+	var o := int(rs["owner"])
+	var mine := o == f
+	_close_row(box, "%s (%s)" % [rd["city"], rd["name"]], _fc(o).lightened(0.4))
+	var lvl := int(rs["level"])
+	var info := "%s of %s. %s, %s ground." % [CData.LEVEL_NAMES[lvl], CData.faction_name(o),
+		"Key city" if CData.KEY_CITIES.has(str(rd["key"])) else ("Capital" if CData.is_capital(r) else "Wealth %d" % int(rd["wealth"])),
+		Terrain.KIND_NAMES[int(rd["terrain"])].to_lower()]
+	box.add_child(Kit.label(info, Kit.FONT_SMALL, Kit.COL_DIM, true))
+	if o != f and f >= 0:
+		var rel := ""
+		var col := Color.WHITE
+		if o < 0:
+			rel = "Independent: can always be attacked."
+			col = Kit.COL_BAD
+		else:
+			match CState.dip(ps, f, o):
+				CState.WAR:
+					rel = "%s is at war with you." % CData.faction_name(o)
+					col = Kit.COL_BAD
+				CState.PEACE:
+					rel = "%s is at peace with you: declare war in Diplomacy to attack." % CData.faction_name(o)
+				CState.TRADE:
+					rel = "%s is at peace and trading with you." % CData.faction_name(o)
+				CState.ALLIED:
+					rel = "%s is your ally." % CData.faction_name(o)
+					col = Kit.COL_GOOD
+		box.add_child(Kit.label(rel, Kit.FONT_SMALL, col, true))
+	var gp := CRules.growth_per_turn(ps, r)
+	var grow := "Growth %d/%d to %s (+%d a turn)" % [int(rs["growth"]), int(CData.GROWTH_TO[lvl + 1]), CData.LEVEL_NAMES[lvl + 1].to_lower(), gp] if lvl < CData.CITY else "Full-grown city"
+	box.add_child(Kit.label("Income %d a turn.  %s." % [CRules.region_income(ps, r), grow], Kit.FONT_SMALL, Color.WHITE, true))
+	var b := CState.battle_at(ps, r)
+	if not b.is_empty():
+		box.add_child(Kit.label("A battle is pending here.", Kit.FONT, Kit.COL_BAD))
+	# Armies here.
+	var here := CState.armies_in(ps, r)
+	if not here.is_empty():
+		box.add_child(Kit.section("Armies"))
+		for a in here:
+			var bt := Kit.button("%s army: %d units, %d men" % [CData.FACTIONS[int(a["f"])]["adj"], CState.unit_count(a), CState.men(a)],
+				s.select_army.bind(int(a["id"])))
+			bt.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			bt.add_theme_color_override("font_color", _fc(int(a["f"])).lightened(0.5))
+			box.add_child(bt)
+	if mine:
+		_recruit(box, r)
+		_buildings(box, r)
+	# Garrison.
+	var gar := CRules.garrison(ps, r)
+	box.add_child(Kit.section("Garrison (%d%% strength, walls %d)" % [int(rs["gar"]), CState.walls(ps, r)]))
+	for g in gar:
+		var row := Kit.UnitRow.new(UT.index_of(str(g["t"])), int(g["n"]), _fc(o))
+		row.full = int(g["full"])
+		box.add_child(row)
+
+
+func _buildings(box: VBoxContainer, r: int) -> void:
+	var ps: Dictionary = s.ps
+	var f: int = s.f
+	var rs: Dictionary = ps["regions"][r]
+	box.add_child(Kit.section("Buildings (%d of %d slots)" % [(rs["slots"] as Array).size(), CState.slot_count(r, int(rs["level"]))]))
+	var bld: Array = rs["build"]
+	var planned := -1
+	for o in s.orders:
+		if str(o["t"]) == "build" and int(o["r"]) == r:
+			planned = int(o["chain"])
+	for c in CData.CHAINS.size():
+		var ch: Dictionary = CData.CHAINS[c]
+		var cur := CState.building(ps, r, c)
+		var h := Kit.hbox(6)
+		var name := "%s %d" % [ch["name"], cur] if cur > 0 else str(ch["name"])
+		var l := Kit.label(name, Kit.FONT, Color.WHITE if cur > 0 else Kit.COL_DIM)
+		l.custom_minimum_size.x = 104
+		l.tooltip_text = str(ch["desc"])
+		h.add_child(l)
+		if not bld.is_empty() and int(bld[0]) == c:
+			var t := Kit.label("-> %d: %d turn%s left" % [int(bld[1]), int(bld[2]), "" if int(bld[2]) == 1 else "s"], Kit.FONT_SMALL, Kit.COL_GOOD, true)
+			h.add_child(t)
+			if planned == c:
+				var cb := Kit.button("Cancel", func(): s.remove_orders(func(o): return str(o["t"]) == "build" and int(o["r"]) == r), 70)
+				h.add_child(cb)
+		else:
+			var info := CRules.build_info(ps, f, r, c)
+			if info.has("why"):
+				if cur == 0 and str(info["why"]) == "no free slot":
+					continue
+				var why := str(info["why"])
+				if why == "fully built" and cur == 0:
+					continue
+				h.add_child(Kit.label(why, Kit.FONT_SMALL, Kit.COL_DIM, true))
+			else:
+				var t := Kit.label("%d (%d turn%s)" % [int(info["cost"]), int(info["turns"]), "" if int(info["turns"]) == 1 else "s"], Kit.FONT_SMALL, Kit.COL_GOLD, true)
+				h.add_child(t)
+				var bb := Kit.button("Build %d" % int(info["level"]) if cur == 0 else "Upgrade", func(): s.add_order({"t": "build", "r": r, "chain": c}), 84)
+				bb.name = "build_%s" % ch["key"]
+				bb.tooltip_text = str(ch["desc"])
+				h.add_child(bb)
+		box.add_child(h)
+
+
+func _recruit(box: VBoxContainer, r: int) -> void:
+	var ps: Dictionary = s.ps
+	var f: int = s.f
+	var rs: Dictionary = ps["regions"][r]
+	var q: Array = rs["queue"]
+	var cap := int(CData.RECRUITS_PER_TURN[int(rs["level"])])
+	box.add_child(Kit.section("Recruit (%d of %d this turn; ready next turn)" % [q.size(), cap]))
+	for k in q.size():
+		var ty := UT.index_of(str(q[k]))
+		var row := Kit.UnitRow.new(ty, -1, _fc(f), "planned")
+		row.sub_text = "arrives next turn"
+		var h := Kit.hbox(4)
+		h.add_child(row)
+		var key := str(q[k])
+		h.add_child(Kit.button("X", func(): _cancel_recruit(r, key), 44))
+		box.add_child(h)
+	var shown := {}
+	for o in CRules.recruit_options(ps, f, r):
+		var line := str(o["line"])
+		# Best available tier per line, plus locked higher tiers greyed.
+		if shown.has(line) and not o["ok"]:
+			continue
+		if shown.has(line) and int(shown[line]) == 1:
+			continue
+		var ty := UT.index_of(str(o["t"]))
+		var why := str(o["why"])
+		if why.begins_with("needs") and int(o["tier"]) > 1:
+			continue  # locked higher tiers: shown in the unit book
+		shown[line] = 1 if o["ok"] else 0
+		var row := Kit.UnitRow.new(ty, -1, _fc(f), str(o["price"]))
+		row.sub_text = "Tier %d  -  upkeep %d" % [int(o["tier"]), CState.upkeep_of(ty)] if o["ok"] else why
+		var key := str(o["t"])
+		row.name = "recruit_row_" + key
+		var open_page := func(): s.open_unit_page(ty,
+			(func(): s.add_order({"t": "recruit", "r": r, "unit": key})) if o["ok"] else Callable(),
+			"Recruit (%d)" % int(o["price"]))
+		row.pressed.connect(open_page)
+		row.long_pressed.connect(open_page)
+		var h := Kit.hbox(4)
+		h.add_child(row)
+		var add := Kit.button("+", func(): s.add_order({"t": "recruit", "r": r, "unit": key}), 44)
+		add.name = "recruit_" + key
+		add.disabled = not o["ok"]
+		h.add_child(add)
+		box.add_child(h)
+
+
+func _cancel_recruit(r: int, key: String) -> void:
+	# Remove the last planned recruit of this type here.
+	var idx := -1
+	for i in s.orders.size():
+		var o: Dictionary = s.orders[i]
+		if str(o["t"]) == "recruit" and int(o["r"]) == r and str(o["unit"]) == key:
+			idx = i
+	if idx >= 0:
+		var target: Dictionary = s.orders[idx]
+		s.remove_orders(func(o): return is_same(o, target))
+
+
+# ----------------------------------------------------------------- army ---
+
+func army_panel(box: VBoxContainer, id: int) -> void:
+	var ps: Dictionary = s.ps
+	var a := CState.army(ps, id)
+	if a.is_empty():
+		return
+	var af := int(a["f"])
+	var mine: bool = af == s.f
+	var r := int(a["r"])
+	_close_row(box, "%s army at %s" % [CData.FACTIONS[af]["adj"], CData.REGIONS[r]["city"]], _fc(af).lightened(0.4))
+	var up := 0
+	for u in a["units"]:
+		up += CState.upkeep_of(CState.unit_type(u))
+	box.add_child(Kit.label("%d of %d units, %d men, upkeep %d" % [CState.unit_count(a), CData.ARMY_MAX, CState.men(a), up],
+		Kit.FONT_SMALL, Kit.COL_DIM, true))
+	if mine:
+		var mv: int = s.planned_move(id)
+		if int(a["busy"]) != 0:
+			box.add_child(Kit.label("In a battle.", Kit.FONT, Kit.COL_BAD))
+		elif mv >= 0:
+			var h := Kit.hbox(6)
+			var att := CState.at_war(ps, af, CState.owner(ps, mv))
+			h.add_child(Kit.label("%s %s" % ["Attacks" if att else "Moves to", CData.REGIONS[mv]["name"]], Kit.FONT,
+				Kit.COL_BAD if att else Kit.COL_GOOD, true))
+			var cb := Kit.button("Cancel move", func(): s.set_move(id, mv), 110)
+			cb.name = "cancel_move"
+			h.add_child(cb)
+			box.add_child(h)
+		else:
+			box.add_child(Kit.label("Tap a highlighted region on the map to move.", Kit.FONT_SMALL, Color.WHITE, true))
+	var sel: Array = _split_sel.get(id, [])
+	var units: Array = a["units"]
+	for k in units.size():
+		var u: Dictionary = units[k]
+		var ty := CState.unit_type(u)
+		var row := Kit.UnitRow.new(ty, int(u["n"]), _fc(af), "", mine)
+		row.selected = sel.has(k)
+		row.name = "unit_%d" % k
+		var kk := k
+		row.long_pressed.connect(func(): s.open_unit_page(ty, Callable(), ""))
+		row.pressed.connect(func():
+			var cur: Array = _split_sel.get(id, [])
+			if cur.has(kk):
+				cur.erase(kk)
+			else:
+				cur.append(kk)
+			_split_sel[id] = cur
+			s.select_army(id))
+		box.add_child(row)
+	if not mine or int(a["busy"]) != 0:
+		return
+	var fl := Kit.flow(6)
+	var nsel := sel.size()
+	var split := Kit.button("Split off %d" % nsel, func(): _split(id), 0)
+	split.name = "split"
+	split.disabled = nsel == 0 or nsel >= units.size()
+	fl.add_child(split)
+	var dis := Kit.button("Disband %d" % nsel, func(): _disband(id), 0)
+	dis.disabled = nsel == 0
+	fl.add_child(dis)
+	fl.add_child(Kit.button("Book", func():
+		var ty := CState.unit_type(units[sel[0]] if nsel > 0 else units[0])
+		s.open_unit_page(ty, Callable(), ""), 0))
+	for o in CState.armies_in(ps, r):
+		if int(o["id"]) != id and int(o["f"]) == af and int(o["busy"]) == 0:
+			var oid := int(o["id"])
+			var mb := Kit.button("Merge into army (%d units)" % CState.unit_count(o), func():
+				_split_sel.erase(id)
+				s.add_order({"t": "merge", "army": id, "into": oid})
+				s.select_army(oid), 0)
+			mb.disabled = CState.unit_count(o) + units.size() > CData.ARMY_MAX
+			fl.add_child(mb)
+	box.add_child(fl)
+	box.add_child(Kit.label("Tap units to choose them for splitting or disbanding.", Kit.FONT_SMALL, Kit.COL_DIM, true))
+
+
+func _split(id: int) -> void:
+	var sel: Array = _split_sel.get(id, [])
+	if sel.is_empty():
+		return
+	var nid := CRules.new_army_id(s.ps, s.f)
+	_split_sel.erase(id)
+	if s.add_order({"t": "split", "army": id, "units": sel.duplicate(), "new": nid}) == "":
+		s.select_army(nid)
+
+
+func _disband(id: int) -> void:
+	var sel: Array = _split_sel.get(id, [])
+	if sel.is_empty():
+		return
+	var box := Kit.label("Disband %d unit%s? Their men go home and their upkeep stops." % [sel.size(), "" if sel.size() == 1 else "s"], Kit.FONT, Color.WHITE, true)
+	s.show_dialog("Disband", box, [["Disband", func():
+		_split_sel.erase(id)
+		s.close_dialog()
+		s.add_order({"t": "disband", "army": id, "units": sel.duplicate()})
+		s.select_army(id)], ["Back", Callable()]], 420)
+
+
+# -------------------------------------------------------------- faction ---
+
+func show_faction() -> void:
+	var ps: Dictionary = s.ps
+	var f: int = s.f if s.f >= 0 else int(ps["humans"][0])
+	var box := Kit.vbox(6)
+	var inc := CRules.income(ps, f)
+	var up := CRules.upkeep(ps, f)
+	box.add_child(Kit.label("Treasury %s after this turn's spending." % Kit.money(int(ps["factions"][f]["treasury"])), Kit.FONT, Color.WHITE, true))
+	box.add_child(Kit.label("Income %d (regions %d, trade %d, cost of a large realm -%d), upkeep %d: %+d a turn." % [
+		int(inc["total"]), int(inc["regions"]), int(inc["trade"]), int(inc.get("corruption", 0)), up, int(inc["total"]) - up],
+		Kit.FONT, Kit.COL_GOLD, true))
+	box.add_child(Kit.label("A turn ending with less than nothing costs every unit a tenth of its men.", Kit.FONT_SMALL, Kit.COL_DIM, true))
+	box.add_child(Kit.section("Regions"))
+	var fl := Kit.flow(6)
+	for r in CState.regions_of(ps, f):
+		var rs: Dictionary = ps["regions"][r]
+		var busy := "" if (rs["build"] as Array).is_empty() else " *"
+		fl.add_child(Kit.button("%s (%s, %d)%s" % [CData.REGIONS[r]["city"], CData.LEVEL_NAMES[int(rs["level"])].to_lower(),
+			CRules.region_income(ps, r), busy], func():
+			s.close_dialog()
+			s.select_region(r)
+			s.focus_region(r), 0, Kit.FONT_SMALL))
+	box.add_child(fl)
+	box.add_child(Kit.section("Armies"))
+	var fl2 := Kit.flow(6)
+	for a in CState.armies_of(ps, f):
+		var id := int(a["id"])
+		var mv: int = s.planned_move(id)
+		var t := "%s: %d units%s" % [CData.REGIONS[int(a["r"])]["city"], CState.unit_count(a), " -> " + str(CData.REGIONS[mv]["city"]) if mv >= 0 else ""]
+		fl2.add_child(Kit.button(t, func():
+			s.close_dialog()
+			s.select_army(id)
+			s.focus_region(int(a["r"])), 0, Kit.FONT_SMALL))
+	box.add_child(fl2)
+	var wars: Array[String] = []
+	for g in CState.nf():
+		if g != f and CState.alive(ps, g) and CState.dip(ps, f, g) == CState.WAR:
+			wars.append(CData.faction_name(g))
+	box.add_child(Kit.label("At war with: " + (", ".join(wars) if not wars.is_empty() else "nobody"), Kit.FONT, Kit.COL_BAD, true))
+	s.show_dialog(CData.faction_name(f), box, [["Close", Callable()]])
+
+
+# ------------------------------------------------------------ diplomacy ---
+
+func show_diplomacy(focus: int = -1) -> void:
+	var ps: Dictionary = s.ps
+	var f: int = s.f
+	if f < 0:
+		return
+	var focus_row: Control = null
+	var box := Kit.vbox(8)
+	box.add_child(Kit.label("Proposals are answered when the turn is resolved; the other side weighs its strength against yours, how long the war has lasted and its losses.", Kit.FONT_SMALL, Kit.COL_DIM, true))
+	for p in ps["proposals"]:
+		if int(p["to"]) != f:
+			continue
+		var pid := int(p["id"])
+		var answered := -1
+		for o in s.orders:
+			if str(o["t"]) == "answer" and int(o["id"]) == pid:
+				answered = int(o["accept"])
+		var h := Kit.hbox(6)
+		h.add_child(Kit.label("%s offers %s." % [CData.faction_name(int(p["from"])), _what(str(p["what"]))], Kit.FONT, Kit.COL_GOLD, true))
+		if answered < 0:
+			h.add_child(Kit.button("Accept", func():
+				s.add_order({"t": "answer", "id": pid, "accept": 1})
+				show_diplomacy(), 80))
+			h.add_child(Kit.button("Refuse", func():
+				s.add_order({"t": "answer", "id": pid, "accept": 0})
+				show_diplomacy(), 80))
+		else:
+			h.add_child(Kit.label("accepted" if answered == 1 else "refused", Kit.FONT_SMALL, Kit.COL_DIM))
+		box.add_child(h)
+	var mine := _fstrength(ps, f)
+	for g in CState.nf():
+		if g == f or not CState.alive(ps, g):
+			continue
+		var d := CState.dip(ps, f, g)
+		var row := Kit.hbox(6)
+		row.name = "dip_%s" % CData.FACTIONS[g]["key"]
+		if g == focus:
+			focus_row = row
+		row.add_child(Kit.swatch(_fc(g), 18))
+		var them := _fstrength(ps, g)
+		var desc := "%s - %s. %d regions, %s army." % [CData.faction_name(g), CState.DIP_NAMES[d],
+			CState.regions_of(ps, g).size(), _compare(mine, them)]
+		var l := Kit.label(desc, Kit.FONT, Kit.COL_BAD if d == CState.WAR else Color.WHITE, true)
+		row.add_child(l)
+		box.add_child(row)
+		if d == CState.ALLIED:
+			continue
+		var acts := Kit.hbox(6)
+		row.add_child(acts)
+		var planned := ""
+		for o in s.orders:
+			if (str(o["t"]) == "propose" or str(o["t"]) == "war") and int(o["to"]) == g:
+				planned = str(o.get("what", "war"))
+		if planned != "":
+			acts.add_child(Kit.label("Planned: " + _what(planned), Kit.FONT_SMALL, Kit.COL_GOOD))
+			acts.add_child(Kit.button("Cancel", func():
+				s.remove_orders(func(o): return (str(o["t"]) == "propose" or str(o["t"]) == "war") and int(o["to"]) == g)
+				show_diplomacy(), 80))
+		else:
+			if d == CState.WAR:
+				acts.add_child(_dip_button("Offer peace", {"t": "propose", "to": g, "what": "peace"}))
+			if d == CState.PEACE:
+				acts.add_child(_dip_button("Offer trade", {"t": "propose", "to": g, "what": "trade"}))
+			if d == CState.TRADE:
+				acts.add_child(_dip_button("End trade", {"t": "propose", "to": g, "what": "cancel_trade"}))
+			if d != CState.WAR:
+				var wb := Kit.button("Declare war", func(): _confirm_war(g), 0)
+				wb.add_theme_color_override("font_color", Kit.COL_BAD)
+				acts.add_child(wb)
+	s.show_dialog("Diplomacy", box, [["Close", Callable()]], 700)
+	if focus_row != null:
+		# Bring the faction asked about into view and mark it.
+		var hl := StyleBoxFlat.new()
+		hl.bg_color = Color(1, 0.85, 0.4, 0.16)
+		var p := PanelContainer.new()
+		p.add_theme_stylebox_override("panel", hl)
+		p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		p.show_behind_parent = true
+		p.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		focus_row.add_child(p)
+		s.dialog_scroll.call_deferred("ensure_control_visible", focus_row)
+
+
+func _dip_button(text: String, o: Dictionary) -> Button:
+	return Kit.button(text, func():
+		s.add_order(o)
+		show_diplomacy(), 0)
+
+
+func _confirm_war(g: int) -> void:
+	var l := Kit.label("Declare war on %s? It takes effect when the turn is resolved, before armies move, so moves into their land can be planned right away and happen this turn." % CData.faction_name(g), Kit.FONT, Color.WHITE, true)
+	s.show_dialog("War", l, [["Declare war", func():
+		s.add_order({"t": "war", "to": g})
+		show_diplomacy(g)], ["Back", func(): show_diplomacy(g)]], 460)
+
+
+func _what(w: String) -> String:
+	return {"peace": "peace", "trade": "a trade agreement", "cancel_trade": "an end to trade", "war": "war"}.get(w, w)
+
+
+func _fstrength(ps: Dictionary, f: int) -> int:
+	var t := 0
+	for a in CState.armies_of(ps, f):
+		t += CState.strength(a)
+	return t
+
+
+func _compare(mine: int, them: int) -> String:
+	if them * 100 > mine * 150:
+		return "much stronger"
+	if them * 100 > mine * 110:
+		return "stronger"
+	if them * 100 * 150 < mine * 100 * 100:
+		return "much weaker"
+	if them * 110 < mine * 100:
+		return "weaker"
+	return "about equal"
+
+
+# -------------------------------------------------------------- battles ---
+
+func show_battles() -> void:
+	var st: Dictionary = s.st
+	var list := CTurn.pending_for(st)
+	var box := Kit.vbox(10)
+	if list.is_empty():
+		box.add_child(Kit.label("No battles pending.", Kit.FONT, Color.WHITE))
+		s.show_dialog("Battles", box, [["Close", Callable()]], 520)
+		return
+	box.add_child(Kit.label("Battles must be resolved before the turn can be planned. Auto-resolve lets the battle AI fight both sides (honest, a little worse than good command); Fight to command it yourself.", Kit.FONT_SMALL, Kit.COL_DIM, true))
+	for b in list:
+		box.add_child(_battle_card(st, b))
+	s.show_dialog("Pending battles (%d)" % list.size(), box, [["Close", Callable()]], 720)
+
+
+func _battle_card(st: Dictionary, b: Dictionary) -> Control:
+	var p := Kit.panel(Color(1, 1, 1, 0.06), 8)
+	var v := Kit.vbox(6)
+	p.add_child(v)
+	var r := int(b["r"])
+	var facs := CRules.battle_factions(st, b)
+	var arm := CRules.battle_armies(st, b)
+	var sides := ["", ""]
+	for k in 2:
+		var names: Array[String] = []
+		for f in facs[k]:
+			names.append(CData.faction_name(int(f)))
+		sides[k] = " and ".join(names)
+	var title := "Battle of %s (%s): %s (attacking) against %s" % [CData.REGIONS[r]["city"], CData.REGIONS[r]["name"], sides[0], sides[1]]
+	v.add_child(Kit.label(title, Kit.FONT, Kit.COL_GOLD, true))
+	var men := [0, 0]
+	var units := [0, 0]
+	for k in 2:
+		for a in arm[k]:
+			men[k] += CState.men(a)
+			units[k] += CState.unit_count(a)
+	var gar := CRules.garrison(st, r)
+	var gmen := 0
+	for g in gar:
+		gmen += int(g["n"])
+	var str_ := CBattle.side_strengths(st, b)
+	var hs := CRules.battle_humans(st, b)
+	var human_att: bool = facs[0].has(hs[0])
+	var p_att := CBattle.win_chance(str_[0], str_[1])
+	var odds := p_att if human_att else 1000 - p_att
+	var terr := Terrain.KIND_NAMES[int(CData.REGIONS[r]["terrain"])].to_lower()
+	v.add_child(Kit.label("Attackers %d units, %d men. Defenders %d units, %d men, plus a garrison of %d (walls %d). Ground: %s. Your chances look %s." % [
+		units[0], men[0], units[1], men[1], gmen, CState.walls(st, r), terr, _odds(odds)], Kit.FONT_SMALL, Color.WHITE, true))
+	if not (b["reinf"] as Array).is_empty():
+		v.add_child(Kit.label("Reinforcements from neighbouring regions join the line.", Kit.FONT_SMALL, Kit.COL_DIM, true))
+	var h := Kit.hbox(8)
+	h.alignment = BoxContainer.ALIGNMENT_END
+	var bid := int(b["id"])
+	var ab := Kit.button("Auto-resolve", func(): s.auto_resolve(bid), 130)
+	ab.name = "auto_%d" % bid
+	h.add_child(ab)
+	var fb := Kit.button("Fight", func(): s.fight(bid), 110)
+	fb.name = "fight_%d" % bid
+	h.add_child(fb)
+	v.add_child(h)
+	return p
+
+
+func _odds(pm: int) -> String:
+	if pm >= 850:
+		return "excellent"
+	if pm >= 650:
+		return "good"
+	if pm >= 400:
+		return "even"
+	if pm >= 200:
+		return "poor"
+	return "very poor"
+
+
+func show_battle_result(events_before: int, outcome: Dictionary) -> void:
+	var st: Dictionary = s.st
+	var box := Kit.vbox(6)
+	var evs: Array = st["events"]
+	for i in range(events_before, evs.size()):
+		var t := event_text(evs[i], s.f)
+		if t != "":
+			box.add_child(Kit.label(t, Kit.FONT, Color.WHITE, true))
+	if int(outcome.get("forfeit", 0)) != 0:
+		box.add_child(Kit.label("You left the field: the army withdrew and the battle counts as lost.", Kit.FONT_SMALL, Kit.COL_DIM, true))
+	if int(outcome.get("scale", 100)) < 100:
+		box.add_child(Kit.label("(Big battle: auto-resolved at half unit size, results scaled up.)", Kit.FONT_SMALL, Kit.COL_DIM, true))
+	s.show_dialog("Battle result", box, [["Continue", func(): s._next_step()]], 560)
+
+
+# -------------------------------------------------------------- summary ---
+
+## "What happened since you last played": events of the turns after `seen`.
+func show_summary(seen: int, then: Callable = Callable()) -> void:
+	var st: Dictionary = s.st
+	var f: int = s.f
+	var mine := Kit.vbox(4)
+	var world := Kit.vbox(4)
+	for e in st["events"]:
+		if int(e["turn"]) <= seen and seen >= 0:
+			continue
+		var t := event_text(e, f)
+		if t == "":
+			continue
+		var col := Color.WHITE
+		if _involves(e, f):
+			mine.add_child(Kit.label(t, Kit.FONT, _event_color(e, f), true))
+		elif str(e["k"]) in ["captured", "eliminated", "war", "peace"]:
+			world.add_child(Kit.label(t, Kit.FONT_SMALL, Kit.COL_DIM, true))
+		col = col
+	var box := Kit.vbox(8)
+	box.add_child(Kit.label("%s. Treasury %s." % [CData.date_text(int(st["turn"])), Kit.money(int(st["factions"][f]["treasury"]))], Kit.FONT, Kit.COL_GOLD))
+	if mine.get_child_count() == 0:
+		mine.add_child(Kit.label("A quiet season for you.", Kit.FONT, Color.WHITE))
+	box.add_child(mine)
+	if world.get_child_count() > 0:
+		box.add_child(Kit.section("Elsewhere"))
+		box.add_child(world)
+	var nb := CTurn.pending_for(st, f).size()
+	if nb > 0:
+		box.add_child(Kit.label("%d battle%s to resolve before planning." % [nb, "" if nb == 1 else "s"], Kit.FONT, Kit.COL_BAD))
+	s.show_dialog("Since you last played: %s" % CData.faction_name(f), box, [["Continue", then]], 640)
+
+
+func show_intro() -> void:
+	var f: int = s.f
+	var box := Kit.vbox(8)
+	box.add_child(Kit.label("%s. You lead %s." % [CData.date_text(int(s.st["turn"])), CData.faction_name(f)], Kit.FONT, Kit.COL_GOLD, true))
+	box.add_child(Kit.label("Each turn: move your armies (tap an army, then a highlighted region; red regions mean a battle), build and recruit in your regions (tap a region), and End turn. Battles are resolved before the next turn: auto-resolve or fight them yourself.", Kit.FONT, Color.WHITE, true))
+	var p := CRules.victory_progress(s.st)
+	box.add_child(Kit.label("Goal: hold %d regions including %d of Roma, Carthago, Pella, Syracusae and Athenae. You lose if %s is destroyed." % [
+		int(p["need_regions"]), int(p["need_capitals"]), "either player" if (s.st["humans"] as Array).size() > 1 else "your faction"], Kit.FONT, Color.WHITE, true))
+	s.show_dialog("A new campaign", box, [["Start", Callable()]], 600)
+
+
+func _involves(e: Dictionary, f: int) -> bool:
+	for k in ["f", "from", "to", "a", "b"]:
+		if e.has(k) and int(e[k]) == f and str(e["k"]) != "move_failed":
+			return true
+	if str(e["k"]) == "battle":
+		return (e["att"] as Array).has(f) or (e["def"] as Array).has(f)
+	if str(e["k"]) == "captured":
+		return int(e["f"]) == f or int(e["from"]) == f
+	if str(e["k"]) in ["order_failed", "move_failed"]:
+		return int(e["f"]) == f
+	return str(e["k"]) in ["victory", "defeat"]
+
+
+func _event_color(e: Dictionary, f: int) -> Color:
+	match str(e["k"]):
+		"battle":
+			var won := (int(e["winner"]) == 0 and (e["att"] as Array).has(f)) or (int(e["winner"]) == 1 and (e["def"] as Array).has(f))
+			return Kit.COL_GOOD if won else Kit.COL_BAD
+		"captured":
+			return Kit.COL_GOOD if int(e["f"]) == f else Kit.COL_BAD
+		"war", "destroyed", "debt", "eliminated", "defeat", "order_failed", "move_failed":
+			return Kit.COL_BAD
+		"peace", "trade", "built", "recruited", "grew", "victory":
+			return Kit.COL_GOOD
+	return Color.WHITE
+
+
+func _names(list: Array) -> String:
+	var out: Array[String] = []
+	for f in list:
+		out.append(CData.faction_name(int(f)))
+	return " and ".join(out)
+
+
+func event_text(e: Dictionary, f: int) -> String:
+	var city := func(r): return str(CData.REGIONS[int(r)]["city"])
+	match str(e["k"]):
+		"battle":
+			var w := "the attackers won" if int(e["winner"]) == 0 else "the defenders held"
+			return "Battle of %s: %s attacked %s; %s (%s). Losses %d of %d and %d of %d men." % [city.call(e["r"]),
+				_names(e["att"]), _names(e["def"]), w, str(e["mode"]).replace("formula", "fought out of sight"),
+				int(e["att_lost"]), int(e["att_men"]), int(e["def_lost"]), int(e["def_men"])]
+		"captured":
+			return "%s took %s from %s." % [CData.faction_name(int(e["f"])), city.call(e["r"]), CData.faction_name(int(e["from"]))]
+		"retreat":
+			return "A %s army fell back from %s to %s." % [CData.FACTIONS[int(e["f"])]["adj"], city.call(e["r"]), city.call(e["to"])]
+		"destroyed":
+			return "A %s army of %d men was destroyed at %s with nowhere to retreat." % [CData.FACTIONS[int(e["f"])]["adj"], int(e["men"]), city.call(e["r"])]
+		"war":
+			return "%s declared war on %s." % [CData.faction_name(int(e["a"])), CData.faction_name(int(e["b"]))]
+		"peace":
+			return "%s and %s made peace." % [CData.faction_name(int(e["a"])), CData.faction_name(int(e["b"]))]
+		"trade":
+			return "%s and %s agreed to trade." % [CData.faction_name(int(e["a"])), CData.faction_name(int(e["b"]))]
+		"trade_end":
+			return "%s and %s stopped trading." % [CData.faction_name(int(e["a"])), CData.faction_name(int(e["b"]))]
+		"refused":
+			return "%s refused %s from %s." % [CData.faction_name(int(e["from"])), _what(str(e["what"])), CData.faction_name(int(e["to"]))]
+		"proposal":
+			return "%s offers %s (answer in Diplomacy this turn)." % [CData.faction_name(int(e["from"])), _what(str(e["what"]))]
+		"built":
+			if int(e["f"]) != f:
+				return ""
+			return "%s: %s %d completed." % [city.call(e["r"]), CData.CHAINS[int(e["chain"])]["name"], int(e["level"])]
+		"recruited":
+			if int(e["f"]) != f:
+				return ""
+			var names: Array[String] = []
+			for k in e["units"]:
+				names.append(str(UT.TYPES[UT.index_of(str(k))]["name"]))
+			return "%s: recruited %s." % [city.call(e["r"]), ", ".join(names)]
+		"grew":
+			if int(e["f"]) != f:
+				return ""
+			return "%s grew into a %s." % [city.call(e["r"]), CData.LEVEL_NAMES[int(e["level"])].to_lower()]
+		"debt":
+			if int(e["f"]) != f:
+				return ""
+			return "The treasury is empty (%d): men deserted." % int(e["treasury"])
+		"eliminated":
+			return "%s has been destroyed." % CData.faction_name(int(e["f"]))
+		"order_failed":
+			if int(e["f"]) != f:
+				return ""
+			return "An order could not be carried out: %s." % str(e["why"])
+		"move_failed":
+			if int(e["f"]) != f:
+				return ""
+			return "An army could not move to %s: %s." % [city.call(e["to"]), str(e["why"])]
+		"victory":
+			return "Victory!"
+		"defeat":
+			return "%s has fallen: the campaign is lost." % CData.faction_name(int(e["f"]))
+	return ""
+
+
+# ----------------------------------------------------------- objectives ---
+
+func show_objectives() -> void:
+	var st: Dictionary = s.ps
+	var p := CRules.victory_progress(st)
+	var box := Kit.vbox(8)
+	box.add_child(Kit.label("Win together: hold %d regions (you hold %d) including %d of the five great cities (you hold %d)." % [
+		int(p["need_regions"]), int(p["regions"]), int(p["need_capitals"]), int(p["capitals"])], Kit.FONT, Color.WHITE, true))
+	for key in CData.KEY_CITIES:
+		var r := CData.region_index(key)
+		var o := CState.owner(st, r)
+		var h := Kit.hbox(6)
+		h.add_child(Kit.swatch(_fc(o), 16))
+		h.add_child(Kit.label("%s - %s" % [CData.REGIONS[r]["city"], CData.faction_name(o)], Kit.FONT,
+			Kit.COL_GOOD if CState.is_human(st, o) else Color.WHITE))
+		box.add_child(h)
+	box.add_child(Kit.label("You lose if %s loses all its regions." % ("either player's faction" if (st["humans"] as Array).size() > 1 else "your faction"), Kit.FONT, Kit.COL_BAD, true))
+	var t: Dictionary = st["settings"]
+	box.add_child(Kit.label("Settings: turn timeout %s (not enforced until the server exists), battles %s, AI aggression %d%%." % [
+		"off" if int(t["turn_timeout_h"]) == 0 else "%d h" % int(t["turn_timeout_h"]),
+		"always auto-resolved" if str(t["autoresolve"]) == "auto" else "your choice each time", int(t["ai_aggression"])], Kit.FONT_SMALL, Kit.COL_DIM, true))
+	s.show_dialog("Objectives", box, [["Close", Callable()]], 560)
+
+
+func show_game_over() -> void:
+	var st: Dictionary = s.st
+	var won := int(st["winner"]) == 1
+	var box := Kit.vbox(8)
+	box.add_child(Kit.label("Victory! The Mediterranean is yours." if won else "Defeat.", 24, Kit.COL_GOOD if won else Kit.COL_BAD))
+	box.add_child(Kit.label("%s, turn %d." % [CData.date_text(int(st["turn"])), int(st["turn"])], Kit.FONT, Color.WHITE))
+	s.show_dialog("The campaign is over", box, [["Back to menu", func(): s.request_exit()], ["Look at the map", Callable()]], 520)
+
+
+# ------------------------------------------------------------- warnings ---
+
+## Short list of things left undone this turn.
+func warnings() -> Array:
+	var ps: Dictionary = s.ps
+	var f: int = s.f
+	var out: Array = []
+	var idle := 0
+	for a in CState.armies_of(ps, f):
+		if int(a["busy"]) == 0 and s.planned_move(int(a["id"])) < 0:
+			var near_enemy := false
+			for e in CData.adjacent(int(a["r"])):
+				if CState.at_war(ps, f, CState.owner(ps, int(e[0]))):
+					near_enemy = true
+			if near_enemy:
+				idle += 1
+	if idle > 0:
+		out.append("%d arm%s next to an enemy without orders." % [idle, "y" if idle == 1 else "ies"])
+	var can_build := 0
+	var cheapest := 1 << 30
+	for r in CState.regions_of(ps, f):
+		if not (ps["regions"][r]["build"] as Array).is_empty():
+			continue
+		for c in CData.CHAINS.size():
+			var info := CRules.build_info(ps, f, r, c)
+			if not info.has("why"):
+				can_build += 1
+				cheapest = mini(cheapest, int(info["cost"]))
+				break
+	if can_build > 0:
+		out.append("%d region%s could start a building (from %d)." % [can_build, "" if can_build == 1 else "s", cheapest])
+	for p in ps["proposals"]:
+		if int(p["to"]) == f:
+			var answered := false
+			for o in s.orders:
+				if str(o["t"]) == "answer" and int(o["id"]) == int(p["id"]):
+					answered = true
+			if not answered:
+				out.append("%s's offer of %s is unanswered (it lapses)." % [CData.faction_name(int(p["from"])), _what(str(p["what"]))])
+	return out
+
+
+func show_warnings(list: Array) -> void:
+	var box := Kit.vbox(6)
+	for w in list:
+		box.add_child(Kit.label("- " + str(w), Kit.FONT, Color.WHITE, true))
+	s.show_dialog("Before you end the turn", box, [["End turn", func():
+		s.close_dialog()
+		s.end_turn(true)], ["Back", Callable()]], 520)
+
+
+# ------------------------------------------------------------------ menu ---
+
+func show_menu() -> void:
+	var box := Kit.vbox(8)
+	box.add_child(Kit.label("%s - %s. Saved automatically." % [str(s.st["name"]), CData.date_text(int(s.st["turn"]))], Kit.FONT, Color.WHITE, true))
+	box.add_child(Kit.label("State %s" % CState.hash_text(s.st), Kit.FONT_SMALL, Kit.COL_DIM))
+	var fl := Kit.flow(8)
+	fl.add_child(Kit.button("Export save as text", func(): show_export(), 0))
+	fl.add_child(Kit.button("Controls", func():
+		s.close_dialog()
+		s.controls_page.open(), 0))
+	box.add_child(fl)
+	s.show_dialog("Campaign", box, [["Main menu", func():
+		s.save()
+		s.request_exit()], ["Back", Callable()]], 520)
+
+
+func show_export() -> void:
+	s.save()
+	var text := Saves.export_text(s.data)
+	var box := Kit.vbox(8)
+	box.add_child(Kit.label("Copy this text and send it to the other player; they paste it under Campaign > Import on the main menu. It holds the whole campaign, including plans not yet ended.", Kit.FONT_SMALL, Color.WHITE, true))
+	var te := TextEdit.new()
+	te.text = text
+	te.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	te.custom_minimum_size = Vector2(300, 140)
+	te.editable = false
+	box.add_child(te)
+	var copy := Kit.button("Copy to clipboard", func():
+		DisplayServer.clipboard_set(text)
+		s._flash("Copied."), 0)
+	box.add_child(copy)
+	box.add_child(Kit.label("%d characters." % text.length(), Kit.FONT_SMALL, Kit.COL_DIM))
+	s.show_dialog("Export", box, [["Close", Callable()]], 620)

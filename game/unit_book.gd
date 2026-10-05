@@ -7,6 +7,7 @@ extends Control
 
 signal closed
 
+const TouchScroll := preload("res://game/touch_scroll.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Icons := preload("res://game/unit_icons.gd")
 const IconView := preload("res://game/unit_icon_view.gd")
@@ -50,7 +51,7 @@ func _init() -> void:
 	row.add_theme_constant_override("separation", 14)
 	panel.add_child(row)
 	# Unit list.
-	var lscroll := ScrollContainer.new()
+	var lscroll := TouchScroll.new()
 	lscroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	lscroll.custom_minimum_size = Vector2(210, 0)
 	row.add_child(lscroll)
@@ -105,7 +106,7 @@ func _init() -> void:
 	head.add_child(close_button)
 	entry = UnitEntry.new()
 	page.add_child(entry)
-	terrain_page = ScrollContainer.new()
+	terrain_page = TouchScroll.new()
 	terrain_page.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	terrain_page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	terrain_page.size_flags_vertical = Control.SIZE_EXPAND_FILL

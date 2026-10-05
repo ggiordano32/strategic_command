@@ -97,8 +97,11 @@ const DEFAULTS := {
 	"climb": 15, "m_hgain": 0, "m_apex": 0, "m_reserve": 0, "m_refill": 0,
 }
 
-const TYPES: Array[Dictionary] = [
+## The nine base types (tier 1 of their line). The sandbox battles use
+## these; derived tier types are appended by _build_types() (see TIERS).
+const BASE: Array[Dictionary] = [
 	{
+		"key": "heavy",
 		"name": "Heavy Swords",
 		"short": "Heavy",
 		"icon": 0,
@@ -122,6 +125,7 @@ const TYPES: Array[Dictionary] = [
 		"cost": 6,
 	},
 	{
+		"key": "light",
 		"name": "Light Infantry",
 		"short": "Light",
 		"icon": 1,
@@ -146,6 +150,7 @@ const TYPES: Array[Dictionary] = [
 		"climb": 13,
 	},
 	{
+		"key": "spear",
 		"name": "Spearmen",
 		"short": "Spear",
 		"icon": 2,
@@ -172,6 +177,7 @@ const TYPES: Array[Dictionary] = [
 		"cost": 5,
 	},
 	{
+		"key": "pike",
 		"name": "Pikemen",
 		"short": "Pike",
 		"icon": 3,
@@ -208,6 +214,7 @@ const TYPES: Array[Dictionary] = [
 		"climb": 17,         # a dense block keeps its order with effort
 	},
 	{
+		"key": "archer",
 		"name": "Archers",
 		"short": "Archer",
 		"icon": 4,
@@ -246,6 +253,7 @@ const TYPES: Array[Dictionary] = [
 		"m_hgain": 150,     # +15 m of range from 10 m higher
 	},
 	{
+		"key": "javelin",
 		"name": "Javelinmen",
 		"short": "Javelin",
 		"icon": 5,
@@ -286,6 +294,7 @@ const TYPES: Array[Dictionary] = [
 		"m_apex": 10,       # thrown in a low arc: clears a man-high bump, not a crest
 	},
 	{
+		"key": "cav",
 		"name": "Shock Cavalry",
 		"short": "Cav",
 		"icon": 6,
@@ -318,6 +327,7 @@ const TYPES: Array[Dictionary] = [
 		"climb": 24,         # horses labour uphill
 	},
 	{
+		"key": "bolt",
 		"name": "Bolt Throwers",
 		"short": "Bolts",
 		"icon": 7,
@@ -371,6 +381,7 @@ const TYPES: Array[Dictionary] = [
 		"m_apex": 2,        # flat: any crest between engine and target stops it
 	},
 	{
+		"key": "stone",
 		"name": "Stone Throwers",
 		"short": "Stones",
 		"icon": 8,
@@ -426,6 +437,189 @@ const TYPES: Array[Dictionary] = [
 		"m_hgain": 150,
 	},
 ]
+
+
+## ------------------------------------------------------------ unit tiers ---
+## Every core line (the seven non-artillery base types) has three tiers,
+## unlocked in the campaign by the level of the military building that
+## trains it. Tier 1 is the base type itself; tiers 2 and 3 are derived rows:
+## the base row plus the tier's stat changes (TIER_DELTA), the row's own
+## extra changes ("add"), its own name, and a recruitment price of the base
+## unit's price times the line's tier percentage (TIER_PRICE, plus the
+## row's "price_add"). Faction-flavoured elites are derived
+## the same way (a little character in "add"). Artillery has one tier.
+## Derived rows carry "base" (base type index), "tier" and "line"; base rows
+## get tier 1 and base = themselves. Rows are appended after the nine base
+## types, so base type indices (and every sandbox battle) are unchanged.
+
+## Default unit size per base type (soldiers; artillery: crews). Mirrors
+## sim/scenarios.gd SIZE (which cannot be preloaded here).
+const BASE_SIZE := [100, 100, 100, 120, 80, 60, 60, 16, 18]
+## Line name per base type (campaign rosters and buildings use these).
+const LINES := ["heavy", "light", "spear", "pike", "archer", "javelin", "cav", "bolt", "stone"]
+
+## Stat changes per tier (added to the base row; hp/morale capped below).
+const TIER_DELTA := {
+	2: {"attack": 5, "defence": 5, "armour": 3, "hp": 6, "morale": 70, "damage": 2},
+	3: {"attack": 10, "defence": 10, "armour": 6, "hp": 12, "morale": 140, "damage": 4},
+}
+## Price of tiers 2 and 3 per line, % of the base unit's price, set so a
+## higher tier is roughly even with tier 1 at equal price (tests/matchups.gd
+## --only=tiers): the tier bonuses are worth most to the low-attack spears
+## and pikes and least to missile troops, whose numbers are their fire.
+const TIER_PRICE := {"heavy": [135, 190], "light": [140, 180], "spear": [153, 262],
+	"pike": [161, 275], "archer": [122, 128], "javelin": [120, 160], "cav": [147, 210]}
+## Attack and defence gains per line, % of TIER_DELTA: a formed pike wall
+## multiplies small gains over four ranks of points.
+const TIER_SKILL := {"pike": 50}
+
+## Derived rows: key, base line, tier, name, short name, role, blurb (put in
+## front of the base description), optional extra stat changes and price.
+const TIERS: Array[Dictionary] = [
+	{"key": "heavy2", "base": HEAVY, "tier": 2, "name": "Veteran Swordsmen", "short": "Vet Heavy",
+		"blurb": "Trained, better-armoured swordsmen."},
+	{"key": "heavy3", "base": HEAVY, "tier": 3, "name": "Guard Swordsmen", "short": "Guard Heavy",
+		"blurb": "Picked, heavily armoured swordsmen."},
+	{"key": "light2", "base": LIGHT, "tier": 2, "name": "Veteran Light Infantry", "short": "Vet Light",
+		"blurb": "Seasoned light fighters."},
+	{"key": "light3", "base": LIGHT, "tier": 3, "name": "Elite Light Infantry", "short": "Elite Light",
+		"blurb": "The best of the light troops."},
+	{"key": "spear2", "base": SPEAR, "tier": 2, "name": "Veteran Spearmen", "short": "Vet Spear",
+		"blurb": "Drilled spearmen."},
+	{"key": "spear3", "base": SPEAR, "tier": 3, "name": "Guard Spearmen", "short": "Guard Spear",
+		"blurb": "Elite armoured spearmen."},
+	{"key": "pike2", "base": PIKE, "tier": 2, "name": "Veteran Pikemen", "short": "Vet Pike",
+		"blurb": "Drilled pikemen."},
+	{"key": "pike3", "base": PIKE, "tier": 3, "name": "Guard Pikemen", "short": "Guard Pike",
+		"blurb": "Elite pikemen."},
+	{"key": "archer2", "base": ARCHER, "tier": 2, "name": "Veteran Archers", "short": "Vet Archer",
+		"blurb": "Practised bowmen.", "add": {"m_damage": 3}},
+	{"key": "archer3", "base": ARCHER, "tier": 3, "name": "Elite Archers", "short": "Elite Archer",
+		"blurb": "Master bowmen.", "add": {"m_damage": 6}},
+	{"key": "javelin2", "base": JAVELIN, "tier": 2, "name": "Veteran Javelinmen", "short": "Vet Javelin",
+		"blurb": "Practised skirmishers.", "add": {"m_damage": 3}},
+	{"key": "javelin3", "base": JAVELIN, "tier": 3, "name": "Elite Javelinmen", "short": "Elite Javelin",
+		"blurb": "Expert skirmishers.", "add": {"m_damage": 6}},
+	{"key": "cav2", "base": CAVALRY, "tier": 2, "name": "Veteran Cavalry", "short": "Vet Cav",
+		"blurb": "Experienced horsemen on better horses.", "add": {"charge": 5}},
+	{"key": "cav3", "base": CAVALRY, "tier": 3, "name": "Guard Cavalry", "short": "Guard Cav",
+		"blurb": "Armoured noble horsemen.", "add": {"charge": 10}},
+	# Faction elites.
+	{"key": "principes", "base": HEAVY, "tier": 2, "name": "Principes", "short": "Principes",
+		"blurb": "Roman citizens in their prime, the second line of the legion."},
+	{"key": "extraordinarii", "base": HEAVY, "tier": 3, "name": "Extraordinarii", "short": "Extraord.",
+		"blurb": "Picked men of the Italian allies, kept at the consul's hand.", "add": {"morale": 20}},
+	{"key": "triarii", "base": SPEAR, "tier": 3, "name": "Triarii", "short": "Triarii",
+		"blurb": "The legion's oldest veterans, kneeling behind their shields in the third line: 'it has come to the triarii'.",
+		"add": {"morale": 60, "defence": 2}},
+	{"key": "phalangites", "base": PIKE, "tier": 2, "name": "Phalangites", "short": "Phalangite",
+		"blurb": "Macedonian levy pikemen, drilled in the sarissa phalanx."},
+	{"key": "silver_shields", "base": PIKE, "tier": 3, "name": "Silver Shields", "short": "Silver Sh.",
+		"blurb": "The argyraspides: veteran royal pikemen with silvered shields.", "add": {"armour": 2, "morale": 40}},
+	{"key": "companions", "base": CAVALRY, "tier": 3, "name": "Companion Cavalry", "short": "Companions",
+		"blurb": "The king's own heavy horse, the hammer of the Macedonian army.", "add": {"charge": 6}},
+	{"key": "chaonians", "base": PIKE, "tier": 3, "name": "Chaonian Guard", "short": "Chaonians",
+		"blurb": "Pyrrhus's royal pikemen from Chaonia.", "add": {"attack": 2}},
+	{"key": "agema", "base": CAVALRY, "tier": 3, "name": "Agema", "short": "Agema",
+		"blurb": "The royal guard cavalry of Epirus.", "add": {"defence": 2}},
+	{"key": "sacred_band", "base": SPEAR, "tier": 3, "name": "Sacred Band", "short": "Sacred Band",
+		"blurb": "Carthage's citizen elite: wealthy, heavily armoured spearmen sworn to stand.",
+		"add": {"armour": 2, "morale": 60}, "price_add": 15},
+	{"key": "hoplites", "base": SPEAR, "tier": 2, "name": "Hoplites", "short": "Hoplites",
+		"blurb": "Greek citizen spearmen with the big round aspis.", "add": {"mshield": 5}},
+	{"key": "picked_hoplites", "base": SPEAR, "tier": 3, "name": "Picked Hoplites", "short": "Picked Hopl.",
+		"blurb": "Epilektoi: the city's chosen, full-time hoplites.", "add": {"mshield": 5}},
+	{"key": "cretans", "base": ARCHER, "tier": 3, "name": "Cretan Archers", "short": "Cretans",
+		"blurb": "The most sought-after mercenary bowmen of the Greek world.", "add": {"m_damage": 8}},
+	{"key": "scutarii", "base": HEAVY, "tier": 2, "name": "Scutarii", "short": "Scutarii",
+		"blurb": "Iberian swordsmen with the long scutum and the falcata."},
+	{"key": "caetrati", "base": LIGHT, "tier": 2, "name": "Caetrati", "short": "Caetrati",
+		"blurb": "Iberian light swordsmen with the small round caetra.", "add": {"attack": 2}},
+	{"key": "warband", "base": LIGHT, "tier": 2, "name": "Gallic Warband", "short": "Warband",
+		"blurb": "Gallic warriors who come on in a furious rush.", "add": {"damage": 4, "defence": -2}},
+	{"key": "gallic_nobles", "base": HEAVY, "tier": 3, "name": "Gallic Nobles", "short": "Nobles",
+		"blurb": "Mailed Gallic nobles and their sworn retainers."},
+	{"key": "noble_cav", "base": CAVALRY, "tier": 3, "name": "Noble Cavalry", "short": "Noble Cav",
+		"blurb": "Gallic nobles on horseback in mail shirts."},
+]
+
+## Every type: the base rows followed by the derived tier rows.
+static var TYPES: Array[Dictionary] = _build_types()
+static var _by_key := {}
+
+
+static func _build_types() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for b in BASE.size():
+		var row: Dictionary = BASE[b].duplicate()
+		row["base"] = b
+		row["tier"] = 1
+		row["line"] = LINES[b]
+		row["size"] = BASE_SIZE[b]
+		row["price"] = int(row["cost"]) * BASE_SIZE[b]
+		out.append(row)
+	for t in TIERS:
+		var b: int = t["base"]
+		var tier: int = t["tier"]
+		var row: Dictionary = BASE[b].duplicate()
+		var delta: Dictionary = TIER_DELTA[tier]
+		for k in delta:
+			var dv := int(delta[k])
+			if k == "attack" or k == "defence":
+				dv = dv * int(TIER_SKILL.get(LINES[b], 100)) / 100
+			row[k] = int(row.get(k, DEFAULTS.get(k, 0))) + dv
+		var add: Dictionary = t.get("add", {})
+		for k in add:
+			row[k] = int(row.get(k, DEFAULTS.get(k, 0))) + int(add[k])
+		row["morale"] = mini(int(row["morale"]), 1000)
+		for k in ["key", "name", "short"]:
+			row[k] = t[k]
+		row["desc"] = str(t["blurb"]) + " " + str(BASE[b]["desc"])
+		row["base"] = b
+		row["tier"] = tier
+		row["line"] = LINES[b]
+		row["size"] = BASE_SIZE[b]
+		var pct: int = TIER_PRICE[LINES[b]][tier - 2] + int(t.get("price_add", 0))
+		var price: int = int(BASE[b]["cost"]) * BASE_SIZE[b] * pct / 100
+		row["price"] = price
+		row["cost"] = maxi((price + BASE_SIZE[b] / 2) / BASE_SIZE[b], 1)
+		out.append(row)
+	return out
+
+
+## Index of the type with this key, -1 if none.
+static func index_of(key: String) -> int:
+	if _by_key.is_empty():
+		for t in TYPES.size():
+			_by_key[str(TYPES[t]["key"])] = t
+	return int(_by_key.get(key, -1))
+
+
+static func key_of(ty: int) -> String:
+	return str(TYPES[ty]["key"])
+
+
+## Base type (tier 1 of the line) of any type.
+static func base_of(ty: int) -> int:
+	return int(TYPES[ty]["base"])
+
+
+static func tier_of(ty: int) -> int:
+	return int(TYPES[ty]["tier"])
+
+
+static func line_of(ty: int) -> String:
+	return str(TYPES[ty]["line"])
+
+
+## Full-strength unit size (soldiers; artillery: crews).
+static func size_of(ty: int) -> int:
+	return int(TYPES[ty]["size"])
+
+
+## Campaign recruitment price of a full unit.
+static func price_of(ty: int) -> int:
+	return int(TYPES[ty]["price"])
 
 
 static func count() -> int:

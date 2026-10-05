@@ -40,6 +40,16 @@ const RANGE_STEPS := 72   # height-adjusted range ring: points round the circle
 
 
 ## Unit order field as the player last ordered it (pending orders included).
+## Group move (three fingers / Alt+drag): destination footprints, each
+## {unit, front (world px), face, files}; and a short label.
+var ghosts: Array = []
+var ghost_hint := ""
+## Box select (mouse drag on empty ground): corners in world px.
+var box_on := false
+var box_a := Vector2.ZERO
+var box_b := Vector2.ZERO
+
+
 func _v(u: int, key: String) -> int:
 	if orders != null:
 		return orders.value(u, key)
@@ -74,6 +84,18 @@ func _draw() -> void:
 			_draw_selected(u, lw, r, u == primary)
 	if preview_on:
 		_draw_preview(lw)
+	for g in ghosts:
+		var u: int = g["unit"]
+		_draw_footprint(u, g["front"], g["face"], g["files"], sim.u_alive[u],
+			Color(0.6, 1.0, 1.0, 0.95), Color(0.6, 1.0, 1.0, 0.16), lw)
+	if ghost_hint != "" and not ghosts.is_empty():
+		var at: Vector2 = ghosts[0]["front"]
+		var fs := _font_size(15.0)
+		draw_string(ThemeDB.fallback_font, at + Vector2(0, -fs * 1.2), ghost_hint, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.7, 1, 1))
+	if box_on:
+		var rect := Rect2(box_a, box_b - box_a).abs()
+		draw_rect(rect, Color(1, 1, 1, 0.12))
+		draw_rect(rect, Color(1, 1, 1, 0.8), false, lw)
 
 
 ## Unit markers at the centroid: side colour, white ring when selected,

@@ -1,4 +1,4 @@
-extends ScrollContainer
+extends "res://game/touch_scroll.gd"
 ## One unit type's page: symbol, name, role, description, what it beats and
 ## what counters it, special rules, formation, and every stat that matters as
 ## a number plus a bar scaled against the best value of that stat among all
@@ -14,6 +14,7 @@ const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const Icons := preload("res://game/unit_icons.gd")
 const IconView := preload("res://game/unit_icon_view.gd")
+const CData := preload("res://campaign/cdata.gd")
 
 const M := 1024.0
 const TICKS_PER_SEC := 10.0
@@ -72,6 +73,7 @@ var _good: Label
 var _bad: Label
 var _tags: HFlowContainer
 var _formation: Label
+var _tier: Label
 var _grid: GridContainer
 
 
@@ -106,6 +108,8 @@ func _init() -> void:
 	_box.add_child(_tags)
 	_formation = _label("", 15, COL_DIM, true)
 	_box.add_child(_formation)
+	_tier = _label("", 15, Color(1.0, 0.85, 0.45), true)
+	_box.add_child(_tier)
 	_grid = GridContainer.new()
 	_grid.columns = 6
 	_grid.add_theme_constant_override("h_separation", 10)
@@ -129,10 +133,18 @@ func set_unit_type(ty: int, p_side_color: Color = Color(0.35, 0.6, 1.0)) -> void
 		c.queue_free()
 	for t in tags(ty):
 		_tags.add_child(_chip(t))
-	var soldiers: int = Scenarios.SIZE.get(ty, 0)
-	var files: int = Scenarios.FILES.get(ty, 0)
+	var soldiers: int = UT.size_of(ty)
+	var files: int = Scenarios.FILES.get(UT.base_of(ty), 0)
 	_formation.text = "%d soldiers per unit in %d files. Spacing %.1f m between files, %.1f m between ranks. Cost %d per soldier." % [
 		soldiers, files, UT.stat(ty, "file_sp") / M, UT.stat(ty, "rank_sp") / M, UT.stat(ty, "cost")]
+	var tier := UT.tier_of(ty)
+	var lines := {"heavy": "Barracks", "light": "Barracks", "spear": "Barracks", "pike": "Barracks",
+		"archer": "Range", "javelin": "Range", "cav": "Stables", "bolt": "Workshop", "stone": "Workshop"}
+	var bld: String = lines.get(UT.line_of(ty), "")
+	var need := tier if UT.cls(ty) != UT.CLS_ART else (2 if UT.base_of(ty) == UT.STONE else 1)
+	_tier.text = "Tier %d (%s line).  Campaign: %d to recruit, %d upkeep per turn; needs %s %d." % [
+		tier, str(UT.TYPES[UT.base_of(ty)]["name"]).to_lower(), UT.price_of(ty),
+		UT.price_of(ty) * CData.UPKEEP_PCT / 100, bld, need]
 	if UT.cls(ty) == UT.CLS_ART:
 		_formation.text = "%d engines with %d crew each (%d soldiers), %d m apart. Cost %d per crew member (%d per battery)." % [
 			value(ty, "_engines"), UT.stat(ty, "crew"), soldiers, UT.stat(ty, "file_sp") / 1024,
@@ -152,6 +164,14 @@ func set_unit_type(ty: int, p_side_color: Color = Color(0.35, 0.6, 1.0)) -> void
 			special.append(r)
 	if not special.is_empty():
 		_section(rows, "Special", special, ty)
+	# Narrow screens (phones): one column of stats, so the page never needs
+	# horizontal room it does not have.
+	var narrow := is_inside_tree() and get_viewport_rect().size.x < 1150.0
+	_grid.columns = 3 if narrow else 6
+	if narrow:
+		for r in rows:
+			_add_row(r)
+		return
 	# Two columns, split at the section boundary nearest the middle so a
 	# section never breaks across columns.
 	var split := rows.size()
@@ -299,7 +319,7 @@ func _add_row(r: Dictionary) -> void:
 static func value(ty: int, key: String) -> int:
 	if key == "_engines":
 		var crew := UT.stat(ty, "crew")
-		return int(Scenarios.SIZE.get(ty, 0)) / crew if crew > 0 else 0
+		return UT.size_of(ty) / crew if crew > 0 else 0
 	return UT.stat(ty, key)
 
 

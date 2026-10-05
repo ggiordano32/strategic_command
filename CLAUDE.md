@@ -18,3 +18,16 @@ run things are in `docs/STATUS.md`. Read both before making changes, and keep
   fixed-point maths only, the sim's own seeded RNG, fixed iteration order, no
   engine physics, no floats in sim state.
 - No node per soldier; soldier state lives in packed arrays.
+
+## Rules for campaign code (`campaign/`)
+
+- Same discipline as the battle sim: the turn resolution
+  (`cturn.resolve_turn`) and battle application (`cturn.apply_battle`) are
+  pure functions of (state, submissions / outcome); two clients with the same
+  inputs must produce the same `CState.state_hash`.
+- Integers only, the state's own RNG (`CState.rand`), arrays in index order;
+  never iterate a Dictionary in rules code (JSON load does not keep key
+  order). The whole state is one JSON-serialisable Dictionary (no floats, no
+  bools, string keys); bump `CState.VERSION` when its meaning changes.
+- No Nodes or engine time in `campaign/`; the view (`game/campaign/`) only
+  reads the state and emits orders.

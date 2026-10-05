@@ -1,11 +1,19 @@
 extends Control
 ## Start screen: pick a scenario, then hand over to the battle view.
 
+const TouchScroll := preload("res://game/touch_scroll.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const Battle := preload("res://game/battle.gd")
 const UnitBook := preload("res://game/unit_book.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const UiScale := preload("res://game/ui_scale.gd")
+const Controls := preload("res://game/controls.gd")
+const CampaignScreen := preload("res://game/campaign/campaign_screen.gd")
+const NewCampaign := preload("res://game/campaign/new_campaign.gd")
+const Saves := preload("res://game/campaign/saves.gd")
+const Kit := preload("res://game/campaign/ui_kit.gd")
+const CState := preload("res://campaign/cstate.gd")
+const CData := preload("res://campaign/cdata.gd")
 ## Menu terrain choices for the playable battles: -1 = random from the seed.
 const TERRAIN_CHOICES := [-1, Terrain.K_FLAT, Terrain.K_ROLLING, Terrain.K_RIDGE,
 	Terrain.K_VALLEY, Terrain.K_HILL, Terrain.K_SLOPE]
@@ -23,6 +31,16 @@ var _last_seed := -1
 var _last_terrain := -1
 var _rotate_hint: Label
 var book: UnitBook
+var controls: Controls
+var campaign: CampaignScreen = null
+var _new_campaign: NewCampaign = null
+## Menu pages: "home", "sandbox", "continue", "import".
+var _pages := {}
+var page := "home"
+var _continue_box: VBoxContainer
+var _import_edit: TextEdit
+var _import_info: Label
+var _ios_tab := false
 
 
 var _shot_path := ""
@@ -34,7 +52,7 @@ var _size_button: Button
 
 
 func _ready() -> void:
-	set_anchors_preset(Control.PRESET_FULL_RECT)
+	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	# UI size from the device (and the player's S / M / L choice).
 	UiScale.apply(get_window())
 	get_tree().root.size_changed.connect(func(): UiScale.apply(get_window()))
@@ -49,8 +67,11 @@ func _ready() -> void:
 			_shot_frames = int(a.get_slice("=", 1))
 	_menu = _build_menu()
 	add_child(_menu)
+	show_page("home")
 	book = UnitBook.new()
 	add_child(book)
+	controls = Controls.new()
+	add_child(controls)
 	var layer := CanvasLayer.new()
 	layer.layer = 100
 	add_child(layer)
@@ -63,7 +84,25 @@ func _ready() -> void:
 	_rotate_hint.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	_rotate_hint.grow_vertical = Control.GROW_DIRECTION_BOTH
 	_rotate_hint.visible = false
+	_rotate_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_rotate_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_rotate_hint.custom_minimum_size = Vector2(300, 0)
+	var hb := StyleBoxFlat.new()
+	hb.bg_color = Color(0.06, 0.07, 0.06, 0.97)
+	hb.set_corner_radius_all(8)
+	hb.set_content_margin_all(18)
+	_rotate_hint.add_theme_stylebox_override("normal", hb)
 	layer.add_child(_rotate_hint)
+	if OS.has_feature("web"):
+		# iPhone / iPad Safari in a browser tab cannot rotate a page to
+		# landscape; only the home-screen app can.
+		var ios = JavaScriptBridge.eval("(/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) && !(window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches)", true)
+		_ios_tab = ios == true
+	for a in OS.get_cmdline_user_args():
+		if a == "--ios-tab":
+			_ios_tab = true  # testing aid
+	if _ios_tab:
+		_rotate_hint.text = "Turn your phone sideways. In Safari: tap Share, then Add to Home Screen, and open the game from there to play in landscape."
 	# Shortcuts for testing: command line "-- --scenario=bench_2000 --speed=3"
 	# (--seed=N fixes the seed),
 	# or on the web a URL query "?scenario=bench_2000&speed=3".
@@ -98,20 +137,45 @@ func _ready() -> void:
 	for a in args:
 		if a.begins_with("--scenario="):
 			_start(a.get_slice("=", 1))
+		elif a.begins_with("--menu-page="):
+			show_page(a.get_slice("=", 1))  # testing aid
+		elif a == "--new-campaign":
+			_new_campaign_page()  # testing aid
+		elif a == "--controls":
+			controls.open()  # testing aid
+		elif a.begins_with("--campaign="):
+			# Testing aid: --campaign=rome[,greeks][:seed] starts a new campaign.
+			var spec: String = a.get_slice("=", 1)
+			var picks: Array = []
+			for k in spec.get_slice(":", 0).split(","):
+				picks.append(CData.faction_index(k))
+			var sd := int(spec.get_slice(":", 1)) if spec.contains(":") else 7
+			var st := CState.new_campaign("Test", sd, picks)
+			var data := {"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}
+			var sl := Saves.slot_for("test", sd)
+			Saves.save(sl, data)
+			_open_campaign(data, sl)
+		elif a.begins_with("--campaign-slot="):
+			var sl2: String = a.get_slice("=", 1)
+			var d2 := Saves.load_slot(sl2)
+			if not d2.is_empty():
+				_open_campaign(d2, sl2)
 
 
 func _build_menu() -> Control:
 	var bg := ColorRect.new()
 	bg.color = Color(0.12, 0.15, 0.12)
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bg.add_child(center)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_pages["home"] = _build_home(bg)
+	_pages["continue"] = _build_continue(bg)
+	_pages["import"] = _build_import(bg)
+	var center := _scroll_page(bg)
+	_pages["sandbox"] = center.get_parent()
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 8)
 	center.add_child(vb)
 	var title := Label.new()
-	title.text = "Strategic Command: battle sandbox"
+	title.text = "Battle sandbox"
 	title.add_theme_font_size_override("font_size", 26)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vb.add_child(title)
@@ -146,14 +210,10 @@ func _build_menu() -> Control:
 	_replay_button.disabled = true
 	row.add_child(_replay_button)
 	row.add_child(_menu_button("Unit book", _open_book))
-	_size_button = _menu_button("", _cycle_ui_size)
-	_size_button.tooltip_text = "Size of buttons and text (S / M / L)"
-	row.add_child(_size_button)
-	row.add_child(_menu_button("Fullscreen", _toggle_fullscreen))
 	_tests_button = _menu_button("Tests and benchmarks  +", _toggle_tests)
 	row.add_child(_tests_button)
+	row.add_child(_menu_button("< Back", show_page.bind("home")))
 	_update_terrain_button()
-	_update_size_button()
 	# Tests and benchmarks, folded away by default.
 	var grid := GridContainer.new()
 	grid.columns = 4
@@ -179,6 +239,189 @@ func _build_menu() -> Control:
 	vb.add_child(help)
 	_help = help
 	return bg
+
+
+## A menu page: a touch-scrollable full-screen area with its content centred
+## (scrolls when the content is taller than a phone screen).
+func _scroll_page(bg: Control) -> CenterContainer:
+	var scroll := TouchScroll.new()
+	scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	scroll.visible = false
+	bg.add_child(scroll)
+	var center := CenterContainer.new()
+	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	center.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.add_child(center)
+	return center
+
+
+func _page_box(bg: Control) -> VBoxContainer:
+	var center := _scroll_page(bg)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 10)
+	center.add_child(vb)
+	return vb
+
+
+func _build_home(bg: Control) -> Control:
+	var vb := _page_box(bg)
+	var title := Kit.label("Strategic Command", 30, Color(1, 0.92, 0.7))
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vb.add_child(title)
+	var sub := Kit.label("The western Mediterranean, 280 BC", 15, Kit.COL_DIM)
+	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vb.add_child(sub)
+	var camp := HBoxContainer.new()
+	camp.add_theme_constant_override("separation", 8)
+	camp.alignment = BoxContainer.ALIGNMENT_CENTER
+	vb.add_child(camp)
+	for d in [["New campaign", _new_campaign_page], ["Continue", show_page.bind("continue")],
+			["Import", show_page.bind("import")]]:
+		var b := _menu_button(d[0], d[1])
+		b.custom_minimum_size = Vector2(190, 52)
+		b.add_theme_font_size_override("font_size", 17)
+		b.name = "home_" + str(d[0]).replace(" ", "_")
+		camp.add_child(b)
+	var row := HFlowContainer.new()
+	row.add_theme_constant_override("h_separation", 8)
+	row.add_theme_constant_override("v_separation", 8)
+	row.alignment = FlowContainer.ALIGNMENT_CENTER
+	vb.add_child(row)
+	var sb := _menu_button("Battle sandbox", show_page.bind("sandbox"))
+	sb.name = "home_sandbox"
+	row.add_child(sb)
+	row.add_child(_menu_button("Unit book", _open_book))
+	var cb := _menu_button("Controls", _open_controls)
+	cb.name = "home_controls"
+	row.add_child(cb)
+	_size_button = _menu_button("", _cycle_ui_size)
+	_size_button.tooltip_text = "Size of buttons and text (S / M / L)"
+	row.add_child(_size_button)
+	row.add_child(_menu_button("Fullscreen", _toggle_fullscreen))
+	_update_size_button()
+	var info := Kit.label("Godot %s, %s renderer" % [Engine.get_version_info()["string"],
+		ProjectSettings.get_setting("rendering/renderer/rendering_method", "?")], 12, Color(1, 1, 1, 0.5))
+	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vb.add_child(info)
+	return vb.get_parent().get_parent()
+
+
+func _build_continue(bg: Control) -> Control:
+	var vb := _page_box(bg)
+	vb.add_child(Kit.label("Continue a campaign", 22, Kit.COL_GOLD))
+	var scroll := TouchScroll.new()
+	scroll.custom_minimum_size = Vector2(560, 250)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	vb.add_child(scroll)
+	_continue_box = Kit.vbox(6)
+	_continue_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(_continue_box)
+	vb.add_child(_menu_button("< Back", show_page.bind("home")))
+	return vb.get_parent().get_parent()
+
+
+func _fill_continue() -> void:
+	for c in _continue_box.get_children():
+		c.queue_free()
+	var list := Saves.list()
+	if list.is_empty():
+		_continue_box.add_child(Kit.label("No saved campaigns yet.", 15, Kit.COL_DIM))
+	for m in list:
+		var h := Kit.hbox(6)
+		var sl := str(m["slot"])
+		var b := _menu_button("%s - %s - %s" % [m.get("name", sl), " & ".join(m.get("factions", [])), m.get("date", "")],
+			func():
+				var d := Saves.load_slot(sl)
+				if not d.is_empty():
+					_open_campaign(d, sl))
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.clip_text = true
+		h.add_child(b)
+		var del := Kit.button("Delete", Callable(), 80)
+		del.pressed.connect(func():
+			if del.text == "Sure?":
+				Saves.delete(sl)
+				_fill_continue()
+			else:
+				del.text = "Sure?")
+		h.add_child(del)
+		_continue_box.add_child(h)
+
+
+func _build_import(bg: Control) -> Control:
+	var vb := _page_box(bg)
+	vb.add_child(Kit.label("Import a campaign", 22, Kit.COL_GOLD))
+	vb.add_child(Kit.label("Paste the text from Export (campaign Menu) on the other device.", 14, Kit.COL_DIM))
+	_import_edit = TextEdit.new()
+	_import_edit.custom_minimum_size = Vector2(560, 150)
+	_import_edit.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	vb.add_child(_import_edit)
+	_import_info = Kit.label("", 14, Kit.COL_BAD)
+	vb.add_child(_import_info)
+	var h := Kit.hbox(8)
+	h.add_child(_menu_button("Paste", func(): _import_edit.text = DisplayServer.clipboard_get()))
+	h.add_child(_menu_button("Import and play", _do_import))
+	h.add_child(_menu_button("< Back", show_page.bind("home")))
+	vb.add_child(h)
+	return vb.get_parent().get_parent()
+
+
+func _do_import() -> void:
+	var d := Saves.import_text(_import_edit.text)
+	if d.is_empty():
+		_import_info.text = "That text is not a campaign save (or is cut short)."
+		return
+	var st: Dictionary = d["state"]
+	var sl := Saves.slot_for(str(st["name"]), int(st["seed"]))
+	Saves.save(sl, d)
+	_import_info.text = ""
+	_open_campaign(d, sl)
+
+
+func show_page(p: String) -> void:
+	page = p
+	for k in _pages:
+		(_pages[k] as Control).visible = k == p
+	if p == "continue":
+		_fill_continue()
+
+
+func _new_campaign_page() -> void:
+	_menu.visible = false
+	_new_campaign = NewCampaign.new()
+	_new_campaign.start.connect(func(d, sl):
+		_new_campaign.queue_free()
+		_new_campaign = null
+		_open_campaign(d, sl))
+	_new_campaign.back.connect(func():
+		_new_campaign.queue_free()
+		_new_campaign = null
+		_menu.visible = true)
+	add_child(_new_campaign)
+	move_child(_new_campaign, _menu.get_index() + 1)
+
+
+func _open_campaign(d: Dictionary, sl: String) -> void:
+	if campaign != null:
+		return
+	_menu.visible = false
+	campaign = CampaignScreen.new()
+	campaign.open(d, sl)
+	campaign.exit_requested.connect(_close_campaign)
+	get_tree().root.add_child.call_deferred(campaign)
+
+
+func _close_campaign() -> void:
+	if campaign != null:
+		campaign.queue_free()
+		campaign = null
+	_menu.visible = true
+	show_page("home")
+
+
+func _open_controls() -> void:
+	controls.open()
 
 
 func _toggle_tests() -> void:

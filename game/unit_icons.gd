@@ -8,6 +8,7 @@ extends RefCounted
 ##   4 bow: bow, string, arrow                5 javelin: two short shafts
 ##   6 cavalry: horseshoe                 7 bolt thrower: bow on a stock, bolt
 ##   8 stone thrower: frame, arm and stone
+## Symbol ids above 99 carry a tier mark (see icon_of).
 
 const UT := preload("res://sim/unit_types.gd")
 
@@ -15,16 +16,35 @@ const SIDE_COLORS := [Color(0.35, 0.6, 1.0), Color(1.0, 0.36, 0.28)]
 const ROUT_COLOR := Color(1.0, 0.9, 0.3)
 
 
+## Symbol id of a unit type: the glyph ("icon" field) plus 100 per tier above
+## the first, so every marker drawn from it carries the tier mark.
 static func icon_of(ty: int) -> int:
-	return UT.stat(ty, "icon")
+	return UT.stat(ty, "icon") + 100 * (UT.tier_of(ty) - 1)
 
 
-## Disc of radius r in `fill` with a dark rim and the glyph for `icon`.
+## Disc of radius r in `fill` with a dark rim and the glyph for `icon`;
+## tiers 2 and 3 get one or two gold chevrons at the bottom of the disc.
 static func draw_marker(ci: CanvasItem, icon: int, c: Vector2, r: float, fill: Color,
 		glyph: Color = Color(1, 1, 1, 0.97)) -> void:
 	ci.draw_circle(c, r, fill)
 	ci.draw_arc(c, r, 0, TAU, 20, Color(0, 0, 0, 0.75), maxf(r * 0.11, 1.0), true)
-	draw_glyph(ci, icon, c, r * 0.72, glyph)
+	draw_glyph(ci, icon % 100, c, r * 0.72, glyph)
+	var tier := icon / 100 + 1
+	if tier > 1:
+		draw_tier(ci, tier, c, r)
+
+
+## Tier mark: gold chevrons below the disc's centre (one for tier 2, two for
+## tier 3), with a dark edge so they read on any side colour.
+static func draw_tier(ci: CanvasItem, tier: int, c: Vector2, r: float) -> void:
+	var gold := Color(1.0, 0.82, 0.25)
+	var w := maxf(r * 0.2, 1.4)
+	for k in tier - 1:
+		var y := c.y + r * (0.98 - 0.36 * k)
+		var pts := PackedVector2Array([Vector2(c.x - r * 0.5, y - r * 0.3), Vector2(c.x, y),
+			Vector2(c.x + r * 0.5, y - r * 0.3)])
+		ci.draw_polyline(pts, Color(0, 0, 0, 0.85), w + 2.0, true)
+		ci.draw_polyline(pts, gold, w, true)
 
 
 ## The glyph alone, fitting in a circle of radius s around c.

@@ -61,6 +61,10 @@ func _init() -> void:
 		_fairness(fair_n)
 		quit(0)
 		return
+	if only == "tiers":
+		_tiers()
+		quit(0)
+		return
 	_section("Pikes")
 	_duel("pike 120 holds vs heavy 100 attacking (front)",
 		[_u(0, UT.PIKE, 120, 150, 200, UP), _u(1, UT.HEAVY, 100, 150, 140, DOWN)],
@@ -1000,3 +1004,31 @@ func _stone_class(sim, k: int) -> int:
 	if hi < 0:
 		return 2
 	return 1
+
+
+# ----------------------------------------------------------------- tiers ---
+
+## Unit tiers (campaign): for each core line, tier 3 and tier 2 against tier
+## 1 at equal numbers (tier 3 should win clearly) and at equal price (the
+## cheaper side gets proportionally more men in a wider unit; should be
+## roughly even). Melee lines: both units advance into each other; missile
+## lines shoot it out at 100 m (then close); cavalry charge each other.
+##   godot --headless --script res://tests/matchups.gd -- --only=tiers [--seeds=N]
+func _tiers() -> void:
+	_section("Unit tiers: higher tier vs tier 1 (side 0 is the higher tier)")
+	only = ""
+	var lines := [["heavy", UT.HEAVY], ["light", UT.LIGHT], ["spear", UT.SPEAR], ["pike", UT.PIKE],
+		["archer", UT.ARCHER], ["javelin", UT.JAVELIN], ["cav", UT.CAVALRY]]
+	for l in lines:
+		var t1: int = l[1]
+		for tier in [3, 2]:
+			var hi := UT.index_of("%s%d" % [l[0], tier])
+			var n_hi := UT.size_of(hi)
+			var gap := 100 if UT.cls(t1) == UT.CLS_MISSILE else 60
+			_duel("%s T%d %d vs T1 %d, equal numbers" % [l[0], tier, n_hi, n_hi],
+				[_u(0, hi, n_hi, 150, 150 + gap / 2, UP), _u(1, t1, n_hi, 150, 150 - gap / 2, DOWN)],
+				[_atk(0, 0, 1, 0), _atk(0, 1, 0, 0)])
+			var n_lo := n_hi * UT.price_of(hi) / UT.price_of(t1)
+			_duel("%s T%d %d vs T1 %d, equal price" % [l[0], tier, n_hi, n_lo],
+				[_u(0, hi, n_hi, 150, 150 + gap / 2, UP), _u(1, t1, n_lo, 150, 150 - gap / 2, DOWN)],
+				[_atk(0, 0, 1, 0), _atk(0, 1, 0, 0)])
