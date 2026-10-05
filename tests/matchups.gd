@@ -16,6 +16,13 @@ extends SceneTree
 ##   throwers kill fewer, frighten, and miss small or moving targets; melee
 ##   troops that reach artillery wreck it quickly; armies stay fair when
 ##   mirrored (--fair=N).
+## Terrain (--only=terrain): holding good high ground against an equal unit
+##   is a clear but beatable edge (~60-70% on a moderate slope, more on
+##   steep ground); archers on a hill outrange archers below; cavalry hits
+##   harder downhill and weaker uphill; flat bolts do not shoot through a
+##   crest; a mirror-symmetric map stays even; AI battles on every terrain
+##   kind are decided in ~4-9 minutes. --fair=N --fair-terrain=K runs the
+##   mirrored battles on a mirror-symmetric generated map of kind K.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
@@ -32,6 +39,7 @@ var max_ticks := 3000
 var fair_n := 0       # --fair=N: only the mirrored-fairness check, N seeds
 var seed0 := 0        # --seed0=K: first seed index (for sharding --fair runs)
 var fair_variants: Array = ["side0_first", "side1_first"]  # --fair-variants=a,b
+var fair_terrain := -1  # --fair-terrain=K: mirrored battles on a symmetric map of kind K
 
 
 func _init() -> void:
@@ -46,6 +54,8 @@ func _init() -> void:
 			seed0 = int(a.get_slice("=", 1))
 		elif a.begins_with("--fair-variants="):
 			fair_variants = Array(a.get_slice("=", 1).split(","))
+		elif a.begins_with("--fair-terrain="):
+			fair_terrain = int(a.get_slice("=", 1))
 	var t0 := Time.get_ticks_msec()
 	if fair_n > 0:
 		_fairness(fair_n)
@@ -121,10 +131,14 @@ func _init() -> void:
 	_round_robin()
 	_section("Artillery")
 	_artillery()
+	_section("Stone aim: where stones land relative to the target formation")
+	_stone_aim()
 	_section("Mirrored fairness: identical units face each other, both attack (bottom side 0 vs top side 1, both unit orders)")
 	_mirror_duels()
 	_section("Full battle")
 	_full_battles()
+	_section("Terrain")
+	_terrain()
 	print("\n(done in %.1f s)" % ((Time.get_ticks_msec() - t0) / 1000.0))
 	quit(0)
 
@@ -462,6 +476,8 @@ func _fairness(n: int) -> void:
 					if int(u["side"]) == 0:
 						a.append(u)
 				scn["units"] = a
+			if fair_terrain >= 0:
+				scn["terrain"] = {"kind": fair_terrain, "sym": 1}
 			var sim := BattleSim.new()
 			sim.setup(scn, 77 + s * 31)
 			while sim.tick < 12000 and sim.winner < 0:
@@ -624,3 +640,363 @@ func _mirror_duels() -> void:
 		var n := 2 * seeds
 		print("%-8s bottom wins %3d%%  top %3d%%  | unit listed first wins %3d%%  (%d runs)" % [
 			UT.TYPES[ty]["short"], bottom * 100 / n, top * 100 / n, first * 100 / n, n])
+
+
+# --------------------------------------------------------------- terrain ---
+
+const Terrain := preload("res://sim/terrain.gd")
+const RAMP_UP_TOP := 768     # ramp rising toward the top of the field (side 1)
+const RAMP_UP_BOTTOM := 256  # ... toward the bottom (side 0)
+
+
+func _scenario_t(units: Array, orders: Array, features: Array) -> Dictionary:
+	var sc := _scenario(units, orders)
+	sc["terrain"] = {"kind": Terrain.K_CUSTOM, "features": features}
+	return sc
+
+
+## A slope across the whole 300 m field, steepest (grade_pct) through the
+## middle third where the units meet, rising toward `dir`.
+func _ramp(grade_pct: int, dir: int) -> Array:
+	# Smoothstep over 2r = 300 m: steepest grade 1.5 * h / 300.
+	return [[Terrain.F_RAMP, 150, 150, 150, grade_pct * 300 / 150, dir]]
+
+
+func _terrain() -> void:
+	if only != "" and only != "terrain":
+		return
+	_terrain_duels()
+	_terrain_archers()
+	_terrain_cavalry()
+	_terrain_pikes()
+	_terrain_artillery()
+	_terrain_mirror()
+	_terrain_battles()
+
+
+## Equal heavy 100 vs heavy 100 on a slope: how often the side on higher
+## ground wins, (a) both advancing to meet, (b) the higher one holding while
+## the lower one climbs to it. Each grade runs with the high side at the top
+## and at the bottom (seeds split), so the field's orientation cannot bias it.
+func _terrain_duels() -> void:
+	for mode in ["meet", "hold"]:
+		for g in [0, 5, 10, 15, 25]:
+			var hi_wins := 0
+			var lo_wins := 0
+			var draws := 0
+			var hi_lost := 0.0
+			var lo_lost := 0.0
+			var n := 0
+			for flip in 2:
+				for s in seeds / 2:
+					# Side 1 (top) is high unless flipped.
+					var hi_side := 1 if flip == 0 else 0
+					var units := [_u(0, UT.HEAVY, 100, 150, 200, UP, 25), _u(1, UT.HEAVY, 100, 150, 100, DOWN, 25)]
+					var orders: Array = []
+					if mode == "meet":
+						orders = [_atk(0, 0, 1, 0), _atk(0, 1, 0, 0), _atk(60, 0, 1, 1), _atk(60, 1, 0, 1)]
+					else:
+						# The low side climbs; the high one holds its ground.
+						var lo_side := 1 - hi_side
+						orders = [_atk(0, lo_side, hi_side, 0), _atk(120, lo_side, hi_side, 1)]
+					var feats: Array = _ramp(g, RAMP_UP_TOP if hi_side == 1 else RAMP_UP_BOTTOM) if g > 0 else []
+					var sim := BattleSim.new()
+					sim.setup(_scenario_t(units, orders, feats), 31000 + s * 977 + flip * 7)
+					while sim.tick < max_ticks and sim.winner < 0:
+						sim.step()
+					n += 1
+					if sim.winner == hi_side:
+						hi_wins += 1
+					elif sim.winner == 1 - hi_side:
+						lo_wins += 1
+					else:
+						draws += 1
+					hi_lost += sim.u_killed[hi_side]
+					lo_lost += sim.u_killed[1 - hi_side]
+			print("heavy vs heavy, %-5s slope %2d%%: higher side wins %3d%%, lower %3d%%, draw %3d%% | killed higher %5.1f, lower %5.1f  (%d runs)" % [
+				mode, g, hi_wins * 100 / n, lo_wins * 100 / n, draws * 100 / n, hi_lost / n, lo_lost / n, n])
+
+
+## Archers 80 vs archers 80, 115 m apart, one unit on a 15 m hill: both
+## shoot at will until their arrows are gone.
+func _terrain_archers() -> void:
+	for hill in [false, true]:
+		var k_hi := 0.0
+		var k_lo := 0.0
+		var s_hi := 0.0
+		var s_lo := 0.0
+		for s in seeds:
+			var units := [_u(0, UT.ARCHER, 80, 150, 210, UP), _u(1, UT.ARCHER, 80, 150, 95, DOWN)]
+			var feats: Array = [[Terrain.F_BUMP, 150, 222, 80, 15]] if hill else []
+			var sim := BattleSim.new()
+			sim.setup(_scenario_t(units, [], feats), 32000 + s * 389)
+			var shots := [0, 0]
+			while sim.tick < 1500 and sim.ended == 0 and (sim.u_ammo[0] > 0 or sim.u_ammo[1] > 0 \
+					or sim.projectiles_in_flight() > 0):
+				var a0: int = sim.u_ammo[0]
+				var a1: int = sim.u_ammo[1]
+				sim.step()
+				shots[0] += maxi(a0 - sim.u_ammo[0], 0)
+				shots[1] += maxi(a1 - sim.u_ammo[1], 0)
+			k_hi += sim.u_killed[1]
+			k_lo += sim.u_killed[0]
+			s_hi += shots[0]
+			s_lo += shots[1]
+		var n := float(seeds)
+		print("archers 80 vs archers 80 at 115 m, %-22s killed by bottom %5.1f (%4.0f arrows), by top %5.1f (%4.0f arrows)" % [
+			"bottom on a 15 m hill:" if hill else "flat (control):", k_hi / n, s_hi / n, k_lo / n, s_lo / n])
+
+
+## Cavalry 60 charging a standing heavy 100 from 110 m down / up a 12% slope
+## (and flat): infantry killed by 40 s, riders lost, who won.
+func _terrain_cavalry() -> void:
+	for mode in ["flat", "downhill", "uphill"]:
+		var killed := 0.0
+		var lost := 0.0
+		var cav_wins := 0
+		var impacts := 0.0
+		for s in seeds:
+			var units := [_u(0, UT.CAVALRY, 60, 150, 220, UP), _u(1, UT.HEAVY, 100, 150, 110, DOWN)]
+			var feats: Array = []
+			if mode == "downhill":
+				feats = _ramp(12, RAMP_UP_BOTTOM)
+			elif mode == "uphill":
+				feats = _ramp(12, RAMP_UP_TOP)
+			var sim := BattleSim.new()
+			sim.setup(_scenario_t(units, [_atk(0, 0, 1, 1)], feats), 33000 + s * 131)
+			while sim.tick < 400:
+				sim.step()
+			killed += sim.u_killed[1]
+			impacts += sim.stat_impacts
+			while sim.tick < max_ticks and sim.winner < 0:
+				sim.step()
+			lost += sim.u_killed[0]
+			if sim.winner == 0:
+				cav_wins += 1
+		var n := float(seeds)
+		print("cav 60 charges heavy 100 standing, %-9s infantry killed by 40 s %5.1f (%4.0f impacts) | riders lost %5.1f | cavalry wins %3d%%" % [
+			mode + ":", killed / n, impacts / n, lost / n, cav_wins * 100 / seeds])
+
+
+## Pike 120 holding against heavy 100 attacking its front: flat, pikes on
+## the higher / lower side of a 15% slope, and of a steep 25% one (where
+## the wall breaks up more easily); plus heavy 100 pinning the pikes' front
+## and light 100 hitting their flank, flat and on the steep slope.
+func _terrain_pikes() -> void:
+	for mode in ["flat", "pikes above", "pikes below", "pikes above 25%", "pikes below 25%"]:
+		var wins := 0
+		var kp := 0.0
+		var kh := 0.0
+		var dis := 0
+		for s in seeds:
+			var units := [_u(0, UT.PIKE, 120, 150, 200, UP), _u(1, UT.HEAVY, 100, 150, 140, DOWN)]
+			var feats: Array = []
+			var g := 25 if mode.ends_with("25%") else 15
+			if mode.begins_with("pikes above"):
+				feats = _ramp(g, RAMP_UP_BOTTOM)
+			elif mode.begins_with("pikes below"):
+				feats = _ramp(g, RAMP_UP_TOP)
+			var sim := BattleSim.new()
+			sim.setup(_scenario_t(units, [_atk(0, 1, 0, 0)], feats), 34000 + s * 211)
+			while sim.tick < max_ticks and sim.winner < 0:
+				sim.step()
+				if sim.u_formed[0] == 0 and sim.u_contact[0] != 0:
+					dis += 1
+			if sim.winner == 0:
+				wins += 1
+			kp += sim.u_killed[0]
+			kh += sim.u_killed[1]
+		var n := float(seeds)
+		print("pike 120 holds vs heavy 100 attacking, %-16s pikes win %3d%% | killed pikes %5.1f, heavy %5.1f | wall down %4.0f ticks in contact" % [
+			mode + ":", wins * 100 / seeds, kp / n, kh / n, dis / n])
+	for g in [0, 25]:
+		var wins2 := 0
+		var lost2 := 0.0
+		for s in seeds:
+			var units := [_u(0, UT.PIKE, 120, 150, 170, UP), _u(1, UT.HEAVY, 100, 150, 130, DOWN),
+				_u(1, UT.LIGHT, 100, 215, 180, LEFT)]
+			var feats: Array = _ramp(g, RAMP_UP_BOTTOM) if g > 0 else []
+			var sim := BattleSim.new()
+			sim.setup(_scenario_t(units, [_atk(0, 1, 0, 0), _atk(150, 2, 0, 0)], feats), 34500 + s * 211)
+			while sim.tick < max_ticks and sim.winner < 0:
+				sim.step()
+			if sim.winner == 0:
+				wins2 += 1
+			lost2 += sim.u_killed[1] + sim.u_killed[2]
+		print("pike 120 (above) pinned by heavy 100, light 100 into flank, %2d%% slope: pikes win %3d%% | attackers killed %5.1f" % [
+			g, wins2 * 100 / seeds, lost2 / seeds])
+
+
+## Bolts against a pike block behind a 6 m crest (explicit order: blocked)
+## and against light infantry beside the crest's end; stones landing on
+## pikes uphill / downhill of the battery (plough length).
+func _terrain_artillery() -> void:
+	for target in [2, 3]:
+		var shots := 0.0
+		var killed := 0.0
+		var blocked := 0.0
+		for s in seeds:
+			var sc := Scenarios.make("test_bolts_crest")
+			sc["orders"] = [_atk(0, 0, target, 0)]
+			var sim := BattleSim.new()
+			sim.setup(sc, 35000 + s * 17)
+			while sim.tick < 900:
+				sim.step()
+			shots += sim.stat_bolts
+			killed += sim.u_killed[target]
+			blocked += sim.stat_lof_blocked
+		var n := float(seeds)
+		print("bolts 16 ordered to shoot %-38s %4.1f bolts fired, %4.1f killed, %5.1f refusals (no line of fire)" % [
+			"pikes behind a 6 m crest:" if target == 2 else "light infantry clear of the crest:",
+			shots / n, killed / n, blocked / n])
+	for mode in ["flat", "target uphill", "target downhill"]:
+		var killed := 0.0
+		var struck := 0.0
+		for s in seeds:
+			var units := [_u(0, UT.STONE, 18, 150, 270, UP), _u(1, UT.PIKE, 120, 150, 70, DOWN)]
+			var feats: Array = []
+			if mode == "target uphill":
+				feats = _ramp(10, RAMP_UP_TOP)
+			elif mode == "target downhill":
+				feats = _ramp(10, RAMP_UP_BOTTOM)
+			var sim := BattleSim.new()
+			sim.setup(_scenario_t(units, [], feats), 36000 + s * 1031)
+			while sim.tick < 2400 and (sim.u_ammo[0] > 0 or sim.projectiles_in_flight() > 0):
+				sim.step()
+			killed += sim.u_killed[1]
+			struck += sim.stat_art_victims
+		var n := float(seeds)
+		print("stones 18 vs pikes 120 standing 200 m away, %-16s killed %5.1f, struck %5.1f" % [
+			mode + ":", killed / n, struck / n])
+
+
+## Mirrored duels on a mirror-symmetric generated map (a hill / valley in
+## the middle, the same for both): the bottom side should win about half.
+func _terrain_mirror() -> void:
+	for kind in [Terrain.K_HILL, Terrain.K_VALLEY, Terrain.K_ROLLING]:
+		var bottom := 0
+		var top := 0
+		var n := 0
+		for swap in [false, true]:
+			for s in seeds:
+				var units := [_u(0, UT.HEAVY, 100, 150, 200, UP, 25), _u(1, UT.HEAVY, 100, 150, 100, DOWN, 25)]
+				var orders := [_atk(0, 0, 1, 0), _atk(0, 1, 0, 0), _atk(60, 0, 1, 1), _atk(60, 1, 0, 1)]
+				if swap:
+					units = [units[1], units[0]]
+				var sc := _scenario(units, orders)
+				sc["terrain"] = {"kind": kind, "sym": 1, "seed": 500 + s}
+				var sim := BattleSim.new()
+				sim.setup(sc, 37000 + s * 7)
+				while sim.tick < max_ticks and sim.winner < 0:
+					sim.step()
+				n += 1
+				if sim.winner == 0:
+					bottom += 1
+				elif sim.winner == 1:
+					top += 1
+		print("heavy mirror duel on a symmetric %-8s map: bottom wins %3d%%, top %3d%%  (%d runs)" % [
+			Terrain.KIND_NAMES[kind].to_lower(), bottom * 100 / n, top * 100 / n, n])
+
+
+## Full AI battles (bench_2000 armies) on each generated terrain kind.
+func _terrain_battles() -> void:
+	var n := maxi(seeds / 4, 3)
+	for kind in [Terrain.K_ROLLING, Terrain.K_RIDGE, Terrain.K_VALLEY, Terrain.K_HILL, Terrain.K_SLOPE]:
+		var times: Array[float] = []
+		var wins := [0, 0, 0]
+		var holds := 0
+		for s in n:
+			var sc := Scenarios.make("bench_2000")
+			sc["terrain"] = {"kind": kind}
+			var sim := BattleSim.new()
+			sim.setup(sc, 38000 + s * 31)
+			while sim.tick < 12000 and sim.winner < 0:
+				sim.step()
+			times.append(sim.tick / 600.0)
+			wins[sim.winner if sim.winner >= 0 else 2] += 1
+			holds += sim.stat_ai[12]
+		times.sort()
+		var sum := 0.0
+		for t in times:
+			sum += t
+		print("AI battle (2,000) on %-8s decided after %.1f min mean (min %.1f, max %.1f); wins %d / %d, draws %d; high-ground holds %d" % [
+			Terrain.KIND_NAMES[kind].to_lower() + ":", sum / n, times[0], times[n - 1], wins[0], wins[1], wins[2], holds])
+
+
+# ------------------------------------------------------------- stone aim ---
+
+## Stones at a 300-man line (heavy, spear, heavy) and a 120 pike block at
+## near / mid / long range, standing and advancing on the battery: where
+## each stone lands along its flight relative to the soldiers under it
+## (front = nearest soldier within 3 m of the line of flight, rear =
+## farthest): short (before the front), inside, beyond the rear, or wide
+## (no soldier within 3 m of its line at all).
+func _stone_aim() -> void:
+	if only != "" and only != "stoneaim" and only != "art":
+		return
+	for tgt in ["line", "pikes"]:
+		for dist in [100, 200, 270]:
+			for mode in ["standing", "advancing"]:
+				var c := [0, 0, 0, 0]
+				var killed := 0.0
+				var n_s := maxi(seeds / 2, 4)
+				for s in n_s:
+					var y1: int = 280 - dist
+					var units: Array = [_u(0, UT.STONE, 18, 150, 285, UP)]
+					if tgt == "line":
+						units.append_array([_u(1, UT.HEAVY, 100, 89, y1, DOWN), _u(1, UT.SPEAR, 100, 150, y1, DOWN),
+							_u(1, UT.HEAVY, 100, 211, y1, DOWN)])
+					else:
+						units.append(_u(1, UT.PIKE, 120, 150, y1, DOWN))
+					var orders: Array = []
+					if mode == "advancing":
+						for k in range(1, units.size()):
+							orders.append({"tick": 0, "type": BattleSim.ORDER_MOVE, "unit": k,
+								"x": int(units[k]["x_m"]) * 1024, "y": 230 * 1024, "facing": DOWN,
+								"width": 28 * 1024, "run": 0})
+					var sim := BattleSim.new()
+					sim.setup(_scenario(units, orders), 41000 + s * 101)
+					var limit := 1200 if mode == "advancing" else 2400
+					while sim.tick < limit and (sim.u_ammo[0] > 0 or sim.projectiles_in_flight() > 0):
+						sim.step()
+						for k in sim.FX_CAP:
+							if sim.fx_t[k] != sim.tick - 1:
+								continue
+							c[_stone_class(sim, k)] += 1
+						if mode == "advancing" and sim.u_ay[1] >= 225 * 1024 and sim.u_order[1] == BattleSim.O_NONE:
+							break
+					for u in range(1, sim.n_units):
+						killed += sim.u_killed[u]
+				var tot := maxi(c[0] + c[1] + c[2] + c[3], 1)
+				print("stones at %-5s %3d m %-9s: %4d stones  short %3d%%  inside %3d%%  beyond rear %3d%%  wide %3d%% | killed %5.1f per run" % [
+					tgt, dist, mode, tot, c[0] * 100 / tot, c[1] * 100 / tot, c[2] * 100 / tot, c[3] * 100 / tot,
+					killed / n_s])
+
+
+## 0 short, 1 inside, 2 beyond the rear, 3 wide (stone impact mark k).
+func _stone_class(sim, k: int) -> int:
+	var x: int = sim.fx_x[k]
+	var y: int = sim.fx_y[k]
+	var ux: int = sim.fx_dx[k]
+	var uy: int = sim.fx_dy[k]
+	var lo := 1 << 40
+	var hi := -(1 << 40)
+	for i in sim.n:
+		if sim.state[i] >= BattleSim.S_DEAD or sim.u_side[sim.unit_of[i]] != 1:
+			continue
+		var rx: int = sim.pos_x[i] - x
+		var ry: int = sim.pos_y[i] - y
+		var lat: int = (ry * ux - rx * uy) / 4096
+		if absi(lat) > 3 * 1024:
+			continue
+		var al: int = (rx * ux + ry * uy) / 4096
+		lo = mini(lo, al)
+		hi = maxi(hi, al)
+	if hi < lo:
+		return 3
+	# al > 0: the soldier is further along the flight than the landing point.
+	if lo > 0:
+		return 0
+	if hi < 0:
+		return 2
+	return 1

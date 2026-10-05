@@ -17,9 +17,11 @@ anti-cheat and original art only if it proves fun.
 | Milestone | State |
 |---|---|
 | 1. Battle sandbox | Done, committed (`6b3a1cf`), playtested on an Android phone |
-| 2. Full battle mechanics | Built, playtested, **not yet committed**; tuning pass in progress |
-| Unit symbols and unit book | Built, **not yet committed** |
-| Artillery (bolt and stone throwers) | Built, **not yet committed**, not yet playtested |
+| 2. Full battle mechanics | Done, committed (`49c1022`), playtested; tuning pass included |
+| Unit symbols and unit book | Done, committed (`49c1022`) |
+| Artillery (bolt and stone throwers) | Committed (`49c1022`), not yet playtested |
+| Terrain height | Built, **not yet committed**, playtested ("feels good so far") |
+| Playtest round (HUD scale, stones, ammo, refill) | Built, **not yet committed**, not yet playtested |
 | 3. Minimal campaign | Not started |
 | 4. Async backend (Go + SQLite) | Not started |
 | 5. Live co-op battles (lockstep) | Not started |
@@ -35,6 +37,14 @@ anti-cheat and original art only if it proves fun.
   artillery engines with crews, set-up / pack-up, piercing bolts and
   ploughing stones; morale, routing, withdrawal; a battle
   AI that only issues orders; a plain-data battle result for the campaign.
+- **Terrain height** (`sim/terrain.gd`, built 2026-10-05): an integer
+  height grid (4 m nodes) generated from kind + seed + a few parameters
+  (flat, rolling, ridge, valley, hill, slope, or hand-placed features),
+  hashed into `state_hash()`; slopes slow units (cavalry and artillery most),
+  higher ground helps in melee, charges hit harder downhill, missiles reach
+  further from above, javelins and bolts are blocked by crests, stones
+  plough less uphill; the AI uses high ground. Drawn as a contour map with
+  hill shading in one shader. Details in DESIGN.md "Terrain height: as built".
 - **View and controls** (`game/`): one-draw-call soldier rendering from a data
   texture, touch and mouse controls, multi-select, show-all-orders overlay,
   instant order preview while paused, unit symbols, unit book, HUD, telemetry.
@@ -53,6 +63,32 @@ anti-cheat and original art only if it proves fun.
 - The touch control scheme works; the user likes it.
 
 ### In progress right now
+
+Playtest feedback round (2026-10-05, built, uncommitted):
+1. HUD scaled by device (`game/ui_scale.gd`: touch 0.88, mouse 0.82 CSS px
+   per logical px, menu "UI size" S / M / L), compact unit cards wrapping
+   into rows (no scrolling: 26 units in 2 rows on the phone, 1 on a
+   desktop), actions in one row above the cards, Withdraw army in the top
+   bar, one-line collapsible readout, grouped start menu with folded Tests.
+   Screenshots `docs/screenshots/hud_*.png` (phone 780x360 CSS, 1920x1080,
+   3840x2160). Unverified on the real phone and the 4K monitor.
+2. Stone throwers aim at the near face of the target, lead its movement and
+   land short rather than over (beyond-the-rear 28-82% -> 1-27%).
+3. More ammunition (archers 40, javelins 6, bolts 11, stones 15 per engine).
+4. Artillery Refill order: one more load in the baggage, ~70-90 s to bring
+   up, cannot move or shoot meanwhile; the AI uses it.
+Details and numbers in DESIGN.md (Artillery "Stone aim", "Refill";
+Missiles "Ammunition"; section 7 "HUD as built").
+
+Terrain height (built 2026-10-05, uncommitted): needs a phone playtest of
+the look (contours, shading, readability of units on top) and of the
+WebGL2 terrain shader on the Android phone and an iPhone; the playable
+battles now get random terrain (menu "Terrain:" button to choose, "Replay"
+for the same seed and ground, `?terrain=ridge&seed=N` on the URL). Four
+terrain test scenarios are on the menu. Flat battles play exactly as
+before (checked against the previous build).
+
+Earlier (committed in `49c1022`):
 
 A tuning pass from playtest feedback (built, uncommitted):
 
@@ -87,18 +123,33 @@ A tuning pass from playtest feedback (built, uncommitted):
 
 ### Open items
 
-- **iPhone Safari has never been tested.** It is the riskiest target. Run the
-  4,000 benchmark there and check the logs.
-- Phone performance of the milestone 2 build is unmeasured.
+- iPhone Safari (iOS 18.7) ran the 4,000 benchmark on the terrain build at a
+  steady 60 fps (sim 3.1 ms mean, 7 ms worst per tick) and the terrain shader
+  works there. It only rotates to landscape when opened from the home screen
+  ("Add to Home Screen"); a Safari tab cannot force orientation.
+- **iPhone determinism is not yet cross-checked** against another device on
+  the same build. Run the same fixed-seed benchmark on the iPhone and one
+  other device and compare with `tools/playtest_report.py`.
+- The user reports performance is good on every device tried so far.
 - Occasional frame hitches at 4,000 soldiers (a whole sim tick runs inside one
   frame). Fix by spreading tick work across frames if it becomes annoying.
 - "A unit with a move order does not fight" was chosen so cavalry can pull out
   and units can retreat. Unconfirmed that it feels right in play.
-- The top button bar nearly touches the performance readout on narrow screens.
-- Installing as a home-screen app is off until the game is hosted behind a
-  real certificate (browsers refuse to install from a self-signed one).
-- Deferred battle features: fatigue, horse archers, terrain, a manual brace
-  toggle, walled sieges, spreading tick work across frames.
+- The game is reachable at `https://strategiccommand.ggior32.dev` through the
+  user's Caddy reverse proxy, which holds a real certificate and forwards
+  plain HTTP to the dev server on port 8060. The dev server is not hardened
+  and only lives as long as the session that started it.
+- The export's install (PWA) option is still off; with the real certificate
+  it can now be switched on, taking care that a cached build is never served
+  stale during playtesting.
+- A mild top/bottom bias may remain in mirrored AI battles (53-55% on some
+  seed ranges, 50.6% on another). Settle before head-to-head play.
+- Deferred battle features: fatigue, horse archers, a manual brace
+  toggle, walled sieges, spreading tick work across frames; terrain
+  visibility (hiding behind hills).
+- Terrain: phone GPU behaviour of `game/terrain.gdshader` is unverified
+  (desktop GL only); the AI's high-ground behaviour (hold, detour, rises)
+  is unplaytested; menu buttons are 44 px tall to fit the new entries.
 - Artillery is unplaytested: look and readability of engines, bolts, stones
   and impact marks on a phone; whether the Deploy button and set-up times
   feel right; whether AI batteries and guards behave sensibly in play.
@@ -107,21 +158,27 @@ A tuning pass from playtest feedback (built, uncommitted):
 
 ## Where we are headed
 
-1. Playtest, then commit the tuning pass, milestone 2, the unit book and
-   artillery.
+1. Playtest terrain (and artillery), then commit terrain.
 2. **Battle depth, agreed with the user on 2026-10-05:** artillery, then
    terrain height, before the campaign; vegetation and map generation are
    done alongside the campaign (milestone 3), since they tie together.
    - **Artillery: built, uncommitted, awaiting playtest** (bolt throwers and
      stone throwers as engine entities with crews; see DESIGN.md
      "Artillery").
-   - **Terrain height:** an integer height grid in the sim affecting movement
-     speed, missile range, melee and charges (high ground matters). Drawn as
-     thin contour lines with soft hill shading on the background, in a shader.
-   - **Trees and vegetation (with milestone 3):** forest zones that slow and disorder formations
-     (cavalry most), reduce missile effect, and make the field look alive.
-   - **Map generation (with milestone 3):** generate each battle map (heights, forests) deterministically
-     from the campaign map location, so both players get the same field.
+   - **Terrain height: built, uncommitted, awaiting playtest.**
+   - **Trees and vegetation (next terrain step, with milestone 3):** forest
+     zones that slow and disorder formations (cavalry most), reduce missile
+     effect, and make the field look alive. Hooks left: new feature types
+     can be rasterised by `sim/terrain.gd` into a second grid next to the
+     heights (same node layout, same hashing); the terrain texture's alpha
+     channel is reserved for vegetation density so the ground shader can
+     draw it in the same pass; movement already goes through one per-unit
+     speed factor (`_fac_for`) where a vegetation factor can multiply in.
+   - **Map generation from the overworld (next, with milestone 3):** the
+     campaign fills the scenario's `terrain` dictionary from the region
+     (kind + seed, optionally relief / scale or explicit features); both
+     peers build the identical grid and `ter_hash` in `state_hash()`
+     catches any mismatch at tick 0.
 3. **Milestone 3, minimal campaign:** region-node map, armies, recruitment
    (reusing the unit book page), a few building chains, money and upkeep,
    war / peace / trade diplomacy, campaign AI, pending battles, auto-resolve,
@@ -160,12 +217,16 @@ godot --headless --script res://tests/determinism_test.gd
 godot --headless --script res://tests/benchmark.gd
 godot --headless --script res://tests/matchups.gd
 godot --headless --script res://tests/matchups.gd -- --fair=100   # mirrored AI battles
+godot --headless --script res://tests/matchups.gd -- --only=terrain  # terrain effect sizes
+godot --headless --script res://tests/matchups.gd -- --fair=50 --fair-terrain=4  # mirrored, symmetric hill map
 godot --script res://tests/input_test.gd        # needs a window
 tools/check_scripts.sh                           # GDScript warnings as errors
 
 # Web build and playtest server
 tools/export_web.sh                              # writes build/web
-python3 tools/serve_web.py 8060 --cert .certs/dev.crt --key .certs/dev.key
+python3 tools/serve_web.py 8060                  # plain HTTP, behind Caddy
+python3 tools/serve_web.py 8443 --cert .certs/dev.crt --key .certs/dev.key
+                                                 # self-signed, direct on the LAN
 python3 tools/playtest_report.py                 # summarise playtest_logs/
 ```
 
@@ -175,7 +236,10 @@ python3 tools/playtest_report.py                 # summarise playtest_logs/
   -out .certs/dev.crt -subj "/CN=strategic-command-dev"
   -addext "subjectAltName=IP:<lan ip>,IP:127.0.0.1,DNS:localhost"`.
   Each browser shows a warning once; accept it.
-- `?scenario=bench_4000` on the URL jumps straight into a scenario. Benchmark
+- `?scenario=bench_4000` on the URL jumps straight into a scenario;
+  `&seed=N&terrain=ridge` fixes the seed and ground of a playable battle
+  (flat, rolling, ridge, valley, hill, slope, random). The battle's seed
+  and terrain kind are shown in the top-left readout. Benchmark
   scenarios use a fixed seed so hashes can be compared between devices, but
   only between builds with the same `sim:` hash in the build stamp.
 - Web export templates for Godot 4.7.2 (no-threads variants only) are in

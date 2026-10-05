@@ -9,7 +9,10 @@ extends SceneTree
 ## withdraw-army buttons, and the paused-order preview hand-over for each;
 ## artillery (battle_2000): Missile group includes batteries, battery card,
 ## Deploy button (pack up while paused, preview, hand-over, packing starts),
-## shoot order on a tapped enemy, Run / Skirmish hidden for batteries.
+## shoot order on a tapped enemy, Run / Skirmish hidden for batteries;
+## terrain (menu): the Terrain button cycles the ground for the battles, a
+## battle starts on the chosen terrain, and Replay restarts the last battle
+## with the same seed and ground.
 ## Exits 0 on success, 1 on failure.
 
 const Battle := preload("res://game/battle.gd")
@@ -144,6 +147,15 @@ func _initialize() -> void:
 		_step_unpause,
 		_step_check_art_handover,
 		_step_check_art_packing,
+		# Compact unit cards (26 player units).
+		_step_cards_start,
+		_step_cards_phone,
+		_step_cards_check_phone,
+		_step_cards_tap_last,
+		_step_cards_check_tap,
+		_step_cards_desktop,
+		_step_cards_check_desktop,
+		_step_cards_restore,
 		_step_done,
 	]
 
@@ -775,11 +787,13 @@ func _step_check_touch_targets() -> void:
 		hud.withdraw_button, hud.withdraw_all_button, hud.add_button]
 	for k in hud.group_buttons:
 		buttons.append(hud.group_buttons[k])
+	# Logical px; on a phone one is 0.88 CSS px (game/ui_scale.gd), so 40 is
+	# ~35 CSS px, ~7 mm.
 	for b in buttons:
 		var sz: Vector2 = (b as Control).get_combined_minimum_size()
-		if sz.y < 48 or sz.x < 72:
+		if sz.y < 40 or sz.x < 50:
 			small.append((b as Button).text)
-	_check(small.is_empty(), "new buttons are at least 72x48 px (%s)" % str(small))
+	_check(small.is_empty(), "buttons are at least 50x40 logical px (%s)" % str(small))
 	var ct: String = hud.card_text(u_arch)
 	_check(ct.find("ammo") >= 0, "missile unit card shows ammunition (%s)" % ct.replace("\n", " | "))
 
@@ -809,8 +823,20 @@ func _step_book_next() -> void:
 
 func _step_check_book_next() -> void:
 	var b = battle.hud.book
-	_check(b.current == (_book_seq + 1) % UT.count() and b.entry.unit_type == b.current,
+	_check(b.current == (_book_seq + 1) % (UT.count() + 1) and b.entry.unit_type == b.current,
 		"Next shows the next unit type (%d -> %d)" % [_book_seq, b.current])
+	# The last page is Terrain: Prev from the first page wraps to it.
+	steps.push_front(_step_check_book_terrain)
+	b.show_type(0)
+	_tap_control(b.prev_button)
+
+
+func _step_check_book_terrain() -> void:
+	var b = battle.hud.book
+	_check(b.current == UT.count() and b.terrain_page.visible and not b.entry.visible
+		and b.terrain_text.text.find("contour") >= 0 and b.terrain_text.text.find("+0.8%") >= 0,
+		"Prev from the first page shows the Terrain page with the rules and numbers")
+	b.show_type(1)
 
 
 func _step_book_close() -> void:
@@ -917,6 +943,73 @@ func _step_check_menu_book() -> void:
 
 func _step_check_menu_book_closed() -> void:
 	_check(not _menu.book.visible, "Close hides the menu's book")
+	steps.push_front(_step_terrain_cycle_check)
+	steps.push_front(_step_terrain_cycle)
+
+
+# ---- terrain (menu) ----
+
+const Terrain := preload("res://sim/terrain.gd")
+var _terrain_taps := 0
+var _replay_hash := 0
+var _replay_seed := -1
+
+
+func _menu_button(prefix: String) -> Button:
+	for b in _menu.find_children("*", "Button", true, false):
+		if (b as Button).text.begins_with(prefix):
+			return b
+	return null
+
+
+func _step_terrain_cycle() -> void:
+	var b := _menu_button("Terrain:")
+	_check(b != null and b.text == "Terrain: random", "menu has a Terrain button, random by default (%s)" % (b.text if b else "none"))
+	_check(_menu_button("Replay") != null and _menu_button("Replay").disabled, "Replay is disabled before any battle")
+	_tap_control(b)
+
+
+func _step_terrain_cycle_check() -> void:
+	_terrain_taps += 1
+	var b := _menu_button("Terrain:")
+	var want: Array[String] = ["", "Terrain: flat", "Terrain: rolling", "Terrain: ridge"]
+	_check(b.text == want[_terrain_taps], "Terrain button cycles (%s, want %s)" % [b.text, want[_terrain_taps]])
+	if _terrain_taps < 3:
+		steps.push_front(_step_terrain_cycle_check)
+		_tap_control(b)
+	else:
+		steps.push_front(_step_terrain_battle_check)
+		_tap_control(_menu_button("Small skirmish"))
+
+
+func _step_terrain_battle_check() -> void:
+	var b = _menu._battle
+	_check(b != null, "a battle started from the menu")
+	if b == null:
+		return
+	_check(b.sim.ter_on == 1 and int(b.sim.ter_info["kind"]) == Terrain.K_RIDGE,
+		"the battle has the chosen terrain (ridge): on %d kind %s" % [b.sim.ter_on, str(b.sim.ter_info.get("kind"))])
+	_replay_hash = b.sim.ter_hash
+	_replay_seed = b.seed_value
+	steps.push_front(_step_terrain_replay)
+	b.hud.menu_pressed.emit()
+
+
+func _step_terrain_replay() -> void:
+	_check(_menu._battle == null and _menu._menu.visible, "Menu returns to the start screen")
+	var r := _menu_button("Replay")
+	_check(r != null and not r.disabled and r.text.find(str(_replay_seed)) >= 0,
+		"Replay shows the last seed (%s)" % (r.text if r else "none"))
+	steps.push_front(_step_terrain_replay_check)
+	_tap_control(r)
+
+
+func _step_terrain_replay_check() -> void:
+	var b = _menu._battle
+	_check(b != null and b.seed_value == _replay_seed and b.sim.ter_hash == _replay_hash
+		and b.scenario_id == "skirmish", "Replay restarts the same battle with the same seed and ground")
+	if b != null:
+		b.hud.menu_pressed.emit()
 
 
 # ---- artillery ----
@@ -979,7 +1072,7 @@ func _step_check_art_card() -> void:
 	_check(ct.find("eng 4/4") >= 0 and ct.find("shots") >= 0 and ct.find("Ready") >= 0,
 		"battery card shows engines, shots and Ready (%s)" % ct.replace("\n", " | "))
 	var sz: Vector2 = hud.deploy_button.get_combined_minimum_size()
-	_check(sz.x >= 72 and sz.y >= 48, "Deploy button is a usable touch target (%s)" % str(sz))
+	_check(sz.x >= 50 and sz.y >= 40, "Deploy button is a usable touch target (%s)" % str(sz))
 
 
 func _step_art_deploy_tap() -> void:
@@ -1031,6 +1124,75 @@ func _step_check_art_packing() -> void:
 		steps.push_front(_step_check_art_packing)
 		return
 	_check(sim.u_depl[u_bolt] < _depl_before, "the battery is packing up (%d -> %d)" % [_depl_before, sim.u_depl[u_bolt]])
+
+
+# ---- compact cards ----
+
+var _cards_win_size := Vector2i.ZERO
+
+
+func _step_cards_start() -> void:
+	battle.queue_free()
+	battle = Battle.new()
+	battle.scenario_id = "battle_4000"
+	battle.seed_value = 7
+	root.add_child(battle)
+	_cards_win_size = root.content_scale_size
+
+
+## The phone's logical size: 780 x 360 CSS px at 0.88 CSS px per logical px.
+func _step_cards_phone() -> void:
+	root.content_scale_size = Vector2i(886, 409)
+	if not battle.paused:
+		battle._toggle_pause()
+
+
+func _cards_on_screen() -> Array:
+	var vis := root.get_visible_rect()
+	var rows := {}
+	var off := 0
+	for u in battle.hud._cards:
+		var r: Rect2 = (battle.hud._cards[u] as Control).get_global_rect()
+		rows[int(r.position.y)] = true
+		if not vis.encloses(r):
+			off += 1
+	return [rows.size(), off, battle.hud._cards.size()]
+
+
+func _step_cards_check_phone() -> void:
+	var c := _cards_on_screen()
+	_check(c[2] >= 20 and c[1] == 0 and c[0] <= 2,
+		"phone: all %d cards on screen, no scrolling, in %d rows (%d off screen)" % [c[2], c[0], c[1]])
+	var bottom: float = battle.hud.bottom_height()
+	_check(bottom <= 409 * 0.36, "phone: the bottom HUD takes %.0f of 409 logical px" % bottom)
+
+
+var _last_card := -1
+
+
+func _step_cards_tap_last() -> void:
+	for u in battle.hud._cards:
+		_last_card = u
+	_tap_control(battle.hud._cards[_last_card])
+
+
+func _step_cards_check_tap() -> void:
+	_check(battle.selected == _last_card and battle.hud._faces[_last_card].selected,
+		"tapping the last (narrow) card selects that unit (%d, selected %d)" % [_last_card, battle.selected])
+
+
+func _step_cards_desktop() -> void:
+	root.content_scale_size = Vector2i(2341, 1317)
+
+
+func _step_cards_check_desktop() -> void:
+	var c := _cards_on_screen()
+	_check(c[1] == 0 and c[0] == 1, "desktop: all %d cards in %d row" % [c[2], c[0]])
+	_check(not battle.hud._faces[_last_card].narrow, "desktop cards show names")
+
+
+func _step_cards_restore() -> void:
+	root.content_scale_size = _cards_win_size
 
 
 func _step_done() -> void:

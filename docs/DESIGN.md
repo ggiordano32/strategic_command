@@ -160,8 +160,8 @@ are the reference for balance.
 | Light infantry | 36 | 26 | 4 | 15% / 40% | 36 | 1.2 | 85 | 4.4 | |
 | Spearmen | 15 | 30 | 9 | 35% / 55% | 30 | 2.2 | 90 | 3.6 | brace 55, +20 vs cavalry |
 | Pikemen | 34 | 40 | 8 | 20% / 30% | 30 | 5.5 | 90 | 3.0 | 4 ranks strike, brace 80, sword 18/16/24 |
-| Archers | 18 | 16 | 3 | 0 / 0 | 24 | 1.0 | 75 | 4.0 | 140 m, 20 arrows, 4 s reload |
-| Javelinmen | 28 | 22 | 3 | 20% / 35% | 28 | 1.2 | 80 | 4.2 | 40 m, 4 javelins, 2.8 s reload |
+| Archers | 18 | 16 | 3 | 0 / 0 | 24 | 1.0 | 75 | 4.0 | 140 m, 40 arrows (was 20), 4 s reload |
+| Javelinmen | 28 | 22 | 3 | 20% / 35% | 28 | 1.2 | 80 | 4.2 | 40 m, 6 javelins (was 4), 2.8 s reload |
 | Shock cavalry | 36 | 28 | 10 | 20% / 15% | 32 | 1.6 | 150 | 8.2 | mass 400, charge 70, turns 90 deg in 1.6 s; arrows x1.2, 9% of hits down the horse |
 | Bolt throwers (crew) | 14 | 14 | 3 | 0 / 0 | 22 | 1.0 | 75 | 0.8 packed | 4 engines x 4 crew, cost 25/crew |
 | Stone throwers (crew) | 14 | 14 | 3 | 0 / 0 | 22 | 1.0 | 75 | 0.7 packed | 3 engines x 6 crew, cost 30/crew |
@@ -297,6 +297,20 @@ The pool has 128 landing-tick buckets (flights up to 12.7 s, for stones).
 Skirmish mode (default on for javelins, off for archers): a unit falls back
 35 m when non-missile enemies come within 30 m (55 m for cavalry).
 
+Ammunition (October 2026, after "everything runs out of ammo fairly
+quickly"): archers 20 -> 40 arrows, javelins 4 -> 6 (8 was tried: in the
+equal-cost duels javelinmen then kited even spearmen to death), bolts 7 ->
+11 and stones 10 -> 15 per engine, plus the artillery refill (one more
+load). Kills by cause in 12 AI battles (bench_2000, flat / random
+terrain), before -> after: missiles 6% -> 10% / 3% -> 6%, artillery 6% ->
+8% / 3% -> 4%; battles 5.0 -> 4.6 min / 5.2 -> 5.5 min, no draws. Kept:
+archers' full 40 arrows into the front of heavy 100 kill 2.6 (was 0.7);
+cavalry charging archers head-on loses ~14 of 60 and wins; artillery
+(940) still loses every time to heavy 100 + archers 68. Changed: in the
+equal-cost open-field duels javelinmen now beat pikes and archers by
+kiting them (spears and heavy still beat them), and javelins 150 beat
+light 100 every time (was 65%).
+
 **Artillery.** A battery is a unit whose soldiers are the crews; its
 engines are their own packed arrays (`e_*`: position, facing, hp, state
 working / wrecked / abandoned, reload work, ammunition, crew at it), hashed
@@ -308,10 +322,12 @@ as men fall or engines are wrecked the survivors re-man the rest.
 |---|---|---|
 | Battery | 4 engines x 4 crew (cost 400) | 3 engines x 6 crew (cost 540) |
 | Range / minimum | 230 m / 15 m, flat | 290 m / 60 m, lobbed over friends |
-| Shots per engine | 7 | 10 |
+| Shots per engine | 11 (was 7), + 11 in reserve | 15 (was 10), + 15 in reserve |
+| Refill at full crew | 6.5 s per bolt (~70 s a load) | 6 s per stone (~90 s a load) |
 | Reload at full crew | 7.5 s (silent below 2 crew) | 15 s (silent below 3 crew) |
-| Flight | 55 m/s, leads moving targets | 28 m/s, no leading |
-| Scatter (triangular, x1.5 along) | 0.3 m + 1% of range | 1.5 m + 4% of range |
+| Flight | 55 m/s, leads moving targets | 28 m/s, leads the unit's movement 90% |
+| Aim | a random man of the target | the near face of the target along the line to a random man, 0.5 m in |
+| Scatter (triangular, x1.5 along) | 0.3 m + 1% of range | 1.5 m + 4.8% of range (was 4%); long errors halved |
 | Shot energy / armour piercing | 120 / 80% | 130 / 50% |
 | Arc / traverse | +-25 deg / ~10 deg/s | +-20 deg / ~7 deg/s |
 | Set up / pack up | 6 s / 3 s | 12 s / 6 s |
@@ -350,11 +366,54 @@ as men fall or engines are wrecked the survivors re-man the rest.
   energy as damage). Rule for friends: a bolt flies at body height the whole
   way, so friends in the line are hit just like enemies (resolved with
   everyone where they stand at landing time).
+- *Stone aim* (October 2026, after "they hurl behind the enemy very
+  often"): each stone used to aim at a random man anywhere in the
+  formation, with no lead and a symmetric along-flight error of up to
+  +-1.5x the spread, so a third of the stones landed beyond the rear of a
+  standing line and two thirds or more beyond an advancing one. Now it aims
+  at the near face of the formation along the line to a random man (the
+  nearest soldier within 2.5 m of that line, 0.5 m in; computed with an
+  exact length, since `approx_len`'s 4% error is metres at 200 m), leads by
+  90% of the unit's mean movement (not one man's, who may be shuffling up
+  to fill a gap), and keeps only half of a long error: a short stone lands
+  in front and ploughs into the front ranks. Stones landing beyond the
+  rear (`tests/matchups.gd -- --only=stoneaim`, 300-man line / 120 pikes at
+  100 / 200 / 270 m): standing 38/36/35% -> 7/19/27% and 28/33/30% ->
+  5/19/19%; advancing 66/71/82% -> 1/9/22% and 67/76/79% -> 3/12/24%.
+  Killed per 30 stones, standing: line 22.6/20.0/15.8 -> 33.7/22.6/17.8,
+  pikes 27.3/18.8/16.2 -> 37.0/24.2/17.7 (scatter widened from 4% to 4.8%
+  to keep mid and long range near the old band; close range is deadlier).
+  Advancing targets are now hit (line 3.5/7.7/4.3 -> 8.2/22.8/16.4):
+  marching steadily in range of stones is no longer safe.
 - *Stones* land at the scattered point: everyone within 0.9 m is struck, then
   the stone ploughs 9 m on along its flight through anyone within 0.6 m
   (1.0 m horses), losing 5 energy per metre and 30 + armour per body, at most
   6 men; damage = energy - armour x 50%, knockdown (energy / 2 + 20)%. No
   shield helps. An engine in the path takes double damage (counter-battery).
+- *Refill* (order `ORDER_REFILL`, the action bar's "Refill" button with
+  batteries selected): each battery carries one more full load in its
+  baggage (`m_reserve` per engine, shown on its card as shots + reserve).
+  Told to refill, a standing battery settles in over 6 s (`REFILL_FULL`
+  ticks; it stops moving and shooting at once); once in, each working
+  engine short of its load gains the work of the crew standing at it and a
+  shot comes up every `m_refill` x full crew (bolts 6.5 s, stones 6 s at
+  full crew; slower with fewer hands, nothing below the minimum crew). It
+  cannot move, turn, traverse or shoot from the moment it starts settling
+  until it is back out (3 s, twice as fast as settling). Any move, shoot,
+  withdraw or Deploy order ends it (after the 3 s); melee or a rout breaks
+  it off at once; it ends by itself when the engines are full or the
+  reserve is empty. A finite reserve (rather than unlimited refills): in a
+  5-10 minute battle one extra load roughly doubles a battery's shooting,
+  and with a limit, when to spend the minute is a decision, and an
+  unattended battery cannot fire for the whole battle. The AI refills when
+  a battery is empty or below a quarter, or below three quarters with
+  nothing in range, if no enemy melee unit is within 35 m (or coming for
+  it within 100 m), and stops when threatened or once three quarters full
+  with a target in range; it never refills a battery whose engines are
+  all wrecked or abandoned. View: card "To refill 40%" / "REFILLING" /
+  "Leaving refill" and blue shot count, a blue ammunition ring under the
+  marker (dashed while settling in / out), "REFILLING 60%" on the Orders
+  overlay; the paused preview covers the order like every other.
 - *Engines* are wrecked at 0 hp: enemy soldiers within 2 m (counted through
   the melee grid, up to 6) take 3 hp each per tick, so a unit that reaches a
   battery wrecks it in seconds. A battery that routs or dies abandons its
@@ -446,7 +505,12 @@ steps 40 m out of its arc; a side shelled by stronger artillery stops
 skirmishing and closes; retired units shelled while idle step aside.
 
 **Benchmarks** (desktop, Ryzen 7 5800X, AI vs AI, mixed armies with
-artillery, seed 42): 4,000 soldiers mean 2.93 ms per tick (milestone 1
+artillery, seed 42). With terrain height (October 2026): bench_4000 (flat)
+mean 2.87 ms, p95 4.12, max 5.6-5.7 (the AI's `_plan()` now reads the sim
+arrays through typed locals: 280 -> 75 us per call, ~0.06 ms off the mean);
+bench_4000_hills mean 2.6-2.7, p95 4.2-4.4, max 6.2-6.4 (budget 3.23 /
+6.45: the worst ticks are the AI army ticks and deployment, close to the
+limit); bench_2000 1.30 / 2.58. Before terrain: 4,000 soldiers mean 2.93 ms per tick (milestone 1
 infantry-only: 2.15; before artillery 2.26), p95 4.25 (3.46), max 6.12
 (4.30): within 1.5x. 2,000: mean 1.31, max 2.67. Artillery costs ~0.12 ms
 per tick at 4,000 (profile_phases); the rest of the rise is a different,
@@ -475,6 +539,138 @@ order: fixed-point `>> 12` (floors) replaced by `/ 4096` (truncates,
 antisymmetric), and the charge's extra victim is no longer the first found
 in grid scan order. Result: top army wins 51.4% (as given) and 49.8% (side 1 listed first) of
 420 battles each, 50.6% overall; mirrored duels per type within noise.
+
+### Terrain height: as built
+
+Numbers are the constants in `sim/battle_sim.gd` ("Terrain" block) and the
+per-type fields `climb`, `m_hgain`, `m_apex` in `sim/unit_types.gd`;
+`tests/matchups.gd -- --only=terrain` measures them.
+
+**Height field.** `sim/terrain.gd` builds an integer height grid with nodes
+4 m apart over the field (heights in sim units, 1 m = 1024, lowest node 0)
+once at setup, from the scenario's `terrain` dictionary (all ints): `kind`
+(flat, rolling, ridge, valley, hill, slope; random = one of those five from
+the seed; custom = only hand-placed features), `seed` (-1 = the battle
+seed), `relief_m`, `scale_m` (0 = the kind's default), `sym` (exactly
+symmetric under the 180-degree rotation that swaps the armies; fairness
+tests) and `features` (hand-placed: round hill or hollow, ridge or valley
+along a segment, one-sided ramp). Generation composes features with smooth
+integer profiles (a (1 - d^2/r^2)^2 bell computed from squared distances,
+no square root; a smoothstep ramp), uses its own xorshift RNG (never the
+sim's), and takes 3-7 ms for a 560 x 600 m field on the desktop. Defaults
+keep the steepest ground of a playable map around 15-25% (rolling 9 m over
+~95 m features, ridge 12 m, valley 10 m, hill 16 m, slope 18 m) plus low
+(1 m), broad undulations. The grid's MD5 and the parameters form
+`ter_hash`, which is in the `state_hash()` header: two peers that built
+different maps disagree at tick 0. Nothing is transmitted; the campaign
+will pass kind + seed (or features). No `terrain` key, or kind flat:
+`ter_on` = 0 and every terrain rule is skipped, so flat battles are
+bit-for-bit those of the build before terrain (golden trajectory digests in
+`tests/determinism_test.gd`). The AI vs AI benchmarks stay flat;
+`bench_4000_hills` is the fixed hilly benchmark (rolling, terrain seed 4242,
+generator version 1: changing the generator changes it).
+
+**Sampling.** `height_at` is fixed-point bilinear: the whole weighted sum
+is formed exactly and divided once, so the mirrored point of a symmetric
+map gives exactly the same height; `slope_at` interpolates node gradients
+(central differences) the same way, antisymmetric under mirroring. Field
+sizes are multiples of 4 m so mirrored points fall in mirrored cells. The
+determinism test checks 16,000 points, gradients, grades and line-of-fire
+results on four symmetric maps for exact symmetry. Lookups cost 0.2-0.6 us
+on the desktop.
+
+**Where lookups happen.** Not per soldier per tick: slope effects on
+movement are per unit (one slope and one height lookup per unit per tick,
+at the anchor and centroid); soldiers then move at their unit's pace.
+Per-soldier lookups happen only per melee blow (2), per charge impact (2),
+per shot (2, plus the line-of-fire samples for flat weapons) and per bolt
+victim.
+
+| Rule | As built |
+|---|---|
+| Uphill | speed -`climb`% per 10% of grade along the direction of travel (the unit's facing in melee): light, javelins 13; archers 14; heavy, spears 15; pikes 17; cavalry 24; packed bolts 40, stones 45. Never below 30% (artillery 20%) |
+| Downhill | +5% at 10% and gentler; beyond 20%, -1% per 1% of extra grade (cavalry twice) |
+| Steep ground (>= 20%) | moving across it adds 4 disorder a tick (decay 2) up to 30: a pike block's wall comes down, spears cannot brace while moving there. A pike block standing on it takes 150% disorder from flank, rear and charge hits |
+| Melee | the man striking down gets +0.8% to hit per 10% of grade between the two (height difference over their distance), at most +-2% (25%); rolled per mille on hilly maps so small slopes give small edges |
+| Charge impact | rider above the victim: +20% per 10% of grade, at most +35%; below: down to -45% |
+| Charge momentum | uphill the cap falls by 3 per 1% of grade (40, the minimum for any impact, at 20%); 10% or more downhill builds 5 a tick instead of 4 |
+| Missile range | + `m_hgain`% of the height difference shooter - target: arrows and stones 1.5 m per metre, javelins 1.0, bolts 0.6; at most +-30% of the range. Target choice uses unit centroid heights; each shot the shooter's and aim point's |
+| Line of fire | flat weapons (javelins, bolts): the straight line from 1.5 m above the shooter's ground to 1 m above the aim point's, allowed to rise `m_apex`% of the distance at mid-flight (javelins 10%, bolts 2%), sampled every 4 m (8 m for target choice), ground within 3 m of either end ignored. Fire at will skips hidden targets; an explicit order on one is refused (missile infantry walks to a quarter of its range until it can see; a battery waits) |
+| Bolts | stopped where the ground rises above the line (also over the 25 m plough); strike only men the line passes between 0.2 m below and 2 m above their feet (a bolt shot down a hill passes over men below its line) |
+| Stones | plough length -40% per 10% uphill (at least 15%), +15% per 10% downhill (at most 130%) |
+| Arrows | arc over everything; only the range changes |
+
+**AI** (all through player orders; hilly maps only, flat decisions
+unchanged): deployment shifts up to 30 m aside, back or forward when that
+line stands 2 m higher; while skirmishing the line halts on a crest short
+of its halt line if that is 1.5 m higher and still within reach; an army
+whose foot stand 4 m or more above the enemy holds its ground (at most 4
+minutes, and only while not clearly outshot or outgunned by artillery) and
+its foot attack only enemies within 25 m until a third of them are
+fighting, then the battle is on everywhere; infantry whose last 35 m to the
+target climb more than 15% goes round to the target's flank if that final
+approach is at most two thirds as steep and the detour at most 1.7x as
+long (once per target, `A_DETOUR`); cavalry target scores lose 60 per % of
+uphill grade; archers, javelins and batteries take the highest spot within
+12 m aside / 10 m back or forward of their slot if 1 m higher, bolt sites
+with a line of fire to the enemy counting 4 m higher; a bolt battery whose
+targets in range are all behind a crest moves to the first nearby spot
+(forward first) from which it sees the nearest enemy. Cheap: the bolt
+siting walks candidate spots from the highest down and stops once no lower
+spot can win (16 m samples), and a battery that is staying put skips it.
+
+**View.** `game/terrain_layer.gd` builds an RGBA8 texture once per battle:
+the 4 m sim grid upsampled to 2 m with a Catmull-Rom midpoint rule, height
+as 16 bits in R/G, hill shade (light from the upper left, relief exaggerated
+2.5x) in B, A reserved for vegetation. `game/terrain.gdshader` draws the
+whole field in one pass: it fetches the four nodes with `texelFetch`
+(nearest; no float textures, no reliance on filtering precision), decodes
+and interpolates in highp, tints by height (+-22 m around the mean height,
+slightly darker and cooler low, lighter and warmer high), applies the soft
+shade (at most about +-30% brightness), draws contours every 2 m (every fifth darker) about 1 px wide at
+any zoom via `fwidth`, fading them out where they would be packed closer
+than ~6 px (minor) / ~8 px (major), with levels set half an interval off the
+commonest height so a plain never lies on a line, and the faint 50 m grid
+(kept, toned down to 4.5% white, now 1 px at any zoom). Flat maps draw the
+old colour and grid. Soldiers are not shaded by height (not needed; the
+contours and shading read well under them). The overlay shows the selected
+missile unit's and battery's range bent by height (radius per direction:
+range against the ground under that point, two refinements), "uphill /
+downhill N%" on the selected unit's attack line and move destination when
+the average slope is 4% or more, and a flat shot blocked by the ground as a
+broken red line to the crest, a red cross there and "NO LINE OF FIRE".
+
+**Measured** (`tests/matchups.gd`, 20 seeds unless noted):
+- Equal heavy 100 vs heavy 100 on a slope, side above wins (60 runs per
+  cell, high side at the top and at the bottom equally; flat control 55%):
+  both advancing to meet 56 / 63 / 66 / 88% at 5 / 10 / 15 / 25% grade;
+  the higher one holding while the lower climbs 57 / 64 / 70 / 84%. (Before
+  tuning, whole-percent to-hit steps gave 80% at only 5%; hence the
+  per-mille roll.)
+- Archers 80 vs archers 80, 115 m apart: flat 32 / 31 killed; the unit on
+  a 15 m hill kills 42 and loses 7 (the lower one is mostly out of range).
+- Cavalry 60 charging a standing heavy 100 across a 12% slope: infantry
+  killed by 40 s 23 flat, 29 downhill, 12 uphill (same 45 impacts; riders
+  lost ~25 either way; the cavalry still loses to a steady heavy front).
+- Pike 120 holding against heavy 100: wins every time on flat and on 15% /
+  25% slopes either way; losses 9 flat, 4-5 above, 11-14 below. Pinned and
+  flanked on a 25% slope the block does far less damage (2 attackers killed
+  vs 45 flat), mostly because the pinning unit climbs slowly and the
+  flankers arrive first; the steep-ground disorder rule itself adds little
+  (2.9 without it).
+- Bolts ordered at a pike block behind a 6 m crest: 0 fired (refused every
+  time); at light infantry clear of the crest: 28 fired, 29 killed.
+- Stones on a pike block on a 10% slope: struck 37 uphill, 40 flat, 43
+  downhill (killed 17.6 / 18.4 / 18.8).
+- Mirrored AI battles (bench_2000) on mirror-symmetric generated maps,
+  60 seeds x both unit orders: hill 62 bottom / 58 top, rolling 62 / 58, no
+  draws; on flat maps, same seeds 0-119: 132 / 108 (identical to the build
+  before terrain, battle by battle: this 55% is pre-existing on this seed
+  range; the earlier 840-battle figure was 50.6%).
+- AI battles on generated terrain (60 runs, 12 per kind): decided in 3.5-
+  7.7 min (mean 4.3-5.8 per kind), no draws.
+- Flat: every earlier matchup line is unchanged.
+- Benchmarks: see below.
 
 ## 5. Networking
 
@@ -530,6 +726,37 @@ Per-soldier state is too large to stream, so only orders are sent.
   agreements are lockstep orders, so the change lands on the same tick for both.
 - Group buttons for "select all infantry / cavalry / missiles".
 
+HUD as built (October 2026, after "the buttons are too large ... double
+stack the cards"): the UI is laid out in logical pixels and
+`game/ui_scale.gd` sets the window's logical size from the device: one
+logical pixel is 0.88 CSS px on a touch screen (a 42 px button is ~37 CSS
+px, ~7 mm on the user's phone) and 0.82 CSS px with a mouse (normal
+desktop sizes on any monitor), times an S / M / L setting (0.85 / 1 / 1.18,
+menu "UI size", saved in `user://settings.cfg`). CSS size and touch come
+from `window.innerWidth` and `matchMedia("(pointer: coarse)")` on the web,
+the screen scale and DisplayServer natively; stretch stays canvas_items, so
+the battlefield is drawn at full window resolution. Never laid out smaller
+than 800 x 400 logical. A 780 x 360 CSS phone is 886 x 409 logical; a
+1920 x 1080 desktop 2341 x 1317; 3840 x 2160 at DPR 1 4682 x 2634.
+Top bar (right): Withdraw army (tap twice), Units, Orders, Pause, speed,
+Menu; the readout (left) is one short line (fps, battle clock), tap for the
+full readout below the bar (benchmarks open it). Bottom: one row with the
+group buttons (left) and the selection's actions (right), then the unit
+cards, wrapping into the fewest rows: 84-136 logical px wide, 34 tall;
+from two rows on they become narrow (symbol and number only) if that saves
+a row. 26 units: two rows on the phone, one on a desktop; 40 fit in three
+rows on the phone. A card shows the symbol, short name and number, a
+headcount bar with the count and a short state word (artillery: set-up /
+refill state), ammunition at the bar's right (batteries: shots + reserve),
+an orange edge under fire or charge, a white frame when selected, yellow
+when routing, orange text wavering, grey when gone. Screenshots:
+`docs/screenshots/hud_*.png`. Testing aids: `--ui-dpr=X --ui-touch=0/1
+--ui-size=S|M|L` emulate a device, `--shot=file.png` saves the window,
+`--menu-tests`, `--refill=U`.
+
+Start menu: the three battles, then Terrain, Replay, Unit book, UI size,
+Fullscreen and a folded "Tests and benchmarks" section with the other 16.
+
 Built in milestone 2: group buttons All / Inf / Missile / Cav and a "+ Add"
 toggle (taps on cards or units add to / remove from the selection; Shift on
 desktop). A selected group moves together on a ground tap, keeping relative
@@ -563,6 +790,17 @@ stone impacts leave a 1.5 s dust ring and furrow drawn by the overlay from a
 small view-only ring buffer in the sim (not state). Unit book pages for both
 types show an Artillery stat section and derived tags.
 
+Terrain controls: the menu's "Terrain:" button cycles the ground for the
+three playable battles (random from the seed, flat, rolling, ridge, valley,
+hill, slope; tests keep their own), "Replay (seed N)" restarts the last
+battle with the same seed and ground, and `?terrain=ridge&seed=N` /
+`--terrain= --seed=` do the same from the URL / command line. The readout
+shows the terrain kind and seed. The unit book's last page, "Terrain",
+explains the rules with the sim's numbers; unit pages carry terrain tags
+derived from the data (climb rate, range per height, flat weapons blocked
+by crests, charge up / downhill, pike wall on steep ground). Testing aids:
+`--force-terrain=K` (any scenario), `--attack=U:T`.
+
 Unit symbols and unit book: every unit type has a symbol (drawn with canvas
 primitives in `game/unit_icons.gd`) used for the field markers (disc in the
 side colour, yellow when routing) and on the unit cards. The unit book
@@ -582,6 +820,10 @@ selecting or ordering anything.
 - Placeholder top-down sprites, tinted per faction, until the game is proven fun.
 - Per unit type: idle, walk, attack, die. One sprite sheet each.
 
+Ground: a topographic-map look from one shader (see "Terrain height: as
+built"): thin 2 m contours, soft hill shading from the upper left, a subtle
+tint by height, the faint 50 m grid. Screenshots in `docs/screenshots/`.
+
 Milestone 2 placeholder: one procedurally drawn atlas with nine top-down
 greyscale sprites (sword and shield, spear, long pike, bow, javelins, horse
 and rider, gun crew, bolt thrower, stone thrower; cells 6 x 2.5 m), tinted per side and state in the shader; each sprite has its own
@@ -597,8 +839,10 @@ soldiers, plus one for missiles in flight.
    projectiles, cavalry charges and knockdowns, bracing, withdrawal and the
    per-unit battle result, the battle AI, multi-select and group moves,
    mixed-army and test scenarios, balance matchups (`tests/matchups.gd`).
-   Deferred: horse archers, fatigue, terrain, and line-of-sight for javelins
-   at soldier level (it is checked unit to unit).
+   Deferred: horse archers, fatigue, and line-of-sight past friends for
+   javelins at soldier level (it is checked unit to unit).
+   Then terrain height (see "Terrain height: as built"); vegetation and map
+   generation from the campaign map come with milestone 3.
    Then (battle depth): artillery (bolt and stone throwers) as above.
 3. **Minimal campaign.** Small map, armies, recruitment, buildings, economy,
    pending battles, auto-resolve, campaign AI, diplomacy states.

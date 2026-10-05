@@ -11,7 +11,7 @@ const Scenarios := preload("res://sim/scenarios.gd")
 
 func _init() -> void:
 	var max_ticks := 6000
-	var scens := ["bench_2000", "bench_4000"]
+	var scens := ["bench_2000", "bench_4000", "bench_4000_hills"]
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--max-ticks="):
 			max_ticks = int(a.get_slice("=", 1))

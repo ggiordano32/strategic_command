@@ -11,6 +11,8 @@ const SoldierLayer := preload("res://game/soldier_layer.gd")
 const Overlay := preload("res://game/overlay.gd")
 const Hud := preload("res://game/hud.gd")
 const OrderPreview := preload("res://game/order_preview.gd")
+const TerrainLayer := preload("res://game/terrain_layer.gd")
+const Terrain := preload("res://sim/terrain.gd")
 const UT := preload("res://sim/unit_types.gd")
 
 const PX_PER_M := 10.0
@@ -25,8 +27,6 @@ const MIN_LINE_M := 3.0           # shorter drags keep the current frontage
 const ZOOM_MIN := 0.12
 const ZOOM_MAX := 4.0
 const PLAYER_SIDE := 0
-const HUD_TOP := 76.0             # screen px used by the top buttons
-const HUD_BOTTOM := 176.0         # unit cards plus the group bar
 const STATS_WINDOW := 20          # ticks (2 s) for sim ms average / worst
 const TELEMETRY_SAMPLE_SEC := 5.0
 # Ticks at which the state hash is reported, so runs of the same scenario and
@@ -39,9 +39,13 @@ static var show_all_orders := false
 
 var scenario_id := "skirmish"
 var seed_value := 1
+## Terrain kind for scenarios with generated terrain (Terrain.K_*), or -1
+## for the scenario's own (random from the seed for the playable battles).
+var terrain_kind := -1
 
 var sim: BattleSim
 var camera: Camera2D
+var terrain: TerrainLayer
 var soldiers: SoldierLayer
 var overlay: Overlay
 var hud: Hud
@@ -100,18 +104,21 @@ var _mouse_pan := false
 
 func _ready() -> void:
 	sim = BattleSim.new()
-	sim.setup(Scenarios.make(scenario_id), seed_value)
+	var scn := Scenarios.make(scenario_id)
+	if terrain_kind >= 0 and scn.has("terrain"):
+		scn["terrain"]["kind"] = terrain_kind
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--force-terrain="):
+			# Testing aid: generated terrain of this kind on any scenario.
+			scn["terrain"] = {"kind": int(a.get_slice("=", 1))}
+	sim.setup(scn, seed_value)
 	bench_mode = sim.is_ai_side(0) and sim.is_ai_side(1)
 	interactive = not sim.is_ai_side(PLAYER_SIDE)
 
-	var bg := ColorRect.new()
-	bg.color = Color(0.27, 0.38, 0.2)
-	bg.size = Vector2(sim.field_w, sim.field_h) / M * PX_PER_M
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(bg)
-	var grid := _FieldGrid.new()
-	grid.size_px = bg.size
-	add_child(grid)
+	# Ground: height shading, contours and the faint 50 m grid in one shader.
+	terrain = TerrainLayer.new()
+	add_child(terrain)
+	terrain.setup(sim, PX_PER_M)
 
 	soldiers = SoldierLayer.new()
 	add_child(soldiers)
@@ -128,11 +135,12 @@ func _ready() -> void:
 	camera = Camera2D.new()
 	add_child(camera)
 	camera.make_current()
-	_fit_camera()
 
 	hud = Hud.new()
 	add_child(hud)
 	hud.build(sim, PLAYER_SIDE, interactive)
+	hud.set_stats_expanded(bench_mode)  # benchmarks show the full readout
+	_fit_camera()
 	hud.card_pressed.connect(_on_card)
 	hud.pause_pressed.connect(_toggle_pause)
 	hud.speed_pressed.connect(_cycle_speed)
@@ -142,6 +150,7 @@ func _ready() -> void:
 	hud.fire_pressed.connect(_toggle_fire)
 	hud.skirmish_pressed.connect(_toggle_skirmish)
 	hud.deploy_pressed.connect(_toggle_deploy)
+	hud.refill_pressed.connect(_toggle_refill)
 	hud.withdraw_pressed.connect(_withdraw)
 	hud.withdraw_all_pressed.connect(_withdraw_all)
 	hud.group_pressed.connect(_select_group)
@@ -166,14 +175,17 @@ func _ready() -> void:
 		_tele.page_hiding.connect(_on_page_hiding)
 	_start_msec = Time.get_ticks_msec()
 	_reset_window()
-	_t("scenario_start", {"scenario": scenario_id, "seed": seed_value, "soldiers": sim.n,
+	_t("scenario_start", {"scenario": scenario_id, "seed": seed_value, "terrain": sim.ter_info,
+		"terrain_build_ms": terrain.build_ms, "soldiers": sim.n,
 		"units": sim.n_units, "bench": bench_mode, "interactive": interactive,
 		"speed": SPEEDS[speed_idx], "start_tick": sim.tick, "hash_at_start": _hash_text})
 
 
 ## Testing aids (desktop only): -- --skip-ticks=N --cam=x_m,y_m --zoom=Z
 ## --select=U[,U...] --pause fast-forward the sim and frame the camera for
-## screenshots; --cam-unit=U centres on a unit after the skip.
+## screenshots; --cam-unit=U centres on a unit after the skip; --attack=U:T
+## gives unit U an attack order on unit T; --refill=U puts battery U into
+## its refill mode (80 ticks run).
 func _apply_debug_args() -> void:
 	for a in OS.get_cmdline_user_args():
 		var v := a.get_slice("=", 1)
@@ -199,6 +211,16 @@ func _apply_debug_args() -> void:
 					first = false
 				else:
 					_toggle_in_selection(int(part))
+		elif a.begins_with("--refill="):
+			# --refill=U tells battery U to refill (it settles in over the
+			# following ticks; combine with --skip-ticks to see it).
+			sim.queue_order(BattleSim.make_refill_order(sim.tick, int(v), 1))
+			for t in 80:
+				sim.step()
+			soldiers.upload()
+		elif a.begins_with("--attack="):
+			# --attack=U:T orders unit U to attack (shoot) unit T.
+			_queue(BattleSim.make_attack_order(0, int(v.get_slice(":", 0)), int(v.get_slice(":", 1)), 0))
 		elif a == "--show-orders":
 			hud.orders_button.button_pressed = true
 		elif a == "--demo-orders":
@@ -234,7 +256,9 @@ func _fit_camera() -> void:
 	lo = lo / M * PX_PER_M
 	hi = hi / M * PX_PER_M
 	var size := (hi - lo).max(Vector2(PX_PER_M * 40.0, PX_PER_M * 40.0))
-	var clear := Rect2(0.0, HUD_TOP, vp.x, maxf(vp.y - HUD_TOP - HUD_BOTTOM, vp.y * 0.3))
+	var top := hud.top_height()
+	var bottom := hud.bottom_height()
+	var clear := Rect2(0.0, top, vp.x, maxf(vp.y - top - bottom, vp.y * 0.3))
 	var z := minf(clear.size.x / (size.x * 1.15), clear.size.y / (size.y * 1.25))
 	z = clampf(z, ZOOM_MIN, ZOOM_MAX)
 	camera.zoom = Vector2.ONE * z
@@ -328,9 +352,18 @@ func _update_stats_label() -> void:
 		avg /= _sim_ms.size()
 	var a0 := sim.alive_count(0)
 	var a1 := sim.alive_count(1)
-	hud.stats_label.text = "FPS %d   sim %.2f ms avg / %.2f worst (2 s)   upload %.2f ms\nsoldiers %d  (%d v %d)   missiles %d   tick %d   hash %s" % [
+	hud.set_stats("%d fps  %d:%02d" % [Engine.get_frames_per_second(), sim.tick / 600, (sim.tick / 10) % 60],
+		"FPS %d   sim %.2f ms avg / %.2f worst (2 s)   upload %.2f ms\nsoldiers %d  (%d v %d)   missiles %d   tick %d   hash %s\n%s   seed %d" % [
 		Engine.get_frames_per_second(), avg, worst, _upload_ms, a0 + a1, a0, a1,
-		sim.projectiles_in_flight(), sim.tick, _hash_text]
+		sim.projectiles_in_flight(), sim.tick, _hash_text, terrain_name(sim), seed_value])
+
+
+## "Terrain: Ridge" etc. for the readout and the result.
+static func terrain_name(p_sim) -> String:
+	if p_sim.ter_on == 0:
+		return "Terrain: flat"
+	var k: int = p_sim.ter_info.get("kind", 0)
+	return "Terrain: %s" % Terrain.KIND_NAMES[k].to_lower()
 
 
 func _show_result() -> void:
@@ -475,7 +508,8 @@ func _queue(order: Dictionary) -> void:
 const ORDER_NAMES := {BattleSim.ORDER_MOVE: "move", BattleSim.ORDER_ATTACK: "attack",
 	BattleSim.ORDER_HALT: "halt", BattleSim.ORDER_RUN: "run", BattleSim.ORDER_FIRE: "fire",
 	BattleSim.ORDER_SKIRMISH: "skirmish", BattleSim.ORDER_WITHDRAW: "withdraw",
-	BattleSim.ORDER_WITHDRAW_ALL: "withdraw_all", BattleSim.ORDER_DEPLOY: "deploy"}
+	BattleSim.ORDER_WITHDRAW_ALL: "withdraw_all", BattleSim.ORDER_DEPLOY: "deploy",
+	BattleSim.ORDER_REFILL: "refill"}
 
 
 ## Select only unit u (-1: clear the selection).
@@ -535,6 +569,7 @@ func _refresh_actions() -> void:
 	var fire := -1
 	var skirm := -1
 	var deploy := -1
+	var refill := -1
 	for u in selection:
 		var art := UT.cls(sim.u_type[u]) == UT.CLS_ART
 		if not art:
@@ -545,9 +580,10 @@ func _refresh_actions() -> void:
 				skirm = maxi(skirm, orders.value(u, "skirm"))
 		if art:
 			deploy = maxi(deploy, orders.value(u, "deploy"))
+			refill = maxi(refill, orders.value(u, "refill"))
 	if selection.is_empty():
 		run = 0
-	hud.set_selection(selection, run, fire, skirm, deploy)
+	hud.set_selection(selection, run, fire, skirm, deploy, refill)
 
 
 ## Group buttons: every ready player unit of a class.
@@ -697,6 +733,19 @@ func _toggle_deploy() -> void:
 	for u in selection:
 		if UT.cls(sim.u_type[u]) == UT.CLS_ART:
 			_queue(BattleSim.make_deploy_order(0, u, 0 if any_on else 1))
+	_refresh_actions()
+
+
+## Artillery in the selection: stop refilling if any battery is, otherwise
+## start refilling them all.
+func _toggle_refill() -> void:
+	var any_on := false
+	for u in selection:
+		if UT.cls(sim.u_type[u]) == UT.CLS_ART and orders.value(u, "refill") != 0:
+			any_on = true
+	for u in selection:
+		if UT.cls(sim.u_type[u]) == UT.CLS_ART:
+			_queue(BattleSim.make_refill_order(0, u, 0 if any_on else 1))
 	_refresh_actions()
 
 
@@ -991,20 +1040,3 @@ func _zoom_at(screen_pos: Vector2, factor: float) -> void:
 func _clamp_camera() -> void:
 	var field := Vector2(sim.field_w, sim.field_h) / M * PX_PER_M
 	camera.position = camera.position.clamp(Vector2.ZERO, field)
-
-
-## Faint 50 m grid so movement and scale are readable.
-class _FieldGrid extends Node2D:
-	var size_px := Vector2.ZERO
-
-	func _draw() -> void:
-		var step := 500.0
-		var col := Color(1, 1, 1, 0.06)
-		var x := 0.0
-		while x <= size_px.x:
-			draw_line(Vector2(x, 0), Vector2(x, size_px.y), col, 2.0)
-			x += step
-		var y := 0.0
-		while y <= size_px.y:
-			draw_line(Vector2(0, y), Vector2(size_px.x, y), col, 2.0)
-			y += step

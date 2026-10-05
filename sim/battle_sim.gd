@@ -24,6 +24,7 @@ extends RefCounted
 const FM := preload("res://sim/fixed_math.gd")
 const UT := preload("res://sim/unit_types.gd")
 const BattleAI := preload("res://sim/battle_ai.gd")
+const Terrain := preload("res://sim/terrain.gd")
 
 const TICKS_PER_SECOND := 10
 const M := 1024  # sim units per metre
@@ -58,10 +59,11 @@ const ORDER_SKIRMISH := 6       # unit, on
 const ORDER_WITHDRAW := 7       # unit
 const ORDER_WITHDRAW_ALL := 8   # side
 const ORDER_DEPLOY := 9         # unit, on (artillery: set up / pack up)
+const ORDER_REFILL := 10        # unit, on (artillery: bring up shots from the baggage)
 
 ## Unit fields an order can change; OrderPreview predicts exactly these.
 const ORDER_KEYS: Array[String] = ["order", "ax", "ay", "face", "files", "dx", "dy",
-	"dface", "target", "run", "fire", "skirm", "deploy"]
+	"dface", "target", "run", "fire", "skirm", "deploy", "refill"]
 
 # Formation geometry (spacing is per unit type, see unit_types.gd).
 const FILE_SPACING := 1126  # default, kept for callers that do not pass a type
@@ -155,6 +157,45 @@ const SWEEP_CAP := 12            # victims considered per shot
 const FRIGHT_MAX := 200
 const FRIGHT_DECAY := 1          # per tick: a stone's fright (60) lasts 6 s
 const FX_CAP := 32               # view: recent stone impacts (not state)
+# Refill (artillery): a battery told to refill takes REFILL_FULL ticks to
+# settle into it (2 per tick back out), and while it is not back at 0 it
+# cannot move, traverse or shoot; once in, crews at their engines bring up
+# shots from the battery's finite reserve (m_refill ticks per shot at full
+# crew, slower with fewer hands, nothing below the minimum crew).
+const REFILL_FULL := 60          # 6 s to settle in, 3 s to get back out
+
+# Terrain height (sim/terrain.gd builds the grid; docs/DESIGN.md "Terrain").
+# Grades are Q12: 4096 = a rise of 1 m per metre (100%). Every effect below
+# is skipped on a flat map (ter_on == 0), which then plays exactly as before.
+const TER_SHIFT := 12            # height grid nodes 4 m apart
+const TER_CELL := 4096
+const TER_STEEP := 819           # 20%: steep ground
+const TER_DOWN_FULL := 410       # downhill speed bonus is full at 10% ...
+const TER_DOWN_BONUS := 50       # ... +5% (per mille)
+const TER_DOWN_STEEP := 1000     # per mille slower per 100% of grade past steep, downhill
+const TER_MIN_FAC := 300         # never below 30% of flat speed (per mille) ...
+const TER_MIN_FAC_ART := 200     # ... 20% for artillery
+const STEEP_DIS_GAIN := 4        # disorder per tick moving on steep ground (decay 2)
+const STEEP_DIS_CAP := 30        # ... up to this (pikes lose the wall, spears the brace)
+const PIKE_STEEP_DIS := 150      # % of disorder from hits on a pike block on steep ground
+const MELEE_H_K := 80            # to-hit per mille per 100% grade from the striker down to his man
+const MELEE_H_CAP := 20          # ... at most +-2% (reached at a 25% grade)
+const CHG_H_K := 200             # charge impact % per 100% grade, rider above the victim
+const CHG_H_MIN := 55            # uphill impact never below 55% ...
+const CHG_H_MAX := 135           # ... downhill at most 135%
+const MOM_UP_K := 300            # momentum cap lost per 100% uphill grade (100 -> 40 at 20%)
+const MOM_DOWN := 410            # 10% downhill: momentum builds one point a tick faster
+const RANGE_H_CAP := 30          # height changes missile range by at most 30%
+const LOF_SKIP := 3 * M          # line of fire: ground this close to either end ignored
+const LOF_STEP := 4 * M          # ... sampled every 4 m
+const LOF_EYE := 1536            # flat weapons leave the hand / engine 1.5 m up ...
+const LOF_BODY := 1024           # ... and are aimed at a man's body, 1 m up
+const BOLT_BODY_LO := -205       # a bolt strikes a man when it passes between his feet ...
+const BOLT_BODY_HI := 2048       # ... and 2 m above the ground under him
+const STONE_UP_K := 400          # plough length % lost per 100% uphill grade (10% -> -40%)
+const STONE_DOWN_K := 150        # ... gained downhill (10% -> +15%)
+const STONE_PLOUGH_MIN := 150    # per mille of the flat plough, at least
+const STONE_PLOUGH_MAX := 1300
 
 # Morale (0..1000).
 const MORALE_MAX := 1000
@@ -296,6 +337,9 @@ var u_fright := PackedInt32Array()    # short-lived morale loss from artillery h
 var u_shelled_t := PackedInt32Array() # last tick an artillery shot hit the unit
 var u_shelled_by := PackedInt32Array() # ... fired by this battery
 var u_emove := PackedInt32Array()     # artillery: engines still rolling to their places
+var u_refill := PackedInt32Array()    # artillery: told to refill (order)
+var u_rprog := PackedInt32Array()     # artillery: 0 normal .. REFILL_FULL refilling
+var u_reserve := PackedInt32Array()   # artillery: shots left in the baggage
 var slot_soldier := PackedInt32Array()  # u_slot_base[u] + slot -> soldier
 var off_x := PackedInt32Array()         # u_slot_base[u] + slot -> offset
 var off_y := PackedInt32Array()
@@ -311,12 +355,30 @@ var e_state := PackedInt32Array()
 var e_reload := PackedInt32Array()  # crew-ticks of work toward the next shot
 var e_ammo := PackedInt32Array()
 var e_crew := PackedInt32Array()    # crew working it this tick
+var e_rwork := PackedInt32Array()   # crew-ticks of work toward the next shot refilled
 var e_px := PackedInt32Array()      # view only: position last tick (not hashed)
 var e_py := PackedInt32Array()
 
 # Battle AI, per side.
 var ai_phase := PackedInt32Array([0, 0])
 var ai_t := PackedInt32Array([0, 0])
+var ai_hold := PackedInt32Array([-1, -1])  # tick the side began holding high ground, -1 not
+
+# Terrain: node heights (sim units) on a 4 m grid covering the field, node
+# gradients (Q12 grade), built once at setup from the scenario's terrain
+# parameters (see sim/terrain.gd). Constant during the battle; ter_hash (MD5
+# of the grid and parameters) is part of state_hash() from tick 0.
+var ter_on: int = 0
+var ter_nx: int = 2
+var ter_ny: int = 2
+var ter_h := PackedInt32Array()
+var ter_gx := PackedInt32Array()
+var ter_gy := PackedInt32Array()
+var ter_hash: int = 0
+var ter_info: Dictionary = {}   # generation parameters (view / telemetry)
+var u_h := PackedInt32Array()   # unit: ground height under its centroid (refreshed each tick)
+var _u_fac := PackedInt32Array()   # scratch: speed per mille along the unit's facing
+var _u_steep := PackedInt32Array() # scratch: unit stands on steep ground
 
 # Projectiles. A projectile is fired at (sx, sy) on tick t0 and lands at
 # (x, y) on tick t1; it is only resolved on landing. Free slots have t1 = -1.
@@ -372,6 +434,7 @@ var t_skirm := PackedInt32Array()
 var t_m_vuln := PackedInt32Array()
 var t_m_down := PackedInt32Array()
 var t_m_lead := PackedInt32Array()
+var t_m_long := PackedInt32Array()
 var t_crew := PackedInt32Array()
 var t_crew_min := PackedInt32Array()
 var t_m_kind := PackedInt32Array()
@@ -384,6 +447,11 @@ var t_arc := PackedInt32Array()
 var t_traverse := PackedInt32Array()
 var t_deploy := PackedInt32Array()
 var t_e_hp := PackedInt32Array()
+var t_climb := PackedInt32Array()
+var t_m_hgain := PackedInt32Array()
+var t_m_apex := PackedInt32Array()
+var t_m_reserve := PackedInt32Array()
+var t_m_refill := PackedInt32Array()
 
 # Spatial grid, one per side so target search only walks enemies.
 var grid_w: int = 0
@@ -424,8 +492,10 @@ var stat_knockdowns: int = 0
 var stat_kills := PackedInt32Array([0, 0, 0, 0, 0])
 var stat_parting: int = 0          # free blows at riders / soldiers turning away
 var stat_impact_blocked: int = 0   # charge impacts taken on a formed front's shields
-## Battle AI decisions by unit mode (BattleAI.A_*), plus [8] army withdrawals.
-var stat_ai := PackedInt32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+## Battle AI decisions by unit mode (BattleAI.A_*), plus [8] army withdrawals,
+## [12] holds of high ground, [13] missile / artillery slots moved onto a
+## rise, [14] deployments shifted to higher ground.
+var stat_ai := PackedInt32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
 var stat_bolts: int = 0        # bolts fired
 var stat_stones: int = 0       # stones fired
 var stat_art_victims: int = 0  # soldiers struck by artillery
@@ -435,6 +505,23 @@ var stat_packs: int = 0        # batteries finished packing up
 var stat_wrecked: int = 0      # engines wrecked
 var stat_abandoned: int = 0    # engines abandoned
 var stat_engine_hits: int = 0  # shots that struck an engine
+## Terrain diagnostics (not hashed): melee blows with a height bonus for the
+## higher man / against the lower, charge impacts downhill / uphill, shots
+## and targets refused for want of a line of fire, unit-ticks slowed uphill,
+## shots whose range was stretched by height, stones whose plough was
+## shortened uphill, bolts stopped by the ground, steep-ground disorder.
+var stat_h_melee: int = 0
+var stat_charge_down: int = 0
+var stat_charge_up: int = 0
+var stat_lof_blocked: int = 0
+var stat_slow_up: int = 0
+var stat_range_up: int = 0
+var stat_plough_short: int = 0
+var stat_bolt_ground: int = 0
+var stat_steep_dis: int = 0
+var stat_refills: int = 0        # batteries that settled into refilling
+var stat_refilled: int = 0       # shots brought up from the baggage
+var stat_refill_broken: int = 0  # refills broken off by melee or rout
 ## View only (not state, never read by the sim): ring of recent stone
 ## impacts for the impact marks: x, y, flight direction (Q12), tick.
 var fx_x := PackedInt32Array()
@@ -471,6 +558,8 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		ai_sides[int(s)] = 1
 	ai_phase = PackedInt32Array([0, 0])
 	ai_t = PackedInt32Array([0, 0])
+	ai_hold = PackedInt32Array([-1, -1])
+	_setup_terrain(scenario.get("terrain", {}), p_seed)
 
 	_load_types()
 
@@ -509,6 +598,10 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	off_y.resize(n)
 	_rm.resize(n)
 	_rm_why.resize(n)
+	_u_fac.resize(n_units)
+	_u_fac.fill(1000)
+	_u_steep.resize(n_units)
+	_u_steep.fill(0)
 	dbg_impacted.resize(n)
 	dbg_impacted.fill(0)
 	target.fill(-1)
@@ -552,6 +645,7 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 			# Artillery: files = engines; ammunition belongs to the engines.
 			u_files[u] = ne
 			u_ammo[u] = ne * t_m_ammo[ty]
+			u_reserve[u] = ne * t_m_reserve[ty]
 			u_deploy[u] = 1
 			u_depl[u] = t_deploy[ty]  # starts set up
 			u_skirm[u] = 0
@@ -610,6 +704,9 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	grid_next.resize(n)
 	_update_bounds()
 	_update_units_stats()
+	if ter_on != 0:
+		for u in n_units:
+			u_h[u] = height_at(u_cx[u], u_cy[u])
 
 	for o in scenario.get("orders", []):
 		var od: Dictionary = (o as Dictionary).duplicate()
@@ -638,11 +735,11 @@ func _unit_arrays() -> Array:
 		u_fire_acc, u_fire_ptr, u_ammo, u_hit_t, u_charged_t, u_killed,
 		u_withdrawn, u_routed_off, u_recent, u_att, u_def, u_dmg, u_reach, u_nwalls,
 		u_ai, u_ai_t, u_ai_x, u_ai_y, u_eng0, u_neng, u_depl, u_deploy, u_fright,
-		u_shelled_t, u_shelled_by, u_emove]
+		u_shelled_t, u_shelled_by, u_emove, u_h, u_refill, u_rprog, u_reserve]
 
 
 func _engine_arrays() -> Array:
-	return [e_unit, e_x, e_y, e_face, e_hp, e_state, e_reload, e_ammo, e_crew]
+	return [e_unit, e_x, e_y, e_face, e_hp, e_state, e_reload, e_ammo, e_crew, e_rwork]
 
 
 ## Engines in a unit of `count` soldiers of type ty (0 unless artillery).
@@ -664,21 +761,217 @@ func _load_types() -> void:
 		t_morale, t_fsp, t_rsp, t_turn, t_brace, t_vs_cav, t_charge, t_sec_att,
 		t_sec_def, t_sec_dmg, t_sec_reach, t_m_range, t_m_dmg, t_m_ap, t_m_ammo,
 		t_m_reload, t_m_spread, t_m_spread0, t_m_speed, t_m_arc, t_skirm, t_m_vuln, t_m_down,
-		t_m_lead, t_crew, t_crew_min, t_m_kind, t_m_min, t_m_pierce, t_m_plough, t_m_blast,
-		t_m_fear, t_arc, t_traverse, t_deploy, t_e_hp]
+		t_m_lead, t_m_long, t_crew, t_crew_min, t_m_kind, t_m_min, t_m_pierce, t_m_plough, t_m_blast,
+		t_m_fear, t_arc, t_traverse, t_deploy, t_e_hp, t_climb, t_m_hgain, t_m_apex, t_m_reserve, t_m_refill]
 	var keys := ["cls", "attack", "defence", "armour", "shield", "mshield",
 		"damage", "reach", "ranks_reach", "mass", "walk", "run", "hp", "cooldown",
 		"morale", "file_sp", "rank_sp", "turn", "brace", "vs_cav", "charge",
 		"sec_attack", "sec_defence", "sec_damage", "sec_reach", "m_range",
 		"m_damage", "m_ap", "m_ammo", "m_reload", "m_spread", "m_spread0",
-		"m_speed", "m_arc", "skirm", "m_vuln", "m_down", "m_lead", "crew", "crew_min",
+		"m_speed", "m_arc", "skirm", "m_vuln", "m_down", "m_lead", "m_long", "crew", "crew_min",
 		"m_kind", "m_min", "m_pierce", "m_plough", "m_blast", "m_fear", "arc", "traverse",
-		"deploy", "e_hp"]
+		"deploy", "e_hp", "climb", "m_hgain", "m_apex", "m_reserve", "m_refill"]
 	for k in arrays.size():
 		var arr: PackedInt32Array = arrays[k]
 		arr.resize(nt)
 		for t in nt:
 			arr[t] = UT.stat(t, keys[k])
+
+
+# -------------------------------------------------------------- terrain ---
+
+## Build the height grid from the scenario's terrain parameters (none or
+## kind flat: ter_on stays 0 and every terrain rule is skipped).
+func _setup_terrain(terr: Dictionary, p_seed: int) -> void:
+	var t := Terrain.build(terr, p_seed, field_w, field_h)
+	ter_on = int(t["on"])
+	ter_nx = int(t["nx"])
+	ter_ny = int(t["ny"])
+	ter_h = t["h"]
+	var g: Array = Terrain.gradients(ter_h, ter_nx, ter_ny)
+	ter_gx = g[0]
+	ter_gy = g[1]
+	ter_info = {"kind": int(t["kind"]), "seed": int(t["seed"]), "relief_m": int(t["relief_m"]),
+		"scale_m": int(t["scale_m"]), "sym": int(t["sym"])}
+	var ctx := HashingContext.new()
+	ctx.start(HashingContext.HASH_MD5)
+	ctx.update(PackedInt64Array([ter_on, ter_nx, ter_ny, int(t["kind"]), int(t["seed"]),
+		int(t["relief_m"]), int(t["scale_m"]), int(t["sym"]),
+		Terrain.grid_hash(ter_h, ter_nx, ter_ny, ter_on)]).to_byte_array())
+	ter_hash = ctx.finish().decode_u32(0)
+
+
+## Ground height (sim units) at (x, y): fixed-point bilinear interpolation
+## of the node grid. The whole weighted sum is formed exactly and divided
+## once, so the field's 180-degree mirror image samples to the same value.
+func height_at(x: int, y: int) -> int:
+	if ter_on == 0:
+		return 0
+	x = clampi(x, 0, field_w)
+	y = clampi(y, 0, field_h)
+	var cx := x >> TER_SHIFT
+	var fx := x & (TER_CELL - 1)
+	if cx >= ter_nx - 1:
+		cx = ter_nx - 2
+		fx = TER_CELL
+	var cy := y >> TER_SHIFT
+	var fy := y & (TER_CELL - 1)
+	if cy >= ter_ny - 1:
+		cy = ter_ny - 2
+		fy = TER_CELL
+	var i := cy * ter_nx + cx
+	var hh := ter_h
+	var h00 := hh[i]
+	var h10 := hh[i + 1]
+	var h01 := hh[i + ter_nx]
+	var h11 := hh[i + ter_nx + 1]
+	var top := h00 * TER_CELL + (h10 - h00) * fx
+	var bot := h01 * TER_CELL + (h11 - h01) * fx
+	return (top * TER_CELL + (bot - top) * fy) / (TER_CELL * TER_CELL)
+
+
+## Ground gradient (Q12 grade, x and y) at (x, y): the node gradients
+## interpolated like the heights (continuous, antisymmetric when mirrored).
+func slope_at(x: int, y: int) -> Vector2i:
+	if ter_on == 0:
+		return Vector2i.ZERO
+	x = clampi(x, 0, field_w)
+	y = clampi(y, 0, field_h)
+	var cx := x >> TER_SHIFT
+	var fx := x & (TER_CELL - 1)
+	if cx >= ter_nx - 1:
+		cx = ter_nx - 2
+		fx = TER_CELL
+	var cy := y >> TER_SHIFT
+	var fy := y & (TER_CELL - 1)
+	if cy >= ter_ny - 1:
+		cy = ter_ny - 2
+		fy = TER_CELL
+	var i := cy * ter_nx + cx
+	var j := i + ter_nx
+	var w00 := (TER_CELL - fx) * (TER_CELL - fy)
+	var w10 := fx * (TER_CELL - fy)
+	var w01 := (TER_CELL - fx) * fy
+	var w11 := fx * fy
+	var den := TER_CELL * TER_CELL
+	return Vector2i((ter_gx[i] * w00 + ter_gx[i + 1] * w10 + ter_gx[j] * w01 + ter_gx[j + 1] * w11) / den,
+		(ter_gy[i] * w00 + ter_gy[i + 1] * w10 + ter_gy[j] * w01 + ter_gy[j + 1] * w11) / den)
+
+
+## Grade (Q12, positive = uphill) of the ground at (x, y) along (dx, dy).
+func grade_along(x: int, y: int, dx: int, dy: int) -> int:
+	var d := FM.approx_len(dx, dy)
+	if ter_on == 0 or d <= 0:
+		return 0
+	var g := slope_at(x, y)
+	return (g.x * dx + g.y * dy) / d
+
+
+## Average grade (Q12) from a ground point at height ha to one at hb, d apart.
+static func grade_between(ha: int, hb: int, d: int) -> int:
+	return (hb - ha) * FM.TRIG_ONE / maxi(d, M)
+
+
+## Speed factor (per mille) for unit u moving along (dx, dy) from (x, y):
+## slower uphill (the type's climb rate), a little faster on a gentle
+## downhill, slower again where it is steep.
+func _slope_fac(u: int, x: int, y: int, dx: int, dy: int) -> int:
+	var f := _fac_for(u, grade_along(x, y, dx, dy))
+	if f < 1000:
+		stat_slow_up += 1
+	return f
+
+
+## Speed factor (per mille) of unit u moving along (dx, dy), d long, on
+## ground of gradient g.
+func _fac_dir(u: int, g: Vector2i, dx: int, dy: int, d: int) -> int:
+	var f := _fac_for(u, (g.x * dx + g.y * dy) / maxi(d, 1))
+	if f < 1000:
+		stat_slow_up += 1
+	return f
+
+
+## Speed factor (per mille) of unit u on a grade s (Q12, + = uphill).
+func _fac_for(u: int, s: int) -> int:
+	var ty := u_type[u]
+	var fac := 1000
+	if s > 0:
+		# climb = % lost per 10% grade: s * 100 / 4096 * climb * 10 / 10.
+		fac = 1000 - s * t_climb[ty] * 100 / FM.TRIG_ONE
+	elif s < 0:
+		var g := -s
+		fac = 1000 + mini(g, TER_DOWN_FULL) * TER_DOWN_BONUS / TER_DOWN_FULL
+		if g > TER_STEEP:
+			fac -= (g - TER_STEEP) * TER_DOWN_STEEP / FM.TRIG_ONE * (2 if u_cls[u] == UT.CLS_CAV else 1)
+	var lo := TER_MIN_FAC_ART if u_cls[u] == UT.CLS_ART else TER_MIN_FAC
+	return clampi(fac, lo, 1000 + TER_DOWN_BONUS)
+
+
+## Missile range of type ty shooting from ground height hs at ground height
+## ht: the type's m_hgain % of the height difference, at most RANGE_H_CAP %.
+func range_h(ty: int, hs: int, ht: int) -> int:
+	var rng := t_m_range[ty]
+	if ter_on == 0:
+		return rng
+	var cap := rng * RANGE_H_CAP / 100
+	return rng + clampi((hs - ht) * t_m_hgain[ty] / 100, -cap, cap)
+
+
+## Effective range of missile unit u against unit t (centroid heights).
+func range_vs(u: int, t: int) -> int:
+	return range_h(u_type[u], u_h[u], u_h[t])
+
+
+## Line of fire over the ground: from (x0, y0) at height z0 to (x1, y1) at
+## z1 (absolute heights, sim units), allowing a rise of `apex` above the
+## straight line at mid-flight (parabolic), continued `ext` past the end.
+## Returns the distance from (x0, y0) at which the ground first rises above
+## the flight, or -1 if it is clear. Ground within LOF_SKIP of either end of
+## the aimed segment is ignored (the shooter's and target's own footing).
+func lof_block(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int, apex: int, ext: int,
+		stride: int = LOF_STEP) -> int:
+	if ter_on == 0:
+		return -1
+	var dx := x1 - x0
+	var dy := y1 - y0
+	var d := FM.approx_len(dx, dy)
+	if d <= 2 * LOF_SKIP:
+		return -1
+	var dz := z1 - z0
+	var a := LOF_SKIP
+	var end := d - LOF_SKIP
+	if ext > 0:
+		end = d + ext
+	while a <= end:
+		var px := x0 + dx * a / d
+		var py := y0 + dy * a / d
+		if px < 0 or py < 0 or px > field_w or py > field_h:
+			return -1
+		var z := z0 + dz * a / d
+		if a < d:
+			z += apex * 4 * a / d * (d - a) / d
+		if height_at(px, py) > z:
+			return a
+		a += stride
+	return -1
+
+
+## Unit-level line of fire for a flat weapon of unit u at unit t (centroid
+## to centroid), or true for weapons that arc over everything.
+func lof_units(u: int, t: int) -> bool:
+	if ter_on == 0:
+		return true
+	var ty := u_type[u]
+	if t_m_arc[ty] != 0:
+		return true
+	var x0 := u_cx[u]
+	var y0 := u_cy[u]
+	var x1 := u_cx[t]
+	var y1 := u_cy[t]
+	var d := FM.approx_len(x1 - x0, y1 - y0)
+	var blk := lof_block(x0, y0, u_h[u] + LOF_EYE, x1, y1, u_h[t] + LOF_BODY,
+		d * t_m_apex[ty] / 100, 0, 2 * LOF_STEP)
+	return blk < 0
 
 
 # ------------------------------------------------------------------ rng ---
@@ -731,6 +1024,10 @@ static func make_withdraw_all_order(p_tick: int, side: int) -> Dictionary:
 
 static func make_deploy_order(p_tick: int, unit: int, on: int) -> Dictionary:
 	return {"tick": p_tick, "type": ORDER_DEPLOY, "unit": unit, "on": on}
+
+
+static func make_refill_order(p_tick: int, unit: int, on: int) -> Dictionary:
+	return {"tick": p_tick, "type": ORDER_REFILL, "unit": unit, "on": on}
 
 
 ## Queue an order. Orders are applied at the start of order["tick"] (or the
@@ -790,6 +1087,7 @@ func _apply_orders() -> void:
 			u_fire[u] = int(d["fire"])
 			u_skirm[u] = int(d["skirm"])
 			u_deploy[u] = int(d["deploy"])
+			u_refill[u] = int(d["refill"])
 			u_dirty[u] = 1
 			u_settled[u] = 0
 
@@ -800,7 +1098,7 @@ static func order_fields(sim, u: int) -> Dictionary:
 		"face": sim.u_face[u], "files": sim.u_files[u], "dx": sim.u_dx[u],
 		"dy": sim.u_dy[u], "dface": sim.u_dface[u], "target": sim.u_target[u],
 		"run": sim.u_run[u], "fire": sim.u_fire[u], "skirm": sim.u_skirm[u],
-		"deploy": sim.u_deploy[u]}
+		"deploy": sim.u_deploy[u], "refill": sim.u_refill[u]}
 
 
 ## Units an order applies to (in index order): its unit, or every ready unit
@@ -828,6 +1126,11 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 	# Artillery: frontage is set by its engines, and it never runs (the
 	# engines are dragged); it does not skirmish.
 	var art := UT.cls(ty) == UT.CLS_ART
+	# A battery's refill ends with any order to move, shoot, withdraw or
+	# set up / pack up (it gets back out first: REFILL_FULL / 2 ticks).
+	if art and (typ == ORDER_MOVE or typ == ORDER_ATTACK or typ == ORDER_WITHDRAW \
+			or typ == ORDER_WITHDRAW_ALL or typ == ORDER_DEPLOY):
+		d["refill"] = 0
 	if typ == ORDER_MOVE:
 		var x := clampi(int(o["x"]), 0, sim.field_w)
 		var y := clampi(int(o["y"]), 0, sim.field_h)
@@ -872,6 +1175,17 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 	elif typ == ORDER_DEPLOY:
 		if art:
 			d["deploy"] = 1 if int(o.get("on", 0)) != 0 else 0
+	elif typ == ORDER_REFILL:
+		if art:
+			var on := 1 if int(o.get("on", 0)) != 0 else 0
+			d["refill"] = on
+			if on != 0:
+				# Stand and resupply: stop moving and shooting.
+				d["order"] = O_NONE
+				d["target"] = -1
+				d["dx"] = d["ax"]
+				d["dy"] = d["ay"]
+				d["dface"] = d["face"]
 	elif typ == ORDER_WITHDRAW or typ == ORDER_WITHDRAW_ALL:
 		d["order"] = O_WITHDRAW
 		d["target"] = -1
@@ -1070,12 +1384,19 @@ func _turn(u: int, want: int) -> void:
 
 
 func _update_units() -> void:
+	var ton := ter_on != 0
 	for u in n_units:
 		u_moved[u] = 0
+		if ton and u_alive[u] > 0:
+			u_h[u] = height_at(u_cx[u], u_cy[u])
 		if u_state[u] != U_READY:
 			u_formed[u] = 0
 			u_braced[u] = 0
 			u_mom[u] = 0
+			if u_rprog[u] > 0 or u_refill[u] != 0:
+				stat_refill_broken += 1  # routed: the refill is abandoned
+				u_rprog[u] = 0
+				u_refill[u] = 0
 			continue
 		var ty := u_type[u]
 		var cls := u_cls[u]
@@ -1086,7 +1407,14 @@ func _update_units() -> void:
 		var order := u_order[u]
 		var want_face := u_dface[u]
 		var art := cls == UT.CLS_ART
-		if art and (order == O_MOVE or order == O_WITHDRAW) and u_depl[u] > 0:
+		# Ground under the anchor (hilly maps; one lookup serves the whole
+		# tick: movement, formation and charge momentum).
+		var g0 := slope_at(u_ax[u], u_ay[u]) if ton else Vector2i.ZERO
+		if art and u_rprog[u] > 0:
+			# Refilling (or getting into / out of it): it stands, does not
+			# turn, and moves on only once it is back out.
+			want_face = u_face[u]
+		elif art and (order == O_MOVE or order == O_WITHDRAW) and u_depl[u] > 0:
 			# Packing up first: the battery cannot move until it is packed.
 			want_face = u_face[u]
 		elif art and order != O_MOVE and order != O_WITHDRAW:
@@ -1107,6 +1435,8 @@ func _update_units() -> void:
 			var dx := u_dx[u] - u_ax[u]
 			var dy := u_dy[u] - u_ay[u]
 			var d := FM.isqrt(dx * dx + dy * dy)
+			if ton and d > 0:
+				aspeed = aspeed * _fac_dir(u, g0, dx, dy, d) / 1000
 			if d <= aspeed:
 				u_ax[u] = u_dx[u]
 				u_ay[u] = u_dy[u]
@@ -1134,10 +1464,18 @@ func _update_units() -> void:
 				if u_charge[u] != 0:
 					pass  # riders resolve the charge themselves; anchor waits
 				elif cls == UT.CLS_MISSILE and u_ammo[u] > 0:
-					# Shoot it: close to most of the range, then stand.
+					# Shoot it: close to most of the range, then stand. On
+					# hilly ground the range is the height-adjusted one, and a
+					# flat thrower with a crest in the way keeps closing.
 					if d > 0:
 						want_face = FM.atan2_a(dy, dx)
 					var stop := t_m_range[ty] * 17 / 20
+					if ton:
+						stop = range_vs(u, t) * 17 / 20
+						if not lof_units(u, t):
+							stop = t_m_range[ty] / 4
+						if d > stop:
+							aspeed = aspeed * _fac_dir(u, g0, dx, dy, d) / 1000
 					if d > stop:
 						var mv := mini(aspeed, d - stop)
 						u_ax[u] += dx * mv / d
@@ -1148,6 +1486,8 @@ func _update_units() -> void:
 					var hh := (u_maxy[t] - u_miny[t]) >> 1
 					var ext := (absi(dx) * hw + absi(dy) * hh) / d
 					var stop := ext + M
+					if ton and d > stop:
+						aspeed = aspeed * _fac_dir(u, g0, dx, dy, d) / 1000
 					if d > stop:
 						var mv := mini(aspeed, d - stop)
 						u_ax[u] += dx * mv / d
@@ -1168,10 +1508,24 @@ func _update_units() -> void:
 
 		# Formation state.
 		if art:
-			_deploy_state(u, order, moved)
+			_refill_state(u, order, moved)
+			if u_rprog[u] == 0:
+				_deploy_state(u, order, moved)
 		var dis := maxi(u_disorder[u] - 2, 0)
 		if cls == UT.CLS_PIKE and u_run[u] != 0 and moved > 0:
 			dis = maxi(dis, DISORDER_RUN)
+		var s_face := 0
+		if ton:
+			# Ground under the formation: steepness, the grade along its
+			# facing, and the speed factor its men fight and close at.
+			_u_steep[u] = 1 if FM.approx_len(g0.x, g0.y) >= TER_STEEP else 0
+			s_face = (g0.x * FM.cos_a(u_face[u]) + g0.y * FM.sin_a(u_face[u])) / FM.TRIG_ONE
+			_u_fac[u] = _fac_for(u, s_face)
+			# Moving across steep ground loosens a formation a little.
+			if moved > 0 and _u_steep[u] != 0 and dis < STEEP_DIS_CAP and cls != UT.CLS_CAV \
+					and not art:
+				dis = mini(dis + STEEP_DIS_GAIN, STEEP_DIS_CAP)
+				stat_steep_dis += 1
 		u_disorder[u] = dis
 		var steady := dis < DISORDERED and u_morale[u] >= WAVER
 		if cls == UT.CLS_PIKE:
@@ -1191,7 +1545,16 @@ func _update_units() -> void:
 			# Momentum builds only while charging a target at speed: a run
 			# away from a melee (pulling out) does not count as a run-up.
 			if u_run[u] != 0 and moved * 10 >= aspeed * 6 and order == O_ATTACK and u_charge[u] == 0:
-				u_mom[u] = mini(u_mom[u] + MOM_GAIN, 100)
+				var gain := MOM_GAIN
+				var cap := 100
+				if ton:
+					# Uphill a charge cannot build full momentum; a good
+					# downhill run builds it faster.
+					if s_face > 0:
+						cap = maxi(100 - s_face * MOM_UP_K / FM.TRIG_ONE, CHARGE_MIN)
+					elif s_face <= -MOM_DOWN:
+						gain += 1
+				u_mom[u] = mini(u_mom[u] + gain, cap)
 			else:
 				u_mom[u] = maxi(u_mom[u] - MOM_LOSS, 0)
 			_charge_state(u)
@@ -1231,6 +1594,28 @@ func _charge_state(u: int) -> void:
 		var base := u_slot_base[u]
 		for s in u_alive[u]:
 			struck[slot_soldier[base + s]] = 0
+
+
+## Refill counter: settling in while the battery stands with a refill order,
+## backing out (twice as fast) once the order is gone; broken off at once
+## when the battery is caught in melee.
+func _refill_state(u: int, order: int, moved: int) -> void:
+	var r := u_rprog[u]
+	if u_fighting[u] > 0 and (r > 0 or u_refill[u] != 0):
+		stat_refill_broken += 1
+		u_refill[u] = 0
+		u_rprog[u] = 0
+		return
+	if u_refill[u] != 0:
+		if r < REFILL_FULL and moved == 0 and u_emove[u] == 0 and order == O_NONE:
+			r += 1
+			if r == REFILL_FULL:
+				stat_refills += 1
+	elif r > 0:
+		r = maxi(r - 2, 0)
+	if r != u_rprog[u]:
+		u_settled[u] = 0
+	u_rprog[u] = r
 
 
 ## Artillery set-up counter: packing up while the battery has to move (or is
@@ -1313,7 +1698,7 @@ func _missile_think(u: int) -> void:
 		var rng := t_m_range[ty]
 		if order == O_ATTACK:
 			var t := u_target[u]
-			if t >= 0 and u_state[t] < U_DESTROYED and _unit_dist(u, t) <= rng:
+			if t >= 0 and u_state[t] < U_DESTROYED and _in_range(u, t, rng):
 				ft = t
 		elif u_fire[u] != 0:
 			# Fire at will: keep shooting the current target while it stays in
@@ -1322,32 +1707,48 @@ func _missile_think(u: int) -> void:
 			# not locked in melee with our own side.
 			var cur := u_ftarget[u]
 			if cur >= 0 and u_state[cur] < U_DESTROYED and u_side[cur] != u_side[u] \
-					and _unit_dist(u, cur) <= rng and (u_fighting[cur] == 0 or not _any_clean_target(u, rng)):
-				u_ftarget[u] = cur if t_m_arc[ty] != 0 or _clear_line(u, cur) else -1
+					and _in_range(u, cur, rng) and (u_fighting[cur] == 0 or not _any_clean_target(u, rng)):
+				u_ftarget[u] = cur if t_m_arc[ty] != 0 or (_clear_line(u, cur) and lof_units(u, cur)) else -1
 				return
 			var best := 0
 			var best_engaged := true
+			var flat_lof := ter_on != 0 and t_m_arc[ty] == 0
 			for o in n_units:
 				if u_side[o] == u_side[u] or u_state[o] >= U_DESTROYED:
 					continue
 				var d := _unit_dist(u, o)
-				if d > rng:
+				if d > rng and (ter_on == 0 or d > range_vs(u, o)):
 					continue
 				var engaged := u_fighting[o] > 0
 				if ft < 0 or (best_engaged and not engaged) or (engaged == best_engaged and d < best):
+					# Thrown flat: skip enemies behind a crest.
+					if flat_lof and not lof_units(u, o):
+						continue
 					ft = o
 					best = d
 					best_engaged = engaged
 		if ft >= 0 and t_m_arc[ty] == 0 and not _clear_line(u, ft):
 			ft = -1
+		if ft >= 0 and not lof_units(u, ft):
+			stat_lof_blocked += 1
+			ft = -1
 	u_ftarget[u] = ft
+
+
+## Unit t within missile unit u's range (`rng` on a flat map; on hilly
+## ground the height-adjusted range).
+func _in_range(u: int, t: int, rng: int) -> bool:
+	var d := _unit_dist(u, t)
+	if ter_on == 0:
+		return d <= rng
+	return d <= range_vs(u, t)
 
 
 ## An enemy in range that is not locked in melee.
 func _any_clean_target(u: int, rng: int) -> bool:
 	for o in n_units:
 		if u_side[o] != u_side[u] and u_state[o] < U_DESTROYED and u_fighting[o] == 0 \
-				and _unit_dist(u, o) <= rng:
+				and _in_range(u, o, rng):
 			return true
 	return false
 
@@ -1474,6 +1875,8 @@ func _update_soldiers() -> void:
 			var rs := (run * 7) >> 3
 			var flx := u_flee_x[u]
 			var fly := u_flee_y[u]
+			if ter_on != 0:
+				rs = rs * _slope_fac(u, u_cx[u], u_cy[u], flx, fly) / 1000
 			var rminx := fw
 			var rmaxx := 0
 			var rminy := fh
@@ -1581,6 +1984,13 @@ func _update_soldiers() -> void:
 			continue
 
 		# Contact path: target search, melee, separation, slot following.
+		if ter_on != 0:
+			# Men close, charge and keep up at the pace the ground allows
+			# along the unit's facing.
+			var fac := _u_fac[u]
+			walk = walk * fac / 1000
+			run = run * fac / 1000
+			spd_formed = spd_formed * fac / 1000
 		var tg := target
 		var cd := cooldown
 		var gnext := grid_next
@@ -2061,8 +2471,16 @@ func _melee(a: int, d: int, pen: int, parting: bool = false) -> void:
 		att += vc
 		dmg0 += vc
 	var chance := clampi(BASE_HIT + att - def + bonus - pen, 5, 95)
-	if _rand() % 100 >= chance:
-		return
+	if ter_on == 0:
+		if _rand() % 100 >= chance:
+			return
+	else:
+		# Hilly map: the same roll at per-mille resolution, so a small slope
+		# gives a small edge (a whole percent is already a lot in a long
+		# frontal fight).
+		var cpm := clampi(chance * 10 + _height_bonus(a, d), 50, 950)
+		if _rand() % 1000 >= cpm:
+			return
 	if frontal and _rand() % 100 < t_shield[td]:
 		return
 	var dmg := maxi(dmg0 - t_armour[td], 4)
@@ -2076,16 +2494,39 @@ func _melee(a: int, d: int, pen: int, parting: bool = false) -> void:
 	if sd != S_ROUTING and u_state[ud] == U_READY:
 		if zone == ZONE_REAR:
 			u_morale[ud] -= MORALE_REAR_HIT
-			u_disorder[ud] = mini(u_disorder[ud] + DISORDER_REAR_HIT, DISORDER_MAX)
+			_add_disorder(ud, DISORDER_REAR_HIT)
 		elif zone == ZONE_FLANK:
 			u_morale[ud] -= MORALE_FLANK_HIT
-			u_disorder[ud] = mini(u_disorder[ud] + DISORDER_FLANK_HIT, DISORDER_MAX)
+			_add_disorder(ud, DISORDER_FLANK_HIT)
 	var h := hp[d] - dmg
 	if h <= 0:
 		stat_kills[0 if frontal else 1] += 1
 		_remove(d, GONE_KILLED)
 	else:
 		hp[d] = h
+
+
+## Melee to-hit bonus (per mille) for soldier a striking soldier d from
+## higher ground (negative from below): MELEE_H_K per 100% of the grade
+## between them, capped at MELEE_H_CAP. Only called on hilly maps.
+func _height_bonus(a: int, d: int) -> int:
+	var xa := pos_x[a]
+	var ya := pos_y[a]
+	var xd := pos_x[d]
+	var yd := pos_y[d]
+	var g := grade_between(height_at(xd, yd), height_at(xa, ya), FM.approx_len(xa - xd, ya - yd))
+	var b := clampi(g * MELEE_H_K / FM.TRIG_ONE, -MELEE_H_CAP, MELEE_H_CAP)
+	if b != 0:
+		stat_h_melee += 1
+	return b
+
+
+## Add disorder to unit u; a pike block on steep ground loses its order
+## more easily (PIKE_STEEP_DIS %).
+func _add_disorder(u: int, amt: int) -> void:
+	if ter_on != 0 and _u_steep[u] != 0 and u_cls[u] == UT.CLS_PIKE:
+		amt = amt * PIKE_STEEP_DIS / 100
+	u_disorder[u] = mini(u_disorder[u] + amt, DISORDER_MAX)
 
 
 ## Cavalry impact: rider r with momentum mom reaches enemy soldier t.
@@ -2115,6 +2556,16 @@ func _impact(r: int, t: int, mom: int) -> void:
 		return
 	stat_impacts += 1
 	var power := t_charge[rty] * mom / 100
+	if ter_on != 0:
+		# Riding down onto a man hits harder; riding up at him, weaker.
+		var g := grade_between(height_at(pos_x[t], pos_y[t]), height_at(pos_x[r], pos_y[r]),
+			FM.approx_len(pos_x[r] - pos_x[t], pos_y[r] - pos_y[t]))
+		var f := clampi(100 + g * CHG_H_K / FM.TRIG_ONE, CHG_H_MIN, CHG_H_MAX)
+		if f > 100:
+			stat_charge_down += 1
+		elif f < 100:
+			stat_charge_up += 1
+		power = power * f / 100
 	var ma := t_mass[rty]
 	if not _impact_victim(r, t, power, ma, zone):
 		return  # stopped by a man who stood his ground in a steady front
@@ -2204,7 +2655,7 @@ func _impact_victim(r: int, v: int, power: int, ma: int, zone: int) -> bool:
 	var dmg := maxi(force - arm, 1) * (85 + _rand() % 31) / 100
 	if u_state[uv] == U_READY:
 		u_morale[uv] -= shock
-		u_disorder[uv] = mini(u_disorder[uv] + DISORDER_IMPACT, DISORDER_MAX)
+		_add_disorder(uv, DISORDER_IMPACT)
 		u_charged_t[uv] = tick
 	var h := hp[v] - dmg
 	if h <= 0:
@@ -2413,8 +2864,12 @@ func _fire(i: int, u: int, ft: int, ty: int) -> void:
 	var dx := ax - sx
 	var dy := ay - sy
 	var dist := FM.approx_len(dx, dy)
-	if dist > t_m_range[ty] or dist <= 0 or pr_free < 0:
-		return
+	if ter_on == 0:
+		if dist > t_m_range[ty] or dist <= 0 or pr_free < 0:
+			return
+	else:
+		if dist <= 0 or pr_free < 0 or not _shot_ok(sx, sy, ax, ay, dist, ty):
+			return
 	var p := pr_free
 	pr_free = pr_next[p]
 	pr_count += 1
@@ -2442,6 +2897,22 @@ func _fire(i: int, u: int, ft: int, ty: int) -> void:
 	var b := (tick + flight) % PR_BUCKETS
 	pr_next[p] = pr_bucket[b]
 	pr_bucket[b] = p
+
+
+## Hilly maps: a shot from (sx, sy) at (ax, ay), dist apart, is within the
+## height-adjusted range and, for a flat weapon, has a line of fire.
+func _shot_ok(sx: int, sy: int, ax: int, ay: int, dist: int, ty: int) -> bool:
+	var hs := height_at(sx, sy)
+	var ha := height_at(ax, ay)
+	if dist > range_h(ty, hs, ha):
+		return false
+	if dist > t_m_range[ty]:
+		stat_range_up += 1
+	if t_m_arc[ty] == 0 and lof_block(sx, sy, hs + LOF_EYE, ax, ay, ha + LOF_BODY,
+			dist * t_m_apex[ty] / 100, 0) >= 0:
+		stat_lof_blocked += 1
+		return false
+	return true
 
 
 ## A projectile lands: the nearest soldier (either side) within his hit radius
@@ -2598,13 +3069,16 @@ func _art_think(u: int) -> void:
 	var ty := u_type[u]
 	var order := u_order[u]
 	var ft := -1
-	if u_ammo[u] > 0 and order != O_MOVE and order != O_WITHDRAW:
+	if u_ammo[u] > 0 and order != O_MOVE and order != O_WITHDRAW and u_rprog[u] == 0:
 		var rng := t_m_range[ty]
 		var mn := t_m_min[ty]
 		if order == O_ATTACK:
 			var t := u_target[u]
 			if t >= 0 and u_state[t] < U_DESTROYED and _art_in_range(u, t, mn, rng):
 				ft = t
+				if not lof_units(u, t):
+					stat_lof_blocked += 1
+					ft = -1  # a crest in the way: the bolts would bury themselves
 		elif u_fire[u] != 0:
 			var cur := u_ftarget[u]
 			if cur >= 0 and u_state[cur] < U_DESTROYED and u_side[cur] != u_side[u] \
@@ -2615,7 +3089,7 @@ func _art_think(u: int) -> void:
 				for o in n_units:
 					if u_side[o] == u_side[u] or u_state[o] >= U_DESTROYED or u_alive[o] <= 0:
 						continue
-					if not _art_in_range(u, o, mn, rng) or not art_safe(u, o):
+					if not _art_in_range(u, o, mn, rng):
 						continue
 					var score := 1000 + u_alive[o] * 4 - _unit_dist(u, o) / M
 					if u_moved[o] == 0:
@@ -2623,7 +3097,9 @@ func _art_think(u: int) -> void:
 					var bear := FM.atan2_a(u_cy[o] - u_cy[u], u_cx[o] - u_cx[u])
 					if absi(FM.angle_diff(u_face[u], bear)) <= t_arc[ty]:
 						score += 400
-					if ft < 0 or score > best_score:
+					# The (dearer) safety and line-of-fire test only for a
+					# target that would be chosen.
+					if (ft < 0 or score > best_score) and art_safe(u, o):
 						ft = o
 						best_score = score
 	u_ftarget[u] = ft
@@ -2631,15 +3107,17 @@ func _art_think(u: int) -> void:
 
 func _art_in_range(u: int, t: int, mn: int, rng: int) -> bool:
 	var d := FM.approx_len(u_cx[t] - u_cx[u], u_cy[t] - u_cy[u])
+	if ter_on != 0:
+		rng = range_vs(u, t)
 	return d >= mn and _unit_dist(u, t) <= rng
 
 
 ## True when battery u can shoot at t without (probably) hitting friends:
-## bolts need a clear line, stones a target with no friends close to it.
-## Also used by the battle AI.
+## bolts need a clear line (no friends, no crest), stones a target with no
+## friends close to it. Also used by the battle AI.
 func art_safe(u: int, t: int) -> bool:
 	if t_m_kind[u_type[u]] == 1:
-		return _clear_line(u, t)
+		return _clear_line(u, t) and lof_units(u, t)
 	var side := u_side[u]
 	var margin := 15 * M
 	for o in n_units:
@@ -2706,7 +3184,7 @@ func _update_artillery() -> void:
 				if e_face[e] != face:
 					e_face[e] = face
 					changed = true
-			else:
+			elif u_rprog[u] == 0:
 				# Traverse toward the target, within the arc of the battery.
 				var want := face
 				if ft >= 0:
@@ -2748,8 +3226,11 @@ func _update_artillery() -> void:
 					e_hp[e] -= near * ENGINE_WRECK
 					if e_hp[e] <= 0:
 						_wreck(e)
+		if u_rprog[u] == REFILL_FULL:
+			_refill_work(u)
+			continue
 		# Shoot: set up, standing, a target, loaded, crewed and on the bearing.
-		if u_depl[u] < full or ft < 0 or u_moved[u] != 0:
+		if u_depl[u] < full or ft < 0 or u_moved[u] != 0 or u_rprog[u] > 0:
 			continue
 		var need := t_m_reload[ty] * t_crew[ty]
 		for k in ne:
@@ -2767,6 +3248,33 @@ func _update_artillery() -> void:
 				continue
 			if _art_fire(e, u, ft, ty):
 				e_reload[e] = 0
+
+
+## A refilling battery: each working engine short of its full load gains
+## the work of the crew standing at it (none below the minimum crew); a
+## shot comes up from the reserve every m_refill x full crew. When nothing
+## more can come up (engines full or the reserve empty) the order ends.
+func _refill_work(u: int) -> void:
+	var ty := u_type[u]
+	var need := t_m_refill[ty] * t_crew[ty]
+	var e0 := u_eng0[u]
+	var more := false
+	for k in u_neng[u]:
+		var e := e0 + k
+		if e_state[e] != E_OK or e_ammo[e] >= t_m_ammo[ty] or u_reserve[u] <= 0:
+			continue
+		more = true
+		if e_crew[e] < t_crew_min[ty]:
+			continue
+		e_rwork[e] += e_crew[e]
+		if e_rwork[e] >= need:
+			e_rwork[e] -= need
+			e_ammo[e] += 1
+			u_ammo[u] += 1
+			u_reserve[u] -= 1
+			stat_refilled += 1
+	if not more:
+		u_refill[u] = 0
 
 
 ## Enemy soldiers (in grid `head`) within r of (x, y), counting up to cap.
@@ -2813,19 +3321,39 @@ func _art_fire(e: int, u: int, ft: int, ty: int) -> bool:
 	var sx := e_x[e]
 	var sy := e_y[e]
 	var spd := t_m_speed[ty]
-	var ax := pos_x[j]
-	var ay := pos_y[j]
-	if t_m_lead[ty] != 0:
+	# Stones aim at the near face of the formation along the line to that
+	# man (the front rank facing the battery, else the nearest edge), not at
+	# the man himself: a stone landing among the rear ranks mostly flies on
+	# beyond them.
+	var bx := pos_x[j]
+	var by := pos_y[j]
+	if t_m_kind[ty] == 2:
+		var nf := _near_face(ft, sx, sy, bx, by)
+		bx = nf.x
+		by = nf.y
+	var ax := bx
+	var ay := by
+	var lead := t_m_lead[ty]
+	if lead != 0:
 		var vx := pos_x[j] - prev_x[j]
 		var vy := pos_y[j] - prev_y[j]
+		if t_m_kind[ty] == 2:
+			# Stones lead the unit's movement, not one man's (men shuffling
+			# up to fill gaps would throw a slow stone metres long).
+			var v := _unit_velocity(ft)
+			vx = v.x
+			vy = v.y
 		for k in 2:
-			var fl := FM.approx_len(ax - sx, ay - sy) / spd + 3
-			ax = pos_x[j] + vx * fl
-			ay = pos_y[j] + vy * fl
+			var fl := (FM.approx_len(ax - sx, ay - sy) / spd + 3) * lead / 100
+			ax = bx + vx * fl
+			ay = by + vy * fl
 	var dx := ax - sx
 	var dy := ay - sy
 	var dist := FM.approx_len(dx, dy)
-	if dist > t_m_range[ty] or dist < t_m_min[ty] or dist <= 0:
+	if ter_on == 0:
+		if dist > t_m_range[ty] or dist < t_m_min[ty] or dist <= 0:
+			return false
+	elif dist < t_m_min[ty] or dist <= 0 or not _shot_ok(sx, sy, ax, ay, dist, ty):
 		return false
 	var p := pr_free
 	pr_free = pr_next[p]
@@ -2839,6 +3367,8 @@ func _art_fire(e: int, u: int, ft: int, ty: int) -> bool:
 	var spread := t_m_spread0[ty] + dist * t_m_spread[ty] / 1000
 	var lat := (_rand() % (spread + 1) + _rand() % (spread + 1)) - spread
 	var lon := ((_rand() % (spread + 1) + _rand() % (spread + 1)) - spread) * 3 / 2
+	if lon > 0:
+		lon = lon * t_m_long[ty] / 100
 	var ux := dx * FM.TRIG_ONE / dist
 	var uy := dy * FM.TRIG_ONE / dist
 	var lx := ax + ((ux * lon - uy * lat) / FM.TRIG_ONE)
@@ -2856,6 +3386,47 @@ func _art_fire(e: int, u: int, ft: int, ty: int) -> bool:
 	pr_next[p] = pr_bucket[b]
 	pr_bucket[b] = p
 	return true
+
+
+## Mean movement of unit t's soldiers over the last tick.
+func _unit_velocity(t: int) -> Vector2i:
+	var base := u_slot_base[t]
+	var n_a := u_alive[t]
+	var vx := 0
+	var vy := 0
+	for s in n_a:
+		var i := slot_soldier[base + s]
+		vx += pos_x[i] - prev_x[i]
+		vy += pos_y[i] - prev_y[i]
+	n_a = maxi(n_a, 1)
+	return Vector2i(vx / n_a, vy / n_a)
+
+
+## Near face of unit t seen from (sx, sy) along the line to (px, py): the
+## point on that line 1 m inside the nearest of t's soldiers within 2.5 m of
+## the line (the line's own end if none is).
+func _near_face(t: int, sx: int, sy: int, px: int, py: int) -> Vector2i:
+	var dx := px - sx
+	var dy := py - sy
+	# Exact length: approx_len (up to 4% off) would put the projections
+	# metres out at 200 m.
+	var d := maxi(FM.isqrt(dx * dx + dy * dy), 1)
+	var ux := dx * FM.TRIG_ONE / d
+	var uy := dy * FM.TRIG_ONE / d
+	var near := (dx * ux + dy * uy) / FM.TRIG_ONE
+	var base := u_slot_base[t]
+	for s in u_alive[t]:
+		var i := slot_soldier[base + s]
+		var rx := pos_x[i] - sx
+		var ry := pos_y[i] - sy
+		var lt := (ry * ux - rx * uy) / FM.TRIG_ONE
+		if lt > 2560 or lt < -2560:
+			continue
+		var al := (rx * ux + ry * uy) / FM.TRIG_ONE
+		if al < near:
+			near = al
+	near += M / 2
+	return Vector2i(sx + ux * near / FM.TRIG_ONE, sy + uy * near / FM.TRIG_ONE)
 
 
 ## Everything within reach of a straight path: the segment from (x0, y0) +
@@ -2957,7 +3528,21 @@ func _land_bolt(p: int) -> void:
 	var dist := maxi(FM.approx_len(dx, dy), 1)
 	var ux := dx * FM.TRIG_ONE / dist
 	var uy := dy * FM.TRIG_ONE / dist
-	_sweep(sx, sy, ux, uy, BOLT_SKIP, dist + t_m_plough[ty], BOLT_R_INF, BOLT_R_CAV)
+	var a1 := dist + t_m_plough[ty]
+	var z0 := 0
+	var dz := 0
+	if ter_on != 0:
+		# Over hilly ground the bolt flies a straight line from the engine to
+		# the aim point and on: the ground stops it where it rises above that
+		# line, and it passes over (or under) men it is not at body height for.
+		z0 = height_at(sx, sy) + LOF_EYE
+		dz = height_at(pr_x[p], pr_y[p]) + LOF_BODY - z0
+		var blk := lof_block(sx, sy, z0, pr_x[p], pr_y[p], z0 + dz, dist * t_m_apex[ty] / 100,
+			t_m_plough[ty])
+		if blk >= 0:
+			a1 = mini(a1, blk)
+			stat_bolt_ground += 1
+	_sweep(sx, sy, ux, uy, BOLT_SKIP, a1, BOLT_R_INF, BOLT_R_CAV)
 	var energy := t_m_dmg[ty]
 	var from := FM.atan2_a(-dy, -dx)
 	var hits := 0
@@ -2966,6 +3551,12 @@ func _land_bolt(p: int) -> void:
 		if energy < SHOT_STOP or hits >= t_m_pierce[ty]:
 			break
 		var v := _sw_v[k]
+		if ter_on != 0:
+			var vx := e_x[-v - 1] if v < 0 else pos_x[v]
+			var vy := e_y[-v - 1] if v < 0 else pos_y[v]
+			var rel := z0 + dz * _sw_a[k] / dist - height_at(vx, vy)
+			if rel < BOLT_BODY_LO or rel > BOLT_BODY_HI:
+				continue
 		if v < 0:
 			_engine_hit(-v - 1, energy)
 			break
@@ -3004,7 +3595,18 @@ func _land_stone(p: int) -> void:
 	var uy := dy * FM.TRIG_ONE / dist
 	var blast := t_m_blast[ty]
 	var r := maxi(blast, STONE_R_INF)
-	_sweep(lx, ly, ux, uy, -blast, t_m_plough[ty], r, maxi(blast, STONE_R_CAV))
+	var plough := t_m_plough[ty]
+	if ter_on != 0:
+		# A stone bouncing on uphill stops sooner; downhill it rolls further.
+		var g := grade_along(lx, ly, ux, uy)
+		var pf := 1000
+		if g > 0:
+			pf = 1000 - g * STONE_UP_K * 10 / FM.TRIG_ONE
+			stat_plough_short += 1
+		elif g < 0:
+			pf = 1000 - g * STONE_DOWN_K * 10 / FM.TRIG_ONE
+		plough = plough * clampi(pf, STONE_PLOUGH_MIN, STONE_PLOUGH_MAX) / 1000
+	_sweep(lx, ly, ux, uy, -blast, plough, r, maxi(blast, STONE_R_CAV))
 	var energy0 := t_m_dmg[ty]
 	var hits := 0
 	_hit_units.fill(-1)
@@ -3292,7 +3894,7 @@ func state_hash() -> int:
 	# Pending (future) orders are deliberately left out: in lockstep a peer
 	# may already hold orders the other has not received yet.
 	var header := PackedInt64Array([tick, rng_state, winner, decided_tick, ended,
-		n, n_units, pr_free, pr_count, n_eng])
+		n, n_units, pr_free, pr_count, n_eng, ter_hash])
 	ctx.update(header.to_byte_array())
 	for arr in _soldier_hashed():
 		ctx.update((arr as PackedInt32Array).to_byte_array())
@@ -3310,5 +3912,6 @@ func state_hash() -> int:
 			ctx.update((arr as PackedInt32Array).to_byte_array())
 	ctx.update(ai_phase.to_byte_array())
 	ctx.update(ai_t.to_byte_array())
+	ctx.update(ai_hold.to_byte_array())
 	var digest := ctx.finish()
 	return digest.decode_u32(0)

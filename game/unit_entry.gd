@@ -52,6 +52,7 @@ const ART_ROWS := [
 	["Shots / engine", "m_ammo", "count"], ["Reload", "m_reload", "s_low"],
 	["Firing arc", "arc", "deg"], ["Traverse", "traverse", "degps"],
 	["Set-up time", "deploy", "s"], ["Engine hp", "e_hp", "int"],
+	["Reserve / engine", "m_reserve", "count"], ["Refill", "m_refill", "s_low"],
 	["Fright per hit", "m_fear", "int"],
 ]
 const SPECIAL_ROWS := [
@@ -194,6 +195,23 @@ static func tags(ty: int) -> Array[String]:
 	if UT.stat(ty, "m_vuln") > 100 or UT.stat(ty, "m_down") > 0:
 		out.append("Vulnerable to missiles (x%.1f damage, %d%% of hits bring a horse down)" % [
 			UT.stat(ty, "m_vuln") / 100.0, UT.stat(ty, "m_down")])
+	# Terrain (data-driven: the type's climb rate and missile height gain).
+	if c == UT.CLS_ART:
+		out.append("Packed up: -%d%% speed per 10%% uphill" % UT.stat(ty, "climb"))
+	else:
+		out.append("Uphill: -%d%% speed per 10%% of slope" % UT.stat(ty, "climb"))
+	if UT.stat(ty, "m_ammo") > 0 and UT.stat(ty, "m_hgain") > 0:
+		var gain := UT.stat(ty, "m_hgain") / 10
+		out.append("Range +%d m from 10 m higher (-%d m shooting up)" % [gain, gain])
+	if UT.stat(ty, "m_ammo") > 0 and UT.stat(ty, "m_arc") == 0:
+		out.append("Flat: blocked by a crest in the way")
+	if UT.stat(ty, "charge") > 0:
+		out.append("Charges downhill hit up to +%d%%, uphill down to -%d%%" % [
+			BattleSim.CHG_H_MAX - 100, 100 - BattleSim.CHG_H_MIN])
+	if c == UT.CLS_PIKE:
+		out.append("Wall breaks %d%% faster on steep ground" % (BattleSim.PIKE_STEEP_DIS - 100))
+	if c == UT.CLS_ART and UT.stat(ty, "m_kind") == 2:
+		out.append("Stones bounce less far uphill")
 	if c == UT.CLS_ART:
 		var kind := UT.stat(ty, "m_kind")
 		if kind == 1:
@@ -203,7 +221,7 @@ static func tags(ty: int) -> Array[String]:
 		else:
 			out.append("Lobbed over friends")
 			out.append("Bounces %d m on through the ranks, knocking men down" % (UT.stat(ty, "m_plough") / 1024))
-			out.append("Inaccurate; does not lead moving targets")
+			out.append("Aims at the near face; lands short rather than over")
 			out.append("Smashes engines")
 		out.append("Minimum range %d m" % (UT.stat(ty, "m_min") / 1024))
 		out.append("Turns to shoot outside its %d deg arc" % int(round(UT.stat(ty, "arc") * 720.0 / 1024.0)))
@@ -214,6 +232,8 @@ static func tags(ty: int) -> Array[String]:
 		out.append("Wrecked by enemies next to it")
 		out.append("Frightens the unit it hits (a few seconds)")
 		out.append("Fire at will / hold fire")
+		out.append("Refill: %d more shots per engine in the baggage, ~%d s for a full load; cannot move or shoot meanwhile" % [
+			UT.stat(ty, "m_reserve"), UT.stat(ty, "m_ammo") * UT.stat(ty, "m_refill") / 10 + BattleSim.REFILL_FULL / 10])
 		out.append("Crews weak in melee, break easily")
 		return out
 	if UT.stat(ty, "m_ammo") > 0:

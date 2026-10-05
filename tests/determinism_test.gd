@@ -8,23 +8,50 @@ extends SceneTree
 ## have exercised missiles, cavalry impacts, braced reflections, knockdowns,
 ## pike walls, withdrawals and routs off the field; and artillery: bolts and
 ## stones fired and striking, batteries packing up, moving and setting up
-## again (deploy order), engines wrecked in melee and engines abandoned.
+## again (deploy order), engines wrecked in melee and engines abandoned,
+## refilling from the baggage (and a refill broken off by melee).
+## Terrain: maps are identical for the same seed and parameters and differ
+## across seeds; the hilly runs ("scenario@kind" forces generated terrain of
+## that kind) exercise every terrain rule (melee height bonus, slowing
+## uphill, steep-ground disorder, charges downhill and uphill, range from
+## height, flat shots refused for want of a line of fire, bolts stopped by
+## the ground, stones ploughing less uphill, and the AI holding high ground,
+## moving missiles onto rises and shifting its deployment); on a mirror-
+## symmetric map every terrain function is exactly symmetric; and on flat
+## maps the battles are bit-for-bit the recorded ones (golden trajectory
+## digests; update them only for an intended change of flat-map rules).
 ## Exits 0 on success, 1 on failure.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const UT := preload("res://sim/unit_types.gd")
+const Terrain := preload("res://sim/terrain.gd")
 
 const M := 1024
 
 ## scenario -> ticks to run
-const RUNS := {"skirmish": 1500, "battle_2000": 1800, "bench_2000": 2500, "test_cav_spears": 600,
-	"test_cav_art": 700}
+## (Playable battles have random generated terrain; "@kind" forces a kind.)
+const RUNS := {"skirmish@0": 1500, "battle_2000@0": 1800, "bench_2000": 2500, "test_cav_spears": 600,
+	"test_cav_art": 700, "battle_2000@2": 1800, "bench_2000@4": 3000, "bench_2000@3": 2500,
+	"test_bolts_crest": 500, "test_attack_uphill": 1500, "test_ridge_defend": 1500,
+	"ai_hill": 1800, "ai_ridge": 600}
+
+## Trajectory digests of flat battles (soldier and unit arrays every 50
+## ticks over 2,500 ticks, seed 4242): flat maps must keep playing exactly
+## like this. Update only for an intended change of flat-map rules. History:
+## terrain height left the digests of commit 49c1022 unchanged; they were
+## re-recorded for more ammunition, stones aimed at the near face and the
+## artillery Refill order (October 2026).
+const GOLDEN := {"skirmish": "55283f52005038df", "bench_2000": "698d8a1a4d09955d",
+	"test_cav_art": "2614adc80bd29eb4", "test_stone_line": "62b07015506232ff"}
 
 var _ok := true
 
 
 func _init() -> void:
+	_check_maps()
+	_check_symmetry()
+	_check_golden()
 	for scen in RUNS:
 		var ticks: int = RUNS[scen]
 		var a := _run(scen, 12345, ticks)
@@ -67,11 +94,11 @@ func _fail(msg: String) -> void:
 func _check_coverage(scen: String, st: Dictionary) -> void:
 	var need: Array = []
 	match scen:
-		"skirmish":
+		"skirmish@0":
 			need = ["shots", "missile_hits", "impacts", "withdrawn", "attacks"]
-		"battle_2000":
+		"battle_2000@0":
 			need = ["shots", "missile_hits", "impacts", "knockdowns", "withdrawn",
-				"pike_wall", "attacks", "bolts", "stones", "art_hits", "art_kills",
+				"pike_wall", "attacks", "bolts", "stones", "art_hits", "art_kills", "refills", "refilled",
 				"packs", "deploys", "parting", "engines_out"]
 		"bench_2000":
 			need = ["shots", "impacts", "routed_off", "ai_flank", "ai_pull", "attacks",
@@ -79,7 +106,25 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 		"test_cav_spears":
 			need = ["reflects"]
 		"test_cav_art":
-			need = ["wrecked", "engines_out", "impacts", "bolts", "stones"]
+			need = ["wrecked", "engines_out", "impacts", "bolts", "stones", "refill_broken"]
+		"battle_2000@2":
+			need = ["h_melee", "slow_up", "charge_down", "charge_up", "steep_dis",
+				"bolts", "stones", "bolt_ground", "plough_short"]
+		"bench_2000@4":
+			need = ["h_melee", "slow_up", "range_up", "charge_down", "charge_up", "ai_hold",
+				"ai_rise", "steep_dis"]
+		"ai_hill":
+			need = ["ai_detour", "ai_hold", "h_melee", "charge_up"]
+		"ai_ridge":
+			need = ["ai_deploy"]
+		"bench_2000@3":
+			need = ["h_melee", "plough_short", "bolt_ground", "ai_rise"]
+		"test_bolts_crest":
+			need = ["lof_blocked", "bolts"]
+		"test_attack_uphill":
+			need = ["h_melee", "slow_up", "charge_up", "range_up"]
+		"test_ridge_defend":
+			need = ["h_melee", "charge_up", "range_up", "steep_dis"]
 	for k in need:
 		if int(st.get(k, 0)) <= 0:
 			_fail("%s: run never exercised %s (%s)" % [scen, k, str(st)])
@@ -101,7 +146,30 @@ func _script_orders(sim, scen: String) -> void:
 		sim.queue_order(BattleSim.make_attack_order(5, 0, 4, 1))
 		sim.queue_order(BattleSim.make_attack_order(5, 1, 5, 1))
 		sim.queue_order(BattleSim.make_attack_order(5, 2, 3, 1))
+		# The enemy batteries keep trying to refill as the riders come in:
+		# melee breaks the refill off.
+		for t in range(150, 700, 20):
+			for b in [3, 4]:
+				var o := BattleSim.make_refill_order(t, b, 1)
+				o["player"] = 50
+				sim.queue_order(o)
 		return
+	scen = scen.get_slice("@", 0) if scen.ends_with("@0") else scen
+	if scen == "test_bolts_crest":
+		# Shoot the pikes behind the crest (refused), then the light infantry.
+		sim.queue_order(BattleSim.make_attack_order(5, 0, 2, 0))
+		sim.queue_order(BattleSim.make_attack_order(250, 0, 3, 0))
+		return
+	if scen == "test_attack_uphill":
+		# Everything goes straight up the hill at the enemy; the cavalry
+		# charges the spearmen's flank uphill.
+		sim.queue_order(BattleSim.make_attack_order(5, 0, 4, 0))
+		sim.queue_order(BattleSim.make_attack_order(5, 1, 4, 0))
+		sim.queue_order(BattleSim.make_attack_order(5, 2, 5, 0))
+		sim.queue_order(BattleSim.make_attack_order(200, 3, 6, 1))
+		return
+	if scen == "test_ridge_defend":
+		return  # the enemy climbs the ridge by its own scripted orders
 	if scen == "test_cav_spears" or sim.is_ai_side(0):
 		return
 	var missiles: Array = []
@@ -130,6 +198,11 @@ func _script_orders(sim, scen: String) -> void:
 			sim.queue_order(BattleSim.make_fire_order(700, a, 0))
 			sim.queue_order(BattleSim.make_halt_order(701, a))
 			sim.queue_order(BattleSim.make_fire_order(800, a, 1))
+		elif k == 1:
+			# The stone throwers refill after their first stones, then are
+			# told to shoot (which ends a refill still running).
+			sim.queue_order(BattleSim.make_refill_order(320, a, 1))
+			sim.queue_order(BattleSim.make_attack_order(1200, a, enemy_units[2], 0))
 	var u0: int = foot[0]
 	var u1: int = foot[1] if foot.size() > 1 else foot[0]
 	# Move / reform / halt / run.
@@ -162,9 +235,31 @@ func _script_orders(sim, scen: String) -> void:
 	sim.queue_order(BattleSim.make_withdraw_all_order(1000, 0))
 
 
+## Scenario for a RUNS key: "id" or "id@kind" (forced generated terrain);
+## "ai_hill": both AIs on the hill test (the attacker goes round the steep
+## side, the holder holds); "ai_ridge": the skirmish, AI against AI, with a
+## low ridge just behind the top army (it shifts its deployment onto it).
+static func _scenario(key: String) -> Dictionary:
+	if key == "ai_hill":
+		var sh := Scenarios.make("test_attack_uphill")
+		sh["ai_sides"] = [0, 1]
+		return sh
+	if key == "ai_ridge":
+		var sr := Scenarios.make("skirmish")
+		sr["ai_sides"] = [0, 1]
+		sr["terrain"] = {"kind": Terrain.K_CUSTOM, "features": [Scenarios.ridge(220, 108, 22, 7, 0, 160)]}
+		return sr
+	var id := key.get_slice("@", 0)
+	var sc := Scenarios.make(id)
+	if key.find("@") >= 0:
+		var kind := int(key.get_slice("@", 1))
+		sc["terrain"] = {"kind": kind}
+	return sc
+
+
 func _run(scen: String, p_seed: int, ticks: int) -> Dictionary:
 	var sim := BattleSim.new()
-	sim.setup(Scenarios.make(scen), p_seed)
+	sim.setup(_scenario(scen), p_seed)
 	_script_orders(sim, scen)
 	var hashes := PackedInt64Array()
 	hashes.append(sim.state_hash())
@@ -188,7 +283,133 @@ func _run(scen: String, p_seed: int, ticks: int) -> Dictionary:
 		"ai_guard": sim.stat_ai[10], "bolts": sim.stat_bolts, "stones": sim.stat_stones,
 		"art_hits": sim.stat_art_victims, "art_kills": sim.stat_art_kills,
 		"packs": sim.stat_packs, "deploys": sim.stat_deploys, "wrecked": sim.stat_wrecked,
-		"engines_out": sim.stat_wrecked + sim.stat_abandoned, "parting": sim.stat_parting}
+		"engines_out": sim.stat_wrecked + sim.stat_abandoned, "parting": sim.stat_parting,
+		"h_melee": sim.stat_h_melee, "charge_down": sim.stat_charge_down,
+		"charge_up": sim.stat_charge_up, "lof_blocked": sim.stat_lof_blocked,
+		"slow_up": sim.stat_slow_up, "range_up": sim.stat_range_up,
+		"plough_short": sim.stat_plough_short, "bolt_ground": sim.stat_bolt_ground,
+		"steep_dis": sim.stat_steep_dis, "ai_hold": sim.stat_ai[12], "ai_rise": sim.stat_ai[13],
+		"ai_deploy": sim.stat_ai[14], "ai_detour": sim.stat_ai[11],
+		"refills": sim.stat_refills, "refilled": sim.stat_refilled,
+		"refill_broken": sim.stat_refill_broken}
 	print("  %s seed %d: alive %d/%d after %d ticks, winner %d" % [scen, p_seed,
 		sim.alive_count(0), sim.alive_count(1), ticks, sim.winner])
 	return {"hashes": hashes, "result": sim.result(), "stats": stats}
+
+
+# --------------------------------------------------------------- terrain ---
+
+## Same seed and parameters: the same map (and hash); another seed or kind:
+## a different one; flat: no terrain; and the hash is in state_hash().
+func _check_maps() -> void:
+	var w := 560 * 1024
+	var h := 560 * 1024
+	for kind in [Terrain.K_ROLLING, Terrain.K_RIDGE, Terrain.K_VALLEY, Terrain.K_HILL, Terrain.K_SLOPE]:
+		var a := Terrain.build({"kind": kind}, 777, w, h)
+		var b := Terrain.build({"kind": kind}, 777, w, h)
+		var c := Terrain.build({"kind": kind}, 778, w, h)
+		var d := Terrain.build({"kind": kind, "seed": 777}, 5, w, h)
+		if a["h"] != b["h"] or a["h"] != d["h"]:
+			_fail("terrain kind %d: same seed built different maps" % kind)
+		elif a["h"] == c["h"]:
+			_fail("terrain kind %d: different seeds built the same map" % kind)
+		elif int(a["on"]) != 1:
+			_fail("terrain kind %d: no relief" % kind)
+		else:
+			print("PASS terrain kind %d: same seed same map, other seed differs" % kind)
+	var sc := Scenarios.make("battle_2000")
+	var s1 := BattleSim.new()
+	s1.setup(sc, 4242)
+	var s2 := BattleSim.new()
+	s2.setup(sc.duplicate(true), 4242)
+	var sc3: Dictionary = sc.duplicate(true)
+	sc3["terrain"]["relief_m"] = 13
+	var s3 := BattleSim.new()
+	s3.setup(sc3, 4242)
+	if s1.state_hash() != s2.state_hash() or s1.ter_hash != s2.ter_hash:
+		_fail("battle_2000: same seed, different tick-0 hash")
+	elif s1.state_hash() == s3.state_hash():
+		_fail("battle_2000: a different terrain parameter left the tick-0 hash unchanged")
+	else:
+		print("PASS terrain parameters are covered by state_hash() at tick 0")
+	var flat := BattleSim.new()
+	flat.setup(Scenarios.make("bench_2000"), 4242)
+	if flat.ter_on != 0 or flat.height_at(100000, 100000) != 0:
+		_fail("bench_2000 is not flat")
+
+
+## On a mirror-symmetric map, every terrain function gives exactly the
+## mirrored answer for the mirrored question (no top / bottom bias).
+func _check_symmetry() -> void:
+	var bad := 0
+	var checks := 0
+	for kind in [Terrain.K_ROLLING, Terrain.K_RIDGE, Terrain.K_HILL, Terrain.K_SLOPE]:
+		var sc := Scenarios.make("bench_2000")
+		sc["terrain"] = {"kind": kind, "sym": 1, "seed": 99 + kind}
+		var sim := BattleSim.new()
+		sim.setup(sc, 1)
+		var W: int = sim.field_w
+		var H: int = sim.field_h
+		var rng := 12345
+		for k in 4000:
+			rng = (rng * 1103515245 + 12345) & 0x7FFFFFFF
+			var x := rng % (W + 1)
+			rng = (rng * 1103515245 + 12345) & 0x7FFFFFFF
+			var y := rng % (H + 1)
+			if k < 40:
+				# Grid lines and edges, where rounding would show first.
+				x = (k % 10) * 4096 * 7
+				y = (k / 10) * 4096 * 13
+			checks += 1
+			if sim.height_at(x, y) != sim.height_at(W - x, H - y):
+				bad += 1
+			var g := sim.slope_at(x, y)
+			var gm := sim.slope_at(W - x, H - y)
+			if g.x != -gm.x or g.y != -gm.y:
+				bad += 1
+			rng = (rng * 1103515245 + 12345) & 0x7FFFFFFF
+			var dx := rng % 8001 - 4000
+			rng = (rng * 1103515245 + 12345) & 0x7FFFFFFF
+			var dy := rng % 8001 - 4000
+			if sim.grade_along(x, y, dx, dy) != sim.grade_along(W - x, H - y, -dx, -dy):
+				bad += 1
+			if k % 8 == 0:
+				rng = (rng * 1103515245 + 12345) & 0x7FFFFFFF
+				var x1 := rng % (W + 1)
+				rng = (rng * 1103515245 + 12345) & 0x7FFFFFFF
+				var y1 := rng % (H + 1)
+				var z0 := sim.height_at(x, y) + BattleSim.LOF_EYE
+				var z1 := sim.height_at(x1, y1) + BattleSim.LOF_BODY
+				var b1 := sim.lof_block(x, y, z0, x1, y1, z1, 3000, 20000)
+				var b2 := sim.lof_block(W - x, H - y, z0, W - x1, H - y1, z1, 3000, 20000)
+				if b1 != b2:
+					bad += 1
+	if bad > 0:
+		_fail("terrain functions not mirror-symmetric on a symmetric map (%d of %d checks)" % [bad, checks])
+	else:
+		print("PASS terrain functions exactly mirror-symmetric (%d points x 4 symmetric maps)" % (checks / 4))
+
+
+## Flat maps play exactly as recorded (golden digests).
+func _check_golden() -> void:
+	for scen in GOLDEN:
+		var sim := BattleSim.new()
+		var sc := Scenarios.make(scen)
+		if sc.has("terrain"):
+			sc["terrain"] = {"kind": Terrain.K_FLAT}
+		sim.setup(sc, 4242)
+		var ctx := HashingContext.new()
+		ctx.start(HashingContext.HASH_MD5)
+		for t in 2500:
+			sim.step()
+			if t % 50 == 0:
+				for arr in [sim.pos_x, sim.pos_y, sim.hp, sim.state, sim.u_morale, sim.u_ax, sim.u_ay,
+						sim.pr_x, sim.e_hp]:
+					var bytes := (arr as PackedInt32Array).to_byte_array()
+					if bytes.size() > 0:
+						ctx.update(bytes)
+		var dig := ctx.finish().hex_encode().substr(0, 16)
+		if dig != GOLDEN[scen]:
+			_fail("%s on a flat map no longer plays as recorded (digest %s, want %s)" % [scen, dig, GOLDEN[scen]])
+		else:
+			print("PASS %s on a flat map plays exactly as recorded" % scen)

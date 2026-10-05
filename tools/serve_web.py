@@ -111,6 +111,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return
             recv = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds")
             ip = self.client_address[0] if self.client_address else ""
+            # Behind a reverse proxy the socket peer is the proxy; record the
+            # original client as well (not trusted, for device grouping only).
+            fwd = self.headers.get("X-Forwarded-For", "")
+            if fwd:
+                ip = fwd.split(",")[0].strip()[:64] + " via " + ip
             lines = []
             for r in records:
                 if not isinstance(r, dict):

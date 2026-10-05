@@ -32,6 +32,11 @@ const COL_FIRE := Color(1.0, 0.75, 0.25, 0.8)
 const COL_ARC := Color(1.0, 0.85, 0.4, 0.5)
 const FX_TICKS := 15.0   # stone impact marks last this many ticks
 const COL_WITHDRAW := Color(0.85, 0.85, 1.0, 0.8)
+const COL_BLOCKED := Color(1.0, 0.25, 0.2, 0.9)
+const COL_UPHILL := Color(1.0, 0.62, 0.35)
+const COL_DOWNHILL := Color(0.6, 1.0, 0.6)
+const HINT_GRADE := 164   # slopes under 4% get no uphill / downhill hint
+const RANGE_STEPS := 72   # height-adjusted range ring: points round the circle
 
 
 ## Unit order field as the player last ordered it (pending orders included).
@@ -109,10 +114,17 @@ func _draw_markers(r: float, lw: float) -> void:
 		if sim.u_neng[u] > 0:
 			var full: int = UT.stat(sim.u_type[u], "deploy")
 			var frac: float = float(sim.u_depl[u]) / maxf(full, 1.0)
+			var rcol := Color(1, 0.9, 0.5, 0.95)
+			if sim.u_rprog[u] > 0 or sim.u_refill[u] != 0:
+				# Refilling: the ring shows how full the engines are (blue),
+				# dashed while the battery gets into or out of it.
+				var full_ammo: int = sim.u_neng[u] * UT.stat(sim.u_type[u], "m_ammo")
+				frac = float(maxi(sim.u_ammo[u], 0)) / maxf(full_ammo, 1.0)
+				rcol = Color(0.45, 0.8, 1.0, 0.95 if sim.u_rprog[u] >= BattleSim.REFILL_FULL else 0.5)
 			var rc := c + Vector2(0, r * 1.9)
 			draw_arc(rc, r * 0.45, 0, TAU, 12, Color(0, 0, 0, 0.6), lw)
 			if frac > 0.0:
-				draw_arc(rc, r * 0.45, -PI * 0.5, -PI * 0.5 + TAU * frac, 12, Color(1, 0.9, 0.5, 0.95), lw)
+				draw_arc(rc, r * 0.45, -PI * 0.5, -PI * 0.5 + TAU * frac, 12, rcol, lw)
 		# Braced spears / formed pikes: bar under the marker.
 		if sim.u_braced[u] != 0:
 			draw_line(c + Vector2(-r, r * 1.35), c + Vector2(r, r * 1.35), Color(1, 1, 1, 0.9), lw * 1.2)
@@ -144,12 +156,21 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 		draw_dashed_line(a, d, Color(0.6, 1.0, 0.6, 0.7), lw, 8.0 / zoom)
 		draw_line(d - dright * hw, d + dright * hw, Color(0.6, 1.0, 0.6, 0.9), lw * 1.5)
 		draw_line(d, d + dfwd * px_per_m * 3.0, Color(0.6, 1.0, 0.6, 0.9), lw)
+		if primary:
+			_draw_slope_hint(sim.u_h[u], sim.height_at(_v(u, "dx"), _v(u, "dy")),
+				_v(u, "dx") - sim.u_cx[u], _v(u, "dy") - sim.u_cy[u], d + Vector2(r, r * 1.2))
 	elif order == BattleSim.O_ATTACK and _v(u, "target") >= 0:
 		var t: int = _v(u, "target")
 		var tcol := Color(1, 0.3, 0.2, 0.85)
-		if UT.cls(ty) == UT.CLS_MISSILE and sim.u_ammo[u] > 0:
+		var shooter: bool = UT.stat(ty, "m_ammo") > 0 and sim.u_ammo[u] > 0
+		if shooter:
 			tcol = COL_FIRE
-		draw_dashed_line(a, to_px(sim.u_cx[t], sim.u_cy[t]), tcol, lw, 8.0 / zoom)
+		var tp := to_px(sim.u_cx[t], sim.u_cy[t])
+		if not (shooter and _draw_blocked(u, t, lw)):
+			draw_dashed_line(a, tp, tcol, lw, 8.0 / zoom)
+		if primary and not shooter:
+			_draw_slope_hint(sim.u_h[u], sim.u_h[t], sim.u_cx[t] - sim.u_cx[u],
+				sim.u_cy[t] - sim.u_cy[u], (a + tp) * 0.5)
 	elif order == BattleSim.O_WITHDRAW:
 		_draw_withdraw(u, a, COL_WITHDRAW, lw)
 	# Artillery: firing arc between minimum and maximum range (and the full
@@ -157,12 +178,11 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 	if UT.cls(ty) == UT.CLS_ART:
 		_draw_art_range(u, lw)
 		_draw_fire_line(u, lw)
-	# Missile troops: range circle and what they are shooting at now.
+	# Missile troops: range circle (stretched where the ground falls away,
+	# shortened uphill) and what they are shooting at now.
 	if UT.cls(ty) == UT.CLS_MISSILE:
-		var c := to_px(sim.u_cx[u], sim.u_cy[u])
-		var rng := UT.stat(ty, "m_range") * px_per_m / M
 		var rcol := Color(1.0, 0.85, 0.4, 0.45) if sim.u_ammo[u] > 0 else Color(0.6, 0.6, 0.6, 0.3)
-		draw_arc(c, rng, 0, TAU, 96, rcol, lw)
+		_draw_range(u, 0.0, TAU, rcol, lw)
 		_draw_fire_line(u, lw)
 	if primary and _v(u, "run") != 0:
 		draw_string(ThemeDB.fallback_font, a + Vector2(r, -r * 3.5), "RUN",
@@ -176,22 +196,22 @@ func _draw_art_range(u: int, lw: float) -> void:
 	var ty: int = sim.u_type[u]
 	var c := to_px(sim.u_cx[u], sim.u_cy[u])
 	var k := px_per_m / M
-	var rmax := UT.stat(ty, "m_range") * k
 	var rmin := UT.stat(ty, "m_min") * k
 	var ok: bool = sim.u_ammo[u] > 0
 	var col := COL_ARC if ok else Color(0.6, 0.6, 0.6, 0.3)
-	draw_arc(c, rmax, 0, TAU, 96, Color(col, col.a * 0.35), lw)
+	_draw_range(u, 0.0, TAU, Color(col, col.a * 0.35), lw)
 	if rmin > 0.0:
 		draw_arc(c, rmin, 0, TAU, 48, Color(col, col.a * 0.35), lw)
 	var face: float = _v(u, "dface") * TAU / 1024.0
 	var half: float = UT.stat(ty, "arc") * TAU / 1024.0
 	var a0 := face - half
 	var a1 := face + half
-	draw_arc(c, rmax, a0, a1, 24, col, lw * 1.6)
+	var ends := _draw_range(u, a0, a1, col, lw * 1.6)
 	draw_arc(c, maxf(rmin, px_per_m), a0, a1, 12, col, lw * 1.6)
-	for a in [a0, a1]:
+	for e in 2:
+		var a: float = [a0, a1][e]
 		var d := Vector2(cos(a), sin(a))
-		draw_line(c + d * maxf(rmin, px_per_m), c + d * rmax, col, lw)
+		draw_line(c + d * maxf(rmin, px_per_m), ends[e], col, lw)
 
 
 ## Stone impacts in the last FX_TICKS ticks: a dust ring that spreads and
@@ -217,6 +237,77 @@ func _draw_fire_line(u: int, w: float) -> void:
 		return
 	draw_dashed_line(to_px(sim.u_cx[u], sim.u_cy[u]), to_px(sim.u_cx[t], sim.u_cy[t]),
 		COL_FIRE, w, 4.0 / zoom)
+
+
+## Missile range of unit u from angle a0 to a1 (radians): on hilly ground
+## each point is the type's range against the ground under that point
+## (two refinements of radius -> ground height -> range), so the ring
+## bulges out where the ground falls away and pulls in uphill. Returns the
+## end points (for the artillery sector edges).
+func _draw_range(u: int, a0: float, a1: float, col: Color, w: float) -> Array:
+	var ty: int = sim.u_type[u]
+	var cx: int = sim.u_cx[u]
+	var cy: int = sim.u_cy[u]
+	var rng: int = UT.stat(ty, "m_range")
+	var c := to_px(cx, cy)
+	var full := a1 - a0 >= TAU - 0.001
+	var steps := RANGE_STEPS if full else maxi(int(RANGE_STEPS * (a1 - a0) / TAU) + 2, 4)
+	var pts := PackedVector2Array()
+	for k in steps + 1:
+		var ang := a0 + (a1 - a0) * k / steps
+		var dir := Vector2(cos(ang), sin(ang))
+		var r := rng
+		if sim.ter_on != 0:
+			for it in 2:
+				var px := cx + int(dir.x * r)
+				var py := cy + int(dir.y * r)
+				r = sim.range_h(ty, sim.u_h[u], sim.height_at(px, py))
+		pts.append(c + dir * (r * px_per_m / M))
+	draw_polyline(pts, col, w)
+	return [pts[0], pts[pts.size() - 1]]
+
+
+## Flat weapons on hilly ground: if the line of fire from u to t is blocked
+## by a crest, draw it broken and red up to the crest with a cross there,
+## and faintly beyond. Returns true if it was blocked (and drawn).
+func _draw_blocked(u: int, t: int, w: float) -> bool:
+	var ty: int = sim.u_type[u]
+	if sim.ter_on == 0 or UT.stat(ty, "m_arc") != 0 or sim.lof_units(u, t):
+		return false
+	var x0: int = sim.u_cx[u]
+	var y0: int = sim.u_cy[u]
+	var x1: int = sim.u_cx[t]
+	var y1: int = sim.u_cy[t]
+	var dist := maxf(Vector2(x1 - x0, y1 - y0).length(), 1.0)
+	var apex: int = int(dist) * UT.stat(ty, "m_apex") / 100
+	var blk: int = sim.lof_block(x0, y0, sim.u_h[u] + BattleSim.LOF_EYE, x1, y1,
+		sim.u_h[t] + BattleSim.LOF_BODY, apex, 0, BattleSim.LOF_STEP)
+	var a := to_px(x0, y0)
+	var b := to_px(x1, y1)
+	var crest := a.lerp(b, clampf(blk / dist, 0.05, 0.95)) if blk >= 0 else (a + b) * 0.5
+	draw_dashed_line(a, crest, COL_BLOCKED, w * 1.3, 10.0 / zoom, false)
+	draw_dashed_line(crest, b, Color(COL_BLOCKED, 0.3), w, 4.0 / zoom)
+	var s := 9.0 / zoom
+	draw_line(crest + Vector2(-s, -s), crest + Vector2(s, s), COL_BLOCKED, w * 2.0)
+	draw_line(crest + Vector2(-s, s), crest + Vector2(s, -s), COL_BLOCKED, w * 2.0)
+	draw_string(ThemeDB.fallback_font, crest + Vector2(s * 1.4, -s * 0.6), "NO LINE OF FIRE",
+		HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(12.0), COL_BLOCKED)
+	return true
+
+
+## "uphill 12%" / "downhill 9%" from ground height ha to hb over (dx, dy)
+## (sim units), at `at` (world pixels); nothing on gentle ground.
+func _draw_slope_hint(ha: int, hb: int, dx: int, dy: int, at: Vector2) -> void:
+	if sim.ter_on == 0:
+		return
+	var d := maxf(Vector2(dx, dy).length(), 1.0)
+	var g := int((hb - ha) * 4096.0 / maxf(d, 1024.0))
+	if absi(g) < HINT_GRADE:
+		return
+	var pct := absi(g) * 100 / 4096
+	var txt := ("uphill %d%%" % pct) if g > 0 else ("downhill %d%%" % pct)
+	draw_string(ThemeDB.fallback_font, at, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0),
+		COL_UPHILL if g > 0 else COL_DOWNHILL)
 
 
 func _draw_withdraw(u: int, from: Vector2, col: Color, w: float) -> void:
@@ -294,7 +385,8 @@ func _draw_all_orders() -> void:
 			_draw_footprint(u, dest, _v(u, "dface"), _v(u, "files"), alive, col_move, fill_move, w)
 		elif order == BattleSim.O_ATTACK and _v(u, "target") >= 0:
 			var t: int = _v(u, "target")
-			draw_dashed_line(anchor, to_px(sim.u_cx[t], sim.u_cy[t]), col_attack, w, 6.0 / zoom)
+			if not (sim.u_ammo[u] > 0 and _draw_blocked(u, t, w)):
+				draw_dashed_line(anchor, to_px(sim.u_cx[t], sim.u_cy[t]), col_attack, w, 6.0 / zoom)
 			_draw_footprint(u, anchor, _v(u, "face"), _v(u, "files"), alive, Color(col_attack, 0.3), Color(0, 0, 0, 0), w)
 		elif order == BattleSim.O_WITHDRAW:
 			_draw_withdraw(u, anchor, Color(COL_WITHDRAW, 0.5), w)
@@ -306,6 +398,11 @@ func _draw_all_orders() -> void:
 			if _v(u, "fire") == 0 and sim.u_ammo[u] > 0:
 				draw_string(ThemeDB.fallback_font, to_px(sim.u_cx[u], sim.u_cy[u]) + Vector2(10, 18) / zoom,
 					"HOLD FIRE", HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(11.0), Color(1, 0.85, 0.5, 0.8))
+			if ucls == UT.CLS_ART and (_v(u, "refill") != 0 or sim.u_rprog[u] > 0):
+				var full_ammo: int = sim.u_neng[u] * UT.stat(sim.u_type[u], "m_ammo")
+				draw_string(ThemeDB.fallback_font, to_px(sim.u_cx[u], sim.u_cy[u]) + Vector2(10, 46) / zoom,
+					"REFILLING %d%%" % (maxi(sim.u_ammo[u], 0) * 100 / maxi(full_ammo, 1)),
+					HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(11.0), Color(0.55, 0.85, 1.0, 0.9))
 			if ucls == UT.CLS_ART and _v(u, "deploy") == 0:
 				draw_string(ThemeDB.fallback_font, to_px(sim.u_cx[u], sim.u_cy[u]) + Vector2(10, 32) / zoom,
 					"PACKED UP", HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(11.0), Color(0.85, 0.9, 1.0, 0.8))

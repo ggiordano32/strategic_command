@@ -8,6 +8,7 @@ extends RefCounted
 ## (player 50) for the enemy; the player commands side 0 and can intervene.
 
 const UT := preload("res://sim/unit_types.gd")
+const Terrain := preload("res://sim/terrain.gd")
 
 const FACE_UP := 768    # -y
 const FACE_DOWN := 256  # +y
@@ -16,10 +17,18 @@ const FACE_LEFT := 512
 const ORDER_ATTACK := 2
 
 const IDS: Array[String] = ["skirmish", "battle_2000", "battle_4000",
-	"bench_2000", "bench_4000",
+	"bench_2000", "bench_4000", "bench_4000_hills",
 	"test_pike_front", "test_pike_flank", "test_cav_rear", "test_cav_spears",
 	"test_cav_archers", "test_archers_heavy", "test_bolt_pikes", "test_stone_line",
-	"test_cav_art"]
+	"test_cav_art", "test_ridge_defend", "test_attack_uphill", "test_archers_hill",
+	"test_bolts_crest"]
+
+## Playable battles get generated terrain (random kind from the seed unless
+## the menu picks one). The benchmarks stay flat so their timings compare
+## with earlier builds; bench_4000_hills is the fixed hilly benchmark
+## (rolling, terrain seed 4242, terrain generator version 1).
+const PLAYABLE: Array[String] = ["skirmish", "battle_2000", "battle_4000"]
+const BENCH_HILLS_TERRAIN := {"kind": Terrain.K_ROLLING, "seed": 4242}
 
 ## Default unit sizes and files per type.
 ## Artillery: soldiers are crews (bolts 4 engines x 4, stones 3 x 6) and
@@ -73,10 +82,38 @@ static func title(id: String) -> String:
 			return "Test: stone throwers vs massed line"
 		"test_cav_art":
 			return "Test: cavalry raids artillery"
+		"bench_4000_hills":
+			return "AI vs AI benchmark: 4,000 on hills"
+		"test_ridge_defend":
+			return "Terrain: defend a ridge"
+		"test_attack_uphill":
+			return "Terrain: attack a hill"
+		"test_archers_hill":
+			return "Terrain: archers on a hill"
+		"test_bolts_crest":
+			return "Terrain: bolts and a crest"
 	return id
 
 
 static func make(id: String) -> Dictionary:
+	var sc := _make(id)
+	if id in PLAYABLE:
+		sc["terrain"] = {"kind": Terrain.K_RANDOM}
+	elif id == "bench_4000_hills":
+		sc["terrain"] = BENCH_HILLS_TERRAIN.duplicate()
+	return sc
+
+
+## Terrain feature shorthand (see sim/terrain.gd).
+static func ridge(x_m: int, y_m: int, half_w_m: int, h_m: int, dir: int, half_len_m: int) -> Array:
+	return [Terrain.F_RIDGE, x_m, y_m, half_w_m, h_m, dir, half_len_m]
+
+
+static func hill(x_m: int, y_m: int, r_m: int, h_m: int) -> Array:
+	return [Terrain.F_BUMP, x_m, y_m, r_m, h_m]
+
+
+static func _make(id: String) -> Dictionary:
 	match id:
 		"skirmish":
 			return _battle(1, [1], SMALL_LINE, SMALL_SCREEN, SMALL_SIZE, 440, 440, 80, NO_REAR)
@@ -84,6 +121,50 @@ static func make(id: String) -> Dictionary:
 			return _battle(1, [1], ARMY_LINE, ARMY_SCREEN, SIZE, 560, 560, 100, ARMY_REAR)
 		"battle_4000":
 			return _battle(2, [1], ARMY_LINE, ARMY_SCREEN, SIZE, 560, 600, 100, ARMY_REAR)
+		"bench_4000_hills":
+			return _battle(2, [0, 1], ARMY_LINE, ARMY_SCREEN, SIZE, 560, 600, 100, ARMY_REAR)
+		"test_ridge_defend":
+			# Your line holds a ridge crest (12 m, slopes up to ~23%); the
+			# enemy climbs it from the far side. Archers shoot from the top.
+			return _test_t([unit(0, UT.HEAVY, 100, 105, 200, FACE_UP),
+				unit(0, UT.SPEAR, 100, 195, 200, FACE_UP),
+				unit(0, UT.ARCHER, 80, 150, 222, FACE_UP),
+				unit(1, UT.HEAVY, 100, 95, 60, FACE_DOWN),
+				unit(1, UT.HEAVY, 100, 175, 60, FACE_DOWN),
+				unit(1, UT.LIGHT, 100, 245, 70, FACE_DOWN),
+				unit(1, UT.CAVALRY, 40, 40, 70, FACE_DOWN)],
+				[attack(150, 3, 0, 0), attack(150, 4, 1, 0), attack(150, 5, 1, 0),
+					attack(400, 6, 2, 1)],
+				[ridge(150, 205, 80, 12, 0, 220)])
+		"test_attack_uphill":
+			# The enemy stands on a round hill (16 m, ~25% at its steepest);
+			# take it. Going round to a gentler side pays.
+			return _test_t([unit(0, UT.HEAVY, 100, 95, 250, FACE_UP),
+				unit(0, UT.HEAVY, 100, 205, 250, FACE_UP),
+				unit(0, UT.LIGHT, 100, 150, 265, FACE_UP),
+				unit(0, UT.CAVALRY, 60, 40, 255, FACE_UP),
+				unit(1, UT.HEAVY, 100, 150, 110, FACE_DOWN),
+				unit(1, UT.SPEAR, 80, 90, 105, FACE_DOWN),
+				unit(1, UT.ARCHER, 60, 150, 85, FACE_DOWN)],
+				[], [hill(150, 95, 100, 16)])
+		"test_archers_hill":
+			# Your archers on a 15 m hill, theirs on the plain 150 m away:
+			# height adds range, so yours reach and theirs fall short until
+			# they walk in.
+			return _test_t([unit(0, UT.ARCHER, 80, 150, 225, FACE_UP),
+				unit(1, UT.ARCHER, 80, 150, 75, FACE_DOWN),
+				unit(1, UT.LIGHT, 100, 230, 60, FACE_DOWN)],
+				[attack(300, 1, 0, 0)], [hill(150, 235, 85, 15)])
+		"test_bolts_crest":
+			# A low crest (6 m) lies across the field: the pike block behind
+			# it cannot be hit by flat bolts; the light infantry past the end
+			# of the crest can. Try ordering the battery to shoot the pikes.
+			return _test_t([unit(0, UT.BOLT, 16, 150, 270, FACE_UP),
+				unit(0, UT.SPEAR, 100, 150, 285, FACE_UP),
+				unit(1, UT.PIKE, 120, 125, 110, FACE_DOWN),
+				unit(1, UT.LIGHT, 100, 260, 115, FACE_DOWN)],
+				[attack(900, 2, 0, 0), attack(900, 3, 0, 0)],
+				[ridge(110, 175, 28, 6, 0, 75)])
 		"bench_2000":
 			return _battle(1, [0, 1], ARMY_LINE, ARMY_SCREEN, SIZE, 560, 560, 100, ARMY_REAR)
 		"bench_4000":
@@ -154,6 +235,13 @@ static func attack(tick: int, u: int, target: int, run: int) -> Dictionary:
 static func _test(units: Array, orders: Array) -> Dictionary:
 	return {"width_m": 300, "height_m": 300, "ai_sides": [], "units": units,
 		"orders": orders}
+
+
+## Test field with hand-placed terrain features (fixed: no seed dependence).
+static func _test_t(units: Array, orders: Array, features: Array) -> Dictionary:
+	var sc := _test(units, orders)
+	sc["terrain"] = {"kind": Terrain.K_CUSTOM, "features": features}
+	return sc
 
 
 ## Two mixed armies facing each other. `armies` armies per side, the second

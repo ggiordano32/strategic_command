@@ -30,10 +30,29 @@ extends RefCounted
 ##             in range, pick dense, valuable, standing targets and never one
 ##             a shot would carry into friends; move up only when nothing is in
 ##             range; one spear (or light) unit guards the batteries.
+##             An empty or low battery with nothing near it refills from its
+##             baggage (also in a lull, below three quarters), and stops
+##             when threatened or once three quarters full with a target in
+##             range.
 ##   cavalry   also rides down enemy batteries left without a guard.
 ##   shelled   an army shelled by stronger enemy artillery closes instead of
 ##             standing to skirmish; idle units under fire get out of the arc.
 ##   all       badly mauled units fall back behind the line.
+## Terrain (hilly maps only; on a flat map none of this changes a decision):
+##   deploy    the army shifts its deployment up to 30 m onto higher ground;
+##   advance   while skirmishing the line halts on a crest short of the halt
+##             line if one is clearly higher;
+##   hold      an army whose line stands 4 m or more above the enemy's holds
+##             its ground (up to HOLD_TICKS, while not outshot or outgunned)
+##             and its foot only attack enemies that come close, until a
+##             third of them are fighting;
+##   detour    infantry whose last 35 m to its target climb more than 15%
+##             goes round to a clearly gentler flank approach if one is
+##             close (A_DETOUR), once per target;
+##   cavalry   prefers targets it does not have to charge uphill;
+##   missiles  archers, javelins and batteries take the highest spot near
+##             their slot; bolt throwers want a line of fire past crests,
+##             and a battery whose targets are all behind a crest moves.
 
 const FM := preload("res://sim/fixed_math.gd")
 const UT := preload("res://sim/unit_types.gd")
@@ -58,7 +77,11 @@ const ORDER_FIRE := 5
 const ORDER_SKIRMISH := 6
 const ORDER_WITHDRAW := 7
 const ORDER_WITHDRAW_ALL := 8
+const ORDER_REFILL := 10
 const FRONT_ARC := 170
+const LOF_EYE := 1536
+const LOF_BODY := 1024
+const LOF_STEP := 4 * 1024
 
 # Army phases.
 const P_DEPLOY := 0
@@ -78,6 +101,9 @@ const A_RETIRE := 7    # mauled unit falling back
 # (stat_ai[8] counts army withdrawals)
 const A_ART := 9       # artillery battery
 const A_GUARD := 10    # infantry guarding the batteries
+const A_DETOUR := 11   # infantry going round a steep slope to a gentler approach
+# (stat_ai[12] holds of high ground, [13] slots moved onto a rise,
+# [14] deployments shifted to higher ground)
 
 const LINE_GAP := 4 * M
 const LINE2_BACK := 35 * M
@@ -98,6 +124,21 @@ const ART_MOVE := 30 * M         # batteries only move for a gain this big
 const GUARD_OUT := 14 * M        # guard post: beside the battery, outward
 const GUARD_RANGE := 70 * M      # guard attacks enemies this close to the battery
 const SHELLED_TICKS := 60        # "being shelled": hit by artillery this recently
+const REFILL_SAFE := 35 * M      # a battery refills with no enemy melee unit this close ...
+const REFILL_WATCH := 100 * M    # ... and none this close coming for it
+# Terrain.
+const HOLD_DH := 4 * M           # hold when the line stands this far above the enemy ...
+const HOLD_TICKS := 2400         # ... for at most 4 minutes
+const HOLD_REACT := 25 * M       # holding foot attack enemies this close
+const DETOUR_GRADE := 614        # 15%: a steeper final approach is avoided ...
+const DETOUR_MIN := 35 * M       # ... (its last 35 m) when the target is at least this far
+const DETOUR_LONG := 17          # ... by a detour at most 1.7x as long (tenths)
+const CREST_GAIN := 1536         # halt on ground 1.5 m higher than the planned halt line
+const DEPLOY_SHIFT := 30 * M     # deployment may shift this far ...
+const DEPLOY_GAIN := 2 * M       # ... to stand this much higher
+const RISE_LAT := 12 * M         # missile / artillery slots look this far aside ...
+const RISE_GAIN := 1024          # ... for ground 1 m higher
+const LINE_SPAN := 30 * M        # line height: sampled every 30 m across +-60 m
 
 
 static func think(sim) -> void:
@@ -152,9 +193,21 @@ static func _army_think(sim, side: int) -> void:
 	if plan.is_empty():
 		return
 	if phase == P_DEPLOY:
-		_issue_line(sim, side, plan, plan["cx"], plan["cy"], true)
+		var dcx: int = plan["cx"]
+		var dcy: int = plan["cy"]
+		if sim.ter_on != 0:
+			var spot := _deploy_spot(sim, plan)
+			if spot.x != dcx or spot.y != dcy:
+				sim.stat_ai[14] += 1
+			dcx = spot.x
+			dcy = spot.y
+		_issue_line(sim, side, plan, dcx, dcy, true)
 		sim.ai_phase[side] = P_ADVANCE
 		sim.ai_t[side] = sim.tick
+		return
+	if phase == P_ENGAGE:
+		if sim.ai_hold[side] >= 0 and not _keep_holding(sim, side):
+			sim.ai_hold[side] = -2  # over for good
 		return
 	if phase == P_ADVANCE:
 		var gap: int = plan["gap"]
@@ -180,6 +233,20 @@ static func _army_think(sim, side: int) -> void:
 		var fx: int = plan["fx"]
 		var fy: int = plan["fy"]
 		var adv := maxi(gap - maxi(halt, ENGAGE_DIST - 10 * M), 0)
+		if sim.ter_on != 0:
+			# High ground: hold it while the enemy comes up; otherwise, while
+			# skirmishing, stop on a crest short of the halt line.
+			if sim.ai_hold[side] >= 0:
+				if _keep_holding(sim, side):
+					adv = 0
+				else:
+					sim.ai_hold[side] = -2
+			elif sim.ai_hold[side] == -1 and _start_hold(sim, side):
+				sim.ai_hold[side] = sim.tick
+				sim.stat_ai[12] += 1
+				adv = 0
+			if sim.ai_hold[side] < 0 and halt > 0 and adv > 0:
+				adv = _crest_advance(sim, plan, adv, gap, halt)
 		var cx: int = plan["cx"] + (fx * adv / FM.TRIG_ONE)
 		var cy: int = plan["cy"] + (fy * adv / FM.TRIG_ONE)
 		_issue_line(sim, side, plan, cx, cy, false)
@@ -191,7 +258,7 @@ static func _strength(sim, side: int) -> int:
 	for u in sim.n_units:
 		if sim.u_side[u] == side and sim.u_state[u] == U_READY and sim.u_order[u] != O_WITHDRAW:
 			var cost := UT.stat(sim.u_type[u], "cost")
-			if sim.u_cls[u] == UT.CLS_ART and sim.u_ammo[u] <= 0:
+			if sim.u_cls[u] == UT.CLS_ART and sim.u_ammo[u] <= 0 and sim.u_reserve[u] <= 0:
 				cost = 2  # crews with nothing left to shoot
 			s += sim.u_alive[u] * cost
 	return s
@@ -245,29 +312,40 @@ static func _ammo_left(sim, side: int) -> bool:
 
 
 ## Army geometry: own centre, facing toward the enemy, gap between fronts.
+## (Hot at army-think ticks: the sim arrays are read through typed locals,
+## since every untyped sim.u_* lookup in the O(units^2) gap loop is slow.)
 static func _plan(sim, side: int) -> Dictionary:
+	var nu: int = sim.n_units
+	var st: PackedInt32Array = sim.u_state
+	var sd: PackedInt32Array = sim.u_side
+	var cl: PackedInt32Array = sim.u_cls
+	var al: PackedInt32Array = sim.u_alive
+	var uax: PackedInt32Array = sim.u_ax
+	var uay: PackedInt32Array = sim.u_ay
+	var ucx: PackedInt32Array = sim.u_cx
+	var ucy: PackedInt32Array = sim.u_cy
 	var ox := 0
 	var oy := 0
 	var on := 0
 	var ex := 0
 	var ey := 0
 	var en := 0
-	for u in sim.n_units:
-		if sim.u_state[u] != U_READY:
+	for u in nu:
+		if st[u] != U_READY:
 			continue
-		var w: int = sim.u_alive[u]
-		if sim.u_side[u] == side:
+		var w := al[u]
+		if sd[u] == side:
 			# The plan is anchored on the main line (missile screens and
 			# cavalry out on the wings would pull it about).
-			if sim.u_cls[u] == UT.CLS_MISSILE or sim.u_cls[u] == UT.CLS_CAV \
-					or sim.u_cls[u] == UT.CLS_ART:
+			var c := cl[u]
+			if c == UT.CLS_MISSILE or c == UT.CLS_CAV or c == UT.CLS_ART:
 				continue
-			ox += sim.u_ax[u] * w
-			oy += sim.u_ay[u] * w
+			ox += uax[u] * w
+			oy += uay[u] * w
 			on += w
 		else:
-			ex += sim.u_cx[u] * w
-			ey += sim.u_cy[u] * w
+			ex += ucx[u] * w
+			ey += ucy[u] * w
 			en += w
 	if on == 0 or en == 0:
 		return {}
@@ -285,14 +363,27 @@ static func _plan(sim, side: int) -> Dictionary:
 	# Gap: closest approach between the two armies' foot (cavalry raids and
 	# batteries do not decide when the lines engage).
 	var gap := d
-	for u in sim.n_units:
-		if sim.u_side[u] != side or sim.u_state[u] != U_READY or not _is_foot(sim, u):
+	var mnx: PackedInt32Array = sim.u_minx
+	var mny: PackedInt32Array = sim.u_miny
+	var mxx: PackedInt32Array = sim.u_maxx
+	var mxy: PackedInt32Array = sim.u_maxy
+	for u in nu:
+		if sd[u] != side or st[u] != U_READY:
 			continue
-		for o in sim.n_units:
-			if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.u_cls[o] == UT.CLS_CAV:
+		var cu := cl[u]
+		if cu != UT.CLS_INF and cu != UT.CLS_PIKE:
+			continue
+		var ax0 := mnx[u]
+		var ax1 := mxx[u]
+		var ay0 := mny[u]
+		var ay1 := mxy[u]
+		for o in nu:
+			if sd[o] == side or st[o] != U_READY or cl[o] == UT.CLS_CAV:
 				continue
-			gap = mini(gap, _bbox_gap(sim, u, o))
-	return {"cx": ox, "cy": oy, "face": face, "fx": fx, "fy": fy, "gap": gap}
+			var gx := maxi(maxi(mnx[o] - ax1, ax0 - mxx[o]), 0)
+			var gy := maxi(maxi(mny[o] - ay1, ay0 - mxy[o]), 0)
+			gap = mini(gap, maxi(gx, gy))
+	return {"cx": ox, "cy": oy, "face": face, "fx": fx, "fy": fy, "gap": gap, "ex": ex, "ey": ey}
 
 
 ## Line infantry (infantry or pikes).
@@ -413,12 +504,20 @@ static func _issue_line(sim, side: int, plan: Dictionary, cx: int, cy: int, depl
 		var py := cy + ((ry * lat - fy * back) / FM.TRIG_ONE)
 		px = clampi(px, 4 * M, sim.field_w - 4 * M)
 		py = clampi(py, 4 * M, sim.field_h - 4 * M)
-		if sim.u_cls[u] == UT.CLS_ART:
+		var art: bool = sim.u_cls[u] == UT.CLS_ART
+		# A battery that has targets and friends close by stays put.
+		var stay: bool = art and not deploy and (sim.u_refill[u] != 0 or sim.u_rprog[u] > 0 \
+			or (_protected(sim, u) and _art_has_target(sim, u)))
+		if sim.ter_on != 0 and (sim.u_cls[u] == UT.CLS_MISSILE or art) and not stay:
+			var rp := _rise(sim, u, px, py, rx, ry, fx, fy, plan)
+			if rp.x != px or rp.y != py:
+				sim.stat_ai[13] += 1
+			px = rp.x
+			py = rp.y
+		if art:
 			# Batteries only pack up for a worthwhile move: at deployment,
 			# and to keep up with the line as it advances.
-			# A battery that has targets and friends close by stays put.
 			var far := 25 * M if deploy else ART_MOVE
-			var stay := not deploy and _protected(sim, u) and _art_has_target(sim, u)
 			if not stay and _d(px - sim.u_ax[u], py - sim.u_ay[u]) > far and sim.u_ammo[u] > 0:
 				_move(sim, u, px, py, face, _width(sim, u), 0, seq)
 		else:
@@ -532,7 +631,11 @@ static func _unit_think(sim, u: int) -> void:
 		if sim.tick - sim.u_ai_t[u] < RETIRE_TICKS or sim.u_order[u] != O_NONE:
 			return
 		if cls == UT.CLS_ART and sim.u_ammo[u] <= 0:
-			return  # an empty battery stays out of the way
+			# An empty battery stays out of the way, refilling if it can.
+			if sim.u_refill[u] == 0 and sim.u_rprog[u] == 0 and _can_refill(sim, u) \
+					and not _art_threatened(sim, u):
+				_order(sim, u, {"type": ORDER_REFILL, "on": 1}, 23)
+			return
 		_set_mode(sim, u, A_ATTACK if cls != UT.CLS_CAV else A_HOLD)
 		mode = sim.u_ai[u]
 	if cls == UT.CLS_CAV:
@@ -574,6 +677,19 @@ static func _melee_think(sim, u: int) -> void:
 	# Engaged with a ready enemy: keep fighting it.
 	if cur >= 0 and sim.u_fighting[u] > 0 and sim.u_state[cur] == U_READY:
 		return
+	if mode == A_DETOUR:
+		var dt: int = sim.u_ai_y[u]
+		if dt >= 0 and sim.u_state[dt] == U_READY:
+			var arrived: bool = sim.u_order[u] != O_MOVE \
+				or _d(sim.u_ax[u] - sim.u_dx[u], sim.u_ay[u] - sim.u_dy[u]) < 8 * M
+			if not arrived and sim.tick - sim.u_ai_t[u] < 400 and sim.u_contact[u] == 0:
+				return
+			_attack(sim, u, dt, 1)
+			_set_mode(sim, u, A_ATTACK)
+			sim.u_ai_x[u] = dt + 1  # this target's approach is settled
+			return
+		_set_mode(sim, u, A_ATTACK)
+		mode = A_ATTACK
 	if mode == A_FLANK:
 		var t: int = sim.u_target[u] if sim.u_order[u] == O_ATTACK else sim.u_ai_y[u]
 		if t >= 0 and sim.u_state[t] == U_READY:
@@ -610,6 +726,13 @@ static func _melee_think(sim, u: int) -> void:
 		var alt := _nearest_not(sim, u, best)
 		if alt >= 0 and _dist2(sim, u, alt) * 4 <= _dist2(sim, u, best) * 9:
 			best = alt
+	if sim.ter_on != 0:
+		# Holding high ground: let the enemy come.
+		if sim.ai_hold[sim.u_side[u]] >= 0 and _bbox_gap(sim, u, best) > HOLD_REACT \
+				and sim.u_fighting[u] == 0:
+			return
+		if sim.u_ai_x[u] != best + 1 and sim.u_fighting[u] == 0 and _detour(sim, u, best):
+			return
 	var run := 1 if _dist2(sim, u, best) < CHARGE_RANGE * CHARGE_RANGE else 0
 	if best != cur or run != sim.u_run[u]:
 		_attack(sim, u, best, run)
@@ -786,6 +909,12 @@ static func _cav_pick(sim, u: int, phase: int) -> int:
 		if score == 0:
 			continue
 		score -= d * 4
+		if sim.ter_on != 0:
+			# Charging uphill costs momentum and impact: prefer level or
+			# downhill targets (60 points per % of climb).
+			var g: int = sim.grade_between(sim.u_h[u], sim.u_h[t], maxi(d, 1) * M)
+			if g > 0:
+				score -= g * 6000 / FM.TRIG_ONE
 		if best < 0 or score > best_score:
 			best = t
 			best_score = score
@@ -841,7 +970,7 @@ static func _missile_think(sim, u: int, phase: int) -> void:
 	for o in sim.n_units:
 		if sim.u_side[o] == side or sim.u_state[o] >= U_DESTROYED:
 			continue
-		if sim.u_fighting[o] == 0 and sim._unit_dist(u, o) <= rng:
+		if sim.u_fighting[o] == 0 and sim._in_range(u, o, rng):
 			clean = true
 			break
 	var want := 1 if clean else 0
@@ -873,6 +1002,19 @@ static func _missile_think(sim, u: int, phase: int) -> void:
 static func _art_think(sim, u: int, phase: int) -> void:
 	var side: int = sim.u_side[u]
 	var ty: int = sim.u_type[u]
+	# Refilling from the baggage: carry on unless threatened, or three
+	# quarters full again with something to shoot.
+	var full: int = sim.u_neng[u] * UT.stat(ty, "m_ammo")
+	if sim.u_refill[u] != 0:
+		if _art_threatened(sim, u) or (sim.u_ammo[u] * 4 >= full * 3 and _art_has_target(sim, u)):
+			_order(sim, u, {"type": ORDER_REFILL, "on": 0}, 23)
+		return
+	if sim.u_rprog[u] > 0:
+		return  # still getting out of it
+	if sim.u_order[u] != O_MOVE and _can_refill(sim, u) and not _art_threatened(sim, u) \
+			and (sim.u_ammo[u] * 4 <= full or (sim.u_ammo[u] * 4 < full * 3 and not _art_has_target(sim, u))):
+		_order(sim, u, {"type": ORDER_REFILL, "on": 1}, 23)
+		return
 	if sim.u_ammo[u] <= 0:
 		if sim.u_ai[u] != A_RETIRE:
 			_retire(sim, u)
@@ -885,14 +1027,13 @@ static func _art_think(sim, u: int, phase: int) -> void:
 	var best := -1
 	var best_score := 0
 	var any_in_range := false
+	var blocked := 0  # in range but behind a crest (bolts on hilly ground)
 	for o in sim.n_units:
 		if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.u_alive[o] <= 0:
 			continue
 		if not sim._art_in_range(u, o, mn, rng):
 			continue
 		any_in_range = true
-		if not sim.art_safe(u, o):
-			continue  # the shot would carry into friends
 		var ot: int = sim.u_type[o]
 		var score: int = sim.u_alive[o] * UT.stat(ot, "cost")
 		var oc: int = sim.u_cls[o]
@@ -907,7 +1048,13 @@ static func _art_think(sim, u: int, phase: int) -> void:
 		elif not bolt:
 			score = score / 2  # stones cannot lead a moving target
 		score -= sim._unit_dist(u, o) / M
+		# Safety (friends in the way; a crest for bolts) only for a target
+		# that would be chosen: the line of fire test is the dear part.
 		if best < 0 or score > best_score:
+			if not sim.art_safe(u, o):
+				if bolt and sim.ter_on != 0 and not sim.lof_units(u, o):
+					blocked += 1
+				continue  # the shot would carry into friends or into the ground
 			best = o
 			best_score = score
 	if best >= 0:
@@ -919,6 +1066,8 @@ static func _art_think(sim, u: int, phase: int) -> void:
 	if sim.u_order[u] == O_ATTACK:
 		# Nothing safe to shoot: stop (an attack order shoots regardless).
 		_order(sim, u, {"type": ORDER_HALT}, 22)
+	if blocked > 0 and _art_resite(sim, u):
+		return
 	if any_in_range or phase != P_ENGAGE:
 		return
 	# Nothing in range: move up to where the plan wants batteries.
@@ -951,6 +1100,35 @@ static func _art_has_target(sim, u: int) -> bool:
 	for o in sim.n_units:
 		if sim.u_side[o] != sim.u_side[u] and sim.u_state[o] == U_READY \
 				and sim._art_in_range(u, o, mn, rng):
+			return true
+	return false
+
+
+## Battery u has shots in its baggage and a working engine short of its
+## full load (abandoned or wrecked engines cannot be refilled).
+static func _can_refill(sim, u: int) -> bool:
+	if sim.u_reserve[u] <= 0:
+		return false
+	var full := UT.stat(sim.u_type[u], "m_ammo")
+	for k in sim.u_neng[u]:
+		var e: int = sim.u_eng0[u] + k
+		if sim.e_state[e] == 0 and sim.e_ammo[e] < full:
+			return true
+	return false
+
+
+## Battery u is threatened: an enemy melee unit (not missile troops or
+## artillery) within REFILL_SAFE of it, or one coming for it (attacking it)
+## within REFILL_WATCH. A fight 30 m ahead of a battery is not a threat to it.
+static func _art_threatened(sim, u: int) -> bool:
+	for o in sim.n_units:
+		if sim.u_side[o] == sim.u_side[u] or sim.u_state[o] != U_READY:
+			continue
+		var c: int = sim.u_cls[o]
+		if c == UT.CLS_MISSILE or c == UT.CLS_ART:
+			continue
+		var g := _bbox_gap(sim, u, o)
+		if g < REFILL_SAFE or (g < REFILL_WATCH and sim.u_order[o] == O_ATTACK and sim.u_target[o] == u):
 			return true
 	return false
 
@@ -1053,6 +1231,258 @@ static func _sidestep(sim, u: int, b: int) -> void:
 	var x := clampi(sim.u_cx[u] + px, 6 * M, sim.field_w - 6 * M)
 	var y := clampi(sim.u_cy[u] + py, 6 * M, sim.field_h - 6 * M)
 	_move(sim, u, x, y, sim.u_face[u], _width(sim, u), 1, 4)
+
+
+# -------------------------------------------------------------- terrain ---
+
+## Mean ground height across a line centred on (x, y) running along (rx, ry)
+## (Q12 unit vector): five samples LINE_SPAN apart.
+static func _line_h(sim, x: int, y: int, rx: int, ry: int) -> int:
+	var sum := 0
+	for k in range(-2, 3):
+		var px := clampi(x + rx * k * LINE_SPAN / FM.TRIG_ONE, 0, sim.field_w)
+		var py := clampi(y + ry * k * LINE_SPAN / FM.TRIG_ONE, 0, sim.field_h)
+		sum += sim.height_at(px, py)
+	return sum / 5
+
+
+## Deployment centre: the plan's, or a spot up to DEPLOY_SHIFT aside, back or
+## forward whose line stands DEPLOY_GAIN higher (best first, in a fixed order).
+static func _deploy_spot(sim, plan: Dictionary) -> Vector2i:
+	var cx: int = plan["cx"]
+	var cy: int = plan["cy"]
+	var fx: int = plan["fx"]
+	var fy: int = plan["fy"]
+	var rx := -fy
+	var ry := fx
+	var best := Vector2i(cx, cy)
+	var best_h := _line_h(sim, cx, cy, rx, ry) + DEPLOY_GAIN - 1
+	var margin := 50 * M
+	for c in [Vector2i(-1, 0), Vector2i(1, 0), Vector2i(0, -1), Vector2i(0, 1),
+			Vector2i(-1, -1), Vector2i(1, -1)]:
+		var lat: int = c.x * DEPLOY_SHIFT
+		var fwd: int = c.y * DEPLOY_SHIFT
+		var x := cx + (rx * lat + fx * fwd) / FM.TRIG_ONE
+		var y := cy + (ry * lat + fy * fwd) / FM.TRIG_ONE
+		if x < margin or y < margin or x > sim.field_w - margin or y > sim.field_h - margin:
+			continue
+		var h := _line_h(sim, x, y, rx, ry)
+		if h > best_h:
+			best = Vector2i(x, y)
+			best_h = h
+	return best
+
+
+## Weighted mean ground height of a side's ready units (foot only, or every
+## non-cavalry unit).
+static func _side_height(sim, side: int, foot_only: bool) -> int:
+	var sd: PackedInt32Array = sim.u_side
+	var st: PackedInt32Array = sim.u_state
+	var cl: PackedInt32Array = sim.u_cls
+	var hh: PackedInt32Array = sim.u_h
+	var al: PackedInt32Array = sim.u_alive
+	var sum := 0
+	var w := 0
+	for u in sim.n_units:
+		if sd[u] != side or st[u] != U_READY:
+			continue
+		var c := cl[u]
+		if c == UT.CLS_CAV or c == UT.CLS_ART or (foot_only and c == UT.CLS_MISSILE):
+			continue
+		sum += hh[u] * al[u]
+		w += al[u]
+	return sum / w if w > 0 else -1
+
+
+## Start holding: our foot stand HOLD_DH above the enemy army, and standing
+## still would not just feed the enemy's archers or artillery.
+static func _start_hold(sim, side: int) -> bool:
+	var own := _side_height(sim, side, true)
+	var foe := _side_height(sim, 1 - side, false)
+	return own >= 0 and foe >= 0 and own - foe >= HOLD_DH and _hold_ok(sim, side)
+
+
+static func _keep_holding(sim, side: int) -> bool:
+	if sim.tick - sim.ai_hold[side] > HOLD_TICKS or not _hold_ok(sim, side):
+		return false
+	# Once a third of our foot is fighting, the battle is on everywhere.
+	var foot := 0
+	var fighting := 0
+	for u in sim.n_units:
+		if sim.u_side[u] == side and sim.u_state[u] == U_READY and _is_foot(sim, u):
+			foot += 1
+			if sim.u_fighting[u] > 0:
+				fighting += 1
+	return fighting * 3 < foot
+
+
+static func _hold_ok(sim, side: int) -> bool:
+	var mine := _missile_power(sim, side)
+	var theirs := _missile_power(sim, 1 - side)
+	if theirs * 10 > mine * 13 + 200:
+		return false  # clearly outshot: waiting only feeds their archers
+	if _shelled(sim, side) and _art_power(sim, 1 - side) > _art_power(sim, side):
+		return false
+	return true
+
+
+## Advance while skirmishing: stop short on clearly higher ground (a crest)
+## still within reach of the enemy, else go the whole way.
+static func _crest_advance(sim, plan: Dictionary, adv: int, gap: int, halt: int) -> int:
+	var cx: int = plan["cx"]
+	var cy: int = plan["cy"]
+	var fx: int = plan["fx"]
+	var fy: int = plan["fy"]
+	var rx := -fy
+	var ry := fx
+	var full_h := _line_h(sim, cx + fx * adv / FM.TRIG_ONE, cy + fy * adv / FM.TRIG_ONE, rx, ry)
+	var best := adv
+	var best_h := full_h + CREST_GAIN - 1
+	for k in 4:
+		var a := adv * k / 4
+		if gap - a > halt + 40 * M:
+			continue  # too far from the enemy to shoot from there
+		var h := _line_h(sim, cx + fx * a / FM.TRIG_ONE, cy + fy * a / FM.TRIG_ONE, rx, ry)
+		if h > best_h:
+			best = a
+			best_h = h
+	return best
+
+
+## Missile and artillery slot: the highest spot within RISE_LAT aside or a
+## little back / forward (bolts: one with a line of fire to the enemy
+## counts 4 m higher), if RISE_GAIN higher than the slot itself.
+static func _rise(sim, u: int, px: int, py: int, rx: int, ry: int, fx: int, fy: int,
+		plan: Dictionary) -> Vector2i:
+	var bolt: bool = sim.u_cls[u] == UT.CLS_ART and UT.stat(sim.u_type[u], "m_kind") == 1
+	# Candidate spots (the slot itself first) and their ground heights.
+	var cx := PackedInt32Array([px])
+	var cy := PackedInt32Array([py])
+	var ch := PackedInt32Array([sim.height_at(px, py)])
+	for c in [Vector2i(-1, 0), Vector2i(1, 0), Vector2i(0, -1), Vector2i(0, 1),
+			Vector2i(-1, -1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(1, 1)]:
+		var lat: int = c.x * RISE_LAT
+		var fwd: int = c.y * 10 * M
+		var x := clampi(px + (rx * lat + fx * fwd) / FM.TRIG_ONE, 4 * M, sim.field_w - 4 * M)
+		var y := clampi(py + (ry * lat + fy * fwd) / FM.TRIG_ONE, 4 * M, sim.field_h - 4 * M)
+		cx.append(x)
+		cy.append(y)
+		ch.append(sim.height_at(x, y))
+	if not bolt:
+		var b := 0
+		var bs := ch[0] + RISE_GAIN - 1
+		for k in range(1, 9):
+			if ch[k] > bs:
+				b = k
+				bs = ch[k]
+		return Vector2i(cx[b], cy[b])
+	# Score = height, + 4 m for a bolt battery's line of fire to the enemy.
+	# The line test is the dear part: walk the spots from the highest down
+	# (ties: in candidate order) and stop once no lower spot can win.
+	var order: Array[int] = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+	order.sort_custom(func(a: int, b: int) -> bool: return ch[a] > ch[b] or (ch[a] == ch[b] and a < b))
+	var score := ch.duplicate()
+	var top := ch[order[0]]
+	for k in order:
+		if ch[k] + 4 * M <= top:
+			break
+		if _sees_enemy(sim, u, cx[k], cy[k], ch[k], plan):
+			score[k] += 4 * M
+			break
+	var best := 0
+	var best_s := score[0] + RISE_GAIN - 1
+	for k in range(1, 9):
+		if score[k] > best_s:
+			best = k
+			best_s = score[k]
+	return Vector2i(cx[best], cy[best])
+
+
+## Line of fire from a battery spot to the enemy army's centre (coarse,
+## 16 m samples: a siting heuristic, not the shot itself).
+static func _sees_enemy(sim, u: int, x: int, y: int, h: int, plan: Dictionary) -> bool:
+	var ex: int = plan["ex"]
+	var ey: int = plan["ey"]
+	var d := _d(ex - x, ey - y)
+	var apex: int = d * UT.stat(sim.u_type[u], "m_apex") / 100
+	return sim.lof_block(x, y, h + LOF_EYE, ex, ey, sim.height_at(ex, ey) + LOF_BODY, apex, 0,
+		4 * LOF_STEP) < 0
+
+
+## Infantry about to attack t up a steep slope (the last DETOUR_MIN of the
+## straight approach climbing more than DETOUR_GRADE): go round to the flank
+## of t whose approach is clearly gentler, if that detour is not too long.
+## Returns true if a detour was ordered.
+static func _detour(sim, u: int, t: int) -> bool:
+	var dx: int = sim.u_cx[t] - sim.u_cx[u]
+	var dy: int = sim.u_cy[t] - sim.u_cy[u]
+	var d := _d(dx, dy)
+	if d < DETOUR_MIN:
+		return false
+	var px0: int = sim.u_cx[t] - dx * DETOUR_MIN / d
+	var py0: int = sim.u_cy[t] - dy * DETOUR_MIN / d
+	var g: int = sim.grade_between(sim.height_at(px0, py0), sim.u_h[t], DETOUR_MIN)
+	if g <= DETOUR_GRADE:
+		return false
+	var tf: int = sim.u_face[t]
+	var c := FM.cos_a(tf)
+	var s := FM.sin_a(tf)
+	var hw: int = sim.unit_half_width(t) + 25 * M
+	var depth: int = sim.unit_depth(t) / 2
+	var best := Vector2i(-1, -1)
+	var best_g := g * 2 / 3  # must be clearly gentler
+	for sgn in [-1, 1]:
+		var out: int = sgn * hw
+		var px := clampi(sim.u_ax[t] + ((-s * out - c * depth) / FM.TRIG_ONE), 6 * M, sim.field_w - 6 * M)
+		var py := clampi(sim.u_ay[t] + ((c * out - s * depth) / FM.TRIG_ONE), 6 * M, sim.field_h - 6 * M)
+		var l1 := _d(px - sim.u_cx[u], py - sim.u_cy[u])
+		var l2 := _d(sim.u_cx[t] - px, sim.u_cy[t] - py)
+		if (l1 + l2) * 10 > d * DETOUR_LONG:
+			continue
+		var hp: int = sim.height_at(px, py)
+		var g1: int = sim.grade_between(sim.u_h[u], hp, l1)
+		var g2: int = sim.grade_between(hp, sim.u_h[t], l2)
+		var worst := maxi(g1, g2)
+		if worst < best_g:
+			best = Vector2i(px, py)
+			best_g = worst
+	if best.x < 0:
+		return false
+	var face := FM.atan2_a(sim.u_cy[t] - best.y, sim.u_cx[t] - best.x)
+	_move(sim, u, best.x, best.y, face, _width(sim, u), 0, 5)
+	_set_mode(sim, u, A_DETOUR)
+	sim.u_ai_y[u] = t
+	return true
+
+
+## A bolt battery whose targets are all behind a crest: move to the first
+## spot (forward first, then aside) from which the nearest enemy can be
+## seen. Returns true if it was ordered to move.
+static func _art_resite(sim, u: int) -> bool:
+	var t := _nearest_enemy(sim, u, true)
+	if t < 0:
+		return false
+	var dx: int = sim.u_cx[t] - sim.u_cx[u]
+	var dy: int = sim.u_cy[t] - sim.u_cy[u]
+	var d := maxi(_d(dx, dy), 1)
+	var fx := dx * FM.TRIG_ONE / d
+	var fy := dy * FM.TRIG_ONE / d
+	var rx := -fy
+	var ry := fx
+	var apex: int = d * UT.stat(sim.u_type[u], "m_apex") / 100
+	var zt: int = sim.u_h[t] + LOF_BODY
+	for c in [Vector2i(0, 25), Vector2i(-30, 10), Vector2i(30, 10), Vector2i(0, 50),
+			Vector2i(-40, 30), Vector2i(40, 30)]:
+		var x := clampi(sim.u_cx[u] + (rx * c.x + fx * c.y) * M / FM.TRIG_ONE, 6 * M, sim.field_w - 6 * M)
+		var y := clampi(sim.u_cy[u] + (ry * c.x + fy * c.y) * M / FM.TRIG_ONE, 6 * M, sim.field_h - 6 * M)
+		if _d(sim.u_cx[t] - x, sim.u_cy[t] - y) < UT.stat(sim.u_type[u], "m_min"):
+			continue
+		var z: int = sim.height_at(x, y) + LOF_EYE
+		if sim.lof_block(x, y, z, sim.u_cx[t], sim.u_cy[t], zt, apex, 0, 2 * LOF_STEP) < 0:
+			var face := FM.atan2_a(sim.u_cy[t] - y, sim.u_cx[t] - x)
+			_move(sim, u, x, y, face, _width(sim, u), 0, 6)
+			return true
+	return false
 
 
 # ------------------------------------------------------------- helpers ---
