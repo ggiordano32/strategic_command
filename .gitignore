@@ -1,0 +1,18 @@
+# Godot 4
+.godot/
+/android/
+*.translation
+*.import.tmp
+export_credentials.cfg
+
+# Build output
+/build/
+
+# OS / editor
+.DS_Store
+*.swp
+
+# Playtest telemetry written by tools/serve_web.py, and the export build stamp
+/playtest_logs/
+/build_stamp.txt
+/.certs/
