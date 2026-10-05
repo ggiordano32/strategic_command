@@ -1,13 +1,20 @@
 extends Node2D
-## World-space overlay: unit markers, the selected unit's formation and orders,
-## and the live preview while the player draws a destination line.
+## World-space overlay: unit markers, the selected units' formations and
+## orders, missile ranges and targets, and the live preview while the player
+## draws a destination line (for one unit or a group).
 
 const BattleSim := preload("res://sim/battle_sim.gd")
+const UT := preload("res://sim/unit_types.gd")
+const Icons := preload("res://game/unit_icons.gd")
+## Marker radius in screen pixels (never below MARKER_MIN_R world pixels).
+const MARKER_SCREEN_R := 11.0
+const MARKER_MIN_R := 5.5
 const M := 1024.0
+const GROUP_GAP_M := 2.0   # metres left between units lined up by a drag
 
 var sim
 var px_per_m: float = 10.0
-var selected_unit: int = -1
+var selected_units: Array[int] = []   # first = primary
 var zoom: float = 1.0
 var show_all_orders := false   # draw every friendly unit's order footprint
 var player_side := 0
@@ -18,8 +25,13 @@ var preview_on := false
 var preview_a := Vector2.ZERO
 var preview_b := Vector2.ZERO
 var preview_ok := false  # long enough to be a formation line
+var _icon := PackedInt32Array()  # unit -> symbol id
 
 const COL_SIDE := [Color(0.35, 0.6, 1.0), Color(1.0, 0.36, 0.28)]
+const COL_FIRE := Color(1.0, 0.75, 0.25, 0.8)
+const COL_ARC := Color(1.0, 0.85, 0.4, 0.5)
+const FX_TICKS := 15.0   # stone impact marks last this many ticks
+const COL_WITHDRAW := Color(0.85, 0.85, 1.0, 0.8)
 
 
 ## Unit order field as the player last ordered it (pending orders included).
@@ -33,81 +45,223 @@ func to_px(x: int, y: int) -> Vector2:
 	return Vector2(x, y) * (px_per_m / M)
 
 
+func _font_size(base: float) -> int:
+	return int(maxf(10.0, base / zoom))
+
+
 func _draw() -> void:
 	if sim == null:
 		return
 	var lw := maxf(1.5, 2.0 / zoom)
-	var r := maxf(5.0, 9.0 / zoom)
+	var r := maxf(MARKER_MIN_R, MARKER_SCREEN_R / zoom)
+	if _icon.size() != sim.n_units:
+		_icon.resize(sim.n_units)
+		for u in sim.n_units:
+			_icon[u] = Icons.icon_of(sim.u_type[u])
 	if show_all_orders:
 		_draw_all_orders()
-	# Unit markers at the centroid: side colour, white ring when selected,
-	# yellow when routing.
+	if sim.n_eng > 0:
+		_draw_impacts(lw)
+	_draw_markers(r, lw)
+	var primary := selected_units[0] if not selected_units.is_empty() else -1
+	for u in selected_units:
+		if u >= 0 and u < sim.n_units and sim.u_state[u] < BattleSim.U_DESTROYED:
+			_draw_selected(u, lw, r, u == primary)
+	if preview_on:
+		_draw_preview(lw)
+
+
+## Unit markers at the centroid: side colour, white ring when selected,
+## yellow when routing, plus small state signs.
+func _draw_markers(r: float, lw: float) -> void:
+	var tick: int = sim.tick
 	for u in sim.n_units:
-		if sim.u_state[u] == BattleSim.U_DESTROYED:
+		if sim.u_state[u] >= BattleSim.U_DESTROYED:
 			continue
 		var c := to_px(sim.u_cx[u], sim.u_cy[u]) + Vector2(0, -r * 2.2)
 		var col: Color = COL_SIDE[sim.u_side[u]]
 		if sim.u_state[u] == BattleSim.U_ROUTING:
 			col = Color(1.0, 0.9, 0.3)
-		draw_circle(c, r, col)
-		draw_arc(c, r, 0, TAU, 16, Color(0, 0, 0, 0.6), lw * 0.6)
-		if u == selected_unit:
+		# Unit type symbol on a disc in the side colour (yellow when broken,
+		# with a dark glyph for contrast).
+		var glyph := Color(0.12, 0.1, 0.05) if sim.u_state[u] == BattleSim.U_ROUTING else Color.WHITE
+		Icons.draw_marker(self, _icon[u], c, r, col, glyph)
+		if selected_units.has(u):
 			draw_arc(c, r * 1.6, 0, TAU, 20, Color.WHITE, lw)
+		if sim.u_state[u] != BattleSim.U_READY:
+			continue
+		# Under missile fire: orange ring for a second after each wound.
+		if tick - sim.u_hit_t[u] < 10:
+			draw_arc(c, r * 1.25, 0, TAU, 16, Color(1.0, 0.6, 0.1, 0.9), lw)
+		# Hit by a charge: red flash.
+		if tick - sim.u_charged_t[u] < 15:
+			draw_arc(c, r * 1.45, 0, TAU, 16, Color(1, 0.15, 0.1, 0.95), lw * 1.3)
+		# Charging cavalry: chevron ahead of the marker.
+		if sim.u_mom[u] >= BattleSim.CHARGE_MIN:
+			var ang: float = sim.u_face[u] * TAU / 1024.0
+			var f := Vector2(cos(ang), sin(ang))
+			var s := Vector2(-f.y, f.x)
+			var tip := c + f * r * 2.2
+			draw_polyline(PackedVector2Array([tip - f * r * 0.8 + s * r * 0.7, tip,
+				tip - f * r * 0.8 - s * r * 0.7]), Color.WHITE, lw * 1.2)
+		# Artillery: a ring under the marker filling up while the battery
+		# sets up (full = ready to shoot); empty while packed.
+		if sim.u_neng[u] > 0:
+			var full: int = UT.stat(sim.u_type[u], "deploy")
+			var frac: float = float(sim.u_depl[u]) / maxf(full, 1.0)
+			var rc := c + Vector2(0, r * 1.9)
+			draw_arc(rc, r * 0.45, 0, TAU, 12, Color(0, 0, 0, 0.6), lw)
+			if frac > 0.0:
+				draw_arc(rc, r * 0.45, -PI * 0.5, -PI * 0.5 + TAU * frac, 12, Color(1, 0.9, 0.5, 0.95), lw)
+		# Braced spears / formed pikes: bar under the marker.
+		if sim.u_braced[u] != 0:
+			draw_line(c + Vector2(-r, r * 1.35), c + Vector2(r, r * 1.35), Color(1, 1, 1, 0.9), lw * 1.2)
+		if sim.u_order[u] == BattleSim.O_WITHDRAW:
+			var down := 1.0 if sim.u_side[u] == 0 else -1.0
+			var b := c + Vector2(0, down * r * 2.0)
+			draw_line(c + Vector2(0, down * r), b, COL_WITHDRAW, lw)
+			draw_line(b, b + Vector2(-r * 0.5, -down * r * 0.5), COL_WITHDRAW, lw)
+			draw_line(b, b + Vector2(r * 0.5, -down * r * 0.5), COL_WITHDRAW, lw)
 
-	if selected_unit >= 0 and selected_unit < sim.n_units and sim.u_state[selected_unit] != BattleSim.U_DESTROYED:
-		var u := selected_unit
-		var files := mini(_v(u, "files"), sim.u_alive[u])
-		var half := (files - 1) * BattleSim.FILE_SPACING / 2
-		var a := to_px(_v(u, "ax"), _v(u, "ay"))
-		var ang: float = _v(u, "face") * TAU / 1024.0
+
+func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
+	var ty: int = sim.u_type[u]
+	var files := mini(_v(u, "files"), sim.u_alive[u])
+	var half := (files - 1) * UT.stat(ty, "file_sp") / 2
+	var a := to_px(_v(u, "ax"), _v(u, "ay"))
+	var ang: float = _v(u, "face") * TAU / 1024.0
+	var fwd := Vector2(cos(ang), sin(ang))
+	var right := Vector2(-fwd.y, fwd.x)
+	var hw := half * px_per_m / M
+	draw_line(a - right * hw, a + right * hw, Color(1, 1, 1, 0.8), lw)
+	draw_line(a, a + fwd * px_per_m * 3.0, Color(1, 1, 1, 0.8), lw)
+	var order: int = _v(u, "order")
+	if order == BattleSim.O_MOVE:
+		var d := to_px(_v(u, "dx"), _v(u, "dy"))
+		var dang: float = _v(u, "dface") * TAU / 1024.0
+		var dfwd := Vector2(cos(dang), sin(dang))
+		var dright := Vector2(-dfwd.y, dfwd.x)
+		draw_dashed_line(a, d, Color(0.6, 1.0, 0.6, 0.7), lw, 8.0 / zoom)
+		draw_line(d - dright * hw, d + dright * hw, Color(0.6, 1.0, 0.6, 0.9), lw * 1.5)
+		draw_line(d, d + dfwd * px_per_m * 3.0, Color(0.6, 1.0, 0.6, 0.9), lw)
+	elif order == BattleSim.O_ATTACK and _v(u, "target") >= 0:
+		var t: int = _v(u, "target")
+		var tcol := Color(1, 0.3, 0.2, 0.85)
+		if UT.cls(ty) == UT.CLS_MISSILE and sim.u_ammo[u] > 0:
+			tcol = COL_FIRE
+		draw_dashed_line(a, to_px(sim.u_cx[t], sim.u_cy[t]), tcol, lw, 8.0 / zoom)
+	elif order == BattleSim.O_WITHDRAW:
+		_draw_withdraw(u, a, COL_WITHDRAW, lw)
+	# Artillery: firing arc between minimum and maximum range (and the full
+	# range faintly, since the battery can turn), and its current target.
+	if UT.cls(ty) == UT.CLS_ART:
+		_draw_art_range(u, lw)
+		_draw_fire_line(u, lw)
+	# Missile troops: range circle and what they are shooting at now.
+	if UT.cls(ty) == UT.CLS_MISSILE:
+		var c := to_px(sim.u_cx[u], sim.u_cy[u])
+		var rng := UT.stat(ty, "m_range") * px_per_m / M
+		var rcol := Color(1.0, 0.85, 0.4, 0.45) if sim.u_ammo[u] > 0 else Color(0.6, 0.6, 0.6, 0.3)
+		draw_arc(c, rng, 0, TAU, 96, rcol, lw)
+		_draw_fire_line(u, lw)
+	if primary and _v(u, "run") != 0:
+		draw_string(ThemeDB.fallback_font, a + Vector2(r, -r * 3.5), "RUN",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(14.0), Color.WHITE)
+
+
+## Firing arc of battery u: an annular sector from minimum to maximum range,
+## +-arc about its facing (the facing it is turning to, if pending), plus the
+## whole maximum-range circle faintly.
+func _draw_art_range(u: int, lw: float) -> void:
+	var ty: int = sim.u_type[u]
+	var c := to_px(sim.u_cx[u], sim.u_cy[u])
+	var k := px_per_m / M
+	var rmax := UT.stat(ty, "m_range") * k
+	var rmin := UT.stat(ty, "m_min") * k
+	var ok: bool = sim.u_ammo[u] > 0
+	var col := COL_ARC if ok else Color(0.6, 0.6, 0.6, 0.3)
+	draw_arc(c, rmax, 0, TAU, 96, Color(col, col.a * 0.35), lw)
+	if rmin > 0.0:
+		draw_arc(c, rmin, 0, TAU, 48, Color(col, col.a * 0.35), lw)
+	var face: float = _v(u, "dface") * TAU / 1024.0
+	var half: float = UT.stat(ty, "arc") * TAU / 1024.0
+	var a0 := face - half
+	var a1 := face + half
+	draw_arc(c, rmax, a0, a1, 24, col, lw * 1.6)
+	draw_arc(c, maxf(rmin, px_per_m), a0, a1, 12, col, lw * 1.6)
+	for a in [a0, a1]:
+		var d := Vector2(cos(a), sin(a))
+		draw_line(c + d * maxf(rmin, px_per_m), c + d * rmax, col, lw)
+
+
+## Stone impacts in the last FX_TICKS ticks: a dust ring that spreads and
+## fades, and the furrow the stone ploughed on along its flight.
+func _draw_impacts(lw: float) -> void:
+	var now: float = sim.tick
+	for k in sim.fx_t.size():
+		var age: float = now - sim.fx_t[k]
+		if age < 0.0 or age > FX_TICKS:
+			continue
+		var f := age / FX_TICKS
+		var p := to_px(sim.fx_x[k], sim.fx_y[k])
+		var dir := Vector2(sim.fx_dx[k], sim.fx_dy[k]) / 4096.0
+		var a := 0.85 * (1.0 - f)
+		draw_circle(p, px_per_m * (0.6 + 1.8 * f), Color(0.55, 0.45, 0.32, a * 0.55))
+		draw_arc(p, px_per_m * (1.0 + 2.5 * f), 0, TAU, 16, Color(0.85, 0.75, 0.55, a), lw)
+		draw_line(p, p + dir * px_per_m * 8.0, Color(0.35, 0.27, 0.18, a), maxf(lw * 1.5, px_per_m * 0.5))
+
+
+func _draw_fire_line(u: int, w: float) -> void:
+	var t: int = sim.u_ftarget[u]
+	if t < 0 or sim.u_state[t] >= BattleSim.U_DESTROYED:
+		return
+	draw_dashed_line(to_px(sim.u_cx[u], sim.u_cy[u]), to_px(sim.u_cx[t], sim.u_cy[t]),
+		COL_FIRE, w, 4.0 / zoom)
+
+
+func _draw_withdraw(u: int, from: Vector2, col: Color, w: float) -> void:
+	var edge: float = (sim.field_h if sim.u_side[u] == 0 else 0) * px_per_m / M
+	var to := Vector2(from.x, edge)
+	draw_dashed_line(from, to, col, w, 10.0 / zoom)
+	var dir := signf(to.y - from.y)
+	var s := 12.0 / zoom
+	draw_line(to, to + Vector2(-s, -dir * s), col, w * 1.5)
+	draw_line(to, to + Vector2(s, -dir * s), col, w * 1.5)
+	draw_string(ThemeDB.fallback_font, from + Vector2(s, dir * s * 2.0), "WITHDRAW",
+		HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(12.0), col)
+
+
+func _draw_preview(lw: float) -> void:
+	var col := Color(1, 1, 1, 0.9) if preview_ok else Color(1, 1, 1, 0.4)
+	draw_line(preview_a, preview_b, col, lw * 1.5)
+	if not preview_ok or selected_units.is_empty():
+		return
+	var dot_r := maxf(1.5, px_per_m * 0.25)
+	for p in preview_group():
+		var u: int = p["unit"]
+		var face: int = p["facing"]
+		var centre: Vector2 = p["centre"]
+		var offs := BattleSim.formation_offsets(sim.u_alive[u], p["files"], face, sim.u_type[u])
+		for k in range(0, offs.size(), 2):
+			draw_circle(centre + Vector2(offs[k], offs[k + 1]) * (px_per_m / M), dot_r, Color(1, 1, 1, 0.55))
+		var ang := face * TAU / 1024.0
 		var fwd := Vector2(cos(ang), sin(ang))
-		var right := Vector2(-fwd.y, fwd.x)
-		var hw := half * px_per_m / M
-		draw_line(a - right * hw, a + right * hw, Color(1, 1, 1, 0.8), lw)
-		draw_line(a, a + fwd * px_per_m * 3.0, Color(1, 1, 1, 0.8), lw)
-		if _v(u, "order") == BattleSim.O_MOVE:
-			var d := to_px(_v(u, "dx"), _v(u, "dy"))
-			var dang: float = _v(u, "dface") * TAU / 1024.0
-			var dfwd := Vector2(cos(dang), sin(dang))
-			var dright := Vector2(-dfwd.y, dfwd.x)
-			draw_dashed_line(a, d, Color(0.6, 1.0, 0.6, 0.7), lw, 8.0 / zoom)
-			draw_line(d - dright * hw, d + dright * hw, Color(0.6, 1.0, 0.6, 0.9), lw * 1.5)
-			draw_line(d, d + dfwd * px_per_m * 3.0, Color(0.6, 1.0, 0.6, 0.9), lw)
-		elif _v(u, "order") == BattleSim.O_ATTACK and _v(u, "target") >= 0:
-			var t: int = _v(u, "target")
-			draw_dashed_line(a, to_px(sim.u_cx[t], sim.u_cy[t]), Color(1, 0.3, 0.2, 0.85), lw, 8.0 / zoom)
-		if _v(u, "run") != 0:
-			draw_string(ThemeDB.fallback_font, a + Vector2(r, -r * 3.5), "RUN",
-				HORIZONTAL_ALIGNMENT_LEFT, -1, int(maxf(10.0, 14.0 / zoom)), Color.WHITE)
-
-	if preview_on:
-		var col := Color(1, 1, 1, 0.9) if preview_ok else Color(1, 1, 1, 0.4)
-		draw_line(preview_a, preview_b, col, lw * 1.5)
-		if preview_ok and selected_unit >= 0:
-			var p := preview_formation()
-			var face: int = p["facing"]
-			var centre: Vector2 = p["centre"]
-			var offs := BattleSim.formation_offsets(sim.u_alive[selected_unit], p["files"], face)
-			var dot_r := maxf(1.5, px_per_m * 0.25)
-			for k in range(0, offs.size(), 2):
-				draw_circle(centre + Vector2(offs[k], offs[k + 1]) * (px_per_m / M), dot_r, Color(1, 1, 1, 0.55))
-			var ang := face * TAU / 1024.0
-			var fwd := Vector2(cos(ang), sin(ang))
-			draw_line(centre, centre + fwd * px_per_m * 5.0, Color(1, 1, 0.6, 0.9), lw * 1.5)
+		draw_line(centre, centre + fwd * px_per_m * 5.0, Color(1, 1, 0.6, 0.9), lw * 1.5)
 
 
 ## Footprint of a formation: rectangle from the front line back through the
 ## last rank, at the real frontage and rank count, plus a facing tick.
-func _draw_footprint(front: Vector2, face: int, files: int, alive: int, edge: Color,
+func _draw_footprint(u: int, front: Vector2, face: int, files: int, alive: int, edge: Color,
 		fill: Color, w: float) -> void:
+	var ty: int = sim.u_type[u]
 	files = clampi(files, 1, maxi(alive, 1))
 	var ranks := (alive + files - 1) / files
 	var ang := face * TAU / 1024.0
 	var fwd := Vector2(cos(ang), sin(ang))
 	var right := Vector2(-fwd.y, fwd.x)
 	var k := px_per_m / M
-	var hw := (files - 1) * BattleSim.FILE_SPACING * 0.5 * k + px_per_m * 0.45
-	var depth := (ranks - 1) * BattleSim.RANK_SPACING * k + px_per_m * 0.45
+	var hw := (files - 1) * UT.stat(ty, "file_sp") * 0.5 * k + px_per_m * 0.45
+	var depth := (ranks - 1) * UT.stat(ty, "rank_sp") * k + px_per_m * 0.45
 	var a := front - right * hw + fwd * px_per_m * 0.45
 	var b := front + right * hw + fwd * px_per_m * 0.45
 	var c := b - fwd * (depth + px_per_m * 0.45)
@@ -120,7 +274,7 @@ func _draw_footprint(front: Vector2, face: int, files: int, alive: int, edge: Co
 
 
 ## Every friendly unit's order at once (toggle in the HUD). Thin and faint so
-## 20 units stay readable on a phone; the selected unit is skipped here and
+## 20 units stay readable on a phone; selected units are skipped here and
 ## drawn on top by the normal selection code.
 func _draw_all_orders() -> void:
 	var w := 1.2 / zoom
@@ -129,7 +283,7 @@ func _draw_all_orders() -> void:
 	var col_still := Color(1, 1, 1, 0.35)
 	var col_attack := Color(1.0, 0.45, 0.35, 0.45)
 	for u in sim.n_units:
-		if u == selected_unit or sim.u_side[u] != player_side or sim.u_state[u] != BattleSim.U_READY:
+		if selected_units.has(u) or sim.u_side[u] != player_side or sim.u_state[u] != BattleSim.U_READY:
 			continue
 		var alive: int = sim.u_alive[u]
 		var anchor := to_px(_v(u, "ax"), _v(u, "ay"))
@@ -137,25 +291,87 @@ func _draw_all_orders() -> void:
 		if order == BattleSim.O_MOVE:
 			var dest := to_px(_v(u, "dx"), _v(u, "dy"))
 			draw_line(to_px(sim.u_cx[u], sim.u_cy[u]), dest, Color(col_move, 0.3), w)
-			_draw_footprint(dest, _v(u, "dface"), _v(u, "files"), alive, col_move, fill_move, w)
+			_draw_footprint(u, dest, _v(u, "dface"), _v(u, "files"), alive, col_move, fill_move, w)
 		elif order == BattleSim.O_ATTACK and _v(u, "target") >= 0:
 			var t: int = _v(u, "target")
 			draw_dashed_line(anchor, to_px(sim.u_cx[t], sim.u_cy[t]), col_attack, w, 6.0 / zoom)
-			_draw_footprint(anchor, _v(u, "face"), _v(u, "files"), alive, Color(col_attack, 0.3), Color(0, 0, 0, 0), w)
+			_draw_footprint(u, anchor, _v(u, "face"), _v(u, "files"), alive, Color(col_attack, 0.3), Color(0, 0, 0, 0), w)
+		elif order == BattleSim.O_WITHDRAW:
+			_draw_withdraw(u, anchor, Color(COL_WITHDRAW, 0.5), w)
 		else:
-			_draw_footprint(anchor, _v(u, "face"), _v(u, "files"), alive, col_still, Color(0, 0, 0, 0), w)
+			_draw_footprint(u, anchor, _v(u, "face"), _v(u, "files"), alive, col_still, Color(0, 0, 0, 0), w)
+		var ucls := UT.cls(sim.u_type[u])
+		if ucls == UT.CLS_MISSILE or ucls == UT.CLS_ART:
+			_draw_fire_line(u, w)
+			if _v(u, "fire") == 0 and sim.u_ammo[u] > 0:
+				draw_string(ThemeDB.fallback_font, to_px(sim.u_cx[u], sim.u_cy[u]) + Vector2(10, 18) / zoom,
+					"HOLD FIRE", HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(11.0), Color(1, 0.85, 0.5, 0.8))
+			if ucls == UT.CLS_ART and _v(u, "deploy") == 0:
+				draw_string(ThemeDB.fallback_font, to_px(sim.u_cx[u], sim.u_cy[u]) + Vector2(10, 32) / zoom,
+					"PACKED UP", HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(11.0), Color(0.85, 0.9, 1.0, 0.8))
 
 
-## Formation implied by the current preview line. The line is the front rank:
-## its midpoint is the front centre, its length the frontage, and the unit
-## faces 90 degrees anticlockwise (on screen) from the drag direction, so a
-## left-to-right drag faces up the screen.
-func preview_formation() -> Dictionary:
-	var centre := (preview_a + preview_b) * 0.5
+## Formations implied by the current preview line. The line is the front
+## rank: it faces 90 degrees anticlockwise (on screen) from the drag
+## direction, so a left-to-right drag faces up the screen. One unit takes
+## the whole line; a group is laid out side by side along it, keeping the
+## units' current left-to-right order, each getting frontage in proportion to
+## its soldiers. Entries: {unit, centre (world px), facing, width, files}.
+func preview_group() -> Array:
+	var out: Array = []
 	var d := preview_b - preview_a
-	var len_m := d.length() / px_per_m
-	var drag_ang := atan2(d.y, d.x)
-	var face_ang := drag_ang - PI * 0.5
+	var len_px := d.length()
+	if len_px <= 0.0:
+		return out
+	var dir := d / len_px
+	var face_ang := atan2(d.y, d.x) - PI * 0.5
 	var face := int(round(face_ang * 1024.0 / TAU)) & 1023
-	var files: int = BattleSim.width_to_files(int(len_m * M), sim.u_alive[selected_unit])
-	return {"centre": centre, "facing": face, "width": int(len_m * M), "files": files}
+	var units: Array[int] = []
+	for u in selected_units:
+		if sim.u_state[u] == BattleSim.U_READY:
+			units.append(u)
+	if units.is_empty():
+		return out
+	# Left-to-right along the drag direction, by current position.
+	units.sort_custom(func(a: int, b: int) -> bool:
+		var pa := to_px(sim.u_cx[a], sim.u_cy[a]).dot(dir)
+		var pb := to_px(sim.u_cx[b], sim.u_cy[b]).dot(dir)
+		return pa < pb or (pa == pb and a < b))
+	var len_m := len_px / px_per_m
+	var gaps := GROUP_GAP_M * (units.size() - 1)
+	var usable := maxf(len_m - gaps, 1.0)
+	var total_w := 0.0
+	for u in units:
+		total_w += _line_weight(u)
+	var x := 0.0
+	for u in units:
+		var share: float = usable * _line_weight(u) / total_w
+		if units.size() == 1:
+			share = len_m
+		var width := int(share * M)
+		var files: int = BattleSim.width_to_files(width, sim.u_alive[u], sim.u_type[u])
+		if sim.u_neng[u] > 0:
+			files = sim.u_neng[u]  # a battery's frontage is its engines
+		var centre: Vector2 = preview_a + dir * (x + share * 0.5) * px_per_m
+		if units.size() == 1:
+			centre = (preview_a + preview_b) * 0.5
+		out.append({"unit": u, "centre": centre, "facing": face, "width": width, "files": files})
+		x += share + GROUP_GAP_M
+	return out
+
+
+## Share of a drawn line a unit gets: its soldiers' file width (a battery:
+## its engines' frontage, weighted like a four-rank unit).
+func _line_weight(u: int) -> float:
+	var fsp := float(UT.stat(sim.u_type[u], "file_sp"))
+	if sim.u_neng[u] > 0:
+		return sim.u_neng[u] * fsp * 4.0
+	return sim.u_alive[u] * fsp
+
+
+## Single-unit form of preview_group (kept for callers and tests).
+func preview_formation() -> Dictionary:
+	var g := preview_group()
+	if g.is_empty():
+		return {"centre": (preview_a + preview_b) * 0.5, "facing": 0, "width": 0, "files": 1}
+	return g[0]

@@ -11,6 +11,7 @@ const SoldierLayer := preload("res://game/soldier_layer.gd")
 const Overlay := preload("res://game/overlay.gd")
 const Hud := preload("res://game/hud.gd")
 const OrderPreview := preload("res://game/order_preview.gd")
+const UT := preload("res://sim/unit_types.gd")
 
 const PX_PER_M := 10.0
 const M := 1024.0
@@ -24,6 +25,8 @@ const MIN_LINE_M := 3.0           # shorter drags keep the current frontage
 const ZOOM_MIN := 0.12
 const ZOOM_MAX := 4.0
 const PLAYER_SIDE := 0
+const HUD_TOP := 76.0             # screen px used by the top buttons
+const HUD_BOTTOM := 176.0         # unit cards plus the group bar
 const STATS_WINDOW := 20          # ticks (2 s) for sim ms average / worst
 const TELEMETRY_SAMPLE_SEC := 5.0
 # Ticks at which the state hash is reported, so runs of the same scenario and
@@ -48,7 +51,12 @@ var paused := false
 var speed_idx := 1
 var interactive := true
 var bench_mode := false
+## Primary selected unit (last one picked), -1 if none.
 var selected := -1
+## Every selected unit; `selected` is one of them.
+var selection: Array[int] = []
+## "+ Add" mode: taps on units and cards add to / remove from the selection.
+var add_mode := false
 
 var _acc := 0.0
 var _sim_ms := PackedFloat64Array()
@@ -61,6 +69,8 @@ var _bench_frames := PackedFloat64Array()
 var _bench_ticks := PackedFloat64Array()
 var _bench_done := false
 var _decided_tick := -1
+var _result_shown := false
+var _paused_before_book := false
 
 # Telemetry (view only; never touches sim state).
 var _tele: Node = null
@@ -129,13 +139,25 @@ func _ready() -> void:
 	hud.menu_pressed.connect(_on_menu)
 	hud.run_pressed.connect(_toggle_run)
 	hud.halt_pressed.connect(_halt)
+	hud.fire_pressed.connect(_toggle_fire)
+	hud.skirmish_pressed.connect(_toggle_skirmish)
+	hud.deploy_pressed.connect(_toggle_deploy)
+	hud.withdraw_pressed.connect(_withdraw)
+	hud.withdraw_all_pressed.connect(_withdraw_all)
+	hud.group_pressed.connect(_select_group)
+	hud.add_toggled.connect(func(on: bool):
+		add_mode = on
+		_count("add_mode_on" if on else "add_mode_off"))
 	hud.orders_toggled.connect(_on_orders_toggled)
+	hud.book_pressed.connect(func(): _open_book(-1, "book_open"))
+	hud.card_long_pressed.connect(func(u: int): _open_book(sim.u_type[u], "book_open_card"))
+	hud.book.closed.connect(_on_book_closed)
 	hud.orders_button.set_pressed_no_signal(show_all_orders)
 	hud.set_orders_text(show_all_orders)
 	overlay.show_all_orders = show_all_orders
 	overlay.player_side = PLAYER_SIDE
 	hud.update_cards(sim)
-	hud.set_selected(-1, 0)
+	_select(-1)
 	_update_speed_text()
 	_apply_debug_args()
 	_hash_text = "%08x" % sim.state_hash()
@@ -150,7 +172,8 @@ func _ready() -> void:
 
 
 ## Testing aids (desktop only): -- --skip-ticks=N --cam=x_m,y_m --zoom=Z
-## --select=U fast-forward the sim and frame the camera for screenshots.
+## --select=U[,U...] --pause fast-forward the sim and frame the camera for
+## screenshots; --cam-unit=U centres on a unit after the skip.
 func _apply_debug_args() -> void:
 	for a in OS.get_cmdline_user_args():
 		var v := a.get_slice("=", 1)
@@ -158,12 +181,24 @@ func _apply_debug_args() -> void:
 			for t in int(v):
 				sim.step()
 			soldiers.upload()
+			soldiers.set_alpha(1.0)
 		elif a.begins_with("--cam="):
 			camera.position = Vector2(float(v.get_slice(",", 0)), float(v.get_slice(",", 1))) * PX_PER_M
+		elif a.begins_with("--cam-unit="):
+			var cu := int(v)
+			camera.position = Vector2(sim.u_cx[cu], sim.u_cy[cu]) / M * PX_PER_M
 		elif a.begins_with("--zoom="):
 			camera.zoom = Vector2.ONE * float(v)
+		elif a == "--pause":
+			_toggle_pause()
 		elif a.begins_with("--select="):
-			_select(int(v))
+			var first := true
+			for part in v.split(","):
+				if first:
+					_select(int(part))
+					first = false
+				else:
+					_toggle_in_selection(int(part))
 		elif a == "--show-orders":
 			hud.orders_button.button_pressed = true
 		elif a == "--demo-orders":
@@ -187,13 +222,24 @@ func _on_menu() -> void:
 	exit_requested.emit()
 
 
+## Frame both armies in the part of the screen the HUD leaves clear (below
+## the top buttons, above the group bar and unit cards).
 func _fit_camera() -> void:
-	# Frame the two armies (central 75% of the field).
 	var vp := get_viewport_rect().size
-	var field := Vector2(sim.field_w, sim.field_h) / M * PX_PER_M
-	camera.position = field * 0.5
-	var z := minf(vp.x / (field.x * 0.8), vp.y / (field.y * 0.6))
-	camera.zoom = Vector2.ONE * clampf(z, ZOOM_MIN, ZOOM_MAX)
+	var lo := Vector2(sim.field_w, sim.field_h)
+	var hi := Vector2.ZERO
+	for u in sim.n_units:
+		lo = lo.min(Vector2(sim.u_minx[u], sim.u_miny[u]))
+		hi = hi.max(Vector2(sim.u_maxx[u], sim.u_maxy[u]))
+	lo = lo / M * PX_PER_M
+	hi = hi / M * PX_PER_M
+	var size := (hi - lo).max(Vector2(PX_PER_M * 40.0, PX_PER_M * 40.0))
+	var clear := Rect2(0.0, HUD_TOP, vp.x, maxf(vp.y - HUD_TOP - HUD_BOTTOM, vp.y * 0.3))
+	var z := minf(clear.size.x / (size.x * 1.15), clear.size.y / (size.y * 1.25))
+	z = clampf(z, ZOOM_MIN, ZOOM_MAX)
+	camera.zoom = Vector2.ONE * z
+	# camera.position is the world point at the viewport centre.
+	camera.position = (lo + hi) * 0.5 + (vp * 0.5 - clear.get_center()) / z
 
 
 # ------------------------------------------------------------- stepping ---
@@ -210,13 +256,11 @@ func _process(delta: float) -> void:
 			_acc = 0.0  # cannot keep up: drop time rather than spiral
 		if steps > 0:
 			var t0 := Time.get_ticks_usec()
-			soldiers.selected_unit = selected
 			soldiers.upload()
 			_upload_ms = (Time.get_ticks_usec() - t0) / 1000.0
 	soldiers.set_alpha(clampf(_acc / TICK_SEC, 0.0, 1.0))
 	orders.refresh()  # drop orders the sim has applied
 	# Redrawn every frame, paused or not, so order changes show at once.
-	overlay.selected_unit = selected
 	overlay.zoom = camera.zoom.x
 	overlay.queue_redraw()
 
@@ -233,6 +277,7 @@ func _process(delta: float) -> void:
 	if _card_timer <= 0.0:
 		_card_timer = 0.25
 		hud.update_cards(sim)
+		_refresh_actions()
 		_update_stats_label()
 
 
@@ -252,8 +297,18 @@ func _do_tick() -> void:
 			_checkpoint_hashes[str(sim.tick)] = _hash_text
 			_t("hash_checkpoint", {"scenario": scenario_id, "seed": seed_value,
 				"tick": sim.tick, "hash": _hash_text, "player_orders": _player_orders})
-	if selected >= 0 and sim.u_state[selected] != BattleSim.U_READY:
-		_select(-1)
+	var lost := false
+	for u in selection:
+		if sim.u_state[u] != BattleSim.U_READY:
+			lost = true
+	if lost:
+		_prune_selection()
+	if sim.ended != 0 and not _result_shown and not bench_mode:
+		_result_shown = true
+		var secs: int = maxi(sim.decided_tick, 0) / 10
+		hud.banner.visible = false
+		hud.show_result(sim.result(), "%s   (decided after %d:%02d)" % [hud.banner.text, secs / 60, secs % 60], PLAYER_SIDE)
+		_t("battle_result", {"scenario": scenario_id, "tick": sim.tick, "result": sim.result()})
 	if sim.winner >= 0 and _decided_tick < 0:
 		_decided_tick = sim.tick
 		_show_result()
@@ -273,9 +328,9 @@ func _update_stats_label() -> void:
 		avg /= _sim_ms.size()
 	var a0 := sim.alive_count(0)
 	var a1 := sim.alive_count(1)
-	hud.stats_label.text = "FPS %d   sim %.2f ms avg / %.2f worst (2 s)   upload %.2f ms\nsoldiers %d  (%d v %d)   tick %d   hash %s" % [
+	hud.stats_label.text = "FPS %d   sim %.2f ms avg / %.2f worst (2 s)   upload %.2f ms\nsoldiers %d  (%d v %d)   missiles %d   tick %d   hash %s" % [
 		Engine.get_frames_per_second(), avg, worst, _upload_ms, a0 + a1, a0, a1,
-		sim.tick, _hash_text]
+		sim.projectiles_in_flight(), sim.tick, _hash_text]
 
 
 func _show_result() -> void:
@@ -408,27 +463,155 @@ func _queue(order: Dictionary) -> void:
 	sim.queue_order(order)
 	orders.add(order)
 	overlay.queue_redraw()
-	var tname: String = {BattleSim.ORDER_MOVE: "move", BattleSim.ORDER_ATTACK: "attack",
-		BattleSim.ORDER_HALT: "halt", BattleSim.ORDER_RUN: "run"}.get(int(order["type"]), "other")
+	var tname: String = ORDER_NAMES.get(int(order["type"]), "other")
 	_player_orders += 1
 	_orders_by_type[tname] = int(_orders_by_type.get(tname, 0)) + 1
 	if _order_events < MAX_ORDER_EVENTS:
 		_order_events += 1
 		_t("order", {"type": tname, "tick": sim.tick, "unit": int(order.get("unit", -1)),
-			"run": int(order.get("run", 0))})
+			"run": int(order.get("run", 0)), "group": selection.size()})
 
 
+const ORDER_NAMES := {BattleSim.ORDER_MOVE: "move", BattleSim.ORDER_ATTACK: "attack",
+	BattleSim.ORDER_HALT: "halt", BattleSim.ORDER_RUN: "run", BattleSim.ORDER_FIRE: "fire",
+	BattleSim.ORDER_SKIRMISH: "skirmish", BattleSim.ORDER_WITHDRAW: "withdraw",
+	BattleSim.ORDER_WITHDRAW_ALL: "withdraw_all", BattleSim.ORDER_DEPLOY: "deploy"}
+
+
+## Select only unit u (-1: clear the selection).
 func _select(u: int) -> void:
+	selection.clear()
+	if u >= 0:
+		selection.append(u)
 	selected = u
-	hud.set_selected(u, orders.value(u, "run") if u >= 0 else 0)
+	_selection_changed()
+
+
+## Add u to the selection, or remove it if it is already in.
+func _toggle_in_selection(u: int) -> void:
+	if selection.has(u):
+		selection.erase(u)
+		if selected == u:
+			selected = selection[selection.size() - 1] if not selection.is_empty() else -1
+	else:
+		selection.append(u)
+		selected = u
+	_selection_changed()
+
+
+func _prune_selection() -> void:
+	var keep: Array[int] = []
+	for u in selection:
+		if sim.u_state[u] == BattleSim.U_READY:
+			keep.append(u)
+	selection = keep
+	if not selection.has(selected):
+		selected = selection[selection.size() - 1] if not selection.is_empty() else -1
+	_selection_changed()
+
+
+func _selection_changed() -> void:
+	# Primary first so the overlay knows which unit gets the RUN label.
+	var ordered: Array[int] = []
+	if selected >= 0:
+		ordered.append(selected)
+	for u in selection:
+		if u != selected:
+			ordered.append(u)
+	overlay.selected_units = ordered
+	var flags := {}
+	for u in selection:
+		flags[u] = true
+	soldiers.selected_units = flags
+	soldiers.upload()
+	_refresh_actions()
 	overlay.queue_redraw()
 
 
-func _on_card(u: int) -> void:
-	if not interactive or sim.u_state[u] != BattleSim.U_READY:
-		hud.set_selected(selected, orders.value(selected, "run") if selected >= 0 else 0)  # undo the card's toggle
+## Action button states from the predicted orders of the selection.
+## Artillery never runs or skirmishes; only it has the Deploy toggle.
+func _refresh_actions() -> void:
+	var run := -1
+	var fire := -1
+	var skirm := -1
+	var deploy := -1
+	for u in selection:
+		var art := UT.cls(sim.u_type[u]) == UT.CLS_ART
+		if not art:
+			run = maxi(run, 1 if orders.value(u, "run") != 0 else 0)
+		if UT.stat(sim.u_type[u], "m_ammo") > 0:
+			fire = maxi(fire, orders.value(u, "fire"))
+			if not art:
+				skirm = maxi(skirm, orders.value(u, "skirm"))
+		if art:
+			deploy = maxi(deploy, orders.value(u, "deploy"))
+	if selection.is_empty():
+		run = 0
+	hud.set_selection(selection, run, fire, skirm, deploy)
+
+
+## Group buttons: every ready player unit of a class.
+func _select_group(kind: String) -> void:
+	if not interactive:
 		return
-	if selected == u:
+	_count("group_" + kind)
+	selection.clear()
+	selected = -1
+	for u in sim.n_units:
+		if sim.u_side[u] != PLAYER_SIDE or sim.u_state[u] != BattleSim.U_READY:
+			continue
+		var c := UT.cls(sim.u_type[u])
+		# Artillery goes with the missile troops: both shoot, take Fire
+		# orders and stand behind the line.
+		var take := kind == "all" or (kind == "inf" and (c == UT.CLS_INF or c == UT.CLS_PIKE)) \
+			or (kind == "missile" and (c == UT.CLS_MISSILE or c == UT.CLS_ART)) \
+			or (kind == "cav" and c == UT.CLS_CAV)
+		if take:
+			selection.append(u)
+	if not selection.is_empty():
+		selected = selection[0]
+	_selection_changed()
+
+
+## Unit book over the battle. Solo play: opening it pauses, closing it
+## restores the pause state from before.
+func _open_book(ty: int, counter: String) -> void:
+	_count(counter)
+	_t("book_open", {"from": counter, "unit_type": ty, "tick": sim.tick})
+	if not hud.book.visible:
+		_paused_before_book = paused
+		_set_paused(true)
+	hud.book.open(ty)
+	overlay.preview_on = false
+	_dragging = false
+	_touches.clear()
+	_primary = -1
+	_gesture_multi = false
+
+
+func _on_book_closed() -> void:
+	_set_paused(_paused_before_book)
+
+
+func _set_paused(on: bool) -> void:
+	paused = on
+	hud.pause_button.text = "Play" if paused else "Pause"
+
+
+func _on_card(u: int) -> void:
+	if hud.suppress_card == u:
+		# Release of a long press that opened the unit book: no selection.
+		hud.suppress_card = -1
+		_selection_changed()  # undo the card's toggle
+		return
+	if not interactive or sim.u_state[u] != BattleSim.U_READY:
+		_selection_changed()  # undo the card's toggle
+		return
+	_count("card_add" if add_mode else "card_select")
+	if add_mode:
+		_toggle_in_selection(u)
+		return
+	if selected == u and selection.size() == 1:
 		_select(-1)
 	else:
 		_select(u)
@@ -461,16 +644,75 @@ func _update_speed_text() -> void:
 
 
 func _toggle_run() -> void:
-	if selected < 0:
+	if selection.is_empty():
 		return
-	var run := 0 if orders.value(selected, "run") != 0 else 1
-	_queue(BattleSim.make_run_order(0, selected, run))
-	hud.run_button.text = "Run: on" if run else "Run: off"
+	var any_off := false
+	for u in selection:
+		if orders.value(u, "run") == 0:
+			any_off = true
+	for u in selection:
+		_queue(BattleSim.make_run_order(0, u, 1 if any_off else 0))
+	_refresh_actions()
 
 
 func _halt() -> void:
-	if selected >= 0:
-		_queue(BattleSim.make_halt_order(0, selected))
+	for u in selection:
+		_queue(BattleSim.make_halt_order(0, u))
+
+
+## Fire at will on/off for the missile units in the selection.
+func _toggle_fire() -> void:
+	var any_on := false
+	for u in selection:
+		if UT.stat(sim.u_type[u], "m_ammo") > 0 and orders.value(u, "fire") != 0:
+			any_on = true
+	for u in selection:
+		if UT.stat(sim.u_type[u], "m_ammo") > 0:
+			_queue(BattleSim.make_fire_order(0, u, 0 if any_on else 1))
+	_refresh_actions()
+
+
+func _toggle_skirmish() -> void:
+	var any_on := false
+	for u in selection:
+		if _skirmisher(u) and orders.value(u, "skirm") != 0:
+			any_on = true
+	for u in selection:
+		if _skirmisher(u):
+			_queue(BattleSim.make_skirmish_order(0, u, 0 if any_on else 1))
+	_refresh_actions()
+
+
+func _skirmisher(u: int) -> bool:
+	return UT.stat(sim.u_type[u], "m_ammo") > 0 and UT.cls(sim.u_type[u]) != UT.CLS_ART
+
+
+## Artillery in the selection: pack up if any battery wants to be set up,
+## otherwise set them all up.
+func _toggle_deploy() -> void:
+	var any_on := false
+	for u in selection:
+		if UT.cls(sim.u_type[u]) == UT.CLS_ART and orders.value(u, "deploy") != 0:
+			any_on = true
+	for u in selection:
+		if UT.cls(sim.u_type[u]) == UT.CLS_ART:
+			_queue(BattleSim.make_deploy_order(0, u, 0 if any_on else 1))
+	_refresh_actions()
+
+
+func _withdraw() -> void:
+	for u in selection:
+		_queue(BattleSim.make_withdraw_order(0, u))
+
+
+func _withdraw_all() -> void:
+	if not interactive:
+		return
+	_queue(BattleSim.make_withdraw_all_order(0, PLAYER_SIDE))
+
+
+func _shift_held() -> bool:
+	return Input.is_key_pressed(KEY_SHIFT)
 
 
 func _tap(screen_pos: Vector2, double: bool) -> void:
@@ -484,41 +726,76 @@ func _tap(screen_pos: Vector2, double: bool) -> void:
 			_count("tap_on_broken_unit")
 			return
 		_count("tap_select")
-		if selected == u and not double:
+		if add_mode or _shift_held():
+			_toggle_in_selection(u)
+		elif selected == u and selection.size() == 1 and not double:
 			_select(-1)
 		else:
 			_select(u)
 		return
-	if selected < 0:
+	if selection.is_empty():
 		_count("tap_nothing_selected")
 		return
 	if u >= 0:
-		# Enemy: attack (double tap = charge at the run).
-		_queue(BattleSim.make_attack_order(0, selected, u, 1 if double else orders.value(selected, "run")))
+		# Enemy: attack (missile troops shoot it; double tap = charge at the run).
+		for s in selection:
+			_queue(BattleSim.make_attack_order(0, s, u, 1 if double else orders.value(s, "run")))
 		return
-	# Ground: move there keeping frontage, facing the direction of travel.
 	var dest := w / PX_PER_M * M
-	var ax: int = orders.value(selected, "ax")
-	var ay: int = orders.value(selected, "ay")
-	var dx := dest.x - ax
-	var dy := dest.y - ay
-	var face: int = orders.value(selected, "face")
-	if dx * dx + dy * dy > 4.0 * M * M:
-		face = int(round(atan2(dy, dx) * 1024.0 / TAU)) & 1023
-	var width: int = orders.value(selected, "files") * BattleSim.FILE_SPACING
-	_queue(BattleSim.make_move_order(0, selected, int(dest.x), int(dest.y), face, width,
-		1 if double else orders.value(selected, "run")))
+	if selection.size() == 1:
+		# Ground: move there keeping frontage, facing the direction of travel.
+		var ax: int = orders.value(selected, "ax")
+		var ay: int = orders.value(selected, "ay")
+		var dx := dest.x - ax
+		var dy := dest.y - ay
+		var face: int = orders.value(selected, "face")
+		if dx * dx + dy * dy > 4.0 * M * M:
+			face = int(round(atan2(dy, dx) * 1024.0 / TAU)) & 1023
+		var width: int = BattleSim.files_to_width(orders.value(selected, "files"), sim.u_type[selected])
+		_queue(BattleSim.make_move_order(0, selected, int(dest.x), int(dest.y), face, width,
+			1 if double else orders.value(selected, "run")))
+		return
+	_group_move(dest, double)
+
+
+## Move the whole selection to `dest` (sim units), keeping the units'
+## positions relative to each other, rotated so the group faces the way it
+## travels (relative to the primary unit's facing).
+func _group_move(dest: Vector2, double: bool) -> void:
+	_count("group_move")
+	var cx := 0.0
+	var cy := 0.0
+	for u in selection:
+		cx += orders.value(u, "ax")
+		cy += orders.value(u, "ay")
+	cx /= selection.size()
+	cy /= selection.size()
+	var d := dest - Vector2(cx, cy)
+	var ref: int = orders.value(selected, "face")
+	var turn := 0
+	if d.length_squared() > 4.0 * M * M:
+		var want := int(round(atan2(d.y, d.x) * 1024.0 / TAU)) & 1023
+		turn = ((want - ref + 512) & 1023) - 512
+	var rot := turn * TAU / 1024.0
+	for u in selection:
+		var rel := Vector2(orders.value(u, "ax") - cx, orders.value(u, "ay") - cy).rotated(rot)
+		var p := dest + rel
+		var face: int = (orders.value(u, "face") + turn) & 1023
+		var width: int = BattleSim.files_to_width(orders.value(u, "files"), sim.u_type[u])
+		_queue(BattleSim.make_move_order(0, u, int(p.x), int(p.y), face, width,
+			1 if double else orders.value(u, "run")))
 
 
 func _finish_line(double_run: bool) -> void:
-	if selected < 0 or not overlay.preview_ok:
+	if selection.is_empty() or not overlay.preview_ok:
 		_count("line_too_short")
 		return
-	_count("line_drag")
-	var p := overlay.preview_formation()
-	var c: Vector2 = p["centre"] / PX_PER_M * M
-	_queue(BattleSim.make_move_order(0, selected, int(c.x), int(c.y), p["facing"], p["width"],
-		1 if double_run else orders.value(selected, "run")))
+	_count("line_drag" if selection.size() == 1 else "line_drag_group")
+	for p in overlay.preview_group():
+		var u: int = p["unit"]
+		var c: Vector2 = p["centre"] / PX_PER_M * M
+		_queue(BattleSim.make_move_order(0, u, int(c.x), int(c.y), p["facing"], p["width"],
+			1 if double_run else orders.value(u, "run")))
 
 
 func _pick_unit(w: Vector2) -> int:
@@ -528,14 +805,15 @@ func _pick_unit(w: Vector2) -> int:
 	var best := -1
 	var best_d := 0
 	for u in sim.n_units:
-		if sim.u_state[u] == BattleSim.U_DESTROYED:
+		if sim.u_state[u] >= BattleSim.U_DESTROYED:
 			continue
 		# Unit marker (drawn above the centroid) also counts.
 		var in_box: bool = x >= sim.u_minx[u] - margin and x <= sim.u_maxx[u] + margin \
 			and y >= sim.u_miny[u] - margin and y <= sim.u_maxy[u] + margin
 		var mdx: int = x - sim.u_cx[u]
-		var mdy: int = y - (sim.u_cy[u] - int(2.2 * 9.0 / camera.zoom.x / PX_PER_M * M))
-		var marker_r := int(16.0 / camera.zoom.x / PX_PER_M * M)
+		var mr := maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / camera.zoom.x)
+		var mdy: int = y - (sim.u_cy[u] - int(2.2 * mr / PX_PER_M * M))
+		var marker_r := int(mr * 1.6 / PX_PER_M * M)
 		var on_marker := mdx * mdx + mdy * mdy <= marker_r * marker_r
 		if not in_box and not on_marker:
 			continue
@@ -555,6 +833,8 @@ func _screen_to_world(p: Vector2) -> Vector2:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if hud.book.visible:
+		return  # the book is modal; it handles its own keys
 	if event is InputEventScreenTouch:
 		_on_touch(event)
 	elif event is InputEventScreenDrag:
@@ -586,6 +866,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			_toggle_pause()
 		elif event.keycode == KEY_ESCAPE:
 			_select(-1)
+		elif event.keycode == KEY_A and event.ctrl_pressed:
+			_select_group("all")
 
 
 func _on_touch(e: InputEventScreenTouch) -> void:
@@ -654,7 +936,7 @@ func _on_drag(e: InputEventScreenDrag) -> void:
 		return
 	if not _dragging and e.position.distance_to(_press_pos) > DRAG_THRESHOLD:
 		_dragging = true
-		if selected >= 0 and interactive:
+		if not selection.is_empty() and interactive:
 			overlay.preview_on = true
 	if not _dragging:
 		return

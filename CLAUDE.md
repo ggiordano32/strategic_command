@@ -1,7 +1,9 @@
 # Strategic Command
 
 2D co-op grand strategy game in Godot 4 (GDScript), web-first. The design and
-milestones live in `docs/DESIGN.md`; read it before making changes.
+milestones live in `docs/DESIGN.md`; current progress, open items and how to
+run things are in `docs/STATUS.md`. Read both before making changes, and keep
+`docs/STATUS.md` up to date when a milestone lands or the plan changes.
 
 ## Working model
 

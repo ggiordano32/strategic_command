@@ -1,18 +1,33 @@
 extends SceneTree
 ## Scripted input test: feeds synthetic touch events through Godot's input
 ## pipeline into the battle view and checks the orders that reach the sim.
-##   godot --headless --script res://tests/input_test.gd
-## (Also runs windowed; add --write-movie to capture frames.)
+##   godot --script res://tests/input_test.gd        (needs a window)
+## (Add --write-movie to capture frames.)
+## Covers: select, drag line, attack, double-tap run, pinch, cards, orders
+## overlay, group buttons, "+ Add" multi-select by cards, group move keeping
+## relative positions, group line-up by drag, fire / skirmish / withdraw /
+## withdraw-army buttons, and the paused-order preview hand-over for each;
+## artillery (battle_2000): Missile group includes batteries, battery card,
+## Deploy button (pack up while paused, preview, hand-over, packing starts),
+## shoot order on a tapped enemy, Run / Skirmish hidden for batteries.
 ## Exits 0 on success, 1 on failure.
 
 const Battle := preload("res://game/battle.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
+const UT := preload("res://sim/unit_types.gd")
 
 var battle: Battle
 var frame := 0
 var failures := 0
 var steps: Array[Callable] = []
 var wait := 0
+
+# Player units of the skirmish scenario, found by type.
+var u_inf := -1     # heavy swords
+var u_pike := -1
+var u_arch := -1
+var u_cav := -1
+var u_enemy := -1
 
 
 func _initialize() -> void:
@@ -25,6 +40,7 @@ func _initialize() -> void:
 	battle.seed_value = 7
 	root.add_child(battle)
 	steps = [
+		_step_find_units,
 		_step_pause,
 		_step_tap_select,
 		_step_check_selected,
@@ -54,6 +70,80 @@ func _initialize() -> void:
 		_step_paused_check_2,
 		_step_unpause,
 		_step_check_handover,
+		# Unit book.
+		_step_book_open_running,
+		_step_check_book_open_running,
+		_step_book_next,
+		_step_check_book_next,
+		_step_book_close,
+		_step_check_book_closed_running,
+		_step_book_open_paused,
+		_step_book_close,
+		_step_check_book_closed_paused,
+		_step_long_press_down,
+		_step_long_press_wait,
+		_step_long_press_up,
+		_step_check_long_press,
+		_step_book_close,
+		_step_tap_card_after_book,
+		_step_check_tap_card_after_book,
+		_step_right_click_card,
+		_step_check_right_click,
+		_step_book_close,
+		# Milestone 2 controls.
+		_step_pause_again,
+		_step_group_all,
+		_step_check_group_all,
+		_step_group_missile,
+		_step_check_group_missile,
+		_step_group_inf,
+		_step_check_group_inf,
+		_step_add_on,
+		_step_add_card,
+		_step_check_add_card,
+		_step_add_card,
+		_step_check_remove_card,
+		_step_add_off,
+		_step_group_move,
+		_step_check_group_move,
+		_step_group_move_turn,
+		_step_check_group_move_turn,
+		_step_group_line,
+		_step_check_group_line,
+		_step_group_missile,
+		_step_missile_buttons,
+		_step_check_missile_pending,
+		_step_shoot_enemy,
+		_step_check_shoot_pending,
+		_step_unpause,
+		_step_check_missile_handover,
+		_step_pause_again,
+		_step_group_cav,
+		_step_withdraw_button,
+		_step_check_withdraw_pending,
+		_step_withdraw_army_first,
+		_step_check_withdraw_army_confirm,
+		_step_withdraw_army_second,
+		_step_check_withdraw_army_pending,
+		_step_unpause,
+		_step_check_withdraw_handover,
+		_step_check_touch_targets,
+		_step_menu_book_open,
+		_step_check_menu_book,
+		# Artillery.
+		_step_art_start,
+		_step_art_find,
+		_step_group_missile_art,
+		_step_check_group_missile_art,
+		_step_art_card,
+		_step_check_art_card,
+		_step_art_deploy_tap,
+		_step_check_art_deploy_pending,
+		_step_art_shoot,
+		_step_check_art_shoot_pending,
+		_step_unpause,
+		_step_check_art_handover,
+		_step_check_art_packing,
 		_step_done,
 	]
 
@@ -82,12 +172,18 @@ func _world_to_screen(w: Vector2) -> Vector2:
 
 
 func _vp_to_window(p: Vector2) -> Vector2:
-	return battle.get_viewport().get_final_transform() * p
+	return root.get_final_transform() * p
 
 
 func _unit_screen(u: int) -> Vector2:
 	var sim := battle.sim
 	return _world_to_screen(Vector2(sim.u_cx[u], sim.u_cy[u]) / 1024.0 * Battle.PX_PER_M)
+
+
+## Centre the camera on a world point given in sim units.
+func _focus(x: int, y: int) -> void:
+	battle.camera.position = Vector2(x, y) / 1024.0 * Battle.PX_PER_M
+	battle.camera.force_update_scroll()
 
 
 func _touch(idx: int, pos: Vector2, pressed: bool) -> void:
@@ -106,6 +202,13 @@ func _drag(idx: int, pos: Vector2, rel: Vector2) -> void:
 	Input.parse_input_event(e)
 
 
+func _tap_control(c: Control) -> void:
+	_no_double_tap()
+	var p := _vp_to_window(c.get_global_rect().get_center())
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
 func _check(cond: bool, what: String) -> void:
 	if cond:
 		print("PASS ", what)
@@ -115,10 +218,48 @@ func _check(cond: bool, what: String) -> void:
 
 
 func _no_double_tap() -> void:
-	battle._last_tap_time = -10.0
+	if is_instance_valid(battle):
+		battle._last_tap_time = -10.0
+
+
+func _sel_set() -> Array:
+	var a: Array = []
+	for u in battle.selection:
+		a.append(u)
+	a.sort()
+	return a
 
 
 # --------------------------------------------------------------- steps ---
+
+func _step_find_units() -> void:
+	var sim := battle.sim
+	for u in sim.n_units:
+		var ty: int = sim.u_type[u]
+		if sim.u_side[u] == 0:
+			if ty == UT.HEAVY and u_inf < 0:
+				u_inf = u
+			elif ty == UT.PIKE and u_pike < 0:
+				u_pike = u
+			elif ty == UT.ARCHER and u_arch < 0:
+				u_arch = u
+			elif ty == UT.CAVALRY and u_cav < 0:
+				u_cav = u
+		elif u_enemy < 0:
+			u_enemy = u
+	_check(u_inf >= 0 and u_pike >= 0 and u_arch >= 0 and u_cav >= 0 and u_enemy >= 0,
+		"skirmish has heavy, pike, archer and cavalry units (%d %d %d %d)" % [u_inf, u_pike, u_arch, u_cav])
+	var vis := 0
+	var vr := battle.get_viewport_rect()
+	for u in sim.n_units:
+		# is_over_ui takes viewport coordinates (not window coordinates).
+		var p := battle.get_canvas_transform() * (Vector2(sim.u_cx[u], sim.u_cy[u]) / 1024.0 * Battle.PX_PER_M)
+		if vr.has_point(p) and not battle.hud.is_over_ui(p):
+			vis += 1
+		else:
+			print("  unit %d off screen or under the HUD at %s" % [u, str(p)])
+	_check(vis == sim.n_units, "initial camera frames every unit clear of the HUD (%d/%d)" % [vis, sim.n_units])
+
 
 func _step_pause() -> void:
 	battle._toggle_pause()  # keep the sim still so screen positions hold
@@ -126,13 +267,14 @@ func _step_pause() -> void:
 
 func _step_tap_select() -> void:
 	_no_double_tap()
-	var p := _unit_screen(0)
+	var p := _unit_screen(u_inf)
 	_touch(0, p, true)
 	_touch(0, p, false)
 
 
 func _step_check_selected() -> void:
-	_check(battle.selected == 0, "tap on own unit selects it (selected=%d)" % battle.selected)
+	_check(battle.selected == u_inf and battle.selection.size() == 1,
+		"tap on own unit selects it (selected=%d)" % battle.selected)
 
 
 var _line_a := Vector2.ZERO
@@ -142,7 +284,8 @@ var _line_b := Vector2.ZERO
 func _step_drag_line_begin() -> void:
 	# Draw a line left to right, 40 m long, 30 m in front of the unit.
 	var sim := battle.sim
-	var w := Vector2(sim.u_ax[0], sim.u_ay[0] - 30 * 1024) / 1024.0 * Battle.PX_PER_M
+	_focus(sim.u_ax[u_inf], sim.u_ay[u_inf] - 30 * 1024)
+	var w := Vector2(sim.u_ax[u_inf], sim.u_ay[u_inf] - 30 * 1024) / 1024.0 * Battle.PX_PER_M
 	_line_a = _world_to_screen(w - Vector2(20, 0) * Battle.PX_PER_M)
 	_line_b = _world_to_screen(w + Vector2(20, 0) * Battle.PX_PER_M)
 	_touch(0, _line_a, true)
@@ -162,20 +305,17 @@ func _step_drag_line_end() -> void:
 
 func _step_check_line_order() -> void:
 	var sim := battle.sim
-	var files: int = sim.u_files[0]
-	_check(sim.u_order[0] == BattleSim.O_MOVE, "drag line issues a move (order=%d)" % sim.u_order[0])
+	var files: int = sim.u_files[u_inf]
+	_check(sim.u_order[u_inf] == BattleSim.O_MOVE, "drag line issues a move (order=%d)" % sim.u_order[u_inf])
 	_check(absi(files - 36) <= 1, "line length sets frontage (files=%d, expect ~36 for 40 m)" % files)
-	_check(absi(((sim.u_dface[0] - 768 + 512) & 1023) - 512) <= 2, "left-to-right drag faces up (facing=%d)" % sim.u_dface[0])
+	_check(absi(((sim.u_dface[u_inf] - 768 + 512) & 1023) - 512) <= 2, "left-to-right drag faces up (facing=%d)" % sim.u_dface[u_inf])
 
 
 func _step_tap_enemy() -> void:
 	_no_double_tap()
-	var enemy := -1
-	for u in battle.sim.n_units:
-		if battle.sim.u_side[u] == 1:
-			enemy = u
-			break
-	var p := _unit_screen(enemy)
+	var sim := battle.sim
+	_focus(sim.u_cx[u_enemy], sim.u_cy[u_enemy])
+	var p := _unit_screen(u_enemy)
 	_touch(0, p, true)
 	_touch(0, p, false)
 	battle.sim.step()
@@ -183,9 +323,9 @@ func _step_tap_enemy() -> void:
 
 func _step_check_attack() -> void:
 	var sim := battle.sim
-	_check(sim.u_order[0] == BattleSim.O_ATTACK and sim.u_side[sim.u_target[0]] == 1,
-		"tap on enemy issues attack (order=%d target=%d)" % [sim.u_order[0], sim.u_target[0]])
-	_check(sim.u_run[0] == 0, "single tap attack walks")
+	_check(sim.u_order[u_inf] == BattleSim.O_ATTACK and sim.u_side[sim.u_target[u_inf]] == 1,
+		"tap on enemy issues attack (order=%d target=%d)" % [sim.u_order[u_inf], sim.u_target[u_inf]])
+	_check(sim.u_run[u_inf] == 0, "single tap attack walks")
 
 
 var _ground := Vector2.ZERO
@@ -194,7 +334,9 @@ var _ground := Vector2.ZERO
 func _step_double_tap_ground_1() -> void:
 	_no_double_tap()
 	var sim := battle.sim
-	_ground = _world_to_screen(Vector2(sim.u_ax[0] - 40 * 1024, sim.u_ay[0] + 10 * 1024) / 1024.0 * Battle.PX_PER_M)
+	var g := Vector2(sim.u_ax[u_inf] - 40 * 1024, sim.u_ay[u_inf] + 10 * 1024)
+	_focus(int(g.x), int(g.y))
+	_ground = _world_to_screen(g / 1024.0 * Battle.PX_PER_M)
 	_touch(0, _ground, true)
 	_touch(0, _ground, false)
 
@@ -207,8 +349,8 @@ func _step_double_tap_ground_2() -> void:
 
 func _step_check_run_move() -> void:
 	var sim := battle.sim
-	_check(sim.u_order[0] == BattleSim.O_MOVE and sim.u_run[0] == 1,
-		"double tap on ground moves at the run (order=%d run=%d)" % [sim.u_order[0], sim.u_run[0]])
+	_check(sim.u_order[u_inf] == BattleSim.O_MOVE and sim.u_run[u_inf] == 1,
+		"double tap on ground moves at the run (order=%d run=%d)" % [sim.u_order[u_inf], sim.u_run[u_inf]])
 
 
 var _zoom_before := 0.0
@@ -245,27 +387,20 @@ func _step_check_pinch() -> void:
 func _step_tap_card() -> void:
 	_no_double_tap()
 	battle._select(-1)
-	# Second player card (unit 1).
-	var card: Button = battle.hud._cards[1]
-	var p := _vp_to_window(card.get_global_rect().get_center())
-	_touch(0, p, true)
-	_touch(0, p, false)
+	_tap_control(battle.hud._cards[u_pike])
 
 
 func _step_check_card() -> void:
-	_check(battle.selected == 1, "tapping a unit card selects that unit (selected=%d)" % battle.selected)
-	_check(battle.sim.u_order[1] == BattleSim.O_NONE, "card tap does not leak a ground order")
+	_check(battle.selected == u_pike, "tapping a unit card selects that unit (selected=%d)" % battle.selected)
+	_check(battle.sim.u_order[u_pike] == BattleSim.O_NONE, "card tap does not leak a ground order")
 
 
 var _orders_seq_before := 0
 
 
 func _step_tap_orders_toggle() -> void:
-	_no_double_tap()
 	_orders_seq_before = battle.sim._order_seq
-	var p := _vp_to_window(battle.hud.orders_button.get_global_rect().get_center())
-	_touch(0, p, true)
-	_touch(0, p, false)
+	_tap_control(battle.hud.orders_button)
 
 
 func _step_check_orders_on() -> void:
@@ -301,18 +436,18 @@ var _expect_c := Vector2.ZERO
 
 
 func _step_center_camera() -> void:
-	# Keep the gesture away from HUD panels: centre the view ahead of unit 1.
+	# Keep the gesture away from HUD panels: centre the view ahead of the unit.
 	var sim := battle.sim
-	battle.camera.position = Vector2(sim.u_ax[1], sim.u_ay[1] - 40 * 1024) / 1024.0 * Battle.PX_PER_M
+	_focus(sim.u_ax[u_inf], sim.u_ay[u_inf] - 60 * 1024)
 
 
 func _step_paused_move_1() -> void:
 	_no_double_tap()
 	if not battle.paused:
 		battle._toggle_pause()
-	battle._select(1)
+	battle._select(u_inf)
 	_paused_tick = battle.sim.tick
-	_expect_c = _draw_line_order(1, 50, 15)
+	_expect_c = _draw_line_order(u_inf, 50, 15)
 
 
 func _pending_ok(u: int, expect_files: int, what: String) -> void:
@@ -320,7 +455,7 @@ func _pending_ok(u: int, expect_files: int, what: String) -> void:
 	var ov := battle.overlay
 	_check(battle.sim.tick == _paused_tick, "%s: no sim tick elapsed (tick %d)" % [what, battle.sim.tick])
 	_check(o.has_pending(u), "%s: order recorded as pending in the view" % what)
-	_check(battle.sim.u_order[u] == BattleSim.O_NONE, "%s: sim has not applied it yet" % what)
+	_check(battle.sim.u_order[u] != BattleSim.O_MOVE or battle.sim.u_dy[u] != ov._v(u, "dy"), "%s: sim has not applied it yet" % what)
 	_check(ov._v(u, "order") == BattleSim.O_MOVE, "%s: overlay draws a move for the unit" % what)
 	var dx: int = ov._v(u, "dx")
 	var dy: int = ov._v(u, "dy")
@@ -330,38 +465,572 @@ func _pending_ok(u: int, expect_files: int, what: String) -> void:
 
 
 func _step_paused_check_1() -> void:
-	_pending_ok(1, 27, "paused move")  # 30 m line -> ~27 files
+	_pending_ok(u_inf, 27, "paused move")  # 30 m line -> ~27 files
 
 
 func _step_paused_move_2() -> void:
-	_expect_c = _draw_line_order(1, 70, 10)
+	_expect_c = _draw_line_order(u_inf, 70, 10)
 
 
 func _step_paused_check_2() -> void:
-	_pending_ok(1, 18, "replacement paused move")  # 20 m line -> ~18 files
+	_pending_ok(u_inf, 18, "replacement paused move")  # 20 m line -> ~18 files
 	_predicted = {}
 	for k in ["order", "dx", "dy", "dface", "files", "run", "target"]:
-		_predicted[k] = battle.overlay._v(1, k)
+		_predicted[k] = battle.overlay._v(u_inf, k)
 
 
 func _step_unpause() -> void:
-	battle._toggle_pause()
+	_paused_tick = battle.sim.tick
+	if battle.paused:
+		battle._toggle_pause()
+
+
+func _handover(u: int, keys: Array, what: String) -> bool:
+	if battle.sim.tick <= _paused_tick:
+		return false  # wait for the first tick
+	var sim := battle.sim
+	_check(not battle.orders.has_pending(u), "%s: after unpause the pending entry is dropped" % what)
+	var same := true
+	for k in keys:
+		var simv: int = (sim.get("u_" + k) as PackedInt32Array)[u]
+		if simv != _predicted[u][k]:
+			same = false
+			printerr("  mismatch %s: predicted %d sim %d" % [k, _predicted[u][k], simv])
+	_check(same, "%s: sim state after applying equals what was drawn while paused (no jump)" % what)
+	return true
 
 
 func _step_check_handover() -> void:
-	if battle.sim.tick <= _paused_tick:
-		steps.push_front(_step_check_handover)  # wait for the first tick
+	var pred := _predicted
+	_predicted = {u_inf: pred}
+	if not _handover(u_inf, pred.keys(), "move"):
+		_predicted = pred
+		steps.push_front(_step_check_handover)
 		return
+	_check(battle.overlay._v(u_inf, "dx") == pred["dx"], "overlay now reads the same destination from the sim")
+
+
+# ---- milestone 2: groups, multi-select, missiles, withdrawal ----
+
+func _step_pause_again() -> void:
+	if not battle.paused:
+		battle._toggle_pause()
+	_paused_tick = battle.sim.tick
+
+
+func _step_group_all() -> void:
+	_tap_control(battle.hud.group_buttons["all"])
+
+
+func _ready_player_units(classes: Array) -> Array:
+	var a: Array = []
 	var sim := battle.sim
-	_check(not battle.orders.has_pending(1), "after unpause the pending entry is dropped")
-	var same := true
-	for k in _predicted:
-		var simv: int = (sim.get("u_" + k) as PackedInt32Array)[1]
-		if simv != _predicted[k]:
-			same = false
-			printerr("  mismatch %s: predicted %d sim %d" % [k, _predicted[k], simv])
-	_check(same, "sim state after applying equals what was drawn while paused (no jump)")
-	_check(battle.overlay._v(1, "dx") == _predicted["dx"], "overlay now reads the same destination from the sim")
+	for u in sim.n_units:
+		if sim.u_side[u] == 0 and sim.u_state[u] == BattleSim.U_READY and UT.cls(sim.u_type[u]) in classes:
+			a.append(u)
+	return a
+
+
+func _step_check_group_all() -> void:
+	var want := _ready_player_units([UT.CLS_INF, UT.CLS_PIKE, UT.CLS_MISSILE, UT.CLS_CAV])
+	_check(_sel_set() == want, "All selects every ready unit (%s vs %s)" % [str(_sel_set()), str(want)])
+
+
+func _step_group_missile() -> void:
+	_tap_control(battle.hud.group_buttons["missile"])
+
+
+func _step_check_group_missile() -> void:
+	_check(_sel_set() == [u_arch], "Missile selects the archers (%s)" % str(_sel_set()))
+	_check(battle.hud.fire_button.visible and battle.hud.skirm_button.visible,
+		"fire and skirmish buttons shown for missile troops")
+
+
+func _step_group_inf() -> void:
+	_tap_control(battle.hud.group_buttons["inf"])
+
+
+func _step_check_group_inf() -> void:
+	var want := _ready_player_units([UT.CLS_INF, UT.CLS_PIKE])
+	_check(_sel_set() == want, "Inf selects infantry and pikes (%s vs %s)" % [str(_sel_set()), str(want)])
+	_check(not battle.hud.fire_button.visible, "fire button hidden without missile troops")
+
+
+func _step_add_on() -> void:
+	_tap_control(battle.hud.add_button)
+
+
+func _step_add_card() -> void:
+	_tap_control(battle.hud._cards[u_arch])
+
+
+func _step_check_add_card() -> void:
+	_check(battle.add_mode, "+ Add toggles add mode on")
+	var want := _ready_player_units([UT.CLS_INF, UT.CLS_PIKE])
+	want.append(u_arch)
+	want.sort()
+	_check(_sel_set() == want, "card tap in add mode adds the unit (%s)" % str(_sel_set()))
+
+
+func _step_check_remove_card() -> void:
+	var want := _ready_player_units([UT.CLS_INF, UT.CLS_PIKE])
+	_check(_sel_set() == want, "second card tap in add mode removes it (%s)" % str(_sel_set()))
+
+
+func _step_add_off() -> void:
+	_tap_control(battle.hud.add_button)
+
+
+var _rel_before := Vector2.ZERO
+var _cent_target := Vector2.ZERO
+
+
+func _pair_rel(a: int, b: int, kx: String, ky: String) -> Vector2:
+	var ov := battle.overlay
+	return Vector2(ov._v(b, kx) - ov._v(a, kx), ov._v(b, ky) - ov._v(a, ky))
+
+
+func _step_group_move() -> void:
+	_no_double_tap()
+	_check(not battle.add_mode, "+ Add toggles add mode off")
+	var sim := battle.sim
+	_rel_before = _pair_rel(u_inf, u_pike, "ax", "ay")
+	var cx := (battle.overlay._v(u_inf, "ax") + battle.overlay._v(u_pike, "ax")) / 2
+	var cy := (battle.overlay._v(u_inf, "ay") + battle.overlay._v(u_pike, "ay")) / 2
+	# Straight ahead of the primary unit: no rotation of the group.
+	var face: int = battle.overlay._v(battle.selected, "face")
+	var f := Vector2(cos(face * TAU / 1024.0), sin(face * TAU / 1024.0))
+	_cent_target = Vector2(cx, cy) + f * 40.0 * 1024.0
+	_focus(int(_cent_target.x), int(_cent_target.y))
+	var p := _world_to_screen(_cent_target / 1024.0 * Battle.PX_PER_M)
+	_touch(0, p, true)
+	_touch(0, p, false)
+	_check(sim.tick == _paused_tick, "group move given while paused")
+
+
+func _step_check_group_move() -> void:
+	var ov := battle.overlay
+	_check(ov._v(u_inf, "order") == BattleSim.O_MOVE and ov._v(u_pike, "order") == BattleSim.O_MOVE,
+		"tap on ground moves every selected unit")
+	var rel := _pair_rel(u_inf, u_pike, "dx", "dy")
+	_check(rel.distance_to(_rel_before) < 2.0 * 1024.0,
+		"group move keeps the units' relative positions (%s vs %s)" % [str(rel / 1024.0), str(_rel_before / 1024.0)])
+	var c := Vector2(ov._v(u_inf, "dx") + ov._v(u_pike, "dx"), ov._v(u_inf, "dy") + ov._v(u_pike, "dy")) * 0.5
+	_check(c.distance_to(_cent_target) < 2.0 * 1024.0, "group centre goes where tapped")
+
+
+func _step_group_move_turn() -> void:
+	_no_double_tap()
+	# Tap well to the right of the group: it wheels to face that way.
+	var ov := battle.overlay
+	var cx := (ov._v(u_inf, "ax") + ov._v(u_pike, "ax")) / 2
+	var cy := (ov._v(u_inf, "ay") + ov._v(u_pike, "ay")) / 2
+	_cent_target = Vector2(cx + 60 * 1024, cy)
+	_focus(int(_cent_target.x), int(_cent_target.y))
+	var p := _world_to_screen(_cent_target / 1024.0 * Battle.PX_PER_M)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_check_group_move_turn() -> void:
+	var ov := battle.overlay
+	var rel := _pair_rel(u_inf, u_pike, "dx", "dy")
+	_check(absf(rel.length() - _rel_before.length()) < 2.0 * 1024.0,
+		"turning group move keeps the spacing (%.1f m vs %.1f m)" % [rel.length() / 1024.0, _rel_before.length() / 1024.0])
+	var df: int = ov._v(u_inf, "dface")
+	_check(absi(((df - 0 + 512) & 1023) - 512) < 40, "group faces its direction of travel (dface %d)" % df)
+
+
+func _step_group_line() -> void:
+	_no_double_tap()
+	var sim := battle.sim
+	# A 70 m line left to right, 50 m ahead of the group.
+	var cx := (sim.u_ax[u_inf] + sim.u_ax[u_pike]) / 2
+	var cy := mini(sim.u_ay[u_inf], sim.u_ay[u_pike]) - 50 * 1024
+	_focus(cx, cy)
+	var w := Vector2(cx, cy) / 1024.0 * Battle.PX_PER_M
+	var a := _world_to_screen(w - Vector2(35, 0) * Battle.PX_PER_M)
+	var b := _world_to_screen(w + Vector2(35, 0) * Battle.PX_PER_M)
+	_touch(0, a, true)
+	_drag(0, a.lerp(b, 0.5), (b - a) * 0.5)
+	_drag(0, b, (b - a) * 0.5)
+	_touch(0, b, false)
+
+
+func _step_check_group_line() -> void:
+	var ov := battle.overlay
+	var sim := battle.sim
+	var units := [u_inf, u_pike]
+	units.sort_custom(func(a: int, b: int) -> bool: return ov._v(a, "dx") < ov._v(b, "dx"))
+	var l: int = units[0]
+	var r: int = units[1]
+	var lw := (ov._v(l, "files") - 1) * UT.stat(sim.u_type[l], "file_sp") / 2
+	var rw := (ov._v(r, "files") - 1) * UT.stat(sim.u_type[r], "file_sp") / 2
+	var gap := (ov._v(r, "dx") - rw) - (ov._v(l, "dx") + lw)
+	_check(absi(ov._v(l, "dy") - ov._v(r, "dy")) < 1024, "drag lines the group up on one front line")
+	_check(gap > 0 and gap < 5 * 1024, "units side by side without overlap (gap %.1f m)" % (gap / 1024.0))
+	var total := (ov._v(r, "dx") + rw) - (ov._v(l, "dx") - lw)
+	_check(absi(total - 70 * 1024) < 6 * 1024, "the group fills the drawn line (%.1f m of 70)" % (total / 1024.0))
+	for u in units:
+		_check(absi(((ov._v(u, "dface") - 768 + 512) & 1023) - 512) <= 2, "lined-up unit %d faces up" % u)
+
+
+func _step_missile_buttons() -> void:
+	_paused_tick = battle.sim.tick
+	_check(battle.sim.u_fire[u_arch] == 1, "archers start with fire at will")
+	_tap_control(battle.hud.fire_button)
+	_tap_control(battle.hud.skirm_button)
+
+
+func _step_check_missile_pending() -> void:
+	var ov := battle.overlay
+	_check(ov._v(u_arch, "fire") == 0 and battle.sim.u_fire[u_arch] == 1,
+		"fire button: hold fire shown at once, sim unchanged until the tick")
+	_check(battle.hud.fire_button.text.ends_with("hold"), "fire button reads hold (%s)" % battle.hud.fire_button.text)
+	_check(ov._v(u_arch, "skirm") != battle.sim.u_skirm[u_arch], "skirmish button toggles skirmish mode (pending)")
+
+
+func _step_shoot_enemy() -> void:
+	_no_double_tap()
+	var sim := battle.sim
+	_focus(sim.u_cx[u_enemy], sim.u_cy[u_enemy])
+	var p := _unit_screen(u_enemy)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_check_shoot_pending() -> void:
+	var ov := battle.overlay
+	_check(ov._v(u_arch, "order") == BattleSim.O_ATTACK and ov._v(u_arch, "target") == u_enemy,
+		"tapping an enemy orders the archers to shoot it")
+	_predicted = {u_arch: {}}
+	for k in ["order", "target", "fire", "skirm", "run"]:
+		_predicted[u_arch][k] = ov._v(u_arch, k)
+
+
+func _step_check_missile_handover() -> void:
+	if not _handover(u_arch, ["order", "target", "fire", "skirm", "run"], "fire/skirmish/shoot"):
+		steps.push_front(_step_check_missile_handover)
+
+
+func _step_group_cav() -> void:
+	_tap_control(battle.hud.group_buttons["cav"])
+
+
+func _step_withdraw_button() -> void:
+	_check(_sel_set() == [u_cav], "Cav selects the cavalry (%s)" % str(_sel_set()))
+	_paused_tick = battle.sim.tick
+	_tap_control(battle.hud.withdraw_button)
+
+
+func _step_check_withdraw_pending() -> void:
+	var ov := battle.overlay
+	_check(ov._v(u_cav, "order") == BattleSim.O_WITHDRAW and battle.sim.u_order[u_cav] != BattleSim.O_WITHDRAW,
+		"withdraw button: withdrawal drawn at once while paused")
+	_check(ov._v(u_cav, "dy") == battle.sim.field_h, "withdrawal heads for the own (bottom) map edge")
+
+
+var _seq_before_army := 0
+
+
+func _step_withdraw_army_first() -> void:
+	_seq_before_army = battle.sim._order_seq
+	_tap_control(battle.hud.withdraw_all_button)
+
+
+func _step_check_withdraw_army_confirm() -> void:
+	_check(battle.sim._order_seq == _seq_before_army, "first tap on Withdraw army only asks to confirm")
+	_check(battle.hud.withdraw_all_button.text.begins_with("Tap"), "button asks for confirmation (%s)" % battle.hud.withdraw_all_button.text)
+
+
+func _step_withdraw_army_second() -> void:
+	_tap_control(battle.hud.withdraw_all_button)
+
+
+func _step_check_withdraw_army_pending() -> void:
+	var ov := battle.overlay
+	var all := true
+	_predicted = {}
+	for u in _ready_player_units([UT.CLS_INF, UT.CLS_PIKE, UT.CLS_MISSILE, UT.CLS_CAV]):
+		if ov._v(u, "order") != BattleSim.O_WITHDRAW:
+			all = false
+		_predicted[u] = {}
+		for k in ["order", "target", "run", "dx", "dy", "dface"]:
+			_predicted[u][k] = ov._v(u, k)
+	_check(all, "second tap withdraws the whole army (drawn while paused)")
+
+
+func _step_check_withdraw_handover() -> void:
+	if battle.sim.tick <= _paused_tick:
+		steps.push_front(_step_check_withdraw_handover)
+		return
+	for u in _predicted:
+		_handover(u, ["order", "target", "run", "dx", "dy", "dface"], "withdraw unit %d" % u)
+
+
+func _step_check_touch_targets() -> void:
+	var small := []
+	var hud := battle.hud
+	var buttons: Array = [hud.run_button, hud.halt_button, hud.fire_button, hud.skirm_button,
+		hud.withdraw_button, hud.withdraw_all_button, hud.add_button]
+	for k in hud.group_buttons:
+		buttons.append(hud.group_buttons[k])
+	for b in buttons:
+		var sz: Vector2 = (b as Control).get_combined_minimum_size()
+		if sz.y < 48 or sz.x < 72:
+			small.append((b as Button).text)
+	_check(small.is_empty(), "new buttons are at least 72x48 px (%s)" % str(small))
+	var ct: String = hud.card_text(u_arch)
+	_check(ct.find("ammo") >= 0, "missile unit card shows ammunition (%s)" % ct.replace("\n", " | "))
+
+
+# ---- unit book ----
+
+var _book_seq := 0
+var _book_sel: Array = []
+var _lp_t0 := 0
+var _lp_pos := Vector2.ZERO
+
+
+func _step_book_open_running() -> void:
+	_check(not battle.paused, "battle running before opening the book")
+	_tap_control(battle.hud.book_button)
+
+
+func _step_check_book_open_running() -> void:
+	_check(battle.hud.book.visible, "Units button opens the unit book")
+	_check(battle.paused, "opening the book pauses the battle")
+
+
+func _step_book_next() -> void:
+	_book_seq = battle.hud.book.current
+	_tap_control(battle.hud.book.next_button)
+
+
+func _step_check_book_next() -> void:
+	var b = battle.hud.book
+	_check(b.current == (_book_seq + 1) % UT.count() and b.entry.unit_type == b.current,
+		"Next shows the next unit type (%d -> %d)" % [_book_seq, b.current])
+
+
+func _step_book_close() -> void:
+	_tap_control(battle.hud.book.close_button)
+
+
+func _step_check_book_closed_running() -> void:
+	_check(not battle.hud.book.visible, "Close hides the book")
+	_check(not battle.paused, "closing restores the running state")
+
+
+func _step_book_open_paused() -> void:
+	battle._toggle_pause()
+	_tap_control(battle.hud.book_button)
+
+
+func _step_check_book_closed_paused() -> void:
+	_check(not battle.hud.book.visible and battle.paused, "a battle paused before the book stays paused after it")
+	battle._toggle_pause()
+
+
+func _step_long_press_down() -> void:
+	_no_double_tap()
+	_book_seq = battle.sim._order_seq
+	_book_sel = _sel_set()
+	var card: Control = battle.hud._cards[u_pike]
+	_lp_pos = _vp_to_window(card.get_global_rect().get_center())
+	_lp_t0 = Time.get_ticks_msec()
+	_touch(0, _lp_pos, true)
+
+
+func _step_long_press_wait() -> void:
+	if Time.get_ticks_msec() - _lp_t0 < 700:
+		steps.push_front(_step_long_press_wait)
+
+
+func _step_long_press_up() -> void:
+	_touch(0, _lp_pos, false)
+
+
+func _step_check_long_press() -> void:
+	var b = battle.hud.book
+	_check(b.visible and b.current == battle.sim.u_type[u_pike],
+		"long press on a card opens that unit type's page (page %d)" % b.current)
+	_check(battle.sim._order_seq == _book_seq, "long press issues no order")
+	_check(_sel_set() == _book_sel, "long press does not change the selection (%s)" % str(_sel_set()))
+	_check(int(battle._input_counts.get("book_open_card", 0)) >= 1, "book opens counted for telemetry")
+
+
+func _step_tap_card_after_book() -> void:
+	battle._select(-1)
+	_tap_control(battle.hud._cards[u_pike])
+
+
+func _step_check_tap_card_after_book() -> void:
+	_check(battle.selected == u_pike, "a normal tap on the card still selects (selected=%d)" % battle.selected)
+	_check(not battle.hud.book.visible, "a normal tap does not open the book")
+
+
+func _step_right_click_card() -> void:
+	_book_seq = battle.sim._order_seq
+	var card: Control = battle.hud._cards[u_arch]
+	var p := _vp_to_window(card.get_global_rect().get_center())
+	for pressed in [true, false]:
+		var e := InputEventMouseButton.new()
+		e.button_index = MOUSE_BUTTON_RIGHT
+		e.pressed = pressed
+		e.position = p
+		e.global_position = p
+		Input.parse_input_event(e)
+
+
+func _step_check_right_click() -> void:
+	var b = battle.hud.book
+	_check(b.visible and b.current == battle.sim.u_type[u_arch], "right click on a card opens its page")
+	_check(battle.sim._order_seq == _book_seq and battle.selected == u_pike, "right click issues no order and keeps the selection")
+
+
+var _menu: Control = null
+
+
+func _step_menu_book_open() -> void:
+	battle.queue_free()
+	_menu = (load("res://game/main.gd") as GDScript).new()
+	root.add_child(_menu)
+	steps.push_front(_step_menu_book_tap)
+
+
+func _step_menu_book_tap() -> void:
+	for b in _menu.find_children("*", "Button", true, false):
+		if (b as Button).text == "Unit book":
+			_tap_control(b)
+			return
+	_check(false, "menu has a Unit book button")
+
+
+func _step_check_menu_book() -> void:
+	var book = _menu.book
+	_check(book.visible, "Unit book button on the menu opens the book")
+	_check(book.entry.unit_type >= 0, "the book shows a page")
+	steps.push_front(_step_check_menu_book_closed)
+	_tap_control(book.close_button)
+
+
+func _step_check_menu_book_closed() -> void:
+	_check(not _menu.book.visible, "Close hides the menu's book")
+
+
+# ---- artillery ----
+
+var u_bolt := -1
+var u_stone := -1
+var u_art_enemy := -1
+
+
+func _step_art_start() -> void:
+	if is_instance_valid(_menu):
+		_menu.queue_free()
+	battle = Battle.new()
+	battle.scenario_id = "battle_2000"
+	battle.seed_value = 7
+	root.add_child(battle)
+
+
+func _step_art_find() -> void:
+	var sim := battle.sim
+	for u in sim.n_units:
+		if sim.u_side[u] == 0 and sim.u_type[u] == UT.BOLT:
+			u_bolt = u
+		elif sim.u_side[u] == 0 and sim.u_type[u] == UT.STONE:
+			u_stone = u
+		elif sim.u_side[u] == 1 and sim.u_type[u] == UT.HEAVY and u_art_enemy < 0:
+			u_art_enemy = u
+	_check(u_bolt >= 0 and u_stone >= 0 and u_art_enemy >= 0,
+		"battle_2000 has player bolt and stone throwers (%d %d)" % [u_bolt, u_stone])
+	if not battle.paused:
+		battle._toggle_pause()
+	_paused_tick = battle.sim.tick
+
+
+func _step_group_missile_art() -> void:
+	_tap_control(battle.hud.group_buttons["missile"])
+
+
+func _step_check_group_missile_art() -> void:
+	var want := _ready_player_units([UT.CLS_MISSILE, UT.CLS_ART])
+	_check(_sel_set() == want, "Missile selects missile troops and artillery (%s vs %s)" % [str(_sel_set()), str(want)])
+	_check(battle.hud.deploy_button.visible, "Deploy button shown when batteries are selected")
+	_check(battle.hud.skirm_button.visible, "Skirmish still shown for the archers in the group")
+
+
+func _step_art_card() -> void:
+	_no_double_tap()
+	battle._select(-1)
+	_tap_control(battle.hud._cards[u_bolt])
+
+
+func _step_check_art_card() -> void:
+	var hud := battle.hud
+	_check(battle.selected == u_bolt and battle.selection.size() == 1, "tapping the battery card selects it")
+	_check(hud.deploy_button.visible and hud.deploy_button.text == "Deploy: on",
+		"Deploy button reads on for a set-up battery (%s)" % hud.deploy_button.text)
+	_check(hud.fire_button.visible and not hud.skirm_button.visible and not hud.run_button.visible,
+		"battery alone: Fire shown, Skirmish and Run hidden")
+	var ct: String = hud.card_text(u_bolt)
+	_check(ct.find("eng 4/4") >= 0 and ct.find("shots") >= 0 and ct.find("Ready") >= 0,
+		"battery card shows engines, shots and Ready (%s)" % ct.replace("\n", " | "))
+	var sz: Vector2 = hud.deploy_button.get_combined_minimum_size()
+	_check(sz.x >= 72 and sz.y >= 48, "Deploy button is a usable touch target (%s)" % str(sz))
+
+
+func _step_art_deploy_tap() -> void:
+	_paused_tick = battle.sim.tick
+	_tap_control(battle.hud.deploy_button)
+
+
+func _step_check_art_deploy_pending() -> void:
+	var ov := battle.overlay
+	_check(battle.sim.tick == _paused_tick, "deploy toggled while paused (no tick)")
+	_check(ov._v(u_bolt, "deploy") == 0 and battle.sim.u_deploy[u_bolt] == 1,
+		"Deploy button: pack up shown at once, sim unchanged until the tick")
+	_check(battle.hud.deploy_button.text == "Deploy: off", "button now reads off (%s)" % battle.hud.deploy_button.text)
+
+
+func _step_art_shoot() -> void:
+	_no_double_tap()
+	var sim := battle.sim
+	_focus(sim.u_cx[u_art_enemy], sim.u_cy[u_art_enemy])
+	var p := _unit_screen(u_art_enemy)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_check_art_shoot_pending() -> void:
+	var ov := battle.overlay
+	_check(ov._v(u_bolt, "order") == BattleSim.O_ATTACK and ov._v(u_bolt, "target") == u_art_enemy,
+		"tapping an enemy orders the battery to shoot it (pending)")
+	_check(ov._v(u_bolt, "run") == 0, "a battery never runs")
+	_predicted = {u_bolt: {}}
+	for k in ["order", "target", "deploy", "run", "fire"]:
+		_predicted[u_bolt][k] = ov._v(u_bolt, k)
+
+
+var _depl_before := -1
+
+
+func _step_check_art_handover() -> void:
+	if not _handover(u_bolt, ["order", "target", "deploy", "run", "fire"], "battery deploy/shoot"):
+		steps.push_front(_step_check_art_handover)
+		return
+	_depl_before = battle.sim.u_depl[u_bolt]
+	_paused_tick = battle.sim.tick
+
+
+func _step_check_art_packing() -> void:
+	var sim := battle.sim
+	if sim.tick < _paused_tick + 3:
+		steps.push_front(_step_check_art_packing)
+		return
+	_check(sim.u_depl[u_bolt] < _depl_before, "the battery is packing up (%d -> %d)" % [_depl_before, sim.u_depl[u_bolt]])
 
 
 func _step_done() -> void:
