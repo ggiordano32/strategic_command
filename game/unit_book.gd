@@ -1,8 +1,8 @@
 extends Control
 ## The unit book: a full-screen overlay listing every unit type, with one
 ## UnitEntry page shown at a time (list on the left, Previous / Next, Close),
-## and a last page, "Terrain", explaining the ground rules with the sim's
-## own numbers. Used from the start menu and from the battle HUD; it only
+## and two last pages, "Terrain" (with woods) and "Settlements and sieges",
+## explaining those rules with the sim's own numbers. Used from the start menu and from the battle HUD; it only
 ## emits `closed` and never touches the sim.
 
 signal closed
@@ -13,9 +13,11 @@ const Icons := preload("res://game/unit_icons.gd")
 const IconView := preload("res://game/unit_icon_view.gd")
 const UnitEntry := preload("res://game/unit_entry.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
+const MapGen := preload("res://sim/mapgen.gd")
 
 var entry: UnitEntry
-## Page shown: a unit type, or UT.count() for the Terrain page.
+## Page shown: a unit type, UT.count() for the Terrain page, UT.count() + 1
+## for Settlements and sieges.
 var current := 0
 var terrain_page: ScrollContainer
 var terrain_text: Label
@@ -81,6 +83,16 @@ func _init() -> void:
 	tb.pressed.connect(show_type.bind(UT.count()))
 	list.add_child(tb)
 	_list.append(tb)
+	var sb2 := Button.new()
+	sb2.custom_minimum_size = Vector2(200, 56)
+	sb2.toggle_mode = true
+	sb2.focus_mode = Control.FOCUS_NONE
+	sb2.text = "Settlements and sieges"
+	sb2.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	sb2.add_theme_font_size_override("font_size", 16)
+	sb2.pressed.connect(show_type.bind(UT.count() + 1))
+	list.add_child(sb2)
+	_list.append(sb2)
 	# Page with its header.
 	var page := VBoxContainer.new()
 	page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -121,7 +133,7 @@ func _init() -> void:
 
 
 func _pages() -> int:
-	return UT.count() + 1
+	return UT.count() + 2
 
 
 ## The Terrain page, in plain words, with the numbers the sim uses.
@@ -157,6 +169,73 @@ static func terrain_help() -> String:
 		"The enemy. The AI deploys on nearby higher ground, stops on a crest while its archers shoot, holds a hill it stands on (up to 4 minutes, unless outshot) and lets you climb to it, goes round to a gentler side rather than straight up a steep slope, avoids charging uphill, and puts its archers and engines on rises with a clear line of fire.",
 		"",
 		"Ordered moves and attacks show 'uphill' or 'downhill' with the average slope when it is 4% or more.",
+		"",
+		woods_help(),
+	]
+	return "\n".join(lines)
+
+
+static func _pcts(a: Array) -> String:
+	return "%d / %d / %d%%" % [a[1], a[2], a[3]]
+
+
+## Speed in light / medium / dense woods for a class row of VEG_SPEED.
+static func _speeds(row: int) -> String:
+	var a: Array = BattleSim.VEG_SPEED[row]
+	return "%d / %d / %d%%" % [int(a[1]) / 10, int(a[2]) / 10, int(a[3]) / 10]
+
+
+## The woods section of the Terrain page.
+static func woods_help() -> String:
+	var lines: Array[String] = [
+		"WOODS",
+		"",
+		"Woods are drawn as trees: scattered ones are light woods, a closed canopy dense woods. Treetops fade where soldiers stand under them. A move order shows where its line runs through trees (green), the formation preview marks the men who would stand in woods, and the hint says 'woods' or 'dense woods'.",
+		"",
+		"Moving. In light / medium / dense woods a unit keeps this much of its speed: infantry %s, pikes %s, missile troops %s, cavalry %s, artillery %s. A battery cannot set up in dense woods." % [
+			_speeds(0), _speeds(1), _speeds(2), _speeds(3), _speeds(4)],
+		"",
+		"Formations. Moving through woods loosens a formation: disorder grows by %d / %d / %d a tick (it fades by 2 a tick) up to %d / %d / %d. From %d a pike block drops its wall and spearmen cannot brace; a pike block cannot stand formed in medium or dense woods at all." % [
+			BattleSim.VEG_DIS_GAIN[1], BattleSim.VEG_DIS_GAIN[2], BattleSim.VEG_DIS_GAIN[3],
+			BattleSim.VEG_DIS_CAP[1], BattleSim.VEG_DIS_CAP[2], BattleSim.VEG_DIS_CAP[3], BattleSim.DISORDERED],
+		"",
+		"Charges. Cavalry in woods cannot build a full charge: momentum is capped at %s of a full charge (a charge needs %d to strike at all). A charge into men standing in woods hits at %s of its force." % [
+			_pcts(BattleSim.VEG_MOM_CAP), BattleSim.CHARGE_MIN, _pcts(BattleSim.VEG_IMPACT)],
+		"",
+		"Missiles. The trees catch %s of the arrows, %s of the javelins and %s of the stones that come down in light / medium / dense woods (so men in woods are harder to hit); a stone that gets through rolls %d / %d / %d%% as far. Javelins and bolts fly flat: woods between the thrower and the target add up (light %d, medium %d, dense %d per 4 m) and past %d block the shot - about %d m of dense woods. A target behind them is shown with the broken red line." % [
+			_pcts(BattleSim.VEG_STOP_ARROW), _pcts(BattleSim.VEG_STOP_JAV), _pcts(BattleSim.VEG_STOP_STONE),
+			BattleSim.VEG_PLOUGH[1] / 10, BattleSim.VEG_PLOUGH[2] / 10, BattleSim.VEG_PLOUGH[3] / 10,
+			BattleSim.TREE_W[1], BattleSim.TREE_W[2], BattleSim.TREE_W[3], BattleSim.TREE_BLOCK,
+			BattleSim.TREE_BLOCK * 4 / BattleSim.TREE_W[3] + 4],
+		"",
+		"Morale is not affected by woods. Woods are as dense as the region: Gaul and northern Italy are wooded, Africa and the south-east of Iberia nearly bare.",
+	]
+	return "\n".join(lines)
+
+
+## The Settlements and sieges page.
+static func siege_help() -> String:
+	var hp: Array = MapGen.GATE_HP
+	var wh: Array = MapGen.WALL_H
+	var lines: Array[String] = [
+		"SETTLEMENTS AND SIEGES",
+		"",
+		"Every settlement is fought over on its own map: houses and streets round a plaza, and with walls a ring of wall and towers with gates. Each city keeps the same map for good (its seed is fixed when the campaign starts), so you can learn it; the region panel shows it with 'View battle map'. A village is %d m across, a town %d m, a city %d m; the map changes as the settlement grows and its walls are built up. Cities on hills stand on a plateau." % [
+			MapGen.R_LEVEL[0] * 2, MapGen.R_LEVEL[1] * 2, MapGen.R_LEVEL[2] * 2],
+		"",
+		"Streets. Houses and walls cannot be crossed: units find their way along the streets and through the gates by themselves, and a unit too wide for a street closes up its files and opens out again after. In a street a formed block cannot be flanked; cavalry in the streets cannot build a charge (at most %d%% of a full charge)." % BattleSim.URBAN_MOM_CAP,
+		"",
+		"Walls. Level 1 / 2 / 3 walls are %d / %d / %d m thick and their walkway %d / %d / %d m high. Nobody can climb them in this version: the way in is through a gate. The defenders' missile troops start on the walls near the gates: from there they shoot further (height) and over the wall, and %d%% of the missiles shot up at them are stopped by the battlements. Units on a wall stay on their stretch of wall (a move slides them along it). Walls and houses stop javelins and bolts; arrows and stones fly over them." % [
+			MapGen.WALL_T[1], MapGen.WALL_T[2], MapGen.WALL_T[3], wh[1], wh[2], wh[3], BattleSim.WALL_COVER],
+		"",
+		"Gates. Up to %d / %d / %d gates for wall level 1 / 2 / 3 (a village has at most 2, a town 3). A gate has %d / %d / %d hit points by wall level and starts shut. The defenders open or shut a gate by tapping it (with nothing selected); it can only be shut when nobody stands in it, and a broken gate stays open. To break one, select engines or foot and tap it: a bolt that hits it takes off %d, a stone %d; foot go to its face and hack at it, each man taking off (weapon damage - %d) x %d%% per swing, at most %d men at a time (heavy swordsmen: a level 1 gate in roughly a minute). Cavalry and missile troops cannot break a gate." % [
+			4, 3, 2, hp[1], hp[2], hp[3], BattleSim.GATE_BOLT, BattleSim.GATE_STONE, BattleSim.GATE_ARMOUR,
+			BattleSim.GATE_HACK_PCT, BattleSim.GATE_HACKERS],
+		"",
+		"Taking the city. Besides breaking the defenders' army, the attackers win by holding the plaza: a unit of at least %d men in it, and no defending unit within %d m beyond it, for %d seconds in a row (the ring round the plaza fills) - then every defender breaks." % [
+			BattleSim.CAPTURE_MEN, BattleSim.CAPTURE_CLEAR / 1024, BattleSim.CAPTURE_TICKS / 10],
+		"",
+		"The enemy. Attacking, the AI picks the weakest, nearest gate, brings its engines up to shoot it from out of bow range, covers it with its archers, sends heavy foot to hack at it when it has no engines (or they take too long), and storms in once a gate is down, making for the plaza; its cavalry waits outside until the defenders break. Defending, it shuts the gates when you come near, keeps its archers on the walls, holds each gate from inside with its steadiest foot, and keeps the rest at the plaza to fall on whatever gets in.",
 	]
 	return "\n".join(lines)
 
@@ -174,13 +253,14 @@ func close() -> void:
 
 
 func show_type(ty: int) -> void:
-	current = clampi(ty, 0, UT.count())
+	current = clampi(ty, 0, UT.count() + 1)
 	for k in _list.size():
 		_list[k].set_pressed_no_signal(k == current)
-	var terr := current == UT.count()
+	var terr := current >= UT.count()
 	terrain_page.visible = terr
 	entry.visible = not terr
 	if terr:
+		terrain_text.text = terrain_help() if current == UT.count() else siege_help()
 		terrain_page.scroll_vertical = 0
 	else:
 		entry.set_unit_type(current, side_color)

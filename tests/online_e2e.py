@@ -208,7 +208,10 @@ def main():
             if i < len(want) and want[i] in m:
                 i += 1
         check(i == len(want), "webhook messages in order (matched %d of %d: next %r)" % (i, len(want), want[i] if i < len(want) else ""))
-        check(len(msgs) == len(set(msgs)), "no duplicate webhook messages")
+        # (Taking command of an army twice at the same settlement in different
+        # turns is two real events with the same text.)
+        once = [m for m in msgs if "took command of your army" not in m]
+        check(len(once) == len(set(once)), "no duplicate webhook messages")
         resolved = sum(1 for m in msgs if "resolved" in m and "Turn" in m and "battles are resolved" not in m)
         check(resolved == len(turn_versions), "one 'turn resolved' message per resolved turn (%d, %d)" % (resolved, len(turn_versions)))
         mention_ok = all("allowed_mentions" in m for m in HOOK_MSGS)

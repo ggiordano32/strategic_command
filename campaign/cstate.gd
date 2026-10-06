@@ -11,7 +11,8 @@ extends RefCounted
 ## by the rules (JSON load does not keep key order). The state carries its own
 ## RNG ("rng", xorshift32) used by the rules and the AI.
 ##
-## Format (VERSION 1), all top-level keys:
+## Format (VERSION 2; version 1 has no city_seed and is migrated on load,
+## see migrate()), all top-level keys:
 ##   format "strategic_command_campaign", version, name, seed, turn (0 =
 ##   280 BC summer), phase ("plan" | "battles" | "over"), rng,
 ##   settings {victory_regions, victory_capitals, turn_timeout_h, autoresolve
@@ -23,7 +24,9 @@ extends RefCounted
 ##     the last change,
 ##   regions [{owner (-1 independent), level, growth, slots [[chain, level]],
 ##     build [chain, level, turns_left] or [], queue [unit keys], gar (garrison
-##     strength %)}] indexed like CData.REGIONS,
+##     strength %), city_seed (the settlement's battle map seed: fixed for
+##     good, so a city always looks the same; see default_city_seed)}]
+##     indexed like CData.REGIONS,
 ##   armies [{id, f, r, units [{t: unit key, n: men}], from (region it came
 ##     from this turn, -1), moved (0/1), busy (0/1: committed to a battle)}]
 ##     sorted by id,
@@ -36,7 +39,9 @@ const CData := preload("res://campaign/cdata.gd")
 const UT := preload("res://sim/unit_types.gd")
 
 const FORMAT := "strategic_command_campaign"
-const VERSION := 1
+const VERSION := 2
+## Oldest format this build reads (older states are migrated on load).
+const MIN_VERSION := 1
 
 const WAR := 0
 const PEACE := 1
@@ -69,7 +74,7 @@ static func new_campaign(p_name: String, p_seed: int, humans: Array, settings: D
 	for r in CData.region_count():
 		var rd: Dictionary = CData.REGIONS[r]
 		regions.append({"owner": -1, "level": int(rd["level"]), "growth": int(CData.GROWTH_TO[int(rd["level"])]),
-			"slots": [], "build": [], "queue": [], "gar": 100})
+			"slots": [], "build": [], "queue": [], "gar": 100, "city_seed": default_city_seed(r)})
 		var wall_lvl := int(rd["walls"])
 		if wall_lvl > 0:
 			(regions[r]["slots"] as Array).append([CData.WALLS, wall_lvl])
@@ -153,9 +158,42 @@ static func from_json(text: String) -> Dictionary:
 	if not (v is Dictionary):
 		return {}
 	var st: Dictionary = normalise(v)
-	if str(st.get("format", "")) != FORMAT or int(st.get("version", 0)) > VERSION:
+	if str(st.get("format", "")) != FORMAT or int(st.get("version", 0)) > VERSION \
+			or int(st.get("version", 0)) < MIN_VERSION:
 		return {}
+	return migrate(st)
+
+
+## Bring a state of an older format up to VERSION (in place; returns it).
+## 1 -> 2: every settlement gets its city_seed (default_city_seed, the same
+## value a new campaign gives it, so migrating on two devices agrees).
+## Online campaigns are not migrated (the server keeps the format a campaign
+## was created with): rules read city_seed() which falls back to the same
+## default, so a format 1 state plays exactly like its migrated copy.
+static func migrate(st: Dictionary) -> Dictionary:
+	if int(st.get("version", 0)) < 2:
+		var regions: Array = st.get("regions", [])
+		for r in regions.size():
+			var rs: Dictionary = regions[r]
+			if not rs.has("city_seed"):
+				rs["city_seed"] = default_city_seed(r)
+		st["version"] = 2
 	return st
+
+
+## The battle map seed a settlement is given when its campaign starts
+## (derived from the region index only: every campaign has the same Roma).
+static func default_city_seed(r: int) -> int:
+	var h := (r + 1) * 2654435761 + 0x5CA1AB1E
+	h = (h ^ (h >> 15)) * 0x2C1B3C6D
+	return (h ^ (h >> 12)) & 0x7FFFFFFF
+
+
+## Settlement r's battle map seed (stored, or the default for a format 1
+## state, which is the same number).
+static func city_seed(st: Dictionary, r: int) -> int:
+	var rs: Dictionary = st["regions"][r]
+	return int(rs.get("city_seed", default_city_seed(r)))
 
 
 ## Deep copy with floats turned into ints (JSON numbers) and bools into 0/1.

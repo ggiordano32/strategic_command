@@ -23,6 +23,13 @@ extends SceneTree
 ##   crest; a mirror-symmetric map stays even; AI battles on every terrain
 ##   kind are decided in ~4-9 minutes. --fair=N --fair-terrain=K runs the
 ##   mirrored battles on a mirror-symmetric generated map of kind K.
+## Woods and settlements (--only=maps): woods blunt charges and arrows and
+##   break up pike walls; dense woods block flat throws; pikes in a street
+##   cannot be flanked and cavalry there has no run-up; gates fall to
+##   batteries in a minute or two and to foot more slowly; an open town
+##   falls easily to a competent attacker, a level 3 wall needs artillery
+##   or a big edge, nothing is impregnable; AI settlement battles end in
+##   12 minutes or less, without draws.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
@@ -63,6 +70,18 @@ func _init() -> void:
 		return
 	if only == "tiers":
 		_tiers()
+		quit(0)
+		return
+	if only == "sieges":
+		_section("Garrison-only defence (town, garrison 3 + walls units of 60) vs the standard 12-unit attacker, AI vs AI")
+		_garrison_defence()
+		_section("AI vs AI settlement battles (garrison + a 4-unit field army defending)")
+		_siege_battles()
+		quit(0)
+		return
+	if only == "maps":
+		_maps()
+		print("\n(done in %.1f s)" % ((Time.get_ticks_msec() - t0) / 1000.0))
 		quit(0)
 		return
 	_section("Pikes")
@@ -1032,3 +1051,360 @@ func _tiers() -> void:
 			_duel("%s T%d %d vs T1 %d, equal price" % [l[0], tier, n_hi, n_lo],
 				[_u(0, hi, n_hi, 150, 150 + gap / 2, UP), _u(1, t1, n_lo, 150, 150 - gap / 2, DOWN)],
 				[_atk(0, 0, 1, 0), _atk(0, 1, 0, 0)])
+
+
+# ------------------------------------------------- woods and settlements ---
+
+## --only=maps: woods, streets, gates and settlement battles.
+func _maps() -> void:
+	_section("Woods")
+	_woods_cav()
+	_woods_cav_archers()
+	_woods_volley()
+	_woods_pikes()
+	_woods_javelins()
+	_section("Streets (a 10 m street between two building blocks vs the open)")
+	_streets()
+	_section("Gates: time to break the main gate (town, no defenders shooting / with the garrison on the walls)")
+	_gates()
+	_section("Garrison-only defence (town, garrison 3 + walls units of 60) vs the standard 12-unit attacker, AI vs AI")
+	_garrison_defence()
+	_section("AI vs AI settlement battles (garrison + a 4-unit field army defending)")
+	_siege_battles()
+	_section("AI vs AI field battles with woods (bench_2000 armies, generated ground, woods 40)")
+	_forest_battles()
+
+
+func _woods_t(units: Array, orders: Array, woods: Array) -> Dictionary:
+	var sc := _scenario(units, orders)
+	if not woods.is_empty():
+		sc["terrain"] = {"kind": 0, "woods": woods}
+	return sc
+
+
+## Cavalry 60 charging a standing heavy 100 whose position (and the last
+## 25 m in front of it) is woods of density d.
+func _woods_cav() -> void:
+	for d in [0, 1, 2, 3]:
+		var killed := 0.0
+		var lost := 0.0
+		var wins := 0
+		var impacts := 0.0
+		for s in seeds:
+			var units := [_u(0, UT.CAVALRY, 60, 150, 220, UP), _u(1, UT.HEAVY, 100, 150, 110, DOWN)]
+			var woods: Array = [[150, 110, 40, 25, d]] if d > 0 else []
+			var sim := BattleSim.new()
+			sim.setup(_woods_t(units, [_atk(0, 0, 1, 1)], woods), 41000 + s * 131)
+			while sim.tick < 400:
+				sim.step()
+			killed += sim.u_killed[1]
+			impacts += sim.stat_impacts
+			while sim.tick < max_ticks and sim.winner < 0:
+				sim.step()
+			lost += sim.u_killed[0]
+			if sim.winner == 0:
+				wins += 1
+		var n := float(seeds)
+		print("cav 60 charges heavy 100 standing, woods %d: infantry killed by 40 s %5.1f (%4.0f impacts) | riders lost %5.1f | cavalry wins %3d%%" % [
+			d, killed / n, impacts / n, lost / n, wins * 100 / seeds])
+
+
+## Cavalry 60 charging archers 80 (who shoot first) in the open / in dense woods.
+func _woods_cav_archers() -> void:
+	for d in [0, 3]:
+		var wins := 0
+		var lost := [0.0, 0.0]
+		for s in seeds:
+			var units := [_u(0, UT.CAVALRY, 60, 150, 250, UP), _u(1, UT.ARCHER, 80, 150, 90, DOWN)]
+			var woods: Array = [[150, 85, 40, 25, d]] if d > 0 else []
+			var sim := BattleSim.new()
+			sim.setup(_woods_t(units, [_atk(0, 0, 1, 1)], woods), 42000 + s * 137)
+			while sim.tick < max_ticks and sim.winner < 0:
+				sim.step()
+			if sim.winner == 0:
+				wins += 1
+			lost[0] += sim.u_killed[0]
+			lost[1] += sim.u_killed[1]
+		var n := float(seeds)
+		print("cav 60 vs archers 80, archers in %-10s cavalry wins %3d%% | riders lost %5.1f, archers lost %5.1f" % [
+			"the open:" if d == 0 else "dense woods:", wins * 100 / seeds, lost[0] / n, lost[1] / n])
+
+
+## Archers 80 shoot all their arrows at light 100 standing 110 m away in
+## the open / in woods of density d.
+func _woods_volley() -> void:
+	for d in [0, 1, 2, 3]:
+		var killed := 0.0
+		var shots := 0.0
+		for s in seeds:
+			var units := [_u(0, UT.ARCHER, 80, 150, 200, UP), _u(1, UT.LIGHT, 100, 150, 90, DOWN)]
+			var woods: Array = [[150, 87, 40, 15, d]] if d > 0 else []
+			var sim := BattleSim.new()
+			sim.setup(_woods_t(units, [_atk(0, 0, 1, 0)], woods), 43000 + s * 139)
+			while sim.tick < 1500 and (sim.u_ammo[0] > 0 or sim.projectiles_in_flight() > 0):
+				sim.step()
+			killed += sim.u_killed[1]
+			shots += sim.stat_shots
+		var n := float(seeds)
+		print("archers 80 volley at light 100 standing in woods %d: killed %5.1f of 100 (%4.0f arrows)" % [d, killed / n, shots / n])
+
+
+## Pike 120 pinned by heavy 100 with light 100 into its flank, in the open
+## and with all of them in medium woods (the pike wall breaks up).
+func _woods_pikes() -> void:
+	for d in [0, 2]:
+		var wins := 0
+		var kp := 0.0
+		var ka := 0.0
+		for s in seeds:
+			var units := [_u(0, UT.PIKE, 120, 150, 170, UP), _u(1, UT.HEAVY, 100, 150, 130, DOWN),
+				_u(1, UT.LIGHT, 100, 215, 180, LEFT)]
+			var woods: Array = [[150, 160, 90, 60, d]] if d > 0 else []
+			var sim := BattleSim.new()
+			sim.setup(_woods_t(units, [_atk(0, 1, 0, 0), _atk(150, 2, 0, 0)], woods), 44000 + s * 149)
+			while sim.tick < max_ticks and sim.winner < 0:
+				sim.step()
+			if sim.winner == 0:
+				wins += 1
+			kp += sim.u_killed[0]
+			ka += sim.u_killed[1] + sim.u_killed[2]
+		var n := float(seeds)
+		print("pike 120 pinned by heavy 100, light 100 into flank, %-14s pikes win %3d%% | pikes lost %5.1f, attackers lost %5.1f" % [
+			"open:" if d == 0 else "medium woods:", wins * 100 / seeds, kp / n, ka / n])
+
+
+## Javelins 60 ordered at light 100 standing 35 m away with 20 m of dense
+## woods between them (flat throws are blocked) vs the open.
+func _woods_javelins() -> void:
+	for d in [0, 3]:
+		var killed := 0.0
+		var shots := 0.0
+		for s in seeds:
+			var units := [_u(0, UT.JAVELIN, 60, 150, 165, UP), _u(1, UT.LIGHT, 100, 150, 130, DOWN)]
+			var woods: Array = [[150, 147, 40, 10, d]] if d > 0 else []
+			var sim := BattleSim.new()
+			sim.setup(_woods_t(units, [_atk(0, 0, 1, 0)], woods), 45000 + s * 151)
+			while sim.tick < 400:
+				sim.step()
+			killed += sim.u_killed[1]
+			shots += sim.stat_shots
+		var n := float(seeds)
+		print("javelins 60 ordered at light 100 35 m away, %-26s javelins thrown %5.1f, killed %5.1f" % [
+			"open ground between:" if d == 0 else "20 m of dense woods between:", shots / n, killed / n])
+
+
+func _street_t(units: Array, orders: Array, street: bool) -> Dictionary:
+	var sc := _scenario(units, orders)
+	if street:
+		sc["terrain"] = {"kind": 0, "blocks": [[40, 60, 145, 240], [155, 60, 260, 240]],
+			"urban": [[40, 60, 260, 240]]}
+	return sc
+
+
+func _streets() -> void:
+	for street in [false, true]:
+		var where := "street:" if street else "open:"
+		# Pikes hold, heavy attack frontally.
+		var w1 := 0
+		var k1 := [0.0, 0.0]
+		# Pikes pinned frontally, light try to flank.
+		var w2 := 0
+		var k2 := [0.0, 0.0]
+		# Cavalry charges heavy.
+		var k3 := 0.0
+		var w3 := 0
+		for s in seeds:
+			var sim := BattleSim.new()
+			sim.setup(_street_t([_u(0, UT.PIKE, 120, 150, 180, UP, 8), _u(1, UT.HEAVY, 100, 150, 100, DOWN, 8)],
+				[_atk(0, 1, 0, 0)], street), 46000 + s * 157)
+			while sim.tick < max_ticks and sim.winner < 0:
+				sim.step()
+			if sim.winner == 0:
+				w1 += 1
+			k1[0] += sim.u_killed[0]
+			k1[1] += sim.u_killed[1]
+			var sim2 := BattleSim.new()
+			# The light infantry starts beside the pikes (in the open: on
+			# their flank; in the street: beyond the east block).
+			sim2.setup(_street_t([_u(0, UT.PIKE, 120, 150, 180, UP, 8), _u(1, UT.HEAVY, 100, 150, 100, DOWN, 8),
+				_u(1, UT.LIGHT, 100, 275 if street else 215, 180, LEFT, 10)], [_atk(0, 1, 0, 0), _atk(150, 2, 0, 0)], street),
+				47000 + s * 163)
+			while sim2.tick < max_ticks and sim2.winner < 0:
+				sim2.step()
+			if sim2.winner == 0:
+				w2 += 1
+			k2[0] += sim2.u_killed[0]
+			k2[1] += sim2.u_killed[1] + sim2.u_killed[2]
+			var sim3 := BattleSim.new()
+			sim3.setup(_street_t([_u(0, UT.CAVALRY, 60, 150, 230, UP, 8), _u(1, UT.HEAVY, 100, 150, 120, DOWN, 8)],
+				[_atk(0, 0, 1, 1)], street), 48000 + s * 167)
+			while sim3.tick < 400:
+				sim3.step()
+			k3 += sim3.u_killed[1]
+			while sim3.tick < max_ticks and sim3.winner < 0:
+				sim3.step()
+			if sim3.winner == 0:
+				w3 += 1
+		var n := float(seeds)
+		print("pike 120 (8 files) holds vs heavy 100 attacking, %-8s pikes win %3d%% | killed %5.1f / %5.1f" % [
+			where, w1 * 100 / seeds, k1[0] / n, k1[1] / n])
+		print("pike 120 pinned by heavy 100, light 100 at its side, %-8s pikes win %3d%% | killed %5.1f / %5.1f" % [
+			where, w2 * 100 / seeds, k2[0] / n, k2[1] / n])
+		print("cav 60 charges heavy 100 (8 files),              %-8s infantry killed by 40 s %5.1f | cavalry wins %3d%%" % [
+			where, k3 / n, w3 * 100 / seeds])
+
+
+## Time to break the main gate of a town at wall levels 1-3: a bolt battery,
+## a stone battery (both at the attackers' line, 150 m out) or heavy 100
+## hacking; with nobody shooting back, and with the garrison's archers on
+## the walls (AI defenders).
+func _gates() -> void:
+	for walls in [1, 2, 3]:
+		for who in ["bolts", "stones", "heavy 100", "light 100"]:
+			for fire in [false, true]:
+				if fire and who != "heavy 100":
+					continue
+				var t_sum := 0.0
+				var w_sum := 0.0
+				var broke := 0
+				var shots := 0.0
+				var lost := 0.0
+				var n_runs := mini(seeds, 10)
+				for s in n_runs:
+					var att: Array = []
+					match who:
+						"bolts":
+							att = [[UT.BOLT, 16]]
+						"stones":
+							att = [[UT.STONE, 18]]
+						"heavy 100":
+							att = [[UT.HEAVY, 100]]
+						_:
+							att = [[UT.LIGHT, 100]]
+					var dfn: Array = [[UT.SPEAR, 60]]
+					if fire:
+						dfn = [[UT.ARCHER, 48], [UT.ARCHER, 48], [UT.SPEAR, 60]]
+					var r := Scenarios.settlement({"seed": 202, "level": 1, "walls": walls, "bld": []},
+						{"kind": 0, "seed": 5, "forest": 0}, att, dfn, 1, [1] if fire else [])
+					var sc: Dictionary = r["scenario"]
+					sc["orders"] = [{"tick": 0, "type": ATTACK, "unit": 0, "target": -1, "gate": 0, "run": 1}]
+					var sim := BattleSim.new()
+					sim.setup(sc, 49000 + s * 173)
+					var first := -1
+					while sim.tick < 6000 and sim.g_state[0] == BattleSim.GATE_CLOSED and sim.u_state[0] == BattleSim.U_READY:
+						sim.step()
+						if first < 0 and sim.g_hit_t[0] >= 0:
+							first = sim.tick
+					if sim.g_state[0] == BattleSim.GATE_BROKEN:
+						broke += 1
+						t_sum += sim.tick / 10.0
+						w_sum += (sim.tick - first) / 10.0
+					shots += sim.stat_bolts + sim.stat_stones
+					lost += sim.u_killed[0]
+				var line := "walls %d, %-10s%-16s broke the gate %2d/%d" % [walls, who,
+					" (under fire)" if fire else "", broke, n_runs]
+				if broke > 0:
+					line += " at %5.1f s (%5.1f s from the first blow)" % [t_sum / broke, w_sum / broke]
+				if who == "bolts" or who == "stones":
+					line += " | %4.1f shots" % (shots / n_runs)
+				else:
+					line += " | men lost %4.1f" % (lost / n_runs)
+				print(line)
+
+
+## Garrison only (town; 3 + walls units of 60: spears, archers, heavy...)
+## against the standard 12-unit attacker, AI vs AI, with and without its
+## two batteries.
+func _garrison_defence() -> void:
+	var n_runs := mini(seeds, 10)
+	for walls in [0, 1, 2, 3]:
+		for arty in [true, false]:
+			var aw := 0
+			var dr := 0
+			var t_sum := 0.0
+			var t_max := 0.0
+			var att_lost := 0.0
+			for s in n_runs:
+				var att: Array = []
+				for e in Scenarios.SIEGE_ARMY:
+					if not arty and UT.cls(int(e[0])) == UT.CLS_ART:
+						continue
+					att.append(e)
+				var dfn: Array = []
+				for k in 3 + walls:
+					dfn.append([Scenarios.SIEGE_GARRISON[k % Scenarios.SIEGE_GARRISON.size()], 60])
+				var r := Scenarios.settlement({"seed": 202 + s, "level": 1, "walls": walls, "bld": [2]},
+					{"kind": 1, "seed": 11 + s, "forest": 15, "ground": 2}, att, dfn, 1, [0, 1])
+				var sim := BattleSim.new()
+				sim.setup(r["scenario"], 50000 + s * 181)
+				while sim.tick < BattleSim.TIME_LIMIT + 10 and sim.winner < 0:
+					sim.step()
+				var dt: float = (sim.decided_tick if sim.decided_tick >= 0 else sim.tick) / 600.0
+				if sim.winner == 0:
+					aw += 1
+				elif sim.winner == 2 or sim.winner < 0:
+					dr += 1
+				t_sum += dt
+				t_max = maxf(t_max, dt)
+				var res := sim.result()
+				att_lost += int(res["sides"][0]["killed"])
+			print("walls %d, attacker %-17s attacker wins %3d%%, draws %3d%% | decided in %4.1f min (max %4.1f) | attackers killed %5.1f" % [
+				walls, "with artillery:" if arty else "without artillery:", aw * 100 / n_runs, dr * 100 / n_runs,
+				t_sum / n_runs, t_max, att_lost / n_runs])
+
+
+## The settlement tests AI vs AI over seeds: decided by when, no draws.
+func _siege_battles() -> void:
+	var n_runs := mini(seeds, 10)
+	for spec in [["open village", 0, 0, 3, 1], ["walled town", 1, 1, 2, 1], ["city walls 2", 2, 2, 1, 0],
+			["hill city walls 3", 2, 3, 4, 4]]:
+		var aw := 0
+		var dr := 0
+		var t_sum := 0.0
+		var t_max := 0.0
+		var caps := 0
+		for s in n_runs:
+			var sc := Scenarios.siege_test(500 + s * 37, int(spec[1]), int(spec[2]), int(spec[3]), int(spec[4]), 1)
+			sc["ai_sides"] = [0, 1]
+			var sim := BattleSim.new()
+			sim.setup(sc, 51000 + s * 191)
+			while sim.tick < BattleSim.TIME_LIMIT + 10 and sim.winner < 0:
+				sim.step()
+			var dt: float = (sim.decided_tick if sim.decided_tick >= 0 else sim.tick) / 600.0
+			if sim.winner == 0:
+				aw += 1
+			elif sim.winner == 2 or sim.winner < 0:
+				dr += 1
+			caps += sim.stat_capture
+			t_sum += dt
+			t_max = maxf(t_max, dt)
+		print("%-18s attacker wins %3d%%, defender %3d%%, draws %3d%% | decided in %4.1f min (max %4.1f) | plaza captures %d/%d" % [
+			spec[0], aw * 100 / n_runs, (n_runs - aw - dr) * 100 / n_runs, dr * 100 / n_runs, t_sum / n_runs, t_max, caps, n_runs])
+
+
+
+## Field battles on generated ground with woods: decided, no draws.
+func _forest_battles() -> void:
+	var n_runs := mini(seeds, 10)
+	var dr := 0
+	var t_sum := 0.0
+	var t_max := 0.0
+	var wins := [0, 0]
+	var shelters := 0
+	for s in n_runs:
+		var sc := Scenarios.make("bench_2000")
+		sc["terrain"] = {"kind": Terrain.K_RANDOM, "forest": 40, "seed": 900 + s}
+		var sim := BattleSim.new()
+		sim.setup(sc, 52000 + s * 193)
+		while sim.tick < BattleSim.TIME_LIMIT + 10 and sim.winner < 0:
+			sim.step()
+		var dt: float = (sim.decided_tick if sim.decided_tick >= 0 else sim.tick) / 600.0
+		if sim.winner == 0 or sim.winner == 1:
+			wins[sim.winner] += 1
+		else:
+			dr += 1
+		shelters += sim.stat_ai[15]
+		t_sum += dt
+		t_max = maxf(t_max, dt)
+	print("woods 40 on generated ground: bottom wins %d, top %d, draws %d of %d | decided in %4.1f min (max %4.1f) | archers sheltering in woods %d times" % [
+		wins[0], wins[1], dr, n_runs, t_sum / n_runs, t_max, shelters])

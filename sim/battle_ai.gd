@@ -53,6 +53,14 @@ extends RefCounted
 ##   missiles  archers, javelins and batteries take the highest spot near
 ##             their slot; bolt throwers want a line of fire past crests,
 ##             and a battery whose targets are all behind a crest moves.
+## Woods (maps with trees only):
+##   deploy    cavalry, pikes and batteries whose slot is in woods take the
+##             nearest clear spot within 30 m;
+##   cavalry   target scores lose 30 per tree density step along the way
+##             (8 m samples) and 600 per step where the target stands;
+##   missiles  archers and javelins threatened by cavalry within 70 m step
+##             into woods (medium or dense) within 40 m if any.
+##   (Flat shots through dense woods are refused by the sim's line of fire.)
 
 const FM := preload("res://sim/fixed_math.gd")
 const UT := preload("res://sim/unit_types.gd")
@@ -505,6 +513,10 @@ static func _issue_line(sim, side: int, plan: Dictionary, cx: int, cy: int, depl
 		px = clampi(px, 4 * M, sim.field_w - 4 * M)
 		py = clampi(py, 4 * M, sim.field_h - 4 * M)
 		var art: bool = sim.u_cls[u] == UT.CLS_ART
+		if sim.veg_on != 0 and (art or sim.u_cls[u] == UT.CLS_CAV or sim.u_cls[u] == UT.CLS_PIKE):
+			var cp := _clear_spot(sim, px, py, rx, ry, fx, fy)
+			px = cp.x
+			py = cp.y
 		# A battery that has targets and friends close by stays put.
 		var stay: bool = art and not deploy and (sim.u_refill[u] != 0 or sim.u_rprog[u] > 0 \
 			or (_protected(sim, u) and _art_has_target(sim, u)))
@@ -915,6 +927,11 @@ static func _cav_pick(sim, u: int, phase: int) -> int:
 			var g: int = sim.grade_between(sim.u_h[u], sim.u_h[t], maxi(d, 1) * M)
 			if g > 0:
 				score -= g * 6000 / FM.TRIG_ONE
+		if sim.veg_on != 0:
+			# Woods break a charge: prefer targets in the open, reached
+			# across open ground.
+			score -= _woods_cost(sim, sim.u_cx[u], sim.u_cy[u], sim.u_cx[t], sim.u_cy[t]) * 30
+			score -= sim.veg_d(sim.u_cx[t], sim.u_cy[t]) * 600
 		if best < 0 or score > best_score:
 			best = t
 			best_score = score
@@ -976,6 +993,8 @@ static func _missile_think(sim, u: int, phase: int) -> void:
 	var want := 1 if clean else 0
 	if sim.u_fire[u] != want:
 		_order(sim, u, {"type": ORDER_FIRE, "on": want}, 21)
+	if sim.veg_on != 0 and _shelter(sim, u):
+		return
 	# Once the lines meet, archers move behind the line.
 	if phase == P_ENGAGE and sim.u_ai[u] == A_LINE and UT.stat(sim.u_type[u], "m_arc") != 0:
 		var plan := _plan(sim, side)
@@ -1483,6 +1502,64 @@ static func _art_resite(sim, u: int) -> bool:
 			_move(sim, u, x, y, face, _width(sim, u), 0, 6)
 			return true
 	return false
+
+
+# --------------------------------------------------------------- woods ---
+
+## Sum of tree densities along a line, sampled every 8 m.
+static func _woods_cost(sim, x0: int, y0: int, x1: int, y1: int) -> int:
+	var d := _d(x1 - x0, y1 - y0)
+	var n := d / (8 * M)
+	var c := 0
+	for k in range(1, n + 1):
+		c += sim.veg_d(x0 + (x1 - x0) * k / (n + 1), y0 + (y1 - y0) * k / (n + 1))
+	return c
+
+
+## The nearest spot to (px, py) without trees: the spot itself, else up to
+## 30 m aside or 10-20 m back (fixed order), else the spot.
+static func _clear_spot(sim, px: int, py: int, rx: int, ry: int, fx: int, fy: int) -> Vector2i:
+	if sim.veg_d(px, py) == 0:
+		return Vector2i(px, py)
+	for c in [Vector2i(-10, 0), Vector2i(10, 0), Vector2i(0, 10), Vector2i(-20, 0), Vector2i(20, 0),
+			Vector2i(-10, 10), Vector2i(10, 10), Vector2i(-30, 0), Vector2i(30, 0), Vector2i(0, 20)]:
+		var x := clampi(px + (rx * c.x - fx * c.y) * M / FM.TRIG_ONE, 4 * M, sim.field_w - 4 * M)
+		var y := clampi(py + (ry * c.x - fy * c.y) * M / FM.TRIG_ONE, 4 * M, sim.field_h - 4 * M)
+		if sim.veg_d(x, y) == 0:
+			return Vector2i(x, y)
+	return Vector2i(px, py)
+
+
+## Missile unit u with enemy cavalry within 70 m and no woods of its own:
+## step into medium or dense woods within 40 m (8 directions, 20 / 40 m),
+## the spot furthest from the riders. Returns true if it was ordered to move.
+static func _shelter(sim, u: int) -> bool:
+	if sim.veg_d(sim.u_cx[u], sim.u_cy[u]) >= 2 or sim.u_order[u] == O_MOVE:
+		return false
+	var cav := _nearest(sim, u, UT.CLS_CAV, 70 * M)
+	if cav < 0:
+		return false
+	var best := Vector2i(-1, -1)
+	var best_d := 0
+	for r in [20, 40]:
+		for k in 8:
+			var a: int = k * 128
+			var x := clampi(sim.u_cx[u] + FM.cos_a(a) * r * M / FM.TRIG_ONE, 4 * M, sim.field_w - 4 * M)
+			var y := clampi(sim.u_cy[u] + FM.sin_a(a) * r * M / FM.TRIG_ONE, 4 * M, sim.field_h - 4 * M)
+			if sim.veg_d(x, y) < 2:
+				continue
+			var dc := _d(x - sim.u_cx[cav], y - sim.u_cy[cav])
+			if best.x < 0 or dc > best_d:
+				best = Vector2i(x, y)
+				best_d = dc
+		if best.x >= 0:
+			break
+	if best.x < 0:
+		return false
+	var face := FM.atan2_a(sim.u_cy[cav] - best.y, sim.u_cx[cav] - best.x)
+	_move(sim, u, best.x, best.y, face, _width(sim, u), 1, 7)
+	sim.stat_ai[15] += 1
+	return true
 
 
 # ------------------------------------------------------------- helpers ---

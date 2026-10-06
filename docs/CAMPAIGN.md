@@ -34,7 +34,7 @@ a little worse than good play. No fleets, generals, politics or agents.
   sorted keys; `from_json` turns JSON's floats back into ints (`normalise`).
   `state_hash` = first 32 bits of the MD5 of that canonical JSON.
 
-### State format (version 1)
+### State format (version 2)
 
 ```
 format "strategic_command_campaign", version 1, name, seed, turn (0 = 280 BC
@@ -47,7 +47,8 @@ factions [{alive, treasury, next_army, income, upkeep, war_turns}]  (CData order
 dip [8*8] 0 war / 1 peace / 2 trade / 3 allied;  dip_turn [8*8] turn of change
 regions [{owner (-1 independent), level 0 village|1 town|2 city, growth,
   slots [[chain, level]...], build [chain, level, turns_left] | [],
-  queue [unit keys recruited this turn], gar (garrison strength %)}]
+  queue [unit keys recruited this turn], gar (garrison strength %),
+  city_seed (the settlement's battle map seed, fixed for good)}]
 armies [{id, f, r, units [{t: unit key, n: men}], from, moved, busy}] by id;
   id = faction * 100000 + factions[f].next_army
 battles [{id, r, turn, att [army ids], def [army ids], att_f, def_f, reinf
@@ -61,6 +62,23 @@ stats {battles, battles_formula, battles_auto, battles_fought, last_war_on_playe
 
 Unit types are stored by key (`"principes"`), regions and factions by index
 into the `cdata.gd` tables; changing those indices needs a version bump.
+
+**Version 2 (October 2026, battle maps)** added `city_seed` per region:
+`CState.default_city_seed(r)`, a hash of the region index alone, so every
+campaign has the same Roma and a settlement's map never changes. Version 1
+states are migrated on load (`CState.migrate`, called by `from_json` and
+`Saves.parse`: local saves, imports): each region gets
+`default_city_seed(r)` and the version becomes 2. **Online campaigns are
+not migrated**: the server pins a campaign's format when it is created and
+refuses uploads of another format, so a format-1 online campaign stays
+format 1; this build reads formats 1-2 (`MIN_VERSION`..`VERSION`) and the
+rules read seeds through `CState.city_seed(st, r)`, which falls back to the
+same default, so a format-1 state plays exactly like its migrated copy (the
+determinism check and live-battle scenario hash agree on every device). New
+campaigns (and "Play online" uploads of a local one) are format 2; an older
+build refuses them with its existing "update the game" message. No server
+change. Ground palette and woods coverage are static region data in
+`cdata.gd` (not saved).
 
 ### Orders and submissions (what milestone 4 sends)
 
@@ -294,11 +312,13 @@ test exaggerates numbers; in an army line the gap is smaller.
   walls 2 or more; types from the owner's roster (spear, missile, melee in
   turn). Garrison strength recovers 25 points a turn (to 100%). A captured
   settlement's garrison starts at 30%.
-- **Walls in battle (chosen mechanism):** extra garrison units (above), better
-  garrison tiers, and the defenders' front stands on a ridge across the field
-  3 m + 3 m per wall level high (a terrain feature added to the region's
-  terrain; the battle AI holds high ground 4 m or more above the enemy). In the
-  formula the garrison counts +15% per wall level. Real walls are later.
+- **Walls in battle (as built, October 2026):** extra garrison units (above),
+  better garrison tiers, and real walls on the settlement's battle map: a
+  wall circuit 8 / 10 / 12 m thick with towers, 4 / 3 / 2 gates (fewer for
+  villages and towns) of 1,800 / 2,700 / 3,800 hp, the garrison's missile
+  troops on the walls (5 / 7 / 9 m up). See DESIGN.md "Battle maps: woods and
+  settlements". (The earlier stand-in, a ridge in front of the defenders, is
+  gone.) In the formula the garrison still counts +15% per wall level.
 - Reinforcements: armies of either side in regions joined by a land route that
   did not move this turn and are not committed elsewhere join the battle,
   until a side has 24 field units.
@@ -306,11 +326,24 @@ test exaggerates numbers; in an army line the gap is smaller.
   headcounts and tiers, the garrison on the defending side, reinforcements
   simply more units in the line: they do not yet arrive from the map edge they
   come from), at most 24 field units a side plus the garrison; the player's
-  side at the bottom (sim side 0); terrain kind from the region, terrain seed
-  and battle seed from campaign seed + region + turn. Layout: cavalry on the
-  wings, bolt throwers at the line ends, pikes centre, missiles 15 m ahead,
-  stone throwers behind, past 12 units a second infantry line 45 m back.
-  Field 560-960 m wide.
+  side at the bottom (sim side 0). Every battle under the current rules is
+  at the region's settlement and is fought on **the settlement's own map**
+  (`CBattle._build_settlement` -> `Scenarios.settlement`): generated from
+  its `city_seed`, level, wall level, the buildings standing (landmarks), the
+  region's terrain kind, ground palette and woods coverage, so a city always
+  looks the same at a given stage (a defending human sees it at the bottom of
+  the screen, an attacking one at the top). Attackers deploy 150 m before the
+  main gate in the usual layout (cavalry on the wings, bolt throwers at the
+  line ends, pikes centre, missiles 15 m ahead, stone throwers behind, past
+  12 units a second line 45 m back); defenders inside: missile troops on the
+  wall stretches nearest the gates, a solid foot unit inside each gate, the
+  rest at the plaza and down the main street (an open town: at its street
+  mouths). The battle ends as before, or when the attackers hold the plaza
+  for 60 s (the defenders break). Battle seed from campaign seed + region +
+  turn. Field 450-640 m. (Field battles, `settlement` 0, get the region's
+  terrain and woods with a seed from campaign seed + region + turn; none
+  occur until free movement lands.) The region panel's "View battle map"
+  shows the map as it stands.
 - Command seam: `CBattle.build` returns `unit_faction` and `controller` for
   every sim unit; in a solo battle the present player commands every unit on
   the player side (allied armies included). Live co-op battles (milestone 5)
@@ -505,7 +538,8 @@ As built 2026-10-05; the server side is in `docs/SERVER.md`.
 
 Agreed order after milestone 4 (the server), from the user on 2026-10-05:
 
-1. **Battle maps with character.**
+1. **Battle maps with character.** Built October 2026 (DESIGN.md "Battle
+   maps: woods and settlements"):
    - Vegetation: forest zones that slow and disorder formations and blunt
      missiles, drawn as trees that fade over units.
    - Settlement battles on real city maps: buildings, walls, gates and

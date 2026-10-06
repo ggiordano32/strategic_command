@@ -26,11 +26,12 @@ extends RefCounted
 ## from squared distances, so no square root and no float is involved.
 ## The generator has its own xorshift RNG and never touches the sim's.
 ##
-## Hooks for later work: vegetation can be added as further feature types
-## rasterised into a second grid; the campaign's map generation only needs to
-## fill this dictionary (kind + seed from the region, or explicit features).
+## Woods and settlements are built next to this grid by sim/mapgen.gd from
+## the same dictionary ("forest", "woods", "city"); for a city map the
+## heights are generated round the city's centre (see build()).
 
 const FM := preload("res://sim/fixed_math.gd")
+const MapGen := preload("res://sim/mapgen.gd")
 
 const M := 1024
 const SHIFT := 12            # node spacing 4 m = 4096 sim units
@@ -50,6 +51,7 @@ const KIND_NAMES: Array[String] = ["Flat", "Rolling", "Ridge", "Valley", "Hill",
 const F_BUMP := 1
 const F_RIDGE := 2
 const F_RAMP := 3
+const F_MESA := 4   # flat-topped hill: [type, x, y, top radius, h, 0, falloff band]
 
 ## Defaults per kind: relief (m), scale (m). Chosen so the steepest ground of
 ## a playable map is roughly 15-25% (a 1.5 * relief / scale bell maximum).
@@ -83,7 +85,25 @@ static func build(terrain: Dictionary, battle_seed: int, field_w: int, field_h: 
 	h.resize(nx * ny)
 	h.fill(0)
 	var feats: Array = []
-	if kind != K_FLAT and kind != K_CUSTOM:
+	var city: Dictionary = terrain["city"] if terrain.get("city") is Dictionary else {}
+	var fr := Vector3i.ZERO
+	if not city.is_empty():
+		# A settlement map: the ground is generated round the city's own centre
+		# (canonical frame, defenders at the top; sim/mapgen.gd turns the map
+		# round when the defenders are at the bottom), so the city stands on
+		# the same ground whatever the field size. Cities on hill or ridge
+		# country sit on a plateau.
+		fr = MapGen.city_frame(city, field_w / M, field_h / M)
+		if kind != K_FLAT and kind != K_CUSTOM:
+			for f in _features(kind, rng, 600, 600, relief, scale):
+				var a: Array = (f as Array).duplicate()
+				a[1] = int(a[1]) + fr.x - 300
+				a[2] = int(a[2]) + fr.y - 300
+				feats.append(a)
+		if kind == K_HILL or kind == K_RIDGE:
+			var rmax := fr.z * 112 / 100
+			feats.append([F_MESA, fr.x, fr.y, rmax + 14, maxi(relief * 3 / 4, 8), 0, 70])
+	elif kind != K_FLAT and kind != K_CUSTOM:
 		feats = _features(kind, rng, field_w / M, field_h / M, relief, scale)
 	for f in terrain.get("features", []):
 		feats.append(f)
@@ -107,6 +127,10 @@ static func build(terrain: Dictionary, battle_seed: int, field_w: int, field_h: 
 				_ridge(h, nx, ny, x, y, r, amp, dir, ln)
 			F_RAMP:
 				_ramp(h, nx, ny, x, y, r, amp, dir)
+			F_MESA:
+				_mesa(h, nx, ny, x, y, r, amp, ln)
+	if not city.is_empty():
+		_level_city(h, nx, ny, fr)
 	if sym != 0:
 		# Exact 180-degree symmetry: node k and node (last - k) take the same
 		# height (the integer mean is commutative, so both get one value).
@@ -284,6 +308,56 @@ static func _ridge(h: PackedInt32Array, nx: int, ny: int, cx: int, cy: int, r: i
 			if d2 >= r2:
 				continue
 			h[row + i] += amp * _bell(d2, r2) / 1024
+
+
+## Flat-topped hill: amp within radius r of (cx, cy), falling off with a
+## smoothstep over the next `band` (sim units).
+static func _mesa(h: PackedInt32Array, nx: int, ny: int, cx: int, cy: int, r: int, amp: int, band: int) -> void:
+	band = maxi(band, CELL)
+	var rb := r + band
+	var sx := _span(cx - rb, cx + rb, nx)
+	var sy := _span(cy - rb, cy + rb, ny)
+	for j in range(sy.x, sy.y + 1):
+		var dy := j * CELL - cy
+		for i in range(sx.x, sx.y + 1):
+			var dx := i * CELL - cx
+			var d := FM.isqrt(dx * dx + dy * dy)
+			if d >= rb:
+				continue
+			var f := 1024
+			if d > r:
+				var t := 1024 - (d - r) * 1024 / band  # Q10, 1 at the rim, 0 outside
+				f = (3 * t * t * 1024 - 2 * t * t * t) / 1048576
+			h[j * nx + i] += amp * f / 1024
+
+
+## Settlements are built on level ground: inside the footprint (plus 16 m)
+## the relief is damped to a quarter round the centre's height, blending
+## back over the next 24 m. fr = (centre x, centre y, radius) in metres.
+static func _level_city(h: PackedInt32Array, nx: int, ny: int, fr: Vector3i) -> void:
+	var cx := fr.x * M
+	var cy := fr.y * M
+	var r_in := (fr.z * 112 / 100 + 16) * M
+	var r_out := r_in + 24 * M
+	var ci := clampi((cx + CELL / 2) / CELL, 0, nx - 1)
+	var cj := clampi((cy + CELL / 2) / CELL, 0, ny - 1)
+	var href := h[cj * nx + ci]
+	var sx := _span(cx - r_out, cx + r_out, nx)
+	var sy := _span(cy - r_out, cy + r_out, ny)
+	for j in range(sy.x, sy.y + 1):
+		var dy := j * CELL - cy
+		for i in range(sx.x, sx.y + 1):
+			var dx := i * CELL - cx
+			var d := FM.isqrt(dx * dx + dy * dy)
+			if d >= r_out:
+				continue
+			var k := j * nx + i
+			var damped := href + (h[k] - href) / 4
+			if d <= r_in:
+				h[k] = damped
+			else:
+				var t := (d - r_in) * 1024 / (r_out - r_in)  # 0 at r_in .. 1024 at r_out
+				h[k] = (damped * (1024 - t) + h[k] * t) / 1024
 
 
 ## One-sided slope: rises by amp toward direction dir across a band of

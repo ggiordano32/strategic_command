@@ -863,9 +863,10 @@ func _step_book_next() -> void:
 
 func _step_check_book_next() -> void:
 	var b = battle.hud.book
-	_check(b.current == (_book_seq + 1) % (UT.count() + 1) and b.entry.unit_type == b.current,
+	_check(b.current == (_book_seq + 1) % (UT.count() + 2) and b.entry.unit_type == b.current,
 		"Next shows the next unit type (%d -> %d)" % [_book_seq, b.current])
-	# The last page is Terrain: Prev from the first page wraps to it.
+	# The last pages are Terrain and Settlements: Prev from the first page
+	# wraps to Settlements, and once more to Terrain.
 	steps.push_front(_step_check_book_terrain)
 	b.show_type(0)
 	_tap_control(b.prev_button)
@@ -873,9 +874,14 @@ func _step_check_book_next() -> void:
 
 func _step_check_book_terrain() -> void:
 	var b = battle.hud.book
-	_check(b.current == UT.count() and b.terrain_page.visible and not b.entry.visible
-		and b.terrain_text.text.find("contour") >= 0 and b.terrain_text.text.find("+0.8%") >= 0,
-		"Prev from the first page shows the Terrain page with the rules and numbers")
+	_check(b.current == UT.count() + 1 and b.terrain_page.visible and not b.entry.visible
+		and b.terrain_text.text.find("SETTLEMENTS") >= 0 and b.terrain_text.text.find("Gates") >= 0,
+		"Prev from the first page shows the Settlements and sieges page")
+	_tap_control(b.prev_button)
+	_check(b.current == UT.count() and b.terrain_page.visible
+		and b.terrain_text.text.find("contour") >= 0 and b.terrain_text.text.find("+0.8%") >= 0
+		and b.terrain_text.text.find("WOODS") >= 0,
+		"Prev again shows the Terrain page with the rules, numbers and woods")
 	b.show_type(1)
 
 

@@ -25,7 +25,9 @@ extends RefCounted
 const FM := preload("res://sim/fixed_math.gd")
 const UT := preload("res://sim/unit_types.gd")
 const BattleAI := preload("res://sim/battle_ai.gd")
+const SiegeAI := preload("res://sim/siege_ai.gd")
 const Terrain := preload("res://sim/terrain.gd")
+const MapGen := preload("res://sim/mapgen.gd")
 
 const TICKS_PER_SECOND := 10
 const M := 1024  # sim units per metre
@@ -61,10 +63,12 @@ const ORDER_WITHDRAW := 7       # unit
 const ORDER_WITHDRAW_ALL := 8   # side
 const ORDER_DEPLOY := 9         # unit, on (artillery: set up / pack up)
 const ORDER_REFILL := 10        # unit, on (artillery: bring up shots from the baggage)
+const ORDER_GATE := 11          # unit (any of the defenders'), gate, on (1 close / 0 open)
+const ORDER_LAST := 11
 
 ## Unit fields an order can change; OrderPreview predicts exactly these.
 const ORDER_KEYS: Array[String] = ["order", "ax", "ay", "face", "files", "dx", "dy",
-	"dface", "target", "run", "fire", "skirm", "deploy", "refill"]
+	"dface", "target", "run", "fire", "skirm", "deploy", "refill", "gtarget"]
 
 # Formation geometry (spacing is per unit type, see unit_types.gd).
 const FILE_SPACING := 1126  # default, kept for callers that do not pass a type
@@ -197,6 +201,51 @@ const STONE_UP_K := 400          # plough length % lost per 100% uphill grade (1
 const STONE_DOWN_K := 150        # ... gained downhill (10% -> +15%)
 const STONE_PLOUGH_MIN := 150    # per mille of the flat plough, at least
 const STONE_PLOUGH_MAX := 1300
+
+# Woods (sim/mapgen.gd: tree density 0-3 per 4 m cell; docs/DESIGN.md
+# "Battle maps"). Every rule is skipped on a map without trees or
+# buildings (map_on == 0), which then plays exactly as before.
+## Speed per mille by tree density [none, light, medium, dense], per class
+## (infantry, pikes, missile, cavalry, artillery).
+const VEG_SPEED := [[1000, 900, 780, 660], [1000, 860, 720, 580], [1000, 900, 790, 680],
+	[1000, 800, 620, 460], [1000, 650, 450, 300]]
+const VEG_DIS_GAIN: Array[int] = [0, 3, 4, 5]      # disorder per tick moving in woods (decay 2) ...
+const VEG_DIS_CAP: Array[int] = [0, 30, 45, 60]    # ... up to this
+const VEG_PIKE_FLOOR: Array[int] = [0, 0, 25, 40]  # a pike block in medium or dense woods cannot form
+const VEG_MOM_CAP: Array[int] = [100, 80, 60, 40]  # cavalry momentum cap where the unit is
+const URBAN_MOM_CAP := 40               # ... and in a settlement's streets (no run-up)
+const VEG_IMPACT: Array[int] = [100, 85, 65, 45]   # charge impact % on a man standing in woods
+const VEG_CAV_MELEE: Array[int] = [0, 5, 10, 15]  # riders in woods: to-hit lost striking, gained against them
+const VEG_STOP_ARROW: Array[int] = [0, 20, 35, 50] # % of arrows landing in woods stopped by the trees
+const VEG_STOP_JAV: Array[int] = [0, 10, 20, 30]   # ... javelins (flat: dense woods also block the line)
+const VEG_STOP_STONE: Array[int] = [0, 15, 30, 45] # ... stones
+const VEG_PLOUGH: Array[int] = [1000, 800, 600, 400]  # stone plough per mille in woods
+const TREE_W: Array[int] = [0, 1, 2, 4]            # line of fire: tree depth per 4 m sample ...
+const TREE_BLOCK := 8                   # ... a flat shot is blocked past this (8 m of dense woods)
+
+# Settlements (city maps). Buildings, wall bodies and towers are impassable
+# 2 m cells; the walkway is only for units placed on the wall; gates are
+# passable unless closed. Units follow paths over a street graph.
+const GATE_OPEN := 0
+const GATE_CLOSED := 1
+const GATE_BROKEN := 2
+const GATE_ARMOUR := 20          # taken off each blow at a gate
+const GATE_HACK_PCT := 25        # % of the rest that a gate takes per man per swing
+const GATE_HACKERS := 10         # at most this many men at a gate
+const GATE_REACH := 2 * M        # men this close to a closed gate's face hack at it
+const GATE_BOLT := 80            # gate hp per bolt that hits it ...
+const GATE_STONE := 360          # ... per stone
+const WALL_COVER := 35           # % of missiles from below stopped by the battlements
+const WALL_PARAPET := 614        # parapet top above the walkway (line of fire)
+const CAPTURE_TICKS := 600       # attackers hold the plaza this long: the defenders break
+const CAPTURE_CLEAR := 12 * M    # ... with no defender unit this far beyond the plaza
+const CAPTURE_MEN := 10          # an attacking unit needs this many men to hold it
+const PATH_MAX := 24             # waypoints per unit path
+const TRAIL := 4                 # waypoints a unit's anchor passed, kept for its stragglers
+const WP_REACH := 4 * M          # a waypoint counts as reached this close
+const PATH_INF := 1 << 28
+const SEARCH_CAP := 64           # settlement maps: a target search looks at most at this many men
+                                 # (crowds in a breach pile up in a few grid cells)
 
 # Morale (0..1000).
 const MORALE_MAX := 1000
@@ -364,6 +413,8 @@ var e_py := PackedInt32Array()
 var ai_phase := PackedInt32Array([0, 0])
 var ai_t := PackedInt32Array([0, 0])
 var ai_hold := PackedInt32Array([-1, -1])  # tick the side began holding high ground, -1 not
+var ai_gate := PackedInt32Array([-1, -1])  # settlement maps: the gate a side's assault is aimed at
+var ai_prog := PackedInt32Array([0, 0, 0])  # settlement maps: deaths + gate damage seen, tick it last changed, all-out (1)
 
 # Terrain: node heights (sim units) on a 4 m grid covering the field, node
 # gradients (Q12 grade), built once at setup from the scenario's terrain
@@ -380,6 +431,78 @@ var ter_info: Dictionary = {}   # generation parameters (view / telemetry)
 var u_h := PackedInt32Array()   # unit: ground height under its centroid (refreshed each tick)
 var _u_fac := PackedInt32Array()   # scratch: speed per mille along the unit's facing
 var _u_steep := PackedInt32Array() # scratch: unit stands on steep ground
+
+# Woods and settlements (sim/mapgen.gd). Static grids are rebuilt by setup()
+# from the scenario (and hashed into ter_hash); gates, the capture clock,
+# the units' paths and squeeze are state (hashed on such maps only).
+var map_on: int = 0               # woods or buildings: the rules below apply
+var veg_on: int = 0               # some trees
+var veg := PackedByteArray()      # 4 m cells: MapGen.V_* bits, density in bits 0-1
+var veg_w: int = 0
+var veg_h: int = 0
+var obs_on: int = 0               # buildings / walls
+var obs := PackedByteArray()      # 2 m cells: MapGen.C_* kind (static)
+var nav := PackedByteArray()      # 2 m cells: MapGen.NAV_* bits (gates change it)
+var ob_w: int = 0
+var ob_h: int = 0
+var obs_c := PackedByteArray()    # 16 m cells: 1 if any obstacle in it (static)
+var obs_cd := PackedByteArray()   # ... or in a neighbouring 16 m cell (melee reach checks)
+var oc_w: int = 0
+var oc_h: int = 0
+var map_hash: int = 0
+var map_info: Dictionary = {}     # generator output for the view (palette, city layout)
+var city_on: int = 0
+var city_def: int = -1            # defending side
+var city_walls: int = 0
+var city_level: int = 0
+var wall_h: int = 0               # walkway height (sim units)
+var wall_t: int = 0               # wall thickness
+var build_h: int = 0              # building height (line of fire)
+var plaza := PackedInt32Array([0, 0, 0, 0])  # x, y, half size, capture radius
+var cap_t: int = 0                # ticks the attackers have held the plaza
+var n_gates: int = 0
+var g_x := PackedInt32Array()     # gate centre (on the wall line)
+var g_y := PackedInt32Array()
+var g_dir := PackedInt32Array()   # outward direction
+var g_ox := PackedInt32Array()    # outside / inside points (paths, AI)
+var g_oy := PackedInt32Array()
+var g_ix := PackedInt32Array()
+var g_iy := PackedInt32Array()
+var g_hp := PackedInt32Array()    # centi-hp
+var g_hp0 := PackedInt32Array()
+var g_state := PackedInt32Array() # GATE_*
+var g_hit_t := PackedInt32Array() # last tick it was damaged (view)
+var g_bb := PackedInt32Array()    # 4 per gate: cell box i0, j0, i1, j1
+var ws_x0 := PackedInt32Array()   # wall walkway segments (centre line), outward dir
+var ws_y0 := PackedInt32Array()
+var ws_x1 := PackedInt32Array()
+var ws_y1 := PackedInt32Array()
+var ws_dir := PackedInt32Array()
+var ng_x := PackedInt32Array()    # street graph: nodes, gate of a gate node (-1), CSR edges
+var ng_y := PackedInt32Array()
+var ng_gate := PackedInt32Array()
+var ng_e0 := PackedInt32Array()
+var ng_to := PackedInt32Array()
+var ng_w := PackedInt32Array()    # edge length in 1/8 m
+var nav_epoch: int = 0            # bumped whenever a gate opens, closes or breaks
+var _dist_cache: Dictionary = {}  # derived: graph distances to a node, per epoch
+var _dist_epoch: int = -1
+# Per unit (on such maps; resized always, hashed only there).
+var u_wall := PackedInt32Array()     # on the wall: walkway segment + 1 (0 = on the ground)
+var u_sq := PackedInt32Array()       # files while squeezed through a street (0 = not)
+var u_gtarget := PackedInt32Array()  # gate ordered at (-1 none): batteries shoot it, foot hack it
+var u_pn := PackedInt32Array()       # path waypoints (0 = none / replan)
+var u_pk := PackedInt32Array()       # current waypoint
+var u_pgx := PackedInt32Array()      # goal the path was planned to
+var u_pgy := PackedInt32Array()
+var u_pep := PackedInt32Array()      # nav_epoch the path was planned in
+var u_trn := PackedInt32Array()      # trail: waypoints the anchor passed (0..TRAIL), stragglers follow it
+var tr_x := PackedInt32Array()       # u * TRAIL + k, oldest first
+var tr_y := PackedInt32Array()
+var pth_x := PackedInt32Array()      # u * PATH_MAX + k
+var pth_y := PackedInt32Array()
+var _u_obs := PackedInt32Array()     # scratch: unit near obstacles this tick
+var _u_vfac := PackedInt32Array()    # scratch: woods speed factor (per mille) this tick
 
 # Projectiles. A projectile is fired at (sx, sy) on tick t0 and lands at
 # (x, y) on tick t1; it is only resolved on landing. Free slots have t1 = -1.
@@ -496,7 +619,8 @@ var stat_impact_blocked: int = 0   # charge impacts taken on a formed front's sh
 ## Battle AI decisions by unit mode (BattleAI.A_*), plus [8] army withdrawals,
 ## [12] holds of high ground, [13] missile / artillery slots moved onto a
 ## rise, [14] deployments shifted to higher ground.
-var stat_ai := PackedInt32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+var stat_ai := PackedInt32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
 var stat_bolts: int = 0        # bolts fired
 var stat_stones: int = 0       # stones fired
 var stat_art_victims: int = 0  # soldiers struck by artillery
@@ -523,6 +647,28 @@ var stat_steep_dis: int = 0
 var stat_refills: int = 0        # batteries that settled into refilling
 var stat_refilled: int = 0       # shots brought up from the baggage
 var stat_refill_broken: int = 0  # refills broken off by melee or rout
+## Woods and settlements diagnostics (not hashed): unit-ticks slowed by trees,
+## disorder from moving in woods, missiles stopped by trees, flat shots
+## blocked by woods or walls, missiles stopped by the battlements, charge
+## impacts weakened by trees, paths planned, men stopped by an obstacle,
+## squeezes, gate damage by hacking / artillery (hp), gates closed / opened /
+## broken, plaza captures.
+var stat_veg_slow: int = 0
+var stat_veg_dis: int = 0
+var stat_veg_stop: int = 0
+var stat_tree_lof: int = 0
+var stat_obs_lof: int = 0
+var stat_wall_cover: int = 0
+var stat_veg_impact: int = 0
+var stat_paths: int = 0
+var stat_clamp: int = 0
+var stat_squeeze: int = 0
+var stat_gate_hack: int = 0
+var stat_gate_art: int = 0
+var stat_gate_close: int = 0
+var stat_gate_open: int = 0
+var stat_gate_broken: int = 0
+var stat_capture: int = 0
 ## View only (not state, never read by the sim): ring of recent stone
 ## impacts for the impact marks: x, y, flight direction (Q12), tick.
 var fx_x := PackedInt32Array()
@@ -560,6 +706,8 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	ai_phase = PackedInt32Array([0, 0])
 	ai_t = PackedInt32Array([0, 0])
 	ai_hold = PackedInt32Array([-1, -1])
+	ai_gate = PackedInt32Array([-1, -1])
+	ai_prog = PackedInt32Array([0, 0, 0])
 	_setup_terrain(scenario.get("terrain", {}), p_seed)
 
 	_load_types()
@@ -594,6 +742,22 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		arr.fill(0)
 	u_walls.resize(n_units * 4)
 	u_walls.fill(-1)
+	for arr in _map_unit_arrays():
+		arr.resize(n_units)
+		arr.fill(0)
+	u_gtarget.fill(-1)
+	pth_x.resize(n_units * PATH_MAX)
+	pth_x.fill(0)
+	pth_y.resize(n_units * PATH_MAX)
+	pth_y.fill(0)
+	tr_x.resize(n_units * TRAIL)
+	tr_x.fill(0)
+	tr_y.resize(n_units * TRAIL)
+	tr_y.fill(0)
+	_u_obs.resize(n_units)
+	_u_obs.fill(0)
+	_u_vfac.resize(n_units)
+	_u_vfac.fill(1000)
 	slot_soldier.resize(n)
 	off_x.resize(n)
 	off_y.resize(n)
@@ -639,6 +803,10 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		u_ftarget[u] = -1
 		u_shelled_t[u] = -1000
 		u_shelled_by[u] = -1
+		if city_on != 0 and int(ud.get("wall", 0)) > 0 and int(ud.get("wall", 0)) <= ws_x0.size():
+			# Placed on a wall walkway: it holds that stretch of wall.
+			u_wall[u] = int(ud["wall"])
+			u_skirm[u] = 0
 		var ne := _engines_for(ty, cnt)
 		u_eng0[u] = eng
 		u_neng[u] = ne
@@ -705,9 +873,9 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	grid_next.resize(n)
 	_update_bounds()
 	_update_units_stats()
-	if ter_on != 0:
+	if ter_on != 0 or obs_on != 0:
 		for u in n_units:
-			u_h[u] = height_at(u_cx[u], u_cy[u])
+			u_h[u] = _unit_elev(u)
 
 	for o in scenario.get("orders", []):
 		var od: Dictionary = (o as Dictionary).duplicate()
@@ -737,6 +905,12 @@ func _unit_arrays() -> Array:
 		u_withdrawn, u_routed_off, u_recent, u_att, u_def, u_dmg, u_reach, u_nwalls,
 		u_ai, u_ai_t, u_ai_x, u_ai_y, u_eng0, u_neng, u_depl, u_deploy, u_fright,
 		u_shelled_t, u_shelled_by, u_emove, u_h, u_refill, u_rprog, u_reserve]
+
+
+## Per-unit arrays of woods and settlement maps (hashed only on those maps,
+## so the hash of a plain map is what it always was).
+func _map_unit_arrays() -> Array:
+	return [u_wall, u_sq, u_gtarget, u_pn, u_pk, u_pgx, u_pgy, u_pep, u_trn]
 
 
 func _engine_arrays() -> Array:
@@ -785,6 +959,9 @@ func _load_types() -> void:
 ## kind flat: ter_on stays 0 and every terrain rule is skipped).
 func _setup_terrain(terr: Dictionary, p_seed: int) -> void:
 	var t := Terrain.build(terr, p_seed, field_w, field_h)
+	# Woods and the settlement (a city map turns its heights round too when
+	# the defenders are at the bottom).
+	var mf := MapGen.build(terr, p_seed, field_w / M, field_h / M, t)
 	ter_on = int(t["on"])
 	ter_nx = int(t["nx"])
 	ter_ny = int(t["ny"])
@@ -793,12 +970,16 @@ func _setup_terrain(terr: Dictionary, p_seed: int) -> void:
 	ter_gx = g[0]
 	ter_gy = g[1]
 	ter_info = {"kind": int(t["kind"]), "seed": int(t["seed"]), "relief_m": int(t["relief_m"]),
-		"scale_m": int(t["scale_m"]), "sym": int(t["sym"])}
+		"scale_m": int(t["scale_m"]), "sym": int(t["sym"]), "palette": int(mf["palette"]),
+		"forest": int(mf["forest"])}
+	_setup_map(mf)
 	var ctx := HashingContext.new()
 	ctx.start(HashingContext.HASH_MD5)
 	ctx.update(PackedInt64Array([ter_on, ter_nx, ter_ny, int(t["kind"]), int(t["seed"]),
 		int(t["relief_m"]), int(t["scale_m"]), int(t["sym"]),
 		Terrain.grid_hash(ter_h, ter_nx, ter_ny, ter_on)]).to_byte_array())
+	if map_on != 0:
+		ctx.update(PackedInt64Array([map_hash]).to_byte_array())
 	ter_hash = ctx.finish().decode_u32(0)
 
 
@@ -912,7 +1093,7 @@ func _fac_for(u: int, s: int) -> int:
 ## ht: the type's m_hgain % of the height difference, at most RANGE_H_CAP %.
 func range_h(ty: int, hs: int, ht: int) -> int:
 	var rng := t_m_range[ty]
-	if ter_on == 0:
+	if ter_on == 0 and obs_on == 0:
 		return rng
 	var cap := rng * RANGE_H_CAP / 100
 	return rng + clampi((hs - ht) * t_m_hgain[ty] / 100, -cap, cap)
@@ -931,7 +1112,7 @@ func range_vs(u: int, t: int) -> int:
 ## the aimed segment is ignored (the shooter's and target's own footing).
 func lof_block(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int, apex: int, ext: int,
 		stride: int = LOF_STEP) -> int:
-	if ter_on == 0:
+	if ter_on == 0 and map_on == 0:
 		return -1
 	var dx := x1 - x0
 	var dy := y1 - y0
@@ -943,6 +1124,27 @@ func lof_block(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int, apex: int, 
 	var end := d - LOF_SKIP
 	if ext > 0:
 		end = d + ext
+	# Woods and settlements: trees in the way add up (TREE_W per sample);
+	# buildings, walls and closed gates stand up from the ground. A shooter
+	# on a wall looks over his own battlements.
+	if map_on == 0:
+		# Plain hilly map: the ground alone (the original tight loop).
+		while a <= end:
+			var qx := x0 + dx * a / d
+			var qy := y0 + dy * a / d
+			if qx < 0 or qy < 0 or qx > field_w or qy > field_h:
+				return -1
+			var qz := z0 + dz * a / d
+			if a < d:
+				qz += apex * 4 * a / d * (d - a) / d
+			if height_at(qx, qy) > qz:
+				return a
+			a += stride
+		return -1
+	var tw := 0
+	var oskip := LOF_SKIP
+	if obs_on != 0 and obs_kind(x0, y0) == MapGen.C_WALK:
+		oskip = wall_t + 2 * M
 	while a <= end:
 		var px := x0 + dx * a / d
 		var py := y0 + dy * a / d
@@ -951,8 +1153,19 @@ func lof_block(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int, apex: int, 
 		var z := z0 + dz * a / d
 		if a < d:
 			z += apex * 4 * a / d * (d - a) / d
-		if height_at(px, py) > z:
+		var gz := height_at(px, py)
+		if obs_on != 0 and a >= oskip:
+			var ot := _obs_top(px, py)
+			if ot > 0 and gz + ot > z:
+				stat_obs_lof += 1
+				return a
+		if gz > z:
 			return a
+		if veg_on != 0:
+			tw += TREE_W[veg_d(px, py)]
+			if tw > TREE_BLOCK:
+				stat_tree_lof += 1
+				return a
 		a += stride
 	return -1
 
@@ -960,7 +1173,7 @@ func lof_block(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int, apex: int, 
 ## Unit-level line of fire for a flat weapon of unit u at unit t (centroid
 ## to centroid), or true for weapons that arc over everything.
 func lof_units(u: int, t: int) -> bool:
-	if ter_on == 0:
+	if ter_on == 0 and map_on == 0:
 		return true
 	var ty := u_type[u]
 	if t_m_arc[ty] != 0:
@@ -973,6 +1186,871 @@ func lof_units(u: int, t: int) -> bool:
 	var blk := lof_block(x0, y0, u_h[u] + LOF_EYE, x1, y1, u_h[t] + LOF_BODY,
 		d * t_m_apex[ty] / 100, 0, 2 * LOF_STEP)
 	return blk < 0
+
+
+# ----------------------------------------------- woods and settlements ---
+
+## Load the woods and settlement data built by MapGen (static grids, gates,
+## wall segments, the street graph) and hash the static part into map_hash.
+func _setup_map(f: Dictionary) -> void:
+	veg_on = int(f["veg_on"])
+	obs_on = int(f["obs_on"])
+	city_on = int(f["city_on"])
+	map_on = 1 if veg_on != 0 or obs_on != 0 else 0
+	veg_w = int(f["vw"])
+	veg_h = int(f["vh"])
+	veg = f["veg"] if map_on != 0 else PackedByteArray()
+	obs = PackedByteArray()
+	nav = PackedByteArray()
+	obs_c = PackedByteArray()
+	obs_cd = PackedByteArray()
+	ob_w = 0
+	ob_h = 0
+	oc_w = 0
+	oc_h = 0
+	city_def = -1
+	cap_t = 0
+	nav_epoch = 0
+	n_gates = 0
+	_dist_cache = {}
+	_dist_epoch = -1
+	for arr in [g_x, g_y, g_dir, g_ox, g_oy, g_ix, g_iy, g_hp, g_hp0, g_state, g_hit_t, g_bb,
+			ws_x0, ws_y0, ws_x1, ws_y1, ws_dir, ng_x, ng_y, ng_gate, ng_e0, ng_to, ng_w]:
+		(arr as PackedInt32Array).resize(0)
+	map_info = {"palette": int(f["palette"]), "forest": int(f["forest"])}
+	if obs_on != 0:
+		obs = f["obs"]
+		ob_w = int(f["ow"])
+		ob_h = int(f["oh"])
+		oc_w = (ob_w + 7) >> 3
+		oc_h = (ob_h + 7) >> 3
+		obs_c.resize(oc_w * oc_h)
+		obs_c.fill(0)
+		for j in ob_h:
+			var row := j * ob_w
+			var crow := (j >> 3) * oc_w
+			for i in ob_w:
+				if obs[row + i] != MapGen.C_OPEN:
+					obs_c[crow + (i >> 3)] = 1
+		obs_cd.resize(oc_w * oc_h)
+		obs_cd.fill(0)
+		for j in oc_h:
+			for i in oc_w:
+				if obs_c[j * oc_w + i] == 0:
+					continue
+				for dj in range(-1, 2):
+					for di in range(-1, 2):
+						var jj := j + dj
+						var ii := i + di
+						if jj >= 0 and ii >= 0 and jj < oc_h and ii < oc_w:
+							obs_cd[jj * oc_w + ii] = 1
+	if city_on != 0:
+		var lay: Dictionary = f["city"]
+		map_info["city"] = lay
+		city_def = int(lay["def"])
+		city_walls = int(lay["walls"])
+		city_level = int(lay["level"])
+		wall_h = int(lay["wall_h_m"]) * M
+		wall_t = int(lay["t"]) * M
+		build_h = int(lay["build_h_m"]) * M
+		var pl: Array = lay["plaza"]
+		plaza = PackedInt32Array([int(pl[0]) * M, int(pl[1]) * M, int(pl[2]) * M, int(pl[3]) * M])
+		for gd in lay["gates"]:
+			g_x.append(int(gd["x"]) * M)
+			g_y.append(int(gd["y"]) * M)
+			g_dir.append(int(gd["dir"]))
+			g_ox.append(int(gd["ox"]) * M)
+			g_oy.append(int(gd["oy"]) * M)
+			g_ix.append(int(gd["ix"]) * M)
+			g_iy.append(int(gd["iy"]) * M)
+			g_hp0.append(int(lay["gate_hp"]) * 100)
+			g_hp.append(int(lay["gate_hp"]) * 100)
+			g_state.append(GATE_CLOSED)
+			g_hit_t.append(-1000)
+			var ext: int = int(lay["t"]) + MapGen.GATE_HW + 2
+			g_bb.append(maxi((int(gd["x"]) - ext) / 2, 0))
+			g_bb.append(maxi((int(gd["y"]) - ext) / 2, 0))
+			g_bb.append(mini((int(gd["x"]) + ext) / 2, ob_w - 1))
+			g_bb.append(mini((int(gd["y"]) + ext) / 2, ob_h - 1))
+		n_gates = g_x.size()
+		for sg in lay["segs"]:
+			ws_x0.append(int(sg[0]) * M)
+			ws_y0.append(int(sg[1]) * M)
+			ws_x1.append(int(sg[2]) * M)
+			ws_y1.append(int(sg[3]) * M)
+			ws_dir.append(int(sg[4]))
+		var gr: Dictionary = lay["nav"]
+		for k in (gr["x"] as PackedInt32Array).size():
+			ng_x.append(int(gr["x"][k]) * M)
+			ng_y.append(int(gr["y"][k]) * M)
+		ng_gate = (gr["gate"] as PackedInt32Array).duplicate()
+		ng_e0 = (gr["e0"] as PackedInt32Array).duplicate()
+		ng_to = (gr["to"] as PackedInt32Array).duplicate()
+		ng_w = (gr["w"] as PackedInt32Array).duplicate()
+	if obs_on != 0:
+		nav.resize(ob_w * ob_h)
+		_rebuild_nav()
+	map_hash = 0
+	if map_on != 0:
+		var ctx := HashingContext.new()
+		ctx.start(HashingContext.HASH_MD5)
+		ctx.update(PackedInt64Array([veg_on, obs_on, city_on, veg_w, veg_h, ob_w, ob_h, city_def,
+			city_walls, city_level, wall_h, n_gates, ng_x.size()]).to_byte_array())
+		if veg.size() > 0:
+			ctx.update(veg)
+		if obs_on != 0:
+			ctx.update(obs)
+			if ng_to.size() > 0:
+				ctx.update(ng_to.to_byte_array())
+			if ws_x0.size() > 0:
+				ctx.update(ws_x0.to_byte_array())
+		map_hash = ctx.finish().decode_u32(0)
+
+
+## Passability from the static cells and the gates' states.
+func _rebuild_nav() -> void:
+	for c in obs.size():
+		nav[c] = _nav_of(obs[c])
+
+
+func _nav_of(k: int) -> int:
+	if k == MapGen.C_OPEN:
+		return MapGen.NAV_GROUND
+	if k == MapGen.C_WALK:
+		return MapGen.NAV_WALL
+	if k >= MapGen.C_GATE:
+		return MapGen.NAV_GROUND if g_state[k - MapGen.C_GATE] != GATE_CLOSED else 0
+	return 0
+
+
+## A gate changed: its cells' passability, and every path is replanned.
+func _gate_cells(g: int) -> void:
+	var b := g * 4
+	for j in range(g_bb[b + 1], g_bb[b + 3] + 1):
+		for i in range(g_bb[b], g_bb[b + 2] + 1):
+			var c := j * ob_w + i
+			if obs[c] == MapGen.C_GATE + g:
+				nav[c] = _nav_of(obs[c])
+	nav_epoch += 1
+
+
+## Tree density 0-3 at (x, y).
+func veg_d(x: int, y: int) -> int:
+	if veg_on == 0:
+		return 0
+	var i := x >> 12
+	var j := y >> 12
+	if x < 0 or y < 0 or i >= veg_w or j >= veg_h:
+		return 0
+	return veg[j * veg_w + i] & MapGen.V_DENS
+
+
+## Raw vegetation bits at (x, y) (density, urban, ...).
+func veg_bits(x: int, y: int) -> int:
+	if map_on == 0:
+		return 0
+	var i := x >> 12
+	var j := y >> 12
+	if x < 0 or y < 0 or i >= veg_w or j >= veg_h:
+		return 0
+	return veg[j * veg_w + i]
+
+
+## Obstacle cell kind (MapGen.C_*) at (x, y).
+func obs_kind(x: int, y: int) -> int:
+	if obs_on == 0 or x < 0 or y < 0:
+		return MapGen.C_OPEN
+	var i := x >> 11
+	var j := y >> 11
+	if i >= ob_w or j >= ob_h:
+		return MapGen.C_OPEN
+	return obs[j * ob_w + i]
+
+
+## Passability bits at (x, y) (outside the field: none).
+func nav_at(x: int, y: int) -> int:
+	if obs_on == 0:
+		return MapGen.NAV_GROUND
+	if x < 0 or y < 0:
+		return 0
+	var i := x >> 11
+	var j := y >> 11
+	if i >= ob_w or j >= ob_h:
+		return 0
+	return nav[j * ob_w + i]
+
+
+## Height a man stands at: the ground, or the walkway on a wall.
+func elev_at(x: int, y: int) -> int:
+	var h := height_at(x, y)
+	if obs_on != 0 and obs_kind(x, y) == MapGen.C_WALK:
+		h += wall_h
+	return h
+
+
+## Unit u's height: its ground (or its walkway).
+func _unit_elev(u: int) -> int:
+	return height_at(u_cx[u], u_cy[u]) + (wall_h if u_wall[u] > 0 else 0)
+
+
+## How far an obstacle at (x, y) rises above the ground (line of fire).
+func _obs_top(x: int, y: int) -> int:
+	var k := obs_kind(x, y)
+	if k == MapGen.C_OPEN:
+		return 0
+	if k == MapGen.C_BUILDING:
+		return build_h
+	if k == MapGen.C_WALK:
+		return wall_h
+	if k == MapGen.C_TOWER:
+		return wall_h + 4 * M
+	if k >= MapGen.C_GATE:
+		return wall_h + M if g_state[k - MapGen.C_GATE] == GATE_CLOSED else 0
+	return wall_h + WALL_PARAPET
+
+
+## Files of unit u's formation now (squeezed in a street, or as ordered).
+func files_of(u: int) -> int:
+	return u_sq[u] if u_sq[u] > 0 else u_files[u]
+
+
+## Unit u is near an obstacle (or on a wall): its men are kept out of
+## blocked cells this tick. Coarse 16 m cells round its box and anchor.
+func _near_obs(u: int) -> int:
+	if u_wall[u] > 0:
+		return 1
+	var x0 := (mini(u_minx[u], u_ax[u]) - 8 * M) >> 14
+	var x1 := (maxi(u_maxx[u], u_ax[u]) + 8 * M) >> 14
+	var y0 := (mini(u_miny[u], u_ay[u]) - 8 * M) >> 14
+	var y1 := (maxi(u_maxy[u], u_ay[u]) + 8 * M) >> 14
+	for j in range(maxi(y0, 0), mini(y1, oc_h - 1) + 1):
+		var row := j * oc_w
+		for i in range(maxi(x0, 0), mini(x1, oc_w - 1) + 1):
+			if obs_c[row + i] != 0:
+				return 1
+	return 0
+
+
+## A man of unit u moving from (ox, oy) to (nx, ny) into a cell he may not
+## enter: if his unit has a trail (waypoints its anchor passed), he walks
+## it (toward the trail point after the one nearest him, or the anchor
+## after the newest); else he slides along one axis; else he stays. A man
+## already inside a blocked cell may move anywhere (to get out).
+func _slide(u: int, ox: int, oy: int, nx: int, ny: int, mask: int) -> Vector2i:
+	if (nav_at(ox, oy) & mask) == 0:
+		return Vector2i(nx, ny)
+	stat_clamp += 1
+	var st := maxi(FM.approx_len(nx - ox, ny - oy), M / 4)
+	var cnt_n := u_trn[u]
+	if cnt_n > 0:
+		var base := u * TRAIL
+		var best := 0
+		var best_d := 1 << 40
+		for k in cnt_n:
+			var d := FM.approx_len(tr_x[base + k] - ox, tr_y[base + k] - oy)
+			if d < best_d:
+				best_d = d
+				best = k
+		var tx := u_ax[u]
+		var ty := u_ay[u]
+		if best + 1 < cnt_n:
+			tx = tr_x[base + best + 1]
+			ty = tr_y[base + best + 1]
+		elif best_d > 3 * M:
+			tx = tr_x[base + best]
+			ty = tr_y[base + best]
+		var dx := tx - ox
+		var dy := ty - oy
+		var d2 := FM.approx_len(dx, dy)
+		if d2 > 0:
+			var s2 := mini(st, d2)
+			var px := ox + dx * s2 / d2
+			var py := oy + dy * s2 / d2
+			if (nav_at(px, py) & mask) != 0:
+				return Vector2i(px, py)
+			if px != ox and (nav_at(px, oy) & mask) != 0:
+				return Vector2i(px, oy)
+			if py != oy and (nav_at(ox, py) & mask) != 0:
+				return Vector2i(ox, py)
+	if nx != ox and (nav_at(nx, oy) & mask) != 0:
+		return Vector2i(nx, oy)
+	if ny != oy and (nav_at(ox, ny) & mask) != 0:
+		return Vector2i(ox, ny)
+	return Vector2i(ox, oy)
+
+
+## Append a passed waypoint to unit u's trail (the oldest drops out).
+func _trail_push(u: int, x: int, y: int) -> void:
+	var base := u * TRAIL
+	var cnt_n := u_trn[u]
+	if cnt_n > 0 and tr_x[base + cnt_n - 1] == x and tr_y[base + cnt_n - 1] == y:
+		return
+	if cnt_n >= TRAIL:
+		for k in TRAIL - 1:
+			tr_x[base + k] = tr_x[base + k + 1]
+			tr_y[base + k] = tr_y[base + k + 1]
+		cnt_n = TRAIL - 1
+	tr_x[base + cnt_n] = x
+	tr_y[base + cnt_n] = y
+	u_trn[u] = cnt_n + 1
+
+
+## 1 if a melee search from (x, y) must check for obstacles in the way
+## (an obstacle within a 16 m cell of him), else 0.
+func _reach_checks(x: int, y: int) -> int:
+	if obs_on == 0:
+		return 0
+	var i := clampi(x >> 14, 0, oc_w - 1)
+	var j := clampi(y >> 14, 0, oc_h - 1)
+	return obs_cd[j * oc_w + i]
+
+
+## Two men can reach each other (melee): nothing impassable between them
+## (a wall, a closed gate, a building corner). Midpoint and quarter points.
+func _reach_ok(x0: int, y0: int, x1: int, y1: int) -> bool:
+	if nav_at((x0 + x1) >> 1, (y0 + y1) >> 1) == 0:
+		return false
+	var dx := x1 - x0
+	var dy := y1 - y0
+	if absi(dx) + absi(dy) > 3 * M:
+		if nav_at(x0 + dx / 4, y0 + dy / 4) == 0 or nav_at(x1 - dx / 4, y1 - dy / 4) == 0:
+			return false
+	return true
+
+
+## A clear line 3 m wide (centre and 1.5 m either side, every metre) for
+## ground units from (x0, y0) to (x1, y1).
+func _los_fat(x0: int, y0: int, x1: int, y1: int) -> bool:
+	var dx := x1 - x0
+	var dy := y1 - y0
+	var l := FM.approx_len(dx, dy)
+	if l <= 0:
+		return (nav_at(x0, y0) & MapGen.NAV_GROUND) != 0
+	var cnt_n := l / M + 1
+	var ox := -dy * 1536 / l
+	var oy := dx * 1536 / l
+	var navg := nav
+	var w := ob_w
+	var h := ob_h
+	for q in cnt_n + 1:
+		var x := x0 + dx * q / cnt_n
+		var y := y0 + dy * q / cnt_n
+		for k in 3:
+			var sx := x + ox * (k - 1)
+			var sy := y + oy * (k - 1)
+			if sx < 0 or sy < 0:
+				return false
+			var i := sx >> 11
+			var j := sy >> 11
+			if i >= w or j >= h or (navg[j * w + i] & MapGen.NAV_GROUND) == 0:
+				return false
+	return true
+
+
+## Street graph node usable now (a closed gate's node is not).
+func _node_open(k: int) -> bool:
+	var g := ng_gate[k]
+	return g < 0 or g_state[g] != GATE_CLOSED
+
+
+## Up to `most` graph nodes near (x, y) with a clear line to it (the nearest
+## open node if none is clear), nearest first (ties: lower index).
+func _near_nodes(x: int, y: int, most: int = 3) -> PackedInt32Array:
+	var cnt_n := ng_x.size()
+	var cand := PackedInt32Array()
+	var cd := PackedInt32Array()
+	for k in cnt_n:
+		if not _node_open(k):
+			continue
+		var dx := ng_x[k] - x
+		var dy := ng_y[k] - y
+		var d := FM.approx_len(dx, dy)
+		# Insert into the six nearest.
+		var pos := cand.size()
+		while pos > 0 and (cd[pos - 1] > d or (cd[pos - 1] == d and cand[pos - 1] > k)):
+			pos -= 1
+		if pos < 6:
+			cand.insert(pos, k)
+			cd.insert(pos, d)
+			if cand.size() > 6:
+				cand.resize(6)
+				cd.resize(6)
+	var out := PackedInt32Array()
+	for k in cand.size():
+		if _los_fat(x, y, ng_x[cand[k]], ng_y[cand[k]]):
+			out.append(cand[k])
+			if out.size() >= most:
+				break
+	if out.is_empty() and not cand.is_empty():
+		out.append(cand[0])
+	return out
+
+
+## Graph distances (1/8 m) from every node to node `dst` with the gates as
+## they are now (Dijkstra, binary heap; cached until a gate changes).
+func _dist_table(dst: int) -> PackedInt32Array:
+	if _dist_epoch != nav_epoch:
+		_dist_cache = {}
+		_dist_epoch = nav_epoch
+	if _dist_cache.has(dst):
+		return _dist_cache[dst]
+	var cnt_n := ng_x.size()
+	var dist := PackedInt32Array()
+	dist.resize(cnt_n)
+	dist.fill(PATH_INF)
+	var heap := PackedInt32Array()
+	dist[dst] = 0
+	heap.append(dst)  # key = d * 4096 + node
+	while not heap.is_empty():
+		var top := heap[0]
+		var last := heap[heap.size() - 1]
+		heap.resize(heap.size() - 1)
+		if not heap.is_empty():
+			# Sift the last key down from the root.
+			var i := 0
+			var hn := heap.size()
+			while true:
+				var c := 2 * i + 1
+				if c >= hn:
+					break
+				if c + 1 < hn and heap[c + 1] < heap[c]:
+					c += 1
+				if heap[c] >= last:
+					break
+				heap[i] = heap[c]
+				i = c
+			heap[i] = last
+		var d := top >> 12
+		var v := top & 4095
+		if d > dist[v]:
+			continue
+		for e in range(ng_e0[v], ng_e0[v + 1]):
+			var to := ng_to[e]
+			if not _node_open(to):
+				continue
+			var nd := d + ng_w[e]
+			if nd < dist[to]:
+				dist[to] = nd
+				var key := nd * 4096 + to
+				heap.append(key)
+				var j := heap.size() - 1
+				while j > 0:
+					var par := (j - 1) >> 1
+					if heap[par] <= key:
+						break
+					heap[j] = heap[par]
+					j = par
+				heap[j] = key
+	_dist_cache[dst] = dist
+	return dist
+
+
+## Plan unit u's path from its anchor to (gx, gy): straight if the way is
+## clear, else over the street graph (entry node near the anchor, exit node
+## near the goal, the cheapest pair), shortcut where the line is clear.
+func _plan_path(u: int, gx: int, gy: int) -> void:
+	stat_paths += 1
+	var base := u * PATH_MAX
+	var ax := u_ax[u]
+	var ay := u_ay[u]
+	u_pgx[u] = gx
+	u_pgy[u] = gy
+	u_pep[u] = nav_epoch
+	u_pk[u] = 0
+	u_pn[u] = 1
+	pth_x[base] = gx
+	pth_y[base] = gy
+	if ng_x.is_empty() or _los_fat(ax, ay, gx, gy):
+		return
+	var srcs := _near_nodes(ax, ay)
+	var dsts := _near_nodes(gx, gy, 2)  # each exit node needs a distance table
+	var best := PATH_INF
+	var ba := -1
+	var bb := -1
+	for b in dsts:
+		var dt := _dist_table(b)
+		var tail := FM.approx_len(gx - ng_x[b], gy - ng_y[b]) / 128
+		for a in srcs:
+			if dt[a] >= PATH_INF:
+				continue
+			var c := FM.approx_len(ng_x[a] - ax, ng_y[a] - ay) / 128 + dt[a] + tail
+			if c < best:
+				best = c
+				ba = a
+				bb = b
+	if ba < 0:
+		return  # no way round (every gate shut): straight on
+	var dtb := _dist_table(bb)
+	var k := 0
+	var cur := ba
+	pth_x[base] = ng_x[cur]
+	pth_y[base] = ng_y[cur]
+	k = 1
+	while cur != bb and k < PATH_MAX - 1:
+		var nxt := -1
+		var nv := PATH_INF
+		for e in range(ng_e0[cur], ng_e0[cur + 1]):
+			var to := ng_to[e]
+			if not _node_open(to):
+				continue
+			var c2 := ng_w[e] + dtb[to]
+			if c2 < nv or (c2 == nv and to < nxt):
+				nv = c2
+				nxt = to
+		if nxt < 0 or dtb[nxt] >= dtb[cur]:
+			break
+		cur = nxt
+		pth_x[base + k] = ng_x[cur]
+		pth_y[base + k] = ng_y[cur]
+		k += 1
+	pth_x[base + k] = gx
+	pth_y[base + k] = gy
+	u_pn[u] = k + 1
+	# Shortcut: skip waypoints the anchor can already see past.
+	var pk := 0
+	while pk + 1 < u_pn[u] - 1 and _los_fat(ax, ay, pth_x[base + pk + 1], pth_y[base + pk + 1]):
+		pk += 1
+	u_pk[u] = pk
+	# Where the unit is now heads its trail (stragglers make for it first).
+	_trail_push(u, ax, ay)
+
+
+## Keep unit u's path to (gx, gy) current: replan when there is none, a gate
+## changed, or (`moving_goal`, at most once a second) the goal moved 12 m;
+## look past the next waypoint now and then. Returns the point to head for.
+func _path_point(u: int, gx: int, gy: int, moving_goal: bool) -> Vector2i:
+	if u_pn[u] == 0 or (u_pep[u] != nav_epoch and (u + tick) % 5 == 0):
+		# (A gate changed: replans are spread over half a second.)
+		_plan_path(u, gx, gy)
+	elif moving_goal and (u + tick) % 10 == 0 \
+			and FM.approx_len(gx - u_pgx[u], gy - u_pgy[u]) > 12 * M:
+		_plan_path(u, gx, gy)
+	elif not moving_goal and (u_pgx[u] != gx or u_pgy[u] != gy):
+		_plan_path(u, gx, gy)
+	var base := u * PATH_MAX
+	var k := u_pk[u]
+	var last := u_pn[u] - 1
+	if k >= last:
+		return Vector2i(gx, gy)
+	var wx := pth_x[base + k]
+	var wy := pth_y[base + k]
+	if FM.approx_len(wx - u_ax[u], wy - u_ay[u]) <= WP_REACH:
+		_trail_push(u, wx, wy)
+		k += 1
+		u_pk[u] = k
+	elif (u + tick) % 5 == 0 and k + 1 <= last:
+		var b1 := base + k + 1
+		var nxx := pth_x[b1] if k + 1 < last else gx
+		var nxy := pth_y[b1] if k + 1 < last else gy
+		if FM.approx_len(nxx - u_ax[u], nxy - u_ay[u]) < 60 * M and _los_fat(u_ax[u], u_ay[u], nxx, nxy):
+			_trail_push(u, wx, wy)
+			k += 1
+			u_pk[u] = k
+	if k >= last:
+		return Vector2i(gx, gy)
+	return Vector2i(pth_x[base + k], pth_y[base + k])
+
+
+## Squeeze: a unit whose front line would not fit between the obstacles
+## either side of its anchor closes files to the width there (at least
+## MIN_FILES), and opens out again once there is room (2 m to spare).
+func _squeeze(u: int) -> void:
+	var ty := u_type[u]
+	var fsp := t_fsp[ty]
+	var want := mini(u_files[u], u_alive[u])
+	var half := want * fsp / 2 + M
+	var c := FM.cos_a(u_face[u])
+	var s := FM.sin_a(u_face[u])
+	var ax := u_ax[u]
+	var ay := u_ay[u]
+	if (nav_at(ax, ay) & MapGen.NAV_GROUND) == 0:
+		return
+	var fl := 0
+	var fr := 0
+	var stp := 2 * M
+	while fl < half and (nav_at(ax + s * (fl + stp) / FM.TRIG_ONE, ay - c * (fl + stp) / FM.TRIG_ONE) & MapGen.NAV_GROUND) != 0:
+		fl += stp
+	while fr < half and (nav_at(ax - s * (fr + stp) / FM.TRIG_ONE, ay + c * (fr + stp) / FM.TRIG_ONE) & MapGen.NAV_GROUND) != 0:
+		fr += stp
+	var width := fl + fr + M
+	var sq := 0
+	if width < want * fsp:
+		sq = clampi(width / fsp, mini(MIN_FILES, want), want)
+		if sq >= want:
+			sq = 0
+	elif u_sq[u] > 0 and width < want * fsp + 2 * M:
+		sq = u_sq[u]  # not quite room yet
+	if sq != u_sq[u]:
+		if sq > 0 and u_sq[u] == 0:
+			stat_squeeze += 1
+		u_sq[u] = sq
+		u_dirty[u] = 1
+		u_settled[u] = 0
+	if sq > 0 and u_order[u] != O_NONE and absi(fl - fr) > 2 * M:
+		# Keep to the middle of the street.
+		var sh := (fr - fl) / 2
+		u_ax[u] = clampi(ax - s * sh / FM.TRIG_ONE, 0, field_w)
+		u_ay[u] = clampi(ay + c * sh / FM.TRIG_ONE, 0, field_h)
+
+
+## A wall unit's move: the destination is projected onto its stretch of
+## walkway (it never leaves the wall), facing out.
+static func wall_anchor(sim, u: int, x: int, y: int, files: int) -> Vector3i:
+	var sg: int = sim.u_wall[u] - 1
+	var x0: int = sim.ws_x0[sg]
+	var y0: int = sim.ws_y0[sg]
+	var x1: int = sim.ws_x1[sg]
+	var y1: int = sim.ws_y1[sg]
+	var l := maxi(FM.isqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0)), 1)
+	var ex := (x1 - x0) * FM.TRIG_ONE / l
+	var ey := (y1 - y0) * FM.TRIG_ONE / l
+	var ty: int = sim.u_type[u]
+	var half := files * UT.stat(ty, "file_sp") / 2
+	var t := ((x - x0) * ex + (y - y0) * ey) / FM.TRIG_ONE
+	if l <= 2 * half:
+		t = l / 2
+	else:
+		t = clampi(t, half, l - half)
+	var dir: int = sim.ws_dir[sg]
+	var ranks: int = (int(sim.u_alive[u]) + files - 1) / maxi(files, 1)
+	var depth: int = maxi(ranks - 1, 0) * UT.stat(ty, "rank_sp")
+	var out := depth / 2
+	return Vector3i(x0 + ex * t / FM.TRIG_ONE + FM.cos_a(dir) * out / FM.TRIG_ONE,
+		y0 + ey * t / FM.TRIG_ONE + FM.sin_a(dir) * out / FM.TRIG_ONE, dir)
+
+
+## Files a wall unit can stand in on its walkway (all in at most 3 ranks if
+## the stretch is long enough).
+static func wall_files(sim, u: int, files: int) -> int:
+	var sg: int = sim.u_wall[u] - 1
+	var dx: int = sim.ws_x1[sg] - sim.ws_x0[sg]
+	var dy: int = sim.ws_y1[sg] - sim.ws_y0[sg]
+	var l := FM.isqrt(dx * dx + dy * dy)
+	var fit := maxi(l / maxi(UT.stat(sim.u_type[u], "file_sp"), 1), 1)
+	var alive: int = sim.u_alive[u]
+	return clampi(maxi(files, (alive + 2) / 3), 1, mini(fit, maxi(alive, 1)))
+
+
+## Gate g's state change from an order (defenders only): closing needs the
+## gate's cells clear of men; a broken gate stays broken.
+func _gate_order(o: Dictionary) -> void:
+	var g := int(o.get("gate", -1))
+	var u := int(o.get("unit", -1))
+	if city_on == 0 or g < 0 or g >= n_gates or u < 0 or u >= n_units or u_side[u] != city_def:
+		return
+	if g_state[g] == GATE_BROKEN:
+		return
+	var want := GATE_CLOSED if int(o.get("on", 1)) != 0 else GATE_OPEN
+	if want == g_state[g]:
+		return
+	if want == GATE_CLOSED and gate_busy(g):
+		return
+	g_state[g] = want
+	if want == GATE_CLOSED:
+		stat_gate_close += 1
+	else:
+		stat_gate_open += 1
+	_gate_cells(g)
+
+
+## Someone stands in gate g's cells.
+func gate_busy(g: int) -> bool:
+	var b := g * 4
+	var x0 := g_bb[b] * 2 * M
+	var y0 := g_bb[b + 1] * 2 * M
+	var x1 := (g_bb[b + 2] + 1) * 2 * M
+	var y1 := (g_bb[b + 3] + 1) * 2 * M
+	for u in n_units:
+		if u_alive[u] <= 0 or u_maxx[u] < x0 or u_minx[u] > x1 or u_maxy[u] < y0 or u_miny[u] > y1:
+			continue
+		var base := u_slot_base[u]
+		for s in u_alive[u]:
+			var i := slot_soldier[base + s]
+			if state[i] < S_DEAD and obs_kind(pos_x[i], pos_y[i]) == MapGen.C_GATE + g:
+				return true
+	return false
+
+
+func _break_gate(g: int) -> void:
+	g_state[g] = GATE_BROKEN
+	g_hp[g] = 0
+	stat_gate_broken += 1
+	_gate_cells(g)
+
+
+## Where (x, y) is relative to gate g: [along the wall, outward] (sim units).
+func gate_frame(g: int, x: int, y: int) -> Vector2i:
+	var c := FM.cos_a(g_dir[g])
+	var s := FM.sin_a(g_dir[g])
+	var rx := x - g_x[g]
+	var ry := y - g_y[g]
+	return Vector2i((ry * c - rx * s) / FM.TRIG_ONE, (rx * c + ry * s) / FM.TRIG_ONE)
+
+
+## The point an attacker aims at to hit gate g: the middle of its outer face.
+func gate_face(g: int) -> Vector2i:
+	var out := wall_t / 2
+	return Vector2i(g_x[g] + FM.cos_a(g_dir[g]) * out / FM.TRIG_ONE,
+		g_y[g] + FM.sin_a(g_dir[g]) * out / FM.TRIG_ONE)
+
+
+## Where a unit stands to hack at gate g (outside for attackers, inside for
+## defenders), facing it.
+func gate_front(g: int, side: int) -> Vector3i:
+	var sgn := 1 if side != city_def else -1
+	var d := wall_t / 2 + M + M / 4
+	var c := FM.cos_a(g_dir[g])
+	var s := FM.sin_a(g_dir[g])
+	return Vector3i(g_x[g] + sgn * c * d / FM.TRIG_ONE, g_y[g] + sgn * s * d / FM.TRIG_ONE,
+		(g_dir[g] + (512 if sgn > 0 else 0)) & FM.ANGLE_MASK)
+
+
+## A projectile aimed at a gate lands: within its face (and 1.5 m round) it
+## damages the gate. Returns true if it struck the gate.
+func _gate_hit(p: int, dmg: int) -> bool:
+	var g := -2 - pr_tu[p]
+	if g < 0 or g >= n_gates or g_state[g] != GATE_CLOSED:
+		return false
+	var f := gate_frame(g, pr_x[p], pr_y[p])
+	if absi(f.x) > MapGen.GATE_HW * M + 1536 or absi(f.y) > wall_t / 2 + 1536:
+		return false
+	g_hp[g] -= dmg * 100
+	g_hit_t[g] = tick
+	stat_gate_art += dmg
+	if g_hp[g] <= 0:
+		_break_gate(g)
+	return true
+
+
+## Men hack at closed gates: foot soldiers (not missile troops, cavalry or
+## crews) of the attacking side within GATE_REACH of the gate's face, of a
+## unit that is not marching past (standing, attacking, or ordered at the
+## gate); each takes off (damage - GATE_ARMOUR) x GATE_HACK_PCT% per swing.
+func _update_gates() -> void:
+	for g in n_gates:
+		if g_state[g] != GATE_CLOSED:
+			continue
+		var reach_x := MapGen.GATE_HW * M + M
+		var reach_y := wall_t / 2 + GATE_REACH
+		var men := 0
+		var dmg := 0
+		var gx := g_x[g]
+		var gy := g_y[g]
+		var r := wall_t + MapGen.GATE_HW * M + 6 * M
+		for u in n_units:
+			if u_side[u] == city_def or u_state[u] != U_READY or u_alive[u] <= 0:
+				continue
+			var cl := u_cls[u]
+			if cl != UT.CLS_INF and cl != UT.CLS_PIKE:
+				continue
+			if u_order[u] == O_MOVE and u_gtarget[u] != g:
+				continue
+			if u_maxx[u] < gx - r or u_minx[u] > gx + r or u_maxy[u] < gy - r or u_miny[u] > gy + r:
+				continue
+			var ty := u_type[u]
+			var rate := maxi(t_damage[ty] - GATE_ARMOUR, 2) * GATE_HACK_PCT / maxi(t_cooldown[ty], 1)
+			var base := u_slot_base[u]
+			for s in u_alive[u]:
+				var i := slot_soldier[base + s]
+				if state[i] != S_FORMED and state[i] != S_FIGHTING:
+					continue
+				var f := gate_frame(g, pos_x[i], pos_y[i])
+				if absi(f.x) <= reach_x and absi(f.y) <= reach_y:
+					men += 1
+					dmg += rate
+					if men >= GATE_HACKERS:
+						break
+			if men >= GATE_HACKERS:
+				break
+		if men > 0:
+			g_hp[g] -= dmg
+			g_hit_t[g] = tick
+			stat_gate_hack += dmg
+			if g_hp[g] <= 0:
+				_break_gate(g)
+
+
+## The plaza: attackers holding it (a ready unit of CAPTURE_MEN or more with
+## its centre in it, no ready defender unit within CAPTURE_CLEAR beyond it)
+## for CAPTURE_TICKS break the defenders. Counted once a second.
+func _update_capture() -> void:
+	if city_on == 0 or winner >= 0 or tick % TICKS_PER_SECOND != 0:
+		return
+	var px := plaza[0]
+	var py := plaza[1]
+	var r := plaza[3]
+	var held := false
+	var contested := false
+	var rc := r + CAPTURE_CLEAR
+	for u in n_units:
+		if u_state[u] != U_READY:
+			continue
+		var dx := u_cx[u] - px
+		var dy := u_cy[u] - py
+		if u_side[u] == city_def:
+			if u_wall[u] == 0 and absi(dx) <= rc and absi(dy) <= rc:
+				contested = true
+		elif u_alive[u] >= CAPTURE_MEN and absi(dx) <= r and absi(dy) <= r:
+			held = true
+	if held and not contested:
+		cap_t += TICKS_PER_SECOND
+	else:
+		cap_t = 0
+	if cap_t >= CAPTURE_TICKS:
+		stat_capture += 1
+		for u in n_units:
+			if u_side[u] == city_def and u_state[u] == U_READY:
+				_start_rout(u)
+				u_routs[u] = MAX_ROUTS + 1  # the city has fallen: no rally
+
+
+## Routing unit u on a settlement map: run along a path to its own edge
+## (round the walls and out through a gate), else straight away.
+func _flee_step(u: int) -> void:
+	var gx := u_cx[u]
+	var gy := field_h if u_side[u] == 0 else 0
+	u_ax[u] = u_cx[u]
+	u_ay[u] = u_cy[u]
+	var p := _path_point(u, gx, gy, true)
+	var dx := p.x - u_cx[u]
+	var dy := p.y - u_cy[u]
+	var d := FM.approx_len(dx, dy)
+	if d > 0:
+		u_flee_x[u] = dx * FM.TRIG_ONE / d
+		u_flee_y[u] = dy * FM.TRIG_ONE / d
+
+
+## Tree depth along a flat shot from (x0, y0) to (x1, y1): the distance at
+## which the woods in the way (TREE_W per 4 m sample, LOF_SKIP from either
+## end ignored) pass TREE_BLOCK, or -1.
+func tree_block(x0: int, y0: int, x1: int, y1: int, ext: int = 0) -> int:
+	if veg_on == 0:
+		return -1
+	var dx := x1 - x0
+	var dy := y1 - y0
+	var d := FM.approx_len(dx, dy)
+	if d <= 2 * LOF_SKIP:
+		return -1
+	var a := LOF_SKIP
+	var end := d - LOF_SKIP + ext
+	var w := 0
+	while a <= end:
+		w += TREE_W[veg_d(x0 + dx * a / d, y0 + dy * a / d)]
+		if w > TREE_BLOCK:
+			return a
+		a += LOF_STEP
+	return -1
+
+
+## How far a stone ploughs from (x, y) along (ux, uy) (Q12) before a
+## building or wall stops it (at most `len`).
+func _obs_run(x: int, y: int, ux: int, uy: int, length: int) -> int:
+	var a := 0
+	while a < length:
+		if obs_kind(x + ux * a / FM.TRIG_ONE, y + uy * a / FM.TRIG_ONE) != MapGen.C_OPEN:
+			return a
+		a += 2 * M
+	return length
 
 
 # ------------------------------------------------------------------ rng ---
@@ -1072,6 +2150,9 @@ func _apply_orders() -> void:
 	pending_orders = rest
 	due.sort_custom(_order_less)
 	for o in due:
+		if int(o["type"]) == ORDER_GATE:
+			_gate_order(o)
+			continue
 		for u in order_units(self, o):
 			var d := order_fields(self, u)
 			apply_order_rule(self, u, d, o)
@@ -1089,8 +2170,11 @@ func _apply_orders() -> void:
 			u_skirm[u] = int(d["skirm"])
 			u_deploy[u] = int(d["deploy"])
 			u_refill[u] = int(d["refill"])
+			u_gtarget[u] = int(d["gtarget"])
 			u_dirty[u] = 1
 			u_settled[u] = 0
+			if obs_on != 0:
+				u_pn[u] = 0  # plan a new path
 
 
 ## The ORDER_KEYS fields of unit u as a Dictionary.
@@ -1099,13 +2183,15 @@ static func order_fields(sim, u: int) -> Dictionary:
 		"face": sim.u_face[u], "files": sim.u_files[u], "dx": sim.u_dx[u],
 		"dy": sim.u_dy[u], "dface": sim.u_dface[u], "target": sim.u_target[u],
 		"run": sim.u_run[u], "fire": sim.u_fire[u], "skirm": sim.u_skirm[u],
-		"deploy": sim.u_deploy[u], "refill": sim.u_refill[u]}
+		"deploy": sim.u_deploy[u], "refill": sim.u_refill[u], "gtarget": sim.u_gtarget[u]}
 
 
 ## Units an order applies to (in index order): its unit, or every ready unit
 ## of the side for an army-wide withdrawal. Shared with OrderPreview.
 static func order_units(sim, o: Dictionary) -> Array[int]:
 	var out: Array[int] = []
+	if int(o["type"]) == ORDER_GATE:
+		return out  # not a unit order (applied by the sim to the gate)
 	if int(o["type"]) == ORDER_WITHDRAW_ALL:
 		var side := int(o.get("side", -1))
 		for u in sim.n_units:
@@ -1132,6 +2218,25 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 	if art and (typ == ORDER_MOVE or typ == ORDER_ATTACK or typ == ORDER_WITHDRAW \
 			or typ == ORDER_WITHDRAW_ALL or typ == ORDER_DEPLOY):
 		d["refill"] = 0
+	# A unit on a wall holds it: it moves only along its stretch of walkway
+	# (facing out), and does not withdraw or skirmish.
+	var wallu: int = sim.u_wall[u] if u < sim.u_wall.size() else 0
+	if wallu > 0:
+		if typ == ORDER_WITHDRAW or typ == ORDER_WITHDRAW_ALL or typ == ORDER_SKIRMISH:
+			return
+		if typ == ORDER_MOVE:
+			var wf := wall_files(sim, u, width_to_files(int(o["width"]), sim.u_alive[u], ty))
+			var wa := wall_anchor(sim, u, int(o["x"]), int(o["y"]), wf)
+			d["files"] = wf
+			d["ax"] = wa.x
+			d["ay"] = wa.y
+			d["face"] = wa.z
+			d["dface"] = wa.z
+			d["order"] = O_NONE
+			d["target"] = -1
+			d["gtarget"] = -1
+			d["run"] = 0
+			return
 	if typ == ORDER_MOVE:
 		var x := clampi(int(o["x"]), 0, sim.field_w)
 		var y := clampi(int(o["y"]), 0, sim.field_h)
@@ -1140,6 +2245,7 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 			d["files"] = width_to_files(int(o["width"]), sim.u_alive[u], ty)
 		d["run"] = 1 if int(o.get("run", 0)) != 0 and not art else 0
 		d["target"] = -1
+		d["gtarget"] = -1
 		var dx: int = x - d["ax"]
 		var dy: int = y - d["ay"]
 		if dx * dx + dy * dy <= REFORM_IN_PLACE_DIST * REFORM_IN_PLACE_DIST:
@@ -1155,15 +2261,42 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 			d["dy"] = y
 		d["dface"] = face
 	elif typ == ORDER_ATTACK:
+		var gt := int(o.get("gate", -1))
+		if gt >= 0:
+			# At a gate: batteries shoot it, foot go to its face and hack at
+			# it; nobody else can (and only the attackers).
+			if sim.city_on == 0 or gt >= sim.n_gates or sim.u_side[u] == sim.city_def \
+					or sim.g_state[gt] != GATE_CLOSED:
+				return
+			if art:
+				d["order"] = O_ATTACK
+				d["target"] = -1
+				d["gtarget"] = gt
+				d["run"] = 0
+				return
+			var c := UT.cls(ty)
+			if c != UT.CLS_INF and c != UT.CLS_PIKE:
+				return
+			var gfp: Vector3i = sim.gate_front(gt, sim.u_side[u])
+			d["order"] = O_MOVE
+			d["dx"] = gfp.x
+			d["dy"] = gfp.y
+			d["dface"] = gfp.z
+			d["target"] = -1
+			d["gtarget"] = gt
+			d["run"] = 1 if int(o.get("run", 0)) != 0 else 0
+			return
 		var t := int(o["target"])
 		if t < 0 or t >= sim.n_units or sim.u_side[t] == sim.u_side[u] or sim.u_state[t] >= U_DESTROYED:
 			return
 		d["order"] = O_ATTACK
 		d["target"] = t
+		d["gtarget"] = -1
 		d["run"] = 1 if int(o.get("run", 0)) != 0 and not art else 0
 	elif typ == ORDER_HALT:
 		d["order"] = O_NONE
 		d["target"] = -1
+		d["gtarget"] = -1
 		d["dface"] = d["face"]
 	elif typ == ORDER_RUN:
 		d["run"] = 1 if int(o.get("run", 0)) != 0 and not art else 0
@@ -1190,6 +2323,7 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 	elif typ == ORDER_WITHDRAW or typ == ORDER_WITHDRAW_ALL:
 		d["order"] = O_WITHDRAW
 		d["target"] = -1
+		d["gtarget"] = -1
 		d["run"] = 0 if art else 1
 		d["dx"] = d["ax"]
 		d["dy"] = sim.field_h if sim.u_side[u] == 0 else 0
@@ -1269,7 +2403,7 @@ func _compute_offsets(u: int) -> void:
 		_art_offsets(u)
 		u_dirty[u] = 0
 		return
-	var files := mini(u_files[u], alive)
+	var files := mini(files_of(u), alive)
 	var ty := u_type[u]
 	_fill_offsets(off_x, u_slot_base[u], alive, files, u_face[u], false, off_y,
 		t_fsp[ty], t_rsp[ty])
@@ -1327,14 +2461,14 @@ func _art_offsets(u: int) -> void:
 
 ## Depth (front to back) of a unit's formation in sim units.
 func unit_depth(u: int) -> int:
-	var files := maxi(mini(u_files[u], u_alive[u]), 1)
+	var files := maxi(mini(files_of(u), u_alive[u]), 1)
 	var ranks := (u_alive[u] + files - 1) / files
 	return maxi(ranks - 1, 0) * t_rsp[u_type[u]]
 
 
 ## Half the frontage of a unit's formation in sim units.
 func unit_half_width(u: int) -> int:
-	var files := maxi(mini(u_files[u], u_alive[u]), 1)
+	var files := maxi(mini(files_of(u), u_alive[u]), 1)
 	return (files - 1) * t_fsp[u_type[u]] / 2
 
 
@@ -1342,7 +2476,10 @@ func unit_half_width(u: int) -> int:
 
 func step() -> void:
 	_apply_orders()
-	BattleAI.think(self)
+	if city_on != 0:
+		SiegeAI.think(self)
+	else:
+		BattleAI.think(self)
 	_apply_orders()  # AI orders are queued for this tick
 	prev_x = pos_x.duplicate()
 	prev_y = pos_y.duplicate()
@@ -1353,11 +2490,15 @@ func step() -> void:
 	_update_contacts()
 	_build_grid()
 	_update_soldiers()
+	if n_gates > 0:
+		_update_gates()
 	if n_eng > 0:
 		_update_artillery()
 	_update_missiles()
 	_refresh_offsets()
 	_update_morale()
+	if city_on != 0:
+		_update_capture()
 	_check_winner()
 	tick += 1
 
@@ -1386,10 +2527,14 @@ func _turn(u: int, want: int) -> void:
 
 func _update_units() -> void:
 	var ton := ter_on != 0
+	var mon := map_on != 0
+	var oon := obs_on != 0
 	for u in n_units:
 		u_moved[u] = 0
-		if ton and u_alive[u] > 0:
-			u_h[u] = height_at(u_cx[u], u_cy[u])
+		if (ton or oon) and u_alive[u] > 0:
+			u_h[u] = _unit_elev(u) if oon else height_at(u_cx[u], u_cy[u])
+		if oon and u_alive[u] > 0:
+			_u_obs[u] = _near_obs(u)
 		if u_state[u] != U_READY:
 			u_formed[u] = 0
 			u_braced[u] = 0
@@ -1398,11 +2543,26 @@ func _update_units() -> void:
 				stat_refill_broken += 1  # routed: the refill is abandoned
 				u_rprog[u] = 0
 				u_refill[u] = 0
+			if oon and u_state[u] == U_ROUTING and u_alive[u] > 0:
+				_flee_step(u)
 			continue
 		var ty := u_type[u]
 		var cls := u_cls[u]
 		var speed := t_run[ty] if u_run[u] != 0 else t_walk[ty]
 		var aspeed := (speed * 7) >> 3
+		# Woods under the anchor: slower, and (below) disorder and a lower
+		# momentum cap; settlement streets cap a charge too.
+		var vd := 0
+		var urban := false
+		if mon:
+			var vb := veg_bits(u_ax[u], u_ay[u])
+			vd = vb & MapGen.V_DENS
+			urban = (vb & MapGen.V_URBAN) != 0
+			var vf: int = VEG_SPEED[cls][vd]
+			_u_vfac[u] = vf
+			if vf < 1000:
+				aspeed = aspeed * vf / 1000
+				stat_veg_slow += 1
 		var ax0 := u_ax[u]
 		var ay0 := u_ay[u]
 		var order := u_order[u]
@@ -1423,7 +2583,21 @@ func _update_units() -> void:
 			# their arc (attack order or fire at will) and shoot from here.
 			want_face = u_dface[u]
 			var at := u_target[u] if order == O_ATTACK else u_ftarget[u]
-			if order == O_ATTACK and (at < 0 or u_state[at] >= U_DESTROYED):
+			var gt := u_gtarget[u] if order == O_ATTACK else -1
+			if gt >= 0:
+				# Shooting at a gate: turn to bring it into the arc; done once
+				# it is open or broken.
+				at = -1
+				if gt >= n_gates or g_state[gt] != GATE_CLOSED:
+					u_order[u] = O_NONE
+					u_gtarget[u] = -1
+				else:
+					var gf := gate_face(gt)
+					var gbear := FM.atan2_a(gf.y - u_cy[u], gf.x - u_cx[u])
+					if absi(FM.angle_diff(u_face[u], gbear)) > t_arc[ty]:
+						want_face = gbear
+						u_dface[u] = gbear
+			elif order == O_ATTACK and (at < 0 or u_state[at] >= U_DESTROYED):
 				u_order[u] = O_NONE
 				u_target[u] = -1
 				at = -1
@@ -1433,22 +2607,33 @@ func _update_units() -> void:
 					want_face = bear
 					u_dface[u] = bear
 		elif order == O_MOVE or order == O_WITHDRAW:
-			var dx := u_dx[u] - u_ax[u]
-			var dy := u_dy[u] - u_ay[u]
+			# On a settlement map the anchor follows a path through the
+			# streets and gates (waypoints before the destination).
+			var wx := u_dx[u]
+			var wy := u_dy[u]
+			var via := false
+			if oon and u_wall[u] == 0:
+				var wp := _path_point(u, u_dx[u], u_dy[u], false)
+				if wp.x != wx or wp.y != wy:
+					via = true
+					wx = wp.x
+					wy = wp.y
+			var dx := wx - u_ax[u]
+			var dy := wy - u_ay[u]
 			var d := FM.isqrt(dx * dx + dy * dy)
 			if ton and d > 0:
 				aspeed = aspeed * _fac_dir(u, g0, dx, dy, d) / 1000
 			if d <= aspeed:
-				u_ax[u] = u_dx[u]
-				u_ay[u] = u_dy[u]
-				if order == O_MOVE:
+				u_ax[u] = wx
+				u_ay[u] = wy
+				if order == O_MOVE and not via:
 					u_order[u] = O_NONE
 			else:
 				u_ax[u] += dx * aspeed / d
 				u_ay[u] += dy * aspeed / d
 				# March facing the direction of travel; turn to the final
 				# facing for the last stretch.
-				if d > REFORM_IN_PLACE_DIST:
+				if via or d > REFORM_IN_PLACE_DIST:
 					want_face = FM.atan2_a(dy, dx)
 		elif order == O_ATTACK:
 			var t := u_target[u]
@@ -1462,7 +2647,25 @@ func _update_units() -> void:
 				var dy := u_cy[t] - u_ay[u]
 				var d := FM.isqrt(dx * dx + dy * dy)
 				want_face = u_face[u]  # engaged: hold the facing
-				if u_charge[u] != 0:
+				# Settlement map: go round by the streets while the target
+				# cannot be reached straight.
+				var via := false
+				if oon and u_wall[u] == 0 and u_charge[u] == 0 and u_fighting[u] == 0 \
+						and not (cls == UT.CLS_MISSILE and u_ammo[u] > 0 and d <= range_vs(u, t)):
+					var wp := _path_point(u, u_cx[t], u_cy[t], true)
+					if wp.x != u_cx[t] or wp.y != u_cy[t]:
+						via = true
+						var vx := wp.x - u_ax[u]
+						var vy := wp.y - u_ay[u]
+						var vdd := FM.isqrt(vx * vx + vy * vy)
+						if vdd > 0:
+							want_face = FM.atan2_a(vy, vx)
+							var mv0 := mini(aspeed, vdd)
+							u_ax[u] += vx * mv0 / vdd
+							u_ay[u] += vy * mv0 / vdd
+				if via:
+					pass
+				elif u_charge[u] != 0:
 					pass  # riders resolve the charge themselves; anchor waits
 				elif cls == UT.CLS_MISSILE and u_ammo[u] > 0:
 					# Shoot it: close to most of the range, then stand. On
@@ -1471,12 +2674,14 @@ func _update_units() -> void:
 					if d > 0:
 						want_face = FM.atan2_a(dy, dx)
 					var stop := t_m_range[ty] * 17 / 20
-					if ton:
+					if ton or mon:
 						stop = range_vs(u, t) * 17 / 20
 						if not lof_units(u, t):
 							stop = t_m_range[ty] / 4
-						if d > stop:
+						if d > stop and ton:
 							aspeed = aspeed * _fac_dir(u, g0, dx, dy, d) / 1000
+					if u_wall[u] > 0:
+						stop = d  # on the wall: shoot from here or not at all
 					if d > stop:
 						var mv := mini(aspeed, d - stop)
 						u_ax[u] += dx * mv / d
@@ -1487,6 +2692,11 @@ func _update_units() -> void:
 					var hh := (u_maxy[t] - u_miny[t]) >> 1
 					var ext := (absi(dx) * hw + absi(dy) * hh) / d
 					var stop := ext + M
+					if oon:
+						# Among buildings a unit stopping short of a deep column
+						# may have a corner between its men and the enemy's:
+						# press right up to it.
+						stop = mini(stop, 4 * M)
 					if ton and d > stop:
 						aspeed = aspeed * _fac_dir(u, g0, dx, dy, d) / 1000
 					if d > stop:
@@ -1495,6 +2705,11 @@ func _update_units() -> void:
 						u_ay[u] += dy * mv / d
 				u_dface[u] = want_face
 		_turn(u, want_face)
+		if oon and _u_obs[u] != 0 and u_wall[u] == 0 and not art and (u + tick) % 3 == 0:
+			_squeeze(u)
+		elif u_sq[u] != 0 and (not oon or _u_obs[u] == 0):
+			u_sq[u] = 0  # out of the streets: open out again
+			u_dirty[u] = 1
 		u_ax[u] = clampi(u_ax[u], 0, field_w)
 		u_ay[u] = clampi(u_ay[u], 0, field_h)
 		var mdx := u_ax[u] - ax0
@@ -1527,11 +2742,19 @@ func _update_units() -> void:
 					and not art:
 				dis = mini(dis + STEEP_DIS_GAIN, STEEP_DIS_CAP)
 				stat_steep_dis += 1
+		if vd > 0 and cls != UT.CLS_CAV and not art:
+			# Woods break up a formation as it moves through them; pikes
+			# cannot stand formed in medium or dense woods.
+			if moved > 0 and dis < VEG_DIS_CAP[vd]:
+				dis = mini(dis + VEG_DIS_GAIN[vd], VEG_DIS_CAP[vd])
+				stat_veg_dis += 1
+			if cls == UT.CLS_PIKE:
+				dis = maxi(dis, VEG_PIKE_FLOOR[vd])
 		u_disorder[u] = dis
 		var steady := dis < DISORDERED and u_morale[u] >= WAVER
 		if cls == UT.CLS_PIKE:
 			var turning := absi(FM.angle_diff(u_face[u], u_dface[u])) > TURN_DISORDER
-			u_formed[u] = 1 if steady and not turning and u_alive[u] >= 2 * mini(u_files[u], u_alive[u]) else 0
+			u_formed[u] = 1 if steady and not turning and u_alive[u] >= 2 * mini(files_of(u), u_alive[u]) else 0
 		else:
 			u_formed[u] = 0
 		# Braced: spears standing still in formation; pikes whenever formed.
@@ -1555,6 +2778,10 @@ func _update_units() -> void:
 						cap = maxi(100 - s_face * MOM_UP_K / FM.TRIG_ONE, CHARGE_MIN)
 					elif s_face <= -MOM_DOWN:
 						gain += 1
+				if mon:
+					cap = mini(cap, VEG_MOM_CAP[vd])
+					if urban:
+						cap = mini(cap, URBAN_MOM_CAP)
 				u_mom[u] = mini(u_mom[u] + gain, cap)
 			else:
 				u_mom[u] = maxi(u_mom[u] - MOM_LOSS, 0)
@@ -1630,7 +2857,7 @@ func _deploy_state(u: int, order: int, moved: int) -> void:
 			u_settled[u] = 0
 			if d == 0:
 				stat_packs += 1
-	elif moved == 0 and u_emove[u] == 0 and d < full:
+	elif moved == 0 and u_emove[u] == 0 and d < full and (veg_on == 0 or veg_d(u_ax[u], u_ay[u]) < 3):
 		d += 1
 		u_settled[u] = 0
 		if d == full:
@@ -1713,12 +2940,13 @@ func _missile_think(u: int) -> void:
 				return
 			var best := 0
 			var best_engaged := true
-			var flat_lof := ter_on != 0 and t_m_arc[ty] == 0
+			var flat_lof := (ter_on != 0 or map_on != 0) and t_m_arc[ty] == 0
+			var hgt := ter_on != 0 or obs_on != 0
 			for o in n_units:
 				if u_side[o] == u_side[u] or u_state[o] >= U_DESTROYED:
 					continue
 				var d := _unit_dist(u, o)
-				if d > rng and (ter_on == 0 or d > range_vs(u, o)):
+				if d > rng and (not hgt or d > range_vs(u, o)):
 					continue
 				var engaged := u_fighting[o] > 0
 				if ft < 0 or (best_engaged and not engaged) or (engaged == best_engaged and d < best):
@@ -1740,7 +2968,7 @@ func _missile_think(u: int) -> void:
 ## ground the height-adjusted range).
 func _in_range(u: int, t: int, rng: int) -> bool:
 	var d := _unit_dist(u, t)
-	if ter_on == 0:
+	if ter_on == 0 and obs_on == 0:
 		return d <= rng
 	return d <= range_vs(u, t)
 
@@ -1872,12 +3100,23 @@ func _update_soldiers() -> void:
 		var run := t_run[ty]
 		var face := u_face[u]
 		var n_rm := 0
+		# Settlement maps: men of a unit near an obstacle are kept out of
+		# blocked cells (walls, buildings, closed gates; the walkway is only
+		# for wall units and they never leave it).
+		var ob := obs_on != 0 and _u_obs[u] != 0
+		var navg := nav
+		var obw := ob_w
+		var obw1 := ob_w - 1
+		var obh1 := ob_h - 1
+		var mask := MapGen.NAV_WALL if u_wall[u] > 0 else MapGen.NAV_GROUND
 		if u_state[u] == U_ROUTING:
 			var rs := (run * 7) >> 3
 			var flx := u_flee_x[u]
 			var fly := u_flee_y[u]
 			if ter_on != 0:
 				rs = rs * _slope_fac(u, u_cx[u], u_cy[u], flx, fly) / 1000
+			if map_on != 0:
+				rs = rs * VEG_SPEED[u_cls[u]][veg_d(u_cx[u], u_cy[u])] / 1000
 			var rminx := fw
 			var rmaxx := 0
 			var rminy := fh
@@ -1891,6 +3130,10 @@ func _update_soldiers() -> void:
 				var fy := fly + flx * jitter / 24
 				var x := clampi(px[i] + ((fx * rs) / tone), 0, fw)
 				var y := clampi(py[i] + ((fy * rs) / tone), 0, fh)
+				if ob and (navg[mini(y >> 11, obh1) * obw + mini(x >> 11, obw1)] & mask) == 0:
+					var sl := _slide(u, px[i], py[i], x, y, mask)
+					x = sl.x
+					y = sl.y
 				px[i] = x
 				py[i] = y
 				fc[i] = FM.atan2_a(fy, fx)
@@ -1965,6 +3208,10 @@ func _update_soldiers() -> void:
 				else:
 					x = clampi(x + dx * spd / d, 0, fw)
 					y = clampi(y + dy * spd / d, 0, fh)
+				if ob and (navg[mini(y >> 11, obh1) * obw + mini(x >> 11, obw1)] & mask) == 0:
+					var sl2 := _slide(u, px[i], py[i], x, y, mask)
+					x = sl2.x
+					y = sl2.y
 				px[i] = x
 				py[i] = y
 				sumx += x
@@ -1992,6 +3239,12 @@ func _update_soldiers() -> void:
 			walk = walk * fac / 1000
 			run = run * fac / 1000
 			spd_formed = spd_formed * fac / 1000
+		if map_on != 0 and _u_vfac[u] < 1000:
+			# ... and the woods allow.
+			var vfac := _u_vfac[u]
+			walk = walk * vfac / 1000
+			run = run * vfac / 1000
+			spd_formed = spd_formed * vfac / 1000
 		var tg := target
 		var cd := cooldown
 		var gnext := grid_next
@@ -1999,7 +3252,7 @@ func _update_soldiers() -> void:
 		var gw := grid_w
 		var gmax := grid_w * grid_h - 1
 		var tk := tick
-		var files := maxi(mini(u_files[u], alive), 1)
+		var files := maxi(mini(files_of(u), alive), 1)
 		var reach := u_reach[u]
 		var want := (reach * 3) >> 2
 		var half_reach := reach >> 1
@@ -2095,7 +3348,8 @@ func _update_soldiers() -> void:
 				if t >= 0 and st[t] >= S_DEAD:
 					t = -1
 				if t < 0 and ((tk + i) & 1) == 0:
-					t = _find_target_cone(x, y, SEARCH_FRONT, fcos, fsin, enemy_head)
+					t = _find_target_cone_obs(x, y, SEARCH_FRONT, fcos, fsin, enemy_head) if ob \
+						else _find_target_cone(x, y, SEARCH_FRONT, fcos, fsin, enemy_head)
 			elif pike_formed:
 				if slot < pike_ranks:
 					if t >= 0:
@@ -2107,7 +3361,8 @@ func _update_soldiers() -> void:
 							if kx * kx + ky * ky > (reach + M) * (reach + M):
 								t = -1
 					if t < 0 and (tk + i) % 3 == 0:
-						t = _find_target_cone(x, y, reach, fcos, fsin, enemy_head)
+						t = _find_target_cone_obs(x, y, reach, fcos, fsin, enemy_head) if ob \
+							else _find_target_cone(x, y, reach, fcos, fsin, enemy_head)
 				else:
 					t = -1
 			else:
@@ -2127,9 +3382,11 @@ func _update_soldiers() -> void:
 					var wide := front or is_cav
 					if lost or (tk + i) % (3 if wide else 7) == 0:
 						if wide and not shy:
-							t = _find_target(x, y, SEARCH_FRONT, 2, enemy_head)
+							t = _find_target_obs(x, y, SEARCH_FRONT, 2, enemy_head) if ob \
+								else _find_target(x, y, SEARCH_FRONT, 2, enemy_head)
 						else:
-							t = _find_target(x, y, rear_r, 2, enemy_head)
+							t = _find_target_obs(x, y, rear_r, 2, enemy_head) if ob \
+								else _find_target(x, y, rear_r, 2, enemy_head)
 			tg[i] = t
 
 			if t >= 0 and not pike_formed:
@@ -2311,6 +3568,10 @@ func _update_soldiers() -> void:
 					ny += (ps * push2) / tone
 			nx = clampi(nx, 0, fw)
 			ny = clampi(ny, 0, fh)
+			if ob and (navg[mini(ny >> 11, obh1) * obw + mini(nx >> 11, obw1)] & mask) == 0:
+				var sl3 := _slide(u, x, y, nx, ny, mask)
+				nx = sl3.x
+				ny = sl3.y
 			px[i] = nx
 			py[i] = ny
 			counted += 1
@@ -2364,7 +3625,7 @@ func _find_target(x: int, y: int, r: int, cr: int, head: PackedInt32Array) -> in
 					var d2 := dx * dx + dy * dy
 					# Tie-break on index so the result never depends on
 					# list order.
-					if d2 < best_d or (d2 == best_d and j < best):
+					if (d2 < best_d or (d2 == best_d and j < best)):
 						best_d = d2
 						best = j
 				j = nxt[j]
@@ -2400,6 +3661,80 @@ func _find_target_cone(x: int, y: int, r: int, fc: int, fs: int, head: PackedInt
 						var f := (dx * fc + dy * fs) / tone
 						var lat := absi((dy * fc - dx * fs) / tone)
 						if f > 0 and lat < f + 2 * M:
+							best_d = d2
+							best = j
+				j = nxt[j]
+	return best
+
+
+## Settlement maps: _find_target that does not reach through walls, gates or
+## building corners and looks at most at SEARCH_CAP men.
+func _find_target_obs(x: int, y: int, r: int, cr: int, head: PackedInt32Array) -> int:
+	stat_searches += 1
+	var ob := _reach_checks(x, y)
+	var budget := SEARCH_CAP
+	var gs := GRID_SHIFT
+	var cx := x >> gs
+	var cy := y >> gs
+	var best := -1
+	var best_d := r * r + 1
+	var px := pos_x
+	var py := pos_y
+	var st := state
+	var nxt := grid_next
+	var gw := grid_w
+	for gy in range(maxi(cy - cr, 0), mini(cy + cr, grid_h - 1) + 1):
+		var row := gy * gw
+		for gx in range(maxi(cx - cr, 0), mini(cx + cr, gw - 1) + 1):
+			var j := head[row + gx]
+			while j >= 0 and budget > 0:
+				budget -= 1
+				if st[j] < S_DEAD:
+					var dx := px[j] - x
+					var dy := py[j] - y
+					var d2 := dx * dx + dy * dy
+					# Tie-break on index so the result never depends on
+					# list order. (Not through a wall, gate or building.)
+					if (d2 < best_d or (d2 == best_d and j < best)) and (ob == 0 or _reach_ok(x, y, px[j], py[j])):
+						best_d = d2
+						best = j
+				j = nxt[j]
+	return best
+
+
+## Settlement maps: _find_target_cone likewise (see _find_target_obs).
+## Nearest living enemy within radius r inside the forward cone (fc, fs Q12
+## facing): ahead of the soldier and no further to the side than ahead + 2 m.
+func _find_target_cone_obs(x: int, y: int, r: int, fc: int, fs: int, head: PackedInt32Array) -> int:
+	stat_searches += 1
+	var ob := _reach_checks(x, y)
+	var budget := SEARCH_CAP
+	var gs := GRID_SHIFT
+	var cr := (r >> gs) + 1
+	var cx := x >> gs
+	var cy := y >> gs
+	var best := -1
+	var best_d := r * r + 1
+	var px := pos_x
+	var py := pos_y
+	var st := state
+	var nxt := grid_next
+	var gw := grid_w
+	var tone := FM.TRIG_ONE  # fixed-point divisor: truncation is symmetric under mirroring (>> floors)
+	for gy in range(maxi(cy - cr, 0), mini(cy + cr, grid_h - 1) + 1):
+		var row := gy * gw
+		for gx in range(maxi(cx - cr, 0), mini(cx + cr, gw - 1) + 1):
+			var j := head[row + gx]
+			while j >= 0 and budget > 0:
+				budget -= 1
+				if st[j] < S_DEAD:
+					var dx := px[j] - x
+					var dy := py[j] - y
+					var d2 := dx * dx + dy * dy
+					if d2 < best_d or (d2 == best_d and j < best):
+						var f := (dx * fc + dy * fs) / tone
+						var lat := absi((dy * fc - dx * fs) / tone)
+						if f > 0 and lat < f + 2 * M and (ob == 0 or _reach_ok(x, y, px[j], py[j])):
 							best_d = d2
 							best = j
 				j = nxt[j]
@@ -2471,6 +3806,12 @@ func _melee(a: int, d: int, pen: int, parting: bool = false) -> void:
 		var vc := t_vs_cav[u_type[ua]]
 		att += vc
 		dmg0 += vc
+	if veg_on != 0:
+		# Horses cannot turn and press among trees.
+		if u_cls[ua] == UT.CLS_CAV:
+			bonus -= VEG_CAV_MELEE[veg_d(pos_x[a], pos_y[a])]
+		if u_cls[ud] == UT.CLS_CAV:
+			bonus += VEG_CAV_MELEE[veg_d(pos_x[d], pos_y[d])]
 	var chance := clampi(BASE_HIT + att - def + bonus - pen, 5, 95)
 	if ter_on == 0:
 		if _rand() % 100 >= chance:
@@ -2567,6 +3908,12 @@ func _impact(r: int, t: int, mom: int) -> void:
 		elif f < 100:
 			stat_charge_up += 1
 		power = power * f / 100
+	if veg_on != 0:
+		# Into a man standing in woods: the trees break the charge.
+		var vdv := veg_d(pos_x[t], pos_y[t])
+		if vdv > 0:
+			power = power * VEG_IMPACT[vdv] / 100
+			stat_veg_impact += 1
 	var ma := t_mass[rty]
 	if not _impact_victim(r, t, power, ma, zone):
 		return  # stopped by a man who stood his ground in a steady front
@@ -2647,7 +3994,7 @@ func _impact_victim(r: int, v: int, power: int, ma: int, zone: int) -> bool:
 				force /= 2  # taken on the shield
 				stat_impact_blocked += 1
 			# Ranks behind brace the man: harder to bowl over.
-			if u_alive[uv] > 2 * maxi(mini(u_files[uv], u_alive[uv]), 1):
+			if u_alive[uv] > 2 * maxi(mini(files_of(uv), u_alive[uv]), 1):
 				knock = mini(force + 10, 90) / 2
 			else:
 				knock = mini(force + 10, 90)
@@ -2713,7 +4060,7 @@ func _remove(d: int, why: int) -> void:
 	ammo[d] = 0
 	var alive := u_alive[u]
 	var base := u_slot_base[u]
-	var files := maxi(u_files[u], 1)
+	var files := maxi(files_of(u), 1)
 	# Fill the gap: the soldier behind steps forward, repeatedly, so the hole
 	# ends at the back; then the last slot fills it to keep slots compact.
 	var hole := slot_of[d]
@@ -2865,7 +4212,7 @@ func _fire(i: int, u: int, ft: int, ty: int) -> void:
 	var dx := ax - sx
 	var dy := ay - sy
 	var dist := FM.approx_len(dx, dy)
-	if ter_on == 0:
+	if ter_on == 0 and map_on == 0:
 		if dist > t_m_range[ty] or dist <= 0 or pr_free < 0:
 			return
 	else:
@@ -2903,8 +4250,8 @@ func _fire(i: int, u: int, ft: int, ty: int) -> void:
 ## Hilly maps: a shot from (sx, sy) at (ax, ay), dist apart, is within the
 ## height-adjusted range and, for a flat weapon, has a line of fire.
 func _shot_ok(sx: int, sy: int, ax: int, ay: int, dist: int, ty: int) -> bool:
-	var hs := height_at(sx, sy)
-	var ha := height_at(ax, ay)
+	var hs := elev_at(sx, sy) if obs_on != 0 else height_at(sx, sy)
+	var ha := elev_at(ax, ay) if obs_on != 0 else height_at(ax, ay)
 	if dist > range_h(ty, hs, ha):
 		return false
 	if dist > t_m_range[ty]:
@@ -2968,6 +4315,18 @@ func _land(p: int) -> void:
 			var hr := HIT_R_CAV if u_cls[tu] == UT.CLS_CAV else HIT_R_INF
 			if dx * dx + dy * dy <= hr * hr:
 				best = j
+	if best >= 0 and map_on != 0:
+		# Trees take some of what falls into woods; battlements shelter men
+		# on a wall from shots from below.
+		var vd := veg_d(x, y)
+		if vd > 0:
+			var stop: int = VEG_STOP_ARROW[vd] if t_m_arc[u_type[pr_unit[p]]] != 0 else VEG_STOP_JAV[vd]
+			if _rand() % 100 < stop:
+				stat_veg_stop += 1
+				return
+		if u_wall[unit_of[best]] > 0 and u_wall[pr_unit[p]] == 0 and _rand() % 100 < WALL_COVER:
+			stat_wall_cover += 1
+			return
 	if best >= 0:
 		_missile_hit(p, best)
 
@@ -2979,7 +4338,7 @@ func _slot_at(u: int, x: int, y: int) -> int:
 	var fsp := t_fsp[ty]
 	var rsp := t_rsp[ty]
 	var alive := u_alive[u]
-	var files := maxi(mini(u_files[u], alive), 1)
+	var files := maxi(mini(files_of(u), alive), 1)
 	var c := FM.cos_a(u_face[u])
 	var s := FM.sin_a(u_face[u])
 	var rx := x - u_ax[u]
@@ -3073,7 +4432,9 @@ func _art_think(u: int) -> void:
 	if u_ammo[u] > 0 and order != O_MOVE and order != O_WITHDRAW and u_rprog[u] == 0:
 		var rng := t_m_range[ty]
 		var mn := t_m_min[ty]
-		if order == O_ATTACK:
+		if order == O_ATTACK and u_gtarget[u] >= 0:
+			pass  # shooting at a gate (_update_artillery)
+		elif order == O_ATTACK:
 			var t := u_target[u]
 			if t >= 0 and u_state[t] < U_DESTROYED and _art_in_range(u, t, mn, rng):
 				ft = t
@@ -3108,7 +4469,7 @@ func _art_think(u: int) -> void:
 
 func _art_in_range(u: int, t: int, mn: int, rng: int) -> bool:
 	var d := FM.approx_len(u_cx[t] - u_cx[u], u_cy[t] - u_cy[u])
-	if ter_on != 0:
+	if ter_on != 0 or obs_on != 0:
 		rng = range_vs(u, t)
 	return d >= mn and _unit_dist(u, t) <= rng
 
@@ -3159,6 +4520,20 @@ func _update_artillery() -> void:
 		var esp := t_fsp[ty]
 		var spd := t_walk[ty] * 2
 		var ft := u_ftarget[u]
+		# Aim: the unit fired at, or the face of the gate ordered at.
+		var gt := u_gtarget[u] if u_order[u] == O_ATTACK else -1
+		if gt >= 0 and (gt >= n_gates or g_state[gt] != GATE_CLOSED):
+			gt = -1
+		var aim := gt >= 0 or ft >= 0
+		var tx := 0
+		var tyy := 0
+		if gt >= 0:
+			var gf := gate_face(gt)
+			tx = gf.x
+			tyy = gf.y
+		elif ft >= 0:
+			tx = u_cx[ft]
+			tyy = u_cy[ft]
 		var moving := 0
 		var changed := false
 		for k in ne:
@@ -3188,8 +4563,8 @@ func _update_artillery() -> void:
 			elif u_rprog[u] == 0:
 				# Traverse toward the target, within the arc of the battery.
 				var want := face
-				if ft >= 0:
-					var bear := FM.atan2_a(u_cy[ft] - e_y[e], u_cx[ft] - e_x[e])
+				if aim:
+					var bear := FM.atan2_a(tyy - e_y[e], tx - e_x[e])
 					var off := clampi(FM.angle_diff(face, bear), -t_arc[ty], t_arc[ty])
 					want = (face + off) & FM.ANGLE_MASK
 				var diff := FM.angle_diff(e_face[e], want)
@@ -3231,7 +4606,7 @@ func _update_artillery() -> void:
 			_refill_work(u)
 			continue
 		# Shoot: set up, standing, a target, loaded, crewed and on the bearing.
-		if u_depl[u] < full or ft < 0 or u_moved[u] != 0 or u_rprog[u] > 0:
+		if u_depl[u] < full or not aim or u_moved[u] != 0 or u_rprog[u] > 0:
 			continue
 		var need := t_m_reload[ty] * t_crew[ty]
 		for k in ne:
@@ -3244,10 +4619,11 @@ func _update_artillery() -> void:
 				e_reload[e] = mini(e_reload[e] + e_crew[e], need)
 			if e_reload[e] < need:
 				continue
-			var bear := FM.atan2_a(u_cy[ft] - e_y[e], u_cx[ft] - e_x[e])
+			var bear := FM.atan2_a(tyy - e_y[e], tx - e_x[e])
 			if absi(FM.angle_diff(e_face[e], bear)) > ALIGN:
 				continue
-			if _art_fire(e, u, ft, ty):
+			var fired := _art_fire_gate(e, u, gt, ty) if gt >= 0 else _art_fire(e, u, ft, ty)
+			if fired:
 				e_reload[e] = 0
 
 
@@ -3351,7 +4727,7 @@ func _art_fire(e: int, u: int, ft: int, ty: int) -> bool:
 	var dx := ax - sx
 	var dy := ay - sy
 	var dist := FM.approx_len(dx, dy)
-	if ter_on == 0:
+	if ter_on == 0 and map_on == 0:
 		if dist > t_m_range[ty] or dist < t_m_min[ty] or dist <= 0:
 			return false
 	elif dist < t_m_min[ty] or dist <= 0 or not _shot_ok(sx, sy, ax, ay, dist, ty):
@@ -3383,6 +4759,50 @@ func _art_fire(e: int, u: int, ft: int, ty: int) -> bool:
 	pr_t1[p] = tick + flight
 	pr_unit[p] = u
 	pr_tu[p] = ft
+	var b := (tick + flight) % PR_BUCKETS
+	pr_next[p] = pr_bucket[b]
+	pr_bucket[b] = p
+	return true
+
+
+## Engine e of battery u shoots at the face of gate g (no lead; the same
+## scatter). Returns false if no shot was possible.
+func _art_fire_gate(e: int, u: int, g: int, ty: int) -> bool:
+	if pr_free < 0:
+		return false
+	var sx := e_x[e]
+	var sy := e_y[e]
+	var gf := gate_face(g)
+	var dx := gf.x - sx
+	var dy := gf.y - sy
+	var dist := FM.approx_len(dx, dy)
+	if dist < t_m_min[ty] or dist <= 0 or not _shot_ok(sx, sy, gf.x, gf.y, dist, ty):
+		return false
+	var p := pr_free
+	pr_free = pr_next[p]
+	pr_count += 1
+	e_ammo[e] -= 1
+	u_ammo[u] -= 1
+	if t_m_kind[ty] == 1:
+		stat_bolts += 1
+	else:
+		stat_stones += 1
+	var spread := t_m_spread0[ty] + dist * t_m_spread[ty] / 1000
+	var lat := (_rand() % (spread + 1) + _rand() % (spread + 1)) - spread
+	var lon := ((_rand() % (spread + 1) + _rand() % (spread + 1)) - spread) * 3 / 2
+	if lon > 0:
+		lon = lon * t_m_long[ty] / 100
+	var ux := dx * FM.TRIG_ONE / dist
+	var uy := dy * FM.TRIG_ONE / dist
+	var flight := clampi(dist / t_m_speed[ty] + 3, 3, PR_BUCKETS - 1)
+	pr_sx[p] = sx
+	pr_sy[p] = sy
+	pr_x[p] = clampi(gf.x + ((ux * lon - uy * lat) / FM.TRIG_ONE), 0, field_w)
+	pr_y[p] = clampi(gf.y + ((uy * lon + ux * lat) / FM.TRIG_ONE), 0, field_h)
+	pr_t0[p] = tick
+	pr_t1[p] = tick + flight
+	pr_unit[p] = u
+	pr_tu[p] = -2 - g
 	var b := (tick + flight) % PR_BUCKETS
 	pr_next[p] = pr_bucket[b]
 	pr_bucket[b] = p
@@ -3520,6 +4940,8 @@ func _sw_insert(v: int, al: int, lt: int) -> void:
 ## armour is mostly pierced, each body absorbs BOLT_BODY + armour, and later
 ## men are less likely to be struck. An engine on the line stops it.
 func _land_bolt(p: int) -> void:
+	if pr_tu[p] <= -2 and _gate_hit(p, GATE_BOLT):
+		return
 	var u := pr_unit[p]
 	var ty := u_type[u]
 	var sx := pr_sx[p]
@@ -3532,12 +4954,13 @@ func _land_bolt(p: int) -> void:
 	var a1 := dist + t_m_plough[ty]
 	var z0 := 0
 	var dz := 0
-	if ter_on != 0:
+	if ter_on != 0 or map_on != 0:
 		# Over hilly ground the bolt flies a straight line from the engine to
 		# the aim point and on: the ground stops it where it rises above that
 		# line, and it passes over (or under) men it is not at body height for.
-		z0 = height_at(sx, sy) + LOF_EYE
-		dz = height_at(pr_x[p], pr_y[p]) + LOF_BODY - z0
+		# Woods, walls and buildings stop it too.
+		z0 = elev_at(sx, sy) + LOF_EYE
+		dz = elev_at(pr_x[p], pr_y[p]) + LOF_BODY - z0
 		var blk := lof_block(sx, sy, z0, pr_x[p], pr_y[p], z0 + dz, dist * t_m_apex[ty] / 100,
 			t_m_plough[ty])
 		if blk >= 0:
@@ -3552,10 +4975,10 @@ func _land_bolt(p: int) -> void:
 		if energy < SHOT_STOP or hits >= t_m_pierce[ty]:
 			break
 		var v := _sw_v[k]
-		if ter_on != 0:
+		if ter_on != 0 or obs_on != 0:
 			var vx := e_x[-v - 1] if v < 0 else pos_x[v]
 			var vy := e_y[-v - 1] if v < 0 else pos_y[v]
-			var rel := z0 + dz * _sw_a[k] / dist - height_at(vx, vy)
+			var rel := z0 + dz * _sw_a[k] / dist - elev_at(vx, vy)
 			if rel < BOLT_BODY_LO or rel > BOLT_BODY_HI:
 				continue
 		if v < 0:
@@ -3585,6 +5008,8 @@ func _land_bolt(p: int) -> void:
 ## body (STONE_BODY + armour) and every metre. Friend or foe alike. Engines
 ## it reaches take double damage (counter-battery fire).
 func _land_stone(p: int) -> void:
+	if pr_tu[p] <= -2 and _gate_hit(p, GATE_STONE):
+		return
 	var u := pr_unit[p]
 	var ty := u_type[u]
 	var lx := pr_x[p]
@@ -3607,6 +5032,17 @@ func _land_stone(p: int) -> void:
 		elif g < 0:
 			pf = 1000 - g * STONE_DOWN_K * 10 / FM.TRIG_ONE
 		plough = plough * clampi(pf, STONE_PLOUGH_MIN, STONE_PLOUGH_MAX) / 1000
+	if map_on != 0:
+		# Trees catch some stones and slow the rest; walls and houses stop
+		# the plough.
+		var vd := veg_d(lx, ly)
+		if vd > 0:
+			if _rand() % 100 < VEG_STOP_STONE[vd]:
+				stat_veg_stop += 1
+				return
+			plough = plough * VEG_PLOUGH[vd] / 1000
+		if obs_on != 0:
+			plough = _obs_run(lx, ly, ux, uy, plough)
 	_sweep(lx, ly, ux, uy, -blast, plough, r, maxi(blast, STONE_R_CAV))
 	var energy0 := t_m_dmg[ty]
 	var hits := 0
@@ -3777,6 +5213,10 @@ func _nearest_enemy_unit(u: int, ready_only: bool) -> int:
 func _start_rout(u: int) -> void:
 	u_state[u] = U_ROUTING
 	u_routs[u] += 1
+	u_sq[u] = 0
+	u_gtarget[u] = -1
+	if obs_on != 0:
+		u_pn[u] = 0
 	u_order[u] = O_NONE
 	u_target[u] = -1
 	u_ftarget[u] = -1
@@ -3800,6 +5240,8 @@ func _start_rout(u: int) -> void:
 
 func _rally(u: int) -> void:
 	u_state[u] = U_READY
+	if obs_on != 0:
+		u_pn[u] = 0
 	u_morale[u] = RALLY_THRESHOLD
 	var e := _nearest_enemy_unit(u, false)
 	var face := u_face[u]
@@ -3894,7 +5336,10 @@ func result() -> Dictionary:
 ## scenario and seed (the unit type tables t_*, the terrain grid) or
 ## view-only diagnostics that are large.
 const _SNAP_SKIP := {"ter_h": true, "ter_gx": true, "ter_gy": true, "ter_info": true,
-	"dbg_impacted": true}
+	"dbg_impacted": true, "veg": true, "obs": true, "obs_c": true, "obs_cd": true, "map_info": true,
+	"ws_x0": true, "ws_y0": true, "ws_x1": true, "ws_y1": true, "ws_dir": true, "ng_x": true,
+	"ng_y": true, "ng_gate": true, "ng_e0": true, "ng_to": true, "ng_w": true, "_dist_cache": true,
+	"_dist_epoch": true}
 const _SNAP_MAGIC := 0x31534353  # "SCS1"
 
 
@@ -3951,6 +5396,9 @@ func restore(blob: PackedByteArray) -> bool:
 			return false
 	for k in d:
 		set(k, d[k])
+	# Derived path distances belong to the gates as they were here.
+	_dist_cache = {}
+	_dist_epoch = -1
 	return true
 
 
@@ -3980,5 +5428,18 @@ func state_hash() -> int:
 	ctx.update(ai_phase.to_byte_array())
 	ctx.update(ai_t.to_byte_array())
 	ctx.update(ai_hold.to_byte_array())
+	if map_on != 0:
+		# Woods / settlement maps only (a plain map hashes as it always did).
+		for arr in _map_unit_arrays():
+			ctx.update((arr as PackedInt32Array).to_byte_array())
+		ctx.update(pth_x.to_byte_array())
+		ctx.update(pth_y.to_byte_array())
+		ctx.update(tr_x.to_byte_array())
+		ctx.update(tr_y.to_byte_array())
+		ctx.update(PackedInt64Array([cap_t, nav_epoch, n_gates, ai_gate[0], ai_gate[1]]).to_byte_array())
+		if n_gates > 0:
+			ctx.update(g_hp.to_byte_array())
+			ctx.update(g_state.to_byte_array())
+		ctx.update(ai_prog.to_byte_array())
 	var digest := ctx.finish()
 	return digest.decode_u32(0)

@@ -57,8 +57,10 @@ static func parse(text: String) -> Dictionary:
 		return {}
 	var data: Dictionary = CState.normalise(v)
 	var st: Dictionary = data["state"]
-	if str(st.get("format", "")) != CState.FORMAT or int(st.get("version", 0)) > CState.VERSION:
+	if str(st.get("format", "")) != CState.FORMAT or int(st.get("version", 0)) > CState.VERSION \
+			or int(st.get("version", 0)) < CState.MIN_VERSION:
 		return {}
+	CState.migrate(st)  # older local saves get the new fields
 	if not data.has("session"):
 		data["session"] = {}
 	return data

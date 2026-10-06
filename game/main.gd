@@ -16,6 +16,7 @@ const CState := preload("res://campaign/cstate.gd")
 const CData := preload("res://campaign/cdata.gd")
 const NetScript := preload("res://game/net/net.gd")
 const NetSelftest := preload("res://game/net/net_selftest.gd")
+const MapGen := preload("res://sim/mapgen.gd")
 ## Menu terrain choices for the playable battles: -1 = random from the seed.
 const TERRAIN_CHOICES := [-1, Terrain.K_FLAT, Terrain.K_ROLLING, Terrain.K_RIDGE,
 	Terrain.K_VALLEY, Terrain.K_HILL, Terrain.K_SLOPE]
@@ -27,6 +28,20 @@ var _seed := -1
 var _terrain_idx := 0
 var _terrain_button: Button
 var _replay_button: Button
+## Ground palette for the playable battles (MapGen.PAL_*; Plain = no woods).
+var _ground_idx := 0
+var _ground_button: Button
+## Settlement battle controls: seed, level 0-2, walls 0-3, terrain kind,
+## the player attacks (def side 1) or defends (0).
+var _siege_seed: LineEdit
+var _siege_level := 1
+var _siege_walls := 1
+var _siege_kind_idx := 0
+var _siege_def := 1
+var _siege_buttons := {}
+const SIEGE_KINDS := [Terrain.K_ROLLING, Terrain.K_FLAT, Terrain.K_HILL, Terrain.K_RIDGE]
+## Last settlement battle (replayed by Replay), empty if the last was not one.
+var _last_siege: Array = []
 ## Last battle started from the menu: replayed with the same seed and terrain.
 var _last_id := ""
 var _last_seed := -1
@@ -138,6 +153,9 @@ func _ready() -> void:
 				if v == nm or v == str(kind):
 					_terrain_idx = k
 			_update_terrain_button()
+		elif a.begins_with("--ground="):
+			_ground_idx = clampi(int(a.get_slice("=", 1)), 0, MapGen.PALETTE_NAMES.size() - 1)
+			_update_ground_button()
 	for a in args:
 		if a == "--menu-tests":
 			_toggle_tests()  # testing aid: open the Tests section
@@ -148,6 +166,12 @@ func _ready() -> void:
 	for a in args:
 		if a.begins_with("--scenario="):
 			_start(a.get_slice("=", 1))
+		elif a.begins_with("--siege="):
+			# Testing aid: --siege=seed:level:walls[:ground[:kind[:defend]]]
+			var sp: PackedStringArray = a.get_slice("=", 1).split(":")
+			_start_siege([int(sp[0]), int(sp[1]) if sp.size() > 1 else 1, int(sp[2]) if sp.size() > 2 else 1,
+				int(sp[3]) if sp.size() > 3 else MapGen.PAL_DRY, int(sp[4]) if sp.size() > 4 else Terrain.K_ROLLING,
+				0 if sp.size() > 5 and int(sp[5]) != 0 else 1])
 		elif a.begins_with("--menu-page="):
 			show_page(a.get_slice("=", 1))  # testing aid
 		elif a == "--new-campaign":
@@ -261,6 +285,9 @@ func _build_menu() -> Control:
 	_terrain_button = _menu_button("", _cycle_terrain)
 	_terrain_button.tooltip_text = "Ground for the three battles (tests have their own)"
 	row.add_child(_terrain_button)
+	_ground_button = _menu_button("", _cycle_ground)
+	_ground_button.tooltip_text = "Region look and woods: plain (no woods), arid, dry, green, rocky"
+	row.add_child(_ground_button)
 	_replay_button = _menu_button("Replay last battle", _replay)
 	_replay_button.tooltip_text = "Same battle, same seed, same ground"
 	_replay_button.disabled = true
@@ -270,6 +297,8 @@ func _build_menu() -> Control:
 	row.add_child(_tests_button)
 	row.add_child(_menu_button("< Back", show_page.bind("home")))
 	_update_terrain_button()
+	_update_ground_button()
+	vb.add_child(_build_siege_row())
 	# Tests and benchmarks, folded away by default.
 	var grid := GridContainer.new()
 	grid.columns = 4
@@ -288,7 +317,7 @@ func _build_menu() -> Control:
 		grid.add_child(tb)
 	_tests_box = grid
 	var help := Label.new()
-	help.text = "Tap a unit or its card to select; All / Inf / Missile / Cav select groups, + Add adds by tapping cards.\nDrag to draw the front line. Tap ground to move, tap an enemy to attack (missile troops and artillery\nshoot it), double tap to run. Contour lines are 2 m apart: high ground helps. Long press a card: unit book."
+	help.text = "Tap a unit or its card to select; All / Inf / Missile / Cav select groups, + Add adds by tapping cards.\nDrag to draw the front line. Tap ground to move, tap an enemy to attack (missile troops and artillery\nshoot it), double tap to run. Contour lines are 2 m apart: high ground helps. Long press a card: unit book.\nSettlements: select engines or foot and tap a gate to break it; defending, tap a gate (nothing selected) to open or shut it."
 	help.add_theme_font_size_override("font_size", 13)
 	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	help.modulate = Color(1, 1, 1, 0.75)
@@ -571,7 +600,7 @@ func _join_find() -> void:
 		return
 	_join_info.text = ""
 	var d: Dictionary = CState.normalise(r["data"])
-	if int(d.get("format_version", 0)) != CState.VERSION:
+	if int(d.get("format_version", 0)) > CState.VERSION or int(d.get("format_version", 0)) < CState.MIN_VERSION:
 		_join_info.text = "That campaign was made by a different version of the game: reload the page to update."
 		return
 	_join_box.add_child(Kit.label("%s, turn %d." % [d.get("name", ""), int(d.get("turn", 0)) + 1], 17, Color.WHITE))
@@ -811,6 +840,96 @@ func _update_size_button() -> void:
 		_size_button.text = "UI size: " + UiScale.size_name()
 
 
+## Settlement battles: a seed, the level and walls, the ground kind, attack
+## or defend; Start opens the settlement's battle map (the ground palette is
+## the Ground button's; Plain uses the dry one).
+func _build_siege_row() -> Control:
+	var box := HFlowContainer.new()
+	box.add_theme_constant_override("h_separation", 8)
+	box.add_theme_constant_override("v_separation", 8)
+	box.alignment = FlowContainer.ALIGNMENT_CENTER
+	var l := Label.new()
+	l.text = "Settlement battle:"
+	l.add_theme_font_size_override("font_size", 15)
+	l.custom_minimum_size = Vector2(0, 42)
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	box.add_child(l)
+	_siege_seed = LineEdit.new()
+	_siege_seed.text = "1"
+	_siege_seed.placeholder_text = "seed"
+	_siege_seed.custom_minimum_size = Vector2(96, 42)
+	_siege_seed.tooltip_text = "Settlement seed: the same seed, level and walls always give the same map"
+	box.add_child(_siege_seed)
+	for key in ["level", "walls", "kind", "side"]:
+		var b := _menu_button("", _cycle_siege.bind(key))
+		b.custom_minimum_size = Vector2(110, 42)
+		_siege_buttons[key] = b
+		box.add_child(b)
+	var go := _menu_button("Start", func(): _start_siege(_siege_params()))
+	go.custom_minimum_size = Vector2(100, 42)
+	box.add_child(go)
+	_update_siege_buttons()
+	return box
+
+
+func _cycle_siege(key: String) -> void:
+	match key:
+		"level":
+			_siege_level = (_siege_level + 1) % 3
+		"walls":
+			_siege_walls = (_siege_walls + 1) % 4
+		"kind":
+			_siege_kind_idx = (_siege_kind_idx + 1) % SIEGE_KINDS.size()
+		"side":
+			_siege_def = 1 - _siege_def
+	_update_siege_buttons()
+
+
+func _update_siege_buttons() -> void:
+	if _siege_buttons.is_empty():
+		return
+	(_siege_buttons["level"] as Button).text = ["Village", "Town", "City"][_siege_level]
+	(_siege_buttons["walls"] as Button).text = "Walls %d" % _siege_walls
+	(_siege_buttons["kind"] as Button).text = Terrain.KIND_NAMES[SIEGE_KINDS[_siege_kind_idx]]
+	(_siege_buttons["side"] as Button).text = "You attack" if _siege_def == 1 else "You defend"
+
+
+func _siege_params() -> Array:
+	var sd := absi(int(_siege_seed.text)) if _siege_seed.text.is_valid_int() else absi(_siege_seed.text.hash())
+	var ground := _ground_idx if _ground_idx > 0 else MapGen.PAL_DRY
+	return [sd, _siege_level, _siege_walls, ground, SIEGE_KINDS[_siege_kind_idx], _siege_def]
+
+
+## params: [seed, level, walls, ground, kind, def side].
+func _start_siege(params: Array) -> void:
+	if _battle != null:
+		return
+	_menu.visible = false
+	var b := Battle.new()
+	b.scenario_id = "settlement"
+	b.custom_scenario = Scenarios.siege_test(params[0], params[1], params[2], params[3], params[4], params[5])
+	b.seed_value = _seed if _seed >= 0 else int(Time.get_unix_time_from_system()) & 0x7FFFFFFF
+	_last_siege = params
+	_last_id = "settlement"
+	_last_seed = b.seed_value
+	_replay_button.disabled = false
+	_replay_button.text = "Replay (seed %d)" % b.seed_value
+	b.speed_idx = clampi(_speed_idx, 0, Battle.SPEEDS.size() - 1)
+	b.exit_requested.connect(_end_battle)
+	_battle = b
+	get_tree().root.add_child.call_deferred(b)
+
+
+func _cycle_ground() -> void:
+	_ground_idx = (_ground_idx + 1) % MapGen.PALETTE_NAMES.size()
+	_update_ground_button()
+
+
+func _update_ground_button() -> void:
+	if _ground_button != null:
+		_ground_button.text = "Ground: " + MapGen.PALETTE_NAMES[_ground_idx].to_lower()
+
+
 func _cycle_terrain() -> void:
 	_terrain_idx = (_terrain_idx + 1) % TERRAIN_CHOICES.size()
 	_update_terrain_button()
@@ -825,6 +944,12 @@ func _update_terrain_button() -> void:
 
 func _replay() -> void:
 	if _last_id == "":
+		return
+	if _last_id == "settlement" and not _last_siege.is_empty():
+		var keep := _seed
+		_seed = _last_seed
+		_start_siege(_last_siege)
+		_seed = keep
 		return
 	_start_with(_last_id, _last_seed, _last_terrain)
 
@@ -884,6 +1009,9 @@ func _start_with(id: String, sd: int, terrain_kind: int) -> void:
 	b.scenario_id = id
 	b.seed_value = sd
 	b.terrain_kind = terrain_kind
+	if id in Scenarios.PLAYABLE and _ground_idx > 0:
+		b.ground = _ground_idx
+	_last_siege = []
 	_last_id = id
 	_last_seed = sd
 	_last_terrain = terrain_kind

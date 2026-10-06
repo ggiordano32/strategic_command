@@ -4,11 +4,15 @@ extends RefCounted
 ## build(): a pending battle as a BattleSim scenario: both sides' armies at
 ## their current headcounts and tiers, the garrison on the defending side,
 ## reinforcing armies simply as more units in the line (a simplification:
-## later they should arrive from the map edge they come from), terrain from
-## the region's kind with a seed derived from campaign seed + region + turn,
-## and for a settlement with walls the defenders deployed on a ridge 3 m +
-## 3 m per wall level high (the battle AI holds high ground). The human side
-## (if any) is sim side 0, at the bottom.
+## later they should arrive from the map edge they come from). A battle at a
+## settlement (every battle under the current campaign rules) is fought on
+## the settlement's own map (sim/mapgen.gd): from its fixed city_seed, level,
+## wall level, buildings, the region's terrain kind, ground palette and
+## woods, so a city always looks the same at a given stage; the garrison's
+## missile troops start on the walls (Scenarios.settlement). A field battle
+## (settlement 0) gets the region's terrain and woods with a seed from
+## campaign seed + region + turn. The human side (if any) is sim side 0, at
+## the bottom.
 ##
 ## Command seam: "unit_faction" lists the campaign faction of every sim
 ## unit and "controller" the faction that commands it. For now the human
@@ -67,6 +71,8 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct: i
 		var g: Dictionary = gar[k]
 		if int(g["n"]) > 0:
 			entries[1].append({"army": -1, "unit": k, "t": str(g["t"]), "n": int(g["n"]), "f": int(b["def_f"])})
+	if int(b.get("settlement", 1)) != 0:
+		return _build_settlement(st, b, human_f, scale_pct, entries, sim_side, gar)
 	var layouts := [_layout(entries[0]), _layout(entries[1])]
 	var width := 560
 	for s in 2:
@@ -98,15 +104,8 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct: i
 			units.append(Scenarios.unit(ss, ty, cnt, x, y, face))
 			map.append({"side": cs, "army": int(e["army"]), "unit": int(e["unit"]), "n": int(e["n"]), "sim_n": cnt})
 			ufac.append(int(e["f"]))
-	var terrain := {"kind": int(CData.REGIONS[r]["terrain"]), "seed": battle_seed(st, r, 1)}
-	var w := CState.walls(st, r)
-	if w > 0 and int(b.get("settlement", 1)) != 0:
-		# The defenders' line stands on a ridge along their front.
-		var ds: int = sim_side[1]
-		var y_front := height / 2 + FRONT + 6
-		if ds == 1:
-			y_front = height - y_front
-		terrain["features"] = [Scenarios.ridge(width / 2, y_front, 34, 3 + 3 * w, 0, width / 2 - 40)]
+	var terrain := {"kind": int(CData.REGIONS[r]["terrain"]), "seed": battle_seed(st, r, 1),
+		"forest": int(CData.REGIONS[r]["forest"]), "ground": int(CData.REGIONS[r]["ground"])}
 	var ai: Array = [0, 1] if human_f < 0 else [1]
 	var controller: Array = []
 	for f in ufac:
@@ -114,6 +113,63 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct: i
 	return {"scenario": {"width_m": width, "height_m": height, "ai_sides": ai, "units": units, "terrain": terrain},
 		"seed": battle_seed(st, r, 2), "map": map, "sim_side": sim_side, "garrison": gar,
 		"unit_faction": ufac, "controller": controller, "battle": int(b["id"]), "region": r}
+
+
+## Settlement battle: the city's map, attackers before its main gate, the
+## defenders (garrison and armies) inside (Scenarios.settlement).
+static func _build_settlement(st: Dictionary, b: Dictionary, human_f: int, scale_pct: int,
+		entries: Array, sim_side: Array, gar: Array) -> Dictionary:
+	var r := int(b["r"])
+	var lists := [[], []]
+	for cs in 2:
+		for e in entries[cs]:
+			var ty := UT.index_of(str(e["t"]))
+			var cnt := int(e["n"])
+			if scale_pct != 100 and UT.cls(ty) != UT.CLS_ART:
+				cnt = maxi(cnt * scale_pct / 100, mini(cnt, 8))
+			lists[cs].append([ty, cnt])
+	var rd: Dictionary = CData.REGIONS[r]
+	var cseed := CState.city_seed(st, r)
+	var city := {"seed": cseed, "level": int(st["regions"][r]["level"]), "walls": CState.walls(st, r),
+		"bld": city_buildings(st, r)}
+	var terr := {"kind": int(rd["terrain"]), "seed": (cseed ^ 0x2545F491) & 0x7FFFFFFF,
+		"forest": int(rd["forest"]), "ground": int(rd["ground"])}
+	var ai: Array = [0, 1] if human_f < 0 else [1]
+	var res := Scenarios.settlement(city, terr, lists[0], lists[1], int(sim_side[1]), ai)
+	var map: Array = []
+	var ufac: Array = []
+	for o in res["order"]:
+		var cs: int = o[0]
+		var e: Dictionary = entries[cs][int(o[1])]
+		map.append({"side": cs, "army": int(e["army"]), "unit": int(e["unit"]), "n": int(e["n"]),
+			"sim_n": int(lists[cs][int(o[1])][1])})
+		ufac.append(int(e["f"]))
+	var controller: Array = []
+	for f in ufac:
+		controller.append(human_f if human_f >= 0 and CState.friendly(st, int(f), human_f) else -1)
+	return {"scenario": res["scenario"], "seed": battle_seed(st, r, 2), "map": map, "sim_side": sim_side,
+		"garrison": gar, "unit_faction": ufac, "controller": controller, "battle": int(b["id"]), "region": r}
+
+
+## Building chains standing in region r (sorted; the city map shows them).
+static func city_buildings(st: Dictionary, r: int) -> Array:
+	var out: Array = []
+	for sl in st["regions"][r]["slots"]:
+		if int(sl[1]) > 0:
+			out.append(int(sl[0]))
+	out.sort()
+	return out
+
+
+## Scenario terrain + city for a preview of settlement r's battle map as it
+## stands (the region panel's "View battle map"), defenders at the top.
+static func city_preview_terrain(st: Dictionary, r: int) -> Dictionary:
+	var rd: Dictionary = CData.REGIONS[r]
+	var cseed := CState.city_seed(st, r)
+	return {"kind": int(rd["terrain"]), "seed": (cseed ^ 0x2545F491) & 0x7FFFFFFF,
+		"forest": int(rd["forest"]), "ground": int(rd["ground"]),
+		"city": {"seed": cseed, "level": int(st["regions"][r]["level"]), "walls": CState.walls(st, r),
+			"bld": city_buildings(st, r), "def": 1}}
 
 
 static func _side_has(st: Dictionary, armies: Array, lead: int, f: int) -> bool:

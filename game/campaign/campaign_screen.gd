@@ -180,7 +180,7 @@ func _load_data() -> void:
 ## Testing aids: --cam-zoom=Z --cam-region=key --close-dialog
 ## --select-region=key --select-army=N (Nth army of the player)
 ## --plan-move=N:key --camp-attack=N:key --camp-fight --sim-turns=N --dialog-scroll=PX
-## --dialog=battles|summary|diplomacy|realm|goals|warnings|online
+## --dialog=battles|summary|diplomacy|realm|goals|warnings|online|citymap
 func _apply_debug_args() -> void:
 	for a in OS.get_cmdline_user_args():
 		var v: String = a.get_slice("=", 1)
@@ -258,6 +258,8 @@ func _apply_debug_args() -> void:
 					panels.show_faction()
 				"goals":
 					panels.show_objectives()
+				"citymap":
+					panels.show_city_map(sel_region if sel_region >= 0 else 0)
 				"warnings":
 					panels.show_warnings(panels.warnings())
 				"online":

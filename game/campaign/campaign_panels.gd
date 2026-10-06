@@ -13,6 +13,8 @@ const UT := preload("res://sim/unit_types.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const Saves := preload("res://game/campaign/saves.gd")
+const CityPreview := preload("res://game/campaign/city_preview.gd")
+const MapGen := preload("res://sim/mapgen.gd")
 
 var s  # the campaign screen
 var _split_sel: Dictionary = {}  # army id -> Array of selected unit indices
@@ -78,6 +80,9 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 	var b := CState.battle_at(ps, r)
 	if not b.is_empty():
 		box.add_child(Kit.label("A battle is pending here.", Kit.FONT, Kit.COL_BAD))
+	var vb := Kit.button("View battle map", show_city_map.bind(r))
+	vb.name = "view_battle_map"
+	box.add_child(vb)
 	# Armies here.
 	var here := CState.armies_in(ps, r)
 	if not here.is_empty():
@@ -98,6 +103,47 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 		var row := Kit.UnitRow.new(UT.index_of(str(g["t"])), int(g["n"]), _fc(o))
 		row.full = int(g["full"])
 		box.add_child(row)
+
+
+## The settlement's battle map as it stands now (CityPreview), with what
+## shapes it: level, walls, gates, the main gate facing the approach.
+func show_city_map(r: int) -> void:
+	var ps: Dictionary = s.ps
+	var rd: Dictionary = CData.REGIONS[r]
+	var rs: Dictionary = ps["regions"][r]
+	var lvl := int(rs["level"])
+	var w := CState.walls(ps, r)
+	var vp: Vector2 = s._vp()
+	# Short landscape screens (phones): picture left, text right.
+	var side := vp.y < 600.0
+	var pw := minf(560.0, vp.x - 72.0)
+	if side:
+		pw = minf(vp.x * 0.42, 420.0)
+	var prev := CityPreview.for_region(ps, r, pw)
+	var maxh := clampf(vp.y * (0.62 if side else 0.5), 190.0, 400.0)
+	if prev.custom_minimum_size.y > maxh:
+		prev.custom_minimum_size = prev.custom_minimum_size * (maxh / prev.custom_minimum_size.y)
+	var box: BoxContainer = Kit.vbox(8)
+	if side:
+		box = Kit.hbox(12)
+	var cc := CenterContainer.new()
+	cc.add_child(prev)
+	box.add_child(cc)
+	var txt := Kit.vbox(8)
+	txt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	txt.custom_minimum_size = Vector2(280 if side else 0, 0)
+	box.add_child(txt)
+	var lay: Dictionary = prev.data["lay"]
+	var ng := (lay["gates"] as Array).size()
+	var what := "%s, %s ground, %s." % [CData.LEVEL_NAMES[lvl], MapGen.PALETTE_NAMES[int(rd["ground"])].to_lower(),
+		("walls level %d with %d gates and towers" % [w, ng]) if w > 0 else "no walls: an open town entered by its streets"]
+	txt.add_child(Kit.label(what, Kit.FONT, Color.WHITE, true))
+	var how := "Attackers form up at the bottom (yellow arrow)" + (", before the main gate (red); its garrison's archers stand on the walls nearest the gates, a foot unit holds each gate and the rest the plaza. Break a gate with artillery or by hacking at it with infantry, then hold the plaza for a minute to take the city." if w > 0 else "; the defenders hold the street mouths and the plaza. Hold the plaza for a minute to take the town.")
+	txt.add_child(Kit.label(how, Kit.FONT_SMALL, Kit.COL_DIM, true))
+	txt.add_child(Kit.label("The map is fixed for this settlement: it changes only as it grows, builds or raises its walls.", Kit.FONT_SMALL, Kit.COL_DIM, true))
+	if side:
+		pw += 300.0
+	s.show_dialog("Battle map: %s" % rd["city"], box, [["Close", Callable()]], pw + 48.0)
 
 
 func _buildings(box: VBoxContainer, r: int) -> void:

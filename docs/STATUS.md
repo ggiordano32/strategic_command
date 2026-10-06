@@ -1,6 +1,6 @@
 # Strategic Command — Status and Handover
 
-Last updated: 2026-10-05 (milestone 5 built: live co-op battles). Read this first, then `docs/DESIGN.md` for the full
+Last updated: 2026-10-05 (battle maps with character built: woods, settlement maps, ground palettes). Read this first, then `docs/DESIGN.md` for the full
 design and `CLAUDE.md` for working rules. Update this file whenever a
 milestone lands or the plan changes.
 
@@ -25,7 +25,8 @@ anti-cheat and original art only if it proves fun.
 | 3. Minimal campaign | Built 2026-10-05, **not committed**, not yet playtested (see below) |
 | 4. Async backend (Go + SQLite) | Committed (`fad7399`); port 8060 runs it; first phone playtest done (live battles were missing) |
 | 5. Live co-op battles (lockstep) | Built 2026-10-05, **not committed**; tested headless, end to end and in two headless Chromiums; the 8060 server binary is not yet updated; not yet played on phones |
-| 6. Depth (sieges, tech, more factions) | Not started |
+| Battle maps with character (woods, city maps, palettes, shading) | Built 2026-10-05, **not committed**; tested headless; not yet played on phones |
+| 6. Depth (siege equipment, tech, more factions) | Not started |
 
 ### What exists
 
@@ -68,6 +69,45 @@ anti-cheat and original art only if it proves fun.
 - The touch control scheme works; the user likes it.
 
 ### In progress right now
+
+**Battle maps with character (built 2026-10-05, uncommitted).** CAMPAIGN.md
+"Later" item 1. Design as built: DESIGN.md section 4 "Battle maps: woods
+and settlements" (rules, numbers, AI, view, measurements). In short:
+- Woods on any map (region coverage 0-100, density 0-3 per 4 m cell): slow
+  units (artillery and cavalry most), disorder formed units (pike walls
+  drop), blunt charges, stop arrows and stones, block flat shots; riders
+  fight badly in them. The field AI keeps cavalry, pikes and batteries out
+  and shelters archers from cavalry in them.
+- Every settlement battle on the settlement's own map from a fixed
+  `city_seed` (+ level, walls, buildings, region ground): streets and
+  houses, plaza, walls with walkway and towers, 2-4 gates with hp,
+  orchards and fields outside; paths through the streets, squeeze in
+  narrow streets, missile troops on the walls, gates shut / opened /
+  broken (artillery or hacking foot), plaza capture (60 s) breaks the
+  defenders. Siege AI for both sides (`sim/siege_ai.gd`). The campaign's
+  ridge stand-in for walls is gone.
+- Ground palettes by region (arid / dry / green / rocky) on the battle map
+  and the campaign map; stronger height shading; trees as one MultiMesh
+  fading over soldiers; the city drawn in one static layer; gate taps;
+  sandbox Ground and Settlement battle choices; unit book pages; the region
+  panel's "View battle map".
+- Campaign state format 2 (`city_seed`), local saves migrated on load;
+  online campaigns stay format 1 on the server and play identically (no
+  server change; see CAMPAIGN.md "State format").
+- Verified: determinism test PASS (golden digests and every earlier run's
+  hash unchanged; woods / village / city / hill city / scripted gate runs
+  identical on repeat and across snapshot / restore); lockstep test PASS
+  (with a walled town, players attacking and defending); live_e2e PASS and
+  online_e2e PASS on scratch servers; campaign tests PASS (v1 save
+  migrates); matchups `--only=maps` (no draws, settlement battles decided
+  in 4-12 min); benchmarks bench_4000 2.65 / 6.0 ms, hills 3.0 / 6.2,
+  bench_4000_city 2.69 / 7.8 (max over budget: first path tables after a
+  gate falls).
+- **Not yet done / next:** play it on the phones (look of the ground,
+  trees and city on real screens; WebGL2 cost of the tree quads and the
+  second ground texture; ground texture build 0.1 s on the desktop, maybe
+  0.3-0.4 s on a phone); city benchmark spikes on phones; sallies; siege
+  equipment.
 
 **Milestone 5, live co-op battles (built 2026-10-05, uncommitted).** Why:
 in the first online playtest one player started a battle and the other's
@@ -288,8 +328,9 @@ A tuning pass from playtest feedback (built, uncommitted):
 - A mild top/bottom bias may remain in mirrored AI battles (53-55% on some
   seed ranges, 50.6% on another). Settle before head-to-head play.
 - Deferred battle features: fatigue, horse archers, a manual brace
-  toggle, walled sieges, spreading tick work across frames; terrain
-  visibility (hiding behind hills).
+  toggle, siege equipment (ladders, towers) and climbing walls, sallies,
+  spreading tick work across frames; terrain visibility (hiding behind
+  hills or in woods).
 - Terrain: phone GPU behaviour of `game/terrain.gdshader` is unverified
   (desktop GL only); the AI's high-ground behaviour (hold, detour, rises)
   is unplaytested; menu buttons are 44 px tall to fit the new entries.
@@ -371,6 +412,11 @@ godot --headless --script res://tests/matchups.gd
 godot --headless --script res://tests/matchups.gd -- --fair=100   # mirrored AI battles
 godot --headless --script res://tests/matchups.gd -- --only=terrain  # terrain effect sizes
 godot --headless --script res://tests/matchups.gd -- --fair=50 --fair-terrain=4  # mirrored, symmetric hill map
+godot --headless --script res://tests/matchups.gd -- --only=maps     # woods, streets, gates, settlement battles
+godot --headless --script res://tests/matchups.gd -- --only=sieges   # settlement battles only
+godot --headless --script res://tests/probe_maps.gd -- --scen=siege_town --png=1500 --out=/tmp  # siege debug pictures
+godot --headless --script res://tools/city_dump.gd -- --out=/tmp --seed=1234   # generated settlements to PNG
+# Sandbox URL / command line: --siege=seed:level:walls[:ground[:kind[:defend]]], --ground=N, --no-trees
 godot --script res://tests/input_test.gd        # needs a window
 tools/check_scripts.sh                           # GDScript warnings as errors
 

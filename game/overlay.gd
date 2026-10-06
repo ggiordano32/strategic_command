@@ -37,6 +37,9 @@ const COL_UPHILL := Color(1.0, 0.62, 0.35)
 const COL_DOWNHILL := Color(0.6, 1.0, 0.6)
 const HINT_GRADE := 164   # slopes under 4% get no uphill / downhill hint
 const RANGE_STEPS := 72   # height-adjusted range ring: points round the circle
+const COL_WOODS := Color(0.85, 1.0, 0.35)
+const COL_BLOCK_CELL := Color(1.0, 0.35, 0.3, 0.7)
+const FLASH_MS := 2500
 
 
 ## Unit order field as the player last ordered it (pending orders included).
@@ -48,6 +51,17 @@ var ghost_hint := ""
 var box_on := false
 var box_a := Vector2.ZERO
 var box_b := Vector2.ZERO
+## A short message at a world point (gate taps): text, where, until (ms).
+var _flash_text := ""
+var _flash_at := Vector2.ZERO
+var _flash_until := 0
+
+
+## Show `text` at world point `at` for a couple of seconds.
+func flash(text: String, at: Vector2) -> void:
+	_flash_text = text
+	_flash_at = at
+	_flash_until = Time.get_ticks_msec() + FLASH_MS
 
 
 func _v(u: int, key: String) -> int:
@@ -73,6 +87,8 @@ func _draw() -> void:
 		_icon.resize(sim.n_units)
 		for u in sim.n_units:
 			_icon[u] = Icons.icon_of(sim.u_type[u])
+	if sim.city_on != 0:
+		_draw_city_marks(lw)
 	if show_all_orders:
 		_draw_all_orders()
 	if sim.n_eng > 0:
@@ -96,6 +112,52 @@ func _draw() -> void:
 		var rect := Rect2(box_a, box_b - box_a).abs()
 		draw_rect(rect, Color(1, 1, 1, 0.12))
 		draw_rect(rect, Color(1, 1, 1, 0.8), false, lw)
+	if _flash_text != "" and Time.get_ticks_msec() < _flash_until:
+		var ffs := _font_size(14.0)
+		var tw := ThemeDB.fallback_font.get_string_size(_flash_text, HORIZONTAL_ALIGNMENT_LEFT, -1, ffs).x
+		var at := _flash_at + Vector2(-tw * 0.5, -ffs * 1.6)
+		draw_rect(Rect2(at + Vector2(-ffs * 0.4, -ffs * 1.05), Vector2(tw + ffs * 0.8, ffs * 1.45)), Color(0, 0, 0, 0.6))
+		draw_string(ThemeDB.fallback_font, at, _flash_text, HORIZONTAL_ALIGNMENT_LEFT, -1, ffs, Color(1, 0.95, 0.8))
+
+
+## Settlement: hit points over each closed gate (a word over an open or a
+## broken one), and the capture ring with "Plaza held N / 60 s" while the
+## attackers hold the plaza.
+func _draw_city_marks(lw: float) -> void:
+	var lay: Dictionary = sim.map_info.get("city", {})
+	if lay.is_empty():
+		return
+	var k := px_per_m
+	for g in sim.n_gates:
+		var gd: Dictionary = lay["gates"][g]
+		var ang: float = int(gd["dir"]) * TAU / 1024.0
+		var n := Vector2(cos(ang), sin(ang))
+		var c := Vector2(gd["x"], gd["y"]) * k + n * (float(lay["t"]) * 0.5 + 3.0) * k
+		var st: int = sim.g_state[g]
+		var bw := maxf(10.0 * k, 46.0 / zoom)
+		var bh := maxf(1.0 * k, 6.0 / zoom)
+		if st == BattleSim.GATE_CLOSED:
+			var f := float(sim.g_hp[g]) / maxf(float(sim.g_hp0[g]), 1.0)
+			draw_rect(Rect2(c - Vector2(bw * 0.5, bh * 0.5), Vector2(bw, bh)), Color(0, 0, 0, 0.65))
+			var col := Color(0.95, 0.75, 0.3) if f > 0.35 else Color(1.0, 0.35, 0.25)
+			draw_rect(Rect2(c - Vector2(bw * 0.5, bh * 0.5), Vector2(bw * f, bh)), col)
+		elif zoom > 0.35:
+			var txt := "BROKEN" if st == BattleSim.GATE_BROKEN else "OPEN"
+			draw_string(ThemeDB.fallback_font, c + Vector2(-bw * 0.3, bh), txt, HORIZONTAL_ALIGNMENT_LEFT, -1,
+				_font_size(12.0), Color(1, 0.85, 0.5) if st == BattleSim.GATE_BROKEN else Color(0.75, 1, 0.75))
+	if sim.cap_t > 0:
+		var pl: Array = lay["plaza"]
+		var pc := Vector2(pl[0], pl[1]) * k
+		var r := float(pl[3]) * k
+		var frac := clampf(float(sim.cap_t) / BattleSim.CAPTURE_TICKS, 0.0, 1.0)
+		var att: int = 1 - sim.city_def
+		var col2: Color = COL_SIDE[att]
+		draw_arc(pc, r, 0, TAU, 48, Color(0, 0, 0, 0.5), lw * 3.0)
+		draw_arc(pc, r, -PI * 0.5, -PI * 0.5 + TAU * frac, 48, col2, lw * 3.0)
+		var fs := _font_size(15.0)
+		var txt2 := "Plaza held %d / %d s" % [sim.cap_t / 10, BattleSim.CAPTURE_TICKS / 10]
+		var tw2 := ThemeDB.fallback_font.get_string_size(txt2, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		draw_string(ThemeDB.fallback_font, pc + Vector2(-tw2 * 0.5, -r - fs * 0.5), txt2, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col2.lightened(0.3))
 
 
 ## Unit markers at the centroid: side colour, white ring when selected,
@@ -175,12 +237,18 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 		var dang: float = _v(u, "dface") * TAU / 1024.0
 		var dfwd := Vector2(cos(dang), sin(dang))
 		var dright := Vector2(-dfwd.y, dfwd.x)
-		draw_dashed_line(a, d, Color(0.6, 1.0, 0.6, 0.7), lw, 8.0 / zoom)
+		_dash_outlined(a, d, Color(0.6, 1.0, 0.6, 0.85), lw, 8.0 / zoom)
+		_draw_woods_along(_v(u, "ax"), _v(u, "ay"), _v(u, "dx"), _v(u, "dy"), lw)
+		draw_line(d - dright * hw, d + dright * hw, Color(0, 0, 0, 0.4), lw * 3.0)
 		draw_line(d - dright * hw, d + dright * hw, Color(0.6, 1.0, 0.6, 0.9), lw * 1.5)
 		draw_line(d, d + dfwd * px_per_m * 3.0, Color(0.6, 1.0, 0.6, 0.9), lw)
 		if primary:
 			_draw_slope_hint(sim.u_h[u], sim.height_at(_v(u, "dx"), _v(u, "dy")),
-				_v(u, "dx") - sim.u_cx[u], _v(u, "dy") - sim.u_cy[u], d + Vector2(r, r * 1.2))
+				_v(u, "dx") - sim.u_cx[u], _v(u, "dy") - sim.u_cy[u], d + Vector2(r, r * 1.2),
+				sim.u_cx[u], sim.u_cy[u])
+			if _v(u, "gtarget") >= 0:
+				draw_string(ThemeDB.fallback_font, d + Vector2(r, -r * 1.5), "BREAK THE GATE",
+					HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), Color(1.0, 0.8, 0.45))
 	elif order == BattleSim.O_ATTACK and _v(u, "target") >= 0:
 		var t: int = _v(u, "target")
 		var tcol := Color(1, 0.3, 0.2, 0.85)
@@ -189,10 +257,17 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 			tcol = COL_FIRE
 		var tp := to_px(sim.u_cx[t], sim.u_cy[t])
 		if not (shooter and _draw_blocked(u, t, lw)):
-			draw_dashed_line(a, tp, tcol, lw, 8.0 / zoom)
+			_dash_outlined(a, tp, tcol, lw, 8.0 / zoom)
 		if primary and not shooter:
 			_draw_slope_hint(sim.u_h[u], sim.u_h[t], sim.u_cx[t] - sim.u_cx[u],
-				sim.u_cy[t] - sim.u_cy[u], (a + tp) * 0.5)
+				sim.u_cy[t] - sim.u_cy[u], (a + tp) * 0.5, sim.u_cx[u], sim.u_cy[u])
+	elif order == BattleSim.O_ATTACK and _v(u, "gtarget") >= 0 and sim.n_gates > _v(u, "gtarget"):
+		# A battery shooting at a gate.
+		var gf: Vector2i = sim.gate_face(_v(u, "gtarget"))
+		draw_dashed_line(a, to_px(gf.x, gf.y), COL_FIRE, lw, 8.0 / zoom)
+		if primary:
+			draw_string(ThemeDB.fallback_font, to_px(gf.x, gf.y) + Vector2(r, r), "SHOOT THE GATE",
+				HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), COL_FIRE)
 	elif order == BattleSim.O_WITHDRAW:
 		_draw_withdraw(u, a, COL_WITHDRAW, lw)
 	# Artillery: firing arc between minimum and maximum range (and the full
@@ -253,6 +328,13 @@ func _draw_impacts(lw: float) -> void:
 		draw_line(p, p + dir * px_per_m * 8.0, Color(0.35, 0.27, 0.18, a), maxf(lw * 1.5, px_per_m * 0.5))
 
 
+## A dashed order line over a faint dark underlay, so it reads on light and
+## dark ground alike.
+func _dash_outlined(a: Vector2, b: Vector2, col: Color, w: float, dash: float) -> void:
+	draw_line(a, b, Color(0, 0, 0, 0.32), w * 2.6)
+	draw_dashed_line(a, b, col, w, dash)
+
+
 func _draw_fire_line(u: int, w: float) -> void:
 	var t: int = sim.u_ftarget[u]
 	if t < 0 or sim.u_state[t] >= BattleSim.U_DESTROYED:
@@ -279,7 +361,7 @@ func _draw_range(u: int, a0: float, a1: float, col: Color, w: float) -> Array:
 		var ang := a0 + (a1 - a0) * k / steps
 		var dir := Vector2(cos(ang), sin(ang))
 		var r := rng
-		if sim.ter_on != 0:
+		if sim.ter_on != 0 or sim.obs_on != 0:
 			for it in 2:
 				var px := cx + int(dir.x * r)
 				var py := cy + int(dir.y * r)
@@ -294,7 +376,7 @@ func _draw_range(u: int, a0: float, a1: float, col: Color, w: float) -> Array:
 ## and faintly beyond. Returns true if it was blocked (and drawn).
 func _draw_blocked(u: int, t: int, w: float) -> bool:
 	var ty: int = sim.u_type[u]
-	if sim.ter_on == 0 or UT.stat(ty, "m_arc") != 0 or sim.lof_units(u, t):
+	if (sim.ter_on == 0 and sim.map_on == 0) or UT.stat(ty, "m_arc") != 0 or sim.lof_units(u, t):
 		return false
 	var x0: int = sim.u_cx[u]
 	var y0: int = sim.u_cy[u]
@@ -318,18 +400,60 @@ func _draw_blocked(u: int, t: int, w: float) -> bool:
 
 
 ## "uphill 12%" / "downhill 9%" from ground height ha to hb over (dx, dy)
-## (sim units), at `at` (world pixels); nothing on gentle ground.
-func _draw_slope_hint(ha: int, hb: int, dx: int, dy: int, at: Vector2) -> void:
-	if sim.ter_on == 0:
+## (sim units), at `at` (world pixels); nothing on gentle ground. "woods"
+## (or "dense woods") when the way from (x0, y0) runs through trees.
+func _draw_slope_hint(ha: int, hb: int, dx: int, dy: int, at: Vector2, x0: int = -1, y0: int = -1) -> void:
+	var parts: Array[String] = []
+	var col := COL_WOODS
+	if sim.ter_on != 0:
+		var d := maxf(Vector2(dx, dy).length(), 1.0)
+		var g := int((hb - ha) * 4096.0 / maxf(d, 1024.0))
+		if absi(g) >= HINT_GRADE:
+			var pct := absi(g) * 100 / 4096
+			parts.append(("uphill %d%%" % pct) if g > 0 else ("downhill %d%%" % pct))
+			col = COL_UPHILL if g > 0 else COL_DOWNHILL
+	if sim.veg_on != 0 and x0 >= 0:
+		var w := _woods_on(x0, y0, x0 + dx, y0 + dy)
+		if w > 0:
+			parts.append("dense woods" if w >= 3 else "woods")
+	if parts.is_empty():
 		return
-	var d := maxf(Vector2(dx, dy).length(), 1.0)
-	var g := int((hb - ha) * 4096.0 / maxf(d, 1024.0))
-	if absi(g) < HINT_GRADE:
+	draw_string(ThemeDB.fallback_font, at, ", ".join(parts), HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), col)
+
+
+## Densest woods on the line (sim units), sampled every 4 m (0 none).
+func _woods_on(x0: int, y0: int, x1: int, y1: int) -> int:
+	var l := Vector2(x1 - x0, y1 - y0).length()
+	var n := int(l / 4096.0) + 1
+	var best := 0
+	for q in n + 1:
+		var x := x0 + int((x1 - x0) * q / float(n))
+		var y := y0 + int((y1 - y0) * q / float(n))
+		best = maxi(best, sim.veg_d(x, y))
+	return best
+
+
+## Where a move line runs through woods: drawn over in green (stronger for
+## denser woods), with a dot where it enters or leaves the trees.
+func _draw_woods_along(x0: int, y0: int, x1: int, y1: int, lw: float) -> void:
+	if sim.veg_on == 0:
 		return
-	var pct := absi(g) * 100 / 4096
-	var txt := ("uphill %d%%" % pct) if g > 0 else ("downhill %d%%" % pct)
-	draw_string(ThemeDB.fallback_font, at, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0),
-		COL_UPHILL if g > 0 else COL_DOWNHILL)
+	var l := Vector2(x1 - x0, y1 - y0).length()
+	var n := int(l / 4096.0) + 1
+	var prev: int = sim.veg_d(x0, y0)
+	var pa := to_px(x0, y0)
+	for q in range(1, n + 1):
+		var x := x0 + int((x1 - x0) * q / float(n))
+		var y := y0 + int((y1 - y0) * q / float(n))
+		var d: int = sim.veg_d(x, y)
+		var pb := to_px(x, y)
+		if prev > 0:
+			draw_line(pa, pb, Color(COL_WOODS, 0.45 + 0.18 * prev), lw * (1.5 + 0.5 * prev))
+		if (d > 0) != (prev > 0):
+			draw_circle(pb, maxf(lw * 2.8, px_per_m * 0.75), Color(0, 0, 0, 0.5))
+			draw_circle(pb, maxf(lw * 2.2, px_per_m * 0.6), COL_WOODS)
+		prev = d
+		pa = pb
 
 
 func _draw_withdraw(u: int, from: Vector2, col: Color, w: float) -> void:
@@ -346,6 +470,7 @@ func _draw_withdraw(u: int, from: Vector2, col: Color, w: float) -> void:
 
 func _draw_preview(lw: float) -> void:
 	var col := Color(1, 1, 1, 0.9) if preview_ok else Color(1, 1, 1, 0.4)
+	draw_line(preview_a, preview_b, Color(0, 0, 0, 0.35), lw * 3.5)
 	draw_line(preview_a, preview_b, col, lw * 1.5)
 	if not preview_ok or selected_units.is_empty():
 		return
@@ -355,8 +480,22 @@ func _draw_preview(lw: float) -> void:
 		var face: int = p["facing"]
 		var centre: Vector2 = p["centre"]
 		var offs := BattleSim.formation_offsets(sim.u_alive[u], p["files"], face, sim.u_type[u])
+		var feat: bool = sim.map_on != 0
 		for k in range(0, offs.size(), 2):
-			draw_circle(centre + Vector2(offs[k], offs[k + 1]) * (px_per_m / M), dot_r, Color(1, 1, 1, 0.55))
+			var dp := centre + Vector2(offs[k], offs[k + 1]) * (px_per_m / M)
+			var dc := Color(1, 1, 1, 0.55)
+			if feat:
+				# Men who would stand in woods (green) or in a wall / house (red).
+				var sx := int(dp.x / px_per_m * M)
+				var sy := int(dp.y / px_per_m * M)
+				if sim.obs_on != 0 and (sim.nav_at(sx, sy) & 1) == 0:
+					dc = COL_BLOCK_CELL
+				elif sim.veg_d(sx, sy) > 0:
+					dc = Color(COL_WOODS, 0.8)
+			draw_circle(dp, dot_r, dc)
+		if sim.u_wall[u] > 0:
+			draw_string(ThemeDB.fallback_font, centre + Vector2(0, -px_per_m * 4.0), "holds its stretch of wall",
+				HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(12.0), Color(1, 0.9, 0.6))
 		var ang := face * TAU / 1024.0
 		var fwd := Vector2(cos(ang), sin(ang))
 		draw_line(centre, centre + fwd * px_per_m * 5.0, Color(1, 1, 0.6, 0.9), lw * 1.5)

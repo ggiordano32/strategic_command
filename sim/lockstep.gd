@@ -336,7 +336,7 @@ func _apply(o: Dictionary) -> void:
 				rejected += 1
 				applied -= 1
 		_:
-			if typ >= BattleSim.ORDER_MOVE and typ <= BattleSim.ORDER_REFILL:
+			if typ >= BattleSim.ORDER_MOVE and typ <= BattleSim.ORDER_LAST:
 				_sim_order(p, o)
 			else:
 				rejected += 1
@@ -463,7 +463,7 @@ func pending_sim_orders() -> Array:
 	qs.sort_custom(_input_less)
 	for o in qs:
 		var typ := int(o.get("type", 0))
-		if typ < BattleSim.ORDER_MOVE or typ > BattleSim.ORDER_REFILL:
+		if typ < BattleSim.ORDER_MOVE or typ > BattleSim.ORDER_LAST:
 			continue
 		if typ == BattleSim.ORDER_WITHDRAW_ALL:
 			for u in u_cmd.size():

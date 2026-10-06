@@ -7,12 +7,23 @@ extends Node2D
 ## Catmull-Rom midpoint rule ((-a + 9b + 9c - d) / 16, separable), so the
 ## contours stay smooth when zoomed in. Hill shade is computed here from the
 ## same 2 m heights (light from the upper left) and stored in the blue
-## channel; the shader interpolates it, so the shading has no facets.
+## channel; the shader interpolates it, so the shading has no facets. Valley
+## floors (ground lower than the 24 m around it) are darkened a little in the
+## same channel. Colours come from the map's ground palette
+## (game/ground_palette.gd, sim.ter_info["palette"]); woods, settlement
+## ground, streets, plaza and fields from the sim's vegetation grid go into a
+## second, 4 m texture.
 
 const SHADER := preload("res://game/terrain.gdshader")
+const GroundPalette := preload("res://game/ground_palette.gd")
+const MapGen := preload("res://sim/mapgen.gd")
 const NODE_M := 2.0                       # texture node spacing (metres)
 const LIGHT := Vector3(-0.55, -0.7, 0.85) # from the upper left, fairly high
-const RELIEF_EXAGGERATE := 2.5            # shading reads on gentle slopes too
+const RELIEF_EXAGGERATE := 3.4            # shading reads on gentle slopes too
+const SHADE_K := 0.6                      # brightness range of the hill shading
+const VALLEY_R := 12                      # nodes (24 m): valley = lower than the mean round it
+const VALLEY_K := 0.09                    # shade per metre below that mean ...
+const VALLEY_MAX := 0.28                  # ... at most
 
 var sim
 var px_per_m := 10.0
@@ -43,6 +54,18 @@ func setup(p_sim, p_px_per_m: float) -> void:
 func _build() -> void:
 	var m := material_ref
 	m.set_shader_parameter("grid_px", 50.0 * px_per_m)
+	var pal := GroundPalette.get_palette(int(sim.ter_info.get("palette", 0)))
+	var base: Color = pal["base"]
+	var line: Color = pal["line"]
+	m.set_shader_parameter("base_col", Vector3(base.r, base.g, base.b))
+	m.set_shader_parameter("low_col", _v3(pal["low"]))
+	m.set_shader_parameter("high_col", _v3(pal["high"]))
+	m.set_shader_parameter("line_col", Vector4(line.r, line.g, line.b, line.a))
+	m.set_shader_parameter("major_col", Vector4(line.r * 0.8, line.g * 0.8, line.b * 0.8, minf(line.a * 1.55, 0.6)))
+	m.set_shader_parameter("wood_col", Vector3(base.r * 0.55, base.g * 0.68, base.b * 0.5))
+	m.set_shader_parameter("pave_col", Vector3(base.r * 0.4 + 0.33, base.g * 0.35 + 0.33, base.b * 0.3 + 0.3))
+	m.set_shader_parameter("field_col", Vector3(minf(base.r * 0.6 + 0.38, 1.0), minf(base.g * 0.55 + 0.36, 1.0), base.b * 0.5 + 0.18))
+	_build_veg()
 	if sim.ter_on == 0:
 		var img0 := Image.create(2, 2, false, Image.FORMAT_RGBA8)
 		img0.fill(Color8(0, 0, 128, 255))
@@ -93,6 +116,7 @@ func _build() -> void:
 		hi = maxf(hi, v)
 		sum += v
 	var range_m := maxf(hi - lo, 0.01)
+	var valley := _valley_depth()
 	var light := LIGHT.normalized()
 	var flat_l := light.z
 	var bytes := PackedByteArray()
@@ -109,6 +133,7 @@ func _build() -> void:
 			var gy := (heights[jp * nx + i] - heights[jm * nx + i]) * inv
 			var n := Vector3(-gx * RELIEF_EXAGGERATE, -gy * RELIEF_EXAGGERATE, 1.0).normalized()
 			var s := n.dot(light) / flat_l - 1.0
+			s -= minf(valley[k] * VALLEY_K, VALLEY_MAX)
 			var o4 := k * 4
 			bytes[o4] = q >> 8
 			bytes[o4 + 1] = q & 255
@@ -119,10 +144,82 @@ func _build() -> void:
 	m.set_shader_parameter("hmap_size", Vector2i(nx, ny))
 	m.set_shader_parameter("texel_px", NODE_M * px_per_m)
 	m.set_shader_parameter("h_range_m", range_m)
+	m.set_shader_parameter("shade_k", SHADE_K)
+	# The tint spans the map's own relief, so low and high ground read
+	# apart on gentle maps too.
+	m.set_shader_parameter("tint_span_m", clampf(range_m * 0.55, 5.0, 22.0))
 	# Heights in the texture start at lo (0 for sim maps).
 	m.set_shader_parameter("h_mid_m", sum / heights.size() - lo)
 	m.set_shader_parameter("h_base_m", _commonest(lo) - lo)
 	m.set_shader_parameter("terrain_on", true)
+
+
+static func _v3(c: Color) -> Vector3:
+	return Vector3(c.r, c.g, c.b)
+
+
+## How far each 2 m node lies below the mean height within VALLEY_R nodes
+## round it (metres, 0 if above): two separable box blurs with running sums.
+func _valley_depth() -> PackedFloat32Array:
+	var tmp := PackedFloat32Array()
+	tmp.resize(nx * ny)
+	var r := VALLEY_R
+	for j in ny:
+		var row := j * nx
+		var acc := 0.0
+		var cnt := 0
+		for i in mini(r, nx):
+			acc += heights[row + i]
+			cnt += 1
+		for i in nx:
+			if i + r < nx:
+				acc += heights[row + i + r]
+				cnt += 1
+			if i - r - 1 >= 0:
+				acc -= heights[row + i - r - 1]
+				cnt -= 1
+			tmp[row + i] = acc / cnt
+	var out := PackedFloat32Array()
+	out.resize(nx * ny)
+	for i in nx:
+		var acc2 := 0.0
+		var cnt2 := 0
+		for j in mini(r, ny):
+			acc2 += tmp[j * nx + i]
+			cnt2 += 1
+		for j in ny:
+			if j + r < ny:
+				acc2 += tmp[(j + r) * nx + i]
+				cnt2 += 1
+			if j - r - 1 >= 0:
+				acc2 -= tmp[(j - r - 1) * nx + i]
+				cnt2 -= 1
+			out[j * nx + i] = maxf(acc2 / cnt2 - heights[j * nx + i], 0.0)
+	return out
+
+
+## Ground features texture from the sim's 4 m vegetation grid.
+func _build_veg() -> void:
+	var m := material_ref
+	var vw: int = sim.veg_w
+	var vh: int = sim.veg_h
+	if sim.map_on == 0 or vw <= 0 or vh <= 0 or sim.veg.size() < vw * vh:
+		m.set_shader_parameter("veg_on", false)
+		return
+	var bytes := PackedByteArray()
+	bytes.resize(vw * vh * 4)
+	var veg: PackedByteArray = sim.veg
+	for k in vw * vh:
+		var b := veg[k]
+		var o := k * 4
+		bytes[o] = (b & MapGen.V_DENS) * 85
+		bytes[o + 1] = 255 if (b & MapGen.V_URBAN) != 0 else 0
+		bytes[o + 2] = 255 if (b & MapGen.V_FIELD) != 0 else 0
+		bytes[o + 3] = 255 if (b & MapGen.V_PLAZA) != 0 else (130 if (b & MapGen.V_ROAD) != 0 else 0)
+	var img := Image.create_from_data(vw, vh, false, Image.FORMAT_RGBA8, bytes)
+	m.set_shader_parameter("vegmap", ImageTexture.create_from_image(img))
+	m.set_shader_parameter("veg_size_px", Vector2(vw, vh) * 4.0 * px_per_m)
+	m.set_shader_parameter("veg_on", true)
 
 
 ## The most common height (to 0.1 m): the plain, if the map has one.

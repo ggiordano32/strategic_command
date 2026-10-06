@@ -1,5 +1,6 @@
 extends Node2D
-## Campaign map, screen layer: settlements (size by level, rings for walls,
+## Campaign map, screen layer: settlements (size by level, a wall ring with
+## towers per wall level,
 ## gold dot for the key cities), names, pending battles, army markers
 ## (faction colour, unit count, strength bar), planned moves as arrows, and
 ## hit tests for taps. Positions come from map_geo.gd through `xform` (map
@@ -102,8 +103,8 @@ func _draw() -> void:
 		var o := int(rs["owner"])
 		var fill := CData.faction_color(o).darkened(0.35)
 		var w := CState.walls(state, r)
-		for k in w:
-			draw_arc(p, rad + 2.5 + 2.5 * k, 0, TAU, 24, Color(0.15, 0.13, 0.1, 0.9), 1.6, true)
+		if w > 0:
+			_wall_ring(p, rad, w)
 		draw_circle(p, rad + 1.5, Color(1, 1, 1, 0.95))
 		draw_circle(p, rad, fill)
 		if CData.KEY_CITIES.has(str(CData.REGIONS[r]["key"])):
@@ -128,6 +129,23 @@ func _draw() -> void:
 		if not pos.has(id):
 			continue
 		_army_marker(pos[id], a, font)
+
+
+## Walls: a stone ring round the settlement with towers on it, thicker and
+## with more towers per wall level (1-3).
+func _wall_ring(p: Vector2, rad: float, w: int) -> void:
+	var m := mk()
+	var rr := rad + (3.0 + 1.2 * w) * m
+	var th := (1.6 + 0.9 * w) * m
+	draw_arc(p, rr, 0, TAU, 32, Color(0.12, 0.11, 0.09, 0.95), th + 1.6, true)
+	draw_arc(p, rr, 0, TAU, 32, Color(0.78, 0.74, 0.64), th, true)
+	var n := 4 + 2 * w
+	var ts := (2.0 + 0.7 * w) * m
+	for k in n:
+		var a := TAU * k / n - PI * 0.5
+		var c := p + Vector2(cos(a), sin(a)) * rr
+		draw_rect(Rect2(c - Vector2(ts, ts) - Vector2(0.8, 0.8), Vector2(ts, ts) * 2.0 + Vector2(1.6, 1.6)), Color(0.12, 0.11, 0.09, 0.95))
+		draw_rect(Rect2(c - Vector2(ts, ts), Vector2(ts, ts) * 2.0), Color(0.84, 0.80, 0.70))
 
 
 func _army_marker(c: Vector2, a: Dictionary, font: Font) -> void:

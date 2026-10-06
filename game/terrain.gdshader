@@ -1,19 +1,27 @@
 shader_type canvas_item;
 // Battlefield ground: a calm topographic-map look drawn in one pass from a
-// height texture built once per battle (game/terrain_layer.gd).
+// height texture built once per battle (game/terrain_layer.gd), in the
+// region's ground palette (game/ground_palette.gd).
 //
-// Texture (RGBA8, one texel per 2 m node, nearest / texelFetch only, no
-// float textures and no reliance on filtering precision):
+// Height texture (RGBA8, one texel per 2 m node, nearest / texelFetch only,
+// no float textures and no reliance on filtering precision):
 //   R, G  height, 16 bits (R high byte), 0..65535 over 0..h_range_m metres
-//   B     hill shade: 128 = flat; (B - 128) / 160 = relative brightness
-//   A     reserved (vegetation later)
-// The four nodes around a fragment are decoded and interpolated here
+//   B     shade: 128 = flat; (B - 128) / 160 = relative brightness (hill
+//         shading from the upper left plus a soft darkening of valley floors)
+//   A     unused
+// Ground features texture (RGBA8, one texel per 4 m cell, linear filter):
+//   R woods (tree density / 3), G inside a settlement, B farm field,
+//   A 0.5 main street / 1.0 plaza.
+// The four height nodes around a fragment are decoded and interpolated here
 // (manual bilinear in highp), so contours are exact and stable when panning
 // and zooming. Contour lines keep a constant screen width via fwidth() and
 // fade out where they would crowd together when zoomed far out.
 
 uniform sampler2D hmap : filter_nearest, repeat_disable;
 uniform ivec2 hmap_size = ivec2(2, 2);
+uniform sampler2D vegmap : filter_linear, repeat_disable;
+uniform bool veg_on = false;
+uniform vec2 veg_size_px = vec2(1.0);  // world pixels covered by the features texture
 uniform float texel_px = 20.0;        // world pixels between texels (nodes)
 uniform float h_range_m = 1.0;        // metres represented by 65535
 uniform float h_mid_m = 0.0;          // tint is neutral at this height
@@ -30,6 +38,9 @@ uniform vec4 line_col = vec4(0.09, 0.12, 0.05, 0.34);
 uniform vec4 major_col = vec4(0.07, 0.09, 0.03, 0.52);
 uniform float grid_px = 500.0;        // faint 50 m grid
 uniform float grid_alpha = 0.045;
+uniform vec3 wood_col = vec3(0.16, 0.24, 0.12);
+uniform vec3 pave_col = vec3(0.56, 0.52, 0.45);
+uniform vec3 field_col = vec3(0.70, 0.64, 0.38);
 
 varying highp vec2 world;
 
@@ -52,6 +63,19 @@ float line_a(highp float d, highp float fw, float half_px) {
 
 void fragment() {
 	vec3 col = base_col;
+	float contour_k = 1.0;
+	if (veg_on) {
+		vec4 v = texture(vegmap, world / veg_size_px);
+		// Forest floor: darker and a little greener under the trees.
+		col = mix(col, wood_col, v.r * 0.55);
+		// Settlement ground, main streets and the plaza: paving.
+		col = mix(col, pave_col, v.g * 0.45);
+		col = mix(col, pave_col * 1.12, clamp(v.a, 0.0, 1.0) * 0.55);
+		// Fields: straw-coloured strips.
+		float strip = 0.85 + 0.15 * step(0.5, fract(world.y / 30.0));
+		col = mix(col, field_col * strip, v.b * 0.55);
+		contour_k = 1.0 - v.g * 0.5;
+	}
 	if (terrain_on) {
 		highp vec2 tp = world / texel_px;
 		highp vec2 f0 = floor(tp);
@@ -64,10 +88,13 @@ void fragment() {
 		highp vec3 v = mix(mix(a, b, fr.x), mix(c, d, fr.x), fr.y);
 		highp float hm = v.x * (h_range_m / 65535.0);
 		float shade = (v.y * 255.0 - 128.0) / 160.0;
-		// Subtle elevation tint, then soft hill shading.
+		// Elevation tint (low ground darker and cooler, high ground paler and
+		// warmer), then hill shading from the upper left.
 		float e = clamp((hm - h_mid_m) / tint_span_m, -1.0, 1.0);
-		col = e < 0.0 ? mix(base_col, low_col, -e) : mix(base_col, high_col, e);
-		col *= 1.0 + shade_k * shade;
+		vec3 tint = e < 0.0 ? mix(base_col, low_col, -e) : mix(base_col, high_col, e);
+		col = col + (tint - base_col);
+		// Lit slopes brighten less than shaded ones darken (no washed-out crests).
+		col *= 1.0 + shade_k * (shade > 0.0 ? shade * 0.7 : shade);
 		// Contours at h_base + (k + 0.5) * minor_m: the plain (the commonest
 		// height) lies midway between two lines, never on one.
 		highp float lv = (hm - h_base_m) / minor_m;
@@ -79,10 +106,10 @@ void fragment() {
 		// ~8 px apart (major), so a zoomed-out hill is shaded, not hatched.
 		if (major) {
 			float fade = 1.0 - smoothstep(0.35, 0.6, fw);
-			col = mix(col, major_col.rgb, major_col.a * fade * line_a(dist, fw, 0.75));
+			col = mix(col, major_col.rgb, major_col.a * contour_k * fade * line_a(dist, fw, 0.75));
 		} else {
 			float fade = 1.0 - smoothstep(0.1, 0.17, fw);
-			col = mix(col, line_col.rgb, line_col.a * fade * line_a(dist, fw, 0.5));
+			col = mix(col, line_col.rgb, line_col.a * contour_k * fade * line_a(dist, fw, 0.5));
 		}
 	}
 	// Faint 50 m grid, about one pixel wide at any zoom.

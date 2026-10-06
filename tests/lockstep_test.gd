@@ -21,6 +21,10 @@ extends SceneTree
 ## 4. A solo run of the same scenario through Lockstep with one player
 ##    equals a plain BattleSim run with the same orders (the lockstep layer
 ##    adds nothing to solo play).
+## 5. Settlement battles (city maps: paths, gates, the plaza): two peers
+##    attacking a walled town (orders at its gates for batteries and foot)
+##    and two peers defending one (opening and closing gates), every frame
+##    equal; snapshots of woods and city battles restore exactly (in 1).
 ## Exits 0 on success.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -37,6 +41,8 @@ func _init() -> void:
 	_test_snapshots()
 	_test_lockstep()
 	_test_solo_equivalence()
+	_test_lockstep_city(1)
+	_test_lockstep_city(0)
 	print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 	quit(0 if _ok else 1)
 
@@ -50,7 +56,8 @@ func _fail(msg: String) -> void:
 
 func _test_snapshots() -> void:
 	var cases := [["skirmish", 400], ["battle_2000", 700], ["test_cav_art", 250], ["test_stone_line", 300],
-		["bench_4000", 600], ["bench_4000_hills", 50]]
+		["bench_4000", 600], ["bench_4000_hills", 50], ["test_woods", 500], ["siege_city", 900],
+		["bench_4000_city", 1200]]
 	for c in cases:
 		var scen: Dictionary = Scenarios.make(str(c[0]))
 		var a := BattleSim.new()
@@ -538,3 +545,63 @@ func _test_solo_equivalence() -> void:
 		_fail("solo through lockstep differs from the plain sim at tick %d" % bad)
 	else:
 		print("PASS solo through lockstep equals the plain sim (800 ticks)")
+
+
+
+# ---------------------------------------------------------- settlements ---
+
+## Two peers on a walled town: attacking it (def_side 1; random orders plus
+## orders at the gates for their batteries and foot), or defending it
+## (def_side 0; random orders plus opening and closing gates; the AI
+## attacks). Every frame's lockstep hash must agree.
+func _test_lockstep_city(def_side: int) -> void:
+	var scen: Dictionary = Scenarios.siege_test(202, 1, 1, 2, 1, def_side)
+	scen["ai_sides"] = [1]
+	var probe := BattleSim.new()
+	probe.setup(scen, 4242)
+	var home := _home_split(probe)
+	var enemy: Array = []
+	for u in probe.n_units:
+		if probe.u_side[u] == 1:
+			enemy.append(u)
+	var relay := Relay.new()
+	var a := _new_peer(scen, home, 0, "A", [0, 1])
+	var b := _new_peer(scen, home, 1, "B", [0, 1])
+	a.latency = 1
+	b.latency = 3
+	b.d = 4
+	var peers: Array[Peer] = [a, b]
+	var total := 400 if quick else 1200
+	var now := 0
+	var gate_orders := 0
+	while now < total * 3 and mini(a.ls.frame, b.ls.frame) < total:
+		now += 1
+		for p in peers:
+			_script(p, now, enemy)
+			var sim = p.ls.sim
+			if now % 37 == p.me * 11 and sim.n_gates > 0:
+				# Orders at the gates by one of this player's units.
+				for u in sim.n_units:
+					if p.ls.u_cmd[u] != p.me or sim.u_state[u] != BattleSim.U_READY:
+						continue
+					var g: int = (now / 37) % sim.n_gates
+					if def_side == 0:
+						p.issue({"type": BattleSim.ORDER_GATE, "unit": u, "gate": g, "on": (now / 74) % 2})
+					else:
+						p.issue({"type": BattleSim.ORDER_ATTACK, "unit": u, "target": -1, "gate": g, "run": 1})
+					gate_orders += 1
+					break
+			p.flush(relay, now)
+			p.deliver(relay, now)
+			p.run(p.rng.randi() % 3, true)
+	var n_ab := _compare(a, b, 0, "city A/B")
+	var sim_a = a.ls.sim
+	var gs := []
+	for g in sim_a.n_gates:
+		gs.append(sim_a.g_state[g])
+	if n_ab < total / 2:
+		_fail("city (defenders on side %d): too few frames compared (%d)" % [def_side, n_ab])
+	else:
+		print("PASS lockstep on a walled town, players %s: %d frames equal A/B; %d gate orders; gates %s; paths %d, gate opened %d / closed %d / broken %d; sim tick %d" % [
+			"attacking" if def_side == 1 else "defending", n_ab, gate_orders, str(gs), sim_a.stat_paths,
+			sim_a.stat_gate_open, sim_a.stat_gate_close, sim_a.stat_gate_broken, sim_a.tick])

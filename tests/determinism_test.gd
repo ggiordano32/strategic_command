@@ -20,6 +20,15 @@ extends SceneTree
 ## symmetric map every terrain function is exactly symmetric; and on flat
 ## maps the battles are bit-for-bit the recorded ones (golden trajectory
 ## digests; update them only for an intended change of flat-map rules).
+## Woods and settlements: a woods set piece (slowing, disorder, arrows and
+## stones stopped by trees, flat throws blocked, charges blunted) and AI
+## settlement battles (an open village, a walled city, a hill city:
+## paths through the streets, men kept out of walls and buildings,
+## squeezing, gates broken by artillery, shots blocked by walls, the
+## battlements' cover, plaza capture), a scripted gate set piece (closing,
+## opening, refusing to close on men, hacking by infantry, bolts at a
+## gate); the same hashes on repeat and across snapshot / restore at
+## several points; the same map for the same parameters.
 ## Exits 0 on success, 1 on failure.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -34,7 +43,8 @@ const M := 1024
 const RUNS := {"skirmish@0": 1500, "battle_2000@0": 1800, "bench_2000": 2500, "test_cav_spears": 600,
 	"test_cav_art": 700, "battle_2000@2": 1800, "bench_2000@4": 3000, "bench_2000@3": 2500,
 	"test_bolts_crest": 500, "test_attack_uphill": 1500, "test_ridge_defend": 1500,
-	"ai_hill": 1800, "ai_ridge": 600}
+	"ai_hill": 1800, "ai_ridge": 600, "test_woods": 1200, "siege_village@ai": 3500,
+	"siege_city@ai": 4200, "siege_hill@ai": 3000, "gate_ops": 1800}
 
 ## Trajectory digests of flat battles (soldier and unit arrays every 50
 ## ticks over 2,500 ticks, seed 4242): flat maps must keep playing exactly
@@ -49,6 +59,8 @@ var _ok := true
 
 
 func _init() -> void:
+	_check_city_maps()
+	_check_snapshots()
 	_check_maps()
 	_check_symmetry()
 	_check_golden()
@@ -125,6 +137,16 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 			need = ["h_melee", "slow_up", "charge_up", "range_up"]
 		"test_ridge_defend":
 			need = ["h_melee", "charge_up", "range_up", "steep_dis"]
+		"test_woods":
+			need = ["veg_slow", "veg_dis", "veg_stop", "veg_impact", "tree_lof"]
+		"siege_village@ai":
+			need = ["paths", "clamp", "squeeze", "veg_slow", "capture"]
+		"siege_city@ai":
+			need = ["paths", "clamp", "squeeze", "gate_art", "gate_broken", "obs_lof", "wall_cover"]
+		"siege_hill@ai":
+			need = ["paths", "clamp", "gate_art", "gate_broken", "wall_cover", "obs_lof"]
+		"gate_ops":
+			need = ["gate_close", "gate_open", "gate_hack", "gate_art", "gate_broken", "paths"]
 	for k in need:
 		if int(st.get(k, 0)) <= 0:
 			_fail("%s: run never exercised %s (%s)" % [scen, k, str(st)])
@@ -170,6 +192,47 @@ func _script_orders(sim, scen: String) -> void:
 		return
 	if scen == "test_ridge_defend":
 		return  # the enemy climbs the ridge by its own scripted orders
+	if scen.ends_with("@ai"):
+		return
+	if scen == "test_woods":
+		# Cavalry charges the archers standing in dense woods; the pikes
+		# advance through woods on the heavy; the javelins go for theirs
+		# across the dense thicket between them.
+		sim.queue_order(BattleSim.make_attack_order(5, 0, 3, 1))
+		sim.queue_order(BattleSim.make_attack_order(5, 1, 4, 0))
+		sim.queue_order(BattleSim.make_attack_order(5, 2, 5, 0))
+		return
+	if scen == "gate_ops":
+		# Defenders (side 1, player 51) shut gate 0 while a man is in it
+		# (refused), open gate 1 and close it again; the attackers' heavy
+		# infantry go into gate 0 (it cannot be shut on them), come out, it
+		# is shut, and they hack at it while their bolts shoot it.
+		for o in [{"tick": 5, "gate": 1, "on": 0}, {"tick": 300, "gate": 1, "on": 1},
+				{"tick": 320, "gate": 0, "on": 0}, {"tick": 400, "gate": 0, "on": 1},
+				{"tick": 650, "gate": 0, "on": 1}]:
+			var go: Dictionary = o.duplicate()
+			go["type"] = BattleSim.ORDER_GATE
+			go["unit"] = sim.n_units - 1
+			go["player"] = 51
+			sim.queue_order(go)
+		var gfoot := -1
+		var bat := -1
+		for u in sim.n_units:
+			if sim.u_side[u] == 0 and UT.cls(sim.u_type[u]) == UT.CLS_ART:
+				bat = u
+			elif sim.u_side[u] == 0:
+				gfoot = u
+		sim.queue_order({"tick": 330, "type": BattleSim.ORDER_MOVE, "unit": gfoot, "x": sim.g_ox[0], "y": sim.g_oy[0],
+			"facing": (sim.g_dir[0] + 512) & 1023, "width": 10 * M, "run": 1})
+		sim.queue_order({"tick": 380, "type": BattleSim.ORDER_MOVE, "unit": gfoot, "x": sim.g_x[0], "y": sim.g_y[0],
+			"facing": (sim.g_dir[0] + 512) & 1023, "width": 6 * M, "run": 0})
+		# Out of the gate again; it is shut behind him; then he hacks at it
+		# and the bolts shoot it.
+		sim.queue_order({"tick": 500, "type": BattleSim.ORDER_MOVE, "unit": gfoot, "x": sim.g_ox[0] + (sim.g_ox[0] - sim.g_x[0]),
+			"y": sim.g_oy[0] + (sim.g_oy[0] - sim.g_y[0]), "facing": (sim.g_dir[0] + 512) & 1023, "width": 10 * M, "run": 1})
+		sim.queue_order({"tick": 700, "type": BattleSim.ORDER_ATTACK, "unit": gfoot, "target": -1, "gate": 0, "run": 0})
+		sim.queue_order({"tick": 700, "type": BattleSim.ORDER_ATTACK, "unit": bat, "target": -1, "gate": 0, "run": 0})
+		return
 	if scen == "test_cav_spears" or sim.is_ai_side(0):
 		return
 	var missiles: Array = []
@@ -240,6 +303,15 @@ func _script_orders(sim, scen: String) -> void:
 ## side, the holder holds); "ai_ridge": the skirmish, AI against AI, with a
 ## low ridge just behind the top army (it shifts its deployment onto it).
 static func _scenario(key: String) -> Dictionary:
+	if key.ends_with("@ai"):
+		var sa := Scenarios.make(key.get_slice("@", 0))
+		sa["ai_sides"] = [0, 1]
+		return sa
+	if key == "gate_ops":
+		var r := Scenarios.settlement({"seed": 202, "level": 1, "walls": 1, "bld": []},
+			{"kind": 1, "seed": 9, "forest": 20, "ground": 2}, [[UT.HEAVY, 100], [UT.BOLT, 16]],
+			[[UT.ARCHER, 40], [UT.SPEAR, 60]], 1, [])
+		return r["scenario"]
 	if key == "ai_hill":
 		var sh := Scenarios.make("test_attack_uphill")
 		sh["ai_sides"] = [0, 1]
@@ -291,7 +363,12 @@ func _run(scen: String, p_seed: int, ticks: int) -> Dictionary:
 		"steep_dis": sim.stat_steep_dis, "ai_hold": sim.stat_ai[12], "ai_rise": sim.stat_ai[13],
 		"ai_deploy": sim.stat_ai[14], "ai_detour": sim.stat_ai[11],
 		"refills": sim.stat_refills, "refilled": sim.stat_refilled,
-		"refill_broken": sim.stat_refill_broken}
+		"refill_broken": sim.stat_refill_broken, "veg_slow": sim.stat_veg_slow, "veg_dis": sim.stat_veg_dis,
+		"veg_stop": sim.stat_veg_stop, "veg_impact": sim.stat_veg_impact, "tree_lof": sim.stat_tree_lof,
+		"obs_lof": sim.stat_obs_lof, "wall_cover": sim.stat_wall_cover, "paths": sim.stat_paths,
+		"clamp": sim.stat_clamp, "squeeze": sim.stat_squeeze, "gate_hack": sim.stat_gate_hack,
+		"gate_art": sim.stat_gate_art, "gate_close": sim.stat_gate_close, "gate_open": sim.stat_gate_open,
+		"gate_broken": sim.stat_gate_broken, "capture": sim.stat_capture, "ai_shelter": sim.stat_ai[15]}
 	print("  %s seed %d: alive %d/%d after %d ticks, winner %d" % [scen, p_seed,
 		sim.alive_count(0), sim.alive_count(1), ticks, sim.winner])
 	return {"hashes": hashes, "result": sim.result(), "stats": stats}
@@ -413,3 +490,69 @@ func _check_golden() -> void:
 			_fail("%s on a flat map no longer plays as recorded (digest %s, want %s)" % [scen, dig, GOLDEN[scen]])
 		else:
 			print("PASS %s on a flat map plays exactly as recorded" % scen)
+
+
+
+# ---------------------------------------------------- woods and settlements ---
+
+## City maps: the same parameters build the same map (and ter_hash); the
+## defenders at the bottom get the same city turned round; every wall
+## stretch and gate node is in the street graph's main piece.
+func _check_city_maps() -> void:
+	var a := Scenarios.make("siege_city")
+	var s1 := BattleSim.new()
+	s1.setup(a, 77)
+	var s2 := BattleSim.new()
+	s2.setup(Scenarios.make("siege_city"), 77)
+	if s1.ter_hash != s2.ter_hash or s1.state_hash() != s2.state_hash():
+		_fail("siege_city: same parameters built different maps")
+	var b := Scenarios.siege_test(303, 2, 2, 1, Terrain.K_FLAT, 0)
+	var s3 := BattleSim.new()
+	s3.setup(b, 77)
+	var bad := 0
+	if s3.ob_w != s1.ob_w or s3.ob_h != s1.ob_h:
+		bad += 1
+	else:
+		var n: int = s1.obs.size()
+		for k in n:
+			if s1.obs[k] != s3.obs[n - 1 - k]:
+				bad += 1
+	if bad > 0:
+		_fail("siege_city defended from the bottom is not the same city turned round (%d cells)" % bad)
+	else:
+		print("PASS settlement maps: same parameters same map; turned round for the other side")
+	var other := Scenarios.siege_test(304, 2, 2, 1, Terrain.K_FLAT, 1)
+	var s4 := BattleSim.new()
+	s4.setup(other, 77)
+	if s4.ter_hash == s1.ter_hash:
+		_fail("another city seed built the same map")
+
+
+## Snapshot / restore round trips on woods and settlement battles: a copy
+## restored at several ticks runs on with exactly the original's hashes.
+func _check_snapshots() -> void:
+	for key in ["test_woods", "siege_city@ai", "gate_ops"]:
+		var sim := BattleSim.new()
+		sim.setup(_scenario(key), 4242)
+		_script_orders(sim, key)
+		var bad := 0
+		var checks := 0
+		for stop in [300, 900, 1500]:
+			while sim.tick < stop:
+				sim.step()
+			var blob := sim.snapshot()
+			var copy := BattleSim.new()
+			copy.setup(_scenario(key), 4242)
+			if not copy.restore(blob):
+				_fail("%s: restore refused at tick %d" % [key, stop])
+				break
+			for t in 120:
+				sim.step()
+				copy.step()
+				checks += 1
+				if sim.state_hash() != copy.state_hash():
+					bad += 1
+		if bad > 0:
+			_fail("%s: restored copies diverged (%d of %d ticks)" % [key, bad, checks])
+		else:
+			print("PASS %s: snapshot / restore at 300, 900, 1500 runs on identically (%d ticks checked)" % [key, checks])

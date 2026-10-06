@@ -7,7 +7,11 @@ extends SceneTree
 ## movement and sea lanes, peace blocking, economy sums, building and
 ## recruitment gating by level and tier, recruits arriving, replenishment,
 ## merge / split / disband, battle scenario and outcome mapping, conquest
-## and retreat, elimination, victory. Exits 0 on success, 1 on failure.
+## and retreat, elimination, victory. Format 2 (city seeds): a saved format 1
+## campaign migrates on load, an unmigrated (online) one plays the same;
+## settlement battles on the city's own map, sim side and winner mapping
+## for an attacking and a defending human, run to a decision.
+## Exits 0 on success, 1 on failure.
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -16,6 +20,7 @@ const CTurn := preload("res://campaign/cturn.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const UT := preload("res://sim/unit_types.gd")
+const Saves := preload("res://game/campaign/saves.gd")
 
 var fails := 0
 
@@ -31,6 +36,8 @@ func _init() -> void:
 	_replenish()
 	_armies()
 	_battles()
+	_format()
+	_settlement_battle()
 	_end_conditions()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
 	quit(0 if fails == 0 else 1)
@@ -281,7 +288,9 @@ func _battles() -> void:
 		if sim.u_side[k] == 0:
 			att0 += 1
 	_check(att0 == CState.unit_count(CState.army(st2, int(a["id"]))), "the human attacker is sim side 0 with all its units")
-	_check(sc["terrain"].has("features") == (CState.walls(st2, _r("apulia")) > 0), "walls put the defenders on a ridge")
+	_check(sc["terrain"].has("city") and int(sc["terrain"]["city"]["walls"]) == CState.walls(st2, _r("apulia"))
+		and int(sc["terrain"]["city"]["seed"]) == CState.city_seed(st2, _r("apulia")),
+		"a settlement battle is fought on the city's own map (walls %d)" % CState.walls(st2, _r("apulia")))
 	var built2 := CBattle.build(st2, b, rome)
 	_check(str(built2) == str(built), "the scenario is a pure function of the state")
 	# Fake result: attackers win, defenders all killed.
@@ -309,6 +318,106 @@ func _battles() -> void:
 	# Formula.
 	var fo := CBattle.formula(CState.copy(st2), b)
 	_check(fo.has("winner") and (fo["units"] as Array).size() > 0, "formula outcome")
+
+
+## Format 2: city seeds, migration of a format 1 save, unmigrated play.
+func _format() -> void:
+	var nst := _new([0])
+	var seeds_ok := int(nst["version"]) == CState.VERSION
+	for r in 36:
+		if int(nst["regions"][r].get("city_seed", -1)) != CState.default_city_seed(r):
+			seeds_ok = false
+	_check(seeds_ok, "a new campaign is format %d with a city seed per settlement" % CState.VERSION)
+	var distinct := {}
+	for r in 36:
+		distinct[CState.default_city_seed(r)] = true
+	_check(distinct.size() == 36, "the 36 city seeds differ")
+	var text := FileAccess.get_file_as_string("res://tests/data/campaign_v1.json")
+	_check(text.length() > 100, "the format 1 campaign file is there")
+	var raw: Dictionary = CState.normalise(JSON.parse_string(text))
+	_check(int(raw["version"]) == 1 and not (raw["regions"][0] as Dictionary).has("city_seed"), "it is a real format 1 state")
+	var mig := CState.from_json(text)
+	var ok := not mig.is_empty() and int(mig["version"]) == 2
+	for r in 36:
+		if mig.is_empty() or int(mig["regions"][r].get("city_seed", -1)) != CState.default_city_seed(r):
+			ok = false
+	_check(ok, "from_json migrates format 1 -> 2: every settlement gets its city seed")
+	var sv := Saves.parse(JSON.stringify({"state": raw.duplicate(true), "session": {}}))
+	_check(not sv.is_empty() and int(sv["state"]["version"]) == 2 and int(sv["state"]["regions"][5]["city_seed"]) == CState.default_city_seed(5),
+		"Saves.parse migrates a saved format 1 campaign")
+	var same := true
+	for r in 36:
+		if CState.city_seed(raw, r) != CState.city_seed(mig, r):
+			same = false
+	_check(same, "city_seed() of an unmigrated format 1 state (online) equals the migrated value")
+	var r1 := CTurn.resolve_turn(raw.duplicate(true), [])
+	var r2 := CTurn.resolve_turn(raw.duplicate(true), [])
+	_check(int(r1["version"]) == 1 and not (r1["regions"][0] as Dictionary).has("city_seed")
+		and CState.state_hash(r1) == CState.state_hash(r2), "an unmigrated format 1 state resolves as format 1, deterministically (%s)" % CState.hash_text(r1))
+	var r3 := CTurn.resolve_turn(mig.duplicate(true), [])
+	var eq := true
+	for k in ["turn", "factions", "armies", "dip", "battles", "rng"]:
+		if str(r1[k]) != str(r3[k]):
+			eq = false
+	_check(eq, "the migrated copy plays the same turn as the unmigrated one")
+	_check(CState.from_json(JSON.stringify({"format": CState.FORMAT, "version": CState.VERSION + 1})).is_empty(),
+		"a newer format is refused")
+
+
+## Settlement battles: the city's map, sides for an attacking and a defending
+## human, the winner mapping both ways, and an AI battle to a decision.
+func _settlement_battle() -> void:
+	var st := _new([_f("rome")])
+	var rome := _f("rome")
+	var a: Dictionary = CState.armies_of(st, rome)[1]  # Samnium
+	var st2 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [{"t": "move", "army": int(a["id"]), "to": _r("apulia")}])])
+	var b := CState.battle_at(st2, _r("apulia"))
+	if b.is_empty():
+		_check(false, "settlement battle at Apulia")
+		return
+	for who in [rome, _f("epirus")]:
+		var built := CBattle.build(st2, b, who)
+		var sim := BattleSim.new()
+		sim.setup(built["scenario"], int(built["seed"]))
+		var sim_side: Array = built["sim_side"]
+		var att_side: int = sim_side[0]
+		var walls := 0
+		var mapping := true
+		var map: Array = built["map"]
+		for k in sim.n_units:
+			if sim.u_wall[k] > 0:
+				walls += 1
+				if sim.u_side[k] != int(sim_side[1]):
+					mapping = false
+			if sim.u_side[k] != int(sim_side[int(map[k]["side"])]):
+				mapping = false
+		var tag := "attacking" if who == rome else "defending"
+		_check(sim.city_on == 1 and sim.city_def == int(sim_side[1]), "%s human: city map, defenders are sim side %d" % [tag, int(sim_side[1])])
+		_check(walls > 0 and mapping, "%s human: %d garrison units on the walls, unit map matches the sim sides" % [tag, walls])
+		var human_side := 0
+		_check((who == rome and att_side == human_side) or (who != rome and int(sim_side[1]) == human_side),
+			"%s human: the human side is sim side 0 (at the bottom)" % tag)
+		# The city sits at the defenders' end of the field.
+		var city_low: bool = sim.plaza[1] > sim.field_h / 2
+		_check(city_low == (int(sim_side[1]) == 0), "%s human: the city is at the defenders' edge" % tag)
+		# Winner mapping: the sim's attacker side wins -> campaign attackers (0).
+		var res := sim.result()
+		res["winner"] = att_side
+		_check(int(CBattle.outcome_from_result(built, res, "fought")["winner"]) == 0, "%s human: attackers' sim win maps to campaign attackers" % tag)
+		res["winner"] = int(sim_side[1])
+		_check(int(CBattle.outcome_from_result(built, res, "fought")["winner"]) == 1, "%s human: defenders' sim win maps to campaign defenders" % tag)
+	# AI against AI to a decision (half size, like the fast auto-resolve).
+	var built3 := CBattle.build(st2, b, -1, 50)
+	var s3 := BattleSim.new()
+	s3.setup(built3["scenario"], int(built3["seed"]))
+	var t0 := Time.get_ticks_msec()
+	while s3.ended == 0 and s3.tick < 9000:
+		s3.step()
+	var out := CBattle.outcome_from_result(built3, s3.result(), "auto")
+	_check(s3.winner == 0 or s3.winner == 1, "AI settlement battle decided (sim winner %d, decided at %d s, %d ms); campaign winner %d" % [
+		s3.winner, s3.decided_tick / 10, Time.get_ticks_msec() - t0, int(out["winner"])])
+	var st4 := CTurn.apply_battle(st2, int(b["id"]), out)
+	_check(str(st4["phase"]) == "plan", "the result applies")
 
 
 func _end_conditions() -> void:

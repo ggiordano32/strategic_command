@@ -12,6 +12,9 @@ const Overlay := preload("res://game/overlay.gd")
 const Hud := preload("res://game/hud.gd")
 const OrderPreview := preload("res://game/order_preview.gd")
 const TerrainLayer := preload("res://game/terrain_layer.gd")
+const TreeLayer := preload("res://game/tree_layer.gd")
+const CityLayer := preload("res://game/city_layer.gd")
+const MapGen := preload("res://sim/mapgen.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Controls := preload("res://game/controls.gd")
@@ -47,6 +50,9 @@ var seed_value := 1
 ## Terrain kind for scenarios with generated terrain (Terrain.K_*), or -1
 ## for the scenario's own (random from the seed for the playable battles).
 var terrain_kind := -1
+## Ground palette for scenarios with generated terrain (MapGen.PAL_*; woods
+## follow the palette, MapGen.PALETTE_FOREST), or -1 for the scenario's own.
+var ground := -1
 ## A ready-made scenario (campaign battles) used instead of scenario_id.
 var custom_scenario: Dictionary = {}
 ## Campaign battle: leaving before the battle is decided needs a second tap
@@ -66,6 +72,8 @@ var coop_region := ""
 var sim: BattleSim
 var camera: Camera2D
 var terrain: TerrainLayer
+var city: CityLayer
+var trees: TreeLayer
 var soldiers: SoldierLayer
 var overlay: Overlay
 var hud: Hud
@@ -156,10 +164,16 @@ func _ready() -> void:
 	var scn := custom_scenario if not custom_scenario.is_empty() else Scenarios.make(scenario_id)
 	if terrain_kind >= 0 and scn.has("terrain"):
 		scn["terrain"]["kind"] = terrain_kind
+	var gr := ground
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--force-terrain="):
 			# Testing aid: generated terrain of this kind on any scenario.
 			scn["terrain"] = {"kind": int(a.get_slice("=", 1))}
+		elif a.begins_with("--ground="):
+			gr = int(a.get_slice("=", 1))  # testing aid: ground palette (and its woods)
+	if gr >= 0 and scn.has("terrain") and not (scn["terrain"] as Dictionary).has("city"):
+		scn["terrain"]["ground"] = gr
+		scn["terrain"]["forest"] = MapGen.PALETTE_FOREST[clampi(gr, 0, MapGen.PALETTE_FOREST.size() - 1)]
 	sim.setup(scn, seed_value)
 	bench_mode = sim.is_ai_side(0) and sim.is_ai_side(1)
 	interactive = not sim.is_ai_side(PLAYER_SIDE)
@@ -169,9 +183,23 @@ func _ready() -> void:
 	add_child(terrain)
 	terrain.setup(sim, PX_PER_M)
 
+	# Settlement: buildings, walls, towers (static) and the gates.
+	city = CityLayer.new()
+	add_child(city)
+	city.setup(sim, PX_PER_M)
+
 	soldiers = SoldierLayer.new()
 	add_child(soldiers)
 	soldiers.setup(sim, PX_PER_M)
+
+	# Trees above the soldiers; their canopies fade over men under them.
+	trees = TreeLayer.new()
+	add_child(trees)
+	trees.setup(sim, PX_PER_M)
+	if "--no-trees" in OS.get_cmdline_user_args():
+		trees.visible = false  # testing aid: frame cost without the trees
+	print("map view: terrain %.1f ms, city %.1f ms, %d trees %.1f ms" % [terrain.build_ms, city.build_ms,
+		trees.count, trees.build_ms])
 
 	orders = OrderPreview.new()
 	orders.sim = sim
@@ -229,6 +257,9 @@ func _ready() -> void:
 	_select(-1)
 	_update_speed_text()
 	_apply_debug_args()
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--frame-stats="):
+			_fs_until = float(a.get_slice("=", 1)) + 3.0
 	_hash_text = "%08x" % sim.state_hash()
 	_tele = get_node_or_null("/root/Telemetry")
 	if _tele != null:
@@ -236,7 +267,8 @@ func _ready() -> void:
 	_start_msec = Time.get_ticks_msec()
 	_reset_window()
 	_t("scenario_start", {"scenario": scenario_id, "seed": seed_value, "terrain": sim.ter_info,
-		"terrain_build_ms": terrain.build_ms, "soldiers": sim.n,
+		"terrain_build_ms": terrain.build_ms, "trees": trees.count, "trees_build_ms": trees.build_ms,
+		"city_build_ms": city.build_ms, "soldiers": sim.n,
 		"units": sim.n_units, "bench": bench_mode, "interactive": interactive,
 		"speed": SPEEDS[speed_idx], "start_tick": sim.tick, "hash_at_start": _hash_text})
 
@@ -254,6 +286,7 @@ func _apply_debug_args() -> void:
 				sim.step()
 			soldiers.upload()
 			soldiers.set_alpha(1.0)
+			_view_tick()
 		elif a.begins_with("--cam="):
 			camera.position = Vector2(float(v.get_slice(",", 0)), float(v.get_slice(",", 1))) * PX_PER_M
 		elif a.begins_with("--cam-unit="):
@@ -373,6 +406,7 @@ func _process(delta: float) -> void:
 		if steps > 0:
 			var t0 := Time.get_ticks_usec()
 			soldiers.upload()
+			_view_tick()
 			_upload_ms = (Time.get_ticks_usec() - t0) / 1000.0
 	if coop == null:
 		soldiers.set_alpha(clampf(_acc / TICK_SEC, 0.0, 1.0))
@@ -384,6 +418,8 @@ func _process(delta: float) -> void:
 
 	if bench_mode and not _bench_done:
 		_bench_frames.append(delta)
+	if _fs_until > 0.0:
+		_frame_stats(delta)
 
 	if _tele != null and not _ended:
 		_win_frames.append(delta)
@@ -399,6 +435,36 @@ func _process(delta: float) -> void:
 			_coop_cards()
 		_refresh_actions()
 		_update_stats_label()
+
+
+## Testing aid --frame-stats=S: after S seconds (the first 3 skipped) print
+## the mean and worst frame time and the time spent in the view's per-tick
+## work, then quit.
+var _fs_until := 0.0
+var _fs_t := 0.0
+var _fs_n := 0
+var _fs_sum := 0.0
+var _fs_max := 0.0
+
+
+func _frame_stats(delta: float) -> void:
+	_fs_t += delta
+	if _fs_t < 3.0:
+		return
+	_fs_n += 1
+	_fs_sum += delta
+	_fs_max = maxf(_fs_max, delta)
+	if _fs_t >= _fs_until:
+		print("frame stats: %d frames, mean %.2f ms (%.0f fps), worst %.1f ms; canopy update %d us/tick; trees %d; tick %d" % [
+			_fs_n, _fs_sum / _fs_n * 1000.0, _fs_n / _fs_sum, _fs_max * 1000.0, trees.update_us, trees.count, sim.tick])
+		get_tree().quit()
+
+
+## Woods and settlement views after the sim moved: canopy fade under the
+## soldiers, the gates.
+func _view_tick() -> void:
+	trees.update_occupancy()
+	city.refresh()
 
 
 func _do_tick() -> void:
@@ -494,6 +560,8 @@ func _finish_bench() -> void:
 		tsum / maxf(1.0, ticks.size()), ticks[int(ticks.size() * 0.95)], ticks[ticks.size() - 1],
 		frames.size(), frames.size() / maxf(total, 0.001), slow1 * 1000.0, 1.0 / maxf(slow1, 0.0001),
 		RenderingServer.get_video_adapter_name(), OS.get_name() + " " + OS.get_model_name()]
+	hud.bench_label.text += "\nMap view: %d trees (built in %.1f ms), canopy update %d us per tick, city %.1f ms, ground %.1f ms" % [
+		trees.count, trees.build_ms, trees.update_us, city.build_ms, terrain.build_ms]
 	hud.bench_panel.visible = true
 	print(hud.bench_label.text)
 	_t("bench_summary", {"scenario": scenario_id, "seed": seed_value, "soldiers": sim.n,
@@ -618,7 +686,7 @@ const ORDER_NAMES := {BattleSim.ORDER_MOVE: "move", BattleSim.ORDER_ATTACK: "att
 	BattleSim.ORDER_HALT: "halt", BattleSim.ORDER_RUN: "run", BattleSim.ORDER_FIRE: "fire",
 	BattleSim.ORDER_SKIRMISH: "skirmish", BattleSim.ORDER_WITHDRAW: "withdraw",
 	BattleSim.ORDER_WITHDRAW_ALL: "withdraw_all", BattleSim.ORDER_DEPLOY: "deploy",
-	BattleSim.ORDER_REFILL: "refill"}
+	BattleSim.ORDER_REFILL: "refill", BattleSim.ORDER_GATE: "gate"}
 
 
 ## Select only unit u (-1: clear the selection).
@@ -928,6 +996,8 @@ func _tap(screen_pos: Vector2, double: bool) -> void:
 		else:
 			_select(u)
 		return
+	if u < 0 and _tap_gate(w):
+		return
 	if selection.is_empty():
 		_count("tap_nothing_selected")
 		return
@@ -951,6 +1021,70 @@ func _tap(screen_pos: Vector2, double: bool) -> void:
 			1 if double else orders.value(selected, "run")))
 		return
 	_group_move(dest, double)
+
+
+## Gate under world point w (px), or -1.
+func _gate_at(w: Vector2) -> int:
+	if sim.n_gates == 0:
+		return -1
+	var x := w.x / PX_PER_M * M
+	var y := w.y / PX_PER_M * M
+	var reach_x := (MapGen.GATE_HW + 3) * M
+	var reach_y: int = sim.wall_t / 2 + 4 * 1024
+	for g in sim.n_gates:
+		var f: Vector2i = sim.gate_frame(g, int(x), int(y))
+		if absi(f.x) <= reach_x and absi(f.y) <= reach_y:
+			return g
+	return -1
+
+
+## A tap on a gate. Defenders (nothing selected): open or close it.
+## Attackers: batteries shoot it, foot go to its face and hack at it
+## (cavalry and missile troops cannot). Returns true if the tap was used.
+func _tap_gate(w: Vector2) -> bool:
+	var g := _gate_at(w)
+	if g < 0:
+		return false
+	var st: int = sim.g_state[g]
+	if sim.city_def == PLAYER_SIDE:
+		if not selection.is_empty():
+			return false  # with units selected a tap moves them (into the gateway)
+		if st == BattleSim.GATE_BROKEN:
+			overlay.flash("The gate is broken: it cannot be shut", w)
+			return true
+		var any := -1
+		for u in sim.n_units:
+			if sim.u_side[u] == PLAYER_SIDE and sim.u_state[u] == BattleSim.U_READY and _mine(u):
+				any = u
+				break
+		if any < 0:
+			return true
+		var close := 1 if st == BattleSim.GATE_OPEN else 0
+		if close == 1 and sim.gate_busy(g):
+			overlay.flash("Men in the gateway: it cannot be shut now", w)
+			return true
+		_count("gate_close" if close == 1 else "gate_open")
+		_queue({"type": BattleSim.ORDER_GATE, "unit": any, "gate": g, "on": close})
+		overlay.flash("Closing the gate" if close == 1 else "Opening the gate", w)
+		return true
+	if selection.is_empty() or st != BattleSim.GATE_CLOSED:
+		return false  # an open or broken gate: a tap there is a move
+	var sent := 0
+	var refused := 0
+	for u in selection:
+		var c := UT.cls(sim.u_type[u])
+		if c == UT.CLS_ART or c == UT.CLS_INF or c == UT.CLS_PIKE:
+			_queue({"type": BattleSim.ORDER_ATTACK, "unit": u, "target": -1, "gate": g,
+				"run": orders.value(u, "run")})
+			sent += 1
+		else:
+			refused += 1
+	_count("gate_attack")
+	if sent == 0:
+		overlay.flash("Cavalry and missile troops cannot break a gate", w)
+	elif refused > 0:
+		overlay.flash("Foot hack at the gate, engines shoot it; the others stay", w)
+	return true
 
 
 ## Move the whole selection to `dest` (sim units), keeping the units'
@@ -1577,6 +1711,7 @@ func _coop_step(delta: float) -> void:
 	if steps > 0:
 		_after_tick(ms / steps)
 		soldiers.upload()
+		_view_tick()
 	var p: bool = ls.paused != 0
 	if p != paused:
 		paused = p
@@ -1619,8 +1754,11 @@ func _rebind(s) -> void:
 	overlay.sim = s
 	orders.sim = s
 	terrain.sim = s
+	city.sim = s
+	trees.sim = s
 	hud._sim = s
 	soldiers.upload()
+	_view_tick()
 	_prune_selection()
 
 

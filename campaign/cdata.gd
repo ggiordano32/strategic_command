@@ -11,12 +11,18 @@ extends RefCounted
 ## degree (view only: the map projects them); terrain is a sim/terrain.gd kind.
 
 const Terrain := preload("res://sim/terrain.gd")
+const MapGen := preload("res://sim/mapgen.gd")
 
 const FLAT := Terrain.K_FLAT
 const ROLLING := Terrain.K_ROLLING
 const RIDGE := Terrain.K_RIDGE
 const VALLEY := Terrain.K_VALLEY
 const HILL := Terrain.K_HILL
+## Ground palettes (battle map and campaign map colour; sim/mapgen.gd).
+const ARID := MapGen.PAL_ARID
+const DRY := MapGen.PAL_DRY
+const GREEN := MapGen.PAL_GREEN
+const ROCKY := MapGen.PAL_ROCKY
 
 ## Settlement levels.
 const VILLAGE := 0
@@ -26,45 +32,48 @@ const LEVEL_NAMES: Array[String] = ["Village", "Town", "City"]
 
 ## Regions: key, region name, settlement, area, terrain, lon, lat (1/100
 ## degree), wealth (1-7), starting settlement level, starting wall level,
-## landmass (view: territory cells only compete within a landmass).
+## landmass (view: territory cells only compete within a landmass), ground
+## palette (arid Africa and south-east Iberia; dry Greece, southern Italy
+## and the islands; green Gaul, northern Italy and Atlantic Iberia; rocky
+## mountains) and woods coverage 0-100 (battle maps' vegetation).
 ## Landmasses: 0 Europe, 1 Africa, 2 Sicily, 3 Sardinia, 4 Corsica.
 const REGIONS: Array[Dictionary] = [
-	{"key": "latium", "name": "Latium", "city": "Roma", "area": "Italy", "terrain": ROLLING, "lon": 1250, "lat": 4190, "wealth": 6, "level": CITY, "walls": 1, "land": 0},
-	{"key": "etruria", "name": "Etruria", "city": "Arretium", "area": "Italy", "terrain": HILL, "lon": 1188, "lat": 4346, "wealth": 4, "level": TOWN, "walls": 0, "land": 0},
-	{"key": "campania", "name": "Campania", "city": "Capua", "area": "Italy", "terrain": FLAT, "lon": 1425, "lat": 4108, "wealth": 6, "level": TOWN, "walls": 0, "land": 0},
-	{"key": "samnium", "name": "Samnium", "city": "Beneventum", "area": "Italy", "terrain": RIDGE, "lon": 1478, "lat": 4130, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 0},
-	{"key": "apulia", "name": "Apulia", "city": "Tarentum", "area": "Italy", "terrain": FLAT, "lon": 1724, "lat": 4047, "wealth": 5, "level": CITY, "walls": 1, "land": 0},
-	{"key": "bruttium", "name": "Bruttium", "city": "Rhegium", "area": "Italy", "terrain": HILL, "lon": 1565, "lat": 3811, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 0},
-	{"key": "cisalpina", "name": "Gallia Cisalpina", "city": "Mediolanum", "area": "Italy", "terrain": FLAT, "lon": 919, "lat": 4546, "wealth": 4, "level": VILLAGE, "walls": 0, "land": 0},
-	{"key": "venetia", "name": "Venetia", "city": "Patavium", "area": "Italy", "terrain": FLAT, "lon": 1188, "lat": 4541, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 0},
-	{"key": "sicilia_occ", "name": "Sicilia Occidentalis", "city": "Lilybaeum", "area": "Islands", "terrain": HILL, "lon": 1243, "lat": 3780, "wealth": 4, "level": TOWN, "walls": 1, "land": 2},
-	{"key": "sicilia_or", "name": "Sicilia Orientalis", "city": "Syracusae", "area": "Islands", "terrain": ROLLING, "lon": 1529, "lat": 3707, "wealth": 6, "level": CITY, "walls": 2, "land": 2},
-	{"key": "sardinia", "name": "Sardinia", "city": "Caralis", "area": "Islands", "terrain": HILL, "lon": 912, "lat": 3922, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 3},
-	{"key": "corsica", "name": "Corsica", "city": "Aleria", "area": "Islands", "terrain": RIDGE, "lon": 951, "lat": 4210, "wealth": 2, "level": VILLAGE, "walls": 0, "land": 4},
-	{"key": "baetica", "name": "Baetica", "city": "Gades", "area": "Iberia", "terrain": ROLLING, "lon": -629, "lat": 3653, "wealth": 5, "level": TOWN, "walls": 0, "land": 0},
-	{"key": "contestania", "name": "Contestania", "city": "Mastia", "area": "Iberia", "terrain": HILL, "lon": -98, "lat": 3760, "wealth": 4, "level": VILLAGE, "walls": 0, "land": 0},
-	{"key": "edetania", "name": "Edetania", "city": "Saguntum", "area": "Iberia", "terrain": ROLLING, "lon": -27, "lat": 3968, "wealth": 4, "level": TOWN, "walls": 0, "land": 0},
-	{"key": "ilergetia", "name": "Ilergetia", "city": "Emporion", "area": "Iberia", "terrain": ROLLING, "lon": 312, "lat": 4213, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 0},
-	{"key": "celtiberia", "name": "Celtiberia", "city": "Numantia", "area": "Iberia", "terrain": RIDGE, "lon": -244, "lat": 4181, "wealth": 3, "level": TOWN, "walls": 1, "land": 0},
-	{"key": "carpetania", "name": "Carpetania", "city": "Toletum", "area": "Iberia", "terrain": FLAT, "lon": -402, "lat": 3986, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 0},
-	{"key": "lusitania", "name": "Lusitania", "city": "Olisipo", "area": "Iberia", "terrain": ROLLING, "lon": -914, "lat": 3872, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 0},
-	{"key": "gallaecia", "name": "Gallaecia", "city": "Brigantium", "area": "Iberia", "terrain": HILL, "lon": -840, "lat": 4337, "wealth": 2, "level": VILLAGE, "walls": 0, "land": 0},
-	{"key": "massalia", "name": "Massalia", "city": "Massalia", "area": "Gaul", "terrain": HILL, "lon": 537, "lat": 4330, "wealth": 5, "level": CITY, "walls": 1, "land": 0},
-	{"key": "volcae", "name": "Volcae", "city": "Narbo", "area": "Gaul", "terrain": FLAT, "lon": 300, "lat": 4318, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 0},
-	{"key": "arverni", "name": "Arverni", "city": "Gergovia", "area": "Gaul", "terrain": RIDGE, "lon": 309, "lat": 4571, "wealth": 4, "level": TOWN, "walls": 1, "land": 0},
-	{"key": "allobroges", "name": "Allobroges", "city": "Vienna", "area": "Gaul", "terrain": VALLEY, "lon": 487, "lat": 4552, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 0},
-	{"key": "macedonia", "name": "Macedonia", "city": "Pella", "area": "Greece", "terrain": ROLLING, "lon": 2252, "lat": 4076, "wealth": 5, "level": CITY, "walls": 1, "land": 0},
-	{"key": "thessalia", "name": "Thessalia", "city": "Larissa", "area": "Greece", "terrain": FLAT, "lon": 2242, "lat": 3964, "wealth": 4, "level": TOWN, "walls": 0, "land": 0},
-	{"key": "epirus", "name": "Epirus", "city": "Ambracia", "area": "Greece", "terrain": RIDGE, "lon": 2098, "lat": 3916, "wealth": 3, "level": TOWN, "walls": 1, "land": 0},
-	{"key": "illyria", "name": "Illyria", "city": "Scodra", "area": "Greece", "terrain": HILL, "lon": 1951, "lat": 4207, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 0},
-	{"key": "aetolia", "name": "Aetolia", "city": "Thermon", "area": "Greece", "terrain": RIDGE, "lon": 2167, "lat": 3860, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 0},
-	{"key": "attica", "name": "Attica", "city": "Athenae", "area": "Greece", "terrain": ROLLING, "lon": 2373, "lat": 3798, "wealth": 6, "level": CITY, "walls": 2, "land": 0},
-	{"key": "achaea", "name": "Achaea", "city": "Corinthus", "area": "Greece", "terrain": HILL, "lon": 2288, "lat": 3790, "wealth": 5, "level": TOWN, "walls": 1, "land": 0},
-	{"key": "laconia", "name": "Laconia", "city": "Sparta", "area": "Greece", "terrain": VALLEY, "lon": 2243, "lat": 3707, "wealth": 3, "level": TOWN, "walls": 0, "land": 0},
-	{"key": "zeugitana", "name": "Zeugitana", "city": "Carthago", "area": "Africa", "terrain": FLAT, "lon": 1032, "lat": 3685, "wealth": 7, "level": CITY, "walls": 2, "land": 1},
-	{"key": "byzacena", "name": "Byzacena", "city": "Hadrumetum", "area": "Africa", "terrain": FLAT, "lon": 1064, "lat": 3583, "wealth": 4, "level": TOWN, "walls": 0, "land": 1},
-	{"key": "numidia", "name": "Numidia", "city": "Cirta", "area": "Africa", "terrain": ROLLING, "lon": 661, "lat": 3636, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 1},
-	{"key": "mauretania", "name": "Mauretania", "city": "Tingis", "area": "Africa", "terrain": HILL, "lon": -580, "lat": 3577, "wealth": 2, "level": VILLAGE, "walls": 0, "land": 1},
+	{"key": "latium", "name": "Latium", "city": "Roma", "area": "Italy", "terrain": ROLLING, "lon": 1250, "lat": 4190, "wealth": 6, "level": CITY, "walls": 1, "land": 0, "ground": DRY, "forest": 20},
+	{"key": "etruria", "name": "Etruria", "city": "Arretium", "area": "Italy", "terrain": HILL, "lon": 1188, "lat": 4346, "wealth": 4, "level": TOWN, "walls": 0, "land": 0, "ground": GREEN, "forest": 45},
+	{"key": "campania", "name": "Campania", "city": "Capua", "area": "Italy", "terrain": FLAT, "lon": 1425, "lat": 4108, "wealth": 6, "level": TOWN, "walls": 0, "land": 0, "ground": DRY, "forest": 15},
+	{"key": "samnium", "name": "Samnium", "city": "Beneventum", "area": "Italy", "terrain": RIDGE, "lon": 1478, "lat": 4130, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 0, "ground": ROCKY, "forest": 35},
+	{"key": "apulia", "name": "Apulia", "city": "Tarentum", "area": "Italy", "terrain": FLAT, "lon": 1724, "lat": 4047, "wealth": 5, "level": CITY, "walls": 1, "land": 0, "ground": DRY, "forest": 12},
+	{"key": "bruttium", "name": "Bruttium", "city": "Rhegium", "area": "Italy", "terrain": HILL, "lon": 1565, "lat": 3811, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 0, "ground": DRY, "forest": 28},
+	{"key": "cisalpina", "name": "Gallia Cisalpina", "city": "Mediolanum", "area": "Italy", "terrain": FLAT, "lon": 919, "lat": 4546, "wealth": 4, "level": VILLAGE, "walls": 0, "land": 0, "ground": GREEN, "forest": 45},
+	{"key": "venetia", "name": "Venetia", "city": "Patavium", "area": "Italy", "terrain": FLAT, "lon": 1188, "lat": 4541, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 0, "ground": GREEN, "forest": 50},
+	{"key": "sicilia_occ", "name": "Sicilia Occidentalis", "city": "Lilybaeum", "area": "Islands", "terrain": HILL, "lon": 1243, "lat": 3780, "wealth": 4, "level": TOWN, "walls": 1, "land": 2, "ground": DRY, "forest": 10},
+	{"key": "sicilia_or", "name": "Sicilia Orientalis", "city": "Syracusae", "area": "Islands", "terrain": ROLLING, "lon": 1529, "lat": 3707, "wealth": 6, "level": CITY, "walls": 2, "land": 2, "ground": DRY, "forest": 12},
+	{"key": "sardinia", "name": "Sardinia", "city": "Caralis", "area": "Islands", "terrain": HILL, "lon": 912, "lat": 3922, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 3, "ground": DRY, "forest": 22},
+	{"key": "corsica", "name": "Corsica", "city": "Aleria", "area": "Islands", "terrain": RIDGE, "lon": 951, "lat": 4210, "wealth": 2, "level": VILLAGE, "walls": 0, "land": 4, "ground": ROCKY, "forest": 40},
+	{"key": "baetica", "name": "Baetica", "city": "Gades", "area": "Iberia", "terrain": ROLLING, "lon": -629, "lat": 3653, "wealth": 5, "level": TOWN, "walls": 0, "land": 0, "ground": DRY, "forest": 15},
+	{"key": "contestania", "name": "Contestania", "city": "Mastia", "area": "Iberia", "terrain": HILL, "lon": -98, "lat": 3760, "wealth": 4, "level": VILLAGE, "walls": 0, "land": 0, "ground": ARID, "forest": 6},
+	{"key": "edetania", "name": "Edetania", "city": "Saguntum", "area": "Iberia", "terrain": ROLLING, "lon": -27, "lat": 3968, "wealth": 4, "level": TOWN, "walls": 0, "land": 0, "ground": ARID, "forest": 10},
+	{"key": "ilergetia", "name": "Ilergetia", "city": "Emporion", "area": "Iberia", "terrain": ROLLING, "lon": 312, "lat": 4213, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 0, "ground": DRY, "forest": 20},
+	{"key": "celtiberia", "name": "Celtiberia", "city": "Numantia", "area": "Iberia", "terrain": RIDGE, "lon": -244, "lat": 4181, "wealth": 3, "level": TOWN, "walls": 1, "land": 0, "ground": ROCKY, "forest": 25},
+	{"key": "carpetania", "name": "Carpetania", "city": "Toletum", "area": "Iberia", "terrain": FLAT, "lon": -402, "lat": 3986, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 0, "ground": DRY, "forest": 12},
+	{"key": "lusitania", "name": "Lusitania", "city": "Olisipo", "area": "Iberia", "terrain": ROLLING, "lon": -914, "lat": 3872, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 0, "ground": GREEN, "forest": 35},
+	{"key": "gallaecia", "name": "Gallaecia", "city": "Brigantium", "area": "Iberia", "terrain": HILL, "lon": -840, "lat": 4337, "wealth": 2, "level": VILLAGE, "walls": 0, "land": 0, "ground": GREEN, "forest": 50},
+	{"key": "massalia", "name": "Massalia", "city": "Massalia", "area": "Gaul", "terrain": HILL, "lon": 537, "lat": 4330, "wealth": 5, "level": CITY, "walls": 1, "land": 0, "ground": DRY, "forest": 20},
+	{"key": "volcae", "name": "Volcae", "city": "Narbo", "area": "Gaul", "terrain": FLAT, "lon": 300, "lat": 4318, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 0, "ground": DRY, "forest": 18},
+	{"key": "arverni", "name": "Arverni", "city": "Gergovia", "area": "Gaul", "terrain": RIDGE, "lon": 309, "lat": 4571, "wealth": 4, "level": TOWN, "walls": 1, "land": 0, "ground": GREEN, "forest": 50},
+	{"key": "allobroges", "name": "Allobroges", "city": "Vienna", "area": "Gaul", "terrain": VALLEY, "lon": 487, "lat": 4552, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 0, "ground": GREEN, "forest": 55},
+	{"key": "macedonia", "name": "Macedonia", "city": "Pella", "area": "Greece", "terrain": ROLLING, "lon": 2252, "lat": 4076, "wealth": 5, "level": CITY, "walls": 1, "land": 0, "ground": DRY, "forest": 25},
+	{"key": "thessalia", "name": "Thessalia", "city": "Larissa", "area": "Greece", "terrain": FLAT, "lon": 2242, "lat": 3964, "wealth": 4, "level": TOWN, "walls": 0, "land": 0, "ground": DRY, "forest": 10},
+	{"key": "epirus", "name": "Epirus", "city": "Ambracia", "area": "Greece", "terrain": RIDGE, "lon": 2098, "lat": 3916, "wealth": 3, "level": TOWN, "walls": 1, "land": 0, "ground": ROCKY, "forest": 35},
+	{"key": "illyria", "name": "Illyria", "city": "Scodra", "area": "Greece", "terrain": HILL, "lon": 1951, "lat": 4207, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 0, "ground": ROCKY, "forest": 40},
+	{"key": "aetolia", "name": "Aetolia", "city": "Thermon", "area": "Greece", "terrain": RIDGE, "lon": 2167, "lat": 3860, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 0, "ground": ROCKY, "forest": 35},
+	{"key": "attica", "name": "Attica", "city": "Athenae", "area": "Greece", "terrain": ROLLING, "lon": 2373, "lat": 3798, "wealth": 6, "level": CITY, "walls": 2, "land": 0, "ground": DRY, "forest": 12},
+	{"key": "achaea", "name": "Achaea", "city": "Corinthus", "area": "Greece", "terrain": HILL, "lon": 2288, "lat": 3790, "wealth": 5, "level": TOWN, "walls": 1, "land": 0, "ground": DRY, "forest": 18},
+	{"key": "laconia", "name": "Laconia", "city": "Sparta", "area": "Greece", "terrain": VALLEY, "lon": 2243, "lat": 3707, "wealth": 3, "level": TOWN, "walls": 0, "land": 0, "ground": DRY, "forest": 20},
+	{"key": "zeugitana", "name": "Zeugitana", "city": "Carthago", "area": "Africa", "terrain": FLAT, "lon": 1032, "lat": 3685, "wealth": 7, "level": CITY, "walls": 2, "land": 1, "ground": ARID, "forest": 5},
+	{"key": "byzacena", "name": "Byzacena", "city": "Hadrumetum", "area": "Africa", "terrain": FLAT, "lon": 1064, "lat": 3583, "wealth": 4, "level": TOWN, "walls": 0, "land": 1, "ground": ARID, "forest": 4},
+	{"key": "numidia", "name": "Numidia", "city": "Cirta", "area": "Africa", "terrain": ROLLING, "lon": 661, "lat": 3636, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 1, "ground": ARID, "forest": 10},
+	{"key": "mauretania", "name": "Mauretania", "city": "Tingis", "area": "Africa", "terrain": HILL, "lon": -580, "lat": 3577, "wealth": 2, "level": VILLAGE, "walls": 0, "land": 1, "ground": ARID, "forest": 14},
 ]
 
 ## Land routes (one turn each way).

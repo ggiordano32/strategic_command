@@ -8,12 +8,14 @@ extends Node2D
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
 const Geo := preload("res://game/campaign/map_geo.gd")
+const GroundPalette := preload("res://game/ground_palette.gd")
 
 const SEA := Color(0.13, 0.25, 0.34)
 const SEA_SHALLOW := Color(0.22, 0.38, 0.47)
 const LAND := Color(0.80, 0.76, 0.62)
 const COAST := Color(0.16, 0.18, 0.16, 0.9)
-const TINT := 0.62
+const TINT := 0.55         # owner colour over the region's ground
+const GROUND_LIFT := 0.36  # the battle palettes are darker than a map should be
 
 var state: Dictionary = {}
 var zoom := 1.0
@@ -24,6 +26,14 @@ var attack_targets: Array[int] = []
 var blocked_targets: Array[int] = []
 var selected_region := -1
 var pulse := 0.0
+
+
+## Land colour of region r owned by o: its ground palette, then the owner.
+static func region_color(r: int, o: int) -> Color:
+	var g := GroundPalette.land_color(int(CData.REGIONS[r]["ground"])).lightened(GROUND_LIFT)
+	if o < 0:
+		return g.lerp(Color(0.55, 0.55, 0.52), 0.25)
+	return g.lerp(CData.faction_color(o), TINT)
 
 
 func _draw() -> void:
@@ -41,9 +51,11 @@ func _draw() -> void:
 	if state.is_empty():
 		return
 	# Territories.
+	# Each region's land is its ground palette (the colour of its battle
+	# maps: arid, dry, green, rocky), tinted by its owner.
 	for r in CData.region_count():
 		var o := CState.owner(state, r)
-		var col := LAND.lerp(CData.faction_color(o), TINT if o >= 0 else 0.35)
+		var col := region_color(r, o)
 		for piece in Geo.cell(r):
 			draw_colored_polygon(piece, col)
 	# Destinations of the selected army.
@@ -58,6 +70,18 @@ func _draw() -> void:
 	if selected_region >= 0:
 		for piece in Geo.cell(selected_region):
 			draw_colored_polygon(piece, Color(1, 1, 0.8, 0.22))
+	# Owner edge: a band of the owner's colour inside each territory, so the
+	# owner reads at once whatever the ground.
+	for r in CData.region_count():
+		var o := CState.owner(state, r)
+		if o < 0:
+			continue
+		var ec := CData.faction_color(o)
+		ec.a = 0.85
+		for piece in Geo.cell(r):
+			var closed: PackedVector2Array = piece.duplicate()
+			closed.append(piece[0])
+			draw_polyline(closed, ec, 3.5 * lw, true)
 	# Borders between territories (darker where owners differ is implied by
 	# the tint; one thin line everywhere keeps it light).
 	for r in CData.region_count():

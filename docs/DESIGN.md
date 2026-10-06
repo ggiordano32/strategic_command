@@ -19,7 +19,7 @@ Goals (v1):
 - Runs in a browser on Android and iPhone (installed to home screen), plus desktop.
 
 Non-goals (v1): head-to-head play, friend controlling the enemy army, generals,
-family/politics, agents, naval combat, walled sieges, accounts, anti-cheat,
+family/politics, agents, naval combat, accounts, anti-cheat,
 original art.
 
 ## 2. Campaign layer
@@ -50,7 +50,9 @@ original art.
 ### Settlement attacks
 
 - v1: attacking a settlement is a field battle in which the garrison joins the defender.
-- Later: walls and gates.
+- As built (October 2026): every settlement has its own battle map with
+  streets, walls and gates (section 4 "Battle maps: woods and settlements").
+  Climbing walls, siege towers and ladders are later.
 
 ## 3. Pending battles
 
@@ -673,6 +675,251 @@ broken red line to the crest, a red cross there and "NO LINE OF FIRE".
 - Flat: every earlier matchup line is unchanged.
 - Benchmarks: see below.
 
+### Battle maps: woods and settlements (as built, October 2026)
+
+Code: `sim/mapgen.gd` (generation), the "Woods" / "Settlements" constants
+and the "woods and settlements" section of `sim/battle_sim.gd` (rules,
+paths, gates, capture), `sim/siege_ai.gd` (AI on city maps),
+`sim/scenarios.gd` (`settlement()`, `siege_test()`, `bench_city()`),
+`campaign/cbattle.gd` (campaign settlement battles). Measured with
+`tests/matchups.gd -- --only=maps` (and `--only=sieges`).
+
+**Generation.** Everything is built at setup from the scenario's `terrain`
+dictionary (integers only, MapGen's own xorshift, never the sim's RNG), so
+both lockstep peers build the same map; the static grids are hashed into
+`ter_hash` (in `state_hash()` from tick 0) only when the map has trees or
+buildings, so a plain map's hash is what it always was. New keys: `forest`
+(woods coverage 0-100, region data), `woods` (hand-placed rectangles, tests),
+`ground` (palette, view only), `blocks` / `urban` (hand-placed buildings,
+tests) and `city` ({seed, level, walls, bld, def}).
+- *Woods* (any map): a 4 m cell grid aligned with the height grid, tree
+  density 0-3. Big smooth blobs (4 + forest/10 of them) plus small ones that
+  break up the edges, a height term (+40 per metre above the mean, so edges
+  follow the contours and woods favour rises), then thresholds read off the
+  histogram so that forest x 0.55 % of the map is wooded (a quarter of that
+  dense, 55 % medium or denser). The centre 70 % of both deployment bands is
+  kept clear. `sym` maps get symmetric woods.
+- *Settlements* (city maps): generated in a canonical frame round the
+  city's own centre (defenders at the top, main gate facing the attackers
+  at the bottom), then turned 180 degrees if the defenders are sim side 0;
+  so a city looks the same whatever the field size or side. Footprint: a
+  polygon of 7-10 vertices (angles and radii from the seed) of radius 60 /
+  85 / 115 m for village / town / city. The block grid (blocks 16-28 m,
+  streets 4-6 m, lots of ~10 m, a house per lot less a metre all round) is
+  laid out by the seed over the largest footprint, so a town grows into the
+  same city; 62 / 76 / 88 % of lots are built. Landmarks by the plaza and
+  the main gate from the buildings present (temple for towns and cities,
+  market stoa, range, workshop, barracks, stables). A central plaza (half
+  size 12 / 16 / 22 m), main streets (6-8 m) from each gate (or, for an
+  open town, out of the town in 3-4 directions) to the plaza, a 6 m ring
+  road inside the wall. Walls (level 1-3): thickness 8 / 10 / 12 m (outer
+  parapet 2 / 2 / 4 m, walkway 4 m, inner face), walkway 5 / 7 / 9 m high,
+  round towers at every vertex and either side of each gate; 2-4 gates (5 -
+  wall level, at most 2 + settlement level): the edge facing the attackers
+  first, then left, right, top; gate opening 8 m. Outside: orchards (trees,
+  density 1) and fields at village / town level with walls 0-1, cleared
+  ground within 60 m of walls level 2-3, the approach and the attackers'
+  deployment kept free of trees. Hill and ridge country: the city stands on
+  a plateau (a flat-topped rise of 3/4 of the kind's relief, falling off
+  over 70 m), and every city's footprint is levelled (relief damped to a
+  quarter). Generation takes 15-50 ms for the map and 6-15 ms for heights
+  on the desktop (cached, so the scenario builder and the sim share it).
+- *Street graph* for paths: nodes at the gates (outside, gate, inside), a
+  ring outside the walls (20 m steps, clear of the towers), the ring road,
+  the plaza, the main streets and the street grid's crossings; edges join
+  nodes up to 48 m apart with a 3 m wide clear line (a gate's cells only
+  for edges to its own node, so a closed gate cuts exactly that node);
+  pieces left apart are joined by the shortest clear line. 50-160 nodes.
+
+**Woods (rules).**
+
+| Rule | Light / medium / dense |
+|---|---|
+| Speed (infantry, pikes, missile, cavalry, artillery), per mille | 900 / 780 / 660; 860 / 720 / 580; 900 / 790 / 680; 800 / 620 / 460; 650 / 450 / 300 |
+| Disorder moving in woods (decay 2 a tick) | +3 / +4 / +5 a tick up to 30 / 45 / 60: a pike wall drops, spears cannot brace |
+| Pikes standing in woods | medium or dense: disorder at least 25 / 40 (never formed: short swords) |
+| Cavalry momentum cap where the unit is | 80 / 60 / 40 (settlement streets: 40, no run-up) |
+| Charge impact on a man standing in woods | 85 / 65 / 45 % |
+| Riders fighting in woods | -5 / -10 / -15 to hit, and +5 / +10 / +15 to be hit |
+| Arrows landing in woods stopped by trees | 20 / 35 / 50 % (javelins 10 / 20 / 30 %) |
+| Stones landing in woods | 15 / 30 / 45 % stopped, plough 80 / 60 / 40 % |
+| Flat shots (javelins, bolts) | tree depth along the line 1 / 2 / 4 per 4 m sample, blocked past 8 (8 m of dense, 16 m of medium woods); also for the AI's target choice |
+| Batteries | cannot set up in dense woods |
+| Morale | no change |
+
+Only on maps with trees: one lookup per unit per tick (anchor), per blow
+and impact of a rider or into a man in woods, per missile landing; never
+per soldier on open ground.
+
+**Settlements (rules).**
+- *Obstacles*: a 2 m cell grid (building, wall body, walkway, tower, gate
+  g) and a passability grid (ground / wall walkway bits; a closed gate is
+  impassable). The men of a unit whose box (plus 8 m) touches a 16 m cell
+  with an obstacle are kept out of cells they may not enter: a blocked man
+  walks the unit's *trail* (the last 4 waypoints its anchor passed; toward
+  the one after the nearest, or the anchor), else slides along one axis,
+  else stays; a man inside a blocked cell may move out. Units away from
+  obstacles pay nothing.
+- *Paths*: the anchor of a unit with a move or attack order goes straight
+  if a 3 m wide line is clear, else over the street graph (entry node near
+  it, exit node near the goal, the cheapest pair by graph distance; Dijkstra
+  per exit node, cached until a gate changes), shortcut where the line is
+  clear; replanned when a gate opens, closes or breaks, when the order
+  changes, or (attacking) when the target moved 12 m (at most once a
+  second). Routers on a city map run along a path to their own edge.
+- *Squeeze*: every third tick a unit near obstacles measures the free width
+  either side of its anchor; if its front would not fit it closes files to
+  the width (at least 4) and keeps to the middle of the street, and opens
+  out again with 2 m to spare. Pikes in a street are strong frontally and
+  cannot be flanked (geometry); cavalry in streets has no run-up (momentum
+  cap 40).
+- *Melee* is not possible through a wall, closed gate or building corner
+  (the midpoint and quarter points must be passable).
+- *Walls*: units placed on a wall (garrison missile troops, by the scenario
+  builder) stand on the walkway: their height is the ground + 5 / 7 / 9 m
+  (missile range from height, line of fire), they move only along their
+  stretch of wall (a move order is projected onto it, facing out), never
+  withdraw or skirmish, and only wall units may enter the walkway (no
+  climbing in this version). Battlements stop 35 % of missiles that would
+  hit a man on a wall from below. Lines of fire (flat shots) are blocked by
+  buildings (4-6 m), walls (walkway + 0.6 m parapet), towers (+4 m) and
+  closed gates; a shooter on a wall looks over his own battlements. Arrows
+  and stones arc over everything; a stone's plough stops at a building or
+  wall.
+- *Gates*: start closed. The defenders may open or close one (order
+  `ORDER_GATE`, any of their units; closing is refused while anyone stands
+  in it; a broken gate stays broken). Hit points 1,800 / 2,700 / 3,800 by
+  wall level. Batteries ordered at a gate (`ORDER_ATTACK` with `gate`)
+  shoot its outer face: a bolt landing within it (1.5 m round) takes 80 hp,
+  a stone 360. Foot (not missile troops, cavalry or crews) of the attackers
+  standing at a closed gate (within 2 m of its face, not marching past)
+  hack at it: each of at most 10 men takes (damage - 20) x 25 % per swing.
+  An order at a gate for foot moves them to its face.
+- *Capture*: if the attackers hold the plaza (a ready unit of 10 or more
+  men with its centre in the capture zone, the plaza's half size + 6 m) with
+  no ready defender unit off the walls within 12 m more, for a continuous
+  60 s, every defender unit breaks for good. The battle then ends as any
+  other (`BattleSim.result()`, so the campaign applies it unchanged).
+
+**Hashing, snapshots.** Static grids and the graph are rebuilt by setup()
+(left out of snapshots); gates, the capture clock, nav (passability),
+paths, trails, squeeze, wall placement and gate orders are state, hashed on
+woods / settlement maps only, and round-trip through snapshot / restore.
+
+**AI.** Field battles with woods (`sim/battle_ai.gd`, maps with trees
+only): cavalry, pikes and batteries whose deployment slot is in woods take
+the nearest clear spot within 30 m; cavalry target scores lose 30 per tree
+step along the way and 600 per step where the target stands; archers and
+javelins with enemy cavalry within 70 m step into medium or dense woods
+within 40 m; flat shots through dense woods are refused by the sim.
+Settlement battles (`sim/siege_ai.gd`) - see its header: attackers form up
+out of the wall archers' reach before the gate they go for (an open or
+broken one first, else the weakest / nearest), batteries 165 m out shoot
+it, archers 110 m out shoot the walls, the two heaviest foot units hack at
+it when there is no battery (or after 2 minutes of bombardment); once a
+gate is open or broken (or the town is open) the foot storm in (attack
+defenders within 45 m, else make for the plaza; at a still-contested
+plaza, the nearest defender anywhere), archers follow to the breach,
+cavalry waits outside until the defenders break, then pursues; with no
+foot left, or 4 minutes into the assault, everything goes in; nothing
+dying for 2.5 minutes: all in if 1.2x stronger, else withdraw. Defenders
+never withdraw: wall units shoot, a solid foot unit holds the inside of
+each gate (attacks within 25 m of it), the rest hold the plaza and main
+street (attack attackers inside the settlement within 140 m), open gates
+are shut when attackers come within 100 m. No sallies.
+
+**View.** `game/ground_palette.gd` holds the palettes (plain, arid, dry,
+green, rocky: base, low / high tint, contour colour, tree shades), shared
+by the battle ground and the campaign map. `game/terrain.gdshader` /
+`terrain_layer.gd`: palette from `ter_info["palette"]`; stronger hill shade
+(relief exaggerated 3.4x, strength 0.6, lit slopes at 70% so crests do not
+wash out), the height tint spanning the map's own relief (5-22 m), valley
+floors slightly darker (heights blurred over 24 m on the CPU), and a second
+4 m texture from `sim.veg` for the forest floor, paving inside settlements,
+lighter main streets and plaza, striped fields; a plain map on the plain
+palette looks as before. `game/tree_layer.gd` + `trees.gdshader`: one
+MultiMesh of top-down canopies (four kinds, shades by palette: olive, scrub
+and cypress on arid / dry ground, oak and pine on green / rocky), 0.45 /
+1.05 / 1.65 trees per 4 m cell, orchards in rows, placed from a view RNG
+seeded with `ter_hash`; canopies fade to 28% over soldiers through an
+occupancy texture rebuilt each tick from the unit boxes (~0.1 ms).
+`game/city_layer.gd`: roofs by building kind with shadows, stone walls
+with walkway, parapet and merlons, round towers, the plaza; a small gates
+node redrawn each tick (closed / open / rubble, flash when hit). Overlay:
+gate hp bars, "Plaza held N / 60 s" with a ring, woods stretches and
+"woods" in the move hint, men shown green in woods / red in walls in the
+drag preview, "BREAK THE GATE" / "SHOOT THE GATE". Tapping a gate: the
+defender opens / shuts it (refused with a message if men stand in it);
+the attacker sends the selected batteries or foot at it. Sandbox:
+"Ground:" choice and a "Settlement battle" row (seed, village / town /
+city, walls 0-3, terrain, attack / defend). Unit book: "Woods" on the
+Terrain page and a "Settlements and sieges" page, numbers read from the
+constants. Campaign map: regions tinted by their ground (lightened) under
+the owner colour with an owner band along the borders, a stone wall ring
+with towers by wall level, and the region panel's "View battle map" (a
+static render of the settlement's map as it stands, `game/campaign/
+city_preview.gd`). Screenshots: `docs/screenshots/maps_*.png`.
+
+**Measured** (`tests/matchups.gd -- --only=maps --seeds=10`, desktop):
+- Woods, cavalry 60 charging a standing heavy 100 (infantry killed by 40 s
+  / riders lost): open 23.9 / 24.7, light 14.4 / 25.7, medium 5.3 / 25.5,
+  dense 1.6 / 25.7 (the cavalry loses every time anyway).
+- Cavalry 60 against archers 80 who shoot first: in the open riders lost
+  12.5, in dense woods 16.4; the cavalry still wins (archers in melee are
+  archers): woods blunt the charge, they do not make archers safe.
+- Archers 80 emptying their quivers at light 100 standing 110 m off:
+  killed 56 open, 44 / 41 / 25 in light / medium / dense woods.
+- Pike 120 pinned by heavy 100 with light 100 into its flank: open, pikes
+  lost 53, attackers 45; in medium woods (no pike wall) pikes lost 60 and
+  killed none. Pikes do not belong in woods.
+- Javelins 60 ordered at light 100 35 m off: 328 thrown, 13 killed across
+  open ground; 0 thrown through 20 m of dense woods.
+- Streets (10 m between two blocks; units of 8 files): pikes holding
+  against heavy 100 win 100% open and in the street; pinned by heavy with
+  light 100 at their side: open, pikes lost 54 / attackers 33; in the
+  street the light cannot get round (pikes lost 13 / attackers 62);
+  cavalry 60 charging heavy 100 kills 18.6 by 40 s in the open, 8.6 in the
+  street.
+- Gates (main gate of a town; time from the first blow; 10 runs): walls 1
+  bolts 44 s (26 shots), stones 45 s (12), heavy 100 40 s, light 100 45 s;
+  walls 2 bolts 68 s (39), stones 69 s (16), heavy 60 s, light 68 s; walls
+  3 one bolt battery's 44 bolts are not enough (it must refill), stones
+  107 s (24), heavy 127 s, light 145 s. Heavy 100 hacking with no cover
+  under two units of archers on the walls: breaks a level 1 gate (losing
+  21 men), routs before breaking level 2 and 3 gates (the AI covers its
+  hackers with archers).
+- Garrison only (town; 3 + walls units of 60 men) against the standard
+  12-unit attacker (about 1,000 men), AI vs AI, 10 runs each: the attacker
+  wins every time, no draws; with / without artillery, minutes to decide:
+  walls 0 4.3 / 4.3, walls 1 4.6 / 3.4, walls 2 5.1 / 5.1, walls 3 5.9 /
+  5.2; attackers killed 79-169, rising with the walls. (12 units against 6
+  small ones is a big edge; a level 3 wall makes it costly, not
+  impossible.)
+- AI vs AI settlement battles (garrison plus a 4-unit field army against
+  the standard attacker, 10 seeds each): open village attacker 100%, 4.3
+  min (max 5.2); walled town 100%, 6.4 (10.0); city walls 2 90% (one
+  defender win after the attackers withdrew), 7.6 (10.5); hill city walls
+  3 100%, 8.9 (11.7); no draws; the plaza capture decides 9 / 9 / 10 of
+  the walled battles. Campaign auto-resolve (`tests/campaign_battles.gd
+  --only=timing`, now a settlement battle): 12 v 12 7.2-9.9 min of battle,
+  4-6 s wall full size; 24 v 24 7.3-8.2 min, 12-13 s full, 7.3 s half size;
+  no draws.
+- Field battles with woods (bench_2000 armies, generated ground, woods 40,
+  10 seeds): 6 / 4 bottom / top, no draws, 5.7 min (max 9.5); archers took
+  shelter in woods 125 times.
+- Plain maps (no woods or buildings) play bit for bit as before: the golden
+  digests and every determinism run's final hash, hilly ones included, equal
+  those of the previous build; the woods / settlement rules are behind
+  `map_on` / `obs_on` / `veg_on`.
+- Benchmarks (desktop, same session; before -> after): bench_4000 mean
+  2.61-2.63 -> 2.63-2.66 ms, max 5.74-5.78 -> 5.76-5.98; bench_4000_hills
+  2.91-2.92 -> 2.99-3.01, max 6.05-6.28 -> 6.20-6.21; new bench_4000_city
+  (3,882 soldiers, 24 attacking units against 26 in a walled city) mean
+  2.69, p95 4.73, max 7.8 ms (setup 94 ms), decided at 11.5 min. Its worst
+  ticks are the first build of a graph distance table after a gate falls
+  (~0.7 ms each, then cached) on top of fighting in the crowded breach (a
+  target search there looks at no more than 64 men).
+
 ## 5. Networking
 
 ### Live battles: deterministic lockstep
@@ -1018,7 +1265,9 @@ soldiers, plus one for missiles in flight.
 5. **Live co-op battles.** Lockstep over the relay, unit gifting, reinforcements,
    desync recovery. Built 2026-10-05 (section 5 "Live battles: as built");
    reinforcements arriving from the map edge are still to do.
-6. **Depth.** Walled sieges, more factions and units, tech, enemy-control mode.
+   Battle maps with character (woods, settlement maps with walls and gates,
+   ground palettes, stronger shading): built October 2026 (section 4).
+6. **Depth.** Siege equipment (ladders, towers), more factions and units, tech, enemy-control mode.
 
 ## 10. Main risks
 

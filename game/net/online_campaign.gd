@@ -184,7 +184,10 @@ func _sync_once(fetch_session: bool) -> bool:
 		return false
 	summary = CState.normalise(r["data"])  # JSON numbers -> ints (Array.has(int) needs ints)
 	seq = int(summary.get("seq", 0))
-	if int(summary.get("format_version", 0)) != CState.VERSION:
+	# Online states keep the format their campaign was made with (the server
+	# pins it); this build reads every format from MIN_VERSION up (rules
+	# fall back to defaults for fields an older format lacks).
+	if int(summary.get("format_version", 0)) > CState.VERSION or int(summary.get("format_version", 0)) < CState.MIN_VERSION:
 		refused = "This campaign uses save format %d; this game build reads format %d. Update the game (reload the page) before playing it." % [
 			int(summary.get("format_version", 0)), CState.VERSION]
 		changed.emit("summary")
@@ -670,7 +673,8 @@ func _load_cache() -> void:
 		return
 	var d: Dictionary = CState.normalise(v)
 	if d.get("state") is Dictionary and str(d["state"].get("format", "")) == CState.FORMAT \
-			and int(d["state"].get("version", 0)) == CState.VERSION:
+			and int(d["state"].get("version", 0)) <= CState.VERSION \
+			and int(d["state"].get("version", 0)) >= CState.MIN_VERSION:
 		st = d["state"]
 		version = int(d.get("version", 0))
 		state_hash = CState.hash_text(st)

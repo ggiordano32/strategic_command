@@ -5,8 +5,9 @@ extends Node
 ## the status badges of the Continue list. One OnlineCampaign at a time is
 ## open (`current`).
 ##
-## Versions: CState.VERSION (state format) must match the campaign's
-## exactly or the campaign is refused. `rules` is a hash of campaign/*.gd
+## Versions: a campaign's state format (pinned by the server when it is
+## created) must be one this build reads (CState.MIN_VERSION..VERSION) or
+## the campaign is refused; online states are never migrated. `rules` is a hash of campaign/*.gd
 ## and sim/*.gd (from build_stamp.txt in exported builds, computed from the
 ## sources otherwise); a different rules hash from the one that made the
 ## latest version is shown as a warning, and the determinism check reports
@@ -151,7 +152,7 @@ func labels() -> Dictionary:
 ## result; on success the seat is stored on this device.
 func create_campaign(st: Dictionary, seat: int, opts: Dictionary = {}) -> Dictionary:
 	var text := CState.to_json(st)
-	var body := {"name": str(opts.get("name", st.get("name", ""))), "format_version": CState.VERSION, "rules": rules,
+	var body := {"name": str(opts.get("name", st.get("name", ""))), "format_version": int(st.get("version", CState.VERSION)), "rules": rules,
 		"build": build, "seat": seat, "state_gz": OnlineCampaign.gz64(text), "hash": CState.hash_text(st),
 		"labels": labels(), "turn_timeout_h": int(st["settings"].get("turn_timeout_h", 0)),
 		"device": accounts.device()}
