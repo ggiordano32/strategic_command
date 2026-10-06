@@ -23,6 +23,7 @@ signal book_pressed
 signal card_long_pressed(unit: int)
 signal deselect_pressed
 signal controls_pressed
+signal gift_pressed
 
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -61,6 +62,7 @@ var skirm_button: Button
 var deploy_button: Button
 var refill_button: Button
 var withdraw_button: Button
+var gift_button: Button
 var withdraw_all_button: Button
 var add_button: Button
 var deselect_button: Button
@@ -231,7 +233,12 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	withdraw_button = _button("Withdraw", Vector2(0, BTN_H))
 	withdraw_button.tooltip_text = "Leave the battle by your own map edge"
 	withdraw_button.pressed.connect(func(): withdraw_pressed.emit())
-	for b in [run_button, halt_button, fire_button, skirm_button, deploy_button, refill_button, withdraw_button]:
+	# Live co-op: give the selected units to the ally (hidden otherwise).
+	gift_button = _button("Gift", Vector2(0, BTN_H))
+	gift_button.tooltip_text = "Give the selected units to your ally (they can give them back)"
+	gift_button.pressed.connect(func(): gift_pressed.emit())
+	gift_button.visible = false
+	for b in [run_button, halt_button, fire_button, skirm_button, deploy_button, refill_button, withdraw_button, gift_button]:
 		actions.add_child(b)
 	actions.visible = false
 	actions_box = actions
@@ -449,6 +456,24 @@ func card_text(u: int) -> String:
 	return (_faces[u] as CardFace).summary
 
 
+## A control of another layer (the co-op panels) that touches must not
+## pass through to the battlefield.
+func add_ui_control(c: Control) -> void:
+	_ui_controls.append(c)
+
+
+## Live co-op: mark unit u's card as commanded by the ally (not orderable
+## here) in the ally's colour, or as this player's own.
+func set_card_owner(u: int, foreign: bool, col: Color) -> void:
+	if not _faces.has(u):
+		return
+	var f: CardFace = _faces[u]
+	if f.foreign != foreign or f.owner_col != col:
+		f.foreign = foreign
+		f.owner_col = col
+		f.queue_redraw()
+
+
 func is_over_ui(screen_pos: Vector2) -> bool:
 	for c in _ui_controls:
 		if c.visible and c.get_global_rect().has_point(screen_pos):
@@ -648,6 +673,9 @@ class CardFace extends Control:
 	var under_fire := false
 	var fighting := false
 	var refilling := false
+	## Live co-op: commanded by the ally (drawn with their colour, dimmer).
+	var foreign := false
+	var owner_col := Color.WHITE
 
 	func _draw() -> void:
 		var sz := size
@@ -669,7 +697,14 @@ class CardFace extends Control:
 				bar = Color(0.4, 0.4, 0.4)
 		if selected:
 			bg = bg.lightened(0.22)
+		if foreign:
+			bg = bg.darkened(0.35)
+			txt = txt.darkened(0.25)
 		draw_rect(Rect2(Vector2.ZERO, sz), bg)
+		if foreign:
+			# The ally's unit: a frame and a corner tab in their colour.
+			draw_rect(Rect2(Vector2(1, 1), sz - Vector2(2, 2)), Color(owner_col, 0.85), false, 1.5)
+			draw_rect(Rect2(sz.x - 9, 0, 9, 6), owner_col)
 		if under_fire and state != ST_GONE:
 			draw_rect(Rect2(0, 0, 3, sz.y), Color(1.0, 0.55, 0.1))
 		var r := minf(sz.y * 0.3, 10.0)

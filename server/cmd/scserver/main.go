@@ -51,6 +51,7 @@ func main() {
 	brMax := flag.Bool("brotli-max", envBool("SC_BROTLI_MAX", true), "also make quality-11 brotli copies in the background (SC_BROTLI_MAX)")
 	testMode := flag.Bool("test-mode", envBool("SC_TEST_MODE", false), "enable /api/test/* and any webhook URL: tests only (SC_TEST_MODE)")
 	lease := flag.Duration("lease", mustDur(env("SC_LEASE", "120s")), "battle lease duration (SC_LEASE)")
+	roomGrace := flag.Duration("room-grace", mustDur(env("SC_ROOM_GRACE", "90s")), "how long an empty live battle room is kept for reconnects (SC_ROOM_GRACE)")
 	logLevel := flag.String("log-level", env("SC_LOG_LEVEL", "info"), "debug, info, warn, error (SC_LOG_LEVEL)")
 	backupNow := flag.Bool("backup-now", false, "write one backup and exit")
 	flag.Parse()
@@ -66,7 +67,7 @@ func main() {
 	}
 	cfg := server.Config{Addr: *addr, DataDir: *data, WebDir: *web, LogDir: *logs, InviteKey: *invite,
 		TrustedProxy: tp, BackupEvery: *backupEvery, BackupKeep: *backupKeep, TestMode: *testMode,
-		CompressWeb: *compress, BrotliMax: *brMax, LeaseDuration: *lease}
+		CompressWeb: *compress, BrotliMax: *brMax, LeaseDuration: *lease, RoomGrace: *roomGrace}
 	srv, err := server.New(cfg, log, nil)
 	if err != nil {
 		log.Error("startup failed", "err", err)

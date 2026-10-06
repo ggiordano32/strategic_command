@@ -39,6 +39,7 @@ const UnitBook := preload("res://game/unit_book.gd")
 const UnitEntry := preload("res://game/unit_entry.gd")
 const Controls := preload("res://game/controls.gd")
 const OnlineUI := preload("res://game/campaign/online_ui.gd")
+const CoopSession := preload("res://game/net/coop_session.gd")
 
 const ZOOM_MIN := 0.2
 const ZOOM_MAX := 2.5
@@ -217,6 +218,16 @@ func _apply_debug_args() -> void:
 			_next_step()
 		elif a.begins_with("--explain="):
 			explain_refusal(sel_army, CData.region_index(v))  # testing aid
+		elif a.begins_with("--live-open=") or a.begins_with("--live-join="):
+			# Testing aid: open / join the live room of battle N once the
+			# online state is here.
+			for i in 100:
+				if online != null and not online.st.is_empty() and not online.summary.is_empty():
+					break
+				await get_tree().create_timer(0.1).timeout
+			if online != null:
+				await online.sync()
+				fight_live(int(v), a.begins_with("--live-open="))
 		elif a == "--camp-fight":
 			var pb := CTurn.pending_for(st)
 			if not pb.is_empty():
@@ -984,7 +995,81 @@ func _set_visible(on: bool) -> void:
 	set_process_unhandled_input(on)
 
 
+## A live co-op battle (milestone 5): open its room (create, the host) or
+## join the open one, built from the campaign version the room was opened
+## at. keep: let the host keep command of this player's units.
+func fight_live(bid: int, create: bool, keep: bool = false) -> void:
+	var b := CState.battle(st, bid)
+	if b.is_empty() or battle != null or online == null:
+		return
+	var v: int = online.version
+	var bst: Dictionary = st
+	var live = online.battle_info(bid).get("live")
+	if not create and live is Dictionary and int(live.get("version", v)) != v:
+		v = int(live["version"])
+		bst = await online.state_at(v)
+		if bst.is_empty():
+			show_toast("Could not load the campaign as it was when this battle started. Try again.")
+			return
+		b = CState.battle(bst, bid)
+		if b.is_empty():
+			return
+	if battle != null:
+		return
+	var hs: Array = CRules.battle_humans(bst, b)
+	var hmin := int(hs.min()) if not hs.is_empty() else f
+	_battle_built = CBattle.build(bst, b, hmin)
+	_battle_id = bid
+	var net := get_node_or_null("/root/Net")
+	var coop = CoopSession.new()
+	add_child(coop)
+	coop.setup(net.api.base_url if net != null else "", online.id, online.token, online.f, _battle_built, hs, v, create, keep)
+	coop.failed.connect(func(code: String, text: String): _coop_failed(code, text))
+	battle = Battle.new()
+	battle.custom_scenario = _battle_built["scenario"]
+	battle.seed_value = int(_battle_built["seed"])
+	battle.scenario_id = "campaign_live"
+	battle.campaign_mode = true
+	battle.coop = coop
+	battle.coop_region = str(CData.REGIONS[int(b["r"])]["city"])
+	battle.exit_requested.connect(_on_battle_exit)
+	close_dialog()
+	_set_visible(false)
+	_t("campaign_battle_start", {"turn": int(st["turn"]), "region": int(b["r"]), "units": (_battle_built["map"] as Array).size(),
+		"live": true, "create": create})
+	get_tree().root.add_child.call_deferred(battle)
+
+
+func _coop_failed(code: String, text: String) -> void:
+	var msg := text
+	match code:
+		"no_room":
+			msg = "Nobody is fighting this battle live any more."
+		"claimed":
+			msg = "Your ally is resolving this battle right now."
+		"stale":
+			msg = "The campaign moved on; try again."
+		"not_pending":
+			msg = "This battle has been resolved."
+	if battle != null and battle.coop != null:
+		battle.coop.leave()
+		var c = battle.coop
+		get_tree().create_timer(2.0).timeout.connect(func(): if is_instance_valid(c): c.queue_free())
+		battle.queue_free()
+		battle = null
+		_set_visible(true)
+	show_toast(msg)
+	if online != null:
+		await online.sync()
+		_after_battle_refresh()
+		if onl != null:
+			onl.show_battles()
+
+
 func _on_battle_exit() -> void:
+	if battle.coop != null:
+		_on_coop_exit()
+		return
 	var res: Dictionary = battle.sim.result()
 	var decided := battle.is_decided()
 	var outcome: Dictionary
@@ -997,6 +1082,30 @@ func _on_battle_exit() -> void:
 	battle.queue_free()
 	battle = null
 	_set_visible(true)
+	_apply_battle(_battle_id, outcome)
+
+
+func _on_coop_exit() -> void:
+	var c = battle.coop
+	var r: Dictionary = battle.coop_exit_result()
+	var res: Dictionary = battle.sim.result()
+	_t("campaign_battle", {"mode": "live", "turn": int(st["turn"]), "ticks": int(res["tick"]), "winner": int(res["winner"]),
+		"upload": not r.is_empty(), "host": c.is_host(), "stats": c.stats})
+	battle.queue_free()
+	battle = null
+	_set_visible(true)
+	get_tree().create_timer(2.0).timeout.connect(func(): if is_instance_valid(c): c.queue_free())
+	if r.is_empty():
+		_after_battle_refresh()
+		if online != null:
+			online.sync()
+		return
+	var outcome: Dictionary
+	if bool(r["decided"]):
+		outcome = CBattle.outcome_from_result(_battle_built, r["res"], "fought")
+	else:
+		outcome = CBattle.outcome_forfeit(_battle_built, r["res"])
+	outcome["live"] = 1
 	_apply_battle(_battle_id, outcome)
 
 

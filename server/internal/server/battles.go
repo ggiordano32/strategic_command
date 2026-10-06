@@ -31,6 +31,11 @@ func (s *Server) mayCommand(ctx context.Context, q queryer, c *campRow, b *Battl
 	if err == nil && cmd == seat.F {
 		return nil
 	}
+	// A seat that took part in the battle fought live (rooms.go).
+	var one int
+	if q.QueryRowContext(ctx, "SELECT 1 FROM battle_live WHERE campaign_id = ? AND battle_id = ? AND f = ?", c.ID, b.ID, seat.F).Scan(&one) == nil {
+		return nil
+	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
@@ -70,6 +75,16 @@ func (s *Server) claimBattle(w http.ResponseWriter, r *http.Request, seat Seat) 
 	}
 	var until int64
 	var seq int64
+	// A battle fought live is held by its room (checked outside the
+	// transaction: room locks are never taken while holding the database).
+	if bid, err := strconv.Atoi(r.PathValue("bid")); err == nil {
+		if li := s.liveInfo(seat.Campaign, bid); li != nil {
+			e := errf(http.StatusConflict, "claimed", "this battle is being fought live")
+			e.extra = map[string]any{"held_by": li["host"], "mode": "live"}
+			s.failErr(w, e)
+			return
+		}
+	}
 	err := s.db.Tx(r.Context(), func(tx *sql.Tx) error {
 		ctx := r.Context()
 		c, b, err := s.battleOf(ctx, tx, seat, r)

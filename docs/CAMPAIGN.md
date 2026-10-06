@@ -312,8 +312,12 @@ test exaggerates numbers; in an army line the gap is smaller.
   stone throwers behind, past 12 units a second infantry line 45 m back.
   Field 560-960 m wide.
 - Command seam: `CBattle.build` returns `unit_faction` and `controller` for
-  every sim unit; today the present player commands every unit on the player
-  side (allied armies included). Co-op battles (milestone 5) split it there.
+  every sim unit; in a solo battle the present player commands every unit on
+  the player side (allied armies included). Live co-op battles (milestone 5)
+  split it in `CoopSession.home_of`: each human commands the units of their
+  own faction, other friendly units go to the lowest human faction; both
+  devices build with `human_f` = the lowest human of the battle, so the
+  scenario is identical (checked by a hash when joining).
 - Applying a result: every unit keeps remaining + withdrawn + 70% of its
   routed-off men; empty units and armies go. The loser's armies in the region
   retreat (attackers to where they came from if still friendly, else any
@@ -464,8 +468,13 @@ As built 2026-10-05; the server side is in `docs/SERVER.md`.
 - **Pending battles online:** your own: Auto-resolve or Fight (the device
   takes a lease first; another device is told "Carthage is fighting this
   battle now"); with your ally's army in it: Wait for ally (they are
-  pinged), Take command (they are told; then Auto-resolve / Fight), Ask to
-  join now. The result is kept on this device until the server has it (it
+  pinged), Take command (they are told; then Auto-resolve / Fight), Fight
+  together (milestone 5: opens the live battle's lobby and pings the ally;
+  "Ask to join now" on servers without live battles). A battle being fought
+  live shows "Live now: Rome is waiting for you in the battle lobby" / "Live
+  now: Rome in battle (started 3 min ago)" with **Join battle** (and "Join,
+  Rome keeps my army"). Fight on such a battle after Take command also opens
+  a live room, so the ally can still join. The result is kept on this device until the server has it (it
   survives a closed page and is resent); if the ally resolved the battle
   first, it is dropped with a note. The "always auto-resolve" setting
   auto-resolves your own battles online too.

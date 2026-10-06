@@ -12,6 +12,9 @@ extends RefCounted
 const BattleSim := preload("res://sim/battle_sim.gd")
 
 var sim
+## Live co-op: where the not-yet-applied orders come from instead (the
+## lockstep layer's queue, both players' orders, plus the sim's own).
+var source := Callable()
 var _pending: Array = []     # orders in queue order (copies)
 var _view: Dictionary = {}   # unit -> predicted {key: int}
 
@@ -24,6 +27,8 @@ func add(order: Dictionary) -> void:
 ## Drop orders the sim has applied and rebuild the predictions. Cheap; call
 ## every frame and after queueing.
 func refresh() -> void:
+	if source.is_valid():
+		_pending = source.call()
 	var keep: Array = []
 	for o in _pending:
 		if int(o["tick"]) >= sim.tick:

@@ -436,6 +436,27 @@ func battle_info(bid: int) -> Dictionary:
 	return {}
 
 
+## The state at version v ({} if it cannot be fetched): a live battle is
+## built from the version its room was opened at.
+func state_at(v: int) -> Dictionary:
+	if v == version and not st.is_empty():
+		return st
+	var r := await _api("GET", "/state?version=%d" % v)
+	if not r["ok"]:
+		return {}
+	var d: Dictionary = r["data"]
+	var nst: Dictionary = CState.normalise(d.get("state", {}))
+	if CState.hash_text(nst) != str(d.get("hash", "")):
+		return {}
+	return nst
+
+
+## Live rooms need the server's API 2 (milestone 5).
+func live_ok() -> bool:
+	var net := get_node_or_null("/root/Net")
+	return net != null and int(net.info.get("api", 0)) >= 2
+
+
 func claim(bid: int, mode: String) -> Dictionary:
 	var r := await _api("POST", "/battles/%d/claim" % bid, {"mode": mode})
 	if r["ok"]:

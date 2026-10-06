@@ -16,6 +16,9 @@ const Terrain := preload("res://sim/terrain.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Controls := preload("res://game/controls.gd")
 const UiScale := preload("res://game/ui_scale.gd")
+const CoopHud := preload("res://game/coop_hud.gd")
+const Lockstep := preload("res://sim/lockstep.gd")
+const CData := preload("res://campaign/cdata.gd")
 
 const PX_PER_M := 10.0
 const M := 1024.0
@@ -51,6 +54,14 @@ var custom_scenario: Dictionary = {}
 ## read "Back to campaign".
 var campaign_mode := false
 var _leave_confirm := 0.0
+## Live co-op battle (game/net/coop_session.gd, milestone 5), or null: the
+## session runs the lockstep layer and owns the sim once the battle starts
+## (before that `sim` is a stand-in built from the same scenario for the
+## lobby). Orders go through it, only for units this player commands;
+## pause and speed are votes.
+var coop = null
+var coop_hud = null
+var coop_region := ""
 
 var sim: BattleSim
 var camera: Camera2D
@@ -208,6 +219,8 @@ func _ready() -> void:
 		_select(-1))
 	hud.controls_pressed.connect(_open_controls)
 	hud.controls.closed.connect(func(): _set_paused(_paused_before_controls))
+	if coop != null:
+		_coop_ready()
 	hud.orders_button.set_pressed_no_signal(show_all_orders)
 	hud.set_orders_text(show_all_orders)
 	overlay.show_all_orders = show_all_orders
@@ -304,6 +317,8 @@ func _on_menu() -> void:
 	if campaign_mode and sim.winner < 0 and _leave_confirm <= 0.0:
 		_leave_confirm = 3.0
 		hud.banner.text = "Leave? Your army withdraws (a defeat). Tap again."
+		if coop != null and _coop_others_in():
+			hud.banner.text = "Leave? Your units go to your ally. Tap again."
 		hud.banner.visible = true
 		return
 	_end_scenario("menu")
@@ -344,7 +359,9 @@ func _process(delta: float) -> void:
 		_leave_confirm -= delta
 		if _leave_confirm <= 0.0 and sim.winner < 0:
 			hud.banner.visible = false
-	if not paused and not _bench_done:
+	if coop != null:
+		_coop_step(delta)
+	elif not paused and not _bench_done:
 		_acc += delta * SPEEDS[speed_idx]
 		var steps := 0
 		while _acc >= TICK_SEC and steps < MAX_TICKS_PER_FRAME and not _bench_done:
@@ -357,7 +374,8 @@ func _process(delta: float) -> void:
 			var t0 := Time.get_ticks_usec()
 			soldiers.upload()
 			_upload_ms = (Time.get_ticks_usec() - t0) / 1000.0
-	soldiers.set_alpha(clampf(_acc / TICK_SEC, 0.0, 1.0))
+	if coop == null:
+		soldiers.set_alpha(clampf(_acc / TICK_SEC, 0.0, 1.0))
 	_keys_held(delta)
 	orders.refresh()  # drop orders the sim has applied
 	# Redrawn every frame, paused or not, so order changes show at once.
@@ -377,6 +395,8 @@ func _process(delta: float) -> void:
 	if _card_timer <= 0.0:
 		_card_timer = 0.25
 		hud.update_cards(sim)
+		if coop != null:
+			_coop_cards()
 		_refresh_actions()
 		_update_stats_label()
 
@@ -384,7 +404,11 @@ func _process(delta: float) -> void:
 func _do_tick() -> void:
 	var t0 := Time.get_ticks_usec()
 	sim.step()
-	var ms := (Time.get_ticks_usec() - t0) / 1000.0
+	_after_tick((Time.get_ticks_usec() - t0) / 1000.0)
+
+
+## Bookkeeping after the sim stepped (ms: the step's time).
+func _after_tick(ms: float) -> void:
 	_sim_ms.append(ms)
 	_win_sim.append(ms)
 	if _sim_ms.size() > STATS_WINDOW:
@@ -567,10 +591,19 @@ func _exit_tree() -> void:
 # --------------------------------------------------------------- orders ---
 
 func _queue(order: Dictionary) -> void:
-	# Solo play: orders apply on the next tick. Lockstep will add a delay.
-	order["tick"] = sim.tick
-	sim.queue_order(order)
-	orders.add(order)
+	if coop != null:
+		# Live co-op: through the lockstep layer, for our own units only.
+		if not coop.can_issue():
+			return
+		var cu := int(order.get("unit", -1))
+		if cu >= 0 and not coop.can_order(cu):
+			return
+		coop.issue(order)
+	else:
+		# Solo play: orders apply on the next tick.
+		order["tick"] = sim.tick
+		sim.queue_order(order)
+		orders.add(order)
 	overlay.queue_redraw()
 	var tname: String = ORDER_NAMES.get(int(order["type"]), "other")
 	_player_orders += 1
@@ -612,7 +645,7 @@ func _toggle_in_selection(u: int) -> void:
 func _prune_selection() -> void:
 	var keep: Array[int] = []
 	for u in selection:
-		if sim.u_state[u] == BattleSim.U_READY:
+		if sim.u_state[u] == BattleSim.U_READY and _mine(u):
 			keep.append(u)
 	selection = keep
 	if not selection.has(selected):
@@ -660,6 +693,11 @@ func _refresh_actions() -> void:
 	if selection.is_empty():
 		run = 0
 	hud.set_selection(selection, run, fire, skirm, deploy, refill)
+	if coop != null:
+		var to := _gift_target()
+		hud.gift_button.visible = not selection.is_empty() and to >= 0
+		if to >= 0:
+			hud.gift_button.text = "Gift to " + CData.faction_name(to)
 
 
 ## Group buttons: every ready player unit of a class.
@@ -670,7 +708,7 @@ func _select_group(kind: String) -> void:
 	selection.clear()
 	selected = -1
 	for u in sim.n_units:
-		if sim.u_side[u] != PLAYER_SIDE or sim.u_state[u] != BattleSim.U_READY:
+		if sim.u_side[u] != PLAYER_SIDE or sim.u_state[u] != BattleSim.U_READY or not _mine(u):
 			continue
 		var c := UT.cls(sim.u_type[u])
 		# Artillery goes with the missile troops: both shoot, take Fire
@@ -706,6 +744,8 @@ func _on_book_closed() -> void:
 
 
 func _set_paused(on: bool) -> void:
+	if coop != null:
+		return  # co-op: the book and the controls page do not pause the battle
 	paused = on
 	hud.pause_button.text = "Play" if paused else "Pause"
 
@@ -718,6 +758,10 @@ func _on_card(u: int) -> void:
 		return
 	if not interactive or sim.u_state[u] != BattleSim.U_READY:
 		_selection_changed()  # undo the card's toggle
+		return
+	if not _mine(u):
+		_selection_changed()
+		_not_mine_hint(u)
 		return
 	var add := add_mode or hud.card_mod_add
 	_count("card_add" if add else "card_select")
@@ -740,19 +784,27 @@ func _center_on_unit(u: int) -> void:
 
 
 func _toggle_pause() -> void:
-	paused = not paused
 	_count("pause_toggle")
+	if coop != null:
+		coop.request_pause()
+		return
+	paused = not paused
 	hud.pause_button.text = "Play" if paused else "Pause"
 
 
 func _cycle_speed() -> void:
-	speed_idx = (speed_idx + 1) % SPEEDS.size()
 	_count("speed_change")
+	if coop != null:
+		_coop_speed(1, true)
+		return
+	speed_idx = (speed_idx + 1) % SPEEDS.size()
 	_update_speed_text()
 
 
 func _update_speed_text() -> void:
 	var s: float = SPEEDS[speed_idx]
+	if coop != null and coop.ls != null:
+		s = coop.ls.speed_q / 4.0
 	hud.speed_button.text = ("%.1fx" % s) if s < 1.0 else ("%dx" % int(s))
 
 
@@ -864,6 +916,9 @@ func _tap(screen_pos: Vector2, double: bool) -> void:
 	if u >= 0 and sim.u_side[u] == PLAYER_SIDE:
 		if sim.u_state[u] != BattleSim.U_READY:
 			_count("tap_on_broken_unit")
+			return
+		if not _mine(u):
+			_not_mine_hint(u)
 			return
 		_count("tap_select")
 		if add_mode or _shift_held():
@@ -1057,11 +1112,17 @@ func _on_key(e: InputEventKey) -> void:
 		"pause":
 			_toggle_pause()
 		"speed_up":
-			speed_idx = mini(speed_idx + 1, SPEEDS.size() - 1)
-			_update_speed_text()
+			if coop != null:
+				_coop_speed(1, false)
+			else:
+				speed_idx = mini(speed_idx + 1, SPEEDS.size() - 1)
+				_update_speed_text()
 		"speed_down":
-			speed_idx = maxi(speed_idx - 1, 0)
-			_update_speed_text()
+			if coop != null:
+				_coop_speed(-1, false)
+			else:
+				speed_idx = maxi(speed_idx - 1, 0)
+				_update_speed_text()
 		"select_all":
 			_select_group("all")
 		"select_inf":
@@ -1278,7 +1339,7 @@ func _box_end(apply: bool) -> void:
 		_select(-1)
 	var any := false
 	for u in sim.n_units:
-		if sim.u_side[u] != PLAYER_SIDE or sim.u_state[u] != BattleSim.U_READY:
+		if sim.u_side[u] != PLAYER_SIDE or sim.u_state[u] != BattleSim.U_READY or not _mine(u):
 			continue
 		var c := Vector2(sim.u_cx[u], sim.u_cy[u]) / M * PX_PER_M
 		if rect.has_point(c) and not selection.has(u):
@@ -1458,3 +1519,208 @@ func _zoom_at(screen_pos: Vector2, factor: float) -> void:
 func _clamp_camera() -> void:
 	var field := Vector2(sim.field_w, sim.field_h) / M * PX_PER_M
 	camera.position = camera.position.clamp(Vector2.ZERO, field)
+
+
+# -------------------------------------------------------------- co-op ---
+
+func _coop_ready() -> void:
+	coop.auto_update = false
+	coop_hud = CoopHud.new()
+	coop_hud.region_name = coop_region
+	add_child(coop_hud)
+	coop_hud.build(coop, hud)
+	coop_hud.leave_pressed.connect(func():
+		_end_scenario("coop_lobby_leave")
+		exit_requested.emit())
+	hud.gift_pressed.connect(_gift)
+	orders.source = _coop_pending
+	coop.changed.connect(func():
+		_prune_selection()
+		overlay.queue_redraw())
+	coop.resolved.connect(func():
+		coop_hud.flash("The result is in on the server. Back to campaign when you like.", 8.0))
+	coop.note.connect(func(text: String, _kind: String): coop_hud.flash(text, 4.0))
+
+
+## The session stepped the sim (lockstep frames due by wall time).
+func _coop_step(delta: float) -> void:
+	if coop.ls != null and coop.ls.sim != sim:
+		_rebind(coop.ls.sim)
+	if coop.ls != null and not has_meta("coop_select_done"):
+		# Testing aid: --coop-select=U[,U] once the battle runs here.
+		set_meta("coop_select_done", true)
+		for a in OS.get_cmdline_user_args():
+			if a.begins_with("--coop-select="):
+				var want: Array = []
+				if a.get_slice("=", 1) == "mine":
+					for u in sim.n_units:
+						if coop.can_order(u) and want.size() < 2:
+							want.append(u)
+				else:
+					want = Array(a.get_slice("=", 1).split(","))
+				for part in want:
+					if coop.can_order(int(part)):
+						if selection.is_empty():
+							_select(int(part))
+						else:
+							_toggle_in_selection(int(part))
+	var t0 := Time.get_ticks_usec()
+	var steps: int = coop.update(delta)
+	var ms := (Time.get_ticks_usec() - t0) / 1000.0
+	_coop_test_aids()
+	var ls = coop.ls
+	if ls == null:
+		soldiers.set_alpha(1.0)
+		return
+	if ls.sim != sim:
+		_rebind(ls.sim)
+	if steps > 0:
+		_after_tick(ms / steps)
+		soldiers.upload()
+	var p: bool = ls.paused != 0
+	if p != paused:
+		paused = p
+		hud.pause_button.text = "Play" if paused else "Pause"
+	var q: int = ls.speed_q
+	if q != int(SPEEDS[speed_idx] * 4.0):
+		speed_idx = maxi(SPEEDS.find(q / 4.0), 0)
+		_update_speed_text()
+	# Interpolation between the last two ticks.
+	var a := 1.0
+	if not paused:
+		var f: float = clampf(coop.wall_acc / TICK_SEC, 0.0, 1.0)
+		a = f if q >= 4 else clampf((ls.acc + f * q) / 4.0, 0.0, 1.0)
+	soldiers.set_alpha(a)
+
+
+## Testing aids (tests/live_shots.py): --coop-start-alone (the host starts
+## without waiting), --coop-test-withdraw-at=F (withdraw the army at frame
+## F), --coop-auto-exit (back to the campaign once the battle is over).
+func _coop_test_aids() -> void:
+	for a in OS.get_cmdline_user_args():
+		if a == "--coop-start-alone" and coop.phase == "lobby" and coop.is_host() and coop.room.is_open():
+			coop.start_battle()
+		elif a.begins_with("--coop-test-withdraw-at=") and coop.ls != null and not has_meta("test_withdrawn") \
+				and coop.ls.frame >= int(a.get_slice("=", 1)) and coop.can_issue():
+			set_meta("test_withdrawn", true)
+			_withdraw_all()
+		elif a == "--coop-auto-exit" and coop.final_frame >= 0 and not has_meta("test_exit") \
+				and coop.ls.frame >= coop.final_frame + 10:
+			set_meta("test_exit", true)
+			_end_scenario("coop_auto_exit")
+			exit_requested.emit()
+
+
+## The session restored a snapshot (or started): every view part follows
+## the new sim.
+func _rebind(s) -> void:
+	sim = s
+	soldiers.sim = s
+	overlay.sim = s
+	orders.sim = s
+	terrain.sim = s
+	hud._sim = s
+	soldiers.upload()
+	_prune_selection()
+
+
+func _mine(u: int) -> bool:
+	return coop == null or coop.can_order(u)
+
+
+func _not_mine_hint(u: int) -> void:
+	_count("tap_ally_unit")
+	if coop != null and coop.ls != null and coop_hud != null:
+		var c: int = coop.ls.commander(u)
+		coop_hud.flash("%s commands this unit." % (CData.faction_name(c) if c >= 0 else "Nobody"), 2.0)
+
+
+## Orders not applied yet, for the preview: the lockstep queue (both
+## players), the sim's own, and what this player queued this frame.
+func _coop_pending() -> Array:
+	if coop.ls == null:
+		return []
+	var out: Array = coop.ls.pending_sim_orders()
+	for o in coop.outbox:
+		var t := int(o.get("type", 0))
+		if t >= BattleSim.ORDER_MOVE and t <= BattleSim.ORDER_REFILL and t != BattleSim.ORDER_WITHDRAW_ALL:
+			var d: Dictionary = o.duplicate()
+			d["tick"] = sim.tick
+			out.append(d)
+	return out
+
+
+func _coop_cards() -> void:
+	if coop.ls == null:
+		return
+	for u in sim.n_units:
+		if sim.u_side[u] != PLAYER_SIDE:
+			continue
+		var c: int = coop.ls.commander(u)
+		hud.set_card_owner(u, c != coop.me, CData.faction_color(c) if c >= 0 else Color(0.5, 0.5, 0.5))
+	if not selection.is_empty():
+		_prune_selection()
+
+
+## Speed request: one step up / down (wrap: the speed button cycles).
+func _coop_speed(dir: int, cycle: bool) -> void:
+	if coop.ls == null:
+		return
+	var qs: Array = Lockstep.SPEED_QS
+	var i: int = qs.find(coop.ls.vote_speed_q if coop.ls.vote_speed_by == coop.me else coop.ls.speed_q)
+	i += dir
+	if cycle:
+		i = (i + qs.size()) % qs.size()
+	i = clampi(i, 0, qs.size() - 1)
+	coop.request_speed(int(qs[i]))
+
+
+## The ally the selection can be gifted to (-1: none taking part).
+func _gift_target() -> int:
+	if coop == null or coop.ls == null:
+		return -1
+	for p in coop.others():
+		if coop.ls.is_active(int(p)):
+			return int(p)
+	return -1
+
+
+func _gift() -> void:
+	var to := _gift_target()
+	if to < 0 or selection.is_empty():
+		return
+	_count("gift")
+	_t("coop_gift", {"units": selection.size(), "to": to, "tick": sim.tick})
+	coop.gift(selection, to)
+	coop_hud.flash("%d unit%s given to %s." % [selection.size(), "" if selection.size() == 1 else "s", CData.faction_name(to)], 2.5)
+	_select(-1)
+
+
+## Another player takes part and is connected (leaving hands them our units).
+func _coop_others_in() -> bool:
+	if coop == null or coop.ls == null:
+		return false
+	for p in coop.ls.active_players():
+		if p != coop.me and coop.connected(p):
+			return true
+	return false
+
+
+## Leaving a live co-op battle: what to upload from this device, if
+## anything ({res, decided}; {}: nothing - another player carries on or
+## the host uploads). Leaves the room either way.
+func coop_exit_result() -> Dictionary:
+	if coop.ls == null:
+		coop.leave()
+		return {}
+	var res: Dictionary = coop.final_result if not coop.final_result.is_empty() else sim.result()
+	var out := {}
+	if sim.winner >= 0:
+		if coop.should_upload():
+			coop.announce_upload()
+			out = {"res": res, "decided": true}
+	elif not _coop_others_in():
+		# The last one here: a forfeit, as in a solo battle.
+		out = {"res": res, "decided": false}
+	coop.leave()
+	return out

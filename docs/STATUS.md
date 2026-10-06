@@ -1,6 +1,6 @@
 # Strategic Command — Status and Handover
 
-Last updated: 2026-10-05 (milestone 4 built: server and online co-op). Read this first, then `docs/DESIGN.md` for the full
+Last updated: 2026-10-05 (milestone 5 built: live co-op battles). Read this first, then `docs/DESIGN.md` for the full
 design and `CLAUDE.md` for working rules. Update this file whenever a
 milestone lands or the plan changes.
 
@@ -23,8 +23,8 @@ anti-cheat and original art only if it proves fun.
 | Terrain height | Built, **not yet committed**, playtested ("feels good so far") |
 | Playtest round (HUD scale, stones, ammo, refill) | Built, **not yet committed**, not yet playtested |
 | 3. Minimal campaign | Built 2026-10-05, **not committed**, not yet playtested (see below) |
-| 4. Async backend (Go + SQLite) | Built 2026-10-05, **not committed**; tested end to end and in headless Chromium; port 8060 not yet switched to it; not yet played on phones |
-| 5. Live co-op battles (lockstep) | Not started |
+| 4. Async backend (Go + SQLite) | Committed (`fad7399`); port 8060 runs it; first phone playtest done (live battles were missing) |
+| 5. Live co-op battles (lockstep) | Built 2026-10-05, **not committed**; tested headless, end to end and in two headless Chromiums; the 8060 server binary is not yet updated; not yet played on phones |
 | 6. Depth (sieges, tech, more factions) | Not started |
 
 ### What exists
@@ -69,8 +69,62 @@ anti-cheat and original art only if it proves fun.
 
 ### In progress right now
 
+**Milestone 5, live co-op battles (built 2026-10-05, uncommitted).** Why:
+in the first online playtest one player started a battle and the other's
+join button only returned them to the map. Now a battle with both armies is
+fought live: the host opens a lobby (the ally is pinged), the ally taps
+"Join battle", each commands their own army, as in Rome 2 co-op. Design as
+built: DESIGN.md section 5 "Live battles: as built"; relay protocol:
+SERVER.md section 17. In short:
+- Deterministic lockstep over the server's WebSocket relay: only inputs
+  travel, each for a frame a few frames ahead (delay from the round trip,
+  2-12 frames of 100 ms; none while alone), the sim waits for a missing
+  player's input. `sim/lockstep.gd` holds the frame, pause / speed and their
+  votes, who takes part, and the command table, all hashed;
+  `BattleSim.snapshot()` / `restore()` for joins, reconnects and desyncs.
+  Golden digests unchanged.
+- Gifts and gifts back, pause and speed by vote (chips under the controls:
+  Accept / No), ally's unit cards framed in their colour and not orderable,
+  a co-op strip (players, host, connection, round trip), waiting / catching
+  up / resync indicators, lobby, Continue / Wait when the ally has been gone
+  10 s (their units come to you, held for them; they get them back when they
+  return), mid-battle join and rejoin by snapshot, host handover, result
+  uploaded once by the host (any seat that took part may upload it).
+- Server: rooms in memory (`rooms.go`) holding the battle's claim while in
+  use, sequence-numbered stream with replay buffer, snapshot cache, roles,
+  rate and size limits; battle list shows "Live now" with Join battle;
+  `api: 2`. New table `battle_live` (created at start, nothing else changes
+  in the database).
+- Verified: `go test ./...` (rooms: entry and auth, ordering, reconnect and
+  replay, drop / continue / ready, snapshots and cache, leave and host
+  handover, lease renewal, upload by a seat that took part);
+  `tests/lockstep_test.gd` (snapshot round trips on 6 scenarios up to 4,056
+  soldiers; two peers through a simulated relay with different latencies
+  and timing, every frame equal, with refused orders, gifts, votes, a drop,
+  takeover and readmission, and a third peer joining mid-battle; solo
+  through the lockstep layer = plain sim); `tests/live_e2e.py` (the Go
+  server and two headless Godot clients fight three battles over real
+  WebSockets: lobby join, mid-battle join, disconnect + takeover + return;
+  hash equal on every frame on both, results uploaded once, both end on the
+  server's state: PASS); `server/cmd/webcheck -live` (the web export in two
+  headless Chromiums: lobby join, 600 frames hash-equal every frame,
+  rejoin mid-battle from a snapshot: PASS); `tests/live_shots.py`
+  (screenshots, and the real game as host uploading through its campaign
+  screen). Screenshots `docs/screenshots/live_phone_*.png`.
+- Numbers: snapshot 86-89 KB at 4,056 soldiers (36 KB at 2,000; 15-30 KB
+  for small battles), ~10 ms to take and 2 ms to restore natively; on the
+  local machine round trips 6-7 ms and no waits at delay 2; in headless
+  Chromium 40-45 ms round trips (frame time included) and waits of up to
+  ~170 ms when frames were run 4x faster than real time.
+- **Not yet done / next:** restart the 8060 server with the new binary (the
+  web build is already the new one); play it on the two phones; watch
+  `coop_*` telemetry (round trips and waits on cellular, iOS Safari with
+  the screen locked, backgrounded tabs); reinforcements arriving from the
+  map edge; spectating without an army.
+
 **Milestone 4, async backend and online co-op (built 2026-10-05,
-uncommitted).** Everything is in `docs/SERVER.md` (API, data model,
+committed in `fad7399`; 8060 runs the Go server behind Caddy, WebSocket
+upgrade checked on the real domain).** Everything is in `docs/SERVER.md` (API, data model,
 concurrency, notifications, deployment, security) and `docs/CAMPAIGN.md`
 "Online play" (the screens). In short:
 - Server: Go 1.27.1 (installed at user level in `~/.local/go`, checksum
@@ -103,12 +157,10 @@ concurrency, notifications, deployment, security) and `docs/CAMPAIGN.md`
   Chromium browsers on the web export: create, join, WebSocket echo,
   submit, resolve, long-poll pickup: PASS); the container image builds and
   runs (Podman). Screenshots `docs/screenshots/online_*.png`.
-- **Not yet done / next:** switch port 8060 to the Go server
-  (`docs/SERVER.md` section 3) and check WebSocket and long-poll through
-  Caddy on the real domain (the commands are there); play it on the Android
-  phone and the iPhone (share link, typing a code, device code to the
-  desktop, background tabs and long-poll on iOS Safari); decide on an invite
-  key before the link is shared; move to the Proxmox host. No token
+- **Not yet done / next:** (8060 is switched and an invite key is set.)
+  Keep playing it on the Android phone and the iPhone (share link, typing a code, device code to the
+  desktop, background tabs and long-poll on iOS Safari); move to the
+  Proxmox host. No token
   revocation UI, no campaign deletion yet.
 
 **Milestone 3, campaign layer (built 2026-10-05, uncommitted, not yet
@@ -276,9 +328,8 @@ A tuning pass from playtest feedback (built, uncommitted):
    and battles launched from the map using the sim's result data.
 4. **Milestone 4, async backend:** built 2026-10-05 (see above and
    `docs/SERVER.md`); next: switch 8060, phone playtest, Proxmox.
-5. **Milestone 5, live co-op battles:** lockstep over the relay, unit gifting
-   and gifting back, reinforcements, pause and speed by vote, desync recovery
-   by snapshot.
+5. **Milestone 5, live co-op battles:** built 2026-10-05 (above); next: phone
+   playtest, reinforcements from the map edge.
 6. **Milestone 6, depth.**
 
 ## Decisions already made (do not reopen without the user)
@@ -323,8 +374,16 @@ godot --headless --script res://tests/matchups.gd -- --fair=50 --fair-terrain=4 
 godot --script res://tests/input_test.gd        # needs a window
 tools/check_scripts.sh                           # GDScript warnings as errors
 
+# Live co-op battles (milestone 5)
+godot --headless --script res://tests/lockstep_test.gd   # snapshots, two peers, mid-battle join (-- --quick)
+python3 tests/live_e2e.py                        # two headless clients, three live battles (~70 s)
+python3 tests/live_shots.py                      # phone screenshots of the co-op UI (needs a window)
+(cd server && PATH=$HOME/.local/go/bin:$PATH go run ./cmd/webcheck -url http://127.0.0.1:8074 -live)
+                                                 # two headless Chromiums, live battle (serve a web export there)
+
 # Server (milestone 4; see docs/SERVER.md)
 tools/build_server.sh --test                     # go vet + go test + build build/server/scserver
+SC_BUILD_OUT=build/server-test/scserver tools/build_server.sh   # elsewhere (tests do this)
 tools/run_server.sh 8070                         # serve build/web + API + telemetry on a port
 python3 tests/online_e2e.py                      # two headless clients against a test server (~30 s)
 (cd server && PATH=$HOME/.local/go/bin:$PATH go run ./cmd/webcheck -url http://127.0.0.1:8070)

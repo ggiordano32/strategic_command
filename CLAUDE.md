@@ -18,6 +18,13 @@ run things are in `docs/STATUS.md`. Read both before making changes, and keep
   fixed-point maths only, the sim's own seeded RNG, fixed iteration order, no
   engine physics, no floats in sim state.
 - No node per soldier; soldier state lives in packed arrays.
+- Live co-op (milestone 5): everything that affects a co-op battle and must
+  be equal on both peers lives in the sim or in `sim/lockstep.gd` and is in
+  `state_hash()` (sim) or `Lockstep.state_hash()`; it changes only by
+  lockstep inputs applied at their frame. Never let the view, the network
+  layer or wall-clock time write it. New sim state must also survive
+  `BattleSim.snapshot()` / `restore()` (script variables are captured
+  automatically; check `tests/lockstep_test.gd` passes).
 
 ## Rules for campaign code (`campaign/`)
 

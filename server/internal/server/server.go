@@ -32,7 +32,7 @@ import (
 const Version = "1.0.0"
 
 // APIVersion is bumped on incompatible API changes.
-const APIVersion = 1
+const APIVersion = 2
 
 // Limits.
 const (
@@ -63,6 +63,7 @@ type Server struct {
 	clock    Clock
 	notifier *notify.Notifier
 	hub      *Hub
+	rooms    *Rooms
 	web      *Web
 	tele     *Telemetry
 	mux      *http.ServeMux
@@ -89,6 +90,9 @@ func New(cfg Config, log *slog.Logger, clock Clock) (*Server, error) {
 	if cfg.LeaseDuration == 0 {
 		cfg.LeaseDuration = 120 * time.Second
 	}
+	if cfg.RoomGrace == 0 {
+		cfg.RoomGrace = 90 * time.Second
+	}
 	db, err := store.Open(filepath.Join(cfg.DataDir, "campaigns.db"))
 	if err != nil {
 		return nil, err
@@ -98,6 +102,7 @@ func New(cfg Config, log *slog.Logger, clock Clock) (*Server, error) {
 		cfg: cfg, db: db, log: log, clock: clock,
 		notifier:    notify.New(log),
 		hub:         NewHub(),
+		rooms:       newRooms(),
 		ipLimit:     NewLimiter(clock, 20, time.Second, 60),
 		tokLimit:    NewLimiter(clock, 10, time.Second, 40),
 		createLimit: NewLimiter(clock, 6, time.Hour, 6),
@@ -125,6 +130,8 @@ func (s *Server) Start() {
 	go func() { defer s.wg.Done(); s.notifier.Run(s.ctx) }()
 	s.wg.Add(1)
 	go func() { defer s.wg.Done(); s.background() }()
+	s.wg.Add(1)
+	go func() { defer s.wg.Done(); s.roomLoop() }()
 	s.web.Warm()
 }
 

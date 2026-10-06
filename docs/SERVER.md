@@ -1,6 +1,6 @@
-# Server (milestone 4) — as built
+# Server (milestones 4 and 5) — as built
 
-Built 2026-10-05. The campaign server for online co-op, the web build's file
+Built 2026-10-05 (milestone 5, the live battle relay: section 17). The campaign server for online co-op, the web build's file
 server and the playtest telemetry endpoint, in one Go binary with SQLite.
 Code: `server/` (Go module), client side in `game/net/` and
 `game/campaign/online_ui.gd`.
@@ -32,6 +32,7 @@ hash matches its content. It does not validate orders or results.
 14. Backups, history, rollback, space
 15. Deployment (Docker, Proxmox, Caddy, moving the data)
 16. Tests
+17. Live battle rooms (milestone 5): the lockstep relay
 
 ## 1. Stack and layout
 
@@ -85,6 +86,7 @@ Configuration: flags, or the environment variable in brackets (flags win).
 | `-compress` | `SC_COMPRESS` | `true` | precompress the web build |
 | `-brotli-max` | `SC_BROTLI_MAX` | `true` | also brotli quality 11 in the background |
 | `-lease` | `SC_LEASE` | `120s` | battle lease length |
+| `-room-grace` | `SC_ROOM_GRACE` | `90s` | an empty, started live battle room is kept this long for reconnects |
 | `-log-level` | `SC_LOG_LEVEL` | `info` | `debug` also logs static file requests |
 | `-test-mode` | `SC_TEST_MODE` | `false` | `/api/test/clock`, any webhook URL: tests only |
 | `-backup-now` | | | write one backup and exit |
@@ -184,7 +186,7 @@ notifications show them from 1.
 | `POST /api/c/{id}/link` | | `{code, expires_at}` (device code, 30 min, single use) |
 | `POST /api/c/{id}/verify` | `{version, ok, local_hash, ms}` | `{ok}` |
 | `GET /api/c/{id}/wait` | `?since=SEQ&timeout=S` (max 25) | `{seq, server_time}` |
-| `GET /api/c/{id}/ws` | WebSocket; first message `{"t":"auth","token":...}` | `hello`, then `ping`→`pong`, `echo` |
+| `GET /api/c/{id}/ws` | WebSocket; first message `{"t":"auth","token":...}` | `hello`, then `ping`→`pong`, `echo`, and `room` (live battles, section 17) |
 | `POST /api/test/clock` | `{advance_ms}` (test mode only) | `{ok, time}` |
 | `GET` / `POST /telemetry` | as `tools/serve_web.py` | `{ok, stored}` / status |
 | `GET /*` | static files from the web build | |
@@ -200,7 +202,8 @@ format_version, rules, humans, alive, me, seq, seats[{f, name, claimed,
 last_seen, online, submitted, discord, alive}], submitted[], missing[],
 all_in, subs_rev, deadline, deadline_expired, timeout_h, battles[{id, r,
 region, humans, claim{f, mode, until, since, mine}|null, wait_by,
-command_by}], activity[{at, f, kind, data}] (last 20), webhook (masked),
+command_by, live{state: lobby|live, host, since, version, players[{f, on, in,
+dropped, joining, keep, silent_ms}]}|null}], activity[{at, f, kind, data}] (last 20), webhook (masked),
 server_time, last{kind, by, rules, build, parent, at}, join_code?`.
 
 ## 5. Data model
@@ -218,6 +221,7 @@ one connection (every transaction is serialised).
 | `submissions` | per plan-phase version and faction: the submission JSON, time |
 | `battle_claims` | per pending battle: holder seat, holder device (token id), mode, lease expiry |
 | `battle_flags` | per pending battle: who chose "wait" and who "took command" |
+| `battle_live` | per pending battle: the seats that took part in it live (each may upload its result); added by milestone 5 with `CREATE TABLE IF NOT EXISTS`, so an existing database gains it at start |
 | `activity` | the last 200 events per campaign (joined, submitted, battle claimed, desync...) |
 | `notif_sent` | notification dedupe keys |
 
@@ -500,7 +504,9 @@ the file; clients only know the domain, so nothing changes for them.
   race, a device switch mid-turn through a device code, an absent player
   and a forced resolution after the (clock-shifted) deadline, battle uploads
   failing three times (A: before sending, then the page is closed and
-  reopened; B: every answer lost after the server committed). Checks: both
+  reopened; B: every answer lost after the server committed). It builds the
+  server into `build/server-test/` (never over the binary a running server
+  uses). Checks: both
   clients and the server on the same hash, contiguous history, every step
   re-run locally with no mismatch, the stored orders equal what was sent,
   one winner of the race with equal hashes, results delivered, Discord
@@ -509,3 +515,109 @@ the file; clients only know the domain, so nothing changes for them.
   (`?nettest=a` / `?nettest=b&join=CODE`, `game/net/net_selftest.gd`):
   create, join, WebSocket echo from the browser, submit, resolution, the
   other browser picking it up by long-poll, equal hashes.
+
+## 17. Live battle rooms (milestone 5)
+
+The relay for live co-op battles (design: DESIGN.md section 5 "Live battles:
+as built"). Code: `server/internal/server/rooms.go` (rooms), `live.go` (the
+WebSocket); client `game/net/live_room.gd` (the connection),
+`game/net/coop_session.gd` (the protocol's client side), `sim/lockstep.gd`
+(the deterministic part). `/api/info` reports `api: 2` from this milestone
+on; clients only offer live battles to servers with API 2.
+
+**The rule stays:** the server never runs the sim. It relays inputs with a
+sequence number, keeps the recent stream and the latest snapshot, decides
+roles (host, who is dropped), and trusts clients only as far as auth: who
+may be in the room, input messages numbered without gaps, marks that never
+go back, sizes, rates.
+
+### Room life
+
+- A room is one pending battle of one campaign (key `campaign/battle`), in
+  memory. It is opened over the campaign WebSocket by a human seat whose army
+  is in the battle (`create`), at the campaign's current version (`v`): the
+  battle is built from that version on every device, so a later joiner
+  fetches that version (`GET /state?version=V`) if the campaign has moved on.
+- Opening takes the battle's claim in mode `live` (refused, `claimed`, if
+  another device holds an ordinary claim; this device's own claim is turned
+  into the live one). While the room has members the server renews the lease
+  every 30 s (no client heartbeats); HTTP claims of the battle are refused
+  (`claimed`, mode `live`). Opening pings the other humans of the battle on
+  Discord ("X is asking you to join the battle at R now", deduplicated per 2
+  minutes) and records `battle_live` activity.
+- Lobby until the host sends `start`; the members present then take part from
+  frame 0. Seats that took part are recorded in `battle_live`: each of them
+  may upload the battle's result (`mayCommand`), also after the room closed,
+  whoever's armies are in it; a live claim does not block their upload.
+- Empty rooms are closed after a grace period (lobby 8 s; started
+  `-room-grace` / `SC_ROOM_GRACE`, default 90 s), or 2 s after the
+  battle's result was uploaded (members get `resolved` first), or when a turn
+  upload or rollback removes the battle. Closing deletes the live claim, so
+  the battle is an ordinary pending battle again; a half-played battle is
+  not saved and restarts from the beginning.
+- Roles: the host is the opener; if the host leaves or is dropped, the first
+  connected member taking part becomes host (in the lobby, any connected
+  member). "Host" only decides who is asked for snapshots and who uploads.
+- One connection per seat: a second connection of the same seat (reconnect,
+  other device) replaces the first.
+
+### Messages
+
+JSON text frames. After `auth` / `hello` the client sends
+`{"t":"room","b":BATTLE,"v":VERSION,"create":bool,"scen":HASH,"keep":bool}`
+(`scen`: the opener's hash of the built scenario, seed and command split,
+which every joiner compares with its own build; `keep`: let the host keep
+command of my army). Errors that end the attempt: `no_room`, `not_pending`,
+`not_in_battle`, `stale`, `claimed`, `unauthorized`.
+
+Server to client:
+
+| Message | Fields | Meaning |
+|---|---|---|
+| `room` | `b, v, scen, host, started, you, seq, region, n, k, in, dropped, start?` | entered; `n`/`k` are this seat's last input number and mark the relay passed on (a reconnecting client continues from them), `start` the start item if started |
+| `roster` | `host, started, seq, players[{f, on, in, dropped, joining, keep, silent_ms}]` | on every change of members or roles |
+| `start` | `s, players[], host` | stream item: the battle starts; `players` take part from frame 0 |
+| `in` | `s, p, n, k, o[]` | stream item: player `p`'s input message number `n`, mark `k` (no more inputs for frames `<= k`), inputs `o` (objects of integers, each with its frame `f`) |
+| `drop` | `s, who, after, to, why` | stream item: `who` takes no part after frame `after` (their last relayed mark); their units go to `to` (-1: nobody); `why`: `continue` or `leave` |
+| `replay` | `from, to, items[]` | stream items `from..to` (batches of 400), answering `replay` |
+| `hash` | `p, fr, h` | player `p`'s lockstep hash at frame `fr` (not kept) |
+| `snapreq` | `to` | please send a snapshot for player `to` |
+| `snap` | `from, id, i, cnt, fr, ls, d` | snapshot chunk `i` of `cnt` (`d`: base64 piece, `fr`: frame, `ls`: last stream number in it) |
+| `ready` | `p, keep` | player `p` has the battle running and asks to be admitted |
+| `res` | `p, fr, h, up?` | player `p`'s result hash at the end; `up`: it is uploading the result |
+| `resolved` | `b` | the result is in; the room closes |
+| `pong` | `n, server_time` | answer to `ping` |
+| `error` | `code, message, n?, k?` | `not_host`, `not_playing`, `out_of_order` (with the relay's `n`, `k`), `bad_input`, `bad_snapshot`, `replay_gone`, `no_snapshot`, `bad_continue`, `still_here`, `rate_limited`, `unknown` |
+
+Client to server: `start` (host, lobby), `in {n, k, o}`, `hash {fr, h}`,
+`res {fr, h, up?}`, `ready`, `snapreq`, `snap {id, to, i, cnt, fr, ls, d}`
+(`to` -1: for the cache only), `replay {from}`, `continue {who}` (drop a
+player who is disconnected or silent for 8 s; their units come to the
+sender), `leave` (drop me, my units go to the host or another player taking
+part), `ping {n}`.
+
+**Stream:** `start`, `in` and `drop` carry the room's sequence number `s`
+and go to every member, the sender included; clients apply them strictly in
+`s` order and fill gaps with `replay`. Inputs are accepted only from players
+taking part (or `joining`: said `ready` after a drop or a mid-battle join;
+their first input marks them as taking part again), numbered `n = last + 1`,
+with `k >= last k`. A refused input gets `out_of_order` with the relay's
+counters; the client takes them and resyncs.
+
+### Limits
+
+256 KB per WebSocket message (snapshot chunks), 16 KB per input message, 128
+inputs per message, 16 integer fields per input; 60 messages a second per
+connection with a burst of 300 (400 a second in test mode, where frames run
+5x faster and hash every frame); 4,096 queued outgoing messages per member
+(a member that cannot keep up is disconnected and catches up after its
+reconnect); stream buffer 20,000 items or 8 MB; snapshot 12 MB (base64);
+a connection silent for 25 s is closed.
+
+### Sizes and rates measured
+
+A live battle at 1x sends about 12 messages a second per player (an input
+message per 100 ms frame, a hash a second, a ping a second), each well under
+200 bytes. A snapshot at 4,000 soldiers is about 86-89 KB (2,000: 36 KB; the
+small test battles 15-30 KB), so 2-3 chunks; the host leaves one with the
+relay every 30 s for reconnects when nobody else can send one.

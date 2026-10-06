@@ -4,7 +4,7 @@ and two headless Godot clients (tests/online_client.gd) playing one campaign.
 
     python3 tests/online_e2e.py [--port 8071] [--turns 9] [--keep]
 
-Builds the server (tools/build_server.sh), starts it in test mode on a temp
+Builds the server (tools/build_server.sh, into build/server-test/), starts it in test mode on a temp
 data dir, starts a fake webhook, runs client A (Rome, creates) and client B
 (Carthage, joins), then checks:
   - both clients end on the server's version and state hash;
@@ -76,7 +76,10 @@ def main():
     ap.add_argument("--keep", action="store_true", help="keep the temp dir")
     args = ap.parse_args()
 
-    subprocess.run([os.path.join(REPO, "tools", "build_server.sh")], check=True)
+    # A scratch binary: never replace the one a running server uses.
+    binary = os.path.join(REPO, "build", "server-test", "scserver")
+    subprocess.run([os.path.join(REPO, "tools", "build_server.sh")], check=True,
+                   env=dict(os.environ, SC_BUILD_OUT=binary))
     tmp = tempfile.mkdtemp(prefix="sc_e2e_")
     print("temp dir", tmp)
     hook = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Hook)
@@ -84,7 +87,7 @@ def main():
     hook_url = "http://127.0.0.1:%d/api/webhooks/1/test" % hook.server_address[1]
     base = "http://127.0.0.1:%d" % args.port
     srv_log = open(os.path.join(tmp, "server.log"), "w")
-    srv = subprocess.Popen([os.path.join(REPO, "build", "server", "scserver"), "-addr", "127.0.0.1:%d" % args.port,
+    srv = subprocess.Popen([binary, "-addr", "127.0.0.1:%d" % args.port,
                             "-data", os.path.join(tmp, "data"), "-web", os.path.join(REPO, "build", "web"),
                             "-log-dir", os.path.join(tmp, "logs"), "-test-mode", "-compress=false"],
                            stdout=srv_log, stderr=srv_log)

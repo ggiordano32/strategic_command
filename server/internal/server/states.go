@@ -218,15 +218,18 @@ func (s *Server) putState(w http.ResponseWriter, r *http.Request, seat Seat) {
 			if meta.Turn != c.Turn {
 				return errf(http.StatusBadRequest, "bad_state", "a battle result cannot change the turn")
 			}
-			if err := s.mayCommand(ctx, tx, c, b, seat); err != nil {
-				return err
-			}
 			var holder int64
 			var hf int
 			var until int64
-			err := tx.QueryRowContext(ctx, "SELECT token_id, f, lease_until FROM battle_claims WHERE campaign_id = ? AND battle_id = ?",
-				c.ID, b.ID).Scan(&holder, &hf, &until)
-			if err == nil && until > now && holder != seat.TokenID {
+			var mode string
+			err := tx.QueryRowContext(ctx, "SELECT token_id, f, lease_until, mode FROM battle_claims WHERE campaign_id = ? AND battle_id = ?",
+				c.ID, b.ID).Scan(&holder, &hf, &until, &mode)
+			if err := s.mayCommand(ctx, tx, c, b, seat); err != nil {
+				return err
+			}
+			// A live battle's result may come from any seat that took part
+			// (mayCommand checked that); the room holds the claim meanwhile.
+			if err == nil && until > now && holder != seat.TokenID && mode != "live" {
 				e := errf(http.StatusConflict, "claimed", "%s holds this battle", c.faction(hf))
 				e.extra = map[string]any{"held_by": hf, "version": c.Version}
 				return e
@@ -266,6 +269,14 @@ func (s *Server) putState(w http.ResponseWriter, r *http.Request, seat Seat) {
 	}
 	s.hub.Notify(seat.Campaign, seq)
 	s.flush(ob)
+	keep := map[int]bool{}
+	for _, id := range meta.AllBattleIDs {
+		keep[id] = true
+	}
+	if req.Kind == "battle" {
+		s.battleResolved(seat.Campaign, req.BattleID)
+	}
+	s.closeRoomsOf(seat.Campaign, keep)
 	s.log.Info("state uploaded", "campaign", seat.Campaign, "version", newV, "kind", req.Kind, "f", seat.F,
 		"turn", meta.Turn, "phase", meta.Phase, "hash", req.Hash)
 	reply(w, 200, map[string]any{"ok": true, "version": newV})
@@ -302,6 +313,7 @@ func (s *Server) applyMeta(ctx context.Context, tx queryer, c *campRow, meta *St
 		if !keep[b.ID] {
 			tx.ExecContext(ctx, "DELETE FROM battle_claims WHERE campaign_id = ? AND battle_id = ?", c.ID, b.ID)
 			tx.ExecContext(ctx, "DELETE FROM battle_flags WHERE campaign_id = ? AND battle_id = ?", c.ID, b.ID)
+			tx.ExecContext(ctx, "DELETE FROM battle_live WHERE campaign_id = ? AND battle_id = ?", c.ID, b.ID)
 		}
 	}
 	return nil
@@ -478,6 +490,7 @@ func (s *Server) rollback(w http.ResponseWriter, r *http.Request, seat Seat) {
 		}
 		tx.ExecContext(ctx, "DELETE FROM battle_claims WHERE campaign_id = ?", c.ID)
 		tx.ExecContext(ctx, "DELETE FROM battle_flags WHERE campaign_id = ?", c.ID)
+		tx.ExecContext(ctx, "DELETE FROM battle_live WHERE campaign_id = ?", c.ID)
 		addActivity(ctx, tx, c.ID, now, seat.F, "rollback", map[string]any{"to": req.ToVersion, "version": newV})
 		seats, _ := loadSeats(ctx, tx, c.ID)
 		s.note(ctx, tx, ob, c, seats, fmt.Sprintf("rollback:%d", newV), "rollback",
@@ -491,6 +504,7 @@ func (s *Server) rollback(w http.ResponseWriter, r *http.Request, seat Seat) {
 	}
 	s.hub.Notify(seat.Campaign, seq)
 	s.flush(ob)
+	s.closeRoomsOf(seat.Campaign, nil)
 	s.log.Warn("campaign rolled back", "campaign", seat.Campaign, "to", req.ToVersion, "version", newV, "f", seat.F)
 	reply(w, 200, map[string]any{"ok": true, "version": newV})
 }

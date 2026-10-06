@@ -650,8 +650,12 @@ func (s *Server) buildSummary(ctx context.Context, seat Seat) (map[string]any, e
 		if cl, ok := claims[b.ID]; ok {
 			claim = cl
 		}
+		var live any
+		if li := s.liveInfo(c.ID, b.ID); li != nil {
+			live = li
+		}
 		battles = append(battles, map[string]any{"id": b.ID, "r": b.R, "region": c.region(b.R), "humans": b.Humans,
-			"claim": claim, "wait_by": fl[0], "command_by": fl[1]})
+			"claim": claim, "wait_by": fl[0], "command_by": fl[1], "live": live})
 	}
 	var acts []map[string]any
 	rows, err = s.db.QueryContext(ctx, "SELECT at, f, kind, data FROM activity WHERE campaign_id = ? ORDER BY id DESC LIMIT 20", c.ID)

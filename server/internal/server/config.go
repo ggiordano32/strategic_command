@@ -9,19 +9,20 @@ import (
 
 // Config is everything the server needs; filled from flags / env by main.
 type Config struct {
-	Addr          string        // listen address, e.g. ":8060"
-	DataDir       string        // SQLite file, backups, compressed-file cache
-	WebDir        string        // the Godot web export (build/web)
-	LogDir        string        // playtest telemetry JSONL files
-	InviteKey     string        // if set, required to create a campaign
+	Addr          string         // listen address, e.g. ":8060"
+	DataDir       string         // SQLite file, backups, compressed-file cache
+	WebDir        string         // the Godot web export (build/web)
+	LogDir        string         // playtest telemetry JSONL files
+	InviteKey     string         // if set, required to create a campaign
 	TrustedProxy  []netip.Prefix // peers whose X-Forwarded-For is believed
-	BackupEvery   time.Duration // 0 = no periodic backups
+	BackupEvery   time.Duration  // 0 = no periodic backups
 	BackupKeep    int
 	TestMode      bool // enables /api/test/* and any webhook URL (never in production)
 	PublicURL     string
 	CompressWeb   bool // precompress the web build (gzip + brotli)
 	BrotliMax     bool // also make a quality-11 brotli copy in the background
 	LeaseDuration time.Duration
+	RoomGrace     time.Duration // an empty live room is kept this long for reconnects
 }
 
 // DefaultTrusted is the default trusted-proxy list: loopback and private

@@ -127,6 +127,14 @@ CREATE TABLE IF NOT EXISTS battle_flags (
 	command_at INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY (campaign_id, battle_id)
 );
+-- Seats that took part in a live co-op battle (milestone 5): each may
+-- upload its result, whoever's armies are in it.
+CREATE TABLE IF NOT EXISTS battle_live (
+	campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+	battle_id INTEGER NOT NULL,
+	f INTEGER NOT NULL,
+	PRIMARY KEY (campaign_id, battle_id, f)
+);
 CREATE TABLE IF NOT EXISTS activity (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,

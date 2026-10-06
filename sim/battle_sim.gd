@@ -16,6 +16,7 @@ extends RefCounted
 ##   step()                           # advance one 10 Hz tick
 ##   state_hash() -> int              # 32-bit hash of the full sim state
 ##   result() -> Dictionary           # per-unit outcome (plain ints)
+##   snapshot() / restore(blob)       # the whole state (live co-op joins, resyncs)
 ##   read access to the packed arrays below (view must not write them).
 ##
 ## Coordinates: 1 m = 1024 units, x right, y down. Angles 0..1023, 0 = +x,
@@ -3885,6 +3886,72 @@ func result() -> Dictionary:
 			t[k] = int(t[k]) + int(r[k])
 	return {"winner": winner, "decided_tick": decided_tick, "ended": ended,
 		"tick": tick, "units": units, "sides": sides}
+
+
+# ------------------------------------------------------------- snapshot ---
+
+## Left out of snapshots: rebuilt identically by setup() from the same
+## scenario and seed (the unit type tables t_*, the terrain grid) or
+## view-only diagnostics that are large.
+const _SNAP_SKIP := {"ter_h": true, "ter_gx": true, "ter_gy": true, "ter_info": true,
+	"dbg_impacted": true}
+const _SNAP_MAGIC := 0x31534353  # "SCS1"
+
+
+## The whole simulation state as a compressed blob: every script variable
+## (state arrays, scratch, RNG, tick, pending orders, diagnostics) except the
+## ones setup() rebuilds. restore() on a sim set up with the same scenario
+## and seed continues exactly as this one would (same hash, same future):
+## used by live co-op battles for joining mid-battle, reconnects and desync
+## recovery. Taken between steps.
+func snapshot() -> PackedByteArray:
+	var d := {}
+	for p in get_property_list():
+		if (int(p["usage"]) & PROPERTY_USAGE_SCRIPT_VARIABLE) == 0:
+			continue
+		var nm: String = p["name"]
+		if nm.begins_with("t_") or _SNAP_SKIP.has(nm):
+			continue
+		d[nm] = get(nm)
+	var raw := var_to_bytes(d)
+	var z := raw.compress(FileAccess.COMPRESSION_DEFLATE)
+	var out := PackedByteArray()
+	out.resize(8)
+	out.encode_u32(0, _SNAP_MAGIC)
+	out.encode_u32(4, raw.size())
+	out.append_array(z)
+	return out
+
+
+## Load a snapshot() blob into this sim, which must have been set up with
+## the same scenario and seed. Returns false (and changes nothing) if the
+## blob is damaged or belongs to another battle.
+func restore(blob: PackedByteArray) -> bool:
+	if blob.size() < 8 or blob.decode_u32(0) != _SNAP_MAGIC:
+		return false
+	var raw_size := blob.decode_u32(4)
+	if raw_size <= 0 or raw_size > 256 << 20:
+		return false
+	var raw := blob.slice(8).decompress(raw_size, FileAccess.COMPRESSION_DEFLATE)
+	if raw.size() != raw_size:
+		return false
+	var v = bytes_to_var(raw)
+	if not (v is Dictionary):
+		return false
+	var d: Dictionary = v
+	for k in ["n", "n_units", "n_eng", "ter_hash", "field_w", "field_h", "seed_value"]:
+		if not d.has(k) or int(d[k]) != int(get(k)):
+			return false
+	var names := {}
+	for p in get_property_list():
+		if (int(p["usage"]) & PROPERTY_USAGE_SCRIPT_VARIABLE) != 0:
+			names[p["name"]] = true
+	for k in d:
+		if not names.has(k) or typeof(d[k]) != typeof(get(k)):
+			return false
+	for k in d:
+		set(k, d[k])
+	return true
 
 
 ## 32-bit hash of the full simulation state (MD5 of every state array).

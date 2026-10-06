@@ -85,6 +85,7 @@ Rules:
 - Each player controls their own army by default.
 - Units can be gifted to the other player at any time and gifted back.
 - Reinforcing armies arrive from the map edge matching their campaign position.
+- As built (milestone 5): see section 5 "Live battles: as built".
 
 ### Per-soldier combat model
 
@@ -688,6 +689,110 @@ Per-soldier state is too large to stream, so only orders are sent.
 - Side benefits: tiny bandwidth, replays, and solo battles use the same code.
 - Transport: WebSocket relay through the server.
 
+### Live battles: as built (milestone 5, 2026-10-05)
+
+Code: `sim/lockstep.gd` (deterministic, no networking), `sim/battle_sim.gd`
+`snapshot()` / `restore()`, `game/net/coop_session.gd` (the client side of
+the protocol), `game/net/live_room.gd` (the WebSocket), `game/coop_hud.gd`
+(the co-op UI), `server/internal/server/rooms.go` (the relay). Protocol,
+messages and limits: `docs/SERVER.md` section 17.
+
+**Frames.** Lockstep time is counted in frames of 100 ms of wall time,
+separate from sim ticks. A frame applies its inputs, then, unless paused,
+adds the speed (quarter ticks: 2 / 4 / 8 / 16 for 0.5x / 1x / 2x / 4x) to an
+accumulator and steps the sim once per 4. So pause and speed are lockstep
+state, orders keep a wall-time delay whatever the speed, and frames (and
+input messages) keep flowing while paused, which is what lets a resume vote
+land.
+
+**Inputs and marks.** Every input (a sim order, or a control input: pause /
+speed request, answer, gift, admit) carries the frame it executes on, `f`.
+A player's inputs go out in numbered messages `{n, k, o}` whose mark `k`
+promises no more inputs for frames `<= k`; one goes out each frame with
+`k = frame + delay` (delay 0 while alone, otherwise 2-12 frames from the
+measured round trip: `ceil((srtt + 4 rttvar + 50 ms) / 100 ms)`, 3 to start;
+200-300 ms on a normal connection). A frame runs only when every player
+taking part has a mark at or past it, so all peers apply the same inputs on
+the same frame, in (frame, player, message, index) order. Own messages are
+applied locally when sent (no round trip added to one's own orders); the
+relay's echo is dropped as a duplicate by message number, which also makes
+any replay of the stream harmless. Late input (for a frame its sender had
+already promised) is dropped by every peer alike.
+
+**Command table.** `u_cmd` (who commands each unit), `u_away` (for whom a
+unit is held) and `u_home` (who commands it by default: the campaign faction
+of the unit if it is a human of the battle, other friendly units the lowest
+human faction) live in the lockstep layer and are hashed with the sim. A sim
+order counts only from the player commanding the unit at its frame; an army
+withdrawal withdraws only the issuer's units; a player not taking part
+orders nothing. Units of a human who is not there at the start are held for
+them by the host; admitting that player gives them back (unless they chose
+"Join, X keeps my army").
+
+**Gifts** are inputs (`C_GIFT unit to`), valid only from the unit's
+commander to a player taking part; gifting back is the same input. The
+selected units' action row has "Gift to <ally>".
+
+**Pause and speed by vote.** Requests and answers are inputs. A request
+applies at once if only one player takes part; otherwise it waits until the
+other player asks for the same thing (tapping Pause, or the same speed) or
+taps Accept on the chip under the control (the requester's colour and
+"Rome Pause?"); No clears it; asking again withdraws it. Applied on the
+same frame for everyone. Solo battles keep immediate pause and speed; the
+unit book and the controls page no longer pause a co-op battle.
+
+**Joining.** "Fight" / "Fight together" on a battle with both armies opens
+the room (lobby; the ally gets the Discord ping) and the battle view shows
+both armies deployed behind the lobby panel. The ally's battle list shows
+"Live now ... Join battle" (and "Join, X keeps my army"). The host starts
+3 s after everyone is in, or alone with Start now. Joining a running battle
+(or rejoining): a snapshot (sim + lockstep state + receipt state, about 86
+KB at 4,000 soldiers) comes through the relay from a player who has the
+battle, the joiner restores it, replays the stream after it, catches up by
+stepping fast, says "ready", and the host admits it (an input) - from that
+frame on the battle also waits for the joiner's input.
+
+**Disconnects.** The sim waits for a missing player's input ("Waiting for
+Carthage..." after 1 s). If that player is disconnected (or silent for 8 s)
+and the wait reaches 10 s, the other gets "Carthage has disconnected:
+Continue without Carthage / Wait". Continue asks the relay to drop them: a
+stream event fixing the frame after their last mark from which they are not
+awaited, and their units go to the remaining player, held for them. When
+they come back they rejoin like a joiner and get their units back. If both
+drop, the room is kept for 90 s (the last cached snapshot lets the first to
+come back resume); after that it closes and the battle is an ordinary
+pending battle again (a half-played battle is not persisted; it restarts
+from the beginning). A page that comes back from the background resumes by
+replay, or by snapshot when more than 10 s behind.
+
+**Desync detection.** Every peer sends its lockstep hash every 10 frames
+(tests: every frame); a mismatch is logged to telemetry (`coop_desync` with
+both hashes and the frame) and on the server (`LIVE DESYNC`), shown briefly
+("Out of step: resyncing"), and the non-host resyncs from a host snapshot.
+
+**Result.** At the end every peer computes the result and sends its hash
+(compared; `coop_result_mismatch` if different). Going back to the campaign
+after the decision: the host uploads the outcome (the existing outbox with
+retries; it tells the others first, so a player who becomes host later does
+not upload again); others just leave. Leaving mid-battle: your units go to
+the remaining player and the host role moves if you were host; the last
+player leaving mid-battle uploads a forfeit as in a solo battle. Any seat
+that took part may upload the result (the server records who took part).
+
+**Hashed state.** Golden digests are unchanged: the sim is untouched apart
+from `snapshot()` / `restore()`, and the lockstep state is hashed in
+`Lockstep.state_hash()` (the sim's hash plus frame, pause, speed, votes, who
+takes part, the command table), which solo play never uses. A solo battle
+through the lockstep layer with one player is bit-for-bit the plain sim
+(tested).
+
+**Telemetry:** `coop_start`, `coop_net` (every 10 s: round trip, delay,
+waits, messages, reconnects), `coop_wait` (waits of 0.5 s or more),
+`coop_catchup`, `coop_snapshot` (sent / restored, bytes, ms),
+`coop_resync`, `coop_desync`, `coop_drop`, `coop_continue`, `coop_admit`,
+`coop_result`, `coop_result_mismatch`, `coop_leave` (with the session
+stats).
+
 ### Campaign: save-store server
 
 - The server stores the campaign state as a versioned blob, accepts turn
@@ -911,7 +1016,8 @@ soldiers, plus one for missiles in flight.
    pending battles, auto-resolve, campaign AI, diplomacy states.
 4. **Async backend.** Save store, turn submission, Discord pings, hosted on Proxmox.
 5. **Live co-op battles.** Lockstep over the relay, unit gifting, reinforcements,
-   desync recovery.
+   desync recovery. Built 2026-10-05 (section 5 "Live battles: as built");
+   reinforcements arriving from the map edge are still to do.
 6. **Depth.** Walled sieges, more factions and units, tech, enemy-control mode.
 
 ## 10. Main risks

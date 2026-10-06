@@ -120,18 +120,22 @@ func (s *Server) wait(w http.ResponseWriter, r *http.Request, seat Seat) {
 // ------------------------------------------------------------ websocket ---
 
 // GET /api/c/{id}/ws: WebSocket. Browsers cannot set headers on a
-// WebSocket, so the first message authenticates: {"t":"auth","token":...}.
-// Then {"t":"ping","n":N} -> {"t":"pong","n":N,"server_time":ms} and
-// {"t":"echo",...} -> the same message back. This proves WebSockets pass
-// the reverse proxy; milestone 5's battle relay will add a "join room"
-// message here and fan messages out to the room's members (see Room).
+// WebSocket, so the first message authenticates: {"t":"auth","token":...}
+// -> {"t":"hello", f, server_time}. Then {"t":"ping","n":N} ->
+// {"t":"pong","n":N,"server_time":ms} and {"t":"echo",...} -> the same
+// message back (the browser self-test), and {"t":"room", b, v, create,
+// scen, keep} enters the live room of battle b (rooms.go); every later
+// message on the connection goes to that room. Text frames of JSON only.
+// A connection that sends nothing for 25 s is closed (clients ping every
+// second or two), so a phone that went to the background drops out of a
+// room promptly.
 func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	c, err := websocket.Accept(w, r, nil) // checks Origin against Host
 	if err != nil {
 		return
 	}
-	c.SetReadLimit(64 << 10)
+	c.SetReadLimit(roomReadLimit)
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	go func() {
@@ -161,48 +165,106 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.markSeen(seat)
-	write := func(v any) error {
-		b, _ := json.Marshal(v)
-		wctx, wc := context.WithTimeout(ctx, 10*time.Second)
-		defer wc()
-		return c.Write(wctx, websocket.MessageText, b)
+	// One writer goroutine per connection; everything else queues into out.
+	now := s.clock.Now()
+	// A live battle sends ~12 messages a second (an input per frame, a hash
+	// a second, a ping); tests run frames 5x faster and hash every frame.
+	rate := 60.0
+	if s.cfg.TestMode {
+		rate = 400
 	}
-	if write(map[string]any{"t": "hello", "f": seat.F, "server_time": ms(s.clock.Now())}) != nil {
-		return
+	m := &member{f: seat.F, tok: seat.TokenID, out: make(chan []byte, 4096), kill: cancel, joined: now, lastMsg: now,
+		limit: &connBucket{tokens: 300, max: 300, rate: rate, last: time.Now()}}
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case b := <-m.out:
+				wctx, wc := context.WithTimeout(ctx, 10*time.Second)
+				err := c.Write(wctx, websocket.MessageText, b)
+				wc()
+				if err != nil {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	send := func(v any) {
+		select {
+		case m.out <- jsonb(v):
+		default:
+			cancel()
+		}
 	}
+	send(map[string]any{"t": "hello", "f": seat.F, "server_time": ms(s.clock.Now()), "api": APIVersion})
 	s.log.Info("ws connected", "campaign", id, "f", seat.F, "ip", ipOf(r))
+	var room *Room
+	defer func() {
+		if room != nil {
+			room.disconnected(m)
+		}
+		c.Close(websocket.StatusNormalClosure, "")
+	}()
+	lastSeen := time.Now()
 	for {
-		rctx, rc := context.WithTimeout(ctx, 10*time.Minute)
+		rctx, rc := context.WithTimeout(ctx, roomReadTimeout)
 		typ, msg, err := c.Read(rctx)
 		rc()
 		if err != nil {
-			c.Close(websocket.StatusNormalClosure, "")
 			return
 		}
 		if typ != websocket.MessageText {
 			continue
 		}
-		var m map[string]any
-		if json.Unmarshal(msg, &m) != nil {
+		if !m.limit.take(time.Now()) {
+			send(map[string]any{"t": "error", "code": "rate_limited", "message": "too many messages"})
 			continue
 		}
-		switch m["t"] {
+		if time.Since(lastSeen) > seenThrottle {
+			lastSeen = time.Now()
+			s.markSeen(seat)
+		}
+		var req roomMsg
+		if json.Unmarshal(msg, &req) != nil {
+			continue
+		}
+		if room != nil {
+			room.handle(m, msg, req)
+			continue
+		}
+		switch req.T {
 		case "ping":
-			write(map[string]any{"t": "pong", "n": m["n"], "server_time": ms(s.clock.Now())})
+			send(map[string]any{"t": "pong", "n": req.N, "server_time": ms(s.clock.Now())})
 		case "echo":
-			write(m)
+			if len(msg) <= 64<<10 {
+				select {
+				case m.out <- msg:
+				default:
+				}
+			}
+		case "room":
+			rm, err := s.enterRoom(ctx, seat, m, req)
+			if err != nil {
+				var ae *apiError
+				if errors.As(err, &ae) {
+					e := map[string]any{"t": "error", "code": ae.code, "message": ae.msg}
+					for k, v := range ae.extra {
+						e[k] = v
+					}
+					send(e)
+				} else {
+					s.log.Error("room entry", "err", err)
+					send(map[string]any{"t": "error", "code": "internal", "message": "internal error"})
+				}
+				continue
+			}
+			room = rm
 		default:
-			write(map[string]any{"t": "error", "message": "unknown message type"})
+			send(map[string]any{"t": "error", "code": "unknown", "message": "unknown message type"})
 		}
 	}
-}
-
-// Room is where milestone 5's live battle relay goes: the members of one
-// battle (campaign + battle id), each a WebSocket; messages from one are
-// forwarded to the others in arrival order. Not used yet.
-type Room struct {
-	Campaign string
-	Battle   int
 }
 
 // ------------------------------------------------------------- sessions ---

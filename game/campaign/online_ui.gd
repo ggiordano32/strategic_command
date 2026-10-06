@@ -365,7 +365,7 @@ func show_battles() -> void:
 		box.add_child(Kit.label("No battles pending.", Kit.FONT, Color.WHITE))
 		s.show_dialog("Battles", box, [["Close", Callable()]], 520)
 		return
-	box.add_child(Kit.label("Battles must be resolved before the next turn. Your own: auto-resolve or fight. Where your ally's army fights, wait for them (they are pinged) or take command of their army (they are told).", Kit.FONT_SMALL, Kit.COL_DIM, true))
+	box.add_child(Kit.label("Battles must be resolved before the next turn. Your own: auto-resolve or fight. Where your ally's army fights too: fight together live (your ally is asked to join and commands their own army), wait for them (they are pinged), or take command of their army (they are told).", Kit.FONT_SMALL, Kit.COL_DIM, true))
 	for b in list:
 		box.add_child(_battle_card(st, b))
 	s.show_dialog("Pending battles (%d)" % list.size(), box, [["Close", Callable()]], 720)
@@ -389,14 +389,18 @@ func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 	var cl = info.get("claim")
 	var cmd := int(info.get("command_by", -1))
 	var wait_by := int(info.get("wait_by", -1))
+	var live = info.get("live")
+	var live_ok: bool = oc.live_ok() and not others.is_empty() and humans.has(oc.f)
 	var status := ""
 	var col := Kit.COL_DIM
+	if live is Dictionary and live_ok and not oc.pending_upload(bid):
+		return _live_card(card, v, h, bid, live, others)
 	if oc.pending_upload(bid):
 		status = "Your result is saved on this device and being sent."
 		col = Kit.COL_GOLD
 	elif cl is Dictionary and not bool(cl.get("mine", false)):
 		status = "%s is %s this battle now." % [_name(int(cl["f"])) if int(cl["f"]) != oc.f else "Your other device",
-			"fighting" if str(cl.get("mode", "")) == "fight" else "auto-resolving"]
+			"fighting" if str(cl.get("mode", "")) in ["fight", "live"] else "auto-resolving"]
 		col = Kit.COL_GOLD
 	elif not others.is_empty() and cmd != oc.f:
 		var mine := humans.has(oc.f)
@@ -420,7 +424,13 @@ func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 		var ab := Kit.button("Auto-resolve", func(): s.auto_resolve(bid), 130)
 		ab.name = "auto_%d" % bid
 		h.add_child(ab)
-		var fb := Kit.button("Fight", func(): s.fight(bid), 100)
+		# With the ally's army in it the battle is fought live: they can
+		# join at any time and command their own army.
+		var fb := Kit.button("Fight", func():
+			if live_ok:
+				s.fight_live(bid, true)
+			else:
+				s.fight(bid), 100)
 		fb.name = "fight_%d" % bid
 		h.add_child(fb)
 	else:
@@ -430,9 +440,49 @@ func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 		var tb := Kit.button("Take command", func(): _choose(bid, "command"), 0)
 		tb.name = "command_%d" % bid
 		h.add_child(tb)
-		var pb := Kit.button("Ask to join now", func(): _ping(bid), 0)
-		pb.name = "ping_%d" % bid
-		h.add_child(pb)
+		if live_ok:
+			# Opens the live battle's lobby and asks the ally to join (Discord).
+			var lb := Kit.button("Fight together", func(): s.fight_live(bid, true), 0)
+			lb.name = "together_%d" % bid
+			h.add_child(lb)
+		else:
+			var pb := Kit.button("Ask to join now", func(): _ping(bid), 0)
+			pb.name = "ping_%d" % bid
+			h.add_child(pb)
+	v.move_child(h, v.get_child_count() - 1)
+	return card
+
+
+## A battle being fought live: who is in it, and Join battle.
+func _live_card(card: Control, v: VBoxContainer, h: HBoxContainer, bid: int, live: Dictionary, others: Array) -> Control:
+	var host := int(live.get("host", -1))
+	var ins: Array[String] = []
+	var me_in := false
+	for p in live.get("players", []):
+		if bool(p.get("on", false)):
+			if int(p["f"]) == oc.f:
+				me_in = true
+			else:
+				ins.append(_name(int(p["f"])))
+	var text := ""
+	if str(live.get("state", "")) == "lobby":
+		text = "Live now: %s is waiting for you in the battle lobby." % _name(host) if host != oc.f else "Your battle lobby is open."
+	else:
+		var mins := maxi(0, (int(oc.summary.get("server_time", 0)) - int(live.get("since", 0))) / 60000)
+		text = "Live now: %s in battle%s." % [" and ".join(ins) if not ins.is_empty() else "nobody", (" (started %d min ago)" % mins) if mins > 0 else ""]
+	if me_in:
+		text += " You are in it on another device."
+	v.add_child(Kit.label(text, Kit.FONT_SMALL, Kit.COL_GOOD, true))
+	h.alignment = BoxContainer.ALIGNMENT_END
+	var jb := Kit.button("Join battle", func(): s.fight_live(bid, false), 130)
+	jb.name = "join_%d" % bid
+	h.add_child(jb)
+	if str(live.get("state", "")) != "lobby" and not others.is_empty():
+		var kb := Kit.button("Join, %s keeps my army" % _name(host), func(): s.fight_live(bid, false, true), 0, Kit.FONT_SMALL)
+		kb.name = "join_keep_%d" % bid
+		kb.tooltip_text = "Watch and take gifted units; %s keeps commanding your army." % _name(host)
+		if host != oc.f:
+			h.add_child(kb)
 	v.move_child(h, v.get_child_count() - 1)
 	return card
 
