@@ -1,7 +1,9 @@
 extends SceneTree
 ## Scripted solo campaign: a human faction played by a simple policy for N
 ## turns, every pending battle auto-resolved with the real battle sim (AI vs
-## AI, as the game's Auto-resolve does), checking the state stays consistent.
+## AI, as the game's Auto-resolve does), checking the state stays consistent
+## (sieges included: the policy lays siege when weaker and storms when the
+## odds turn).
 ##   godot --headless --script res://tests/campaign_solo.gd [-- --turns=20 --faction=rome --seed=5]
 
 const CData := preload("res://campaign/cdata.gd")
@@ -56,6 +58,12 @@ func _init() -> void:
 		print("turn %2d  %s: %d regions, %d armies, %d units, treasury %d | battles so far %d (won %d)" % [
 			int(st["turn"]), CData.faction_name(f), CState.regions_of(st, f).size(), CState.armies_of(st, f).size(),
 			_units(st, f), int(st["factions"][f]["treasury"]), battles, won])
+	var nsg := 0
+	var nsur := 0
+	for e in st["events"]:
+		nsg += 1 if str(e["k"]) == "siege" else 0
+		nsur += 1 if str(e.get("how", "")) == "surrendered" else 0
+	print("sieges in the last two turns' events: %d started, %d surrendered; open now: %d" % [nsg, nsur, (st.get("sieges", []) as Array).size()])
 	var back := CState.from_json(CState.to_json(st))
 	_check(CState.state_hash(back) == CState.state_hash(st), "final state survives a JSON round trip")
 	print("auto-resolved %d battles (half-size units) in %.1f s of sim" % [battles, sim_ms / 1000.0])
@@ -72,8 +80,8 @@ func _units(st: Dictionary, f: int) -> int:
 
 ## Policy: build the cheapest thing in each region, recruit the best melee
 ## unit available while upkeep stays below 70% of income, attack the most
-## valuable neighbour (independents first) when 1.4 times its defence, war
-## on an independent-free neighbour after turn 8 if strong.
+## valuable neighbour (independents first) when 1.4 times its defence (lay
+## siege at 0.7 times), storm a siege when the odds reach 55%.
 func _plan(st: Dictionary, f: int) -> Array:
 	var orders: Array = []
 	var ps := CState.copy(st)
@@ -96,23 +104,29 @@ func _plan(st: Dictionary, f: int) -> Array:
 				if CRules.apply_order(ps, f, o) == "":
 					orders.append(o)
 				break
+	for sg in ps.get("sieges", []):
+		var r := int(sg["r"])
+		if CRules.can_assault(ps, f, r) == "" and int(CBattle.odds(ps, CRules.besiegers(ps, r), CRules.besieged_armies(ps, r), r, true)["win"]) >= 55:
+			orders.append({"t": "assault", "r": r})
 	for a in CState.armies_of(ps, f):
-		if int(a["busy"]) != 0:
+		if int(a["busy"]) != 0 or CRules.siege_role(ps, a) != 0:
 			continue
 		var best := -1
 		var best_v := 0
+		var best_mode := CData.MODE_ASSAULT
 		for t in CRules.move_targets(ps, a):
 			if not CState.at_war(ps, f, CState.owner(ps, t)):
 				continue
 			var d := CAI.target_defence(ps, f, t)
-			if CState.strength(a) * 100 < d * 140:
+			if CState.strength(a) * 100 < d * 70:
 				continue
 			var v := CAI.region_value(ps, t) * 1000 / maxi(d, 1)
 			if v > best_v:
 				best_v = v
 				best = t
+				best_mode = CData.MODE_ASSAULT if CState.strength(a) * 100 >= d * 140 else CData.MODE_SIEGE
 		if best >= 0:
-			orders.append({"t": "move", "army": int(a["id"]), "to": best})
+			orders.append({"t": "move", "army": int(a["id"]), "to": best, "mode": best_mode})
 	return orders
 
 
@@ -133,11 +147,15 @@ func _consistency(st: Dictionary, t: int) -> void:
 				ok = false
 				printerr("  army %d unit with %d men" % [id, int(u["n"])])
 		var o := CState.owner(st, int(a["r"]))
-		if not CState.friendly(st, int(a["f"]), o) and CState.battle_at(st, int(a["r"])).is_empty():
+		if not CState.friendly(st, int(a["f"]), o) and CState.battle_at(st, int(a["r"])).is_empty() and CRules.siege_role(st, a) != 1:
 			ok = false
 			printerr("  army %d of %s stands in %s's region %d without a battle" % [id, a["f"], o, int(a["r"])])
 		if not CState.alive(st, int(a["f"])):
 			ok = false
+	for sg in st.get("sieges", []):
+		if CRules.besiegers(st, int(sg["r"])).is_empty() or CState.friendly(st, int(sg["f"]), CState.owner(st, int(sg["r"]))):
+			ok = false
+			printerr("  siege of region %d without besiegers or of a friendly city" % int(sg["r"]))
 	if not (st["battles"] as Array).is_empty() and str(st["phase"]) == "plan":
 		ok = false
 		printerr("  battles left in phase plan")

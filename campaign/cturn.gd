@@ -13,7 +13,10 @@ extends RefCounted
 ##   2. players' other orders (build, recruit, merge, split, disband), each
 ##      faction in faction order, its orders in the order given;
 ##   3. players' moves, all factions together, by army id; entering a hostile
-##      region starts (or joins) a battle;
+##      region starts a battle (state version 4: lays siege unless the move's
+##      mode is assault), entering a region whose battle started this turn
+##      joins it (crules.join_battle; AI moves in step 5 too); then the
+##      players' assault and sally orders (version 4), faction by faction;
 ##   4. players' proposals, answered by the AI at once;
 ##   5. AI factions act in faction order (build, recruit, move);
 ##   6. neighbouring armies reinforce the new battles;
@@ -40,7 +43,8 @@ static func submission(st: Dictionary, f: int, orders: Array) -> Dictionary:
 ## Apply a faction's planned orders to a copy of the state (no moves, no AI,
 ## no end of turn), for the planning view: treasury after spending, queued
 ## recruits and buildings, merged and split armies. Returns {state, errors
-## [[order index, reason]], moves [[army, to]]}.
+## [[order index, reason]], moves [[army, to, mode]]}. Move, assault and
+## sally orders are only validated.
 static func preview(st: Dictionary, f: int, orders: Array) -> Dictionary:
 	var s := CState.copy(st)
 	var errors: Array = []
@@ -57,7 +61,7 @@ static func preview(st: Dictionary, f: int, orders: Array) -> Dictionary:
 				if why != "":
 					errors.append([i, why])
 				else:
-					moves.append([int(o["army"]), int(o["to"])])
+					moves.append([int(o["army"]), int(o["to"]), int(o.get("mode", CData.MODE_SIEGE))])
 				continue
 			var why2 := CRules.apply_order(s, f, o)
 			if why2 != "":
@@ -88,14 +92,15 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 			var f := int(s["f"])
 			for o in s["orders"]:
 				var t := str(o.get("t", ""))
-				if t == "move" or t == "propose":
+				if t == "move" or t == "propose" or t == "assault" or t == "sally":
 					continue
 				if (t == "war" or t == "answer") != (pass_i == 0):
 					continue
 				var why := CRules.apply_order(st, f, o)
 				if why != "":
 					CRules.event(st, {"k": "order_failed", "f": f, "order": o, "why": why})
-	# 3. Moves.
+	CRules.check_sieges(st)
+	# 3. Moves (mode: lay siege by default, or assault).
 	var moves: Array = []
 	var seen := {}
 	for s in subs:
@@ -105,15 +110,26 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 				if seen.has(id):
 					continue
 				seen[id] = 1
-				moves.append([id, int(o.get("to", -1)), int(s["f"])])
+				moves.append([id, int(o.get("to", -1)), int(s["f"]), int(o.get("mode", CData.MODE_SIEGE))])
 	moves.sort_custom(func(a, b): return a[0] < b[0])
 	for m in moves:
 		var a := CState.army(st, m[0])
 		if a.is_empty() or int(a["f"]) != int(m[2]):
 			continue
-		var why := CRules.execute_move(st, a, m[1])
+		var why := CRules.execute_move(st, a, m[1], m[3])
 		if why != "":
 			CRules.event(st, {"k": "move_failed", "f": int(m[2]), "army": int(m[0]), "to": int(m[1]), "why": why})
+	# 3b. Assaults and sallies (version 4), faction by faction.
+	for s in subs:
+		var f := int(s["f"])
+		for o in s["orders"]:
+			var t := str(o.get("t", ""))
+			if t != "assault" and t != "sally":
+				continue
+			var r := int(o.get("r", -1))
+			var why := CRules.order_assault(st, f, r) if t == "assault" else CRules.order_sally(st, f, r)
+			if why != "":
+				CRules.event(st, {"k": "order_failed", "f": f, "order": o, "why": why})
 	# 4. Proposals.
 	for s in subs:
 		var f := int(s["f"])
@@ -128,9 +144,11 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 				CRules.apply_agreement(st, f, g, what)
 			else:
 				CRules.event(st, {"k": "refused", "from": g, "to": f, "what": what})
+	CRules.check_sieges(st)
 	# 5. AI factions.
 	for f in CState.nf():
 		CAI.act(st, f)
+	CRules.check_sieges(st)
 	# 6-7. Reinforcements; formula for AI-only battles.
 	for b in st["battles"]:
 		if int(b.get("new", 0)) != 0:

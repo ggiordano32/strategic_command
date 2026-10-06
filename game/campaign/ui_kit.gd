@@ -193,3 +193,70 @@ class UnitRow extends Control:
 			draw_string(font, Vector2(x0 + bw + 6, by + 9), t, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, COL_DIM)
 		elif sub_text != "":
 			draw_string(font, Vector2(x0, by + 9), sub_text, HORIZONTAL_ALIGNMENT_LEFT, sz.x - x0 - rw, 12, COL_DIM)
+
+
+## Balance of power: a two-colour bar split at the attackers' share of the
+## combined strength (campaign/cbattle.gd odds()), a mark at the middle.
+class OddsBar extends Control:
+	var share := 50
+	var cols: Array = [Color(0.8, 0.3, 0.25), Color(0.3, 0.5, 0.9)]
+	var texts: Array = ["", ""]
+
+	func _init(p_share: int, p_cols: Array, p_texts: Array) -> void:
+		share = clampi(p_share, 0, 100)
+		cols = p_cols
+		texts = p_texts
+		custom_minimum_size = Vector2(180, 24)
+		size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func _draw() -> void:
+		var sz := size
+		var x := roundf(sz.x * share / 100.0)
+		draw_rect(Rect2(Vector2.ZERO, sz), Color(0, 0, 0, 0.6))
+		draw_rect(Rect2(1, 1, maxf(x - 1, 0), sz.y - 2), cols[0])
+		draw_rect(Rect2(x, 1, maxf(sz.x - x - 1, 0), sz.y - 2), cols[1])
+		draw_line(Vector2(x, 0), Vector2(x, sz.y), Color.WHITE, 2.0)
+		draw_line(Vector2(sz.x * 0.5, sz.y - 5), Vector2(sz.x * 0.5, sz.y), Color(1, 1, 1, 0.8), 1.5)
+		var font := ThemeDB.fallback_font
+		var fs := 13
+		var y := sz.y * 0.5 + fs * 0.35
+		for k in 2:
+			var t := str(texts[k])
+			if t == "":
+				continue
+			var tw := font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+			var p := Vector2(6, y) if k == 0 else Vector2(sz.x - tw - 6, y)
+			draw_string_outline(font, p, t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 4, Color(0, 0, 0, 0.85))
+			draw_string(font, p, t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color.WHITE)
+
+
+const BAND_WORDS: Array[String] = ["decisive defeat", "likely defeat", "even", "likely victory", "decisive victory"]
+const BAND_COLS: Array[Color] = [Color(1.0, 0.45, 0.4), Color(1.0, 0.65, 0.5), Color(1.0, 0.9, 0.6), Color(0.65, 0.95, 0.6),
+	Color(0.5, 1.0, 0.55)]
+
+
+## The odds of a battle as a box: title, the bar (attackers left in their
+## colour, defenders right), and "Your chance 62%: likely victory. Expected
+## losses: yours 18%, theirs 41%." me: 0 the viewer attacks, 1 defends, -1
+## neither (the attackers' view). names / cols: [attackers, defenders].
+static func odds_view(od: Dictionary, me: int, names: Array, cols: Array, title: String) -> Control:
+	var v := vbox(3)
+	v.name = "odds"
+	if title != "":
+		v.add_child(label(title, FONT_SMALL, COL_GOLD, true))
+	var share := int(od["share"])
+	var bar := OddsBar.new(share, cols, ["%s %d%%" % [names[0], share], "%d%% %s" % [100 - share, names[1]]])
+	bar.name = "odds_bar"
+	v.add_child(bar)
+	var win := int(od["win"]) if me != 1 else 100 - int(od["win"])
+	var band := int(od["band"]) if me != 1 else 4 - int(od["band"])
+	var mine := int(od["att_loss"]) if me != 1 else int(od["def_loss"])
+	var theirs := int(od["def_loss"]) if me != 1 else int(od["att_loss"])
+	var who := "Your" if me >= 0 else "%s's" % names[0]
+	var t := "%s chance %d%%: %s. Expected losses: %s %d%%, %s %d%%." % [who, win, BAND_WORDS[band],
+		"yours" if me >= 0 else str(names[0]), mine, "theirs" if me >= 0 else str(names[1]), theirs]
+	var l := label(t, FONT_SMALL, BAND_COLS[band], true)
+	l.name = "odds_text"
+	v.add_child(l)
+	return v

@@ -179,7 +179,7 @@ func _load_data() -> void:
 
 ## Testing aids: --cam-zoom=Z --cam-region=key --close-dialog
 ## --select-region=key --select-army=N (Nth army of the player)
-## --plan-move=N:key --camp-attack=N:key --camp-fight --sim-turns=N --dialog-scroll=PX
+## --plan-move=N:key --camp-attack=N:key --camp-siege=N:key[:turns] --camp-besieged=key:faction --camp-fight --sim-turns=N --dialog-scroll=PX --side-scroll=PX
 ## --dialog=battles|summary|diplomacy|realm|goals|warnings|online|citymap
 func _apply_debug_args() -> void:
 	for a in OS.get_cmdline_user_args():
@@ -194,6 +194,9 @@ func _apply_debug_args() -> void:
 		elif a.begins_with("--dialog-scroll="):
 			await get_tree().create_timer(1.5).timeout
 			dialog_scroll.scroll_vertical = int(v)  # testing aid
+		elif a.begins_with("--side-scroll="):
+			await get_tree().create_timer(1.0).timeout
+			side_scroll.scroll_vertical = int(v)  # testing aid
 		elif a == "--debug-xform":
 			print("world ", world.get_global_transform_with_canvas(), " overlay ", overlay.get_global_transform_with_canvas(), " vp ", _vp(), " zoom ", zoom, " off ", offset, " roma ", Geo.site(0), " -> ", overlay.to_screen(Geo.site(0)))
 		elif a.begins_with("--select-region="):
@@ -232,6 +235,36 @@ func _apply_debug_args() -> void:
 			var pb := CTurn.pending_for(st)
 			if not pb.is_empty():
 				fight(int(pb[0]["id"]))
+		elif a.begins_with("--camp-siege="):
+			# --camp-siege=N:region[:turns]: the player's Nth army has been
+			# besieging region for `turns` turns (war if needed).
+			var mine4 := CState.armies_of(st, f)
+			var to4 := CData.region_index(v.get_slice(":", 1))
+			var a4: Dictionary = mine4[int(v.get_slice(":", 0))]
+			var o4 := CState.owner(st, to4)
+			if o4 >= 0 and not CState.at_war(st, f, o4):
+				CRules.declare_war(st, f, o4)
+			var left := int(a4["r"])
+			a4["r"] = to4
+			var sg4 := CRules.start_siege(st, to4, a4, left)
+			var n4 := int(v.get_slice(":", 2)) if v.get_slice_count(":") > 2 else 1
+			sg4["turn"] = int(st["turn"]) - n4
+			sg4["supply"] = maxi(int(sg4["supply"]) - n4, 0)
+			_replan()
+		elif a.begins_with("--camp-besieged="):
+			# --camp-besieged=region:faction: a fresh army of faction (at war
+			# with the player) has besieged the player's region for a turn.
+			var r6 := CData.region_index(v.get_slice(":", 0))
+			var e6 := CData.faction_index(v.get_slice(":", 1))
+			if not CState.at_war(st, f, e6):
+				CRules.declare_war(st, f, e6)
+			var id6 := CRules.new_army_id(st, e6)
+			st["factions"][e6]["next_army"] = int(st["factions"][e6]["next_army"]) + 1
+			CRules._insert_army(st, {"id": id6, "f": e6, "r": r6, "units": [{"t": "heavy", "n": 100}, {"t": "heavy", "n": 100},
+				{"t": "spear", "n": 100}, {"t": "light", "n": 120}], "from": -1, "moved": 0, "busy": 0})
+			var sg6 := CRules.start_siege(st, r6, CState.army(st, id6), -1)
+			sg6["turn"] = int(st["turn"]) - 1
+			_replan()
 		elif a.begins_with("--camp-attack="):
 			# --camp-attack=N:region: the player's Nth army attacks now (war if needed).
 			var mine3 := CState.armies_of(st, f)
@@ -483,8 +516,79 @@ func set_move(army: int, to: int) -> void:
 	if cur == to:
 		_t("campaign_input", {"what": "move_cancel"})
 		return
-	add_order({"t": "move", "army": army, "to": to})
-	_t("campaign_input", {"what": "move"})
+	var mo := {"t": "move", "army": army, "to": to}
+	if CState.sieges_on(st):
+		mo["mode"] = CData.MODE_SIEGE  # the default: lay siege (Assault is one tap away)
+	if add_order(mo) == "":
+		_t("campaign_input", {"what": "move"})
+		if move_kind(army) != "move":
+			move_toast(army)
+
+
+## Mode of army's planned move (CData.MODE_*; -1 if none).
+func move_mode(army: int) -> int:
+	for m in moves:
+		if int(m[0]) == army:
+			return int(m[2]) if (m as Array).size() > 2 else CData.MODE_SIEGE
+	return -1
+
+
+## What army's planned move does: "move" (friendly land), "siege" (lays
+## siege), "join" (joins our siege), "assault" (storms it now), "relief"
+## (relieves our besieged city), "" (no move).
+func move_kind(army: int) -> String:
+	var to := planned_move(army)
+	var a := CState.army(ps, army)
+	if to < 0 or a.is_empty():
+		return ""
+	var af := int(a["f"])
+	var o := CState.owner(ps, to)
+	if not CState.sieges_on(ps):
+		return "assault" if CState.at_war(ps, af, o) else "move"
+	var sg := CState.siege_at(ps, to)
+	if not sg.is_empty():
+		if CState.friendly(ps, af, o):
+			return "relief"
+		return "assault" if move_mode(army) == CData.MODE_ASSAULT else "join"
+	if CState.at_war(ps, af, o):
+		return "assault" if move_mode(army) == CData.MODE_ASSAULT else "siege"
+	return "move"
+
+
+## Switch army's planned move between laying siege and assaulting.
+func set_move_mode(army: int, mode: int) -> void:
+	for o in orders:
+		if str(o["t"]) == "move" and int(o["army"]) == army:
+			o["mode"] = mode
+	_replan()
+	save()
+	_t("campaign_input", {"what": "move_mode", "mode": mode})
+	move_toast(army)
+
+
+## The toast after planning a move into hostile land: what it does, the
+## odds of storming the city now, and the other choice one tap away.
+func move_toast(army: int) -> void:
+	var kind := move_kind(army)
+	var to := planned_move(army)
+	if to < 0 or kind == "move" or kind == "":
+		return
+	var po: Dictionary = panels.plan_odds(to)
+	var od: Dictionary = po["od"]
+	var odds := "%d%% (%s)" % [int(od["win"]), Kit.BAND_WORDS[int(od["band"])]]
+	var city := str(CData.REGIONS[to]["city"])
+	match kind:
+		"siege":
+			show_toast("Lays siege to %s: no battle this turn; its supplies last %d turns, then it starves. Storming it now: %s." % [
+				city, CState.siege_supply(ps, to), odds], ["Assault now", func(): set_move_mode(army, CData.MODE_ASSAULT)])
+		"join":
+			show_toast("Joins the siege of %s. Storming it now with every besieger: %s." % [city, odds],
+				["Assault now", func(): set_move_mode(army, CData.MODE_ASSAULT)])
+		"assault":
+			if CState.sieges_on(ps):
+				show_toast("Storms %s at once: %s." % [city, odds], ["Lay siege", func(): set_move_mode(army, CData.MODE_SIEGE)])
+		"relief":
+			show_toast("Relieves %s: a field battle outside the walls, the garrison and the armies inside on your side: %s." % [city, odds])
 
 
 ## Why the selected army cannot move to region r, and what to do about it,
@@ -508,6 +612,10 @@ func explain_refusal(army: int, r: int) -> void:
 		action = ["Battles", func(): panels.show_battles()]
 	elif why == "battle pending there":
 		text = "A battle is pending in %s: no other army can enter until it is resolved." % reg
+	elif why == "besieged":
+		text = "This army is inside a besieged city: it can only leave by a sally (tap the city)."
+	elif why.begins_with("besieged by"):
+		text = "%s is %s: only their side or the city's own can march in." % [reg, why]
 	elif why == "not adjacent":
 		text = "%s is not next to this army: one region or one sea lane a turn." % reg
 	else:
@@ -529,8 +637,11 @@ func show_toast(text: String, action: Array = []) -> void:
 	var h := Kit.hbox(8)
 	_toast.add_child(h)
 	var l := Kit.label(text, Kit.FONT, Color(1, 0.92, 0.8), true)
-	# Fits left of the side panel when it is open.
+	# Fits left of the side panel when it is open; on a narrow screen (a
+	# phone with the panel open) it spans the width, over the panel.
 	var room := _vp().x - (side.size.x + 16.0 if side.visible else 0.0) - 16.0
+	if room < 460.0:
+		room = _vp().x - 16.0
 	l.custom_minimum_size.x = clampf(room - 200.0, 180.0, 520.0)
 	h.add_child(l)
 	if not action.is_empty():
@@ -549,14 +660,20 @@ func show_toast(text: String, action: Array = []) -> void:
 	h.add_child(x)
 	ui.add_child(_toast)
 	ui.move_child(_toast, end_button.get_index())
-	_toast.reset_size()
-	var vp := _vp()
-	_toast.position = Vector2(8, vp.y - _toast.size.y - 64)
+	_place_toast()
+	_place_toast.call_deferred()  # again once the wrapped label has its height
 	var me := _toast
 	get_tree().create_timer(6.0).timeout.connect(func():
 		if is_instance_valid(me) and me == _toast:
 			me.queue_free()
 			_toast = null)
+
+
+func _place_toast() -> void:
+	if _toast == null or not is_instance_valid(_toast):
+		return
+	_toast.reset_size()
+	_toast.position = Vector2(8, _vp().y - _toast.size.y - 64)
 
 
 func _flash(text: String) -> void:
@@ -810,7 +927,7 @@ func _update_hint() -> void:
 	elif online != null and online.i_submitted():
 		hint.text = "Turn submitted. You can look around; Unsubmit to change your orders."
 	elif sel_army >= 0:
-		hint.text = "Tap a highlighted region to move there (red: attack; dark: not allowed, tap for why). Tap it again to cancel."
+		hint.text = "Tap a highlighted region to move there (red: siege or attack; dark: not allowed, tap for why). Tap it again to cancel."
 	else:
 		hint.text = "Tap an army to move it, a region for buildings and recruits."
 
@@ -822,11 +939,16 @@ func _refresh_map() -> void:
 	overlay.selected_army = sel_army
 	overlay.moves = moves
 	var att: Array[int] = []
+	var sgm: Array[int] = []
 	for m in moves:
 		var o := CState.owner(ps, int(m[1]))
-		if CState.at_war(ps, f, o):
+		var kind := move_kind(int(m[0]))
+		if CState.at_war(ps, f, o) or kind == "relief":
 			att.append(int(m[0]))
+		if kind == "siege" or kind == "join":
+			sgm.append(int(m[0]))
 	overlay.attack_moves = att
+	overlay.siege_moves = sgm
 	map_view.targets = []
 	map_view.attack_targets = []
 	map_view.blocked_targets = []

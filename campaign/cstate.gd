@@ -11,9 +11,9 @@ extends RefCounted
 ## by the rules (JSON load does not keep key order). The state carries its own
 ## RNG ("rng", xorshift32) used by the rules and the AI.
 ##
-## Format (VERSION 3; version 1 has no city_seed, versions 1-2 no builder
-## data "built"; older states are migrated on load, see migrate()), all
-## top-level keys:
+## Format (VERSION 4; version 1 has no city_seed, versions 1-2 no builder
+## data "built", versions 1-3 no "sieges"; older states are migrated on
+## load, see migrate()), all top-level keys:
 ##   format "strategic_command_campaign", version, name, seed, turn (0 =
 ##   280 BC summer), phase ("plan" | "battles" | "over"), rng,
 ##   settings {victory_regions, victory_capitals, turn_timeout_h, autoresolve
@@ -37,6 +37,10 @@ extends RefCounted
 ##     from this turn, -1), moved (0/1), busy (0/1: committed to a battle)}]
 ##     sorted by id,
 ##   battles [pending battle, see crules.gd], next_battle,
+##   sieges [{r, f (besieging faction), turn (started), supply (turns of
+##     supplies left), held (turns maintained without an assault), from
+##     [[army id, region it came from]...]}] sorted by region (version 4;
+##     a state without the key plays without sieges, see sieges_on),
 ##   proposals [{id, from, to, what, turn}] (AI proposals to humans),
 ##   next_proposal, events [{turn, k, ...}] (what happened, for the turn
 ##   summary), winner (-1 none, 1 players won, 0 players lost), stats {}.
@@ -45,7 +49,7 @@ const CData := preload("res://campaign/cdata.gd")
 const UT := preload("res://sim/unit_types.gd")
 
 const FORMAT := "strategic_command_campaign"
-const VERSION := 3
+const VERSION := 4
 ## Oldest format this build reads (older states are migrated on load).
 const MIN_VERSION := 1
 
@@ -135,6 +139,7 @@ static func new_campaign(p_name: String, p_seed: int, humans: Array, settings: D
 				set_dip(st, a, b, ALLIED)
 	st["battles"] = []
 	st["next_battle"] = 1
+	st["sieges"] = []
 	st["proposals"] = []
 	st["next_proposal"] = 1
 	st["events"] = []
@@ -172,6 +177,7 @@ static func from_json(text: String) -> Dictionary:
 
 
 ## Bring a state of an older format up to VERSION (in place; returns it).
+## 3 -> 4: no sieges yet (an empty "sieges" list switches the siege rules on).
 ## 2 -> 3: every settlement gets an empty builder list "built".
 ## 1 -> 2: every settlement gets its city_seed (default_city_seed, the same
 ## value a new campaign gives it, so migrating on two devices agrees).
@@ -195,6 +201,10 @@ static func migrate(st: Dictionary) -> Dictionary:
 			if not rs3.has("built"):
 				rs3["built"] = []
 		st["version"] = 3
+	if int(st.get("version", 0)) < 4:
+		if not st.has("sieges"):
+			st["sieges"] = []
+		st["version"] = 4
 	return st
 
 
@@ -385,6 +395,32 @@ static func battle_at(st: Dictionary, r: int) -> Dictionary:
 		if int(b["r"]) == r:
 			return b
 	return {}
+
+
+## Siege rules apply (state version 4 and later: the state has "sieges").
+## An unmigrated online campaign of format 1-3 has no sieges: every move
+## into a hostile region assaults at once, exactly as those builds did.
+static func sieges_on(st: Dictionary) -> bool:
+	return st.has("sieges")
+
+
+## The siege of region r ({} if none).
+static func siege_at(st: Dictionary, r: int) -> Dictionary:
+	if not st.has("sieges"):
+		return {}
+	for sg in st["sieges"]:
+		if int(sg["r"]) == r:
+			return sg
+	return {}
+
+
+## Turns of supplies a settlement holds when a siege starts: SIEGE_SUPPLY by
+## level, +1 with granaries (farms at SIEGE_GRANARY_FARM or more).
+static func siege_supply(st: Dictionary, r: int) -> int:
+	var s := int(CData.SIEGE_SUPPLY[int(st["regions"][r]["level"])])
+	if building(st, r, CData.FARM) >= CData.SIEGE_GRANARY_FARM:
+		s += 1
+	return s
 
 
 static func battle(st: Dictionary, id: int) -> Dictionary:

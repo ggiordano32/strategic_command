@@ -74,6 +74,10 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 					rel = "%s is your ally." % CData.faction_name(o)
 					col = Kit.COL_GOOD
 		box.add_child(Kit.label(rel, Kit.FONT_SMALL, col, true))
+	if not CState.siege_at(ps, r).is_empty():
+		_siege_section(box, r)
+	elif f >= 0 and CState.at_war(ps, f, o) and CState.battle_at(ps, r).is_empty():
+		_attack_section(box, r)
 	var gp := CRules.growth_per_turn(ps, r)
 	var grow := "Growth %d/%d to %s (+%d a turn)" % [int(rs["growth"]), int(CData.GROWTH_TO[lvl + 1]), CData.LEVEL_NAMES[lvl + 1].to_lower(), gp] if lvl < CData.CITY else "Full-grown city"
 	box.add_child(Kit.label("Income %d a turn.  %s." % [CRules.region_income(ps, r), grow], Kit.FONT_SMALL, Color.WHITE, true))
@@ -104,6 +108,164 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 		var row := Kit.UnitRow.new(UT.index_of(str(g["t"])), int(g["n"]), _fc(o))
 		row.full = int(g["full"])
 		box.add_child(row)
+
+
+# ---------------------------------------------------------------- sieges ---
+
+func _fname(f: int) -> String:
+	return CData.faction_name(f)
+
+
+func _has_order(t: String, r: int) -> bool:
+	for o in s.orders:
+		if str(o["t"]) == t and int(o.get("r", -1)) == r:
+			return true
+	return false
+
+
+## Armies the player planning now has ordered into region r (in the preview
+## state, still where they stand).
+func planned_into(r: int) -> Array:
+	var out: Array = []
+	for m in s.moves:
+		if int(m[1]) == r:
+			var a := CState.army(s.ps, int(m[0]))
+			if not a.is_empty():
+				out.append(a)
+	return out
+
+
+## The odds of what the player plans against region r: a relief of our
+## besieged city (field battle: the relief and the armies inside with the
+## garrison against the besiegers), else storming it with the armies ordered
+## in and those already besieging it (garrison and armies there defending).
+## {od, me, names, cols, kind ("relief" | "assault"), n (armies)}.
+func plan_odds(r: int) -> Dictionary:
+	var ps: Dictionary = s.ps
+	var f: int = s.f
+	var o := CState.owner(ps, r)
+	var att := planned_into(r)
+	var sg := CState.siege_at(ps, r)
+	if not sg.is_empty() and CState.friendly(ps, f, o):
+		var od := CBattle.odds(ps, att + CRules.besieged_armies(ps, r), CRules.besiegers(ps, r), r, false, 0)
+		return {"od": od, "me": 0, "names": [_fname(f), _fname(int(sg["f"]))], "cols": [_fc(f), _fc(int(sg["f"]))],
+			"kind": "relief", "n": att.size()}
+	for a in CRules.besiegers(ps, r):
+		if not att.has(a):
+			att.append(a)
+	var defs: Array = []
+	if o >= 0:
+		for a in CState.armies_in(ps, r):
+			if CState.friendly(ps, int(a["f"]), o):
+				defs.append(a)
+	var od2 := CBattle.odds(ps, att, defs, r, true)
+	return {"od": od2, "me": 0, "names": [_fname(f), _fname(o)], "cols": [_fc(f), _fc(o)], "kind": "assault", "n": att.size()}
+
+
+## Region panel of a besieged settlement: who, how long, supplies; for a
+## besieger the assault odds with Assault / Maintain, for the defender the
+## sally odds with Sally.
+func _siege_section(box: VBoxContainer, r: int) -> void:
+	var ps: Dictionary = s.ps
+	var f: int = s.f
+	var sg := CState.siege_at(ps, r)
+	var o := CState.owner(ps, r)
+	var p := Kit.panel(Color(0.35, 0.18, 0.08, 0.5), 8)
+	p.name = "siege_panel"
+	var v := Kit.vbox(6)
+	p.add_child(v)
+	box.add_child(p)
+	var turn_n := int(ps["turn"]) - int(sg["turn"])
+	var sup := int(sg["supply"])
+	var sup_t := ("supplies %d turn%s left" % [sup, "" if sup == 1 else "s"]) if sup > 0 \
+		else "out of supplies: the garrison loses %d%% a turn" % CData.SIEGE_STARVE_PCT
+	var bs := CRules.besiegers(ps, r)
+	var men := 0
+	for a in bs:
+		men += CState.men(a)
+	v.add_child(Kit.label("Besieged by %s, turn %d of the siege, %s." % [_fname(int(sg["f"])), turn_n, sup_t],
+		Kit.FONT, Kit.COL_GOLD, true))
+	var note := Kit.label("%d besieging arm%s, %d men. No income, recruits or building while besieged; with no garrison and no army inside it surrenders." % [
+		bs.size(), "y" if bs.size() == 1 else "ies", men], Kit.FONT_SMALL, Kit.COL_DIM, true)
+	if f < 0:
+		v.add_child(note)
+		return
+	var mine := false
+	for a in bs:
+		if int(a["f"]) == f:
+			mine = true
+	if mine:
+		var po := plan_odds(r)
+		v.add_child(Kit.odds_view(po["od"], 0, po["names"], po["cols"], "If you storm it this turn (all besiegers%s):" % (
+			" and the armies marching in" if planned_into(r).size() > 0 else "")))
+		var ordered := _has_order("assault", r)
+		v.add_child(Kit.label("Orders: storm the walls at the end of the turn." if ordered else "Orders: keep up the siege.",
+			Kit.FONT, Kit.COL_BAD if ordered else Color.WHITE, true))
+		var h := Kit.hbox(8)
+		var ab := Kit.button("Assault", func(): s.add_order({"t": "assault", "r": r}), 110)
+		ab.name = "siege_assault"
+		ab.disabled = ordered or CRules.can_assault(ps, f, r) != ""
+		h.add_child(ab)
+		var mb := Kit.button("Maintain", func(): s.remove_orders(func(x): return str(x["t"]) == "assault" and int(x.get("r", -1)) == r), 110)
+		mb.name = "siege_maintain"
+		mb.disabled = not ordered
+		h.add_child(mb)
+		v.add_child(h)
+		v.add_child(note)
+	elif CState.friendly(ps, f, o):
+		var inside := CRules.besieged_armies(ps, r)
+		var od := CBattle.odds(ps, inside, bs, r, false, 0)
+		v.add_child(Kit.odds_view(od, 0, [_fname(f), _fname(int(sg["f"]))], [_fc(f), _fc(int(sg["f"]))],
+			"If the garrison and the armies inside sally (a field battle outside the walls):" if not inside.is_empty()
+			else "If the garrison sallies (a field battle outside the walls):"))
+		var ordered2 := _has_order("sally", r)
+		var h2 := Kit.hbox(8)
+		var sb := Kit.button("Cancel sally" if ordered2 else "Sally", func():
+			if ordered2:
+				s.remove_orders(func(x): return str(x["t"]) == "sally" and int(x.get("r", -1)) == r)
+			else:
+				s.add_order({"t": "sally", "r": r}), 130)
+		sb.name = "siege_sally"
+		sb.disabled = not ordered2 and CRules.can_sally(ps, f, r) != ""
+		h2.add_child(sb)
+		h2.add_child(Kit.label("Orders: sally at the end of the turn." if ordered2 else "Win to lift the siege; lose and the siege goes on.",
+			Kit.FONT_SMALL, Kit.COL_BAD if ordered2 else Kit.COL_DIM, true))
+		v.add_child(h2)
+		if planned_into(r).size() > 0:
+			var po2 := plan_odds(r)
+			v.add_child(Kit.odds_view(po2["od"], 0, po2["names"], po2["cols"], "Your relief (with the garrison and the armies inside riding out):"))
+		else:
+			v.add_child(Kit.label("An army of yours marching in relieves it: a field battle, the garrison and the armies inside fight on its side.",
+				Kit.FONT_SMALL, Kit.COL_DIM, true))
+		v.add_child(note)
+	else:
+		v.add_child(note)
+
+
+## Region panel of an enemy settlement: the odds of the armies ordered into
+## it this turn.
+func _attack_section(box: VBoxContainer, r: int) -> void:
+	var ps: Dictionary = s.ps
+	var into := planned_into(r)
+	if into.is_empty():
+		return
+	var po := plan_odds(r)
+	var assault := 0
+	for m in s.moves:
+		if int(m[1]) == r and int(m[2]) == CData.MODE_ASSAULT:
+			assault += 1
+	var what := "Planned: %d arm%s %s." % [into.size(), "y" if into.size() == 1 else "ies",
+		"storm it at once" if assault > 0 or not CState.sieges_on(ps) else "lay siege (no battle this turn)"]
+	var p := Kit.panel(Color(0.3, 0.1, 0.08, 0.45), 8)
+	p.name = "attack_panel"
+	var v := Kit.vbox(6)
+	p.add_child(v)
+	v.add_child(Kit.label(what, Kit.FONT, Kit.COL_GOLD, true))
+	v.add_child(Kit.odds_view(po["od"], 0, po["names"], po["cols"], "Odds of storming it (garrison and walls included):"))
+	if CState.sieges_on(ps) and assault == 0:
+		v.add_child(Kit.label("A siege starves it: supplies %d turns, then the garrison weakens each turn." % CState.siege_supply(ps, r),
+			Kit.FONT_SMALL, Kit.COL_DIM, true))
+	box.add_child(p)
 
 
 ## The settlement's battle map as it stands now (CityPreview), with what
@@ -276,17 +438,42 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 		Kit.FONT_SMALL, Kit.COL_DIM, true))
 	if mine:
 		var mv: int = s.planned_move(id)
+		var role := CRules.siege_role(ps, a)
 		if int(a["busy"]) != 0:
 			box.add_child(Kit.label("In a battle.", Kit.FONT, Kit.COL_BAD))
 		elif mv >= 0:
 			var h := Kit.hbox(6)
-			var att := CState.at_war(ps, af, CState.owner(ps, mv))
-			h.add_child(Kit.label("%s %s" % ["Attacks" if att else "Moves to", CData.REGIONS[mv]["name"]], Kit.FONT,
-				Kit.COL_BAD if att else Kit.COL_GOOD, true))
+			var kind: String = s.move_kind(id)
+			var verb: String = {"siege": "Lays siege to", "join": "Joins the siege of", "assault": "Assaults", "relief": "Relieves",
+				"move": "Moves to"}.get(kind, "Moves to")
+			h.add_child(Kit.label("%s %s" % [verb, CData.REGIONS[mv]["name"]], Kit.FONT,
+				Kit.COL_GOOD if kind == "move" else Kit.COL_BAD, true))
+			if kind == "siege" or kind == "join" or (kind == "assault" and CState.sieges_on(ps)):
+				var to_mode := CData.MODE_SIEGE if kind == "assault" else CData.MODE_ASSAULT
+				var mb := Kit.button("Lay siege" if kind == "assault" else "Assault", func(): s.set_move_mode(id, to_mode), 96)
+				mb.name = "move_mode"
+				h.add_child(mb)
 			var cb := Kit.button("Cancel move", func(): s.set_move(id, mv), 110)
 			cb.name = "cancel_move"
 			h.add_child(cb)
 			box.add_child(h)
+		elif role == 1:
+			var sg := CState.siege_at(ps, r)
+			var h2 := Kit.hbox(6)
+			h2.add_child(Kit.label("Besieging %s (turn %d). It stays until ordered away." % [CData.REGIONS[r]["city"],
+				int(ps["turn"]) - int(sg["turn"])], Kit.FONT, Kit.COL_GOLD, true))
+			var sp := Kit.button("Siege", func(): s.select_region(r), 80)
+			sp.name = "army_siege"
+			h2.add_child(sp)
+			box.add_child(h2)
+		elif role == 2:
+			var h3 := Kit.hbox(6)
+			h3.add_child(Kit.label("Inside the besieged walls of %s: it can only leave by a sally." % CData.REGIONS[r]["city"],
+				Kit.FONT, Kit.COL_BAD, true))
+			var sp2 := Kit.button("Siege", func(): s.select_region(r), 80)
+			sp2.name = "army_siege"
+			h3.add_child(sp2)
+			box.add_child(h3)
 		else:
 			box.add_child(Kit.label("Tap a highlighted region on the map to move.", Kit.FONT_SMALL, Color.WHITE, true))
 	var sel: Array = _split_sel.get(id, [])
@@ -308,7 +495,7 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 			_split_sel[id] = cur
 			s.select_army(id))
 		box.add_child(row)
-	if not mine or int(a["busy"]) != 0:
+	if not mine or int(a["busy"]) != 0 or CRules.siege_role(ps, a) != 0:
 		return
 	var fl := Kit.flow(6)
 	var nsel := sel.size()
@@ -323,7 +510,7 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 		var ty := CState.unit_type(units[sel[0]] if nsel > 0 else units[0])
 		s.open_unit_page(ty, Callable(), ""), 0))
 	for o in CState.armies_in(ps, r):
-		if int(o["id"]) != id and int(o["f"]) == af and int(o["busy"]) == 0:
+		if int(o["id"]) != id and int(o["f"]) == af and int(o["busy"]) == 0 and CRules.siege_role(ps, o) == 0:
 			var oid := int(o["id"])
 			var mb := Kit.button("Merge into army (%d units)" % CState.unit_count(o), func():
 				_split_sel.erase(id)
@@ -552,7 +739,15 @@ func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 		for f in facs[k]:
 			names.append(CData.faction_name(int(f)))
 		sides[k] = " and ".join(names)
+	var kind := str(b.get("kind", ""))
 	var title := "Battle of %s (%s): %s (attacking) against %s" % [CData.REGIONS[r]["city"], CData.REGIONS[r]["name"], sides[0], sides[1]]
+	match kind:
+		"assault":
+			title = "Assault on %s (%s): %s storm the walls held by %s" % [CData.REGIONS[r]["city"], CData.REGIONS[r]["name"], sides[0], sides[1]]
+		"sally":
+			title = "Sally from %s (%s): %s ride out against the besiegers, %s (a field battle)" % [CData.REGIONS[r]["city"], CData.REGIONS[r]["name"], sides[1], sides[0]]
+		"relief":
+			title = "Relief of %s (%s): %s and the garrison against the besiegers, %s (a field battle)" % [CData.REGIONS[r]["city"], CData.REGIONS[r]["name"], sides[1], sides[0]]
 	v.add_child(Kit.label(title, Kit.FONT, Kit.COL_GOLD, true))
 	var men := [0, 0]
 	var units := [0, 0]
@@ -564,14 +759,16 @@ func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 	var gmen := 0
 	for g in gar:
 		gmen += int(g["n"])
-	var str_ := CBattle.side_strengths(st, b)
 	var hs := CRules.battle_humans(st, b)
 	var human_att: bool = facs[0].has(hs[0])
-	var p_att := CBattle.win_chance(str_[0], str_[1])
-	var odds := p_att if human_att else 1000 - p_att
 	var terr := Terrain.KIND_NAMES[int(CData.REGIONS[r]["terrain"])].to_lower()
-	v.add_child(Kit.label("Attackers %d units, %d men. Defenders %d units, %d men, plus a garrison of %d (walls %d). Ground: %s. Your chances look %s." % [
-		units[0], men[0], units[1], men[1], gmen, CState.walls(st, r), terr, _odds(odds)], Kit.FONT_SMALL, Color.WHITE, true))
+	var field := int(b.get("settlement", 1)) == 0
+	var where := ("in the field outside the walls, on %s ground" % terr) if field else ("walls %d, %s ground" % [CState.walls(st, r), terr])
+	v.add_child(Kit.label("Attackers %d units, %d men. Defenders %d units, %d men, plus a garrison of %d (%s)." % [
+		units[0], men[0], units[1], men[1], gmen, where], Kit.FONT_SMALL, Color.WHITE, true))
+	var lead := [int(b["att_f"]), int(b["def_f"])]
+	v.add_child(Kit.odds_view(CBattle.battle_odds(st, b), 0 if human_att else 1, [_names([lead[0]]), _names([lead[1]])],
+		[_fc(lead[0]), _fc(lead[1])], "Balance of power (estimate from the battle formula):"))
 	if not (b["reinf"] as Array).is_empty():
 		v.add_child(Kit.label("Reinforcements from neighbouring regions join the line.", Kit.FONT_SMALL, Kit.COL_DIM, true))
 	var h := Kit.hbox(8)
@@ -585,18 +782,6 @@ func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 	h.add_child(fb)
 	v.add_child(h)
 	return p
-
-
-func _odds(pm: int) -> String:
-	if pm >= 850:
-		return "excellent"
-	if pm >= 650:
-		return "good"
-	if pm >= 400:
-		return "even"
-	if pm >= 200:
-		return "poor"
-	return "very poor"
 
 
 func show_battle_result(events_before: int, outcome: Dictionary) -> void:
@@ -660,7 +845,7 @@ func show_intro() -> void:
 
 
 func _involves(e: Dictionary, f: int) -> bool:
-	for k in ["f", "from", "to", "a", "b"]:
+	for k in ["f", "from", "to", "a", "b", "o", "by"]:
 		if e.has(k) and int(e[k]) == f and str(e["k"]) != "move_failed":
 			return true
 	if str(e["k"]) == "battle":
@@ -679,8 +864,12 @@ func _event_color(e: Dictionary, f: int) -> Color:
 			return Kit.COL_GOOD if won else Kit.COL_BAD
 		"captured":
 			return Kit.COL_GOOD if int(e["f"]) == f else Kit.COL_BAD
-		"war", "destroyed", "debt", "eliminated", "defeat", "order_failed", "move_failed":
+		"war", "destroyed", "debt", "eliminated", "defeat", "order_failed", "move_failed", "starving":
 			return Kit.COL_BAD
+		"siege":
+			return Kit.COL_BAD if int(e["o"]) == f else Kit.COL_GOLD
+		"siege_lifted":
+			return Kit.COL_GOOD if int(e["o"]) == f else Kit.COL_DIM
 		"peace", "trade", "built", "recruited", "grew", "victory":
 			return Kit.COL_GOOD
 	return Color.WHITE
@@ -698,11 +887,31 @@ func event_text(e: Dictionary, f: int) -> String:
 	match str(e["k"]):
 		"battle":
 			var w := "the attackers won" if int(e["winner"]) == 0 else "the defenders held"
-			return "Battle of %s: %s attacked %s; %s (%s). Losses %d of %d and %d of %d men." % [city.call(e["r"]),
-				_names(e["att"]), _names(e["def"]), w, str(e["mode"]).replace("formula", "fought out of sight"),
-				int(e["att_lost"]), int(e["att_men"]), int(e["def_lost"]), int(e["def_men"])]
+			var how := str(e["mode"]).replace("formula", "fought out of sight")
+			var loss := "Losses %d of %d and %d of %d men." % [int(e["att_lost"]), int(e["att_men"]), int(e["def_lost"]), int(e["def_men"])]
+			match str(e.get("kind", "")):
+				"assault":
+					return "Assault on %s: %s stormed the walls of %s; %s (%s). %s" % [city.call(e["r"]), _names(e["att"]), _names(e["def"]),
+						"the city fell" if int(e["winner"]) == 0 else "the walls held", how, loss]
+				"sally", "relief":
+					return "%s %s: %s against the besiegers, %s; %s (%s). %s" % ["Sally from" if str(e["kind"]) == "sally" else "Relief of",
+						city.call(e["r"]), _names(e["def"]), _names(e["att"]),
+						"the siege goes on" if int(e["winner"]) == 0 else "the siege is broken", how, loss]
+			return "Battle of %s: %s attacked %s; %s (%s). %s" % [city.call(e["r"]),
+				_names(e["att"]), _names(e["def"]), w, how, loss]
 		"captured":
+			if str(e.get("how", "")) == "surrendered":
+				return "%s surrendered to %s (%s) after a siege." % [city.call(e["r"]), CData.faction_name(int(e["f"])), CData.faction_name(int(e["from"]))]
 			return "%s took %s from %s." % [CData.faction_name(int(e["f"])), city.call(e["r"]), CData.faction_name(int(e["from"]))]
+		"siege":
+			return "%s laid siege to %s (%s)." % [CData.faction_name(int(e["f"])), city.call(e["r"]), CData.faction_name(int(e["o"]))]
+		"siege_lifted":
+			return "The siege of %s by %s was lifted%s." % [city.call(e["r"]), CData.faction_name(int(e["f"])),
+				": the besiegers marched away" if str(e.get("why", "")) == "left" else ""]
+		"starving":
+			if int(e["f"]) != f and int(e["by"]) != f:
+				return ""
+			return "%s is starving under siege: garrison at %d%%." % [city.call(e["r"]), int(e["gar"])]
 		"retreat":
 			return "A %s army fell back from %s to %s." % [CData.FACTIONS[int(e["f"])]["adj"], city.call(e["r"]), city.call(e["to"])]
 		"destroyed":
@@ -798,7 +1007,7 @@ func warnings() -> Array:
 	var out: Array = []
 	var idle := 0
 	for a in CState.armies_of(ps, f):
-		if int(a["busy"]) == 0 and s.planned_move(int(a["id"])) < 0:
+		if int(a["busy"]) == 0 and s.planned_move(int(a["id"])) < 0 and CRules.siege_role(ps, a) == 0:
 			var near_enemy := false
 			for e in CData.adjacent(int(a["r"])):
 				if CState.at_war(ps, f, CState.owner(ps, int(e[0]))):

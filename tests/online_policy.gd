@@ -3,8 +3,8 @@ extends RefCounted
 ## tests/campaign_solo.gd): build the first affordable of barracks / farm /
 ## market / walls in each region, recruit the best line unit while upkeep
 ## stays under 70% of income, and attack the most valuable neighbour at war
-## (or independent) when 1.4 times its defence. Deterministic: same state,
-## same orders.
+## (or independent) when 1.4 times its defence, assaulting at once (move
+## mode 1: no siege). Deterministic: same state, same orders.
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -55,7 +55,8 @@ static func plan(st: Dictionary, f: int, attack_pct: int = 140, march: bool = fa
 				best_v = v
 				best = t
 		if best >= 0:
-			orders.append({"t": "move", "army": int(a["id"]), "to": best})
+			# Storm it at once (a battle this turn, as before sieges).
+			orders.append({"t": "move", "army": int(a["id"]), "to": best, "mode": CData.MODE_ASSAULT})
 		elif march:
 			var step := _step_towards_enemy(ps, f, a)
 			if step >= 0:

@@ -34,10 +34,10 @@ a little worse than good play. No fleets, generals, politics or agents.
   sorted keys; `from_json` turns JSON's floats back into ints (`normalise`).
   `state_hash` = first 32 bits of the MD5 of that canonical JSON.
 
-### State format (version 3)
+### State format (version 4)
 
 ```
-format "strategic_command_campaign", version 3, name, seed, turn (0 = 280 BC
+format "strategic_command_campaign", version 4, name, seed, turn (0 = 280 BC
 summer), phase "plan" | "battles" | "over", rng, winner (-1, 1 won, 0 lost),
 settings {victory_regions 20, victory_capitals 3, turn_timeout_h 0|12|24|48|72
   (the initial value for online campaigns; the server enforces its own
@@ -53,11 +53,19 @@ regions [{owner (-1 independent), level 0 village|1 town|2 city, growth,
 armies [{id, f, r, units [{t: unit key, n: men}], from, moved, busy}] by id;
   id = faction * 100000 + factions[f].next_army
 battles [{id, r, turn, att [army ids], def [army ids], att_f, def_f, reinf
-  [army ids], settlement 1}], next_battle
+  [army ids], settlement 1|0, from [[army id, region it came from]...]
+  (version 4), kind "assault"|"sally"|"relief" (version 4, battles of a
+  siege only)}], next_battle
+sieges [{r, f (besieging faction), turn (started), supply (turns left),
+  held (turns without an assault), from [[army id, region]...]}] by region
+  (version 4)
 proposals [{id, from (AI), to (player), what, turn}], next_proposal
-events [{turn, k, ...}] (the last two turns: battle, captured, retreat,
+events [{turn, k, ...}] (the last two turns: battle (version 4: + kind),
+  captured (version 4: how "surrendered" after a siege), retreat,
   destroyed, war, peace, trade, trade_end, refused, proposal, built,
-  recruited, grew, debt, eliminated, order_failed, move_failed, victory, defeat)
+  recruited, grew, debt, eliminated, order_failed, move_failed, victory,
+  defeat; version 4: siege {r, f, o}, siege_lifted {r, f, o, why "left" |
+  "gone"}, starving {r, f (owner), by, gar})
 stats {battles, battles_formula, battles_auto, battles_fought, last_war_on_players}
 ```
 
@@ -100,6 +108,20 @@ equal: the missing data falls back to the founder's culture). New campaigns
 (and "Play online" uploads of a local one) are format 3; an older build
 refuses them with its "update the game" message. No server change.
 
+**Version 4 (October 2026, sieges)** adds the top-level `sieges` list and,
+on battles, `from` (where each army that moved in came from: losers
+retreat there even after the turn's `from` reset) and `kind` (battles of a
+siege). The siege rules apply only to a state that has the key
+(`CState.sieges_on`): `migrate()` turns a version 3 state (and so 1 and 2)
+into version 4 with `sieges: []`; an **unmigrated online campaign of
+format 1-3 plays without sieges**, exactly as the previous build: a move's
+`mode` is ignored (every move into hostile land attacks), `assault` and
+`sally` orders fail ("no sieges in this campaign"), and the AI uses its
+pre-siege move step. Checked: 6 AI-only campaigns of 60 turns from a
+format 3 state end on the same hashes as the previous build's code (HEAD
+with the joining fix). New campaigns and "Play online" uploads are format
+4; the server pins the format, so nothing changes on the server.
+
 Static region data used by the battle maps (not saved): `culture`
 (founding culture, which sets the wall plan: latin castrum, greek polis,
 punic, celtic oppidum), `terrain` (with the city seed: the site), the ports
@@ -117,7 +139,7 @@ orders (plain data):
 
 | order | fields | when applied |
 |---|---|---|
-| move | army, to | step 3, all players' moves by army id |
+| move | army, to, mode (version 4: 0 lay siege, the default when missing; 1 assault at once) | step 3, all players' moves by army id |
 | recruit | r, unit (type key) | step 2; paid now, arrives at end of turn |
 | build | r, chain | step 2; paid now, done after the chain's turns |
 | merge | army, into | step 2 (same region, at most 12 units) |
@@ -126,10 +148,17 @@ orders (plain data):
 | propose | to, what peace / trade / cancel_trade | step 4, AI answers |
 | war | to | step 1 |
 | answer | id (AI proposal), accept 0/1 | step 1 |
+| assault | r (a region one of our armies besieges) | step 3b (version 4) |
+| sally | r (our besieged region, or an ally's with our army inside) | step 3b (version 4) |
 
 Invalid orders are skipped and logged (`order_failed` / `move_failed`), never
 fatal. The client previews its plan with `CTurn.preview` (the same rule code
-on a copy) and drops orders that became invalid.
+on a copy) and drops orders that became invalid. Validation with reasons:
+`CRules.can_move` ("besieged", "besieged by Carthage", ...),
+`can_assault` ("no siege there", "none of your armies besiege it",
+"battle pending there"), `can_sally` ("not your city", "none of your armies
+are inside", "nobody left to sally"). Two allies both ordering the same
+assault (or sally) make one battle and no failed order.
 
 A battle result is the other input: `{winner 0 attackers / 1 defenders,
 mode, units [{army (-1 garrison), unit, killed, routed, withdrawn,
@@ -141,14 +170,23 @@ remaining}], garrison_pct}`, built from `BattleSim.result()` by
 1. Players' war declarations and answers to AI proposals.
 2. Players' other orders, faction by faction, in the order given.
 3. Players' moves, by army id. Entering a region of a faction at war (or an
-   independent) starts a battle there (or joins it).
+   independent) starts a battle there (version 4: lays siege unless the
+   move's mode is 1, assault); entering a region whose battle started this
+   turn joins it (AI moves in step 5 too); entering a region our side
+   besieges joins the siege (mode 1: and storms it now); entering our own
+   side's besieged region relieves it. 3b (version 4): the players'
+   assault and sally orders, faction by faction.
 4. Players' proposals; the AI answers at once.
 5. AI factions act in faction order (merge, cut debt, build, recruit, move).
 6. Neighbouring armies reinforce the new battles.
 7. Battles without a player: resolved now by the formula. Battles with a
    player: pending (phase "battles").
 8. AI diplomacy; end of turn (constructions, recruits, money, debt,
-   replenishment, garrisons, growth); eliminations; victory; turn + 1.
+   replenishment, sieges: supplies, starvation, surrender; garrisons,
+   growth); eliminations; victory; turn + 1. The sieges are checked after
+   steps 2, 4, 5, every battle and at the end of turn (`check_sieges`:
+   armies left at peace in a besieged region go home, a siege without
+   besiegers is lifted).
 
 Pending battles must be resolved (`apply_battle`) before the next turn can be
 planned; `resolve_turn` refuses while any is pending. A faction that submits
@@ -302,7 +340,8 @@ test exaggerates numbers; in an army line the gap is smaller.
 ## Economy and growth
 
 - Income per region per turn: wealth x 60 + settlement (village 0, town 80,
-  city 200) + farm 40 per level + market 90 per level.
+  city 200) + farm 40 per level + market 90 per level; nothing while
+  besieged (version 4).
 - Trade per partner (trade agreement or the allied player): 80 + 15 per
   region of the smaller realm, at most 260, then +15% per market level of
   ours (at most 3).
@@ -336,14 +375,20 @@ test exaggerates numbers; in an army line the gap is smaller.
 
 - An army is at most 12 units; moves one region or one sea lane per turn.
   Entry into a faction's region at peace is refused; declare war first
-  (declarations apply before moves). Regions with a pending battle cannot be
-  entered.
+  (declarations apply before moves). Entering a hostile region lays siege
+  to its settlement unless the move assaults (version 4, see "Sieges and
+  battle odds"). Regions with a battle pending from an
+  earlier turn cannot be entered. An army entering a region where a battle
+  started this turn (by land or sea lane) joins it: the attackers if it is on
+  their side and at war with the owner, the defenders if it is on the
+  owner's side, while that side stays within 24 field units (else it is
+  bounced, "battle side full"); an army on neither side is bounced.
 - Every owned settlement has a free garrison that only defends:
   2 / 3 / 4 units (village / town / city) + 1 per wall level, each 60% of a
   full unit (independents +2 units at 90%); tier 1, +1 in a city, +1 with
   walls 2 or more; types from the owner's roster (spear, missile, melee in
-  turn). Garrison strength recovers 25 points a turn (to 100%). A captured
-  settlement's garrison starts at 30%.
+  turn). Garrison strength recovers 25 points a turn (to 100%; not while
+  besieged). A captured settlement's garrison starts at 30%.
 - **Walls in battle (as built, October 2026):** extra garrison units (above),
   better garrison tiers, and real walls on the settlement's battle map: a
   wall circuit 8 / 10 / 12 m thick (Punic +2 m) with towers, gates of
@@ -356,7 +401,8 @@ test exaggerates numbers; in an army line the gap is smaller.
   garrison still counts +15% per wall level.
 - Reinforcements: armies of either side in regions joined by a land route that
   did not move this turn and are not committed elsewhere join the battle,
-  until a side has 24 field units.
+  until a side has 24 field units. Neighbours across a sea lane do not
+  reinforce passively; they must move in (and so join) instead.
 - A battle in the sim: attackers and defenders (armies at their current
   headcounts and tiers, the garrison on the defending side, reinforcements
   simply more units in the line: they do not yet arrive from the map edge they
@@ -375,9 +421,10 @@ test exaggerates numbers; in an army line the gap is smaller.
   rest at the plaza and down the main street (an open town: at its street
   mouths). The battle ends as before, or when the attackers hold the plaza
   for 60 s (the defenders break). Battle seed from campaign seed + region +
-  turn. Field 450-640 m. (Field battles, `settlement` 0, get the region's
-  terrain and woods with a seed from campaign seed + region + turn; none
-  occur until free movement lands.) The region panel's "View battle map"
+  turn. Field 450-640 m. Field battles (`settlement` 0: sallies and
+  reliefs, version 4) get the region's terrain kind, ground palette and
+  woods with a seed from campaign seed + region + turn, the two sides in
+  the usual layout facing each other, the garrison in the owner's line. The region panel's "View battle map"
   shows the map as it stands.
 - Command seam: `CBattle.build` returns `unit_faction` and `controller` for
   every sim unit; in a solo battle the present player commands every unit on
@@ -428,6 +475,123 @@ formula's favourite won the sim battle 53 / 60 (88%); by predicted chance:
 80-100% -> 100%. Killed share winner / loser: sim 23% / 60%, formula
 19% / 58%.
 
+## Sieges and battle odds (version 4)
+
+Agreed with the user and built October 2026. Code: `campaign/crules.gd`
+"sieges", `campaign/cbattle.gd` odds, `campaign/cai.gd` _move_sieges,
+view in `game/campaign/campaign_panels.gd` (siege and attack sections,
+battle cards), `campaign_screen.gd` (move toast), `map_overlay.gd`
+(siege ring), `ui_kit.gd` (OddsBar).
+
+- **Arriving.** A move into a hostile region carries a mode: 0 lay siege
+  (the default) or 1 assault. Assault is the battle at once, as before
+  (armies arriving the same turn join it). Siege: the army camps outside;
+  a siege record is made (no battle); armies of the besieger's side moving
+  in on later turns, by land or sea lane, join it; leaving with the last
+  besieger lifts it ("siege_lifted"). Besieging armies stay until ordered
+  away and cannot merge, split or disband (`siege_role` 1). The owner's
+  armies inside cannot leave except by a sally (`siege_role` 2, "besieged").
+  A third faction cannot enter a besieged region ("besieged by ...").
+- **Each turn** the besiegers may order `assault` (a settlement battle at the
+  end of the turn: every besieger attacks, up to 24 field units, the
+  garrison and the armies inside defend; with a player pending as usual)
+  or nothing (maintain). The defender may `sally` (a field battle on the
+  region's terrain: the garrison and every army of the owner's side inside
+  against the besiegers). An army of the owner's side (or the allied
+  player's) moving in is a **relief**: a field battle, the relievers with
+  the garrison and the armies inside riding out on their side, against the
+  besiegers. In the battle record the besiegers are always the attackers
+  ("att", att_f the siege's faction) and the owner's side the defenders.
+- **Outcomes.** Assault: as any settlement battle (won: the city is taken,
+  the siege ends; lost: the besiegers retreat, the siege is lifted when
+  none are left). Sally or relief won by the owner's side: the siege is
+  lifted, the besiegers fall back to where they came from, else to a
+  friendly neighbour, else to the nearest friendly region (breadth first),
+  else they are destroyed. Won by the besiegers (or drawn): the siege goes
+  on, the relieving armies fall back where they came from (or any friendly
+  neighbour, else destroyed), the armies inside stay inside. The garrison's
+  losses in a field battle stand (`garrison_pct`; the formula takes the
+  losing side's kill share off it).
+- **End of turn while besieged** (skipped while a battle is pending there):
+  no income from the region, no recruiting or building (a queued building
+  pauses), no growth, no garrison recovery, no replenishment for the armies
+  inside or the besiegers. Supplies: `SIEGE_SUPPLY` 2 / 3 / 4 turns (village
+  / town / city), +1 with Farms 2 or more (granaries; `SIEGE_GRANARY_FARM`),
+  counted down each end of turn including the first. Out of supplies, each
+  turn the garrison loses `SIEGE_STARVE_PCT` 25 points and every army of
+  the owner's side inside 10% of its men (`SIEGE_STARVE_ARMY_PCT`, at least
+  one a unit). A settlement with no garrison left and no army of its side
+  inside **surrenders** to the besiegers (the lead faction if it still has
+  an army there): the capture path of a won battle, event "captured" with
+  `how: "surrendered"`. A full-strength village holds 2 + 4 = 6 turns.
+  Recruits paid for before the siege began still arrive; armies of the old
+  owner left in a captured city march out (version 4).
+- **Peace** with a besieging faction sends its armies home and lifts the
+  siege. If the lead faction's armies leave, the siege passes to an allied
+  besieger still there.
+- **Odds** (`CBattle.odds(st, attackers, defenders, r, settlement,
+  gar_side)`): built on the formula that decides AI-only battles, so it
+  predicts what that formula would do: strengths (men x price per man; a
+  settlement battle adds the garrison with +15% per wall level to the
+  defenders and the ground bonus; a field battle adds the garrison without
+  walls to `gar_side`, no ground), the attackers' chance Sa^3 / (Sa^3 +
+  Sd^3) in % and per mille, the expected % of men lost for good per side
+  (killed plus the 30% of the routed who do not return, averaged over
+  winning and losing), and a band 0 decisive loss (< 15%), 1 loss, 2 even
+  (40-60%), 3 win, 4 decisive win (> 85%). `battle_odds(st, b)` for a
+  pending battle equals `win_chance(side_strengths(b))`. Tested against
+  600 formula runs: chance and losses within a couple of points. Shown as
+  a two-colour balance-of-power bar (attackers' colour left, split at their
+  share of the combined strength, a tick at the middle) with "Your chance
+  62%: likely victory. Expected losses: yours 18%, theirs 41%." in the
+  siege panel (assault for a besieger, sally and relief for the defender),
+  on every pending-battle card (before Auto-resolve / Fight; the player's
+  view) and in the region panel of an enemy settlement with armies ordered
+  into it (those armies plus any besieging it, against the garrison and
+  the armies there), recomputed whenever the plan changes. The fought or
+  auto-resolved battle is the real sim, which the formula only predicts.
+- **View.** Map: a dashed ring with tents in the besieger's colour round
+  the settlement; siege moves drawn orange, assaults red. Region panel:
+  "Besieged by Carthage, turn 2 of the siege, supplies 1 turn left" (or
+  "out of supplies"), the odds, Assault / Maintain for a besieger, Sally /
+  Cancel sally for the defender. Planning a move into hostile land shows a
+  toast: "Lays siege to Capua: no battle this turn; its supplies last 3
+  turns. Storming it now: 35% (likely defeat)." with **Assault now** (and
+  "Lay siege" back); the army panel has the same switch. Besieging and
+  besieged armies say so in their panel with a Siege button. Turn summary
+  lines: laid siege, siege lifted, starving, surrendered, assault / sally /
+  relief results. Screenshots `docs/screenshots/siege_phone_*.png`.
+- **AI** (version 4 only; `_move_sieges`): first its sieges: free armies
+  next to one of its sieges join it; assault when the besiegers' strength
+  reaches the attack ratio (150% / aggression) of the defence, or when the
+  city is out of supplies and a relief army stands next to it; lift (go
+  back where they came from) when a stronger relief army is next to it and
+  that field battle would go against it; after supplies + 3 turns
+  (`SIEGE_PATIENCE`) assault if its chance is at least 35%, else lift. Its
+  own besieged cities: sally when the garrison and the armies inside reach
+  the ratio against the besiegers in the field; relieve with free
+  neighbouring armies when their chance (with the garrison and armies
+  inside) is 60% or more. Then attacks: assault when the armies that can
+  reach a target bring the ratio, lay siege when they bring half of it and
+  another army can join within two turns (next to the target, or one step
+  through friendly land), else leave it. Gathering never walks into its own
+  besieged city (that is a relief).
+- **Co-op:** the two players' armies besiege together; either player with
+  an army in the siege may order the assault; both ordering it make one
+  battle with both players' armies; the allied player's army can relieve or
+  sally from the other's city. Siege battles are normal pending battles
+  (fight, auto-resolve, take command, live co-op).
+- **Pacing** (`tests/campaign_sim.gd -- --seeds=6 --turns=60 --twice`, all
+  AI): eliminations by turn 60: 4, 4, 3, 2, 4, 4 factions; battles 33-75 a
+  campaign; sieges started 11-16, assaults 6-18 (won 5-11), reliefs 2-6,
+  sallies 0, lifted 3-7, surrendered 0; the longest siege 5-6 turns, at
+  most one open at the end: the AI does not stall. Largest faction at turn
+  15 / 30 / 60: 8/12/15 (Carthage), 8/11/12 (Carthage), 8/10/17
+  (Iberians), 8/8/10, 9/17/18 (Carthage), 8/11/16 (Macedon). The same seeds
+  without sieges (`--no-sieges`, the rules as before, with the joining
+  fix): eliminations 3, 4, 5, 4, 3, 1, battles 32-74. Full AI turn 10-13 ms
+  mean, 17 ms worst. Deterministic (each seed twice, same hash).
+
 ## Diplomacy and AI
 
 - Per pair: war, peace, trade; the players are allied for good.
@@ -453,8 +617,9 @@ formula's favourite won the sim battle 53 / 60 (88%); by predicted chance:
   x aggression, halved with trade, reduced for realms over 8 regions; no AI
   war before turn 6, none on the players before turn 10 or within 8 turns of
   the last, and no new war while at war with 2.
-- AI-only campaigns, 60 turns, 6 seeds (`tests/campaign_sim.gd -- --seeds=6`),
-  regions held by the largest faction at turn 15 / 30 / 60 per seed: 10/14/18
+- AI-only campaigns, 60 turns, 6 seeds (`tests/campaign_sim.gd -- --seeds=6`;
+  measured before sieges and the joining fix; with sieges see "Sieges and
+  battle odds"), regions held by the largest faction at turn 15 / 30 / 60 per seed: 10/14/18
   (Carthage), 10/10/21 (Carthage), 9/11/10, 10/10/10, 10/9/16 (Rome), 10/12/15.
   Eliminations by turn 60: 4, 1, 1, 2, 3, 4 factions (Epirus, Syracuse and the
   Iberians go most often). Battles 30-58 per campaign; armies 18-31, units
@@ -561,15 +726,21 @@ As built 2026-10-05; the server side is in `docs/SERVER.md`.
 - `tests/campaign_test.gd` rules, JSON round trip, determinism (also across a
   save/load), movement, sea lanes, economy sums, building and recruitment
   gating by level and tier, replenishment, armies, battle scenario and
-  outcome, conquest, retreat, elimination, victory; state formats 1-3
+  outcome, conquest, retreat, elimination, victory; state formats 1-4
   (migration, unmigrated online states playing and building battle
-  scenarios like their migrated copies, builder data, cultures, ports).
-- `tests/campaign_sim.gd` AI-only campaigns (pacing, economy, time per turn).
+  scenarios like their format 3 copies, builder data, cultures, ports);
+  sieges (start, join, lift, supplies, starvation, surrender, the besieged
+  economy, assault / sally / relief battles with the right sides and their
+  outcomes, retreats and destruction, odds against the formula, co-op
+  assault, determinism, a format 3 state ignoring move modes).
+- `tests/campaign_sim.gd` AI-only campaigns (pacing, economy, time per turn,
+  sieges; `--twice` checks determinism, `--no-sieges` plays format 3).
 - `tests/campaign_solo.gd` a player faction with a simple policy for 20
   turns, pending battles auto-resolved with the sim, consistency checks.
 - `tests/campaign_battles.gd` auto-resolve timing and formula calibration.
 - `tests/campaign_input_test.gd` (windowed) the screens with synthetic
-  touches.
+  touches (also: a move lays siege by default, the toast's Assault now, the
+  siege panel's Assault / Maintain and Sally with the odds bar).
 
 ## Later
 
@@ -598,7 +769,8 @@ Agreed order after milestone 4 (the server), from the user on 2026-10-05:
      can screen a city;
    - reinforcement is by range: armies staged near each other support one
      another in battle, and arrive from their map direction;
-   - attacking a settlement is a deliberate order.
+   - attacking a settlement is a deliberate order (partly there since the
+     sieges of state version 4: entering lays siege, storming is an order).
    This changes the state format and the AI; do it as its own milestone.
 3. Reinforcements arriving from the map edge; elephants, then camels,
    chariots and war dogs; both players sharing one empire; live co-op

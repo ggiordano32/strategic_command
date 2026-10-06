@@ -1,9 +1,10 @@
 extends Node2D
 ## Campaign map, screen layer: settlements (size by level, a wall ring with
 ## towers per wall level,
-## gold dot for the key cities), names, pending battles, army markers
-## (faction colour, unit count, strength bar), planned moves as arrows, and
-## hit tests for taps. Positions come from map_geo.gd through `xform` (map
+## gold dot for the key cities), names, pending battles, sieges (a ring of
+## tents round the settlement in the besieger's colour), army markers
+## (faction colour, unit count, strength bar), planned moves as arrows (red
+## an assault, orange a siege), and hit tests for taps. Positions come from map_geo.gd through `xform` (map
 ## pixels -> screen), set by the campaign screen every frame.
 
 const CData := preload("res://campaign/cdata.gd")
@@ -24,6 +25,7 @@ var player := -1
 ## Planned moves of the player planning now: [[army id, to region], ...].
 var moves: Array = []
 var attack_moves: Array[int] = []  # army ids whose move is an attack
+var siege_moves: Array[int] = []   # ... of which these lay siege (or join one)
 var pulse := 0.0
 
 
@@ -92,7 +94,12 @@ func _draw() -> void:
 			continue
 		var from: Vector2 = pos[id]
 		var to := to_screen(Geo.site(int(m[1]))) + Vector2(0, 8)
-		_arrow(from, to, Color(1.0, 0.45, 0.35) if attack_moves.has(id) else Color(1, 1, 1))
+		var col := Color(1, 1, 1)
+		if siege_moves.has(id):
+			col = Color(1.0, 0.7, 0.25)
+		elif attack_moves.has(id):
+			col = Color(1.0, 0.45, 0.35)
+		_arrow(from, to, col)
 	# Settlements and names.
 	var show_names := zoom >= 0.5
 	for r in CData.region_count():
@@ -107,6 +114,9 @@ func _draw() -> void:
 			_wall_ring(p, rad, w)
 		draw_circle(p, rad + 1.5, Color(1, 1, 1, 0.95))
 		draw_circle(p, rad, fill)
+		var sg := CState.siege_at(state, r)
+		if not sg.is_empty():
+			_siege_ring(p, rad + (6.0 + 1.2 * w) * mk(), int(sg["f"]))
 		if CData.KEY_CITIES.has(str(CData.REGIONS[r]["key"])):
 			draw_circle(p, rad * 0.4, Color(1.0, 0.85, 0.3))
 		if show_names or lvl == CData.CITY:
@@ -146,6 +156,28 @@ func _wall_ring(p: Vector2, rad: float, w: int) -> void:
 		var c := p + Vector2(cos(a), sin(a)) * rr
 		draw_rect(Rect2(c - Vector2(ts, ts) - Vector2(0.8, 0.8), Vector2(ts, ts) * 2.0 + Vector2(1.6, 1.6)), Color(0.12, 0.11, 0.09, 0.95))
 		draw_rect(Rect2(c - Vector2(ts, ts), Vector2(ts, ts) * 2.0), Color(0.84, 0.80, 0.70))
+
+
+## Siege: a dashed ring in the besieger's colour with tents on its upper
+## half (the army banners stand below the settlement).
+func _siege_ring(p: Vector2, rad: float, f: int) -> void:
+	var m := mk()
+	var rr := rad + 6.0 * m
+	var col := CData.faction_color(f)
+	var n := 12
+	for k in n:
+		var a0 := TAU * k / n
+		draw_arc(p, rr, a0, a0 + TAU / n * 0.6, 6, Color(0, 0, 0, 0.75), 5.0 * m, true)
+		draw_arc(p, rr, a0, a0 + TAU / n * 0.6, 6, col.lightened(0.25), 3.0 * m, true)
+	var ts := 5.5 * m
+	for k in 5:
+		var a := PI + PI * (k + 0.5) / 5  # left, over the top, to the right
+		var c := p + Vector2(cos(a), sin(a)) * rr
+		var tri := PackedVector2Array([c + Vector2(0, -ts), c + Vector2(ts, ts * 0.8), c + Vector2(-ts, ts * 0.8)])
+		draw_colored_polygon(tri, col)
+		var o := tri.duplicate()
+		o.append(tri[0])
+		draw_polyline(o, Color(1, 1, 1, 0.9), 1.2, true)
 
 
 func _army_marker(c: Vector2, a: Dictionary, font: Font) -> void:

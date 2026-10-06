@@ -7,6 +7,9 @@ extends SceneTree
 ## through the warnings, the second player's hand-over, the pending battle
 ## dialog, launching a battle and leaving it (forfeit applied to the state),
 ## and an auto-resolved battle with the progress dialog applied to the state.
+## Sieges: a move into enemy land lays siege by default, the toast's
+## "Assault now" switches it; the siege panel's Assault / Maintain and Sally
+## buttons with the odds bar.
 ## Exits 0 on success, 1 on failure.
 
 const CampaignScreen := preload("res://game/campaign/campaign_screen.gd")
@@ -37,11 +40,12 @@ func _initialize() -> void:
 	root.add_child(cs)
 	steps = [
 		_s_handover, _s_intro, _s_tap_army, _s_check_army, _s_tap_etruria, _s_check_move,
-		_s_tap_etruria, _s_check_cancel, _s_tap_army1, _s_tap_apulia, _s_check_attack,
+		_s_tap_etruria, _s_check_cancel, _s_tap_army1, _s_tap_apulia, _s_check_siege_default, _s_check_attack,
 		_s_tap_roma, _s_check_region, _s_recruit, _s_check_recruit, _s_unit_page, _s_check_unit_page,
 		_s_build, _s_check_build, _s_end_turn, _s_warnings, _s_check_handover2, _s_start2, _s_intro,
 		_s_end_turn2, _s_summary, _s_check_battles, _s_fight, _s_check_battle_on, _s_leave, _s_leave2,
-		_s_check_forfeit, _s_auto_setup, _s_auto_tap, _s_auto_wait, _s_auto_check, _s_refuse_select, _s_refuse_tap, _s_refuse_check, _s_refuse_dip, _s_refuse_war, _s_controls, _s_controls_check, _s_done,
+		_s_check_forfeit, _s_auto_setup, _s_auto_tap, _s_auto_wait, _s_auto_check, _s_refuse_select, _s_refuse_tap, _s_refuse_check, _s_refuse_dip, _s_refuse_war, _s_siege_setup, _s_siege_check, _s_siege_assault_check,
+		_s_siege_maintain_check, _s_sally_setup, _s_sally_check, _s_siege_cleanup, _s_controls, _s_controls_check, _s_done,
 	]
 
 
@@ -167,9 +171,20 @@ func _s_tap_apulia() -> void:
 	_tap(_site("apulia") + Vector2(-20, -25))
 
 
+func _s_check_siege_default() -> void:
+	_check(cs.planned_move(army1) == CData.region_index("apulia") and cs.move_kind(army1) == "siege",
+		"a move into enemy land lays siege by default")
+	_check(cs.overlay.siege_moves.has(army1), "drawn as a siege")
+	var t = cs.find_child("toast", true, false)
+	_check(t != null and _button("toast_action") != null and _button("toast_action").text == "Assault now",
+		"the toast offers Assault now, one tap away")
+	_tap_button("toast_action", "Assault now")
+
+
 func _s_check_attack() -> void:
 	_check(cs.planned_move(army1) == CData.region_index("apulia"), "attack on Apulia planned")
-	_check(cs.overlay.attack_moves.has(army1), "drawn as an attack")
+	_check(cs.move_kind(army1) == "assault" and cs.move_mode(army1) == CData.MODE_ASSAULT, "the move now assaults")
+	_check(cs.overlay.attack_moves.has(army1) and not cs.overlay.siege_moves.has(army1), "drawn as an attack")
 
 
 func _s_tap_roma() -> void:
@@ -381,6 +396,94 @@ func _s_refuse_war() -> void:
 	_check(cs.map_view.targets.has(CData.region_index("sardinia")),
 		"with war planned this turn, Sardinia becomes a move target at once")
 	cs.remove_orders(func(o): return str(o["t"]) == "war")
+	cs.close_side()
+
+
+var _siege_r := -1
+
+
+func _s_siege_setup() -> void:
+	# Rome's first army has laid siege to Corsica (independent).
+	_siege_r = CData.region_index("corsica")
+	var a := CState.army(cs.st, army0)
+	var left := int(a["r"])
+	a["r"] = _siege_r
+	CRules.start_siege(cs.st, _siege_r, a, left)
+	cs._replan()
+	cs.focus_region(_siege_r, 0.9)
+	cs.select_region(_siege_r)
+	await process_frame
+	await process_frame
+	var p = cs.side_box.find_child("siege_panel", true, false)
+	_check(p != null and cs.side_box.find_child("odds_bar", true, false) != null, "the besieged city's panel shows the siege and the odds bar")
+	var ab := _button("siege_assault")
+	_check(ab != null and not ab.disabled and _button("siege_maintain").disabled, "Assault is offered, Maintain is the current order")
+	_tap_button("siege_assault", "order the assault")
+
+
+func _s_siege_check() -> void:
+	var n := 0
+	for o in cs.orders:
+		if str(o["t"]) == "assault" and int(o["r"]) == _siege_r:
+			n += 1
+	_check(n == 1, "the assault order is planned")
+	var mb := _button("siege_maintain")
+	_check(mb != null and not mb.disabled and _button("siege_assault").disabled, "Maintain is now offered")
+	_tap_button("siege_maintain", "keep up the siege instead")
+
+
+func _s_siege_assault_check() -> void:
+	var n := 0
+	for o in cs.orders:
+		if str(o["t"]) == "assault":
+			n += 1
+	_check(n == 0, "Maintain removes the assault order")
+
+
+func _s_siege_maintain_check() -> void:
+	# The besieging army's panel says what it does.
+	cs.select_army(army0)
+	await process_frame
+	_check(_button("army_siege") != null, "the besieging army's panel links to its siege")
+
+
+func _s_sally_setup() -> void:
+	# An Epirote army lays siege to Samnium (Rome's); Rome may sally.
+	var st: Dictionary = cs.st
+	var ep := CData.faction_index("epirus")
+	var sa := CData.region_index("samnium")
+	var id := CRules.new_army_id(st, ep)
+	st["factions"][ep]["next_army"] = int(st["factions"][ep]["next_army"]) + 1
+	CRules._insert_army(st, {"id": id, "f": ep, "r": sa, "units": [{"t": "heavy", "n": 100}], "from": -1, "moved": 0, "busy": 0})
+	CRules.start_siege(st, sa, CState.army(st, id), CData.region_index("apulia"))
+	cs._replan()
+	cs.select_region(sa)
+	await process_frame
+	await process_frame
+	var sb := _button("siege_sally")
+	_check(sb != null and not sb.disabled and cs.side_box.find_child("odds_bar", true, false) != null, "the defender's panel offers Sally with the odds")
+	_tap_button("siege_sally", "order a sally")
+
+
+func _s_sally_check() -> void:
+	var n := 0
+	for o in cs.orders:
+		if str(o["t"]) == "sally":
+			n += 1
+	_check(n == 1 and _button("siege_sally") != null and _button("siege_sally").text == "Cancel sally", "the sally is planned (Cancel sally)")
+
+
+func _s_siege_cleanup() -> void:
+	cs.remove_orders(func(o): return str(o["t"]) == "sally" or str(o["t"]) == "assault")
+	var st: Dictionary = cs.st
+	st["sieges"] = []
+	var keep: Array = []
+	for a in st["armies"]:
+		if int(a["f"]) != CData.faction_index("epirus") or int(a["r"]) != CData.region_index("samnium"):
+			keep.append(a)
+	st["armies"] = keep
+	CState.army(st, army0)["r"] = CData.region_index("latium")
+	cs._replan()
 	cs.close_side()
 
 

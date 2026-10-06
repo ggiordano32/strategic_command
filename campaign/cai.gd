@@ -16,6 +16,15 @@ extends RefCounted
 ##     it this turn are ATTACK_RATIO times its defence (garrison, armies there
 ##     and half the hostile armies next to it); else gather towards the best
 ##     target, or march to the frontier.
+## With sieges (state version 4) the move step is _move_sieges(): first the
+## sieges (join our sieges with free armies next to them; assault when the
+## ratio is met, or when the garrison is starving and a relief army is near;
+## lift and go home before a stronger relief army when the odds are poor;
+## never maintain past the supplies + SIEGE_PATIENCE turns: then assault or
+## lift; sally from our own besieged cities when garrison and armies inside
+## outnumber the besiegers by the ratio; relieve them when the odds favour
+## it), then attacks: assault when the ratio is met, else lay siege when the
+## armies bring half the ratio and another army can arrive within two turns.
 ## Diplomacy (diplomacy()): peace when losing a long war, trade with
 ## neighbours at peace, and opportunistic wars on weaker neighbours, paced
 ## (no wars in the first turns, at most one new war on the players every few
@@ -38,6 +47,9 @@ const WAR_RATIO := 120         # % of a neighbour's strength needed to consider 
 const WAR_RATIO_BUSY := 90     # ... if the neighbour is already at war
 const WAR_CHANCE := 12         # % per turn per eligible neighbour
 const WAR_CHANCE_PLAYERS := 8
+const SIEGE_PATIENCE := 3      # turns past the supplies a siege is maintained before assault or lift
+const RELIEF_WIN := 60         # % chance needed to relieve a besieged city
+const SIEGE_ASSAULT_WIN := 35  # % chance to storm a siege that ran out of patience (else lift)
 
 
 static func act(st: Dictionary, f: int) -> void:
@@ -131,7 +143,7 @@ static func _cut_debt(st: Dictionary, f: int) -> void:
 		var best_k := -1
 		var best_n := 1 << 30
 		for a in CState.armies_of(st, f):
-			if int(a["busy"]) != 0:
+			if int(a["busy"]) != 0 or CRules.siege_role(st, a) != 0:
 				continue
 			for k in CState.unit_count(a):
 				var n := int(a["units"][k]["n"]) * 100 / maxi(UT.size_of(CState.unit_type(a["units"][k])), 1)
@@ -311,9 +323,8 @@ static func target_defence(st: Dictionary, f: int, t: int) -> int:
 	return d
 
 
-static func _move(st: Dictionary, f: int) -> void:
-	var ratio := ATTACK_RATIO * 100 / _aggr(st)
-	# Distance to the frontier over friendly regions (multi-source BFS).
+## Distance to the frontier over friendly regions (multi-source BFS).
+static func _frontier_dist(st: Dictionary, f: int) -> Array[int]:
 	var nreg := CData.region_count()
 	var dist: Array[int] = []
 	dist.resize(nreg)
@@ -332,6 +343,16 @@ static func _move(st: Dictionary, f: int) -> void:
 			if dist[n] > dist[r] + 1 and CState.friendly(st, f, CState.owner(st, n)):
 				dist[n] = dist[r] + 1
 				queue.append(n)
+	return dist
+
+
+static func _move(st: Dictionary, f: int) -> void:
+	if CState.sieges_on(st):
+		_move_sieges(st, f)
+		return
+	var ratio := ATTACK_RATIO * 100 / _aggr(st)
+	var nreg := CData.region_count()
+	var dist := _frontier_dist(st, f)
 	# Attack plans: for each hostile region next to our armies, the armies
 	# that could reach it this turn.
 	var targets: Array = []
@@ -393,6 +414,217 @@ static func _move(st: Dictionary, f: int) -> void:
 					best = n
 		if best >= 0:
 			CRules.execute_move(st, a, best)
+
+
+# ---------------------------------------------------------------- sieges ---
+
+## The move step with sieges (state version 4).
+static func _move_sieges(st: Dictionary, f: int) -> void:
+	var ratio := ATTACK_RATIO * 100 / _aggr(st)
+	var nreg := CData.region_count()
+	var dist := _frontier_dist(st, f)
+	_sieges(st, f, ratio)
+	# Attack plans, as in _move(); regions under siege are handled above.
+	var targets: Array = []
+	for t in nreg:
+		var o := CState.owner(st, t)
+		if not CState.at_war(st, f, o) or not CState.battle_at(st, t).is_empty() or not CState.siege_at(st, t).is_empty():
+			continue
+		var reach: Array = []
+		var power := 0
+		for a in CState.armies_of(st, f):
+			if _free(st, a) and CData.link(int(a["r"]), t) >= 0:
+				reach.append(a)
+				power += CState.strength(a)
+		if reach.is_empty():
+			continue
+		var d := maxi(target_defence(st, f, t), 1)
+		var val := region_value(st, t)
+		if o >= 0 and CState.is_human(st, o):
+			val = val * 90 / 100
+		targets.append({"t": t, "def": d, "power": power, "reach": reach, "score": val * 1000 / d})
+	targets.sort_custom(func(a, b): return a["score"] > b["score"] or (a["score"] == b["score"] and a["t"] < b["t"]))
+	for tg in targets:
+		var t := int(tg["t"])
+		var d := int(tg["def"])
+		if int(tg["power"]) * 100 < d * ratio / 2:
+			continue
+		var reach: Array = tg["reach"]
+		reach.sort_custom(func(a, b): return CState.strength(a) > CState.strength(b) \
+			or (CState.strength(a) == CState.strength(b) and int(a["id"]) < int(b["id"])))
+		var sent := 0
+		var go: Array = []
+		var assault := int(tg["power"]) * 100 >= d * ratio
+		for a in reach:
+			if not _free(st, a) or _must_hold(st, f, a):
+				continue
+			go.append(a)
+			sent += CState.strength(a)
+			if assault and sent * 100 >= d * ratio * 13 / 10:
+				break
+		if go.is_empty():
+			continue
+		var mode := CData.MODE_ASSAULT
+		if sent * 100 < d * ratio:
+			# Not enough to storm it: lay siege if another army can join
+			# within two turns, else leave it.
+			if sent * 100 < d * ratio / 2 or not _support_near(st, f, t, go):
+				continue
+			mode = CData.MODE_SIEGE
+		for a in go:
+			CRules.execute_move(st, a, t, mode)
+	# Remaining armies: gather towards the frontier (never into one of our
+	# besieged cities: that is a relief, decided above).
+	for a in CState.armies_of(st, f):
+		if not _free(st, a):
+			continue
+		var r := int(a["r"])
+		if dist[r] == 0 or _must_hold(st, f, a):
+			continue
+		var best := -1
+		for e in CData.adjacent(r):
+			var n := int(e[0])
+			if dist[n] < dist[r] and (best < 0 or dist[n] < dist[best]):
+				if CRules.can_move(st, a, n) == "" and CState.siege_at(st, n).is_empty():
+					best = n
+		if best >= 0:
+			CRules.execute_move(st, a, best)
+
+
+## An army free to act: not in a battle, not moved, not in a siege.
+static func _free(st: Dictionary, a: Dictionary) -> bool:
+	return int(a["busy"]) == 0 and int(a["moved"]) == 0 and CRules.siege_role(st, a) == 0
+
+
+## Another army of f (not in `go`) can reach a region next to t through
+## friendly land within two turns.
+static func _support_near(st: Dictionary, f: int, t: int, go: Array) -> bool:
+	var ids: Array = []
+	for a in go:
+		ids.append(int(a["id"]))
+	for a in CState.armies_of(st, f):
+		if ids.has(int(a["id"])) or int(a["busy"]) != 0 or CRules.siege_role(st, a) != 0:
+			continue
+		var r := int(a["r"])
+		if CData.link(r, t) >= 0:
+			return true
+		for e in CData.adjacent(r):
+			var n := int(e[0])
+			if CData.link(n, t) >= 0 and CState.friendly(st, f, CState.owner(st, n)):
+				return true
+	return false
+
+
+## Strength of the armies of region r's owner's side next to r (a relief).
+static func _relief_near(st: Dictionary, f: int, r: int) -> Array:
+	var o := CState.owner(st, r)
+	var out: Array = []
+	if o < 0:
+		return out
+	for e in CData.adjacent(r):
+		for a in CState.armies_in(st, int(e[0])):
+			if CState.friendly(st, int(a["f"]), o) and CState.at_war(st, f, int(a["f"])) \
+					and CRules.siege_role(st, a) == 0:
+				out.append(a)
+	return out
+
+
+static func _sum(list: Array) -> int:
+	var s := 0
+	for a in list:
+		s += CState.strength(a)
+	return s
+
+
+## Sieges for AI faction f: its own (join, assault, lift or maintain) and
+## its besieged cities (sally or relieve).
+static func _sieges(st: Dictionary, f: int, ratio: int) -> void:
+	for sg in (st["sieges"] as Array).duplicate():
+		var r := int(sg["r"])
+		if CState.siege_at(st, r).is_empty() or not CState.battle_at(st, r).is_empty():
+			continue
+		var o := CState.owner(st, r)
+		if int(sg["f"]) == f:
+			_own_siege(st, f, sg, ratio)
+		elif o == f:
+			_besieged(st, f, r, ratio)
+
+
+static func _own_siege(st: Dictionary, f: int, sg: Dictionary, ratio: int) -> void:
+	var r := int(sg["r"])
+	# Free armies next to the siege join it.
+	for a in CState.armies_of(st, f):
+		if _free(st, a) and CData.link(int(a["r"]), r) >= 0 and not _must_hold(st, f, a) \
+				and CRules.can_move(st, a, r) == "":
+			CRules.execute_move(st, a, r, CData.MODE_SIEGE)
+	var bs := CRules.besiegers(st, r)
+	if bs.is_empty():
+		return
+	var od := CBattle.odds(st, bs, CRules.besieged_armies(st, r), r, true)
+	var relief := _relief_near(st, f, r)
+	var starving := int(sg["supply"]) <= 0
+	if int(od["att"]) * 100 >= int(od["def"]) * ratio or (starving and not relief.is_empty()):
+		CRules.order_assault(st, f, r)
+		return
+	if not relief.is_empty() and _sum(relief) > _sum(bs):
+		# A stronger army comes to relieve it: odds of that field battle
+		# (relief, garrison and armies inside against us).
+		var all := relief + CRules.besieged_armies(st, r)
+		var ro := CBattle.odds(st, all, bs, r, false, 0)
+		if int(ro["win"]) >= 50:
+			_lift(st, f, sg)
+			return
+	if int(sg["held"]) >= CState.siege_supply(st, r) + SIEGE_PATIENCE:
+		if int(od["win"]) >= SIEGE_ASSAULT_WIN:
+			CRules.order_assault(st, f, r)
+		else:
+			_lift(st, f, sg)
+
+
+## Lift a siege: every besieging army of f goes back where it came from (or
+## to any friendly neighbour).
+static func _lift(st: Dictionary, f: int, sg: Dictionary) -> void:
+	var r := int(sg["r"])
+	for a in CRules.besiegers(st, r):
+		if int(a["f"]) != f or int(a["busy"]) != 0 or int(a["moved"]) != 0:
+			continue
+		var dest := -1
+		var o := CRules._siege_origin(sg, int(a["id"]))
+		if o >= 0 and CState.friendly(st, f, CState.owner(st, o)) and CState.siege_at(st, o).is_empty() \
+				and CRules.can_move(st, a, o) == "":
+			dest = o
+		if dest < 0:
+			for e in CData.adjacent(r):
+				var n := int(e[0])
+				if CState.friendly(st, f, CState.owner(st, n)) and CState.siege_at(st, n).is_empty() \
+						and CRules.can_move(st, a, n) == "":
+					dest = n
+					break
+		if dest >= 0:
+			CRules.execute_move(st, a, dest, CData.MODE_SIEGE)
+
+
+## Our city r is besieged: sally when the garrison and the armies inside
+## outnumber the besiegers by the ratio, else relieve it when the odds of
+## the free armies next to it (with the garrison and armies inside) favour
+## us.
+static func _besieged(st: Dictionary, f: int, r: int, ratio: int) -> void:
+	var bs := CRules.besiegers(st, r)
+	var inside := CRules.besieged_armies(st, r)
+	var so := CBattle.odds(st, inside, bs, r, false, 0)
+	if int(so["att"]) * 100 >= int(so["def"]) * ratio:
+		CRules.order_sally(st, f, r)
+		return
+	var rel: Array = []
+	for a in CState.armies_of(st, f):
+		if _free(st, a) and CData.link(int(a["r"]), r) >= 0 and CRules.can_move(st, a, r) == "":
+			rel.append(a)
+	if rel.is_empty():
+		return
+	var ro := CBattle.odds(st, rel + inside, bs, r, false, 0)
+	if int(ro["win"]) >= RELIEF_WIN:
+		for a in rel:
+			CRules.execute_move(st, a, r, CData.MODE_SIEGE)
 
 
 ## An army stays to defend its region if the threat there exceeds the

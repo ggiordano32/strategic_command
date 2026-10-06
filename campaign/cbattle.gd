@@ -26,7 +26,13 @@ extends RefCounted
 ## strengths from men x value per man (unit price / size), modified for the
 ## garrison's walls and the defender's ground; attacker wins with probability
 ## Sa^3 / (Sa^3 + Sd^3) (calibrated against AI-vs-AI sim battles, see
-## tests/campaign_battles.gd); losses from the strength ratio.
+## tests/campaign_battles.gd); losses from the strength ratio. A field
+## battle of a siege (sally, relief: settlement 0) counts the garrison on the
+## owner's side without its walls and gives nobody the ground.
+##
+## odds(): the same formula as a prediction for any two groups of armies
+## (the view's balance-of-power bar): strengths, the attacker's chance,
+## expected losses per side and a band from decisive loss to decisive win.
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -40,6 +46,8 @@ const FRONT := 100       # m from the centre line to each side's front
 const SECOND_LINE := 45  # m behind the first
 const SCREEN := 15       # missile screen ahead of the line
 const MAX_LINE := 12     # units in the first line before a second line forms
+const WIN_ROUT := 5      # formula: % routed on the winning side ...
+const LOSE_ROUT := 20    # ... and on the losing side
 
 
 ## Seeds for region r's battle on turn t (battle and terrain).
@@ -320,31 +328,108 @@ static func outcome_from_result(built: Dictionary, res: Dictionary, mode: String
 	var winner := 1
 	if w == int(sim_side[0]):
 		winner = 0
-	return {"winner": winner, "mode": mode, "units": units,
+	var out := {"winner": winner, "mode": mode, "units": units,
 		"garrison_pct": (gar_back * 100 / gar_full) if gar_full > 0 else 0,
 		"sim_winner": w, "ticks": int(res["tick"])}
+	if w != int(sim_side[0]) and w != int(sim_side[1]):
+		out["draw"] = 1  # mutual destruction or time out
+	return out
 
 
 ## Strength of each side of battle b for the formula and the AI:
 ## [attackers, defenders].
 static func side_strengths(st: Dictionary, b: Dictionary) -> Array:
 	var arm := CRules.battle_armies(st, b)
+	return strengths(st, arm[0], arm[1], int(b["r"]), int(b.get("settlement", 1)) != 0, 1)
+
+
+## Formula strengths [attackers, defenders] of two groups of armies in
+## region r. A settlement battle: the garrison (with its walls) joins the
+## defenders, who also get the ground. A field battle: the garrison (without
+## walls) joins side gar_side (0, 1, or -1: not there); no ground bonus.
+## gar_side -2: 1 for a settlement battle, -1 for a field battle.
+static func strengths(st: Dictionary, attackers: Array, defenders: Array, r: int, settlement: bool,
+		gar_side: int = -2) -> Array:
 	var s := [0, 0]
-	for side in 2:
-		for a in arm[side]:
-			s[side] += CState.strength(a)
-	s[1] += garrison_strength(st, int(b["r"]))
-	s[1] = s[1] * (100 + ground_bonus(int(b["r"]))) / 100
+	for a in attackers:
+		s[0] += CState.strength(a)
+	for a in defenders:
+		s[1] += CState.strength(a)
+	var gs := gar_side
+	if gs == -2:
+		gs = 1 if settlement else -1
+	if settlement:
+		if gs >= 0:
+			s[gs] += garrison_strength(st, r)
+		s[1] = s[1] * (100 + ground_bonus(r)) / 100
+	elif gs >= 0:
+		s[gs] += garrison_men_strength(st, r)
 	return s
 
 
 ## Garrison strength including the wall bonus.
 static func garrison_strength(st: Dictionary, r: int) -> int:
+	return garrison_men_strength(st, r) * (100 + 15 * CState.walls(st, r)) / 100
+
+
+## Garrison strength in the open (no walls).
+static func garrison_men_strength(st: Dictionary, r: int) -> int:
 	var g := 0
 	for u in CRules.garrison(st, r):
 		var ty := UT.index_of(str(u["t"]))
 		g += int(u["n"]) * UT.price_of(ty) / maxi(UT.size_of(ty), 1)
-	return g * (100 + 15 * CState.walls(st, r)) / 100
+	return g
+
+
+## The formula's prediction for attackers against defenders in region r
+## (see strengths() for settlement and gar_side): {att, def (strengths),
+## share (attackers' % of the total), win (attacker's chance, %), win_pm
+## (per mille), att_loss, def_loss (expected % of men lost for good:
+## killed, and the routed who do not come back), band 0 decisive loss,
+## 1 loss, 2 even, 3 win, 4 decisive win (for the attackers)}.
+static func odds(st: Dictionary, attackers: Array, defenders: Array, r: int, settlement: bool,
+		gar_side: int = -2) -> Dictionary:
+	var s := strengths(st, attackers, defenders, r, settlement, gar_side)
+	return odds_of(s[0], s[1])
+
+
+## odds() for battle b as it stands.
+static func battle_odds(st: Dictionary, b: Dictionary) -> Dictionary:
+	var s := side_strengths(st, b)
+	return odds_of(s[0], s[1])
+
+
+static func odds_of(sa: int, sd: int) -> Dictionary:
+	var p := win_chance(sa, sd)
+	var q_att_wins := clampi(sd * 1000 / maxi(sa, 1), 0, 3000)
+	var q_def_wins := clampi(sa * 1000 / maxi(sd, 1), 0, 3000)
+	var att_loss := (p * _win_loss_pm(q_att_wins) + (1000 - p) * _lose_loss_pm(q_def_wins)) / 10000
+	var def_loss := (p * _lose_loss_pm(q_att_wins) + (1000 - p) * _win_loss_pm(q_def_wins)) / 10000
+	var band := 2
+	if p < 150:
+		band = 0
+	elif p < 400:
+		band = 1
+	elif p > 850:
+		band = 4
+	elif p > 600:
+		band = 3
+	return {"att": sa, "def": sd, "share": sa * 100 / maxi(sa + sd, 1), "win": (p + 5) / 10, "win_pm": p,
+		"att_loss": att_loss, "def_loss": def_loss, "band": band}
+
+
+## Men lost for good by the winner (per mille): killed + the routed who do
+## not come back (formula()).
+static func _win_loss_pm(q: int) -> int:
+	return _win_kill(q) * 10 + WIN_ROUT * (100 - CData.ROUT_RETURN) / 10
+
+
+static func _lose_loss_pm(q: int) -> int:
+	return clampi(66 - q * 12 / 1000, 35, 80) * 10 + LOSE_ROUT * (100 - CData.ROUT_RETURN) / 10
+
+
+static func _win_kill(q: int) -> int:
+	return clampi(q * 32 / 1000, 4, 45)
 
 
 ## Defender's % bonus from the region's ground.
@@ -377,14 +462,13 @@ static func formula(st: Dictionary, b: Dictionary) -> Dictionary:
 	var sl: int = s[1 - winner]
 	# q = loser / winner strength in per mille.
 	var q := clampi(sl * 1000 / sw, 0, 3000)
-	var win_kill := clampi(q * 32 / 1000, 4, 45)              # % killed on the winning side
+	var win_kill := _win_kill(q)                               # % killed on the winning side
 	var lose_kill := clampi(66 - q * 12 / 1000 + CState.rand(st, 11) - 5, 35, 80)
-	var lose_rout := 20
 	var arm := CRules.battle_armies(st, b)
 	var units: Array = []
 	for side in 2:
 		var kill := win_kill if side == winner else lose_kill
-		var rout := 5 if side == winner else lose_rout
+		var rout := WIN_ROUT if side == winner else LOSE_ROUT
 		for a in arm[side]:
 			for k in CState.unit_count(a):
 				var n := int(a["units"][k]["n"])
@@ -396,6 +480,8 @@ static func formula(st: Dictionary, b: Dictionary) -> Dictionary:
 	var gpct := 0
 	if winner == 1:
 		gpct = gar * (100 - win_kill) / 100
+	elif int(b.get("settlement", 1)) == 0:
+		gpct = gar * (100 - lose_kill) / 100  # beaten in the field, back behind the walls
 	return {"winner": winner, "mode": "formula", "units": units, "garrison_pct": gpct}
 
 

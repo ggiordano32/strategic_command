@@ -206,7 +206,7 @@ const START_WARS: Array = [["rome", "epirus"], ["carthage", "syracuse"]]
 ## each level does (text for the panel; the numbers are in the rules).
 const CHAINS: Array[Dictionary] = [
 	{"key": "farm", "name": "Farms", "levels": 3, "cost": [400, 900, 1600], "turns": [1, 2, 3],
-		"desc": "+1 growth and +40 income per level"},
+		"desc": "+1 growth and +40 income per level; from level 2 granaries make a siege's supplies last a turn longer"},
 	{"key": "market", "name": "Market", "levels": 3, "cost": [500, 1000, 1800], "turns": [1, 2, 3],
 		"desc": "+90 income per level; +15% trade income per level"},
 	{"key": "barracks", "name": "Barracks", "levels": 3, "cost": [400, 900, 1600], "turns": [1, 2, 3],
@@ -271,6 +271,17 @@ const REPLENISH_PER_LEVEL := 6   # + this per level of the line's building in th
 const ROUT_RETURN := 70          # % of routed-off soldiers who rejoin after a battle
 const ARMY_MAX := 12             # units per army
 const BATTLE_SIDE_MAX := 24      # field units per side in a real-time battle (+ garrison)
+## Sieges (state version 4). Turns a besieged settlement's supplies last per
+## level (village, town, city), +1 with farms at SIEGE_GRANARY_FARM or more
+## (granaries); then the garrison loses SIEGE_STARVE_PCT strength points and
+## the owner's armies inside SIEGE_STARVE_ARMY_PCT of their men every turn.
+const SIEGE_SUPPLY := [2, 3, 4]
+const SIEGE_GRANARY_FARM := 2
+const SIEGE_STARVE_PCT := 25
+const SIEGE_STARVE_ARMY_PCT := 10
+## Move modes: lay siege (default) or assault at once.
+const MODE_SIEGE := 0
+const MODE_ASSAULT := 1
 const START_YEAR := 280          # BC; two turns a year (summer, winter)
 
 ## Key cities for the default victory condition.
