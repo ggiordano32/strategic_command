@@ -1,6 +1,6 @@
 # Strategic Command — Status and Handover
 
-Last updated: 2026-10-05 (settlement variety built: wall plans by founding culture, sites, coasts, citadels, stairs, owner dressing). Read this first, then `docs/DESIGN.md` for the full
+Last updated: 2026-10-06 (free campaign movement built; sieges and battle odds built on the campaign map; settlement variety built 2026-10-05). Read this first, then `docs/DESIGN.md` for the full
 design and `CLAUDE.md` for working rules. Update this file whenever a
 milestone lands or the plan changes.
 
@@ -27,6 +27,8 @@ anti-cheat and original art only if it proves fun.
 | 5. Live co-op battles (lockstep) | Built 2026-10-05, **not committed**; tested headless, end to end and in two headless Chromiums; the 8060 server binary is not yet updated; not yet played on phones |
 | Battle maps with character (woods, city maps, palettes, shading) | Committed (`3522fd2`); not yet played on phones |
 | Settlement variety (plans, sites, coasts, citadels, stairs, owners) | Built 2026-10-05, **not committed**; tested headless; not yet played on phones |
+| Sieges and battle odds (campaign, state format 4) | Built 2026-10-06, **not committed**; tested headless and windowed; not yet played on phones |
+| Free campaign movement (state format 5) | Built 2026-10-06, **not committed**; tested headless and windowed; not yet played on phones |
 | 6. Depth (siege equipment, tech, more factions) | Not started |
 
 ### What exists
@@ -71,6 +73,87 @@ anti-cheat and original art only if it proves fun.
 
 ### In progress right now
 
+**Free campaign movement (built 2026-10-06, uncommitted).** Design agreed
+with the user; rules, orders, state, AI, pacing as built in CAMPAIGN.md
+"Free movement (version 5)". In short:
+- Movement points by the slowest arm (foot 20, cavalry only 30, with
+  artillery 15); entering a region costs 10 open / 15 hill or ridge, +5 in
+  heavy woods; a sea lane needs full points and takes them all. A move is
+  a destination: cheapest path (Dijkstra, ties by region index), walked in
+  rounds (every army's k-th hop, by id), continued on later turns
+  (`persist`, `dest` on the army; `cancel_move`).
+- Enemy field armies stop armies entering their region: a field battle
+  (kind "field", no garrison). Entering enemy land raids it (owner gets
+  half the income); `siege` / `assault` are orders from inside, a move's
+  mode is the "on arrival" shortcut (field armies there are fought first).
+  Stance: in the field / inside the walls (`stance` order).
+- Support by range over land within a turn's points; reinforcements deploy
+  on the map edge they come from in field battles (explicit positions; no
+  sim change).
+- AI: multi-hop targets, concentrate before attacking, raids, screens,
+  stances, no dithering (idle 3 turns). Pacing close to format 4 (largest
+  at turn 30 median 10 vs 11 over 10 seeds, eliminations median 4); AI turn
+  ~13 ms mean, ~19 ms worst.
+- State format 5; 4 -> 5 migration; unmigrated online campaigns of formats
+  1-4 play exactly as before (6 AI campaigns x 60 turns from format 4 give
+  HEAD's hashes). No server change; the server binary needs no restart.
+- Tests: campaign_test (paths, rounds, interception, raiding, siege start
+  in the field, support by range with edges, retreat, persistence, 4 -> 5
+  migration), campaign_sim (`--format=4`, pacing table, `--twice`),
+  campaign_solo, campaign_input_test, online_e2e, go test. Screenshots
+  `docs/screenshots/move_phone_*.png`.
+- **Open / next:** play on the phones (is raiding by default right; toast
+  and army card on a small screen); reinforcements arriving mid-battle;
+  edge arrival in settlement battles; Epirus now falls in every AI-only
+  seed; interceptions are few in AI-only play (1-7 a campaign).
+
+**Sieges and battle odds (built 2026-10-06, uncommitted).** Design agreed
+with the user; rules, orders, state and AI as built in CAMPAIGN.md
+"Sieges and battle odds". In short:
+- A move into a hostile settlement lays siege by default (no battle); the
+  move toast and the army panel make Assault (today's battle at once) one
+  tap away. Besiegers stay until ordered away, cannot merge / split /
+  disband; armies of their side that move in later join. Each turn the
+  besieger may order `assault` (settlement battle, every besieger
+  attacks), the defender `sally` (field battle on the region's terrain,
+  garrison and armies inside riding out); an army of the owner's side
+  moving in is a relief (field battle, the garrison and the armies inside
+  on its side). Lost sally / relief by the besiegers lifts the siege and
+  sends them home (or to the nearest friendly region); a beaten relief
+  falls back or is destroyed.
+- Besieged: no income, no recruits, construction and growth paused, no
+  garrison recovery; supplies 2 / 3 / 4 turns (village / town / city, +1
+  with farms 2: granaries), then the garrison loses 25 points and the
+  armies inside 10% of their men a turn; no garrison and no army inside =
+  surrender to the besiegers ("surrendered" event).
+- `CBattle.odds()`: the formula's prediction (strengths, chance, expected
+  losses, band) for any two groups of armies; shown as a two-colour
+  balance-of-power bar in the siege panel (assault / sally / relief), the
+  pending-battle cards and the region panel of an enemy settlement with
+  armies ordered into it. Map: a ring of tents in the besieger's colour;
+  siege moves drawn orange, assaults red.
+- AI: assault at its attack ratio, else lay siege when another army can
+  join within two turns; assault a starving city with a relief near; lift
+  before a stronger relief; maintain at most supplies + 3 turns; sally at
+  the ratio; relieve at 60%.
+- State format 4 (top-level `sieges`); 3 -> 4 migration adds an empty list.
+  Online campaigns of formats 1-3 stay as they are and play without sieges,
+  byte-identical to the previous build (checked: 6 AI campaigns x 60 turns
+  give the same final hashes as HEAD + the join fix). No server change; the
+  live server binary needs no restart for this.
+- Tests: campaign_test (sieges: start, join, lift, starvation, surrender,
+  economy, assault / sally / relief battles and outcomes, odds against the
+  formula, co-op assault, format 4 migration), campaign_input_test (Assault
+  now toast, Assault / Maintain, Sally), campaign_sim `--twice` (determinism)
+  and `--no-sieges`, campaign_solo (a siege policy), online_e2e, go test.
+  Screenshots `docs/screenshots/siege_phone_*.png`.
+- **Open / next:** play it on the phones (is the default siege right for
+  players who expect a battle; the toast on a small screen); AI sallies are
+  rare (0 in 6 AI campaigns: the garrison fights without walls) and AI
+  sieges end by assault or lift, not starvation (patience cap); tune after
+  play. Pending battles resolve after the end of turn (as before), so a
+  siege with a battle pending skips that turn's supplies and starvation.
+
 **Settlement variety (built 2026-10-05, uncommitted).** After the
 playtest of the city maps (liked; every walled town looked the same round
 hill fort; wall archers could not leave a wall). Design as built: DESIGN.md
@@ -99,11 +182,22 @@ section 4 "Settlement plans, sites and owners"; save format: CAMPAIGN.md
   street fixes); lockstep PASS (coastal polis, players attacking and
   defending with stair moves); campaign_test / solo / input tests,
   input_test, check_scripts, go test, online_e2e, live_e2e PASS.
-- **Open / next:** walls 3 citadel and oppidum maps are too strong for the
-  AI attacker (12-25 % wins, up to 50 % draws: slow fights at narrow
-  gates) - tune before the campaign leans on walls 3; breach melee still
-  6.4-7.4 ms a tick on the desktop at 4,000 soldiers; play it on phones
-  (look of the sea, shrines, banners; the stair orders by touch).
+- Balance pass (2026-10-06, uncommitted): diagnosed freezes and grinds
+  fixed (melee over walls, cut-off units, everyone on one target, hunting
+  instead of taking the plaza, a citadel cut off the street graph) plus
+  "the town is lost" morale, weaker citadel gates, a shallower oppidum
+  funnel without ditch, quicker withdrawal when beaten. Draws now at most
+  1 in 8, battles 5-10 min; see DESIGN.md "Balance pass".
+- Round 3: breach searches and paths made cheaper (p95 4.7-5.2 ms, worst
+  6.4-6.7 ms on the city benches); battlement cover by wall level; the
+  stall clock waits out the approach; check_scripts no longer writes an
+  override.cfg into the shared checkout.
+- **Open / next:** walls 3 is still easy for ring / castrum / polis (87-100 %
+  attacker wins) and still hard for the oppidum on a plain (50 %): a 60-80 %
+  band needs stronger walls-3 defences (a rules choice); breach melee
+  still 5.4-5.9 ms p95 and 7.5-8.5 ms worst at 4,000 soldiers (volume of
+  men in contact: per-man contact gating is the next step); play it on
+  phones (look of the sea, shrines, banners; the stair orders by touch).
 
 **Battle maps with character (built 2026-10-05, committed in `3522fd2`).** CAMPAIGN.md
 "Later" item 1. Design as built: DESIGN.md section 4 "Battle maps: woods
@@ -339,6 +433,13 @@ A tuning pass from playtest feedback (built, uncommitted):
 
 ### Open items
 
+- Campaign bug fixed (2026-10-05, from play): two armies ordered into the
+  same enemy region in one turn (Lilybaeum -> Carthago by sea) fought
+  separately: the second was bounced by "battle pending there". Now an
+  army entering a region whose battle started this turn joins it (attackers
+  or defenders, 24 field units a side, else "battle side full"); AI attacks
+  that commit several armies now arrive together too. Sea-lane neighbours
+  still do not reinforce passively (open: whether they should).
 - iPhone Safari (iOS 18.7) ran the 4,000 benchmark on the terrain build at a
   steady 60 fps (sim 3.1 ms mean, 7 ms worst per tick) and the terrain shader
   works there. It only rotates to landscape when opened from the home screen
@@ -454,7 +555,8 @@ godot --headless --script res://tests/probe_maps.gd -- --scen=siege_town --png=1
 godot --headless --script res://tools/city_dump.gd -- --out=/tmp --seed=1234   # generated settlements to PNG
 # Sandbox URL / command line: --siege=seed:level:walls[:ground[:kind[:defend[:plan[:coast]]]]], --ground=N, --no-trees
 godot --script res://tests/input_test.gd        # needs a window
-tools/check_scripts.sh                           # GDScript warnings as errors
+tools/check_scripts.sh                           # GDScript warnings as errors (in a scratch copy of the
+                                                 # project: safe while other Godot runs use this checkout)
 
 # Live co-op battles (milestone 5)
 godot --headless --script res://tests/lockstep_test.gd   # snapshots, two peers, mid-battle join (-- --quick)

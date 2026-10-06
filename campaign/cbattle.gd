@@ -46,6 +46,8 @@ const FRONT := 100       # m from the centre line to each side's front
 const SECOND_LINE := 45  # m behind the first
 const SCREEN := 15       # missile screen ahead of the line
 const MAX_LINE := 12     # units in the first line before a second line forms
+const EDGE_BAND := 110   # m added on a side of the field where reinforcements arrive
+const EDGE_IN := 45      # m from the map edge to an arriving column's front
 const WIN_ROUT := 5      # formula: % routed on the winning side ...
 const LOSE_ROUT := 20    # ... and on the losing side
 
@@ -62,7 +64,8 @@ static func battle_seed(st: Dictionary, r: int, salt: int = 0) -> int:
 static func build(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct: int = 100) -> Dictionary:
 	var r := int(b["r"])
 	var arm := CRules.battle_armies(st, b)
-	var gar := CRules.garrison(st, r)
+	# Version 5 interceptions ("field"): armies only, the garrison stays in.
+	var gar := CRules.garrison(st, r) if str(b.get("kind", "")) != "field" else []
 	# Campaign side (0 attackers, 1 defenders) -> sim side.
 	var def_on_0 := human_f >= 0 and _side_has(st, arm[1], int(b["def_f"]), human_f)
 	var sim_side := [1, 0] if def_on_0 else [0, 1]
@@ -82,22 +85,38 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct: i
 			entries[1].append({"army": -1, "unit": k, "t": str(g["t"]), "n": int(g["n"]), "f": int(b["def_f"])})
 	if int(b.get("settlement", 1)) != 0:
 		return _build_settlement(st, b, human_f, scale_pct, entries, sim_side, gar)
+	# Version 5: reinforcements arrive from the map edge facing the region
+	# they come from (b["edge"]: compass sectors), turned so the lead
+	# attacker's approach is the attackers' own edge.
+	var edges := _edge_groups(b, entries)
 	var layouts := [_layout(entries[0]), _layout(entries[1])]
 	var width := 560
 	for s in 2:
 		width = maxi(width, int(layouts[s]["width"]) + 160)
-	width = mini(width, 960)
-	width -= width % 4
 	var two_lines := int(layouts[0]["lines"]) > 1 or int(layouts[1]["lines"]) > 1
 	var height := 640 if two_lines else 560
+	var side_edges := false
+	var end_edges := false
+	for g in edges:
+		var ed := int(g["edge"])
+		if ed == 1 or ed == 3:
+			side_edges = true
+		else:
+			end_edges = true
+		width = maxi(width, int(g["lay"]["width"]) + 160)
+	if side_edges:
+		width += 2 * EDGE_BAND
+	if end_edges:
+		height += 2 * EDGE_BAND
+	width = mini(width, 960 + 2 * EDGE_BAND)
+	width -= width % 4
 	var units: Array = []
 	var map: Array = []
 	var ufac: Array = []
+	var placed_all: Array = []  # [campaign side, x, y, face, entry]
 	for cs in 2:
 		var ss: int = sim_side[cs]
 		for p in layouts[cs]["placed"]:
-			var e: Dictionary = p["e"]
-			var ty := UT.index_of(str(e["t"]))
 			var x := width / 2 + int(p["x"])
 			var y := height / 2 + FRONT + int(p["back"])
 			var face := Scenarios.FACE_UP
@@ -105,14 +124,25 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct: i
 				x = width - x
 				y = height - y
 				face = Scenarios.FACE_DOWN
-			var cnt := int(e["n"])
-			if scale_pct != 100:
-				cnt = maxi(cnt * scale_pct / 100, mini(cnt, 8))
-				if UT.cls(ty) == UT.CLS_ART:
-					cnt = int(e["n"])  # engines and crews are not scaled
-			units.append(Scenarios.unit(ss, ty, cnt, x, y, face))
-			map.append({"side": cs, "army": int(e["army"]), "unit": int(e["unit"]), "n": int(e["n"]), "sim_n": cnt})
-			ufac.append(int(e["f"]))
+			placed_all.append([cs, x, y, face, p["e"]])
+	for g in edges:
+		_place_edge(g, width, height, placed_all)
+	for pa in placed_all:
+		var cs: int = pa[0]
+		var ss: int = sim_side[cs]
+		var e: Dictionary = pa[4]
+		var ty := UT.index_of(str(e["t"]))
+		var x: int = pa[1]
+		var y: int = pa[2]
+		var face: int = pa[3]
+		var cnt := int(e["n"])
+		if scale_pct != 100:
+			cnt = maxi(cnt * scale_pct / 100, mini(cnt, 8))
+			if UT.cls(ty) == UT.CLS_ART:
+				cnt = int(e["n"])  # engines and crews are not scaled
+		units.append(Scenarios.unit(ss, ty, cnt, x, y, face))
+		map.append({"side": cs, "army": int(e["army"]), "unit": int(e["unit"]), "n": int(e["n"]), "sim_n": cnt})
+		ufac.append(int(e["f"]))
 	var terrain := {"kind": int(CData.REGIONS[r]["terrain"]), "seed": battle_seed(st, r, 1),
 		"forest": int(CData.REGIONS[r]["forest"]), "ground": int(CData.REGIONS[r]["ground"])}
 	var ai: Array = [0, 1] if human_f < 0 else [1]
@@ -122,6 +152,132 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct: i
 	return {"scenario": {"width_m": width, "height_m": height, "ai_sides": ai, "units": units, "terrain": terrain},
 		"seed": battle_seed(st, r, 2), "map": map, "sim_side": sim_side, "garrison": gar,
 		"unit_faction": ufac, "controller": controller, "battle": int(b["id"]), "region": r}
+
+
+## Reinforcing armies with an edge (b["edge"], version 5) taken out of
+## `entries` into groups {side, edge (0 the attackers' end, 1 the
+## attackers' left, 2 the defenders' end, 3 the attackers' right, as seen
+## by the attackers facing the enemy), corner (-1, 0, 1: along that edge),
+## entries, lay}. Sectors relative to the attackers' approach (the sector
+## the lead attacker came from; south if unknown): 0 = behind the
+## attackers, 4 = behind the defenders, 2 / 6 the attackers' left / right
+## flanks (compass clockwise, the attackers facing the enemy), odd =
+## corners (put on the nearer end edge, toward that flank: corner -1 left,
+## +1 right).
+static func _edge_groups(b: Dictionary, entries: Array) -> Array:
+	var out: Array = []
+	var list: Array = b.get("edge", [])
+	if list.is_empty() or int(b.get("settlement", 1)) != 0:
+		return out
+	var r := int(b["r"])
+	var approach := 4  # unknown: attackers from the south
+	for pr in b.get("from", []):
+		if (b["att"] as Array).has(int(pr[0])) and int(pr[1]) >= 0:
+			var sc := CData.sector(r, int(pr[1]))
+			if sc >= 0:
+				approach = sc
+				break
+	var groups := {}
+	var order: Array = []
+	for pr in list:
+		var sc := int(pr[1])
+		if sc < 0:
+			continue
+		var rel := posmod(sc - approach, 8)
+		var edge := 0
+		var corner := 0
+		match rel:
+			0:
+				edge = 0
+			1:
+				edge = 0
+				corner = -1
+			2:
+				edge = 1
+			3:
+				edge = 2
+				corner = -1
+			4:
+				edge = 2
+			5:
+				edge = 2
+				corner = 1
+			6:
+				edge = 3
+			7:
+				edge = 0
+				corner = 1
+		var aid := int(pr[0])
+		for cs in 2:
+			var keep: Array = []
+			var mine: Array = []
+			for e in entries[cs]:
+				if int(e["army"]) == aid:
+					mine.append(e)
+				else:
+					keep.append(e)
+			if mine.is_empty():
+				continue
+			entries[cs] = keep
+			var key := "%d_%d_%d" % [cs, edge, corner]
+			if not groups.has(key):
+				groups[key] = {"side": cs, "edge": edge, "corner": corner, "entries": []}
+				order.append(key)
+			(groups[key]["entries"] as Array).append_array(mine)
+	for key in order:
+		var g: Dictionary = groups[key]
+		g["lay"] = _layout(g["entries"])
+		out.append(g)
+	return out
+
+
+## Place an edge group on the field (sim coordinates; the attackers' end is
+## where sim side sim_side[0] stands): a line facing inwards EDGE_IN m from
+## that edge. Appends [campaign side, x, y, face, entry] to placed_all.
+static func _place_edge(g: Dictionary, width: int, height: int, placed_all: Array) -> void:
+	# Where the attackers stand: find any attacker entry already placed.
+	var att_bottom := true
+	for pa in placed_all:
+		if int(pa[0]) == 0:
+			att_bottom = int(pa[2]) > height / 2
+			break
+	var edge := int(g["edge"])
+	var corner := int(g["corner"])
+	# Screen edge: 0 bottom, 1 left, 2 top, 3 right.
+	var scr := edge
+	if att_bottom:
+		scr = [0, 1, 2, 3][edge]
+	else:
+		scr = [2, 3, 0, 1][edge]
+	var lay: Dictionary = g["lay"]
+	var shift := corner * width / 4 * (1 if att_bottom else -1)
+	for p in lay["placed"]:
+		var e: Dictionary = p["e"]
+		var along := int(p["x"])
+		var back := int(p["back"])
+		var x := 0
+		var y := 0
+		var face := Scenarios.FACE_UP
+		match scr:
+			0:
+				x = width / 2 + along + shift
+				y = height - EDGE_IN + back
+				face = Scenarios.FACE_UP
+			2:
+				x = width / 2 - along + shift
+				y = EDGE_IN - back
+				face = Scenarios.FACE_DOWN
+			1:
+				x = EDGE_IN - back
+				y = height / 2 + along
+				face = Scenarios.FACE_RIGHT
+			3:
+				x = width - EDGE_IN + back
+				y = height / 2 - along
+				face = Scenarios.FACE_LEFT
+		x = clampi(x, 12, width - 12)
+		y = clampi(y, 12, height - 12)
+		placed_all.append([int(g["side"]), x, y, face, e])
 
 
 ## Settlement battle: the city's map, attackers before its main gate, the
@@ -340,7 +496,8 @@ static func outcome_from_result(built: Dictionary, res: Dictionary, mode: String
 ## [attackers, defenders].
 static func side_strengths(st: Dictionary, b: Dictionary) -> Array:
 	var arm := CRules.battle_armies(st, b)
-	return strengths(st, arm[0], arm[1], int(b["r"]), int(b.get("settlement", 1)) != 0, 1)
+	var gs := -1 if str(b.get("kind", "")) == "field" else 1  # version 5 field battles: no garrison
+	return strengths(st, arm[0], arm[1], int(b["r"]), int(b.get("settlement", 1)) != 0, gs)
 
 
 ## Formula strengths [attackers, defenders] of two groups of armies in
@@ -372,13 +529,24 @@ static func garrison_strength(st: Dictionary, r: int) -> int:
 	return garrison_men_strength(st, r) * (100 + 15 * CState.walls(st, r)) / 100
 
 
-## Garrison strength in the open (no walls).
+## Garrison strength in the open (no walls). A pure function of the
+## region's owner, level, walls and garrison strength, so it is memoised.
 static func garrison_men_strength(st: Dictionary, r: int) -> int:
+	var rs: Dictionary = st["regions"][r]
+	var key := "%d:%d:%d:%d:%d" % [r, int(rs["owner"]), int(rs["level"]), CState.walls(st, r), int(rs["gar"])]
+	if _gar_memo.has(key):
+		return int(_gar_memo[key])
 	var g := 0
 	for u in CRules.garrison(st, r):
 		var ty := UT.index_of(str(u["t"]))
 		g += int(u["n"]) * UT.price_of(ty) / maxi(UT.size_of(ty), 1)
+	if _gar_memo.size() > 20000:
+		_gar_memo.clear()
+	_gar_memo[key] = g
 	return g
+
+
+static var _gar_memo := {}
 
 
 ## The formula's prediction for attackers against defenders in region r
@@ -478,7 +646,9 @@ static func formula(st: Dictionary, b: Dictionary) -> Dictionary:
 					"withdrawn": 0, "remaining": n - kd - rt})
 	var gar := int(st["regions"][int(b["r"])]["gar"])
 	var gpct := 0
-	if winner == 1:
+	if str(b.get("kind", "")) == "field":
+		gpct = gar  # the garrison was not in it
+	elif winner == 1:
 		gpct = gar * (100 - win_kill) / 100
 	elif int(b.get("settlement", 1)) == 0:
 		gpct = gar * (100 - lose_kill) / 100  # beaten in the field, back behind the walls

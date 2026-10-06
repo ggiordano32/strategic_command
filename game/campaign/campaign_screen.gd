@@ -180,6 +180,8 @@ func _load_data() -> void:
 ## Testing aids: --cam-zoom=Z --cam-region=key --close-dialog
 ## --select-region=key --select-army=N (Nth army of the player)
 ## --plan-move=N:key --camp-attack=N:key --camp-siege=N:key[:turns] --camp-besieged=key:faction --camp-fight --sim-turns=N --dialog-scroll=PX --side-scroll=PX
+## --plan-stance=N:0|1 --camp-raid=N:key (version 5: the player's Nth army raids region key) --camp-intercept=N:key:faction (an army
+## of faction marching into key runs into the player's Nth army standing there in the field)
 ## --dialog=battles|summary|diplomacy|realm|goals|warnings|online|citymap
 func _apply_debug_args() -> void:
 	for a in OS.get_cmdline_user_args():
@@ -265,6 +267,44 @@ func _apply_debug_args() -> void:
 			var sg6 := CRules.start_siege(st, r6, CState.army(st, id6), -1)
 			sg6["turn"] = int(st["turn"]) - 1
 			_replan()
+		elif a.begins_with("--plan-stance="):
+			var mine9 := CState.armies_of(ps, f)
+			add_order({"t": "stance", "a": int(mine9[int(v.get_slice(":", 0))]["id"]), "s": int(v.get_slice(":", 1))})
+		elif a.begins_with("--camp-raid="):
+			var mine7 := CState.armies_of(st, f)
+			var to7 := CData.region_index(v.get_slice(":", 1))
+			var a7: Dictionary = mine7[int(v.get_slice(":", 0))]
+			var o7 := CState.owner(st, to7)
+			if o7 >= 0 and not CState.at_war(st, f, o7):
+				CRules.declare_war(st, f, o7)
+			a7["r"] = to7
+			for d7 in CState.armies_in(st, to7):
+				if int(d7["f"]) == o7:
+					d7["stance"] = CData.STANCE_GARRISON
+			_replan()
+		elif a.begins_with("--camp-intercept="):
+			var mine8 := CState.armies_of(st, f)
+			var r8 := CData.region_index(v.get_slice(":", 1))
+			var e8 := CData.faction_index(v.get_slice(":", 2))
+			var a8: Dictionary = mine8[int(v.get_slice(":", 0))]
+			if not CState.at_war(st, f, e8):
+				CRules.declare_war(st, f, e8)
+			a8["r"] = r8
+			a8["stance"] = CData.STANCE_FIELD
+			var from8 := -1
+			for e in CData.adjacent(r8):
+				if int(e[1]) == 0 and from8 < 0 and CState.owner(st, int(e[0])) != f:
+					from8 = int(e[0])
+			var id8 := CRules.new_army_id(st, e8)
+			st["factions"][e8]["next_army"] = int(st["factions"][e8]["next_army"]) + 1
+			CRules._insert_army(st, {"id": id8, "f": e8, "r": from8, "units": [{"t": "heavy", "n": 100}, {"t": "heavy", "n": 100},
+				{"t": "spear", "n": 100}, {"t": "light", "n": 100}, {"t": "cav", "n": 60}], "from": -1, "moved": 0, "busy": 0})
+			CRules.execute_moves(st, [[id8, r8, e8, CData.MODE_MARCH, 0]])
+			for b8 in st["battles"]:
+				CRules.add_reinforcements(st, b8)
+				b8.erase("new")
+			st["phase"] = "battles"
+			_next_step()
 		elif a.begins_with("--camp-attack="):
 			# --camp-attack=N:region: the player's Nth army attacks now (war if needed).
 			var mine3 := CState.armies_of(st, f)
@@ -503,21 +543,45 @@ func remove_orders(pred: Callable) -> void:
 	save()
 
 
+## Where army is ordered this turn: its move order, else (state version 5)
+## the destination it is still marching to; -1 if none.
 func planned_move(army: int) -> int:
 	for m in moves:
 		if int(m[0]) == army:
 			return int(m[1])
-	return -1
+	return stored_move(army)
+
+
+## Version 5: the destination army keeps marching to from an earlier turn
+## (and was not stopped this turn), else -1.
+func stored_move(army: int) -> int:
+	if not CState.moves_on(ps):
+		return -1
+	var a := CState.army(ps, army)
+	if a.is_empty() or int(a["busy"]) != 0 or int(a.get("dest", -1)) == int(a["r"]):
+		return -1
+	return int(a.get("dest", -1))
 
 
 func set_move(army: int, to: int) -> void:
 	var cur := planned_move(army)
+	var had_order := false
+	for o in orders:
+		if str(o["t"]) == "move" and int(o["army"]) == army:
+			had_order = true
 	remove_orders(func(o): return str(o["t"]) == "move" and int(o["army"]) == army)
 	if cur == to:
+		if not had_order and stored_move(army) == to:
+			add_order({"t": "cancel_move", "army": army})  # stop a march from an earlier turn
 		_t("campaign_input", {"what": "move_cancel"})
 		return
 	var mo := {"t": "move", "army": army, "to": to}
-	if CState.sieges_on(st):
+	if CState.moves_on(st):
+		# March there over as many turns as it takes; entering enemy land
+		# raids it (laying siege or assaulting is one tap away in the toast).
+		mo["mode"] = CData.MODE_MARCH
+		mo["persist"] = 1
+	elif CState.sieges_on(st):
 		mo["mode"] = CData.MODE_SIEGE  # the default: lay siege (Assault is one tap away)
 	if add_order(mo) == "":
 		_t("campaign_input", {"what": "move"})
@@ -530,12 +594,30 @@ func move_mode(army: int) -> int:
 	for m in moves:
 		if int(m[0]) == army:
 			return int(m[2]) if (m as Array).size() > 2 else CData.MODE_SIEGE
+	if stored_move(army) >= 0:
+		return int(CState.army(ps, army)["mode"])
 	return -1
+
+
+## Version 5: the planned (or stored) march of army: {path [regions],
+## turns [turn each hop is reached: 0 this turn], to, mode}; {} if none.
+func route(army: int) -> Dictionary:
+	var to := planned_move(army)
+	var a := CState.army(ps, army)
+	if to < 0 or a.is_empty() or not CState.moves_on(ps):
+		return {}
+	var rc := CRules.reach(ps, a)
+	var path := CRules.path_of(rc, to)
+	var turns: Array = []
+	for r in path:
+		turns.append(int(rc["t"][r]))
+	return {"path": path, "turns": turns, "to": to, "mode": move_mode(army), "left": int(rc["m"][to]) if not path.is_empty() else 0}
 
 
 ## What army's planned move does: "move" (friendly land), "siege" (lays
 ## siege), "join" (joins our siege), "assault" (storms it now), "relief"
-## (relieves our besieged city), "" (no move).
+## (relieves our besieged city), "raid" (version 5: marches into enemy land
+## without attacking its settlement), "" (no move).
 func move_kind(army: int) -> String:
 	var to := planned_move(army)
 	var a := CState.army(ps, army)
@@ -551,15 +633,26 @@ func move_kind(army: int) -> String:
 			return "relief"
 		return "assault" if move_mode(army) == CData.MODE_ASSAULT else "join"
 	if CState.at_war(ps, af, o):
-		return "assault" if move_mode(army) == CData.MODE_ASSAULT else "siege"
+		match move_mode(army):
+			CData.MODE_ASSAULT:
+				return "assault"
+			CData.MODE_MARCH:
+				return "raid"
+		return "siege"
 	return "move"
 
 
-## Switch army's planned move between laying siege and assaulting.
+## Switch army's planned move between laying siege and assaulting (and,
+## version 5, marching in without attacking).
 func set_move_mode(army: int, mode: int) -> void:
+	var found := false
 	for o in orders:
 		if str(o["t"]) == "move" and int(o["army"]) == army:
 			o["mode"] = mode
+			found = true
+	if not found and stored_move(army) >= 0:
+		# A march from an earlier turn: re-issue it with the new mode.
+		orders.append({"t": "move", "army": army, "to": stored_move(army), "mode": mode, "persist": 1})
 	_replan()
 	save()
 	_t("campaign_input", {"what": "move_mode", "mode": mode})
@@ -577,6 +670,9 @@ func move_toast(army: int) -> void:
 	var od: Dictionary = po["od"]
 	var odds := "%d%% (%s)" % [int(od["win"]), Kit.BAND_WORDS[int(od["band"])]]
 	var city := str(CData.REGIONS[to]["city"])
+	if CState.moves_on(ps):
+		_march_toast(army, kind, to, odds)
+		return
 	match kind:
 		"siege":
 			show_toast("Lays siege to %s: no battle this turn; its supplies last %d turns, then it starves. Storming it now: %s." % [
@@ -589,6 +685,46 @@ func move_toast(army: int) -> void:
 				show_toast("Storms %s at once: %s." % [city, odds], ["Lay siege", func(): set_move_mode(army, CData.MODE_SIEGE)])
 		"relief":
 			show_toast("Relieves %s: a field battle outside the walls, the garrison and the armies inside on your side: %s." % [city, odds])
+
+
+## Version 5 toast: when the march arrives, what it does there (raid, lay
+## siege, storm), a field battle first if enemy armies stand in the field
+## there, and the other two choices one tap away.
+func _march_toast(army: int, kind: String, to: int, odds: String) -> void:
+	var rt := route(army)
+	var city := str(CData.REGIONS[to]["city"])
+	var reg := str(CData.REGIONS[to]["name"])
+	var o := CState.owner(ps, to)
+	var turns: Array = rt.get("turns", [])
+	var last := int(turns[-1]) if not turns.is_empty() else 0
+	var when := "this turn" if last == 0 else ("next turn" if last == 1 else "in %d turns" % (last + 1))
+	var text := ""
+	var acts: Array = []
+	var raid := ["March only", func(): set_move_mode(army, CData.MODE_MARCH)]
+	var siege := ["Lay siege", func(): set_move_mode(army, CData.MODE_SIEGE)]
+	var storm := ["Assault", func(): set_move_mode(army, CData.MODE_ASSAULT)]
+	match kind:
+		"raid":
+			text = "Marches into %s (%s) and raids it: %s loses half its income. Storming %s instead: %s." % [
+				reg, when, CData.faction_name(o), city, odds]
+			acts = [siege, storm]
+		"siege":
+			text = "Lays siege to %s on arrival (%s): no battle; supplies for %d turns. Storming it instead: %s." % [
+				city, when, CState.siege_supply(ps, to), odds]
+			acts = [storm, raid]
+		"join":
+			text = "Joins the siege of %s (%s). Storming it with every besieger: %s." % [city, when, odds]
+			acts = [storm]
+		"assault":
+			text = "Storms %s on arrival (%s): %s." % [city, when, odds]
+			acts = [siege, raid]
+		"relief":
+			text = "Relieves %s (%s): a field battle, the garrison and the armies inside with you: %s." % [city, when, odds]
+	var fo: Dictionary = panels.field_odds(army, to)
+	if not fo.is_empty():
+		text += " %s's army in the field there must be beaten first: %d%% (%s)." % [
+			CData.faction_name(int(fo["by"])), int(fo["od"]["win"]), Kit.BAND_WORDS[int(fo["od"]["band"])]]
+	show_toast(text, acts)
 
 
 ## Why the selected army cannot move to region r, and what to do about it,
@@ -618,6 +754,10 @@ func explain_refusal(army: int, r: int) -> void:
 		text = "%s is %s: only their side or the city's own can march in." % [reg, why]
 	elif why == "not adjacent":
 		text = "%s is not next to this army: one region or one sea lane a turn." % reg
+	elif why == "no route":
+		text = "No way to %s: lands at peace or besieged by others block every path." % reg
+	elif why == "already there":
+		text = "The army is in %s already. To lay siege or storm it, open the region." % reg
 	else:
 		text = "Cannot move to %s: %s." % [reg, why]
 	_t("campaign_input", {"what": "move_refused", "why": why})
@@ -628,30 +768,45 @@ var _toast: PanelContainer = null
 
 
 ## A short message above the bottom edge (stays 6 s or until tapped away),
-## with an optional [label, callable] button.
+## with an optional [label, callable] button (or several: [[label,
+## callable], ...]; the first is named toast_action, the next toast_action2).
 func show_toast(text: String, action: Array = []) -> void:
 	if _toast != null:
 		_toast.queue_free()
 	_toast = Kit.panel(Color(0.12, 0.1, 0.08, 0.96), 10)
 	_toast.name = "toast"
-	var h := Kit.hbox(8)
-	_toast.add_child(h)
 	var l := Kit.label(text, Kit.FONT, Color(1, 0.92, 0.8), true)
 	# Fits left of the side panel when it is open; on a narrow screen (a
 	# phone with the panel open) it spans the width, over the panel.
 	var room := _vp().x - (side.size.x + 16.0 if side.visible else 0.0) - 16.0
-	if room < 460.0:
-		room = _vp().x - 16.0
-	l.custom_minimum_size.x = clampf(room - 200.0, 180.0, 520.0)
-	h.add_child(l)
+	var acts: Array = []
 	if not action.is_empty():
-		var cb: Callable = action[1]
-		var b := Kit.button(str(action[0]), func():
+		acts = action if action[0] is Array else [action]
+	var h := Kit.hbox(8)
+	if acts.size() > 1:
+		# Several choices: the text on top, the buttons in a row below it.
+		if room < 320.0:
+			room = _vp().x - 16.0
+		var v := Kit.vbox(6)
+		_toast.add_child(v)
+		l.custom_minimum_size.x = clampf(room - 24.0, 240.0, 640.0)
+		v.add_child(l)
+		h.alignment = BoxContainer.ALIGNMENT_END
+		v.add_child(h)
+	else:
+		if room < 460.0:
+			room = _vp().x - 16.0
+		_toast.add_child(h)
+		l.custom_minimum_size.x = clampf(room - 200.0, 180.0, 520.0)
+		h.add_child(l)
+	for k in acts.size():
+		var cb: Callable = acts[k][1]
+		var b := Kit.button(str(acts[k][0]), func():
 			if _toast != null:
 				_toast.queue_free()
 				_toast = null
 			cb.call(), 110)
-		b.name = "toast_action"
+		b.name = "toast_action" if k == 0 else "toast_action%d" % (k + 1)
 		h.add_child(b)
 	var x := Kit.button("OK", func():
 		if _toast != null:
@@ -926,6 +1081,8 @@ func _update_hint() -> void:
 		hint.text = "Resolve the pending battles first (Battles)."
 	elif online != null and online.i_submitted():
 		hint.text = "Turn submitted. You can look around; Unsubmit to change your orders."
+	elif sel_army >= 0 and CState.moves_on(ps):
+		hint.text = "Tap a region to march there (bright: this turn, dim: later turns; red: enemy land). Tap it again to cancel."
 	elif sel_army >= 0:
 		hint.text = "Tap a highlighted region to move there (red: siege or attack; dark: not allowed, tap for why). Tap it again to cancel."
 	else:
@@ -940,19 +1097,46 @@ func _refresh_map() -> void:
 	overlay.moves = moves
 	var att: Array[int] = []
 	var sgm: Array[int] = []
-	for m in moves:
+	var shown: Array = moves.duplicate()
+	var free_moves := not ps.is_empty() and CState.moves_on(ps)
+	if free_moves:
+		for a in CState.armies_of(ps, f):
+			if stored_move(int(a["id"])) >= 0 and planned_move(int(a["id"])) == stored_move(int(a["id"])) and _first(moves, int(a["id"])):
+				shown.append([int(a["id"]), stored_move(int(a["id"])), int(a["mode"])])
+	for m in shown:
 		var o := CState.owner(ps, int(m[1]))
 		var kind := move_kind(int(m[0]))
-		if CState.at_war(ps, f, o) or kind == "relief":
+		if (CState.at_war(ps, f, o) and kind != "raid") or kind == "relief":
 			att.append(int(m[0]))
 		if kind == "siege" or kind == "join":
 			sgm.append(int(m[0]))
 	overlay.attack_moves = att
 	overlay.siege_moves = sgm
+	var paths: Array = []
+	if free_moves:
+		overlay.moves = []
+		for m in shown:
+			var rt := route(int(m[0]))
+			if rt.is_empty() or (rt["path"] as Array).is_empty():
+				continue
+			var a0 := CState.army(ps, int(m[0]))
+			var pts: Array = [Geo.site(int(a0["r"]))]
+			var now := 0
+			for k in (rt["path"] as Array).size():
+				pts.append(Geo.site(int(rt["path"][k])))
+				if int(rt["turns"][k]) == 0:
+					now = k + 1
+			paths.append({"army": int(m[0]), "pts": pts, "now": now})
+	overlay.paths = paths
 	map_view.targets = []
 	map_view.attack_targets = []
 	map_view.blocked_targets = []
-	if sel_army >= 0:
+	map_view.target_turns = {}
+	if sel_army >= 0 and free_moves:
+		var a := CState.army(ps, sel_army)
+		if not a.is_empty() and int(a["f"]) == f and int(a["busy"]) == 0:
+			_free_targets(a)
+	elif sel_army >= 0:
 		var a := CState.army(ps, sel_army)
 		if not a.is_empty() and int(a["f"]) == f:
 			var tg := CRules.move_targets(ps, a) if int(a["busy"]) == 0 else ([] as Array[int])
@@ -970,6 +1154,42 @@ func _refresh_map() -> void:
 	map_view.selected_region = sel_region
 	map_view.queue_redraw()
 	overlay.queue_redraw()
+
+
+static func _first(list: Array, id: int) -> bool:
+	for m in list:
+		if int(m[0]) == id:
+			return false
+	return true
+
+
+## Version 5 destinations of the selected army: every region it can reach,
+## by the turn it gets there (map_view shades this turn bright, the next
+## dimmer); unreachable neighbours of this turn's reach are blocked.
+func _free_targets(a: Dictionary) -> void:
+	var tg := CRules.move_targets(ps, a)
+	var rc := CRules.reach(ps, a)
+	var turns := {}
+	var at: Array[int] = []
+	for r in tg:
+		turns[r] = int(rc["t"][r])
+		if CState.at_war(ps, f, CState.owner(ps, r)):
+			at.append(r)
+	var near := {int(a["r"]): 1}
+	for r in tg:
+		if int(rc["t"][r]) == 0:
+			near[r] = 1
+	var bl: Array[int] = []
+	for r in near:
+		for e in CData.adjacent(int(r)):
+			var n := int(e[0])
+			if n != int(a["r"]) and not tg.has(n) and not bl.has(n) and planned_move(sel_army) != n:
+				bl.append(n)
+	bl.sort()
+	map_view.targets = tg
+	map_view.attack_targets = at
+	map_view.blocked_targets = bl
+	map_view.target_turns = turns
 
 
 func select_army(id: int) -> void:

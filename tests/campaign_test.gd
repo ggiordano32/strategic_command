@@ -15,6 +15,13 @@ extends SceneTree
 ## (sieges): start, join, lift, supplies and starvation, surrender, the
 ## besieged region's economy, assault / sally / relief battles and their
 ## outcomes, the odds against the formula, co-op assaults, migration.
+## Format 5 (free movement): path costs and Dijkstra ties, movement points
+## by composition, the sea lane rule, rounds (armies meeting half-way),
+## interception by field armies only (garrison stance and allies never
+## block), raiding income, a siege start fought in the field first, support
+## by range over land with its map edge, retreat along the path, multi-turn
+## marches and cancel, migration 4 -> 5 and from format 1, determinism, a
+## format 4 state ignoring the new orders.
 ## Exits 0 on success, 1 on failure.
 
 const CData := preload("res://campaign/cdata.gd")
@@ -49,6 +56,14 @@ func _init() -> void:
 	_siege_battles()
 	_odds()
 	_coop_siege()
+	_paths()
+	_rounds()
+	_interception()
+	_raiding()
+	_siege_start_field()
+	_support_range()
+	_persist()
+	_format5()
 	_end_conditions()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
 	quit(0 if fails == 0 else 1)
@@ -72,6 +87,33 @@ func _f(key: String) -> int:
 
 func _new(humans: Array = []) -> Dictionary:
 	return CState.new_campaign("test", 4242, humans)
+
+
+## A copy of st as an older format would have it (format v: no free
+## movement below 5, no sieges below 4, no builder data below 3).
+func _downgrade(st: Dictionary, v: int) -> Dictionary:
+	var c := CState.copy(st)
+	if v < 5:
+		for a in c["armies"]:
+			for k in ["mp", "dest", "mode", "stance", "idle"]:
+				(a as Dictionary).erase(k)
+		for b in c["battles"]:
+			(b as Dictionary).erase("edge")
+	if v < 4:
+		c.erase("sieges")
+	if v < 3:
+		for rs in c["regions"]:
+			(rs as Dictionary).erase("built")
+	c["version"] = v
+	return c
+
+
+## The owner's armies in region r withdraw inside the walls (version 5: so
+## an attack on r is a settlement battle, not a field battle first).
+func _inside(st: Dictionary, r: int) -> void:
+	for a in CState.armies_in(st, r):
+		if CState.friendly(st, int(a["f"]), CState.owner(st, r)):
+			a["stance"] = CData.STANCE_GARRISON
 
 
 func _data() -> void:
@@ -159,7 +201,8 @@ func _movement() -> void:
 	var a: Dictionary = CState.armies_of(st, rome)[0]  # in Latium
 	_check(int(a["r"]) == _r("latium"), "Rome's first army starts in Latium")
 	_check(CRules.can_move(st, a, _r("etruria")) == "", "move to an adjacent own region")
-	_check(CRules.can_move(st, a, _r("apulia")) != "", "no move to a non-adjacent region")
+	_check(CRules.can_move(_downgrade(st, 4), a, _r("apulia")) != "", "format 4: no move to a non-adjacent region")
+	_check(CRules.can_move(st, a, _r("apulia")) == "", "format 5: a march to a region two away")
 	_check(CRules.can_move(st, a, _r("sardinia")) != "", "Sardinia (Carthage, at peace) is blocked: " + CRules.can_move(st, a, _r("sardinia")))
 	_check(CData.link(_r("latium"), _r("sardinia")) == 1, "Latium-Sardinia is a sea lane")
 	var pv := CTurn.preview(st, rome, [{"t": "war", "to": _f("carthage")}, {"t": "move", "army": int(a["id"]), "to": _r("sardinia")}])
@@ -283,6 +326,7 @@ func _armies() -> void:
 func _battles() -> void:
 	var st := _new([_f("rome")])
 	var rome := _f("rome")
+	_inside(st, _r("apulia"))
 	var a: Dictionary = CState.armies_of(st, rome)[1]  # Samnium
 	var st2 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [{"t": "move", "army": int(a["id"]), "to": _r("apulia"), "mode": CData.MODE_ASSAULT}])])
 	var b := CState.battle_at(st2, _r("apulia"))
@@ -430,16 +474,14 @@ func _format() -> void:
 		and not (r1["regions"][0] as Dictionary).has("built") and CState.state_hash(r1) == CState.state_hash(r2), "an unmigrated format 1 state resolves as format 1, deterministically (%s)" % CState.hash_text(r1))
 	# Migrated only to format 3 (no sieges: what the previous build made of
 	# it), it plays the same turn as the unmigrated one.
-	var mig3 := mig.duplicate(true)
-	mig3.erase("sieges")
-	mig3["version"] = 3
+	var mig3 := _downgrade(mig, 3)
 	var r3 := CTurn.resolve_turn(mig3, [])
 	var eq := true
 	for k in ["turn", "factions", "armies", "dip", "battles", "rng"]:
 		if str(r1[k]) != str(r3[k]):
 			eq = false
 	_check(eq, "the format 3 copy plays the same turn as the unmigrated one")
-	_check(int(mig["version"]) == 4 and (mig["sieges"] as Array).is_empty(), "the full migration reaches format 4 with no sieges")
+	_check(int(mig["version"]) == CState.VERSION and (mig["sieges"] as Array).is_empty(), "the full migration reaches format %d with no sieges" % CState.VERSION)
 	_check(CState.from_json(JSON.stringify({"format": CState.FORMAT, "version": CState.VERSION + 1})).is_empty(),
 		"a newer format is refused")
 
@@ -569,6 +611,7 @@ func _ints_only(v) -> bool:
 func _settlement_battle() -> void:
 	var st := _new([_f("rome")])
 	var rome := _f("rome")
+	_inside(st, _r("apulia"))
 	var a: Dictionary = CState.armies_of(st, rome)[1]  # Samnium
 	var st2 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [{"t": "move", "army": int(a["id"]), "to": _r("apulia"), "mode": CData.MODE_ASSAULT}])])
 	var b := CState.battle_at(st2, _r("apulia"))
@@ -618,6 +661,344 @@ func _settlement_battle() -> void:
 		s3.winner, s3.decided_tick / 10, Time.get_ticks_msec() - t0, int(out["winner"])])
 	var st4 := CTurn.apply_battle(st2, int(b["id"]), out)
 	_check(str(st4["phase"]) == "plan", "the result applies")
+
+
+# --------------------------------------------------------- free movement ---
+
+func _army(st: Dictionary, f: int, key: String, units: Array) -> Dictionary:
+	var id := CRules.new_army_id(st, f)
+	st["factions"][f]["next_army"] = int(st["factions"][f]["next_army"]) + 1
+	var us: Array = []
+	for t in units:
+		us.append({"t": t, "n": UT.size_of(UT.index_of(t))})
+	CRules._insert_army(st, {"id": id, "f": f, "r": _r(key), "units": us, "from": -1, "moved": 0, "busy": 0})
+	return CState.army(st, id)
+
+
+## Movement points, path costs, Dijkstra ties, the sea lane rule.
+func _paths() -> void:
+	var st := _new([_f("rome")])
+	var rome := _f("rome")
+	_check(CState.moves_on(st) and CData.move_cost(_r("campania")) == 10 and CData.move_cost(_r("samnium")) == 15
+		and CData.move_cost(_r("etruria")) == 20 and CData.move_cost(_r("apulia")) == 10,
+		"entry costs: flat 10, ridge 15, hill with woods 45% 20, flat 10")
+	var foot := _army(st, rome, "latium", ["heavy", "cav"])
+	var cav := _army(st, rome, "latium", ["cav", "cav"])
+	var art := _army(st, rome, "latium", ["heavy", "bolt"])
+	_check(CState.max_mp(foot) == CData.MP_FOOT and CState.max_mp(cav) == CData.MP_CAV and CState.max_mp(art) == CData.MP_ART,
+		"points by the slowest arm: foot %d, cavalry only %d, with artillery %d" % [CState.max_mp(foot), CState.max_mp(cav), CState.max_mp(art)])
+	var rf := CRules.reach(st, foot)
+	_check(int(rf["t"][_r("samnium")]) == 0 and int(rf["m"][_r("samnium")]) == 5 and int(rf["t"][_r("apulia")]) == 1,
+		"foot from Latium: Samnium this turn (5 left), Apulia next turn: Italy in two turns")
+	var rc := CRules.reach(st, cav)
+	_check(int(rc["t"][_r("apulia")]) == 0 and CRules.path_of(rc, _r("apulia")) == [_r("samnium"), _r("apulia")],
+		"cavalry from Latium reach Apulia in one turn by Samnium")
+	var ra := CRules.reach(st, art)
+	_check(int(ra["t"][_r("etruria")]) == 0 and int(ra["m"][_r("etruria")]) == 0,
+		"an army with full points can always make one hop (artillery into wooded Etruria, 20 > 15)")
+	# Sea lane: needs full points. Latium -> Sardinia (war with Carthage).
+	CState.set_dip(st, rome, _f("carthage"), CState.WAR)
+	rf = CRules.reach(st, foot)
+	_check(int(rf["t"][_r("sardinia")]) == 0 and int(rf["m"][_r("sardinia")]) == 0, "with full points the sea lane to Sardinia is this turn, using them all")
+	foot["mp"] = 5
+	rf = CRules.reach(st, foot)
+	_check(int(rf["t"][_r("sardinia")]) == 1, "with points spent the sea lane waits for next turn")
+	# Ties by region index: Contestania -> Celtiberia by Edetania (14) or
+	# Carpetania (17), both 10 + 15: Edetania, the lower index.
+	var ib := _f("iberians")
+	var ia := _army(st, ib, "contestania", ["light"])
+	var ri := CRules.reach(st, ia)
+	_check(CRules.path_of(ri, _r("celtiberia")) == [_r("edetania"), _r("celtiberia")] and int(ri["t"][_r("celtiberia")]) == 1,
+		"equal paths: the one through the lower region index (Edetania): %s" % str(CRules.path_of(ri, _r("celtiberia"))))
+	# Peace blocks passage; a multi-turn destination is a valid order.
+	_check(CRules.can_move(st, CState.armies_of(st, rome)[0], _r("cisalpina")).begins_with("at peace"), "no march into a land at peace")
+	var rv := CRules.reach(st, CState.armies_of(st, rome)[0])
+	_check(not CRules.path_of(rv, _r("venetia")).has(_r("cisalpina")) and CRules.path_of(rv, _r("venetia")).has(_r("illyria")),
+		"nor through it: to Venetia by Apulia and the sea to Illyria, not through Gaul")
+	_check(CRules.move_targets(st, cav, true).has(_r("apulia")) and not CRules.move_targets(st, foot, true).has(_r("apulia"))
+		and CRules.move_targets(st, CState.armies_of(st, rome)[0]).has(_r("apulia")), "move targets: all reachable, or this turn's")
+
+
+## Rounds: two hostile armies marching at each other meet half-way.
+func _rounds() -> void:
+	var st := _new([_f("rome")])
+	var rome := _f("rome")
+	var ep := _f("epirus")
+	var a: Dictionary = CState.armies_of(st, rome)[0]  # Latium
+	var other: Dictionary = CState.armies_of(st, rome)[1]
+	other["r"] = _r("etruria")  # out of Samnium
+	var e := _army(st, ep, "apulia", ["pike", "pike", "cav"])
+	CRules.execute_moves(st, [[int(e["id"]), _r("latium"), ep, CData.MODE_MARCH, 0], [int(a["id"]), _r("apulia"), rome, CData.MODE_MARCH, 0]])
+	var bs: Array = st["battles"]
+	_check(bs.size() == 1 and int(bs[0]["r"]) == _r("samnium") and str(bs[0]["kind"]) == "field" and int(bs[0]["settlement"]) == 0,
+		"Rome to Apulia and Epirus to Latium meet in Samnium: one field battle there (%s)" % str(bs))
+	if bs.size() == 1:
+		_check((bs[0]["att"] as Array) == [int(e["id"])] and (bs[0]["def"] as Array) == [int(a["id"])] and int(bs[0]["def_f"]) == rome,
+			"round 1: Rome (lower id) reached Samnium first, Epirus ran into it")
+		_check(int(a["dest"]) == -1 and int(a["r"]) == _r("samnium") and int(CState.army(st, int(e["id"]))["r"]) == _r("samnium"),
+			"both stand in Samnium; a march without persist forgets its destination")
+
+
+## Interception: a field army stops an army entering; garrison stance and
+## allies do not.
+func _interception() -> void:
+	var rome := _f("rome")
+	var ep := _f("epirus")
+	var st := _new([rome, _f("greeks")])
+	var a: Dictionary = CState.armies_of(st, rome)[1]  # Samnium
+	var e: Dictionary = CState.armies_in(st, _r("apulia"))[0]
+	_inside(st, _r("apulia"))
+	_check(CState.stance(e) == CData.STANCE_GARRISON, "the Epirote army in Tarentum is inside the walls")
+	var s1 := CState.copy(st)
+	CRules.execute_moves(s1, [[int(a["id"]), _r("apulia"), rome, CData.MODE_MARCH, 0]])
+	_check((s1["battles"] as Array).is_empty() and int(CState.army(s1, int(a["id"]))["r"]) == _r("apulia")
+		and CState.siege_at(s1, _r("apulia")).is_empty(), "an army inside the walls does not block: Rome marches into Apulia, no battle, no siege")
+	var s2 := CState.copy(st)
+	CState.army(s2, int(e["id"]))["stance"] = CData.STANCE_FIELD
+	CRules.execute_moves(s2, [[int(a["id"]), _r("apulia"), rome, CData.MODE_SIEGE, 0]])
+	var b := CState.battle_at(s2, _r("apulia"))
+	_check(not b.is_empty() and str(b.get("kind", "")) == "field" and (b["att"] as Array).has(int(a["id"]))
+		and (b["def"] as Array).has(int(e["id"])) and CState.siege_at(s2, _r("apulia")).is_empty(),
+		"a field army intercepts: a field battle, no siege yet")
+	_check(int(CState.army(s2, int(a["id"]))["dest"]) == _r("apulia") and int(CState.army(s2, int(a["id"]))["mode"]) == CData.MODE_SIEGE,
+		"the army keeps its siege intent for after the battle")
+	if not b.is_empty():
+		var built := CBattle.build(s2, b, rome)
+		var gar := 0
+		for m in built["map"]:
+			if int(m["army"]) < 0:
+				gar += 1
+		_check(gar == 0 and not (built["scenario"]["terrain"] as Dictionary).has("city")
+			and int(built["scenario"]["terrain"]["kind"]) == int(CData.REGIONS[_r("apulia")]["terrain"])
+			and int(built["scenario"]["terrain"]["forest"]) == int(CData.REGIONS[_r("apulia")]["forest"]),
+			"the interception is a field battle on the region's ground and woods, without the garrison")
+		var od := CBattle.battle_odds(s2, b)
+		var fo := CBattle.formula(CState.copy(s2), b)
+		_check(int(od["def"]) == CState.strength(CState.army(s2, int(e["id"]))) and int(fo["garrison_pct"]) == int(s2["regions"][_r("apulia")]["gar"]),
+			"its odds and the formula leave the garrison out")
+		# Won by Rome: Epirus falls back, the siege begins.
+		var w := CTurn.apply_battle(s2, int(b["id"]), {"winner": 0, "mode": "fought", "units": [], "garrison_pct": 0})
+		_check(int(CState.army(w, int(e["id"]))["r"]) != _r("apulia") and not CState.siege_at(w, _r("apulia")).is_empty()
+			and int(w["regions"][_r("apulia")]["gar"]) == 100 and CState.owner(w, _r("apulia")) == ep,
+			"won: the defenders fall back, the siege begins, the garrison is untouched and Tarentum not taken")
+		# Lost: Rome retreats along its path (Samnium).
+		var l := CTurn.apply_battle(s2, int(b["id"]), {"winner": 1, "mode": "fought", "units": [], "garrison_pct": 0})
+		_check(int(CState.army(l, int(a["id"]))["r"]) == _r("samnium") and int(CState.army(l, int(e["id"]))["r"]) == _r("apulia")
+			and int(CState.army(l, int(a["id"]))["dest"]) == -1, "lost: the attacker falls back the way it came")
+	# Retreat along a longer path: cavalry from Latium caught in Apulia go back to Samnium.
+	var s3 := CState.copy(st)
+	CState.army(s3, int(e["id"]))["stance"] = CData.STANCE_FIELD
+	var c := _army(s3, rome, "latium", ["cav", "cav"])
+	CState.army(s3, int(a["id"]))["r"] = _r("campania")
+	CRules.execute_moves(s3, [[int(c["id"]), _r("apulia"), rome, CData.MODE_MARCH, 0]])
+	var b3 := CState.battle_at(s3, _r("apulia"))
+	if not b3.is_empty():
+		var l3 := CTurn.apply_battle(s3, int(b3["id"]), {"winner": 1, "mode": "fought", "units": [], "garrison_pct": 0})
+		_check(int(CState.army(l3, int(c["id"]))["r"]) == _r("samnium"), "a beaten army retreats to the previous region on its path (Samnium, not Latium)")
+	else:
+		_check(false, "cavalry intercepted in Apulia")
+	# Allies never block: a Greek (allied player) army standing in Campania.
+	var s4 := CState.copy(st)
+	var g: Dictionary = CState.armies_of(s4, _f("greeks"))[0]
+	g["r"] = _r("campania")
+	var la: Dictionary = CState.armies_of(s4, rome)[0]
+	CRules.execute_moves(s4, [[int(la["id"]), _r("campania"), rome, CData.MODE_MARCH, 0]])
+	_check((s4["battles"] as Array).is_empty() and int(la["r"]) == _r("campania"), "an allied army never blocks")
+	# Through a besieged... no: peace. An army at peace cannot enter (as before).
+	_check(CRules.can_enter(st, rome, _r("cisalpina")) != "", "armies at peace cannot enter")
+
+
+## Raiding: an enemy army without a siege halves the region's income.
+func _raiding() -> void:
+	var st := _new([_f("rome")])
+	var rome := _f("rome")
+	var ap := _r("apulia")
+	_inside(st, ap)
+	var full := CRules.region_income(st, ap)
+	var a: Dictionary = CState.armies_of(st, rome)[1]
+	var s1 := CTurn.resolve_turn(st, _sub(st, rome, [{"t": "move", "army": int(a["id"]), "to": ap, "mode": CData.MODE_MARCH}]))
+	var here := int(CState.army(s1, int(a["id"]))["r"]) == ap and CState.battle_at(s1, ap).is_empty()
+	_check(here and CState.siege_at(s1, ap).is_empty() and CRules.raider(s1, ap) == rome,
+		"mode march: Rome stands in Apulia without a siege, raiding")
+	if here:
+		_check(CRules.region_income(s1, ap) == full / 2, "the owner gets half its income (%d of %d)" % [CRules.region_income(s1, ap), full])
+		var ep := _f("epirus")
+		var inc := int(CRules.income(s1, ep)["regions"])
+		var s2 := CState.copy(s1)
+		CState.army(s2, int(a["id"]))["r"] = _r("samnium")
+		_check(int(CRules.income(s2, ep)["regions"]) - inc == full - full / 2, "and gets it back when the raiders leave")
+		# Laying siege from inside: an order.
+		var pv := CTurn.preview(s1, rome, [{"t": "siege", "r": ap}])
+		_check((pv["errors"] as Array).is_empty() and CRules.can_siege(s1, rome, ap) == "", "the siege order is valid from inside")
+		var s3 := CState.copy(s1)
+		for x in CState.armies_in(s3, ap):
+			if int(x["f"]) == ep:
+				x["stance"] = CData.STANCE_GARRISON
+		var r3 := CTurn.resolve_turn(s3, _sub(s3, rome, [{"t": "siege", "r": ap}]))
+		_check(not CState.siege_at(r3, ap).is_empty() or not CState.battle_at(r3, ap).is_empty(),
+			"ordering the siege lays it (or fights the field armies first)")
+		_check(CRules.region_income(r3, ap) == 0 or not CState.battle_at(r3, ap).is_empty(), "besieged: no income at all")
+
+
+## A siege laid where enemy field armies stand: a field battle first (the
+## garrison stays in), the siege only after it is won.
+func _siege_start_field() -> void:
+	var st := _new([_f("rome")])
+	var rome := _f("rome")
+	var ep := _f("epirus")
+	var ap := _r("apulia")
+	var a: Dictionary = CState.armies_of(st, rome)[1]
+	a["r"] = ap
+	for e in CState.armies_in(st, ap):
+		if int(e["f"]) == ep:
+			e["stance"] = CData.STANCE_FIELD
+	_check(CRules.order_siege(st, rome, ap) == "", "Rome orders a siege of Tarentum with Epirus's army in the field there")
+	var b := CState.battle_at(st, ap)
+	_check(not b.is_empty() and str(b.get("kind", "")) == "field" and CState.siege_at(st, ap).is_empty()
+		and int(a["dest"]) == ap and int(a["mode"]) == CData.MODE_SIEGE, "the field army is fought first; no siege yet")
+	if not b.is_empty():
+		var w := CTurn.apply_battle(st, int(b["id"]), {"winner": 0, "mode": "formula", "units": [], "garrison_pct": 0})
+		_check(not CState.siege_at(w, ap).is_empty() and int(CState.army(w, int(a["id"]))["dest"]) == -1,
+			"won: the siege begins afterwards")
+		var l := CTurn.apply_battle(st, int(b["id"]), {"winner": 1, "mode": "formula", "units": [], "garrison_pct": 0})
+		_check(CState.siege_at(l, ap).is_empty() and int(CState.army(l, int(a["id"]))["r"]) != ap, "lost: no siege, Rome falls back")
+	# Garrison stance armies are inside: the siege starts at once and they are besieged.
+	var s2 := _new([_f("rome")])
+	var a2: Dictionary = CState.armies_of(s2, rome)[1]
+	a2["r"] = ap
+	_inside(s2, ap)
+	_check(CRules.order_siege(s2, rome, ap) == "" and not CState.siege_at(s2, ap).is_empty() and (s2["battles"] as Array).is_empty()
+		and CRules.besieged_armies(s2, ap).size() == 1, "armies inside the walls are besieged at once")
+
+
+## Support by range: unmoved field armies within a turn's march over land
+## join, with the map edge they come from; sea lanes never count.
+func _support_range() -> void:
+	var st := _new([_f("rome")])
+	var rome := _f("rome")
+	var ep := _f("epirus")
+	var sa := _r("samnium")
+	var defender: Dictionary = CState.armies_of(st, rome)[1]  # Samnium, field
+	var lat: Dictionary = CState.armies_of(st, rome)[0]       # Latium, 15 points away
+	var sar := _army(st, rome, "sardinia", ["heavy"])         # across a sea lane only
+	var cap := _army(st, rome, "campania", ["heavy"])
+	cap["stance"] = CData.STANCE_GARRISON                     # inside Capua's walls
+	var far := _army(st, rome, "etruria", ["heavy"])          # Etruria -> Latium -> Samnium: 35
+	var e := _army(st, ep, "apulia", ["pike", "pike", "cav"])
+	CRules.execute_moves(st, [[int(e["id"]), sa, ep, CData.MODE_MARCH, 0]])
+	var b := CState.battle_at(st, sa)
+	_check(not b.is_empty() and (b["def"] as Array).has(int(defender["id"])), "Epirus runs into Rome's field army in Samnium")
+	if b.is_empty():
+		return
+	CRules.add_reinforcements(st, b)
+	var rf: Array = b["reinf"]
+	_check(rf.has(int(lat["id"])) and not rf.has(int(sar["id"])) and not rf.has(int(cap["id"])) and not rf.has(int(far["id"])),
+		"support by range: Latium's army joins; Sardinia (sea), Capua's garrison stance and Etruria (too far) do not (%s)" % str(rf))
+	var edge := -2
+	for pr in b.get("edge", []):
+		if int(pr[0]) == int(lat["id"]):
+			edge = int(pr[1])
+	_check(edge == 6 and CData.sector(sa, _r("latium")) == 6 and CData.sector(sa, _r("apulia")) == 3,
+		"the Latium army comes from the west (sector %d); Epirus from the south-east" % edge)
+	var built := CBattle.build(st, b, rome)
+	var sc: Dictionary = built["scenario"]
+	var w := int(sc["width_m"])
+	var h := int(sc["height_m"])
+	var ok := true
+	var n := 0
+	for k in (built["map"] as Array).size():
+		var m: Dictionary = built["map"][k]
+		if int(m["army"]) != int(lat["id"]):
+			continue
+		n += 1
+		var u: Dictionary = sc["units"][k]
+		# Attackers (from the south-east) at the top: west is down and right.
+		if int(u["y_m"]) < h - CBattle.EDGE_IN - 60 or int(u["x_m"]) <= w / 2:
+			ok = false
+	_check(n == CState.unit_count(lat) and ok, "the Latium army deploys on the map edge it comes from (bottom right, %d units, field %dx%d)" % [n, w, h])
+	var sim := BattleSim.new()
+	sim.setup(sc, int(built["seed"]))
+	_check(sim.n_units == (built["map"] as Array).size(), "the scenario with an edge group sets up (%d units)" % sim.n_units)
+	var b2 := CBattle.build(st, b, -1)
+	_check(str(b2["scenario"]) == str(CBattle.build(st, b, -1)["scenario"]), "and is a pure function of the state")
+	# A format 4 copy: land-adjacent reinforcement as before (Latium is next to Samnium; Campania too).
+	var v4 := _downgrade(_new([rome]), 4)
+	var d4: Dictionary = CState.armies_of(v4, rome)[1]
+	var e4 := {"id": CRules.new_army_id(v4, ep), "f": ep, "r": _r("apulia"), "units": [{"t": "heavy", "n": 100}], "from": -1, "moved": 0, "busy": 0}
+	CRules._insert_army(v4, e4)
+	_check(CRules.execute_move(v4, CState.army(v4, int(e4["id"])), sa, CData.MODE_ASSAULT) == "", "format 4: Epirus attacks Samnium")
+	var b4 := CState.battle_at(v4, sa)
+	CRules.add_reinforcements(v4, b4)
+	_check((b4["reinf"] as Array).has(int(CState.armies_of(v4, rome)[0]["id"])) and not b4.has("edge") and not d4.has("stance"),
+		"format 4: the land neighbour reinforces, no edges, no stances")
+
+
+## Multi-turn marches: the destination is kept and walked on; cancel.
+func _persist() -> void:
+	var rome := _f("rome")
+	var st := _new([rome])
+	var a: Dictionary = CState.armies_of(st, rome)[0]  # Latium
+	var aid := int(a["id"])
+	var co := _r("corsica")
+	var s1 := CTurn.resolve_turn(st, _sub(st, rome, [{"t": "move", "army": aid, "to": co, "mode": CData.MODE_MARCH, "persist": 1}]))
+	var a1 := CState.army(s1, aid)
+	_check(int(a1["r"]) == _r("etruria") and int(a1["dest"]) == co and int(a1["mode"]) == CData.MODE_MARCH and int(a1["mp"]) == CState.max_mp(a1),
+		"turn 1: Etruria (20 points), still marching to Corsica; points back at the end of the turn")
+	var s2 := CTurn.resolve_turn(s1, [])
+	var a2 := CState.army(s2, aid)
+	_check(int(a2["r"]) == co and int(a2["dest"]) == -1, "turn 2: with no orders it crosses to Corsica and arrives")
+	var c2 := CTurn.resolve_turn(s1, _sub(s1, rome, [{"t": "cancel_move", "army": aid}]))
+	_check(int(CState.army(c2, aid)["r"]) == _r("etruria") and int(CState.army(c2, aid)["dest"]) == -1, "cancel_move: it stays in Etruria")
+	var n1 := CTurn.resolve_turn(st, _sub(st, rome, [{"t": "move", "army": aid, "to": co, "mode": CData.MODE_MARCH}]))
+	_check(int(CState.army(n1, aid)["r"]) == _r("etruria") and int(CState.army(n1, aid)["dest"]) == -1, "without persist the march ends where the points run out")
+	var o2 := CTurn.resolve_turn(s1, _sub(s1, rome, [{"t": "move", "army": aid, "to": _r("latium"), "mode": CData.MODE_MARCH}]))
+	_check(int(CState.army(o2, aid)["r"]) == _r("latium") and int(CState.army(o2, aid)["dest"]) == -1, "a new order replaces the stored march")
+	# Siege shortcut over two turns: lays siege on arrival.
+	var g1 := CTurn.resolve_turn(st, _sub(st, rome, [{"t": "move", "army": aid, "to": co, "mode": CData.MODE_SIEGE, "persist": 1}]))
+	var g2 := CTurn.resolve_turn(g1, [])
+	_check(not CState.siege_at(g2, co).is_empty() and int(CState.army(g2, aid)["r"]) == co, "a persisting siege march lays siege on arrival")
+	_check(CState.state_hash(g2) == CState.state_hash(CTurn.resolve_turn(CState.from_json(CState.to_json(g1)), [])),
+		"a stored march survives save / load and resolves the same")
+	_check(CState.state_hash(s1) == CState.state_hash(CTurn.resolve_turn(st, _sub(st, rome, [{"t": "move", "army": aid, "to": co, "mode": CData.MODE_MARCH, "persist": 1}]))),
+		"free movement resolves deterministically (%s)" % CState.hash_text(s1))
+
+
+## Format 5: migration, older formats unchanged.
+func _format5() -> void:
+	var rome := _f("rome")
+	var nst := _new([rome])
+	var keys := true
+	for a in nst["armies"]:
+		for k in ["mp", "dest", "mode", "stance", "idle"]:
+			if not (a as Dictionary).has(k):
+				keys = false
+	_check(int(nst["version"]) == 5 and keys, "a new campaign is format 5: every army has points, dest, mode, stance")
+	var v4 := _downgrade(nst, 4)
+	var mig := CState.from_json(CState.to_json(v4))
+	_check(not mig.is_empty() and CState.state_hash(mig) == CState.state_hash(nst), "a format 4 state migrates to format 5 (equal to a new campaign)")
+	var v1 := CState.from_json(FileAccess.get_file_as_string("res://tests/data/campaign_v1.json"))
+	var ok := not v1.is_empty() and int(v1["version"]) == 5
+	for a in v1.get("armies", []):
+		if int(a.get("mp", -1)) != CState.max_mp(a) or int(a.get("stance", -1)) != CData.STANCE_FIELD or int(a.get("dest", 0)) != -1:
+			ok = false
+	_check(ok, "the format 1 save migrates to format 5 with full points and field stances")
+	# A format 4 state: one hop a turn, the new orders refused.
+	var a: Dictionary = CState.armies_of(v4, rome)[0]
+	_check(CRules.apply_order(CState.copy(v4), rome, {"t": "stance", "a": int(a["id"]), "s": 1}) != ""
+		and CRules.apply_order(CState.copy(v4), rome, {"t": "cancel_move", "army": int(a["id"])}) != ""
+		and CRules.can_siege(v4, rome, _r("apulia")) != "", "format 4 refuses stance, cancel_move and siege orders")
+	var r4 := CTurn.resolve_turn(v4, _sub(v4, rome, [{"t": "move", "army": int(a["id"]), "to": _r("apulia"), "persist": 1}]))
+	var a4 := CState.army(r4, int(a["id"]))
+	_check(int(r4["version"]) == 4 and int(a4["r"]) == _r("latium") and not a4.has("mp") and not a4.has("dest"),
+		"format 4: a two-region move fails and no free movement keys appear")
+	# Stance orders (format 5).
+	var s := CState.copy(nst)
+	var la: Dictionary = CState.armies_of(s, rome)[0]
+	_check(CRules.apply_order(s, rome, {"t": "stance", "a": int(la["id"]), "s": 1}) == "" and CState.stance(la) == CData.STANCE_GARRISON,
+		"stance: inside the walls of Roma")
+	la["r"] = _r("apulia")
+	la["stance"] = CData.STANCE_FIELD
+	_check(CRules.apply_order(s, rome, {"t": "stance", "a": int(la["id"]), "s": 1}) == "not your settlement", "not inside an enemy's walls")
 
 
 func _end_conditions() -> void:
@@ -726,7 +1107,8 @@ func _sieges() -> void:
 	var l1 := CTurn.resolve_turn(s2, _sub(s2, rome, [{"t": "move", "army": aid, "to": _r("etruria")}]))
 	_check(not CState.siege_at(l1, co).is_empty() and CRules.besiegers(l1, co).size() == 1, "one army leaves: the siege goes on")
 	var l2 := CTurn.resolve_turn(l1, _sub(l1, rome, [{"t": "move", "army": bid, "to": _r("etruria")}]))
-	_check(CState.siege_at(l2, co).is_empty() and _events(l2, "siege_lifted").size() == 1, "the last besieger leaves: the siege is lifted")
+	_check(CState.siege_at(l2, co).is_empty() and _events(l2, "siege_lifted").filter(func(e): return int(e["r"]) == co).size() == 1,
+		"the last besieger leaves: the siege is lifted")
 	# Assault mode: battle at once, as before sieges.
 	var m1 := CTurn.resolve_turn(st, _sub(st, rome, [{"t": "move", "army": aid, "to": co, "mode": CData.MODE_ASSAULT}]))
 	_check(not CState.battle_at(m1, co).is_empty() and CState.siege_at(m1, co).is_empty(), "mode 1 assaults at once")
@@ -761,12 +1143,10 @@ func _sieges() -> void:
 		t2 = CTurn.resolve_turn(CState.from_json(CState.to_json(t2)), [])
 	_check(CState.state_hash(t1) == CState.state_hash(t2), "a siege survives save / load and resolves the same")
 	# Migration 3 -> 4.
-	var old := CState.copy(_new([rome]))
-	old.erase("sieges")
-	old["version"] = 3
+	var old := _downgrade(_new([rome]), 3)
 	var mig := CState.from_json(CState.to_json(old))
-	_check(int(mig["version"]) == 4 and (mig["sieges"] as Array).is_empty() and CState.state_hash(mig) == CState.state_hash(_new([rome])),
-		"a format 3 state migrates to format 4 with no sieges (equal to a new campaign)")
+	_check(int(mig["version"]) == CState.VERSION and (mig["sieges"] as Array).is_empty() and CState.state_hash(mig) == CState.state_hash(_new([rome])),
+		"a format 3 state migrates to format %d with no sieges (equal to a new campaign)" % CState.VERSION)
 
 
 ## Samnium (Rome's) besieged by an Epirote army from Apulia, a Roman army
@@ -904,6 +1284,7 @@ func _odds() -> void:
 	var st := _new([_f("rome")])
 	var rome := _f("rome")
 	var ap := _r("apulia")
+	_inside(st, ap)
 	var defs := CState.armies_in(st, ap)
 	var last := -1
 	var last_loss := 1000

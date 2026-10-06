@@ -279,9 +279,27 @@ const SIEGE_SUPPLY := [2, 3, 4]
 const SIEGE_GRANARY_FARM := 2
 const SIEGE_STARVE_PCT := 25
 const SIEGE_STARVE_ARMY_PCT := 10
-## Move modes: lay siege (default) or assault at once.
+## Move modes: lay siege (default) or assault at once; version 5: march
+## (enter without attacking the settlement: raiding in enemy land).
 const MODE_SIEGE := 0
 const MODE_ASSAULT := 1
+const MODE_MARCH := 2
+## Free movement (state version 5). Movement points per turn by the army's
+## slowest arm: cavalry only MP_CAV, with artillery MP_ART, else MP_FOOT.
+## Entering a region costs by its terrain (move_cost); a sea lane needs full
+## points and uses them all; a hop costing more than the points left needs
+## full points (so an army can always make one hop a turn).
+const MP_FOOT := 20
+const MP_CAV := 30
+const MP_ART := 15
+const COST_OPEN := 10          # flat, rolling, valley
+const COST_ROUGH := 15         # hill, ridge
+const COST_WOODS := 5          # extra into a region with woods coverage >= WOODS_HEAVY
+const WOODS_HEAVY := 40
+## Stances (version 5): in the field (blocks and intercepts enemy movement,
+## supports battles in range) or inside the walls of a friendly settlement.
+const STANCE_FIELD := 0
+const STANCE_GARRISON := 1
 const START_YEAR := 280          # BC; two turns a year (summer, winter)
 
 ## Key cities for the default victory condition.
@@ -342,6 +360,36 @@ static func link(a: int, b: int) -> int:
 		if int(e[0]) == b:
 			return int(e[1])
 	return -1
+
+
+## Movement points it costs to enter region r (version 5): COST_OPEN for
+## flat, rolling and valley ground, COST_ROUGH for hills and ridges, plus
+## COST_WOODS with woods coverage of WOODS_HEAVY or more.
+static func move_cost(r: int) -> int:
+	var k := int(REGIONS[r]["terrain"])
+	var c := COST_ROUGH if k == HILL or k == RIDGE else COST_OPEN
+	if int(REGIONS[r]["forest"]) >= WOODS_HEAVY:
+		c += COST_WOODS
+	return c
+
+
+## Compass sector (0 N, 1 NE, 2 E ... 7 NW) of region `from` seen from
+## region `at` (the map's projection: lon x 0.766, lat x 1), -1 if the same.
+static func sector(at: int, from: int) -> int:
+	var dx := (int(REGIONS[from]["lon"]) - int(REGIONS[at]["lon"])) * 766 / 1000
+	var dy := int(REGIONS[from]["lat"]) - int(REGIONS[at]["lat"])  # north positive
+	if dx == 0 and dy == 0:
+		return -1
+	var ax := absi(dx)
+	var ay := absi(dy)
+	# tan(67.5 deg) = 2.414: mostly vertical / horizontal, else a diagonal.
+	if ay * 1000 >= ax * 2414:
+		return 0 if dy > 0 else 4
+	if ax * 1000 >= ay * 2414:
+		return 2 if dx > 0 else 6
+	if dx > 0:
+		return 1 if dy > 0 else 3
+	return 7 if dy > 0 else 5
 
 
 ## Founding culture of region r (MapGen.CUL_*).

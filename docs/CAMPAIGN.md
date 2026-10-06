@@ -34,7 +34,7 @@ a little worse than good play. No fleets, generals, politics or agents.
   sorted keys; `from_json` turns JSON's floats back into ints (`normalise`).
   `state_hash` = first 32 bits of the MD5 of that canonical JSON.
 
-### State format (version 4)
+### State format (version 5)
 
 ```
 format "strategic_command_campaign", version 4, name, seed, turn (0 = 280 BC
@@ -50,12 +50,19 @@ regions [{owner (-1 independent), level 0 village|1 town|2 city, growth,
   queue [unit keys recruited this turn], gar (garrison strength %),
   city_seed (the settlement's battle map seed, fixed for good),
   built [[chain, level, culture]...] (version 3: who built what; see below)}]
-armies [{id, f, r, units [{t: unit key, n: men}], from, moved, busy}] by id;
+armies [{id, f, r, units [{t: unit key, n: men}], from, moved, busy;
+  version 5: mp (movement points left this turn), dest (-1, or the region
+  it keeps marching to on later turns), mode (on arriving at dest: 0 lay
+  siege, 1 assault, 2 march in), stance (0 in the field, 1 inside the
+  walls), idle (turns without moving, read by the AI)}] by id;
   id = faction * 100000 + factions[f].next_army
 battles [{id, r, turn, att [army ids], def [army ids], att_f, def_f, reinf
   [army ids], settlement 1|0, from [[army id, region it came from]...]
   (version 4), kind "assault"|"sally"|"relief" (version 4, battles of a
-  siege only)}], next_battle
+  siege only) | "field" (version 5: an interception or a fight before a
+  siege; def_f is then the defending army's faction, not the region's
+  owner), edge [[army id, compass sector 0 N .. 7 NW, -1 here]...]
+  (version 5: where each reinforcement comes from)}], next_battle
 sieges [{r, f (besieging faction), turn (started), supply (turns left),
   held (turns without an assault), from [[army id, region]...]}] by region
   (version 4)
@@ -65,7 +72,8 @@ events [{turn, k, ...}] (the last two turns: battle (version 4: + kind),
   destroyed, war, peace, trade, trade_end, refused, proposal, built,
   recruited, grew, debt, eliminated, order_failed, move_failed, victory,
   defeat; version 4: siege {r, f, o}, siege_lifted {r, f, o, why "left" |
-  "gone"}, starving {r, f (owner), by, gar})
+  "gone"}, starving {r, f (owner), by, gar}; version 5: intercepted {r, f
+  (the marching army's faction), by, army}; battle kind "field")
 stats {battles, battles_formula, battles_auto, battles_fought, last_war_on_players}
 ```
 
@@ -122,6 +130,21 @@ format 3 state end on the same hashes as the previous build's code (HEAD
 with the joining fix). New campaigns and "Play online" uploads are format
 4; the server pins the format, so nothing changes on the server.
 
+**Version 5 (October 2026, free movement)** adds per army `mp`, `dest`,
+`mode`, `stance`, `idle` and per battle `edge`; battles may be of kind
+`"field"`. The rules apply only to a state of version 5 or later
+(`CState.moves_on`); `migrate()` turns a version 4 state (and so 1-3) into
+version 5 with `CState.army_defaults` on every army (full points, no
+destination, march mode, field stance, idle 0). **An unmigrated online
+campaign of format 1-4 plays exactly as the previous build**: one region a
+turn, a move's `mode` as in version 4, land-adjacent reinforcement, no
+stances or raiding; the new orders (`siege`, `stance`, `cancel_move`)
+fail ("no free movement in this campaign"). Checked: 6 AI-only campaigns
+of 60 turns from a format 4 state end on the same hashes as HEAD
+(`tests/campaign_sim.gd -- --format=4`: fe226e5c, 91dd6206, d15158df,
+edb70ffd, 87877994, ea253bb4). New campaigns and "Play online" uploads are
+format 5; the server pins the format, so nothing changes on the server.
+
 Static region data used by the battle maps (not saved): `culture`
 (founding culture, which sets the wall plan: latin castrum, greek polis,
 punic, celtic oppidum), `terrain` (with the city seed: the site), the ports
@@ -139,7 +162,7 @@ orders (plain data):
 
 | order | fields | when applied |
 |---|---|---|
-| move | army, to, mode (version 4: 0 lay siege, the default when missing; 1 assault at once) | step 3, all players' moves by army id |
+| move | army, to, mode (version 4: 0 lay siege, the default when missing; 1 assault at once; version 5: 2 march in without attacking), persist (version 5: 0/1) | step 3, all players' moves by army id (version 5: in rounds, see "Free movement") |
 | recruit | r, unit (type key) | step 2; paid now, arrives at end of turn |
 | build | r, chain | step 2; paid now, done after the chain's turns |
 | merge | army, into | step 2 (same region, at most 12 units) |
@@ -148,8 +171,21 @@ orders (plain data):
 | propose | to, what peace / trade / cancel_trade | step 4, AI answers |
 | war | to | step 1 |
 | answer | id (AI proposal), accept 0/1 | step 1 |
-| assault | r (a region one of our armies besieges) | step 3b (version 4) |
+| assault | r (a region one of our armies besieges; version 5 also one where our armies stand without a siege) | step 3b (version 4) |
 | sally | r (our besieged region, or an ally's with our army inside) | step 3b (version 4) |
+| siege | r (version 5: a hostile region where one of our armies stands, no siege yet) | step 3b |
+| stance | a (army id), s (0 in the field, 1 inside the walls of a settlement of our side) | step 2 (version 5; no points spent) |
+| cancel_move | army (stop a march stored from an earlier turn) | step 2 (version 5) |
+
+Version 5: `to` is the destination, any region the army can reach (not
+only a neighbour); the path is computed when the turn resolves. With
+`persist` 1 (what the game sends) an army that does not get there this
+turn keeps `dest` and `mode` and marches on next turn without a new order
+(each later turn's path is computed afresh); a new move order for it
+replaces the stored one, `cancel_move` drops it. With mode 0 / 1 the army
+lays siege / storms the settlement when it arrives (the same turn if it
+gets there). A move order to the army's own region is refused ("already
+there"): siege and assault are orders.
 
 Invalid orders are skipped and logged (`order_failed` / `move_failed`), never
 fatal. The client previews its plan with `CTurn.preview` (the same rule code
@@ -157,8 +193,11 @@ on a copy) and drops orders that became invalid. Validation with reasons:
 `CRules.can_move` ("besieged", "besieged by Carthage", ...),
 `can_assault` ("no siege there", "none of your armies besiege it",
 "battle pending there"), `can_sally` ("not your city", "none of your armies
-are inside", "nobody left to sally"). Two allies both ordering the same
-assault (or sally) make one battle and no failed order.
+are inside", "nobody left to sally"); version 5: `can_move` also says
+"no route", "already there"; `can_siege` ("already besieged", "not
+hostile land", "none of your armies are there"); stance ("not your
+settlement", "besieged"). Two allies both ordering the same assault (or
+sally, or siege) make one battle and no failed order.
 
 A battle result is the other input: `{winner 0 attackers / 1 defenders,
 mode, units [{army (-1 garrison), unit, killed, routed, withdrawn,
@@ -177,8 +216,14 @@ remaining}], garrison_pct}`, built from `BattleSim.result()` by
    side's besieged region relieves it. 3b (version 4): the players'
    assault and sally orders, faction by faction.
 4. Players' proposals; the AI answers at once.
+   Version 5: every move order and every players' army still marching to a
+   stored destination walks its cheapest path in rounds
+   (`CRules.execute_moves`), then 3b also runs the siege orders.
 5. AI factions act in faction order (merge, cut debt, build, recruit, move).
-6. Neighbouring armies reinforce the new battles.
+   Version 5: the AI factions plan in faction order and their moves then
+   run together in rounds.
+6. Neighbouring armies reinforce the new battles (version 5: field armies
+   within a turn's march over land, with their map edge).
 7. Battles without a player: resolved now by the formula. Battles with a
    player: pending (phase "battles").
 8. AI diplomacy; end of turn (constructions, recruits, money, debt,
@@ -198,7 +243,11 @@ nothing holds (the online turn timeout uses this: docs/SERVER.md).
 ports (coastal settlements on the battle map). Culture is the founding
 culture (wall plan; Iberian, Illyrian and Samnite hill peoples use the
 celtic oppidum). Crossing a sea lane takes the
-turn like a land move; no fleets. Settlements at real coordinates.
+turn like a land move (version 5: it needs a full turn's movement points
+and uses them all); no fleets. Settlements at real coordinates. Version 5
+entry costs: flat, rolling and valley 10, hill and ridge 15, +5 with woods
+coverage of 40 or more (Etruria, Cisalpina, Venetia, Gallaecia, Arverni,
+Allobroges, Corsica, Illyria): `CData.move_cost`.
 
 | Region (settlement) | Terrain | Wealth | Start | Land routes | Sea lanes | Culture |
 |---|---|---|---|---|---|---|
@@ -373,7 +422,8 @@ test exaggerates numbers; in an army line the gap is smaller.
 
 ## Armies, movement, garrisons and battles
 
-- An army is at most 12 units; moves one region or one sea lane per turn.
+- An army is at most 12 units; moves one region or one sea lane per turn
+  (version 5: movement points, see "Free movement").
   Entry into a faction's region at peace is refused; declare war first
   (declarations apply before moves). Entering a hostile region lays siege
   to its settlement unless the move assaults (version 4, see "Sieges and
@@ -402,7 +452,8 @@ test exaggerates numbers; in an army line the gap is smaller.
 - Reinforcements: armies of either side in regions joined by a land route that
   did not move this turn and are not committed elsewhere join the battle,
   until a side has 24 field units. Neighbours across a sea lane do not
-  reinforce passively; they must move in (and so join) instead.
+  reinforce passively; they must move in (and so join) instead. Version 5:
+  support by range instead (see "Free movement").
 - A battle in the sim: attackers and defenders (armies at their current
   headcounts and tiers, the garrison on the defending side, reinforcements
   simply more units in the line: they do not yet arrive from the map edge they
@@ -592,6 +643,157 @@ battle cards), `campaign_screen.gd` (move toast), `map_overlay.gd`
   fix): eliminations 3, 4, 5, 4, 3, 1, battles 32-74. Full AI turn 10-13 ms
   mean, 17 ms worst. Deterministic (each seed twice, same hash).
 
+## Free movement (version 5)
+
+Agreed with the user and built October 2026 (the "Later" item 2). Code:
+`campaign/crules.gd` "free movement (v5)" (paths, rounds, interception,
+stances, raiding, support by range), `campaign/cbattle.gd` (field battles
+without the garrison, edge deployment), `campaign/cai.gd` `_move_free`,
+view in `game/campaign/campaign_screen.gd` (targets by turn, routes, the
+march toast), `campaign_panels.gd` (army card: points, stance, march;
+region panel: raided note, Lay siege / Assault from inside; field battle
+cards), `map_view.gd` (reach shading), `map_overlay.gd` (paths, the
+"inside the walls" tower on a banner).
+
+- **Movement points.** Each army has points a turn by its slowest arm
+  (`CState.max_mp`): cavalry only `MP_CAV` 30, any artillery `MP_ART` 15,
+  else `MP_FOOT` 20. Entering a region costs `CData.move_cost`: flat,
+  rolling, valley 10; hill, ridge 15; +5 into heavy woods (coverage 40+). A
+  sea lane needs full points and uses them all (one lane a turn, as
+  before). A hop that costs more than the points left needs full points
+  and uses them all, so every army can always make one hop a turn. Points
+  reset at the end of the turn; merging keeps the lower, a split part
+  keeps the parent's (capped by its own maximum). Pacing: an army on foot
+  goes Latium -> Samnium (15) this turn and Apulia (10) the next; cavalry
+  do both in one turn (25 of 30).
+- **Paths and rounds.** A move order is a destination. At resolution each
+  army's cheapest path is computed (`CRules.reach`: Dijkstra over
+  `CData.adjacent` on (turn reached, most points left), ties by the lower
+  region index; regions it may not enter are skipped: peace, a battle
+  pending from an earlier turn, a siege by a third party). A phase's moves
+  run in rounds: round k moves every army's k-th hop, by army id; an army
+  stops when its points run out (with `persist` it keeps `dest` / `mode`
+  for next turn), when it is refused, or when it enters a battle. The
+  players' moves (step 3) and the AI's (step 5) are two phases.
+- **Blocking and interception.** An army entering a region where an army of
+  a faction at war with it stands in the field (not in a battle) is stopped
+  there: a field battle (kind "field", settlement 0) on the region's terrain
+  kind, ground palette and woods; the marching army attacks, every enemy
+  field army of that side there defends; no garrison takes part (it stays
+  inside, its strength untouched; odds and formula leave it out). Event
+  "intercepted". Armies at peace cannot enter; friendly and allied armies
+  never block; an army inside the walls (stance 1) never blocks. Entering a
+  region whose battle started this turn joins it (as before). The stopped
+  army keeps a siege / assault intent for that region (see below).
+- **Attacking is deliberate.** Entering hostile land with nobody in the field
+  there just places the army there. An army standing in a region of a
+  faction it is at war with, without a siege, is **raiding**: the owner
+  gets half the region's income (`CRules.raider`, `region_income`). Laying
+  siege (`siege` order) or storming (`assault` order, also without a siege
+  now) is an order from inside the region; a move's mode 0 / 1 is the
+  shortcut "march there and on arrival lay siege / storm it". If enemy
+  field armies stand there, the siege or assault starts with a field
+  battle against them (our armies of that side in the region attack); the
+  army keeps the intent (`dest` = the region, `mode`): a won field battle
+  lays the siege at once, an assault is kept for next turn's movement
+  phase (it storms then if still there).
+- **Stance.** `stance` 0 in the field (default), 1 inside the walls: only in
+  a region of the army's side, not while besieged; an order, no points
+  spent; marching resets it to the field. Inside: cannot be caught in the
+  field, does not block, does not support battles outside, defends in
+  settlement battles and is besieged when a siege starts. An army in the
+  field in its own region when a siege would start is fought first (the
+  rule above; the garrison does not ride out, unlike a relief). Taking the
+  field where enemy armies stand rides out to fight them (a field battle).
+  Armies left in the field of a faction they make peace with go home;
+  inside-the-walls armies in a settlement no longer their side's take the
+  field.
+- **Support by range.** Replaces the land-adjacent rule: an army that did
+  not move this turn, stands in the field and is not in a siege joins a new
+  battle if its cheapest path over land (sea lanes never count) reaches the
+  battle's region this turn, until a side has 24 field units. The battle
+  records its `edge`: the compass sector (`CData.sector`, the map's
+  projection, 8 sectors) of its region seen from the battle's. In a field
+  battle (`CBattle.build`) the edge is turned relative to the lead
+  attacker's approach (the sector it came from; south if unknown): behind
+  the attackers, behind the defenders, the attackers' left or right flank,
+  or a corner; that army's units deploy as a line facing inwards 45 m from
+  that edge (the field grows 110 m on that side); explicit unit positions
+  in the scenario, no sim change. Settlement battles still put
+  reinforcements in their side's line (TODO: arrival outside the walls).
+  No mid-battle arrival.
+- **Retreats.** The loser of a field battle falls back to the region it came
+  from on its path (the battle's `from`, its `from`) if that is friendly,
+  else to a friendly neighbour, else to the nearest friendly region
+  (breadth first, land and sea), else it is destroyed (the existing
+  helper). A retreat ends its march (dest cleared) and its points.
+- **AI** (`_move_free`, version 5; plans, the moves run later in rounds):
+  per free army one `reach`; sieges as in version 4 but with armies that
+  reach the siege this turn (join, assault at the ratio or when starving
+  with a relief near, lift before a stronger relief or past patience; sally;
+  relieve at 60%). Attacks by value per defence: the armies reaching the
+  target this turn assault at the attack ratio (150% / aggression), lay
+  siege at half of it with a second army near; if the ratio needs armies a
+  turn further away they first gather on a friendly region next to the
+  target (concentrate). An army idle 3 turns (`idle`) with a target it
+  reaches whose odds are 35%+ lays siege to it (no dithering). One raid a
+  turn into a rich enemy region (wealth 4+) with no enemy field army and no
+  stronger enemy within a turn's march. Screens: a threatened city of ours
+  without a field army gets the strongest free army that can match 80% of
+  the threat (it stands in the field and intercepts). The rest march to the
+  nearest frontier region (multi-hop). Stances last: armies staying in our
+  regions shelter inside when the enemy within a turn's march is above
+  ~1.4x their strength (or would win a ride-out), else take the field.
+  A capital-defence step recalling besiegers was tried and dropped: it made
+  the AI-only campaigns snowball more (largest faction at turn 30 median 14
+  instead of 10 over 10 seeds).
+- **View** (phone first). Select an army: every region it can reach is a
+  destination: this turn bright, next turn dimmer, later turns outline
+  only (red: enemy land); unreachable neighbours of this turn's reach are
+  crossed. Tap a region: the march is planned (`persist` 1, mode march) and
+  drawn along the region sites, solid for this turn's hops, dotted after,
+  with an arrowhead; tap it again to cancel. Into enemy land a toast says
+  when it arrives and what happens ("Marches into Apulia (next turn) and
+  raids it: Epirus loses half its income. Storming Tarentum instead: 8%";
+  "Epirus's army in the field there must be beaten first: 21%") with
+  **Lay siege** and **Assault** (or March only). The army card shows the
+  march and its arrival ("arrives this turn, 5 points left" / "next turn",
+  "marching on from an earlier turn"), Cancel move (a stored march: a
+  cancel_move order), the movement points with the cost table, and the
+  stance toggle **Inside the walls / In the field** with one line on what
+  it means. Region panel: "Raided by Carthage: half income."; for our
+  raiding armies Lay siege / Assault with the odds (and the field battle
+  first if enemies stand there). Field battles are cards in the Battles
+  list ("Field battle in Samnium: Epirus ran into Rome in the open") with
+  the odds bar. Banners of armies inside the walls carry a small tower.
+  Screenshots `docs/screenshots/move_phone_*.png`.
+- **Pacing** (`tests/campaign_sim.gd -- --seeds=6 --turns=60 --twice`, all
+  AI; "before" = the same seeds from a format 4 state, `--format=4`, which
+  is the previous build's rules exactly):
+
+| Seed | Largest at 15 / 30 / 60, before | after | Eliminated by 60, before | after | First 20 regions + 3 key cities | Battles before / after (field) |
+|---|---|---|---|---|---|---|
+| 1000 | 8 / 12 / 15 | 11 / 13 / 15 | 4 | 4 | - / - | 52 / 72 (7) |
+| 1077 | 8 / 11 / 12 | 8 / 9 / 13 | 4 | 4 | - / - | 44 / 50 (5) |
+| 1154 | 8 / 10 / 17 | 10 / 10 / 15 | 3 | 4 | - / - | 59 / 49 (6) |
+| 1231 | 8 / 8 / 10 | 10 / 10 / 16 | 2 | 3 | - / - | 33 / 33 (2) |
+| 1308 | 9 / 17 / 18 | 11 / 14 / 26 | 4 | 6 | - / turn 44 | 51 / 80 (1) |
+| 1385 | 8 / 11 / 16 | 8 / 10 / 15 | 4 | 3 | - / - | 75 / 52 (1) |
+
+  Over 10 seeds: largest at 30 median 11 (8-17) before, 10 (9-14) after;
+  eliminations median 4 (2-6) before, 4 (3-6) after; one faction reached
+  the victory size (turn 44) in 1 of 10 after, none before. Epirus falls in
+  every seed (4 of 6 before): Rome reaches Tarentum in two turns now.
+  Sieges after: started 13-25, assaulted 13-21, reliefs 1-7, sallies 0-1,
+  lifted 2-6, none surrendered; interceptions 1-7 a campaign; a region
+  ends a turn raided 1-3 times a campaign. Full AI turn (8 factions,
+  resolution included, native desktop, an otherwise idle machine) 12.6-13.7
+  ms mean, 17.5-19.3 ms worst (before 10.1-12.3 / 13.8-16.4).
+  Deterministic (each seed twice, same hash).
+- **Co-op:** allied armies never block each other; either ally's armies
+  support by range; both ordering the siege or assault of a region they
+  raid together make one battle.
+
 ## Diplomacy and AI
 
 - Per pair: war, peace, trade; the players are allied for good.
@@ -599,7 +801,7 @@ battle cards), `campaign_screen.gd` (move toast), `map_overlay.gd`
   turns of war if its strength < the proposer's, after 18 turns, or when down
   to 2 regions; **trade** after 2+ turns of peace unless it is 2.5x stronger;
   ending trade always.
-- AI factions each turn: merge armies together; disband the most depleted
+- AI factions each turn (version 5 moves: see "Free movement"): merge armies together; disband the most depleted
   units while in debt; build (budget 60% of treasury above one turn of
   upkeep): walls where threatened, farms and markets, the military buildings
   of their preferred lines in towns and capitals, workshops; recruit by their
@@ -733,14 +935,29 @@ As built 2026-10-05; the server side is in `docs/SERVER.md`.
   economy, assault / sally / relief battles with the right sides and their
   outcomes, retreats and destruction, odds against the formula, co-op
   assault, determinism, a format 3 state ignoring move modes).
+- `tests/campaign_test.gd` (version 5): path costs and Dijkstra ties, points
+  by composition, the sea lane rule, rounds (two armies meeting half-way
+  fight one battle in Samnium), interception by field stance only (inside
+  the walls and allies never block), the field battle without garrison on
+  the region's ground, raiding income, laying siege from inside, a siege
+  start fought in the field first (won: the siege begins), support by
+  range over land only with the right edge and the units on that map edge,
+  retreat along the path, multi-turn marches (persist, cancel, a new order,
+  a siege on arrival, save / load), migration 4 -> 5 and from the format 1
+  file, format 4 refusing the new orders, stance orders, determinism.
 - `tests/campaign_sim.gd` AI-only campaigns (pacing, economy, time per turn,
-  sieges; `--twice` checks determinism, `--no-sieges` plays format 3).
+  sieges, interceptions and raids, a pacing table; `--twice` checks
+  determinism, `--format=4` plays the previous rules, `--no-sieges` format 3).
 - `tests/campaign_solo.gd` a player faction with a simple policy for 20
   turns, pending battles auto-resolved with the sim, consistency checks.
 - `tests/campaign_battles.gd` auto-resolve timing and formula calibration.
 - `tests/campaign_input_test.gd` (windowed) the screens with synthetic
-  touches (also: a move lays siege by default, the toast's Assault now, the
-  siege panel's Assault / Maintain and Sally with the odds bar).
+  touches (also: the siege panel's Assault / Maintain and Sally with the
+  odds bar; version 5: a move into enemy land marches in by default and
+  the toast's Lay siege / Assault, a two-turn march drawn solid then
+  dotted with its arrival in the army card, the stance toggle, Cancel
+  move, stopping a stored march, the raided region's note and Lay siege, a
+  field battle in the Battles list with the odds bar).
 
 ## Later
 
@@ -761,17 +978,10 @@ Agreed order after milestone 4 (the server), from the user on 2026-10-05:
      northern Italy, rocky Greece), on the campaign map and the battle map.
    - Stronger height shading on the battle map so high and low ground read at
      a glance (the contours alone are too subtle zoomed in).
-2. **Free movement on the campaign map.** Replace "one region per turn, and
-   entering attacks the settlement" with armies that have a movement range
-   and positions inside regions:
-   - an army can enter a region without attacking its settlement;
-   - armies block or intercept movement (zone of control), so a field army
-     can screen a city;
-   - reinforcement is by range: armies staged near each other support one
-     another in battle, and arrive from their map direction;
-   - attacking a settlement is a deliberate order (partly there since the
-     sieges of state version 4: entering lays siege, storming is an order).
-   This changes the state format and the AI; do it as its own milestone.
-3. Reinforcements arriving from the map edge; elephants, then camels,
-   chariots and war dogs; both players sharing one empire; live co-op
-   battles (milestone 5).
+2. **Free movement on the campaign map.** Built October 2026 (state format
+   5, "Free movement" above). What remains: reinforcements arriving during
+   the battle (they deploy on their map edge at the start), and edge
+   arrival in settlement battles (they still stand in their side's line).
+3. Reinforcements arriving from the map edge mid-battle; elephants, then
+   camels, chariots and war dogs; both players sharing one empire; live
+   co-op battles (milestone 5).

@@ -24,6 +24,9 @@ var targets: Array[int] = []
 var attack_targets: Array[int] = []
 ## Neighbours the selected army cannot enter (muted, crossed out).
 var blocked_targets: Array[int] = []
+## State version 5: the turn the selected army reaches each target (0 this
+## turn: bright; 1 next turn: dimmer; later: outline only).
+var target_turns: Dictionary = {}
 var selected_region := -1
 var pulse := 0.0
 
@@ -62,6 +65,11 @@ func _draw() -> void:
 	var a := 0.25 + 0.15 * sin(pulse * 4.0)
 	for r in targets:
 		var hc := Color(1, 1, 1, a) if not attack_targets.has(r) else Color(1.0, 0.35, 0.25, a + 0.1)
+		var tt := int(target_turns.get(r, 0))
+		if tt >= 2:
+			continue
+		if tt == 1:
+			hc.a *= 0.4
 		for piece in Geo.cell(r):
 			draw_colored_polygon(piece, hc)
 	for r in blocked_targets:
@@ -90,10 +98,14 @@ func _draw() -> void:
 			closed.append(piece[0])
 			draw_polyline(closed, Color(0.1, 0.1, 0.08, 0.45), 1.2 * lw, true)
 	for r in targets:
+		var tt := int(target_turns.get(r, 0))
+		var oc := Color(1, 1, 1, 0.9) if not attack_targets.has(r) else Color(1, 0.5, 0.4, 0.95)
+		if tt >= 1:
+			oc.a = 0.55 if tt == 1 else 0.3
 		for piece in Geo.cell(r):
 			var closed: PackedVector2Array = piece.duplicate()
 			closed.append(piece[0])
-			draw_polyline(closed, Color(1, 1, 1, 0.9) if not attack_targets.has(r) else Color(1, 0.5, 0.4, 0.95), 2.5 * lw, true)
+			draw_polyline(closed, oc, (2.5 if tt == 0 else 1.6) * lw, true)
 	for r in blocked_targets:
 		for piece in Geo.cell(r):
 			var closed: PackedVector2Array = piece.duplicate()

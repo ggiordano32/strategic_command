@@ -44,7 +44,7 @@ static func plan(st: Dictionary, f: int, attack_pct: int = 140, march: bool = fa
 			continue
 		var best := -1
 		var best_v := 0
-		for t in CRules.move_targets(ps, a):
+		for t in CRules.move_targets(ps, a, true):
 			if not CState.at_war(ps, f, CState.owner(ps, t)):
 				continue
 			var d := CAI.target_defence(ps, f, t)

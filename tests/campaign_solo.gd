@@ -81,7 +81,9 @@ func _units(st: Dictionary, f: int) -> int:
 ## Policy: build the cheapest thing in each region, recruit the best melee
 ## unit available while upkeep stays below 70% of income, attack the most
 ## valuable neighbour (independents first) when 1.4 times its defence (lay
-## siege at 0.7 times), storm a siege when the odds reach 55%.
+## siege at 0.7 times), storm a siege when the odds reach 55%. Format 5:
+## targets it reaches this turn; the checks allow raiding armies and check
+## points and stances.
 func _plan(st: Dictionary, f: int) -> Array:
 	var orders: Array = []
 	var ps := CState.copy(st)
@@ -114,7 +116,7 @@ func _plan(st: Dictionary, f: int) -> Array:
 		var best := -1
 		var best_v := 0
 		var best_mode := CData.MODE_ASSAULT
-		for t in CRules.move_targets(ps, a):
+		for t in CRules.move_targets(ps, a, true):
 			if not CState.at_war(ps, f, CState.owner(ps, t)):
 				continue
 			var d := CAI.target_defence(ps, f, t)
@@ -146,8 +148,17 @@ func _consistency(st: Dictionary, t: int) -> void:
 			if int(u["n"]) <= 0 or int(u["n"]) > UT.size_of(CState.unit_type(u)):
 				ok = false
 				printerr("  army %d unit with %d men" % [id, int(u["n"])])
+		if CState.moves_on(st):
+			if int(a.get("mp", -1)) != CState.max_mp(a) and str(st["phase"]) == "plan" and int(a["moved"]) == 0:
+				ok = false
+				printerr("  army %d starts the turn with %d of %d points" % [id, int(a.get("mp", -1)), CState.max_mp(a)])
+			if CState.stance(a) == CData.STANCE_GARRISON and not CState.friendly(st, int(a["f"]), CState.owner(st, int(a["r"]))):
+				ok = false
+				printerr("  army %d inside the walls of a hostile settlement" % id)
 		var o := CState.owner(st, int(a["r"]))
-		if not CState.friendly(st, int(a["f"]), o) and CState.battle_at(st, int(a["r"])).is_empty() and CRules.siege_role(st, a) != 1:
+		var raiding := CState.moves_on(st) and CState.at_war(st, int(a["f"]), o)
+		if not CState.friendly(st, int(a["f"]), o) and CState.battle_at(st, int(a["r"])).is_empty() and CRules.siege_role(st, a) != 1 \
+				and not raiding:
 			ok = false
 			printerr("  army %d of %s stands in %s's region %d without a battle" % [id, a["f"], o, int(a["r"])])
 		if not CState.alive(st, int(a["f"])):

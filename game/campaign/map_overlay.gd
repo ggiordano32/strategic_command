@@ -3,8 +3,10 @@ extends Node2D
 ## towers per wall level,
 ## gold dot for the key cities), names, pending battles, sieges (a ring of
 ## tents round the settlement in the besieger's colour), army markers
-## (faction colour, unit count, strength bar), planned moves as arrows (red
-## an assault, orange a siege), and hit tests for taps. Positions come from map_geo.gd through `xform` (map
+## (faction colour, unit count, strength bar; a small tower: inside the
+## walls), planned moves as arrows (red an assault, orange a siege; state
+## version 5: the path, solid this turn, dotted after), and hit tests for
+## taps. Positions come from map_geo.gd through `xform` (map
 ## pixels -> screen), set by the campaign screen every frame.
 
 const CData := preload("res://campaign/cdata.gd")
@@ -26,6 +28,10 @@ var player := -1
 var moves: Array = []
 var attack_moves: Array[int] = []  # army ids whose move is an attack
 var siege_moves: Array[int] = []   # ... of which these lay siege (or join one)
+## State version 5: planned and stored marches [{army, pts [map points from
+## the army's region], now (segments walked this turn)}]: solid this turn,
+## dotted after.
+var paths: Array = []
 var pulse := 0.0
 
 
@@ -100,6 +106,8 @@ func _draw() -> void:
 		elif attack_moves.has(id):
 			col = Color(1.0, 0.45, 0.35)
 		_arrow(from, to, col)
+	for pth in paths:
+		_path(pth, pos)
 	# Settlements and names.
 	var show_names := zoom >= 0.5
 	for r in CData.region_count():
@@ -214,6 +222,60 @@ func _army_marker(c: Vector2, a: Dictionary, font: Font) -> void:
 	draw_rect(Rect2(rect.position.x, by, rect.size.x * frac, 4 * m), Color(0.5, 1.0, 0.5) if frac > 0.6 else Color(1.0, 0.8, 0.3))
 	if int(a["moved"]) != 0 and human:
 		draw_circle(rect.position + Vector2(rect.size.x, 0), 3.5, Color(0.6, 0.6, 0.6))
+	if int(a.get("stance", 0)) == CData.STANCE_GARRISON:
+		# Inside the walls: a small crenellated tower on the banner's corner.
+		var tw2 := 8.0 * m
+		var tp := rect.position + Vector2(-tw2 * 0.6, -tw2 * 0.4)
+		var stone := Color(0.85, 0.8, 0.7)
+		draw_rect(Rect2(tp - Vector2(1, 1), Vector2(tw2, tw2 * 1.1) + Vector2(2, 2)), Color(0.05, 0.05, 0.05))
+		draw_rect(Rect2(tp, Vector2(tw2, tw2 * 1.1)), stone)
+		for k in 3:
+			draw_rect(Rect2(tp + Vector2(tw2 * 0.38 * k, -tw2 * 0.25), Vector2(tw2 * 0.24, tw2 * 0.25)), stone)
+
+
+## A march: from the army's banner along the region sites; this turn's
+## hops solid, later ones dotted, an arrowhead at the destination.
+func _path(pth: Dictionary, pos: Dictionary) -> void:
+	var id := int(pth["army"])
+	var pts: Array = pth["pts"]
+	if pts.size() < 2:
+		return
+	var col := Color(0.95, 0.95, 0.9)
+	if siege_moves.has(id):
+		col = Color(1.0, 0.7, 0.25)
+	elif attack_moves.has(id):
+		col = Color(1.0, 0.45, 0.35)
+	var sp: Array = []
+	for k in pts.size():
+		sp.append(to_screen(pts[k]) + Vector2(0, 8))
+	if pos.has(id):
+		sp[0] = pos[id]
+	var now := int(pth["now"])
+	var m := mk()
+	for k in pts.size() - 1:
+		var a: Vector2 = sp[k]
+		var b: Vector2 = sp[k + 1]
+		var last := k == pts.size() - 2
+		var d := b - a
+		var ln := d.length()
+		if ln < 4.0:
+			continue
+		var u := d / ln
+		var s0 := a + u * (14.0 if k == 0 else 6.0)
+		var e0 := b - u * (14.0 if last else 6.0)
+		if k < now:
+			draw_line(s0, e0, Color(0, 0, 0, 0.6), 7.0 * m, true)
+			draw_line(s0, e0, col, 4.0 * m, true)
+		else:
+			draw_dashed_line(s0, e0, Color(0, 0, 0, 0.55), 6.0 * m, 9.0, true)
+			draw_dashed_line(s0, e0, col.darkened(0.05), 3.0 * m, 9.0, true)
+		if not last:
+			draw_circle(b, 3.5 * m, col if k < now else Color(col, 0.6))
+		else:
+			var tip := e0
+			var nrm := Vector2(-u.y, u.x)
+			var head := PackedVector2Array([tip + u * 10.0, tip + nrm * 7.0 - u * 2.0, tip - nrm * 7.0 - u * 2.0])
+			draw_colored_polygon(head, col)
 
 
 func _arrow(from: Vector2, to: Vector2, col: Color) -> void:

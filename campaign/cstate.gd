@@ -11,8 +11,9 @@ extends RefCounted
 ## by the rules (JSON load does not keep key order). The state carries its own
 ## RNG ("rng", xorshift32) used by the rules and the AI.
 ##
-## Format (VERSION 4; version 1 has no city_seed, versions 1-2 no builder
-## data "built", versions 1-3 no "sieges"; older states are migrated on
+## Format (VERSION 5; version 1 has no city_seed, versions 1-2 no builder
+## data "built", versions 1-3 no "sieges", versions 1-4 no free movement
+## (army mp / dest / mode / stance / idle); older states are migrated on
 ## load, see migrate()), all top-level keys:
 ##   format "strategic_command_campaign", version, name, seed, turn (0 =
 ##   280 BC summer), phase ("plan" | "battles" | "over"), rng,
@@ -34,7 +35,11 @@ extends RefCounted
 ##     not listed is in the founder's style, see builder_culture)}]
 ##     indexed like CData.REGIONS,
 ##   armies [{id, f, r, units [{t: unit key, n: men}], from (region it came
-##     from this turn, -1), moved (0/1), busy (0/1: committed to a battle)}]
+##     from this turn, -1), moved (0/1), busy (0/1: committed to a battle);
+##     version 5: mp (movement points left this turn), dest (-1 or the
+##     region it is marching to over several turns), mode (what it does on
+##     arriving at dest: MODE_SIEGE, MODE_ASSAULT, MODE_MARCH), stance
+##     (STANCE_FIELD, STANCE_GARRISON), idle (turns without moving: the AI)}]
 ##     sorted by id,
 ##   battles [pending battle, see crules.gd], next_battle,
 ##   sieges [{r, f (besieging faction), turn (started), supply (turns of
@@ -49,7 +54,7 @@ const CData := preload("res://campaign/cdata.gd")
 const UT := preload("res://sim/unit_types.gd")
 
 const FORMAT := "strategic_command_campaign"
-const VERSION := 4
+const VERSION := 5
 ## Oldest format this build reads (older states are migrated on load).
 const MIN_VERSION := 1
 
@@ -117,8 +122,10 @@ static func new_campaign(p_name: String, p_seed: int, humans: Array, settings: D
 				var ty := UT.index_of(k)
 				assert(ty >= 0, "unknown unit " + str(k))
 				units.append({"t": k, "n": UT.size_of(ty)})
-			armies.append({"id": f * 100000 + int(fs["next_army"]), "f": f,
-				"r": CData.region_index(ad[0]), "units": units, "from": -1, "moved": 0, "busy": 0})
+			var na := {"id": f * 100000 + int(fs["next_army"]), "f": f,
+				"r": CData.region_index(ad[0]), "units": units, "from": -1, "moved": 0, "busy": 0}
+			army_defaults(na)
+			armies.append(na)
 			fs["next_army"] = int(fs["next_army"]) + 1
 	armies.sort_custom(func(a, b): return int(a["id"]) < int(b["id"]))
 	st["regions"] = regions
@@ -177,6 +184,8 @@ static func from_json(text: String) -> Dictionary:
 
 
 ## Bring a state of an older format up to VERSION (in place; returns it).
+## 4 -> 5: free movement: every army gets full points, no destination,
+## field stance (army_defaults).
 ## 3 -> 4: no sieges yet (an empty "sieges" list switches the siege rules on).
 ## 2 -> 3: every settlement gets an empty builder list "built".
 ## 1 -> 2: every settlement gets its city_seed (default_city_seed, the same
@@ -205,7 +214,56 @@ static func migrate(st: Dictionary) -> Dictionary:
 		if not st.has("sieges"):
 			st["sieges"] = []
 		st["version"] = 4
+	if int(st.get("version", 0)) < 5:
+		for a in st.get("armies", []):
+			army_defaults(a)
+		st["version"] = 5
 	return st
+
+
+## Free movement keys of a version 5 army (missing ones only): full points,
+## no destination, march mode, field stance, not idle.
+static func army_defaults(a: Dictionary) -> void:
+	if not a.has("mp"):
+		a["mp"] = max_mp(a)
+	if not a.has("dest"):
+		a["dest"] = -1
+	if not a.has("mode"):
+		a["mode"] = CData.MODE_MARCH
+	if not a.has("stance"):
+		a["stance"] = CData.STANCE_FIELD
+	if not a.has("idle"):
+		a["idle"] = 0
+
+
+## Free movement rules apply (state version 5 and later). An unmigrated
+## online campaign of format 1-4 keeps one region a turn, entering hostile
+## land lays siege or attacks, and land-adjacent reinforcement.
+static func moves_on(st: Dictionary) -> bool:
+	return int(st.get("version", 0)) >= 5
+
+
+## Movement points a turn of army a (its slowest arm): cavalry only MP_CAV,
+## any artillery MP_ART, else MP_FOOT.
+static func max_mp(a: Dictionary) -> int:
+	var all_cav := true
+	var units: Array = a.get("units", [])
+	for u in units:
+		var c := UT.cls(unit_type(u))
+		if c == UT.CLS_ART:
+			return CData.MP_ART
+		if c != UT.CLS_CAV:
+			all_cav = false
+	return CData.MP_CAV if all_cav and not units.is_empty() else CData.MP_FOOT
+
+
+## Points army a has left this turn.
+static func mp(a: Dictionary) -> int:
+	return int(a.get("mp", max_mp(a)))
+
+
+static func stance(a: Dictionary) -> int:
+	return int(a.get("stance", CData.STANCE_FIELD))
 
 
 ## Note that chain `chain` (-1: the settlement itself) reached `level` in

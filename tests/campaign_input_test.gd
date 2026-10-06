@@ -7,9 +7,13 @@ extends SceneTree
 ## through the warnings, the second player's hand-over, the pending battle
 ## dialog, launching a battle and leaving it (forfeit applied to the state),
 ## and an auto-resolved battle with the progress dialog applied to the state.
-## Sieges: a move into enemy land lays siege by default, the toast's
-## "Assault now" switches it; the siege panel's Assault / Maintain and Sally
-## buttons with the odds bar.
+## Sieges: the siege panel's Assault / Maintain and Sally buttons with the
+## odds bar. Free movement (format 5): a move into enemy land marches in
+## (raids) by default and the toast's Lay siege / Assault switch it; a
+## two-turn march drawn solid then dotted with its arrival in the army card;
+## the stance toggle; Cancel move; a march stored from an earlier turn and
+## stopping it; the raided region's note and its Lay siege button; a field
+## battle (interception) in the Battles list with the odds bar.
 ## Exits 0 on success, 1 on failure.
 
 const CampaignScreen := preload("res://game/campaign/campaign_screen.gd")
@@ -45,7 +49,10 @@ func _initialize() -> void:
 		_s_build, _s_check_build, _s_end_turn, _s_warnings, _s_check_handover2, _s_start2, _s_intro,
 		_s_end_turn2, _s_summary, _s_check_battles, _s_fight, _s_check_battle_on, _s_leave, _s_leave2,
 		_s_check_forfeit, _s_auto_setup, _s_auto_tap, _s_auto_wait, _s_auto_check, _s_refuse_select, _s_refuse_tap, _s_refuse_check, _s_refuse_dip, _s_refuse_war, _s_siege_setup, _s_siege_check, _s_siege_assault_check,
-		_s_siege_maintain_check, _s_sally_setup, _s_sally_check, _s_siege_cleanup, _s_controls, _s_controls_check, _s_done,
+		_s_siege_maintain_check, _s_sally_setup, _s_sally_check, _s_siege_cleanup,
+		_s_march_tap, _s_march_check, _s_stance_inside, _s_stance_check, _s_stance_field, _s_cancel_tap, _s_cancel_check,
+		_s_stored_setup, _s_stored_stop, _s_stored_check, _s_raid_setup, _s_raid_siege, _s_raid_check, _s_field_battle, _s_field_check,
+		_s_controls, _s_controls_check, _s_done,
 	]
 
 
@@ -150,7 +157,7 @@ func _s_tap_etruria() -> void:
 
 func _s_check_move() -> void:
 	_check(cs.planned_move(army0) == CData.region_index("etruria"), "tapping a highlighted region plans a move")
-	_check(cs.overlay.moves.size() == 1, "the planned move is drawn")
+	_check(cs.overlay.paths.size() == 1 and int(cs.overlay.paths[0]["now"]) == 1, "the planned march is drawn (one hop, this turn)")
 
 
 func _s_check_cancel() -> void:
@@ -172,13 +179,19 @@ func _s_tap_apulia() -> void:
 
 
 func _s_check_siege_default() -> void:
-	_check(cs.planned_move(army1) == CData.region_index("apulia") and cs.move_kind(army1) == "siege",
-		"a move into enemy land lays siege by default")
-	_check(cs.overlay.siege_moves.has(army1), "drawn as a siege")
+	_check(cs.planned_move(army1) == CData.region_index("apulia") and cs.move_kind(army1) == "raid",
+		"a move into enemy land marches in (raids) by default")
+	_check(not cs.overlay.siege_moves.has(army1) and not cs.overlay.attack_moves.has(army1), "drawn as a march")
 	var t = cs.find_child("toast", true, false)
-	_check(t != null and _button("toast_action") != null and _button("toast_action").text == "Assault now",
-		"the toast offers Assault now, one tap away")
-	_tap_button("toast_action", "Assault now")
+	_check(t != null and _button("toast_action") != null and _button("toast_action").text == "Lay siege"
+		and _button("toast_action2") != null and _button("toast_action2").text == "Assault",
+		"the toast offers Lay siege and Assault, one tap away")
+	var txt := ""
+	if t != null:
+		for l in t.find_children("*", "Label", true, false):
+			txt += (l as Label).text
+	_check(txt.contains("half its income") and txt.contains("must be beaten first"), "it says raiding costs them half the income, and that their field army must be fought first: " + txt.substr(0, 120))
+	_tap_button("toast_action2", "Assault")
 
 
 func _s_check_attack() -> void:
@@ -485,6 +498,196 @@ func _s_siege_cleanup() -> void:
 	CState.army(st, army0)["r"] = CData.region_index("latium")
 	cs._replan()
 	cs.close_side()
+
+
+# --------------------------------------------------------- free movement ---
+
+func _s_march_tap() -> void:
+	# Rome's first army (Latium) marches to Corsica: Etruria this turn, the
+	# sea lane next turn.
+	cs.close_side()
+	cs.select_army(army0)
+	cs.focus_region(CData.region_index("etruria"), 0.7)
+	await process_frame
+	await process_frame
+	_check(cs.map_view.targets.has(CData.region_index("corsica")) and int(cs.map_view.target_turns.get(CData.region_index("corsica"), -1)) == 1,
+		"Corsica is a destination for next turn (dim)")
+	_tap(_site("corsica"))
+
+
+func _s_march_check() -> void:
+	var co := CData.region_index("corsica")
+	_check(cs.planned_move(army0) == co, "tapping a region two hops away plans the march")
+	var mo := {}
+	for o in cs.orders:
+		if str(o["t"]) == "move" and int(o["army"]) == army0:
+			mo = o
+	_check(int(mo.get("persist", 0)) == 1 and int(mo.get("mode", -1)) == CData.MODE_MARCH, "the order marches on over the turns (persist)")
+	var pth: Dictionary = {}
+	for p in cs.overlay.paths:
+		if int(p["army"]) == army0:
+			pth = p
+	_check(not pth.is_empty() and (pth["pts"] as Array).size() == 3 and int(pth["now"]) == 1,
+		"drawn solid to Etruria (this turn), dotted on to Corsica")
+	var txt := ""
+	for l in cs.side_box.find_children("*", "Label", true, false):
+		txt += (l as Label).text + " "
+	_check(txt.contains("arrives next turn") and cs.side_box.find_child("army_points", true, false) != null,
+		"the army card says when it arrives and shows its points")
+
+
+func _s_stance_inside() -> void:
+	cs.set_move(army0, cs.planned_move(army0))  # cancel the march first
+	cs.select_army(army0)
+	await process_frame
+	_tap_button("stance_inside", "Inside the walls")
+
+
+func _s_stance_check() -> void:
+	var n := 0
+	for o in cs.orders:
+		if str(o["t"]) == "stance" and int(o["a"]) == army0 and int(o["s"]) == CData.STANCE_GARRISON:
+			n += 1
+	_check(n == 1 and CState.stance(CState.army(cs.ps, army0)) == CData.STANCE_GARRISON, "the stance order shelters the army inside Roma's walls")
+	_check(_button("stance_field") != null and not _button("stance_field").disabled and _button("stance_inside").text.ends_with("(now)"), "In the field is offered back")
+
+
+func _s_stance_field() -> void:
+	_tap_button("stance_field", "In the field")
+
+
+func _s_cancel_tap() -> void:
+	var n := 0
+	for o in cs.orders:
+		if str(o["t"]) == "stance":
+			n += 1
+	_check(n == 0 and CState.stance(CState.army(cs.ps, army0)) == CData.STANCE_FIELD, "back in the field: the stance order is gone")
+	cs.set_move(army0, CData.region_index("campania"))
+	cs.select_army(army0)
+	await process_frame
+	_tap_button("cancel_move", "Cancel move")
+
+
+func _s_cancel_check() -> void:
+	_check(cs.planned_move(army0) == -1, "Cancel move in the army card drops the march")
+
+
+func _s_stored_setup() -> void:
+	# A march stored from an earlier turn.
+	var a := CState.army(cs.st, army0)
+	a["dest"] = CData.region_index("corsica")
+	a["mode"] = CData.MODE_MARCH
+	cs._replan()
+	cs.select_army(army0)
+	await process_frame
+	var txt := ""
+	for l in cs.side_box.find_children("*", "Label", true, false):
+		txt += (l as Label).text + " "
+	_check(cs.planned_move(army0) == CData.region_index("corsica") and txt.contains("from an earlier turn"),
+		"a march from an earlier turn shows in the army card")
+	_check(cs.overlay.paths.size() >= 1, "and on the map")
+
+
+func _s_stored_stop() -> void:
+	_tap_button("cancel_move", "Cancel move (stored march)")
+
+
+func _s_stored_check() -> void:
+	var n := 0
+	for o in cs.orders:
+		if str(o["t"]) == "cancel_move" and int(o["army"]) == army0:
+			n += 1
+	_check(n == 1 and cs.planned_move(army0) == -1, "stopping it is a cancel_move order")
+	cs.remove_orders(func(o): return str(o["t"]) == "cancel_move")
+	CState.army(cs.st, army0)["dest"] = -1
+	cs._replan()
+
+
+var _raid_r := -1
+
+
+func _s_raid_setup() -> void:
+	# Rome's second army stands in Apulia (Epirus) without a siege; the
+	# Epirote army there is inside the walls.
+	_raid_r = CData.region_index("apulia")
+	var a := CState.army(cs.st, army1)
+	if a.is_empty():
+		var mine := CState.armies_of(cs.st, rome)
+		a = mine[mine.size() - 1]
+		army1 = int(a["id"])
+	a["r"] = _raid_r
+	for e in CState.armies_in(cs.st, _raid_r):
+		if int(e["f"]) == CData.faction_index("epirus"):
+			e["stance"] = CData.STANCE_GARRISON
+	cs._replan()
+	cs.select_region(_raid_r)
+	await process_frame
+	await process_frame
+	var note = cs.side_box.find_child("raided_note", true, false)
+	_check(note != null and (note as Label).text.begins_with("Raided by Rome"), "the region panel says it is raided (half income)")
+	_check(cs.side_box.find_child("raid_panel", true, false) != null and _button("raid_siege") != null and not _button("raid_siege").disabled,
+		"the raiding armies may lay siege from here")
+	_tap_button("raid_siege", "Lay siege from inside")
+
+
+func _s_raid_siege() -> void:
+	var n := 0
+	for o in cs.orders:
+		if str(o["t"]) == "siege" and int(o["r"]) == _raid_r:
+			n += 1
+	_check(n == 1 and _button("raid_siege") != null and _button("raid_siege").text == "Cancel siege", "the siege order is planned (Cancel siege)")
+	_tap_button("raid_siege", "cancel the siege order")
+
+
+func _s_raid_check() -> void:
+	var n := 0
+	for o in cs.orders:
+		if str(o["t"]) == "siege":
+			n += 1
+	_check(n == 0, "Cancel siege removes it")
+	var a := CState.army(cs.st, army1)
+	a["r"] = CData.region_index("samnium")
+	cs._replan()
+	cs.close_side()
+
+
+func _s_field_battle() -> void:
+	# An Epirote army marching into Samnium ran into Rome's field army there.
+	var st: Dictionary = cs.st
+	var ep := CData.faction_index("epirus")
+	var id := CRules.new_army_id(st, ep)
+	st["factions"][ep]["next_army"] = int(st["factions"][ep]["next_army"]) + 1
+	CRules._insert_army(st, {"id": id, "f": ep, "r": CData.region_index("apulia"), "units": [{"t": "pike", "n": 120}, {"t": "cav", "n": 60}],
+		"from": -1, "moved": 0, "busy": 0})
+	var defn := CState.army(st, army1)
+	defn["r"] = CData.region_index("samnium")
+	defn["stance"] = CData.STANCE_FIELD
+	CRules.execute_moves(st, [[id, CData.region_index("samnium"), ep, CData.MODE_MARCH, 0]])
+	var b := CState.battle_at(st, CData.region_index("samnium"))
+	_check(not b.is_empty() and str(b.get("kind", "")) == "field", "the interception is a pending field battle")
+	b.erase("new")
+	st["phase"] = "battles"
+	cs._next_step()
+
+
+func _s_field_check() -> void:
+	if _button("dlg_Continue") != null:
+		_tap_button("dlg_Continue", "summary before battles")
+		steps.push_front(_s_field_check)
+		return
+	var txt := ""
+	for l in cs.dialog_box.find_children("*", "Label", true, false):
+		txt += (l as Label).text + " "
+	_check(cs.dialog.visible and txt.contains("Field battle in Samnium") and cs.dialog_box.find_child("odds_bar", true, false) != null,
+		"the Battles list shows the field battle with the odds bar")
+	# Clean up: drop the battle.
+	var st: Dictionary = cs.st
+	for a in st["armies"]:
+		a["busy"] = 0
+	st["battles"] = []
+	st["phase"] = "plan"
+	cs.close_dialog()
+	cs._next_step()
 
 
 func _s_controls() -> void:

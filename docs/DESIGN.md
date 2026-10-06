@@ -41,6 +41,25 @@ original art.
 - Resources: money and one growth/population value. Upkeep for armies.
 - Armies recruit in owned settlements, limited by the military buildings present.
 
+### Movement (free movement, as built October 2026, state format 5)
+
+- Armies have movement points a turn by their slowest arm (foot 20,
+  cavalry only 30, with artillery 15); entering a region costs 10 (open
+  ground) or 15 (hills, ridges), +5 in heavy woods; a sea lane takes a
+  whole turn. A move order is a destination: the cheapest path is walked as
+  far as the points allow and continues on later turns. Moves resolve in
+  rounds (every army's first hop, then the second...), so armies meet where
+  they plausibly meet.
+- An enemy army in the field stops any army entering its region: a field
+  battle there (interception), so field armies screen cities. An army can
+  shelter inside a friendly settlement's walls (stance) instead.
+- Entering enemy land does not attack: an army there without a siege raids
+  it (half its income lost); laying siege or storming is a separate order
+  (or a move's mode, applied on arrival).
+- Unmoved field armies within a turn's march over land support a battle and
+  deploy on the map edge they come from. Details: CAMPAIGN.md "Free
+  movement".
+
 ### Diplomacy
 
 - States per faction pair: war, peace, trade agreement.
@@ -53,6 +72,17 @@ original art.
 - As built (October 2026): every settlement has its own battle map with
   streets, walls and gates (section 4 "Battle maps: woods and settlements").
   Climbing walls, siege towers and ladders are later.
+- Sieges (as built, October 2026, state format 4; CAMPAIGN.md "Sieges and
+  battle odds"): marching into a hostile settlement lays siege by default
+  (Assault, the battle at once, is one tap away). Since format 5 (free
+  movement) marching in raids, and laying siege or storming is chosen. A siege cuts the city's
+  income, recruiting, building and growth, runs down its supplies (2-4
+  turns by level, +1 with granaries) and then starves the garrison until it
+  surrenders. Each turn the besiegers may storm it (a settlement battle),
+  the defenders may sally, and an army of the owner's side marching in
+  relieves it; sallies and reliefs are field battles on the region's
+  terrain with the garrison riding out. Every battle shows its odds (the
+  battle formula's prediction) as a balance-of-power bar.
 
 ## 3. Pending battles
 
@@ -979,7 +1009,7 @@ radius 60 / 85 / 115 m as before):
   m, built 10 % denser), a **citadel** (Byrsa) inland on a 6 m knoll, the
   main square pushed away from it.
 - *Oppidum*: an oval (98-108 % x 78-90 %) with a kidney's dent at the back,
-  the main gate at the end of a **funnel**: the wall turns in 30-38 m at an
+  the main gate at the end of a **funnel**: the wall turns in 20-26 m at an
   offset point of the front, one arm longer than the other, big round
   towers at its mouth, the gate in its inner edge, so men at the gate are
   shot from both arms; a second (back) gate in half of the towns and
@@ -1085,6 +1115,62 @@ the main square (`agora`: the defenders' posts and the shrine).
   man slides along the obstacle instead of walking the unit's trail (which
   lies behind him); a man left in a stair after a stair move walks to its
   foot.
+- Balance pass (October 2026, after the first plan table showed walls-3
+  citadels and oppida at 12-25 % attacker wins and up to 50 % draws; each
+  change from a diagnosed freeze or grind):
+  - melee reach must cross ground (or ditch, stair foot) cells: men on
+    either side of a wall had targeted each other over the walkway and
+    tried for ever to close; a kept target is dropped once out of reach;
+  - a unit counts as cut off when its men are 8 m + half its depth from
+    the anchor while not fighting, and regroups after 10 s (it slows to a
+    quarter only past 20 m);
+  - storming units spread over the defenders (each other unit already on
+    one counts as 25 m more) and, with no defender within 45 m, go for the
+    plaza even when all out (hunting the last defenders anywhere had let
+    them hold out); hunting anywhere only at a contested plaza;
+  - **the town is lost**: while the attackers' men inside the walls are 3
+    times the defenders' ready men, after 2 minutes every defending unit
+    (walls and citadel included) loses 6 morale a second and does not
+    recover (`_town_lost`, hashed counter `cit_siege`);
+  - a citadel's gate has 60 % of the outer gates' hit points; batteries out
+    of reach move up to 70 % of their range from it;
+  - the oppidum's funnel is 20-26 m deep and 8 m wider at its gate edge, and
+    an oppidum gets no ditch (it would run into the funnel and leave one
+    causeway under fire from both arms);
+  - the attacker withdraws below 35 % of its starting strength when weaker
+    than the defenders (was 20 %); all out and stalled 5 more minutes it
+    withdraws unless 1.5x stronger;
+  - every gate in the street graph is joined to its own outside and inside
+    points (a citadel's short gate edge had cut its interior off the graph,
+    so units sent to its plaza went "straight on" into walls);
+  - settlement-map target searches scan rings of cells outward and stop
+    once nothing nearer can remain (same nearest man, except that the
+    64-man budget is spent on nearer cells first).
+- Round 3 (2026-10-06): battlement cover by wall level 25 / 35 / 65 %
+  (was 35 % at every level) and, behind level 3 walls, "the town is lost"
+  drains 3 morale a second instead of 6. Walls 3, 8 seeds (attacker /
+  defender / draw %): ring plain 100/0/0, ring hill 100/0/0, castrum
+  100/0/0, polis coastal 87/0/12, polis plain 87/0/12, punic 100/0/0,
+  oppidum spur 62/37/0, oppidum plain 75/12/12. The cover barely moves the
+  easy plans: the attackers' losses come from the street fighting, not
+  from shooting at the walls; a 60-85 % band on every plan needs a lever
+  in the town fight (open). The stall clock now starts only after 4
+  minutes of approach (bombarding, then hacking): with the rate-based
+  stall the attacker had given up during the approach.
+- Breach performance (round 3), no behaviour change except where noted:
+  enemy men per 16 m block counted in `_build_grid` so a settlement search
+  with no enemy near returns at once; searches skip cells that cannot hold
+  anyone nearer than the best so far (budget order changes: noted); a lean
+  branch for men who only follow their slot (hash-identical); line-of-sight
+  checks skip 8 m at a time through obstacle-free 16 m blocks
+  (hash-identical); on settlement maps half the men who just lost their
+  target search at once and the rest at their next regular search (a
+  behaviour change: it halves the search bursts when a unit breaks).
+  Idle machine, mean / p95 / max ms: bench_4000_city 2.80 / 5.18 / 6.70,
+  polis 2.97 / 4.74 / 6.48, castrum 2.85 / 4.89 / 6.41 (were 2.95 / 5.94 /
+  7.56, 3.18 / 5.36 / 7.55, 3.10 / 5.72 / 8.54); in the same session the
+  unchanged flat bench_4000 measured 2.89 / 4.79 / 7.78 (2.65 / 4.45 /
+  5.88 an hour earlier), so the maxima carry ~1 ms of machine noise.
 - Attackers' stall watch: under 10 defenders killed (a gate's 100 hp
   counts as one) in 2.5 minutes is a stall (it used to be any death at
   all, so a trickle of losses kept a hopeless assault going): all out if
@@ -1111,48 +1197,49 @@ same ticks.
 
 **Measured** (desktop, Ryzen 7 5800X; `tests/matchups.gd -- --only=plans
 --seeds=8`: a city held by its garrison and a 4-unit field army against
-the standard 12-unit attacker, AI vs AI, 8 seeds a row; wins attacker /
-defender / draws %, minutes to decide, attackers / defenders killed):
+the standard 12-unit attacker, AI vs AI, 8 seeds a row; attacker /
+defender / draw %, mean minutes to decide). First table as the plans
+landed, second after the balance pass:
 
 | Plan, site | walls 1 | walls 2 | walls 3 |
 |---|---|---|---|
-| ring, plain (baseline) | 100/0/0, 7.6 min, 349/429 | 100/0/0, 10.3, 470/545 | 100/0/0, 9.4, 473/599 |
-| ring, hill (plateau) | 100/0/0, 10.1, 367/498 | 87/12/0, 10.0, 436/478 | 100/0/0, 11.2, 485/558 |
-| castrum, plain (ditch at 3) | 100/0/0, 5.4, 291/293 | 100/0/0, 6.9, 386/333 | 75/25/0, 8.5, 476/401 |
-| polis, coastal hill | 87/0/12, 10.9, 403/595 | 75/0/25, 11.5, 400/674 | 62/25/12, 12.3, 498/631 |
-| polis, plain | 87/0/12, 11.0, 418/562 | 75/25/0, 10.7, 444/607 | 25/37/37, 12.8, 491/559 |
-| punic, coast | 100/0/0, 9.1, 383/611 | 87/12/0, 10.7, 466/650 | 25/50/25, 12.1, 550/552 |
-| oppidum, spur | 75/0/25, 9.9, 404/523 | 50/37/12, 11.5, 503/597 | 12/50/37, 11.7, 600/441 |
-| oppidum, plain | 50/0/50, 11.2, 405/428 | 62/25/12, 10.0, 575/539 | 12/37/50, 13.8, 583/386 |
+| ring, plain (baseline) | 100/0/0, 7.6 -> 100/0/0, 5.7 | 100/0/0, 10.3 -> 100/0/0, 5.8 | 100/0/0, 9.4 -> 100/0/0, 7.4 |
+| ring, hill (plateau) | 100/0/0, 10.1 -> 100/0/0, 5.9 | 87/12/0, 10.0 -> 100/0/0, 6.8 | 100/0/0, 11.2 -> 87/12/0, 7.7 |
+| castrum, plain (ditch at 3) | 100/0/0, 5.4 -> 100/0/0, 4.7 | 100/0/0, 6.9 -> 100/0/0, 5.2 | 75/25/0, 8.5 -> 100/0/0, 6.3 |
+| polis, coastal hill | 87/0/12, 10.9 -> 100/0/0, 7.6 | 75/0/25, 11.5 -> 87/12/0, 9.1 | 62/25/12, 12.3 -> 100/0/0, 9.6 |
+| polis, plain | 87/0/12, 11.0 -> 100/0/0, 7.7 | 75/25/0, 10.7 -> 87/12/0, 9.0 | 25/37/37, 12.8 -> 100/0/0, 9.0 |
+| punic, coast | 100/0/0, 9.1 -> 100/0/0, 7.8 | 87/12/0, 10.7 -> 100/0/0, 9.5 | 25/50/25, 12.1 -> 75/25/0, 10.4 |
+| oppidum, spur | 75/0/25, 9.9 -> 100/0/0, 6.9 | 50/37/12, 11.5 -> 87/12/0, 7.6 | 12/50/37, 11.7 -> 75/12/12, 8.5 |
+| oppidum, plain | 50/0/50, 11.2 -> 100/0/0, 6.5 | 62/25/12, 10.0 -> 75/25/0, 7.9 | 12/37/50, 13.8 -> 50/37/12, 8.9 |
 
-- The citadel and the funnel cost the attacker more than the plain ring:
-  longer battles, more draws and defender wins, and (oppidum) more
-  attackers killed; with a citadel the defenders fall back into it in 7-8
-  of 8 battles and the attackers broke its gate in 1-8 of 8; captures
-  come from the plaza (castrum, ring, oppidum) or not at all (citadels:
-  the defenders were destroyed or broke first).
-- **Not degenerate at walls 1-2, too strong at walls 3** for the citadel
-  and oppidum plans: at walls 3 the attacker wins 12-25 %, and the oppidum
-  and polis draw up to 50 % at the 15-minute limit. The draws are a slow
-  grind (about 10 defenders a minute die at a funnel gate or the citadel's
-  8 m gate, where only a few men at a time can fight), not a deadlock.
-  Open: tune before relying on walls 3 in the campaign (see STATUS).
+- After the pass: draws at most 1 in 8 (two oppidum rows at walls 3),
+  every row decided in 4.7-10.4 minutes on average; at walls 3 the
+  attacker wins 50-100 %: the oppidum on a plain is still the hardest (50
+  %), the ring, castrum and polis are now easy (87-100 %, as the ring
+  already was before). A 60-80 % band at walls 3 on every plan would need
+  stronger walls-3 defences (rules), not a weaker AI: left open.
+- The citadel and the funnel still cost the attacker more than the ring
+  (polis / punic kill 600-670 defenders but take 8-10 min; the oppidum
+  costs up to 490 attackers at walls 3 against 370 for the ring).
 - Castrum on a plain with a ditch: foot use the causeways; in a scripted
   crossing heavy foot wade it (119 unit-ticks in it), riders never enter.
-- Benchmarks (before -> after, mean / p95 / max ms per tick):
-  bench_4000 2.71 / 4.57 / 5.89 -> 2.73 / 4.62 / 6.15 (code unchanged on
-  flat maps: noise); bench_4000_hills 2.99 / 4.26 / 6.20 -> 3.07 / 4.45 /
-  6.80 (likewise); bench_4000_city 2.80 / 4.95 / 7.68 -> 2.83 / 4.92 / 7.49
-  (now decided at 8.4 min); new bench_4000_polis (coastal hill, acropolis)
-  2.87 / 4.77 / 7.38-9.51, setup 141 ms; new bench_4000_castrum (plain,
-  walls 3) 2.86 / 5.04 / 7.36, setup 109 ms. No worst tick builds a path
-  table any more (at most 2 a tick); the ticks over the 6.45 ms budget are
-  a plateau of the crowded breach melee (~250-320 obstacle-checked target
-  searches a tick, 6.4-7.4 ms over ~150 ticks), not a spike.
-- Auto-resolve wall time (`tests/campaign_battles.gd --only=timing`, before
-  -> after): 12 v 12 full 5.4 / 6.4 -> 6.8 / 6.1 s, half 3.7 / 3.4 -> 4.3 /
-  3.9 s; 24 v 24 full 12.2 / 12.5 -> 15.3 / 13.7 s, half (used) 7.2 / 7.1
-  -> 2.9 / 2.8 s (those two now end at 3.5 min); per tick 10-20 % dearer.
+- Benchmarks (mean / p95 / max ms per tick; milestone start -> plans
+  landed -> after the balance pass, the last under load from another
+  agent's runs, max values +-1 ms): bench_4000 2.71 / 4.57 / 5.89 -> 2.73 /
+  4.62 / 6.15 -> 2.80 / 4.70 / 7.23 (flat code unchanged: noise);
+  bench_4000_city 2.80 / 4.95 / 7.68 -> 2.83 / 4.92 / 7.49 -> 2.95 / 5.94 /
+  7.56; bench_4000_polis - / 2.87 / 4.77 / 7.38 -> 3.18 / 5.36 / 7.55;
+  bench_4000_castrum - / 2.86 / 5.04 / 7.36 -> 3.10 / 5.72 / 8.54. No worst
+  tick builds a path table. The breach ticks are volume: ~1,600 men inside
+  a unit-level contact box take the full per-man contact path (~3 µs each)
+  while only ~200 target searches, ~115 slides and ~14 blows happen a tick;
+  the balance pass puts more men in the town at once, so p95 rose. The fix
+  is per-man contact gating (or splitting the tick), not search: open.
+- Auto-resolve wall time (`tests/campaign_battles.gd --only=timing`;
+  start -> plans -> balance pass, the last under load): 12 v 12 full 5.4 /
+  6.4 -> 6.8 / 6.1 -> 6.2 / 8.0 s; half 3.7 / 3.4 -> 4.3 / 3.9 -> 3.9 / 3.9
+  s; 24 v 24 full 12.2 / 12.5 -> 15.3 / 13.7 -> 15.2 / 14.3 s; half (used)
+  7.2 / 7.1 -> 2.9 / 2.8 -> 3.2 / 3.0 s.
 - Generation: 15-110 ms a map (punic cities with walls 3 and a ditch the
   most), terrain 5-40 ms.
 

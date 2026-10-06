@@ -9,8 +9,17 @@ extends RefCounted
 ##   {"t": "move", "army": id, "to": region, "mode": 0 | 1}
 ##        (mode, state version 4: into a hostile region 0 lays siege (the
 ##        default when missing), 1 assaults at once; see "Sieges" below)
-##   {"t": "assault", "r": region}  (version 4: the besiegers storm it)
+##        (version 5: "to" is the destination, any region the army can
+##        reach; the path is computed at resolution and walked as far as the
+##        army's movement points allow; mode 2 marches in without attacking
+##        (raiding); mode 0 / 1 lay siege / assault on arrival; "persist" 1
+##        keeps marching on later turns: the army stores dest and mode)
+##   {"t": "assault", "r": region}  (version 4: the besiegers storm it;
+##        version 5 also from inside the region without a siege)
 ##   {"t": "sally", "r": region}    (version 4: the besieged ride out)
+##   {"t": "siege", "r": region}    (version 5: lay siege from inside)
+##   {"t": "stance", "a": army id, "s": 0 field | 1 inside the walls} (v5)
+##   {"t": "cancel_move", "army": id}  (version 5: forget a stored dest)
 ##   {"t": "recruit", "r": region, "unit": unit type key}
 ##   {"t": "build", "r": region, "chain": building chain index}
 ##   {"t": "merge", "army": id, "into": id}             (same region)
@@ -93,6 +102,12 @@ static func apply_order(st: Dictionary, f: int, o: Dictionary) -> String:
 			return can_assault(st, f, int(o.get("r", -1)))
 		"sally":
 			return can_sally(st, f, int(o.get("r", -1)))
+		"siege":
+			return can_siege(st, f, int(o.get("r", -1)))
+		"stance":
+			return _set_stance(st, f, int(o.get("a", -1)), int(o.get("s", 0)))
+		"cancel_move":
+			return _cancel_move(st, f, int(o.get("army", -1)))
 	return "unknown order"
 
 
@@ -216,6 +231,10 @@ static func _merge(st: Dictionary, f: int, id: int, into: int) -> String:
 	if CState.unit_count(a) + CState.unit_count(b) > CData.ARMY_MAX:
 		return "more than %d units" % CData.ARMY_MAX
 	(b["units"] as Array).append_array(a["units"])
+	if CState.moves_on(st):
+		# The merged army moves at the pace of its slower part.
+		b["mp"] = mini(mini(CState.mp(a), CState.mp(b)), CState.max_mp(b))
+		b["moved"] = maxi(int(a["moved"]), int(b["moved"]))
 	st["armies"].remove_at(CState.army_index(st, id))
 	return ""
 
@@ -247,8 +266,13 @@ static func _split(st: Dictionary, f: int, id: int, idx, new_id: int) -> String:
 		moved.push_front((a["units"] as Array)[list[k]])
 		(a["units"] as Array).remove_at(list[k])
 	st["factions"][f]["next_army"] = int(st["factions"][f]["next_army"]) + 1
-	_insert_army(st, {"id": new_id, "f": f, "r": int(a["r"]), "units": moved,
-		"from": int(a["from"]), "moved": int(a["moved"]), "busy": 0})
+	var na := {"id": new_id, "f": f, "r": int(a["r"]), "units": moved,
+		"from": int(a["from"]), "moved": int(a["moved"]), "busy": 0}
+	if CState.moves_on(st):
+		na["mp"] = mini(CState.mp(a), CState.max_mp(na))
+		na["stance"] = CState.stance(a)
+		a["mp"] = mini(CState.mp(a), CState.max_mp(a))
+	_insert_army(st, na)
 	return ""
 
 
@@ -267,6 +291,8 @@ static func _disband(st: Dictionary, f: int, id: int, idx) -> String:
 
 
 static func _insert_army(st: Dictionary, a: Dictionary) -> void:
+	if CState.moves_on(st):
+		CState.army_defaults(a)
 	var arr: Array = st["armies"]
 	var i := 0
 	while i < arr.size() and int(arr[i]["id"]) < int(a["id"]):
@@ -274,10 +300,13 @@ static func _insert_army(st: Dictionary, a: Dictionary) -> void:
 	arr.insert(i, a)
 
 
-## "" if army a (of faction f, -1 = its own) may move to region `to` this turn.
+## "" if army a (of faction f, -1 = its own) may move to region `to` this
+## turn (version 5: march towards it, any region it can reach).
 static func can_move(st: Dictionary, a: Dictionary, to: int, f: int = -1) -> String:
 	if a.is_empty() or (f >= 0 and int(a["f"]) != f):
 		return "no such army"
+	if CState.moves_on(st):
+		return _can_march(st, a, to)
 	if int(a["busy"]) != 0:
 		return "in a battle"
 	if int(a["moved"]) != 0:
@@ -301,9 +330,18 @@ static func can_move(st: Dictionary, a: Dictionary, to: int, f: int = -1) -> Str
 	return "at peace with " + CData.faction_name(o)
 
 
-## Regions army a can move to (sorted).
-static func move_targets(st: Dictionary, a: Dictionary) -> Array[int]:
+## Regions army a can move to (sorted). Version 5: every region it can
+## reach (this_turn: only those it reaches this turn).
+static func move_targets(st: Dictionary, a: Dictionary, this_turn: bool = false) -> Array[int]:
 	var out: Array[int] = []
+	if CState.moves_on(st):
+		if a.is_empty() or int(a["busy"]) != 0 or int(a["moved"]) != 0 or siege_role(st, a) == 2:
+			return out
+		var rc := reach(st, a)
+		for r in CData.region_count():
+			if r != int(a["r"]) and int(rc["t"][r]) < INF and (not this_turn or int(rc["t"][r]) == 0):
+				out.append(r)
+		return out
 	for e in CData.adjacent(int(a["r"])):
 		if can_move(st, a, int(e[0])) == "":
 			out.append(int(e[0]))
@@ -360,12 +398,12 @@ static func _arrive(a: Dictionary, to: int) -> void:
 ## attackers if it is on their side (and at war with the owner), the
 ## defenders if it is on the owner's side, while that side has room for its
 ## units (BATTLE_SIDE_MAX field units). Returns "" or why it was bounced.
-static func join_battle(st: Dictionary, a: Dictionary, b: Dictionary) -> String:
+static func join_battle(st: Dictionary, a: Dictionary, b: Dictionary, marching: bool = false) -> String:
 	if a.is_empty():
 		return "no such army"
 	if int(a["busy"]) != 0:
 		return "in a battle"
-	if int(a["moved"]) != 0:
+	if int(a["moved"]) != 0 and not marching:
 		return "already moved"
 	var to := int(b["r"])
 	if CData.link(int(a["r"]), to) < 0:
@@ -414,6 +452,551 @@ static func start_battle(st: Dictionary, r: int, a: Dictionary) -> Dictionary:
 	st["next_battle"] = int(st["next_battle"]) + 1
 	(st["battles"] as Array).append(b)
 	return b
+
+
+# ------------------------------------------------ free movement (v5) ---
+# State version 5 (CState.moves_on): armies have movement points (CState
+# max_mp by their slowest arm), pay CData.move_cost to enter a region (a
+# sea lane needs full points and takes them all), and walk the cheapest
+# path to a destination hop by hop. A phase's moves run in rounds: round k
+# moves every army's k-th hop, armies by id within a round. An enemy army
+# in the field stops an army entering its region: a field battle there
+# (kind "field"). Entering hostile land does not attack by itself (raiding:
+# the owner gets half the region's income); laying siege or assaulting is
+# an order (or a move's mode, applied on arrival).
+
+const INF := 1 << 30
+
+
+## "" if faction f may enter region r (pass through or stop there), else
+## why not: a battle pending from an earlier turn (one started this turn
+## can be joined), a siege by a third party, a faction at peace.
+static func can_enter(st: Dictionary, f: int, r: int) -> String:
+	var b := CState.battle_at(st, r)
+	if not b.is_empty() and int(b.get("new", 0)) == 0:
+		return "battle pending there"
+	var o := CState.owner(st, r)
+	var sg := CState.siege_at(st, r)
+	if not sg.is_empty():
+		if (CState.friendly(st, f, int(sg["f"])) and CState.at_war(st, f, o)) or CState.friendly(st, f, o):
+			return ""
+		return "besieged by " + CData.faction_name(int(sg["f"]))
+	if CState.friendly(st, f, o) or CState.at_war(st, f, o):
+		return ""
+	return "at peace with " + CData.faction_name(o)
+
+
+## Cheapest paths of army a from where it stands (Dijkstra over
+## CData.adjacent, regions it may enter): per region "t" the turn it gets
+## there (0 this turn, INF never), "m" the points it has left then, "prev"
+## the region before it on the path. Ordered by (turn, most points left),
+## ties by region index. land_only: no sea lanes. ok_in: optional per-region
+## 1 / 0 for can_enter of the army's faction (callers planning many armies).
+static func reach(st: Dictionary, a: Dictionary, land_only: bool = false, ok_in: Array[int] = []) -> Dictionary:
+	_tables()
+	var n := CData.region_count()
+	var f := int(a["f"])
+	var full := CState.max_mp(a)
+	var t: Array[int] = []
+	var m: Array[int] = []
+	var prev: Array[int] = []
+	var done: Array[int] = []
+	var ok: Array[int] = []
+	t.resize(n)
+	m.resize(n)
+	prev.resize(n)
+	done.resize(n)
+	t.fill(INF)
+	m.fill(-1)
+	prev.fill(-1)
+	done.fill(0)
+	if ok_in.size() == n:
+		ok = ok_in
+	else:
+		ok.resize(n)
+		ok.fill(-1)  # -1 unknown, 0 no, 1 yes
+	var s := int(a["r"])
+	t[s] = 0
+	m[s] = clampi(CState.mp(a), 0, full)
+	var open: Array[int] = [s]
+	while not open.is_empty():
+		var bi := 0
+		for i in range(1, open.size()):
+			var r := open[i]
+			var u0 := open[bi]
+			if t[r] < t[u0] or (t[r] == t[u0] and (m[r] > m[u0] or (m[r] == m[u0] and r < u0))):
+				bi = i
+		var u := open[bi]
+		open.remove_at(bi)
+		if done[u] != 0:
+			continue
+		done[u] = 1
+		var nb: Array[int] = _t_adj[u]
+		var sea_l: Array[int] = _t_sea[u]
+		for k in nb.size():
+			var v := nb[k]
+			var sea := sea_l[k] == 1
+			if done[v] != 0 or (sea and land_only):
+				continue
+			if ok[v] < 0:
+				ok[v] = 1 if can_enter(st, f, v) == "" else 0
+			if ok[v] == 0:
+				continue
+			var nt := t[u]
+			var nm := 0
+			if sea:
+				if m[u] != full:
+					nt += 1
+			else:
+				var c := _t_cost[v]
+				if m[u] >= c:
+					nm = m[u] - c
+				elif m[u] != full:
+					nt += 1
+					nm = maxi(full - c, 0)
+			if nt < t[v] or (nt == t[v] and nm > m[v]):
+				if t[v] >= INF:
+					open.append(v)
+				elif not open.has(v):
+					open.append(v)
+				t[v] = nt
+				m[v] = nm
+				prev[v] = u
+	return {"t": t, "m": m, "prev": prev}
+
+
+static var _t_adj: Array = []
+static var _t_sea: Array = []
+static var _t_cost: Array[int] = []
+
+
+## Static tables for reach(): neighbours, link kinds and entry costs.
+static func _tables() -> void:
+	if not _t_cost.is_empty():
+		return
+	for r in CData.region_count():
+		var nb: Array[int] = []
+		var sk: Array[int] = []
+		for e in CData.adjacent(r):
+			nb.append(int(e[0]))
+			sk.append(int(e[1]))
+		_t_adj.append(nb)
+		_t_sea.append(sk)
+		_t_cost.append(CData.move_cost(r))
+
+
+## The hops from the army's region to `to` on reach() result rc (empty if
+## unreachable or there already).
+static func path_of(rc: Dictionary, to: int) -> Array:
+	var out: Array = []
+	if to < 0 or int(rc["t"][to]) >= INF:
+		return out
+	var r := to
+	while int(rc["prev"][r]) >= 0:
+		out.push_front(r)
+		r = int(rc["prev"][r])
+	return out
+
+
+static func _can_march(st: Dictionary, a: Dictionary, to: int, rc: Dictionary = {}) -> String:
+	if int(a["busy"]) != 0:
+		return "in a battle"
+	if int(a["moved"]) != 0:
+		return "already moved"
+	if to < 0 or to >= CData.region_count():
+		return "no route"
+	if siege_role(st, a) == 2:
+		return "besieged"
+	if to == int(a["r"]):
+		return "already there"
+	var why := can_enter(st, int(a["f"]), to)
+	if why != "":
+		return why
+	if int((rc if not rc.is_empty() else reach(st, a))["t"][to]) >= INF:
+		return "no route"
+	return ""
+
+
+## Version 5: run one phase's moves in rounds. moves: [[army id, dest,
+## faction, mode, persist], ...]. Each army's path is computed now (the
+## state as the phase starts); round k moves every army's k-th hop, by army
+## id. An army stops when out of points, when it enters a battle (joins one
+## started this turn, is intercepted by an enemy field army, relieves a
+## siege) or is refused; with persist it keeps dest and mode for next turn.
+## Arriving at dest with mode siege / assault in hostile land lays siege /
+## storms the settlement (a field battle first if enemy field armies are
+## there: the intent is kept and acted on after a won battle).
+static func execute_moves(st: Dictionary, moves: Array) -> void:
+	var list := moves.duplicate()
+	list.sort_custom(func(x, y): return int(x[0]) < int(y[0]))
+	var plans: Array = []
+	var seen := {}
+	for mv in list:
+		var id := int(mv[0])
+		if seen.has(id):
+			continue
+		seen[id] = 1
+		var a := CState.army(st, id)
+		if a.is_empty() or int(a["f"]) != int(mv[2]):
+			continue
+		var dest := int(mv[1])
+		var mode := int(mv[3])
+		var persist := int(mv[4]) if (mv as Array).size() > 4 else 0
+		var why := ""
+		var rc := {}
+		if dest == int(a["r"]):
+			why = _can_act_here(st, a, mode)
+		else:
+			rc = reach(st, a)
+			why = _can_march(st, a, dest, rc)
+		if why != "":
+			event(st, {"k": "move_failed", "f": int(a["f"]), "army": id, "to": dest, "why": why})
+			a["dest"] = -1
+			a["mode"] = CData.MODE_MARCH
+			continue
+		var path: Array = [] if dest == int(a["r"]) else path_of(rc, dest)
+		plans.append({"id": id, "path": path, "k": 0, "dest": dest, "mode": mode, "persist": persist, "stop": 0})
+	# Armies already where they want to act (a stored siege / assault).
+	for p in plans:
+		if (p["path"] as Array).is_empty():
+			_act_here(st, CState.army(st, int(p["id"])), int(p["mode"]))
+	var moving := true
+	while moving:
+		moving = false
+		for p in plans:
+			var path: Array = p["path"]
+			if int(p["stop"]) != 0 or int(p["k"]) >= path.size():
+				continue
+			var a := CState.army(st, int(p["id"]))
+			if a.is_empty() or int(a["busy"]) != 0:
+				p["stop"] = 1
+				continue
+			var to := int(path[int(p["k"])])
+			var full := CState.max_mp(a)
+			var left := CState.mp(a)
+			var cost := 0
+			if CData.link(int(a["r"]), to) == 1:
+				if left < full:
+					p["stop"] = 1
+					continue
+				cost = left
+			else:
+				cost = CData.move_cost(to)
+				if left < cost:
+					if left < full:
+						p["stop"] = 1
+						continue
+					cost = left
+			var final := int(p["k"]) == path.size() - 1
+			var res := _hop(st, a, to, cost, final, int(p["mode"]))
+			if res == "" or res == "stop":
+				p["k"] = int(p["k"]) + 1
+				moving = true
+			if res != "":
+				p["stop"] = 1
+			if res != "" and res != "stop":
+				event(st, {"k": "move_failed", "f": int(a["f"]), "army": int(a["id"]), "to": to, "why": res})
+	for p in plans:
+		var a := CState.army(st, int(p["id"]))
+		if a.is_empty():
+			continue
+		var dest := int(p["dest"])
+		if int(a["r"]) == dest:
+			if not _intent_pending(st, a):
+				a["dest"] = -1
+				a["mode"] = CData.MODE_MARCH
+		elif int(p["persist"]) != 0:
+			a["dest"] = dest
+			a["mode"] = int(p["mode"])
+		else:
+			a["dest"] = -1
+			a["mode"] = CData.MODE_MARCH
+
+
+## Army a stands at its destination with a siege / assault that waits for a
+## field battle there to be won (see _act_here).
+static func _intent_pending(st: Dictionary, a: Dictionary) -> bool:
+	if int(a["dest"]) != int(a["r"]) or int(a["mode"]) == CData.MODE_MARCH:
+		return false
+	var b := CState.battle_at(st, int(a["r"]))
+	return not b.is_empty() and str(b.get("kind", "")) == "field" and (b["att"] as Array).has(int(a["id"]))
+
+
+## One hop of a march into `to` for `cost` points. Returns "" (moved on),
+## "stop" (it entered and its march ends: a battle) or why it was refused.
+static func _hop(st: Dictionary, a: Dictionary, to: int, cost: int, final: bool, mode: int) -> String:
+	var f := int(a["f"])
+	var b := CState.battle_at(st, to)
+	if not b.is_empty():
+		if int(b.get("new", 0)) == 0:
+			return "battle pending there"
+		var jw := join_battle(st, a, b, true)
+		if jw != "":
+			return jw
+		_spend(a, cost)
+		return "stop"
+	var why := can_enter(st, f, to)
+	if why != "":
+		return why
+	var o := CState.owner(st, to)
+	var left := int(a["r"])
+	var sg := CState.siege_at(st, to)
+	if not sg.is_empty():
+		_arrive(a, to)
+		_spend(a, cost)
+		_left_siege(st, left)
+		if CState.friendly(st, f, int(sg["f"])) and CState.at_war(st, f, o):
+			_set_from(sg, int(a["id"]), left)
+			if final and mode == CData.MODE_ASSAULT:
+				start_siege_battle(st, to, "assault")
+				return "stop"
+			return ""
+		start_siege_battle(st, to, "relief", a)
+		return "stop"
+	var foes := hostile_field(st, to, f)
+	_arrive(a, to)
+	_spend(a, cost)
+	_left_siege(st, left)
+	if not foes.is_empty():
+		var fb := start_field_battle(st, to, [a], foes)
+		if final and mode != CData.MODE_MARCH and CState.at_war(st, f, o):
+			a["dest"] = to
+			a["mode"] = mode
+		event(st, {"k": "intercepted", "r": to, "f": f, "by": int(fb["def_f"]), "army": int(a["id"])})
+		return "stop"
+	if final and mode != CData.MODE_MARCH and CState.at_war(st, f, o):
+		_act_here(st, a, mode)
+	return ""
+
+
+static func _spend(a: Dictionary, cost: int) -> void:
+	a["mp"] = maxi(CState.mp(a) - cost, 0)
+	a["stance"] = CData.STANCE_FIELD
+
+
+## Enemy armies (at war with f) in the field in region r, not in a battle:
+## those that stop an army entering. Only the first one's side (allies of
+## it) is returned.
+static func hostile_field(st: Dictionary, r: int, f: int) -> Array:
+	var out: Array = []
+	var lead := -1
+	for d in st["armies"]:
+		if int(d["r"]) != r or int(d["busy"]) != 0 or CState.stance(d) != CData.STANCE_FIELD:
+			continue
+		var df := int(d["f"])
+		if not CState.at_war(st, f, df):
+			continue
+		if lead < 0:
+			lead = df
+		if CState.friendly(st, df, lead):
+			out.append(d)
+	return out
+
+
+## A field battle in region r (kind "field", no settlement, no garrison):
+## the armies `att` attack the armies `defs` (each side up to
+## BATTLE_SIDE_MAX field units). def_f is the first defender's faction.
+static func start_field_battle(st: Dictionary, r: int, att: Array, defs: Array) -> Dictionary:
+	var sides := [[], []]
+	var groups := [att, defs]
+	for s in 2:
+		var count := 0
+		for a in groups[s]:
+			if count > 0 and count + CState.unit_count(a) > CData.BATTLE_SIDE_MAX:
+				continue
+			count += CState.unit_count(a)
+			sides[s].append(int(a["id"]))
+			a["busy"] = 1
+	var from: Array = []
+	for a in att:
+		if sides[0].has(int(a["id"])) and int(a["from"]) >= 0:
+			from.append([int(a["id"]), int(a["from"])])
+	for a in defs:
+		if sides[1].has(int(a["id"])) and int(a["from"]) >= 0 and int(a["from"]) != r:
+			from.append([int(a["id"]), int(a["from"])])
+	var b := {"id": int(st["next_battle"]), "r": r, "turn": int(st["turn"]), "att": sides[0], "def": sides[1],
+		"att_f": int(att[0]["f"]), "def_f": int(defs[0]["f"]), "reinf": [], "settlement": 0, "new": 1,
+		"kind": "field", "from": from, "edge": []}
+	st["next_battle"] = int(st["next_battle"]) + 1
+	(st["battles"] as Array).append(b)
+	return b
+
+
+## "" if army a, standing where it is, may lay siege (mode 0) or storm the
+## settlement (mode 1) there now.
+static func _can_act_here(st: Dictionary, a: Dictionary, mode: int) -> String:
+	if mode == CData.MODE_MARCH:
+		return "already there"
+	if int(a["busy"]) != 0:
+		return "in a battle"
+	var r := int(a["r"])
+	if not CState.at_war(st, int(a["f"]), CState.owner(st, r)):
+		return "not hostile land"
+	if not CState.battle_at(st, r).is_empty():
+		return "battle pending there"
+	var sg := CState.siege_at(st, r)
+	if not sg.is_empty() and mode == CData.MODE_SIEGE:
+		return "already besieged"
+	return ""
+
+
+## Army a (in hostile region r) lays siege (MODE_SIEGE) or storms the
+## settlement (MODE_ASSAULT) with the armies of its side there. Enemy armies
+## in the field there are fought first (a field battle; the intent is kept
+## on the army: dest r, mode, acted on when the battle is won).
+static func _act_here(st: Dictionary, a: Dictionary, mode: int) -> void:
+	if a.is_empty() or _can_act_here(st, a, mode) != "":
+		return
+	var r := int(a["r"])
+	var f := int(a["f"])
+	var sg := CState.siege_at(st, r)
+	if not sg.is_empty():
+		start_siege_battle(st, r, "assault")
+		return
+	var foes := hostile_field(st, r, f)
+	if not foes.is_empty():
+		start_field_battle(st, r, _side_here(st, r, a), foes)
+		a["dest"] = r
+		a["mode"] = mode
+		return
+	if mode == CData.MODE_SIEGE:
+		start_siege(st, r, a, int(a["from"]))
+	else:
+		var b := start_battle(st, r, a)
+		var count := CState.unit_count(a)
+		for d in _side_here(st, r, a):
+			if int(d["id"]) == int(a["id"]) or count + CState.unit_count(d) > CData.BATTLE_SIDE_MAX:
+				continue
+			count += CState.unit_count(d)
+			(b["att"] as Array).append(int(d["id"]))
+			d["busy"] = 1
+			if int(d["from"]) >= 0:
+				(b["from"] as Array).append([int(d["id"]), int(d["from"])])
+
+
+## Army a and the armies of its side in region r not in a battle (by id).
+static func _side_here(st: Dictionary, r: int, a: Dictionary) -> Array:
+	var out: Array = [a]
+	var o := CState.owner(st, r)
+	for d in st["armies"]:
+		if int(d["r"]) == r and int(d["id"]) != int(a["id"]) and int(d["busy"]) == 0 \
+				and CState.friendly(st, int(d["f"]), int(a["f"])) and CState.at_war(st, int(d["f"]), o):
+			out.append(d)
+	return out
+
+
+## The attackers won a field battle in region r: an army that meant to lay
+## siege there does so now; one that meant to storm it keeps the order for
+## next turn (its dest and mode).
+static func _after_field_win(st: Dictionary, r: int, attackers: Array) -> void:
+	for a in attackers:
+		if CState.army_index(st, int(a["id"])) < 0 or int(a["r"]) != r or int(a["dest"]) != r:
+			continue
+		if int(a["mode"]) == CData.MODE_SIEGE:
+			a["dest"] = -1
+			a["mode"] = CData.MODE_MARCH
+			if _can_act_here(st, a, CData.MODE_SIEGE) == "" and hostile_field(st, r, int(a["f"])).is_empty():
+				start_siege(st, r, a, int(a["from"]))
+
+
+## "" if faction f may order a siege of region r from inside: one of its
+## armies stands there, at war with the owner, no siege or battle yet.
+static func can_siege(st: Dictionary, f: int, r: int) -> String:
+	if not CState.moves_on(st):
+		return "no free movement in this campaign"
+	if r < 0 or r >= CData.region_count():
+		return "bad order"
+	if not CState.siege_at(st, r).is_empty():
+		return "already besieged"
+	if not CState.at_war(st, f, CState.owner(st, r)):
+		return "not hostile land"
+	if not CState.battle_at(st, r).is_empty():
+		return "battle pending there"
+	if _mine_here(st, f, r).is_empty():
+		return "none of your armies are there"
+	return ""
+
+
+## Faction f's armies in region r that are free to act (not in a battle).
+static func _mine_here(st: Dictionary, f: int, r: int) -> Array:
+	var out: Array = []
+	for a in st["armies"]:
+		if int(a["r"]) == r and int(a["f"]) == f and int(a["busy"]) == 0:
+			out.append(a)
+	return out
+
+
+static func order_siege(st: Dictionary, f: int, r: int) -> String:
+	if r >= 0 and r < CData.region_count() and CState.at_war(st, f, CState.owner(st, r)):
+		var sg := CState.siege_at(st, r)
+		if not sg.is_empty() and CState.friendly(st, f, int(sg["f"])) and int(sg["turn"]) == int(st["turn"]):
+			return ""  # the ally laid it this turn
+	var why := can_siege(st, f, r)
+	if why != "":
+		return why
+	_act_here(st, _mine_here(st, f, r)[0], CData.MODE_SIEGE)
+	return ""
+
+
+## Stance order (version 5): 1 inside the walls of a settlement of our side,
+## 0 in the field. Taking the field where enemy armies stand rides out to
+## fight them (a field battle). No points spent.
+static func _set_stance(st: Dictionary, f: int, id: int, s: int) -> String:
+	if not CState.moves_on(st):
+		return "no free movement in this campaign"
+	var a := CState.army(st, id)
+	if a.is_empty() or int(a["f"]) != f:
+		return "no such army"
+	if int(a["busy"]) != 0:
+		return "in a battle"
+	var r := int(a["r"])
+	if s != CData.STANCE_FIELD and s != CData.STANCE_GARRISON:
+		return "bad order"
+	if CState.stance(a) == s:
+		return ""
+	if not CState.siege_at(st, r).is_empty():
+		return "besieged"
+	if s == CData.STANCE_GARRISON:
+		if not CState.friendly(st, f, CState.owner(st, r)):
+			return "not your settlement"
+		a["stance"] = s
+		return ""
+	a["stance"] = s
+	var foes: Array = []
+	for d in st["armies"]:
+		if int(d["r"]) == r and int(d["busy"]) == 0 and CState.at_war(st, f, int(d["f"])):
+			if foes.is_empty() or CState.friendly(st, int(d["f"]), int(foes[0]["f"])):
+				foes.append(d)
+	if not foes.is_empty():
+		start_field_battle(st, r, [a], foes)
+	return ""
+
+
+static func _cancel_move(st: Dictionary, f: int, id: int) -> String:
+	if not CState.moves_on(st):
+		return "no free movement in this campaign"
+	var a := CState.army(st, id)
+	if a.is_empty() or int(a["f"]) != f:
+		return "no such army"
+	a["dest"] = -1
+	a["mode"] = CData.MODE_MARCH
+	return ""
+
+
+## Version 5: armies left in the land of a faction they are at peace with
+## (peace made while they stood there) go home; armies inside the walls of
+## a settlement no longer their side's take the field.
+static func _check_trespass(st: Dictionary) -> void:
+	for a in (st["armies"] as Array).duplicate():
+		if int(a["busy"]) != 0:
+			continue
+		var r := int(a["r"])
+		var o := CState.owner(st, r)
+		var af := int(a["f"])
+		if not CState.friendly(st, af, o) and CState.stance(a) != CData.STANCE_FIELD:
+			a["stance"] = CData.STANCE_FIELD
+		if not CState.friendly(st, af, o) and not CState.at_war(st, af, o) and CState.siege_at(st, r).is_empty():
+			_retreat(st, a, -1, true)
 
 
 # --------------------------------------------------------------- sieges ---
@@ -552,6 +1135,15 @@ static func can_assault(st: Dictionary, f: int, r: int) -> String:
 		return "no sieges in this campaign"
 	if r < 0 or r >= CData.region_count():
 		return "bad order"
+	if CState.siege_at(st, r).is_empty() and CState.moves_on(st):
+		# Version 5: storm it from where our armies stand (raiding).
+		if not CState.at_war(st, f, CState.owner(st, r)):
+			return "not hostile land"
+		if not CState.battle_at(st, r).is_empty():
+			return "battle pending there"
+		if _mine_here(st, f, r).is_empty():
+			return "none of your armies are there"
+		return ""
 	if CState.siege_at(st, r).is_empty():
 		return "no siege there"
 	var mine := false
@@ -594,12 +1186,15 @@ static func can_sally(st: Dictionary, f: int, r: int) -> String:
 ## Execute an assault order (both allies ordering it make one battle).
 static func order_assault(st: Dictionary, f: int, r: int) -> String:
 	var b := CState.battle_at(st, r) if r >= 0 and r < CData.region_count() else {}
-	if not b.is_empty() and str(b.get("kind", "")) == "assault" and int(b["turn"]) == int(st["turn"]) \
-			and CState.friendly(st, f, int(b["att_f"])):
-		return ""
+	if not b.is_empty() and str(b.get("kind", "")) in ["assault", "", "field"] and int(b["turn"]) == int(st["turn"]) \
+			and int(b.get("new", 0)) != 0 and CState.friendly(st, f, int(b["att_f"])):
+		return ""  # an ally's assault this turn already (both armies are in it)
 	var why := can_assault(st, f, r)
 	if why != "":
 		return why
+	if CState.siege_at(st, r).is_empty():
+		_act_here(st, _mine_here(st, f, r)[0], CData.MODE_ASSAULT)
+		return ""
 	start_siege_battle(st, r, "assault")
 	return ""
 
@@ -623,6 +1218,8 @@ static func order_sally(st: Dictionary, f: int, r: int) -> String:
 static func check_sieges(st: Dictionary) -> void:
 	if not CState.sieges_on(st):
 		return
+	if CState.moves_on(st):
+		_check_trespass(st)
 	for sg in (st["sieges"] as Array).duplicate():
 		var r := int(sg["r"])
 		var o := CState.owner(st, r)
@@ -772,6 +1369,9 @@ static func add_reinforcements(st: Dictionary, b: Dictionary) -> void:
 		for a in arm[s]:
 			counts[s] += CState.unit_count(a)
 	var leads := [int(b["att_f"]), int(b["def_f"])]
+	if CState.moves_on(st):
+		_support_by_range(st, b, counts, leads)
+		return
 	for a in st["armies"]:
 		if int(a["busy"]) != 0 or int(a["moved"]) != 0 or siege_role(st, a) != 0:
 			continue
@@ -785,6 +1385,65 @@ static func add_reinforcements(st: Dictionary, b: Dictionary) -> void:
 			counts[s] += CState.unit_count(a)
 			(b["reinf"] as Array).append(int(a["id"]))
 			a["busy"] = 1
+
+
+## Version 5: armies that did not move this turn, stand in the field and
+## can reach the battle's region this turn over land (cheapest path within
+## their full movement points; sea lanes never count) join it, until a side
+## has BATTLE_SIDE_MAX field units. Each records in b["edge"] the compass
+## sector it comes from (CData.sector of its region seen from the battle;
+## -1 already there): the battle map deploys it on that edge.
+static func _support_by_range(st: Dictionary, b: Dictionary, counts: Array, leads: Array) -> void:
+	var br := int(b["r"])
+	if not b.has("edge"):
+		b["edge"] = []
+	for a in st["armies"]:
+		if int(a["busy"]) != 0 or int(a["moved"]) != 0 or siege_role(st, a) != 0 \
+				or CState.stance(a) != CData.STANCE_FIELD:
+			continue
+		var af := int(a["f"])
+		var side := -1
+		for s in 2:
+			if side < 0 and leads[s] >= 0 and CState.friendly(st, af, leads[s]):
+				side = s
+		if side < 0 or counts[side] + CState.unit_count(a) > CData.BATTLE_SIDE_MAX:
+			continue
+		var ar := int(a["r"])
+		if ar != br and land_hops(ar, br) > CState.max_mp(a) / CData.COST_OPEN:
+			continue
+		if ar != br and int(reach(st, a, true)["t"][br]) != 0:
+			continue
+		counts[side] += CState.unit_count(a)
+		(b["reinf"] as Array).append(int(a["id"]))
+		(b["edge"] as Array).append([int(a["id"]), CData.sector(br, ar)])
+		a["busy"] = 1
+
+
+static var _land_hops: Array = []
+
+
+## Land routes between regions a and b (breadth first; 99 if none), cached.
+static func land_hops(a: int, b: int) -> int:
+	var n := CData.region_count()
+	if _land_hops.is_empty():
+		var tab: Array = []
+		for s in n:
+			var d: Array[int] = []
+			d.resize(n)
+			d.fill(99)
+			d[s] = 0
+			var q: Array[int] = [s]
+			var qi := 0
+			while qi < q.size():
+				var r := q[qi]
+				qi += 1
+				for e in CData.adjacent(r):
+					if int(e[1]) == 0 and d[int(e[0])] > d[r] + 1:
+						d[int(e[0])] = d[r] + 1
+						q.append(int(e[0]))
+			tab.append(d)
+		_land_hops = tab
+	return int(_land_hops[a][b])
 
 
 # ------------------------------------------------------------- garrison ---
@@ -834,6 +1493,9 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 	var kind := str(b.get("kind", ""))
 	# A sally or relief (field battle of a siege): the owner's side is "def".
 	var field := kind == "sally" or kind == "relief"
+	# Version 5: an interception or a fight before a siege ("field"): two
+	# groups of armies in the open, no garrison; the loser falls back.
+	var open_field := kind == "field"
 	var winner := int(outcome.get("winner", 1))
 	if winner != 0:
 		winner = 1
@@ -874,13 +1536,18 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 			now += CState.men(a)
 		lost[s] = before[s] - now
 	var rs: Dictionary = st["regions"][r]
-	rs["gar"] = clampi(int(outcome.get("garrison_pct", rs["gar"])), 0, 100)
+	if not open_field:
+		rs["gar"] = clampi(int(outcome.get("garrison_pct", rs["gar"])), 0, 100)
 	# Reinforcements stay where they are; armies in the region retreat if
 	# their side lost.
 	var loser := 1 - winner
 	for a in arm[loser]:
 		a["busy"] = 0
 		if (b["reinf"] as Array).has(int(a["id"])):
+			continue
+		if open_field:
+			# Back along the way it came, else the nearest friendly region.
+			_retreat(st, a, _origin(st, b, a), true)
 			continue
 		if field:
 			if loser == 0:
@@ -894,7 +1561,11 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 	for a in arm[winner]:
 		a["busy"] = 0
 	var new_owner := -1
-	if winner == 0 and not field:
+	if open_field:
+		st["battles"].erase(b)
+		if winner == 0:
+			_after_field_win(st, r, arm[0])
+	if winner == 0 and not field and not open_field:
 		# The attackers take the settlement: the lead attacker if it still
 		# has an army in the region, else the first attacking army there.
 		var lead := int(b["att_f"])
@@ -975,6 +1646,11 @@ static func _retreat(st: Dictionary, a: Dictionary, prefer: int, far: bool = fal
 		return
 	a["r"] = opts[0]
 	a["moved"] = 1
+	if CState.moves_on(st):
+		a["mp"] = 0
+		a["dest"] = -1
+		a["mode"] = CData.MODE_MARCH
+		a["stance"] = CData.STANCE_FIELD
 	event(st, {"k": "retreat", "f": f, "r": from, "to": opts[0], "army": int(a["id"])})
 
 
@@ -1115,8 +1791,25 @@ static func region_income(st: Dictionary, r: int) -> int:
 	if not CState.siege_at(st, r).is_empty():
 		return 0  # besieged: nothing comes in
 	var rs: Dictionary = st["regions"][r]
-	return int(CData.REGIONS[r]["wealth"]) * CData.WEALTH_INCOME + int(CData.LEVEL_INCOME[int(rs["level"])]) \
+	var inc := int(CData.REGIONS[r]["wealth"]) * CData.WEALTH_INCOME + int(CData.LEVEL_INCOME[int(rs["level"])]) \
 		+ CState.building(st, r, CData.FARM) * CData.FARM_INCOME + CState.building(st, r, CData.MARKET) * CData.MARKET_INCOME
+	if raider(st, r) >= 0:
+		inc /= 2  # raided (version 5): half the income
+	return inc
+
+
+## Version 5: the faction raiding region r (its army stands there, at war
+## with the owner, without a siege; the lowest army id), else -1.
+static func raider(st: Dictionary, r: int) -> int:
+	if not CState.moves_on(st) or not CState.siege_at(st, r).is_empty():
+		return -1
+	var o := CState.owner(st, r)
+	if o < 0:
+		return -1
+	for a in st["armies"]:
+		if int(a["r"]) == r and CState.at_war(st, int(a["f"]), o):
+			return int(a["f"])
+	return -1
 
 
 static func upkeep(st: Dictionary, f: int) -> int:
@@ -1208,8 +1901,12 @@ static func end_of_turn(st: Dictionary) -> void:
 			rs["level"] = lvl + 1
 			CState.record_built(st, r, -1, lvl + 1)
 			event(st, {"k": "grew", "r": r, "f": int(rs["owner"]), "level": lvl + 1})
+	var free_moves := CState.moves_on(st)
 	for a in st["armies"]:
 		a["busy"] = 1 if in_battle(st, int(a["id"])) else 0
+		if free_moves:
+			a["idle"] = 0 if int(a["moved"]) != 0 else int(a.get("idle", 0)) + 1
+			a["mp"] = CState.max_mp(a)
 		a["moved"] = 0
 		a["from"] = -1
 	# Proposals last one turn.
