@@ -14,6 +14,17 @@ extends SceneTree
 ## the stance toggle; Cancel move; a march stored from an earlier turn and
 ## stopping it; the raided region's note and its Lay siege button; a field
 ## battle (interception) in the Battles list with the odds bar.
+## (All of the above on a format 5 copy of the new campaign: the screens of
+## an unmigrated online campaign of that format.)
+## Format 6 (the continuous overworld), a solo campaign: selecting an army
+## shades its reach and draws the enemies' zones and its links; a tap on
+## land plans a march to that cell (x, y) drawn along the cells; the same
+## spot again cancels it; Undo brings it back; a tap on an enemy army plans
+## an attack (tgt); a tap on a hostile city a siege, with the army card's
+## on-arrival Assault switch; a tap on our own city goes inside; the stance
+## selector; a drag from an army plans a march, a drag elsewhere pans; the
+## siege panel's Assault / Continue siege / Withdraw; a resolved turn
+## replays the step log and a tap skips it.
 ## Exits 0 on success, 1 on failure.
 
 const CampaignScreen := preload("res://game/campaign/campaign_screen.gd")
@@ -22,6 +33,8 @@ const CState := preload("res://campaign/cstate.gd")
 const CRules := preload("res://campaign/crules.gd")
 const CTurn := preload("res://campaign/cturn.gd")
 const Geo := preload("res://game/campaign/map_geo.gd")
+const CGrid := preload("res://campaign/cgrid.gd")
+const MapOverlay := preload("res://game/campaign/map_overlay.gd")
 
 var cs: CampaignScreen
 var frame := 0
@@ -38,7 +51,7 @@ var _poll := 0
 func _initialize() -> void:
 	Input.use_accumulated_input = false
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
-	var st := CState.new_campaign("InputTest", 3, [rome, greeks])
+	var st := CState.as_format(CState.new_campaign("InputTest", 3, [rome, greeks]), 5)
 	cs = CampaignScreen.new()
 	cs.open({"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}, "input_test")
 	root.add_child(cs)
@@ -52,7 +65,11 @@ func _initialize() -> void:
 		_s_siege_maintain_check, _s_sally_setup, _s_sally_check, _s_siege_cleanup,
 		_s_march_tap, _s_march_check, _s_stance_inside, _s_stance_check, _s_stance_field, _s_cancel_tap, _s_cancel_check,
 		_s_stored_setup, _s_stored_stop, _s_stored_check, _s_raid_setup, _s_raid_siege, _s_raid_check, _s_field_battle, _s_field_check,
-		_s_controls, _s_controls_check, _s_done,
+		_s_controls, _s_controls_check, _s_done5,
+		_g_setup, _g_intro, _g_select, _g_tap_land, _g_check_land, _g_cancel, _g_undo, _g_attack, _g_attack_check,
+		_g_city, _g_city_check, _g_arrive_assault, _g_inside, _g_inside_check, _g_stance, _g_stance_check,
+		_g_drag_army, _g_drag_check, _g_pan, _g_pan_check, _g_siege, _g_siege_assault, _g_siege_continue, _g_siege_withdraw,
+		_g_siege_done, _g_end_turn, _g_summary, _g_replay, _g_replay_check, _s_done,
 	]
 
 
@@ -701,8 +718,297 @@ func _s_controls_check() -> void:
 	_tap_control(cs.controls_page.close_button)
 
 
-func _s_done() -> void:
+func _s_done5() -> void:
 	_check(not cs.controls_page.visible, "Controls closes")
 	_check(str(cs.st["phase"]) == "plan" and not cs.end_button.disabled, "planning resumes")
+
+
+func _s_done() -> void:
 	print("RESULT: %s" % ("PASS" if failures == 0 else "FAIL (%d)" % failures))
 	quit(0 if failures == 0 else 1)
+
+# ------------------------------------------------- the overworld (format 6) ---
+
+var g0 := -1   # Rome's army in Latium
+var g1 := -1   # Rome's army in Samnium
+var _off := Vector2.ZERO
+var _corsica := -1
+
+
+func _cell_screen(c: int) -> Vector2:
+	return cs.overlay.to_screen(MapOverlay.cell_point(c))
+
+
+func _move_order(id: int) -> Dictionary:
+	for o in cs.orders:
+		if str(o["t"]) == "move" and int(o["army"]) == id:
+			return o
+	return {}
+
+
+func _g_setup() -> void:
+	cs.queue_free()
+	var st := CState.new_campaign("Overworld", 3, [rome])
+	_check(CState.grid_on(st), "a new campaign is on the overworld grid (format %d)" % int(st["version"]))
+	cs = CampaignScreen.new()
+	cs.open({"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}, "input_test6")
+	root.add_child(cs)
+	wait = 6
+
+
+func _g_intro() -> void:
+	if cs.dialog.visible:
+		_tap_button("dlg_Start", "intro: start")
+	var mine := CState.armies_of(cs.ps, rome)
+	g0 = int(mine[0]["id"])
+	g1 = int(mine[1]["id"])
+
+
+func _g_select() -> void:
+	cs.focus_region(CData.region_index("latium"), 1.1)
+	await process_frame
+	await process_frame
+	_tap(cs.overlay.army_positions()[g0])
+	await process_frame
+	await process_frame
+	_check(cs.sel_army == g0 and cs.side.visible, "tapping the banner selects the army")
+	_check(not cs.map_view.reach_loops.is_empty(), "its reach this turn is drawn (%d outline(s))" % cs.map_view.reach_loops.size())
+	_check(not cs.overlay.zones.is_empty(), "the zones of the enemy armies are drawn (%d)" % cs.overlay.zones.size())
+
+
+func _g_tap_land() -> void:
+	_tap(_cell_screen(CState.field_cell(CData.region_index("etruria"))))
+
+
+func _g_check_land() -> void:
+	var c := CState.field_cell(CData.region_index("etruria"))
+	var o := _move_order(g0)
+	_check(not o.is_empty() and int(o.get("x", -1)) == CGrid.cx(c) and int(o.get("y", -1)) == CGrid.cy(c) and int(o.get("persist", 0)) == 1,
+		"a tap on land plans a march to that cell: %s" % str(o))
+	_check(cs.overlay.paths6.size() == 1 and int(cs.overlay.paths6[0]["now"]) == (cs.overlay.paths6[0]["pts"] as Array).size() - 1,
+		"the path is drawn along the cells, all of it this turn")
+	_check(cs.undo_button.visible, "Undo is offered")
+	_tap(_cell_screen(c))
+
+
+func _g_cancel() -> void:
+	_check(_move_order(g0).is_empty() and cs.overlay.paths6.is_empty(), "the same spot again cancels the march")
+	_tap_control(cs.undo_button)
+
+
+func _g_undo() -> void:
+	_check(not _move_order(g0).is_empty(), "Undo brings the march back")
+	cs.remove_orders(func(o): return str(o["t"]) == "move")
+	cs.close_side()
+	cs.focus_region(CData.region_index("apulia"), 1.1)
+	await process_frame
+	await process_frame
+	_tap(cs.overlay.army_positions()[g1])
+
+
+func _g_attack() -> void:
+	_check(cs.sel_army == g1, "the Samnite army selected")
+	var att := 0
+	for ln in cs.overlay.links:
+		if int(ln[2]) == 1:
+			att += 1
+	_check(att > 0, "a red line to the enemy army it can attack this turn (%d links)" % cs.overlay.links.size())
+	var ep := -1
+	for a in cs.ps["armies"]:
+		if int(a["f"]) == CData.faction_index("epirus") and int(a["r"]) == CData.region_index("apulia"):
+			ep = int(a["id"])
+	_check(ep >= 0, "an Epirote army stands in Apulia")
+	if ep >= 0:
+		_tap(cs.overlay.army_positions()[ep])
+
+
+func _g_attack_check() -> void:
+	var o := _move_order(g1)
+	_check(int(o.get("tgt", -1)) >= 0 and cs.move_kind(g1) == "attack", "a tap on an enemy army plans an attack on it: %s" % str(o))
+	_check(not cs.overlay.paths6.is_empty() and str(cs.overlay.paths6[0]["kind"]) == "attack", "drawn as an attack")
+	_tap(cs.overlay.to_screen(cs.overlay.site_point(CData.region_index("apulia"))))
+
+
+func _g_city() -> void:
+	pass
+
+
+func _g_city_check() -> void:
+	var o := _move_order(g1)
+	var s := CGrid.site(CData.region_index("apulia"))
+	_check(int(o.get("x", -1)) == CGrid.cx(s) and int(o.get("y", -1)) == CGrid.cy(s) and int(o.get("tgt", -1)) < 0
+		and cs.move_kind(g1) == "siege", "a tap on Tarentum plans a siege on arrival: %s (%s)" % [str(o), cs.move_kind(g1)])
+	_check(_button("arrive_assault") != null and _button("cancel_move") != null, "the army card offers Assault on arrival and Cancel move")
+	_check(cs.find_child("toast", true, false) == null, "no move-mode toast")
+	_tap_button("arrive_assault", "Assault on arrival")
+
+
+func _g_arrive_assault() -> void:
+	_check(cs.move_mode(g1) == CData.MODE_ASSAULT and cs.move_kind(g1) == "assault", "the march now storms the city on arrival")
+	cs.remove_orders(func(o): return str(o["t"]) == "move")
+	cs.close_side()
+	cs.focus_region(CData.region_index("latium"), 1.1)
+	await process_frame
+	await process_frame
+	cs.select_army(g0)
+	await process_frame
+	_tap(cs.overlay.to_screen(cs.overlay.site_point(CData.region_index("latium"))))
+
+
+func _g_inside() -> void:
+	pass
+
+
+func _g_inside_check() -> void:
+	_check(cs.move_kind(g0) == "inside", "a tap on our own city goes inside the walls (%s)" % cs.move_kind(g0))
+	cs.remove_orders(func(o): return str(o["t"]) == "move")
+	cs.select_army(g0)
+
+
+func _g_stance() -> void:
+	_check(_button("stance_0") != null and _button("stance_2") != null and _button("stance_3") != null and _button("stance_4") != null,
+		"the army card has the stance selector")
+	_check(_button("stance_inside") == null and _button("stance_field") == null, "no inside / field toggle")
+	_tap_button("stance_2", "Forced march")
+
+
+func _g_stance_check() -> void:
+	var n := 0
+	for o in cs.orders:
+		if str(o["t"]) == "stance" and int(o["a"]) == g0 and int(o["s"]) == CData.ST_FORCED:
+			n += 1
+	var a := CState.army(cs.ps, g0)
+	_check(n == 1 and CState.stance(a) == CData.ST_FORCED and CState.mp(a) > CData.MP6_FOOT, "forced march: the order, more points (%d)" % CState.mp(a))
+	_tap_button("stance_0", "back to Default")
+	await process_frame
+	await process_frame
+	var n2 := 0
+	for o in cs.orders:
+		if str(o["t"]) == "stance":
+			n2 += 1
+	_check(n2 == 0, "back to Default drops the stance order")
+
+
+func _drag(from: Vector2, to: Vector2) -> void:
+	var e := InputEventScreenTouch.new()
+	e.index = 0
+	e.position = _win(from)
+	e.pressed = true
+	Input.parse_input_event(e)
+	for k in range(1, 9):
+		var d := InputEventScreenDrag.new()
+		d.index = 0
+		var p := from.lerp(to, k / 8.0)
+		d.position = _win(p)
+		d.relative = (to - from) / 8.0
+		Input.parse_input_event(d)
+	var u := InputEventScreenTouch.new()
+	u.index = 0
+	u.position = _win(to)
+	u.pressed = false
+	Input.parse_input_event(u)
+
+
+func _g_drag_army() -> void:
+	cs.close_side()
+	await process_frame
+	var c := CState.field_cell(CData.region_index("campania"))
+	_drag(cs.overlay.army_positions()[g0], _cell_screen(c))
+
+
+func _g_drag_check() -> void:
+	var c := CState.field_cell(CData.region_index("campania"))
+	var o := _move_order(g0)
+	_check(int(o.get("x", -1)) == CGrid.cx(c) and int(o.get("y", -1)) == CGrid.cy(c), "dragging the army to a spot plans its march there: %s" % str(o))
+	_check(cs.overlay.drag.is_empty(), "the drag preview is gone after the release")
+	cs.remove_orders(func(o2): return str(o2["t"]) == "move")
+	cs.close_side()
+	_off = cs.offset
+
+
+func _g_pan() -> void:
+	var p := _cell_screen(CState.field_cell(CData.region_index("latium"))) + Vector2(0, 120)
+	_drag(p, p + Vector2(-90, 10))
+
+
+func _g_pan_check() -> void:
+	_check(cs.offset != _off and _move_order(g0).is_empty() and _move_order(g1).is_empty(), "a drag elsewhere pans the map and plans nothing")
+
+
+func _g_siege() -> void:
+	# Rome's first army lays siege to Aleria (Corsica, independent).
+	_corsica = CData.region_index("corsica")
+	var a := CState.army(cs.st, g0)
+	CState.place(a, CState.ring_cell(_corsica, 0))
+	CRules.start_siege(cs.st, _corsica, a, CData.region_index("latium"))
+	cs._replan()
+	cs.focus_region(_corsica, 1.1)
+	cs.select_region(_corsica)
+	await process_frame
+	await process_frame
+	_check(cs.side_box.find_child("siege_panel", true, false) != null and cs.side_box.find_child("odds_bar", true, false) != null,
+		"the besieged city's panel shows the siege with the odds")
+	_check(_button("siege_assault") != null and _button("siege_continue") != null and _button("siege_withdraw") != null
+		and _button("siege_maintain") == null and _button("siege_sally") == null, "Assault / Continue siege / Withdraw (no Maintain, no Sally)")
+	_tap_button("siege_assault", "Assault")
+
+
+func _g_siege_assault() -> void:
+	var n := 0
+	for o in cs.orders:
+		if str(o["t"]) == "assault" and int(o["r"]) == _corsica:
+			n += 1
+	_check(n == 1 and not _button("siege_continue").disabled, "the assault is ordered; Continue siege is offered")
+	_tap_button("siege_continue", "Continue siege")
+
+
+func _g_siege_continue() -> void:
+	var n := 0
+	for o in cs.orders:
+		if str(o["t"]) == "assault":
+			n += 1
+	_check(n == 0, "Continue siege drops the assault")
+	_tap_button("siege_withdraw", "Withdraw")
+
+
+func _g_siege_withdraw() -> void:
+	var o := _move_order(g0)
+	var l = cs.side_box.find_child("siege_orders", true, false)
+	_check(not o.is_empty() and l != null and (l as Label).text.contains("withdraw"), "Withdraw orders the besiegers away: %s" % str(o))
+
+
+func _g_siege_done() -> void:
+	cs.remove_orders(func(o): return str(o["t"]) == "move")
+	cs.st["sieges"] = []
+	CState.place(CState.army(cs.st, g0), CState.field_cell(CData.region_index("latium")))
+	cs._replan()
+	cs.close_side()
+	# Plan a march for the replay.
+	cs.set_move6(g0, CState.field_cell(CData.region_index("etruria")), -1)
+
+
+func _g_end_turn() -> void:
+	_tap_control(cs.end_button)
+	await process_frame
+	await process_frame
+	if _button("dlg_End_turn") != null:
+		_tap_button("dlg_End_turn", "end turn anyway")
+
+
+func _g_summary() -> void:
+	_check(int(cs.st["turn"]) == 1, "the turn resolved")
+	if cs.dialog.visible and _button("dlg_Continue") != null:
+		_tap_button("dlg_Continue", "summary continue")
+	elif cs.dialog.visible:
+		cs.close_dialog()
+
+
+func _g_replay() -> void:
+	_check(not cs.replay.is_empty(), "the turn replays from the step log (%d rounds)" % (cs.replay.get("rounds", []) as Array).size())
+	_check(not cs.overlay.replay_pos.is_empty(), "armies are drawn on their way")
+	_tap(Vector2(300, 400))
+
+
+func _g_replay_check() -> void:
+	_check(cs.replay.is_empty() and cs.overlay.replay_pos.is_empty(), "a tap skips the replay")
+	_check(int(CState.army(cs.st, g0).get("r", -1)) == CData.region_index("etruria"), "the army marched to Etruria")

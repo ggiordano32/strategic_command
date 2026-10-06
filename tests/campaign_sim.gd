@@ -1,15 +1,17 @@
 extends SceneTree
 ## AI-only campaign simulation (pacing and economy check).
-##   godot --headless --script res://tests/campaign_sim.gd [-- --seeds=4 --turns=60 --every=5 --format=4 --no-sieges --twice]
+##   godot --headless --script res://tests/campaign_sim.gd [-- --seeds=4 --turns=60 --every=5 --format=5 --no-sieges --twice]
 ## Every faction is AI. Reports per seed: regions per faction every N turns,
 ## eliminations, treasury ranges, army counts, battles and time per turn,
 ## the sieges (started, assaulted, sallies, reliefs, lifted, surrendered,
 ## the longest) and, with free movement (format 5), interceptions, raids
 ## and field battles; at the end a pacing table (largest faction at turns
 ## 15 / 30 / 60, eliminations, the first turn a faction holds 20 regions
-## with 3 key cities). --format=4 plays a format 4 state (the rules before
-## free movement), --no-sieges (= --format=3) the rules before sieges;
-## --twice plays every seed again and compares the final hashes.
+## with 3 key cities). --format=5 plays a format 5 state (region hops: the
+## rules before the continuous overworld), --format=4 the rules before free
+## movement, --no-sieges (= --format=3) the rules before sieges; --twice
+## plays every seed again and compares the final hashes. Format 6 also
+## reports contact battles, zone stops are not counted.
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -20,7 +22,7 @@ var seeds := 4
 var turns := 60
 var every := 5
 var no_sieges := false
-var fmt := 5
+var fmt := 6
 var twice := false
 var pacing: Array = []
 var sg := {}
@@ -66,14 +68,8 @@ func _run(sd: int, verbose: bool) -> String:
 	var first_win := -1
 	if true:
 		var st := CState.new_campaign("sim", 1000 + sd * 77, [])
-		if fmt <= 4:
-			for a in st["armies"]:
-				for k in ["mp", "dest", "mode", "stance", "idle"]:
-					(a as Dictionary).erase(k)
-			st["version"] = 4
-		if no_sieges:
-			st.erase("sieges")
-			st["version"] = 3
+		if fmt < CState.VERSION:
+			st = CState.as_format(st, fmt)
 		if verbose:
 			print("\n=== seed %d" % (1000 + sd * 77))
 			print("turn  " + "  ".join(short) + "  indep | armies units | treasury min..max | battles | wars | ms/turn")

@@ -3,8 +3,9 @@ extends SceneTree
 ## turns, every pending battle auto-resolved with the real battle sim (AI vs
 ## AI, as the game's Auto-resolve does), checking the state stays consistent
 ## (sieges included: the policy lays siege when weaker and storms when the
-## odds turn).
-##   godot --headless --script res://tests/campaign_solo.gd [-- --turns=20 --faction=rome --seed=5]
+## odds turn). Format 6 by default (the continuous overworld: cells, stances,
+## contact battles); --format=5 plays the region-hop rules.
+##   godot --headless --script res://tests/campaign_solo.gd [-- --turns=20 --faction=rome --seed=5 --format=5]
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -14,10 +15,12 @@ const CBattle := preload("res://campaign/cbattle.gd")
 const CAI := preload("res://campaign/cai.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const UT := preload("res://sim/unit_types.gd")
+const CGrid := preload("res://campaign/cgrid.gd")
 
 var turns := 20
 var faction := "rome"
 var seed_v := 5
+var fmt := 6
 var fails := 0
 
 
@@ -29,8 +32,12 @@ func _init() -> void:
 			faction = a.get_slice("=", 1)
 		elif a.begins_with("--seed="):
 			seed_v = int(a.get_slice("=", 1))
+		elif a.begins_with("--format="):
+			fmt = int(a.get_slice("=", 1))
 	var f := CData.faction_index(faction)
 	var st := CState.new_campaign("solo", seed_v, [f])
+	if fmt < CState.VERSION:
+		st = CState.as_format(st, fmt)
 	var battles := 0
 	var won := 0
 	var sim_ms := 0
@@ -64,7 +71,7 @@ func _init() -> void:
 		nsg += 1 if str(e["k"]) == "siege" else 0
 		nsur += 1 if str(e.get("how", "")) == "surrendered" else 0
 	print("sieges in the last two turns' events: %d started, %d surrendered; open now: %d" % [nsg, nsur, (st.get("sieges", []) as Array).size()])
-	var back := CState.from_json(CState.to_json(st))
+	var back := CState.from_json(CState.to_json(st), int(st["version"]))
 	_check(CState.state_hash(back) == CState.state_hash(st), "final state survives a JSON round trip")
 	print("auto-resolved %d battles (half-size units) in %.1f s of sim" % [battles, sim_ms / 1000.0])
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
@@ -129,6 +136,8 @@ func _plan(st: Dictionary, f: int) -> Array:
 				best_mode = CData.MODE_ASSAULT if CState.strength(a) * 100 >= d * 140 else CData.MODE_SIEGE
 		if best >= 0:
 			orders.append({"t": "move", "army": int(a["id"]), "to": best, "mode": best_mode})
+		elif CState.grid_on(ps) and CState.at_war(ps, f, CState.owner(ps, int(a["r"]))) and CState.stance(a) != CData.ST_RAID:
+			orders.append({"t": "stance", "a": int(a["id"]), "s": CData.ST_RAID})  # nothing to take: raid
 	return orders
 
 
@@ -148,11 +157,23 @@ func _consistency(st: Dictionary, t: int) -> void:
 			if int(u["n"]) <= 0 or int(u["n"]) > UT.size_of(CState.unit_type(u)):
 				ok = false
 				printerr("  army %d unit with %d men" % [id, int(u["n"])])
-		if CState.moves_on(st):
-			if int(a.get("mp", -1)) != CState.max_mp(a) and str(st["phase"]) == "plan" and int(a["moved"]) == 0:
+		if CState.grid_on(st):
+			var c := CState.cell(a)
+			if CGrid.region(c) != int(a["r"]) or not CGrid.passable(c):
 				ok = false
-				printerr("  army %d starts the turn with %d of %d points" % [id, int(a.get("mp", -1)), CState.max_mp(a)])
-			if CState.stance(a) == CData.STANCE_GARRISON and not CState.friendly(st, int(a["f"]), CState.owner(st, int(a["r"]))):
+				printerr("  army %d at cell %d (region %d) but r %d" % [id, c, CGrid.region(c), int(a["r"])])
+			var sr := CGrid.site_region(c)
+			if sr >= 0 and not CState.friendly(st, int(a["f"]), CState.owner(st, sr)) and int(a["busy"]) == 0:
+				ok = false
+				printerr("  army %d on the cell of a hostile settlement" % id)
+			if int(a.get("dest", -2)) != -2:
+				ok = false
+				printerr("  army %d still has a region destination" % id)
+		if CState.moves_on(st):
+			if int(a.get("mp", -1)) != CState.full_mp(st, a) and str(st["phase"]) == "plan" and int(a["moved"]) == 0:
+				ok = false
+				printerr("  army %d starts the turn with %d of %d points" % [id, int(a.get("mp", -1)), CState.full_mp(st, a)])
+			if not CState.grid_on(st) and CState.stance(a) == CData.STANCE_GARRISON and not CState.friendly(st, int(a["f"]), CState.owner(st, int(a["r"]))):
 				ok = false
 				printerr("  army %d inside the walls of a hostile settlement" % id)
 		var o := CState.owner(st, int(a["r"]))

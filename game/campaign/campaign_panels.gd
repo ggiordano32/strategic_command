@@ -15,6 +15,7 @@ const Kit := preload("res://game/campaign/ui_kit.gd")
 const Saves := preload("res://game/campaign/saves.gd")
 const CityPreview := preload("res://game/campaign/city_preview.gd")
 const MapGen := preload("res://sim/mapgen.gd")
+const CGrid := preload("res://campaign/cgrid.gd")
 
 var s  # the campaign screen
 var _split_sel: Dictionary = {}  # army id -> Array of selected unit indices
@@ -76,13 +77,19 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 		box.add_child(Kit.label(rel, Kit.FONT_SMALL, col, true))
 	var rd_f := CRules.raider(ps, r)
 	if rd_f >= 0:
-		var rl := Kit.label("Raided by %s: half income." % CData.faction_name(rd_f), Kit.FONT, Kit.COL_BAD if o == f else Kit.COL_GOLD, true)
+		var rtxt := "Raided by %s: half income." % CData.faction_name(rd_f)
+		if CState.grid_on(ps):
+			rtxt = "Raided by %s: it takes %d%% of the income." % [CData.faction_name(rd_f), CData.RAID_PCT]
+		var rl := Kit.label(rtxt, Kit.FONT, Kit.COL_BAD if o == f else Kit.COL_GOLD, true)
 		rl.name = "raided_note"
 		box.add_child(rl)
 	if not CState.siege_at(ps, r).is_empty():
-		_siege_section(box, r)
+		if CState.grid_on(ps):
+			_siege_section6(box, r)
+		else:
+			_siege_section(box, r)
 	elif f >= 0 and CState.at_war(ps, f, o) and CState.battle_at(ps, r).is_empty():
-		if CState.moves_on(ps) and not CRules._mine_here(ps, f, r).is_empty():
+		if CState.moves_on(ps) and not CState.grid_on(ps) and not CRules._mine_here(ps, f, r).is_empty():
 			_raid_section(box, r)
 		_attack_section(box, r)
 	var gp := CRules.growth_per_turn(ps, r)
@@ -97,8 +104,13 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 	box.add_child(vb)
 	# Armies here.
 	var here := CState.armies_in(ps, r)
+	if CState.grid_on(ps):
+		here = []
+		for a in ps["armies"]:
+			if CGrid.cheb(CState.cell(a), CGrid.site(r)) <= 1:
+				here.append(a)
 	if not here.is_empty():
-		box.add_child(Kit.section("Armies"))
+		box.add_child(Kit.section("Armies" if not CState.grid_on(ps) else "Armies at %s" % rd["city"]))
 		for a in here:
 			var bt := Kit.button("%s army: %d units, %d men" % [CData.FACTIONS[int(a["f"])]["adj"], CState.unit_count(a), CState.men(a)],
 				s.select_army.bind(int(a["id"])))
@@ -134,6 +146,12 @@ func _has_order(t: String, r: int) -> bool:
 ## state, still where they stand).
 func planned_into(r: int) -> Array:
 	var out: Array = []
+	if CState.grid_on(s.ps):
+		for a in CState.armies_of(s.ps, s.f):
+			var p6: Dictionary = s.plan6(int(a["id"]))
+			if not p6.is_empty() and int(p6["cell"]) == CGrid.site(r):
+				out.append(a)
+		return out
 	for m in s.moves:
 		if int(m[1]) == r:
 			var a := CState.army(s.ps, int(m[0]))
@@ -339,8 +357,15 @@ func _attack_section(box: VBoxContainer, r: int) -> void:
 	for m in s.moves:
 		if int(m[1]) == r and int(m[2]) == CData.MODE_ASSAULT:
 			assault += 1
+	if CState.grid_on(ps):
+		assault = 0
+		for a in into:
+			if int(s.move_mode(int(a["id"]))) == CData.MODE_ASSAULT:
+				assault += 1
 	var verb := "storm it at once" if assault > 0 or not CState.sieges_on(ps) else "lay siege (no battle this turn)"
-	if CState.moves_on(ps):
+	if CState.grid_on(ps):
+		verb = "storm it on arrival" if assault > 0 else "lay siege on arrival"
+	elif CState.moves_on(ps):
 		var marching := 0
 		for m in s.moves:
 			if int(m[1]) == r and int(m[2]) == CData.MODE_MARCH:
@@ -527,7 +552,9 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 		up += CState.upkeep_of(CState.unit_type(u))
 	box.add_child(Kit.label("%d of %d units, %d men, upkeep %d" % [CState.unit_count(a), CData.ARMY_MAX, CState.men(a), up],
 		Kit.FONT_SMALL, Kit.COL_DIM, true))
-	if mine:
+	if mine and CState.grid_on(ps):
+		_army_orders6(box, a)
+	elif mine:
 		var mv: int = s.planned_move(id)
 		var role := CRules.siege_role(ps, a)
 		if int(a["busy"]) != 0:
@@ -625,7 +652,13 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 	fl.add_child(Kit.button("Book", func():
 		var ty := CState.unit_type(units[sel[0]] if nsel > 0 else units[0])
 		s.open_unit_page(ty, Callable(), ""), 0))
-	for o in CState.armies_in(ps, r):
+	var near := CState.armies_in(ps, r)
+	if CState.grid_on(ps):
+		near = []
+		for o2 in ps["armies"]:
+			if CGrid.cheb(CState.cell(o2), CState.cell(a)) <= 1:
+				near.append(o2)
+	for o in near:
 		if int(o["id"]) != id and int(o["f"]) == af and int(o["busy"]) == 0 and CRules.siege_role(ps, o) == 0:
 			var oid := int(o["id"])
 			var mb := Kit.button("Merge into army (%d units)" % CState.unit_count(o), func():
@@ -1103,9 +1136,14 @@ func event_text(e: Dictionary, f: int) -> String:
 		"intercepted":
 			if int(e["f"]) != f and int(e["by"]) != f:
 				return ""
+			if e.has("x"):
+				return "A %s army ran into %s's army in %s: a battle." % [CData.FACTIONS[int(e["f"])]["adj"],
+					CData.faction_name(int(e["by"])), CData.REGIONS[int(e["r"])]["name"]]
 			return "A %s army marching through %s was stopped by %s's army in the field." % [CData.FACTIONS[int(e["f"])]["adj"],
 				CData.REGIONS[int(e["r"])]["name"], CData.faction_name(int(e["by"]))]
 		"retreat":
+			if e.has("x"):
+				return "A %s army fell back in %s." % [CData.FACTIONS[int(e["f"])]["adj"], CData.REGIONS[maxi(int(e["to"]), 0)]["name"]]
 			return "A %s army fell back from %s to %s." % [CData.FACTIONS[int(e["f"])]["adj"], city.call(e["r"]), city.call(e["to"])]
 		"destroyed":
 			return "A %s army of %d men was destroyed at %s with nowhere to retreat." % [CData.FACTIONS[int(e["f"])]["adj"], int(e["men"]), city.call(e["r"])]
@@ -1149,6 +1187,8 @@ func event_text(e: Dictionary, f: int) -> String:
 		"move_failed":
 			if int(e["f"]) != f:
 				return ""
+			if int(e["to"]) < 0:
+				return "An army could not move: %s." % str(e["why"])
 			return "An army could not move to %s: %s." % [city.call(e["to"]), str(e["why"])]
 		"victory":
 			return "Victory!"
@@ -1205,6 +1245,8 @@ func warnings() -> Array:
 			for e in CData.adjacent(int(a["r"])):
 				if CState.at_war(ps, f, CState.owner(ps, int(e[0]))):
 					near_enemy = true
+			if CState.grid_on(ps) and (CState.stance(a) == CData.ST_FORTIFY or CState.stance(a) == CData.ST_RAID or CRules.inside(ps, a)):
+				near_enemy = false  # holding on purpose
 			if near_enemy:
 				idle += 1
 	if idle > 0:
@@ -1317,3 +1359,299 @@ func show_export() -> void:
 	box.add_child(copy)
 	box.add_child(Kit.label("%d characters." % text.length(), Kit.FONT_SMALL, Kit.COL_DIM))
 	s.show_dialog("Export", box, [["Close", Callable()]], 620)
+
+
+# ------------------------------------------- the continuous overworld (v6) ---
+
+const STANCE_HELP := {
+	0: "Default: marches at its normal pace, attacks and lays siege; its zone of control stops enemy marches.",
+	2: "Forced march: half again as far, but it cannot attack or lay siege, has no zone of control, and fights shaken if caught.",
+	3: "Fortify: it stays put; a wider zone of control, supports battles further off and defends better in the field.",
+	4: "Raiding: a slower pace; standing in enemy land it takes half that region's income for you.",
+}
+const STANCE_ORDER: Array[int] = [0, 2, 3, 4]
+
+
+## The siege the army stands round (its region), -1 if none.
+func _siege_of(ps: Dictionary, a: Dictionary) -> int:
+	for sg in ps.get("sieges", []):
+		if CGrid.cheb(CState.cell(a), CGrid.site(int(sg["r"]))) <= 1:
+			return int(sg["r"])
+	return -1
+
+
+## Army card (version 6): what it does (its march and when it arrives, the
+## siege it is in), the on-arrival switch for a hostile settlement, Cancel
+## move, the points and the stance selector.
+func _army_orders6(box: VBoxContainer, a: Dictionary) -> void:
+	var ps: Dictionary = s.ps
+	var id := int(a["id"])
+	var role := CRules.siege_role(ps, a)
+	if int(a["busy"]) != 0:
+		box.add_child(Kit.label("In a battle.", Kit.FONT, Kit.COL_BAD))
+		return
+	var p6: Dictionary = s.plan6(id)
+	if role == 1:
+		var sr := _siege_of(ps, a)
+		var h2 := Kit.hbox(6)
+		var sg := CState.siege_at(ps, sr)
+		h2.add_child(Kit.label("Besieging %s (turn %d)." % [CData.REGIONS[sr]["city"], int(ps["turn"]) - int(sg.get("turn", ps["turn"]))],
+			Kit.FONT, Kit.COL_GOLD, true))
+		var sp := Kit.button("Siege", func(): s.select_region(sr), 80)
+		sp.name = "army_siege"
+		h2.add_child(sp)
+		box.add_child(h2)
+	elif role == 2:
+		var h3 := Kit.hbox(6)
+		h3.add_child(Kit.label("Inside the besieged walls of %s: tap a besieger to sally against it." % CData.REGIONS[int(a["r"])]["city"],
+			Kit.FONT, Kit.COL_BAD, true))
+		var sp2 := Kit.button("Siege", func(): s.select_region(int(a["r"])), 80)
+		sp2.name = "army_siege"
+		h3.add_child(sp2)
+		box.add_child(h3)
+	elif CRules.inside(ps, a):
+		box.add_child(Kit.label("Inside the walls of %s: it defends the city with the garrison; it stops no enemy and supports no battle outside." % CData.REGIONS[int(a["r"])]["city"],
+			Kit.FONT_SMALL, Kit.COL_DIM, true))
+	if not p6.is_empty():
+		var rt: Dictionary = s.route6(id)
+		var kind: String = s.move_kind(id)
+		var c := int(p6["cell"])
+		var r := CGrid.region(c)
+		var sr2 := CGrid.site_region(c)
+		var place := str(CData.REGIONS[r]["name"]) if r >= 0 else "there"
+		var verb := "Marches into %s" % place
+		match kind:
+			"inside":
+				verb = "Goes inside the walls of %s" % CData.REGIONS[sr2]["city"]
+			"siege":
+				verb = "Lays siege to %s" % CData.REGIONS[sr2]["city"]
+			"join":
+				verb = "Joins the siege of %s" % CData.REGIONS[sr2]["city"]
+			"assault":
+				verb = "Storms %s" % CData.REGIONS[sr2]["city"]
+			"relief":
+				verb = "Relieves %s" % CData.REGIONS[maxi(sr2, r)]["city"]
+			"attack", "sally":
+				var t := CState.army(ps, int(p6["tgt"]))
+				verb = "%s the %s army" % ["Sallies against" if kind == "sally" else "Attacks",
+					CData.FACTIONS[int(t["f"])]["adj"] if not t.is_empty() else "enemy"]
+		var when := ""
+		if rt.has("why"):
+			when = " - cannot march there now: %s" % str(rt["why"])
+		elif not (rt.get("t", []) as Array).is_empty():
+			var last := int(rt["t"][-1])
+			when = " (arrives this turn, %d points left)" % int(rt["left"]) if last == 0 else (" (arrives next turn)" if last == 1 else " (arrives in %d turns)" % (last + 1))
+		if bool(p6["stored"]):
+			when += ", marching on from an earlier turn"
+		var ml := Kit.label(verb + when + ".", Kit.FONT, Kit.COL_GOOD if kind in ["move", "inside"] else Kit.COL_BAD, true)
+		ml.name = "army_march"
+		box.add_child(ml)
+		var h := Kit.flow(6)
+		if kind in ["siege", "join", "assault"]:
+			h.add_child(Kit.label("On arrival:", Kit.FONT_SMALL, Kit.COL_DIM))
+			var assault := int(p6["mode"]) == CData.MODE_ASSAULT
+			var b1 := Kit.button("Lay siege" + (" (now)" if not assault else ""), func(): s.set_move_mode(id, CData.MODE_SIEGE), 0)
+			b1.name = "arrive_siege"
+			b1.disabled = not assault
+			h.add_child(b1)
+			var b2 := Kit.button("Assault" + (" (now)" if assault else ""), func(): s.set_move_mode(id, CData.MODE_ASSAULT), 0)
+			b2.name = "arrive_assault"
+			b2.disabled = assault
+			h.add_child(b2)
+		var cb := Kit.button("Cancel move", func():
+			s.set_move6(id, int(p6["cell"]), int(p6["tgt"]))
+			s.select_army(id), 110)
+		cb.name = "cancel_move"
+		h.add_child(cb)
+		box.add_child(h)
+	elif role != 2:
+		box.add_child(Kit.label("Tap the map (or drag the army) to march: the shaded area is this turn's reach; tap an enemy army to attack it, a city to besiege it.",
+			Kit.FONT_SMALL, Color.WHITE, true))
+	_movement_rows6(box, a)
+
+
+func _movement_rows6(box: VBoxContainer, a: Dictionary) -> void:
+	var ps: Dictionary = s.ps
+	var id := int(a["id"])
+	var full := CState.full_mp(ps, a)
+	var left := CState.mp(a)
+	var base := CState.max_mp(a)
+	var pace := "cavalry only" if base == CData.MP_CAV else ("artillery sets the pace" if base == CData.MP_ART else "on foot")
+	var ml := Kit.label("Movement %d of %d points this turn (%s). A cell of open ground costs %d, hills %d, ridges %d, heavy woods +%d (diagonals 1.4x); a sea lane takes a whole turn." % [
+		left, full, pace, int(CData.GRID_COST[CData.FLAT]), int(CData.GRID_COST[CData.HILL]), int(CData.GRID_COST[CData.RIDGE]),
+		CData.GRID_WOODS], Kit.FONT_SMALL, Kit.COL_DIM, true)
+	ml.name = "army_points"
+	box.add_child(ml)
+	if CRules.siege_role(ps, a) == 2:
+		return
+	var cur := CState.stance(a)
+	box.add_child(Kit.label("Stance", Kit.FONT_SMALL, Kit.COL_GOLD))
+	var fl := Kit.flow(6)
+	for sv in STANCE_ORDER:
+		var b := Kit.button(str(CData.STANCE_NAMES[sv]), func(): _set_stance6(id, sv), 0)
+		b.name = "stance_%d" % sv
+		b.toggle_mode = true
+		b.button_pressed = sv == cur
+		b.disabled = sv == cur
+		fl.add_child(b)
+	box.add_child(fl)
+	var sl := Kit.label(str(STANCE_HELP.get(cur, "")), Kit.FONT_SMALL, Kit.COL_DIM, true)
+	sl.name = "stance_help"
+	box.add_child(sl)
+
+
+## A stance order (no points spent); back to the stance it had at the start
+## of the turn removes the order.
+func _set_stance6(id: int, sv: int) -> void:
+	var base := CState.army(s.st, id)
+	var keep: Array = []
+	for o in s.orders:
+		if not (str(o["t"]) == "stance" and int(o.get("a", -1)) == id):
+			keep.append(o)
+	if keep.size() != s.orders.size():
+		s._push_undo()
+	s.orders = keep
+	s._replan()
+	if not base.is_empty() and CState.stance(base) != sv:
+		s.add_order({"t": "stance", "a": id, "s": sv})
+	s.save()
+	s.select_army(id)
+
+
+## The besieged city's panel (version 6): who, how long, supplies; a
+## besieger gets the odds and Assault / Continue siege / Withdraw; the
+## defender the odds of a sally (made on the map: an army inside taps a
+## besieger) and of a relief.
+func _siege_section6(box: VBoxContainer, r: int) -> void:
+	var ps: Dictionary = s.ps
+	var f: int = s.f
+	var sg := CState.siege_at(ps, r)
+	var o := CState.owner(ps, r)
+	var p := Kit.panel(Color(0.35, 0.18, 0.08, 0.5), 8)
+	p.name = "siege_panel"
+	var v := Kit.vbox(6)
+	p.add_child(v)
+	box.add_child(p)
+	var turn_n := int(ps["turn"]) - int(sg["turn"])
+	var sup := int(sg["supply"])
+	var sup_t := ("supplies %d turn%s left" % [sup, "" if sup == 1 else "s"]) if sup > 0 \
+		else "out of supplies: the garrison loses %d%% a turn, the besiegers %d%% of their men" % [CData.SIEGE_STARVE_PCT, CData.SIEGE_BESIEGER_PCT]
+	var bs := CRules.besiegers(ps, r)
+	var men := 0
+	var mine: Array = []
+	for a in bs:
+		men += CState.men(a)
+		if int(a["f"]) == f:
+			mine.append(a)
+	v.add_child(Kit.label("Besieged by %s, turn %d of the siege, %s." % [_fname(int(sg["f"])), turn_n, sup_t],
+		Kit.FONT, Kit.COL_GOLD, true))
+	var note := Kit.label("%d besieging arm%s, %d men. No income, recruits or building while besieged; with no garrison and no army inside it surrenders." % [
+		bs.size(), "y" if bs.size() == 1 else "ies", men], Kit.FONT_SMALL, Kit.COL_DIM, true)
+	if f < 0:
+		v.add_child(note)
+		return
+	if not mine.is_empty():
+		var po := plan_odds(r)
+		v.add_child(Kit.odds_view(po["od"], 0, po["names"], po["cols"], "If you storm it this turn (all besiegers):"))
+		var ordered := _has_order("assault", r)
+		var leaving := _withdrawing(mine, r)
+		var txt := "Orders: keep up the siege."
+		if ordered:
+			txt = "Orders: storm the walls at the end of the turn."
+		elif leaving:
+			txt = "Orders: withdraw (the siege is lifted when the last besieger leaves)."
+		var ol := Kit.label(txt, Kit.FONT, Kit.COL_BAD if ordered or leaving else Color.WHITE, true)
+		ol.name = "siege_orders"
+		v.add_child(ol)
+		var h := Kit.hbox(8)
+		var ab := Kit.button("Assault", func():
+			_cancel_withdraw(mine, r)
+			s.add_order({"t": "assault", "r": r})
+			s.select_region(r), 100)
+		ab.name = "siege_assault"
+		ab.disabled = ordered or CRules.can_assault(ps, f, r) != ""
+		h.add_child(ab)
+		var cb := Kit.button("Continue siege", func():
+			s.remove_orders(func(x): return str(x["t"]) == "assault" and int(x.get("r", -1)) == r)
+			_cancel_withdraw(mine, r)
+			s.select_region(r), 130)
+		cb.name = "siege_continue"
+		cb.disabled = not ordered and not leaving
+		h.add_child(cb)
+		var wb := Kit.button("Withdraw", func():
+			s.remove_orders(func(x): return str(x["t"]) == "assault" and int(x.get("r", -1)) == r)
+			_withdraw(mine, sg)
+			s.select_region(r), 100)
+		wb.name = "siege_withdraw"
+		wb.disabled = leaving
+		h.add_child(wb)
+		v.add_child(h)
+		v.add_child(note)
+	elif CState.friendly(ps, f, o):
+		var inside := CRules.besieged_armies(ps, r)
+		if not inside.is_empty():
+			var od := CBattle.odds(ps, inside, bs, r, false, 0)
+			v.add_child(Kit.odds_view(od, 0, [_fname(f), _fname(int(sg["f"]))], [_fc(f), _fc(int(sg["f"]))],
+				"If the armies inside sally with the garrison (a field battle outside the walls):"))
+			var hl := Kit.label("To sally: select an army inside (its banner under the city) and tap a besieger.", Kit.FONT_SMALL, Color.WHITE, true)
+			hl.name = "sally_hint"
+			v.add_child(hl)
+		if planned_into(r).size() > 0:
+			var po2 := plan_odds(r)
+			v.add_child(Kit.odds_view(po2["od"], 0, po2["names"], po2["cols"], "Your relief (with the garrison and the armies inside riding out):"))
+		else:
+			v.add_child(Kit.label("An army of yours marching onto the city relieves it: a field battle against a besieger, the garrison and the armies inside on its side.",
+				Kit.FONT_SMALL, Kit.COL_DIM, true))
+		v.add_child(note)
+	else:
+		v.add_child(note)
+
+
+## Where a besieger withdraws to: the field cell of the region it came from
+## when that is ours, else of our nearest region.
+func _withdraw_cell(a: Dictionary, sg: Dictionary) -> int:
+	var ps: Dictionary = s.ps
+	var f := int(a["f"])
+	for pr in sg.get("from", []):
+		if int(pr[0]) == int(a["id"]) and int(pr[1]) >= 0 and CState.friendly(ps, f, CState.owner(ps, int(pr[1]))):
+			return CState.field_cell(int(pr[1]))
+	var best := -1
+	var bd := 1 << 30
+	for rr in CData.region_count():
+		if CState.owner(ps, rr) == f and CState.siege_at(ps, rr).is_empty():
+			var d := CGrid.d2(CState.cell(a), CGrid.site(rr))
+			if d < bd:
+				bd = d
+				best = rr
+	return CState.field_cell(best) if best >= 0 else -1
+
+
+func _withdraw(mine: Array, sg: Dictionary) -> void:
+	for a in mine:
+		var c := _withdraw_cell(a, sg)
+		if c < 0:
+			continue
+		var p6: Dictionary = s.plan6(int(a["id"]))
+		if not p6.is_empty() and int(p6["cell"]) == c:
+			continue
+		s.set_move6(int(a["id"]), c, -1)
+
+
+func _withdrawing(mine: Array, r: int) -> bool:
+	if mine.is_empty():
+		return false
+	for a in mine:
+		var p6: Dictionary = s.plan6(int(a["id"]))
+		if p6.is_empty() or CGrid.cheb(int(p6["cell"]), CGrid.site(r)) <= 1:
+			return false
+	return true
+
+
+func _cancel_withdraw(mine: Array, r: int) -> void:
+	var ids: Array = []
+	for a in mine:
+		var p6: Dictionary = s.plan6(int(a["id"]))
+		if not p6.is_empty() and CGrid.cheb(int(p6["cell"]), CGrid.site(r)) > 1:
+			ids.append(int(a["id"]))
+	if not ids.is_empty():
+		s.remove_orders(func(x): return str(x["t"]) == "move" and ids.has(int(x["army"])))

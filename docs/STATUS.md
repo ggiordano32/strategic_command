@@ -1,6 +1,6 @@
 # Strategic Command — Status and Handover
 
-Last updated: 2026-10-06 (free campaign movement built; sieges and battle odds built on the campaign map; settlement variety built 2026-10-05). Read this first, then `docs/DESIGN.md` for the full
+Last updated: 2026-10-06 (the continuous campaign overworld built, state format 6; free campaign movement built; sieges and battle odds built on the campaign map; settlement variety built 2026-10-05). Read this first, then `docs/DESIGN.md` for the full
 design and `CLAUDE.md` for working rules. Update this file whenever a
 milestone lands or the plan changes.
 
@@ -30,6 +30,7 @@ anti-cheat and original art only if it proves fun.
 | Sieges and battle odds (campaign, state format 4) | Built 2026-10-06, **not committed**; tested headless and windowed; not yet played on phones |
 | Free campaign movement (state format 5) | Built 2026-10-06, **not committed**; tested headless and windowed; not yet played on phones |
 | Wall orders, drag clamp, reachability (playtest fixes) | Built 2026-10-06, **not committed**; tested headless and windowed; not yet played on phones |
+| Continuous campaign overworld (state format 6) | Built 2026-10-06, **not committed**; tested headless and windowed; not yet played on phones |
 | 6. Depth (siege equipment, tech, more factions) | Not started |
 
 ### What exists
@@ -73,6 +74,64 @@ anti-cheat and original art only if it proves fun.
 - The touch control scheme works; the user likes it.
 
 ### In progress right now
+
+**Continuous campaign overworld (built 2026-10-06, uncommitted).** Design
+agreed with the user; rules, numbers, grid format, orders, state, AI and
+pacing as built in CAMPAIGN.md "The continuous overworld (version 6)". In
+short:
+- A static nav grid (`campaign/data/grid_data.gd`, 138 x 70 cells of 20 map
+  px, generated from the map by `tools/campaign_grid.gd`): armies stand on
+  cells and march A* paths (foot 200 points, cavalry 300, artillery 150; a
+  cell 10-20 by terrain, diagonals 14/10; Roma -> Tarentum two turns on
+  foot, one for cavalry), continuing on later turns; sea lanes port to
+  port.
+- Zones of control (2 cells, 3 fortified): paths keep out of enemy zones
+  unless attacking; a step next to an enemy army is a field battle on its
+  cell (rounds, armies by id: the lower id attacks head-on); one battle
+  per region. Moving onto a hostile city lays siege from its ring (or
+  storms it on arrival); onto your own: inside the walls; inside a
+  besieged city onto a besieger: a sally; on your own besieged city: a
+  relief. Besiegers lose 5 % a turn once the city starves. Support within
+  4 cells (6 fortified), deploying from its bearing. Stances: default,
+  forced march, fortify, raiding (takes half the region's income).
+- AI with static distance fields per settlement: sieges, hunting enemy
+  field armies, attacks with gathering a march short of the target,
+  raids, screens, forced marches, fortifying; ~16-19 ms a full AI turn
+  (first turn ~130 ms for the fields). Pacing (6 seeds x 60 turns):
+  largest at turn 30 median 8 (before 10), no faction reaches the victory
+  size by 60, field battles 6-27 a campaign (before 1-7); deterministic.
+- State format 6; 5 -> 6 migration (local saves); unmigrated online
+  campaigns of formats 1-5 play exactly as before (6 AI campaigns x 60
+  turns from format 5 give HEAD's hashes; format 4 HEAD's table). No server
+  change; the server binary needs no restart.
+- The battle sim gained an optional per-unit `morale_pct` scenario key (an
+  army caught on a forced march); existing scenarios unchanged
+  (determinism_test PASS).
+- View (phone first): armies at their cells, the reach area, enemy zones,
+  yellow support and red attack lines, tap-then-tap planning (enemy army =
+  attack, city = siege or inside, land = march; same spot = cancel) with
+  Undo, drag from an army to plan (elsewhere pans), paths solid / dashed
+  with the end-of-turn ring and an intent badge, one stance selector, the
+  siege panel's Assault / Continue siege / Withdraw, a skippable replay of
+  the turn's steps. The move-mode toast, the stance toggle, Maintain and
+  Sally are gone for format 6. Screenshots
+  `docs/screenshots/overworld_phone_*.png`.
+- Tests: campaign_test (format 6 suite: grid, paths, zones, turns, contact,
+  sieges, sally / relief, support, stances, raiding, migration, step log,
+  determinism; the older suites on format 5 states), campaign_sim
+  (`--format=5`, `--twice`), campaign_solo, campaign_battles,
+  campaign_input_test (windowed; v6 and v5 parts), check_scripts,
+  determinism_test, online_e2e (scratch port 8077), go test.
+  `tests/touch_scroll_test.gd` fails two recruit-list scroll checks, the
+  same on HEAD (not from this change).
+- **Open / next:** play it on the phones (tap-tap planning, drags, the
+  replay; whether a tap inside an enemy zone should become an attack
+  instead of a refusal); the version 5 testing aids `--camp-raid`,
+  `--camp-intercept`, `--camp-attack` are not adapted to format 6;
+  fortify has no real-battle effect yet (odds and formula only);
+  forced march: morale only, no smaller deployment; siege equipment over
+  turns; roads / rivers / fords as grid overrides; Epirus still falls in
+  most AI-only seeds and Rome in 2 of 6.
 
 **Wall orders (phone playtest fixes, built 2026-10-06, uncommitted).**
 Report: "loading on or off a wall is difficult. It doesn't display where
@@ -589,7 +648,8 @@ changes (view-only), but art cost, not code, is the deciding factor.
 ```sh
 # Campaign tests
 godot --headless --script res://tests/campaign_test.gd      # rules, determinism, JSON
-godot --headless --script res://tests/campaign_sim.gd -- --seeds=6 --turns=60   # AI pacing
+godot --headless --script res://tests/campaign_sim.gd -- --seeds=6 --turns=60   # AI pacing (format 6; --format=5 the region-hop rules)
+godot --headless --script res://tools/campaign_grid.gd [-- --check --png=/tmp/grid.png]  # regenerate / check the nav grid
 godot --headless --script res://tests/campaign_solo.gd      # 20 turns of a player policy
 godot --headless --script res://tests/campaign_battles.gd   # auto-resolve timing, formula calibration
 godot --script res://tests/campaign_input_test.gd           # needs a window

@@ -35,30 +35,49 @@ original art.
 
 ### Map and economy
 
-- Region-node map (settlements connected by routes), straight top-down.
+- Continuous overworld (state format 6, October 2026): regions with one
+  settlement each over a static nav grid (cells of 0.2 deg of latitude,
+  square on the map); armies stand anywhere on it. The older formats were a
+  region-node map (settlements connected by routes); online campaigns of
+  those formats still play that way.
 - Each region has one settlement with a small number of building slots.
 - Buildings come in a few chains: economy, military (unlocks units), growth/order.
 - Resources: money and one growth/population value. Upkeep for armies.
 - Armies recruit in owned settlements, limited by the military buildings present.
+- **Reuse:** the campaign layer is meant to carry a different game later
+  (the American West). Everything specific to the Mediterranean is data:
+  regions, routes, sea lanes, factions, rosters, starts and numbers in
+  `campaign/cdata.gd`, the coastlines and territories in
+  `game/campaign/map_geo.gd`, from which `tools/campaign_grid.gd`
+  generates the nav grid (`campaign/data/grid_data.gd`). The rules
+  (`campaign/crules.gd`, `cgrid.gd`, `cai.gd`) read only those tables.
 
-### Movement (free movement, as built October 2026, state format 5)
+### Movement (continuous overworld, as built October 2026, state format 6)
 
-- Armies have movement points a turn by their slowest arm (foot 20,
-  cavalry only 30, with artillery 15); entering a region costs 10 (open
-  ground) or 15 (hills, ridges), +5 in heavy woods; a sea lane takes a
-  whole turn. A move order is a destination: the cheapest path is walked as
-  far as the points allow and continues on later turns. Moves resolve in
-  rounds (every army's first hop, then the second...), so armies meet where
-  they plausibly meet.
-- An enemy army in the field stops any army entering its region: a field
-  battle there (interception), so field armies screen cities. An army can
-  shelter inside a friendly settlement's walls (stance) instead.
-- Entering enemy land does not attack: an army there without a siege raids
-  it (half its income lost); laying siege or storming is a separate order
-  (or a move's mode, applied on arrival).
-- Unmoved field armies within a turn's march over land support a battle and
-  deploy on the map edge they come from. Details: CAMPAIGN.md "Free
-  movement".
+- Armies stand on cells and march 8-connected paths to a destination cell
+  (A*, ties by cell index) within movement points a turn by their slowest
+  arm (foot 200, cavalry only 300, with artillery 150; a cell costs 10 on
+  open ground, 15 hills, 20 ridges, +5 in heavy woods, diagonals 14/10);
+  marches continue on later turns. Rome to Tarentum: two turns on foot, one
+  for cavalry. Sea lanes join port cells (a full turn's points).
+- Zones of control: every army in the field holds a circle of 2 cells
+  (fortified 3); paths keep out of enemy zones unless that army is the
+  target. An army stepping next to an enemy army attacks it: a field battle
+  on that cell. Moves resolve in rounds (one step per army, by id), so
+  armies meet where they plausibly meet.
+- Moving onto a hostile settlement lays siege from its ring (or storms it
+  on arrival); onto your own settlement goes inside the walls; an army
+  inside moving onto a besieger sallies; marching on your own besieged city
+  relieves it.
+- Stances: default, forced march (+50% points, cannot attack, fights badly
+  if caught), fortify (immobile, wider zone, longer support reach, a
+  defender's bonus), raiding (-30% points, takes half the income of the
+  enemy region it stands in).
+- Friendly armies within 4 cells (fortified 6) of a battle join it and
+  deploy on the map edge facing where they stand. The view shows the reach
+  area, zones, support (yellow) and attack (red) lines, paths with this
+  turn's end marked, and replays the turn's steps. Details: CAMPAIGN.md
+  "The continuous overworld".
 
 ### Diplomacy
 
@@ -75,7 +94,9 @@ original art.
 - Sieges (as built, October 2026, state format 4; CAMPAIGN.md "Sieges and
   battle odds"): marching into a hostile settlement lays siege by default
   (Assault, the battle at once, is one tap away). Since format 5 (free
-  movement) marching in raids, and laying siege or storming is chosen. A siege cuts the city's
+  movement) marching in raids, and laying siege or storming is chosen;
+  since format 6 (the overworld) moving onto the city lays siege from its
+  ring and besiegers also go hungry once the city's supplies run out. A siege cuts the city's
   income, recruiting, building and growth, runs down its supplies (2-4
   turns by level, +1 with granaries) and then starves the garrison until it
   surrenders. Each turn the besiegers may storm it (a settlement battle),

@@ -300,6 +300,41 @@ const WOODS_HEAVY := 40
 ## supports battles in range) or inside the walls of a friendly settlement.
 const STANCE_FIELD := 0
 const STANCE_GARRISON := 1
+## Continuous overworld (state version 6, campaign/cgrid.gd). Armies stand
+## on cells of a static nav grid (campaign/data/grid_data.gd, generated from
+## the map by tools/campaign_grid.gd) and walk 8-connected paths; a cell
+## costs by its region's terrain (GRID_COST, + GRID_WOODS in heavy woods), a
+## diagonal step 14/10 of that; a cell override (roads, fords: later) sets
+## the cost directly. Movement points a turn by the slowest arm.
+const GRID_COST := {FLAT: 10, ROLLING: 10, VALLEY: 10, HILL: 15, RIDGE: 20}
+const GRID_WOODS := 5
+const MP6_FOOT := 200
+const MP6_CAV := 300
+const MP6_ART := 150
+## Zone of control (cells, a circle: dx^2 + dy^2 <= r^2 + r): paths may not
+## enter an enemy army's zone unless that army is the target. Support: a
+## friendly army within this radius of a battle's cell joins it.
+const ZOC := 2
+const SUPPORT := 4
+## Stances (version 6; one selector on the army card). Forced march: +50%
+## points, cannot attack or lay siege, fights badly if caught. Fortify:
+## cannot move, zone +1, support +2, a defender bonus. Raiding: -30%
+## points, takes RAID_PCT of the income of the enemy region it stands in.
+## (Version 5's 1, inside the walls, is a position in version 6: an army on
+## its settlement's cell is inside.)
+const ST_DEFAULT := 0
+const ST_FORCED := 2
+const ST_FORTIFY := 3
+const ST_RAID := 4
+const STANCE_NAMES := {0: "Default", 2: "Forced march", 3: "Fortify", 4: "Raiding"}
+const FORCED_MP_PCT := 150
+const RAID_MP_PCT := 70
+const RAID_PCT := 50
+const FORTIFY_DEF_PCT := 125   # formula / odds: fortified defenders' strength
+const FORCED_DEF_PCT := 75     # ... an army caught on a forced march
+const FORCED_MORALE_PCT := 75  # battle: its units start with this % of their morale
+## Besiegers lose this % of their men a turn once the city's supplies are gone.
+const SIEGE_BESIEGER_PCT := 5
 const START_YEAR := 280          # BC; two turns a year (summer, winter)
 
 ## Key cities for the default victory condition.

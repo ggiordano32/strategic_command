@@ -25,6 +25,10 @@ extends RefCounted
 ## outnumber the besiegers by the ratio; relieve them when the odds favour
 ## it), then attacks: assault when the ratio is met, else lay siege when the
 ## armies bring half the ratio and another army can arrive within two turns.
+## With the continuous overworld (state version 6) the move step is
+## _move_grid() (see there: static distance fields, hunting field armies,
+## gathering, raids in the raiding stance, screens, forced marches,
+## fortifying).
 ## Diplomacy (diplomacy()): peace when losing a long war, trade with
 ## neighbours at peace, and opportunistic wars on weaker neighbours, paced
 ## (no wars in the first turns, at most one new war on the players every few
@@ -35,6 +39,7 @@ const CState := preload("res://campaign/cstate.gd")
 const CRules := preload("res://campaign/crules.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
 const UT := preload("res://sim/unit_types.gd")
+const CGrid := preload("res://campaign/cgrid.gd")
 
 const UPKEEP_SHARE := 70       # % of income spent on army upkeep at most
 const ATTACK_RATIO := 150      # % of the target's defence needed to attack
@@ -67,7 +72,9 @@ static func act(st: Dictionary, f: int, moves: Array = []) -> void:
 	_cut_debt(st, f)
 	_build(st, f)
 	_recruit(st, f)
-	if CState.moves_on(st):
+	if CState.grid_on(st):
+		_move_grid(st, f, moves)
+	elif CState.moves_on(st):
 		_move_free(st, f, moves)
 	else:
 		_move(st, f)
@@ -134,7 +141,12 @@ static func _merge(st: Dictionary, f: int) -> void:
 			continue
 		for j in range(i + 1, mine.size()):
 			var b: Dictionary = mine[j]
-			if CState.army_index(st, int(b["id"])) < 0 or int(b["busy"]) != 0 or int(b["r"]) != int(a["r"]):
+			if CState.army_index(st, int(b["id"])) < 0 or int(b["busy"]) != 0:
+				continue
+			if CState.grid_on(st):
+				if CGrid.cheb(CState.cell(a), CState.cell(b)) > 1:
+					continue
+			elif int(b["r"]) != int(a["r"]):
 				continue
 			if CState.unit_count(a) + CState.unit_count(b) <= CData.ARMY_MAX:
 				CRules.apply_order(st, f, {"t": "merge", "army": int(b["id"]), "into": int(a["id"])})
@@ -969,7 +981,13 @@ static func _hold(cx: Dictionary, st: Dictionary, f: int, a: Dictionary) -> bool
 	var h: Dictionary = cx["hold"]
 	var id := int(a["id"])
 	if not h.has(id):
-		h[id] = _must_hold(st, f, a)
+		if cx.has("v6"):
+			# Version 6: the threat is what reaches the settlement this turn.
+			var r := int(a["r"])
+			var thr := int(cx["thr"][r])
+			h[id] = CState.owner(st, r) == f and thr > 0 and defence(st, r) - CState.strength(a) < thr
+		else:
+			h[id] = _must_hold(st, f, a)
 	return bool(h[id])
 
 
@@ -1176,3 +1194,579 @@ static func _propose(st: Dictionary, f: int, g: int, what: String) -> void:
 		return
 	if accepts(st, f, g, what):
 		CRules.apply_agreement(st, f, g, what)
+
+
+# ------------------------------------------ the continuous overworld (v6) ---
+
+## Sea lanes in the AI's static distance fields cost this many points.
+const FIELD_SEA := 200
+const FORCED_HELP := 1  # forced march when it gets a screen or gathering there a turn sooner
+const HUNT_COST := 13   # points a cell, the AI's estimate of a march across country
+const HUNT_WIN := 70    # odds to attack an enemy army in the field outside our lands
+const ATTACK_RATIO6 := 130  # version 6: % of the target's defence needed to attack
+
+
+## Turns army a needs to reach region r's settlement (a hostile one: its
+## ring) by the static distance field of that settlement (CGrid.field: no
+## zones, no borders; the rules find the real path): 0 this turn, INF never.
+static func eta(st: Dictionary, a: Dictionary, r: int, full: int = -1) -> int:
+	if full < 0:
+		full = CState.full_mp(st, a)
+	var left := mini(CState.mp(a), full) if full == CState.full_mp(st, a) and int(a["moved"]) != 0 else full
+	return _eta_d(site_dist(CState.cell(a), r, not CState.friendly(st, int(a["f"]), CState.owner(st, r))), full, left)
+
+
+## Turns for distance d with `full` points a turn and `left` now.
+static func _eta_d(d: int, full: int, left: int) -> int:
+	if full <= 0 or d >= CGrid.INF:
+		return CRules.INF
+	if d <= left:
+		return 0
+	return 1 + (d - left - 1) / full
+
+
+static var _sf: Array = []
+static var _site_cost: Array[int] = []
+
+
+## Static distance from cell c to region r's settlement (ring: next to it,
+## when `ring`), from the memoised fields of every settlement.
+static func site_dist(c: int, r: int, ring: bool) -> int:
+	if _sf.is_empty():
+		for k in CData.region_count():
+			_sf.append(CGrid.field(CGrid.site(k), FIELD_SEA))
+			_site_cost.append(CGrid.cost(CGrid.site(k)))
+	var d: int = (_sf[r] as PackedInt32Array)[c]
+	if ring and d < CGrid.INF:
+		d = maxi(d - CGrid.cost(CGrid.site(r)), 0)
+	return d
+
+
+## The move step with the continuous overworld (state version 6). Plans
+## only, as _move_free (version 5), with turns to a region from the static
+## distance fields; destinations are cells: a hostile settlement (lay siege
+## or storm it), an enemy army (attack it), a region's field cell (next to
+## its settlement: screens, gathering, the frontier) or camp (raids, with
+## the raiding stance). Then: attack enemy armies standing in our lands when
+## the odds favour it; forced march to a screen or a gathering point a turn
+## sooner; armies staying in a threatened region fortify, or go inside the
+## walls when far outmatched; the rest default.
+static func _move_grid(st: Dictionary, f: int, out: Array) -> void:
+	var ratio := ATTACK_RATIO6 * 100 / _aggr(st)
+	var nreg := CData.region_count()
+	var etas := {}
+	var free: Array = []
+	var want := {}  # army id -> stance
+	var hostile: Array[bool] = []
+	for r in nreg:
+		hostile.append(not CState.friendly(st, f, CState.owner(st, r)))
+	for a in CState.armies_of(st, f):
+		if int(a["busy"]) != 0:
+			continue
+		CRules._drop_march(a)
+		if int(a["moved"]) != 0 or CRules.siege_role(st, a) == 2:
+			continue
+		var full := CState.max_mp6(_default_of(a))
+		var t: Array[int] = []
+		var c := CState.cell(a)
+		if _sf.is_empty():
+			site_dist(0, 0, false)
+		for r in nreg:
+			var d: int = (_sf[r] as PackedInt32Array)[c]
+			if d >= CGrid.INF:
+				t.append(CRules.INF)
+				continue
+			if hostile[r]:
+				d = maxi(d - _site_cost[r], 0)
+			t.append(0 if d <= full else 1 + (d - full - 1) / full)
+		etas[int(a["id"])] = {"t": t}
+		free.append(a)
+		want[int(a["id"])] = CData.ST_DEFAULT
+	var cx := _context6(st, f)
+	var used := {}
+	_sieges_grid(st, f, ratio, free, etas, used, out, cx)
+	_hunt(st, f, free, used, out, cx)
+	# Attack plans.
+	var targets: Array = []
+	for t in nreg:
+		var o := CState.owner(st, t)
+		if not CState.at_war(st, f, o) or not CState.battle_at(st, t).is_empty() or not CState.siege_at(st, t).is_empty():
+			continue
+		var now: Array = []
+		var soon: Array = []
+		for a in free:
+			var id := int(a["id"])
+			if used.has(id) or CRules.siege_role(st, a) != 0:
+				continue
+			var tt := int(etas[id]["t"][t])
+			if tt == 0:
+				now.append(a)
+			elif tt == 1:
+				soon.append(a)
+		if now.is_empty() and soon.is_empty():
+			continue
+		var d := maxi(target_defence(st, f, t), 1)
+		var val := region_value(st, t)
+		if o >= 0 and CState.is_human(st, o):
+			val = val * 90 / 100
+		targets.append({"t": t, "def": d, "now": now, "soon": soon, "score": val * 1000 / d})
+	targets.sort_custom(func(x, y): return x["score"] > y["score"] or (x["score"] == y["score"] and x["t"] < y["t"]))
+	for tg in targets:
+		_attack6(st, f, tg, ratio, etas, used, out, cx, want)
+	# Idle armies take a fair chance.
+	for a in free:
+		var id := int(a["id"])
+		if used.has(id) or int(a.get("idle", 0)) < IDLE_TURNS or CRules.siege_role(st, a) != 0 or _hold(cx, st, f, a):
+			continue
+		var best := -1
+		var best_v := 0
+		for tg in targets:
+			var t := int(tg["t"])
+			if int(etas[id]["t"][t]) != 0 or not CState.siege_at(st, t).is_empty() or not CState.battle_at(st, t).is_empty():
+				continue
+			var od := CBattle.odds(st, [a], _defenders6(st, t), t, true)
+			if int(od["win"]) >= IDLE_WIN and region_value(st, t) > best_v:
+				best_v = region_value(st, t)
+				best = t
+		if best >= 0:
+			used[id] = 1
+			_go(out, a, CGrid.site(best), f, CData.MODE_SIEGE)
+	_raid6(st, f, free, etas, used, out, cx, want)
+	_screen6(st, f, free, etas, used, out, cx, want)
+	# The rest march towards the frontier.
+	var dist := _frontier_dist(st, f)
+	for a in free:
+		var id := int(a["id"])
+		if used.has(id) or CRules.siege_role(st, a) != 0:
+			continue
+		var r := int(a["r"])
+		if (dist[r] == 0 and CState.owner(st, r) == f) or _hold(cx, st, f, a):
+			continue
+		var et: Array = etas[id]["t"]
+		var best := -1
+		for n in nreg:
+			if dist[n] != 0 or int(et[n]) >= CRules.INF or not CState.siege_at(st, n).is_empty() \
+					or not CState.friendly(st, f, CState.owner(st, n)) or n == r:
+				continue
+			if best < 0 or int(et[n]) < int(et[best]) or (int(et[n]) == int(et[best]) and n < best):
+				best = n
+		if best >= 0:
+			used[id] = 1
+			_go(out, a, _toward(st, f, a, CState.field_cell(best), cx), f, CData.MODE_SIEGE)
+	_stances6(st, f, free, used, cx, want, out)
+	for a in free:
+		var id := int(a["id"])
+		if CState.army_index(st, id) >= 0 and int(a["busy"]) == 0 and CState.stance(a) != int(want[id]):
+			CRules.apply_order(st, f, {"t": "stance", "a": id, "s": int(want[id])})
+
+
+## A copy-free view of army a at the default stance (for its full points).
+static func _default_of(a: Dictionary) -> Dictionary:
+	return {"units": a["units"], "stance": CData.ST_DEFAULT}
+
+
+## A march toward cell dest more than a turn and a half away goes to a
+## waypoint instead: about a turn down the static distance field of dest's
+## region's settlement, backed off out of enemy zones and lands it may not
+## enter (the AI re-plans every turn; short searches stay cheap).
+static func _toward(st: Dictionary, f: int, a: Dictionary, dest: int, cx: Dictionary) -> int:
+	var r := CGrid.region(dest)
+	if r < 0:
+		return dest
+	var full := CState.max_mp6(_default_of(a))
+	var fld := CGrid.field(CGrid.site(r), FIELD_SEA)
+	var c := CState.cell(a)
+	if fld[c] >= CGrid.INF or fld[c] - fld[dest] <= full * 3 / 2:
+		return dest
+	var zm: PackedInt32Array = cx["zone"] if cx.has("zone") else PackedInt32Array()
+	if zm.is_empty():
+		zm = CRules.zone_mask(st, f)
+		cx["zone"] = zm
+	var trail: Array[int] = []
+	var start_d := fld[c]
+	for guard in 60:
+		var nx := CGrid.downhill(fld, c, FIELD_SEA)
+		if nx < 0 or start_d - fld[nx] > full:
+			break
+		c = nx
+		trail.append(c)
+	for k in range(trail.size() - 1, -1, -1):
+		var tc: int = trail[k]
+		if zm[tc] == 0 and CGrid.site_region(tc) < 0 and CRules.can_enter(st, f, CGrid.region(tc)) == "":
+			return tc
+	return dest
+
+
+static func _go(out: Array, a: Dictionary, c: int, f: int, mode: int, tgt: int = -1) -> void:
+	out.append([int(a["id"]), c, f, mode, 0, tgt])
+
+
+## Armies of region r's owner's side inside or next to its settlement.
+static func _defenders6(st: Dictionary, r: int) -> Array:
+	var o := CState.owner(st, r)
+	var out: Array = []
+	if o < 0:
+		return out
+	var s := CGrid.site(r)
+	for a in st["armies"]:
+		if CState.friendly(st, int(a["f"]), o) and CGrid.cheb(CState.cell(a), s) <= 1:
+			out.append(a)
+	return out
+
+
+## _context for version 6: "thr" per region the strength of the enemy
+## armies that reach its settlement this turn (by eta), "foe" 1 if an enemy
+## army stands in the field in the region, "here" 1 if any enemy army
+## stands there; "str", "hold" as in _context.
+static func _context6(st: Dictionary, f: int) -> Dictionary:
+	var n := CData.region_count()
+	var thr: Array[int] = []
+	var foe: Array[int] = []
+	var here: Array[int] = []
+	thr.resize(n)
+	foe.resize(n)
+	here.resize(n)
+	thr.fill(0)
+	foe.fill(0)
+	here.fill(0)
+	var sm := {}
+	if _sf.is_empty():
+		site_dist(0, 0, false)
+	for a in st["armies"]:
+		if int(a["busy"]) != 0 or not CState.at_war(st, f, int(a["f"])):
+			continue
+		var s := CState.strength(a)
+		sm[int(a["id"])] = s
+		var ar := int(a["r"])
+		here[ar] = 1
+		if not CRules.inside(st, a):
+			foe[ar] = 1
+		var full := CState.max_mp6(_default_of(a))
+		var c := CState.cell(a)
+		for r in n:
+			# Within its march of the settlement (of the ring for a city of
+			# ours, hostile to it): "thr" for our regions, "near" for all.
+			var d: int = (_sf[r] as PackedInt32Array)[c]
+			if d < CGrid.INF and d - int(_site_cost[r]) <= full:
+				thr[r] += s
+	return {"thr": thr, "foe": foe, "here": here, "str": sm, "hold": {}, "v6": 1}
+
+
+static func _attack6(st: Dictionary, f: int, tg: Dictionary, ratio: int, _etas: Dictionary, used: Dictionary, out: Array,
+		cx: Dictionary, want: Dictionary) -> void:
+	var t := int(tg["t"])
+	var d := int(tg["def"])
+	var now: Array = []
+	var soon: Array = []
+	for a in tg["now"]:
+		if not used.has(int(a["id"])) and not _hold(cx, st, f, a):
+			now.append(a)
+	for a in tg["soon"]:
+		if not used.has(int(a["id"])) and not _hold(cx, st, f, a):
+			soon.append(a)
+	for a in now + soon:
+		_str(cx, a)
+	var sm: Dictionary = cx["str"]
+	var by_strength := func(x, y): return int(sm[int(x["id"])]) > int(sm[int(y["id"])]) \
+		or (int(sm[int(x["id"])]) == int(sm[int(y["id"])]) and int(x["id"]) < int(y["id"]))
+	now.sort_custom(by_strength)
+	soon.sort_custom(by_strength)
+	var p_now := 0
+	var p_soon := 0
+	for a in now:
+		p_now += _str(cx, a)
+	for a in soon:
+		p_soon += _str(cx, a)
+	var site := CGrid.site(t)
+	if p_now * 100 >= d * ratio:
+		var sent := 0
+		for a in now:
+			used[int(a["id"])] = 1
+			_go(out, a, site, f, CData.MODE_ASSAULT)
+			sent += _str(cx, a)
+			if sent * 100 >= d * ratio * 13 / 10:
+				break
+		return
+	if p_now * 100 >= d * ratio / 2 and not now.is_empty() and (not soon.is_empty() or now.size() > 1):
+		for a in now:
+			used[int(a["id"])] = 1
+			_go(out, a, site, f, CData.MODE_SIEGE)
+		return
+	if soon.is_empty() or (p_now + p_soon) * 100 < d * ratio:
+		return
+	# Concentrate: gather within support range of each other a march short
+	# of the target, on the way the strongest of them would come (down the
+	# target's distance field, backed off out of enemy zones); attack next
+	# turn.
+	var all: Array = now + soon
+	var lead: Dictionary = all[0]
+	var fld := CGrid.field(site, FIELD_SEA)
+	var full := CState.max_mp6(_default_of(lead))
+	var zm: PackedInt32Array = cx["zone"] if cx.has("zone") else PackedInt32Array()
+	if zm.is_empty():
+		zm = CRules.zone_mask(st, f)
+		cx["zone"] = zm
+	var trail: Array[int] = [CState.cell(lead)]
+	var c := CState.cell(lead)
+	for guard in 200:
+		if fld[c] <= full * 3 / 4:
+			break
+		var nx := CGrid.downhill(fld, c, FIELD_SEA)
+		if nx < 0:
+			break
+		c = nx
+		trail.append(c)
+	var sc := -1
+	for k in range(trail.size() - 1, -1, -1):
+		var tc: int = trail[k]
+		if zm[tc] == 0 and CGrid.site_region(tc) < 0 and CRules.can_enter(st, f, CGrid.region(tc)) == "":
+			sc = tc
+			break
+	if sc < 0:
+		return
+	var sent2 := 0
+	for a in all:
+		var id := int(a["id"])
+		used[id] = 1
+		if CGrid.cheb(CState.cell(a), sc) > 1:
+			var dist := maxi(fld[CState.cell(a)] - fld[sc], 0)
+			if dist > CState.max_mp6(_default_of(a)) and dist <= CState.max_mp6({"units": a["units"], "stance": CData.ST_FORCED}) \
+					and CState.friendly(st, f, CState.owner(st, int(a["r"]))):
+				want[id] = CData.ST_FORCED  # a turn sooner on a forced march
+			_go(out, a, sc, f, CData.MODE_SIEGE)
+		sent2 += _str(cx, a)
+		if sent2 * 100 >= d * ratio * 13 / 10:
+			break
+
+
+## Version 6 sieges (as _sieges_free; armies that reach the ring this turn).
+static func _sieges_grid(st: Dictionary, f: int, ratio: int, free: Array, etas: Dictionary, used: Dictionary, out: Array,
+		cx: Dictionary) -> void:
+	for sg in (st["sieges"] as Array).duplicate():
+		var r := int(sg["r"])
+		if CState.siege_at(st, r).is_empty() or not CState.battle_at(st, r).is_empty():
+			continue
+		var o := CState.owner(st, r)
+		var site := CGrid.site(r)
+		if int(sg["f"]) == f:
+			var bs := CRules.besiegers(st, r)
+			var join: Array = []
+			for a in free:
+				var id := int(a["id"])
+				if not used.has(id) and CRules.siege_role(st, a) == 0 and int(etas[id]["t"][r]) == 0 and not _hold(cx, st, f, a):
+					join.append(a)
+			var od := CBattle.odds(st, bs + join, CRules.besieged_armies(st, r), r, true)
+			var relief := _relief_near6(st, f, r)
+			var starving := int(sg["supply"]) <= 0
+			var storm := int(od["att"]) * 100 >= int(od["def"]) * ratio or (starving and not relief.is_empty())
+			var lift := false
+			if not storm and not relief.is_empty() and _sum(relief) > _sum(bs + join):
+				var ro := CBattle.odds(st, relief + CRules.besieged_armies(st, r), bs + join, r, false, 0)
+				lift = int(ro["win"]) >= 50
+			if not storm and not lift and int(sg["held"]) >= CState.siege_supply(st, r) + SIEGE_PATIENCE:
+				storm = int(od["win"]) >= SIEGE_ASSAULT_WIN
+				lift = not storm
+			if lift:
+				for a in bs:
+					if int(a["f"]) != f or int(a["busy"]) != 0 or int(a["moved"]) != 0 or not etas.has(int(a["id"])):
+						continue
+					var back := _way_home6(st, f, a, sg, etas[int(a["id"])])
+					if back >= 0:
+						used[int(a["id"])] = 1
+						_go(out, a, _toward(st, f, a, CState.field_cell(back), cx), f, CData.MODE_SIEGE)
+				continue
+			for a in join:
+				used[int(a["id"])] = 1
+				_go(out, a, site, f, CData.MODE_ASSAULT if storm else CData.MODE_SIEGE)
+			for a in bs:
+				used[int(a["id"])] = 1
+			if storm and join.is_empty():
+				CRules.order_assault(st, f, r)
+		elif o == f:
+			var bs2 := CRules.besiegers(st, r)
+			var inside := CRules.besieged_armies(st, r)
+			var so := CBattle.odds(st, inside, bs2, r, false, 0)
+			if not inside.is_empty() and int(so["att"]) * 100 >= int(so["def"]) * ratio:
+				CRules.order_sally(st, f, r)
+				continue
+			var rel: Array = []
+			for a in free:
+				var id := int(a["id"])
+				if not used.has(id) and CRules.siege_role(st, a) == 0 and int(etas[id]["t"][r]) == 0 \
+						and CState.stance(a) != CData.ST_FORCED:
+					rel.append(a)
+			if rel.is_empty():
+				continue
+			var ro2 := CBattle.odds(st, rel + inside, bs2, r, false, 0)
+			if int(ro2["win"]) >= RELIEF_WIN:
+				for a in rel:
+					used[int(a["id"])] = 1
+					_go(out, a, site, f, CData.MODE_SIEGE)
+
+
+## Armies of region r's owner's side (at war with f) near r: in the field
+## within reach of its settlement this turn.
+static func _relief_near6(st: Dictionary, f: int, r: int) -> Array:
+	var o := CState.owner(st, r)
+	var out: Array = []
+	if o < 0:
+		return out
+	for a in st["armies"]:
+		if CState.friendly(st, int(a["f"]), o) and CState.at_war(st, f, int(a["f"])) and int(a["busy"]) == 0 \
+				and CRules.siege_role(st, a) == 0 and not CRules.inside(st, a) and eta(st, a, r) == 0:
+			out.append(a)
+	return out
+
+
+static func _way_home6(st: Dictionary, f: int, a: Dictionary, sg: Dictionary, et: Dictionary) -> int:
+	var o := CRules._siege_origin(sg, int(a["id"]))
+	if o >= 0 and CState.friendly(st, f, CState.owner(st, o)) and CState.siege_at(st, o).is_empty() \
+			and int(et["t"][o]) < CRules.INF:
+		return o
+	var best := -1
+	for n in CData.region_count():
+		if not CState.friendly(st, f, CState.owner(st, n)) or not CState.siege_at(st, n).is_empty() or int(et["t"][n]) >= CRules.INF:
+			continue
+		if best < 0 or int(et["t"][n]) < int(et["t"][best]) or (int(et["t"][n]) == int(et["t"][best]) and n < best):
+			best = n
+	return best
+
+
+## Enemy armies in the field are attacked by the free armies that reach
+## them this turn (an estimate: HUNT_COST points a cell on the straight
+## line) when those armies' odds reach HUNT_WIN % (RELIEF_WIN % in our own
+## lands); nearest first.
+static func _hunt(st: Dictionary, f: int, free: Array, used: Dictionary, out: Array, cx: Dictionary) -> void:
+	for e in st["armies"]:
+		if int(e["busy"]) != 0 or not CState.at_war(st, f, int(e["f"])) or CRules.inside(st, e) or CRules.siege_role(st, e) == 2:
+			continue
+		var ec := CState.cell(e)
+		var go: Array = []
+		for a in free:
+			var id := int(a["id"])
+			if used.has(id) or CRules.siege_role(st, a) != 0 or _hold(cx, st, f, a):
+				continue
+			if int(CData.REGIONS[int(a["r"])]["land"]) != int(CData.REGIONS[int(e["r"])]["land"]):
+				continue  # not across the sea
+			if CGrid.octile(CState.cell(a), ec) * HUNT_COST / 10 + 10 <= CState.max_mp6(_default_of(a)):
+				go.append(a)
+		if go.is_empty():
+			continue
+		var od := CBattle.odds(st, go, [e], int(e["r"]), false, -1)
+		var need := RELIEF_WIN if CState.owner(st, int(e["r"])) == f else HUNT_WIN
+		if int(od["win"]) < need:
+			continue
+		for a in go:
+			used[int(a["id"])] = 1
+			_go(out, a, ec, f, CData.MODE_SIEGE, int(e["id"]))
+
+
+## One raid a turn: a free army marches to the camp of a rich enemy region
+## it reaches this turn (no enemy army there, none near that outmatches
+## it) in the raiding stance.
+static func _raid6(st: Dictionary, f: int, free: Array, etas: Dictionary, used: Dictionary, out: Array, cx: Dictionary,
+		want: Dictionary) -> void:
+	var best_a: Dictionary = {}
+	var best_t := -1
+	var best_v := 0
+	for a in free:
+		var id := int(a["id"])
+		if used.has(id) or CRules.siege_role(st, a) != 0 or _hold(cx, st, f, a):
+			continue
+		var et: Array = etas[id]["t"]
+		for t in CData.region_count():
+			if int(et[t]) != 0:
+				continue
+			var o := CState.owner(st, t)
+			if o < 0 or not CState.at_war(st, f, o) or int(CData.REGIONS[t]["wealth"]) < RAID_WEALTH:
+				continue
+			if not CState.siege_at(st, t).is_empty() or not CState.battle_at(st, t).is_empty() or CRules.raider(st, t) >= 0:
+				continue
+			if int(cx["foe"][t]) != 0 or int(cx["thr"][t]) > _str(cx, a):
+				continue
+			var v := CRules.region_income(st, t)
+			if v > best_v:
+				best_v = v
+				best_t = t
+				best_a = a
+	if best_t >= 0:
+		used[int(best_a["id"])] = 1
+		want[int(best_a["id"])] = CData.ST_RAID
+		_go(out, best_a, CGrid.camp(best_t), f, CData.MODE_SIEGE)
+	# Raiders already in place keep raiding while it is safe.
+	for a in free:
+		var id := int(a["id"])
+		if used.has(id) or CState.stance(a) != CData.ST_RAID:
+			continue
+		var r := int(a["r"])
+		var o := CState.owner(st, r)
+		if o >= 0 and CState.at_war(st, f, o) and CState.siege_at(st, r).is_empty() and int(cx["thr"][r]) <= _str(cx, a):
+			used[id] = 1
+			want[id] = CData.ST_RAID
+
+
+## Screens: a threatened city of ours without a field army next to it gets
+## the strongest free army that can match SCREEN_PCT of the threat; it
+## stands in the field next to the city (its zone covers the approaches),
+## on a forced march if that brings it there this turn.
+static func _screen6(st: Dictionary, f: int, free: Array, etas: Dictionary, used: Dictionary, out: Array, cx: Dictionary,
+		want: Dictionary) -> void:
+	for r in CState.regions_of(st, f):
+		if not CState.siege_at(st, r).is_empty() or not CState.battle_at(st, r).is_empty():
+			continue
+		var thr := int(cx["thr"][r])
+		if thr == 0:
+			continue
+		var site := CGrid.site(r)
+		var guarded := false
+		for a in st["armies"]:
+			if int(a["f"]) == f and not CRules.inside(st, a) and CGrid.cheb(CState.cell(a), site) <= 2:
+				guarded = true
+		if guarded:
+			continue
+		var best: Dictionary = {}
+		var forced := false
+		for a in free:
+			var id := int(a["id"])
+			if used.has(id) or CRules.siege_role(st, a) != 0 or _str(cx, a) * 100 < thr * SCREEN_PCT or _hold(cx, st, f, a):
+				continue
+			var tt := int(etas[id]["t"][r])
+			var fz := false
+			if tt != 0:
+				if tt == FORCED_HELP and eta(st, a, r, CState.max_mp6({"units": a["units"], "stance": CData.ST_FORCED})) == 0:
+					fz = true
+				else:
+					continue
+			if best.is_empty() or _str(cx, a) > _str(cx, best):
+				best = a
+				forced = fz
+		if not best.is_empty():
+			used[int(best["id"])] = 1
+			if forced:
+				want[int(best["id"])] = CData.ST_FORCED
+			_go(out, best, CState.field_cell(r), f, CData.MODE_SIEGE)
+
+
+## Stances of the armies that stay: in a threatened region of ours, inside
+## the walls when far outmatched (they march onto the settlement), else
+## fortified; elsewhere the default.
+static func _stances6(st: Dictionary, f: int, free: Array, used: Dictionary, cx: Dictionary, want: Dictionary, out: Array) -> void:
+	for a in free:
+		var id := int(a["id"])
+		if used.has(id) or CRules.siege_role(st, a) != 0:
+			continue
+		var r := int(a["r"])
+		if CState.owner(st, r) != f:
+			continue
+		var thr := int(cx["thr"][r])
+		if thr == 0:
+			continue
+		var mine := 0
+		for b in free:
+			if int(b["r"]) == r and not used.has(int(b["id"])):
+				mine += _str(cx, b)
+		if mine * 100 < thr * SHELTER_PCT and not CRules.inside(st, a):
+			used[id] = 1
+			_go(out, a, CGrid.site(r), f, CData.MODE_SIEGE)  # into the walls
+			continue
+		want[id] = CData.ST_FORTIFY if not CRules.inside(st, a) else CData.ST_DEFAULT

@@ -11,9 +11,10 @@ extends RefCounted
 ## by the rules (JSON load does not keep key order). The state carries its own
 ## RNG ("rng", xorshift32) used by the rules and the AI.
 ##
-## Format (VERSION 5; version 1 has no city_seed, versions 1-2 no builder
+## Format (VERSION 6; version 1 has no city_seed, versions 1-2 no builder
 ## data "built", versions 1-3 no "sieges", versions 1-4 no free movement
-## (army mp / dest / mode / stance / idle); older states are migrated on
+## (army mp / dest / mode / stance / idle), versions 1-5 no cells (army x,
+## y, dest_x, dest_y, tgt; battle x, y, app); older states are migrated on
 ## load, see migrate()), all top-level keys:
 ##   format "strategic_command_campaign", version, name, seed, turn (0 =
 ##   280 BC summer), phase ("plan" | "battles" | "over"), rng,
@@ -39,9 +40,16 @@ extends RefCounted
 ##     version 5: mp (movement points left this turn), dest (-1 or the
 ##     region it is marching to over several turns), mode (what it does on
 ##     arriving at dest: MODE_SIEGE, MODE_ASSAULT, MODE_MARCH), stance
-##     (STANCE_FIELD, STANCE_GARRISON), idle (turns without moving: the AI)}]
-##     sorted by id,
-##   battles [pending battle, see crules.gd], next_battle,
+##     (STANCE_FIELD, STANCE_GARRISON), idle (turns without moving: the AI);
+##     version 6 (the continuous overworld, see grid_on): x, y (its cell on
+##     the nav grid, campaign/cgrid.gd; r is then the region of that cell,
+##     kept up to date), dest_x, dest_y (-1 or the cell it marches to over
+##     several turns), tgt (-1 or the enemy army it pursues), mode (what it
+##     does on reaching a hostile settlement: MODE_SIEGE or MODE_ASSAULT),
+##     stance (CData.ST_*: default, forced march, fortify, raiding); no
+##     "dest"}] sorted by id,
+##   battles [pending battle, see crules.gd; version 6: + x, y (its cell),
+##     app (compass sector the lead attacker came from)], next_battle,
 ##   sieges [{r, f (besieging faction), turn (started), supply (turns of
 ##     supplies left), held (turns maintained without an assault), from
 ##     [[army id, region it came from]...]}] sorted by region (version 4;
@@ -51,10 +59,11 @@ extends RefCounted
 ##   summary), winner (-1 none, 1 players won, 0 players lost), stats {}.
 
 const CData := preload("res://campaign/cdata.gd")
+const CGrid := preload("res://campaign/cgrid.gd")
 const UT := preload("res://sim/unit_types.gd")
 
 const FORMAT := "strategic_command_campaign"
-const VERSION := 5
+const VERSION := 6
 ## Oldest format this build reads (older states are migrated on load).
 const MIN_VERSION := 1
 
@@ -125,6 +134,9 @@ static func new_campaign(p_name: String, p_seed: int, humans: Array, settings: D
 			var na := {"id": f * 100000 + int(fs["next_army"]), "f": f,
 				"r": CData.region_index(ad[0]), "units": units, "from": -1, "moved": 0, "busy": 0}
 			army_defaults(na)
+			# Version 6: in the field next to its settlement.
+			place(na, field_cell(int(na["r"])))
+			army_defaults6(na)
 			armies.append(na)
 			fs["next_army"] = int(fs["next_army"]) + 1
 	armies.sort_custom(func(a, b): return int(a["id"]) < int(b["id"]))
@@ -172,7 +184,7 @@ static func to_json(st: Dictionary) -> String:
 ## Parse a saved state. Returns {} on failure (bad JSON, wrong format or a
 ## newer version). Numbers come back from JSON as floats: normalise() turns
 ## every integral float back into an int.
-static func from_json(text: String) -> Dictionary:
+static func from_json(text: String, upto: int = VERSION) -> Dictionary:
 	var v = JSON.parse_string(text)
 	if not (v is Dictionary):
 		return {}
@@ -180,10 +192,12 @@ static func from_json(text: String) -> Dictionary:
 	if str(st.get("format", "")) != FORMAT or int(st.get("version", 0)) > VERSION \
 			or int(st.get("version", 0)) < MIN_VERSION:
 		return {}
-	return migrate(st)
+	return migrate(st, upto)
 
 
-## Bring a state of an older format up to VERSION (in place; returns it).
+## Bring a state of an older format up to VERSION (in place; returns it;
+## upto 5: only as far as format 5, for tests of the older rules).
+## 5 -> 6: the continuous overworld (_migrate6).
 ## 4 -> 5: free movement: every army gets full points, no destination,
 ## field stance (army_defaults).
 ## 3 -> 4: no sieges yet (an empty "sieges" list switches the siege rules on).
@@ -193,7 +207,60 @@ static func from_json(text: String) -> Dictionary:
 ## Online campaigns are not migrated (the server keeps the format a campaign
 ## was created with): rules read city_seed() which falls back to the same
 ## default, so a format 1 state plays exactly like its migrated copy.
-static func migrate(st: Dictionary) -> Dictionary:
+static func migrate(st: Dictionary, upto: int = VERSION) -> Dictionary:
+	_migrate_old(st)
+	if int(st.get("version", 0)) < 6 and upto >= 6:
+		_migrate6(st)
+	return st
+
+
+## 5 -> 6: the continuous overworld. Every army stands on a cell: inside the
+## walls (stance 1) on its settlement's cell; besiegers and other armies in
+## friendly land in the field next to the settlement; armies in hostile land
+## without a siege on the region's camp cell, raiding (they were raiding by
+## the version 5 rule). A stored march keeps its target: a hostile
+## settlement it means to besiege or storm (its cell), else the region's
+## field cell. Pending battles get their cell (the settlement's for a
+## settlement battle, the camp for a field battle).
+static func _migrate6(st: Dictionary) -> void:
+	var regions: Array = st.get("regions", [])
+	for a in st.get("armies", []):
+		var r := int(a["r"])
+		var af := int(a["f"])
+		var o := int(regions[r]["owner"]) if r >= 0 and r < regions.size() else -1
+		var c := field_cell(r)
+		var sg := siege_at(st, r)
+		var inside := int(a.get("stance", CData.STANCE_FIELD)) == CData.STANCE_GARRISON
+		a["stance"] = CData.ST_DEFAULT
+		if friendly(st, af, o):
+			if inside or not sg.is_empty():
+				c = CGrid.site(r)  # inside (besieged armies are inside)
+		elif sg.is_empty() and at_war(st, af, o):
+			c = CGrid.camp(r)
+			if o >= 0:
+				a["stance"] = CData.ST_RAID
+		place(a, c)
+		var d := int(a.get("dest", -1))
+		a.erase("dest")
+		a["dest_x"] = -1
+		a["dest_y"] = -1
+		if d >= 0 and d != r:
+			var dc := CGrid.site(d) if int(a.get("mode", CData.MODE_MARCH)) != CData.MODE_MARCH else field_cell(d)
+			a["dest_x"] = CGrid.cx(dc)
+			a["dest_y"] = CGrid.cy(dc)
+		if int(a.get("mode", CData.MODE_MARCH)) == CData.MODE_MARCH:
+			a["mode"] = CData.MODE_SIEGE
+		army_defaults6(a)
+		a["mp"] = max_mp6(a)
+	for b in st.get("battles", []):
+		var r := int(b["r"])
+		var c := CGrid.site(r) if int(b.get("settlement", 1)) != 0 else CGrid.camp(r)
+		b["x"] = CGrid.cx(c)
+		b["y"] = CGrid.cy(c)
+	st["version"] = 6
+
+
+static func _migrate_old(st: Dictionary) -> void:
 	if int(st.get("version", 0)) < 2:
 		var regions: Array = st.get("regions", [])
 		for r in regions.size():
@@ -218,7 +285,41 @@ static func migrate(st: Dictionary) -> Dictionary:
 		for a in st.get("armies", []):
 			army_defaults(a)
 		st["version"] = 5
-	return st
+
+
+## A copy of a NEW campaign as the build of format v (5 or older) made it:
+## for tests and AI-only simulations of the older rules (the online
+## campaigns of that format play by them). Version 5: no cells (each army
+## back on its region, full version 5 points, no destination, march mode,
+## field stance); below 5 no free movement keys; below 4 no sieges; below 3
+## no builder data.
+static func as_format(st_in: Dictionary, v: int) -> Dictionary:
+	var c := copy(st_in)
+	if v < 6:
+		for a in c["armies"]:
+			for k in ["x", "y", "dest_x", "dest_y", "tgt"]:
+				(a as Dictionary).erase(k)
+			a["mp"] = max_mp(a)
+			a["dest"] = -1
+			a["mode"] = CData.MODE_MARCH
+			a["stance"] = CData.STANCE_FIELD
+			a["idle"] = 0
+		for b in c["battles"]:
+			for k in ["x", "y", "app"]:
+				(b as Dictionary).erase(k)
+	if v < 5:
+		for a in c["armies"]:
+			for k in ["mp", "dest", "mode", "stance", "idle"]:
+				(a as Dictionary).erase(k)
+		for b in c["battles"]:
+			(b as Dictionary).erase("edge")
+	if v < 4:
+		c.erase("sieges")
+	if v < 3:
+		for rs in c["regions"]:
+			(rs as Dictionary).erase("built")
+	c["version"] = mini(v, VERSION)
+	return c
 
 
 ## Free movement keys of a version 5 army (missing ones only): full points,
@@ -234,6 +335,100 @@ static func army_defaults(a: Dictionary) -> void:
 		a["stance"] = CData.STANCE_FIELD
 	if not a.has("idle"):
 		a["idle"] = 0
+
+
+## Version 6 keys of an army (missing ones only): no destination or target,
+## siege on arrival, default stance, its full points (it must have a cell).
+static func army_defaults6(a: Dictionary) -> void:
+	var fresh := not a.has("dest_x")
+	if fresh:
+		a["dest_x"] = -1
+		a["dest_y"] = -1
+	if not a.has("tgt"):
+		a["tgt"] = -1
+	if not a.has("mode") or int(a["mode"]) == CData.MODE_MARCH:
+		a["mode"] = CData.MODE_SIEGE
+	if not a.has("stance"):
+		a["stance"] = CData.ST_DEFAULT
+	if not a.has("idle"):
+		a["idle"] = 0
+	a.erase("dest")
+	if not a.has("x"):
+		place(a, field_cell(int(a["r"])))
+	if fresh or not a.has("mp"):
+		a["mp"] = max_mp6(a)
+
+
+## The continuous overworld applies (state version 6 and later): armies on
+## the nav grid (campaign/cgrid.gd), paths of cells, zones of control,
+## contact battles, sieges by moving onto a settlement, support by radius,
+## stances. Older states keep their own rules exactly (an unmigrated online
+## campaign of format 5 keeps region hops).
+static func grid_on(st: Dictionary) -> bool:
+	return int(st.get("version", 0)) >= 6
+
+
+## Army a's cell (version 6).
+static func cell(a: Dictionary) -> int:
+	return int(a["y"]) * CGrid.width() + int(a["x"])
+
+
+## Put army a on cell c (and its cached region).
+static func place(a: Dictionary, c: int) -> void:
+	a["x"] = CGrid.cx(c)
+	a["y"] = CGrid.cy(c)
+	var r := CGrid.region(c)
+	if r >= 0:
+		a["r"] = r
+
+
+## Where an army of region r stands in the field: the first cell of the
+## region next to the settlement (neighbour order N, NE ... NW), else the
+## settlement's cell.
+static func field_cell(r: int) -> int:
+	var s := CGrid.site(r)
+	for k in 8:
+		var c := CGrid.at(CGrid.cx(s) + CGrid.DX[k], CGrid.cy(s) + CGrid.DY[k])
+		if c >= 0 and CGrid.region(c) == r and CGrid.step_cost(s, c) > 0:
+			return c
+	return s
+
+
+## The k-th field cell next to settlement r (k wraps over the free ones).
+static func ring_cell(r: int, k: int) -> int:
+	var s := CGrid.site(r)
+	var list: Array[int] = []
+	for d in 8:
+		var c := CGrid.at(CGrid.cx(s) + CGrid.DX[d], CGrid.cy(s) + CGrid.DY[d])
+		if c >= 0 and CGrid.passable(c) and CGrid.step_cost(s, c) > 0:
+			list.append(c)
+	if list.is_empty():
+		return s
+	return list[posmod(k, list.size())]
+
+
+## Movement points a turn of army a in a version 6 state: by its slowest arm
+## (MP6_*), then its stance (forced march more, raiding less).
+static func max_mp6(a: Dictionary) -> int:
+	var base := CData.MP6_FOOT
+	var v5 := max_mp(a)
+	if v5 == CData.MP_CAV:
+		base = CData.MP6_CAV
+	elif v5 == CData.MP_ART:
+		base = CData.MP6_ART
+	match int(a.get("stance", CData.ST_DEFAULT)):
+		CData.ST_FORCED:
+			base = base * CData.FORCED_MP_PCT / 100
+		CData.ST_RAID:
+			base = base * CData.RAID_MP_PCT / 100
+		CData.ST_FORTIFY:
+			base = 0
+	return base
+
+
+## Full points a turn of army a in state st (by the state's format).
+static func full_mp(st: Dictionary, a: Dictionary) -> int:
+	return max_mp6(a) if grid_on(st) else max_mp(a)
 
 
 ## Free movement rules apply (state version 5 and later). An unmigrated

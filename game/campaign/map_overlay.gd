@@ -8,10 +8,22 @@ extends Node2D
 ## version 5: the path, solid this turn, dotted after), and hit tests for
 ## taps. Positions come from map_geo.gd through `xform` (map
 ## pixels -> screen), set by the campaign screen every frame.
+##
+## State version 6 (the continuous overworld, CState.grid_on): settlements
+## stand on their grid cell and armies on theirs (several on one cell side
+## by side; armies inside the walls under their settlement), pending battles
+## on their cell; planned paths run along cell centres (solid this turn,
+## dashed beyond, a ring where this turn ends, the intent at the end:
+## swords an attack or assault, a tent a siege, a tower going inside);
+## for the selected army the enemies' zones of control (red circles) and
+## its support (yellow) and attack (red) lines; during a turn replay armies
+## slide along their step log (replay_pos) and battles pop up (markers).
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
 const Geo := preload("res://game/campaign/map_geo.gd")
+const CGrid := preload("res://campaign/cgrid.gd")
+const CRules := preload("res://campaign/crules.gd")
 
 const ARMY_W := 30.0
 const ARMY_H := 26.0
@@ -33,6 +45,39 @@ var siege_moves: Array[int] = []   # ... of which these lay siege (or join one)
 ## dotted after.
 var paths: Array = []
 var pulse := 0.0
+## Version 6: planned paths [{army, pts [map points: the army's cell then
+## each step], now (index of the last point reached this turn), kind
+## (CRules.move_aim kind)}], also the drag preview (army -1 never: drag
+## holds the dragged army's preview, {} none); enemy zones [[map centre,
+## radius in map px]]; links [[army id, other id, 0 support | 1 attack]];
+## replay_pos {army id: map point} during a replay; markers [[map point,
+## seconds left]] (battles popping up).
+var grid := false
+var paths6: Array = []
+var drag: Dictionary = {}
+var zones: Array = []
+var links: Array = []
+var replay_pos := {}
+var replay_trail := {}  # army id -> map points passed so far in the replay
+var markers: Array = []
+var _tips: Array = []  # intents to draw over the banners: [point, kind, colour]
+
+
+## Map point (map pixels) of the centre of grid cell c.
+static func cell_point(c: int) -> Vector2:
+	var px := float(CGrid.cell_px())
+	return Vector2((CGrid.cx(c) + 0.5) * px, (CGrid.cy(c) + 0.5) * px)
+
+
+## The grid cell under map point p (-1 off the grid).
+static func cell_of_point(p: Vector2) -> int:
+	var px := float(CGrid.cell_px())
+	return CGrid.at(int(floor(p.x / px)), int(floor(p.y / px)))
+
+
+## Where settlement r is drawn (map pixels): its grid cell in version 6.
+func site_point(r: int) -> Vector2:
+	return cell_point(CGrid.site(r)) if grid else Geo.site(r)
 
 
 func to_screen(p: Vector2) -> Vector2:
@@ -49,6 +94,8 @@ func army_positions() -> Dictionary:
 	var out := {}
 	if state.is_empty():
 		return out
+	if grid:
+		return _army_positions6()
 	var by_region := {}
 	for a in state["armies"]:
 		var r := int(a["r"])
@@ -83,9 +130,45 @@ func army_at(p: Vector2) -> int:
 
 func settlement_at(p: Vector2) -> int:
 	for r in CData.region_count():
-		if to_screen(Geo.site(r)).distance_to(p) <= 16.0:
+		if to_screen(site_point(r)).distance_to(p) <= 16.0:
 			return r
 	return -1
+
+
+## Version 6: armies at their cells; armies sharing a cell side by side;
+## armies inside the walls under their settlement (as version 5 draws a
+## region's armies); during a replay at replay_pos.
+func _army_positions6() -> Dictionary:
+	var out := {}
+	var groups := {}
+	var order: Array = []
+	var m := mk()
+	for a in state["armies"]:
+		var id := int(a["id"])
+		var key := ""
+		var c := Vector2.ZERO
+		if replay_pos.has(id):
+			c = to_screen(replay_pos[id])
+			key = "p%d_%d" % [int(c.x / 6.0), int(c.y / 6.0)]
+		elif CRules.inside(state, a):
+			var r := CGrid.site_region(CState.cell(a))
+			c = to_screen(site_point(r)) + Vector2(0, (ARMY_H * 0.5 + 12.0) * m)
+			key = "s%d" % r
+		else:
+			c = to_screen(cell_point(CState.cell(a)))
+			key = "c%d" % CState.cell(a)
+		if not groups.has(key):
+			groups[key] = [c, []]
+			order.append(key)
+		(groups[key][1] as Array).append(id)
+	var step := (ARMY_W + ARMY_GAP) * m * (0.8 if m < 0.8 else 1.0)
+	for key in order:
+		var g: Array = groups[key]
+		var ids: Array = g[1]
+		var n := ids.size()
+		for k in n:
+			out[int(ids[k])] = (g[0] as Vector2) + Vector2((k - (n - 1) * 0.5) * step, 0)
+	return out
 
 
 func _draw() -> void:
@@ -108,10 +191,19 @@ func _draw() -> void:
 		_arrow(from, to, col)
 	for pth in paths:
 		_path(pth, pos)
+	_tips = []
+	if grid:
+		_draw_trails()
+		_draw_zones()
+		_draw_links(pos)
+		for pth in paths6:
+			_path6(pth, pos)
+		if not drag.is_empty():
+			_path6(drag, pos)
 	# Settlements and names.
 	var show_names := zoom >= 0.5
 	for r in CData.region_count():
-		var p := to_screen(Geo.site(r))
+		var p := to_screen(site_point(r))
 		var rs: Dictionary = state["regions"][r]
 		var lvl := int(rs["level"])
 		var rad: float = SITE_R[lvl] * mk()
@@ -124,7 +216,10 @@ func _draw() -> void:
 		draw_circle(p, rad, fill)
 		var sg := CState.siege_at(state, r)
 		if not sg.is_empty():
-			_siege_ring(p, rad + (6.0 + 1.2 * w) * mk(), int(sg["f"]))
+			var sr := rad + (6.0 + 1.2 * w) * mk()
+			if grid:
+				sr = maxf(sr, CGrid.cell_px() * 1.1 * zoom)  # round the ring the besiegers stand on
+			_siege_ring(p, sr, int(sg["f"]))
 		if CData.KEY_CITIES.has(str(CData.REGIONS[r]["key"])):
 			draw_circle(p, rad * 0.4, Color(1.0, 0.85, 0.3))
 		if show_names or lvl == CData.CITY:
@@ -137,16 +232,127 @@ func _draw() -> void:
 	# Pending battles.
 	for b in state["battles"]:
 		var p := to_screen(Geo.site(int(b["r"]))) + Vector2(16, -14)
-		draw_circle(p, 11.0, Color(0.75, 0.1, 0.08, 0.95))
-		draw_arc(p, 11.0, 0, TAU, 20, Color(1, 1, 1), 1.5, true)
-		draw_line(p + Vector2(-5, -5), p + Vector2(5, 5), Color.WHITE, 2.2, true)
-		draw_line(p + Vector2(5, -5), p + Vector2(-5, 5), Color.WHITE, 2.2, true)
+		if grid and b.has("x"):
+			p = to_screen(cell_point(CGrid.at(int(b["x"]), int(b["y"])))) + Vector2(0, -16)
+		_battle_mark(p, 1.0)
+	for mkr in markers:
+		_battle_mark(to_screen(mkr[0]) + Vector2(0, -16), clampf(float(mkr[1]), 0.0, 1.0))
 	# Armies.
 	for a in state["armies"]:
 		var id := int(a["id"])
 		if not pos.has(id):
 			continue
 		_army_marker(pos[id], a, font)
+	for tp in _tips:
+		_intent(tp[0], str(tp[1]), tp[2])
+
+
+## A battle: a red disc with crossed swords (alpha fades a popped marker).
+func _battle_mark(p: Vector2, alpha: float) -> void:
+	draw_circle(p, 11.0, Color(0.75, 0.1, 0.08, 0.95 * alpha))
+	draw_arc(p, 11.0, 0, TAU, 20, Color(1, 1, 1, alpha), 1.5, true)
+	draw_line(p + Vector2(-5, -5), p + Vector2(5, 5), Color(1, 1, 1, alpha), 2.2, true)
+	draw_line(p + Vector2(5, -5), p + Vector2(-5, 5), Color(1, 1, 1, alpha), 2.2, true)
+
+
+## Version 6 replay: a faint line behind each army on its way.
+func _draw_trails() -> void:
+	for a in state["armies"]:
+		var id := int(a["id"])
+		if not replay_trail.has(id) or not replay_pos.has(id):
+			continue
+		var pts := PackedVector2Array()
+		for q in replay_trail[id]:
+			pts.append(to_screen(q))
+		pts.append(to_screen(replay_pos[id]))
+		if pts.size() >= 2:
+			var col := CData.faction_color(int(a["f"])).lightened(0.3)
+			col.a = 0.8
+			draw_polyline(pts, Color(0, 0, 0, 0.5), 6.0, true)
+			draw_polyline(pts, col, 3.5, true)
+
+
+## Version 6: the enemies' zones of control (red circles).
+func _draw_zones() -> void:
+	for z in zones:
+		var c := to_screen(z[0])
+		var rad: float = float(z[1]) * zoom
+		draw_circle(c, rad, Color(0.85, 0.15, 0.1, 0.12))
+		draw_arc(c, rad, 0, TAU, 40, Color(0.0, 0.0, 0.0, 0.45), 3.0, true)
+		draw_arc(c, rad, 0, TAU, 40, Color(1.0, 0.35, 0.25, 0.85), 1.6, true)
+
+
+## Version 6: support (yellow) and attack (red) lines of the selected army.
+func _draw_links(pos: Dictionary) -> void:
+	for ln in links:
+		if not pos.has(int(ln[0])) or not pos.has(int(ln[1])):
+			continue
+		var a: Vector2 = pos[int(ln[0])]
+		var b: Vector2 = pos[int(ln[1])]
+		var col := Color(1.0, 0.85, 0.2, 0.9) if int(ln[2]) == 0 else Color(1.0, 0.25, 0.2, 0.9)
+		draw_line(a, b, Color(0, 0, 0, 0.5), 5.0, true)
+		draw_dashed_line(a, b, col, 3.0, 10.0, true)
+
+
+## Version 6: a planned path along cell centres: solid this turn, dashed
+## beyond, a ring where this turn ends, the intent at the end.
+func _path6(pth: Dictionary, pos: Dictionary) -> void:
+	var pts: Array = pth["pts"]
+	if pts.size() < 2:
+		return
+	var id := int(pth["army"])
+	var kind := str(pth.get("kind", "move"))
+	var col := Color(0.95, 0.95, 0.9)
+	if kind in ["attack", "assault", "relief", "sally"]:
+		col = Color(1.0, 0.45, 0.35)
+	elif kind in ["siege", "join"]:
+		col = Color(1.0, 0.7, 0.25)
+	var m := mk()
+	var sp: Array = []
+	for k in pts.size():
+		sp.append(to_screen(pts[k]))
+	if pos.has(id) and not pth.has("drag"):
+		sp[0] = pos[id]
+	var now := int(pth["now"])
+	for k in pts.size() - 1:
+		var a: Vector2 = sp[k]
+		var b: Vector2 = sp[k + 1]
+		if a.distance_to(b) < 1.0:
+			continue
+		if k < now:
+			draw_line(a, b, Color(0, 0, 0, 0.6), 7.0 * m, true)
+			draw_line(a, b, col, 4.0 * m, true)
+		else:
+			draw_dashed_line(a, b, Color(0, 0, 0, 0.5), 6.0 * m, 8.0, true)
+			draw_dashed_line(a, b, col.darkened(0.05), 3.0 * m, 8.0, true)
+	if now > 0 and now < pts.size() - 1:
+		# Where this turn's march ends.
+		var e: Vector2 = sp[now]
+		draw_circle(e, 7.0 * m, Color(0, 0, 0, 0.55))
+		draw_arc(e, 7.0 * m, 0, TAU, 20, col, 3.0 * m, true)
+	_tips.append([sp[-1], kind, col])
+
+
+## The intent at a path's end: a small badge.
+func _intent(p: Vector2, kind: String, col: Color) -> void:
+	var m := mk()
+	var r := 9.0 * m
+	draw_circle(p, r + 1.5, Color(0, 0, 0, 0.75))
+	draw_circle(p, r, col.darkened(0.35))
+	var w := Color(1, 1, 1, 0.95)
+	match kind:
+		"attack", "assault", "relief", "sally":
+			draw_line(p + Vector2(-5, -5) * m, p + Vector2(5, 5) * m, w, 2.2, true)
+			draw_line(p + Vector2(5, -5) * m, p + Vector2(-5, 5) * m, w, 2.2, true)
+		"siege", "join":
+			var ts := 5.5 * m
+			draw_colored_polygon(PackedVector2Array([p + Vector2(0, -ts), p + Vector2(ts, ts * 0.8), p + Vector2(-ts, ts * 0.8)]), w)
+		"inside":
+			draw_rect(Rect2(p - Vector2(4, 3) * m, Vector2(8, 8) * m), w)
+			for k in 3:
+				draw_rect(Rect2(p + Vector2(-4 + 3.0 * k, -6) * m, Vector2(2, 3) * m), w)
+		_:
+			draw_circle(p, 3.0 * m, w)
 
 
 ## Walls: a stone ring round the settlement with towers on it, thicker and
@@ -222,7 +428,9 @@ func _army_marker(c: Vector2, a: Dictionary, font: Font) -> void:
 	draw_rect(Rect2(rect.position.x, by, rect.size.x * frac, 4 * m), Color(0.5, 1.0, 0.5) if frac > 0.6 else Color(1.0, 0.8, 0.3))
 	if int(a["moved"]) != 0 and human:
 		draw_circle(rect.position + Vector2(rect.size.x, 0), 3.5, Color(0.6, 0.6, 0.6))
-	if int(a.get("stance", 0)) == CData.STANCE_GARRISON:
+	if grid:
+		_stance_badge(rect, a)
+	if (not grid and int(a.get("stance", 0)) == CData.STANCE_GARRISON) or (grid and CRules.inside(state, a)):
 		# Inside the walls: a small crenellated tower on the banner's corner.
 		var tw2 := 8.0 * m
 		var tp := rect.position + Vector2(-tw2 * 0.6, -tw2 * 0.4)
@@ -231,6 +439,22 @@ func _army_marker(c: Vector2, a: Dictionary, font: Font) -> void:
 		draw_rect(Rect2(tp, Vector2(tw2, tw2 * 1.1)), stone)
 		for k in 3:
 			draw_rect(Rect2(tp + Vector2(tw2 * 0.38 * k, -tw2 * 0.25), Vector2(tw2 * 0.24, tw2 * 0.25)), stone)
+
+
+## Version 6: a letter on the banner's top right for a stance other than
+## the default (F forced march, D fortified, R raiding).
+func _stance_badge(rect: Rect2, a: Dictionary) -> void:
+	var st_v := CState.stance(a)
+	if st_v == CData.ST_DEFAULT:
+		return
+	var txt: String = {CData.ST_FORCED: "F", CData.ST_FORTIFY: "D", CData.ST_RAID: "R"}.get(st_v, "")
+	var col: Color = {CData.ST_FORCED: Color(0.3, 0.6, 1.0), CData.ST_FORTIFY: Color(0.55, 0.55, 0.5), CData.ST_RAID: Color(0.95, 0.55, 0.15)}.get(st_v, Color.WHITE)
+	var c := rect.position + Vector2(rect.size.x, 0)
+	draw_circle(c, 7.0, Color(0, 0, 0, 0.85))
+	draw_circle(c, 6.0, col)
+	var font := ThemeDB.fallback_font
+	var tw := font.get_string_size(str(txt), HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
+	draw_string(font, c + Vector2(-tw * 0.5, 4), str(txt), HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color.WHITE)
 
 
 ## A march: from the army's banner along the region sites; this turn's

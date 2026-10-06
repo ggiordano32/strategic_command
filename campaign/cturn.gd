@@ -19,13 +19,16 @@ extends RefCounted
 ##      joins it (crules.join_battle; AI moves in step 5 too); version 5:
 ##      every move (and every army still marching to a stored destination)
 ##      walks its cheapest path in rounds (crules.execute_moves: blocking,
-##      interception, siege / assault on arrival); then the players' assault,
+##      interception, siege / assault on arrival; version 6: cells in rounds,
+##      crules.execute_moves6: zones of control, contact battles, sieges by
+##      moving onto a city); then the players' assault,
 ##      sally and (version 5) siege orders, faction by faction;
 ##   4. players' proposals, answered by the AI at once;
 ##   5. AI factions act in faction order (build, recruit, move; version 5:
 ##      they plan in faction order, then all AI moves run in rounds);
 ##   6. neighbouring armies reinforce the new battles (version 5: armies in
-##      the field within a turn's march over land, crules._support_by_range);
+##      the field within a turn's march over land, crules._support_by_range;
+##      version 6: within CData.SUPPORT cells, crules._support6);
 ##   7. battles without a player are resolved by the formula now; battles with
 ##      a player become pending (phase "battles") and must be resolved
 ##      (apply_battle) before the next turn can be planned;
@@ -38,6 +41,7 @@ const CState := preload("res://campaign/cstate.gd")
 const CRules := preload("res://campaign/crules.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
 const CAI := preload("res://campaign/cai.gd")
+const CGrid := preload("res://campaign/cgrid.gd")
 
 const KEEP_EVENTS_TURNS := 2
 
@@ -49,7 +53,8 @@ static func submission(st: Dictionary, f: int, orders: Array) -> Dictionary:
 ## Apply a faction's planned orders to a copy of the state (no moves, no AI,
 ## no end of turn), for the planning view: treasury after spending, queued
 ## recruits and buildings, merged and split armies. Returns {state, errors
-## [[order index, reason]], moves [[army, to, mode, persist]]}. Move,
+## [[order index, reason]], moves [[army, to, mode, persist]] (version 6:
+## [[army, dest cell, mode, persist, tgt]])}. Move,
 ## assault, sally and siege orders are only validated.
 static func preview(st: Dictionary, f: int, orders: Array) -> Dictionary:
 	var s := CState.copy(st)
@@ -66,6 +71,10 @@ static func preview(st: Dictionary, f: int, orders: Array) -> Dictionary:
 				var why := CRules.apply_order(s, f, o)
 				if why != "":
 					errors.append([i, why])
+				elif CState.grid_on(s):
+					var a6 := CState.army(s, int(o["army"]))
+					moves.append([int(o["army"]), CRules.order_cell(s, a6, o), int(o.get("mode", CData.MODE_SIEGE)),
+						int(o.get("persist", 0)), int(o.get("tgt", -1))])
 				else:
 					moves.append([int(o["army"]), int(o["to"]), int(o.get("mode", CData.MODE_SIEGE)), int(o.get("persist", 0))])
 				continue
@@ -85,6 +94,9 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 	var keep: Array = []
 	for e in st["events"]:
 		if int(e["turn"]) >= turn - KEEP_EVENTS_TURNS + 1:
+			# Version 6 step logs: only the last turn's (the replay).
+			if str(e.get("k", "")) == "moves" and int(e["turn"]) < turn:
+				continue
 			keep.append(e)
 	st["events"] = keep
 	var subs: Array = []
@@ -118,7 +130,25 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 				seen[id] = 1
 				moves.append([id, int(o.get("to", -1)), int(s["f"]), int(o.get("mode", CData.MODE_SIEGE))])
 	moves.sort_custom(func(a, b): return a[0] < b[0])
-	if CState.moves_on(st):
+	if CState.grid_on(st):
+		# Version 6: cells and targets; the players' armies still marching to
+		# a stored destination (or after a target) carry on.
+		var mv6: Array = []
+		for s in subs:
+			for o in s["orders"]:
+				if str(o.get("t", "")) == "move" and _first_move(mv6, int(o.get("army", -1))):
+					var a6 := CState.army(st, int(o.get("army", -1)))
+					if a6.is_empty():
+						continue
+					mv6.append([int(a6["id"]), CRules.order_cell(st, a6, o), int(s["f"]), int(o.get("mode", CData.MODE_SIEGE)),
+						int(o.get("persist", 0)), int(o.get("tgt", -1))])
+		for a in st["armies"]:
+			if not seen.has(int(a["id"])) and CState.is_human(st, int(a["f"])) and (int(a.get("dest_x", -1)) >= 0 or int(a.get("tgt", -1)) >= 0):
+				var dc := CGrid.at(int(a["dest_x"]), int(a["dest_y"]))
+				mv6.append([int(a["id"]), dc, int(a["f"]), int(a["mode"]), 1, int(a.get("tgt", -1))])
+		CRules.execute_moves6(st, mv6)
+		moves = []
+	elif CState.moves_on(st):
 		# Version 5: the orders, plus the players' armies still marching to a
 		# stored destination, walk their paths in rounds.
 		var mv: Array = []
@@ -175,7 +205,9 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 	var ai_moves: Array = []
 	for f in CState.nf():
 		CAI.act(st, f, ai_moves)
-	if CState.moves_on(st):
+	if CState.grid_on(st):
+		CRules.execute_moves6(st, ai_moves)
+	elif CState.moves_on(st):
 		CRules.execute_moves(st, ai_moves)
 	CRules.check_sieges(st)
 	# 6-7. Reinforcements; formula for AI-only battles.

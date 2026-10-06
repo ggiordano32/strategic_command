@@ -21,7 +21,16 @@ extends SceneTree
 ## block), raiding income, a siege start fought in the field first, support
 ## by range over land with its map edge, retreat along the path, multi-turn
 ## marches and cancel, migration 4 -> 5 and from format 1, determinism, a
-## format 4 state ignoring the new orders.
+## format 4 state ignoring the new orders. Format 6 (the continuous
+## overworld): the nav grid (every region has cells, settlements on their
+## region, each landmass connected, routes joined, ports on the coast),
+## path search (deterministic, around enemy zones of control, into the
+## target's), points and partial marches across turns, contact in rounds
+## (converging and head-on: the lower id moves first and attacks), sieges
+## by moving onto a city (and storming on arrival), sally and relief by
+## moving onto a besieger, support by radius with the bearing, stances
+## (forced march, fortify, raiding) and the raiders' income, migration
+## 5 -> 6 and from the format 1 file, the step log, determinism.
 ## Exits 0 on success, 1 on failure.
 
 const CData := preload("res://campaign/cdata.gd")
@@ -65,6 +74,19 @@ func _init() -> void:
 	_persist()
 	_format5()
 	_end_conditions()
+	# Format 6: the continuous overworld.
+	_grid()
+	_grid_paths()
+	_grid_turns()
+	_grid_contact()
+	_grid_siege()
+	_grid_sally_relief()
+	_grid_support()
+	_grid_stances()
+	_grid_raiding()
+	_grid_migration()
+	_grid_steps()
+	_grid_determinism()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
 	quit(0 if fails == 0 else 1)
 
@@ -85,8 +107,16 @@ func _f(key: String) -> int:
 	return CData.faction_index(key)
 
 
+## A new campaign as format 5 (region hops): the tests below up to
+## _format5 check the rules of formats 1-5, which online campaigns of those
+## formats still play. Format 6 (the continuous overworld): _new6 and the
+## tests from _grid on.
 func _new(humans: Array = []) -> Dictionary:
-	return CState.new_campaign("test", 4242, humans)
+	return CState.as_format(CState.new_campaign("test", 4242, humans), 5)
+
+
+func _new6(humans: Array = [], sd: int = 4242) -> Dictionary:
+	return CState.new_campaign("test", sd, humans)
 
 
 ## A copy of st as an older format would have it (format v: no free
@@ -152,7 +182,7 @@ func _data() -> void:
 
 
 func _round_trip() -> void:
-	var st := _new([0, 1])
+	var st := _new6([0, 1])
 	for t in 3:
 		st = CTurn.resolve_turn(st, [])
 		while str(st["phase"]) == "battles":
@@ -169,7 +199,7 @@ func _round_trip() -> void:
 func _play(st: Dictionary, turns: int, mid_save: int) -> Dictionary:
 	for t in turns:
 		if t == mid_save:
-			st = CState.from_json(CState.to_json(st))
+			st = CState.from_json(CState.to_json(st), int(st["version"]))
 		var subs: Array = []
 		for h in st["humans"]:
 			var orders: Array = []
@@ -441,11 +471,11 @@ func _joining() -> void:
 ## Format 2: city seeds, migration of a format 1 save, unmigrated play.
 func _format() -> void:
 	var nst := _new([0])
-	var seeds_ok := int(nst["version"]) == CState.VERSION
+	var seeds_ok := int(nst["version"]) == 5 and int(_new6()["version"]) == CState.VERSION
 	for r in 36:
 		if int(nst["regions"][r].get("city_seed", -1)) != CState.default_city_seed(r):
 			seeds_ok = false
-	_check(seeds_ok, "a new campaign is format %d with a city seed per settlement" % CState.VERSION)
+	_check(seeds_ok, "a new campaign (as format 5) has a city seed per settlement")
 	var distinct := {}
 	for r in 36:
 		distinct[CState.default_city_seed(r)] = true
@@ -454,12 +484,12 @@ func _format() -> void:
 	_check(text.length() > 100, "the format 1 campaign file is there")
 	var raw: Dictionary = CState.normalise(JSON.parse_string(text))
 	_check(int(raw["version"]) == 1 and not (raw["regions"][0] as Dictionary).has("city_seed"), "it is a real format 1 state")
-	var mig := CState.from_json(text)
-	var ok := not mig.is_empty() and int(mig["version"]) == CState.VERSION
+	var mig := CState.from_json(text, 5)
+	var ok := not mig.is_empty() and int(mig["version"]) == 5
 	for r in 36:
 		if mig.is_empty() or int(mig["regions"][r].get("city_seed", -1)) != CState.default_city_seed(r):
 			ok = false
-	_check(ok, "from_json migrates format 1 -> %d: every settlement gets its city seed" % CState.VERSION)
+	_check(ok, "from_json migrates format 1 -> 5: every settlement gets its city seed")
 	var sv := Saves.parse(JSON.stringify({"state": raw.duplicate(true), "session": {}}))
 	_check(not sv.is_empty() and int(sv["state"]["version"]) == CState.VERSION and int(sv["state"]["regions"][5]["city_seed"]) == CState.default_city_seed(5),
 		"Saves.parse migrates a saved format 1 campaign")
@@ -481,7 +511,7 @@ func _format() -> void:
 		if str(r1[k]) != str(r3[k]):
 			eq = false
 	_check(eq, "the format 3 copy plays the same turn as the unmigrated one")
-	_check(int(mig["version"]) == CState.VERSION and (mig["sieges"] as Array).is_empty(), "the full migration reaches format %d with no sieges" % CState.VERSION)
+	_check(int(sv["state"]["version"]) == CState.VERSION and (sv["state"]["sieges"] as Array).is_empty(), "the full migration reaches format %d with no sieges" % CState.VERSION)
 	_check(CState.from_json(JSON.stringify({"format": CState.FORMAT, "version": CState.VERSION + 1})).is_empty(),
 		"a newer format is refused")
 
@@ -512,12 +542,12 @@ func _format3() -> void:
 	v2["version"] = 2
 	for r in 36:
 		(v2["regions"][r] as Dictionary).erase("built")
-	var mig := CState.from_json(CState.to_json(v2))
-	var mok := not mig.is_empty() and int(mig["version"]) == CState.VERSION
+	var mig := CState.from_json(CState.to_json(v2), 5)
+	var mok := not mig.is_empty() and int(mig["version"]) == 5
 	for r in 36:
 		if mig.is_empty() or not (mig["regions"][r] as Dictionary).has("built"):
 			mok = false
-	_check(mok and CState.state_hash(mig) == CState.state_hash(nst), "a format 2 state migrates to format %d (equal to the new campaign)" % CState.VERSION)
+	_check(mok and CState.state_hash(mig) == CState.state_hash(nst), "a format 2 state migrates to format 5 (equal to the new campaign)")
 	# Builder entries: a building completed and a settlement grown under a
 	# new owner are in the owner's style; nothing else changes.
 	var st := CState.copy(nst)
@@ -576,7 +606,7 @@ func _format3() -> void:
 	var a: Dictionary = CState.armies_of(w2, rome)[1]
 	var sub := [CTurn.submission(w2, rome, [{"t": "move", "army": int(a["id"]), "to": _r("apulia")}])]
 	var t2 := CTurn.resolve_turn(w2, sub)
-	var w3 := CState.from_json(CState.to_json(w2))
+	var w3 := CState.from_json(CState.to_json(w2), 5)
 	w3.erase("sieges")  # migrated as far as format 3 (the build that had no sieges)
 	w3["version"] = 3
 	var t3 := CTurn.resolve_turn(w3, sub)
@@ -957,7 +987,7 @@ func _persist() -> void:
 	var g1 := CTurn.resolve_turn(st, _sub(st, rome, [{"t": "move", "army": aid, "to": co, "mode": CData.MODE_SIEGE, "persist": 1}]))
 	var g2 := CTurn.resolve_turn(g1, [])
 	_check(not CState.siege_at(g2, co).is_empty() and int(CState.army(g2, aid)["r"]) == co, "a persisting siege march lays siege on arrival")
-	_check(CState.state_hash(g2) == CState.state_hash(CTurn.resolve_turn(CState.from_json(CState.to_json(g1)), [])),
+	_check(CState.state_hash(g2) == CState.state_hash(CTurn.resolve_turn(CState.from_json(CState.to_json(g1), 5), [])),
 		"a stored march survives save / load and resolves the same")
 	_check(CState.state_hash(s1) == CState.state_hash(CTurn.resolve_turn(st, _sub(st, rome, [{"t": "move", "army": aid, "to": co, "mode": CData.MODE_MARCH, "persist": 1}]))),
 		"free movement resolves deterministically (%s)" % CState.hash_text(s1))
@@ -974,9 +1004,9 @@ func _format5() -> void:
 				keys = false
 	_check(int(nst["version"]) == 5 and keys, "a new campaign is format 5: every army has points, dest, mode, stance")
 	var v4 := _downgrade(nst, 4)
-	var mig := CState.from_json(CState.to_json(v4))
+	var mig := CState.from_json(CState.to_json(v4), 5)
 	_check(not mig.is_empty() and CState.state_hash(mig) == CState.state_hash(nst), "a format 4 state migrates to format 5 (equal to a new campaign)")
-	var v1 := CState.from_json(FileAccess.get_file_as_string("res://tests/data/campaign_v1.json"))
+	var v1 := CState.from_json(FileAccess.get_file_as_string("res://tests/data/campaign_v1.json"), 5)
 	var ok := not v1.is_empty() and int(v1["version"]) == 5
 	for a in v1.get("armies", []):
 		if int(a.get("mp", -1)) != CState.max_mp(a) or int(a.get("stance", -1)) != CData.STANCE_FIELD or int(a.get("dest", 0)) != -1:
@@ -1140,13 +1170,13 @@ func _sieges() -> void:
 	var t2 := CState.copy(s1)
 	for k in 4:
 		t1 = CTurn.resolve_turn(t1, [])
-		t2 = CTurn.resolve_turn(CState.from_json(CState.to_json(t2)), [])
+		t2 = CTurn.resolve_turn(CState.from_json(CState.to_json(t2), 5), [])
 	_check(CState.state_hash(t1) == CState.state_hash(t2), "a siege survives save / load and resolves the same")
 	# Migration 3 -> 4.
 	var old := _downgrade(_new([rome]), 3)
-	var mig := CState.from_json(CState.to_json(old))
-	_check(int(mig["version"]) == CState.VERSION and (mig["sieges"] as Array).is_empty() and CState.state_hash(mig) == CState.state_hash(_new([rome])),
-		"a format 3 state migrates to format %d with no sieges (equal to a new campaign)" % CState.VERSION)
+	var mig := CState.from_json(CState.to_json(old), 5)
+	_check(int(mig["version"]) == 5 and (mig["sieges"] as Array).is_empty() and CState.state_hash(mig) == CState.state_hash(_new([rome])),
+		"a format 3 state migrates to format 5 with no sieges (equal to a new campaign)")
 
 
 ## Samnium (Rome's) besieged by an Epirote army from Apulia, a Roman army
@@ -1371,3 +1401,488 @@ func _coop_siege() -> void:
 			n += 1
 			_check((b["att"] as Array).size() == 2 and CRules.battle_humans(s2, b).size() == 2, "the battle holds both allies' armies")
 	_check(n == 1 and _events(s2, "order_failed").is_empty(), "both order the assault: one battle, no failed order")
+
+
+# ------------------------------------------------- format 6: the overworld ---
+
+const CGrid := preload("res://campaign/cgrid.gd")
+
+
+## A format 6 test state with no armies: Rome (a player) at war with Epirus.
+func _empty6() -> Dictionary:
+	var st := _new6([_f("rome")])
+	st["armies"] = []
+	return st
+
+
+## A new army of faction f on cell c.
+func _put(st: Dictionary, f: int, c: int, units: Array) -> Dictionary:
+	var id := CRules.new_army_id(st, f)
+	st["factions"][f]["next_army"] = int(st["factions"][f]["next_army"]) + 1
+	var us: Array = []
+	for t in units:
+		us.append({"t": t, "n": UT.size_of(UT.index_of(t))})
+	var a := {"id": id, "f": f, "r": CGrid.region(c), "units": us, "from": -1, "moved": 0, "busy": 0}
+	CState.place(a, c)
+	CRules._insert_army(st, a)
+	return CState.army(st, id)
+
+
+## A row of n passable cells of region r (left to right), away from its
+## settlement; [] if none.
+func _row(r: int, n: int) -> Array:
+	var site := CGrid.site(r)
+	for c in CGrid.cells_of(r):
+		var ok := true
+		var out: Array = []
+		for k in n:
+			var d := CGrid.at(CGrid.cx(c) + k, CGrid.cy(c))
+			if d < 0 or CGrid.region(d) != r or CGrid.cheb(d, site) < 2 or (k > 0 and CGrid.step_cost(out[-1], d) <= 0):
+				ok = false
+				break
+			out.append(d)
+		if ok:
+			return out
+	return []
+
+
+func _move6(a: Dictionary, c: int, extra: Dictionary = {}) -> Dictionary:
+	var o := {"t": "move", "army": int(a["id"]), "x": CGrid.cx(c), "y": CGrid.cy(c), "persist": 1}
+	for k in extra:
+		o[k] = extra[k]
+	return o
+
+
+func _grid() -> void:
+	CGrid.ensure()
+	var ok := true
+	var site_ok := true
+	for r in CData.region_count():
+		if CGrid.cells_of(r).is_empty():
+			ok = false
+		if CGrid.region(CGrid.site(r)) != r or CGrid.region(CGrid.camp(r)) != r:
+			site_ok = false
+	_check(ok, "every region has cells on the grid (%d x %d, %d px)" % [CGrid.width(), CGrid.height(), CGrid.cell_px()])
+	_check(site_ok, "every settlement and camp cell lies in its region")
+	# Each landmass is one connected piece (steps only), and every land route joins.
+	var comp := PackedInt32Array()
+	comp.resize(CGrid.count())
+	comp.fill(-1)
+	var parts := 0
+	for s in CGrid.count():
+		if not CGrid.passable(s) or comp[s] >= 0:
+			continue
+		comp[s] = parts
+		var q: Array[int] = [s]
+		var qi := 0
+		while qi < q.size():
+			var u := q[qi]
+			qi += 1
+			for k in 8:
+				var v := CGrid.at(CGrid.cx(u) + CGrid.DX[k], CGrid.cy(u) + CGrid.DY[k])
+				if v >= 0 and comp[v] < 0 and CGrid.step_cost(u, v) > 0:
+					comp[v] = parts
+					q.append(v)
+		parts += 1
+	_check(parts == 5, "five land components, one per landmass (%d)" % parts)
+	var routes := true
+	for pair in CData.ROUTES:
+		if comp[CGrid.site(CData.region_index(pair[0]))] != comp[CGrid.site(CData.region_index(pair[1]))]:
+			routes = false
+	_check(routes, "every land route's settlements are connected on the grid")
+	var ports := true
+	for r in CData.region_count():
+		var pc := CGrid.port(r)
+		if CData.is_port(r) != (pc >= 0) or (pc >= 0 and (CGrid.region(pc) != r or CGrid.links(pc).is_empty())):
+			ports = false
+	_check(ports, "ports: a coastal cell of the region with its sea lanes")
+	_check(CGrid.step_cost(CGrid.site(_r("bruttium")), CGrid.site(_r("sicilia_or"))) == 0
+		and CGrid.region(CGrid.site(_r("sicilia_or"))) == _r("sicilia_or"), "Sicily is not joined to Italy by land")
+
+
+func _grid_paths() -> void:
+	var st := _empty6()
+	var rome := _f("rome")
+	var foot := _put(st, rome, CState.field_cell(_r("latium")), ["heavy", "heavy", "spear"])
+	var cav := _put(st, rome, CState.field_cell(_r("latium")), ["cav", "cav"])
+	var art := _put(st, rome, CState.field_cell(_r("latium")), ["heavy", "bolt"])
+	_check(CState.max_mp6(foot) == CData.MP6_FOOT and CState.max_mp6(cav) == CData.MP6_CAV and CState.max_mp6(art) == CData.MP6_ART,
+		"points by the slowest arm (%d, %d, %d)" % [CState.max_mp6(foot), CState.max_mp6(cav), CState.max_mp6(art)])
+	var tar := CGrid.site(_r("apulia"))
+	var pf := CRules.plan_path(st, foot, tar)
+	var pc := CRules.plan_path(st, cav, tar)
+	_check(not pf.has("why") and int(pf["t"][-1]) == 1 and str(pf["aim"]["kind"]) == "siege",
+		"foot from Latium reaches Tarentum's walls next turn (%d cells): Italy in two turns" % (pf.get("path", []) as Array).size())
+	_check(not pc.has("why") and int(pc["t"][-1]) == 0, "cavalry gets there this turn")
+	_check(CGrid.cheb(int(pf["path"][-1]), tar) == 1, "the march ends next to the city (its ring), not in it")
+	var p2 := CRules.plan_path(st, foot, tar)
+	_check(str(p2["path"]) == str(pf["path"]), "the path search is deterministic")
+	# An enemy army across the way: the path goes round its zone of control,
+	# unless it is the target.
+	var row := _row(_r("lusitania"), 11)
+	_check(row.size() == 11, "a row of 11 cells in Lusitania (independent)")
+	if row.size() < 11:
+		return
+	var st2 := _empty6()
+	var a := _put(st2, rome, row[0], ["heavy", "heavy"])
+	var e := _put(st2, _f("epirus"), row[5], ["spear", "spear"])
+	var pa := CRules.plan_path(st2, a, row[10])
+	var clear := not pa.has("why")
+	if clear:
+		for c in pa["path"]:
+			if CGrid.within(CState.cell(e), int(c), CRules.zone_r(st2, e)):
+				clear = false
+	_check(clear, "a march past an enemy army keeps out of its zone of control (%d cells)" % (pa.get("path", []) as Array).size())
+	var pt := CRules.plan_path(st2, a, CState.cell(e), int(e["id"]))
+	_check(not pt.has("why") and str(pt["aim"]["kind"]) == "attack" and CGrid.cheb(int(pt["path"][-1]), CState.cell(e)) == 1,
+		"a march on the enemy army goes straight at it and ends next to it")
+	_check(CRules._can_move6(st2, a, row[4]) != "", "a cell inside an enemy's zone is not a destination: " + CRules._can_move6(st2, a, row[4]))
+
+
+func _grid_turns() -> void:
+	var st := _empty6()
+	var rome := _f("rome")
+	var foot := _put(st, rome, CState.field_cell(_r("latium")), ["heavy", "heavy", "spear"])
+	var id := int(foot["id"])
+	var tar := CGrid.site(_r("apulia"))
+	var s1 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [_move6(foot, tar)])])
+	var a1 := CState.army(s1, id)
+	_check(CGrid.cheb(CState.cell(a1), tar) > 1 and int(a1["dest_x"]) == CGrid.cx(tar) and int(a1["mp"]) == CState.max_mp6(a1),
+		"after one turn the march is under way: destination kept, points back to full")
+	var s2 := CTurn.resolve_turn(s1, [CTurn.submission(s1, rome, [])])
+	var a2 := CState.army(s2, id)
+	_check(CGrid.cheb(CState.cell(a2), tar) == 1 and not CState.siege_at(s2, _r("apulia")).is_empty() and int(a2["dest_x"]) == -1,
+		"the second turn it arrives without a new order and lays siege to Tarentum")
+	var s3 := CTurn.resolve_turn(s1, [CTurn.submission(s1, rome, [{"t": "cancel_move", "army": id}])])
+	_check(CState.cell(CState.army(s3, id)) == CState.cell(a1) and int(CState.army(s3, id)["dest_x"]) == -1, "cancel_move stops it")
+	# Sea lanes: a full turn's points at the port, landing at the other port.
+	var st4 := _empty6()
+	var b := _put(st4, rome, CGrid.port(_r("apulia")), ["heavy"])
+	st4["regions"][_r("apulia")]["owner"] = rome
+	var land := CGrid.port(_r("epirus"))
+	var pb := CRules.plan_path(st4, b, CGrid.camp(_r("epirus")))
+	_check(not pb.has("why") and (pb["path"] as Array).has(land) and int(pb["t"][(pb["path"] as Array).find(land)]) == 0
+		and int(pb["m"][(pb["path"] as Array).find(land)]) == 0, "from Tarentum's port across the lane to Epirus: it lands this turn with no points left")
+
+
+func _grid_contact() -> void:
+	var row := _row(_r("lusitania"), 11)
+	if row.size() < 11:
+		return
+	var rome := _f("rome")
+	var ep := _f("epirus")
+	# Converging: Rome's army attacks Epirus's army, which marches west past it.
+	var st := _empty6()
+	var a := _put(st, rome, row[0], ["heavy", "heavy", "heavy"])
+	var e := _put(st, ep, row[10], ["spear", "spear"])
+	# Epirus is AI: give it the march through the rules directly.
+	var s1 := CState.copy(st)
+	CRules.execute_moves6(s1, [[int(a["id"]), CState.cell(e), rome, CData.MODE_SIEGE, 1, int(e["id"])],
+		[int(e["id"]), row[0], ep, CData.MODE_SIEGE, 0, -1]])
+	var b: Dictionary = s1["battles"][0] if not (s1["battles"] as Array).is_empty() else {}
+	_check(not b.is_empty() and (b["att"] as Array).has(int(a["id"])) and (b["def"] as Array).has(int(e["id"]))
+		and str(b.get("kind", "")) == "field", "converging: the army that attacks is the attacker of the field battle")
+	if not b.is_empty():
+		var bc := CGrid.at(int(b["x"]), int(b["y"]))
+		_check(bc == CState.cell(CState.army(s1, int(e["id"]))) and CGrid.cheb(CState.cell(CState.army(s1, int(a["id"]))), bc) == 1,
+			"the battle is on the defender's cell, the attacker next to it")
+		_check(int(b["r"]) == _r("lusitania") and CGrid.region(bc) == int(b["r"]), "the battle's region is its cell's")
+	# The marching Epirotes did not walk into Rome's zone (they were not
+	# attacking): they stopped at its edge or were caught.
+	var ea := CState.army(s1, int(e["id"]))
+	_check(not ea.is_empty(), "the defender is there")
+	# Head-on: both target each other; the lower id moves first and attacks.
+	var st2 := _empty6()
+	var a2 := _put(st2, rome, row[0], ["heavy", "heavy"])
+	var e2 := _put(st2, ep, row[10], ["spear", "spear"])
+	var mv := [[int(a2["id"]), CState.cell(e2), rome, 0, 0, int(e2["id"])], [int(e2["id"]), CState.cell(a2), ep, 0, 0, int(a2["id"])]]
+	var h1 := CState.copy(st2)
+	CRules.execute_moves6(h1, mv)
+	var h2 := CState.copy(st2)
+	CRules.execute_moves6(h2, mv)
+	var hb: Dictionary = h1["battles"][0] if not (h1["battles"] as Array).is_empty() else {}
+	var lower := mini(int(a2["id"]), int(e2["id"]))
+	_check(not hb.is_empty() and (hb["att"] as Array).has(lower), "head-on: one battle, the lower army id (moving first in each round) attacks")
+	_check(CState.state_hash(h1) == CState.state_hash(h2), "head-on contact is deterministic")
+	var meet := CGrid.cx(CGrid.at(int(hb.get("x", 0)), int(hb.get("y", 0))))
+	_check(not hb.is_empty() and meet > CGrid.cx(row[0]) and meet < CGrid.cx(row[10]), "they meet between their starting cells (x %d)" % meet)
+	# Zones: a march that is not an attack stops at the edge of an enemy
+	# zone that moves into its way (its path was planned round the zones as
+	# the phase began).
+	var n3 := CGrid.at(CGrid.cx(row[3]), CGrid.cy(row[3]) - 3)
+	if CGrid.passable(n3) and CGrid.region(n3) == _r("lusitania"):
+		var st3 := _empty6()
+		var a3 := _put(st3, rome, n3, ["heavy"])
+		var e3 := _put(st3, ep, row[10], ["spear"])
+		CRules.execute_moves6(st3, [[int(a3["id"]), row[3], rome, 0, 0, -1], [int(e3["id"]), row[0], ep, 0, 1, -1]])
+		var e4 := CState.army(st3, int(e3["id"]))
+		_check((st3["battles"] as Array).is_empty() and CState.cell(e4) == row[6] and int(e4["dest_x"]) == CGrid.cx(row[0]),
+			"a march (no attack) stops at the edge of an enemy zone that moved into its way; no battle, it keeps its destination")
+	else:
+		_check(false, "a cell three north of the row for the zone test")
+
+
+func _grid_siege() -> void:
+	var rome := _f("rome")
+	var st := _empty6()
+	var ap := _r("apulia")
+	var site := CGrid.site(ap)
+	var start := -1
+	for c in CGrid.disc(site, 4):
+		if CGrid.region(c) == ap and CGrid.cheb(c, site) == 4 and CGrid.passable(c):
+			start = c
+			break
+	var a := _put(st, rome, start, ["heavy", "heavy", "heavy", "spear"])
+	var s1 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [_move6(a, site)])])
+	var a1 := CState.army(s1, int(a["id"]))
+	_check(not CState.siege_at(s1, ap).is_empty() and CGrid.cheb(CState.cell(a1), site) == 1 and CRules.siege_role(s1, a1) == 1,
+		"moving onto Tarentum lays siege: the army stops on the ring and besieges it")
+	_check((s1["battles"] as Array).is_empty(), "no battle the turn the siege is laid")
+	var s2 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [_move6(a, site, {"mode": CData.MODE_ASSAULT})])])
+	var b := CState.battle_at(s2, ap)
+	_check(not b.is_empty() and int(b["settlement"]) == 1 and (b["att"] as Array).has(int(a["id"])) and CGrid.at(int(b["x"]), int(b["y"])) == site,
+		"with mode assault it storms the city on arrival (a settlement battle at the city's cell)")
+	# Siege panel orders: assault from the ring; withdraw by marching away.
+	var s3 := CTurn.resolve_turn(s1, [CTurn.submission(s1, rome, [{"t": "assault", "r": ap}])])
+	_check(str(CState.battle_at(s3, ap).get("kind", "")) == "assault", "the besieger's Assault order storms it")
+	var away := CGrid.at(CGrid.cx(start), CGrid.cy(start))
+	var s4 := CTurn.resolve_turn(s1, [CTurn.submission(s1, rome, [_move6(a1, away)])])
+	_check(CState.siege_at(s4, ap).is_empty() and (_events(s4, "siege_lifted") as Array).size() == 1, "marching away (Withdraw) lifts the siege")
+	# Out of supplies, the besiegers lose men too.
+	var s5 := CState.copy(s1)
+	s5["sieges"][0]["supply"] = 0
+	var men0 := CState.men(CState.army(s5, int(a["id"])))
+	CRules.end_of_turn(s5)
+	var men1 := CState.men(CState.army(s5, int(a["id"])))
+	_check(men1 < men0 and men1 >= men0 * (100 - CData.SIEGE_BESIEGER_PCT - 1) / 100 - 4,
+		"besiegers lose about %d%% a turn once the city starves (%d -> %d)" % [CData.SIEGE_BESIEGER_PCT, men0, men1])
+
+
+func _grid_sally_relief() -> void:
+	var rome := _f("rome")
+	var ep := _f("epirus")
+	var sa := _r("samnium")
+	var site := CGrid.site(sa)
+	var st := _empty6()
+	var inside := _put(st, rome, site, ["heavy", "heavy", "heavy"])
+	var ring := CState.ring_cell(sa, 4)
+	var e := _put(st, ep, ring, ["spear", "spear"])
+	CRules.start_siege(st, sa, e, _r("apulia"))
+	_check(CRules.siege_role(st, inside) == 2 and CRules.siege_role(st, e) == 1 and CRules.besieged_armies(st, sa).size() == 1,
+		"an army on its settlement's cell is inside the besieged walls")
+	_check(CRules._can_move6(st, inside, CGrid.camp(_r("latium"))) == "besieged", "the besieged cannot march off")
+	var s1 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [_move6(inside, CState.cell(e), {"tgt": int(e["id"])})])])
+	var b := CState.battle_at(s1, sa)
+	_check(str(b.get("kind", "")) == "sally" and (b["def"] as Array).has(int(inside["id"])) and (b["att"] as Array).has(int(e["id"])),
+		"an army inside moving onto a besieger rides out: a sally (the besiegers attack in the record)")
+	# Relief: an army outside marches on its own besieged city.
+	var st2 := CState.copy(st)
+	st2["armies"].erase(CState.army(st2, int(inside["id"])))
+	var rel := _put(st2, rome, CState.field_cell(_r("latium")), ["heavy", "heavy", "heavy", "cav"])
+	var s2 := CTurn.resolve_turn(st2, [CTurn.submission(st2, rome, [_move6(rel, site)])])
+	var b2 := CState.battle_at(s2, sa)
+	_check(str(b2.get("kind", "")) == "relief" and (b2["def"] as Array).has(int(rel["id"])) and int(b2["settlement"]) == 0,
+		"an army marching on its besieged city runs into the besiegers: a relief, a field battle")
+	if not b2.is_empty():
+		var built := CBattle.build(s2, b2, rome)
+		var gar := false
+		for m in built["map"]:
+			if int(m["army"]) < 0:
+				gar = true
+		_check(gar, "the garrison rides out with the relief")
+
+
+func _grid_support() -> void:
+	var row := _row(_r("lusitania"), 11)
+	if row.size() < 11:
+		return
+	var rome := _f("rome")
+	var ep := _f("epirus")
+	var st := _empty6()
+	var a := _put(st, rome, row[0], ["heavy", "heavy"])
+	var e := _put(st, ep, row[3], ["spear", "spear"])
+	var near := _put(st, rome, CGrid.at(CGrid.cx(row[3]), CGrid.cy(row[3]) - 3), ["heavy"]) if CGrid.passable(CGrid.at(CGrid.cx(row[3]), CGrid.cy(row[3]) - 3)) else {}
+	var far := _put(st, rome, row[10], ["heavy"])
+	var efar := _put(st, ep, row[7], ["javelin"])
+	CRules.execute_moves6(st, [[int(a["id"]), CState.cell(e), rome, 0, 0, int(e["id"])]])
+	var b: Dictionary = st["battles"][0] if not (st["battles"] as Array).is_empty() else {}
+	_check(not b.is_empty(), "the field battle starts")
+	if b.is_empty():
+		return
+	CRules.add_reinforcements(st, b)
+	var bc := CGrid.at(int(b["x"]), int(b["y"]))
+	var reinf: Array = b["reinf"]
+	_check(not near.is_empty() and reinf.has(int(near["id"])), "a friendly army %d cells away supports it" % (CGrid.cheb(bc, CState.cell(near)) if not near.is_empty() else -1))
+	_check(reinf.has(int(efar["id"])), "an enemy army 4 cells away supports its side")
+	_check(not reinf.has(int(far["id"])), "one %d cells away does not (support radius %d)" % [CGrid.cheb(bc, CState.cell(far)), CData.SUPPORT])
+	var edge := -2
+	for pr in b["edge"]:
+		if int(pr[0]) == int(near.get("id", -1)):
+			edge = int(pr[1])
+	_check(edge == CGrid.sector(bc, CState.cell(near)) and edge == 0, "its map edge is its bearing from the battle (north: %d)" % edge)
+	var built := CBattle.build(st, b, rome)
+	_check(int(built["scenario"]["height_m"]) > 560, "the field grows on the reinforcements' edge")
+	# Fortified: support + 2.
+	var st2 := _empty6()
+	var a2 := _put(st2, rome, row[0], ["heavy", "heavy"])
+	var e2 := _put(st2, ep, row[3], ["spear", "spear"])
+	var f2 := _put(st2, rome, row[9], ["heavy"])
+	f2["stance"] = CData.ST_FORTIFY
+	CRules.execute_moves6(st2, [[int(a2["id"]), CState.cell(e2), rome, 0, 0, int(e2["id"])]])
+	CRules.add_reinforcements(st2, st2["battles"][0])
+	_check((st2["battles"][0]["reinf"] as Array).has(int(f2["id"])), "a fortified army supports from 6 cells")
+
+
+func _grid_stances() -> void:
+	var rome := _f("rome")
+	var ep := _f("epirus")
+	var row := _row(_r("lusitania"), 11)
+	if row.size() < 11:
+		return
+	var st := _empty6()
+	var a := _put(st, rome, row[0], ["heavy", "heavy"])
+	var e := _put(st, ep, row[8], ["spear"])
+	var full := CState.max_mp6(a)
+	_check(CRules.apply_order(st, rome, {"t": "stance", "a": int(a["id"]), "s": CData.ST_FORCED}) == "" and int(a["mp"]) == full * 3 / 2,
+		"forced march: half as many points again (%d)" % int(a["mp"]))
+	_check(CRules.zone_r(st, a) == 0, "an army on a forced march has no zone of control")
+	_check(CRules._can_move6(st, a, CState.cell(e), int(e["id"])).begins_with("on a forced march"), "an army on a forced march cannot attack")
+	var od1 := CBattle.odds(st, [e], [a], int(a["r"]), false, -1)
+	a["stance"] = CData.ST_DEFAULT
+	var od0 := CBattle.odds(st, [e], [a], int(a["r"]), false, -1)
+	_check(int(od1["win"]) > int(od0["win"]), "an army caught on a forced march fights worse (%d%% vs %d%% against it)" % [int(od1["win"]), int(od0["win"])])
+	# Caught on a forced march: its units start shaken in the battle.
+	a["stance"] = CData.ST_FORCED
+	CRules.execute_moves6(st, [[int(e["id"]), CState.cell(a), ep, 0, 0, int(a["id"])]])
+	var b: Dictionary = st["battles"][0] if not (st["battles"] as Array).is_empty() else {}
+	var shaken := false
+	if not b.is_empty():
+		for u in CBattle.build(st, b, rome)["scenario"]["units"]:
+			if int(u.get("morale_pct", 100)) == CData.FORCED_MORALE_PCT:
+				shaken = true
+	_check(shaken, "an army caught on a forced march starts the battle with %d%% morale" % CData.FORCED_MORALE_PCT)
+	# Fortify: no moves, a wider zone, the defender's bonus.
+	var st2 := _empty6()
+	var f2 := _put(st2, rome, row[0], ["heavy", "heavy"])
+	var e2 := _put(st2, ep, row[8], ["heavy", "heavy"])
+	var o0 := CBattle.odds(st2, [e2], [f2], int(f2["r"]), false, -1)
+	_check(CRules.apply_order(st2, rome, {"t": "stance", "a": int(f2["id"]), "s": CData.ST_FORTIFY}) == "", "fortify")
+	_check(CRules._can_move6(st2, f2, row[3]) == "fortified" and CRules.zone_r(st2, f2) == CData.ZOC + 1, "a fortified army cannot move; its zone is one wider")
+	var o1 := CBattle.odds(st2, [e2], [f2], int(f2["r"]), false, -1)
+	_check(int(o1["win"]) < int(o0["win"]), "attacking a fortified army is harder (%d%% vs %d%%)" % [int(o1["win"]), int(o0["win"])])
+	f2["moved"] = 1
+	f2["stance"] = CData.ST_DEFAULT
+	_check(CRules.apply_order(st2, rome, {"t": "stance", "a": int(f2["id"]), "s": CData.ST_FORTIFY}) != "", "an army that moved this turn cannot fortify")
+	# Raiding: fewer points.
+	var r3 := _put(st2, rome, row[5], ["heavy"])
+	_check(CRules.apply_order(st2, rome, {"t": "stance", "a": int(r3["id"]), "s": CData.ST_RAID}) == "" and int(r3["mp"]) == CState.max_mp6({"units": r3["units"]}) * CData.RAID_MP_PCT / 100,
+		"raiding: %d%% points" % CData.RAID_MP_PCT)
+
+
+func _grid_raiding() -> void:
+	var rome := _f("rome")
+	var st := _empty6()
+	var ep := _f("epirus")
+	var ap := _r("apulia")
+	var inc0 := CRules.income(st, ep)
+	var mine0 := CRules.income(st, rome)
+	var base := CRules.region_income(st, ap)
+	var a := _put(st, rome, CGrid.camp(ap), ["heavy", "heavy"])
+	_check(CRules.raider(st, ap) == -1, "an army in enemy land in the default stance does not raid")
+	a["stance"] = CData.ST_RAID
+	_check(CRules.raider(st, ap) == rome and CRules.region_income(st, ap) == base - base * CData.RAID_PCT / 100,
+		"in the raiding stance it takes %d%% of Apulia's income" % CData.RAID_PCT)
+	var inc1 := CRules.income(st, ep)
+	var mine1 := CRules.income(st, rome)
+	_check(int(mine1["raid"]) == base * CData.RAID_PCT / 100 and int(mine1["total"]) - int(mine0["total"]) == int(mine1["raid"]),
+		"the raider's realm gains it (%d)" % int(mine1["raid"]))
+	_check(int(inc1["regions"]) < int(inc0["regions"]), "the owner's income falls (%d -> %d)" % [int(inc0["regions"]), int(inc1["regions"])])
+	var s1 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [])])
+	_check(int(s1["factions"][rome]["income"]) == int(mine1["total"]), "the end of turn pays it")
+
+
+func _grid_migration() -> void:
+	var v5 := _new([_f("rome")])
+	var la := _r("latium")
+	var a: Dictionary = CState.armies_of(v5, _f("rome"))[0]
+	a["stance"] = CData.STANCE_GARRISON
+	var raider: Dictionary = CState.armies_of(v5, _f("rome"))[1]
+	raider["r"] = _r("apulia")
+	var mig := CState.from_json(CState.to_json(v5))
+	_check(int(mig["version"]) == 6, "a format 5 save migrates to format 6")
+	var ok := true
+	for m in mig["armies"]:
+		if not m.has("x") or CGrid.region(CState.cell(m)) != int(m["r"]) or m.has("dest") or int(m["mp"]) != CState.max_mp6(m):
+			ok = false
+	_check(ok, "every army stands on a cell of its region with full points")
+	var ma := CState.army(mig, int(a["id"]))
+	var mr := CState.army(mig, int(raider["id"]))
+	_check(CState.cell(ma) == CGrid.site(la) and CRules.inside(mig, ma) and int(ma["stance"]) == CData.ST_DEFAULT,
+		"an army inside the walls is on its settlement's cell")
+	_check(CState.cell(mr) == CGrid.camp(_r("apulia")) and int(mr["stance"]) == CData.ST_RAID, "an army in enemy land raids from its camp")
+	var other: Dictionary = CState.armies_of(mig, _f("carthage"))[0]
+	_check(CGrid.cheb(CState.cell(other), CGrid.site(int(other["r"]))) == 1, "the others stand in the field next to their settlement")
+	var v1 := CState.from_json(FileAccess.get_file_as_string("res://tests/data/campaign_v1.json"))
+	var ok1 := not v1.is_empty() and int(v1["version"]) == 6
+	for m in v1.get("armies", []):
+		if not m.has("x"):
+			ok1 = false
+	_check(ok1, "the format 1 save migrates all the way to format 6")
+	var r1 := CTurn.resolve_turn(v1, [])
+	var r2 := CTurn.resolve_turn(CState.from_json(FileAccess.get_file_as_string("res://tests/data/campaign_v1.json")), [])
+	_check(CState.state_hash(r1) == CState.state_hash(r2) and int(r1["turn"]) == int(v1["turn"]) + 1, "and resolves a turn deterministically")
+	_check(CRules.apply_order(v5, _f("rome"), {"t": "stance", "a": int(raider["id"]), "s": CData.ST_RAID}) != "", "a format 5 state refuses the new stances")
+
+
+func _grid_steps() -> void:
+	var st := _empty6()
+	var rome := _f("rome")
+	var a := _put(st, rome, CState.field_cell(_r("latium")), ["heavy"])
+	var b := _put(st, rome, CState.field_cell(_r("etruria")), ["cav"])
+	var s1 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [_move6(a, CGrid.camp(_r("campania"))), _move6(b, CGrid.camp(_r("latium")))])])
+	var ev := _events(s1, "moves")
+	_check(ev.size() >= 1, "the turn's steps are logged")
+	if ev.is_empty():
+		return
+	var steps: Array = ev[0]["steps"]
+	var last := {}
+	var order_ok := true
+	var prev := -1
+	for sp in steps:
+		last[int(sp[0])] = CGrid.at(int(sp[1]), int(sp[2]))
+	_check(int(last.get(int(a["id"]), -1)) == CState.cell(CState.army(s1, int(a["id"]))) and int(last.get(int(b["id"]), -1)) == CState.cell(CState.army(s1, int(b["id"]))),
+		"each army's last logged step is where it ends")
+	_check(int(steps[0][0]) == int(a["id"]) and int(steps[1][0]) == int(b["id"]), "steps go round by round, armies by id")
+	if order_ok and prev < 0:
+		pass
+	var s2 := CTurn.resolve_turn(s1, [])
+	var old := 0
+	for e in s2["events"]:
+		if str(e["k"]) == "moves" and int(e["turn"]) < int(s1["turn"]):
+			old += 1
+	_check(old == 0, "only the last turn's step log is kept")
+
+
+func _grid_determinism() -> void:
+	var a := _play(_new6([0]), 12, -1)
+	var b := _play(_new6([0]), 12, -1)
+	var c := _play(_new6([0]), 12, 6)
+	_check(CState.state_hash(a) == CState.state_hash(b), "format 6: same inputs, same state after 12 turns (%s)" % CState.hash_text(a))
+	_check(CState.state_hash(a) == CState.state_hash(c), "format 6: save / load in the middle changes nothing (%s)" % CState.hash_text(c))
+	_check(_plain(a), "format 6: the state holds only ints, strings, arrays and dictionaries (no floats, no packed arrays)")
+
+
+func _plain(v) -> bool:
+	if v is int or v is String:
+		return true
+	if v is Array:
+		for x in v:
+			if not _plain(x):
+				return false
+		return true
+	if v is Dictionary:
+		for k in v:
+			if not (k is String) or not _plain(v[k]):
+				return false
+		return true
+	return false

@@ -742,7 +742,8 @@ var fx_head: int = 0
 ## scenario = {
 ##   "width_m": int, "height_m": int,
 ##   "ai_sides": [side, ...],
-##   "units": [{"side", "type", "count", "x_m", "y_m", "facing", "files"}, ...],
+##   "units": [{"side", "type", "count", "x_m", "y_m", "facing", "files", optional
+##     "wall", "morale_pct" (starts with that % of its morale)}, ...],
 ##   "orders": [order, ...]   # optional scripted orders (test scenarios)
 ## }  x_m/y_m is the front centre of the unit in metres.
 func setup(scenario: Dictionary, p_seed: int) -> void:
@@ -847,6 +848,10 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		u_alive[u] = cnt
 		u_state[u] = U_READY
 		u_morale[u] = t_morale[ty]
+		if ud.has("morale_pct"):
+			# A unit that starts shaken (the campaign: an army caught on a
+			# forced march): this % of its type's morale.
+			u_morale[u] = t_morale[ty] * clampi(int(ud["morale_pct"]), 10, 100) / 100
 		u_files[u] = clampi(int(ud.get("files", 20)), 1, cnt)
 		u_ax[u] = int(ud["x_m"]) * M
 		u_ay[u] = int(ud["y_m"]) * M

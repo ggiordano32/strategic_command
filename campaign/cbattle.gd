@@ -78,7 +78,10 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct: i
 				if int(u["n"]) <= 0 or field >= CData.BATTLE_SIDE_MAX:
 					continue
 				field += 1
-				entries[s].append({"army": int(a["id"]), "unit": k, "t": str(u["t"]), "n": int(u["n"]), "f": int(a["f"])})
+				var ent := {"army": int(a["id"]), "unit": k, "t": str(u["t"]), "n": int(u["n"]), "f": int(a["f"])}
+				if CState.stance(a) == CData.ST_FORCED:
+					ent["morale"] = CData.FORCED_MORALE_PCT
+				entries[s].append(ent)
 	for k in gar.size():
 		var g: Dictionary = gar[k]
 		if int(g["n"]) > 0:
@@ -140,7 +143,10 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct: i
 			cnt = maxi(cnt * scale_pct / 100, mini(cnt, 8))
 			if UT.cls(ty) == UT.CLS_ART:
 				cnt = int(e["n"])  # engines and crews are not scaled
-		units.append(Scenarios.unit(ss, ty, cnt, x, y, face))
+		var su := Scenarios.unit(ss, ty, cnt, x, y, face)
+		if int(e.get("morale", 100)) != 100:
+			su["morale_pct"] = int(e["morale"])  # version 6: caught on a forced march
+		units.append(su)
 		map.append({"side": cs, "army": int(e["army"]), "unit": int(e["unit"]), "n": int(e["n"]), "sim_n": cnt})
 		ufac.append(int(e["f"]))
 	var terrain := {"kind": int(CData.REGIONS[r]["terrain"]), "seed": battle_seed(st, r, 1),
@@ -171,12 +177,15 @@ static func _edge_groups(b: Dictionary, entries: Array) -> Array:
 		return out
 	var r := int(b["r"])
 	var approach := 4  # unknown: attackers from the south
-	for pr in b.get("from", []):
-		if (b["att"] as Array).has(int(pr[0])) and int(pr[1]) >= 0:
-			var sc := CData.sector(r, int(pr[1]))
-			if sc >= 0:
-				approach = sc
-				break
+	if int(b.get("app", -1)) >= 0:
+		approach = int(b["app"])  # version 6: the lead attacker's bearing
+	else:
+		for pr in b.get("from", []):
+			if (b["att"] as Array).has(int(pr[0])) and int(pr[1]) >= 0:
+				var sc := CData.sector(r, int(pr[1]))
+				if sc >= 0:
+					approach = sc
+					break
 	var groups := {}
 	var order: Array = []
 	for pr in list:
@@ -509,9 +518,9 @@ static func strengths(st: Dictionary, attackers: Array, defenders: Array, r: int
 		gar_side: int = -2) -> Array:
 	var s := [0, 0]
 	for a in attackers:
-		s[0] += CState.strength(a)
+		s[0] += CState.strength(a) * _stance_pct(a, false) / 100
 	for a in defenders:
-		s[1] += CState.strength(a)
+		s[1] += CState.strength(a) * _stance_pct(a, not settlement) / 100
 	var gs := gar_side
 	if gs == -2:
 		gs = 1 if settlement else -1
@@ -522,6 +531,18 @@ static func strengths(st: Dictionary, attackers: Array, defenders: Array, r: int
 	elif gs >= 0:
 		s[gs] += garrison_men_strength(st, r)
 	return s
+
+
+## Version 6 stances in the formula: a fortified army defending in the
+## field counts FORTIFY_DEF_PCT %, an army caught on a forced march
+## FORCED_DEF_PCT % (stance values 2-4 exist only in version 6 states).
+static func _stance_pct(a: Dictionary, field_def: bool) -> int:
+	match CState.stance(a):
+		CData.ST_FORCED:
+			return CData.FORCED_DEF_PCT
+		CData.ST_FORTIFY:
+			return CData.FORTIFY_DEF_PCT if field_def else 100
+	return 100
 
 
 ## Garrison strength including the wall bonus.

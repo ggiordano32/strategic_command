@@ -14,11 +14,15 @@ extends RefCounted
 ##        army's movement points allow; mode 2 marches in without attacking
 ##        (raiding); mode 0 / 1 lay siege / assault on arrival; "persist" 1
 ##        keeps marching on later turns: the army stores dest and mode)
+##        (version 6: "x", "y" the destination cell, or "tgt" an enemy army;
+##        "to" still means that region's settlement; see "the continuous
+##        overworld (v6)" at the end of this file)
 ##   {"t": "assault", "r": region}  (version 4: the besiegers storm it;
 ##        version 5 also from inside the region without a siege)
 ##   {"t": "sally", "r": region}    (version 4: the besieged ride out)
 ##   {"t": "siege", "r": region}    (version 5: lay siege from inside)
-##   {"t": "stance", "a": army id, "s": 0 field | 1 inside the walls} (v5)
+##   {"t": "stance", "a": army id, "s": 0 field | 1 inside the walls} (v5;
+##        version 6: CData.ST_* default 0, forced march 2, fortify 3, raid 4)
 ##   {"t": "cancel_move", "army": id}  (version 5: forget a stored dest)
 ##   {"t": "recruit", "r": region, "unit": unit type key}
 ##   {"t": "build", "r": region, "chain": building chain index}
@@ -81,6 +85,11 @@ static func apply_order(st: Dictionary, f: int, o: Dictionary) -> String:
 	var t := str(o.get("t", ""))
 	match t:
 		"move":
+			if CState.grid_on(st):
+				var ma := CState.army(st, int(o.get("army", -1)))
+				if ma.is_empty() or int(ma["f"]) != f:
+					return "no such army"
+				return _can_move6(st, ma, order_cell(st, ma, o), int(o.get("tgt", -1)), int(o.get("mode", CData.MODE_SIEGE)))
 			return can_move(st, CState.army(st, int(o.get("army", -1))), int(o.get("to", -1)), f)
 		"build":
 			return _build(st, f, int(o.get("r", -1)), int(o.get("chain", -1)))
@@ -226,14 +235,17 @@ static func _merge(st: Dictionary, f: int, id: int, into: int) -> String:
 	var b := _own_free_army(st, f, into)
 	if a.is_empty() or b.is_empty() or id == into:
 		return "no such army"
-	if int(a["r"]) != int(b["r"]):
+	if CState.grid_on(st):
+		if CGrid.cheb(CState.cell(a), CState.cell(b)) > 1:
+			return "not together"
+	elif int(a["r"]) != int(b["r"]):
 		return "not in the same region"
 	if CState.unit_count(a) + CState.unit_count(b) > CData.ARMY_MAX:
 		return "more than %d units" % CData.ARMY_MAX
 	(b["units"] as Array).append_array(a["units"])
 	if CState.moves_on(st):
 		# The merged army moves at the pace of its slower part.
-		b["mp"] = mini(mini(CState.mp(a), CState.mp(b)), CState.max_mp(b))
+		b["mp"] = mini(mini(CState.mp(a), CState.mp(b)), CState.full_mp(st, b))
 		b["moved"] = maxi(int(a["moved"]), int(b["moved"]))
 	st["armies"].remove_at(CState.army_index(st, id))
 	return ""
@@ -268,7 +280,15 @@ static func _split(st: Dictionary, f: int, id: int, idx, new_id: int) -> String:
 	st["factions"][f]["next_army"] = int(st["factions"][f]["next_army"]) + 1
 	var na := {"id": new_id, "f": f, "r": int(a["r"]), "units": moved,
 		"from": int(a["from"]), "moved": int(a["moved"]), "busy": 0}
-	if CState.moves_on(st):
+	if CState.grid_on(st):
+		na["x"] = int(a["x"])
+		na["y"] = int(a["y"])
+		na["dest_x"] = -1
+		na["dest_y"] = -1
+		na["stance"] = CState.stance(a)
+		na["mp"] = mini(CState.mp(a), CState.full_mp(st, na))
+		a["mp"] = mini(CState.mp(a), CState.full_mp(st, a))
+	elif CState.moves_on(st):
 		na["mp"] = mini(CState.mp(a), CState.max_mp(na))
 		na["stance"] = CState.stance(a)
 		a["mp"] = mini(CState.mp(a), CState.max_mp(a))
@@ -291,7 +311,9 @@ static func _disband(st: Dictionary, f: int, id: int, idx) -> String:
 
 
 static func _insert_army(st: Dictionary, a: Dictionary) -> void:
-	if CState.moves_on(st):
+	if CState.grid_on(st):
+		CState.army_defaults6(a)
+	elif CState.moves_on(st):
 		CState.army_defaults(a)
 	var arr: Array = st["armies"]
 	var i := 0
@@ -305,6 +327,10 @@ static func _insert_army(st: Dictionary, a: Dictionary) -> void:
 static func can_move(st: Dictionary, a: Dictionary, to: int, f: int = -1) -> String:
 	if a.is_empty() or (f >= 0 and int(a["f"]) != f):
 		return "no such army"
+	if CState.grid_on(st):
+		if to < 0 or to >= CData.region_count():
+			return "no route"
+		return _can_move6(st, a, CGrid.site(to))
 	if CState.moves_on(st):
 		return _can_march(st, a, to)
 	if int(a["busy"]) != 0:
@@ -334,6 +360,8 @@ static func can_move(st: Dictionary, a: Dictionary, to: int, f: int = -1) -> Str
 ## reach (this_turn: only those it reaches this turn).
 static func move_targets(st: Dictionary, a: Dictionary, this_turn: bool = false) -> Array[int]:
 	var out: Array[int] = []
+	if CState.grid_on(st):
+		return _move_targets6(st, a, this_turn)
 	if CState.moves_on(st):
 		if a.is_empty() or int(a["busy"]) != 0 or int(a["moved"]) != 0 or siege_role(st, a) == 2:
 			return out
@@ -449,6 +477,12 @@ static func start_battle(st: Dictionary, r: int, a: Dictionary) -> Dictionary:
 		"def": defs, "att_f": int(a["f"]), "def_f": o, "reinf": [], "settlement": 1, "new": 1}
 	if CState.sieges_on(st):
 		b["from"] = [[int(a["id"]), int(a["from"])]]
+	if CState.grid_on(st):
+		var sc := CGrid.site(r)
+		b["x"] = CGrid.cx(sc)
+		b["y"] = CGrid.cy(sc)
+		b["app"] = -1
+		b["edge"] = []
 	st["next_battle"] = int(st["next_battle"]) + 1
 	(st["battles"] as Array).append(b)
 	return b
@@ -918,8 +952,15 @@ static func can_siege(st: Dictionary, f: int, r: int) -> String:
 
 
 ## Faction f's armies in region r that are free to act (not in a battle).
+## Version 6: its armies on the ring of r's settlement (not on a forced
+## march).
 static func _mine_here(st: Dictionary, f: int, r: int) -> Array:
 	var out: Array = []
+	if CState.grid_on(st):
+		for a in on_ring(st, r, f):
+			if int(a["busy"]) == 0 and CState.stance(a) != CData.ST_FORCED:
+				out.append(a)
+		return out
 	for a in st["armies"]:
 		if int(a["r"]) == r and int(a["f"]) == f and int(a["busy"]) == 0:
 			out.append(a)
@@ -934,6 +975,10 @@ static func order_siege(st: Dictionary, f: int, r: int) -> String:
 	var why := can_siege(st, f, r)
 	if why != "":
 		return why
+	if CState.grid_on(st):
+		var a: Dictionary = _mine_here(st, f, r)[0]
+		start_siege(st, r, a, int(a["from"]))
+		return ""
 	_act_here(st, _mine_here(st, f, r)[0], CData.MODE_SIEGE)
 	return ""
 
@@ -944,6 +989,8 @@ static func order_siege(st: Dictionary, f: int, r: int) -> String:
 static func _set_stance(st: Dictionary, f: int, id: int, s: int) -> String:
 	if not CState.moves_on(st):
 		return "no free movement in this campaign"
+	if CState.grid_on(st):
+		return _set_stance6(st, f, id, s)
 	var a := CState.army(st, id)
 	if a.is_empty() or int(a["f"]) != f:
 		return "no such army"
@@ -978,6 +1025,9 @@ static func _cancel_move(st: Dictionary, f: int, id: int) -> String:
 	var a := CState.army(st, id)
 	if a.is_empty() or int(a["f"]) != f:
 		return "no such army"
+	if CState.grid_on(st):
+		_drop_march(a)
+		return ""
 	a["dest"] = -1
 	a["mode"] = CData.MODE_MARCH
 	return ""
@@ -987,6 +1037,9 @@ static func _cancel_move(st: Dictionary, f: int, id: int) -> String:
 ## (peace made while they stood there) go home; armies inside the walls of
 ## a settlement no longer their side's take the field.
 static func _check_trespass(st: Dictionary) -> void:
+	if CState.grid_on(st):
+		_check_trespass6(st)
+		return
 	for a in (st["armies"] as Array).duplicate():
 		if int(a["busy"]) != 0:
 			continue
@@ -1005,6 +1058,18 @@ static func _check_trespass(st: Dictionary) -> void:
 ## inside a besieged settlement of its own side.
 static func siege_role(st: Dictionary, a: Dictionary) -> int:
 	if a.is_empty() or not CState.sieges_on(st):
+		return 0
+	if CState.grid_on(st):
+		var c := CState.cell(a)
+		var af2 := int(a["f"])
+		for sg2 in st["sieges"]:
+			var r2 := int(sg2["r"])
+			var s2 := CGrid.site(r2)
+			var o2 := CState.owner(st, r2)
+			if c == s2 and CState.friendly(st, af2, o2):
+				return 2
+			if c != s2 and CGrid.cheb(c, s2) <= 1 and CState.friendly(st, af2, int(sg2["f"])) and CState.at_war(st, af2, o2):
+				return 1
 		return 0
 	var r := int(a["r"])
 	var sg := CState.siege_at(st, r)
@@ -1027,6 +1092,11 @@ static func besiegers(st: Dictionary, r: int) -> Array:
 	if sg.is_empty():
 		return out
 	var o := CState.owner(st, r)
+	if CState.grid_on(st):
+		for a in on_ring(st, r, int(sg["f"]), true):
+			if CState.at_war(st, int(a["f"]), o):
+				out.append(a)
+		return out
 	for a in st["armies"]:
 		if int(a["r"]) == r and CState.friendly(st, int(a["f"]), int(sg["f"])) and CState.at_war(st, int(a["f"]), o):
 			out.append(a)
@@ -1038,6 +1108,8 @@ static func besieged_armies(st: Dictionary, r: int) -> Array:
 	var out: Array = []
 	if CState.siege_at(st, r).is_empty():
 		return out
+	if CState.grid_on(st):
+		return inside_of(st, r)
 	var o := CState.owner(st, r)
 	for a in st["armies"]:
 		if int(a["r"]) == r and CState.friendly(st, int(a["f"]), o):
@@ -1169,16 +1241,16 @@ static func can_sally(st: Dictionary, f: int, r: int) -> String:
 	var o := CState.owner(st, r)
 	if not CState.friendly(st, f, o):
 		return "not your city"
-	var inside := besieged_armies(st, r)
+	var ins := besieged_armies(st, r)
 	var mine := f == o
-	for a in inside:
+	for a in ins:
 		if int(a["f"]) == f:
 			mine = true
 	if not mine:
 		return "none of your armies are inside"
 	if not CState.battle_at(st, r).is_empty():
 		return "battle pending there"
-	if inside.is_empty() and int(st["regions"][r]["gar"]) <= 0:
+	if ins.is_empty() and int(st["regions"][r]["gar"]) <= 0:
 		return "nobody left to sally"
 	return ""
 
@@ -1192,6 +1264,12 @@ static func order_assault(st: Dictionary, f: int, r: int) -> String:
 	var why := can_assault(st, f, r)
 	if why != "":
 		return why
+	if CState.grid_on(st):
+		if CState.siege_at(st, r).is_empty():
+			_assault6(st, r, _mine_here(st, f, r)[0])
+		else:
+			_siege_battle6(st, r, "assault", {})
+		return ""
 	if CState.siege_at(st, r).is_empty():
 		_act_here(st, _mine_here(st, f, r)[0], CData.MODE_ASSAULT)
 		return ""
@@ -1207,6 +1285,10 @@ static func order_sally(st: Dictionary, f: int, r: int) -> String:
 	var why := can_sally(st, f, r)
 	if why != "":
 		return why
+	if CState.grid_on(st):
+		var bs := besiegers(st, r)
+		_siege_battle6(st, r, "sally", {}, CState.cell(bs[0]) if not bs.is_empty() else -1)
+		return ""
 	start_siege_battle(st, r, "sally")
 	return ""
 
@@ -1299,6 +1381,17 @@ static func _siege_turn(st: Dictionary) -> void:
 						keep.append(unit)
 				a["units"] = keep
 			_drop_empty_armies(st)
+			if CState.grid_on(st):
+				# Version 6: the besiegers live off a stripped land too.
+				for a in besiegers(st, r):
+					for unit in a["units"]:
+						unit["n"] = maxi(int(unit["n"]) - maxi(int(unit["n"]) * CData.SIEGE_BESIEGER_PCT / 100, 1), 0)
+					var keep2: Array = []
+					for unit in a["units"]:
+						if int(unit["n"]) > 0:
+							keep2.append(unit)
+					a["units"] = keep2
+				_drop_empty_armies(st)
 			event(st, {"k": "starving", "r": r, "f": CState.owner(st, r), "by": int(sg["f"]), "gar": int(rs["gar"])})
 		if int(rs["gar"]) <= 0 and besieged_armies(st, r).is_empty():
 			var bs := besiegers(st, r)
@@ -1369,6 +1462,9 @@ static func add_reinforcements(st: Dictionary, b: Dictionary) -> void:
 		for a in arm[s]:
 			counts[s] += CState.unit_count(a)
 	var leads := [int(b["att_f"]), int(b["def_f"])]
+	if CState.grid_on(st):
+		_support6(st, b, counts, leads)
+		return
 	if CState.moves_on(st):
 		_support_by_range(st, b, counts, leads)
 		return
@@ -1541,29 +1637,37 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 	# Reinforcements stay where they are; armies in the region retreat if
 	# their side lost.
 	var loser := 1 - winner
+	var bc := CGrid.at(int(b["x"]), int(b["y"])) if b.has("x") else -1
+	var app := int(b.get("app", -1))
+	if app >= 0 and loser == 1:
+		app = (app + 4) % 8  # the defenders fall back away from the attackers
 	for a in arm[loser]:
 		a["busy"] = 0
 		if (b["reinf"] as Array).has(int(a["id"])):
 			continue
+		if CState.grid_on(st) and not open_field and not field and loser == 1 and not inside(st, a):
+			# Version 6: the owner's field armies beaten at the walls fall back.
+			_retreat(st, a, -1, true, bc, app)
+			continue
 		if open_field:
 			# Back along the way it came, else the nearest friendly region.
-			_retreat(st, a, _origin(st, b, a), true)
+			_retreat(st, a, _origin(st, b, a), true, bc, app)
 			continue
 		if field:
 			if loser == 0:
 				# The siege is broken: the besiegers fall back to where they
 				# came from, else to the nearest friendly region.
-				_retreat(st, a, _origin(st, b, a), true)
-			elif _arrived(b, a):
-				_retreat(st, a, _origin(st, b, a))  # the relief is beaten off
+				_retreat(st, a, _origin(st, b, a), true, bc, app)
+			elif _arrived(b, a) or (CState.grid_on(st) and not inside(st, a)):
+				_retreat(st, a, _origin(st, b, a), false, bc, app)  # the relief is beaten off
 			continue  # the armies inside stay behind their walls
-		_retreat(st, a, _origin(st, b, a) if loser == 0 else -1)
+		_retreat(st, a, _origin(st, b, a) if loser == 0 else -1, false, bc, app)
 	for a in arm[winner]:
 		a["busy"] = 0
 	var new_owner := -1
 	if open_field:
 		st["battles"].erase(b)
-		if winner == 0:
+		if winner == 0 and not CState.grid_on(st):
 			_after_field_win(st, r, arm[0])
 	if winner == 0 and not field and not open_field:
 		# The attackers take the settlement: the lead attacker if it still
@@ -1571,7 +1675,7 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 		var lead := int(b["att_f"])
 		var present := -1
 		for a in arm[0]:
-			if int(a["r"]) == r:
+			if int(a["r"]) == r or (CState.grid_on(st) and CGrid.cheb(CState.cell(a), CGrid.site(r)) <= 1):
 				if int(a["f"]) == lead:
 					present = lead
 					break
@@ -1617,16 +1721,25 @@ static func _capture(st: Dictionary, r: int, f: int, how: String = "") -> void:
 	if CState.sieges_on(st):
 		# Armies of the old side left in the city (raised there while its
 		# battle was pending) march out (version 4; older states keep them).
-		for a in CState.armies_in(st, r):
+		var olds: Array = CState.armies_in(st, r)
+		if CState.grid_on(st):
+			olds = []
+			for a in st["armies"]:
+				if CState.cell(a) == CGrid.site(r):
+					olds.append(a)
+		for a in olds:
 			if int(a["busy"]) == 0 and not CState.friendly(st, int(a["f"]), f):
-				_retreat(st, a, -1)
+				_retreat(st, a, -1, false, CGrid.site(r) if CState.grid_on(st) else -1)
 
 
 ## Move a beaten army to a neighbouring friendly region (its origin if
 ## given and still friendly; else land before sea, lowest index), or
 ## destroy it. far: with no friendly neighbour, the nearest friendly region
 ## (breadth first over land routes and sea lanes, lowest index first).
-static func _retreat(st: Dictionary, a: Dictionary, prefer: int, far: bool = false) -> void:
+static func _retreat(st: Dictionary, a: Dictionary, prefer: int, far: bool = false, bc: int = -1, app: int = -1) -> void:
+	if CState.grid_on(st):
+		_retreat6(st, a, bc, app, far)
+		return
 	var f := int(a["f"])
 	var opts: Array[int] = []
 	if prefer >= 0 and _retreat_ok(st, f, prefer, int(a["r"])):
@@ -1767,9 +1880,16 @@ static func income(st: Dictionary, f: int) -> Dictionary:
 	var reg := 0
 	var markets := 0
 	var owned := CState.regions_of(st, f)
+	var rmap := raid_map(st) if CState.grid_on(st) else PackedInt32Array()
 	for r in owned:
-		reg += region_income(st, r)
+		reg += region_income(st, r, rmap)
 		markets += CState.building(st, r, CData.MARKET)
+	var raid := 0
+	if CState.grid_on(st):
+		# Version 6: what our raiders take from enemy regions.
+		for r in CData.region_count():
+			if rmap[r] == f:
+				raid += _base_income(st, r) * CData.RAID_PCT / 100
 	var trade := 0
 	for g in CState.nf():
 		if g == f or not CState.alive(st, g):
@@ -1784,23 +1904,37 @@ static func income(st: Dictionary, f: int) -> Dictionary:
 	var corr := clampi((owned.size() - CData.CORRUPTION_FREE) * CData.CORRUPTION_PCT, 0, CData.CORRUPTION_MAX)
 	var gross := reg + trade
 	var cut := gross * corr / 100
-	return {"regions": reg, "trade": trade, "corruption": cut, "total": gross - cut}
+	var out := {"regions": reg, "trade": trade, "corruption": cut, "total": gross - cut}
+	if CState.grid_on(st):
+		out["raid"] = raid
+		out["total"] = gross - cut + raid
+	return out
 
 
-static func region_income(st: Dictionary, r: int) -> int:
+static func region_income(st: Dictionary, r: int, rmap: PackedInt32Array = PackedInt32Array()) -> int:
 	if not CState.siege_at(st, r).is_empty():
 		return 0  # besieged: nothing comes in
-	var rs: Dictionary = st["regions"][r]
-	var inc := int(CData.REGIONS[r]["wealth"]) * CData.WEALTH_INCOME + int(CData.LEVEL_INCOME[int(rs["level"])]) \
-		+ CState.building(st, r, CData.FARM) * CData.FARM_INCOME + CState.building(st, r, CData.MARKET) * CData.MARKET_INCOME
+	var inc := _base_income(st, r)
+	if CState.grid_on(st):
+		if (rmap[r] if rmap.size() > r else _raider6(st, r)) >= 0:
+			inc -= inc * CData.RAID_PCT / 100  # version 6: the raiders take their share
+		return inc
 	if raider(st, r) >= 0:
 		inc /= 2  # raided (version 5): half the income
 	return inc
 
 
+static func _base_income(st: Dictionary, r: int) -> int:
+	var rs: Dictionary = st["regions"][r]
+	return int(CData.REGIONS[r]["wealth"]) * CData.WEALTH_INCOME + int(CData.LEVEL_INCOME[int(rs["level"])]) \
+		+ CState.building(st, r, CData.FARM) * CData.FARM_INCOME + CState.building(st, r, CData.MARKET) * CData.MARKET_INCOME
+
+
 ## Version 5: the faction raiding region r (its army stands there, at war
 ## with the owner, without a siege; the lowest army id), else -1.
 static func raider(st: Dictionary, r: int) -> int:
+	if CState.grid_on(st):
+		return _raider6(st, r)
 	if not CState.moves_on(st) or not CState.siege_at(st, r).is_empty():
 		return -1
 	var o := CState.owner(st, r)
@@ -1906,7 +2040,7 @@ static func end_of_turn(st: Dictionary) -> void:
 		a["busy"] = 1 if in_battle(st, int(a["id"])) else 0
 		if free_moves:
 			a["idle"] = 0 if int(a["moved"]) != 0 else int(a.get("idle", 0)) + 1
-			a["mp"] = CState.max_mp(a)
+			a["mp"] = CState.full_mp(st, a)
 		a["moved"] = 0
 		a["from"] = -1
 	# Proposals last one turn.
@@ -1921,13 +2055,18 @@ static func end_of_turn(st: Dictionary) -> void:
 ## forms a new army.
 static func _add_recruit(st: Dictionary, f: int, r: int, key: String) -> void:
 	var unit := {"t": key, "n": UT.size_of(UT.index_of(key))}
+	var grid := CState.grid_on(st)
 	for a in st["armies"]:
-		if int(a["f"]) == f and int(a["r"]) == r and int(a["busy"]) == 0 and CState.unit_count(a) < CData.ARMY_MAX:
+		var here := CGrid.cheb(CState.cell(a), CGrid.site(r)) <= 1 if grid else int(a["r"]) == r
+		if int(a["f"]) == f and here and int(a["busy"]) == 0 and CState.unit_count(a) < CData.ARMY_MAX:
 			(a["units"] as Array).append(unit)
 			return
 	var id := new_army_id(st, f)
 	st["factions"][f]["next_army"] = int(st["factions"][f]["next_army"]) + 1
-	_insert_army(st, {"id": id, "f": f, "r": r, "units": [unit], "from": -1, "moved": 0, "busy": 0})
+	var na := {"id": id, "f": f, "r": r, "units": [unit], "from": -1, "moved": 0, "busy": 0}
+	if grid:
+		CState.place(na, CGrid.site(r))  # version 6: raised inside the walls
+	_insert_army(st, na)
 
 
 # ------------------------------------------------------ end conditions ---
@@ -2002,3 +2141,882 @@ static func check_victory(st: Dictionary) -> void:
 static func event(st: Dictionary, e: Dictionary) -> void:
 	e["turn"] = int(st["turn"])
 	(st["events"] as Array).append(e)
+
+
+# ------------------------------------------ the continuous overworld (v6) ---
+# State version 6 (CState.grid_on): armies stand on cells of the static nav
+# grid (campaign/cgrid.gd) and walk 8-connected paths (CGrid.find_path) to a
+# destination cell, an enemy army (tgt) or a hostile settlement (they stop on
+# its ring, the 8 cells round it, and lay siege or storm it: the move's
+# mode). Paths avoid cells a faction may not enter (lands at peace, hostile
+# settlement cells, pending battles of earlier turns and their ring, sieges
+# by a third party) and the zones of control of enemy armies (a circle of
+# CData.ZOC cells, + 1 fortified, none on a forced march or inside walls)
+# except the target's. A phase's moves run in rounds: every moving army takes
+# one step a round, by army id. A step next to an enemy army (its ring) is
+# contact: a field battle on that army's cell, the mover attacking (a forced
+# march cannot attack: it stops). A step into an enemy's zone from outside
+# stops the army before it unless that army is its target. One battle per
+# region: contact where a battle started this turn joins it (or stops). An
+# army on its own side's settlement cell is inside the walls; armies on the
+# ring of a besieged settlement besiege it. Support: armies within
+# CData.SUPPORT cells of a battle (+2 fortified) join it from their bearing.
+
+const CGrid := preload("res://campaign/cgrid.gd")
+
+
+## Zone of control radius of army a (0: none: on a forced march, in a
+## battle, or inside its settlement's walls).
+static func zone_r(st: Dictionary, a: Dictionary) -> int:
+	if int(a["busy"]) != 0 or inside(st, a):
+		return 0
+	match CState.stance(a):
+		CData.ST_FORCED:
+			return 0
+		CData.ST_FORTIFY:
+			return CData.ZOC + 1
+	return CData.ZOC
+
+
+## The region whose siege army a takes part in as a besieger (on its
+## settlement's ring), -1 none.
+static func siege_of(st: Dictionary, a: Dictionary) -> int:
+	if not CState.sieges_on(st) or a.is_empty():
+		return -1
+	var c := CState.cell(a)
+	for sg in st["sieges"]:
+		var r := int(sg["r"])
+		var s := CGrid.site(r)
+		if c != s and CGrid.cheb(c, s) <= 1 and CState.friendly(st, int(a["f"]), int(sg["f"])) \
+				and CState.at_war(st, int(a["f"]), CState.owner(st, r)):
+			return r
+	return -1
+
+
+## Army a stands inside the walls: on the cell of a settlement of its side.
+static func inside(st: Dictionary, a: Dictionary) -> bool:
+	var c := CState.cell(a)
+	var r := CGrid.site_region(c)
+	return r >= 0 and CState.friendly(st, int(a["f"]), CState.owner(st, r))
+
+
+## Armies of the owner's side inside settlement r (by id).
+static func inside_of(st: Dictionary, r: int) -> Array:
+	var out: Array = []
+	var s := CGrid.site(r)
+	var o := CState.owner(st, r)
+	for a in st["armies"]:
+		if CState.cell(a) == s and CState.friendly(st, int(a["f"]), o):
+			out.append(a)
+	return out
+
+
+## Armies of faction f (all of its side: allies too when side) on the ring
+## of settlement r (next to its cell), by id.
+static func on_ring(st: Dictionary, r: int, f: int, side: bool = false) -> Array:
+	var out: Array = []
+	var s := CGrid.site(r)
+	for a in st["armies"]:
+		var c := CState.cell(a)
+		if c != s and CGrid.cheb(c, s) <= 1 and (int(a["f"]) == f or (side and CState.friendly(st, int(a["f"]), f))):
+			out.append(a)
+	return out
+
+
+## Cells faction f may not enter this phase (1): lands of factions at peace
+## with it, hostile settlement cells (a path stops on the ring), the cell
+## and ring of a battle pending from an earlier turn, the ring of a
+## settlement besieged by a third party.
+static func block_mask(st: Dictionary, f: int) -> PackedByteArray:
+	var n := CGrid.count()
+	var m := PackedByteArray()
+	m.resize(n)
+	m.fill(0)
+	for r in CData.region_count():
+		var o := CState.owner(st, r)
+		if not CState.friendly(st, f, o) and not CState.at_war(st, f, o):
+			for c in CGrid.cells_of(r):
+				m[c] = 1
+			continue
+		var s := CGrid.site(r)
+		if not CState.friendly(st, f, o):
+			m[s] = 1
+		var sg := CState.siege_at(st, r)
+		if not sg.is_empty() and not CState.friendly(st, f, int(sg["f"])) and not CState.friendly(st, f, o):
+			for c in CGrid.disc(s, 1):
+				m[c] = 1
+	for b in st["battles"]:
+		if int(b.get("new", 0)) == 0 and b.has("x"):
+			for c in CGrid.disc(CGrid.at(int(b["x"]), int(b["y"])), 1):
+				m[c] = 1
+	return m
+
+
+## Enemy armies of faction f that project a zone (at war, zone_r > 0), by id.
+static func zone_armies(st: Dictionary, f: int) -> Array:
+	var out: Array = []
+	for e in st["armies"]:
+		if CState.at_war(st, f, int(e["f"])) and zone_r(st, e) > 0:
+			out.append(e)
+	return out
+
+
+## Zones of control of the enemies of f, as a per-cell count of the zones
+## covering it, without the zones of the armies in `except` (ids).
+static func zone_mask(st: Dictionary, f: int, except: Array = []) -> PackedInt32Array:
+	var n := CGrid.count()
+	var m := PackedInt32Array()
+	m.resize(n)
+	m.fill(0)
+	for e in zone_armies(st, f):
+		if except.has(int(e["id"])):
+			continue
+		for c in CGrid.disc(CState.cell(e), zone_r(st, e)):
+			m[c] += 1
+	return m
+
+
+## What a move of army a to cell `dest` (or after enemy army tgt) aims at:
+## {cell (where the search goes), adjacent (stop next to it), tgt (army id
+## or -1), r (a hostile settlement it besieges or storms, -1), targets
+## (enemy army ids whose zones it may enter), kind ("move", "inside" (into
+## our own settlement), "siege", "assault", "attack", "relief", "sally",
+## "join")}.
+static func move_aim(st: Dictionary, a: Dictionary, dest: int, tgt: int = -1, mode: int = CData.MODE_SIEGE) -> Dictionary:
+	var f := int(a["f"])
+	var out := {"cell": dest, "adjacent": 0, "tgt": -1, "r": -1, "targets": [], "kind": "move"}
+	if tgt >= 0:
+		var t := CState.army(st, tgt)
+		if not t.is_empty() and CState.at_war(st, f, int(t["f"])):
+			var tc := CState.cell(t)
+			var t_reg := CGrid.site_region(tc)
+			if t_reg >= 0 and inside(st, t):
+				dest = tc  # inside its walls: that is the settlement
+			else:
+				out["cell"] = tc
+				out["adjacent"] = 1
+				out["tgt"] = tgt
+				# Its side's armies standing with it are fought too: their
+				# zones may be entered.
+				var tl: Array = [tgt]
+				for e in st["armies"]:
+					if int(e["id"]) != tgt and CState.friendly(st, int(e["f"]), int(t["f"])) and zone_r(st, e) > 0 \
+							and CGrid.cheb(CState.cell(e), tc) <= CData.ZOC:
+						tl.append(int(e["id"]))
+				out["targets"] = tl
+				var tsr := siege_of(st, t)
+				if tsr >= 0:
+					out["kind"] = "sally" if siege_role(st, a) == 2 else ("relief" if CState.friendly(st, f, CState.owner(st, tsr)) else "attack")
+				else:
+					out["kind"] = "attack"
+				return out
+	var r := CGrid.site_region(dest)
+	if r >= 0:
+		var o := CState.owner(st, r)
+		if CState.friendly(st, f, o):
+			out["kind"] = "inside"
+			if not CState.siege_at(st, r).is_empty() and siege_role(st, a) != 2:
+				out["kind"] = "relief"
+				out["adjacent"] = 1
+				for e in besiegers(st, r):
+					out["targets"].append(int(e["id"]))
+			return out
+		if CState.at_war(st, f, o):
+			out["adjacent"] = 1
+			out["r"] = r
+			var sg2 := CState.siege_at(st, r)
+			if not sg2.is_empty() and CState.friendly(st, f, int(sg2["f"])):
+				out["kind"] = "assault" if mode == CData.MODE_ASSAULT else "join"
+			else:
+				out["kind"] = "assault" if mode == CData.MODE_ASSAULT else "siege"
+			# The owner's side's armies in the field near the city must be
+			# beaten first: their zones may be entered.
+			for e in st["armies"]:
+				if CState.friendly(st, int(e["f"]), o) and o >= 0 and zone_r(st, e) > 0 \
+						and CGrid.cheb(CState.cell(e), dest) <= CData.ZOC + 2:
+					out["targets"].append(int(e["id"]))
+	return out
+
+
+## The cell of a move order (version 6): {"x", "y"} or "tgt" (an enemy
+## army: its cell) or, from older clients and tests, "to" (a region: its
+## settlement's cell; with mode MODE_MARCH into hostile land its camp).
+static func order_cell(st: Dictionary, a: Dictionary, o: Dictionary) -> int:
+	var tgt := int(o.get("tgt", -1))
+	if tgt >= 0:
+		var t := CState.army(st, tgt)
+		return CState.cell(t) if not t.is_empty() else -1
+	if o.has("x"):
+		return CGrid.at(int(o["x"]), int(o.get("y", -1)))
+	var to := int(o.get("to", -1))
+	if to < 0 or to >= CData.region_count():
+		return -1
+	if int(o.get("mode", CData.MODE_SIEGE)) == CData.MODE_MARCH and not CState.friendly(st, int(a["f"]), CState.owner(st, to)):
+		return CGrid.camp(to)
+	return CGrid.site(to)
+
+
+## The path army a would walk now to `dest` / tgt: {path, t, m (CGrid
+## find_path), aim (move_aim)} or {"why"}. cache: per-phase masks by
+## faction ("b<f>" block_mask, "z<f>" zone_mask), filled on demand.
+static func plan_path(st: Dictionary, a: Dictionary, dest: int, tgt: int = -1, mode: int = CData.MODE_SIEGE,
+		cache: Dictionary = {}, max_turns: int = 12) -> Dictionary:
+	if dest < 0 or not CGrid.passable(dest):
+		return {"why": "no route"}
+	var aim := move_aim(st, a, dest, tgt, mode)
+	var f := int(a["f"])
+	var kb := "b%d" % f
+	var kz := "z%d" % f
+	if not cache.has(kb):
+		cache[kb] = block_mask(st, f)
+		cache[kz] = zone_mask(st, f)
+	var m: PackedByteArray = cache[kb]
+	var zm: PackedInt32Array = cache[kz]
+	var targets: Array = aim["targets"]
+	if not targets.is_empty():
+		zm = zm.duplicate()
+		for id in targets:
+			var e := CState.army(st, int(id))
+			if e.is_empty() or zone_r(st, e) <= 0 or not CState.at_war(st, f, int(e["f"])):
+				continue
+			for c in CGrid.disc(CState.cell(e), zone_r(st, e)):
+				zm[c] -= 1
+	var goal := int(aim["cell"])
+	var adjacent := int(aim["adjacent"]) != 0
+	if not adjacent and (m[goal] != 0 or zm[goal] > 0):
+		return {"why": "in an enemy's zone of control" if zm[goal] > 0 and m[goal] == 0 else "no route"}
+	var full := CState.full_mp(st, a)
+	if full <= 0:
+		return {"why": "fortified"}
+	var res := CGrid.find_path(CState.cell(a), goal, full, CState.mp(a), m, zm, adjacent, max_turns,
+		400 * max_turns if max_turns <= 2 else 1500 + 1500 * mini(max_turns, 6))
+	if res.is_empty():
+		return {"why": "no route"}
+	res["aim"] = aim
+	return res
+
+
+## "" if army a may be ordered to march to cell dest (or after enemy army
+## tgt) this turn (version 6).
+static func _can_move6(st: Dictionary, a: Dictionary, dest: int, tgt: int = -1, mode: int = CData.MODE_SIEGE,
+		need_path: bool = true) -> String:
+	if a.is_empty():
+		return "no such army"
+	if int(a["busy"]) != 0:
+		return "in a battle"
+	if int(a["moved"]) != 0:
+		return "already moved"
+	if CState.stance(a) == CData.ST_FORTIFY:
+		return "fortified"
+	if dest < 0 or not CGrid.passable(dest):
+		return "no route"
+	if siege_role(st, a) == 2:
+		# Inside a besieged settlement: only a sally against a besieger.
+		var t := CState.army(st, tgt)
+		if t.is_empty() or siege_of(st, t) != int(a["r"]):
+			return "besieged"
+		return ""
+	if dest == CState.cell(a) and tgt < 0:
+		var r := CGrid.site_region(dest)
+		if r < 0 or CState.friendly(st, int(a["f"]), CState.owner(st, r)):
+			return "already there"
+	var why := can_enter(st, int(a["f"]), CGrid.region(dest))
+	if why != "" and tgt < 0:
+		return why
+	if CState.stance(a) == CData.ST_FORCED:
+		var aim := move_aim(st, a, dest, tgt, mode)
+		if str(aim["kind"]) not in ["move", "inside"]:
+			return "on a forced march: cannot attack"
+	if not need_path:
+		return ""
+	var pp := plan_path(st, a, dest, tgt, mode)
+	if pp.has("why"):
+		return str(pp["why"])
+	return ""
+
+
+## Version 6: run one phase's moves in rounds. moves: [[army id, dest cell,
+## faction, mode, persist, tgt], ...] (dest -1 with a tgt: its cell). Paths
+## are computed as the phase starts; round k moves every army one step, by
+## army id; contact, zones, sieges and joining battles as described above.
+static func execute_moves6(st: Dictionary, moves: Array) -> void:
+	var list := moves.duplicate()
+	list.sort_custom(func(x, y): return int(x[0]) < int(y[0]))
+	var plans: Array = []
+	var seen := {}
+	var cache := {}
+	_mlog = []
+	for mv in list:
+		var id := int(mv[0])
+		if seen.has(id):
+			continue
+		seen[id] = 1
+		var a := CState.army(st, id)
+		if a.is_empty() or int(a["f"]) != int(mv[2]):
+			continue
+		var tgt := int(mv[5]) if (mv as Array).size() > 5 else -1
+		var dest := int(mv[1])
+		if tgt >= 0:
+			var t := CState.army(st, tgt)
+			if t.is_empty() or not CState.at_war(st, int(a["f"]), int(t["f"])):
+				tgt = -1
+				if dest < 0 or not t.is_empty():
+					_drop_march(a)
+					continue
+			else:
+				dest = CState.cell(t)
+		var mode := int(mv[3])
+		var persist := int(mv[4]) if (mv as Array).size() > 4 else 0
+		var why := _can_move6(st, a, dest, tgt, mode, false)
+		if why == "" and siege_role(st, a) == 2:
+			_sally6(st, a, CState.army(st, tgt))  # inside a besieged city: a sally
+			_drop_march(a)
+			continue
+		var aim := move_aim(st, a, dest, tgt, mode)
+		if why == "" and int(aim["adjacent"]) != 0 and CGrid.cheb(CState.cell(a), int(aim["cell"])) <= 1:
+			# Already next to what it means to act on.
+			plans.append({"id": id, "path": [], "k": 0, "aim": aim, "mode": mode, "persist": persist, "stop": 0,
+				"dest": dest, "tgt": tgt})
+			continue
+		var pp := {}
+		if why == "":
+			# A march for this turn only (the AI's) looks two turns ahead.
+			pp = plan_path(st, a, dest, tgt, mode, cache, 12 if persist != 0 else 2)
+			why = str(pp.get("why", ""))
+		if why != "":
+			if why != "already there":
+				event(st, {"k": "move_failed", "f": int(a["f"]), "army": id, "to": CGrid.region(dest), "why": why})
+			_drop_march(a)
+			continue
+		plans.append({"id": id, "path": pp["path"], "k": 0, "aim": pp["aim"], "mode": mode, "persist": persist,
+			"stop": 0, "dest": dest, "tgt": tgt})
+	# Armies already next to what they mean to act on.
+	for p in plans:
+		if (p["path"] as Array).is_empty():
+			var a := CState.army(st, int(p["id"]))
+			if not a.is_empty() and int(a["busy"]) == 0:
+				_arrive6(st, a, p)
+	var moving := true
+	while moving:
+		moving = false
+		for p in plans:
+			var path: Array = p["path"]
+			if int(p["stop"]) != 0 or int(p["k"]) >= path.size():
+				continue
+			var a := CState.army(st, int(p["id"]))
+			if a.is_empty() or int(a["busy"]) != 0:
+				p["stop"] = 1
+				continue
+			var res := _step6(st, a, int(path[int(p["k"])]), p)
+			if res == "" or res == "stop":
+				p["k"] = int(p["k"]) + 1
+				moving = true
+			if res != "":
+				p["stop"] = 1
+			if res == "" and int(p["k"]) >= path.size():
+				_arrive6(st, a, p)
+	if not _mlog.is_empty():
+		event(st, {"k": "moves", "steps": _mlog})
+	_mlog = []
+	for p in plans:
+		var a := CState.army(st, int(p["id"]))
+		if a.is_empty():
+			continue
+		var done := int(p["k"]) >= (p["path"] as Array).size() or int(a["busy"]) != 0
+		if done or int(p["persist"]) == 0:
+			_drop_march(a)
+		else:
+			var dc := int(p["dest"])
+			a["dest_x"] = CGrid.cx(dc)
+			a["dest_y"] = CGrid.cy(dc)
+			a["tgt"] = int(p["tgt"])
+			a["mode"] = int(p["mode"])
+
+
+static func _drop_march(a: Dictionary) -> void:
+	a["dest_x"] = -1
+	a["dest_y"] = -1
+	a["tgt"] = -1
+
+
+static var _mlog: Array = []
+
+
+## Record a step for the view's replay: each phase's steps become one event
+## {k: "moves", steps: [[army, x, y], ...]} in the order they were taken
+## (rounds, armies by id within a round).
+static func _log_step(_st: Dictionary, a: Dictionary) -> void:
+	_mlog.append([int(a["id"]), int(a["x"]), int(a["y"])])
+
+
+## One step of army a onto cell c (a neighbour or across a sea lane).
+## Returns "" (moved on), "stop" (moved and its march ends: a battle) or why
+## it did not move (it stops where it is).
+static func _step6(st: Dictionary, a: Dictionary, c: int, p: Dictionary) -> String:
+	var f := int(a["f"])
+	var c0 := CState.cell(a)
+	var full := CState.full_mp(st, a)
+	var left := CState.mp(a)
+	var cost := CGrid.step_cost(c0, c)
+	if cost <= 0:
+		if left < full:
+			return "out of points"
+		cost = left  # a sea lane takes the whole turn
+	elif left < cost:
+		return "out of points"
+	var rc := CGrid.region(c)
+	var why := can_enter(st, f, rc)
+	if why != "" and why != "battle pending there":
+		return why
+	var forced := CState.stance(a) == CData.ST_FORCED
+	# A battle started this turn next to the cell: join it.
+	for b in st["battles"]:
+		if not b.has("x"):
+			continue
+		var bc := CGrid.at(int(b["x"]), int(b["y"]))
+		if CGrid.cheb(bc, c) <= 1:
+			if int(b.get("new", 0)) == 0:
+				return "battle pending there"
+			if forced:
+				return "on a forced march"
+			var jw := _join6(st, a, b, c, cost)
+			return "stop" if jw == "" else jw
+	# Contact: next to an enemy army in the field (the first by id); else a
+	# zone of control entered from outside stops it (unless that army is
+	# its target). Armies more than 3 cells away cannot matter (zones are at
+	# most ZOC + 1 = 3).
+	var targets: Array = p["aim"]["targets"]
+	var x1 := CGrid.cx(c)
+	var y1 := CGrid.cy(c)
+	var aid := int(a["id"])
+	var zone_hit := false
+	for e in st["armies"]:
+		var ex := int(e["x"])
+		var ey := int(e["y"])
+		if absi(ex - x1) > 3 or absi(ey - y1) > 3 or int(e["id"]) == aid or int(e["busy"]) != 0:
+			continue
+		if not CState.at_war(st, f, int(e["f"])) or inside(st, e):
+			continue
+		var ec := CGrid.at(ex, ey)
+		if absi(ex - x1) <= 1 and absi(ey - y1) <= 1:
+			if forced:
+				return "on a forced march"
+			return _contact6(st, a, e, c, cost)
+		if zone_hit or targets.has(int(e["id"])):
+			continue
+		var zr := zone_r(st, e)
+		if zr > 0 and CGrid.within(ec, c, zr) and not CGrid.within(ec, c0, zr):
+			zone_hit = true
+	if zone_hit:
+		return "zone of control"
+	_move_to(st, a, c, cost)
+	return ""
+
+
+## Army a moves onto cell c for `cost` points (the siege it leaves is
+## lifted if it was the last besieger).
+static func _move_to(st: Dictionary, a: Dictionary, c: int, cost: int) -> void:
+	var old_r := int(a["r"])
+	var was := siege_of(st, a)
+	a["from"] = old_r
+	CState.place(a, c)
+	a["moved"] = 1
+	a["mp"] = maxi(CState.mp(a) - cost, 0)
+	_log_step(st, a)
+	if was >= 0 and siege_of(st, a) != was:
+		_left_siege(st, was)
+
+
+## The march of plan p ended next to its aim (or already was): lay siege,
+## storm, or nothing more.
+static func _arrive6(st: Dictionary, a: Dictionary, p: Dictionary) -> void:
+	var aim: Dictionary = p["aim"]
+	if int(a["busy"]) == 0 and CState.stance(a) != CData.ST_FORCED:
+		# Next to an army it targets (the march ended there, or started there).
+		for id in aim["targets"]:
+			var e := CState.army(st, int(id))
+			if not e.is_empty() and int(e["busy"]) == 0 and CState.at_war(st, int(a["f"]), int(e["f"])) \
+					and not inside(st, e) and CGrid.cheb(CState.cell(e), CState.cell(a)) <= 1:
+				_contact6(st, a, e, CState.cell(a), 0)
+				return
+		if str(aim["kind"]) == "relief":
+			# At the walls of our besieged city with no besieger next to it:
+			# the relief falls on the besiegers all the same.
+			var rr := CGrid.site_region(int(aim["cell"]))
+			if rr >= 0 and CGrid.cheb(CState.cell(a), CGrid.site(rr)) <= 1 and CState.battle_at(st, rr).is_empty():
+				for e in besiegers(st, rr):
+					if int(e["busy"]) == 0:
+						_contact6(st, a, e, CState.cell(a), 0)
+						return
+	var r := int(aim["r"])
+	if r < 0 or int(a["busy"]) != 0 or CGrid.cheb(CState.cell(a), CGrid.site(r)) > 1:
+		return
+	if CState.stance(a) == CData.ST_FORCED or not CState.at_war(st, int(a["f"]), CState.owner(st, r)):
+		return
+	var sg := CState.siege_at(st, r)
+	if not sg.is_empty():
+		if CState.friendly(st, int(a["f"]), int(sg["f"])):
+			_set_from(sg, int(a["id"]), int(a["from"]))
+			if int(p["mode"]) == CData.MODE_ASSAULT and CState.battle_at(st, r).is_empty():
+				_siege_battle6(st, r, "assault", {})
+		return
+	if not CState.battle_at(st, r).is_empty():
+		return
+	if int(p["mode"]) == CData.MODE_ASSAULT:
+		_assault6(st, r, a)
+	else:
+		start_siege(st, r, a, int(a["from"]))
+
+
+## A settlement battle at r without a siege (storming on arrival): army a
+## and the armies of its side on the ring attack; the garrison and the
+## armies inside (and the owner's side on the ring) defend.
+static func _assault6(st: Dictionary, r: int, a: Dictionary) -> Dictionary:
+	var o := CState.owner(st, r)
+	var defs: Array = []
+	for d in st["armies"]:
+		if int(d["busy"]) == 0 and CState.friendly(st, int(d["f"]), o) and o >= 0 \
+				and CGrid.cheb(CState.cell(d), CGrid.site(r)) <= 1:
+			defs.append(int(d["id"]))
+			d["busy"] = 1
+	var att: Array = [int(a["id"])]
+	var from: Array = [[int(a["id"]), int(a["from"])]]
+	var count := CState.unit_count(a)
+	a["busy"] = 1
+	for d in on_ring(st, r, int(a["f"]), true):
+		if int(d["busy"]) != 0 or not CState.at_war(st, int(d["f"]), o) or count + CState.unit_count(d) > CData.BATTLE_SIDE_MAX:
+			continue
+		count += CState.unit_count(d)
+		att.append(int(d["id"]))
+		from.append([int(d["id"]), int(d["from"])])
+		d["busy"] = 1
+	var s := CGrid.site(r)
+	var b := {"id": int(st["next_battle"]), "r": r, "turn": int(st["turn"]), "att": att, "def": defs,
+		"att_f": int(a["f"]), "def_f": o, "reinf": [], "settlement": 1, "new": 1, "from": from,
+		"x": CGrid.cx(s), "y": CGrid.cy(s), "app": CGrid.sector(s, CState.cell(a)), "edge": []}
+	st["next_battle"] = int(st["next_battle"]) + 1
+	(st["battles"] as Array).append(b)
+	return b
+
+
+## A battle of the siege of r (start_siege_battle) with its cell: the
+## settlement's for an assault or a sally, the contacted besieger's for a
+## relief.
+static func _siege_battle6(st: Dictionary, r: int, kind: String, reliever: Dictionary, at: int = -1) -> Dictionary:
+	var b := start_siege_battle(st, r, kind, reliever)
+	if b.is_empty():
+		return b
+	var c := at if at >= 0 else CGrid.site(r)
+	if not reliever.is_empty() and not (b["def"] as Array).has(int(reliever["id"])):
+		(b["def"] as Array).append(int(reliever["id"]))
+		reliever["busy"] = 1
+	b["x"] = CGrid.cx(c)
+	b["y"] = CGrid.cy(c)
+	b["app"] = CGrid.sector(c, CState.cell(reliever)) if not reliever.is_empty() else -1
+	b["edge"] = []
+	return b
+
+
+## A sally: army a inside besieged r rides out against the besiegers.
+static func _sally6(st: Dictionary, a: Dictionary, t: Dictionary) -> void:
+	var r := int(a["r"])
+	if not CState.battle_at(st, r).is_empty() or CState.siege_at(st, r).is_empty():
+		return
+	_siege_battle6(st, r, "sally", {}, CState.cell(t) if not t.is_empty() else -1)
+
+
+## Army a, stepping onto cell c, runs into enemy army e: a field battle on
+## e's cell (a relief if e besieges a settlement of a's side), or a's side
+## joins the battle already started in that region this turn.
+static func _contact6(st: Dictionary, a: Dictionary, e: Dictionary, c: int, cost: int) -> String:
+	var er := int(e["r"])
+	# A besieger of a city of a's side: the relief is that city's battle
+	# (its ring may lie in a neighbouring region).
+	var sr := siege_of(st, e)
+	var relief := sr >= 0 and CState.friendly(st, int(a["f"]), CState.owner(st, sr))
+	if relief:
+		er = sr
+	var bx := CState.battle_at(st, er)
+	if not bx.is_empty():
+		if int(bx.get("new", 0)) == 0:
+			return "battle pending there"
+		var jw := _join6(st, a, bx, c, cost)
+		return "stop" if jw == "" else jw
+	var c0 := CState.cell(a)
+	if c != c0:
+		_move_to(st, a, c, cost)
+	var ec := CState.cell(e)
+	if relief:
+		_siege_battle6(st, er, "relief", a, ec)
+	else:
+		var defs: Array = [e]
+		for d in st["armies"]:
+			if int(d["id"]) != int(e["id"]) and int(d["busy"]) == 0 and CState.friendly(st, int(d["f"]), int(e["f"])) \
+					and not inside(st, d) and CGrid.cheb(CState.cell(d), ec) <= 1 and CState.at_war(st, int(a["f"]), int(d["f"])):
+				defs.append(d)
+		var b := start_field_battle(st, er, [a], defs)
+		b["x"] = CGrid.cx(ec)
+		b["y"] = CGrid.cy(ec)
+		b["app"] = CGrid.sector(ec, c0)
+		if not (b["from"] as Array).is_empty():
+			b["from"][0][1] = int(a["from"])
+	event(st, {"k": "intercepted", "r": er, "f": int(a["f"]), "by": int(e["f"]), "army": int(a["id"]),
+		"x": int(e["x"]), "y": int(e["y"])})
+	return "stop"
+
+
+## Army a steps onto cell c next to battle b (started this turn) and joins
+## it on its side (version 6 join_battle).
+static func _join6(st: Dictionary, a: Dictionary, b: Dictionary, c: int, cost: int) -> String:
+	var af := int(a["f"])
+	var side := -1
+	if CState.friendly(st, af, int(b["att_f"])) and CState.at_war(st, af, int(b["def_f"])):
+		side = 0
+	elif CState.friendly(st, af, int(b["def_f"])) and int(b["def_f"]) >= 0:
+		side = 1
+	if side < 0:
+		return "battle there"
+	var count := CState.unit_count(a)
+	for d in battle_armies(st, b)[side]:
+		count += CState.unit_count(d)
+	if count > CData.BATTLE_SIDE_MAX:
+		return "battle side full"
+	var left := int(a["r"])
+	if c != CState.cell(a):
+		_move_to(st, a, c, cost)
+	a["busy"] = 1
+	(b["att" if side == 0 else "def"] as Array).append(int(a["id"]))
+	if b.has("from"):
+		(b["from"] as Array).append([int(a["id"]), left])
+	var sg := CState.siege_at(st, int(b["r"]))
+	if side == 0 and not sg.is_empty():
+		_set_from(sg, int(a["id"]), left)
+	return ""
+
+
+## Version 6 support: armies of either side within CData.SUPPORT cells of
+## the battle's cell (+2 fortified), in the field, not in a battle or a
+## siege, not on a forced march, join it until a side has BATTLE_SIDE_MAX
+## field units; each records its bearing (CGrid.sector) in b["edge"].
+static func _support6(st: Dictionary, b: Dictionary, counts: Array, leads: Array) -> void:
+	if not b.has("edge"):
+		b["edge"] = []
+	var bc := CGrid.at(int(b["x"]), int(b["y"])) if b.has("x") else CGrid.site(int(b["r"]))
+	for a in st["armies"]:
+		if int(a["busy"]) != 0 or siege_role(st, a) != 0 or inside(st, a) or CState.stance(a) == CData.ST_FORCED:
+			continue
+		var af := int(a["f"])
+		var side := -1
+		for s in 2:
+			if side < 0 and leads[s] >= 0 and CState.friendly(st, af, leads[s]):
+				side = s
+		if side < 0 or counts[side] + CState.unit_count(a) > CData.BATTLE_SIDE_MAX:
+			continue
+		if not CGrid.within(bc, CState.cell(a), support_r(a)):
+			continue
+		counts[side] += CState.unit_count(a)
+		(b["reinf"] as Array).append(int(a["id"]))
+		(b["edge"] as Array).append([int(a["id"]), CGrid.sector(bc, CState.cell(a))])
+		a["busy"] = 1
+
+
+static func support_r(a: Dictionary) -> int:
+	return CData.SUPPORT + (2 if CState.stance(a) == CData.ST_FORTIFY else 0)
+
+
+## For the view: which armies army a could support (or be supported by:
+## friendly, in the field, within either's support radius) and which enemy
+## armies it can attack this turn (reach a cell next to them). {support
+## [ids], attack [ids]}.
+static func links_of(st: Dictionary, a: Dictionary, reach_t: PackedInt32Array = PackedInt32Array()) -> Dictionary:
+	var sup: Array = []
+	var att: Array = []
+	var c := CState.cell(a)
+	for e in st["armies"]:
+		if int(e["id"]) == int(a["id"]):
+			continue
+		var ec := CState.cell(e)
+		if CState.friendly(st, int(a["f"]), int(e["f"])):
+			if not inside(st, e) and (CGrid.within(c, ec, support_r(a)) or CGrid.within(ec, c, support_r(e))):
+				sup.append(int(e["id"]))
+		elif CState.at_war(st, int(a["f"]), int(e["f"])) and not inside(st, e) and reach_t.size() == CGrid.count():
+			for k in CGrid.disc(ec, 1):
+				if reach_t[k] == 0:
+					att.append(int(e["id"]))
+					break
+	return {"support": sup, "attack": att}
+
+
+## Cells army a reaches this turn (version 6, for the view): per cell 0 this
+## turn, 1 next turn, -1 not. It may enter enemy zones (and stops there).
+static func reach6(st: Dictionary, a: Dictionary, turns: int = 0) -> PackedInt32Array:
+	var f := int(a["f"])
+	var m := block_mask(st, f)
+	var zm := zone_mask(st, f)
+	var full := CState.full_mp(st, a)
+	if full <= 0 or int(a["busy"]) != 0 or int(a["moved"]) != 0:
+		var none := PackedInt32Array()
+		none.resize(CGrid.count())
+		none.fill(-1)
+		return none
+	return CGrid.reach(CState.cell(a), full, CState.mp(a), m, turns, zm)
+
+
+## Version 6 retreat of a beaten army: the best cell within 5 of where it
+## stands, at least 2 from the battle's cell, that its side may enter and
+## that lies in no enemy's zone (farthest from the battle; friendly land
+## first; for an attacker toward where it came from); else the nearest
+## friendly region's field cell if `far`; else it is destroyed.
+static func _retreat6(st: Dictionary, a: Dictionary, battle_cell: int, app: int, far: bool) -> void:
+	var f := int(a["f"])
+	var start := CState.cell(a)
+	var bc := battle_cell if battle_cell >= 0 else start
+	var blk := block_mask(st, f)
+	var zm := zone_mask(st, f)
+	var best := -1
+	var best_s := -(1 << 30)
+	var seen := {start: 1}
+	var q: Array[int] = [start]
+	var qi := 0
+	while qi < q.size():
+		var u := q[qi]
+		qi += 1
+		for k in 8:
+			var v := CGrid.at(CGrid.cx(u) + CGrid.DX[k], CGrid.cy(u) + CGrid.DY[k])
+			if v < 0 or seen.has(v) or CGrid.step_cost(u, v) <= 0 or blk[v] != 0 or CGrid.cheb(v, start) > 5:
+				continue
+			seen[v] = 1
+			q.append(v)
+			if zm[v] != 0 or CGrid.cheb(v, bc) < 2 or CGrid.site_region(v) >= 0:
+				continue
+			var sc := CGrid.d2(v, bc) * 4
+			if CState.friendly(st, f, CState.owner(st, CGrid.region(v))):
+				sc += 40
+			if app >= 0 and CGrid.sector(bc, v) == app:
+				sc += 20
+			if sc > best_s:
+				best_s = sc
+				best = v
+	var from := int(a["r"])
+	if best < 0 and far:
+		var t := _nearest_friendly(st, f, from)
+		if t >= 0:
+			best = CState.field_cell(t)
+	if best < 0:
+		event(st, {"k": "destroyed", "f": f, "r": from, "army": int(a["id"]), "men": CState.men(a)})
+		st["armies"].erase(a)
+		return
+	CState.place(a, best)
+	a["moved"] = 1
+	a["mp"] = 0
+	_drop_march(a)
+	if CState.stance(a) == CData.ST_FORTIFY:
+		a["stance"] = CData.ST_DEFAULT
+	event(st, {"k": "retreat", "f": f, "r": from, "to": int(a["r"]), "army": int(a["id"]), "x": int(a["x"]), "y": int(a["y"])})
+
+
+## Version 6 stance order: CData.ST_* (no points spent; a fortified army
+## cannot move this turn, so fortifying needs an army that has not moved).
+static func _set_stance6(st: Dictionary, f: int, id: int, s: int) -> String:
+	var a := CState.army(st, id)
+	if a.is_empty() or int(a["f"]) != f:
+		return "no such army"
+	if int(a["busy"]) != 0:
+		return "in a battle"
+	if not CData.STANCE_NAMES.has(s):
+		return "bad order"
+	var cur := CState.stance(a)
+	if cur == s:
+		return ""
+	if s == CData.ST_FORTIFY and int(a["moved"]) != 0:
+		return "already moved"
+	if s == CData.ST_FORCED and siege_role(st, a) == 1:
+		return "besieging"
+	var old_full := CState.max_mp6(a)
+	a["stance"] = s
+	var new_full := CState.max_mp6(a)
+	var used := maxi(old_full - CState.mp(a), 0)
+	a["mp"] = maxi(new_full - used, 0)
+	return ""
+
+
+## Version 6 raider of region r: the faction of the first army (by id) in
+## the raiding stance standing in r, at war with its owner, without a siege
+## there; -1 none.
+static func _raider6(st: Dictionary, r: int) -> int:
+	if not CState.siege_at(st, r).is_empty():
+		return -1
+	var o := CState.owner(st, r)
+	if o < 0:
+		return -1
+	for a in st["armies"]:
+		if int(a["r"]) == r and CState.stance(a) == CData.ST_RAID and int(a["busy"]) == 0 \
+				and CState.at_war(st, int(a["f"]), o):
+			return int(a["f"])
+	return -1
+
+
+## Version 6: the raider of every region (_raider6) in one pass.
+static func raid_map(st: Dictionary) -> PackedInt32Array:
+	var n := CData.region_count()
+	var out := PackedInt32Array()
+	out.resize(n)
+	out.fill(-1)
+	for a in st["armies"]:
+		if CState.stance(a) != CData.ST_RAID or int(a["busy"]) != 0:
+			continue
+		var r := int(a["r"])
+		if out[r] >= 0:
+			continue
+		var o := CState.owner(st, r)
+		if o >= 0 and CState.at_war(st, int(a["f"]), o) and CState.siege_at(st, r).is_empty():
+			out[r] = int(a["f"])
+	return out
+
+
+## Version 6: armies left in lands at peace go home; armies on the cell of a
+## settlement no longer their side's step out next to it.
+static func _check_trespass6(st: Dictionary) -> void:
+	for a in (st["armies"] as Array).duplicate():
+		if int(a["busy"]) != 0:
+			continue
+		var r := int(a["r"])
+		var o := CState.owner(st, r)
+		var af := int(a["f"])
+		var c := CState.cell(a)
+		if CGrid.site_region(c) == r and not CState.friendly(st, af, o):
+			CState.place(a, CState.field_cell(r))
+		if not CState.friendly(st, af, o) and not CState.at_war(st, af, o) and CState.siege_at(st, r).is_empty():
+			var t := _nearest_friendly(st, af, r)
+			if t < 0:
+				event(st, {"k": "destroyed", "f": af, "r": r, "army": int(a["id"]), "men": CState.men(a)})
+				st["armies"].erase(a)
+				continue
+			CState.place(a, CState.field_cell(t))
+			_drop_march(a)
+			event(st, {"k": "retreat", "f": af, "r": r, "to": t, "army": int(a["id"]), "x": int(a["x"]), "y": int(a["y"])})
+
+
+## Version 6 move_targets: regions whose settlement army a can march to (a
+## hostile one: its ring) this turn (this_turn) or within three turns.
+static func _move_targets6(st: Dictionary, a: Dictionary, this_turn: bool) -> Array[int]:
+	var out: Array[int] = []
+	if a.is_empty() or int(a["busy"]) != 0 or int(a["moved"]) != 0 or siege_role(st, a) == 2 \
+			or CState.full_mp(st, a) <= 0:
+		return out
+	var f := int(a["f"])
+	var rt := CGrid.reach(CState.cell(a), CState.full_mp(st, a), CState.mp(a), block_mask(st, f),
+		0 if this_turn else 3, zone_mask(st, f))
+	for r in CData.region_count():
+		if r == int(a["r"]) or can_enter(st, f, r) != "":
+			continue
+		var s := CGrid.site(r)
+		if CState.friendly(st, f, CState.owner(st, r)):
+			if rt[s] >= 0:
+				out.append(r)
+			continue
+		for c in CGrid.disc(s, 1):
+			if c != s and rt[c] >= 0:
+				out.append(r)
+				break
+	return out

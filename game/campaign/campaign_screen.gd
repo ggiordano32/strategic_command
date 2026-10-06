@@ -17,6 +17,13 @@ extends Node
 ## online_ui.gd runs the turn flow against the server (Submit turn, waiting
 ## for the ally, claims on battles, results uploaded instead of applied
 ## locally). Local solo and hot-seat play are unchanged.
+##
+## State version 6 (the continuous overworld, CState.grid_on): a move is a
+## cell (or an enemy army, tgt): select an army (its reach this turn is
+## shaded, enemy zones and support / attack lines drawn), then tap a
+## destination or drag from the army; tapping the same destination again
+## cancels; Undo takes back the last change to the plan. A resolved turn is
+## replayed from the step logs (armies slide cell to cell; a tap skips).
 
 signal exit_requested
 
@@ -40,6 +47,7 @@ const UnitEntry := preload("res://game/unit_entry.gd")
 const Controls := preload("res://game/controls.gd")
 const OnlineUI := preload("res://game/campaign/online_ui.gd")
 const CoopSession := preload("res://game/net/coop_session.gd")
+const CGrid := preload("res://campaign/cgrid.gd")
 
 const ZOOM_MIN := 0.2
 const ZOOM_MAX := 2.5
@@ -102,6 +110,21 @@ var _multi := false
 var _pinch_d := 0.0
 var _pinch_mid := Vector2.ZERO
 var _mouse_pan := false
+
+# Version 6.
+var undo_button: Button
+var _undo: Array = []          # earlier order lists (Undo)
+var _routes := {}              # army id -> plan_path result for its plan (per preview)
+var _drag_army := -1           # an army being dragged to a destination
+var _drag_cell := -1
+var _drag_tgt := -1
+var _shown_turn := -1          # the turn whose army positions are _shown_cells
+var _shown_cells := {}         # army id -> cell, as last shown
+var _replay_q: Dictionary = {} # a replay waiting for the dialogs to close
+var replay: Dictionary = {}    # the replay running: {rounds, k, t, cur {id: map pt}, from {id: map pt}}
+var _replay_freeze := -1
+var _skip_release := false       # testing aid: hold the replay half way through this round
+const REPLAY_ROUND := 0.13     # seconds per round of steps
 
 
 func _ready() -> void:
@@ -207,6 +230,27 @@ func _apply_debug_args() -> void:
 			var mine := CState.armies_of(ps, f)
 			if int(v) < mine.size():
 				select_army(int(mine[int(v)]["id"]))
+		elif a.begins_with("--plan-cell="):
+			# --plan-cell=N:x:y (version 6): the player's Nth army marches to cell (x, y).
+			var mine10 := CState.armies_of(ps, f)
+			var k10 := int(v.get_slice(":", 0))
+			if k10 < mine10.size():
+				set_move6(int(mine10[k10]["id"]), CGrid.at(int(v.get_slice(":", 1)), int(v.get_slice(":", 2))), -1)
+		elif a.begins_with("--plan-site="):
+			# --plan-site=N:key (version 6): the player's Nth army marches onto a settlement.
+			var mine11 := CState.armies_of(ps, f)
+			var k11 := int(v.get_slice(":", 0))
+			if k11 < mine11.size():
+				set_move6(int(mine11[k11]["id"]), CGrid.site(CData.region_index(v.get_slice(":", 1))), -1)
+		elif a.begins_with("--camp-place="):
+			# --camp-place=N:x:y (version 6): put the player's Nth army on cell (x, y).
+			var mine12 := CState.armies_of(st, f)
+			var k12 := int(v.get_slice(":", 0))
+			if k12 < mine12.size():
+				CState.place(mine12[k12], CGrid.at(int(v.get_slice(":", 1)), int(v.get_slice(":", 2))))
+				_replan()
+		elif a.begins_with("--replay-freeze="):
+			_replay_freeze = int(v)  # testing aid
 		elif a.begins_with("--plan-move="):
 			var mine2 := CState.armies_of(ps, f)
 			var k := int(v.get_slice(":", 0))
@@ -248,6 +292,8 @@ func _apply_debug_args() -> void:
 				CRules.declare_war(st, f, o4)
 			var left := int(a4["r"])
 			a4["r"] = to4
+			if CState.grid_on(st):
+				CState.place(a4, CState.ring_cell(to4, 0))  # version 6: on the ring
 			var sg4 := CRules.start_siege(st, to4, a4, left)
 			var n4 := int(v.get_slice(":", 2)) if v.get_slice_count(":") > 2 else 1
 			sg4["turn"] = int(st["turn"]) - n4
@@ -425,6 +471,7 @@ func _set_planner(p_f: int, start: bool) -> void:
 		start = false
 	elif data["session"]["plans"].has(str(f)):
 		orders = (data["session"]["plans"][str(f)] as Array).duplicate(true)
+	_undo = []
 	sel_army = -1
 	sel_region = -1
 	_replan()
@@ -498,6 +545,7 @@ func _resolve_turn() -> void:
 
 ## Re-run the preview of the plan; drop orders that no longer apply.
 func _replan() -> void:
+	_routes = {}
 	if f < 0:
 		ps = st
 		moves = []
@@ -527,6 +575,7 @@ func add_order(o: Dictionary) -> String:
 		if int(e[0]) == orders.size():
 			_flash(str(e[1]))
 			return str(e[1])
+	_push_undo()
 	orders.append(o)
 	_replan()
 	save()
@@ -538,14 +587,35 @@ func remove_orders(pred: Callable) -> void:
 	for o in orders:
 		if not pred.call(o):
 			keep.append(o)
+	if keep.size() != orders.size():
+		_push_undo()
 	orders = keep
 	_replan()
 	save()
 
 
+func _push_undo() -> void:
+	_undo.append(orders.duplicate(true))
+	if _undo.size() > 40:
+		_undo.pop_front()
+
+
+## Take back the last change to the plan.
+func undo() -> void:
+	if _undo.is_empty() or f < 0:
+		return
+	orders = _undo.pop_back()
+	_replan()
+	save()
+	_t("campaign_input", {"what": "undo"})
+
+
 ## Where army is ordered this turn: its move order, else (state version 5)
 ## the destination it is still marching to; -1 if none.
 func planned_move(army: int) -> int:
+	if _g():
+		var p6 := plan6(army)
+		return CGrid.region(int(p6["cell"])) if not p6.is_empty() and int(p6["cell"]) >= 0 else -1
 	for m in moves:
 		if int(m[0]) == army:
 			return int(m[1])
@@ -564,6 +634,10 @@ func stored_move(army: int) -> int:
 
 
 func set_move(army: int, to: int) -> void:
+	if _g():
+		# A region (tests, the v5 callers): its settlement.
+		set_move6(army, CGrid.site(to) if to >= 0 else -1, -1)
+		return
 	var cur := planned_move(army)
 	var had_order := false
 	for o in orders:
@@ -591,6 +665,9 @@ func set_move(army: int, to: int) -> void:
 
 ## Mode of army's planned move (CData.MODE_*; -1 if none).
 func move_mode(army: int) -> int:
+	if _g():
+		var p6 := plan6(army)
+		return int(p6["mode"]) if not p6.is_empty() else -1
 	for m in moves:
 		if int(m[0]) == army:
 			return int(m[2]) if (m as Array).size() > 2 else CData.MODE_SIEGE
@@ -602,6 +679,8 @@ func move_mode(army: int) -> int:
 ## Version 5: the planned (or stored) march of army: {path [regions],
 ## turns [turn each hop is reached: 0 this turn], to, mode}; {} if none.
 func route(army: int) -> Dictionary:
+	if _g():
+		return route6(army)
 	var to := planned_move(army)
 	var a := CState.army(ps, army)
 	if to < 0 or a.is_empty() or not CState.moves_on(ps):
@@ -619,6 +698,12 @@ func route(army: int) -> Dictionary:
 ## (relieves our besieged city), "raid" (version 5: marches into enemy land
 ## without attacking its settlement), "" (no move).
 func move_kind(army: int) -> String:
+	if _g():
+		var p6 := plan6(army)
+		var a6 := CState.army(ps, army)
+		if p6.is_empty() or a6.is_empty():
+			return ""
+		return str(CRules.move_aim(ps, a6, int(p6["cell"]), int(p6["tgt"]), int(p6["mode"]))["kind"])
 	var to := planned_move(army)
 	var a := CState.army(ps, army)
 	if to < 0 or a.is_empty():
@@ -645,6 +730,25 @@ func move_kind(army: int) -> String:
 ## Switch army's planned move between laying siege and assaulting (and,
 ## version 5, marching in without attacking).
 func set_move_mode(army: int, mode: int) -> void:
+	if _g():
+		var p6 := plan6(army)
+		if p6.is_empty():
+			return
+		_push_undo()
+		var found6 := false
+		for o in orders:
+			if str(o["t"]) == "move" and int(o["army"]) == army:
+				o["mode"] = mode
+				found6 = true
+		if not found6:
+			var mo := {"t": "move", "army": army, "x": CGrid.cx(int(p6["cell"])), "y": CGrid.cy(int(p6["cell"])), "mode": mode, "persist": 1}
+			if int(p6["tgt"]) >= 0:
+				mo["tgt"] = int(p6["tgt"])
+			orders.append(mo)
+		_replan()
+		save()
+		_t("campaign_input", {"what": "move_mode", "mode": mode})
+		return
 	var found := false
 	for o in orders:
 		if str(o["t"]) == "move" and int(o["army"]) == army:
@@ -662,6 +766,8 @@ func set_move_mode(army: int, mode: int) -> void:
 ## The toast after planning a move into hostile land: what it does, the
 ## odds of storming the city now, and the other choice one tap away.
 func move_toast(army: int) -> void:
+	if _g():
+		return  # version 6: the intent is drawn at the path's end
 	var kind := move_kind(army)
 	var to := planned_move(army)
 	if to < 0 or kind == "move" or kind == "":
@@ -729,9 +835,9 @@ func _march_toast(army: int, kind: String, to: int, odds: String) -> void:
 
 ## Why the selected army cannot move to region r, and what to do about it,
 ## as a toast (with a Diplomacy shortcut when peace is the reason).
-func explain_refusal(army: int, r: int) -> void:
+func explain_refusal(army: int, r: int, why_in: String = "") -> void:
 	var a := CState.army(ps, army)
-	var why := CRules.can_move(ps, a, r)
+	var why := why_in if why_in != "" else CRules.can_move(ps, a, r)
 	var o := CState.owner(ps, r)
 	var reg := str(CData.REGIONS[r]["name"])
 	var text := ""
@@ -758,6 +864,14 @@ func explain_refusal(army: int, r: int) -> void:
 		text = "No way to %s: lands at peace or besieged by others block every path." % reg
 	elif why == "already there":
 		text = "The army is in %s already. To lay siege or storm it, open the region." % reg
+	elif why == "in an enemy's zone of control":
+		text = "That ground lies in an enemy army's zone of control (red circle): tap the army itself to attack it, or pick a spot outside its zone."
+	elif why == "zone of control":
+		text = "An enemy army's zone of control stops the march: attack it or go round."
+	elif why == "fortified":
+		text = "This army is fortified and cannot move: set its stance back to Default first (the army card)."
+	elif why.begins_with("on a forced march"):
+		text = "On a forced march an army cannot attack or lay siege: set its stance to Default first (the army card)."
 	else:
 		text = "Cannot move to %s: %s." % [reg, why]
 	_t("campaign_input", {"what": "move_refused", "why": why})
@@ -817,6 +931,7 @@ func show_toast(text: String, action: Array = []) -> void:
 	ui.move_child(_toast, end_button.get_index())
 	_place_toast()
 	_place_toast.call_deferred()  # again once the wrapped label has its height
+	ui.move_child(_toast, -1)
 	var me := _toast
 	get_tree().create_timer(6.0).timeout.connect(func():
 		if is_instance_valid(me) and me == _toast:
@@ -907,6 +1022,16 @@ func _build_ui() -> void:
 	end_button.offset_bottom = -8
 	end_button.custom_minimum_size = Vector2(130, 48)
 	ui.add_child(end_button)
+	undo_button = Kit.button("Undo", func(): undo(), 80, 15)
+	undo_button.name = "undo"
+	undo_button.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	undo_button.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	undo_button.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	undo_button.offset_right = -146
+	undo_button.offset_bottom = -8
+	undo_button.custom_minimum_size = Vector2(80, 48)
+	undo_button.visible = false
+	ui.add_child(undo_button)
 	wait_panel = Kit.panel(Color(0.1, 0.12, 0.1, 0.95), 8)
 	wait_panel.name = "wait_panel"
 	wait_panel.visible = false
@@ -1067,6 +1192,7 @@ func _refresh_top() -> void:
 	battles_button.text = "Battles (%d)" % nb if nb > 0 else "Battles"
 	battles_button.modulate = Color(1, 0.6, 0.5) if nb > 0 else Color(1, 1, 1)
 	end_button.disabled = nb > 0 or f < 0 or str(st["phase"]) == "over"
+	undo_button.visible = _g() and f >= 0 and not _undo.is_empty()
 	if onl != null:
 		var eb := onl.end_button_state()
 		end_button.text = str(eb[0])
@@ -1081,6 +1207,12 @@ func _update_hint() -> void:
 		hint.text = "Resolve the pending battles first (Battles)."
 	elif online != null and online.i_submitted():
 		hint.text = "Turn submitted. You can look around; Unsubmit to change your orders."
+	elif not replay.is_empty():
+		hint.text = "Replaying the turn: tap to skip."
+	elif sel_army >= 0 and _g():
+		hint.text = "Tap (or drag the army to) a spot inside the shaded area to march there this turn, further on for later turns; tap an enemy army to attack it, a city to besiege it. Same spot again: cancel."
+	elif _g():
+		hint.text = "Tap an army to move it, a city for buildings and recruits."
 	elif sel_army >= 0 and CState.moves_on(ps):
 		hint.text = "Tap a region to march there (bright: this turn, dim: later turns; red: enemy land). Tap it again to cancel."
 	elif sel_army >= 0:
@@ -1092,6 +1224,11 @@ func _update_hint() -> void:
 func _refresh_map() -> void:
 	map_view.state = ps
 	overlay.state = ps
+	if _g():
+		_refresh_map6()
+		return
+	map_view.grid = false
+	overlay.grid = false
 	overlay.player = f
 	overlay.selected_army = sel_army
 	overlay.moves = moves
@@ -1192,6 +1329,280 @@ func _free_targets(a: Dictionary) -> void:
 	map_view.target_turns = turns
 
 
+## Version 6: the state is on the grid.
+func _g() -> bool:
+	return not ps.is_empty() and CState.grid_on(ps)
+
+
+## Version 6: army's planned or stored march: {cell, tgt, mode, stored} ({}
+## none).
+func plan6(army: int) -> Dictionary:
+	for m in moves:
+		if int(m[0]) == army:
+			return {"cell": int(m[1]), "tgt": int(m[4]) if (m as Array).size() > 4 else -1, "mode": int(m[2]), "stored": false}
+	var a := CState.army(ps, army)
+	if a.is_empty() or int(a["busy"]) != 0:
+		return {}
+	for o in orders:
+		if str(o["t"]) == "cancel_move" and int(o["army"]) == army:
+			return {}
+	var tgt := int(a.get("tgt", -1))
+	if tgt >= 0:
+		var t := CState.army(ps, tgt)
+		if t.is_empty():
+			return {}
+		return {"cell": CState.cell(t), "tgt": tgt, "mode": int(a.get("mode", CData.MODE_SIEGE)), "stored": true}
+	if int(a.get("dest_x", -1)) >= 0:
+		return {"cell": CGrid.at(int(a["dest_x"]), int(a["dest_y"])), "tgt": -1, "mode": int(a.get("mode", CData.MODE_SIEGE)), "stored": true}
+	return {}
+
+
+## Version 6: the path of army's plan now (CRules.plan_path: path, t, m,
+## aim; plus turns, left; "why" if it cannot go), {} without a plan. Cached
+## per preview.
+func route6(army: int) -> Dictionary:
+	if _routes.has(army):
+		return _routes[army]
+	var p6 := plan6(army)
+	var a := CState.army(ps, army)
+	var out := {}
+	if not p6.is_empty() and not a.is_empty():
+		out = CRules.plan_path(ps, a, int(p6["cell"]), int(p6["tgt"]), int(p6["mode"]))
+		if not out.has("why"):
+			out["turns"] = out["t"]
+			out["left"] = int(out["m"][-1]) if not (out["m"] as Array).is_empty() else CState.mp(a)
+	_routes[army] = out
+	return out
+
+
+## Version 6: plan army's march to cell c (or after enemy army tgt); the
+## same destination again cancels it (a stored march: a cancel_move order).
+func set_move6(army: int, c: int, tgt: int) -> void:
+	var a := CState.army(ps, army)
+	if a.is_empty() or c < 0:
+		return
+	var cur := plan6(army)
+	var same := not cur.is_empty() and ((tgt >= 0 and int(cur["tgt"]) == tgt) or (tgt < 0 and int(cur["tgt"]) < 0 and int(cur["cell"]) == c))
+	var had_order := false
+	for o in orders:
+		if str(o["t"]) == "move" and int(o["army"]) == army:
+			had_order = true
+	var before := orders.duplicate(true)
+	var keep: Array = []
+	for o in orders:
+		if not ((str(o["t"]) == "move" or str(o["t"]) == "cancel_move") and int(o["army"]) == army):
+			keep.append(o)
+	orders = keep
+	if same:
+		if not had_order and bool(cur["stored"]):
+			orders.append({"t": "cancel_move", "army": army})
+		_undo.append(before)
+		_replan()
+		save()
+		_t("campaign_input", {"what": "move_cancel"})
+		return
+	var mo := {"t": "move", "army": army, "x": CGrid.cx(c), "y": CGrid.cy(c), "mode": CData.MODE_SIEGE, "persist": 1}
+	if tgt >= 0:
+		mo["tgt"] = tgt
+	var pv := CTurn.preview(st, f, orders + [mo])
+	for e in pv["errors"]:
+		if int(e[0]) == orders.size():
+			orders = before
+			_replan()
+			explain_refusal(army, maxi(CGrid.region(c), 0), str(e[1]))
+			return
+	orders.append(mo)
+	_undo.append(before)
+	_replan()
+	save()
+	_t("campaign_input", {"what": "move", "tgt": tgt})
+
+
+## Version 6 map: armies on their cells, the selected army's reach, enemy
+## zones and links, every planned path.
+func _refresh_map6() -> void:
+	map_view.grid = true
+	overlay.grid = true
+	overlay.player = f
+	overlay.selected_army = sel_army
+	overlay.moves = []
+	overlay.paths = []
+	overlay.attack_moves = []
+	overlay.siege_moves = []
+	map_view.targets = []
+	map_view.attack_targets = []
+	map_view.blocked_targets = []
+	map_view.target_turns = {}
+	map_view.selected_region = sel_region
+	var paths: Array = []
+	if f >= 0:
+		for a in CState.armies_of(ps, f):
+			var rt := route6(int(a["id"]))
+			if rt.is_empty() or rt.has("why"):
+				continue
+			paths.append(path_entry(a, rt))
+		for h in ps["humans"]:
+			if int(h) == f:
+				continue
+			for a in CState.armies_of(ps, int(h)):
+				# The ally's stored marches (their plan is theirs).
+				if int(a.get("dest_x", -1)) >= 0 or int(a.get("tgt", -1)) >= 0:
+					var c := CGrid.at(int(a["dest_x"]), int(a["dest_y"])) if int(a.get("dest_x", -1)) >= 0 else -1
+					var rt2 := CRules.plan_path(ps, a, c, int(a.get("tgt", -1)), int(a["mode"]))
+					if not rt2.has("why"):
+						paths.append(path_entry(a, rt2))
+	overlay.paths6 = paths
+	var zones: Array = []
+	var links: Array = []
+	var sa := CState.army(ps, sel_army) if sel_army >= 0 else {}
+	if not sa.is_empty():
+		var rt6 := PackedInt32Array()
+		if int(sa["f"]) == f:
+			rt6 = CRules.reach6(ps, sa, 1)
+		map_view.reach_hostile = false
+		map_view.set_reach(rt6)
+		var px := float(CGrid.cell_px())
+		for e in CRules.zone_armies(ps, int(sa["f"])):
+			var zr := CRules.zone_r(ps, e)
+			zones.append([MapOverlay.cell_point(CState.cell(e)), (sqrt(float(zr * zr + zr)) + 0.5) * px])
+		var lk := CRules.links_of(ps, sa, rt6)
+		for id in lk["support"]:
+			links.append([sel_army, int(id), 0])
+		for id in lk["attack"]:
+			links.append([sel_army, int(id), 1])
+	else:
+		map_view.set_reach(PackedInt32Array())
+	overlay.zones = zones
+	overlay.links = links
+	map_view.queue_redraw()
+	overlay.queue_redraw()
+	_note_positions()
+
+
+## A path for the overlay: {army, pts (map points from the army's cell),
+## now (last point reached this turn), kind}; an attack or a siege ends on
+## its target.
+func path_entry(a: Dictionary, rt: Dictionary) -> Dictionary:
+	var pts: Array = [MapOverlay.cell_point(CState.cell(a))]
+	var now := 0
+	var cells: Array = rt["path"]
+	for k in cells.size():
+		pts.append(MapOverlay.cell_point(int(cells[k])))
+		if int(rt["t"][k]) == 0:
+			now = k + 1
+	var aim: Dictionary = rt.get("aim", {})
+	var kind := str(aim.get("kind", "move"))
+	if int(aim.get("adjacent", 0)) != 0 and aim.has("cell"):
+		pts.append(MapOverlay.cell_point(int(aim["cell"])))
+		if now == cells.size():
+			now += 1  # reached this turn: the strike is this turn too
+	return {"army": int(a["id"]), "pts": pts, "now": now, "kind": kind}
+
+
+# --------------------------------------------------------------- replay ---
+
+## Version 6: remember the positions shown; a newer turn with step logs
+## queues a replay from the positions last shown.
+func _note_positions() -> void:
+	if st.is_empty() or not CState.grid_on(st):
+		return
+	var turn := int(st["turn"])
+	if _shown_turn >= 0 and turn == _shown_turn + 1 and not _shown_cells.is_empty():
+		var steps: Array = []
+		for e in st["events"]:
+			if str(e["k"]) == "moves" and int(e["turn"]) == turn - 1:
+				steps.append_array(e["steps"])
+		var marks: Array = []
+		for e in st["events"]:
+			if int(e["turn"]) != turn - 1 or str(e["k"]) != "battle":
+				continue
+			var at := MapOverlay.cell_point(CGrid.site(int(e["r"])))
+			for e2 in st["events"]:
+				if str(e2["k"]) == "intercepted" and int(e2["turn"]) == turn - 1 and int(e2["r"]) == int(e["r"]) and e2.has("x"):
+					at = MapOverlay.cell_point(CGrid.at(int(e2["x"]), int(e2["y"])))
+			marks.append(at)
+		if not steps.is_empty() or not marks.is_empty():
+			_replay_q = {"steps": steps, "from": _shown_cells.duplicate(), "marks": marks}
+	if turn != _shown_turn or replay.is_empty():
+		_shown_turn = turn
+		var cells := {}
+		for a in st["armies"]:
+			cells[int(a["id"])] = CState.cell(a)
+		_shown_cells = cells
+
+
+## Start a queued replay: the steps grouped in rounds (a round ends where
+## the army ids stop rising: the rules move armies by id within a round).
+func _start_replay() -> void:
+	var q := _replay_q
+	_replay_q = {}
+	var rounds: Array = []
+	var cur: Array = []
+	var last := -1
+	for stp in q["steps"]:
+		var id := int(stp[0])
+		if id <= last and not cur.is_empty():
+			rounds.append(cur)
+			cur = []
+		cur.append([id, MapOverlay.cell_point(CGrid.at(int(stp[1]), int(stp[2])))])
+		last = id
+	if not cur.is_empty():
+		rounds.append(cur)
+	var pos := {}
+	var from: Dictionary = q["from"]
+	for rd in rounds:
+		for e in rd:
+			var id := int(e[0])
+			if not pos.has(id):
+				pos[id] = MapOverlay.cell_point(int(from[id])) if from.has(id) else e[1]
+	replay = {"rounds": rounds, "k": 0, "t": 0.0, "pos": pos, "marks": q["marks"]}
+	overlay.replay_pos = pos.duplicate()
+	var trails := {}
+	for id in pos:
+		trails[id] = [pos[id]]
+	overlay.replay_trail = trails
+	_update_hint()
+	_t("campaign_replay", {"rounds": rounds.size()})
+
+
+func _end_replay() -> void:
+	if replay.is_empty():
+		return
+	for m in replay["marks"]:
+		overlay.markers.append([m, 3.0])
+	replay = {}
+	overlay.replay_pos = {}
+	overlay.replay_trail = {}
+	overlay.queue_redraw()
+	_update_hint()
+
+
+func _step_replay(delta: float) -> void:
+	var rounds: Array = replay["rounds"]
+	var k := int(replay["k"])
+	if k >= rounds.size():
+		_end_replay()
+		return
+	var t := float(replay["t"]) + delta / REPLAY_ROUND
+	if _replay_freeze >= 0 and k >= _replay_freeze:
+		t = 0.5
+	var pos: Dictionary = replay["pos"]
+	var shown := pos.duplicate()
+	for e in rounds[k]:
+		var id := int(e[0])
+		shown[id] = (pos[id] as Vector2).lerp(e[1], clampf(t, 0.0, 1.0))
+	if t >= 1.0:
+		for e in rounds[k]:
+			pos[int(e[0])] = e[1]
+			if overlay.replay_trail.has(int(e[0])):
+				(overlay.replay_trail[int(e[0])] as Array).append(e[1])
+		replay["k"] = k + 1
+		t = 0.0
+	replay["t"] = t
+	overlay.replay_pos = shown
+	overlay.queue_redraw()
+
+
 func select_army(id: int) -> void:
 	sel_army = id
 	var a := CState.army(ps, id)
@@ -1272,6 +1683,18 @@ func _process(delta: float) -> void:
 		map_view.queue_redraw()  # line widths follow the zoom
 	if sel_army >= 0 or not moves.is_empty() or not map_view.targets.is_empty():
 		map_view.queue_redraw()
+		overlay.queue_redraw()
+	if not _replay_q.is_empty() and replay.is_empty() and not _blocked():
+		_start_replay()
+	if not replay.is_empty():
+		_step_replay(delta)
+	if not overlay.markers.is_empty():
+		var keep: Array = []
+		for m in overlay.markers:
+			m[1] = float(m[1]) - delta
+			if float(m[1]) > 0.0:
+				keep.append(m)
+		overlay.markers = keep
 		overlay.queue_redraw()
 	_keys(delta)
 
@@ -1506,7 +1929,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			_zoom_at(mb.position, 1.0 / 1.15)
 		elif mb.button_index == MOUSE_BUTTON_RIGHT or mb.button_index == MOUSE_BUTTON_MIDDLE:
 			_mouse_pan = mb.pressed
-			if mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT and sel_army >= 0:
+			if mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT and sel_army >= 0 and _g():
+				_mouse_pan = false
+				_plan_at(mb.position)
+			elif mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT and sel_army >= 0:
 				# Right click on a region with an army selected: move there.
 				var r := _region_at(mb.position)
 				if r >= 0 and map_view.targets.has(r):
@@ -1568,15 +1994,43 @@ func _cycle_army() -> void:
 
 
 func _on_touch(e: InputEventScreenTouch) -> void:
+	if e.pressed and not replay.is_empty():
+		_end_replay()  # a tap skips the replay
+		_touches.clear()
+		_skip_release = true
+		return
+	if not e.pressed and _skip_release:
+		_skip_release = false
+		_touches.erase(e.index)
+		return
 	if e.pressed:
 		_touches[e.index] = e.position
 		if _touches.size() == 1:
 			_press_pos = e.position
 			_dragging = false
 			_multi = false
+			_drag_army = -1
+			if _g() and f >= 0:
+				# A drag that starts on one of our free armies plans its march.
+				var id := overlay.army_at(e.position)
+				var a := CState.army(ps, id) if id >= 0 else {}
+				if not a.is_empty() and int(a["f"]) == f and int(a["busy"]) == 0:
+					_drag_army = id
 		else:
 			_multi = true
+			_drag_army = -1
+			_drag_preview(-1, -1)
 			_start_pinch()
+		return
+	if _drag_army >= 0 and _dragging and not _multi and _touches.has(e.index):
+		_touches.erase(e.index)
+		var id2 := _drag_army
+		_drag_army = -1
+		_dragging = false
+		_drag_preview(-1, -1)
+		if sel_army != id2:
+			select_army(id2)
+		_plan_at(e.position)
 		return
 	if not _touches.has(e.index):
 		return
@@ -1613,6 +2067,11 @@ func _on_drag(e: InputEventScreenDrag) -> void:
 		return
 	if not _dragging and e.position.distance_to(_press_pos) > DRAG_THRESHOLD:
 		_dragging = true
+	if _dragging and _drag_army >= 0:
+		var tg := _target_at(e.position)
+		if int(tg[0]) != _drag_cell or int(tg[1]) != _drag_tgt:
+			_drag_preview(int(tg[0]), int(tg[1]))
+		return
 	if _dragging:
 		offset += e.relative
 		_clamp_view()
@@ -1644,6 +2103,9 @@ func tap(p: Vector2) -> void:
 func _tap(p: Vector2) -> void:
 	if f < 0:
 		return
+	if _g():
+		_tap6(p)
+		return
 	var id := overlay.army_at(p)
 	var r := _region_at(p)
 	if sel_army >= 0 and r >= 0 and map_view.blocked_targets.has(r) and \
@@ -1664,3 +2126,77 @@ func _tap(p: Vector2) -> void:
 		select_region(r)
 		return
 	close_side()
+
+
+## Version 6 tap: one of our armies selects it (again: deselects); with one
+## of ours selected, an enemy army is an attack, a settlement a march onto
+## it (siege, or inside our walls), any land a march there; otherwise a
+## settlement or region opens its panel, the sea clears the selection.
+func _tap6(p: Vector2) -> void:
+	var id := overlay.army_at(p)
+	var sa := CState.army(ps, sel_army) if sel_army >= 0 else {}
+	var mine_sel := not sa.is_empty() and int(sa["f"]) == f and int(sa["busy"]) == 0
+	if id >= 0:
+		var e := CState.army(ps, id)
+		if id == sel_army:
+			close_side()
+			return
+		if not mine_sel or CState.friendly(ps, f, int(e["f"])):
+			select_army(id)
+			_t("campaign_input", {"what": "select_army"})
+			return
+	if mine_sel:
+		_plan_at(p)
+		return
+	var sr := overlay.settlement_at(p)
+	if sr >= 0:
+		select_region(sr)
+		return
+	var r := Geo.region_at(_map_point(p))
+	if r >= 0:
+		select_region(r)
+		return
+	close_side()
+
+
+## What screen point p targets for the selected army: [cell, tgt] (an enemy
+## army, a settlement's cell, else the land cell under it; -1 none).
+func _target_at(p: Vector2) -> Array:
+	var id := overlay.army_at(p)
+	if id >= 0 and id != sel_army and id != _drag_army:
+		var e := CState.army(ps, id)
+		if not e.is_empty() and CState.at_war(ps, f, int(e["f"])):
+			return [CState.cell(e), id]
+	var sr := overlay.settlement_at(p)
+	if sr >= 0:
+		return [CGrid.site(sr), -1]
+	var c := MapOverlay.cell_of_point(_map_point(p))
+	if c >= 0 and CGrid.passable(c):
+		return [c, -1]
+	return [-1, -1]
+
+
+## Plan the selected army's march to what screen point p targets.
+func _plan_at(p: Vector2) -> void:
+	var tg := _target_at(p)
+	if int(tg[0]) < 0:
+		_flash("Not on land.")
+		return
+	set_move6(sel_army, int(tg[0]), int(tg[1]))
+	if sel_army >= 0 and not CState.army(ps, sel_army).is_empty():
+		show_side(func(box): panels.army_panel(box, sel_army))
+
+
+## The path preview while dragging an army (cell -1: none).
+func _drag_preview(c: int, tgt: int) -> void:
+	_drag_cell = c
+	_drag_tgt = tgt
+	overlay.drag = {}
+	var a := CState.army(ps, _drag_army)
+	if c >= 0 and not a.is_empty():
+		var rt := CRules.plan_path(ps, a, c, tgt, CData.MODE_SIEGE)
+		if not rt.has("why"):
+			var pe := path_entry(a, rt)
+			pe["drag"] = 1
+			overlay.drag = pe
+	overlay.queue_redraw()
