@@ -29,6 +29,7 @@ anti-cheat and original art only if it proves fun.
 | Settlement variety (plans, sites, coasts, citadels, stairs, owners) | Built 2026-10-05, **not committed**; tested headless; not yet played on phones |
 | Sieges and battle odds (campaign, state format 4) | Built 2026-10-06, **not committed**; tested headless and windowed; not yet played on phones |
 | Free campaign movement (state format 5) | Built 2026-10-06, **not committed**; tested headless and windowed; not yet played on phones |
+| Wall orders, drag clamp, reachability (playtest fixes) | Built 2026-10-06, **not committed**; tested headless and windowed; not yet played on phones |
 | 6. Depth (siege equipment, tech, more factions) | Not started |
 
 ### What exists
@@ -72,6 +73,60 @@ anti-cheat and original art only if it proves fun.
 - The touch control scheme works; the user likes it.
 
 ### In progress right now
+
+**Wall orders (phone playtest fixes, built 2026-10-06, uncommitted).**
+Report: "loading on or off a wall is difficult. It doesn't display where
+the units may go, and they don't seem to fit; once I pulled the javelins
+down I couldn't get them back on the wall." Found: (1) only a tap within
+3 m of a walkway's centre line counted as "up the wall" (a 6 m band of an
+8-16 m wall plus towers); a tap on the parapet, inner face or a tower was a
+ground move to a blocked spot; (2) a unit standing near the wall (inside
+the 12 m reform distance, e.g. just pulled down) ordered up only reformed
+in place and never climbed; (3) wall units stood in up to 3 ranks of 2 m
+(off the 4 m walkway: 25-60 % of the men of every garrison unit stood in
+wall cells) and the whole line turned with its target; on stretches of
+12-20 m they piled 5-6 deep. Fixed (rules in `sim/battle_sim.gd`, DESIGN.md
+"Walls" / "Stairs"):
+- any tap on a wall's body, walkway, stair, tower or gate tower snaps to
+  the nearest walkway point of its stretch (`wall_snap`, in the order rule:
+  preview and sim agree; lockstep peers snap the same raw input); the way
+  up is always a march to the stair;
+- the wall line: two ranks (at most 1.2 m apart) along the walkway, centred
+  on the tap, clamped to the stretch, spilling through a tower onto the
+  joined stretch (towers passable to wall units only), surplus at the
+  ends; garrison units start in it; men never jittered off the walkway;
+- coming down: in the unit's normal block (`ground_files`); men on a stair
+  move follow the stair's trail (junction, walkway, stair, foot);
+- view: the predicted wall line, stretch(es), stair (ringed) and route
+  (dashed) going up and coming down, and the ground footprint below;
+  stretch under the mouse lit; refusals ("Cavalry cannot man walls", "No
+  ladders yet...", "No way to a stair..."); buttons "Man the wall" (M:
+  nearest stretch within 60 m, the one nearest the enemy) and "Come down"
+  (Shift+M: the nearer stair's foot); Controls page and unit book updated.
+  Screenshots `docs/screenshots/walls_order_up_phone.png`, `..._down_phone.png`.
+- Drag clamp: a formation line is at most one rank long (men x file
+  spacing, a group: the sum plus gaps); the line stops following the finger
+  there (solid end caps, "ONE RANK"); the order rule already capped files
+  at the men alive.
+- Reachability (same playtest, attacking a city: "the formation goes past
+  the walls ... sliding along the wall in clumps"): pieces of open ground
+  with the gates as connectors; moves to unreachable ground go to the
+  nearest own ground (a tap on a house / wall) or to the gate on the unit's
+  side and hold there; attacks on a unit inside: melee to the gate (attacking
+  foot hack it, go in once it breaks), missile troops only as far as their
+  ground goes and shoot from range; places kept to the anchor's ground.
+  Captions "No way in: moving to the gate", "Moving into range". DESIGN.md
+  "Settlements (rules)" / Reachability. Benchmarks (run side by side with
+  HEAD, so noisy): city 2.71 -> 2.87 ms mean (p95 5.1 -> 5.6), polis 2.87
+  -> 3.05, castrum 2.76 -> 2.98; setup +20-30 ms.
+- Tests: determinism_test "wall orders" (down and back up by walkway,
+  parapet, tower and Man the wall; spill; repeat + snapshot), "drag
+  clamp" and "reachability" (tap into a shut town holds at the gate with no
+  man strung out; attack on a unit inside: to the gate, hack, in once
+  broken; archers shoot from outside; no place off its ground); flat golden
+  digests unchanged; every settlement hash changed (the open village too,
+  from the reachability rules); lockstep (both sides, both maps) and
+  input_test pass.
 
 **Free campaign movement (built 2026-10-06, uncommitted).** Design agreed
 with the user; rules, orders, state, AI, pacing as built in CAMPAIGN.md

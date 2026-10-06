@@ -25,6 +25,10 @@ var preview_on := false
 var preview_a := Vector2.ZERO
 var preview_b := Vector2.ZERO
 var preview_ok := false  # long enough to be a formation line
+var preview_clamped := false  # pulled out to the selection's single-rank length (the line stops there)
+## Mouse over the field (world px; x < 0: none): the wall stretch under it
+## is highlighted while a unit that can man the walls is selected.
+var hover_w := Vector2(-1, -1)
 var _icon := PackedInt32Array()  # unit -> symbol id
 
 const COL_SIDE := [Color(0.35, 0.6, 1.0), Color(1.0, 0.36, 0.28)]
@@ -40,6 +44,8 @@ const RANGE_STEPS := 72   # height-adjusted range ring: points round the circle
 const COL_WOODS := Color(0.85, 1.0, 0.35)
 const COL_BLOCK_CELL := Color(1.0, 0.35, 0.3, 0.7)
 const FLASH_MS := 2500
+const COL_WALL := Color(1.0, 0.92, 0.45)
+const COL_STAIR := Color(0.45, 1.0, 0.95)
 
 
 ## Unit order field as the player last ordered it (pending orders included).
@@ -98,6 +104,8 @@ func _draw() -> void:
 	for u in selected_units:
 		if u >= 0 and u < sim.n_units and sim.u_state[u] < BattleSim.U_DESTROYED:
 			_draw_selected(u, lw, r, u == primary)
+	if hover_w.x >= 0.0 and not preview_on:
+		_draw_wall_hover(hover_w, lw)
 	if preview_on:
 		_draw_preview(lw)
 	for g in ghosts:
@@ -234,6 +242,15 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 	draw_line(a - right * hw, a + right * hw, Color(1, 1, 1, 0.8), lw)
 	draw_line(a, a + fwd * px_per_m * 3.0, Color(1, 1, 1, 0.8), lw)
 	var order: int = _v(u, "order")
+	var wp: Dictionary = orders.wall_plan(u) if orders != null else {}
+	if not wp.is_empty():
+		_draw_wall_plan(u, wp, lw, primary)
+		if wp["mode"] == "up" or wp["mode"] == "down":
+			order = -1  # its way is the plan's (by the stair), not a straight line
+			if wp["mode"] == "down" and int(wp["seg"]) < 0 and _v(u, "order") == BattleSim.O_MOVE:
+				# Where it forms up below (its normal block).
+				_draw_footprint(u, to_px(_v(u, "dx"), _v(u, "dy")), _v(u, "dface"), _v(u, "files"),
+					sim.u_alive[u], Color(0.6, 1.0, 0.6, 0.9), Color(0.6, 1.0, 0.6, 0.14), lw)
 	if order == BattleSim.O_MOVE:
 		var d := to_px(_v(u, "dx"), _v(u, "dy"))
 		var dang: float = _v(u, "dface") * TAU / 1024.0
@@ -251,6 +268,10 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 			if _v(u, "gtarget") >= 0:
 				draw_string(ThemeDB.fallback_font, d + Vector2(r, -r * 1.5), "BREAK THE GATE",
 					HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), Color(1.0, 0.8, 0.45))
+			elif orders != null and orders.snap_of(u) >= 2:
+				draw_string(ThemeDB.fallback_font, d + Vector2(r, -r * 1.5),
+					"NO WAY IN: MOVING TO THE GATE" if orders.snap_of(u) == 2 else "NO WAY THERE",
+					HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), Color(1.0, 0.8, 0.45))
 	elif order == BattleSim.O_ATTACK and _v(u, "target") >= 0:
 		var t: int = _v(u, "target")
 		var tcol := Color(1, 0.3, 0.2, 0.85)
@@ -258,7 +279,21 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 		if shooter:
 			tcol = COL_FIRE
 		var tp := to_px(sim.u_cx[t], sim.u_cy[t])
-		if not (shooter and _draw_blocked(u, t, lw)):
+		var ug := Vector3i.ZERO
+		if sim.city_on != 0 and sim.u_wall[u] == 0:
+			ug = sim.unreach_goal(u, t, sim._attack_goal(u, t))
+			if ug.z == 1 and shooter and sim._in_range(u, t, sim.range_vs(u, t)):
+				ug = Vector3i.ZERO  # in range already: it shoots from where it stands
+		if ug.z != 0:
+			# Out of reach: its way to the gate (melee) or into range (missiles).
+			var gp := to_px(ug.x, ug.y)
+			_dash_outlined(a, gp, Color(1.0, 0.8, 0.45, 0.9), lw, 8.0 / zoom)
+			draw_dashed_line(gp, tp, Color(tcol, 0.35), lw, 4.0 / zoom)
+			if primary:
+				draw_string(ThemeDB.fallback_font, gp + Vector2(r, -r * 1.5),
+					"NO WAY IN: TO THE GATE" if ug.z == 2 else "MOVING INTO RANGE",
+					HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), Color(1.0, 0.8, 0.45))
+		elif not (shooter and _draw_blocked(u, t, lw)):
 			_dash_outlined(a, tp, tcol, lw, 8.0 / zoom)
 		if primary and not shooter:
 			_draw_slope_hint(sim.u_h[u], sim.u_h[t], sim.u_cx[t] - sim.u_cx[u],
@@ -474,6 +509,17 @@ func _draw_preview(lw: float) -> void:
 	var col := Color(1, 1, 1, 0.9) if preview_ok else Color(1, 1, 1, 0.4)
 	draw_line(preview_a, preview_b, Color(0, 0, 0, 0.35), lw * 3.5)
 	draw_line(preview_a, preview_b, col, lw * 1.5)
+	# End caps: hollow while the line can grow, solid once it is one rank
+	# long (it stops following the finger there).
+	var cap := maxf(px_per_m * 0.6, 5.0 / zoom)
+	for e in [preview_a, preview_b]:
+		if preview_clamped:
+			draw_circle(e, cap, Color(1, 0.85, 0.35, 0.95))
+		else:
+			draw_arc(e, cap, 0, TAU, 14, col, lw)
+	if preview_clamped:
+		draw_string(ThemeDB.fallback_font, preview_b + Vector2(cap * 1.5, -cap), "ONE RANK",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(12.0), Color(1, 0.85, 0.35))
 	if not preview_ok or selected_units.is_empty():
 		return
 	var dot_r := maxf(1.5, px_per_m * 0.25)
@@ -481,6 +527,14 @@ func _draw_preview(lw: float) -> void:
 		var u: int = p["unit"]
 		var face: int = p["facing"]
 		var centre: Vector2 = p["centre"]
+		if sim.city_on != 0 and orders != null:
+			# Onto (or off) a wall: the wall line and the stair, as the sim will do it.
+			var c := centre / px_per_m * M
+			var wpl: Dictionary = orders.wall_plan_for(u, BattleSim.make_move_order(0, u, int(c.x), int(c.y),
+				face, p["width"], 0))
+			if not wpl.is_empty() and wpl["mode"] != "hold":
+				_draw_wall_plan(u, wpl, lw, true)
+				continue
 		var offs := BattleSim.formation_offsets(sim.u_alive[u], p["files"], face, sim.u_type[u])
 		var feat: bool = sim.map_on != 0
 		for k in range(0, offs.size(), 2):
@@ -635,3 +689,93 @@ func preview_formation() -> Dictionary:
 	if g.is_empty():
 		return {"centre": (preview_a + preview_b) * 0.5, "facing": 0, "width": 0, "files": 1}
 	return g[0]
+
+
+## The longest line the selection can be drawn along: every unit in one
+## rank (men alive x file spacing; a battery its engines), plus the gaps
+## between them (world px).
+func max_line_px() -> float:
+	var total := 0.0
+	var n := 0
+	for u in selected_units:
+		if sim.u_state[u] != BattleSim.U_READY:
+			continue
+		var fsp := float(UT.stat(sim.u_type[u], "file_sp"))
+		total += (sim.u_neng[u] if sim.u_neng[u] > 0 else sim.u_alive[u]) * fsp / M
+		n += 1
+	return (total + GROUP_GAP_M * maxi(n - 1, 0)) * px_per_m
+
+
+# ---------------------------------------------------------------- walls ---
+
+## A wall stretch highlighted (its walkway, from end to end).
+func _draw_stretch(sg: int, lw: float, a: float) -> void:
+	var p0 := to_px(sim.ws_x0[sg], sim.ws_y0[sg])
+	var p1 := to_px(sim.ws_x1[sg], sim.ws_y1[sg])
+	draw_line(p0, p1, Color(COL_WALL, a * 0.5), maxf(px_per_m * 4.0, lw * 3.0))
+	draw_line(p0, p1, Color(COL_WALL, a), lw)
+
+
+## Mouse over a wall with a unit selected that may man it: its stretch.
+func _draw_wall_hover(w: Vector2, lw: float) -> void:
+	if sim.city_on == 0 or sim.ws_x0.size() == 0:
+		return
+	var any := false
+	for u in selected_units:
+		if BattleSim.can_man_walls(sim, u) or sim.u_wall[u] > 0:
+			any = true
+	if not any:
+		return
+	var ws := BattleSim.wall_snap(sim, int(w.x / px_per_m * M), int(w.y / px_per_m * M))
+	if ws.z >= 0:
+		_draw_stretch(ws.z, lw, 0.55)
+
+
+## A unit's wall move (OrderPreview.plan_from): the stretch it takes and
+## its men in their wall line there, the stair it uses (ringed) and its way
+## to it (dashed), and a caption.
+func _draw_wall_plan(u: int, wp: Dictionary, lw: float, primary: bool) -> void:
+	var sg: int = wp["seg"]
+	var slots: PackedInt32Array = wp["slots"]
+	if sg >= 0:
+		_draw_stretch(sg, lw, 0.75 if wp["mode"] != "hold" else 0.35)
+		var seen := {sg: true}
+		for k in range(0, slots.size(), 2):
+			var s2: int = sim.walk_seg_at(slots[k], slots[k + 1])
+			if s2 >= 0 and not seen.has(s2):
+				seen[s2] = true
+				_draw_stretch(s2, lw, 0.6)  # the line goes on through a tower onto it
+	var dot := maxf(1.2, px_per_m * 0.3)
+	for k in range(0, slots.size(), 2):
+		draw_circle(to_px(slots[k], slots[k + 1]), dot, Color(1, 1, 0.75, 0.85))
+	var route: PackedInt32Array = wp["route"]
+	if route.size() >= 4:
+		var pts := PackedVector2Array()
+		for k in range(0, route.size(), 2):
+			pts.append(to_px(route[k], route[k + 1]))
+		for k in pts.size() - 1:
+			_dash_outlined(pts[k], pts[k + 1], Color(COL_STAIR, 0.9), lw, 8.0 / zoom)
+	var ss: int = wp["stair_seg"]
+	if ss >= 0:
+		var e: int = wp["stair_end"]
+		var sp := to_px(sim.stair_pt(ss, e, 1).x, sim.stair_pt(ss, e, 1).y)
+		var rr := maxf(px_per_m * 3.0, 9.0 / zoom)
+		draw_circle(sp, rr, Color(COL_STAIR, 0.22))
+		draw_arc(sp, rr, 0, TAU, 20, COL_STAIR, lw * 1.4)
+		if wp.has("up_seg"):
+			var e2: int = wp["up_end"]
+			var s2p := to_px(sim.stair_pt(wp["up_seg"], e2, 1).x, sim.stair_pt(wp["up_seg"], e2, 1).y)
+			draw_circle(s2p, rr, Color(COL_STAIR, 0.22))
+			draw_arc(s2p, rr, 0, TAU, 20, COL_STAIR, lw * 1.4)
+		if primary:
+			draw_string(ThemeDB.fallback_font, sp + Vector2(rr * 1.2, -rr * 0.3), "STAIR",
+				HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(12.0), COL_STAIR)
+	if primary and wp["mode"] != "hold":
+		var txt: String = {"up": "UP BY THE STAIR", "down": "DOWN BY THE STAIR", "along": "ALONG THE WALL"}.get(wp["mode"], "")
+		if wp["mode"] == "down" and sg >= 0:
+			txt = "DOWN, THEN UP ONTO THAT WALL"
+		var at := to_px(sim.u_cx[u], sim.u_cy[u])
+		if sg >= 0 and slots.size() >= 2:
+			at = to_px(slots[0], slots[1])
+		draw_string(ThemeDB.fallback_font, at + Vector2(0, -px_per_m * 4.0), txt,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), COL_WALL)

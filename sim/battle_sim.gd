@@ -248,6 +248,12 @@ const SEARCH_CAP := 64           # settlement maps: a target search looks at mos
 const DIST_PER_TICK := 2         # street graph distance tables built per tick at most (the rest wait)
 const DITCH_SPEED := 450         # per mille of the speed while crossing a ditch (foot only)
 const STAIR_MAX := 400           # a stair move gives up waiting for stragglers after this long
+const WALL_RG := 1229            # a unit on a wall stands in two ranks at most this far apart (1.2 m)
+const WALL_SNAP := 14 * M        # a move onto wall / tower cells this near a stretch's walkway goes onto it
+const WALL_JOIN := 26 * M        # stretches whose ends are this near (through a tower) are joined
+const MAN_WALL_R := 60 * M       # "Man the wall": stretches this near the unit
+const NAV_TOWER := 8             # passability bit of tower cells: the walkway runs through them (wall units only)
+const NAV_WALK := 16             # ... and of the walkway itself (with MapGen.NAV_WALL; a stair has NAV_WALL only)
 const CIT_GATE_PCT := 60         # a citadel's gate: % of the outer gates' hit points
 const CIT_SIEGE := 1200          # the attackers 3:1 inside the walls this long: the town is lost ...
 const CIT_SIEGE_LOSS := 6        # ... lose this much morale a second
@@ -503,6 +509,14 @@ var g_hw := PackedInt32Array()    # gate opening half width, m (static)
 var g_cit := PackedInt32Array()   # 1: the citadel's gate (static)
 var ws_e := PackedInt32Array()    # per segment end (seg * 2 + end) * 6: walkway point E, stair S, foot D (static)
 var ws_fl := PackedInt32Array()   # segment flags MapGen.SEG_* (static)
+var ws_nb := PackedInt32Array()   # per segment end (seg * 2 + end): the stretch end joined to it through a tower (seg * 2 + end, -1 none; static)
+var ws_jx := PackedInt32Array()   # ... and the junction point (in the tower) between them (static)
+var cmp := PackedInt32Array()     # settlement maps: each cell's piece of open ground with every gate shut (-1 none, -2 - g gate g's cells; static)
+var n_cmp: int = 0
+var g_cmp := PackedInt32Array()   # gate g * 4 + k: the pieces next to gate g (-1 none; static)
+var _croot := PackedInt32Array()  # derived: each piece's joined piece with the gates as they are (for _croot_ep == nav_epoch)
+var _croot_ep: int = -1
+var ws_jy := PackedInt32Array()
 var agora := PackedInt32Array([0, 0, 0])  # the main square (posts): x, y, half size (static)
 var cit_x: int = 0                # the citadel (cit_r 0: none), static
 var cit_y: int = 0
@@ -706,6 +720,7 @@ var stat_gate_open: int = 0
 var stat_gate_broken: int = 0
 var stat_capture: int = 0
 var stat_stair_down: int = 0      # wall units ordered down a stair
+var stat_unreach: int = 0         # unit-ticks attacking a unit out of reach (to the gate / into range)
 var stat_stair_up: int = 0        # units that climbed onto a wall
 var stat_stair_rout: int = 0      # wall units that routed off by a stair
 var stat_ditch: int = 0           # unit-ticks crossing a ditch
@@ -852,9 +867,16 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		u_shelled_t[u] = -1000
 		u_shelled_by[u] = -1
 		if city_on != 0 and int(ud.get("wall", 0)) > 0 and int(ud.get("wall", 0)) <= ws_x0.size():
-			# Placed on a wall walkway: it holds that stretch of wall.
+			# Placed on a wall walkway: it holds that stretch of wall, in
+			# its wall line (as a unit sent up there would stand).
 			u_wall[u] = int(ud["wall"])
 			u_skirm[u] = 0
+			var wa := wall_anchor(self, u_wall[u] - 1, u_ax[u], u_ay[u], cnt, ty)
+			u_ax[u] = wa.x
+			u_ay[u] = wa.y
+			u_face[u] = wa.z
+			u_dface[u] = wa.z
+			u_files[u] = wall_nf(cnt)
 		var ne := _engines_for(ty, cnt)
 		u_eng0[u] = eng
 		u_neng[u] = ne
@@ -890,6 +912,10 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 			# Small deterministic jitter so ranks do not look ruled.
 			pos_x[i] = u_ax[u] + off_x[base + s] + _rand() % 205 - 102
 			pos_y[i] = u_ay[u] + off_y[base + s] + _rand() % 205 - 102
+			if u_wall[u] > 0 and obs_kind(pos_x[i], pos_y[i]) != MapGen.C_WALK:
+				# On a wall: never jittered off the walkway.
+				pos_x[i] = u_ax[u] + off_x[base + s]
+				pos_y[i] = u_ay[u] + off_y[base + s]
 			facing[i] = u_face[u]
 			hp[i] = t_hp[ty]
 			state[i] = S_FORMED
@@ -1280,7 +1306,7 @@ func _setup_map(f: Dictionary) -> void:
 	agora = PackedInt32Array([0, 0, 0])
 	for arr in [g_x, g_y, g_dir, g_ox, g_oy, g_ix, g_iy, g_hp, g_hp0, g_state, g_hit_t, g_bb,
 			ws_x0, ws_y0, ws_x1, ws_y1, ws_dir, ng_x, ng_y, ng_gate, ng_e0, ng_to, ng_w, g_hw, g_cit,
-			ws_e, ws_fl, sea_flee]:
+			ws_e, ws_fl, sea_flee, ws_nb, ws_jx, ws_jy]:
 		(arr as PackedInt32Array).resize(0)
 	map_info = {"palette": int(f["palette"]), "forest": int(f["forest"])}
 	if obs_on != 0:
@@ -1379,6 +1405,8 @@ func _setup_map(f: Dictionary) -> void:
 	if obs_on != 0:
 		nav.resize(ob_w * ob_h)
 		_rebuild_nav()
+		_wall_joins()
+		_build_cmp()
 	map_hash = 0
 	if map_on != 0:
 		var ctx := HashingContext.new()
@@ -1409,11 +1437,345 @@ func _rebuild_nav() -> void:
 		nav[c] = _nav_of(obs[c])
 
 
+## Wall stretches joined end to end through a tower (a corner of the wall,
+## not a gate): for each stretch end the nearest other stretch end within
+## WALL_JOIN whose way to it (along the walkway centre lines to where they
+## meet) is all walkway, stair or tower. Static (rebuilt by setup()).
+func _wall_joins() -> void:
+	var ns := ws_x0.size()
+	ws_nb.resize(ns * 2)
+	ws_nb.fill(-1)
+	ws_jx.resize(ns * 2)
+	ws_jx.fill(0)
+	ws_jy.resize(ns * 2)
+	ws_jy.fill(0)
+	for sg in ns:
+		for e in 2:
+			var p := _seg_end(sg, e)
+			var best := -1
+			var best_d := WALL_JOIN + 1
+			for s2 in ns:
+				if s2 == sg:
+					continue
+				for e2 in 2:
+					var q := _seg_end(s2, e2)
+					var d := FM.approx_len(q.x - p.x, q.y - p.y)
+					if d < best_d:
+						best_d = d
+						best = s2 * 2 + e2
+			if best < 0:
+				continue
+			var q2 := _seg_end(best / 2, best % 2)
+			var j := _seg_meet(sg, best / 2, p, q2)
+			if _wall_way(p, j) and _wall_way(j, q2):
+				ws_nb[sg * 2 + e] = best
+				ws_jx[sg * 2 + e] = j.x
+				ws_jy[sg * 2 + e] = j.y
+				_open_tower(p, j)
+				_open_tower(j, q2)
+
+
+## End e (0: x0 y0, 1: x1 y1) of walkway segment sg.
+func _seg_end(sg: int, e: int) -> Vector2i:
+	return Vector2i(ws_x0[sg], ws_y0[sg]) if e == 0 else Vector2i(ws_x1[sg], ws_y1[sg])
+
+
+## Where the centre lines of segments a and b meet (their ends p, q joined
+## through a tower); the midpoint of p and q if they do not meet near them.
+func _seg_meet(a: int, b: int, p: Vector2i, q: Vector2i) -> Vector2i:
+	var ax := ws_x1[a] - ws_x0[a]
+	var ay := ws_y1[a] - ws_y0[a]
+	var bx := ws_x1[b] - ws_x0[b]
+	var by := ws_y1[b] - ws_y0[b]
+	var la := maxi(FM.isqrt(ax * ax + ay * ay), 1)
+	var lb := maxi(FM.isqrt(bx * bx + by * by), 1)
+	# Unit directions (1/4096) and the cross product of them.
+	var ux := ax * 4096 / la
+	var uy := ay * 4096 / la
+	var vx := bx * 4096 / lb
+	var vy := by * 4096 / lb
+	var cr := ux * vy - uy * vx
+	var mid := Vector2i((p.x + q.x) / 2, (p.y + q.y) / 2)
+	if absi(cr) < 4096 * 4096 / 20:
+		return mid  # nearly in line
+	# p + s * u = q + t * v: s = ((q - p) x v) / (u x v) (sim units).
+	var wx := q.x - p.x
+	var wy := q.y - p.y
+	var s := (wx * vy - wy * vx) / (cr / 4096)
+	var j := Vector2i(p.x + ux * s / 4096, p.y + uy * s / 4096)
+	if FM.approx_len(j.x - mid.x, j.y - mid.y) > WALL_JOIN:
+		return mid
+	return j
+
+
+## Every metre from a to b is walkway, stair or tower (a wall unit's way).
+func _wall_way(a: Vector2i, b: Vector2i) -> bool:
+	var steps := FM.approx_len(b.x - a.x, b.y - a.y) / M + 1
+	for q in steps + 1:
+		var k := obs_kind(a.x + (b.x - a.x) * q / steps, a.y + (b.y - a.y) * q / steps)
+		if k != MapGen.C_WALK and k != MapGen.C_STAIR and k != MapGen.C_TOWER:
+			return false
+	return true
+
+
+## The tower cells within 2 m of the way from a to b (a junction between
+## two stretches) become passable to wall units (NAV_TOWER); other towers
+## (a gate's, a lone one) stay shut. Static, like the cells.
+func _open_tower(a: Vector2i, b: Vector2i) -> void:
+	var steps := FM.approx_len(b.x - a.x, b.y - a.y) / M + 1
+	for q in steps + 1:
+		var ci := (a.x + (b.x - a.x) * q / steps) >> 11
+		var cj := (a.y + (b.y - a.y) * q / steps) >> 11
+		for dj in range(-1, 2):
+			for di in range(-1, 2):
+				var i := ci + di
+				var j := cj + dj
+				if i >= 0 and j >= 0 and i < ob_w and j < ob_h and obs[j * ob_w + i] == MapGen.C_TOWER:
+					nav[j * ob_w + i] = NAV_TOWER
+
+
+## Reachability (settlement maps): the open ground (and ditch) in pieces
+## with every gate shut, flood-filled once (4-neighbour); each gate's cells
+## and the pieces beside it. With the gates as they are, pieces joined by an
+## open or broken gate are one (_roots). Static; the joining is a pure
+## function of the gates' states.
+func _build_cmp() -> void:
+	var nc := ob_w * ob_h
+	cmp.resize(nc)
+	cmp.fill(-1)
+	n_cmp = 0
+	g_cmp.resize(n_gates * 4)
+	g_cmp.fill(-1)
+	_croot_ep = -1
+	if city_on == 0:
+		return
+	var open := MapGen.NAV_GROUND | MapGen.NAV_DITCH
+	# Open by cell kind (gates shut), then a flood fill by plain index steps.
+	var kind_open := PackedByteArray()
+	kind_open.resize(256)
+	for k in MapGen.C_GATE:
+		kind_open[k] = 1 if (_nav_of(k) & open) != 0 else 0
+	var free := PackedByteArray()
+	free.resize(nc)
+	for c in nc:
+		var k := obs[c]
+		if k >= MapGen.C_GATE:
+			cmp[c] = -2 - (k - MapGen.C_GATE)
+		else:
+			free[c] = kind_open[k]
+	var q := PackedInt32Array()
+	q.resize(nc)
+	var w := ob_w
+	for c0 in nc:
+		if free[c0] == 0:
+			continue
+		var head := 0
+		var tail := 1
+		q[0] = c0
+		free[c0] = 0
+		cmp[c0] = n_cmp
+		while head < tail:
+			var c := q[head]
+			head += 1
+			var i := c % w
+			if i + 1 < w and free[c + 1] != 0:
+				free[c + 1] = 0
+				cmp[c + 1] = n_cmp
+				q[tail] = c + 1
+				tail += 1
+			if i > 0 and free[c - 1] != 0:
+				free[c - 1] = 0
+				cmp[c - 1] = n_cmp
+				q[tail] = c - 1
+				tail += 1
+			if c + w < nc and free[c + w] != 0:
+				free[c + w] = 0
+				cmp[c + w] = n_cmp
+				q[tail] = c + w
+				tail += 1
+			if c >= w and free[c - w] != 0:
+				free[c - w] = 0
+				cmp[c - w] = n_cmp
+				q[tail] = c - w
+				tail += 1
+		n_cmp += 1
+	# The pieces beside each gate's cells.
+	for g in n_gates:
+		var b := g * 4
+		for j in range(g_bb[b + 1], g_bb[b + 3] + 1):
+			for i in range(g_bb[b], g_bb[b + 2] + 1):
+				if cmp[j * ob_w + i] != -2 - g:
+					continue
+				for k in 4:
+					var ni := i + (1 if k == 0 else (-1 if k == 1 else 0))
+					var nj := j + (1 if k == 2 else (-1 if k == 3 else 0))
+					if ni < 0 or nj < 0 or ni >= ob_w or nj >= ob_h:
+						continue
+					var pc := cmp[nj * ob_w + ni]
+					if pc < 0:
+						continue
+					for m in 4:
+						if g_cmp[g * 4 + m] == pc:
+							break
+						if g_cmp[g * 4 + m] == -1:
+							g_cmp[g * 4 + m] = pc
+							break
+
+
+## Each piece's joined piece (the lowest index among those joined) with the
+## gates as they are now; recomputed when a gate changes.
+func _roots() -> PackedInt32Array:
+	if _croot_ep == nav_epoch and _croot.size() == n_cmp:
+		return _croot
+	_croot.resize(n_cmp)
+	for k in n_cmp:
+		_croot[k] = k
+	for g in n_gates:
+		if g_state[g] == GATE_CLOSED:
+			continue
+		for m in range(1, 4):
+			var a := g_cmp[g * 4]
+			var b := g_cmp[g * 4 + m]
+			if a < 0 or b < 0:
+				continue
+			var ra := _find_root(a)
+			var rb := _find_root(b)
+			if ra != rb:
+				_croot[maxi(ra, rb)] = mini(ra, rb)
+	for k in n_cmp:
+		_croot[k] = _find_root(k)
+	_croot_ep = nav_epoch
+	return _croot
+
+
+func _find_root(k: int) -> int:
+	var r := k
+	while _croot[r] != r:
+		r = _croot[r]
+	return r
+
+
+## The piece of open ground (x, y) belongs to with the gates as they are
+## (an open gate's cells: the pieces it joins); -1 if not open ground (a
+## wall, a building, the walkway, a shut gate) or no settlement map.
+func reach_at(x: int, y: int) -> int:
+	if city_on == 0 or n_cmp == 0 or x < 0 or y < 0:
+		return -1
+	var i := x >> 11
+	var j := y >> 11
+	if i >= ob_w or j >= ob_h:
+		return -1
+	var k := cmp[j * ob_w + i]
+	var r := _roots()
+	if k >= 0:
+		return r[k]
+	if k <= -2:
+		var g := -2 - k
+		if g_state[g] == GATE_CLOSED or g_cmp[g * 4] < 0:
+			return -1
+		return r[g_cmp[g * 4]]
+	return -1
+
+
+## Where a ground unit with its anchor at (ax, ay) goes when ordered to
+## (x, y): (x, y, 0) if it can get there; (x', y', 1) the nearest open
+## ground of its own piece within 12 m of a tap on a house or a wall; else
+## (x', y', 2) the gate on its side that is best on the way (a tap inside a
+## shut town: it goes to the gate and holds there); (x, y, 3) if there is
+## no way at all (no gate on its side). Read-only (the order rule and the
+## preview).
+func reach_snap(ax: int, ay: int, x: int, y: int, side: int) -> Vector3i:
+	var ru := reach_at(ax, ay)
+	if ru < 0:
+		return Vector3i(x, y, 0)
+	var rd := reach_at(x, y)
+	if rd == ru:
+		return Vector3i(x, y, 0)
+	var ci := x >> 11
+	var rings := 7 if rd < 0 else 1  # (open ground of another piece: straight to the gate)
+	var cj := y >> 11
+	for ring in range(1, rings):
+		var best := Vector2i(-1, -1)
+		var best_d := 1 << 40
+		for dj in range(-ring, ring + 1):
+			for di in range(-ring, ring + 1):
+				if absi(di) != ring and absi(dj) != ring:
+					continue
+				var px := ((ci + di) << 11) + 1024
+				var py := ((cj + dj) << 11) + 1024
+				if reach_at(px, py) != ru:
+					continue
+				var d := FM.approx_len(px - x, py - y)
+				if d < best_d:
+					best_d = d
+					best = Vector2i(px, py)
+		if best.x >= 0:
+			return Vector3i(best.x, best.y, 1)
+	var gp := gate_way(ru, ax, ay, x, y, side)
+	if gp.z >= 0:
+		return Vector3i(gp.x, gp.y, 2)
+	return Vector3i(x, y, 3)
+
+
+## The gate a unit of `side` in piece ru goes to on its way to (x, y) from
+## (ax, ay): the one whose front on ru's side (where foot stand to hack at
+## it) makes the way shortest; (x, y, gate) or z -1 if none.
+func gate_way(ru: int, ax: int, ay: int, x: int, y: int, side: int) -> Vector3i:
+	var best := Vector3i(0, 0, -1)
+	var best_c := 1 << 40
+	for g in n_gates:
+		for k in 2:
+			var f := gate_front(g, side if k == 0 else (city_def if side != city_def else 1 - city_def))
+			if reach_at(f.x, f.y) != ru:
+				continue
+			var c := FM.approx_len(f.x - ax, f.y - ay) + FM.approx_len(x - f.x, y - f.y)
+			if c < best_c:
+				best_c = c
+				best = Vector3i(f.x, f.y, g)
+			break
+	return best
+
+
+## Unit u attacking t that it cannot reach (another piece of ground):
+## (x, y, 1) a missile unit with shots goes toward it as far as its own
+## ground goes (the last point of its piece on the line from t back to it;
+## it shoots from range on the way); (x, y, 2) others go to the gate on
+## their side nearest t and hold there (attacking foot hack at it while it
+## is shut); z 0: it can reach t (or the rule does not apply).
+func unreach_goal(u: int, _t: int, goal: Vector2i) -> Vector3i:
+	if city_on == 0 or n_cmp == 0 or u_wall[u] > 0:
+		return Vector3i.ZERO
+	var ru := reach_at(u_ax[u], u_ay[u])
+	if ru < 0:
+		return Vector3i.ZERO
+	var rt := reach_at(goal.x, goal.y)
+	if rt == ru:
+		return Vector3i.ZERO
+	if u_cls[u] == UT.CLS_MISSILE and u_ammo[u] > 0:
+		var dx := u_ax[u] - goal.x
+		var dy := u_ay[u] - goal.y
+		var steps := FM.approx_len(dx, dy) / (2 * M) + 1
+		for q in range(1, steps + 1):
+			var px := goal.x + dx * q / steps
+			var py := goal.y + dy * q / steps
+			if reach_at(px, py) == ru:
+				return Vector3i(px, py, 1)
+		return Vector3i(u_ax[u], u_ay[u], 1)
+	if rt < 0:
+		return Vector3i.ZERO  # (a man on a wall: as before)
+	var gp := gate_way(ru, goal.x, goal.y, goal.x, goal.y, u_side[u])
+	if gp.z < 0:
+		return Vector3i(u_ax[u], u_ay[u], 2)
+	return Vector3i(gp.x, gp.y, 2)
+
+
 func _nav_of(k: int) -> int:
 	if k == MapGen.C_OPEN:
 		return MapGen.NAV_GROUND
 	if k == MapGen.C_WALK:
-		return MapGen.NAV_WALL
+		return MapGen.NAV_WALL | NAV_WALK
+	# Towers: shut, but those joining two stretches (_wall_joins) let wall
+	# units' men through.
 	if k == MapGen.C_STAIR:
 		return MapGen.NAV_WALL | MapGen.NAV_GROUND
 	if k == MapGen.C_DITCH:
@@ -1485,8 +1847,8 @@ func elev_at(x: int, y: int) -> int:
 	var h := height_at(x, y)
 	if obs_on != 0:
 		var k := obs_kind(x, y)
-		if k == MapGen.C_WALK:
-			h += wall_h
+		if k == MapGen.C_WALK or k == MapGen.C_TOWER:
+			h += wall_h  # (a man in a tower is a wall unit's, passing through)
 		elif k == MapGen.C_STAIR:
 			h += wall_h / 2
 	return h
@@ -1541,13 +1903,22 @@ func _near_obs(u: int) -> int:
 ## after the newest); else he slides along one axis; else he stays. A man
 ## already inside a blocked cell may move anywhere (to get out).
 func _slide(u: int, ox: int, oy: int, nx: int, ny: int, mask: int) -> Vector2i:
+	var on_walk := false
+	if u_stair[u] == 1 or u_stair[u] == 3:
+		var here := nav_at(ox, oy)
+		if (here & (NAV_WALK | NAV_TOWER)) != 0:
+			on_walk = true
+			mask |= NAV_TOWER  # a man on the walkway may pass a tower (by the junction)
 	if (nav_at(ox, oy) & mask) == 0:
 		return Vector2i(nx, ny)
 	stat_clamp += 1
 	var st := maxi(FM.approx_len(nx - ox, ny - oy), M / 4)
-	if u_stair[u] == 0 and u_state[u] == U_READY and obs_kind(ox, oy) == MapGen.C_STAIR:
-		# Left in a stair after his unit's stair move: down to its foot.
-		var fp := _stair_foot(ox, oy)
+	if u_state[u] == U_READY and obs_kind(ox, oy) == MapGen.C_STAIR and (u_stair[u] == 0 or u_stair[u] == 2 \
+			or FM.approx_len(stair_pt(u_sseg[u], u_send[u], 1).x - ox, stair_pt(u_sseg[u], u_send[u], 1).y - oy) > 5 * M):
+		# In a stair that is not his unit's way (left there after a stair
+		# move, or strayed into one): down to its foot (up to its walkway
+		# point, his unit being on the wall).
+		var fp := _stair_foot(ox, oy, u_wall[u] > 0 and u_stair[u] == 0)
 		var fdx := fp.x - ox
 		var fdy := fp.y - oy
 		var fd := FM.approx_len(fdx, fdy)
@@ -1556,9 +1927,25 @@ func _slide(u: int, ox: int, oy: int, nx: int, ny: int, mask: int) -> Vector2i:
 			var fy := oy + fdy * mini(st, fd) / fd
 			if (nav_at(fx, fy) & mask) != 0:
 				return Vector2i(fx, fy)
+	if u_wall[u] > 0 and (u_stair[u] == 0 or on_walk):
+		# A wall unit spread over two stretches: a man bound for the other
+		# stretch goes by the junction in the tower between them.
+		var jn := _wall_join(u)
+		if jn.z != 0:
+			var jx := jn.x - ox
+			var jy := jn.y - oy
+			var jd := FM.approx_len(jx, jy)
+			if jd > M / 2 and jx * (nx - ox) + jy * (ny - oy) > 0:
+				var s3 := mini(st, jd)
+				var qx := ox + jx * s3 / jd
+				var qy := oy + jy * s3 / jd
+				if (nav_at(qx, qy) & mask) != 0:
+					return Vector2i(qx, qy)
 	var cnt_n := u_trn[u]
 	if u_state[u] == U_ROUTING and u_stair[u] == 0:
 		cnt_n = 0  # the trail lies behind a router: slide along the obstacle instead
+	if u_stair[u] == 3 and on_walk:
+		cnt_n = 0  # up already: the stair's trail lies behind him
 	if cnt_n > 0:
 		var base := u * TRAIL
 		var best := 0
@@ -1570,11 +1957,13 @@ func _slide(u: int, ox: int, oy: int, nx: int, ny: int, mask: int) -> Vector2i:
 				best = k
 		var tx := u_ax[u]
 		var ty := u_ay[u]
-		if u_stair[u] != 0 and best_d > 3 * M:
-			# On a stair move (walkway point, stair, foot): reach the nearest
-			# point first, then the next.
-			tx = tr_x[base + best]
-			ty = tr_y[base + best]
+		if u_stair[u] != 0:
+			# On a stair move (junction, walkway point, stair, foot): along
+			# the trail as in the open (_stair_goal), the anchor past its end.
+			var sgo := _stair_goal(u, ox, oy)
+			if best + 1 < cnt_n or best_d > 3 * M:
+				tx = sgo.x
+				ty = sgo.y
 		elif best + 1 < cnt_n:
 			tx = tr_x[base + best + 1]
 			ty = tr_y[base + best + 1]
@@ -1601,8 +1990,8 @@ func _slide(u: int, ox: int, oy: int, nx: int, ny: int, mask: int) -> Vector2i:
 	return Vector2i(ox, oy)
 
 
-## The foot (street end) of the stair nearest (x, y).
-func _stair_foot(x: int, y: int) -> Vector2i:
+## The foot (street end) of the stair nearest (x, y) (`top`: its walkway point).
+func _stair_foot(x: int, y: int, top: bool = false) -> Vector2i:
 	var best := Vector2i(x, y)
 	var best_d := 1 << 40
 	for k in ws_e.size() / 6:
@@ -1611,8 +2000,58 @@ func _stair_foot(x: int, y: int) -> Vector2i:
 		var d := FM.approx_len(sx - x, sy - y)
 		if d < best_d:
 			best_d = d
-			best = Vector2i(ws_e[k * 6 + 4], ws_e[k * 6 + 5])
+			best = Vector2i(ws_e[k * 6], ws_e[k * 6 + 1]) if top else Vector2i(ws_e[k * 6 + 4], ws_e[k * 6 + 5])
 	return best
+
+
+## A man at (x, y) of unit u on a stair move (mode 1 down, 3 up) who is
+## still on the level it is leaving (walkway or tower going down, anything
+## else going up): where he heads (z 1), else z 0 (he takes his place).
+func _stair_leave(u: int, x: int, y: int, mode: int) -> Vector3i:
+	var nvh := nav_at(x, y)
+	if ((nvh & (NAV_WALK | NAV_TOWER)) != 0) != (mode == 1):
+		return Vector3i.ZERO
+	var g := _stair_goal(u, x, y)
+	return Vector3i(g.x, g.y, 1)
+
+
+## The cells a man at (x, y) of a unit on a stair move (mode 1 down, 3 up)
+## may step into: on the walkway (or in a tower) the walkway and towers, and
+## going down the stairs (he leaves the wall only by a stair); elsewhere
+## his unit's (`mask`), the walls' cells only near his unit's stair.
+func _stair_mask(u: int, x: int, y: int, mask: int, mode: int) -> int:
+	if (nav_at(x, y) & (NAV_WALK | NAV_TOWER)) != 0:
+		# Going up he is up: walkway and towers only (not back into the stair).
+		return (MapGen.NAV_WALL if mode == 1 else NAV_WALK) | NAV_TOWER
+	var sp := stair_pt(u_sseg[u], u_send[u], 1)
+	if FM.approx_len(sp.x - x, sp.y - y) > 5 * M:
+		return mask & ~MapGen.NAV_WALL  # off the walls but by his unit's stair
+	return mask
+
+
+## Where a man at (x, y) of unit u on a stair move heads along its trail:
+## the point after the one he has reached (within 2.5 m) or passed (he is
+## nearer the next one than it is), else the nearest; the last point once
+## there.
+func _stair_goal(u: int, x: int, y: int) -> Vector2i:
+	var base := u * TRAIL
+	var cnt := u_trn[u]
+	if u_stair[u] == 3 and cnt == 3 and obs_kind(x, y) == MapGen.C_STAIR \
+			and FM.approx_len(tr_x[base + 1] - x, tr_y[base + 1] - y) <= 4 * M:
+		return Vector2i(tr_x[base + 2], tr_y[base + 2])  # on its stair: up onto the walkway
+	var best := 0
+	var best_d := 1 << 40
+	for k in cnt:
+		var d := FM.approx_len(tr_x[base + k] - x, tr_y[base + k] - y)
+		if d < best_d:
+			best_d = d
+			best = k
+	if best + 1 < cnt:
+		var gap := FM.approx_len(tr_x[base + best + 1] - tr_x[base + best], tr_y[base + best + 1] - tr_y[base + best])
+		var dn := FM.approx_len(tr_x[base + best + 1] - x, tr_y[base + best + 1] - y)
+		if best_d <= 2560 or dn < gap:
+			best += 1
+	return Vector2i(tr_x[base + best], tr_y[base + best])
 
 
 ## Append a passed waypoint to unit u's trail (the oldest drops out).
@@ -1705,7 +2144,7 @@ func _mask_of(u: int) -> int:
 	if u_stair[u] == 1 or u_stair[u] == 3:
 		return MapGen.NAV_WALL | MapGen.NAV_GROUND | MapGen.NAV_DITCH
 	if u_wall[u] > 0:
-		return MapGen.NAV_WALL
+		return MapGen.NAV_WALL | NAV_TOWER
 	return _ground_mask(u)
 
 
@@ -1926,6 +2365,63 @@ func _plan_path(u: int, gx: int, gy: int) -> void:
 	_trail_push(u, ax, ay)
 
 
+## The way a unit's anchor at (ax, ay) would go to (gx, gy) through the
+## streets (planned as _plan_path plans it, but read-only: no state, no
+## cache): the waypoints, interleaved x, y, (gx, gy) last; empty if every
+## way there is shut. For the view (route previews, refusals).
+func route_to(ax: int, ay: int, gx: int, gy: int, gm: int = MapGen.NAV_GROUND) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	if ng_x.is_empty() or _los_fat(ax, ay, gx, gy, gm):
+		out.append_array([gx, gy])
+		return out
+	var srcs := _near_nodes(ax, ay, 3, gm)
+	var dsts := _near_nodes(gx, gy, 2, gm)
+	var best := PATH_INF
+	var ba := -1
+	var bt := PackedInt32Array()
+	var bb := -1
+	for b in dsts:
+		var dt := _dijkstra(b)
+		var tail := FM.approx_len(gx - ng_x[b], gy - ng_y[b]) / 128
+		for a in srcs:
+			if dt[a] >= PATH_INF:
+				continue
+			var c := FM.approx_len(ng_x[a] - ax, ng_y[a] - ay) / 128 + dt[a] + tail
+			if c < best:
+				best = c
+				ba = a
+				bb = b
+				bt = dt
+	if ba < 0:
+		return out
+	var cur := ba
+	out.append_array([ng_x[cur], ng_y[cur]])
+	var k := 1
+	while cur != bb and k < PATH_MAX - 1:
+		var nxt := -1
+		var nv := PATH_INF
+		for e in range(ng_e0[cur], ng_e0[cur + 1]):
+			var to := ng_to[e]
+			if not _node_open(to):
+				continue
+			var c2 := ng_w[e] + bt[to]
+			if c2 < nv or (c2 == nv and to < nxt):
+				nv = c2
+				nxt = to
+		if nxt < 0 or bt[nxt] >= bt[cur]:
+			break
+		cur = nxt
+		out.append_array([ng_x[cur], ng_y[cur]])
+		k += 1
+	out.append_array([gx, gy])
+	# Shortcut as _plan_path does: skip waypoints it can already see past.
+	var pk := 0
+	var cnt := out.size() / 2
+	while pk + 1 < cnt - 1 and _los_fat(ax, ay, out[(pk + 1) * 2], out[(pk + 1) * 2 + 1], gm):
+		pk += 1
+	return out.slice(pk * 2)
+
+
 ## Keep unit u's path to (gx, gy) current: replan when there is none, a gate
 ## changed, or (`moving_goal`, at most once a second) the goal moved 12 m;
 ## look past the next waypoint now and then. Returns the point to head for.
@@ -2048,7 +2544,7 @@ func _squeeze(u: int) -> void:
 		u_sq[u] = sq
 		u_dirty[u] = 1
 		u_settled[u] = 0
-	if sq > 0 and u_order[u] != O_NONE and absi(fl - fr) > 2 * M:
+	if sq > 0 and u_order[u] != O_NONE and absi(fl - fr) > 2 * M and u_stair[u] != 2:
 		# Keep to the middle of the street (a metre at a time: at a corner
 		# the free width either side can flip from one check to the next).
 		var sh := clampi((fr - fl) / 2, -M, M)
@@ -2056,49 +2552,265 @@ func _squeeze(u: int) -> void:
 		u_ay[u] = clampi(ay + c * sh / FM.TRIG_ONE, 0, field_h)
 
 
-## A wall unit's move: the destination is projected onto its stretch of
-## walkway (it never leaves the wall), facing out.
-static func wall_anchor(sim, u: int, x: int, y: int, files: int) -> Vector3i:
-	var sg: int = sim.u_wall[u] - 1
-	var x0: int = sim.ws_x0[sg]
-	var y0: int = sim.ws_y0[sg]
-	var x1: int = sim.ws_x1[sg]
-	var y1: int = sim.ws_y1[sg]
-	var l := maxi(FM.isqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0)), 1)
-	var ex := (x1 - x0) * FM.TRIG_ONE / l
-	var ey := (y1 - y0) * FM.TRIG_ONE / l
-	var ty: int = sim.u_type[u]
-	var half := files * UT.stat(ty, "file_sp") / 2
-	var t := ((x - x0) * ex + (y - y0) * ey) / FM.TRIG_ONE
-	if l <= 2 * half:
-		t = l / 2
-	else:
-		t = clampi(t, half, l - half)
-	var dir: int = sim.ws_dir[sg]
-	var ranks: int = (int(sim.u_alive[u]) + files - 1) / maxi(files, 1)
-	var depth: int = maxi(ranks - 1, 0) * UT.stat(ty, "rank_sp")
-	var out := depth / 2
-	return Vector3i(x0 + ex * t / FM.TRIG_ONE + FM.cos_a(dir) * out / FM.TRIG_ONE,
-		y0 + ey * t / FM.TRIG_ONE + FM.sin_a(dir) * out / FM.TRIG_ONE, dir)
+## Walls (how a unit stands on one, where a move onto one goes). Static
+## where the order rule and the view's preview need them (`sim` is the
+## BattleSim), so the preview draws exactly what the sim will do.
 
-
-## Files a wall unit can stand in on its walkway (all in at most 3 ranks if
-## the stretch is long enough).
-static func wall_files(sim, u: int, files: int) -> int:
-	var sg: int = sim.u_wall[u] - 1
+## Length of walkway segment sg (sim units, at least 1).
+static func seg_len(sim, sg: int) -> int:
 	var dx: int = sim.ws_x1[sg] - sim.ws_x0[sg]
 	var dy: int = sim.ws_y1[sg] - sim.ws_y0[sg]
-	var l := FM.isqrt(dx * dx + dy * dy)
-	var fit := maxi(l / maxi(UT.stat(sim.u_type[u], "file_sp"), 1), 1)
-	var alive: int = sim.u_alive[u]
-	return clampi(maxi(files, (alive + 2) / 3), 1, mini(fit, maxi(alive, 1)))
+	return maxi(FM.isqrt(dx * dx + dy * dy), 1)
 
 
-## (x, y) is on unit u's own stretch of walkway (or the wall band beside
-## it): a move there keeps it on the wall.
-func on_own_stretch(u: int, x: int, y: int) -> bool:
+## How far along segment sg (x, y) lies, clamped to the segment.
+static func seg_t(sim, sg: int, x: int, y: int) -> int:
+	var dx: int = sim.ws_x1[sg] - sim.ws_x0[sg]
+	var dy: int = sim.ws_y1[sg] - sim.ws_y0[sg]
+	var l := seg_len(sim, sg)
+	return clampi(((x - sim.ws_x0[sg]) * dx + (y - sim.ws_y0[sg]) * dy) / l, 0, l)
+
+
+## The point t along segment sg's walkway centre line.
+static func seg_pt(sim, sg: int, t: int) -> Vector2i:
+	var l := seg_len(sim, sg)
+	return Vector2i(sim.ws_x0[sg] + (sim.ws_x1[sg] - sim.ws_x0[sg]) * t / l,
+		sim.ws_y0[sg] + (sim.ws_y1[sg] - sim.ws_y0[sg]) * t / l)
+
+
+## Unit u may go up on the walls: a defending foot or missile unit on a
+## map with walkways (attackers never: no ladders yet; no horses, pikes or
+## engines).
+static func can_man_walls(sim, u: int) -> bool:
+	if sim.city_on == 0 or sim.ws_x0.size() == 0 or sim.u_side[u] != sim.city_def:
+		return false
+	var c: int = sim.u_cls[u]
+	return c == UT.CLS_INF or c == UT.CLS_MISSILE
+
+
+## A move to (x, y) on the wall: if (x, y) is on a wall's body, walkway,
+## stair, tower or gate tower, the walkway point of the stretch it belongs
+## to (the nearest stretch within WALL_SNAP of it, ties to the lower index;
+## the nearest point of its centre line), as (x, y, stretch); else stretch
+## -1. A gateway, the ground and the sea are not the wall.
+static func wall_snap(sim, x: int, y: int) -> Vector3i:
+	if sim.city_on == 0 or sim.ws_x0.size() == 0:
+		return Vector3i(x, y, -1)
+	var k: int = sim.obs_kind(x, y)
+	if k != MapGen.C_WALL and k != MapGen.C_WALK and k != MapGen.C_TOWER and k != MapGen.C_STAIR:
+		return Vector3i(x, y, -1)
+	var best := -1
+	var best_o := WALL_SNAP + 1
+	for sg in sim.ws_x0.size():
+		var o: int = sim._seg_off(sg, x, y)
+		if o < best_o:
+			best_o = o
+			best = sg
+	if best < 0:
+		return Vector3i(x, y, -1)
+	var p := seg_pt(sim, best, seg_t(sim, best, x, y))
+	return Vector3i(p.x, p.y, best)
+
+
+## Files of a unit `count` strong on a wall: two ranks (one man: one).
+static func wall_nf(count: int) -> int:
+	return maxi((count + 1) / 2, 1)
+
+
+## A unit `count` strong of type ty taking stretch sg at (x, y): its anchor
+## (on the walkway centre line, facing out). It stands in two ranks centred
+## on (x, y), moved along so the whole line is on the stretch; a line longer
+## than the stretch fills it and goes on through a tower onto the joined
+## stretch on the side nearer (x, y): its anchor is then (x, y) itself.
+static func wall_anchor(sim, sg: int, x: int, y: int, count: int, ty: int) -> Vector3i:
+	var l := seg_len(sim, sg)
+	var w := wall_nf(count) * UT.stat(ty, "file_sp")
+	var t := seg_t(sim, sg, x, y)
+	if w <= l:
+		t = clampi(t, w / 2, l - (w - w / 2))
+	var p := seg_pt(sim, sg, t)
+	return Vector3i(p.x, p.y, sim.ws_dir[sg])
+
+
+## The end of stretch sg a line too long for it goes on from (anchor at
+## (ax, ay)): the nearer end if a stretch is joined there, else the other;
+## -1 if neither end is joined.
+static func spill_end(sim, sg: int, ax: int, ay: int) -> int:
+	var e := 0 if 2 * seg_t(sim, sg, ax, ay) < seg_len(sim, sg) else 1
+	if sim.ws_nb[sg * 2 + e] < 0:
+		e = 1 - e
+	return e if sim.ws_nb[sg * 2 + e] >= 0 else -1
+
+
+## The file positions of a wall line: `nf` files fsp apart on the walkway
+## centre lines, anchored at (ax, ay) on stretch sg (see wall_anchor):
+## (x, y, stretch) per file, in order along the wall. Files that fit on
+## neither stretch stand at the line's two ends, alternately.
+static func wall_files_at(sim, sg: int, ax: int, ay: int, nf: int, fsp: int) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	var l := seg_len(sim, sg)
+	var fit := l / fsp
+	if nf <= fit:
+		var t0 := clampi(seg_t(sim, sg, ax, ay) - nf * fsp / 2, 0, l - nf * fsp)
+		for k in nf:
+			var p := seg_pt(sim, sg, t0 + fsp / 2 + k * fsp)
+			out.append_array([p.x, p.y, sg])
+		return out
+	fit = maxi(fit, 1)
+	var t1 := (l - fit * fsp) / 2 + fsp / 2
+	var e := spill_end(sim, sg, ax, ay)
+	var main := PackedInt32Array()
+	for k in fit:
+		var p := seg_pt(sim, sg, clampi(t1 + k * fsp, 0, l))
+		main.append_array([p.x, p.y, sg])
+	var side := PackedInt32Array()  # the joined stretch's files, from the junction outward
+	if e >= 0:
+		var nb: int = sim.ws_nb[sg * 2 + e]
+		var s2 := nb / 2
+		var l2 := seg_len(sim, s2)
+		var n2 := mini(nf - fit, l2 / fsp)
+		for k in n2:
+			var t2 := fsp / 2 + k * fsp
+			var p2 := seg_pt(sim, s2, t2 if nb % 2 == 0 else l2 - t2)
+			side.append_array([p2.x, p2.y, s2])
+	if e == 0:
+		# Along the wall: the joined stretch (far end first), then this one.
+		for k in range(side.size() / 3 - 1, -1, -1):
+			out.append_array([side[k * 3], side[k * 3 + 1], side[k * 3 + 2]])
+		out.append_array(main)
+	else:
+		out.append_array(main)
+		out.append_array(side)
+	var have := out.size() / 3
+	for k in nf - have:
+		var q := 0 if k % 2 == 0 else have - 1
+		out.append_array([out[q * 3], out[q * 3 + 1], out[q * 3 + 2]])
+	return out
+
+
+## Where the men of a unit `count` strong of type ty stand on a wall,
+## anchored at (ax, ay) on stretch sg: interleaved x, y per slot (absolute).
+## Two ranks either side of the walkway's centre line (at most WALL_RG
+## apart; the back rank's last files centred), each man moved to the
+## nearest walkway cell if his place falls off it.
+static func wall_slots(sim, sg: int, ax: int, ay: int, count: int, ty: int) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	out.resize(count * 2)
+	if count <= 0:
+		return out
+	var nf := wall_nf(count)
+	var files := wall_files_at(sim, sg, ax, ay, nf, UT.stat(ty, "file_sp"))
+	var half := mini(UT.stat(ty, "rank_sp"), WALL_RG) / 2
+	var back_n := count - nf
+	for s in count:
+		var r := s / nf
+		var f := s - r * nf
+		var off := half
+		if r > 0:
+			off = -half
+			f += (nf - back_n) / 2
+		if count == 1:
+			off = 0
+		var fx := files[f * 3]
+		var fy := files[f * 3 + 1]
+		var dir: int = sim.ws_dir[files[f * 3 + 2]]
+		var nx := FM.cos_a(dir)
+		var ny := FM.sin_a(dir)
+		var px := fx + nx * off / FM.TRIG_ONE
+		var py := fy + ny * off / FM.TRIG_ONE
+		if sim.obs_kind(px, py) != MapGen.C_WALK:
+			# Off the walkway (the grid is 2 m): the nearest walkway spot.
+			for q in WALL_NUDGE.size() / 2:
+				var a: int = WALL_NUDGE[q * 2]
+				var b: int = WALL_NUDGE[q * 2 + 1]
+				var qx := fx + (nx * a - ny * b) / FM.TRIG_ONE
+				var qy := fy + (ny * a + nx * b) / FM.TRIG_ONE
+				if sim.obs_kind(qx, qy) == MapGen.C_WALK:
+					px = qx
+					py = qy
+					break
+		out[s * 2] = px
+		out[s * 2 + 1] = py
+	return out
+
+
+## Tries for a man off the walkway: (out, along) from his file's point.
+const WALL_NUDGE: Array[int] = [0, 0, 512, 0, -512, 0, 0, 512, 0, -512, 512, 512, -512, 512,
+	512, -512, -512, -512, 1024, 0, -1024, 0, 0, 1024, 0, -1024]
+
+
+## Wall unit u spread over two stretches: the junction its men pass by (z 1),
+## else z 0.
+func _wall_join(u: int) -> Vector3i:
 	var sg := u_wall[u] - 1
-	return sg >= 0 and _seg_off(sg, x, y) <= 7 * M
+	if wall_nf(u_alive[u]) * t_fsp[u_type[u]] <= seg_len(self, sg):
+		return Vector3i.ZERO
+	var e := spill_end(self, sg, u_ax[u], u_ay[u])
+	if e < 0:
+		return Vector3i.ZERO
+	return Vector3i(ws_jx[sg * 2 + e], ws_jy[sg * 2 + e], 1)
+
+
+## Formation offsets of wall unit u (its wall line, see wall_slots).
+func _wall_offsets(u: int) -> void:
+	var sl := wall_slots(self, u_wall[u] - 1, u_ax[u], u_ay[u], u_alive[u], u_type[u])
+	var base := u_slot_base[u]
+	for s in u_alive[u]:
+		off_x[base + s] = sl[s * 2] - u_ax[u]
+		off_y[base + s] = sl[s * 2 + 1] - u_ay[u]
+
+
+## (x, y) is on unit u's own stretch of wall (a move there keeps it on it).
+func on_own_stretch(u: int, x: int, y: int) -> bool:
+	return u_wall[u] > 0 and wall_snap(self, x, y).z == u_wall[u] - 1
+
+
+## Where a wall unit at (x, y) on stretch sg comes down to ("Come down"):
+## the foot of the stretch's stair nearer (x, y), in the street just inside
+## the wall (the stair it goes down by; nothing in the way from there).
+func wall_inside(sg: int, x: int, y: int) -> Vector2i:
+	return stair_pt(sg, descent_end(self, sg, x, y, false, 0, 0), 2)
+
+
+## "Man the wall" for unit u on the ground: the walkway point it goes to,
+## (x, y, stretch): of the stretches within MAN_WALL_R of its anchor, the one
+## nearest the nearest enemy unit (ties: the lower index), at its point
+## nearest the unit; stretch -1 if there is none (or u may not man walls).
+## Read-only: the view turns it into an ordinary move order.
+static func man_wall_target(sim, u: int) -> Vector3i:
+	if not can_man_walls(sim, u) or sim.u_wall[u] > 0:
+		return Vector3i(0, 0, -1)
+	var ax: int = sim.u_ax[u]
+	var ay: int = sim.u_ay[u]
+	var en := -1
+	var en_d := 0
+	for t in sim.n_units:
+		if sim.u_side[t] == sim.u_side[u] or sim.u_state[t] >= U_DESTROYED or sim.u_alive[t] <= 0:
+			continue
+		var d := FM.approx_len(sim.u_cx[t] - ax, sim.u_cy[t] - ay)
+		if en < 0 or d < en_d:
+			en = t
+			en_d = d
+	var best := -1
+	var best_s := 0
+	for sg in sim.ws_x0.size():
+		if sim._seg_off(sg, ax, ay) > MAN_WALL_R:
+			continue
+		var sc: int = sim._seg_off(sg, sim.u_cx[en], sim.u_cy[en]) if en >= 0 else sim._seg_off(sg, ax, ay)
+		if best < 0 or sc < best_s:
+			best = sg
+			best_s = sc
+	if best < 0:
+		return Vector3i(0, 0, -1)
+	var p := seg_pt(sim, best, seg_t(sim, best, ax, ay))
+	return Vector3i(p.x, p.y, best)
+
+
+## Files a unit forms coming down off a wall: its normal block (a quarter
+## of its men, a third for missile troops; at least 4).
+static func ground_files(ty: int, alive: int) -> int:
+	var f := alive / (3 if UT.cls(ty) == UT.CLS_MISSILE else 4)
+	return clampi(f, mini(MIN_FILES, maxi(alive, 1)), maxi(alive, 1))
 
 
 ## How far (x, y) lies from segment sg's walkway centre line (sim units; past
@@ -2145,22 +2857,56 @@ func sea_exit(x: int) -> Vector2i:
 
 ## After an order is applied on a settlement map with walls: a wall unit
 ## ordered off its stretch goes down a stair; a defending foot or missile
-## unit ordered onto a walkway goes up one (via the street to its foot);
-## any other order ends a march to a stair.
+## unit ordered onto a wall (the order rule has put its destination on the
+## walkway: see wall_snap) goes up one (via the street to its foot); any
+## other order ends a march to a stair.
 func _wall_order(u: int, typ: int) -> void:
 	if u_wall[u] > 0 and u_order[u] == O_MOVE:
 		_start_descent(u)
 		return
 	if u_stair[u] == 1:
 		return  # still coming down: the new order waits until it is down
-	if typ == ORDER_MOVE and u_wall[u] == 0 and u_side[u] == city_def and u_order[u] == O_MOVE \
-			and (u_cls[u] == UT.CLS_INF or u_cls[u] == UT.CLS_MISSILE):
-		var sg := walk_seg_at(u_dx[u], u_dy[u])
-		if sg >= 0:
-			_start_ascent(u, sg, u_dx[u], u_dy[u])
+	if typ == ORDER_MOVE and u_wall[u] == 0 and u_order[u] == O_MOVE and can_man_walls(self, u):
+		var ws := wall_snap(self, u_dx[u], u_dy[u])
+		if ws.z >= 0:
+			_start_ascent(u, ws.z, ws.x, ws.y)
 			return
 	if u_stair[u] == 2:
 		u_stair[u] = 0
+
+
+## Which end's stair a unit on stretch sg (its men about (cx, cy)) goes
+## down by: the one that minimises the walk to it plus (`moving`) the way
+## from its foot to (dx, dy). Shared with the view's preview.
+static func descent_end(sim, sg: int, cx: int, cy: int, moving: bool, dx: int, dy: int) -> int:
+	var best_e := 0
+	var best_c := 1 << 40
+	for e in 2:
+		var ep: Vector2i = sim.stair_pt(sg, e, 0)
+		var dp: Vector2i = sim.stair_pt(sg, e, 2)
+		var c := FM.approx_len(ep.x - cx, ep.y - cy)
+		if moving:
+			c += FM.approx_len(dx - dp.x, dy - dp.y)
+		if c < best_c:
+			best_c = c
+			best_e = e
+	return best_e
+
+
+## Which end's stair a unit on the ground at (ax, ay) climbs to reach (x, y)
+## on stretch sg: the one that minimises the way to its foot plus the walk
+## along the wall. Shared with the view's preview.
+static func ascent_end(sim, sg: int, ax: int, ay: int, x: int, y: int) -> int:
+	var best_e := 0
+	var best_c := 1 << 40
+	for e in 2:
+		var ep: Vector2i = sim.stair_pt(sg, e, 0)
+		var dp: Vector2i = sim.stair_pt(sg, e, 2)
+		var c := FM.approx_len(dp.x - ax, dp.y - ay) + FM.approx_len(x - ep.x, y - ep.y)
+		if c < best_c:
+			best_c = c
+			best_e = e
+	return best_e
 
 
 ## Wall unit u goes down: along its walkway to the stair at the end that
@@ -2168,18 +2914,20 @@ func _wall_order(u: int, typ: int) -> void:
 ## men are down (its order then goes ahead).
 func _start_descent(u: int) -> void:
 	var sg := u_wall[u] - 1
-	var best_e := 0
-	var best_c := 1 << 40
-	for e in 2:
-		var ep := stair_pt(sg, e, 0)
-		var dp := stair_pt(sg, e, 2)
-		var c := FM.approx_len(ep.x - u_cx[u], ep.y - u_cy[u])
-		if u_order[u] == O_MOVE or u_order[u] == O_WITHDRAW:
-			c += FM.approx_len(u_dx[u] - dp.x, u_dy[u] - dp.y)
-		if c < best_c:
-			best_c = c
-			best_e = e
+	var best_e := descent_end(self, sg, u_cx[u], u_cy[u], u_order[u] == O_MOVE or u_order[u] == O_WITHDRAW,
+		u_dx[u], u_dy[u])
+	var jn := _wall_join(u)
 	_stair_set(u, sg, best_e, 1)
+	if jn.z != 0:
+		# Spread over two stretches: the men on the other one come by the
+		# junction in the tower first (trail junction, walkway, stair, foot).
+		var base := u * TRAIL
+		for q in range(3, 0, -1):
+			tr_x[base + q] = tr_x[base + q - 1]
+			tr_y[base + q] = tr_y[base + q - 1]
+		tr_x[base] = jn.x
+		tr_y[base] = jn.y
+		u_trn[u] = 4
 	if u_state[u] == U_ROUTING:
 		stat_stair_rout += 1
 	else:
@@ -2199,15 +2947,7 @@ func _start_descent(u: int) -> void:
 ## marches to the foot of the stair nearer to it (counting the walk along
 ## the wall), then climbs.
 func _start_ascent(u: int, sg: int, x: int, y: int) -> void:
-	var best_e := 0
-	var best_c := 1 << 40
-	for e in 2:
-		var ep := stair_pt(sg, e, 0)
-		var dp := stair_pt(sg, e, 2)
-		var c := FM.approx_len(dp.x - u_ax[u], dp.y - u_ay[u]) + FM.approx_len(x - ep.x, y - ep.y)
-		if c < best_c:
-			best_c = c
-			best_e = e
+	var best_e := ascent_end(self, sg, u_ax[u], u_ay[u], x, y)
 	u_sseg[u] = sg
 	u_send[u] = best_e
 	u_stair[u] = 2
@@ -2230,10 +2970,35 @@ func _stair_set(u: int, sg: int, e: int, mode: int) -> void:
 	var base := u * TRAIL
 	for q in 3:
 		var p := stair_pt(sg, e, q if mode == 1 else 2 - q)
+		if q == 1:
+			p = _stair_cell(p.x, p.y)
 		tr_x[base + q] = p.x
 		tr_y[base + q] = p.y
 	u_trn[u] = 3
 	u_pn[u] = 0
+
+
+## The middle of the stair cell nearest (x, y) (within 2 cells; else (x, y)):
+## a stair point can fall on a cell's edge, where a man heading for it
+## along a wall cannot reach it.
+func _stair_cell(x: int, y: int) -> Vector2i:
+	var ci := x >> 11
+	var cj := y >> 11
+	var best := Vector2i(x, y)
+	var best_d := 1 << 40
+	for dj in range(-2, 3):
+		for di in range(-2, 3):
+			var i := ci + di
+			var j := cj + dj
+			if i < 0 or j < 0 or i >= ob_w or j >= ob_h or obs[j * ob_w + i] != MapGen.C_STAIR:
+				continue
+			var cx := (i << 11) + 1024
+			var cy := (j << 11) + 1024
+			var d := FM.approx_len(cx - x, cy - y)
+			if d < best_d:
+				best_d = d
+				best = Vector2i(cx, cy)
+	return best
 
 
 ## At the foot of its stair: up it goes (onto the walkway at the point it
@@ -2243,9 +3008,8 @@ func _climb(u: int) -> void:
 	_stair_set(u, sg, u_send[u], 3)
 	stat_stair_up += 1
 	u_wall[u] = sg + 1
-	var wf := wall_files(self, u, u_files[u])
-	var wa := wall_anchor(self, u, u_wx[u], u_wy[u], wf)
-	u_files[u] = wf
+	var wa := wall_anchor(self, sg, u_wx[u], u_wy[u], u_alive[u], u_type[u])
+	u_files[u] = wall_nf(u_alive[u])
 	u_ax[u] = wa.x
 	u_ay[u] = wa.y
 	u_face[u] = wa.z
@@ -2273,7 +3037,9 @@ func _stair_check(u: int) -> void:
 			if state[i] >= S_DEAD:
 				continue
 			var k := obs_kind(pos_x[i], pos_y[i])
-			var on_wall := k == MapGen.C_WALK or k == MapGen.C_STAIR
+			# Down once off the walkway (a stair's cells are the street's too),
+			# up once on it (or passing a tower).
+			var on_wall := k == MapGen.C_WALK or k == MapGen.C_TOWER
 			if on_wall == down:
 				done = false
 				break
@@ -2283,12 +3049,11 @@ func _stair_check(u: int) -> void:
 	u_trn[u] = 0
 	u_pn[u] = 0
 	u_settled[u] = 0
-	if down and u_state[u] == U_READY and u_order[u] == O_MOVE and u_side[u] == city_def \
-			and (u_cls[u] == UT.CLS_INF or u_cls[u] == UT.CLS_MISSILE):
+	if down and u_state[u] == U_READY and u_order[u] == O_MOVE and can_man_walls(self, u):
 		# Down from one stretch, bound for another: up again.
-		var sg := walk_seg_at(u_dx[u], u_dy[u])
-		if sg >= 0:
-			_start_ascent(u, sg, u_dx[u], u_dy[u])
+		var ws := wall_snap(self, u_dx[u], u_dy[u])
+		if ws.z >= 0:
+			_start_ascent(u, ws.z, ws.x, ws.y)
 
 
 ## Gate g's state change from an order (defenders only): closing needs the
@@ -2724,29 +3489,23 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 	if art and (typ == ORDER_MOVE or typ == ORDER_ATTACK or typ == ORDER_WITHDRAW \
 			or typ == ORDER_WITHDRAW_ALL or typ == ORDER_DEPLOY):
 		d["refill"] = 0
-	# A unit on a wall holds it: it moves only along its stretch of walkway
-	# (facing out), and does not withdraw or skirmish.
+	# Walls. A move onto a wall's body, walkway, stair or tower goes to the
+	# walkway of the stretch it belongs to (wall_snap); only units that may
+	# man the walls take it so (others: a ground move, refused by the view).
+	# A unit on a wall holds it: it moves only along its stretch (in its
+	# wall line, facing out), anywhere else means down a stair (the sim
+	# starts the stair moves when the order is applied: _wall_order), and it
+	# does not withdraw or skirmish.
 	var wallu: int = sim.u_wall[u] if u < sim.u_wall.size() else 0
+	var ws := Vector3i(0, 0, -1)
+	if typ == ORDER_MOVE and (wallu > 0 or can_man_walls(sim, u)):
+		ws = wall_snap(sim, int(o["x"]), int(o["y"]))
 	if wallu > 0:
 		if typ == ORDER_WITHDRAW or typ == ORDER_WITHDRAW_ALL or typ == ORDER_SKIRMISH:
 			return
-		if typ == ORDER_MOVE and not sim.on_own_stretch(u, int(o["x"]), int(o["y"])):
-			# Off the wall (or onto another stretch): it goes down by the
-			# stair at a tower and on through the streets (the sim starts
-			# the stair move when the order is applied).
-			d["order"] = O_MOVE
-			d["dx"] = clampi(int(o["x"]), 0, sim.field_w)
-			d["dy"] = clampi(int(o["y"]), 0, sim.field_h)
-			d["dface"] = int(o["facing"]) & FM.ANGLE_MASK
-			d["files"] = width_to_files(int(o["width"]), sim.u_alive[u], ty)
-			d["run"] = 1 if int(o.get("run", 0)) != 0 else 0
-			d["target"] = -1
-			d["gtarget"] = -1
-			return
-		if typ == ORDER_MOVE:
-			var wf := wall_files(sim, u, width_to_files(int(o["width"]), sim.u_alive[u], ty))
-			var wa := wall_anchor(sim, u, int(o["x"]), int(o["y"]), wf)
-			d["files"] = wf
+		if typ == ORDER_MOVE and ws.z == wallu - 1:
+			var wa := wall_anchor(sim, ws.z, ws.x, ws.y, sim.u_alive[u], ty)
+			d["files"] = wall_nf(sim.u_alive[u])
 			d["ax"] = wa.x
 			d["ay"] = wa.y
 			d["face"] = wa.z
@@ -2756,10 +3515,43 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 			d["gtarget"] = -1
 			d["run"] = 0
 			return
+		if typ == ORDER_MOVE:
+			# Off the wall (down by a stair and on through the streets, in its
+			# normal block at most), or onto another stretch (down, then up).
+			d["order"] = O_MOVE
+			d["dx"] = ws.x if ws.z >= 0 else clampi(int(o["x"]), 0, sim.field_w)
+			d["dy"] = ws.y if ws.z >= 0 else clampi(int(o["y"]), 0, sim.field_h)
+			d["dface"] = sim.ws_dir[ws.z] if ws.z >= 0 else int(o["facing"]) & FM.ANGLE_MASK
+			d["files"] = mini(width_to_files(int(o["width"]), sim.u_alive[u], ty), ground_files(ty, sim.u_alive[u]))
+			d["run"] = 1 if int(o.get("run", 0)) != 0 else 0
+			d["target"] = -1
+			d["gtarget"] = -1
+			return
+	elif ws.z >= 0:
+		# Up onto the wall: to the stair's foot, up, along to the point
+		# (always a march, however near: the way up is by the stair; it
+		# turns to the wall at the top).
+		d["order"] = O_MOVE
+		d["dx"] = ws.x
+		d["dy"] = ws.y
+		d["dface"] = sim.ws_dir[ws.z]
+		d["run"] = 1 if int(o.get("run", 0)) != 0 else 0
+		d["target"] = -1
+		d["gtarget"] = -1
+		return
 	if typ == ORDER_MOVE:
 		var x := clampi(int(o["x"]), 0, sim.field_w)
 		var y := clampi(int(o["y"]), 0, sim.field_h)
 		var face := int(o["facing"]) & FM.ANGLE_MASK
+		if sim.city_on != 0 and sim.n_cmp > 0:
+			# Where it can get to: open ground of its own piece (a tap on a
+			# house: beside it), else the gate on its side on the way (a tap
+			# inside a shut town: it goes to the gate and holds there).
+			var rs: Vector3i = sim.reach_snap(int(d["ax"]), int(d["ay"]), x, y, sim.u_side[u])
+			if rs.z == 1 or rs.z == 2:
+				x = rs.x
+				y = rs.y
+			d["snap"] = rs.z
 		if not art:
 			d["files"] = width_to_files(int(o["width"]), sim.u_alive[u], ty)
 		d["run"] = 1 if int(o.get("run", 0)) != 0 and not art else 0
@@ -2928,11 +3720,46 @@ func _compute_offsets(u: int) -> void:
 		_art_offsets(u)
 		u_dirty[u] = 0
 		return
+	if u_wall[u] > 0:
+		_wall_offsets(u)
+		u_dirty[u] = 0
+		return
 	var files := mini(files_of(u), alive)
 	var ty := u_type[u]
 	_fill_offsets(off_x, u_slot_base[u], alive, files, u_face[u], false, off_y,
 		t_fsp[ty], t_rsp[ty])
+	if city_on != 0 and n_cmp > 0 and u_stair[u] == 0 and u < _u_obs.size() and _u_obs[u] != 0:
+		_project_slots(u)
 	u_dirty[u] = 0
+
+
+## Settlement maps: a man's place that falls across a wall, in a house or on
+## ground of another piece than the anchor's comes in toward the anchor to
+## the first open ground of its piece (his side of the anchor), so no man
+## tries for a place he cannot reach. Only when the offsets are recomputed
+## (an order, a turn, the end of a move), never per tick.
+func _project_slots(u: int) -> void:
+	var ax := u_ax[u]
+	var ay := u_ay[u]
+	var ra := reach_at(ax, ay)
+	if ra < 0:
+		return
+	var base := u_slot_base[u]
+	for s in u_alive[u]:
+		var ox := off_x[base + s]
+		var oy := off_y[base + s]
+		if reach_at(ax + ox, ay + oy) == ra:
+			continue
+		var steps := FM.approx_len(ox, oy) / M + 1
+		var q := 1
+		while q <= steps:
+			var px := ox * (steps - q) / steps
+			var py := oy * (steps - q) / steps
+			if reach_at(ax + px, ay + py) == ra or q == steps:
+				off_x[base + s] = px
+				off_y[base + s] = py
+				break
+			q += 1
 
 
 ## Where crew member j of an engine stands, relative to the engine facing
@@ -3179,6 +4006,8 @@ func _update_units() -> void:
 				u_ay[u] = wy
 				if order == O_MOVE and not via:
 					u_order[u] = O_NONE
+					if city_on != 0:
+						u_dirty[u] = 1  # there: its places again (kept to its own ground)
 					if u_stair[u] == 2:
 						_climb(u)  # at the stair's foot: up
 			else:
@@ -3203,11 +4032,22 @@ func _update_units() -> void:
 				# Settlement map: go round by the streets while the target
 				# cannot be reached straight.
 				var via := false
+				var held := false
 				if oon and u_wall[u] == 0 and u_charge[u] == 0 and u_fighting[u] == 0 \
 						and not (cls == UT.CLS_MISSILE and u_ammo[u] > 0 and d <= range_vs(u, t)):
 					var goal := _attack_goal(u, t)
+					if city_on != 0:
+						# Out of reach (another piece of ground: a shut gate
+						# between): to the gate (melee), or as near as its own
+						# ground goes (missile troops, shooting once in range).
+						var ug := unreach_goal(u, t, goal)
+						if ug.z != 0:
+							goal = Vector2i(ug.x, ug.y)
+							held = true
+							stat_unreach += 1
 					var wp := _path_point(u, goal.x, goal.y, true)
-					if wp.x != goal.x or wp.y != goal.y:
+					var gd := FM.approx_len(goal.x - u_ax[u], goal.y - u_ay[u])
+					if wp.x != goal.x or wp.y != goal.y or (held and gd > M / 4):
 						via = true
 						var vx := wp.x - u_ax[u]
 						var vy := wp.y - u_ay[u]
@@ -3219,6 +4059,11 @@ func _update_units() -> void:
 							u_ay[u] += vy * mv0 / vdd
 				if via:
 					pass
+				elif held:
+					# At the gate (or as near as it gets): it holds there, its
+					# places now and then kept to its own ground.
+					if (tick + u) % 10 == 0:
+						u_dirty[u] = 1
 				elif u_charge[u] != 0:
 					pass  # riders resolve the charge themselves; anchor waits
 				elif u_wall[u] > 0 and cls != UT.CLS_MISSILE:
@@ -3238,6 +4083,9 @@ func _update_units() -> void:
 							aspeed = aspeed * _fac_dir(u, g0, dx, dy, d) / 1000
 					if u_wall[u] > 0:
 						stop = d  # on the wall: shoot from here or not at all
+					elif d > stop and oon and city_on != 0 \
+							and unreach_goal(u, t, Vector2i(u_cx[t], u_cy[t])).z != 0:
+						stop = d  # in range of a target out of reach: no closer (a wall between)
 					if d > stop:
 						var mv := mini(aspeed, d - stop)
 						u_ax[u] += dx * mv / d
@@ -3748,6 +4596,13 @@ func _update_soldiers() -> void:
 		var maxy := 0
 		var sumx := 0
 		var sumy := 0
+		# On a stair move, a man still on the level his unit is leaving (the
+		# walkway or a tower going down, the ground going up) walks its trail
+		# (junction, walkway point, stair, foot or back), not straight at his
+		# new place (under or over the wall).
+		var stair_mv := 0
+		if ob:
+			stair_mv = u_stair[u] if u_stair[u] == 1 or u_stair[u] == 3 else 0
 		if u_contact[u] == 0 and u_down[u] == 0 and u_charge[u] == 0:
 			# Fast path: slot following only (no separation, no search).
 			for s in alive:
@@ -3757,6 +4612,11 @@ func _update_soldiers() -> void:
 				var y := py[i]
 				var dx := ax + oxs[k] - x
 				var dy := ay + oys[k] - y
+				if stair_mv != 0:
+					var sgo := _stair_leave(u, x, y, stair_mv)
+					if sgo.z != 0:
+						dx = sgo.x - x
+						dy = sgo.y - y
 				fc[i] = face
 				if is_cav:
 					cg[i] = umom
@@ -3787,8 +4647,9 @@ func _update_soldiers() -> void:
 				else:
 					x = clampi(x + dx * spd / d, 0, fw)
 					y = clampi(y + dy * spd / d, 0, fh)
-				if ob and (navg[mini(y >> 11, obh1) * obw + mini(x >> 11, obw1)] & mask) == 0:
-					var sl2 := _slide(u, px[i], py[i], x, y, mask)
+				var mm := mask if stair_mv == 0 else _stair_mask(u, px[i], py[i], mask, stair_mv)
+				if ob and (navg[mini(y >> 11, obh1) * obw + mini(x >> 11, obw1)] & mm) == 0:
+					var sl2 := _slide(u, px[i], py[i], x, y, mm)
 					x = sl2.x
 					y = sl2.y
 				px[i] = x
@@ -3919,6 +4780,11 @@ func _update_soldiers() -> void:
 				var kl := base + slot
 				var ldx := ax + oxs[kl] - x
 				var ldy := ay + oys[kl] - y
+				if stair_mv != 0:
+					var sgl := _stair_leave(u, x, y, stair_mv)
+					if sgl.z != 0:
+						ldx = sgl.x - x
+						ldy = sgl.y - y
 				if ldx != 0 or ldy != 0:
 					var ld := FM.approx_len(ldx, ldy)
 					var lspd := spd_formed if ld <= CATCH_UP_DIST else run
@@ -3950,8 +4816,9 @@ func _update_soldiers() -> void:
 					ny += (lps * lpush) / tone
 				nx = clampi(nx, 0, fw)
 				ny = clampi(ny, 0, fh)
-				if ob and (navg[mini(ny >> 11, obh1) * obw + mini(nx >> 11, obw1)] & mask) == 0:
-					var sll := _slide(u, x, y, nx, ny, mask)
+				var mml := mask if stair_mv == 0 else _stair_mask(u, x, y, mask, stair_mv)
+				if ob and (navg[mini(ny >> 11, obh1) * obw + mini(nx >> 11, obw1)] & mml) == 0:
+					var sll := _slide(u, x, y, nx, ny, mml)
 					nx = sll.x
 					ny = sll.y
 				px[i] = nx
@@ -4152,6 +5019,11 @@ func _update_soldiers() -> void:
 				var k := base + slot_of[i]
 				var dx := ax + oxs[k] - x
 				var dy := ay + oys[k] - y
+				if stair_mv != 0:
+					var sgs := _stair_leave(u, x, y, stair_mv)
+					if sgs.z != 0:
+						dx = sgs.x - x
+						dy = sgs.y - y
 				if wrap_t >= 0 and front and t < 0:
 					dx = u_cx[wrap_t] - x
 					dy = u_cy[wrap_t] - y
@@ -4215,8 +5087,9 @@ func _update_soldiers() -> void:
 					ny += (ps * push2) / tone
 			nx = clampi(nx, 0, fw)
 			ny = clampi(ny, 0, fh)
-			if ob and (navg[mini(ny >> 11, obh1) * obw + mini(nx >> 11, obw1)] & mask) == 0:
-				var sl3 := _slide(u, x, y, nx, ny, mask)
+			var mm3 := mask if stair_mv == 0 else _stair_mask(u, x, y, mask, stair_mv)
+			if ob and (navg[mini(ny >> 11, obh1) * obw + mini(nx >> 11, obw1)] & mm3) == 0:
+				var sl3 := _slide(u, x, y, nx, ny, mm3)
 				nx = sl3.x
 				ny = sl3.y
 			px[i] = nx
@@ -5017,7 +5890,7 @@ func _land(p: int) -> void:
 	var tu := pr_tu[p]
 	if best < 0 and u_contact[tu] == 0 and u_alive[tu] > 0:
 		var j := -1
-		if u_state[tu] == U_READY and u_neng[tu] == 0:
+		if u_state[tu] == U_READY and u_neng[tu] == 0 and u_wall[tu] == 0:
 			j = _slot_at(tu, x, y)
 		else:
 			j = _nearest_in_unit(tu, x, y)
@@ -6059,7 +6932,8 @@ const _SNAP_SKIP := {"ter_h": true, "ter_gx": true, "ter_gy": true, "ter_info": 
 	"dbg_impacted": true, "veg": true, "obs": true, "obs_c": true, "obs_cd": true, "map_info": true,
 	"ws_x0": true, "ws_y0": true, "ws_x1": true, "ws_y1": true, "ws_dir": true, "ng_x": true,
 	"ng_y": true, "ng_gate": true, "ng_e0": true, "ng_to": true, "ng_w": true, "_dist_cache": true,
-	"g_hw": true, "g_cit": true, "ws_e": true, "ws_fl": true, "sea_flee": true}
+	"g_hw": true, "g_cit": true, "ws_e": true, "ws_fl": true, "sea_flee": true, "ws_nb": true,
+	"ws_jx": true, "ws_jy": true, "cmp": true, "n_cmp": true, "g_cmp": true, "_croot": true, "_croot_ep": true}
 const _SNAP_MAGIC := 0x31534353  # "SCS1"
 
 
@@ -6116,6 +6990,7 @@ func restore(blob: PackedByteArray) -> bool:
 			return false
 	for k in d:
 		set(k, d[k])
+	_croot_ep = -1  # (derived from the gates: recomputed on use)
 	# Derived path distances: the tables this sim held (they decide which
 	# units may plan this tick), for the gates as they are here.
 	_dist_cache = {}

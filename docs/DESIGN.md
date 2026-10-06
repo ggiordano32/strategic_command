@@ -799,6 +799,27 @@ per soldier on open ground.
   clear; replanned when a gate opens, closes or breaks, when the order
   changes, or (attacking) when the target moved 12 m (at most once a
   second). Routers on a city map run along a path to their own edge.
+- *Reachability* (October 2026 playtest: "the formation goes past the
+  walls ... sliding along the wall in clumps"): the open ground (and ditch)
+  is flood-filled once into pieces with every gate shut (`cmp`, static, ~20
+  ms at setup); an open or broken gate joins the pieces beside it (union
+  of the pieces, recomputed only when a gate changes: a pure function of
+  the gates, not state). A move order (order rule, so preview, sim and
+  lockstep peers agree) to ground the unit cannot reach goes, for a tap on
+  a house or wall, to the nearest open ground of its own piece within 12 m,
+  else to the front of the gate on its side that makes the way shortest,
+  where it holds ("No way in: moving to the gate"; attacking foot standing
+  there hack it). An attack on a unit in another piece: melee units go to
+  the gate on their side nearest the target and hold (attacking foot hack
+  it; once it breaks the pieces join and they go in); missile troops with
+  shots go only as far as their own ground goes toward it, stand once in
+  range and shoot ("Moving into range"; flat throwers without a line of
+  fire show "No line of fire" as before; batteries never move to attack).
+  The AI's attack orders follow the same rule. A ground unit's places
+  (anchor + offset) on ground of another piece than its anchor's, or in a
+  wall or house, are pulled in toward the anchor to the first open ground
+  of its piece whenever its offsets are recomputed (an order, a turn, the
+  end of a move, every second while holding at a gate); no per-tick cost.
 - *Squeeze*: every third tick a unit near obstacles measures the free width
   either side of its anchor; if its front would not fit it closes files to
   the width (at least 4) and keeps to the middle of the street, and opens
@@ -809,10 +830,26 @@ per soldier on open ground.
   (the midpoint and quarter points must be passable).
 - *Walls*: units placed on a wall (garrison missile troops, by the scenario
   builder) stand on the walkway: their height is the ground + 5 / 7 / 9 m
-  (missile range from height, line of fire), a move order within 7 m of
-  their stretch is projected onto it (facing out), they never withdraw or
+  (missile range from height, line of fire), they never withdraw or
   skirmish, and only wall units may enter the walkway (no climbing for
-  attackers). Since October 2026 towers are stairs: a move order off the
+  attackers). Since the October 2026 wall-orders fix: a move order onto a
+  wall's body, walkway, stair, tower or gate tower goes to the nearest
+  walkway point of that stretch (`wall_snap`: the nearest stretch within 14
+  m, in the order rule, so preview, sim and both lockstep peers agree; only
+  defending foot and missile units; others get a ground move the view
+  refuses with a reason). A wall unit stands in its *wall line*
+  (`wall_anchor` / `wall_slots`): two ranks along the walkway at most 1.2 m
+  apart either side of its centre line, centred on the ordered point and
+  moved along so the line fits on the stretch; a line longer than the
+  stretch fills it and goes on through the tower onto the stretch joined
+  there (`ws_nb`: ends within 26 m whose way along the centre lines is all
+  walkway / tower; towers are passable to wall units only, bit
+  `NAV_TOWER`), surplus files at the ends; a man whose place falls off the
+  walkway cells takes the nearest walkway spot. The same line for garrison
+  units at the start and for units sent up. A move onto its own stretch
+  slides it along; anywhere else is down a stair (onto the ground in its
+  normal block, at most a quarter of its men wide, a third for missile
+  troops). Since October 2026 towers are stairs: a move order off the
   stretch takes the unit down the stair at one of its ends and on through
   the streets, routers leave the wall the same way, and defenders can be
   sent up (see "Stairs" below). Battlements stop 35 % of missiles that would
@@ -1074,10 +1111,17 @@ the ring road. A unit on a wall:
   the order goes ahead through the streets. A destination on another
   stretch: down, then up.
 - routing: down the nearest stair, then away as any router.
-A defending infantry or missile unit on the ground ordered onto a walkway
-(within 3 m of a stretch's centre line) marches to the foot of the better
-stair, climbs (trail foot -> stair -> walkway) and takes the stretch at the
-ordered point. Attackers never climb (no ladders or towers yet). State
+A defending infantry or missile unit on the ground ordered onto a wall
+(see Walls: any wall cell of a stretch) marches to the foot of the better
+stair (always a march, however near: no reforming in place under the
+wall), climbs (trail foot -> stair -> walkway) and takes the stretch at the
+ordered point in its wall line. On a stair move a man still on the level
+his unit is leaving follows the trail (`_stair_goal`; a unit spread over
+two stretches puts the junction in the tower first going down); men on the
+walkway keep to walkway and towers; a stair counts as down, not up. "Man
+the wall" (view) sends a unit to the stretch within 60 m nearest the
+nearest enemy (`man_wall_target`); "Come down" to the foot of its nearer
+stair (`wall_inside`). Attackers never climb (no ladders or towers yet). State
 `u_stair` / `u_sseg` / `u_send` / `u_st0` / `u_wx` / `u_wy` is hashed on
 walled settlement maps and survives snapshots.
 

@@ -14,6 +14,8 @@ signal fire_pressed
 signal skirmish_pressed
 signal deploy_pressed
 signal refill_pressed
+signal man_wall_pressed
+signal come_down_pressed
 signal withdraw_pressed
 signal withdraw_all_pressed
 signal group_pressed(kind: String)
@@ -61,6 +63,8 @@ var fire_button: Button
 var skirm_button: Button
 var deploy_button: Button
 var refill_button: Button
+var man_wall_button: Button
+var come_down_button: Button
 var withdraw_button: Button
 var gift_button: Button
 var withdraw_all_button: Button
@@ -230,6 +234,14 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	refill_button = _button("Refill: off", Vector2(0, BTN_H))
 	refill_button.tooltip_text = "Artillery: bring up shots from the baggage (cannot move or shoot meanwhile)"
 	refill_button.pressed.connect(func(): refill_pressed.emit())
+	man_wall_button = _button("Man the wall", Vector2(0, BTN_H))
+	man_wall_button.tooltip_text = "Up onto the nearest stretch of wall (facing the enemy) by its stair (M)"
+	man_wall_button.pressed.connect(func(): man_wall_pressed.emit())
+	man_wall_button.visible = false
+	come_down_button = _button("Come down", Vector2(0, BTN_H))
+	come_down_button.tooltip_text = "Down off the wall by a stair, into the street just inside it (Shift+M)"
+	come_down_button.pressed.connect(func(): come_down_pressed.emit())
+	come_down_button.visible = false
 	withdraw_button = _button("Withdraw", Vector2(0, BTN_H))
 	withdraw_button.tooltip_text = "Leave the battle by your own map edge"
 	withdraw_button.pressed.connect(func(): withdraw_pressed.emit())
@@ -238,7 +250,8 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	gift_button.tooltip_text = "Give the selected units to your ally (they can give them back)"
 	gift_button.pressed.connect(func(): gift_pressed.emit())
 	gift_button.visible = false
-	for b in [run_button, halt_button, fire_button, skirm_button, deploy_button, refill_button, withdraw_button, gift_button]:
+	for b in [run_button, halt_button, fire_button, skirm_button, deploy_button, refill_button, man_wall_button,
+			come_down_button, withdraw_button, gift_button]:
 		actions.add_child(b)
 	actions.visible = false
 	actions_box = actions
@@ -503,6 +516,12 @@ func set_selection(units: Array[int], run: int, fire: int, skirm: int, deploy: i
 	deploy_button.text = "Deploy: on" if deploy > 0 else "Deploy: off"
 	refill_button.visible = refill >= 0
 	refill_button.text = "Refill: on" if refill > 0 else "Refill: off"
+
+
+## Walls: show "Man the wall" / "Come down" (battle.gd decides when).
+func set_wall_buttons(man: bool, down: bool) -> void:
+	man_wall_button.visible = man
+	come_down_button.visible = down
 
 
 func update_cards(sim) -> void:

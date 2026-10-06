@@ -38,6 +38,18 @@ extends SceneTree
 ## cells), nobody walks on water and missiles fly over it; ditch cells
 ## with causeways at the gates; the view-only owner style keys change no
 ## hash.
+## Wall orders (October 2026 playtest): garrison javelins on a wall are
+## ordered down to the street just inside it, then back up by a tap on the
+## walkway, on the wall's body (parapet), on a tower and by "Man the wall",
+## climbing each time into their wall line (two ranks on the walkway); a
+## unit longer than its stretch spills through a tower onto the next; the
+## same hashes on repeat and across snapshot / restore. A drag longer than
+## a unit's single rank forms exactly one rank.
+## Reachability (October 2026 playtest, "the formation goes past the
+## walls"): attackers outside a shut town ordered inside hold at the gate
+## (no men strung along the wall); ordered to attack a unit inside, foot go
+## to the gate and hack it, then go in once it breaks; archers shoot from
+## outside the wall; no man's place on a wall or in a house.
 ## Exits 0 on success, 1 on failure.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -71,6 +83,9 @@ var _ok := true
 
 
 func _init() -> void:
+	_check_wall_orders()
+	_check_line_clamp()
+	_check_reach()
 	_check_plans()
 	_check_city_maps()
 	_check_snapshots()
@@ -766,3 +781,382 @@ func _check_snapshots() -> void:
 			_fail("%s: restored copies diverged (%d of %d ticks)" % [key, bad, checks])
 		else:
 			print("PASS %s: snapshot / restore at 300, 900, 1500 runs on identically (%d ticks checked)" % [key, checks])
+
+
+# ---------------------------------------------------------------- walls ---
+
+## Garrison javelins (unit 1) on a wall of a walled town, spearmen (unit 2)
+## in it; the attackers (unit 0) stand outside. No AI.
+static func _wall_scenario() -> Dictionary:
+	var r := Scenarios.settlement({"seed": 202, "level": 1, "walls": 1, "bld": []},
+		{"kind": 1, "seed": 9, "forest": 0, "ground": 2}, [[UT.HEAVY, 60]],
+		[[UT.JAVELIN, 40], [UT.SPEAR, 60]], 1, [])
+	return r["scenario"]
+
+
+## The wall orders run: returns {hashes, log, bad}.
+func _wall_run(snap_check: bool) -> Dictionary:
+	var MapGen := preload("res://sim/mapgen.gd")
+	var sim := BattleSim.new()
+	sim.setup(_wall_scenario(), 31)
+	var hashes := PackedInt64Array()
+	var bad: Array = []
+	var notes: Array = []
+	var jav := -1
+	var spear := -1
+	for u in sim.n_units:
+		if sim.u_wall[u] > 0:
+			jav = u
+		elif sim.u_side[u] == sim.city_def:
+			spear = u
+	if jav < 0 or spear < 0:
+		return {"hashes": hashes, "log": notes, "bad": ["no wall unit in the wall scenario"]}
+	var sg0: int = sim.u_wall[jav] - 1
+	# Starts in its wall line.
+	if _off_line(sim, jav) > 0:
+		bad.append("garrison javelins do not start in their wall line (%d men off it)" % _off_line(sim, jav))
+	var mid := BattleSim.seg_pt(sim, sg0, BattleSim.seg_len(sim, sg0) / 2)
+	var dir: int = sim.ws_dir[sg0]
+	# Taps: the walkway; the wall's body (outward from the walkway to the
+	# parapet); a tower (along the centre line past an end); "Man the wall".
+	var parapet := Vector2i(-1, -1)
+	for q in 24:
+		var px: int = mid.x + FM.cos_a(dir) * q * 256 / 4096
+		var py: int = mid.y + FM.sin_a(dir) * q * 256 / 4096
+		if sim.obs_kind(px, py) == MapGen.C_WALL:
+			parapet = Vector2i(px, py)
+			break
+	var tower := Vector2i(-1, -1)
+	for e in 2:
+		var a := BattleSim.seg_pt(sim, sg0, 0 if e == 0 else BattleSim.seg_len(sim, sg0))
+		var b := BattleSim.seg_pt(sim, sg0, BattleSim.seg_len(sim, sg0) if e == 0 else 0)
+		var l := maxi(FM.approx_len(a.x - b.x, a.y - b.y), 1)
+		for q in 40:
+			var tx: int = a.x + (a.x - b.x) * q * 512 / l
+			var ty: int = a.y + (a.y - b.y) * q * 512 / l
+			if sim.obs_kind(tx, ty) == MapGen.C_TOWER:
+				tower = Vector2i(tx, ty)
+				break
+		if tower.x >= 0:
+			break
+	if parapet.x < 0 or tower.x < 0:
+		bad.append("wall scenario: no parapet / tower cell found by the stretch")
+		return {"hashes": hashes, "log": notes, "bad": bad}
+	var ways := ["walkway", "parapet", "tower", "man the wall"]
+	for w in ways.size():
+		# Down to the street just inside the wall (toward the attackers).
+		var inside: Vector2i = sim.wall_inside(sim.u_wall[jav] - 1, sim.u_ax[jav], sim.u_ay[jav])
+		var downs: int = sim.stat_stair_down
+		_wall_order(sim, jav, inside.x, inside.y)
+		if not _wall_wait(sim, hashes, 700, func() -> bool: return sim.u_wall[jav] == 0 and sim.u_stair[jav] == 0):
+			bad.append("%s: the javelins did not come down" % ways[w])
+			break
+		if sim.stat_stair_down != downs + 1:
+			bad.append("%s: %d stair descents, want 1" % [ways[w], sim.stat_stair_down - downs])
+		_wall_wait(sim, hashes, 150, func() -> bool: return sim.u_order[jav] == BattleSim.O_NONE)
+		var dest := mid
+		if w == 1:
+			dest = parapet
+		elif w == 2:
+			dest = tower
+		elif w == 3:
+			var mt := BattleSim.man_wall_target(sim, jav)
+			if mt.z < 0:
+				bad.append("man the wall: no stretch found")
+				break
+			dest = Vector2i(mt.x, mt.y)
+		var want := BattleSim.wall_snap(sim, dest.x, dest.y)
+		if want.z < 0:
+			bad.append("%s: the tap does not snap to a stretch" % ways[w])
+			break
+		var ups: int = sim.stat_stair_up
+		_wall_order(sim, jav, dest.x, dest.y)
+		var ok := _wall_wait(sim, hashes, 900, func() -> bool:
+			return sim.u_wall[jav] > 0 and sim.u_stair[jav] == 0 and _off_line(sim, jav) == 0)
+		if sim.stat_stair_up != ups + 1 or sim.u_wall[jav] - 1 != want.z:
+			bad.append("%s: %d climbs, on stretch %d (want 1 climb onto %d)" % [ways[w], sim.stat_stair_up - ups,
+				sim.u_wall[jav] - 1, want.z])
+		elif not ok:
+			bad.append("%s: on the wall but %d men are off their wall line" % [ways[w], _off_line(sim, jav)])
+		notes.append("%s up by tick %d" % [ways[w], sim.tick])
+		if snap_check and w == 1:
+			# Snapshot / restore on the wall: runs on identically.
+			var blob := sim.snapshot()
+			var copy := BattleSim.new()
+			copy.setup(_wall_scenario(), 31)
+			if not copy.restore(blob):
+				bad.append("wall orders: restore refused")
+			else:
+				for t in 120:
+					sim.step()
+					copy.step()
+					hashes.append(sim.state_hash())
+					if sim.state_hash() != copy.state_hash():
+						bad.append("wall orders: restored copy diverged at tick %d" % sim.tick)
+						break
+	# A unit longer than its stretch: the spearmen onto a short stretch with
+	# a joined neighbour spill through the tower onto it.
+	var fsp := UT.stat(sim.u_type[spear], "file_sp")
+	var need := BattleSim.wall_nf(sim.u_alive[spear]) * fsp
+	var short := -1
+	for sg in sim.ws_x0.size():
+		if sg != sim.u_wall[jav] - 1 and BattleSim.seg_len(sim, sg) < need \
+				and (sim.ws_nb[sg * 2] >= 0 or sim.ws_nb[sg * 2 + 1] >= 0):
+			short = sg
+			break
+	if short < 0:
+		bad.append("spill: no short joined stretch on the map")
+	else:
+		var sp := BattleSim.seg_pt(sim, short, BattleSim.seg_len(sim, short) / 2)
+		_wall_order(sim, spear, sp.x, sp.y)
+		var ok2 := _wall_wait(sim, hashes, 1500, func() -> bool:
+			return sim.u_wall[spear] > 0 and sim.u_stair[spear] == 0 and _off_line(sim, spear) <= 1)
+		var on_nb := 0
+		var base: int = sim.u_slot_base[spear]
+		for q in sim.u_alive[spear]:
+			var i: int = sim.slot_soldier[base + q]
+			var best := -1
+			var best_o := 1 << 40
+			for sg in sim.ws_x0.size():
+				var o: int = sim._seg_off(sg, sim.pos_x[i], sim.pos_y[i])
+				if o < best_o:
+					best_o = o
+					best = sg
+			if best != short:
+				on_nb += 1
+		if not ok2 or sim.u_wall[spear] - 1 != short:
+			bad.append("spill: the spearmen did not take their line on stretch %d (on %d, %d off the line)" % [short,
+				sim.u_wall[spear] - 1, _off_line(sim, spear)])
+		elif on_nb == 0:
+			bad.append("spill: no man on the joined stretch")
+		notes.append("spill: %d of %d spearmen on the joined stretch, by tick %d" % [on_nb, sim.u_alive[spear], sim.tick])
+	return {"hashes": hashes, "log": notes, "bad": bad}
+
+
+## Men of wall unit u more than 1.5 m from their place in its wall line or
+## off the walkway (towers count as walkway: a spilled line passes them).
+static func _off_line(sim, u: int) -> int:
+	var MapGen := preload("res://sim/mapgen.gd")
+	var sl := BattleSim.wall_slots(sim, sim.u_wall[u] - 1, sim.u_ax[u], sim.u_ay[u], sim.u_alive[u], sim.u_type[u])
+	var base: int = sim.u_slot_base[u]
+	var off := 0
+	for q in sim.u_alive[u]:
+		var i: int = sim.slot_soldier[base + q]
+		# His place: the sim's (anchor + offset) is the wall line's.
+		if sim.u_ax[u] + sim.off_x[base + q] != sl[q * 2] or sim.u_ay[u] + sim.off_y[base + q] != sl[q * 2 + 1]:
+			off += 1
+			continue
+		var dx: int = sl[q * 2] - sim.pos_x[i]
+		var dy: int = sl[q * 2 + 1] - sim.pos_y[i]
+		var k: int = sim.obs_kind(sim.pos_x[i], sim.pos_y[i])
+		if dx * dx + dy * dy > 1536 * 1536 or (k != MapGen.C_WALK and k != MapGen.C_TOWER):
+			off += 1
+	return off
+
+
+## A tap-like move order for unit u to (x, y) (the defenders' player).
+static func _wall_order(sim, u: int, x: int, y: int) -> void:
+	var o := BattleSim.make_move_order(sim.tick, u, x, y, sim.u_face[u],
+		BattleSim.files_to_width(sim.u_files[u], sim.u_type[u]), 0)
+	o["player"] = 51
+	sim.queue_order(o)
+
+
+## Step until cond holds (true) or `most` ticks pass (false).
+static func _wall_wait(sim, hashes: PackedInt64Array, most: int, cond: Callable) -> bool:
+	for t in most:
+		sim.step()
+		hashes.append(sim.state_hash())
+		if cond.call():
+			return true
+	return false
+
+
+func _check_wall_orders() -> void:
+	var a := _wall_run(true)
+	var b := _wall_run(false)
+	var bad: Array = a["bad"]
+	var ha: PackedInt64Array = a["hashes"]
+	var hb: PackedInt64Array = b["hashes"]
+	# Run b has no snapshot detour: compare up to it.
+	var n := 0
+	for t in mini(ha.size(), hb.size()):
+		if ha[t] != hb[t]:
+			break
+		n += 1
+	if n < 200:
+		bad.append("wall orders: repeat runs diverged at step %d" % n)
+	if bad.is_empty():
+		print("PASS wall orders: down and back up by walkway, parapet, tower and Man the wall, in the wall line each time; spill onto the joined stretch; repeatable, snapshot / restore (%s)" % "; ".join(a["log"]))
+	else:
+		for x in bad:
+			_fail("walls: " + str(x))
+
+
+## A drag longer than a unit's single rank: exactly one rank.
+func _check_line_clamp() -> void:
+	var sim := BattleSim.new()
+	sim.setup(Scenarios.make("skirmish"), 5)
+	var u := 0
+	var alive: int = sim.u_alive[u]
+	sim.queue_order(BattleSim.make_move_order(1, u, sim.u_ax[u], sim.u_ay[u] - 20 * M, 768, 900 * M, 0))
+	for t in 5:
+		sim.step()
+	if sim.u_files[u] != alive or sim.unit_depth(u) != 0:
+		_fail("an over-long drag gave %d files of %d men (depth %d), want one rank" % [sim.u_files[u], alive, sim.unit_depth(u)])
+	else:
+		print("PASS drag clamp: a 900 m line forms one rank of %d" % alive)
+
+
+# ---------------------------------------------------------- reachability ---
+
+## Attackers (side 0): heavy foot 0, archers 1; defenders (side 1): spears
+## 2 inside the shut town. No AI.
+static func _reach_scenario() -> Dictionary:
+	var r := Scenarios.settlement({"seed": 202, "level": 1, "walls": 1, "bld": []},
+		{"kind": 1, "seed": 9, "forest": 0, "ground": 2}, [[UT.HEAVY, 60], [UT.ARCHER, 40]],
+		[[UT.SPEAR, 60]], 1, [])
+	return r["scenario"]
+
+
+func _reach_run() -> Dictionary:
+	var sim := BattleSim.new()
+	sim.setup(_reach_scenario(), 21)
+	var bad: Array = []
+	var notes: Array = []
+	var hashes := PackedInt64Array()
+	var heavy := -1
+	var arch := -1
+	var spear := -1
+	for u in sim.n_units:
+		var c := UT.cls(sim.u_type[u])
+		if sim.u_side[u] == sim.city_def:
+			spear = u
+		elif c == UT.CLS_MISSILE:
+			arch = u
+		else:
+			heavy = u
+	var outside: int = sim.reach_at(sim.u_ax[heavy], sim.u_ay[heavy])
+	var inside: int = sim.reach_at(sim.u_ax[spear], sim.u_ay[spear])
+	if outside < 0 or inside < 0 or outside == inside:
+		return {"bad": ["reach: the shut town is not two pieces (%d, %d)" % [outside, inside]], "notes": notes, "hashes": hashes}
+	# (a) A tap on the plaza from outside: to the gate, and it holds there.
+	sim.queue_order(BattleSim.make_move_order(1, heavy, sim.plaza[0], sim.plaza[1], 768, 20 * M, 1))
+	var off_slot := 0
+	for t in 1200:
+		sim.step()
+		hashes.append(sim.state_hash())
+		if t % 10 == 0:
+			off_slot += _bad_slots(sim)
+		if t > 20 and sim.u_order[heavy] == BattleSim.O_NONE:
+			break
+	for t in 60:
+		sim.step()  # (its men take their places)
+		hashes.append(sim.state_hash())
+	var at_gate := _at_gate(sim, heavy)
+	if sim.reach_at(sim.u_ax[heavy], sim.u_ay[heavy]) != outside:
+		bad.append("reach (a): the heavy foot's anchor left its ground")
+	if at_gate < 0 or sim.u_order[heavy] != BattleSim.O_NONE:
+		bad.append("reach (a): ordered into the shut town, the heavy foot did not stop at a gate")
+	var strung := _strung(sim, heavy)
+	if strung > 0:
+		bad.append("reach (a): %d men strung out from their unit at the gate" % strung)
+	notes.append("(a) holds at gate %d from tick %d, %d men strung out" % [at_gate, sim.tick, strung])
+	# (b) A fresh battle: the heavy foot and the archers ordered to attack
+	# the spearmen inside. The foot go to the gate and hack it, (c) go in
+	# once it breaks; (e) the archers shoot from outside.
+	sim = BattleSim.new()
+	sim.setup(_reach_scenario(), 21)
+	sim.queue_order(BattleSim.make_attack_order(1, heavy, spear, 1))
+	sim.queue_order(BattleSim.make_attack_order(1, arch, spear, 0))
+	var broke := -1
+	var arch_in := 0
+	var gate_t := -1
+	var went_in := -1
+	for t in 3000:
+		sim.step()
+		hashes.append(sim.state_hash())
+		if t % 10 == 0:
+			off_slot += _bad_slots(sim)
+			if broke < 0 and sim.reach_at(sim.u_ax[arch], sim.u_ay[arch]) != outside:
+				arch_in += 1
+		if gate_t < 0 and _at_gate(sim, heavy) >= 0:
+			gate_t = sim.tick
+		if broke < 0:
+			for g in sim.n_gates:
+				if sim.g_state[g] == BattleSim.GATE_BROKEN:
+					broke = sim.tick
+		elif went_in < 0 and (sim.reach_at(sim.u_ax[heavy], sim.u_ay[heavy]) != outside or sim.u_fighting[heavy] != 0 \
+				or sim.u_state[spear] != BattleSim.U_READY):
+			went_in = sim.tick
+		if went_in >= 0:
+			break
+	if gate_t < 0:
+		bad.append("reach (b): attacking a unit inside, the heavy foot never came to a gate")
+	if sim.stat_gate_hack <= 0:
+		bad.append("reach (b): nobody hacked at the gate")
+	if broke < 0:
+		bad.append("reach (c): the gate never broke")
+	elif went_in < 0:
+		bad.append("reach (c): the gate is broken but the heavy foot did not go in")
+	if sim.stat_shots <= 0:
+		bad.append("reach (e): the archers did not shoot at the spearmen inside")
+	if arch_in > 0:
+		bad.append("reach (e): the archers' anchor left the outside before the gate broke")
+	if off_slot > 0:
+		bad.append("reach (d): %d places of standing units on a wall, a house or other ground" % off_slot)
+	notes.append("(b) at the gate at tick %d, hacked %d hp, (c) broken at tick %d, in at %d, (e) archers shot %d, (d) no place off its ground" % [
+		gate_t, sim.stat_gate_hack / 100, broke, went_in, sim.stat_shots])
+	return {"bad": bad, "notes": notes, "hashes": hashes}
+
+
+## The gate whose front (attackers' side) unit u's anchor stands at, or -1.
+static func _at_gate(sim, u: int) -> int:
+	for g in sim.n_gates:
+		var f: Vector3i = sim.gate_front(g, sim.u_side[u])
+		if FM.approx_len(f.x - sim.u_ax[u], f.y - sim.u_ay[u]) <= 3 * M:
+			return g
+	return -1
+
+
+## Men of unit u farther from the anchor than its depth + 8 m.
+static func _strung(sim, u: int) -> int:
+	var lim: int = sim.unit_depth(u) + BattleSim.files_to_width(sim.u_files[u], sim.u_type[u]) / 2 + 8 * M
+	var n := 0
+	var base: int = sim.u_slot_base[u]
+	for q in sim.u_alive[u]:
+		var i: int = sim.slot_soldier[base + q]
+		if FM.approx_len(sim.pos_x[i] - sim.u_ax[u], sim.pos_y[i] - sim.u_ay[u]) > lim:
+			n += 1
+	return n
+
+
+## Places (anchor + offset) of standing ground units near obstacles that are
+## not on their anchor's ground.
+static func _bad_slots(sim) -> int:
+	var n := 0
+	for u in sim.n_units:
+		if sim.u_state[u] != BattleSim.U_READY or sim.u_wall[u] > 0 or sim.u_stair[u] != 0 \
+				or sim.u_order[u] != BattleSim.O_NONE or sim.u_dirty[u] != 0 or sim._u_obs[u] == 0:
+			continue
+		var ra: int = sim.reach_at(sim.u_ax[u], sim.u_ay[u])
+		if ra < 0:
+			continue
+		var base: int = sim.u_slot_base[u]
+		for q in sim.u_alive[u]:
+			if sim.reach_at(sim.u_ax[u] + sim.off_x[base + q], sim.u_ay[u] + sim.off_y[base + q]) != ra:
+				n += 1
+	return n
+
+
+func _check_reach() -> void:
+	var a := _reach_run()
+	var b := _reach_run()
+	var bad: Array = a["bad"]
+	if a["hashes"] != b["hashes"]:
+		bad.append("reach: repeat runs differ")
+	if bad.is_empty():
+		print("PASS reachability: %s; repeatable" % "; ".join(a["notes"]))
+	else:
+		for x in bad:
+			_fail(str(x))

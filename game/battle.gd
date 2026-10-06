@@ -22,6 +22,7 @@ const UiScale := preload("res://game/ui_scale.gd")
 const CoopHud := preload("res://game/coop_hud.gd")
 const Lockstep := preload("res://sim/lockstep.gd")
 const CData := preload("res://campaign/cdata.gd")
+const FM := preload("res://sim/fixed_math.gd")
 
 const PX_PER_M := 10.0
 const M := 1024.0
@@ -231,6 +232,8 @@ func _ready() -> void:
 	hud.skirmish_pressed.connect(_toggle_skirmish)
 	hud.deploy_pressed.connect(_toggle_deploy)
 	hud.refill_pressed.connect(_toggle_refill)
+	hud.man_wall_pressed.connect(_man_wall)
+	hud.come_down_pressed.connect(_come_down)
 	hud.withdraw_pressed.connect(_withdraw)
 	hud.withdraw_all_pressed.connect(_withdraw_all)
 	hud.group_pressed.connect(_select_group)
@@ -330,6 +333,38 @@ func _apply_debug_args() -> void:
 			_gm_rot = deg_to_rad(float(v))
 			_gm_move = Vector2(0, -60.0 * PX_PER_M)
 			_gm_update()
+		elif a.begins_with("--demo-wall="):
+			# --demo-wall=down|up: the player's first wall unit selected, a
+			# pending order down off its wall (down), or (up) brought down
+			# first, then a tap on the wall's body; for screenshots (with
+			# --pause the order stays pending, so its preview shows).
+			var wu := -1
+			for u in sim.n_units:
+				if sim.u_side[u] == PLAYER_SIDE and sim.u_wall[u] > 0:
+					wu = u
+					break
+			if wu < 0:
+				continue
+			var sg: int = sim.u_wall[wu] - 1
+			var inside: Vector2i = sim.wall_inside(sg, sim.u_cx[wu], sim.u_cy[wu])
+			if v == "up":
+				sim.queue_order(BattleSim.make_move_order(sim.tick, wu, inside.x, inside.y, sim.ws_dir[sg], 10 * 1024, 0))
+				for t in 600:
+					sim.step()
+					if sim.u_wall[wu] == 0 and sim.u_stair[wu] == 0 and sim.u_order[wu] == BattleSim.O_NONE:
+						break
+				soldiers.upload()
+				_view_tick()
+			_select(wu)
+			camera.position = Vector2(sim.u_cx[wu], sim.u_cy[wu]) / M * PX_PER_M
+			if v == "up":
+				# A tap on the wall's body (the parapet side), off the walkway.
+				var mid := BattleSim.seg_pt(sim, sg, BattleSim.seg_len(sim, sg) / 2)
+				var tx: int = mid.x + FM.cos_a(sim.ws_dir[sg]) * 3 * 1024 / 4096
+				var ty: int = mid.y + FM.sin_a(sim.ws_dir[sg]) * 3 * 1024 / 4096
+				_queue(BattleSim.make_move_order(0, wu, tx, ty, sim.u_face[wu], 10 * 1024, 0))
+			else:
+				_come_down()
 		elif a == "--show-orders":
 			hud.orders_button.button_pressed = true
 		elif a == "--demo-orders":
@@ -495,6 +530,8 @@ func _after_tick(ms: float) -> void:
 			lost = true
 	if lost:
 		_prune_selection()
+	elif sim.city_on != 0 and not selection.is_empty() and sim.tick % 5 == 0:
+		_refresh_wall_buttons()  # units walk in and out of reach of a wall
 	if sim.ended != 0 and not _result_shown and not bench_mode:
 		_result_shown = true
 		var secs: int = maxi(sim.decided_tick, 0) / 10
@@ -763,6 +800,7 @@ func _refresh_actions() -> void:
 	if selection.is_empty():
 		run = 0
 	hud.set_selection(selection, run, fire, skirm, deploy, refill)
+	_refresh_wall_buttons()
 	if coop != null:
 		var to := _gift_target()
 		hud.gift_button.visible = not selection.is_empty() and to >= 0
@@ -948,6 +986,63 @@ func _toggle_refill() -> void:
 	_refresh_actions()
 
 
+## Walls: "Man the wall" shows while a selected unit may go up onto a
+## stretch within reach (BattleSim.man_wall_target), "Come down" while one
+## stands on a wall.
+func _refresh_wall_buttons() -> void:
+	var man := false
+	var down := false
+	if sim.city_on != 0 and sim.ws_x0.size() > 0:
+		for u in selection:
+			if sim.u_state[u] != BattleSim.U_READY:
+				continue
+			if sim.u_wall[u] > 0 and sim.u_stair[u] == 0:
+				down = true
+			elif sim.u_wall[u] == 0 and sim.u_stair[u] != 1 and BattleSim.man_wall_target(sim, u).z >= 0:
+				man = true
+	hud.set_wall_buttons(man, down)
+
+
+## "Man the wall": each selected unit that may goes up onto the stretch
+## within 60 m nearest the enemy, at its point nearest the unit (an ordinary
+## move order there: the sim takes it up the stair).
+func _man_wall() -> void:
+	var sent := 0
+	var why := ""
+	for u in selection:
+		if sim.u_state[u] != BattleSim.U_READY or sim.u_wall[u] > 0:
+			continue
+		var mt := BattleSim.man_wall_target(sim, u)
+		if mt.z < 0:
+			continue
+		var r: String = orders.wall_refusal(u, mt.x, mt.y)
+		if r != "":
+			why = r
+			continue
+		_queue(BattleSim.make_move_order(0, u, mt.x, mt.y, sim.ws_dir[mt.z],
+			BattleSim.files_to_width(orders.value(u, "files"), sim.u_type[u]), orders.value(u, "run")))
+		sent += 1
+	_count("man_wall")
+	if sent == 0 and selected >= 0:
+		overlay.flash(why if why != "" else "No wall within 60 m that these men can man",
+			Vector2(sim.u_cx[selected], sim.u_cy[selected]) / M * PX_PER_M)
+
+
+## "Come down": each selected unit on a wall goes down its nearer stair to
+## the street at its foot (BattleSim.wall_inside), facing out, in its
+## normal block.
+func _come_down() -> void:
+	for u in selection:
+		if sim.u_state[u] != BattleSim.U_READY or sim.u_wall[u] == 0:
+			continue
+		var sg: int = sim.u_wall[u] - 1
+		var p: Vector2i = sim.wall_inside(sg, sim.u_cx[u], sim.u_cy[u])
+		var files := BattleSim.ground_files(sim.u_type[u], sim.u_alive[u])
+		_queue(BattleSim.make_move_order(0, u, p.x, p.y, sim.ws_dir[sg],
+			BattleSim.files_to_width(files, sim.u_type[u]), orders.value(u, "run")))
+	_count("come_down")
+
+
 func _withdraw() -> void:
 	for u in selection:
 		_queue(BattleSim.make_withdraw_order(0, u))
@@ -1019,6 +1114,11 @@ func _tap(screen_pos: Vector2, double: bool) -> void:
 		if dx * dx + dy * dy > 4.0 * M * M:
 			face = int(round(atan2(dy, dx) * 1024.0 / TAU)) & 1023
 		var width: int = BattleSim.files_to_width(orders.value(selected, "files"), sim.u_type[selected])
+		var why: String = orders.wall_refusal(selected, int(dest.x), int(dest.y))
+		if why != "":
+			_count("wall_refused")
+			overlay.flash(why, w)
+			return
 		_queue(BattleSim.make_move_order(0, selected, int(dest.x), int(dest.y), face, width,
 			1 if double else orders.value(selected, "run")))
 		return
@@ -1113,6 +1213,11 @@ func _group_move(dest: Vector2, double: bool) -> void:
 		var p := dest + rel
 		var face: int = (orders.value(u, "face") + turn) & 1023
 		var width: int = BattleSim.files_to_width(orders.value(u, "files"), sim.u_type[u])
+		var why: String = orders.wall_refusal(u, int(p.x), int(p.y))
+		if why != "":
+			_count("wall_refused")
+			overlay.flash(why, p / M * PX_PER_M)
+			continue
 		_queue(BattleSim.make_move_order(0, u, int(p.x), int(p.y), face, width,
 			1 if double else orders.value(u, "run")))
 
@@ -1125,6 +1230,11 @@ func _finish_line(double_run: bool) -> void:
 	for p in overlay.preview_group():
 		var u: int = p["unit"]
 		var c: Vector2 = p["centre"] / PX_PER_M * M
+		var why: String = orders.wall_refusal(u, int(c.x), int(c.y))
+		if why != "":
+			_count("wall_refused")
+			overlay.flash(why, p["centre"])
+			continue
 		_queue(BattleSim.make_move_order(0, u, int(c.x), int(c.y), p["facing"], p["width"],
 			1 if double_run else orders.value(u, "run")))
 
@@ -1229,6 +1339,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		if _mouse_pan:
 			camera.position -= (event as InputEventMouseMotion).relative / camera.zoom
 			_clamp_camera()
+		elif sim.city_on != 0 and not selection.is_empty():
+			# Walls: the stretch under the mouse lights up (overlay).
+			overlay.hover_w = _screen_to_world((event as InputEventMouseMotion).position)
+			overlay.queue_redraw()
 	elif event is InputEventMagnifyGesture:
 		var mg := event as InputEventMagnifyGesture
 		_zoom_at(mg.position, mg.factor)
@@ -1285,6 +1399,10 @@ func _on_key(e: InputEventKey) -> void:
 			_toggle_deploy()
 		"refill":
 			_toggle_refill()
+		"man_wall":
+			_man_wall()
+		"come_down":
+			_come_down()
 		"orders_overlay":
 			hud.orders_button.button_pressed = not hud.orders_button.button_pressed
 		"group_rotate_left":
@@ -1454,6 +1572,13 @@ func _on_drag(e: InputEventScreenDrag) -> void:
 	elif overlay.preview_on:
 		overlay.preview_a = _screen_to_world(_press_pos)
 		overlay.preview_b = _screen_to_world(e.position)
+		# One rank is the longest line (the order rule clamps the
+		# frontage the same way): the line stops growing there.
+		var lmax: float = overlay.max_line_px()
+		var dv := overlay.preview_b - overlay.preview_a
+		overlay.preview_clamped = lmax > 0.0 and dv.length() > lmax
+		if overlay.preview_clamped:
+			overlay.preview_b = overlay.preview_a + dv.normalized() * lmax
 		overlay.preview_ok = overlay.preview_a.distance_to(overlay.preview_b) >= MIN_LINE_M * PX_PER_M
 	else:
 		# No unit selected: one-finger drag pans.
