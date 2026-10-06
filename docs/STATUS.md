@@ -132,6 +132,13 @@ short:
   city gather into one army at the end of the turn (CAMPAIGN.md "Merging,
   exchanging, gifts"). No version bump; AI pacing unchanged within noise.
   Open: try it on the phones.
+- **AI and the mustering rule; merge glyphs (2026-10-06, uncommitted):** the
+  campaign AI (format 6) plans moves before recruits and never recruits
+  into an army it marches (holds a small one or raises a new army):
+  refused "mustering" AI moves 37-57 per seed -> 0 (CAMPAIGN.md
+  "Recruiting into armies"); the merge plus only shows where a tap would
+  merge (`merge_why`: the real merge / join / path checks, cached per
+  selection and plan).
 - **Open / next:** play it on the phones (tap-tap planning, drags, the
   replay; whether a tap inside an enemy zone should become an attack
   instead of a refusal); the version 5 testing aids `--camp-raid`,

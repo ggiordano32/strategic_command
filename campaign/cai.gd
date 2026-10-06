@@ -28,7 +28,9 @@ extends RefCounted
 ## With the continuous overworld (state version 6) the move step is
 ## _move_grid() (see there: static distance fields, hunting field armies,
 ## gathering, raids in the raiding stance, screens, forced marches,
-## fortifying).
+## fortifying); it runs before the recruiting, which then puts recruits
+## only into armies that hold this turn or raises a new army (the mustering
+## rule, _recruit_order).
 ## Diplomacy (diplomacy()): peace when losing a long war, trade with
 ## neighbours at peace, and opportunistic wars on weaker neighbours, paced
 ## (no wars in the first turns, at most one new war on the players every few
@@ -66,10 +68,15 @@ static func act(st: Dictionary, f: int, moves: Array = []) -> void:
 	_merge(st, f)
 	_cut_debt(st, f)
 	_build(st, f)
-	_recruit(st, f)
 	if CState.grid_on(st):
+		# Version 6: the moves are planned first, so the recruits go into
+		# armies that hold this turn (the mustering rule: an army taking
+		# recruits cannot march this turn; see _recruit_order).
 		_move_grid(st, f, moves)
-	elif CState.moves_on(st):
+		_recruit(st, f, moves)
+		return
+	_recruit(st, f)
+	if CState.moves_on(st):
 		_move_free(st, f, moves)
 	else:
 		_move(st, f)
@@ -249,7 +256,9 @@ static func _wants_chain(mix: Dictionary, c: int) -> bool:
 
 # -------------------------------------------------------------- recruit ---
 
-static func _recruit(st: Dictionary, f: int) -> void:
+## moves (version 6): the faction's planned moves (_move_grid), so each
+## recruit goes into an army that holds (_recruit_order).
+static func _recruit(st: Dictionary, f: int, moves: Array = []) -> void:
 	var fs: Dictionary = st["factions"][f]
 	var inc := int(CRules.income(st, f)["total"])
 	var kn := CP.of(st, f)
@@ -281,6 +290,11 @@ static func _recruit(st: Dictionary, f: int) -> void:
 		sc += threat(st, f, r) / kn[CP.RECRUIT_THREAT_DIV] + (kn[CP.RECRUIT_FRONTIER_W] if _frontier(st, f, r) else 0)
 		scored.append([sc, r])
 	scored.sort_custom(func(a, b): return a[0] > b[0] or (a[0] == b[0] and a[1] < b[1]))
+	var marching := {}  # version 6: army id -> 1, planned to march this turn
+	if CState.grid_on(st):
+		for mv in moves:
+			if int(mv[2]) == f:
+				marching[int(mv[0])] = 1
 	var guard := 0
 	for e in scored:
 		var r: int = e[1]
@@ -300,9 +314,67 @@ static func _recruit(st: Dictionary, f: int) -> void:
 				return
 			if int(fs["treasury"]) - UT.price_of(ty) < _reserve(st, f) / kn[CP.RECRUIT_RESERVE_DIV]:
 				return
-			if CRules.apply_order(st, f, {"t": "recruit", "r": r, "unit": key}) != "":
+			if CRules.apply_order(st, f, _recruit_order(st, f, r, key, marching, moves, kn)) != "":
 				break
 			up += CState.upkeep_of(ty)
+
+
+## The recruit order for unit key in region r. Formats 1-5: the old form.
+## Version 6 (the mustering rule: an army taking recruits cannot march this
+## turn): into the first army of ours on or next to the settlement, with
+## room, that is not planned to march (a garrison, an army parked there);
+## else, when every such army marches, into one of at most
+## RECRUIT_HOLD_UNITS units marching within our lands (its march is taken
+## back: it stays and fills up), else the recruits raise a new army ("new":
+## 1); with no army there at all, the old form (it joins no army now).
+## marching: army id -> 1 (updated); moves: the planned moves (updated).
+static func _recruit_order(st: Dictionary, f: int, r: int, key: String, marching: Dictionary, moves: Array,
+		kn: PackedInt32Array) -> Dictionary:
+	var o := {"t": "recruit", "r": r, "unit": key}
+	if not CState.grid_on(st):
+		return o
+	var site := CGrid.site(r)
+	var hold := -1
+	var small := -1
+	var any_march := false
+	for a in st["armies"]:
+		if int(a["f"]) != f or int(a["busy"]) != 0 or CGrid.cheb(CState.cell(a), site) > 1:
+			continue
+		var id := int(a["id"])
+		if CRules.army_recruit_check(st, f, r, id) != "":
+			continue
+		if not marching.has(id):
+			hold = id
+			break
+		any_march = true
+		if small < 0 and CState.unit_count(a) + CRules.queued_into(st, id) <= kn[CP.RECRUIT_HOLD_UNITS] \
+				and _home_march(st, f, moves, id):
+			small = id
+	if hold < 0 and small >= 0:
+		hold = small
+		marching.erase(small)
+		for k in range(moves.size() - 1, -1, -1):
+			if int(moves[k][0]) == small:
+				moves.remove_at(k)
+	if hold >= 0:
+		o["army"] = hold
+	elif any_march:
+		o["new"] = 1
+	return o
+
+
+## Army id's planned move is a march within friendly lands (to a cell, not
+## after an enemy army): taking it back costs no attack.
+static func _home_march(st: Dictionary, f: int, moves: Array, id: int) -> bool:
+	for mv in moves:
+		if int(mv[0]) != id:
+			continue
+		var r := CGrid.region(int(mv[1]))
+		if int(mv[1]) < 0 or r < 0 or ((mv as Array).size() > 5 and int(mv[5]) >= 0):
+			return false
+		if not CState.friendly(st, f, CState.owner(st, r)):
+			return false
+	return true
 
 
 ## The line furthest below its share of the preferred mix.

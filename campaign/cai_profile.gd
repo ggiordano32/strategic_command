@@ -117,7 +117,12 @@ const RELIEVE := 66             # relieve our besieged cities (1) or not (0)
 const STANCES := 67             # use fortify, forced march, raiding and sheltering (1) or the default stance only (0)
 const OVER_RECRUIT_PCT := 68    # MK_OVER_RECRUIT: army upkeep up to this % of income that turn
 const MK_BASE := 69             # MK_BASE + M_*: % chance of that mistake per roll (0: never rolled)
-const N_KNOBS := MK_BASE + 5
+# (6) The mustering rule (an army taking recruits cannot march this turn):
+# with every army at a recruiting city planned to march, one of at most this
+# many units on a march within our lands stays to take the recruits instead
+# (the others march; the recruits raise a new army).
+const RECRUIT_HOLD_UNITS := MK_BASE + 5
+const N_KNOBS := RECRUIT_HOLD_UNITS + 1
 
 # Deliberate mistakes (docs/AI.md 4, "Deliberate mistakes (campaign)"),
 # rolled with CState.rand at the decision point (cai.gd _mistake); each is a
@@ -216,6 +221,8 @@ const KNOBS: Array = [
 	[MK_BASE + M_OVER_RECRUIT, 25, 0, 0],
 	[MK_BASE + M_UNWISE_WAR, 8, 0, 0],
 	[MK_BASE + M_NO_GARRISON, 50, 0, 0],
+	# The mustering rule (format 6).
+	[RECRUIT_HOLD_UNITS, 0, 2, 2],
 ]
 
 ## Personality offsets [knob, CAUTIOUS, BALANCED, AGGRESSIVE] (docs/AI.md 5:

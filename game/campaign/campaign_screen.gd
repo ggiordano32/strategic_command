@@ -122,6 +122,8 @@ var _drag_army := -1           # an army being dragged to a destination
 var _drag_cell := -1
 var _drag_tgt := -1
 var merge_tap := -1            # own army tapped once with an army selected: the merge previewed
+var _marks_for := -1           # the army _marks were computed for (until the plan changes)
+var _marks: Array = []         # _merge_marks of _marks_for (per preview)
 var _shown_turn := -1          # the turn whose army positions are _shown_cells
 var _shown_cells := {}         # army id -> cell, as last shown
 var _replay_q: Dictionary = {} # a replay waiting for the dialogs to close
@@ -606,6 +608,7 @@ func _resolve_turn() -> void:
 ## Re-run the preview of the plan; drop orders that no longer apply.
 func _replan() -> void:
 	_routes = {}
+	_marks_for = -1
 	if f < 0:
 		ps = st
 		moves = []
@@ -1643,11 +1646,7 @@ func _merge_tap_at(id: int) -> void:
 		show_side(func(box): panels.army_panel(box, sel_army))
 		return
 	merge_tap = id
-	var why := CRules.join_check(ps, sa, id)
-	if why == "" and CGrid.cheb(CState.cell(sa), CState.cell(t)) <= 1:
-		why = CRules.merge_check(ps, f, sel_army, id)
-	elif why == "":
-		why = CRules._can_move6(ps, sa, CState.cell(t), -1, CData.MODE_SIEGE, true, id)
+	var why := merge_why(sa, id)
 	_refresh_map()
 	var other := id
 	var sel_it := ["Select it", func(): select_army(other)]
@@ -1706,7 +1705,10 @@ func _refresh_map6() -> void:
 		if int(sa["f"]) == f:
 			rt6 = CRules.reach6(ps, sa, 1)
 			if int(sa["busy"]) == 0:
-				marks = _merge_marks(sa, rt6)
+				if _marks_for != sel_army:
+					_marks = _merge_marks(sa, rt6)
+					_marks_for = sel_army
+				marks = _marks
 				var mt := CState.army(ps, merge_tap) if merge_tap >= 0 else {}
 				if not mt.is_empty():
 					var pr := CRules.plan_path(ps, sa, CState.cell(mt), -1, CData.MODE_SIEGE, {}, 12, merge_tap)
@@ -1736,9 +1738,29 @@ func _refresh_map6() -> void:
 	_note_positions()
 
 
+## Version 6: "" if our army sa may merge into our army id now, the checks a
+## tap on it runs (_merge_tap_at): next to it, CRules.merge_check; further,
+## the march that merges on arrival (CRules._can_move6 with join: units,
+## stance, the path past enemy zones of control); else the reason.
+func merge_why(sa: Dictionary, id: int) -> String:
+	var t := CState.army(ps, id)
+	if sa.is_empty() or t.is_empty():
+		return "no such army"
+	var why := CRules.join_check(ps, sa, id)
+	if why == "" and CGrid.cheb(CState.cell(sa), CState.cell(t)) <= 1:
+		why = CRules.merge_check(ps, f, int(sa["id"]), id)
+	elif why == "":
+		why = CRules._can_move6(ps, sa, CState.cell(t), -1, CData.MODE_SIEGE, true, id)
+	return why
+
+
 ## Version 6: the armies the selected one (sa, its reach rt6) can merge
-## into or give units to: [[id, 0 merge (an army of ours it reaches this
-## turn), 1 gift (an allied player's army next to it), 2 too big to merge]].
+## into or give units to: [[id, 0 merge (an army of ours next to it or next
+## to a cell it reaches this turn, and merge_why passes: a tap merges),
+## 1 gift (an allied player's army next to it), 2 too big to merge]]. An
+## army whose merge a tap would refuse otherwise (an enemy zone of control
+## in the way, fortified, already moved) gets no mark. Computed once per
+## selection and plan (_marks, reset by _replan).
 func _merge_marks(sa: Dictionary, rt6: PackedInt32Array) -> Array:
 	var out: Array = []
 	var c0 := CState.cell(sa)
@@ -1756,7 +1778,11 @@ func _merge_marks(sa: Dictionary, rt6: PackedInt32Array) -> Array:
 						near = true
 						break
 			if near:
-				out.append([id, 2 if CState.unit_count(sa) + CState.unit_count(e) > CData.ARMY_MAX else 0])
+				var why := merge_why(sa, id)
+				if why == "":
+					out.append([id, 0])
+				elif why == "too many units to merge" or why.begins_with("more than"):
+					out.append([id, 2])
 		elif CState.is_human(ps, ef) and CState.friendly(ps, f, ef) and CRules.together(ps, sa, e) == "":
 			out.append([id, 1])
 	return out

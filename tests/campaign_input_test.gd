@@ -29,7 +29,8 @@ extends SceneTree
 ## (tap a unit across, the counts, Confirm adds the order, Undo takes it
 ## back), a tap on our other army previews the merge (caption, glyphs) and
 ## a second tap merges (next to it: a merge order; further: a march with
-## "join"), a tap on the allied player's army next to ours opens the panel
+## "join"), no merge glyph on our army whose merge a tap would refuse (next
+## to an enemy army: no route), a tap on the allied player's army next to ours opens the panel
 ## in gift mode. Recruiting (format 6): the army card of an army at our
 ## city has the recruit list (slots, "+", the planned recruit greyed in the
 ## unit list with X); a march planned for it asks in a toast (Keep
@@ -87,7 +88,7 @@ func _initialize() -> void:
 		_g_drag_army, _g_drag_check, _g_pan, _g_pan_check, _g_siege, _g_siege_assault, _g_siege_continue, _g_siege_withdraw,
 		_g_siege_done, _g_end_turn, _g_summary, _g_replay, _g_replay_check,
 		_m_setup, _m_card, _m_xc_open, _m_xc_move, _m_xc_confirm, _m_xc_check, _m_undo, _m_tap1, _m_tap2, _m_merged,
-		_m_far, _m_far1, _m_far2, _m_far_check, _m_gift_setup, _m_gift_tap, _m_gift_row, _m_gift_confirm, _m_gift_check,
+		_m_far, _m_far1, _m_far2, _m_far_check, _m_block_setup, _m_block_check, _m_gift_setup, _m_gift_tap, _m_gift_row, _m_gift_confirm, _m_gift_check,
 		_r_setup, _r_card, _r_check, _r_march, _r_keep, _r_march2, _r_cancel_march, _r_marching, _r_again, _r_x, _r_x_check,
 		_r_region, _r_picker, _r_picker2, _r_picker3, _r_raise_check, _r_raise_x, _s_done,
 	]
@@ -1229,6 +1230,59 @@ func _m_far_check() -> void:
 	for pth in cs.overlay.paths6:
 		cap += str(pth.get("caption", ""))
 	_check(cap.begins_with("Merge into army"), "its path reads %s" % cap)
+	cs.orders = []
+	cs._replan()
+
+
+var _blocker := -1
+var _blocker_dip := 0
+
+
+func _m_block_setup() -> void:
+	# Our other army standing next to an enemy army, within the selected
+	# army's reach: the march to merge into it is refused (no route past the
+	# enemy's zone), so no merge glyph may show on it.
+	var en := greeks
+	_blocker_dip = CState.dip(cs.st, rome, en)
+	CState.set_dip(cs.st, rome, en, CState.WAR)
+	var c0 := CState.field_cell(CData.region_index("latium"))
+	var ec := CGrid.at(CGrid.cx(c0), CGrid.cy(c0) + 2)
+	var id := CRules.new_army_id(cs.st, en)
+	cs.st["factions"][en]["next_army"] = int(cs.st["factions"][en]["next_army"]) + 1
+	var na := {"id": id, "f": en, "r": CGrid.region(ec), "units": [{"t": "spear", "n": 100}, {"t": "spear", "n": 100}],
+		"from": -1, "moved": 0, "busy": 0}
+	CState.place(na, ec)
+	CRules._insert_army(cs.st, na)
+	_blocker = id
+	CState.place(CState.army(cs.st, g0), c0)
+	CState.place(CState.army(cs.st, g1), CGrid.at(CGrid.cx(c0), CGrid.cy(c0) + 3))
+	cs._replan()
+	cs.close_side()
+	cs.focus_region(CData.region_index("latium"), 1.6)
+	await process_frame
+	await process_frame
+	cs.select_army(g0)
+
+
+func _m_block_check() -> void:
+	var sa := CState.army(cs.ps, g0)
+	var why := cs.merge_why(sa, g1)
+	var rt6 := CRules.reach6(cs.ps, sa, 1)
+	var reached := false
+	for k in CGrid.disc(CState.cell(CState.army(cs.ps, g1)), 1):
+		if rt6.size() == CGrid.count() and rt6[k] == 0:
+			reached = true
+	_check(why != "" and reached, "set-up: our army next to the enemy is within reach but its merge is refused (%s)" % why)
+	var marks := 0
+	var wrong := 0
+	for mm in cs.overlay.merge_marks:
+		if int(mm[0]) == g1:
+			marks += 1
+		if int(mm[1]) == 0 and cs.merge_why(sa, int(mm[0])) != "":
+			wrong += 1
+	_check(marks == 0 and wrong == 0, "no merge glyph where a tap would refuse the merge (%s)" % str(cs.overlay.merge_marks))
+	cs.st["armies"].remove_at(CState.army_index(cs.st, _blocker))
+	CState.set_dip(cs.st, rome, greeks, _blocker_dip)
 	cs.orders = []
 	cs._replan()
 

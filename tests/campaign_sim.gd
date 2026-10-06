@@ -11,7 +11,8 @@ extends SceneTree
 ## rules before the continuous overworld), --format=4 the rules before free
 ## movement, --no-sieges (= --format=3) the rules before sieges; --twice
 ## plays every seed again and compares the final hashes. Format 6 also
-## reports contact battles, zone stops are not counted. Each seed also
+## reports contact battles, zone stops are not counted, and the moves
+## refused as "mustering" (an army taking recruits that turn). Each seed also
 ## prints the campaign AI's competency counters (campaign/cai_profile.gd).
 ## --skill=easy|average|skilled sets every AI faction's campaign skill
 ## (settings.ai_campaign_skill); --skill-f=<faction>:easy one faction's
@@ -69,7 +70,7 @@ func _init() -> void:
 		if twice and _run(sd, false) != h1:
 			print("NOT DETERMINISTIC: seed %d" % (1000 + sd * 77))
 			ok = false
-	print("\npacing (format %d): seed | largest at 15 / 30 / 60 | eliminated by 60 | first win (20 regions, 3 key cities) | battles | field | ms/turn mean max" % fmt)
+	print("\npacing (format %d): seed | largest at 15 / 30 / 60 | eliminated by 60 | first win (20 regions, 3 key cities) | battles | field | mustering refusals | ms/turn mean max" % fmt)
 	for row in pacing:
 		print("  " + str(row))
 	if not watch.is_empty():
@@ -83,7 +84,7 @@ func _init() -> void:
 
 func _run(sd: int, verbose: bool) -> String:
 	sg = {"started": 0, "assault": 0, "sally": 0, "relief": 0, "lifted": 0, "surrendered": 0, "longest": 0,
-		"field_won": 0, "assault_won": 0, "field": 0, "intercepted": 0, "raided": 0}
+		"field_won": 0, "assault_won": 0, "field": 0, "intercepted": 0, "raided": 0, "mustering": 0}
 	var largest := [0, 0, 0]
 	var first_win := -1
 	CP.reset_counters()
@@ -157,8 +158,8 @@ func _run(sd: int, verbose: bool) -> String:
 		print("sieges: started %d, assaulted %d (won %d), sallies %d, reliefs %d (sally/relief won by the besieged %d), lifted %d, surrendered %d, longest %d turns; open at the end: %s" % [
 			int(sg["started"]), int(sg["assault"]), int(sg["assault_won"]), int(sg["sally"]), int(sg["relief"]),
 			int(sg["field_won"]), int(sg["lifted"]), int(sg["surrendered"]), int(sg["longest"]), str(open_now)])
-		print("free movement: field battles %d (interceptions %d), turns ending with a region raided %d" % [
-			int(sg["field"]), int(sg["intercepted"]), int(sg["raided"])])
+		print("free movement: field battles %d (interceptions %d), turns ending with a region raided %d, moves refused as mustering %d" % [
+			int(sg["field"]), int(sg["intercepted"]), int(sg["raided"]), int(sg["mustering"])])
 		var ct := CP.totals()
 		print("AI counters (docs/AI.md 6, all factions): attacks at bad odds %d, threatened cities left empty %d, faction-turns at war on two fronts %d, armies trickled in %d" % [
 			ct[0], ct[1], ct[2], ct[3]])
@@ -172,9 +173,9 @@ func _run(sd: int, verbose: bool) -> String:
 				str(w_reg[f]), str(w_dead[f]) if int(w_dead[f]) >= 0 else "-", ", ".join(mk)])
 			watch.append("%d | %s %s | %d / %d / %d | %s" % [1000 + sd * 77, short[int(f)], CP.SKILL_NAMES[int(skill_f[f])],
 				w_reg[f][0], w_reg[f][1], w_reg[f][2], str(w_dead[f]) if int(w_dead[f]) >= 0 else "-"])
-		pacing.append("%d | %d / %d / %d | %d %s | %s | %d | %d | %.1f %.1f" % [1000 + sd * 77, largest[0], largest[1], largest[2],
+		pacing.append("%d | %d / %d / %d | %d %s | %s | %d | %d | %d | %.1f %.1f" % [1000 + sd * 77, largest[0], largest[1], largest[2],
 			elim.size(), str(elim), str(first_win) if first_win >= 0 else "-", int(st["stats"]["battles"]), int(sg["field"]),
-			t_total / 1000.0 / turns, t_max / 1000.0])
+			int(sg["mustering"]), t_total / 1000.0 / turns, t_max / 1000.0])
 		return CState.hash_text(st)
 	return ""
 
@@ -226,6 +227,9 @@ func _count_sieges(st: Dictionary, t: int) -> void:
 					sg["field"] += 1
 			"intercepted":
 				sg["intercepted"] += 1
+			"move_failed":
+				if str(e.get("why", "")) == "mustering":
+					sg["mustering"] += 1
 	for x in st.get("sieges", []):
 		sg["longest"] = maxi(int(sg["longest"]), int(st["turn"]) - int(x["turn"]))
 	for r in CData.region_count():

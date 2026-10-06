@@ -273,7 +273,8 @@ remaining}], garrison_pct}`, built from `BattleSim.result()` by
    (`CRules.execute_moves`), then 3b also runs the siege orders.
 5. AI factions act in faction order (merge, cut debt, build, recruit, move).
    Version 5: the AI factions plan in faction order and their moves then
-   run together in rounds.
+   run together in rounds. Version 6: plan the moves, then recruit (the
+   mustering rule, see "Recruiting into armies").
 6. Neighbouring armies reinforce the new battles (version 5: field armies
    within a turn's march over land, with their map edge).
 7. Battles without a player: resolved now by the formula. Battles with a
@@ -1083,9 +1084,25 @@ contact, sieges, sally / relief, support, stances, raiding, retreats),
     Merging, exchanging, splitting and stance changes are not moves and
     stay allowed (a mustering army merged away gives its recruits to the
     fallback above).
-  - Later (not done): the AI planner does not know the rule yet; it should
-    recruit into armies it means to hold. Today its moves for an army that
-    takes recruits that turn are simply refused that turn.
+  - The AI (`CAI._recruit_order`, format 6) plans its moves first and
+    recruits after, so it knows the rule: a recruit goes into the first
+    army of ours on or next to the settlement, with room, that is not
+    planned to march (a garrison, an army parked there); when every army
+    there marches, one of at most `RECRUIT_HOLD_UNITS` units (Average 2,
+    Easy 0) whose march stays within friendly lands (not an attack) has
+    its march taken back and fills up; else the recruits raise a new army
+    (`new: 1`) and the marching armies go. With no army there it uses the
+    old form (it musters nobody). An army the AI marches is never a
+    recruit target. Formats 1-5 are unchanged (recruit before move, the
+    old form; `--format=5` hashes identical). Refused "mustering" AI
+    moves (`campaign_sim` counts them, column "mustering refusals"):
+    37-57 per seed (`--seeds=6 --turns=60`) before, 0 after; at Easy
+    99-153, now 0. Pacing before / after (largest at 15 / 30 / 60,
+    eliminated, battles): 1000 7/8/9 1 55 -> 7/10/13 4 53; 1077 6/8/17
+    2 65 -> 8/9/15 4 79; 1154 7/9/17 3 86 -> 7/8/12 3 73; 1231 7/8/10 1
+    45 -> 6/8/17 3 76; 1308 7/9/15 4 74 -> 7/9/14 5 83; 1385 7/9/11 2 65
+    -> 7/7/11 3 64 (13 eliminations in all before, 22 after: the armies
+    that used to stand a turn now march). Deterministic (`--twice`).
 - **AI** (`_move_grid`; plans, the moves run in rounds). Turns to a region
   come from static distance fields of every settlement (`CGrid.field`:
   points over the grid, a sea lane 200, memoised; the first AI turn of a
@@ -1188,7 +1205,11 @@ the stance toggle).
   and Disband stay under the unit list.
 - **Merge on the map.** With an army selected, your armies it can reach
   this turn (or that stand next to it) carry a small green plus (grey: the
-  two would pass 12 units), allied players' armies next to it a gold gift
+  two would pass 12 units) only where a tap would plan the merge (the
+  screen's `merge_why`, the same checks as the tap: `CRules.merge_check`
+  next to it, else `join_check` and the march's path, so none on an army
+  whose merge path an enemy zone of control blocks; computed once per
+  selection and plan), allied players' armies next to it a gold gift
   box. The first tap on your other army previews the merge (its path with
   the caption "Merge into army (N units)" or "Too many units to merge", and
   a toast with Merge / Select it); a second tap (or Merge) plans it: next
