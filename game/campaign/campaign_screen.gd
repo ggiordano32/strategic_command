@@ -208,6 +208,7 @@ func _load_data() -> void:
 ## --select-region=key --select-army=N (Nth army of the player)
 ## --plan-move=N:key --camp-attack=N:key --camp-siege=N:key[:turns] --camp-besieged=key:faction --camp-fight --sim-turns=N --dialog-scroll=PX --side-scroll=PX
 ## --camp-exchange=N:M:k (version 6: the exchange panel)
+## --camp-recruit=N:key:k --camp-raise=key:k (version 6: recruits into an army, the raise picker)
 ## --plan-stance=N:0|1 --camp-raid=N:key (version 5: the player's Nth army raids region key) --camp-intercept=N:key:faction (an army
 ## of faction marching into key runs into the player's Nth army standing there in the field)
 ## --dialog=battles|summary|diplomacy|realm|goals|warnings|online|citymap
@@ -278,6 +279,36 @@ func _apply_debug_args() -> void:
 				panels.show_exchange(id13, int(mine13[m13]["id"]))
 				for k13 in int(v.get_slice(":", 2)):
 					panels._xc_toggle("out", k13)
+		elif a.begins_with("--camp-recruit="):
+			# --camp-recruit=N:key:k (version 6): put the player's Nth army
+			# inside the walls of region key, select it and plan k recruits
+			# into it (the first recruitable lines of its card).
+			var mine14 := CState.armies_of(st, f)
+			var n14 := int(v.get_slice(":", 0))
+			var r14 := CData.region_index(v.get_slice(":", 1))
+			if n14 < mine14.size() and r14 >= 0:
+				var id14 := int(mine14[n14]["id"])
+				CState.place(mine14[n14], CGrid.site(r14))
+				_replan()
+				focus_region(r14, 1.4)
+				for k14 in int(v.get_slice(":", 2)):
+					for o14 in Panels.best_options(ps, f, r14):
+						if o14["ok"]:
+							add_order({"t": "recruit", "r": r14, "unit": str(o14["t"]), "army": id14})
+							break
+				select_army(id14)
+		elif a.begins_with("--camp-raise="):
+			# --camp-raise=key:k (version 6): the region panel of key and the
+			# Raise new army picker with k units picked.
+			var r15 := CData.region_index(v.get_slice(":", 0))
+			if r15 >= 0:
+				focus_region(r15, 1.4)
+				select_region(r15)
+				panels.show_raise(r15)
+				var opts15 := Panels.best_options(ps, f, r15)
+				for k15 in int(v.get_slice(":", 1)):
+					if k15 < opts15.size():
+						panels._raise_pick(str(opts15[k15]["t"]), 1)
 		elif a.begins_with("--replay-freeze="):
 			_replay_freeze = int(v)  # testing aid
 		elif a.begins_with("--plan-move="):
@@ -611,6 +642,48 @@ func add_order(o: Dictionary) -> String:
 	return ""
 
 
+## Several orders at once (one Undo step); none is added if any is refused.
+func add_orders(list: Array) -> String:
+	var pv := CTurn.preview(st, f, orders + list)
+	for e in pv["errors"]:
+		if int(e[0]) >= orders.size():
+			_flash(str(e[1]))
+			return str(e[1])
+	_push_undo()
+	orders.append_array(list)
+	_replan()
+	save()
+	return ""
+
+
+## Version 6: the planned recruit orders into army (it would be mustering).
+func recruits_into(army: int) -> Array:
+	var out: Array = []
+	for o in orders:
+		if str(o["t"]) == "recruit" and int(o.get("army", -1)) == army:
+			out.append(o)
+	return out
+
+
+## Version 6: a march planned for an army with recruits planned for it:
+## the toast asks to cancel the recruits (an army taking recruits cannot
+## march this turn); never silently. Returns true when it asked.
+func _muster_guard(army: int, then: Callable) -> bool:
+	var rec := recruits_into(army)
+	if rec.is_empty():
+		return false
+	var n := rec.size()
+	show_toast("This army is taking %d recruit%s this turn: an army taking recruits cannot march until the next turn." % [n, "" if n == 1 else "s"],
+		[["Cancel recruits and march", func():
+			remove_orders(func(o): return str(o["t"]) == "recruit" and int(o.get("army", -1)) == army)
+			then.call()
+			if sel_army >= 0 and not CState.army(ps, sel_army).is_empty():
+				show_side(func(box): panels.army_panel(box, sel_army))],
+		["Keep recruiting", func(): pass]])
+	_t("campaign_input", {"what": "muster_toast"})
+	return true
+
+
 func remove_orders(pred: Callable) -> void:
 	var keep: Array = []
 	for o in orders:
@@ -897,6 +970,8 @@ func explain_refusal(army: int, r: int, why_in: String = "") -> void:
 		text = "That ground lies in an enemy army's zone of control (red circle): tap the army itself to attack it, or pick a spot outside its zone."
 	elif why == "zone of control":
 		text = "An enemy army's zone of control stops the march: attack it or go round."
+	elif why == "mustering":
+		text = "This army is taking recruits this turn: it cannot march until the next turn."
 	elif why == "fortified":
 		text = "This army is fortified and cannot move: set its stance back to Default first (the army card)."
 	elif why == "too many units to merge" or why.begins_with("more than"):
@@ -1283,7 +1358,7 @@ func _update_hint() -> void:
 	elif sel_army >= 0 and _g():
 		hint.text = "Tap (or drag the army to) a spot inside the shaded area to march there this turn, further on for later turns; tap an enemy army to attack it, a city to besiege it. Same spot again: cancel."
 	elif _g():
-		hint.text = "Tap an army to move it, a city for buildings and recruits."
+		hint.text = "Tap an army to move it or recruit into it (at a city), a city for buildings or a new army."
 	elif sel_army >= 0 and CState.moves_on(ps):
 		hint.text = "Tap a region to march there (bright: this turn, dim: later turns; red: enemy land). Tap it again to cancel."
 	elif sel_army >= 0:
@@ -1463,6 +1538,8 @@ func set_move6(army: int, c: int, tgt: int) -> void:
 		return
 	var cur := plan6(army)
 	var same := not cur.is_empty() and ((tgt >= 0 and int(cur["tgt"]) == tgt) or (tgt < 0 and int(cur["tgt"]) < 0 and int(cur["cell"]) == c))
+	if not same and _muster_guard(army, func(): set_move6(army, c, tgt)):
+		return
 	var had_order := false
 	for o in orders:
 		if str(o["t"]) == "move" and int(o["army"]) == army:
@@ -1515,6 +1592,8 @@ func set_join(army: int, target: int) -> void:
 		return
 	var cur := plan6(army)
 	var same := not cur.is_empty() and int(cur.get("join", -1)) == target
+	if not same and _muster_guard(army, func(): set_join(army, target)):
+		return
 	var had_order := false
 	for o in orders:
 		if str(o["t"]) == "move" and int(o["army"]) == army:
@@ -1635,7 +1714,6 @@ func _refresh_map6() -> void:
 						var pe := path_entry(sa, pr)
 						pe["preview"] = 1
 						paths.append(pe)
-		map_view.reach_hostile = false
 		map_view.set_reach(rt6)
 		var px := float(CGrid.cell_px())
 		for e in CRules.zone_armies(ps, int(sa["f"])):

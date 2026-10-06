@@ -1,7 +1,6 @@
 extends Node2D
 ## Campaign map, screen layer: settlements (size by level, a wall ring with
-## towers per wall level,
-## gold dot for the key cities), names, pending battles, sieges (a ring of
+## towers per wall level, a white star for the key cities), names, pending battles, sieges (a ring of
 ## tents round the settlement in the besieger's colour), army markers
 ## (faction colour, unit count, strength bar; a small tower: inside the
 ## walls), planned moves as arrows (red an assault, orange a siege; state
@@ -14,7 +13,8 @@ extends Node2D
 ## by side; armies inside the walls under their settlement), pending battles
 ## on their cell; planned paths run along cell centres (solid this turn,
 ## dashed beyond, a ring where this turn ends, the intent at the end:
-## swords an attack or assault, a tent a siege, a tower going inside);
+## swords an attack or assault, a tent a siege, a plus a merge, a tower
+## going inside; a plain march has no end badge);
 ## for the selected army the enemies' zones of control (red circles) and
 ## its support (yellow) and attack (red) lines; during a turn replay armies
 ## slide along their step log (replay_pos) and battles pop up (markers).
@@ -52,12 +52,13 @@ const LINK_DASH := 10.0
 const ZONE_FILL := Color(0.85, 0.15, 0.1, 0.12)
 const ZONE_EDGE := Color(1.0, 0.35, 0.25, 0.85)
 const COL_BATTLE := Color(0.75, 0.1, 0.08)
-const COL_KEY_CITY := Color(1.0, 0.85, 0.3)
+const COL_KEY_CITY := Color(1, 1, 1)
 const COL_SELECTED := Color(1, 0.95, 0.4, 0.95)
-const COL_MOVED := Color(0.6, 0.6, 0.6)
+const COL_MOVED := Color(0.6, 0.6, 0.6)          # versions 1-5: has moved this turn
+const COL_OUTLINE := Color(0.05, 0.05, 0.05, 0.95)  # dark edge round faction-coloured marks
 const BAR_GOOD := Color(0.5, 1.0, 0.5)           # strength above 60 %
 const BAR_LOW := Color(1.0, 0.8, 0.3)
-const MERGE_COLS: Array[Color] = [Color(0.3, 0.75, 0.35), Color(0.9, 0.7, 0.2), Color(0.5, 0.5, 0.48)]
+const MERGE_COLS: Array[Color] = [Color(0.3, 0.75, 0.35), Color(0.9, 0.7, 0.2)]
 const STANCE_LETTERS := {CData.ST_FORCED: "F", CData.ST_FORTIFY: "D", CData.ST_RAID: "R"}
 const STANCE_COLS := {CData.ST_FORCED: Color(0.3, 0.6, 1.0), CData.ST_FORTIFY: Color(0.55, 0.55, 0.5), CData.ST_RAID: Color(0.95, 0.55, 0.15)}
 
@@ -91,8 +92,9 @@ var replay_pos := {}
 var replay_trail := {}  # army id -> map points passed so far in the replay
 var markers: Array = []
 ## The selected army's merge and gift candidates [[army id, 0 merge | 1 gift
-## | 2 too many units]] (a small glyph on their banners) and the one tapped
-## once (merge_tap: its glyph rings).
+## | 2 too many units]] (a small glyph on the banners of 0 and 1 only: an
+## over-full merge shows as its grey path and caption when tapped) and the
+## one tapped once (merge_tap: its glyph rings).
 var merge_marks: Array = []
 var merge_tap := -1
 var _tips: Array = []  # intents to draw over the banners: [point, kind, colour, caption]
@@ -276,13 +278,14 @@ func _draw() -> void:
 			continue
 		_army_marker(pos[id], a)
 	for mm in merge_marks:
-		if pos.has(int(mm[0])):
+		if int(mm[1]) in [0, 1] and pos.has(int(mm[0])):
 			var gp: Vector2 = pos[int(mm[0])] + Vector2(-ARMY_W * 0.5, ARMY_H * 0.5) * m
 			if int(mm[0]) == merge_tap:
 				draw_arc(gp, 7.0 * m + 4.0 + 1.5 * sin(pulse * 6.0), 0, TAU, 20, Color(1, 1, 1, 0.9), 2.0, true)
 			draw_merge_glyph(self, gp, int(mm[1]), m)
 	for tp in _tips:
-		draw_intent(self, tp[0], str(tp[1]), tp[2], m)
+		if not (str(tp[1]) == "merge" and str(tp[3]).begins_with("Too many")):
+			draw_intent(self, tp[0], str(tp[1]), tp[2], m)  # an over-full merge: the grey path and caption only
 		if (tp as Array).size() > 3 and str(tp[3]) != "":
 			_caption(tp[0], str(tp[3]), tp[2])
 
@@ -348,8 +351,15 @@ static func draw_turn_end(ci: CanvasItem, e: Vector2, col: Color, m: float) -> v
 
 
 ## The intent at a path's end: a small badge (swords an attack, a tent a
-## siege, a plus a merge, a tower going inside, a dot a march).
+## siege, a plus a merge, a tower going inside); none for a plain march (its
+## line ends there; the ring marks where this turn's part ends).
+static func has_intent(kind: String) -> bool:
+	return ATTACK_KINDS.has(kind) or SIEGE_KINDS.has(kind) or kind == "merge" or kind == "inside"
+
+
 static func draw_intent(ci: CanvasItem, p: Vector2, kind: String, col: Color, m: float) -> void:
+	if not has_intent(kind):
+		return
 	var r := 9.0 * m
 	ci.draw_circle(p, r + 1.5, Color(0, 0, 0, 0.75))
 	ci.draw_circle(p, r, col.darkened(0.35))
@@ -363,21 +373,19 @@ static func draw_intent(ci: CanvasItem, p: Vector2, kind: String, col: Color, m:
 	elif kind == "merge":
 		ci.draw_line(p + Vector2(-5, 0) * m, p + Vector2(5, 0) * m, w, 2.4, true)
 		ci.draw_line(p + Vector2(0, -5) * m, p + Vector2(0, 5) * m, w, 2.4, true)
-	elif kind == "inside":
+	else:  # inside
 		ci.draw_rect(Rect2(p - Vector2(4, 3) * m, Vector2(8, 8) * m), w)
 		for k in 3:
 			ci.draw_rect(Rect2(p + Vector2(-4 + 3.0 * k, -6) * m, Vector2(2, 3) * m), w)
-	else:
-		ci.draw_circle(p, 3.0 * m, w)
 
 
-## A merge candidate's glyph at p: kind 0 can merge (green plus), 1 an
-## allied player's army to give units to (gold gift box), 2 too many units
-## (grey plus).
+## A merge candidate's glyph at p: kind 0 an army of ours it can merge
+## into (in reach, room for the units: green plus), 1 an allied player's
+## army next to it to give units to (gold gift box).
 static func draw_merge_glyph(ci: CanvasItem, p: Vector2, kind: int, m: float) -> void:
 	var r := 7.0 * m
 	ci.draw_circle(p, r + 1.2, Color(0, 0, 0, 0.85))
-	ci.draw_circle(p, r, MERGE_COLS[clampi(kind, 0, 2)])
+	ci.draw_circle(p, r, MERGE_COLS[clampi(kind, 0, 1)])
 	var w := Color(1, 1, 1)
 	if kind == 1:
 		ci.draw_rect(Rect2(p - Vector2(4, 3) * m, Vector2(8, 7) * m), w, false, 1.5)
@@ -388,17 +396,29 @@ static func draw_merge_glyph(ci: CanvasItem, p: Vector2, kind: int, m: float) ->
 		ci.draw_line(p + Vector2(0, -4) * m, p + Vector2(0, 4) * m, w, 2.0, true)
 
 
-## A settlement: walls (w 0-3), a white rim and the owner's colour.
+## A settlement: walls (w 0-3), a white rim and the owner's colour (the
+## same faction colour as its banners and the land's owner band).
 static func draw_site(ci: CanvasItem, p: Vector2, rad: float, owner_col: Color, w: int, m: float) -> void:
 	if w > 0:
 		draw_wall_ring(ci, p, rad, w, m)
+	ci.draw_circle(p, rad + 2.5, COL_OUTLINE)
 	ci.draw_circle(p, rad + 1.5, Color(1, 1, 1, 0.95))
-	ci.draw_circle(p, rad, owner_col.darkened(0.35))
+	ci.draw_circle(p, rad, owner_col)
 
 
-## A key city (the default victory condition): a gold dot.
+## A key city (the default victory condition): a white star with a dark
+## edge on the settlement (no gold: gold is the gift glyph).
 static func draw_key_city(ci: CanvasItem, p: Vector2, rad: float) -> void:
-	ci.draw_circle(p, rad * 0.4, COL_KEY_CITY)
+	var ro := maxf(rad * 0.78, 3.5)
+	var ri := ro * 0.45
+	var pts := PackedVector2Array()
+	for k in 10:
+		var a := -PI * 0.5 + PI * k / 5.0
+		pts.append(p + Vector2(cos(a), sin(a)) * (ro if k % 2 == 0 else ri))
+	ci.draw_colored_polygon(pts, COL_KEY_CITY)
+	var o := pts.duplicate()
+	o.append(pts[0])
+	ci.draw_polyline(o, COL_OUTLINE, 1.2, true)
 
 
 ## Walls: a stone ring round the settlement with towers on it, thicker and
@@ -438,9 +458,12 @@ static func draw_siege_ring(ci: CanvasItem, p: Vector2, rad: float, col: Color, 
 
 
 ## An army banner at c (size ARMY_W x ARMY_H times m): a shield in the
-## faction colour (white edge: a player's army, black: the AI's), the unit
-## count, the strength bar (men / full strength, frac), the selection frame
-## (glow > 0), the grey "moved" dot. Returns the banner's rect.
+## faction colour (the same colour as its settlements and land band) with a
+## dark edge (inside it a white rim: a player's army), the unit count
+## (outlined so it reads on any faction colour), the strength bar (men /
+## full strength, frac), the selection frame (glow > 0), versions 1-5 the
+## grey "moved" dot (version 6 shows marches as paths and has the stance
+## badge there). Returns the banner's rect.
 static func draw_banner(ci: CanvasItem, c: Vector2, col: Color, m: float, human: bool, count: int, frac: float,
 		glow: float = 0.0, moved: bool = false) -> Rect2:
 	var rect := Rect2(c - Vector2(ARMY_W, ARMY_H) * 0.5 * m, Vector2(ARMY_W, ARMY_H) * m)
@@ -450,15 +473,19 @@ static func draw_banner(ci: CanvasItem, c: Vector2, col: Color, m: float, human:
 	var pts := PackedVector2Array([rect.position, rect.position + Vector2(rect.size.x, 0),
 		rect.position + Vector2(rect.size.x, rect.size.y - 6 * m), c + Vector2(0, rect.size.y * 0.5 + 3 * m),
 		rect.position + Vector2(0, rect.size.y - 6 * m)])
-	ci.draw_colored_polygon(pts, col.darkened(0.15))
+	ci.draw_colored_polygon(pts, col)
 	var outline := pts.duplicate()
 	outline.append(pts[0])
-	ci.draw_polyline(outline, Color(1, 1, 1) if human else Color(0.05, 0.05, 0.05), 2.0 if human else 1.5, true)
+	ci.draw_polyline(outline, COL_OUTLINE, 3.5 if human else 1.8, true)
+	if human:
+		ci.draw_polyline(outline, Color(1, 1, 1), 1.8, true)
 	var font := ThemeDB.fallback_font
 	var n := str(count)
 	var afs := int(round(15 * maxf(m, 0.75)))
 	var tw := font.get_string_size(n, HORIZONTAL_ALIGNMENT_LEFT, -1, afs).x
-	ci.draw_string(font, c + Vector2(-tw * 0.5, afs * 0.3), n, HORIZONTAL_ALIGNMENT_LEFT, -1, afs, Color.WHITE)
+	var tp := c + Vector2(-tw * 0.5, afs * 0.3)
+	ci.draw_string_outline(font, tp, n, HORIZONTAL_ALIGNMENT_LEFT, -1, afs, 4, Color(0, 0, 0, 0.8))
+	ci.draw_string(font, tp, n, HORIZONTAL_ALIGNMENT_LEFT, -1, afs, Color.WHITE)
 	var by := rect.end.y + 5.0 * m
 	ci.draw_rect(Rect2(rect.position.x, by, rect.size.x, 4 * m), Color(0, 0, 0, 0.7))
 	ci.draw_rect(Rect2(rect.position.x, by, rect.size.x * frac, 4 * m), BAR_GOOD if frac > 0.6 else BAR_LOW)
@@ -594,7 +621,7 @@ func _army_marker(c: Vector2, a: Dictionary) -> void:
 	var frac := clampf(float(men) / maxf(full, 1), 0.0, 1.0)
 	var glow := 3.0 + 1.5 * sin(pulse * 5.0) if int(a["id"]) == selected_army else 0.0
 	var rect := draw_banner(self, c, CData.faction_color(f), m, human, CState.unit_count(a), frac, glow,
-		int(a["moved"]) != 0 and human)
+		int(a["moved"]) != 0 and human and not grid)
 	if grid:
 		draw_stance(self, rect, CState.stance(a))
 	if (not grid and int(a.get("stance", 0)) == CData.STANCE_GARRISON) or (grid and CRules.inside(state, a)):

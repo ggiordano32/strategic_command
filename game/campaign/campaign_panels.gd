@@ -120,15 +120,29 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 			bt.alignment = HORIZONTAL_ALIGNMENT_LEFT
 			bt.add_theme_color_override("font_color", _fc(int(a["f"])).lightened(0.5))
 			box.add_child(bt)
+	var grid := CState.grid_on(ps)
 	if mine:
-		_recruit(box, r)
+		if grid:
+			_raise_section(box, r)  # version 6: recruiting is in the army card
+		else:
+			_recruit(box, r)
 		_buildings(box, r)
-	# Garrison.
+		if grid:
+			_trains(box, r)
+	# Garrison: what the settlement provides (by level and walls).
 	var gar := CRules.garrison(ps, r)
-	box.add_child(Kit.section("Garrison (%d%% strength, walls %d)" % [int(rs["gar"]), CState.walls(ps, r)]))
+	var gs := Kit.section("Garrison (%d%% strength, walls %d)" % [int(rs["gar"]), CState.walls(ps, r)])
+	gs.name = "garrison_section"
+	box.add_child(gs)
+	if grid:
+		box.add_child(Kit.label("Provided by the %s and its walls; it defends the city and recovers %d%% a turn." % [
+			CData.LEVEL_NAMES[lvl].to_lower(), CData.GARRISON_REGEN], Kit.FONT_SMALL, Kit.COL_DIM, true))
 	for g in gar:
-		var row := Kit.UnitRow.new(UT.index_of(str(g["t"])), int(g["n"]), _fc(o))
+		var gty := UT.index_of(str(g["t"]))
+		var row := Kit.UnitRow.new(gty, int(g["n"]), _fc(o))
 		row.full = int(g["full"])
+		if grid:
+			row.pressed.connect(func(): s.open_unit_page(gty, Callable(), ""))
 		box.add_child(row)
 
 
@@ -496,19 +510,9 @@ func _recruit(box: VBoxContainer, r: int) -> void:
 		var key := str(q[k])
 		h.add_child(Kit.button("X", func(): _cancel_recruit(r, key), 44))
 		box.add_child(h)
-	var shown := {}
-	for o in CRules.recruit_options(ps, f, r):
-		var line := str(o["line"])
-		# Best available tier per line, plus locked higher tiers greyed.
-		if shown.has(line) and not o["ok"]:
-			continue
-		if shown.has(line) and int(shown[line]) == 1:
-			continue
+	for o in best_options(ps, f, r):
 		var ty := UT.index_of(str(o["t"]))
 		var why := str(o["why"])
-		if why.begins_with("needs") and int(o["tier"]) > 1:
-			continue  # locked higher tiers: shown in the unit book
-		shown[line] = 1 if o["ok"] else 0
 		var row := Kit.UnitRow.new(ty, -1, _fc(f), str(o["price"]))
 		row.sub_text = "Tier %d  -  upkeep %d" % [int(o["tier"]), CState.upkeep_of(ty)] if o["ok"] else why
 		var key := str(o["t"])
@@ -525,6 +529,243 @@ func _recruit(box: VBoxContainer, r: int) -> void:
 		add.disabled = not o["ok"]
 		h.add_child(add)
 		box.add_child(h)
+
+
+## The recruit list's rows: the best available tier per line (and a
+## better one greyed when only money or this turn's slots are missing);
+## locked higher tiers are left to the unit book.
+static func best_options(ps: Dictionary, f: int, r: int) -> Array:
+	var out: Array = []
+	var shown := {}
+	for o in CRules.recruit_options(ps, f, r):
+		var line := str(o["line"])
+		if shown.has(line) and not o["ok"]:
+			continue
+		if shown.has(line) and int(shown[line]) == 1:
+			continue
+		if str(o["why"]).begins_with("needs") and int(o["tier"]) > 1:
+			continue
+		shown[line] = 1 if o["ok"] else 0
+		out.append(o)
+	return out
+
+
+## Version 6 region panel: this turn's recruit slots, the planned new army
+## (with X) and "Raise new army" (the picker).
+func _raise_section(box: VBoxContainer, r: int) -> void:
+	var ps: Dictionary = s.ps
+	var f: int = s.f
+	var rs: Dictionary = ps["regions"][r]
+	var cap := int(CData.RECRUITS_PER_TURN[int(rs["level"])])
+	var used := (rs["queue"] as Array).size()
+	var sec := Kit.section("Recruits (%d of %d here this turn)" % [used, cap])
+	sec.name = "recruit_slots"
+	box.add_child(sec)
+	var raising := _raise_orders(r)
+	if not raising.is_empty():
+		var names: Array[String] = []
+		for o in raising:
+			names.append(str(UT.TYPES[UT.index_of(str(o["unit"]))]["name"]))
+		var h := Kit.hbox(6)
+		var l := Kit.label("Raising a new army: %d unit%s (%s), inside the walls at the end of the turn." % [raising.size(),
+			"" if raising.size() == 1 else "s", ", ".join(names)], Kit.FONT, Kit.COL_GOOD, true)
+		l.name = "raise_planned"
+		h.add_child(l)
+		var x := Kit.button("X", func(): s.remove_orders(func(o): return _is_raise(o, r)), 44)
+		x.name = "raise_cancel"
+		h.add_child(x)
+		box.add_child(h)
+	# Old-form recruits planned before this panel changed (a saved plan):
+	# shown with X so they can still be taken back.
+	for o in s.orders:
+		if str(o["t"]) == "recruit" and int(o.get("r", -1)) == r and not o.has("army") and int(o.get("new", 0)) == 0:
+			var oty := UT.index_of(str(o["unit"]))
+			var orow := Kit.UnitRow.new(oty, -1, _fc(f), "planned")
+			orow.sub_text = "arrives at the end of the turn"
+			var oh := Kit.hbox(4)
+			oh.add_child(orow)
+			var ox := Kit.button("X", func(): s.remove_orders(func(x): return is_same(x, o)), 44)
+			oh.add_child(ox)
+			box.add_child(oh)
+	var why := raise_why(ps, f, r)
+	var b := Kit.button("Raise new army" if raising.is_empty() else "Add to the new army", func(): show_raise(r), 0)
+	b.name = "raise_army"
+	b.disabled = why != ""
+	box.add_child(b)
+	var hint := "To recruit into an army, select an army standing at %s: its card has the recruit list. Recruits arrive at the end of the turn; an army taking recruits cannot march this turn." % CData.REGIONS[r]["city"]
+	if why != "":
+		hint = "Cannot raise an army now: %s. " % why + hint
+	box.add_child(Kit.label(hint, Kit.FONT_SMALL, Kit.COL_DIM, true))
+
+
+func _is_raise(o: Dictionary, r: int) -> bool:
+	return str(o["t"]) == "recruit" and int(o.get("r", -1)) == r and int(o.get("new", 0)) != 0
+
+
+## The planned "new army" recruit orders of region r.
+func _raise_orders(r: int) -> Array:
+	var out: Array = []
+	for o in s.orders:
+		if _is_raise(o, r):
+			out.append(o)
+	return out
+
+
+## "" if faction f can raise (or add to) a new army in region r now, else
+## why not (the region's: besieged, recruitment full, money...).
+static func raise_why(ps: Dictionary, f: int, r: int) -> String:
+	var first := ""
+	for o in CRules.recruit_options(ps, f, r):
+		if o["ok"]:
+			return ""
+		if first == "" or first.begins_with("needs") or first == "not in your roster":
+			first = str(o["why"])
+	return first if first != "" else "nothing to recruit"
+
+
+## The units the city trains (what its buildings unlock): the best tier of
+## each line with the building it needs; a tap opens the unit book.
+func _trains(box: VBoxContainer, r: int) -> void:
+	var ps: Dictionary = s.ps
+	var f: int = s.f
+	var sec := Kit.section("Trains here")
+	sec.name = "trains_section"
+	box.add_child(sec)
+	var ro: Dictionary = CData.roster(f)
+	var any := false
+	for line in CData.LINE_ORDER:
+		if not ro.has(line):
+			continue
+		var tiers: Array = ro[line]
+		var best := ""
+		var next := ""
+		for k in tiers.size():
+			var key := str(tiers[k])
+			if key == "":
+				continue
+			var nd := CRules.needs(key)
+			if CState.building(ps, r, int(nd[0])) >= int(nd[1]):
+				best = key
+			elif next == "":
+				next = key
+		if best == "":
+			continue
+		any = true
+		var ty := UT.index_of(best)
+		var nd2 := CRules.needs(best)
+		var row := Kit.UnitRow.new(ty, -1, _fc(f), str(UT.price_of(ty)))
+		row.name = "trains_" + best
+		var sub := "Tier %d (%s %d)" % [UT.tier_of(ty), CData.CHAINS[int(nd2[0])]["name"], int(nd2[1])]
+		if next != "":
+			var nn := CRules.needs(next)
+			sub += "; tier %d needs %s %d" % [UT.tier_of(UT.index_of(next)), CData.CHAINS[int(nn[0])]["name"], int(nn[1])]
+		row.sub_text = sub
+		row.pressed.connect(func(): s.open_unit_page(ty, Callable(), ""))
+		box.add_child(row)
+	if not any:
+		box.add_child(Kit.label("No military buildings yet: build barracks, a range or stables to train units.", Kit.FONT_SMALL, Kit.COL_DIM, true))
+
+
+## The "Raise new army" picker: {r, picks {unit key: count}} while open.
+var _raise: Dictionary = {}
+
+
+## Pick the units of a new army raised in region r this turn (up to the
+## free slots and the treasury); Confirm adds one recruit order with
+## "new": 1 per unit (one Undo step).
+func show_raise(r: int) -> void:
+	var ps: Dictionary = s.ps
+	var f: int = s.f
+	if int(_raise.get("r", -1)) != r:
+		_raise = {"r": r, "picks": {}}
+	var picks: Dictionary = _raise["picks"]
+	var rs: Dictionary = ps["regions"][r]
+	var cap := int(CData.RECRUITS_PER_TURN[int(rs["level"])])
+	var free := cap - (rs["queue"] as Array).size()
+	var money := int(ps["factions"][f]["treasury"])
+	var n := 0
+	var cost := 0
+	for o in best_options(ps, f, r):
+		var key := str(o["t"])
+		n += int(picks.get(key, 0))
+		cost += int(picks.get(key, 0)) * int(o["price"])
+	var v := Kit.vbox(6)
+	v.name = "raise_panel"
+	v.add_child(Kit.label("Choose the units of a new army: up to %d this turn (%d of %d recruit slots used at %s). It forms inside the walls at the end of the turn." % [
+		free, cap - free, cap, CData.REGIONS[r]["city"]], Kit.FONT_SMALL, Kit.COL_DIM, true))
+	for o in best_options(ps, f, r):
+		var key := str(o["t"])
+		var ty := UT.index_of(key)
+		var price := int(o["price"])
+		var cnt := int(picks.get(key, 0))
+		var ok: bool = o["ok"] or (cnt > 0)
+		var row := Kit.UnitRow.new(ty, -1, _fc(f), str(price))
+		row.name = "raise_row_" + key
+		row.selected = cnt > 0
+		row.sub_text = "Tier %d  -  upkeep %d" % [int(o["tier"]), CState.upkeep_of(ty)] if ok else str(o["why"])
+		row.pressed.connect(func(): s.open_unit_page(ty, Callable(), ""))
+		var h := Kit.hbox(4)
+		h.add_child(row)
+		var minus := Kit.button("-", func(): _raise_pick(key, -1), 44)
+		minus.name = "raise_minus_" + key
+		minus.disabled = cnt == 0
+		h.add_child(minus)
+		var cl := Kit.label(str(cnt), Kit.FONT, Color.WHITE)
+		cl.name = "raise_count_" + key
+		cl.custom_minimum_size.x = 22
+		cl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		h.add_child(cl)
+		var plus := Kit.button("+", func(): _raise_pick(key, 1), 44)
+		plus.name = "raise_plus_" + key
+		plus.disabled = not ok or n >= free or cost + price > money
+		h.add_child(plus)
+		v.add_child(h)
+	var tl := Kit.label("%d unit%s, %s (treasury %s)." % [n, "" if n == 1 else "s", Kit.money(cost), Kit.money(money)],
+		Kit.FONT, Kit.COL_GOLD if n > 0 else Kit.COL_DIM, true)
+	tl.name = "raise_total"
+	v.add_child(tl)
+	var sv: int = s.dialog_scroll.scroll_vertical if s.dialog_open() and s.dialog_box.find_child("raise_panel", true, false) != null else 0
+	s.show_dialog("Raise new army at %s" % CData.REGIONS[r]["city"], v,
+		[["Cancel", func():
+			_raise = {}
+			s.close_dialog()], ["Raise army (%d)" % n, func(): _raise_confirm(r)]], 640)
+	var btns: Array = s.dialog_buttons.get_children()
+	if btns.size() >= 2:
+		(btns[0] as Button).name = "raise_cancel_dialog"
+		var okb := btns[btns.size() - 1] as Button
+		okb.name = "raise_confirm"
+		okb.disabled = n == 0
+	if sv > 0:
+		(func(): s.dialog_scroll.scroll_vertical = sv).call_deferred()
+
+
+func _raise_pick(key: String, d: int) -> void:
+	if _raise.is_empty():
+		return
+	var picks: Dictionary = _raise["picks"]
+	picks[key] = maxi(int(picks.get(key, 0)) + d, 0)
+	if int(picks[key]) == 0:
+		picks.erase(key)
+	show_raise(int(_raise["r"]))
+
+
+func _raise_confirm(r: int) -> void:
+	if _raise.is_empty():
+		return
+	var picks: Dictionary = _raise["picks"]
+	var list: Array = []
+	# Lines in display order (a Dictionary's order is the taps').
+	for o in best_options(s.ps, s.f, r):
+		var key := str(o["t"])
+		for i in int(picks.get(key, 0)):
+			list.append({"t": "recruit", "r": r, "unit": key, "new": 1})
+	_raise = {}
+	s.close_dialog()
+	if list.is_empty():
+		return
+	if s.add_orders(list) == "":
+		s._t("campaign_input", {"what": "raise_army", "n": list.size()})
+	s.select_region(r)
 
 
 func _cancel_recruit(r: int, key: String) -> void:
@@ -553,8 +794,11 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 	var up := 0
 	for u in a["units"]:
 		up += CState.upkeep_of(CState.unit_type(u))
-	box.add_child(Kit.label("%d of %d units, %d men, upkeep %d" % [CState.unit_count(a), CData.ARMY_MAX, CState.men(a), up],
-		Kit.FONT_SMALL, Kit.COL_DIM, true))
+	var arriving: Array = _army_recruits(id) if mine else []
+	var cnt_l := Kit.label("%d of %d units%s, %d men, upkeep %d" % [CState.unit_count(a), CData.ARMY_MAX,
+		" (+%d arriving)" % arriving.size() if not arriving.is_empty() else "", CState.men(a), up], Kit.FONT_SMALL, Kit.COL_DIM, true)
+	cnt_l.name = "army_count"
+	box.add_child(cnt_l)
 	if mine and CState.grid_on(ps):
 		_together_row(box, a)
 		_army_orders6(box, a)
@@ -642,6 +886,23 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 			_split_sel[id] = cur
 			s.select_army(id))
 		box.add_child(row)
+	# Planned recruits joining it at the end of the turn (version 6), greyed.
+	for k in arriving.size():
+		var ro: Dictionary = arriving[k]
+		var rty := UT.index_of(str(ro["unit"]))
+		var arow := Kit.UnitRow.new(rty, -1, _fc(af).darkened(0.35), "arriving")
+		arow.sub_text = "joins at the end of the turn"
+		arow.modulate = Color(1, 1, 1, 0.65)
+		arow.name = "arriving_%d" % k
+		arow.pressed.connect(func(): s.open_unit_page(rty, Callable(), ""))
+		var ah := Kit.hbox(4)
+		ah.add_child(arow)
+		var xb := Kit.button("X", func(): s.remove_orders(func(o): return is_same(o, ro)), 44)
+		xb.name = "recruit_cancel_%d" % k
+		ah.add_child(xb)
+		box.add_child(ah)
+	if mine and CState.grid_on(ps):
+		_army_recruit(box, a)
 	if not mine or int(a["busy"]) != 0 or CRules.siege_role(ps, a) != 0:
 		return
 	var fl := Kit.flow(6)
@@ -670,6 +931,66 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 			fl.add_child(mb)
 	box.add_child(fl)
 	box.add_child(Kit.label("Tap units to choose them for splitting or disbanding.", Kit.FONT_SMALL, Kit.COL_DIM, true))
+
+
+## The planned recruit orders into army id (version 6), in order.
+func _army_recruits(id: int) -> Array:
+	var out: Array = []
+	for o in s.orders:
+		if str(o["t"]) == "recruit" and int(o.get("army", -1)) == id:
+			out.append(o)
+	return out
+
+
+## Version 6 army card: the recruit list when the army stands on or next to
+## a settlement of ours: the slots used this turn, the best tier per line
+## (tap: the unit book with a Recruit button; "+" recruits at once); off
+## while the army has a march planned (an army taking recruits cannot march
+## this turn).
+func _army_recruit(box: VBoxContainer, a: Dictionary) -> void:
+	var ps: Dictionary = s.ps
+	var f: int = s.f
+	var id := int(a["id"])
+	var r := CRules.recruit_region(ps, a)
+	if r < 0 or int(a["busy"]) != 0:
+		return
+	var rs: Dictionary = ps["regions"][r]
+	var cap := int(CData.RECRUITS_PER_TURN[int(rs["level"])])
+	var used := (rs["queue"] as Array).size()
+	var sec := Kit.section("Recruit at %s" % CData.REGIONS[r]["city"])
+	sec.name = "recruit_section"
+	box.add_child(sec)
+	var sl := Kit.label("%d of %d recruits here this turn; they join this army at the end of the turn, and it cannot march this turn." % [used, cap],
+		Kit.FONT_SMALL, Kit.COL_DIM, true)
+	sl.name = "recruit_slots"
+	box.add_child(sl)
+	if not s.plan6(id).is_empty():
+		var ml := Kit.label("This army is marching this turn: cancel its move to recruit into it.", Kit.FONT, Kit.COL_GOLD, true)
+		ml.name = "recruit_marching"
+		box.add_child(ml)
+		return
+	var why_a := CRules.army_recruit_check(ps, f, r, id)
+	for o in best_options(ps, f, r):
+		var ty := UT.index_of(str(o["t"]))
+		var ok: bool = o["ok"] and why_a == ""
+		var row := Kit.UnitRow.new(ty, -1, _fc(f), str(o["price"]))
+		row.sub_text = "Tier %d  -  upkeep %d" % [int(o["tier"]), CState.upkeep_of(ty)] if ok else (why_a if o["ok"] else str(o["why"]))
+		var key := str(o["t"])
+		row.name = "recruit_row_" + key
+		var order := {"t": "recruit", "r": r, "unit": key, "army": id}
+		var add_it := func():
+			if s.add_order(order.duplicate()) == "":
+				s._t("campaign_input", {"what": "recruit_army"})
+		var open_page := func(): s.open_unit_page(ty, add_it if ok else Callable(), "Recruit (%d)" % int(o["price"]))
+		row.pressed.connect(open_page)
+		row.long_pressed.connect(open_page)
+		var h := Kit.hbox(4)
+		h.add_child(row)
+		var add := Kit.button("+", add_it, 44)
+		add.name = "recruit_" + key
+		add.disabled = not ok
+		h.add_child(add)
+		box.add_child(h)
 
 
 ## Version 6, top of the army card: "Merge into army (N units)" for each
@@ -1251,7 +1572,10 @@ func show_intro() -> void:
 	var f: int = s.f
 	var box := Kit.vbox(8)
 	box.add_child(Kit.label("%s. You lead %s." % [CData.date_text(int(s.st["turn"])), CData.faction_name(f)], Kit.FONT, Kit.COL_GOLD, true))
-	box.add_child(Kit.label("Each turn: move your armies (tap an army, then a highlighted region; red regions mean a battle), build and recruit in your regions (tap a region), and End turn. Battles are resolved before the next turn: auto-resolve or fight them yourself.", Kit.FONT, Color.WHITE, true))
+	var how := "Each turn: move your armies (tap an army, then a highlighted region; red regions mean a battle), build and recruit in your regions (tap a region), and End turn. Battles are resolved before the next turn: auto-resolve or fight them yourself."
+	if CState.grid_on(s.ps):
+		how = "Each turn: march your armies (tap an army, then the map), recruit into an army standing at one of your cities (its card) or raise a new army there (tap the city), build (tap the city), and End turn. Battles are resolved before the next turn: auto-resolve or fight them yourself."
+	box.add_child(Kit.label(how, Kit.FONT, Color.WHITE, true))
 	var p := CRules.victory_progress(s.st)
 	box.add_child(Kit.label("Goal: hold %d regions including %d of Roma, Carthago, Pella, Syracusae and Athenae. You lose if %s is destroyed." % [
 		int(p["need_regions"]), int(p["need_capitals"]), "either player" if (s.st["humans"] as Array).size() > 1 else "your faction"], Kit.FONT, Color.WHITE, true))
@@ -1390,6 +1714,8 @@ func event_text(e: Dictionary, f: int) -> String:
 		"move_failed":
 			if int(e["f"]) != f:
 				return ""
+			if str(e["why"]) == "mustering":
+				return "An army taking recruits stayed to muster them this turn; a stored march goes on next turn."
 			if int(e["to"]) < 0:
 				return "An army could not move: %s." % str(e["why"])
 			return "An army could not move to %s: %s." % [city.call(e["to"]), str(e["why"])]

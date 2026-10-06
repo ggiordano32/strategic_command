@@ -3,7 +3,7 @@ extends SceneTree
 ## DPR 2, touch), synthetic ScreenTouch / ScreenDrag events through Godot's
 ## input pipeline (the engine emulates the mouse events buttons see).
 ##   godot --resolution 1560x720 --script res://tests/touch_scroll_test.gd
-## For the recruitment list, the army unit list, the save list, the main menu
+## For the recruitment list (the army card of an army at a city), the army unit list, the save list, the main menu
 ## test list and the unit book (list and page): (a) a drag that starts on a
 ## button or row scrolls and presses nothing; (b) a short tap presses exactly
 ## that button; (c) a fling keeps scrolling after release; (d) a long press
@@ -15,6 +15,7 @@ const CampaignScreen := preload("res://game/campaign/campaign_screen.gd")
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
 const Saves := preload("res://game/campaign/saves.gd")
+const CGrid := preload("res://campaign/cgrid.gd")
 
 var failures := 0
 
@@ -124,10 +125,15 @@ func _campaign_lists() -> void:
 	root.add_child(cs)
 	await _frames(5)
 	cs.close_dialog()
-	cs.select_region(CData.region_index("latium"))
+	# The recruit list is in the card of an army at one of our cities
+	# (format 6): Rome's first army inside the walls of Roma.
+	var a0: Dictionary = CState.armies_of(cs.st, rome)[0]
+	CState.place(a0, CGrid.site(CData.region_index("latium")))
+	cs._replan()
+	cs.select_army(int(a0["id"]))
 	await _frames(4)
 	var sc = cs.side_scroll
-	_check(sc.get_v_scroll_bar().max_value > sc.get_v_scroll_bar().page, "the region panel overflows the phone screen (scrollable)")
+	_check(sc.get_v_scroll_bar().max_value > sc.get_v_scroll_bar().page, "the army card with its recruit list overflows the phone screen (scrollable)")
 	# (a) drag starting on a recruit + button.
 	var plus: Button = cs.side_box.find_child("recruit_heavy", true, false)
 	var y0: int = sc.scroll_vertical

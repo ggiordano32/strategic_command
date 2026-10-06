@@ -205,7 +205,7 @@ orders (plain data):
 | order | fields | when applied |
 |---|---|---|
 | move | army, to, mode (version 4: 0 lay siege, the default when missing; 1 assault at once; version 5: 2 march in without attacking), persist (version 5: 0/1); version 6: x, y (the destination cell) or tgt (an enemy army to attack or pursue; a besieger, from an army inside: a sally) or join (another army of the faction: march to it and merge into it on arrival), mode 0 lay siege / 1 storm on reaching a hostile settlement, persist; "to" (a region) still works: its settlement's cell (with mode 2 into hostile land: its camp) | step 3, all players' moves by army id (version 5 / 6: in rounds) |
-| recruit | r, unit (type key) | step 2; paid now, arrives at end of turn |
+| recruit | r, unit (type key); version 6 also army (an army of ours on or next to the settlement: the recruit joins it) or new 1 (the turn's "new" recruits of the region raise one new army inside the walls) | step 2; paid now, arrives at end of turn; the army it joins is mustering: it cannot march this turn (see "Recruiting into armies") |
 | build | r, chain | step 2; paid now, done after the chain's turns |
 | merge | army, into | step 2 (same region, at most 12 units; version 6: on the same or a neighbouring cell, besiegers too) |
 | exchange | from (our army), to (our army or an allied player's), units [indices of from's units going to `to`], back (optional: indices of to's units coming to `from`; not with an ally's army) | step 2 (the two armies as for merge; neither above 12 units; an army left empty is gone; to an ally: a gift, event "gift") |
@@ -464,7 +464,8 @@ test exaggerates numbers; in an army line the gap is smaller.
 - Recruits per turn: village 1, town 2, city 3; a recruit needs the line's
   building at its tier's level (workshop 1 bolts, 2 stones), is paid at once
   and joins the first army in the region with room at the end of the turn (or
-  forms a new army).
+  forms a new army). Version 6: recruits go into a chosen army at the city
+  or raise a new army there (see "Recruiting into armies").
 - Replenishment in own or allied land, not in a battle, not in debt: 8% of
   full strength plus 6% per level of the line's building in that region.
 
@@ -988,7 +989,7 @@ contact, sieges, sally / relief, support, stances, raiding, retreats),
   friendly region's field cell when nothing is near). A retreat ends its
   march, its points and a fortified stance.
 - **Recruits** arrive inside the walls (on the settlement's cell) or join
-  an army of the faction on or next to it.
+  an army of the faction on or next to it (see "Recruiting into armies").
 - **Merging, exchanging, gifts** (added after the first playtest: "lots of
   1 and 2 stacks at the same location"; no version bump, the new army key
   `dest_army` is read with a default and only present while used).
@@ -1033,6 +1034,58 @@ contact, sieges, sally / relief, support, stances, raiding, retreats),
   1154: largest 7 / 10 / 10 (was 7 / 10 / 13), 1 eliminated (was 2), 51
   battles (9 field, was 7). The AI's own merge step is unchanged (it
   merges armies within a cell before planning); deterministic.
+- **Recruiting into armies** (agreed with the user, built 2026-10-06; no
+  version bump: the queue is only filled during a turn's resolution). The
+  `recruit` order takes an optional target: `army` (an army of ours) or
+  `new: 1`; without either it is the old form (the AI, the test policies).
+  - Into an army: valid when the army is ours, not in a battle, stands on
+    or next to (Chebyshev 1) the settlement of a region we own (an ally's
+    city does not recruit for us: "not your region"), and has room: its
+    units plus the recruits already queued for it below 12 ("the army is
+    full"); otherwise the region's checks as before (roster, building,
+    besieged, battle pending, money). "not at the settlement", "no such
+    army"; `army` with `new`, or either on a format 5 or older state: "bad
+    order".
+  - Slots: village 1, town 2, city 3 a turn per region, shared by every
+    recruit there (into any army, a new army, old-form orders).
+  - Raise a new army (`new: 1`): all of a region's "new" recruits of the
+    turn form ONE army on the settlement's cell (inside the walls, default
+    stance). It stays apart from `_auto_merge6` the turn it is raised (the
+    end-of-turn gathering would otherwise put it straight back into the
+    army in the city); from the next turn, idle on the city's cell in the
+    same stance as another army, it gathers like any other.
+  - Queue: `queue` stays a list of unit keys (the AI reads it); version 6
+    adds `qa`, parallel to it, the army each entry joins: an id, -2 a new
+    army (`CRules.QA_RAISE`), -1 (`QA_ANY`) an old-form order that found no
+    army. An old-form order records, when it is given, the army
+    `_add_recruit` would pick then (`CRules.recruit_target`: the faction's
+    first army by id on or next to the settlement, not in a battle, with
+    room counting its queued recruits). `qa` exists only between the order
+    and the end of the turn (and in a plan preview); a captured region
+    drops it with its queue. `CRules.queue_of(st, r)` gives
+    [[unit, army], ...].
+  - End of turn (`_place_recruits6`): each entry joins its army while that
+    is still ours, on or next to the settlement, not in a battle and below
+    12; else (the army merged away, was destroyed, got caught in a battle,
+    filled up by a merge) it is placed as before (`_add_recruit`: the first
+    army there with room, else a new army inside the walls). QA_ANY entries
+    use `_add_recruit` as before.
+  - **Mustering rule** (rules, AI and players alike): an army with recruits
+    queued for it this turn (`CRules.mustering`: any entry of `qa` with its
+    id, so old-form orders muster the army they will join) cannot march
+    this turn. In the move step (`execute_moves6`, players' step 3 and the
+    AI's step 5) its move is refused with a `move_failed` "mustering"; a
+    player's march (persist, or one stored from an earlier turn) is kept
+    and goes on next turn; the turn summary reads "An army taking recruits
+    stayed to muster them this turn; a stored march goes on next turn." The
+    plan preview (`apply_order` of a move) refuses it too. The order of
+    orders does not matter: recruits apply in step 2, moves in step 3.
+    Merging, exchanging, splitting and stance changes are not moves and
+    stay allowed (a mustering army merged away gives its recruits to the
+    fallback above).
+  - Later (not done): the AI planner does not know the rule yet; it should
+    recruit into armies it means to hold. Today its moves for an army that
+    takes recruits that turn are simply refused that turn.
 - **AI** (`_move_grid`; plans, the moves run in rounds). Turns to a region
   come from static distance fields of every settlement (`CGrid.field`:
   points over the grid, a sea lane 200, memoised; the first AI turn of a
@@ -1108,7 +1161,7 @@ the stance toggle).
   `docs/screenshots/campaign_phone_key.png`.
 - **Select an army** (tap its banner; tap again to deselect): its reach
   this turn as a filled translucent area with a smoothed outline (cells
-  from `CRules.reach6`; next turn's reach a dim outline), red circles for
+  from `CRules.reach6`; next turn's reach a dashed outline), red circles for
   enemy zones of control, yellow lines to friendly armies it supports or is
   supported by and red ones to enemies it can attack this turn
   (`CRules.links_of`).
@@ -1152,6 +1205,37 @@ the stance toggle).
   colour) stay in the dialog's button row. Confirm adds one `exchange`
   order; Undo takes it back like any order. Screenshot (1560 x 720, phone
   scale): `docs/screenshots/exchange_phone.png`.
+- **Recruiting** (version 6). The region panel has no recruit list: it
+  shows "Recruits (N of M here this turn)", the planned new army ("Raising
+  a new army: 2 units (...)" with an X that cancels it), the "Raise new
+  army" button (off with the reason when the region cannot recruit now:
+  besieged, recruitment full, money), "Trains here" (for each line the best
+  tier the buildings unlock with the building, and what the next tier
+  needs; a tap opens the unit book), the buildings and the garrison (the
+  units the settlement provides by level and walls, with the garrison's
+  strength; a tap opens the unit book). "Raise new army" opens a picker:
+  the best tier per line with price and upkeep, - / count / + per line (up
+  to the free slots and the treasury), the total; "Raise army (N)" adds N
+  `recruit` orders with `new: 1` in one Undo step. The army card of an army
+  of ours standing at one of our cities (on or next to its cell) has a
+  "Recruit at Roma" section at the end: "N of M recruits here this turn;
+  they join this army at the end of the turn, and it cannot march this
+  turn", then the best tier per line (price, tier, upkeep, or why not;
+  tap: the unit book page with a Recruit button; "+" recruits at once).
+  Planned recruits show in the unit list greyed, "arriving", with an X, and
+  the count reads "7 of 12 units (+1 arriving)"; the preview treasury has
+  paid for them. Planned recruits and a planned march are exclusive per
+  army: with a march planned (or stored) the section reads "This army is
+  marching this turn: cancel its move to recruit into it"; planning a march
+  (tap, drag, merge march) for an army with recruits planned shows a toast
+  "This army is taking N recruits this turn: an army taking recruits
+  cannot march until the next turn." with "Cancel recruits and march" /
+  "Keep recruiting", never silently. Screenshots (1560 x 720, phone scale):
+  `docs/screenshots/recruit_phone_army.png` (the card's arriving recruit
+  and recruit list), `recruit_phone_raise.png` (the picker). Testing aids:
+  `--camp-recruit=N:key:k` (the Nth army inside the walls of key, k
+  recruits planned into it, selected), `--camp-raise=key:k` (the region
+  panel and the picker with k units picked).
 - **Siege panel** (tap a besieged city). Besieger: the odds bar with
   Assault / Continue siege / Withdraw (Withdraw marches every besieger of
   yours to the field cell of the region it came from, or your nearest).
@@ -1226,7 +1310,7 @@ and its armies disband.
   auto, AI calm / normal / aggressive. Online mode: see "Online play".
 - **Map:** pan (drag, right / middle drag, W A S D / arrows), zoom (pinch,
   wheel, + / -) from the whole map to close up; territories tinted by owner;
-  settlements sized by level, rings for walls, gold dot for great cities;
+  settlements sized by level, rings for walls, a white star for key cities;
   dashed land routes, dotted light-blue sea lanes; army banners in faction
   colour with unit count and strength bar (players' outlined in white),
   scaled down and overlapped when zoomed out; pending battles as red crosses.
@@ -1236,7 +1320,10 @@ and its armies disband.
 - **Region panel:** income, growth, armies, recruit list (best tier per line,
   price and upkeep; tap a unit for its unit book page with a Recruit button;
   "+" recruits at once; planned recruits with X), buildings (build / upgrade
-  with cost and turns, or why not), garrison.
+  with cost and turns, or why not), garrison. Version 6: no recruit list
+  (recruiting is in the army card; the region panel raises new armies, and
+  shows what the city trains and its garrison): see "View (version 6)",
+  Recruiting.
 - **Army panel:** units with strength bars; tap units to choose them; Split
   off, Disband (confirm), Merge into another army there, Book; planned move
   with Cancel.
@@ -1340,8 +1427,16 @@ As built 2026-10-05; the server side is in `docs/SERVER.md`.
   immobile, wider zone, better odds, not after moving; raiding points),
   raiding income both ways, migration 5 -> 6 and from the format 1 file,
   the step log, determinism and a save / load in the middle, plain-data
-  state. The tests above that run on `_new()` play format 5 states (the
-  older rules online campaigns keep).
+  state. Recruiting into armies (`_grid_recruit_army`): into an army at
+  the city and one next to it, the slots shared with a new army and the
+  old form, the cap counting queued recruits, an army away from the city,
+  an ally's city, `army` with `new`, format 5 refusing targets, mustering
+  (the move refused, the destination kept, the march next turn, the
+  preview's refusal), the old form mustering its army, one raised army per
+  region and turn left apart by the end-of-turn gathering that turn and
+  gathered the next, a besieged city refusing both forms, determinism, no
+  queue left, JSON round trip. The tests above that run on `_new()` play
+  format 5 states (the older rules online campaigns keep).
 - `tests/campaign_sim.gd` AI-only campaigns (pacing, economy, time per turn,
   sieges, interceptions and raids, a pacing table; `--twice` checks
   determinism, `--format=5` plays the previous rules, `--format=4` the
@@ -1356,8 +1451,12 @@ As built 2026-10-05; the server side is in `docs/SERVER.md`.
   Undo, attack an army (`tgt`), a siege switched to Assault on arrival,
   into our own city, the stance selector, a drag from an army (a march)
   against a drag elsewhere (a pan), the siege panel's Assault / Continue /
-  Withdraw, End turn, the replay and a tap skipping it. The older parts run
-  on a format 5 state.
+  Withdraw, End turn, the replay and a tap skipping it; recruiting: the
+  army card's recruit list, "+", the arriving row and count, its X, the
+  march toast (Keep recruiting / Cancel recruits and march), the list off
+  while marching, the region panel without a recruit list (garrison,
+  trains here), the Raise new army picker and the planned army's X. The
+  older parts run on a format 5 state.
 - `tests/campaign_input_test.gd` (windowed) the screens with synthetic
   touches (also: the siege panel's Assault / Maintain and Sally with the
   odds bar; version 5: a move into enemy land marches in by default and

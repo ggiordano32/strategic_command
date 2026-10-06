@@ -7,7 +7,7 @@ extends Node2D
 ##
 ## State version 6: the selected army's reach this turn is a filled
 ## translucent area with a smoothed outline (cells from CRules.reach6; next
-## turn's a dimmer outline); land routes are gone (armies walk the grid),
+## turn's a dashed outline); land routes are gone (armies walk the grid),
 ## sea lanes join the port cells.
 
 const CData := preload("res://campaign/cdata.gd")
@@ -30,9 +30,10 @@ const COL_ROUTE := Color(0.25, 0.18, 0.1, 0.55)   # versions 1-5: land routes
 const ROUTE_DASH := 7.0
 const LANE_W := 1.6
 const COL_REACH := Color(1.0, 0.98, 0.85, 0.36)    # version 6: reach this turn (fill)
-const COL_REACH_HOSTILE := Color(1.0, 0.6, 0.45, 0.36)
 const COL_REACH_EDGE := Color(1, 0.95, 0.6, 0.95)
-const COL_REACH_NEXT := Color(1, 1, 0.85, 0.35)   # ... next turn (outline)
+const COL_REACH_NEXT := Color(1, 1, 0.9, 0.7)     # ... next turn (dashed outline)
+const REACH_NEXT_W := 2.0
+const REACH_NEXT_DASH := 7.0                       # dash and gap, screen px
 const OWNER_EDGE_A := 0.85                         # owner band inside each territory
 const OWNER_EDGE_W := 3.5
 const COL_BLOCKED := Color(0.1, 0.1, 0.1, 0.32)    # version 5: a neighbour it cannot enter
@@ -55,8 +56,9 @@ var grid := false
 var reach_rects: Array = []      # Rect2 per reachable cell this turn (fallback fill)
 var reach_fill: Array = []       # outer outlines that triangulate (the fill)
 var reach_loops: Array = []      # PackedVector2Array outlines (this turn)
-var next_loops: Array = []       # ... within two turns (dimmer)
-var reach_hostile := false
+var next_loops: Array = []       # ... within two turns (dashed)
+var _next_dashes: Array = []     # next_loops cut into dashes (PackedVector2Array of segment pairs)
+var _next_dashes_lw := -1.0      # ... for this line scale
 
 
 ## Set the reach (per cell: 0 this turn, 1 next turn, -1 not), or clear it
@@ -66,6 +68,8 @@ func set_reach(rt: PackedInt32Array) -> void:
 	reach_loops = []
 	next_loops = []
 	reach_fill = []
+	_next_dashes = []
+	_next_dashes_lw = -1.0
 	if rt.size() != CGrid.count():
 		queue_redraw()
 		return
@@ -295,9 +299,40 @@ static func draw_reach_edge(ci: CanvasItem, closed: PackedVector2Array, lw: floa
 	ci.draw_polyline(closed, COL_REACH_EDGE, 2.4 * lw, true)
 
 
-## Version 6: an outline of next turn's reach.
+## Version 6: an outline of next turn's reach: dashed, light over a dark
+## shadow (clearly visible on light land, unlike this turn's solid bright
+## edge).
 static func draw_next_edge(ci: CanvasItem, closed: PackedVector2Array, lw: float) -> void:
-	ci.draw_polyline(closed, COL_REACH_NEXT, 1.5 * lw, true)
+	draw_next_dashes(ci, next_dashes(closed, lw), lw)
+
+
+## The dashes of a closed outline (dash and gap REACH_NEXT_DASH screen px,
+## running on round the corners): segment pairs for draw_multiline.
+static func next_dashes(closed: PackedVector2Array, lw: float) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	var dash := REACH_NEXT_DASH * lw
+	var t := 0.0  # position in the dash + gap period
+	for i in closed.size() - 1:
+		var a := closed[i]
+		var b := closed[i + 1]
+		var ln := a.distance_to(b)
+		var s := 0.0
+		while s < ln:
+			var left := maxf((dash - t) if t < dash else (2.0 * dash - t), 0.01)
+			var e := minf(s + left, ln)
+			if t < dash:
+				out.append(a.lerp(b, s / ln))
+				out.append(a.lerp(b, e / ln))
+			t = fmod(t + (e - s), 2.0 * dash)
+			s = e
+	return out
+
+
+static func draw_next_dashes(ci: CanvasItem, segs: PackedVector2Array, lw: float) -> void:
+	if segs.size() < 2:
+		return
+	ci.draw_multiline(segs, Color(0, 0, 0, 0.45), (REACH_NEXT_W + 2.0) * lw, true)
+	ci.draw_multiline(segs, COL_REACH_NEXT, REACH_NEXT_W * lw, true)
 
 
 ## Version 5: a destination's fill (turns 0 this turn, 1 next; attack: an
@@ -325,20 +360,26 @@ static func draw_blocked_cross(ci: CanvasItem, c: Vector2, lw: float) -> void:
 
 
 ## Version 6: the selected army's reach (this turn filled, next turn a
-## dim outline).
+## dashed outline).
 func _draw_reach(lw: float) -> void:
 	if reach_loops.is_empty():
 		return
-	var col := COL_REACH if not reach_hostile else COL_REACH_HOSTILE
 	if reach_rects.is_empty():
 		for lp in reach_fill:
-			draw_colored_polygon(lp, col)
+			draw_colored_polygon(lp, COL_REACH)
 	for rc in reach_rects:
-		draw_rect(rc, col)
-	for lp in next_loops:
-		var closed: PackedVector2Array = (lp as PackedVector2Array).duplicate()
-		closed.append(lp[0])
-		draw_next_edge(self, closed, lw)
+		draw_rect(rc, COL_REACH)
+	if not is_equal_approx(_next_dashes_lw, lw):
+		# Map redraws every frame while an army is selected: cut the dashes
+		# again only when the zoom changes.
+		_next_dashes = []
+		_next_dashes_lw = lw
+		for lp in next_loops:
+			var closed: PackedVector2Array = (lp as PackedVector2Array).duplicate()
+			closed.append(lp[0])
+			_next_dashes.append(next_dashes(closed, lw))
+	for segs in _next_dashes:
+		draw_next_dashes(self, segs, lw)
 	for lp in reach_loops:
 		var closed2: PackedVector2Array = (lp as PackedVector2Array).duplicate()
 		closed2.append(lp[0])

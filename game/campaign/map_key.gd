@@ -183,7 +183,9 @@ func rows() -> Array:
 		out.append(["Lay siege to a city", _path_row("siege", "", m)])
 		out.append(["Go inside your own walls", _path_row("inside", "", m)])
 		out.append(["Merge into your army", _path_row("merge", "", m)])
-		out.append(["Too many units to merge (over %d)" % CData.ARMY_MAX, _path_row("merge", "Too many", m)])
+		out.append(["Too many units to merge (over %d)" % CData.ARMY_MAX, func(ci: Control, sz: Vector2):
+			_land(ci, sz)
+			Overlay.draw_path_step(ci, _l(sz), _r(sz), Overlay.path_color("merge", "Too many"), true, m)])
 		out.append(["Selected army"])
 		out.append(["Reach this turn", func(ci: Control, sz: Vector2):
 			_land(ci, sz)
@@ -202,9 +204,8 @@ func rows() -> Array:
 		out.append(["Enemy it can attack this turn", func(ci: Control, sz: Vector2):
 			_land(ci, sz)
 			Overlay.draw_link(ci, _l(sz), _r(sz), 1)])
-		out.append(["Your army it can merge with", _glyph_row(0)])
-		out.append(["Ally's army: give it units", _glyph_row(1)])
-		out.append(["Too many units to merge with", _glyph_row(2)])
+		out.append(["Your army it can merge into (in reach, room for the units)", _glyph_row(0)])
+		out.append(["Ally's army next to it: give it units", _glyph_row(1)])
 	elif format == 5:
 		out.append(["Planned marches"])
 		out.append(["March this turn", _hop_row(Overlay.COL_MOVE, true)])
@@ -251,9 +252,10 @@ func rows() -> Array:
 				var p := Vector2(sz.x * (0.22 + 0.28 * k), sz.y * 0.5)
 				Overlay.draw_stance(ci, Rect2(p - Vector2(10, 0), Vector2(10, 10)), int(s))
 				k += 1])
-	out.append(["Grey dot: has moved this turn", func(ci: Control, sz: Vector2):
-		_land(ci, sz)
-		Overlay.draw_banner(ci, Vector2(sz.x * 0.5, sz.y * 0.45), oc, 0.75, true, 6, 1.0, 0.0, true)])
+	if format <= 5:
+		out.append(["Grey dot: has moved this turn", func(ci: Control, sz: Vector2):
+			_land(ci, sz)
+			Overlay.draw_banner(ci, Vector2(sz.x * 0.5, sz.y * 0.45), oc, 0.75, true, 6, 1.0, 0.0, true)])
 	if format >= 6:
 		out.append(["Replay: the way an army just went", func(ci: Control, sz: Vector2):
 			_land(ci, sz)
@@ -271,7 +273,7 @@ func rows() -> Array:
 		_land(ci, sz)
 		Overlay.draw_site(ci, Vector2(sz.x * 0.3, sz.y * 0.5), 5.0, oc, 1, 0.8)
 		Overlay.draw_site(ci, Vector2(sz.x * 0.72, sz.y * 0.5), 5.0, oc, 3, 0.8)])
-	out.append(["Gold dot: key city (victory goal)", func(ci: Control, sz: Vector2):
+	out.append(["White star: key city (victory goal)", func(ci: Control, sz: Vector2):
 		_land(ci, sz)
 		Overlay.draw_site(ci, sz * 0.5, Overlay.SITE_R[2] * 0.9, ec, 0, 0.9)
 		Overlay.draw_key_city(ci, sz * 0.5, Overlay.SITE_R[2] * 0.9)])
@@ -311,7 +313,7 @@ static func _closed(rc: Rect2) -> PackedVector2Array:
 		Vector2(rc.position.x, rc.end.y), rc.position])
 
 
-## A version 6 path of a kind with its end badge.
+## A version 6 path of a kind with its end badge (none for a plain march).
 static func _path_row(kind: String, caption: String, m: float) -> Callable:
 	return func(ci: Control, sz: Vector2):
 		_land(ci, sz)

@@ -30,7 +30,13 @@ extends SceneTree
 ## back), a tap on our other army previews the merge (caption, glyphs) and
 ## a second tap merges (next to it: a merge order; further: a march with
 ## "join"), a tap on the allied player's army next to ours opens the panel
-## in gift mode. The map key: format 5 rows on the format 5 copy; on the
+## in gift mode. Recruiting (format 6): the army card of an army at our
+## city has the recruit list (slots, "+", the planned recruit greyed in the
+## unit list with X); a march planned for it asks in a toast (Keep
+## recruiting / Cancel recruits and march); with a march planned the list
+## is off; the region panel has no recruit list but the garrison, what the
+## city trains and Raise new army (the picker: +, the count, Raise army;
+## the planned army with X). The map key: format 5 rows on the format 5 copy; on the
 ## overworld the Key button opens it (its version 6 rows, clear of End turn
 ## and the hint), a tap on the map closes it on a phone, its header closes it.
 ## Exits 0 on success, 1 on failure.
@@ -81,7 +87,9 @@ func _initialize() -> void:
 		_g_drag_army, _g_drag_check, _g_pan, _g_pan_check, _g_siege, _g_siege_assault, _g_siege_continue, _g_siege_withdraw,
 		_g_siege_done, _g_end_turn, _g_summary, _g_replay, _g_replay_check,
 		_m_setup, _m_card, _m_xc_open, _m_xc_move, _m_xc_confirm, _m_xc_check, _m_undo, _m_tap1, _m_tap2, _m_merged,
-		_m_far, _m_far1, _m_far2, _m_far_check, _m_gift_setup, _m_gift_tap, _m_gift_row, _m_gift_confirm, _m_gift_check, _s_done,
+		_m_far, _m_far1, _m_far2, _m_far_check, _m_gift_setup, _m_gift_tap, _m_gift_row, _m_gift_confirm, _m_gift_check,
+		_r_setup, _r_card, _r_check, _r_march, _r_keep, _r_march2, _r_cancel_march, _r_marching, _r_again, _r_x, _r_x_check,
+		_r_region, _r_picker, _r_picker2, _r_picker3, _r_raise_check, _r_raise_x, _s_done,
 	]
 
 
@@ -1279,3 +1287,187 @@ func _m_gift_check() -> void:
 		if str(o["t"]) == "exchange" and int(o["to"]) == _ally_army and not o.has("back"):
 			n += 1
 	_check(n == 1 and CState.unit_count(CState.army(cs.ps, _ally_army)) == 2, "the gift is planned; the ally's army shows it in the preview")
+
+
+# ------------------------------------------------------------ recruiting ---
+
+var _lat := CData.region_index("latium")
+
+
+func _recruit_orders() -> Array:
+	var out: Array = []
+	for o in cs.orders:
+		if str(o["t"]) == "recruit":
+			out.append(o)
+	return out
+
+
+func _r_setup() -> void:
+	if cs.dialog.visible:
+		cs.close_dialog()
+	# Back to Rome alone; its first army inside the walls of Roma.
+	if _ally_army >= 0:
+		cs.st["armies"].erase(CState.army(cs.st, _ally_army))
+	cs.st["humans"] = [rome]
+	cs.st["factions"][rome]["treasury"] = 20000
+	cs.orders = []
+	var a := CState.army(cs.st, g0)
+	CState.place(a, CGrid.site(_lat))
+	a["dest_x"] = -1
+	a["dest_y"] = -1
+	a["tgt"] = -1
+	CState.place(CState.army(cs.st, g1), CState.field_cell(CData.region_index("campania")))
+	cs._replan()
+	cs.close_side()
+	cs.focus_region(_lat, 1.4)
+	await process_frame
+	await process_frame
+	cs.select_army(g0)
+
+
+func _r_card() -> void:
+	var sec = cs.side_box.find_child("recruit_section", true, false)
+	var sl = cs.side_box.find_child("recruit_slots", true, false)
+	_check(sec != null and sl != null and (sl as Label).text.begins_with("0 of 3 recruits here this turn"),
+		"the card of an army at Roma has the recruit list (%s)" % ((sl as Label).text if sl else "none"))
+	var plus: Button = null
+	for b in cs.side_box.find_children("recruit_*", "Button", true, false):
+		if not (b as Button).disabled and not str(b.name).begins_with("recruit_cancel"):
+			plus = b
+			break
+	_check(plus != null, "a recruit + button is enabled")
+	if plus != null:
+		_tap_control(plus)
+
+
+func _r_check() -> void:
+	var rec := _recruit_orders()
+	_check(rec.size() == 1 and int(rec[0].get("army", -1)) == g0 and int(rec[0]["r"]) == _lat, "+ plans a recruit into this army: %s" % str(rec))
+	var cnt = cs.side_box.find_child("army_count", true, false)
+	_check(cnt != null and (cnt as Label).text.contains("(+1 arriving)"), "the card counts it as arriving (%s)" % ((cnt as Label).text if cnt else ""))
+	_check(cs.side_box.find_child("arriving_0", true, false) != null and cs.side_box.find_child("recruit_cancel_0", true, false) != null,
+		"the planned recruit shows greyed in the unit list with an X")
+	var sl = cs.side_box.find_child("recruit_slots", true, false)
+	_check(sl != null and (sl as Label).text.begins_with("1 of 3"), "the slot counter: %s" % ((sl as Label).text if sl else ""))
+	_check(int(cs.ps["factions"][rome]["treasury"]) < int(cs.st["factions"][rome]["treasury"]), "the price comes off the previewed treasury")
+	# Plan a march for it: a toast asks first.
+	_tap(_cell_screen(CState.field_cell(_lat)))
+
+
+func _r_march() -> void:
+	var t = cs.find_child("toast", true, false)
+	var b1 := _button("toast_action")
+	var b2 := _button("toast_action2")
+	_check(t != null and b1 != null and b1.text == "Cancel recruits and march" and b2 != null and b2.text == "Keep recruiting",
+		"a march for an army taking recruits asks: Cancel recruits and march / Keep recruiting")
+	_check(_move_order(g0).is_empty() and _recruit_orders().size() == 1, "nothing changed yet")
+	if b2 != null:
+		_tap_control(b2)
+
+
+func _r_keep() -> void:
+	_check(_move_order(g0).is_empty() and _recruit_orders().size() == 1, "Keep recruiting: no march, the recruit stays")
+	_tap(_cell_screen(CState.field_cell(_lat)))
+
+
+func _r_march2() -> void:
+	var b1 := _button("toast_action")
+	_check(b1 != null and b1.text == "Cancel recruits and march", "the toast again")
+	if b1 != null:
+		_tap_control(b1)
+
+
+func _r_cancel_march() -> void:
+	_check(not _move_order(g0).is_empty() and _recruit_orders().is_empty(), "Cancel recruits and march: the recruit is gone, the march planned")
+
+
+func _r_marching() -> void:
+	cs.select_army(g0)
+	await process_frame
+	var ml = cs.side_box.find_child("recruit_marching", true, false)
+	_check(ml != null and cs.side_box.find_child("recruit_heavy", true, false) == null and cs.side_box.find_child("recruit_row_heavy", true, false) == null,
+		"with a march planned the recruit list is off: This army is marching this turn")
+	cs.orders = []
+	cs._replan()
+	cs.select_army(g0)
+
+
+func _r_again() -> void:
+	var plus: Button = null
+	for b in cs.side_box.find_children("recruit_*", "Button", true, false):
+		if not (b as Button).disabled and not str(b.name).begins_with("recruit_cancel"):
+			plus = b
+			break
+	if plus != null:
+		_tap_control(plus)
+
+
+func _r_x() -> void:
+	_check(_recruit_orders().size() == 1, "recruit planned again")
+	var x = cs.side_box.find_child("recruit_cancel_0", true, false)
+	if x != null:
+		_tap_control(x)
+
+
+func _r_x_check() -> void:
+	_check(_recruit_orders().is_empty() and cs.side_box.find_child("arriving_0", true, false) == null, "its X takes the planned recruit back")
+
+
+func _r_region() -> void:
+	cs.close_side()
+	cs.select_region(_lat)
+	await process_frame
+	await process_frame
+	_check(cs.side_box.find_child("recruit_heavy", true, false) == null and cs.side_box.find_child("recruit_row_heavy", true, false) == null,
+		"the region panel has no recruit list")
+	_check(cs.side_box.find_child("garrison_section", true, false) != null and cs.side_box.find_child("trains_section", true, false) != null,
+		"it shows the garrison and what the city trains")
+	var rb := _button("raise_army")
+	_check(rb != null and not rb.disabled, "Raise new army")
+	if rb != null:
+		_tap_control(rb)
+
+
+var _raise_key := ""
+
+
+func _r_picker() -> void:
+	_check(cs.dialog.visible and cs.dialog.find_child("raise_panel", true, false) != null, "the picker opens")
+	var ok = cs.dialog.find_child("raise_confirm", true, false)
+	_check(ok != null and (ok as Button).disabled, "Raise army is off with nothing picked")
+	for b in cs.dialog.find_children("raise_plus_*", "Button", true, false):
+		if not (b as Button).disabled:
+			_raise_key = str(b.name).substr("raise_plus_".length())
+			_tap_control(b)
+			return
+	_check(false, "a + in the picker")
+
+
+func _r_picker2() -> void:
+	var b = cs.dialog.find_child("raise_plus_" + _raise_key, true, false)
+	if b != null:
+		_tap_control(b)
+
+
+func _r_picker3() -> void:
+	var cl = cs.dialog.find_child("raise_count_" + _raise_key, true, false)
+	var ok = cs.dialog.find_child("raise_confirm", true, false)
+	_check(cl != null and (cl as Label).text == "2" and ok != null and not (ok as Button).disabled and (ok as Button).text == "Raise army (2)",
+		"two picked: Raise army (2)")
+	if ok != null:
+		_tap_control(ok)
+
+
+func _r_raise_check() -> void:
+	var rec := _recruit_orders()
+	_check(rec.size() == 2 and int(rec[0].get("new", 0)) == 1 and int(rec[1].get("new", 0)) == 1 and not cs.dialog.visible,
+		"Raise army adds two new-army recruit orders: %s" % str(rec))
+	var pl = cs.side_box.find_child("raise_planned", true, false)
+	_check(pl != null and (pl as Label).text.begins_with("Raising a new army: 2 units"), "the region panel shows it: %s" % ((pl as Label).text if pl else ""))
+	var x = cs.side_box.find_child("raise_cancel", true, false)
+	if x != null:
+		_tap_control(x)
+
+
+func _r_raise_x() -> void:
+	_check(_recruit_orders().is_empty() and cs.side_box.find_child("raise_planned", true, false) == null, "its X cancels the new army")

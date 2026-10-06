@@ -33,7 +33,11 @@ extends SceneTree
 ## 5 -> 6 and from the format 1 file, the step log, determinism; merging
 ## by marching onto an army (same turn, following it across turns, the cap,
 ## the army gone), the exchange order both ways (an army emptied is gone),
-## gifts to an allied human (taking refused, the event), recruits
+## gifts to an allied human (taking refused, the event), recruiting into
+## an army and raising a new one (slots shared, the cap, wrong / allied
+## region and besieged refused, mustering refuses the march and keeps the
+## stored destination, old-form orders muster their army too, one raised
+## army that the end-of-turn gathering leaves apart that turn), recruits
 ## collecting in one army, the end-of-turn merge of idle armies in a city.
 ## Exits 0 on success, 1 on failure.
 
@@ -95,6 +99,7 @@ func _init() -> void:
 	_grid_exchange()
 	_grid_gift()
 	_grid_recruit_collect()
+	_grid_recruit_army()
 	_grid_auto_merge()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
 	quit(0 if fails == 0 else 1)
@@ -2127,3 +2132,134 @@ func _grid_auto_merge() -> void:
 	_check(not CState.army(s2, int(q["id"])).is_empty() and not CState.army(s2, int(p["id"])).is_empty(), "an army marching off is not merged")
 	var r1 := CTurn.resolve_turn(st, [])
 	_check(CState.state_hash(r1) == CState.state_hash(s1), "the end-of-turn merge is deterministic")
+
+
+## Version 6 recruiting into armies: {r, unit, army} and {r, unit, new: 1}.
+func _grid_recruit_army() -> void:
+	var rome := _f("rome")
+	var lat := _r("latium")
+	var site := CGrid.site(lat)
+	var st := _empty6()
+	_italy(st, rome)
+	st["factions"][rome]["treasury"] = 50000
+	var key := _recruitable(st, rome, lat)
+	_check(key != "" and int(CData.RECRUITS_PER_TURN[int(st["regions"][lat]["level"])]) == 3, "Roma recruits 3 a turn (%s)" % key)
+	if key == "":
+		return
+	var price := UT.price_of(UT.index_of(key))
+	var a := _put(st, rome, site, ["heavy", "spear"])
+	var nb := -1
+	for k in 8:
+		var c := CGrid.at(CGrid.cx(site) + CGrid.DX[k], CGrid.cy(site) + CGrid.DY[k])
+		if c >= 0 and CGrid.passable(c) and CGrid.region(c) >= 0:
+			nb = c
+			break
+	var b := _put(st, rome, nb, ["cav"])
+	var ida := int(a["id"])
+	var idb := int(b["id"])
+	var far := _put(st, rome, CState.field_cell(_r("bruttium")), ["spear"])
+	# Validation.
+	var p := CState.copy(st)
+	_check(CRules.apply_order(p, rome, {"t": "recruit", "r": lat, "unit": key, "army": ida}) == "", "recruit into the army in the city")
+	_check(int(p["factions"][rome]["treasury"]) == 50000 - price and str(CRules.queue_of(p, lat)) == str([[key, ida]]),
+		"paid now, queued for that army (%s)" % str(CRules.queue_of(p, lat)))
+	_check(CRules.mustering(p, ida) and not CRules.mustering(p, idb), "that army is mustering, the other is not")
+	_check(CRules.apply_order(p, rome, {"t": "recruit", "r": lat, "unit": key, "army": idb}) == "", "an army next to the settlement recruits too")
+	_check(CRules.apply_order(p, rome, {"t": "recruit", "r": lat, "unit": key, "new": 1}) == "", "a new army: the third slot")
+	_check(CRules.apply_order(p, rome, {"t": "recruit", "r": lat, "unit": key, "army": ida}) == "recruitment full this turn",
+		"the slots are shared by the armies and the new army")
+	_check(CRules.apply_order(p, rome, {"t": "recruit", "r": lat, "unit": key}) == "recruitment full this turn", "and by the old form")
+	_check(CRules.apply_order(CState.copy(st), rome, {"t": "recruit", "r": lat, "unit": key, "army": int(far["id"])}) == "not at the settlement",
+		"an army away from the city cannot recruit there")
+	_check(CRules.apply_order(CState.copy(st), rome, {"t": "recruit", "r": lat, "unit": key, "army": ida, "new": 1}) == "bad order",
+		"army and new together are refused")
+	_check(CRules.apply_order(CState.copy(st), rome, {"t": "recruit", "r": lat, "unit": key, "army": 999999}) == "no such army", "an unknown army is refused")
+	# The cap counts the recruits already queued for the army.
+	var p2 := CState.copy(st)
+	var big := CState.army(p2, ida)
+	for i in CData.ARMY_MAX - 3:
+		(big["units"] as Array).append({"t": "spear", "n": 100})
+	_check(CRules.apply_order(p2, rome, {"t": "recruit", "r": lat, "unit": key, "army": ida}) == "", "an army of 11 takes one recruit")
+	_check(CRules.apply_order(p2, rome, {"t": "recruit", "r": lat, "unit": key, "army": ida}) == "the army is full",
+		"not a second: %d units with the queued recruit" % CData.ARMY_MAX)
+	# An allied player's city does not recruit for us.
+	var st3 := _new6([rome, _f("carthage")])
+	st3["armies"] = []
+	var cart := _f("carthage")
+	CState.set_dip(st3, rome, cart, CState.ALLIED)
+	var camp := _r("campania")
+	st3["regions"][camp]["owner"] = cart
+	var ra := _put(st3, rome, CGrid.site(camp), ["heavy"])
+	_check(CRules.recruit_region(st3, ra) == -1, "an allied city is not a recruiting place for us")
+	_check(CRules.apply_order(st3, rome, {"t": "recruit", "r": camp, "unit": key, "army": int(ra["id"])}) == "not your region",
+		"recruiting into our army at an ally's city is refused")
+	_check(CRules.recruit_region(st, a) == lat and CRules.recruit_region(st, b) == lat and CRules.recruit_region(st, far) != lat,
+		"recruit_region: on or next to our settlement (%d %d %d)" % [CRules.recruit_region(st, a), CRules.recruit_region(st, b), CRules.recruit_region(st, far)])
+	# A turn: two armies and a new army share the slots.
+	var orders := [{"t": "recruit", "r": lat, "unit": key, "army": ida}, {"t": "recruit", "r": lat, "unit": key, "army": idb},
+		{"t": "recruit", "r": lat, "unit": key, "new": 1}]
+	var s1 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, orders)])
+	var s1b := CTurn.resolve_turn(st, [CTurn.submission(st, rome, orders)])
+	_check(CState.state_hash(s1) == CState.state_hash(s1b), "recruiting into armies is deterministic")
+	_check(CState.unit_count(CState.army(s1, ida)) == 3 and CState.unit_count(CState.army(s1, idb)) == 2, "each army gets its recruit")
+	var raised: Array = []
+	for x in CState.armies_of(s1, rome):
+		if int(x["id"]) not in [ida, idb, int(far["id"])]:
+			raised.append(x)
+	_check(raised.size() == 1 and CState.unit_count(raised[0]) == 1 and CState.cell(raised[0]) == site,
+		"the new army forms inside the walls (%d raised)" % raised.size())
+	_check(not raised.is_empty() and not CState.army(s1, ida).is_empty() and CState.cell(CState.army(s1, ida)) == site,
+		"the raised army is not gathered into the army in the city the turn it is raised")
+	var no_qa := true
+	for rs in s1["regions"]:
+		no_qa = no_qa and not rs.has("qa") and (rs["queue"] as Array).is_empty()
+	_check(no_qa, "no queue (and no qa) is left after the turn")
+	var back := CState.from_json(CState.to_json(s1), int(s1["version"]))
+	_check(CState.state_hash(back) == CState.state_hash(s1), "the state survives a JSON round trip")
+	if not raised.is_empty():
+		var s2 := CTurn.resolve_turn(s1, [])
+		_check(CState.army(s2, int(raised[0]["id"])).is_empty() and CState.unit_count(CState.army(s2, ida)) == 4,
+			"idle on the city's cell next turn, it gathers into the army there")
+	# Several "new" recruits in one turn form one army.
+	var s3 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [{"t": "recruit", "r": lat, "unit": key, "new": 1},
+		{"t": "recruit", "r": lat, "unit": key, "new": 1}])])
+	var n3 := CState.armies_of(s3, rome).size()
+	_check(n3 == 4, "two new-army recruits raise one army (%d armies, was 3)" % n3)
+	# Mustering: the army taking recruits does not march; its march is kept.
+	var dest := CState.field_cell(_r("campania"))
+	var s4 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [{"t": "recruit", "r": lat, "unit": key, "army": ida}, _move6(a, dest)])])
+	var a4 := CState.army(s4, ida)
+	var mf := _events(s4, "move_failed")
+	_check(CState.cell(a4) == site and CState.unit_count(a4) == 3, "an army taking recruits stays where it is and gets them")
+	_check(mf.size() == 1 and str(mf[0]["why"]) == "mustering" and int(mf[0]["army"]) == ida, "the move is refused: mustering")
+	_check(int(a4.get("dest_x", -1)) == CGrid.cx(dest) and int(a4.get("dest_y", -1)) == CGrid.cy(dest), "its destination is kept")
+	var s5 := CTurn.resolve_turn(s4, [])
+	_check(CState.cell(CState.army(s5, ida)) != site, "next turn it marches on")
+	var pv := CTurn.preview(st, rome, [{"t": "recruit", "r": lat, "unit": key, "army": ida}, _move6(a, dest)])
+	_check((pv["errors"] as Array).size() == 1 and str(pv["errors"][0][1]) == "mustering", "the plan preview refuses its move: mustering")
+	# The old form musters the army it will join.
+	var p6 := CState.copy(st)
+	_check(CRules.apply_order(p6, rome, {"t": "recruit", "r": lat, "unit": key}) == "" and str(CRules.queue_of(p6, lat)) == str([[key, ida]]),
+		"an old-form recruit is queued for the first army at the city (%s)" % str(CRules.queue_of(p6, lat)))
+	var s6 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [{"t": "recruit", "r": lat, "unit": key}, _move6(a, dest)])])
+	_check(CState.cell(CState.army(s6, ida)) == site and CState.unit_count(CState.army(s6, ida)) == 3, "and that army musters too")
+	_check(CState.cell(CState.army(s6, idb)) == nb, "the army next to it was free (it did not move without orders)")
+	# Older formats do not know the targets.
+	var o5 := CState.as_format(_new6([rome]), 5)
+	o5["factions"][rome]["treasury"] = 50000
+	var a5: Dictionary = CState.armies_of(o5, rome)[0]
+	_check(CRules.apply_order(o5, rome, {"t": "recruit", "r": int(a5["r"]), "unit": key, "army": int(a5["id"])}) == "bad order",
+		"format 5 refuses a recruit into an army")
+	# Besieged: no recruiting, in any form.
+	var sa := _r("samnium")
+	var st7 := _empty6()
+	st7["factions"][rome]["treasury"] = 50000
+	var inside := _put(st7, rome, CGrid.site(sa), ["heavy"])
+	var e := _put(st7, _f("epirus"), CState.ring_cell(sa, 4), ["spear", "spear"])
+	CRules.start_siege(st7, sa, e, _r("apulia"))
+	var k7 := _recruitable(st, rome, sa)
+	if k7 == "":
+		k7 = key
+	_check(CRules.apply_order(st7, rome, {"t": "recruit", "r": sa, "unit": k7, "army": int(inside["id"])}) == "besieged"
+		and CRules.apply_order(st7, rome, {"t": "recruit", "r": sa, "unit": k7, "new": 1}) == "besieged",
+		"a besieged city recruits nothing (into an army or a new one)")

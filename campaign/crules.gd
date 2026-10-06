@@ -25,6 +25,10 @@ extends RefCounted
 ##        version 6: CData.ST_* default 0, forced march 2, fortify 3, raid 4)
 ##   {"t": "cancel_move", "army": id}  (version 5: forget a stored dest)
 ##   {"t": "recruit", "r": region, "unit": unit type key}
+##        (version 6 also "army": id, into that army of ours standing on or
+##        next to the settlement, or "new": 1, the turn's recruits raise one
+##        new army inside the walls; an army with recruits queued for it is
+##        mustering: it cannot march this turn; see _recruit)
 ##   {"t": "build", "r": region, "chain": building chain index}
 ##   {"t": "merge", "army": id, "into": id}             (same region;
 ##        version 6: on the same or a neighbouring cell)
@@ -100,13 +104,15 @@ static func apply_order(st: Dictionary, f: int, o: Dictionary) -> String:
 				var ma := CState.army(st, int(o.get("army", -1)))
 				if ma.is_empty() or int(ma["f"]) != f:
 					return "no such army"
+				if mustering(st, int(ma["id"])):
+					return "mustering"
 				return _can_move6(st, ma, order_cell(st, ma, o), int(o.get("tgt", -1)), int(o.get("mode", CData.MODE_SIEGE)),
 					true, int(o.get("join", -1)))
 			return can_move(st, CState.army(st, int(o.get("army", -1))), int(o.get("to", -1)), f)
 		"build":
 			return _build(st, f, int(o.get("r", -1)), int(o.get("chain", -1)))
 		"recruit":
-			return _recruit(st, f, int(o.get("r", -1)), str(o.get("unit", "")))
+			return _recruit(st, f, o)
 		"merge":
 			return _merge(st, f, int(o.get("army", -1)), int(o.get("into", -1)))
 		"split":
@@ -228,13 +234,125 @@ static func recruit_check(st: Dictionary, f: int, r: int, key: String) -> String
 	return ""
 
 
-static func _recruit(st: Dictionary, f: int, r: int, key: String) -> String:
-	var why := recruit_check(st, f, r, key)
+## A recruit order: {r, unit} (the old form: the recruit joins the army
+## _add_recruit picks), version 6 also {r, unit, army: id} (into that army
+## of ours on or next to the settlement) or {r, unit, new: 1} (the
+## recruits of the turn raise one new army inside the walls). Version 6
+## records for each queue entry the army it joins in the region's "qa"
+## (parallel to "queue": an army id, QA_RAISE for a "new" order, QA_ANY for
+## an old-form order that found no army; only present during a turn's
+## resolution): that army is mustering and cannot march this turn.
+const QA_ANY := -1
+const QA_RAISE := -2
+
+
+static func _recruit(st: Dictionary, f: int, o: Dictionary) -> String:
+	var r := int(o.get("r", -1))
+	var key := str(o.get("unit", ""))
+	var army := int(o.get("army", -1))
+	var raise := int(o.get("new", 0)) != 0
+	var why := recruit_order_check(st, f, r, key, army, raise)
 	if why != "":
 		return why
+	var into := -1
+	if CState.grid_on(st):
+		into = army if army >= 0 else (QA_RAISE if raise else recruit_target(st, f, r))
 	st["factions"][f]["treasury"] = int(st["factions"][f]["treasury"]) - UT.price_of(UT.index_of(key))
-	(st["regions"][r]["queue"] as Array).append(key)
+	var rs: Dictionary = st["regions"][r]
+	(rs["queue"] as Array).append(key)
+	if CState.grid_on(st):
+		if not rs.has("qa"):
+			rs["qa"] = []
+		(rs["qa"] as Array).append(into)
 	return ""
+
+
+## recruit_check plus the version 6 targets: army (an army of ours on or
+## next to the settlement, not in a battle, with room for the recruits
+## already queued for it) or raise (a new army). Older formats refuse both.
+static func recruit_order_check(st: Dictionary, f: int, r: int, key: String, army: int = -1, raise: bool = false) -> String:
+	if (army >= 0 or raise) and not CState.grid_on(st):
+		return "bad order"
+	if army >= 0 and raise:
+		return "bad order"
+	var why := recruit_check(st, f, r, key)
+	if why != "" or army < 0:
+		return why
+	return army_recruit_check(st, f, r, army)
+
+
+## "" if army id of faction f can take recruits from region r this turn
+## (version 6): it stands on or next to the settlement's cell, is not in a
+## battle and has room (its units plus the recruits already queued for it
+## below CData.ARMY_MAX). The region's own checks are recruit_check's.
+static func army_recruit_check(st: Dictionary, f: int, r: int, id: int) -> String:
+	var a := CState.army(st, id)
+	if a.is_empty() or int(a["f"]) != f:
+		return "no such army"
+	if r < 0 or r >= CData.region_count() or CGrid.cheb(CState.cell(a), CGrid.site(r)) > 1:
+		return "not at the settlement"
+	if int(a["busy"]) != 0:
+		return "in a battle"
+	if CState.unit_count(a) + queued_into(st, id) >= CData.ARMY_MAX:
+		return "the army is full"
+	return ""
+
+
+## Version 6: the settlement of faction f (a region it owns) army a stands
+## on or next to, -1 if none (allied settlements do not recruit for it).
+static func recruit_region(st: Dictionary, a: Dictionary) -> int:
+	if a.is_empty() or not CState.grid_on(st):
+		return -1
+	var c := CState.cell(a)
+	for r in CData.region_count():
+		if int(st["regions"][r]["owner"]) == int(a["f"]) and CGrid.cheb(c, CGrid.site(r)) <= 1:
+			return r
+	return -1
+
+
+## Recruits queued this turn (all regions) that join army id.
+static func queued_into(st: Dictionary, id: int) -> int:
+	var n := 0
+	for rs in st["regions"]:
+		if rs.has("qa"):
+			for v in rs["qa"]:
+				if int(v) == id:
+					n += 1
+	return n
+
+
+## Version 6 mustering rule: an army with recruits queued for it this turn
+## cannot march this turn (its move is refused, "mustering"; a stored
+## march carries on next turn).
+static func mustering(st: Dictionary, id: int) -> bool:
+	return id >= 0 and queued_into(st, id) > 0
+
+
+## The queue entries of region r as [[unit key, army id | QA_RAISE |
+## QA_ANY], ...] (older formats: QA_ANY for all).
+static func queue_of(st: Dictionary, r: int) -> Array:
+	var rs: Dictionary = st["regions"][r]
+	var q: Array = rs["queue"]
+	var qa: Array = rs.get("qa", [])
+	var out: Array = []
+	for k in q.size():
+		out.append([str(q[k]), int(qa[k]) if k < qa.size() else QA_ANY])
+	return out
+
+
+## Version 6: the army an old-form recruit in region r joins (where
+## _add_recruit would place it now, counting the recruits already queued
+## for each army): the first army of f by id on or next to the
+## settlement's cell, not in a battle, with room; QA_ANY if none (placed
+## by _add_recruit at the end of the turn: usually a new army inside the
+## walls).
+static func recruit_target(st: Dictionary, f: int, r: int) -> int:
+	var site := CGrid.site(r)
+	for a in st["armies"]:
+		if int(a["f"]) == f and CGrid.cheb(CState.cell(a), site) <= 1 and int(a["busy"]) == 0 \
+				and CState.unit_count(a) + queued_into(st, int(a["id"])) < CData.ARMY_MAX:
+			return int(a["id"])
+	return QA_ANY
 
 
 static func _own_free_army(st: Dictionary, f: int, id: int) -> Dictionary:
@@ -1852,6 +1970,7 @@ static func _capture(st: Dictionary, r: int, f: int, how: String = "") -> void:
 	rs["gar"] = CData.CAPTURED_GARRISON
 	rs["build"] = []
 	rs["queue"] = []
+	rs.erase("qa")
 	var e := {"k": "captured", "r": r, "f": f, "from": old}
 	if how != "":
 		e["how"] = how
@@ -2105,6 +2224,7 @@ static func growth_per_turn(st: Dictionary, r: int) -> int:
 static func end_of_turn(st: Dictionary) -> void:
 	var nreg := CData.region_count()
 	check_sieges(st)
+	var fresh := {}  # version 6: ids of the armies raised by this turn's recruits
 	# Constructions and recruits.
 	for r in nreg:
 		var rs: Dictionary = st["regions"][r]
@@ -2119,10 +2239,14 @@ static func end_of_turn(st: Dictionary) -> void:
 				event(st, {"k": "built", "r": r, "f": o, "chain": int(bld[0]), "level": int(bld[1])})
 		var q: Array = rs["queue"]
 		if not q.is_empty() and o >= 0:
-			for key in q:
-				_add_recruit(st, o, r, str(key))
+			if rs.has("qa"):
+				_place_recruits6(st, o, r, fresh)
+			else:
+				for key in q:
+					_add_recruit(st, o, r, str(key))
 			event(st, {"k": "recruited", "r": r, "f": o, "units": q.duplicate()})
 			rs["queue"] = []
+		rs.erase("qa")
 	# Money.
 	for f in CState.nf():
 		var fs: Dictionary = st["factions"][f]
@@ -2147,7 +2271,7 @@ static func end_of_turn(st: Dictionary) -> void:
 		a["units"] = keep
 	_drop_empty_armies(st)
 	if CState.grid_on(st):
-		_auto_merge6(st)
+		_auto_merge6(st, fresh)
 	# Replenishment in friendly land.
 	for a in st["armies"]:
 		var f := int(a["f"])
@@ -2197,8 +2321,10 @@ static func end_of_turn(st: Dictionary) -> void:
 ## Version 6, end of turn: armies of one faction standing idle on the same
 ## settlement cell (not in a battle, no march stored, the same stance)
 ## merge, the lowest id taking in the others in id order while they fit in
-## CData.ARMY_MAX; one that does not fit starts the next group.
-static func _auto_merge6(st: Dictionary) -> void:
+## CData.ARMY_MAX; one that does not fit starts the next group. Armies
+## raised by this turn's recruits (`fresh`: id -> 1) stay apart this turn
+## (a "Raise new army" is not swallowed by the army in the city at once).
+static func _auto_merge6(st: Dictionary, fresh: Dictionary = {}) -> void:
 	var arr: Array = st["armies"]
 	var gone := PackedByteArray()
 	gone.resize(arr.size())
@@ -2206,12 +2332,12 @@ static func _auto_merge6(st: Dictionary) -> void:
 	var any := false
 	for i in arr.size():
 		var a: Dictionary = arr[i]
-		if gone[i] != 0 or not _idle_in_town(a):
+		if gone[i] != 0 or not _idle_in_town(a) or fresh.has(int(a["id"])):
 			continue
 		for j in range(i + 1, arr.size()):
 			var b: Dictionary = arr[j]
 			if gone[j] != 0 or int(b["f"]) != int(a["f"]) or CState.cell(b) != CState.cell(a) \
-					or CState.stance(b) != CState.stance(a) or not _idle_in_town(b):
+					or CState.stance(b) != CState.stance(a) or not _idle_in_town(b) or fresh.has(int(b["id"])):
 				continue
 			if CState.unit_count(a) + CState.unit_count(b) > CData.ARMY_MAX:
 				continue
@@ -2247,12 +2373,50 @@ static func _add_recruit(st: Dictionary, f: int, r: int, key: String) -> void:
 		if int(a["f"]) == f and here and int(a["busy"]) == 0 and CState.unit_count(a) < CData.ARMY_MAX:
 			(a["units"] as Array).append(unit)
 			return
+	_raise_army(st, f, r, unit)
+
+
+## A new army of faction f holding `unit`, in region r (version 6: inside
+## the walls, on the settlement's cell). Returns its id.
+static func _raise_army(st: Dictionary, f: int, r: int, unit: Dictionary) -> int:
 	var id := new_army_id(st, f)
 	st["factions"][f]["next_army"] = int(st["factions"][f]["next_army"]) + 1
 	var na := {"id": id, "f": f, "r": r, "units": [unit], "from": -1, "moved": 0, "busy": 0}
-	if grid:
+	if CState.grid_on(st):
 		CState.place(na, CGrid.site(r))  # version 6: raised inside the walls
 	_insert_army(st, na)
+	return id
+
+
+## Version 6, end of turn: region r's recruits (queue and qa, in index
+## order) join the army each was queued for while it is still ours, on or
+## next to the settlement, not in a battle, with room; the entries of a
+## "new" order (QA_RAISE) all join one army raised inside the walls, which
+## goes into `fresh` (kept out of this turn's _auto_merge6); the others
+## (QA_ANY: an old-form order that found no army, or a recruit whose army
+## can no longer take it) are placed as _add_recruit does.
+static func _place_recruits6(st: Dictionary, f: int, r: int, fresh: Dictionary) -> void:
+	var rs: Dictionary = st["regions"][r]
+	var raised := -1
+	for e in queue_of(st, r):
+		var key := str(e[0])
+		var into := int(e[1])
+		var unit := {"t": key, "n": UT.size_of(UT.index_of(key))}
+		if into != QA_RAISE:
+			var a := CState.army(st, into) if into >= 0 else {}
+			if not a.is_empty() and int(a["f"]) == f and int(a["busy"]) == 0 \
+					and CGrid.cheb(CState.cell(a), CGrid.site(r)) <= 1 and CState.unit_count(a) < CData.ARMY_MAX:
+				(a["units"] as Array).append(unit)
+			else:
+				_add_recruit(st, f, r, key)
+			continue
+		var ra := CState.army(st, raised) if raised >= 0 else {}
+		if raised >= 0 and not ra.is_empty() and CState.unit_count(ra) < CData.ARMY_MAX:
+			(ra["units"] as Array).append(unit)
+			continue
+		raised = _raise_army(st, f, r, unit)
+		fresh[raised] = 1
+	rs.erase("qa")
 
 
 # ------------------------------------------------------ end conditions ---
@@ -2702,6 +2866,15 @@ static func execute_moves6(st: Dictionary, moves: Array) -> void:
 				dest = CState.cell(t)
 		var mode := int(mv[3])
 		var persist := int(mv[4]) if (mv as Array).size() > 4 else 0
+		if mustering(st, id):
+			# Recruits are joining it this turn: it stays; a march for later
+			# turns is kept.
+			event(st, {"k": "move_failed", "f": int(a["f"]), "army": id, "to": CGrid.region(dest) if dest >= 0 else -1, "why": "mustering"})
+			if persist != 0 and dest >= 0:
+				_store_march(a, dest, tgt, mode, join)
+			else:
+				_drop_march(a)
+			continue
 		var why := _can_move6(st, a, dest, tgt, mode, false, join)
 		if why == "" and siege_role(st, a) == 2 and join < 0:
 			_sally6(st, a, CState.army(st, tgt))  # inside a besieged city: a sally
@@ -2763,15 +2936,20 @@ static func execute_moves6(st: Dictionary, moves: Array) -> void:
 		if done or int(p["persist"]) == 0:
 			_drop_march(a)
 		else:
-			var dc := int(p["dest"])
-			a["dest_x"] = CGrid.cx(dc)
-			a["dest_y"] = CGrid.cy(dc)
-			a["tgt"] = int(p["tgt"])
-			a["mode"] = int(p["mode"])
-			if int(p["join"]) >= 0:
-				a["dest_army"] = int(p["join"])
-			else:
-				a.erase("dest_army")
+			_store_march(a, int(p["dest"]), int(p["tgt"]), int(p["mode"]), int(p["join"]))
+
+
+## Keep a march for the next turns (dest cell, enemy army tgt, mode, the
+## army it marches to merge into).
+static func _store_march(a: Dictionary, dc: int, tgt: int, mode: int, join: int) -> void:
+	a["dest_x"] = CGrid.cx(dc)
+	a["dest_y"] = CGrid.cy(dc)
+	a["tgt"] = tgt
+	a["mode"] = mode
+	if join >= 0:
+		a["dest_army"] = join
+	else:
+		a.erase("dest_army")
 
 
 static func _drop_march(a: Dictionary) -> void:

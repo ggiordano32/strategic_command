@@ -22,7 +22,8 @@ extends RefCounted
 ##      walks its cheapest path in rounds (crules.execute_moves: blocking,
 ##      interception, siege / assault on arrival; version 6: cells in rounds,
 ##      crules.execute_moves6: zones of control, contact battles, sieges by
-##      moving onto a city); then the players' assault,
+##      moving onto a city; an army with recruits queued for it this turn
+##      is mustering and stays, its stored march kept); then the players' assault,
 ##      sally and (version 5) siege orders, faction by faction;
 ##   4. players' proposals, answered by the AI at once;
 ##   5. AI factions act in faction order (build, recruit, move; version 5:
