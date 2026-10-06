@@ -118,6 +118,7 @@ var _routes := {}              # army id -> plan_path result for its plan (per p
 var _drag_army := -1           # an army being dragged to a destination
 var _drag_cell := -1
 var _drag_tgt := -1
+var merge_tap := -1            # own army tapped once with an army selected: the merge previewed
 var _shown_turn := -1          # the turn whose army positions are _shown_cells
 var _shown_cells := {}         # army id -> cell, as last shown
 var _replay_q: Dictionary = {} # a replay waiting for the dialogs to close
@@ -203,6 +204,7 @@ func _load_data() -> void:
 ## Testing aids: --cam-zoom=Z --cam-region=key --close-dialog
 ## --select-region=key --select-army=N (Nth army of the player)
 ## --plan-move=N:key --camp-attack=N:key --camp-siege=N:key[:turns] --camp-besieged=key:faction --camp-fight --sim-turns=N --dialog-scroll=PX --side-scroll=PX
+## --camp-exchange=N:M:k (version 6: the exchange panel)
 ## --plan-stance=N:0|1 --camp-raid=N:key (version 5: the player's Nth army raids region key) --camp-intercept=N:key:faction (an army
 ## of faction marching into key runs into the player's Nth army standing there in the field)
 ## --dialog=battles|summary|diplomacy|realm|goals|warnings|online|citymap
@@ -249,6 +251,27 @@ func _apply_debug_args() -> void:
 			if k12 < mine12.size():
 				CState.place(mine12[k12], CGrid.at(int(v.get_slice(":", 1)), int(v.get_slice(":", 2))))
 				_replan()
+		elif a.begins_with("--camp-exchange="):
+			# --camp-exchange=N:M:k (version 6): put the player's Mth army next
+			# to its Nth and open the exchange panel, the Nth's first k units
+			# sent across.
+			var mine13 := CState.armies_of(st, f)
+			var n13 := int(v.get_slice(":", 0))
+			var m13 := int(v.get_slice(":", 1))
+			if n13 < mine13.size() and m13 < mine13.size() and n13 != m13:
+				var c13 := CState.cell(mine13[n13])
+				for d13 in 8:
+					var nc := CGrid.at(CGrid.cx(c13) + CGrid.DX[d13], CGrid.cy(c13) + CGrid.DY[d13])
+					if nc >= 0 and CGrid.passable(nc) and CGrid.step_cost(c13, nc) > 0 and CGrid.site_region(nc) < 0:
+						CState.place(mine13[m13], nc)
+						break
+				_replan()
+				var id13 := int(mine13[n13]["id"])
+				focus_region(int(mine13[n13]["r"]), 1.4)
+				select_army(id13)
+				panels.show_exchange(id13, int(mine13[m13]["id"]))
+				for k13 in int(v.get_slice(":", 2)):
+					panels._xc_toggle("out", k13)
 		elif a.begins_with("--replay-freeze="):
 			_replay_freeze = int(v)  # testing aid
 		elif a.begins_with("--plan-move="):
@@ -703,7 +726,7 @@ func move_kind(army: int) -> String:
 		var a6 := CState.army(ps, army)
 		if p6.is_empty() or a6.is_empty():
 			return ""
-		return str(CRules.move_aim(ps, a6, int(p6["cell"]), int(p6["tgt"]), int(p6["mode"]))["kind"])
+		return str(CRules.move_aim(ps, a6, int(p6["cell"]), int(p6["tgt"]), int(p6["mode"]), int(p6.get("join", -1)))["kind"])
 	var to := planned_move(army)
 	var a := CState.army(ps, army)
 	if to < 0 or a.is_empty():
@@ -870,6 +893,10 @@ func explain_refusal(army: int, r: int, why_in: String = "") -> void:
 		text = "An enemy army's zone of control stops the march: attack it or go round."
 	elif why == "fortified":
 		text = "This army is fortified and cannot move: set its stance back to Default first (the army card)."
+	elif why == "too many units to merge" or why.begins_with("more than"):
+		text = "Too many units to merge: an army holds at most %d. Exchange units instead when the two stand together (the army card)." % CData.ARMY_MAX
+	elif why == "not together":
+		text = "The two armies must stand on the same or neighbouring cells."
 	elif why.begins_with("on a forced march"):
 		text = "On a forced march an army cannot attack or lay siege: set its stance to Default first (the army card)."
 	else:
@@ -1148,6 +1175,7 @@ func show_side(content_builder: Callable) -> void:
 func close_side() -> void:
 	side.visible = false
 	sel_army = -1
+	merge_tap = -1
 	sel_region = -1
 	_refresh_map()
 
@@ -1334,26 +1362,34 @@ func _g() -> bool:
 	return not ps.is_empty() and CState.grid_on(ps)
 
 
-## Version 6: army's planned or stored march: {cell, tgt, mode, stored} ({}
-## none).
+## Version 6: army's planned or stored march: {cell, tgt, mode, stored,
+## join (an army of ours it marches to merge into, -1)} ({} none).
 func plan6(army: int) -> Dictionary:
 	for m in moves:
 		if int(m[0]) == army:
-			return {"cell": int(m[1]), "tgt": int(m[4]) if (m as Array).size() > 4 else -1, "mode": int(m[2]), "stored": false}
+			return {"cell": int(m[1]), "tgt": int(m[4]) if (m as Array).size() > 4 else -1, "mode": int(m[2]), "stored": false,
+				"join": int(m[5]) if (m as Array).size() > 5 else -1}
 	var a := CState.army(ps, army)
 	if a.is_empty() or int(a["busy"]) != 0:
 		return {}
 	for o in orders:
 		if str(o["t"]) == "cancel_move" and int(o["army"]) == army:
 			return {}
+	var join := int(a.get("dest_army", -1))
+	if join >= 0:
+		var j := CState.army(ps, join)
+		if j.is_empty():
+			return {}
+		return {"cell": CState.cell(j), "tgt": -1, "mode": int(a.get("mode", CData.MODE_SIEGE)), "stored": true, "join": join}
 	var tgt := int(a.get("tgt", -1))
 	if tgt >= 0:
 		var t := CState.army(ps, tgt)
 		if t.is_empty():
 			return {}
-		return {"cell": CState.cell(t), "tgt": tgt, "mode": int(a.get("mode", CData.MODE_SIEGE)), "stored": true}
+		return {"cell": CState.cell(t), "tgt": tgt, "mode": int(a.get("mode", CData.MODE_SIEGE)), "stored": true, "join": -1}
 	if int(a.get("dest_x", -1)) >= 0:
-		return {"cell": CGrid.at(int(a["dest_x"]), int(a["dest_y"])), "tgt": -1, "mode": int(a.get("mode", CData.MODE_SIEGE)), "stored": true}
+		return {"cell": CGrid.at(int(a["dest_x"]), int(a["dest_y"])), "tgt": -1, "mode": int(a.get("mode", CData.MODE_SIEGE)), "stored": true,
+			"join": -1}
 	return {}
 
 
@@ -1367,7 +1403,7 @@ func route6(army: int) -> Dictionary:
 	var a := CState.army(ps, army)
 	var out := {}
 	if not p6.is_empty() and not a.is_empty():
-		out = CRules.plan_path(ps, a, int(p6["cell"]), int(p6["tgt"]), int(p6["mode"]))
+		out = CRules.plan_path(ps, a, int(p6["cell"]), int(p6["tgt"]), int(p6["mode"]), {}, 12, int(p6.get("join", -1)))
 		if not out.has("why"):
 			out["turns"] = out["t"]
 			out["left"] = int(out["m"][-1]) if not (out["m"] as Array).is_empty() else CState.mp(a)
@@ -1418,6 +1454,93 @@ func set_move6(army: int, c: int, tgt: int) -> void:
 	_t("campaign_input", {"what": "move", "tgt": tgt})
 
 
+## Version 6: army marches to our army `target` and merges into it on
+## arrival (a move with "join"; it keeps following it over the turns). Next
+## to it already: a merge order now (the plan preview shows the merged
+## army). The same target again cancels the march.
+func set_join(army: int, target: int) -> void:
+	var a := CState.army(ps, army)
+	var t := CState.army(ps, target)
+	if a.is_empty() or t.is_empty():
+		return
+	merge_tap = -1
+	if CGrid.cheb(CState.cell(a), CState.cell(t)) <= 1 and CRules.merge_check(ps, f, army, target) == "":
+		if add_order({"t": "merge", "army": army, "into": target}) == "":
+			_t("campaign_input", {"what": "merge"})
+			select_army(target)
+		return
+	var cur := plan6(army)
+	var same := not cur.is_empty() and int(cur.get("join", -1)) == target
+	var had_order := false
+	for o in orders:
+		if str(o["t"]) == "move" and int(o["army"]) == army:
+			had_order = true
+	var before := orders.duplicate(true)
+	var keep: Array = []
+	for o in orders:
+		if not ((str(o["t"]) == "move" or str(o["t"]) == "cancel_move") and int(o["army"]) == army):
+			keep.append(o)
+	orders = keep
+	if same:
+		if not had_order and bool(cur["stored"]):
+			orders.append({"t": "cancel_move", "army": army})
+		_undo.append(before)
+		_replan()
+		save()
+		_t("campaign_input", {"what": "move_cancel"})
+		return
+	var mo := {"t": "move", "army": army, "join": target, "mode": CData.MODE_SIEGE, "persist": 1}
+	var pv := CTurn.preview(st, f, orders + [mo])
+	for e in pv["errors"]:
+		if int(e[0]) == orders.size():
+			orders = before
+			_replan()
+			explain_refusal(army, maxi(CGrid.region(CState.cell(t)), 0), str(e[1]))
+			return
+	orders.append(mo)
+	_undo.append(before)
+	_replan()
+	save()
+	_t("campaign_input", {"what": "move", "join": target})
+
+
+## First tap on another of our armies with one selected: preview the merge
+## (its path, the caption, a toast with Merge / Select it); a second tap on
+## it plans the merge.
+func _merge_tap_at(id: int) -> void:
+	if merge_tap == id:
+		set_join(sel_army, id)
+		if sel_army >= 0 and not CState.army(ps, sel_army).is_empty():
+			show_side(func(box): panels.army_panel(box, sel_army))
+		return
+	var sa := CState.army(ps, sel_army)
+	var t := CState.army(ps, id)
+	if int(plan6(sel_army).get("join", -1)) == id:
+		set_join(sel_army, id)  # the planned merge tapped again: cancel it
+		show_side(func(box): panels.army_panel(box, sel_army))
+		return
+	merge_tap = id
+	var why := CRules.join_check(ps, sa, id)
+	if why == "" and CGrid.cheb(CState.cell(sa), CState.cell(t)) <= 1:
+		why = CRules.merge_check(ps, f, sel_army, id)
+	elif why == "":
+		why = CRules._can_move6(ps, sa, CState.cell(t), -1, CData.MODE_SIEGE, true, id)
+	_refresh_map()
+	var other := id
+	var sel_it := ["Select it", func(): select_army(other)]
+	if why == "too many units to merge" or why.begins_with("more than"):
+		show_toast("Too many units to merge: %d + %d is more than %d. Exchange units instead when they stand together." % [
+			CState.unit_count(sa), CState.unit_count(t), CData.ARMY_MAX], [sel_it])
+	elif why != "":
+		show_toast("Cannot merge into that army now: %s." % why, [sel_it])
+	else:
+		var near := CGrid.cheb(CState.cell(sa), CState.cell(t)) <= 1
+		show_toast("Merge into army (%d units)%s. Tap it again, or Merge." % [CState.unit_count(t),
+			": they stand together, at once" if near else ": the army marches to it and merges on arrival"],
+			[["Merge", func(): _merge_tap_at(other)], sel_it])
+	_t("campaign_input", {"what": "merge_preview"})
+
+
 ## Version 6 map: armies on their cells, the selected army's reach, enemy
 ## zones and links, every planned path.
 func _refresh_map6() -> void:
@@ -1451,14 +1574,23 @@ func _refresh_map6() -> void:
 					var rt2 := CRules.plan_path(ps, a, c, int(a.get("tgt", -1)), int(a["mode"]))
 					if not rt2.has("why"):
 						paths.append(path_entry(a, rt2))
-	overlay.paths6 = paths
 	var zones: Array = []
 	var links: Array = []
+	var marks: Array = []
 	var sa := CState.army(ps, sel_army) if sel_army >= 0 else {}
 	if not sa.is_empty():
 		var rt6 := PackedInt32Array()
 		if int(sa["f"]) == f:
 			rt6 = CRules.reach6(ps, sa, 1)
+			if int(sa["busy"]) == 0:
+				marks = _merge_marks(sa, rt6)
+				var mt := CState.army(ps, merge_tap) if merge_tap >= 0 else {}
+				if not mt.is_empty():
+					var pr := CRules.plan_path(ps, sa, CState.cell(mt), -1, CData.MODE_SIEGE, {}, 12, merge_tap)
+					if not pr.has("why"):
+						var pe := path_entry(sa, pr)
+						pe["preview"] = 1
+						paths.append(pe)
 		map_view.reach_hostile = false
 		map_view.set_reach(rt6)
 		var px := float(CGrid.cell_px())
@@ -1472,11 +1604,40 @@ func _refresh_map6() -> void:
 			links.append([sel_army, int(id), 1])
 	else:
 		map_view.set_reach(PackedInt32Array())
+	overlay.paths6 = paths
 	overlay.zones = zones
 	overlay.links = links
+	overlay.merge_marks = marks
+	overlay.merge_tap = merge_tap
 	map_view.queue_redraw()
 	overlay.queue_redraw()
 	_note_positions()
+
+
+## Version 6: the armies the selected one (sa, its reach rt6) can merge
+## into or give units to: [[id, 0 merge (an army of ours it reaches this
+## turn), 1 gift (an allied player's army next to it), 2 too big to merge]].
+func _merge_marks(sa: Dictionary, rt6: PackedInt32Array) -> Array:
+	var out: Array = []
+	var c0 := CState.cell(sa)
+	for e in ps["armies"]:
+		var id := int(e["id"])
+		if id == int(sa["id"]) or int(e["busy"]) != 0:
+			continue
+		var ef := int(e["f"])
+		var ec := CState.cell(e)
+		if ef == f:
+			var near := CGrid.cheb(c0, ec) <= 1
+			if not near and rt6.size() == CGrid.count():
+				for k in CGrid.disc(ec, 1):
+					if rt6[k] == 0:
+						near = true
+						break
+			if near:
+				out.append([id, 2 if CState.unit_count(sa) + CState.unit_count(e) > CData.ARMY_MAX else 0])
+		elif CState.is_human(ps, ef) and CState.friendly(ps, f, ef) and CRules.together(ps, sa, e) == "":
+			out.append([id, 1])
+	return out
 
 
 ## A path for the overlay: {army, pts (map points from the army's cell),
@@ -1496,7 +1657,13 @@ func path_entry(a: Dictionary, rt: Dictionary) -> Dictionary:
 		pts.append(MapOverlay.cell_point(int(aim["cell"])))
 		if now == cells.size():
 			now += 1  # reached this turn: the strike is this turn too
-	return {"army": int(a["id"]), "pts": pts, "now": now, "kind": kind}
+	var out := {"army": int(a["id"]), "pts": pts, "now": now, "kind": kind}
+	if kind == "merge":
+		var t := CState.army(ps, int(aim.get("join", -1)))
+		if not t.is_empty():
+			out["caption"] = "Too many units to merge" if CState.unit_count(a) + CState.unit_count(t) > CData.ARMY_MAX \
+				else "Merge into army (%d units)" % CState.unit_count(t)
+	return out
 
 
 # --------------------------------------------------------------- replay ---
@@ -1605,6 +1772,7 @@ func _step_replay(delta: float) -> void:
 
 func select_army(id: int) -> void:
 	sel_army = id
+	merge_tap = -1
 	var a := CState.army(ps, id)
 	sel_region = -1
 	if not a.is_empty():
@@ -2141,11 +2309,21 @@ func _tap6(p: Vector2) -> void:
 		if id == sel_army:
 			close_side()
 			return
-		if not mine_sel or CState.friendly(ps, f, int(e["f"])):
+		var ef := int(e["f"])
+		if mine_sel and ef == f:
+			_merge_tap_at(id)  # merge (first tap previews)
+			return
+		if mine_sel and ef != f and CState.is_human(ps, ef) and CState.friendly(ps, f, ef) and CRules.together(ps, sa, e) == "":
+			merge_tap = -1
+			panels.show_exchange(sel_army, id)  # the ally's army next to ours: a gift
+			_t("campaign_input", {"what": "exchange_gift"})
+			return
+		if not mine_sel or CState.friendly(ps, f, ef):
 			select_army(id)
 			_t("campaign_input", {"what": "select_army"})
 			return
 	if mine_sel:
+		merge_tap = -1
 		_plan_at(p)
 		return
 	var sr := overlay.settlement_at(p)

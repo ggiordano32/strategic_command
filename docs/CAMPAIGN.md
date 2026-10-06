@@ -64,7 +64,8 @@ armies [{id, f, r, units [{t: unit key, n: men}], from, moved, busy;
   enemy army it marches on), mode (on reaching a hostile settlement: 0 lay
   siege, 1 storm it), stance (0 default, 2 forced march, 3 fortify, 4
   raiding; inside the walls is a position: on its settlement's cell), no
-  dest}] by id;
+  dest; dest_army (only while it marches to merge into that army of its
+  faction; read with a default, no version bump)}] by id;
   id = faction * 100000 + factions[f].next_army
 battles [{id, r, turn, att [army ids], def [army ids], att_f, def_f, reinf
   [army ids], settlement 1|0, from [[army id, region it came from]...]
@@ -89,7 +90,8 @@ events [{turn, k, ...}] (the last two turns: battle (version 4: + kind),
   (the marching army's faction), by, army}; battle kind "field"; version 6:
   moves {steps [[army, x, y]...]} one per movement phase, every step in
   the order taken, kept for the last turn only; intercepted (a contact
-  battle) and retreat carry x, y)
+  battle) and retreat carry x, y; gift {f (giver), to (the allied player),
+  r, n units, army (the receiving army)})
 stats {battles, battles_formula, battles_auto, battles_fought, last_war_on_players}
 ```
 
@@ -202,10 +204,11 @@ orders (plain data):
 
 | order | fields | when applied |
 |---|---|---|
-| move | army, to, mode (version 4: 0 lay siege, the default when missing; 1 assault at once; version 5: 2 march in without attacking), persist (version 5: 0/1); version 6: x, y (the destination cell) or tgt (an enemy army to attack or pursue; a besieger, from an army inside: a sally), mode 0 lay siege / 1 storm on reaching a hostile settlement, persist; "to" (a region) still works: its settlement's cell (with mode 2 into hostile land: its camp) | step 3, all players' moves by army id (version 5 / 6: in rounds) |
+| move | army, to, mode (version 4: 0 lay siege, the default when missing; 1 assault at once; version 5: 2 march in without attacking), persist (version 5: 0/1); version 6: x, y (the destination cell) or tgt (an enemy army to attack or pursue; a besieger, from an army inside: a sally) or join (another army of the faction: march to it and merge into it on arrival), mode 0 lay siege / 1 storm on reaching a hostile settlement, persist; "to" (a region) still works: its settlement's cell (with mode 2 into hostile land: its camp) | step 3, all players' moves by army id (version 5 / 6: in rounds) |
 | recruit | r, unit (type key) | step 2; paid now, arrives at end of turn |
 | build | r, chain | step 2; paid now, done after the chain's turns |
-| merge | army, into | step 2 (same region, at most 12 units) |
+| merge | army, into | step 2 (same region, at most 12 units; version 6: on the same or a neighbouring cell, besiegers too) |
+| exchange | from (our army), to (our army or an allied player's), units [indices of from's units going to `to`], back (optional: indices of to's units coming to `from`; not with an ally's army) | step 2 (the two armies as for merge; neither above 12 units; an army left empty is gone; to an ally: a gift, event "gift") |
 | split | army, units [indices], new (the faction's next army id) | step 2 |
 | disband | army, units [indices] | step 2 |
 | propose | to, what peace / trade / cancel_trade | step 4, AI answers |
@@ -986,7 +989,50 @@ contact, sieges, sally / relief, support, stances, raiding, retreats),
   march, its points and a fortified stance.
 - **Recruits** arrive inside the walls (on the settlement's cell) or join
   an army of the faction on or next to it.
-- **Merging** needs the two armies on the same or neighbouring cells.
+- **Merging, exchanging, gifts** (added after the first playtest: "lots of
+  1 and 2 stacks at the same location"; no version bump, the new army key
+  `dest_army` is read with a default and only present while used).
+  Two armies are *together* (`CRules.together`) on the same or neighbouring
+  cells, neither in a battle; an army inside a besieged city only with
+  another inside it (besiegers on the ring may merge and trade). The
+  `merge` order needs them together and at most `ARMY_MAX` 12 units; the
+  merged army keeps the target's id, stance and cell and moves at the
+  slower part's pace. A move with `join` (tapping your other army) marches
+  to it and merges on arrival (kind "merge": the path ends next to it; the
+  same turn if it gets there, else it keeps following that army, stored as
+  `dest_army`, re-pathed each turn to where it stands); refused "too many
+  units to merge" when the two exceed 12 (also checked on arrival: the move
+  ends with a `move_failed`); if the army is gone (merged elsewhere,
+  disbanded, destroyed) the move ends with a `move_failed` "the army to
+  merge into is gone"; if it is in a battle when the mover arrives, the
+  mover waits next to it and merges on a later turn. Never into or out of a
+  battle. The `exchange` order trades units between two armies together:
+  `units` go from `from` to `to`, `back` the other way, each list after the
+  kept units, in index order; neither may end above 12; an army left with
+  no units is gone (giving all units hands the whole army over). With an
+  allied player's army as `to` it is a **gift**: only from the submitting
+  faction's army (no `back`: taking is refused, "cannot take an ally's
+  units"); both clients apply orders faction by faction in faction order,
+  so a gift is identical everywhere (if the ally's own orders that turn
+  removed the receiving army first, the gift fails as an `order_failed`).
+  The receiver sees "Rome gave you 3 units at Roma" (event `gift`).
+- **Recruits collect, idle armies gather** (version 6): recruits join the
+  faction's first army (by id) on the settlement's cell or next to it with
+  room, else form one new army inside the walls that the city's later
+  recruits join. At the end of the turn (after recruits arrive and debt
+  desertion) armies of one faction standing on the same settlement cell,
+  idle (not in a battle, no march or target stored, not following an
+  army) and in the same stance merge (`CRules._auto_merge6`): the lowest
+  id takes in the others in id order while they fit in 12; one that does
+  not fit starts the next group. Field armies are never merged
+  automatically. Formats 1-5 are unchanged (6 AI campaigns x 60 turns from
+  a format 5 state still give the hashes above). AI pacing with the change
+  (`--seeds=6 --turns=60 --twice`): seeds 1000, 1231, 1385 end on exactly
+  the same hashes; 1077 and 1308 differ but with the same pacing row
+  (largest 7 / 9 / 13 and 6 / 7 / 11, the same eliminations and battles);
+  1154: largest 7 / 10 / 10 (was 7 / 10 / 13), 1 eliminated (was 2), 51
+  battles (9 field, was 7). The AI's own merge step is unchanged (it
+  merges armies within a cell before planning); deterministic.
 - **AI** (`_move_grid`; plans, the moves run in rounds). Turns to a region
   come from static distance fields of every settlement (`CGrid.field`:
   points over the grid, a sea lane 200, memoised; the first AI turn of a
@@ -1068,9 +1114,31 @@ the stance toggle).
   turn, N points left" / "next turn" / "in N turns", "marching on from an
   earlier turn"); "On arrival: Lay siege | Assault" only for a hostile
   city; Cancel move; the points with the cost table; one stance selector
-  (Default, Forced march, Fortify, Raiding) with a line on the chosen one;
-  merging with armies within a cell. The move-mode toast, the inside / in
-  the field toggle, Maintain and the Sally button are gone in version 6.
+  (Default, Forced march, Fortify, Raiding) with a line on the chosen one.
+  At the top: "Merge into army (N units)" for each army of yours together
+  with it and "Exchange units" when any friendly army (yours or the allied
+  player's) is together with it. The move-mode toast, the inside / in the
+  field toggle, Maintain and the Sally button are gone in version 6; Split
+  and Disband stay under the unit list.
+- **Merge on the map.** With an army selected, your armies it can reach
+  this turn (or that stand next to it) carry a small green plus (grey: the
+  two would pass 12 units), allied players' armies next to it a gold gift
+  box. The first tap on your other army previews the merge (its path with
+  the caption "Merge into army (N units)" or "Too many units to merge", and
+  a toast with Merge / Select it); a second tap (or Merge) plans it: next
+  to it a `merge` order now (the plan preview shows the merged army),
+  further a move with `join` (the army card reads "Marches to merge into
+  the army of N units", Cancel move and a tap on it again cancel). A tap on
+  an allied player's army next to the selected one opens the exchange
+  panel as a gift.
+- **Exchange panel** (a dialog): this army on the left, the other on the
+  right (a picker when several stand together); tap a unit row to send it
+  across (it moves to the top of the other column, framed, "in" / "gift"),
+  again to take it back; the counts "N / 12" turn red past the cap and the
+  reason shows; Cancel and Confirm (to the ally: "Gift N units" in their
+  colour) stay in the dialog's button row. Confirm adds one `exchange`
+  order; Undo takes it back like any order. Screenshot (1560 x 720, phone
+  scale): `docs/screenshots/exchange_phone.png`.
 - **Siege panel** (tap a besieged city). Besieger: the odds bar with
   Assault / Continue siege / Withdraw (Withdraw marches every besieger of
   yours to the field cell of the region it came from, or your nearest).
@@ -1086,7 +1154,8 @@ the stance toggle).
   and attack lines), `..._siege.png` (the tent ring and the siege panel),
   `..._replay.png` (the replay mid-slide).
 - Testing aids: `--plan-cell=N:x:y`, `--plan-site=N:key`,
-  `--camp-place=N:x:y`, `--replay-freeze=K`; `--camp-siege` puts the army on
+  `--camp-place=N:x:y`, `--replay-freeze=K`, `--camp-exchange=N:M:k` (the
+  Mth army next to the Nth, the exchange panel open with k units sent); `--camp-siege` puts the army on
   the ring in version 6. The version 5 aids `--camp-raid`,
   `--camp-intercept`, `--camp-attack` were not adapted.
 

@@ -10,9 +10,10 @@ extends RefCounted
 ##
 ## resolve_turn(state, submissions) runs, in order:
 ##   1. players' war declarations and answers to AI proposals;
-##   2. players' other orders (build, recruit, merge, split, disband; version
-##      5: stance, cancel_move), each faction in faction order, its orders
-##      in the order given;
+##   2. players' other orders (build, recruit, merge, split, disband,
+##      exchange (also a gift to an allied human's army); version 5: stance,
+##      cancel_move), each faction in faction order, its orders in the order
+##      given;
 ##   3. players' moves, all factions together, by army id; entering a hostile
 ##      region starts a battle (state version 4: lays siege unless the move's
 ##      mode is assault), entering a region whose battle started this turn
@@ -52,9 +53,9 @@ static func submission(st: Dictionary, f: int, orders: Array) -> Dictionary:
 
 ## Apply a faction's planned orders to a copy of the state (no moves, no AI,
 ## no end of turn), for the planning view: treasury after spending, queued
-## recruits and buildings, merged and split armies. Returns {state, errors
-## [[order index, reason]], moves [[army, to, mode, persist]] (version 6:
-## [[army, dest cell, mode, persist, tgt]])}. Move,
+## recruits and buildings, merged, split and exchanged armies. Returns
+## {state, errors [[order index, reason]], moves [[army, to, mode, persist]]
+## (version 6: [[army, dest cell, mode, persist, tgt, join]])}. Move,
 ## assault, sally and siege orders are only validated.
 static func preview(st: Dictionary, f: int, orders: Array) -> Dictionary:
 	var s := CState.copy(st)
@@ -74,7 +75,7 @@ static func preview(st: Dictionary, f: int, orders: Array) -> Dictionary:
 				elif CState.grid_on(s):
 					var a6 := CState.army(s, int(o["army"]))
 					moves.append([int(o["army"]), CRules.order_cell(s, a6, o), int(o.get("mode", CData.MODE_SIEGE)),
-						int(o.get("persist", 0)), int(o.get("tgt", -1))])
+						int(o.get("persist", 0)), int(o.get("tgt", -1)), int(o.get("join", -1))])
 				else:
 					moves.append([int(o["army"]), int(o["to"]), int(o.get("mode", CData.MODE_SIEGE)), int(o.get("persist", 0))])
 				continue
@@ -141,11 +142,11 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 					if a6.is_empty():
 						continue
 					mv6.append([int(a6["id"]), CRules.order_cell(st, a6, o), int(s["f"]), int(o.get("mode", CData.MODE_SIEGE)),
-						int(o.get("persist", 0)), int(o.get("tgt", -1))])
+						int(o.get("persist", 0)), int(o.get("tgt", -1)), int(o.get("join", -1))])
 		for a in st["armies"]:
 			if not seen.has(int(a["id"])) and CState.is_human(st, int(a["f"])) and (int(a.get("dest_x", -1)) >= 0 or int(a.get("tgt", -1)) >= 0):
 				var dc := CGrid.at(int(a["dest_x"]), int(a["dest_y"]))
-				mv6.append([int(a["id"]), dc, int(a["f"]), int(a["mode"]), 1, int(a.get("tgt", -1))])
+				mv6.append([int(a["id"]), dc, int(a["f"]), int(a["mode"]), 1, int(a.get("tgt", -1)), int(a.get("dest_army", -1))])
 		CRules.execute_moves6(st, mv6)
 		moves = []
 	elif CState.moves_on(st):

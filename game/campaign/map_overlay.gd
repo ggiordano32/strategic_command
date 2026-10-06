@@ -60,7 +60,12 @@ var links: Array = []
 var replay_pos := {}
 var replay_trail := {}  # army id -> map points passed so far in the replay
 var markers: Array = []
-var _tips: Array = []  # intents to draw over the banners: [point, kind, colour]
+## The selected army's merge and gift candidates [[army id, 0 merge | 1 gift
+## | 2 too many units]] (a small glyph on their banners) and the one tapped
+## once (merge_tap: its glyph rings).
+var merge_marks: Array = []
+var merge_tap := -1
+var _tips: Array = []  # intents to draw over the banners: [point, kind, colour, caption]
 
 
 ## Map point (map pixels) of the centre of grid cell c.
@@ -243,8 +248,13 @@ func _draw() -> void:
 		if not pos.has(id):
 			continue
 		_army_marker(pos[id], a, font)
+	for mm in merge_marks:
+		if pos.has(int(mm[0])):
+			_merge_glyph(pos[int(mm[0])], int(mm[1]), int(mm[0]) == merge_tap)
 	for tp in _tips:
 		_intent(tp[0], str(tp[1]), tp[2])
+		if (tp as Array).size() > 3 and str(tp[3]) != "":
+			_caption(tp[0], str(tp[3]), tp[2])
 
 
 ## A battle: a red disc with crossed swords (alpha fades a popped marker).
@@ -307,6 +317,8 @@ func _path6(pth: Dictionary, pos: Dictionary) -> void:
 		col = Color(1.0, 0.45, 0.35)
 	elif kind in ["siege", "join"]:
 		col = Color(1.0, 0.7, 0.25)
+	elif kind == "merge":
+		col = Color(0.55, 0.95, 0.6) if not str(pth.get("caption", "")).begins_with("Too many") else Color(0.7, 0.7, 0.68)
 	var m := mk()
 	var sp: Array = []
 	for k in pts.size():
@@ -330,7 +342,7 @@ func _path6(pth: Dictionary, pos: Dictionary) -> void:
 		var e: Vector2 = sp[now]
 		draw_circle(e, 7.0 * m, Color(0, 0, 0, 0.55))
 		draw_arc(e, 7.0 * m, 0, TAU, 20, col, 3.0 * m, true)
-	_tips.append([sp[-1], kind, col])
+	_tips.append([sp[-1], kind, col, str(pth.get("caption", ""))])
 
 
 ## The intent at a path's end: a small badge.
@@ -347,12 +359,47 @@ func _intent(p: Vector2, kind: String, col: Color) -> void:
 		"siege", "join":
 			var ts := 5.5 * m
 			draw_colored_polygon(PackedVector2Array([p + Vector2(0, -ts), p + Vector2(ts, ts * 0.8), p + Vector2(-ts, ts * 0.8)]), w)
+		"merge":
+			draw_line(p + Vector2(-5, 0) * m, p + Vector2(5, 0) * m, w, 2.4, true)
+			draw_line(p + Vector2(0, -5) * m, p + Vector2(0, 5) * m, w, 2.4, true)
 		"inside":
 			draw_rect(Rect2(p - Vector2(4, 3) * m, Vector2(8, 8) * m), w)
 			for k in 3:
 				draw_rect(Rect2(p + Vector2(-4 + 3.0 * k, -6) * m, Vector2(2, 3) * m), w)
 		_:
 			draw_circle(p, 3.0 * m, w)
+
+
+## A path's caption ("Merge into army (5 units)") above its end.
+func _caption(p: Vector2, text: String, col: Color) -> void:
+	var font := ThemeDB.fallback_font
+	var fs := 14
+	var tw := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	var tp := p + Vector2(-tw * 0.5, -ARMY_H * mk() - 6.0)
+	draw_rect(Rect2(tp + Vector2(-5, -fs), Vector2(tw + 10, fs + 7)), Color(0, 0, 0, 0.7))
+	draw_string(font, tp, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col.lightened(0.3))
+
+
+## On a banner the selected army can merge into (a green plus), give units
+## to (an allied player's army: a gold gift box) or not merge with (too
+## many units: a grey plus); the one tapped once gets a ring.
+func _merge_glyph(c: Vector2, kind: int, tapped: bool) -> void:
+	var m := mk()
+	var p := c + Vector2(-ARMY_W * 0.5, ARMY_H * 0.5) * m
+	var r := 7.0 * m
+	var col: Color = [Color(0.3, 0.75, 0.35), Color(0.9, 0.7, 0.2), Color(0.5, 0.5, 0.48)][clampi(kind, 0, 2)]
+	if tapped:
+		draw_arc(p, r + 4.0 + 1.5 * sin(pulse * 6.0), 0, TAU, 20, Color(1, 1, 1, 0.9), 2.0, true)
+	draw_circle(p, r + 1.2, Color(0, 0, 0, 0.85))
+	draw_circle(p, r, col)
+	var w := Color(1, 1, 1)
+	if kind == 1:
+		draw_rect(Rect2(p - Vector2(4, 3) * m, Vector2(8, 7) * m), w, false, 1.5)
+		draw_line(p + Vector2(0, -4) * m, p + Vector2(0, 4) * m, w, 1.5)
+		draw_line(p + Vector2(-4, 0) * m, p + Vector2(4, 0) * m, w, 1.5)
+	else:
+		draw_line(p + Vector2(-4, 0) * m, p + Vector2(4, 0) * m, w, 2.0, true)
+		draw_line(p + Vector2(0, -4) * m, p + Vector2(0, 4) * m, w, 2.0, true)
 
 
 ## Walls: a stone ring round the settlement with towers on it, thicker and

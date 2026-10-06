@@ -26,9 +26,20 @@ extends RefCounted
 ##   {"t": "cancel_move", "army": id}  (version 5: forget a stored dest)
 ##   {"t": "recruit", "r": region, "unit": unit type key}
 ##   {"t": "build", "r": region, "chain": building chain index}
-##   {"t": "merge", "army": id, "into": id}             (same region)
+##   {"t": "merge", "army": id, "into": id}             (same region;
+##        version 6: on the same or a neighbouring cell)
 ##   {"t": "split", "army": id, "units": [unit indices], "new": new army id}
 ##   {"t": "disband", "army": id, "units": [unit indices]}
+##   {"t": "exchange", "from": id, "to": id, "units": [indices of from's
+##        units that go to `to`], "back": [indices of to's units that come
+##        to `from`] (optional)}: armies standing together (as merge) trade
+##        units; neither may end above CData.ARMY_MAX; an army left with no
+##        units is gone. `to` may be an allied human's army: a gift (no
+##        "back": taking is not allowed); event "gift" for the receiver.
+##   Version 6 move with "join": id (another army of the faction) instead of
+##        x, y / tgt: march to it and merge into it on arrival (it keeps its
+##        id, stance and cell); with persist the army keeps following it
+##        (army key "dest_army") until it merges or the army is gone.
 ##   {"t": "propose", "to": faction, "what": "peace" | "trade" | "cancel_trade"}
 ##   {"t": "war", "to": faction}                        (declare war)
 ##   {"t": "answer", "id": proposal id, "accept": 0 | 1}
@@ -89,7 +100,8 @@ static func apply_order(st: Dictionary, f: int, o: Dictionary) -> String:
 				var ma := CState.army(st, int(o.get("army", -1)))
 				if ma.is_empty() or int(ma["f"]) != f:
 					return "no such army"
-				return _can_move6(st, ma, order_cell(st, ma, o), int(o.get("tgt", -1)), int(o.get("mode", CData.MODE_SIEGE)))
+				return _can_move6(st, ma, order_cell(st, ma, o), int(o.get("tgt", -1)), int(o.get("mode", CData.MODE_SIEGE)),
+					true, int(o.get("join", -1)))
 			return can_move(st, CState.army(st, int(o.get("army", -1))), int(o.get("to", -1)), f)
 		"build":
 			return _build(st, f, int(o.get("r", -1)), int(o.get("chain", -1)))
@@ -101,6 +113,8 @@ static func apply_order(st: Dictionary, f: int, o: Dictionary) -> String:
 			return _split(st, f, int(o.get("army", -1)), o.get("units", []), int(o.get("new", -1)))
 		"disband":
 			return _disband(st, f, int(o.get("army", -1)), o.get("units", []))
+		"exchange":
+			return _exchange(st, f, int(o.get("from", -1)), int(o.get("to", -1)), o.get("units", []), o.get("back", []))
 		"propose":
 			return check_proposal(st, f, int(o.get("to", -1)), str(o.get("what", "")))
 		"war":
@@ -230,7 +244,57 @@ static func _own_free_army(st: Dictionary, f: int, id: int) -> Dictionary:
 	return a
 
 
+## "" if armies a and b stand together to merge or trade units: neither in
+## a battle; version 6 on the same or neighbouring cells (an army inside a
+## besieged settlement only with another inside it; besiegers may); older
+## formats in the same region and neither in a siege.
+static func together(st: Dictionary, a: Dictionary, b: Dictionary) -> String:
+	if int(a["busy"]) != 0 or int(b["busy"]) != 0:
+		return "in a battle"
+	if CState.grid_on(st):
+		if CGrid.cheb(CState.cell(a), CState.cell(b)) > 1:
+			return "not together"
+		if (siege_role(st, a) == 2 or siege_role(st, b) == 2) and CState.cell(a) != CState.cell(b):
+			return "besieged"
+		return ""
+	if siege_role(st, a) != 0 or siege_role(st, b) != 0:
+		return "in a siege"
+	if int(a["r"]) != int(b["r"]):
+		return "not in the same region"
+	return ""
+
+
+## "" if army id of faction f may merge into army `into` now (version 6
+## rules; older formats: _merge's own checks).
+static func merge_check(st: Dictionary, f: int, id: int, into: int) -> String:
+	var a := CState.army(st, id)
+	var b := CState.army(st, into)
+	if a.is_empty() or b.is_empty() or id == into or int(a["f"]) != f or int(b["f"]) != f:
+		return "no such army"
+	var why := together(st, a, b)
+	if why != "":
+		return why
+	if CState.unit_count(a) + CState.unit_count(b) > CData.ARMY_MAX:
+		return "more than %d units" % CData.ARMY_MAX
+	return ""
+
+
+## Army a joins army b: its units after b's, b keeps its id, stance and
+## cell and moves at the pace of the slower part; a is gone.
+static func _absorb(st: Dictionary, b: Dictionary, a: Dictionary) -> void:
+	(b["units"] as Array).append_array(a["units"])
+	if CState.moves_on(st):
+		b["mp"] = mini(mini(CState.mp(a), CState.mp(b)), CState.full_mp(st, b))
+		b["moved"] = maxi(int(a["moved"]), int(b["moved"]))
+	st["armies"].remove_at(CState.army_index(st, int(a["id"])))
+
+
 static func _merge(st: Dictionary, f: int, id: int, into: int) -> String:
+	if CState.grid_on(st):
+		var why := merge_check(st, f, id, into)
+		if why == "":
+			_absorb(st, CState.army(st, into), CState.army(st, id))
+		return why
 	var a := _own_free_army(st, f, id)
 	var b := _own_free_army(st, f, into)
 	if a.is_empty() or b.is_empty() or id == into:
@@ -307,6 +371,83 @@ static func _disband(st: Dictionary, f: int, id: int, idx) -> String:
 		(a["units"] as Array).remove_at(list[k])
 	if CState.unit_count(a) == 0:
 		st["armies"].remove_at(CState.army_index(st, id))
+	return ""
+
+
+## idx is a valid list of distinct unit indices of army a (empty is valid).
+static func _idx_ok(a: Dictionary, idx) -> bool:
+	return idx is Array and _unit_list(a, idx).size() == (idx as Array).size()
+
+
+## A gift: army b belongs to an allied human faction (not f's own).
+static func is_gift(_st: Dictionary, f: int, b: Dictionary) -> bool:
+	return not b.is_empty() and int(b["f"]) != f
+
+
+## "" if faction f may trade units between its army `from` and army `to`
+## (its own, or an allied human's: a gift, nothing taken back): units
+## [indices of from's units] go to `to`, back [indices of to's units] come
+## to `from`; both armies together (as merge); neither above ARMY_MAX.
+static func exchange_check(st: Dictionary, f: int, from: int, to: int, units, back = []) -> String:
+	var a := CState.army(st, from)
+	var b := CState.army(st, to)
+	if a.is_empty() or b.is_empty() or from == to or int(a["f"]) != f:
+		return "no such army"
+	var g := int(b["f"])
+	if g != f and not (CState.is_human(st, f) and CState.is_human(st, g) and CState.friendly(st, f, g) and CState.alive(st, g)):
+		return "not a friendly army"
+	var why := together(st, a, b)
+	if why != "":
+		return why
+	if not _idx_ok(a, units) or not _idx_ok(b, back):
+		return "bad units"
+	var nu := (units as Array).size()
+	var nbk := (back as Array).size()
+	if nu == 0 and nbk == 0:
+		return "no units chosen"
+	if g != f and nbk > 0:
+		return "cannot take an ally's units"
+	if CState.unit_count(a) - nu + nbk > CData.ARMY_MAX or CState.unit_count(b) - nbk + nu > CData.ARMY_MAX:
+		return "more than %d units" % CData.ARMY_MAX
+	return ""
+
+
+static func _exchange(st: Dictionary, f: int, from: int, to: int, units, back) -> String:
+	var why := exchange_check(st, f, from, to, units, back)
+	if why != "":
+		return why
+	var a := CState.army(st, from)
+	var b := CState.army(st, to)
+	var out := _unit_list(a, units)
+	var bk := _unit_list(b, back)
+	var give: Array = []
+	var keep_a: Array = []
+	for k in CState.unit_count(a):
+		(give if out.has(k) else keep_a).append(a["units"][k])
+	var take: Array = []
+	var keep_b: Array = []
+	for k in CState.unit_count(b):
+		(take if bk.has(k) else keep_b).append(b["units"][k])
+	var mpa := CState.mp(a)
+	var mpb := CState.mp(b)
+	a["units"] = keep_a + take
+	b["units"] = keep_b + give
+	if CState.moves_on(st):
+		# A receiving army moves at the pace of the slower part.
+		if not give.is_empty():
+			b["mp"] = mini(mpa, mpb)
+			b["moved"] = maxi(int(a["moved"]), int(b["moved"]))
+		if not take.is_empty():
+			a["mp"] = mini(mpa, mpb)
+			a["moved"] = maxi(int(a["moved"]), int(b["moved"]))
+		a["mp"] = mini(CState.mp(a), CState.full_mp(st, a))
+		b["mp"] = mini(CState.mp(b), CState.full_mp(st, b))
+	if is_gift(st, f, b):
+		event(st, {"k": "gift", "f": f, "to": int(b["f"]), "r": int(b["r"]), "n": give.size(), "army": to})
+	for id in [from, to]:
+		var x := CState.army(st, id)
+		if not x.is_empty() and CState.unit_count(x) == 0:
+			st["armies"].remove_at(CState.army_index(st, id))
 	return ""
 
 
@@ -2005,6 +2146,8 @@ static func end_of_turn(st: Dictionary) -> void:
 				keep.append(unit)
 		a["units"] = keep
 	_drop_empty_armies(st)
+	if CState.grid_on(st):
+		_auto_merge6(st)
 	# Replenishment in friendly land.
 	for a in st["armies"]:
 		var f := int(a["f"])
@@ -2051,8 +2194,51 @@ static func end_of_turn(st: Dictionary) -> void:
 	st["proposals"] = keep_p
 
 
+## Version 6, end of turn: armies of one faction standing idle on the same
+## settlement cell (not in a battle, no march stored, the same stance)
+## merge, the lowest id taking in the others in id order while they fit in
+## CData.ARMY_MAX; one that does not fit starts the next group.
+static func _auto_merge6(st: Dictionary) -> void:
+	var arr: Array = st["armies"]
+	var gone := PackedByteArray()
+	gone.resize(arr.size())
+	gone.fill(0)
+	var any := false
+	for i in arr.size():
+		var a: Dictionary = arr[i]
+		if gone[i] != 0 or not _idle_in_town(a):
+			continue
+		for j in range(i + 1, arr.size()):
+			var b: Dictionary = arr[j]
+			if gone[j] != 0 or int(b["f"]) != int(a["f"]) or CState.cell(b) != CState.cell(a) \
+					or CState.stance(b) != CState.stance(a) or not _idle_in_town(b):
+				continue
+			if CState.unit_count(a) + CState.unit_count(b) > CData.ARMY_MAX:
+				continue
+			(a["units"] as Array).append_array(b["units"])
+			a["idle"] = mini(int(a.get("idle", 0)), int(b.get("idle", 0)))
+			gone[j] = 1
+			any = true
+	if not any:
+		return
+	var keep: Array = []
+	for i in arr.size():
+		if gone[i] == 0:
+			keep.append(arr[i])
+	st["armies"] = keep
+
+
+static func _idle_in_town(a: Dictionary) -> bool:
+	return int(a["busy"]) == 0 and int(a.get("dest_x", -1)) < 0 and int(a.get("tgt", -1)) < 0 \
+			and not a.has("dest_army") and CGrid.site_region(CState.cell(a)) >= 0
+
+
 ## New recruit: joins the faction's first army in the region with room, or
-## forms a new army.
+## forms a new army. Version 6: the first army of the faction (by id) on
+## the settlement's cell or next to it, not in a battle, with room, else a
+## new army inside the walls; so a city's recruits collect in one army
+## (the next turn's recruits join it while it stays; _auto_merge6 gathers
+## any others standing idle there).
 static func _add_recruit(st: Dictionary, f: int, r: int, key: String) -> void:
 	var unit := {"t": key, "n": UT.size_of(UT.index_of(key))}
 	var grid := CState.grid_on(st)
@@ -2281,10 +2467,20 @@ static func zone_mask(st: Dictionary, f: int, except: Array = []) -> PackedInt32
 ## or -1), r (a hostile settlement it besieges or storms, -1), targets
 ## (enemy army ids whose zones it may enter), kind ("move", "inside" (into
 ## our own settlement), "siege", "assault", "attack", "relief", "sally",
-## "join")}.
-static func move_aim(st: Dictionary, a: Dictionary, dest: int, tgt: int = -1, mode: int = CData.MODE_SIEGE) -> Dictionary:
+## "join" (our siege), "merge" (join: another army of ours to merge into;
+## then "join" holds its id)}.
+static func move_aim(st: Dictionary, a: Dictionary, dest: int, tgt: int = -1, mode: int = CData.MODE_SIEGE,
+		join: int = -1) -> Dictionary:
 	var f := int(a["f"])
 	var out := {"cell": dest, "adjacent": 0, "tgt": -1, "r": -1, "targets": [], "kind": "move"}
+	if join >= 0:
+		var j := CState.army(st, join)
+		if not j.is_empty() and int(j["f"]) == f and join != int(a["id"]):
+			out["cell"] = CState.cell(j)
+			out["adjacent"] = 1
+			out["kind"] = "merge"
+			out["join"] = join
+			return out
 	if tgt >= 0:
 		var t := CState.army(st, tgt)
 		if not t.is_empty() and CState.at_war(st, f, int(t["f"])):
@@ -2342,6 +2538,10 @@ static func move_aim(st: Dictionary, a: Dictionary, dest: int, tgt: int = -1, mo
 ## army: its cell) or, from older clients and tests, "to" (a region: its
 ## settlement's cell; with mode MODE_MARCH into hostile land its camp).
 static func order_cell(st: Dictionary, a: Dictionary, o: Dictionary) -> int:
+	var join := int(o.get("join", -1))
+	if join >= 0:
+		var j := CState.army(st, join)
+		return CState.cell(j) if not j.is_empty() else -1
 	var tgt := int(o.get("tgt", -1))
 	if tgt >= 0:
 		var t := CState.army(st, tgt)
@@ -2356,14 +2556,15 @@ static func order_cell(st: Dictionary, a: Dictionary, o: Dictionary) -> int:
 	return CGrid.site(to)
 
 
-## The path army a would walk now to `dest` / tgt: {path, t, m (CGrid
-## find_path), aim (move_aim)} or {"why"}. cache: per-phase masks by
-## faction ("b<f>" block_mask, "z<f>" zone_mask), filled on demand.
+## The path army a would walk now to `dest` / tgt (or to merge into army
+## join): {path, t, m (CGrid find_path), aim (move_aim)} or {"why"}. cache:
+## per-phase masks by faction ("b<f>" block_mask, "z<f>" zone_mask), filled
+## on demand.
 static func plan_path(st: Dictionary, a: Dictionary, dest: int, tgt: int = -1, mode: int = CData.MODE_SIEGE,
-		cache: Dictionary = {}, max_turns: int = 12) -> Dictionary:
+		cache: Dictionary = {}, max_turns: int = 12, join: int = -1) -> Dictionary:
 	if dest < 0 or not CGrid.passable(dest):
 		return {"why": "no route"}
-	var aim := move_aim(st, a, dest, tgt, mode)
+	var aim := move_aim(st, a, dest, tgt, mode, join)
 	var f := int(a["f"])
 	var kb := "b%d" % f
 	var kz := "z%d" % f
@@ -2396,16 +2597,39 @@ static func plan_path(st: Dictionary, a: Dictionary, dest: int, tgt: int = -1, m
 	return res
 
 
+## "" if army a may march to army join and merge into it: another army of
+## its faction, the two within CData.ARMY_MAX units ("too many units to
+## merge").
+static func join_check(st: Dictionary, a: Dictionary, join: int) -> String:
+	var j := CState.army(st, join)
+	if j.is_empty() or join == int(a["id"]) or int(j["f"]) != int(a["f"]):
+		return "no such army"
+	if CState.unit_count(a) + CState.unit_count(j) > CData.ARMY_MAX:
+		return "too many units to merge"
+	return ""
+
+
 ## "" if army a may be ordered to march to cell dest (or after enemy army
-## tgt) this turn (version 6).
+## tgt, or to merge into army join) this turn (version 6).
 static func _can_move6(st: Dictionary, a: Dictionary, dest: int, tgt: int = -1, mode: int = CData.MODE_SIEGE,
-		need_path: bool = true) -> String:
+		need_path: bool = true, join: int = -1) -> String:
 	if a.is_empty():
 		return "no such army"
 	if int(a["busy"]) != 0:
 		return "in a battle"
 	if int(a["moved"]) != 0:
 		return "already moved"
+	if join >= 0:
+		var why_j := join_check(st, a, join)
+		if why_j != "":
+			return why_j
+		var j := CState.army(st, join)
+		if CGrid.cheb(CState.cell(a), CState.cell(j)) <= 1:
+			return together(st, a, j)  # merges at once, no march
+		if siege_role(st, a) == 2:
+			return "besieged"
+		dest = CState.cell(j)
+		tgt = -1
 	if CState.stance(a) == CData.ST_FORTIFY:
 		return "fortified"
 	if dest < 0 or not CGrid.passable(dest):
@@ -2424,19 +2648,21 @@ static func _can_move6(st: Dictionary, a: Dictionary, dest: int, tgt: int = -1, 
 	if why != "" and tgt < 0:
 		return why
 	if CState.stance(a) == CData.ST_FORCED:
-		var aim := move_aim(st, a, dest, tgt, mode)
-		if str(aim["kind"]) not in ["move", "inside"]:
+		var aim := move_aim(st, a, dest, tgt, mode, join)
+		if str(aim["kind"]) not in ["move", "inside", "merge"]:
 			return "on a forced march: cannot attack"
 	if not need_path:
 		return ""
-	var pp := plan_path(st, a, dest, tgt, mode)
+	var pp := plan_path(st, a, dest, tgt, mode, {}, 12, join)
 	if pp.has("why"):
 		return str(pp["why"])
 	return ""
 
 
 ## Version 6: run one phase's moves in rounds. moves: [[army id, dest cell,
-## faction, mode, persist, tgt], ...] (dest -1 with a tgt: its cell). Paths
+## faction, mode, persist, tgt, join], ...] (dest -1 with a tgt: its cell;
+## join (optional, -1): an army of the mover's faction to merge into, its
+## cell is the destination and the move ends when it is gone). Paths
 ## are computed as the phase starts; round k moves every army one step, by
 ## army id; contact, zones, sieges and joining battles as described above.
 static func execute_moves6(st: Dictionary, moves: Array) -> void:
@@ -2455,7 +2681,16 @@ static func execute_moves6(st: Dictionary, moves: Array) -> void:
 		if a.is_empty() or int(a["f"]) != int(mv[2]):
 			continue
 		var tgt := int(mv[5]) if (mv as Array).size() > 5 else -1
+		var join := int(mv[6]) if (mv as Array).size() > 6 else -1
 		var dest := int(mv[1])
+		if join >= 0:
+			var jt := CState.army(st, join)
+			if jt.is_empty() or int(jt["f"]) != int(a["f"]):
+				event(st, {"k": "move_failed", "f": int(a["f"]), "army": id, "to": -1, "why": "the army to merge into is gone"})
+				_drop_march(a)
+				continue
+			dest = CState.cell(jt)
+			tgt = -1
 		if tgt >= 0:
 			var t := CState.army(st, tgt)
 			if t.is_empty() or not CState.at_war(st, int(a["f"]), int(t["f"])):
@@ -2467,21 +2702,21 @@ static func execute_moves6(st: Dictionary, moves: Array) -> void:
 				dest = CState.cell(t)
 		var mode := int(mv[3])
 		var persist := int(mv[4]) if (mv as Array).size() > 4 else 0
-		var why := _can_move6(st, a, dest, tgt, mode, false)
-		if why == "" and siege_role(st, a) == 2:
+		var why := _can_move6(st, a, dest, tgt, mode, false, join)
+		if why == "" and siege_role(st, a) == 2 and join < 0:
 			_sally6(st, a, CState.army(st, tgt))  # inside a besieged city: a sally
 			_drop_march(a)
 			continue
-		var aim := move_aim(st, a, dest, tgt, mode)
+		var aim := move_aim(st, a, dest, tgt, mode, join)
 		if why == "" and int(aim["adjacent"]) != 0 and CGrid.cheb(CState.cell(a), int(aim["cell"])) <= 1:
 			# Already next to what it means to act on.
 			plans.append({"id": id, "path": [], "k": 0, "aim": aim, "mode": mode, "persist": persist, "stop": 0,
-				"dest": dest, "tgt": tgt})
+				"dest": dest, "tgt": tgt, "join": join})
 			continue
 		var pp := {}
 		if why == "":
 			# A march for this turn only (the AI's) looks two turns ahead.
-			pp = plan_path(st, a, dest, tgt, mode, cache, 12 if persist != 0 else 2)
+			pp = plan_path(st, a, dest, tgt, mode, cache, 12 if persist != 0 else 2, join)
 			why = str(pp.get("why", ""))
 		if why != "":
 			if why != "already there":
@@ -2489,7 +2724,7 @@ static func execute_moves6(st: Dictionary, moves: Array) -> void:
 			_drop_march(a)
 			continue
 		plans.append({"id": id, "path": pp["path"], "k": 0, "aim": pp["aim"], "mode": mode, "persist": persist,
-			"stop": 0, "dest": dest, "tgt": tgt})
+			"stop": 0, "dest": dest, "tgt": tgt, "join": join})
 	# Armies already next to what they mean to act on.
 	for p in plans:
 		if (p["path"] as Array).is_empty():
@@ -2523,6 +2758,8 @@ static func execute_moves6(st: Dictionary, moves: Array) -> void:
 		if a.is_empty():
 			continue
 		var done := int(p["k"]) >= (p["path"] as Array).size() or int(a["busy"]) != 0
+		if int(p.get("follow", 0)) != 0 and int(a["busy"]) == 0:
+			done = false  # a merge that did not happen yet: keep following the army
 		if done or int(p["persist"]) == 0:
 			_drop_march(a)
 		else:
@@ -2531,12 +2768,17 @@ static func execute_moves6(st: Dictionary, moves: Array) -> void:
 			a["dest_y"] = CGrid.cy(dc)
 			a["tgt"] = int(p["tgt"])
 			a["mode"] = int(p["mode"])
+			if int(p["join"]) >= 0:
+				a["dest_army"] = int(p["join"])
+			else:
+				a.erase("dest_army")
 
 
 static func _drop_march(a: Dictionary) -> void:
 	a["dest_x"] = -1
 	a["dest_y"] = -1
 	a["tgt"] = -1
+	a.erase("dest_army")
 
 
 static var _mlog: Array = []
@@ -2631,6 +2873,9 @@ static func _move_to(st: Dictionary, a: Dictionary, c: int, cost: int) -> void:
 ## storm, or nothing more.
 static func _arrive6(st: Dictionary, a: Dictionary, p: Dictionary) -> void:
 	var aim: Dictionary = p["aim"]
+	if str(aim["kind"]) == "merge":
+		_arrive_merge(st, a, p)
+		return
 	if int(a["busy"]) == 0 and CState.stance(a) != CData.ST_FORCED:
 		# Next to an army it targets (the march ended there, or started there).
 		for id in aim["targets"]:
@@ -2666,6 +2911,25 @@ static func _arrive6(st: Dictionary, a: Dictionary, p: Dictionary) -> void:
 		_assault6(st, r, a)
 	else:
 		start_siege(st, r, a, int(a["from"]))
+
+
+## The march of plan p ended next to the army it merges into (aim "join"):
+## merge now when both are free; if that army moved on or is in a battle,
+## keep following it (p "follow"); too many units ends the move.
+static func _arrive_merge(st: Dictionary, a: Dictionary, p: Dictionary) -> void:
+	var t := CState.army(st, int(p["aim"]["join"]))
+	if t.is_empty() or int(t["f"]) != int(a["f"]):
+		return
+	if CGrid.cheb(CState.cell(a), CState.cell(t)) > 1 or int(t["busy"]) != 0 or int(a["busy"]) != 0:
+		p["follow"] = 1
+		return
+	var why := together(st, a, t)
+	if why == "" and CState.unit_count(a) + CState.unit_count(t) > CData.ARMY_MAX:
+		why = "too many units to merge"
+	if why != "":
+		event(st, {"k": "move_failed", "f": int(a["f"]), "army": int(a["id"]), "to": -1, "why": why})
+		return
+	_absorb(st, t, a)
 
 
 ## A settlement battle at r without a siege (storming on arrival): army a

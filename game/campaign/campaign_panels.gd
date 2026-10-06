@@ -19,6 +19,9 @@ const CGrid := preload("res://campaign/cgrid.gd")
 
 var s  # the campaign screen
 var _split_sel: Dictionary = {}  # army id -> Array of selected unit indices
+## The exchange panel's pending trade: {a (this army), b (the other), out
+## [indices of a's units going to b], back [indices of b's coming to a]}.
+var _xc: Dictionary = {}
 
 
 func _init(screen) -> void:
@@ -553,6 +556,7 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 	box.add_child(Kit.label("%d of %d units, %d men, upkeep %d" % [CState.unit_count(a), CData.ARMY_MAX, CState.men(a), up],
 		Kit.FONT_SMALL, Kit.COL_DIM, true))
 	if mine and CState.grid_on(ps):
+		_together_row(box, a)
 		_army_orders6(box, a)
 	elif mine:
 		var mv: int = s.planned_move(id)
@@ -654,10 +658,7 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 		s.open_unit_page(ty, Callable(), ""), 0))
 	var near := CState.armies_in(ps, r)
 	if CState.grid_on(ps):
-		near = []
-		for o2 in ps["armies"]:
-			if CGrid.cheb(CState.cell(o2), CState.cell(a)) <= 1:
-				near.append(o2)
+		near = []  # version 6: Merge and Exchange are at the top of the card
 	for o in near:
 		if int(o["id"]) != id and int(o["f"]) == af and int(o["busy"]) == 0 and CRules.siege_role(ps, o) == 0:
 			var oid := int(o["id"])
@@ -669,6 +670,201 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 			fl.add_child(mb)
 	box.add_child(fl)
 	box.add_child(Kit.label("Tap units to choose them for splitting or disbanding.", Kit.FONT_SMALL, Kit.COL_DIM, true))
+
+
+## Version 6, top of the army card: "Merge into army (N units)" for each
+## army of ours standing together with this one, and "Exchange units" when
+## any friendly army (ours or the allied player's) does.
+func _together_row(box: VBoxContainer, a: Dictionary) -> void:
+	var ps: Dictionary = s.ps
+	var id := int(a["id"])
+	if int(a["busy"]) != 0:
+		return
+	var fl := Kit.flow(6)
+	fl.name = "together_row"
+	var any := false
+	for o in _partners(ps, a):
+		any = true
+		var oid := int(o["id"])
+		if int(o["f"]) != int(a["f"]):
+			continue
+		var mb := Kit.button("Merge into army (%d units)" % CState.unit_count(o), func():
+			_split_sel.erase(id)
+			if s.add_order({"t": "merge", "army": id, "into": oid}) == "":
+				s.select_army(oid), 0)
+		mb.name = "merge_into_%d" % oid
+		mb.disabled = CRules.merge_check(ps, int(a["f"]), id, oid) != ""
+		fl.add_child(mb)
+	if not any:
+		return
+	var xb := Kit.button("Exchange units", func(): show_exchange(id, -1), 0)
+	xb.name = "exchange_units"
+	fl.add_child(xb)
+	box.add_child(fl)
+
+
+## Friendly armies army a may trade units with now (ours, or an allied
+## player's for a gift), by id.
+func _partners(ps: Dictionary, a: Dictionary) -> Array:
+	var out: Array = []
+	var af := int(a["f"])
+	for o in ps["armies"]:
+		var of := int(o["f"])
+		if int(o["id"]) == int(a["id"]):
+			continue
+		if of != af and not (CState.is_human(ps, of) and CState.is_human(ps, af) and CState.friendly(ps, af, of)):
+			continue
+		if CRules.together(ps, a, o) == "":
+			out.append(o)
+	return out
+
+
+## The exchange panel (version 6): this army on the left, a nearby friendly
+## army on the right (a picker when there are several). Tap a unit row to
+## send it across; the counts and the cap show; Confirm adds one exchange
+## order (to the allied player's army: a gift, only from this side).
+func show_exchange(id: int, other: int) -> void:
+	var ps: Dictionary = s.ps
+	var a := CState.army(ps, id)
+	if a.is_empty():
+		return
+	var parts := _partners(ps, a)
+	if parts.is_empty():
+		return
+	if int(_xc.get("a", -1)) != id or (other >= 0 and int(_xc.get("b", -1)) != other):
+		_xc = {"a": id, "b": other, "out": [], "back": []}
+	var cur := -1
+	for o in parts:
+		if int(o["id"]) == int(_xc["b"]):
+			cur = int(o["id"])
+	if cur < 0:
+		_xc = {"a": id, "b": int(parts[0]["id"]), "out": [], "back": []}
+	var b := CState.army(ps, int(_xc["b"]))
+	var f := int(a["f"])
+	var gift := CRules.is_gift(ps, f, b)
+	var out: Array = _xc["out"]
+	var back: Array = _xc["back"]
+	var v := Kit.vbox(8)
+	v.name = "exchange_panel"
+	if parts.size() > 1:
+		var pick := Kit.flow(6)
+		pick.add_child(Kit.label("With:", Kit.FONT_SMALL, Kit.COL_DIM))
+		for o in parts:
+			var oid := int(o["id"])
+			var pb := Kit.button("%s army (%d)" % [CData.FACTIONS[int(o["f"])]["adj"], CState.unit_count(o)], func():
+				_xc = {"a": id, "b": oid, "out": [], "back": []}
+				show_exchange(id, oid), 0)
+			pb.name = "xc_pick_%d" % oid
+			pb.disabled = oid == int(b["id"])
+			pb.add_theme_color_override("font_color", _fc(int(o["f"])).lightened(0.4))
+			pick.add_child(pb)
+		v.add_child(pick)
+	var na := CState.unit_count(a) - out.size() + back.size()
+	var nb := CState.unit_count(b) - back.size() + out.size()
+	var cols := Kit.hbox(10)
+	var left := Kit.vbox(4)
+	var right := Kit.vbox(4)
+	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cols.add_child(left)
+	cols.add_child(right)
+	var la := Kit.label("This army: %d / %d" % [na, CData.ARMY_MAX], Kit.FONT, Kit.COL_BAD if na > CData.ARMY_MAX else _fc(f).lightened(0.45))
+	la.name = "xc_count_a"
+	left.add_child(la)
+	var bname := "%s army%s" % [CData.FACTIONS[int(b["f"])]["adj"], " (gift)" if gift else ""]
+	var lb := Kit.label("%s: %d / %d" % [bname, nb, CData.ARMY_MAX], Kit.FONT, Kit.COL_BAD if nb > CData.ARMY_MAX else _fc(int(b["f"])).lightened(0.45))
+	lb.name = "xc_count_b"
+	right.add_child(lb)
+	var au: Array = a["units"]
+	var bu: Array = b["units"]
+	# Units coming across first (framed), then the army's own.
+	for k in bu.size():
+		if back.has(k):
+			left.add_child(_xc_row(bu[k], int(b["f"]), "in", "xb_%d" % k, true, _xc_toggle.bind("back", k)))
+	for k in au.size():
+		if not out.has(k):
+			left.add_child(_xc_row(au[k], f, "", "xa_%d" % k, true, _xc_toggle.bind("out", k)))
+	for k in au.size():
+		if out.has(k):
+			right.add_child(_xc_row(au[k], f, "gift" if gift else "in", "xa_%d" % k, true, _xc_toggle.bind("out", k)))
+	for k in bu.size():
+		if not back.has(k):
+			right.add_child(_xc_row(bu[k], int(b["f"]), "", "xb_%d" % k, not gift, _xc_toggle.bind("back", k)))
+	v.add_child(cols)
+	var why := CRules.exchange_check(ps, f, id, int(b["id"]), out, back)
+	var hint := "Tap a unit to send it across." if not gift else "Tap your units to give them to your ally; their units stay theirs."
+	if why != "" and why != "no units chosen":
+		hint = "Cannot: %s." % why
+	var hl := Kit.label(hint, Kit.FONT_SMALL, Kit.COL_BAD if why != "" and why != "no units chosen" else Kit.COL_DIM, true)
+	hl.name = "xc_hint"
+	v.add_child(hl)
+	var ok_text := ("Gift %d unit%s" % [out.size(), "" if out.size() == 1 else "s"]) if gift else "Confirm"
+	# Confirm and Cancel in the dialog's button row: always in view. A
+	# re-render after a tap keeps the scroll position.
+	var sv: int = s.dialog_scroll.scroll_vertical if s.dialog_open() and s.dialog_box.find_child("exchange_panel", true, false) != null else 0
+	s.show_dialog("Exchange units" if not gift else "Give units to %s" % CData.faction_name(int(b["f"])), v,
+		[["Cancel", func():
+			_xc = {}
+			s.close_dialog()], [ok_text, _xc_confirm]], 760)
+	var btns: Array = s.dialog_buttons.get_children()
+	if btns.size() >= 2:
+		(btns[0] as Button).name = "xc_cancel"
+		var ok := btns[btns.size() - 1] as Button
+		ok.name = "xc_confirm"
+		ok.disabled = why != ""
+		if gift:
+			ok.add_theme_color_override("font_color", _fc(int(b["f"])).lightened(0.5))
+	if sv > 0:
+		(func(): s.dialog_scroll.scroll_vertical = sv).call_deferred()
+
+
+func _xc_row(u: Dictionary, uf: int, tag: String, nm: String, active: bool, cb: Callable) -> Control:
+	var row := Kit.UnitRow.new(CState.unit_type(u), int(u["n"]), _fc(uf), tag, false)
+	row.name = nm
+	row.selected = tag != ""
+	if active:
+		row.pressed.connect(cb)
+	else:
+		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.modulate = Color(1, 1, 1, 0.75)
+	return row
+
+
+func _xc_toggle(side: String, k: int) -> void:
+	if _xc.is_empty():
+		return
+	var list: Array = _xc[side]
+	if list.has(k):
+		list.erase(k)
+	else:
+		list.append(k)
+	show_exchange(int(_xc["a"]), int(_xc["b"]))
+
+
+func _xc_confirm() -> void:
+	if _xc.is_empty():
+		return
+	var id := int(_xc["a"])
+	var bid := int(_xc["b"])
+	var out: Array = (_xc["out"] as Array).duplicate()
+	var back: Array = (_xc["back"] as Array).duplicate()
+	out.sort()
+	back.sort()
+	var o := {"t": "exchange", "from": id, "to": bid, "units": out}
+	if not back.is_empty():
+		o["back"] = back
+	var gift := CRules.is_gift(s.ps, s.f, CState.army(s.ps, bid))
+	_xc = {}
+	s.close_dialog()
+	_split_sel.erase(id)
+	if s.add_order(o) == "":
+		s._t("campaign_input", {"what": "exchange", "gift": 1 if gift else 0})
+		if not CState.army(s.ps, id).is_empty():
+			s.select_army(id)
+		elif int(CState.army(s.ps, bid).get("f", -1)) == s.f:
+			s.select_army(bid)
+		else:
+			s.close_side()
 
 
 func _no_order(id: int) -> bool:
@@ -1088,7 +1284,7 @@ func _event_color(e: Dictionary, f: int) -> Color:
 			return Kit.COL_BAD if int(e["o"]) == f else Kit.COL_GOLD
 		"siege_lifted":
 			return Kit.COL_GOOD if int(e["o"]) == f else Kit.COL_DIM
-		"peace", "trade", "built", "recruited", "grew", "victory":
+		"peace", "trade", "built", "recruited", "grew", "victory", "gift":
 			return Kit.COL_GOOD
 	return Color.WHITE
 
@@ -1170,6 +1366,13 @@ func event_text(e: Dictionary, f: int) -> String:
 			for k in e["units"]:
 				names.append(str(UT.TYPES[UT.index_of(str(k))]["name"]))
 			return "%s: recruited %s." % [city.call(e["r"]), ", ".join(names)]
+		"gift":
+			var n := int(e["n"])
+			if int(e["to"]) == f:
+				return "%s gave you %d unit%s at %s." % [CData.faction_name(int(e["f"])), n, "" if n == 1 else "s", city.call(e["r"])]
+			if int(e["f"]) == f:
+				return "You gave %s %d unit%s at %s." % [CData.faction_name(int(e["to"])), n, "" if n == 1 else "s", city.call(e["r"])]
+			return ""
 		"grew":
 			if int(e["f"]) != f:
 				return ""
@@ -1431,6 +1634,9 @@ func _army_orders6(box: VBoxContainer, a: Dictionary) -> void:
 				verb = "Storms %s" % CData.REGIONS[sr2]["city"]
 			"relief":
 				verb = "Relieves %s" % CData.REGIONS[maxi(sr2, r)]["city"]
+			"merge":
+				var jt := CState.army(ps, int(p6.get("join", -1)))
+				verb = "Marches to merge into the army of %d units" % CState.unit_count(jt) if not jt.is_empty() else "Marches to merge"
 			"attack", "sally":
 				var t := CState.army(ps, int(p6["tgt"]))
 				verb = "%s the %s army" % ["Sallies against" if kind == "sally" else "Attacks",
@@ -1443,7 +1649,7 @@ func _army_orders6(box: VBoxContainer, a: Dictionary) -> void:
 			when = " (arrives this turn, %d points left)" % int(rt["left"]) if last == 0 else (" (arrives next turn)" if last == 1 else " (arrives in %d turns)" % (last + 1))
 		if bool(p6["stored"]):
 			when += ", marching on from an earlier turn"
-		var ml := Kit.label(verb + when + ".", Kit.FONT, Kit.COL_GOOD if kind in ["move", "inside"] else Kit.COL_BAD, true)
+		var ml := Kit.label(verb + when + ".", Kit.FONT, Kit.COL_GOOD if kind in ["move", "inside", "merge"] else Kit.COL_BAD, true)
 		ml.name = "army_march"
 		box.add_child(ml)
 		var h := Kit.flow(6)

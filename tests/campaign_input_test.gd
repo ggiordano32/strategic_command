@@ -24,7 +24,13 @@ extends SceneTree
 ## on-arrival Assault switch; a tap on our own city goes inside; the stance
 ## selector; a drag from an army plans a march, a drag elsewhere pans; the
 ## siege panel's Assault / Continue siege / Withdraw; a resolved turn
-## replays the step log and a tap skips it.
+## replays the step log and a tap skips it. Merging and exchanging: the
+## army card's Merge into / Exchange units at the top, the exchange panel
+## (tap a unit across, the counts, Confirm adds the order, Undo takes it
+## back), a tap on our other army previews the merge (caption, glyphs) and
+## a second tap merges (next to it: a merge order; further: a march with
+## "join"), a tap on the allied player's army next to ours opens the panel
+## in gift mode.
 ## Exits 0 on success, 1 on failure.
 
 const CampaignScreen := preload("res://game/campaign/campaign_screen.gd")
@@ -69,7 +75,9 @@ func _initialize() -> void:
 		_g_setup, _g_intro, _g_select, _g_tap_land, _g_check_land, _g_cancel, _g_undo, _g_attack, _g_attack_check,
 		_g_city, _g_city_check, _g_arrive_assault, _g_inside, _g_inside_check, _g_stance, _g_stance_check,
 		_g_drag_army, _g_drag_check, _g_pan, _g_pan_check, _g_siege, _g_siege_assault, _g_siege_continue, _g_siege_withdraw,
-		_g_siege_done, _g_end_turn, _g_summary, _g_replay, _g_replay_check, _s_done,
+		_g_siege_done, _g_end_turn, _g_summary, _g_replay, _g_replay_check,
+		_m_setup, _m_card, _m_xc_open, _m_xc_move, _m_xc_confirm, _m_xc_check, _m_undo, _m_tap1, _m_tap2, _m_merged,
+		_m_far, _m_far1, _m_far2, _m_far_check, _m_gift_setup, _m_gift_tap, _m_gift_row, _m_gift_confirm, _m_gift_check, _s_done,
 	]
 
 
@@ -1012,3 +1020,204 @@ func _g_replay() -> void:
 func _g_replay_check() -> void:
 	_check(cs.replay.is_empty() and cs.overlay.replay_pos.is_empty(), "a tap skips the replay")
 	_check(int(CState.army(cs.st, g0).get("r", -1)) == CData.region_index("etruria"), "the army marched to Etruria")
+
+
+# ----------------------------------------- merge, exchange, gift (format 6) ---
+
+var _ally := -1
+var _ally_army := -1
+
+
+func _neighbour(c0: int) -> int:
+	for k in 8:
+		var c := CGrid.at(CGrid.cx(c0) + CGrid.DX[k], CGrid.cy(c0) + CGrid.DY[k])
+		if c >= 0 and CGrid.passable(c) and CGrid.step_cost(c0, c) > 0 and CGrid.site_region(c) < 0:
+			return c
+	return -1
+
+
+func _m_setup() -> void:
+	if cs.dialog.visible:
+		cs.close_dialog()
+	cs.orders = []
+	var c0 := CState.field_cell(CData.region_index("latium"))
+	CState.place(CState.army(cs.st, g0), c0)
+	CState.place(CState.army(cs.st, g1), _neighbour(c0))
+	CState.army(cs.st, g0)["dest_x"] = -1
+	CState.army(cs.st, g0)["dest_y"] = -1
+	cs._replan()
+	cs.close_side()
+	cs.focus_region(CData.region_index("latium"), 1.6)
+	await process_frame
+	await process_frame
+	cs.select_army(g0)
+
+
+func _m_card() -> void:
+	var mb := _button("merge_into_%d" % g1)
+	_check(mb != null and not mb.disabled and mb.text.begins_with("Merge into army"), "the army card offers Merge into the army next to it")
+	var row = cs.side_box.find_child("together_row", true, false)
+	var orders_lbl = cs.side_box.find_child("army_points", true, false)
+	_check(row != null and (orders_lbl == null or (row as Control).get_index() < 3), "near the top of the card")
+	_tap_button("exchange_units", "Exchange units")
+
+
+func _m_xc_open() -> void:
+	var pnl = cs.dialog.find_child("exchange_panel", true, false)
+	_check(cs.dialog.visible and pnl != null, "the exchange panel opens")
+	var row = cs.dialog.find_child("xa_0", true, false)
+	_check(row != null, "this army's units are listed")
+	if row != null:
+		_tap_control(row)
+
+
+func _m_xc_move() -> void:
+	var a := CState.army(cs.ps, g0)
+	var b := CState.army(cs.ps, g1)
+	var la = cs.dialog.find_child("xc_count_a", true, false)
+	var lb = cs.dialog.find_child("xc_count_b", true, false)
+	_check(la != null and (la as Label).text.begins_with("This army: %d / %d" % [CState.unit_count(a) - 1, CData.ARMY_MAX])
+		and lb != null and (lb as Label).text.contains("%d / %d" % [CState.unit_count(b) + 1, CData.ARMY_MAX]),
+		"a tapped unit moves across; the counts and the cap show (%s | %s)" % [(la as Label).text if la else "", (lb as Label).text if lb else ""])
+	var btn = cs.dialog.find_child("xc_confirm", true, false)
+	_check(btn != null and not (btn as Button).disabled, "Confirm is enabled")
+	if btn != null:
+		_tap_control(btn)
+
+
+func _m_xc_confirm() -> void:
+	pass
+
+
+func _m_xc_check() -> void:
+	var n := 0
+	for o in cs.orders:
+		if str(o["t"]) == "exchange" and int(o["from"]) == g0 and int(o["to"]) == g1 and str(o["units"]) == str([0]):
+			n += 1
+	_check(n == 1 and not cs.dialog.visible, "Confirm adds the exchange order")
+	_check(CState.unit_count(CState.army(cs.ps, g1)) == CState.unit_count(CState.army(cs.st, g1)) + 1, "the plan preview shows the counts after it")
+	_tap_control(cs.undo_button)
+
+
+func _m_undo() -> void:
+	var n := 0
+	for o in cs.orders:
+		if str(o["t"]) == "exchange":
+			n += 1
+	_check(n == 0, "Undo takes the exchange back")
+	cs.select_army(g0)
+	await process_frame
+	_tap(cs.overlay.army_positions()[g1])
+
+
+func _m_tap1() -> void:
+	_check(cs.sel_army == g0 and cs.merge_tap == g1, "a first tap on our other army previews the merge (still %d selected)" % cs.sel_army)
+	var marks := 0
+	for mm in cs.overlay.merge_marks:
+		if int(mm[0]) == g1:
+			marks += 1
+	var cap := ""
+	for pth in cs.overlay.paths6:
+		cap += str(pth.get("caption", ""))
+	_check(marks == 1 and cap.begins_with("Merge into army"), "a merge glyph on it and the caption: %s" % cap)
+	_check(cs.find_child("toast", true, false) != null, "a toast offers Merge / Select it")
+	_tap(cs.overlay.army_positions()[g1])
+
+
+func _m_tap2() -> void:
+	pass
+
+
+func _m_merged() -> void:
+	var n := 0
+	for o in cs.orders:
+		if str(o["t"]) == "merge" and int(o["army"]) == g0 and int(o["into"]) == g1:
+			n += 1
+	_check(n == 1 and CState.army(cs.ps, g0).is_empty() and cs.sel_army == g1, "the second tap merges (next to it: a merge order now)")
+	cs.orders = []
+	cs._replan()
+
+
+func _m_far() -> void:
+	CState.place(CState.army(cs.st, g1), CState.field_cell(CData.region_index("campania")))
+	cs._replan()
+	cs.close_side()
+	cs.focus_region(CData.region_index("latium"), 0.9)
+	await process_frame
+	await process_frame
+	cs.select_army(g0)
+
+
+func _m_far1() -> void:
+	_tap(cs.overlay.army_positions()[g1])
+
+
+func _m_far2() -> void:
+	_tap(cs.overlay.army_positions()[g1])
+
+
+func _m_far_check() -> void:
+	var o := _move_order(g0)
+	_check(int(o.get("join", -1)) == g1 and cs.move_kind(g0) == "merge", "further away: a march that merges on arrival: %s" % str(o))
+	var cap := ""
+	for pth in cs.overlay.paths6:
+		cap += str(pth.get("caption", ""))
+	_check(cap.begins_with("Merge into army"), "its path reads %s" % cap)
+	cs.orders = []
+	cs._replan()
+
+
+func _m_gift_setup() -> void:
+	# An allied player (Carthage) with an army next to ours.
+	_ally = CData.faction_index("carthage")
+	(cs.st["humans"] as Array).append(_ally)
+	(cs.st["humans"] as Array).sort()
+	CState.set_dip(cs.st, rome, _ally, CState.ALLIED)
+	var c0 := CState.field_cell(CData.region_index("latium"))
+	var id := CRules.new_army_id(cs.st, _ally)
+	cs.st["factions"][_ally]["next_army"] = int(cs.st["factions"][_ally]["next_army"]) + 1
+	var na := {"id": id, "f": _ally, "r": CGrid.region(c0), "units": [{"t": "spear", "n": 100}], "from": -1, "moved": 0, "busy": 0}
+	CState.place(na, _neighbour(c0))
+	CRules._insert_army(cs.st, na)
+	_ally_army = id
+	CState.place(CState.army(cs.st, g1), CState.field_cell(CData.region_index("campania")))
+	cs._replan()
+	cs.close_side()
+	cs.focus_region(CData.region_index("latium"), 1.6)
+	await process_frame
+	await process_frame
+	cs.select_army(g0)
+
+
+func _m_gift_tap() -> void:
+	var gl := 0
+	for mm in cs.overlay.merge_marks:
+		if int(mm[0]) == _ally_army and int(mm[1]) == 1:
+			gl += 1
+	_check(gl == 1, "the ally's army next to ours shows the gift glyph")
+	_tap(cs.overlay.army_positions()[_ally_army])
+
+
+func _m_gift_row() -> void:
+	var btn = cs.dialog.find_child("xc_confirm", true, false)
+	_check(cs.dialog.visible and btn != null and (btn as Button).text.begins_with("Gift"), "a tap on the ally's army opens the panel in gift mode")
+	var theirs = cs.dialog.find_child("xb_0", true, false)
+	_check(theirs != null and (theirs as Control).mouse_filter == Control.MOUSE_FILTER_IGNORE, "the ally's units cannot be taken")
+	var row = cs.dialog.find_child("xa_0", true, false)
+	if row != null:
+		_tap_control(row)
+
+
+func _m_gift_confirm() -> void:
+	var btn = cs.dialog.find_child("xc_confirm", true, false)
+	_check(btn != null and (btn as Button).text == "Gift 1 unit" and not (btn as Button).disabled, "Gift 1 unit")
+	if btn != null:
+		_tap_control(btn)
+
+
+func _m_gift_check() -> void:
+	var n := 0
+	for o in cs.orders:
+		if str(o["t"]) == "exchange" and int(o["to"]) == _ally_army and not o.has("back"):
+			n += 1
+	_check(n == 1 and CState.unit_count(CState.army(cs.ps, _ally_army)) == 2, "the gift is planned; the ally's army shows it in the preview")

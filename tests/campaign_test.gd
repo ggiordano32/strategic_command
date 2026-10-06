@@ -30,7 +30,11 @@ extends SceneTree
 ## by moving onto a city (and storming on arrival), sally and relief by
 ## moving onto a besieger, support by radius with the bearing, stances
 ## (forced march, fortify, raiding) and the raiders' income, migration
-## 5 -> 6 and from the format 1 file, the step log, determinism.
+## 5 -> 6 and from the format 1 file, the step log, determinism; merging
+## by marching onto an army (same turn, following it across turns, the cap,
+## the army gone), the exchange order both ways (an army emptied is gone),
+## gifts to an allied human (taking refused, the event), recruits
+## collecting in one army, the end-of-turn merge of idle armies in a city.
 ## Exits 0 on success, 1 on failure.
 
 const CData := preload("res://campaign/cdata.gd")
@@ -87,6 +91,11 @@ func _init() -> void:
 	_grid_migration()
 	_grid_steps()
 	_grid_determinism()
+	_grid_merge()
+	_grid_exchange()
+	_grid_gift()
+	_grid_recruit_collect()
+	_grid_auto_merge()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
 	quit(0 if fails == 0 else 1)
 
@@ -1886,3 +1895,235 @@ func _plain(v) -> bool:
 				return false
 		return true
 	return false
+
+
+# ------------------------------------- format 6: merge, exchange, gifts ---
+
+## Regions of Italy given to faction f (a clear road for the merge tests).
+func _italy(st: Dictionary, f: int) -> void:
+	for key in ["latium", "etruria", "campania", "samnium", "apulia", "bruttium", "umbria"]:
+		if _r(key) >= 0:
+			st["regions"][_r(key)]["owner"] = f
+
+
+func _keys(a: Dictionary) -> Array:
+	var out: Array = []
+	for u in a["units"]:
+		out.append(str(u["t"]))
+	return out
+
+
+func _grid_merge() -> void:
+	var st := _empty6()
+	var rome := _f("rome")
+	_italy(st, rome)
+	var a := _put(st, rome, CState.field_cell(_r("latium")), ["heavy", "spear"])
+	var b := _put(st, rome, CState.field_cell(_r("campania")), ["cav", "cav", "heavy"])
+	var ida := int(a["id"])
+	var idb := int(b["id"])
+	var mo := {"t": "move", "army": idb, "join": ida, "persist": 1}
+	_check(CRules.apply_order(CState.copy(st), rome, mo) == "", "a march to merge into one's own army is a valid order")
+	var pv := CTurn.preview(st, rome, [mo])
+	_check((pv["errors"] as Array).is_empty() and (pv["moves"] as Array).size() == 1 and int(pv["moves"][0][5]) == ida,
+		"the plan preview carries the merge target")
+	var pp := CRules.plan_path(st, b, CState.cell(a), -1, CData.MODE_SIEGE, {}, 12, ida)
+	_check(not pp.has("why") and str(pp["aim"]["kind"]) == "merge" and int(pp["t"][-1]) == 0, "its path ends next to the army this turn (kind merge)")
+	var s1 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [mo])])
+	var a1 := CState.army(s1, ida)
+	_check(CState.army(s1, idb).is_empty() and not a1.is_empty() and str(_keys(a1)) == str(["heavy", "spear", "cav", "cav", "heavy"]),
+		"same turn: the mover merged in, its units after the target's (%s)" % str(_keys(a1)))
+	_check(CState.cell(a1) == CState.cell(a) and int(a1["id"]) == ida, "the target keeps its id and cell")
+	# Across turns: the target marches off north; the mover follows it.
+	var st2 := _empty6()
+	_italy(st2, rome)
+	var t2 := _put(st2, rome, CState.field_cell(_r("latium")), ["heavy"])
+	var m2 := _put(st2, rome, CState.field_cell(_r("bruttium")), ["spear", "spear"])
+	var away := CState.field_cell(_r("etruria"))
+	var s2 := CTurn.resolve_turn(st2, [CTurn.submission(st2, rome, [_move6(t2, away),
+		{"t": "move", "army": int(m2["id"]), "join": int(t2["id"]), "persist": 1}])])
+	var m2b := CState.army(s2, int(m2["id"]))
+	_check(not m2b.is_empty() and int(m2b.get("dest_army", -1)) == int(t2["id"]), "not there yet: the mover keeps following (dest_army)")
+	var cur := s2
+	var turns := 1
+	while turns < 6 and not CState.army(cur, int(m2["id"])).is_empty():
+		cur = CTurn.resolve_turn(cur, [CTurn.submission(cur, rome, [])])
+		turns += 1
+	var t2b := CState.army(cur, int(t2["id"]))
+	_check(CState.army(cur, int(m2["id"])).is_empty() and CState.unit_count(t2b) == 3 and CGrid.cheb(CState.cell(t2b), away) <= 1,
+		"it caught up and merged after %d turns, where the target went" % turns)
+	_check(_plain(s2), "a stored merge march is plain data")
+	# The cap.
+	var st3 := _empty6()
+	_italy(st3, rome)
+	var big := _put(st3, rome, CState.field_cell(_r("latium")), ["heavy", "heavy", "heavy", "heavy", "heavy", "heavy", "heavy", "heavy"])
+	var five := _put(st3, rome, CState.field_cell(_r("campania")), ["spear", "spear", "spear", "spear", "spear"])
+	_check(CRules.apply_order(CState.copy(st3), rome, {"t": "move", "army": int(five["id"]), "join": int(big["id"]), "persist": 1}) == "too many units to merge",
+		"merging past %d units is refused: too many units to merge" % CData.ARMY_MAX)
+	# The target gone (disbanded this turn): the move ends with a note.
+	var st4 := _empty6()
+	_italy(st4, rome)
+	var t4 := _put(st4, rome, CState.field_cell(_r("latium")), ["heavy"])
+	var m4 := _put(st4, rome, CState.field_cell(_r("bruttium")), ["spear"])
+	var s4 := CTurn.resolve_turn(st4, [CTurn.submission(st4, rome, [{"t": "disband", "army": int(t4["id"]), "units": [0]},
+		{"t": "move", "army": int(m4["id"]), "join": int(t4["id"]), "persist": 1}])])
+	var m4b := CState.army(s4, int(m4["id"]))
+	var gone_ev := false
+	for e in _events(s4, "move_failed"):
+		if int(e["army"]) == int(m4["id"]):
+			gone_ev = true
+	_check(not m4b.is_empty() and CState.cell(m4b) == CState.cell(m4) and not m4b.has("dest_army") and gone_ev,
+		"the army to merge into is gone: the mover stays and is told")
+	# Merging into a besieger from its ring is allowed (the merge order too).
+	var st5 := _empty6()
+	var ep := _f("epirus")
+	var r5 := _r("epirus")
+	var ring := []
+	for k in 8:
+		var c := CGrid.at(CGrid.cx(CGrid.site(r5)) + CGrid.DX[k], CGrid.cy(CGrid.site(r5)) + CGrid.DY[k])
+		if c >= 0 and CGrid.passable(c) and CGrid.step_cost(CGrid.site(r5), c) > 0:
+			ring.append(c)
+	_check(int(st5["regions"][r5]["owner"]) == ep and ring.size() >= 2, "Epirus has two ring cells")
+	if ring.size() >= 2:
+		var s1a := _put(st5, rome, ring[0], ["heavy"])
+		var s1b := _put(st5, rome, ring[1], ["spear"])
+		CRules.start_siege(st5, r5, s1a, -1)
+		if CGrid.cheb(ring[0], ring[1]) <= 1:
+			_check(CRules.siege_role(st5, s1b) == 1 and CRules.apply_order(st5, rome, {"t": "merge", "army": int(s1b["id"]), "into": int(s1a["id"])}) == "",
+				"two besiegers side by side merge")
+
+
+func _grid_exchange() -> void:
+	var st := _empty6()
+	var rome := _f("rome")
+	_italy(st, rome)
+	var c0 := CState.field_cell(_r("latium"))
+	var a := _put(st, rome, c0, ["heavy", "heavy", "spear"])
+	var c1 := -1
+	for k in 8:
+		var c := CGrid.at(CGrid.cx(c0) + CGrid.DX[k], CGrid.cy(c0) + CGrid.DY[k])
+		if c >= 0 and CGrid.passable(c) and CGrid.step_cost(c0, c) > 0 and CGrid.site_region(c) < 0:
+			c1 = c
+			break
+	var b := _put(st, rome, c1, ["cav", "cav"])
+	var ida := int(a["id"])
+	var idb := int(b["id"])
+	var x := {"t": "exchange", "from": ida, "to": idb, "units": [0], "back": [1]}
+	var s1 := CState.copy(st)
+	_check(CRules.apply_order(s1, rome, x) == "", "exchange between neighbouring armies")
+	_check(str(_keys(CState.army(s1, ida))) == str(["heavy", "spear", "cav"]) and str(_keys(CState.army(s1, idb))) == str(["cav", "heavy"]),
+		"both ways: the units given go after the kept ones (%s / %s)" % [str(_keys(CState.army(s1, ida))), str(_keys(CState.army(s1, idb)))])
+	var s2 := CState.copy(st)
+	_check(CRules.apply_order(s2, rome, {"t": "exchange", "from": idb, "to": ida, "units": [0, 1]}) == ""
+		and CState.army(s2, idb).is_empty() and CState.unit_count(CState.army(s2, ida)) == 5, "an army that gives all its units is gone")
+	var s3 := CState.copy(st)
+	CState.place(CState.army(s3, idb), CState.field_cell(_r("campania")))
+	_check(CRules.apply_order(s3, rome, x) == "not together", "armies apart cannot trade units")
+	var s4 := CState.copy(st)
+	for k in 9:
+		(CState.army(s4, ida)["units"] as Array).append({"t": "heavy", "n": 100})
+	_check(CRules.apply_order(s4, rome, {"t": "exchange", "from": idb, "to": ida, "units": [0]}) == "more than %d units" % CData.ARMY_MAX,
+		"the receiving army stays within %d units" % CData.ARMY_MAX)
+	_check(CRules.apply_order(CState.copy(st), rome, {"t": "exchange", "from": ida, "to": idb, "units": [0, 0]}) == "bad units", "repeated indices are refused")
+	# Through a turn: deterministic, the preview shows the counts.
+	var pv := CTurn.preview(st, rome, [x])
+	_check(CState.unit_count(CState.army(pv["state"], ida)) == 3 and CState.unit_count(CState.army(pv["state"], idb)) == 2
+		and str(_keys(CState.army(pv["state"], idb))) == str(["cav", "heavy"]), "the plan preview applies the exchange")
+	var r1 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [x])])
+	var r2 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [x])])
+	_check(CState.state_hash(r1) == CState.state_hash(r2), "an exchange resolves deterministically")
+
+
+func _grid_gift() -> void:
+	var rome := _f("rome")
+	var cart := _f("carthage")
+	var st := _new6([rome, cart])
+	st["armies"] = []
+	_italy(st, rome)
+	var c0 := CState.field_cell(_r("latium"))
+	var mine := _put(st, rome, c0, ["heavy", "heavy", "spear"])
+	var theirs := _put(st, cart, c0, ["cav"])
+	var ai := _put(st, _f("epirus"), c0, ["spear"])
+	var g := {"t": "exchange", "from": int(mine["id"]), "to": int(theirs["id"]), "units": [0, 2]}
+	_check(CRules.exchange_check(st, rome, int(mine["id"]), int(theirs["id"]), [0, 2]) == "", "a gift of two units to the ally's army is allowed")
+	_check(CRules.exchange_check(st, rome, int(theirs["id"]), int(mine["id"]), [0]) == "no such army", "taking the ally's units is not (from must be ours)")
+	_check(CRules.exchange_check(st, rome, int(mine["id"]), int(theirs["id"]), [0], [0]) == "cannot take an ally's units", "nor in return for a gift")
+	_check(CRules.exchange_check(st, rome, int(mine["id"]), int(ai["id"]), [0]) == "not a friendly army", "no gifts to an AI faction")
+	var subs := [CTurn.submission(st, rome, [g]), CTurn.submission(st, cart, [])]
+	var r1 := CTurn.resolve_turn(st, subs)
+	var r2 := CTurn.resolve_turn(st, [subs[1], subs[0]])
+	var t1 := CState.army(r1, int(theirs["id"]))
+	_check(CState.unit_count(t1) == 3 and str(_keys(t1)) == str(["cav", "heavy", "spear"]) and CState.unit_count(CState.army(r1, int(mine["id"]))) == 1,
+		"the ally's army has the gift after the turn (%s)" % str(_keys(t1)))
+	_check(CState.state_hash(r1) == CState.state_hash(r2), "both clients resolve the gift the same (submission order does not matter)")
+	var ev := _events(r1, "gift")
+	_check(ev.size() == 1 and int(ev[0]["f"]) == rome and int(ev[0]["to"]) == cart and int(ev[0]["n"]) == 2 and int(ev[0]["r"]) == _r("latium"),
+		"a gift event for the receiver")
+	# A whole army as a gift.
+	var s3 := CState.copy(st)
+	_check(CRules.apply_order(s3, rome, {"t": "exchange", "from": int(mine["id"]), "to": int(theirs["id"]), "units": [0, 1, 2]}) == ""
+		and CState.army(s3, int(mine["id"])).is_empty() and CState.unit_count(CState.army(s3, int(theirs["id"]))) == 4,
+		"giving the whole army: the giver's army is gone")
+
+
+## A unit key faction f can recruit in r now.
+func _recruitable(st: Dictionary, f: int, r: int) -> String:
+	for o in CRules.recruit_options(st, f, r):
+		if bool(o["ok"]):
+			return str(o["t"])
+	return ""
+
+
+func _grid_recruit_collect() -> void:
+	var rome := _f("rome")
+	var st := _empty6()
+	var lat := _r("latium")
+	st["factions"][rome]["treasury"] = 20000
+	var key := _recruitable(st, rome, lat)
+	_check(key != "", "Roma can recruit (%s)" % key)
+	if key == "":
+		return
+	var s1 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [{"t": "recruit", "r": lat, "unit": key}, {"t": "recruit", "r": lat, "unit": key}])])
+	var mine := CState.armies_of(s1, rome)
+	_check(mine.size() == 1 and CState.unit_count(mine[0]) == 2 and CState.cell(mine[0]) == CGrid.site(lat), "two recruits form one army inside the walls")
+	var s2 := CTurn.resolve_turn(s1, [CTurn.submission(s1, rome, [{"t": "recruit", "r": lat, "unit": key}])])
+	mine = CState.armies_of(s2, rome)
+	_check(mine.size() == 1 and CState.unit_count(mine[0]) == 3, "next turn's recruit joins it")
+	# A 1-unit army already standing idle in the city: the end of the turn
+	# gathers it in too.
+	var s3 := CState.copy(s2)
+	var extra := _put(s3, rome, CGrid.site(lat), [key])
+	var s4 := CTurn.resolve_turn(s3, [CTurn.submission(s3, rome, [{"t": "recruit", "r": lat, "unit": key}])])
+	mine = CState.armies_of(s4, rome)
+	_check(mine.size() == 1 and CState.unit_count(mine[0]) == 5 and CState.army(s4, int(extra["id"])).is_empty(),
+		"recruits and an idle army in the city end in one army (%d armies)" % mine.size())
+
+
+func _grid_auto_merge() -> void:
+	var rome := _f("rome")
+	var st := _empty6()
+	var lat := _r("latium")
+	var site := CGrid.site(lat)
+	var a := _put(st, rome, site, ["heavy", "heavy", "heavy", "heavy", "heavy", "heavy", "heavy", "heavy"])
+	var b := _put(st, rome, site, ["spear", "spear", "spear", "spear", "spear"])
+	var c := _put(st, rome, site, ["cav", "cav"])
+	var d := _put(st, rome, site, ["cav"])
+	d["stance"] = CData.ST_FORTIFY
+	var e := _put(st, rome, CState.field_cell(lat), ["spear"])
+	var e2 := _put(st, rome, CState.field_cell(lat), ["spear"])
+	var s1 := CTurn.resolve_turn(st, [])
+	_check(CState.army(s1, int(c["id"])).is_empty() and CState.unit_count(CState.army(s1, int(a["id"]))) == 10,
+		"idle armies in a city merge at the end of the turn into the lowest id")
+	_check(not CState.army(s1, int(b["id"])).is_empty() and CState.unit_count(CState.army(s1, int(b["id"]))) == 5,
+		"one that would pass %d units stays apart" % CData.ARMY_MAX)
+	_check(not CState.army(s1, int(d["id"])).is_empty(), "another stance stays apart")
+	_check(not CState.army(s1, int(e["id"])).is_empty() and not CState.army(s1, int(e2["id"])).is_empty(), "armies in the field are not merged")
+	# One with a march stored is not idle.
+	var st2 := _empty6()
+	var p := _put(st2, rome, site, ["heavy"])
+	var q := _put(st2, rome, site, ["spear"])
+	var far := CState.field_cell(_r("bruttium"))
+	_italy(st2, rome)
+	var s2 := CTurn.resolve_turn(st2, [CTurn.submission(st2, rome, [_move6(q, far)])])
+	_check(not CState.army(s2, int(q["id"])).is_empty() and not CState.army(s2, int(p["id"])).is_empty(), "an army marching off is not merged")
+	var r1 := CTurn.resolve_turn(st, [])
+	_check(CState.state_hash(r1) == CState.state_hash(s1), "the end-of-turn merge is deterministic")
