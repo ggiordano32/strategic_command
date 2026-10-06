@@ -33,6 +33,7 @@ hash matches its content. It does not validate orders or results.
 15. Deployment (Docker, Proxmox, Caddy, moving the data)
 16. Tests
 17. Live battle rooms (milestone 5): the lockstep relay
+18. Custom battle rooms
 
 ## 1. Stack and layout
 
@@ -160,7 +161,7 @@ notifications show them from 1.
 | Call | Body / query | Answer |
 |---|---|---|
 | `GET /healthz` | | `{ok, version, notify{queued,sent,failed,dropped,pending}}` |
-| `GET /api/info` | | `{server, version, api, build (web build stamp), invite_required, time}` |
+| `GET /api/info` | | `{server, version, api (3: custom battles), build (web build stamp), invite_required, time}` |
 | `POST /api/campaigns` | `{name, format_version, rules, build, seat, state_gz, hash, labels{factions[],regions[]}, turn_timeout_h, webhook_url?, discord_user?, invite?, device?}` | `{id, token, seat, version: 1, hash, join_code?, join_expires?}` |
 | `POST /api/join/preview` | `{code}` | `{id, name, turn, humans, format_version, rules, seats[{f, name, claimed}]}` |
 | `POST /api/join` | `{code, f, discord_user?, device?}` | `{id, token, seat, name}` |
@@ -187,6 +188,9 @@ notifications show them from 1.
 | `POST /api/c/{id}/verify` | `{version, ok, local_hash, ms}` | `{ok}` |
 | `GET /api/c/{id}/wait` | `?since=SEQ&timeout=S` (max 25) | `{seq, server_time}` |
 | `GET /api/c/{id}/ws` | WebSocket; first message `{"t":"auth","token":...}` | `hello`, then `ping`→`pong`, `echo`, and `room` (live battles, section 17) |
+| `POST /api/custom` | `{setup (JSON object, <= 64 KB), rules, build, invite?, name?}` | `{code, token, seat: 0, rev: 1}` (custom battles, section 18) |
+| `POST /api/custom/join` | `{code}` | `{code, token, seat: 1, rev, setup, rules, build, name}` |
+| `GET /api/custom/{code}/ws` | WebSocket; first message `{"t":"auth","token":...}` | as `/api/c/{id}/ws`, the room is the custom battle (section 18) |
 | `POST /api/test/clock` | `{advance_ms}` (test mode only) | `{ok, time}` |
 | `GET` / `POST /telemetry` | as `tools/serve_web.py` | `{ok, stored}` / status |
 | `GET /*` | static files from the web build | |
@@ -621,3 +625,85 @@ message per 100 ms frame, a hash a second, a ping a second), each well under
 200 bytes. A snapshot at 4,000 soldiers is about 86-89 KB (2,000: 36 KB; the
 small test battles 15-30 KB), so 2-3 chunks; the host leaves one with the
 relay every 30 s for reconnects when nobody else can send one.
+
+## 18. Custom battle rooms
+
+A live lockstep room (section 17) that is not tied to a campaign: two players
+set up one battle together and fight it. Code:
+`server/internal/server/custom.go` (endpoints, lobby, expiry), the relay is
+`rooms.go`, the WebSocket loop `live.go` (shared with campaign rooms).
+`/api/info` reports `api: 3` from here on (campaign live rooms still need
+`>= 2`).
+
+**The rule stays:** the server never reads the setup. It stores it as an
+opaque JSON object, versions it (`rev`), and relays the lockstep exactly as
+for a campaign room. Memory only: no database rows, no Discord, no claims,
+no `battle_live`; a restart loses every custom room.
+
+### Flow
+
+1. Player 1 `POST /api/custom {setup, rules, build, invite?, name?}` ->
+   `{code, token, seat: 0, rev: 1}`. The room exists, in the lobby, empty.
+2. Player 2 `POST /api/custom/join {code}` -> `{code, token, seat: 1, rev,
+   setup, rules, build, name}`. The code is typed like a campaign join code
+   (any case, dashes and spaces ignored).
+3. Both open `GET /api/custom/{code}/ws`: `{"t":"auth","token":...}` ->
+   `{"t":"hello","f":SEAT,"server_time","api":3}`, then
+   `{"t":"room","b":0,"v":0,"create":false,"scen":"","keep":bool}` (b, v,
+   create, scen ignored) -> the room reply.
+4. Lobby: either seat edits the setup (`setup`, compare-and-swap on `rev`),
+   each says `lobby {ready, rev, scen}`; the host sends `start`.
+5. From the `start` stream item on it is the section 17 relay unchanged
+   (`in`, `hash`, `res`, `snapreq`/`snap`, `replay`, `ready` to join a
+   running battle, `continue`, `leave`, `ping`; drops name `to`, the
+   clients decide what happens to the units).
+
+Seats: 0 = Player 1 (creator), 1 = Player 2 (joiner); they are the lockstep
+player ids (`f`, `p`, `players`, `who`, `to`). In the lobby the host is seat
+0 whenever it is connected, otherwise the connected seat; after the start the
+section 17 handover applies. Tokens: 32 random bytes, only their SHA-256
+kept, compared in constant time; one token per seat (no device codes).
+
+### HTTP
+
+| Call | Errors |
+|---|---|
+| `POST /api/custom` | 403 `invite_required` (as campaign creation), 429 `rate_limited` (the campaign creation limiter: 6 an hour per IP), 400 `bad_request` (setup missing or not a JSON object), 413 `too_large` (setup over 64 KB raw), 503 `busy` (1,000 custom rooms open) |
+| `POST /api/custom/join` | 404 `bad_code` (no such room, or closed / expired; counts against the code-guess limiter, 10 per 15 min per IP), 409 `seat_taken` (seat 1 already claimed), 409 `started` (started without Player 2), 429 `rate_limited` |
+| `GET /api/custom/{code}/ws` | bad token, unknown or closed code: closed with policy violation (counts against the code-guess limiter) |
+
+### Messages (in addition to section 17)
+
+| Message | Fields | Meaning |
+|---|---|---|
+| `room` (server) | section 17 fields (`b`: 0, `v`: rev, `scen`: "", `region`: 0) plus `custom: true, code, setup, rev, name, rules, build` | entered |
+| `roster` (server) | section 17 fields plus `rev`; per player also `ready` (ready at the current rev), `scen` (the hash it reported) | both claimed seats always listed (`on: false` when not connected) |
+| `setup` (client) | `rev` (the base), `setup{...}` | replace the setup if `rev` is current; lobby only |
+| `setup` (server) | `rev, setup, by` | the new setup, to every member (the sender too); `by`: the seat that changed it, -1 when it is a resend after `conflict` |
+| `lobby` (client) | `ready, rev, scen` | ready only counts if `rev` is current; `scen` (<= 64 chars): the client's hash of the battle it built; lobby only |
+| `start` (stream) | `s, players[], host, rev` | `players`: the connected seats |
+| `error` (server) | `conflict` (with the current `rev`, followed by a `setup` with the current setup), `started` (lobby message after the start), `too_large`, `bad_request`, `not_host`, `not_ready`, `scen_mismatch` | |
+
+Lobby rules: a successful `setup` bumps `rev` and clears every seat's ready
+flag and `scen`; a member that disconnects in the lobby loses its ready flag
+and `scen` (it says `lobby` again after reconnecting). `start` (host only)
+needs every connected member ready at the current `rev` with equal `scen`
+hashes (`not_ready`, `scen_mismatch`); the host may start alone when the
+other seat is not connected (Player 2 can still enter later and join the
+running battle with `ready`, as a mid-battle join in section 17).
+
+### Limits and expiry
+
+| What | Value |
+|---|---|
+| setup | 64 KB raw (a JSON object), compacted when stored |
+| empty lobby | closed after `-custom-ttl` / `SC_CUSTOM_TTL` (default 10 min) since it was last non-empty, or since creation if nobody entered |
+| empty started room | closed after `-room-grace` / `SC_ROOM_GRACE` (default 90 s) |
+| any room | closed 6 h after creation, members or not |
+| rooms open | 1,000 custom rooms per server |
+| WebSocket | as section 17 (sizes, rates, 25 s silence) |
+
+A closed room is removed: its code answers `bad_code`, its tokens are
+refused. Nothing about it is kept (logs only: `custom room created`,
+`custom room joined`, `custom room started`, `custom room closed`, `ws
+connected`).

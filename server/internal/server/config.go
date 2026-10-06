@@ -23,6 +23,7 @@ type Config struct {
 	BrotliMax     bool // also make a quality-11 brotli copy in the background
 	LeaseDuration time.Duration
 	RoomGrace     time.Duration // an empty live room is kept this long for reconnects
+	CustomTTL     time.Duration // an empty custom battle lobby is kept this long
 }
 
 // DefaultTrusted is the default trusted-proxy list: loopback and private
