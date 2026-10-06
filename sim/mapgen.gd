@@ -975,14 +975,14 @@ static func plan_outline(p: Dictionary, kind: int, w_m: int) -> Dictionary:
 			var ki := (768 + _rr(rng, -150, 150)) & 1023
 			var kd := _rr(rng, 12, 18)
 			var phi := (256 + _rr(rng, -80, 80)) & 1023
-			var depth := _rr(rng, 30, 38)
+			var depth := _rr(rng, 20, 26)
 			var skew := _rr(rng, -8, 8)
 			n_gates = 1 + _r(rng, 2)
 			px = cx + _rr(rng, -8, 8)
 			py = cy + _rr(rng, -8, 8)
 			var mouth := 26
 			var dlt := mouth * 163 / maxi(_ell_r(ea, eb, phi, ki, kd), 1)
-			var gw := 2 * (GATE_HW + 2 * trg) + 8
+			var gw := 2 * (GATE_HW + 2 * trg) + 16
 			var done := walls == 0
 			for k in 16:
 				var a := k * 64
@@ -1556,7 +1556,9 @@ static func _city_plan(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 			post.append([att_x - 40, oy0, att_x - 14, oy1, 1])
 			post.append([att_x + 14, oy0, att_x + 40, oy1, 1])
 	var ditch := 0
-	if site == SITE_PLAIN and walls == 3:
+	# (Not round an oppidum: the ditch would run into its funnel and leave
+	# the attackers one causeway under fire from both arms.)
+	if site == SITE_PLAIN and walls == 3 and plan != PLAN_OPPIDUM:
 		ditch = 1
 		_ditch(obs, inside, ow, oh, vx, vy, esea, gates, n_outer, t / 2 + tow_r + DITCH_GAP, t / 2 + tow_r + DITCH_GAP + DITCH_W)
 		var d_out := t / 2 + tow_r + DITCH_GAP + DITCH_W + 8
@@ -2380,24 +2382,28 @@ static func _nav_graph(obs: PackedByteArray, ow: int, oh: int, w_m: int, h_m: in
 	var nx := PackedInt32Array()
 	var ny := PackedInt32Array()
 	var ng := PackedInt32Array()
-	var add := func(x: int, y: int, g: int) -> void:
+	# (Returns the node's index, an existing one within 4 m, or -1.)
+	var add := func(x: int, y: int, g: int) -> int:
 		if x < 4 or y < 4 or x > w_m - 4 or y > h_m - 4:
-			return
+			return -1
 		var c := mini(y / 2, oh - 1) * ow + mini(x / 2, ow - 1)
 		var k := obs[c]
 		if g < 0 and k != C_OPEN:
-			return
+			return -1
 		for q in nx.size():
 			if absi(nx[q] - x) < 4 and absi(ny[q] - y) < 4:
-				return
+				return q
 		nx.append(x)
 		ny.append(y)
 		ng.append(g)
+		return nx.size() - 1
+	var gate_links: Array = []  # [gate node, outside node, inside node]
 	for g in gates.size():
 		var gd: Dictionary = gates[g]
-		add.call(int(gd["ox"]), int(gd["oy"]), -1)
-		add.call(int(gd["x"]), int(gd["y"]), g)
-		add.call(int(gd["ix"]), int(gd["iy"]), -1)
+		var n_o: int = add.call(int(gd["ox"]), int(gd["oy"]), -1)
+		var n_g: int = add.call(int(gd["x"]), int(gd["y"]), g)
+		var n_i: int = add.call(int(gd["ix"]), int(gd["iy"]), -1)
+		gate_links.append([n_g, n_o, n_i])
 	var nv := vx.size()
 	if walls > 0:
 		for k in nv:
@@ -2469,6 +2475,26 @@ static func _nav_graph(obs: PackedByteArray, ow: int, oh: int, w_m: int, h_m: in
 			var w := FM.isqrt(l2 * 64)  # eighths of a metre
 			(adj[a] as Array).append([b, w])
 			(adj[b] as Array).append([a, w])
+	# A gate always joins its own outside and inside points (the 3 m line
+	# can clip a wall corner beside a short gate edge, as at a citadel).
+	for gl in gate_links:
+		var n_g: int = gl[0]
+		if n_g < 0 or ng[n_g] < 0:
+			continue
+		for side in [1, 2]:
+			var n_s: int = gl[side]
+			if n_s < 0 or n_s == n_g:
+				continue
+			var linked := false
+			for e in adj[n_g]:
+				if int(e[0]) == n_s:
+					linked = true
+			if not linked:
+				var dx2 := nx[n_s] - nx[n_g]
+				var dy2 := ny[n_s] - ny[n_g]
+				var w2 := FM.isqrt((dx2 * dx2 + dy2 * dy2) * 64)
+				(adj[n_g] as Array).append([n_s, w2])
+				(adj[n_s] as Array).append([n_g, w2])
 	_join_components(obs, ow, oh, nx, ny, ng, adj)
 	var e0 := PackedInt32Array()
 	var to := PackedInt32Array()

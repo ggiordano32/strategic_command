@@ -235,7 +235,7 @@ const GATE_HACKERS := 10         # at most this many men at a gate
 const GATE_REACH := 2 * M        # men this close to a closed gate's face hack at it
 const GATE_BOLT := 80            # gate hp per bolt that hits it ...
 const GATE_STONE := 360          # ... per stone
-const WALL_COVER := 35           # % of missiles from below stopped by the battlements
+const WALL_COVER: Array[int] = [0, 25, 35, 65]  # % of missiles from below stopped by the battlements, by wall level
 const WALL_PARAPET := 614        # parapet top above the walkway (line of fire)
 const CAPTURE_TICKS := 600       # attackers hold the plaza this long: the defenders break
 const CAPTURE_CLEAR := 12 * M    # ... with no defender unit this far beyond the plaza
@@ -248,8 +248,12 @@ const SEARCH_CAP := 64           # settlement maps: a target search looks at mos
 const DIST_PER_TICK := 2         # street graph distance tables built per tick at most (the rest wait)
 const DITCH_SPEED := 450         # per mille of the speed while crossing a ditch (foot only)
 const STAIR_MAX := 400           # a stair move gives up waiting for stragglers after this long
+const CIT_GATE_PCT := 60         # a citadel's gate: % of the outer gates' hit points
+const CIT_SIEGE := 1200          # the attackers 3:1 inside the walls this long: the town is lost ...
+const CIT_SIEGE_LOSS := 6        # ... lose this much morale a second
 const LAG_HOLD := 20 * M         # settlement maps: the anchor slows to a quarter while its men lag this far (+ half its depth)
-const REGROUP := 100             # ... and after this long the unit regroups where its men are
+const LAG_CUT := 8 * M           # ... and counts as cut off past this (+ half its depth) when not fighting
+const REGROUP := 100             # ... for this long: the unit regroups where its men are
                                  # (crowds in a breach pile up in a few grid cells)
 
 # Morale (0..1000).
@@ -507,6 +511,7 @@ var cit_gate: int = -1
 var sea_on: int = 0               # the sea behind the city (static)
 var sea_flee := PackedInt32Array()  # coast: where the defenders leave the field: x, y left, x, y right (static)
 var city_ditch: int = 0           # a ditch round the walls (static)
+var cit_siege: int = 0            # ticks the attackers have held the town 3:1 (the defenders lose heart)
 # Per unit (on such maps; resized always, hashed only there).
 var u_wall := PackedInt32Array()     # on the wall: walkway segment + 1 (0 = on the ground)
 var u_sq := PackedInt32Array()       # files while squeezed through a street (0 = not)
@@ -609,6 +614,10 @@ var grid_w: int = 0
 var grid_h: int = 0
 var grid_head0 := PackedInt32Array()
 var grid_head1 := PackedInt32Array()
+var blk_n0 := PackedInt32Array()    # settlement maps: side-0 men in contact per 16 m block (scratch, rebuilt each tick)
+var blk_n1 := PackedInt32Array()
+var blk_w: int = 0
+var _enemy_bn := PackedInt32Array()  # scratch: the block counts of the enemies of the unit being moved
 var grid_next := PackedInt32Array()
 
 # Orders waiting for their tick. Each is a Dictionary of ints.
@@ -701,6 +710,7 @@ var stat_stair_up: int = 0        # units that climbed onto a wall
 var stat_stair_rout: int = 0      # wall units that routed off by a stair
 var stat_ditch: int = 0           # unit-ticks crossing a ditch
 var stat_sea_exit: int = 0        # defenders who left a coast map along the shore
+var stat_cit_siege: int = 0       # defender unit-seconds of morale lost with the town lost
 var stat_regroup: int = 0         # units that regrouped where their cut-off men were
 ## View only (not state, never read by the sim): ring of recent stone
 ## impacts for the impact marks: x, y, flight direction (Q12), tick.
@@ -908,6 +918,9 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	grid_h = (field_h >> GRID_SHIFT) + 1
 	grid_head0.resize(grid_w * grid_h)
 	grid_head1.resize(grid_w * grid_h)
+	blk_w = (field_w >> 14) + 1
+	blk_n0.resize(blk_w * ((field_h >> 14) + 1))
+	blk_n1.resize(blk_n0.size())
 	grid_next.resize(n)
 	_update_bounds()
 	_update_units_stats()
@@ -1263,6 +1276,7 @@ func _setup_map(f: Dictionary) -> void:
 	cit_gate = -1
 	sea_on = 0
 	city_ditch = 0
+	cit_siege = 0
 	agora = PackedInt32Array([0, 0, 0])
 	for arr in [g_x, g_y, g_dir, g_ox, g_oy, g_ix, g_iy, g_hp, g_hp0, g_state, g_hit_t, g_bb,
 			ws_x0, ws_y0, ws_x1, ws_y1, ws_dir, ng_x, ng_y, ng_gate, ng_e0, ng_to, ng_w, g_hw, g_cit,
@@ -1314,9 +1328,11 @@ func _setup_map(f: Dictionary) -> void:
 			g_oy.append(int(gd["oy"]) * M)
 			g_ix.append(int(gd["ix"]) * M)
 			g_iy.append(int(gd["iy"]) * M)
-			g_hp0.append(int(lay["gate_hp"]) * 100)
-			g_hp.append(int(lay["gate_hp"]) * 100)
 			var gcit := int(gd.get("cit", 0))
+			# A citadel's gate is an inner wall's: 60 % of the outer gates' hit points.
+			var ghp: int = int(lay["gate_hp"]) * (CIT_GATE_PCT if gcit != 0 else 100)
+			g_hp0.append(ghp)
+			g_hp.append(ghp)
 			g_cit.append(gcit)
 			g_hw.append(int(gd.get("hw", MapGen.GATE_HW)))
 			# The citadel's gate starts open (its men come and go).
@@ -1628,12 +1644,18 @@ func _reach_checks(x: int, y: int) -> int:
 ## Two men can reach each other (melee): nothing impassable between them
 ## (a wall, a closed gate, a building corner). Midpoint and quarter points.
 func _reach_ok(x0: int, y0: int, x1: int, y1: int) -> bool:
-	if nav_at((x0 + x1) >> 1, (y0 + y1) >> 1) == 0:
+	# Over ground (or a ditch, a stair's foot) only: a man on a walkway is
+	# out of reach from below, and the walkway between two men on either
+	# side of a wall is not a way through it.
+	var gm := MapGen.NAV_GROUND | MapGen.NAV_DITCH
+	if (nav_at((x0 + x1) >> 1, (y0 + y1) >> 1) & gm) == 0:
+		return false
+	if (nav_at(x0, y0) & gm) == 0 or (nav_at(x1, y1) & gm) == 0:
 		return false
 	var dx := x1 - x0
 	var dy := y1 - y0
 	if absi(dx) + absi(dy) > 3 * M:
-		if nav_at(x0 + dx / 4, y0 + dy / 4) == 0 or nav_at(x1 - dx / 4, y1 - dy / 4) == 0:
+		if (nav_at(x0 + dx / 4, y0 + dy / 4) & gm) == 0 or (nav_at(x1 - dx / 4, y1 - dy / 4) & gm) == 0:
 			return false
 	return true
 
@@ -1652,9 +1674,19 @@ func _los_fat(x0: int, y0: int, x1: int, y1: int, mask: int = MapGen.NAV_GROUND)
 	var navg := nav
 	var w := ob_w
 	var h := ob_h
-	for q in cnt_n + 1:
+	var q := 0
+	while q <= cnt_n:
 		var x := x0 + dx * q / cnt_n
 		var y := y0 + dy * q / cnt_n
+		# No obstacle within the 16 m cells round here: the next 8 m of the
+		# line (and 1.5 m either side) are clear without looking.
+		if x > 12 * M and y > 12 * M and x < field_w - 12 * M and y < field_h - 12 * M:
+			var ci := x >> 14
+			var cj := y >> 14
+			if ci < oc_w and cj < oc_h and obs_cd[cj * oc_w + ci] == 0:
+				q += 8
+				continue
+		q += 1
 		for k in 3:
 			var sx := x + ox * (k - 1)
 			var sy := y + oy * (k - 1)
@@ -2404,6 +2436,7 @@ func _update_gates() -> void:
 func _update_capture() -> void:
 	if city_on == 0 or winner >= 0 or tick % TICKS_PER_SECOND != 0:
 		return
+	_town_lost()
 	var px := plaza[0]
 	var py := plaza[1]
 	var r := plaza[3]
@@ -2430,6 +2463,34 @@ func _update_capture() -> void:
 			if u_side[u] == city_def and u_state[u] == U_READY:
 				_start_rout(u)
 				u_routs[u] = MAX_ROUTS + 1  # the city has fallen: no rally
+
+
+## The town is lost: while the attackers' men inside the walls outnumber
+## the defenders' ready men 3 to 1, after CIT_SIEGE ticks every defending
+## unit (on the walls, in a citadel or anywhere) loses CIT_SIEGE_LOSS
+## morale a second and does not recover. Counted once a second.
+func _town_lost() -> void:
+	var att := 0
+	var dfn := 0
+	for u in n_units:
+		if u_state[u] != U_READY:
+			continue
+		if u_side[u] == city_def:
+			dfn += u_alive[u]
+		elif (veg_bits(u_cx[u], u_cy[u]) & MapGen.V_URBAN) != 0:
+			att += u_alive[u]
+	if dfn > 0 and att >= 3 * dfn:
+		cit_siege += TICKS_PER_SECOND
+	else:
+		cit_siege = 0
+	if cit_siege < CIT_SIEGE:
+		return
+	for u in n_units:
+		if u_side[u] == city_def and u_state[u] == U_READY:
+			# (Behind level 3 walls they hold out twice as long.)
+			u_morale[u] -= CIT_SIEGE_LOSS if city_walls < 3 else CIT_SIEGE_LOSS / 2
+			u_hit_t[u] = tick  # no recovering meanwhile
+			stat_cit_siege += 1
 
 
 ## Routing unit u on a settlement map: run along a path to its own edge
@@ -3035,12 +3096,17 @@ func _update_units() -> void:
 			aspeed = aspeed * DITCH_SPEED / 1000
 			_u_vfac[u] = _u_vfac[u] * DITCH_SPEED / 1000
 			stat_ditch += 1
+		var lag := 0
 		if oon and _u_obs[u] != 0 and u_fighting[u] == 0 and u_charge[u] == 0 and u_wall[u] == 0 \
-				and u_stair[u] == 0 and FM.approx_len(u_cx[u] - u_ax[u], u_cy[u] - u_ay[u]) > LAG_HOLD + unit_depth(u) / 2:
+				and u_stair[u] == 0:
+			lag = FM.approx_len(u_cx[u] - u_ax[u], u_cy[u] - u_ay[u]) - unit_depth(u) / 2
+		if lag > LAG_CUT:
 			# Among walls and houses: slow down for the men strung out
 			# behind (they follow the trail of waypoints the anchor passed);
-			# still strung out after REGROUP ticks: regroup where they are.
-			aspeed /= 4
+			# still cut off from the anchor after REGROUP ticks (a wall or
+			# houses between): regroup where they are.
+			if lag > LAG_HOLD:
+				aspeed /= 4
 			u_lagt[u] += 1
 			if u_lagt[u] >= REGROUP:
 				_regroup(u)
@@ -3545,10 +3611,16 @@ func _build_grid() -> void:
 	var gw := grid_w
 	var gmax := grid_w * grid_h - 1
 	var cnt := 0
+	var blk := obs_on != 0
+	if blk:
+		blk_n0.fill(0)
+		blk_n1.fill(0)
+	var bmax := blk_n0.size() - 1
 	for u in n_units:
 		if u_contact[u] == 0:
 			continue
 		var head: PackedInt32Array = grid_head0 if u_side[u] == 0 else grid_head1
+		var bn: PackedInt32Array = blk_n0 if u_side[u] == 0 else blk_n1
 		var base := u_slot_base[u]
 		for s in u_alive[u]:
 			var i := slot_soldier[base + s]
@@ -3556,7 +3628,22 @@ func _build_grid() -> void:
 			grid_next[i] = head[c]
 			head[c] = i
 			cnt += 1
+			if blk:
+				bn[clampi((pos_y[i] >> 14) * blk_w + (pos_x[i] >> 14), 0, bmax)] += 1
 	stat_grid_soldiers = cnt
+
+
+## Settlement maps: no enemy man (of the unit being moved: _enemy_bn) in
+## the 16 m blocks covering the square of half side r round (x, y), so a
+## search there finds nobody (scratch counts from _build_grid).
+func _none_near(x: int, y: int, r: int) -> bool:
+	var bn := _enemy_bn
+	var bh := bn.size() / blk_w
+	for by in range(maxi((y - r) >> 14, 0), mini((y + r) >> 14, bh - 1) + 1):
+		for bx in range(maxi((x - r) >> 14, 0), mini((x + r) >> 14, blk_w - 1) + 1):
+			if bn[by * blk_w + bx] != 0:
+				return false
+	return true
 
 
 func _update_soldiers() -> void:
@@ -3752,6 +3839,7 @@ func _update_soldiers() -> void:
 		var cool := t_cooldown[ty]
 		var side := u_side[u]
 		var enemy_head: PackedInt32Array = grid_head1 if side == 0 else grid_head0
+		_enemy_bn = blk_n1 if side == 0 else blk_n0
 		var own_head: PackedInt32Array = grid_head0 if side == 0 else grid_head1
 		var keep_front := (SEARCH_FRONT + TARGET_KEEP_EXTRA) * (SEARCH_FRONT + TARGET_KEEP_EXTRA)
 		# Missile troops with ammunition, and gun crews, only defend
@@ -3794,6 +3882,11 @@ func _update_soldiers() -> void:
 		# Slots can be reshuffled by deaths inside this loop (gap filling), so
 		# walk a snapshot of the slot list.
 		var order := ss.slice(base, base + alive)
+		# Men with no target and no search due this tick (in a unit that is
+		# not charging, not a formed pike block, not wrapping round its
+		# target and not held off by pike walls) only follow their slot:
+		# they take a short path with exactly the full one's result.
+		var lean := not charging and not pike_formed
 		for s in alive:
 			var i := order[s]
 			var sti := st[i]
@@ -3821,6 +3914,61 @@ func _update_soldiers() -> void:
 				if y > maxy: maxy = y
 				continue
 			var slot := slot_of[i]
+			if lean and tg[i] < 0 and (tk + i) % (3 if slot < files or is_cav else 7) != 0 \
+					and (wrap_t < 0 or slot >= files):
+				var kl := base + slot
+				var ldx := ax + oxs[kl] - x
+				var ldy := ay + oys[kl] - y
+				if ldx != 0 or ldy != 0:
+					var ld := FM.approx_len(ldx, ldy)
+					var lspd := spd_formed if ld <= CATCH_UP_DIST else run
+					if ld <= lspd:
+						nx = x + ldx
+						ny = y + ldy
+					else:
+						nx = x + ldx * lspd / ld
+						ny = y + ldy * lspd / ld
+				fc[i] = face
+				if is_cav:
+					cg[i] = maxi(umom, cg[i] - 10)
+				st[i] = S_FORMED
+				for w in nwalls:
+					var lw5 := w * 5
+					var lpc := wp[lw5]
+					var lps := wp[lw5 + 1]
+					var lrx := nx - wp[lw5 + 2]
+					var lry := ny - wp[lw5 + 3]
+					var lf := (lrx * lpc + lry * lps) / tone
+					if lf >= PIKE_HOLD or lf <= -M:
+						continue
+					var llat := (lry * lpc - lrx * lps) / tone
+					var lhw := wp[lw5 + 4]
+					if llat > lhw or llat < -lhw:
+						continue
+					var lpush := PIKE_HOLD - lf
+					nx += (lpc * lpush) / tone
+					ny += (lps * lpush) / tone
+				nx = clampi(nx, 0, fw)
+				ny = clampi(ny, 0, fh)
+				if ob and (navg[mini(ny >> 11, obh1) * obw + mini(nx >> 11, obw1)] & mask) == 0:
+					var sll := _slide(u, x, y, nx, ny, mask)
+					nx = sll.x
+					ny = sll.y
+				px[i] = nx
+				py[i] = ny
+				counted += 1
+				sumx += nx
+				sumy += ny
+				if nx < minx: minx = nx
+				if nx > maxx: maxx = nx
+				if ny < miny: miny = ny
+				if ny > maxy: maxy = ny
+				if withdrawing and ((ny > exit_y if exit_y > EDGE_EXIT else ny < exit_y) \
+						or (side_exit and (nx < 8 * M or nx > fw - 8 * M))):
+					_rm[n_rm] = i
+					_rm_why[n_rm] = GONE_WITHDRAWN
+					n_rm += 1
+				continue
 			var front := slot < files
 			var t := tg[i]
 			if disengage:
@@ -3870,10 +4018,16 @@ func _update_soldiers() -> void:
 						if ddx * ddx + ddy * ddy > (keep_front if front and not shy else keep_rear):
 							t = -1
 							lost = true
+						elif ob and ((tk + i) & 7) == 0 and not _reach_ok(x, y, px[t], py[t]):
+							t = -1  # out of reach behind a wall: look again
+							lost = true
 				if t < 0:
 					# Every rider looks ahead, not just the front rank.
 					var wide := front or is_cav
-					if lost or (tk + i) % (3 if wide else 7) == 0:
+					# (Among buildings, half the men who just lost their man look
+					# again at once and the rest at their next turn: a unit
+					# breaking off or dying set off a burst of searches.)
+					if (lost and (not ob or ((tk + i) & 1) == 0)) or (tk + i) % (3 if wide else 7) == 0:
 						if wide and not shy:
 							t = _find_target_obs(x, y, SEARCH_FRONT, 2, enemy_head) if ob \
 								else _find_target(x, y, SEARCH_FRONT, 2, enemy_head)
@@ -4165,6 +4319,8 @@ func _find_target_cone(x: int, y: int, r: int, fc: int, fs: int, head: PackedInt
 ## building corners and looks at most at SEARCH_CAP men.
 func _find_target_obs(x: int, y: int, r: int, cr: int, head: PackedInt32Array) -> int:
 	stat_searches += 1
+	if _none_near(x, y, r):
+		return -1
 	var ob := _reach_checks(x, y)
 	var budget := SEARCH_CAP
 	var gs := GRID_SHIFT
@@ -4177,22 +4333,52 @@ func _find_target_obs(x: int, y: int, r: int, cr: int, head: PackedInt32Array) -
 	var st := state
 	var nxt := grid_next
 	var gw := grid_w
-	for gy in range(maxi(cy - cr, 0), mini(cy + cr, grid_h - 1) + 1):
-		var row := gy * gw
-		for gx in range(maxi(cx - cr, 0), mini(cx + cr, gw - 1) + 1):
-			var j := head[row + gx]
-			while j >= 0 and budget > 0:
-				budget -= 1
-				if st[j] < S_DEAD:
-					var dx := px[j] - x
-					var dy := py[j] - y
-					var d2 := dx * dx + dy * dy
-					# Tie-break on index so the result never depends on
-					# list order. (Not through a wall, gate or building.)
-					if (d2 < best_d or (d2 == best_d and j < best)) and (ob == 0 or _reach_ok(x, y, px[j], py[j])):
-						best_d = d2
-						best = j
-				j = nxt[j]
+	# Rings of cells outward from his own; past a ring no cell can hold a
+	# nearer man than one already found (each is a whole cell further).
+	var gh1 := grid_h - 1
+	var gw1 := gw - 1
+	for k in cr + 1:
+		if k >= 2 and best >= 0 and best_d < ((k - 1) << gs) * ((k - 1) << gs):
+			break
+		var gy := maxi(cy - k, 0)
+		var gy1 := mini(cy + k, gh1)
+		while gy <= gy1:
+			var row := gy * gw
+			var edge_y := gy == cy - k or gy == cy + k
+			var cdy := maxi(maxi((gy << gs) - y, y - (((gy + 1) << gs) - 1)), 0)
+			cdy *= cdy
+			# Off the ring's top and bottom rows only its two side cells.
+			var gx := maxi(cx - k, 0) if edge_y else cx - k
+			var gx1 := mini(cx + k, gw1)
+			var gstep := 1 if edge_y else maxi(2 * k, 1)
+			gy += 1
+			if cdy > best_d:
+				continue
+			while gx <= gx1:
+				var gxc := gx
+				gx += gstep
+				if gxc < 0:
+					continue
+				var j := head[row + gxc]
+				if j < 0:
+					continue
+				# Skip a cell no part of which is nearer than the best so far
+				# (or the search radius).
+				var cdx := maxi(maxi((gxc << gs) - x, x - (((gxc + 1) << gs) - 1)), 0)
+				if cdx * cdx + cdy > best_d:
+					continue
+				while j >= 0 and budget > 0:
+					budget -= 1
+					if st[j] < S_DEAD:
+						var dx := px[j] - x
+						var dy := py[j] - y
+						var d2 := dx * dx + dy * dy
+						# Tie-break on index so the result never depends on
+						# list order. (Not through a wall, gate or building.)
+						if (d2 < best_d or (d2 == best_d and j < best)) and (ob == 0 or _reach_ok(x, y, px[j], py[j])):
+							best_d = d2
+							best = j
+					j = nxt[j]
 	return best
 
 
@@ -4201,6 +4387,8 @@ func _find_target_obs(x: int, y: int, r: int, cr: int, head: PackedInt32Array) -
 ## facing): ahead of the soldier and no further to the side than ahead + 2 m.
 func _find_target_cone_obs(x: int, y: int, r: int, fc: int, fs: int, head: PackedInt32Array) -> int:
 	stat_searches += 1
+	if _none_near(x, y, r):
+		return -1
 	var ob := _reach_checks(x, y)
 	var budget := SEARCH_CAP
 	var gs := GRID_SHIFT
@@ -4215,23 +4403,51 @@ func _find_target_cone_obs(x: int, y: int, r: int, fc: int, fs: int, head: Packe
 	var nxt := grid_next
 	var gw := grid_w
 	var tone := FM.TRIG_ONE  # fixed-point divisor: truncation is symmetric under mirroring (>> floors)
-	for gy in range(maxi(cy - cr, 0), mini(cy + cr, grid_h - 1) + 1):
-		var row := gy * gw
-		for gx in range(maxi(cx - cr, 0), mini(cx + cr, gw - 1) + 1):
-			var j := head[row + gx]
-			while j >= 0 and budget > 0:
-				budget -= 1
-				if st[j] < S_DEAD:
-					var dx := px[j] - x
-					var dy := py[j] - y
-					var d2 := dx * dx + dy * dy
-					if d2 < best_d or (d2 == best_d and j < best):
-						var f := (dx * fc + dy * fs) / tone
-						var lat := absi((dy * fc - dx * fs) / tone)
-						if f > 0 and lat < f + 2 * M and (ob == 0 or _reach_ok(x, y, px[j], py[j])):
-							best_d = d2
-							best = j
-				j = nxt[j]
+	var gh1 := grid_h - 1
+	var gw1 := gw - 1
+	for k in cr + 1:
+		if k >= 2 and best >= 0 and best_d < ((k - 1) << gs) * ((k - 1) << gs):
+			break
+		var gy := maxi(cy - k, 0)
+		var gy1 := mini(cy + k, gh1)
+		while gy <= gy1:
+			var row := gy * gw
+			var edge_y := gy == cy - k or gy == cy + k
+			var cdy := maxi(maxi((gy << gs) - y, y - (((gy + 1) << gs) - 1)), 0)
+			cdy *= cdy
+			# Off the ring's top and bottom rows only its two side cells.
+			var gx := maxi(cx - k, 0) if edge_y else cx - k
+			var gx1 := mini(cx + k, gw1)
+			var gstep := 1 if edge_y else maxi(2 * k, 1)
+			gy += 1
+			if cdy > best_d:
+				continue
+			while gx <= gx1:
+				var gxc := gx
+				gx += gstep
+				if gxc < 0:
+					continue
+				var j := head[row + gxc]
+				if j < 0:
+					continue
+				# Skip a cell no part of which is nearer than the best so far
+				# (or the search radius).
+				var cdx := maxi(maxi((gxc << gs) - x, x - (((gxc + 1) << gs) - 1)), 0)
+				if cdx * cdx + cdy > best_d:
+					continue
+				while j >= 0 and budget > 0:
+					budget -= 1
+					if st[j] < S_DEAD:
+						var dx := px[j] - x
+						var dy := py[j] - y
+						var d2 := dx * dx + dy * dy
+						if d2 < best_d or (d2 == best_d and j < best):
+							var f := (dx * fc + dy * fs) / tone
+							var lat := absi((dy * fc - dx * fs) / tone)
+							if f > 0 and lat < f + 2 * M and (ob == 0 or _reach_ok(x, y, px[j], py[j])):
+								best_d = d2
+								best = j
+					j = nxt[j]
 	return best
 
 
@@ -4820,7 +5036,7 @@ func _land(p: int) -> void:
 			if _rand() % 100 < stop:
 				stat_veg_stop += 1
 				return
-		if u_wall[unit_of[best]] > 0 and u_wall[pr_unit[p]] == 0 and _rand() % 100 < WALL_COVER:
+		if u_wall[unit_of[best]] > 0 and u_wall[pr_unit[p]] == 0 and _rand() % 100 < WALL_COVER[city_walls]:
 			stat_wall_cover += 1
 			return
 	if best >= 0:
@@ -5946,6 +6162,8 @@ func state_hash() -> int:
 		ctx.update(PackedInt64Array([cap_t, nav_epoch, n_gates, ai_gate[0], ai_gate[1]]).to_byte_array())
 		if cit_r > 0:
 			ctx.update(ai_cit.to_byte_array())
+		if city_on != 0:
+			ctx.update(PackedInt64Array([cit_siege]).to_byte_array())
 		if obs_on != 0:
 			for arr in _stair_arrays():
 				ctx.update((arr as PackedInt32Array).to_byte_array())

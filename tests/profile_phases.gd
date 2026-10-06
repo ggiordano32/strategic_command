@@ -1,6 +1,7 @@
 extends SceneTree
 ## Per-phase timing of BattleSim.step() for the 4,000 AI vs AI scenario.
-##   godot --headless --script res://tests/profile_phases.gd [-- --scen=bench_4000_city --ticks=N]
+##   godot --headless --script res://tests/profile_phases.gd [-- --scen=bench_4000_city --ticks=N --from=T]
+## (--from: only ticks from T on are counted, e.g. a city's breach fight.)
 ## (Mirrors step(): keep it in step with it.)
 
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -24,11 +25,16 @@ func _init() -> void:
 	var mx_t := PackedInt32Array()
 	mx_t.resize(names.size())
 	var ticks := 2000
+	var from := 0
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--ticks="):
 			ticks = int(a.get_slice("=", 1))
+		elif a.begins_with("--from="):
+			from = int(a.get_slice("=", 1))
+	var counted := 0
 	for t in ticks:
 		var ts := [Time.get_ticks_usec()]
+		sim._dist_new = 0
 		sim._apply_orders()
 		if sim.city_on != 0:
 			SiegeAI.think(sim)
@@ -53,6 +59,9 @@ func _init() -> void:
 		if sim.city_on != 0:
 			sim._update_capture()
 		sim._check_winner(); sim.tick += 1; ts.append(Time.get_ticks_usec())
+		if t < from:
+			continue
+		counted += 1
 		for k in names.size():
 			var dt: float = ts[k + 1] - ts[k]
 			tot[k] += dt
@@ -61,6 +70,6 @@ func _init() -> void:
 				mx_t[k] = sim.tick - 1
 	print(scen)
 	for k in names.size():
-		print("%-14s %.3f ms/tick  max %.2f ms (tick %d)" % [names[k], tot[k] / 1000.0 / ticks, mx[k] / 1000.0, mx_t[k]])
+		print("%-14s %.3f ms/tick  max %.2f ms (tick %d)" % [names[k], tot[k] / 1000.0 / maxi(counted, 1), mx[k] / 1000.0, mx_t[k]])
 	print("searches %d, attacks %d, shots %d, impacts %d" % [sim.stat_searches, sim.stat_attacks, sim.stat_shots, sim.stat_impacts])
 	quit(0)

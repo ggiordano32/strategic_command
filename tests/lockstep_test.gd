@@ -631,5 +631,7 @@ func _test_lockstep_city(def_side: int, polis := false) -> void:
 			"coastal polis" if polis else "walled town", "attacking" if def_side == 1 else "defending", n_ab,
 			gate_orders, wall_orders, str(gs), sim_a.stat_paths, sim_a.stat_gate_open, sim_a.stat_gate_close,
 			sim_a.stat_gate_broken, sim_a.stat_stair_down, sim_a.stat_stair_up, sim_a.tick])
-		if polis and def_side == 0 and (sim_a.stat_stair_down == 0 or sim_a.stat_stair_up == 0):
-			_fail("coastal polis (defending): no wall unit went down and up a stair")
+		# The quick run is too short for a climb (the march to a stair's foot
+		# takes longer): it checks the way down only.
+		if polis and def_side == 0 and (sim_a.stat_stair_down == 0 or (sim_a.stat_stair_up == 0 and not quick)):
+			_fail("coastal polis (defending): no wall unit went down%s a stair" % ("" if quick else " and up"))

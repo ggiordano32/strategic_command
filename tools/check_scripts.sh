@@ -1,16 +1,28 @@
 #!/bin/sh
 # Parse every script with all default-on GDScript warnings raised to errors.
-# Writes a temporary override.cfg (removed on exit). Exit 1 on any problem.
+# Exit 1 on any problem.
+#
+# The warnings-as-errors settings go into an override.cfg of a scratch copy
+# of the project (a temporary directory holding project.godot and symlinks
+# to the source directories), never into the real project: an override.cfg
+# there would turn warnings into errors for every other Godot process
+# running in this checkout meanwhile (tests, other agents).
 set -e
 cd "$(dirname "$0")/.."
-trap 'rm -f override.cfg' EXIT
+root=$(pwd)
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/sc_check.XXXXXX")
+trap 'rm -rf "$tmp"' EXIT
+cp project.godot "$tmp/"
+for d in sim campaign game tests tools data; do
+	[ -e "$d" ] && ln -s "$root/$d" "$tmp/$d"
+done
 {
 	echo "[debug]"
-	godot --headless --script res://tools/list_warnings.gd 2>/dev/null | grep '^gdscript/warnings/' | sed 's/=.*/=2/'
-} > override.cfg
+	godot --headless --path "$tmp" --script res://tools/list_warnings.gd 2>/dev/null | grep '^gdscript/warnings/' | sed 's/=.*/=2/'
+} > "$tmp/override.cfg"
 fail=0
 for f in sim/*.gd campaign/*.gd game/*.gd game/campaign/*.gd game/net/*.gd tests/*.gd tools/*.gd; do
-	out=$(godot --headless --check-only --script "res://$f" 2>&1 | grep -v '^Godot Engine' | grep -v '^$' || true)
+	out=$(godot --headless --path "$tmp" --check-only --script "res://$f" 2>&1 | grep -v '^Godot Engine' | grep -v '^$' || true)
 	if [ -n "$out" ]; then
 		echo "== $f"
 		echo "$out"

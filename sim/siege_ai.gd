@@ -26,7 +26,8 @@ extends RefCounted
 ##             counting as one) in 2.5 minutes, every attacking unit storms (hunting the nearest
 ##             defender anywhere) if the attackers still have 1.2x the
 ##             defenders' strength off the walls, else they withdraw; all
-##             out and still nothing for 5 more minutes: they withdraw.
+##             out and still nothing for 5 more minutes: they withdraw
+##             unless 1.5x stronger.
 ##   The army withdraws as in the field when the battle is clearly lost.
 ## Defenders (never withdraw):
 ##   wall      units on the walls stand and shoot (fire at will).
@@ -98,6 +99,8 @@ const ART_OUT := 165 * M        # batteries' firing line
 const COVER_OUT := 110 * M      # archers' line
 const HACK_AFTER := 1200        # bombardment ticks before the foot hack anyway
 const STORM_R := 45 * M         # assault: attack defenders this close
+const BEATEN_PCT := 35         # attackers down to this % of their strength and weaker than the defenders: withdraw
+const SPREAD := 25 * M          # ... each other unit of ours on a defender counts as this much further
 const GATE_REACT := 25 * M      # gate guards attack attackers this close to the gate
 const RESERVE_R := 140 * M      # reserves attack attackers inside this close to their post
 const CLOSE_R := 100 * M        # close an open gate with attackers this close
@@ -155,7 +158,7 @@ static func _army(sim, side: int) -> void:
 	var own := BattleAI._strength(sim, side)
 	var foe := BattleAI._strength(sim, 1 - side)
 	if sim.tick > 600 and foe > 0 and (own * 100 < foe * 30 \
-			or (own * 100 < BattleAI._start_strength(sim, side) * 20 and own < foe)):
+			or (own * 100 < BattleAI._start_strength(sim, side) * BEATEN_PCT and own < foe)):
 		sim.queue_order({"tick": sim.tick, "type": ORDER_WITHDRAW_ALL, "side": side,
 			"player": BattleAI.AI_PLAYER_BASE + side, "seq": 9000})
 		sim.ai_phase[side] = P_WITHDRAW
@@ -173,16 +176,21 @@ static func _army(sim, side: int) -> void:
 			prog += sim.u_killed[u]
 	for g in sim.n_gates:
 		prog += (sim.g_hp0[g] - sim.g_hp[g]) / 10000
-	if prog >= sim.ai_prog[0] + STALL_PROG:
-		sim.ai_prog[0] = prog
+	if prog >= sim.ai_prog[0] + STALL_PROG or (phase == SP_APPROACH and sim.tick - sim.ai_t[side] < 2 * HACK_AFTER):
+		# (The first four minutes of the approach - the batteries setting up
+		# and bombarding, then the foot hacking - never count as a stall.)
+		sim.ai_prog[0] = maxi(prog, sim.ai_prog[0])
 		sim.ai_prog[1] = sim.tick
 	elif phase == SP_ASSAULT and sim.tick - sim.ai_t[side] > ASSAULT_ALL and sim.ai_prog[2] == 0:
 		sim.ai_prog[2] = 1  # four minutes into the assault: everything goes in
 	elif sim.tick - sim.ai_prog[1] > STALL_TICKS and (sim.ai_prog[2] == 0 \
 			or sim.tick - sim.ai_prog[1] > 2 * STALL_TICKS):
-		if sim.ai_prog[2] == 0 and own * 10 >= _ground_strength(sim, 1 - side) * 12:
+		var foe_g := _ground_strength(sim, 1 - side)
+		if sim.ai_prog[2] == 0 and own * 10 >= foe_g * 12:
 			sim.ai_prog[2] = 1  # all out
 			sim.ai_prog[1] = sim.tick
+		elif sim.ai_prog[2] != 0 and own * 10 >= foe_g * 15:
+			sim.ai_prog[1] = sim.tick  # all out and still clearly stronger: keep at it
 		else:
 			# Too weak, or all out and still nothing for 5 minutes: give up.
 			sim.queue_order({"tick": sim.tick, "type": ORDER_WITHDRAW_ALL, "side": side,
@@ -670,10 +678,20 @@ static func _att_art(sim, u: int, phase: int) -> void:
 	if phase == SP_ASSAULT and cg >= 0 and sim.g_state[cg] == GATE_CLOSED and sim.u_ammo[u] > 0:
 		# The citadel's gate, if it is within reach from here.
 		var f: Vector2i = sim.gate_face(cg)
-		if BattleAI._d(f.x - sim.u_cx[u], f.y - sim.u_cy[u]) < UT.stat(ty, "m_range") * 92 / 100:
+		var dcg := BattleAI._d(f.x - sim.u_cx[u], f.y - sim.u_cy[u])
+		var reach: int = UT.stat(ty, "m_range") * 92 / 100
+		if dcg < reach:
 			if sim.u_order[u] != O_ATTACK or sim.u_gtarget[u] != cg:
 				BattleAI._order(sim, u, {"type": ORDER_ATTACK, "target": -1, "gate": cg, "run": 0}, 0)
 			return
+		# Out of reach: bring the battery up (through the breach if need be)
+		# to 70 % of its range from the citadel's gate.
+		var want := UT.stat(ty, "m_range") * 70 / 100
+		var spot := Vector2i(f.x + (sim.u_cx[u] - f.x) * want / maxi(dcg, 1),
+			f.y + (sim.u_cy[u] - f.y) * want / maxi(dcg, 1))
+		if sim.u_order[u] != O_MOVE or BattleAI._d(sim.u_dx[u] - spot.x, sim.u_dy[u] - spot.y) > 8 * M:
+			BattleAI._move(sim, u, spot.x, spot.y, FM.atan2_a(f.y - spot.y, f.x - spot.x), BattleAI._width(sim, u), 0, 6)
+		return
 	# No gate to shoot: fire at will from where it stands.
 	if sim.u_order[u] == O_ATTACK and sim.u_gtarget[u] >= 0:
 		BattleAI._order(sim, u, {"type": 3}, 22)  # halt
@@ -813,8 +831,10 @@ static func _storm(sim, u: int) -> void:
 	var best_d := STORM_R
 	# At the plaza with it still contested: go for the nearest defender off
 	# the walls wherever he is (no stand-off at the plaza).
-	if (BattleAI._d(sim.u_cx[u] - sim.plaza[0], sim.u_cy[u] - sim.plaza[1]) < sim.plaza[3] + 15 * M \
-			and sim.cap_t == 0) or sim.ai_prog[2] != 0:
+	# (All out, the units still go for the plaza when no defender is near:
+	# hunting the last defenders all over the town let them hold out.)
+	if BattleAI._d(sim.u_cx[u] - sim.plaza[0], sim.u_cy[u] - sim.plaza[1]) < sim.plaza[3] + 15 * M \
+			and sim.cap_t == 0:
 		best_d = 1 << 30
 	var cg: int = sim.cit_gate
 	var cit_shut: bool = cg >= 0 and sim.g_state[cg] == GATE_CLOSED
@@ -824,6 +844,16 @@ static func _storm(sim, u: int) -> void:
 		if cit_shut and BattleAI._d(sim.u_cx[o] - sim.cit_x, sim.u_cy[o] - sim.cit_y) < sim.cit_r:
 			continue  # behind the citadel's shut gate
 		var d := BattleAI._d(sim.u_cx[o] - sim.u_cx[u], sim.u_cy[o] - sim.u_cy[u])
+		if d >= best_d:
+			continue
+		# Spread out: every other unit of ours already on it counts as 25 m
+		# more (a whole army queuing on one unit jams the streets).
+		var crowd := 0
+		for f in sim.n_units:
+			if f != u and sim.u_side[f] == sim.u_side[u] and sim.u_state[f] == U_READY \
+					and sim.u_order[f] == O_ATTACK and sim.u_target[f] == o:
+				crowd += 1
+		d += crowd * SPREAD
 		if d < best_d:
 			best = o
 			best_d = d

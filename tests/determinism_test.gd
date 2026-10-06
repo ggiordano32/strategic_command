@@ -167,7 +167,7 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 		"siege_punic@ai":
 			need = ["paths", "gate_broken", "stair_down", "gate_art", "gate_close"]
 		"siege_oppidum@ai":
-			need = ["paths", "gate_broken", "gate_hack", "stair_rout"]
+			need = ["paths", "gate_broken", "gate_art", "stair_rout"]
 		"cit_ops":
 			need = ["stair_down", "stair_up", "gate_close", "gate_open", "gate_hack", "gate_broken", "capture"]
 	for k in need:

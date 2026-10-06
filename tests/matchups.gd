@@ -48,6 +48,7 @@ var seed0 := 0        # --seed0=K: first seed index (for sharding --fair runs)
 var fair_variants: Array = ["side0_first", "side1_first"]  # --fair-variants=a,b
 var fair_terrain := -1  # --fair-terrain=K: mirrored battles on a symmetric map of kind K
 var plans_only: Array = []  # --plans=0,4: settlement plans to run (--only=sieges / plans)
+var walls_only: Array = []  # --walls=3: wall levels to run (--only=sieges / plans)
 
 
 func _init() -> void:
@@ -64,6 +65,9 @@ func _init() -> void:
 			fair_variants = Array(a.get_slice("=", 1).split(","))
 		elif a.begins_with("--fair-terrain="):
 			fair_terrain = int(a.get_slice("=", 1))
+		elif a.begins_with("--walls="):
+			for v in a.get_slice("=", 1).split(","):
+				walls_only.append(int(v))
 		elif a.begins_with("--plans="):
 			for v in a.get_slice("=", 1).split(","):
 				plans_only.append(int(v))
@@ -1404,6 +1408,8 @@ func _plan_sieges() -> void:
 		if not plans_only.is_empty() and not plans_only.has(int(spec[1])):
 			continue
 		for walls in [1, 2, 3]:
+			if not walls_only.is_empty() and not walls_only.has(walls):
+				continue
 			var aw := 0
 			var dr := 0
 			var t_sum := 0.0
