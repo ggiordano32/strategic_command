@@ -241,6 +241,8 @@ static func siege_help() -> String:
 			BattleSim.CAPTURE_MEN, BattleSim.CAPTURE_CLEAR / 1024, BattleSim.CAPTURE_TICKS / 10],
 		"",
 		"The enemy. Attacking, the AI picks the weakest, nearest gate, brings its engines up to shoot it from out of bow range, covers it with its archers, sends heavy foot to hack at it when it has no engines (or they take too long), and storms in once a gate is down, making for the plaza; its cavalry waits outside until the defenders break. Defending, it shuts the gates when you come near, keeps its archers on the land walls (bringing them down when a gate falls and the enemy is near), holds each gate from inside with its steadiest foot, keeps the rest at the plaza to fall on whatever gets in, and when the town is lost pulls back into its citadel and shuts it. Attacking a citadel, the AI hacks at its gate with its heaviest foot and shoots it with any engine in reach.",
+		"",
+		"Deployment. A battle may open with a deployment phase (the campaign's Deployment time setting, or a custom battle's): nothing moves or shoots and the clock stands still while you place your units inside your zone (blue; the enemy's is outlined red). Tap, drag a line or move a group as usual: the men stand there at once. A point outside the zone is kept to its edge on the field; defending a town you place inside the walls (open ground of the town) or straight onto a walkway (foot and missile troops). The AI's line is placed at the start so you can see it. Start battle (or Enter) when ready; with two players the battle starts when both are ready, or when the time runs out.",
 	]
 	return "\n".join(lines)
 

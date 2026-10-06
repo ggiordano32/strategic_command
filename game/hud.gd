@@ -26,6 +26,7 @@ signal card_long_pressed(unit: int)
 signal deselect_pressed
 signal controls_pressed
 signal gift_pressed
+signal ready_pressed
 
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -102,6 +103,11 @@ var _lp_pos := Vector2.ZERO
 var _lp_fired := false
 ## Unit whose card release must not select (the long press opened the book).
 var suppress_card := -1
+## Deployment phase: a bar under the top buttons (countdown, who is ready)
+## with "Start battle".
+var deploy_panel: PanelContainer
+var deploy_label: Label
+var ready_button: Button
 var _ui_controls: Array[Control] = []
 var _confirm_left := 0.0
 
@@ -355,6 +361,27 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	rbuttons.add_child(rmenu)
 	_ui_controls.append(result_panel)
 
+	# Deployment bar, top centre under the buttons.
+	deploy_panel = PanelContainer.new()
+	deploy_panel.add_theme_stylebox_override("panel", _box(Color(0.03, 0.08, 0.16, 0.85)))
+	deploy_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	deploy_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	deploy_panel.position.y = BTN_H + 2 * MARGIN
+	deploy_panel.visible = false
+	root.add_child(deploy_panel)
+	var dh := HBoxContainer.new()
+	dh.add_theme_constant_override("separation", int(GAP) * 2)
+	deploy_panel.add_child(dh)
+	deploy_label = Label.new()
+	deploy_label.add_theme_font_size_override("font_size", FONT)
+	deploy_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	dh.add_child(deploy_label)
+	ready_button = _button("Start battle", Vector2(130, BTN_H))
+	ready_button.tooltip_text = "Ready: the battle starts when every player is ready, or when the time runs out (Enter)"
+	ready_button.pressed.connect(func(): ready_pressed.emit())
+	dh.add_child(ready_button)
+	_ui_controls.append(deploy_panel)
+
 	# Unit book, above everything else.
 	book = UnitBook.new()
 	book.side_color = Icons.SIDE_COLORS[player_side]
@@ -471,6 +498,18 @@ func card_text(u: int) -> String:
 
 ## A control of another layer (the co-op panels) that touches must not
 ## pass through to the battlefield.
+## Deployment bar: text "" hides it; the button shows btn (disabled if
+## not btn_on).
+func set_deploy(text: String, btn: String, btn_on: bool) -> void:
+	if deploy_panel == null:
+		return
+	deploy_panel.visible = text != ""
+	deploy_label.text = text
+	ready_button.text = btn
+	ready_button.disabled = not btn_on
+	ready_button.visible = btn != ""
+
+
 func add_ui_control(c: Control) -> void:
 	_ui_controls.append(c)
 

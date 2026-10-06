@@ -17,6 +17,8 @@ const CData := preload("res://campaign/cdata.gd")
 const NetScript := preload("res://game/net/net.gd")
 const NetSelftest := preload("res://game/net/net_selftest.gd")
 const MapGen := preload("res://sim/mapgen.gd")
+const CustomBattle := preload("res://game/custom/custom_battle.gd")
+const CustomSetup := preload("res://game/custom/custom_setup.gd")
 ## Menu terrain choices for the playable battles: -1 = random from the seed.
 const TERRAIN_CHOICES := [-1, Terrain.K_FLAT, Terrain.K_ROLLING, Terrain.K_RIDGE,
 	Terrain.K_VALLEY, Terrain.K_HILL, Terrain.K_SLOPE]
@@ -73,6 +75,7 @@ var _net_line: Label
 var _online_box: VBoxContainer
 
 
+var custom: CustomBattle = null
 var _shot_path := ""
 var _shot_frames := 0
 var _tests_box: Control
@@ -186,6 +189,12 @@ func _ready() -> void:
 			show_page(a.get_slice("=", 1))  # testing aid
 		elif a == "--new-campaign":
 			_new_campaign_page()  # testing aid
+		elif a == "--custom" or a.begins_with("--custom-template=") or a.begins_with("--custom-join="):
+			if custom == null:
+				_open_custom()  # testing aid (the screen reads the rest)
+		elif a == "--custom-solo":
+			_open_custom()
+			custom._play_solo.call_deferred()  # testing aid: straight into the battle
 		elif a == "--new-online":
 			_new_campaign_page(true)  # testing aid
 		elif a.begins_with("--open-online="):
@@ -222,6 +231,10 @@ func _ready() -> void:
 	elif net != null and campaign == null:
 		if net.launch.has("link"):
 			_claim_device_code.call_deferred(str(net.launch["link"]))
+		elif net.launch.has("custom"):
+			_open_custom()
+			custom._code_edit.text = str(net.launch["custom"])
+			custom._join.call_deferred()
 		elif net.launch.has("join"):
 			show_page("join")
 			_join_edit.text = NetScript.show_code(str(net.launch["join"]))
@@ -302,6 +315,7 @@ func _build_menu() -> Control:
 	_ai_button.tooltip_text = "Battle AI skill (Easy and Skilled play like Average for now)"
 	row.add_child(_ai_button)
 	_update_ai_button()
+	row.add_child(_menu_button("Custom battle", _open_custom))
 	_replay_button = _menu_button("Replay last battle", _replay)
 	_replay_button.tooltip_text = "Same battle, same seed, same ground"
 	_replay_button.disabled = true
@@ -392,6 +406,9 @@ func _build_home(bg: Control) -> Control:
 	row.add_theme_constant_override("v_separation", 8)
 	row.alignment = FlowContainer.ALIGNMENT_CENTER
 	vb.add_child(row)
+	var cbt := _menu_button("Custom battle", _open_custom)
+	cbt.name = "home_custom"
+	row.add_child(cbt)
 	var sb := _menu_button("Battle sandbox", show_page.bind("sandbox"))
 	sb.name = "home_sandbox"
 	row.add_child(sb)
@@ -1059,6 +1076,62 @@ func _start_with(id: String, sd: int, terrain_kind: int) -> void:
 
 func _end_battle() -> void:
 	if _battle != null:
+		if _battle.coop != null and _battle.has_meta("custom"):
+			_battle.coop.leave()
 		_battle.queue_free()
 		_battle = null
+	if custom != null:
+		custom.visible = true
+		return
 	_menu.visible = true
+
+
+# --------------------------------------------------------- custom battles ---
+
+func _open_custom() -> void:
+	if custom == null:
+		custom = CustomBattle.new()
+		custom.back.connect(func():
+			custom.queue_free()
+			custom = null
+			_menu.visible = true)
+		custom.play_solo.connect(_custom_solo)
+		custom.play_online.connect(_custom_online)
+		add_child(custom)
+	_menu.visible = false
+	custom.visible = true
+
+
+func _custom_battle(built: Dictionary, st: Dictionary, me: int) -> Battle:
+	var b := Battle.new()
+	b.scenario_id = "custom"
+	b.custom_scenario = built["scenario"]
+	b.seed_value = int(built["seed"])
+	b.player_side = maxi(CustomSetup.side_of_player(st, me), 0)
+	b.custom_summary = CustomSetup.summary(st)
+	b.set_meta("custom", true)
+	b.speed_idx = clampi(_speed_idx, 0, Battle.SPEEDS.size() - 1)
+	b.exit_requested.connect(_end_battle)
+	return b
+
+
+func _custom_solo(built: Dictionary, st: Dictionary) -> void:
+	if _battle != null:
+		return
+	custom.visible = false
+	var b := _custom_battle(built, st, 0)
+	_battle = b
+	get_tree().root.add_child.call_deferred(b)
+
+
+func _custom_online(session: Node, st: Dictionary) -> void:
+	if _battle != null:
+		session.leave()
+		return
+	custom.visible = false
+	var b := _custom_battle({"scenario": session.scenario, "seed": session.seed_value}, st, session.me)
+	b.coop = session
+	b.coop_region = "custom"
+	b.add_child(session)
+	_battle = b
+	get_tree().root.add_child.call_deferred(b)

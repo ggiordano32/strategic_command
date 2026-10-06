@@ -54,7 +54,7 @@ func _ready() -> void:
 		if q is String:
 			for kv in (q as String).trim_prefix("?").split("&"):
 				var k := kv.get_slice("=", 0)
-				if k in ["join", "link"] and kv.contains("="):
+				if k in ["join", "link", "custom"] and kv.contains("="):
 					launch[k] = norm_code(kv.get_slice("=", 1).uri_decode())
 				elif k in ["nettest", "campaign", "token", "invite"] and kv.contains("="):
 					launch[k] = kv.get_slice("=", 1).uri_decode()  # browser self-test (net_selftest.gd)

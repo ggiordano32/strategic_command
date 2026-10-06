@@ -19,6 +19,12 @@ creates the campaign, hosts) and B (Carthage, joins), then checks:
     B's units; B came back by snapshot and regained them;
   - each result was uploaded once by the host; both clients end on the
     server's campaign state with nothing left to send and no mismatch.
+Then two custom battles (tests/live_custom_client.gd): head-to-head (each
+player commands one side) and co-op (both on one side against the AI):
+room by setup, join by code, Player 2 edits its army in the lobby, both
+ready, a deployment phase (placements, the other's units refused, ready at
+different frames), the fight to the end; hashes equal on every frame.
+`--only-custom` skips the campaign battles.
 Prints waits, round trips, snapshot sizes and catch-up times. Exit 0 on PASS.
 """
 import argparse
@@ -54,6 +60,7 @@ def main():
     ap.add_argument("--port", type=int, default=8072)
     ap.add_argument("--frame-ms", type=int, default=20, help="lockstep frame length (100 = real time)")
     ap.add_argument("--keep", action="store_true")
+    ap.add_argument("--only-custom", action="store_true")
     args = ap.parse_args()
     binary = os.path.join(REPO, "build", "server-test", "scserver")
     subprocess.run([os.path.join(REPO, "tools", "build_server.sh")], check=True, env=dict(os.environ, SC_BUILD_OUT=binary))
@@ -71,6 +78,11 @@ def main():
                     break
             except Exception:
                 time.sleep(0.1)
+        for mode in ["h2h", "coop"]:
+            custom_battle(tmp, base, mode, args.frame_ms)
+        if args.only_custom:
+            print("RESULT:", "PASS" if not FAILS else "FAIL (%d)" % len(FAILS))
+            sys.exit(0 if not FAILS else 1)
         procs = {}
         logs = {}
         for role in ["A", "B"]:
@@ -115,6 +127,8 @@ def main():
             sa, sb = a["stats"], b["stats"]
             check(sa["desyncs"] == 0 and sb["desyncs"] == 0 and sa["hash_checks"] > 100 and sb["hash_checks"] > 100,
                   "battle %d: hash checks over the relay A %d / B %d, desyncs %d / %d" % (bid, sa["hash_checks"], sb["hash_checks"], sa["desyncs"], sb["desyncs"]))
+            check(a.get("deploy_end", -1) >= 90 and (kind == "midjoin" or abs(a.get("deploy_end", 0) - b.get("deploy_end", -99)) <= 8),
+                  "battle %d: a 10 s deployment phase ended at frame %s (B %s)" % (bid, a.get("deploy_end"), b.get("deploy_end")))
             check(a.get("upload") == "ok" and not b.get("upload"), "battle %d: the host uploaded the result once (%s)" % (bid, a.get("upload")))
             print("    numbers: A rtt %.1f ms delay %s, waits %d (total %.0f ms, max %.0f ms); B rtt %.1f ms, waits %d (total %.0f ms, max %.0f ms); wall %.1f s" % (
                 a["rtt_ms"], a["delay"], sa["waits"], sa["wait_ms_total"], sa["wait_ms_max"], b["rtt_ms"], sb["waits"],
@@ -167,6 +181,51 @@ def main():
     else:
         shutil.rmtree(tmp, ignore_errors=True)
     sys.exit(0 if not FAILS else 1)
+
+
+def custom_battle(tmp, base, mode, frame_ms):
+    print("custom battle:", mode)
+    procs, logs = {}, {}
+    for role in ["A", "B"]:
+        logs[role] = open(os.path.join(tmp, "custom_%s_%s.log" % (mode, role)), "w")
+        procs[role] = subprocess.Popen(
+            ["godot", "--headless", "--path", REPO, "--script", "res://tests/live_custom_client.gd", "--",
+             "--server=" + base, "--role=" + role, "--dir=" + tmp, "--mode=" + mode,
+             "--coop-frame-ms=%d" % frame_ms, "--coop-hash-every=1", "--coop-grace=2"],
+            stdout=logs[role], stderr=subprocess.STDOUT)
+    t0 = time.time()
+    codes = {}
+    for role, p in procs.items():
+        try:
+            codes[role] = p.wait(timeout=600 - (time.time() - t0))
+        except subprocess.TimeoutExpired:
+            p.kill()
+            codes[role] = "timeout"
+    print("  clients finished in %.0f s: %s" % (time.time() - t0, codes))
+    res = {}
+    for role in ["A", "B"]:
+        path = os.path.join(tmp, "custom_%s_%s.json" % (mode, role))
+        res[role] = json.load(open(path)) if os.path.exists(path) else {}
+    a, b = res["A"], res["B"]
+    check(codes == {"A": 0, "B": 0} and a.get("ok") is True and b.get("ok") is True,
+          "%s: both clients ran cleanly (%s; errors %s %s)" % (mode, codes, a.get("errors"), b.get("errors")))
+    ha = json.load(open(os.path.join(tmp, "chashes_%s_A.json" % mode))) if os.path.exists(os.path.join(tmp, "chashes_%s_A.json" % mode)) else {}
+    hb = json.load(open(os.path.join(tmp, "chashes_%s_B.json" % mode))) if os.path.exists(os.path.join(tmp, "chashes_%s_B.json" % mode)) else {}
+    common = [f for f in ha if f in hb]
+    bad = [f for f in common if ha[f] != hb[f]]
+    check(len(common) > 200 and not bad, "%s: %d frames with both hashes, %d different" % (mode, len(common), len(bad)))
+    check(a.get("setup_rev", 0) >= 2 and a.get("setup_rev") == b.get("setup_rev"),
+          "%s: Player 2's lobby edit reached the host (setup rev %s / %s)" % (mode, a.get("setup_rev"), b.get("setup_rev")))
+    check(a.get("start_frame", -1) > 40 and a.get("start_frame") == b.get("start_frame"),
+          "%s: the deployment ended when both were ready (frame %s / %s; A ready at 40, B at 90)" % (mode, a.get("start_frame"), b.get("start_frame")))
+    check(a.get("placed", 0) > 0 and b.get("placed", 0) > 0 and a.get("rejected", 0) > 0,
+          "%s: units placed (A %s, B %s); orders for the other's units refused (%s)" % (mode, a.get("placed"), b.get("placed"), a.get("rejected")))
+    want_sides = (0, 1) if mode == "h2h" else (0, 0)
+    check((a.get("my_side"), b.get("my_side")) == want_sides and (a.get("ai_sides") == ([0, 0] if mode == "h2h" else [0, 1])),
+          "%s: sides A %s B %s, AI sides %s" % (mode, a.get("my_side"), b.get("my_side"), a.get("ai_sides")))
+    check(a.get("end_frame", -1) > 0 and a.get("result_hash") and a.get("result_hash") == b.get("result_hash"),
+          "%s: fought to the end (frame %s, winner %s), same result on both (%s / %s)" % (
+              mode, a.get("end_frame"), a.get("winner"), a.get("result_hash"), b.get("result_hash")))
 
 
 if __name__ == "__main__":

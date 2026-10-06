@@ -98,6 +98,8 @@ func _main() -> void:
 		return
 	if role == "A":
 		var st := SelfTest.live_test_state("Live E2E", 21, rome, carth, [7, 11, 13], 4)
+		# Battles with a 10 s deployment phase (the campaign setting).
+		st["settings"]["deploy_time"] = 10
 		var r: Dictionary = await net.create_campaign(st, rome, {})
 		if not r["ok"]:
 			_err("create: %s" % r)
@@ -202,6 +204,12 @@ func _battle(kind: String, bid: int) -> void:
 			continue
 		if started_ms < 0:
 			started_ms = Time.get_ticks_msec()
+		if ls.sim.dep_on != 0 and ls.sim.phase == BattleSim.PHASE_BATTLE and not rec.has("deploy_end"):
+			rec["deploy_end"] = ls.frame
+		if kind == "prestart" and role == "A" and ls.frame >= 30 and not rec.has("ready_sent") and s.can_issue() \
+				and ls.sim.phase == BattleSim.PHASE_DEPLOY:
+			rec["ready_sent"] = ls.frame
+			s.issue({"type": BattleSim.ORDER_READY})
 		for fr in s.my_hashes:
 			hashes[hkey][fr] = s.my_hashes[fr]
 		var fr0: int = ls.frame

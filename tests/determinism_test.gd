@@ -1215,14 +1215,14 @@ static func _deploy_scenario(kind: String) -> Dictionary:
 	return sc
 
 
-## Scripted deployment: returns {hashes, log, steps}. ready_at < 0: wait
+## Scripted deployment: returns {hashes, rlog, steps}. ready_at < 0: wait
 ## for the countdown. snap: check snapshot / restore at a deployment step
 ## and in the battle.
 func _deploy_run(kind: String, ready_at: int, snap: bool) -> Dictionary:
 	var sc := _deploy_scenario(kind)
 	var sim := BattleSim.new()
 	sim.setup(sc, 4711)
-	var log: Array = []
+	var rlog: Array = []
 	var hashes := PackedInt64Array([sim.state_hash()])
 	var mine: Array[int] = []
 	for u in sim.n_units:
@@ -1250,7 +1250,7 @@ func _deploy_run(kind: String, ready_at: int, snap: bool) -> Dictionary:
 						# Off the wall: into the street by the plaza.
 						sim.queue_order({"tick": 0, "type": BattleSim.ORDER_PLACE, "unit": u, "x": sim.plaza[0],
 							"y": sim.plaza[1], "facing": 256, "files": 10})
-						log.append("down %d" % u)
+						rlog.append("down %d" % u)
 						break
 				for u in mine:
 					if sim.u_wall[u] == 0 and sim.u_cls[u] == UT.CLS_INF:
@@ -1265,13 +1265,13 @@ func _deploy_run(kind: String, ready_at: int, snap: bool) -> Dictionary:
 						var mid := BattleSim.seg_pt(sim, best, BattleSim.seg_len(sim, best) / 2)
 						sim.queue_order({"tick": 0, "type": BattleSim.ORDER_PLACE, "unit": u, "x": mid.x, "y": mid.y,
 							"facing": 0, "files": 10})
-						log.append("up %d seg %d" % [u, best])
+						rlog.append("up %d seg %d" % [u, best])
 						break
 				# Outside the walls: refused.
 				var uo: int = mine[mine.size() - 1]
 				sim.queue_order({"tick": 0, "type": BattleSim.ORDER_PLACE, "unit": uo, "x": sim.field_w / 2,
 					"y": sim.field_h - 20 * M, "facing": 768, "files": 10})
-				log.append("outside %d at %d,%d" % [uo, sim.u_ax[uo] / M, sim.u_ay[uo] / M])
+				rlog.append("outside %d at %d,%d" % [uo, sim.u_ax[uo] / M, sim.u_ay[uo] / M])
 		if steps == ready_at:
 			sim.queue_order({"tick": 0, "type": BattleSim.ORDER_READY, "who": 0})
 		if snap and steps == 10:
@@ -1283,8 +1283,8 @@ func _deploy_run(kind: String, ready_at: int, snap: bool) -> Dictionary:
 			break
 		hashes.append(sim.state_hash())
 		if steps == 5:
-			log.append(_deploy_report(sim, mine, kind))
-	log.append("started after %d steps" % steps)
+			rlog.append(_deploy_report(sim, mine, kind))
+	rlog.append("started after %d steps" % steps)
 	for t in 400:
 		sim.step()
 		hashes.append(sim.state_hash())
@@ -1292,7 +1292,7 @@ func _deploy_run(kind: String, ready_at: int, snap: bool) -> Dictionary:
 			bad_snap += _snap_diverges(sim, sc, 4711, 60)
 	if bad_snap > 0:
 		_fail("%s deployment: restored copies diverged (%d)" % [kind, bad_snap])
-	return {"hashes": hashes, "log": log, "steps": steps}
+	return {"hashes": hashes, "rlog": rlog, "steps": steps}
 
 
 ## What the first placements did (checked here).
@@ -1372,10 +1372,10 @@ func _check_deploy() -> void:
 		if a["hashes"] != b["hashes"]:
 			_fail("%s deployment: repeat runs differ" % kind)
 		else:
-			print("PASS %s deployment: %s; identical on repeat and across snapshot / restore" % [kind, str(a["log"])])
+			print("PASS %s deployment: %s; identical on repeat and across snapshot / restore" % [kind, str(a["rlog"])])
 		if int(a["steps"]) != 31:
 			_fail("%s deployment: ready did not start the battle (%d steps)" % [kind, int(a["steps"])])
-		if kind == "town" and not str(a["log"]).contains("on wall"):
+		if kind == "town" and not str(a["rlog"]).contains("on wall"):
 			_fail("town deployment: no unit placed up on a wall")
 		var c := _deploy_run(kind, -1, false)
 		if int(c["steps"]) != 600:
