@@ -613,10 +613,9 @@ fixes are all landed; see "Where we are"):
 6. **AI competency** (`docs/AI.md`): Easy / Average / Skilled on two
    independent axes (battle, campaign) plus personality, no cheats ever;
    skill is reaction, perception, planning, execution and deliberate
-   plausible mistakes. Open questions for the user: whether the AI should
-   keep full information if fog of war ever arrives; whether difficulty is
-   per faction or global by default; whether "Average" should be
-   calibrated to the two humans' playtests.
+   plausible mistakes. Decided 2026-10-06: AI obeys fog of war if it ever
+   exists; difficulty global with per-faction Advanced overrides;
+   personalities and army composition styles per faction by default.
 7. **Mid-battle reinforcements** from the map edge; ambush stance once
    hidden information in an async game is designed.
 8. **Shared empire** (both humans running one faction).

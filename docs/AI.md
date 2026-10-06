@@ -338,6 +338,24 @@ Personality shifts thresholds; skill decides how well the chosen plan is
 executed. Default per faction in `cdata` (e.g. Carthage cautious, Gauls
 aggressive, Rome balanced); overridable at campaign start.
 
+Personality also covers **how a faction fields its armies**, so a late-game
+Roman army feels different from a late-game Gallic one at the same skill:
+a per-faction composition style in `cdata` (preferred arms and tiers, how
+much artillery, how much cavalry, how early it upgrades) that the campaign
+AI's recruitment follows and the battle AI's deployment template reflects.
+Rome: heavy infantry lines, spears on the flanks, artillery for sieges.
+Gauls: swords and cavalry, light on missiles, early aggression. Carthage:
+cavalry and mercenary-style mixes, elephants when they exist, keeps a war
+chest. Greeks: pike centre, missiles, strong walls. Skill decides how well
+the style is executed, not which style is used.
+
+**Decisions (user, 2026-10-06):** if fog of war is ever added the AI obeys
+it like the player; the difficulty knobs (battle, campaign) are global
+(Easy / Average / Skilled) with per-faction overrides under an Advanced
+tab; personalities and composition styles are per faction by default and
+should be felt without touching Advanced; the order of work in section 8
+stands.
+
 ## 6. Measurement
 
 Competence must be measurable, or "Skilled" is a label.
@@ -406,5 +424,4 @@ Competence must be measurable, or "Skilled" is a label.
    setting.
 6. Calibrate "Average" against the two humans' playtests.
 
-Open questions for the user are tracked in `docs/STATUS.md` under this
-item.
+The user's decisions on the open questions are recorded in section 5.
