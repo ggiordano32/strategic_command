@@ -36,6 +36,13 @@ extends SceneTree
 ##    on with the original's hash; two peers against an Easy enemy AI, with
 ##    a third joining mid-battle by snapshot, hash equal on every frame,
 ##    and the enemy did make mistakes.
+## 8. Deployment phase and head-to-head (custom battles): two peers placing
+##    their units and readying (one early), a third joining by snapshot
+##    during the deployment; head-to-head with the countdown starting the
+##    battle, placements of the enemy's units and gifts to the enemy
+##    refused, a drop (the AI takes the dropped player's side) and the
+##    return (handed back); a drop during the deployment starts the battle
+##    without waiting. Every frame equal.
 ## Exits 0 on success.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -50,6 +57,13 @@ var quick := false
 
 func _init() -> void:
 	quick = OS.get_cmdline_user_args().has("--quick")
+	if OS.get_cmdline_user_args().has("--only=deploy"):
+		_test_deploy("coop")
+		_test_deploy("h2h")
+		_test_deploy("h2h_drop")
+		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
+		quit(0 if _ok else 1)
+		return
 	_test_snapshots()
 	_test_profiles()
 	_test_lockstep()
@@ -60,6 +74,9 @@ func _init() -> void:
 	_test_lockstep_city(0, true)
 	_test_easy_snapshots()
 	_test_lockstep_easy()
+	_test_deploy("coop")
+	_test_deploy("h2h")
+	_test_deploy("h2h_drop")
 	print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 	quit(0 if _ok else 1)
 
@@ -785,3 +802,169 @@ func _test_lockstep_city(def_side: int, polis := false) -> void:
 		# takes longer): it checks the way down only.
 		if polis and def_side == 0 and (sim_a.stat_stair_down == 0 or (sim_a.stat_stair_up == 0 and not quick)):
 			_fail("coastal polis (defending): no wall unit went down%s a stair" % ("" if quick else " and up"))
+
+
+# ------------------------------------------------------------ deployment ---
+
+## Two peers through the relay in a battle with a deployment phase.
+## mode "coop": both on side 0 against the AI; A ready early, B later; a
+##   third peer joins by snapshot during the deployment.
+## mode "h2h": head-to-head (A side 0, B side 1, no AI); nobody readies
+##   but A: the countdown starts the battle; then B drops (A is an enemy:
+##   the AI takes B's side), comes back and is admitted (the AI hands it
+##   back); gifts to the enemy refused.
+## mode "h2h_drop": head-to-head, A ready early, B drops during the
+##   deployment: the battle starts without waiting for B.
+func _test_deploy(mode: String) -> void:
+	var scen: Dictionary = Scenarios.make("battle_2000")
+	scen["terrain"] = {"kind": 2, "seed": 5}
+	scen["deploy_time"] = 40
+	scen["deploy_zones"] = Scenarios.field_zones(scen)
+	var h2h := mode != "coop"
+	scen["ai_sides"] = [] if h2h else [1]
+	var probe := BattleSim.new()
+	probe.setup(scen, 4242)
+	var home: Array = []
+	if h2h:
+		for u in probe.n_units:
+			home.append(probe.u_side[u])
+	else:
+		home = _home_split(probe)
+	var relay := Relay.new()
+	var a := _new_peer(scen, home, 0, "A", [0, 1])
+	var b := _new_peer(scen, home, 1, "B", [0, 1])
+	a.latency = 1
+	b.latency = 3
+	b.d = 4
+	var peers: Array[Peer] = [a, b]
+	var c: Peer = null
+	var start_frame := {}
+	var placed := {"A": 0, "B": 0}
+	var refused0: int = a.ls.rejected
+	var now := 0
+	var b_drop := 80 if mode == "h2h_drop" else (600 if mode == "h2h" else -1)
+	var b_back := b_drop + 60 if mode == "h2h" else -1
+	var ai_took := false
+	var ai_gave := false
+	var total := 900
+	while now < total * 3 and a.ls.frame < total:
+		now += 1
+		for p in peers:
+			if not p.online:
+				continue
+			var sim = p.ls.sim
+			if sim.phase == BattleSim.PHASE_DEPLOY:
+				if sim.tick != 0:
+					_fail("%s %s: the sim clock ran during the deployment" % [mode, p.name])
+				if now % 5 == p.me and now < 200:
+					# Place one of my units somewhere in our half (clamped), and
+					# try one of the other's (refused).
+					var mine: Array = []
+					var theirs: Array = []
+					for u in sim.n_units:
+						if p.ls.u_cmd[u] == p.me:
+							mine.append(u)
+						elif p.ls.u_cmd[u] >= 0:
+							theirs.append(u)
+					if not mine.is_empty():
+						var u: int = mine[p.rng.randi() % mine.size()]
+						p.issue({"type": BattleSim.ORDER_PLACE, "unit": u, "x": sim.u_ax[u] + (p.rng.randi() % 61 - 30) * 1024,
+							"y": sim.u_ay[u] + (p.rng.randi() % 61 - 30) * 1024, "facing": sim.u_face[u], "files": 8 + p.rng.randi() % 10})
+						placed[p.name] = int(placed[p.name]) + 1
+					if not theirs.is_empty() and now % 20 == p.me:
+						p.issue({"type": BattleSim.ORDER_PLACE, "unit": theirs[0], "x": 10 * 1024, "y": 10 * 1024,
+							"facing": 0, "files": 8})
+						if h2h:
+							# A gift to the enemy: refused.
+							p.issue({"type": Lockstep.C_GIFT, "unit": mine[0], "to": 1 - p.me})
+				var ready_at := 30 if p.me == 0 else (120 if mode == "coop" else -1)
+				if now == ready_at:
+					p.issue({"type": BattleSim.ORDER_READY})
+			elif not start_frame.has(p.name):
+				start_frame[p.name] = p.ls.frame
+			elif now % 9 == p.me:
+				_script(p, now, [])
+			p.flush(relay, now)
+			p.deliver(relay, now)
+			p.run(p.rng.randi() % 3, true)
+		if c != null:
+			c.flush(relay, now)
+			c.deliver(relay, now)
+			c.run(4, true)
+		if mode == "coop" and now == 60:
+			# A third peer (B's seat on another device) joins during the deployment.
+			c = _new_peer(scen, home, 1, "C", [0, 1])
+			if not c.ls.restore(a.ls.snapshot()) or c.ls.state_hash() != a.ls.state_hash():
+				_fail("deploy coop: C could not restore A's snapshot taken during the deployment")
+				return
+			if c.ls.sim.phase != BattleSim.PHASE_DEPLOY:
+				_fail("deploy coop: the snapshot lost the deployment phase")
+			c.hashes[c.ls.frame] = c.ls.state_hash()
+			c.cursor = 0
+			while c.cursor < relay.items.size() and int(relay.items[c.cursor]["s"]) <= c.ls.last_s:
+				c.cursor += 1
+			c.sent_k = 1 << 30
+		if now == b_drop:
+			b.online = false
+			relay.drop(now, 1, 0)
+		if mode == "h2h" and b_drop > 0 and now > b_drop and now < b_back and not ai_took:
+			if a.ls.sim.ai_sides[1] != 0 and not a.ls.is_active(1):
+				ai_took = true
+				for u in a.ls.u_cmd.size():
+					if a.ls.sim.u_side[u] == 1 and a.ls.u_cmd[u] != -1:
+						_fail("h2h: a dropped enemy's unit went to the other player")
+						break
+		if now == b_back:
+			var nb := _new_peer(scen, home, 1, "B", [0, 1])
+			nb.latency = b.latency
+			nb.d = b.d
+			if not nb.ls.restore(a.ls.snapshot()):
+				_fail("h2h: B could not restore after reconnecting")
+				return
+			nb.cursor = 0
+			while nb.cursor < relay.items.size() and int(relay.items[nb.cursor]["s"]) <= nb.ls.last_s:
+				nb.cursor += 1
+			nb.n = int(relay.last_n.get(1, 0))
+			nb.sent_k = int(relay.last_k.get(1, -1))
+			nb.hashes = b.hashes
+			relay.dropped.erase(1)
+			b = nb
+			peers[1] = b
+			a.issue({"type": Lockstep.C_ADMIT, "who": 1, "keep": 0})
+		if mode == "h2h" and now > b_back and b_back > 0 and not ai_gave and a.ls.is_active(1):
+			ai_gave = a.ls.sim.ai_sides[1] == 0
+	var n_ab := _compare(a, b, 0, "deploy %s A/B" % mode)
+	var n_ac := _compare(a, c, 60, "deploy %s A/C" % mode) if c != null else 0
+	var sf: int = start_frame.get("A", -1)
+	var why := ""
+	match mode:
+		"coop":
+			# B's ready (issued at clock 120) starts it, before the countdown (400).
+			if sf < 100 or sf > 300:
+				_fail("deploy coop: the battle started at frame %d (want after B's ready, before the countdown)" % sf)
+			if c == null or n_ac < 100:
+				_fail("deploy coop: too few frames compared for the joiner (%d)" % n_ac)
+			why = "started at frame %d on both readies; C joined during the deployment (%d frames equal)" % [sf, n_ac]
+		"h2h":
+			if sf < 395 or sf > 410:
+				_fail("deploy h2h: the countdown did not start the battle (frame %d)" % sf)
+			if not ai_took:
+				_fail("deploy h2h: the AI did not take over the dropped enemy's side")
+			if not ai_gave:
+				_fail("deploy h2h: the AI did not hand the side back on admission")
+			if a.ls.rejected <= refused0:
+				_fail("deploy h2h: no refusal (placing the enemy's units, gifts to the enemy)")
+			why = "countdown started it at frame %d; B dropped: the AI took side 1, gave it back on admission; %d inputs refused" % [sf, a.ls.rejected]
+		"h2h_drop":
+			if sf < 40 or sf > 140:
+				_fail("deploy h2h_drop: the battle did not start when B dropped (frame %d)" % sf)
+			if a.ls.sim.ai_sides[1] == 0:
+				_fail("deploy h2h_drop: the AI did not take B's side")
+			why = "started at frame %d when the unready B dropped; the AI fights side 1" % sf
+	# (The same start frame on both is implied by the hashes, which hold
+	# the phase: start_frame is only when each peer's loop noticed it.)
+	if n_ab < (60 if mode == "h2h_drop" else 300):
+		_fail("deploy %s: too few frames compared (%d)" % [mode, n_ab])
+	if int(placed["A"]) == 0 or int(placed["B"]) == 0:
+		_fail("deploy %s: nothing placed" % mode)
+	print("PASS deploy %s: %d frames equal A/B; %s; placements A %d B %d" % [mode, n_ab, why, int(placed["A"]), int(placed["B"])])

@@ -56,6 +56,13 @@ extends SceneTree
 ## walled city; identical on repeat and across snapshot / restore, and the
 ## Easy sides make deliberate mistakes (the mistake roller draws from the
 ## sim's RNG). The Average runs and golden digests above are unchanged.
+## Deployment phase (October 2026): a field battle and a settlement battle
+## with "deploy_time": nothing moves during it, placements are kept to the
+## side's zone (clamped on the field, refused outside the walls, onto a
+## walkway for wall units), move orders are refused, the AI's line is
+## placed at the start, the battle starts when the player is ready or when
+## the countdown runs out; identical on repeat and across snapshot / restore
+## mid-deployment and mid-battle.
 ## Exits 0 on success, 1 on failure.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -90,6 +97,11 @@ var _ok := true
 
 
 func _init() -> void:
+	_check_deploy()
+	if "--only=deploy" in OS.get_cmdline_user_args():
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	_check_wall_orders()
 	_check_line_clamp()
 	_check_reach()
@@ -1186,3 +1198,187 @@ func _check_reach() -> void:
 	else:
 		for x in bad:
 			_fail(str(x))
+
+
+# ------------------------------------------------------------ deployment ---
+
+static func _deploy_scenario(kind: String) -> Dictionary:
+	var sc: Dictionary
+	if kind == "field":
+		sc = Scenarios.make("battle_2000")
+		sc["terrain"] = {"kind": Terrain.K_ROLLING, "seed": 77}
+		sc["deploy_zones"] = Scenarios.field_zones(sc)
+	else:
+		# The player (side 0) defends a walled town; the AI attacks.
+		sc = Scenarios.siege_test(202, 1, 1, 2, Terrain.K_ROLLING, 0)
+	sc["deploy_time"] = 60
+	return sc
+
+
+## Scripted deployment: returns {hashes, log, steps}. ready_at < 0: wait
+## for the countdown. snap: check snapshot / restore at a deployment step
+## and in the battle.
+func _deploy_run(kind: String, ready_at: int, snap: bool) -> Dictionary:
+	var sc := _deploy_scenario(kind)
+	var sim := BattleSim.new()
+	sim.setup(sc, 4711)
+	var log: Array = []
+	var hashes := PackedInt64Array([sim.state_hash()])
+	var mine: Array[int] = []
+	for u in sim.n_units:
+		if sim.u_side[u] == 0:
+			mine.append(u)
+	var steps := 0
+	var bad_snap := 0
+	while sim.phase == BattleSim.PHASE_DEPLOY and steps < 2000:
+		if steps == 3:
+			if kind == "field":
+				var u0: int = mine[0]
+				# Inside the zone: placed where ordered.
+				sim.queue_order({"tick": 0, "type": BattleSim.ORDER_PLACE, "unit": u0, "x": sim.u_ax[u0] - 30 * M,
+					"y": sim.u_ay[u0] + 20 * M, "facing": 700, "files": 12})
+				# Into the enemy's half: clamped to the edge of our zone.
+				var u1: int = mine[1]
+				sim.queue_order({"tick": 0, "type": BattleSim.ORDER_PLACE, "unit": u1, "x": sim.u_ax[u1], "y": 50 * M,
+					"facing": 768, "files": 10})
+				# A move during the deployment: refused.
+				var u2: int = mine[2]
+				sim.queue_order(BattleSim.make_move_order(0, u2, sim.u_ax[u2], sim.u_ay[u2] - 60 * M, 768, 20 * M, 1))
+			else:
+				for u in mine:
+					if sim.u_wall[u] > 0 and sim.u_cls[u] == UT.CLS_MISSILE:
+						# Off the wall: into the street by the plaza.
+						sim.queue_order({"tick": 0, "type": BattleSim.ORDER_PLACE, "unit": u, "x": sim.plaza[0],
+							"y": sim.plaza[1], "facing": 256, "files": 10})
+						log.append("down %d" % u)
+						break
+				for u in mine:
+					if sim.u_wall[u] == 0 and sim.u_cls[u] == UT.CLS_INF:
+						# Onto the stretch of wall farthest from it.
+						var best := -1
+						var far := -1
+						for sg in sim.ws_x0.size():
+							var d: int = absi(sim.ws_x0[sg] - sim.u_ax[u]) + absi(sim.ws_y0[sg] - sim.u_ay[u])
+							if d > far:
+								far = d
+								best = sg
+						var mid := BattleSim.seg_pt(sim, best, BattleSim.seg_len(sim, best) / 2)
+						sim.queue_order({"tick": 0, "type": BattleSim.ORDER_PLACE, "unit": u, "x": mid.x, "y": mid.y,
+							"facing": 0, "files": 10})
+						log.append("up %d seg %d" % [u, best])
+						break
+				# Outside the walls: refused.
+				var uo: int = mine[mine.size() - 1]
+				sim.queue_order({"tick": 0, "type": BattleSim.ORDER_PLACE, "unit": uo, "x": sim.field_w / 2,
+					"y": sim.field_h - 20 * M, "facing": 768, "files": 10})
+				log.append("outside %d at %d,%d" % [uo, sim.u_ax[uo] / M, sim.u_ay[uo] / M])
+		if steps == ready_at:
+			sim.queue_order({"tick": 0, "type": BattleSim.ORDER_READY, "who": 0})
+		if snap and steps == 10:
+			bad_snap += _snap_diverges(sim, sc, 4711, 60)
+		sim.step()
+		steps += 1
+		if sim.tick != 0:
+			_fail("%s: the clock ran during the deployment" % kind)
+			break
+		hashes.append(sim.state_hash())
+		if steps == 5:
+			log.append(_deploy_report(sim, mine, kind))
+	log.append("started after %d steps" % steps)
+	for t in 400:
+		sim.step()
+		hashes.append(sim.state_hash())
+		if snap and t == 200:
+			bad_snap += _snap_diverges(sim, sc, 4711, 60)
+	if bad_snap > 0:
+		_fail("%s deployment: restored copies diverged (%d)" % [kind, bad_snap])
+	return {"hashes": hashes, "log": log, "steps": steps}
+
+
+## What the first placements did (checked here).
+func _deploy_report(sim, mine: Array[int], kind: String) -> String:
+	if kind == "field":
+		var u0: int = mine[0]
+		var u1: int = mine[1]
+		var u2: int = mine[2]
+		var z: Vector3i = BattleSim.deploy_clamp(sim, 0, sim.u_ax[u1], 0)
+		if sim.u_ay[u1] != z.y:
+			_fail("field deployment: a placement into the enemy half was not clamped to the zone (%d vs %d)" % [sim.u_ay[u1], z.y])
+		if sim.u_order[u2] != BattleSim.O_NONE:
+			_fail("field deployment: a move order was obeyed during the deployment")
+		if sim.u_face[u0] != 700 or sim.u_files[u0] != 12:
+			_fail("field deployment: placement did not take its facing / files")
+		var far := 0
+		for s in sim.u_alive[u0]:
+			var i: int = sim.slot_soldier[sim.u_slot_base[u0] + s]
+			far = maxi(far, absi(sim.pos_x[i] - sim.u_ax[u0] - sim.off_x[sim.u_slot_base[u0] + s]))
+		if far != 0:
+			_fail("field deployment: the placed unit's men are not in their places")
+		return "placed u%d at %d,%d; u%d clamped to y %d" % [u0, sim.u_ax[u0] / M, sim.u_ay[u0] / M, u1, sim.u_ay[u1] / M]
+	var out := ""
+	for u in mine:
+		if sim.u_wall[u] > 0:
+			out += "u%d on wall %d; " % [u, sim.u_wall[u] - 1]
+		if u == mine[mine.size() - 1]:
+			out += "u%d at %d,%d" % [u, sim.u_ax[u] / M, sim.u_ay[u] / M]
+	return out
+
+
+## Snapshot sim now into two copies and run both `n` steps: diverging steps.
+func _snap_diverges(sim, sc: Dictionary, p_seed: int, n: int) -> int:
+	var blob: PackedByteArray = sim.snapshot()
+	var a := BattleSim.new()
+	a.setup(sc, p_seed)
+	var b := BattleSim.new()
+	b.setup(sc, p_seed)
+	if not a.restore(blob) or not b.restore(blob):
+		_fail("restore refused")
+		return 1
+	if a.state_hash() != sim.state_hash():
+		_fail("restored copy hashes differently")
+		return 1
+	var bad := 0
+	for t in n:
+		a.step()
+		b.step()
+		if a.state_hash() != b.state_hash():
+			bad += 1
+	return bad
+
+
+func _check_deploy() -> void:
+	for kind in ["field", "town"]:
+		var sc := _deploy_scenario(kind)
+		var probe := BattleSim.new()
+		probe.setup(sc, 4711)
+		var plain := BattleSim.new()
+		var sc0 := sc.duplicate(true)
+		sc0.erase("deploy_time")
+		plain.setup(sc0, 4711)
+		if probe.phase != BattleSim.PHASE_DEPLOY or plain.phase != BattleSim.PHASE_BATTLE:
+			_fail("%s: deployment phase not set from deploy_time" % kind)
+		if kind == "field":
+			# The AI's line is placed at the start (its units moved, ours not).
+			var moved := [0, 0]
+			for u in probe.n_units:
+				if probe.u_ax[u] != plain.u_ax[u] or probe.u_ay[u] != plain.u_ay[u]:
+					moved[probe.u_side[u]] += 1
+			if moved[1] == 0 or moved[0] != 0:
+				_fail("field: the AI did not deploy at the start (moved %s)" % str(moved))
+			else:
+				print("PASS field deployment: the AI placed %d units at the start" % moved[1])
+		var a := _deploy_run(kind, 30, true)
+		var b := _deploy_run(kind, 30, false)
+		if a["hashes"] != b["hashes"]:
+			_fail("%s deployment: repeat runs differ" % kind)
+		else:
+			print("PASS %s deployment: %s; identical on repeat and across snapshot / restore" % [kind, str(a["log"])])
+		if int(a["steps"]) != 31:
+			_fail("%s deployment: ready did not start the battle (%d steps)" % [kind, int(a["steps"])])
+		if kind == "town" and not str(a["log"]).contains("on wall"):
+			_fail("town deployment: no unit placed up on a wall")
+		var c := _deploy_run(kind, -1, false)
+		if int(c["steps"]) != 600:
+			_fail("%s deployment: the countdown did not start the battle (%d steps)" % [kind, int(c["steps"])])
+		else:
+			print("PASS %s deployment: the countdown starts the battle after 600 steps" % kind)

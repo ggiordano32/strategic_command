@@ -65,7 +65,16 @@ const ORDER_WITHDRAW_ALL := 8   # side
 const ORDER_DEPLOY := 9         # unit, on (artillery: set up / pack up)
 const ORDER_REFILL := 10        # unit, on (artillery: bring up shots from the baggage)
 const ORDER_GATE := 11          # unit (any of the defenders'), gate, on (1 close / 0 open)
-const ORDER_LAST := 11
+const ORDER_PLACE := 12         # unit, x, y, facing, files (deployment phase only, inside its side's zone)
+const ORDER_READY := 13         # who (deployment phase: player `who` is ready to start)
+const ORDER_LAST := 13
+
+# Battle phase (scenario "deploy_time" > 0 starts in PHASE_DEPLOY, see the
+# "deployment phase" section at the end of this file).
+const PHASE_BATTLE := 0
+const PHASE_DEPLOY := 1
+const DZ_RECT := 0     # deployment zone: a rectangle (clamped into)
+const DZ_INSIDE := 1   # settlement defenders: open ground inside the walls within the box (refused outside)
 
 ## Unit fields an order can change; OrderPreview predicts exactly these.
 const ORDER_KEYS: Array[String] = ["order", "ax", "ay", "face", "files", "dx", "dy",
@@ -755,6 +764,16 @@ var fx_dx := PackedInt32Array()
 var fx_dy := PackedInt32Array()
 var fx_t := PackedInt32Array()
 var fx_head: int = 0
+## Deployment phase (section at the end of the file). Hashed only when the
+## scenario has one (dep_on), so battles without it hash as before.
+var phase: int = PHASE_BATTLE
+var dep_on: int = 0
+var dep_ticks: int = 0      # length of the countdown (ticks)
+var dep_left: int = 0       # ticks left while deploying
+var dep_need: int = 0       # bit per player who must be ready (0: nobody: ends at once)
+var dep_ready: int = 0      # bit per player who is ready
+var dep_z := PackedInt32Array()  # zones, 6 per zone: side, kind (DZ_*), x0, y0, x1, y1 (sim units)
+var dep_out: int = -1       # settlement maps: the attackers' piece of open ground
 
 
 # ---------------------------------------------------------------- setup ---
@@ -1002,6 +1021,7 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		if not od.has("player"):
 			od["player"] = 50
 		queue_order(od)
+	_setup_deploy(scenario)
 
 
 func _soldier_arrays() -> Array:
@@ -3447,13 +3467,15 @@ static func _order_less(a: Dictionary, b: Dictionary) -> bool:
 	return int(a["seq"]) < int(b["seq"])
 
 
-func _apply_orders() -> void:
+## Apply the orders due; orders of players >= max_player stay pending (the
+## deployment phase: scripted and AI orders wait for the battle).
+func _apply_orders(max_player: int = 1 << 30) -> void:
 	if pending_orders.is_empty():
 		return
 	var due: Array = []
 	var rest: Array = []
 	for o in pending_orders:
-		if int(o["tick"]) <= tick:
+		if int(o["tick"]) <= tick and int(o["player"]) < max_player:
 			due.append(o)
 		else:
 			rest.append(o)
@@ -3462,8 +3484,13 @@ func _apply_orders() -> void:
 	pending_orders = rest
 	due.sort_custom(_order_less)
 	for o in due:
+		if int(o["type"]) == ORDER_READY:
+			if phase == PHASE_DEPLOY:
+				dep_ready |= 1 << clampi(int(o.get("who", 0)), 0, 30)
+			continue
 		if int(o["type"]) == ORDER_GATE:
-			_gate_order(o)
+			if phase != PHASE_DEPLOY:
+				_gate_order(o)
 			continue
 		for u in order_units(self, o):
 			var d := order_fields(self, u)
@@ -3485,6 +3512,10 @@ func _apply_orders() -> void:
 			u_gtarget[u] = int(d["gtarget"])
 			u_dirty[u] = 1
 			u_settled[u] = 0
+			if int(o["type"]) == ORDER_PLACE:
+				if int(d.get("placed", 0)) != 0:
+					_place_unit(u, int(d.get("wall", 0)))
+				continue
 			if obs_on != 0:
 				u_pn[u] = 0  # plan a new path
 			if city_on != 0 and ws_e.size() > 0:
@@ -3524,6 +3555,16 @@ static func order_units(sim, o: Dictionary) -> Array[int]:
 static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 	var typ := int(o["type"])
 	var ty: int = sim.u_type[u]
+	# Deployment phase: units are placed (ORDER_PLACE), not moved; only the
+	# standing settings (run, fire at will, skirmish, artillery set up) may
+	# change. A placement outside the deployment phase does nothing.
+	if typ == ORDER_PLACE:
+		if sim.phase == PHASE_DEPLOY:
+			place_rule(sim, u, d, o)
+		return
+	if sim.phase == PHASE_DEPLOY and typ != ORDER_RUN and typ != ORDER_FIRE and typ != ORDER_SKIRMISH \
+			and typ != ORDER_DEPLOY:
+		return
 	# Artillery: frontage is set by its engines, and it never runs (the
 	# engines are dragged); it does not skirmish.
 	var art := UT.cls(ty) == UT.CLS_ART
@@ -3870,6 +3911,9 @@ func unit_half_width(u: int) -> int:
 # ----------------------------------------------------------------- step ---
 
 func step() -> void:
+	if phase == PHASE_DEPLOY:
+		_deploy_step()
+		return
 	_dist_new = 0
 	_apply_orders()
 	if city_on != 0:
@@ -7100,5 +7144,239 @@ func state_hash() -> int:
 			ctx.update(g_hp.to_byte_array())
 			ctx.update(g_state.to_byte_array())
 		ctx.update(ai_prog.to_byte_array())
+	if dep_on != 0:
+		# The deployment phase (battles without one hash as before).
+		ctx.update(PackedInt64Array([phase, dep_ticks, dep_left, dep_need, dep_ready, dep_out]).to_byte_array())
+		ctx.update(dep_z.to_byte_array())
 	var digest := ctx.finish()
 	return digest.decode_u32(0)
+
+
+# ------------------------------------------------------- deployment phase ---
+# A scenario with "deploy_time" (seconds) > 0 starts in PHASE_DEPLOY, as in
+# Total War: nothing moves, shoots or loses heart; the players place their
+# units inside their side's zone (ORDER_PLACE, applied at once: the men
+# stand in their new places on the next step) and say they are ready
+# (ORDER_READY). The battle starts at tick 0 once every player in dep_need
+# is ready or the countdown (in deployment steps of a tick each) runs out.
+# `tick` stays 0 meanwhile, so the battle's own timings (scripted orders,
+# the AI's clocks, the time limit) start with the battle. AI sides deploy
+# at once on field maps (the battle AI's deployment, its units placed where
+# it sends them), so the players see the enemy line; on settlement maps the
+# scenario's placement stands. Scripted and AI orders wait for the battle.
+#
+# Scenario keys: "deploy_time" (s), "deploy_need" (bit per player who must
+# be ready; default 1 = player 0, or 0 when both sides are AI), and
+# "deploy_zones": [[side, kind, x0_m, y0_m, x1_m, y1_m], ...] (DZ_RECT: a
+# rectangle a placement is clamped into; DZ_INSIDE: settlement defenders,
+# open ground inside the walls within the box - a placement elsewhere is
+# refused; defenders who may man the walls are placed on a walkway when the
+# point is on a wall). Without zones each side gets its half of the field
+# beyond 30 m from the centre line.
+
+func _setup_deploy(sc: Dictionary) -> void:
+	phase = PHASE_BATTLE
+	dep_on = 0
+	dep_ticks = 0
+	dep_left = 0
+	dep_need = 0
+	dep_ready = 0
+	dep_z = PackedInt32Array()
+	dep_out = -1
+	var secs := int(sc.get("deploy_time", 0))
+	if secs <= 0:
+		return
+	dep_on = 1
+	dep_ticks = secs * TICKS_PER_SECOND
+	dep_left = dep_ticks
+	dep_need = int(sc.get("deploy_need", 0 if ai_sides[0] != 0 and ai_sides[1] != 0 else 1))
+	var zones: Array = sc.get("deploy_zones", [])
+	if zones.is_empty():
+		for s in 2:
+			var sy := 0
+			var cnt := 0
+			for u in n_units:
+				if u_side[u] == s:
+					sy += u_ay[u] / M
+					cnt += 1
+			var bottom := cnt > 0 and sy / cnt > field_h / M / 2
+			var mid := field_h / M / 2
+			zones.append([s, DZ_RECT, 0, mid + 30, field_w / M, field_h / M] if bottom else [s, DZ_RECT, 0, 0, field_w / M, mid - 30])
+	for z in zones:
+		var za: Array = z
+		dep_z.append_array([int(za[0]), int(za[1]), int(za[2]) * M, int(za[3]) * M, int(za[4]) * M, int(za[5]) * M])
+	if city_on != 0:
+		for u in n_units:
+			if u_side[u] != city_def:
+				dep_out = _piece0(u_ax[u], u_ay[u])
+				if dep_out >= 0:
+					break
+	if city_on == 0 and (ai_sides[0] != 0 or ai_sides[1] != 0):
+		# The AI deploys now: its orders of tick 0, its units put where it
+		# sends them (kept to its zone).
+		var keep := pending_orders
+		pending_orders = []
+		BattleAI.think(self)
+		_apply_orders()
+		pending_orders.append_array(keep)
+		for u in n_units:
+			if ai_sides[u_side[u]] == 0 or u_state[u] != U_READY or u_order[u] != O_MOVE:
+				continue
+			var p := deploy_clamp(self, u_side[u], u_dx[u], u_dy[u])
+			if p.z != 0:
+				u_ax[u] = p.x
+				u_ay[u] = p.y
+				u_face[u] = u_dface[u]
+			u_order[u] = O_NONE
+			_place_unit(u, 0)
+	phase = PHASE_DEPLOY
+
+
+func _deploy_step() -> void:
+	_dist_new = 0
+	_apply_orders(50)
+	if dep_left > 0:
+		dep_left -= 1
+	if dep_left <= 0 or dep_need == 0 or (dep_ready & dep_need) == dep_need:
+		phase = PHASE_BATTLE
+		dep_left = 0
+
+
+## Seconds of the countdown left (deployment phase), else 0.
+func deploy_secs_left() -> int:
+	return (dep_left + TICKS_PER_SECOND - 1) / TICKS_PER_SECOND if phase == PHASE_DEPLOY else 0
+
+
+## The raw piece of open ground at (x, y) with every gate shut (-1: none).
+func _piece0(x: int, y: int) -> int:
+	if n_cmp == 0 or x < 0 or y < 0:
+		return -1
+	var i := x >> 11
+	var j := y >> 11
+	if i >= ob_w or j >= ob_h:
+		return -1
+	return maxi(cmp[j * ob_w + i], -1)
+
+
+## Where a placement of a unit of `side` at (x, y) goes: (x, y, 1) inside
+## its zone, (x', y', 1) clamped into the nearest rectangle of its zone,
+## (x, y, 0) refused (outside a settlement zone). No zone: the field.
+static func deploy_clamp(sim, side: int, x: int, y: int) -> Vector3i:
+	var best := Vector3i(clampi(x, 0, sim.field_w), clampi(y, 0, sim.field_h), 1)
+	var best_d := -1
+	var z: PackedInt32Array = sim.dep_z
+	for k in range(0, z.size(), 6):
+		if z[k] != side:
+			continue
+		var cx := clampi(x, z[k + 2], z[k + 4])
+		var cy := clampi(y, z[k + 3], z[k + 5])
+		if z[k + 1] == DZ_INSIDE:
+			if cx == x and cy == y and sim._piece0(x, y) >= 0 and sim._piece0(x, y) != sim.dep_out:
+				return Vector3i(x, y, 1)
+			if best_d < 0:
+				best = Vector3i(x, y, 0)
+			continue
+		var dd := (cx - x) * (cx - x) + (cy - y) * (cy - y)
+		if dd == 0:
+			return Vector3i(x, y, 1)
+		if best_d < 0 or dd < best_d:
+			best_d = dd
+			best = Vector3i(cx, cy, 1)
+	return best
+
+
+## The placement rule (ORDER_PLACE in the deployment phase), on the order
+## fields d; shared with OrderPreview. Sets d["placed"] = 1 (and d["wall"]:
+## the walkway segment + 1, 0 the ground) when the unit is placed.
+static func place_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
+	var side: int = sim.u_side[u]
+	var ty: int = sim.u_type[u]
+	var alive: int = sim.u_alive[u]
+	var x := int(o.get("x", d["ax"]))
+	var y := int(o.get("y", d["ay"]))
+	var face := int(o.get("facing", d["face"])) & FM.ANGLE_MASK
+	if can_man_walls(sim, u):
+		var ws := wall_snap(sim, x, y)
+		if ws.z >= 0:
+			var wa := wall_anchor(sim, ws.z, ws.x, ws.y, alive, ty)
+			d["ax"] = wa.x
+			d["ay"] = wa.y
+			d["face"] = wa.z
+			d["files"] = wall_nf(alive)
+			d["wall"] = ws.z + 1
+			_placed(d)
+			return
+	var p := deploy_clamp(sim, side, x, y)
+	if p.z == 0:
+		return
+	if sim.city_on != 0 and sim.n_cmp > 0 and sim._piece0(p.x, p.y) < 0:
+		return  # a house, a wall, a gateway
+	d["ax"] = p.x
+	d["ay"] = p.y
+	d["face"] = face
+	if UT.cls(ty) != UT.CLS_ART:
+		var f := int(o.get("files", d["files"]))
+		if sim.u_wall[u] > 0 and not o.has("files"):
+			f = ground_files(ty, alive)
+		d["files"] = clampi(f, mini(MIN_FILES, maxi(alive, 1)), maxi(alive, 1))
+	d["wall"] = 0
+	_placed(d)
+
+
+static func _placed(d: Dictionary) -> void:
+	d["dface"] = d["face"]
+	d["dx"] = d["ax"]
+	d["dy"] = d["ay"]
+	d["order"] = O_NONE
+	d["target"] = -1
+	d["gtarget"] = -1
+	d["refill"] = 0
+	d["placed"] = 1
+
+
+## Put unit u's men (and engines) in their places at its anchor (the
+## deployment phase), on the walkway segment wall - 1 (0: the ground).
+func _place_unit(u: int, wall: int) -> void:
+	var ty := u_type[u]
+	if wall > 0:
+		if u_wall[u] == 0:
+			u_skirm[u] = 0
+		u_wall[u] = wall
+	elif u_wall[u] > 0:
+		u_wall[u] = 0
+		u_skirm[u] = t_skirm[ty]
+	u_stair[u] = 0
+	u_pn[u] = 0
+	u_trn[u] = 0
+	u_dx[u] = u_ax[u]
+	u_dy[u] = u_ay[u]
+	u_dface[u] = u_face[u]
+	var ne := u_neng[u]
+	if ne > 0:
+		var c := FM.cos_a(u_face[u])
+		var sn := FM.sin_a(u_face[u])
+		for k in ne:
+			var e := u_eng0[u] + k
+			var lat := ((2 * k - (ne - 1)) * t_fsp[ty]) / 2
+			e_x[e] = u_ax[u] + ((-lat * sn) / FM.TRIG_ONE)
+			e_y[e] = u_ay[u] + ((lat * c) / FM.TRIG_ONE)
+			e_face[e] = u_face[u]
+			e_px[e] = e_x[e]
+			e_py[e] = e_y[e]
+	if obs_on != 0 and u < _u_obs.size():
+		_u_obs[u] = _near_obs(u)
+	_compute_offsets(u)
+	var base := u_slot_base[u]
+	for s in u_alive[u]:
+		var i := slot_soldier[base + s]
+		pos_x[i] = u_ax[u] + off_x[base + s]
+		pos_y[i] = u_ay[u] + off_y[base + s]
+		prev_x[i] = pos_x[i]
+		prev_y[i] = pos_y[i]
+		facing[i] = u_face[u]
+		state[i] = S_FORMED
+		target[i] = -1
+	u_settled[u] = 0
+	_update_bounds()
+	if ter_on != 0 or obs_on != 0:
+		u_h[u] = _unit_elev(u)
