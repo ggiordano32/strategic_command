@@ -422,6 +422,8 @@ func _layout_cards() -> void:
 ## Height of the top bar and of the bottom HUD (cards, groups, actions) in
 ## logical pixels, for framing the battle between them.
 func top_height() -> float:
+	if _sim != null and _sim.phase != 0:
+		return MARGIN * 4 + BTN_H * 2  # (the deployment bar under the buttons)
 	return MARGIN * 2 + BTN_H
 
 

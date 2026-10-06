@@ -157,7 +157,7 @@ func _show_check() -> void:
 		var mode := "solo (Player 2's armies are fought by the AI)" if p2 >= 0 else "solo"
 		if p2 >= 0:
 			mode += "; online: " + ("co-op, Player 1 and Player 2 on one side" if p1 == p2 else "head-to-head")
-		_info.text = "Ready to play %s." % mode
+		_info.text = "Ready to play %s." % mode if session == null else "The setup is complete."
 		_info.add_theme_color_override("font_color", Kit.COL_GOOD)
 
 
@@ -543,7 +543,7 @@ func _refresh_lobby() -> void:
 	for p in [0, 1]:
 		var info: Dictionary = session.player(p)
 		var side := CS.side_of_player(setup, p)
-		var where: String = SIDE_NAMES[side] if side >= 0 else "no army"
+		var where: String = ["side 1, bottom", "side 2, top"][side] if side >= 0 else "no army"
 		var st := "not here yet"
 		if bool(info.get("on", false)):
 			st = "ready" if bool(info.get("ready", false)) else "choosing"
