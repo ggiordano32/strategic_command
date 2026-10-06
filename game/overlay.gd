@@ -121,8 +121,9 @@ func _draw() -> void:
 
 
 ## Settlement: hit points over each closed gate (a word over an open or a
-## broken one), and the capture ring with "Plaza held N / 60 s" while the
-## attackers hold the plaza.
+## broken one), and the capture ring with "Plaza held N / 60 s" ("Citadel
+## held" where the capture point is a citadel's court) while the attackers
+## hold it.
 func _draw_city_marks(lw: float) -> void:
 	var lay: Dictionary = sim.map_info.get("city", {})
 	if lay.is_empty():
@@ -155,7 +156,8 @@ func _draw_city_marks(lw: float) -> void:
 		draw_arc(pc, r, 0, TAU, 48, Color(0, 0, 0, 0.5), lw * 3.0)
 		draw_arc(pc, r, -PI * 0.5, -PI * 0.5 + TAU * frac, 48, col2, lw * 3.0)
 		var fs := _font_size(15.0)
-		var txt2 := "Plaza held %d / %d s" % [sim.cap_t / 10, BattleSim.CAPTURE_TICKS / 10]
+		var where := "Citadel" if not (lay.get("cit", {}) as Dictionary).is_empty() else "Plaza"
+		var txt2 := "%s held %d / %d s" % [where, sim.cap_t / 10, BattleSim.CAPTURE_TICKS / 10]
 		var tw2 := ThemeDB.fallback_font.get_string_size(txt2, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 		draw_string(ThemeDB.fallback_font, pc + Vector2(-tw2 * 0.5, -r - fs * 0.5), txt2, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col2.lightened(0.3))
 

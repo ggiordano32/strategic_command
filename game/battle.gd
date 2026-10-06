@@ -273,12 +273,14 @@ func _ready() -> void:
 		"speed": SPEEDS[speed_idx], "start_tick": sim.tick, "hash_at_start": _hash_text})
 
 
-## Testing aids (desktop only): -- --skip-ticks=N --cam=x_m,y_m --zoom=Z
+## Testing aids (desktop only): -- --ai-both --skip-ticks=N --cam=x_m,y_m --zoom=Z
 ## --select=U[,U...] --pause fast-forward the sim and frame the camera for
 ## screenshots; --cam-unit=U centres on a unit after the skip; --attack=U:T
 ## gives unit U an attack order on unit T; --refill=U puts battery U into
 ## its refill mode (80 ticks run).
 func _apply_debug_args() -> void:
+	if "--ai-both" in OS.get_cmdline_user_args():
+		sim.ai_sides[0] = 1  # screenshots: the AI fights for both sides
 	for a in OS.get_cmdline_user_args():
 		var v := a.get_slice("=", 1)
 		if a.begins_with("--skip-ticks="):
@@ -1029,9 +1031,9 @@ func _gate_at(w: Vector2) -> int:
 		return -1
 	var x := w.x / PX_PER_M * M
 	var y := w.y / PX_PER_M * M
-	var reach_x := (MapGen.GATE_HW + 3) * M
 	var reach_y: int = sim.wall_t / 2 + 4 * 1024
 	for g in sim.n_gates:
+		var reach_x := int((sim.g_hw[g] + 3) * M)
 		var f: Vector2i = sim.gate_frame(g, int(x), int(y))
 		if absi(f.x) <= reach_x and absi(f.y) <= reach_y:
 			return g

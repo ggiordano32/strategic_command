@@ -34,10 +34,10 @@ a little worse than good play. No fleets, generals, politics or agents.
   sorted keys; `from_json` turns JSON's floats back into ints (`normalise`).
   `state_hash` = first 32 bits of the MD5 of that canonical JSON.
 
-### State format (version 2)
+### State format (version 3)
 
 ```
-format "strategic_command_campaign", version 1, name, seed, turn (0 = 280 BC
+format "strategic_command_campaign", version 3, name, seed, turn (0 = 280 BC
 summer), phase "plan" | "battles" | "over", rng, winner (-1, 1 won, 0 lost),
 settings {victory_regions 20, victory_capitals 3, turn_timeout_h 0|12|24|48|72
   (the initial value for online campaigns; the server enforces its own
@@ -48,7 +48,8 @@ dip [8*8] 0 war / 1 peace / 2 trade / 3 allied;  dip_turn [8*8] turn of change
 regions [{owner (-1 independent), level 0 village|1 town|2 city, growth,
   slots [[chain, level]...], build [chain, level, turns_left] | [],
   queue [unit keys recruited this turn], gar (garrison strength %),
-  city_seed (the settlement's battle map seed, fixed for good)}]
+  city_seed (the settlement's battle map seed, fixed for good),
+  built [[chain, level, culture]...] (version 3: who built what; see below)}]
 armies [{id, f, r, units [{t: unit key, n: men}], from, moved, busy}] by id;
   id = faction * 100000 + factions[f].next_army
 battles [{id, r, turn, att [army ids], def [army ids], att_f, def_f, reinf
@@ -71,7 +72,7 @@ states are migrated on load (`CState.migrate`, called by `from_json` and
 `default_city_seed(r)` and the version becomes 2. **Online campaigns are
 not migrated**: the server pins a campaign's format when it is created and
 refuses uploads of another format, so a format-1 online campaign stays
-format 1; this build reads formats 1-2 (`MIN_VERSION`..`VERSION`) and the
+format 1; this build reads formats 1-3 (`MIN_VERSION`..`VERSION`) and the
 rules read seeds through `CState.city_seed(st, r)`, which falls back to the
 same default, so a format-1 state plays exactly like its migrated copy (the
 determinism check and live-battle scenario hash agree on every device). New
@@ -79,6 +80,34 @@ campaigns (and "Play online" uploads of a local one) are format 2; an older
 build refuses them with its existing "update the game" message. No server
 change. Ground palette and woods coverage are static region data in
 `cdata.gd` (not saved).
+
+**Version 3 (October 2026, settlement variety)** adds per region `built`:
+`[[chain, level, culture], ...]`, appended by `end_of_turn` when a building
+level completes (`chain` its index) and when the settlement grows a level
+(`chain` -1), with the culture of the owner at that moment (an independent
+owner: the region's founding culture). `CState.builder_culture(st, r,
+chain, level)` reads the last matching entry, else the founding culture;
+the battle map draws each building in that culture's style (DESIGN.md
+"Settlement plans, sites and owners"). New campaigns start with `built: []`
+(everything in the founder's style); `migrate()` turns a version 2 state
+into version 3 the same way (1 -> 2 -> 3). The rules append only to a
+region that already has the key, so an **unmigrated online campaign of
+format 1 or 2 never gains it**: the server pins the format a campaign was
+created with and refuses uploads of another, so an old online campaign
+stays as it is and every client on it computes the same state; such a
+state plays identically to its migrated copy (the battle scenarios are
+equal: the missing data falls back to the founder's culture). New campaigns
+(and "Play online" uploads of a local one) are format 3; an older build
+refuses them with its "update the game" message. No server change.
+
+Static region data used by the battle maps (not saved): `culture`
+(founding culture, which sets the wall plan: latin castrum, greek polis,
+punic, celtic oppidum), `terrain` (with the city seed: the site), the ports
+(regions in `SEA_LANES`: coastal settlements), ground palette and woods.
+`CBattle.city_dict(st, r)` passes the city to the sim as integers only:
+`seed, level, walls, bld, plan, coast` (geometry) and `founder, owner,
+banner, bstyle, hstyle` (view only); `CBattle.city_caption(st, r)` gives
+the region panel's "Greek city on a coastal hill, held by Rome".
 
 ### Orders and submissions (what milestone 4 sends)
 
@@ -127,47 +156,50 @@ nothing holds (the online turn timeout uses this: docs/SERVER.md).
 
 ## Map
 
-36 regions, 45 land routes, 14 sea lanes. Crossing a sea lane takes the
+36 regions, 45 land routes, 14 sea lanes. The 19 regions on a sea lane are
+ports (coastal settlements on the battle map). Culture is the founding
+culture (wall plan; Iberian, Illyrian and Samnite hill peoples use the
+celtic oppidum). Crossing a sea lane takes the
 turn like a land move; no fleets. Settlements at real coordinates.
 
-| Region (settlement) | Terrain | Wealth | Start | Land routes | Sea lanes |
-|---|---|---|---|---|---|
-| Latium (Roma) | rolling | 6 | city, walls 1 | Etruria, Campania, Samnium | Sardinia |
-| Etruria (Arretium) | hill | 4 | town | Latium, Cisalpina | Corsica |
-| Campania (Capua) | flat | 6 | town | Latium, Samnium, Bruttium | |
-| Samnium (Beneventum) | ridge | 3 | village | Latium, Campania, Apulia | |
-| Apulia (Tarentum) | flat | 5 | city, walls 1 | Samnium, Bruttium | Epirus, Illyria |
-| Bruttium (Rhegium) | hill | 3 | village | Campania, Apulia | Sicilia Or. |
-| Gallia Cisalpina (Mediolanum) | flat | 4 | village | Etruria, Venetia, Allobroges, Massalia | |
-| Venetia (Patavium) | flat | 3 | village | Cisalpina, Illyria | |
-| Sicilia Occ. (Lilybaeum) | hill | 4 | town, walls 1 | Sicilia Or. | Zeugitana |
-| Sicilia Or. (Syracusae) | rolling | 6 | city, walls 2 | Sicilia Occ. | Bruttium, Achaea |
-| Sardinia (Caralis) | hill | 3 | village | | Zeugitana, Corsica, Latium |
-| Corsica (Aleria) | ridge | 2 | village | | Sardinia, Etruria, Massalia |
-| Baetica (Gades) | rolling | 5 | town | Contestania, Carpetania, Lusitania | Mauretania |
-| Contestania (Mastia) | hill | 4 | village | Baetica, Edetania, Carpetania | Numidia |
-| Edetania (Saguntum) | rolling | 4 | town | Contestania, Ilergetia, Celtiberia | |
-| Ilergetia (Emporion) | rolling | 3 | village | Edetania, Celtiberia, Volcae | Massalia |
-| Celtiberia (Numantia) | ridge | 3 | town, walls 1 | Edetania, Ilergetia, Carpetania, Gallaecia | |
-| Carpetania (Toletum) | flat | 3 | village | Baetica, Contestania, Celtiberia, Lusitania | |
-| Lusitania (Olisipo) | rolling | 3 | village | Baetica, Carpetania, Gallaecia | |
-| Gallaecia (Brigantium) | hill | 2 | village | Lusitania, Celtiberia | |
-| Massalia (Massalia) | hill | 5 | city, walls 1 | Cisalpina, Volcae, Allobroges | Corsica, Ilergetia |
-| Volcae (Narbo) | flat | 3 | village | Ilergetia, Massalia, Arverni | |
-| Arverni (Gergovia) | ridge | 4 | town, walls 1 | Volcae, Allobroges | |
-| Allobroges (Vienna) | valley | 3 | village | Cisalpina, Massalia, Arverni | |
-| Macedonia (Pella) | rolling | 5 | city, walls 1 | Thessalia, Illyria, Epirus | |
-| Thessalia (Larissa) | flat | 4 | town | Macedonia, Epirus, Aetolia, Attica | |
-| Epirus (Ambracia) | ridge | 3 | town, walls 1 | Macedonia, Thessalia, Illyria, Aetolia | Apulia |
-| Illyria (Scodra) | hill | 3 | village | Venetia, Macedonia, Epirus | Apulia |
-| Aetolia (Thermon) | ridge | 3 | village | Thessalia, Epirus, Attica | Achaea |
-| Attica (Athenae) | rolling | 6 | city, walls 2 | Thessalia, Aetolia, Achaea | |
-| Achaea (Corinthus) | hill | 5 | town, walls 1 | Attica, Laconia | Aetolia, Sicilia Or. |
-| Laconia (Sparta) | valley | 3 | town | Achaea | |
-| Zeugitana (Carthago) | flat | 7 | city, walls 2 | Byzacena, Numidia | Sicilia Occ., Sardinia |
-| Byzacena (Hadrumetum) | flat | 4 | town | Zeugitana, Numidia | |
-| Numidia (Cirta) | rolling | 3 | village | Zeugitana, Byzacena, Mauretania | Contestania |
-| Mauretania (Tingis) | hill | 2 | village | Numidia | Baetica |
+| Region (settlement) | Terrain | Wealth | Start | Land routes | Sea lanes | Culture |
+|---|---|---|---|---|---|---|
+| Latium (Roma) | rolling | 6 | city, walls 1 | Etruria, Campania, Samnium | Sardinia | latin |
+| Etruria (Arretium) | hill | 4 | town | Latium, Cisalpina | Corsica | latin |
+| Campania (Capua) | flat | 6 | town | Latium, Samnium, Bruttium | | latin |
+| Samnium (Beneventum) | ridge | 3 | village | Latium, Campania, Apulia | | celtic |
+| Apulia (Tarentum) | flat | 5 | city, walls 1 | Samnium, Bruttium | Epirus, Illyria | greek |
+| Bruttium (Rhegium) | hill | 3 | village | Campania, Apulia | Sicilia Or. | greek |
+| Gallia Cisalpina (Mediolanum) | flat | 4 | village | Etruria, Venetia, Allobroges, Massalia | | celtic |
+| Venetia (Patavium) | flat | 3 | village | Cisalpina, Illyria | | latin |
+| Sicilia Occ. (Lilybaeum) | hill | 4 | town, walls 1 | Sicilia Or. | Zeugitana | punic |
+| Sicilia Or. (Syracusae) | rolling | 6 | city, walls 2 | Sicilia Occ. | Bruttium, Achaea | greek |
+| Sardinia (Caralis) | hill | 3 | village | | Zeugitana, Corsica, Latium | punic |
+| Corsica (Aleria) | ridge | 2 | village | | Sardinia, Etruria, Massalia | greek |
+| Baetica (Gades) | rolling | 5 | town | Contestania, Carpetania, Lusitania | Mauretania | punic |
+| Contestania (Mastia) | hill | 4 | village | Baetica, Edetania, Carpetania | Numidia | punic |
+| Edetania (Saguntum) | rolling | 4 | town | Contestania, Ilergetia, Celtiberia | | celtic |
+| Ilergetia (Emporion) | rolling | 3 | village | Edetania, Celtiberia, Volcae | Massalia | greek |
+| Celtiberia (Numantia) | ridge | 3 | town, walls 1 | Edetania, Ilergetia, Carpetania, Gallaecia | | celtic |
+| Carpetania (Toletum) | flat | 3 | village | Baetica, Contestania, Celtiberia, Lusitania | | celtic |
+| Lusitania (Olisipo) | rolling | 3 | village | Baetica, Carpetania, Gallaecia | | celtic |
+| Gallaecia (Brigantium) | hill | 2 | village | Lusitania, Celtiberia | | celtic |
+| Massalia (Massalia) | hill | 5 | city, walls 1 | Cisalpina, Volcae, Allobroges | Corsica, Ilergetia | greek |
+| Volcae (Narbo) | flat | 3 | village | Ilergetia, Massalia, Arverni | | celtic |
+| Arverni (Gergovia) | ridge | 4 | town, walls 1 | Volcae, Allobroges | | celtic |
+| Allobroges (Vienna) | valley | 3 | village | Cisalpina, Massalia, Arverni | | celtic |
+| Macedonia (Pella) | rolling | 5 | city, walls 1 | Thessalia, Illyria, Epirus | | greek |
+| Thessalia (Larissa) | flat | 4 | town | Macedonia, Epirus, Aetolia, Attica | | greek |
+| Epirus (Ambracia) | ridge | 3 | town, walls 1 | Macedonia, Thessalia, Illyria, Aetolia | Apulia | greek |
+| Illyria (Scodra) | hill | 3 | village | Venetia, Macedonia, Epirus | Apulia | celtic |
+| Aetolia (Thermon) | ridge | 3 | village | Thessalia, Epirus, Attica | Achaea | greek |
+| Attica (Athenae) | rolling | 6 | city, walls 2 | Thessalia, Aetolia, Achaea | | greek |
+| Achaea (Corinthus) | hill | 5 | town, walls 1 | Attica, Laconia | Aetolia, Sicilia Or. | greek |
+| Laconia (Sparta) | valley | 3 | town | Achaea | | greek |
+| Zeugitana (Carthago) | flat | 7 | city, walls 2 | Byzacena, Numidia | Sicilia Occ., Sardinia | punic |
+| Byzacena (Hadrumetum) | flat | 4 | town | Zeugitana, Numidia | | punic |
+| Numidia (Cirta) | rolling | 3 | village | Zeugitana, Byzacena, Mauretania | Contestania | punic |
+| Mauretania (Tingis) | hill | 2 | village | Numidia | Baetica | punic |
 
 The map screen draws hand-authored low-polygon coastlines (Europe as one
 polygon closed by the map edges, North Africa, Sicily, Sardinia, Corsica;
@@ -314,11 +346,14 @@ test exaggerates numbers; in an army line the gap is smaller.
   settlement's garrison starts at 30%.
 - **Walls in battle (as built, October 2026):** extra garrison units (above),
   better garrison tiers, and real walls on the settlement's battle map: a
-  wall circuit 8 / 10 / 12 m thick with towers, 4 / 3 / 2 gates (fewer for
-  villages and towns) of 1,800 / 2,700 / 3,800 hp, the garrison's missile
-  troops on the walls (5 / 7 / 9 m up). See DESIGN.md "Battle maps: woods and
-  settlements". (The earlier stand-in, a ridge in front of the defenders, is
-  gone.) In the formula the garrison still counts +15% per wall level.
+  wall circuit 8 / 10 / 12 m thick (Punic +2 m) with towers, gates of
+  1,800 / 2,700 / 3,800 hp, the garrison's missile troops on the land
+  side's walls (5 / 7 / 9 m up). The plan is the founding culture's
+  (castrum, polis with an acropolis, Punic with a citadel, oppidum with a
+  funnel gate), the site the region's (plain with a ditch at walls 3, hill,
+  spur), ports have the sea behind; see DESIGN.md "Battle maps: woods and
+  settlements" and "Settlement plans, sites and owners". In the formula the
+  garrison still counts +15% per wall level.
 - Reinforcements: armies of either side in regions joined by a land route that
   did not move this turn and are not committed elsewhere join the battle,
   until a side has 24 field units.
@@ -526,7 +561,9 @@ As built 2026-10-05; the server side is in `docs/SERVER.md`.
 - `tests/campaign_test.gd` rules, JSON round trip, determinism (also across a
   save/load), movement, sea lanes, economy sums, building and recruitment
   gating by level and tier, replenishment, armies, battle scenario and
-  outcome, conquest, retreat, elimination, victory.
+  outcome, conquest, retreat, elimination, victory; state formats 1-3
+  (migration, unmigrated online states playing and building battle
+  scenarios like their migrated copies, builder data, cultures, ports).
 - `tests/campaign_sim.gd` AI-only campaigns (pacing, economy, time per turn).
 - `tests/campaign_solo.gd` a player faction with a simple policy for 20
   turns, pending battles auto-resolved with the sim, consistency checks.

@@ -80,6 +80,7 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 	var b := CState.battle_at(ps, r)
 	if not b.is_empty():
 		box.add_child(Kit.label("A battle is pending here.", Kit.FONT, Kit.COL_BAD))
+	box.add_child(Kit.label(CBattle.city_caption(ps, r) + ".", Kit.FONT_SMALL, Kit.COL_DIM, true))
 	var vb := Kit.button("View battle map", show_city_map.bind(r))
 	vb.name = "view_battle_map"
 	box.add_child(vb)
@@ -134,9 +135,17 @@ func show_city_map(r: int) -> void:
 	txt.custom_minimum_size = Vector2(280 if side else 0, 0)
 	box.add_child(txt)
 	var lay: Dictionary = prev.data["lay"]
-	var ng := (lay["gates"] as Array).size()
-	var what := "%s, %s ground, %s." % [CData.LEVEL_NAMES[lvl], MapGen.PALETTE_NAMES[int(rd["ground"])].to_lower(),
-		("walls level %d with %d gates and towers" % [w, ng]) if w > 0 else "no walls: an open town entered by its streets"]
+	var ng := 0
+	var cit := false
+	for gd in lay["gates"]:
+		if int((gd as Dictionary).get("cit", 0)) == 0:
+			ng += 1
+		else:
+			cit = true
+	txt.add_child(Kit.label(CBattle.city_caption(ps, r) + ".", Kit.FONT, Kit.COL_GOOD, true))
+	var what := "%s, %s ground, %s%s." % [CData.LEVEL_NAMES[lvl], MapGen.PALETTE_NAMES[int(rd["ground"])].to_lower(),
+		("walls level %d with %d gates and towers" % [w, ng]) if w > 0 else "no walls: an open town entered by its streets",
+		" and a walled citadel (its plaza is the one to hold)" if cit else ""]
 	txt.add_child(Kit.label(what, Kit.FONT, Color.WHITE, true))
 	var how := "Attackers form up at the bottom (yellow arrow)" + (", before the main gate (red); its garrison's archers stand on the walls nearest the gates, a foot unit holds each gate and the rest the plaza. Break a gate with artillery or by hacking at it with infantry, then hold the plaza for a minute to take the city." if w > 0 else "; the defenders hold the street mouths and the plaza. Hold the plaza for a minute to take the town.")
 	txt.add_child(Kit.label(how, Kit.FONT_SMALL, Kit.COL_DIM, true))

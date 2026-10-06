@@ -676,6 +676,7 @@ static func end_of_turn(st: Dictionary) -> void:
 			if int(bld[2]) <= 0:
 				CState._add_building(rs, int(bld[0]), int(bld[1]), 99)
 				rs["build"] = []
+				CState.record_built(st, r, int(bld[0]), int(bld[1]))
 				event(st, {"k": "built", "r": r, "f": o, "chain": int(bld[0]), "level": int(bld[1])})
 		var q: Array = rs["queue"]
 		if not q.is_empty() and o >= 0:
@@ -729,6 +730,7 @@ static func end_of_turn(st: Dictionary) -> void:
 		rs["growth"] = int(rs["growth"]) + growth_per_turn(st, r)
 		if lvl < CData.CITY and int(rs["growth"]) >= int(CData.GROWTH_TO[lvl + 1]):
 			rs["level"] = lvl + 1
+			CState.record_built(st, r, -1, lvl + 1)
 			event(st, {"k": "grew", "r": r, "f": int(rs["owner"]), "level": lvl + 1})
 	for a in st["armies"]:
 		a["busy"] = 1 if in_battle(st, int(a["id"])) else 0

@@ -41,6 +41,11 @@ uniform float grid_alpha = 0.045;
 uniform vec3 wood_col = vec3(0.16, 0.24, 0.12);
 uniform vec3 pave_col = vec3(0.56, 0.52, 0.45);
 uniform vec3 field_col = vec3(0.70, 0.64, 0.38);
+// The sea and a ditch (settlement maps): R sea, G ditch, one texel per 4 m.
+uniform sampler2D seamap : filter_linear, repeat_disable;
+uniform bool sea_on = false;
+uniform vec3 sea_col = vec3(0.18, 0.36, 0.5);
+uniform vec3 ditch_col = vec3(0.27, 0.21, 0.15);
 
 varying highp vec2 world;
 
@@ -64,6 +69,13 @@ float line_a(highp float d, highp float fw, float half_px) {
 void fragment() {
 	vec3 col = base_col;
 	float contour_k = 1.0;
+	float sea = 0.0;
+	float ditch = 0.0;
+	if (sea_on) {
+		vec2 sv = texture(seamap, world / veg_size_px).rg;
+		sea = smoothstep(0.35, 0.65, sv.r);
+		ditch = smoothstep(0.3, 0.7, sv.g);
+	}
 	if (veg_on) {
 		vec4 v = texture(vegmap, world / veg_size_px);
 		// Forest floor: darker and a little greener under the trees.
@@ -76,6 +88,9 @@ void fragment() {
 		col = mix(col, field_col * strip, v.b * 0.55);
 		contour_k = 1.0 - v.g * 0.5;
 	}
+	// A ditch: dark earth, its floor in shadow.
+	col = mix(col, ditch_col, ditch * 0.85);
+	contour_k *= 1.0 - max(sea, ditch);
 	if (terrain_on) {
 		highp vec2 tp = world / texel_px;
 		highp vec2 f0 = floor(tp);
@@ -94,7 +109,7 @@ void fragment() {
 		vec3 tint = e < 0.0 ? mix(base_col, low_col, -e) : mix(base_col, high_col, e);
 		col = col + (tint - base_col);
 		// Lit slopes brighten less than shaded ones darken (no washed-out crests).
-		col *= 1.0 + shade_k * (shade > 0.0 ? shade * 0.7 : shade);
+		col *= 1.0 + shade_k * (shade > 0.0 ? shade * 0.7 : shade) * (1.0 - sea);
 		// Contours at h_base + (k + 0.5) * minor_m: the plain (the commonest
 		// height) lies midway between two lines, never on one.
 		highp float lv = (hm - h_base_m) / minor_m;
@@ -111,6 +126,16 @@ void fragment() {
 			float fade = 1.0 - smoothstep(0.1, 0.17, fw);
 			col = mix(col, line_col.rgb, line_col.a * contour_k * fade * line_a(dist, fw, 0.5));
 		}
+	}
+	if (sea_on && sea > 0.0) {
+		// Water: flat colour with a slow ripple and a light band of foam
+		// along the shore.
+		highp vec2 wv = world / 90.0;
+		float rip = 0.5 + 0.5 * sin(wv.x * 1.7 + sin(wv.y * 2.3) * 1.3) * sin(wv.y * 1.1);
+		vec3 water = sea_col * (0.94 + 0.1 * rip);
+		col = mix(col, water, sea);
+		float foam = sea * (1.0 - sea) * 4.0;
+		col = mix(col, vec3(0.88, 0.92, 0.9), foam * 0.45);
 	}
 	// Faint 50 m grid, about one pixel wide at any zoom.
 	highp vec2 g = world / grid_px;

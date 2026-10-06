@@ -220,6 +220,25 @@ func _build_veg() -> void:
 	m.set_shader_parameter("vegmap", ImageTexture.create_from_image(img))
 	m.set_shader_parameter("veg_size_px", Vector2(vw, vh) * 4.0 * px_per_m)
 	m.set_shader_parameter("veg_on", true)
+	# The sea and a ditch (settlement maps only): a second small texture,
+	# R sea, G ditch; nothing is bound on other maps.
+	var any := false
+	var sb := PackedByteArray()
+	sb.resize(vw * vh * 2)
+	for k in vw * vh:
+		var b2 := veg[k]
+		if (b2 & MapGen.V_WATER) != 0:
+			sb[k * 2] = 255
+			any = true
+		if (b2 & MapGen.V_DITCH) != 0:
+			sb[k * 2 + 1] = 255
+			any = true
+	m.set_shader_parameter("sea_on", any)
+	if any:
+		var simg := Image.create_from_data(vw, vh, false, Image.FORMAT_RG8, sb)
+		m.set_shader_parameter("seamap", ImageTexture.create_from_image(simg))
+		var base: Color = GroundPalette.get_palette(int(sim.ter_info.get("palette", 0)))["base"]
+		m.set_shader_parameter("sea_col", Vector3(0.16 + base.r * 0.1, 0.33 + base.g * 0.1, 0.46 + base.b * 0.05))
 
 
 ## The most common height (to 0.1 m): the plain, if the map has one.

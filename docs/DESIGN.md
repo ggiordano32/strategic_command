@@ -722,7 +722,9 @@ tests) and `city` ({seed, level, walls, bld, def}).
   deployment kept free of trees. Hill and ridge country: the city stands on
   a plateau (a flat-topped rise of 3/4 of the kind's relief, falling off
   over 70 m), and every city's footprint is levelled (relief damped to a
-  quarter). Generation takes 15-50 ms for the map and 6-15 ms for heights
+  quarter). (This is the original ring, `PLAN_RING`, still the default
+  without a plan; campaign settlements now use their founder's plan on
+  their own site: see "Settlement plans, sites and owners" below.) Generation takes 15-50 ms for the map and 6-15 ms for heights
   on the desktop (cached, so the scenario builder and the sim share it).
 - *Street graph* for paths: nodes at the gates (outside, gate, inside), a
   ring outside the walls (20 m steps, clear of the towers), the ring road,
@@ -777,10 +779,13 @@ per soldier on open ground.
   (the midpoint and quarter points must be passable).
 - *Walls*: units placed on a wall (garrison missile troops, by the scenario
   builder) stand on the walkway: their height is the ground + 5 / 7 / 9 m
-  (missile range from height, line of fire), they move only along their
-  stretch of wall (a move order is projected onto it, facing out), never
-  withdraw or skirmish, and only wall units may enter the walkway (no
-  climbing in this version). Battlements stop 35 % of missiles that would
+  (missile range from height, line of fire), a move order within 7 m of
+  their stretch is projected onto it (facing out), they never withdraw or
+  skirmish, and only wall units may enter the walkway (no climbing for
+  attackers). Since October 2026 towers are stairs: a move order off the
+  stretch takes the unit down the stair at one of its ends and on through
+  the streets, routers leave the wall the same way, and defenders can be
+  sent up (see "Stairs" below). Battlements stop 35 % of missiles that would
   hit a man on a wall from below. Lines of fire (flat shots) are blocked by
   buildings (4-6 m), walls (walkway + 0.6 m parapet), towers (+4 m) and
   closed gates; a shooter on a wall looks over his own battlements. Arrows
@@ -919,6 +924,238 @@ city_preview.gd`). Screenshots: `docs/screenshots/maps_*.png`.
   ticks are the first build of a graph distance table after a gate falls
   (~0.7 ms each, then cached) on top of fighting in the crowded breach (a
   target search there looks at no more than 64 men).
+
+### Settlement plans, sites and owners (as built, October 2026)
+
+Why: in the first playtest of the city maps every walled settlement was the
+same round ring, and 17 of 36 regions put it on a levelled plateau, so
+nearly every siege was the same hill fort. Now the wall plan comes from the
+settlement's founding culture, the ground from the region, the sea from the
+ports, and the current owner shows in banners, the shrine and new buildings.
+
+Code: `sim/mapgen.gd` (`plan_outline`, `_city_plan`, `_houses_*`,
+`_harbour`, `_segments` / `_stairs`, `_ditch`, `coast_params` /
+`shore_y`, `site_of`, `describe`), `sim/terrain.gd` (`_city_ground`:
+`_rise`, `_spur`, the citadel's knoll, the sea floor), `sim/battle_sim.gd`
+(stairs, ditch, sea, citadel gate, `_attack_goal`, path budget),
+`sim/siege_ai.gd` (wall units off a lost stretch, the citadel), `sim/
+scenarios.gd` (`siege_test(..., plan, coast)`, `siege_castrum` /
+`siege_polis` / `siege_punic` / `siege_oppidum`, `bench_4000_polis` /
+`bench_4000_castrum`), `campaign/cbattle.gd` (`city_dict`, `city_caption`),
+`game/city_draw.gd` (one drawing module for the battle map, the campaign
+preview and `tools/city_dump.gd`). Pictures: `docs/screenshots/
+settlements_*.png`.
+
+**Scenario keys** (city dictionary, integers only): geometry `seed`,
+`level`, `walls`, `bld`, `def`, `plan` (`PLAN_CASTRUM` 0 latin,
+`PLAN_POLIS` 1 greek, `PLAN_PUNIC` 2 punic, `PLAN_OPPIDUM` 3 celtic,
+`PLAN_RING` 4 the original ring = the default), `coast` (0/1); view only
+(copied into the layout, read by no rule, in no hash): `founder`, `owner`
+(cultures), `banner` (faction index; -1 independent, -2 none: side
+colours), `bstyle` (culture that built each `bld` entry), `hstyle` (culture
+of the houses that came with settlement level 0, 1, 2). The site is
+`MapGen.site_of(kind, city seed)`: flat -> plain, hill -> hill, ridge ->
+spur, rolling -> plain or a gentle hill by a seed bit, valley -> plain.
+
+**Plans** (one seeded generator each; the draws come in a fixed order
+whatever the level and walls, so a town grows into the same city; footprint
+radius 60 / 85 / 115 m as before):
+- *Castrum*: a rectangle (half width 76-84 %, half depth 70-80 % of the
+  radius), square corners or rounded (a 10-16 % chamfer), square towers at
+  the corners and every 28-40 m along the sides (interval towers stand out
+  from the wall; the walkway runs past them), gates at the ends of the two
+  main streets (cardo and decumanus) that cross at the forum in the middle:
+  3-4 gates (2 for a village; none on the sea side), regular square insulae
+  (20-26 m, streets 4-5 m), built 6 % denser.
+- *Polis*: an irregular outline (8-11 corners, radius 82-114 %), the agora
+  15-28 % of the radius off the centre toward the front, two street grids
+  at 25-45 degrees to each other meeting on a seam through the agora
+  (long blocks 16-20 x 30-38 m: wedge-shaped blocks along the seam), 2-4
+  gates, round towers, an **acropolis** at a back corner (front corner on a
+  coast) on a knoll 9 m high.
+- *Punic*: a regular polygon (6-8 corners, radius 94-106 %), walls 2 m
+  thicker, square towers every 18-24 m on the land side, two land gates
+  (front and one side), dense small blocks (14-20 x 20-28 m, streets 3-4
+  m, built 10 % denser), a **citadel** (Byrsa) inland on a 6 m knoll, the
+  main square pushed away from it.
+- *Oppidum*: an oval (98-108 % x 78-90 %) with a kidney's dent at the back,
+  the main gate at the end of a **funnel**: the wall turns in 30-38 m at an
+  offset point of the front, one arm longer than the other, big round
+  towers at its mouth, the gate in its inner edge, so men at the gate are
+  shot from both arms; a second (back) gate in half of the towns and
+  cities; round houses (3-5 m) in clusters along bent lanes round a large
+  open middle; on a rise (a 5 m flat-topped rise on a plain, the old
+  plateau on a hill, the spur on a ridge).
+- *Ring*: the original generator, unchanged apart from the stairs.
+- *Citadel* (polis and punic towns and cities with walls): a hexagonal wall
+  ring of radius 20-24 m (punic 21-25; towns 2 m less) with the outer
+  wall's thickness, towers at four corners and one gate facing the agora,
+  fitted inside the outer wall (turned up to 150 degrees and pulled in
+  toward the centre until it fits; the agora gives way if it must), on its
+  knoll. Its interior (about 26-34 m across) is kept open; its gate starts
+  **open**. 45 of 48 polis / punic towns and cities in the generator survey
+  got one (the misses: small coastal punic towns with walls 3).
+- *Enclosed fields*: oppida at village and town level and every village:
+  houses only in the middle (the footprint shrunk by 25-35 m), the ring
+  between them and the wall is 12 m patches of gardens and pens (field
+  bits, open ground) and a few orchards (trees, density 1).
+- *Villages* have a small shrine; a walled village's wall is drawn as a
+  timber palisade (the rules are a level-1 wall's).
+
+**Sites** (`sim/terrain.gd` `_city_ground`):
+- *Plain*: the region's own relief round the city, the footprint levelled
+  to a quarter; a straight road out of the main gate with orchards either
+  side (26 m strips from 35 m, or 60 m at walls 2-3, out to 40 m before the
+  attackers); at walls 3 a **ditch** 6 m wide 24-30 m outside the wall
+  line (`C_DITCH`): foot cross it at 45 % speed, horses and engines cannot
+  enter it; a causeway (the gate's width + 4 m either side) leads to each
+  outer gate; the street graph gets a ring beyond the ditch and nodes at
+  the causeways' ends.
+- *Hill*: a rise of 10-15 m (rolling country: 6-8 m) centred 35 % of the
+  radius behind the centre, its radius 2 x rmax + 60 m toward the main
+  gate (the gentle side with the road) and rmax + 45 m elsewhere (about
+  10-13 % at the walls), the footprint levelled only to 55 % (the town
+  tilts with the hill: no plateau).
+- *Spur*: high ground 12-16 m over the city's disc, a neck as wide as 90 %
+  of the city running down to a plateau beyond the main gate (where the
+  attackers deploy, at the same height), falling off over 45 m on every
+  other side (up to ~40 %); levelled to 35 %. Every gate but the main one
+  is a **postern**: a 4 m opening without towers.
+- *Coast* (regions in `SEA_LANES`, any site): the shore runs straight
+  across behind the city at 42-56 % of the radius behind its centre (slope
+  up to 5 %), bending and waving beyond the city; everything above it is
+  sea (`C_WATER`, `V_WATER`): nobody walks on it, shots fly over it, routed
+  or withdrawing defenders go along the shore to the nearer side edge and
+  leave there. The wall polygon is cut along the shore (the sea wall: no
+  gates, no wall units placed on it, towers where it meets the land
+  walls); a sea gate in its longest stretch and a mole with an elbow
+  running out from it are scenery (wall cells: it cannot be attacked or
+  used). The sea floor is 1.5 m below the lowest land.
+
+**Stairs.** Every walkway stretch has a stair 3 m in from each end (next to
+a tower, gatehouse or corner): the wall's inner face there (`C_STAIR`, 4 m
+wide) is passable both to the walkway and the street, and its foot is on
+the ring road. A unit on a wall:
+- ordered to a point more than 7 m off its stretch: it is a descent. It
+  picks the end that minimises (its men to the walkway point) + (the foot
+  to the destination), its anchor waits at the foot while its men walk the
+  walkway to the stair and down (they follow a trail walkway point ->
+  stair -> foot), and once every man is off the walkway (or after 40 s)
+  the order goes ahead through the streets. A destination on another
+  stretch: down, then up.
+- routing: down the nearest stair, then away as any router.
+A defending infantry or missile unit on the ground ordered onto a walkway
+(within 3 m of a stretch's centre line) marches to the foot of the better
+stair, climbs (trail foot -> stair -> walkway) and takes the stretch at the
+ordered point. Attackers never climb (no ladders or towers yet). State
+`u_stair` / `u_sseg` / `u_send` / `u_st0` / `u_wx` / `u_wy` is hashed on
+walled settlement maps and survives snapshots.
+
+**Citadel capture.** With a citadel the capture zone (`plaza`) is the
+citadel's interior square (half size radius - wall/2 - 3 m, + 6 m): the
+attackers must hold it 60 s with no ready defender off the walls within 12
+m more (the rule as before), so they need its gate too. The agora is just
+the main square (`agora`: the defenders' posts and the shrine).
+
+**AI.**
+- Defenders: a wall unit whose nearest outer gate is open or broken, with
+  an attacking unit inside the walls within 40 m, comes down by a stair
+  and runs to a post in the citadel (if its gate is not shut) or at the
+  agora; when the town is lost (an attacker within 30 m of the citadel's
+  gate, or more attacking men inside the walls than defending men off
+  them) the defenders fall back into the citadel - as many as it holds
+  (about 1.5 men per square metre of its interior: wall units first, then
+  missile troops, then the others by index; the rest fight on in the town)
+  - and shut its gate once those are in or an attacker is within 25 m of
+  it (never on men standing in it). In the citadel they attack attackers
+  who get in and missile troops shoot from their posts.
+- Attackers: the citadel's gate is never chosen as a breach or for the
+  approach; once in the town with the citadel shut, the three heaviest foot
+  units hack at its gate, the others fight defenders in the town and
+  gather 20 m before it, batteries within reach shoot it.
+- Both: on settlement maps a unit moving among walls and houses waits for
+  its men when their centre lags more than 20 m + half its depth behind
+  the anchor (they follow its trail); attackers make for a reachable point
+  of their target (its centre, else its anchor, else its man nearest them)
+  so a unit split round a house or a wall can still be reached; squeezed
+  units keep to the middle of a street a metre at a time (the old jump
+  could flip from side to side at a corner and stall the unit); a unit
+  whose men stay strung out for 10 s regroups (its anchor goes back to the
+  man nearest their centre and it plans its way again); a blocked routing
+  man slides along the obstacle instead of walking the unit's trail (which
+  lies behind him); a man left in a stair after a stair move walks to its
+  foot.
+- Attackers' stall watch: under 10 defenders killed (a gate's 100 hp
+  counts as one) in 2.5 minutes is a stall (it used to be any death at
+  all, so a trickle of losses kept a hopeless assault going): all out if
+  1.2x stronger, else withdraw; all out and stalled 5 more minutes:
+  withdraw.
+
+**Owner dressing (view only).** Banners in the owner faction's colour on
+the gate towers, the citadel and the agora (independent grey; sandbox: the
+defending side's colour); the owner's shrine on the agora (in the temple's
+footprint: Roman podium temple, Greek colonnaded temple, Punic walled
+precinct, Celtic sacred enclosure); roofs by the culture that built each
+building or settlement level (Roman red tile, Greek pale tile, Punic flat
+white, Celtic thatch). The campaign remembers who built what (state format
+3, CAMPAIGN.md); the region panel's "View battle map" shows it all with a
+caption ("Greek city on a coastal hill, held by Rome").
+
+**Performance.** Street graph distance tables (one Dijkstra per exit node,
+~0.7 ms) are built at most two a tick: a unit whose table is not ready
+keeps its old path (or, with none, heads straight for its goal) and plans
+again within half a second. Which tables exist is state for the budget's
+sake (`_dist_have`, `_dist_epoch` are snapshotted; `restore()` rebuilds
+them), so lockstep peers and restored copies plan the same units on the
+same ticks.
+
+**Measured** (desktop, Ryzen 7 5800X; `tests/matchups.gd -- --only=plans
+--seeds=8`: a city held by its garrison and a 4-unit field army against
+the standard 12-unit attacker, AI vs AI, 8 seeds a row; wins attacker /
+defender / draws %, minutes to decide, attackers / defenders killed):
+
+| Plan, site | walls 1 | walls 2 | walls 3 |
+|---|---|---|---|
+| ring, plain (baseline) | 100/0/0, 7.6 min, 349/429 | 100/0/0, 10.3, 470/545 | 100/0/0, 9.4, 473/599 |
+| ring, hill (plateau) | 100/0/0, 10.1, 367/498 | 87/12/0, 10.0, 436/478 | 100/0/0, 11.2, 485/558 |
+| castrum, plain (ditch at 3) | 100/0/0, 5.4, 291/293 | 100/0/0, 6.9, 386/333 | 75/25/0, 8.5, 476/401 |
+| polis, coastal hill | 87/0/12, 10.9, 403/595 | 75/0/25, 11.5, 400/674 | 62/25/12, 12.3, 498/631 |
+| polis, plain | 87/0/12, 11.0, 418/562 | 75/25/0, 10.7, 444/607 | 25/37/37, 12.8, 491/559 |
+| punic, coast | 100/0/0, 9.1, 383/611 | 87/12/0, 10.7, 466/650 | 25/50/25, 12.1, 550/552 |
+| oppidum, spur | 75/0/25, 9.9, 404/523 | 50/37/12, 11.5, 503/597 | 12/50/37, 11.7, 600/441 |
+| oppidum, plain | 50/0/50, 11.2, 405/428 | 62/25/12, 10.0, 575/539 | 12/37/50, 13.8, 583/386 |
+
+- The citadel and the funnel cost the attacker more than the plain ring:
+  longer battles, more draws and defender wins, and (oppidum) more
+  attackers killed; with a citadel the defenders fall back into it in 7-8
+  of 8 battles and the attackers broke its gate in 1-8 of 8; captures
+  come from the plaza (castrum, ring, oppidum) or not at all (citadels:
+  the defenders were destroyed or broke first).
+- **Not degenerate at walls 1-2, too strong at walls 3** for the citadel
+  and oppidum plans: at walls 3 the attacker wins 12-25 %, and the oppidum
+  and polis draw up to 50 % at the 15-minute limit. The draws are a slow
+  grind (about 10 defenders a minute die at a funnel gate or the citadel's
+  8 m gate, where only a few men at a time can fight), not a deadlock.
+  Open: tune before relying on walls 3 in the campaign (see STATUS).
+- Castrum on a plain with a ditch: foot use the causeways; in a scripted
+  crossing heavy foot wade it (119 unit-ticks in it), riders never enter.
+- Benchmarks (before -> after, mean / p95 / max ms per tick):
+  bench_4000 2.71 / 4.57 / 5.89 -> 2.73 / 4.62 / 6.15 (code unchanged on
+  flat maps: noise); bench_4000_hills 2.99 / 4.26 / 6.20 -> 3.07 / 4.45 /
+  6.80 (likewise); bench_4000_city 2.80 / 4.95 / 7.68 -> 2.83 / 4.92 / 7.49
+  (now decided at 8.4 min); new bench_4000_polis (coastal hill, acropolis)
+  2.87 / 4.77 / 7.38-9.51, setup 141 ms; new bench_4000_castrum (plain,
+  walls 3) 2.86 / 5.04 / 7.36, setup 109 ms. No worst tick builds a path
+  table any more (at most 2 a tick); the ticks over the 6.45 ms budget are
+  a plateau of the crowded breach melee (~250-320 obstacle-checked target
+  searches a tick, 6.4-7.4 ms over ~150 ticks), not a spike.
+- Auto-resolve wall time (`tests/campaign_battles.gd --only=timing`, before
+  -> after): 12 v 12 full 5.4 / 6.4 -> 6.8 / 6.1 s, half 3.7 / 3.4 -> 4.3 /
+  3.9 s; 24 v 24 full 12.2 / 12.5 -> 15.3 / 13.7 s, half (used) 7.2 / 7.1
+  -> 2.9 / 2.8 s (those two now end at 3.5 min); per tick 10-20 % dearer.
+- Generation: 15-110 ms a map (punic cities with walls 3 and a ditch the
+  most), terrain 5-40 ms.
+
 
 ## 5. Networking
 

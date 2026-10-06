@@ -37,6 +37,7 @@ func _init() -> void:
 	_armies()
 	_battles()
 	_format()
+	_format3()
 	_settlement_battle()
 	_end_conditions()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
@@ -337,13 +338,13 @@ func _format() -> void:
 	var raw: Dictionary = CState.normalise(JSON.parse_string(text))
 	_check(int(raw["version"]) == 1 and not (raw["regions"][0] as Dictionary).has("city_seed"), "it is a real format 1 state")
 	var mig := CState.from_json(text)
-	var ok := not mig.is_empty() and int(mig["version"]) == 2
+	var ok := not mig.is_empty() and int(mig["version"]) == CState.VERSION
 	for r in 36:
 		if mig.is_empty() or int(mig["regions"][r].get("city_seed", -1)) != CState.default_city_seed(r):
 			ok = false
-	_check(ok, "from_json migrates format 1 -> 2: every settlement gets its city seed")
+	_check(ok, "from_json migrates format 1 -> %d: every settlement gets its city seed" % CState.VERSION)
 	var sv := Saves.parse(JSON.stringify({"state": raw.duplicate(true), "session": {}}))
-	_check(not sv.is_empty() and int(sv["state"]["version"]) == 2 and int(sv["state"]["regions"][5]["city_seed"]) == CState.default_city_seed(5),
+	_check(not sv.is_empty() and int(sv["state"]["version"]) == CState.VERSION and int(sv["state"]["regions"][5]["city_seed"]) == CState.default_city_seed(5),
 		"Saves.parse migrates a saved format 1 campaign")
 	var same := true
 	for r in 36:
@@ -353,7 +354,7 @@ func _format() -> void:
 	var r1 := CTurn.resolve_turn(raw.duplicate(true), [])
 	var r2 := CTurn.resolve_turn(raw.duplicate(true), [])
 	_check(int(r1["version"]) == 1 and not (r1["regions"][0] as Dictionary).has("city_seed")
-		and CState.state_hash(r1) == CState.state_hash(r2), "an unmigrated format 1 state resolves as format 1, deterministically (%s)" % CState.hash_text(r1))
+		and not (r1["regions"][0] as Dictionary).has("built") and CState.state_hash(r1) == CState.state_hash(r2), "an unmigrated format 1 state resolves as format 1, deterministically (%s)" % CState.hash_text(r1))
 	var r3 := CTurn.resolve_turn(mig.duplicate(true), [])
 	var eq := true
 	for k in ["turn", "factions", "armies", "dip", "battles", "rng"]:
@@ -362,6 +363,120 @@ func _format() -> void:
 	_check(eq, "the migrated copy plays the same turn as the unmigrated one")
 	_check(CState.from_json(JSON.stringify({"format": CState.FORMAT, "version": CState.VERSION + 1})).is_empty(),
 		"a newer format is refused")
+
+
+## Format 3: builder data (who built what), migration of a format 2 state,
+## an unmigrated format 2 state playing like its migrated copy.
+func _format3() -> void:
+	var nst := _new([_f("rome")])
+	var ok := int(nst["version"]) == 3
+	for r in 36:
+		if not (nst["regions"][r] as Dictionary).has("built") or not (nst["regions"][r]["built"] as Array).is_empty():
+			ok = false
+	_check(ok, "a new campaign is format 3 with an empty builder list per settlement")
+	var cul_ok := true
+	for r in 36:
+		if int(CData.REGIONS[r].get("culture", -1)) < 0 or int(CData.REGIONS[r]["culture"]) > 3:
+			cul_ok = false
+	for f in CData.faction_count():
+		if CData.faction_culture(f) < 0:
+			cul_ok = false
+	_check(cul_ok and CData.region_culture(_r("latium")) == CData.LATIN and CData.region_culture(_r("attica")) == CData.GREEK
+		and CData.region_culture(_r("zeugitana")) == CData.PUNIC and CData.region_culture(_r("arverni")) == CData.CELTIC,
+		"every region and faction has a culture")
+	_check(CData.is_port(_r("zeugitana")) and CData.is_port(_r("massalia")) and not CData.is_port(_r("attica"))
+		and not CData.is_port(_r("arverni")), "ports are the regions on sea lanes")
+	# A format 2 state (format 3 minus the builder lists).
+	var v2 := CState.copy(nst)
+	v2["version"] = 2
+	for r in 36:
+		(v2["regions"][r] as Dictionary).erase("built")
+	var mig := CState.from_json(CState.to_json(v2))
+	var mok := not mig.is_empty() and int(mig["version"]) == 3
+	for r in 36:
+		if mig.is_empty() or not (mig["regions"][r] as Dictionary).has("built"):
+			mok = false
+	_check(mok and CState.state_hash(mig) == CState.state_hash(nst), "a format 2 state migrates to format 3 (equal to the new campaign)")
+	# Builder entries: a building completed and a settlement grown under a
+	# new owner are in the owner's style; nothing else changes.
+	var st := CState.copy(nst)
+	var rome := _f("rome")
+	var ap := _r("apulia")
+	var br := _r("bruttium")
+	st["regions"][ap]["owner"] = rome
+	st["regions"][ap]["build"] = [CData.MARKET, 2, 1]
+	st["regions"][br]["owner"] = rome
+	st["regions"][br]["growth"] = int(CData.GROWTH_TO[1]) - 1
+	var v2b := CState.copy(st)
+	v2b["version"] = 2
+	for r in 36:
+		(v2b["regions"][r] as Dictionary).erase("built")
+	var s1 := CTurn.resolve_turn(st, [])
+	var bl: Array = s1["regions"][ap]["built"]
+	_check(bl.size() == 1 and int(bl[0][0]) == CData.MARKET and int(bl[0][1]) == 2 and int(bl[0][2]) == CData.LATIN
+		and CState.builder_culture(s1, ap, CData.MARKET, 2) == CData.LATIN
+		and CState.builder_culture(s1, ap, CData.MARKET, 1) == CData.GREEK, "a market built by Rome in Tarentum is Roman (%s)" % str(bl))
+	var gl: Array = s1["regions"][br]["built"]
+	_check(int(s1["regions"][br]["level"]) == 1 and gl.size() == 1 and int(gl[0][0]) == -1 and int(gl[0][2]) == CData.LATIN,
+		"Rhegium growing into a town under Rome records Roman houses (%s)" % str(gl))
+	var cd := CBattle.city_dict(s1, br)
+	_check(int(cd["plan"]) == CData.GREEK and int(cd["founder"]) == CData.GREEK and int(cd["owner"]) == CData.LATIN
+		and int(cd["banner"]) == rome and str(cd["hstyle"]) == str([CData.GREEK, CData.LATIN, CData.GREEK]) and int(cd["coast"]) == 1,
+		"the city dict: Greek plan, coastal, Roman owner, Roman town houses (%s)" % str(cd))
+	var cda := CBattle.city_dict(s1, ap)
+	var bpos := (cda["bld"] as Array).find(CData.MARKET)
+	_check(bpos >= 0 and int(cda["bstyle"][bpos]) == CData.LATIN and (cda["bstyle"] as Array).size() == (cda["bld"] as Array).size(),
+		"bstyle follows bld: the market is Roman (%s)" % str(cda))
+	_check(CBattle.city_caption(s1, br).ends_with("held by Rome") and CBattle.city_caption(s1, br).begins_with("Greek town"),
+		"caption: %s" % CBattle.city_caption(s1, br))
+	# The same turn on an unmigrated format 2 copy: no builder keys appear,
+	# everything else is the same.
+	var s2 := CTurn.resolve_turn(v2b, [])
+	_check(int(s2["version"]) == 2 and not (s2["regions"][ap] as Dictionary).has("built"), "an unmigrated format 2 state never gains builder data")
+	var eq := true
+	for k in ["turn", "factions", "armies", "dip", "battles", "rng"]:
+		if str(s1[k]) != str(s2[k]):
+			eq = false
+	for r in 36:
+		for k in ["owner", "level", "slots", "growth", "gar"]:
+			if str(s1["regions"][r][k]) != str(s2["regions"][r][k]):
+				eq = false
+	_check(eq, "the format 2 copy plays the same turn")
+	_check(CBattle.city_dict(s2, ap)["bstyle"][bpos] == CData.GREEK, "... and shows the founder's style")
+	# Battles on an unmigrated format 2 state and its migrated copy build the
+	# same scenario (integers only).
+	var w2 := CState.copy(nst)
+	w2["version"] = 2
+	for r in 36:
+		(w2["regions"][r] as Dictionary).erase("built")
+	var a: Dictionary = CState.armies_of(w2, rome)[1]
+	var sub := [CTurn.submission(w2, rome, [{"t": "move", "army": int(a["id"]), "to": _r("apulia")}])]
+	var t2 := CTurn.resolve_turn(w2, sub)
+	var t3 := CTurn.resolve_turn(CState.from_json(CState.to_json(w2)), sub)
+	var b2 := CState.battle_at(t2, _r("apulia"))
+	var b3 := CState.battle_at(t3, _r("apulia"))
+	_check(not b2.is_empty() and not b3.is_empty(), "the battle happens on both copies")
+	if not b2.is_empty() and not b3.is_empty():
+		var sc2: Dictionary = CBattle.build(t2, b2, rome)["scenario"]
+		var sc3: Dictionary = CBattle.build(t3, b3, rome)["scenario"]
+		_check(str(sc2) == str(sc3), "format 2 and its migrated copy build the same battle scenario")
+		_check(_ints_only(sc2["terrain"]["city"]), "the city dict carries only integers (%s)" % str(sc2["terrain"]["city"]))
+
+
+func _ints_only(v) -> bool:
+	if v is int:
+		return true
+	if v is Array:
+		for x in v:
+			if not _ints_only(x):
+				return false
+		return true
+	if v is Dictionary:
+		for k in v:
+			if not _ints_only(v[k]):
+				return false
+		return true
+	return false
 
 
 ## Settlement battles: the city's map, sides for an attacking and a defending

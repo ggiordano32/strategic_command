@@ -1,6 +1,6 @@
 # Strategic Command — Status and Handover
 
-Last updated: 2026-10-05 (battle maps with character built: woods, settlement maps, ground palettes). Read this first, then `docs/DESIGN.md` for the full
+Last updated: 2026-10-05 (settlement variety built: wall plans by founding culture, sites, coasts, citadels, stairs, owner dressing). Read this first, then `docs/DESIGN.md` for the full
 design and `CLAUDE.md` for working rules. Update this file whenever a
 milestone lands or the plan changes.
 
@@ -25,7 +25,8 @@ anti-cheat and original art only if it proves fun.
 | 3. Minimal campaign | Built 2026-10-05, **not committed**, not yet playtested (see below) |
 | 4. Async backend (Go + SQLite) | Committed (`fad7399`); port 8060 runs it; first phone playtest done (live battles were missing) |
 | 5. Live co-op battles (lockstep) | Built 2026-10-05, **not committed**; tested headless, end to end and in two headless Chromiums; the 8060 server binary is not yet updated; not yet played on phones |
-| Battle maps with character (woods, city maps, palettes, shading) | Built 2026-10-05, **not committed**; tested headless; not yet played on phones |
+| Battle maps with character (woods, city maps, palettes, shading) | Committed (`3522fd2`); not yet played on phones |
+| Settlement variety (plans, sites, coasts, citadels, stairs, owners) | Built 2026-10-05, **not committed**; tested headless; not yet played on phones |
 | 6. Depth (siege equipment, tech, more factions) | Not started |
 
 ### What exists
@@ -70,7 +71,41 @@ anti-cheat and original art only if it proves fun.
 
 ### In progress right now
 
-**Battle maps with character (built 2026-10-05, uncommitted).** CAMPAIGN.md
+**Settlement variety (built 2026-10-05, uncommitted).** After the
+playtest of the city maps (liked; every walled town looked the same round
+hill fort; wall archers could not leave a wall). Design as built: DESIGN.md
+section 4 "Settlement plans, sites and owners"; save format: CAMPAIGN.md
+"Version 3". In short:
+- Wall plan by founding culture (static `culture` per region): castrum
+  (latin), polis with acropolis (greek), punic with citadel, oppidum with
+  a funnel gate (celtic); the original ring stays for the sandbox tests.
+  Sites by terrain: plain (ditch at walls 3), hill (a rise, no plateau),
+  spur (posterns); ports have the sea behind (sea wall, scenery sea gate
+  and mole, defenders retreat along the shore). Enclosed fields in
+  villages and small oppida.
+- Bug fixed: towers are stairs. Wall units can be ordered down (and
+  defenders up), routers leave the wall by a stair; the AI pulls wall
+  archers off a lost stretch.
+- Citadels: the capture zone is inside; attackers must break two gates;
+  the defenders fall back into it (as many as fit) and shut it.
+- Owner dressing (view): banners, the owner's shrine, roofs by who built
+  what (state format 3 with builder data; online formats 1-3 readable).
+- Path tables at most 2 a tick; several street-fighting fixes (squeeze
+  centring, regroup, reachable attack goals, routers not walking the
+  trail, stair stragglers, rate-based stall).
+- Verified: determinism PASS (golden digests and every flat / hill / woods
+  hash unchanged; new runs per plan, a scripted citadel / stairs set
+  piece, sea / ditch / style checks; settlement runs changed: stairs,
+  street fixes); lockstep PASS (coastal polis, players attacking and
+  defending with stair moves); campaign_test / solo / input tests,
+  input_test, check_scripts, go test, online_e2e, live_e2e PASS.
+- **Open / next:** walls 3 citadel and oppidum maps are too strong for the
+  AI attacker (12-25 % wins, up to 50 % draws: slow fights at narrow
+  gates) - tune before the campaign leans on walls 3; breach melee still
+  6.4-7.4 ms a tick on the desktop at 4,000 soldiers; play it on phones
+  (look of the sea, shrines, banners; the stair orders by touch).
+
+**Battle maps with character (built 2026-10-05, committed in `3522fd2`).** CAMPAIGN.md
 "Later" item 1. Design as built: DESIGN.md section 4 "Battle maps: woods
 and settlements" (rules, numbers, AI, view, measurements). In short:
 - Woods on any map (region coverage 0-100, density 0-3 per 4 m cell): slow
@@ -414,9 +449,10 @@ godot --headless --script res://tests/matchups.gd -- --only=terrain  # terrain e
 godot --headless --script res://tests/matchups.gd -- --fair=50 --fair-terrain=4  # mirrored, symmetric hill map
 godot --headless --script res://tests/matchups.gd -- --only=maps     # woods, streets, gates, settlement battles
 godot --headless --script res://tests/matchups.gd -- --only=sieges   # settlement battles only
+godot --headless --script res://tests/matchups.gd -- --only=plans --seeds=8 [--plans=0,4]   # each wall plan at walls 1-3
 godot --headless --script res://tests/probe_maps.gd -- --scen=siege_town --png=1500 --out=/tmp  # siege debug pictures
 godot --headless --script res://tools/city_dump.gd -- --out=/tmp --seed=1234   # generated settlements to PNG
-# Sandbox URL / command line: --siege=seed:level:walls[:ground[:kind[:defend]]], --ground=N, --no-trees
+# Sandbox URL / command line: --siege=seed:level:walls[:ground[:kind[:defend[:plan[:coast]]]]], --ground=N, --no-trees
 godot --script res://tests/input_test.gd        # needs a window
 tools/check_scripts.sh                           # GDScript warnings as errors
 

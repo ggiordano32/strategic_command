@@ -11,8 +11,9 @@ extends RefCounted
 ## by the rules (JSON load does not keep key order). The state carries its own
 ## RNG ("rng", xorshift32) used by the rules and the AI.
 ##
-## Format (VERSION 2; version 1 has no city_seed and is migrated on load,
-## see migrate()), all top-level keys:
+## Format (VERSION 3; version 1 has no city_seed, versions 1-2 no builder
+## data "built"; older states are migrated on load, see migrate()), all
+## top-level keys:
 ##   format "strategic_command_campaign", version, name, seed, turn (0 =
 ##   280 BC summer), phase ("plan" | "battles" | "over"), rng,
 ##   settings {victory_regions, victory_capitals, turn_timeout_h, autoresolve
@@ -25,7 +26,12 @@ extends RefCounted
 ##   regions [{owner (-1 independent), level, growth, slots [[chain, level]],
 ##     build [chain, level, turns_left] or [], queue [unit keys], gar (garrison
 ##     strength %), city_seed (the settlement's battle map seed: fixed for
-##     good, so a city always looks the same; see default_city_seed)}]
+##     good, so a city always looks the same; see default_city_seed),
+##     built [[chain, level, culture]...] (version 3: who built what, in
+##     order: a building chain's level completing, chain -1 = the settlement
+##     growing to that level; the culture of the owner then, MapGen.CUL_*;
+##     view only: post-conquest buildings in the owner's style; anything
+##     not listed is in the founder's style, see builder_culture)}]
 ##     indexed like CData.REGIONS,
 ##   armies [{id, f, r, units [{t: unit key, n: men}], from (region it came
 ##     from this turn, -1), moved (0/1), busy (0/1: committed to a battle)}]
@@ -39,7 +45,7 @@ const CData := preload("res://campaign/cdata.gd")
 const UT := preload("res://sim/unit_types.gd")
 
 const FORMAT := "strategic_command_campaign"
-const VERSION := 2
+const VERSION := 3
 ## Oldest format this build reads (older states are migrated on load).
 const MIN_VERSION := 1
 
@@ -74,7 +80,8 @@ static func new_campaign(p_name: String, p_seed: int, humans: Array, settings: D
 	for r in CData.region_count():
 		var rd: Dictionary = CData.REGIONS[r]
 		regions.append({"owner": -1, "level": int(rd["level"]), "growth": int(CData.GROWTH_TO[int(rd["level"])]),
-			"slots": [], "build": [], "queue": [], "gar": 100, "city_seed": default_city_seed(r)})
+			"slots": [], "build": [], "queue": [], "gar": 100, "city_seed": default_city_seed(r),
+			"built": []})
 		var wall_lvl := int(rd["walls"])
 		if wall_lvl > 0:
 			(regions[r]["slots"] as Array).append([CData.WALLS, wall_lvl])
@@ -165,6 +172,7 @@ static func from_json(text: String) -> Dictionary:
 
 
 ## Bring a state of an older format up to VERSION (in place; returns it).
+## 2 -> 3: every settlement gets an empty builder list "built".
 ## 1 -> 2: every settlement gets its city_seed (default_city_seed, the same
 ## value a new campaign gives it, so migrating on two devices agrees).
 ## Online campaigns are not migrated (the server keeps the format a campaign
@@ -178,7 +186,45 @@ static func migrate(st: Dictionary) -> Dictionary:
 			if not rs.has("city_seed"):
 				rs["city_seed"] = default_city_seed(r)
 		st["version"] = 2
+	if int(st.get("version", 0)) < 3:
+		# 2 -> 3: builder data; an empty list = everything in the founder's
+		# style (exactly what an unmigrated state shows).
+		var regions3: Array = st.get("regions", [])
+		for r in regions3.size():
+			var rs3: Dictionary = regions3[r]
+			if not rs3.has("built"):
+				rs3["built"] = []
+		st["version"] = 3
 	return st
+
+
+## Note that chain `chain` (-1: the settlement itself) reached `level` in
+## region r, built by its owner now (independent: the founder's culture).
+## Only states of format 3 keep this (an unmigrated online format 1-2 state
+## never gains the key, so every client on it computes the same state).
+static func record_built(st: Dictionary, r: int, chain: int, level: int) -> void:
+	var rs: Dictionary = st["regions"][r]
+	if not rs.has("built"):
+		return
+	(rs["built"] as Array).append([chain, level, owner_culture(st, r)])
+
+
+## Culture of region r's owner (independent: the founder's).
+static func owner_culture(st: Dictionary, r: int) -> int:
+	var o := owner(st, r)
+	return CData.faction_culture(o) if o >= 0 else CData.region_culture(r)
+
+
+## Culture that built level `level` of chain `chain` (-1: the settlement
+## level) in region r: the last matching builder entry, else the founder.
+static func builder_culture(st: Dictionary, r: int, chain: int, level: int) -> int:
+	var rs: Dictionary = st["regions"][r]
+	var out := CData.region_culture(r)
+	var b: Array = rs.get("built", [])
+	for e in b:
+		if int(e[0]) == chain and int(e[1]) == level:
+			out = int(e[2])
+	return out
 
 
 ## The battle map seed a settlement is given when its campaign starts

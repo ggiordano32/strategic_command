@@ -24,7 +24,8 @@ const IDS: Array[String] = ["skirmish", "battle_2000", "battle_4000",
 	"test_cav_archers", "test_archers_heavy", "test_bolt_pikes", "test_stone_line",
 	"test_cav_art", "test_ridge_defend", "test_attack_uphill", "test_archers_hill",
 	"test_bolts_crest", "test_woods", "siege_village", "siege_town", "siege_city", "siege_hill",
-	"bench_4000_city"]
+	"bench_4000_city", "siege_castrum", "siege_polis", "siege_punic", "siege_oppidum",
+	"bench_4000_polis", "bench_4000_castrum"]
 
 ## Playable battles get generated terrain (random kind from the seed unless
 ## the menu picks one). The benchmarks stay flat so their timings compare
@@ -107,6 +108,18 @@ static func title(id: String) -> String:
 			return "Settlement: hill city, walls 3"
 		"bench_4000_city":
 			return "AI vs AI benchmark: 4,000 in a city"
+		"siege_castrum":
+			return "Settlement: castrum on a plain, ditch"
+		"siege_polis":
+			return "Settlement: coastal polis, acropolis"
+		"siege_punic":
+			return "Settlement: Punic city on the coast"
+		"siege_oppidum":
+			return "Settlement: oppidum on a spur"
+		"bench_4000_polis":
+			return "AI vs AI benchmark: 4,000, coastal polis"
+		"bench_4000_castrum":
+			return "AI vs AI benchmark: 4,000, castrum"
 	return id
 
 
@@ -122,6 +135,18 @@ static func make(id: String) -> Dictionary:
 			return siege_test(404, 2, 3, MapGen.PAL_ROCKY, Terrain.K_HILL, 1)
 		"bench_4000_city":
 			return bench_city()
+		"siege_castrum":
+			return siege_test(505, 2, 3, MapGen.PAL_DRY, Terrain.K_FLAT, 1, -1, MapGen.PLAN_CASTRUM, 0)
+		"siege_polis":
+			return siege_test(606, 2, 2, MapGen.PAL_DRY, Terrain.K_HILL, 1, -1, MapGen.PLAN_POLIS, 1)
+		"siege_punic":
+			return siege_test(707, 2, 2, MapGen.PAL_ARID, Terrain.K_FLAT, 1, -1, MapGen.PLAN_PUNIC, 1)
+		"siege_oppidum":
+			return siege_test(808, 1, 1, MapGen.PAL_GREEN, Terrain.K_RIDGE, 1, -1, MapGen.PLAN_OPPIDUM, 0)
+		"bench_4000_polis":
+			return bench_city(MapGen.PLAN_POLIS, 1, Terrain.K_HILL)
+		"bench_4000_castrum":
+			return bench_city(MapGen.PLAN_CASTRUM, 0, Terrain.K_FLAT, 3)
 	var sc := _make(id)
 	if id in PLAYABLE:
 		sc["terrain"] = {"kind": Terrain.K_RANDOM}
@@ -459,13 +484,16 @@ static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Arra
 		units.append(unit(att_side, int(att[i][0]), int(att[i][1]), x, y, aface))
 		order.append([0, i])
 	# Defenders.
-	var gates: Array = lay["gates"]
-	var streets: Array = lay["streets"]
-	var pl: Array = lay["plaza"]
+	var gates: Array = []
+	for gd in lay["gates"]:
+		if int(gd.get("cit", 0)) == 0:
+			gates.append(gd)  # the outer gates (a citadel's is not held from inside the town)
+	var mouths: Array = lay.get("mouths", [])
+	var pl: Array = lay.get("agora", lay["plaza"])
 	var mx: int = pl[0]
 	var my: int = pl[1]
-	var main_x: int = int(gates[0]["x"]) if not gates.is_empty() else int(streets[0][2])
-	var main_y: int = int(gates[0]["y"]) if not gates.is_empty() else int(streets[0][3])
+	var main_x: int = int(gates[0]["x"]) if not gates.is_empty() else (int(mouths[0][0]) if not mouths.is_empty() else mx)
+	var main_y: int = int(gates[0]["y"]) if not gates.is_empty() else (int(mouths[0][1]) if not mouths.is_empty() else my + 40)
 	var missiles: Array = []
 	var solid: Array = []
 	var rest: Array = []
@@ -489,6 +517,8 @@ static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Arra
 	var seg_order: Array = []
 	for k in segs.size():
 		var sg: Array = segs[k]
+		if sg.size() > 17 and (int(sg[17]) & (MapGen.SEG_SEA | MapGen.SEG_CIT)) != 0:
+			continue  # the land side of the outer wall only
 		var smx := (int(sg[0]) + int(sg[2])) / 2
 		var smy := (int(sg[1]) + int(sg[3])) / 2
 		var best := 1 << 30
@@ -531,13 +561,13 @@ static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Arra
 				int(gd["iy"]) - FM.sin_a(dir) * 5 / FM.TRIG_ONE, dir])
 	else:
 		var r0: int = lay["r0"]
-		for st in streets:
-			var a: Array = st
-			var dx := int(a[2]) - int(a[0])
-			var dy := int(a[3]) - int(a[1])
+		for mo in mouths:
+			var a: Array = mo
+			var dx := int(a[0]) - mx
+			var dy := int(a[1]) - my
 			var l := maxi(FM.isqrt(dx * dx + dy * dy), 1)
 			var t := r0 * 80 / 100
-			holds.append([int(a[0]) + dx * t / l, int(a[1]) + dy * t / l, FM.atan2_a(dy, dx)])
+			holds.append([mx + dx * t / l, my + dy * t / l, FM.atan2_a(dy, dx)])
 	var n_hold := mini(holds.size(), maxi(solid.size() - (1 if solid.size() > 2 else 0), 0))
 	if solid.size() == 1:
 		n_hold = 1
@@ -607,7 +637,7 @@ const SIEGE_GARRISON := [UT.SPEAR, UT.ARCHER, UT.HEAVY, UT.ARCHER, UT.SPEAR, UT.
 ## (def_side 0), a settlement of this seed, level and wall level held by a
 ## campaign-like garrison and a small field army (AI on the other side).
 static func siege_test(city_seed: int, level: int, walls: int, ground: int, kind: int,
-		def_side: int = 1, forest: int = -1) -> Dictionary:
+		def_side: int = 1, forest: int = -1, plan: int = MapGen.PLAN_RING, coast: int = 0) -> Dictionary:
 	var dfn: Array = []
 	var n_gar := 2 + level + walls + (1 if level == 2 else 0)
 	for k in n_gar:
@@ -619,15 +649,19 @@ static func siege_test(city_seed: int, level: int, walls: int, ground: int, kind
 	var terr := {"kind": kind, "seed": city_seed * 7 + 3, "forest": forest, "ground": ground}
 	# The player is side 0 (attacking or defending); the AI side 1.
 	var att: Array = SIEGE_ARMY.duplicate(true)
-	var r := settlement({"seed": city_seed, "level": level, "walls": walls, "bld": [1, 2, 4]}, terr,
-		att, dfn, def_side, [1])
+	var city := {"seed": city_seed, "level": level, "walls": walls, "bld": [1, 2, 4]}
+	if plan != MapGen.PLAN_RING:
+		city["plan"] = plan
+		city["coast"] = coast
+	var r := settlement(city, terr, att, dfn, def_side, [1])
 	return r["scenario"]
 
 
 ## bench_4000_city: two armies storm a walled city (walls 2) held by a large
 ## garrison and a field army; AI against AI. Fixed seeds (map generator
 ## version 1) so timings compare between builds.
-static func bench_city() -> Dictionary:
+static func bench_city(plan: int = MapGen.PLAN_RING, coast: int = 0, kind: int = Terrain.K_ROLLING,
+		walls: int = 2) -> Dictionary:
 	var att: Array = SIEGE_ARMY.duplicate(true)
 	att.append_array(SIEGE_ARMY.duplicate(true))
 	var dfn: Array = []
@@ -638,6 +672,10 @@ static func bench_city() -> Dictionary:
 		[UT.HEAVY, 100], [UT.LIGHT, 100], [UT.ARCHER, 80], [UT.STONE, 18], [UT.BOLT, 16],
 		[UT.SPEAR, 100], [UT.PIKE, 120], [UT.HEAVY, 100]]
 	dfn.append_array(army)
-	var terr := {"kind": Terrain.K_ROLLING, "seed": 4243, "forest": 20, "ground": MapGen.PAL_DRY}
-	var r := settlement({"seed": 4242, "level": 2, "walls": 2, "bld": [1, 2, 3, 4, 5]}, terr, att, dfn, 1, [0, 1])
+	var terr := {"kind": kind, "seed": 4243, "forest": 20, "ground": MapGen.PAL_DRY}
+	var city := {"seed": 4242, "level": 2, "walls": walls, "bld": [1, 2, 3, 4, 5]}
+	if plan != MapGen.PLAN_RING:
+		city["plan"] = plan
+		city["coast"] = coast
+	var r := settlement(city, terr, att, dfn, 1, [0, 1])
 	return r["scenario"]

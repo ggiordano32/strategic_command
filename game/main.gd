@@ -38,6 +38,8 @@ var _siege_level := 1
 var _siege_walls := 1
 var _siege_kind_idx := 0
 var _siege_def := 1
+var _siege_plan := MapGen.PLAN_RING
+var _siege_coast := 0
 var _siege_buttons := {}
 const SIEGE_KINDS := [Terrain.K_ROLLING, Terrain.K_FLAT, Terrain.K_HILL, Terrain.K_RIDGE]
 ## Last settlement battle (replayed by Replay), empty if the last was not one.
@@ -167,11 +169,14 @@ func _ready() -> void:
 		if a.begins_with("--scenario="):
 			_start(a.get_slice("=", 1))
 		elif a.begins_with("--siege="):
-			# Testing aid: --siege=seed:level:walls[:ground[:kind[:defend]]]
+			# Testing aid: --siege=seed:level:walls[:ground[:kind[:defend[:plan[:coast]]]]]
+			# (plan: MapGen.PLAN_* 0 castrum, 1 polis, 2 punic, 3 oppidum, 4 ring)
 			var sp: PackedStringArray = a.get_slice("=", 1).split(":")
 			_start_siege([int(sp[0]), int(sp[1]) if sp.size() > 1 else 1, int(sp[2]) if sp.size() > 2 else 1,
 				int(sp[3]) if sp.size() > 3 else MapGen.PAL_DRY, int(sp[4]) if sp.size() > 4 else Terrain.K_ROLLING,
-				0 if sp.size() > 5 and int(sp[5]) != 0 else 1])
+				0 if sp.size() > 5 and int(sp[5]) != 0 else 1,
+				clampi(int(sp[6]), 0, MapGen.PLAN_RING) if sp.size() > 6 else MapGen.PLAN_RING,
+				1 if sp.size() > 7 and int(sp[7]) != 0 else 0])
 		elif a.begins_with("--menu-page="):
 			show_page(a.get_slice("=", 1))  # testing aid
 		elif a == "--new-campaign":
@@ -860,7 +865,7 @@ func _build_siege_row() -> Control:
 	_siege_seed.custom_minimum_size = Vector2(96, 42)
 	_siege_seed.tooltip_text = "Settlement seed: the same seed, level and walls always give the same map"
 	box.add_child(_siege_seed)
-	for key in ["level", "walls", "kind", "side"]:
+	for key in ["plan", "level", "walls", "kind", "coast", "side"]:
 		var b := _menu_button("", _cycle_siege.bind(key))
 		b.custom_minimum_size = Vector2(110, 42)
 		_siege_buttons[key] = b
@@ -882,6 +887,10 @@ func _cycle_siege(key: String) -> void:
 			_siege_kind_idx = (_siege_kind_idx + 1) % SIEGE_KINDS.size()
 		"side":
 			_siege_def = 1 - _siege_def
+		"plan":
+			_siege_plan = (_siege_plan + 1) % (MapGen.PLAN_RING + 1)
+		"coast":
+			_siege_coast = 1 - _siege_coast
 	_update_siege_buttons()
 
 
@@ -892,22 +901,26 @@ func _update_siege_buttons() -> void:
 	(_siege_buttons["walls"] as Button).text = "Walls %d" % _siege_walls
 	(_siege_buttons["kind"] as Button).text = Terrain.KIND_NAMES[SIEGE_KINDS[_siege_kind_idx]]
 	(_siege_buttons["side"] as Button).text = "You attack" if _siege_def == 1 else "You defend"
+	(_siege_buttons["plan"] as Button).text = MapGen.PLAN_NAMES[_siege_plan]
+	(_siege_buttons["coast"] as Button).text = "Coast" if _siege_coast != 0 else "Inland"
 
 
 func _siege_params() -> Array:
 	var sd := absi(int(_siege_seed.text)) if _siege_seed.text.is_valid_int() else absi(_siege_seed.text.hash())
 	var ground := _ground_idx if _ground_idx > 0 else MapGen.PAL_DRY
-	return [sd, _siege_level, _siege_walls, ground, SIEGE_KINDS[_siege_kind_idx], _siege_def]
+	return [sd, _siege_level, _siege_walls, ground, SIEGE_KINDS[_siege_kind_idx], _siege_def, _siege_plan,
+		_siege_coast]
 
 
-## params: [seed, level, walls, ground, kind, def side].
+## params: [seed, level, walls, ground, kind, def side, plan, coast].
 func _start_siege(params: Array) -> void:
 	if _battle != null:
 		return
 	_menu.visible = false
 	var b := Battle.new()
 	b.scenario_id = "settlement"
-	b.custom_scenario = Scenarios.siege_test(params[0], params[1], params[2], params[3], params[4], params[5])
+	b.custom_scenario = Scenarios.siege_test(params[0], params[1], params[2], params[3], params[4], params[5],
+		-1, int(params[6]) if params.size() > 6 else MapGen.PLAN_RING, int(params[7]) if params.size() > 7 else 0)
 	b.seed_value = _seed if _seed >= 0 else int(Time.get_unix_time_from_system()) & 0x7FFFFFFF
 	_last_siege = params
 	_last_id = "settlement"

@@ -43,6 +43,8 @@ func _init() -> void:
 	_test_solo_equivalence()
 	_test_lockstep_city(1)
 	_test_lockstep_city(0)
+	_test_lockstep_city(1, true)
+	_test_lockstep_city(0, true)
 	print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 	quit(0 if _ok else 1)
 
@@ -57,7 +59,7 @@ func _fail(msg: String) -> void:
 func _test_snapshots() -> void:
 	var cases := [["skirmish", 400], ["battle_2000", 700], ["test_cav_art", 250], ["test_stone_line", 300],
 		["bench_4000", 600], ["bench_4000_hills", 50], ["test_woods", 500], ["siege_city", 900],
-		["bench_4000_city", 1200]]
+		["bench_4000_city", 1200], ["siege_polis", 900], ["siege_castrum", 700], ["siege_oppidum", 600]]
 	for c in cases:
 		var scen: Dictionary = Scenarios.make(str(c[0]))
 		var a := BattleSim.new()
@@ -554,8 +556,13 @@ func _test_solo_equivalence() -> void:
 ## orders at the gates for their batteries and foot), or defending it
 ## (def_side 0; random orders plus opening and closing gates; the AI
 ## attacks). Every frame's lockstep hash must agree.
-func _test_lockstep_city(def_side: int) -> void:
+func _test_lockstep_city(def_side: int, polis := false) -> void:
 	var scen: Dictionary = Scenarios.siege_test(202, 1, 1, 2, 1, def_side)
+	if polis:
+		# A coastal polis on a hill with its acropolis: the gate orders
+		# include the citadel's; defending players send wall units down
+		# the stairs and back up onto other stretches.
+		scen = Scenarios.siege_test(606, 2, 2, 2, 4, def_side, -1, 1, 1)
 	scen["ai_sides"] = [1]
 	var probe := BattleSim.new()
 	probe.setup(scen, 4242)
@@ -574,11 +581,29 @@ func _test_lockstep_city(def_side: int) -> void:
 	var total := 400 if quick else 1200
 	var now := 0
 	var gate_orders := 0
+	var wall_orders := 0
 	while now < total * 3 and mini(a.ls.frame, b.ls.frame) < total:
 		now += 1
 		for p in peers:
 			_script(p, now, enemy)
 			var sim = p.ls.sim
+			if def_side == 0 and polis and now % 53 == p.me * 17 and sim.ws_x0.size() > 1:
+				# A wall unit down to the agora, or a unit on the ground up
+				# onto a stretch of wall.
+				for u in sim.n_units:
+					if p.ls.u_cmd[u] != p.me or sim.u_state[u] != BattleSim.U_READY or sim.u_stair[u] != 0:
+						continue
+					if sim.u_wall[u] > 0:
+						p.issue({"type": BattleSim.ORDER_MOVE, "unit": u, "x": sim.agora[0], "y": sim.agora[1],
+							"facing": 256, "width": 12 * 1024, "run": 1})
+					elif UT.cls(sim.u_type[u]) == UT.CLS_MISSILE:
+						var sg: int = (now / 53) % sim.ws_x0.size()
+						p.issue({"type": BattleSim.ORDER_MOVE, "unit": u, "x": (sim.ws_x0[sg] + sim.ws_x1[sg]) / 2,
+							"y": (sim.ws_y0[sg] + sim.ws_y1[sg]) / 2, "facing": 256, "width": 12 * 1024, "run": 0})
+					else:
+						continue
+					wall_orders += 1
+					break
 			if now % 37 == p.me * 11 and sim.n_gates > 0:
 				# Orders at the gates by one of this player's units.
 				for u in sim.n_units:
@@ -602,6 +627,9 @@ func _test_lockstep_city(def_side: int) -> void:
 	if n_ab < total / 2:
 		_fail("city (defenders on side %d): too few frames compared (%d)" % [def_side, n_ab])
 	else:
-		print("PASS lockstep on a walled town, players %s: %d frames equal A/B; %d gate orders; gates %s; paths %d, gate opened %d / closed %d / broken %d; sim tick %d" % [
-			"attacking" if def_side == 1 else "defending", n_ab, gate_orders, str(gs), sim_a.stat_paths,
-			sim_a.stat_gate_open, sim_a.stat_gate_close, sim_a.stat_gate_broken, sim_a.tick])
+		print("PASS lockstep on a %s, players %s: %d frames equal A/B; %d gate orders, %d wall orders; gates %s; paths %d, gate opened %d / closed %d / broken %d, stairs down %d / up %d; sim tick %d" % [
+			"coastal polis" if polis else "walled town", "attacking" if def_side == 1 else "defending", n_ab,
+			gate_orders, wall_orders, str(gs), sim_a.stat_paths, sim_a.stat_gate_open, sim_a.stat_gate_close,
+			sim_a.stat_gate_broken, sim_a.stat_stair_down, sim_a.stat_stair_up, sim_a.tick])
+		if polis and def_side == 0 and (sim_a.stat_stair_down == 0 or sim_a.stat_stair_up == 0):
+			_fail("coastal polis (defending): no wall unit went down and up a stair")

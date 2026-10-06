@@ -29,12 +29,22 @@ extends SceneTree
 ## opening, refusing to close on men, hacking by infantry, bolts at a
 ## gate); the same hashes on repeat and across snapshot / restore at
 ## several points; the same map for the same parameters.
+## Settlement plans (October 2026): AI battles on a castrum on a plain
+## (ditch), a coastal polis on a hill (acropolis), a Punic city on the
+## coast (citadel) and an oppidum on a spur (enclosed fields); a scripted
+## citadel set piece on a coastal polis (a wall unit sent down a stair and
+## up onto another stretch, the citadel's gate shut, hacked down, the
+## citadel's plaza held: capture); the sea gate is scenery (no gate, wall
+## cells), nobody walks on water and missiles fly over it; ditch cells
+## with causeways at the gates; the view-only owner style keys change no
+## hash.
 ## Exits 0 on success, 1 on failure.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Terrain := preload("res://sim/terrain.gd")
+const FM := preload("res://sim/fixed_math.gd")
 
 const M := 1024
 
@@ -44,7 +54,9 @@ const RUNS := {"skirmish@0": 1500, "battle_2000@0": 1800, "bench_2000": 2500, "t
 	"test_cav_art": 700, "battle_2000@2": 1800, "bench_2000@4": 3000, "bench_2000@3": 2500,
 	"test_bolts_crest": 500, "test_attack_uphill": 1500, "test_ridge_defend": 1500,
 	"ai_hill": 1800, "ai_ridge": 600, "test_woods": 1200, "siege_village@ai": 3500,
-	"siege_city@ai": 4200, "siege_hill@ai": 3000, "gate_ops": 1800}
+	"siege_city@ai": 4200, "siege_hill@ai": 3000, "gate_ops": 1800,
+	"siege_castrum@ai": 3600, "siege_polis@ai": 4500, "siege_punic@ai": 6500, "siege_oppidum@ai": 3600,
+	"cit_ops": 3200}
 
 ## Trajectory digests of flat battles (soldier and unit arrays every 50
 ## ticks over 2,500 ticks, seed 4242): flat maps must keep playing exactly
@@ -59,6 +71,7 @@ var _ok := true
 
 
 func _init() -> void:
+	_check_plans()
 	_check_city_maps()
 	_check_snapshots()
 	_check_maps()
@@ -140,13 +153,23 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 		"test_woods":
 			need = ["veg_slow", "veg_dis", "veg_stop", "veg_impact", "tree_lof"]
 		"siege_village@ai":
-			need = ["paths", "clamp", "squeeze", "veg_slow", "capture"]
+			need = ["paths", "clamp", "squeeze", "veg_slow"]
 		"siege_city@ai":
 			need = ["paths", "clamp", "squeeze", "gate_art", "gate_broken", "obs_lof", "wall_cover"]
 		"siege_hill@ai":
 			need = ["paths", "clamp", "gate_art", "gate_broken", "wall_cover", "obs_lof"]
 		"gate_ops":
 			need = ["gate_close", "gate_open", "gate_hack", "gate_art", "gate_broken", "paths"]
+		"siege_castrum@ai":
+			need = ["paths", "clamp", "gate_broken", "wall_cover", "obs_lof"]
+		"siege_polis@ai":
+			need = ["paths", "gate_broken", "stair_down", "gate_close", "obs_lof"]
+		"siege_punic@ai":
+			need = ["paths", "gate_broken", "stair_down", "gate_art", "gate_close"]
+		"siege_oppidum@ai":
+			need = ["paths", "gate_broken", "gate_hack", "stair_rout"]
+		"cit_ops":
+			need = ["stair_down", "stair_up", "gate_close", "gate_open", "gate_hack", "gate_broken", "capture"]
 	for k in need:
 		if int(st.get(k, 0)) <= 0:
 			_fail("%s: run never exercised %s (%s)" % [scen, k, str(st)])
@@ -233,6 +256,9 @@ func _script_orders(sim, scen: String) -> void:
 		sim.queue_order({"tick": 700, "type": BattleSim.ORDER_ATTACK, "unit": gfoot, "target": -1, "gate": 0, "run": 0})
 		sim.queue_order({"tick": 700, "type": BattleSim.ORDER_ATTACK, "unit": bat, "target": -1, "gate": 0, "run": 0})
 		return
+	if scen == "cit_ops":
+		_cit_orders(sim)
+		return
 	if scen == "test_cav_spears" or sim.is_ai_side(0):
 		return
 	var missiles: Array = []
@@ -312,6 +338,11 @@ static func _scenario(key: String) -> Dictionary:
 			{"kind": 1, "seed": 9, "forest": 20, "ground": 2}, [[UT.HEAVY, 100], [UT.BOLT, 16]],
 			[[UT.ARCHER, 40], [UT.SPEAR, 60]], 1, [])
 		return r["scenario"]
+	if key == "cit_ops":
+		var rc := Scenarios.settlement({"seed": 606, "level": 1, "walls": 1, "bld": [], "plan": 1, "coast": 1},
+			{"kind": 4, "seed": 11, "forest": 10, "ground": 2}, [[UT.HEAVY, 100], [UT.HEAVY, 100]],
+			[[UT.ARCHER, 40], [UT.SPEAR, 40]], 1, [])
+		return rc["scenario"]
 	if key == "ai_hill":
 		var sh := Scenarios.make("test_attack_uphill")
 		sh["ai_sides"] = [0, 1]
@@ -368,7 +399,9 @@ func _run(scen: String, p_seed: int, ticks: int) -> Dictionary:
 		"obs_lof": sim.stat_obs_lof, "wall_cover": sim.stat_wall_cover, "paths": sim.stat_paths,
 		"clamp": sim.stat_clamp, "squeeze": sim.stat_squeeze, "gate_hack": sim.stat_gate_hack,
 		"gate_art": sim.stat_gate_art, "gate_close": sim.stat_gate_close, "gate_open": sim.stat_gate_open,
-		"gate_broken": sim.stat_gate_broken, "capture": sim.stat_capture, "ai_shelter": sim.stat_ai[15]}
+		"gate_broken": sim.stat_gate_broken, "capture": sim.stat_capture, "ai_shelter": sim.stat_ai[15],
+		"stair_down": sim.stat_stair_down, "stair_up": sim.stat_stair_up, "stair_rout": sim.stat_stair_rout,
+		"ditch": sim.stat_ditch, "sea_exit": sim.stat_sea_exit}
 	print("  %s seed %d: alive %d/%d after %d ticks, winner %d" % [scen, p_seed,
 		sim.alive_count(0), sim.alive_count(1), ticks, sim.winner])
 	return {"hashes": hashes, "result": sim.result(), "stats": stats}
@@ -528,10 +561,187 @@ func _check_city_maps() -> void:
 		_fail("another city seed built the same map")
 
 
+## The citadel set piece on a coastal polis town (attackers 0, 1: heavy
+## infantry; defenders 2: archers on a wall, 3: spearmen at the gate). The
+## defenders open the outer gate, the spearmen go into the citadel, the
+## archers come down a stair to the agora; the attackers march to the
+## citadel; its gate is shut; they hack it down while the archers climb
+## onto another stretch of wall; they kill the spearmen and hold the
+## citadel's plaza.
+func _cit_orders(sim) -> void:
+	var cg: int = sim.cit_gate
+	var arch := 2
+	var spear := 3
+	var own_seg: int = sim.u_wall[arch] - 1
+	var other := -1
+	for sg in sim.ws_x0.size():
+		if sg != own_seg and sim.ws_fl[sg] == 0:
+			other = sg
+			break
+	var gate_o := func(t: int, g: int, on: int) -> void:
+		sim.queue_order({"tick": t, "type": BattleSim.ORDER_GATE, "unit": spear, "gate": g, "on": on, "player": 51})
+	var mv := func(t: int, u: int, x: int, y: int, run: int, pl: int) -> void:
+		var o := BattleSim.make_move_order(t, u, x, y, 768, 8 * M, run)
+		o["player"] = pl
+		sim.queue_order(o)
+	gate_o.call(5, 0, 0)
+	mv.call(5, spear, sim.cit_x, sim.cit_y, 1, 51)
+	mv.call(5, arch, sim.agora[0], sim.agora[1], 0, 51)
+	for u in [0, 1]:
+		mv.call(10, u, sim.g_ox[cg] + (u * 2 - 1) * 6 * M, sim.g_oy[cg], 1, 0)
+	gate_o.call(700, cg, 1)
+	for u in [0, 1]:
+		sim.queue_order({"tick": 760, "type": BattleSim.ORDER_ATTACK, "unit": u, "target": -1, "gate": cg,
+			"run": 0, "player": 0})
+	if other >= 0:
+		var o2 := BattleSim.make_move_order(800, arch, (sim.ws_x0[other] + sim.ws_x1[other]) / 2,
+			(sim.ws_y0[other] + sim.ws_y1[other]) / 2, 768, 8 * M, 0)
+		o2["player"] = 51
+		sim.queue_order(o2)
+	for u in [0, 1]:
+		sim.queue_order(BattleSim.make_attack_order(1500, u, spear, 0))
+	mv.call(2100, 0, sim.cit_x, sim.cit_y, 0, 0)
+	mv.call(2100, 1, sim.cit_x + 4 * M, sim.cit_y + 4 * M, 0, 0)
+
+
+## Settlement plans: every plan x site builds; coast (the sea gate is wall,
+## not a gate; nobody walks on the sea; shots fly over it); the ditch (and
+## its causeways); the citadel is the capture zone; the view-only style
+## keys (owner, founder, banner, bstyle, hstyle) change no map or hash.
+func _check_plans() -> void:
+	var MapGen := preload("res://sim/mapgen.gd")
+	var pol := BattleSim.new()
+	pol.setup(Scenarios.make("siege_polis"), 77)
+	var lay: Dictionary = pol.map_info["city"]
+	var sea: Dictionary = lay["sea"]
+	var bad := []
+	if pol.sea_on == 0 or sea.is_empty() or (sea["gate"] as Array).is_empty():
+		bad.append("no sea gate on the coastal polis")
+	else:
+		var sgx: int = int(sea["gate"][0]) * M
+		var sgy: int = int(sea["gate"][1]) * M
+		# Across the wall at the sea gate some cell is closed to men on the
+		# ground (the gate is scenery: wall and walkway).
+		var sdir: int = int(sea["gate"][2])
+		var shut := false
+		for q in range(-8, 9):
+			var qx := sgx + FM.cos_a(sdir) * q * M / 4096
+			var qy := sgy + FM.sin_a(sdir) * q * M / 4096
+			if (pol.nav_at(qx, qy) & MapGen.NAV_GROUND) == 0 and pol.obs_kind(qx, qy) != MapGen.C_WATER:
+				shut = true
+		if not shut:
+			bad.append("the sea gate can be walked through")
+		for g in pol.n_gates:
+			if FM.approx_len(pol.g_x[g] - sgx, pol.g_y[g] - sgy) < 14 * M:
+				bad.append("a sim gate at the sea gate")
+	var water := 0
+	for c in pol.obs.size():
+		if pol.obs[c] == MapGen.C_WATER:
+			water += 1
+			if pol.nav[c] != 0:
+				bad.append("water is passable")
+				break
+	if water < 1000:
+		bad.append("no sea (%d cells)" % water)
+	if pol._obs_top(int(sea["flee"][0][0]) * M, 2 * M if pol.city_def == 1 else pol.field_h - 2 * M) != 0:
+		bad.append("the sea blocks shots")
+	if pol.cit_r <= 0 or pol.plaza[0] != pol.cit_x or pol.plaza[1] != pol.cit_y:
+		bad.append("the polis's capture zone is not its acropolis")
+	if pol.g_state[pol.cit_gate] != BattleSim.GATE_OPEN:
+		bad.append("the citadel's gate does not start open")
+	var cas := BattleSim.new()
+	cas.setup(Scenarios.make("siege_castrum"), 77)
+	var ditch := 0
+	for c in cas.obs.size():
+		if cas.obs[c] == MapGen.C_DITCH:
+			ditch += 1
+	if ditch < 500 or cas.city_ditch == 0:
+		bad.append("no ditch round the castrum (%d cells)" % ditch)
+	for g in cas.n_gates:
+		var dx := FM.cos_a(cas.g_dir[g])
+		var dy := FM.sin_a(cas.g_dir[g])
+		for d in range(16, 40, 2):
+			if cas.obs_kind(cas.g_x[g] + dx * d * M / 4096, cas.g_y[g] + dy * d * M / 4096) == MapGen.C_DITCH:
+				bad.append("gate %d has no causeway" % g)
+				break
+	# View-only style keys.
+	var plain := Scenarios.siege_test(707, 2, 2, 1, Terrain.K_FLAT, 1, -1, MapGen.PLAN_PUNIC, 1)
+	var styled: Dictionary = plain.duplicate(true)
+	var cty: Dictionary = styled["terrain"]["city"]
+	cty["owner"] = 0
+	cty["founder"] = 2
+	cty["banner"] = 0
+	cty["bstyle"] = [0, 0, 1]
+	cty["hstyle"] = [2, 0, 0]
+	var s1 := BattleSim.new()
+	s1.setup(plain, 4242)
+	var s2 := BattleSim.new()
+	s2.setup(styled, 4242)
+	for t in 300:
+		s1.step()
+		s2.step()
+	if s1.ter_hash != s2.ter_hash or s1.state_hash() != s2.state_hash():
+		bad.append("owner style keys changed the map or the hash")
+	var st_view := 0
+	for b in (s2.map_info["city"]["buildings"] as Array):
+		if int(b[5]) == 0:
+			st_view += 1
+	if st_view == 0:
+		bad.append("owner style keys did not reach the view's layout")
+	# Every plan x site x coast builds, with gates and a street graph.
+	var built := 0
+	for plan in 4:
+		for kind in [Terrain.K_FLAT, Terrain.K_HILL, Terrain.K_RIDGE, Terrain.K_ROLLING]:
+			for coast in 2:
+				var sc := Scenarios.siege_test(900 + plan * 13 + kind, 2, 2, 2, kind, 1, -1, plan, coast)
+				var sp := BattleSim.new()
+				sp.setup(sc, 1)
+				var outer := 0
+				for g in sp.n_gates:
+					if sp.g_cit[g] == 0:
+						outer += 1
+				if outer < 1 or sp.ng_x.size() < 20 or sp.ws_x0.size() < 2:
+					bad.append("plan %d kind %d coast %d: %d gates, %d nodes" % [plan, kind, coast, outer, sp.ng_x.size()])
+				built += 1
+	# The ditch: foot ordered straight across it wade through (slowly);
+	# horses sent to the same spot go round by a causeway, never into it.
+	var rd := Scenarios.settlement({"seed": 505, "level": 2, "walls": 3, "bld": [], "plan": 0, "coast": 0},
+		{"kind": 0, "seed": 3, "forest": 0, "ground": 2}, [[UT.HEAVY, 60], [UT.CAVALRY, 40]],
+		[[UT.SPEAR, 20]], 1, [])
+	var sd := BattleSim.new()
+	sd.setup(rd["scenario"], 5)
+	var gdir: int = sd.g_dir[0]
+	var lx: int = sd.g_x[0] - FM.sin_a(gdir) * 40 * M / 4096 + FM.cos_a(gdir) * 18 * M / 4096
+	var ly: int = sd.g_y[0] + FM.cos_a(gdir) * 40 * M / 4096 + FM.sin_a(gdir) * 18 * M / 4096
+	for u in [0, 1]:
+		sd.queue_order(BattleSim.make_move_order(2, u, lx, ly, 768, 12 * M, 0))
+	var cav_in := 0
+	var t_cross := -1
+	var cav_u := 0 if UT.cls(sd.u_type[0]) == UT.CLS_CAV else 1
+	for t in 1500:
+		sd.step()
+		var base: int = sd.u_slot_base[cav_u]
+		for q in sd.u_alive[cav_u]:
+			var i: int = sd.slot_soldier[base + q]
+			if sd.obs_kind(sd.pos_x[i], sd.pos_y[i]) == MapGen.C_DITCH:
+				cav_in += 1
+		if t_cross < 0 and sd.stat_ditch > 0:
+			t_cross = sd.tick
+	if sd.stat_ditch <= 0:
+		bad.append("foot did not cross the ditch")
+	if cav_in > 0:
+		bad.append("horses stood in the ditch (%d man-ticks)" % cav_in)
+	if bad.is_empty():
+		print("PASS settlement plans: %d plan x site x coast maps build; sea gate is wall, water impassable, shots cross it; ditch with causeways, foot wade it (%d unit-ticks in it), horses never; citadel is the capture zone; style keys change no hash" % [built, sd.stat_ditch])
+	else:
+		for b in bad:
+			_fail("plans: " + str(b))
+
+
 ## Snapshot / restore round trips on woods and settlement battles: a copy
 ## restored at several ticks runs on with exactly the original's hashes.
 func _check_snapshots() -> void:
-	for key in ["test_woods", "siege_city@ai", "gate_ops"]:
+	for key in ["test_woods", "siege_city@ai", "gate_ops", "cit_ops", "siege_polis@ai"]:
 		var sim := BattleSim.new()
 		sim.setup(_scenario(key), 4242)
 		_script_orders(sim, key)

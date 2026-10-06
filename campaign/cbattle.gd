@@ -34,6 +34,7 @@ const CRules := preload("res://campaign/crules.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const Terrain := preload("res://sim/terrain.gd")
+const MapGen := preload("res://sim/mapgen.gd")
 
 const FRONT := 100       # m from the centre line to each side's front
 const SECOND_LINE := 45  # m behind the first
@@ -130,8 +131,7 @@ static func _build_settlement(st: Dictionary, b: Dictionary, human_f: int, scale
 			lists[cs].append([ty, cnt])
 	var rd: Dictionary = CData.REGIONS[r]
 	var cseed := CState.city_seed(st, r)
-	var city := {"seed": cseed, "level": int(st["regions"][r]["level"]), "walls": CState.walls(st, r),
-		"bld": city_buildings(st, r)}
+	var city := city_dict(st, r)
 	var terr := {"kind": int(rd["terrain"]), "seed": (cseed ^ 0x2545F491) & 0x7FFFFFFF,
 		"forest": int(rd["forest"]), "ground": int(rd["ground"])}
 	var ai: Array = [0, 1] if human_f < 0 else [1]
@@ -151,6 +151,41 @@ static func _build_settlement(st: Dictionary, b: Dictionary, human_f: int, scale
 		"garrison": gar, "unit_faction": ufac, "controller": controller, "battle": int(b["id"]), "region": r}
 
 
+## Settlement r's city dictionary for the battle map (integers only):
+## geometry (seed, level, walls, bld, plan = the founder's culture, coast =
+## a port) and view-only dressing (founder, owner = the current owner's
+## culture, banner = owner faction, bstyle = culture that built each entry
+## of bld at its current level, hstyle = culture of the houses that came
+## with each settlement level). def (the defending sim side) is set by
+## Scenarios.settlement unless given (>= 0).
+static func city_dict(st: Dictionary, r: int, def_side: int = -1) -> Dictionary:
+	var bld := city_buildings(st, r)
+	var bstyle: Array = []
+	for c in bld:
+		bstyle.append(CState.builder_culture(st, r, int(c), CState.building(st, r, int(c))))
+	var hstyle: Array = []
+	for lv in 3:
+		hstyle.append(CState.builder_culture(st, r, -1, lv) if lv > 0 else CData.region_culture(r))
+	var d := {"seed": CState.city_seed(st, r), "level": int(st["regions"][r]["level"]),
+		"walls": CState.walls(st, r), "bld": bld, "plan": CData.region_culture(r),
+		"coast": 1 if CData.is_port(r) else 0, "founder": CData.region_culture(r),
+		"owner": CState.owner_culture(st, r), "banner": CState.owner(st, r), "bstyle": bstyle,
+		"hstyle": hstyle}
+	if def_side >= 0:
+		d["def"] = def_side
+	return d
+
+
+## "Greek city on a coastal hill, held by Rome" (region panel caption).
+static func city_caption(st: Dictionary, r: int) -> String:
+	var rd: Dictionary = CData.REGIONS[r]
+	# The site comes from the terrain kind and the city seed (MapGen.site_of).
+	var txt := MapGen.describe(CData.region_culture(r), int(st["regions"][r]["level"]), int(rd["terrain"]),
+		CState.city_seed(st, r), 1 if CData.is_port(r) else 0)
+	var o := CState.owner(st, r)
+	return txt + (", held by %s" % CData.faction_name(o) if o >= 0 else ", independent")
+
+
 ## Building chains standing in region r (sorted; the city map shows them).
 static func city_buildings(st: Dictionary, r: int) -> Array:
 	var out: Array = []
@@ -168,8 +203,7 @@ static func city_preview_terrain(st: Dictionary, r: int) -> Dictionary:
 	var cseed := CState.city_seed(st, r)
 	return {"kind": int(rd["terrain"]), "seed": (cseed ^ 0x2545F491) & 0x7FFFFFFF,
 		"forest": int(rd["forest"]), "ground": int(rd["ground"]),
-		"city": {"seed": cseed, "level": int(st["regions"][r]["level"]), "walls": CState.walls(st, r),
-			"bld": city_buildings(st, r), "def": 1}}
+		"city": city_dict(st, r, 1)}
 
 
 static func _side_has(st: Dictionary, armies: Array, lead: int, f: int) -> bool:

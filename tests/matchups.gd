@@ -47,6 +47,7 @@ var fair_n := 0       # --fair=N: only the mirrored-fairness check, N seeds
 var seed0 := 0        # --seed0=K: first seed index (for sharding --fair runs)
 var fair_variants: Array = ["side0_first", "side1_first"]  # --fair-variants=a,b
 var fair_terrain := -1  # --fair-terrain=K: mirrored battles on a symmetric map of kind K
+var plans_only: Array = []  # --plans=0,4: settlement plans to run (--only=sieges / plans)
 
 
 func _init() -> void:
@@ -63,6 +64,9 @@ func _init() -> void:
 			fair_variants = Array(a.get_slice("=", 1).split(","))
 		elif a.begins_with("--fair-terrain="):
 			fair_terrain = int(a.get_slice("=", 1))
+		elif a.begins_with("--plans="):
+			for v in a.get_slice("=", 1).split(","):
+				plans_only.append(int(v))
 	var t0 := Time.get_ticks_msec()
 	if fair_n > 0:
 		_fairness(fair_n)
@@ -72,11 +76,14 @@ func _init() -> void:
 		_tiers()
 		quit(0)
 		return
-	if only == "sieges":
-		_section("Garrison-only defence (town, garrison 3 + walls units of 60) vs the standard 12-unit attacker, AI vs AI")
-		_garrison_defence()
-		_section("AI vs AI settlement battles (garrison + a 4-unit field army defending)")
-		_siege_battles()
+	if only == "sieges" or only == "plans":
+		if only == "sieges":
+			_section("Garrison-only defence (town, garrison 3 + walls units of 60) vs the standard 12-unit attacker, AI vs AI")
+			_garrison_defence()
+			_section("AI vs AI settlement battles (garrison + a 4-unit field army defending)")
+			_siege_battles()
+		_section("Settlement plans, AI vs AI (a city: garrison + a 4-unit field army vs the standard attacker)")
+		_plan_sieges()
 		quit(0)
 		return
 	if only == "maps":
@@ -1381,6 +1388,63 @@ func _siege_battles() -> void:
 		print("%-18s attacker wins %3d%%, defender %3d%%, draws %3d%% | decided in %4.1f min (max %4.1f) | plaza captures %d/%d" % [
 			spec[0], aw * 100 / n_runs, (n_runs - aw - dr) * 100 / n_runs, dr * 100 / n_runs, t_sum / n_runs, t_max, caps, n_runs])
 
+
+
+## Each plan on its representative site at walls 1-3 (a city: garrison +
+## a 4-unit field army vs the standard 12-unit attacker), AI vs AI: who
+## wins, how long it takes, what it costs the attacker; the original ring
+## on the same ground as the baseline.
+func _plan_sieges() -> void:
+	var n_runs := mini(seeds, 10)
+	var specs := [["ring, plain", 4, Terrain.K_FLAT, 0], ["ring, hill (plateau)", 4, Terrain.K_HILL, 0],
+		["castrum, plain", 0, Terrain.K_FLAT, 0], ["polis, coastal hill", 1, Terrain.K_HILL, 1],
+		["polis, plain", 1, Terrain.K_FLAT, 0], ["punic, coast", 2, Terrain.K_FLAT, 1],
+		["oppidum, spur", 3, Terrain.K_RIDGE, 0], ["oppidum, plain", 3, Terrain.K_FLAT, 0]]
+	for spec in specs:
+		if not plans_only.is_empty() and not plans_only.has(int(spec[1])):
+			continue
+		for walls in [1, 2, 3]:
+			var aw := 0
+			var dr := 0
+			var t_sum := 0.0
+			var t_max := 0.0
+			var caps := 0
+			var att_lost := 0.0
+			var def_lost := 0.0
+			var cit_broken := 0
+			var cit_shut := 0
+			var stairs := 0
+			var withdrew := 0
+			for s in n_runs:
+				var sc := Scenarios.siege_test(700 + s * 41, 2, walls, 2, int(spec[2]), 1, -1, int(spec[1]), int(spec[3]))
+				sc["ai_sides"] = [0, 1]
+				var sim := BattleSim.new()
+				sim.setup(sc, 53000 + s * 197)
+				while sim.tick < BattleSim.TIME_LIMIT + 10 and sim.winner < 0:
+					sim.step()
+				var dt: float = (sim.decided_tick if sim.decided_tick >= 0 else sim.tick) / 600.0
+				if sim.winner == 0:
+					aw += 1
+				elif sim.winner == 2 or sim.winner < 0:
+					dr += 1
+				if sim.ai_phase[0] == 3:
+					withdrew += 1
+				caps += sim.stat_capture
+				t_sum += dt
+				t_max = maxf(t_max, dt)
+				var res := sim.result()
+				att_lost += int(res["sides"][0]["killed"])
+				def_lost += int(res["sides"][1]["killed"])
+				if sim.cit_gate >= 0:
+					if sim.g_state[sim.cit_gate] == BattleSim.GATE_BROKEN:
+						cit_broken += 1
+					if sim.ai_cit[1] != 0:
+						cit_shut += 1
+				stairs += sim.stat_stair_down + sim.stat_stair_rout
+			print("%-21s walls %d: attacker wins %3d%%, defender %3d%%, draws %3d%% (withdrew %d) | %4.1f min (max %4.1f) | killed att %5.1f def %5.1f | captures %d/%d | citadel held %d, gate broken %d | stair moves %.1f" % [
+				spec[0], walls, aw * 100 / n_runs, (n_runs - aw - dr) * 100 / n_runs, dr * 100 / n_runs, withdrew,
+				t_sum / n_runs, t_max, att_lost / n_runs, def_lost / n_runs, caps, n_runs, cit_shut, cit_broken,
+				float(stairs) / n_runs])
 
 
 ## Field battles on generated ground with woods: decided, no draws.

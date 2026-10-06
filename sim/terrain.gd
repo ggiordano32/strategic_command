@@ -87,22 +87,45 @@ static func build(terrain: Dictionary, battle_seed: int, field_w: int, field_h: 
 	var feats: Array = []
 	var city: Dictionary = terrain["city"] if terrain.get("city") is Dictionary else {}
 	var fr := Vector3i.ZERO
+	var cp := {}
+	var site := MapGen.SITE_PLAIN
+	var outl := {}
 	if not city.is_empty():
 		# A settlement map: the ground is generated round the city's own centre
 		# (canonical frame, defenders at the top; sim/mapgen.gd turns the map
 		# round when the defenders are at the bottom), so the city stands on
-		# the same ground whatever the field size. Cities on hill or ridge
-		# country sit on a plateau.
+		# the same ground whatever the field size.
 		fr = MapGen.city_frame(city, field_w / M, field_h / M)
-		if kind != K_FLAT and kind != K_CUSTOM:
-			for f in _features(kind, rng, 600, 600, relief, scale):
-				var a: Array = (f as Array).duplicate()
-				a[1] = int(a[1]) + fr.x - 300
-				a[2] = int(a[2]) + fr.y - 300
-				feats.append(a)
-		if kind == K_HILL or kind == K_RIDGE:
-			var rmax := fr.z * 112 / 100
-			feats.append([F_MESA, fr.x, fr.y, rmax + 14, maxi(relief * 3 / 4, 8), 0, 70])
+		cp = MapGen.city_params(city)
+		var rmax := fr.z * 112 / 100
+		if int(cp["plan"]) == MapGen.PLAN_RING:
+			# The original ring: cities on hill or ridge country sit on a plateau.
+			if kind != K_FLAT and kind != K_CUSTOM:
+				for f in _features(kind, rng, 600, 600, relief, scale):
+					var a: Array = (f as Array).duplicate()
+					a[1] = int(a[1]) + fr.x - 300
+					a[2] = int(a[2]) + fr.y - 300
+					feats.append(a)
+			if kind == K_HILL or kind == K_RIDGE:
+				feats.append([F_MESA, fr.x, fr.y, rmax + 14, maxi(relief * 3 / 4, 8), 0, 70])
+		else:
+			# A culture's plan on its site (plain, hill, spur; MapGen.site_of).
+			site = MapGen.site_of(kind, int(cp["seed"]))
+			outl = MapGen.plan_outline(cp, kind, field_w / M)
+			# Plains keep their country's own relief round the city; hills and
+			# spurs get theirs below, on top of gentle undulations.
+			var base_kind := kind if site == MapGen.SITE_PLAIN and kind != K_CUSTOM else K_FLAT
+			for f in _features(base_kind, rng, 600, 600, relief, scale):
+				var a2: Array = (f as Array).duplicate()
+				a2[1] = int(a2[1]) + fr.x - 300
+				a2[2] = int(a2[2]) + fr.y - 300
+				feats.append(a2)
+			if int(cp["plan"]) == MapGen.PLAN_OPPIDUM and site != MapGen.SITE_SPUR:
+				# An oppidum stands on a rise (flat-topped on a hill).
+				if site == MapGen.SITE_HILL:
+					feats.append([F_MESA, fr.x, fr.y, rmax + 14, maxi(relief * 3 / 4, 8), 0, 70])
+				else:
+					feats.append([F_MESA, fr.x, fr.y, rmax + 6, 5, 0, 60])
 	elif kind != K_FLAT and kind != K_CUSTOM:
 		feats = _features(kind, rng, field_w / M, field_h / M, relief, scale)
 	for f in terrain.get("features", []):
@@ -130,7 +153,10 @@ static func build(terrain: Dictionary, battle_seed: int, field_w: int, field_h: 
 			F_MESA:
 				_mesa(h, nx, ny, x, y, r, amp, ln)
 	if not city.is_empty():
-		_level_city(h, nx, ny, fr)
+		if outl.is_empty():
+			_level_city(h, nx, ny, fr, 250)
+		else:
+			_city_ground(h, nx, ny, fr, cp, site, kind, outl, rng)
 	if sym != 0:
 		# Exact 180-degree symmetry: node k and node (last - k) take the same
 		# height (the integer mean is commutative, so both get one value).
@@ -331,10 +357,109 @@ static func _mesa(h: PackedInt32Array, nx: int, ny: int, cx: int, cy: int, r: in
 			h[j * nx + i] += amp * f / 1024
 
 
+## A culture's settlement on its site (after the features): a hill's rise
+## (gentle on the side of the main gate, steeper elsewhere) or a spur's
+## tongue (steep on three sides, a level neck to the main gate), the
+## footprint levelled in part (less on a hill: the town tilts with it), a
+## knoll under a citadel, and the sea behind a coastal city (below the
+## lowest land).
+static func _city_ground(h: PackedInt32Array, nx: int, ny: int, fr: Vector3i, cp: Dictionary, site: int,
+		kind: int, outl: Dictionary, rng: PackedInt32Array) -> void:
+	var rmax := fr.z * 112 / 100
+	var plan: int = cp["plan"]
+	var amp := 0
+	if site == MapGen.SITE_HILL:
+		amp = _rr(rng, 10, 15) if kind == K_HILL else _rr(rng, 6, 8)
+		if plan != MapGen.PLAN_OPPIDUM:
+			_rise(h, nx, ny, fr.x * M, (fr.y - fr.z * 35 / 100) * M, (rmax * 2 + 60) * M, (rmax + 45) * M, amp * M)
+	elif site == MapGen.SITE_SPUR:
+		amp = _rr(rng, 12, 16)
+		_spur(h, nx, ny, fr.x * M, fr.y * M, (rmax + 10) * M, (rmax * 45 / 100) * M,
+			(fr.y + rmax + 50) * M, amp * M, 45 * M)
+	var keep_pm := 250
+	if site == MapGen.SITE_HILL and plan != MapGen.PLAN_OPPIDUM:
+		keep_pm = 550
+	elif site == MapGen.SITE_SPUR:
+		keep_pm = 350
+	_level_city(h, nx, ny, fr, keep_pm)
+	var cit: Vector3i = outl["cit"]
+	if cit.z > 0:
+		var kh := 9 if plan == MapGen.PLAN_POLIS else 6
+		_bump(h, nx, ny, cit.x * M, cit.y * M, cit.z * 26 / 10 * M, kh * M)
+	if int(cp["coast"]) != 0:
+		var shore: PackedInt32Array = outl["cp"]
+		var lo := 1 << 40
+		var sea := PackedByteArray()
+		sea.resize(nx * ny)
+		sea.fill(0)
+		for i in nx:
+			var sy := MapGen.shore_y(shore, i * 4)
+			for j in ny:
+				if j * 4 < sy - 2:
+					sea[j * nx + i] = 1
+				else:
+					lo = mini(lo, h[j * nx + i])
+		if lo < (1 << 40):
+			for k in nx * ny:
+				if sea[k] != 0:
+					h[k] = lo - 3 * M / 2
+
+
+## A rise of height amp centred at (cx, cy) whose radius is r_front toward
+## the attackers (+y, the main gate's side) and r_back elsewhere (bell
+## profile; all sim units).
+static func _rise(h: PackedInt32Array, nx: int, ny: int, cx: int, cy: int, r_front: int, r_back: int,
+		amp: int) -> void:
+	var sx := _span(cx - r_front, cx + r_front, nx)
+	var sy := _span(cy - r_front, cy + r_front, ny)
+	for j in range(sy.x, sy.y + 1):
+		var dy := j * CELL - cy
+		for i in range(sx.x, sx.y + 1):
+			var dx := i * CELL - cx
+			var d2 := dx * dx + dy * dy
+			if d2 >= r_front * r_front:
+				continue
+			var w := 0
+			if d2 > 0:
+				var c := FM.cos_a((FM.atan2_a(dy, dx) - 256) & 1023)
+				if c > 0:
+					w = c * c / FM.TRIG_ONE
+			var r := r_back + (r_front - r_back) * w / FM.TRIG_ONE
+			if d2 >= r * r:
+				continue
+			h[j * nx + i] += amp * _bell(d2, r * r) / 1024
+
+
+## A spur: high ground (amp) over the city's disc (radius rad), a neck of
+## half width neck_hw from the city to the plateau beyond y_plat (the
+## attackers' side, +y), falling off over `band` on every other side
+## (smoothstep; all sim units).
+static func _spur(h: PackedInt32Array, nx: int, ny: int, cx: int, cy: int, rad: int, neck_hw: int,
+		y_plat: int, amp: int, band: int) -> void:
+	for j in ny:
+		var y := j * CELL
+		for i in nx:
+			var x := i * CELL
+			var dx := x - cx
+			var dy := y - cy
+			var d_disc := maxi(FM.isqrt(dx * dx + dy * dy) - rad, 0)
+			var d_neck := 1 << 40
+			if y >= cy:
+				d_neck = maxi(absi(dx) - neck_hw, 0)
+			var d_plat := maxi(y_plat - y, 0)
+			var d := mini(mini(d_disc, d_neck), d_plat)
+			if d >= band:
+				continue
+			var t := 1024 - d * 1024 / band
+			var f := (3 * t * t * 1024 - 2 * t * t * t) / 1048576
+			h[j * nx + i] += amp * f / 1024
+
+
 ## Settlements are built on level ground: inside the footprint (plus 16 m)
-## the relief is damped to a quarter round the centre's height, blending
-## back over the next 24 m. fr = (centre x, centre y, radius) in metres.
-static func _level_city(h: PackedInt32Array, nx: int, ny: int, fr: Vector3i) -> void:
+## the relief is damped to keep_pm per mille round the centre's height
+## (a quarter for the original ring), blending back over the next 24 m.
+## fr = (centre x, centre y, radius) in metres.
+static func _level_city(h: PackedInt32Array, nx: int, ny: int, fr: Vector3i, keep_pm: int) -> void:
 	var cx := fr.x * M
 	var cy := fr.y * M
 	var r_in := (fr.z * 112 / 100 + 16) * M
@@ -352,7 +477,7 @@ static func _level_city(h: PackedInt32Array, nx: int, ny: int, fr: Vector3i) -> 
 			if d >= r_out:
 				continue
 			var k := j * nx + i
-			var damped := href + (h[k] - href) / 4
+			var damped := href + (h[k] - href) / 4 if keep_pm == 250 else href + (h[k] - href) * keep_pm / 1000
 			if d <= r_in:
 				h[k] = damped
 			else:

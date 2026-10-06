@@ -11,11 +11,10 @@ const Terrain := preload("res://sim/terrain.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
 const GroundPalette := preload("res://game/ground_palette.gd")
+const CityDraw := preload("res://game/city_draw.gd")
+const SEA := Color(0.20, 0.38, 0.52)
+const DITCH := Color(0.30, 0.24, 0.17)
 
-const ROOF := [Color(0.69, 0.40, 0.28), Color(0.80, 0.76, 0.66), Color(0.74, 0.55, 0.35),
-	Color(0.58, 0.36, 0.27), Color(0.62, 0.47, 0.33), Color(0.55, 0.42, 0.36), Color(0.64, 0.44, 0.30)]
-const STONE := Color(0.66, 0.63, 0.56)
-const STONE_DARK := Color(0.33, 0.31, 0.28)
 
 static var _cache := {}
 
@@ -92,6 +91,10 @@ static func make(terr: Dictionary) -> Dictionary:
 			var d := vb & MapGen.V_DENS
 			if d > 0:
 				col = col.lerp(tree, 0.3 + 0.17 * d)
+			if (vb & MapGen.V_WATER) != 0:
+				col = SEA
+			elif (vb & MapGen.V_DITCH) != 0:
+				col = DITCH
 			if ow > 0:
 				var k: int = obs[(my / 2) * ow + mx / 2]
 				if k == MapGen.C_BUILDING:
@@ -122,42 +125,17 @@ func _draw() -> void:
 	draw_texture_rect(data["tex"], Rect2(Vector2.ZERO, size), false)
 	var lay: Dictionary = data["lay"]
 	var m := func(x: float, y: float) -> Vector2: return o + Vector2(x, y) * sc
-	# Buildings: flat roofs with a shadow toward the lower right.
-	for b in lay["buildings"]:
-		var a: Array = b
-		var rc := Rect2(m.call(a[0], a[1]), Vector2(int(a[2]) - int(a[0]), int(a[3]) - int(a[1])) * sc)
-		draw_rect(Rect2(rc.position + Vector2(1.2, 1.2) * maxf(sc, 0.6), rc.size), Color(0, 0, 0, 0.3))
-		var roof: Color = ROOF[clampi(int(a[4]), 0, ROOF.size() - 1)]
-		draw_rect(rc, roof)
-		draw_rect(rc, roof.darkened(0.35), false, 1.0)
-	# Plaza outline.
-	var pl: Array = lay["plaza"]
-	var ph: float = pl[2]
-	draw_rect(Rect2(m.call(int(pl[0]) - ph, int(pl[1]) - ph), Vector2(ph, ph) * 2.0 * sc), Color(1, 0.95, 0.7, 0.8), false, 1.5)
-	# Walls: the circuit as a thick stone band, towers, gates.
-	var walls: int = lay["walls"]
-	if walls > 0:
-		var poly: PackedInt32Array = lay["poly"]
-		var pts := PackedVector2Array()
-		for k in poly.size() / 2:
-			pts.append(m.call(poly[k * 2], poly[k * 2 + 1]))
-		pts.append(pts[0])
-		var tw: float = maxf(float(lay["t"]) * sc, 3.0)
-		draw_polyline(pts, STONE_DARK, tw + 2.0, true)
-		draw_polyline(pts, STONE, tw, true)
-		for tow in lay["towers"]:
-			var a: Array = tow
-			draw_circle(m.call(a[0], a[1]), maxf(float(a[2]) * sc, 2.5) + 1.0, STONE_DARK)
-			draw_circle(m.call(a[0], a[1]), maxf(float(a[2]) * sc, 2.5), STONE.lightened(0.08))
-		var gi := 0
-		for gd in lay["gates"]:
-			var c: Vector2 = m.call(gd["x"], gd["y"])
-			var ang := float(int(gd["dir"])) / 1024.0 * TAU
-			var along := Vector2(-sin(ang), cos(ang)) * float(MapGen.GATE_HW) * sc
-			var out := Vector2(cos(ang), sin(ang)) * (float(lay["t"]) * 0.5 * sc + 1.0)
-			var q := PackedVector2Array([c - along - out, c + along - out, c + along + out, c - along + out])
-			draw_colored_polygon(q, Color(0.42, 0.27, 0.14) if gi > 0 else Color(0.85, 0.30, 0.15))
-			gi += 1
+	# Houses, shrine, walls, towers, citadel, harbour, gates and banners.
+	CityDraw.draw_static(self, lay, sc, o, sc >= 2.5, true)
+	# The main gate in red (the dialog's text refers to it).
+	if int(lay["walls"]) > 0 and not (lay["gates"] as Array).is_empty():
+		var g0d: Dictionary = lay["gates"][0]
+		var gc: Vector2 = m.call(g0d["x"], g0d["y"])
+		var ang := float(int(g0d["dir"])) / 1024.0 * TAU
+		var along := Vector2(-sin(ang), cos(ang)) * float(int(g0d.get("hw", MapGen.GATE_HW))) * sc
+		var out := Vector2(cos(ang), sin(ang)) * (float(lay["t"]) * 0.5 * sc + 1.0)
+		draw_colored_polygon(PackedVector2Array([gc - along - out, gc + along - out, gc + along + out, gc - along + out]),
+			Color(0.85, 0.30, 0.15))
 	# The attackers' approach: an arrow from their deployment to the main gate.
 	var ax: Vector2 = m.call(lay["att_x"], lay["att_y"])
 	var tgt: Vector2 = m.call(lay["att_x"], int(lay["cy"]) + int(lay["r0"]) * 112 / 100 + 6)
