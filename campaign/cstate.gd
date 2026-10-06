@@ -19,10 +19,15 @@ extends RefCounted
 ##   format "strategic_command_campaign", version, name, seed, turn (0 =
 ##   280 BC summer), phase ("plan" | "battles" | "over"), rng,
 ##   settings {victory_regions, victory_capitals, turn_timeout_h, autoresolve
-##     ("ask" | "auto"), ai_aggression (50-150, %)},
+##     ("ask" | "auto"), ai_aggression (50-150, %); optional (absent =
+##     Average, campaign/cai_profile.gd): ai_battle_skill, ai_campaign_skill
+##     (0 Easy, 1 Average, 2 Skilled)},
 ##   humans [faction ...] (permanently allied),
-##   factions [{alive, treasury, next_army, income, upkeep, war_turns}]
-##     indexed like CData.FACTIONS,
+##   factions [{alive, treasury, next_army, income, upkeep, war_turns;
+##     optional AI profile overrides (absent = the settings / default, see
+##     campaign/cai_profile.gd): ai_skill, ai_battle_skill, ai_style (0
+##     Cautious, 1 Balanced, 2 Aggressive; written from CData when not
+##     Balanced)}] indexed like CData.FACTIONS,
 ##   dip [n*n] 0 war / 1 peace / 2 trade / 3 allied; dip_turn [n*n] turn of
 ##     the last change,
 ##   regions [{owner (-1 independent), level, growth, slots [[chain, level]],
@@ -73,6 +78,10 @@ const TRADE := 2
 const ALLIED := 3
 const DIP_NAMES: Array[String] = ["War", "Peace", "Trade", "Allied"]
 
+## AI profile defaults (campaign/cai_profile.gd AVERAGE / BALANCED).
+const AI_AVERAGE := 1
+const AI_BALANCED := 1
+
 const DEFAULT_SETTINGS := {"victory_regions": 20, "victory_capitals": 3, "turn_timeout_h": 0,
 	"autoresolve": "ask", "ai_aggression": 100}
 const TIMEOUT_CHOICES := [0, 12, 24, 48, 72]
@@ -88,6 +97,11 @@ static func new_campaign(p_name: String, p_seed: int, humans: Array, settings: D
 	var s := DEFAULT_SETTINGS.duplicate()
 	for k in settings:
 		s[k] = settings[k]
+	# AI difficulty (campaign/cai_profile.gd): only kept when not Average,
+	# so a default campaign is the state it always was (same hash).
+	for k in ["ai_battle_skill", "ai_campaign_skill"]:
+		if s.has(k) and int(s[k]) == AI_AVERAGE:
+			s.erase(k)
 	st["settings"] = s
 	var hs: Array = []
 	for h in humans:
@@ -109,6 +123,8 @@ static func new_campaign(p_name: String, p_seed: int, humans: Array, settings: D
 		var fd: Dictionary = CData.FACTIONS[f]
 		var fs := {"alive": 1, "treasury": int(fd["treasury"]), "next_army": 1, "income": 0,
 			"upkeep": 0, "war_turns": 0}
+		if int(fd.get("ai_style", AI_BALANCED)) != AI_BALANCED:
+			fs["ai_style"] = int(fd["ai_style"])  # the faction's AI personality (cdata)
 		factions.append(fs)
 		for key in fd["regions"]:
 			var r := CData.region_index(key)

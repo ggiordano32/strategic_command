@@ -116,51 +116,72 @@ const SEA_LANES: Array = [
 	["achaea", "aetolia"], ["sicilia_or", "achaea"],
 ]
 
+## AI personalities (campaign/cai_profile.gd CAUTIOUS / BALANCED / AGGRESSIVE).
+const AI_CAUTIOUS := 0
+const AI_BALANCED := 1
+const AI_AGGRESSIVE := 2
+
 ## Factions. Index = faction id in the state; -1 is "independent".
 ## colour (view), capital region, starting regions, treasury, armies
 ## (region + unit type keys), and the AI's preferred army make-up
 ## (line -> weight; lines missing from the roster are ignored).
+## AI flavour (docs/AI.md 5): "ai_style" the default personality, written
+## into a new campaign's factions[f] when not BALANCED (all BALANCED for
+## now: the user wants Carthage CAUTIOUS and the Gauls AGGRESSIVE once
+## personalities do something, docs/AI.md 8 step 5); "composition" the
+## army style the recruitment and deployment will follow (not read by
+## anything yet): {"arms": preferred lines, best first; "art_pct": share of
+## artillery in a field army, %; "cav_pct": share of cavalry, %; "upgrade":
+## eagerness to recruit higher tiers, 0 late .. 2 early}.
 const FACTIONS: Array[Dictionary] = [
 	{"key": "rome", "culture": LATIN, "name": "Rome", "adj": "Roman", "color": "c8402f", "capital": "latium",
 		"regions": ["latium", "etruria", "campania", "samnium"], "treasury": 1500,
 		"armies": [["latium", ["heavy", "heavy", "heavy", "spear", "javelin", "javelin", "cav"]],
 			["samnium", ["heavy", "heavy", "spear", "javelin", "cav"]]],
-		"mix": {"heavy": 45, "spear": 15, "javelin": 20, "cav": 15, "bolt": 5}},
+		"mix": {"heavy": 45, "spear": 15, "javelin": 20, "cav": 15, "bolt": 5},
+		"ai_style": AI_BALANCED, "composition": {"arms": ["heavy", "spear", "javelin"], "art_pct": 10, "cav_pct": 10, "upgrade": 2}},
 	{"key": "carthage", "culture": PUNIC, "name": "Carthage", "adj": "Carthaginian", "color": "7a4fc4", "capital": "zeugitana",
 		"regions": ["zeugitana", "byzacena", "sicilia_occ", "sardinia", "baetica"], "treasury": 2200,
 		"armies": [["zeugitana", ["spear", "spear", "heavy", "light", "light", "javelin", "cav", "cav"]],
 			["sicilia_occ", ["spear", "light", "light", "archer", "cav"]],
 			["baetica", ["light", "light", "javelin", "javelin", "cav"]]],
-		"mix": {"spear": 25, "heavy": 15, "light": 15, "javelin": 15, "archer": 5, "cav": 25}},
+		"mix": {"spear": 25, "heavy": 15, "light": 15, "javelin": 15, "archer": 5, "cav": 25},
+		"ai_style": AI_BALANCED, "composition": {"arms": ["cav", "spear", "light"], "art_pct": 0, "cav_pct": 25, "upgrade": 1}},
 	{"key": "macedon", "culture": GREEK, "name": "Macedon", "adj": "Macedonian", "color": "e0b02a", "capital": "macedonia",
 		"regions": ["macedonia", "thessalia"], "treasury": 1600,
 		"armies": [["macedonia", ["pike", "pike", "pike", "cav", "cav", "archer", "light", "javelin"]]],
-		"mix": {"pike": 45, "cav": 20, "archer": 10, "light": 10, "javelin": 10, "stone": 5}},
+		"mix": {"pike": 45, "cav": 20, "archer": 10, "light": 10, "javelin": 10, "stone": 5},
+		"ai_style": AI_BALANCED, "composition": {"arms": ["pike", "cav", "archer"], "art_pct": 5, "cav_pct": 20, "upgrade": 1}},
 	{"key": "epirus", "culture": GREEK, "name": "Epirus", "adj": "Epirote", "color": "e07a2a", "capital": "epirus",
 		"regions": ["epirus", "apulia"], "treasury": 1800,
 		"armies": [["apulia", ["pike", "pike", "pike", "pike", "cav", "cav", "cav", "light", "javelin", "archer"]],
 			["epirus", ["pike", "light", "javelin", "spear"]]],
-		"mix": {"pike": 40, "cav": 25, "light": 10, "javelin": 10, "archer": 10, "spear": 5}},
+		"mix": {"pike": 40, "cav": 25, "light": 10, "javelin": 10, "archer": 10, "spear": 5},
+		"ai_style": AI_BALANCED, "composition": {"arms": ["pike", "cav", "light"], "art_pct": 0, "cav_pct": 25, "upgrade": 1}},
 	{"key": "greeks", "culture": GREEK, "name": "Greek League", "adj": "Greek", "color": "3f7fd8", "capital": "attica",
 		"regions": ["attica", "achaea", "aetolia"], "treasury": 1600,
 		"armies": [["attica", ["spear", "spear", "archer", "light", "javelin"]],
 			["achaea", ["spear", "spear", "archer", "cav"]]],
-		"mix": {"spear": 45, "archer": 20, "light": 10, "javelin": 10, "cav": 10, "bolt": 5}},
+		"mix": {"spear": 45, "archer": 20, "light": 10, "javelin": 10, "cav": 10, "bolt": 5},
+		"ai_style": AI_BALANCED, "composition": {"arms": ["spear", "archer", "light"], "art_pct": 5, "cav_pct": 10, "upgrade": 1}},
 	{"key": "syracuse", "culture": GREEK, "name": "Syracuse", "adj": "Syracusan", "color": "2fa8a0", "capital": "sicilia_or",
 		"regions": ["sicilia_or", "bruttium"], "treasury": 2200,
 		"armies": [["sicilia_or", ["spear", "spear", "spear", "spear", "archer", "archer", "heavy", "heavy", "cav", "bolt"]],
 			["bruttium", ["spear", "javelin", "light"]]],
-		"mix": {"spear": 40, "heavy": 15, "archer": 15, "javelin": 10, "cav": 10, "bolt": 5, "stone": 5}},
+		"mix": {"spear": 40, "heavy": 15, "archer": 15, "javelin": 10, "cav": 10, "bolt": 5, "stone": 5},
+		"ai_style": AI_BALANCED, "composition": {"arms": ["spear", "archer", "heavy"], "art_pct": 10, "cav_pct": 10, "upgrade": 1}},
 	{"key": "iberians", "culture": CELTIC, "name": "Iberian Tribes", "adj": "Iberian", "color": "8a5a2b", "capital": "celtiberia",
 		"regions": ["celtiberia", "edetania", "carpetania"], "treasury": 1200,
 		"armies": [["celtiberia", ["light", "light", "light", "heavy", "javelin", "javelin", "cav"]],
 			["edetania", ["light", "light", "javelin", "cav"]]],
-		"mix": {"light": 35, "heavy": 20, "javelin": 25, "cav": 15, "spear": 5}},
+		"mix": {"light": 35, "heavy": 20, "javelin": 25, "cav": 15, "spear": 5},
+		"ai_style": AI_BALANCED, "composition": {"arms": ["light", "javelin", "heavy"], "art_pct": 0, "cav_pct": 15, "upgrade": 0}},
 	{"key": "gauls", "culture": CELTIC, "name": "Gallic Tribes", "adj": "Gallic", "color": "3c9a3c", "capital": "arverni",
 		"regions": ["arverni", "cisalpina", "volcae"], "treasury": 1200,
 		"armies": [["arverni", ["light", "light", "light", "heavy", "cav", "cav", "javelin"]],
 			["cisalpina", ["light", "light", "light", "cav", "javelin"]]],
-		"mix": {"light": 45, "heavy": 20, "cav": 20, "javelin": 10, "archer": 5}},
+		"mix": {"light": 45, "heavy": 20, "cav": 20, "javelin": 10, "archer": 5},
+		"ai_style": AI_BALANCED, "composition": {"arms": ["light", "heavy", "cav"], "art_pct": 0, "cav_pct": 20, "upgrade": 0}},
 ]
 const INDEPENDENT := -1
 const INDEPENDENT_COLOR := "8c8c84"

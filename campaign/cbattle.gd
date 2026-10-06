@@ -14,6 +14,12 @@ extends RefCounted
 ## campaign seed + region + turn. The human side (if any) is sim side 0, at
 ## the bottom.
 ##
+## AI profiles: the scenario carries "ai_skill" / "ai_style" per sim side
+## (sim/ai_profile.gd): an AI-commanded side gets its lead faction's battle
+## skill and personality (campaign/cai_profile.gd battle_skill / style;
+## independents the battle skill setting), a side of the players (or one
+## they command) Average / Balanced.
+##
 ## Command seam: "unit_faction" lists the campaign faction of every sim
 ## unit and "controller" the faction that commands it. For now the human
 ## present commands every unit of the player side (allied armies included);
@@ -41,6 +47,7 @@ const UT := preload("res://sim/unit_types.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const MapGen := preload("res://sim/mapgen.gd")
+const CP := preload("res://campaign/cai_profile.gd")
 
 const FRONT := 100       # m from the centre line to each side's front
 const SECOND_LINE := 45  # m behind the first
@@ -155,9 +162,29 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct: i
 	var controller: Array = []
 	for f in ufac:
 		controller.append(human_f if human_f >= 0 and CState.friendly(st, int(f), human_f) else -1)
-	return {"scenario": {"width_m": width, "height_m": height, "ai_sides": ai, "units": units, "terrain": terrain},
+	var prof := _ai_profiles(st, b, sim_side, ai)
+	return {"scenario": {"width_m": width, "height_m": height, "ai_sides": ai, "ai_skill": prof[0],
+		"ai_style": prof[1], "units": units, "terrain": terrain},
 		"seed": battle_seed(st, r, 2), "map": map, "sim_side": sim_side, "garrison": gar,
 		"unit_faction": ufac, "controller": controller, "battle": int(b["id"]), "region": r}
+
+
+## [ai_skill per sim side, ai_style per sim side] for battle b: an AI side
+## its lead faction's (attacker / defender), the players' sides Average /
+## Balanced.
+static func _ai_profiles(st: Dictionary, b: Dictionary, sim_side: Array, ai: Array) -> Array:
+	var sk := [CP.AVERAGE, CP.AVERAGE]
+	var sy := [CP.BALANCED, CP.BALANCED]
+	for cs in 2:
+		var ss := int(sim_side[cs])
+		if not ai.has(ss):
+			continue
+		var f := int(b["att_f"]) if cs == 0 else int(b["def_f"])
+		if f >= 0 and CState.is_human(st, f):
+			continue
+		sk[ss] = CP.battle_skill(st, f)
+		sy[ss] = CP.style(st, f)
+	return [sk, sy]
 
 
 ## Reinforcing armies with an edge (b["edge"], version 5) taken out of
@@ -309,6 +336,9 @@ static func _build_settlement(st: Dictionary, b: Dictionary, human_f: int, scale
 		"forest": int(rd["forest"]), "ground": int(rd["ground"])}
 	var ai: Array = [0, 1] if human_f < 0 else [1]
 	var res := Scenarios.settlement(city, terr, lists[0], lists[1], int(sim_side[1]), ai)
+	var prof := _ai_profiles(st, b, sim_side, ai)
+	res["scenario"]["ai_skill"] = prof[0]
+	res["scenario"]["ai_style"] = prof[1]
 	var map: Array = []
 	var ufac: Array = []
 	for o in res["order"]:

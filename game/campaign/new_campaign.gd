@@ -5,6 +5,11 @@ extends Control
 ## factions, the first one tapped is yours; plus the Discord webhook, your
 ## Discord user id and (if the server wants one) an invite key; Start
 ## creates the campaign on the server and emits `created_online(id, code)`.
+## Difficulty: the battle AI and the campaign AI skill (Easy / Average /
+## Skilled, campaign/cai_profile.gd) for every AI faction, stored in the
+## campaign's settings (only when not Average). For now Easy and Skilled
+## play exactly like Average (docs/AI.md 8: the levels come in later
+## steps); the buttons say so.
 
 signal start(data: Dictionary, slot: String)
 signal back
@@ -121,6 +126,16 @@ func _ready() -> void:
 		_setting_buttons[k] = b
 		sr.add_child(b)
 	v.add_child(sr)
+	settings["ai_battle_skill"] = AI_AVERAGE
+	settings["ai_campaign_skill"] = AI_AVERAGE
+	var dr := Kit.flow(8)
+	dr.add_child(Kit.label("Difficulty", Kit.FONT, Kit.COL_DIM))
+	for k in ["ai_battle_skill", "ai_campaign_skill"]:
+		var b := Kit.button("", _cycle.bind(k), 0, 14)
+		b.name = k
+		_setting_buttons[k] = b
+		dr.add_child(b)
+	v.add_child(dr)
 	_online_box = Kit.vbox(6)
 	_online_box.visible = online
 	v.add_child(_online_box)
@@ -154,7 +169,11 @@ func _ready() -> void:
 
 
 const CHOICES := {"victory_regions": [15, 20, 25, 30], "victory_capitals": [2, 3, 4, 5],
-	"turn_timeout_h": [0, 12, 24, 48, 72], "autoresolve": ["ask", "auto"], "ai_aggression": [70, 100, 130]}
+	"turn_timeout_h": [0, 12, 24, 48, 72], "autoresolve": ["ask", "auto"], "ai_aggression": [70, 100, 130],
+	"ai_battle_skill": [0, 1, 2], "ai_campaign_skill": [0, 1, 2]}
+## AI skill levels (campaign/cai_profile.gd EASY / AVERAGE / SKILLED).
+const AI_AVERAGE := 1
+const SKILL_LABELS: Array[String] = ["Easy (soon)", "Average", "Skilled (soon)"]
 
 
 func _cycle(k: String) -> void:
@@ -216,6 +235,11 @@ func _update() -> void:
 	vr["turn_timeout_h"].text = "Turn timeout: " + ("off" if int(settings["turn_timeout_h"]) == 0 else "%d h" % int(settings["turn_timeout_h"]))
 	vr["autoresolve"].text = "Battles: " + ("ask" if str(settings["autoresolve"]) == "ask" else "always auto")
 	vr["ai_aggression"].text = "AI: " + {70: "calm", 100: "normal", 130: "aggressive"}[int(settings["ai_aggression"])]
+	vr["ai_battle_skill"].text = "Battle AI: " + SKILL_LABELS[int(settings["ai_battle_skill"])]
+	vr["ai_campaign_skill"].text = "Campaign AI: " + SKILL_LABELS[int(settings["ai_campaign_skill"])]
+	var soon := "Easy and Skilled play like Average for now: the levels arrive in the next updates."
+	vr["ai_battle_skill"].tooltip_text = soon
+	vr["ai_campaign_skill"].tooltip_text = soon
 
 
 func _start() -> void:

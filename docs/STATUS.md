@@ -124,6 +124,14 @@ short:
   determinism_test, online_e2e (scratch port 8077), go test.
   `tests/touch_scroll_test.gd` fails two recruit-list scroll checks, the
   same on HEAD (not from this change).
+- **Merging, exchanging and gifting (fixed after the playtest "lots of 1
+  and 2 stacks at the same location", 2026-10-06, uncommitted):** tap your
+  other army to merge (marches to it and follows it over the turns), the
+  `exchange` order and panel (also gifts to the allied player), Merge into /
+  Exchange units at the top of the army card, recruits and idle armies in a
+  city gather into one army at the end of the turn (CAMPAIGN.md "Merging,
+  exchanging, gifts"). No version bump; AI pacing unchanged within noise.
+  Open: try it on the phones.
 - **Open / next:** play it on the phones (tap-tap planning, drags, the
   replay; whether a tap inside an enemy zone should become an attack
   instead of a refusal); the version 5 testing aids `--camp-raid`,
@@ -616,6 +624,21 @@ fixes are all landed; see "Where we are"):
    plausible mistakes. Decided 2026-10-06: AI obeys fog of war if it ever
    exists; difficulty global with per-faction Advanced overrides;
    personalities and army composition styles per faction by default.
+   **Step 1 done (2026-10-06): profiles as data, no behaviour change.**
+   `sim/ai_profile.gd` (148 battle / settlement knobs) and
+   `campaign/cai_profile.gd` (60 campaign knobs), Average / Balanced = the
+   old values exactly (Easy and Skilled rows are copies for now); scenario
+   `ai_skill` / `ai_style` per side (hashed only when not default, kept by
+   snapshots), campaign `settings.ai_battle_skill` / `ai_campaign_skill`
+   and `factions[i].ai_skill` / `ai_battle_skill` / `ai_style` (written
+   only when not default: no `CState.VERSION` bump); new-campaign
+   "Difficulty" row and sandbox "AI:" button (Easy / Skilled marked
+   "soon"); per-competency counters (`BattleSim.stat_aic`, campaign
+   `CP.count`, printed by `campaign_sim`); `cdata` FACTIONS `ai_style`
+   (all Balanced) and `composition` placeholders. Verified: determinism
+   golden digests and all final hashes, campaign_sim 6x60 per-seed
+   hashes, sieges, campaign_test / solo / battles equal to HEAD. Next:
+   step 2 (Easy).
 7. **Mid-battle reinforcements** from the map edge; ambush stance once
    hidden information in an async game is designed.
 8. **Shared empire** (both humans running one faction).

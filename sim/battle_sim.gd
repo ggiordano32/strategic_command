@@ -26,6 +26,7 @@ const FM := preload("res://sim/fixed_math.gd")
 const UT := preload("res://sim/unit_types.gd")
 const BattleAI := preload("res://sim/battle_ai.gd")
 const SiegeAI := preload("res://sim/siege_ai.gd")
+const AIProfile := preload("res://sim/ai_profile.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 
@@ -308,6 +309,11 @@ var rng_state: int = 1
 var field_w: int = 0
 var field_h: int = 0
 var ai_sides: PackedInt32Array = PackedInt32Array([0, 0])  # 1 = AI controls side
+## AI skill level and personality per side (sim/ai_profile.gd: AIProfile.EASY ..
+## SKILLED, CAUTIOUS .. AGGRESSIVE; scenario "ai_skill" / "ai_style"). Hashed
+## when not the default (AVERAGE / BALANCED on both sides).
+var ai_skill: PackedInt32Array = PackedInt32Array([1, 1])
+var ai_style: PackedInt32Array = PackedInt32Array([1, 1])
 var winner: int = -1  # -1 undecided, else winning side (2 = draw)
 var decided_tick: int = -1
 var ended: int = 0    # 1 once the result is final (pursuit over)
@@ -671,6 +677,15 @@ var stat_impact_blocked: int = 0   # charge impacts taken on a formed front's sh
 ## rise, [14] deployments shifted to higher ground.
 var stat_ai := PackedInt32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+## Per-competency AI counters, side * AIProfile.N_COUNTERS + AIProfile.C_*
+## (docs/AI.md 6: flank hits, pull-outs, units saved, spear responses,
+## missiles caught, ammunition left at rout ...). Not hashed, never read by
+## the sim or the AI.
+var stat_aic := PackedInt32Array()
+## Diagnostics for stat_aic: per unit, the tick enemy cavalry first came
+## within a spear unit's response radius (-1 none near). Never read by a
+## decision.
+var dbg_cav_seen := PackedInt32Array()
 var stat_bolts: int = 0        # bolts fired
 var stat_stones: int = 0       # stones fired
 var stat_art_victims: int = 0  # soldiers struck by artillery
@@ -742,6 +757,8 @@ var fx_head: int = 0
 ## scenario = {
 ##   "width_m": int, "height_m": int,
 ##   "ai_sides": [side, ...],
+##   "ai_skill": [side 0, side 1], "ai_style": [side 0, side 1]   # optional AI
+##     profiles (sim/ai_profile.gd; default AVERAGE / BALANCED),
 ##   "units": [{"side", "type", "count", "x_m", "y_m", "facing", "files", optional
 ##     "wall", "morale_pct" (starts with that % of its morale)}, ...],
 ##   "orders": [order, ...]   # optional scripted orders (test scenarios)
@@ -762,6 +779,17 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	ai_sides = PackedInt32Array([0, 0])
 	for s in scenario.get("ai_sides", []):
 		ai_sides[int(s)] = 1
+	ai_skill = PackedInt32Array([AIProfile.AVERAGE, AIProfile.AVERAGE])
+	ai_style = PackedInt32Array([AIProfile.BALANCED, AIProfile.BALANCED])
+	var sk: Array = scenario.get("ai_skill", [])
+	var sy: Array = scenario.get("ai_style", [])
+	for s in mini(sk.size(), 2):
+		ai_skill[s] = clampi(int(sk[s]), AIProfile.EASY, AIProfile.SKILLED)
+	for s in mini(sy.size(), 2):
+		ai_style[s] = clampi(int(sy[s]), AIProfile.CAUTIOUS, AIProfile.AGGRESSIVE)
+	stat_aic = PackedInt32Array()
+	stat_aic.resize(2 * AIProfile.N_COUNTERS)
+	stat_aic.fill(0)
 	ai_phase = PackedInt32Array([0, 0])
 	ai_t = PackedInt32Array([0, 0])
 	ai_hold = PackedInt32Array([-1, -1])
@@ -803,6 +831,8 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		arr.fill(0)
 	u_walls.resize(n_units * 4)
 	u_walls.fill(-1)
+	dbg_cav_seen.resize(n_units)
+	dbg_cav_seen.fill(-1)
 	for arr in _map_unit_arrays():
 		arr.resize(n_units)
 		arr.fill(0)
@@ -5571,6 +5601,8 @@ func _impact_victim(r: int, v: int, power: int, ma: int, zone: int) -> bool:
 		dirmul = 130
 		shock = MORALE_CHARGE_FLANK
 	var force := power * dirmul / 100 * ma / (ma + md)
+	if dirmul > 100 and ready:
+		stat_aic[u_side[unit_of[r]] * AIProfile.N_COUNTERS + AIProfile.C_FLANK_HIT] += 1
 	var arm := t_armour[tv] / 2
 	var knock := mini(force + 10, 90)
 	if frontal:
@@ -6801,6 +6833,9 @@ func _nearest_enemy_unit(u: int, ready_only: bool) -> int:
 
 
 func _start_rout(u: int) -> void:
+	if u_cls[u] == UT.CLS_MISSILE:
+		stat_aic[u_side[u] * AIProfile.N_COUNTERS + AIProfile.C_AMMO_AT_ROUT] += u_ammo[u]
+		stat_aic[u_side[u] * AIProfile.N_COUNTERS + AIProfile.C_MISSILE_ROUTS] += 1
 	u_state[u] = U_ROUTING
 	u_routs[u] += 1
 	u_sq[u] = 0
@@ -7031,6 +7066,11 @@ func state_hash() -> int:
 	ctx.update(ai_phase.to_byte_array())
 	ctx.update(ai_t.to_byte_array())
 	ctx.update(ai_hold.to_byte_array())
+	if ai_skill[0] != AIProfile.AVERAGE or ai_skill[1] != AIProfile.AVERAGE \
+			or ai_style[0] != AIProfile.BALANCED or ai_style[1] != AIProfile.BALANCED:
+		# AI profiles other than the default (the default hashes as before).
+		ctx.update(ai_skill.to_byte_array())
+		ctx.update(ai_style.to_byte_array())
 	if map_on != 0:
 		# Woods / settlement maps only (a plain map hashes as it always did).
 		for arr in _map_unit_arrays():

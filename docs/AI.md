@@ -1,9 +1,10 @@
 # AI competency
 
 Design for how the AI plays, how skill levels differ, and how we measure
-it. Written 2026-10-06 with the user. Status: **design**; the current AI is
-one fixed skill (described in `sim/battle_ai.gd`, `sim/siege_ai.gd` and
-`campaign/cai.gd`) that this document treats as roughly the "Average" level.
+it. Written 2026-10-06 with the user. Status: **design, step 1 built**
+(profiles as data, section 9); the current AI is one fixed skill
+(described in `sim/battle_ai.gd`, `sim/siege_ai.gd` and `campaign/cai.gd`)
+that this document treats as roughly the "Average" level.
 
 ## 1. Principles
 
@@ -349,6 +350,24 @@ cavalry and mercenary-style mixes, elephants when they exist, keeps a war
 chest. Greeks: pike centre, missiles, strong walls. Skill decides how well
 the style is executed, not which style is used.
 
+**Data shape** (in `campaign/cdata.gd` FACTIONS, step 1: present, not yet
+read by anything):
+
+```
+"ai_style": AI_BALANCED,        # AI_CAUTIOUS 0 / AI_BALANCED 1 / AI_AGGRESSIVE 2
+"composition": {
+    "arms": ["heavy", "spear", "javelin"],  # preferred lines (CData.LINE_ORDER keys), best first
+    "art_pct": 10,               # share of artillery in a field army, %
+    "cav_pct": 10,               # share of cavalry, %
+    "upgrade": 2,                # eagerness to recruit higher tiers: 0 late, 1 normal, 2 early
+}
+```
+
+`ai_style` is copied into a new campaign's `factions[f]` when it is not
+Balanced (every faction is Balanced for now; Carthage Cautious and the
+Gauls Aggressive come with step 5). `composition` complements the existing
+`mix` weights (which recruitment already follows).
+
 **Decisions (user, 2026-10-06):** if fog of war is ever added the AI obeys
 it like the player; the difficulty knobs (battle, campaign) are global
 (Easy / Average / Skilled) with per-faction overrides under an Advanced
@@ -425,3 +444,68 @@ Competence must be measurable, or "Skilled" is a label.
 6. Calibrate "Average" against the two humans' playtests.
 
 The user's decisions on the open questions are recorded in section 5.
+
+## 9. As built: profiles (step 1, 2026-10-06)
+
+No behaviour change: at Average / Balanced every hash is the old one
+(determinism golden digests and final hashes, campaign_sim per-seed
+hashes, the siege matchups).
+
+**Battle and settlement AI: `sim/ai_profile.gd`.** `KNOBS` rows
+`[knob, EASY, AVERAGE, SKILLED]` (Average = the old constant; Easy and
+Skilled copies for now), `STYLE` rows `[knob, CAUTIOUS, BALANCED,
+AGGRESSIVE]` of offsets (all 0; the rows mark what personality will move:
+when to quit, cavalry risk, how long to stand and shoot). Behaviour code
+reads `kn[AP.X]` with `kn = AP.of(sim, side)` and never branches on the
+level. 148 knobs by competency: reaction 4 (army and unit think intervals,
+re-order thresholds), deployment 5, approach and skirmish 8, engagement 2,
+flanking 4, cavalry 26 (timings, distances and the target scores),
+missiles 3, artillery 18 (incl. target scores and refill thresholds),
+reserves 3, morale 1, terrain and woods 23, withdrawal 3, pursuit 4,
+sieges attacking 34, sieges defending 10. Ratios that were fractions
+like 4/3 or 2/3 are NUM / DEN knob pairs so Average is exact.
+
+**Scenario and sim state.** The scenario carries `"ai_skill": [s0, s1]`
+and `"ai_style": [s0, s1]` per sim side (absent = Average / Balanced).
+`BattleSim.ai_skill` / `ai_style` are hashed by `state_hash()` only when
+not the default (so every old scenario hashes as before) and survive
+`snapshot()` / `restore()` (`tests/lockstep_test.gd` checks both). The
+co-op scenario hash (`CoopSession.scenario_hash`) covers the whole
+scenario, so peers with different profiles refuse to start.
+
+**Campaign AI: `campaign/cai_profile.gd`.** Same layout, 60 knobs:
+economy 5, recruitment 9, targets 4, concentration 7, defence and screens
+3, sieges and relief 6, raids and hunting 4, diplomacy 22. A faction's
+skill is `factions[f].ai_skill`, else `settings.ai_campaign_skill`, else
+Average; its style `factions[f].ai_style`, else Balanced; its armies'
+battle skill `factions[f].ai_battle_skill`, else `settings.ai_battle_skill`,
+else Average. These keys are written only when not the default (no
+`CState.VERSION` bump; older states read the defaults).
+`campaign/cbattle.gd` puts the AI side's lead faction's battle skill and
+style into the scenario (the players' sides Average / Balanced).
+
+**UI.** New campaign: a "Difficulty" row, Battle AI and Campaign AI
+(Easy / Average / Skilled, default Average; Easy and Skilled say "(soon)"
+and play like Average until steps 2 and 3). Sandbox: an "AI:" button for
+both AI sides. Per-faction overrides (Advanced) come later.
+
+**Counters (section 6).** Battle: `BattleSim.stat_aic[side *
+AP.N_COUNTERS + AP.C_*]`, not hashed, never read by a decision: flank /
+rear charge hits, cavalry pull-outs, rotations (0 until step 3), units
+saved (fell back mauled and returned without breaking), routers chased by
+foot, spear responses to cavalry and the ticks they took, missile
+unit-thinks in melee, ammunition left at rout over missile routs, reserve
+commits (0 until step 3). Campaign: `CP.count()` into a static dictionary
+outside the state (attacks at bad odds, threatened cities left empty,
+faction-turns at war on two fronts, armies trickled in), printed per seed
+by `tests/campaign_sim.gd`.
+
+**Left hard-coded on purpose:** constants mirrored from the sim (order
+types, states, the frontal arc, line-of-fire heights), map-edge clamps,
+the fixed candidate patterns of spot searches (`_clear_spot`, `_rise`,
+`_art_resite`, `_shelter`'s 20 / 40 m rings, woods sampling every 8 m),
+order sequence numbers, arrival / slack tolerances of `_go_home` and
+battery positioning, the citadel's capacity (2 m2 a man), and in the
+campaign `FIELD_SEA` (a property of the memoised distance fields) and
+the `ai_aggression` setting's clamp.
+

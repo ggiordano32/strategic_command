@@ -11,12 +11,14 @@ extends SceneTree
 ## rules before the continuous overworld), --format=4 the rules before free
 ## movement, --no-sieges (= --format=3) the rules before sieges; --twice
 ## plays every seed again and compares the final hashes. Format 6 also
-## reports contact battles, zone stops are not counted.
+## reports contact battles, zone stops are not counted. Each seed also
+## prints the campaign AI's competency counters (campaign/cai_profile.gd).
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
 const CTurn := preload("res://campaign/cturn.gd")
 const CRules := preload("res://campaign/crules.gd")
+const CP := preload("res://campaign/cai_profile.gd")
 
 var seeds := 4
 var turns := 60
@@ -66,6 +68,7 @@ func _run(sd: int, verbose: bool) -> String:
 		"field_won": 0, "assault_won": 0, "field": 0, "intercepted": 0, "raided": 0}
 	var largest := [0, 0, 0]
 	var first_win := -1
+	CP.reset_counters()
 	if true:
 		var st := CState.new_campaign("sim", 1000 + sd * 77, [])
 		if fmt < CState.VERSION:
@@ -121,6 +124,9 @@ func _run(sd: int, verbose: bool) -> String:
 			int(sg["field_won"]), int(sg["lifted"]), int(sg["surrendered"]), int(sg["longest"]), str(open_now)])
 		print("free movement: field battles %d (interceptions %d), turns ending with a region raided %d" % [
 			int(sg["field"]), int(sg["intercepted"]), int(sg["raided"])])
+		var ct := CP.totals()
+		print("AI counters (docs/AI.md 6, all factions): attacks at bad odds %d, threatened cities left empty %d, faction-turns at war on two fronts %d, armies trickled in %d" % [
+			ct[0], ct[1], ct[2], ct[3]])
 		pacing.append("%d | %d / %d / %d | %d %s | %s | %d | %d | %.1f %.1f" % [1000 + sd * 77, largest[0], largest[1], largest[2],
 			elim.size(), str(elim), str(first_win) if first_win >= 0 else "-", int(st["stats"]["battles"]), int(sg["field"]),
 			t_total / 1000.0 / turns, t_max / 1000.0])

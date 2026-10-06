@@ -40,26 +40,12 @@ const CRules := preload("res://campaign/crules.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
 const UT := preload("res://sim/unit_types.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
+const CP := preload("res://campaign/cai_profile.gd")
 
-const UPKEEP_SHARE := 70       # % of income spent on army upkeep at most
-const ATTACK_RATIO := 150      # % of the target's defence needed to attack
-const RESERVE_TURNS := 1       # keep this many turns of upkeep in the bank
-const FIRST_WAR_TURN := 6      # no AI declares war before this turn
-const FIRST_WAR_ON_PLAYERS := 10
-const PLAYER_WAR_GAP := 8      # turns between AI war declarations on the players
-const MAX_WARS := 2            # an AI starts no new war while at war with this many factions
-const WAR_RATIO := 120         # % of a neighbour's strength needed to consider war on it ...
-const WAR_RATIO_BUSY := 90     # ... if the neighbour is already at war
-const WAR_CHANCE := 12         # % per turn per eligible neighbour
-const WAR_CHANCE_PLAYERS := 8
-const SIEGE_PATIENCE := 3      # turns past the supplies a siege is maintained before assault or lift
-const RELIEF_WIN := 60         # % chance needed to relieve a besieged city
-const SIEGE_ASSAULT_WIN := 35  # % chance to storm a siege that ran out of patience (else lift)
-const IDLE_TURNS := 3          # version 5: an army idle this long takes a fair chance
-const IDLE_WIN := 35           # ... of at least this % (lays siege)
-const RAID_WEALTH := 4         # version 5: raid regions of at least this wealth
-const SHELTER_PCT := 70        # shelter inside when our armies there are below this % of the threat
-const SCREEN_PCT := 80         # an army screens a threatened city if this % of the threat
+# Every ratio, odds cutoff, turn count, share and weight the AI decides with
+# is a knob of the faction's skill / personality profile
+# (campaign/cai_profile.gd, read as kn[CP.X] with kn = CP.of(st, f)); the
+# names in capitals in the comments are those knobs.
 
 
 ## moves (state version 5): the faction's move orders are appended here
@@ -120,10 +106,12 @@ static func wars(st: Dictionary, f: int) -> Array[int]:
 	return out
 
 
-static func region_value(st: Dictionary, r: int) -> int:
-	var v := int(CData.REGIONS[r]["wealth"]) * 100 + int(st["regions"][r]["level"]) * 150
+## Value of region r to faction f (f < 0: the default profile's weights).
+static func region_value(st: Dictionary, r: int, f: int = -1) -> int:
+	var kn := CP.of(st, f)
+	var v := int(CData.REGIONS[r]["wealth"]) * kn[CP.VAL_WEALTH] + int(st["regions"][r]["level"]) * kn[CP.VAL_LEVEL]
 	if CData.KEY_CITIES.has(str(CData.REGIONS[r]["key"])):
-		v += 300
+		v += kn[CP.VAL_KEY]
 	return v
 
 
@@ -160,7 +148,8 @@ static func _cut_debt(st: Dictionary, f: int) -> void:
 	var inc := int(CRules.income(st, f)["total"])
 	var up := CRules.upkeep(st, f)
 	var guard := 0
-	while up > inc * 90 / 100 and guard < 40:
+	var keep_pct := CP.of(st, f)[CP.CUT_DEBT_PCT]
+	while up > inc * keep_pct / 100 and guard < 40:
 		guard += 1
 		var best_a := {}
 		var best_k := -1
@@ -183,25 +172,27 @@ static func _cut_debt(st: Dictionary, f: int) -> void:
 # ---------------------------------------------------------------- build ---
 
 static func _reserve(st: Dictionary, f: int) -> int:
-	return CRules.upkeep(st, f) * RESERVE_TURNS
+	return CRules.upkeep(st, f) * CP.of(st, f)[CP.RESERVE_TURNS]
 
 
 static func _build(st: Dictionary, f: int) -> void:
 	var regions := CState.regions_of(st, f)
+	var kn := CP.of(st, f)
+	var cap_w: int = kn[CP.BUILD_CAPITAL_W]
 	# Richest and capital first.
 	regions.sort_custom(func(a, b):
-		var va := region_value(st, a) + (1000 if CData.is_capital(a) else 0)
-		var vb := region_value(st, b) + (1000 if CData.is_capital(b) else 0)
+		var va := region_value(st, a, f) + (cap_w if CData.is_capital(a) else 0)
+		var vb := region_value(st, b, f) + (cap_w if CData.is_capital(b) else 0)
 		return va > vb or (va == vb and a < b))
 	var mix: Dictionary = CData.FACTIONS[f]["mix"]
 	var spent := 0
-	var budget := (int(st["factions"][f]["treasury"]) - _reserve(st, f)) * 60 / 100
+	var budget := (int(st["factions"][f]["treasury"]) - _reserve(st, f)) * kn[CP.BUILD_BUDGET_PCT] / 100
 	for r in regions:
 		if not CState.battle_at(st, r).is_empty():
 			continue
 		var want: Array[int] = []
 		var thr := threat(st, f, r)
-		if thr > defence(st, r) / 2:
+		if thr > defence(st, r) / kn[CP.WALLS_THREAT_DIV]:
 			want.append(CData.WALLS)
 		var centre := CData.is_capital(r) or int(st["regions"][r]["level"]) >= CData.TOWN
 		want.append(CData.FARM)
@@ -235,13 +226,14 @@ static func _wants_chain(mix: Dictionary, c: int) -> bool:
 static func _recruit(st: Dictionary, f: int) -> void:
 	var fs: Dictionary = st["factions"][f]
 	var inc := int(CRules.income(st, f)["total"])
-	var share := UPKEEP_SHARE * _aggr(st) / 100
+	var kn := CP.of(st, f)
+	var share := kn[CP.UPKEEP_SHARE] * _aggr(st) / 100
 	if not wars(st, f).is_empty():
-		share += 10
+		share += kn[CP.WAR_SHARE]
 	# Money in the bank buys more army (a war chest of several turns'
 	# income is spent down over time).
 	if inc > 0:
-		share += clampi(int(fs["treasury"]) * 10 / inc, 0, 40)
+		share += clampi(int(fs["treasury"]) * kn[CP.CHEST_SHARE] / inc, 0, kn[CP.CHEST_SHARE_MAX])
 	var cap := inc * share / 100
 	var up := CRules.upkeep(st, f)
 	var mix: Dictionary = CData.FACTIONS[f]["mix"]
@@ -254,16 +246,16 @@ static func _recruit(st: Dictionary, f: int) -> void:
 			continue
 		var sc := 0
 		for c in [CData.BARRACKS, CData.STABLES, CData.RANGE, CData.WORKSHOP]:
-			sc += CState.building(st, r, c) * 10
+			sc += CState.building(st, r, c) * kn[CP.RECRUIT_BUILDING_W]
 		if sc == 0:
 			continue
-		sc += threat(st, f, r) / 500 + (5 if _frontier(st, f, r) else 0)
+		sc += threat(st, f, r) / kn[CP.RECRUIT_THREAT_DIV] + (kn[CP.RECRUIT_FRONTIER_W] if _frontier(st, f, r) else 0)
 		scored.append([sc, r])
 	scored.sort_custom(func(a, b): return a[0] > b[0] or (a[0] == b[0] and a[1] < b[1]))
 	var guard := 0
 	for e in scored:
 		var r: int = e[1]
-		while guard < 12:
+		while guard < kn[CP.RECRUIT_MAX]:
 			guard += 1
 			var line := _next_line(st, f, mix)
 			var key := _best_type(st, f, r, line)
@@ -274,7 +266,7 @@ static func _recruit(st: Dictionary, f: int) -> void:
 			var ty := UT.index_of(key)
 			if up + CState.upkeep_of(ty) > cap:
 				return
-			if int(fs["treasury"]) - UT.price_of(ty) < _reserve(st, f) / 2:
+			if int(fs["treasury"]) - UT.price_of(ty) < _reserve(st, f) / kn[CP.RECRUIT_RESERVE_DIV]:
 				return
 			if CRules.apply_order(st, f, {"t": "recruit", "r": r, "unit": key}) != "":
 				break
@@ -373,7 +365,8 @@ static func _move(st: Dictionary, f: int) -> void:
 	if CState.sieges_on(st):
 		_move_sieges(st, f)
 		return
-	var ratio := ATTACK_RATIO * 100 / _aggr(st)
+	var kn := CP.of(st, f)
+	var ratio := kn[CP.ATTACK_RATIO] * 100 / _aggr(st)
 	var nreg := CData.region_count()
 	var dist := _frontier_dist(st, f)
 	# Attack plans: for each hostile region next to our armies, the armies
@@ -394,9 +387,9 @@ static func _move(st: Dictionary, f: int) -> void:
 		if reach.is_empty():
 			continue
 		var d := maxi(target_defence(st, f, t), 1)
-		var val := region_value(st, t)
+		var val := region_value(st, t, f)
 		if o >= 0 and CState.is_human(st, o):
-			val = val * 90 / 100
+			val = val * kn[CP.HUMAN_VALUE_PCT] / 100
 		targets.append({"t": t, "def": d, "power": power, "reach": reach, "score": val * 1000 / d})
 	targets.sort_custom(func(a, b): return a["score"] > b["score"] or (a["score"] == b["score"] and a["t"] < b["t"]))
 	for tg in targets:
@@ -416,7 +409,7 @@ static func _move(st: Dictionary, f: int) -> void:
 				continue
 			go.append(a)
 			sent += CState.strength(a)
-			if sent * 100 >= int(tg["def"]) * ratio * 13 / 10:
+			if sent * 100 >= int(tg["def"]) * ratio * kn[CP.COMMIT_PCT] / 100:
 				break
 		if sent * 100 < int(tg["def"]) * ratio:
 			continue
@@ -443,7 +436,8 @@ static func _move(st: Dictionary, f: int) -> void:
 
 ## The move step with sieges (state version 4).
 static func _move_sieges(st: Dictionary, f: int) -> void:
-	var ratio := ATTACK_RATIO * 100 / _aggr(st)
+	var kn := CP.of(st, f)
+	var ratio := kn[CP.ATTACK_RATIO] * 100 / _aggr(st)
 	var nreg := CData.region_count()
 	var dist := _frontier_dist(st, f)
 	_sieges(st, f, ratio)
@@ -462,15 +456,15 @@ static func _move_sieges(st: Dictionary, f: int) -> void:
 		if reach.is_empty():
 			continue
 		var d := maxi(target_defence(st, f, t), 1)
-		var val := region_value(st, t)
+		var val := region_value(st, t, f)
 		if o >= 0 and CState.is_human(st, o):
-			val = val * 90 / 100
+			val = val * kn[CP.HUMAN_VALUE_PCT] / 100
 		targets.append({"t": t, "def": d, "power": power, "reach": reach, "score": val * 1000 / d})
 	targets.sort_custom(func(a, b): return a["score"] > b["score"] or (a["score"] == b["score"] and a["t"] < b["t"]))
 	for tg in targets:
 		var t := int(tg["t"])
 		var d := int(tg["def"])
-		if int(tg["power"]) * 100 < d * ratio / 2:
+		if int(tg["power"]) * 100 < d * ratio * kn[CP.SIEGE_RATIO_PCT] / 100:
 			continue
 		var reach: Array = tg["reach"]
 		reach.sort_custom(func(a, b): return CState.strength(a) > CState.strength(b) \
@@ -483,7 +477,7 @@ static func _move_sieges(st: Dictionary, f: int) -> void:
 				continue
 			go.append(a)
 			sent += CState.strength(a)
-			if assault and sent * 100 >= d * ratio * 13 / 10:
+			if assault and sent * 100 >= d * ratio * kn[CP.COMMIT_PCT] / 100:
 				break
 		if go.is_empty():
 			continue
@@ -491,7 +485,7 @@ static func _move_sieges(st: Dictionary, f: int) -> void:
 		if sent * 100 < d * ratio:
 			# Not enough to storm it: lay siege if another army can join
 			# within two turns, else leave it.
-			if sent * 100 < d * ratio / 2 or not _support_near(st, f, t, go):
+			if sent * 100 < d * ratio * kn[CP.SIEGE_RATIO_PCT] / 100 or not _support_near(st, f, t, go):
 				continue
 			mode = CData.MODE_SIEGE
 		for a in go:
@@ -575,6 +569,7 @@ static func _sieges(st: Dictionary, f: int, ratio: int) -> void:
 
 static func _own_siege(st: Dictionary, f: int, sg: Dictionary, ratio: int) -> void:
 	var r := int(sg["r"])
+	var kn := CP.of(st, f)
 	# Free armies next to the siege join it.
 	for a in CState.armies_of(st, f):
 		if _free(st, a) and CData.link(int(a["r"]), r) >= 0 and not _must_hold(st, f, a) \
@@ -594,11 +589,13 @@ static func _own_siege(st: Dictionary, f: int, sg: Dictionary, ratio: int) -> vo
 		# (relief, garrison and armies inside against us).
 		var all := relief + CRules.besieged_armies(st, r)
 		var ro := CBattle.odds(st, all, bs, r, false, 0)
-		if int(ro["win"]) >= 50:
+		if int(ro["win"]) >= kn[CP.LIFT_WIN]:
 			_lift(st, f, sg)
 			return
-	if int(sg["held"]) >= CState.siege_supply(st, r) + SIEGE_PATIENCE:
-		if int(od["win"]) >= SIEGE_ASSAULT_WIN:
+	if int(sg["held"]) >= CState.siege_supply(st, r) + kn[CP.SIEGE_PATIENCE]:
+		if int(od["win"]) >= kn[CP.SIEGE_ASSAULT_WIN]:
+			if int(od["win"]) < 50:
+				CP.count(CP.C_BAD_ODDS, f)
 			CRules.order_assault(st, f, r)
 		else:
 			_lift(st, f, sg)
@@ -645,7 +642,7 @@ static func _besieged(st: Dictionary, f: int, r: int, ratio: int) -> void:
 	if rel.is_empty():
 		return
 	var ro := CBattle.odds(st, rel + inside, bs, r, false, 0)
-	if int(ro["win"]) >= RELIEF_WIN:
+	if int(ro["win"]) >= CP.of(st, f)[CP.RELIEF_WIN]:
 		for a in rel:
 			CRules.execute_move(st, a, r, CData.MODE_SIEGE)
 
@@ -670,7 +667,8 @@ static func _besieged(st: Dictionary, f: int, r: int, ratio: int) -> void:
 ##  7. stance: armies staying in our regions shelter inside the walls when
 ##     the enemy within a turn's march is much stronger, else take the field.
 static func _move_free(st: Dictionary, f: int, out: Array) -> void:
-	var ratio := ATTACK_RATIO * 100 / _aggr(st)
+	var kn := CP.of(st, f)
+	var ratio := kn[CP.ATTACK_RATIO] * 100 / _aggr(st)
 	var nreg := CData.region_count()
 	var ok := _passable(st, f)
 	var rcs := {}
@@ -707,9 +705,9 @@ static func _move_free(st: Dictionary, f: int, out: Array) -> void:
 		if now.is_empty() and soon.is_empty():
 			continue
 		var d := maxi(target_defence(st, f, t), 1)
-		var val := region_value(st, t)
+		var val := region_value(st, t, f)
 		if o >= 0 and CState.is_human(st, o):
-			val = val * 90 / 100
+			val = val * kn[CP.HUMAN_VALUE_PCT] / 100
 		targets.append({"t": t, "def": d, "now": now, "soon": soon, "score": val * 1000 / d})
 	targets.sort_custom(func(x, y): return x["score"] > y["score"] or (x["score"] == y["score"] and x["t"] < y["t"]))
 	for tg in targets:
@@ -717,20 +715,24 @@ static func _move_free(st: Dictionary, f: int, out: Array) -> void:
 	# Idle armies take a fair chance.
 	for a in free:
 		var id := int(a["id"])
-		if used.has(id) or int(a.get("idle", 0)) < IDLE_TURNS or CRules.siege_role(st, a) != 0 or _hold(cx, st, f, a):
+		if used.has(id) or int(a.get("idle", 0)) < kn[CP.IDLE_TURNS] or CRules.siege_role(st, a) != 0 or _hold(cx, st, f, a):
 			continue
 		var best := -1
 		var best_v := 0
+		var best_win := 0
 		for tg in targets:
 			var t := int(tg["t"])
 			if int(rcs[id]["t"][t]) != 0 or not CState.siege_at(st, t).is_empty() or not CState.battle_at(st, t).is_empty():
 				continue
 			var od := CBattle.odds(st, [a], _defenders(st, t), t, true)
-			if int(od["win"]) >= IDLE_WIN and region_value(st, t) > best_v:
-				best_v = region_value(st, t)
+			if int(od["win"]) >= kn[CP.IDLE_WIN] and region_value(st, t, f) > best_v:
+				best_v = region_value(st, t, f)
 				best = t
+				best_win = int(od["win"])
 		if best >= 0:
 			used[id] = 1
+			if best_win < 50:
+				CP.count(CP.C_BAD_ODDS, f)
 			out.append([id, best, f, CData.MODE_SIEGE, 0])
 	_raid(st, f, free, rcs, used, out, cx)
 	_screen(st, f, free, rcs, used, out, cx)
@@ -786,6 +788,8 @@ static func _defenders(st: Dictionary, r: int) -> Array:
 static func _attack(st: Dictionary, f: int, tg: Dictionary, ratio: int, rcs: Dictionary, used: Dictionary, out: Array, cx: Dictionary) -> void:
 	var t := int(tg["t"])
 	var d := int(tg["def"])
+	var kn := CP.of(st, f)
+	var commit := d * ratio * kn[CP.COMMIT_PCT] / 100
 	var now: Array = []
 	var soon: Array = []
 	for a in tg["now"]:
@@ -807,14 +811,18 @@ static func _attack(st: Dictionary, f: int, tg: Dictionary, ratio: int, rcs: Dic
 		p_soon += _str(cx, a)
 	if p_now * 100 >= d * ratio:
 		var sent := 0
+		var n_sent := 0
 		for a in now:
 			used[int(a["id"])] = 1
 			out.append([int(a["id"]), t, f, CData.MODE_ASSAULT, 0])
 			sent += _str(cx, a)
-			if sent * 100 >= d * ratio * 13 / 10:
+			n_sent += 1
+			if sent * 100 >= commit:
 				break
+		if n_sent == 1 and not soon.is_empty():
+			CP.count(CP.C_TRICKLED, f)
 		return
-	if p_now * 100 >= d * ratio / 2 and not now.is_empty() and (not soon.is_empty() or now.size() > 1):
+	if p_now * 100 >= d * ratio * kn[CP.SIEGE_RATIO_PCT] / 100 and not now.is_empty() and (not soon.is_empty() or now.size() > 1):
 		for a in now:
 			used[int(a["id"])] = 1
 			out.append([int(a["id"]), t, f, CData.MODE_SIEGE, 0])
@@ -838,7 +846,7 @@ static func _attack(st: Dictionary, f: int, tg: Dictionary, ratio: int, rcs: Dic
 		if int(a["r"]) != stage and int(rcs[id]["t"][stage]) == 0:
 			out.append([id, stage, f, CData.MODE_MARCH, 0])
 		sent2 += _str(cx, a)
-		if sent2 * 100 >= d * ratio * 13 / 10:
+		if sent2 * 100 >= commit:
 			break
 
 
@@ -861,13 +869,16 @@ static func _sieges_free(st: Dictionary, f: int, ratio: int, free: Array, rcs: D
 			var relief := _relief_near(st, f, r)
 			var starving := int(sg["supply"]) <= 0
 			var storm := int(od["att"]) * 100 >= int(od["def"]) * ratio or (starving and not relief.is_empty())
+			var kn := CP.of(st, f)
 			var lift := false
 			if not storm and not relief.is_empty() and _sum(relief) > _sum(bs + join):
 				var ro := CBattle.odds(st, relief + CRules.besieged_armies(st, r), bs + join, r, false, 0)
-				lift = int(ro["win"]) >= 50
-			if not storm and not lift and int(sg["held"]) >= CState.siege_supply(st, r) + SIEGE_PATIENCE:
-				storm = int(od["win"]) >= SIEGE_ASSAULT_WIN
+				lift = int(ro["win"]) >= kn[CP.LIFT_WIN]
+			if not storm and not lift and int(sg["held"]) >= CState.siege_supply(st, r) + kn[CP.SIEGE_PATIENCE]:
+				storm = int(od["win"]) >= kn[CP.SIEGE_ASSAULT_WIN]
 				lift = not storm
+				if storm and int(od["win"]) < 50:
+					CP.count(CP.C_BAD_ODDS, f)
 			if lift:
 				for a in bs:
 					if int(a["f"]) != f or int(a["busy"]) != 0 or int(a["moved"]) != 0 or not rcs.has(int(a["id"])):
@@ -899,7 +910,7 @@ static func _sieges_free(st: Dictionary, f: int, ratio: int, free: Array, rcs: D
 			if rel.is_empty():
 				continue
 			var ro2 := CBattle.odds(st, rel + inside, bs2, r, false, 0)
-			if int(ro2["win"]) >= RELIEF_WIN:
+			if int(ro2["win"]) >= CP.of(st, f)[CP.RELIEF_WIN]:
 				for a in rel:
 					used[int(a["id"])] = 1
 					out.append([int(a["id"]), r, f, CData.MODE_MARCH, 0])
@@ -997,6 +1008,7 @@ static func _raid(st: Dictionary, f: int, free: Array, rcs: Dictionary, used: Di
 	var best_a: Dictionary = {}
 	var best_t := -1
 	var best_v := 0
+	var raid_w := CP.of(st, f)[CP.RAID_WEALTH]
 	for a in free:
 		var id := int(a["id"])
 		if used.has(id) or CRules.siege_role(st, a) != 0 or _hold(cx, st, f, a):
@@ -1006,7 +1018,7 @@ static func _raid(st: Dictionary, f: int, free: Array, rcs: Dictionary, used: Di
 			if int(rc["t"][t]) != 0:
 				continue
 			var o := CState.owner(st, t)
-			if o < 0 or not CState.at_war(st, f, o) or int(CData.REGIONS[t]["wealth"]) < RAID_WEALTH:
+			if o < 0 or not CState.at_war(st, f, o) or int(CData.REGIONS[t]["wealth"]) < raid_w:
 				continue
 			if not CState.siege_at(st, t).is_empty() or not CState.battle_at(st, t).is_empty() or CRules.raider(st, t) >= 0:
 				continue
@@ -1025,6 +1037,7 @@ static func _raid(st: Dictionary, f: int, free: Array, rcs: Dictionary, used: Di
 ## Screens: a threatened city of ours without a field army gets the nearest
 ## free army that can match the threat (it stands there in the field).
 static func _screen(st: Dictionary, f: int, free: Array, rcs: Dictionary, used: Dictionary, out: Array, cx: Dictionary) -> void:
+	var screen_pct := CP.of(st, f)[CP.SCREEN_PCT]
 	for r in CState.regions_of(st, f):
 		if not CState.siege_at(st, r).is_empty() or not CState.battle_at(st, r).is_empty():
 			continue
@@ -1042,19 +1055,22 @@ static func _screen(st: Dictionary, f: int, free: Array, rcs: Dictionary, used: 
 			var id := int(a["id"])
 			if used.has(id) or CRules.siege_role(st, a) != 0 or int(a["r"]) == r or int(rcs[id]["t"][r]) != 0:
 				continue
-			if _str(cx, a) * 100 < thr * SCREEN_PCT or _hold(cx, st, f, a):
+			if _str(cx, a) * 100 < thr * screen_pct or _hold(cx, st, f, a):
 				continue
 			if best.is_empty() or _str(cx, a) > _str(cx, best):
 				best = a
 		if not best.is_empty():
 			used[int(best["id"])] = 1
 			out.append([int(best["id"]), r, f, CData.MODE_MARCH, 0])
+		elif CState.armies_in(st, r).is_empty():
+			CP.count(CP.C_EMPTY_CITY, f)
 
 
 ## Stances of the armies that stay in our regions: inside the walls when the
 ## enemy within a turn's march is much stronger than our armies there, in
 ## the field otherwise (never riding out into a battle it would lose).
 static func _stances(st: Dictionary, f: int, used: Dictionary, cx: Dictionary) -> void:
+	var kn := CP.of(st, f)
 	for r in CState.regions_of(st, f):
 		if not CState.siege_at(st, r).is_empty() or not CState.battle_at(st, r).is_empty():
 			continue
@@ -1066,11 +1082,11 @@ static func _stances(st: Dictionary, f: int, used: Dictionary, cx: Dictionary) -
 			continue
 		var thr := int(cx["thr"][r])
 		var want := CData.STANCE_FIELD
-		if thr > 0 and _sum(here) * 100 < thr * SHELTER_PCT:
+		if thr > 0 and _sum(here) * 100 < thr * kn[CP.SHELTER_PCT]:
 			want = CData.STANCE_GARRISON
 		if want == CData.STANCE_FIELD and int(cx["here"][r]) != 0:
 			var od := CBattle.odds(st, here, _foes_in(st, f, r), r, false, -1)
-			if int(od["win"]) < RELIEF_WIN:
+			if int(od["win"]) < kn[CP.RELIEF_WIN]:
 				want = CData.STANCE_GARRISON
 		for a in here:
 			if CState.stance(a) != want:
@@ -1102,17 +1118,18 @@ static func _must_hold(st: Dictionary, f: int, a: Dictionary) -> bool:
 static func accepts(st: Dictionary, from: int, to: int, what: String) -> bool:
 	var mine := faction_strength(st, to)
 	var theirs := faction_strength(st, from)
+	var kn := CP.of(st, to)
 	match what:
 		"peace":
 			var since := CState.dip_since(st, from, to)
-			if since < 3:
+			if since < kn[CP.PEACE_MIN_TURNS]:
 				return false
-			# Accept when not clearly winning, or after a long war.
 			# Accept when not clearly winning, after a long war, or when
 			# down to few regions.
-			return mine * 100 < theirs * 100 or since >= 18 or CState.regions_of(st, to).size() <= 2
+			return mine * 100 < theirs * kn[CP.PEACE_ACCEPT_PCT] or since >= kn[CP.PEACE_ACCEPT_LONG] \
+				or CState.regions_of(st, to).size() <= kn[CP.PEACE_ACCEPT_REGIONS]
 		"trade":
-			return CState.dip_since(st, from, to) >= 2 and mine * 100 < theirs * 250
+			return CState.dip_since(st, from, to) >= kn[CP.TRADE_ACCEPT_TURNS] and mine * 100 < theirs * kn[CP.TRADE_ACCEPT_PCT]
 		"cancel_trade":
 			return true
 	return false
@@ -1124,45 +1141,50 @@ static func diplomacy(st: Dictionary, f: int) -> void:
 	var turn := int(st["turn"])
 	var mine := faction_strength(st, f)
 	var my_wars := wars(st, f)
+	var kn := CP.of(st, f)
+	if my_wars.size() >= 2:
+		CP.count(CP.C_TWO_FRONTS, f)
 	# Peace when losing a long war.
 	for g in my_wars:
-		if CState.dip_since(st, f, g) < 6:
+		if CState.dip_since(st, f, g) < kn[CP.PEACE_ASK_TURNS]:
 			continue
 		var theirs := faction_strength(st, g)
-		if mine * 100 < theirs * 70 or CState.dip_since(st, f, g) >= 20:
+		if mine * 100 < theirs * kn[CP.PEACE_ASK_PCT] or CState.dip_since(st, f, g) >= kn[CP.PEACE_ASK_LONG]:
 			_propose(st, f, g, "peace")
 	# Trade with neighbours at peace.
 	for g in CState.nf():
 		if g == f or not CState.alive(st, g) or CState.dip(st, f, g) != CState.PEACE:
 			continue
-		if CState.dip_since(st, f, g) >= 3 and _neighbours(st, f, g) and CState.rand(st, 100) < 15:
+		if CState.dip_since(st, f, g) >= kn[CP.TRADE_ASK_TURNS] and _neighbours(st, f, g) \
+				and CState.rand(st, 100) < kn[CP.TRADE_ASK_CHANCE]:
 			_propose(st, f, g, "trade")
 	# Opportunistic war.
-	if turn < FIRST_WAR_TURN or my_wars.size() >= MAX_WARS:
+	if turn < kn[CP.FIRST_WAR_TURN] or my_wars.size() >= kn[CP.MAX_WARS]:
 		return
 	var aggr := _aggr(st)
 	for g in CState.nf():
 		if g == f or not CState.alive(st, g) or CState.dip(st, f, g) == CState.WAR:
 			continue
-		if CState.friendly(st, f, g) or not _neighbours(st, f, g) or CState.dip_since(st, f, g) < 6:
+		if CState.friendly(st, f, g) or not _neighbours(st, f, g) or CState.dip_since(st, f, g) < kn[CP.WAR_CALM_TURNS]:
 			continue
 		var theirs := faction_strength(st, g)
 		# Weaker neighbours, or ones already fighting someone else.
 		var busy := not wars(st, g).is_empty()
-		if mine * 100 < theirs * (WAR_RATIO_BUSY if busy else WAR_RATIO):
+		if mine * 100 < theirs * (kn[CP.WAR_RATIO_BUSY] if busy else kn[CP.WAR_RATIO]):
 			continue
-		var chance := WAR_CHANCE * aggr / 100
+		var chance := kn[CP.WAR_CHANCE] * aggr / 100
 		if CState.is_human(st, g):
 			var last := int(st["stats"].get("last_war_on_players", -100))
-			if turn < FIRST_WAR_ON_PLAYERS or turn - last < PLAYER_WAR_GAP:
+			if turn < kn[CP.FIRST_WAR_ON_PLAYERS] or turn - last < kn[CP.PLAYER_WAR_GAP]:
 				continue
-			chance = WAR_CHANCE_PLAYERS * aggr / 100
+			chance = kn[CP.WAR_CHANCE_PLAYERS] * aggr / 100
 		if CState.dip(st, f, g) == CState.TRADE:
-			chance /= 2
+			chance /= kn[CP.TRADE_WAR_DIV]
 		# Big realms start fewer wars.
 		var owned := CState.regions_of(st, f).size()
-		if owned > 8:
-			chance = chance * 8 / owned
+		var big := kn[CP.BIG_REALM]
+		if owned > big:
+			chance = chance * big / owned
 		if CState.rand(st, 100) < chance:
 			CRules.declare_war(st, f, g)
 			if CState.is_human(st, g):
@@ -1198,12 +1220,9 @@ static func _propose(st: Dictionary, f: int, g: int, what: String) -> void:
 
 # ------------------------------------------ the continuous overworld (v6) ---
 
-## Sea lanes in the AI's static distance fields cost this many points.
+## Sea lanes in the AI's static distance fields cost this many points (a
+## property of the memoised distance fields, shared by every profile).
 const FIELD_SEA := 200
-const FORCED_HELP := 1  # forced march when it gets a screen or gathering there a turn sooner
-const HUNT_COST := 13   # points a cell, the AI's estimate of a march across country
-const HUNT_WIN := 70    # odds to attack an enemy army in the field outside our lands
-const ATTACK_RATIO6 := 130  # version 6: % of the target's defence needed to attack
 
 
 ## Turns army a needs to reach region r's settlement (a hostile one: its
@@ -1252,7 +1271,8 @@ static func site_dist(c: int, r: int, ring: bool) -> int:
 ## sooner; armies staying in a threatened region fortify, or go inside the
 ## walls when far outmatched; the rest default.
 static func _move_grid(st: Dictionary, f: int, out: Array) -> void:
-	var ratio := ATTACK_RATIO6 * 100 / _aggr(st)
+	var kn := CP.of(st, f)
+	var ratio := kn[CP.ATTACK_RATIO6] * 100 / _aggr(st)
 	var nreg := CData.region_count()
 	var etas := {}
 	var free: Array = []
@@ -1306,9 +1326,9 @@ static func _move_grid(st: Dictionary, f: int, out: Array) -> void:
 		if now.is_empty() and soon.is_empty():
 			continue
 		var d := maxi(target_defence(st, f, t), 1)
-		var val := region_value(st, t)
+		var val := region_value(st, t, f)
 		if o >= 0 and CState.is_human(st, o):
-			val = val * 90 / 100
+			val = val * kn[CP.HUMAN_VALUE_PCT] / 100
 		targets.append({"t": t, "def": d, "now": now, "soon": soon, "score": val * 1000 / d})
 	targets.sort_custom(func(x, y): return x["score"] > y["score"] or (x["score"] == y["score"] and x["t"] < y["t"]))
 	for tg in targets:
@@ -1316,20 +1336,24 @@ static func _move_grid(st: Dictionary, f: int, out: Array) -> void:
 	# Idle armies take a fair chance.
 	for a in free:
 		var id := int(a["id"])
-		if used.has(id) or int(a.get("idle", 0)) < IDLE_TURNS or CRules.siege_role(st, a) != 0 or _hold(cx, st, f, a):
+		if used.has(id) or int(a.get("idle", 0)) < kn[CP.IDLE_TURNS] or CRules.siege_role(st, a) != 0 or _hold(cx, st, f, a):
 			continue
 		var best := -1
 		var best_v := 0
+		var best_win := 0
 		for tg in targets:
 			var t := int(tg["t"])
 			if int(etas[id]["t"][t]) != 0 or not CState.siege_at(st, t).is_empty() or not CState.battle_at(st, t).is_empty():
 				continue
 			var od := CBattle.odds(st, [a], _defenders6(st, t), t, true)
-			if int(od["win"]) >= IDLE_WIN and region_value(st, t) > best_v:
-				best_v = region_value(st, t)
+			if int(od["win"]) >= kn[CP.IDLE_WIN] and region_value(st, t, f) > best_v:
+				best_v = region_value(st, t, f)
 				best = t
+				best_win = int(od["win"])
 		if best >= 0:
 			used[id] = 1
+			if best_win < 50:
+				CP.count(CP.C_BAD_ODDS, f)
 			_go(out, a, CGrid.site(best), f, CData.MODE_SIEGE)
 	_raid6(st, f, free, etas, used, out, cx, want)
 	_screen6(st, f, free, etas, used, out, cx, want)
@@ -1376,7 +1400,7 @@ static func _toward(st: Dictionary, f: int, a: Dictionary, dest: int, cx: Dictio
 	var full := CState.max_mp6(_default_of(a))
 	var fld := CGrid.field(CGrid.site(r), FIELD_SEA)
 	var c := CState.cell(a)
-	if fld[c] >= CGrid.INF or fld[c] - fld[dest] <= full * 3 / 2:
+	if fld[c] >= CGrid.INF or fld[c] - fld[dest] <= full * CP.of(st, f)[CP.TOWARD_PCT] / 100:
 		return dest
 	var zm: PackedInt32Array = cx["zone"] if cx.has("zone") else PackedInt32Array()
 	if zm.is_empty():
@@ -1456,6 +1480,8 @@ static func _attack6(st: Dictionary, f: int, tg: Dictionary, ratio: int, _etas: 
 		cx: Dictionary, want: Dictionary) -> void:
 	var t := int(tg["t"])
 	var d := int(tg["def"])
+	var kn := CP.of(st, f)
+	var commit := d * ratio * kn[CP.COMMIT_PCT] / 100
 	var now: Array = []
 	var soon: Array = []
 	for a in tg["now"]:
@@ -1480,14 +1506,18 @@ static func _attack6(st: Dictionary, f: int, tg: Dictionary, ratio: int, _etas: 
 	var site := CGrid.site(t)
 	if p_now * 100 >= d * ratio:
 		var sent := 0
+		var n_sent := 0
 		for a in now:
 			used[int(a["id"])] = 1
 			_go(out, a, site, f, CData.MODE_ASSAULT)
 			sent += _str(cx, a)
-			if sent * 100 >= d * ratio * 13 / 10:
+			n_sent += 1
+			if sent * 100 >= commit:
 				break
+		if n_sent == 1 and not soon.is_empty():
+			CP.count(CP.C_TRICKLED, f)
 		return
-	if p_now * 100 >= d * ratio / 2 and not now.is_empty() and (not soon.is_empty() or now.size() > 1):
+	if p_now * 100 >= d * ratio * kn[CP.SIEGE_RATIO_PCT] / 100 and not now.is_empty() and (not soon.is_empty() or now.size() > 1):
 		for a in now:
 			used[int(a["id"])] = 1
 			_go(out, a, site, f, CData.MODE_SIEGE)
@@ -1509,7 +1539,7 @@ static func _attack6(st: Dictionary, f: int, tg: Dictionary, ratio: int, _etas: 
 	var trail: Array[int] = [CState.cell(lead)]
 	var c := CState.cell(lead)
 	for guard in 200:
-		if fld[c] <= full * 3 / 4:
+		if fld[c] <= full * kn[CP.GATHER_PCT] / 100:
 			break
 		var nx := CGrid.downhill(fld, c, FIELD_SEA)
 		if nx < 0:
@@ -1535,7 +1565,7 @@ static func _attack6(st: Dictionary, f: int, tg: Dictionary, ratio: int, _etas: 
 				want[id] = CData.ST_FORCED  # a turn sooner on a forced march
 			_go(out, a, sc, f, CData.MODE_SIEGE)
 		sent2 += _str(cx, a)
-		if sent2 * 100 >= d * ratio * 13 / 10:
+		if sent2 * 100 >= commit:
 			break
 
 
@@ -1559,13 +1589,16 @@ static func _sieges_grid(st: Dictionary, f: int, ratio: int, free: Array, etas: 
 			var relief := _relief_near6(st, f, r)
 			var starving := int(sg["supply"]) <= 0
 			var storm := int(od["att"]) * 100 >= int(od["def"]) * ratio or (starving and not relief.is_empty())
+			var kn := CP.of(st, f)
 			var lift := false
 			if not storm and not relief.is_empty() and _sum(relief) > _sum(bs + join):
 				var ro := CBattle.odds(st, relief + CRules.besieged_armies(st, r), bs + join, r, false, 0)
-				lift = int(ro["win"]) >= 50
-			if not storm and not lift and int(sg["held"]) >= CState.siege_supply(st, r) + SIEGE_PATIENCE:
-				storm = int(od["win"]) >= SIEGE_ASSAULT_WIN
+				lift = int(ro["win"]) >= kn[CP.LIFT_WIN]
+			if not storm and not lift and int(sg["held"]) >= CState.siege_supply(st, r) + kn[CP.SIEGE_PATIENCE]:
+				storm = int(od["win"]) >= kn[CP.SIEGE_ASSAULT_WIN]
 				lift = not storm
+				if storm and int(od["win"]) < 50:
+					CP.count(CP.C_BAD_ODDS, f)
 			if lift:
 				for a in bs:
 					if int(a["f"]) != f or int(a["busy"]) != 0 or int(a["moved"]) != 0 or not etas.has(int(a["id"])):
@@ -1598,7 +1631,7 @@ static func _sieges_grid(st: Dictionary, f: int, ratio: int, free: Array, etas: 
 			if rel.is_empty():
 				continue
 			var ro2 := CBattle.odds(st, rel + inside, bs2, r, false, 0)
-			if int(ro2["win"]) >= RELIEF_WIN:
+			if int(ro2["win"]) >= CP.of(st, f)[CP.RELIEF_WIN]:
 				for a in rel:
 					used[int(a["id"])] = 1
 					_go(out, a, site, f, CData.MODE_SIEGE)
@@ -1637,6 +1670,9 @@ static func _way_home6(st: Dictionary, f: int, a: Dictionary, sg: Dictionary, et
 ## line) when those armies' odds reach HUNT_WIN % (RELIEF_WIN % in our own
 ## lands); nearest first.
 static func _hunt(st: Dictionary, f: int, free: Array, used: Dictionary, out: Array, cx: Dictionary) -> void:
+	var kn := CP.of(st, f)
+	var hunt_cost := kn[CP.HUNT_COST]
+	var hunt_slack := kn[CP.HUNT_SLACK]
 	for e in st["armies"]:
 		if int(e["busy"]) != 0 or not CState.at_war(st, f, int(e["f"])) or CRules.inside(st, e) or CRules.siege_role(st, e) == 2:
 			continue
@@ -1648,12 +1684,12 @@ static func _hunt(st: Dictionary, f: int, free: Array, used: Dictionary, out: Ar
 				continue
 			if int(CData.REGIONS[int(a["r"])]["land"]) != int(CData.REGIONS[int(e["r"])]["land"]):
 				continue  # not across the sea
-			if CGrid.octile(CState.cell(a), ec) * HUNT_COST / 10 + 10 <= CState.max_mp6(_default_of(a)):
+			if CGrid.octile(CState.cell(a), ec) * hunt_cost / 10 + hunt_slack <= CState.max_mp6(_default_of(a)):
 				go.append(a)
 		if go.is_empty():
 			continue
 		var od := CBattle.odds(st, go, [e], int(e["r"]), false, -1)
-		var need := RELIEF_WIN if CState.owner(st, int(e["r"])) == f else HUNT_WIN
+		var need := kn[CP.RELIEF_WIN] if CState.owner(st, int(e["r"])) == f else kn[CP.HUNT_WIN]
 		if int(od["win"]) < need:
 			continue
 		for a in go:
@@ -1669,6 +1705,7 @@ static func _raid6(st: Dictionary, f: int, free: Array, etas: Dictionary, used: 
 	var best_a: Dictionary = {}
 	var best_t := -1
 	var best_v := 0
+	var raid_w := CP.of(st, f)[CP.RAID_WEALTH]
 	for a in free:
 		var id := int(a["id"])
 		if used.has(id) or CRules.siege_role(st, a) != 0 or _hold(cx, st, f, a):
@@ -1678,7 +1715,7 @@ static func _raid6(st: Dictionary, f: int, free: Array, etas: Dictionary, used: 
 			if int(et[t]) != 0:
 				continue
 			var o := CState.owner(st, t)
-			if o < 0 or not CState.at_war(st, f, o) or int(CData.REGIONS[t]["wealth"]) < RAID_WEALTH:
+			if o < 0 or not CState.at_war(st, f, o) or int(CData.REGIONS[t]["wealth"]) < raid_w:
 				continue
 			if not CState.siege_at(st, t).is_empty() or not CState.battle_at(st, t).is_empty() or CRules.raider(st, t) >= 0:
 				continue
@@ -1711,6 +1748,9 @@ static func _raid6(st: Dictionary, f: int, free: Array, etas: Dictionary, used: 
 ## on a forced march if that brings it there this turn.
 static func _screen6(st: Dictionary, f: int, free: Array, etas: Dictionary, used: Dictionary, out: Array, cx: Dictionary,
 		want: Dictionary) -> void:
+	var kn := CP.of(st, f)
+	var screen_pct := kn[CP.SCREEN_PCT]
+	var near := kn[CP.SCREEN_NEAR]
 	for r in CState.regions_of(st, f):
 		if not CState.siege_at(st, r).is_empty() or not CState.battle_at(st, r).is_empty():
 			continue
@@ -1720,7 +1760,7 @@ static func _screen6(st: Dictionary, f: int, free: Array, etas: Dictionary, used
 		var site := CGrid.site(r)
 		var guarded := false
 		for a in st["armies"]:
-			if int(a["f"]) == f and not CRules.inside(st, a) and CGrid.cheb(CState.cell(a), site) <= 2:
+			if int(a["f"]) == f and not CRules.inside(st, a) and CGrid.cheb(CState.cell(a), site) <= near:
 				guarded = true
 		if guarded:
 			continue
@@ -1728,12 +1768,12 @@ static func _screen6(st: Dictionary, f: int, free: Array, etas: Dictionary, used
 		var forced := false
 		for a in free:
 			var id := int(a["id"])
-			if used.has(id) or CRules.siege_role(st, a) != 0 or _str(cx, a) * 100 < thr * SCREEN_PCT or _hold(cx, st, f, a):
+			if used.has(id) or CRules.siege_role(st, a) != 0 or _str(cx, a) * 100 < thr * screen_pct or _hold(cx, st, f, a):
 				continue
 			var tt := int(etas[id]["t"][r])
 			var fz := false
 			if tt != 0:
-				if tt == FORCED_HELP and eta(st, a, r, CState.max_mp6({"units": a["units"], "stance": CData.ST_FORCED})) == 0:
+				if tt == kn[CP.FORCED_HELP] and eta(st, a, r, CState.max_mp6({"units": a["units"], "stance": CData.ST_FORCED})) == 0:
 					fz = true
 				else:
 					continue
@@ -1745,12 +1785,15 @@ static func _screen6(st: Dictionary, f: int, free: Array, etas: Dictionary, used
 			if forced:
 				want[int(best["id"])] = CData.ST_FORCED
 			_go(out, best, CState.field_cell(r), f, CData.MODE_SIEGE)
+		elif CState.armies_in(st, r).is_empty():
+			CP.count(CP.C_EMPTY_CITY, f)
 
 
 ## Stances of the armies that stay: in a threatened region of ours, inside
 ## the walls when far outmatched (they march onto the settlement), else
 ## fortified; elsewhere the default.
 static func _stances6(st: Dictionary, f: int, free: Array, used: Dictionary, cx: Dictionary, want: Dictionary, out: Array) -> void:
+	var shelter := CP.of(st, f)[CP.SHELTER_PCT]
 	for a in free:
 		var id := int(a["id"])
 		if used.has(id) or CRules.siege_role(st, a) != 0:
@@ -1765,7 +1808,7 @@ static func _stances6(st: Dictionary, f: int, free: Array, used: Dictionary, cx:
 		for b in free:
 			if int(b["r"]) == r and not used.has(int(b["id"])):
 				mine += _str(cx, b)
-		if mine * 100 < thr * SHELTER_PCT and not CRules.inside(st, a):
+		if mine * 100 < thr * shelter and not CRules.inside(st, a):
 			used[id] = 1
 			_go(out, a, CGrid.site(r), f, CData.MODE_SIEGE)  # into the walls
 			continue

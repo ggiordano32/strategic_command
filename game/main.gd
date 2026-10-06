@@ -31,6 +31,11 @@ var _replay_button: Button
 ## Ground palette for the playable battles (MapGen.PAL_*; Plain = no woods).
 var _ground_idx := 0
 var _ground_button: Button
+## Battle AI skill for the sandbox (sim/ai_profile.gd EASY / AVERAGE /
+## SKILLED; Easy and Skilled play like Average for now).
+var _ai_skill := 1
+var _ai_button: Button
+const AI_SKILL_LABELS: Array[String] = ["easy (soon)", "average", "skilled (soon)"]
 ## Settlement battle controls: seed, level 0-2, walls 0-3, terrain kind,
 ## the player attacks (def side 1) or defends (0).
 var _siege_seed: LineEdit
@@ -293,6 +298,10 @@ func _build_menu() -> Control:
 	_ground_button = _menu_button("", _cycle_ground)
 	_ground_button.tooltip_text = "Region look and woods: plain (no woods), arid, dry, green, rocky"
 	row.add_child(_ground_button)
+	_ai_button = _menu_button("", _cycle_ai_skill)
+	_ai_button.tooltip_text = "Battle AI skill (Easy and Skilled play like Average for now)"
+	row.add_child(_ai_button)
+	_update_ai_button()
 	_replay_button = _menu_button("Replay last battle", _replay)
 	_replay_button.tooltip_text = "Same battle, same seed, same ground"
 	_replay_button.disabled = true
@@ -921,6 +930,7 @@ func _start_siege(params: Array) -> void:
 	b.scenario_id = "settlement"
 	b.custom_scenario = Scenarios.siege_test(params[0], params[1], params[2], params[3], params[4], params[5],
 		-1, int(params[6]) if params.size() > 6 else MapGen.PLAN_RING, int(params[7]) if params.size() > 7 else 0)
+	b.ai_skill = _ai_skill
 	b.seed_value = _seed if _seed >= 0 else int(Time.get_unix_time_from_system()) & 0x7FFFFFFF
 	_last_siege = params
 	_last_id = "settlement"
@@ -941,6 +951,16 @@ func _cycle_ground() -> void:
 func _update_ground_button() -> void:
 	if _ground_button != null:
 		_ground_button.text = "Ground: " + MapGen.PALETTE_NAMES[_ground_idx].to_lower()
+
+
+func _cycle_ai_skill() -> void:
+	_ai_skill = (_ai_skill + 1) % AI_SKILL_LABELS.size()
+	_update_ai_button()
+
+
+func _update_ai_button() -> void:
+	if _ai_button != null:
+		_ai_button.text = "AI: " + AI_SKILL_LABELS[_ai_skill]
 
 
 func _cycle_terrain() -> void:
@@ -1022,6 +1042,7 @@ func _start_with(id: String, sd: int, terrain_kind: int) -> void:
 	b.scenario_id = id
 	b.seed_value = sd
 	b.terrain_kind = terrain_kind
+	b.ai_skill = _ai_skill
 	if id in Scenarios.PLAYABLE and _ground_idx > 0:
 		b.ground = _ground_idx
 	_last_siege = []

@@ -56,6 +56,9 @@ var terrain_kind := -1
 var ground := -1
 ## A ready-made scenario (campaign battles) used instead of scenario_id.
 var custom_scenario: Dictionary = {}
+## Sandbox: battle AI skill for both sides (sim/ai_profile.gd), -1 = the
+## scenario's own (campaign battles carry theirs in the scenario).
+var ai_skill := -1
 ## Campaign battle: leaving before the battle is decided needs a second tap
 ## (the army withdraws and the battle counts as lost); the menu buttons
 ## read "Back to campaign".
@@ -175,6 +178,8 @@ func _ready() -> void:
 	if gr >= 0 and scn.has("terrain") and not (scn["terrain"] as Dictionary).has("city"):
 		scn["terrain"]["ground"] = gr
 		scn["terrain"]["forest"] = MapGen.PALETTE_FOREST[clampi(gr, 0, MapGen.PALETTE_FOREST.size() - 1)]
+	if ai_skill >= 0 and not campaign_mode:
+		scn["ai_skill"] = [ai_skill, ai_skill]
 	sim.setup(scn, seed_value)
 	bench_mode = sim.is_ai_side(0) and sim.is_ai_side(1)
 	interactive = not sim.is_ai_side(PLAYER_SIDE)

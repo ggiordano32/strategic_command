@@ -25,6 +25,11 @@ extends SceneTree
 ##    attacking a walled town (orders at its gates for batteries and foot)
 ##    and two peers defending one (opening and closing gates), every frame
 ##    equal; snapshots of woods and city battles restore exactly (in 1).
+## 6. AI profiles (sim/ai_profile.gd): a scenario naming the default
+##    profile ("ai_skill" / "ai_style" AVERAGE / BALANCED) hashes exactly as
+##    one without the keys; another profile is in the hash from tick 0 and
+##    survives snapshot / restore (a sim set up with the default profile
+##    takes the snapshot's).
 ## Exits 0 on success.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -39,6 +44,7 @@ var quick := false
 func _init() -> void:
 	quick = OS.get_cmdline_user_args().has("--quick")
 	_test_snapshots()
+	_test_profiles()
 	_test_lockstep()
 	_test_solo_equivalence()
 	_test_lockstep_city(1)
@@ -52,6 +58,39 @@ func _init() -> void:
 func _fail(msg: String) -> void:
 	_ok = false
 	printerr("FAIL " + msg)
+
+
+# ------------------------------------------------------------- profiles ---
+
+func _test_profiles() -> void:
+	var base := Scenarios.make("skirmish")
+	var plain := BattleSim.new()
+	plain.setup(base, 7)
+	var named := base.duplicate(true)
+	named["ai_skill"] = [1, 1]
+	named["ai_style"] = [1, 1]
+	var dflt := BattleSim.new()
+	dflt.setup(named, 7)
+	var other := base.duplicate(true)
+	other["ai_skill"] = [2, 0]
+	other["ai_style"] = [0, 2]
+	var prof := BattleSim.new()
+	prof.setup(other, 7)
+	if dflt.state_hash() != plain.state_hash():
+		_fail("profiles: the default profile named in the scenario changed the hash")
+	if prof.state_hash() == plain.state_hash():
+		_fail("profiles: another profile is not in the hash at tick 0")
+	for t in 50:
+		prof.step()
+	var snap := prof.snapshot()
+	var back := BattleSim.new()
+	back.setup(base, 7)
+	if not back.restore(snap) or back.state_hash() != prof.state_hash() \
+			or back.ai_skill != prof.ai_skill or back.ai_style != prof.ai_style:
+		_fail("profiles: snapshot / restore lost the AI profile")
+	else:
+		print("PASS profiles: default hashes as before, others hashed (%08x vs %08x), snapshot keeps them" % [
+			prof.state_hash(), plain.state_hash()])
 
 
 # ------------------------------------------------------------ snapshots ---

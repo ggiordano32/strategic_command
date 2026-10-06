@@ -195,6 +195,8 @@ Per-soldier simulation is the main cost, so the sim is built around it:
 - Unit-level behaviours: hold line, advance, flank with cavalry, skirmish with
   missiles, protect flanks, rout pursuit.
 - An army-level planner picks a deployment and assigns behaviours.
+- Every threshold and interval it uses comes from a skill / personality
+  profile (`sim/ai_profile.gd`; design in `docs/AI.md`).
 
 ### Milestone 2: mechanics as built
 
@@ -543,6 +545,12 @@ when its fighting strength is under 30% of the enemy's, or under a fifth of
 its own starting strength while weaker than the enemy (empty batteries count
 almost nothing). The lines engage when their *foot* are within 60 m
 (cavalry raids and batteries no longer flip the whole army into melee).
+Every number in this paragraph (think intervals, distances, ratios, target
+scores) is a knob of the side's AI profile, `sim/ai_profile.gd` (skill
+Easy / Average / Skilled, personality Cautious / Balanced / Aggressive;
+the values here are the Average / Balanced row), carried per side in the
+scenario (`ai_skill`, `ai_style`); the settlement AI and the campaign AI
+(`campaign/cai_profile.gd`) likewise. See `docs/AI.md` "As built: profiles".
 Artillery: bolts deploy at the ends of the first line (clear, flat field of
 fire), stones 25 m behind the centre; a battery keeps its place while it
 has targets in range and friends within 30 m, otherwise packs up to follow

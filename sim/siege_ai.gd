@@ -49,14 +49,17 @@ extends RefCounted
 ## Attackers with the outer gate down and a citadel shut against them: the
 ## heaviest foot hack at its gate (the batteries shoot it if they reach),
 ## the rest fight in the town and gather before it.
+## Profiles: the distances, times and ratios above are knobs of the side's
+## skill / personality profile (sim/ai_profile.gd, the S_* knobs and the
+## field AI's shared ones), read as kn[AP.X] with kn = AP.of(sim, side).
 
 const FM := preload("res://sim/fixed_math.gd")
 const UT := preload("res://sim/unit_types.gd")
 const BattleAI := preload("res://sim/battle_ai.gd")
 const MapGen := preload("res://sim/mapgen.gd")
+const AP := preload("res://sim/ai_profile.gd")
 
 const M := 1024
-const THINK_PERIOD := 10
 
 const U_READY := 0
 const U_ROUTING := 1
@@ -94,30 +97,16 @@ const A_STORM := 27     # attacking foot in the assault (u_ai_x: 0 to the street
 const A_CAVOUT := 28    # attacking cavalry kept outside
 const A_CIT := 29       # defender holding the citadel (u_ai_x / u_ai_y = post)
 
-const STAGE_OUT := 160 * M      # waiting line from the gate's face
-const ART_OUT := 165 * M        # batteries' firing line
-const COVER_OUT := 110 * M      # archers' line
-const HACK_AFTER := 1200        # bombardment ticks before the foot hack anyway
-const STORM_R := 45 * M         # assault: attack defenders this close
-const BEATEN_PCT := 35         # attackers down to this % of their strength and weaker than the defenders: withdraw
-const SPREAD := 25 * M          # ... each other unit of ours on a defender counts as this much further
-const GATE_REACT := 25 * M      # gate guards attack attackers this close to the gate
-const RESERVE_R := 140 * M      # reserves attack attackers inside this close to their post
-const CLOSE_R := 100 * M        # close an open gate with attackers this close
-const STALL_TICKS := 1500       # under STALL_PROG defenders killed / gate damage (100 hp each) for this long: a stall
-const STALL_PROG := 10
-const ASSAULT_ALL := 2400       # after this long in the assault every unit goes in
-const OFFWALL_R := 40 * M       # wall units come down with attackers in the town this close
-const CIT_LOST_R := 30 * M      # attackers this close to the citadel's gate: into the citadel
-const CIT_SHUT_R := 25 * M      # ... and it is shut with attackers this close
 
 
 static func think(sim) -> void:
 	var tick: int = sim.tick
-	if tick % THINK_PERIOD == 0:
-		for side in 2:
-			if sim.ai_sides[side] != 0:
-				_army(sim, side)
+	var kn0 := AP.of(sim, 0)
+	var kn1 := AP.of(sim, 1)
+	var unit_period := PackedInt32Array([kn0[AP.UNIT_THINK], kn1[AP.UNIT_THINK]])
+	for side in 2:
+		if sim.ai_sides[side] != 0 and tick % (kn0 if side == 0 else kn1)[AP.ARMY_THINK] == 0:
+			_army(sim, side)
 	if sim.ai_sides[0] == 0 and sim.ai_sides[1] == 0:
 		return
 	var local := [0, 0]
@@ -127,7 +116,7 @@ static func think(sim) -> void:
 		local[side] = k + 1
 		if sim.ai_sides[side] == 0 or sim.u_state[u] != U_READY:
 			continue
-		if (k + tick) % THINK_PERIOD != 0:
+		if (k + tick) % unit_period[side] != 0:
 			continue
 		if sim.ai_phase[side] == P_WITHDRAW or sim.u_order[u] == O_WITHDRAW:
 			continue
@@ -143,6 +132,7 @@ static func _army(sim, side: int) -> void:
 	var phase: int = sim.ai_phase[side]
 	if phase == P_WITHDRAW:
 		return
+	var kn := AP.of(sim, side)
 	if side == sim.city_def:
 		if phase != SD_HOLD:
 			sim.ai_phase[side] = SD_HOLD
@@ -157,8 +147,8 @@ static func _army(sim, side: int) -> void:
 	# Attackers. Clearly lost: withdraw (as in the field).
 	var own := BattleAI._strength(sim, side)
 	var foe := BattleAI._strength(sim, 1 - side)
-	if sim.tick > 600 and foe > 0 and (own * 100 < foe * 30 \
-			or (own * 100 < BattleAI._start_strength(sim, side) * BEATEN_PCT and own < foe)):
+	if sim.tick > kn[AP.WD_MIN_TICK] and foe > 0 and (own * 100 < foe * kn[AP.WD_FOE_PCT] \
+			or (own * 100 < BattleAI._start_strength(sim, side) * kn[AP.S_BEATEN_PCT] and own < foe)):
 		sim.queue_order({"tick": sim.tick, "type": ORDER_WITHDRAW_ALL, "side": side,
 			"player": BattleAI.AI_PLAYER_BASE + side, "seq": 9000})
 		sim.ai_phase[side] = P_WITHDRAW
@@ -176,20 +166,21 @@ static func _army(sim, side: int) -> void:
 			prog += sim.u_killed[u]
 	for g in sim.n_gates:
 		prog += (sim.g_hp0[g] - sim.g_hp[g]) / 10000
-	if prog >= sim.ai_prog[0] + STALL_PROG or (phase == SP_APPROACH and sim.tick - sim.ai_t[side] < 2 * HACK_AFTER):
+	var stall: int = kn[AP.S_STALL_TICKS]
+	if prog >= sim.ai_prog[0] + kn[AP.S_STALL_PROG] or (phase == SP_APPROACH and sim.tick - sim.ai_t[side] < 2 * kn[AP.S_HACK_AFTER]):
 		# (The first four minutes of the approach - the batteries setting up
 		# and bombarding, then the foot hacking - never count as a stall.)
 		sim.ai_prog[0] = maxi(prog, sim.ai_prog[0])
 		sim.ai_prog[1] = sim.tick
-	elif phase == SP_ASSAULT and sim.tick - sim.ai_t[side] > ASSAULT_ALL and sim.ai_prog[2] == 0:
+	elif phase == SP_ASSAULT and sim.tick - sim.ai_t[side] > kn[AP.S_ASSAULT_ALL] and sim.ai_prog[2] == 0:
 		sim.ai_prog[2] = 1  # four minutes into the assault: everything goes in
-	elif sim.tick - sim.ai_prog[1] > STALL_TICKS and (sim.ai_prog[2] == 0 \
-			or sim.tick - sim.ai_prog[1] > 2 * STALL_TICKS):
+	elif sim.tick - sim.ai_prog[1] > stall and (sim.ai_prog[2] == 0 \
+			or sim.tick - sim.ai_prog[1] > 2 * stall):
 		var foe_g := _ground_strength(sim, 1 - side)
-		if sim.ai_prog[2] == 0 and own * 10 >= foe_g * 12:
+		if sim.ai_prog[2] == 0 and own * 100 >= foe_g * kn[AP.S_ALLOUT_PCT]:
 			sim.ai_prog[2] = 1  # all out
 			sim.ai_prog[1] = sim.tick
-		elif sim.ai_prog[2] != 0 and own * 10 >= foe_g * 15:
+		elif sim.ai_prog[2] != 0 and own * 100 >= foe_g * kn[AP.S_KEEP_PCT]:
 			sim.ai_prog[1] = sim.tick  # all out and still clearly stronger: keep at it
 		else:
 			# Too weak, or all out and still nothing for 5 minutes: give up.
@@ -263,12 +254,13 @@ static func _breach(sim, side: int) -> int:
 ## Gate to break: the weakest and nearest (hit points count 4 m per 100 hp).
 static func _pick_gate(sim, side: int) -> int:
 	var c := _army_centre(sim, side)
+	var hp_w := AP.of(sim, side)[AP.S_GATE_HP_W]
 	var best := -1
 	var best_s := 0
 	for g in sim.n_gates:
 		if sim.g_state[g] != GATE_CLOSED or sim.g_cit[g] != 0:
 			continue
-		var s: int = BattleAI._d(sim.g_ox[g] - c.x, sim.g_oy[g] - c.y) / M + sim.g_hp[g] / 100 * 4 / 100
+		var s: int = BattleAI._d(sim.g_ox[g] - c.x, sim.g_oy[g] - c.y) / M + sim.g_hp[g] / 100 * hp_w / 100
 		if best < 0 or s < best_s:
 			best = g
 			best_s = s
@@ -298,13 +290,14 @@ static func _close_gates(sim, side: int) -> void:
 			break
 	if any < 0:
 		return
+	var close_r := AP.of(sim, side)[AP.S_CLOSE_R]
 	for g in sim.n_gates:
 		if sim.g_state[g] != GATE_OPEN or sim.g_cit[g] != 0:
 			continue
 		for o in sim.n_units:
 			if sim.u_side[o] == side or sim.u_state[o] != U_READY:
 				continue
-			if BattleAI._d(sim.u_cx[o] - sim.g_x[g], sim.u_cy[o] - sim.g_y[g]) < CLOSE_R:
+			if BattleAI._d(sim.u_cx[o] - sim.g_x[g], sim.u_cy[o] - sim.g_y[g]) < close_r:
 				sim.queue_order({"tick": sim.tick, "type": ORDER_GATE, "unit": any, "gate": g, "on": 1,
 					"player": BattleAI.AI_PLAYER_BASE + side, "seq": 8000 + g})
 				break
@@ -317,7 +310,8 @@ static func _classify_defender(sim, u: int) -> void:
 		BattleAI._set_mode(sim, u, A_WALLU)
 		return
 	for g in sim.n_gates:
-		if sim.g_cit[g] == 0 and BattleAI._d(sim.u_ax[u] - sim.g_ix[g], sim.u_ay[u] - sim.g_iy[g]) < 20 * M:
+		if sim.g_cit[g] == 0 and BattleAI._d(sim.u_ax[u] - sim.g_ix[g], sim.u_ay[u] - sim.g_iy[g]) \
+				< AP.of(sim, sim.u_side[u])[AP.S_GATE_POST_R]:
 			BattleAI._set_mode(sim, u, A_GATE)
 			sim.u_ai_y[u] = g
 			sim.u_ai_x[u] = 0
@@ -372,7 +366,7 @@ static func _off_wall(sim, u: int) -> void:
 			gd = d
 	if g < 0 or sim.g_state[g] == GATE_CLOSED:
 		return
-	if _nearest_attacker(sim, u, sim.u_cx[u], sim.u_cy[u], OFFWALL_R, true) < 0:
+	if _nearest_attacker(sim, u, sim.u_cx[u], sim.u_cy[u], AP.of(sim, sim.u_side[u])[AP.S_OFFWALL_R], true) < 0:
 		return
 	var post := _fallback_post(sim, u)
 	BattleAI._order(sim, u, {"type": 1, "x": post.x, "y": post.y, "facing": post.z,
@@ -404,6 +398,7 @@ static func _fallback_post(sim, u: int) -> Vector3i:
 ## gate is shut once they are in or attackers come close.
 static func _citadel(sim, side: int) -> void:
 	var g: int = sim.cit_gate
+	var kn := AP.of(sim, side)
 	if sim.ai_cit[side] == 0:
 		var lost := false
 		var att := 0
@@ -415,7 +410,7 @@ static func _citadel(sim, side: int) -> void:
 				if sim.u_wall[o] == 0:
 					dfn += sim.u_alive[o]
 				continue
-			if BattleAI._d(sim.u_cx[o] - sim.g_x[g], sim.u_cy[o] - sim.g_y[g]) < CIT_LOST_R:
+			if BattleAI._d(sim.u_cx[o] - sim.g_x[g], sim.u_cy[o] - sim.g_y[g]) < kn[AP.S_CIT_LOST_R]:
 				lost = true
 			if (sim.veg_bits(sim.u_cx[o], sim.u_cy[o]) & MapGen.V_URBAN) != 0:
 				att += sim.u_alive[o]
@@ -463,7 +458,7 @@ static func _citadel(sim, side: int) -> void:
 	if not shut:
 		for o in sim.n_units:
 			if sim.u_side[o] != side and sim.u_state[o] == U_READY \
-					and BattleAI._d(sim.u_cx[o] - sim.g_x[g], sim.u_cy[o] - sim.g_y[g]) < CIT_SHUT_R:
+					and BattleAI._d(sim.u_cx[o] - sim.g_x[g], sim.u_cy[o] - sim.g_y[g]) < kn[AP.S_CIT_SHUT_R]:
 				shut = true
 				break
 	if shut:
@@ -479,7 +474,7 @@ static func _cit_guard(sim, u: int) -> void:
 	if _engaged(sim, u):
 		return
 	var t := -1
-	var best_d: int = sim.cit_r + 8 * M
+	var best_d: int = sim.cit_r + AP.of(sim, sim.u_side[u])[AP.S_CIT_REACT]
 	for o in sim.n_units:
 		if sim.u_side[o] == sim.u_side[u] or sim.u_state[o] != U_READY:
 			continue
@@ -502,13 +497,14 @@ static func _gate_guard(sim, u: int) -> void:
 	var gy: int = sim.g_iy[g]
 	if _engaged(sim, u):
 		return
-	var t := _nearest_attacker(sim, u, gx, gy, GATE_REACT, false)
+	var kn := AP.of(sim, sim.u_side[u])
+	var t := _nearest_attacker(sim, u, gx, gy, kn[AP.S_GATE_REACT], false)
 	if t >= 0:
 		BattleAI._attack(sim, u, t, 0)
 		return
 	if sim.g_state[g] == GATE_BROKEN:
 		# The gate has fallen and nobody is at it: hold the street behind.
-		var t2 := _nearest_attacker(sim, u, gx, gy, 60 * M, true)
+		var t2 := _nearest_attacker(sim, u, gx, gy, kn[AP.S_STREET_R], true)
 		if t2 >= 0:
 			BattleAI._attack(sim, u, t2, 0)
 			return
@@ -524,11 +520,13 @@ static func _reserve(sim, u: int) -> void:
 		return
 	var hx: int = sim.u_ai_x[u]
 	var hy: int = sim.u_ai_y[u]
-	var t := _nearest_attacker(sim, u, hx, hy, RESERVE_R, true)
+	var kn := AP.of(sim, sim.u_side[u])
+	var t := _nearest_attacker(sim, u, hx, hy, kn[AP.S_RESERVE_R], true)
 	if t >= 0 and sim.u_cls[u] != UT.CLS_ART:
 		if sim.u_cls[u] == UT.CLS_MISSILE and sim.u_ammo[u] > 0:
 			return  # shoot from the post (fire at will)
-		BattleAI._attack(sim, u, t, 1 if BattleAI._dist2(sim, u, t) < 30 * M * 30 * M else 0)
+		var run_r := kn[AP.S_RESERVE_RUN]
+		BattleAI._attack(sim, u, t, 1 if BattleAI._dist2(sim, u, t) < run_r * run_r else 0)
 		return
 	var face: int = FM.atan2_a(sim.g_y[0] - hy, sim.g_x[0] - hx) if sim.n_gates > 0 else sim.u_dface[u]
 	_go_home(sim, u, hx, hy, face, 10)
@@ -589,12 +587,16 @@ static func _attacker(sim, u: int) -> void:
 	var cls: int = sim.u_cls[u]
 	# Badly mauled: fall back once (as in the field).
 	var mode: int = sim.u_ai[u]
-	if mode != BattleAI.A_RETIRE and sim.u_alive[u] * 100 < sim.u_count0[u] * 30 and sim.u_morale[u] < 350:
+	var kn := AP.of(sim, side)
+	if mode != BattleAI.A_RETIRE and sim.u_alive[u] * 100 < sim.u_count0[u] * kn[AP.RETIRE_ALIVE_PCT] \
+			and sim.u_morale[u] < kn[AP.RETIRE_MORALE]:
 		BattleAI._retire(sim, u)
 		return
 	if mode == BattleAI.A_RETIRE:
-		if sim.tick - sim.u_ai_t[u] < BattleAI.RETIRE_TICKS or sim.u_order[u] != O_NONE:
+		if sim.tick - sim.u_ai_t[u] < kn[AP.RETIRE_TICKS] or sim.u_order[u] != O_NONE:
 			return
+		if sim.u_routs[u] == 0 and sim.u_alive[u] * 100 < sim.u_count0[u] * kn[AP.RETIRE_ALIVE_PCT]:
+			BattleAI._count(sim, side, AP.C_SAVED)
 		BattleAI._set_mode(sim, u, A_WAIT)
 	if cls == UT.CLS_ART:
 		_att_art(sim, u, phase)
@@ -638,30 +640,31 @@ static func _spread(k: int, n: int, gap: int) -> int:
 
 static func _att_art(sim, u: int, phase: int) -> void:
 	var side: int = sim.u_side[u]
+	var kn := AP.of(sim, side)
 	BattleAI._set_mode(sim, u, A_SART)
 	var ty: int = sim.u_type[u]
 	var full: int = sim.u_neng[u] * UT.stat(ty, "m_ammo")
 	# Refilling or getting into / out of it: as in the field.
 	if sim.u_refill[u] != 0:
-		if BattleAI._art_threatened(sim, u) or sim.u_ammo[u] * 4 >= full * 3:
+		if BattleAI._art_threatened(sim, u) or sim.u_ammo[u] * 100 >= full * kn[AP.REFILL_FULL_PCT]:
 			BattleAI._order(sim, u, {"type": ORDER_REFILL, "on": 0}, 23)
 		return
 	if sim.u_rprog[u] > 0:
 		return
-	if sim.u_ammo[u] * 4 <= full and BattleAI._can_refill(sim, u) and not BattleAI._art_threatened(sim, u) \
+	if sim.u_ammo[u] * 100 <= full * kn[AP.REFILL_LOW_PCT] and BattleAI._can_refill(sim, u) and not BattleAI._art_threatened(sim, u) \
 			and sim.u_order[u] != O_MOVE:
 		BattleAI._order(sim, u, {"type": ORDER_REFILL, "on": 1}, 23)
 		return
 	var g: int = sim.ai_gate[side]
 	if phase == SP_APPROACH and g >= 0 and sim.g_state[g] == GATE_CLOSED and sim.u_ammo[u] > 0:
 		var rk := _rank(sim, u, func(o): return sim.u_cls[o] == UT.CLS_ART)
-		var lat := _spread(rk.x, rk.y, 30 * M)
-		var spot := _gate_point(sim, g, ART_OUT, lat)
+		var lat := _spread(rk.x, rk.y, kn[AP.S_ART_SPREAD])
+		var spot := _gate_point(sim, g, kn[AP.S_ART_OUT], lat)
 		if UT.stat(ty, "m_kind") == 1:
 			# Bolts need a clear flat line to the gate: try further aside.
 			var f: Vector2i = sim.gate_face(g)
 			for off in [0, 20, -20, 40, -40]:
-				var cand := _gate_point(sim, g, ART_OUT, lat + off * M)
+				var cand := _gate_point(sim, g, kn[AP.S_ART_OUT], lat + off * M)
 				if sim.lof_block(cand.x, cand.y, sim.height_at(cand.x, cand.y) + 1536, f.x, f.y,
 						sim.height_at(f.x, f.y) + 1024, 0, 0, 8192) < 0:
 					spot = cand
@@ -679,14 +682,14 @@ static func _att_art(sim, u: int, phase: int) -> void:
 		# The citadel's gate, if it is within reach from here.
 		var f: Vector2i = sim.gate_face(cg)
 		var dcg := BattleAI._d(f.x - sim.u_cx[u], f.y - sim.u_cy[u])
-		var reach: int = UT.stat(ty, "m_range") * 92 / 100
+		var reach: int = UT.stat(ty, "m_range") * kn[AP.S_ART_REACH_PCT] / 100
 		if dcg < reach:
 			if sim.u_order[u] != O_ATTACK or sim.u_gtarget[u] != cg:
 				BattleAI._order(sim, u, {"type": ORDER_ATTACK, "target": -1, "gate": cg, "run": 0}, 0)
 			return
 		# Out of reach: bring the battery up (through the breach if need be)
 		# to 70 % of its range from the citadel's gate.
-		var want := UT.stat(ty, "m_range") * 70 / 100
+		var want := UT.stat(ty, "m_range") * kn[AP.S_ART_CLOSE_PCT] / 100
 		var spot := Vector2i(f.x + (sim.u_cx[u] - f.x) * want / maxi(dcg, 1),
 			f.y + (sim.u_cy[u] - f.y) * want / maxi(dcg, 1))
 		if sim.u_order[u] != O_MOVE or BattleAI._d(sim.u_dx[u] - spot.x, sim.u_dy[u] - spot.y) > 8 * M:
@@ -761,11 +764,13 @@ static func _hack_rank(sim, u: int) -> int:
 
 static func _att_foot(sim, u: int, phase: int) -> void:
 	var side: int = sim.u_side[u]
+	var kn := AP.of(sim, side)
 	if phase == SP_PURSUE:
-		var r := _router(sim, u, 80 * M)
+		var r := _router(sim, u, kn[AP.S_FOOT_ROUTER_R])
 		if r >= 0:
 			if sim.u_order[u] != O_ATTACK or sim.u_target[u] != r:
 				BattleAI._attack(sim, u, r, 1)
+				BattleAI._count(sim, side, AP.C_INF_CHASE)
 			return
 		_storm(sim, u)
 		return
@@ -777,29 +782,29 @@ static func _att_foot(sim, u: int, phase: int) -> void:
 		return
 	# Hack at the gate: with no battery from the start, else after a while
 	# of bombardment.
-	var hackers := 2
+	var hackers: int = kn[AP.S_HACKERS]
 	if not _art_ready(sim, side):
-		hackers = 99 if sim.tick - sim.ai_t[side] > 2 * HACK_AFTER else 2
-	elif sim.tick - sim.ai_t[side] < HACK_AFTER:
+		hackers = 99 if sim.tick - sim.ai_t[side] > 2 * kn[AP.S_HACK_AFTER] else kn[AP.S_HACKERS]
+	elif sim.tick - sim.ai_t[side] < kn[AP.S_HACK_AFTER]:
 		hackers = 0
 	if _hack_rank(sim, u) < hackers:
 		BattleAI._set_mode(sim, u, A_HACK)
 		if _engaged(sim, u):
 			return
 		if sim.u_gtarget[u] != g:
-			var far := BattleAI._d(sim.u_cx[u] - sim.g_ox[g], sim.u_cy[u] - sim.g_oy[g]) > 40 * M
+			var far := BattleAI._d(sim.u_cx[u] - sim.g_ox[g], sim.u_cy[u] - sim.g_oy[g]) > kn[AP.S_HACK_RUN]
 			BattleAI._order(sim, u, {"type": ORDER_ATTACK, "target": -1, "gate": g,
 				"run": 1 if far and sim.u_cls[u] != UT.CLS_PIKE else 0}, 0)
 		return
 	BattleAI._set_mode(sim, u, A_WAIT)
 	# Defenders outside the walls near us: fight them.
-	var t := _nearest_outside(sim, u, 40 * M)
+	var t := _nearest_outside(sim, u, kn[AP.S_OUTSIDE_R])
 	if t >= 0:
 		if not _engaged(sim, u):
 			BattleAI._attack(sim, u, t, 1)
 		return
 	var rk := _rank(sim, u, func(o): return sim.u_cls[o] == UT.CLS_INF or sim.u_cls[o] == UT.CLS_PIKE)
-	var spot := _gate_point(sim, g, STAGE_OUT, _spread(rk.x, rk.y, 34 * M))
+	var spot := _gate_point(sim, g, kn[AP.S_STAGE_OUT], _spread(rk.x, rk.y, kn[AP.S_FOOT_SPREAD]))
 	var face := FM.atan2_a(sim.g_y[g] - spot.y, sim.g_x[g] - spot.x)
 	_go_home(sim, u, spot.x, spot.y, face, 10)
 
@@ -827,13 +832,15 @@ static func _storm(sim, u: int) -> void:
 	BattleAI._set_mode(sim, u, A_STORM)
 	if _engaged(sim, u):
 		return
+	var kn := AP.of(sim, sim.u_side[u])
+	var spread: int = kn[AP.S_SPREAD]
 	var best := -1
-	var best_d := STORM_R
+	var best_d: int = kn[AP.S_STORM_R]
 	# At the plaza with it still contested: go for the nearest defender off
 	# the walls wherever he is (no stand-off at the plaza).
 	# (All out, the units still go for the plaza when no defender is near:
 	# hunting the last defenders all over the town let them hold out.)
-	if BattleAI._d(sim.u_cx[u] - sim.plaza[0], sim.u_cy[u] - sim.plaza[1]) < sim.plaza[3] + 15 * M \
+	if BattleAI._d(sim.u_cx[u] - sim.plaza[0], sim.u_cy[u] - sim.plaza[1]) < sim.plaza[3] + kn[AP.S_PLAZA_HUNT] \
 			and sim.cap_t == 0:
 		best_d = 1 << 30
 	var cg: int = sim.cit_gate
@@ -853,24 +860,24 @@ static func _storm(sim, u: int) -> void:
 			if f != u and sim.u_side[f] == sim.u_side[u] and sim.u_state[f] == U_READY \
 					and sim.u_order[f] == O_ATTACK and sim.u_target[f] == o:
 				crowd += 1
-		d += crowd * SPREAD
+		d += crowd * spread
 		if d < best_d:
 			best = o
 			best_d = d
 	if best >= 0:
 		if sim.u_order[u] != O_ATTACK or sim.u_target[u] != best:
-			BattleAI._attack(sim, u, best, 1 if best_d < 25 * M else 0)
+			BattleAI._attack(sim, u, best, 1 if best_d < kn[AP.S_STORM_RUN] else 0)
 		return
 	if cit_shut:
 		# The citadel is shut: the three foot units nearest its gate hack at
 		# it, the rest gather before it.
 		var c: int = sim.u_cls[u]
-		if (c == UT.CLS_INF or c == UT.CLS_PIKE) and _near_rank(sim, u, sim.g_x[cg], sim.g_y[cg]) < 3:
+		if (c == UT.CLS_INF or c == UT.CLS_PIKE) and _near_rank(sim, u, sim.g_x[cg], sim.g_y[cg]) < kn[AP.S_CIT_HACKERS]:
 			if sim.u_gtarget[u] != cg:
 				BattleAI._order(sim, u, {"type": ORDER_ATTACK, "target": -1, "gate": cg, "run": 0}, 0)
 			return
 		var rkc := _rank(sim, u, func(o): return sim.u_cls[o] == UT.CLS_INF or sim.u_cls[o] == UT.CLS_PIKE)
-		var cspot := _gate_point(sim, cg, 20 * M, _spread(rkc.x % 5, mini(rkc.y, 5), 14 * M))
+		var cspot := _gate_point(sim, cg, kn[AP.S_CIT_GATHER], _spread(rkc.x % 5, mini(rkc.y, 5), kn[AP.S_CIT_SPREAD]))
 		var cface := FM.atan2_a(sim.g_y[cg] - cspot.y, sim.g_x[cg] - cspot.x)
 		_go_home(sim, u, cspot.x, cspot.y, cface, 8)
 		return
@@ -899,17 +906,20 @@ static func _storm(sim, u: int) -> void:
 	var far := BattleAI._d(tx - sim.u_ax[u], ty - sim.u_ay[u])
 	var face: int = FM.atan2_a(ty - sim.u_ay[u], tx - sim.u_ax[u]) if far > 10 * M else sim.u_face[u]
 	# Run while no defender is near (pikes walk: running breaks their order).
-	var run := 1 if far > 40 * M and sim.u_cls[u] != UT.CLS_PIKE else 0
+	var run := 1 if far > kn[AP.S_PLAZA_RUN] and sim.u_cls[u] != UT.CLS_PIKE else 0
 	_go_run(sim, u, tx, ty, face, 6, run)
 
 
 static func _att_missile(sim, u: int, phase: int) -> void:
 	var side: int = sim.u_side[u]
+	var kn := AP.of(sim, side)
+	if sim.u_fighting[u] > 0:
+		BattleAI._count(sim, side, AP.C_MISSILE_CAUGHT)
 	if sim.u_fire[u] == 0 and sim.u_ammo[u] > 0:
 		BattleAI._order(sim, u, {"type": ORDER_FIRE, "on": 1}, 21)
 	var g: int = sim.ai_gate[side]
 	if phase == SP_PURSUE:
-		var r := _router(sim, u, 40 * M)
+		var r := _router(sim, u, kn[AP.S_MIS_ROUTER_R])
 		if r >= 0 and sim.u_ammo[u] <= 0:
 			if sim.u_order[u] != O_ATTACK or sim.u_target[u] != r:
 				BattleAI._attack(sim, u, r, 1)
@@ -928,27 +938,28 @@ static func _att_missile(sim, u: int, phase: int) -> void:
 			var ox: int = sim.u_ax[u]
 			var oy: int = sim.u_ay[u]
 			var dd := maxi(BattleAI._d(ox - cx, oy - cy), 1)
-			var want := int(lay["r0"]) * M * 112 / 100 + 50 * M
+			var want := int(lay["r0"]) * M * kn[AP.S_OPEN_PCT] / 100 + kn[AP.S_OPEN_OUT]
 			var tx := clampi(cx + (ox - cx) * want / dd + _spread(rk0.x, rk0.y, 20 * M), 8 * M, sim.field_w - 8 * M)
 			var ty := clampi(cy + (oy - cy) * want / dd, 8 * M, sim.field_h - 8 * M)
 			if dd > want + 10 * M:
 				_go_home(sim, u, tx, ty, FM.atan2_a(cy - ty, cx - tx), 10)
 		return
-	var out := COVER_OUT
+	var out: int = kn[AP.S_COVER_OUT]
 	if phase == SP_ASSAULT:
-		out = 40 * M  # follow up to the breach
+		out = kn[AP.S_MIS_BREACH]  # follow up to the breach
 	if UT.stat(sim.u_type[u], "m_arc") == 0 and phase == SP_APPROACH:
-		out = STAGE_OUT  # javelins wait with the foot
+		out = kn[AP.S_STAGE_OUT]  # javelins wait with the foot
 	var rk := _rank(sim, u, func(o): return sim.u_cls[o] == UT.CLS_MISSILE)
-	var spot := _gate_point(sim, g, out, _spread(rk.x, rk.y, 26 * M))
+	var spot := _gate_point(sim, g, out, _spread(rk.x, rk.y, kn[AP.S_MIS_SPREAD]))
 	var face := FM.atan2_a(sim.g_y[g] - spot.y, sim.g_x[g] - spot.x)
 	_go_home(sim, u, spot.x, spot.y, face, 10)
 
 
 static func _att_cav(sim, u: int, phase: int) -> void:
 	var side: int = sim.u_side[u]
+	var kn := AP.of(sim, side)
 	if phase == SP_PURSUE:
-		var r := _router(sim, u, 200 * M)
+		var r := _router(sim, u, kn[AP.S_CAV_ROUTER_R])
 		if r >= 0:
 			if sim.u_order[u] != O_ATTACK or sim.u_target[u] != r:
 				BattleAI._attack(sim, u, r, 1)
@@ -959,7 +970,7 @@ static func _att_cav(sim, u: int, phase: int) -> void:
 	BattleAI._set_mode(sim, u, A_CAVOUT)
 	if _engaged(sim, u):
 		return
-	var t := _nearest_outside(sim, u, 100 * M)
+	var t := _nearest_outside(sim, u, kn[AP.S_CAV_OUTSIDE_R])
 	if t >= 0:
 		if sim.u_order[u] != O_ATTACK or sim.u_target[u] != t:
 			BattleAI._attack(sim, u, t, 1)
@@ -968,8 +979,8 @@ static func _att_cav(sim, u: int, phase: int) -> void:
 	if g < 0:
 		return
 	var rk := _rank(sim, u, func(o): return sim.u_cls[o] == UT.CLS_CAV)
-	var lat := (90 + rk.x / 2 * 30) * M * (1 if rk.x % 2 == 0 else -1)
-	var spot := _gate_point(sim, g, STAGE_OUT + 20 * M, lat)
+	var lat := (kn[AP.S_CAV_WING] + rk.x / 2 * kn[AP.S_CAV_WING_STEP]) * M * (1 if rk.x % 2 == 0 else -1)
+	var spot := _gate_point(sim, g, kn[AP.S_STAGE_OUT] + kn[AP.S_CAV_BACK], lat)
 	var face := FM.atan2_a(sim.g_y[g] - spot.y, sim.g_x[g] - spot.x)
 	_go_home(sim, u, spot.x, spot.y, face, 12)
 
