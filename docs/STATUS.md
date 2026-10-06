@@ -533,36 +533,39 @@ A tuning pass from playtest feedback (built, uncommitted):
 
 ## Where we are headed
 
-1. Playtest terrain (and artillery), then commit terrain.
-2. **Battle depth, agreed with the user on 2026-10-05:** artillery, then
-   terrain height, before the campaign; vegetation and map generation are
-   done alongside the campaign (milestone 3), since they tie together.
-   - **Artillery: built, uncommitted, awaiting playtest** (bolt throwers and
-     stone throwers as engine entities with crews; see DESIGN.md
-     "Artillery").
-   - **Terrain height: built, uncommitted, awaiting playtest.**
-   - **Trees and vegetation (next terrain step, with milestone 3):** forest
-     zones that slow and disorder formations (cavalry most), reduce missile
-     effect, and make the field look alive. Hooks left: new feature types
-     can be rasterised by `sim/terrain.gd` into a second grid next to the
-     heights (same node layout, same hashing); the terrain texture's alpha
-     channel is reserved for vegetation density so the ground shader can
-     draw it in the same pass; movement already goes through one per-unit
-     speed factor (`_fac_for`) where a vegetation factor can multiply in.
-   - **Map generation from the overworld (next, with milestone 3):** the
-     campaign fills the scenario's `terrain` dictionary from the region
-     (kind + seed, optionally relief / scale or explicit features); both
-     peers build the identical grid and `ter_hash` in `state_hash()`
-     catches any mismatch at tick 0.
-3. **Milestone 3, minimal campaign:** region-node map, armies, recruitment
-   (reusing the unit book page), a few building chains, money and upkeep,
-   war / peace / trade diplomacy, campaign AI, pending battles, auto-resolve,
-   and battles launched from the map using the sim's result data.
-4. **Milestone 4, async backend:** built 2026-10-05 (see above and
-   `docs/SERVER.md`); next: switch 8060, phone playtest, Proxmox.
-5. **Milestone 5, live co-op battles:** built 2026-10-05 (above); next: phone
-   playtest, reinforcements from the map edge.
-6. **Milestone 6, depth.**
+Agreed with the user on 2026-10-06, in this order (milestones 1-5, battle
+maps, settlement variety, sieges, free movement and the wall/reachability
+fixes are all landed; see "Where we are"):
+
+1. **Continuous overworld** (in progress): Rome 2-style positions on a
+   campaign grid, paths and range shapes, zones of control, siege by moving
+   onto a city, support by radius with lines, stances (forced march,
+   fortify, raiding), turn animation; campaign layer kept data-driven so it
+   can be reused for a different setting (the user has an American West
+   game in mind on the same engine).
+2. **Phone round on the overworld**, then a tuning pass from what it shows.
+3. **Roads, rivers and crossings** as grid-cell overrides (historic roads,
+   rivers as barriers with fords and bridges; ford battles on the battle
+   map).
+4. **Siege equipment over turns** (ladders / towers after 2-3 turns of
+   siege so attackers can take walls), suburbs and river sites for cities,
+   sallies from inside, the walls-3 street-fight lever.
+5. **Elephants**, then camels, chariots, war dogs.
+6. **Difficulty settings**: an easier AI (flanks less, charges worse,
+   reacts slower) on both battle and campaign AI.
+7. **Mid-battle reinforcements** from the map edge; ambush stance once
+   hidden information in an async game is designed.
+8. **Shared empire** (both humans running one faction).
+9. **Server to Proxmox** via `server/deploy/docker-compose.yml` (Podman),
+   plus delete-campaign and revoke-device admin. Independent; whenever the
+   user wants the server off the dev machine.
+10. **Sprite animation pipeline**: parts + procedural motion workflow and
+    tooling, written up in `docs/ART_PIPELINE.md`. Last on purpose: the
+    symbolic soldiers stay until the game is in a good state.
+
+Further out: the American West game as a data set and roster on the same
+campaign engine; a 3D client remains possible without sim or campaign
+changes (view-only), but art cost, not code, is the deciding factor.
 
 ## Decisions already made (do not reopen without the user)
 
