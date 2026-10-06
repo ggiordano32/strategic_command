@@ -437,6 +437,11 @@ var ai_hold := PackedInt32Array([-1, -1])  # tick the side began holding high gr
 var ai_gate := PackedInt32Array([-1, -1])  # settlement maps: the gate a side's assault is aimed at
 var ai_cit := PackedInt32Array([0, 0])  # settlement maps: the defenders fell back into the citadel (1)
 var ai_prog := PackedInt32Array([0, 0, 0])  # settlement maps: deaths + gate damage seen, tick it last changed, all-out (1)
+## Deliberate mistakes (sim/ai_profile.gd M_*): per side * AIProfile.N_MISTAKES
+## + M_*, the tick before which that mistake cannot be made again (0 none).
+## Only a level whose mistake chances are above 0 writes it; hashed with the
+## AI profiles when they are not the default.
+var ai_mist := PackedInt32Array()
 
 # Terrain: node heights (sim units) on a 4 m grid covering the field, node
 # gradients (Q12 grade), built once at setup from the scenario's terrain
@@ -796,6 +801,9 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	ai_gate = PackedInt32Array([-1, -1])
 	ai_prog = PackedInt32Array([0, 0, 0])
 	ai_cit = PackedInt32Array([0, 0])
+	ai_mist = PackedInt32Array()
+	ai_mist.resize(2 * AIProfile.N_MISTAKES)
+	ai_mist.fill(0)
 	_dist_new = 0
 	_setup_terrain(scenario.get("terrain", {}), p_seed)
 
@@ -7071,6 +7079,7 @@ func state_hash() -> int:
 		# AI profiles other than the default (the default hashes as before).
 		ctx.update(ai_skill.to_byte_array())
 		ctx.update(ai_style.to_byte_array())
+		ctx.update(ai_mist.to_byte_array())
 	if map_on != 0:
 		# Woods / settlement maps only (a plain map hashes as it always did).
 		for arr in _map_unit_arrays():

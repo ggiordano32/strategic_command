@@ -65,6 +65,19 @@ extends RefCounted
 ## of the side's skill / personality profile (sim/ai_profile.gd, read as
 ## `kn[AP.X]` with kn = AP.of(sim, side)); the names in capitals above are
 ## those knobs. Behaviour never branches on the level itself.
+## Easy (docs/AI.md 9): knobs switch behaviours off (CLEAR_SPOT, MIS_SKIRM,
+## CAV_STAGE_FRONT, FLANK_PCT, terrain sense by out-of-reach thresholds,
+## RETIRE_ALIVE_PCT 0) and the deliberate mistakes (AP.M_*) are rolled with
+## the sim's RNG at their decision points (_mistake / _mistake_once): a
+## spear or cavalry unit ignoring enemy riders this think, cavalry riding at
+## the nearest foot instead of its chosen target, a line unit left idle when
+## the lines meet (A_IDLE), foot chasing a router (marked in u_ai_y), a
+## charge into a braced or pike front, archers not pulled back, the cavalry
+## thrown at the enemy line before the lines meet, a gate left open, an
+## early withdrawal. Each is an order a player could give; a side cannot
+## repeat one within MK_COOLDOWN (BattleSim.ai_mist, hashed with a
+## non-default profile). A level with a mistake's chance at 0 never rolls
+## it (no RNG draw), so Average plays exactly as before.
 
 const FM := preload("res://sim/fixed_math.gd")
 const UT := preload("res://sim/unit_types.gd")
@@ -113,6 +126,7 @@ const A_RETIRE := 7    # mauled unit falling back
 const A_ART := 9       # artillery battery
 const A_GUARD := 10    # infantry guarding the batteries
 const A_DETOUR := 11   # infantry going round a steep slope to a gentler approach
+const A_IDLE := 30     # line unit left idle by a mistake (M_IDLE) until IDLE_TICKS or attacked
 # (stat_ai[12] holds of high ground, [13] slots moved onto a rise,
 # [14] deployments shifted to higher ground)
 
@@ -169,6 +183,12 @@ static func _army_think(sim, side: int) -> void:
 		sim.ai_t[side] = sim.tick
 		sim.stat_ai[8] += 1
 		return
+	# Mistake: withdrawing while still in the fight (rolled once a battle,
+	# the first time the army is clearly the weaker).
+	if kn[AP.WD_EARLY_PCT] > 0 and sim.tick > kn[AP.WD_MIN_TICK] and own * 100 < foe * kn[AP.WD_EARLY_PCT] \
+			and _mistake_once(sim, side, AP.M_EARLY_WD, kn):
+		withdraw_all(sim, side, 9000)
+		return
 	var plan := _plan(sim, side)
 	if plan.is_empty():
 		return
@@ -203,12 +223,21 @@ static func _army_think(sim, side: int) -> void:
 		if skirmishing:
 			halt = kn[AP.SKIRMISH_HALT]
 		var engage_d := kn[AP.ENGAGE_DIST]
-		if gap < engage_d or (halt == 0 and gap < engage_d + kn[AP.ENGAGE_RUSH]):
+		var engage := gap < engage_d or (halt == 0 and gap < engage_d + kn[AP.ENGAGE_RUSH])
+		# Mistake: the cavalry, the army's reserve, is thrown at the enemy
+		# line before the lines meet (once a battle, once the armies are
+		# within twice the bow-range halt line).
+		if not engage and gap < 2 * kn[AP.SKIRMISH_HALT] and _mistake_once(sim, side, AP.M_COMMIT_EARLY, kn):
+			_commit_cavalry(sim, side)
+		if engage:
 			sim.ai_phase[side] = P_ENGAGE
 			sim.ai_t[side] = sim.tick
 			for u in sim.n_units:
 				if sim.u_side[u] == side and sim.u_ai[u] == A_LINE and sim.u_cls[u] != UT.CLS_MISSILE:
-					sim.u_ai[u] = A_ATTACK
+					if _mistake(sim, side, AP.M_IDLE, kn):
+						_set_mode(sim, u, A_IDLE)  # left standing while the line goes in
+					else:
+						sim.u_ai[u] = A_ATTACK
 			return
 		# Halt line: `halt` short of the enemy front, never backwards.
 		var fx: int = plan["fx"]
@@ -231,6 +260,36 @@ static func _army_think(sim, side: int) -> void:
 		var cx: int = plan["cx"] + (fx * adv / FM.TRIG_ONE)
 		var cy: int = plan["cy"] + (fy * adv / FM.TRIG_ONE)
 		_issue_line(sim, side, plan, cx, cy, false)
+
+
+## The commit-early mistake: every waiting cavalry unit charges the
+## nearest enemy foot unit head on, and sees the charge through.
+static func _commit_cavalry(sim, side: int) -> void:
+	for u in sim.n_units:
+		if sim.u_side[u] != side or sim.u_state[u] != U_READY or sim.u_cls[u] != UT.CLS_CAV or sim.u_ai[u] != A_HOLD:
+			continue
+		var t := _nearest_foot(sim, u)
+		if t < 0:
+			continue
+		_attack(sim, u, t, 1)
+		_set_mode(sim, u, A_CHARGE)
+		sim.u_ai_y[u] = 1  # no going round
+
+
+## Nearest ready enemy line unit (infantry or pikes) to u, or -1.
+static func _nearest_foot(sim, u: int) -> int:
+	var best := -1
+	var best_d := 0
+	for o in sim.n_units:
+		if sim.u_side[o] == sim.u_side[u] or sim.u_state[o] != U_READY:
+			continue
+		if sim.u_cls[o] != UT.CLS_INF and sim.u_cls[o] != UT.CLS_PIKE:
+			continue
+		var d := _dist2(sim, u, o)
+		if best < 0 or d < best_d:
+			best = o
+			best_d = d
+	return best
 
 
 ## Fighting strength of a side: ready, non-withdrawing soldiers times cost.
@@ -489,7 +548,7 @@ static func _issue_line(sim, side: int, plan: Dictionary, cx: int, cy: int, depl
 		px = clampi(px, 4 * M, sim.field_w - 4 * M)
 		py = clampi(py, 4 * M, sim.field_h - 4 * M)
 		var art: bool = sim.u_cls[u] == UT.CLS_ART
-		if sim.veg_on != 0 and (art or sim.u_cls[u] == UT.CLS_CAV or sim.u_cls[u] == UT.CLS_PIKE):
+		if sim.veg_on != 0 and kn[AP.CLEAR_SPOT] != 0 and (art or sim.u_cls[u] == UT.CLS_CAV or sim.u_cls[u] == UT.CLS_PIKE):
 			var cp := _clear_spot(sim, px, py, rx, ry, fx, fy)
 			px = cp.x
 			py = cp.y
@@ -511,7 +570,7 @@ static func _issue_line(sim, side: int, plan: Dictionary, cx: int, cy: int, depl
 		else:
 			_move(sim, u, px, py, face, _width(sim, u), 0, seq)
 		seq += 1
-		if sim.u_cls[u] == UT.CLS_MISSILE and sim.u_skirm[u] == 0:
+		if sim.u_cls[u] == UT.CLS_MISSILE and sim.u_skirm[u] == 0 and kn[AP.MIS_SKIRM] != 0:
 			_order(sim, u, {"type": ORDER_SKIRMISH, "on": 1}, 20)
 		if deploy:
 			var mode := A_LINE
@@ -630,6 +689,12 @@ static func _unit_think(sim, u: int) -> void:
 			_count(sim, side, AP.C_SAVED)  # fell back mauled and returns without having broken
 		_set_mode(sim, u, A_ATTACK if cls != UT.CLS_CAV else A_HOLD)
 		mode = sim.u_ai[u]
+	if mode == A_IDLE:
+		# Left idle (a mistake): until IDLE_TICKS have passed or it is attacked.
+		if sim.tick - sim.u_ai_t[u] < kn[AP.IDLE_TICKS] and sim.u_fighting[u] == 0 and sim.u_contact[u] == 0:
+			return
+		_set_mode(sim, u, A_ATTACK)
+		mode = A_ATTACK
 	if cls != UT.CLS_CAV and UT.stat(sim.u_type[u], "vs_cav") > 0:
 		_watch_cav(sim, u, kn[AP.SPEAR_CAV_R])
 	if cls == UT.CLS_CAV:
@@ -674,6 +739,9 @@ static func _melee_think(sim, u: int) -> void:
 	# Engaged with a ready enemy: keep fighting it.
 	if cur >= 0 and sim.u_fighting[u] > 0 and sim.u_state[cur] == U_READY:
 		return
+	# Chasing a router (a mistake): after it until it is gone or rallies.
+	if cur >= 0 and sim.u_state[cur] == U_ROUTING and sim.u_ai_y[u] == -(cur + 2):
+		return
 	if mode == A_DETOUR:
 		var dt: int = sim.u_ai_y[u]
 		if dt >= 0 and sim.u_state[dt] == U_READY:
@@ -703,25 +771,37 @@ static func _melee_think(sim, u: int) -> void:
 	# Spears turn on cavalry close by.
 	if spear:
 		best = _nearest(sim, u, UT.CLS_CAV, kn[AP.SPEAR_CAV_R])
+		if best >= 0 and best != cur and _mistake(sim, side, AP.M_LATE_FLANK, kn):
+			return  # a late reaction: carries on as it was this think
 		if best >= 0 and best != cur:
 			_count(sim, side, AP.C_SPEAR_RESP)
 			if sim.dbg_cav_seen.size() > u and sim.dbg_cav_seen[u] >= 0:
 				_count(sim, side, AP.C_SPEAR_RESP_T, sim.tick - sim.dbg_cav_seen[u])
+	var chase := false
 	if best < 0:
 		best = _nearest_enemy(sim, u, true)
+		if best >= 0 and kn[AP.MK_BASE + AP.M_CHASE] > 0:
+			# Mistake: a routing enemy closer than the fight draws the foot after it.
+			var r := _nearest_enemy(sim, u, false)
+			if r >= 0 and sim.u_state[r] == U_ROUTING and _dist2(sim, u, r) < _dist2(sim, u, best) \
+					and _mistake(sim, side, AP.M_CHASE, kn):
+				best = r
+				chase = true
 	if best < 0:
 		best = _nearest_enemy(sim, u, false)
 	if best < 0:
 		return
-	# Formed enemy pikes: do not walk into the points if it can be helped.
-	if sim.u_formed[best] != 0 and sim.u_cls[u] != UT.CLS_PIKE and _frontal(sim, best, u):
+	# Formed enemy pikes: do not walk into the points if it can be helped
+	# (unless the mistake is to walk into them).
+	if sim.u_formed[best] != 0 and sim.u_cls[u] != UT.CLS_PIKE and _frontal(sim, best, u) \
+			and not _mistake(sim, side, AP.M_SPEAR_CHARGE, kn):
 		var pinned := false
 		for o in sim.n_units:
 			if o != u and sim.u_side[o] == sim.u_side[u] and sim.u_order[o] == O_ATTACK \
 					and sim.u_target[o] == best and sim.u_state[o] == U_READY:
 				pinned = true
 				break
-		if pinned:
+		if pinned and _chance(sim, kn[AP.FLANK_PCT]):
 			_flank(sim, u, best)
 			return
 		var alt := _nearest_not(sim, u, best)
@@ -742,6 +822,8 @@ static func _melee_think(sim, u: int) -> void:
 		if sim.u_state[best] == U_ROUTING:
 			_count(sim, side, AP.C_INF_CHASE)
 	_set_mode(sim, u, A_ATTACK)
+	if chase:
+		sim.u_ai_y[u] = -(best + 2)
 
 
 ## Send u round to the flank of enemy unit t, then attack.
@@ -795,6 +877,8 @@ static func _cav_think(sim, u: int, phase: int) -> void:
 			elif tick - sim.u_ai_x[u] > kn[AP.CAV_MELEE_TICKS]:
 				_pull_out(sim, u, t)
 			return
+		elif sim.u_ai_y[u] == 1:
+			return  # charging a braced front on purpose (a mistake): no going round
 		elif _is_braced_front(sim, t, u) and _dist2(sim, u, t) > kn[AP.CAV_RESTAGE_DIST] * kn[AP.CAV_RESTAGE_DIST]:
 			# The target turned its points toward us: go round.
 			_stage(sim, u, t)
@@ -837,10 +921,26 @@ static func _cav_think(sim, u: int, phase: int) -> void:
 	var pick := _cav_pick(sim, u, phase)
 	if pick < 0:
 		return
+	if sim.u_cls[pick] == UT.CLS_CAV and sim.u_state[pick] == U_READY and _mistake(sim, side, AP.M_LATE_FLANK, kn):
+		return  # enemy riders on our flank, noticed late
+	if not _is_foot(sim, pick) and sim.u_state[pick] == U_READY and _mistake(sim, side, AP.M_WRONG_TARGET, kn):
+		# The nearest enemy foot instead of the chosen target.
+		var near := _nearest_foot(sim, u)
+		if near >= 0:
+			pick = near
 	if _frontal(sim, pick, u) and (UT.stat(sim.u_type[pick], "brace") > 0 or sim.u_fighting[pick] == 0) \
 			and sim.u_cls[pick] != UT.CLS_MISSILE and sim.u_cls[pick] != UT.CLS_CAV \
 			and sim.u_cls[pick] != UT.CLS_ART and sim.u_state[pick] == U_READY:
-		_stage(sim, u, pick)
+		var braced := UT.stat(sim.u_type[pick], "brace") > 0
+		if braced and _mistake(sim, side, AP.M_SPEAR_CHARGE, kn):
+			_attack(sim, u, pick, 1)  # straight into the points
+			_set_mode(sim, u, A_CHARGE)
+			sim.u_ai_y[u] = 1
+		elif braced or kn[AP.CAV_STAGE_FRONT] != 0:
+			_stage(sim, u, pick)
+		else:
+			_attack(sim, u, pick, 1)  # head on into a formed front
+			_set_mode(sim, u, A_CHARGE)
 	else:
 		_attack(sim, u, pick, 1)
 		_set_mode(sim, u, A_CHARGE)
@@ -976,7 +1076,7 @@ static func _missile_think(sim, u: int, phase: int) -> void:
 	var kn := AP.of(sim, side)
 	if sim.u_fighting[u] > 0:
 		_count(sim, side, AP.C_MISSILE_CAUGHT)
-	if sim.u_skirm[u] == 0:
+	if sim.u_skirm[u] == 0 and kn[AP.MIS_SKIRM] != 0:
 		_order(sim, u, {"type": ORDER_SKIRMISH, "on": 1}, 20)
 	if sim.u_ammo[u] <= 0:
 		# Out of ammunition: finish off routers nearby, otherwise keep clear.
@@ -989,8 +1089,10 @@ static func _missile_think(sim, u: int, phase: int) -> void:
 		return
 	# Hold fire unless an unengaged enemy is in range.
 	var rng := UT.stat(sim.u_type[u], "m_range")
-	var clean := false
+	var clean := kn[AP.MIS_CLEAN] == 0  # (0: fire at will regardless)
 	for o in sim.n_units:
+		if clean:
+			break
 		if sim.u_side[o] == side or sim.u_state[o] >= U_DESTROYED:
 			continue
 		if sim.u_fighting[o] == 0 and sim._in_range(u, o, rng):
@@ -1010,7 +1112,9 @@ static func _missile_think(sim, u: int, phase: int) -> void:
 			var cx: int = plan["cx"]
 			var cy: int = plan["cy"]
 			var ahead: int = (((sim.u_ax[u] - cx) * fx + (sim.u_ay[u] - cy) * fy) / FM.TRIG_ONE)
-			if ahead > -kn[AP.MIS_BEHIND]:
+			if ahead > -kn[AP.MIS_BEHIND] and _mistake(sim, side, AP.M_MIS_FORGET, kn):
+				pass  # left out in front of the line (a mistake)
+			elif ahead > -kn[AP.MIS_BEHIND]:
 				var back: int = ahead + kn[AP.MIS_FALLBACK]
 				var px: int = clampi(sim.u_ax[u] - (fx * back / FM.TRIG_ONE), 4 * M, sim.field_w - 4 * M)
 				var py: int = clampi(sim.u_ay[u] - (fy * back / FM.TRIG_ONE), 4 * M, sim.field_h - 4 * M)
@@ -1590,6 +1694,57 @@ static func _shelter(sim, u: int) -> bool:
 
 
 # ------------------------------------------------------------- helpers ---
+
+## Deliberate mistake m (AP.M_*) of side `side` at a decision point: rolled
+## with the sim's RNG at the profile's chance (MK_BASE + m, %), unless the
+## side made it within MK_COOLDOWN. A level whose chance is 0 never rolls
+## (no RNG draw: Average plays exactly as before). Counted in stat_aic.
+static func _mistake(sim, side: int, m: int, kn: PackedInt32Array) -> bool:
+	var p := kn[AP.MK_BASE + m]
+	if p <= 0:
+		return false
+	var i := side * AP.N_MISTAKES + m
+	if sim.tick < sim.ai_mist[i]:
+		return false
+	if int(sim._rand()) % 100 >= p:
+		return false
+	sim.ai_mist[i] = sim.tick + kn[AP.MK_COOLDOWN]
+	_count(sim, side, AP.C_MISTAKE + m)
+	return true
+
+
+## As _mistake, for a mistake a side gets one chance at per battle: the
+## first roll uses it up, made or not.
+static func _mistake_once(sim, side: int, m: int, kn: PackedInt32Array) -> bool:
+	if kn[AP.MK_BASE + m] <= 0:
+		return false
+	var i := side * AP.N_MISTAKES + m
+	if sim.ai_mist[i] != 0:
+		return false
+	var made: bool = int(sim._rand()) % 100 < kn[AP.MK_BASE + m]
+	sim.ai_mist[i] = 0x7FFFFFFF
+	if made:
+		_count(sim, side, AP.C_MISTAKE + m)
+	return made
+
+
+## A pct % chance with the sim's RNG (100 or more: always, without a draw).
+static func _chance(sim, pct: int) -> bool:
+	if pct >= 100:
+		return true
+	if pct <= 0:
+		return false
+	return int(sim._rand()) % 100 < pct
+
+
+## The whole army withdraws (ORDER_WITHDRAW_ALL; phase P_WITHDRAW).
+static func withdraw_all(sim, side: int, seq: int) -> void:
+	sim.queue_order({"tick": sim.tick, "type": ORDER_WITHDRAW_ALL, "side": side,
+		"player": AI_PLAYER_BASE + side, "seq": seq})
+	sim.ai_phase[side] = P_WITHDRAW
+	sim.ai_t[side] = sim.tick
+	sim.stat_ai[8] += 1
+
 
 ## Per-competency diagnostic counter (BattleSim.stat_aic; never read back).
 static func _count(sim, side: int, c: int, n: int = 1) -> void:

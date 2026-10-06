@@ -33,6 +33,15 @@ extends RefCounted
 ## neighbours at peace, and opportunistic wars on weaker neighbours, paced
 ## (no wars in the first turns, at most one new war on the players every few
 ## turns, few wars at a time).
+## Easy (docs/AI.md 9; knobs of campaign/cai_profile.gd, the overworld of
+## version 6 mainly): cheapest building first, piecemeal recruiting leaning
+## to the line it already has, the nearest targets first at lower odds,
+## armies sent as they are (no gathering, a turn apart), assaults on
+## arrival, no screens, relief, raids or stances, no peace proposals; and
+## the deliberate mistakes rolled with CState.rand (_mistake): an army
+## marching off from a threatened city or a fresh conquest, one attack at
+## poor odds, a turn of recruiting past the income, a war on a stronger
+## neighbour. A level whose chance of a mistake is 0 never draws for it.
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -203,6 +212,8 @@ static func _build(st: Dictionary, f: int) -> void:
 					want.append(c)
 			if mix.has("bolt") or mix.has("stone"):
 				want.append(CData.WORKSHOP)
+		if kn[CP.BUILD_CHEAPEST] != 0:
+			want = _by_cost(st, f, r, want)
 		for c in want:
 			var info := CRules.build_info(st, f, r, c)
 			if info.has("why"):
@@ -212,6 +223,21 @@ static func _build(st: Dictionary, f: int) -> void:
 			if CRules.apply_order(st, f, {"t": "build", "r": r, "chain": c}) == "":
 				spent += int(info["cost"])
 				break
+
+
+## The chains of `want` that can be built in r, cheapest first (ties: the
+## order given).
+static func _by_cost(st: Dictionary, f: int, r: int, want: Array[int]) -> Array[int]:
+	var keyed: Array = []
+	for k in want.size():
+		var info := CRules.build_info(st, f, r, want[k])
+		if not info.has("why"):
+			keyed.append([int(info["cost"]), k, want[k]])
+	keyed.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
+	var out: Array[int] = []
+	for e in keyed:
+		out.append(int(e[2]))
+	return out
 
 
 static func _wants_chain(mix: Dictionary, c: int) -> bool:
@@ -235,6 +261,9 @@ static func _recruit(st: Dictionary, f: int) -> void:
 	if inc > 0:
 		share += clampi(int(fs["treasury"]) * kn[CP.CHEST_SHARE] / inc, 0, kn[CP.CHEST_SHARE_MAX])
 	var cap := inc * share / 100
+	# Mistake: recruiting past the income this turn (the debt rules follow).
+	if inc > 0 and _mistake(st, f, kn, CP.M_OVER_RECRUIT):
+		cap = maxi(cap, inc * kn[CP.OVER_RECRUIT_PCT] / 100)
 	var up := CRules.upkeep(st, f)
 	var mix: Dictionary = CData.FACTIONS[f]["mix"]
 	# Where to recruit: regions with armies or on the frontier, richest
@@ -258,6 +287,9 @@ static func _recruit(st: Dictionary, f: int) -> void:
 		while guard < kn[CP.RECRUIT_MAX]:
 			guard += 1
 			var line := _next_line(st, f, mix)
+			var lean := kn[CP.RECRUIT_LEAN_PCT]
+			if lean > 0 and CState.rand(st, 100) < lean:
+				line = _most_line(st, f, mix)  # more of what it already has
 			var key := _best_type(st, f, r, line)
 			if key == "":
 				key = _any_type(st, f, r)
@@ -296,6 +328,23 @@ static func _next_line(st: Dictionary, f: int, mix: Dictionary) -> String:
 		var gap := int(mix[line]) * (total + 1) - int(have.get(line, 0)) * 100
 		if gap > best_gap:
 			best_gap = gap
+			best = line
+	return best
+
+
+## The line of the preferred mix that faction f's armies hold most units of
+## (ties: CData.LINE_ORDER).
+static func _most_line(st: Dictionary, f: int, mix: Dictionary) -> String:
+	var have := {}
+	for a in CState.armies_of(st, f):
+		for u in a["units"]:
+			var line := UT.line_of(CState.unit_type(u))
+			have[line] = int(have.get(line, 0)) + 1
+	var best := ""
+	var best_n := -1
+	for line in CData.LINE_ORDER:
+		if mix.has(line) and int(have.get(line, 0)) > best_n:
+			best_n = int(have.get(line, 0))
 			best = line
 	return best
 
@@ -999,7 +1048,37 @@ static func _hold(cx: Dictionary, st: Dictionary, f: int, a: Dictionary) -> bool
 			h[id] = CState.owner(st, r) == f and thr > 0 and defence(st, r) - CState.strength(a) < thr
 		else:
 			h[id] = _must_hold(st, f, a)
+		if bool(h[id]):
+			# Mistakes: marching off from a threatened city (one taken last
+			# turn: forgetting to garrison the conquest).
+			var kn := CP.of(st, f)
+			if _recent_capture(st, f, int(a["r"])):
+				if _mistake(st, f, kn, CP.M_NO_GARRISON):
+					h[id] = false
+			elif _mistake(st, f, kn, CP.M_EMPTY_CITY):
+				h[id] = false
 	return bool(h[id])
+
+
+## Region r was taken by f last turn (or this one).
+static func _recent_capture(st: Dictionary, f: int, r: int) -> bool:
+	var turn := int(st["turn"])
+	for e in st["events"]:
+		if str(e.get("k", "")) == "captured" and int(e.get("r", -1)) == r and int(e.get("f", -1)) == f \
+				and int(e.get("turn", -100)) >= turn - 1:
+			return true
+	return false
+
+
+## Deliberate mistake m (CP.M_*) of faction f: rolled with the state's RNG
+## at the level's chance (MK_BASE + m, %); a level whose chance is 0 never
+## draws (Average campaigns are unchanged). Counted (CP.MISTAKE_KEYS).
+static func _mistake(st: Dictionary, f: int, kn: PackedInt32Array, m: int) -> bool:
+	var p := kn[CP.MK_BASE + m]
+	if p <= 0 or CState.rand(st, 100) >= p:
+		return false
+	CP.count(CP.MISTAKE_KEYS[m], f)
+	return true
 
 
 ## One raid a turn: a free army marches into a rich enemy region it reaches
@@ -1161,6 +1240,8 @@ static func diplomacy(st: Dictionary, f: int) -> void:
 	# Opportunistic war.
 	if turn < kn[CP.FIRST_WAR_TURN] or my_wars.size() >= kn[CP.MAX_WARS]:
 		return
+	if kn[CP.MK_BASE + CP.M_UNWISE_WAR] > 0 and _unwise_war(st, f, kn, mine):
+		return
 	var aggr := _aggr(st)
 	for g in CState.nf():
 		if g == f or not CState.alive(st, g) or CState.dip(st, f, g) == CState.WAR:
@@ -1190,6 +1271,33 @@ static func diplomacy(st: Dictionary, f: int) -> void:
 			if CState.is_human(st, g):
 				st["stats"]["last_war_on_players"] = turn
 			return
+
+
+## Mistake: war on a neighbour that is stronger than the level's war ratio
+## allows (the same pacing as any war: calm turns, the players' war gap).
+## The candidate is found from a random start among the factions.
+static func _unwise_war(st: Dictionary, f: int, kn: PackedInt32Array, mine: int) -> bool:
+	var turn := int(st["turn"])
+	var nf := CState.nf()
+	var cands: Array[int] = []
+	for g in nf:
+		if g == f or not CState.alive(st, g) or CState.dip(st, f, g) == CState.WAR:
+			continue
+		if CState.friendly(st, f, g) or not _neighbours(st, f, g) or CState.dip_since(st, f, g) < kn[CP.WAR_CALM_TURNS]:
+			continue
+		if CState.is_human(st, g):
+			var last := int(st["stats"].get("last_war_on_players", -100))
+			if turn < kn[CP.FIRST_WAR_ON_PLAYERS] or turn - last < kn[CP.PLAYER_WAR_GAP]:
+				continue
+		if mine * 100 < faction_strength(st, g) * kn[CP.WAR_RATIO]:
+			cands.append(g)
+	if cands.is_empty() or not _mistake(st, f, kn, CP.M_UNWISE_WAR):
+		return false
+	var g: int = cands[CState.rand(st, cands.size())]
+	CRules.declare_war(st, f, g)
+	if CState.is_human(st, g):
+		st["stats"]["last_war_on_players"] = turn
+	return true
 
 
 static func _neighbours(st: Dictionary, f: int, g: int) -> bool:
@@ -1329,7 +1437,10 @@ static func _move_grid(st: Dictionary, f: int, out: Array) -> void:
 		var val := region_value(st, t, f)
 		if o >= 0 and CState.is_human(st, o):
 			val = val * kn[CP.HUMAN_VALUE_PCT] / 100
-		targets.append({"t": t, "def": d, "now": now, "soon": soon, "score": val * 1000 / d})
+		var score := val * 1000 / d
+		if kn[CP.TARGET_NEAREST] != 0:
+			score = (1 << 20 if not now.is_empty() else 0) + val  # the nearest, defence not weighed
+		targets.append({"t": t, "def": d, "now": now, "soon": soon, "score": score})
 	targets.sort_custom(func(x, y): return x["score"] > y["score"] or (x["score"] == y["score"] and x["t"] < y["t"]))
 	for tg in targets:
 		_attack6(st, f, tg, ratio, etas, used, out, cx, want)
@@ -1354,8 +1465,9 @@ static func _move_grid(st: Dictionary, f: int, out: Array) -> void:
 			used[id] = 1
 			if best_win < 50:
 				CP.count(CP.C_BAD_ODDS, f)
-			_go(out, a, CGrid.site(best), f, CData.MODE_SIEGE)
-	_raid6(st, f, free, etas, used, out, cx, want)
+			_go(out, a, CGrid.site(best), f, CData.MODE_ASSAULT if kn[CP.ASSAULT_ALWAYS] != 0 else CData.MODE_SIEGE)
+	if kn[CP.STANCES] != 0:
+		_raid6(st, f, free, etas, used, out, cx, want)
 	_screen6(st, f, free, etas, used, out, cx, want)
 	# The rest march towards the frontier.
 	var dist := _frontier_dist(st, f)
@@ -1377,7 +1489,8 @@ static func _move_grid(st: Dictionary, f: int, out: Array) -> void:
 		if best >= 0:
 			used[id] = 1
 			_go(out, a, _toward(st, f, a, CState.field_cell(best), cx), f, CData.MODE_SIEGE)
-	_stances6(st, f, free, used, cx, want, out)
+	if kn[CP.STANCES] != 0:
+		_stances6(st, f, free, used, cx, want, out)
 	for a in free:
 		var id := int(a["id"])
 		if CState.army_index(st, id) >= 0 and int(a["busy"]) == 0 and CState.stance(a) != int(want[id]):
@@ -1517,12 +1630,30 @@ static func _attack6(st: Dictionary, f: int, tg: Dictionary, ratio: int, _etas: 
 		if n_sent == 1 and not soon.is_empty():
 			CP.count(CP.C_TRICKLED, f)
 		return
+	var lay := CData.MODE_ASSAULT if kn[CP.ASSAULT_ALWAYS] != 0 else CData.MODE_SIEGE
 	if p_now * 100 >= d * ratio * kn[CP.SIEGE_RATIO_PCT] / 100 and not now.is_empty() and (not soon.is_empty() or now.size() > 1):
 		for a in now:
 			used[int(a["id"])] = 1
-			_go(out, a, site, f, CData.MODE_SIEGE)
+			_go(out, a, site, f, lay)
 		return
+	# Mistake: attacking at poor odds with what is there (one roll a turn).
+	if not now.is_empty() and not cx.has("mk_odds") and kn[CP.MK_BASE + CP.M_BAD_ODDS] > 0:
+		cx["mk_odds"] = 1
+		if _mistake(st, f, kn, CP.M_BAD_ODDS):
+			CP.count(CP.C_BAD_ODDS, f)
+			for a in now:
+				used[int(a["id"])] = 1
+				_go(out, a, site, f, CData.MODE_ASSAULT)
+			return
 	if soon.is_empty() or (p_now + p_soon) * 100 < d * ratio:
+		return
+	if kn[CP.GATHER] == 0:
+		# No gathering: the armies go as they are, arriving a turn apart.
+		if not now.is_empty():
+			CP.count(CP.C_TRICKLED, f)
+		for a in now + soon:
+			used[int(a["id"])] = 1
+			_go(out, a, site, f, CData.MODE_ASSAULT)
 		return
 	# Concentrate: gather within support range of each other a march short
 	# of the target, on the way the strongest of them would come (down the
@@ -1624,6 +1755,8 @@ static func _sieges_grid(st: Dictionary, f: int, ratio: int, free: Array, etas: 
 				continue
 			var rel: Array = []
 			for a in free:
+				if CP.of(st, f)[CP.RELIEVE] == 0:
+					break  # never relieves
 				var id := int(a["id"])
 				if not used.has(id) and CRules.siege_role(st, a) == 0 and int(etas[id]["t"][r]) == 0 \
 						and CState.stance(a) != CData.ST_FORCED:
@@ -1767,6 +1900,8 @@ static func _screen6(st: Dictionary, f: int, free: Array, etas: Dictionary, used
 		var best: Dictionary = {}
 		var forced := false
 		for a in free:
+			if kn[CP.SCREENS] == 0:
+				break  # no screens at this level
 			var id := int(a["id"])
 			if used.has(id) or CRules.siege_role(st, a) != 0 or _str(cx, a) * 100 < thr * screen_pct or _hold(cx, st, f, a):
 				continue

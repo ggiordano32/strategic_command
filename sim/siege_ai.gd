@@ -52,6 +52,13 @@ extends RefCounted
 ## Profiles: the distances, times and ratios above are knobs of the side's
 ## skill / personality profile (sim/ai_profile.gd, the S_* knobs and the
 ## field AI's shared ones), read as kn[AP.X] with kn = AP.of(sim, side).
+## Easy: hacks at the nearest gate with everything from the start (no
+## bombardment first), storming foot run after routers (M_CHASE), reserves
+## react late (and sometimes a think later still: M_LATE_FLANK), gates are
+## closed late and
+## sometimes not at all (M_GATE_OPEN), wall units come down late and the
+## citadel is taken only when attackers inside outnumber the defenders
+## twice (S_CIT_OUTNUMBER_PCT); attackers may withdraw early (M_EARLY_WD).
 
 const FM := preload("res://sim/fixed_math.gd")
 const UT := preload("res://sim/unit_types.gd")
@@ -154,6 +161,11 @@ static func _army(sim, side: int) -> void:
 		sim.ai_phase[side] = P_WITHDRAW
 		sim.ai_t[side] = sim.tick
 		sim.stat_ai[8] += 1
+		return
+	# Mistake: giving up while still in the fight (once a battle).
+	if kn[AP.WD_EARLY_PCT] > 0 and sim.tick > kn[AP.WD_MIN_TICK] and foe > 0 and own * 100 < foe * kn[AP.WD_EARLY_PCT] \
+			and BattleAI._mistake_once(sim, side, AP.M_EARLY_WD, kn):
+		BattleAI.withdraw_all(sim, side, 9000)
 		return
 	if phase < SP_APPROACH:
 		phase = SP_APPROACH
@@ -290,7 +302,8 @@ static func _close_gates(sim, side: int) -> void:
 			break
 	if any < 0:
 		return
-	var close_r := AP.of(sim, side)[AP.S_CLOSE_R]
+	var kn := AP.of(sim, side)
+	var close_r := kn[AP.S_CLOSE_R]
 	for g in sim.n_gates:
 		if sim.g_state[g] != GATE_OPEN or sim.g_cit[g] != 0:
 			continue
@@ -298,6 +311,8 @@ static func _close_gates(sim, side: int) -> void:
 			if sim.u_side[o] == side or sim.u_state[o] != U_READY:
 				continue
 			if BattleAI._d(sim.u_cx[o] - sim.g_x[g], sim.u_cy[o] - sim.g_y[g]) < close_r:
+				if BattleAI._mistake(sim, side, AP.M_GATE_OPEN, kn):
+					break  # left open this time
 				sim.queue_order({"tick": sim.tick, "type": ORDER_GATE, "unit": any, "gate": g, "on": 1,
 					"player": BattleAI.AI_PLAYER_BASE + side, "seq": 8000 + g})
 				break
@@ -414,7 +429,7 @@ static func _citadel(sim, side: int) -> void:
 				lost = true
 			if (sim.veg_bits(sim.u_cx[o], sim.u_cy[o]) & MapGen.V_URBAN) != 0:
 				att += sim.u_alive[o]
-		if not lost and att <= dfn:
+		if not lost and att * 100 <= dfn * kn[AP.S_CIT_OUTNUMBER_PCT]:
 			return
 		sim.ai_cit[side] = 1
 		# As many as the citadel holds (about 2 m2 a man), the wall units
@@ -525,6 +540,9 @@ static func _reserve(sim, u: int) -> void:
 	if t >= 0 and sim.u_cls[u] != UT.CLS_ART:
 		if sim.u_cls[u] == UT.CLS_MISSILE and sim.u_ammo[u] > 0:
 			return  # shoot from the post (fire at will)
+		if (sim.u_order[u] != O_ATTACK or sim.u_target[u] != t) \
+				and BattleAI._mistake(sim, sim.u_side[u], AP.M_LATE_FLANK, kn):
+			return  # attackers in the streets, noticed late
 		var run_r := kn[AP.S_RESERVE_RUN]
 		BattleAI._attack(sim, u, t, 1 if BattleAI._dist2(sim, u, t) < run_r * run_r else 0)
 		return
@@ -833,6 +851,14 @@ static func _storm(sim, u: int) -> void:
 	if _engaged(sim, u):
 		return
 	var kn := AP.of(sim, sim.u_side[u])
+	if kn[AP.MK_BASE + AP.M_CHASE] > 0 and (sim.u_order[u] != O_ATTACK or sim.u_target[u] < 0 \
+			or sim.u_state[sim.u_target[u]] != U_ROUTING):
+		# Mistake: storming foot run after a routing defender near them.
+		var r := _router(sim, u, kn[AP.S_STORM_R])
+		if r >= 0 and BattleAI._mistake(sim, sim.u_side[u], AP.M_CHASE, kn):
+			BattleAI._attack(sim, u, r, 1)
+			BattleAI._count(sim, sim.u_side[u], AP.C_INF_CHASE)
+			return
 	var spread: int = kn[AP.S_SPREAD]
 	var best := -1
 	var best_d: int = kn[AP.S_STORM_R]

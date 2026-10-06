@@ -13,6 +13,12 @@ extends SceneTree
 ## plays every seed again and compares the final hashes. Format 6 also
 ## reports contact battles, zone stops are not counted. Each seed also
 ## prints the campaign AI's competency counters (campaign/cai_profile.gd).
+## --skill=easy|average|skilled sets every AI faction's campaign skill
+## (settings.ai_campaign_skill); --skill-f=<faction>:easy one faction's
+## (factions[f].ai_skill; <faction> a key or its first letters, e.g. rome,
+## carth); repeatable. Each seed then prints, per faction with a skill set,
+## its regions at turns 15 / 30 / 60, when it was eliminated and its
+## mistakes, and the end table sums them over the seeds.
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -29,6 +35,9 @@ var twice := false
 var pacing: Array = []
 var sg := {}
 var short: Array = []
+var skill_all := -1           # --skill=: campaign skill of every AI faction (-1 not set)
+var skill_f := {}             # --skill-f=: faction -> campaign skill
+var watch: Array = []         # [faction, [regions at 15, 30, 60], eliminated at turn] per seed
 
 
 func _init() -> void:
@@ -47,6 +56,11 @@ func _init() -> void:
 			no_sieges = fmt <= 3
 		elif a == "--twice":
 			twice = true
+		elif a.begins_with("--skill="):
+			skill_all = _level(a.get_slice("=", 1))
+		elif a.begins_with("--skill-f="):
+			var v := a.get_slice("=", 1)
+			skill_f[_faction(v.get_slice(":", 0))] = _level(v.get_slice(":", 1))
 	for f in CData.FACTIONS:
 		short.append(str(f["key"]).substr(0, 4))
 	var ok := true
@@ -58,6 +72,10 @@ func _init() -> void:
 	print("\npacing (format %d): seed | largest at 15 / 30 / 60 | eliminated by 60 | first win (20 regions, 3 key cities) | battles | field | ms/turn mean max" % fmt)
 	for row in pacing:
 		print("  " + str(row))
+	if not watch.is_empty():
+		print("\nfactions with a skill set: seed | faction skill | regions at 15 / 30 / 60 | eliminated at turn")
+		for w in watch:
+			print("  " + str(w))
 	if twice:
 		print("determinism (each seed twice): %s" % ("OK" if ok else "FAILED"))
 	quit(0 if ok else 1)
@@ -70,7 +88,19 @@ func _run(sd: int, verbose: bool) -> String:
 	var first_win := -1
 	CP.reset_counters()
 	if true:
-		var st := CState.new_campaign("sim", 1000 + sd * 77, [])
+		var settings := {}
+		if skill_all >= 0:
+			settings["ai_campaign_skill"] = skill_all
+		var st := CState.new_campaign("sim", 1000 + sd * 77, [], settings)
+		var keys: Array = skill_f.keys()
+		keys.sort()
+		for f in keys:
+			st["factions"][int(f)]["ai_skill"] = int(skill_f[f])
+		var w_reg := {}  # faction -> regions at 15 / 30 / 60
+		var w_dead := {}  # faction -> turn eliminated
+		for f in keys:
+			w_reg[f] = [0, 0, 0]
+			w_dead[f] = -1
 		if fmt < CState.VERSION:
 			st = CState.as_format(st, fmt)
 		if verbose:
@@ -105,6 +135,11 @@ func _run(sd: int, verbose: bool) -> String:
 			for k in 3:
 				if int(st["turn"]) == [15, 30, 60][k]:
 					largest[k] = big
+					for f in keys:
+						w_reg[f][k] = CState.regions_of(st, int(f)).size()
+			for f in keys:
+				if int(w_dead[f]) < 0 and not CState.alive(st, int(f)):
+					w_dead[f] = int(st["turn"])
 			if verbose and ((t + 1) % every == 0 or t == 0):
 				_report(st, us)
 		var elim := []
@@ -127,11 +162,40 @@ func _run(sd: int, verbose: bool) -> String:
 		var ct := CP.totals()
 		print("AI counters (docs/AI.md 6, all factions): attacks at bad odds %d, threatened cities left empty %d, faction-turns at war on two fronts %d, armies trickled in %d" % [
 			ct[0], ct[1], ct[2], ct[3]])
+		print("AI mistakes (all factions): city left empty %d, attack at bad odds %d, over-recruiting %d, unwise war %d, conquest not garrisoned %d" % [
+			ct[4], ct[5], ct[6], ct[7], ct[8]])
+		for f in keys:
+			var mk: Array = []
+			for key in CP.COUNTER_KEYS:
+				mk.append("%s %d" % [key, CP.counter(key, int(f))])
+			print("%s (%s): regions at 15 / 30 / 60: %s, eliminated at %s | %s" % [short[int(f)], CP.SKILL_NAMES[int(skill_f[f])],
+				str(w_reg[f]), str(w_dead[f]) if int(w_dead[f]) >= 0 else "-", ", ".join(mk)])
+			watch.append("%d | %s %s | %d / %d / %d | %s" % [1000 + sd * 77, short[int(f)], CP.SKILL_NAMES[int(skill_f[f])],
+				w_reg[f][0], w_reg[f][1], w_reg[f][2], str(w_dead[f]) if int(w_dead[f]) >= 0 else "-"])
 		pacing.append("%d | %d / %d / %d | %d %s | %s | %d | %d | %.1f %.1f" % [1000 + sd * 77, largest[0], largest[1], largest[2],
 			elim.size(), str(elim), str(first_win) if first_win >= 0 else "-", int(st["stats"]["battles"]), int(sg["field"]),
 			t_total / 1000.0 / turns, t_max / 1000.0])
 		return CState.hash_text(st)
 	return ""
+
+
+## "easy" / "average" / "skilled" (or 0 / 1 / 2) to a skill level.
+static func _level(v: String) -> int:
+	match v.to_lower().substr(0, 1):
+		"e", "0":
+			return CP.EASY
+		"s", "2":
+			return CP.SKILLED
+	return CP.AVERAGE
+
+
+## A faction index by its key or the first letters of it (-1 none).
+static func _faction(v: String) -> int:
+	for f in CData.FACTIONS.size():
+		if str(CData.FACTIONS[f]["key"]).begins_with(v.to_lower()):
+			return f
+	push_error("campaign_sim: no faction %s" % v)
+	return 0
 
 
 ## Siege events of the turn just resolved (turn t; events carry the turn they

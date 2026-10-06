@@ -637,8 +637,23 @@ fixes are all landed; see "Where we are"):
    `CP.count`, printed by `campaign_sim`); `cdata` FACTIONS `ai_style`
    (all Balanced) and `composition` placeholders. Verified: determinism
    golden digests and all final hashes, campaign_sim 6x60 per-seed
-   hashes, sieges, campaign_test / solo / battles equal to HEAD. Next:
-   step 2 (Easy).
+   hashes, sieges, campaign_test / solo / battles equal to HEAD.
+   **Step 2 done (2026-10-06): Easy, battle and campaign** (`docs/AI.md`
+   section 10). Battle: slower thinking, narrower perception, no terrain
+   sense, marches straight in, archers never in skirmish mode, no
+   fall-back of mauled units, chases routers, plus a deliberate-mistake
+   roller on the sim RNG (9 mistakes, per-side cooldowns in hashed
+   `BattleSim.ai_mist`; lockstep and snapshot tested). Average beats Easy
+   74 % (flat) / 71 % (hill) of mirrored battles; Easy vs Easy 50 / 50,
+   no draws. Campaign: cheapest builds, one recruit a turn, nearest
+   targets, no gathering / screens / relief / stances, storms on arrival,
+   no peace, 5 mistakes on `CState.rand`; an Easy faction ends about as
+   big as at Average (target not met: Average's caution costs it as much,
+   see AI.md). Several "Easy" behaviours (no pull-outs, unguarded
+   batteries, nearest targets, early charge) beat Average and were kept
+   at Average: a lead for step 3. Average / Balanced byte-identical
+   (determinism, sieges, campaign_sim hashes). UI: Easy without "(soon)".
+   Next: step 3 (Skilled battle).
 7. **Mid-battle reinforcements** from the map edge; ambush stance once
    hidden information in an async game is designed.
 8. **Shared empire** (both humans running one faction).

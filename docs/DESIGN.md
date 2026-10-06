@@ -196,7 +196,10 @@ Per-soldier simulation is the main cost, so the sim is built around it:
   missiles, protect flanks, rout pursuit.
 - An army-level planner picks a deployment and assigns behaviours.
 - Every threshold and interval it uses comes from a skill / personality
-  profile (`sim/ai_profile.gd`; design in `docs/AI.md`).
+  profile (`sim/ai_profile.gd`; design in `docs/AI.md`). Easy (built)
+  thinks slower, notices less, ignores terrain and makes deliberate,
+  plausible mistakes rolled with the sim's RNG (lockstep-safe); Skilled
+  comes later.
 
 ### Milestone 2: mechanics as built
 
@@ -550,7 +553,8 @@ scores) is a knob of the side's AI profile, `sim/ai_profile.gd` (skill
 Easy / Average / Skilled, personality Cautious / Balanced / Aggressive;
 the values here are the Average / Balanced row), carried per side in the
 scenario (`ai_skill`, `ai_style`); the settlement AI and the campaign AI
-(`campaign/cai_profile.gd`) likewise. See `docs/AI.md` "As built: profiles".
+(`campaign/cai_profile.gd`) likewise. See `docs/AI.md` "As built: profiles"
+and "As built: Easy".
 Artillery: bolts deploy at the ends of the first line (clear, flat field of
 fire), stones 25 m behind the centre; a battery keeps its place while it
 has targets in range and friends within 30 m, otherwise packs up to follow

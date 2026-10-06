@@ -16,8 +16,13 @@ extends RefCounted
 ## give the battle AI's skill for that faction's armies (battle_skill()).
 ##
 ## Step 1 (October 2026): the AVERAGE column is the AI as it was (every
-## value exactly the old constant), EASY and SKILLED are copies of it
-## (placeholders), every personality offset is 0.
+## value exactly the old constant), every personality offset is 0.
+## Step 2 (October 2026): the EASY column: this turn only, cheapest
+## buildings, piecemeal single-type recruiting, nearest targets at poor
+## odds, no gathering, screens, relief, sieges or stances, random-ish wars
+## and no peace, plus the deliberate mistakes (M_*, rolled only where the
+## level's MK_BASE + M_* is above 0: Average never draws from the RNG for
+## them, so its campaigns are unchanged). SKILLED is still AVERAGE.
 ##
 ## Also here: diagnostic counters of what the AI did (docs/AI.md 6), kept
 ## in a static Dictionary outside the state (never hashed, never read by
@@ -101,15 +106,37 @@ const TRADE_ASK_TURNS := 56     # propose trade after this many turns of peace .
 const TRADE_ASK_CHANCE := 57    # ... with this % chance a turn
 const TRADE_ACCEPT_TURNS := 58  # accept trade after this many turns of peace ...
 const TRADE_ACCEPT_PCT := 59    # ... when below this % of the asker's strength
-const N_KNOBS := 60
+# Step 2 (Easy): behaviours a level switches off, and the deliberate mistakes.
+const BUILD_CHEAPEST := 60      # build the cheapest wanted building first (1) or by priority (0)
+const RECRUIT_LEAN_PCT := 61    # % chance a recruit is of the line the faction already has most of
+const TARGET_NEAREST := 62      # attack targets: the ones reached this turn first, by value, defence ignored (1)
+const GATHER := 63              # gather armies a march short before attacking (1) or let them arrive as they come (0)
+const SCREENS := 64             # send armies to screen threatened cities (1) or not (0)
+const ASSAULT_ALWAYS := 65      # storm on arrival instead of laying siege (1)
+const RELIEVE := 66             # relieve our besieged cities (1) or not (0)
+const STANCES := 67             # use fortify, forced march, raiding and sheltering (1) or the default stance only (0)
+const OVER_RECRUIT_PCT := 68    # MK_OVER_RECRUIT: army upkeep up to this % of income that turn
+const MK_BASE := 69             # MK_BASE + M_*: % chance of that mistake per roll (0: never rolled)
+const N_KNOBS := MK_BASE + 5
 
-## [knob, EASY, AVERAGE, SKILLED]. Step 1: EASY = SKILLED = AVERAGE = the old value.
+# Deliberate mistakes (docs/AI.md 4, "Deliberate mistakes (campaign)"),
+# rolled with CState.rand at the decision point (cai.gd _mistake); each is a
+# move a player could make under the same rules.
+const M_EMPTY_CITY := 0         # an army that should hold a threatened city of ours marches off
+const M_BAD_ODDS := 1           # one attack a turn below the odds the level wants
+const M_OVER_RECRUIT := 2       # recruits past its income for a turn (into deficit, then the debt rules)
+const M_UNWISE_WAR := 3         # declares war on a stronger neighbour
+const M_NO_GARRISON := 4        # the army in a city it took last turn marches off though it is threatened
+const N_MISTAKES := 5
+
+## [knob, EASY, AVERAGE, SKILLED]. AVERAGE = the old value; SKILLED = AVERAGE
+## for now (step 4); EASY: docs/AI.md section 9, "As built: Easy".
 const KNOBS: Array = [
 	# Economy and build order.
-	[RESERVE_TURNS, 1, 1, 1],
-	[BUILD_BUDGET_PCT, 60, 60, 60],
+	[RESERVE_TURNS, 0, 1, 1],
+	[BUILD_BUDGET_PCT, 100, 60, 60],
 	[BUILD_CAPITAL_W, 1000, 1000, 1000],
-	[WALLS_THREAT_DIV, 2, 2, 2],
+	[WALLS_THREAT_DIV, 1, 2, 2],
 	[CUT_DEBT_PCT, 90, 90, 90],
 	# Army composition and recruitment.
 	[UPKEEP_SHARE, 70, 70, 70],
@@ -119,52 +146,52 @@ const KNOBS: Array = [
 	[RECRUIT_BUILDING_W, 10, 10, 10],
 	[RECRUIT_THREAT_DIV, 500, 500, 500],
 	[RECRUIT_FRONTIER_W, 5, 5, 5],
-	[RECRUIT_MAX, 12, 12, 12],
+	[RECRUIT_MAX, 1, 12, 12],
 	[RECRUIT_RESERVE_DIV, 2, 2, 2],
 	# Target selection and expansion.
 	[VAL_WEALTH, 100, 100, 100],
 	[VAL_LEVEL, 150, 150, 150],
 	[VAL_KEY, 300, 300, 300],
-	[HUMAN_VALUE_PCT, 90, 90, 90],
+	[HUMAN_VALUE_PCT, 100, 90, 90],
 	# Concentration of force and support.
-	[ATTACK_RATIO, 150, 150, 150],
-	[ATTACK_RATIO6, 130, 130, 130],
-	[COMMIT_PCT, 130, 130, 130],
+	[ATTACK_RATIO, 120, 150, 150],
+	[ATTACK_RATIO6, 110, 130, 130],
+	[COMMIT_PCT, 100, 130, 130],
 	[SIEGE_RATIO_PCT, 50, 50, 50],
 	[GATHER_PCT, 75, 75, 75],
 	[TOWARD_PCT, 150, 150, 150],
 	[FORCED_HELP, 1, 1, 1],
 	# Defence, screening and zones of control.
-	[SHELTER_PCT, 70, 70, 70],
+	[SHELTER_PCT, 0, 70, 70],
 	[SCREEN_PCT, 80, 80, 80],
 	[SCREEN_NEAR, 2, 2, 2],
 	# Sieges and relief.
-	[SIEGE_PATIENCE, 3, 3, 3],
-	[SIEGE_ASSAULT_WIN, 35, 35, 35],
+	[SIEGE_PATIENCE, 0, 3, 3],
+	[SIEGE_ASSAULT_WIN, 0, 35, 35],
 	[RELIEF_WIN, 60, 60, 60],
-	[LIFT_WIN, 50, 50, 50],
+	[LIFT_WIN, 101, 50, 50],
 	[IDLE_TURNS, 3, 3, 3],
-	[IDLE_WIN, 35, 35, 35],
+	[IDLE_WIN, 20, 35, 35],
 	# Stances: raids and hunting.
-	[RAID_WEALTH, 4, 4, 4],
+	[RAID_WEALTH, 99, 4, 4],
 	[HUNT_COST, 13, 13, 13],
 	[HUNT_SLACK, 10, 10, 10],
-	[HUNT_WIN, 70, 70, 70],
+	[HUNT_WIN, 50, 70, 70],
 	# Diplomacy.
 	[FIRST_WAR_TURN, 6, 6, 6],
 	[FIRST_WAR_ON_PLAYERS, 10, 10, 10],
 	[PLAYER_WAR_GAP, 8, 8, 8],
 	[MAX_WARS, 2, 2, 2],
 	[WAR_CALM_TURNS, 6, 6, 6],
-	[WAR_RATIO, 120, 120, 120],
-	[WAR_RATIO_BUSY, 90, 90, 90],
+	[WAR_RATIO, 100, 120, 120],
+	[WAR_RATIO_BUSY, 80, 90, 90],
 	[WAR_CHANCE, 12, 12, 12],
 	[WAR_CHANCE_PLAYERS, 8, 8, 8],
 	[TRADE_WAR_DIV, 2, 2, 2],
 	[BIG_REALM, 8, 8, 8],
-	[PEACE_ASK_TURNS, 6, 6, 6],
+	[PEACE_ASK_TURNS, 999, 6, 6],
 	[PEACE_ASK_PCT, 70, 70, 70],
-	[PEACE_ASK_LONG, 20, 20, 20],
+	[PEACE_ASK_LONG, 999, 20, 20],
 	[PEACE_MIN_TURNS, 3, 3, 3],
 	[PEACE_ACCEPT_PCT, 100, 100, 100],
 	[PEACE_ACCEPT_LONG, 18, 18, 18],
@@ -173,6 +200,22 @@ const KNOBS: Array = [
 	[TRADE_ASK_CHANCE, 15, 15, 15],
 	[TRADE_ACCEPT_TURNS, 2, 2, 2],
 	[TRADE_ACCEPT_PCT, 250, 250, 250],
+	# Behaviours a level switches off (Average: as before).
+	[BUILD_CHEAPEST, 1, 0, 0],
+	[RECRUIT_LEAN_PCT, 70, 0, 0],
+	[TARGET_NEAREST, 1, 0, 0],
+	[GATHER, 0, 1, 1],
+	[SCREENS, 0, 1, 1],
+	[ASSAULT_ALWAYS, 1, 0, 0],
+	[RELIEVE, 0, 1, 1],
+	[STANCES, 0, 1, 1],
+	[OVER_RECRUIT_PCT, 130, 100, 100],
+	# Deliberate mistakes: % per roll (Average and Skilled: never rolled).
+	[MK_BASE + M_EMPTY_CITY, 50, 0, 0],
+	[MK_BASE + M_BAD_ODDS, 30, 0, 0],
+	[MK_BASE + M_OVER_RECRUIT, 25, 0, 0],
+	[MK_BASE + M_UNWISE_WAR, 8, 0, 0],
+	[MK_BASE + M_NO_GARRISON, 50, 0, 0],
 ]
 
 ## Personality offsets [knob, CAUTIOUS, BALANCED, AGGRESSIVE] (docs/AI.md 5:
@@ -256,7 +299,15 @@ const C_BAD_ODDS := "attacks_bad_odds"      # attacks / assaults launched with t
 const C_EMPTY_CITY := "cities_left_empty"   # threatened cities of ours left with no army in or near them
 const C_TWO_FRONTS := "two_front_wars"      # turns at war with two or more factions
 const C_TRICKLED := "armies_trickled"       # attacks by a single army while another army was a turn away
-const COUNTER_KEYS: Array[String] = [C_BAD_ODDS, C_EMPTY_CITY, C_TWO_FRONTS, C_TRICKLED]
+# Deliberate mistakes made (M_*), in M_* order.
+const C_MK_EMPTY_CITY := "mk_empty_city"
+const C_MK_BAD_ODDS := "mk_bad_odds"
+const C_MK_OVER_RECRUIT := "mk_over_recruit"
+const C_MK_UNWISE_WAR := "mk_unwise_war"
+const C_MK_NO_GARRISON := "mk_no_garrison"
+const MISTAKE_KEYS: Array[String] = [C_MK_EMPTY_CITY, C_MK_BAD_ODDS, C_MK_OVER_RECRUIT, C_MK_UNWISE_WAR, C_MK_NO_GARRISON]
+const COUNTER_KEYS: Array[String] = [C_BAD_ODDS, C_EMPTY_CITY, C_TWO_FRONTS, C_TRICKLED,
+	C_MK_EMPTY_CITY, C_MK_BAD_ODDS, C_MK_OVER_RECRUIT, C_MK_UNWISE_WAR, C_MK_NO_GARRISON]
 
 static var _counters := {}
 
@@ -275,6 +326,11 @@ static func totals() -> Array[int]:
 			t += int(_counters.get("%s:%d" % [key, f], 0))
 		out.append(t)
 	return out
+
+
+## Counter `key` of faction f alone.
+static func counter(key: String, f: int) -> int:
+	return int(_counters.get("%s:%d" % [key, f], 0))
 
 
 static func reset_counters() -> void:

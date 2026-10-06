@@ -30,10 +30,18 @@ extends SceneTree
 ##   falls easily to a competent attacker, a level 3 wall needs artillery
 ##   or a big edge, nothing is impregnable; AI settlement battles end in
 ##   12 minutes or less, without draws.
+## Skill levels (docs/AI.md 6): --skill=A:B (levels e, a, s or 0, 1, 2) with
+##   --fair=N runs the mirrored bench_2000 battles with side 0 at level A
+##   and side 1 at B, then swapped (each orientation, so a top / bottom bias
+##   cancels), and prints the wins per level, the mirrored bias, durations
+##   and the AI's per-competency counters per level ("SKILL" lines; shard
+##   with --seed0). With --only=sieges / plans it sets the attacker (A) and
+##   the defender (B) of the settlement battles.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const UT := preload("res://sim/unit_types.gd")
+const AP := preload("res://sim/ai_profile.gd")
 
 const UP := Scenarios.FACE_UP
 const DOWN := Scenarios.FACE_DOWN
@@ -49,6 +57,7 @@ var fair_variants: Array = ["side0_first", "side1_first"]  # --fair-variants=a,b
 var fair_terrain := -1  # --fair-terrain=K: mirrored battles on a symmetric map of kind K
 var plans_only: Array = []  # --plans=0,4: settlement plans to run (--only=sieges / plans)
 var walls_only: Array = []  # --walls=3: wall levels to run (--only=sieges / plans)
+var skill: Array = []       # --skill=A:B: AI skill of side 0 / attacker and side 1 / defender
 
 
 func _init() -> void:
@@ -71,7 +80,14 @@ func _init() -> void:
 		elif a.begins_with("--plans="):
 			for v in a.get_slice("=", 1).split(","):
 				plans_only.append(int(v))
+		elif a.begins_with("--skill="):
+			for v in a.get_slice("=", 1).split(":"):
+				skill.append(_level(v))
 	var t0 := Time.get_ticks_msec()
+	if fair_n > 0 and skill.size() == 2:
+		_skill_fair(fair_n)
+		quit(0)
+		return
 	if fair_n > 0:
 		_fairness(fair_n)
 		quit(0)
@@ -522,6 +538,85 @@ func _fairness(n: int) -> void:
 				killed[side] += int(r["sides"][side]["killed"])
 		print("FAIR %s n=%d bottom(side0)=%d top(side1)=%d draw=%d killed0=%d killed1=%d" % [
 			variant, n, wins[0], wins[1], wins[2], killed[0], killed[1]])
+
+
+## "e" / "a" / "s" (or 0 / 1 / 2) to a skill level.
+static func _level(v: String) -> int:
+	match v.to_lower().substr(0, 1):
+		"e", "0":
+			return AP.EASY
+		"s", "2":
+			return AP.SKILLED
+	return AP.AVERAGE
+
+
+## Settlement scenarios with --skill: attacker (side 0) A, defender B.
+func _with_skill(sc: Dictionary) -> void:
+	if skill.size() == 2:
+		sc["ai_skill"] = [skill[0], skill[1]]
+
+
+## --fair=N --skill=A:B: the mirrored bench_2000 battles (flat, or the
+## symmetric map of --fair-terrain) with side 0 at level A and side 1 at B,
+## then the same seeds swapped. Prints per orientation and in total the wins
+## of each level, draws, minutes to decide, and the per-competency counters
+## summed per level (AP.COUNTER_NAMES). "SKILL" lines sum across shards.
+func _skill_fair(n: int) -> void:
+	var la: int = skill[0]
+	var lb: int = skill[1]
+	var names := ["A=%s" % AP.SKILL_NAMES[la], "B=%s" % AP.SKILL_NAMES[lb]]
+	var cnt: Array = []  # per level A, B (plain arrays: packed ones are values)
+	for lv in 2:
+		var row: Array = []
+		row.resize(AP.N_COUNTERS)
+		row.fill(0)
+		cnt.append(row)
+	var tot := [0, 0, 0]  # wins of A, of B, draws
+	var mins := 0.0
+	var max_min := 0.0
+	var withdrew := [0, 0]
+	for orient in 2:
+		var wins := [0, 0, 0]  # A, B, draw
+		for k in n:
+			var s := seed0 + k
+			var scn := Scenarios.make("bench_2000")
+			if fair_terrain >= 0:
+				scn["terrain"] = {"kind": fair_terrain, "sym": 1}
+			var a_side := 0 if orient == 0 else 1
+			var sk := [la, lb] if orient == 0 else [lb, la]
+			scn["ai_skill"] = sk
+			var sim := BattleSim.new()
+			sim.setup(scn, 77 + s * 31)
+			while sim.tick < 12000 and sim.winner < 0:
+				sim.step()
+			var w: int = sim.winner
+			if w == a_side:
+				wins[0] += 1
+			elif w == 1 - a_side:
+				wins[1] += 1
+			else:
+				wins[2] += 1
+			var dt: float = (sim.decided_tick if sim.decided_tick >= 0 else sim.tick) / 600.0
+			mins += dt
+			max_min = maxf(max_min, dt)
+			for side in 2:
+				var lv := 0 if side == a_side else 1
+				if sim.ai_phase[side] == 3:
+					withdrew[lv] += 1
+				for c in AP.N_COUNTERS:
+					cnt[lv][c] += sim.stat_aic[side * AP.N_COUNTERS + c]
+		print("SKILL orient=%d terrain=%d n=%d %s(side %d) wins=%d %s(side %d) wins=%d draws=%d" % [
+			orient, fair_terrain, n, names[0], 0 if orient == 0 else 1, wins[0], names[1], 1 if orient == 0 else 0,
+			wins[1], wins[2]])
+		for x in 3:
+			tot[x] += wins[x]
+	print("SKILL total terrain=%d n=%d %s wins=%d %s wins=%d draws=%d minutes_sum=%.1f max=%.1f withdrew=%d,%d" % [
+		fair_terrain, 2 * n, names[0], tot[0], names[1], tot[1], tot[2], mins, max_min, withdrew[0], withdrew[1]])
+	for lv in 2:
+		var parts: Array = []
+		for c in AP.N_COUNTERS:
+			parts.append("%s=%d" % [AP.COUNTER_NAMES[c], cnt[lv][c]])
+		print("SKILLCOUNT terrain=%d %s %s" % [fair_terrain, names[lv], " ".join(parts)])
 
 
 ## Artillery set pieces: (name, units, orders, ticks, mode).
@@ -1347,6 +1442,7 @@ func _garrison_defence() -> void:
 				var r := Scenarios.settlement({"seed": 202 + s, "level": 1, "walls": walls, "bld": [2]},
 					{"kind": 1, "seed": 11 + s, "forest": 15, "ground": 2}, att, dfn, 1, [0, 1])
 				var sim := BattleSim.new()
+				_with_skill(r["scenario"])
 				sim.setup(r["scenario"], 50000 + s * 181)
 				while sim.tick < BattleSim.TIME_LIMIT + 10 and sim.winner < 0:
 					sim.step()
@@ -1377,6 +1473,7 @@ func _siege_battles() -> void:
 		for s in n_runs:
 			var sc := Scenarios.siege_test(500 + s * 37, int(spec[1]), int(spec[2]), int(spec[3]), int(spec[4]), 1)
 			sc["ai_sides"] = [0, 1]
+			_with_skill(sc)
 			var sim := BattleSim.new()
 			sim.setup(sc, 51000 + s * 191)
 			while sim.tick < BattleSim.TIME_LIMIT + 10 and sim.winner < 0:
@@ -1424,6 +1521,7 @@ func _plan_sieges() -> void:
 			for s in n_runs:
 				var sc := Scenarios.siege_test(700 + s * 41, 2, walls, 2, int(spec[2]), 1, -1, int(spec[1]), int(spec[3]))
 				sc["ai_sides"] = [0, 1]
+				_with_skill(sc)
 				var sim := BattleSim.new()
 				sim.setup(sc, 53000 + s * 197)
 				while sim.tick < BattleSim.TIME_LIMIT + 10 and sim.winner < 0:

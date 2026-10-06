@@ -35,7 +35,7 @@ var _ground_button: Button
 ## SKILLED; Easy and Skilled play like Average for now).
 var _ai_skill := 1
 var _ai_button: Button
-const AI_SKILL_LABELS: Array[String] = ["easy (soon)", "average", "skilled (soon)"]
+const AI_SKILL_LABELS: Array[String] = ["easy", "average", "skilled (soon)"]
 ## Settlement battle controls: seed, level 0-2, walls 0-3, terrain kind,
 ## the player attacks (def side 1) or defends (0).
 var _siege_seed: LineEdit

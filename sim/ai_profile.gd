@@ -11,8 +11,12 @@ extends RefCounted
 ## changes numbers here, or enables a behaviour by a knob.
 ##
 ## Step 1 (October 2026): the AVERAGE column is the AI as it was (every
-## value exactly the old constant), and EASY and SKILLED are copies of it
-## (placeholders, so nothing changes yet); every personality offset is 0.
+## value exactly the old constant); every personality offset is 0.
+## Step 2 (October 2026): the EASY column (docs/AI.md section 9, "As built:
+## Easy"): slower thinking, narrower perception, no terrain sense, no
+## pull-outs, no reserve or relief, and the deliberate mistakes (M_*, rolled
+## only where the level's MK_BASE + M_* is above 0, so Average and Skilled
+## never draw from the RNG for them). SKILLED is still a copy of AVERAGE.
 ## Integers only (sim units: M = 1024 per metre, ticks of 0.1 s; *_PCT in
 ## percent of the thing named).
 ##
@@ -195,36 +199,64 @@ const S_OFFWALL_R := 144       # wall units come down with attackers in the town
 const S_CIT_LOST_R := 145      # attackers this close to the citadel's gate: into the citadel
 const S_CIT_SHUT_R := 146      # ... and it is shut with attackers this close
 const S_CIT_REACT := 147       # in the citadel, attack attackers within its radius + this
-const N_KNOBS := 148
+# Step 2 (Easy): behaviours a level switches off, and the deliberate mistakes.
+const CLEAR_SPOT := 148        # deployment: cavalry, pikes, batteries in woods look for a clear spot (1) or not (0)
+const CAV_STAGE_FRONT := 149   # cavalry goes round a formed, unengaged front (1) or charges it head on (0)
+const FLANK_PCT := 150         # % chance a unit facing a pinned pike front goes round to its flank
+const WD_EARLY_PCT := 151      # below this % of the enemy's strength, MK_EARLY_WD is rolled (once a battle)
+const IDLE_TICKS := 152        # a unit left idle (MK_IDLE) waits this long unless it is attacked
+const MK_COOLDOWN := 153       # after a mistake, the side cannot make that mistake again for this long
+const S_CIT_OUTNUMBER_PCT := 154  # defenders go into the citadel when the attackers inside the walls exceed this % of them
+const MIS_SKIRM := 155         # missile troops are put in skirmish mode (evade charges) (1) or never (0)
+const MIS_CLEAN := 156         # missile troops hold fire unless an unengaged enemy is in range (1) or shoot at will (0)
+const MK_BASE := 157           # MK_BASE + M_*: % chance of that mistake per roll (0: never rolled)
+const N_KNOBS := MK_BASE + 9
+
+# Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
+# sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
+# player could give. Per side, a mistake made cannot recur for MK_COOLDOWN
+# (BattleSim.ai_mist, hashed when a profile is not the default).
+const M_LATE_FLANK := 0        # spears / cavalry ignore an enemy cavalry threat, a town reserve attackers near it, this think
+const M_WRONG_TARGET := 1      # cavalry rides at the nearest enemy foot instead of the target it chose
+const M_IDLE := 2              # a line unit is left idle when the lines engage
+const M_CHASE := 3             # foot chase a routing enemy instead of the fight
+const M_SPEAR_CHARGE := 4      # cavalry charges a braced front, or foot walk into a formed pike front
+const M_MIS_FORGET := 5        # archers are not pulled back behind the line when the lines meet
+const M_COMMIT_EARLY := 6      # the cavalry (the reserve) charges the enemy line before the lines meet (once a battle)
+const M_GATE_OPEN := 7         # a defender's gate is not closed this time with attackers near
+const M_EARLY_WD := 8          # the army withdraws while still in the fight (once a battle)
+const N_MISTAKES := 9
+const MISTAKE_NAMES: Array[String] = ["late_flank", "wrong_target", "idle", "chase", "spear_charge",
+	"mis_forget", "commit_early", "gate_open", "early_wd"]
 
 ## [knob, EASY, AVERAGE, SKILLED], grouped by competency (docs/AI.md 3.x).
-## Step 1: every row has EASY = SKILLED = AVERAGE = the old constant.
+## AVERAGE = the old constant; SKILLED = AVERAGE (step 3 changes it).
 const KNOBS: Array = [
 	# Reaction (2: think interval).
-	[ARMY_THINK, 10, 10, 10],
-	[UNIT_THINK, 10, 10, 10],
-	[REPLAN_DIST, 15 * M, 15 * M, 15 * M],
-	[REPLAN_FACE, 24, 24, 24],
+	[ARMY_THINK, 35, 10, 10],
+	[UNIT_THINK, 30, 10, 10],
+	[REPLAN_DIST, 25 * M, 15 * M, 15 * M],
+	[REPLAN_FACE, 48, 24, 24],
 	# Deployment (3.1).
 	[LINE_GAP, 4 * M, 4 * M, 4 * M],
 	[LINE2_BACK, 35 * M, 35 * M, 35 * M],
 	[MISSILE_AHEAD, 15 * M, 15 * M, 15 * M],
-	[MAX_LINE, 8, 8, 8],
+	[MAX_LINE, 12, 8, 8],
 	[WING_GAP, 10 * M, 10 * M, 10 * M],
 	# Approach and skirmish (3.2).
 	[SKIRMISH_HALT, 105 * M, 105 * M, 105 * M],
 	[ENGAGE_DIST, 60 * M, 60 * M, 60 * M],
 	[ENGAGE_RUSH, 20 * M, 20 * M, 20 * M],
 	[HALT_SHORT, 10 * M, 10 * M, 10 * M],
-	[SKIRMISH_TICKS, 1100, 1100, 1100],
+	[SKIRMISH_TICKS, 400, 1100, 1100],
 	[SKIRMISH_MISSILE_PCT, 70, 70, 70],
-	[SKIRMISH_AMMO_PCT, 25, 25, 25],
+	[SKIRMISH_AMMO_PCT, 5, 25, 25],
 	[SHELLED_TICKS, 60, 60, 60],
 	# Engagement and target choice (3.3).
 	[CHARGE_RANGE, 35 * M, 35 * M, 35 * M],
-	[SPEAR_CAV_R, 40 * M, 40 * M, 40 * M],
+	[SPEAR_CAV_R, 20 * M, 40 * M, 40 * M],
 	# Flanking and the rear (3.4).
-	[PIKE_ALT_PCT, 150, 150, 150],
+	[PIKE_ALT_PCT, 110, 150, 150],
 	[FLANK_OUT, 14 * M, 14 * M, 14 * M],
 	[FLANK_ARRIVE, 8 * M, 8 * M, 8 * M],
 	[FLANK_TIMEOUT, 300, 300, 300],
@@ -240,8 +272,8 @@ const KNOBS: Array = [
 	[CAV_ARROW_REACT, 30, 30, 30],
 	[CAV_SHELL_REACT, 30, 30, 30],
 	[UNPROTECTED, 30 * M, 30 * M, 30 * M],
-	[CAV_THREAT, 60 * M, 60 * M, 60 * M],
-	[CAV_SC_ROUTER, 1000, 1000, 1000],
+	[CAV_THREAT, 25 * M, 60 * M, 60 * M],
+	[CAV_SC_ROUTER, 5000, 1000, 1000],
 	[CAV_SC_MISSILE, 4000, 4000, 4000],
 	[CAV_SC_MISSILE_FIRE, 2600, 2600, 2600],
 	[CAV_MISSILE_CLOSE, 50, 50, 50],
@@ -249,20 +281,20 @@ const KNOBS: Array = [
 	[CAV_SC_BATTERY_GUARDED, 2200, 2200, 2200],
 	[CAV_SC_CAV_THREAT, 3500, 3500, 3500],
 	[CAV_SC_ENGAGED, 3000, 3000, 3000],
-	[CAV_SC_ENGAGED_BRACED, 2500, 2500, 2500],
+	[CAV_SC_ENGAGED_BRACED, 3000, 2500, 2500],
 	[CAV_SC_MISSILE_LATE, 2000, 2000, 2000],
 	[CAV_SC_DIST, 4, 4, 4],
-	[CAV_SC_UPHILL, 6000, 6000, 6000],
-	[CAV_SC_WOODS_PATH, 30, 30, 30],
-	[CAV_SC_WOODS_AT, 600, 600, 600],
+	[CAV_SC_UPHILL, 0, 6000, 6000],
+	[CAV_SC_WOODS_PATH, 0, 30, 30],
+	[CAV_SC_WOODS_AT, 0, 600, 600],
 	# Missile use (3.6).
 	[MIS_BEHIND, 25 * M, 25 * M, 25 * M],
 	[MIS_FALLBACK, 40 * M, 40 * M, 40 * M],
-	[SHELTER_CAV_R, 70 * M, 70 * M, 70 * M],
+	[SHELTER_CAV_R, 0, 70 * M, 70 * M],
 	# Artillery (3.7).
 	[ART_BACK, 25 * M, 25 * M, 25 * M],
 	[ART_MOVE, 30 * M, 30 * M, 30 * M],
-	[ART_DEPLOY_MOVE, 25 * M, 25 * M, 25 * M],
+	[ART_DEPLOY_MOVE, 1000 * M, 25 * M, 25 * M],
 	[GUARD_OUT, 14 * M, 14 * M, 14 * M],
 	[GUARD_FWD, 5 * M, 5 * M, 5 * M],
 	[GUARD_RANGE, 70 * M, 70 * M, 70 * M],
@@ -279,59 +311,59 @@ const KNOBS: Array = [
 	[ART_SC_MOVING_PCT, 50, 50, 50],
 	[SIDESTEP, 40 * M, 40 * M, 40 * M],
 	# Reserves and rotation (3.8).
-	[RETIRE_ALIVE_PCT, 30, 30, 30],
+	[RETIRE_ALIVE_PCT, 0, 30, 30],
 	[RETIRE_TICKS, 300, 300, 300],
 	[RETIRE_BACK, 60 * M, 60 * M, 60 * M],
 	# Morale and chain routs (3.9).
 	[RETIRE_MORALE, 350, 350, 350],
 	# Terrain and woods (3.10).
-	[HOLD_DH, 4 * M, 4 * M, 4 * M],
+	[HOLD_DH, 1000 * M, 4 * M, 4 * M],
 	[HOLD_TICKS, 2400, 2400, 2400],
 	[HOLD_REACT, 25 * M, 25 * M, 25 * M],
 	[HOLD_OUTSHOT_PCT, 130, 130, 130],
 	[HOLD_OUTSHOT_SLACK, 200, 200, 200],
 	[HOLD_FIGHT_DIV, 3, 3, 3],
-	[DETOUR_GRADE, 614, 614, 614],
+	[DETOUR_GRADE, 1 << 20, 614, 614],
 	[DETOUR_MIN, 35 * M, 35 * M, 35 * M],
 	[DETOUR_LONG, 17, 17, 17],
 	[DETOUR_OUT, 25 * M, 25 * M, 25 * M],
 	[DETOUR_GENTLE_NUM, 2, 2, 2],
 	[DETOUR_GENTLE_DEN, 3, 3, 3],
 	[DETOUR_TIMEOUT, 400, 400, 400],
-	[CREST_GAIN, 1536, 1536, 1536],
+	[CREST_GAIN, 1000 * M, 1536, 1536],
 	[CREST_REACH, 40 * M, 40 * M, 40 * M],
-	[DEPLOY_SHIFT, 30 * M, 30 * M, 30 * M],
+	[DEPLOY_SHIFT, 0, 30 * M, 30 * M],
 	[DEPLOY_GAIN, 2 * M, 2 * M, 2 * M],
 	[DEPLOY_MARGIN, 50 * M, 50 * M, 50 * M],
 	[RISE_LAT, 12 * M, 12 * M, 12 * M],
 	[RISE_FWD, 10 * M, 10 * M, 10 * M],
-	[RISE_GAIN, 1024, 1024, 1024],
-	[RISE_LOF_BONUS, 4 * M, 4 * M, 4 * M],
+	[RISE_GAIN, 1000 * M, 1024, 1024],
+	[RISE_LOF_BONUS, 0, 4 * M, 4 * M],
 	[LINE_SPAN, 30 * M, 30 * M, 30 * M],
 	# Knowing when to quit (3.14).
 	[WD_MIN_TICK, 600, 600, 600],
-	[WD_FOE_PCT, 30, 30, 30],
-	[WD_START_PCT, 20, 20, 20],
+	[WD_FOE_PCT, 15, 30, 30],
+	[WD_START_PCT, 10, 20, 20],
 	# Pursuit and discipline (3.13).
 	[MIS_ROUTER_R, 40 * M, 40 * M, 40 * M],
-	[S_FOOT_ROUTER_R, 80 * M, 80 * M, 80 * M],
+	[S_FOOT_ROUTER_R, 200 * M, 80 * M, 80 * M],
 	[S_MIS_ROUTER_R, 40 * M, 40 * M, 40 * M],
 	[S_CAV_ROUTER_R, 200 * M, 200 * M, 200 * M],
 	# Sieges, attacking (3.11).
-	[S_BEATEN_PCT, 35, 35, 35],
+	[S_BEATEN_PCT, 20, 35, 35],
 	[S_STAGE_OUT, 160 * M, 160 * M, 160 * M],
 	[S_ART_OUT, 165 * M, 165 * M, 165 * M],
 	[S_COVER_OUT, 110 * M, 110 * M, 110 * M],
-	[S_HACK_AFTER, 1200, 1200, 1200],
-	[S_HACKERS, 2, 2, 2],
+	[S_HACK_AFTER, 0, 1200, 1200],
+	[S_HACKERS, 4, 2, 2],
 	[S_STORM_R, 45 * M, 45 * M, 45 * M],
 	[S_SPREAD, 25 * M, 25 * M, 25 * M],
 	[S_STALL_TICKS, 1500, 1500, 1500],
 	[S_STALL_PROG, 10, 10, 10],
-	[S_ASSAULT_ALL, 2400, 2400, 2400],
+	[S_ASSAULT_ALL, 600, 2400, 2400],
 	[S_ALLOUT_PCT, 120, 120, 120],
 	[S_KEEP_PCT, 150, 150, 150],
-	[S_GATE_HP_W, 4, 4, 4],
+	[S_GATE_HP_W, 0, 4, 4],
 	[S_ART_SPREAD, 30 * M, 30 * M, 30 * M],
 	[S_ART_REACH_PCT, 92, 92, 92],
 	[S_ART_CLOSE_PCT, 70, 70, 70],
@@ -356,13 +388,33 @@ const KNOBS: Array = [
 	[S_GATE_POST_R, 20 * M, 20 * M, 20 * M],
 	[S_GATE_REACT, 25 * M, 25 * M, 25 * M],
 	[S_STREET_R, 60 * M, 60 * M, 60 * M],
-	[S_RESERVE_R, 140 * M, 140 * M, 140 * M],
+	[S_RESERVE_R, 60 * M, 140 * M, 140 * M],
 	[S_RESERVE_RUN, 30 * M, 30 * M, 30 * M],
-	[S_CLOSE_R, 100 * M, 100 * M, 100 * M],
-	[S_OFFWALL_R, 40 * M, 40 * M, 40 * M],
-	[S_CIT_LOST_R, 30 * M, 30 * M, 30 * M],
+	[S_CLOSE_R, 40 * M, 100 * M, 100 * M],
+	[S_OFFWALL_R, 15 * M, 40 * M, 40 * M],
+	[S_CIT_LOST_R, 10 * M, 30 * M, 30 * M],
 	[S_CIT_SHUT_R, 25 * M, 25 * M, 25 * M],
 	[S_CIT_REACT, 8 * M, 8 * M, 8 * M],
+	[S_CIT_OUTNUMBER_PCT, 200, 100, 100],
+	# Behaviours a level switches off (Average: on, as before).
+	[CLEAR_SPOT, 0, 1, 1],
+	[MIS_SKIRM, 0, 1, 1],
+	[MIS_CLEAN, 1, 1, 1],
+	[CAV_STAGE_FRONT, 0, 1, 1],
+	[FLANK_PCT, 30, 100, 100],
+	[WD_EARLY_PCT, 75, 0, 0],
+	[IDLE_TICKS, 600, 600, 600],
+	# Deliberate mistakes: % per roll (Average and Skilled: never rolled).
+	[MK_COOLDOWN, 30, 100, 100],
+	[MK_BASE + M_LATE_FLANK, 50, 0, 0],
+	[MK_BASE + M_WRONG_TARGET, 15, 0, 0],
+	[MK_BASE + M_IDLE, 50, 0, 0],
+	[MK_BASE + M_CHASE, 90, 0, 0],
+	[MK_BASE + M_SPEAR_CHARGE, 35, 0, 0],
+	[MK_BASE + M_MIS_FORGET, 60, 0, 0],
+	[MK_BASE + M_COMMIT_EARLY, 15, 0, 0],
+	[MK_BASE + M_GATE_OPEN, 50, 0, 0],
+	[MK_BASE + M_EARLY_WD, 35, 0, 0],
 ]
 
 ## Personality offsets [knob, CAUTIOUS, BALANCED, AGGRESSIVE], added to the
@@ -392,9 +444,12 @@ const C_MISSILE_CAUGHT := 7    # missile unit-thinks spent in melee
 const C_AMMO_AT_ROUT := 8      # missiles left in missile units when they routed (sum) ...
 const C_MISSILE_ROUTS := 9     # ... over this many routs
 const C_RESERVE_COMMIT := 10   # reserves committed (none yet)
-const N_COUNTERS := 11
+const C_MISTAKE := 11          # C_MISTAKE + M_*: deliberate mistakes made
+const N_COUNTERS := C_MISTAKE + N_MISTAKES
 const COUNTER_NAMES: Array[String] = ["flank_hits", "pull_outs", "rotations", "saved", "inf_chase",
-	"spear_resp", "spear_resp_ticks", "missile_caught", "ammo_at_rout", "missile_routs", "reserve_commits"]
+	"spear_resp", "spear_resp_ticks", "missile_caught", "ammo_at_rout", "missile_routs", "reserve_commits",
+	"mk_late_flank", "mk_wrong_target", "mk_idle", "mk_chase", "mk_spear_charge", "mk_mis_forget",
+	"mk_commit_early", "mk_gate_open", "mk_early_wd"]
 
 
 static var _tab: Array = []

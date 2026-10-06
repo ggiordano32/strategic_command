@@ -1,10 +1,11 @@
 # AI competency
 
 Design for how the AI plays, how skill levels differ, and how we measure
-it. Written 2026-10-06 with the user. Status: **design, step 1 built**
-(profiles as data, section 9); the current AI is one fixed skill
-(described in `sim/battle_ai.gd`, `sim/siege_ai.gd` and `campaign/cai.gd`)
-that this document treats as roughly the "Average" level.
+it. Written 2026-10-06 with the user. Status: **design, steps 1-2 built**
+(profiles as data, section 9; Easy, section 10); Average is the one fixed
+skill the AI had before (described in `sim/battle_ai.gd`,
+`sim/siege_ai.gd` and `campaign/cai.gd`), which this document treats as
+roughly the "Average" level.
 
 ## 1. Principles
 
@@ -485,9 +486,10 @@ else Average. These keys are written only when not the default (no
 style into the scenario (the players' sides Average / Balanced).
 
 **UI.** New campaign: a "Difficulty" row, Battle AI and Campaign AI
-(Easy / Average / Skilled, default Average; Easy and Skilled say "(soon)"
-and play like Average until steps 2 and 3). Sandbox: an "AI:" button for
-both AI sides. Per-faction overrides (Advanced) come later.
+(Easy / Average / Skilled, default Average; Easy and Skilled said "(soon)"
+and played like Average until steps 2 and 3; Easy is real since step 2,
+section 10). Sandbox: an "AI:" button for both AI sides. Per-faction
+overrides (Advanced) come later.
 
 **Counters (section 6).** Battle: `BattleSim.stat_aic[side *
 AP.N_COUNTERS + AP.C_*]`, not hashed, never read by a decision: flank /
@@ -509,3 +511,187 @@ battery positioning, the citadel's capacity (2 m2 a man), and in the
 campaign `FIELD_SEA` (a property of the memoised distance fields) and
 the `ai_aggression` setting's clamp.
 
+
+## 10. As built: Easy (step 2, 2026-10-06)
+
+Average / Balanced is byte for byte what it was: determinism golden
+digests and every Average run's final hash, `campaign_sim` 6 x 60 per-seed
+hashes and `matchups --only=sieges` equal to HEAD. A mistake whose chance
+is 0 at a level is never rolled (no RNG draw), and the new sim array
+`ai_mist` is hashed only with a non-default profile. Easy plays by the
+same rules with the same information: no stat, income, ammunition,
+morale, vision or movement difference anywhere; everything it does is an
+order a player could give.
+
+**Battle knobs (`sim/ai_profile.gd` EASY column).** Reaction: army thinks
+every 3.5 s, units every 3 s (staggered), re-orders only for a 25 m /
+48-unit facing change. Perception: spears turn on cavalry within 20 m
+(Average 40), cavalry answers enemy riders near our foot within 25 m
+(60); missiles never shelter in woods. Deployment: no shift onto high
+ground, no rise for missiles and batteries, no clear-spot search in woods
+(`CLEAR_SPOT` 0), batteries deploy where they stand, up to 12 foot in the
+first line. Approach: skirmishes at most 40 s from deployment (march
+included: in practice it marches straight in), missile troops never put
+in skirmish mode (`MIS_SKIRM` 0: they stand until caught). Engagement:
+takes another target than a formed pike front only if it is nearer than
+110 % (Average 150 %), goes round a pinned pike front only 30 % of the
+time (`FLANK_PCT`). Cavalry: charges a formed, unengaged front head on
+(`CAV_STAGE_FRONT` 0), engaged braced fronts score like any engaged
+enemy, routers score 5,000 (Average 1,000: it chases them across the
+field), no uphill or woods penalties. Reserves: no fall-back of mauled
+units (`RETIRE_ALIVE_PCT` 0). Withdrawal: only below 15 % of the
+enemy's strength (or 10 % of its own start), else fights on.
+Sieges: hacks at the nearest gate with four foot units from the start
+(no bombardment first), all in after 1 minute of assault, routers chased
+200 m; defending, reserves react within 60 m, gates are closed at 40 m,
+wall units come down at 15 m, the citadel is taken only when attackers
+inside outnumber the defenders twice (`S_CIT_OUTNUMBER_PCT` 200) or are
+within 10 m of its gate.
+
+**Deliberate mistakes (battle), % per roll at the decision point, with a
+3 s cooldown per side and mistake (`MK_COOLDOWN` 30 ticks, in
+`BattleSim.ai_mist`):** late reaction (a spear or cavalry unit ignores
+enemy riders near it, a town's reserve attackers in the streets near its
+post, this think) 50; wrong target (cavalry rides at the
+nearest enemy foot instead of the target it chose) 15; a line unit left
+idle for up to 60 s when the lines meet (`A_IDLE`, back in at once if
+attacked) 50; foot chasing a router nearer than the fight (until it is
+gone or rallies; storming foot in a town likewise) 90; a charge into a braced or pike front (cavalry, and
+foot that do not avoid a formed pike front) 35; archers not pulled back
+behind the line when it engages 60; the cavalry thrown head on at the
+enemy line before the lines meet (once a battle) 15; a gate left open this
+think with attackers near (defending) 50; withdrawing while still in the
+fight, below 75 % of the enemy's strength (once a battle) 35. Counted in
+`stat_aic` (`mk_*`).
+
+**Not as the design said, and why.** Measured against Average with
+identical armies, several "Easy" behaviours of section 3 turned out to be
+*stronger* than Average's own competence in this sim, so Easy keeps the
+Average value there:
+- cavalry staying in melee (no pull-outs): Easy won ~57 % of mirrored
+  battles with it; Easy cavalry pulls out like Average;
+- batteries left unguarded: an unguarded battery lures Average's cavalry
+  (its highest target score) away from the line and frees a foot unit;
+  Easy guards its batteries;
+- firing at will into melee (missiles not holding fire): Easy holds fire
+  like Average;
+- "nearest instead of chosen" for batteries and cavalry, and the whole
+  line charging from too far: both made Easy win more (nearest = sooner
+  impact; there is no fatigue, so an early charge only catches Average's
+  skirmishers). The wrong-target mistake became "cavalry rides at the
+  nearest enemy *foot*" and committing early became "the cavalry reserve
+  thrown at the enemy line", both at low rates.
+These say as much about Average as about Easy: its pull-outs, battery
+guard, skirmish halt and target scoring cost it against a blunt opponent.
+Step 3 (Skilled) should start there.
+
+**Battle measurement** (`matchups --fair=50 --skill=a:e`, bench_2000,
+identical mirrored armies, each seed in both orientations, 100 battles):
+
+| | Average wins | Easy | draws | mean / max min | Average top / bottom |
+|---|---|---|---|---|---|
+| flat | 74 % | 25 % | 1 | 5.6 / 15.0 | 41 / 33 of 50 |
+| symmetric hill (`--fair-terrain=4`) | 71 % | 29 % | 0 | 5.5 / 10.3 | 40 / 31 of 50 |
+| Easy vs Easy, flat | 50 / 50 | | 0 | 5.2 / 14.3 | |
+
+(Average vs Average on the same seeds: 50 / 50, top side 58 %: the bias
+is the scenario's, not the levels'.) Counters per 100 battles, Average /
+Easy (flat): flank or rear hits 2,277 / 2,576, cavalry pull-outs 561 /
+353, units saved 13 / 0, routers chased by foot 0 / 347, spear responses
+59 / 16 (mean 22 / 32 ticks after the riders came within the spears'
+radius), missile unit-thinks in melee 1,353 / 957, arrows left per missile
+rout 550 / 957 (Easy's archers break with full quivers), mistakes: late
+flank 111, wrong target 79, idle 94, chase 663, spear charge 304, archers
+left forward 49, cavalry committed early 20, early withdrawal 22.
+
+**Settlements** (`--only=plans --plans=4,1 --walls=W --skill=A:B`, 10
+seeds, a city with garrison and a 4-unit field army against the standard
+12-unit attacker; attacker wins at walls 1 / 2 / 3, mean minutes):
+
+| | Average vs Average | Easy attacker | Easy defender |
+|---|---|---|---|
+| ring, plain | 100 / 100 / 100 %, 5.6 / 6.2 / 7.7 | 100 / 90 / 90 %, 4.1 / 4.7 / 4.9 | 100 / 100 / 80 %, 5.5 / 6.6 / 8.1 |
+| ring, hill | 100 / 100 / 80 %, 6.1 / 6.5 / 8.0 | 100 / 90 / 80 %, 4.5 / 5.3 / 5.9 | 100 / 90 / 90 %, 6.0 / 6.9 / 8.1 |
+| polis, coastal hill | 100 / 100 / 60 %, 7.8 / 9.2 / 11.9 | 100 / 80 / 80 %, 6.0 / 8.4 / 8.7 | 100 / 70 / 60 %, 9.7 / 9.1 / 10.9 |
+| polis, plain | 100 / 100 / 90 %, 8.2 / 9.1 / 9.9 | 100 / 80 / 70 %, 6.1 / 7.8 / 7.5 | 100 / 70 / 90 %, 9.4 / 9.5 / 11.1 |
+
+The Easy attacker storms sooner (hacking from the start) and fails a
+little more often behind walls 2-3, but still wins most settlement battles
+with the standard attacker (never 0 %). An Easy defender does not make a
+city easier to take in this sample (10 seeds: a difference of one battle
+is noise): the walls, the gate guards and the citadel do the work, and a
+late reaction in the streets costs little. Draws stay at or below
+Average's (at most 10 % against its 30 % on the coastal polis at walls 3).
+
+**Campaign knobs (`campaign/cai_profile.gd` EASY column).** No reserve,
+all money above it on buildings, the cheapest wanted building first
+(`BUILD_CHEAPEST`), walls only when the threat exceeds the whole defence;
+one recruit a turn, 70 % of them of the line it already has most of
+(`RECRUIT_LEAN_PCT`); targets reached this turn first, by value, defence
+not weighed (`TARGET_NEAREST`), attack at 110 % (Average 130 %), commit
+only to 100 % of that; no gathering: armies go as they are and arrive a
+turn apart (`GATHER` 0); storm on arrival (`ASSAULT_ALWAYS`), never lift,
+never relieve (`RELIEVE` 0), no screens (`SCREENS` 0), the default stance
+only (`STANCES` 0: no fortify, forced march, raids or sheltering); idle
+armies take 20 % odds, hunt field armies at 50 %; regions of the players
+valued like any; wars on neighbours at 100 % of their strength, never
+asks for peace. Mistakes, % per roll (`CState.rand`, Average never
+draws): an army that should hold a threatened city marches off 50; the
+same for a city taken last turn (conquest not garrisoned) 50; one attack a
+turn below the odds 30; a turn of recruiting up to 130 % of income 25; a
+war on a stronger neighbour 8 a turn when one qualifies. Counted with
+`CP.count` (`mk_*`), printed by `campaign_sim`.
+
+**Campaign measurement** (`campaign_sim --seeds=6 --turns=60`, rules of
+commit 857c275; one faction Easy at a time, the others Average; regions
+at 15 / 30 / 60, mean of 6 seeds, eliminations by turn 60):
+
+| faction | Average (all Average) | that faction Easy |
+|---|---|---|
+| Rome | 4.0 / 4.2 / 6.3, 0 out | 3.5 / 3.8 / 5.8, 2 out (turns 14, 21) |
+| Carthage | 5.0 / 4.5 / 3.2, 3 out | 6.0 / 7.8 / 6.2, 2 out (48, 25) |
+| Macedon | 2.7 / 1.7 / 2.0, 4 out | 2.7 / 2.5 / 4.7, 2 out |
+| Epirus | 3.0 / 2.0 / 1.3, 2 out | 3.3 / 2.8 / 5.3, 1 out |
+| Greeks | 4.5 / 6.3 / 8.8, 0 out | 4.2 / 6.7 / 9.2, 0 out |
+| Syracuse | 4.2 / 4.3 / 2.0, 3 out | 4.2 / 4.5 / 6.2, 3 out |
+| Iberians | 4.8 / 5.3 / 6.8, 1 out | 5.3 / 4.3 / 4.5, 2 out |
+| Gauls | 6.8 / 7.7 / 5.5, 0 out | 5.5 / 5.0 / 2.8, 2 out |
+| all 48 runs | 4.38 / 4.50 / 4.50, 13 out | 4.33 / 4.69 / 5.58, 14 out |
+
+**The campaign target is not met:** an Easy faction is about as big as
+the same faction at Average at turns 15 and 30 and on average bigger at
+60, with one more elimination in 48 runs. Rome, Iberia and the Gauls end
+smaller, the weak eastern factions and Carthage larger. Two things block
+it. The world is chaotic (one faction's level changes every war; the
+spread between seeds is far larger than the difference measured), and,
+as in battle, the Average campaign AI's caution costs it about as much as
+Easy's mistakes: gathering a march short, screening cities, laying siege
+and waiting, and holding threatened regions keep its armies from
+conquering, while a faction that storms the nearest region on arrival
+snowballs once it survives the first wars. Earlier variants made this
+plain: with Easy's first draft (attack at 80 %, three wars, more upkeep)
+Easy factions ended at 7.1 regions against Average's 4.5; Average's
+screens and gathering given back to Easy cost it a region; economic
+handicaps (one recruit a turn, everything on buildings) are what bring it
+back to par. Step 4 should look at Average's passivity first; a
+calibration with humans (step 6) will say which of the two is wrong.
+
+All-AI campaigns at Easy (every faction) run as fast as at Average (40-60
+ms a turn), with three times the battles (185-211 against 45-86) and
+largest realms of 9-16 regions at turn 60. Mistakes over 6 x 60 turns
+(all Easy): city left empty 121, attack at bad odds 41, over-recruiting
+120, unwise war 3, conquest not garrisoned 8.
+
+**Lockstep and determinism.** `tests/lockstep_test.gd`: two peers against
+an Easy enemy AI, with a third joining mid-battle by snapshot, are hash
+equal on every frame and the enemy makes mistakes; AI battles with both
+sides Easy (a field battle and a walled city) restore from snapshots at
+three points and run on identically. `tests/determinism_test.gd`: Easy
+runs (both sides on a flat field, Easy against Average on a hill, an Easy
+attacker and an Easy defender of a walled city) are identical on repeat,
+diverge for another seed and make mistakes; an Easy field battle and an
+Easy-defended city are in the snapshot round trips.
+
+**UI.** Easy is selectable without "(soon)" on the new-campaign
+Difficulty row (Battle AI and Campaign AI) and on the sandbox "AI:"
+button; Skilled still says "(soon)" and plays like Average.

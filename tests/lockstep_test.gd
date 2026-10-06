@@ -30,12 +30,19 @@ extends SceneTree
 ##    one without the keys; another profile is in the hash from tick 0 and
 ##    survives snapshot / restore (a sim set up with the default profile
 ##    takes the snapshot's).
+## 7. Easy (docs/AI.md step 2: the deliberate-mistake roller draws from the
+##    sim's RNG and keeps its cooldowns in hashed sim state): an AI battle
+##    with both sides at Easy restored from snapshots at several ticks runs
+##    on with the original's hash; two peers against an Easy enemy AI, with
+##    a third joining mid-battle by snapshot, hash equal on every frame,
+##    and the enemy did make mistakes.
 ## Exits 0 on success.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Lockstep := preload("res://sim/lockstep.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const UT := preload("res://sim/unit_types.gd")
+const AIProfile := preload("res://sim/ai_profile.gd")
 
 var _ok := true
 var quick := false
@@ -51,6 +58,8 @@ func _init() -> void:
 	_test_lockstep_city(0)
 	_test_lockstep_city(1, true)
 	_test_lockstep_city(0, true)
+	_test_easy_snapshots()
+	_test_lockstep_easy()
 	print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 	quit(0 if _ok else 1)
 
@@ -91,6 +100,108 @@ func _test_profiles() -> void:
 	else:
 		print("PASS profiles: default hashes as before, others hashed (%08x vs %08x), snapshot keeps them" % [
 			prof.state_hash(), plain.state_hash()])
+
+
+# ----------------------------------------------------------------- easy ---
+
+## Mistakes made by sim side `side` (BattleSim.stat_aic, AIProfile C_MISTAKE..).
+static func _mistakes(sim, side: int) -> int:
+	var n := 0
+	for m in AIProfile.N_MISTAKES:
+		n += sim.stat_aic[side * AIProfile.N_COUNTERS + AIProfile.C_MISTAKE + m]
+	return n
+
+
+## Both sides at Easy: snapshot / restore at several ticks runs on exactly.
+func _test_easy_snapshots() -> void:
+	for key in ["battle_2000", "siege_city"]:
+		var scen: Dictionary = Scenarios.make(key)
+		scen["ai_sides"] = [0, 1]
+		scen["ai_skill"] = [0, 0]
+		var a := BattleSim.new()
+		a.setup(scen, 31337)
+		var bad := 0
+		var checks := 0
+		for stop in ([600, 1500] if quick else [600, 1500, 2400]):
+			while a.tick < stop and a.winner < 0:
+				a.step()
+			var b := BattleSim.new()
+			b.setup(scen, 31337)
+			if not b.restore(a.snapshot()) or b.state_hash() != a.state_hash():
+				_fail("easy %s: restore at tick %d did not reproduce the hash" % [key, stop])
+				return
+			for t in 200:
+				a.step()
+				b.step()
+				checks += 1
+				if a.state_hash() != b.state_hash():
+					bad += 1
+		if bad > 0:
+			_fail("easy %s: restored copies diverged (%d of %d ticks)" % [key, bad, checks])
+		else:
+			print("PASS easy %s: both sides Easy, snapshot / restore runs on identically (%d ticks checked), mistakes %d / %d, cooldowns %s" % [
+				key, checks, _mistakes(a, 0), _mistakes(a, 1), str(a.ai_mist)])
+		if _mistakes(a, 0) + _mistakes(a, 1) == 0:
+			_fail("easy %s: no mistake was made" % key)
+
+
+## Two peers (side 0) against an Easy enemy AI, a third joining mid-battle:
+## every frame hash-equal; the enemy made mistakes.
+func _test_lockstep_easy() -> void:
+	var scen: Dictionary = Scenarios.make("battle_2000")
+	scen["ai_sides"] = [1]
+	scen["ai_skill"] = [1, 0]
+	var probe := BattleSim.new()
+	probe.setup(scen, 4242)
+	var home := _home_split(probe)
+	var enemy: Array = []
+	for u in probe.n_units:
+		if probe.u_side[u] == 1:
+			enemy.append(u)
+	var relay := Relay.new()
+	var a := _new_peer(scen, home, 0, "A", [0, 1])
+	var b := _new_peer(scen, home, 1, "B", [0, 1])
+	a.latency = 1
+	b.latency = 3
+	b.d = 4
+	var peers: Array[Peer] = [a, b]
+	var total := 1200 if quick else 3000
+	var c: Peer = null
+	var c_join := total / 3
+	var now := 0
+	while now < total * 3 and mini(a.ls.frame, b.ls.frame) < total:
+		now += 1
+		for p in peers:
+			_script(p, now, enemy)
+			p.flush(relay, now)
+			p.deliver(relay, now)
+			p.run(p.rng.randi() % 3, true)
+		if c != null:
+			c.flush(relay, now)
+			c.deliver(relay, now)
+			c.run(4, true)
+		if now == c_join:
+			c = _new_peer(scen, home, 1, "C", [0, 1])
+			c.online = true
+			c.latency = 2
+			if not c.ls.restore(a.ls.snapshot()):
+				_fail("easy lockstep: C could not restore A's snapshot")
+				return
+			c.hashes[c.ls.frame] = c.ls.state_hash()
+			c.cursor = 0
+			while c.cursor < relay.items.size() and int(relay.items[c.cursor]["s"]) <= c.ls.last_s:
+				c.cursor += 1
+			c.sent_k = 1 << 30
+	var n_ab := _compare(a, b, 0, "easy A/B")
+	var n_ac := _compare(a, c, c_join, "easy A/C") if c != null else 0
+	var mk := _mistakes(a.ls.sim, 1)
+	if n_ab < total / 2 or n_ac < 100:
+		_fail("easy lockstep: too few frames compared (A/B %d, A/C %d)" % [n_ab, n_ac])
+	elif n_ab > 0 and n_ac > 0:
+		print("PASS easy lockstep: %d frames A/B and %d A/C equal against an Easy enemy (sim tick %d, its mistakes %d)" % [
+			n_ab, n_ac, a.ls.sim.tick, mk])
+	if mk == 0:
+		_fail("easy lockstep: the Easy enemy made no mistake")
 
 
 # ------------------------------------------------------------ snapshots ---
