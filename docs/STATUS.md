@@ -610,8 +610,13 @@ fixes are all landed; see "Where we are"):
    siege so attackers can take walls), suburbs and river sites for cities,
    sallies from inside, the walls-3 street-fight lever.
 5. **Elephants**, then camels, chariots, war dogs.
-6. **Difficulty settings**: an easier AI (flanks less, charges worse,
-   reacts slower) on both battle and campaign AI.
+6. **AI competency** (`docs/AI.md`): Easy / Average / Skilled on two
+   independent axes (battle, campaign) plus personality, no cheats ever;
+   skill is reaction, perception, planning, execution and deliberate
+   plausible mistakes. Open questions for the user: whether the AI should
+   keep full information if fog of war ever arrives; whether difficulty is
+   per faction or global by default; whether "Average" should be
+   calibrated to the two humans' playtests.
 7. **Mid-battle reinforcements** from the map edge; ambush stance once
    hidden information in an async game is designed.
 8. **Shared empire** (both humans running one faction).
