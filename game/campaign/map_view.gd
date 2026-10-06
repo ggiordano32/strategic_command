@@ -22,6 +22,21 @@ const LAND := Color(0.80, 0.76, 0.62)
 const COAST := Color(0.16, 0.18, 0.16, 0.9)
 const TINT := 0.55         # owner colour over the region's ground
 const GROUND_LIFT := 0.36  # the battle palettes are darker than a map should be
+## Lines and highlights, shared with the map key (map_key.gd draws its
+## samples with the painters below). Widths are screen px (times lw).
+const COL_SEA_LANE := Color(0.75, 0.9, 1.0, 0.6)
+const SEA_LANE_DASH := 3.0
+const COL_ROUTE := Color(0.25, 0.18, 0.1, 0.55)   # versions 1-5: land routes
+const ROUTE_DASH := 7.0
+const LANE_W := 1.6
+const COL_REACH := Color(1.0, 0.98, 0.85, 0.36)    # version 6: reach this turn (fill)
+const COL_REACH_HOSTILE := Color(1.0, 0.6, 0.45, 0.36)
+const COL_REACH_EDGE := Color(1, 0.95, 0.6, 0.95)
+const COL_REACH_NEXT := Color(1, 1, 0.85, 0.35)   # ... next turn (outline)
+const OWNER_EDGE_A := 0.85                         # owner band inside each territory
+const OWNER_EDGE_W := 3.5
+const COL_BLOCKED := Color(0.1, 0.1, 0.1, 0.32)    # version 5: a neighbour it cannot enter
+const COL_BLOCKED_EDGE := Color(0.15, 0.15, 0.15, 0.85)
 
 var state: Dictionary = {}
 var zoom := 1.0
@@ -189,17 +204,15 @@ func _draw() -> void:
 	# Destinations of the selected army.
 	var a := 0.25 + 0.15 * sin(pulse * 4.0)
 	for r in targets:
-		var hc := Color(1, 1, 1, a) if not attack_targets.has(r) else Color(1.0, 0.35, 0.25, a + 0.1)
 		var tt := int(target_turns.get(r, 0))
 		if tt >= 2:
 			continue
-		if tt == 1:
-			hc.a *= 0.4
+		var hc := target_fill(attack_targets.has(r), tt, a)
 		for piece in Geo.cell(r):
 			draw_colored_polygon(piece, hc)
 	for r in blocked_targets:
 		for piece in Geo.cell(r):
-			draw_colored_polygon(piece, Color(0.1, 0.1, 0.1, 0.32))
+			draw_colored_polygon(piece, COL_BLOCKED)
 	if selected_region >= 0:
 		for piece in Geo.cell(selected_region):
 			draw_colored_polygon(piece, Color(1, 1, 0.8, 0.22))
@@ -210,11 +223,11 @@ func _draw() -> void:
 		if o < 0:
 			continue
 		var ec := CData.faction_color(o)
-		ec.a = 0.85
+		ec.a = OWNER_EDGE_A
 		for piece in Geo.cell(r):
 			var closed: PackedVector2Array = piece.duplicate()
 			closed.append(piece[0])
-			draw_polyline(closed, ec, 3.5 * lw, true)
+			draw_polyline(closed, ec, OWNER_EDGE_W * lw, true)
 	# Borders between territories (darker where owners differ is implied by
 	# the tint; one thin line everywhere keeps it light).
 	for r in CData.region_count():
@@ -223,24 +236,18 @@ func _draw() -> void:
 			closed.append(piece[0])
 			draw_polyline(closed, Color(0.1, 0.1, 0.08, 0.45), 1.2 * lw, true)
 	for r in targets:
-		var tt := int(target_turns.get(r, 0))
-		var oc := Color(1, 1, 1, 0.9) if not attack_targets.has(r) else Color(1, 0.5, 0.4, 0.95)
-		if tt >= 1:
-			oc.a = 0.55 if tt == 1 else 0.3
+		var te := target_edge(attack_targets.has(r), int(target_turns.get(r, 0)))
 		for piece in Geo.cell(r):
 			var closed: PackedVector2Array = piece.duplicate()
 			closed.append(piece[0])
-			draw_polyline(closed, oc, (2.5 if tt == 0 else 1.6) * lw, true)
+			draw_polyline(closed, te[0], float(te[1]) * lw, true)
 	for r in blocked_targets:
 		for piece in Geo.cell(r):
 			var closed: PackedVector2Array = piece.duplicate()
 			closed.append(piece[0])
-			draw_polyline(closed, Color(0.15, 0.15, 0.15, 0.85), 2.0 * lw, true)
+			draw_polyline(closed, COL_BLOCKED_EDGE, 2.0 * lw, true)
 		# A small cross on the settlement: "not this turn".
-		var c := Geo.site(r)
-		var k := 9.0 * lw
-		draw_line(c + Vector2(-k, -k), c + Vector2(k, k), Color(0.1, 0.1, 0.1, 0.9), 2.5 * lw, true)
-		draw_line(c + Vector2(k, -k), c + Vector2(-k, k), Color(0.1, 0.1, 0.1, 0.9), 2.5 * lw, true)
+		draw_blocked_cross(self, Geo.site(r), lw)
 	if selected_region >= 0:
 		for piece in Geo.cell(selected_region):
 			var closed: PackedVector2Array = piece.duplicate()
@@ -260,16 +267,61 @@ func _draw() -> void:
 			var c1 := CGrid.port(CData.region_index(pair[1]))
 			var p0 := Vector2((CGrid.cx(c0) + 0.5) * px, (CGrid.cy(c0) + 0.5) * px)
 			var p1 := Vector2((CGrid.cx(c1) + 0.5) * px, (CGrid.cy(c1) + 0.5) * px)
-			draw_dashed_line(p0, p1, Color(0.75, 0.9, 1.0, 0.6), 1.6 * lw, 3.0 * lw, true)
+			draw_sea_lane(self, p0, p1, lw)
 		return
 	for pair in CData.ROUTES:
 		var p0 := Geo.site(CData.region_index(pair[0]))
 		var p1 := Geo.site(CData.region_index(pair[1]))
-		draw_dashed_line(p0, p1, Color(0.25, 0.18, 0.1, 0.55), 1.6 * lw, 7.0 * lw, true)
+		draw_route(self, p0, p1, lw)
 	for pair in CData.SEA_LANES:
 		var p0 := Geo.site(CData.region_index(pair[0]))
 		var p1 := Geo.site(CData.region_index(pair[1]))
-		draw_dashed_line(p0, p1, Color(0.75, 0.9, 1.0, 0.6), 1.6 * lw, 3.0 * lw, true)
+		draw_sea_lane(self, p0, p1, lw)
+
+
+## A sea lane (dotted, light blue) between two ports.
+static func draw_sea_lane(ci: CanvasItem, p0: Vector2, p1: Vector2, lw: float) -> void:
+	ci.draw_dashed_line(p0, p1, COL_SEA_LANE, LANE_W * lw, SEA_LANE_DASH * lw, true)
+
+
+## Versions 1-5: a land route (dashed, brown) between two settlements.
+static func draw_route(ci: CanvasItem, p0: Vector2, p1: Vector2, lw: float) -> void:
+	ci.draw_dashed_line(p0, p1, COL_ROUTE, LANE_W * lw, ROUTE_DASH * lw, true)
+
+
+## Version 6: an outline of this turn's reach (closed polyline).
+static func draw_reach_edge(ci: CanvasItem, closed: PackedVector2Array, lw: float) -> void:
+	ci.draw_polyline(closed, Color(0, 0, 0, 0.5), 4.5 * lw, true)
+	ci.draw_polyline(closed, COL_REACH_EDGE, 2.4 * lw, true)
+
+
+## Version 6: an outline of next turn's reach.
+static func draw_next_edge(ci: CanvasItem, closed: PackedVector2Array, lw: float) -> void:
+	ci.draw_polyline(closed, COL_REACH_NEXT, 1.5 * lw, true)
+
+
+## Version 5: a destination's fill (turns 0 this turn, 1 next; attack: an
+## enemy region) at pulse phase a (0.1 - 0.4).
+static func target_fill(attack: bool, turns: int, a: float) -> Color:
+	var hc := Color(1, 1, 1, a) if not attack else Color(1.0, 0.35, 0.25, a + 0.1)
+	if turns == 1:
+		hc.a *= 0.4
+	return hc
+
+
+## Version 5: a destination's outline [colour, width (times lw)].
+static func target_edge(attack: bool, turns: int) -> Array:
+	var oc := Color(1, 1, 1, 0.9) if not attack else Color(1, 0.5, 0.4, 0.95)
+	if turns >= 1:
+		oc.a = 0.55 if turns == 1 else 0.3
+	return [oc, 2.5 if turns == 0 else 1.6]
+
+
+## Version 5: a neighbour the army cannot enter: a cross on its settlement.
+static func draw_blocked_cross(ci: CanvasItem, c: Vector2, lw: float) -> void:
+	var k := 9.0 * lw
+	ci.draw_line(c + Vector2(-k, -k), c + Vector2(k, k), Color(0.1, 0.1, 0.1, 0.9), 2.5 * lw, true)
+	ci.draw_line(c + Vector2(k, -k), c + Vector2(-k, k), Color(0.1, 0.1, 0.1, 0.9), 2.5 * lw, true)
 
 
 ## Version 6: the selected army's reach (this turn filled, next turn a
@@ -277,7 +329,7 @@ func _draw() -> void:
 func _draw_reach(lw: float) -> void:
 	if reach_loops.is_empty():
 		return
-	var col := Color(1.0, 0.98, 0.85, 0.36) if not reach_hostile else Color(1.0, 0.6, 0.45, 0.36)
+	var col := COL_REACH if not reach_hostile else COL_REACH_HOSTILE
 	if reach_rects.is_empty():
 		for lp in reach_fill:
 			draw_colored_polygon(lp, col)
@@ -286,9 +338,8 @@ func _draw_reach(lw: float) -> void:
 	for lp in next_loops:
 		var closed: PackedVector2Array = (lp as PackedVector2Array).duplicate()
 		closed.append(lp[0])
-		draw_polyline(closed, Color(1, 1, 0.85, 0.35), 1.5 * lw, true)
+		draw_next_edge(self, closed, lw)
 	for lp in reach_loops:
 		var closed2: PackedVector2Array = (lp as PackedVector2Array).duplicate()
 		closed2.append(lp[0])
-		draw_polyline(closed2, Color(0, 0, 0, 0.5), 4.5 * lw, true)
-		draw_polyline(closed2, Color(1, 0.95, 0.6, 0.95), 2.4 * lw, true)
+		draw_reach_edge(self, closed2, lw)

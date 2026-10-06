@@ -1093,6 +1093,19 @@ the stance toggle).
   tower badge; a letter on the banner for a stance other than default: F,
   D, R), pending battles at their cell, the siege ring of tents round the
   ring cells, sea lanes dotted between port cells (no land route lines).
+- **Map key** (`map_key.gd`): a Key button at the bottom left (the hint
+  sits right of it) opens a scrollable list of samples with what each line,
+  circle, shading and badge means, sectioned Planned marches / Selected
+  army / Armies / Map. Every sample is drawn by the map's own static
+  painters and colour constants (`map_overlay.gd`, `map_view.gd` `draw_*`,
+  `COL_*`), so the key cannot drift from the map. The rows follow the
+  format (6: cell paths, reach, zones, links, merge glyphs, stances,
+  replay trail; 5: region destinations and solid / dotted hops, land
+  routes; older: arrows). It opens above the hint and End turn, under the
+  top bar; on a phone a tap on the map (or its header) closes it. Open /
+  closed is a view preference in `user://settings.cfg` (`[ui] map_key`).
+  Testing aid `--map-key=1`. Screenshot (phone scale):
+  `docs/screenshots/campaign_phone_key.png`.
 - **Select an army** (tap its banner; tap again to deselect): its reach
   this turn as a filled translucent area with a smoothed outline (cells
   from `CRules.reach6`; next turn's reach a dim outline), red circles for

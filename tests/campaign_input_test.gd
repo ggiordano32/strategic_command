@@ -30,7 +30,9 @@ extends SceneTree
 ## back), a tap on our other army previews the merge (caption, glyphs) and
 ## a second tap merges (next to it: a merge order; further: a march with
 ## "join"), a tap on the allied player's army next to ours opens the panel
-## in gift mode.
+## in gift mode. The map key: format 5 rows on the format 5 copy; on the
+## overworld the Key button opens it (its version 6 rows, clear of End turn
+## and the hint), a tap on the map closes it on a phone, its header closes it.
 ## Exits 0 on success, 1 on failure.
 
 const CampaignScreen := preload("res://game/campaign/campaign_screen.gd")
@@ -41,6 +43,7 @@ const CTurn := preload("res://campaign/cturn.gd")
 const Geo := preload("res://game/campaign/map_geo.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const MapOverlay := preload("res://game/campaign/map_overlay.gd")
+const UiScale := preload("res://game/ui_scale.gd")
 
 var cs: CampaignScreen
 var frame := 0
@@ -61,6 +64,7 @@ func _initialize() -> void:
 	cs = CampaignScreen.new()
 	cs.open({"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}, "input_test")
 	root.add_child(cs)
+	_key_off()
 	steps = [
 		_s_handover, _s_intro, _s_tap_army, _s_check_army, _s_tap_etruria, _s_check_move,
 		_s_tap_etruria, _s_check_cancel, _s_tap_army1, _s_tap_apulia, _s_check_siege_default, _s_check_attack,
@@ -71,8 +75,8 @@ func _initialize() -> void:
 		_s_siege_maintain_check, _s_sally_setup, _s_sally_check, _s_siege_cleanup,
 		_s_march_tap, _s_march_check, _s_stance_inside, _s_stance_check, _s_stance_field, _s_cancel_tap, _s_cancel_check,
 		_s_stored_setup, _s_stored_stop, _s_stored_check, _s_raid_setup, _s_raid_siege, _s_raid_check, _s_field_battle, _s_field_check,
-		_s_controls, _s_controls_check, _s_done5,
-		_g_setup, _g_intro, _g_select, _g_tap_land, _g_check_land, _g_cancel, _g_undo, _g_attack, _g_attack_check,
+		_s_controls, _s_controls_check, _k5_check, _s_done5,
+		_g_setup, _g_intro, _k_open, _k_check, _k_tap_map, _k_reopen, _k_closed, _g_select, _g_tap_land, _g_check_land, _g_cancel, _g_undo, _g_attack, _g_attack_check,
 		_g_city, _g_city_check, _g_arrive_assault, _g_inside, _g_inside_check, _g_stance, _g_stance_check,
 		_g_drag_army, _g_drag_check, _g_pan, _g_pan_check, _g_siege, _g_siege_assault, _g_siege_continue, _g_siege_withdraw,
 		_g_siege_done, _g_end_turn, _g_summary, _g_replay, _g_replay_check,
@@ -754,6 +758,59 @@ func _move_order(id: int) -> Dictionary:
 	return {}
 
 
+# ------------------------------------------------------------- map key ---
+
+## The test never saves the key's open / closed preference and starts closed.
+func _key_off() -> void:
+	if not cs.is_node_ready():
+		cs.ready.connect(_key_off, CONNECT_ONE_SHOT)
+		return
+	cs.map_key.persist = false
+	cs.map_key.set_expanded(false)
+
+
+func _k5_check() -> void:
+	var k := cs.map_key
+	_check(k.format == 5 and k.row_count() >= 15, "format 5: the map key has the free-movement rows (%d)" % k.row_count())
+	var has_route := false
+	for r in k.rows():
+		has_route = has_route or str(r[0]) == "Land route"
+	_check(has_route, "format 5: the key explains the land routes")
+
+
+func _k_open() -> void:
+	_check(cs.map_key.button.is_visible_in_tree() and not cs.map_key.panel.visible, "the map key starts closed: a Key button")
+	_tap_button("map_key_button", "open the map key")
+
+
+func _k_check() -> void:
+	var k := cs.map_key
+	_check(k.expanded and k.panel.is_visible_in_tree(), "the Key button opens the map key")
+	_check(k.format == 6 and k.row_count() >= 25, "format 6: the key has the overworld rows (%d)" % k.row_count())
+	var pr := k.panel.get_global_rect()
+	_check(not pr.intersects(cs.end_button.get_global_rect()), "the key does not cover End turn")
+	_check(cs.hint.text == "" or not pr.intersects(cs.hint.get_global_rect()), "the key does not cover the hint")
+	_check(pr.position.y >= cs.TOP_H, "the key stays under the top bar")
+	UiScale._touch_override = 1  # a phone: a tap on the map closes the key
+	_tap(cs._vp() * Vector2(0.6, 0.5))
+
+
+func _k_tap_map() -> void:
+	UiScale._touch_override = -1
+	_check(not cs.map_key.expanded and cs.map_key.button.is_visible_in_tree(), "on a phone a tap on the map closes the key")
+	_check(cs.sel_army == -1, "that tap only closed the key")
+	_tap_button("map_key_button", "open the map key again")
+
+
+func _k_reopen() -> void:
+	_check(cs.map_key.expanded, "the key opens again")
+	_tap_button("map_key_header", "close the key by its header")
+
+
+func _k_closed() -> void:
+	_check(not cs.map_key.expanded and not cs.map_key.panel.visible, "its header closes the key")
+
+
 func _g_setup() -> void:
 	cs.queue_free()
 	var st := CState.new_campaign("Overworld", 3, [rome])
@@ -761,6 +818,7 @@ func _g_setup() -> void:
 	cs = CampaignScreen.new()
 	cs.open({"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}, "input_test6")
 	root.add_child(cs)
+	_key_off()
 	wait = 6
 
 

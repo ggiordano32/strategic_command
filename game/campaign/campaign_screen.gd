@@ -48,6 +48,8 @@ const Controls := preload("res://game/controls.gd")
 const OnlineUI := preload("res://game/campaign/online_ui.gd")
 const CoopSession := preload("res://game/net/coop_session.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
+const MapKey := preload("res://game/campaign/map_key.gd")
+const UiScale := preload("res://game/ui_scale.gd")
 
 const ZOOM_MIN := 0.2
 const ZOOM_MAX := 2.5
@@ -80,6 +82,7 @@ var side_scroll: ScrollContainer
 var end_button: Button
 var battles_button: Button
 var hint: Label
+var map_key: MapKey            # the map key (bottom left)
 var dialog: PanelContainer
 var dialog_box: VBoxContainer
 var dialog_title: Label
@@ -218,6 +221,9 @@ func _apply_debug_args() -> void:
 			focus_region(CData.region_index(v))
 		elif a == "--close-dialog":
 			close_dialog()
+		elif a.begins_with("--map-key="):
+			map_key.persist = false  # testing aid: open (1) or close (0) the map key
+			map_key.set_expanded(v == "1")
 		elif a.begins_with("--dialog-scroll="):
 			await get_tree().create_timer(1.5).timeout
 			dialog_scroll.scroll_vertical = int(v)  # testing aid
@@ -1040,7 +1046,13 @@ func _build_ui() -> void:
 	hint.add_theme_color_override("font_outline_color", Color.BLACK)
 	hint.add_theme_constant_override("outline_size", 5)
 	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Right of the map key's button.
+	hint.offset_left = MapKey.MARGIN * 2.0 + MapKey.BUTTON_W
+	hint.offset_right = hint.offset_left + 412
 	ui.add_child(hint)
+	map_key = MapKey.new()
+	ui.add_child(map_key)
+	map_key.set_expanded(MapKey.load_pref())
 	end_button = Kit.button("End turn", func(): end_turn(), 130, 17)
 	end_button.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
 	end_button.grow_horizontal = Control.GROW_DIRECTION_BEGIN
@@ -1207,6 +1219,37 @@ func _refresh() -> void:
 			side.visible = false
 
 
+## The map key's rows follow the campaign's format; its samples use the
+## planning faction's colour and an enemy's.
+func _refresh_key() -> void:
+	if ps.is_empty():
+		return
+	var fs := f if f >= 0 else (int(ps["humans"][0]) if not (ps["humans"] as Array).is_empty() else 0)
+	var en := (fs + 1) % CData.FACTIONS.size()
+	for k in CData.FACTIONS.size():
+		if k != fs and not CState.friendly(ps, fs, k):
+			en = k
+			break
+	var fmt := 6 if _g() else (5 if CState.moves_on(ps) else 4)
+	map_key.set_format(fmt, CData.faction_color(fs), CData.faction_color(en))
+
+
+## Phones (and narrow windows): the open map key covers the map, so a tap on
+## the map closes it.
+func _key_modal() -> bool:
+	return UiScale.is_touch() or _vp().x < 1000.0
+
+
+func _place_key() -> void:
+	if not map_key.expanded:
+		return
+	var vp := _vp()
+	var bottom := vp.y - MapKey.MARGIN - MapKey.BUTTON_H
+	if hint.text != "" and hint.visible:
+		bottom = minf(bottom, hint.get_global_rect().position.y)
+	map_key.place(TOP_H + 6.0, bottom - 6.0, vp.x)
+
+
 func _refresh_top() -> void:
 	if st.is_empty():
 		return
@@ -1252,6 +1295,7 @@ func _update_hint() -> void:
 func _refresh_map() -> void:
 	map_view.state = ps
 	overlay.state = ps
+	_refresh_key()
 	if _g():
 		_refresh_map6()
 		return
@@ -1865,6 +1909,7 @@ func _process(delta: float) -> void:
 		overlay.markers = keep
 		overlay.queue_redraw()
 	_keys(delta)
+	_place_key()
 
 
 func _on_auto_done(outcome: Dictionary) -> void:
@@ -2162,6 +2207,10 @@ func _cycle_army() -> void:
 
 
 func _on_touch(e: InputEventScreenTouch) -> void:
+	if e.pressed and map_key.expanded and _key_modal() and _touches.is_empty():
+		map_key.set_expanded(false)  # a tap on the map closes the key on a phone
+		_skip_release = true
+		return
 	if e.pressed and not replay.is_empty():
 		_end_replay()  # a tap skips the replay
 		_touches.clear()
