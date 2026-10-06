@@ -774,6 +774,8 @@ godot --headless --script res://tests/lockstep_test.gd   # snapshots, two peers,
 python3 tests/live_e2e.py --port 8077            # two headless clients, three live battles + two custom battles
 python3 tests/live_e2e.py --port 8077 --only-custom   # just the custom head-to-head and co-op battles (~90 s)
 godot --headless --script res://tests/custom_battle_test.gd   # custom setups build and run
+godot --headless --script res://tests/deploy_view_test.gd     # deployment through the battle view
+python3 tests/custom_shots.py --port 8081         # phone screenshots: setup, deployment, head-to-head lobby (needs a window)
 # Testing aids: -- --custom (the custom battle screen), --custom-solo, --custom-template=test_cav_archers,
 #   --custom-join=CODE; web: ?custom=CODE
 python3 tests/live_shots.py                      # phone screenshots of the co-op UI (needs a window)
