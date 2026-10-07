@@ -1159,7 +1159,14 @@ func _tap(screen_pos: Vector2, double: bool) -> void:
 	if not interactive:
 		return
 	var w := _screen_to_world(screen_pos)
-	var u := _pick_unit(w)
+	# A tap in a gate's doorway is about the gate: it is tested before the
+	# units, so a marker floating over the gate (men on the wall above it)
+	# or a unit box cannot steal it. Outside the doorway units pick first and
+	# the gate's wider reach is the fallback.
+	var door := _gate_doorway(w)
+	if door >= 0 and _tap_gate(door, w):
+		return
+	var u := -1 if door >= 0 else _pick_unit(w)
 	if u >= 0 and sim.u_side[u] == player_side:
 		if sim.u_state[u] != BattleSim.U_READY:
 			_count("tap_on_broken_unit")
@@ -1175,8 +1182,10 @@ func _tap(screen_pos: Vector2, double: bool) -> void:
 		else:
 			_select(u)
 		return
-	if u < 0 and _tap_gate(w):
-		return
+	if u < 0 and door < 0:
+		var g := _gate_at(w)
+		if g >= 0 and _tap_gate(g, w):
+			return
 	if selection.is_empty():
 		_count("tap_nothing_selected")
 		return
@@ -1207,7 +1216,41 @@ func _tap(screen_pos: Vector2, double: bool) -> void:
 	_group_move(dest, double)
 
 
-## Gate under world point w (px), or -1.
+## Radius (sim units) of a unit marker's hit circle at the current zoom:
+## generous on touch screens. Also the least reach of a gate's doorway.
+func _marker_hit_r() -> int:
+	var mr := maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / camera.zoom.x)
+	var hit_k := 2.3 if UiScale.is_touch() else 1.7
+	return int(mr * hit_k / PX_PER_M * M)
+
+
+## Gate whose doorway is under world point w (px), or -1: the opening's own
+## rectangle in its frame (half width + 1 m along the wall, the wall's
+## thickness + 1.5 m each side across it), widened to at least the marker
+## hit radius so it stays a fair touch target when zoomed out. The nearest
+## gate wins if two overlap.
+func _gate_doorway(w: Vector2) -> int:
+	if sim.n_gates == 0:
+		return -1
+	var x := int(w.x / PX_PER_M * M)
+	var y := int(w.y / PX_PER_M * M)
+	var touch_r := _marker_hit_r()
+	var ry := maxi(sim.wall_t / 2 + 1536, touch_r)
+	var best := -1
+	var best_d := 0
+	for g in sim.n_gates:
+		var rx := maxi((sim.g_hw[g] + 1) * int(M), touch_r)
+		var f: Vector2i = sim.gate_frame(g, x, y)
+		if absi(f.x) <= rx and absi(f.y) <= ry:
+			var d := f.x * f.x + f.y * f.y
+			if best < 0 or d < best_d:
+				best = g
+				best_d = d
+	return best
+
+
+## Gate within reach of world point w (px), or -1: wider than the doorway,
+## used only when no unit was picked.
 func _gate_at(w: Vector2) -> int:
 	if sim.n_gates == 0:
 		return -1
@@ -1222,17 +1265,14 @@ func _gate_at(w: Vector2) -> int:
 	return -1
 
 
-## A tap on a gate. Defenders (nothing selected): open or close it.
-## Attackers: batteries shoot it, foot go to its face and hack at it
-## (cavalry and missile troops cannot). Returns true if the tap was used.
-func _tap_gate(w: Vector2) -> bool:
-	var g := _gate_at(w)
-	if g < 0:
-		return false
+## A tap on gate g (w the tap, world px). Defenders: open or close it,
+## whatever is selected (the selection stays, nothing moves). Attackers:
+## batteries shoot it, foot go to its face and hack at it (cavalry and
+## missile troops cannot); an open or broken gate is a move. Returns true if
+## the tap was used.
+func _tap_gate(g: int, w: Vector2) -> bool:
 	var st: int = sim.g_state[g]
 	if sim.city_def == player_side:
-		if not selection.is_empty():
-			return false  # with units selected a tap moves them (into the gateway)
 		if st == BattleSim.GATE_BROKEN:
 			overlay.flash("The gate is broken: it cannot be shut", w)
 			return true
@@ -1331,8 +1371,7 @@ func _pick_unit(w: Vector2) -> int:
 	# touch screens); a tap on a marker wins over a unit's ground box under
 	# it, since markers float over neighbouring units when zoomed out.
 	var mr := maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / camera.zoom.x)
-	var hit_k := 2.3 if UiScale.is_touch() else 1.7
-	var marker_r := int(mr * hit_k / PX_PER_M * M)
+	var marker_r := _marker_hit_r()
 	var lift := int(2.2 * mr / PX_PER_M * M)
 	for u in sim.n_units:
 		if sim.u_state[u] >= BattleSim.U_DESTROYED:
@@ -1422,8 +1461,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			camera.position -= (event as InputEventMouseMotion).relative / camera.zoom
 			_clamp_camera()
 		elif sim.city_on != 0 and not selection.is_empty():
-			# Walls: the stretch under the mouse lights up (overlay).
-			overlay.hover_w = _screen_to_world((event as InputEventMouseMotion).position)
+			# Walls: the stretch under the mouse lights up (overlay); not in
+			# a gate's doorway, where a click is about the gate.
+			var hw := _screen_to_world((event as InputEventMouseMotion).position)
+			overlay.hover_w = hw if _gate_doorway(hw) < 0 else Vector2(-1, -1)
 			overlay.queue_redraw()
 	elif event is InputEventMagnifyGesture:
 		var mg := event as InputEventMagnifyGesture

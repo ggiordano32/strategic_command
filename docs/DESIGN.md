@@ -962,7 +962,11 @@ gate hp bars, "Plaza held N / 60 s" with a ring, woods stretches and
 "woods" in the move hint, men shown green in woods / red in walls in the
 drag preview, "BREAK THE GATE" / "SHOOT THE GATE". Tapping a gate: the
 defender opens / shuts it (refused with a message if men stand in it);
-the attacker sends the selected batteries or foot at it. Sandbox:
+the attacker sends the selected batteries or foot at it. A tap in a
+gate's doorway (its opening + 1 m along the wall, the wall + 1.5 m each
+side, at least a marker's touch radius) is about the gate before any unit
+marker or box; for the defender it toggles the gate whatever is selected
+(the selection stays, nothing moves). Sandbox:
 "Ground:" choice and a "Settlement battle" row (seed, village / town /
 city, walls 0-3, terrain, attack / defend). Unit book: "Woods" on the
 Terrain page and a "Settlements and sieges" page, numbers read from the

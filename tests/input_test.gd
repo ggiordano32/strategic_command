@@ -25,6 +25,8 @@ const Hud := preload("res://game/hud.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Overlay := preload("res://game/overlay.gd")
+const Scenarios := preload("res://sim/scenarios.gd")
+const MapGen := preload("res://sim/mapgen.gd")
 
 var battle: Battle
 var frame := 0
@@ -218,6 +220,14 @@ func _initialize() -> void:
 		_step_ro_check_short,
 		_step_ro_pages,
 		_step_ro_check_pages,
+		# Gate doorway taps (defender of a walled city).
+		_step_gd_start,
+		_step_gd_tap_door,
+		_step_gd_check_door,
+		_step_gd_tap_door_marker,
+		_step_gd_check_door_marker,
+		_step_gd_tap_marker,
+		_step_gd_check_marker,
 		_step_done,
 	]
 
@@ -1740,6 +1750,131 @@ func _step_ro_pages() -> void:
 
 func _step_ro_check_pages() -> void:
 	_check(battle.hud.display_order() == _ro0 and _ro_box_order() == _ro0, "the order survives the unit book and the controls page")
+
+
+# ---- gate doorway taps ----
+
+var _gd_gate := -1
+var _gd_sel := -1     # a selected defender unit (not on the wall)
+var _gd_wall := -1    # a defender unit on the wall whose marker overlaps the doorway
+var _gd_on := -1      # the toggle a tap should ask for (1 close, 0 open)
+var _gd_moves0 := 0
+
+
+## World point (px) at gate g's frame position (fx along the wall, fy
+## outward; sim units).
+func _gd_point(g: int, fx: float, fy: float) -> Vector2:
+	var sim := battle.sim
+	var a: float = sim.g_dir[g] * TAU / 1024.0
+	var p := Vector2(sim.g_x[g], sim.g_y[g]) + Vector2(-sin(a), cos(a)) * fx + Vector2(cos(a), sin(a)) * fy
+	return p / 1024.0 * Battle.PX_PER_M
+
+
+func _gd_gate_orders() -> Array:
+	var out: Array = []
+	for o in battle.sim.pending_orders:
+		if int(o["type"]) == BattleSim.ORDER_GATE:
+			out.append(o)
+	return out
+
+
+func _gd_tap(w: Vector2) -> void:
+	_no_double_tap()
+	var p := _world_to_screen(w)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+## Walled city (walls 2, inner ring) defended by the player (side 0).
+func _step_gd_start() -> void:
+	if is_instance_valid(battle):
+		battle.queue_free()
+	battle = Battle.new()
+	battle.custom_scenario = Scenarios.siege_test(303, 2, 2, MapGen.PAL_ARID, Terrain.K_FLAT, 0)
+	battle.seed_value = 7
+	root.add_child(battle)
+
+
+func _step_gd_tap_door() -> void:
+	var sim := battle.sim
+	if not battle.paused:
+		battle._toggle_pause()
+	_check(sim.city_def == battle.player_side and sim.n_gates > 0,
+		"gate test: the player defends a walled city (%d gates)" % sim.n_gates)
+	# The last gate that is not broken (inner ring gates come after the outer ones).
+	for g in sim.n_gates:
+		if sim.g_state[g] != BattleSim.GATE_BROKEN:
+			_gd_gate = g
+	_gd_on = 1 if sim.g_state[_gd_gate] == BattleSim.GATE_OPEN else 0
+	for u in sim.n_units:
+		if sim.u_side[u] != 0 or sim.u_state[u] != BattleSim.U_READY:
+			continue
+		if sim.u_wall[u] > 0 and _gd_wall < 0:
+			_gd_wall = u
+		elif sim.u_wall[u] == 0 and _gd_sel < 0:
+			_gd_sel = u
+	_check(_gd_gate >= 0 and _gd_wall >= 0 and _gd_sel >= 0,
+		"gate test: a gate, a wall unit and a ground unit (%d %d %d)" % [_gd_gate, _gd_wall, _gd_sel])
+	battle.camera.zoom = Vector2(1, 1)
+	_focus(sim.g_x[_gd_gate], sim.g_y[_gd_gate])
+	battle._select(_gd_sel)
+	_gd_moves0 = _pending_moves()
+	_gd_tap(_gd_point(_gd_gate, 0, 0))
+
+
+func _step_gd_check_door() -> void:
+	var go := _gd_gate_orders()
+	_check(go.size() == 1 and int(go[0]["gate"]) == _gd_gate and int(go[0]["on"]) == _gd_on,
+		"defender with a unit selected: a tap on the gate's doorway toggles it (%s)" % str(go))
+	_check(battle.selection == [_gd_sel], "the selection is kept (%s)" % str(battle.selection))
+	_check(_pending_moves() == _gd_moves0, "no move is queued by the gate tap")
+
+
+## Put the wall unit's marker over the doorway's edge along the wall, then
+## tap the doorway inside that marker's hit circle.
+func _step_gd_tap_door_marker() -> void:
+	var sim := battle.sim
+	var touch_r: int = battle._marker_hit_r()
+	var rx := maxi((sim.g_hw[_gd_gate] + 1) * 1024, touch_r)
+	var mr := maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / battle.camera.zoom.x)
+	var lift := int(2.2 * mr / Battle.PX_PER_M * 1024)
+	var mk := _gd_point(_gd_gate, rx + 512, 0) / Battle.PX_PER_M * 1024.0  # marker centre, sim units
+	var cx := int(mk.x)
+	var cy := int(mk.y) + lift
+	# Test set-up only (paused, view picking): the unit stands on the wall
+	# next to the gate, its marker floating over the doorway.
+	var dx: int = cx - sim.u_cx[_gd_wall]
+	var dy: int = cy - sim.u_cy[_gd_wall]
+	sim.u_cx[_gd_wall] = cx
+	sim.u_cy[_gd_wall] = cy
+	sim.u_minx[_gd_wall] += dx
+	sim.u_maxx[_gd_wall] += dx
+	sim.u_miny[_gd_wall] += dy
+	sim.u_maxy[_gd_wall] += dy
+	var tap := _gd_point(_gd_gate, rx - 512, 0)
+	_check(battle._pick_unit(tap) == _gd_wall, "the wall unit's marker covers the doorway tap point")
+	_gd_tap(tap)
+
+
+func _step_gd_check_door_marker() -> void:
+	var go := _gd_gate_orders()
+	_check(go.size() == 2 and int(go[1]["gate"]) == _gd_gate,
+		"a doorway tap under a wall unit's marker toggles the gate (%d gate orders)" % go.size())
+	_check(battle.selection == [_gd_sel], "... and does not select the unit on the wall (%s)" % str(battle.selection))
+	_check(_pending_moves() == _gd_moves0, "... nor move anything")
+
+
+func _step_gd_tap_marker() -> void:
+	var sim := battle.sim
+	var rx := maxi((sim.g_hw[_gd_gate] + 1) * 1024, battle._marker_hit_r())
+	var tap := _gd_point(_gd_gate, rx + 512, 0)
+	_check(battle._gate_doorway(tap) < 0, "the marker's centre is outside the doorway")
+	_gd_tap(tap)
+
+
+func _step_gd_check_marker() -> void:
+	_check(battle.selection == [_gd_wall], "a tap on the marker just outside the doorway selects the unit (%s)" % str(battle.selection))
+	_check(_gd_gate_orders().size() == 2, "... and asks nothing of the gate")
 
 
 func _step_done() -> void:

@@ -203,6 +203,9 @@ short:
   order type). Controls page rows `card_reorder`, `map_army_reorder`.
   Screenshot `docs/screenshots/reorder_phone.png`. Open: try it on the
   phones (the 0.35 s lift, the long press -> book on release).
+- **Gate doorway taps (phone playtest fix, 2026-10-07, view only):** gate
+  doorway taps win over unit markers and toggle for the defender whatever
+  is selected (`game/battle.gd` `_gate_doorway`; tests in `input_test.gd`).
 - **Open / next:** play it on the phones (tap-tap planning, drags, the
   replay; whether a tap inside an enemy zone should become an attack
   instead of a refusal); the version 5 testing aids `--camp-raid`,
