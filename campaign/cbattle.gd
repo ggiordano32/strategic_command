@@ -423,7 +423,8 @@ static func _build_settlement(st: Dictionary, b: Dictionary, human_f: int, scale
 	for f in ufac:
 		controller.append(human_f if human_f >= 0 and CState.friendly(st, int(f), human_f) else -1)
 	return {"scenario": res["scenario"], "seed": battle_seed(st, r, 2), "map": map, "sim_side": sim_side,
-		"garrison": gar, "unit_faction": ufac, "controller": controller, "battle": int(b["id"]), "region": r}
+		"garrison": gar, "unit_faction": ufac, "controller": controller, "battle": int(b["id"]), "region": r,
+		"owner": int(st["regions"][r]["owner"])}
 
 
 ## Settlement r's city dictionary for the battle map (integers only):

@@ -146,7 +146,28 @@ static func home_of(built: Dictionary, p_humans: Array) -> Array:
 			out.append(int(ufac[u]))
 		else:
 			out.append(int(hs[0]) if not hs.is_empty() else int(ctrl[u]))
+	# Units after the mapped ones (the ram, last of the attackers') go to the
+	# first commander of their side; then one entry for the units the sim
+	# adds on the city's side (its towers): the owner, if a human in the
+	# battle, else the lowest human of that side (Lockstep.setup).
+	var units: Array = (built["scenario"] as Dictionary)["units"]
+	for u in range(ctrl.size(), units.size()):
+		out.append(_first_home(units, out, int(units[u]["side"])))
+	if built.has("owner") and built.has("sim_side"):
+		var city_f := int(built["owner"])
+		if hs.has(city_f):
+			out.append(city_f)
+		else:
+			out.append(_first_home(units, out, int(built["sim_side"][1])))
 	return out
+
+
+## The first player commanding a unit of sim side `side` in home list `h`.
+static func _first_home(units: Array, h: Array, side: int) -> int:
+	for u in mini(units.size(), h.size()):
+		if int(units[u]["side"]) == side and int(h[u]) >= 0:
+			return int(h[u])
+	return -1
 
 
 ## Hash of what both players must build identically.

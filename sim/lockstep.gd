@@ -100,6 +100,9 @@ var applied := 0
 
 
 ## home[u]: the player who commands unit u by default (-1: enemy / AI).
+## One entry past the scenario's units, when present, is the player for the
+## units the sim adds itself (the towers of a walled city, on the defending
+## side): the city's owner, who may gift them like any unit.
 ## present: players taking part from the first frame; units of the others
 ## start with `host`, held for them until they are admitted.
 func setup(scenario: Dictionary, p_seed: int, home: Array, present: Array, host: int) -> void:
@@ -133,8 +136,14 @@ func setup(scenario: Dictionary, p_seed: int, home: Array, present: Array, host:
 	u_away.resize(n_units)
 	u_home.resize(n_units)
 	ai_take = PackedInt32Array([0, 0])
+	var n_scn: int = (scenario["units"] as Array).size()
 	for u in n_units:
-		u_home[u] = int(home[u]) if u < home.size() else -1
+		if u < mini(home.size(), n_scn):
+			u_home[u] = int(home[u])
+		elif u >= n_scn and home.size() > n_scn and sim.is_tower(u):
+			u_home[u] = int(home[n_scn])
+		else:
+			u_home[u] = -1
 	for u in n_units:
 		var h := u_home[u]
 		u_away[u] = -1

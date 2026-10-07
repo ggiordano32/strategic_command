@@ -59,10 +59,12 @@ func _init() -> void:
 			_fail("%s: built differently after a JSON round trip" % name)
 		var sc: Dictionary = a["scenario"]
 		var home: Array = a["home"]
-		if home.size() != (sc["units"] as Array).size():
-			_fail("%s: home has %d entries for %d units" % [name, home.size(), (sc["units"] as Array).size()])
+		var n_scn: int = (sc["units"] as Array).size()
+		var walled: bool = str(st["map"].get("kind", "")) == "settlement" and int(st["map"].get("walls", 0)) > 0
+		if home.size() != n_scn + (1 if walled else 0):
+			_fail("%s: home has %d entries for %d units" % [name, home.size(), n_scn])
 			continue
-		for i in home.size():
+		for i in n_scn:
 			var side := int(sc["units"][i]["side"])
 			var human := not (sc["ai_sides"] as Array).has(side)
 			if human != (int(home[i]) >= 0):
@@ -119,6 +121,28 @@ func _run(name: String, b: Dictionary) -> void:
 	var ls := Lockstep.new()
 	ls.setup(sc, int(b["seed"]), b["home"], players, 0)
 	var sim = ls.sim
+	# The towers the sim added belong to the defending side's lead player
+	# (the trailing home entry), the ram to the attackers' (a scenario unit).
+	var n_scn: int = (sc["units"] as Array).size()
+	var towers := 0
+	for u in range(n_scn, sim.n_units):
+		if sim.is_tower(u):
+			towers += 1
+			if ls.u_home[u] != int(b["home"][n_scn]):
+				_fail("%s: tower %d has home %d, not %d" % [name, u, ls.u_home[u], int(b["home"][n_scn])])
+				break
+	if (b["home"] as Array).size() > n_scn:
+		var def_side: int = sim.city_def
+		for u in n_scn:
+			if sim.u_type[u] == UT.RAM and ls.u_home[u] < 0:
+				_fail("%s: the ram has no commander" % name)
+		var lead := -1
+		for u in n_scn:
+			if int(sc["units"][u]["side"]) == def_side and ls.u_home[u] >= 0:
+				lead = ls.u_home[u]
+				break
+		if towers > 0 and lead != int(b["home"][n_scn]):
+			_fail("%s: towers go to %d, the defenders' lead player is %d" % [name, int(b["home"][n_scn]), lead])
 	var n := {}
 	var deploy: bool = sim.phase == BattleSim.PHASE_DEPLOY
 	var t0 := Time.get_ticks_msec()

@@ -221,6 +221,8 @@ static func build(st: Dictionary, solo: bool = false) -> Dictionary:
 		for k in range(home.size(), (sc["units"] as Array).size()):
 			# The ram (after every army unit): the attacking side's lead player.
 			home.append(players[att_side][0] if not (players[att_side] as Array).is_empty() else -1)
+		# The city's towers (added by the sim): the defending side's lead player.
+		home.append(players[def_side][0] if not (players[def_side] as Array).is_empty() else -1)
 	else:
 		sc = _field(st, lists, ctrl_of, home)
 		sc["ai_sides"] = ai
