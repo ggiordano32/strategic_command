@@ -1188,7 +1188,11 @@ func _step_art_shoot() -> void:
 	_no_double_tap()
 	var sim := battle.sim
 	_focus(sim.u_cx[u_art_enemy], sim.u_cy[u_art_enemy])
-	var p := _unit_screen(u_art_enemy)
+	# Its marker, not its body: in battle_2000's second line the marker of
+	# the unit behind floats over this unit's centre and markers pick first.
+	var r := maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / battle.camera.zoom.x)
+	var p := _world_to_screen(Vector2(sim.u_cx[u_art_enemy], sim.u_cy[u_art_enemy]) / 1024.0 * Battle.PX_PER_M
+		+ Vector2(0, -r * 2.2))
 	_touch(0, p, true)
 	_touch(0, p, false)
 
@@ -1196,7 +1200,8 @@ func _step_art_shoot() -> void:
 func _step_check_art_shoot_pending() -> void:
 	var ov := battle.overlay
 	_check(ov._v(u_bolt, "order") == BattleSim.O_ATTACK and ov._v(u_bolt, "target") == u_art_enemy,
-		"tapping an enemy orders the battery to shoot it (pending)")
+		"tapping an enemy orders the battery to shoot it (pending; order %d target %d, wanted %d)" % [
+			ov._v(u_bolt, "order"), ov._v(u_bolt, "target"), u_art_enemy])
 	_check(ov._v(u_bolt, "run") == 0, "a battery never runs")
 	_predicted = {u_bolt: {}}
 	for k in ["order", "target", "deploy", "run", "fire"]:

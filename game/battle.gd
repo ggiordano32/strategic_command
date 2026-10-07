@@ -35,7 +35,9 @@ const DOUBLE_TAP_DIST := 48.0
 const MIN_LINE_M := 3.0           # shorter drags keep the current frontage
 const ZOOM_MIN := 0.12
 const ZOOM_MAX := 4.0
-const PLAYER_SIDE := 0
+## The side this player fights on (0 bottom; head-to-head: 1 for the
+## player on the top side).
+var player_side := 0
 const STATS_WINDOW := 20          # ticks (2 s) for sim ms average / worst
 const TELEMETRY_SAMPLE_SEC := 5.0
 # Ticks at which the state hash is reported, so runs of the same scenario and
@@ -72,6 +74,9 @@ var _leave_confirm := 0.0
 var coop = null
 var coop_hud = null
 var coop_region := ""
+## Custom battle: CustomSetup.summary() of its setup (telemetry
+## "custom_battle" at the end), else empty.
+var custom_summary: Dictionary = {}
 
 var sim: BattleSim
 var camera: Camera2D
@@ -182,7 +187,7 @@ func _ready() -> void:
 		scn["ai_skill"] = [ai_skill, ai_skill]
 	sim.setup(scn, seed_value)
 	bench_mode = sim.is_ai_side(0) and sim.is_ai_side(1)
-	interactive = not sim.is_ai_side(PLAYER_SIDE)
+	interactive = not sim.is_ai_side(player_side)
 
 	# Ground: height shading, contours and the faint 50 m grid in one shader.
 	terrain = TerrainLayer.new()
@@ -221,7 +226,7 @@ func _ready() -> void:
 
 	hud = Hud.new()
 	add_child(hud)
-	hud.build(sim, PLAYER_SIDE, interactive)
+	hud.build(sim, player_side, interactive)
 	if campaign_mode:
 		hud.result_menu_button.text = "Back to campaign"
 		hud.menu_button.text = "Leave"
@@ -255,16 +260,18 @@ func _ready() -> void:
 		_gm_cancel()
 		_select(-1))
 	hud.controls_pressed.connect(_open_controls)
+	hud.ready_pressed.connect(_deploy_ready)
 	hud.controls.closed.connect(func(): _set_paused(_paused_before_controls))
 	if coop != null:
 		_coop_ready()
 	hud.orders_button.set_pressed_no_signal(show_all_orders)
 	hud.set_orders_text(show_all_orders)
 	overlay.show_all_orders = show_all_orders
-	overlay.player_side = PLAYER_SIDE
+	overlay.player_side = player_side
 	hud.update_cards(sim)
 	_select(-1)
 	_update_speed_text()
+	_refresh_deploy()
 	_apply_debug_args()
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--frame-stats="):
@@ -330,7 +337,7 @@ func _apply_debug_args() -> void:
 			# group, moved 60 m ahead and turned; for screenshots.
 			_select(-1)
 			for u in sim.n_units:
-				if sim.u_side[u] == PLAYER_SIDE and sim.u_cls[u] != UT.CLS_MISSILE and sim.u_cls[u] != UT.CLS_ART:
+				if sim.u_side[u] == player_side and sim.u_cls[u] != UT.CLS_MISSILE and sim.u_cls[u] != UT.CLS_ART:
 					if selection.is_empty():
 						_select(u)
 					else:
@@ -346,7 +353,7 @@ func _apply_debug_args() -> void:
 			# --pause the order stays pending, so its preview shows).
 			var wu := -1
 			for u in sim.n_units:
-				if sim.u_side[u] == PLAYER_SIDE and sim.u_wall[u] > 0:
+				if sim.u_side[u] == player_side and sim.u_wall[u] > 0:
 					wu = u
 					break
 			if wu < 0:
@@ -377,7 +384,7 @@ func _apply_debug_args() -> void:
 			# Every other player unit advances 40 m in a wider line; the rest
 			# stay put. For screenshots of the all-orders overlay.
 			for u in sim.n_units:
-				if sim.u_side[u] == PLAYER_SIDE and u % 2 == 0:
+				if sim.u_side[u] == player_side and u % 2 == 0:
 					_queue(BattleSim.make_move_order(0, u, sim.u_ax[u] + 6 * 1024,
 						sim.u_ay[u] - 40 * 1024, 760, 32 * 1024, 0))
 
@@ -478,6 +485,7 @@ func _process(delta: float) -> void:
 			_coop_cards()
 		_refresh_actions()
 		_update_stats_label()
+		_refresh_deploy()
 
 
 ## Testing aid --frame-stats=S: after S seconds (the first 3 skipped) print
@@ -542,8 +550,12 @@ func _after_tick(ms: float) -> void:
 		_result_shown = true
 		var secs: int = maxi(sim.decided_tick, 0) / 10
 		hud.banner.visible = false
-		hud.show_result(sim.result(), "%s   (decided after %d:%02d)" % [hud.banner.text, secs / 60, secs % 60], PLAYER_SIDE)
+		hud.show_result(sim.result(), "%s   (decided after %d:%02d)" % [hud.banner.text, secs / 60, secs % 60], player_side)
 		_t("battle_result", {"scenario": scenario_id, "tick": sim.tick, "result": sim.result()})
+		if not custom_summary.is_empty():
+			var rs: Dictionary = sim.result()
+			_t("custom_battle", {"setup": custom_summary, "winner": sim.winner, "my_side": player_side,
+				"online": coop != null, "me": coop.me if coop != null else 0, "tick": sim.tick, "sides": rs["sides"]})
 	if sim.winner >= 0 and _decided_tick < 0:
 		_decided_tick = sim.tick
 		_show_result()
@@ -579,9 +591,9 @@ static func terrain_name(p_sim) -> String:
 
 func _show_result() -> void:
 	var text := "Draw"
-	if sim.winner == PLAYER_SIDE:
+	if sim.winner == player_side:
 		text = "Victory" if interactive else "Blue wins"
-	elif sim.winner == 1 - PLAYER_SIDE:
+	elif sim.winner == 1 - player_side:
 		text = "Defeat" if interactive else "Red wins"
 	hud.banner.text = text
 	hud.banner.visible = true
@@ -704,6 +716,22 @@ func _exit_tree() -> void:
 # --------------------------------------------------------------- orders ---
 
 func _queue(order: Dictionary) -> void:
+	if sim.phase == BattleSim.PHASE_DEPLOY:
+		# Deployment: moves become placements (the same gestures: tap, line,
+		# group), everything else that would set the army going waits.
+		var typ := int(order["type"])
+		if typ == BattleSim.ORDER_MOVE:
+			var pu := int(order["unit"])
+			var width := int(order.get("width", BattleSim.files_to_width(orders.value(pu, "files"), sim.u_type[pu])))
+			order = {"type": BattleSim.ORDER_PLACE, "unit": pu, "x": int(order["x"]), "y": int(order["y"]),
+				"facing": int(order["facing"]), "files": BattleSim.width_to_files(width, sim.u_alive[pu], sim.u_type[pu])}
+		elif typ != BattleSim.ORDER_RUN and typ != BattleSim.ORDER_FIRE and typ != BattleSim.ORDER_SKIRMISH \
+				and typ != BattleSim.ORDER_DEPLOY and typ != BattleSim.ORDER_PLACE and typ != BattleSim.ORDER_READY:
+			_count("order_in_deployment")
+			if selected >= 0:
+				overlay.flash("Deployment: place your units; orders wait for the battle",
+					Vector2(sim.u_cx[selected], sim.u_cy[selected]) / M * PX_PER_M)
+			return
 	if coop != null:
 		# Live co-op: through the lockstep layer, for our own units only.
 		if not coop.can_issue():
@@ -727,11 +755,58 @@ func _queue(order: Dictionary) -> void:
 			"run": int(order.get("run", 0)), "group": selection.size()})
 
 
+## Deployment phase: this player is ready (solo: the battle starts).
+func _deploy_ready() -> void:
+	if sim.phase != BattleSim.PHASE_DEPLOY:
+		return
+	_count("deploy_ready")
+	_t("deploy_ready", {"secs_left": sim.deploy_secs_left(), "scenario": scenario_id})
+	if coop != null:
+		if coop.can_issue():
+			coop.issue({"type": BattleSim.ORDER_READY})
+		return
+	sim.queue_order({"tick": sim.tick, "type": BattleSim.ORDER_READY, "who": 0})
+	if paused:
+		_toggle_pause()  # a ready player wants the battle to run
+
+
+## The deployment bar: countdown, who is ready, Start battle / Ready.
+func _refresh_deploy() -> void:
+	if sim.phase != BattleSim.PHASE_DEPLOY:
+		if hud.deploy_panel.visible:
+			hud.set_deploy("", "", false)
+			_t("battle_start", {"scenario": scenario_id, "tick": sim.tick})
+		return
+	var s: int = sim.deploy_secs_left()
+	var text := "Deployment  %d:%02d" % [s / 60, s % 60]
+	if coop != null and coop.ls != null:
+		var me_ready := false
+		var parts: Array[String] = []
+		for p in coop.ls.active_players():
+			var r: bool = (sim.dep_ready & (1 << p)) != 0
+			if p == coop.me:
+				me_ready = r
+			elif r:
+				parts.append("%s is ready" % coop.player_name(p))
+			else:
+				parts.append("Waiting for %s" % coop.player_name(p))
+		if not parts.is_empty():
+			text += "   " + ", ".join(parts)
+		hud.set_deploy(text, "Ready" if not me_ready else "Ready: waiting", not me_ready and coop.can_issue())
+	else:
+		var pend := false
+		for o in sim.pending_orders:
+			if int(o["type"]) == BattleSim.ORDER_READY:
+				pend = true
+		hud.set_deploy(text + "   Place your units in the blue zone", "Start battle", not pend and interactive)
+
+
 const ORDER_NAMES := {BattleSim.ORDER_MOVE: "move", BattleSim.ORDER_ATTACK: "attack",
 	BattleSim.ORDER_HALT: "halt", BattleSim.ORDER_RUN: "run", BattleSim.ORDER_FIRE: "fire",
 	BattleSim.ORDER_SKIRMISH: "skirmish", BattleSim.ORDER_WITHDRAW: "withdraw",
 	BattleSim.ORDER_WITHDRAW_ALL: "withdraw_all", BattleSim.ORDER_DEPLOY: "deploy",
-	BattleSim.ORDER_REFILL: "refill", BattleSim.ORDER_GATE: "gate"}
+	BattleSim.ORDER_REFILL: "refill", BattleSim.ORDER_GATE: "gate", BattleSim.ORDER_PLACE: "place",
+	BattleSim.ORDER_READY: "ready"}
 
 
 ## Select only unit u (-1: clear the selection).
@@ -811,7 +886,7 @@ func _refresh_actions() -> void:
 		var to := _gift_target()
 		hud.gift_button.visible = not selection.is_empty() and to >= 0
 		if to >= 0:
-			hud.gift_button.text = "Gift to " + CData.faction_name(to)
+			hud.gift_button.text = "Gift to " + coop.player_name(to)
 
 
 ## Group buttons: every ready player unit of a class.
@@ -823,7 +898,7 @@ func _select_group(kind: String) -> void:
 	selected = -1
 	# In the card strip's order (the player may have dragged cards around).
 	for u in hud.display_order():
-		if sim.u_side[u] != PLAYER_SIDE or sim.u_state[u] != BattleSim.U_READY or not _mine(u):
+		if sim.u_side[u] != player_side or sim.u_state[u] != BattleSim.U_READY or not _mine(u):
 			continue
 		var c := UT.cls(sim.u_type[u])
 		# Artillery goes with the missile troops: both shoot, take Fire
@@ -1058,7 +1133,7 @@ func _withdraw() -> void:
 func _withdraw_all() -> void:
 	if not interactive:
 		return
-	_queue(BattleSim.make_withdraw_all_order(0, PLAYER_SIDE))
+	_queue(BattleSim.make_withdraw_all_order(0, player_side))
 
 
 func _shift_held() -> bool:
@@ -1085,7 +1160,7 @@ func _tap(screen_pos: Vector2, double: bool) -> void:
 		return
 	var w := _screen_to_world(screen_pos)
 	var u := _pick_unit(w)
-	if u >= 0 and sim.u_side[u] == PLAYER_SIDE:
+	if u >= 0 and sim.u_side[u] == player_side:
 		if sim.u_state[u] != BattleSim.U_READY:
 			_count("tap_on_broken_unit")
 			return
@@ -1155,7 +1230,7 @@ func _tap_gate(w: Vector2) -> bool:
 	if g < 0:
 		return false
 	var st: int = sim.g_state[g]
-	if sim.city_def == PLAYER_SIDE:
+	if sim.city_def == player_side:
 		if not selection.is_empty():
 			return false  # with units selected a tap moves them (into the gateway)
 		if st == BattleSim.GATE_BROKEN:
@@ -1163,7 +1238,7 @@ func _tap_gate(w: Vector2) -> bool:
 			return true
 		var any := -1
 		for u in sim.n_units:
-			if sim.u_side[u] == PLAYER_SIDE and sim.u_state[u] == BattleSim.U_READY and _mine(u):
+			if sim.u_side[u] == player_side and sim.u_state[u] == BattleSim.U_READY and _mine(u):
 				any = u
 				break
 		if any < 0:
@@ -1412,6 +1487,8 @@ func _on_key(e: InputEventKey) -> void:
 			_come_down()
 		"orders_overlay":
 			hud.orders_button.button_pressed = not hud.orders_button.button_pressed
+		"ready":
+			_deploy_ready()
 		"group_rotate_left":
 			_gm_turn(-GM_STEP)
 		"group_rotate_right":
@@ -1607,7 +1684,7 @@ func _box_end(apply: bool) -> void:
 		_select(-1)
 	var any := false
 	for u in sim.n_units:
-		if sim.u_side[u] != PLAYER_SIDE or sim.u_state[u] != BattleSim.U_READY or not _mine(u):
+		if sim.u_side[u] != player_side or sim.u_state[u] != BattleSim.U_READY or not _mine(u):
 			continue
 		var c := Vector2(sim.u_cx[u], sim.u_cy[u]) / M * PX_PER_M
 		if rect.has_point(c) and not selection.has(u):
@@ -1904,7 +1981,7 @@ func _not_mine_hint(u: int) -> void:
 	_count("tap_ally_unit")
 	if coop != null and coop.ls != null and coop_hud != null:
 		var c: int = coop.ls.commander(u)
-		coop_hud.flash("%s commands this unit." % (CData.faction_name(c) if c >= 0 else "Nobody"), 2.0)
+		coop_hud.flash("%s commands this unit." % (coop.player_name(c) if c >= 0 else "Nobody"), 2.0)
 
 
 ## Orders not applied yet, for the preview: the lockstep queue (both
@@ -1915,7 +1992,8 @@ func _coop_pending() -> Array:
 	var out: Array = coop.ls.pending_sim_orders()
 	for o in coop.outbox:
 		var t := int(o.get("type", 0))
-		if t >= BattleSim.ORDER_MOVE and t <= BattleSim.ORDER_REFILL and t != BattleSim.ORDER_WITHDRAW_ALL:
+		if (t >= BattleSim.ORDER_MOVE and t <= BattleSim.ORDER_REFILL or t == BattleSim.ORDER_PLACE) \
+				and t != BattleSim.ORDER_WITHDRAW_ALL:
 			var d: Dictionary = o.duplicate()
 			d["tick"] = sim.tick
 			out.append(d)
@@ -1926,10 +2004,10 @@ func _coop_cards() -> void:
 	if coop.ls == null:
 		return
 	for u in sim.n_units:
-		if sim.u_side[u] != PLAYER_SIDE:
+		if sim.u_side[u] != player_side:
 			continue
 		var c: int = coop.ls.commander(u)
-		hud.set_card_owner(u, c != coop.me, CData.faction_color(c) if c >= 0 else Color(0.5, 0.5, 0.5))
+		hud.set_card_owner(u, c != coop.me, coop.player_color(c) if c >= 0 else Color(0.5, 0.5, 0.5))
 	if not selection.is_empty():
 		_prune_selection()
 
@@ -1952,7 +2030,7 @@ func _gift_target() -> int:
 	if coop == null or coop.ls == null:
 		return -1
 	for p in coop.others():
-		if coop.ls.is_active(int(p)):
+		if coop.ls.is_active(int(p)) and coop.ls.side_of(int(p)) == player_side:
 			return int(p)
 	return -1
 
@@ -1964,7 +2042,7 @@ func _gift() -> void:
 	_count("gift")
 	_t("coop_gift", {"units": selection.size(), "to": to, "tick": sim.tick})
 	coop.gift(selection, to)
-	coop_hud.flash("%d unit%s given to %s." % [selection.size(), "" if selection.size() == 1 else "s", CData.faction_name(to)], 2.5)
+	coop_hud.flash("%d unit%s given to %s." % [selection.size(), "" if selection.size() == 1 else "s", coop.player_name(to)], 2.5)
 	_select(-1)
 
 

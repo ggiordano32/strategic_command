@@ -1,6 +1,6 @@
 # Strategic Command — Status and Handover
 
-Last updated: 2026-10-06 (the continuous campaign overworld built, state format 6; free campaign movement built; sieges and battle odds built on the campaign map; settlement variety built 2026-10-05). Read this first, then `docs/DESIGN.md` for the full
+Last updated: 2026-10-06 (deployment phase and custom battles built; the continuous campaign overworld built, state format 6; free campaign movement built; sieges and battle odds built on the campaign map; settlement variety built 2026-10-05). Read this first, then `docs/DESIGN.md` for the full
 design and `CLAUDE.md` for working rules. Update this file whenever a
 milestone lands or the plan changes.
 
@@ -31,6 +31,7 @@ anti-cheat and original art only if it proves fun.
 | Free campaign movement (state format 5) | Built 2026-10-06, **not committed**; tested headless and windowed; not yet played on phones |
 | Wall orders, drag clamp, reachability (playtest fixes) | Built 2026-10-06, **not committed**; tested headless and windowed; not yet played on phones |
 | Continuous campaign overworld (state format 6) | Built 2026-10-06, **not committed**; tested headless and windowed; not yet played on phones |
+| Deployment phase and custom battles (solo, co-op, head-to-head) | Built 2026-10-06 on a branch; tested headless, end to end and windowed; not yet played on phones |
 | 6. Depth (siege equipment, tech, more factions) | Not started |
 
 ### What exists
@@ -74,6 +75,56 @@ anti-cheat and original art only if it proves fun.
 - The touch control scheme works; the user likes it.
 
 ### In progress right now
+
+**Deployment phase and custom battles (built 2026-10-06).** As built in
+DESIGN.md section 4 "Deployment phase" and section 5 "Custom battles and
+head-to-head"; server: SERVER.md section 18. In short:
+- Battles may open with a Total War deployment phase (scenario
+  `deploy_time`): the clock stands at 0, nothing moves or shoots, players
+  place their units inside their zone (`ORDER_PLACE`: the ordinary tap /
+  line / group gestures, clamped into the zone on the field, inside the
+  walls or onto a walkway in a defended town) and press Start battle /
+  Ready (`ORDER_READY`); it ends when every player is ready or the
+  countdown runs out. AI sides show their line from the start (field
+  maps). Zones drawn; a bar with the countdown and who is ready. Campaign:
+  new-campaign "Deployment time: none / 1 / 2 min" (default 1 min;
+  `settings.deploy_time`, no VERSION bump; older and online campaigns
+  made before have none; auto-resolve ignores it); live co-op goes from
+  the lobby into the deployment.
+- Custom battles (start screen and sandbox page): field or settlement
+  map, two sides of 1-3 armies of up to 12 units from the whole roster with
+  campaign prices and optional equal funds, controllers Player 1 / Player
+  2 / AI (skill and personality per side), deployment time, templates (the
+  sandbox's battles and test matchups). Solo at once; online by a custom
+  battle room (code, lobby where Player 2 may edit Player 2's armies, both
+  Ready, the host starts): co-op on one side or head-to-head.
+- Head-to-head in the lockstep layer: players have sides; gifts only to
+  the same side; a dropped / leaving / absent player's units go to a
+  player of their side, else the battle AI takes the side (handed back on
+  return); votes unchanged.
+- Server: `POST /api/custom`, `POST /api/custom/join`, WebSocket
+  `/api/custom/{code}/ws` (lobby `setup` / `lobby` messages, then the live
+  relay); memory only; `api: 3`.
+- Tests: determinism_test (deployment: field and town, repeat and
+  snapshot / restore mid-deployment and mid-battle, clamping, refusals,
+  walls, AI line, countdown; golden digests unchanged), lockstep_test
+  (deploy co-op with an early ready and a join during the deployment;
+  head-to-head with the countdown, refused enemy placements and gifts, a
+  drop with AI takeover and return; a drop during the deployment),
+  custom_battle_test (every template and hand-made setups build
+  identically and run), live_e2e (the three campaign battles now with a
+  10 s deployment, plus a custom head-to-head and a custom co-op battle
+  over the real server), go test (custom rooms), check_scripts,
+  input_test, campaign_input_test.
+- Decisions to know: the battle AI commands whole sides, so an "AI" army
+  on a side with a player's army is commanded by that player, and AI
+  skill / personality is per side; the side-2 player sees the map
+  unrotated (their army at the top); the server never checks the setup
+  (the clients' scenario hashes must agree before the start).
+- **Open / next:** play it on the phones (placing by touch, the zone and
+  bar on a small screen, the lobby); per-army AI on a mixed side; turning
+  the view for the top side; mirrored-fairness (53-55 % bottom bias)
+  matters more head-to-head; a lobby chat / rematch button.
 
 **Continuous campaign overworld (built 2026-10-06, uncommitted).** Design
 agreed with the user; rules, numbers, grid format, orders, state, AI and
@@ -740,7 +791,13 @@ tools/check_scripts.sh                           # GDScript warnings as errors (
 
 # Live co-op battles (milestone 5)
 godot --headless --script res://tests/lockstep_test.gd   # snapshots, two peers, mid-battle join (-- --quick)
-python3 tests/live_e2e.py                        # two headless clients, three live battles (~70 s)
+python3 tests/live_e2e.py --port 8077            # two headless clients, three live battles + two custom battles
+python3 tests/live_e2e.py --port 8077 --only-custom   # just the custom head-to-head and co-op battles (~90 s)
+godot --headless --script res://tests/custom_battle_test.gd   # custom setups build and run
+godot --headless --script res://tests/deploy_view_test.gd     # deployment through the battle view
+python3 tests/custom_shots.py --port 8081         # phone screenshots: setup, deployment, head-to-head lobby (needs a window)
+# Testing aids: -- --custom (the custom battle screen), --custom-solo, --custom-template=test_cav_archers,
+#   --custom-join=CODE; web: ?custom=CODE
 python3 tests/live_shots.py                      # phone screenshots of the co-op UI (needs a window)
 (cd server && PATH=$HOME/.local/go/bin:$PATH go run ./cmd/webcheck -url http://127.0.0.1:8074 -live)
                                                  # two headless Chromiums, live battle (serve a web export there)

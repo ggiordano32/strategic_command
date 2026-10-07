@@ -35,6 +35,21 @@ extends RefCounted
 ## server's drop event (a disconnected or leaving player: their units go to
 ## the player named in the event, held for them until they are admitted
 ## again).
+##
+## Sides (custom battles, head-to-head): every player belongs to the side of
+## the units they command by default (u_home). Gifts go only to a player of
+## the same side. Units of a player who is away (absent at the start,
+## dropped, left) go to a player of their own side taking part (the one the
+## server named if that one is), else the battle AI takes that side over
+## (sim.ai_sides, hashed here; ai_take marks sides the AI holds) and hands it
+## back when a player of that side is admitted again.
+##
+## Deployment phase (scenario "deploy_time"): placements are ordinary sim
+## orders (BattleSim.ORDER_PLACE, for the player's own units); "ready" is
+## the sim's ORDER_READY with the issuer as `who`. Who must be ready
+## (sim.dep_need) is kept here: the players taking part (set at the start,
+## a dropped player's bit cleared, an admitted player's set), so the battle
+## never waits for someone who has gone.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
 
@@ -69,6 +84,7 @@ var active := PackedInt32Array()    # per players[i]: 1 while taking part
 var u_cmd := PackedInt32Array()     # unit -> commanding player (-1: not a human's)
 var u_away := PackedInt32Array()    # unit -> player it is held for (-1: none)
 var u_home := PackedInt32Array()    # unit -> player who commands it by default
+var ai_take := PackedInt32Array([0, 0])  # side -> 1 while the AI holds it for its absent players
 
 # ---- receipt state (snapshotted, not hashed) ----
 var queue: Array = []        # inputs not yet applied: {f, p, n, i, type, ...}
@@ -116,17 +132,25 @@ func setup(scenario: Dictionary, p_seed: int, home: Array, present: Array, host:
 	u_cmd.resize(n_units)
 	u_away.resize(n_units)
 	u_home.resize(n_units)
+	ai_take = PackedInt32Array([0, 0])
 	for u in n_units:
-		var h := int(home[u]) if u < home.size() else -1
-		u_home[u] = h
+		u_home[u] = int(home[u]) if u < home.size() else -1
+	for u in n_units:
+		var h := u_home[u]
 		u_away[u] = -1
 		if h < 0:
 			u_cmd[u] = -1
 		elif is_active(h):
 			u_cmd[u] = h
 		else:
-			u_cmd[u] = host
+			# Held for them by a player of their side taking part (the host
+			# if it is one), else by the AI of that side.
+			u_cmd[u] = _keeper(sim.u_side[u], host)
 			u_away[u] = h
+			if u_cmd[u] < 0:
+				_ai_take(sim.u_side[u])
+	if sim.dep_on != 0:
+		sim.dep_need = _active_mask()
 	queue = []
 	marks = {}
 	last_n = {}
@@ -159,6 +183,46 @@ func active_players() -> Array[int]:
 
 func commander(u: int) -> int:
 	return u_cmd[u] if u >= 0 and u < u_cmd.size() else -1
+
+
+## The side player p fights on (that of the units they command by
+## default; -1 if none).
+func side_of(p: int) -> int:
+	for u in u_home.size():
+		if u_home[u] == p:
+			return sim.u_side[u]
+	return -1
+
+
+## A player of `side` taking part to hold units for an absent one: `pref`
+## if it is one, else the lowest; -1 if none.
+func _keeper(side: int, pref: int) -> int:
+	if pref >= 0 and is_active(pref) and side_of(pref) == side:
+		return pref
+	for i in players.size():
+		if active[i] != 0 and side_of(players[i]) == side:
+			return players[i]
+	return -1
+
+
+## The battle AI takes over `side` (no player of it is taking part).
+func _ai_take(side: int) -> void:
+	if side < 0 or side > 1 or sim.ai_sides[side] != 0:
+		return
+	sim.ai_sides[side] = 1
+	ai_take[side] = 1
+	if sim.city_on == 0 and sim.phase == BattleSim.PHASE_BATTLE and sim.ai_phase[side] == BattleSim.BattleAI.P_DEPLOY:
+		# Mid-battle: advance from where the army stands (not a deployment).
+		sim.ai_phase[side] = BattleSim.BattleAI.P_ADVANCE
+		sim.ai_t[side] = sim.tick
+
+
+func _active_mask() -> int:
+	var m := 0
+	for i in players.size():
+		if active[i] != 0 and players[i] >= 0 and players[i] <= 30:
+			m |= 1 << players[i]
+	return m
 
 
 # ------------------------------------------------------------- receiving ---
@@ -329,14 +393,19 @@ func _apply(o: Dictionary) -> void:
 		C_GIFT:
 			var u := int(o.get("unit", -1))
 			var to := int(o.get("to", -1))
-			if u >= 0 and u < u_cmd.size() and u_cmd[u] == p and to != p and is_active(to):
+			if u >= 0 and u < u_cmd.size() and u_cmd[u] == p and to != p and is_active(to) \
+					and side_of(to) == sim.u_side[u]:
 				u_cmd[u] = to
 				u_away[u] = -1
 			else:
 				rejected += 1
 				applied -= 1
 		_:
-			if typ >= BattleSim.ORDER_MOVE and typ <= BattleSim.ORDER_LAST:
+			if typ == BattleSim.ORDER_READY:
+				# Deployment: this player is ready (applied by the sim's next step).
+				sim.queue_order({"tick": sim.tick, "type": BattleSim.ORDER_READY, "who": p, "player": p,
+					"seq": int(o["n"]) * 64 + int(o["i"])})
+			elif typ >= BattleSim.ORDER_MOVE and typ <= BattleSim.ORDER_LAST:
 				_sim_order(p, o)
 			else:
 				rejected += 1
@@ -430,8 +499,15 @@ func _drop(who: int, to: int) -> void:
 		to = -1
 	for u in u_cmd.size():
 		if u_cmd[u] == who:
-			u_cmd[u] = to
+			# To the named player if they fight on the unit's side, else to
+			# another player of that side, else the AI takes the side.
+			var k := _keeper(sim.u_side[u], to)
+			u_cmd[u] = k
 			u_away[u] = who
+			if k < 0:
+				_ai_take(sim.u_side[u])
+	if sim.dep_on != 0 and who >= 0 and who <= 30:
+		sim.dep_need &= ~(1 << who)
 	if vote_pause_by == who:
 		vote_pause_by = -1
 	if vote_speed_by == who:
@@ -444,13 +520,21 @@ func _admit(who: int, keep: int) -> void:
 		return
 	active[i] = 1
 	drop_at.erase(who)
+	var side := side_of(who)
+	if side >= 0 and ai_take[side] != 0:
+		# A player of the side is back: the AI hands it over.
+		sim.ai_sides[side] = 0
+		ai_take[side] = 0
+		keep = 0
 	for u in u_cmd.size():
 		if u_away[u] == who:
 			if keep == 0 or u_cmd[u] < 0:
 				u_cmd[u] = who
 			u_away[u] = -1
-		elif u_cmd[u] < 0 and u_home[u] >= 0:
+		elif u_cmd[u] < 0 and u_home[u] >= 0 and sim.u_side[u] == side:
 			u_cmd[u] = who
+	if sim.dep_on != 0 and who >= 0 and who <= 30:
+		sim.dep_need |= 1 << who
 
 
 # ------------------------------------------------------------------ view ---
@@ -495,6 +579,8 @@ func state_hash() -> int:
 	ctx.update(active.to_byte_array())
 	ctx.update(u_cmd.to_byte_array())
 	ctx.update(u_away.to_byte_array())
+	ctx.update(sim.ai_sides.to_byte_array())
+	ctx.update(ai_take.to_byte_array())
 	return ctx.finish().decode_u32(0)
 
 
@@ -505,7 +591,7 @@ func snapshot() -> PackedByteArray:
 	var d := {"frame": frame, "acc": acc, "speed_q": speed_q, "paused": paused,
 		"vote_pause_by": vote_pause_by, "vote_pause_want": vote_pause_want,
 		"vote_speed_by": vote_speed_by, "vote_speed_q": vote_speed_q,
-		"players": players, "active": active, "u_cmd": u_cmd, "u_away": u_away, "u_home": u_home,
+		"players": players, "active": active, "u_cmd": u_cmd, "u_away": u_away, "u_home": u_home, "ai_take": ai_take,
 		"queue": queue, "marks": marks, "last_n": last_n, "drop_at": drop_at, "last_s": last_s,
 		"sim": sim.snapshot()}
 	var raw := var_to_bytes(d)
@@ -548,6 +634,7 @@ func restore(blob: PackedByteArray) -> bool:
 	u_cmd = d["u_cmd"]
 	u_away = d["u_away"]
 	u_home = d["u_home"]
+	ai_take = d.get("ai_take", PackedInt32Array([0, 0]))
 	queue = d["queue"]
 	marks = d["marks"]
 	last_n = d["last_n"]

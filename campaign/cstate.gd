@@ -102,6 +102,10 @@ static func new_campaign(p_name: String, p_seed: int, humans: Array, settings: D
 	for k in ["ai_battle_skill", "ai_campaign_skill"]:
 		if s.has(k) and int(s[k]) == AI_AVERAGE:
 			s.erase(k)
+	# Deployment phase of real-time battles (seconds; read with a default
+	# of none, so no format change): kept only when set.
+	if s.has("deploy_time") and int(s["deploy_time"]) <= 0:
+		s.erase("deploy_time")
 	st["settings"] = s
 	var hs: Array = []
 	for h in humans:

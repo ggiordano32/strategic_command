@@ -32,7 +32,7 @@ import (
 const Version = "1.0.0"
 
 // APIVersion is bumped on incompatible API changes.
-const APIVersion = 2
+const APIVersion = 3
 
 // Limits.
 const (
@@ -92,6 +92,9 @@ func New(cfg Config, log *slog.Logger, clock Clock) (*Server, error) {
 	}
 	if cfg.RoomGrace == 0 {
 		cfg.RoomGrace = 90 * time.Second
+	}
+	if cfg.CustomTTL == 0 {
+		cfg.CustomTTL = 10 * time.Minute
 	}
 	db, err := store.Open(filepath.Join(cfg.DataDir, "campaigns.db"))
 	if err != nil {
@@ -182,6 +185,9 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/c/{id}/verify", s.auth(s.verifyReport))
 	m.HandleFunc("GET /api/c/{id}/wait", s.auth(s.wait))
 	m.HandleFunc("GET /api/c/{id}/ws", s.ws)
+	m.HandleFunc("POST /api/custom", s.createCustom)
+	m.HandleFunc("POST /api/custom/join", s.joinCustom)
+	m.HandleFunc("GET /api/custom/{code}/ws", s.wsCustom)
 	if s.cfg.TestMode {
 		m.HandleFunc("POST /api/test/clock", s.testClock)
 	}

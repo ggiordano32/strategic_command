@@ -18,7 +18,7 @@ signal failed(code: String, text: String)    ## the room refused us (no retry)
 const PING_SEC := 1.0
 const DEAD_SEC := 6.0
 ## Room errors that will not change by retrying.
-const FATAL := ["no_room", "not_in_battle", "not_pending", "stale", "claimed", "unauthorized"]
+const FATAL := ["no_room", "not_in_battle", "not_pending", "stale", "claimed", "unauthorized", "bad_code"]
 
 var url := ""
 var token := ""
@@ -46,7 +46,12 @@ var _closing := false
 
 ## base: "http(s)://host[:port]"; room: the {"t":"room", ...} body.
 func start(base: String, cid: String, p_token: String, room: Dictionary) -> void:
-	url = base.replace("https://", "wss://").replace("http://", "ws://") + "/api/c/%s/ws" % cid
+	start_url(base.replace("https://", "wss://").replace("http://", "ws://") + "/api/c/%s/ws" % cid, p_token, room)
+
+
+## The same with the WebSocket URL given (custom battle rooms).
+func start_url(ws_url: String, p_token: String, room: Dictionary) -> void:
+	url = ws_url
 	token = p_token
 	room_body = room.duplicate()
 	room_body["t"] = "room"

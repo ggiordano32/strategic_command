@@ -84,6 +84,30 @@ func _font_size(base: float) -> int:
 	return int(maxf(10.0, base / zoom))
 
 
+## Deployment phase: this player's zone (blue, filled) and the enemy's
+## (red outline). A settlement defenders' zone is the open ground inside
+## the walls and the walkways: its box is outlined and labelled.
+func _draw_deploy_zones(lw: float) -> void:
+	var z: PackedInt32Array = sim.dep_z
+	var k := 0
+	while k + 5 < z.size():
+		var mine := z[k] == player_side
+		var r := Rect2(Vector2(z[k + 2], z[k + 3]) / 1024.0 * px_per_m,
+			Vector2(z[k + 4] - z[k + 2], z[k + 5] - z[k + 3]) / 1024.0 * px_per_m)
+		var col := Color(0.35, 0.65, 1.0) if mine else Color(1.0, 0.4, 0.3)
+		if z[k + 1] == BattleSim.DZ_INSIDE:
+			draw_rect(r, Color(col, 0.07 if mine else 0.0))
+			draw_rect(r, Color(col, 0.75 if mine else 0.45), false, lw * (1.5 if mine else 1.0))
+			if mine:
+				var fs := _font_size(14.0)
+				draw_string(ThemeDB.fallback_font, r.position + Vector2(fs * 0.4, -fs * 0.4),
+					"Deploy inside the walls or on them", HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(col, 0.95))
+		else:
+			draw_rect(r, Color(col, 0.10 if mine else 0.05))
+			draw_rect(r, Color(col, 0.8 if mine else 0.5), false, lw * (1.5 if mine else 1.0))
+		k += 6
+
+
 func _draw() -> void:
 	if sim == null:
 		return
@@ -93,6 +117,8 @@ func _draw() -> void:
 		_icon.resize(sim.n_units)
 		for u in sim.n_units:
 			_icon[u] = Icons.icon_of(sim.u_type[u])
+	if sim.phase == BattleSim.PHASE_DEPLOY:
+		_draw_deploy_zones(lw)
 	if sim.city_on != 0:
 		_draw_city_marks(lw)
 	if show_all_orders:

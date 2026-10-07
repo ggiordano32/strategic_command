@@ -36,6 +36,9 @@ signal changed                         ## roster / phase / votes / waiting chang
 signal note(text: String, kind: String)  ## info, warn, error
 signal failed(code: String, text: String)
 signal resolved                        ## the battle's result is in on the server
+signal setup_changed                   ## custom battle lobby: the setup (or its revision) changed
+
+const CData := preload("res://campaign/cdata.gd")
 
 const Lockstep := preload("res://sim/lockstep.gd")
 const LiveRoom := preload("res://game/net/live_room.gd")
@@ -110,6 +113,21 @@ var stats := {"waits": 0, "wait_ms_total": 0.0, "wait_ms_max": 0.0, "catchups": 
 	"desyncs": 0, "hash_checks": 0, "replays": 0, "frames": 0, "drops": 0, "admits": 0}
 var desync_log: Array = []
 
+## Custom battles (docs/SERVER.md section 18): a room not tied to a
+## campaign. The setup (an opaque JSON the clients build the scenario
+## from, game/custom/custom_setup.gd) and its revision live on the relay;
+## `builder` turns a setup into {scenario, seed, home}. Players are seats 0
+## and 1 (Player 1, Player 2).
+var custom := false
+var custom_code := ""
+var setup_data: Dictionary = {}
+var setup_rev := 0
+var builder := Callable()
+var build_error := ""
+var want_ready := false          ## custom lobby: this player pressed Ready for setup_rev
+var names := {}                  ## player -> display name (else the campaign faction's)
+var colors := {}                 ## player -> Color
+
 
 ## Unit -> player who commands it by default: a human's own units (the
 ## campaign faction of the unit, if that faction is a human in the battle),
@@ -176,6 +194,88 @@ func setup(base: String, cid: String, token: String, p_me: int, built: Dictionar
 	room.start(base, cid, token, {"b": battle_id, "v": version, "create": create, "scen": scen_hash, "keep": keep})
 
 
+## A custom battle room: code from POST /api/custom (create) or
+## /api/custom/join; token that call's seat token; me the seat (0 / 1).
+func setup_custom(base: String, code: String, token: String, p_me: int, p_builder: Callable) -> void:
+	custom = true
+	custom_code = code
+	me = p_me
+	humans = [0, 1]
+	builder = p_builder
+	auto_start = false
+	battle_id = 0
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--coop-delay="):
+			fixed_delay = int(a.get_slice("=", 1))
+		elif a.begins_with("--coop-hash-every="):
+			hash_every = maxi(1, int(a.get_slice("=", 1)))
+		elif a.begins_with("--coop-frame-ms="):
+			frame_sec = maxf(0.002, int(a.get_slice("=", 1)) / 1000.0)
+		elif a.begins_with("--coop-grace="):
+			grace_sec = float(a.get_slice("=", 1))
+	room = LiveRoom.new()
+	add_child(room)
+	room.message.connect(_on_message)
+	room.failed.connect(func(fcode: String, text: String):
+		phase = "gone"
+		failed.emit(fcode, text)
+		changed.emit())
+	room.state_changed.connect(func(s: String):
+		if s == "retrying" and phase in ["live", "lobby", "sync"]:
+			_t("coop_disconnected", {"phase": phase})
+		changed.emit())
+	room.start_url(base.replace("https://", "wss://").replace("http://", "ws://") + "/api/custom/%s/ws" % code,
+		token, {"b": 0, "v": 0, "create": false, "scen": "", "keep": false})
+
+
+## Custom battles: take a setup revision and build the battle from it.
+func _take_setup(d: Dictionary, rev: int) -> void:
+	if rev != setup_rev:
+		want_ready = false  # the relay cleared every ready flag
+	setup_data = d
+	setup_rev = rev
+	build_error = ""
+	if builder.is_valid():
+		var b: Dictionary = builder.call(d)
+		if b.has("error"):
+			build_error = str(b["error"])
+		else:
+			scenario = b["scenario"]
+			seed_value = int(b["seed"])
+			home = b["home"]
+			scen_hash = scenario_hash(scenario, seed_value, home)
+	setup_changed.emit()
+	changed.emit()
+
+
+## Custom lobby: send a new setup (compare-and-swap on the revision).
+func send_setup(d: Dictionary) -> void:
+	room.send({"t": "setup", "rev": setup_rev, "setup": d})
+
+
+## Custom lobby: ready (or not) for the current setup revision.
+func lobby_ready(on: bool) -> void:
+	want_ready = on and build_error == ""
+	room.send({"t": "lobby", "ready": on and build_error == "", "rev": setup_rev, "scen": scen_hash})
+
+
+## Custom lobby: is player p ready at the current revision?
+func lobby_is_ready(p: int) -> bool:
+	return bool(player(p).get("ready", false))
+
+
+func player_name(p: int) -> String:
+	if names.has(p):
+		return str(names[p])
+	return CData.faction_name(p)
+
+
+func player_color(p: int) -> Color:
+	if colors.has(p):
+		return colors[p]
+	return CData.faction_color(p)
+
+
 func _t(kind: String, d: Dictionary = {}) -> void:
 	if _tele != null:
 		d["battle"] = battle_id
@@ -237,6 +337,9 @@ func _on_message(m: Dictionary) -> void:
 		"resolved":
 			result_in = true
 			resolved.emit()
+		"setup":
+			if custom and m.get("setup") is Dictionary:
+				_take_setup(m["setup"], int(m.get("rev", 0)))
 		"error":
 			var code := str(m.get("code", ""))
 			if code == "replay_gone":
@@ -254,6 +357,12 @@ func _on_message(m: Dictionary) -> void:
 					outbox.clear()
 				if phase == "live":
 					_request_snapshot(code)
+			elif code in ["conflict", "not_ready", "scen_mismatch", "not_host", "started"] and custom:
+				var why := {"conflict": "The setup changed meanwhile; here is the latest.",
+					"not_ready": "Both players must be ready for this setup.",
+					"scen_mismatch": "The two devices build this battle differently (different game versions?). Reload both.",
+					"not_host": "Only the host starts the battle.", "started": "The battle has started."}
+				note.emit(str(why.get(code, code)), "warn")
 			else:
 				note.emit("Server: %s" % str(m.get("message", code)), "warn")
 
@@ -261,6 +370,12 @@ func _on_message(m: Dictionary) -> void:
 func _on_room(m: Dictionary) -> void:
 	host = int(m.get("host", -1))
 	var their := str(m.get("scen", ""))
+	if custom:
+		their = ""
+		if m.get("setup") is Dictionary and (int(m.get("rev", 0)) != setup_rev or setup_data.is_empty()):
+			_take_setup(m["setup"], int(m.get("rev", 0)))
+		if want_ready and not bool(m.get("started", false)):
+			lobby_ready(true)  # (a reconnect clears it on the relay)
 	if their != "" and their != scen_hash:
 		phase = "gone"
 		room.close()

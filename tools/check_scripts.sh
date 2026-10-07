@@ -21,7 +21,7 @@ done
 	godot --headless --path "$tmp" --script res://tools/list_warnings.gd 2>/dev/null | grep '^gdscript/warnings/' | sed 's/=.*/=2/'
 } > "$tmp/override.cfg"
 fail=0
-for f in sim/*.gd campaign/*.gd game/*.gd game/campaign/*.gd game/net/*.gd tests/*.gd tools/*.gd; do
+for f in sim/*.gd campaign/*.gd game/*.gd game/campaign/*.gd game/net/*.gd game/custom/*.gd tests/*.gd tools/*.gd; do
 	out=$(godot --headless --path "$tmp" --check-only --script "res://$f" 2>&1 | grep -v '^Godot Engine' | grep -v '^$' || true)
 	if [ -n "$out" ]; then
 		echo "== $f"

@@ -163,10 +163,26 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct: i
 	for f in ufac:
 		controller.append(human_f if human_f >= 0 and CState.friendly(st, int(f), human_f) else -1)
 	var prof := _ai_profiles(st, b, sim_side, ai)
-	return {"scenario": {"width_m": width, "height_m": height, "ai_sides": ai, "ai_skill": prof[0],
-		"ai_style": prof[1], "units": units, "terrain": terrain},
+	var scn := {"width_m": width, "height_m": height, "ai_sides": ai, "ai_skill": prof[0],
+		"ai_style": prof[1], "units": units, "terrain": terrain}
+	_deployment(st, scn, human_f)
+	return {"scenario": scn,
 		"seed": battle_seed(st, r, 2), "map": map, "sim_side": sim_side, "garrison": gar,
 		"unit_faction": ufac, "controller": controller, "battle": int(b["id"]), "region": r}
+
+
+## A battle fought by players (human_f >= 0) gets the campaign's deployment
+## phase (settings "deploy_time", seconds; absent = none: older campaigns
+## and every auto-resolved battle). Field battles get their zones here
+## (each side's half, flank arrivals boxed); settlement scenarios carry
+## theirs.
+static func _deployment(st: Dictionary, scn: Dictionary, human_f: int) -> void:
+	var dt := int((st.get("settings", {}) as Dictionary).get("deploy_time", 0))
+	if human_f < 0 or dt <= 0:
+		return
+	scn["deploy_time"] = dt
+	if not scn.has("deploy_zones"):
+		scn["deploy_zones"] = Scenarios.field_zones(scn)
 
 
 ## [ai_skill per sim side, ai_style per sim side] for battle b: an AI side
@@ -339,6 +355,7 @@ static func _build_settlement(st: Dictionary, b: Dictionary, human_f: int, scale
 	var prof := _ai_profiles(st, b, sim_side, ai)
 	res["scenario"]["ai_skill"] = prof[0]
 	res["scenario"]["ai_style"] = prof[1]
+	_deployment(st, res["scenario"], human_f)
 	var map: Array = []
 	var ufac: Array = []
 	for o in res["order"]:

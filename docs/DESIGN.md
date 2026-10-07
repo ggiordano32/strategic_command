@@ -1328,6 +1328,76 @@ landed, second after the balance pass:
   most), terrain 5-40 ms.
 
 
+### Deployment phase (as built, October 2026)
+
+Total War's deployment: before the fighting, each player places their
+army inside their side's zone, sees the enemy's line, and says ready.
+Code: `sim/battle_sim.gd` (section "deployment phase" at the end of the
+file, plus small hooks in `setup`, `step`, `_apply_orders`,
+`apply_order_rule`, `state_hash`), `sim/lockstep.gd`, `sim/scenarios.gd`
+(`field_zones`, settlement zones), the view (`game/battle.gd` `_queue` /
+`_deploy_ready` / `_refresh_deploy`, `game/hud.gd` deployment bar,
+`game/overlay.gd` zones).
+
+- **Scenario keys.** `deploy_time` (seconds; 0 or absent = none, so every
+  existing scenario plays and hashes exactly as before: golden digests
+  unchanged), `deploy_need` (bit per player who must be ready; default
+  player 0, or nobody when both sides are AI), `deploy_zones`
+  `[[side, kind, x0, y0, x1, y1], ...]` in metres: kind 0 a rectangle a
+  placement is clamped into, kind 1 (settlement defenders) the open ground
+  inside the walls within the box (a placement elsewhere is refused). No
+  zones: each side's half beyond 30 m from the centre line.
+- **Zones as built.** Field battles (campaign, custom): each side's part of
+  the field from 30 m beyond the centre line to its edge, plus a 40 m box
+  round every unit of the side standing outside that band (armies arriving
+  on a flank). Settlements: the attackers the approach band (from 40 m
+  ahead of their front to their map edge); the defenders inside the walls
+  (any piece of open ground with every gate shut other than the attackers'
+  piece, within the walls' box: citadels included) and on the walkways;
+  an open town: a square round it.
+- **Phase.** `phase` is `PHASE_DEPLOY` from setup while `dep_left` (sim
+  ticks) > 0. A deployment step applies the players' orders (scripted
+  orders, player 50, and AI orders wait for the battle), counts down, and
+  ends the phase when every player in `dep_need` is ready
+  (`dep_ready`), nobody needs to be, or the countdown reaches 0. Nothing
+  else runs: no movement, shooting, morale; `tick` stays 0, so the battle's
+  own clocks (scripted orders, AI timings, the time limit) start with the
+  battle. All of it is hashed (only when `dep_on`) and in snapshots.
+- **Orders.** `ORDER_PLACE {unit, x, y, facing, files}` (deployment only):
+  the order rule `place_rule` (shared with the preview) clamps the point
+  into the zone (or refuses it), refuses a house / wall / gateway on
+  settlement maps, puts a defender who may man the walls straight onto the
+  walkway when the point is on a wall (`wall_snap` + `wall_anchor`, two
+  ranks), and the sim stands the men in their places at once
+  (`_place_unit`: soldiers, engines, bounds). In the deployment the other
+  orders are refused except the standing settings (run, fire at will,
+  skirmish, artillery set up). `ORDER_READY {who}`. The view maps its
+  ordinary gestures (tap, line drag, group move) to placements, so there
+  is nothing new to learn; attack orders flash "orders wait for the
+  battle".
+- **AI sides** deploy at the start on field maps: the battle AI's tick-0
+  thinking runs in setup and its units are placed where it sends them (kept
+  to its zone), so the player sees the enemy line; on settlement maps the
+  scenario's placement (walls, gates, plaza) stands and the siege AI starts
+  with the battle.
+- **Lockstep.** Placements are ordinary sim orders for one's own units;
+  ready is the sim's ORDER_READY with the issuing player as `who`.
+  `Lockstep` keeps `sim.dep_need` = the players taking part (set at the
+  start, a dropped player's bit cleared, an admitted player's set), so the
+  battle never waits for someone who has gone; the countdown keeps it
+  bounded anyway. Pausing (a vote in co-op) stops the countdown.
+- **View.** The zones (own blue and filled, the enemy's red outline), a bar
+  under the top buttons: "Deployment 0:42", who is ready / "Waiting for X",
+  Start battle (solo) / Ready (live), Enter key; the unit book and the
+  controls do not pause a live battle (as before).
+- **Campaign.** New-campaign screen "Deployment time: none / 1 min / 2 min"
+  (default 1 min), stored as `settings.deploy_time` only when set (read with
+  a default of none: no `CState.VERSION` change; online campaigns made
+  before have none). `CBattle.build` gives a battle fought by players
+  (`human_f >= 0`) the phase and its zones; auto-resolve (`human_f = -1`)
+  ignores it. A live co-op battle opens its lobby as before and goes into
+  the deployment when the host starts.
+
 ## 5. Networking
 
 ### Live battles: deterministic lockstep
@@ -1447,6 +1517,62 @@ waits, messages, reconnects), `coop_wait` (waits of 0.5 s or more),
 `coop_resync`, `coop_desync`, `coop_drop`, `coop_continue`, `coop_admit`,
 `coop_result`, `coop_result_mismatch`, `coop_leave` (with the session
 stats).
+
+### Custom battles and head-to-head (as built, October 2026)
+
+Start screen > Custom battle (`game/custom/custom_battle.gd`, the setup and
+its scenario `game/custom/custom_setup.gd`, server `docs/SERVER.md` section
+18).
+
+- **Setup** (plain JSON): the map (field: terrain kind, ground palette,
+  woods %, seed; settlement: plan, site, level, walls, coast, seed and which
+  side defends), the deployment time (none / 1 / 2 min), equal funds per
+  side (none / 4,500 / 7,500 / 12,000 at campaign prices, Total War style),
+  and two sides of 1-3 armies of up to 12 units each, picked from the whole
+  roster (every line, tier and faction elite) with their prices. Each army
+  is commanded by Player 1, Player 2 or the AI; each side has an AI skill
+  (Easy / Average / Skilled) and personality used when the AI fights it.
+  Templates: the sandbox's playable battles and test matchups (cav vs
+  archers, pikes, artillery, woods, two settlements), each side one army.
+- **Build.** Deterministic: armies one behind another per side, laid out as
+  the campaign does (`Scenarios.army_layout`), side 1 the mirror image;
+  settlements through `Scenarios.settlement`; `home` (who commands each
+  unit) from the controllers. The sim's battle AI commands whole sides
+  (`ai_sides`; per-side profile), so: a side with no player's army is the
+  AI's; an "AI" army on a side that also has a player's army is commanded
+  by that side's (lowest) player, as AI allies are in campaign co-op; the
+  skill / personality is per side, not per army (decision kept for now:
+  changing it means per-army AI in `sim/battle_ai.gd`). Not supported: two
+  players on one side and one on the other (only two players anyway).
+- **Solo:** Play solo starts at once (with the deployment phase); Player 2's
+  armies count as the AI's (on Player 1's side: Player 1 commands them).
+  The player may be on either side (side 2 deploys at the top; the view
+  is not turned round).
+- **Online:** Play online creates a custom battle room (setup, 6-character
+  code, seat token); the friend types the code under Join. The lobby shows
+  the code, both players (connected, ready), co-op or head-to-head. The host
+  owns the setup (every change goes to the relay with compare-and-swap on
+  its revision and comes back to both); Player 2 may only change the units
+  of Player 2's armies. Any change clears both players' Ready; the host's
+  Start battle needs every connected player ready at the current revision
+  with the same scenario hash (else "the two devices build this battle
+  differently"). Then the battle opens on both with the live session:
+  deployment, battle, results as in campaign co-op. Leaving goes back to
+  the custom screen.
+- **Head-to-head in the lockstep layer.** Every player belongs to the side
+  of the units they command by default. Gifts only to a player of the
+  same side (the Gift button only offers an ally). Pause and speed are
+  still votes of everyone taking part. A player who is away at the start,
+  drops, leaves or is continued without: their units go to a player of
+  their own side taking part (the one the server named, if they are on
+  that side), otherwise the battle AI takes their side over
+  (`sim.ai_sides`, hashed in `Lockstep.state_hash` with `ai_take`;
+  mid-battle on a field map it advances from where the army stands rather
+  than deploying again) and hands it back when that player is admitted
+  again. Results are per side (the result panel: your army / enemy).
+- **Telemetry:** `custom_room` (create / join with a setup summary),
+  `custom_start`, `custom_battle` at the end (setup summary, winner, my
+  side, online, per-side totals), `deploy_ready`, `battle_start`.
 
 ### Campaign: save-store server
 

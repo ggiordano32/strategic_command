@@ -76,6 +76,12 @@ static var BINDINGS: Array = [
 		"touch": "Withdraw button", "mouse": "Withdraw button", "keys": []},
 	{"id": "withdraw_all", "s": "battle", "label": "Withdraw the whole army",
 		"touch": "Withdraw army, tap twice", "mouse": "Withdraw army, click twice", "keys": []},
+	# ---- battle: deployment phase
+	{"id": "place", "s": "battle", "label": "Deployment: place units (inside your blue zone; the men stand there at once)",
+		"touch": "Tap the ground, drag a line, or three-finger drag a group (as moving)",
+		"mouse": "Click, drag or Alt+drag (as moving); a point outside the zone is kept to its edge", "keys": []},
+	{"id": "ready", "s": "battle", "label": "Deployment: ready, start the battle (it starts when every player is ready, or when the time runs out)",
+		"touch": "Start battle button", "mouse": "Start battle button", "keys": [KEY_ENTER, KEY_KP_ENTER]},
 	# ---- battle: view
 	{"id": "pan", "s": "battle", "label": "Pan the view",
 		"touch": "Drag with one finger (nothing selected) or two fingers",

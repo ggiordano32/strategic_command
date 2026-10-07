@@ -608,8 +608,63 @@ static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Arra
 		units.append(unit(def_side, ty, int(dfn[i][1]), x, y, face_main, files))
 		order.append([1, i])
 		slot += 1
-	return {"scenario": {"width_m": w, "height_m": h, "ai_sides": ai_sides, "units": units, "terrain": t2},
-		"order": order, "layout": lay}
+	# Deployment zones (used when the battle has a deployment phase): the
+	# attackers the approach band (from 40 m ahead of their front to their
+	# edge), the defenders inside the walls and on the walkways (an open
+	# town: the square round it).
+	var zones: Array = []
+	var att_front: int = lay["att_y"]
+	if def_side == 1:
+		zones.append([att_side, 0, 0, clampi(att_front - 40, 0, h), w, h])
+	else:
+		zones.append([att_side, 0, 0, 0, w, clampi(att_front + 40, 0, h)])
+	if int(lay.get("walls", 0)) > 0 and not segs.is_empty():
+		var x0 := w
+		var y0 := h
+		var x1 := 0
+		var y1 := 0
+		for sg in segs:
+			x0 = mini(x0, mini(int(sg[0]), int(sg[2])))
+			y0 = mini(y0, mini(int(sg[1]), int(sg[3])))
+			x1 = maxi(x1, maxi(int(sg[0]), int(sg[2])))
+			y1 = maxi(y1, maxi(int(sg[1]), int(sg[3])))
+		zones.append([def_side, 1, maxi(x0 - 4, 0), maxi(y0 - 4, 0), mini(x1 + 4, w), mini(y1 + 4, h)])
+	else:
+		var r0: int = int(lay.get("r0", 80)) + 10
+		var tcx: int = lay["cx"]
+		var tcy: int = lay["cy"]
+		zones.append([def_side, 0, maxi(tcx - r0, 0), maxi(tcy - r0, 0), mini(tcx + r0, w), mini(tcy + r0, h)])
+	return {"scenario": {"width_m": w, "height_m": h, "ai_sides": ai_sides, "units": units, "terrain": t2,
+		"deploy_zones": zones}, "order": order, "layout": lay}
+
+
+## Deployment zones for a field battle (metres): each side's part of the
+## field from `gap` m beyond the centre line to its own edge, plus a box of
+## `pad` m round every unit of that side standing outside it (armies that
+## arrive on a flank). [[side, 0 (BattleSim.DZ_RECT), x0, y0, x1, y1], ...].
+static func field_zones(sc: Dictionary, gap: int = 30, pad: int = 40) -> Array:
+	var w := int(sc["width_m"])
+	var h := int(sc["height_m"])
+	var zones: Array = []
+	for s in 2:
+		var sy := 0
+		var cnt := 0
+		for ud in sc["units"]:
+			if int(ud["side"]) == s:
+				sy += int(ud["y_m"])
+				cnt += 1
+		var bottom := cnt == 0 and s == 0 or cnt > 0 and sy / cnt > h / 2
+		var band := [s, 0, 0, h / 2 + gap, w, h] if bottom else [s, 0, 0, 0, w, h / 2 - gap]
+		zones.append(band)
+		for ud in sc["units"]:
+			if int(ud["side"]) != s:
+				continue
+			var x := int(ud["x_m"])
+			var y := int(ud["y_m"])
+			if y >= int(band[3]) and y <= int(band[5]):
+				continue
+			zones.append([s, 0, maxi(x - pad, 0), maxi(y - pad, 0), mini(x + pad, w), mini(y + pad, h)])
+	return zones
 
 
 static func _gate_rank(ty: int) -> int:

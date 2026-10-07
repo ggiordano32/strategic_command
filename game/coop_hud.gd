@@ -88,8 +88,8 @@ func _process(delta: float) -> void:
 		refresh()
 
 
-static func fname(f: int) -> String:
-	return CData.faction_name(f) if f >= 0 else "nobody"
+func fname(f: int) -> String:
+	return coop.player_name(f) if f >= 0 else "nobody"
 
 
 func _swatch(col: Color, s: float = 12.0) -> ColorRect:
@@ -162,7 +162,7 @@ func _refresh_strip() -> void:
 		chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var h := Kit.hbox(4)
 		h.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		h.add_child(_swatch(CData.faction_color(fi)))
+		h.add_child(_swatch(coop.player_color(fi)))
 		var st := _player_state(fi)
 		var col := Color.WHITE
 		if st == "disconnected" or st == "left":
@@ -230,7 +230,7 @@ func _refresh_lobby() -> void:
 	else:
 		for f in coop.humans:
 			var h := Kit.hbox(6)
-			h.add_child(_swatch(CData.faction_color(int(f)), 14))
+			h.add_child(_swatch(coop.player_color(int(f)), 14))
 			var on: bool = coop.connected(int(f))
 			var who := fname(int(f)) + (" (you)" if int(f) == coop.me else "")
 			h.add_child(Kit.label("%s: %s" % [who, "here" if on else "waiting for them to join"], Kit.FONT,
@@ -299,7 +299,7 @@ func _fill_chip(chip: PanelContainer, by: int, what: String, kind: int) -> void:
 	if by < 0:
 		return
 	var h := Kit.hbox(4)
-	h.add_child(_swatch(CData.faction_color(by), 12))
+	h.add_child(_swatch(coop.player_color(by), 12))
 	if by == coop.me:
 		h.add_child(Kit.label("%s asked" % what, 12, Color.WHITE))
 	else:

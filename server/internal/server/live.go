@@ -131,6 +131,35 @@ func (s *Server) wait(w http.ResponseWriter, r *http.Request, seat Seat) {
 // room promptly.
 func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	s.serveWS(w, r, "auth:", func(ctx context.Context, tok string) (*wsPeer, bool) {
+		seat, ok := s.checkToken(ctx, id, tok)
+		if !ok {
+			return nil, false
+		}
+		return &wsPeer{f: seat.F, tok: seat.TokenID, logKV: []any{"campaign", id, "f", seat.F},
+			seen: func() { s.markSeen(seat) },
+			enter: func(ctx context.Context, m *member, req roomMsg) (*Room, error) {
+				return s.enterRoom(ctx, seat, m, req)
+			}}, true
+	})
+}
+
+// wsPeer is an authenticated WebSocket: its seat (the lockstep player id),
+// how to mark it seen and how its {"t":"room"} message enters a room.
+type wsPeer struct {
+	f     int
+	tok   int64
+	logKV []any
+	seen  func() // nil: nothing to record
+	enter func(ctx context.Context, m *member, req roomMsg) (*Room, error)
+}
+
+// serveWS is the WebSocket loop shared by campaign and custom rooms: auth
+// (failures count under failKey+IP in the code limiter), hello, the writer
+// goroutine, rate bucket, read timeout, ping/echo, room entry, then every
+// message to the room.
+func (s *Server) serveWS(w http.ResponseWriter, r *http.Request, failKey string,
+	auth func(ctx context.Context, tok string) (*wsPeer, bool)) {
 	c, err := websocket.Accept(w, r, nil) // checks Origin against Host
 	if err != nil {
 		return
@@ -158,13 +187,15 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 		Token string `json:"token"`
 	}
 	json.Unmarshal(msg, &hello)
-	seat, ok := s.checkToken(ctx, id, hello.Token)
+	peer, ok := auth(ctx, hello.Token)
 	if hello.T != "auth" || !ok {
-		s.codeFail.Take("auth:" + ipOf(r))
+		s.codeFail.Take(failKey + ipOf(r))
 		c.Close(websocket.StatusPolicyViolation, "unauthorized")
 		return
 	}
-	s.markSeen(seat)
+	if peer.seen != nil {
+		peer.seen()
+	}
 	// One writer goroutine per connection; everything else queues into out.
 	now := s.clock.Now()
 	// A live battle sends ~12 messages a second (an input per frame, a hash
@@ -173,7 +204,7 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.TestMode {
 		rate = 400
 	}
-	m := &member{f: seat.F, tok: seat.TokenID, out: make(chan []byte, 4096), kill: cancel, joined: now, lastMsg: now,
+	m := &member{f: peer.f, tok: peer.tok, out: make(chan []byte, 4096), kill: cancel, joined: now, lastMsg: now,
 		limit: &connBucket{tokens: 300, max: 300, rate: rate, last: time.Now()}}
 	go func() {
 		for {
@@ -198,8 +229,8 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 			cancel()
 		}
 	}
-	send(map[string]any{"t": "hello", "f": seat.F, "server_time": ms(s.clock.Now()), "api": APIVersion})
-	s.log.Info("ws connected", "campaign", id, "f", seat.F, "ip", ipOf(r))
+	send(map[string]any{"t": "hello", "f": peer.f, "server_time": ms(s.clock.Now()), "api": APIVersion})
+	s.log.Info("ws connected", append(append([]any{}, peer.logKV...), "ip", ipOf(r))...)
 	var room *Room
 	defer func() {
 		if room != nil {
@@ -222,9 +253,9 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 			send(map[string]any{"t": "error", "code": "rate_limited", "message": "too many messages"})
 			continue
 		}
-		if time.Since(lastSeen) > seenThrottle {
+		if peer.seen != nil && time.Since(lastSeen) > seenThrottle {
 			lastSeen = time.Now()
-			s.markSeen(seat)
+			peer.seen()
 		}
 		var req roomMsg
 		if json.Unmarshal(msg, &req) != nil {
@@ -245,7 +276,7 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		case "room":
-			rm, err := s.enterRoom(ctx, seat, m, req)
+			rm, err := peer.enter(ctx, m, req)
 			if err != nil {
 				var ae *apiError
 				if errors.As(err, &ae) {

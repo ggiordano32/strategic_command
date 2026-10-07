@@ -30,8 +30,16 @@ func refresh() -> void:
 	if source.is_valid():
 		_pending = source.call()
 	var keep: Array = []
+	var applied_all := false
+	if sim.phase == BattleSim.PHASE_DEPLOY and not source.is_valid():
+		# Deployment: the clock stands at 0, so an order's tick cannot say
+		# whether it was applied; none of ours left in the sim = all were.
+		applied_all = true
+		for so in sim.pending_orders:
+			if int(so["player"]) < 50:
+				applied_all = false
 	for o in _pending:
-		if int(o["tick"]) >= sim.tick:
+		if int(o["tick"]) >= sim.tick and not applied_all:
 			keep.append(o)
 	_pending = keep
 	_view = {}
@@ -221,6 +229,8 @@ func wall_refusal(u: int, x: int, y: int) -> String:
 		if c == UT.CLS_ART:
 			return "Engines cannot go up on the walls"
 		return "Pikes cannot man walls"
+	if sim.phase == BattleSim.PHASE_DEPLOY:
+		return ""  # deployment: placed straight onto the walkway
 	var from := Vector2i(sim.u_ax[u], sim.u_ay[u])
 	if sim.u_wall[u] > 0:
 		var e0 := BattleSim.descent_end(sim, sim.u_wall[u] - 1, sim.u_cx[u], sim.u_cy[u], true, ws.x, ws.y)

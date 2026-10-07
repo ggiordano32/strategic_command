@@ -86,6 +86,18 @@ type Room struct {
 	closed    bool
 	emptyAt   time.Time
 	renewedAt time.Time
+
+	// Custom battle rooms (custom.go): not tied to a campaign, memory only.
+	custom     bool
+	code       string
+	setup      json.RawMessage
+	rev        int
+	name       string
+	rules      string
+	build      string
+	toks       [customSeats]string // SHA-256 of each seat's token ("": unclaimed)
+	lobbyReady map[int]int         // seat -> rev it is ready at (absent: not ready)
+	scens      map[int]string      // seat -> scenario hash it reported
 }
 
 type member struct {
@@ -165,6 +177,9 @@ type roomMsg struct {
 	From   int64           `json:"from"`
 	Who    *int            `json:"who"`
 	Ms     int             `json:"ms"`
+	Rev    *int            `json:"rev"`
+	Setup  json.RawMessage `json:"setup"`
+	Ready  bool            `json:"ready"`
 }
 
 func jsonb(v any) []byte {
@@ -415,6 +430,13 @@ func (r *Room) players() []map[string]any {
 	for f := range r.parts {
 		fs[f] = true
 	}
+	if r.custom {
+		for f, h := range r.toks {
+			if h != "" {
+				fs[f] = true
+			}
+		}
+	}
 	var list []int
 	for f := range fs {
 		list = append(list, f)
@@ -431,14 +453,22 @@ func (r *Room) players() []map[string]any {
 			e["keep"] = m.keep
 			e["silent_ms"] = now.Sub(m.lastMsg).Milliseconds()
 		}
+		if r.custom {
+			rv, ok := r.lobbyReady[f]
+			e["ready"] = ok && rv == r.rev
+			e["scen"] = r.scens[f]
+		}
 		out = append(out, e)
 	}
 	return out
 }
 
 func (r *Room) roster() {
-	r.broadcast(jsonb(map[string]any{"t": "roster", "host": r.host, "started": r.started, "players": r.players(),
-		"seq": r.seq}), -1)
+	msg := map[string]any{"t": "roster", "host": r.host, "started": r.started, "players": r.players(), "seq": r.seq}
+	if r.custom {
+		msg["rev"] = r.rev
+	}
+	r.broadcast(jsonb(msg), -1)
 }
 
 func (r *Room) errorTo(m *member, code, msg string) {
@@ -463,6 +493,9 @@ func (r *Room) handle(m *member, raw []byte, req roomMsg) {
 			r.errorTo(m, "not_host", "only the host starts the battle")
 			return
 		}
+		if r.custom && !r.customCanStart(m) {
+			return
+		}
 		r.started = true
 		r.startedAt = now
 		var ps []int
@@ -471,8 +504,16 @@ func (r *Room) handle(m *member, raw []byte, req roomMsg) {
 			r.parts[f] = &part{lastK: -1, in: true, lastIn: now}
 		}
 		sort.Ints(ps)
-		r.startItem = r.stream(map[string]any{"t": "start", "players": ps, "host": r.host})
+		item := map[string]any{"t": "start", "players": ps, "host": r.host}
+		if r.custom {
+			item["rev"] = r.rev
+		}
+		r.startItem = r.stream(item)
 		r.roster()
+		if r.custom {
+			r.s.log.Info("custom room started", "code", r.code, "players", ps, "rev", r.rev)
+			return
+		}
 		r.s.log.Info("room started", "room", r.key, "players", ps)
 		go r.s.tookPart(r.campaign, r.battle, ps...)
 		go r.s.setHost(r.campaign, r.battle, r.host, m.tok)
@@ -508,7 +549,9 @@ func (r *Room) handle(m *member, raw []byte, req roomMsg) {
 			p.in = true
 			p.dropped = false
 			defer r.roster()
-			go r.s.tookPart(r.campaign, r.battle, m.f)
+			if !r.custom {
+				go r.s.tookPart(r.campaign, r.battle, m.f)
+			}
 		}
 		r.stream(map[string]any{"t": "in", "p": m.f, "n": req.N, "k": *req.K, "o": orders})
 	case "hash":
@@ -574,6 +617,18 @@ func (r *Room) handle(m *member, raw []byte, req roomMsg) {
 		m.kill()
 	case "ping":
 		r.sendTo(m, jsonb(map[string]any{"t": "pong", "n": req.N, "server_time": ms(now)}))
+	case "setup":
+		if !r.custom {
+			r.errorTo(m, "unknown", "unknown message type")
+			return
+		}
+		r.customSetup(m, req)
+	case "lobby":
+		if !r.custom {
+			r.errorTo(m, "unknown", "unknown message type")
+			return
+		}
+		r.customLobby(m, req)
 	default:
 		r.errorTo(m, "unknown", "unknown message type")
 	}
@@ -647,7 +702,7 @@ func (r *Room) pickHost(not int) {
 	}
 	if best >= 0 && best != r.host {
 		r.host = best
-		if m := r.members[best]; m != nil && r.started {
+		if m := r.members[best]; m != nil && r.started && !r.custom {
 			go r.s.setHost(r.campaign, r.battle, best, m.tok)
 		}
 	}
@@ -660,6 +715,16 @@ func (r *Room) memberGone(f int) {
 	}
 	if len(r.members) == 0 {
 		r.emptyAt = r.s.clock.Now()
+	}
+	if r.custom {
+		if !r.started {
+			// Ready flags are for the members present; a returning member
+			// says ready again.
+			delete(r.lobbyReady, f)
+			delete(r.scens, f)
+		}
+		r.roster()
+		return
 	}
 	r.roster()
 	go r.s.roomChanged(r.campaign)
@@ -817,6 +882,10 @@ func (r *Room) close(why string) {
 	}
 	r.members = map[int]*member{}
 	r.mu.Unlock()
+	if r.custom {
+		r.s.log.Info("custom room closed", "code", r.code, "why", why)
+		return
+	}
 	r.s.log.Info("room closed", "room", r.key, "why", why)
 	go func() {
 		r.s.db.Exec("DELETE FROM battle_claims WHERE campaign_id = ? AND battle_id = ? AND mode = 'live'", r.campaign, r.battle)
@@ -863,6 +932,10 @@ func (s *Server) roomSweep() {
 	}
 	s.rooms.mu.Unlock()
 	for _, r := range all {
+		if r.custom {
+			s.customSweep(r, now)
+			continue
+		}
 		r.mu.Lock()
 		empty := len(r.members) == 0
 		grace := s.cfg.RoomGrace
