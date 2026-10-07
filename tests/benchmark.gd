@@ -1,9 +1,10 @@
 extends SceneTree
 ## Headless sim benchmark.
-##   godot --headless --script res://tests/benchmark.gd [-- --max-ticks=6000]
+##   godot --headless --script res://tests/benchmark.gd [-- --max-ticks=6000] [--skill=s]
 ## Runs the AI vs AI scenarios through a full engagement and reports ms per
 ## tick (mean, p95, max), split into march (no unit in contact) and
-## engagement phases.
+## engagement phases. --skill=e|a|s sets both AI sides' battle skill
+## (docs/AI.md; default Average, the scenarios' own).
 
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
@@ -11,6 +12,7 @@ const Scenarios := preload("res://sim/scenarios.gd")
 
 func _init() -> void:
 	var max_ticks := 6000
+	var skill := -1
 	var scens := ["bench_2000", "bench_4000", "bench_4000_hills", "bench_4000_city", "bench_4000_polis",
 		"bench_4000_castrum"]
 	for a in OS.get_cmdline_user_args():
@@ -18,16 +20,21 @@ func _init() -> void:
 			max_ticks = int(a.get_slice("=", 1))
 		elif a.begins_with("--scen="):
 			scens = a.get_slice("=", 1).split(",")
+		elif a.begins_with("--skill="):
+			skill = {"e": 0, "a": 1, "s": 2}.get(a.get_slice("=", 1).substr(0, 1), 1)
 	print("CPU: %s, %d threads, %s" % [OS.get_processor_name(), OS.get_processor_count(), OS.get_name()])
 	for scen in scens:
-		_bench(scen, max_ticks)
+		_bench(scen, max_ticks, skill)
 	quit(0)
 
 
-func _bench(scen: String, max_ticks: int) -> void:
+func _bench(scen: String, max_ticks: int, skill: int) -> void:
 	var sim := BattleSim.new()
 	var t0 := Time.get_ticks_usec()
-	sim.setup(Scenarios.make(scen), 42)
+	var sc := Scenarios.make(scen)
+	if skill >= 0:
+		sc["ai_skill"] = [skill, skill]
+	sim.setup(sc, 42)
 	var setup_ms := (Time.get_ticks_usec() - t0) / 1000.0
 	var all := PackedFloat64Array()
 	var march := PackedFloat64Array()

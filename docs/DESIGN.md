@@ -198,8 +198,13 @@ Per-soldier simulation is the main cost, so the sim is built around it:
 - Every threshold and interval it uses comes from a skill / personality
   profile (`sim/ai_profile.gd`; design in `docs/AI.md`). Easy (built)
   thinks slower, notices less, ignores terrain and makes deliberate,
-  plausible mistakes rolled with the sim's RNG (lockstep-safe); Skilled
-  comes later.
+  plausible mistakes rolled with the sim's RNG (lockstep-safe). Skilled
+  (built, `docs/AI.md` section 11) keeps a foot and a cavalry reserve and
+  commits them when the enemy wavers, rotates tired units, assigns
+  matchups, focuses missile fire, reads morale, ammunition and where enemy
+  riders are heading, and in sieges shifts wall units, counter-charges the
+  breach and sallies; its memory is hashed sim state (`ai_mem`), and it
+  never gets anything a player does not.
 
 ### Milestone 2: mechanics as built
 
@@ -553,8 +558,10 @@ scores) is a knob of the side's AI profile, `sim/ai_profile.gd` (skill
 Easy / Average / Skilled, personality Cautious / Balanced / Aggressive;
 the values here are the Average / Balanced row), carried per side in the
 scenario (`ai_skill`, `ai_style`); the settlement AI and the campaign AI
-(`campaign/cai_profile.gd`) likewise. See `docs/AI.md` "As built: profiles"
-and "As built: Easy".
+(`campaign/cai_profile.gd`) likewise. See `docs/AI.md` "As built: profiles",
+"As built: Easy" and "As built: Skilled" (the Skilled level adds reserves,
+rotation, matchup assignment, focus fire and the other behaviours switched
+on by its SK_* knobs, which are off for Easy and Average).
 Artillery: bolts deploy at the ends of the first line (clear, flat field of
 fire), stones 25 m behind the centre; a battery keeps its place while it
 has targets in range and friends within 30 m, otherwise packs up to follow
@@ -1536,7 +1543,18 @@ headcount bar with the count and a short state word (artillery: set-up /
 refill state), ammunition at the bar's right (batteries: shots + reserve),
 an orange edge under fire or charge, a white frame when selected, yellow
 when routing, orange text wavering, grey when gone. Screenshots:
-`docs/screenshots/hud_*.png`. Testing aids: `--ui-dpr=X --ui-touch=0/1
+`docs/screenshots/hud_*.png`. Reordering the cards: drag a card (mouse: a plain
+drag; touch: hold it still 0.35 s until it lifts, bigger and brighter with
+a shadow and a gold rim, then drag; a quick touch drag does nothing) and
+drop it between two cards (a ghost follows the pointer, a gold bar marks
+the slot); a long press released without moving opens the unit book as
+before (`game/drag_reorder.gd`, shared with the campaign army card). The
+order is the strip's own view mapping (display position -> sim unit
+index; the sim's unit indices never change, nothing reaches the sim or
+lockstep: per player, per battle, co-op peers may differ), kept for the
+whole battle (book, controls page, pause); All / Inf / Missile / Cav
+select in that order, so the first card of the group becomes the primary
+unit. Screenshot (phone, mid-drag): `docs/screenshots/reorder_phone.png`. Testing aids: `--ui-dpr=X --ui-touch=0/1
 --ui-size=S|M|L` emulate a device, `--shot=file.png` saves the window,
 `--menu-tests`, `--refill=U`.
 

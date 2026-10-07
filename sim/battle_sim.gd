@@ -442,6 +442,10 @@ var ai_prog := PackedInt32Array([0, 0, 0])  # settlement maps: deaths + gate dam
 ## Only a level whose mistake chances are above 0 writes it; hashed with the
 ## AI profiles when they are not the default.
 var ai_mist := PackedInt32Array()
+## Skilled AI memory (sim/ai_profile.gd MU_* per unit, then SD_* per side):
+## sized only when a side's profile asks for it (AIProfile.uses_mem), so it
+## is empty, and hashes as nothing, in every other battle.
+var ai_mem := PackedInt32Array()
 
 # Terrain: node heights (sim units) on a 4 m grid covering the field, node
 # gradients (Q12 grade), built once at setup from the scenario's terrain
@@ -841,6 +845,10 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	u_walls.fill(-1)
 	dbg_cav_seen.resize(n_units)
 	dbg_cav_seen.fill(-1)
+	ai_mem = PackedInt32Array()
+	if AIProfile.uses_mem(ai_skill, ai_style):
+		ai_mem.resize(n_units * AIProfile.MU_K + 2 * AIProfile.SD_K)
+		ai_mem.fill(0)
 	for arr in _map_unit_arrays():
 		arr.resize(n_units)
 		arr.fill(0)
@@ -7080,6 +7088,8 @@ func state_hash() -> int:
 		ctx.update(ai_skill.to_byte_array())
 		ctx.update(ai_style.to_byte_array())
 		ctx.update(ai_mist.to_byte_array())
+		if not ai_mem.is_empty():
+			ctx.update(ai_mem.to_byte_array())
 	if map_on != 0:
 		# Woods / settlement maps only (a plain map hashes as it always did).
 		for arr in _map_unit_arrays():

@@ -139,6 +139,19 @@ short:
   "Recruiting into armies"); the merge plus only shows where a tap would
   merge (`merge_why`: the real merge / join / path checks, cached per
   selection and plan).
+- **Reordering units by drag and drop (2026-10-06, commit 0babb12):** battle
+  card strip: drag a card (touch: long press until it lifts, then drag) to
+  a new place; a view-only display order per player and battle (nothing in
+  the sim or lockstep), All / Inf / Missile / Cav select in it. Campaign
+  army card: the same gesture on unit rows plans an `arrange` order
+  (step 2, any format, one per army and turn, Undo per drag); it sets the
+  order units take the field in. Shared helper `game/drag_reorder.gd`;
+  `TouchScroll.hold` keeps a lifted row from scrolling. On a touch screen
+  the long press on a card or army row now opens the unit page on release
+  (after the lift) instead of while held. No state version bump (a new
+  order type). Controls page rows `card_reorder`, `map_army_reorder`.
+  Screenshot `docs/screenshots/reorder_phone.png`. Open: try it on the
+  phones (the 0.35 s lift, the long press -> book on release).
 - **Open / next:** play it on the phones (tap-tap planning, drags, the
   replay; whether a tap inside an enemy zone should become an attack
   instead of a refusal); the version 5 testing aids `--camp-raid`,
@@ -660,7 +673,7 @@ fixes are all landed; see "Where we are"):
    batteries, nearest targets, early charge) beat Average and were kept
    at Average: a lead for step 3. Average / Balanced byte-identical
    (determinism, sieges, campaign_sim hashes). UI: Easy without "(soon)".
-   Next: step 3 (Skilled battle).
+   **Step 3 done (2026-10-06): Skilled battle and settlement AI** (`docs/AI.md` section 11; reserves, rotation, matchups, focus fire, siege wall shift / breach / sally; beats Average 72 % flat, 67 % hill, Easy 89-95 %; Easy / Average byte-identical). Next: step 4 (Skilled campaign).
 7. **Mid-battle reinforcements** from the map edge; ambush stance once
    hidden information in an async game is designed.
 8. **Shared empire** (both humans running one faction).

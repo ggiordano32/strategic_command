@@ -150,6 +150,8 @@ static func _army(sim, side: int) -> void:
 		_close_gates(sim, side)
 		if sim.cit_r > 0:
 			_citadel(sim, side)
+		if kn[AP.SK_MEM] != 0:
+			_sk_defend(sim, side, kn)
 		return
 	# Attackers. Clearly lost: withdraw (as in the field).
 	var own := BattleAI._strength(sim, side)
@@ -307,6 +309,8 @@ static func _close_gates(sim, side: int) -> void:
 	for g in sim.n_gates:
 		if sim.g_state[g] != GATE_OPEN or sim.g_cit[g] != 0:
 			continue
+		if kn[AP.SK_SALLY_R] > 0 and BattleAI._sd(sim, side, AP.SD_SALLY) == g + 1:
+			continue  # our sally is out through it
 		for o in sim.n_units:
 			if sim.u_side[o] == side or sim.u_state[o] != U_READY:
 				continue
@@ -338,6 +342,9 @@ static func _classify_defender(sim, u: int) -> void:
 
 static func _defender(sim, u: int) -> void:
 	var mode: int = sim.u_ai[u]
+	var kn := AP.of(sim, sim.u_side[u])
+	if kn[AP.SK_MEM] != 0 and _sk_defender(sim, u, kn):
+		return
 	if mode == A_WALLU:
 		if sim.u_wall[u] == 0:
 			# Came down (or was ordered down): hold a post in the town.
@@ -692,6 +699,8 @@ static func _att_art(sim, u: int, phase: int) -> void:
 				var face := FM.atan2_a(sim.g_y[g] - spot.y, sim.g_x[g] - spot.x)
 				BattleAI._move(sim, u, spot.x, spot.y, face, BattleAI._width(sim, u), 0, 6)
 			return
+		if kn[AP.SK_WALL_ART] > 0 and _sk_wall_target(sim, u, g, kn):
+			return
 		if sim.u_order[u] != O_ATTACK or sim.u_gtarget[u] != g:
 			BattleAI._order(sim, u, {"type": ORDER_ATTACK, "target": -1, "gate": g, "run": 0}, 0)
 		return
@@ -907,6 +916,8 @@ static func _storm(sim, u: int) -> void:
 		var cface := FM.atan2_a(sim.g_y[cg] - cspot.y, sim.g_x[cg] - cspot.x)
 		_go_home(sim, u, cspot.x, cspot.y, cface, 8)
 		return
+	if kn[AP.SK_STORM_STAGGER] != 0 and _sk_storm_wait(sim, u, kn):
+		return
 	var px: int = sim.plaza[0]
 	var py: int = sim.plaza[1]
 	if sim.n_gates == 0 and sim.u_ai_x[u] == 0:
@@ -1006,9 +1017,317 @@ static func _att_cav(sim, u: int, phase: int) -> void:
 		return
 	var rk := _rank(sim, u, func(o): return sim.u_cls[o] == UT.CLS_CAV)
 	var lat := (kn[AP.S_CAV_WING] + rk.x / 2 * kn[AP.S_CAV_WING_STEP]) * M * (1 if rk.x % 2 == 0 else -1)
+	if kn[AP.SK_FEINT] != 0 and phase == SP_APPROACH:
+		# The feint: the riders show themselves before another gate.
+		var fg := _sk_feint_gate(sim, g)
+		if fg >= 0:
+			if BattleAI._mem(sim, u, AP.MU_X) == 0:
+				BattleAI._mset(sim, u, AP.MU_X, 1)
+				BattleAI._count(sim, side, AP.C_SIEGE)
+			g = fg
+			lat = (rk.x * 2 - (rk.y - 1)) * 15 * M
 	var spot := _gate_point(sim, g, kn[AP.S_STAGE_OUT] + kn[AP.S_CAV_BACK], lat)
 	var face := FM.atan2_a(sim.g_y[g] - spot.y, sim.g_x[g] - spot.x)
 	_go_home(sim, u, spot.x, spot.y, face, 12)
+
+
+# ------------------------------------------------------ Skilled (step 3) ---
+# Settlement behaviours only a profile with the SK_* knobs runs (docs/AI.md
+# 11); memory in BattleSim.ai_mem (BattleAI._mem / _sd).
+
+## Defenders, army level: read which gate is attacked (the one being
+## damaged, else one open or broken with attackers near, else the one
+## nearest the attackers), shift idle wall units toward it, bring missile
+## troops down before it falls, move the reserves' posts up behind it,
+## and sally against a weak, isolated party outside a gate.
+static func _sk_defend(sim, side: int, kn: PackedInt32Array) -> void:
+	var ag := _sk_attacked_gate(sim, side)
+	if ag >= 0:
+		if kn[AP.SK_WALL_SHIFT] != 0:
+			_sk_wall_shift(sim, side, ag, kn)
+		if kn[AP.SK_MIS_DOWN_PCT] > 0:
+			_sk_mis_down(sim, side, ag, kn)
+		if kn[AP.SK_BREACH] != 0:
+			_sk_breach_posts(sim, side, ag)
+	if kn[AP.SK_SALLY_R] > 0:
+		_sk_sally(sim, side, kn)
+
+
+static func _sk_attacked_gate(sim, side: int) -> int:
+	var best := -1
+	var best_t: int = sim.tick - 300
+	for g in sim.n_gates:
+		if sim.g_cit[g] != 0:
+			continue
+		if sim.g_state[g] != GATE_CLOSED and _attackers_near(sim, side, sim.g_x[g], sim.g_y[g], 100 * M) > 0:
+			return g
+		if sim.g_state[g] == GATE_CLOSED and sim.g_hit_t[g] > best_t:
+			best = g
+			best_t = sim.g_hit_t[g]
+	if best >= 0:
+		return best
+	# Nobody at a gate yet: the gate nearest the attackers' army.
+	var c := _army_centre(sim, 1 - side)
+	var bd := 0
+	for g in sim.n_gates:
+		if sim.g_cit[g] != 0:
+			continue
+		var d := BattleAI._d(sim.g_x[g] - c.x, sim.g_y[g] - c.y)
+		if best < 0 or d < bd:
+			best = g
+			bd = d
+	return best
+
+
+## Ready attacking units within r of (x, y).
+static func _attackers_near(sim, side: int, x: int, y: int, r: int) -> int:
+	var n := 0
+	for o in sim.n_units:
+		if sim.u_side[o] != side and sim.u_state[o] == U_READY \
+				and BattleAI._d(sim.u_cx[o] - x, sim.u_cy[o] - y) < r:
+			n += 1
+	return n
+
+
+## Wall missile units with nobody in range, on a stretch more than 80 m
+## from the attacked gate, move along to the stretch nearest it (at most
+## two units a stretch). In transit: MU_X 10 + stretch.
+static func _sk_wall_shift(sim, side: int, ag: int, _kn: PackedInt32Array) -> void:
+	var gx: int = sim.g_x[ag]
+	var gy: int = sim.g_y[ag]
+	for u in sim.n_units:
+		if sim.u_side[u] != side or sim.u_state[u] != U_READY or sim.u_ai[u] != A_WALLU:
+			continue
+		if sim.u_wall[u] == 0 or sim.u_stair[u] != 0 or sim.u_order[u] == O_MOVE or sim.u_ammo[u] <= 0 \
+				or sim.u_cls[u] != UT.CLS_MISSILE:
+			continue
+		var sg0: int = sim.u_wall[u] - 1
+		if sim._seg_off(sg0, gx, gy) <= 80 * M or _anyone_in_range(sim, u):
+			continue
+		var best := -1
+		var bd := 0
+		for sg in sim.ws_x0.size():
+			if (sim.ws_fl[sg] & MapGen.SEG_CIT) != 0 or sg == sg0:
+				continue
+			var occ := 0
+			for o in sim.n_units:
+				if sim.u_side[o] == side and sim.u_state[o] == U_READY \
+						and (sim.u_wall[o] == sg + 1 or BattleAI._mem(sim, o, AP.MU_X) == 10 + sg):
+					occ += 1
+			if occ >= 2:
+				continue
+			var d: int = sim._seg_off(sg, gx, gy)
+			if d >= sim._seg_off(sg0, gx, gy):
+				continue
+			if best < 0 or d < bd:
+				best = sg
+				bd = d
+		if best < 0:
+			continue
+		var p: Vector2i = sim.seg_pt(sim, best, sim.seg_t(sim, best, gx, gy))
+		BattleAI._mset(sim, u, AP.MU_X, 10 + best)
+		BattleAI._order(sim, u, {"type": 1, "x": p.x, "y": p.y, "facing": sim.ws_dir[best],
+			"width": BattleAI._width(sim, u), "run": 1}, 2)
+		BattleAI._count(sim, side, AP.C_SIEGE)
+
+
+static func _anyone_in_range(sim, u: int) -> bool:
+	for o in sim.n_units:
+		if sim.u_side[o] != sim.u_side[u] and sim.u_state[o] == U_READY \
+				and sim._unit_dist(u, o) <= sim.range_vs(u, o):
+			return true
+	return false
+
+
+## Wall missile units within 60 m of the attacked gate come down to the
+## street behind it when the gate is below SK_MIS_DOWN_PCT % of its hit
+## points (before it falls and the stairs are cut off).
+static func _sk_mis_down(sim, side: int, ag: int, kn: PackedInt32Array) -> void:
+	if sim.g_state[ag] != GATE_CLOSED or sim.g_hp[ag] * 100 >= sim.g_hp0[ag] * kn[AP.SK_MIS_DOWN_PCT]:
+		return
+	for u in sim.n_units:
+		if sim.u_side[u] != side or sim.u_state[u] != U_READY or sim.u_ai[u] != A_WALLU:
+			continue
+		if sim.u_wall[u] == 0 or sim.u_stair[u] != 0 or sim.u_order[u] == O_MOVE or sim.u_cls[u] != UT.CLS_MISSILE:
+			continue
+		if BattleAI._d(sim.u_cx[u] - sim.g_x[ag], sim.u_cy[u] - sim.g_y[ag]) > 60 * M:
+			continue
+		var p: Vector2i = sim.wall_inside(sim.u_wall[u] - 1, sim.u_cx[u], sim.u_cy[u])
+		BattleAI._order(sim, u, {"type": 1, "x": p.x, "y": p.y, "facing": (sim.g_dir[ag] + 512) & 1023,
+			"width": BattleAI._width(sim, u), "run": 1}, 2)
+		BattleAI._count(sim, side, AP.C_SIEGE)
+
+
+## Reserves' posts move up behind the attacked gate once it is below half
+## its hit points (or open / broken), so they counter-charge the breach
+## (MU_X 20: moved).
+static func _sk_breach_posts(sim, side: int, ag: int) -> void:
+	if sim.g_state[ag] == GATE_CLOSED and sim.g_hp[ag] * 2 >= sim.g_hp0[ag]:
+		return
+	var dir: int = sim.g_dir[ag]
+	var k := 0
+	for u in sim.n_units:
+		if sim.u_side[u] != side or sim.u_state[u] != U_READY or sim.u_ai[u] != A_RESERVE:
+			continue
+		if sim.u_cls[u] == UT.CLS_MISSILE or sim.u_cls[u] == UT.CLS_ART or BattleAI._mem(sim, u, AP.MU_X) == 20:
+			continue
+		var hx: int = sim.u_ai_x[u]
+		var hy: int = sim.u_ai_y[u]
+		if BattleAI._d(hx - sim.g_ix[ag], hy - sim.g_iy[ag]) < 60 * M:
+			continue
+		var back := (25 + 12 * (k / 2)) * M
+		var lat := (8 * M) * (1 if k % 2 == 0 else -1)
+		var c := FM.cos_a(dir)
+		var sn := FM.sin_a(dir)
+		var px: int = sim.g_ix[ag] - (c * back + sn * lat) / FM.TRIG_ONE
+		var py: int = sim.g_iy[ag] - (sn * back - c * lat) / FM.TRIG_ONE
+		if (sim.veg_bits(px, py) & MapGen.V_URBAN) == 0 or sim.obs_kind(px, py) != MapGen.C_OPEN:
+			continue
+		sim.u_ai_x[u] = px
+		sim.u_ai_y[u] = py
+		BattleAI._mset(sim, u, AP.MU_X, 20)
+		BattleAI._count(sim, side, AP.C_SIEGE)
+		k += 1
+
+
+## Sally: a closed gate with a weak party of attackers within SK_SALLY_R
+## outside it and no other attackers within 2.5 times that: if the foot
+## and riders within 60 m inside it are 1.5 times as strong, the gate opens
+## and they go out at them (MU_X 30), back in after 45 s or when nobody is
+## left near; the gate is shut again by the usual rule once they are in.
+static func _sk_sally(sim, side: int, kn: PackedInt32Array) -> void:
+	var r := kn[AP.SK_SALLY_R]
+	var cur := BattleAI._sd(sim, side, AP.SD_SALLY) - 1
+	if cur >= 0:
+		if sim.tick - BattleAI._sd(sim, side, AP.SD_SALLY_T) > 450 \
+				or _attackers_near(sim, side, sim.g_ox[cur], sim.g_oy[cur], 2 * r) == 0 or sim.g_state[cur] == GATE_BROKEN:
+			BattleAI._sdset(sim, side, AP.SD_SALLY, 0)
+			for u in sim.n_units:
+				if sim.u_side[u] == side and BattleAI._mem(sim, u, AP.MU_X) == 30:
+					BattleAI._mset(sim, u, AP.MU_X, 0)
+		return
+	for g in sim.n_gates:
+		if sim.g_cit[g] != 0 or sim.g_state[g] != GATE_CLOSED:
+			continue
+		var ox: int = sim.g_ox[g]
+		var oy: int = sim.g_oy[g]
+		var near := _attackers_near(sim, side, ox, oy, r)
+		if near == 0 or _attackers_near(sim, side, ox, oy, r * 5 / 2) != near:
+			continue
+		var att := 0
+		for o in sim.n_units:
+			if sim.u_side[o] != side and sim.u_state[o] == U_READY and BattleAI._d(sim.u_cx[o] - ox, sim.u_cy[o] - oy) < r:
+				att += sim.u_alive[o] * UT.stat(sim.u_type[o], "cost")
+		var dfn := 0
+		var party: Array = []
+		for u in sim.n_units:
+			if sim.u_side[u] != side or sim.u_state[u] != U_READY or sim.u_wall[u] != 0:
+				continue
+			var c: int = sim.u_cls[u]
+			if c == UT.CLS_MISSILE or c == UT.CLS_ART or sim.u_ai[u] == A_CIT:
+				continue
+			if BattleAI._d(sim.u_cx[u] - sim.g_ix[g], sim.u_cy[u] - sim.g_iy[g]) < 60 * M:
+				dfn += sim.u_alive[u] * UT.stat(sim.u_type[u], "cost")
+				party.append(u)
+		if party.is_empty() or dfn * 100 < att * 150:
+			continue
+		sim.queue_order({"tick": sim.tick, "type": ORDER_GATE, "unit": party[0], "gate": g, "on": 0,
+			"player": BattleAI.AI_PLAYER_BASE + side, "seq": 8000 + g})
+		for u in party:
+			BattleAI._mset(sim, u, AP.MU_X, 30)
+		BattleAI._sdset(sim, side, AP.SD_SALLY, g + 1)
+		BattleAI._sdset(sim, side, AP.SD_SALLY_T, sim.tick)
+		BattleAI._count(sim, side, AP.C_SIEGE)
+		return
+
+
+## Defender unit think, Skilled parts first: a sallying unit goes at the
+## nearest attacker outside its gate; a wall unit in transit to another
+## stretch keeps going. Returns true when it handled the unit.
+static func _sk_defender(sim, u: int, kn: PackedInt32Array) -> bool:
+	var x := BattleAI._mem(sim, u, AP.MU_X)
+	if x == 30:
+		var g := BattleAI._sd(sim, sim.u_side[u], AP.SD_SALLY) - 1
+		if g < 0:
+			BattleAI._mset(sim, u, AP.MU_X, 0)
+			return false
+		if _engaged(sim, u):
+			return true
+		var t := _nearest_attacker(sim, u, sim.g_ox[g], sim.g_oy[g], 2 * kn[AP.SK_SALLY_R], false)
+		if t >= 0:
+			if sim.u_order[u] != O_ATTACK or sim.u_target[u] != t:
+				BattleAI._attack(sim, u, t, 1)
+			return true
+		return false
+	if x >= 10 and x < 20 and sim.u_ai[u] == A_WALLU:
+		if sim.u_wall[u] == x - 9:
+			BattleAI._mset(sim, u, AP.MU_X, 0)  # there
+			return false
+		if sim.u_wall[u] == 0 and (sim.u_stair[u] != 0 or sim.u_order[u] == O_MOVE):
+			return true  # on its way along the streets to the other stretch
+		if sim.u_order[u] != O_MOVE and sim.u_stair[u] == 0:
+			BattleAI._mset(sim, u, AP.MU_X, 0)  # stopped short: it stays where it is
+	return false
+
+
+## Attacking batteries in their first SK_WALL_ART ticks at the gate shoot
+## the wall units over it (within 60 m of it and in reach), if any.
+static func _sk_wall_target(sim, u: int, g: int, kn: PackedInt32Array) -> bool:
+	var side: int = sim.u_side[u]
+	if sim.tick - sim.ai_t[side] > kn[AP.SK_WALL_ART] + 2 * kn[AP.S_HACK_AFTER] / 3:
+		return false
+	var ty: int = sim.u_type[u]
+	var rng := UT.stat(ty, "m_range")
+	var mn := UT.stat(ty, "m_min")
+	var best := -1
+	var bd := 0
+	for o in sim.n_units:
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.u_wall[o] == 0:
+			continue
+		var d := BattleAI._d(sim.u_cx[o] - sim.g_x[g], sim.u_cy[o] - sim.g_y[g])
+		if d > 60 * M or not sim._art_in_range(u, o, mn, rng):
+			continue
+		if best < 0 or d < bd:
+			best = o
+			bd = d
+	if best < 0:
+		return false
+	if sim.u_order[u] != O_ATTACK or sim.u_target[u] != best:
+		BattleAI._attack(sim, u, best, 0)
+	return true
+
+
+## Storming foot outside the walls wait before the breach while three or
+## more of ours are already crowding the street just inside it.
+static func _sk_storm_wait(sim, u: int, _kn: PackedInt32Array) -> bool:
+	var g: int = sim.ai_gate[sim.u_side[u]]
+	if g < 0 or (sim.veg_bits(sim.u_cx[u], sim.u_cy[u]) & MapGen.V_URBAN) != 0:
+		return false
+	var crowd := 0
+	for o in sim.n_units:
+		if o != u and sim.u_side[o] == sim.u_side[u] and sim.u_state[o] == U_READY \
+				and BattleAI._d(sim.u_cx[o] - sim.g_ix[g], sim.u_cy[o] - sim.g_iy[g]) < 25 * M:
+			crowd += 1
+	if crowd < 3:
+		return false
+	var spot := _gate_point(sim, g, 30 * M, _spread(_rank(sim, u, func(o): return sim.u_cls[o] == UT.CLS_INF \
+		or sim.u_cls[o] == UT.CLS_PIKE).x % 3, 3, 20 * M))
+	_go_home(sim, u, spot.x, spot.y, FM.atan2_a(sim.g_y[g] - spot.y, sim.g_x[g] - spot.x), 8)
+	return true
+
+
+## The other closed outer gate nearest gate g (the feint's), or -1.
+static func _sk_feint_gate(sim, g: int) -> int:
+	var best := -1
+	var bd := 0
+	for k in sim.n_gates:
+		if k == g or sim.g_cit[k] != 0 or sim.g_state[k] != GATE_CLOSED:
+			continue
+		var d := BattleAI._d(sim.g_x[k] - sim.g_x[g], sim.g_y[k] - sim.g_y[g])
+		if best < 0 or d < bd:
+			best = k
+			bd = d
+	return best
 
 
 ## Nearest routing enemy within r that can be reached (not on a wall).

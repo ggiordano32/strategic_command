@@ -1,8 +1,9 @@
 # AI competency
 
 Design for how the AI plays, how skill levels differ, and how we measure
-it. Written 2026-10-06 with the user. Status: **design, steps 1-2 built**
-(profiles as data, section 9; Easy, section 10); Average is the one fixed
+it. Written 2026-10-06 with the user. Status: **design, steps 1-3 built**
+(profiles as data, section 9; Easy, section 10; Skilled battle and
+settlement AI, section 11); Average is the one fixed
 skill the AI had before (described in `sim/battle_ai.gd`,
 `sim/siege_ai.gd` and `campaign/cai.gd`), which this document treats as
 roughly the "Average" level.
@@ -642,6 +643,15 @@ turn below the odds 30; a turn of recruiting up to 130 % of income 25; a
 war on a stronger neighbour 8 a turn when one qualifies. Counted with
 `CP.count` (`mk_*`), printed by `campaign_sim`.
 
+**Mustering (format 6, commit 20fa43e).** The planner moves armies before
+it recruits, since an army taking recruits cannot march that turn (the
+same rule as the player's). `RECRUIT_HOLD_UNITS` (Easy 0, Average and
+Skilled 2): when every army at a recruiting city is planned to march, one
+of at most this many units on a march within the AI's own lands stays to
+take the recruits instead; the others march and the recruits raise a new
+army. At 0 the AI never holds a unit back, so its recruits always start
+as new one- or two-unit armies.
+
 **Campaign measurement** (`campaign_sim --seeds=6 --turns=60`, rules of
 commit 857c275; one faction Easy at a time, the others Average; regions
 at 15 / 30 / 60, mean of 6 seeds, eliminations by turn 60):
@@ -694,4 +704,236 @@ Easy-defended city are in the snapshot round trips.
 
 **UI.** Easy is selectable without "(soon)" on the new-campaign
 Difficulty row (Battle AI and Campaign AI) and on the sandbox "AI:"
-button; Skilled still says "(soon)" and plays like Average.
+button; Skilled still says "(soon)" and plays like Average. (Step 3:
+Skilled battle AI built, section 11.)
+
+
+## 11. As built: Skilled (step 3, 2026-10-06)
+
+Average and Easy are byte for byte what they were: determinism golden
+digests and every Average / Easy run's final hash, `matchups
+--only=sieges`, and `matchups --fair=50 --skill=a:e` (flat 74 / 25 / 1
+draw, hill 71 / 29, the same counters) equal HEAD. Every Skilled behaviour
+is switched on by an `SK_*` knob (`sim/ai_profile.gd`, ids 166-207) that
+is 0 for Easy and Average, so those levels never run it, never draw the
+RNG for it and keep no Skilled memory. No behaviour code branches on the
+level. Skilled has no deliberate mistakes (all `M_*` 0). It plays by the
+same rules with the same information: everything it reads is on the field
+(positions, facings, how fast a unit moves, men, morale and ammunition,
+who is fighting, a gate's damage), never an enemy's orders, and
+everything it does is an order a player could give.
+
+**Memory.** `BattleSim.ai_mem` (one new array in `sim/battle_sim.gd`, the
+only sim change): `AP.MU_K` = 4 ints per unit (matchup target, melee
+start men / relief unit, enemy men at contact / relief tick, role: reserve,
+rotated out, reserve rider, released guard, wall unit in transit, moved
+reserve post, sallying) and `AP.SD_K` = 4 per side (sally gate and tick,
+reserve riders released, withdrawal began). It is sized only when a
+side's profile has `SK_MEM` (`AP.uses_mem`), so it is empty, and hashes
+as nothing, in every other battle; it is in `state_hash()` with the
+profiles and in `snapshot()` / `restore()` like every script variable.
+(The lockstep profile check's hash for a [Skilled, Easy] scenario and the
+snapshot size, +8 bytes, changed accordingly.)
+
+**Behaviours (field, `sim/battle_ai.gd` section "Skilled").**
+- Reserves (3.8): one foot unit (light first, never pikes;
+  `SK_RESERVE` 1) deploys and keeps station 30 m behind the centre
+  (`A_RESV`; fights only what comes within 25 m). It commits to relieve
+  the most tired unit of the line, or as the hammer on an enemy unit
+  engaged with ours and near breaking (morale under 400) within 80 m
+  (round its flank if its front faces us). One cavalry unit (`SK_CAV_RESERVE`
+  1, with two or more) only counter-charges riders on our flank, finishes
+  wavering units or rides down routers until the enemy's first line unit
+  or rider breaks (or our other riders are gone); then it is free.
+- Rotation (3.8): a foot unit fighting with morale under 40 % of its
+  type's is relieved by the reserve, which attacks the same enemy; once the
+  relief has fought 6 s and no free enemy riders are within 60 m, the
+  tired unit falls back 60 m, recovers 30 s and becomes the reserve.
+  Own waverers (morale under 300, not fighting) next to a routing friend
+  fall back the same way (3.9).
+- Matchup assignment (3.3): each army think, a greedy pass over (free foot
+  unit, enemy) pairs, best score first (ties: lower unit, then target):
+  1 point per metre nearer, +20 a good matchup (foot on missiles or
+  artillery, heavy on light, spears on riders), -40 heavy on an unengaged
+  heavy, -80 a formed pike front, +30 a flank or rear on an enemy engaged
+  with ours, +5 per 10 morale under 400, -4 per % of climb, +25 the target
+  it already goes for, +35 an enemy nobody of ours is on yet (pin every
+  enemy first), +25 a second unit on one, -25 per unit beyond. Candidates
+  within 120 % of the nearest enemy's distance + 5 m; foot never chase
+  riders (spears may).
+- Cavalry (3.5): after the 5 s of melee it pulls out only if it is not
+  winning (the enemy lost under 150 % of its own losses since contact),
+  else stays and judges again; pursuit in pairs (+600 for a router another
+  rider is after); a staged rider waits up to 8 s for a partner staging on
+  the same target (timed double charge); +1,500 for enemy riders caught in
+  a melee (counter-charge); +5 per morale point under 400 for an engaged
+  enemy (the finishing charge, 3.9).
+- Missiles (3.6): focus fire, one order for the target chosen from those in
+  range and not in a melee: enemy missiles we outrange +500, halted riders
+  +400 (moving -300), shields facing us -6 per % of missile shield, +2 per
+  morale point under 400, +250 per other missile unit on it; flat throws
+  only with a clear line. Archers go back behind the line when enemy foot
+  come within 70 m during the advance (Average: when the lines meet).
+- Spears (3.4): the spear response reads where riders are heading (their
+  facing and pace 3 s ahead), so spears turn before the charge lands (mean
+  response 9 ticks against Average's 50).
+- Artillery (3.7): the battery guard joins the fight once the lines meet
+  while no enemy riders are free within 150 m of the battery, and goes back
+  when free riders come within 100 m; crews of a battery with an enemy
+  melee unit within 35 m (riders 70 m) and no melee friend near pull back
+  60 m and return like a mauled unit.
+- Deployment (3.1): with the enemy's riders massed toward one end of our
+  line (their mean more than 20 m off our centre), the spears take that end;
+  on maps with woods the line shifts up to 40 m aside (20 m steps, nearest
+  first) to rest a flank on woods with the line itself clear.
+- Terrain (3.10): holds high ground from 0.5 m above the enemy (Average
+  4 m; `HOLD_DH`), and the matchup score's climb penalty.
+- Withdrawal (3.14): foot and batteries withdraw first, cavalry and
+  missile troops keep covering for 15 s, then everyone goes.
+
+**Behaviours (settlements, `sim/siege_ai.gd` section "Skilled").**
+Attacking: the cavalry waits before another gate during the approach (the
+feint); storming foot outside the walls wait before the breach while three
+of ours crowd the street just inside it (staggered storm). Defending: the
+attacked gate is read from the field (the gate being damaged, else an
+open or broken one with attackers near, else the one nearest the
+attackers); wall missile units with nobody in range shift along to the
+stretches nearest it (two a stretch at most); wall missile units within
+60 m of it come down to the street behind it when it is below a quarter of
+its hit points; once it is below half (or open / broken) the reserves'
+posts move up behind it (counter-charge the breach); and a closed gate
+with a weak party of attackers within 60 m and nobody else within 150 m
+opens for a sally by the foot and riders within 60 m inside it if they are
+1.5 times as strong (back after 45 s or when no attackers are left near;
+the usual rule shuts the gate).
+
+**Knob values (SKILLED column; Easy and Average 0 for every `SK_*`).**
+Reaction and every Average threshold are kept, except `HOLD_DH` 0.5 m.
+`SK_ASSIGN` 1, `SK_ASSIGN_REACH` 120 %, `SK_ASSIGN_SLACK` 5 m,
+`SK_SC_PAIR` 25, `SK_SC_MATCH` 20, `SK_SC_BAD` 40, `SK_SC_FLANK` 30,
+`SK_SC_MORALE` 5, `SK_BREAK_MORALE` 400, `SK_SC_UPHILL` 4, `SK_SC_STICK`
+25, `SK_SC_COVER` 35; `SK_PULL_READ` 1, `SK_WIN_PCT` 150; `SK_CAV_RESERVE`
+1, `SK_CAV_PAIR` 600, `SK_PAIR_WAIT` 80 ticks, `SK_CAV_COUNTER` 1,500;
+`SK_FOCUS` 1, `SK_AMMO_KEEP_PCT` 0; `SK_GUARD_CAV_R` 150 m, `SK_ART_PULL`
+1; `SK_RESERVE` 1, `SK_RESERVE_BACK` 30 m, `SK_ROTATE` 1,
+`SK_ROT_MORALE_PCT` 40, `SK_ROT_DELAY` 60 ticks, `SK_ROT_SAFE_R` 60 m,
+`SK_WAVER_PULL` 300; `SK_MIS_EARLY_R` 70 m, `SK_SPEAR_LEAD` 30 ticks;
+`SK_MIRROR` 1, `SK_ANCHOR` 40 m; `SK_WD_COVER` 150 ticks; sieges
+`SK_STORM_STAGGER` 1, `SK_FEINT` 1, `SK_WALL_ART` 0, `SK_WALL_SHIFT` 1,
+`SK_MIS_DOWN_PCT` 25, `SK_BREACH` 1, `SK_SALLY_R` 60 m.
+
+**Not as the design said, and why (measured).**
+- Reaction: Skilled thinks every second like Average. Thinking every
+  0.5 s lost 7 points against Average (more re-orders, the same plans);
+  Skilled reacts sooner by reading more (where riders head, morale,
+  who is free), not by thinking more often.
+- The two reserves are the heart of it: switching off the cavalry reserve
+  took Skilled from 64 % to 34 % against Average, the foot reserve to 38 %.
+  Two reserve riders (33 %) or two reserve foot units (46 %) were worse.
+- A pair bonus on formed targets (both riders onto one unit) cost 8
+  points: pairs are for pursuit only; the timed double charge happens when
+  two riders stage on one target anyway.
+- Shooting the wall units over the gate before the gate
+  (`SK_WALL_ART`, built) slowed the storm and lost walls-3 battles
+  (32 of 40 against 36 without): off.
+- Keeping a third of the arrows for routers (`SK_AMMO_KEEP_PCT`, built)
+  was even on the flat and cost 6 points on hills: off.
+- The matchup pass with a wide reach (150 % + 15 m) was worth nothing
+  against Average and cost 10 points against Easy and on hills (units
+  walked past one enemy to reach another); the tight reach, the "pin
+  every enemy first" bonus, stickiness and the climb penalty made it pay.
+- A permanent battery guard is right (no guard at all: 34 %); releasing
+  it while no riders are free near the battery is the Skilled refinement.
+- Not built: bending the enemy line by pulling a unit back, kiting enemy
+  riders away from their spears, baiting riders into spears during the
+  skirmish, a staggered advance (the line already advances as one
+  formation), reading the enemy's approach to skip the skirmish halt
+  (switching the halt off measured even), pre-sighting the halt line and
+  shifting batteries for the second phase, baiting uphill with missiles,
+  approaching a flank through woods, and a slope anchor (woods only).
+  Sieges "withdraw when the odds turn" uses Average's thresholds.
+
+**Battle measurement** (`matchups --fair=N --skill=s:X`, bench_2000,
+identical mirrored armies, every seed in both orientations; woods:
+`--fair-forest=40`, a mirror-symmetric flat map with 40 % woods;
+"top / bottom" are the Skilled side's wins in each orientation):
+
+| | battles | Skilled wins | other | draws | mean / max min | Skilled bottom / top |
+|---|---|---|---|---|---|---|
+| vs Average, flat | 200 | **72 %** | 28 % | 0 | 5.0 / 9.2 | 67 / 77 of 100 |
+| vs Average, hill (`--fair-terrain=4`) | 200 | **67 %** | 33 % | 0 | 6.0 / 13.7 | 68 / 66 of 100 |
+| vs Average, woods | 100 | **67 %** | 33 % | 0 | 5.1 / 8.5 | 36 / 31 of 50 |
+| vs Easy, flat | 100 | **92 %** | 8 % | 0 | 4.2 / 8.0 | 47 / 45 of 50 |
+| vs Easy, hill | 100 | **89 %** | 10 % | 1 | 4.9 / 15.0 | 44 / 45 of 50 |
+| vs Easy, woods | 100 | **95 %** | 5 % | 0 | 4.4 / 11.6 | 48 / 47 of 50 |
+| Skilled vs Skilled, flat | 100 | 50 / 50 | | 0 | 5.6 / 7.0 | |
+| Skilled vs Skilled, hill | 100 | 50 / 50 | | 0 | 6.5 / 11.7 | |
+| Skilled vs Skilled, woods | 100 | 50 / 50 | | 0 | 5.7 / 7.3 | |
+
+(Average vs Average: 50 / 50, no draws, 5.1 / 8.2 min flat, 5.2 / 8.2
+woods.) Targets: Skilled vs Average 65 % and vs Easy 85 % on flat and
+hilly maps (and woods): met. Skilled vs Skilled ends every battle, no
+draws (Average vs Average: none either), a little longer than Average's
+(the reserves). Noise: a 200-battle rate has a standard error of about
+3.4 points, a 100-battle one about 4.5.
+
+Counters per 200 flat battles, Skilled / Average: flank or rear charge
+hits 4,396 / 4,300; cavalry pull-outs 838 / 625, melees stayed in because
+winning 281; rotations 159; units saved (rotated, pulled back wavering or
+mauled, back unbroken) 29 / 1; reserve commits (foot and riders) 441;
+timed double charges 181; spear responses 278 (mean 9 ticks after the
+riders came near) / 252 (50 ticks); missile unit-thinks in melee
+2,386 / 4,915; missile routs 167 / 392 (arrows left per missile rout
+836 / 849); focus-fire orders 27,081; waverers pulled back 64; battery
+pull-backs 258; routers chased by foot 0 / 0. On the hill: rotations 115,
+saved 53 / 2, released battery guards 123, spear response 16 / 53 ticks.
+
+**Settlements** (`--only=plans --plans=4,1 --walls=W --skill=A:B`, 10
+seeds; attacker wins at walls 1 / 2 / 3, mean minutes):
+
+| | Average vs Average | Skilled attacker | Skilled defender |
+|---|---|---|---|
+| ring, plain | 100 / 100 / 100 %, 5.6 / 6.2 / 7.7 | 100 / 100 / 100 %, 5.8 / 6.1 / 7.7 | 100 / 100 / 90 %, 5.9 / 6.9 / 8.8 |
+| ring, hill | 100 / 100 / 80 %, 6.1 / 6.5 / 8.0 | 100 / 100 / 80 %, 6.5 / 7.0 / 7.9 | 100 / 100 / 40 %, 6.4 / 7.8 / 9.7 |
+| polis, coastal hill | 100 / 100 / 60 %, 7.8 / 9.2 / 11.9 | 100 / 80 / 90 %, 8.7 / 10.3 / 10.8 | 100 / 80 / 80 %, 7.7 / 10.4 / 10.0 |
+| polis, plain | 100 / 100 / 90 %, 8.2 / 9.1 / 9.9 | 100 / 90 / 90 %, 8.5 / 9.5 / 8.9 | 100 / 90 / 70 %, 8.0 / 10.0 / 11.5 |
+
+At walls 3 the Skilled defender holds 12 of 40 (7 defender wins, 5
+draws; attackers win 28) against Average's 7 (3 wins, 4 draws; attackers
+33): measurably harder to take.
+A Skilled attacker takes 36 of 40 at walls 3 (Average 33), a little more
+slowly at walls 1-2 on the polis (the feint and the waits before the
+breach), and fails in three polis battles at walls 2 (two defender wins,
+one draw) that Average's attacker won. Walls-3
+ablations, attacker wins of 40 against the full Skilled defender's 28:
+without the wall shift 34, without the breach posts 35, without the sally
+31, without bringing missiles down 30. Against the Skilled attacker's 32
+(then with the wall bombardment on): without the staggered storm 28,
+without the feint 31, without the wall bombardment 36.
+
+**Frame cost** (`tests/benchmark.gd --skill=s`, both sides Skilled,
+against HEAD's Average, ms per tick on the desktop): bench_4000 mean
+2.87 / 2.85, worst 7.04 / 6.32; bench_4000_hills 3.12 / 3.18, worst
+6.65 / 6.46; bench_4000_city 3.11 / 2.89, worst 6.07 / 7.27. Every Skilled
+read is per unit (no per-man loop); the matchup pass is units x enemies
+once a second per army.
+
+**Determinism and lockstep.** `tests/determinism_test.gd`: Skilled runs
+(both sides on a flat field, Skilled against Average on a hill, Average
+against Skilled on a woods map, a Skilled attacker and a Skilled defender
+of a walled city) are identical on repeat, diverge for another seed and
+use their Skilled behaviours ("skilled" coverage); the flat, woods and
+both city runs are in the snapshot round trips. `tests/lockstep_test.gd`:
+AI battles with Skilled sides (both on a field; Skilled attacker; Skilled
+defender) restored from snapshots at three points run on identically; two
+peers against a Skilled enemy, with a third joining mid-battle by
+snapshot, are hash equal on every frame.
+
+**Tools.** `matchups --fair-forest=N` (woods on the mirrored maps) and
+`--knob=LEVEL:ID=VALUE` (override one knob for a run: the ablations
+above); the settlement plans print the Skilled siege moves with
+`--skill`; `benchmark --skill=e|a|s`.
+
+**UI.** Battle AI "Skilled" without "(soon)" on the new-campaign
+Difficulty row and the sandbox "AI:" button; the Campaign AI row still
+says "Skilled (soon)" (step 4).

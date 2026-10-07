@@ -173,7 +173,7 @@ const CHOICES := {"victory_regions": [15, 20, 25, 30], "victory_capitals": [2, 3
 	"ai_battle_skill": [0, 1, 2], "ai_campaign_skill": [0, 1, 2]}
 ## AI skill levels (campaign/cai_profile.gd EASY / AVERAGE / SKILLED).
 const AI_AVERAGE := 1
-const SKILL_LABELS: Array[String] = ["Easy", "Average", "Skilled (soon)"]
+const SKILL_LABELS: Array[String] = ["Easy", "Average", "Skilled"]
 
 
 func _cycle(k: String) -> void:
@@ -236,10 +236,10 @@ func _update() -> void:
 	vr["autoresolve"].text = "Battles: " + ("ask" if str(settings["autoresolve"]) == "ask" else "always auto")
 	vr["ai_aggression"].text = "AI: " + {70: "calm", 100: "normal", 130: "aggressive"}[int(settings["ai_aggression"])]
 	vr["ai_battle_skill"].text = "Battle AI: " + SKILL_LABELS[int(settings["ai_battle_skill"])]
-	vr["ai_campaign_skill"].text = "Campaign AI: " + SKILL_LABELS[int(settings["ai_campaign_skill"])]
-	var soon := "Easy makes a new player's mistakes; Skilled plays like Average for now (it arrives in a later update)."
-	vr["ai_battle_skill"].tooltip_text = soon
-	vr["ai_campaign_skill"].tooltip_text = soon
+	vr["ai_campaign_skill"].text = "Campaign AI: " + SKILL_LABELS[int(settings["ai_campaign_skill"])] \
+		+ (" (soon)" if int(settings["ai_campaign_skill"]) == 2 else "")
+	vr["ai_battle_skill"].tooltip_text = "Easy makes a new player's mistakes; Skilled reads the battle and punishes yours."
+	vr["ai_campaign_skill"].tooltip_text = "Easy makes a new player's mistakes; Skilled plays like Average for now (it arrives in a later update)."
 
 
 func _start() -> void:

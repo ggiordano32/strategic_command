@@ -56,6 +56,12 @@ extends SceneTree
 ## walled city; identical on repeat and across snapshot / restore, and the
 ## Easy sides make deliberate mistakes (the mistake roller draws from the
 ## sim's RNG). The Average runs and golden digests above are unchanged.
+## Skilled (docs/AI.md step 3; "s" in the key): both sides on a flat field,
+## Skilled against Average on a hill, Average against Skilled on a
+## mirror-symmetric woods map ("ai_woods"), a Skilled attacker and a
+## Skilled defender of a walled city: identical on repeat and across
+## snapshot / restore, and the Skilled sides use their behaviours
+## ("skilled" coverage: rotations, reserve commits, Skilled-only counters).
 ## Exits 0 on success, 1 on failure.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -75,7 +81,8 @@ const RUNS := {"skirmish@0": 1500, "battle_2000@0": 1800, "bench_2000": 2500, "t
 	"siege_city@ai": 4200, "siege_hill@ai": 3000, "gate_ops": 1800,
 	"siege_castrum@ai": 3600, "siege_polis@ai": 4500, "siege_punic@ai": 6500, "siege_oppidum@ai": 3600,
 	"cit_ops": 3200, "bench_2000~ee": 2500, "bench_2000@4~ea": 3000, "siege_city@ai~ea": 4200,
-	"siege_city@ai~ae": 4200}
+	"siege_city@ai~ae": 4200, "bench_2000~ss": 2500, "bench_2000@4~sa": 3000, "ai_woods~as": 2500,
+	"siege_city@ai~sa": 4200, "siege_city@ai~as": 4200}
 
 ## Trajectory digests of flat battles (soldier and unit arrays every 50
 ## ticks over 2,500 ticks, seed 4242): flat maps must keep playing exactly
@@ -194,6 +201,8 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 			need = ["stair_down", "stair_up", "gate_close", "gate_open", "gate_hack", "gate_broken", "capture"]
 		"bench_2000~ee", "bench_2000@4~ea", "siege_city@ai~ea", "siege_city@ai~ae":
 			need = ["mistakes", "attacks"]
+		"bench_2000~ss", "bench_2000@4~sa", "ai_woods~as", "siege_city@ai~sa", "siege_city@ai~as":
+			need = ["skilled", "attacks"]
 	for k in need:
 		if int(st.get(k, 0)) <= 0:
 			_fail("%s: run never exercised %s (%s)" % [scen, k, str(st)])
@@ -357,8 +366,14 @@ static func _scenario(key: String) -> Dictionary:
 		# AI skill per side: "~ea" side 0 Easy, side 1 Average.
 		var sk := key.get_slice("~", 1)
 		var sc0 := _scenario(key.get_slice("~", 0))
-		sc0["ai_skill"] = [0 if sk.substr(0, 1) == "e" else 1, 0 if sk.substr(1, 1) == "e" else 1]
+		var lv := {"e": 0, "a": 1, "s": 2}
+		sc0["ai_skill"] = [lv[sk.substr(0, 1)], lv[sk.substr(1, 1)]]
 		return sc0
+	if key == "ai_woods":
+		# Mirrored armies, AI against AI, on a mirror-symmetric field with woods.
+		var sw := Scenarios.make("bench_2000")
+		sw["terrain"] = {"kind": Terrain.K_FLAT, "sym": 1, "forest": 40, "seed": 901}
+		return sw
 	if key.ends_with("@ai"):
 		var sa := Scenarios.make(key.get_slice("@", 0))
 		sa["ai_sides"] = [0, 1]
@@ -432,6 +447,8 @@ func _run(scen: String, p_seed: int, ticks: int) -> Dictionary:
 		"gate_broken": sim.stat_gate_broken, "capture": sim.stat_capture, "ai_shelter": sim.stat_ai[15],
 		"stair_down": sim.stat_stair_down, "stair_up": sim.stat_stair_up, "stair_rout": sim.stat_stair_rout,
 		"ditch": sim.stat_ditch, "sea_exit": sim.stat_sea_exit, "mistakes": _mistakes(sim)}
+	if not sim.ai_mem.is_empty():
+		stats["skilled"] = _skilled(sim)
 	print("  %s seed %d: alive %d/%d after %d ticks, winner %d" % [scen, p_seed,
 		sim.alive_count(0), sim.alive_count(1), ticks, sim.winner])
 	return {"hashes": hashes, "result": sim.result(), "stats": stats}
@@ -444,6 +461,18 @@ static func _mistakes(sim) -> int:
 	for side in 2:
 		for m in AP.N_MISTAKES:
 			n += sim.stat_aic[side * AP.N_COUNTERS + AP.C_MISTAKE + m]
+	return n
+
+
+## Skilled behaviours carried out (rotations, reserve commits and the
+## Skilled-only counters), both sides.
+static func _skilled(sim) -> int:
+	var AP := preload("res://sim/ai_profile.gd")
+	var n := 0
+	for side in 2:
+		for c in [AP.C_ROTATION, AP.C_RESERVE_COMMIT, AP.C_CAV_STAY, AP.C_DOUBLE, AP.C_FOCUS, AP.C_GUARD_FREE,
+				AP.C_WAVER_PULL, AP.C_SIEGE, AP.C_ART_PULL]:
+			n += sim.stat_aic[side * AP.N_COUNTERS + c]
 	return n
 
 
@@ -782,7 +811,7 @@ func _check_plans() -> void:
 ## restored at several ticks runs on with exactly the original's hashes.
 func _check_snapshots() -> void:
 	for key in ["test_woods", "siege_city@ai", "gate_ops", "cit_ops", "siege_polis@ai", "bench_2000~ee",
-			"siege_city@ai~ae"]:
+			"siege_city@ai~ae", "bench_2000~ss", "ai_woods~as", "siege_city@ai~sa", "siege_city@ai~as"]:
 		var sim := BattleSim.new()
 		sim.setup(_scenario(key), 4242)
 		_script_orders(sim, key)

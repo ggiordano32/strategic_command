@@ -16,7 +16,12 @@ extends RefCounted
 ## Easy"): slower thinking, narrower perception, no terrain sense, no
 ## pull-outs, no reserve or relief, and the deliberate mistakes (M_*, rolled
 ## only where the level's MK_BASE + M_* is above 0, so Average and Skilled
-## never draw from the RNG for them). SKILLED is still a copy of AVERAGE.
+## never draw from the RNG for them).
+## Step 3 (October 2026): the SKILLED column (docs/AI.md section 11, "As
+## built: Skilled"): Average's values where they measured best, plus the
+## SK_* behaviours (0 = off for Easy and Average: those levels never run
+## them, never draw the RNG for them and keep no Skilled memory, so they
+## play and hash exactly as before).
 ## Integers only (sim units: M = 1024 per metre, ticks of 0.1 s; *_PCT in
 ## percent of the thing named).
 ##
@@ -210,7 +215,52 @@ const S_CIT_OUTNUMBER_PCT := 154  # defenders go into the citadel when the attac
 const MIS_SKIRM := 155         # missile troops are put in skirmish mode (evade charges) (1) or never (0)
 const MIS_CLEAN := 156         # missile troops hold fire unless an unengaged enemy is in range (1) or shoot at will (0)
 const MK_BASE := 157           # MK_BASE + M_*: % chance of that mistake per roll (0: never rolled)
-const N_KNOBS := MK_BASE + 9
+# Step 3 (Skilled): behaviours a level switches on (0 = off: Easy and
+# Average never run them, never draw from the RNG for them and never write
+# BattleSim.ai_mem). Ids after the mistakes (MK_BASE + N_MISTAKES = 166).
+const SK_MEM := 166            # the side keeps Skilled memory (BattleSim.ai_mem) (1) or none (0)
+const SK_ASSIGN := 167         # foot targets come from the army's matchup pass (1) or each unit's nearest (0)
+const SK_ASSIGN_REACH := 168   # ... candidates up to this % of the nearest enemy's distance ...
+const SK_ASSIGN_SLACK := 169   # ... plus this
+const SK_SC_PAIR := 170        # ... score for a second attacker on a target already engaged (concentration)
+const SK_SC_MATCH := 171       # ... score for a good matchup (heavy on light, spears on cavalry, foot on missiles)
+const SK_SC_BAD := 172         # ... penalty for a bad one (a formed pike front, heavy on unengaged heavy)
+const SK_SC_FLANK := 173       # ... for a target engaged by ours that we would hit in the flank or rear
+const SK_SC_MORALE := 174      # target scores (foot, cavalry, missiles): per 10 morale under SK_BREAK_MORALE
+const SK_BREAK_MORALE := 175   # "near breaking": morale below this
+const SK_PULL_READ := 176      # cavalry pulls out of a melee only when not winning it (1) or always (0) ...
+const SK_WIN_PCT := 177        # ... winning: the enemy lost at least this % of what it lost since contact
+const SK_CAV_RESERVE := 178    # cavalry units held back until the enemy wavers or routs (only counter-charges)
+const SK_CAV_PAIR := 179       # cavalry target score for a target another of ours is charging or staging on
+const SK_PAIR_WAIT := 180      # ... a staged rider waits at most this long for its partner to arrive
+const SK_FOCUS := 181          # missile troops pick one target together (1) or fire at will (0)
+const SK_AMMO_KEEP_PCT := 182  # missile troops keep this % of their missiles for routers and riders
+const SK_GUARD_CAV_R := 183    # a battery guard joins the fight with no enemy cavalry this close to the battery (0: always guards)
+const SK_RESERVE := 184        # foot units held in reserve behind the centre
+const SK_RESERVE_BACK := 185   # ... this far behind the line
+const SK_ROTATE := 186         # rotation: a relief unit takes over a tired unit's fight (1) or none (0) ...
+const SK_ROT_MORALE_PCT := 187 # ... tired: morale below this % of its type's
+const SK_ROT_DELAY := 188      # ... the tired unit pulls out this long after the relief engages
+const SK_ROT_SAFE_R := 189     # ... unless enemy cavalry is this close
+const SK_WAVER_PULL := 190     # own wavering units (morale below this) near a routing friend, not fighting, fall back
+const SK_MIS_EARLY_R := 191    # missile troops go back behind the line with enemy foot this close (0: when the lines meet)
+const SK_SPEAR_LEAD := 192     # spears watch enemy cavalry where it will be in this many ticks
+const SK_ART_PULL := 193       # a battery whose crew is threatened and unguarded pulls back (1) or stays (0)
+const SK_CAV_COUNTER := 194    # cavalry counter-charges enemy cavalry engaged with our units (score)
+const SK_WD_COVER := 195       # withdrawing in good order: cavalry and missiles cover for this long
+const SK_STORM_STAGGER := 196  # sieges, attacking: storming units spread over the streets (1) or all to the plaza (0)
+const SK_FEINT := 197          # ... a feint: waiting foot units show at another gate
+const SK_WALL_ART := 198       # ... batteries shoot the wall units over the gate before the gate (ticks)
+const SK_WALL_SHIFT := 199     # sieges, defending: wall units shift to the attacked face (1)
+const SK_MIS_DOWN_PCT := 200   # ... wall missile units come down when the gate is below this % of its hit points
+const SK_BREACH := 201         # ... reserves counter-charge the breach (1)
+const SK_SALLY_R := 202        # ... sally against an isolated attacker this close to a gate (0: never)
+const SK_MIRROR := 203         # deployment: the spears take the end of the line facing the enemy's riders (1)
+const SK_ANCHOR := 204         # deployment: shift the line up to this far aside to rest a flank on woods (0: never)
+const SK_SC_UPHILL := 205      # matchup score: less this per % of climb to the target
+const SK_SC_STICK := 206       # matchup score for the target the unit already goes for (no flip-flopping)
+const SK_SC_COVER := 207       # matchup score for a target none of ours is on yet (pin every enemy first)
+const N_KNOBS := 208
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
@@ -317,7 +367,7 @@ const KNOBS: Array = [
 	# Morale and chain routs (3.9).
 	[RETIRE_MORALE, 350, 350, 350],
 	# Terrain and woods (3.10).
-	[HOLD_DH, 1000 * M, 4 * M, 4 * M],
+	[HOLD_DH, 1000 * M, 4 * M, M / 2],
 	[HOLD_TICKS, 2400, 2400, 2400],
 	[HOLD_REACT, 25 * M, 25 * M, 25 * M],
 	[HOLD_OUTSHOT_PCT, 130, 130, 130],
@@ -415,6 +465,49 @@ const KNOBS: Array = [
 	[MK_BASE + M_COMMIT_EARLY, 15, 0, 0],
 	[MK_BASE + M_GATE_OPEN, 50, 0, 0],
 	[MK_BASE + M_EARLY_WD, 35, 0, 0],
+	# Skilled behaviours (step 3; 0 = off).
+	[SK_MEM, 0, 0, 1],
+	[SK_ASSIGN, 0, 0, 1],
+	[SK_ASSIGN_REACH, 0, 0, 120],
+	[SK_ASSIGN_SLACK, 0, 0, 5 * M],
+	[SK_SC_PAIR, 0, 0, 25],
+	[SK_SC_MATCH, 0, 0, 20],
+	[SK_SC_BAD, 0, 0, 40],
+	[SK_SC_FLANK, 0, 0, 30],
+	[SK_SC_MORALE, 0, 0, 5],
+	[SK_BREAK_MORALE, 0, 0, 400],
+	[SK_PULL_READ, 0, 0, 1],
+	[SK_WIN_PCT, 0, 0, 150],
+	[SK_CAV_RESERVE, 0, 0, 1],
+	[SK_CAV_PAIR, 0, 0, 600],
+	[SK_PAIR_WAIT, 0, 0, 80],
+	[SK_FOCUS, 0, 0, 1],
+	[SK_AMMO_KEEP_PCT, 0, 0, 0],
+	[SK_GUARD_CAV_R, 0, 0, 150 * M],
+	[SK_RESERVE, 0, 0, 1],
+	[SK_RESERVE_BACK, 0, 0, 30 * M],
+	[SK_ROTATE, 0, 0, 1],
+	[SK_ROT_MORALE_PCT, 0, 0, 40],
+	[SK_ROT_DELAY, 0, 0, 60],
+	[SK_ROT_SAFE_R, 0, 0, 60 * M],
+	[SK_WAVER_PULL, 0, 0, 300],
+	[SK_MIS_EARLY_R, 0, 0, 70 * M],
+	[SK_SPEAR_LEAD, 0, 0, 30],
+	[SK_ART_PULL, 0, 0, 1],
+	[SK_CAV_COUNTER, 0, 0, 1500],
+	[SK_WD_COVER, 0, 0, 150],
+	[SK_STORM_STAGGER, 0, 0, 1],
+	[SK_FEINT, 0, 0, 1],
+	[SK_WALL_ART, 0, 0, 0],
+	[SK_WALL_SHIFT, 0, 0, 1],
+	[SK_MIS_DOWN_PCT, 0, 0, 25],
+	[SK_BREACH, 0, 0, 1],
+	[SK_SALLY_R, 0, 0, 60 * M],
+	[SK_MIRROR, 0, 0, 1],
+	[SK_ANCHOR, 0, 0, 40 * M],
+	[SK_SC_UPHILL, 0, 0, 4],
+	[SK_SC_STICK, 0, 0, 25],
+	[SK_SC_COVER, 0, 0, 35],
 ]
 
 ## Personality offsets [knob, CAUTIOUS, BALANCED, AGGRESSIVE], added to the
@@ -445,14 +538,43 @@ const C_AMMO_AT_ROUT := 8      # missiles left in missile units when they routed
 const C_MISSILE_ROUTS := 9     # ... over this many routs
 const C_RESERVE_COMMIT := 10   # reserves committed (none yet)
 const C_MISTAKE := 11          # C_MISTAKE + M_*: deliberate mistakes made
-const N_COUNTERS := C_MISTAKE + N_MISTAKES
+const C_CAV_STAY := C_MISTAKE + N_MISTAKES  # cavalry stayed in a melee it was winning (Skilled)
+const C_DOUBLE := C_CAV_STAY + 1   # timed double charges (two riders on one target within a few seconds)
+const C_FOCUS := C_CAV_STAY + 2    # missile focus-fire orders
+const C_GUARD_FREE := C_CAV_STAY + 3  # battery guards sent into the fight (no cavalry threat)
+const C_WAVER_PULL := C_CAV_STAY + 4  # own waverers pulled back from a routing neighbour
+const C_SIEGE := C_CAV_STAY + 5    # siege moves: feints, wall shifts, missiles down, breach charges, sallies
+const C_ART_PULL := C_CAV_STAY + 6  # battery crews pulled back from an enemy coming for them
+const N_COUNTERS := C_CAV_STAY + 7
 const COUNTER_NAMES: Array[String] = ["flank_hits", "pull_outs", "rotations", "saved", "inf_chase",
 	"spear_resp", "spear_resp_ticks", "missile_caught", "ammo_at_rout", "missile_routs", "reserve_commits",
 	"mk_late_flank", "mk_wrong_target", "mk_idle", "mk_chase", "mk_spear_charge", "mk_mis_forget",
-	"mk_commit_early", "mk_gate_open", "mk_early_wd"]
+	"mk_commit_early", "mk_gate_open", "mk_early_wd", "cav_stay", "double_charges", "focus_orders",
+	"guard_free", "waver_pull", "siege_moves", "art_pull"]
+
+# Skilled memory layout (BattleSim.ai_mem): MU_K ints per unit, then SD_K
+# per side at n_units * MU_K + side * SD_K.
+const MU_ASSIGN := 0           # matchup target + 1 (0 none)
+const MU_A0 := 1               # cavalry: own men at the start of this melee; rotation: relief unit + 1
+const MU_T0 := 2               # cavalry: the enemy's men then; rotation: tick the relief engaged
+const MU_X := 3                # role: 1 reserve, 2 rotated out, 3 reserve cavalry, 4 + b: released guard of battery b
+const MU_K := 4
+const SD_SALLY := 0            # settlement defenders: a sally is out through this gate + 1
+const SD_COMMIT := 1           # the reserve cavalry has been released (1)
+const SD_WD := 2               # withdrawal in good order began at this tick + 1
+const SD_SALLY_T := 3          # ... the sally began at this tick
+const SD_K := 4
 
 
 static var _tab: Array = []
+
+
+## True when either side's profile keeps Skilled memory (SK_MEM).
+static func uses_mem(skill: PackedInt32Array, style: PackedInt32Array) -> bool:
+	for s in 2:
+		if row(skill[s], style[s])[SK_MEM] != 0:
+			return true
+	return false
 
 
 ## The knobs of sim side `side` (its scenario's ai_skill / ai_style).

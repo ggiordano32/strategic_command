@@ -36,6 +36,13 @@ extends SceneTree
 ##    on with the original's hash; two peers against an Easy enemy AI, with
 ##    a third joining mid-battle by snapshot, hash equal on every frame,
 ##    and the enemy did make mistakes.
+## 8. Skilled (docs/AI.md step 3: its memory, BattleSim.ai_mem, is hashed
+##    sim state): AI battles with a Skilled side (both sides on a field, a
+##    Skilled attacker and a Skilled defender of a walled city) restored
+##    from snapshots at several ticks run on with the original's hash; two
+##    peers against a Skilled enemy AI, with a third joining mid-battle by
+##    snapshot, hash equal on every frame, and the enemy did use its
+##    Skilled behaviours.
 ## Exits 0 on success.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -60,6 +67,8 @@ func _init() -> void:
 	_test_lockstep_city(0, true)
 	_test_easy_snapshots()
 	_test_lockstep_easy()
+	_test_skilled_snapshots()
+	_test_lockstep_skilled()
 	print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 	quit(0 if _ok else 1)
 
@@ -202,6 +211,113 @@ func _test_lockstep_easy() -> void:
 			n_ab, n_ac, a.ls.sim.tick, mk])
 	if mk == 0:
 		_fail("easy lockstep: the Easy enemy made no mistake")
+
+
+# -------------------------------------------------------------- skilled ---
+
+## Skilled behaviours carried out by sim side `side` (rotations, reserve
+## commits and the Skilled-only counters of BattleSim.stat_aic).
+static func _skilled(sim, side: int) -> int:
+	var n := 0
+	for c in [AIProfile.C_ROTATION, AIProfile.C_RESERVE_COMMIT, AIProfile.C_CAV_STAY, AIProfile.C_DOUBLE,
+			AIProfile.C_FOCUS, AIProfile.C_GUARD_FREE, AIProfile.C_WAVER_PULL, AIProfile.C_SIEGE, AIProfile.C_ART_PULL]:
+		n += sim.stat_aic[side * AIProfile.N_COUNTERS + c]
+	return n
+
+
+## AI battles with a Skilled side: snapshot / restore at several ticks
+## runs on exactly.
+func _test_skilled_snapshots() -> void:
+	for spec in [["battle_2000", [2, 2]], ["siege_city", [2, 1]], ["siege_city", [1, 2]]]:
+		var key: String = spec[0]
+		var scen: Dictionary = Scenarios.make(key)
+		scen["ai_sides"] = [0, 1]
+		scen["ai_skill"] = spec[1]
+		var a := BattleSim.new()
+		a.setup(scen, 31337)
+		var bad := 0
+		var checks := 0
+		for stop in ([600, 1500] if quick else [600, 1500, 2400]):
+			while a.tick < stop and a.winner < 0:
+				a.step()
+			var b := BattleSim.new()
+			b.setup(scen, 31337)
+			if not b.restore(a.snapshot()) or b.state_hash() != a.state_hash():
+				_fail("skilled %s %s: restore at tick %d did not reproduce the hash" % [key, str(spec[1]), stop])
+				return
+			for t in 200:
+				a.step()
+				b.step()
+				checks += 1
+				if a.state_hash() != b.state_hash():
+					bad += 1
+		var used := _skilled(a, 0) + _skilled(a, 1)
+		if bad > 0:
+			_fail("skilled %s %s: restored copies diverged (%d of %d ticks)" % [key, str(spec[1]), bad, checks])
+		else:
+			print("PASS skilled %s %s: snapshot / restore runs on identically (%d ticks checked), Skilled moves %d / %d" % [
+				key, str(spec[1]), checks, _skilled(a, 0), _skilled(a, 1)])
+		if used == 0:
+			_fail("skilled %s %s: no Skilled behaviour was used" % [key, str(spec[1])])
+
+
+## Two peers (side 0) against a Skilled enemy AI, a third joining
+## mid-battle: every frame hash-equal; the enemy used its Skilled moves.
+func _test_lockstep_skilled() -> void:
+	var scen: Dictionary = Scenarios.make("battle_2000")
+	scen["ai_sides"] = [1]
+	scen["ai_skill"] = [1, 2]
+	var probe := BattleSim.new()
+	probe.setup(scen, 4242)
+	var home := _home_split(probe)
+	var enemy: Array = []
+	for u in probe.n_units:
+		if probe.u_side[u] == 1:
+			enemy.append(u)
+	var relay := Relay.new()
+	var a := _new_peer(scen, home, 0, "A", [0, 1])
+	var b := _new_peer(scen, home, 1, "B", [0, 1])
+	a.latency = 1
+	b.latency = 3
+	b.d = 4
+	var peers: Array[Peer] = [a, b]
+	var total := 1200 if quick else 3000
+	var c: Peer = null
+	var c_join := total / 3
+	var now := 0
+	while now < total * 3 and mini(a.ls.frame, b.ls.frame) < total:
+		now += 1
+		for p in peers:
+			_script(p, now, enemy)
+			p.flush(relay, now)
+			p.deliver(relay, now)
+			p.run(p.rng.randi() % 3, true)
+		if c != null:
+			c.flush(relay, now)
+			c.deliver(relay, now)
+			c.run(4, true)
+		if now == c_join:
+			c = _new_peer(scen, home, 1, "C", [0, 1])
+			c.online = true
+			c.latency = 2
+			if not c.ls.restore(a.ls.snapshot()):
+				_fail("skilled lockstep: C could not restore A's snapshot")
+				return
+			c.hashes[c.ls.frame] = c.ls.state_hash()
+			c.cursor = 0
+			while c.cursor < relay.items.size() and int(relay.items[c.cursor]["s"]) <= c.ls.last_s:
+				c.cursor += 1
+			c.sent_k = 1 << 30
+	var n_ab := _compare(a, b, 0, "skilled A/B")
+	var n_ac := _compare(a, c, c_join, "skilled A/C") if c != null else 0
+	var used := _skilled(a.ls.sim, 1)
+	if n_ab < total / 2 or n_ac < 100:
+		_fail("skilled lockstep: too few frames compared (A/B %d, A/C %d)" % [n_ab, n_ac])
+	elif n_ab > 0 and n_ac > 0:
+		print("PASS skilled lockstep: %d frames A/B and %d A/C equal against a Skilled enemy (sim tick %d, its Skilled moves %d)" % [
+			n_ab, n_ac, a.ls.sim.tick, used])
+	if used == 0:
+		_fail("skilled lockstep: the Skilled enemy used no Skilled behaviour")
 
 
 # ------------------------------------------------------------ snapshots ---

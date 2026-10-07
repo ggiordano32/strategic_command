@@ -36,7 +36,12 @@ extends SceneTree
 ##   cancels), and prints the wins per level, the mirrored bias, durations
 ##   and the AI's per-competency counters per level ("SKILL" lines; shard
 ##   with --seed0). With --only=sieges / plans it sets the attacker (A) and
-##   the defender (B) of the settlement battles.
+##   the defender (B) of the settlement battles (the plans then also print
+##   the Skilled siege moves). --fair-forest=N puts N % woods on the
+##   mirrored maps (mirror-symmetric). Tuning aid: --knob=LEVEL:ID=VALUE
+##   overrides one knob (sim/ai_profile.gd id) of a level for the run
+##   (repeatable), e.g. --knob=s:178=0 runs Skilled without its reserve
+##   cavalry (docs/AI.md 11 ablations).
 
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
@@ -58,6 +63,7 @@ var fair_terrain := -1  # --fair-terrain=K: mirrored battles on a symmetric map 
 var plans_only: Array = []  # --plans=0,4: settlement plans to run (--only=sieges / plans)
 var walls_only: Array = []  # --walls=3: wall levels to run (--only=sieges / plans)
 var skill: Array = []       # --skill=A:B: AI skill of side 0 / attacker and side 1 / defender
+var fair_forest := 0        # --fair-forest=N: woods coverage N on the mirrored maps (--fair with --skill)
 
 
 func _init() -> void:
@@ -83,6 +89,20 @@ func _init() -> void:
 		elif a.begins_with("--skill="):
 			for v in a.get_slice("=", 1).split(":"):
 				skill.append(_level(v))
+		elif a.begins_with("--fair-forest="):
+			fair_forest = int(a.get_slice("=", 1))
+		elif a.begins_with("--knob="):
+			# Tuning aid: --knob=LEVEL:ID=VALUE overrides one knob of a level
+			# (all personalities) for this run, e.g. --knob=s:9=0.
+			var kv := a.get_slice("=", 1) + "=" + a.get_slice("=", 2)
+			var lv := _level(kv.get_slice(":", 0))
+			var id := int(kv.get_slice(":", 1).get_slice("=", 0))
+			var val := int(kv.get_slice("=", 1))
+			AP.row(lv, AP.BALANCED)
+			for y in 3:
+				var r: PackedInt32Array = AP._tab[lv * 3 + y]
+				r[id] = val
+				AP._tab[lv * 3 + y] = r
 	var t0 := Time.get_ticks_msec()
 	if fair_n > 0 and skill.size() == 2:
 		_skill_fair(fair_n)
@@ -580,8 +600,11 @@ func _skill_fair(n: int) -> void:
 		for k in n:
 			var s := seed0 + k
 			var scn := Scenarios.make("bench_2000")
-			if fair_terrain >= 0:
-				scn["terrain"] = {"kind": fair_terrain, "sym": 1}
+			if fair_terrain >= 0 or fair_forest > 0:
+				scn["terrain"] = {"kind": maxi(fair_terrain, 0), "sym": 1}
+				if fair_forest > 0:
+					scn["terrain"]["forest"] = fair_forest
+					scn["terrain"]["seed"] = 900 + s
 			var a_side := 0 if orient == 0 else 1
 			var sk := [la, lb] if orient == 0 else [lb, la]
 			scn["ai_skill"] = sk
@@ -1518,6 +1541,7 @@ func _plan_sieges() -> void:
 			var cit_shut := 0
 			var stairs := 0
 			var withdrew := 0
+			var sk_moves := [0, 0]
 			for s in n_runs:
 				var sc := Scenarios.siege_test(700 + s * 41, 2, walls, 2, int(spec[2]), 1, -1, int(spec[1]), int(spec[3]))
 				sc["ai_sides"] = [0, 1]
@@ -1545,10 +1569,15 @@ func _plan_sieges() -> void:
 					if sim.ai_cit[1] != 0:
 						cit_shut += 1
 				stairs += sim.stat_stair_down + sim.stat_stair_rout
+				for side in 2:
+					sk_moves[side] += sim.stat_aic[side * AP.N_COUNTERS + AP.C_SIEGE]
+			var sk_note := ""
+			if skill.size() == 2:
+				sk_note = " | siege moves att %d def %d" % [sk_moves[0], sk_moves[1]]
 			print("%-21s walls %d: attacker wins %3d%%, defender %3d%%, draws %3d%% (withdrew %d) | %4.1f min (max %4.1f) | killed att %5.1f def %5.1f | captures %d/%d | citadel held %d, gate broken %d | stair moves %.1f" % [
 				spec[0], walls, aw * 100 / n_runs, (n_runs - aw - dr) * 100 / n_runs, dr * 100 / n_runs, withdrew,
 				t_sum / n_runs, t_max, att_lost / n_runs, def_lost / n_runs, caps, n_runs, cit_shut, cit_broken,
-				float(stairs) / n_runs])
+				float(stairs) / n_runs] + sk_note)
 
 
 ## Field battles on generated ground with woods: decided, no draws.
