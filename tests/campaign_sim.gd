@@ -20,6 +20,8 @@ extends SceneTree
 ## carth); repeatable. Each seed then prints, per faction with a skill set,
 ## its regions at turns 15 / 30 / 60, when it was eliminated and its
 ## mistakes, and the end table sums them over the seeds.
+## --knob=LEVEL:ID=VALUE (e.g. --knob=s:85=0) overrides one knob of a level
+## for the run (ablations; repeatable).
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -39,6 +41,12 @@ var short: Array = []
 var skill_all := -1           # --skill=: campaign skill of every AI faction (-1 not set)
 var skill_f := {}             # --skill-f=: faction -> campaign skill
 var watch: Array = []         # [faction, [regions at 15, 30, 60], eliminated at turn] per seed
+var knobs: Array = []         # --knob=: [level, knob id, value]
+var dg := {}                  # watched faction -> battle / capture tallies (this seed)
+var dg_all := {}              # the same summed over the seeds, per watched faction
+const DG_KEYS: Array[String] = ["field_att_won", "field_att_lost", "field_def_won", "field_def_lost", "town_att_won",
+	"town_att_lost", "town_def_won", "town_def_lost", "siege_fights_won", "siege_fights_lost", "gained", "gained_surrender",
+	"lost", "lost_surrender", "lost_within_3_turns_of_taking", "armies_destroyed"]
 
 
 func _init() -> void:
@@ -62,8 +70,15 @@ func _init() -> void:
 		elif a.begins_with("--skill-f="):
 			var v := a.get_slice("=", 1)
 			skill_f[_faction(v.get_slice(":", 0))] = _level(v.get_slice(":", 1))
+		elif a.begins_with("--knob="):
+			# --knob=LEVEL:ID=VALUE: override one campaign AI knob for the run.
+			var v := a.substr(7)
+			var lk := v.get_slice("=", 0)
+			knobs.append([_level(lk.get_slice(":", 0)), int(lk.get_slice(":", 1)), int(v.get_slice("=", 1))])
 	for f in CData.FACTIONS:
 		short.append(str(f["key"]).substr(0, 4))
+	for kv in knobs:
+		CP.set_knob(int(kv[0]), int(kv[1]), int(kv[2]))
 	var ok := true
 	for sd in seeds:
 		var h1 := _run(sd, true)
@@ -77,6 +92,13 @@ func _init() -> void:
 		print("\nfactions with a skill set: seed | faction skill | regions at 15 / 30 / 60 | eliminated at turn")
 		for w in watch:
 			print("  " + str(w))
+		var fk: Array = dg_all.keys()
+		fk.sort()
+		for f in fk:
+			var parts: Array = []
+			for key in DG_KEYS:
+				parts.append("%s %d" % [key, int(dg_all[f].get(key, 0))])
+			print("battles and captures of %s over the seeds: %s" % [short[int(f)], ", ".join(parts)])
 	if twice:
 		print("determinism (each seed twice): %s" % ("OK" if ok else "FAILED"))
 	quit(0 if ok else 1)
@@ -99,9 +121,11 @@ func _run(sd: int, verbose: bool) -> String:
 			st["factions"][int(f)]["ai_skill"] = int(skill_f[f])
 		var w_reg := {}  # faction -> regions at 15 / 30 / 60
 		var w_dead := {}  # faction -> turn eliminated
+		dg = {}
 		for f in keys:
 			w_reg[f] = [0, 0, 0]
 			w_dead[f] = -1
+			dg[int(f)] = {}
 		if fmt < CState.VERSION:
 			st = CState.as_format(st, fmt)
 		if verbose:
@@ -122,6 +146,7 @@ func _run(sd: int, verbose: bool) -> String:
 					tr_min = mini(tr_min, int(st["factions"][f]["treasury"]))
 					tr_max = maxi(tr_max, int(st["factions"][f]["treasury"]))
 			_count_sieges(st, t)
+			_tally(st, t)
 			var big := 0
 			for f in CState.nf():
 				var n := CState.regions_of(st, f).size()
@@ -171,6 +196,10 @@ func _run(sd: int, verbose: bool) -> String:
 				mk.append("%s %d" % [key, CP.counter(key, int(f))])
 			print("%s (%s): regions at 15 / 30 / 60: %s, eliminated at %s | %s" % [short[int(f)], CP.SKILL_NAMES[int(skill_f[f])],
 				str(w_reg[f]), str(w_dead[f]) if int(w_dead[f]) >= 0 else "-", ", ".join(mk)])
+			if not dg_all.has(int(f)):
+				dg_all[int(f)] = {}
+			for key in DG_KEYS:
+				dg_all[int(f)][key] = int(dg_all[int(f)].get(key, 0)) + int(dg[int(f)].get(key, 0))
 			watch.append("%d | %s %s | %d / %d / %d | %s" % [1000 + sd * 77, short[int(f)], CP.SKILL_NAMES[int(skill_f[f])],
 				w_reg[f][0], w_reg[f][1], w_reg[f][2], str(w_dead[f]) if int(w_dead[f]) >= 0 else "-"])
 		pacing.append("%d | %d / %d / %d | %d %s | %s | %d | %d | %d | %.1f %.1f" % [1000 + sd * 77, largest[0], largest[1], largest[2],
@@ -197,6 +226,41 @@ static func _faction(v: String) -> int:
 			return f
 	push_error("campaign_sim: no faction %s" % v)
 	return 0
+
+
+## Battles and captures of the watched factions in the turn just resolved
+## (events of turn t).
+func _tally(st: Dictionary, t: int) -> void:
+	for e in st["events"]:
+		if int(e["turn"]) != t:
+			continue
+		var k := str(e["k"])
+		for f in dg:
+			var d: Dictionary = dg[f]
+			if k == "battle":
+				var side := 0 if (e["att"] as Array).has(int(f)) else (1 if (e["def"] as Array).has(int(f)) else -1)
+				if side < 0:
+					continue
+				var won := int(e["winner"]) == side
+				var kind := str(e.get("kind", ""))
+				var cat := "town" if kind == "assault" or kind == "" else ("field" if kind == "field" else "siege_fights")
+				var key := cat + ("_" if cat == "siege_fights" else ("_att_" if side == 0 else "_def_")) + ("won" if won else "lost")
+				d[key] = int(d.get(key, 0)) + 1
+			elif k == "captured":
+				var sur := str(e.get("how", "")) == "surrendered"
+				if int(e["f"]) == int(f):
+					d["gained"] = int(d.get("gained", 0)) + 1
+					if sur:
+						d["gained_surrender"] = int(d.get("gained_surrender", 0)) + 1
+					d["took_%d" % int(e["r"])] = t
+				elif int(e.get("from", -1)) == int(f):
+					d["lost"] = int(d.get("lost", 0)) + 1
+					if t - int(d.get("took_%d" % int(e["r"]), -100)) <= 3:
+						d["lost_within_3_turns_of_taking"] = int(d.get("lost_within_3_turns_of_taking", 0)) + 1
+					if sur:
+						d["lost_surrender"] = int(d.get("lost_surrender", 0)) + 1
+			elif k == "destroyed" and int(e["f"]) == int(f):
+				d["armies_destroyed"] = int(d.get("armies_destroyed", 0)) + 1
 
 
 ## Siege events of the turn just resolved (turn t; events carry the turn they

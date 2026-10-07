@@ -51,6 +51,7 @@ const CBattle := preload("res://campaign/cbattle.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Saves := preload("res://game/campaign/saves.gd")
+const CP := preload("res://campaign/cai_profile.gd")
 
 var fails := 0
 
@@ -104,6 +105,7 @@ func _init() -> void:
 	_grid_recruit_collect()
 	_grid_recruit_army()
 	_grid_auto_merge()
+	_ai_skilled()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
 	quit(0 if fails == 0 else 1)
 
@@ -2317,3 +2319,73 @@ func _grid_recruit_army() -> void:
 	_check(CRules.apply_order(st7, rome, {"t": "recruit", "r": sa, "unit": k7, "army": int(inside["id"])}) == "besieged"
 		and CRules.apply_order(st7, rome, {"t": "recruit", "r": sa, "unit": k7, "new": 1}) == "besieged",
 		"a besieged city recruits nothing (into an army or a new one)")
+
+
+## The Skilled campaign AI (docs/AI.md 12): deterministic, its behaviours
+## run, the knobs only it has are 0 at Easy and Average, the per-faction
+## override is read, and Average / Easy campaigns are what they were before
+## it existed (golden hashes and RNG state from the commit before step 4).
+func _ai_skilled() -> void:
+	# Average and Easy unchanged: an AI-only campaign of 20 turns, every
+	# faction Average, then with Macedon Easy.
+	var g := CState.new_campaign("test", 4242, [])
+	for t in 20:
+		g = CTurn.resolve_turn(g, [])
+	_check(CState.hash_text(g) == "63ea40c5" and int(g["rng"]) == 3394658370,
+		"Average plays and draws the RNG exactly as before step 4 (%s, rng %d)" % [CState.hash_text(g), int(g["rng"])])
+	var ge := CState.new_campaign("test", 4242, [])
+	ge["factions"][_f("macedon")]["ai_skill"] = CP.EASY
+	for t in 20:
+		ge = CTurn.resolve_turn(ge, [])
+	_check(CState.hash_text(ge) == "1379013c" and int(ge["rng"]) == 694925818,
+		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(ge), int(ge["rng"])])
+	# Knobs: every Skilled-only knob is 0 at Easy and Average.
+	var zero := true
+	for k in range(CP.SK_SUPPORT, CP.N_KNOBS):
+		for lv in [CP.EASY, CP.AVERAGE]:
+			for r in CP.KNOBS:
+				if int(r[0]) == k and int(r[1 + lv]) != 0:
+					zero = false
+	_check(zero, "the Skilled knobs (SK_*) are 0 for Easy and Average")
+	# The per-faction override over the campaign setting.
+	var ov := CState.new_campaign("test", 4242, [], {"ai_campaign_skill": CP.EASY})
+	ov["factions"][2]["ai_skill"] = CP.SKILLED
+	_check(CP.skill(ov, 2) == CP.SKILLED and CP.skill(ov, 1) == CP.EASY and CP.of(ov, 2)[CP.SK_SUPPORT] == 1
+		and CP.of(ov, 1)[CP.SK_SUPPORT] == 0, "factions[f].ai_skill overrides settings.ai_campaign_skill (Skilled knobs for that faction only)")
+	# Determinism with Skilled factions and a player: same inputs, same state;
+	# a save / load in the middle changes nothing.
+	var s0 := _new6([0])
+	for f in range(1, CState.nf()):
+		s0["factions"][f]["ai_skill"] = CP.SKILLED
+	var a := _play(CState.copy(s0), 16, -1)
+	var b := _play(CState.copy(s0), 16, -1)
+	var c := _play(CState.copy(s0), 16, 8)
+	_check(CState.state_hash(a) == CState.state_hash(b), "Skilled: same inputs, same state after 16 turns (%s)" % CState.hash_text(a))
+	_check(CState.state_hash(a) == CState.state_hash(c), "Skilled: save / load in the middle changes nothing (%s)" % CState.hash_text(c))
+	var avg := _play(_new6([0]), 16, -1)
+	_check(CState.state_hash(a) != CState.state_hash(avg), "Skilled factions play differently from Average ones")
+	_check(_plain(a), "Skilled: the state holds only ints, strings, arrays and dictionaries")
+	# One resolution from the same state and submissions, twice.
+	var subs := [CTurn.submission(a, 0, [])]
+	if str(a["phase"]) == "plan":
+		_check(CState.state_hash(CTurn.resolve_turn(a, subs)) == CState.state_hash(CTurn.resolve_turn(a, subs)),
+			"Skilled: one turn from the same state and submissions gives the same hash")
+	# The Skilled behaviours run (counters, outside the state): an AI-only
+	# campaign, every faction Skilled.
+	CP.reset_counters()
+	var sk := CState.new_campaign("test", 4242, [], {"ai_campaign_skill": CP.SKILLED})
+	for t in 40:
+		sk = CTurn.resolve_turn(sk, [])
+	var used: Array = []
+	for key in [CP.C_SK_TWO_TO_ONE, CP.C_SK_HUNT_DECLINED, CP.C_SK_TIMED, CP.C_SK_MERGE, CP.C_SK_RALLY, CP.C_SK_FALLBACK]:
+		var n := 0
+		for f in CState.nf():
+			n += CP.counter(key, f)
+		used.append("%s %d" % [key, n])
+		_check(n > 0, "Skilled behaviour used in 40 AI turns: %s (%d)" % [key, n])
+	var mk := 0
+	for key in CP.MISTAKE_KEYS:
+		for f in CState.nf():
+			mk += CP.counter(key, f)
+	_check(mk == 0, "Skilled makes no deliberate mistakes (%d)" % mk)
+	CP.reset_counters()

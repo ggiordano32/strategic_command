@@ -22,7 +22,15 @@ extends RefCounted
 ## odds, no gathering, screens, relief, sieges or stances, random-ish wars
 ## and no peace, plus the deliberate mistakes (M_*, rolled only where the
 ## level's MK_BASE + M_* is above 0: Average never draws from the RNG for
-## them, so its campaigns are unchanged). SKILLED is still AVERAGE.
+## them, so its campaigns are unchanged).
+## Step 4 (October 2026): the SKILLED column (docs/AI.md 12): Average's
+## thresholds with a few changes (no sheltering inside the walls, battles
+## at 50 % odds or better) plus the SK_* behaviours, 0 at Easy and Average
+## (those levels never run them and never draw the RNG for them):
+## support-aware hunting, rallying spare armies on the main army, staging
+## out of the enemy's reach, falling back from danger, storming before a
+## relief, intercepting reliefs, counter-composition, war timed to the
+## enemy's absence from the border and one front at a time. No mistakes.
 ##
 ## Also here: diagnostic counters of what the AI did (docs/AI.md 6), kept
 ## in a static Dictionary outside the state (never hashed, never read by
@@ -122,7 +130,25 @@ const MK_BASE := 69             # MK_BASE + M_*: % chance of that mistake per ro
 # many units on a march within our lands stays to take the recruits instead
 # (the others march; the recruits raise a new army).
 const RECRUIT_HOLD_UNITS := MK_BASE + 5
-const N_KNOBS := RECRUIT_HOLD_UNITS + 1
+# Step 4 (Skilled; docs/AI.md 12). 0 for Easy and Average: those levels never
+# run these behaviours and never draw the RNG for them.
+const SK_SUPPORT := RECRUIT_HOLD_UNITS + 1   # (6) odds count the armies within support range of the battle's cell (both sides)
+const SK_HUNT_WIN := SK_SUPPORT + 1          # (6) hunt enemy field armies at these odds (with support; 0: HUNT_WIN)
+const SK_RALLY := SK_SUPPORT + 2             # (6) spare armies join / stand by our strongest army within this many turns (0 off)
+const SK_SAFE_WIN := SK_SUPPORT + 3          # (6) an army the enemy could attack next turn at these odds falls back to support (0 off)
+const SK_SAFE_HOLD := SK_SUPPORT + 4         # (6) ... even an army holding a threatened city (1) or not (0)
+const SK_SAFE_GAIN := SK_SUPPORT + 5         # (6) ... only where the enemy's odds are at least this many points lower
+const SK_REACH_DEF_PCT := SK_SUPPORT + 6     # (6) a target's defence counts this % of its side's field armies that reach it next turn (0: off; measured even)
+const SK_WAR_BORDER_PCT := SK_SUPPORT + 7    # war timing: their border is "weak" when their armies near it are at most this % of ours near theirs (0 off)
+const SK_ONE_FRONT := SK_SUPPORT + 8         # at war on two fronts: propose peace on all but the main one (1)
+const SK_WAR_WEAK_PCT := SK_SUPPORT + 9      # ... war chance x this % when their border is weak ...
+const SK_WAR_GUARDED_PCT := SK_SUPPORT + 10  # ... and x this % when it is not
+const SK_STAGE_SAFE := SK_SUPPORT + 11      # (6) gather armies only where the enemy's odds against them next turn stay below this % (0 off)
+const SK_INTERCEPT_WIN := SK_SUPPORT + 12    # (6) hunt an army that can relieve a siege of ours at these odds (0 off)
+const SK_STORM_RELIEF_WIN := SK_SUPPORT + 13 # (6) storm a siege at these odds when a relief can arrive next turn (0 off)
+const SK_COUNTER_MIX := SK_SUPPORT + 14      # recruit: + this weight to spears / pikes against cavalry-heavy enemies (missiles: half, against light foot)
+const SK_COUNTER_SHARE := SK_SUPPORT + 15    # ... when that arm is at least this % of the enemies' units
+const N_KNOBS := SK_SUPPORT + 16
 
 # Deliberate mistakes (docs/AI.md 4, "Deliberate mistakes (campaign)"),
 # rolled with CState.rand at the decision point (cai.gd _mistake); each is a
@@ -134,8 +160,8 @@ const M_UNWISE_WAR := 3         # declares war on a stronger neighbour
 const M_NO_GARRISON := 4        # the army in a city it took last turn marches off though it is threatened
 const N_MISTAKES := 5
 
-## [knob, EASY, AVERAGE, SKILLED]. AVERAGE = the old value; SKILLED = AVERAGE
-## for now (step 4); EASY: docs/AI.md section 9, "As built: Easy".
+## [knob, EASY, AVERAGE, SKILLED]. AVERAGE = the old value; EASY: docs/AI.md
+## section 10, "As built: Easy"; SKILLED: section 12.
 const KNOBS: Array = [
 	# Economy and build order.
 	[RESERVE_TURNS, 0, 1, 1],
@@ -167,16 +193,16 @@ const KNOBS: Array = [
 	[TOWARD_PCT, 150, 150, 150],
 	[FORCED_HELP, 1, 1, 1],
 	# Defence, screening and zones of control.
-	[SHELTER_PCT, 0, 70, 70],
+	[SHELTER_PCT, 0, 70, 0],
 	[SCREEN_PCT, 80, 80, 80],
 	[SCREEN_NEAR, 2, 2, 2],
 	# Sieges and relief.
 	[SIEGE_PATIENCE, 0, 3, 3],
-	[SIEGE_ASSAULT_WIN, 0, 35, 35],
+	[SIEGE_ASSAULT_WIN, 0, 35, 50],
 	[RELIEF_WIN, 60, 60, 60],
 	[LIFT_WIN, 101, 50, 50],
 	[IDLE_TURNS, 3, 3, 3],
-	[IDLE_WIN, 20, 35, 35],
+	[IDLE_WIN, 20, 35, 50],
 	# Stances: raids and hunting.
 	[RAID_WEALTH, 99, 4, 4],
 	[HUNT_COST, 13, 13, 13],
@@ -223,6 +249,23 @@ const KNOBS: Array = [
 	[MK_BASE + M_NO_GARRISON, 50, 0, 0],
 	# The mustering rule (format 6).
 	[RECRUIT_HOLD_UNITS, 0, 2, 2],
+	# Skilled (step 4): behaviours only the Skilled level runs.
+	[SK_SUPPORT, 0, 0, 1],
+	[SK_HUNT_WIN, 0, 0, 75],
+	[SK_RALLY, 0, 0, 2],
+	[SK_SAFE_WIN, 0, 0, 70],
+	[SK_SAFE_HOLD, 0, 0, 0],
+	[SK_SAFE_GAIN, 0, 0, 15],
+	[SK_REACH_DEF_PCT, 0, 0, 0],
+	[SK_WAR_BORDER_PCT, 0, 0, 100],
+	[SK_ONE_FRONT, 0, 0, 1],
+	[SK_WAR_WEAK_PCT, 0, 0, 200],
+	[SK_WAR_GUARDED_PCT, 0, 0, 50],
+	[SK_STAGE_SAFE, 0, 0, 70],
+	[SK_INTERCEPT_WIN, 0, 0, 60],
+	[SK_STORM_RELIEF_WIN, 0, 0, 50],
+	[SK_COUNTER_MIX, 0, 0, 20],
+	[SK_COUNTER_SHARE, 0, 0, 25],
 ]
 
 ## Personality offsets [knob, CAUTIOUS, BALANCED, AGGRESSIVE] (docs/AI.md 5:
@@ -280,6 +323,22 @@ static func of(st: Dictionary, f: int) -> PackedInt32Array:
 	return _tab[skill(st, f) * 3 + style(st, f)]
 
 
+## Test tool (tests/campaign_sim.gd --knob=): set knob k of skill `level`
+## to v for every personality (plus its offset) for the rest of the run.
+## Never called by the rules or the AI.
+static func set_knob(level: int, k: int, v: int) -> void:
+	if _tab.is_empty():
+		_build()
+	for y in 3:
+		var off := 0
+		for r in STYLE:
+			if int(r[0]) == k:
+				off = int(r[1 + y])
+		var p: PackedInt32Array = _tab[level * 3 + y]
+		p[k] = v + off
+		_tab[level * 3 + y] = p
+
+
 static func _build() -> void:
 	var tab: Array = []
 	for s in 3:
@@ -313,8 +372,19 @@ const C_MK_OVER_RECRUIT := "mk_over_recruit"
 const C_MK_UNWISE_WAR := "mk_unwise_war"
 const C_MK_NO_GARRISON := "mk_no_garrison"
 const MISTAKE_KEYS: Array[String] = [C_MK_EMPTY_CITY, C_MK_BAD_ODDS, C_MK_OVER_RECRUIT, C_MK_UNWISE_WAR, C_MK_NO_GARRISON]
+# Skilled behaviours (step 4), counted when the Skilled code decides them.
+const C_SK_TWO_TO_ONE := "sk_two_to_one"    # attacks on an enemy field army with at least twice its strength (support counted)
+const C_SK_HUNT_DECLINED := "sk_hunt_declined"  # hunts Average's odds would launch, called off for the target's support
+const C_SK_INTERCEPT := "sk_relief_intercepts"  # field attacks on an army that can relieve a siege of ours next turn
+const C_SK_TIMED := "sk_timed_arrivals"      # attacks where armies that started a turn apart arrive together
+const C_SK_MERGE := "sk_merges"              # spare armies sent to merge into our main army before campaigning
+const C_SK_RALLY := "sk_rallies"             # spare armies sent to stand within support of our main army
+const C_SK_FALLBACK := "sk_fallbacks"        # armies in danger falling back to support
+const C_SK_STORM_RELIEF := "sk_storms_before_relief"  # sieges stormed before a relief that could arrive next turn
 const COUNTER_KEYS: Array[String] = [C_BAD_ODDS, C_EMPTY_CITY, C_TWO_FRONTS, C_TRICKLED,
-	C_MK_EMPTY_CITY, C_MK_BAD_ODDS, C_MK_OVER_RECRUIT, C_MK_UNWISE_WAR, C_MK_NO_GARRISON]
+	C_MK_EMPTY_CITY, C_MK_BAD_ODDS, C_MK_OVER_RECRUIT, C_MK_UNWISE_WAR, C_MK_NO_GARRISON,
+	C_SK_TWO_TO_ONE, C_SK_HUNT_DECLINED, C_SK_INTERCEPT, C_SK_TIMED, C_SK_MERGE, C_SK_RALLY, C_SK_FALLBACK,
+	C_SK_STORM_RELIEF]
 
 static var _counters := {}
 

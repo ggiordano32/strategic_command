@@ -727,7 +727,8 @@ fixes are all landed; see "Where we are"):
    batteries, nearest targets, early charge) beat Average and were kept
    at Average: a lead for step 3. Average / Balanced byte-identical
    (determinism, sieges, campaign_sim hashes). UI: Easy without "(soon)".
-   **Step 3 done (2026-10-06): Skilled battle and settlement AI** (`docs/AI.md` section 11; reserves, rotation, matchups, focus fire, siege wall shift / breach / sally; beats Average 72 % flat, 67 % hill, Easy 89-95 %; Easy / Average byte-identical). Next: step 4 (Skilled campaign).
+   **Step 3 done (2026-10-06): Skilled battle and settlement AI** (`docs/AI.md` section 11; reserves, rotation, matchups, focus fire, siege wall shift / breach / sally; beats Average 72 % flat, 67 % hill, Easy 89-95 %; Easy / Average byte-identical).
+   **Step 4 done (2026-10-07): Skilled campaign AI** (`docs/AI.md` section 12; `SK_*` knobs in `campaign/cai_profile.gd`, 0 at Easy / Average): never shelters inside the walls (fortifies outside), support-aware hunting at two to one, spare armies merge into / stand by the main army, staging and falling back out of the enemy's reach next turn, storming before a relief, counter-composition, war when the neighbour's armies are away from the border, peace offers to close a second front; no mistakes. One faction Skilled ends turn 60 with +47 % regions over 24 seeds (6.58 against 4.48; +44 % on 6) and 41 eliminations against 70; Macedon not better (3.7 against 4.0, noise). ~0.8 ms per Skilled faction-turn. Average / Easy byte-identical (campaign_sim hashes; golden hash and RNG in campaign_test); no state change, VERSION 6. UI: Campaign AI Skilled without "(soon)". `campaign_sim --knob=` for ablations. Next: step 5 (personalities and composition styles per faction, the Advanced per-faction UI, the split setting).
 7. **Mid-battle reinforcements** from the map edge; ambush stance once
    hidden information in an async game is designed.
 8. **Shared empire** (both humans running one faction).
@@ -765,6 +766,7 @@ changes (view-only), but art cost, not code, is the deciding factor.
 # Campaign tests
 godot --headless --script res://tests/campaign_test.gd      # rules, determinism, JSON
 godot --headless --script res://tests/campaign_sim.gd -- --seeds=6 --turns=60   # AI pacing (format 6; --format=5 the region-hop rules)
+#   campaign_sim: --skill=easy|average|skilled, --skill-f=rome:s (one faction), --knob=s:ID=VALUE (ablation), --twice
 godot --headless --script res://tools/campaign_grid.gd [-- --check --png=/tmp/grid.png]  # regenerate / check the nav grid
 godot --headless --script res://tests/campaign_solo.gd      # 20 turns of a player policy
 godot --headless --script res://tests/campaign_battles.gd   # auto-resolve timing, formula calibration

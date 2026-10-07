@@ -1,9 +1,9 @@
 # AI competency
 
 Design for how the AI plays, how skill levels differ, and how we measure
-it. Written 2026-10-06 with the user. Status: **design, steps 1-3 built**
+it. Written 2026-10-06 with the user. Status: **design, steps 1-4 built**
 (profiles as data, section 9; Easy, section 10; Skilled battle and
-settlement AI, section 11); Average is the one fixed
+settlement AI, section 11; Skilled campaign AI, section 12); Average is the one fixed
 skill the AI had before (described in `sim/battle_ai.gd`,
 `sim/siege_ai.gd` and `campaign/cai.gd`), which this document treats as
 roughly the "Average" level.
@@ -937,3 +937,218 @@ above); the settlement plans print the Skilled siege moves with
 **UI.** Battle AI "Skilled" without "(soon)" on the new-campaign
 Difficulty row and the sandbox "AI:" button; the Campaign AI row still
 says "Skilled (soon)" (step 4).
+
+
+## 12. As built: Skilled campaign (step 4, 2026-10-07)
+
+Average and Easy are byte for byte what they were: `campaign_sim --seeds=6
+--turns=60` per-seed hashes all-Average (056bfc4c 7e5be9e9 4ddf4d22
+27da886c 892fc13f 01cad53e), all-Easy and each faction Easy in turn (54
+hashes), and `--format=5`, equal HEAD; `tests/campaign_test.gd` pins an
+AI-only Average campaign and one with an Easy faction (20 turns: hash and
+`rng` state from the commit before step 4). Every Skilled behaviour hangs
+off an `SK_*` knob (`campaign/cai_profile.gd`, ids 75-90) that is 0 for
+Easy and Average, so those levels never run it and never draw the RNG for
+it (the test checks the column); no code branches on the level. Skilled has
+no deliberate mistakes. No state change: no new keys, `CState.VERSION`
+stays 6, the AI keeps no memory between turns (everything it reads is
+recomputed from the state each turn).
+
+**Same rules, same information.** Skilled reads only the state every
+player sees (positions, strengths, stances, sieges, diplomacy, the
+enemies' unit lines) and acts only through the orders a player has (move,
+move to merge, stance, recruit, build, propose, declare). No income, unit,
+movement or sight difference. (As at every level, the AI plans in step 5
+of `cturn`, after the players' moves of the turn have been walked: it
+sees where they went, never their orders. This is the pipeline's, not
+Skilled's.)
+
+**Knobs (SKILLED column; Easy and Average 0 for every `SK_*`).** Average's
+values except `SHELTER_PCT` 0 (never shelters inside the walls), `IDLE_WIN`
+50 and `SIEGE_ASSAULT_WIN` 50 (no battle under even odds unless a city is
+at stake). `SK_SUPPORT` 1, `SK_HUNT_WIN` 75; `SK_RALLY` 2 turns;
+`SK_SAFE_WIN` 70, `SK_SAFE_HOLD` 0, `SK_SAFE_GAIN` 15; `SK_STAGE_SAFE` 70;
+`SK_INTERCEPT_WIN` 60; `SK_STORM_RELIEF_WIN` 50; `SK_COUNTER_MIX` 20,
+`SK_COUNTER_SHARE` 25 %; `SK_WAR_BORDER_PCT` 100, `SK_WAR_WEAK_PCT` 200,
+`SK_WAR_GUARDED_PCT` 50; `SK_ONE_FRONT` 1; `SK_REACH_DEF_PCT` 0 (built,
+off).
+
+**Behaviours (`campaign/cai.gd`, format 6).**
+- Two to one, support counted (4.4): a hunt of an enemy field army counts
+  the target's friends that would join as support (`_supporters`: in the
+  field, not forced, within `support_r` of its cell, the rules'
+  `_support6`) and goes at 75 % odds outside our lands (Average 70 %
+  against the lone army: it walks into support). Counted: attacks at
+  twice the defence or more, hunts called off for the support.
+- Concentration (4.2, 4.4): spare armies (nothing else to do this turn)
+  within two turns of our strongest army march to merge into it while the
+  two fit in one army (a "join" move, the order players have), else to
+  stand by it within support range (`_rally`); the armies arriving
+  together then merge at the start of the next turn. Gathering points for
+  an attack (Average's "a march short") are taken further back when the
+  enemy could fall on the gathering armies there next turn at 70 % odds
+  (`SK_STAGE_SAFE`, from `_danger`); the armies then strike together
+  (counted when two or more attack one settlement in the same turn).
+- Reading the enemy (4.10, 4.9): `_foes6` / `_danger` estimate, for any
+  cell, every enemy field army that can reach it next turn (the hunters'
+  own estimate: 13 points a cell + 10) against our army there and our
+  armies within support range, stances counted. A free army (not holding
+  a threatened city) the enemy could attack at 70 % falls back to the
+  friendly field cell or army it reaches this turn where the odds are at
+  least 15 points lower (`_fall_back`).
+- Sieges and relief (4.6): a siege of ours is stormed at 50 % odds when a
+  relief army can reach the city next turn (`_relief_soon`; Average waits
+  for the ratio or starvation); an army that can relieve a city we besiege
+  is hunted at 60 % (intercept in the field).
+- Composition (4.2): recruitment's mix gains +20 for spears (or pikes)
+  when cavalry is at least 25 % of the enemies' units, +10 for archers /
+  javelins against light foot (`_counter_mix`; lines the faction does not
+  field are not added; no artillery: see below).
+- Diplomacy (4.3, 4.8): war on an eligible neighbour (Average's ratio and
+  pacing) is twice as likely when its field armies that can reach our
+  settlements next turn are at most as strong as ours that can reach its
+  own (`_border_weak`), half as likely otherwise. At war on two fronts or
+  more it offers peace to every enemy but the one whose regions its armies
+  reach most (`_one_front`; the other side answers by its own rule, a
+  player is asked).
+
+**Measurement** (`campaign_sim --seeds=6 --turns=60 --skill-f=<faction>:s`,
+one faction Skilled at a time, the others Average; regions at 15 / 30 / 60,
+mean of 6 seeds, eliminations by turn 60 with the turn; the Average and
+Easy columns are the same seeds at HEAD):
+
+| faction | all Average | that faction Easy | that faction Skilled |
+|---|---|---|---|
+| Rome | 6.5 / 6.8 / 3.7, 2 out (31, 57) | 4.3 / 2.7 / 4.3, 1 out (19) | 6.8 / 7.7 / 9.5, 1 out (41) |
+| Carthage | 5.5 / 5.0 / 7.2, 1 out (21) | 4.7 / 3.3 / 4.7, 3 out | 5.5 / 6.5 / 10.2, 0 out |
+| Macedon | 2.3 / 2.8 / 4.5, 4 out | 3.2 / 4.3 / 8.7, 0 out | 2.3 / 2.7 / 4.2, 2 out (17, 19) |
+| Epirus | 1.5 / 1.0 / 0.0, 6 out | 5.5 / 5.3 / 7.2, 1 out (33) | 2.8 / 1.5 / 0.7, 5 out |
+| Greeks | 5.2 / 5.7 / 7.8, 2 out (41, 34) | 3.8 / 4.8 / 7.7, 0 out | 4.8 / 6.2 / 10.2, 0 out |
+| Syracuse | 3.2 / 3.8 / 1.5, 5 out | 3.0 / 2.0 / 0.7, 4 out | 3.0 / 3.3 / 3.8, 1 out (51) |
+| Iberians | 5.0 / 4.7 / 3.7, 2 out (50, 31) | 4.3 / 4.8 / 6.5, 1 out (33) | 5.0 / 4.5 / 5.3, 1 out (26) |
+| Gauls | 5.0 / 5.7 / 7.3, 0 out | 5.2 / 5.5 / 5.7, 0 out | 5.5 / 5.0 / 7.5, 2 out (54, 24) |
+| all 48 runs | 4.27 / 4.44 / 4.46, 22 out | 4.25 / 4.10 / 5.67, 10 out | **4.48 / 4.67 / 6.42, 12 out** |
+
+The same with 24 seeds (1000 + 77k, k < 24; 192 runs a column), which is
+what the design decisions below were measured on (standard error of the
+turn-60 mean about 0.3 regions):
+
+| faction | all Average | that faction Skilled |
+|---|---|---|
+| Rome | 6.0 / 6.2 / 5.3, 6 out | 6.3 / 7.6 / 10.2, 1 out |
+| Carthage | 5.7 / 7.0 / 9.2, 3 out | 5.2 / 6.9 / 9.5, 1 out |
+| Macedon | 2.8 / 3.2 / 4.0, 10 out | 2.8 / 2.9 / 3.7, 8 out |
+| Epirus | 1.7 / 1.0 / 0.5, 18 out | 2.7 / 1.9 / 1.1, 15 out |
+| Greeks | 4.8 / 5.4 / 6.9, 4 out | 4.8 / 6.5 / 10.7, 1 out |
+| Syracuse | 3.1 / 3.4 / 2.1, 14 out | 3.1 / 3.7 / 4.2, 6 out |
+| Iberians | 5.0 / 4.1 / 3.0, 9 out | 5.0 / 5.1 / 6.8, 2 out |
+| Gauls | 5.2 / 5.2 / 4.8, 6 out | 5.8 / 5.0 / 6.4, 7 out |
+| all | 4.30 / 4.45 / 4.48, 70 out | **4.47 / 4.95 / 6.58, 41 out** |
+
+Target (+30 % regions at turn 60, fewer eliminations, no faction worse):
+**+47 %** (24 seeds; +44 % on 6) and 41 eliminations against 70. Rome,
+the Greeks, Syracuse and the Iberians end clearly larger, the Gauls
+larger (with one more elimination in 24 runs), Carthage and Epirus a
+little larger, **Macedon not**: 3.7 regions against 4.0 at turn 60 (fewer
+eliminations, 8 against 10), within its noise (one faction's 24-run
+mean: about 0.6) but not better. Most of the gain comes late (turn 15
++4 %, 30 +11 %, 60 +47 %): Skilled factions survive their early wars and
+keep growing. Skilled against Easy (the same faction Easy): larger
+overall (6.42 against 5.67) and in five factions, but Easy Macedon,
+Epirus and the Iberians end larger (Macedon and Epirus far larger): for the weak
+eastern factions Easy's blunt aggression (wars at 100 %, no peace,
+storming on arrival) wins more than Skilled's care; Easy's own target
+(smaller than Average) was already not met in step 2.
+
+Battles and captures of the watched faction (24 seeds, the 8 factions'
+192 runs summed; Average / Skilled): field battles attacking won 186 /
+197, lost 99 / 45; defending won 99 / 240, lost 186 / 628; settlements
+stormed 1,169 / 1,435 (lost 182 / 267); settlements defended won 125 /
+101, lost 885 / 749; armies destroyed 270 / 107; turns at war on two
+fronts 2,205 / 1,952. Every region changes hands by storm: no AI siege
+ran to a surrender at any level. Skilled loses more field battles as a
+defender (its armies stand fortified outside a threatened city instead of
+inside it) but far fewer armies, fewer regions, and takes more.
+
+Counters (`CP.count`, 24 seeds, the 8 Skilled factions): attacks at
+twice the defence (support counted) 546, hunts called off for the
+target's support 354, relief intercepts 5, timed arrivals (two or more
+armies storming together) 481, merges into the main army 656, armies
+sent to stand by it 3,971, fall-backs from danger 137, storms before a
+relief 28, attacks at bad odds 0, deliberate mistakes 0.
+
+**What decided it (ablations, 24 seeds, turn-60 regions and
+eliminations of the Skilled faction; Average 4.48, 70 out).**
+- Sheltering inside the walls is Average's worst habit: Average with only
+  `SHELTER_PCT` 0 ends at 5.25 (52 out), with no stances at all 5.35;
+  every Skilled variant with sheltering back fell to 4.4-5.5 and 63-73
+  out. An army inside a city is lost with the city (88 % of attacked
+  settlements fall: the attacker only comes at 130 %); outside, fortified,
+  it adds its zone and support and survives a defeat. So Skilled never
+  shelters (the design's "shelter a weaker army inside walls and sally
+  with support" is switched off, `SHELTER_PCT` 0).
+- One front at a time: without it 5.94 / 52 out, with it 6.11 / 46 (turns
+  on two fronts 2,276 against 1,371 before the war timing).
+- War timing: a hard rule (no war unless their border is weak) cost
+  conquests (6.11 against 6.43 without); as a preference (x2 / x0.5) 6.86
+  / 38 out, the largest single step after sheltering.
+- Support-aware hunting: without it 6.24 against 6.43 (both without the
+  war timing): small, kept. The rally: within noise either way (6.86 /
+  42 out without it, 6.86 / 38 with it; it is the "merge before
+  campaigning"), kept at 2 turns (1 turn: 6.60).
+- Falling back with armies that hold a threatened city: 4.94 / 60 out
+  (the city falls): `SK_SAFE_HOLD` 0; free armies only (5.97 against
+  5.91 without).
+- Staging out of reach, storming before a relief, the 50 % floor and the
+  counter-composition were each within noise (6.53, 6.81, 6.69, 6.24 with
+  each off, against 6.58 with all); they are the competencies the design
+  asks for and cost nothing measurable, so they stay on.
+- A target's defence counting the enemy armies that reach it next turn
+  (`SK_REACH_DEF_PCT`, "strike where they are not"): at 50 % 5.44, 100 %
+  5.70, 25 % 5.93 against 5.97 off: fewer conquests as well as fewer
+  losses. Built, off.
+- Economy (upkeep share 60, building budget 80 %, no reserve, chest
+  shares), attack ratio 110-150, commitment 100-200 %, gathering 50 %,
+  screens, relief odds, hunting odds, siege patience 4-5: all within noise
+  of the configuration above; Skilled keeps Average's values. Siege
+  patience never matters: AI sieges end by storm or lift before it.
+
+**Not built.** Artillery for walled cities (a battery slows an army to
+150 points a turn, and the formula that resolves AI battles ignores
+composition, so it cannot be measured here; it needs the battle sim);
+valuing regions by position (chokepoints, ports) and victory relevance;
+positioning so that every approach to a threatened city crosses a zone
+of control (the danger model is used for falling back and staging only;
+Average's screens and fortify stand); tracking armies across turns
+(trajectories: there is no AI memory in the state, and adding one would
+change the save format); a war chest and build order by wealth / threat;
+coordinating with an ally's wars; sallies with support. Section 5's
+personalities and composition styles are step 5.
+
+**Frame cost** (`campaign_sim --seeds=6 --turns=60`, desktop, one process):
+every faction Average 17.1 ms a turn (worst 28.8, first turn 130 for the
+memoised distance fields), every faction Skilled 23.5 ms (worst 37.3):
+about 0.8 ms per Skilled faction-turn. The Skilled reads are per army
+against the enemy armies (no per-cell search beyond Average's): hunting
+and danger O(ours x theirs), the border test O(armies x regions) per war
+candidate.
+
+**Determinism.** `tests/campaign_test.gd` (`_ai_skilled`): with every AI
+faction Skilled and a player, the same inputs give the same state after
+16 turns, a save / load in the middle changes nothing, one turn from the
+same state and submissions gives the same hash, the state stays plain
+(ints, strings, arrays, dictionaries), Skilled plays differently from
+Average; in 40 AI-only turns the Skilled behaviours run (two to one,
+hunts declined, timed arrivals, merges, rallies, fall-backs, all above
+0) and no mistake is made; the `SK_*` knobs are 0 at Easy and Average;
+`factions[f].ai_skill` overrides `settings.ai_campaign_skill`.
+`campaign_sim --skill=skilled --twice` is deterministic.
+
+**Tools.** `campaign_sim --knob=LEVEL:ID=VALUE` overrides one knob for a
+run (`CP.set_knob`, test only; the ablations above), and for each faction
+with a skill set it prints and sums its battles (field / settlement,
+attacking / defending, won / lost), regions gained and lost (and lost
+within 3 turns of taking them) and armies destroyed.
+
+**UI.** New campaign: "Campaign AI: Skilled" without "(soon)"; the
+tooltip says what it does. Per-faction overrides (Advanced) are step 5.

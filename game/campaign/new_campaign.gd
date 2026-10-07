@@ -7,9 +7,7 @@ extends Control
 ## creates the campaign on the server and emits `created_online(id, code)`.
 ## Difficulty: the battle AI and the campaign AI skill (Easy / Average /
 ## Skilled, campaign/cai_profile.gd) for every AI faction, stored in the
-## campaign's settings (only when not Average). For now Easy and Skilled
-## play exactly like Average (docs/AI.md 8: the levels come in later
-## steps); the buttons say so.
+## campaign's settings (only when not Average); docs/AI.md sections 10-12.
 
 signal start(data: Dictionary, slot: String)
 signal back
@@ -242,11 +240,10 @@ func _update() -> void:
 	vr["autoresolve"].text = "Battles: " + ("ask" if str(settings["autoresolve"]) == "ask" else "always auto")
 	vr["ai_aggression"].text = "AI: " + {70: "calm", 100: "normal", 130: "aggressive"}[int(settings["ai_aggression"])]
 	vr["ai_battle_skill"].text = "Battle AI: " + SKILL_LABELS[int(settings["ai_battle_skill"])]
-	vr["ai_campaign_skill"].text = "Campaign AI: " + SKILL_LABELS[int(settings["ai_campaign_skill"])] \
-		+ (" (soon)" if int(settings["ai_campaign_skill"]) == 2 else "")
+	vr["ai_campaign_skill"].text = "Campaign AI: " + SKILL_LABELS[int(settings["ai_campaign_skill"])]
 	vr["deploy_time"].text = "Deployment time: " + {0: "none", 60: "1 min", 120: "2 min"}[int(settings["deploy_time"])]
 	vr["ai_battle_skill"].tooltip_text = "Easy makes a new player's mistakes; Skilled reads the battle and punishes yours."
-	vr["ai_campaign_skill"].tooltip_text = "Easy makes a new player's mistakes; Skilled plays like Average for now (it arrives in a later update)."
+	vr["ai_campaign_skill"].tooltip_text = "Easy makes a new player's mistakes; Skilled concentrates its armies, picks its wars and fights one front at a time."
 
 
 func _start() -> void:
