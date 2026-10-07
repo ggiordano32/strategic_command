@@ -1197,7 +1197,8 @@ func _test_lockstep_street() -> void:
 	b.latency = 3
 	b.d = 4
 	var peers: Array[Peer] = [a, b]
-	var total := 900 if quick else 1800
+	# Not shortened by --quick: the columns meet and C joins after frame 900.
+	var total := 1800
 	var c: Peer = null
 	var c_join := -1
 	var now := 0
