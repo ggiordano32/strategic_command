@@ -1,6 +1,6 @@
 # Strategic Command — Status and Handover
 
-Last updated: 2026-10-07 (cities worth defending, part 1: tower engines, ladders, a ram, hard gates, the battle time limit; earlier 2026-10-06: deployment phase and custom battles built; the continuous campaign overworld built, state format 6; free campaign movement built; sieges and battle odds built on the campaign map; settlement variety built 2026-10-05). Read this first, then `docs/DESIGN.md` for the full
+Last updated: 2026-10-07 (cities worth defending, part 2a: units do not pass through each other, street fights; part 1: tower engines, ladders, a ram, hard gates, the battle time limit; earlier 2026-10-06: deployment phase and custom battles built; the continuous campaign overworld built, state format 6; free campaign movement built; sieges and battle odds built on the campaign map; settlement variety built 2026-10-05). Read this first, then `docs/DESIGN.md` for the full
 design and `CLAUDE.md` for working rules. Update this file whenever a
 milestone lands or the plan changes.
 
@@ -33,6 +33,7 @@ anti-cheat and original art only if it proves fun.
 | Continuous campaign overworld (state format 6) | Built 2026-10-06, **not committed**; tested headless and windowed; not yet played on phones |
 | Deployment phase and custom battles (solo, co-op, head-to-head) | Built 2026-10-06 on a branch; tested headless, end to end and windowed; not yet played on phones |
 | Cities worth defending, part 1 (tower engines, ladders, ram, hard gates, battle time limit) | Built 2026-10-07, **not committed**; tested headless and windowed; not yet played on phones |
+| Cities worth defending, part 2a (units do not pass through each other, street fights) | Built 2026-10-07, **not committed**; tested headless (and the windowed input tests); not yet played on phones |
 | 6. Depth (siege towers, tech, more factions) | Not started |
 
 ### What exists
@@ -76,6 +77,63 @@ anti-cheat and original art only if it proves fun.
 - The touch control scheme works; the user likes it.
 
 ### In progress right now
+
+**Cities must be worth defending, part 2a: units do not pass through each
+other (built 2026-10-07).** As built in DESIGN.md "Unit blocking and street
+fights", AI.md section 14. In short: every ready ground unit's footprint
+(its formation rectangle, clipped to its men) is marked in 4 m cells per
+side, every other tick, per unit; an anchor never steps into an enemy's
+footprint (it steers 30-60 degrees round it where there is room, else stops
+and its men fight, a move included), passes through friends at half speed,
+and an attacking unit waits behind friends already fighting (or waiting)
+near its target: a 10 m street holds one unit a side, the rest queue. Men's
+places a cell deep in an enemy are moved back; no soldier-level separation
+was needed. The street squeeze (frontage clamped to the corridor) already
+existed. Deployment placements inside another unit are refused ("Another
+unit stands there"). Skilled defenders hold the inside of a breached gate
+(posts either side of it) and bring the idle gate guards to the breach
+(knobs `S_BREACH_HOLD`, `S_GUARD_JOIN`, off at Easy / Average: at Average
+they did not move walls 1 and cost the defenders above it).
+- Measured (`--only=fair-sieges`, both Average, 10 seeds; attacker wins,
+  draws, mean / max minutes; before -> after):
+
+  | City | Ladders + ram | Artillery only |
+  |---|---|---|
+  | ring, walls 1 | 100 % (6.4 / 6.9) -> 100 % (7.2 / 8.9) | 100 % (6.3 / 7.4) -> 100 % (7.1 / 8.1) |
+  | ring, walls 2 | 60 % (8.6 / 11.2) -> 60 % (8.6 / 9.6) | 10 % (8.7 / 10.1) -> 60 % (10.4 / 11.9) |
+  | ring, walls 3 | 50 % (9.2 / 10.3) -> 20 % (9.5 / 10.7) | 0 % (10.0 / 12.8) -> 10 %, 10 % draws (9.7 / 15.0) |
+  | polis, walls 1 | 100 % (8.2 / 10.6) -> 90 %, 10 % draws (10.5 / 15.0) | 100 % (8.7 / 12.6) -> 100 % (9.1 / 11.0) |
+  | polis, walls 2 | 50 %, 10 % draws (11.2 / 15.0) -> 70 %, 10 % draws (12.5 / 15.0) | 10 % (9.1 / 14.3) -> 30 %, 30 % draws (10.8 / 15.0) |
+  | polis, walls 3 | 10 %, 20 % draws (10.9 / 15.0) -> 10 %, 40 % draws (12.7 / 15.0) | 0 %, 10 % draws (9.2 / 15.0) -> 0 %, 40 % draws (12.0 / 15.0) |
+
+  Walls 3 with a 30 minute limit (before -> after): ring 50 / 0 % -> 20 /
+  20 %, polis 10 % (20 % draws) / 0 % (10 %) -> 30 % (20 %) / 30 % (0 %).
+  **Walls 1 still misses its 45 % target (100 %)**: blocking works (the
+  attackers queue through the gateway and fight a unit at a time) but the
+  defenders lose the exchange about 2.4 : 1 anyway: a third of their
+  strength (the guards of the three gates not attacked, about 300 men)
+  never fights, their reserves march down the main street into the
+  attackers spread out inside the gate (the narrow end is theirs, not the
+  attackers'), and the plaza capture then breaks everyone. That is AI
+  disposition, not movement rules (the Skilled breach hold / guard join did
+  not fix it at Average either); next step for the main session.
+- Field (`--fair=50`, 100 battles each): Average vs Average 50 / 50, no
+  draws, 5.14 -> 5.40 min mean (+5 %), max 8.2 -> 8.0; Average vs Easy 74
+  % (1 draw) -> 79 %; Skilled vs Average 77 -> 76 %. bench_4000 (one seed)
+  now meets 96 s later (the lines pass through their own missile screen and
+  second line at half speed) and lasts 9.3 instead of 5.7 min.
+- Tick cost (desktop, same session, before -> after; different battles, so
+  the whole-run figures move with what happens): the unit phase +0.18 ms
+  (bench_4000 0.26 -> 0.43, bench_4000_city 0.76 -> 0.95: the footprints
+  ~0.08 ms a tick averaged, the anchor probes the rest); bench_4000 mean
+  2.91 -> 2.35 ms, p95 4.8 -> 5.0, worst 6.5-6.8 -> 6.5-7.1; city 3.31 ->
+  3.42, p95 6.0 -> 5.6, worst 8.6-8.7 -> 7.5-8.2; polis 3.23 -> 3.25, worst
+  8.4-9.6 -> 7.1; castrum 3.02 -> 3.55, p95 5.5 -> 6.8, worst 8.0-9.0 ->
+  9.0-9.6.
+- Tests: determinism `--only=blocking` (street fight, pass-through, gate
+  jam, gate rush in the gateway and 14 m inside, foot and riders) and the
+  re-recorded skirmish / bench_2000 golden digests; lockstep street fight
+  with a late joiner; campaign_sim hashes unchanged.
 
 **Cities must be worth defending, part 1: attrition at the wall (built
 2026-10-07).** As built in DESIGN.md section 4 "Siege equipment and wall
@@ -805,8 +863,10 @@ fixes are all landed; see "Where we are"):
       and the sandbox so long sieges can run. Calibration target: an
       **equal-force siege matchup set**, walls 3 equal strength ->
       attacker about 25 %, walls 1 about 45 %.
-   2. **Units do not pass through each other** (Thursday 2026-10-09):
-      unit-level blocking first (an enemy unit's footprint is impassable
+   2. **Units do not pass through each other** (part 2a done 2026-10-07:
+      blocking, queueing, street frontage, gate rush; walls 1 still 100 %,
+      see "In progress right now"; open: the defenders' disposition at
+      walls 1, the rest of this item): unit-level blocking first (an enemy unit's footprint is impassable
       in the 4 m pathing grid, frontage clamps to the corridor a unit is
       in, friendly units pass through each other at half speed so streets
       never deadlock), soldier-level separation only at the contact seam

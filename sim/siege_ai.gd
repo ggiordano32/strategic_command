@@ -130,6 +130,7 @@ const A_RAM := 30       # attacking ram
 const A_LADDER := 31    # attacking foot going up the ladders (then into the town to unbar a gate)
 const A_TOWER := 32     # defending tower engine
 const A_ESC := 33       # defender sent up against ladder men (u_ai_y = the attacking unit)
+const A_BREACH := 34    # defender holding the inside of a breached gate beside it (u_ai_x / u_ai_y = post)
 
 
 
@@ -181,6 +182,8 @@ static func _army(sim, side: int) -> void:
 			_citadel(sim, side)
 		if kn[AP.SK_MEM] != 0:
 			_sk_defend(sim, side, kn)
+		if kn[AP.S_BREACH_HOLD] != 0:
+			_breach_hold(sim, side, kn)
 		return
 	# Attackers. Clearly lost: withdraw (as in the field).
 	var own := BattleAI._strength(sim, side)
@@ -400,6 +403,9 @@ static func _defender(sim, u: int) -> void:
 	if mode == A_RESERVE:
 		_reserve(sim, u)
 		return
+	if mode == A_BREACH:
+		_breach_unit(sim, u)
+		return
 	# Not yet classified (the army thinks first on the same tick).
 
 
@@ -590,6 +596,120 @@ static func _reserve(sim, u: int) -> void:
 		return
 	var face: int = FM.atan2_a(sim.g_y[0] - hy, sim.g_x[0] - hx) if sim.n_gates > 0 else sim.u_dface[u]
 	_go_home(sim, u, hx, hy, face, 10)
+
+
+## Hold the breach (S_BREACH_HOLD; units do not pass through each other,
+## so attackers come out of a gateway one unit at a time): once a gate is
+## open or broken with attackers within 100 m of it, the reserve foot unit
+## nearest each of two posts inside the wall, S_BREACH_LAT either side of
+## the gate (on open ground of the town's side), takes it (A_BREACH); with
+## the gate's guard in the street behind the gate they close the mouth of
+## the gateway on three sides. Once per breached gate (ai_gate of the
+## defending side remembers it).
+static func _breach_hold(sim, side: int, kn: PackedInt32Array) -> void:
+	var ag := -1
+	for g in sim.n_gates:
+		if sim.g_cit[g] == 0 and sim.g_state[g] != GATE_CLOSED \
+				and _attackers_near(sim, side, sim.g_x[g], sim.g_y[g], 100 * M) > 0:
+			ag = g
+			break
+	if ag < 0:
+		return
+	if kn[AP.S_GUARD_JOIN] > 0:
+		_guards_join(sim, side, ag, kn)
+	if sim.ai_gate[side] == ag:
+		return
+	sim.ai_gate[side] = ag
+	var dir: int = sim.g_dir[ag]
+	var c := FM.cos_a(dir)
+	var sn := FM.sin_a(dir)
+	var gi := Vector2i(sim.g_ix[ag], sim.g_iy[ag])
+	var piece: int = sim.reach_at(gi.x, gi.y)
+	for lr in [1, -1]:
+		# Along the wall (across the gate's outward direction), a little in.
+		var post := Vector2i(-1, -1)
+		for inw in [0, 4, 8]:
+			var lat: int = kn[AP.S_BREACH_LAT] * lr
+			var px: int = gi.x - (c * inw * M + sn * lat) / FM.TRIG_ONE
+			var py: int = gi.y - (sn * inw * M - c * lat) / FM.TRIG_ONE
+			if sim.obs_kind(px, py) == MapGen.C_OPEN and (sim.nav_at(px, py) & MapGen.NAV_GROUND) != 0 \
+					and sim.reach_at(px, py) == piece:
+				post = Vector2i(px, py)
+				break
+		if post.x < 0:
+			continue
+		var best := -1
+		var bd := 0
+		for u in sim.n_units:
+			if sim.u_side[u] != side or sim.u_state[u] != U_READY or sim.u_ai[u] != A_RESERVE:
+				continue
+			var cl: int = sim.u_cls[u]
+			if cl != UT.CLS_INF and cl != UT.CLS_PIKE:
+				continue
+			var d := BattleAI._d(sim.u_cx[u] - post.x, sim.u_cy[u] - post.y)
+			if best < 0 or d < bd:
+				best = u
+				bd = d
+		if best < 0:
+			return
+		BattleAI._set_mode(sim, best, A_BREACH)
+		sim.u_ai_x[best] = post.x
+		sim.u_ai_y[best] = post.y
+		BattleAI._count(sim, side, AP.C_SIEGE)
+
+
+## The guards of the other gates with no attacker within S_GUARD_JOIN of
+## their gate come to the breach (gate ag): reserves posted 30 m inside it
+## (the plaza if that is not open ground of the town), so the whole army
+## fights where the attackers come in.
+static func _guards_join(sim, side: int, ag: int, kn: PackedInt32Array) -> void:
+	var dir: int = sim.g_dir[ag]
+	var c := FM.cos_a(dir)
+	var sn := FM.sin_a(dir)
+	var piece: int = sim.reach_at(sim.g_ix[ag], sim.g_iy[ag])
+	var k := 0
+	for u in sim.n_units:
+		if sim.u_side[u] != side or sim.u_state[u] != U_READY or sim.u_ai[u] != A_GATE:
+			continue
+		var g: int = sim.u_ai_y[u]
+		if g == ag or _attackers_near(sim, side, sim.g_x[g], sim.g_y[g], kn[AP.S_GUARD_JOIN]) > 0:
+			continue
+		# Posts spread behind the breach (30 m in, 12 m apart), the plaza
+		# where that is not open ground of the town.
+		var back := (30 + 12 * (k / 3)) * M
+		var lat := ((k % 3) - 1) * 12 * M
+		var px: int = sim.g_ix[ag] - (c * back + sn * lat) / FM.TRIG_ONE
+		var py: int = sim.g_iy[ag] - (sn * back - c * lat) / FM.TRIG_ONE
+		if sim.obs_kind(px, py) != MapGen.C_OPEN or sim.reach_at(px, py) != piece:
+			px = sim.plaza[0] + lat
+			py = sim.plaza[1]
+		k += 1
+		BattleAI._set_mode(sim, u, A_RESERVE)
+		sim.u_ai_x[u] = px
+		sim.u_ai_y[u] = py
+		BattleAI._count(sim, side, AP.C_SIEGE)
+
+
+## A unit holding beside a breached gate: attack attackers that come within
+## S_BREACH_REACT of its post (out of the gateway), else back to the post
+## facing the gate's mouth.
+static func _breach_unit(sim, u: int) -> void:
+	if _engaged(sim, u):
+		return
+	var side: int = sim.u_side[u]
+	var kn := AP.of(sim, side)
+	var hx: int = sim.u_ai_x[u]
+	var hy: int = sim.u_ai_y[u]
+	var t := _nearest_attacker(sim, u, hx, hy, kn[AP.S_BREACH_REACT], false)
+	if t >= 0 and sim.u_wall[t] == 0:
+		if sim.u_order[u] != O_ATTACK or sim.u_target[u] != t:
+			BattleAI._attack(sim, u, t, 0)
+		return
+	var g: int = sim.ai_gate[side]
+	var face: int = sim.u_dface[u]
+	if g >= 0:
+		face = FM.atan2_a(sim.g_iy[g] - hy, sim.g_ix[g] - hx)
+	_go_home(sim, u, hx, hy, face, 6)
 
 
 ## Unit u is fighting a ready enemy it was ordered at.

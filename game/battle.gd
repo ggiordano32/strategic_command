@@ -728,6 +728,12 @@ func _queue(order: Dictionary) -> void:
 			var width := int(order.get("width", BattleSim.files_to_width(orders.value(pu, "files"), sim.u_type[pu])))
 			order = {"type": BattleSim.ORDER_PLACE, "unit": pu, "x": int(order["x"]), "y": int(order["y"]),
 				"facing": int(order["facing"]), "files": BattleSim.width_to_files(width, sim.u_alive[pu], sim.u_type[pu])}
+			if selection.size() <= 1 and not BattleSim.place_clear(sim, pu, int(order["x"]), int(order["y"]),
+					int(order["facing"]) & 1023, int(order["files"])):
+				# (Units do not stand inside each other: the sim refuses it too.)
+				_count("place_refused")
+				overlay.flash("Another unit stands there", Vector2(int(order["x"]), int(order["y"])) / M * PX_PER_M)
+				return
 		elif typ != BattleSim.ORDER_RUN and typ != BattleSim.ORDER_FIRE and typ != BattleSim.ORDER_SKIRMISH \
 				and typ != BattleSim.ORDER_DEPLOY and typ != BattleSim.ORDER_PLACE and typ != BattleSim.ORDER_READY:
 			_count("order_in_deployment")

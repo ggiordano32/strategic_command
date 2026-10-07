@@ -269,7 +269,12 @@ const S_COUNTER_BAT := 212     # attacking batteries shoot towers this near the 
 const S_ESC_REPLY := 213       # defenders send a foot unit up against ladder men (1) or not (0)
 const S_RAM_WAIT := 214        # the ram waits for the gate's towers to be silenced at most this long into the approach
 const S_LADDER_WALLS := 215    # with working artillery, ladders only against walls of this level or more (no artillery: any)
-const N_KNOBS := 216
+# Street fights (docs/AI.md 14; units do not pass through each other).
+const S_BREACH_HOLD := 216     # defenders hold the inside of a breached gate: foot units along the wall either side (1) or not (0)
+const S_BREACH_LAT := 217      # ... their posts this far along the wall from the gate's middle
+const S_BREACH_REACT := 218    # ... they attack attackers this close to their post
+const S_GUARD_JOIN := 219      # ... and the guards of gates with no attacker this near come to the breach (0: they stay)
+const N_KNOBS := 220
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
@@ -423,6 +428,10 @@ const KNOBS: Array = [
 	[S_ESC_REPLY, 0, 1, 1],
 	[S_RAM_WAIT, 0, 0, 900],
 	[S_LADDER_WALLS, 1, 2, 2],
+	[S_BREACH_HOLD, 0, 0, 1],
+	[S_BREACH_LAT, 14 * M, 14 * M, 14 * M],
+	[S_BREACH_REACT, 22 * M, 22 * M, 22 * M],
+	[S_GUARD_JOIN, 0, 0, 120 * M],
 	[S_STORM_R, 45 * M, 45 * M, 45 * M],
 	[S_SPREAD, 25 * M, 25 * M, 25 * M],
 	[S_STALL_TICKS, 1500, 1500, 1500],

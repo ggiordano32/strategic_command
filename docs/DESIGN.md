@@ -1528,6 +1528,76 @@ the view (`game/battle.gd`, `game/order_preview.gd`, `game/overlay.gd`,
   ms (2.84 before, same session), p95 5.7 (5.5), worst 7.0-7.1 (7.2-8.1:
   machine noise).
 
+### Unit blocking and street fights (as built, 2026-10-07)
+
+Why: units walked straight through each other, so a column storming a
+town went through the defenders in the streets and a street fight was
+over as soon as it started ("cities must be worth defending", part 2a).
+Code: "unit footprints" in `sim/battle_sim.gd` (`_build_occ`, `_occ_probe`,
+`_anchor_step`), `_slots_off_enemy`, `place_clear`; `sim/siege_ai.gd`
+`_breach_hold` / `_guards_join`. Everywhere (field and city maps).
+- **Footprints.** At the start of each tick's unit update every ready unit
+  on the ground (not routing, not on a wall, a stair or its ladders, not a
+  tower's engine) marks its footprint in the 4 m cells of the soldier
+  grid, one array per side (`occ0` / `occ1`, derived state rebuilt every
+  other tick and carried in snapshots, not hashed): its formation rectangle (anchor at the front
+  centre, 1 m ahead, 0.5 m beyond the outer files and the rear rank, half
+  extents at least 2 m) clipped to its men's box, row by row (each row's
+  run of cells from the rectangle's edges: per unit, never per soldier;
+  batteries: the men's box). A cell holds the number of units, the number
+  of them fighting or queued, and the first (lowest) unit.
+- **Anchors.** Wherever a unit's anchor moves (a move or withdrawal, an
+  attack, a path through the streets, missile troops closing to range),
+  the step is probed at the anchor and its two front corners (across its
+  facing, at most 8 m out; a step with all four cells empty goes on at
+  once). Into an *enemy's* footprint it may not step: it steers round it
+  (30 or 60 degrees off, on the side it chose before, else away from the
+  enemy's middle, only with a free cell 4 m on that way; never
+  round the unit it attacks) or stops there (`u_blk` BLK_ENEMY). A unit
+  already inside an enemy's cells (it came to us) may back away from its
+  middle. A move stopped by an enemy fights where it stands (its men do
+  not disengage). Through a *friend's* footprint it goes at half speed
+  (BLK_FRIEND: files interleave, so streets and gateways never deadlock).
+  A unit attacking, not itself fighting, whose target is fighting, waits
+  behind friends fighting or already waiting within 60 m of the target's
+  box (BLK_QUEUE) unless it can go round them: the queue behind the line
+  in a street, a second line behind the first in the field. `u_blk` and
+  `u_dodge` (the side chosen) are hashed unit arrays.
+- **Places.** When a unit's offsets are recomputed with an enemy near, a
+  man's place a cell deep inside an enemy's footprint moves back 2 m at a
+  time (at most 8 m); places on the seam stay. Men at the seam fight as
+  before; no soldier-level separation was needed (men close only to 3/4 of
+  their reach of their man).
+- **Street frontage.** The squeeze (above, "Settlements (rules)") already
+  clamps a unit's files to the free width either side of its anchor in any
+  corridor (streets, gateways, causeways); with blocking a 10 m street now
+  holds one unit a side at a time and the rest queue behind. The drag
+  clamp (one rank at most) stays.
+- **Deployment.** A placement whose formation's middle lies in another
+  ground unit (or another's middle in it) is refused (`place_clear`, in the
+  order rule; units placed in the same batch or with a placement pending
+  do not count); the view says "Another unit stands there".
+- **AI.** Pathing and storming need nothing new: the queue is the AI's
+  reserve waiting behind the line. Skilled defenders (knobs `S_BREACH_HOLD`
+  1, `S_GUARD_JOIN` 120 m; 0 at Easy / Average, see docs/AI.md 14): once a
+  gate is breached, the reserve foot nearest two posts along the wall 14 m
+  either side of it hold them and charge attackers coming out of the
+  gateway within 22 m, and the guards of gates with no attacker within
+  120 m come to posts behind the breach. Measured at Average both cost the
+  defenders more than they gained above walls 1 and did not move walls 1.
+- **Measured** (desktop; docs/STATUS.md has the tables): a 10 m street,
+  three heavy units of 60 a side: one unit a side fights at a time, 28 /
+  25 killed in 150 s; a light unit through a standing heavy one 629 ticks
+  against 574 round it; four units through one open gate together all
+  arrive. Gate rush (a spear unit holding the gateway): foot ordered to the
+  plaza stop at it and fight there, never get behind it, and the plaza
+  clock never starts; riders at the run stop at it too (and break on the
+  braced spears); with the spear 14 m inside both stop at it and fight
+  (the path's way round, the ring road, is not taken: the anchor steers
+  round only where a free cell lies 4 m on). (An earlier build that probed
+  the front corners along the step instead of across the facing let the
+  riders slip round by the ring road and take the plaza.)
+
 ## 5. Networking
 
 ### Live battles: deterministic lockstep

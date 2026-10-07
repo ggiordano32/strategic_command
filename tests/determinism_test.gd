@@ -76,6 +76,15 @@ extends SceneTree
 ## identical on repeat and across snapshot / restore; men climbed ladders,
 ## the ram struck, towers were hit. Field battles and walls-0/1 cities hash
 ## as before; walls-2/3 cities changed (towers, harder gates, cover).
+## Units do not pass through each other (2026-10-07; "--only=blocking"): a
+## street fight (two columns meeting in a 10 m street: one unit a side
+## fights, the rest wait), a unit passing through a standing friend (slower
+## than round it), four units through one open gate (none freezes), and the
+## "gate rush" (foot and riders at the run ordered to the plaza past a spear
+## unit holding the gateway, or standing 14 m inside: never through it,
+## never behind it in the gateway, the plaza clock never starts); each
+## identical on repeat and across snapshot / restore. The flat-map golden
+## digests of skirmish and bench_2000 were re-recorded for it.
 ## Exits 0 on success, 1 on failure.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -103,8 +112,10 @@ const RUNS := {"skirmish@0": 1500, "battle_2000@0": 1800, "bench_2000": 2500, "t
 ## like this. Update only for an intended change of flat-map rules. History:
 ## terrain height left the digests of commit 49c1022 unchanged; they were
 ## re-recorded for more ammunition, stones aimed at the near face and the
-## artillery Refill order (October 2026).
-const GOLDEN := {"skirmish": "55283f52005038df", "bench_2000": "698d8a1a4d09955d",
+## artillery Refill order (October 2026), and for units that do not pass
+## through each other (2026-10-07: skirmish and bench_2000 changed, the two
+## artillery set pieces did not).
+const GOLDEN := {"skirmish": "65e6f576f5248be9", "bench_2000": "45a3d1affeff41e8",
 	"test_cav_art": "2614adc80bd29eb4", "test_stone_line": "62b07015506232ff"}
 
 var _ok := true
@@ -113,6 +124,11 @@ var _ok := true
 func _init() -> void:
 	_check_deploy()
 	if "--only=deploy" in OS.get_cmdline_user_args():
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
+	_check_blocking()
+	if "--only=blocking" in OS.get_cmdline_user_args():
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
@@ -877,6 +893,252 @@ func _check_snapshots() -> void:
 			_fail("%s: restored copies diverged (%d of %d ticks)" % [key, bad, checks])
 		else:
 			print("PASS %s: snapshot / restore at 300, 900, 1500 runs on identically (%d ticks checked)" % [key, checks])
+
+
+# ------------------------------------------------------------- blocking ---
+# Units do not pass through each other (docs/DESIGN.md "Unit blocking and
+# street fights"): a street fight (two columns meeting in a 10 m street: no
+# more than two units a side fighting at once, the rest wait behind), a
+# unit passing through a standing friend (slower than over open ground, it
+# gets there), four attacking units through one open gate together (none
+# freezes in the gateway); each identical on repeat and across snapshot /
+# restore (mid street fight, mid pass-through, mid jam).
+
+## A 10 m street between two blocks of houses; side 0's three heavy units
+## come up it from the south, side 1's three from the north, each column's
+## units attacking the other column's head.
+static func _street_fight_scenario() -> Dictionary:
+	var units: Array = []
+	for k in 3:
+		units.append(Scenarios.unit(0, UT.HEAVY, 60, 150, 252 + k * 16, Scenarios.FACE_UP))
+	for k in 3:
+		units.append(Scenarios.unit(1, UT.HEAVY, 60, 150, 48 - k * 16, Scenarios.FACE_DOWN))
+	for u in units:
+		u["files"] = 8
+	var orders: Array = []
+	for k in 3:
+		orders.append({"tick": 2 + k, "type": BattleSim.ORDER_ATTACK, "unit": k, "target": 3, "run": 0, "player": 50})
+		orders.append({"tick": 2 + k, "type": BattleSim.ORDER_ATTACK, "unit": 3 + k, "target": 0, "run": 0, "player": 50})
+	return {"width_m": 300, "height_m": 300, "units": units, "orders": orders,
+		"terrain": {"kind": 0, "blocks": [[40, 60, 145, 240], [155, 60, 260, 240]], "urban": [[40, 60, 260, 240]]}}
+
+
+## A light unit marching through a heavy one standing in its way (or, with
+## `clear`, with the heavy unit off to the side); a lone enemy far off.
+static func _pass_scenario(clear: bool) -> Dictionary:
+	var units: Array = [Scenarios.unit(0, UT.HEAVY, 80, 260 if clear else 150, 150, Scenarios.FACE_UP),
+		Scenarios.unit(0, UT.LIGHT, 60, 150, 195, Scenarios.FACE_UP), Scenarios.unit(1, UT.SPEAR, 40, 30, 20, Scenarios.FACE_DOWN)]
+	units[0]["files"] = 16
+	units[1]["files"] = 10
+	return {"width_m": 300, "height_m": 300, "units": units,
+		"orders": [{"tick": 2, "type": BattleSim.ORDER_MOVE, "unit": 1, "x": 150 * M, "y": 115 * M, "facing": Scenarios.FACE_UP,
+			"width": 11 * M, "run": 0, "player": 50}]}
+
+
+## A walled town (walls 1) whose garrison (javelins on the wall, told to
+## hold fire) opens its main gate; four attacking units go through it to
+## the plaza together.
+static func _gate_jam_scenario() -> Dictionary:
+	var r := Scenarios.settlement({"seed": 202, "level": 1, "walls": 1, "bld": []},
+		{"kind": 1, "seed": 9, "forest": 0, "ground": 2},
+		[[UT.HEAVY, 60], [UT.LIGHT, 60], [UT.SPEAR, 60], [UT.HEAVY, 60]], [[UT.JAVELIN, 40]], 1, [])
+	return r["scenario"]
+
+
+func _gate_jam_orders(sim) -> void:
+	var dfn := -1
+	for u in sim.n_units:
+		if sim.u_side[u] == 1:
+			dfn = u
+	sim.queue_order({"tick": 1, "type": BattleSim.ORDER_FIRE, "unit": dfn, "on": 0, "player": 51})
+	sim.queue_order({"tick": 1, "type": BattleSim.ORDER_GATE, "unit": dfn, "gate": 0, "on": 0, "player": 51})
+	for u in sim.n_units:
+		if sim.u_side[u] == 0:
+			sim.queue_order({"tick": 20, "type": BattleSim.ORDER_MOVE, "unit": u, "x": sim.plaza[0] + (u % 2) * 8 * M - 4 * M,
+				"y": sim.plaza[1], "facing": FM.atan2_a(sim.plaza[1] - sim.g_y[0], sim.plaza[0] - sim.g_x[0]),
+				"width": 9 * M, "run": 0, "player": 50})
+
+
+## Run a blocking set piece: hashes every tick, and the per-tick probe.
+func _block_run(kind: String, snap_at: int, ticks: int) -> Dictionary:
+	var sc: Dictionary
+	match kind:
+		"street":
+			sc = _street_fight_scenario()
+		"pass":
+			sc = _pass_scenario(false)
+		"pass_clear":
+			sc = _pass_scenario(true)
+		_:
+			sc = _gate_jam_scenario()
+	var sim := BattleSim.new()
+	sim.setup(sc, 777)
+	if kind == "jam":
+		_gate_jam_orders(sim)
+	var hashes := PackedInt64Array()
+	var max_fight := [0, 0]
+	var arrived := -1
+	var snap_bad := -1
+	for t in ticks:
+		sim.step()
+		hashes.append(sim.state_hash())
+		if t == snap_at:
+			snap_bad = _snap_diverges(sim, sc, 777, 120)
+		if kind == "street":
+			var nf := [0, 0]
+			for u in sim.n_units:
+				if sim.u_state[u] == BattleSim.U_READY and sim.u_fighting[u] > 0:
+					nf[sim.u_side[u]] += 1
+			for sd in 2:
+				max_fight[sd] = maxi(max_fight[sd], nf[sd])
+		elif kind == "pass" or kind == "pass_clear":
+			if arrived < 0 and sim.u_order[1] == BattleSim.O_NONE and t > 5:
+				arrived = t
+		elif arrived < 0 and t > 25:
+			var all_in := true
+			for u in sim.n_units:
+				if sim.u_side[u] == 0 and sim.u_state[u] == BattleSim.U_READY and sim.u_order[u] != BattleSim.O_NONE:
+					all_in = false
+			if all_in:
+				arrived = t
+	return {"hashes": hashes, "max_fight": max_fight, "arrived": arrived, "snap_bad": snap_bad,
+		"queued": sim.stat_queued, "blocked": sim.stat_blocked, "pass": sim.stat_pass, "dodge": sim.stat_dodge,
+		"killed": [sim.u_killed[0] + sim.u_killed[1] + sim.u_killed[2], sim.u_killed[3] + sim.u_killed[4] + sim.u_killed[5]] if kind == "street" else [],
+		"winner": sim.winner}
+
+
+## The "gate rush": a walled town (walls 1) with its main gate opened at
+## the start, a defending spear unit standing just inside the gateway
+## (`inside` m in from the gate's inner point), an attacking heavy unit
+## (or `cav`: riders at the run) outside ordered to the plaza. Returns
+## {sc, gate}.
+static func _rush_scenario(inside: int, cav: bool) -> Dictionary:
+	var r := Scenarios.settlement({"seed": 202, "level": 1, "walls": 1, "bld": []},
+		{"kind": 1, "seed": 9, "forest": 0, "ground": 2},
+		[[UT.CAVALRY, 40] if cav else [UT.HEAVY, 60]], [[UT.SPEAR, 60]], 1, [])
+	var sc: Dictionary = r["scenario"]
+	var probe := BattleSim.new()
+	probe.setup(sc, 777)
+	var g := 0
+	var dc := FM.cos_a(probe.g_dir[g])
+	var ds := FM.sin_a(probe.g_dir[g])
+	for ud in sc["units"]:
+		if int(ud["side"]) == 1:
+			ud["x_m"] = (probe.g_ix[g] - dc * inside * M / FM.TRIG_ONE) / M
+			ud["y_m"] = (probe.g_iy[g] - ds * inside * M / FM.TRIG_ONE) / M
+			ud["facing"] = probe.g_dir[g]
+			ud["files"] = 6
+		else:
+			ud["x_m"] = (probe.g_ox[g] + dc * 30 * M / FM.TRIG_ONE) / M
+			ud["y_m"] = (probe.g_oy[g] + ds * 30 * M / FM.TRIG_ONE) / M
+			ud["facing"] = (probe.g_dir[g] + 512) & 1023
+			ud["files"] = 6
+	sc["orders"] = [{"tick": 1, "type": BattleSim.ORDER_GATE, "unit": 1, "gate": g, "on": 0, "player": 51},
+		{"tick": 10, "type": BattleSim.ORDER_MOVE, "unit": 0, "x": probe.plaza[0], "y": probe.plaza[1],
+			"facing": (probe.g_dir[g] + 512) & 1023, "width": 7 * M, "run": 1 if cav else 0, "player": 50}]
+	return {"sc": sc, "gate": g}
+
+
+## Run a gate rush: where the attacker gets to relative to the defender
+## (metres in from the gate along its axis), whether its anchor was ever
+## inside the defender's formation or behind its rear rank, the plaza clock.
+func _rush_run(inside: int, cav: bool, ticks: int, snap: bool) -> Dictionary:
+	var rs := _rush_scenario(inside, cav)
+	var sc: Dictionary = rs["sc"]
+	var g: int = rs["gate"]
+	var sim := BattleSim.new()
+	sim.setup(sc, 777)
+	var hashes := PackedInt64Array()
+	var dc := FM.cos_a(sim.g_dir[g])
+	var ds := FM.sin_a(sim.g_dir[g])
+	var contact := -1
+	var behind := 0
+	var inside_n := 0
+	var cap := 0
+	var snap_bad := 0
+	for t in ticks:
+		sim.step()
+		hashes.append(sim.state_hash())
+		if snap and t == 300:
+			snap_bad = _snap_diverges(sim, sc, 777, 120)
+		if contact < 0 and (sim.u_fighting[0] > 0 or sim.u_blk[0] == BattleSim.BLK_ENEMY):
+			contact = t
+		cap = maxi(cap, sim.cap_t)
+		if sim.u_state[1] == BattleSim.U_READY and sim.u_state[0] == BattleSim.U_READY:
+			# In from the gate's inner point along its axis (m x 1024).
+			var a_in: int = -((sim.u_ax[0] - sim.g_ix[g]) * dc + (sim.u_ay[0] - sim.g_iy[g]) * ds) / FM.TRIG_ONE
+			var d_in: int = -((sim.u_ax[1] - sim.g_ix[g]) * dc + (sim.u_ay[1] - sim.g_iy[g]) * ds) / FM.TRIG_ONE
+			if a_in > d_in + sim.unit_depth(1) + 2 * M:
+				behind += 1
+			# Inside its formation rectangle (1 m in from its edges)?
+			var fdx: int = sim.u_ax[0] - sim.u_ax[1]
+			var fdy: int = sim.u_ay[0] - sim.u_ay[1]
+			var fc := FM.cos_a(sim.u_face[1])
+			var fs := FM.sin_a(sim.u_face[1])
+			var fw := (fdx * fc + fdy * fs) / FM.TRIG_ONE
+			var lt := (-fdx * fs + fdy * fc) / FM.TRIG_ONE
+			if fw < -M and fw > -sim.unit_depth(1) + M and absi(lt) < sim.unit_half_width(1) - M:
+				inside_n += 1
+	var a_end: int = -((sim.u_ax[0] - sim.g_ix[g]) * dc + (sim.u_ay[0] - sim.g_iy[g]) * ds) / FM.TRIG_ONE / M
+	return {"hashes": hashes, "contact": contact, "behind": behind, "inside": inside_n, "cap": cap, "snap_bad": snap_bad,
+		"a_end": a_end, "def_in": inside, "killed": [sim.u_killed[0], sim.u_killed[1]], "states": [sim.u_state[0], sim.u_state[1]], "routs": [sim.u_routs[0], sim.u_routs[1]],
+		"plaza_d": FM.approx_len(sim.u_ax[0] - sim.plaza[0], sim.u_ay[0] - sim.plaza[1]) / M, "dodge": sim.stat_dodge}
+
+
+func _check_gate_rush() -> void:
+	for spec in [[2, false, "foot, defender in the gateway"], [2, true, "riders at the run, defender in the gateway"],
+			[14, false, "foot, defender 14 m inside (side streets open)"], [14, true, "riders, defender 14 m inside"]]:
+		var a := _rush_run(int(spec[0]), bool(spec[1]), 900, true)
+		var b := _rush_run(int(spec[0]), bool(spec[1]), 900, false)
+		if a["hashes"] != b["hashes"]:
+			_fail("gate rush (%s): same seed diverged" % spec[2])
+		if int(a["snap_bad"]) != 0:
+			_fail("gate rush (%s): snapshot / restore diverged" % spec[2])
+		var why := "contact at tick %d, attacker ended %d m in from the gate (defender %d m in), %d m from the plaza; anchor inside the defender %d ticks, behind it %d ticks; plaza clock max %d; killed att %d / def %d; states %s, routs %s; steered %d" % [
+			a["contact"], a["a_end"], a["def_in"], a["plaza_d"], a["inside"], a["behind"], a["cap"],
+			a["killed"][0], a["killed"][1], str(a["states"]), str(a["routs"]), a["dodge"]]
+		if int(a["inside"]) > 0 or int(a["contact"]) < 0 or (int(spec[0]) < 5 and (int(a["behind"]) > 0 or int(a["cap"]) > 0)):
+			_fail("gate rush (%s): %s" % [spec[2], why])
+		else:
+			print("PASS gate rush (%s): %s; identical on repeat and across snapshot / restore" % [spec[2], why])
+
+
+func _check_blocking() -> void:
+	_check_gate_rush()
+	for kind in ["street", "pass", "pass_clear", "jam"]:
+		var ticks := 1500 if kind == "street" else (1200 if kind != "jam" else 3000)
+		var snap_at := 400 if kind == "street" else (200 if kind != "jam" else 500)
+		var a := _block_run(kind, snap_at, ticks)
+		var b := _block_run(kind, -1, ticks)
+		var ha: PackedInt64Array = a["hashes"]
+		var hb: PackedInt64Array = b["hashes"]
+		if ha != hb:
+			_fail("blocking %s: same seed diverged" % kind)
+		if int(a["snap_bad"]) != 0:
+			_fail("blocking %s: snapshot / restore diverged (%d ticks)" % [kind, int(a["snap_bad"])])
+		var info := "queued %d, blocked %d, through friends %d, steered %d" % [a["queued"], a["blocked"], a["pass"], a["dodge"]]
+		match kind:
+			"street":
+				var mf: Array = a["max_fight"]
+				if int(mf[0]) > 2 or int(mf[1]) > 2:
+					_fail("blocking street: more than two units a side fought at once (%s)" % str(mf))
+				if int(a["queued"]) <= 0:
+					_fail("blocking street: nobody waited behind the fighting friends (%s)" % info)
+				print("PASS blocking street fight: at most %s units a side fighting at once, killed %s, winner %d; %s; identical on repeat and across snapshot / restore at tick 400" % [
+					str(mf), str(a["killed"]), a["winner"], info])
+			"pass":
+				var clear := _block_run("pass_clear", -1, 1200)
+				if int(a["pass"]) <= 0 or int(a["arrived"]) < 0 or int(a["arrived"]) <= int(clear["arrived"]):
+					_fail("blocking pass-through: arrived at %d (open ground %d), %s" % [a["arrived"], clear["arrived"], info])
+				else:
+					print("PASS blocking pass-through: through a standing friend in %d ticks (open ground %d); %s; identical across snapshot / restore mid-pass" % [
+						a["arrived"], clear["arrived"], info])
+			"jam":
+				if int(a["arrived"]) < 0:
+					_fail("blocking gate jam: the four units did not all get through the gate (%s)" % info)
+				else:
+					print("PASS blocking gate jam: four units through one open gate to the plaza by tick %d; %s; identical across snapshot / restore mid-jam" % [
+						a["arrived"], info])
 
 
 # ---------------------------------------------------------------- walls ---

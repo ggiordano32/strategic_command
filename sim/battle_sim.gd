@@ -717,6 +717,8 @@ var stat_knockdowns: int = 0
 ## Diagnostics: kills by cause [melee frontal, melee flank/rear/down,
 ## charge impact, missile, artillery].
 var stat_kills := PackedInt32Array([0, 0, 0, 0, 0])
+## ... per side of the men killed: side * 5 + cause (not hashed).
+var stat_kside := PackedInt32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
 var stat_parting: int = 0          # free blows at riders / soldiers turning away
 var stat_impact_blocked: int = 0   # charge impacts taken on a formed front's shields
 ## Battle AI decisions by unit mode (BattleAI.A_*), plus [8] army withdrawals,
@@ -826,6 +828,34 @@ var stat_unbar: int = 0             # gates opened from inside
 var stat_tower_hits: int = 0        # shots that struck a tower
 var stat_towers_down: int = 0       # towers silenced (engine wrecked)
 var stat_tower_kills: int = 0       # men killed by the towers' engines
+
+# Units do not pass through each other (docs/DESIGN.md "Unit blocking and
+# street fights"). Each tick the footprints of the ready units on the
+# ground (their formation rectangle, clipped to where their men are) are
+# marked in 4 m cells per side (the soldier grid's cells); an anchor may not
+# step into an enemy's footprint (it steers round where there is room, else
+# stops there and its men fight), passes through friends at half speed, and
+# an attacking unit queues behind friends already fighting its target.
+const OCC_FRONT := M              # a footprint reaches this far ahead of the anchor ...
+const OCC_PAD := M / 2            # ... this far beyond the outer files and the rear rank
+const OCC_MIN := 2 * M            # ... half extents at least this (a thin line still covers a cell)
+const OCC_QUEUE := 60 * M         # friends fighting this near the box of the unit we attack are the line we queue behind
+const OCC_CORNER := 8 * M         # front corners probed at most this far either side of the anchor
+const DODGE: Array[int] = [85, 171]  # steering angles tried when blocked (30, 60 degrees: still getting on)
+const DODGE_LOOK := 4 * M         # ... each looked along this far (a cell): room to go round, not a sidestep
+const BLK_FRIEND := 1             # u_blk: passing through a friend (half speed)
+const BLK_QUEUE := 2              # ... waiting behind friends fighting its target
+const BLK_ENEMY := 3              # ... stopped at an enemy's footprint (its men fight)
+var u_blk := PackedInt32Array()   # what the anchor met this tick (BLK_*, 0 nothing)
+var u_dodge := PackedInt32Array() # the side it steers round an obstacle (-1 / 1, 0 none)
+var occ0 := PackedInt32Array()    # derived (rebuilt every other tick, kept in snapshots): side 0's footprints per 4 m cell:
+var occ1 := PackedInt32Array()    # units | fighting units << 8 | (first unit + 1) << 16; side 1's
+var _blk_u: int = -1              # scratch: the unit an anchor probe met
+var _placing := PackedInt32Array() # scratch: units placed by this tick's orders (they do not refuse each other)
+var stat_blocked: int = 0         # unit-ticks an anchor stopped at an enemy
+var stat_queued: int = 0          # unit-ticks waiting behind fighting friends
+var stat_pass: int = 0            # unit-ticks passing through friends
+var stat_dodge: int = 0           # unit-ticks steering round a unit
 
 
 # ---------------------------------------------------------------- setup ---
@@ -1105,6 +1135,9 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	blk_w = (field_w >> 14) + 1
 	blk_n0.resize(blk_w * ((field_h >> 14) + 1))
 	blk_n1.resize(blk_n0.size())
+	for arr in [occ0, occ1]:
+		arr.resize(grid_w * grid_h)
+		arr.fill(0)
 	grid_next.resize(n)
 	_update_bounds()
 	_update_units_stats()
@@ -1140,7 +1173,7 @@ func _unit_arrays() -> Array:
 		u_fire_acc, u_fire_ptr, u_ammo, u_hit_t, u_charged_t, u_killed,
 		u_withdrawn, u_routed_off, u_recent, u_att, u_def, u_dmg, u_reach, u_nwalls,
 		u_ai, u_ai_t, u_ai_x, u_ai_y, u_eng0, u_neng, u_depl, u_deploy, u_fright,
-		u_shelled_t, u_shelled_by, u_emove, u_h, u_refill, u_rprog, u_reserve]
+		u_shelled_t, u_shelled_by, u_emove, u_h, u_refill, u_rprog, u_reserve, u_blk, u_dodge]
 
 
 ## Per-unit arrays of woods and settlement maps (hashed only on those maps,
@@ -3625,6 +3658,10 @@ func _apply_orders(max_player: int = 1 << 30) -> void:
 		return
 	pending_orders = rest
 	due.sort_custom(_order_less)
+	_placing = PackedInt32Array()
+	for o in due:
+		if int(o["type"]) == ORDER_PLACE:
+			_placing.append(int(o.get("unit", -1)))
 	for o in due:
 		if int(o["type"]) == ORDER_READY:
 			if phase == PHASE_DEPLOY:
@@ -3662,6 +3699,7 @@ func _apply_orders(max_player: int = 1 << 30) -> void:
 				u_pn[u] = 0  # plan a new path
 			if city_on != 0 and ws_e.size() > 0:
 				_wall_order(u, int(o["type"]))
+	_placing = PackedInt32Array()
 
 
 ## The ORDER_KEYS fields of unit u as a Dictionary.
@@ -3976,7 +4014,40 @@ func _compute_offsets(u: int) -> void:
 		t_fsp[ty], t_rsp[ty])
 	if city_on != 0 and n_cmp > 0 and u_stair[u] == 0 and u < _u_obs.size() and _u_obs[u] != 0:
 		_project_slots(u)
+	if u_contact[u] != 0 and occ0.size() > 0:
+		_slots_off_enemy(u)
 	u_dirty[u] = 0
+
+
+## No man's place inside an enemy unit's footprint: such places move back
+## (away from the unit's front) 2 m at a time, at most 8 m. Only when the
+## offsets are recomputed with an enemy near, never per tick.
+func _slots_off_enemy(u: int) -> void:
+	var theirs: PackedInt32Array = occ1 if u_side[u] == 0 else occ0
+	var gw := grid_w
+	var gmax := grid_w * grid_h - 1
+	var ax := u_ax[u]
+	var ay := u_ay[u]
+	var bx := -FM.cos_a(u_face[u]) * 2 * M / FM.TRIG_ONE
+	var by := -FM.sin_a(u_face[u]) * 2 * M / FM.TRIG_ONE
+	var base := u_slot_base[u]
+	for s in u_alive[u]:
+		var x := ax + off_x[base + s]
+		var y := ay + off_y[base + s]
+		# (On the seam - the enemy's cells reach ours there - it keeps its place:
+		# only a place a cell deep in the enemy's footprint moves.)
+		if theirs[clampi((y >> 12) * gw + (x >> 12), 0, gmax)] == 0 \
+				or theirs[clampi(((y - 2 * by) >> 12) * gw + ((x - 2 * bx) >> 12), 0, gmax)] == 0:
+			continue
+		for q in 4:
+			x += bx
+			y += by
+			if theirs[clampi((y >> 12) * gw + (x >> 12), 0, gmax)] == 0:
+				break
+		if obs_on != 0 and (nav_at(x, y) & _mask_of(u)) == 0:
+			continue  # (back there is a wall or a house: it keeps its place)
+		off_x[base + s] = x - ax
+		off_y[base + s] = y - ay
 
 
 ## Settlement maps: a man's place that falls across a wall, in a house or on
@@ -4127,12 +4198,264 @@ func _turn(u: int, want: int) -> void:
 	u_dirty[u] = 1
 
 
+# ------------------------------------------------------ unit footprints ---
+
+## Mark every ready ground unit's footprint in the 4 m cells of its side
+## (occ0 / occ1): its formation rectangle (the anchor at its front centre,
+## OCC_FRONT ahead, OCC_PAD beyond its outer files and rear rank, half
+## extents at least OCC_MIN), the cells whose centre lies inside it and
+## within its men's box (padded): per unit, row by row (each row's run of
+## cells worked out from the rectangle's edges), never per soldier.
+## Routing units, units on a wall or a stair, ladder parties climbing and
+## tower engines are not obstacles. Units in index order, so the first unit
+## of a cell is the lowest index (a pure function of the state).
+func _build_occ() -> void:
+	occ0.fill(0)
+	occ1.fill(0)
+	var o0 := occ0
+	var o1 := occ1
+	var gw := grid_w
+	var gh := grid_h
+	var ust := u_state
+	var ual := u_alive
+	var uwl := u_wall
+	var ustr := u_stair
+	var uty := u_type
+	var usd := u_side
+	var ufi := u_fighting
+	var ubk := u_blk
+	var mnx := u_minx
+	var mxx := u_maxx
+	var mny := u_miny
+	var mxy := u_maxy
+	var uax := u_ax
+	var uay := u_ay
+	var ufc := u_face
+	var ucl := u_cls
+	for u in n_units:
+		var alive := ual[u]
+		if ust[u] != U_READY or alive <= 0 or uwl[u] > 0 or ustr[u] != 0:
+			continue
+		var ty := uty[u]
+		if t_fixed[ty] != 0:
+			continue
+		var occ: PackedInt32Array = o0 if usd[u] == 0 else o1
+		# (Units waiting behind fighting friends count as the line too, so the
+		# next ones queue behind them rather than in them. u_blk is last tick's.)
+		var add := 257 if ufi[u] > 0 or ubk[u] == BLK_QUEUE else 1
+		var own := (u + 1) << 16
+		# Cells of the men's box (padded).
+		var i0 := maxi((mnx[u] - OCC_PAD) >> 12, 0)
+		var i1 := mini((mxx[u] + OCC_PAD) >> 12, gw - 1)
+		var j0 := maxi((mny[u] - OCC_PAD) >> 12, 0)
+		var j1 := mini((mxy[u] + OCC_PAD) >> 12, gh - 1)
+		if ucl[u] == UT.CLS_ART:
+			# A battery: its engines and crews stand round the line of engines;
+			# the men's box is close enough.
+			for j in range(j0, j1 + 1):
+				var row := j * gw
+				for i in range(i0, i1 + 1):
+					var v := occ[row + i]
+					occ[row + i] = (v + add) if v >= 65536 else (v + add) | own
+			continue
+		# The formation rectangle in the unit's frame: along its facing
+		# f in [-back, OCC_FRONT], across it l in [-hw, hw] (x 4096).
+		# (unit_half_width / unit_depth inlined.)
+		var files := maxi(mini(u_sq[u] if u_sq[u] > 0 else u_files[u], alive), 1)
+		var c := FM.cos_a(ufc[u])
+		var s := FM.sin_a(ufc[u])
+		var hw := maxi((files - 1) * t_fsp[ty] / 2 + t_fsp[ty] / 2 + OCC_PAD, OCC_MIN)
+		var back := maxi(((alive + files - 1) / files - 1) * t_rsp[ty] + t_rsp[ty] / 2 + OCC_PAD,
+			2 * OCC_MIN - OCC_FRONT)
+		var fmax := OCC_FRONT * 4096
+		var fmin := -back * 4096
+		var lmax := hw * 4096
+		var ax := uax[u]
+		var ay := uay[u]
+		# Rows of the rectangle's own box too.
+		var ey := ((s if s >= 0 else -s) * (back + OCC_FRONT) + (c if c >= 0 else -c) * 2 * hw) / 8192
+		var my := ay + s * (OCC_FRONT - back) / 8192
+		j0 = maxi(j0, (my - ey - 2048) >> 12)
+		j1 = mini(j1, (my + ey - 2048) >> 12)
+		var dy := j0 * 4096 + 2048 - ay
+		for j in range(j0, j1 + 1):
+			# Along the row (x' = x - ax): f = x' c + dy s, l = -x' s + dy c.
+			var fb := dy * s
+			var lb := dy * c
+			dy += 4096
+			var xlo := -(1 << 40)
+			var xhi := 1 << 40
+			if c > 0:
+				xlo = (fmin - fb) / c
+				xhi = (fmax - fb) / c
+			elif c < 0:
+				xlo = (fmax - fb) / c
+				xhi = (fmin - fb) / c
+			elif fb < fmin or fb > fmax:
+				continue
+			if s > 0:
+				xlo = maxi(xlo, (lb - lmax) / s)
+				xhi = mini(xhi, (lb + lmax) / s)
+			elif s < 0:
+				xlo = maxi(xlo, (lb + lmax) / s)
+				xhi = mini(xhi, (lb - lmax) / s)
+			elif lb < -lmax or lb > lmax:
+				continue
+			if xlo > xhi:
+				continue
+			# Cells whose centre (i * 4 m + 2 m) lies in [ax + xlo, ax + xhi].
+			var ia := maxi(-((2048 - ax - xlo) >> 12), i0)
+			var ib := mini((ax + xhi - 2048) >> 12, i1)
+			var row := j * gw
+			for k in range(row + ia, row + ib + 1):
+				var v := occ[k]
+				occ[k] = (v + add) if v >= 65536 else (v + add) | own
+
+
+## What unit u's anchor would meet stepping from (ox, oy) to (x, y), its
+## front corners (rx, ry) either side (t: the unit it attacks, -1 none): BLK_ENEMY (an
+## enemy's footprint it is not already inside and backing out of), BLK_QUEUE
+## (u attacks and is not fighting: friends fighting near its target ahead),
+## BLK_FRIEND (another friend's footprint: half speed), 0 free. _blk_u: the
+## unit met.
+func _occ_probe(u: int, ox: int, oy: int, x: int, y: int, rx: int, ry: int, t: int) -> int:
+	var gw := grid_w
+	var gmax := grid_w * grid_h - 1
+	var mine: PackedInt32Array = occ0 if u_side[u] == 0 else occ1
+	var theirs: PackedInt32Array = occ1 if u_side[u] == 0 else occ0
+	var sx := x - ox
+	var sy := y - oy
+	# Enemy footprints: the anchor and the two front corners (rx, ry out).
+	for q in 3:
+		var px := x
+		var py := y
+		var qx := ox
+		var qy := oy
+		if q == 1:
+			px += rx; py += ry; qx += rx; qy += ry
+		elif q == 2:
+			px -= rx; py -= ry; qx -= rx; qy -= ry
+		var v := theirs[clampi((py >> 12) * gw + (px >> 12), 0, gmax)]
+		if v == 0:
+			continue
+		var b := (v >> 16) - 1
+		# Already inside it (it came to us, or our men are mixed with its):
+		# moving away from its centre is allowed.
+		if theirs[clampi((qy >> 12) * gw + (qx >> 12), 0, gmax)] != 0 \
+				and sx * (qx - u_cx[b]) + sy * (qy - u_cy[b]) >= 0:
+			continue
+		_blk_u = b
+		return BLK_ENEMY
+	var k := clampi((y >> 12) * gw + (x >> 12), 0, gmax)
+	var w := mine[k]
+	if w == 0:
+		return 0
+	var cnt := w & 255
+	var own := (w >> 16) - 1
+	if cnt == 1 and own == u:
+		return 0
+	if t >= 0 and u_fighting[u] == 0 and ((w >> 8) & 255) > 0 and u_fighting[t] > 0 \
+			and x >= u_minx[t] - OCC_QUEUE and x <= u_maxx[t] + OCC_QUEUE \
+			and y >= u_miny[t] - OCC_QUEUE and y <= u_maxy[t] + OCC_QUEUE:
+		# Friends are fighting our target here: the line; wait behind it.
+		_blk_u = own if own != u else -1
+		return BLK_QUEUE
+	_blk_u = own if own != u else -1
+	return BLK_FRIEND
+
+
+## Unit u's anchor steps from (ox, oy) toward (nx, ny) (t: the unit it
+## attacks, -1 a move): into an enemy's footprint it may not (it steers
+## round it if there is room: 30 or 60 degrees off with a free cell beyond,
+## on the side it chose first, never round its own target; else it stops
+## there), behind friends
+## fighting its target it waits (or goes round them), through other friends
+## it goes at half speed. Sets u_blk / u_dodge. Returns where it gets to.
+func _anchor_step(u: int, ox: int, oy: int, nx: int, ny: int, t: int, spd: int) -> Vector2i:
+	var sx := nx - ox
+	var sy := ny - oy
+	if sx == 0 and sy == 0:
+		return Vector2i(nx, ny)
+	# Front corners: across the unit's facing, at most OCC_CORNER out.
+	var hw := mini(unit_half_width(u), OCC_CORNER)
+	var rx := -FM.sin_a(u_face[u]) * hw / FM.TRIG_ONE
+	var ry := FM.cos_a(u_face[u]) * hw / FM.TRIG_ONE
+	# Nothing there (most steps): straight on.
+	var gw := grid_w
+	var gmax := grid_w * grid_h - 1
+	var theirs: PackedInt32Array = occ1 if u_side[u] == 0 else occ0
+	var mine: PackedInt32Array = occ0 if u_side[u] == 0 else occ1
+	var ci := clampi((ny >> 12) * gw + (nx >> 12), 0, gmax)
+	if theirs[ci] == 0 and mine[ci] == 0 and theirs[clampi(((ny + ry) >> 12) * gw + ((nx + rx) >> 12), 0, gmax)] == 0 \
+			and theirs[clampi(((ny - ry) >> 12) * gw + ((nx - rx) >> 12), 0, gmax)] == 0:
+		u_dodge[u] = 0
+		return Vector2i(nx, ny)
+	var k := _occ_probe(u, ox, oy, nx, ny, rx, ry, t)
+	if k <= BLK_FRIEND:
+		u_dodge[u] = 0
+		u_blk[u] = k
+		if k == BLK_FRIEND:
+			stat_pass += 1
+			return _half_step(ox, oy, sx, sy, spd)
+		return Vector2i(nx, ny)
+	var b := _blk_u
+	if not (k == BLK_ENEMY and b == t):
+		# Round it: first on the side chosen before, else away from its
+		# centre (the side it lies less on).
+		var side := u_dodge[u]
+		if side == 0:
+			side = 1
+			if b >= 0 and sx * (u_cy[b] - oy) - sy * (u_cx[b] - ox) > 0:
+				side = -1
+		var gm := _ground_mask(u) if obs_on != 0 else 0
+		var sl := maxi(FM.approx_len(sx, sy), 1)
+		for a in DODGE:
+			for sd in [side, -side]:
+				var ca := FM.cos_a(a)
+				var sa: int = FM.sin_a(a) * sd
+				var dx := (sx * ca - sy * sa) / FM.TRIG_ONE
+				var dy := (sx * sa + sy * ca) / FM.TRIG_ONE
+				var px := clampi(ox + dx, 0, field_w)
+				var py := clampi(oy + dy, 0, field_h)
+				# Room that way: a cell further on is free too.
+				var lx := clampi(ox + dx * DODGE_LOOK / sl, 0, field_w)
+				var ly := clampi(oy + dy * DODGE_LOOK / sl, 0, field_h)
+				if gm != 0 and ((nav_at(px, py) & gm) == 0 or (nav_at(lx, ly) & gm) == 0):
+					continue
+				var k2 := _occ_probe(u, ox, oy, px, py, rx, ry, t)
+				if k2 <= BLK_FRIEND and _occ_probe(u, ox, oy, lx, ly, rx, ry, t) <= BLK_FRIEND:
+					u_dodge[u] = sd
+					u_blk[u] = k
+					stat_dodge += 1
+					if k2 == BLK_FRIEND:
+						return _half_step(ox, oy, px - ox, py - oy, spd)
+					return Vector2i(px, py)
+	u_blk[u] = k
+	if k == BLK_ENEMY:
+		stat_blocked += 1
+	else:
+		stat_queued += 1
+	return Vector2i(ox, oy)
+
+
+## A step (sx, sy) from (ox, oy) through friends: at most half the speed.
+func _half_step(ox: int, oy: int, sx: int, sy: int, spd: int) -> Vector2i:
+	var l := FM.approx_len(sx, sy)
+	var h := maxi(spd / 2, 1)
+	if l <= h:
+		return Vector2i(ox + sx, oy + sy)
+	return Vector2i(ox + sx * h / l, oy + sy * h / l)
+
+
 func _update_units() -> void:
 	var ton := ter_on != 0
 	var mon := map_on != 0
 	var oon := obs_on != 0
+	if (tick & 1) == 0:
+		_build_occ()  # (every other tick: footprints move little in 0.2 s)
 	for u in n_units:
 		u_moved[u] = 0
+		u_blk[u] = 0
 		if (ton or oon) and u_alive[u] > 0:
 			u_h[u] = _unit_elev(u) if oon else height_at(u_cx[u], u_cy[u])
 		if oon and u_alive[u] > 0:
@@ -4252,7 +4575,17 @@ func _update_units() -> void:
 			var d := FM.isqrt(dx * dx + dy * dy)
 			if ton and d > 0:
 				aspeed = aspeed * _fac_dir(u, g0, dx, dy, d) / 1000
-			if d <= aspeed:
+			var arrive := d <= aspeed
+			var mnx := wx if arrive else u_ax[u] + dx * aspeed / d
+			var mny := wy if arrive else u_ay[u] + dy * aspeed / d
+			if d > 0:
+				# Other units in the way: round them, through friends slowly.
+				var ms := _anchor_step(u, u_ax[u], u_ay[u], mnx, mny, -1, aspeed)
+				if ms.x != mnx or ms.y != mny:
+					arrive = false
+					mnx = ms.x
+					mny = ms.y
+			if arrive:
 				u_ax[u] = wx
 				u_ay[u] = wy
 				if order == O_MOVE and not via:
@@ -4264,8 +4597,8 @@ func _update_units() -> void:
 					elif u_stair[u] == ST_LADDER_GO:
 						_ladder_start(u)  # at the foot of the wall: up the ladders
 			else:
-				u_ax[u] += dx * aspeed / d
-				u_ay[u] += dy * aspeed / d
+				u_ax[u] = mnx
+				u_ay[u] = mny
 				# March facing the direction of travel; turn to the final
 				# facing for the last stretch.
 				if via or d > REFORM_IN_PLACE_DIST:
@@ -4308,8 +4641,10 @@ func _update_units() -> void:
 						if vdd > 0:
 							want_face = FM.atan2_a(vy, vx)
 							var mv0 := mini(aspeed, vdd)
-							u_ax[u] += vx * mv0 / vdd
-							u_ay[u] += vy * mv0 / vdd
+							var vs := _anchor_step(u, u_ax[u], u_ay[u], u_ax[u] + vx * mv0 / vdd,
+								u_ay[u] + vy * mv0 / vdd, t, aspeed)
+							u_ax[u] = vs.x
+							u_ay[u] = vs.y
 				if via:
 					pass
 				elif held:
@@ -4341,8 +4676,10 @@ func _update_units() -> void:
 						stop = d  # in range of a target out of reach: no closer (a wall between)
 					if d > stop:
 						var mv := mini(aspeed, d - stop)
-						u_ax[u] += dx * mv / d
-						u_ay[u] += dy * mv / d
+						var ss := _anchor_step(u, u_ax[u], u_ay[u], u_ax[u] + dx * mv / d, u_ay[u] + dy * mv / d,
+							t, aspeed)
+						u_ax[u] = ss.x
+						u_ay[u] = ss.y
 				elif (u_fighting[u] == 0 or u_state[t] == U_ROUTING) and d > 0:
 					want_face = FM.atan2_a(dy, dx)
 					var hw := (u_maxx[t] - u_minx[t]) >> 1
@@ -4358,8 +4695,10 @@ func _update_units() -> void:
 						aspeed = aspeed * _fac_dir(u, g0, dx, dy, d) / 1000
 					if d > stop:
 						var mv := mini(aspeed, d - stop)
-						u_ax[u] += dx * mv / d
-						u_ay[u] += dy * mv / d
+						var ms2 := _anchor_step(u, u_ax[u], u_ay[u], u_ax[u] + dx * mv / d, u_ay[u] + dy * mv / d,
+							t, aspeed)
+						u_ax[u] = ms2.x
+						u_ay[u] = ms2.y
 				u_dface[u] = want_face
 		_turn(u, want_face)
 		if oon and _u_obs[u] != 0 and u_wall[u] == 0 and not art and (u + tick) % 3 == 0:
@@ -4963,7 +5302,8 @@ func _update_soldiers() -> void:
 		if u_fighting[u] > 0 and not shy and tick - u_charged_t[u] < ENGAGED_AFTER_CHARGE:
 			rear_r = SEARCH_ENGAGED
 		var keep_rear := (rear_r + TARGET_KEEP_EXTRA) * (rear_r + TARGET_KEEP_EXTRA)
-		var disengage := u_order[u] == O_MOVE or withdrawing
+		# (A move stopped by an enemy in the way fights where it stands.)
+		var disengage := (u_order[u] == O_MOVE and u_blk[u] != BLK_ENEMY) or withdrawing
 		# Formed pikes strike from their slots with ranks 1..ranks_reach.
 		var pike_formed := u_formed[u] != 0
 		var pike_ranks := t_ranks[ty] * files
@@ -5679,6 +6019,7 @@ func _melee(a: int, d: int, pen: int, parting: bool = false) -> void:
 	var h := hp[d] - dmg
 	if h <= 0:
 		stat_kills[0 if frontal else 1] += 1
+		stat_kside[u_side[ud] * 5 + (0 if frontal else 1)] += 1
 		_remove(d, GONE_KILLED)
 	else:
 		hp[d] = h
@@ -5846,6 +6187,7 @@ func _impact_victim(r: int, v: int, power: int, ma: int, zone: int) -> bool:
 	var h := hp[v] - dmg
 	if h <= 0:
 		stat_kills[2] += 1
+		stat_kside[u_side[uv] * 5 + 2] += 1
 		_remove(v, GONE_KILLED)
 		return true
 	hp[v] = h
@@ -6255,6 +6597,7 @@ func _missile_hit(p: int, d: int) -> void:
 	# A horse struck may simply go down, rider and all.
 	if h <= 0 or (t_m_down[td] > 0 and _rand() % 100 < t_m_down[td]):
 		stat_kills[3] += 1
+		stat_kside[u_side[ud] * 5 + 3] += 1
 		_remove(d, GONE_KILLED)
 	else:
 		hp[d] = h
@@ -6960,6 +7303,7 @@ func _art_wound(v: int, dmg: int, by: int, knock: int) -> void:
 	var h := hp[v] - dmg
 	if h <= 0:
 		stat_kills[4] += 1
+		stat_kside[u_side[unit_of[v]] * 5 + 4] += 1
 		stat_art_kills += 1
 		if t_fixed[u_type[by]] != 0:
 			stat_tower_kills += 1
@@ -7507,16 +7851,68 @@ static func place_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 		return
 	if sim.city_on != 0 and sim.n_cmp > 0 and sim._piece0(p.x, p.y) < 0:
 		return  # a house, a wall, a gateway
-	d["ax"] = p.x
-	d["ay"] = p.y
-	d["face"] = face
+	var nf: int = d["files"]
 	if UT.cls(ty) != UT.CLS_ART:
 		var f := int(o.get("files", d["files"]))
 		if sim.u_wall[u] > 0 and not o.has("files"):
 			f = ground_files(ty, alive)
-		d["files"] = clampi(f, mini(MIN_FILES, maxi(alive, 1)), maxi(alive, 1))
+		nf = clampi(f, mini(MIN_FILES, maxi(alive, 1)), maxi(alive, 1))
+	if not place_clear(sim, u, p.x, p.y, face, nf):
+		return  # inside another unit
+	d["ax"] = p.x
+	d["ay"] = p.y
+	d["face"] = face
+	d["files"] = nf
 	d["wall"] = 0
 	_placed(d)
+
+
+## A unit u placed with its anchor at (x, y), facing `face`, `files` wide,
+## is not inside another unit on the ground (units do not pass through each
+## other): neither formation's middle lies within the other's rectangle.
+static func place_clear(sim, u: int, x: int, y: int, face: int, files: int) -> bool:
+	var ty: int = sim.u_type[u]
+	var alive: int = maxi(sim.u_alive[u], 1)
+	var f := clampi(files, 1, alive)
+	var hw: int = (f - 1) * UT.stat(ty, "file_sp") / 2 + M / 2
+	var dep: int = ((alive + f - 1) / f - 1) * UT.stat(ty, "rank_sp") + M / 2
+	var c := FM.cos_a(face)
+	var s := FM.sin_a(face)
+	var mx := x - c * dep / 2 / FM.TRIG_ONE
+	var my := y - s * dep / 2 / FM.TRIG_ONE
+	# (Units placed in the same batch - a group dragged together - and units
+	# with a placement still pending go where they are sent: not obstacles.)
+	var moving := {}
+	for k in sim._placing:
+		moving[k] = true
+	for po in sim.pending_orders:
+		if int(po["type"]) == ORDER_PLACE:
+			moving[int(po.get("unit", -1))] = true
+	for o in sim.n_units:
+		if o == u or sim.u_state[o] != U_READY or sim.u_alive[o] <= 0 or sim.u_wall[o] > 0 \
+				or UT.stat(sim.u_type[o], "fixed") != 0 or moving.has(o):
+			continue
+		var oc := FM.cos_a(sim.u_face[o])
+		var os := FM.sin_a(sim.u_face[o])
+		var ohw: int = sim.unit_half_width(o) + M / 2
+		var odep: int = sim.unit_depth(o) + M / 2
+		# Our middle in its rectangle?
+		var dx: int = mx - sim.u_ax[o]
+		var dy: int = my - sim.u_ay[o]
+		var fw := (dx * oc + dy * os) / FM.TRIG_ONE
+		var lt := (-dx * os + dy * oc) / FM.TRIG_ONE
+		if fw <= M and fw >= -odep and absi(lt) <= ohw:
+			return false
+		# Its middle in ours?
+		var omx: int = sim.u_ax[o] - oc * odep / 2 / FM.TRIG_ONE
+		var omy: int = sim.u_ay[o] - os * odep / 2 / FM.TRIG_ONE
+		dx = omx - x
+		dy = omy - y
+		fw = (dx * c + dy * s) / FM.TRIG_ONE
+		lt = (-dx * s + dy * c) / FM.TRIG_ONE
+		if fw <= M and fw >= -dep and absi(lt) <= hw:
+			return false
+	return true
 
 
 static func _placed(d: Dictionary) -> void:

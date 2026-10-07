@@ -50,6 +50,10 @@ extends SceneTree
 ##    refused, a drop (the AI takes the dropped player's side) and the
 ##    return (handed back); a drop during the deployment starts the battle
 ##    without waiting. Every frame equal.
+## 11. Units do not pass through each other: two peers fighting a street
+##    fight (two columns meeting in a 10 m street, the enemy AI), a third
+##    joining by snapshot while units wait behind the fighting ones: every
+##    frame equal.
 ## 10. Siege equipment and wall towers: the equal-force walls-3 siege with
 ##    ladders, a ram, tower engines and a 20 minute limit, restored from a
 ##    snapshot taken mid-climb (and at other ticks) runs on identically;
@@ -77,6 +81,11 @@ func _init() -> void:
 		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 		quit(0 if _ok else 1)
 		return
+	if OS.get_cmdline_user_args().has("--only=street"):
+		_test_lockstep_street()
+		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
+		quit(0 if _ok else 1)
+		return
 	_test_snapshots()
 	_test_profiles()
 	_test_lockstep()
@@ -87,6 +96,7 @@ func _init() -> void:
 	_test_lockstep_city(0, true)
 	_test_siege_snapshots()
 	_test_lockstep_siege()
+	_test_lockstep_street()
 	_test_easy_snapshots()
 	_test_lockstep_easy()
 	_test_skilled_snapshots()
@@ -1068,6 +1078,93 @@ func _test_lockstep_siege() -> void:
 			sim_a.stat_tower_hits, str(sim_a.g_state), sim_a.tick])
 	if sim_a.stat_ladder_up == 0:
 		_fail("siege lockstep: nobody went up a ladder")
+
+
+# -------------------------------------------------------------- blocking ---
+
+## Two peers (side 0, three heavy units in a 10 m street) against the AI's
+## three coming down it; each peer sends its units at the enemy unit
+## nearest them now and then; a third peer joins by snapshot once units
+## are waiting behind friends who fight (the street fight under way).
+func _test_lockstep_street() -> void:
+	var units: Array = []
+	for k in 3:
+		units.append(Scenarios.unit(0, UT.HEAVY, 60, 150, 252 + k * 16, Scenarios.FACE_UP))
+	for k in 3:
+		units.append(Scenarios.unit(1, UT.HEAVY, 60, 150, 48 - k * 16, Scenarios.FACE_DOWN))
+	for u in units:
+		u["files"] = 8
+	var scen := {"width_m": 300, "height_m": 300, "units": units, "ai_sides": [1],
+		"terrain": {"kind": 0, "blocks": [[40, 60, 145, 240], [155, 60, 260, 240]], "urban": [[40, 60, 260, 240]]}}
+	var probe := BattleSim.new()
+	probe.setup(scen, 4242)
+	var home := _home_split(probe)
+	var relay := Relay.new()
+	var a := _new_peer(scen, home, 0, "A", [0, 1])
+	var b := _new_peer(scen, home, 1, "B", [0, 1])
+	a.latency = 1
+	b.latency = 3
+	b.d = 4
+	var peers: Array[Peer] = [a, b]
+	var total := 900 if quick else 1800
+	var c: Peer = null
+	var c_join := -1
+	var now := 0
+	while now < total * 3 and mini(a.ls.frame, b.ls.frame) < total:
+		now += 1
+		for p in peers:
+			var sim = p.ls.sim
+			if now % 40 == 5 + p.me * 13:
+				for u in sim.n_units:
+					if p.ls.u_cmd[u] != p.me or sim.u_state[u] != BattleSim.U_READY or sim.u_order[u] == BattleSim.O_ATTACK:
+						continue
+					var best := -1
+					var bd := 0
+					for o in sim.n_units:
+						if sim.u_side[o] == 1 and sim.u_state[o] == BattleSim.U_READY:
+							var d: int = absi(sim.u_cx[o] - sim.u_cx[u]) + absi(sim.u_cy[o] - sim.u_cy[u])
+							if best < 0 or d < bd:
+								best = o
+								bd = d
+					if best >= 0:
+						p.issue({"type": BattleSim.ORDER_ATTACK, "unit": u, "target": best, "run": 0})
+			p.flush(relay, now)
+			p.deliver(relay, now)
+			p.run(p.rng.randi() % 3, true)
+		if c != null:
+			c.flush(relay, now)
+			c.deliver(relay, now)
+			c.run(4, true)
+		elif now > 30:
+			var sa = a.ls.sim
+			var fighting := false
+			for u in sa.n_units:
+				if sa.u_fighting[u] > 0:
+					fighting = true
+			if (fighting and sa.stat_queued > 20) or now == total * 3 / 2:
+				c_join = now
+				c = _new_peer(scen, home, 1, "C", [0, 1])
+				c.online = true
+				c.latency = 2
+				if not c.ls.restore(a.ls.snapshot()):
+					_fail("street lockstep: C could not restore A's snapshot")
+					return
+				c.hashes[c.ls.frame] = c.ls.state_hash()
+				c.cursor = 0
+				while c.cursor < relay.items.size() and int(relay.items[c.cursor]["s"]) <= c.ls.last_s:
+					c.cursor += 1
+				c.sent_k = 1 << 30
+	var n_ab := _compare(a, b, 0, "street A/B")
+	var n_ac := _compare(a, c, c_join, "street A/C") if c != null else 0
+	var sim_a = a.ls.sim
+	if n_ab < total / 2 or n_ac < 50:
+		_fail("street lockstep: too few frames compared (A/B %d, A/C %d)" % [n_ab, n_ac])
+	elif n_ab > 0 and n_ac > 0:
+		print("PASS street lockstep: %d frames A/B and %d A/C equal (C joined at frame %d, mid street fight %s); waited behind friends %d, stopped at enemies %d, through friends %d; killed %d / %d; sim tick %d" % [
+			n_ab, n_ac, c_join, str(c_join != total * 3 / 2), sim_a.stat_queued, sim_a.stat_blocked, sim_a.stat_pass,
+			sim_a.u_killed[0] + sim_a.u_killed[1] + sim_a.u_killed[2], sim_a.u_killed[3] + sim_a.u_killed[4] + sim_a.u_killed[5], sim_a.tick])
+	if sim_a.stat_queued == 0:
+		_fail("street lockstep: nobody waited behind a fighting friend")
 
 
 # ------------------------------------------------------------ deployment ---

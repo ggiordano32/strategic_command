@@ -1179,3 +1179,27 @@ against ladder men; `u_ai_y` = the attacking unit; once they are gone it
 comes down to the foot of its stair as a reserve). With a ram that can
 still work a gate no foot hack at it. Counted in `C_SIEGE` (ladder orders,
 the ram sent, replies). Measured: docs/STATUS.md (fair-sieges table).
+
+## 14. As built: street fights (2026-10-07)
+
+Units no longer pass through each other (docs/DESIGN.md "Unit blocking and
+street fights"). The battle and settlement AI needed no change to work
+with it: their attack orders queue behind friends already fighting the
+target (the reserve waits behind the line), moves pass through friends at
+half speed, and paths never target ground a unit cannot reach (as
+before). New knobs (`sim/ai_profile.gd`), on for Skilled only:
+
+| Knob | E / A / S | What |
+|---|---|---|
+| `S_BREACH_HOLD` | 0 / 0 / 1 | once a gate is open or broken with attackers within 100 m, the reserve foot unit nearest each of two posts inside the wall either side of it holds that post (`A_BREACH` 34, `u_ai_x` / `u_ai_y` the post; the defending side's `ai_gate` remembers the gate) |
+| `S_BREACH_LAT` | 14 / 14 / 14 m | ... the posts this far along the wall from the gate's middle (open ground of the town, up to 8 m in) |
+| `S_BREACH_REACT` | 22 / 22 / 22 m | ... and they attack attackers this close to their post (those coming out of the gateway), else go back to it facing the gate |
+| `S_GUARD_JOIN` | 0 / 0 / 120 m | ... and the guards of the other gates with no attacker this near their gate become reserves posted behind the breach (30 m in, 12 m apart; the plaza if that is not open ground) |
+
+Tried at Average in the equal-force sieges (`--knob=a:216=1 --knob=a:219=122880`,
+10 seeds a row): walls 1 ring 100 / 100 % either way, polis 80 / 100 %
+(100 / 100 without); walls 2 ring 30 / 70 % (60 / 60), walls 3 ring 0 /
+10 % (30 / 10), with more draws. The defenders killed more attackers
+(ring walls 1: 372 against 269) but the breach holders, two or three units
+against the whole assault, died at the gate. Left on for Skilled as a
+Skilled habit; Easy and Average play as without them.
