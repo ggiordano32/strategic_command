@@ -39,6 +39,7 @@ signal resolved                        ## the battle's result is in on the serve
 signal setup_changed                   ## custom battle lobby: the setup (or its revision) changed
 
 const CData := preload("res://campaign/cdata.gd")
+const CState := preload("res://campaign/cstate.gd")
 
 const Lockstep := preload("res://sim/lockstep.gd")
 const LiveRoom := preload("res://game/net/live_room.gd")
@@ -57,6 +58,7 @@ var phase := "connecting"        ## connecting, lobby, sync, live, gone
 var me := -1
 var host := -1
 var humans: Array = []           ## the battle's human factions
+var guests: Array = []           ## other campaign humans who may join (no army in the battle; given units)
 var roster: Array = []           ## [{f, on, in, dropped, joining, keep, silent_ms}]
 var scenario: Dictionary = {}
 var seed_value := 0
@@ -178,18 +180,25 @@ func _ready() -> void:
 
 
 ## built: CBattle.build() of the pending battle; create: open the room (the
-## host) or join an existing one.
+## host) or join an existing one. p_guests: the campaign's other alive
+## humans, whose armies are not in the battle (guest_list()): they may join
+## and command units they are given.
 func setup(base: String, cid: String, token: String, p_me: int, built: Dictionary, p_humans: Array,
-		p_version: int, create: bool, p_keep: bool = false) -> void:
+		p_version: int, create: bool, p_keep: bool = false, p_guests: Array = []) -> void:
 	me = p_me
 	humans = p_humans.duplicate()
+	guests = []
+	for g in p_guests:
+		if not humans.has(int(g)) and not guests.has(int(g)):
+			guests.append(int(g))
+	guests.sort()
 	scenario = built["scenario"]
 	seed_value = int(built["seed"])
 	battle_id = int(built["battle"])
 	version = p_version
 	keep = p_keep
 	home = home_of(built, humans)
-	scen_hash = scenario_hash(scenario, seed_value, home)
+	scen_hash = scenario_hash(scenario, seed_value, home if guests.is_empty() else home + [-2] + guests)
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--coop-delay="):
 			fixed_delay = int(a.get_slice("=", 1))
@@ -456,7 +465,7 @@ func _apply_item(it: Dictionary) -> void:
 		for p in it.get("players", []):
 			ps.append(int(p))
 		ls = Lockstep.new()
-		ls.setup(scenario, seed_value, home, ps, int(it.get("host", host)))
+		ls.setup(scenario, seed_value, home, ps, int(it.get("host", host)), guests)
 		ls.saw(s)
 		phase = "live"
 		if ps.has(me):
@@ -815,13 +824,18 @@ func wait_longer() -> void:
 
 
 func _house(delta: float) -> void:
-	# Lobby: the host starts when every human is in (after a short count).
+	# Lobby: the host starts when every human of the battle is in and
+	# someone else is too (a guest counts) (after a short count).
 	if phase == "lobby" and is_host() and auto_start:
 		var all_in := true
 		for h in humans:
 			if not connected(int(h)):
 				all_in = false
-		if all_in and humans.size() > 1:
+		var n_in := 0
+		for p in roster:
+			if bool(p.get("on", false)):
+				n_in += 1
+		if all_in and n_in > 1:
 			if _start_t < 0.0:
 				_start_t = _now()
 				changed.emit()
@@ -903,12 +917,34 @@ func gift(units: Array, to: int) -> void:
 			issue({"type": Lockstep.C_GIFT, "unit": int(u), "to": to})
 
 
-## The other human players of the battle.
+## The other human players of the battle (guests included).
 func others() -> Array:
 	var out: Array = []
-	for h in humans:
+	for h in humans + guests:
 		if int(h) != me:
 			out.append(int(h))
+	return out
+
+
+## The players to show (lobby, strip): the battle's humans, then the guests
+## who are in the room or taking part.
+func shown_players() -> Array:
+	var out: Array = humans.duplicate()
+	for g in guests:
+		if not player(int(g)).is_empty() or (ls != null and ls.is_active(int(g))):
+			out.append(int(g))
+	return out
+
+
+## The campaign's alive humans not in battle b (the guests of its live
+## battle), in index order.
+static func guest_list(st: Dictionary, battle_humans: Array) -> Array:
+	var out: Array = []
+	for h in st.get("humans", []):
+		var f := int(h)
+		if not battle_humans.has(f) and CState.alive(st, f) and not out.has(f):
+			out.append(f)
+	out.sort()
 	return out
 
 

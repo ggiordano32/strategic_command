@@ -192,7 +192,9 @@ func jsonb(v any) []byte {
 // enterRoom handles {"t":"room", b, v, create, scen, keep}: the seat must be
 // a human whose army is in pending battle b of the campaign, at state
 // version v. create opens the room if there is none (the claim must be
-// free, or this device's own, or another live claim of this room).
+// free, or this device's own, or another live claim of this room). Any
+// other alive human seat may join a room that is open (a guest: no army of
+// its own there, it commands the units it is given) but never opens one.
 func (s *Server) enterRoom(ctx context.Context, seat Seat, m *member, req roomMsg) (*Room, error) {
 	c, err := loadCamp(ctx, s.db, seat.Campaign)
 	if err != nil {
@@ -202,7 +204,8 @@ func (s *Server) enterRoom(ctx context.Context, seat Seat, m *member, req roomMs
 	if b == nil {
 		return nil, errf(http.StatusConflict, "not_pending", "battle %d is not pending", req.B)
 	}
-	if !hasInt(b.Humans, seat.F) {
+	inBattle := hasInt(b.Humans, seat.F)
+	if !inBattle && !hasInt(c.Alive, seat.F) {
 		return nil, errf(http.StatusForbidden, "not_in_battle", "your army is not in this battle")
 	}
 	// Lock order: never take a room lock while holding the database (the
@@ -223,6 +226,12 @@ func (s *Server) enterRoom(ctx context.Context, seat Seat, m *member, req roomMs
 	}
 	s.rooms.mu.Unlock()
 	if r == nil {
+		if !inBattle {
+			if req.Create {
+				return nil, errf(http.StatusForbidden, "not_in_battle", "your army is not in this battle: join when your ally opens it")
+			}
+			return nil, errf(http.StatusNotFound, "no_room", "nobody is fighting this battle live")
+		}
 		if !req.Create {
 			return nil, errf(http.StatusNotFound, "no_room", "nobody is fighting this battle live")
 		}
@@ -260,7 +269,7 @@ func (s *Server) enterRoom(ctx context.Context, seat Seat, m *member, req roomMs
 	m.keep = req.Keep
 	r.members[seat.F] = m
 	r.emptyAt = time.Time{}
-	if _, ok := r.members[r.host]; !ok && !r.started {
+	if _, ok := r.members[r.host]; !ok && !r.started && inBattle {
 		r.host = seat.F
 	}
 	p := r.parts[seat.F]
@@ -312,7 +321,8 @@ func (s *Server) claimLive(ctx context.Context, c *campRow, b *Battle, seat Seat
 	})
 }
 
-// roomOpened: activity, the ally's Discord ping, the long-poll bump.
+// roomOpened: activity, the allies' Discord ping (every other alive human:
+// anyone may join, army in the battle or not), the long-poll bump.
 func (s *Server) roomOpened(c *campRow, b *Battle, seat Seat) {
 	ctx := s.ctx
 	ob := &outbox{}
@@ -321,7 +331,7 @@ func (s *Server) roomOpened(c *campRow, b *Battle, seat Seat) {
 		now := s.clock.Now()
 		seats, _ := loadSeats(ctx, tx, c.ID)
 		var others []int
-		for _, f := range b.Humans {
+		for _, f := range c.Alive {
 			if f != seat.F {
 				others = append(others, f)
 			}

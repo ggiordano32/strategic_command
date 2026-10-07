@@ -105,8 +105,24 @@ const JS_HOOKS := """
 			max_touch_points: navigator.maxTouchPoints || 0,
 			standalone: !!(window.navigator.standalone ||
 				(window.matchMedia && matchMedia('(display-mode: standalone)').matches)),
-			url_query: location.search, origin: location.origin
+			url_query: location.search, origin: location.origin,
+			gpu_unmasked: T.gpu()
 		});
+	};
+	// The real GPU name (Chrome reports "WebKit WebGL" as the renderer),
+	// from a throwaway WebGL2 context.
+	T.gpu = function () {
+		try {
+			var g = document.createElement('canvas').getContext('webgl2');
+			if (!g) return '';
+			var e = g.getExtension('WEBGL_debug_renderer_info');
+			var r = e ? String(g.getParameter(e.UNMASKED_RENDERER_WEBGL)) : '';
+			var l = g.getExtension('WEBGL_lose_context');
+			if (l) l.loseContext();
+			return r;
+		} catch (err) {
+			return '';
+		}
 	};
 })();
 """

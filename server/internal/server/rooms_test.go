@@ -456,3 +456,59 @@ func TestRoomParticipantUpload(t *testing.T) {
 		t.Fatalf("battle_live rows left after the battle: %d", n)
 	}
 }
+
+// A seat whose army is not in the battle asks to join (choice "ask"): the
+// owner sees it in the summary; the guest cannot open the room, but joins
+// the owner's room once it is open (never as the lobby host).
+func TestRoomGuestAsksAndJoins(t *testing.T) {
+	e := newEnv(t, nil)
+	c := e.battleCampaign() // battle 2: Rome's army alone
+	p := "/api/c/" + c.id
+	e.must2(e.call("POST", p+"/battles/2/choice", c.tokB, map[string]any{"choice": "ask"}))
+	e.must2(e.call("POST", p+"/battles/2/choice", c.tokB, map[string]any{"choice": "ask"})) // (again: harmless)
+	if st, _ := e.call("POST", p+"/battles/2/choice", c.tokA, map[string]any{"choice": "ask"}); st != 400 {
+		t.Fatalf("ask on one's own battle: %d", st)
+	}
+	if st, _ := e.call("POST", p+"/battles/2/choice", c.tokB, map[string]any{"choice": "dance"}); st != 400 {
+		t.Fatalf("unknown choice: %d", st)
+	}
+	sum := e.must2(e.call("GET", p, c.tokA, nil))
+	var ask []any
+	for _, b := range sum["battles"].([]any) {
+		bm := b.(map[string]any)
+		if num64(bm["id"]) == 2 {
+			ask, _ = bm["ask_by"].([]any)
+		}
+	}
+	if len(ask) != 1 || num64(ask[0]) != 1 {
+		t.Fatalf("ask_by of battle 2: %v", sum["battles"])
+	}
+	// The guest can neither open the room nor find one yet.
+	g := e.dial(c.id, c.tokB)
+	g.send(map[string]any{"t": "room", "b": 2, "v": 2, "create": true})
+	if m := g.next("error"); m["code"] != "not_in_battle" {
+		t.Fatalf("guest opening: %v", m)
+	}
+	g.send(map[string]any{"t": "room", "b": 2, "v": 2})
+	if m := g.next("error"); m["code"] != "no_room" {
+		t.Fatalf("guest before the room: %v", m)
+	}
+	// Rome opens it; the guest joins (create or not); Rome stays host.
+	a := e.dial(c.id, c.tokA)
+	a.send(map[string]any{"t": "room", "b": 2, "v": 2, "create": true})
+	if m := a.next("room"); num64(m["host"]) != 0 {
+		t.Fatalf("owner's room: %v", m)
+	}
+	g.send(map[string]any{"t": "room", "b": 2, "v": 2, "create": true})
+	if m := g.next("room"); num64(m["host"]) != 0 || num64(m["you"]) != 1 {
+		t.Fatalf("guest joining: %v", m)
+	}
+	// Resolving the battle clears the ask.
+	e.must2(e.upload(c, c.tokA, 2, "battle", battleState(1, tbattle{ID: 1, R: 1, Armies: map[int]int{1: 0, 100001: 1}, DefF: 4}),
+		map[string]any{"battle_id": 2, "outcome": map[string]any{"winner": 0}}))
+	var n int
+	e.srv.db.QueryRow("SELECT COUNT(*) FROM battle_asks WHERE campaign_id = ?", c.id).Scan(&n)
+	if n != 0 {
+		t.Fatalf("asks left behind: %d", n)
+	}
+}

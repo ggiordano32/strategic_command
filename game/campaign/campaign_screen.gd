@@ -2175,7 +2175,8 @@ func _set_visible(on: bool) -> void:
 
 ## A live co-op battle (milestone 5): open its room (create, the host) or
 ## join the open one, built from the campaign version the room was opened
-## at. keep: let the host keep command of this player's units.
+## at. keep: let the host keep command of this player's units. A player
+## whose army is not in the battle joins as a guest (units given to them).
 func fight_live(bid: int, create: bool, keep: bool = false) -> void:
 	var b := CState.battle(st, bid)
 	if b.is_empty() or battle != null or online == null:
@@ -2202,7 +2203,9 @@ func fight_live(bid: int, create: bool, keep: bool = false) -> void:
 	var net := get_node_or_null("/root/Net")
 	var coop = CoopSession.new()
 	add_child(coop)
-	coop.setup(net.api.base_url if net != null else "", online.id, online.token, online.f, _battle_built, hs, v, create, keep)
+	# The campaign's other alive humans may join too (army in it or not).
+	coop.setup(net.api.base_url if net != null else "", online.id, online.token, online.f, _battle_built, hs, v, create, keep,
+		CoopSession.guest_list(bst, hs))
 	coop.failed.connect(func(code: String, text: String): _coop_failed(code, text))
 	battle = Battle.new()
 	battle.custom_scenario = _battle_built["scenario"]
@@ -2230,6 +2233,8 @@ func _coop_failed(code: String, text: String) -> void:
 			msg = "The campaign moved on; try again."
 		"not_pending":
 			msg = "This battle has been resolved."
+		"not_in_battle":
+			msg = "Your army is not in this battle: ask to join, and join when your ally opens it."
 	if battle != null and battle.coop != null:
 		battle.coop.leave()
 		var c = battle.coop

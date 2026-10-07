@@ -38,6 +38,16 @@ const SPR_RECT: Array[Vector4] = [
 const ENGINE_OK := 6
 const ENGINE_OUT := 7
 
+## Self-check (probe): once per battle, PROBE_FRAMES frames in, only the
+## soldier layers are drawn into a small offscreen viewport around the
+## biggest unit and the drawn pixels are counted; `probed` reports them
+## (telemetry, console "SOLDIER_PROBE", server/cmd/webcheck). Zero pixels
+## with men alive means this device draws no soldiers.
+signal probed(drawn: int, men: int)
+const PROBE_LAYER := 1 << 19   # visibility layer only the probe viewport draws
+const PROBE_PX := 128          # probe viewport size (px), 2 px a metre
+const PROBE_FRAMES := 30
+
 ## Built once per page session (procedural, ~30k pixels).
 static var _atlas_cache: ImageTexture = null
 
@@ -64,6 +74,7 @@ var _pr_tex: ImageTexture
 var _pr_rows: int = 1
 var _pr_flags := PackedInt32Array()
 var _pr_was_active := true
+var _probe_frames := 0
 
 
 func setup(p_sim, p_px_per_m: float) -> void:
@@ -90,10 +101,12 @@ func setup(p_sim, p_px_per_m: float) -> void:
 	var pad := px_per_m * 6.0
 	_mm = MultiMesh.new()
 	_mm.transform_format = MultiMesh.TRANSFORM_2D
+	_mm.use_custom_data = true
 	_mm.mesh = _make_quad()
 	_mm.instance_count = _n_inst
 	for i in _n_inst:
 		_mm.set_instance_transform_2d(i, Transform2D.IDENTITY)
+		_mm.set_instance_custom_data(i, _index_data(i))
 	# All instance transforms are identity (the shader places soldiers), so
 	# give the MultiMesh bounds covering the whole field to avoid culling.
 	_mm.custom_aabb = AABB(Vector3(-pad, -pad, -1.0), Vector3(fw + 2.0 * pad, fh + 2.0 * pad, 2.0))
@@ -136,10 +149,12 @@ func setup(p_sim, p_px_per_m: float) -> void:
 		_pr_flags[u] = (sim.u_side[u] & 1) | (kind << 1)
 	var pmm := MultiMesh.new()
 	pmm.transform_format = MultiMesh.TRANSFORM_2D
+	pmm.use_custom_data = true
 	pmm.mesh = _make_quad()
 	pmm.instance_count = cap
 	for i in cap:
 		pmm.set_instance_transform_2d(i, Transform2D.IDENTITY)
+		pmm.set_instance_custom_data(i, _index_data(i))
 	pmm.custom_aabb = _mm.custom_aabb
 	_pr_mat = ShaderMaterial.new()
 	_pr_mat.shader = PR_SHADER
@@ -152,6 +167,57 @@ func setup(p_sim, p_px_per_m: float) -> void:
 	pmmi.material = _pr_mat
 	add_child(pmmi)
 	upload()
+
+
+func _process(_delta: float) -> void:
+	if _probe_frames < 0 or sim == null:
+		return
+	_probe_frames += 1
+	if _probe_frames >= PROBE_FRAMES:
+		_probe_frames = -1
+		if DisplayServer.get_name() != "headless":
+			_probe()
+
+
+func _probe() -> void:
+	# The biggest unit on the field, framed at 2 px a metre.
+	var best := -1
+	for u in sim.n_units:
+		if sim.u_alive[u] > 0 and (best < 0 or sim.u_alive[u] > sim.u_alive[best]):
+			best = u
+	if best < 0:
+		return
+	var vp := SubViewport.new()
+	vp.size = Vector2i(PROBE_PX, PROBE_PX)
+	vp.transparent_bg = true
+	vp.world_2d = get_viewport().world_2d
+	vp.canvas_cull_mask = PROBE_LAYER
+	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	# The soldier layers and every canvas item above them carry the probe's
+	# layer (a hidden parent hides its children in a viewport too); nothing
+	# else does, so the probe sees soldiers on a transparent background.
+	var n: Node = self
+	while n is CanvasItem:
+		(n as CanvasItem).visibility_layer |= PROBE_LAYER
+		n = n.get_parent()
+	for mmi in _layers:
+		mmi.visibility_layer |= PROBE_LAYER
+	add_child(vp)
+	var k := 2.0 / px_per_m
+	var c := Vector2(sim.u_cx[best], sim.u_cy[best]) / 1024.0 * px_per_m
+	vp.canvas_transform = Transform2D(0.0, Vector2(k, k), 0.0, Vector2(PROBE_PX, PROBE_PX) * 0.5 - c * k)
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	var drawn := 0
+	var img := vp.get_texture().get_image()
+	if img != null:
+		img.convert(Image.FORMAT_RGBA8)
+		var px := img.get_data()
+		for i in range(3, px.size(), 4):
+			if px[i] > 64:
+				drawn += 1
+	vp.queue_free()
+	probed.emit(drawn, int(sim.u_alive[best]))
 
 
 ## Copy the sim arrays into the data textures. Call once after each tick.
@@ -196,6 +262,14 @@ static func _pack(arrays: Array, block: int) -> PackedByteArray:
 			pad.resize(block - b.size())
 			out.append_array(pad)
 	return out
+
+
+## Instance i's index for the shaders (INSTANCE_CUSTOM: i = x + 2048 * y,
+## each part exact even at half precision). The shaders avoid INSTANCE_ID
+## (gl_InstanceID) and uint / bitwise maths: an Android tablet's Chrome drew
+## no soldiers at all with them (2026-10-07) while other devices did.
+static func _index_data(i: int) -> Color:
+	return Color(float(i % 2048), float(i / 2048), 0.0, 0.0)
 
 
 ## alpha: interpolation between the previous and the current tick.

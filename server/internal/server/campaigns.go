@@ -640,8 +640,23 @@ func (s *Server) buildSummary(ctx context.Context, seat Seat) (map[string]any, e
 		flags[bid] = [2]int{wb, cb}
 	}
 	rows.Close()
+	asks := map[int][]int{}
+	rows, err = s.db.QueryContext(ctx, "SELECT battle_id, f FROM battle_asks WHERE campaign_id = ? ORDER BY battle_id, f", c.ID)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var bid, f int
+		rows.Scan(&bid, &f)
+		asks[bid] = append(asks[bid], f)
+	}
+	rows.Close()
 	var battles []map[string]any
 	for _, b := range c.Battles {
+		ask := asks[b.ID]
+		if ask == nil {
+			ask = []int{}
+		}
 		fl, ok := flags[b.ID]
 		if !ok {
 			fl = [2]int{-1, -1}
@@ -655,7 +670,7 @@ func (s *Server) buildSummary(ctx context.Context, seat Seat) (map[string]any, e
 			live = li
 		}
 		battles = append(battles, map[string]any{"id": b.ID, "r": b.R, "region": c.region(b.R), "humans": b.Humans,
-			"claim": claim, "wait_by": fl[0], "command_by": fl[1], "live": live})
+			"claim": claim, "wait_by": fl[0], "command_by": fl[1], "ask_by": ask, "live": live})
 	}
 	var acts []map[string]any
 	rows, err = s.db.QueryContext(ctx, "SELECT at, f, kind, data FROM activity WHERE campaign_id = ? ORDER BY id DESC LIMIT 20", c.ID)

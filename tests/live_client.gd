@@ -20,6 +20,10 @@ extends SceneTree
 ##   battle 3 "drop": both start; B's connection drops at frame 200; A waits,
 ##     gets the Continue offer and takes over; B comes back (snapshot),
 ##     is admitted again and regains its units.
+##   battle 4 "guest": Rome's army alone (Carthage has none there). B asks
+##     to join (choice "ask"); A sees the request in the summary and opens
+##     the room (Fight together); B joins as a guest; the host starts when
+##     both are in; A gives B two units, B commands them; run to the end.
 ## Every frame's lockstep hash is recorded (hash_every 1) and written to
 ## <dir>/hashes_<role>_<battle>.json; the host uploads each result; both
 ## end on the same campaign state. <dir>/live_<role>.json has the numbers.
@@ -98,6 +102,9 @@ func _main() -> void:
 		return
 	if role == "A":
 		var st := SelfTest.live_test_state("Live E2E", 21, rome, carth, [7, 11, 13], 4)
+		# Battle 4: Rome's army alone at Emporion (independent).
+		var ga: Dictionary = SelfTest._clone_army(st, CState.armies_of(st, rome)[0], rome, 15, 4)
+		CRules.start_battle(st, 15, ga)
 		# Battles with a 10 s deployment phase (the campaign setting).
 		st["settings"]["deploy_time"] = 10
 		var r: Dictionary = await net.create_campaign(st, rome, {})
@@ -122,8 +129,8 @@ func _main() -> void:
 	for b in oc.st["battles"]:
 		ids.append(int(b["id"]))
 	ids.sort()
-	var kinds := ["prestart", "midjoin", "drop"]
-	for k in mini(ids.size(), 3):
+	var kinds := ["prestart", "midjoin", "drop", "guest"]
+	for k in mini(ids.size(), 4):
 		await _battle(kinds[k], int(ids[k]))
 	# Both end on the server's state.
 	for i in 100:
@@ -154,6 +161,25 @@ func _battle(kind: String, bid: int) -> void:
 		return
 	var host := role == "A"
 	var rec := {"kind": kind, "battle": bid}
+	if kind == "guest":
+		# B (no army here) asks to join; A sees it before opening the room.
+		if not host:
+			var r: Dictionary = await oc.choose(bid, "ask")
+			rec["asked"] = bool(r["ok"])
+			if not r["ok"]:
+				_err("battle %d: ask refused %s" % [bid, r])
+			_write("live_%d_asked.txt" % bid, "1")
+		else:
+			await _wait_file("live_%d_asked.txt" % bid, 120.0)
+			for i in 100:
+				await oc.sync()
+				var asks: Array = oc.battle_info(bid).get("ask_by", [])
+				if asks.has(float(ally)) or asks.has(ally):
+					rec["ask_seen"] = true
+					break
+				await create_timer(0.1).timeout
+			if not rec.has("ask_seen"):
+				_err("battle %d: the owner never saw the request to join" % bid)
 	# The peer waits for the host's room (and for the mid-battle point).
 	if not host:
 		var need := "live_%d_open" % bid
@@ -175,7 +201,11 @@ func _battle(kind: String, bid: int) -> void:
 		bst = await oc.state_at(v)
 	var hs: Array = CRules.battle_humans(bst, CState.battle(bst, bid))
 	var built := CBattle.build(bst, CState.battle(bst, bid), int(hs.min()))
-	var s := _session(built, hs, v, host)
+	var guests: Array = CoopSession.guest_list(bst, hs)
+	rec["guests"] = guests
+	if kind == "guest" and (hs != [rome_f()] or guests != [carth_f()]):
+		_err("battle %d: humans %s guests %s" % [bid, hs, guests])
+	var s := _session(built, hs, v, host, guests)
 	if host and kind == "midjoin":
 		s.auto_start = false
 	if host:
@@ -221,6 +251,8 @@ func _battle(kind: String, bid: int) -> void:
 			_orders(s)
 		if kind == "prestart":
 			_controls(s, votes, gifted)
+		if kind == "guest":
+			_guest(s, gifted)
 		# Battle 3: B drops at frame 200, comes back 120 frames of A later.
 		if kind == "drop" and not host and dropped_at < 0 and fr0 >= 200 and s.ls.is_active(me):
 			dropped_at = fr0
@@ -230,7 +262,7 @@ func _battle(kind: String, bid: int) -> void:
 			_write("live_%d_dropped.txt" % bid, str(fr0))
 			await _wait_file("live_%d_took.txt" % bid, 120.0)
 			await create_timer(1.0).timeout
-			s = _session(built, hs, v, false)
+			s = _session(built, hs, v, false, guests)
 			rejoined = true
 			continue
 		if kind == "drop" and host and s.takeover_offer >= 0 and took < 0:
@@ -299,11 +331,11 @@ func _battle(kind: String, bid: int) -> void:
 	(result["battles"] as Array).append(rec)
 
 
-func _session(built: Dictionary, hs: Array, v: int, create: bool) -> Node:
+func _session(built: Dictionary, hs: Array, v: int, create: bool, guests: Array = []) -> Node:
 	var s := CoopSession.new()
 	root.add_child(s)
 	var e: Dictionary = net.accounts.get_entry(cid)
-	s.setup(net.api.base_url, cid, str(e["token"]), me, built, hs, v, create, false)
+	s.setup(net.api.base_url, cid, str(e["token"]), me, built, hs, v, create, false, guests)
 	s.note.connect(func(t: String, k: String): _log("note (%s): %s" % [k, t]))
 	s.failed.connect(func(c: String, t: String):
 		if not s.result_in and s.final_frame < 0:
@@ -342,6 +374,48 @@ func _orders(s) -> void:
 				s.issue(BattleSim.make_move_order(0, u, sim.u_ax[u] + 3 * 1024, sim.u_ay[u] - 10 * 1024, 768, 30 * 1024, 0))
 			else:
 				s.issue(BattleSim.make_attack_order(0, u, best, 1))
+
+
+func rome_f() -> int:
+	return CData.faction_index("rome")
+
+
+func carth_f() -> int:
+	return CData.faction_index("carthage")
+
+
+## Battle 4: the owner (A) gives the guest (B) two units at frame 60; B
+## notes when it commands them and when it has ordered them.
+func _guest(s, gifted: Dictionary) -> void:
+	var ls = s.ls
+	if not s.can_issue():
+		return
+	var fr: int = ls.frame
+	if role == "A":
+		if fr >= 60 and not gifted.has("given"):
+			var units: Array = []
+			for u in ls.u_cmd.size():
+				if ls.u_cmd[u] == me and ls.sim.u_state[u] == BattleSim.U_READY and units.size() < 2:
+					units.append(u)
+			if not units.is_empty():
+				s.gift(units, ally)
+				gifted["given"] = units
+				gifted["given_at"] = fr
+		if gifted.has("given") and not gifted.has("ally_has"):
+			var n := 0
+			for u in gifted["given"]:
+				if ls.u_cmd[int(u)] == ally:
+					n += 1
+			if n > 0:
+				gifted["ally_has"] = n
+				gifted["ally_has_at"] = fr
+	else:
+		var n2 := _count_cmd(ls, me, ally)
+		if n2 > 0 and not gifted.has("got"):
+			gifted["got"] = n2
+			gifted["got_at"] = fr
+		if gifted.has("got") and not gifted.has("ordered") and fr % 25 == 0:
+			gifted["ordered"] = fr  # (_orders ran this frame for the units it commands)
 
 
 ## Battle 1's gifts and votes.

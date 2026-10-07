@@ -1,5 +1,5 @@
 shader_type canvas_item;
-// Draws every soldier as one MultiMesh instance (INSTANCE_ID = soldier index).
+// Draws every soldier as one MultiMesh instance (instance index = soldier index).
 // Positions come straight from the sim's int arrays: the view uploads them
 // once per tick as raw bytes in an RGBA8 texture (one texel = one int32,
 // little endian), and this shader decodes them and interpolates between the
@@ -36,16 +36,33 @@ uniform vec4 spr_rect[9];
 
 varying vec4 v_color;
 
+// Portability (mobile WebGL drivers): the instance's index comes from
+// INSTANCE_CUSTOM (x + 2048 * y, written once by soldier_layer.gd), not
+// INSTANCE_ID, and the int32s are decoded with float maths (exact below
+// 2^24 in magnitude), with no uint, bitwise or % operators.
+int slot_index(vec4 cd) {
+	return int(cd.x + 0.5) + int(cd.y + 0.5) * 2048;
+}
+
 int fetch_int(int block, int idx) {
-	ivec2 p = ivec2(idx % tex_width, block * rows_per_block + idx / tex_width);
-	vec4 t = texelFetch(data_tex, p, 0);
-	uvec4 b = uvec4(round(t * 255.0));
-	uint u = b.r | (b.g << 8u) | (b.b << 16u) | (b.a << 24u);
-	return int(u);
+	int row = idx / tex_width;
+	ivec2 p = ivec2(idx - row * tex_width, block * rows_per_block + row);
+	vec4 b = floor(texelFetch(data_tex, p, 0) * 255.0 + 0.5);
+	if (b.a >= 128.0) {
+		vec4 c = vec4(255.0) - b;  // negative: two's complement
+		return -int(c.r + c.g * 256.0 + c.b * 65536.0 + c.a * 16777216.0) - 1;
+	}
+	return int(b.r + b.g * 256.0 + b.b * 65536.0 + b.a * 16777216.0);
+}
+
+// A bit field of a non-negative int: (v / div) mod span (div, span powers of 2).
+int bitfield(int v, int div, int span) {
+	int q = v / div;
+	return q - (q / span) * span;
 }
 
 void vertex() {
-	int i = INSTANCE_ID;
+	int i = slot_index(INSTANCE_CUSTOM);
 	int st = fetch_int(5, i);
 	// 0 formed, 1 fighting, 2 routing, 3 knocked down, 4 dead, 5 off field;
 	// engines: 6 working, 7 out of action
@@ -61,8 +78,9 @@ void vertex() {
 		vec2 p = mix(prv, cur, alpha) * px_per_unit;
 		float ang = float(fetch_int(4, i)) * (6.2831853 / 1024.0);
 		int flags = fetch_int(7, fetch_int(6, i));
-		int spr = clamp(engine ? (flags >> 8) & 15 : (flags >> 4) & 15, 0, SPRITES - 1);
-		vec3 base = (flags & 1) == 0 ? color_side0 : color_side1;
+		int spr = clamp(engine ? bitfield(flags, 256, 16) : bitfield(flags, 16, 16), 0, SPRITES - 1);
+		bool sel = bitfield(flags, 2, 2) != 0;
+		vec3 base = bitfield(flags, 1, 2) == 0 ? color_side0 : color_side1;
 		vec4 r = spr_rect[spr];
 		vec2 lp = vec2(mix(r.x, r.y, UV.x), mix(r.z, r.w, UV.y));
 		UV = vec2((float(spr) + (lp.x - CELL_X0) / CELL_W) / float(SPRITES),
@@ -73,7 +91,7 @@ void vertex() {
 			vec3 c = mix(vec3(0.85, 0.72, 0.52), base, 0.3);
 			if (dead) {
 				c = mix(c, vec3(0.15, 0.12, 0.1), 0.7);
-			} else if ((flags & 2) != 0) {
+			} else if (sel) {
 				c = mix(c, vec3(1.0), 0.35);
 			}
 			v_color = vec4(c, 1.0);
@@ -91,10 +109,10 @@ void vertex() {
 				ang += 1.5708;
 				v *= 0.85;
 			}
-			if ((flags & 4) != 0) {
+			if (bitfield(flags, 4, 2) != 0) {
 				c = mix(c, vec3(1.0, 0.7, 0.3), 0.2);  // under missile fire
 			}
-			if ((flags & 2) != 0) {
+			if (sel) {
 				c = mix(c, vec3(1.0), 0.45);  // selected unit
 			}
 			v_color = vec4(c, 1.0);

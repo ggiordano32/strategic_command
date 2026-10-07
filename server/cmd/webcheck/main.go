@@ -13,6 +13,13 @@
 //	    a live co-op battle instead (milestone 5): A opens the room, B joins in
 //	    the lobby, 600 frames in lockstep with every frame's hash compared over
 //	    the relay, then B leaves and joins again mid-battle (snapshot)
+//	go run ./cmd/webcheck -url http://127.0.0.1:8092 -soldiers
+//	    only the last check (works against tools/serve_web.py too)
+//
+// After the turn flow, A loads ?scenario=skirmish&speed=3 and the battle's
+// soldier self-check (game/soldier_layer.gd, console "SOLDIER_PROBE") must
+// report soldiers drawn in WebGL: the sim can run perfectly with nothing on
+// screen, which no other check notices.
 //
 // Exit code 0 when everything passed.
 package main
@@ -109,6 +116,7 @@ func main() {
 	timeout := flag.Duration("timeout", 4*time.Minute, "overall timeout")
 	flag.BoolVar(&verbose, "v", false, "print every console line")
 	live := flag.Bool("live", false, "check a live co-op battle instead of the turn flow")
+	soldiersOnly := flag.Bool("soldiers", false, "only check that a battle draws its soldiers")
 	flag.Parse()
 
 	// Two browser processes: separate storage, like two devices, and each
@@ -159,6 +167,15 @@ func main() {
 	if *live {
 		os.Exit(runLive(ctxA, ca, newBrowser, front, phone, *url, inv, check, &fails))
 	}
+	if *soldiersOnly {
+		checkSoldiers(ctxA, ca, phone, *url, check)
+		if fails == 0 {
+			fmt.Println("RESULT: PASS")
+			return
+		}
+		fmt.Printf("RESULT: FAIL (%d)\n", fails)
+		os.Exit(1)
+	}
 	if err := chromedp.Do(ctxA, phone, chromedp.Navigate(*url+"/?nettest=a"+inv)); err != nil {
 		fmt.Println("navigate A:", err)
 		os.Exit(1)
@@ -204,6 +221,8 @@ func main() {
 			}
 		}
 	}
+	cancelB()
+	checkSoldiers(ctxA, ca, phone, *url, check)
 	for _, c := range []*console{ca, cb} {
 		for _, l := range c.all {
 			if strings.Contains(l, "EXCEPTION") || strings.Contains(l, "SCRIPT ERROR") {
@@ -217,6 +236,26 @@ func main() {
 	}
 	fmt.Printf("RESULT: FAIL (%d)\n", fails)
 	os.Exit(1)
+}
+
+// checkSoldiers: a battle in the browser draws its soldiers. The battle's
+// self-check renders only the soldier layers around the biggest unit into a
+// small offscreen viewport ~30 frames in and prints the pixels drawn.
+func checkSoldiers(ctx context.Context, c *console, phone chromedp.Action[chromedp.Void], url string, check func(bool, string)) {
+	t0 := time.Now()
+	if err := chromedp.Do(ctx, phone, chromedp.Navigate(url+"/?scenario=skirmish&speed=3")); err != nil {
+		check(false, "navigate to the skirmish: "+err.Error())
+		return
+	}
+	m := c.wait(regexp.MustCompile(`SOLDIER_PROBE drawn=(\d+) men=(\d+)`), 90*time.Second)
+	check(m != nil && atoi(m[1]) >= 50, fmt.Sprintf("a battle draws its soldiers in WebGL: %v pixels around a unit of %v men (%.1f s)",
+		idx(m, 1), idx(m, 2), time.Since(t0).Seconds()))
+	for _, l := range c.all {
+		if strings.Contains(l, "SHADER ERROR") || strings.Contains(l, "Shader compilation failed") {
+			check(false, "shader error: "+strings.TrimSpace(l))
+			break
+		}
+	}
 }
 
 func tail(s []string, n int) []string {

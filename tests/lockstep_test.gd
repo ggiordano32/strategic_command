@@ -710,6 +710,7 @@ func _test_lockstep() -> void:
 	stats["pauses"] = 0
 	# Deterministic unit-level checks of the control inputs.
 	_check_controls(scen, home)
+	_check_guest(scen, home)
 
 
 ## Small direct checks of the vote, gift, drop and admit rules.
@@ -812,6 +813,57 @@ func _check_controls(scen: Dictionary, home: Array) -> void:
 		_fail("lockstep snapshot round trip changed the hash")
 	else:
 		print("PASS controls: votes, refusal, gift and gift back, order refusal, drop + takeover, admit + return, snapshot round trip")
+
+
+## A guest (a campaign ally whose army is not in the battle): admitted
+## mid-battle, given a unit by the owner, commands it; the owner's order for
+## it is refused; nobody else can be given units.
+func _check_guest(scen: Dictionary, home: Array) -> void:
+	var h0: Array = []
+	for x in home:
+		h0.append(0 if int(x) >= 0 else int(x))
+	var ls := Lockstep.new()
+	ls.setup(scen, 9, h0, [0], 0, [3])
+	var cnt := {0: 0, 3: 0}
+	var send := func(p: int, k: int, os: Array) -> void:
+		cnt[p] = int(cnt[p]) + 1
+		for o in os:
+			o["f"] = k
+		ls.receive({"p": p, "n": cnt[p], "k": k, "o": os})
+	if ls.is_active(3) or not Array(ls.players).has(3) or ls.side_of(3) != ls.side_of(0) or ls.side_of(5) != -1:
+		_fail("guest setup: players %s, active %s, sides %d / %d / %d" % [ls.players, ls.active, ls.side_of(3), ls.side_of(0), ls.side_of(5)])
+	var u := -1
+	for i in ls.u_cmd.size():
+		if ls.u_cmd[i] == 0:
+			u = i
+			break
+	# Not taking part yet: a gift to the guest is refused.
+	send.call(0, 0, [{"type": Lockstep.C_GIFT, "unit": u, "to": 3}])
+	ls.advance()
+	if ls.u_cmd[u] != 0:
+		_fail("a gift to a guest not taking part was applied")
+	# Admitted at frame 1, then given the unit at frame 2.
+	send.call(0, 1, [{"type": Lockstep.C_ADMIT, "who": 3, "keep": 0}])
+	ls.advance()
+	if not ls.is_active(3):
+		_fail("guest not admitted")
+	send.call(0, 2, [{"type": Lockstep.C_GIFT, "unit": u, "to": 3}, {"type": Lockstep.C_GIFT, "unit": u + 1, "to": 5}])
+	send.call(3, 2, [])
+	ls.advance()
+	if ls.u_cmd[u] != 3 or ls.u_cmd[u + 1] != 0:
+		_fail("gift to the guest: cmd %d (want 3), to an outsider: %d (want 0)" % [ls.u_cmd[u], ls.u_cmd[u + 1]])
+	var rej: int = ls.rejected
+	send.call(0, 3, [{"type": BattleSim.ORDER_HALT, "unit": u}])
+	send.call(3, 3, [{"type": BattleSim.ORDER_HALT, "unit": u}])
+	ls.advance()
+	if ls.rejected != rej + 1:
+		_fail("orders for the guest's unit: %d refused (want 1: the owner's)" % (ls.rejected - rej))
+	var ls2 := Lockstep.new()
+	ls2.setup(scen, 9, h0, [0], 0, [3])
+	if not ls2.restore(ls.snapshot()) or ls2.state_hash() != ls.state_hash():
+		_fail("guest: lockstep snapshot round trip changed the hash")
+	else:
+		print("PASS guest: admitted mid-battle, given a unit, commands it (the owner's order refused), outsiders get nothing, snapshot round trip")
 
 
 ## One player alone through Lockstep (delay 0) = the plain sim with the

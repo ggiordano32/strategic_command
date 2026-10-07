@@ -193,9 +193,11 @@ func (s *Server) releaseBattle(w http.ResponseWriter, r *http.Request, seat Seat
 	reply(w, 200, map[string]any{"ok": true})
 }
 
-// POST /api/c/{id}/battles/{bid}/choice {choice: wait | command}: when the
-// ally's army is in the battle, wait for the ally (they are pinged) or take
-// command of their army (they are told).
+// POST /api/c/{id}/battles/{bid}/choice {choice: wait | command | ask}: when
+// the ally's army is in the battle, wait for the ally (they are pinged) or
+// take command of their army (they are told); or ask to join the battle
+// live (any alive human seat, army in it or not: the battle's humans see it
+// in the summary's ask_by and are pinged).
 func (s *Server) battleChoice(w http.ResponseWriter, r *http.Request, seat Seat) {
 	var req struct {
 		Choice string `json:"choice"`
@@ -204,8 +206,8 @@ func (s *Server) battleChoice(w http.ResponseWriter, r *http.Request, seat Seat)
 		s.failErr(w, err)
 		return
 	}
-	if req.Choice != "wait" && req.Choice != "command" {
-		fail(w, http.StatusBadRequest, "bad_request", "choice must be wait or command")
+	if req.Choice != "wait" && req.Choice != "command" && req.Choice != "ask" {
+		fail(w, http.StatusBadRequest, "bad_request", "choice must be wait, command or ask")
 		return
 	}
 	ob := &outbox{}
@@ -228,7 +230,14 @@ func (s *Server) battleChoice(w http.ResponseWriter, r *http.Request, seat Seat)
 		now := s.clock.Now()
 		tx.ExecContext(ctx, "INSERT OR IGNORE INTO battle_flags (campaign_id, battle_id) VALUES (?, ?)", c.ID, b.ID)
 		seats, _ := loadSeats(ctx, tx, c.ID)
-		if req.Choice == "wait" {
+		if req.Choice == "ask" {
+			if !hasInt(c.Alive, seat.F) {
+				return errf(http.StatusForbidden, "not_alive", "your faction is out of the campaign")
+			}
+			tx.ExecContext(ctx, "INSERT OR IGNORE INTO battle_asks (campaign_id, battle_id, f, at) VALUES (?, ?, ?, ?)", c.ID, b.ID, seat.F, ms(now))
+			s.note(ctx, tx, ob, c, seats, fmt.Sprintf("ask:%d:%d:%d", b.ID, seat.F, ms(now)/waitPingBucket.Milliseconds()), "ask",
+				fmt.Sprintf("%s asks to join the battle at %s: open it with Fight together.", c.faction(seat.F), c.region(b.R)), others)
+		} else if req.Choice == "wait" {
 			tx.ExecContext(ctx, "UPDATE battle_flags SET wait_by = ?, wait_at = ? WHERE campaign_id = ? AND battle_id = ?", seat.F, ms(now), c.ID, b.ID)
 			s.note(ctx, tx, ob, c, seats, fmt.Sprintf("wait:%d:%d:%d", b.ID, seat.F, ms(now)/waitPingBucket.Milliseconds()), "wait",
 				fmt.Sprintf("%s is waiting for you to fight the battle at %s.", c.faction(seat.F), c.region(b.R)), others)

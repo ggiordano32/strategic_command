@@ -156,7 +156,7 @@ func _player_state(f: int) -> String:
 func _refresh_strip() -> void:
 	for c in _strip.get_children():
 		c.queue_free()
-	for f in coop.humans:
+	for f in coop.shown_players():
 		var fi := int(f)
 		var chip := Kit.panel(Color(0, 0, 0, 0.55), 4)
 		chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -228,19 +228,22 @@ func _refresh_lobby() -> void:
 	elif coop.phase == "gone":
 		_lobby_box.add_child(Kit.label("The room is closed.", Kit.FONT, Kit.COL_BAD))
 	else:
-		for f in coop.humans:
+		for f in coop.humans + coop.guests:
 			var h := Kit.hbox(6)
 			h.add_child(_swatch(coop.player_color(int(f)), 14))
 			var on: bool = coop.connected(int(f))
+			var guest: bool = coop.guests.has(int(f))
 			var who := fname(int(f)) + (" (you)" if int(f) == coop.me else "")
-			h.add_child(Kit.label("%s: %s" % [who, "here" if on else "waiting for them to join"], Kit.FONT,
-				Color.WHITE if on else Kit.COL_DIM))
+			var what := "here" if on else ("may join (no army here)" if guest else "waiting for them to join")
+			if on and guest:
+				what = "here (no army here: gets the units %s gives)" % fname(coop.host) if int(f) != coop.host else "here"
+			h.add_child(Kit.label("%s: %s" % [who, what], Kit.FONT, Color.WHITE if on else Kit.COL_DIM, true))
 			_lobby_box.add_child(h)
 		var s: float = coop.start_in()
 		if s >= 0.0:
 			_lobby_box.add_child(Kit.label("Everyone is here: starting in %d..." % ceili(s), Kit.FONT, Kit.COL_GOOD))
 		elif coop.is_host():
-			_lobby_box.add_child(Kit.label("Your ally has been asked to join (Discord). Start now to fight alone; they can still join during the battle.",
+			_lobby_box.add_child(Kit.label("Your ally has been told the battle is open. Start now to fight alone; they can still join during the battle, and you can give them units (select, then Gift).",
 				Kit.FONT_SMALL, Kit.COL_DIM, true))
 		else:
 			_lobby_box.add_child(Kit.label("Waiting for %s to start the battle." % fname(coop.host), Kit.FONT_SMALL, Kit.COL_DIM, true))

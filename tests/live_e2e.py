@@ -17,6 +17,9 @@ creates the campaign, hosts) and B (Carthage, joins), then checks:
     admitted, then commanded its own army;
   - battle 3 (B's connection dropped): A was offered Continue and took over
     B's units; B came back by snapshot and regained them;
+  - battle 4 (Rome's army alone): B, with no army there, asked to join
+    (choice "ask"), A saw the request, opened the room, B joined as a guest,
+    A gave B two units and B commanded them;
   - each result was uploaded once by the host; both clients end on the
     server's campaign state with nothing left to send and no mismatch.
 Then two custom battles (tests/live_custom_client.gd): head-to-head (each
@@ -110,7 +113,7 @@ def main():
             check(res[role].get("ok") is True, "client %s reports no errors %s" % (role, res[role].get("errors")))
         ba = {b["battle"]: b for b in res["A"].get("battles", [])}
         bb = {b["battle"]: b for b in res["B"].get("battles", [])}
-        check(len(ba) == 3 and len(bb) == 3, "three battles fought on both clients")
+        check(len(ba) == 4 and len(bb) == 4, "four battles fought on both clients")
         for bid in sorted(ba):
             a, b = ba[bid], bb.get(bid, {})
             kind = a["kind"]
@@ -152,6 +155,13 @@ def main():
                 check(sb["snap_restored"] >= 1 and b.get("admitted_frame") is not None and b.get("commands", 0) > 0,
                       "battle %d: B joined mid-battle from a snapshot, admitted at frame %s commanding %s units" % (
                           bid, b.get("admitted_frame"), b.get("commands")))
+            if kind == "guest":
+                g, gb = a.get("gifts", {}), b.get("gifts", {})
+                check(b.get("asked") is True and a.get("ask_seen") is True,
+                      "battle %d: B (no army) asked to join, A saw the request (guests %s)" % (bid, a.get("guests")))
+                check("given" in g and g.get("ally_has", 0) > 0 and gb.get("got", 0) > 0 and "ordered" in gb,
+                      "battle %d: A gave units %s at frame %s, B commanded %s from frame %s and ordered them at %s" % (
+                          bid, g.get("given"), g.get("given_at"), gb.get("got"), gb.get("got_at"), gb.get("ordered")))
             if kind == "drop":
                 check(a.get("took_units", 0) > 0, "battle %d: A took over %s of B's units after B dropped" % (bid, a.get("took_units")))
                 check(b.get("regained_units", 0) > 0 and sb["snap_restored"] >= 1,
@@ -163,7 +173,7 @@ def main():
         check(fa.get("hash") == summ["hash"] == fb.get("hash") and fa.get("local_hash") == summ["hash"] == fb.get("local_hash"),
               "both clients end on the server's campaign state (v%s %s)" % (summ["version"], summ["hash"]))
         check(fa.get("outbox") == 0 and fb.get("outbox") == 0, "no result left unsent")
-        check(summ["phase"] != "battles" and summ["version"] == 4, "all three battles resolved (version %d, phase %s)" % (summ["version"], summ["phase"]))
+        check(summ["phase"] != "battles" and summ["version"] == 5, "all four battles resolved (version %d, phase %s)" % (summ["version"], summ["phase"]))
         bad_verify = [k for k, v in list(fa.get("verified", {}).items()) + list(fb.get("verified", {}).items()) if v != 1]
         check(not bad_verify, "every version made by the other device re-checked equal %s" % bad_verify)
         with open(os.path.join(tmp, "server.log")) as f:

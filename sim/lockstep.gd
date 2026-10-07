@@ -105,7 +105,10 @@ var applied := 0
 ## side): the city's owner, who may gift them like any unit.
 ## present: players taking part from the first frame; units of the others
 ## start with `host`, held for them until they are admitted.
-func setup(scenario: Dictionary, p_seed: int, home: Array, present: Array, host: int) -> void:
+## guests: further players who may join (admitted like anyone) though no
+## unit is theirs by default (a campaign ally whose army is not in the
+## battle): they command what they are given (side_of).
+func setup(scenario: Dictionary, p_seed: int, home: Array, present: Array, host: int, guests: Array = []) -> void:
 	sim = BattleSim.new()
 	sim.setup(scenario, p_seed)
 	frame = 0
@@ -119,6 +122,9 @@ func setup(scenario: Dictionary, p_seed: int, home: Array, present: Array, host:
 			ps.append(int(h))
 	for p in present:
 		if not ps.has(int(p)):
+			ps.append(int(p))
+	for p in guests:
+		if int(p) >= 0 and not ps.has(int(p)):
 			ps.append(int(p))
 	if host >= 0 and not ps.has(host):
 		ps.append(host)
@@ -195,12 +201,20 @@ func commander(u: int) -> int:
 
 
 ## The side player p fights on (that of the units they command by
-## default; -1 if none).
+## default). A player with no units of their own (a guest) fights on the
+## players' side when every player's units are on one side (co-op), else
+## on none (-1).
 func side_of(p: int) -> int:
+	var any := -1
 	for u in u_home.size():
 		if u_home[u] == p:
 			return sim.u_side[u]
-	return -1
+		if u_home[u] >= 0:
+			if any < 0:
+				any = sim.u_side[u]
+			elif any != sim.u_side[u]:
+				any = -2
+	return any if any >= 0 and players.has(p) else -1
 
 
 ## A player of `side` taking part to hold units for an absent one: `pref`

@@ -178,7 +178,7 @@ notifications show them from 1.
 | `POST /api/c/{id}/battles/{bid}/claim` | `{mode: fight\|auto}` | `{ok, until, lease_ms}` |
 | `POST /api/c/{id}/battles/{bid}/heartbeat` | | `{ok, until}` |
 | `POST /api/c/{id}/battles/{bid}/release` | | `{ok}` |
-| `POST /api/c/{id}/battles/{bid}/choice` | `{choice: wait\|command}` | `{ok}` |
+| `POST /api/c/{id}/battles/{bid}/choice` | `{choice: wait\|command\|ask}` | `{ok}` |
 | `POST /api/c/{id}/ping` | `{battle_id?}` | `{ok, sent}` |
 | `GET /api/c/{id}/session` | | `{rev, data}` |
 | `POST /api/c/{id}/session` | `{data, rev?}` | `{ok, rev}` |
@@ -206,7 +206,7 @@ format_version, rules, humans, alive, me, seq, seats[{f, name, claimed,
 last_seen, online, submitted, discord, alive}], submitted[], missing[],
 all_in, subs_rev, deadline, deadline_expired, timeout_h, battles[{id, r,
 region, humans, claim{f, mode, until, since, mine}|null, wait_by,
-command_by, live{state: lobby|live, host, since, version, players[{f, on, in,
+command_by, ask_by[], live{state: lobby|live, host, since, version, players[{f, on, in,
 dropped, joining, keep, silent_ms}]}|null}], activity[{at, f, kind, data}] (last 20), webhook (masked),
 server_time, last{kind, by, rules, build, parent, at}, join_code?`.
 
@@ -267,13 +267,20 @@ so "read, check, write" is atomic.
   and can be changed in the Online dialog; the server's value is the one
   enforced (`state.settings.turn_timeout_h` is only the initial value).
 - **Battles:** a seat may claim (fight or auto-resolve) a pending battle when
-  its own faction is the only human in it, or after choosing **Take command**
-  for a battle with the ally's army in it (the ally is told). **Wait for
-  ally** records the choice and pings the ally; **Ask to join now** pings
-  them ("X is asking you to join the battle at R now": the live-battle
-  invitation; the live co-op battle itself is milestone 5). Claims are
-  leases (120 s) renewed by heartbeats every 30 s, released by the result
-  upload, by release, or by expiring.
+  its own faction is the only human in it, or after choosing `command`
+  (the card's **Fight it for X**) for a battle with the ally's army in it
+  (the ally is told). Choices (`POST .../choice`): `wait` (**Leave it to
+  X**) records `wait_by` and pings the ally; `command` records
+  `command_by`; `ask` (**Ask to join**, any alive human seat, army in the
+  battle or not) adds the seat to the battle's `ask_by` (table
+  `battle_asks`, cleared when the battle leaves the pending list or on a
+  rollback) and pings the battle's humans when a webhook is set ("X asks
+  to join the battle at R: open it with Fight together"). The owner's
+  client shows the request on its battle card on its next poll and offers
+  Fight together first; the request needs no Discord. A choice on a battle
+  where the seat's own army is the only human one is refused
+  (`not_needed`). Claims are leases (120 s) renewed by heartbeats every
+  30 s, released by the result upload, by release, or by expiring.
 - Battle results go through a local **outbox** on the client: saved to the
   device before the upload, retried with backoff (also after the page is
   closed and reopened), re-applied on a newer state after a conflict,
@@ -293,7 +300,8 @@ campaign name in bold):
 | turn resolved | "Turn N resolved: K battles pending involving your army: Capua (Rome), ..." | humans with armies in them |
 | your turn | "Turn N resolved. Turn N+1 is ready to plan." (or after the last battle) | alive seats |
 | ping | "X is waiting for you (turn N)" (button on the waiting panel) | the missing seats |
-| ping battle | "X is asking you to join the battle at R now" | the ally |
+| ping battle | "X is asking you to join the battle at R now" (a live room opened, or the battle card's ping) | the ally (every other alive human for a room) |
+| ask | "X asks to join the battle at R: open it with Fight together" | the battle's humans |
 | wait | "X is waiting for you to fight the battle at R" | the ally |
 | took command | "X took command of your army at R" | the ally |
 | deadline soon | "Turn N deadline in about 2 hours: Y has not submitted" | the missing seats |
@@ -547,12 +555,18 @@ go back, sizes, rates.
   is in the battle (`create`), at the campaign's current version (`v`): the
   battle is built from that version on every device, so a later joiner
   fetches that version (`GET /state?version=V`) if the campaign has moved on.
+- Any other alive human seat may join an open room, army in the battle or
+  not (a **guest**: it commands the units it is given; clients pass the
+  campaign's other alive humans to `Lockstep.setup` as guests so they can be
+  admitted and gifted units mid-battle). A guest cannot open a room
+  (`not_in_battle` with `create`, `no_room` without) and never becomes the
+  lobby host on entry.
 - Opening takes the battle's claim in mode `live` (refused, `claimed`, if
   another device holds an ordinary claim; this device's own claim is turned
   into the live one). While the room has members the server renews the lease
   every 30 s (no client heartbeats); HTTP claims of the battle are refused
-  (`claimed`, mode `live`). Opening pings the other humans of the battle on
-  Discord ("X is asking you to join the battle at R now", deduplicated per 2
+  (`claimed`, mode `live`). Opening pings the campaign's other alive humans
+  on Discord ("X is asking you to join the battle at R now", deduplicated per 2
   minutes) and records `battle_live` activity.
 - Lobby until the host sends `start`; the members present then take part from
   frame 0. Seats that took part are recorded in `battle_live`: each of them

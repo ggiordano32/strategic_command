@@ -42,8 +42,8 @@ built for phones and browsers. Run an empire in the western Mediterranean of
    by marching onto a city), build, recruit, trade, make and break
    treaties. Armies within range support each other in battle. Submit.
 3. When a battle involves one of you, you get a ping. Fight it yourself,
-   auto-resolve it, or if both armies are in it, open the lobby and fight
-   it together in real time.
+   auto-resolve it, or open the lobby and fight it together in real time;
+   the other player can join any fought battle and be given units.
 4. Gift units or whole armies to each other on the map, and pass units
    across during a live battle.
 

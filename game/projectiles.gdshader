@@ -21,16 +21,33 @@ varying vec4 v_color;
 varying vec2 v_uv;
 varying float v_kind;
 
+// Portability (mobile WebGL drivers), as in soldiers.gdshader: the
+// instance's index comes from INSTANCE_CUSTOM (x + 2048 * y, written once by
+// soldier_layer.gd), not INSTANCE_ID, and the int32s are decoded with float maths (exact below
+// 2^24 in magnitude), with no uint, bitwise or % operators.
+int slot_index(vec4 cd) {
+	return int(cd.x + 0.5) + int(cd.y + 0.5) * 2048;
+}
+
 int fetch_int(int block, int idx) {
-	ivec2 p = ivec2(idx % tex_width, block * rows_per_block + idx / tex_width);
-	vec4 t = texelFetch(data_tex, p, 0);
-	uvec4 b = uvec4(round(t * 255.0));
-	uint u = b.r | (b.g << 8u) | (b.b << 16u) | (b.a << 24u);
-	return int(u);
+	int row = idx / tex_width;
+	ivec2 p = ivec2(idx - row * tex_width, block * rows_per_block + row);
+	vec4 b = floor(texelFetch(data_tex, p, 0) * 255.0 + 0.5);
+	if (b.a >= 128.0) {
+		vec4 c = vec4(255.0) - b;  // negative: two's complement
+		return -int(c.r + c.g * 256.0 + c.b * 65536.0 + c.a * 16777216.0) - 1;
+	}
+	return int(b.r + b.g * 256.0 + b.b * 65536.0 + b.a * 16777216.0);
+}
+
+// A bit field of a non-negative int: (v / div) mod span (div, span powers of 2).
+int bitfield(int v, int div, int span) {
+	int q = v / div;
+	return q - (q / span) * span;
 }
 
 void vertex() {
-	int i = INSTANCE_ID;
+	int i = slot_index(INSTANCE_CUSTOM);
 	float t0 = float(fetch_int(4, i));
 	float t1 = float(fetch_int(5, i));
 	v_uv = UV;
@@ -46,7 +63,7 @@ void vertex() {
 		vec2 d = e - s;
 		float ang = atan(d.y, d.x);
 		int flags = fetch_int(7, fetch_int(6, i));
-		int kind = (flags >> 1) & 3;
+		int kind = bitfield(flags, 2, 4);
 		v_kind = float(kind);
 		float m = px_per_unit * 1024.0;
 		// Arrow 0.9 m, javelin 1.6 m, bolt 2 m; width a fixed fraction.
@@ -67,7 +84,7 @@ void vertex() {
 		vec2 v = (UV - vec2(0.5)) * size * m;
 		float cs = cos(ang);
 		float sn = sin(ang);
-		vec3 tint = (flags & 1) == 0 ? vec3(0.75, 0.85, 1.0) : vec3(1.0, 0.82, 0.75);
+		vec3 tint = bitfield(flags, 1, 2) == 0 ? vec3(0.75, 0.85, 1.0) : vec3(1.0, 0.82, 0.75);
 		if (kind == 2) {
 			tint = mix(tint, vec3(0.35, 0.25, 0.15), 0.55);
 		} else if (kind == 3) {

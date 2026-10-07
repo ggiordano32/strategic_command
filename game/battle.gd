@@ -202,6 +202,7 @@ func _ready() -> void:
 	soldiers = SoldierLayer.new()
 	add_child(soldiers)
 	soldiers.setup(sim, PX_PER_M)
+	soldiers.probed.connect(_on_soldier_probe)
 
 	# Trees above the soldiers; their canopies fade over men under them.
 	trees = TreeLayer.new()
@@ -635,6 +636,12 @@ func _finish_bench() -> void:
 
 
 # ------------------------------------------------------------ telemetry ---
+
+## The soldier layer's self-check: pixels drawn around the biggest unit.
+func _on_soldier_probe(drawn: int, men: int) -> void:
+	print("SOLDIER_PROBE drawn=%d men=%d" % [drawn, men])
+	_t("soldier_probe", {"drawn": drawn, "men": men, "tick": sim.tick})
+
 
 func _t(kind: String, data: Dictionary) -> void:
 	if _tele != null:

@@ -314,6 +314,7 @@ func (s *Server) applyMeta(ctx context.Context, tx queryer, c *campRow, meta *St
 			tx.ExecContext(ctx, "DELETE FROM battle_claims WHERE campaign_id = ? AND battle_id = ?", c.ID, b.ID)
 			tx.ExecContext(ctx, "DELETE FROM battle_flags WHERE campaign_id = ? AND battle_id = ?", c.ID, b.ID)
 			tx.ExecContext(ctx, "DELETE FROM battle_live WHERE campaign_id = ? AND battle_id = ?", c.ID, b.ID)
+			tx.ExecContext(ctx, "DELETE FROM battle_asks WHERE campaign_id = ? AND battle_id = ?", c.ID, b.ID)
 		}
 	}
 	return nil
@@ -491,6 +492,7 @@ func (s *Server) rollback(w http.ResponseWriter, r *http.Request, seat Seat) {
 		tx.ExecContext(ctx, "DELETE FROM battle_claims WHERE campaign_id = ?", c.ID)
 		tx.ExecContext(ctx, "DELETE FROM battle_flags WHERE campaign_id = ?", c.ID)
 		tx.ExecContext(ctx, "DELETE FROM battle_live WHERE campaign_id = ?", c.ID)
+		tx.ExecContext(ctx, "DELETE FROM battle_asks WHERE campaign_id = ?", c.ID)
 		addActivity(ctx, tx, c.ID, now, seat.F, "rollback", map[string]any{"to": req.ToVersion, "version": newV})
 		seats, _ := loadSeats(ctx, tx, c.ID)
 		s.note(ctx, tx, ob, c, seats, fmt.Sprintf("rollback:%d", newV), "rollback",

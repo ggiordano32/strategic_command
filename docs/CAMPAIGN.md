@@ -1397,7 +1397,8 @@ and its armies disband.
   settlement's map preview (or the field's ground, woods and both
   deployment edges), the siege equipment line (ladder sets, ram, towers at
   walls 2-3), the odds bar and the buttons (Auto-resolve / Fight; online
-  also Fight together, Wait for ally, Take command, Join battle), then both
+  also Fight together, Ask to join, Leave it to <ally>, Fight it for
+  <ally>, Join battle), then both
   sides as unit cards (symbol with tier mark, men, a health bar of men
   against full strength) grouped by army, support armies and the garrison
   included, attackers left and defenders right. After auto-resolve or a
@@ -1442,16 +1443,27 @@ As built 2026-10-05; the server side is in `docs/SERVER.md`.
   Resolve without <ally>. When both are in, the turn resolves on its own
   (the last submitter's device; the other after a few seconds if needed) and
   both see the turn summary. Changes appear without refreshing (long-poll).
-- **Pending battles online:** your own: Auto-resolve or Fight (the device
-  takes a lease first; another device is told "Carthage is fighting this
-  battle now"); with your ally's army in it: Wait for ally (they are
-  pinged), Take command (they are told; then Auto-resolve / Fight), Fight
-  together (milestone 5: opens the live battle's lobby and pings the ally;
-  "Ask to join now" on servers without live battles). A battle being fought
-  live shows "Live now: Rome is waiting for you in the battle lobby" / "Live
-  now: Rome in battle (started 3 min ago)" with **Join battle** (and "Join,
-  Rome keeps my army"). Fight on such a battle after Take command also opens
-  a live room, so the ally can still join. The result is kept on this device until the server has it (it
+- **Pending battles online:** your own: Auto-resolve, Fight (solo; the
+  device takes a lease first; another device is told "Carthage is fighting
+  this battle now") and **Fight together** whenever another human is alive
+  (milestone 5: opens the live battle's lobby; the allies are told). **Who
+  can join:** any alive human of the campaign can join a fought battle,
+  army in it or not: a player whose army is in it commands it; one without
+  (a guest) commands the units the owner gives them (select, Gift) and can
+  give them back. Your ally's battle (yours not in it): **Ask to join**
+  (recorded on the server, no Discord needed: the owner's card says
+  "Syracuse asks to join this battle", puts Fight together first, and Fight
+  alone asks "Syracuse asked to join. Fight alone anyway?"; a Discord ping
+  goes out too when the campaign has a webhook), **Leave it to <ally>**
+  (they are pinged; their card says you are waiting and also puts Fight
+  together first) and **Fight it for <ally>** (for when they are away: you
+  take command of their army, they are told; then Auto-resolve / Fight).
+  With both armies in it: Leave it to <ally>, Fight it for <ally> and Fight
+  together. A battle being fought live shows "Live now: Rome is waiting
+  for you in the battle lobby" / "Live now: Rome in battle (started 3 min
+  ago)" with **Join battle** (and, with your army in it, "Join, Rome keeps
+  my army"). Fight on a battle with the ally's army in it (after Fight it
+  for them) also opens a live room, so the ally can still join. The result is kept on this device until the server has it (it
   survives a closed page and is resent); if the ally resolved the battle
   first, it is dropped with a note. The "always auto-resolve" setting
   auto-resolves your own battles online too.

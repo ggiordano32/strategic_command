@@ -127,6 +127,15 @@ CREATE TABLE IF NOT EXISTS battle_flags (
 	command_at INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY (campaign_id, battle_id)
 );
+-- Seats that asked to join a pending battle (choice "ask"), whether or not
+-- their army is in it: the battle's owner sees it and opens the live room.
+CREATE TABLE IF NOT EXISTS battle_asks (
+	campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+	battle_id INTEGER NOT NULL,
+	f INTEGER NOT NULL,
+	at INTEGER NOT NULL,
+	PRIMARY KEY (campaign_id, battle_id, f)
+);
 -- Seats that took part in a live co-op battle (milestone 5): each may
 -- upload its result, whoever's armies are in it.
 CREATE TABLE IF NOT EXISTS battle_live (
