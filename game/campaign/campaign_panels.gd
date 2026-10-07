@@ -16,6 +16,7 @@ const Saves := preload("res://game/campaign/saves.gd")
 const CityPreview := preload("res://game/campaign/city_preview.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
+const DragReorder := preload("res://game/drag_reorder.gd")
 
 var s  # the campaign screen
 var _split_sel: Dictionary = {}  # army id -> Array of selected unit indices
@@ -869,6 +870,18 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 			_movement_rows(box, a)
 	var sel: Array = _split_sel.get(id, [])
 	var units: Array = a["units"]
+	# Drag a row to reorder the army (an "arrange" order; mouse: drag; touch:
+	# long press until it lifts, then drag). Its long press without a drag
+	# opens the unit page.
+	var reorder: DragReorder = null
+	if mine and int(a["busy"]) == 0 and units.size() > 1:
+		reorder = DragReorder.new()
+		reorder.name = "unit_reorder"
+		reorder.vertical = true
+		reorder.scroll = s.side_scroll
+		box.add_child(reorder)
+		reorder.moved.connect(func(from: int, to: int): _arrange(id, from, to))
+		reorder.held.connect(func(i: int): s.open_unit_page(CState.unit_type(units[i]), Callable(), ""))
 	for k in units.size():
 		var u: Dictionary = units[k]
 		var ty := CState.unit_type(u)
@@ -876,7 +889,11 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 		row.selected = sel.has(k)
 		row.name = "unit_%d" % k
 		var kk := k
-		row.long_pressed.connect(func(): s.open_unit_page(ty, Callable(), ""))
+		if reorder != null:
+			reorder.items.append(row)
+			row.gui_input.connect(func(e: InputEvent): reorder.feed(e, kk))
+		else:
+			row.long_pressed.connect(func(): s.open_unit_page(ty, Callable(), ""))
 		row.pressed.connect(func():
 			var cur: Array = _split_sel.get(id, [])
 			if cur.has(kk):
@@ -930,7 +947,8 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 			mb.disabled = CState.unit_count(o) + units.size() > CData.ARMY_MAX
 			fl.add_child(mb)
 	box.add_child(fl)
-	box.add_child(Kit.label("Tap units to choose them for splitting or disbanding.", Kit.FONT_SMALL, Kit.COL_DIM, true))
+	box.add_child(Kit.label("Tap units to choose them for splitting or disbanding. Drag a unit (on a touch screen: hold it until it lifts) to change the order the army takes the field in.",
+		Kit.FONT_SMALL, Kit.COL_DIM, true))
 
 
 ## The planned recruit orders into army id (version 6), in order.
@@ -1245,6 +1263,70 @@ func _set_stance(id: int, st_v: int) -> void:
 	if not base.is_empty() and CState.stance(base) != st_v:
 		s.add_order({"t": "stance", "a": id, "s": st_v})
 	s.select_army(id)
+
+
+## A unit row of army id dropped at position `to`: one "arrange" order for
+## the army this turn. A later drag rewrites the pending one (composing the
+## two) unless an order after it changed the army's units (then a second
+## arrange follows them); back to the turn's order drops it. The split
+## selection follows its units; the card keeps its scroll position.
+func _arrange(id: int, from: int, to: int) -> void:
+	var n := CState.unit_count(CState.army(s.ps, id))
+	if from < 0 or from >= n or to < 0 or to >= n or from == to:
+		return
+	var perm: Array = range(n)
+	perm.insert(to, perm.pop_at(from))
+	var sel: Array = _split_sel.get(id, [])
+	if not sel.is_empty():
+		var moved_sel: Array = []
+		for k in n:
+			if sel.has(int(perm[k])):
+				moved_sel.append(k)
+		_split_sel[id] = moved_sel
+	var j := -1
+	for k in s.orders.size():
+		var o: Dictionary = s.orders[k]
+		if str(o["t"]) == "arrange" and int(o.get("army", -1)) == id:
+			j = k
+	var sv: int = s.side_scroll.scroll_vertical
+	if j >= 0 and not _units_changed_after(id, j):
+		var old: Array = s.orders[j]["order"]
+		var comp: Array = []
+		for k in n:
+			comp.append(int(old[int(perm[k])]))
+		var list: Array = s.orders.duplicate()
+		if comp == range(n):
+			list.remove_at(j)
+		else:
+			list[j] = {"t": "arrange", "army": id, "order": comp}
+		s.set_orders(list)
+	else:
+		s.add_order({"t": "arrange", "army": id, "order": perm})
+	s._t("campaign_input", {"what": "arrange"})
+	s.select_army(id)
+	_keep_scroll(sv)
+
+
+## An order after index j that changes army id's unit list.
+func _units_changed_after(id: int, j: int) -> bool:
+	for k in range(j + 1, s.orders.size()):
+		var o: Dictionary = s.orders[k]
+		var t := str(o["t"])
+		if (t in ["split", "disband", "merge", "arrange"] and int(o.get("army", -1)) == id) \
+				or (t == "merge" and int(o.get("into", -1)) == id) \
+				or (t == "exchange" and (int(o.get("from", -1)) == id or int(o.get("to", -1)) == id)):
+			return true
+	return false
+
+
+## The side panel back at scroll position sv once the rebuilt card is laid
+## out.
+func _keep_scroll(sv: int) -> void:
+	if sv <= 0:
+		return
+	await s.get_tree().process_frame
+	if is_instance_valid(s) and s.side_scroll != null:
+		s.side_scroll.scroll_vertical = sv
 
 
 func _split(id: int) -> void:

@@ -40,6 +40,11 @@ extends RefCounted
 ##        units; neither may end above CData.ARMY_MAX; an army left with no
 ##        units is gone. `to` may be an allied human's army: a gift (no
 ##        "back": taking is not allowed); event "gift" for the receiver.
+##   {"t": "arrange", "army": id, "order": [unit indices]}: the army's units
+##        in a new order, a permutation of 0..n-1 (the new list's unit k is
+##        the old unit order[k]); any format; an army of the faction not in
+##        a battle. The order sets the order its units take the field in
+##        (cbattle.build reads the list in order).
 ##   Version 6 move with "join": id (another army of the faction) instead of
 ##        x, y / tgt: march to it and merge into it on arrival (it keeps its
 ##        id, stance and cell); with persist the army keeps following it
@@ -121,6 +126,8 @@ static func apply_order(st: Dictionary, f: int, o: Dictionary) -> String:
 			return _disband(st, f, int(o.get("army", -1)), o.get("units", []))
 		"exchange":
 			return _exchange(st, f, int(o.get("from", -1)), int(o.get("to", -1)), o.get("units", []), o.get("back", []))
+		"arrange":
+			return _arrange(st, f, int(o.get("army", -1)), o.get("order", []))
 		"propose":
 			return check_proposal(st, f, int(o.get("to", -1)), str(o.get("what", "")))
 		"war":
@@ -566,6 +573,43 @@ static func _exchange(st: Dictionary, f: int, from: int, to: int, units, back) -
 		var x := CState.army(st, id)
 		if not x.is_empty() and CState.unit_count(x) == 0:
 			st["armies"].remove_at(CState.army_index(st, id))
+	return ""
+
+
+## "" if faction f may put the units of its army id in the order `order`
+## (a permutation of the unit indices, see "arrange" above).
+static func arrange_check(st: Dictionary, f: int, id: int, order) -> String:
+	var a := CState.army(st, id)
+	if a.is_empty() or int(a["f"]) != f:
+		return "no such army"
+	if int(a["busy"]) != 0:
+		return "in a battle"
+	var n := CState.unit_count(a)
+	if not (order is Array) or (order as Array).size() != n:
+		return "bad order"
+	var seen: Array = []
+	seen.resize(n)
+	seen.fill(0)
+	for v in order:
+		if not (v is int or v is float):
+			return "bad order"
+		var k := int(v)
+		if k < 0 or k >= n or float(k) != float(v) or int(seen[k]) != 0:
+			return "bad order"
+		seen[k] = 1
+	return ""
+
+
+static func _arrange(st: Dictionary, f: int, id: int, order) -> String:
+	var why := arrange_check(st, f, id, order)
+	if why != "":
+		return why
+	var a := CState.army(st, id)
+	var old: Array = a["units"]
+	var units: Array = []
+	for v in order:
+		units.append(old[int(v)])
+	a["units"] = units
 	return ""
 
 

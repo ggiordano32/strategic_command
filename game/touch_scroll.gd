@@ -19,7 +19,10 @@ extends ScrollContainer
 ##  - the innermost TouchScroll under the finger that can scroll that way
 ##    takes the gesture; drags never reach the map or battle underneath (the
 ##    touch events of a scroll are marked handled);
-##  - on release the scroll keeps its velocity and slows down (FRICTION).
+##  - on release the scroll keeps its velocity and slows down (FRICTION);
+##  - a long press that lifts a row to reorder it (drag_reorder.gd) sets
+##    `hold`: that touch never becomes a scroll (the lift needs the finger
+##    still, so it always comes before the DEADZONE).
 ## The built-in drag scrolling is switched off (huge scroll_deadzone) so the
 ## two never add up. Scroll bars become thin indicators on touch screens.
 
@@ -31,6 +34,9 @@ const MIN_FLING := 40.0       # px/s below which a fling stops
 const OUTSIDE := Vector2(-100000.0, -100000.0)
 
 static var _owner: ScrollContainer = null   # container scrolling the current touch
+## A drag to reorder (game/drag_reorder.gd) has lifted an item under the
+## finger: no scroll starts for this touch.
+static var hold := false
 
 var _down := false
 var _start := Vector2.ZERO
@@ -105,7 +111,7 @@ func _input(e: InputEvent) -> void:
 	if not _scrolling:
 		var d := mm.position - _start
 		var axis := _axis(d)
-		if d.length() < DEADZONE or axis == Vector2.ZERO or _owner != null or _inner_claims(axis):
+		if d.length() < DEADZONE or axis == Vector2.ZERO or _owner != null or hold or _inner_claims(axis):
 			return
 		_scrolling = true
 		_owner = self

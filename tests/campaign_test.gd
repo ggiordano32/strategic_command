@@ -33,6 +33,8 @@ extends SceneTree
 ## 5 -> 6 and from the format 1 file, the step log, determinism; merging
 ## by marching onto an army (same turn, following it across turns, the cap,
 ## the army gone), the exchange order both ways (an army emptied is gone),
+## the arrange order (a permutation of the army's units: validation, JSON
+## numbers, the preview, a split after it, determinism, format 5 too),
 ## gifts to an allied human (taking refused, the event), recruiting into
 ## an army and raising a new one (slots shared, the cap, wrong / allied
 ## region and besieged refused, mustering refuses the march and keeps the
@@ -97,6 +99,7 @@ func _init() -> void:
 	_grid_determinism()
 	_grid_merge()
 	_grid_exchange()
+	_grid_arrange()
 	_grid_gift()
 	_grid_recruit_collect()
 	_grid_recruit_army()
@@ -2036,6 +2039,57 @@ func _grid_exchange() -> void:
 	var r1 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [x])])
 	var r2 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [x])])
 	_check(CState.state_hash(r1) == CState.state_hash(r2), "an exchange resolves deterministically")
+
+
+func _grid_arrange() -> void:
+	var st := _empty6()
+	var rome := _f("rome")
+	var cart := _f("carthage")
+	_italy(st, rome)
+	var a := _put(st, rome, CState.field_cell(_r("latium")), ["heavy", "spear", "cav", "light"])
+	var id := int(a["id"])
+	var x := {"t": "arrange", "army": id, "order": [2, 0, 3, 1]}
+	var s1 := CState.copy(st)
+	_check(CRules.apply_order(s1, rome, x) == "" and str(_keys(CState.army(s1, id))) == str(["cav", "heavy", "light", "spear"]),
+		"arrange puts the units in the new order (%s)" % str(_keys(CState.army(s1, id))))
+	var bad := [[0, 1, 2], [0, 1, 2, 3, 4], [0, 0, 1, 2], [0, 1, 2, 4], [-1, 0, 1, 2], [0, 1, 2, 1.5], "0123", [0, 1, 2, "3"]]
+	var refused := 0
+	for b in bad:
+		if CRules.apply_order(CState.copy(st), rome, {"t": "arrange", "army": id, "order": b}) == "bad order":
+			refused += 1
+	_check(refused == bad.size(), "a list that is not a permutation of the units is refused (%d of %d)" % [refused, bad.size()])
+	var s2 := CState.copy(st)
+	_check(CRules.apply_order(s2, rome, {"t": "arrange", "army": id, "order": [2.0, 0.0, 3.0, 1.0]}) == ""
+		and str(_keys(CState.army(s2, id))) == str(["cav", "heavy", "light", "spear"]), "JSON numbers (floats) are accepted")
+	_check(CRules.apply_order(CState.copy(st), cart, x) == "no such army", "another faction's army is refused")
+	var s3 := CState.copy(st)
+	CState.army(s3, id)["busy"] = 1
+	_check(CRules.apply_order(s3, rome, x) == "in a battle", "an army in a battle is refused")
+	# The plan preview, and a split after it takes the arranged units.
+	var sp := {"t": "split", "army": id, "units": [0], "new": CRules.new_army_id(st, rome)}
+	var pv := CTurn.preview(st, rome, [x, sp])
+	_check((pv["errors"] as Array).is_empty() and str(_keys(CState.army(pv["state"], id))) == str(["heavy", "light", "spear"])
+		and str(_keys(CState.army(pv["state"], int(sp["new"])))) == str(["cav"]), "the preview applies it; a later split counts in the new order")
+	# Through a turn: applied, deterministic, the same after a JSON trip.
+	var sub := CTurn.submission(st, rome, [x])
+	var r1 := CTurn.resolve_turn(st, [sub])
+	var r2 := CTurn.resolve_turn(st, [sub])
+	var r3 := CTurn.resolve_turn(st, [JSON.parse_string(JSON.stringify(sub))])
+	_check(str(_keys(CState.army(r1, id))) == str(["cav", "heavy", "light", "spear"]), "the turn applies the arrangement")
+	_check(CState.state_hash(r1) == CState.state_hash(r2) and CState.state_hash(r1) == CState.state_hash(r3),
+		"an arrangement resolves deterministically (also from a JSON submission)")
+	_check(_plain(r1), "the state stays plain data")
+	# Format 5 (and older): the same order.
+	var st5 := _new([rome])
+	var a5: Dictionary = CState.armies_of(st5, rome)[0]
+	var n5 := CState.unit_count(a5)
+	var rev: Array = []
+	for k in n5:
+		rev.append(n5 - 1 - k)
+	var want: Array = _keys(a5)
+	want.reverse()
+	var r5 := CTurn.resolve_turn(st5, _sub(st5, rome, [{"t": "arrange", "army": int(a5["id"]), "order": rev}]))
+	_check(n5 > 1 and str(_keys(CState.army(r5, int(a5["id"])))) == str(want), "format 5: the arrangement applies as well")
 
 
 func _grid_gift() -> void:

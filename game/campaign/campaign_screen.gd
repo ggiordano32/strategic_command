@@ -659,6 +659,20 @@ func add_orders(list: Array) -> String:
 	return ""
 
 
+## Replace the whole plan with `list` (one Undo step), e.g. a pending order
+## rewritten in place; nothing changes if any order of it is refused.
+func set_orders(list: Array) -> String:
+	var pv := CTurn.preview(st, f, list)
+	for e in pv["errors"]:
+		_flash(str(e[1]))
+		return str(e[1])
+	_push_undo()
+	orders = list
+	_replan()
+	save()
+	return ""
+
+
 ## Version 6: the planned recruit orders into army (it would be mustering).
 func recruits_into(army: int) -> Array:
 	var out: Array = []

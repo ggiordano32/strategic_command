@@ -158,6 +158,12 @@ class UnitRow extends Control:
 				_press_t = -1.0
 				queue_redraw()
 
+	## Forget the press in progress (a drag to reorder took it over: no
+	## press, no long press on release).
+	func cancel_press() -> void:
+		_press_t = -1.0
+		queue_redraw()
+
 	func _process(_delta: float) -> void:
 		if _press_t >= 0.0 and not _long_fired and Time.get_ticks_msec() / 1000.0 - _press_t >= LONG_PRESS_SEC:
 			_long_fired = true

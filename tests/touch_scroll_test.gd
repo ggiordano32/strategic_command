@@ -7,10 +7,13 @@ extends SceneTree
 ## test list and the unit book (list and page): (a) a drag that starts on a
 ## button or row scrolls and presses nothing; (b) a short tap presses exactly
 ## that button; (c) a fling keeps scrolling after release; (d) a long press
-## on a recruit or army row opens the unit page, and a drag cancels it.
+## on a recruit or army row opens the unit page, and a drag cancels it;
+## (e) on an army row the long press lifts the row and a drag moves it (an
+## arrange order) without scrolling.
 ## Exits 0 on success, 1 on failure.
 
 const UiScale := preload("res://game/ui_scale.gd")
+const UT := preload("res://sim/unit_types.gd")
 const CampaignScreen := preload("res://game/campaign/campaign_screen.gd")
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -207,6 +210,57 @@ func _campaign_lists() -> void:
 	await _settle(urow)
 	await _drag(_centre(urow), _centre(urow) + Vector2(-150, -40))
 	_check(cs.offset == off, "a drag in the panel does not pan the map")
+	# (e) a long press on an army row lifts it (drag_reorder.gd): released
+	# without moving it opens the unit page; dragged, the row moves (an
+	# arrange order) and the panel does not scroll.
+	var arm := CState.army(cs.st, int(a["id"]))
+	arm["units"] = (a["units"] as Array).duplicate(true)
+	cs.orders = []
+	cs._replan()
+	cs.select_army(int(a["id"]))
+	await _frames(4)
+	urow = cs.side_box.find_child("unit_1", true, false)
+	await _settle(urow)
+	_touch(_centre(urow), true)
+	await create_timer(0.6).timeout
+	_touch(_centre(urow), false)
+	await _frames(3)
+	var nm := str(UT.TYPES[urow.ty]["name"])
+	_check(cs.dialog.visible and cs.dialog_title.text == nm, "army list: a long press released in place opens the unit page (%s)" % cs.dialog_title.text)
+	_check(cs.orders.is_empty(), "army list: and plans nothing")
+	cs.close_dialog()
+	await _frames(2)
+	urow = cs.side_box.find_child("unit_1", true, false)
+	await _settle(urow)
+	# Clear of the panel's auto-scroll edges.
+	sc.scroll_vertical += int(urow.get_global_rect().position.y - sc.get_global_rect().position.y - 50.0)
+	await _frames(3)
+	var sv0: int = sc.scroll_vertical
+	start = _centre(urow)
+	var r2: Rect2 = (cs.side_box.find_child("unit_2", true, false) as Control).get_global_rect()
+	var to := r2.get_center() + Vector2(0, r2.size.y * 0.3)
+	_touch(start, true)
+	await create_timer(0.5).timeout
+	var prev := start
+	for k in range(1, 7):
+		var p := start.lerp(to, k / 6.0)
+		var e := InputEventScreenDrag.new()
+		e.index = 0
+		e.position = _win(p)
+		e.relative = _win(p) - _win(prev)
+		Input.parse_input_event(e)
+		prev = p
+		await process_frame
+	_touch(to, false)
+	await _frames(3)
+	var arr: Array = []
+	for o in cs.orders:
+		if str(o["t"]) == "arrange":
+			arr.append(o)
+	_check(arr.size() == 1 and int(arr[0]["order"][1]) == 2 and int(arr[0]["order"][2]) == 1,
+		"army list: long press and drag moves the row (%s)" % str(arr))
+	_check(absi(sc.scroll_vertical - sv0) <= 2, "army list: the lifted row does not scroll the panel (%d -> %d)" % [sv0, sc.scroll_vertical])
+	_check(not cs.dialog.visible, "army list: the drag opens no page")
 	cs.queue_free()
 	await _frames(3)
 

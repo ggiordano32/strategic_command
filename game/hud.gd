@@ -26,8 +26,10 @@ signal card_long_pressed(unit: int)
 signal deselect_pressed
 signal controls_pressed
 signal gift_pressed
+signal cards_reordered
 
 const TouchScroll := preload("res://game/touch_scroll.gd")
+const DragReorder := preload("res://game/drag_reorder.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Icons := preload("res://game/unit_icons.gd")
@@ -35,7 +37,6 @@ const UnitBook := preload("res://game/unit_book.gd")
 const Controls := preload("res://game/controls.gd")
 const CONFIRM_SEC := 3.0
 const LONG_PRESS_SEC := 0.5
-const LONG_PRESS_SLOP := 14.0   # px the finger may wander during a long press
 # Layout in logical pixels (game/ui_scale.gd turns them into device sizes).
 const BTN_H := 42.0
 const MARGIN := 6.0
@@ -95,13 +96,14 @@ var book: UnitBook
 var book_button: Button
 var controls_button: Button
 var controls: Controls
-# Long press on a card: unit, start time, start position; fired once.
-var _lp_unit := -1
-var _lp_start := 0.0
-var _lp_pos := Vector2.ZERO
-var _lp_fired := false
-## Unit whose card release must not select (the long press opened the book).
+## Unit whose card release must not select (unused since drag_reorder.gd
+## swallows the release after a long press; battle.gd still checks it).
 var suppress_card := -1
+## The cards' display order (unit indices), changed by dragging a card. A
+## view-only mapping for this player and this battle: the sim's unit
+## indices never change and nothing of it reaches the sim or lockstep.
+var _order: Array[int] = []
+var _reorder: DragReorder
 var _ui_controls: Array[Control] = []
 var _confirm_left := 0.0
 
@@ -285,6 +287,14 @@ func build(sim, player_side: int, interactive: bool) -> void:
 		cards_box.add_child(b)
 		_cards[u] = b
 		_faces[u] = face
+		_order.append(u)
+	# Drag a card to reorder the strip (mouse: drag; touch: long press, then
+	# drag); its long press without a drag opens the unit book.
+	_reorder = DragReorder.new()
+	root.add_child(_reorder)
+	_reorder.held.connect(func(i: int): card_long_pressed.emit(_order[i]))
+	_reorder.moved.connect(_on_card_moved)
+	_reorder_items()
 	_ui_controls.append(cards_bar)
 	get_viewport().size_changed.connect(_layout_cards)
 	_layout_cards()
@@ -413,37 +423,46 @@ func set_stats_expanded(on: bool) -> void:
 	stats_panel.visible = on
 
 
-## Long press (touch or left button held) or right click on a card opens
-## that unit type's page; it never selects or orders anything.
+## Right click on a card, or a long press (left button held still; on a
+## touch: held until the card lifts, released without moving) opens that
+## unit type's page; it never selects or orders anything. Dragging a card
+## (touch: after the lift) moves it in the strip (drag_reorder.gd).
 func _on_card_input(event: InputEvent, u: int) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.button_index == MOUSE_BUTTON_RIGHT and mb.pressed:
 			card_long_pressed.emit(u)
 			return
-		if mb.button_index == MOUSE_BUTTON_LEFT:
-			if mb.pressed:
-				# Shift / Ctrl held at the click: add to the selection.
-				card_mod_add = mb.shift_pressed or mb.ctrl_pressed or mb.meta_pressed
-				_lp_unit = u
-				_lp_start = Time.get_ticks_msec() / 1000.0
-				_lp_pos = mb.global_position
-				_lp_fired = false
-			else:
-				_lp_unit = -1
-				if suppress_card >= 0:
-					# The card's own release handling (pressed) runs first.
-					set_deferred("suppress_card", -1)
-	elif event is InputEventMouseMotion and _lp_unit == u:
-		if (event as InputEventMouseMotion).global_position.distance_to(_lp_pos) > LONG_PRESS_SLOP:
-			_lp_unit = -1
+		if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed:
+			# Shift / Ctrl held at the click: add to the selection.
+			card_mod_add = mb.shift_pressed or mb.ctrl_pressed or mb.meta_pressed
+	_reorder.feed(event, _order.find(u))
+
+
+## A card dropped at display position `to`.
+func _on_card_moved(from: int, to: int) -> void:
+	var u := _order[from]
+	_order.remove_at(from)
+	_order.insert(to, u)
+	cards_box.move_child(_cards[u], to)
+	_reorder_items()
+	cards_reordered.emit()
+
+
+func _reorder_items() -> void:
+	var list: Array = []
+	for u in _order:
+		list.append(_cards[u])
+	_reorder.items = list
+
+
+## The player's units in the card strip's display order (the order group
+## selection follows).
+func display_order() -> Array[int]:
+	return _order.duplicate()
 
 
 func _process(delta: float) -> void:
-	if _lp_unit >= 0 and not _lp_fired and Time.get_ticks_msec() / 1000.0 - _lp_start >= LONG_PRESS_SEC:
-		_lp_fired = true
-		suppress_card = _lp_unit  # the release that follows must not select
-		card_long_pressed.emit(_lp_unit)
 	if _confirm_left > 0.0:
 		_confirm_left -= delta
 		if _confirm_left <= 0.0:

@@ -248,6 +248,7 @@ func _ready() -> void:
 	hud.orders_toggled.connect(_on_orders_toggled)
 	hud.book_pressed.connect(func(): _open_book(-1, "book_open"))
 	hud.card_long_pressed.connect(func(u: int): _open_book(sim.u_type[u], "book_open_card"))
+	hud.cards_reordered.connect(func(): _count("card_reorder"))
 	hud.book.closed.connect(_on_book_closed)
 	hud.deselect_pressed.connect(func():
 		_count("deselect_button")
@@ -820,7 +821,8 @@ func _select_group(kind: String) -> void:
 	_count("group_" + kind)
 	selection.clear()
 	selected = -1
-	for u in sim.n_units:
+	# In the card strip's order (the player may have dragged cards around).
+	for u in hud.display_order():
 		if sim.u_side[u] != PLAYER_SIDE or sim.u_state[u] != BattleSim.U_READY or not _mine(u):
 			continue
 		var c := UT.cls(sim.u_type[u])

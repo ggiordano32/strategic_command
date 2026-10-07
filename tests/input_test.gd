@@ -13,9 +13,15 @@ extends SceneTree
 ## terrain (menu): the Terrain button cycles the ground for the battles, a
 ## battle starts on the chosen terrain, and Replay restarts the last battle
 ## with the same seed and ground.
+## Card strip reordering: a mouse drag of a card moves it (the display
+## order only: no order, no sim change, the click still selects), All
+## selects in the display order, a touch long press lifts a card and a
+## drag moves it, a quick touch drag moves nothing, the order survives the
+## unit book and the controls page.
 ## Exits 0 on success, 1 on failure.
 
 const Battle := preload("res://game/battle.gd")
+const Hud := preload("res://game/hud.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Overlay := preload("res://game/overlay.gd")
@@ -196,6 +202,22 @@ func _initialize() -> void:
 		_step_bc_box_drag,
 		_step_bc_box_up,
 		_step_bc_check_box,
+		# Card strip: drag to reorder (a view-only mapping).
+		_step_ro_start,
+		_step_ro_mouse_up,
+		_step_ro_check_mouse,
+		_step_ro_click,
+		_step_ro_check_click,
+		_step_ro_group,
+		_step_ro_touch_down,
+		_step_ro_touch_wait,
+		_step_ro_touch_drag,
+		_step_ro_touch_up,
+		_step_ro_check_touch,
+		_step_ro_short_drag,
+		_step_ro_check_short,
+		_step_ro_pages,
+		_step_ro_check_pages,
 		_step_done,
 	]
 
@@ -928,7 +950,7 @@ func _step_check_long_press() -> void:
 	_check(b.visible and b.current == battle.sim.u_type[u_pike],
 		"long press on a card opens that unit type's page (page %d)" % b.current)
 	_check(battle.sim._order_seq == _book_seq, "long press issues no order")
-	_check(_sel_set() == _book_sel, "long press does not change the selection (%s)" % str(_sel_set()))
+	_check(_sel_set() == _book_sel, "long press does not change the selection (%s, was %s)" % [str(_sel_set()), str(_book_sel)])
 	_check(int(battle._input_counts.get("book_open_card", 0)) >= 1, "book opens counted for telemetry")
 
 
@@ -1569,6 +1591,150 @@ func _step_bc_box_up() -> void:
 
 func _step_bc_check_box() -> void:
 	_check(battle.selection.has(_bc[0]) and battle.selection.has(_bc[1]), "a mouse drag box selects the units inside (%s)" % str(battle.selection))
+
+
+# ---- card strip: drag to reorder ----
+
+var _ro0: Array[int] = []
+var _ro_hash := 0
+var _ro_seq := 0
+var _ro_t0 := 0
+var _ro_p := Vector2.ZERO
+var _ro_sel: Array = []
+
+
+func _ro_card(i: int) -> Rect2:
+	return (battle.hud._cards[battle.hud.display_order()[i]] as Control).get_global_rect()
+
+
+func _ro_box_order() -> Array:
+	var out: Array = []
+	for c in battle.hud.cards_box.get_children():
+		out.append(battle.hud._cards.find_key(c))
+	return out
+
+
+func _step_ro_start() -> void:
+	if not battle.paused:
+		battle._toggle_pause()
+	battle._select(-1)
+	_no_double_tap()
+	_ro0 = battle.hud.display_order()
+	_ro_hash = battle.sim.state_hash()
+	_ro_seq = battle.sim._order_seq
+	_check(_ro0.size() >= 4, "enough cards to reorder (%d)" % _ro0.size())
+	# Desktop: press on the first card and drag it past the third.
+	var a := _ro_card(0).get_center()
+	var r := _ro_card(2)
+	_ro_p = r.get_center() + Vector2(r.size.x * 0.3, 0)
+	_mouse(a, true)
+	for k in range(1, 6):
+		_mouse_move(a.lerp(_ro_p, k / 5.0), (_ro_p - a) / 5.0)
+
+
+func _step_ro_mouse_up() -> void:
+	_check(battle.hud._reorder.is_active(), "a mouse drag lifts the card")
+	_mouse(_ro_p, false)
+
+
+func _step_ro_check_mouse() -> void:
+	var want: Array = [_ro0[1], _ro0[2], _ro0[0]]
+	want.append_array(_ro0.slice(3))
+	_check(battle.hud.display_order() == want, "a mouse drag moves the card after the third (%s -> %s)" % [str(_ro0), str(battle.hud.display_order())])
+	_check(_ro_box_order() == want, "the strip shows the new order")
+	_check(battle.selection.is_empty() and not battle.hud.book.visible, "the drag selects nothing and opens no page")
+	_check(battle.sim.state_hash() == _ro_hash and battle.sim._order_seq == _ro_seq, "view only: no order, the sim state unchanged")
+	_check(int(battle._input_counts.get("card_reorder", 0)) == 1, "counted for telemetry")
+
+
+func _step_ro_click() -> void:
+	_no_double_tap()
+	var p := _ro_card(2).get_center()
+	_mouse(p, true)
+	_mouse(p, false)
+
+
+func _step_ro_check_click() -> void:
+	_check(battle.selection == [_ro0[0]], "a click on the moved card still selects its unit (%s)" % str(battle.selection))
+	_tap_control(battle.hud.group_buttons["all"])
+
+
+func _step_ro_group() -> void:
+	var want: Array = []
+	for u in battle.hud.display_order():
+		if battle.sim.u_state[u] == BattleSim.U_READY:
+			want.append(u)
+	_check(battle.selection == want, "All selects in the strip's order (%s)" % str(battle.selection))
+	_ro_sel = battle.selection.duplicate()
+	_ro0 = battle.hud.display_order()
+
+
+## Touch: a long press on the fourth card lifts it, a drag takes it first.
+func _step_ro_touch_down() -> void:
+	_no_double_tap()
+	_ro_p = _vp_to_window(_ro_card(3).get_center())
+	_ro_t0 = Time.get_ticks_msec()
+	_touch(0, _ro_p, true)
+
+
+func _step_ro_touch_wait() -> void:
+	if Time.get_ticks_msec() - _ro_t0 < 500:
+		steps.push_front(_step_ro_touch_wait)
+
+
+func _step_ro_touch_drag() -> void:
+	_check(battle.hud._reorder.is_active(), "a touch long press lifts the card")
+	var r := _ro_card(0)
+	var to := _vp_to_window(r.get_center() - Vector2(r.size.x * 0.3, 0))
+	var prev := _ro_p
+	for k in range(1, 7):
+		var p := _ro_p.lerp(to, k / 6.0)
+		_drag(0, p, p - prev)
+		prev = p
+	_ro_p = to
+
+
+func _step_ro_touch_up() -> void:
+	_touch(0, _ro_p, false)
+
+
+func _step_ro_check_touch() -> void:
+	var want: Array = [_ro0[3], _ro0[0], _ro0[1], _ro0[2]]
+	want.append_array(_ro0.slice(4))
+	_check(battle.hud.display_order() == want, "long press and drag moves the card first (%s)" % str(battle.hud.display_order()))
+	_check(not battle.hud.book.visible and battle.selection == _ro_sel, "the touch drag opens no page and keeps the selection (%s, book %s)" % [str(battle.selection), str(battle.hud.book.visible)])
+	_check(not battle.hud._reorder.is_active() and not Hud.TouchScroll.hold, "the lift is over")
+	_ro0 = battle.hud.display_order()
+
+
+## A quick touch drag (no long press) moves nothing.
+func _step_ro_short_drag() -> void:
+	_no_double_tap()
+	var a := _vp_to_window(_ro_card(1).get_center())
+	var b := _vp_to_window(_ro_card(3).get_center())
+	_touch(0, a, true)
+	var prev := a
+	for k in range(1, 5):
+		var p := a.lerp(b, k / 4.0)
+		_drag(0, p, p - prev)
+		prev = p
+	_touch(0, b, false)
+
+
+func _step_ro_check_short() -> void:
+	_check(battle.hud.display_order() == _ro0, "a quick touch drag moves no card")
+	_check(battle.selection == _ro_sel and not battle.hud.book.visible, "nor selects or opens anything (%s)" % str(battle.selection))
+
+
+func _step_ro_pages() -> void:
+	battle._open_book(-1, "book_open")
+	battle.hud.book.close()
+	battle._open_controls()
+	battle.hud.controls.close()
+
+
+func _step_ro_check_pages() -> void:
+	_check(battle.hud.display_order() == _ro0 and _ro_box_order() == _ro0, "the order survives the unit book and the controls page")
 
 
 func _step_done() -> void:

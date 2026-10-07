@@ -209,6 +209,7 @@ orders (plain data):
 | build | r, chain | step 2; paid now, done after the chain's turns |
 | merge | army, into | step 2 (same region, at most 12 units; version 6: on the same or a neighbouring cell, besiegers too) |
 | exchange | from (our army), to (our army or an allied player's), units [indices of from's units going to `to`], back (optional: indices of to's units coming to `from`; not with an ally's army) | step 2 (the two armies as for merge; neither above 12 units; an army left empty is gone; to an ally: a gift, event "gift") |
+| arrange | army (ours, not in a battle), order [a permutation of the army's unit indices: the new list's unit k is the old unit order[k]] | step 2, in the order given with the other army orders (a later split / disband / exchange counts in the new order); any format; the order the units take the field in (`cbattle.build` reads the list in order) |
 | split | army, units [indices], new (the faction's next army id) | step 2 |
 | disband | army, units [indices] | step 2 |
 | propose | to, what peace / trade / cancel_trade | step 4, AI answers |
@@ -1218,6 +1219,18 @@ the stance toggle).
   the army of N units", Cancel move and a tap on it again cancel). A tap on
   an allied player's army next to the selected one opens the exchange
   panel as a gift.
+- **Arranging an army** (any format). On the army card of an army of
+  yours that is not in a battle, drag a unit row (mouse: a plain drag;
+  touch: hold it still until it lifts, then drag; a quick touch drag still
+  scrolls the panel, which auto-scrolls while a row is dragged near its
+  ends) and drop it between two rows (`game/drag_reorder.gd`, the same
+  gesture as the battle's unit cards). The card shows the new order at
+  once (the plan preview applies an `arrange` order); several drags in a
+  turn rewrite the army's one pending `arrange` (composed), unless an
+  order after it changed the army's units (then a second one follows), and
+  dragging back to the turn's order drops it; each drag is one Undo step.
+  The split selection follows its units; the card keeps its scroll
+  position. A long press released without moving opens the unit page.
 - **Exchange panel** (a dialog): this army on the left, the other on the
   right (a picker when several stand together); tap a unit row to send it
   across (it moves to the top of the other column, framed, "in" / "gift"),
@@ -1467,6 +1480,15 @@ As built 2026-10-05; the server side is in `docs/SERVER.md`.
   (format 6 by default: every army on a passable cell of its region, never
   on a hostile settlement's cell, full points each turn; `--format=5`).
 - `tests/campaign_battles.gd` auto-resolve timing and formula calibration.
+- `tests/campaign_test.gd` `_grid_arrange`: the `arrange` order (a
+  permutation applied, non-permutations and JSON numbers, another
+  faction's army and an army in a battle refused, the preview, a split
+  after it counting in the new order, determinism also from a JSON
+  submission, plain data, format 5). `tests/campaign_input_test.gd`: a
+  long press and drag on the army card plans it, a mouse drag rewrites it
+  (one per army), Undo per drag, the turn resolves in the planned order;
+  `tests/touch_scroll_test.gd`: the lifted row does not scroll the panel,
+  a long press released in place opens the unit page.
 - `tests/campaign_input_test.gd` version 6 part (windowed): select an
   army (reach, zones, the attack line), plan by tapping land, cancel and
   Undo, attack an army (`tgt`), a siege switched to Assault on arrival,

@@ -37,7 +37,11 @@ extends SceneTree
 ## recruiting / Cancel recruits and march); with a march planned the list
 ## is off; the region panel has no recruit list but the garrison, what the
 ## city trains and Raise new army (the picker: +, the count, Raise army;
-## the planned army with X). The map key: format 5 rows on the format 5 copy; on the
+## the planned army with X). Arranging (any format; here format 6): a
+## long press on a unit row of the army card lifts it and a drag moves it
+## (an "arrange" order, the rows in the new order at once), a mouse drag
+## rewrites the pending order (one per army), Undo takes back each drag,
+## and the turn resolves with the units in the planned order. The map key: format 5 rows on the format 5 copy; on the
 ## overworld the Key button opens it (its version 6 rows, clear of End turn
 ## and the hint), a tap on the map closes it on a phone, its header closes it.
 ## Exits 0 on success, 1 on failure.
@@ -51,6 +55,7 @@ const Geo := preload("res://game/campaign/map_geo.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const MapOverlay := preload("res://game/campaign/map_overlay.gd")
 const UiScale := preload("res://game/ui_scale.gd")
+const UT := preload("res://sim/unit_types.gd")
 
 var cs: CampaignScreen
 var frame := 0
@@ -90,7 +95,9 @@ func _initialize() -> void:
 		_m_setup, _m_card, _m_xc_open, _m_xc_move, _m_xc_confirm, _m_xc_check, _m_undo, _m_tap1, _m_tap2, _m_merged,
 		_m_far, _m_far1, _m_far2, _m_far_check, _m_block_setup, _m_block_check, _m_gift_setup, _m_gift_tap, _m_gift_row, _m_gift_confirm, _m_gift_check,
 		_r_setup, _r_card, _r_check, _r_march, _r_keep, _r_march2, _r_cancel_march, _r_marching, _r_again, _r_x, _r_x_check,
-		_r_region, _r_picker, _r_picker2, _r_picker3, _r_raise_check, _r_raise_x, _s_done,
+		_r_region, _r_picker, _r_picker2, _r_picker3, _r_raise_check, _r_raise_x,
+		_a_setup, _a_scroll, _a_press, _a_wait, _a_drag, _a_up, _a_check1, _a_mouse, _a_mouse_up, _a_check2, _a_undo1, _a_undo2,
+		_a_scroll, _a_mouse_top, _a_mouse_top_up, _a_resolve, _s_done,
 	]
 
 
@@ -742,6 +749,177 @@ func _s_controls_check() -> void:
 func _s_done5() -> void:
 	_check(not cs.controls_page.visible, "Controls closes")
 	_check(str(cs.st["phase"]) == "plan" and not cs.end_button.disabled, "planning resumes")
+
+
+# ------------------------------------------ arrange (the army card) ---
+
+var _a_keys: Array = []
+var _a_t0 := 0
+var _a_p := Vector2.ZERO
+
+
+func _arrange_orders() -> Array:
+	var out: Array = []
+	for o in cs.orders:
+		if str(o["t"]) == "arrange":
+			out.append(o)
+	return out
+
+
+func _a_unit_keys(st: Dictionary) -> Array:
+	var out: Array = []
+	for u in CState.army(st, g1)["units"]:
+		out.append(str(u["t"]))
+	return out
+
+
+func _a_row(k: int) -> Control:
+	return cs.side_box.find_child("unit_%d" % k, true, false)
+
+
+func _a_mouse_btn(p: Vector2, pressed: bool) -> void:
+	var e := InputEventMouseButton.new()
+	e.button_index = MOUSE_BUTTON_LEFT
+	e.pressed = pressed
+	e.position = _win(p)
+	e.global_position = e.position
+	e.button_mask = MOUSE_BUTTON_MASK_LEFT if pressed else 0
+	Input.parse_input_event(e)
+
+
+func _a_mouse_drag(a: Vector2, b: Vector2) -> void:
+	_a_mouse_btn(a, true)
+	for k in range(1, 6):
+		var e := InputEventMouseMotion.new()
+		e.position = _win(a.lerp(b, k / 5.0))
+		e.global_position = e.position
+		e.relative = (b - a) / 5.0
+		e.button_mask = MOUSE_BUTTON_MASK_LEFT
+		Input.parse_input_event(e)
+
+
+func _a_setup() -> void:
+	if cs.dialog.visible:
+		cs.close_dialog()
+	cs.orders = []
+	var a := CState.army(cs.st, g1)
+	a["units"] = [{"t": "heavy", "n": 100}, {"t": "spear", "n": 100}, {"t": "cav", "n": 50}, {"t": "light", "n": 100}]
+	cs._replan()
+	cs.close_side()
+	cs.select_army(g1)
+	_a_keys = _a_unit_keys(cs.ps)
+
+
+## The unit rows in view, clear of the panel's auto-scroll edges.
+func _a_scroll() -> void:
+	var top := cs.side_scroll.get_global_rect().position.y
+	cs.side_scroll.scroll_vertical += int(_a_row(0).get_global_rect().position.y - top - 60.0)
+
+
+var _a_sv := 0
+
+
+func _a_press() -> void:
+	_a_sv = cs.side_scroll.scroll_vertical
+	var r0 := _a_row(0)
+	var r3 := _a_row(3)
+	var vis := cs.side_scroll.get_global_rect()
+	_check(r0 != null and r3 != null and vis.encloses(r0.get_global_rect()) and vis.encloses(r3.get_global_rect()),
+		"the army card shows its four unit rows")
+	_check(cs.side_box.find_child("unit_reorder", true, false) != null, "they can be dragged")
+	_a_p = r0.get_global_rect().get_center()
+	_a_t0 = Time.get_ticks_msec()
+	var e := InputEventScreenTouch.new()
+	e.index = 0
+	e.position = _win(_a_p)
+	e.pressed = true
+	Input.parse_input_event(e)
+
+
+func _a_wait() -> void:
+	if Time.get_ticks_msec() - _a_t0 < 500:
+		steps.push_front(_a_wait)
+
+
+func _a_drag() -> void:
+	var rd = cs.side_box.find_child("unit_reorder", true, false)
+	_check(rd != null and rd.is_active(), "a long press lifts the unit row")
+	var r2 := _a_row(2).get_global_rect()
+	var to := r2.get_center() + Vector2(0, r2.size.y * 0.3)
+	for k in range(1, 7):
+		var d := InputEventScreenDrag.new()
+		d.index = 0
+		d.position = _win(_a_p.lerp(to, k / 6.0))
+		d.relative = (to - _a_p) / 6.0
+		Input.parse_input_event(d)
+	_a_p = to
+
+
+func _a_up() -> void:
+	var e := InputEventScreenTouch.new()
+	e.index = 0
+	e.position = _win(_a_p)
+	e.pressed = false
+	Input.parse_input_event(e)
+
+
+func _a_check1() -> void:
+	var ar := _arrange_orders()
+	_check(ar.size() == 1 and int(ar[0]["army"]) == g1 and str(ar[0]["order"]) == str([1, 2, 0, 3]),
+		"long press and drag below the third row plans an arrange order: %s" % str(ar))
+	var want: Array = [_a_keys[1], _a_keys[2], _a_keys[0], _a_keys[3]]
+	_check(_a_unit_keys(cs.ps) == want, "the plan preview has the new order (%s)" % str(_a_unit_keys(cs.ps)))
+	var r0 = _a_row(0)
+	_check(r0 != null and r0.ty == UT.index_of(str(want[0])) and not cs.dialog.visible, "the card shows the rows in the new order, no page opened")
+	_check(cs.side_scroll.scroll_vertical == _a_sv, "the panel did not scroll (%d, was %d)" % [cs.side_scroll.scroll_vertical, _a_sv])
+	# Desktop: drag the first row below the last.
+	var r3 := _a_row(3).get_global_rect()
+	_a_p = r3.get_center() + Vector2(0, r3.size.y * 0.3)
+	_a_mouse_drag(_a_row(0).get_global_rect().get_center(), _a_p)
+
+
+func _a_mouse() -> void:
+	pass
+
+
+func _a_mouse_up() -> void:
+	_a_mouse_btn(_a_p, false)
+
+
+func _a_check2() -> void:
+	var ar := _arrange_orders()
+	_check(ar.size() == 1 and str(ar[0]["order"]) == str([2, 0, 3, 1]),
+		"a second drag rewrites the pending order (one per army): %s" % str(ar))
+	_check(_a_unit_keys(cs.ps) == [_a_keys[2], _a_keys[0], _a_keys[3], _a_keys[1]], "the preview follows (%s)" % str(_a_unit_keys(cs.ps)))
+	_tap_control(cs.undo_button)
+
+
+func _a_undo1() -> void:
+	var ar := _arrange_orders()
+	_check(ar.size() == 1 and str(ar[0]["order"]) == str([1, 2, 0, 3]), "Undo takes back the second drag: %s" % str(ar))
+	_tap_control(cs.undo_button)
+
+
+func _a_undo2() -> void:
+	_check(_arrange_orders().is_empty() and _a_unit_keys(cs.ps) == _a_keys, "Undo again: no arrange order, the turn's order")
+	cs.select_army(g1)
+
+
+func _a_mouse_top() -> void:
+	var r0 := _a_row(0).get_global_rect()
+	_a_p = r0.get_center() - Vector2(0, r0.size.y * 0.3)
+	_a_mouse_drag(_a_row(3).get_global_rect().get_center(), _a_p)
+
+
+func _a_mouse_top_up() -> void:
+	_a_mouse_btn(_a_p, false)
+
+
+func _a_resolve() -> void:
+	var ar := _arrange_orders()
+	_check(ar.size() == 1 and str(ar[0]["order"]) == str([3, 0, 1, 2]), "a mouse drag of the last row to the top: %s" % str(ar))
+	var res := CTurn.resolve_turn(cs.st, [CTurn.submission(cs.st, rome, cs.orders)])
+	_check(_a_unit_keys(res) == [_a_keys[3], _a_keys[0], _a_keys[1], _a_keys[2]], "the turn resolves with the units in the planned order (%s)" % str(_a_unit_keys(res)))
 
 
 func _s_done() -> void:

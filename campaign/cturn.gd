@@ -11,9 +11,9 @@ extends RefCounted
 ## resolve_turn(state, submissions) runs, in order:
 ##   1. players' war declarations and answers to AI proposals;
 ##   2. players' other orders (build, recruit, merge, split, disband,
-##      exchange (also a gift to an allied human's army); version 5: stance,
-##      cancel_move), each faction in faction order, its orders in the order
-##      given;
+##      exchange (also a gift to an allied human's army), arrange; version 5:
+##      stance, cancel_move), each faction in faction order, its orders in the
+##      order given;
 ##   3. players' moves, all factions together, by army id; entering a hostile
 ##      region starts a battle (state version 4: lays siege unless the move's
 ##      mode is assault), entering a region whose battle started this turn
