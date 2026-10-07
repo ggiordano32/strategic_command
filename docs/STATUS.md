@@ -688,9 +688,43 @@ fixes are all landed; see "Where we are"):
 3. **Roads, rivers and crossings** as grid-cell overrides (historic roads,
    rivers as barriers with fords and bridges; ford battles on the battle
    map).
-4. **Siege equipment over turns** (ladders / towers after 2-3 turns of
-   siege so attackers can take walls), suburbs and river sites for cities,
-   sallies from inside, the walls-3 street-fight lever.
+4. **Cities must be worth defending** (agreed 2026-10-07, moved ahead of
+   everything else after the Skilled campaign AI found that an army is
+   better off fortified outside a city than inside it: in the formula
+   only the garrison gets the wall bonus (+15 % a level) while a fortified
+   field army gets +25 %, 88 % of attacked cities fall, no AI siege has
+   ever ended in surrender; in the sim walls-3 attackers win 87-100 % of
+   the 1.5-2:1 `siege_test` battles). Principles: **no stat bonus for
+   standing inside walls**; defence is attrition at the wall and a slow,
+   narrow street fight. In three parts, all sim-first, the formula fitted
+   to the sim afterwards, none a save-format change:
+   1. **Attrition at the wall** (tonight, 2026-10-07): wall archers hit
+      harder from the battlements (cover / height levers), **arrow towers
+      at walls 2** shooting siege bolts and **two stone throwers mounted
+      on walls 3**, immobile garrison engines with a fixed ammunition
+      load (+ammo from a building inside), crews that can be shot and
+      towers that batteries can duel; walls-2/3 gates nearly immune to
+      hand weapons and somewhat tougher, so without artillery you climb
+      or starve them (siege equipment over turns comes with part 2 / the
+      old item 4); a **battle time limit setting** (today a fixed 15 min
+      `BattleSim.TIME_LIMIT`) in the campaign settings, custom battles
+      and the sandbox so long sieges can run. Calibration target: an
+      **equal-force siege matchup set**, walls 3 equal strength ->
+      attacker about 25 %, walls 1 about 45 %.
+   2. **Units do not pass through each other** (Thursday 2026-10-09):
+      unit-level blocking first (an enemy unit's footprint is impassable
+      in the 4 m pathing grid, frontage clamps to the corridor a unit is
+      in, friendly units pass through each other at half speed so streets
+      never deadlock), soldier-level separation only at the contact seam
+      if it still reads wrong; walls thicker and walls-2/3 cities 15-20 %
+      larger inside, measured against the city tick budget; stone
+      throwers over the walls at the army inside. Then siege equipment
+      over turns (ladders / towers after 2-3 turns), suburbs and river
+      sites, sallies from inside.
+   3. **Fit the formula** to the measured siege results across force
+      ratios (a walls term for the armies inside is a prediction of the
+      sim, not a bonus), turn the campaign AI's shelter knob back on and
+      re-run the AI tables.
 5. **Elephants**, then camels, chariots, war dogs.
 6. **AI competency** (`docs/AI.md`): Easy / Average / Skilled on two
    independent axes (battle, campaign) plus personality, no cheats ever;
