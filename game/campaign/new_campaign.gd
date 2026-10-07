@@ -139,6 +139,12 @@ func _ready() -> void:
 	db.tooltip_text = "Before a battle you fight yourself: time to place your units in your zone (Total War style); auto-resolve ignores it"
 	_setting_buttons["deploy_time"] = db
 	dr.add_child(db)
+	settings["time_limit"] = 900
+	var tb := Kit.button("", _cycle.bind("time_limit"), 0, 14)
+	tb.name = "time_limit"
+	tb.tooltip_text = "How long a battle lasts before it is a draw (a long siege may need more than 15 minutes)"
+	_setting_buttons["time_limit"] = tb
+	dr.add_child(tb)
 	v.add_child(dr)
 	_online_box = Kit.vbox(6)
 	_online_box.visible = online
@@ -174,7 +180,8 @@ func _ready() -> void:
 
 const CHOICES := {"victory_regions": [15, 20, 25, 30], "victory_capitals": [2, 3, 4, 5],
 	"turn_timeout_h": [0, 12, 24, 48, 72], "autoresolve": ["ask", "auto"], "ai_aggression": [70, 100, 130],
-	"ai_battle_skill": [0, 1, 2], "ai_campaign_skill": [0, 1, 2], "deploy_time": [0, 60, 120]}
+	"ai_battle_skill": [0, 1, 2], "ai_campaign_skill": [0, 1, 2], "deploy_time": [0, 60, 120],
+	"time_limit": [900, 1200, 1800, 2700]}
 ## AI skill levels (campaign/cai_profile.gd EASY / AVERAGE / SKILLED).
 const AI_AVERAGE := 1
 const SKILL_LABELS: Array[String] = ["Easy", "Average", "Skilled"]
@@ -242,6 +249,7 @@ func _update() -> void:
 	vr["ai_battle_skill"].text = "Battle AI: " + SKILL_LABELS[int(settings["ai_battle_skill"])]
 	vr["ai_campaign_skill"].text = "Campaign AI: " + SKILL_LABELS[int(settings["ai_campaign_skill"])]
 	vr["deploy_time"].text = "Deployment time: " + {0: "none", 60: "1 min", 120: "2 min"}[int(settings["deploy_time"])]
+	vr["time_limit"].text = "Battle time: %d min" % (int(settings["time_limit"]) / 60)
 	vr["ai_battle_skill"].tooltip_text = "Easy makes a new player's mistakes; Skilled reads the battle and punishes yours."
 	vr["ai_campaign_skill"].tooltip_text = "Easy makes a new player's mistakes; Skilled concentrates its armies, picks its wars and fights one front at a time."
 

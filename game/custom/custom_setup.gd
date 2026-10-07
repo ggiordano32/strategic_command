@@ -6,9 +6,12 @@ extends RefCounted
 ##
 ## setup = {
 ##   "v": 1, "seed": int, "deploy": seconds (0 / 60 / 120), "funds": FUNDS index,
+##   "time": battle time limit in seconds (TIME_CHOICES; absent or 900 = the
+##           sim's 15 minutes),
 ##   "map": {"kind": "field" | "settlement", "terrain": Terrain.K_*, "ground": MapGen.PAL_*,
 ##           "woods": 0-100, "mseed": int, "plan": MapGen.PLAN_*, "level": 0-2, "walls": 0-3,
-##           "coast": 0/1, "def": defending sim side},
+##           "coast": 0/1, "def": defending sim side,
+##           "ladders": 0/1, "ram": 0/1 (the attackers' siege equipment; walls only)},
 ##   "sides": [{"skill": AIProfile level, "style": AIProfile personality,
 ##              "armies": [{"ctrl": "p1" | "p2" | "ai", "units": [[type key, men], ...]}, ...]}, x2]
 ## }
@@ -30,6 +33,7 @@ const MAX_UNITS := 12          # per army (the campaign's army size)
 const FUNDS := [0, 4500, 7500, 12000]
 const FUNDS_NAMES := ["No limit", "Small (4,500)", "Medium (7,500)", "Large (12,000)"]
 const DEPLOY_CHOICES := [0, 60, 120]
+const TIME_CHOICES := [900, 1200, 1800, 2700]
 const CTRL_NAMES := {"p1": "Player 1", "p2": "Player 2", "ai": "AI"}
 const FIELD_KINDS := [Terrain.K_FLAT, Terrain.K_ROLLING, Terrain.K_RIDGE, Terrain.K_VALLEY, Terrain.K_HILL,
 	Terrain.K_SLOPE]
@@ -204,11 +208,19 @@ static func build(st: Dictionary, solo: bool = false) -> Dictionary:
 		var ground := int(mp.get("ground", MapGen.PAL_DRY))
 		var terr := {"kind": int(mp.get("terrain", Terrain.K_ROLLING)), "seed": int(mp.get("mseed", 1)) * 7 + 3,
 			"forest": clampi(int(mp.get("woods", 15)), 0, 100), "ground": ground}
-		var r := Scenarios.settlement(city, terr, lists[att_side], lists[def_side], def_side, ai)
+		var equip := {}
+		if int(mp.get("ladders", 0)) != 0:
+			equip["ladders"] = 1
+		if int(mp.get("ram", 0)) != 0:
+			equip["ram"] = 1
+		var r := Scenarios.settlement(city, terr, lists[att_side], lists[def_side], def_side, ai, equip)
 		sc = r["scenario"]
 		for o in r["order"]:
 			var s := att_side if int(o[0]) == 0 else def_side
 			home.append(ctrl_of[s][int(o[1])])
+		for k in range(home.size(), (sc["units"] as Array).size()):
+			# The ram (after every army unit): the attacking side's lead player.
+			home.append(players[att_side][0] if not (players[att_side] as Array).is_empty() else -1)
 	else:
 		sc = _field(st, lists, ctrl_of, home)
 		sc["ai_sides"] = ai
@@ -220,6 +232,9 @@ static func build(st: Dictionary, solo: bool = false) -> Dictionary:
 	var dt := int(st.get("deploy", 0))
 	if dt > 0:
 		sc["deploy_time"] = dt
+	var tl := int(st.get("time", 900))
+	if tl > 900:
+		sc["time_limit"] = tl
 	return {"scenario": sc, "seed": int(st.get("seed", 1)) & 0x7FFFFFFF, "home": home, "sides": players}
 
 
@@ -275,4 +290,5 @@ static func summary(st: Dictionary) -> Dictionary:
 		sides.append({"armies": ctrl, "units": units, "men": men, "cost": side_cost(st, s),
 			"skill": int(st["sides"][s].get("skill", 1)), "style": int(st["sides"][s].get("style", 1))})
 	return {"map": str(mp.get("kind", "field")), "terrain": int(mp.get("terrain", 0)), "deploy": int(st.get("deploy", 0)),
-		"funds": int(st.get("funds", 0)), "sides": sides}
+		"funds": int(st.get("funds", 0)), "sides": sides, "time": int(st.get("time", 900)),
+		"ladders": int(mp.get("ladders", 0)), "ram": int(mp.get("ram", 0))}

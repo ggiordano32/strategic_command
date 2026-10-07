@@ -90,7 +90,8 @@ original art.
 - v1: attacking a settlement is a field battle in which the garrison joins the defender.
 - As built (October 2026): every settlement has its own battle map with
   streets, walls and gates (section 4 "Battle maps: woods and settlements").
-  Climbing walls, siege towers and ladders are later.
+  Ladders, a ram and tower engines since 2026-10-07 (section 4 "Siege
+  equipment and wall towers"); siege towers are later.
 - Sieges (as built, October 2026, state format 4; CAMPAIGN.md "Sieges and
   battle odds"): marching into a hostile settlement lays siege by default
   (Assault, the battle at once, is one tap away). Since format 5 (free
@@ -871,8 +872,8 @@ per soldier on open ground.
 - *Walls*: units placed on a wall (garrison missile troops, by the scenario
   builder) stand on the walkway: their height is the ground + 5 / 7 / 9 m
   (missile range from height, line of fire), they never withdraw or
-  skirmish, and only wall units may enter the walkway (no climbing for
-  attackers). Since the October 2026 wall-orders fix: a move order onto a
+  skirmish, and only wall units may enter the walkway (attackers only by
+  ladders: see "Siege equipment and wall towers"). Since the October 2026 wall-orders fix: a move order onto a
   wall's body, walkway, stair, tower or gate tower goes to the nearest
   walkway point of that stretch (`wall_snap`: the nearest stretch within 14
   m, in the order rule, so preview, sim and both lockstep peers agree; only
@@ -892,7 +893,8 @@ per soldier on open ground.
   troops). Since October 2026 towers are stairs: a move order off the
   stretch takes the unit down the stair at one of its ends and on through
   the streets, routers leave the wall the same way, and defenders can be
-  sent up (see "Stairs" below). Battlements stop 35 % of missiles that would
+  sent up (see "Stairs" below). Battlements stop 25 / 45 / 70 % (wall level
+  1 / 2 / 3; 35 % at every level before round 3) of missiles that would
   hit a man on a wall from below. Lines of fire (flat shots) are blocked by
   buildings (4-6 m), walls (walkway + 0.6 m parapet), towers (+4 m) and
   closed gates; a shooter on a wall looks over his own battlements. Arrows
@@ -901,11 +903,13 @@ per soldier on open ground.
 - *Gates*: start closed. The defenders may open or close one (order
   `ORDER_GATE`, any of their units; closing is refused while anyone stands
   in it; a broken gate stays broken). Hit points 1,800 / 2,700 / 3,800 by
-  wall level. Batteries ordered at a gate (`ORDER_ATTACK` with `gate`)
+  wall level (walls 2-3 x 130 % since 2026-10-07: "Siege equipment and
+  wall towers"). Batteries ordered at a gate (`ORDER_ATTACK` with `gate`)
   shoot its outer face: a bolt landing within it (1.5 m round) takes 80 hp,
   a stone 360. Foot (not missile troops, cavalry or crews) of the attackers
   standing at a closed gate (within 2 m of its face, not marching past)
-  hack at it: each of at most 10 men takes (damage - 20) x 25 % per swing.
+  hack at it: each of at most 10 men takes (damage - 20) x 25 % per swing
+  (1 % at walls 2-3 since 2026-10-07; rams and engines break those).
   An order at a gate for foot moves them to its face.
 - *Capture*: if the attackers hold the plaza (a ready unit of 10 or more
   men with its centre in the capture zone, the plaza's half size + 6 m) with
@@ -1165,7 +1169,8 @@ two stretches puts the junction in the tower first going down); men on the
 walkway keep to walkway and towers; a stair counts as down, not up. "Man
 the wall" (view) sends a unit to the stretch within 60 m nearest the
 nearest enemy (`man_wall_target`); "Come down" to the foot of its nearer
-stair (`wall_inside`). Attackers never climb (no ladders or towers yet). State
+stair (`wall_inside`). Attackers climb only by ladders ("Siege equipment
+and wall towers"). State
 `u_stair` / `u_sseg` / `u_send` / `u_st0` / `u_wx` / `u_wy` is hashed on
 walled settlement maps and survives snapshots.
 
@@ -1401,6 +1406,127 @@ file, plus small hooks in `setup`, `step`, `_apply_orders`,
   (`human_f >= 0`) the phase and its zones; auto-resolve (`human_f = -1`)
   ignores it. A live co-op battle opens its lobby as before and goes into
   the deployment when the host starts.
+
+### Siege equipment and wall towers (as built, 2026-10-07)
+
+Why: the Skilled campaign AI found that an army was better off fortified
+outside a city than inside it, and in the sim walls-3 attackers won 87-100 %
+of the 1.5-2:1 `siege_test` battles. The user's decision: **no stat bonus
+for standing inside walls**; a city holds by attrition at the wall and a
+slow street fight. This is part 1 of three (docs/STATUS.md "Where we are
+headed" item 4): attrition at the wall. Code: `sim/battle_sim.gd` (section
+"siege" at the end, plus hooks in setup, the order rule, `_wall_order`,
+`_update_units`, `_update_soldiers` (the ladder climb's per-man goal and
+mask through `_stair_leave` / `_stair_mask`), `_update_gates`, the line of
+fire, `_land`, `_land_bolt` / `_land_stone`, morale, `_check_winner`,
+`state_hash`), `sim/unit_types.gd` (SPECIAL: `tower_bolt`, `tower_stone`,
+`ram`), `sim/siege_ai.gd` (section "siege equipment, towers"),
+`sim/scenarios.gd` (`settlement(..., equip)`, `fair_siege`),
+`campaign/cbattle.gd` (`siege_equipment`, `equipment_text`, `_time_limit`),
+the view (`game/battle.gd`, `game/order_preview.gd`, `game/overlay.gd`,
+`game/custom/*`, `game/main.gd`, new-campaign and siege panel).
+
+- **Hard gates.** Walls-2/3 gates have `GATE_HP_PCT` 130 % of their old
+  hit points (3,510 / 4,940) and take `GATE_HACK_BY_WALLS` 1 % instead of
+  25 % per sword blow (a few hours of hacking): they yield to rams and
+  artillery. Walls 0-1 gates are unchanged.
+- **Tower engines** (walls 2-3; city key `towers`: 0 leaves them out). At
+  setup the sim appends engine units of the defenders (UT "fixed") on the
+  generator's towers (`map_info.city.towers`, in order): bolt throwers on
+  the towers flanking each outer gate first, then on others nearest the
+  main gate at least 40 m apart, 6 in all at walls 2 and 8 at walls 3; at
+  walls 3 first two stone throwers on the biggest towers not by a gate
+  (`_siege_towers`). None on a citadel's towers or on the sea wall. Each is
+  one engine (bolt: crew 4, 20 bolts, 180 m, reload 6 s; stone: crew 6, 12
+  stones, 280 m) with a fixed load, 150 % with a Workshop in the city's
+  `bld` (cdata chain `workshop`, MapGen.B_WORKSHOP: the campaign's own
+  building list, no new key). The unit is a wall unit of the nearest
+  stretch (its crew keeps to walkway and towers; battlements cover them),
+  never moves, packs, refills or loses heart; it shoots over its own tower
+  (the line of fire ignores the tower's own cells, `_skip0`) and over
+  friends (bolts need no clear line past friendly units). It is gone when
+  its crew is dead or its engine (the tower) is wrecked: a bolt ordered at
+  it landing within the tower takes `TOWER_BOLT_DMG` 70, a stone
+  `TOWER_STONE_DMG` 330 (900 / 1,200 hit points; the crew falls with it).
+  The order rule lets a tower only shoot (a unit, at will) or halt; the
+  player gets its card like a battery's (no Deploy / Refill). It does not
+  count toward a side's standing units (`_check_winner`) or the town-lost
+  count.
+- **Ladders** (scenario unit key `ladders`: 1, `u_lad`): an attacking
+  infantry or missile unit (not pikes, horses, engines or the ram) ordered
+  onto a stretch of wall from outside (`wall_snap`) marches to the foot of
+  the wall there (`ladder_foot`: straight out from the walkway point past
+  the outer face; refused for a tower, gate, sea wall or a citadel's
+  stretch, or ground it cannot reach), `u_stair` 5; there it takes the
+  stretch (its wall line) and climbs, `u_stair` 4: a ladder for every 20
+  men (1-5), 2.5 m apart, each bringing up a man every `LADDER_TICKS` 2 /
+  3 / 4 s (walls 1 / 2 / 3); the next man below in slot order standing
+  within 8 m of the foot steps onto the walkway above his ladder. Men
+  below queue behind their ladder (ground only), men up keep to walkway
+  and towers; on the walkway they fight the defenders man to man (melee
+  reach along walkway and towers in battles with siege gear). Climbing,
+  the unit refuses orders but fire, run and withdraw; once every man is up
+  it is a wall unit: along its stretch, or down a stair into the town.
+  Withdrawing or routing, attackers on a wall come back down their ladders
+  at once (`_ladder_down`). Ladder men at the inner face of a closed gate
+  (4 or more for 15 s) **unbar** it (it opens); a gate order from inside
+  the walls sends ladder men to its inner face. Men on the ground below a
+  climbing unit get no battlement cover.
+- **The ram** (UT "ram", 20 crew, walks at 1.2 m/s, cannot run, attack
+  units or climb; roof: missile shield 85 %, 35 % damage from missiles):
+  ordered at a closed gate it goes to its face; with 6 or more of its crew
+  within 6 m of the outer face it lands a blow of `RAM_DMG` 160 every 480
+  man-ticks (20 men: every 2.4 s; a walls-3 gate in about a minute and a
+  half). It never hacks; it keeps out of the ditch.
+- **Battle time limit**: scenario `time_limit` (seconds, at least 60;
+  absent = 900, the old fixed 15 minutes), hashed only when not 900. The
+  HUD clock shows "m:ss / limit"; a draw by time says so.
+- **Hashing, snapshots.** `u_lad`, `u_lfx`, `u_lfy`, `u_lacc` (ladder work /
+  ram work), `u_trad` and `g_unbar` are state, hashed only when the battle
+  has a tower, ladders or a ram (`sg_on`); towers add units and engines,
+  which are hashed as any. Battles without them (field battles, walls 0-1
+  cities) hash exactly as before.
+- **AI** (`docs/AI.md` 13, every level): the ram goes at the gate the army
+  goes for (Skilled first waits up to 90 s for the towers by it to be
+  silenced); with a working ram no foot hack. Ladders: against walls 2-3
+  (any walls without working artillery; Easy any) the 1 / 2 / 3 heaviest
+  ladder-carrying foot units go after 2 minutes, or once the gate is below
+  85 %, to the stretch within 140 m of the gate scored by distance +
+  defenders on the walls within 40 m + working towers within 60 m (one
+  unit a stretch); once up they go down to unbar the nearest closed gate.
+  Batteries shoot the working towers within 40 / 60 / 90 m of the gate
+  before the gate. Defending towers pick the ram, then batteries, then men
+  at a gate, on ladders or up on the walls (Easy: fire at will); a reserve
+  foot unit goes up against every ladder party (not Easy).
+- **Campaign** (`docs/CAMPAIGN.md` "Siege equipment"): an assault after a
+  siege of a full turn brings ladders for the attackers' foot, of two
+  turns a ram too (`CBattle.siege_equipment`, from the siege entry's turn;
+  no state, VERSION 6); `settings.time_limit` (new-campaign "Battle time:
+  15 / 20 / 30 / 45 min", stored only when longer than 15). Custom battles:
+  Ladders / Ram toggles (settlement with walls) and Battle time; the
+  sandbox settlement row: siege kit and minutes.
+- **Levers** (static in `BattleSim` so `tests/matchups.gd --tune=NAME=...`
+  can try values; the game never changes them): `WALL_COVER` 25 / 45 / 70
+  % (was 25 / 35 / 65), `WALL_RANGE_PCT` 0 / 15 / 15 % (missile troops on a
+  wall reach that much further at men below), `GATE_HP_PCT`,
+  `GATE_HACK_BY_WALLS`, `LADDER_TICKS`, `TOWERS_MAX`, `TOWERS_STONE`,
+  `RAM_DMG`. Walls-1 values are the old ones (walls-1 battles hash as
+  before): raising its cover to 50-60 % and its range by 20-30 % moved the
+  equal-force walls-1 siege by 10 points at most.
+- **Measured** (`tests/matchups.gd -- --only=fair-sieges`: a city held by
+  its garrison and a field army as strong as SIEGE_ARMY, ring and polis on
+  flat ground, both AI Average, 10 seeds; attacker wins with ladders and a
+  ram / with artillery only): walls 1 100 / 100 %, walls 2 60 / 10 % (ring)
+  and 50 / 10 % (polis), walls 3 50 / 0 % (ring) and 10 / 0 % (polis; 20 %
+  draws, stand-offs at the acropolis that 30 minutes do not settle);
+  battles 6-11 min mean, walls 3 up to the 15 minute limit. Tower engines
+  kill 40-95 men a battle; 1-3.5 towers are battered down. Walls 1 misses
+  the 45 % target: no towers, a gate artillery breaks in two minutes; it is
+  decided in the streets (part 2). The 1.5-2:1 `--only=plans` attackers
+  (artillery, no ladders or ram) now win walls 3 0-30 % (castrum 70 %),
+  were 60-100 %. Tick cost: bench_4000_city (walls 2: 6 towers) mean 3.15
+  ms (2.84 before, same session), p95 5.7 (5.5), worst 7.0-7.1 (7.2-8.1:
+  machine noise).
 
 ## 5. Networking
 

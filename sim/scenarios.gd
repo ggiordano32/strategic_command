@@ -452,8 +452,13 @@ static func _lay_row(units: Array, row: Array, back: int, gap: int, placed: Arra
 ## an open town (walls 0) is held at its street mouths. Returns
 ## {"scenario", "order": [[0 attacker / 1 defender, index], ...] in sim unit
 ## order, "layout": the generator's layout (metres, final frame)}.
+## equip: the attackers' siege equipment (docs/DESIGN.md "Siege equipment
+## and wall towers"): "ladders": 1 gives every attacking infantry and
+## missile unit ladders (only against walls); "ram": 1 adds a battering ram
+## behind the army (after every other unit, so `order` is unchanged; not in
+## it). The walls-2/3 city's tower engines are added by the sim.
 static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Array, def_side: int,
-		ai_sides: Array) -> Dictionary:
+		ai_sides: Array, equip: Dictionary = {}) -> Dictionary:
 	var c := MapGen.city_params(city)
 	c["def"] = def_side
 	var al := army_layout(att)
@@ -477,11 +482,16 @@ static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Arra
 	ax = clampi(ax, hw, w - hw)
 	var ay: int = lay["att_y"]
 	var aface := FACE_UP if def_side == 1 else FACE_DOWN
+	var walled := int(c["walls"]) > 0
 	for p in al["placed"]:
 		var i: int = p["i"]
 		var x := ax + int(p["x"]) * sgn
 		var y := ay + int(p["back"]) * sgn
-		units.append(unit(att_side, int(att[i][0]), int(att[i][1]), x, y, aface))
+		var ua := unit(att_side, int(att[i][0]), int(att[i][1]), x, y, aface)
+		var acl := UT.cls(int(att[i][0]))
+		if walled and int(equip.get("ladders", 0)) != 0 and (acl == UT.CLS_INF or acl == UT.CLS_MISSILE):
+			ua["ladders"] = 1
+		units.append(ua)
 		order.append([0, i])
 	# Defenders.
 	var gates: Array = []
@@ -634,6 +644,10 @@ static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Arra
 		var tcx: int = lay["cx"]
 		var tcy: int = lay["cy"]
 		zones.append([def_side, 0, maxi(tcx - r0, 0), maxi(tcy - r0, 0), mini(tcx + r0, w), mini(tcy + r0, h)])
+	if walled and int(equip.get("ram", 0)) != 0:
+		# The ram: behind the middle of the attackers' line (last of all units).
+		var back := int(al["depth"]) + 12
+		units.append(unit(att_side, UT.RAM, UT.size_of(UT.RAM), ax, clampi(ay + back * sgn, 10, h - 10), aface, 4))
 	return {"scenario": {"width_m": w, "height_m": h, "ai_sides": ai_sides, "units": units, "terrain": t2,
 		"deploy_zones": zones}, "order": order, "layout": lay}
 
@@ -692,7 +706,8 @@ const SIEGE_GARRISON := [UT.SPEAR, UT.ARCHER, UT.HEAVY, UT.ARCHER, UT.SPEAR, UT.
 ## (def_side 0), a settlement of this seed, level and wall level held by a
 ## campaign-like garrison and a small field army (AI on the other side).
 static func siege_test(city_seed: int, level: int, walls: int, ground: int, kind: int,
-		def_side: int = 1, forest: int = -1, plan: int = MapGen.PLAN_RING, coast: int = 0) -> Dictionary:
+		def_side: int = 1, forest: int = -1, plan: int = MapGen.PLAN_RING, coast: int = 0,
+		equip: Dictionary = {}) -> Dictionary:
 	var dfn: Array = []
 	var n_gar := 2 + level + walls + (1 if level == 2 else 0)
 	for k in n_gar:
@@ -708,7 +723,44 @@ static func siege_test(city_seed: int, level: int, walls: int, ground: int, kind
 	if plan != MapGen.PLAN_RING:
 		city["plan"] = plan
 		city["coast"] = coast
-	var r := settlement(city, terr, att, dfn, def_side, [1])
+	var r := settlement(city, terr, att, dfn, def_side, [1], equip)
+	return r["scenario"]
+
+
+## The fair siege (tests/matchups.gd --only=fair-sieges): a city (level 2)
+## of this seed, walls and plan on flat ground, defended by its garrison
+## (2 + level + walls + 1 units of 60, as siege_test) and a field army,
+## attacked by SIEGE_ARMY; the defenders' field army is SIEGE_ARMY less the
+## garrison's strength (count x cost per man, campaign CState.strength)
+## taken from its end, so both sides are equally strong. equip: the
+## attackers' siege equipment (settlement()). Both sides AI.
+static func fair_siege(city_seed: int, walls: int, plan: int, equip: Dictionary) -> Dictionary:
+	var level := 2
+	var gar: Array = []
+	var n_gar := 2 + level + walls + 1
+	var g_str := 0
+	for k in n_gar:
+		var ty: int = SIEGE_GARRISON[k % SIEGE_GARRISON.size()]
+		gar.append([ty, 60])
+		g_str += 60 * UT.stat(ty, "cost")
+	var field: Array = SIEGE_ARMY.duplicate(true)
+	var left := g_str
+	while left > 0 and not field.is_empty():
+		var e: Array = field[field.size() - 1]
+		var c := UT.stat(int(e[0]), "cost")
+		var s := int(e[1]) * c
+		if s <= left:
+			left -= s
+			field.pop_back()
+		else:
+			e[1] = int(e[1]) - (left + c - 1) / c
+			left = 0
+	var dfn: Array = gar.duplicate()
+	dfn.append_array(field)
+	var terr := {"kind": Terrain.K_FLAT, "seed": city_seed * 7 + 3, "forest": MapGen.PALETTE_FOREST[MapGen.PAL_DRY],
+		"ground": MapGen.PAL_DRY}
+	var city := {"seed": city_seed, "level": level, "walls": walls, "bld": [1, 2, 4], "plan": plan, "coast": 0}
+	var r := settlement(city, terr, SIEGE_ARMY.duplicate(true), dfn, 1, [0, 1], equip)
 	return r["scenario"]
 
 

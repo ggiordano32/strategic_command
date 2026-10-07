@@ -1152,3 +1152,30 @@ within 3 turns of taking them) and armies destroyed.
 
 **UI.** New campaign: "Campaign AI: Skilled" without "(soon)"; the
 tooltip says what it does. Per-faction overrides (Advanced) are step 5.
+
+## 13. As built: siege equipment and wall towers (2026-10-07)
+
+The settlement AI uses and answers the siege gear of docs/DESIGN.md
+"Siege equipment and wall towers" (`sim/siege_ai.gd`, section "siege
+equipment, towers"). It runs only in battles with towers, ladders or a ram
+(`sim.sg_on`), so every other battle plays and hashes as before. New knobs
+(`sim/ai_profile.gd`, Easy / Average / Skilled; personality offsets 0):
+
+| Knob | E / A / S | What |
+|---|---|---|
+| `S_LADDER_UNITS` | 1 / 2 / 3 | attacking foot units carrying ladders sent up (heavy, light, spears; then by index) |
+| `S_LADDER_DEF_W` | 0 / 1 / 3 | stretch choice: metres from the gate + this per defender on the walls within 40 m (and x 60 per working tower within 60 m) |
+| `S_LADDER_AFTER` | 0 / 1200 / 1200 | ladders go this many ticks into the approach, or once the gate is below 85 % |
+| `S_LADDER_WALLS` | 1 / 2 / 2 | with working artillery, ladders only against walls of this level or more (without: any) |
+| `S_TOWER_FOCUS` | 0 / 1 / 1 | towers pick the ram, batteries, men at a gate / on ladders / up on the walls (else fire at will) |
+| `S_COUNTER_BAT` | 40 / 60 / 90 m | attacking batteries shoot working towers this near the gate before the gate |
+| `S_ESC_REPLY` | 0 / 1 / 1 | a reserve foot unit is sent up onto every stretch with ladder men on it |
+| `S_RAM_WAIT` | 0 / 0 / 900 | the ram waits (out of reach) for the towers within 40 m of the gate to be silenced, at most this long |
+
+Modes (`u_ai`): `A_RAM` 30, `A_LADDER` 31 (kept once given: climbing, then
+down into the town to the inner face of the nearest closed gate to unbar
+it, storming when none is left), `A_TOWER` 32, `A_ESC` 33 (a defender sent
+against ladder men; `u_ai_y` = the attacking unit; once they are gone it
+comes down to the foot of its stair as a reserve). With a ram that can
+still work a gate no foot hack at it. Counted in `C_SIEGE` (ladder orders,
+the ram sent, replies). Measured: docs/STATUS.md (fair-sieges table).

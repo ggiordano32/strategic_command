@@ -106,6 +106,10 @@ static func new_campaign(p_name: String, p_seed: int, humans: Array, settings: D
 	# of none, so no format change): kept only when set.
 	if s.has("deploy_time") and int(s["deploy_time"]) <= 0:
 		s.erase("deploy_time")
+	# Battle time limit (seconds; read with a default of 900, the sim's 15
+	# minutes, so no format change): kept only when longer.
+	if s.has("time_limit") and int(s["time_limit"]) <= 900:
+		s.erase("time_limit")
 	st["settings"] = s
 	var hs: Array = []
 	for h in humans:

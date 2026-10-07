@@ -119,6 +119,41 @@ func plan_from(u: int, d: Dictionary, pending: bool) -> Dictionary:
 		"route": PackedInt32Array()}
 	var wall: int = sim.u_wall[u]
 	var stair: int = sim.u_stair[u]
+	if stair == BattleSim.ST_LADDER:
+		# Climbing ladders now: its stretch, its men's places, the foot.
+		out["mode"] = "climb"
+		out["seg"] = wall - 1
+		out["slots"] = BattleSim.wall_slots(sim, wall - 1, sim.u_ax[u], sim.u_ay[u], alive, ty)
+		out["foot"] = Vector2i(sim.u_lfx[u], sim.u_lfy[u])
+		return out
+	var lad_go := stair == BattleSim.ST_LADDER_GO and not pending
+	if wall == 0 and int(d["order"]) == BattleSim.O_MOVE and (lad_go or BattleSim.can_ladder(sim, u)):
+		# Up the ladders: to the foot of the wall, up onto the walkway.
+		var lx := int(d["dx"])
+		var ly := int(d["dy"])
+		var lsg := -1
+		if lad_go:
+			lsg = sim.u_sseg[u]
+			lx = sim.u_wx[u]
+			ly = sim.u_wy[u]
+		else:
+			var wl := BattleSim.wall_snap(sim, lx, ly)
+			if wl.z >= 0 and BattleSim.ladder_ok(sim, u, wl.z, wl.x, wl.y):
+				lsg = wl.z
+				lx = wl.x
+				ly = wl.y
+		if lsg >= 0:
+			var lf := BattleSim.ladder_foot(sim, lsg, lx, ly)
+			out["mode"] = "ladder"
+			out["seg"] = lsg
+			out["foot"] = Vector2i(lf.x, lf.y)
+			var rl := PackedInt32Array([cx, cy])
+			rl.append_array(_route_cached(u, Vector2i(sim.u_ax[u], sim.u_ay[u]), Vector2i(lf.x, lf.y)))
+			rl.append_array([lx, ly])
+			out["route"] = rl
+			var wal := BattleSim.wall_anchor(sim, lsg, lx, ly, alive, ty)
+			out["slots"] = BattleSim.wall_slots(sim, lsg, wal.x, wal.y, alive, ty)
+			return out
 	if wall > 0 and stair == 0 and int(d["order"]) == BattleSim.O_MOVE and pending:
 		# Down (and maybe up again onto another stretch).
 		var sg := wall - 1
@@ -217,12 +252,27 @@ func _route_cached(u: int, a: Vector2i, b: Vector2i) -> PackedInt32Array:
 func wall_refusal(u: int, x: int, y: int) -> String:
 	if sim.city_on == 0 or sim.ws_x0.size() == 0:
 		return ""
+	if UT.stat(sim.u_type[u], "fixed") != 0:
+		return "A tower's engine stays on its tower: tap an enemy to shoot at it"
+	if sim.u_stair[u] == BattleSim.ST_LADDER:
+		return "Climbing the ladders: orders wait until all are up"
 	var ws := BattleSim.wall_snap(sim, x, y)
 	if ws.z < 0 or (sim.u_wall[u] > 0 and ws.z == sim.u_wall[u] - 1):
 		return ""
+	if sim.u_wall[u] == 0 and BattleSim.can_ladder(sim, u):
+		if not BattleSim.ladder_ok(sim, u, ws.z, ws.x, ws.y):
+			return "No ladders there: a tower, a gate, the sea or out of reach"
+		return ""
 	if not BattleSim.can_man_walls(sim, u):
 		if sim.u_side[u] != sim.city_def:
-			return "No ladders yet: attackers cannot climb the walls"
+			if UT.stat(sim.u_type[u], "ram") != 0:
+				return "The ram cannot climb: tap a gate to batter it"
+			if sim.u_wall[u] > 0:
+				return "Down into the town first (Come down), or along this wall"
+			var c0: int = sim.u_cls[u]
+			if c0 == UT.CLS_CAV or c0 == UT.CLS_PIKE or c0 == UT.CLS_ART:
+				return "Only foot (not pikes) can climb ladders"
+			return "No ladders: they come after a turn of siege (custom battles: Ladders)"
 		var c: int = sim.u_cls[u]
 		if c == UT.CLS_CAV:
 			return "Cavalry cannot man walls"

@@ -30,6 +30,11 @@ extends SceneTree
 ##   falls easily to a competent attacker, a level 3 wall needs artillery
 ##   or a big edge, nothing is impregnable; AI settlement battles end in
 ##   12 minutes or less, without draws.
+## Equal-force sieges (--only=fair-sieges, docs/STATUS.md item 4): a city
+##   held by a garrison and field army as strong as the attacker, walls 1-3,
+##   ring and polis, with ladders and a ram or artillery only; --rows,
+##   --walls, --plans shard it, --time-limit=S sets the battle time limit and
+##   --tune=NAME=v0,v1,v2,v3 sets a siege lever of BattleSim for the run.
 ## Skill levels (docs/AI.md 6): --skill=A:B (levels e, a, s or 0, 1, 2) with
 ##   --fair=N runs the mirrored bench_2000 battles with side 0 at level A
 ##   and side 1 at B, then swapped (each orientation, so a top / bottom bias
@@ -47,6 +52,7 @@ const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const UT := preload("res://sim/unit_types.gd")
 const AP := preload("res://sim/ai_profile.gd")
+const MapGen := preload("res://sim/mapgen.gd")
 
 const UP := Scenarios.FACE_UP
 const DOWN := Scenarios.FACE_DOWN
@@ -64,6 +70,8 @@ var plans_only: Array = []  # --plans=0,4: settlement plans to run (--only=siege
 var walls_only: Array = []  # --walls=3: wall levels to run (--only=sieges / plans)
 var skill: Array = []       # --skill=A:B: AI skill of side 0 / attacker and side 1 / defender
 var fair_forest := 0        # --fair-forest=N: woods coverage N on the mirrored maps (--fair with --skill)
+var rows_only: Array = []   # --rows=0,1: fair-sieges rows to run (0 ladders + ram, 1 artillery only)
+var time_limit := 0         # --time-limit=S: battle time limit (s) for the settlement sets (0: default)
 
 
 func _init() -> void:
@@ -91,6 +99,16 @@ func _init() -> void:
 				skill.append(_level(v))
 		elif a.begins_with("--fair-forest="):
 			fair_forest = int(a.get_slice("=", 1))
+		elif a.begins_with("--rows="):
+			for v in a.get_slice("=", 1).split(","):
+				rows_only.append(int(v))
+		elif a.begins_with("--time-limit="):
+			time_limit = int(a.get_slice("=", 1))
+		elif a.begins_with("--tune="):
+			# Tuning aid: --tune=NAME=v0,v1,v2,v3 sets a siege lever of BattleSim
+			# (static: WALL_COVER, WALL_RANGE_PCT, GATE_HACK_BY_WALLS, GATE_HP_PCT,
+			# LADDER_TICKS, TOWERS_MAX, TOWERS_STONE; RAM_DMG one value).
+			_tune(a.get_slice("=", 1), a.get_slice("=", 2))
 		elif a.begins_with("--knob="):
 			# Tuning aid: --knob=LEVEL:ID=VALUE overrides one knob of a level
 			# (all personalities) for this run, e.g. --knob=s:9=0.
@@ -114,6 +132,12 @@ func _init() -> void:
 		return
 	if only == "tiers":
 		_tiers()
+		quit(0)
+		return
+	if only == "fair-sieges":
+		_section("Equal-force sieges (a city, garrison + field army = the attacker's strength), AI vs AI")
+		_fair_sieges()
+		print("\n(done in %.1f s)" % ((Time.get_ticks_msec() - t0) / 1000.0))
 		quit(0)
 		return
 	if only == "sieges" or only == "plans":
@@ -211,6 +235,32 @@ func _init() -> void:
 	_terrain()
 	print("\n(done in %.1f s)" % ((Time.get_ticks_msec() - t0) / 1000.0))
 	quit(0)
+
+
+func _tune(name: String, vals: String) -> void:
+	var arr: Array[int] = []
+	for v in vals.split(","):
+		arr.append(int(v))
+	match name:
+		"WALL_COVER":
+			BattleSim.WALL_COVER = arr
+		"WALL_RANGE_PCT":
+			BattleSim.WALL_RANGE_PCT = arr
+		"GATE_HACK_BY_WALLS":
+			BattleSim.GATE_HACK_BY_WALLS = arr
+		"GATE_HP_PCT":
+			BattleSim.GATE_HP_PCT = arr
+		"LADDER_TICKS":
+			BattleSim.LADDER_TICKS = arr
+		"TOWERS_MAX":
+			BattleSim.TOWERS_MAX = arr
+		"TOWERS_STONE":
+			BattleSim.TOWERS_STONE = arr
+		"RAM_DMG":
+			BattleSim.RAM_DMG = arr[0]
+		_:
+			push_error("unknown lever " + name)
+	print("TUNE %s = %s" % [name, str(arr)])
 
 
 func _section(title: String) -> void:
@@ -1467,7 +1517,7 @@ func _garrison_defence() -> void:
 				var sim := BattleSim.new()
 				_with_skill(r["scenario"])
 				sim.setup(r["scenario"], 50000 + s * 181)
-				while sim.tick < BattleSim.TIME_LIMIT + 10 and sim.winner < 0:
+				while sim.tick < sim.time_limit + 10 and sim.winner < 0:
 					sim.step()
 				var dt: float = (sim.decided_tick if sim.decided_tick >= 0 else sim.tick) / 600.0
 				if sim.winner == 0:
@@ -1481,6 +1531,84 @@ func _garrison_defence() -> void:
 			print("walls %d, attacker %-17s attacker wins %3d%%, draws %3d%% | decided in %4.1f min (max %4.1f) | attackers killed %5.1f" % [
 				walls, "with artillery:" if arty else "without artillery:", aw * 100 / n_runs, dr * 100 / n_runs,
 				t_sum / n_runs, t_max, att_lost / n_runs])
+
+
+## --only=fair-sieges: equal-force sieges (Scenarios.fair_siege: the
+## defenders' garrison plus field army as strong as SIEGE_ARMY), ring and
+## polis on flat ground, walls 1-3, 10 seeds, both AI sides Average
+## (--skill=A:B), the attacker with ladders and a ram (row 0: a siege of two
+## turns) or artillery only (row 1: an assault on arrival). Targets
+## (docs/STATUS.md): walls 3 about 25 % attacker wins, walls 1 about 45 %
+## (row 0); row 1 lower at walls 2-3. --plans / --walls / --rows shard it;
+## --time-limit=S sets the battle time limit.
+func _fair_sieges() -> void:
+	var n_runs := mini(seeds, 10)
+	var specs := [["ring", MapGen.PLAN_RING], ["polis", MapGen.PLAN_POLIS]]
+	for spec in specs:
+		if not plans_only.is_empty() and not plans_only.has(int(spec[1])):
+			continue
+		for walls in [1, 2, 3]:
+			if not walls_only.is_empty() and not walls_only.has(walls):
+				continue
+			for row in 2:
+				if not rows_only.is_empty() and not rows_only.has(row):
+					continue
+				var eq := {"ladders": 1, "ram": 1} if row == 0 else {}
+				var aw := 0
+				var dr := 0
+				var withdrew := 0
+				var t_sum := 0.0
+				var t_max := 0.0
+				var att_lost := 0.0
+				var def_lost := 0.0
+				var lad := 0
+				var unbar := 0
+				var blows := 0
+				var tw_down := 0
+				var tw_hits := 0
+				var tw_kills := 0
+				var gate_by := [0, 0, 0]  # broken (artillery / ram / hack), opened from inside counted in unbar
+				var caps := 0
+				for s in n_runs:
+					var sc := Scenarios.fair_siege(700 + s * 41, walls, int(spec[1]), eq)
+					if time_limit > 0:
+						sc["time_limit"] = time_limit
+					_with_skill(sc)
+					var sim := BattleSim.new()
+					sim.setup(sc, 53000 + s * 197)
+					while sim.tick < sim.time_limit + 10 and sim.winner < 0:
+						sim.step()
+					var dt: float = (sim.decided_tick if sim.decided_tick >= 0 else sim.tick) / 600.0
+					if sim.winner == 0:
+						aw += 1
+					elif sim.winner == 2 or sim.winner < 0:
+						dr += 1
+					if sim.ai_phase[0] == 3:
+						withdrew += 1
+					t_sum += dt
+					t_max = maxf(t_max, dt)
+					var res := sim.result()
+					att_lost += int(res["sides"][0]["killed"])
+					def_lost += int(res["sides"][1]["killed"])
+					lad += sim.stat_ladder_up
+					unbar += sim.stat_unbar
+					blows += sim.stat_ram_blows
+					tw_down += sim.stat_towers_down
+					tw_hits += sim.stat_tower_hits
+					tw_kills += sim.stat_tower_kills
+					caps += sim.stat_capture
+					if sim.stat_gate_broken > 0:
+						if sim.stat_ram_blows > 0:
+							gate_by[1] += 1
+						elif sim.stat_gate_art > 0:
+							gate_by[0] += 1
+						else:
+							gate_by[2] += 1
+				print("%-6s walls %d %-15s attacker %3d%%, defender %3d%%, draws %3d%% (withdrew %d) | %4.1f min (max %4.1f) | killed att %5.1f def %5.1f | ladder men up %5.1f, gates opened from inside %d, ram blows %4.1f, gate broken by art/ram/hack %d/%d/%d | towers hit %4.1f, down %3.1f, killed %5.1f | captures %d/%d" % [
+					spec[0], walls, "ladders + ram:" if row == 0 else "artillery only:", aw * 100 / n_runs,
+					(n_runs - aw - dr) * 100 / n_runs, dr * 100 / n_runs, withdrew, t_sum / n_runs, t_max,
+					att_lost / n_runs, def_lost / n_runs, float(lad) / n_runs, unbar, float(blows) / n_runs,
+					gate_by[0], gate_by[1], gate_by[2], float(tw_hits) / n_runs, float(tw_down) / n_runs, float(tw_kills) / n_runs, caps, n_runs])
 
 
 ## The settlement tests AI vs AI over seeds: decided by when, no draws.
@@ -1499,7 +1627,7 @@ func _siege_battles() -> void:
 			_with_skill(sc)
 			var sim := BattleSim.new()
 			sim.setup(sc, 51000 + s * 191)
-			while sim.tick < BattleSim.TIME_LIMIT + 10 and sim.winner < 0:
+			while sim.tick < sim.time_limit + 10 and sim.winner < 0:
 				sim.step()
 			var dt: float = (sim.decided_tick if sim.decided_tick >= 0 else sim.tick) / 600.0
 			if sim.winner == 0:
@@ -1548,7 +1676,7 @@ func _plan_sieges() -> void:
 				_with_skill(sc)
 				var sim := BattleSim.new()
 				sim.setup(sc, 53000 + s * 197)
-				while sim.tick < BattleSim.TIME_LIMIT + 10 and sim.winner < 0:
+				while sim.tick < sim.time_limit + 10 and sim.winner < 0:
 					sim.step()
 				var dt: float = (sim.decided_tick if sim.decided_tick >= 0 else sim.tick) / 600.0
 				if sim.winner == 0:
@@ -1593,7 +1721,7 @@ func _forest_battles() -> void:
 		sc["terrain"] = {"kind": Terrain.K_RANDOM, "forest": 40, "seed": 900 + s}
 		var sim := BattleSim.new()
 		sim.setup(sc, 52000 + s * 193)
-		while sim.tick < BattleSim.TIME_LIMIT + 10 and sim.winner < 0:
+		while sim.tick < sim.time_limit + 10 and sim.winner < 0:
 			sim.step()
 		var dt: float = (sim.decided_tick if sim.decided_tick >= 0 else sim.tick) / 600.0
 		if sim.winner == 0 or sim.winner == 1:

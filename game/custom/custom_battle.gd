@@ -193,6 +193,20 @@ func _map_row() -> Control:
 		row.add_child(_opt("%s defends" % SIDE_NAMES[int(mp["def"])].get_slice(" (", 0), func():
 			mp["def"] = 1 - int(mp["def"])
 			_changed(), ed))
+		if int(mp["walls"]) > 0:
+			# The attackers' siege equipment (a siege of a turn: ladders, of two: a ram too).
+			var lb := _opt("Ladders: " + ("yes" if int(mp.get("ladders", 0)) != 0 else "no"), func():
+				mp["ladders"] = 1 - int(mp.get("ladders", 0))
+				_changed(), ed)
+			lb.name = "custom_ladders"
+			lb.tooltip_text = "The attackers' foot carry ladders: tap a stretch of wall with one selected to climb it"
+			row.add_child(lb)
+			var rb := _opt("Ram: " + ("yes" if int(mp.get("ram", 0)) != 0 else "no"), func():
+				mp["ram"] = 1 - int(mp.get("ram", 0))
+				_changed(), ed)
+			rb.name = "custom_ram"
+			rb.tooltip_text = "The attackers bring a battering ram: tap a gate with it selected to batter it"
+			row.add_child(rb)
 	row.add_child(_opt("Ground: " + MapGen.PALETTE_NAMES[int(mp["ground"])], func():
 		mp["ground"] = (int(mp["ground"]) + 1) % MapGen.PALETTE_NAMES.size()
 		_changed(), ed))
@@ -223,6 +237,12 @@ func _map_row() -> Control:
 		_changed(), ed)
 	db.name = "custom_deploy"
 	r2.add_child(db)
+	var tl := int(setup.get("time", 900))
+	var tlb := _opt("Battle time: %d min" % (tl / 60), func():
+		setup["time"] = CS.TIME_CHOICES[(CS.TIME_CHOICES.find(tl) + 1) % CS.TIME_CHOICES.size()]
+		_changed(), ed)
+	tlb.name = "custom_time"
+	r2.add_child(tlb)
 	var fi := int(setup.get("funds", 0))
 	r2.add_child(_opt("Funds per side: " + CS.FUNDS_NAMES[fi], func():
 		setup["funds"] = (fi + 1) % CS.FUNDS.size()

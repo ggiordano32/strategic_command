@@ -6,11 +6,13 @@ extends SceneTree
 ## twice (and the same after a JSON round trip, as the relay passes it on),
 ## with a player for every unit of a human side and the AI on the others;
 ## the battle deploys (the player places a unit, readies) and runs; the
-## setup checks refuse what cannot be played.
+## setup checks refuse what cannot be played; siege equipment (ladders, a
+## ram) and the battle time limit reach the scenario.
 
 const CS := preload("res://game/custom/custom_setup.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Lockstep := preload("res://sim/lockstep.gd")
+const UT := preload("res://sim/unit_types.gd")
 
 var _ok := true
 
@@ -35,6 +37,14 @@ func _init() -> void:
 	town["map"]["def"] = 0
 	town["sides"][0]["armies"][0]["units"].append(["javelin", 60])
 	setups["settlement, players defend"] = town
+	var storm := CS.default_setup(8)
+	storm["map"]["kind"] = "settlement"
+	storm["map"]["walls"] = 3
+	storm["map"]["level"] = 2
+	storm["map"]["ladders"] = 1
+	storm["map"]["ram"] = 1
+	storm["time"] = 1800
+	setups["settlement, players storm with ladders and a ram, 30 min"] = storm
 	var coop := CS.default_setup(7)
 	coop["sides"][0]["armies"].append({"ctrl": "p2", "units": [["heavy2", 100], ["cav3", 60]]})
 	setups["co-op"] = coop
@@ -59,6 +69,20 @@ func _init() -> void:
 				_fail("%s: unit %d of side %d has player %d" % [name, i, side, int(home[i])])
 				break
 		_run(name, a)
+	# Siege equipment and the time limit reach the scenario (the ram after
+	# every army unit, Player 1's; ladders on the attacking foot).
+	var sb := CS.build(storm)
+	var lad := 0
+	var ram := -1
+	for i in (sb["scenario"]["units"] as Array).size():
+		var ud: Dictionary = sb["scenario"]["units"][i]
+		lad += int(ud.get("ladders", 0))
+		if int(ud["type"]) == UT.RAM:
+			ram = i
+	if lad == 0 or ram != (sb["scenario"]["units"] as Array).size() - 1 or int(sb["home"][ram]) != 0 \
+			or int(sb["scenario"].get("time_limit", 0)) != 1800:
+		_fail("storm: ladders %d, ram at %d (home %s), time limit %s" % [lad, ram, str(sb["home"][maxi(ram, 0)]),
+			str(sb["scenario"].get("time_limit", 0))])
 	# Checks.
 	var bad := CS.default_setup(1)
 	bad["sides"][1]["armies"] = []

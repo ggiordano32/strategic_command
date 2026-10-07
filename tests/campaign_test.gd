@@ -92,6 +92,7 @@ func _init() -> void:
 	_grid_contact()
 	_grid_siege()
 	_grid_sally_relief()
+	_grid_siege_equipment()
 	_grid_support()
 	_grid_stances()
 	_grid_raiding()
@@ -1709,6 +1710,53 @@ func _grid_sally_relief() -> void:
 			if int(m["army"]) < 0:
 				gar = true
 		_check(gar, "the garrison rides out with the relief")
+
+
+## Siege equipment by siege length (docs/CAMPAIGN.md "Siege equipment"):
+## an assault on arrival brings nothing, after a turn of siege ladders for
+## the foot, after two a ram; derived from the siege entry (no state of its
+## own). The battle time limit setting reaches the scenario.
+func _grid_siege_equipment() -> void:
+	var rome := _f("rome")
+	var ep := _f("epirus")
+	var ap := _r("apulia")
+	var st := _empty6()
+	st["regions"][ap]["owner"] = rome
+	var e := _put(st, ep, CState.ring_cell(ap, 4), ["heavy", "light", "archer", "cav"])
+	CRules.start_siege(st, ap, e, _r("bruttium"))
+	var b := CRules.start_siege_battle(st, ap, "assault")
+	_check(not b.is_empty() and CBattle.siege_equipment(st, b).is_empty() and CBattle.siege_turns(st, ap) == 0,
+		"an assault on arrival brings neither ladders nor a ram")
+	var h0 := CState.state_hash(st)
+	var sg := CState.siege_at(st, ap)
+	var t0 := int(sg["turn"])
+	sg["turn"] = t0 - 1
+	var eq1 := CBattle.siege_equipment(st, b)
+	_check(int(eq1.get("ladders", 0)) == 1 and not eq1.has("ram"), "after a turn of siege: ladders")
+	sg["turn"] = t0 - 2
+	var eq2 := CBattle.siege_equipment(st, b)
+	_check(int(eq2.get("ladders", 0)) == 1 and int(eq2.get("ram", 0)) == 1, "after two turns: ladders and a ram")
+	_check(CBattle.equipment_text(st, ap).contains("ram"), "the siege panel line names the ram")
+	var built := CBattle.build(st, b, -1)
+	var lad := 0
+	var ram := 0
+	for ud in built["scenario"]["units"]:
+		if int(ud.get("ladders", 0)) != 0:
+			lad += 1
+		if int(ud["type"]) == UT.RAM:
+			ram += 1
+	_check(lad == 3 and ram == 1 and (built["map"] as Array).size() == (built["scenario"]["units"] as Array).size() - 1,
+		"the assault's scenario: ladders for the foot (%d), a ram after every army unit (%d), the result map unchanged" % [lad, ram])
+	_check(not built["scenario"].has("time_limit"), "no time limit setting: the sim's 15 minutes")
+	st["settings"]["time_limit"] = 1800
+	_check(int(CBattle.build(st, b, -1)["scenario"].get("time_limit", 0)) == 1800, "the battle time setting reaches the scenario")
+	sg["turn"] = t0
+	st["settings"].erase("time_limit")
+	_check(CState.state_hash(st) == h0, "deriving the equipment changes no state")
+	var nc := CState.new_campaign("t", 7, [rome], {"time_limit": 900})
+	var nc2 := CState.new_campaign("t", 7, [rome], {"time_limit": 2700})
+	_check(not (nc["settings"] as Dictionary).has("time_limit") and int(nc2["settings"]["time_limit"]) == 2700,
+		"time_limit is stored only when longer than 15 minutes")
 
 
 func _grid_support() -> void:

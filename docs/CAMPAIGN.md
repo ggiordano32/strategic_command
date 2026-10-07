@@ -45,7 +45,8 @@ format "strategic_command_campaign", version 6, name, seed, turn (0 = 280 BC
 summer), phase "plan" | "battles" | "over", rng, winner (-1, 1 won, 0 lost),
 settings {victory_regions 20, victory_capitals 3, turn_timeout_h 0|12|24|48|72
   (the initial value for online campaigns; the server enforces its own
-  copy, see SERVER.md), autoresolve "ask"|"auto", ai_aggression 70|100|130},
+  copy, see SERVER.md), autoresolve "ask"|"auto", ai_aggression 70|100|130;
+  optional: deploy_time s, time_limit s (> 900 only), AI skills},
 humans [faction...]   (sorted; permanently allied: dip ALLIED)
 factions [{alive, treasury, next_army, income, upkeep, war_turns}]  (CData order)
 dip [8*8] 0 war / 1 peace / 2 trade / 3 allied;  dip_turn [8*8] turn of change
@@ -641,6 +642,26 @@ battle cards), `campaign_screen.gd` (move toast), `map_overlay.gd`
   `how: "surrendered"`. A full-strength village holds 2 + 4 = 6 turns.
   Recruits paid for before the siege began still arrive; armies of the old
   owner left in a captured city march out (version 4).
+- **Siege equipment** (2026-10-07; docs/DESIGN.md "Siege equipment and
+  wall towers"): an assault after a siege of a full turn or more brings
+  ladders for the attackers' infantry and missile troops, of two turns or
+  more a battering ram as well; an assault on arrival has only the armies'
+  own artillery. `CBattle.siege_equipment(st, b)` derives it from the
+  battle's turn less the siege entry's `turn` (no new state key; VERSION
+  stays 6) and passes it to `Scenarios.settlement` (`equip`); the ram is
+  appended after every army unit, so the result map (`order`) is
+  unchanged. A walls-2/3 city mounts its tower engines in the battle (the
+  sim's own); a Workshop in the city gives them half as many shots again.
+  The auto-resolve formula is unchanged (part 3 of the plan fits it to the
+  sim). Siege panel line (`CBattle.equipment_text`): "Siege equipment:
+  none yet (artillery only); ladders next turn, a ram in 2 turns" /
+  "ladders for the foot; a ram next turn" / "ladders and a ram"; the
+  lay-siege toast says "Ladders after a turn of siege, a ram after two".
+- **Battle time limit** (2026-10-07): `settings.time_limit` in seconds
+  (new-campaign "Battle time: 15 / 20 / 30 / 45 min", default 15; stored
+  only when longer, read with a default of 900, so no format change) goes
+  into every battle scenario built (`CBattle._time_limit`) as
+  `time_limit`; a battle undecided by then is a draw.
 - **Peace** with a besieging faction sends its armies home and lifts the
   siege. If the lead faction's armies leave, the siege passes to an allied
   besieger still there.

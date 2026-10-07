@@ -55,6 +55,9 @@ const SCREEN := 15       # missile screen ahead of the line
 const MAX_LINE := 12     # units in the first line before a second line forms
 const EDGE_BAND := 110   # m added on a side of the field where reinforcements arrive
 const EDGE_IN := 45      # m from the map edge to an arriving column's front
+const LADDER_TURNS := 1  # an assault after a siege of this many turns brings ladders ...
+const RAM_TURNS := 2     # ... and of this many a ram
+const DEFAULT_TIME_LIMIT := 900  # s: the sim's own battle time limit (settings "time_limit")
 const WIN_ROUT := 5      # formula: % routed on the winning side ...
 const LOSE_ROUT := 20    # ... and on the losing side
 
@@ -166,6 +169,7 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct: i
 	var scn := {"width_m": width, "height_m": height, "ai_sides": ai, "ai_skill": prof[0],
 		"ai_style": prof[1], "units": units, "terrain": terrain}
 	_deployment(st, scn, human_f)
+	_time_limit(st, scn)
 	return {"scenario": scn,
 		"seed": battle_seed(st, r, 2), "map": map, "sim_side": sim_side, "garrison": gar,
 		"unit_faction": ufac, "controller": controller, "battle": int(b["id"]), "region": r}
@@ -183,6 +187,56 @@ static func _deployment(st: Dictionary, scn: Dictionary, human_f: int) -> void:
 	scn["deploy_time"] = dt
 	if not scn.has("deploy_zones"):
 		scn["deploy_zones"] = Scenarios.field_zones(scn)
+
+
+## The campaign's battle time limit (settings "time_limit", seconds; absent
+## = the sim's 15 minutes: older campaigns hash as before).
+static func _time_limit(st: Dictionary, scn: Dictionary) -> void:
+	var tl := int((st.get("settings", {}) as Dictionary).get("time_limit", 0))
+	if tl > 0 and tl != DEFAULT_TIME_LIMIT:
+		scn["time_limit"] = tl
+
+
+## Turns region r has been besieged for (the current turn less the siege's
+## first), -1 if it is not besieged. No state of its own: siege entries
+## keep the turn they began (docs/CAMPAIGN.md "Siege equipment").
+static func siege_turns(st: Dictionary, r: int) -> int:
+	var sg := CState.siege_at(st, r)
+	if sg.is_empty():
+		return -1
+	return maxi(int(st["turn"]) - int(sg["turn"]), 0)
+
+
+## The attackers' siege equipment for battle b (Scenarios.settlement
+## "equip"): an assault after a siege of a full turn or more brings ladders
+## for the attackers' foot, of two turns or more a ram as well; an assault
+## on arrival (and any other battle) nothing but the armies' own artillery.
+static func siege_equipment(st: Dictionary, b: Dictionary) -> Dictionary:
+	if str(b.get("kind", "")) != "assault":
+		return {}
+	var sg := CState.siege_at(st, int(b["r"]))
+	if sg.is_empty():
+		return {}
+	var n := maxi(int(b.get("turn", st["turn"])) - int(sg["turn"]), 0)
+	var out := {}
+	if n >= LADDER_TURNS:
+		out["ladders"] = 1
+	if n >= RAM_TURNS:
+		out["ram"] = 1
+	return out
+
+
+## One line for the siege panel on what an assault on besieged region r
+## brings this turn and when more comes ("" for an open town or no siege).
+static func equipment_text(st: Dictionary, r: int) -> String:
+	var n := siege_turns(st, r)
+	if n < 0 or CState.walls(st, r) <= 0:
+		return ""
+	if n >= RAM_TURNS:
+		return "Siege equipment: ladders and a ram."
+	if n >= LADDER_TURNS:
+		return "Siege equipment: ladders for the foot; a ram next turn."
+	return "Siege equipment: none yet (artillery only); ladders next turn, a ram in %d turns." % RAM_TURNS
 
 
 ## [ai_skill per sim side, ai_style per sim side] for battle b: an AI side
@@ -351,11 +405,12 @@ static func _build_settlement(st: Dictionary, b: Dictionary, human_f: int, scale
 	var terr := {"kind": int(rd["terrain"]), "seed": (cseed ^ 0x2545F491) & 0x7FFFFFFF,
 		"forest": int(rd["forest"]), "ground": int(rd["ground"])}
 	var ai: Array = [0, 1] if human_f < 0 else [1]
-	var res := Scenarios.settlement(city, terr, lists[0], lists[1], int(sim_side[1]), ai)
+	var res := Scenarios.settlement(city, terr, lists[0], lists[1], int(sim_side[1]), ai, siege_equipment(st, b))
 	var prof := _ai_profiles(st, b, sim_side, ai)
 	res["scenario"]["ai_skill"] = prof[0]
 	res["scenario"]["ai_style"] = prof[1]
 	_deployment(st, res["scenario"], human_f)
+	_time_limit(st, res["scenario"])
 	var map: Array = []
 	var ufac: Array = []
 	for o in res["order"]:

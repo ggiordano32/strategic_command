@@ -121,6 +121,8 @@ func _draw() -> void:
 		_draw_deploy_zones(lw)
 	if sim.city_on != 0:
 		_draw_city_marks(lw)
+		if sim.sg_on != 0:
+			_draw_siege_gear(lw)
 	if show_all_orders:
 		_draw_all_orders()
 	if sim.n_eng > 0:
@@ -271,8 +273,8 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 	var wp: Dictionary = orders.wall_plan(u) if orders != null else {}
 	if not wp.is_empty():
 		_draw_wall_plan(u, wp, lw, primary)
-		if wp["mode"] == "up" or wp["mode"] == "down":
-			order = -1  # its way is the plan's (by the stair), not a straight line
+		if wp["mode"] == "up" or wp["mode"] == "down" or wp["mode"] == "ladder":
+			order = -1  # its way is the plan's (by the stair or ladders), not a straight line
 			if wp["mode"] == "down" and int(wp["seg"]) < 0 and _v(u, "order") == BattleSim.O_MOVE:
 				# Where it forms up below (its normal block).
 				_draw_footprint(u, to_px(_v(u, "dx"), _v(u, "dy")), _v(u, "dface"), _v(u, "files"),
@@ -292,7 +294,12 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 				_v(u, "dx") - sim.u_cx[u], _v(u, "dy") - sim.u_cy[u], d + Vector2(r, r * 1.2),
 				sim.u_cx[u], sim.u_cy[u])
 			if _v(u, "gtarget") >= 0:
-				draw_string(ThemeDB.fallback_font, d + Vector2(r, -r * 1.5), "BREAK THE GATE",
+				var gtxt := "BREAK THE GATE"
+				if UT.stat(ty, "ram") != 0:
+					gtxt = "RAM THE GATE"
+				elif sim.gate_frame(_v(u, "gtarget"), _v(u, "dx"), _v(u, "dy")).y < 0:
+					gtxt = "UNBAR THE GATE"  # ladder men inside the walls
+				draw_string(ThemeDB.fallback_font, d + Vector2(r, -r * 1.5), gtxt,
 					HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), Color(1.0, 0.8, 0.45))
 			elif orders != null and orders.snap_of(u) >= 2:
 				draw_string(ThemeDB.fallback_font, d + Vector2(r, -r * 1.5),
@@ -796,8 +803,29 @@ func _draw_wall_plan(u: int, wp: Dictionary, lw: float, primary: bool) -> void:
 		if primary:
 			draw_string(ThemeDB.fallback_font, sp + Vector2(rr * 1.2, -rr * 0.3), "STAIR",
 				HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(12.0), COL_STAIR)
+	if wp.has("foot"):
+		# Ladders against the wall at the foot: two rails and rungs.
+		var fp: Vector2i = wp["foot"]
+		var fpx := to_px(fp.x, fp.y)
+		var dir: float = sim.ws_dir[int(wp["seg"])] * TAU / 1024.0
+		var inw := -Vector2(cos(dir), sin(dir)) * px_per_m * 3.0
+		var side := Vector2(-sin(dir), cos(dir)) * px_per_m * 0.5
+		for rail in [-1.0, 1.0]:
+			draw_line(fpx + side * rail, fpx + side * rail + inw, Color(COL_STAIR, 0.95), lw * 1.2)
+		for k in 4:
+			var q := fpx + inw * (0.2 + 0.2 * k)
+			draw_line(q - side, q + side, Color(COL_STAIR, 0.95), lw)
 	if primary and wp["mode"] != "hold":
-		var txt: String = {"up": "UP BY THE STAIR", "down": "DOWN BY THE STAIR", "along": "ALONG THE WALL"}.get(wp["mode"], "")
+		var txt: String = {"up": "UP BY THE STAIR", "down": "DOWN BY THE STAIR", "along": "ALONG THE WALL",
+			"ladder": "UP BY LADDERS"}.get(wp["mode"], "")
+		if wp["mode"] == "climb":
+			var up := 0
+			var base: int = sim.u_slot_base[u]
+			for k in sim.u_alive[u]:
+				var i: int = sim.slot_soldier[base + k]
+				if sim._on_walk(sim.pos_x[i], sim.pos_y[i]):
+					up += 1
+			txt = "CLIMBING: %d OF %d UP" % [up, sim.u_alive[u]]
 		if wp["mode"] == "down" and sg >= 0:
 			txt = "DOWN, THEN UP ONTO THAT WALL"
 		var at := to_px(sim.u_cx[u], sim.u_cy[u])
@@ -805,3 +833,35 @@ func _draw_wall_plan(u: int, wp: Dictionary, lw: float, primary: bool) -> void:
 			at = to_px(slots[0], slots[1])
 		draw_string(ThemeDB.fallback_font, at + Vector2(0, -px_per_m * 4.0), txt,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), COL_WALL)
+
+
+## Siege gear (view only): the ram's roofed shed over its crew, and the
+## ladders of units climbing a wall.
+func _draw_siege_gear(lw: float) -> void:
+	for u in sim.n_units:
+		if sim.u_alive[u] <= 0 or sim.u_state[u] >= BattleSim.U_DESTROYED:
+			continue
+		if sim.is_ram(u):
+			var c := to_px(sim.u_cx[u], sim.u_cy[u])
+			var ang: float = sim.u_face[u] * TAU / 1024.0
+			var fwd := Vector2(cos(ang), sin(ang)) * px_per_m
+			var side := Vector2(-fwd.y, fwd.x)
+			var pts := PackedVector2Array([c + fwd * 3.5 + side * 1.4, c + fwd * 3.5 - side * 1.4,
+				c - fwd * 3.0 - side * 1.4, c - fwd * 3.0 + side * 1.4])
+			draw_colored_polygon(pts, Color(0.45, 0.3, 0.16, 0.9))
+			pts.append(pts[0])
+			draw_polyline(pts, Color(0.2, 0.12, 0.05, 0.95), lw)
+			draw_line(c - fwd * 3.0, c + fwd * 4.6, Color(0.3, 0.2, 0.1, 1.0), lw * 2.0)  # the beam's head
+		elif sim.u_stair[u] == BattleSim.ST_LADDER:
+			var n_l: int = maxi(BattleSim.ladders_of(sim, u), 1)
+			var dir: float = sim.ws_dir[sim.u_sseg[u]] * TAU / 1024.0
+			var inw := -Vector2(cos(dir), sin(dir)) * px_per_m * 3.5
+			var side2 := Vector2(-sin(dir), cos(dir)) * px_per_m * 0.45
+			for k in n_l:
+				var f: Vector2i = sim._ladder_k_foot(u, k, n_l)
+				var fp := to_px(f.x, f.y)
+				for rail in [-1.0, 1.0]:
+					draw_line(fp + side2 * rail, fp + side2 * rail + inw, Color(0.55, 0.38, 0.2, 1.0), lw)
+				for q in 5:
+					var rq := fp + inw * (0.15 + 0.18 * q)
+					draw_line(rq - side2, rq + side2, Color(0.55, 0.38, 0.2, 1.0), lw * 0.8)

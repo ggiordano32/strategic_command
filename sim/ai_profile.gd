@@ -260,7 +260,16 @@ const SK_ANCHOR := 204         # deployment: shift the line up to this far aside
 const SK_SC_UPHILL := 205      # matchup score: less this per % of climb to the target
 const SK_SC_STICK := 206       # matchup score for the target the unit already goes for (no flip-flopping)
 const SK_SC_COVER := 207       # matchup score for a target none of ours is on yet (pin every enemy first)
-const N_KNOBS := 208
+# Siege equipment and wall towers (docs/AI.md 13; every level runs them).
+const S_LADDER_UNITS := 208    # attacking foot units sent up the ladders (heaviest first)
+const S_LADDER_DEF_W := 209    # ... the stretch: metres from the gate plus this many per defender on it
+const S_LADDER_AFTER := 210    # ... sent this long into the approach
+const S_TOWER_FOCUS := 211     # defending towers pick the ram, batteries, men at the gate or on ladders (1) or fire at will (0)
+const S_COUNTER_BAT := 212     # attacking batteries shoot towers this near the gate first (0: never)
+const S_ESC_REPLY := 213       # defenders send a foot unit up against ladder men (1) or not (0)
+const S_RAM_WAIT := 214        # the ram waits for the gate's towers to be silenced at most this long into the approach
+const S_LADDER_WALLS := 215    # with working artillery, ladders only against walls of this level or more (no artillery: any)
+const N_KNOBS := 216
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
@@ -406,6 +415,14 @@ const KNOBS: Array = [
 	[S_COVER_OUT, 110 * M, 110 * M, 110 * M],
 	[S_HACK_AFTER, 0, 1200, 1200],
 	[S_HACKERS, 4, 2, 2],
+	[S_LADDER_UNITS, 1, 2, 3],
+	[S_LADDER_DEF_W, 0, 1, 3],
+	[S_LADDER_AFTER, 0, 1200, 1200],
+	[S_TOWER_FOCUS, 0, 1, 1],
+	[S_COUNTER_BAT, 40 * M, 60 * M, 90 * M],
+	[S_ESC_REPLY, 0, 1, 1],
+	[S_RAM_WAIT, 0, 0, 900],
+	[S_LADDER_WALLS, 1, 2, 2],
 	[S_STORM_R, 45 * M, 45 * M, 45 * M],
 	[S_SPREAD, 25 * M, 25 * M, 25 * M],
 	[S_STALL_TICKS, 1500, 1500, 1500],

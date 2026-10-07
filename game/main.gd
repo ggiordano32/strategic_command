@@ -47,6 +47,8 @@ var _siege_kind_idx := 0
 var _siege_def := 1
 var _siege_plan := MapGen.PLAN_RING
 var _siege_coast := 0
+var _siege_equip := 0  # attackers' siege equipment: 0 none, 1 ladders, 2 ladders and a ram
+var _siege_time := 900  # battle time limit (s)
 var _siege_buttons := {}
 const SIEGE_KINDS := [Terrain.K_ROLLING, Terrain.K_FLAT, Terrain.K_HILL, Terrain.K_RIDGE]
 ## Last settlement battle (replayed by Replay), empty if the last was not one.
@@ -177,14 +179,16 @@ func _ready() -> void:
 		if a.begins_with("--scenario="):
 			_start(a.get_slice("=", 1))
 		elif a.begins_with("--siege="):
-			# Testing aid: --siege=seed:level:walls[:ground[:kind[:defend[:plan[:coast]]]]]
-			# (plan: MapGen.PLAN_* 0 castrum, 1 polis, 2 punic, 3 oppidum, 4 ring)
+			# Testing aid: --siege=seed:level:walls[:ground[:kind[:defend[:plan[:coast[:equip[:time]]]]]]]
+			# (plan: MapGen.PLAN_* 0 castrum, 1 polis, 2 punic, 3 oppidum, 4 ring;
+			# equip 0 none, 1 ladders, 2 ladders and a ram; time limit in s)
 			var sp: PackedStringArray = a.get_slice("=", 1).split(":")
 			_start_siege([int(sp[0]), int(sp[1]) if sp.size() > 1 else 1, int(sp[2]) if sp.size() > 2 else 1,
 				int(sp[3]) if sp.size() > 3 else MapGen.PAL_DRY, int(sp[4]) if sp.size() > 4 else Terrain.K_ROLLING,
 				0 if sp.size() > 5 and int(sp[5]) != 0 else 1,
 				clampi(int(sp[6]), 0, MapGen.PLAN_RING) if sp.size() > 6 else MapGen.PLAN_RING,
-				1 if sp.size() > 7 and int(sp[7]) != 0 else 0])
+				1 if sp.size() > 7 and int(sp[7]) != 0 else 0, int(sp[8]) if sp.size() > 8 else 0,
+				int(sp[9]) if sp.size() > 9 else 900])
 		elif a.begins_with("--menu-page="):
 			show_page(a.get_slice("=", 1))  # testing aid
 		elif a == "--new-campaign":
@@ -891,7 +895,7 @@ func _build_siege_row() -> Control:
 	_siege_seed.custom_minimum_size = Vector2(96, 42)
 	_siege_seed.tooltip_text = "Settlement seed: the same seed, level and walls always give the same map"
 	box.add_child(_siege_seed)
-	for key in ["plan", "level", "walls", "kind", "coast", "side"]:
+	for key in ["plan", "level", "walls", "kind", "coast", "side", "equip", "time"]:
 		var b := _menu_button("", _cycle_siege.bind(key))
 		b.custom_minimum_size = Vector2(110, 42)
 		_siege_buttons[key] = b
@@ -917,6 +921,10 @@ func _cycle_siege(key: String) -> void:
 			_siege_plan = (_siege_plan + 1) % (MapGen.PLAN_RING + 1)
 		"coast":
 			_siege_coast = 1 - _siege_coast
+		"equip":
+			_siege_equip = (_siege_equip + 1) % 3
+		"time":
+			_siege_time = [900, 1200, 1800, 2700][([900, 1200, 1800, 2700].find(_siege_time) + 1) % 4]
 	_update_siege_buttons()
 
 
@@ -929,24 +937,36 @@ func _update_siege_buttons() -> void:
 	(_siege_buttons["side"] as Button).text = "You attack" if _siege_def == 1 else "You defend"
 	(_siege_buttons["plan"] as Button).text = MapGen.PLAN_NAMES[_siege_plan]
 	(_siege_buttons["coast"] as Button).text = "Coast" if _siege_coast != 0 else "Inland"
+	(_siege_buttons["equip"] as Button).text = ["No ladders", "Ladders", "Ladders, ram"][_siege_equip]
+	(_siege_buttons["time"] as Button).text = "%d min" % (_siege_time / 60)
 
 
 func _siege_params() -> Array:
 	var sd := absi(int(_siege_seed.text)) if _siege_seed.text.is_valid_int() else absi(_siege_seed.text.hash())
 	var ground := _ground_idx if _ground_idx > 0 else MapGen.PAL_DRY
 	return [sd, _siege_level, _siege_walls, ground, SIEGE_KINDS[_siege_kind_idx], _siege_def, _siege_plan,
-		_siege_coast]
+		_siege_coast, _siege_equip, _siege_time]
 
 
-## params: [seed, level, walls, ground, kind, def side, plan, coast].
+## params: [seed, level, walls, ground, kind, def side, plan, coast,
+## siege equipment (0 none, 1 ladders, 2 ladders and a ram), time limit (s)].
 func _start_siege(params: Array) -> void:
 	if _battle != null:
 		return
 	_menu.visible = false
 	var b := Battle.new()
 	b.scenario_id = "settlement"
+	var eq := int(params[8]) if params.size() > 8 else 0
+	var equip := {}
+	if eq >= 1:
+		equip["ladders"] = 1
+	if eq >= 2:
+		equip["ram"] = 1
 	b.custom_scenario = Scenarios.siege_test(params[0], params[1], params[2], params[3], params[4], params[5],
-		-1, int(params[6]) if params.size() > 6 else MapGen.PLAN_RING, int(params[7]) if params.size() > 7 else 0)
+		-1, int(params[6]) if params.size() > 6 else MapGen.PLAN_RING, int(params[7]) if params.size() > 7 else 0,
+		equip)
+	if params.size() > 9 and int(params[9]) > 900:
+		b.custom_scenario["time_limit"] = int(params[9])
 	b.ai_skill = _ai_skill
 	b.seed_value = _seed if _seed >= 0 else int(Time.get_unix_time_from_system()) & 0x7FFFFFFF
 	_last_siege = params

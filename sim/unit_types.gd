@@ -64,6 +64,15 @@ extends RefCounted
 ##   m_apex       flat weapons (m_arc 0): how high the missile rises at
 ##                mid-flight above the straight line, in % of the distance;
 ##                ground above that line blocks the shot
+## Siege (special types, never recruited: see SPECIAL):
+##   fixed        1: an engine mounted on a wall tower (garrison artillery):
+##                it never moves, packs, refills or loses heart; the sim
+##                places it on a tower of a walls-2/3 city (BattleSim
+##                _siege_towers) and it is gone when its crew is dead or its
+##                engine wrecked
+##   ram          1: a battering ram pushed by its crew (the unit's men): it
+##                breaks a gate it stands at (BattleSim._update_gates),
+##                never hacks, climbs or attacks units
 
 ## Display only (never read by the sim, not hashed): icon (marker / card
 ## symbol, see game/unit_icons.gd), role, desc, good_vs, weak_vs (unit book).
@@ -95,6 +104,7 @@ const DEFAULTS := {
 	"crew": 0, "crew_min": 0, "m_kind": 0, "m_min": 0, "m_pierce": 0, "m_plough": 0,
 	"m_blast": 0, "m_fear": 0, "arc": 0, "traverse": 0, "deploy": 0, "e_hp": 0,
 	"climb": 15, "m_hgain": 0, "m_apex": 0, "m_reserve": 0, "m_refill": 0,
+	"fixed": 0, "ram": 0,
 }
 
 ## The nine base types (tier 1 of their line). The sandbox battles use
@@ -543,9 +553,80 @@ const TIERS: Array[Dictionary] = [
 		"blurb": "Gallic nobles on horseback in mail shirts."},
 ]
 
-## Every type: the base rows followed by the derived tier rows.
+## Siege types (docs/DESIGN.md "Siege equipment and wall towers"): never
+## recruited (line "siege", in no roster or picker), appended after the
+## tier rows so every other index is unchanged. The towers' engines are
+## placed by the sim on a walls-2/3 city's towers; the ram comes with an
+## attacking army that has besieged a city long enough (campaign) or is
+## chosen in a custom battle. base = the row itself; size = its crew.
+const SPECIAL: Array[Dictionary] = [
+	{
+		"key": "tower_bolt",
+		"name": "Tower Bolt Thrower",
+		"short": "Tower",
+		"icon": 7,
+		"role": "Wall tower artillery (walls 2-3)",
+		"desc": "A bolt thrower mounted on a tower of the city wall, with a crew of four. It shoots flat bolts down at anyone approaching the wall: rams, ladder parties, men at the gate, batteries. It cannot move and turns all the way round. A fixed load of bolts (half as many again with a workshop in the city). Gone when its crew is shot down or its tower is battered by enemy artillery (a few stones, many bolts).",
+		"good_vs": "Rams and men at the gate, ladder parties, batteries in range.",
+		"weak_vs": "Enemy stone throwers, archers picking off its crew.",
+		"cls": CLS_ART,
+		"sprite": 6,
+		"fixed": 1,
+		"attack": 14, "defence": 16, "armour": 4, "shield": 0, "mshield": 0, "damage": 22,
+		"reach": 1024, "mass": 70, "walk": 82, "run": 200, "hp": 80, "cooldown": 12, "morale": 1000,
+		"file_sp": 7 * 1024, "rank_sp": 1229, "turn": 0,
+		"crew": 4, "crew_min": 2, "m_kind": 1, "m_range": 180 * 1024, "m_min": 5 * 1024,
+		"m_damage": 120, "m_ap": 80, "m_ammo": 20, "m_reload": 60, "m_spread": 10, "m_spread0": 300,
+		"m_speed": 5632, "m_arc": 0, "m_pierce": 5, "m_plough": 25 * 1024, "m_fear": 15,
+		"arc": 512, "traverse": 6, "deploy": 1, "e_hp": 900, "cost": 0, "size": 4,
+		"m_hgain": 60, "m_apex": 2,
+	},
+	{
+		"key": "tower_stone",
+		"name": "Tower Stone Thrower",
+		"short": "Tower St.",
+		"icon": 8,
+		"role": "Wall tower artillery (walls 3)",
+		"desc": "An onager mounted on one of the two biggest towers of a walls-3 city, with a crew of six. It lobs stones far out over the approach: at batteries, at the ram, at the army forming up. It cannot move and turns all the way round. A fixed load of stones (half as many again with a workshop in the city). Gone when its crew is shot down or its tower is battered by enemy artillery.",
+		"good_vs": "Batteries and big formations standing in range, the ram.",
+		"weak_vs": "Small or moving targets, anything close under the wall.",
+		"cls": CLS_ART,
+		"sprite": 6,
+		"fixed": 1,
+		"attack": 14, "defence": 16, "armour": 4, "shield": 0, "mshield": 0, "damage": 22,
+		"reach": 1024, "mass": 70, "walk": 72, "run": 200, "hp": 80, "cooldown": 12, "morale": 1000,
+		"file_sp": 10 * 1024, "rank_sp": 1229, "turn": 0,
+		"crew": 6, "crew_min": 3, "m_kind": 2, "m_range": 280 * 1024, "m_min": 30 * 1024,
+		"m_damage": 130, "m_ap": 50, "m_ammo": 12, "m_reload": 150, "m_spread": 48, "m_spread0": 1536,
+		"m_speed": 2867, "m_arc": 1, "m_lead": 90, "m_long": 50, "m_pierce": 6, "m_plough": 9 * 1024,
+		"m_blast": 900, "m_fear": 60, "arc": 512, "traverse": 4, "deploy": 1, "e_hp": 1200, "cost": 0,
+		"size": 6, "m_hgain": 150,
+	},
+	{
+		"key": "ram",
+		"name": "Battering Ram",
+		"short": "Ram",
+		"icon": 0,
+		"role": "Siege engine (gates)",
+		"desc": "A heavy ram under a roofed shed, pushed at a walking pace by twenty men. At a closed gate it breaks it in a minute or two whatever the wall (walls 2 and 3 gates barely notice swords). The roof keeps most arrows off the crew; bolts and stones from the towers do not care. It cannot run, attack units or climb, and its crew fights poorly.",
+		"good_vs": "Closed gates.",
+		"weak_vs": "Tower artillery, anything that reaches its crew.",
+		"cls": CLS_INF,
+		"sprite": 0,
+		"ram": 1,
+		"attack": 12, "defence": 18, "armour": 18, "shield": 0, "mshield": 85, "m_vuln": 35,
+		"damage": 22, "reach": 1024, "mass": 90, "walk": 123, "run": 123, "hp": 120, "cooldown": 12,
+		"morale": 850, "cost": 3, "size": 20, "climb": 30,
+	},
+]
+
+## Every type: the base rows, the derived tier rows, then SPECIAL.
 static var TYPES: Array[Dictionary] = _build_types()
 static var _by_key := {}
+## Indices of the siege types (after the tier rows).
+static var TOWER_BOLT: int = BASE.size() + TIERS.size()
+static var TOWER_STONE: int = BASE.size() + TIERS.size() + 1
+static var RAM: int = BASE.size() + TIERS.size() + 2
 
 
 static func _build_types() -> Array[Dictionary]:
@@ -583,6 +664,13 @@ static func _build_types() -> Array[Dictionary]:
 		var price: int = int(BASE[b]["cost"]) * BASE_SIZE[b] * pct / 100
 		row["price"] = price
 		row["cost"] = maxi((price + BASE_SIZE[b] / 2) / BASE_SIZE[b], 1)
+		out.append(row)
+	for sp in SPECIAL:
+		var row: Dictionary = sp.duplicate()
+		row["base"] = out.size()
+		row["tier"] = 1
+		row["line"] = "siege"
+		row["price"] = int(row["cost"]) * int(row["size"])
 		out.append(row)
 	return out
 

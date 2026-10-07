@@ -222,11 +222,14 @@ static func city_params(c: Dictionary) -> Dictionary:
 	for k in 3:
 		hstyle.append(int(hs[k]) if k < hs.size() else founder)
 	var owner := int(c.get("owner", -1))
-	return {"seed": int(c.get("seed", 1)), "level": clampi(int(c.get("level", 1)), 0, 2),
+	var out := {"seed": int(c.get("seed", 1)), "level": clampi(int(c.get("level", 1)), 0, 2),
 		"walls": clampi(int(c.get("walls", 0)), 0, 3), "bld": bld, "def": int(c.get("def", 1)),
 		"plan": plan, "coast": 1 if int(c.get("coast", 0)) != 0 else 0, "founder": founder,
 		"owner": owner if owner >= 0 else founder, "banner": int(c.get("banner", -2)),
 		"bstyle": bstyle, "hstyle": hstyle}
+	if c.has("towers"):
+		out["towers"] = int(c["towers"])  # (read by the sim: 0 = no tower engines; not the map's)
+	return out
 
 
 ## Site of a settlement: SITE_* from the region's terrain kind (rolling

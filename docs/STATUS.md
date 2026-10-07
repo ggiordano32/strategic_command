@@ -1,6 +1,6 @@
 # Strategic Command — Status and Handover
 
-Last updated: 2026-10-06 (deployment phase and custom battles built; the continuous campaign overworld built, state format 6; free campaign movement built; sieges and battle odds built on the campaign map; settlement variety built 2026-10-05). Read this first, then `docs/DESIGN.md` for the full
+Last updated: 2026-10-07 (cities worth defending, part 1: tower engines, ladders, a ram, hard gates, the battle time limit; earlier 2026-10-06: deployment phase and custom battles built; the continuous campaign overworld built, state format 6; free campaign movement built; sieges and battle odds built on the campaign map; settlement variety built 2026-10-05). Read this first, then `docs/DESIGN.md` for the full
 design and `CLAUDE.md` for working rules. Update this file whenever a
 milestone lands or the plan changes.
 
@@ -32,7 +32,8 @@ anti-cheat and original art only if it proves fun.
 | Wall orders, drag clamp, reachability (playtest fixes) | Built 2026-10-06, **not committed**; tested headless and windowed; not yet played on phones |
 | Continuous campaign overworld (state format 6) | Built 2026-10-06, **not committed**; tested headless and windowed; not yet played on phones |
 | Deployment phase and custom battles (solo, co-op, head-to-head) | Built 2026-10-06 on a branch; tested headless, end to end and windowed; not yet played on phones |
-| 6. Depth (siege equipment, tech, more factions) | Not started |
+| Cities worth defending, part 1 (tower engines, ladders, ram, hard gates, battle time limit) | Built 2026-10-07, **not committed**; tested headless and windowed; not yet played on phones |
+| 6. Depth (siege towers, tech, more factions) | Not started |
 
 ### What exists
 
@@ -75,6 +76,92 @@ anti-cheat and original art only if it proves fun.
 - The touch control scheme works; the user likes it.
 
 ### In progress right now
+
+**Cities must be worth defending, part 1: attrition at the wall (built
+2026-10-07).** As built in DESIGN.md section 4 "Siege equipment and wall
+towers", AI.md section 13, CAMPAIGN.md "Siege equipment". No stat bonus
+for standing inside walls. In short:
+- Walls-2/3 cities mount **tower engines** (UT `tower_bolt` / `tower_stone`):
+  bolt throwers on the towers by the gates and at intervals (6 / 8), at
+  walls 3 two stone throwers on the biggest towers; immobile, fixed shots
+  (+50 % with a Workshop), crews that can be shot, towers batteries can
+  batter down (counter-battery); a card each for the defending player
+  (fire / hold, target by tap); the AI defender focuses the ram, batteries,
+  men at the gate and on ladders; the AI attacker batters the towers by the
+  gate first.
+- **Hard gates**: walls-2/3 gates 130 % hit points and 1 % of the old sword
+  rate (walls 0-1 unchanged). **Ladders**: attacking foot carrying them tap
+  a stretch of wall from outside, march to its foot and climb, a man per
+  ladder every 2 / 3 / 4 s (walls 1 / 2 / 3), arriving on the walkway one
+  at a time and fighting there, exposed to the walls and towers; once up,
+  down into the town to unbar a gate from inside. **Ram**: a slow roofed
+  engine unit; at a gate's face it breaks a walls-3 gate in about a
+  minute and a half. Battlement cover 25 / 45 / 70 % (was 25 / 35 / 65),
+  wall archers reach 15 % further at men below at walls 2-3 (walls 1
+  unchanged). AI at every skill uses and answers all of it (knobs
+  `S_LADDER_*`, `S_TOWER_FOCUS`, `S_COUNTER_BAT`, `S_ESC_REPLY`,
+  `S_RAM_WAIT`).
+- **Campaign**: an assault after a siege of a turn brings ladders, of two
+  a ram (derived from the siege entry's turn; no state change, VERSION 6);
+  siege panel line "Siege equipment: ..."; auto-resolve formula untouched
+  (campaign_sim 6 x 60 hashes equal HEAD's). **Battle time limit**:
+  scenario `time_limit` (absent = 900 s, hashed only when not), campaign
+  `settings.time_limit` ("Battle time: 15 / 20 / 30 / 45 min"), custom
+  battles (Battle time; Ladders / Ram toggles), sandbox settlement row
+  (siege kit, minutes); HUD clock "m:ss / limit".
+- Measured (`tests/matchups.gd -- --only=fair-sieges`, equal strength,
+  both AI Average, 10 seeds; attacker wins, mean / max minutes):
+
+  | City | Ladders + ram (siege of 2 turns) | Artillery only (on arrival) |
+  |---|---|---|
+  | ring, walls 1 | 100 % (6.4 / 6.9) | 100 % (6.3 / 7.4) |
+  | ring, walls 2 | 60 % (8.6 / 11.2) | 10 % (8.7 / 10.1) |
+  | ring, walls 3 | 50 % (9.2 / 10.3) | 0 % (10.0 / 12.8) |
+  | polis, walls 1 | 100 % (8.2 / 10.6) | 100 % (8.7 / 12.6) |
+  | polis, walls 2 | 50 %, 10 % draws (11.2 / 15.0) | 10 % (9.1 / 14.3) |
+  | polis, walls 3 | 10 %, 20 % draws (10.9 / 15.0) | 0 %, 10 % draws (9.2 / 15.0) |
+
+  Walls 3: about 30 % with ladders and a ram (target 25 %), none on
+  arrival; walls 2: 55 % / 10 %. **Walls 1 misses its target (100 %
+  against 45 %)**: walls 1 has no towers and its gate falls to artillery
+  in about two minutes, so the battle is decided in the street fight and
+  the plaza capture; the wall levers moved it 10 points at most (cover 50
+  / 60 %, range +20 / 30 % tried) and were left at the old values (walls-1
+  battles hash as before). That is part 2's job (units that do not pass
+  through each other, the slow street fight). The polis's walls-3 draws
+  are stand-offs at the acropolis: a 30 minute limit leaves the same 20 %
+  undecided. Ladder parties go up (80-140 men a battle) but rarely live to
+  unbar a gate (towers and wall archers shoot the queues); the ram
+  breaks most walls-3 gates.
+- The 1.5-2:1 sets changed as expected (attackers have artillery but no
+  ladders or ram there): `--only=plans` walls 3 attacker wins (before ->
+  after) ring plain 100 -> 20 %, ring hill 80 -> 30 %, castrum 90 -> 70 %,
+  polis coastal 60 -> 10 %, polis plain 90 -> 10 %, punic 60 -> 0 %,
+  oppidum spur 80 -> 20 %, oppidum plain 60 -> 30 %; walls 2 ring 100 ->
+  80 / 100 %, castrum 100 -> 100 %, polis 100 -> 40 / 40 %, punic 90 -> 10
+  %, oppidum 90 -> 50 / 70 %; walls 1 unchanged. `--only=sieges`:
+  garrison-only walls 2 / 3 with artillery 100 -> 90 / 50 % (draws 10 /
+  50 %), without artillery 100 -> 0 % (all draws: no way in without a ram
+  or engines, by design); city walls 2 90 -> 60 %, hill city walls 3 100
+  -> 20 %. Battles run longer (walls 3 9-14 min mean, several to the 15
+  minute limit).
+- Tick cost (`benchmark.gd`, same session, base / new): bench_4000_city
+  mean 2.84 / 3.15 ms, p95 5.54 / 5.72, max 7.18-8.11 / 7.01-7.08 (the
+  6.5 ms target is missed by the base too on this machine today);
+  bench_4000_polis max 6.64 / 7.52, castrum (walls 3) 5.99 / 7.64;
+  bench_4000 unchanged (6.14 / 6.22).
+- Determinism: every golden digest and the final hash of every field
+  battle and walls-0/1 city (`siege_village`, `gate_ops`, `cit_ops`,
+  `siege_oppidum`) equal HEAD's; walls-2/3 cities changed (towers, gates,
+  cover). New runs `siege_eq_ring3` (walls 3, ladders, ram, towers, 20 min
+  limit) and `siege_eq_polis2~sa` (ladders, a Workshop, Skilled attacker),
+  snapshot / restore; lockstep: snapshot mid-climb, two peers plus a late
+  joiner on the walls-3 siege.
+- **Open / next:** walls 1 (part 2); escalade rarely unbars a gate in AI
+  play (the parties die at the wall; a Skilled timing or more ladders may
+  help); the polis's acropolis stand-offs; in live co-op the towers belong
+  to nobody (they fire at will); play it on phones (tower cards, ladder
+  taps, the ram). Screenshot `docs/screenshots/siege_ladders_ram_phone.png`.
 
 **Deployment phase and custom battles (built 2026-10-06).** As built in
 DESIGN.md section 4 "Deployment phase" and section 5 "Custom battles and
@@ -388,9 +475,10 @@ section 4 "Settlement plans, sites and owners"; save format: CAMPAIGN.md
   6.4-6.7 ms on the city benches); battlement cover by wall level; the
   stall clock waits out the approach; check_scripts no longer writes an
   override.cfg into the shared checkout.
-- **Open / next:** walls 3 is still easy for ring / castrum / polis (87-100 %
-  attacker wins) and still hard for the oppidum on a plain (50 %): a 60-80 %
-  band needs stronger walls-3 defences (a rules choice); breach melee
+- **Open / next:** walls 3 was still easy for ring / castrum / polis (87-100 %
+  attacker wins); since 2026-10-07 the tower engines, hard gates and
+  stronger battlements make walls 2-3 cost the attacker (see "Cities must
+  be worth defending, part 1" above; walls 1 open); breach melee
   still 5.4-5.9 ms p95 and 7.5-8.5 ms worst at 4,000 soldiers (volume of
   men in contact: per-man contact gating is the next step); play it on
   phones (look of the sea, shrines, banners; the stair orders by touch).
@@ -698,7 +786,9 @@ fixes are all landed; see "Where we are"):
    standing inside walls**; defence is attrition at the wall and a slow,
    narrow street fight. In three parts, all sim-first, the formula fitted
    to the sim afterwards, none a save-format change:
-   1. **Attrition at the wall** (tonight, 2026-10-07): wall archers hit
+   1. **Done 2026-10-07: attrition at the wall** (see "In progress right
+      now" for the table: walls 3 about 30 % with ladders and a ram, none
+      on arrival; walls 1 missed, 100 %). As agreed: wall archers hit
       harder from the battlements (cover / height levers), **arrow towers
       at walls 2** shooting siege bolts and **two stone throwers mounted
       on walls 3**, immobile garrison engines with a fixed ammunition
@@ -825,9 +915,12 @@ godot --headless --script res://tests/matchups.gd -- --fair=50 --fair-terrain=4 
 godot --headless --script res://tests/matchups.gd -- --only=maps     # woods, streets, gates, settlement battles
 godot --headless --script res://tests/matchups.gd -- --only=sieges   # settlement battles only
 godot --headless --script res://tests/matchups.gd -- --only=plans --seeds=8 [--plans=0,4]   # each wall plan at walls 1-3
+godot --headless --script res://tests/matchups.gd -- --only=fair-sieges [--plans=4 --walls=3 --rows=0 --time-limit=1800 --tune=WALL_COVER=0,25,45,70]
+#   equal-force sieges, ladders + ram (row 0) or artillery only (row 1); shard by plan / walls / row
 godot --headless --script res://tests/probe_maps.gd -- --scen=siege_town --png=1500 --out=/tmp  # siege debug pictures
 godot --headless --script res://tools/city_dump.gd -- --out=/tmp --seed=1234   # generated settlements to PNG
-# Sandbox URL / command line: --siege=seed:level:walls[:ground[:kind[:defend[:plan[:coast]]]]], --ground=N, --no-trees
+# Sandbox URL / command line: --siege=seed:level:walls[:ground[:kind[:defend[:plan[:coast[:equip[:time]]]]]]], --ground=N, --no-trees
+#   (equip 0 none, 1 ladders, 2 ladders and a ram; time = battle time limit in s)
 godot --script res://tests/input_test.gd        # needs a window
 tools/check_scripts.sh                           # GDScript warnings as errors (in a scratch copy of the
                                                  # project: safe while other Godot runs use this checkout)

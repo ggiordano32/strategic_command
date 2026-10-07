@@ -228,6 +228,11 @@ func _siege_section(box: VBoxContainer, r: int) -> void:
 		men += CState.men(a)
 	v.add_child(Kit.label("Besieged by %s, turn %d of the siege, %s." % [_fname(int(sg["f"])), turn_n, sup_t],
 		Kit.FONT, Kit.COL_GOLD, true))
+	var eq_t := CBattle.equipment_text(ps, r)
+	if eq_t != "":
+		var eql := Kit.label(eq_t, Kit.FONT_SMALL, Color.WHITE, true)
+		eql.name = "siege_equipment"
+		v.add_child(eql)
 	var note := Kit.label("%d besieging arm%s, %d men. No income, recruits or building while besieged; with no garrison and no army inside it surrenders." % [
 		bs.size(), "y" if bs.size() == 1 else "ies", men], Kit.FONT_SMALL, Kit.COL_DIM, true)
 	if f < 0:
@@ -2159,6 +2164,11 @@ func _siege_section6(box: VBoxContainer, r: int) -> void:
 			mine.append(a)
 	v.add_child(Kit.label("Besieged by %s, turn %d of the siege, %s." % [_fname(int(sg["f"])), turn_n, sup_t],
 		Kit.FONT, Kit.COL_GOLD, true))
+	var eq_t := CBattle.equipment_text(ps, r)
+	if eq_t != "":
+		var eql := Kit.label(eq_t, Kit.FONT_SMALL, Color.WHITE, true)
+		eql.name = "siege_equipment"
+		v.add_child(eql)
 	var note := Kit.label("%d besieging arm%s, %d men. No income, recruits or building while besieged; with no garrison and no army inside it surrenders." % [
 		bs.size(), "y" if bs.size() == 1 else "ies", men], Kit.FONT_SMALL, Kit.COL_DIM, true)
 	if f < 0:

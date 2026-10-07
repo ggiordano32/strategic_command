@@ -69,6 +69,13 @@ extends SceneTree
 ## placed at the start, the battle starts when the player is ready or when
 ## the countdown runs out; identical on repeat and across snapshot / restore
 ## mid-deployment and mid-battle.
+## Siege equipment and wall towers (2026-10-07): the equal-force walls-3
+## siege with ladders, a ram, the city's tower engines and a 20 minute time
+## limit ("siege_eq_ring3"), and a walls-2 polis with ladders, a Workshop's
+## extra tower shots and a Skilled attacker ("siege_eq_polis2~sa"):
+## identical on repeat and across snapshot / restore; men climbed ladders,
+## the ram struck, towers were hit. Field battles and walls-0/1 cities hash
+## as before; walls-2/3 cities changed (towers, harder gates, cover).
 ## Exits 0 on success, 1 on failure.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -89,7 +96,7 @@ const RUNS := {"skirmish@0": 1500, "battle_2000@0": 1800, "bench_2000": 2500, "t
 	"siege_castrum@ai": 3600, "siege_polis@ai": 4500, "siege_punic@ai": 6500, "siege_oppidum@ai": 3600,
 	"cit_ops": 3200, "bench_2000~ee": 2500, "bench_2000@4~ea": 3000, "siege_city@ai~ea": 4200,
 	"siege_city@ai~ae": 4200, "bench_2000~ss": 2500, "bench_2000@4~sa": 3000, "ai_woods~as": 2500,
-	"siege_city@ai~sa": 4200, "siege_city@ai~as": 4200}
+	"siege_city@ai~sa": 4200, "siege_city@ai~as": 4200, "siege_eq_ring3": 4500, "siege_eq_polis2~sa": 4500}
 
 ## Trajectory digests of flat battles (soldier and unit arrays every 50
 ## ticks over 2,500 ticks, seed 4242): flat maps must keep playing exactly
@@ -198,7 +205,10 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 		"siege_city@ai":
 			need = ["paths", "clamp", "squeeze", "gate_art", "gate_broken", "obs_lof", "wall_cover"]
 		"siege_hill@ai":
-			need = ["paths", "clamp", "gate_art", "gate_broken", "wall_cover", "obs_lof"]
+			# (Walls 3 since the tower engines: the batteries batter the towers
+			# by the gate first, so the gate stands past the run, and the
+			# archers keep out of the walls' longer reach.)
+			need = ["paths", "clamp", "obs_lof", "tower_hits", "gate_hack"]
 		"gate_ops":
 			need = ["gate_close", "gate_open", "gate_hack", "gate_art", "gate_broken", "paths"]
 		"siege_castrum@ai":
@@ -215,6 +225,10 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 			need = ["mistakes", "attacks"]
 		"bench_2000~ss", "bench_2000@4~sa", "ai_woods~as", "siege_city@ai~sa", "siege_city@ai~as":
 			need = ["skilled", "attacks"]
+		"siege_eq_ring3":
+			need = ["ladder_up", "ram_blows", "tower_hits", "bolts", "stones", "wall_cover", "gate_broken"]
+		"siege_eq_polis2~sa":
+			need = ["ladder_up", "tower_hits", "bolts", "skilled", "gate_broken"]
 	for k in need:
 		if int(st.get(k, 0)) <= 0:
 			_fail("%s: run never exercised %s (%s)" % [scen, k, str(st)])
@@ -381,6 +395,18 @@ static func _scenario(key: String) -> Dictionary:
 		var lv := {"e": 0, "a": 1, "s": 2}
 		sc0["ai_skill"] = [lv[sk.substr(0, 1)], lv[sk.substr(1, 1)]]
 		return sc0
+	if key == "siege_eq_ring3":
+		# The equal-force walls-3 siege with ladders, a ram, the city's tower
+		# engines and a 20 minute time limit (docs/DESIGN.md "Siege
+		# equipment and wall towers"), both sides AI.
+		var se := Scenarios.fair_siege(741, 3, 4, {"ladders": 1, "ram": 1})
+		se["time_limit"] = 1200
+		return se
+	if key == "siege_eq_polis2":
+		# A walls-2 polis (its acropolis), ladders only, a workshop's extra shots.
+		var sp := Scenarios.fair_siege(782, 2, 1, {"ladders": 1})
+		(sp["terrain"]["city"]["bld"] as Array).append(5)
+		return sp
 	if key == "ai_woods":
 		# Mirrored armies, AI against AI, on a mirror-symmetric field with woods.
 		var sw := Scenarios.make("bench_2000")
@@ -458,7 +484,9 @@ func _run(scen: String, p_seed: int, ticks: int) -> Dictionary:
 		"gate_art": sim.stat_gate_art, "gate_close": sim.stat_gate_close, "gate_open": sim.stat_gate_open,
 		"gate_broken": sim.stat_gate_broken, "capture": sim.stat_capture, "ai_shelter": sim.stat_ai[15],
 		"stair_down": sim.stat_stair_down, "stair_up": sim.stat_stair_up, "stair_rout": sim.stat_stair_rout,
-		"ditch": sim.stat_ditch, "sea_exit": sim.stat_sea_exit, "mistakes": _mistakes(sim)}
+		"ditch": sim.stat_ditch, "sea_exit": sim.stat_sea_exit, "mistakes": _mistakes(sim),
+		"ladder_up": sim.stat_ladder_up, "ram_blows": sim.stat_ram_blows, "tower_hits": sim.stat_tower_hits,
+		"unbar": sim.stat_unbar}
 	if not sim.ai_mem.is_empty():
 		stats["skilled"] = _skilled(sim)
 	print("  %s seed %d: alive %d/%d after %d ticks, winner %d" % [scen, p_seed,
@@ -823,7 +851,8 @@ func _check_plans() -> void:
 ## restored at several ticks runs on with exactly the original's hashes.
 func _check_snapshots() -> void:
 	for key in ["test_woods", "siege_city@ai", "gate_ops", "cit_ops", "siege_polis@ai", "bench_2000~ee",
-			"siege_city@ai~ae", "bench_2000~ss", "ai_woods~as", "siege_city@ai~sa", "siege_city@ai~as"]:
+			"siege_city@ai~ae", "bench_2000~ss", "ai_woods~as", "siege_city@ai~sa", "siege_city@ai~as",
+			"siege_eq_ring3", "siege_eq_polis2~sa"]:
 		var sim := BattleSim.new()
 		sim.setup(_scenario(key), 4242)
 		_script_orders(sim, key)

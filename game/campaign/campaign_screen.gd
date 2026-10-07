@@ -900,7 +900,7 @@ func move_toast(army: int) -> void:
 		return
 	match kind:
 		"siege":
-			show_toast("Lays siege to %s: no battle this turn; its supplies last %d turns, then it starves. Storming it now: %s." % [
+			show_toast("Lays siege to %s: no battle this turn; its supplies last %d turns, then it starves. Ladders after a turn of siege, a ram after two. Storming it now: %s." % [
 				city, CState.siege_supply(ps, to), odds], ["Assault now", func(): set_move_mode(army, CData.MODE_ASSAULT)])
 		"join":
 			show_toast("Joins the siege of %s. Storming it now with every besieger: %s." % [city, odds],

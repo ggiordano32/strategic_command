@@ -50,6 +50,12 @@ extends SceneTree
 ##    refused, a drop (the AI takes the dropped player's side) and the
 ##    return (handed back); a drop during the deployment starts the battle
 ##    without waiting. Every frame equal.
+## 10. Siege equipment and wall towers: the equal-force walls-3 siege with
+##    ladders, a ram, tower engines and a 20 minute limit, restored from a
+##    snapshot taken mid-climb (and at other ticks) runs on identically;
+##    two peers attacking it (each sends a ladder unit up a stretch and the
+##    ram at the main gate) with a third joining by snapshot while a unit is
+##    on its ladders: every frame equal.
 ## Exits 0 on success.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -79,6 +85,8 @@ func _init() -> void:
 	_test_lockstep_city(0)
 	_test_lockstep_city(1, true)
 	_test_lockstep_city(0, true)
+	_test_siege_snapshots()
+	_test_lockstep_siege()
 	_test_easy_snapshots()
 	_test_lockstep_easy()
 	_test_skilled_snapshots()
@@ -918,6 +926,148 @@ func _test_lockstep_city(def_side: int, polis := false) -> void:
 		# takes longer): it checks the way down only.
 		if polis and def_side == 0 and (sim_a.stat_stair_down == 0 or (sim_a.stat_stair_up == 0 and not quick)):
 			_fail("coastal polis (defending): no wall unit went down%s a stair" % ("" if quick else " and up"))
+
+
+# ------------------------------------------------------ siege equipment ---
+
+## The equal-force walls-3 siege with ladders, a ram and the city's tower
+## engines (and a 20 minute time limit), both sides AI: snapshot / restore
+## mid-climb (a unit on its ladders with men up and men below) and later
+## runs on exactly.
+func _test_siege_snapshots() -> void:
+	var scen := Scenarios.fair_siege(741, 3, 4, {"ladders": 1, "ram": 1})
+	scen["time_limit"] = 1200
+	var a := BattleSim.new()
+	a.setup(scen, 31337)
+	var stops: Array = []
+	var climbing := false
+	while a.tick < 4000 and a.winner < 0 and stops.size() < (2 if quick else 3):
+		a.step()
+		var mid := -1
+		for u in a.n_units:
+			if a.u_stair[u] == BattleSim.ST_LADDER:
+				var up := 0
+				var base: int = a.u_slot_base[u]
+				for k in a.u_alive[u]:
+					var i: int = a.slot_soldier[base + k]
+					if a._on_walk(a.pos_x[i], a.pos_y[i]):
+						up += 1
+				if up > 0 and up < a.u_alive[u]:
+					mid = u
+		if (mid >= 0 and not climbing) or (a.tick % 1500 == 0):
+			climbing = climbing or mid >= 0
+			stops.append(a.tick)
+			var b := BattleSim.new()
+			b.setup(scen, 31337)
+			if not b.restore(a.snapshot()) or b.state_hash() != a.state_hash():
+				_fail("siege: restore at tick %d did not reproduce the hash" % a.tick)
+				return
+			for t in 200:
+				a.step()
+				b.step()
+				if a.state_hash() != b.state_hash():
+					_fail("siege: the restored copy diverged %d ticks after tick %d" % [t + 1, stops[-1]])
+					return
+	if not climbing:
+		_fail("siege: no snapshot was taken mid-climb")
+		return
+	print("PASS siege snapshots: walls 3 with ladders, a ram and tower engines; restored at ticks %s (one of them mid-climb) and ran on identically; men up ladders %d, ram blows %d, tower hits %d" % [
+		str(stops), a.stat_ladder_up, a.stat_ram_blows, a.stat_tower_hits])
+
+
+## Two peers attacking the walls-3 city with ladders and a ram (the
+## defenders AI, with the city's tower engines; a 20 minute time limit):
+## each sends its ladder unit up a stretch and its ram (whoever has it) at
+## the main gate; a third peer joins by snapshot while a unit is on its
+## ladders. Every frame's lockstep hash must agree.
+func _test_lockstep_siege() -> void:
+	var scen := Scenarios.fair_siege(741, 3, 4, {"ladders": 1, "ram": 1})
+	scen["time_limit"] = 1200
+	scen["ai_sides"] = [1]
+	var probe := BattleSim.new()
+	probe.setup(scen, 4242)
+	var home := _home_split(probe)
+	var relay := Relay.new()
+	var a := _new_peer(scen, home, 0, "A", [0, 1])
+	var b := _new_peer(scen, home, 1, "B", [0, 1])
+	a.latency = 1
+	b.latency = 3
+	b.d = 4
+	var peers: Array[Peer] = [a, b]
+	var total := 900 if quick else 2400
+	var c: Peer = null
+	var c_join := -1
+	var now := 0
+	var orders := 0
+	while now < total * 3 and mini(a.ls.frame, b.ls.frame) < total:
+		now += 1
+		for p in peers:
+			var sim = p.ls.sim
+			if now % 50 == 10 + p.me * 7:
+				# The ram at the main gate; one ladder unit (idle on the
+				# ground outside) up the stretch nearest it.
+				var lad_sent := false
+				for u in sim.n_units:
+					if p.ls.u_cmd[u] != p.me or sim.u_state[u] != BattleSim.U_READY:
+						continue
+					if sim.is_ram(u) and sim.u_gtarget[u] < 0 and sim.g_state[0] == BattleSim.GATE_CLOSED:
+						p.issue({"type": BattleSim.ORDER_ATTACK, "unit": u, "target": -1, "gate": 0, "run": 0})
+						orders += 1
+					elif not lad_sent and BattleSim.can_ladder(sim, u) and sim.u_stair[u] == 0 \
+							and sim.u_cls[u] == UT.CLS_INF:
+						lad_sent = true
+						var best := -1
+						var bd := 0
+						for sg in sim.ws_x0.size():
+							var mp: Vector2i = BattleSim.seg_pt(sim, sg, BattleSim.seg_len(sim, sg) / 2)
+							if not BattleSim.ladder_ok(sim, u, sg, mp.x, mp.y):
+								continue
+							var d := absi(mp.x - sim.u_cx[u]) + absi(mp.y - sim.u_cy[u])
+							if best < 0 or d < bd:
+								best = sg
+								bd = d
+						if best >= 0:
+							var lp: Vector2i = BattleSim.seg_pt(sim, best, BattleSim.seg_len(sim, best) / 2)
+							p.issue({"type": BattleSim.ORDER_MOVE, "unit": u, "x": lp.x, "y": lp.y, "facing": 768,
+								"width": 20 * 1024, "run": 1})
+							orders += 1
+			p.flush(relay, now)
+			p.deliver(relay, now)
+			p.run(p.rng.randi() % 3, true)
+		if c != null:
+			c.flush(relay, now)
+			c.deliver(relay, now)
+			c.run(4, true)
+		elif now > 30:
+			var sa = a.ls.sim
+			var climbing := false
+			for u in sa.n_units:
+				if sa.u_stair[u] == BattleSim.ST_LADDER and sa.stat_ladder_up > 0:
+					climbing = true
+			if climbing or now == total * 3 / 2:
+				c_join = now
+				c = _new_peer(scen, home, 1, "C", [0, 1])
+				c.online = true
+				c.latency = 2
+				if not c.ls.restore(a.ls.snapshot()):
+					_fail("siege lockstep: C could not restore A's snapshot")
+					return
+				c.hashes[c.ls.frame] = c.ls.state_hash()
+				c.cursor = 0
+				while c.cursor < relay.items.size() and int(relay.items[c.cursor]["s"]) <= c.ls.last_s:
+					c.cursor += 1
+				c.sent_k = 1 << 30
+	var n_ab := _compare(a, b, 0, "siege A/B")
+	var n_ac := _compare(a, c, c_join, "siege A/C") if c != null else 0
+	var sim_a = a.ls.sim
+	if n_ab < total / 2 or n_ac < 50:
+		_fail("siege lockstep: too few frames compared (A/B %d, A/C %d)" % [n_ab, n_ac])
+	elif n_ab > 0 and n_ac > 0:
+		print("PASS siege lockstep: walls 3, ladders, a ram, tower engines, 20 min limit: %d frames A/B and %d A/C equal (C joined at frame %d, mid-climb %s); %d siege orders; men up ladders %d, ram blows %d, tower hits %d, gates %s; sim tick %d" % [
+			n_ab, n_ac, c_join, str(c_join != total * 3 / 2), orders, sim_a.stat_ladder_up, sim_a.stat_ram_blows,
+			sim_a.stat_tower_hits, str(sim_a.g_state), sim_a.tick])
+	if sim_a.stat_ladder_up == 0:
+		_fail("siege lockstep: nobody went up a ladder")
 
 
 # ------------------------------------------------------------ deployment ---

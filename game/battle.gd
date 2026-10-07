@@ -575,7 +575,8 @@ func _update_stats_label() -> void:
 		avg /= _sim_ms.size()
 	var a0 := sim.alive_count(0)
 	var a1 := sim.alive_count(1)
-	hud.set_stats("%d fps  %d:%02d" % [Engine.get_frames_per_second(), sim.tick / 600, (sim.tick / 10) % 60],
+	hud.set_stats("%d fps  %d:%02d / %d:%02d" % [Engine.get_frames_per_second(), sim.tick / 600, (sim.tick / 10) % 60,
+		sim.time_limit / 600, (sim.time_limit / 10) % 60],
 		"FPS %d   sim %.2f ms avg / %.2f worst (2 s)   upload %.2f ms\nsoldiers %d  (%d v %d)   missiles %d   tick %d   hash %s\n%s   seed %d" % [
 		Engine.get_frames_per_second(), avg, worst, _upload_ms, a0 + a1, a0, a1,
 		sim.projectiles_in_flight(), sim.tick, _hash_text, terrain_name(sim), seed_value])
@@ -591,6 +592,8 @@ static func terrain_name(p_sim) -> String:
 
 func _show_result() -> void:
 	var text := "Draw"
+	if sim.winner == 2 and sim.decided_tick >= sim.time_limit:
+		text = "Draw: the %d minutes are up" % (sim.time_limit / 600)
 	if sim.winner == player_side:
 		text = "Victory" if interactive else "Blue wins"
 	elif sim.winner == 1 - player_side:
@@ -875,7 +878,8 @@ func _refresh_actions() -> void:
 			fire = maxi(fire, orders.value(u, "fire"))
 			if not art:
 				skirm = maxi(skirm, orders.value(u, "skirm"))
-		if art:
+		if art and UT.stat(sim.u_type[u], "fixed") == 0:
+			# (A tower's engine is always set up and has no baggage.)
 			deploy = maxi(deploy, orders.value(u, "deploy"))
 			refill = maxi(refill, orders.value(u, "refill"))
 	if selection.is_empty():
@@ -1191,8 +1195,14 @@ func _tap(screen_pos: Vector2, double: bool) -> void:
 		return
 	if u >= 0:
 		# Enemy: attack (missile troops shoot it; double tap = charge at the run).
+		var rams := 0
 		for s in selection:
+			if UT.stat(sim.u_type[s], "ram") != 0:
+				rams += 1  # the ram only batters gates
+				continue
 			_queue(BattleSim.make_attack_order(0, s, u, 1 if double else orders.value(s, "run")))
+		if rams > 0:
+			overlay.flash("The ram only batters gates: tap a gate", w)
 		return
 	var dest := w / PX_PER_M * M
 	if selection.size() == 1:
@@ -1304,10 +1314,18 @@ func _tap_gate(g: int, w: Vector2) -> bool:
 		else:
 			refused += 1
 	_count("gate_attack")
+	var ram := false
+	for u in selection:
+		if UT.stat(sim.u_type[u], "ram") != 0:
+			ram = true
 	if sent == 0:
 		overlay.flash("Cavalry and missile troops cannot break a gate", w)
 	elif refused > 0:
 		overlay.flash("Foot hack at the gate, engines shoot it; the others stay", w)
+	elif ram:
+		overlay.flash("The ram goes at the gate and batters it", w)
+	elif sim.city_walls >= 2:
+		overlay.flash("Swords barely mark this gate: a ram or artillery breaks it", w)
 	return true
 
 

@@ -245,7 +245,10 @@ const GATE_HACKERS := 10         # at most this many men at a gate
 const GATE_REACH := 2 * M        # men this close to a closed gate's face hack at it
 const GATE_BOLT := 80            # gate hp per bolt that hits it ...
 const GATE_STONE := 360          # ... per stone
-const WALL_COVER: Array[int] = [0, 25, 35, 65]  # % of missiles from below stopped by the battlements, by wall level
+## Siege levers (docs/DESIGN.md "Siege equipment and wall towers"): static
+## so tests/matchups.gd --tune can try values; the game never changes them.
+static var WALL_COVER: Array[int] = [0, 25, 45, 70]  # % of missiles from below stopped by the battlements, by wall level (was 25 / 35 / 65)
+static var WALL_RANGE_PCT: Array[int] = [0, 0, 15, 15]  # missile troops on a wall reach this % further at men below
 const WALL_PARAPET := 614        # parapet top above the walkway (line of fire)
 const CAPTURE_TICKS := 600       # attackers hold the plaza this long: the defenders break
 const CAPTURE_CLEAR := 12 * M    # ... with no defender unit this far beyond the plaza
@@ -271,6 +274,30 @@ const LAG_HOLD := 20 * M         # settlement maps: the anchor slows to a quarte
 const LAG_CUT := 8 * M           # ... and counts as cut off past this (+ half its depth) when not fighting
 const REGROUP := 100             # ... for this long: the unit regroups where its men are
                                  # (crowds in a breach pile up in a few grid cells)
+# Siege equipment and wall towers (docs/DESIGN.md "Siege equipment and wall
+# towers"). Walls 2-3 gates shrug off swords; rams and artillery break them.
+static var GATE_HACK_BY_WALLS: Array[int] = [25, 25, 1, 1]  # GATE_HACK_PCT by wall level
+static var GATE_HP_PCT: Array[int] = [100, 100, 130, 130]   # gate hit points (% of MapGen.GATE_HP) by wall level
+const RAM_REACH := 6 * M         # a ram's crew this close outside a closed gate's face works it ...
+const RAM_MEN := 6               # ... at least this many of them ...
+const RAM_WORK := 480            # ... man-ticks per blow (20 men: a blow every 2.4 s) ...
+static var RAM_DMG := 160        # ... hit points per blow
+static var TOWERS_MAX: Array[int] = [0, 0, 6, 8]          # bolt-thrower towers by wall level ...
+static var TOWERS_STONE: Array[int] = [0, 0, 0, 2]        # ... and stone-thrower towers
+const TOWER_SPACING := 40        # m between towers given engines (a gate's pair excepted)
+const TOWER_AMMO_BLD := 5        # a city with this building (cdata "workshop", MapGen.B_WORKSHOP) ...
+const TOWER_AMMO_PCT := 150      # ... loads its towers with this % of the shots
+const TOWER_BOLT_DMG := 70       # tower hit points per bolt landing on a tower ordered at ...
+const TOWER_STONE_DMG := 330     # ... per stone
+const LADDER_MEN := 20           # a unit carries a ladder per this many men (1-5)
+static var LADDER_TICKS: Array[int] = [0, 20, 30, 40]    # ticks per man up one ladder, by wall level
+const LADDER_NEAR := 8 * M       # men this close to the foot go up in turn
+const LADDER_GAP := 2560         # ladders this far apart along the wall
+const UNBAR_MEN := 4             # ladder men this many at the inside of a closed gate ...
+const UNBAR_TICKS := 150         # ... for this long open it
+const SG_LADDER := 1             # "siege" bits of a scenario unit / u_lad: carries ladders
+const ST_LADDER_GO := 5          # u_stair: marching to a ladder's foot ...
+const ST_LADDER := 4             # ... climbing it (u_wall set, men go up a few at a time)
 
 # Morale (0..1000).
 const MORALE_MAX := 1000
@@ -646,6 +673,8 @@ var t_m_hgain := PackedInt32Array()
 var t_m_apex := PackedInt32Array()
 var t_m_reserve := PackedInt32Array()
 var t_m_refill := PackedInt32Array()
+var t_fixed := PackedInt32Array()
+var t_ram := PackedInt32Array()
 
 # Spatial grid, one per side so target search only walks enemies.
 var grid_w: int = 0
@@ -694,7 +723,7 @@ var stat_impact_blocked: int = 0   # charge impacts taken on a formed front's sh
 ## [12] holds of high ground, [13] missile / artillery slots moved onto a
 ## rise, [14] deployments shifted to higher ground.
 var stat_ai := PackedInt32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
 ## Per-competency AI counters, side * AIProfile.N_COUNTERS + AIProfile.C_*
 ## (docs/AI.md 6: flank hits, pull-outs, units saved, spear responses,
 ## missiles caught, ammunition left at rout ...). Not hashed, never read by
@@ -778,6 +807,25 @@ var dep_need: int = 0       # bit per player who must be ready (0: nobody: ends 
 var dep_ready: int = 0      # bit per player who is ready
 var dep_z := PackedInt32Array()  # zones, 6 per zone: side, kind (DZ_*), x0, y0, x1, y1 (sim units)
 var dep_out: int = -1       # settlement maps: the attackers' piece of open ground
+## Battle time limit (ticks; scenario "time_limit" in seconds, absent = 900).
+## Hashed only when not the default.
+var time_limit: int = TIME_LIMIT
+## Siege equipment and wall towers (section "siege" at the end). Hashed only
+## when the battle has any (sg_on), so battles without them hash as before.
+var sg_on: int = 0
+var u_lad := PackedInt32Array()     # per unit: SG_LADDER if it carries ladders
+var u_lfx := PackedInt32Array()     # ladders: the foot (outside the wall) it climbs from
+var u_lfy := PackedInt32Array()
+var u_lacc := PackedInt32Array()    # ladders: work toward the next man up; ram: toward the next blow
+var u_trad := PackedInt32Array()    # tower engines: the tower's radius (static)
+var g_unbar := PackedInt32Array()   # per gate: ticks ladder men have stood unbarring it
+var stat_ladder_up: int = 0         # men up a ladder
+var stat_ladder_done: int = 0       # units wholly up
+var stat_ram_blows: int = 0
+var stat_unbar: int = 0             # gates opened from inside
+var stat_tower_hits: int = 0        # shots that struck a tower
+var stat_towers_down: int = 0       # towers silenced (engine wrecked)
+var stat_tower_kills: int = 0       # men killed by the towers' engines
 
 
 # ---------------------------------------------------------------- setup ---
@@ -832,7 +880,13 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 
 	_load_types()
 
+	time_limit = maxi(int(scenario.get("time_limit", TIME_LIMIT / TICKS_PER_SECOND)), 60) * TICKS_PER_SECOND
 	var units: Array = scenario["units"]
+	var towers := _siege_towers(scenario)
+	if not towers.is_empty():
+		# The city's tower engines come after the scenario's own units.
+		units = units.duplicate()
+		units.append_array(towers)
 	n_units = units.size()
 	var total := 0
 	n_eng = 0
@@ -874,6 +928,12 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	for arr in _stair_arrays():
 		arr.resize(n_units)
 		arr.fill(0)
+	for arr in _siege_unit_arrays():
+		arr.resize(n_units)
+		arr.fill(0)
+	g_unbar.resize(n_gates)
+	g_unbar.fill(0)
+	sg_on = 0
 	u_gtarget.fill(-1)
 	pth_x.resize(n_units * PATH_MAX)
 	pth_x.fill(0)
@@ -947,6 +1007,28 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 			u_face[u] = wa.z
 			u_dface[u] = wa.z
 			u_files[u] = wall_nf(cnt)
+		if t_fixed[ty] != 0:
+			# A tower's engine: on the tower (a wall unit of the stretch
+			# nearest it: its crew keeps to the walkway and towers and the
+			# battlements cover it), never moving.
+			sg_on = 1
+			u_trad[u] = int(ud.get("tower_r", 4)) * M
+			u_skirm[u] = 0
+			if city_on != 0 and ws_x0.size() > 0:
+				var bs := 0
+				var bo := 1 << 40
+				for sg in ws_x0.size():
+					var o := _seg_off(sg, u_ax[u], u_ay[u])
+					if o < bo:
+						bo = o
+						bs = sg
+				u_wall[u] = bs + 1
+		elif t_ram[ty] != 0:
+			sg_on = 1
+		elif int(ud.get("ladders", 0)) != 0 and city_on != 0 and int(ud["side"]) != city_def \
+				and (t_cls[ty] == UT.CLS_INF or t_cls[ty] == UT.CLS_MISSILE):
+			sg_on = 1
+			u_lad[u] = SG_LADDER
 		var ne := _engines_for(ty, cnt)
 		u_eng0[u] = eng
 		u_neng[u] = ne
@@ -970,8 +1052,14 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 				e_hp[e] = t_e_hp[ty]
 				e_state[e] = E_OK
 				e_ammo[e] = t_m_ammo[ty]
+				if t_fixed[ty] != 0 and int(ud.get("tower_ammo", 100)) != 100:
+					e_ammo[e] = t_m_ammo[ty] * int(ud["tower_ammo"]) / 100
 				# Staggered: engines are part way through loading.
 				e_reload[e] = _rand() % maxi(t_m_reload[ty] * t_crew[ty], 1)
+			if t_fixed[ty] != 0:
+				u_ammo[u] = 0
+				for k in ne:
+					u_ammo[u] += e_ammo[eng + k]
 			eng += ne
 		_compute_offsets(u)
 		for s in cnt:
@@ -1091,7 +1179,8 @@ func _load_types() -> void:
 		t_sec_def, t_sec_dmg, t_sec_reach, t_m_range, t_m_dmg, t_m_ap, t_m_ammo,
 		t_m_reload, t_m_spread, t_m_spread0, t_m_speed, t_m_arc, t_skirm, t_m_vuln, t_m_down,
 		t_m_lead, t_m_long, t_crew, t_crew_min, t_m_kind, t_m_min, t_m_pierce, t_m_plough, t_m_blast,
-		t_m_fear, t_arc, t_traverse, t_deploy, t_e_hp, t_climb, t_m_hgain, t_m_apex, t_m_reserve, t_m_refill]
+		t_m_fear, t_arc, t_traverse, t_deploy, t_e_hp, t_climb, t_m_hgain, t_m_apex, t_m_reserve, t_m_refill,
+		t_fixed, t_ram]
 	var keys := ["cls", "attack", "defence", "armour", "shield", "mshield",
 		"damage", "reach", "ranks_reach", "mass", "walk", "run", "hp", "cooldown",
 		"morale", "file_sp", "rank_sp", "turn", "brace", "vs_cav", "charge",
@@ -1099,7 +1188,7 @@ func _load_types() -> void:
 		"m_damage", "m_ap", "m_ammo", "m_reload", "m_spread", "m_spread0",
 		"m_speed", "m_arc", "skirm", "m_vuln", "m_down", "m_lead", "m_long", "crew", "crew_min",
 		"m_kind", "m_min", "m_pierce", "m_plough", "m_blast", "m_fear", "arc", "traverse",
-		"deploy", "e_hp", "climb", "m_hgain", "m_apex", "m_reserve", "m_refill"]
+		"deploy", "e_hp", "climb", "m_hgain", "m_apex", "m_reserve", "m_refill", "fixed", "ram"]
 	for k in arrays.size():
 		var arr: PackedInt32Array = arrays[k]
 		arr.resize(nt)
@@ -1253,9 +1342,18 @@ func range_h(ty: int, hs: int, ht: int) -> int:
 	return rng + clampi((hs - ht) * t_m_hgain[ty] / 100, -cap, cap)
 
 
-## Effective range of missile unit u against unit t (centroid heights).
+## Effective range of missile unit u against unit t (centroid heights; from
+## a wall at men below, WALL_RANGE_PCT further).
 func range_vs(u: int, t: int) -> int:
-	return range_h(u_type[u], u_h[u], u_h[t])
+	return range_h(u_type[u], u_h[u], u_h[t]) + _wall_rb(u, t)
+
+
+## Missile troops on a wall shooting at men not on one: WALL_RANGE_PCT % of
+## their range more (0 elsewhere).
+func _wall_rb(u: int, t: int) -> int:
+	if city_on == 0 or u_wall[u] == 0 or u_wall[t] != 0 or t_cls[u_type[u]] != UT.CLS_MISSILE:
+		return 0
+	return t_m_range[u_type[u]] * WALL_RANGE_PCT[city_walls] / 100
 
 
 ## Line of fire over the ground: from (x0, y0) at height z0 to (x1, y1) at
@@ -1265,7 +1363,7 @@ func range_vs(u: int, t: int) -> int:
 ## the flight, or -1 if it is clear. Ground within LOF_SKIP of either end of
 ## the aimed segment is ignored (the shooter's and target's own footing).
 func lof_block(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int, apex: int, ext: int,
-		stride: int = LOF_STEP) -> int:
+		stride: int = LOF_STEP, skip0: int = 0, skip1: int = LOF_SKIP) -> int:
 	if ter_on == 0 and map_on == 0:
 		return -1
 	var dx := x1 - x0
@@ -1275,7 +1373,7 @@ func lof_block(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int, apex: int, 
 		return -1
 	var dz := z1 - z0
 	var a := LOF_SKIP
-	var end := d - LOF_SKIP
+	var end := d - skip1  # (skip1: a tower aimed at is not in its own way)
 	if ext > 0:
 		end = d + ext
 	# Woods and settlements: trees in the way add up (TREE_W per sample);
@@ -1299,6 +1397,7 @@ func lof_block(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int, apex: int, 
 	var oskip := LOF_SKIP
 	if obs_on != 0 and obs_kind(x0, y0) == MapGen.C_WALK:
 		oskip = wall_t + 2 * M
+	oskip = maxi(oskip, skip0)  # a tower's engine shoots over its own tower
 	while a <= end:
 		var px := x0 + dx * a / d
 		var py := y0 + dy * a / d
@@ -1338,7 +1437,7 @@ func lof_units(u: int, t: int) -> bool:
 	var y1 := u_cy[t]
 	var d := FM.approx_len(x1 - x0, y1 - y0)
 	var blk := lof_block(x0, y0, u_h[u] + LOF_EYE, x1, y1, u_h[t] + LOF_BODY,
-		d * t_m_apex[ty] / 100, 0, 2 * LOF_STEP)
+		d * t_m_apex[ty] / 100, 0, 2 * LOF_STEP, _skip0(u), _skip1(t))
 	return blk < 0
 
 
@@ -1428,6 +1527,7 @@ func _setup_map(f: Dictionary) -> void:
 			var gcit := int(gd.get("cit", 0))
 			# A citadel's gate is an inner wall's: 60 % of the outer gates' hit points.
 			var ghp: int = int(lay["gate_hp"]) * (CIT_GATE_PCT if gcit != 0 else 100)
+			ghp = ghp * GATE_HP_PCT[city_walls] / 100  # walls 2-3: tougher gates
 			g_hp0.append(ghp)
 			g_hp.append(ghp)
 			g_cit.append(gcit)
@@ -2078,7 +2178,13 @@ func _stair_foot(x: int, y: int, top: bool = false) -> Vector2i:
 ## A man at (x, y) of unit u on a stair move (mode 1 down, 3 up) who is
 ## still on the level it is leaving (walkway or tower going down, anything
 ## else going up): where he heads (z 1), else z 0 (he takes his place).
-func _stair_leave(u: int, x: int, y: int, mode: int) -> Vector3i:
+func _stair_leave(u: int, x: int, y: int, mode: int, s: int = 0) -> Vector3i:
+	if mode == ST_LADDER:
+		# Climbing ladders: a man below waits his turn behind his ladder.
+		if _on_walk(x, y):
+			return Vector3i.ZERO
+		var lw := _ladder_wait(u, s)
+		return Vector3i(lw.x, lw.y, 1)
 	var nvh := nav_at(x, y)
 	if ((nvh & (NAV_WALK | NAV_TOWER)) != 0) != (mode == 1):
 		return Vector3i.ZERO
@@ -2091,6 +2197,10 @@ func _stair_leave(u: int, x: int, y: int, mode: int) -> Vector3i:
 ## going down the stairs (he leaves the wall only by a stair); elsewhere
 ## his unit's (`mask`), the walls' cells only near his unit's stair.
 func _stair_mask(u: int, x: int, y: int, mask: int, mode: int) -> int:
+	if mode == ST_LADDER:
+		# Climbing ladders: men up keep to the walkway and towers, men below
+		# to the ground.
+		return NAV_WALK | NAV_TOWER if _on_walk(x, y) else _ground_mask(u)
 	if (nav_at(x, y) & (NAV_WALK | NAV_TOWER)) != 0:
 		# Going up he is up: walkway and towers only (not back into the stair).
 		return (MapGen.NAV_WALL if mode == 1 else NAV_WALK) | NAV_TOWER
@@ -2159,6 +2269,12 @@ func _reach_ok(x0: int, y0: int, x1: int, y1: int) -> bool:
 	# side of a wall is not a way through it.
 	var gm := MapGen.NAV_GROUND | MapGen.NAV_DITCH
 	if (nav_at((x0 + x1) >> 1, (y0 + y1) >> 1) & gm) == 0:
+		# Up on the walls (attackers come up by ladders): man to man along
+		# the walkway and towers.
+		if sg_on != 0:
+			var wb := NAV_WALK | NAV_TOWER
+			return (nav_at((x0 + x1) >> 1, (y0 + y1) >> 1) & wb) != 0 and (nav_at(x0, y0) & wb) != 0 \
+				and (nav_at(x1, y1) & wb) != 0
 		return false
 	if (nav_at(x0, y0) & gm) == 0 or (nav_at(x1, y1) & gm) == 0:
 		return false
@@ -2223,7 +2339,7 @@ func _mask_of(u: int) -> int:
 ## also a ditch; horses and engines not.
 func _ground_mask(u: int) -> int:
 	var c := u_cls[u]
-	if city_ditch != 0 and (c == UT.CLS_INF or c == UT.CLS_PIKE or c == UT.CLS_MISSILE):
+	if city_ditch != 0 and (c == UT.CLS_INF or c == UT.CLS_PIKE or c == UT.CLS_MISSILE) and t_ram[u_type[u]] == 0:
 		return MapGen.NAV_GROUND | MapGen.NAV_DITCH
 	return MapGen.NAV_GROUND
 
@@ -2932,9 +3048,19 @@ func sea_exit(x: int) -> Vector2i:
 ## walkway: see wall_snap) goes up one (via the street to its foot); any
 ## other order ends a march to a stair.
 func _wall_order(u: int, typ: int) -> void:
+	if u_stair[u] == ST_LADDER and u_order[u] != O_WITHDRAW:
+		return  # climbing: the order waits (only fire and run apply)
+	if u_wall[u] > 0 and u_order[u] == O_WITHDRAW and u_side[u] != city_def:
+		_ladder_down(u)  # back down the ladders and away
+		return
 	if u_wall[u] > 0 and u_order[u] == O_MOVE:
 		_start_descent(u)
 		return
+	if typ == ORDER_MOVE and u_wall[u] == 0 and u_order[u] == O_MOVE and can_ladder(self, u):
+		var wl := wall_snap(self, u_dx[u], u_dy[u])
+		if wl.z >= 0 and ladder_ok(self, u, wl.z, wl.x, wl.y):
+			_start_ladder(u, wl.z, wl.x, wl.y)
+			return
 	if u_stair[u] == 1:
 		return  # still coming down: the new order waits until it is down
 	if typ == ORDER_MOVE and u_wall[u] == 0 and u_order[u] == O_MOVE and can_man_walls(self, u):
@@ -2942,7 +3068,7 @@ func _wall_order(u: int, typ: int) -> void:
 		if ws.z >= 0:
 			_start_ascent(u, ws.z, ws.x, ws.y)
 			return
-	if u_stair[u] == 2:
+	if u_stair[u] == 2 or u_stair[u] == ST_LADDER_GO:
 		u_stair[u] = 0
 
 
@@ -3223,6 +3349,7 @@ func _gate_hit(p: int, dmg: int) -> bool:
 ## unit that is not marching past (standing, attacking, or ordered at the
 ## gate); each takes off (damage - GATE_ARMOUR) x GATE_HACK_PCT% per swing.
 func _update_gates() -> void:
+	var hack_pct: int = GATE_HACK_BY_WALLS[city_walls]
 	for g in n_gates:
 		if g_state[g] != GATE_CLOSED:
 			continue
@@ -3233,6 +3360,10 @@ func _update_gates() -> void:
 		var gx := g_x[g]
 		var gy := g_y[g]
 		var r := wall_t + MapGen.GATE_HW * M + 6 * M
+		if sg_on != 0:
+			_siege_gate(g)
+			if g_state[g] != GATE_CLOSED:
+				continue
 		for u in n_units:
 			if u_side[u] == city_def or u_state[u] != U_READY or u_alive[u] <= 0:
 				continue
@@ -3244,7 +3375,9 @@ func _update_gates() -> void:
 			if u_maxx[u] < gx - r or u_minx[u] > gx + r or u_maxy[u] < gy - r or u_miny[u] > gy + r:
 				continue
 			var ty := u_type[u]
-			var rate := maxi(t_damage[ty] - GATE_ARMOUR, 2) * GATE_HACK_PCT / maxi(t_cooldown[ty], 1)
+			if t_ram[ty] != 0:
+				continue  # the ram works the gate itself (_siege_gate)
+			var rate := maxi(t_damage[ty] - GATE_ARMOUR, 2) * hack_pct / maxi(t_cooldown[ty], 1)
 			var base := u_slot_base[u]
 			for s in u_alive[u]:
 				var i := slot_soldier[base + s]
@@ -3312,7 +3445,8 @@ func _town_lost() -> void:
 		if u_state[u] != U_READY:
 			continue
 		if u_side[u] == city_def:
-			dfn += u_alive[u]
+			if t_fixed[u_type[u]] == 0:
+				dfn += u_alive[u]
 		elif (veg_bits(u_cx[u], u_cy[u]) & MapGen.V_URBAN) != 0:
 			att += u_alive[u]
 	if dfn > 0 and att >= 3 * dfn:
@@ -3573,6 +3707,16 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 	if sim.phase == PHASE_DEPLOY and typ != ORDER_RUN and typ != ORDER_FIRE and typ != ORDER_SKIRMISH \
 			and typ != ORDER_DEPLOY:
 		return
+	# Siege: a tower's engine only shoots (at a unit, at will) or holds; a
+	# ram goes at gates (and moves), never at units; a unit climbing
+	# ladders goes on climbing (or withdraws back down them).
+	if UT.stat(ty, "fixed") != 0 and typ != ORDER_ATTACK and typ != ORDER_HALT and typ != ORDER_FIRE:
+		return
+	if UT.stat(ty, "ram") != 0 and typ == ORDER_ATTACK and int(o.get("gate", -1)) < 0:
+		return
+	if u < sim.u_stair.size() and sim.u_stair[u] == ST_LADDER and typ != ORDER_FIRE and typ != ORDER_RUN \
+			and typ != ORDER_WITHDRAW and typ != ORDER_WITHDRAW_ALL:
+		return
 	# Artillery: frontage is set by its engines, and it never runs (the
 	# engines are dragged); it does not skirmish.
 	var art := UT.cls(ty) == UT.CLS_ART
@@ -3590,9 +3734,16 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 	# does not withdraw or skirmish.
 	var wallu: int = sim.u_wall[u] if u < sim.u_wall.size() else 0
 	var ws := Vector3i(0, 0, -1)
-	if typ == ORDER_MOVE and (wallu > 0 or can_man_walls(sim, u)):
+	var lad := wallu == 0 and can_ladder(sim, u)
+	if typ == ORDER_MOVE and (wallu > 0 or can_man_walls(sim, u) or lad):
 		ws = wall_snap(sim, int(o["x"]), int(o["y"]))
-	if wallu > 0:
+		if lad and ws.z >= 0 and not ladder_ok(sim, u, ws.z, ws.x, ws.y):
+			ws = Vector3i(0, 0, -1)  # no way up there: an ordinary move
+	# Attackers up the ladders withdraw back down them (the wall rule below
+	# keeps defenders on their wall).
+	var lad_down: bool = wallu > 0 and sim.u_side[u] != sim.city_def \
+		and (typ == ORDER_WITHDRAW or typ == ORDER_WITHDRAW_ALL)
+	if wallu > 0 and not lad_down:
 		if typ == ORDER_WITHDRAW or typ == ORDER_WITHDRAW_ALL or typ == ORDER_SKIRMISH:
 			return
 		if typ == ORDER_MOVE and ws.z == wallu - 1:
@@ -3681,6 +3832,9 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 			if c != UT.CLS_INF and c != UT.CLS_PIKE:
 				return
 			var gfp: Vector3i = sim.gate_front(gt, sim.u_side[u])
+			if u < sim.u_lad.size() and sim.u_lad[u] != 0 and (wallu > 0 \
+					or sim.reach_at(int(d["ax"]), int(d["ay"])) == sim.reach_at(sim.g_ix[gt], sim.g_iy[gt])):
+				gfp = sim.gate_front(gt, sim.city_def)  # over the wall already: its inside, to unbar it
 			d["order"] = O_MOVE
 			d["dx"] = gfp.x
 			d["dy"] = gfp.y
@@ -3985,6 +4139,8 @@ func _update_units() -> void:
 			_u_obs[u] = _near_obs(u)
 			if u_stair[u] == 1 or u_stair[u] == 3:
 				_stair_check(u)
+			elif u_stair[u] == ST_LADDER and u_state[u] == U_READY:
+				_ladder_step(u)
 		if u_state[u] != U_READY:
 			u_formed[u] = 0
 			u_braced[u] = 0
@@ -4105,6 +4261,8 @@ func _update_units() -> void:
 						u_dirty[u] = 1  # there: its places again (kept to its own ground)
 					if u_stair[u] == 2:
 						_climb(u)  # at the stair's foot: up
+					elif u_stair[u] == ST_LADDER_GO:
+						_ladder_start(u)  # at the foot of the wall: up the ladders
 			else:
 				u_ax[u] += dx * aspeed / d
 				u_ay[u] += dy * aspeed / d
@@ -4697,7 +4855,7 @@ func _update_soldiers() -> void:
 		# new place (under or over the wall).
 		var stair_mv := 0
 		if ob:
-			stair_mv = u_stair[u] if u_stair[u] == 1 or u_stair[u] == 3 else 0
+			stair_mv = u_stair[u] if u_stair[u] == 1 or u_stair[u] == 3 or u_stair[u] == ST_LADDER else 0
 		if u_contact[u] == 0 and u_down[u] == 0 and u_charge[u] == 0:
 			# Fast path: slot following only (no separation, no search).
 			for s in alive:
@@ -4708,7 +4866,7 @@ func _update_soldiers() -> void:
 				var dx := ax + oxs[k] - x
 				var dy := ay + oys[k] - y
 				if stair_mv != 0:
-					var sgo := _stair_leave(u, x, y, stair_mv)
+					var sgo := _stair_leave(u, x, y, stair_mv, s)
 					if sgo.z != 0:
 						dx = sgo.x - x
 						dy = sgo.y - y
@@ -4876,7 +5034,7 @@ func _update_soldiers() -> void:
 				var ldx := ax + oxs[kl] - x
 				var ldy := ay + oys[kl] - y
 				if stair_mv != 0:
-					var sgl := _stair_leave(u, x, y, stair_mv)
+					var sgl := _stair_leave(u, x, y, stair_mv, slot)
 					if sgl.z != 0:
 						ldx = sgl.x - x
 						ldy = sgl.y - y
@@ -5115,7 +5273,7 @@ func _update_soldiers() -> void:
 				var dx := ax + oxs[k] - x
 				var dy := ay + oys[k] - y
 				if stair_mv != 0:
-					var sgs := _stair_leave(u, x, y, stair_mv)
+					var sgs := _stair_leave(u, x, y, stair_mv, slot_of[i])
 					if sgs.z != 0:
 						dx = sgs.x - x
 						dy = sgs.y - y
@@ -5898,7 +6056,7 @@ func _fire(i: int, u: int, ft: int, ty: int) -> void:
 		if dist > t_m_range[ty] or dist <= 0 or pr_free < 0:
 			return
 	else:
-		if dist <= 0 or pr_free < 0 or not _shot_ok(sx, sy, ax, ay, dist, ty):
+		if dist <= 0 or pr_free < 0 or not _shot_ok(sx, sy, ax, ay, dist, ty, 0, _skip1(ft), _wall_rb(u, ft)):
 			return
 	var p := pr_free
 	pr_free = pr_next[p]
@@ -5931,15 +6089,16 @@ func _fire(i: int, u: int, ft: int, ty: int) -> void:
 
 ## Hilly maps: a shot from (sx, sy) at (ax, ay), dist apart, is within the
 ## height-adjusted range and, for a flat weapon, has a line of fire.
-func _shot_ok(sx: int, sy: int, ax: int, ay: int, dist: int, ty: int) -> bool:
+func _shot_ok(sx: int, sy: int, ax: int, ay: int, dist: int, ty: int, skip0: int = 0,
+		skip1: int = LOF_SKIP, wb: int = 0) -> bool:
 	var hs := elev_at(sx, sy) if obs_on != 0 else height_at(sx, sy)
 	var ha := elev_at(ax, ay) if obs_on != 0 else height_at(ax, ay)
-	if dist > range_h(ty, hs, ha):
+	if dist > range_h(ty, hs, ha) + wb:
 		return false
 	if dist > t_m_range[ty]:
 		stat_range_up += 1
 	if t_m_arc[ty] == 0 and lof_block(sx, sy, hs + LOF_EYE, ax, ay, ha + LOF_BODY,
-			dist * t_m_apex[ty] / 100, 0) >= 0:
+			dist * t_m_apex[ty] / 100, 0, LOF_STEP, skip0, skip1) >= 0:
 		stat_lof_blocked += 1
 		return false
 	return true
@@ -6006,7 +6165,9 @@ func _land(p: int) -> void:
 			if _rand() % 100 < stop:
 				stat_veg_stop += 1
 				return
-		if u_wall[unit_of[best]] > 0 and u_wall[pr_unit[p]] == 0 and _rand() % 100 < WALL_COVER[city_walls]:
+		var ub := unit_of[best]
+		if u_wall[ub] > 0 and u_wall[pr_unit[p]] == 0 and (u_stair[ub] != ST_LADDER or _on_walk(pos_x[best], pos_y[best])) \
+				and _rand() % 100 < WALL_COVER[city_walls]:
 			stat_wall_cover += 1
 			return
 	if best >= 0:
@@ -6161,7 +6322,8 @@ func _art_in_range(u: int, t: int, mn: int, rng: int) -> bool:
 ## friends close to it. Also used by the battle AI.
 func art_safe(u: int, t: int) -> bool:
 	if t_m_kind[u_type[u]] == 1:
-		return _clear_line(u, t) and lof_units(u, t)
+		# (A tower's engine shoots over its friends on the walls and below.)
+		return (t_fixed[u_type[u]] != 0 or _clear_line(u, t)) and lof_units(u, t)
 	var side := u_side[u]
 	var margin := 15 * M
 	for o in n_units:
@@ -6184,6 +6346,8 @@ func _update_artillery() -> void:
 			continue
 		var e0 := u_eng0[u]
 		var ty := u_type[u]
+		if t_fixed[ty] != 0 and u_state[u] == U_READY and u_alive[u] > 0 and e_state[e0] != E_OK:
+			_tower_fall(u)
 		if u_state[u] != U_READY or u_alive[u] <= 0:
 			# Broken or gone: the engines are left where they stand.
 			for k in ne:
@@ -6412,7 +6576,7 @@ func _art_fire(e: int, u: int, ft: int, ty: int) -> bool:
 	if ter_on == 0 and map_on == 0:
 		if dist > t_m_range[ty] or dist < t_m_min[ty] or dist <= 0:
 			return false
-	elif dist < t_m_min[ty] or dist <= 0 or not _shot_ok(sx, sy, ax, ay, dist, ty):
+	elif dist < t_m_min[ty] or dist <= 0 or not _shot_ok(sx, sy, ax, ay, dist, ty, _skip0(u), _skip1(ft)):
 		return false
 	var p := pr_free
 	pr_free = pr_next[p]
@@ -6458,7 +6622,7 @@ func _art_fire_gate(e: int, u: int, g: int, ty: int) -> bool:
 	var dx := gf.x - sx
 	var dy := gf.y - sy
 	var dist := FM.approx_len(dx, dy)
-	if dist < t_m_min[ty] or dist <= 0 or not _shot_ok(sx, sy, gf.x, gf.y, dist, ty):
+	if dist < t_m_min[ty] or dist <= 0 or not _shot_ok(sx, sy, gf.x, gf.y, dist, ty, _skip0(u)):
 		return false
 	var p := pr_free
 	pr_free = pr_next[p]
@@ -6624,6 +6788,8 @@ func _sw_insert(v: int, al: int, lt: int) -> void:
 func _land_bolt(p: int) -> void:
 	if pr_tu[p] <= -2 and _gate_hit(p, GATE_BOLT):
 		return
+	if sg_on != 0 and _tower_hit(p, TOWER_BOLT_DMG):
+		return  # into the tower's masonry
 	var u := pr_unit[p]
 	var ty := u_type[u]
 	var sx := pr_sx[p]
@@ -6644,11 +6810,11 @@ func _land_bolt(p: int) -> void:
 		z0 = elev_at(sx, sy) + LOF_EYE
 		dz = elev_at(pr_x[p], pr_y[p]) + LOF_BODY - z0
 		var blk := lof_block(sx, sy, z0, pr_x[p], pr_y[p], z0 + dz, dist * t_m_apex[ty] / 100,
-			t_m_plough[ty])
+			t_m_plough[ty], LOF_STEP, _skip0(u))
 		if blk >= 0:
 			a1 = mini(a1, blk)
 			stat_bolt_ground += 1
-	_sweep(sx, sy, ux, uy, BOLT_SKIP, a1, BOLT_R_INF, BOLT_R_CAV)
+	_sweep(sx, sy, ux, uy, maxi(BOLT_SKIP, _skip0(u)), a1, BOLT_R_INF, BOLT_R_CAV)
 	var energy := t_m_dmg[ty]
 	var from := FM.atan2_a(-dy, -dx)
 	var hits := 0
@@ -6692,6 +6858,8 @@ func _land_bolt(p: int) -> void:
 func _land_stone(p: int) -> void:
 	if pr_tu[p] <= -2 and _gate_hit(p, GATE_STONE):
 		return
+	if sg_on != 0:
+		_tower_hit(p, TOWER_STONE_DMG)  # (and it smashes on among the crew)
 	var u := pr_unit[p]
 	var ty := u_type[u]
 	var lx := pr_x[p]
@@ -6793,6 +6961,8 @@ func _art_wound(v: int, dmg: int, by: int, knock: int) -> void:
 	if h <= 0:
 		stat_kills[4] += 1
 		stat_art_kills += 1
+		if t_fixed[u_type[by]] != 0:
+			stat_tower_kills += 1
 		_remove(v, GONE_KILLED)
 		return
 	hp[v] = h
@@ -6818,6 +6988,8 @@ func _update_morale() -> void:
 		if us >= U_DESTROYED:
 			continue
 		var ty := u_type[u]
+		if t_fixed[ty] != 0:
+			continue  # a tower's crew stays at its engine
 		var m := u_morale[u]
 		var periodic := (u + tick) % TICKS_PER_SECOND == 0
 		u_recent[u] -= u_recent[u] >> RECENT_DECAY_SHIFT
@@ -6893,6 +7065,8 @@ func _nearest_enemy_unit(u: int, ready_only: bool) -> int:
 
 
 func _start_rout(u: int) -> void:
+	if t_fixed[u_type[u]] != 0:
+		return  # a tower's crew stays at its engine
 	if u_cls[u] == UT.CLS_MISSILE:
 		stat_aic[u_side[u] * AIProfile.N_COUNTERS + AIProfile.C_AMMO_AT_ROUT] += u_ammo[u]
 		stat_aic[u_side[u] * AIProfile.N_COUNTERS + AIProfile.C_MISSILE_ROUTS] += 1
@@ -6903,7 +7077,9 @@ func _start_rout(u: int) -> void:
 	if obs_on != 0:
 		u_pn[u] = 0
 	u_order[u] = O_NONE
-	if u_wall[u] > 0:
+	if u_wall[u] > 0 and u_side[u] != city_def and u_lad[u] != 0:
+		_ladder_down(u)  # up the ladders: back down them
+	elif u_wall[u] > 0:
 		_start_descent(u)  # off the wall by the nearest stair
 	elif u_stair[u] == 2:
 		u_stair[u] = 0
@@ -6962,21 +7138,22 @@ func _check_winner() -> void:
 		if ended == 0:
 			var loser_on := 0
 			for u in n_units:
-				if winner < 2 and u_side[u] != winner and u_state[u] < U_DESTROYED:
+				if winner < 2 and u_side[u] != winner and u_state[u] < U_DESTROYED and t_fixed[u_type[u]] == 0:
 					loser_on += 1
 			if winner == 2 or loser_on == 0 or tick - decided_tick >= END_AFTER:
 				ended = 1
 		return
-	# A side still fights while it has a ready unit that is not withdrawing.
+	# A side still fights while it has a ready unit that is not withdrawing
+	# (a tower's engine does not hold a city on its own).
 	var ready := [0, 0]
 	for u in n_units:
-		if u_state[u] == U_READY and u_order[u] != O_WITHDRAW:
+		if u_state[u] == U_READY and u_order[u] != O_WITHDRAW and t_fixed[u_type[u]] == 0:
 			ready[u_side[u]] += 1
 	if ready[0] == 0 and ready[1] > 0:
 		winner = 1
 	elif ready[1] == 0 and ready[0] > 0:
 		winner = 0
-	elif (ready[0] == 0 and ready[1] == 0) or tick >= TIME_LIMIT:
+	elif (ready[0] == 0 and ready[1] == 0) or tick >= time_limit:
 		winner = 2  # mutual destruction / both gone / time out
 	if winner >= 0:
 		decided_tick = tick
@@ -7158,6 +7335,13 @@ func state_hash() -> int:
 		# The deployment phase (battles without one hash as before).
 		ctx.update(PackedInt64Array([phase, dep_ticks, dep_left, dep_need, dep_ready, dep_out]).to_byte_array())
 		ctx.update(dep_z.to_byte_array())
+	if time_limit != TIME_LIMIT:
+		ctx.update(PackedInt64Array([time_limit]).to_byte_array())
+	if sg_on != 0:
+		# Siege equipment and tower engines (battles without them hash as before).
+		for arr in _siege_unit_arrays():
+			ctx.update((arr as PackedInt32Array).to_byte_array())
+		ctx.update(g_unbar.to_byte_array())
 	var digest := ctx.finish()
 	return digest.decode_u32(0)
 
@@ -7299,6 +7483,8 @@ static func deploy_clamp(sim, side: int, x: int, y: int) -> Vector3i:
 ## fields d; shared with OrderPreview. Sets d["placed"] = 1 (and d["wall"]:
 ## the walkway segment + 1, 0 the ground) when the unit is placed.
 static func place_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
+	if UT.stat(sim.u_type[u], "fixed") != 0:
+		return  # a tower's engine stays on its tower
 	var side: int = sim.u_side[u]
 	var ty: int = sim.u_type[u]
 	var alive: int = sim.u_alive[u]
@@ -7390,3 +7576,443 @@ func _place_unit(u: int, wall: int) -> void:
 	_update_bounds()
 	if ter_on != 0 or obs_on != 0:
 		u_h[u] = _unit_elev(u)
+
+
+# ---------------------------------------------------------------- siege ---
+# Siege equipment and wall towers (docs/DESIGN.md "Siege equipment and wall
+# towers"). Cities are held by attrition at the wall, not by any bonus for
+# standing inside it:
+# - Tower engines: a walls-2/3 city mounts bolt throwers on its towers (by
+#   the outer gates and at intervals) and, at walls 3, two stone throwers
+#   on its biggest towers: immobile artillery units of the defenders
+#   (UT "fixed"), on the tower as wall units, with a fixed load of shots
+#   (more with a workshop), crews that can be shot, and a tower that enemy
+#   batteries batter down (a shot aimed at the tower landing within it).
+# - Ladders (scenario unit key "ladders": 1; u_lad): an attacking foot unit
+#   ordered onto a stretch of wall from outside marches to the foot of the
+#   wall there (ST_LADDER_GO), then climbs (ST_LADDER): its men go up one
+#   ladder at a time (LADDERS_TICKS by wall level), arriving on the walkway
+#   where they fight the defenders; once all are up it is a wall unit (down
+#   into the town by a stair; withdrawing or routing: back down the
+#   ladders). Ladder men at the inside of a closed gate unbar it.
+# - The ram (UT "ram"): its crew at a closed gate's outer face batters it
+#   (RAM_DMG every RAM_WORK man-ticks); walls-2/3 gates barely notice swords
+#   (GATE_HACK_BY_WALLS).
+# All of it is state hashed when the battle has any (sg_on).
+
+func _siege_unit_arrays() -> Array:
+	return [u_lad, u_lfx, u_lfy, u_lacc, u_trad]
+
+
+## The engines a walls-2/3 city mounts on its towers, as scenario unit
+## dictionaries of the defending side (appended after the scenario's own
+## units): bolt throwers on the towers by the outer gates, then on others
+## nearest the main gate at least TOWER_SPACING m apart (TOWERS_MAX in
+## all); at walls 3 first stone throwers on the biggest towers not by a
+## gate (TOWERS_STONE). None on a citadel's towers or on the sea wall. City
+## key "towers": 0 leaves them out; a workshop in "bld" loads them with
+## TOWER_AMMO_PCT % of the shots. The generator's tower list in order,
+## integers only.
+func _siege_towers(sc: Dictionary) -> Array:
+	var out: Array = []
+	if city_on == 0 or city_walls < 2 or not map_info.has("city"):
+		return out
+	var cd: Dictionary = (sc.get("terrain", {}) as Dictionary).get("city", {})
+	if int(cd.get("towers", 1)) == 0:
+		return out
+	var t_ammo := 100
+	for b in cd.get("bld", []):
+		if int(b) == TOWER_AMMO_BLD:
+			t_ammo = TOWER_AMMO_PCT
+	var lay: Dictionary = map_info["city"]
+	var cx := int(lay["cx"])
+	var cy := int(lay["cy"])
+	var cit: Dictionary = lay.get("cit", {})
+	var gates: Array = lay["gates"]
+	var mx := cx
+	var my := cy
+	for gd in gates:
+		if int(gd.get("cit", 0)) == 0:
+			mx = int(gd["x"])
+			my = int(gd["y"])
+			break
+	var cand: Array = []  # [x, y, r, by a gate, distance to the main gate]
+	for tw in lay["towers"]:
+		var x := int(tw[0])
+		var y := int(tw[1])
+		var r := int(tw[2])
+		if not cit.is_empty() and FM.approx_len(x - int(cit["x"]), y - int(cit["y"])) < int(cit["rc"]) + r + 4:
+			continue  # the citadel's
+		var dx := x - cx
+		var dy := y - cy
+		var l := maxi(FM.isqrt(dx * dx + dy * dy), 1)
+		if obs_kind((x + dx * (r + 12) / l) * M, (y + dy * (r + 12) / l) * M) == MapGen.C_WATER:
+			continue  # on the sea wall
+		var at_gate := 0
+		for gd in gates:
+			if int(gd.get("cit", 0)) != 0 or int(gd.get("tr", 0)) <= 0:
+				continue
+			if FM.approx_len(x - int(gd["x"]), y - int(gd["y"])) <= int(gd["hw"]) + 2 * int(gd["tr"]) + 2:
+				at_gate = 1
+		cand.append([x, y, r, at_gate, FM.approx_len(x - mx, y - my)])
+	var order: Array = []
+	for k in cand.size():
+		order.append(k)
+	order.sort_custom(func(a, b): return int(cand[a][4]) < int(cand[b][4]) \
+		or (int(cand[a][4]) == int(cand[b][4]) and a < b))
+	var picked: Array = []  # [candidate, type]
+	var n_st: int = TOWERS_STONE[city_walls]
+	if n_st > 0:
+		var big: Array = order.duplicate()
+		big.sort_custom(func(a, b): return int(cand[a][2]) > int(cand[b][2]) \
+			or (int(cand[a][2]) == int(cand[b][2]) and (int(cand[a][4]) < int(cand[b][4]) \
+			or (int(cand[a][4]) == int(cand[b][4]) and a < b))))
+		for k in big:
+			if picked.size() >= n_st:
+				break
+			if int(cand[k][3]) != 0 or not _tower_clear(cand, picked, k, 30):
+				continue
+			picked.append([k, UT.TOWER_STONE])
+	var n_b: int = TOWERS_MAX[city_walls]
+	var n_bolt := 0
+	for pass_n in 2:
+		for k in order:
+			if n_bolt >= n_b:
+				break
+			var gate_t := int(cand[k][3]) != 0
+			if gate_t != (pass_n == 0):
+				continue
+			var taken := false
+			for pk in picked:
+				if int(pk[0]) == k:
+					taken = true
+			if taken or (not gate_t and not _tower_clear(cand, picked, k, TOWER_SPACING)):
+				continue
+			picked.append([k, UT.TOWER_BOLT])
+			n_bolt += 1
+	for pk in picked:
+		var c: Array = cand[int(pk[0])]
+		var ty: int = pk[1]
+		var face := FM.atan2_a(int(c[1]) - cy, int(c[0]) - cx)
+		out.append({"side": city_def, "type": ty, "count": UT.stat(ty, "crew"), "x_m": int(c[0]),
+			"y_m": int(c[1]), "facing": face, "files": 1, "tower_r": int(c[2]), "tower_ammo": t_ammo})
+	return out
+
+
+## Candidate k of _siege_towers is at least `gap` m from every tower picked.
+static func _tower_clear(cand: Array, picked: Array, k: int, gap: int) -> bool:
+	for pk in picked:
+		var c: Array = cand[int(pk[0])]
+		if FM.approx_len(int(c[0]) - int(cand[k][0]), int(c[1]) - int(cand[k][1])) < gap:
+			return false
+	return true
+
+
+## Unit u is a tower's engine.
+func is_tower(u: int) -> bool:
+	return t_fixed[u_type[u]] != 0
+
+
+## Unit u is a ram.
+func is_ram(u: int) -> bool:
+	return t_ram[u_type[u]] != 0
+
+
+## Ladders unit u carries (0: none): one per LADDER_MEN men it started with, 1-5.
+static func ladders_of(sim, u: int) -> int:
+	if u >= sim.u_lad.size() or sim.u_lad[u] == 0:
+		return 0
+	return clampi(sim.u_count0[u] / LADDER_MEN, 1, 5)
+
+
+## Unit u may climb a wall by ladders: an attacking infantry or missile
+## unit (not a ram) carrying them, on the ground (not already on a stair or
+## ladder move up).
+static func can_ladder(sim, u: int) -> bool:
+	if sim.city_on == 0 or sim.ws_x0.size() == 0 or u >= sim.u_lad.size() or sim.u_lad[u] == 0:
+		return false
+	if sim.u_side[u] == sim.city_def or sim.u_wall[u] > 0:
+		return false
+	var c: int = sim.u_cls[u]
+	return (c == UT.CLS_INF or c == UT.CLS_MISSILE) and UT.stat(sim.u_type[u], "ram") == 0
+
+
+## The foot of the ladders against stretch sg at its walkway point (x, y):
+## out along the stretch's outward direction past the wall's outer face, a
+## metre onto the open ground (or ditch) beyond, as (x, y, 1); z 0 if a
+## tower, gate or the sea is in the way, or the stretch is the citadel's or
+## the sea's. Shared with the view's preview.
+static func ladder_foot(sim, sg: int, x: int, y: int) -> Vector3i:
+	if sg < 0 or (sim.ws_fl[sg] & (MapGen.SEG_SEA | MapGen.SEG_CIT)) != 0:
+		return Vector3i(x, y, 0)
+	var c := FM.cos_a(sim.ws_dir[sg])
+	var s := FM.sin_a(sim.ws_dir[sg])
+	var a := 0
+	var lim: int = sim.wall_t + 6 * M
+	while a <= lim:
+		a += M / 2
+		var k: int = sim.obs_kind(x + c * a / FM.TRIG_ONE, y + s * a / FM.TRIG_ONE)
+		if k == MapGen.C_OPEN or k == MapGen.C_DITCH:
+			var fx := x + c * (a + M) / FM.TRIG_ONE
+			var fy := y + s * (a + M) / FM.TRIG_ONE
+			if (sim.nav_at(fx, fy) & (MapGen.NAV_GROUND | MapGen.NAV_DITCH)) == 0:
+				return Vector3i(x, y, 0)
+			return Vector3i(fx, fy, 1)
+		if k != MapGen.C_WALL and k != MapGen.C_WALK:
+			return Vector3i(x, y, 0)
+	return Vector3i(x, y, 0)
+
+
+## A ladder move for unit u to walkway point (x, y) of stretch sg is
+## possible: a foot outside the wall there on the unit's own ground.
+static func ladder_ok(sim, u: int, sg: int, x: int, y: int) -> bool:
+	var lf := ladder_foot(sim, sg, x, y)
+	if lf.z == 0:
+		return false
+	var ra: int = sim.reach_at(sim.u_ax[u], sim.u_ay[u])
+	return ra >= 0 and sim.reach_at(lf.x, lf.y) == ra
+
+
+## Unit u (carrying ladders) is ordered onto stretch sg at (x, y): it
+## marches to the foot of the wall there.
+func _start_ladder(u: int, sg: int, x: int, y: int) -> void:
+	var lf := ladder_foot(self, sg, x, y)
+	u_sseg[u] = sg
+	u_stair[u] = ST_LADDER_GO
+	u_st0[u] = tick
+	u_wx[u] = x
+	u_wy[u] = y
+	u_lfx[u] = lf.x
+	u_lfy[u] = lf.y
+	u_dx[u] = lf.x
+	u_dy[u] = lf.y
+	u_dface[u] = (ws_dir[sg] + 512) & FM.ANGLE_MASK
+	u_pn[u] = 0
+
+
+## At the foot of the wall: the climb begins. The unit takes the stretch
+## (its wall line at the point it was ordered to); its men go up one at a
+## time per ladder (_ladder_step).
+func _ladder_start(u: int) -> void:
+	var sg := u_sseg[u]
+	u_stair[u] = ST_LADDER
+	u_st0[u] = tick
+	u_wall[u] = sg + 1
+	var wa := wall_anchor(self, sg, u_wx[u], u_wy[u], u_alive[u], u_type[u])
+	u_files[u] = wall_nf(u_alive[u])
+	u_ax[u] = wa.x
+	u_ay[u] = wa.y
+	u_face[u] = wa.z
+	u_dface[u] = wa.z
+	u_order[u] = O_NONE
+	u_target[u] = -1
+	u_gtarget[u] = -1
+	u_run[u] = 0
+	u_skirm[u] = 0
+	u_sq[u] = 0
+	u_trn[u] = 0
+	u_pn[u] = 0
+	u_lacc[u] = 0
+	u_dirty[u] = 1
+	u_settled[u] = 0
+
+
+## Ladder k's foot of climbing unit u (k of n ladders, LADDER_GAP apart
+## along the wall about the unit's foot point).
+func _ladder_k_foot(u: int, k: int, n_l: int) -> Vector2i:
+	var dir := ws_dir[u_sseg[u]]
+	var off := (2 * k - (n_l - 1)) * LADDER_GAP / 2
+	return Vector2i(u_lfx[u] - FM.sin_a(dir) * off / FM.TRIG_ONE, u_lfy[u] + FM.cos_a(dir) * off / FM.TRIG_ONE)
+
+
+## Where a man of climbing unit u in slot s still below the wall waits:
+## in a file behind his ladder's foot (the ladder his slot takes).
+func _ladder_wait(u: int, s: int) -> Vector2i:
+	var n_l := maxi(ladders_of(self, u), 1)
+	var f := _ladder_k_foot(u, s % n_l, n_l)
+	var back := ((s / n_l) % 6) * 1229
+	var dir := ws_dir[u_sseg[u]]
+	return Vector2i(f.x + FM.cos_a(dir) * back / FM.TRIG_ONE, f.y + FM.sin_a(dir) * back / FM.TRIG_ONE)
+
+
+## (x, y) is on a walkway or in a tower.
+func _on_walk(x: int, y: int) -> bool:
+	var k := obs_kind(x, y)
+	return k == MapGen.C_WALK or k == MapGen.C_TOWER
+
+
+## A climbing unit, once a tick: its ladders bring men up in turn (each
+## ladder a man every LADDER_TICKS[walls]; the next man below, in slot
+## order, standing within LADDER_NEAR of the foot); he steps onto the
+## walkway above his ladder. Once every man is up the climb is over.
+func _ladder_step(u: int) -> void:
+	var base := u_slot_base[u]
+	var up := 0
+	var nxt := -1
+	var all_up := true
+	var fx := u_lfx[u]
+	var fy := u_lfy[u]
+	for s in u_alive[u]:
+		var i := slot_soldier[base + s]
+		if state[i] >= S_DEAD:
+			continue
+		if _on_walk(pos_x[i], pos_y[i]):
+			up += 1
+			continue
+		all_up = false
+		if nxt < 0 and state[i] == S_FORMED and FM.approx_len(pos_x[i] - fx, pos_y[i] - fy) <= LADDER_NEAR:
+			nxt = i
+	if all_up:
+		u_stair[u] = 0
+		u_settled[u] = 0
+		u_dirty[u] = 1
+		stat_ladder_done += 1
+		return
+	var n_l := maxi(ladders_of(self, u), 1)
+	var per: int = LADDER_TICKS[city_walls]
+	u_lacc[u] = mini(u_lacc[u] + n_l, per)
+	if u_lacc[u] < per or nxt < 0:
+		return
+	u_lacc[u] -= per
+	var sg := u_sseg[u]
+	var lf := _ladder_k_foot(u, up % n_l, n_l)
+	var top := seg_pt(self, sg, seg_t(self, sg, lf.x, lf.y))
+	if obs_kind(top.x, top.y) != MapGen.C_WALK:
+		top = Vector2i(u_wx[u], u_wy[u])
+	pos_x[nxt] = top.x
+	pos_y[nxt] = top.y
+	prev_x[nxt] = top.x
+	prev_y[nxt] = top.y
+	facing[nxt] = ws_dir[sg]
+	target[nxt] = -1
+	u_settled[u] = 0
+	stat_ladder_up += 1
+
+
+## An attacking unit up a ladder (or climbing) comes back down the ladders
+## at once (withdrawing or routing): its men on the walkway step down to
+## the foot, and it is a ground unit again.
+func _ladder_down(u: int) -> void:
+	var base := u_slot_base[u]
+	var n_l := maxi(ladders_of(self, u), 1)
+	for s in u_alive[u]:
+		var i := slot_soldier[base + s]
+		if state[i] >= S_DEAD or (nav_at(pos_x[i], pos_y[i]) & (MapGen.NAV_GROUND | MapGen.NAV_DITCH)) != 0:
+			continue
+		var f := _ladder_k_foot(u, s % n_l, n_l)
+		pos_x[i] = f.x
+		pos_y[i] = f.y
+		prev_x[i] = f.x
+		prev_y[i] = f.y
+		target[i] = -1
+	u_wall[u] = 0
+	u_stair[u] = 0
+	u_trn[u] = 0
+	u_pn[u] = 0
+	u_sq[u] = 0
+	u_ax[u] = u_lfx[u]
+	u_ay[u] = u_lfy[u]
+	u_files[u] = ground_files(u_type[u], u_alive[u])
+	u_dirty[u] = 1
+	u_settled[u] = 0
+	_update_bounds()
+
+
+## Settlement maps with siege equipment, a closed gate g each tick: a ram
+## whose crew stands at its outer face (RAM_MEN or more within RAM_REACH)
+## batters it (RAM_DMG every RAM_WORK man-ticks); ladder men at its inner
+## face (UNBAR_MEN or more) open it after UNBAR_TICKS.
+func _siege_gate(g: int) -> void:
+	var reach_x := g_hw[g] * M + M
+	var out_y := wall_t / 2 + RAM_REACH
+	var in_y := wall_t / 2 + GATE_REACH + M
+	var gx := g_x[g]
+	var gy := g_y[g]
+	var r := wall_t + MapGen.GATE_HW * M + RAM_REACH + 4 * M
+	var inside := 0
+	for u in n_units:
+		if u_side[u] == city_def or u_state[u] != U_READY or u_alive[u] <= 0:
+			continue
+		var ram := t_ram[u_type[u]] != 0
+		if not ram and u_lad[u] == 0:
+			continue
+		if u_order[u] == O_MOVE and u_gtarget[u] != g:
+			continue
+		if u_maxx[u] < gx - r or u_minx[u] > gx + r or u_maxy[u] < gy - r or u_miny[u] > gy + r:
+			continue
+		var men := 0
+		var base := u_slot_base[u]
+		for s in u_alive[u]:
+			var i := slot_soldier[base + s]
+			if state[i] != S_FORMED and state[i] != S_FIGHTING:
+				continue
+			var f := gate_frame(g, pos_x[i], pos_y[i])
+			if absi(f.x) > reach_x:
+				continue
+			if ram:
+				if f.y >= 0 and f.y <= out_y:
+					men += 1
+			elif f.y < 0 and -f.y <= in_y:
+				inside += 1
+		if ram and men >= RAM_MEN:
+			u_lacc[u] += men
+			if u_lacc[u] >= RAM_WORK:
+				u_lacc[u] -= RAM_WORK
+				g_hp[g] -= RAM_DMG * 100
+				g_hit_t[g] = tick
+				stat_ram_blows += 1
+				if g_hp[g] <= 0:
+					_break_gate(g)
+					return
+	if inside >= UNBAR_MEN:
+		g_unbar[g] += 1
+		if g_unbar[g] >= UNBAR_TICKS:
+			g_unbar[g] = 0
+			g_state[g] = GATE_OPEN
+			stat_unbar += 1
+			stat_gate_open += 1
+			_gate_cells(g)
+	elif g_unbar[g] > 0:
+		g_unbar[g] = 0
+
+
+## A shot aimed at tower engine unit pr_tu[p] lands within its tower: the
+## tower takes dmg (its engine's hit points; wrecked at 0, the crew lost
+## with it). Returns true if it struck the tower.
+func _tower_hit(p: int, dmg: int) -> bool:
+	var t := pr_tu[p]
+	if t < 0 or t >= n_units or t_fixed[u_type[t]] == 0 or u_neng[t] == 0 or u_alive[t] <= 0:
+		return false
+	var e := u_eng0[t]
+	if e_state[e] != E_OK:
+		return false
+	var dx := pr_x[p] - u_ax[t]
+	var dy := pr_y[p] - u_ay[t]
+	var r := u_trad[t] + M
+	if dx * dx + dy * dy > r * r:
+		return false
+	stat_tower_hits += 1
+	stat_engine_hits += 1
+	e_hp[e] -= dmg
+	if e_hp[e] <= 0:
+		_wreck(e)
+	return true
+
+
+## A tower whose engine is wrecked is lost with its crew.
+func _tower_fall(u: int) -> void:
+	stat_towers_down += 1
+	var base := u_slot_base[u]
+	while u_alive[u] > 0:
+		_remove(slot_soldier[base + u_alive[u] - 1], GONE_KILLED)
+
+
+## Line of fire: ground or masonry this near the shooter's end ignored (a
+## tower's engine shoots over its own tower).
+func _skip0(u: int) -> int:
+	return u_trad[u] + M if u >= 0 and u < u_trad.size() and u_trad[u] > 0 else 0
+
+
+## ... and this near the far end (a tower aimed at is not in its own way).
+func _skip1(t: int) -> int:
+	return u_trad[t] + M if t >= 0 and t < u_trad.size() and u_trad[t] > 0 else LOF_SKIP
