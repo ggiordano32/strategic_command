@@ -1048,6 +1048,36 @@ fixes are all landed; see "Where we are"):
 7. **Mid-battle reinforcements** from the map edge; ambush stance once
    hidden information in an async game is designed.
 8. **Shared empire** (both humans running one faction).
+8b. **Audio** (asked 2026-10-07; the game has no sound at all today).
+   Battle: melee clash, charge impact, volleys and artillery release /
+   impact, gate blows and the gate breaking, ladders and towers, unit
+   breaking / rallying, a battle horn at start and at the result; mixed by
+   distance to the camera and capped per category so 4,000 men do not
+   stack 4,000 sounds (one emitter per event bucket per tick). Overworld:
+   taps and button clicks, order placed / refused, end of turn, a turn
+   resolved and a battle pending (also the notification sound), treaty and
+   trade. A light ambient bed per screen (march drums / wind for battles,
+   a quiet loop for the map). Music optional and last. Web constraints:
+   audio starts only after a user gesture (unlock on the first tap),
+   Compatibility renderer and threads off mean the sample player, not the
+   worklet; keep total asset size small (OGG, short clips). Sources:
+   generated or CC0 packs; settings row for volumes (master / effects /
+   ambient) in `user://settings.cfg [audio]`. Nothing in the sim: sounds
+   are driven from the view reading sim events, as the animation pipeline
+   will be.
+8c. **UI icon pass** (asked 2026-10-07): icons where a word stands alone
+   today — the top bar (treasury, income, turn / season), the map key
+   entries, order kinds on the army card (move, siege, assault, sally,
+   stances, merge, exchange, recruit, gift), the overworld buttons
+   (Battles, Realm, Diplomacy, Goals, Units, Menu, Undo, Deselect, End
+   turn), region dialog buildings and the recruit list, battle HUD
+   buttons (fire / hold, skirmish, run, deploy, wall orders, pick up /
+   drop, withdraw), the battle screen's outcome banner and totals,
+   siege equipment and towers. One consistent line style and size at the
+   touch scale, drawn in code or a small SVG set under `assets/icons/`,
+   reused by `unit_icons.gd`'s approach; text labels kept beside icons on
+   buttons where a bare icon would be unclear. Includes a pass on
+   spacing / alignment of the rows that gained buttons this week.
 9. **Server to Proxmox** via `server/deploy/docker-compose.yml` (Podman),
    plus delete-campaign and revoke-device admin. Independent; whenever the
    user wants the server off the dev machine.
