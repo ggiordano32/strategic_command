@@ -17,6 +17,7 @@ const CityPreview := preload("res://game/campaign/city_preview.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const DragReorder := preload("res://game/drag_reorder.gd")
+const BattleScreen := preload("res://game/campaign/battle_screen.gd")
 
 var s  # the campaign screen
 var _split_sel: Dictionary = {}  # army id -> Array of selected unit indices
@@ -1532,93 +1533,37 @@ func show_battles() -> void:
 		box.add_child(Kit.label("No battles pending.", Kit.FONT, Color.WHITE))
 		s.show_dialog("Battles", box, [["Close", Callable()]], 520)
 		return
-	box.add_child(Kit.label("Battles must be resolved before the turn can be planned. Auto-resolve lets the battle AI fight both sides (honest, a little worse than good command); Fight to command it yourself.", Kit.FONT_SMALL, Kit.COL_DIM, true))
+	if s._vp().y >= 600:  # a landscape phone: the battle screen needs the room
+		box.add_child(Kit.label("Battles must be resolved before the turn can be planned. Auto-resolve lets the battle AI fight both sides (honest, a little worse than good command); Fight to command it yourself.", Kit.FONT_SMALL, Kit.COL_DIM, true))
 	for b in list:
 		box.add_child(_battle_card(st, b))
-	s.show_dialog("Pending battles (%d)" % list.size(), box, [["Close", Callable()]], 720)
+	s.show_dialog("Pending battles (%d)" % list.size(), box, [["Close", Callable()]], 900, true)
 
 
 func _battle_card(st: Dictionary, b: Dictionary) -> Control:
-	var p := Kit.panel(Color(1, 1, 1, 0.06), 8)
-	var v := Kit.vbox(6)
-	p.add_child(v)
-	var r := int(b["r"])
-	var facs := CRules.battle_factions(st, b)
-	var arm := CRules.battle_armies(st, b)
-	var sides := ["", ""]
-	for k in 2:
-		var names: Array[String] = []
-		for f in facs[k]:
-			names.append(CData.faction_name(int(f)))
-		sides[k] = " and ".join(names)
-	var kind := str(b.get("kind", ""))
-	var title := "Battle of %s (%s): %s (attacking) against %s" % [CData.REGIONS[r]["city"], CData.REGIONS[r]["name"], sides[0], sides[1]]
-	match kind:
-		"assault":
-			title = "Assault on %s (%s): %s storm the walls held by %s" % [CData.REGIONS[r]["city"], CData.REGIONS[r]["name"], sides[0], sides[1]]
-		"sally":
-			title = "Sally from %s (%s): %s ride out against the besiegers, %s (a field battle)" % [CData.REGIONS[r]["city"], CData.REGIONS[r]["name"], sides[1], sides[0]]
-		"relief":
-			title = "Relief of %s (%s): %s and the garrison against the besiegers, %s (a field battle)" % [CData.REGIONS[r]["city"], CData.REGIONS[r]["name"], sides[1], sides[0]]
-		"field":
-			title = "Field battle in %s: %s ran into %s in the open (no walls, no garrison)" % [CData.REGIONS[r]["name"], sides[0], sides[1]]
-	v.add_child(Kit.label(title, Kit.FONT, Kit.COL_GOLD, true))
-	var men := [0, 0]
-	var units := [0, 0]
-	for k in 2:
-		for a in arm[k]:
-			men[k] += CState.men(a)
-			units[k] += CState.unit_count(a)
-	var gar := CRules.garrison(st, r)
-	var gmen := 0
-	for g in gar:
-		gmen += int(g["n"])
-	var hs := CRules.battle_humans(st, b)
-	var human_att: bool = facs[0].has(hs[0])
-	var terr := Terrain.KIND_NAMES[int(CData.REGIONS[r]["terrain"])].to_lower()
-	var field := int(b.get("settlement", 1)) == 0
-	var where := ("in the field outside the walls, on %s ground" % terr) if field else ("walls %d, %s ground" % [CState.walls(st, r), terr])
-	if kind == "field":
-		v.add_child(Kit.label("Attackers %d units, %d men. Defenders %d units, %d men (in the open, %s ground)." % [
-			units[0], men[0], units[1], men[1], terr], Kit.FONT_SMALL, Color.WHITE, true))
-	else:
-		v.add_child(Kit.label("Attackers %d units, %d men. Defenders %d units, %d men, plus a garrison of %d (%s)." % [
-			units[0], men[0], units[1], men[1], gmen, where], Kit.FONT_SMALL, Color.WHITE, true))
-	var lead := [int(b["att_f"]), int(b["def_f"])]
-	v.add_child(Kit.odds_view(CBattle.battle_odds(st, b), 0 if human_att else 1, [_names([lead[0]]), _names([lead[1]])],
-		[_fc(lead[0]), _fc(lead[1])], "Balance of power (estimate from the battle formula):"))
-	if not (b["reinf"] as Array).is_empty():
-		if b.has("edge"):
-			v.add_child(Kit.label("Reinforcements within a turn's march join%s." % (
-				", arriving from the map edge they march from" if int(b.get("settlement", 1)) == 0 else ""), Kit.FONT_SMALL, Kit.COL_DIM, true))
-		else:
-			v.add_child(Kit.label("Reinforcements from neighbouring regions join the line.", Kit.FONT_SMALL, Kit.COL_DIM, true))
-	var h := Kit.hbox(8)
-	h.alignment = BoxContainer.ALIGNMENT_END
-	var bid := int(b["id"])
-	var ab := Kit.button("Auto-resolve", func(): s.auto_resolve(bid), 130)
-	ab.name = "auto_%d" % bid
-	h.add_child(ab)
-	var fb := Kit.button("Fight", func(): s.fight(bid), 110)
-	fb.name = "fight_%d" % bid
-	h.add_child(fb)
-	v.add_child(h)
-	return p
+	return BattleScreen.pre(s, st, b)
 
 
+## The battle screen's result state (game/campaign/battle_screen.gd) for
+## the battle just applied: s._battle_snap was taken when it started.
 func show_battle_result(events_before: int, outcome: Dictionary) -> void:
 	var st: Dictionary = s.st
-	var box := Kit.vbox(6)
+	var texts: Array = []
 	var evs: Array = st["events"]
 	for i in range(events_before, evs.size()):
 		var t := event_text(evs[i], s.f)
 		if t != "":
-			box.add_child(Kit.label(t, Kit.FONT, Color.WHITE, true))
-	if int(outcome.get("forfeit", 0)) != 0:
-		box.add_child(Kit.label("You left the field: the army withdrew and the battle counts as lost.", Kit.FONT_SMALL, Kit.COL_DIM, true))
-	if int(outcome.get("scale", 100)) < 100:
-		box.add_child(Kit.label("(Big battle: auto-resolved at half unit size, results scaled up.)", Kit.FONT_SMALL, Kit.COL_DIM, true))
-	s.show_dialog("Battle result", box, [["Continue", func(): s._next_step()]], 560)
+			texts.append(t)
+	var snap: Dictionary = s._battle_snap
+	if snap.is_empty():
+		var box := Kit.vbox(6)
+		for t2 in texts:
+			box.add_child(Kit.label(t2, Kit.FONT, Color.WHITE, true))
+		if int(outcome.get("forfeit", 0)) != 0:
+			box.add_child(Kit.label("You left the field: the army withdrew and the battle counts as lost.", Kit.FONT_SMALL, Kit.COL_DIM, true))
+		s.show_dialog("Battle result", box, [["Continue", func(): s._next_step()]], 560)
+		return
+	s.show_dialog("Battle result", BattleScreen.result(s, snap, outcome, st, texts), [["Continue", func(): s._next_step()]], 900, true)
 
 
 # -------------------------------------------------------------- summary ---

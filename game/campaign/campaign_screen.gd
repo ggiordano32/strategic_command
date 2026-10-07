@@ -41,6 +41,7 @@ const Kit := preload("res://game/campaign/ui_kit.gd")
 const Saves := preload("res://game/campaign/saves.gd")
 const Panels := preload("res://game/campaign/campaign_panels.gd")
 const AutoResolve := preload("res://game/campaign/auto_resolve.gd")
+const BattleScreen := preload("res://game/campaign/battle_screen.gd")
 const Battle := preload("res://game/battle.gd")
 const UnitBook := preload("res://game/unit_book.gd")
 const UnitEntry := preload("res://game/unit_entry.gd")
@@ -94,6 +95,8 @@ var controls_page: Controls
 var panels: Panels
 var battle: Battle = null
 var _battle_built: Dictionary = {}
+## The battle screen's snapshot of the battle in progress (taken at its start).
+var _battle_snap: Dictionary = {}
 var _battle_id := -1
 var _resolver: AutoResolve = null
 var _progress: ProgressBar = null
@@ -208,7 +211,7 @@ func _load_data() -> void:
 
 ## Testing aids: --cam-zoom=Z --cam-region=key --close-dialog
 ## --select-region=key --select-army=N (Nth army of the player)
-## --plan-move=N:key --camp-attack=N:key --camp-siege=N:key[:turns] --camp-besieged=key:faction --camp-fight --sim-turns=N --dialog-scroll=PX --side-scroll=PX
+## --plan-move=N:key --camp-attack=N:key --camp-siege=N:key[:turns] --camp-assault=key --camp-besieged=key:faction --camp-fight --camp-auto --sim-turns=N --dialog-scroll=PX --side-scroll=PX
 ## --camp-exchange=N:M:k (version 6: the exchange panel)
 ## --camp-recruit=N:key:k --camp-raise=key:k (version 6: recruits into an army, the raise picker)
 ## --plan-stance=N:0|1 --camp-raid=N:key (version 5: the player's Nth army raids region key) --camp-intercept=N:key:faction (an army
@@ -339,6 +342,17 @@ func _apply_debug_args() -> void:
 			if online != null:
 				await online.sync()
 				fight_live(int(v), a.begins_with("--live-open="))
+		elif a.begins_with("--camp-assault="):
+			# --camp-assault=region (after --camp-siege): the besiegers storm it now.
+			var b16 := CRules.start_siege_battle(st, CData.region_index(v), "assault")
+			if not b16.is_empty():
+				b16.erase("new")
+				st["phase"] = "battles"
+				_next_step()
+		elif a == "--camp-auto":
+			var pb2 := CTurn.pending_for(st)
+			if not pb2.is_empty():
+				auto_resolve(int(pb2[0]["id"]))
 		elif a == "--camp-fight":
 			var pb := CTurn.pending_for(st)
 			if not pb.is_empty():
@@ -1209,7 +1223,7 @@ func _vp() -> Vector2:
 ## Show a modal dialog. buttons: [[text, callable], ...]; an empty callable
 ## just closes. The dialog fills most of a phone screen and is capped on a
 ## desktop.
-func show_dialog(title: String, content: Control, buttons: Array, width: float = 620.0) -> void:
+func show_dialog(title: String, content: Control, buttons: Array, width: float = 620.0, tall: bool = false) -> void:
 	for c in dialog_box.get_children():
 		dialog_box.remove_child(c)
 		c.queue_free()
@@ -1233,7 +1247,7 @@ func show_dialog(title: String, content: Control, buttons: Array, width: float =
 	var h := minf(vp.y - 24, maxf(260.0, vp.y * 0.86))
 	dialog.custom_minimum_size = Vector2(w, 0)
 	dialog_scroll.custom_minimum_size = Vector2(w - 24, 0)
-	dialog_scroll.set_meta("max_h", minf(h - 110, 560))
+	dialog_scroll.set_meta("max_h", (h - 110) if tall else minf(h - 110, 560))
 	dialog.size = Vector2(w, 0)
 	dialog.reset_size()
 	dialog.position = (vp - dialog.size) * 0.5
@@ -1980,6 +1994,7 @@ func auto_resolve(bid: int) -> void:
 	b = CState.battle(st, bid)
 	if b.is_empty() or _resolver != null:
 		return
+	_battle_snap = BattleScreen.snapshot(st, b, f)
 	_resolver = AutoResolve.new()
 	add_child(_resolver)
 	_resolver.start(st, b)
@@ -2042,6 +2057,8 @@ func _on_auto_done(outcome: Dictionary) -> void:
 
 
 func _apply_battle(bid: int, outcome: Dictionary) -> void:
+	if int(_battle_snap.get("bid", -1)) != bid:
+		_battle_snap = {}
 	if online != null:
 		onl.upload(bid, outcome)
 		_after_battle_refresh()
@@ -2065,6 +2082,7 @@ func fight(bid: int) -> void:
 	var hs := CRules.battle_humans(st, b)
 	var hf: int = f if hs.has(f) else int(hs[0])
 	_battle_built = CBattle.build(st, b, hf)
+	_battle_snap = BattleScreen.snapshot(st, b, f)
 	_battle_id = bid
 	battle = Battle.new()
 	battle.custom_scenario = _battle_built["scenario"]
@@ -2117,6 +2135,7 @@ func fight_live(bid: int, create: bool, keep: bool = false) -> void:
 	var hs: Array = CRules.battle_humans(bst, b)
 	var hmin := int(hs.min()) if not hs.is_empty() else f
 	_battle_built = CBattle.build(bst, b, hmin)
+	_battle_snap = BattleScreen.snapshot(bst, b, f)
 	_battle_id = bid
 	var net := get_node_or_null("/root/Net")
 	var coop = CoopSession.new()

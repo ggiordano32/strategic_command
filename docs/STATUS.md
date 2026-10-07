@@ -1,6 +1,6 @@
 # Strategic Command — Status and Handover
 
-Last updated: 2026-10-07 (cities worth defending, part 2b: siege equipment as objects, the ladder shuffle and wall-punching bugs; part 2a: units do not pass through each other, street fights; part 1: tower engines, ladders, a ram, hard gates, the battle time limit; earlier 2026-10-06: deployment phase and custom battles built; the continuous campaign overworld built, state format 6; free campaign movement built; sieges and battle odds built on the campaign map; settlement variety built 2026-10-05). Read this first, then `docs/DESIGN.md` for the full
+Last updated: 2026-10-07 (the battle screen on the overworld; cities worth defending, part 2b: siege equipment as objects, the ladder shuffle and wall-punching bugs; part 2a: units do not pass through each other, street fights; part 1: tower engines, ladders, a ram, hard gates, the battle time limit; earlier 2026-10-06: deployment phase and custom battles built; the continuous campaign overworld built, state format 6; free campaign movement built; sieges and battle odds built on the campaign map; settlement variety built 2026-10-05). Read this first, then `docs/DESIGN.md` for the full
 design and `CLAUDE.md` for working rules. Update this file whenever a
 milestone lands or the plan changes.
 
@@ -35,6 +35,7 @@ anti-cheat and original art only if it proves fun.
 | Cities worth defending, part 1 (tower engines, ladders, ram, hard gates, battle time limit) | Built 2026-10-07, **not committed**; tested headless and windowed; not yet played on phones |
 | Cities worth defending, part 2a (units do not pass through each other, street fights) | Built 2026-10-07, **not committed**; tested headless (and the windowed input tests); not yet played on phones |
 | Cities worth defending, part 2b (siege equipment as objects; ladder and wall-punching fixes) | Built 2026-10-07, **not committed**; tested headless, windowed input test, live_e2e; not yet played on phones |
+| Battle screen on the overworld (pre-battle and result, item 4b) | Built 2026-10-07, **not committed**; tested headless (`tests/battle_screen_test.gd`), the windowed input test and online_e2e; not yet played on phones |
 | 6. Depth (siege towers, tech, more factions) | Not started |
 
 ### What exists
@@ -78,6 +79,40 @@ anti-cheat and original art only if it proves fun.
 - The touch control scheme works; the user likes it.
 
 ### In progress right now
+
+**Battle screen on the overworld (built 2026-10-07, item 4b below).**
+`game/campaign/battle_screen.gd`, one screen in two states for the solo
+and online Battles dialogs. *Pre-battle* (replaces the old auto / fight
+card): the settlement's map preview from its seed (`city_preview.gd`; the
+arrow is the attackers' approach) or, for field battles (sally, relief,
+interception), a ground panel (ground colour, relief, woods %, attackers'
+band at the bottom, defenders' at the top); the siege equipment line
+(ladder sets / ram from `CBattle.siege_equipment`, towers at walls 2-3);
+the odds bar; the buttons right under it (Auto-resolve / Fight; online:
+Fight together / Wait for ally / Take command / Join battle, status lines
+above them); then both sides as unit cards (symbol with tier mark, men,
+tier, short name, a green health bar of men against full strength),
+grouped by army with faction colour, support armies marked, the garrison
+as its own group, units past the 24-per-side cap shown as "(reserve)".
+Attackers left, defenders right (stacked below 640 logical px). *Result*
+(after auto-resolve and after a fought battle, campaign only): VICTORY /
+DEFEAT / DRAW for the viewer (ATTACKERS / DEFENDERS WIN if not in it),
+"Auto-resolved" / "Fought" / "Fought (left the field)" / "Fought
+together", the one-line outcome (city taken / held, beaten but not taken,
+siege continues / broken, who holds the field, armies destroyed), the same
+cards with survivors against fielded (lost part red, "-N"), per-side totals
+"Fielded, back, lost (dead, fled). Kills", the event reports, Continue.
+Both auto-resolve and fought battles run the sim, so both take the sim's
+per-unit tallies from the outcome; the sim counts kills per side, not per
+unit (no sim change), so cards show each unit's losses and the side's
+kills are the enemy's dead (said on the screen). No rules change: the
+outcome dictionary, campaign_sim hashes and `CState.VERSION` unchanged; a
+snapshot of the battle (`BattleScreen.snapshot`) is taken when it starts
+(`_battle_snap`). Testing aids `--camp-assault=key`, `--camp-auto`.
+Screenshots `docs/screenshots/battle_screen_pre_phone.png`,
+`battle_screen_pre_cards_phone.png`, `battle_screen_result_phone.png`. Open: play it on the phones (the
+landscape phone dialog is short: the preview shrinks to keep the buttons
+in sight, the cards are a scroll away).
 
 **Cities must be worth defending, part 2b: siege equipment as objects
 (built 2026-10-07).** As built in DESIGN.md "Siege equipment and wall
@@ -940,7 +975,7 @@ fixes are all landed; see "Where we are"):
       ratios (a walls term for the armies inside is a prediction of the
       sim, not a bonus), turn the campaign AI's shelter knob back on and
       re-run the AI tables.
-4b. **Battle screen on the overworld** (agreed 2026-10-07, next build
+4b. **Battle screen on the overworld** (**done 2026-10-07**, see "In progress right now"; agreed 2026-10-07, next build
    after part 2b, before part 2c): one screen in two states, used for
    auto-resolve and fought battles alike. *Pre-battle* (replaces the
    auto / fight choice): a map preview at the top (the settlement drawn
@@ -1038,9 +1073,10 @@ godot --headless --script res://tools/campaign_grid.gd [-- --check --png=/tmp/gr
 godot --headless --script res://tests/campaign_solo.gd      # 20 turns of a player policy
 godot --headless --script res://tests/campaign_battles.gd   # auto-resolve timing, formula calibration
 godot --script res://tests/campaign_input_test.gd           # needs a window
+godot --headless --script res://tests/battle_screen_test.gd  # battle screen: pre-battle, auto / fought result, field battle
 godot --headless --script res://tests/matchups.gd -- --only=tiers   # tier balance
 # Campaign testing aids: -- --campaign=rome[,greeks][:seed] --sim-turns=N
-#   --camp-attack=N:region --camp-fight --select-army=N --select-region=key
+#   --camp-attack=N:region --camp-siege=N:region:turns --camp-assault=region --camp-auto --camp-fight --select-army=N --select-region=key
 #   --cam-zoom=Z --dialog=battles|summary|diplomacy|realm|goals --new-campaign
 #   --controls --ios-tab; battle: --demo-ghost=deg
 

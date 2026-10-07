@@ -1388,6 +1388,23 @@ and its armies disband.
   recruits, growth, failed orders; captures and wars elsewhere); battle result;
   End turn with a short warning list (armies next to an enemy without orders,
   regions that could build, unanswered offers) that can be skipped.
+- **Battle screen** (2026-10-07, `game/campaign/battle_screen.gd`): the
+  Battles dialog shows each pending battle as its pre-battle screen: the
+  settlement's map preview (or the field's ground, woods and both
+  deployment edges), the siege equipment line (ladder sets, ram, towers at
+  walls 2-3), the odds bar and the buttons (Auto-resolve / Fight; online
+  also Fight together, Wait for ally, Take command, Join battle), then both
+  sides as unit cards (symbol with tier mark, men, a health bar of men
+  against full strength) grouped by army, support armies and the garrison
+  included, attackers left and defenders right. After auto-resolve or a
+  fought battle the same screen shows the result: VICTORY / DEFEAT / DRAW
+  for the viewer, "Auto-resolved" or "Fought", the one-line outcome (city
+  taken or held, siege continues or broken, who holds the field, armies
+  destroyed), the cards with survivors against fielded (the lost part
+  marked) and each unit's losses, per-side totals with the side's kills
+  (the sim counts kills per side, not per unit: a side's kills are the
+  enemy's dead), the event reports and Continue. View only: a snapshot of
+  the battle is taken when it starts; the outcome dictionary is unchanged.
 - **Hot seat:** each player plans in turn behind a hand-over screen; the
   submissions are exactly the milestone-4 payload. **Saves:** one file per
   campaign in `user://campaigns/` (IndexedDB on the web), written on every

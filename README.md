@@ -32,7 +32,7 @@ built for phones and browsers. Run an empire in the western Mediterranean of
 |---|---|
 | ![Field battle in the woods](docs/screenshots/maps_green_desktop.png) | ![Breaking into a walled town](docs/screenshots/maps_gate_fight_phone.png) |
 | A field battle in Gaul: woods slow cavalry and swallow arrows | Through the gate: the fight in the streets |
-| ![A Greek coastal city](docs/screenshots/settlements_polis_hill_coast.png) | ![Siege odds](docs/screenshots/siege_phone_panel.png) |
+| ![A Greek coastal city](docs/screenshots/settlements_polis_hill_coast.png) | ![Before a battle: the city, siege equipment, odds and both armies](docs/screenshots/battle_screen_pre_phone.png) |
 | A Greek city on a coastal hill with its acropolis | Besieging Tarentum: the odds before you storm |
 
 ## Co-op play

@@ -365,17 +365,19 @@ func show_battles() -> void:
 		box.add_child(Kit.label("No battles pending.", Kit.FONT, Color.WHITE))
 		s.show_dialog("Battles", box, [["Close", Callable()]], 520)
 		return
-	box.add_child(Kit.label("Battles must be resolved before the next turn. Your own: auto-resolve or fight. Where your ally's army fights too: fight together live (your ally is asked to join and commands their own army), wait for them (they are pinged), or take command of their army (they are told).", Kit.FONT_SMALL, Kit.COL_DIM, true))
+	if s._vp().y >= 600:  # a landscape phone: the battle screen needs the room
+		box.add_child(Kit.label("Battles must be resolved before the next turn. Your own: auto-resolve or fight. Where your ally's army fights too: fight together live (your ally is asked to join and commands their own army), wait for them (they are pinged), or take command of their army (they are told).", Kit.FONT_SMALL, Kit.COL_DIM, true))
 	for b in list:
 		box.add_child(_battle_card(st, b))
-	s.show_dialog("Pending battles (%d)" % list.size(), box, [["Close", Callable()]], 720)
+	s.show_dialog("Pending battles (%d)" % list.size(), box, [["Close", Callable()]], 900, true)
 	s.dialog_kind = "online_battles"
 
 
 func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 	var card: Control = s.panels._battle_card(st, b)
-	var v: VBoxContainer = card.get_child(0)
-	var h: HBoxContainer = v.get_child(v.get_child_count() - 1)
+	# The battle screen's status lines (above the buttons) and button row.
+	var v: VBoxContainer = card.find_child("battle_status", true, false)
+	var h: HBoxContainer = card.find_child("battle_buttons", true, false)
 	for c in h.get_children():
 		h.remove_child(c)
 		c.queue_free()
@@ -418,8 +420,7 @@ func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 	h.alignment = BoxContainer.ALIGNMENT_END
 	var busy: bool = oc.pending_upload(bid) or (cl is Dictionary and not bool(cl.get("mine", false)))
 	if busy:
-		v.move_child(h, v.get_child_count() - 1)
-		return card
+			return card
 	if others.is_empty() or cmd == oc.f:
 		var ab := Kit.button("Auto-resolve", func(): s.auto_resolve(bid), 130)
 		ab.name = "auto_%d" % bid
@@ -449,7 +450,6 @@ func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 			var pb := Kit.button("Ask to join now", func(): _ping(bid), 0)
 			pb.name = "ping_%d" % bid
 			h.add_child(pb)
-	v.move_child(h, v.get_child_count() - 1)
 	return card
 
 
@@ -483,7 +483,6 @@ func _live_card(card: Control, v: VBoxContainer, h: HBoxContainer, bid: int, liv
 		kb.tooltip_text = "Watch and take gifted units; %s keeps commanding your army." % _name(host)
 		if host != oc.f:
 			h.add_child(kb)
-	v.move_child(h, v.get_child_count() - 1)
 	return card
 
 
