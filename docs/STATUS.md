@@ -994,6 +994,19 @@ fixes are all landed; see "Where we are"):
    health bar (lost part marked) and kills beside each unit, totals at
    the foot; Continue. Fought battles take the sim's tallies, auto-resolve
    the formula's per-unit losses.
+4c. **Gifting cities and money between co-op players** (asked
+   2026-10-07). A player may gift a region they own to the other human
+   when **no army of theirs stands in the city** (garrison stays with the
+   city); the offer carries an optional price either way (the giver may
+   ask for payment, or the receiver may offer it), so money can also be
+   gifted on its own. Orders like the existing treaty / exchange orders:
+   `gift_region` (r, to, price) and `gift_money` (to, amount), resolved in
+   `cturn` as rules (both humans alive, owner check, army check at
+   resolution, treasury check, refused otherwise), visible on the region
+   dialog and the Diplomacy screen for the ally, with an accept step for a
+   priced offer (two-turn handshake like a treaty) and immediate for a
+   free gift. No format bump if the pending offer lives in the existing
+   diplomacy / proposal structures; else an optional key.
 5. **Elephants**, then camels, chariots, war dogs.
 6. **AI competency** (`docs/AI.md`): Easy / Average / Skilled on two
    independent axes (battle, campaign) plus personality, no cheats ever;
