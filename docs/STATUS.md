@@ -36,6 +36,7 @@ anti-cheat and original art only if it proves fun.
 | Cities worth defending, part 2a (units do not pass through each other, street fights) | Built 2026-10-07, **not committed**; tested headless (and the windowed input tests); not yet played on phones |
 | Cities worth defending, part 2b (siege equipment as objects; ladder and wall-punching fixes) | Built 2026-10-07, **not committed**; tested headless, windowed input test, live_e2e; not yet played on phones |
 | Battle screen on the overworld (pre-battle and result, item 4b) | Built 2026-10-07, **not committed**; tested headless (`tests/battle_screen_test.gd`), the windowed input test and online_e2e; not yet played on phones |
+| Overworld UI fixes: Deselect button; dialogs and the side panel keep their scroll position when re-rendered | Built 2026-10-07, **not committed**; windowed campaign_input_test; not yet played on phones |
 | 6. Depth (siege towers, tech, more factions) | Not started |
 
 ### What exists

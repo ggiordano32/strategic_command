@@ -1211,7 +1211,11 @@ the stance toggle).
   march stored from an earlier turn: `cancel_move`). The path runs along
   the cells, solid this turn, dashed after, with a ring where this turn
   ends and an intent badge at its end (swords, tent, tower). An Undo
-  button next to End turn undoes the last plan change. A drag that starts
+  button next to End turn undoes the last plan change; a Deselect button
+  beside them (shown only while something is selected) clears the
+  selection and closes its panel, never an order. A dialog or the side
+  panel re-rendered by its own buttons keeps its scroll position (another
+  dialog or selection starts at the top). A drag that starts
   on one of your free armies previews the path live and plans the march on
   release; any other drag pans; right click plans on a desktop. Refusals
   are explained in a toast (zone of control, fortified, forced march, at

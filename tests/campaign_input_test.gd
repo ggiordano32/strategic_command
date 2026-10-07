@@ -41,7 +41,10 @@ extends SceneTree
 ## long press on a unit row of the army card lifts it and a drag moves it
 ## (an "arrange" order, the rows in the new order at once), a mouse drag
 ## rewrites the pending order (one per army), Undo takes back each drag,
-## and the turn resolves with the units in the planned order. The map key: format 5 rows on the format 5 copy; on the
+## and the turn resolves with the units in the planned order. Deselect: shown
+## only while something is selected, a tap clears it, closes the panel and
+## plans nothing. A dialog re-rendered by its own button (Diplomacy's Offer)
+## keeps its scroll position; another dialog starts at the top. The map key: format 5 rows on the format 5 copy; on the
 ## overworld the Key button opens it (its version 6 rows, clear of End turn
 ## and the hint), a tap on the map closes it on a phone, its header closes it.
 ## Exits 0 on success, 1 on failure.
@@ -97,7 +100,8 @@ func _initialize() -> void:
 		_r_setup, _r_card, _r_check, _r_march, _r_keep, _r_march2, _r_cancel_march, _r_marching, _r_again, _r_x, _r_x_check,
 		_r_region, _r_picker, _r_picker2, _r_picker3, _r_raise_check, _r_raise_x,
 		_a_setup, _a_scroll, _a_press, _a_wait, _a_drag, _a_up, _a_check1, _a_mouse, _a_mouse_up, _a_check2, _a_undo1, _a_undo2,
-		_a_scroll, _a_mouse_top, _a_mouse_top_up, _a_resolve, _s_done,
+		_a_scroll, _a_mouse_top, _a_mouse_top_up, _a_resolve,
+		_d_select, _d_tap, _d_check, _d_dip, _d_dip_tap, _d_dip_check, _d_other, _d_other_check, _s_done,
 	]
 
 
@@ -920,6 +924,84 @@ func _a_resolve() -> void:
 	_check(ar.size() == 1 and str(ar[0]["order"]) == str([3, 0, 1, 2]), "a mouse drag of the last row to the top: %s" % str(ar))
 	var res := CTurn.resolve_turn(cs.st, [CTurn.submission(cs.st, rome, cs.orders)])
 	_check(_a_unit_keys(res) == [_a_keys[3], _a_keys[0], _a_keys[1], _a_keys[2]], "the turn resolves with the units in the planned order (%s)" % str(_a_unit_keys(res)))
+
+
+# ------------------------------------------- Deselect, dialog scroll ---
+
+var _d_orders := ""
+var _d_sv := 0
+var _d_win := Vector2i.ZERO
+
+
+func _d_select() -> void:
+	_d_win = root.content_scale_size
+	root.content_scale_size = Vector2i(844, 390)  # a phone, landscape
+	await process_frame
+	await process_frame
+	cs.close_side()
+	_check(not cs.deselect_button.visible, "nothing selected: no Deselect button")
+	cs.select_army(g1)
+	_d_orders = str(cs.orders)
+
+
+func _d_tap() -> void:
+	_check(cs.deselect_button.is_visible_in_tree(), "an army selected: the Deselect button shows")
+	var b := cs.deselect_button.get_global_rect()
+	_check(not b.intersects(cs.end_button.get_global_rect()) and (not cs.undo_button.visible or not b.intersects(cs.undo_button.get_global_rect())),
+		"Deselect sits clear of End turn and Undo")
+	_tap_control(cs.deselect_button)
+
+
+func _d_check() -> void:
+	_check(cs.sel_army == -1 and cs.sel_region == -1 and cs.merge_tap == -1 and not cs.side.visible,
+		"Deselect clears the selection and closes the panel")
+	_check(str(cs.orders) == _d_orders, "and plans nothing")
+	_check(not cs.deselect_button.visible, "Deselect hides again")
+
+
+func _d_dip() -> void:
+	cs.panels.show_diplomacy()
+	await process_frame
+	await process_frame
+	var b := _button("Offer")
+	_check(b != null, "Diplomacy has an Offer button")
+	if b == null:
+		return
+	cs.dialog_scroll.ensure_control_visible(b)
+	cs.dialog_scroll.scroll_vertical += 400  # past it, as far as it goes
+	await process_frame
+	cs.dialog_scroll.ensure_control_visible(b)
+	await process_frame
+	await process_frame
+	_d_sv = cs.dialog_scroll.scroll_vertical
+	_check(_d_sv > 0, "Diplomacy is scrolled down (%d)" % _d_sv)
+	_tap(b.get_global_rect().get_center())
+
+
+func _d_dip_tap() -> void:
+	pass  # a frame for the re-render's layout
+
+
+func _d_dip_check() -> void:
+	var proposed := false
+	for o in cs.orders:
+		proposed = proposed or str(o["t"]) == "propose"
+	_check(proposed and cs.dialog.visible and cs.dialog_title.text == "Diplomacy", "Offer re-renders Diplomacy with the proposal planned")
+	_check(cs.dialog_scroll.scroll_vertical == _d_sv, "and keeps its scroll position (%d, was %d)" % [cs.dialog_scroll.scroll_vertical, _d_sv])
+
+
+func _d_other() -> void:
+	var v := VBoxContainer.new()
+	for k in 60:
+		v.add_child(Label.new())
+		(v.get_child(k) as Label).text = "line %d" % k
+	cs.show_dialog("Another dialog", v, [["Close", Callable()]])
+
+
+func _d_other_check() -> void:
+	_check(cs.dialog.visible and cs.dialog_scroll.scroll_vertical == 0, "another dialog opens at the top (%d)" % cs.dialog_scroll.scroll_vertical)
+	cs.close_dialog()
+	root.content_scale_size = _d_win
 
 
 func _s_done() -> void:

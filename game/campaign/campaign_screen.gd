@@ -119,6 +119,10 @@ var _mouse_pan := false
 
 # Version 6.
 var undo_button: Button
+var deselect_button: Button    # bottom right, while something is selected
+var _side_key := ""            # what the side panel shows ("a<army>" / "r<region>")
+var _side_gen := 0             # side panel builds (a stale scroll restore is dropped)
+var _dlg_gen := 0              # dialog builds (likewise)
 var _undo: Array = []          # earlier order lists (Undo)
 var _routes := {}              # army id -> plan_path result for its plan (per preview)
 var _drag_army := -1           # an army being dragged to a destination
@@ -1177,6 +1181,17 @@ func _build_ui() -> void:
 	undo_button.custom_minimum_size = Vector2(80, 48)
 	undo_button.visible = false
 	ui.add_child(undo_button)
+	# Deselect: clears the selection and closes its panel without scrolling
+	# back to it (never a move: a button takes the tap from the map).
+	deselect_button = Kit.button("Deselect", func(): deselect_all(), 110, 15)
+	deselect_button.name = "deselect"
+	deselect_button.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	deselect_button.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	deselect_button.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	deselect_button.offset_bottom = -8
+	deselect_button.custom_minimum_size = Vector2(110, 48)
+	deselect_button.visible = false
+	ui.add_child(deselect_button)
 	wait_panel = Kit.panel(Color(0.1, 0.12, 0.1, 0.95), 8)
 	wait_panel.name = "wait_panel"
 	wait_panel.visible = false
@@ -1230,6 +1245,10 @@ func show_dialog(title: String, content: Control, buttons: Array, width: float =
 	for c in dialog_buttons.get_children():
 		dialog_buttons.remove_child(c)
 		c.queue_free()
+	# The same dialog shown again (a button in it re-rendered it) keeps its
+	# scroll position; another dialog starts at the top.
+	var keep := dialog_scroll.scroll_vertical if dialog.visible and title != "" and dialog_title.text == title else 0
+	_dlg_gen += 1
 	dialog_title.text = title
 	dialog_title.visible = title != ""
 	dialog_box.add_child(content)
@@ -1254,8 +1273,8 @@ func show_dialog(title: String, content: Control, buttons: Array, width: float =
 	dialog.visible = true
 	dialog_kind = ""
 	(dialog.get_meta("dim") as Control).visible = true
-	dialog_scroll.scroll_vertical = 0
 	call_deferred("_center_dialog")
+	_restore_scroll(dialog_scroll, keep, _dlg_gen, true)
 
 
 func _center_dialog() -> void:
@@ -1276,6 +1295,11 @@ func dialog_open() -> bool:
 
 
 func show_side(content_builder: Callable) -> void:
+	# Rebuilt for the same selection: keep the scroll position.
+	var key := ("a%d" % sel_army) if sel_army >= 0 else ("r%d" % sel_region)
+	var keep := side_scroll.scroll_vertical if side.visible and key == _side_key else 0
+	_side_key = key
+	_side_gen += 1
 	for c in side_box.get_children():
 		side_box.remove_child(c)
 		c.queue_free()
@@ -1287,7 +1311,20 @@ func show_side(content_builder: Callable) -> void:
 	var w := minf(PANEL_W, vp.x * 0.48)
 	side.offset_left = -w - 4
 	side.visible = true
-	side_scroll.scroll_vertical = 0
+	_restore_scroll(side_scroll, keep, _side_gen, false)
+	_update_deselect()
+
+
+## A scroll position back once the rebuilt content is laid out (clamped by
+## the container); dropped when the panel / dialog was rebuilt again since.
+func _restore_scroll(sc: ScrollContainer, v: int, gen: int, dlg: bool) -> void:
+	sc.scroll_vertical = v
+	if v <= 0:
+		return
+	await get_tree().process_frame
+	if not is_instance_valid(sc) or (_dlg_gen if dlg else _side_gen) != gen:
+		return
+	sc.scroll_vertical = v
 
 
 func close_side() -> void:
@@ -1296,6 +1333,29 @@ func close_side() -> void:
 	merge_tap = -1
 	sel_region = -1
 	_refresh_map()
+	_update_deselect()
+
+
+## Deselect button: clears the selected army (ours or an enemy's), region
+## or city, a previewed merge or drag, and closes the panel. Never an order.
+func deselect_all() -> void:
+	if merge_tap >= 0 and _toast != null:
+		_toast.queue_free()  # the merge preview's toast
+		_toast = null
+	_drag_army = -1
+	_drag_cell = -1
+	_drag_tgt = -1
+	close_side()
+	_update_hint()
+	_t("campaign_input", {"what": "deselect"})
+
+
+## Shown only while something is selected, left of Undo (or of End turn).
+func _update_deselect() -> void:
+	if deselect_button == null:
+		return
+	deselect_button.visible = side.visible or sel_army >= 0 or sel_region >= 0 or merge_tap >= 0
+	deselect_button.offset_right = -234.0 if undo_button.visible else -146.0
 
 
 ## Unit book page as a recruitment card: the UnitEntry view with a Recruit
@@ -1323,6 +1383,7 @@ func _refresh() -> void:
 			show_side(func(box): panels.region_panel(box, sel_region))
 		else:
 			side.visible = false
+			_update_deselect()
 
 
 ## The map key's rows follow the campaign's format; its samples use the
@@ -1370,6 +1431,7 @@ func _refresh_top() -> void:
 	battles_button.modulate = Color(1, 0.6, 0.5) if nb > 0 else Color(1, 1, 1)
 	end_button.disabled = nb > 0 or f < 0 or str(st["phase"]) == "over"
 	undo_button.visible = _g() and f >= 0 and not _undo.is_empty()
+	_update_deselect()
 	if onl != null:
 		var eb := onl.end_button_state()
 		end_button.text = str(eb[0])

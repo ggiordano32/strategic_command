@@ -126,7 +126,7 @@ static var BINDINGS: Array = [
 	{"id": "map_recruit_info", "s": "campaign", "label": "Unit page before recruiting",
 		"touch": "Tap the unit in the recruit list (the army card of an army at your city)", "mouse": "Click the unit", "keys": []},
 	{"id": "map_deselect", "s": "campaign", "label": "Close the panel / deselect",
-		"touch": "Tap the sea, or Close", "mouse": "Click the sea, or Close", "keys": [KEY_ESCAPE]},
+		"touch": "Deselect button (bottom right), tap the sea, or Close", "mouse": "Deselect button, click the sea, or Close", "keys": [KEY_ESCAPE]},
 	{"id": "map_pan", "s": "campaign", "label": "Pan the map",
 		"touch": "Drag", "mouse": "Left, right or middle drag; W A S D or arrow keys", "keys": []},
 	{"id": "map_pan_up", "s": "campaign", "label": "Pan up", "touch": "-", "mouse": "-", "keys": [KEY_W, KEY_UP], "hidden": true},

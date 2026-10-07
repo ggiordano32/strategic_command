@@ -731,7 +731,6 @@ func show_raise(r: int) -> void:
 		Kit.FONT, Kit.COL_GOLD if n > 0 else Kit.COL_DIM, true)
 	tl.name = "raise_total"
 	v.add_child(tl)
-	var sv: int = s.dialog_scroll.scroll_vertical if s.dialog_open() and s.dialog_box.find_child("raise_panel", true, false) != null else 0
 	s.show_dialog("Raise new army at %s" % CData.REGIONS[r]["city"], v,
 		[["Cancel", func():
 			_raise = {}
@@ -742,8 +741,6 @@ func show_raise(r: int) -> void:
 		var okb := btns[btns.size() - 1] as Button
 		okb.name = "raise_confirm"
 		okb.disabled = n == 0
-	if sv > 0:
-		(func(): s.dialog_scroll.scroll_vertical = sv).call_deferred()
 
 
 func _raise_pick(key: String, d: int) -> void:
@@ -1145,8 +1142,7 @@ func show_exchange(id: int, other: int) -> void:
 	v.add_child(hl)
 	var ok_text := ("Gift %d unit%s" % [out.size(), "" if out.size() == 1 else "s"]) if gift else "Confirm"
 	# Confirm and Cancel in the dialog's button row: always in view. A
-	# re-render after a tap keeps the scroll position.
-	var sv: int = s.dialog_scroll.scroll_vertical if s.dialog_open() and s.dialog_box.find_child("exchange_panel", true, false) != null else 0
+	# re-render after a tap keeps the scroll position (show_dialog).
 	s.show_dialog("Exchange units" if not gift else "Give units to %s" % CData.faction_name(int(b["f"])), v,
 		[["Cancel", func():
 			_xc = {}
@@ -1159,8 +1155,6 @@ func show_exchange(id: int, other: int) -> void:
 		ok.disabled = why != ""
 		if gift:
 			ok.add_theme_color_override("font_color", _fc(int(b["f"])).lightened(0.5))
-	if sv > 0:
-		(func(): s.dialog_scroll.scroll_vertical = sv).call_deferred()
 
 
 func _xc_row(u: Dictionary, uf: int, tag: String, nm: String, active: bool, cb: Callable) -> Control:
@@ -1294,7 +1288,6 @@ func _arrange(id: int, from: int, to: int) -> void:
 		var o: Dictionary = s.orders[k]
 		if str(o["t"]) == "arrange" and int(o.get("army", -1)) == id:
 			j = k
-	var sv: int = s.side_scroll.scroll_vertical
 	if j >= 0 and not _units_changed_after(id, j):
 		var old: Array = s.orders[j]["order"]
 		var comp: Array = []
@@ -1309,8 +1302,7 @@ func _arrange(id: int, from: int, to: int) -> void:
 	else:
 		s.add_order({"t": "arrange", "army": id, "order": perm})
 	s._t("campaign_input", {"what": "arrange"})
-	s.select_army(id)
-	_keep_scroll(sv)
+	s.select_army(id)  # the same army's card: show_side keeps its place
 
 
 ## An order after index j that changes army id's unit list.
@@ -1323,16 +1315,6 @@ func _units_changed_after(id: int, j: int) -> bool:
 				or (t == "exchange" and (int(o.get("from", -1)) == id or int(o.get("to", -1)) == id)):
 			return true
 	return false
-
-
-## The side panel back at scroll position sv once the rebuilt card is laid
-## out.
-func _keep_scroll(sv: int) -> void:
-	if sv <= 0:
-		return
-	await s.get_tree().process_frame
-	if is_instance_valid(s) and s.side_scroll != null:
-		s.side_scroll.scroll_vertical = sv
 
 
 func _split(id: int) -> void:
