@@ -704,9 +704,13 @@ fixes are all landed; see "Where we are"):
       on walls 3**, immobile garrison engines with a fixed ammunition
       load (+ammo from a building inside), crews that can be shot and
       towers that batteries can duel; walls-2/3 gates nearly immune to
-      hand weapons and somewhat tougher, so without artillery you climb
-      or starve them (siege equipment over turns comes with part 2 / the
-      old item 4); a **battle time limit setting** (today a fixed 15 min
+      hand weapons and somewhat tougher; **attacker siege equipment:
+      ladders** (foot units climb the wall from outside, slower the higher
+      the wall level) **and a ram** (a slow engine unit the gate yields
+      to), earned by siege turns in the campaign (optional key on the
+      siege entry, no format bump) and chosen in custom battles, so
+      without artillery you bring ladders and a ram or starve them (added
+      2026-10-07); a **battle time limit setting** (today a fixed 15 min
       `BattleSim.TIME_LIMIT`) in the campaign settings, custom battles
       and the sandbox so long sieges can run. Calibration target: an
       **equal-force siege matchup set**, walls 3 equal strength ->
