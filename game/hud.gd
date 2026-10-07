@@ -16,6 +16,7 @@ signal deploy_pressed
 signal refill_pressed
 signal man_wall_pressed
 signal come_down_pressed
+signal drop_pressed
 signal withdraw_pressed
 signal withdraw_all_pressed
 signal group_pressed(kind: String)
@@ -67,6 +68,7 @@ var deploy_button: Button
 var refill_button: Button
 var man_wall_button: Button
 var come_down_button: Button
+var drop_button: Button
 var withdraw_button: Button
 var gift_button: Button
 var withdraw_all_button: Button
@@ -250,6 +252,10 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	come_down_button.tooltip_text = "Down off the wall by a stair, into the street just inside it (Shift+M)"
 	come_down_button.pressed.connect(func(): come_down_pressed.emit())
 	come_down_button.visible = false
+	drop_button = _button("Drop", Vector2(0, BTN_H))
+	drop_button.tooltip_text = "Put down the ladders or the ram where the unit stands, free to fight (X); any foot unit picks it up again (tap it)"
+	drop_button.pressed.connect(func(): drop_pressed.emit())
+	drop_button.visible = false
 	withdraw_button = _button("Withdraw", Vector2(0, BTN_H))
 	withdraw_button.tooltip_text = "Leave the battle by your own map edge"
 	withdraw_button.pressed.connect(func(): withdraw_pressed.emit())
@@ -259,7 +265,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	gift_button.pressed.connect(func(): gift_pressed.emit())
 	gift_button.visible = false
 	for b in [run_button, halt_button, fire_button, skirm_button, deploy_button, refill_button, man_wall_button,
-			come_down_button, withdraw_button, gift_button]:
+			come_down_button, drop_button, withdraw_button, gift_button]:
 		actions.add_child(b)
 	actions.visible = false
 	actions_box = actions
@@ -578,10 +584,12 @@ func set_selection(units: Array[int], run: int, fire: int, skirm: int, deploy: i
 	refill_button.text = "Refill: on" if refill > 0 else "Refill: off"
 
 
-## Walls: show "Man the wall" / "Come down" (battle.gd decides when).
-func set_wall_buttons(man: bool, down: bool) -> void:
+## Walls: show "Man the wall" / "Come down" (battle.gd decides when);
+## siege equipment: "Drop" while a selected unit carries a piece.
+func set_wall_buttons(man: bool, down: bool, drop: bool = false) -> void:
 	man_wall_button.visible = man
 	come_down_button.visible = down
+	drop_button.visible = drop
 
 
 func update_cards(sim) -> void:
@@ -610,6 +618,11 @@ func update_cards(sim) -> void:
 		if art and sim.u_state[u] == BattleSim.U_READY and sim.u_order[u] != BattleSim.O_WITHDRAW:
 			var dt := deploy_text(sim, u)
 			word = dt if dt != "Ready" else word
+		var carry := carry_text(sim, u)
+		if carry != "":
+			summary += " " + carry
+			if word == "":
+				word = carry
 		f.state_text = word
 		f.summary = summary + " " + mstate
 		var st := 0
@@ -639,6 +652,16 @@ static func art_card_text(sim, u: int) -> String:
 	return "%s %d  %d/%d\neng %d/%d  %d shots +%d\n%s" % [UT.TYPES[ty]["short"], u + 1,
 		sim.u_alive[u], sim.u_count0[u], ok, sim.u_neng[u], maxi(sim.u_ammo[u], 0),
 		maxi(sim.u_reserve[u], 0), deploy_text(sim, u)]
+
+
+## Siege equipment a unit carries: "carrying ladders" / "carrying ram", else "".
+static func carry_text(sim, u: int) -> String:
+	var k := BattleSim.carrying(sim, u)
+	if k == BattleSim.EQ_LADDERS:
+		return "carrying ladders"
+	if k == BattleSim.EQ_RAM:
+		return "carrying ram"
+	return ""
 
 
 ## Artillery set-up / refill state as a word.

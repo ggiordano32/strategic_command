@@ -127,29 +127,43 @@ func plan_from(u: int, d: Dictionary, pending: bool) -> Dictionary:
 		out["foot"] = Vector2i(sim.u_lfx[u], sim.u_lfy[u])
 		return out
 	var lad_go := stair == BattleSim.ST_LADDER_GO and not pending
-	if wall == 0 and int(d["order"]) == BattleSim.O_MOVE and (lad_go or BattleSim.can_ladder(sim, u)):
-		# Up the ladders: to the foot of the wall, up onto the walkway.
+	if wall == 0 and int(d["order"]) == BattleSim.O_MOVE and (lad_go or BattleSim.may_ladder(sim, u)):
+		# Up the ladders: to the foot of the wall (planting the set it carries
+		# there, or to a set already planted on that stretch), up onto the
+		# walkway.
 		var lx := int(d["dx"])
 		var ly := int(d["dy"])
 		var lsg := -1
+		var lq := -1
 		if lad_go:
 			lsg = sim.u_sseg[u]
 			lx = sim.u_wx[u]
 			ly = sim.u_wy[u]
+			lq = sim.u_lq[u]
 		else:
 			var wl := BattleSim.wall_snap(sim, lx, ly)
-			if wl.z >= 0 and BattleSim.ladder_ok(sim, u, wl.z, wl.x, wl.y):
-				lsg = wl.z
-				lx = wl.x
-				ly = wl.y
+			if wl.z >= 0:
+				lq = BattleSim.ladder_set_for(sim, u, wl.z, wl.x, wl.y)
+				if lq >= 0:
+					lsg = wl.z
+					lx = wl.x
+					ly = wl.y
+					if sim.q_state[lq] == BattleSim.Q_PLANTED:
+						lsg = sim.q_seg[lq]
+						lx = sim.q_wx[lq]
+						ly = sim.q_wy[lq]
 		if lsg >= 0:
 			var lf := BattleSim.ladder_foot(sim, lsg, lx, ly)
+			if lq >= 0 and sim.q_state[lq] == BattleSim.Q_PLANTED:
+				lf = Vector3i(sim.q_x[lq], sim.q_y[lq], 1)
 			out["mode"] = "ladder"
+			out["plant"] = lq >= 0 and sim.q_state[lq] != BattleSim.Q_PLANTED
 			out["seg"] = lsg
 			out["foot"] = Vector2i(lf.x, lf.y)
+			var ap := BattleSim.ladder_approach(sim, lsg, lf.x, lf.y)
 			var rl := PackedInt32Array([cx, cy])
-			rl.append_array(_route_cached(u, Vector2i(sim.u_ax[u], sim.u_ay[u]), Vector2i(lf.x, lf.y)))
-			rl.append_array([lx, ly])
+			rl.append_array(_route_cached(u, Vector2i(sim.u_ax[u], sim.u_ay[u]), ap))
+			rl.append_array([lf.x, lf.y, lx, ly])
 			out["route"] = rl
 			var wal := BattleSim.wall_anchor(sim, lsg, lx, ly, alive, ty)
 			out["slots"] = BattleSim.wall_slots(sim, lsg, wal.x, wal.y, alive, ty)
@@ -259,20 +273,27 @@ func wall_refusal(u: int, x: int, y: int) -> String:
 	var ws := BattleSim.wall_snap(sim, x, y)
 	if ws.z < 0 or (sim.u_wall[u] > 0 and ws.z == sim.u_wall[u] - 1):
 		return ""
-	if sim.u_wall[u] == 0 and BattleSim.can_ladder(sim, u):
-		if not BattleSim.ladder_ok(sim, u, ws.z, ws.x, ws.y):
-			return "No ladders there: a tower, a gate, the sea or out of reach"
+	var kc := BattleSim.carrying(sim, u)
+	if sim.u_wall[u] == 0 and BattleSim.may_ladder(sim, u):
+		if BattleSim.ladder_set_for(sim, u, ws.z, ws.x, ws.y) < 0:
+			if kc == BattleSim.EQ_LADDERS:
+				return "No ladders there: a tower, a gate, the sea, the citadel or out of reach"
+			return "No ladders planted on that wall: a unit carrying a set plants them"
 		return ""
 	if not BattleSim.can_man_walls(sim, u):
 		if sim.u_side[u] != sim.city_def:
-			if UT.stat(sim.u_type[u], "ram") != 0:
-				return "The ram cannot climb: tap a gate to batter it"
+			if kc == BattleSim.EQ_RAM:
+				return "Not with the ram: tap a gate to batter it (or Drop it)"
 			if sim.u_wall[u] > 0:
 				return "Down into the town first (Come down), or along this wall"
 			var c0: int = sim.u_cls[u]
-			if c0 == UT.CLS_CAV or c0 == UT.CLS_PIKE or c0 == UT.CLS_ART:
-				return "Only foot (not pikes) can climb ladders"
-			return "No ladders: they come after a turn of siege (custom battles: Ladders)"
+			if c0 == UT.CLS_CAV or c0 == UT.CLS_ART:
+				return "Only foot can climb ladders"
+			if c0 == UT.CLS_PIKE:
+				return "Pikes do not climb: they can carry ladders and plant them"
+			if sim.n_eq == 0:
+				return "No ladders: they come after a turn of siege (custom battles: Ladders)"
+			return "Pick up a ladder set first (tap it), or climb where ladders are planted"
 		var c: int = sim.u_cls[u]
 		if c == UT.CLS_CAV:
 			return "Cavalry cannot man walls"

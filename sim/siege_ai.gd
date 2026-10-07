@@ -103,10 +103,18 @@ const GATE_OPEN := 0
 const GATE_CLOSED := 1
 const GATE_BROKEN := 2
 
-# BattleSim's siege values (u_stair while going up ladders; a ram's crew).
+# BattleSim's siege values (u_stair while going up ladders; siege
+# equipment kinds and states, its orders).
 const ST_LADDER := 4
 const ST_LADDER_GO := 5
-const RAM_MEN := 6
+const EQ_LADDERS := 1
+const EQ_RAM := 2
+const Q_GROUND := 0
+const Q_CARRIED := 1
+const Q_PLANTED := 2
+const Q_WRECKED := 3
+const ORDER_PICKUP := 14
+const ORDER_DROP := 15
 
 # Army phases (ai_phase) on settlement maps.
 const SP_APPROACH := 10
@@ -251,6 +259,8 @@ static func _army(sim, side: int) -> void:
 			if g < 0 or sim.g_state[g] != GATE_CLOSED:
 				sim.ai_gate[side] = _pick_gate(sim, side)
 	sim.ai_phase[side] = phase
+	if sim.n_eq > 0:
+		_assign_equip(sim, side, phase, kn)
 
 
 ## Fighting strength of side's ready units off the walls.
@@ -266,7 +276,7 @@ static func _ground_strength(sim, side: int) -> int:
 static func _no_foot(sim, side: int) -> bool:
 	for u in sim.n_units:
 		if sim.u_side[u] == side and sim.u_state[u] == U_READY and \
-				(sim.u_cls[u] == UT.CLS_INF or sim.u_cls[u] == UT.CLS_PIKE) and not sim.is_ram(u):
+				(sim.u_cls[u] == UT.CLS_INF or sim.u_cls[u] == UT.CLS_PIKE):
 			return false
 	return true
 
@@ -778,9 +788,9 @@ static func _attacker(sim, u: int) -> void:
 		if sim.u_routs[u] == 0 and sim.u_alive[u] * 100 < sim.u_count0[u] * kn[AP.RETIRE_ALIVE_PCT]:
 			BattleAI._count(sim, side, AP.C_SAVED)
 		BattleAI._set_mode(sim, u, A_WAIT)
-	if sim.sg_on != 0 and sim.is_ram(u):
-		_att_ram(sim, u, phase)
-	elif cls == UT.CLS_ART:
+	if sim.n_eq > 0 and sim.u_ai[u] == A_RAM and _att_ram(sim, u, phase):
+		return
+	if cls == UT.CLS_ART:
 		_att_art(sim, u, phase)
 	elif cls == UT.CLS_CAV:
 		_att_cav(sim, u, phase)
@@ -939,7 +949,7 @@ static func _hack_rank(sim, u: int) -> int:
 		var c: int = sim.u_cls[o]
 		if c != UT.CLS_INF and c != UT.CLS_PIKE:
 			continue
-		if sim.sg_on != 0 and (sim.u_ai[o] == A_LADDER or sim.is_ram(o)):
+		if sim.n_eq > 0 and (sim.u_ai[o] == A_LADDER or sim.u_ai[o] == A_RAM):
 			continue
 		var bo := UT.base_of(sim.u_type[o])
 		var ko := 3
@@ -972,9 +982,11 @@ static func _att_foot(sim, u: int, phase: int) -> void:
 	var g: int = sim.ai_gate[side]
 	if g < 0:
 		return
-	if sim.sg_on != 0 and sim.u_lad[u] != 0 and (sim.u_ai[u] == A_LADDER \
-			or (_ladder_time(sim, side, g, kn) and _ladder_rank(sim, u) < kn[AP.S_LADDER_UNITS])):
+	if sim.n_eq > 0 and sim.u_ai[u] == A_LADDER:
 		_escalade(sim, u, g, kn)
+		return
+	if sim.n_eq > 0 and sim.u_carry[u] >= 0:
+		BattleAI._order(sim, u, {"type": ORDER_DROP}, 24)  # (nothing to do with it)
 		return
 	# Hack at the gate: with no battery from the start, else after a while
 	# of bombardment.
@@ -983,8 +995,10 @@ static func _att_foot(sim, u: int, phase: int) -> void:
 		hackers = 99 if sim.tick - sim.ai_t[side] > 2 * kn[AP.S_HACK_AFTER] else kn[AP.S_HACKERS]
 	elif sim.tick - sim.ai_t[side] < kn[AP.S_HACK_AFTER]:
 		hackers = 0
-	if sim.sg_on != 0 and _ram_ready(sim, side):
+	if sim.n_eq > 0 and _ram_avail(sim, side) >= 0:
 		hackers = 0  # the ram breaks the gate
+	if not sim.gate_hackable(sim, g):
+		hackers = 0  # iron-bound: nobody hacks at it
 	if _hack_rank(sim, u) < hackers:
 		BattleAI._set_mode(sim, u, A_HACK)
 		if _engaged(sim, u):
@@ -1028,6 +1042,9 @@ static func _nearest_outside(sim, u: int, r: int) -> int:
 ## the plaza (an open town: first the street mouth given to this unit).
 static func _storm(sim, u: int) -> void:
 	BattleAI._set_mode(sim, u, A_STORM)
+	if sim.n_eq > 0 and sim.u_carry[u] >= 0:
+		BattleAI._order(sim, u, {"type": ORDER_DROP}, 24)  # put it down to fight
+		return
 	if _engaged(sim, u):
 		return
 	var kn := AP.of(sim, sim.u_side[u])
@@ -1076,14 +1093,19 @@ static func _storm(sim, u: int) -> void:
 		return
 	if cit_shut:
 		# The citadel is shut: the three foot units nearest its gate hack at
-		# it, the rest gather before it.
+		# it if swords can break it (walls 0-1) and no ram is coming (the
+		# army gives the ram to a unit: _assign_equip); the rest gather before
+		# it, out of bow shot when nobody can hurt the gate (they wait for
+		# the ram, or for the defenders to come out).
 		var c: int = sim.u_cls[u]
-		if (c == UT.CLS_INF or c == UT.CLS_PIKE) and _near_rank(sim, u, sim.g_x[cg], sim.g_y[cg]) < kn[AP.S_CIT_HACKERS]:
+		var hack: bool = sim.gate_hackable(sim, cg) and (sim.n_eq == 0 or _ram_avail(sim, sim.u_side[u]) < 0)
+		if hack and (c == UT.CLS_INF or c == UT.CLS_PIKE) and _near_rank(sim, u, sim.g_x[cg], sim.g_y[cg]) < kn[AP.S_CIT_HACKERS]:
 			if sim.u_gtarget[u] != cg:
 				BattleAI._order(sim, u, {"type": ORDER_ATTACK, "target": -1, "gate": cg, "run": 0}, 0)
 			return
 		var rkc := _rank(sim, u, func(o): return sim.u_cls[o] == UT.CLS_INF or sim.u_cls[o] == UT.CLS_PIKE)
-		var cspot := _gate_point(sim, cg, kn[AP.S_CIT_GATHER], _spread(rkc.x % 5, mini(rkc.y, 5), kn[AP.S_CIT_SPREAD]))
+		var gath: int = kn[AP.S_CIT_GATHER] if hack else maxi(kn[AP.S_CIT_GATHER], kn[AP.S_CIT_WAIT])
+		var cspot := _gate_point(sim, cg, gath, _spread(rkc.x % 5, mini(rkc.y, 5), kn[AP.S_CIT_SPREAD]))
 		var cface := FM.atan2_a(sim.g_y[cg] - cspot.y, sim.g_x[cg] - cspot.x)
 		_go_home(sim, u, cspot.x, cspot.y, cface, 8)
 		return
@@ -1519,35 +1541,198 @@ static func _router(sim, u: int, within: int) -> int:
 # docs/AI.md 13. Runs only in battles with siege equipment or tower engines
 # (sim.sg_on), so the others play exactly as before.
 
-## The side has a ram that can still work a gate.
-static func _ram_ready(sim, side: int) -> bool:
+## A ram of the side that can still work a gate (on the ground or carried
+## by one of ours), -1 none.
+static func _ram_avail(sim, side: int) -> int:
+	for q in sim.n_eq:
+		if sim.q_kind[q] != EQ_RAM or sim.q_side[q] != side:
+			continue
+		if sim.q_state[q] == Q_GROUND or sim.q_state[q] == Q_CARRIED:
+			return q
+	return -1
+
+
+## The gate a ram should go at now, -1 none: in the approach the gate the
+## army goes for (while shut); in the assault the citadel's gate while it
+## is shut against us.
+static func _ram_target(sim, side: int, phase: int) -> int:
+	if phase == SP_APPROACH:
+		var g: int = sim.ai_gate[side]
+		return g if g >= 0 and sim.g_state[g] == GATE_CLOSED else -1
+	if phase == SP_ASSAULT:
+		var cg: int = sim.cit_gate
+		return cg if cg >= 0 and sim.g_state[cg] == GATE_CLOSED else -1
+	return -1
+
+
+## Attacking foot unit u may be given a piece of equipment: ready, on the
+## ground (not on a wall or a ladder move), not already given one, not
+## falling back, not fighting, on the piece's own ground.
+static func _equip_free(sim, u: int, side: int, q: int) -> bool:
+	if sim.u_side[u] != side or sim.u_state[u] != U_READY or sim.u_wall[u] > 0 or sim.u_stair[u] != 0:
+		return false
+	var m: int = sim.u_ai[u]
+	if m == A_LADDER or m == A_RAM or m == BattleAI.A_RETIRE or sim.u_carry[u] >= 0:
+		return false
+	if sim.u_fighting[u] > 0:
+		return false
+	var ra: int = sim.reach_at(sim.u_ax[u], sim.u_ay[u])
+	return ra >= 0 and ra == sim.reach_at(sim.q_x[q], sim.q_y[q])
+
+
+## The unit of ours holding piece q: carrying it, or given it (u_ai_x =
+## q + 1 in mode A_RAM / A_LADDER); -1 none.
+static func _holder(sim, side: int, q: int) -> int:
+	if sim.q_state[q] == Q_CARRIED:
+		var c: int = sim.q_unit[q]
+		if c >= 0 and sim.u_side[c] == side:
+			return c
 	for u in sim.n_units:
-		if sim.u_side[u] == side and sim.u_state[u] == U_READY and sim.is_ram(u) \
-				and sim.u_alive[u] >= RAM_MEN:
-			return true
-	return false
+		if sim.u_side[u] == side and sim.u_state[u] == U_READY and (sim.u_ai[u] == A_RAM or sim.u_ai[u] == A_LADDER) \
+				and sim.u_ai_x[u] == q + 1:
+			return u
+	return -1
 
 
-## The ram: at the gate the army goes for (Skilled first waits, out of the
-## towers' reach, for the towers by the gate to be silenced, at most
-## S_RAM_WAIT into the approach); once the gate is down it stays outside.
-static func _att_ram(sim, u: int, phase: int) -> void:
+## Attackers, army level (docs/AI.md 15): who carries what. The ram goes to
+## the foot unit least wanted in the streets (pikes, then light, spears,
+## heavy; nearest first) while there is a shut gate for it; up to
+## S_LADDER_UNITS ladder sets to the heaviest infantry (heavy, light,
+## spears) while ladders are wanted; each planted set gets up to
+## S_LADDER_FOLLOW more infantry climbing it. A unit keeps its piece
+## (A_RAM / A_LADDER, u_ai_x = piece + 1) until it has no more use for it.
+static func _assign_equip(sim, side: int, phase: int, kn: PackedInt32Array) -> void:
+	var g: int = sim.ai_gate[side]
+	# The ram.
+	var rq := _ram_avail(sim, side)
+	if rq >= 0 and _ram_target(sim, side, phase) >= 0:
+		var h := _holder(sim, side, rq)
+		if h >= 0:
+			if sim.u_ai[h] != A_RAM:
+				BattleAI._set_mode(sim, h, A_RAM)
+				sim.u_ai_x[h] = rq + 1
+		else:
+			var best := -1
+			var bk := 0
+			for u in sim.n_units:
+				var c: int = sim.u_cls[u]
+				if (c != UT.CLS_INF and c != UT.CLS_PIKE) or not _equip_free(sim, u, side, rq):
+					continue
+				var key := _foot_key(sim, u)
+				var rk := (3 - key) if c != UT.CLS_PIKE else -1
+				var k: int = (rk + 1) * 100000 + BattleAI._d(sim.u_cx[u] - sim.q_x[rq], sim.u_cy[u] - sim.q_y[rq]) / M
+				if best < 0 or k < bk:
+					best = u
+					bk = k
+			if best >= 0:
+				BattleAI._set_mode(sim, best, A_RAM)
+				sim.u_ai_x[best] = rq + 1
+				BattleAI._count(sim, side, AP.C_SIEGE)
+	if phase != SP_APPROACH or g < 0:
+		return
+	if sim.city_walls < kn[AP.S_LADDER_WALLS] and _art_ready(sim, side):
+		return  # the engines will have the gate down before the ladders are up
+	# Ladder parties: the sets on the ground or carried, heaviest infantry
+	# first (sets already planted count: S_LADDER_UNITS sets in all).
+	var parties := 0
+	for q0 in sim.n_eq:
+		if sim.q_kind[q0] == EQ_LADDERS and sim.q_side[q0] == side and sim.q_state[q0] == Q_PLANTED:
+			parties += 1
+	for u in sim.n_units:
+		if sim.u_side[u] == side and sim.u_state[u] == U_READY and sim.u_ai[u] == A_LADDER and sim.u_ai_x[u] > 0:
+			var q0: int = sim.u_ai_x[u] - 1
+			if sim.q_state[q0] != Q_PLANTED:
+				parties += 1
+	for q in sim.n_eq:
+		if sim.q_kind[q] != EQ_LADDERS or sim.q_side[q] != side:
+			continue
+		if sim.q_state[q] == Q_PLANTED:
+			# Followers: more infantry up the planted set.
+			var on := 0
+			for u in sim.n_units:
+				if sim.u_side[u] == side and sim.u_state[u] == U_READY and sim.u_ai[u] == A_LADDER \
+						and sim.u_ai_x[u] == q + 1:
+					on += 1
+			if on >= 1 + kn[AP.S_LADDER_FOLLOW]:
+				continue
+			var fb := -1
+			var fd := 0
+			for u in sim.n_units:
+				if sim.u_cls[u] != UT.CLS_INF or sim.u_ai[u] != A_WAIT or not _equip_free(sim, u, side, q):
+					continue
+				var d := BattleAI._d(sim.u_cx[u] - sim.q_x[q], sim.u_cy[u] - sim.q_y[q])
+				if fb < 0 or d < fd:
+					fb = u
+					fd = d
+			if fb >= 0:
+				BattleAI._set_mode(sim, fb, A_LADDER)
+				sim.u_ai_x[fb] = q + 1
+				BattleAI._count(sim, side, AP.C_SIEGE)
+			continue
+		if sim.q_state[q] != Q_GROUND and sim.q_state[q] != Q_CARRIED:
+			continue
+		if _holder(sim, side, q) >= 0 or parties >= kn[AP.S_LADDER_UNITS]:
+			continue
+		var best := -1
+		var bk := 0
+		for u in sim.n_units:
+			if sim.u_cls[u] != UT.CLS_INF or not _equip_free(sim, u, side, q):
+				continue
+			var k: int = _foot_key(sim, u) * 1000 + u
+			if best < 0 or k < bk:
+				best = u
+				bk = k
+		if best < 0:
+			break
+		BattleAI._set_mode(sim, best, A_LADDER)
+		sim.u_ai_x[best] = q + 1
+		parties += 1
+		BattleAI._count(sim, side, AP.C_SIEGE)
+
+
+## A unit gives up its piece of equipment (puts it down if it carries it)
+## and goes back to the foot's usual work.
+static func _release(sim, u: int) -> void:
+	if sim.u_carry[u] >= 0:
+		BattleAI._order(sim, u, {"type": ORDER_DROP}, 24)
+	BattleAI._set_mode(sim, u, A_WAIT)
+
+
+## The ram's unit (A_RAM, u_ai_x = the ram + 1): to the ram and picks it up;
+## carrying it, at the gate it goes for (_ram_target; Skilled first waits,
+## out of the towers' reach, for the towers by the gate to be silenced, at
+## most S_RAM_WAIT into the approach) and batters it. The sim puts the ram
+## down once the gate breaks; with no shut gate left for it the unit puts it
+## down and fights as the others. Returns true while it handled the unit.
+static func _att_ram(sim, u: int, phase: int) -> bool:
 	var side: int = sim.u_side[u]
 	var kn := AP.of(sim, side)
-	BattleAI._set_mode(sim, u, A_RAM)
-	var g: int = sim.ai_gate[side]
-	if phase != SP_APPROACH or g < 0 or sim.g_state[g] != GATE_CLOSED:
-		if sim.u_order[u] == O_MOVE and sim.u_gtarget[u] >= 0:
-			BattleAI._order(sim, u, {"type": 3}, 22)  # halt
-		return
-	if kn[AP.S_RAM_WAIT] > 0 and sim.tick - sim.ai_t[side] < kn[AP.S_RAM_WAIT] \
+	var q: int = sim.u_ai_x[u] - 1
+	var g := _ram_target(sim, side, phase)
+	if q < 0 or q >= sim.n_eq or sim.q_kind[q] != EQ_RAM or g < 0 \
+			or (sim.q_state[q] != Q_GROUND and not (sim.q_state[q] == Q_CARRIED and sim.q_unit[q] == u)):
+		_release(sim, u)
+		return false
+	if sim.q_state[q] == Q_GROUND:
+		if sim.u_carry[u] >= 0:
+			BattleAI._order(sim, u, {"type": ORDER_DROP}, 24)
+			return true
+		if _engaged(sim, u):
+			return true
+		if sim.u_pick[u] != q:
+			var far := BattleAI._d(sim.u_cx[u] - sim.q_x[q], sim.u_cy[u] - sim.q_y[q]) > 40 * M
+			BattleAI._order(sim, u, {"type": ORDER_PICKUP, "equip": q, "run": 1 if far else 0}, 25)
+		return true
+	# Carrying it.
+	if phase == SP_APPROACH and kn[AP.S_RAM_WAIT] > 0 and sim.tick - sim.ai_t[side] < kn[AP.S_RAM_WAIT] \
 			and _tower_near_gate(sim, -1, g, 40 * M, false) >= 0:
 		var spot := _gate_point(sim, g, kn[AP.S_STAGE_OUT], 0)
 		_go_home(sim, u, spot.x, spot.y, FM.atan2_a(sim.g_y[g] - spot.y, sim.g_x[g] - spot.x), 10)
-		return
+		return true
 	if sim.u_gtarget[u] != g:
 		BattleAI._order(sim, u, {"type": ORDER_ATTACK, "target": -1, "gate": g, "run": 0}, 0)
 		BattleAI._count(sim, side, AP.C_SIEGE)
+	return true
 
 
 ## An enemy tower engine still working (crew, engine, shots) within r of
@@ -1577,32 +1762,11 @@ static func _tower_near_gate(sim, u: int, g: int, r: int, reach: bool) -> int:
 
 ## Time for the ladders: S_LADDER_AFTER into the approach, or sooner once
 ## gate g is under attack (below 85 % of its hit points), so the defenders
-## have two places to hold at once; never against a low wall
-## (S_LADDER_WALLS) while the engines work.
+## have two places to hold at once.
 static func _ladder_time(sim, side: int, g: int, kn: PackedInt32Array) -> bool:
-	if sim.city_walls < kn[AP.S_LADDER_WALLS] and _art_ready(sim, side):
-		return false  # the engines will have the gate down before the ladders are up
 	if sim.tick - sim.ai_t[side] >= kn[AP.S_LADDER_AFTER]:
 		return true
 	return sim.g_hp[g] * 100 < sim.g_hp0[g] * 85
-
-
-## Rank of ladder unit u among its side's ready infantry carrying ladders
-## (heavy, light, spears; then by index).
-static func _ladder_rank(sim, u: int) -> int:
-	if sim.u_cls[u] != UT.CLS_INF:
-		return 99
-	var key := _foot_key(sim, u)
-	var k := 0
-	for o in sim.n_units:
-		if o == u or sim.u_side[o] != sim.u_side[u] or sim.u_state[o] != U_READY or sim.u_lad[o] == 0:
-			continue
-		if sim.u_cls[o] != UT.CLS_INF:
-			continue
-		var ko := _foot_key(sim, o)
-		if ko < key or (ko == key and o < u):
-			k += 1
-	return k
 
 
 static func _foot_key(sim, u: int) -> int:
@@ -1616,19 +1780,20 @@ static func _foot_key(sim, u: int) -> int:
 	return 3
 
 
-## A ladder unit: on the ground outside, to the weakest stretch near gate g
-## (_ladder_spot); climbing, on; up, down into the town to the inside of the
-## nearest closed outer gate (it unbars it); inside with no closed gate
-## left, it storms.
+## A ladder unit (A_LADDER, u_ai_x = its set + 1): on the ground outside, to
+## its set and picks it up; carrying it, waits with the foot until ladder
+## time, then plants it on the weakest stretch near gate g (_ladder_spot)
+## and climbs; a follower climbs the set where it is planted. Once over,
+## down into the town to the inside of the nearest closed outer gate (it
+## unbars it); inside with no closed gate left, it storms.
 static func _escalade(sim, u: int, g: int, kn: PackedInt32Array) -> void:
-	BattleAI._set_mode(sim, u, A_LADDER)
 	var st: int = sim.u_stair[u]
 	if st == ST_LADDER or st == ST_LADDER_GO:
 		return
 	if _engaged(sim, u):
 		return
 	var inside: bool = sim.u_wall[u] > 0 or st == 1
-	if not inside:
+	if not inside and sim.u_lq[u] >= 0:
 		var ra: int = sim.reach_at(sim.u_ax[u], sim.u_ay[u])
 		for k in sim.n_gates:
 			if sim.g_cit[k] == 0 and ra >= 0 and sim.reach_at(sim.g_ix[k], sim.g_iy[k]) == ra:
@@ -1650,22 +1815,44 @@ static func _escalade(sim, u: int, g: int, kn: PackedInt32Array) -> void:
 		if sim.u_gtarget[u] != tg:
 			BattleAI._order(sim, u, {"type": ORDER_ATTACK, "target": -1, "gate": tg, "run": 1}, 0)
 		return
-	var p := _ladder_spot(sim, u, g, kn)
-	if p.z < 0:
+	var q: int = sim.u_ai_x[u] - 1
+	if q < 0 or q >= sim.n_eq or sim.q_kind[q] != EQ_LADDERS or sim.q_state[q] == Q_WRECKED \
+			or (sim.q_state[q] == Q_CARRIED and sim.q_unit[q] != u):
+		_release(sim, u)
 		return
+	if sim.q_state[q] == Q_GROUND:
+		if sim.u_carry[u] >= 0:
+			BattleAI._order(sim, u, {"type": ORDER_DROP}, 24)
+			return
+		if sim.u_pick[u] != q:
+			var far := BattleAI._d(sim.u_cx[u] - sim.q_x[q], sim.u_cy[u] - sim.q_y[q]) > 40 * M
+			BattleAI._order(sim, u, {"type": ORDER_PICKUP, "equip": q, "run": 1 if far else 0}, 25)
+		return
+	var p := Vector3i(sim.q_wx[q], sim.q_wy[q], sim.q_seg[q])
+	if sim.q_state[q] == Q_CARRIED:
+		if not _ladder_time(sim, sim.u_side[u], g, kn):
+			# Ladders ready: wait with the foot.
+			var rk := _rank(sim, u, func(o): return sim.u_cls[o] == UT.CLS_INF or sim.u_cls[o] == UT.CLS_PIKE)
+			var spot := _gate_point(sim, g, kn[AP.S_STAGE_OUT], _spread(rk.x, rk.y, kn[AP.S_FOOT_SPREAD]))
+			_go_home(sim, u, spot.x, spot.y, FM.atan2_a(sim.g_y[g] - spot.y, sim.g_x[g] - spot.x), 10)
+			return
+		p = _ladder_spot(sim, u, g, kn)
+		if p.z < 0:
+			return
 	if sim.u_order[u] == O_MOVE and BattleAI._d(sim.u_dx[u] - p.x, sim.u_dy[u] - p.y) < 4 * M:
 		return
-	var far := BattleAI._d(sim.u_cx[u] - p.x, sim.u_cy[u] - p.y) > 60 * M
+	var far2 := BattleAI._d(sim.u_cx[u] - p.x, sim.u_cy[u] - p.y) > 60 * M
 	BattleAI._order(sim, u, {"type": 1, "x": p.x, "y": p.y, "facing": sim.ws_dir[p.z],
-		"width": BattleAI._width(sim, u), "run": 1 if far else 0}, 2)
+		"width": BattleAI._width(sim, u), "run": 1 if far2 and sim.u_carry[u] < 0 else 0}, 2)
 	BattleAI._count(sim, sim.u_side[u], AP.C_SIEGE)
 
 
-## Where ladder unit u climbs: the middle of a land-wall stretch within 140
-## m of gate g with a foot it can reach, scored by metres from the gate plus
-## S_LADDER_DEF_W per defending man on the walls within 40 m of it and 60
-## per working tower within 60 m, a stretch another of ours is on (or bound
-## for) 200 m more. (x, y, stretch); stretch -1 none.
+## Where ladder unit u plants its set: the middle of a land-wall stretch
+## within 140 m of gate g with a foot it can reach, scored by metres from
+## the gate and from the unit plus S_LADDER_DEF_W per defending man on the walls within 40 m
+## of it and 60 per working tower within 60 m, a stretch another of ours is
+## on, bound for or has ladders planted on 200 m more. (x, y, stretch);
+## stretch -1 none.
 static func _ladder_spot(sim, u: int, g: int, kn: PackedInt32Array) -> Vector3i:
 	var best := Vector3i(0, 0, -1)
 	var best_s := 0
@@ -1677,7 +1864,8 @@ static func _ladder_spot(sim, u: int, g: int, kn: PackedInt32Array) -> Vector3i:
 		var dg := BattleAI._d(p.x - sim.g_x[g], p.y - sim.g_y[g])
 		if dg > 140 * M:
 			continue
-		var sc := dg / M
+		# (Carrying ladders is slow: the walk there counts as much again.)
+		var sc := dg / M + BattleAI._d(p.x - sim.u_cx[u], p.y - sim.u_cy[u]) / M
 		for o in sim.n_units:
 			if sim.u_state[o] != U_READY or o == u:
 				continue
@@ -1692,6 +1880,9 @@ static func _ladder_spot(sim, u: int, g: int, kn: PackedInt32Array) -> Vector3i:
 					sc += sim.u_alive[o] * kn[AP.S_LADDER_DEF_W]
 			elif sim.u_wall[o] == sg + 1 or ((sim.u_stair[o] == ST_LADDER_GO or sim.u_stair[o] == ST_LADDER) \
 					and sim.u_sseg[o] == sg):
+				sc += 200
+		for q in sim.n_eq:
+			if sim.q_state[q] == Q_PLANTED and sim.q_seg[q] == sg:
 				sc += 200
 		if best.z >= 0 and sc >= best_s:
 			continue
@@ -1722,7 +1913,7 @@ static func _tower(sim, u: int) -> void:
 		if sim.u_side[o] == sim.u_side[u] or sim.u_state[o] != U_READY or sim.u_alive[o] <= 0:
 			continue
 		var cls := 0
-		if sim.is_ram(o):
+		if sim.carrying(sim, o) == EQ_RAM:
 			cls = 3
 		elif sim.u_cls[o] == UT.CLS_ART:
 			cls = 2

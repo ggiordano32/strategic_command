@@ -70,6 +70,8 @@ static var BINDINGS: Array = [
 	{"id": "man_wall", "s": "battle", "label": "Walls (defending): up onto the nearest stretch, facing the enemy",
 		"touch": "Man the wall button (or tap the wall, a tower or the walkway)", "mouse": "Man the wall button, or click the wall",
 		"keys": [KEY_M]},
+	{"id": "drop", "s": "battle", "label": "Siege equipment: put down the ladders or the ram (pick up: tap the piece)",
+		"touch": "Drop button", "mouse": "Drop button", "keys": [KEY_X]},
 	{"id": "come_down", "s": "battle", "label": "Walls: down off the wall into the street inside",
 		"touch": "Come down button (or tap the ground)", "mouse": "Come down button, or click the ground", "keys": [KEY_M | KEY_MASK_SHIFT]},
 	{"id": "withdraw", "s": "battle", "label": "Withdraw the selected units",

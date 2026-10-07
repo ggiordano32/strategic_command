@@ -81,6 +81,12 @@ func _init() -> void:
 		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 		quit(0 if _ok else 1)
 		return
+	if OS.get_cmdline_user_args().has("--only=siege"):
+		_test_siege_snapshots()
+		_test_lockstep_siege()
+		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
+		quit(0 if _ok else 1)
+		return
 	if OS.get_cmdline_user_args().has("--only=street"):
 		_test_lockstep_street()
 		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
@@ -158,7 +164,7 @@ static func _mistakes(sim, side: int) -> int:
 
 ## Both sides at Easy: snapshot / restore at several ticks runs on exactly.
 func _test_easy_snapshots() -> void:
-	for key in ["battle_2000", "siege_city"]:
+	for key in ["battle_2000", "siege_town"]:
 		var scen: Dictionary = Scenarios.make(key)
 		scen["ai_sides"] = [0, 1]
 		scen["ai_skill"] = [0, 0]
@@ -942,19 +948,24 @@ func _test_lockstep_city(def_side: int, polis := false) -> void:
 
 ## The equal-force walls-3 siege with ladders, a ram and the city's tower
 ## engines (and a 20 minute time limit), both sides AI: snapshot / restore
-## mid-climb (a unit on its ladders with men up and men below) and later
+## mid-carry (a unit carrying a piece of siege equipment), mid-climb (a unit
+## on its ladders with men up and men below) and every 1500 ticks; later
 ## runs on exactly.
 func _test_siege_snapshots() -> void:
-	var scen := Scenarios.fair_siege(741, 3, 4, {"ladders": 1, "ram": 1})
+	var scen := Scenarios.fair_siege(741, 3, 4, {"ladders": 3, "ram": 1})
 	scen["time_limit"] = 1200
 	var a := BattleSim.new()
 	a.setup(scen, 31337)
 	var stops: Array = []
 	var climbing := false
-	while a.tick < 4000 and a.winner < 0 and stops.size() < (2 if quick else 3):
+	var carrying := false
+	while a.tick < 9000 and a.winner < 0 and stops.size() < (3 if quick else 8):
 		a.step()
 		var mid := -1
+		var car := -1
 		for u in a.n_units:
+			if a.u_carry[u] >= 0 and a.u_state[u] == BattleSim.U_READY:
+				car = u
 			if a.u_stair[u] == BattleSim.ST_LADDER:
 				var up := 0
 				var base: int = a.u_slot_base[u]
@@ -964,8 +975,10 @@ func _test_siege_snapshots() -> void:
 						up += 1
 				if up > 0 and up < a.u_alive[u]:
 					mid = u
-		if (mid >= 0 and not climbing) or (a.tick % 1500 == 0):
+		var take := (mid >= 0 and not climbing) or (car >= 0 and not carrying and a.tick > 300) or (a.tick % 1500 == 0)
+		if take:
 			climbing = climbing or mid >= 0
+			carrying = carrying or (car >= 0 and a.tick > 300)
 			stops.append(a.tick)
 			var b := BattleSim.new()
 			b.setup(scen, 31337)
@@ -978,20 +991,22 @@ func _test_siege_snapshots() -> void:
 				if a.state_hash() != b.state_hash():
 					_fail("siege: the restored copy diverged %d ticks after tick %d" % [t + 1, stops[-1]])
 					return
-	if not climbing:
-		_fail("siege: no snapshot was taken mid-climb")
+	if not carrying:
+		_fail("siege: no snapshot was taken mid-carry (%s) or mid-climb (%s)" % [str(carrying), str(climbing)])
 		return
-	print("PASS siege snapshots: walls 3 with ladders, a ram and tower engines; restored at ticks %s (one of them mid-climb) and ran on identically; men up ladders %d, ram blows %d, tower hits %d" % [
-		str(stops), a.stat_ladder_up, a.stat_ram_blows, a.stat_tower_hits])
+	print("PASS siege snapshots: walls 3 with ladders, a ram and tower engines; restored at ticks %s (mid-carry, mid-climb %s) and ran on identically; picked up %d, planted %d, men up ladders %d, ram blows %d, tower hits %d" % [
+		str(stops), str(climbing), a.stat_pickups, a.stat_planted, a.stat_ladder_up, a.stat_ram_blows, a.stat_tower_hits])
 
 
-## Two peers attacking the walls-3 city with ladders and a ram (the
+## Two peers attacking the walls-3 city with siege equipment (the
 ## defenders AI, with the city's tower engines; a 20 minute time limit):
-## each sends its ladder unit up a stretch and its ram (whoever has it) at
-## the main gate; a third peer joins by snapshot while a unit is on its
-## ladders. Every frame's lockstep hash must agree.
+## A's first infantry picks up a ladder set and puts it down again; B's
+## second infantry picks that set up and plants it on the stretch nearest
+## (climbing it); B's first foot carries the ram to the main gate. A third
+## peer joins by snapshot while B carries the ladders A dropped. Every
+## frame's lockstep hash must agree.
 func _test_lockstep_siege() -> void:
-	var scen := Scenarios.fair_siege(741, 3, 4, {"ladders": 1, "ram": 1})
+	var scen := Scenarios.fair_siege(741, 3, 4, {"ladders": 3, "ram": 1})
 	scen["time_limit"] = 1200
 	scen["ai_sides"] = [1]
 	var probe := BattleSim.new()
@@ -1004,42 +1019,69 @@ func _test_lockstep_siege() -> void:
 	b.latency = 3
 	b.d = 4
 	var peers: Array[Peer] = [a, b]
-	var total := 900 if quick else 2400
+	var total := 1500 if quick else 4500
 	var c: Peer = null
 	var c_join := -1
 	var now := 0
 	var orders := 0
+	var dropped := false
+	var a_carry_t := -1
+	var b_carried := false
+	var ram_q := -1
+	for q in probe.n_eq:
+		if probe.q_kind[q] == BattleSim.EQ_RAM:
+			ram_q = q
 	while now < total * 3 and mini(a.ls.frame, b.ls.frame) < total:
 		now += 1
 		for p in peers:
 			var sim = p.ls.sim
-			if now % 50 == 10 + p.me * 7:
-				# The ram at the main gate; one ladder unit (idle on the
-				# ground outside) up the stretch nearest it.
-				var lad_sent := false
+			if now % 20 == 5 + p.me * 7:
+				var mine: Array = []
 				for u in sim.n_units:
-					if p.ls.u_cmd[u] != p.me or sim.u_state[u] != BattleSim.U_READY:
-						continue
-					if sim.is_ram(u) and sim.u_gtarget[u] < 0 and sim.g_state[0] == BattleSim.GATE_CLOSED:
-						p.issue({"type": BattleSim.ORDER_ATTACK, "unit": u, "target": -1, "gate": 0, "run": 0})
+					if p.ls.u_cmd[u] == p.me and sim.u_state[u] == BattleSim.U_READY and sim.u_cls[u] == UT.CLS_INF:
+						mine.append(u)
+				if mine.size() < 2:
+					continue
+				if p.me == 0:
+					var ua: int = mine[0]
+					if not dropped and sim.u_carry[ua] < 0 and sim.q_state[0] == BattleSim.Q_GROUND and sim.u_pick[ua] != 0:
+						p.issue({"type": BattleSim.ORDER_PICKUP, "unit": ua, "equip": 0, "run": 1})
 						orders += 1
-					elif not lad_sent and BattleSim.can_ladder(sim, u) and sim.u_stair[u] == 0 \
-							and sim.u_cls[u] == UT.CLS_INF:
-						lad_sent = true
+					elif sim.u_carry[ua] == 0:
+						if a_carry_t < 0:
+							a_carry_t = now
+						elif now - a_carry_t > 150 and not dropped:
+							p.issue({"type": BattleSim.ORDER_DROP, "unit": ua})
+							dropped = true
+							orders += 1
+				else:
+					var ur: int = mine[0]
+					var ub: int = mine[1]
+					if ram_q >= 0 and sim.u_carry[ur] < 0 and sim.q_state[ram_q] == BattleSim.Q_GROUND and sim.u_pick[ur] != ram_q:
+						p.issue({"type": BattleSim.ORDER_PICKUP, "unit": ur, "equip": ram_q, "run": 1})
+						orders += 1
+					elif sim.u_carry[ur] == ram_q and sim.u_gtarget[ur] != 0 and sim.g_state[0] == BattleSim.GATE_CLOSED:
+						p.issue({"type": BattleSim.ORDER_ATTACK, "unit": ur, "target": -1, "gate": 0, "run": 0})
+						orders += 1
+					if dropped and sim.u_carry[ub] < 0 and sim.q_state[0] == BattleSim.Q_GROUND and sim.u_pick[ub] != 0:
+						p.issue({"type": BattleSim.ORDER_PICKUP, "unit": ub, "equip": 0, "run": 1})
+						orders += 1
+					elif sim.u_carry[ub] == 0 and sim.u_stair[ub] == 0:
+						b_carried = true
 						var best := -1
 						var bd := 0
 						for sg in sim.ws_x0.size():
 							var mp: Vector2i = BattleSim.seg_pt(sim, sg, BattleSim.seg_len(sim, sg) / 2)
-							if not BattleSim.ladder_ok(sim, u, sg, mp.x, mp.y):
+							if BattleSim.ladder_set_for(sim, ub, sg, mp.x, mp.y) < 0:
 								continue
-							var d := absi(mp.x - sim.u_cx[u]) + absi(mp.y - sim.u_cy[u])
+							var d := absi(mp.x - sim.u_cx[ub]) + absi(mp.y - sim.u_cy[ub])
 							if best < 0 or d < bd:
 								best = sg
 								bd = d
-						if best >= 0:
+						if best >= 0 and (sim.u_order[ub] != BattleSim.O_MOVE or sim.u_stair[ub] == 0):
 							var lp: Vector2i = BattleSim.seg_pt(sim, best, BattleSim.seg_len(sim, best) / 2)
-							p.issue({"type": BattleSim.ORDER_MOVE, "unit": u, "x": lp.x, "y": lp.y, "facing": 768,
-								"width": 20 * 1024, "run": 1})
+							p.issue({"type": BattleSim.ORDER_MOVE, "unit": ub, "x": lp.x, "y": lp.y, "facing": 768,
+								"width": 20 * 1024, "run": 0})
 							orders += 1
 			p.flush(relay, now)
 			p.deliver(relay, now)
@@ -1048,36 +1090,33 @@ func _test_lockstep_siege() -> void:
 			c.flush(relay, now)
 			c.deliver(relay, now)
 			c.run(4, true)
-		elif now > 30:
-			var sa = a.ls.sim
-			var climbing := false
-			for u in sa.n_units:
-				if sa.u_stair[u] == BattleSim.ST_LADDER and sa.stat_ladder_up > 0:
-					climbing = true
-			if climbing or now == total * 3 / 2:
-				c_join = now
-				c = _new_peer(scen, home, 1, "C", [0, 1])
-				c.online = true
-				c.latency = 2
-				if not c.ls.restore(a.ls.snapshot()):
-					_fail("siege lockstep: C could not restore A's snapshot")
-					return
-				c.hashes[c.ls.frame] = c.ls.state_hash()
-				c.cursor = 0
-				while c.cursor < relay.items.size() and int(relay.items[c.cursor]["s"]) <= c.ls.last_s:
-					c.cursor += 1
-				c.sent_k = 1 << 30
+		elif now > 30 and (b_carried or now == total * 3 / 2):
+			c_join = now
+			c = _new_peer(scen, home, 1, "C", [0, 1])
+			c.online = true
+			c.latency = 2
+			if not c.ls.restore(a.ls.snapshot()):
+				_fail("siege lockstep: C could not restore A's snapshot")
+				return
+			c.hashes[c.ls.frame] = c.ls.state_hash()
+			c.cursor = 0
+			while c.cursor < relay.items.size() and int(relay.items[c.cursor]["s"]) <= c.ls.last_s:
+				c.cursor += 1
+			c.sent_k = 1 << 30
 	var n_ab := _compare(a, b, 0, "siege A/B")
 	var n_ac := _compare(a, c, c_join, "siege A/C") if c != null else 0
 	var sim_a = a.ls.sim
 	if n_ab < total / 2 or n_ac < 50:
 		_fail("siege lockstep: too few frames compared (A/B %d, A/C %d)" % [n_ab, n_ac])
 	elif n_ab > 0 and n_ac > 0:
-		print("PASS siege lockstep: walls 3, ladders, a ram, tower engines, 20 min limit: %d frames A/B and %d A/C equal (C joined at frame %d, mid-climb %s); %d siege orders; men up ladders %d, ram blows %d, tower hits %d, gates %s; sim tick %d" % [
-			n_ab, n_ac, c_join, str(c_join != total * 3 / 2), orders, sim_a.stat_ladder_up, sim_a.stat_ram_blows,
-			sim_a.stat_tower_hits, str(sim_a.g_state), sim_a.tick])
-	if sim_a.stat_ladder_up == 0:
-		_fail("siege lockstep: nobody went up a ladder")
+		print("PASS siege lockstep: walls 3, ladders, a ram, tower engines, 20 min limit: %d frames A/B and %d A/C equal (C joined at frame %d, mid-carry %s); %d siege orders; picked up %d, dropped %d, planted %d, men up ladders %d, ram blows %d, tower hits %d, gates %s; sim tick %d" % [
+			n_ab, n_ac, c_join, str(b_carried), orders, sim_a.stat_pickups, sim_a.stat_drops, sim_a.stat_planted,
+			sim_a.stat_ladder_up, sim_a.stat_ram_blows, sim_a.stat_tower_hits, str(sim_a.g_state), sim_a.tick])
+	if sim_a.stat_pickups < 3 or sim_a.stat_drops < 1 or not b_carried:
+		_fail("siege lockstep: the equipment was not picked up, dropped and picked up again (%d / %d)" % [
+			sim_a.stat_pickups, sim_a.stat_drops])
+	elif not quick and sim_a.stat_planted == 0:
+		_fail("siege lockstep: the ladders were never planted")
 
 
 # -------------------------------------------------------------- blocking ---

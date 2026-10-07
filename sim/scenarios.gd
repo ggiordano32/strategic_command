@@ -17,6 +17,8 @@ const FACE_DOWN := 256  # +y
 const FACE_RIGHT := 0
 const FACE_LEFT := 512
 const ORDER_ATTACK := 2
+const EQ_LADDERS := 1   # BattleSim's siege equipment kinds (scenario "equip")
+const EQ_RAM := 2
 
 const IDS: Array[String] = ["skirmish", "battle_2000", "battle_4000",
 	"bench_2000", "bench_4000", "bench_4000_hills",
@@ -453,10 +455,11 @@ static func _lay_row(units: Array, row: Array, back: int, gap: int, placed: Arra
 ## {"scenario", "order": [[0 attacker / 1 defender, index], ...] in sim unit
 ## order, "layout": the generator's layout (metres, final frame)}.
 ## equip: the attackers' siege equipment (docs/DESIGN.md "Siege equipment
-## and wall towers"): "ladders": 1 gives every attacking infantry and
-## missile unit ladders (only against walls); "ram": 1 adds a battering ram
-## behind the army (after every other unit, so `order` is unchanged; not in
-## it). The walls-2/3 city's tower engines are added by the sim.
+## and wall towers"): {"ladders": sets of ladders, "ram": rams}, objects on
+## the ground behind the middle of the attackers' line, 12 m apart (the
+## rams in the middle), in the scenario's "equip" list (BattleSim
+## EQ_LADDERS / EQ_RAM, x_m, y_m); only against walls. The walls-2/3
+## city's tower engines are added by the sim.
 static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Array, def_side: int,
 		ai_sides: Array, equip: Dictionary = {}) -> Dictionary:
 	var c := MapGen.city_params(city)
@@ -487,11 +490,7 @@ static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Arra
 		var i: int = p["i"]
 		var x := ax + int(p["x"]) * sgn
 		var y := ay + int(p["back"]) * sgn
-		var ua := unit(att_side, int(att[i][0]), int(att[i][1]), x, y, aface)
-		var acl := UT.cls(int(att[i][0]))
-		if walled and int(equip.get("ladders", 0)) != 0 and (acl == UT.CLS_INF or acl == UT.CLS_MISSILE):
-			ua["ladders"] = 1
-		units.append(ua)
+		units.append(unit(att_side, int(att[i][0]), int(att[i][1]), x, y, aface))
 		order.append([0, i])
 	# Defenders.
 	var gates: Array = []
@@ -644,12 +643,37 @@ static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Arra
 		var tcx: int = lay["cx"]
 		var tcy: int = lay["cy"]
 		zones.append([def_side, 0, maxi(tcx - r0, 0), maxi(tcy - r0, 0), mini(tcx + r0, w), mini(tcy + r0, h)])
-	if walled and int(equip.get("ram", 0)) != 0:
-		# The ram: behind the middle of the attackers' line (last of all units).
-		var back := int(al["depth"]) + 12
-		units.append(unit(att_side, UT.RAM, UT.size_of(UT.RAM), ax, clampi(ay + back * sgn, 10, h - 10), aface, 4))
-	return {"scenario": {"width_m": w, "height_m": h, "ai_sides": ai_sides, "units": units, "terrain": t2,
-		"deploy_zones": zones}, "order": order, "layout": lay}
+	var sc := {"width_m": w, "height_m": h, "ai_sides": ai_sides, "units": units, "terrain": t2,
+		"deploy_zones": zones}
+	if walled:
+		var eq_l := clampi(int(equip.get("ladders", 0)), 0, 8)
+		var eq_r := clampi(int(equip.get("ram", 0)), 0, 2)
+		if eq_l + eq_r > 0:
+			# Behind the middle of the attackers' line, in a row 12 m apart.
+			var row: Array = []
+			for k in eq_l / 2 + eq_l % 2:
+				row.append(EQ_LADDERS)
+			for k in eq_r:
+				row.append(EQ_RAM)
+			for k in eq_l / 2:
+				row.append(EQ_LADDERS)
+			var back := int(al["depth"]) + 12
+			var ey := clampi(ay + back * sgn, 10, h - 10)
+			var eqs: Array = []
+			var n_e := row.size()
+			for k in n_e:
+				var ex := clampi(ax + (k * 2 - (n_e - 1)) * 6, 10, w - 10)
+				eqs.append([int(row[k]), ex, ey])
+			# Index order: the ladder sets first (left to right), then the rams.
+			var out_eq: Array = []
+			for e in eqs:
+				if int(e[0]) == EQ_LADDERS:
+					out_eq.append(e)
+			for e in eqs:
+				if int(e[0]) == EQ_RAM:
+					out_eq.append(e)
+			sc["equip"] = out_eq
+	return {"scenario": sc, "order": order, "layout": lay}
 
 
 ## Deployment zones for a field battle (metres): each side's part of the

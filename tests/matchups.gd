@@ -1553,7 +1553,7 @@ func _fair_sieges() -> void:
 			for row in 2:
 				if not rows_only.is_empty() and not rows_only.has(row):
 					continue
-				var eq := {"ladders": 1, "ram": 1} if row == 0 else {}
+				var eq := {"ladders": 3, "ram": 1} if row == 0 else {}  # (a siege of two turns)
 				var aw := 0
 				var dr := 0
 				var withdrew := 0

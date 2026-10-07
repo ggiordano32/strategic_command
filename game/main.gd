@@ -959,7 +959,7 @@ func _start_siege(params: Array) -> void:
 	var eq := int(params[8]) if params.size() > 8 else 0
 	var equip := {}
 	if eq >= 1:
-		equip["ladders"] = 1
+		equip["ladders"] = 3
 	if eq >= 2:
 		equip["ram"] = 1
 	b.custom_scenario = Scenarios.siege_test(params[0], params[1], params[2], params[3], params[4], params[5],

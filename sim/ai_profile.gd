@@ -274,7 +274,10 @@ const S_BREACH_HOLD := 216     # defenders hold the inside of a breached gate: f
 const S_BREACH_LAT := 217      # ... their posts this far along the wall from the gate's middle
 const S_BREACH_REACT := 218    # ... they attack attackers this close to their post
 const S_GUARD_JOIN := 219      # ... and the guards of gates with no attacker this near come to the breach (0: they stay)
-const N_KNOBS := 220
+# Siege equipment as objects, shut inner gates (docs/AI.md 15).
+const S_LADDER_FOLLOW := 220   # attacking infantry sent up a planted ladder set after its own party
+const S_CIT_WAIT := 221        # attackers before a shut gate nobody can hurt wait this far from it
+const N_KNOBS := 222
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
@@ -422,7 +425,7 @@ const KNOBS: Array = [
 	[S_HACKERS, 4, 2, 2],
 	[S_LADDER_UNITS, 1, 2, 3],
 	[S_LADDER_DEF_W, 0, 1, 3],
-	[S_LADDER_AFTER, 0, 1200, 1200],
+	[S_LADDER_AFTER, 0, 300, 300],
 	[S_TOWER_FOCUS, 0, 1, 1],
 	[S_COUNTER_BAT, 40 * M, 60 * M, 90 * M],
 	[S_ESC_REPLY, 0, 1, 1],
@@ -432,6 +435,8 @@ const KNOBS: Array = [
 	[S_BREACH_LAT, 14 * M, 14 * M, 14 * M],
 	[S_BREACH_REACT, 22 * M, 22 * M, 22 * M],
 	[S_GUARD_JOIN, 0, 0, 120 * M],
+	[S_LADDER_FOLLOW, 0, 1, 1],
+	[S_CIT_WAIT, 50 * M, 50 * M, 50 * M],
 	[S_STORM_R, 45 * M, 45 * M, 45 * M],
 	[S_SPREAD, 25 * M, 25 * M, 25 * M],
 	[S_STALL_TICKS, 1500, 1500, 1500],

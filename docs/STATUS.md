@@ -1,6 +1,6 @@
 # Strategic Command — Status and Handover
 
-Last updated: 2026-10-07 (cities worth defending, part 2a: units do not pass through each other, street fights; part 1: tower engines, ladders, a ram, hard gates, the battle time limit; earlier 2026-10-06: deployment phase and custom battles built; the continuous campaign overworld built, state format 6; free campaign movement built; sieges and battle odds built on the campaign map; settlement variety built 2026-10-05). Read this first, then `docs/DESIGN.md` for the full
+Last updated: 2026-10-07 (cities worth defending, part 2b: siege equipment as objects, the ladder shuffle and wall-punching bugs; part 2a: units do not pass through each other, street fights; part 1: tower engines, ladders, a ram, hard gates, the battle time limit; earlier 2026-10-06: deployment phase and custom battles built; the continuous campaign overworld built, state format 6; free campaign movement built; sieges and battle odds built on the campaign map; settlement variety built 2026-10-05). Read this first, then `docs/DESIGN.md` for the full
 design and `CLAUDE.md` for working rules. Update this file whenever a
 milestone lands or the plan changes.
 
@@ -34,6 +34,7 @@ anti-cheat and original art only if it proves fun.
 | Deployment phase and custom battles (solo, co-op, head-to-head) | Built 2026-10-06 on a branch; tested headless, end to end and windowed; not yet played on phones |
 | Cities worth defending, part 1 (tower engines, ladders, ram, hard gates, battle time limit) | Built 2026-10-07, **not committed**; tested headless and windowed; not yet played on phones |
 | Cities worth defending, part 2a (units do not pass through each other, street fights) | Built 2026-10-07, **not committed**; tested headless (and the windowed input tests); not yet played on phones |
+| Cities worth defending, part 2b (siege equipment as objects; ladder and wall-punching fixes) | Built 2026-10-07, **not committed**; tested headless, windowed input test, live_e2e; not yet played on phones |
 | 6. Depth (siege towers, tech, more factions) | Not started |
 
 ### What exists
@@ -77,6 +78,66 @@ anti-cheat and original art only if it proves fun.
 - The touch control scheme works; the user likes it.
 
 ### In progress right now
+
+**Cities must be worth defending, part 2b: siege equipment as objects
+(built 2026-10-07).** As built in DESIGN.md "Siege equipment and wall
+towers" (the "Siege equipment as objects" and "No blows at walls"
+bullets). In short:
+- Ladders (sets of 5) and the ram are objects on the ground behind the
+  attackers' line (scenario `equip`; campaign: 2 sets after a turn of
+  siege, 3 sets and a ram after two; custom Ladders: 3 sets, Ram: 1;
+  sandbox kit 1 / 2 likewise). Any attacking foot unit picks one up (tap
+  it; `ORDER_PICKUP`), carries it slowly (no running, no attacking, 60 %
+  melee), puts it down (Drop button, X; `ORDER_DROP`; routing leaves it);
+  ladders are planted on the stretch the carriers are sent to (for the
+  battle) and any infantry / missile unit ordered onto that stretch then
+  climbs them; the ram's carriers batter a gate (outer, or the citadel's
+  from the town) and put it down when it breaks; towers can wreck the ram
+  (2,500 hp). The RAM unit type and the per-unit ladders flag are gone;
+  co-op: no commander for equipment (whoever's unit carries it), only the
+  towers' trailing home entry. UI: pieces drawn on the ground / carried /
+  planted, previews "PICK UP LADDERS / THE RAM", "PLANT LADDERS HERE",
+  "RAM THE GATE", cards "carrying ladders / ram", refusals, unit book.
+  AI (every level): `_assign_equip` gives the ram to the least street-worthy
+  foot (pikes first) and ladder sets to the heaviest infantry (S_LADDER_UNITS),
+  `S_LADDER_FOLLOW` more infantry climb each planted set, ladder spots are
+  scored by the walk too, `S_LADDER_AFTER` 300 (was 1200: carrying is slow).
+- Bug B fixed (the unit marched along the wall to the foot and shuffled: its
+  anchor never "arrived", its men could not form between it and the wall,
+  it regrouped; a foot by a tower got no clear line to a path node): the
+  climb starts within 8 m of the foot, units march to an approach point out
+  from it. `tests/ladder_probe.gd`: 108 maps (5 plans x 4 sites x coast x
+  walls 1-3), 2,432 points the rule allows, 2,432 climbed, 0 failed; 250
+  refused (225 tower / gate / sea, 21 citadel, 4 no ground out there).
+- Bug C fixed: walls-2/3 gates do not yield to swords (order rule, sim and
+  AI); men drop a target they cannot reach within two ticks (was eight;
+  1,758 man-ticks "fighting across a wall" in the reproduction -> ~0); the
+  AI facing a shut citadel gate brings the ram, hacks only a walls-0/1 gate,
+  else waits 50 m out (`S_CIT_WAIT`). Determinism `--only=equipment`
+  (scripted pick-up / drop / plant / climb / ram with snapshot mid-carry;
+  the shut inner gate), lockstep `--only=siege` (late joiner mid-carry, a
+  set dropped by one peer picked up by the other).
+- Measured (`--only=fair-sieges`, both Average, 10 seeds, ladders + ram
+  row now 3 sets and a ram; attacker wins, mean / max min; da9ff24 ->
+  now): ring walls 1 100 % (7.2 / 8.9) -> 100 % (7.2 / 8.0), walls 2 60 %
+  -> 50 % (8.8 / 10.7), walls 3 20 % -> 20 %, 10 % draws (10.1 / 15.0);
+  polis walls 1 90 % -> 80 %, 20 % draws (11.0 / 15.0), walls 2 70 % ->
+  50 % (11.0 / 13.9), walls 3 10 % -> 20 %, 10 % draws (11.9 / 15.0).
+  Artillery only: ring 100 / 20 / 40 % (was 100 / 60 / 10), polis 100 /
+  40 / 0 % (was 100 / 30 / 0). Walls 3 at 30 min, ladders + ram /
+  artillery: ring 20 / 40 %, polis 30 / 10 %. Gates at walls 2-3 now fall
+  mostly to the ram (walls 3: 10 of 10). No tuning was done (scope).
+  Field battles hash exactly as before (golden digests), so `--fair` is
+  unchanged. Tick cost (same session, alternating, worst of two runs):
+  bench_4000_city mean 3.35-3.44 -> 3.26-3.27 ms, p95 5.5 -> 5.8-6.0, worst
+  7.4 -> 8.3-9.3; polis 3.19-3.28 -> 3.05-3.07, p95 5.6-5.8 -> 6.6-6.7,
+  worst 7.0-9.3 -> 10.1-12.1; castrum 3.48-3.56 -> 2.85-2.90, p95 6.7-6.8
+  -> 6.0-6.2, worst 8.5-8.8 -> 8.7-9.5 (different battles: no hacking at
+  iron gates, the ram; the two-tick reach recheck alone costs ~0.05 ms).
+- **Next (decided): part 2c, the walls-1 defender layout (former D: hold the
+  attacked gate's inner mouth early, quiet gates' guards to the breach,
+  plaza reserve) and the fair-sieges calibration**; then artillery engines
+  as pick-up-able equipment with crews as men (decided with the user).
 
 **Cities must be worth defending, part 2a: units do not pass through each
 other (built 2026-10-07).** As built in DESIGN.md "Unit blocking and street
@@ -879,6 +940,24 @@ fixes are all landed; see "Where we are"):
       ratios (a walls term for the armies inside is a prediction of the
       sim, not a bonus), turn the campaign AI's shelter knob back on and
       re-run the AI tables.
+4b. **Battle screen on the overworld** (agreed 2026-10-07, next build
+   after part 2b, before part 2c): one screen in two states, used for
+   auto-resolve and fought battles alike. *Pre-battle* (replaces the
+   auto / fight choice): a map preview at the top (the settlement drawn
+   from its seed via `city_preview.gd`, or the field's terrain kind and
+   woods, with both deployment edges marked); both sides' compositions
+   as rows of unit cards (icon, men, tier) with a **health bar under
+   each card** (current men vs full strength), attackers left, defenders
+   right, grouped by army and faction, garrison and support armies
+   included; a siege equipment line (ladder sets, ram, towers); the odds
+   bar and the existing buttons (Auto-resolve / Fight / siege choices).
+   *Result* (after auto-resolve, and after a fought battle): a big
+   VICTORY / DEFEAT / DRAW with the one-line outcome (city taken / held,
+   army destroyed, withdrew), labelled "Auto-resolved" or "Fought"; below
+   it, per side, the same card rows with survivors vs fielded as the
+   health bar (lost part marked) and kills beside each unit, totals at
+   the foot; Continue. Fought battles take the sim's tallies, auto-resolve
+   the formula's per-unit losses.
 5. **Elephants**, then camels, chariots, war dogs.
 6. **AI competency** (`docs/AI.md`): Easy / Average / Skilled on two
    independent axes (battle, campaign) plus personality, no cheats ever;
@@ -978,9 +1057,10 @@ godot --headless --script res://tests/matchups.gd -- --only=plans --seeds=8 [--p
 godot --headless --script res://tests/matchups.gd -- --only=fair-sieges [--plans=4 --walls=3 --rows=0 --time-limit=1800 --tune=WALL_COVER=0,25,45,70]
 #   equal-force sieges, ladders + ram (row 0) or artillery only (row 1); shard by plan / walls / row
 godot --headless --script res://tests/probe_maps.gd -- --scen=siege_town --png=1500 --out=/tmp  # siege debug pictures
+godot --headless --script res://tests/ladder_probe.gd [-- --walls=2 --plans=4 --quick]   # every stretch climbable as the preview says (~7 min)
 godot --headless --script res://tools/city_dump.gd -- --out=/tmp --seed=1234   # generated settlements to PNG
 # Sandbox URL / command line: --siege=seed:level:walls[:ground[:kind[:defend[:plan[:coast[:equip[:time]]]]]]], --ground=N, --no-trees
-#   (equip 0 none, 1 ladders, 2 ladders and a ram; time = battle time limit in s)
+#   (equip 0 none, 1 three ladder sets, 2 three ladder sets and a ram; time = battle time limit in s)
 godot --script res://tests/input_test.gd        # needs a window
 tools/check_scripts.sh                           # GDScript warnings as errors (in a scratch copy of the
                                                  # project: safe while other Godot runs use this checkout)

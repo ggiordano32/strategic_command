@@ -293,9 +293,13 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 			_draw_slope_hint(sim.u_h[u], sim.height_at(_v(u, "dx"), _v(u, "dy")),
 				_v(u, "dx") - sim.u_cx[u], _v(u, "dy") - sim.u_cy[u], d + Vector2(r, r * 1.2),
 				sim.u_cx[u], sim.u_cy[u])
-			if _v(u, "gtarget") >= 0:
+			if _v(u, "pick") >= 0 and _v(u, "pick") < sim.n_eq:
+				var ptxt := "PICK UP THE RAM" if sim.q_kind[_v(u, "pick")] == BattleSim.EQ_RAM else "PICK UP LADDERS"
+				draw_string(ThemeDB.fallback_font, d + Vector2(r, -r * 1.5), ptxt,
+					HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), Color(1.0, 0.8, 0.45))
+			elif _v(u, "gtarget") >= 0:
 				var gtxt := "BREAK THE GATE"
-				if UT.stat(ty, "ram") != 0:
+				if BattleSim.carrying(sim, u) == BattleSim.EQ_RAM:
 					gtxt = "RAM THE GATE"
 				elif sim.gate_frame(_v(u, "gtarget"), _v(u, "dx"), _v(u, "dy")).y < 0:
 					gtxt = "UNBAR THE GATE"  # ladder men inside the walls
@@ -818,6 +822,8 @@ func _draw_wall_plan(u: int, wp: Dictionary, lw: float, primary: bool) -> void:
 	if primary and wp["mode"] != "hold":
 		var txt: String = {"up": "UP BY THE STAIR", "down": "DOWN BY THE STAIR", "along": "ALONG THE WALL",
 			"ladder": "UP BY LADDERS"}.get(wp["mode"], "")
+		if wp["mode"] == "ladder" and bool(wp.get("plant", false)):
+			txt = "PLANT LADDERS HERE"
 		if wp["mode"] == "climb":
 			var up := 0
 			var base: int = sim.u_slot_base[u]
@@ -835,33 +841,57 @@ func _draw_wall_plan(u: int, wp: Dictionary, lw: float, primary: bool) -> void:
 			HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), COL_WALL)
 
 
-## Siege gear (view only): the ram's roofed shed over its crew, and the
-## ladders of units climbing a wall.
+## Siege gear (view only): the attackers' ladder sets and rams, on the
+## ground, carried (at the carriers' front, along their facing) or planted
+## against a wall (five ladders, rails and rungs); a wrecked ram as wreckage.
 func _draw_siege_gear(lw: float) -> void:
-	for u in sim.n_units:
-		if sim.u_alive[u] <= 0 or sim.u_state[u] >= BattleSim.U_DESTROYED:
-			continue
-		if sim.is_ram(u):
-			var c := to_px(sim.u_cx[u], sim.u_cy[u])
-			var ang: float = sim.u_face[u] * TAU / 1024.0
-			var fwd := Vector2(cos(ang), sin(ang)) * px_per_m
-			var side := Vector2(-fwd.y, fwd.x)
+	var wood := Color(0.55, 0.38, 0.2, 1.0)
+	var dark := Color(0.2, 0.12, 0.05, 0.95)
+	for q in sim.n_eq:
+		var st: int = sim.q_state[q]
+		var c := to_px(sim.q_x[q], sim.q_y[q])
+		var ang := 0.0
+		var u: int = sim.q_unit[q]
+		if st == BattleSim.Q_CARRIED and u >= 0:
+			ang = sim.u_face[u] * TAU / 1024.0
+		elif st == BattleSim.Q_GROUND or st == BattleSim.Q_WRECKED:
+			ang = (sim.q_x[q] / 1024 % 7) * 0.4  # lying a little askew
+		var fwd := Vector2(cos(ang), sin(ang)) * px_per_m
+		var side := Vector2(-fwd.y, fwd.x)
+		if sim.q_kind[q] == BattleSim.EQ_RAM:
+			if st == BattleSim.Q_CARRIED:
+				c -= fwd * 2.0  # (its head at the carriers' front)
 			var pts := PackedVector2Array([c + fwd * 3.5 + side * 1.4, c + fwd * 3.5 - side * 1.4,
 				c - fwd * 3.0 - side * 1.4, c - fwd * 3.0 + side * 1.4])
-			draw_colored_polygon(pts, Color(0.45, 0.3, 0.16, 0.9))
+			var col := Color(0.45, 0.3, 0.16, 0.9) if st != BattleSim.Q_WRECKED else Color(0.25, 0.2, 0.15, 0.7)
+			draw_colored_polygon(pts, col)
 			pts.append(pts[0])
-			draw_polyline(pts, Color(0.2, 0.12, 0.05, 0.95), lw)
-			draw_line(c - fwd * 3.0, c + fwd * 4.6, Color(0.3, 0.2, 0.1, 1.0), lw * 2.0)  # the beam's head
-		elif sim.u_stair[u] == BattleSim.ST_LADDER:
-			var n_l: int = maxi(BattleSim.ladders_of(sim, u), 1)
-			var dir: float = sim.ws_dir[sim.u_sseg[u]] * TAU / 1024.0
+			draw_polyline(pts, dark, lw)
+			if st == BattleSim.Q_WRECKED:
+				draw_line(pts[0], pts[2], dark, lw * 1.5)
+				draw_line(pts[1], pts[3], dark, lw * 1.5)
+			else:
+				draw_line(c - fwd * 3.0, c + fwd * 4.6, Color(0.3, 0.2, 0.1, 1.0), lw * 2.0)  # the beam's head
+			continue
+		if st == BattleSim.Q_PLANTED:
+			var dir: float = sim.ws_dir[sim.q_seg[q]] * TAU / 1024.0
 			var inw := -Vector2(cos(dir), sin(dir)) * px_per_m * 3.5
 			var side2 := Vector2(-sin(dir), cos(dir)) * px_per_m * 0.45
-			for k in n_l:
-				var f: Vector2i = sim._ladder_k_foot(u, k, n_l)
+			for k in BattleSim.LADDER_SET:
+				var f: Vector2i = sim.set_ladder_foot(q, k)
 				var fp := to_px(f.x, f.y)
 				for rail in [-1.0, 1.0]:
-					draw_line(fp + side2 * rail, fp + side2 * rail + inw, Color(0.55, 0.38, 0.2, 1.0), lw)
-				for q in 5:
-					var rq := fp + inw * (0.15 + 0.18 * q)
-					draw_line(rq - side2, rq + side2, Color(0.55, 0.38, 0.2, 1.0), lw * 0.8)
+					draw_line(fp + side2 * rail, fp + side2 * rail + inw, wood, lw)
+				for r in 5:
+					var rq := fp + inw * (0.15 + 0.18 * r)
+					draw_line(rq - side2, rq + side2, wood, lw * 0.8)
+			continue
+		# A bundle of five ladders (on the ground or on the carriers' shoulders).
+		if st == BattleSim.Q_CARRIED:
+			c -= fwd * 1.5
+		for k in 3:
+			var o := side * (float(k) - 1.0) * 0.7
+			draw_line(c - fwd * 3.0 + o, c + fwd * 3.0 + o, wood, lw * 1.3)
+		for r in 6:
+			var rq := c + fwd * (-2.6 + r * 1.04)
+			draw_line(rq - side * 0.9, rq + side * 0.9, wood, lw * 0.7)

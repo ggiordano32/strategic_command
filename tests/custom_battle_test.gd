@@ -71,20 +71,22 @@ func _init() -> void:
 				_fail("%s: unit %d of side %d has player %d" % [name, i, side, int(home[i])])
 				break
 		_run(name, a)
-	# Siege equipment and the time limit reach the scenario (the ram after
-	# every army unit, Player 1's; ladders on the attacking foot).
+	# Siege equipment and the time limit reach the scenario: equipment
+	# objects (CS.LADDER_SETS sets of ladders and a ram), not units, so no
+	# home entry of their own (only the towers' trailing one).
 	var sb := CS.build(storm)
 	var lad := 0
-	var ram := -1
-	for i in (sb["scenario"]["units"] as Array).size():
-		var ud: Dictionary = sb["scenario"]["units"][i]
-		lad += int(ud.get("ladders", 0))
-		if int(ud["type"]) == UT.RAM:
-			ram = i
-	if lad == 0 or ram != (sb["scenario"]["units"] as Array).size() - 1 or int(sb["home"][ram]) != 0 \
+	var ram := 0
+	for e in (sb["scenario"].get("equip", []) as Array):
+		if int(e[0]) == BattleSim.EQ_LADDERS:
+			lad += 1
+		elif int(e[0]) == BattleSim.EQ_RAM:
+			ram += 1
+	var n_sc: int = (sb["scenario"]["units"] as Array).size()
+	if lad != CS.LADDER_SETS or ram != 1 or (sb["home"] as Array).size() != n_sc + 1 \
 			or int(sb["scenario"].get("time_limit", 0)) != 1800:
-		_fail("storm: ladders %d, ram at %d (home %s), time limit %s" % [lad, ram, str(sb["home"][maxi(ram, 0)]),
-			str(sb["scenario"].get("time_limit", 0))])
+		_fail("storm: %d ladder sets, %d rams, %d home entries for %d units, time limit %s" % [lad, ram,
+			(sb["home"] as Array).size(), n_sc, str(sb["scenario"].get("time_limit", 0))])
 	# Checks.
 	var bad := CS.default_setup(1)
 	bad["sides"][1]["armies"] = []
@@ -133,9 +135,6 @@ func _run(name: String, b: Dictionary) -> void:
 				break
 	if (b["home"] as Array).size() > n_scn:
 		var def_side: int = sim.city_def
-		for u in n_scn:
-			if sim.u_type[u] == UT.RAM and ls.u_home[u] < 0:
-				_fail("%s: the ram has no commander" % name)
 		var lead := -1
 		for u in n_scn:
 			if int(sc["units"][u]["side"]) == def_side and ls.u_home[u] >= 0:

@@ -1452,32 +1452,49 @@ the view (`game/battle.gd`, `game/order_preview.gd`, `game/overlay.gd`,
   player gets its card like a battery's (no Deploy / Refill). It does not
   count toward a side's standing units (`_check_winner`) or the town-lost
   count.
-- **Ladders** (scenario unit key `ladders`: 1, `u_lad`): an attacking
-  infantry or missile unit (not pikes, horses, engines or the ram) ordered
-  onto a stretch of wall from outside (`wall_snap`) marches to the foot of
-  the wall there (`ladder_foot`: straight out from the walkway point past
-  the outer face; refused for a tower, gate, sea wall or a citadel's
-  stretch, or ground it cannot reach), `u_stair` 5; there it takes the
-  stretch (its wall line) and climbs, `u_stair` 4: a ladder for every 20
-  men (1-5), 2.5 m apart, each bringing up a man every `LADDER_TICKS` 2 /
-  3 / 4 s (walls 1 / 2 / 3); the next man below in slot order standing
-  within 8 m of the foot steps onto the walkway above his ladder. Men
-  below queue behind their ladder (ground only), men up keep to walkway
-  and towers; on the walkway they fight the defenders man to man (melee
-  reach along walkway and towers in battles with siege gear). Climbing,
-  the unit refuses orders but fire, run and withdraw; once every man is up
-  it is a wall unit: along its stretch, or down a stair into the town.
-  Withdrawing or routing, attackers on a wall come back down their ladders
-  at once (`_ladder_down`). Ladder men at the inner face of a closed gate
-  (4 or more for 15 s) **unbar** it (it opens); a gate order from inside
-  the walls sends ladder men to its inner face. Men on the ground below a
-  climbing unit get no battlement cover.
-- **The ram** (UT "ram", 20 crew, walks at 1.2 m/s, cannot run, attack
-  units or climb; roof: missile shield 85 %, 35 % damage from missiles):
-  ordered at a closed gate it goes to its face; with 6 or more of its crew
-  within 6 m of the outer face it lands a blow of `RAM_DMG` 160 every 480
-  man-ticks (20 men: every 2.4 s; a walls-3 gate in about a minute and a
-  half). It never hacks; it keeps out of the ditch.
+- **Siege equipment as objects** (part 2b, 2026-10-07; replaces part 1's
+  per-unit ladders flag and the ram unit; Rome 2's model). Scenario
+  `equip` `[[kind, x_m, y_m], ...]` (`EQ_LADDERS` a set of 5 ladders,
+  `EQ_RAM`), the attackers', on the ground behind their line
+  (`Scenarios.settlement(..., {"ladders": sets, "ram": n})`, 12 m apart).
+  Sim arrays `q_kind / q_x / q_y / q_state (GROUND, CARRIED, PLANTED,
+  WRECKED) / q_unit / q_seg / q_wx / q_wy / q_hp / q_acc / q_side`, per
+  unit `u_carry`, `u_pick` (an order field: "pick"), `u_lq` (the set it
+  climbs / came up by); hashed with the other siege arrays (`sg_on`),
+  in snapshots. Orders `ORDER_PICKUP` (unit, equip: it marches to the
+  piece and takes it within 6 m; any attacking foot, pikes too, not
+  horses or engines, carrying nothing) and `ORDER_DROP` (put down at its
+  anchor). A carried piece rides at the carriers' anchor; they walk (the
+  ram at 1.2 m/s, ladders 80 % of the walk), never run, attack no unit
+  (the ram's carriers go at gates), shoot nothing and fight at 60 % attack
+  and defence; routing or wiped out they leave it where it is.
+  - **Ladders**: carriers ordered onto a stretch from outside march to a
+    point out from its foot (`ladder_approach`: 5-24 m out on firm ground
+    with room round it, past a ditch), go up from within `LADDER_NEAR` of
+    the foot (`_ladder_reached`), plant the set there for the battle and
+    climb (pikes plant but do not climb); any infantry or missile unit of
+    theirs ordered onto that stretch later climbs the same set. The set
+    brings a man up every `LADDER_TICKS` / 5 ticks between all who climb
+    it (`q_acc`). Climb, walkway fighting, the way down (`_ladder_down`)
+    and unbarring a gate from inside (men who came up by ladders) as
+    before. Bug B fixed: a unit whose last leg ran along the wall arrived
+    pressing its men into it (the anchor never reached the foot, its men
+    could not form there, it regrouped and shuffled) and a foot squeezed
+    by a tower got no clear line to a path node (long detours);
+    `tests/ladder_probe.gd` checks every stretch of every plan x site x
+    coast x wall level.
+  - **The ram**: carriers ordered at a closed gate (an outer gate, or the
+    citadel's from the town) go to its outer face; up to `RAM_CREW` 20 of
+    their men there batter it (`RAM_DMG` every `RAM_WORK` man-ticks), and
+    they put it down once it breaks. It has `RAM_HP` 2,500: a bolt landing
+    within 3 m takes 70, a stone 330, defenders standing at a ram on the
+    ground smash it; its roof stops 70 % of the arrows landing on carriers
+    within 5 m of it.
+- **No blows at walls** (bug C): walls-2/3 gates do not yield to swords
+  at all (`gate_hackable`: the order rule refuses foot at them, the sim
+  skips their hacking, the AI never sends hackers); a man holding a target
+  he cannot reach (behind a wall, a gate or a corner) drops it within two
+  ticks (was eight), so no unit stands "fighting" a wall.
 - **Battle time limit**: scenario `time_limit` (seconds, at least 60;
   absent = 900, the old fixed 15 minutes), hashed only when not 900. The
   HUD clock shows "m:ss / limit"; a draw by time says so.

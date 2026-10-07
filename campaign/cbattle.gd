@@ -57,6 +57,7 @@ const EDGE_BAND := 110   # m added on a side of the field where reinforcements a
 const EDGE_IN := 45      # m from the map edge to an arriving column's front
 const LADDER_TURNS := 1  # an assault after a siege of this many turns brings ladders ...
 const RAM_TURNS := 2     # ... and of this many a ram
+const LADDER_SETS := [2, 3]  # ... sets of ladders after LADDER_TURNS, RAM_TURNS turns
 const DEFAULT_TIME_LIMIT := 900  # s: the sim's own battle time limit (settings "time_limit")
 const WIN_ROUT := 5      # formula: % routed on the winning side ...
 const LOSE_ROUT := 20    # ... and on the losing side
@@ -208,9 +209,9 @@ static func siege_turns(st: Dictionary, r: int) -> int:
 
 
 ## The attackers' siege equipment for battle b (Scenarios.settlement
-## "equip"): an assault after a siege of a full turn or more brings ladders
-## for the attackers' foot, of two turns or more a ram as well; an assault
-## on arrival (and any other battle) nothing but the armies' own artillery.
+## "equip"): an assault after a siege of a full turn or more brings two
+## sets of ladders, of two turns or more three and a ram; an assault on
+## arrival (and any other battle) nothing but the armies' own artillery.
 static func siege_equipment(st: Dictionary, b: Dictionary) -> Dictionary:
 	if str(b.get("kind", "")) != "assault":
 		return {}
@@ -220,7 +221,7 @@ static func siege_equipment(st: Dictionary, b: Dictionary) -> Dictionary:
 	var n := maxi(int(b.get("turn", st["turn"])) - int(sg["turn"]), 0)
 	var out := {}
 	if n >= LADDER_TURNS:
-		out["ladders"] = 1
+		out["ladders"] = int(LADDER_SETS[1 if n >= RAM_TURNS else 0])
 	if n >= RAM_TURNS:
 		out["ram"] = 1
 	return out
@@ -233,9 +234,9 @@ static func equipment_text(st: Dictionary, r: int) -> String:
 	if n < 0 or CState.walls(st, r) <= 0:
 		return ""
 	if n >= RAM_TURNS:
-		return "Siege equipment: ladders and a ram."
+		return "Siege equipment: %d sets of ladders and a ram." % int(LADDER_SETS[1])
 	if n >= LADDER_TURNS:
-		return "Siege equipment: ladders for the foot; a ram next turn."
+		return "Siege equipment: %d sets of ladders; a ram next turn." % int(LADDER_SETS[0])
 	return "Siege equipment: none yet (artillery only); ladders next turn, a ram in %d turns." % RAM_TURNS
 
 

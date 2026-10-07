@@ -146,13 +146,11 @@ static func home_of(built: Dictionary, p_humans: Array) -> Array:
 			out.append(int(ufac[u]))
 		else:
 			out.append(int(hs[0]) if not hs.is_empty() else int(ctrl[u]))
-	# Units after the mapped ones (the ram, last of the attackers') go to the
-	# first commander of their side; then one entry for the units the sim
-	# adds on the city's side (its towers): the owner, if a human in the
-	# battle, else the lowest human of that side (Lockstep.setup).
+	# Then one entry for the units the sim adds on the city's side (its
+	# towers): the owner, if a human in the battle, else the lowest human of
+	# that side (Lockstep.setup). Siege equipment (ladders, the ram) is not a
+	# unit: whoever's unit carries it uses it.
 	var units: Array = (built["scenario"] as Dictionary)["units"]
-	for u in range(ctrl.size(), units.size()):
-		out.append(_first_home(units, out, int(units[u]["side"])))
 	if built.has("owner") and built.has("sim_side"):
 		var city_f := int(built["owner"])
 		if hs.has(city_f):

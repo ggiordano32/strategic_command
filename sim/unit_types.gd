@@ -70,9 +70,6 @@ extends RefCounted
 ##                places it on a tower of a walls-2/3 city (BattleSim
 ##                _siege_towers) and it is gone when its crew is dead or its
 ##                engine wrecked
-##   ram          1: a battering ram pushed by its crew (the unit's men): it
-##                breaks a gate it stands at (BattleSim._update_gates),
-##                never hacks, climbs or attacks units
 
 ## Display only (never read by the sim, not hashed): icon (marker / card
 ## symbol, see game/unit_icons.gd), role, desc, good_vs, weak_vs (unit book).
@@ -104,7 +101,7 @@ const DEFAULTS := {
 	"crew": 0, "crew_min": 0, "m_kind": 0, "m_min": 0, "m_pierce": 0, "m_plough": 0,
 	"m_blast": 0, "m_fear": 0, "arc": 0, "traverse": 0, "deploy": 0, "e_hp": 0,
 	"climb": 15, "m_hgain": 0, "m_apex": 0, "m_reserve": 0, "m_refill": 0,
-	"fixed": 0, "ram": 0,
+	"fixed": 0,
 }
 
 ## The nine base types (tier 1 of their line). The sandbox battles use
@@ -556,9 +553,9 @@ const TIERS: Array[Dictionary] = [
 ## Siege types (docs/DESIGN.md "Siege equipment and wall towers"): never
 ## recruited (line "siege", in no roster or picker), appended after the
 ## tier rows so every other index is unchanged. The towers' engines are
-## placed by the sim on a walls-2/3 city's towers; the ram comes with an
-## attacking army that has besieged a city long enough (campaign) or is
-## chosen in a custom battle. base = the row itself; size = its crew.
+## placed by the sim on a walls-2/3 city's towers (ladders and the ram are
+## not units: BattleSim's siege equipment objects). base = the row itself;
+## size = its crew.
 const SPECIAL: Array[Dictionary] = [
 	{
 		"key": "tower_bolt",
@@ -601,23 +598,7 @@ const SPECIAL: Array[Dictionary] = [
 		"m_speed": 2867, "m_arc": 1, "m_lead": 90, "m_long": 50, "m_pierce": 6, "m_plough": 9 * 1024,
 		"m_blast": 900, "m_fear": 60, "arc": 512, "traverse": 4, "deploy": 1, "e_hp": 1200, "cost": 0,
 		"size": 6, "m_hgain": 150,
-	},
-	{
-		"key": "ram",
-		"name": "Battering Ram",
-		"short": "Ram",
-		"icon": 0,
-		"role": "Siege engine (gates)",
-		"desc": "A heavy ram under a roofed shed, pushed at a walking pace by twenty men. At a closed gate it breaks it in a minute or two whatever the wall (walls 2 and 3 gates barely notice swords). The roof keeps most arrows off the crew; bolts and stones from the towers do not care. It cannot run, attack units or climb, and its crew fights poorly.",
-		"good_vs": "Closed gates.",
-		"weak_vs": "Tower artillery, anything that reaches its crew.",
-		"cls": CLS_INF,
-		"sprite": 0,
-		"ram": 1,
-		"attack": 12, "defence": 18, "armour": 18, "shield": 0, "mshield": 85, "m_vuln": 35,
-		"damage": 22, "reach": 1024, "mass": 90, "walk": 123, "run": 123, "hp": 120, "cooldown": 12,
-		"morale": 850, "cost": 3, "size": 20, "climb": 30,
-	},
+	}
 ]
 
 ## Every type: the base rows, the derived tier rows, then SPECIAL.
@@ -626,7 +607,6 @@ static var _by_key := {}
 ## Indices of the siege types (after the tier rows).
 static var TOWER_BOLT: int = BASE.size() + TIERS.size()
 static var TOWER_STONE: int = BASE.size() + TIERS.size() + 1
-static var RAM: int = BASE.size() + TIERS.size() + 2
 
 
 static func _build_types() -> Array[Dictionary]:

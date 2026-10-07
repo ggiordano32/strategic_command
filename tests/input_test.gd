@@ -228,6 +228,13 @@ func _initialize() -> void:
 		_step_gd_check_door_marker,
 		_step_gd_tap_marker,
 		_step_gd_check_marker,
+		_step_eq_start,
+		_step_eq_tap_piece,
+		_step_eq_check_piece,
+		_step_eq_tap_wall,
+		_step_eq_check_wall,
+		_step_eq_drop,
+		_step_eq_check_drop,
 		_step_done,
 	]
 
@@ -1875,6 +1882,118 @@ func _step_gd_tap_marker() -> void:
 func _step_gd_check_marker() -> void:
 	_check(battle.selection == [_gd_wall], "a tap on the marker just outside the doorway selects the unit (%s)" % str(battle.selection))
 	_check(_gd_gate_orders().size() == 2, "... and asks nothing of the gate")
+
+
+# Siege equipment (part 2b): tap a piece to pick it up, refusals, tap a
+# stretch with a carried set to plant it, the Drop button.
+var _eq_inf := -1
+var _eq_cav := -1
+var _eq_lp := Vector2i(-1, -1)
+
+
+func _eq_orders(typ: int) -> Array:
+	var out: Array = []
+	for o in battle.sim.pending_orders:
+		if int(o["type"]) == typ:
+			out.append(o)
+	return out
+
+
+func _step_eq_start() -> void:
+	if is_instance_valid(battle):
+		battle.queue_free()
+	battle = Battle.new()
+	battle.custom_scenario = Scenarios.siege_test(303, 2, 2, MapGen.PAL_ARID, Terrain.K_FLAT, 1, -1, MapGen.PLAN_RING,
+		0, {"ladders": 2, "ram": 1})
+	battle.seed_value = 7
+	root.add_child(battle)
+
+
+## Cavalry and foot selected, a tap on ladder set 0: the foot goes for it.
+func _step_eq_tap_piece() -> void:
+	var sim := battle.sim
+	if not battle.paused:
+		battle._toggle_pause()
+	_check(sim.n_eq == 3, "equipment: two ladder sets and a ram on the ground (%d)" % sim.n_eq)
+	for u in sim.n_units:
+		if sim.u_side[u] != 0:
+			continue
+		if sim.u_cls[u] == UT.CLS_INF and _eq_inf < 0:
+			_eq_inf = u
+		elif sim.u_cls[u] == UT.CLS_CAV and _eq_cav < 0:
+			_eq_cav = u
+	battle.camera.zoom = Vector2(1, 1)
+	_focus(sim.q_x[0], sim.q_y[0])
+	battle._select(_eq_cav)
+	_gd_tap(Vector2(sim.q_x[0], sim.q_y[0]) / 1024.0 * Battle.PX_PER_M)
+	_check(_eq_orders(BattleSim.ORDER_PICKUP).is_empty(), "cavalry alone: a tap on the ladders picks nothing up")
+	battle._toggle_in_selection(_eq_inf)
+	_gd_tap(Vector2(sim.q_x[0], sim.q_y[0]) / 1024.0 * Battle.PX_PER_M)
+
+
+func _step_eq_check_piece() -> void:
+	var po := _eq_orders(BattleSim.ORDER_PICKUP)
+	_check(po.size() == 1 and int(po[0]["unit"]) == _eq_inf and int(po[0]["equip"]) == 0,
+		"cavalry and foot selected, a tap on the ladders: the foot picks them up (%s)" % str(po))
+	_check(battle.orders.value(_eq_inf, "pick") == 0, "the preview knows the pick-up")
+	# Carrying the set from here on (test set-up: picked up at once); the
+	# camera goes to a stretch it can be planted on (the tap comes next frame).
+	var sim := battle.sim
+	sim.pending_orders.clear()
+	battle.orders.refresh()
+	sim.u_carry[_eq_inf] = 0
+	sim.q_state[0] = BattleSim.Q_CARRIED
+	sim.q_unit[0] = _eq_inf
+	battle._select(_eq_inf)
+	for sg in sim.ws_x0.size():
+		var mp: Vector2i = BattleSim.seg_pt(sim, sg, BattleSim.seg_len(sim, sg) / 2)
+		if BattleSim.ladder_set_for(sim, _eq_inf, sg, mp.x, mp.y) == 0:
+			_eq_lp = mp
+			break
+	_check(_eq_lp.x >= 0, "a stretch the carried set can be planted on")
+	_focus(_eq_lp.x, _eq_lp.y)
+
+
+## Carrying the set, a tap on the stretch; an enemy tapped while carrying
+## is refused.
+func _step_eq_tap_wall() -> void:
+	var sim := battle.sim
+	# (The wall tap's own path - _tap, wall_refusal, the move order - is
+	# given exactly; the camera may not sit where the walkway is.)
+	_check(battle.orders.wall_refusal(_eq_inf, _eq_lp.x, _eq_lp.y) == "", "no refusal for planting there")
+	battle._queue(BattleSim.make_move_order(0, _eq_inf, _eq_lp.x, _eq_lp.y, 768, 20 * 1024, 0))
+	sim.u_carry[_eq_cav] = -1
+	_check(battle.orders.wall_refusal(_eq_cav, _eq_lp.x, _eq_lp.y).contains("Only foot"),
+		"cavalry ordered onto the wall: refused (%s)" % battle.orders.wall_refusal(_eq_cav, _eq_lp.x, _eq_lp.y))
+
+
+func _step_eq_check_wall() -> void:
+	var mo := _eq_orders(BattleSim.ORDER_MOVE)
+	_check(mo.size() == 1 and int(mo[0]["unit"]) == _eq_inf, "carrying ladders, a tap on the wall: a move there (%s)" % str(mo))
+	var wp: Dictionary = battle.orders.wall_plan(_eq_inf)
+	_check(str(wp.get("mode", "")) == "ladder" and bool(wp.get("plant", false)),
+		"the preview: PLANT LADDERS HERE (%s %s)" % [str(wp.get("mode", "")), str(wp.get("plant", false))])
+	var enemy := -1
+	for u in battle.sim.n_units:
+		if battle.sim.u_side[u] == 1 and not battle.sim.is_tower(u):
+			enemy = u
+			break
+	battle._queue(BattleSim.make_attack_order(0, _eq_inf, enemy, 0))
+	_check(battle.orders.value(_eq_inf, "order") == BattleSim.O_MOVE and battle.orders.value(_eq_inf, "target") < 0,
+		"carrying: an attack order is refused by the rule (the plant move stands)")
+	battle._refresh_actions()
+	_check(battle.hud.drop_button.visible, "the Drop button shows while a selected unit carries")
+
+
+func _step_eq_drop() -> void:
+	battle.sim.pending_orders.clear()
+	battle.orders.refresh()
+	battle.hud.drop_button.pressed.emit()
+
+
+func _step_eq_check_drop() -> void:
+	var dr := _eq_orders(BattleSim.ORDER_DROP)
+	_check(dr.size() == 1 and int(dr[0]["unit"]) == _eq_inf, "Drop: the carrier puts the ladders down (%s)" % str(dr))
 
 
 func _step_done() -> void:

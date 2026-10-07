@@ -244,6 +244,7 @@ func _ready() -> void:
 	hud.refill_pressed.connect(_toggle_refill)
 	hud.man_wall_pressed.connect(_man_wall)
 	hud.come_down_pressed.connect(_come_down)
+	hud.drop_pressed.connect(_drop)
 	hud.withdraw_pressed.connect(_withdraw)
 	hud.withdraw_all_pressed.connect(_withdraw_all)
 	hud.group_pressed.connect(_select_group)
@@ -1080,19 +1081,81 @@ func _toggle_refill() -> void:
 
 ## Walls: "Man the wall" shows while a selected unit may go up onto a
 ## stretch within reach (BattleSim.man_wall_target), "Come down" while one
-## stands on a wall.
+## stands on a wall; "Drop" while one carries siege equipment.
 func _refresh_wall_buttons() -> void:
 	var man := false
 	var down := false
+	var drop := false
 	if sim.city_on != 0 and sim.ws_x0.size() > 0:
 		for u in selection:
 			if sim.u_state[u] != BattleSim.U_READY:
 				continue
+			if BattleSim.carrying(sim, u) != 0:
+				drop = true
 			if sim.u_wall[u] > 0 and sim.u_stair[u] == 0:
 				down = true
 			elif sim.u_wall[u] == 0 and sim.u_stair[u] != 1 and BattleSim.man_wall_target(sim, u).z >= 0:
 				man = true
-	hud.set_wall_buttons(man, down)
+	hud.set_wall_buttons(man, down, drop)
+
+
+## "Drop": each selected unit carrying siege equipment puts it down where
+## it stands (anyone's foot can pick it up again).
+func _drop() -> void:
+	var sent := 0
+	for u in selection:
+		if sim.u_state[u] == BattleSim.U_READY and BattleSim.carrying(sim, u) != 0:
+			_queue({"type": BattleSim.ORDER_DROP, "unit": u})
+			sent += 1
+	_count("drop")
+	if sent > 0 and selected >= 0:
+		overlay.flash("Put down: free to fight", Vector2(sim.u_cx[selected], sim.u_cy[selected]) / M * PX_PER_M)
+
+
+## The piece of siege equipment on the ground under world point w (px), or
+## -1: the nearest within 5 m (at least the marker hit radius / 2).
+func _equip_at(w: Vector2) -> int:
+	if sim.n_eq == 0:
+		return -1
+	var x := int(w.x / PX_PER_M * M)
+	var y := int(w.y / PX_PER_M * M)
+	var r := maxi(5 * 1024, _marker_hit_r() / 2)
+	var best := -1
+	var bd := 0
+	for q in sim.n_eq:
+		if sim.q_state[q] != BattleSim.Q_GROUND:
+			continue
+		var dx: int = sim.q_x[q] - x
+		var dy: int = sim.q_y[q] - y
+		var d := dx * dx + dy * dy
+		if d <= r * r and (best < 0 or d < bd):
+			best = q
+			bd = d
+	return best
+
+
+## A tap on piece q with units selected: the selected unit nearest it that
+## may carry it goes and picks it up (one unit a piece).
+func _tap_equip(q: int, w: Vector2) -> void:
+	var best := -1
+	var bd := 0
+	var why := ""
+	for u in selection:
+		var r: String = BattleSim.pickup_refusal(sim, u, q)
+		if r != "":
+			if why == "" or u == selected:
+				why = r
+			continue
+		var d := FM.approx_len(sim.u_cx[u] - sim.q_x[q], sim.u_cy[u] - sim.q_y[q])
+		if best < 0 or d < bd:
+			best = u
+			bd = d
+	_count("equip_pickup" if best >= 0 else "equip_refused")
+	if best < 0:
+		overlay.flash(why, w)
+		return
+	_queue({"type": BattleSim.ORDER_PICKUP, "unit": best, "equip": q, "run": orders.value(best, "run")})
+	overlay.flash("Picking up the ram" if sim.q_kind[q] == BattleSim.EQ_RAM else "Picking up the ladders", w)
 
 
 ## "Man the wall": each selected unit that may goes up onto the stretch
@@ -1199,16 +1262,21 @@ func _tap(screen_pos: Vector2, double: bool) -> void:
 	if selection.is_empty():
 		_count("tap_nothing_selected")
 		return
+	if u < 0:
+		var q := _equip_at(w)
+		if q >= 0:
+			_tap_equip(q, w)
+			return
 	if u >= 0:
 		# Enemy: attack (missile troops shoot it; double tap = charge at the run).
-		var rams := 0
+		var carriers := 0
 		for s in selection:
-			if UT.stat(sim.u_type[s], "ram") != 0:
-				rams += 1  # the ram only batters gates
+			if BattleSim.carrying(sim, s) != 0:
+				carriers += 1  # carrying siege equipment: no attacking
 				continue
 			_queue(BattleSim.make_attack_order(0, s, u, 1 if double else orders.value(s, "run")))
-		if rams > 0:
-			overlay.flash("The ram only batters gates: tap a gate", w)
+		if carriers > 0:
+			overlay.flash("Carrying siege equipment: put it down first (Drop) to fight", w)
 		return
 	var dest := w / PX_PER_M * M
 	if selection.size() == 1:
@@ -1311,27 +1379,41 @@ func _tap_gate(g: int, w: Vector2) -> bool:
 		return false  # an open or broken gate: a tap there is a move
 	var sent := 0
 	var refused := 0
+	var ram := false
+	var iron := not BattleSim.gate_hackable(sim, g)
+	var ladders := false
 	for u in selection:
 		var c := UT.cls(sim.u_type[u])
-		if c == UT.CLS_ART or c == UT.CLS_INF or c == UT.CLS_PIKE:
+		var k := BattleSim.carrying(sim, u)
+		var inside: bool = sim.u_lq[u] >= 0 and (sim.u_wall[u] > 0 \
+			or sim.reach_at(sim.u_ax[u], sim.u_ay[u]) == sim.reach_at(sim.g_ix[g], sim.g_iy[g]))
+		var ok := false
+		if k == BattleSim.EQ_RAM:
+			ok = true
+			ram = true
+		elif k == BattleSim.EQ_LADDERS:
+			ladders = true
+		elif c == UT.CLS_ART or (inside and c != UT.CLS_CAV):
+			ok = true
+		elif (c == UT.CLS_INF or c == UT.CLS_PIKE) and not iron:
+			ok = true
+		if ok:
 			_queue({"type": BattleSim.ORDER_ATTACK, "unit": u, "target": -1, "gate": g,
 				"run": orders.value(u, "run")})
 			sent += 1
 		else:
 			refused += 1
 	_count("gate_attack")
-	var ram := false
-	for u in selection:
-		if UT.stat(sim.u_type[u], "ram") != 0:
-			ram = true
-	if sent == 0:
+	if ram:
+		overlay.flash("RAM THE GATE: the ram goes at it and batters it", w)
+	elif sent == 0 and ladders:
+		overlay.flash("Carrying ladders: tap a stretch of wall to plant them", w)
+	elif sent == 0 and iron:
+		overlay.flash("Swords cannot break this iron-bound gate: a ram or artillery breaks it", w)
+	elif sent == 0:
 		overlay.flash("Cavalry and missile troops cannot break a gate", w)
 	elif refused > 0:
 		overlay.flash("Foot hack at the gate, engines shoot it; the others stay", w)
-	elif ram:
-		overlay.flash("The ram goes at the gate and batters it", w)
-	elif sim.city_walls >= 2:
-		overlay.flash("Swords barely mark this gate: a ram or artillery breaks it", w)
 	return true
 
 
@@ -1550,6 +1632,8 @@ func _on_key(e: InputEventKey) -> void:
 			_man_wall()
 		"come_down":
 			_come_down()
+		"drop":
+			_drop()
 		"orders_overlay":
 			hud.orders_button.button_pressed = not hud.orders_button.button_pressed
 		"ready":

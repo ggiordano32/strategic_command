@@ -11,7 +11,8 @@ extends RefCounted
 ##   "map": {"kind": "field" | "settlement", "terrain": Terrain.K_*, "ground": MapGen.PAL_*,
 ##           "woods": 0-100, "mseed": int, "plan": MapGen.PLAN_*, "level": 0-2, "walls": 0-3,
 ##           "coast": 0/1, "def": defending sim side,
-##           "ladders": 0/1, "ram": 0/1 (the attackers' siege equipment; walls only)},
+##           "ladders": 0/1, "ram": 0/1 (the attackers' siege equipment, objects on
+##           the ground: LADDER_SETS sets of ladders, a ram; walls only)},
 ##   "sides": [{"skill": AIProfile level, "style": AIProfile personality,
 ##              "armies": [{"ctrl": "p1" | "p2" | "ai", "units": [[type key, men], ...]}, ...]}, x2]
 ## }
@@ -28,6 +29,7 @@ const Terrain := preload("res://sim/terrain.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const AIProfile := preload("res://sim/ai_profile.gd")
 
+const LADDER_SETS := 3         # the Ladders toggle: sets of ladders (as a campaign siege of two turns)
 const MAX_ARMIES := 3          # per side
 const MAX_UNITS := 12          # per army (the campaign's army size)
 const FUNDS := [0, 4500, 7500, 12000]
@@ -210,7 +212,7 @@ static func build(st: Dictionary, solo: bool = false) -> Dictionary:
 			"forest": clampi(int(mp.get("woods", 15)), 0, 100), "ground": ground}
 		var equip := {}
 		if int(mp.get("ladders", 0)) != 0:
-			equip["ladders"] = 1
+			equip["ladders"] = LADDER_SETS
 		if int(mp.get("ram", 0)) != 0:
 			equip["ram"] = 1
 		var r := Scenarios.settlement(city, terr, lists[att_side], lists[def_side], def_side, ai, equip)
@@ -218,9 +220,6 @@ static func build(st: Dictionary, solo: bool = false) -> Dictionary:
 		for o in r["order"]:
 			var s := att_side if int(o[0]) == 0 else def_side
 			home.append(ctrl_of[s][int(o[1])])
-		for k in range(home.size(), (sc["units"] as Array).size()):
-			# The ram (after every army unit): the attacking side's lead player.
-			home.append(players[att_side][0] if not (players[att_side] as Array).is_empty() else -1)
 		# The city's towers (added by the sim): the defending side's lead player.
 		home.append(players[def_side][0] if not (players[def_side] as Array).is_empty() else -1)
 	else:

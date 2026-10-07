@@ -1732,21 +1732,21 @@ func _grid_siege_equipment() -> void:
 	var t0 := int(sg["turn"])
 	sg["turn"] = t0 - 1
 	var eq1 := CBattle.siege_equipment(st, b)
-	_check(int(eq1.get("ladders", 0)) == 1 and not eq1.has("ram"), "after a turn of siege: ladders")
+	_check(int(eq1.get("ladders", 0)) == 2 and not eq1.has("ram"), "after a turn of siege: two sets of ladders")
 	sg["turn"] = t0 - 2
 	var eq2 := CBattle.siege_equipment(st, b)
-	_check(int(eq2.get("ladders", 0)) == 1 and int(eq2.get("ram", 0)) == 1, "after two turns: ladders and a ram")
+	_check(int(eq2.get("ladders", 0)) == 3 and int(eq2.get("ram", 0)) == 1, "after two turns: three sets of ladders and a ram")
 	_check(CBattle.equipment_text(st, ap).contains("ram"), "the siege panel line names the ram")
 	var built := CBattle.build(st, b, -1)
 	var lad := 0
 	var ram := 0
-	for ud in built["scenario"]["units"]:
-		if int(ud.get("ladders", 0)) != 0:
+	for eq_e in (built["scenario"].get("equip", []) as Array):
+		if int(eq_e[0]) == 1:
 			lad += 1
-		if int(ud["type"]) == UT.RAM:
+		elif int(eq_e[0]) == 2:
 			ram += 1
-	_check(lad == 3 and ram == 1 and (built["map"] as Array).size() == (built["scenario"]["units"] as Array).size() - 1,
-		"the assault's scenario: ladders for the foot (%d), a ram after every army unit (%d), the result map unchanged" % [lad, ram])
+	_check(lad == 3 and ram == 1 and (built["map"] as Array).size() == (built["scenario"]["units"] as Array).size(),
+		"the assault's scenario: %d sets of ladders and %d ram on the ground (objects, not units), the result map unchanged" % [lad, ram])
 	_check(not built["scenario"].has("time_limit"), "no time limit setting: the sim's 15 minutes")
 	st["settings"]["time_limit"] = 1800
 	_check(int(CBattle.build(st, b, -1)["scenario"].get("time_limit", 0)) == 1800, "the battle time setting reaches the scenario")

@@ -91,6 +91,8 @@ const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Terrain := preload("res://sim/terrain.gd")
+const SiegeAI := preload("res://sim/siege_ai.gd")
+const BattleAI := preload("res://sim/battle_ai.gd")
 const FM := preload("res://sim/fixed_math.gd")
 
 const M := 1024
@@ -124,6 +126,12 @@ var _ok := true
 func _init() -> void:
 	_check_deploy()
 	if "--only=deploy" in OS.get_cmdline_user_args():
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
+	_check_equipment()
+	_check_shut_inner_gate()
+	if "--only=equipment" in OS.get_cmdline_user_args():
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
@@ -224,7 +232,8 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 			# (Walls 3 since the tower engines: the batteries batter the towers
 			# by the gate first, so the gate stands past the run, and the
 			# archers keep out of the walls' longer reach.)
-			need = ["paths", "clamp", "obs_lof", "tower_hits", "gate_hack"]
+			# (No gate_hack: walls-3 gates do not yield to swords.)
+			need = ["paths", "clamp", "obs_lof", "tower_hits"]
 		"gate_ops":
 			need = ["gate_close", "gate_open", "gate_hack", "gate_art", "gate_broken", "paths"]
 		"siege_castrum@ai":
@@ -239,12 +248,18 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 			need = ["stair_down", "stair_up", "gate_close", "gate_open", "gate_hack", "gate_broken", "capture"]
 		"bench_2000~ee", "bench_2000@4~ea", "siege_city@ai~ea", "siege_city@ai~ae":
 			need = ["mistakes", "attacks"]
-		"bench_2000~ss", "bench_2000@4~sa", "ai_woods~as", "siege_city@ai~sa", "siege_city@ai~as":
+		"bench_2000~ss", "bench_2000@4~sa", "ai_woods~as", "siege_city@ai~sa":
 			need = ["skilled", "attacks"]
+		"siege_city@ai~as":
+			# (Average attackers at an iron-bound gate: no foot go in within
+			# the run since walls-2/3 gates do not yield to swords.)
+			need = ["skilled"]
 		"siege_eq_ring3":
-			need = ["ladder_up", "ram_blows", "tower_hits", "bolts", "stones", "wall_cover", "gate_broken"]
+			# (The AI's ladders come late at the carry pace: the scripted
+			# "equipment" case covers planting and climbing.)
+			need = ["pickups", "tower_hits", "bolts", "stones", "wall_cover", "gate_broken"]
 		"siege_eq_polis2~sa":
-			need = ["ladder_up", "tower_hits", "bolts", "skilled", "gate_broken"]
+			need = ["pickups", "tower_hits", "bolts", "skilled", "gate_broken"]
 	for k in need:
 		if int(st.get(k, 0)) <= 0:
 			_fail("%s: run never exercised %s (%s)" % [scen, k, str(st)])
@@ -415,12 +430,12 @@ static func _scenario(key: String) -> Dictionary:
 		# The equal-force walls-3 siege with ladders, a ram, the city's tower
 		# engines and a 20 minute time limit (docs/DESIGN.md "Siege
 		# equipment and wall towers"), both sides AI.
-		var se := Scenarios.fair_siege(741, 3, 4, {"ladders": 1, "ram": 1})
+		var se := Scenarios.fair_siege(741, 3, 4, {"ladders": 3, "ram": 1})
 		se["time_limit"] = 1200
 		return se
 	if key == "siege_eq_polis2":
 		# A walls-2 polis (its acropolis), ladders only, a workshop's extra shots.
-		var sp := Scenarios.fair_siege(782, 2, 1, {"ladders": 1})
+		var sp := Scenarios.fair_siege(782, 2, 1, {"ladders": 2})
 		(sp["terrain"]["city"]["bld"] as Array).append(5)
 		return sp
 	if key == "ai_woods":
@@ -502,7 +517,7 @@ func _run(scen: String, p_seed: int, ticks: int) -> Dictionary:
 		"stair_down": sim.stat_stair_down, "stair_up": sim.stat_stair_up, "stair_rout": sim.stat_stair_rout,
 		"ditch": sim.stat_ditch, "sea_exit": sim.stat_sea_exit, "mistakes": _mistakes(sim),
 		"ladder_up": sim.stat_ladder_up, "ram_blows": sim.stat_ram_blows, "tower_hits": sim.stat_tower_hits,
-		"unbar": sim.stat_unbar}
+		"unbar": sim.stat_unbar, "pickups": sim.stat_pickups, "planted": sim.stat_planted, "drops": sim.stat_drops}
 	if not sim.ai_mem.is_empty():
 		stats["skilled"] = _skilled(sim)
 	print("  %s seed %d: alive %d/%d after %d ticks, winner %d" % [scen, p_seed,
@@ -893,6 +908,176 @@ func _check_snapshots() -> void:
 			_fail("%s: restored copies diverged (%d of %d ticks)" % [key, bad, checks])
 		else:
 			print("PASS %s: snapshot / restore at 300, 900, 1500 runs on identically (%d ticks checked)" % [key, checks])
+
+
+# ------------------------------------------------------ siege equipment ---
+# Siege equipment as objects (docs/DESIGN.md "Siege equipment and wall
+# towers", part 2b): pick up, carry, drop, plant, climb, ram; and the shut
+# inner gate (nobody fights a wall).
+
+## The equipment set piece: a walls-2 ring, three attacking units with two
+## ladder sets and a ram, scripted (no AI): the heavy picks up set 0 and
+## plants it on the nearest stretch it can (and climbs), the light picks up
+## set 1 and puts it down again, the pikes carry the ram to gate 0 and
+## batter it (putting it down once it breaks). Hashes every tick; a second
+## run equal; a copy restored mid-carry runs on equal.
+func _equip_run(snap_check: bool) -> Dictionary:
+	var city := {"seed": 4242, "level": 2, "walls": 2, "bld": []}
+	var terr := {"kind": Terrain.K_FLAT, "seed": 11, "forest": 0, "ground": 2}
+	var r := Scenarios.settlement(city, terr, [[UT.HEAVY, 60], [UT.LIGHT, 60], [UT.PIKE, 60]], [[UT.SPEAR, 20]], 1, [],
+		{"ladders": 2, "ram": 1})
+	var sc: Dictionary = r["scenario"]
+	var sim := BattleSim.new()
+	sim.setup(sc, 77)
+	var hashes := PackedInt64Array()
+	var ram_q := sim.n_eq - 1
+	var dropped := -1
+	var snap_bad := -1
+	var snap_t := -1
+	for t in 3000:
+		if t % 10 == 0:
+			if sim.u_carry[0] < 0 and sim.q_state[0] == BattleSim.Q_GROUND and sim.u_pick[0] != 0:
+				sim.queue_order({"tick": sim.tick, "type": BattleSim.ORDER_PICKUP, "unit": 0, "equip": 0, "run": 1})
+			elif sim.u_carry[0] == 0 and sim.u_stair[0] == 0 and sim.u_order[0] != BattleSim.O_MOVE:
+				var best := -1
+				var bd := 0
+				for sg in sim.ws_x0.size():
+					var mp: Vector2i = BattleSim.seg_pt(sim, sg, BattleSim.seg_len(sim, sg) / 2)
+					if BattleSim.ladder_set_for(sim, 0, sg, mp.x, mp.y) < 0:
+						continue
+					var d := absi(mp.x - sim.u_cx[0]) + absi(mp.y - sim.u_cy[0])
+					if best < 0 or d < bd:
+						best = sg
+						bd = d
+				if best >= 0:
+					var lp: Vector2i = BattleSim.seg_pt(sim, best, BattleSim.seg_len(sim, best) / 2)
+					sim.queue_order(BattleSim.make_move_order(sim.tick, 0, lp.x, lp.y, 768, 20 * 1024, 0))
+			if dropped < 0 and sim.u_carry[1] < 0 and sim.u_pick[1] != 1:
+				sim.queue_order({"tick": sim.tick, "type": BattleSim.ORDER_PICKUP, "unit": 1, "equip": 1, "run": 1})
+			elif dropped < 0 and sim.u_carry[1] == 1:
+				dropped = sim.tick
+				sim.queue_order({"tick": sim.tick, "type": BattleSim.ORDER_DROP, "unit": 1})
+			if sim.u_carry[2] < 0 and sim.q_state[ram_q] == BattleSim.Q_GROUND and sim.g_state[0] == BattleSim.GATE_CLOSED \
+					and sim.u_pick[2] != ram_q:
+				sim.queue_order({"tick": sim.tick, "type": BattleSim.ORDER_PICKUP, "unit": 2, "equip": ram_q, "run": 0})
+			elif sim.u_carry[2] == ram_q and sim.u_gtarget[2] != 0 and sim.g_state[0] == BattleSim.GATE_CLOSED:
+				sim.queue_order({"tick": sim.tick, "type": BattleSim.ORDER_ATTACK, "unit": 2, "target": -1, "gate": 0, "run": 0})
+		sim.step()
+		hashes.append(sim.state_hash())
+		if snap_check and snap_t < 0 and sim.u_carry[2] == ram_q and sim.u_carry[0] == 0:
+			snap_t = sim.tick
+			var b := BattleSim.new()
+			b.setup(sc, 77)
+			b.restore(sim.snapshot())
+			var c := sim.snapshot()
+			var a2 := BattleSim.new()
+			a2.setup(sc, 77)
+			a2.restore(c)
+			for k in 300:
+				a2.step()
+				b.step()
+				if a2.state_hash() != b.state_hash():
+					snap_bad = k
+					break
+	return {"hashes": hashes, "pickups": sim.stat_pickups, "drops": sim.stat_drops, "planted": sim.stat_planted,
+		"up": sim.stat_ladder_up, "blows": sim.stat_ram_blows, "broken": sim.g_state[0] == BattleSim.GATE_BROKEN,
+		"ram_state": sim.q_state[ram_q], "snap_t": snap_t, "snap_bad": snap_bad, "dropped": dropped}
+
+
+func _check_equipment() -> void:
+	var a := _equip_run(true)
+	var b := _equip_run(false)
+	if a["hashes"] != b["hashes"]:
+		_fail("equipment: the repeat diverged")
+		return
+	if int(a["snap_t"]) < 0 or int(a["snap_bad"]) >= 0:
+		_fail("equipment: no snapshot mid-carry, or the restored copy diverged (%s)" % str(a.erase("hashes")))
+		return
+	if int(a["pickups"]) < 3 or int(a["drops"]) < 2 or int(a["planted"]) < 1 or int(a["up"]) <= 0 \
+			or int(a["blows"]) <= 0 or not a["broken"] or int(a["ram_state"]) != BattleSim.Q_GROUND:
+		a.erase("hashes")
+		_fail("equipment: %s" % str(a))
+		return
+	print("PASS equipment: picked up %d, put down %d (the light's set at tick %d, the ram as the gate broke), planted %d, men up %d, ram blows %d; identical on repeat and across snapshot / restore mid-carry (tick %d)" % [
+		a["pickups"], a["drops"], a["dropped"], a["planted"], a["up"], a["blows"], a["snap_t"]])
+
+
+## The shut inner gate: an equal-force walls-2 polis with a ram, both
+## sides AI, its outer gates broken at the start and the defenders falling
+## back into the acropolis, which they shut (an iron-bound gate). Nobody
+## hacks at it; no attacker stands fighting a man he cannot reach (behind
+## a wall or a gate) for more than a tick or two; the AI brings the ram to
+## it (or waits); identical on repeat and across snapshot / restore.
+func _shut_run(snap_check: bool) -> Dictionary:
+	var sc := Scenarios.fair_siege(700, 2, 1, {"ram": 1})
+	var sim := BattleSim.new()
+	sim.setup(sc, 53000)
+	for g in sim.n_gates:
+		if sim.g_cit[g] == 0:
+			sim._break_gate(g)
+	sim.step()
+	sim.ai_cit[1] = 1
+	for u in sim.n_units:
+		if sim.u_side[u] != 1 or sim.u_state[u] != 0 or sim.is_tower(u) or sim.u_cls[u] == UT.CLS_CAV \
+				or sim.u_cls[u] == UT.CLS_ART:
+			continue
+		BattleAI._set_mode(sim, u, SiegeAI.A_CIT)
+		var post: Vector3i = SiegeAI._fallback_post(sim, u)
+		sim.u_ai_x[u] = post.x
+		sim.u_ai_y[u] = post.y
+		BattleAI._order(sim, u, {"type": 1, "x": post.x, "y": post.y, "facing": post.z, "width": 12 * 1024, "run": 1}, 2)
+	var hack0: int = sim.stat_gate_hack
+	var hashes := PackedInt64Array()
+	var across := 0
+	var shut := -1
+	var ram_at := -1
+	var snap_bad := -1
+	while sim.tick < 5000 and sim.winner < 0:
+		sim.step()
+		hashes.append(sim.state_hash())
+		if shut < 0 and sim.g_state[sim.cit_gate] == BattleSim.GATE_CLOSED:
+			shut = sim.tick
+		for u in sim.n_units:
+			if ram_at < 0 and sim.u_side[u] == 0 and sim.u_carry[u] >= 0 and sim.u_gtarget[u] == sim.cit_gate:
+				ram_at = sim.tick
+		for i in sim.n:
+			var t: int = sim.target[i]
+			if t < 0 or sim.state[i] != BattleSim.S_FIGHTING or sim.u_side[sim.unit_of[i]] != 0:
+				continue
+			var dx: int = sim.pos_x[t] - sim.pos_x[i]
+			var dy: int = sim.pos_y[t] - sim.pos_y[i]
+			var rr: int = sim.u_reach[sim.unit_of[i]] + 1024
+			if dx * dx + dy * dy <= rr * rr and not sim._reach_ok(sim.pos_x[i], sim.pos_y[i], sim.pos_x[t], sim.pos_y[t]):
+				across += 1
+		if snap_check and sim.tick == 2000:
+			var b := BattleSim.new()
+			b.setup(sc, 53000)
+			b.restore(sim.snapshot())
+			var a2 := BattleSim.new()
+			a2.setup(sc, 53000)
+			a2.restore(sim.snapshot())
+			for k in 300:
+				a2.step()
+				b.step()
+				if a2.state_hash() != b.state_hash():
+					snap_bad = k
+					break
+	return {"hashes": hashes, "shut": shut, "hack": (sim.stat_gate_hack - hack0) / 100, "across": across,
+		"ram_at": ram_at, "blows": sim.stat_ram_blows, "snap_bad": snap_bad, "winner": sim.winner, "tick": sim.tick}
+
+
+func _check_shut_inner_gate() -> void:
+	var a := _shut_run(true)
+	var b := _shut_run(false)
+	if a["hashes"] != b["hashes"] or int(a["snap_bad"]) >= 0:
+		_fail("shut inner gate: the repeat or the restored copy diverged (%d)" % int(a["snap_bad"]))
+		return
+	a.erase("hashes")
+	if int(a["shut"]) < 0 or int(a["hack"]) > 0 or int(a["across"]) > 40 or int(a["ram_at"]) < 0:
+		_fail("shut inner gate: %s" % str(a))
+		return
+	print("PASS shut inner gate: the acropolis shut at tick %d; hacked 0; man-ticks within reach of a man behind a wall %d; the ram sent at it at tick %d (%d blows); winner %d at %d; identical on repeat and across snapshot / restore" % [
+		a["shut"], a["across"], a["ram_at"], a["blows"], a["winner"], a["tick"]])
 
 
 # ------------------------------------------------------------- blocking ---

@@ -644,18 +644,19 @@ battle cards), `campaign_screen.gd` (move toast), `map_overlay.gd`
   owner left in a captured city march out (version 4).
 - **Siege equipment** (2026-10-07; docs/DESIGN.md "Siege equipment and
   wall towers"): an assault after a siege of a full turn or more brings
-  ladders for the attackers' infantry and missile troops, of two turns or
-  more a battering ram as well; an assault on arrival has only the armies'
+  two sets of ladders (`CBattle.LADDER_SETS`), of two turns or more three
+  sets and a battering ram; an assault on arrival has only the armies'
   own artillery. `CBattle.siege_equipment(st, b)` derives it from the
   battle's turn less the siege entry's `turn` (no new state key; VERSION
-  stays 6) and passes it to `Scenarios.settlement` (`equip`); the ram is
-  appended after every army unit, so the result map (`order`) is
-  unchanged. A walls-2/3 city mounts its tower engines in the battle (the
+  stays 6) and passes it to `Scenarios.settlement` (`equip`: counts);
+  since part 2b (2026-10-07) they are objects on the ground behind the
+  attackers' line that any of their foot picks up, not units, so the
+  result map (`order`) covers every scenario unit. A walls-2/3 city mounts its tower engines in the battle (the
   sim's own); a Workshop in the city gives them half as many shots again.
   The auto-resolve formula is unchanged (part 3 of the plan fits it to the
   sim). Siege panel line (`CBattle.equipment_text`): "Siege equipment:
   none yet (artillery only); ladders next turn, a ram in 2 turns" /
-  "ladders for the foot; a ram next turn" / "ladders and a ram"; the
+  "2 sets of ladders; a ram next turn" / "3 sets of ladders and a ram"; the
   lay-siege toast says "Ladders after a turn of siege, a ram after two".
 - **Battle time limit** (2026-10-07): `settings.time_limit` in seconds
   (new-campaign "Battle time: 15 / 20 / 30 / 45 min", default 15; stored

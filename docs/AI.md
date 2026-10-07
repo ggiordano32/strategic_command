@@ -1203,3 +1203,15 @@ Tried at Average in the equal-force sieges (`--knob=a:216=1 --knob=a:219=122880`
 (ring walls 1: 372 against 269) but the breach holders, two or three units
 against the whole assault, died at the gate. Left on for Skilled as a
 Skilled habit; Easy and Average play as without them.
+
+## 15. Siege equipment knobs (part 2b, 2026-10-07)
+
+Ladders and the ram are objects any attacking foot unit carries, plants
+or batters with, and drops (docs/DESIGN.md "Siege equipment and wall
+towers"). `sim/siege_ai.gd` assigns the ram to the least street-worthy
+foot unit (pikes first) and ladder sets to the heaviest infantry, up to
+`S_LADDER_UNITS` including planted sets; `S_LADDER_FOLLOW` (0 / 1 / 1)
+sends that many extra infantry up each planted set; `S_LADDER_AFTER` is
+300 ticks (carrying is slow); `S_CIT_WAIT`: at a shut walls-2/3 gate with
+no ram the AI waits 50 m out instead of hacking (iron gates ignore
+swords at every level). Skilled's wait-for-towers rule is unchanged.

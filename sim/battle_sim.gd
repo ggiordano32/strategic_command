@@ -67,7 +67,9 @@ const ORDER_REFILL := 10        # unit, on (artillery: bring up shots from the b
 const ORDER_GATE := 11          # unit (any of the defenders'), gate, on (1 close / 0 open)
 const ORDER_PLACE := 12         # unit, x, y, facing, files (deployment phase only, inside its side's zone)
 const ORDER_READY := 13         # who (deployment phase: player `who` is ready to start)
-const ORDER_LAST := 13
+const ORDER_PICKUP := 14        # unit, equip (siege equipment: go to the piece and pick it up)
+const ORDER_DROP := 15          # unit (put down the piece it carries where it stands)
+const ORDER_LAST := 15
 
 # Battle phase (scenario "deploy_time" > 0 starts in PHASE_DEPLOY, see the
 # "deployment phase" section at the end of this file).
@@ -78,7 +80,7 @@ const DZ_INSIDE := 1   # settlement defenders: open ground inside the walls with
 
 ## Unit fields an order can change; OrderPreview predicts exactly these.
 const ORDER_KEYS: Array[String] = ["order", "ax", "ay", "face", "files", "dx", "dy",
-	"dface", "target", "run", "fire", "skirm", "deploy", "refill", "gtarget"]
+	"dface", "target", "run", "fire", "skirm", "deploy", "refill", "gtarget", "pick"]
 
 # Formation geometry (spacing is per unit type, see unit_types.gd).
 const FILE_SPACING := 1126  # default, kept for callers that do not pass a type
@@ -289,15 +291,33 @@ const TOWER_AMMO_BLD := 5        # a city with this building (cdata "workshop", 
 const TOWER_AMMO_PCT := 150      # ... loads its towers with this % of the shots
 const TOWER_BOLT_DMG := 70       # tower hit points per bolt landing on a tower ordered at ...
 const TOWER_STONE_DMG := 330     # ... per stone
-const LADDER_MEN := 20           # a unit carries a ladder per this many men (1-5)
+const LADDER_SET := 5            # ladders in a set (one piece of equipment)
 static var LADDER_TICKS: Array[int] = [0, 20, 30, 40]    # ticks per man up one ladder, by wall level
 const LADDER_NEAR := 8 * M       # men this close to the foot go up in turn
 const LADDER_GAP := 2560         # ladders this far apart along the wall
 const UNBAR_MEN := 4             # ladder men this many at the inside of a closed gate ...
 const UNBAR_TICKS := 150         # ... for this long open it
-const SG_LADDER := 1             # "siege" bits of a scenario unit / u_lad: carries ladders
 const ST_LADDER_GO := 5          # u_stair: marching to a ladder's foot ...
 const ST_LADDER := 4             # ... climbing it (u_wall set, men go up a few at a time)
+# Siege equipment objects (q_*: docs/DESIGN.md "Siege equipment as objects").
+const EQ_LADDERS := 1            # a set of LADDER_SET ladders
+const EQ_RAM := 2                # a battering ram
+const Q_GROUND := 0              # lying where it was put down
+const Q_CARRIED := 1             # carried by unit q_unit (at its anchor)
+const Q_PLANTED := 2             # ladders against stretch q_seg (foot q_x, q_y; for the battle)
+const Q_WRECKED := 3             # a ram smashed (artillery, defenders at it)
+const RAM_CREW := 20             # men of the carrying unit who work the ram at most
+const RAM_WALK := 123            # a unit carrying the ram walks at most this fast (1.2 m/s) ...
+const LADDER_WALK_PCT := 80      # ... one carrying ladders at this % of its walk; neither runs
+const CARRY_MELEE_PCT := 60      # a carrying unit's melee attack and defence (it defends poorly)
+const PICK_R := 6 * M            # the anchor this close to a piece on the ground picks it up
+const RAM_HP := 2500             # a ram's hit points ...
+const RAM_BOLT_DMG := 70         # ... a bolt landing within RAM_HIT_R takes this, a stone ...
+const RAM_STONE_DMG := 330
+const RAM_HIT_R := 3 * M
+const RAM_ROOF_R := 5 * M        # arrows landing on the carriers this near the ram ...
+const RAM_ROOF_PCT := 70         # ... are stopped by its roof this often
+const RAM_WRECK := 3             # hit points a tick per defender within ENGINE_NEAR of a ram on the ground
 
 # Morale (0..1000).
 const MORALE_MAX := 1000
@@ -674,7 +694,6 @@ var t_m_apex := PackedInt32Array()
 var t_m_reserve := PackedInt32Array()
 var t_m_refill := PackedInt32Array()
 var t_fixed := PackedInt32Array()
-var t_ram := PackedInt32Array()
 
 # Spatial grid, one per side so target search only walks enemies.
 var grid_w: int = 0
@@ -815,12 +834,35 @@ var time_limit: int = TIME_LIMIT
 ## Siege equipment and wall towers (section "siege" at the end). Hashed only
 ## when the battle has any (sg_on), so battles without them hash as before.
 var sg_on: int = 0
-var u_lad := PackedInt32Array()     # per unit: SG_LADDER if it carries ladders
+var u_carry := PackedInt32Array()   # per unit: the piece of siege equipment it carries (-1 none)
+var u_pick := PackedInt32Array()    # ... the piece it is going to pick up (an order field; -1 none)
+var u_lq := PackedInt32Array()      # ... the ladder set it goes up / came up by (-1 none)
 var u_lfx := PackedInt32Array()     # ladders: the foot (outside the wall) it climbs from
 var u_lfy := PackedInt32Array()
-var u_lacc := PackedInt32Array()    # ladders: work toward the next man up; ram: toward the next blow
+var u_lacc := PackedInt32Array()    # the ram's work toward the next blow
 var u_trad := PackedInt32Array()    # tower engines: the tower's radius (static)
 var g_unbar := PackedInt32Array()   # per gate: ticks ladder men have stood unbarring it
+## Siege equipment objects (the attackers' ladder sets and rams), in index
+## order: kind (EQ_*), where it is (the foot of planted ladders), state
+## (Q_*), the unit carrying it, the stretch planted at (-1), the walkway
+## point above planted ladders, hit points (a ram), the climb's work toward
+## the next man up (planted ladders), the side it belongs to.
+var n_eq: int = 0
+var q_kind := PackedInt32Array()
+var q_x := PackedInt32Array()
+var q_y := PackedInt32Array()
+var q_state := PackedInt32Array()
+var q_unit := PackedInt32Array()
+var q_seg := PackedInt32Array()
+var q_wx := PackedInt32Array()
+var q_wy := PackedInt32Array()
+var q_hp := PackedInt32Array()
+var q_acc := PackedInt32Array()
+var q_side := PackedInt32Array()
+var stat_pickups: int = 0           # pieces picked up
+var stat_drops: int = 0             # ... put down (ordered, routing, the gate broken)
+var stat_planted: int = 0           # ladder sets planted against a wall
+var stat_ram_wrecked: int = 0
 var stat_ladder_up: int = 0         # men up a ladder
 var stat_ladder_done: int = 0       # units wholly up
 var stat_ram_blows: int = 0
@@ -964,6 +1006,9 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	g_unbar.resize(n_gates)
 	g_unbar.fill(0)
 	sg_on = 0
+	for arr in [u_carry, u_pick, u_lq]:
+		arr.fill(-1)
+	_setup_equip(scenario)
 	u_gtarget.fill(-1)
 	pth_x.resize(n_units * PATH_MAX)
 	pth_x.fill(0)
@@ -1053,12 +1098,6 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 						bo = o
 						bs = sg
 				u_wall[u] = bs + 1
-		elif t_ram[ty] != 0:
-			sg_on = 1
-		elif int(ud.get("ladders", 0)) != 0 and city_on != 0 and int(ud["side"]) != city_def \
-				and (t_cls[ty] == UT.CLS_INF or t_cls[ty] == UT.CLS_MISSILE):
-			sg_on = 1
-			u_lad[u] = SG_LADDER
 		var ne := _engines_for(ty, cnt)
 		u_eng0[u] = eng
 		u_neng[u] = ne
@@ -1213,7 +1252,7 @@ func _load_types() -> void:
 		t_m_reload, t_m_spread, t_m_spread0, t_m_speed, t_m_arc, t_skirm, t_m_vuln, t_m_down,
 		t_m_lead, t_m_long, t_crew, t_crew_min, t_m_kind, t_m_min, t_m_pierce, t_m_plough, t_m_blast,
 		t_m_fear, t_arc, t_traverse, t_deploy, t_e_hp, t_climb, t_m_hgain, t_m_apex, t_m_reserve, t_m_refill,
-		t_fixed, t_ram]
+		t_fixed]
 	var keys := ["cls", "attack", "defence", "armour", "shield", "mshield",
 		"damage", "reach", "ranks_reach", "mass", "walk", "run", "hp", "cooldown",
 		"morale", "file_sp", "rank_sp", "turn", "brace", "vs_cav", "charge",
@@ -1221,7 +1260,7 @@ func _load_types() -> void:
 		"m_damage", "m_ap", "m_ammo", "m_reload", "m_spread", "m_spread0",
 		"m_speed", "m_arc", "skirm", "m_vuln", "m_down", "m_lead", "m_long", "crew", "crew_min",
 		"m_kind", "m_min", "m_pierce", "m_plough", "m_blast", "m_fear", "arc", "traverse",
-		"deploy", "e_hp", "climb", "m_hgain", "m_apex", "m_reserve", "m_refill", "fixed", "ram"]
+		"deploy", "e_hp", "climb", "m_hgain", "m_apex", "m_reserve", "m_refill", "fixed"]
 	for k in arrays.size():
 		var arr: PackedInt32Array = arrays[k]
 		arr.resize(nt)
@@ -2372,7 +2411,7 @@ func _mask_of(u: int) -> int:
 ## also a ditch; horses and engines not.
 func _ground_mask(u: int) -> int:
 	var c := u_cls[u]
-	if city_ditch != 0 and (c == UT.CLS_INF or c == UT.CLS_PIKE or c == UT.CLS_MISSILE) and t_ram[u_type[u]] == 0:
+	if city_ditch != 0 and (c == UT.CLS_INF or c == UT.CLS_PIKE or c == UT.CLS_MISSILE) and not carries_ram(u):
 		return MapGen.NAV_GROUND | MapGen.NAV_DITCH
 	return MapGen.NAV_GROUND
 
@@ -3089,11 +3128,13 @@ func _wall_order(u: int, typ: int) -> void:
 	if u_wall[u] > 0 and u_order[u] == O_MOVE:
 		_start_descent(u)
 		return
-	if typ == ORDER_MOVE and u_wall[u] == 0 and u_order[u] == O_MOVE and can_ladder(self, u):
+	if typ == ORDER_MOVE and u_wall[u] == 0 and u_order[u] == O_MOVE and may_ladder(self, u):
 		var wl := wall_snap(self, u_dx[u], u_dy[u])
-		if wl.z >= 0 and ladder_ok(self, u, wl.z, wl.x, wl.y):
-			_start_ladder(u, wl.z, wl.x, wl.y)
-			return
+		if wl.z >= 0:
+			var lq := ladder_set_for(self, u, wl.z, wl.x, wl.y)
+			if lq >= 0:
+				_start_ladder(u, lq, wl.z, wl.x, wl.y)
+				return
 	if u_stair[u] == 1:
 		return  # still coming down: the new order waits until it is down
 	if typ == ORDER_MOVE and u_wall[u] == 0 and u_order[u] == O_MOVE and can_man_walls(self, u):
@@ -3101,7 +3142,10 @@ func _wall_order(u: int, typ: int) -> void:
 		if ws.z >= 0:
 			_start_ascent(u, ws.z, ws.x, ws.y)
 			return
-	if u_stair[u] == 2 or u_stair[u] == ST_LADDER_GO:
+	if (u_stair[u] == 2 or u_stair[u] == ST_LADDER_GO) and typ != ORDER_RUN and typ != ORDER_FIRE \
+			and typ != ORDER_SKIRMISH:
+		if u_stair[u] == ST_LADDER_GO:
+			u_lq[u] = -1
 		u_stair[u] = 0
 
 
@@ -3397,6 +3441,8 @@ func _update_gates() -> void:
 			_siege_gate(g)
 			if g_state[g] != GATE_CLOSED:
 				continue
+		if not gate_hackable(self, g):
+			continue  # bound with iron: swords do nothing (a ram or artillery)
 		for u in n_units:
 			if u_side[u] == city_def or u_state[u] != U_READY or u_alive[u] <= 0:
 				continue
@@ -3408,8 +3454,8 @@ func _update_gates() -> void:
 			if u_maxx[u] < gx - r or u_minx[u] > gx + r or u_maxy[u] < gy - r or u_miny[u] > gy + r:
 				continue
 			var ty := u_type[u]
-			if t_ram[ty] != 0:
-				continue  # the ram works the gate itself (_siege_gate)
+			if sg_on != 0 and u_carry[u] >= 0:
+				continue  # carrying: no hacking (the ram works the gate itself: _siege_gate)
 			var rate := maxi(t_damage[ty] - GATE_ARMOUR, 2) * hack_pct / maxi(t_cooldown[ty], 1)
 			var base := u_slot_base[u]
 			for s in u_alive[u]:
@@ -3689,8 +3735,13 @@ func _apply_orders(max_player: int = 1 << 30) -> void:
 			u_deploy[u] = int(d["deploy"])
 			u_refill[u] = int(d["refill"])
 			u_gtarget[u] = int(d["gtarget"])
+			u_pick[u] = int(d["pick"])
 			u_dirty[u] = 1
 			u_settled[u] = 0
+			if int(o["type"]) == ORDER_DROP:
+				_drop(u)
+			elif u_pick[u] >= 0:
+				_pick_check(u)
 			if int(o["type"]) == ORDER_PLACE:
 				if int(d.get("placed", 0)) != 0:
 					_place_unit(u, int(d.get("wall", 0)))
@@ -3708,7 +3759,8 @@ static func order_fields(sim, u: int) -> Dictionary:
 		"face": sim.u_face[u], "files": sim.u_files[u], "dx": sim.u_dx[u],
 		"dy": sim.u_dy[u], "dface": sim.u_dface[u], "target": sim.u_target[u],
 		"run": sim.u_run[u], "fire": sim.u_fire[u], "skirm": sim.u_skirm[u],
-		"deploy": sim.u_deploy[u], "refill": sim.u_refill[u], "gtarget": sim.u_gtarget[u]}
+		"deploy": sim.u_deploy[u], "refill": sim.u_refill[u], "gtarget": sim.u_gtarget[u],
+		"pick": sim.u_pick[u]}
 
 
 ## Units an order applies to (in index order): its unit, or every ready unit
@@ -3746,15 +3798,42 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 			and typ != ORDER_DEPLOY:
 		return
 	# Siege: a tower's engine only shoots (at a unit, at will) or holds; a
-	# ram goes at gates (and moves), never at units; a unit climbing
-	# ladders goes on climbing (or withdraws back down them).
+	# unit climbing ladders goes on climbing (or withdraws back down them).
 	if UT.stat(ty, "fixed") != 0 and typ != ORDER_ATTACK and typ != ORDER_HALT and typ != ORDER_FIRE:
-		return
-	if UT.stat(ty, "ram") != 0 and typ == ORDER_ATTACK and int(o.get("gate", -1)) < 0:
 		return
 	if u < sim.u_stair.size() and sim.u_stair[u] == ST_LADDER and typ != ORDER_FIRE and typ != ORDER_RUN \
 			and typ != ORDER_WITHDRAW and typ != ORDER_WITHDRAW_ALL:
 		return
+	# Siege equipment: a unit goes to a piece and picks it up (ORDER_PICKUP);
+	# putting it down (ORDER_DROP) is the sim's (no order field changes). A
+	# unit carrying a piece never runs and attacks no unit (the ram's
+	# carriers go at gates); any other order forgets a pick-up.
+	var carry: int = sim.u_carry[u] if u < sim.u_carry.size() else -1
+	if typ == ORDER_PICKUP:
+		var q := int(o.get("equip", -1))
+		if pickup_refusal(sim, u, q) != "":
+			return
+		d["order"] = O_MOVE
+		d["dx"] = sim.q_x[q]
+		d["dy"] = sim.q_y[q]
+		var pdx: int = sim.q_x[q] - int(d["ax"])
+		var pdy: int = sim.q_y[q] - int(d["ay"])
+		d["dface"] = FM.atan2_a(pdy, pdx) if pdx != 0 or pdy != 0 else int(d["face"])
+		d["target"] = -1
+		d["gtarget"] = -1
+		d["run"] = 1 if int(o.get("run", 0)) != 0 and carry < 0 else 0
+		d["pick"] = q
+		return
+	if typ == ORDER_DROP:
+		return
+	if typ == ORDER_MOVE or typ == ORDER_ATTACK or typ == ORDER_HALT or typ == ORDER_WITHDRAW \
+			or typ == ORDER_WITHDRAW_ALL:
+		d["pick"] = -1
+	if carry >= 0:
+		if typ == ORDER_ATTACK and (int(o.get("gate", -1)) < 0 or sim.q_kind[carry] != EQ_RAM):
+			return  # carrying: it does not attack (put it down first); the ram goes at gates
+		if typ == ORDER_RUN:
+			return
 	# Artillery: frontage is set by its engines, and it never runs (the
 	# engines are dragged); it does not skirmish.
 	var art := UT.cls(ty) == UT.CLS_ART
@@ -3772,10 +3851,10 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 	# does not withdraw or skirmish.
 	var wallu: int = sim.u_wall[u] if u < sim.u_wall.size() else 0
 	var ws := Vector3i(0, 0, -1)
-	var lad := wallu == 0 and can_ladder(sim, u)
+	var lad := wallu == 0 and may_ladder(sim, u)
 	if typ == ORDER_MOVE and (wallu > 0 or can_man_walls(sim, u) or lad):
 		ws = wall_snap(sim, int(o["x"]), int(o["y"]))
-		if lad and ws.z >= 0 and not ladder_ok(sim, u, ws.z, ws.x, ws.y):
+		if lad and ws.z >= 0 and ladder_set_for(sim, u, ws.z, ws.x, ws.y) < 0:
 			ws = Vector3i(0, 0, -1)  # no way up there: an ordinary move
 	# Attackers up the ladders withdraw back down them (the wall rule below
 	# keeps defenders on their wall).
@@ -3835,7 +3914,7 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 			d["snap"] = rs.z
 		if not art:
 			d["files"] = width_to_files(int(o["width"]), sim.u_alive[u], ty)
-		d["run"] = 1 if int(o.get("run", 0)) != 0 and not art else 0
+		d["run"] = 1 if int(o.get("run", 0)) != 0 and not art and carry < 0 else 0
 		d["target"] = -1
 		d["gtarget"] = -1
 		var dx: int = x - d["ax"]
@@ -3867,19 +3946,21 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 				d["run"] = 0
 				return
 			var c := UT.cls(ty)
-			if c != UT.CLS_INF and c != UT.CLS_PIKE:
-				return
 			var gfp: Vector3i = sim.gate_front(gt, sim.u_side[u])
-			if u < sim.u_lad.size() and sim.u_lad[u] != 0 and (wallu > 0 \
+			if carry < 0 and u < sim.u_lq.size() and sim.u_lq[u] >= 0 and (wallu > 0 \
 					or sim.reach_at(int(d["ax"]), int(d["ay"])) == sim.reach_at(sim.g_ix[gt], sim.g_iy[gt])):
-				gfp = sim.gate_front(gt, sim.city_def)  # over the wall already: its inside, to unbar it
+				gfp = sim.gate_front(gt, sim.city_def)  # over the wall by ladders: its inside, to unbar it
+				if c == UT.CLS_CAV or c == UT.CLS_ART:
+					return
+			elif carry < 0 and (c != UT.CLS_INF and c != UT.CLS_PIKE or not gate_hackable(sim, gt)):
+				return  # (only foot hack, and only at a gate swords can break)
 			d["order"] = O_MOVE
 			d["dx"] = gfp.x
 			d["dy"] = gfp.y
 			d["dface"] = gfp.z
 			d["target"] = -1
 			d["gtarget"] = gt
-			d["run"] = 1 if int(o.get("run", 0)) != 0 else 0
+			d["run"] = 1 if int(o.get("run", 0)) != 0 and carry < 0 else 0
 			return
 		var t := int(o["target"])
 		if t < 0 or t >= sim.n_units or sim.u_side[t] == sim.u_side[u] or sim.u_state[t] >= U_DESTROYED:
@@ -3887,14 +3968,14 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 		d["order"] = O_ATTACK
 		d["target"] = t
 		d["gtarget"] = -1
-		d["run"] = 1 if int(o.get("run", 0)) != 0 and not art else 0
+		d["run"] = 1 if int(o.get("run", 0)) != 0 and not art and carry < 0 else 0
 	elif typ == ORDER_HALT:
 		d["order"] = O_NONE
 		d["target"] = -1
 		d["gtarget"] = -1
 		d["dface"] = d["face"]
 	elif typ == ORDER_RUN:
-		d["run"] = 1 if int(o.get("run", 0)) != 0 and not art else 0
+		d["run"] = 1 if int(o.get("run", 0)) != 0 and not art and carry < 0 else 0
 	elif typ == ORDER_FIRE:
 		if UT.stat(ty, "m_ammo") > 0:
 			d["fire"] = 1 if int(o.get("on", 0)) != 0 else 0
@@ -3919,7 +4000,7 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 		d["order"] = O_WITHDRAW
 		d["target"] = -1
 		d["gtarget"] = -1
-		d["run"] = 0 if art else 1
+		d["run"] = 0 if art or carry >= 0 else 1
 		d["dx"] = d["ax"]
 		d["dy"] = sim.field_h if sim.u_side[u] == 0 else 0
 		d["dface"] = 256 if sim.u_side[u] == 0 else 768
@@ -4163,6 +4244,8 @@ func step() -> void:
 	_update_contacts()
 	_build_grid()
 	_update_soldiers()
+	if n_eq > 0:
+		_update_equip()
 	if n_gates > 0:
 		_update_gates()
 	if n_eng > 0:
@@ -4478,6 +4561,10 @@ func _update_units() -> void:
 		var ty := u_type[u]
 		var cls := u_cls[u]
 		var speed := t_run[ty] if u_run[u] != 0 else t_walk[ty]
+		if sg_on != 0 and u_carry[u] >= 0:
+			# Carrying siege equipment: no running, the ram's pace or a little
+			# below the walk with ladders.
+			speed = mini(t_walk[ty], RAM_WALK) if q_kind[u_carry[u]] == EQ_RAM else t_walk[ty] * LADDER_WALK_PCT / 100
 		var aspeed := (speed * 7) >> 3
 		# Woods under the anchor: slower, and (below) disorder and a lower
 		# momentum cap; settlement streets cap a charge too.
@@ -4603,6 +4690,11 @@ func _update_units() -> void:
 				# facing for the last stretch.
 				if via or d > REFORM_IN_PLACE_DIST:
 					want_face = FM.atan2_a(dy, dx)
+				if u_stair[u] == ST_LADDER_GO and order == O_MOVE and _ladder_reached(u):
+					# Near enough the foot (its men cannot all fit between the
+					# anchor and the wall): up the ladders from here.
+					u_order[u] = O_NONE
+					_ladder_start(u)
 		elif order == O_ATTACK:
 			var t := u_target[u]
 			if t < 0 or u_state[t] >= U_DESTROYED:
@@ -4874,6 +4966,10 @@ func _unit_stats(u: int) -> void:
 		u_def[u] = t_defence[ty]
 		u_dmg[u] = t_damage[ty]
 		u_reach[u] = t_reach[ty]
+	if sg_on != 0 and u_carry[u] >= 0:
+		# Carrying siege equipment: it defends itself poorly.
+		u_att[u] = u_att[u] * CARRY_MELEE_PCT / 100
+		u_def[u] = u_def[u] * CARRY_MELEE_PCT / 100
 
 
 func _update_units_stats() -> void:
@@ -4884,6 +4980,9 @@ func _update_units_stats() -> void:
 ## Missile unit behaviour, every FIRE_THINK ticks: skirmish away from close
 ## melee troops, and choose what to shoot.
 func _missile_think(u: int) -> void:
+	if sg_on != 0 and u_carry[u] >= 0:
+		u_ftarget[u] = -1  # carrying siege equipment: no shooting, no skirmishing
+		return
 	var ty := u_type[u]
 	var order := u_order[u]
 	# Skirmish mode: fall back from approaching infantry or cavalry.
@@ -5478,8 +5577,10 @@ func _update_soldiers() -> void:
 						if ddx * ddx + ddy * ddy > (keep_front if front and not shy else keep_rear):
 							t = -1
 							lost = true
-						elif ob and ((tk + i) & 7) == 0 and not _reach_ok(x, y, px[t], py[t]):
-							t = -1  # out of reach behind a wall: look again
+						elif ob and ((tk + i) & 1) == 0 and not _reach_ok(x, y, px[t], py[t]):
+							# Out of reach behind a wall (or a gate, a corner): look
+							# again (every other tick: nobody stands fighting a wall).
+							t = -1
 							lost = true
 				if t < 0:
 					# Every rider looks ahead, not just the front rank.
@@ -6512,6 +6613,10 @@ func _land(p: int) -> void:
 				and _rand() % 100 < WALL_COVER[city_walls]:
 			stat_wall_cover += 1
 			return
+		if sg_on != 0 and u_carry[ub] >= 0 and q_kind[u_carry[ub]] == EQ_RAM \
+				and FM.approx_len(pos_x[best] - q_x[u_carry[ub]], pos_y[best] - q_y[u_carry[ub]]) <= RAM_ROOF_R \
+				and _rand() % 100 < RAM_ROOF_PCT:
+			return  # on the ram's roof
 	if best >= 0:
 		_missile_hit(p, best)
 
@@ -7131,8 +7236,11 @@ func _sw_insert(v: int, al: int, lt: int) -> void:
 func _land_bolt(p: int) -> void:
 	if pr_tu[p] <= -2 and _gate_hit(p, GATE_BOLT):
 		return
-	if sg_on != 0 and _tower_hit(p, TOWER_BOLT_DMG):
-		return  # into the tower's masonry
+	if sg_on != 0:
+		if _tower_hit(p, TOWER_BOLT_DMG):
+			return  # into the tower's masonry
+		if n_eq > 0:
+			_ram_hit(pr_x[p], pr_y[p], RAM_BOLT_DMG)
 	var u := pr_unit[p]
 	var ty := u_type[u]
 	var sx := pr_sx[p]
@@ -7203,6 +7311,8 @@ func _land_stone(p: int) -> void:
 		return
 	if sg_on != 0:
 		_tower_hit(p, TOWER_STONE_DMG)  # (and it smashes on among the crew)
+		if n_eq > 0:
+			_ram_hit(pr_x[p], pr_y[p], RAM_STONE_DMG)
 	var u := pr_unit[p]
 	var ty := u_type[u]
 	var lx := pr_x[p]
@@ -7421,7 +7531,9 @@ func _start_rout(u: int) -> void:
 	if obs_on != 0:
 		u_pn[u] = 0
 	u_order[u] = O_NONE
-	if u_wall[u] > 0 and u_side[u] != city_def and u_lad[u] != 0:
+	if sg_on != 0 and u_carry[u] >= 0:
+		_drop(u)  # routing: whatever it carries is left where it is
+	if u_wall[u] > 0 and u_side[u] != city_def and u_lq[u] >= 0:
 		_ladder_down(u)  # up the ladders: back down them
 	elif u_wall[u] > 0:
 		_start_descent(u)  # off the wall by the nearest stair
@@ -7686,6 +7798,9 @@ func state_hash() -> int:
 		for arr in _siege_unit_arrays():
 			ctx.update((arr as PackedInt32Array).to_byte_array())
 		ctx.update(g_unbar.to_byte_array())
+		if n_eq > 0:
+			for arr in _equip_arrays():
+				ctx.update((arr as PackedInt32Array).to_byte_array())
 	var digest := ctx.finish()
 	return digest.decode_u32(0)
 
@@ -7984,20 +8099,34 @@ func _place_unit(u: int, wall: int) -> void:
 #   (UT "fixed"), on the tower as wall units, with a fixed load of shots
 #   (more with a workshop), crews that can be shot, and a tower that enemy
 #   batteries batter down (a shot aimed at the tower landing within it).
-# - Ladders (scenario unit key "ladders": 1; u_lad): an attacking foot unit
-#   ordered onto a stretch of wall from outside marches to the foot of the
-#   wall there (ST_LADDER_GO), then climbs (ST_LADDER): its men go up one
-#   ladder at a time (LADDERS_TICKS by wall level), arriving on the walkway
-#   where they fight the defenders; once all are up it is a wall unit (down
-#   into the town by a stair; withdrawing or routing: back down the
-#   ladders). Ladder men at the inside of a closed gate unbar it.
-# - The ram (UT "ram"): its crew at a closed gate's outer face batters it
-#   (RAM_DMG every RAM_WORK man-ticks); walls-2/3 gates barely notice swords
-#   (GATE_HACK_BY_WALLS).
+# - Siege equipment (q_*, scenario "equip"): the attackers' ladder sets and
+#   rams are objects on the ground. Any attacking foot unit picks one up
+#   (ORDER_PICKUP: it goes to it), carries it at its anchor (slowly, never
+#   running, attacking nobody, defending poorly) and puts it down
+#   (ORDER_DROP; routing or wiped out, it is left where they were).
+# - Ladders: a unit carrying a set ordered onto a stretch of wall from
+#   outside marches to the foot of the wall there (ST_LADDER_GO), plants
+#   it (for the battle) and climbs (ST_LADDER); any infantry or missile
+#   unit of its side ordered onto that stretch later climbs there too. The
+#   men go up one at a time per ladder (LADDER_TICKS by wall level, the
+#   set's five ladders shared by all who climb it), arriving on the walkway
+#   where they fight the defenders; once all are up it is a wall unit
+#   (down into the town by a stair; withdrawing or routing: back down the
+#   ladders). Men who came up by ladders at the inside of a closed gate
+#   unbar it.
+# - The ram: carried to a closed gate's outer face (an outer gate, or the
+#   citadel's from the town) its carriers batter it (RAM_DMG every RAM_WORK
+#   man-ticks of at most RAM_CREW men) and put it down once it breaks;
+#   walls-2/3 gates do not yield to swords at all (gate_hackable). Tower
+#   bolts and stones can wreck it, defenders standing at it smash it.
 # All of it is state hashed when the battle has any (sg_on).
 
 func _siege_unit_arrays() -> Array:
-	return [u_lad, u_lfx, u_lfy, u_lacc, u_trad]
+	return [u_carry, u_pick, u_lq, u_lfx, u_lfy, u_lacc, u_trad]
+
+
+func _equip_arrays() -> Array:
+	return [q_kind, q_x, q_y, q_state, q_unit, q_seg, q_wx, q_wy, q_hp, q_acc, q_side]
 
 
 ## The engines a walls-2/3 city mounts on its towers, as scenario unit
@@ -8109,28 +8238,233 @@ func is_tower(u: int) -> bool:
 	return t_fixed[u_type[u]] != 0
 
 
-## Unit u is a ram.
-func is_ram(u: int) -> bool:
-	return t_ram[u_type[u]] != 0
+## Siege equipment at setup: scenario "equip" [[kind (EQ_*), x_m, y_m],
+## ...], the attackers' (the side not defending the city), on the ground
+## where the scenario puts them (behind the attackers' line). Only on a
+## settlement map with walls; any piece makes the battle a siege-gear one
+## (sg_on).
+func _setup_equip(sc: Dictionary) -> void:
+	var lst: Array = sc.get("equip", [])
+	if city_on == 0 or ws_x0.size() == 0:
+		lst = []
+	n_eq = lst.size()
+	for arr in _equip_arrays():
+		arr.resize(n_eq)
+		arr.fill(0)
+	q_unit.fill(-1)
+	q_seg.fill(-1)
+	for q in n_eq:
+		var e: Array = lst[q]
+		q_kind[q] = EQ_RAM if int(e[0]) == EQ_RAM else EQ_LADDERS
+		q_x[q] = clampi(int(e[1]) * M, 0, field_w)
+		q_y[q] = clampi(int(e[2]) * M, 0, field_h)
+		q_state[q] = Q_GROUND
+		q_hp[q] = RAM_HP if q_kind[q] == EQ_RAM else 0
+		q_side[q] = 1 - city_def
+	if n_eq > 0:
+		sg_on = 1
 
 
-## Ladders unit u carries (0: none): one per LADDER_MEN men it started with, 1-5.
-static func ladders_of(sim, u: int) -> int:
-	if u >= sim.u_lad.size() or sim.u_lad[u] == 0:
+## Unit u carries the ram.
+func carries_ram(u: int) -> bool:
+	var c := u_carry[u]
+	return c >= 0 and q_kind[c] == EQ_RAM
+
+
+## What unit u carries: 0 nothing, EQ_LADDERS or EQ_RAM.
+static func carrying(sim, u: int) -> int:
+	if u >= sim.u_carry.size() or sim.u_carry[u] < 0:
 		return 0
-	return clampi(sim.u_count0[u] / LADDER_MEN, 1, 5)
+	return sim.q_kind[sim.u_carry[u]]
 
 
-## Unit u may climb a wall by ladders: an attacking infantry or missile
-## unit (not a ram) carrying them, on the ground (not already on a stair or
-## ladder move up).
-static func can_ladder(sim, u: int) -> bool:
-	if sim.city_on == 0 or sim.ws_x0.size() == 0 or u >= sim.u_lad.size() or sim.u_lad[u] == 0:
+## Ladders unit u goes up by (a set: LADDER_SET), 0 if it is not on a ladder move.
+static func ladders_of(sim, u: int) -> int:
+	if u >= sim.u_lq.size() or sim.u_lq[u] < 0:
+		return 0
+	return LADDER_SET
+
+
+## Why unit u cannot pick up piece q ("" if it can): attacking foot (not
+## horses or engines) on the ground, carrying nothing, the piece on the
+## ground and on its own ground. Shared with the view.
+static func pickup_refusal(sim, u: int, q: int) -> String:
+	if q < 0 or q >= sim.n_eq:
+		return "Nothing to pick up there"
+	if sim.q_side[q] != sim.u_side[u]:
+		return "Only the attackers use siege equipment"
+	if sim.q_state[q] == Q_PLANTED:
+		return "Planted ladders stay against the wall: order foot onto that wall to climb"
+	if sim.q_state[q] == Q_WRECKED:
+		return "The ram is wrecked"
+	if sim.q_state[q] == Q_CARRIED:
+		return "Another unit carries it"
+	var c: int = sim.u_cls[u]
+	if c == UT.CLS_CAV:
+		return "Cavalry cannot carry siege equipment"
+	if c == UT.CLS_ART:
+		return "Engines cannot carry siege equipment"
+	if sim.u_wall[u] > 0 or sim.u_stair[u] != 0:
+		return "Down off the wall first"
+	if sim.u_carry[u] >= 0:
+		return "Already carrying something: put it down first (Drop)"
+	var ra: int = sim.reach_at(sim.u_ax[u], sim.u_ay[u])
+	var rq: int = sim.reach_at(sim.q_x[q], sim.q_y[q])
+	if ra >= 0 and rq >= 0 and ra != rq:
+		return "No way to it from here"
+	return ""
+
+
+## Unit u (going to pick up u_pick) is within PICK_R of it: it picks it up
+## and stops there; a piece gone meanwhile (taken, wrecked) is forgotten.
+func _pick_check(u: int) -> void:
+	var q := u_pick[u]
+	if q < 0:
+		return
+	if u_state[u] != U_READY or q_state[q] != Q_GROUND or u_carry[u] >= 0 or u_wall[u] > 0:
+		u_pick[u] = -1
+		return
+	if FM.approx_len(u_ax[u] - q_x[q], u_ay[u] - q_y[q]) > PICK_R:
+		return
+	q_state[q] = Q_CARRIED
+	q_unit[q] = u
+	u_carry[u] = q
+	u_pick[u] = -1
+	u_run[u] = 0
+	if u_order[u] == O_MOVE:
+		u_order[u] = O_NONE
+		u_dx[u] = u_ax[u]
+		u_dy[u] = u_ay[u]
+	u_settled[u] = 0
+	stat_pickups += 1
+
+
+## Unit u puts down what it carries, at its anchor (where it stands).
+func _drop(u: int) -> void:
+	var q := u_carry[u]
+	if q < 0:
+		return
+	u_carry[u] = -1
+	q_state[q] = Q_GROUND
+	q_unit[q] = -1
+	q_x[q] = clampi(u_ax[u], 0, field_w)
+	q_y[q] = clampi(u_ay[u], 0, field_h)
+	stat_drops += 1
+
+
+## Siege equipment once a tick: a carried piece goes with its carriers'
+## anchor (left where it is if they are gone or routed); planted ladders
+## make ready the next man up (a set brings one up every LADDER_TICKS /
+## LADDER_SET ticks between all the units climbing it); a ram on the
+## ground is smashed by defenders standing at it; units going to pick a
+## piece up take it once there.
+func _update_equip() -> void:
+	var per: int = LADDER_TICKS[city_walls]
+	for q in n_eq:
+		var st := q_state[q]
+		if st == Q_CARRIED:
+			var u := q_unit[q]
+			if u < 0 or u_state[u] != U_READY or u_alive[u] <= 0 or u_carry[u] != q:
+				if u >= 0 and u_carry[u] == q:
+					u_carry[u] = -1
+				q_state[q] = Q_GROUND
+				q_unit[q] = -1
+				stat_drops += 1
+			else:
+				q_x[q] = u_ax[u]
+				q_y[q] = u_ay[u]
+		elif st == Q_PLANTED:
+			q_acc[q] = mini(q_acc[q] + LADDER_SET, per)
+		elif st == Q_GROUND and q_kind[q] == EQ_RAM:
+			# Defenders at a ram left on the ground smash it (a sally).
+			var qx := q_x[q]
+			var qy := q_y[q]
+			var r := ENGINE_NEAR
+			var men := 0
+			for u in n_units:
+				if u_side[u] != city_def or u_state[u] != U_READY or u_alive[u] <= 0 or u_wall[u] > 0:
+					continue
+				if u_maxx[u] < qx - r or u_minx[u] > qx + r or u_maxy[u] < qy - r or u_miny[u] > qy + r:
+					continue
+				var base := u_slot_base[u]
+				for s in u_alive[u]:
+					var i := slot_soldier[base + s]
+					if state[i] < S_DEAD and absi(pos_x[i] - qx) <= r and absi(pos_y[i] - qy) <= r:
+						men += 1
+			if men > 0:
+				q_hp[q] -= RAM_WRECK * mini(men, 6)
+				if q_hp[q] <= 0:
+					q_state[q] = Q_WRECKED
+					stat_ram_wrecked += 1
+	for u in n_units:
+		if u_pick[u] >= 0:
+			_pick_check(u)
+
+
+## A bolt or stone landing at (x, y) within RAM_HIT_R of a ram (carried or
+## on the ground) takes dmg off it; at 0 it is wrecked (dropped).
+func _ram_hit(x: int, y: int, dmg: int) -> void:
+	for q in n_eq:
+		if q_kind[q] != EQ_RAM or (q_state[q] != Q_GROUND and q_state[q] != Q_CARRIED):
+			continue
+		if absi(q_x[q] - x) > RAM_HIT_R or absi(q_y[q] - y) > RAM_HIT_R:
+			continue
+		q_hp[q] -= dmg
+		if q_hp[q] <= 0:
+			var u := q_unit[q]
+			if u >= 0 and u_carry[u] == q:
+				u_carry[u] = -1
+			q_unit[q] = -1
+			q_state[q] = Q_WRECKED
+			stat_ram_wrecked += 1
+
+
+## Swords can break gate g (walls 0-1: GATE_HACK_BY_WALLS of a few per cent
+## or more); walls-2/3 gates are bound with iron and yield only to a ram or
+## artillery, so foot are never sent at them (nobody hacks at a wall).
+static func gate_hackable(sim, _g: int) -> bool:
+	return GATE_HACK_BY_WALLS[sim.city_walls] >= 5
+
+
+## Unit u may go up a wall by ladders: an attacking foot unit on the ground
+## (not carrying the ram) that carries a ladder set (pikes too: they plant
+## it but do not climb) or, infantry and missile troops, with a set of its
+## side planted somewhere. Which stretch: ladder_set_for.
+static func may_ladder(sim, u: int) -> bool:
+	if sim.n_eq == 0 or sim.city_on == 0 or sim.ws_x0.size() == 0:
 		return false
 	if sim.u_side[u] == sim.city_def or sim.u_wall[u] > 0:
 		return false
 	var c: int = sim.u_cls[u]
-	return (c == UT.CLS_INF or c == UT.CLS_MISSILE) and UT.stat(sim.u_type[u], "ram") == 0
+	var k := carrying(sim, u)
+	if k == EQ_RAM:
+		return false
+	if k == EQ_LADDERS:
+		return c == UT.CLS_INF or c == UT.CLS_MISSILE or c == UT.CLS_PIKE
+	if c != UT.CLS_INF and c != UT.CLS_MISSILE:
+		return false
+	for q in sim.n_eq:
+		if sim.q_state[q] == Q_PLANTED and sim.q_side[q] == sim.u_side[u]:
+			return true
+	return false
+
+
+## The ladder set unit u would go up stretch sg by, ordered to its walkway
+## point (x, y): the set it carries (planted there: a foot outside the wall
+## it can reach), else a set of its side already planted on sg (its foot
+## reachable; infantry and missile troops), -1 none.
+static func ladder_set_for(sim, u: int, sg: int, x: int, y: int) -> int:
+	if not may_ladder(sim, u) or sg < 0:
+		return -1
+	var c: int = sim.u_carry[u]
+	if c >= 0:
+		return c if ladder_ok(sim, u, sg, x, y) else -1
+	var ra: int = sim.reach_at(sim.u_ax[u], sim.u_ay[u])
+	for q in sim.n_eq:
+		if sim.q_state[q] == Q_PLANTED and sim.q_seg[q] == sg and sim.q_side[q] == sim.u_side[u] \
+				and ra >= 0 and sim.reach_at(sim.q_x[q], sim.q_y[q]) == ra:
+			return q
+	return -1
 
 
 ## The foot of the ladders against stretch sg at its walkway point (x, y):
@@ -8169,10 +8503,18 @@ static func ladder_ok(sim, u: int, sg: int, x: int, y: int) -> bool:
 	return ra >= 0 and sim.reach_at(lf.x, lf.y) == ra
 
 
-## Unit u (carrying ladders) is ordered onto stretch sg at (x, y): it
-## marches to the foot of the wall there.
-func _start_ladder(u: int, sg: int, x: int, y: int) -> void:
-	var lf := ladder_foot(self, sg, x, y)
+## Unit u goes up stretch sg by ladder set q: the set it carries, to be
+## planted below walkway point (x, y), or a set already planted there (its
+## foot and walkway point). It marches to the foot of the wall.
+func _start_ladder(u: int, q: int, sg: int, x: int, y: int) -> void:
+	var lf := Vector3i(q_x[q], q_y[q], 1)
+	if q_state[q] == Q_PLANTED:
+		sg = q_seg[q]
+		x = q_wx[q]
+		y = q_wy[q]
+	else:
+		lf = ladder_foot(self, sg, x, y)
+	u_lq[u] = q
 	u_sseg[u] = sg
 	u_stair[u] = ST_LADDER_GO
 	u_st0[u] = tick
@@ -8180,17 +8522,79 @@ func _start_ladder(u: int, sg: int, x: int, y: int) -> void:
 	u_wy[u] = y
 	u_lfx[u] = lf.x
 	u_lfy[u] = lf.y
-	u_dx[u] = lf.x
-	u_dy[u] = lf.y
+	# It marches to a point a few metres out from the foot (open ground the
+	# street paths reach: a foot squeezed beside a tower has no clear line
+	# to any path node) and goes up from within LADDER_NEAR of the foot.
+	var ap := ladder_approach(self, sg, lf.x, lf.y)
+	u_dx[u] = ap.x
+	u_dy[u] = ap.y
 	u_dface[u] = (ws_dir[sg] + 512) & FM.ANGLE_MASK
 	u_pn[u] = 0
 
 
-## At the foot of the wall: the climb begins. The unit takes the stretch
-## (its wall line at the point it was ordered to); its men go up one at a
-## time per ladder (_ladder_step).
+## Where a unit going up ladders with their foot at (fx, fy) against
+## stretch sg marches to (its men then walk to their ladders from there):
+## out from the foot along the stretch's outward direction, the first point
+## at least 5 m out on firm ground with room round it (2.5 m every way:
+## clear of a tower's corner; past a ditch: the street paths go round a
+## ditch, men wade it) with nothing but ground or ditch back to the foot,
+## at most 24 m out; else the foot. Shared with the view's preview.
+static func ladder_approach(sim, sg: int, fx: int, fy: int) -> Vector2i:
+	var c := FM.cos_a(sim.ws_dir[sg])
+	var s := FM.sin_a(sim.ws_dir[sg])
+	var gd := MapGen.NAV_GROUND | MapGen.NAV_DITCH
+	for d in range(1, 25):
+		var x: int = fx + c * d * M / FM.TRIG_ONE
+		var y: int = fy + s * d * M / FM.TRIG_ONE
+		var nv: int = sim.nav_at(x, y)
+		if (nv & gd) == 0:
+			break  # (a tower, a house, the sea: stop at the last good point)
+		if d >= 5 and (nv & MapGen.NAV_DITCH) == 0 and (nv & MapGen.NAV_GROUND) != 0 \
+				and (sim.nav_at(x + 2560, y) & gd) != 0 and (sim.nav_at(x - 2560, y) & gd) != 0 \
+				and (sim.nav_at(x, y + 2560) & gd) != 0 and (sim.nav_at(x, y - 2560) & gd) != 0:
+			return Vector2i(x, y)
+	return Vector2i(fx, fy)
+
+
+## Unit u on its way to its ladders' foot is near enough to start: its
+## anchor within LADDER_NEAR of the foot with nothing in the way (a march
+## along the wall would otherwise end pressing its men into it).
+func _ladder_reached(u: int) -> bool:
+	var fx := u_lfx[u]
+	var fy := u_lfy[u]
+	var ax := u_ax[u]
+	var ay := u_ay[u]
+	if FM.approx_len(ax - fx, ay - fy) > LADDER_NEAR:
+		return false
+	var gm := MapGen.NAV_GROUND | MapGen.NAV_DITCH
+	for k in range(1, 5):
+		if (nav_at(ax + (fx - ax) * k / 4, ay + (fy - ay) * k / 4) & gm) == 0:
+			return false
+	return true
+
+
+## At the foot of the wall: a set it carries is planted there (for the
+## battle); then the climb begins (not pikes: they stand). The unit takes
+## the stretch (its wall line at the point it was ordered to); its men go
+## up one at a time per ladder (_ladder_step).
 func _ladder_start(u: int) -> void:
 	var sg := u_sseg[u]
+	var q := u_lq[u]
+	if q >= 0 and u_carry[u] == q:
+		u_carry[u] = -1
+		q_unit[q] = -1
+		q_state[q] = Q_PLANTED
+		q_seg[q] = sg
+		q_x[q] = u_lfx[u]
+		q_y[q] = u_lfy[u]
+		q_wx[q] = u_wx[u]
+		q_wy[q] = u_wy[u]
+		q_acc[q] = 0
+		stat_planted += 1
+	if q < 0 or q_state[q] != Q_PLANTED or u_cls[u] == UT.CLS_PIKE:
+		u_stair[u] = 0  # (pikes plant the ladders but do not climb)
+		u_lq[u] = -1
+		return
 	u_stair[u] = ST_LADDER
 	u_st0[u] = tick
 	u_wall[u] = sg + 1
@@ -8208,9 +8612,9 @@ func _ladder_start(u: int) -> void:
 	u_sq[u] = 0
 	u_trn[u] = 0
 	u_pn[u] = 0
-	u_lacc[u] = 0
 	u_dirty[u] = 1
 	u_settled[u] = 0
+
 
 
 ## Ladder k's foot of climbing unit u (k of n ladders, LADDER_GAP apart
@@ -8219,6 +8623,14 @@ func _ladder_k_foot(u: int, k: int, n_l: int) -> Vector2i:
 	var dir := ws_dir[u_sseg[u]]
 	var off := (2 * k - (n_l - 1)) * LADDER_GAP / 2
 	return Vector2i(u_lfx[u] - FM.sin_a(dir) * off / FM.TRIG_ONE, u_lfy[u] + FM.cos_a(dir) * off / FM.TRIG_ONE)
+
+
+## Ladder k's foot of planted set q (LADDER_SET ladders LADDER_GAP apart
+## along its stretch about the set's foot). For the view.
+func set_ladder_foot(q: int, k: int) -> Vector2i:
+	var dir := ws_dir[q_seg[q]]
+	var off := (2 * k - (LADDER_SET - 1)) * LADDER_GAP / 2
+	return Vector2i(q_x[q] - FM.sin_a(dir) * off / FM.TRIG_ONE, q_y[q] + FM.cos_a(dir) * off / FM.TRIG_ONE)
 
 
 ## Where a man of climbing unit u in slot s still below the wall waits:
@@ -8266,10 +8678,10 @@ func _ladder_step(u: int) -> void:
 		return
 	var n_l := maxi(ladders_of(self, u), 1)
 	var per: int = LADDER_TICKS[city_walls]
-	u_lacc[u] = mini(u_lacc[u] + n_l, per)
-	if u_lacc[u] < per or nxt < 0:
+	var q := u_lq[u]
+	if q < 0 or q_acc[q] < per or nxt < 0:
 		return
-	u_lacc[u] -= per
+	q_acc[q] -= per
 	var sg := u_sseg[u]
 	var lf := _ladder_k_foot(u, up % n_l, n_l)
 	var top := seg_pt(self, sg, seg_t(self, sg, lf.x, lf.y))
@@ -8314,10 +8726,13 @@ func _ladder_down(u: int) -> void:
 	_update_bounds()
 
 
-## Settlement maps with siege equipment, a closed gate g each tick: a ram
-## whose crew stands at its outer face (RAM_MEN or more within RAM_REACH)
-## batters it (RAM_DMG every RAM_WORK man-ticks); ladder men at its inner
-## face (UNBAR_MEN or more) open it after UNBAR_TICKS.
+## Settlement maps with siege equipment, a closed gate g each tick: a unit
+## carrying the ram with its men at the gate's outer face (RAM_MEN or more
+## within RAM_REACH, RAM_CREW of them counted) batters it (RAM_DMG every
+## RAM_WORK man-ticks; once it breaks they put the ram down, free to
+## fight); men who came over the wall by ladders at its inner face
+## (UNBAR_MEN or more) open it after UNBAR_TICKS. The outer face of a
+## citadel's gate is the town side.
 func _siege_gate(g: int) -> void:
 	var reach_x := g_hw[g] * M + M
 	var out_y := wall_t / 2 + RAM_REACH
@@ -8329,8 +8744,8 @@ func _siege_gate(g: int) -> void:
 	for u in n_units:
 		if u_side[u] == city_def or u_state[u] != U_READY or u_alive[u] <= 0:
 			continue
-		var ram := t_ram[u_type[u]] != 0
-		if not ram and u_lad[u] == 0:
+		var ram := carries_ram(u)
+		if not ram and u_lq[u] < 0:
 			continue
 		if u_order[u] == O_MOVE and u_gtarget[u] != g:
 			continue
@@ -8351,7 +8766,7 @@ func _siege_gate(g: int) -> void:
 			elif f.y < 0 and -f.y <= in_y:
 				inside += 1
 		if ram and men >= RAM_MEN:
-			u_lacc[u] += men
+			u_lacc[u] += mini(men, RAM_CREW)
 			if u_lacc[u] >= RAM_WORK:
 				u_lacc[u] -= RAM_WORK
 				g_hp[g] -= RAM_DMG * 100
@@ -8359,6 +8774,10 @@ func _siege_gate(g: int) -> void:
 				stat_ram_blows += 1
 				if g_hp[g] <= 0:
 					_break_gate(g)
+					_drop(u)  # through: the crew puts the ram down and is free to fight
+					if u_order[u] == O_MOVE and u_gtarget[u] == g:
+						u_order[u] = O_NONE
+					u_gtarget[u] = -1
 					return
 	if inside >= UNBAR_MEN:
 		g_unbar[g] += 1
