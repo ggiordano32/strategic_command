@@ -539,14 +539,15 @@ func _build_import(bg: Control) -> Control:
 	var vb := _page_box(bg)
 	vb.add_child(Kit.label("Import a campaign", 22, Kit.COL_GOLD))
 	vb.add_child(Kit.label("Paste the text from Export (campaign Menu) on the other device.", 14, Kit.COL_DIM))
-	_import_edit = TextEdit.new()
-	_import_edit.custom_minimum_size = Vector2(560, 150)
-	_import_edit.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	_import_edit = Kit.text_area(Vector2(560, 150))
+	_import_edit.name = "import_text"
 	vb.add_child(_import_edit)
 	_import_info = Kit.label("", 14, Kit.COL_BAD)
 	vb.add_child(_import_info)
+	_import_edit.set_meta("hint", _import_info)
 	var h := Kit.hbox(8)
-	h.add_child(_menu_button("Paste", func(): _import_edit.text = DisplayServer.clipboard_get()))
+	h.add_child(_menu_button("Paste", func(): Kit.paste_into(_import_edit)))
+	Kit.arm_paste(h.get_child(-1))
 	h.add_child(_menu_button("Import and play", _do_import))
 	h.add_child(_menu_button("< Back", show_page.bind("home")))
 	vb.add_child(h)
@@ -572,9 +573,8 @@ func _build_join(bg: Control) -> Control:
 	vb.add_child(Kit.label("Join a campaign", 22, Kit.COL_GOLD))
 	vb.add_child(Kit.label("Enter the join code from your ally, or a device code to continue your own campaign here.", 14, Kit.COL_DIM))
 	var h := Kit.hbox(8)
-	_join_edit = LineEdit.new()
+	_join_edit = Kit.text_field("ABC-DEF", "", 240, "Join code or device code", true)
 	_join_edit.name = "join_code"
-	_join_edit.placeholder_text = "ABC-DEF"
 	_join_edit.custom_minimum_size = Vector2(240, 52)
 	_join_edit.add_theme_font_size_override("font_size", 26)
 	_join_edit.max_length = 11
@@ -592,10 +592,11 @@ func _build_join(bg: Control) -> Control:
 	fb.name = "join_find"
 	fb.custom_minimum_size = Vector2(110, 52)
 	h.add_child(fb)
-	h.add_child(_menu_button("Paste", func():
-		_join_edit.text = DisplayServer.clipboard_get().strip_edges().to_upper().substr(0, 40)))
+	h.add_child(_menu_button("Paste", func(): Kit.paste_into(_join_edit)))
+	Kit.arm_paste(h.get_child(-1))
 	vb.add_child(h)
 	_join_info = Kit.label("", 14, Kit.COL_BAD, true)
+	_join_edit.set_meta("hint", _join_info)
 	_join_info.custom_minimum_size.x = 520
 	vb.add_child(_join_info)
 	_join_box = Kit.vbox(8)
@@ -651,11 +652,8 @@ func _join_find() -> void:
 	if free.is_empty():
 		_join_box.add_child(Kit.label("Every seat is taken.", 15, Kit.COL_BAD))
 		return
-	var du := LineEdit.new()
-	du.placeholder_text = "Your Discord user id (optional, for @mentions)"
-	du.custom_minimum_size = Vector2(380, 40)
-	du.text = str(net.accounts.data.get("discord_user", ""))
-	_join_box.add_child(du)
+	var du := Kit.text_field("Your Discord user id (optional, for @mentions)", str(net.accounts.data.get("discord_user", "")), 380, "Your Discord user id", true)
+	_join_box.add_child(Kit.field_box(du))
 	var row := Kit.flow(8)
 	for seat in free:
 		var f := int(seat["f"])
@@ -889,9 +887,7 @@ func _build_siege_row() -> Control:
 	l.custom_minimum_size = Vector2(0, 42)
 	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	box.add_child(l)
-	_siege_seed = LineEdit.new()
-	_siege_seed.text = "1"
-	_siege_seed.placeholder_text = "seed"
+	_siege_seed = Kit.text_field("seed", "1", 96, "Settlement seed", true)
 	_siege_seed.custom_minimum_size = Vector2(96, 42)
 	_siege_seed.tooltip_text = "Settlement seed: the same seed, level and walls always give the same map"
 	box.add_child(_siege_seed)

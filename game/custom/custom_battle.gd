@@ -121,11 +121,9 @@ func _rebuild() -> void:
 	if session == null:
 		var jr := Kit.flow(8)
 		jr.add_child(Kit.label("A friend's code:", Kit.FONT, Kit.COL_DIM))
-		_code_edit = LineEdit.new()
-		_code_edit.placeholder_text = "ABC-DEF"
-		_code_edit.custom_minimum_size = Vector2(150, 40)
+		_code_edit = Kit.text_field("ABC-DEF", "", 150, "Your friend's code", true)
 		_code_edit.name = "custom_code"
-		jr.add_child(_code_edit)
+		jr.add_child(Kit.field_box(_code_edit))
 		var jb := Kit.button("Join", _join, 80)
 		jb.name = "custom_join"
 		jr.add_child(jb)
@@ -213,9 +211,7 @@ func _map_row() -> Control:
 	row.add_child(_opt("Woods: %d%%" % int(mp["woods"]), func():
 		mp["woods"] = [0, 15, 30, 50][([0, 15, 30, 50].find(int(mp["woods"])) + 1) % 4]
 		_changed(), ed))
-	var se := LineEdit.new()
-	se.text = str(int(mp["mseed"]))
-	se.custom_minimum_size = Vector2(100, 40)
+	var se := Kit.text_field("seed", str(int(mp["mseed"])), 100, "Map seed", true)
 	se.tooltip_text = "Map seed: the same seed and settings always give the same ground"
 	se.editable = ed
 	se.text_submitted.connect(func(t: String):

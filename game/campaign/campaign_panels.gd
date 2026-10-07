@@ -1865,11 +1865,9 @@ func show_go_online() -> void:
 	var me: int = s.f if s.f >= 0 else int(hs[0])
 	box.add_child(Kit.label("Upload this campaign to the server and play it online. You keep %s%s. Plans not yet ended are not uploaded. The local save stays on this device unchanged." % [
 		CData.faction_name(me), (", and your ally joins as %s with a code" % CData.faction_name(int(hs[1] if int(hs[0]) == me else hs[0]))) if hs.size() > 1 else ""], Kit.FONT, Color.WHITE, true))
-	var inv := LineEdit.new()
-	inv.placeholder_text = "Invite key (only if the server asks for one)"
-	inv.text = str(net.accounts.data.get("invite", "")) if net else ""
-	inv.custom_minimum_size = Vector2(300, 40)
-	box.add_child(inv)
+	var inv := Kit.text_field("Invite key (only if the server asks for one)", str(net.accounts.data.get("invite", "")) if net else "", 300, "Invite key", true)
+	inv.name = "invite"
+	box.add_child(Kit.field_box(inv))
 	var info := Kit.label("", Kit.FONT_SMALL, Kit.COL_BAD, true)
 	box.add_child(info)
 	s.show_dialog("Play online", box, [["Upload", func():

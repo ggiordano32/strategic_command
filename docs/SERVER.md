@@ -405,6 +405,11 @@ Online dialog.
 - **Invite key** (`SC_INVITE_KEY`): if set, creating a campaign needs it, so
   strangers cannot fill the disk. Creating is also limited to 6 per hour per
   IP. Recommended once the domain is shared beyond the two players.
+  Players enter it once per device: the client remembers the last key that
+  worked (`invite` in `user://online/accounts.json`) and prefills it. On
+  phones and tablets a tap on the field opens the browser's text box (paste
+  works there); on desktop browsers use Ctrl+V or the Paste button beside
+  the field. Spaces around a pasted key are dropped.
 - Limits: 64 KB per ordinary request, 4 MB per state upload (8 MB
   decompressed), 512 KB session blobs, 256 KB per submission; per IP 20
   requests/s (burst 60); per token 10/s (burst 40); failed auth counts

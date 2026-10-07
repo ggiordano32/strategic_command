@@ -6,6 +6,8 @@ extends RefCounted
 
 const UT := preload("res://sim/unit_types.gd")
 const Icons := preload("res://game/unit_icons.gd")
+const UiScale := preload("res://game/ui_scale.gd")
+const TouchScroll := preload("res://game/touch_scroll.gd")
 
 const BTN_H := 40.0
 const FONT := 15
@@ -266,3 +268,230 @@ static func odds_view(od: Dictionary, me: int, names: Array, cols: Array, title:
 	l.name = "odds_text"
 	v.add_child(l)
 	return v
+
+
+# ------------------------------------------------------------ text entry ---
+# Every text field in the game is a Kit.text_field, so typing and pasting
+# work on the web build too:
+#  - a finger tap on a field on the web build opens the browser's own
+#    prompt() with the field's title and text: Godot's web export has no
+#    usable on-screen keyboard (the experimental one needs a hidden DOM input
+#    focused inside the touch handler, which Godot's main loop cannot do, so
+#    iOS Safari never raises it), while prompt() always brings up the
+#    keyboard and allows paste, on Android Chrome and iOS Safari alike. The
+#    answer goes into the LineEdit, then text_changed and text_submitted are
+#    emitted as if typed. A mouse click (desktop) edits in place as usual.
+#  - Ctrl+V / Cmd+V on the web reads the clipboard through the browser
+#    (navigator.clipboard.readText, started inside the real keydown handler):
+#    Godot's own web paste returns the clipboard of the previous paste.
+#  - field_box() adds a Paste button beside a field on the web build; its
+#    read starts in the browser's own pointerup handler (Safari wants the
+#    gesture), and a refusal shows a short hint under the field.
+
+const PASTE_HINT := "Paste not allowed by the browser: use Ctrl+V with the field focused."
+const PASTE_HINT_TOUCH := "Paste not allowed by the browser: tap the field and paste into the box that opens."
+const _JS := """
+if (!window.scText) {
+  window.scText = {
+    n: 0, res: {}, armed: 0, last: 0, lastT: 0, taken: 0, cb: null,
+    read: function () {
+      const n = ++this.n;
+      this.last = n;
+      this.lastT = Date.now();
+      const done = (ok, t) => { this.res[n] = JSON.stringify([ok, t]); if (this.cb) this.cb(n, ok, t); };
+      try {
+        navigator.clipboard.readText().then((t) => done(1, String(t)), (e) => done(0, String(e)));
+      } catch (e) { done(0, String(e)); }
+      return n;
+    },
+    arm: function () { this.armed = Date.now(); },
+    take: function () {
+      if (this.last > this.taken && Date.now() - this.lastT < 2000) { this.taken = this.last; return this.last; }
+      const n = this.read();
+      this.taken = n;
+      return n;
+    },
+    result: function (n) { const r = this.res[n]; delete this.res[n]; return r === undefined ? "" : r; },
+  };
+  window.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === "v" || e.key === "V")) scText.read();
+  }, true);
+  window.addEventListener("pointerup", () => {
+    if (scText.armed && Date.now() - scText.armed < 3000) { scText.armed = 0; scText.read(); }
+  }, true);
+}
+"""
+
+static var _js_cb: JavaScriptObject = null
+static var _clip_wait := {}   # clipboard read number -> Callable(ok: bool, text: String)
+
+
+## A one-line text field (see the section header). title: what the browser
+## prompt asks (default: the placeholder). trim: drop surrounding spaces from
+## prompted and pasted text (keys and codes).
+static func text_field(placeholder: String, text: String = "", min_w: float = 200.0, title: String = "", trim: bool = false) -> LineEdit:
+	var le := LineEdit.new()
+	le.placeholder_text = placeholder
+	le.text = text
+	le.custom_minimum_size = Vector2(min_w, BTN_H)
+	le.set_meta("title", title if title != "" else placeholder)
+	if trim:
+		le.set_meta("trim", 1)
+	if OS.has_feature("web"):
+		_web_init()
+		le.gui_input.connect(func(e: InputEvent): _field_input(e, le))
+	return le
+
+
+## A multi-line text box (pasted saves): Ctrl+V works on the web too.
+static func text_area(min_size: Vector2) -> TextEdit:
+	var te := TextEdit.new()
+	te.custom_minimum_size = min_size
+	te.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	if OS.has_feature("web"):
+		_web_init()
+		te.gui_input.connect(func(e: InputEvent): _paste_key(e, te))
+	return te
+
+
+## The field with a Paste button beside it (web build only; elsewhere the
+## field itself is returned) and a hint line under it for a refused paste.
+## Add the returned control (and show / hide it) instead of the field.
+static func field_box(c: Control) -> Control:
+	if not OS.has_feature("web"):
+		return c
+	var v := vbox(2)
+	v.size_flags_horizontal = c.size_flags_horizontal
+	var h := hbox(6)
+	c.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	h.add_child(c)
+	var b := button("Paste", Callable(), 0, FONT_SMALL)
+	b.name = str(c.name) + "_paste"
+	b.pressed.connect(func(): paste_into(c))
+	arm_paste(b)
+	h.add_child(b)
+	v.add_child(h)
+	var hint := label("", FONT_SMALL, COL_BAD, true)
+	hint.visible = false
+	v.add_child(hint)
+	c.set_meta("hint", hint)
+	c.set_meta("own_hint", 1)
+	return v
+
+
+## A Paste button (it calls paste_into on pressed): on the web, start the
+## clipboard read in the browser's own release handler.
+static func arm_paste(b: BaseButton) -> void:
+	if OS.has_feature("web"):
+		b.button_down.connect(func(): JavaScriptBridge.eval("window.scText && scText.arm()"))
+
+
+## Paste the clipboard into a LineEdit or TextEdit: replace its text, or
+## insert at the caret. On the web this waits for the browser's read.
+static func paste_into(c: Control, insert: bool = false) -> void:
+	if not OS.has_feature("web"):
+		_put(c, DisplayServer.clipboard_get(), insert, "paste")
+		return
+	_web_init()
+	var n := int(JavaScriptBridge.eval("scText.take()", true))
+	_clip_wait[n] = func(ok: bool, s: String):
+		if not is_instance_valid(c):
+			return
+		if ok:
+			_put(c, s, insert, "paste")
+		else:
+			push_warning("paste refused: " + s)
+			var hint = c.get_meta("hint", null)
+			if hint is Label and is_instance_valid(hint):
+				hint.text = PASTE_HINT_TOUCH if UiScale.is_touch() else PASTE_HINT
+				hint.visible = true
+	var r = JavaScriptBridge.eval("scText.result(%d)" % n, true)
+	if r is String and r != "":
+		var a = JSON.parse_string(r)
+		if a is Array and a.size() == 2:
+			_clip_done([n, a[0], a[1]])
+
+
+static func _web_init() -> void:
+	if _js_cb != null:
+		return
+	JavaScriptBridge.eval(_JS, true)
+	_js_cb = JavaScriptBridge.create_callback(func(args: Array): _clip_done(args))
+	var st: JavaScriptObject = JavaScriptBridge.get_interface("scText")
+	if st != null:
+		st.cb = _js_cb
+
+
+static func _clip_done(args: Array) -> void:
+	var n := int(args[0])
+	if not _clip_wait.has(n):
+		return
+	var f: Callable = _clip_wait[n]
+	_clip_wait.erase(n)
+	JavaScriptBridge.eval("delete scText.res[%d]" % n)
+	f.call(int(args[1]) != 0, str(args[2]))
+
+
+static func _field_input(e: InputEvent, le: LineEdit) -> void:
+	if not le.editable:
+		return
+	if e is InputEventMouseButton and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT and TouchScroll.is_touch_event(e):
+		# A finger: the browser's prompt instead of Godot's (missing) keyboard.
+		le.accept_event()
+		var mb := e as InputEventMouseButton
+		if not mb.pressed and Rect2(Vector2.ZERO, le.size).has_point(mb.position):
+			_ask.call_deferred(le)
+		return
+	_paste_key(e, le)
+
+
+## Ctrl+V / Cmd+V on the web: paste through the browser (see the header).
+static func _paste_key(e: InputEvent, c: Control) -> void:
+	if e is InputEventKey:
+		var k := e as InputEventKey
+		if k.pressed and not k.echo and k.keycode == KEY_V and (k.ctrl_pressed or k.meta_pressed) and not k.alt_pressed:
+			c.accept_event()
+			paste_into(c, true)
+
+
+static func _ask(le: LineEdit) -> void:
+	if not is_instance_valid(le) or not le.is_visible_in_tree():
+		return
+	var r = JavaScriptBridge.eval("prompt(%s, %s)" % [JSON.stringify(str(le.get_meta("title", ""))), JSON.stringify(le.text)], true)
+	le.release_focus()
+	if r == null:
+		return  # cancelled
+	_put(le, str(r), false, "prompt")
+	le.text_submitted.emit(le.text)
+
+
+## Put text into a field as if typed (one line for a LineEdit), and tell its
+## listeners.
+static func _put(c: Control, s: String, insert: bool, how: String) -> void:
+	if c is LineEdit:
+		var le := c as LineEdit
+		s = s.replace("\r", "").replace("\n", " ")
+		if le.has_meta("trim"):
+			s = s.strip_edges()
+		if insert:
+			le.insert_text_at_caret(s)
+		else:
+			le.text = s
+		if le.has_meta("trim"):
+			le.text = le.text.strip_edges()
+		le.caret_column = le.text.length()
+		le.text_changed.emit(le.text)
+		print("text field %s: %d chars by %s" % [le.name, le.text.length(), how])
+	elif c is TextEdit:
+		var te := c as TextEdit
+		if insert:
+			te.insert_text_at_caret(s)
+		else:
+			te.text = s
+		te.text_changed.emit()
+		print("text field %s: %d chars by %s" % [te.name, te.text.length(), how])
+	var hint = c.get_meta("hint", null)
+	if hint is Label and is_instance_valid(hint) and hint.text in [PASTE_HINT, PASTE_HINT_TOUCH]:
+		hint.text = ""
+		if c.has_meta("own_hint"):
+			hint.visible = false

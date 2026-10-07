@@ -37,6 +37,7 @@ anti-cheat and original art only if it proves fun.
 | Cities worth defending, part 2b (siege equipment as objects; ladder and wall-punching fixes) | Built 2026-10-07, **not committed**; tested headless, windowed input test, live_e2e; not yet played on phones |
 | Battle screen on the overworld (pre-battle and result, item 4b) | Built 2026-10-07, **not committed**; tested headless (`tests/battle_screen_test.gd`), the windowed input test and online_e2e; not yet played on phones |
 | Overworld UI fixes: Deselect button; dialogs and the side panel keep their scroll position when re-rendered | Built 2026-10-07, **not committed**; windowed campaign_input_test; not yet played on phones |
+| Text entry on the web (no keyboard on tablets, bad desktop paste): every field is `Kit.text_field`; a finger tap on the web opens the browser's `prompt()` (Godot's web export has no usable on-screen keyboard: `html/experimental_virtual_keyboard` is off, and even on it cannot raise the keyboard on iOS); Ctrl+V and a Paste button beside the online fields read the clipboard through the browser (Godot's web paste returned the previous clipboard); invite key / codes trimmed | Built 2026-10-07, **not committed**; check_scripts, windowed campaign_input_test, touch_scroll_test as on HEAD, custom_battle_test, a scratch web export driven in headless Chromium (stubbed prompt / clipboard: tap, Paste, Ctrl+V); not yet tried on a real tablet / iPhone |
 | 6. Depth (siege towers, tech, more factions) | Not started |
 
 ### What exists

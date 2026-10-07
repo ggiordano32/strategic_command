@@ -45,6 +45,7 @@ var _online_box: VBoxContainer
 var _hook_edit: LineEdit
 var _user_edit: LineEdit
 var _invite_edit: LineEdit
+var _invite_row: Control  # the invite field (with its Paste button on the web)
 var _creating := false
 
 
@@ -108,14 +109,13 @@ func _ready() -> void:
 		_fbuttons.append(b)
 	var row := Kit.flow(8)
 	row.add_child(Kit.label("Name", Kit.FONT, Kit.COL_DIM))
-	name_edit = LineEdit.new()
-	name_edit.text = "Campaign"
-	name_edit.custom_minimum_size = Vector2(180, 40)
+	name_edit = Kit.text_field("Campaign name", "Campaign", 180)
+	name_edit.name = "campaign_name"
 	row.add_child(name_edit)
 	row.add_child(Kit.label("Seed", Kit.FONT, Kit.COL_DIM))
-	seed_edit = LineEdit.new()
-	seed_edit.text = str(int(Time.get_unix_time_from_system()) % 100000)
-	seed_edit.custom_minimum_size = Vector2(110, 40)
+	seed_edit = Kit.text_field("Seed", str(int(Time.get_unix_time_from_system()) % 100000), 110, "Seed (a number: the same seed gives the same map)", true)
+	seed_edit.name = "campaign_seed"
+	seed_edit.virtual_keyboard_type = LineEdit.KEYBOARD_TYPE_NUMBER
 	row.add_child(seed_edit)
 	v.add_child(row)
 	var sr := Kit.flow(8)
@@ -151,25 +151,22 @@ func _ready() -> void:
 	v.add_child(_online_box)
 	var net := get_node_or_null("/root/Net")
 	_online_box.add_child(Kit.label("Discord notifications (optional): a channel's webhook URL (Channel settings > Integrations > Webhooks), and your Discord user id for @mentions (Discord settings > Advanced > Developer mode, then right-click your name > Copy User ID).", 13, Kit.COL_DIM, true))
-	_hook_edit = LineEdit.new()
-	_hook_edit.placeholder_text = "https://discord.com/api/webhooks/..."
-	_hook_edit.custom_minimum_size = Vector2(300, 40)
+	_hook_edit = Kit.text_field("https://discord.com/api/webhooks/...", "", 300, "Discord webhook URL", true)
+	_hook_edit.name = "webhook"
 	_hook_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_online_box.add_child(_hook_edit)
+	_online_box.add_child(Kit.field_box(_hook_edit))
 	var r2 := Kit.flow(8)
-	_user_edit = LineEdit.new()
-	_user_edit.placeholder_text = "Your Discord user id"
-	_user_edit.custom_minimum_size = Vector2(240, 40)
-	_user_edit.text = str(net.accounts.data.get("discord_user", "")) if net else ""
-	r2.add_child(_user_edit)
-	_invite_edit = LineEdit.new()
-	_invite_edit.placeholder_text = "Invite key (if the server asks)"
-	_invite_edit.custom_minimum_size = Vector2(240, 40)
-	_invite_edit.text = str(net.accounts.data.get("invite", "")) if net else ""
-	r2.add_child(_invite_edit)
+	_user_edit = Kit.text_field("Your Discord user id", str(net.accounts.data.get("discord_user", "")) if net else "", 240, "", true)
+	_user_edit.name = "discord_user"
+	r2.add_child(Kit.field_box(_user_edit))
+	# The invite key last used is remembered on this device (Net accounts).
+	_invite_edit = Kit.text_field("Invite key (if the server asks)", str(net.accounts.data.get("invite", "")) if net else "", 240, "Invite key", true)
+	_invite_edit.name = "invite"
+	_invite_row = Kit.field_box(_invite_edit)
+	r2.add_child(_invite_row)
 	_online_box.add_child(r2)
 	if online and net != null and not bool(net.info.get("invite_required", true)):
-		_invite_edit.visible = false
+		_invite_row.visible = false
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--picks="):
 			# Testing aid: --picks=rome,carthage
@@ -300,7 +297,7 @@ func _start_online() -> void:
 		if r["network"]:
 			_info.text = "The game server cannot be reached. Try again later."
 		elif str(r["error"]) == "invite_required":
-			_invite_edit.visible = true
+			_invite_row.visible = true
 			_info.text = "This server needs an invite key to create campaigns: ask the server's owner."
 		else:
 			_info.text = "Could not create it: " + (str(r["message"]) if str(r["message"]) != "" else str(r["error"]))

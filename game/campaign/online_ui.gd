@@ -579,16 +579,11 @@ func show_online() -> void:
 	box.add_child(Kit.section("Discord notifications"))
 	var hook_l := "Webhook: " + (str(sm.get("webhook", "")) if str(sm.get("webhook", "")) != "" else "not set")
 	box.add_child(Kit.label(hook_l, Kit.FONT_SMALL, Kit.COL_DIM, true))
-	var hook_edit := LineEdit.new()
-	hook_edit.placeholder_text = "https://discord.com/api/webhooks/..."
-	hook_edit.custom_minimum_size = Vector2(300, 40)
+	var hook_edit := Kit.text_field("https://discord.com/api/webhooks/...", "", 300, "Discord webhook URL", true)
 	hook_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	box.add_child(hook_edit)
-	var user_edit := LineEdit.new()
-	user_edit.placeholder_text = "Your Discord user id (for @mentions, optional)"
-	user_edit.custom_minimum_size = Vector2(300, 40)
-	user_edit.text = str(net.accounts.data.get("discord_user", "")) if net else ""
-	box.add_child(user_edit)
+	box.add_child(Kit.field_box(hook_edit))
+	var user_edit := Kit.text_field("Your Discord user id (for @mentions, optional)", str(net.accounts.data.get("discord_user", "")) if net else "", 300, "Your Discord user id", true)
+	box.add_child(Kit.field_box(user_edit))
 	var dh := Kit.flow(6)
 	dh.add_child(Kit.button("Save", func(): _save_discord(hook_edit.text.strip_edges(), user_edit.text.strip_edges()), 0))
 	dh.add_child(Kit.button("Send test message", func(): _test_notify(), 0))
