@@ -1057,6 +1057,31 @@ fixes are all landed; see "Where we are"):
    units carry comes from the faction roster and a building (Fletcher /
    Workshop chain), no state format change if stored on the unit entry
    as an optional key. Battle screen and unit book show the kinds.
+4e. **Resupply: foraging in woods and an ammunition wagon** (asked
+   2026-10-08). Builds on the artillery refill that exists (ORDER_REFILL:
+   a battery settles for REFILL_FULL ticks and draws shots from its finite
+   reserve, shown "44+44" on the card).
+   - **Foraging:** an archer (and javelin) unit standing in woods can be
+     told to make arrows: it cannot move or shoot while doing it, takes
+     real time (slower than the wagon, e.g. a quiver in 2-3 minutes),
+     stops when attacked or ordered away, and fills only the unit's own
+     quiver (not its reserve). Card button "Forage" shown only in woods;
+     AI uses it when idle and empty behind the line (knob).
+   - **Ammunition wagon:** a unit type recruited from the standard siege
+     building (Workshop chain) that takes an army slot; a slow, unarmed
+     crew with a wagon (sprite/marker like an engine), roofed like the
+     ram, capturable / destroyable (fire). In battle, missile units and
+     batteries within a short radius refill their quiver and reserve
+     from the wagon's finite stock when told to refill (the artillery
+     refill order generalised: a unit near the wagon, not moving, takes
+     REFILL_FULL ticks to settle, then draws from the wagon until full or
+     the wagon is empty). One wagon carries a fixed stock per missile kind
+     (ties into 4d ammunition types: the wagon can carry the special
+     kinds). AI brings it behind the line, guards it, and sends empty
+     missile units to it (knobs). Campaign: it is a unit (`unit_types`
+     row, roster line "siege"), so it costs upkeep, can be gifted and
+     exchanged, and auto-resolve counts it as a small strength plus a
+     missile bonus for the army; no format change.
 5. **Elephants**, then camels, chariots, war dogs.
 6. **AI competency** (`docs/AI.md`): Easy / Average / Skilled on two
    independent axes (battle, campaign) plus personality, no cheats ever;
