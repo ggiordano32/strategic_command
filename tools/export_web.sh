@@ -11,7 +11,7 @@ cd "$(dirname "$0")/.."
 export LC_ALL=C
 mkdir -p build/web
 touch build/.gdignore  # keep Godot from importing the exported files
-src=$(cat project.godot sim/*.gd campaign/*.gd game/*.gd game/campaign/*.gd game/net/*.gd game/*.gdshader | sha1sum | cut -c1-8)
+src=$(cat project.godot sim/*.gd campaign/*.gd game/*.gd game/campaign/*.gd game/net/*.gd game/*.gdshader game/*.gdshaderinc | sha1sum | cut -c1-8)
 simh=$(cat sim/*.gd | sha1sum | cut -c1-8)
 rules=$(ls campaign/*.gd sim/*.gd | sort | xargs cat | sha1sum | cut -c1-8)
 echo "$(date -u +%Y%m%dT%H%M%SZ) src:$src sim:$simh rules:$rules" > build_stamp.txt

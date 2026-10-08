@@ -177,8 +177,9 @@ mass, speed.
 Per-soldier simulation is the main cost, so the sim is built around it:
 
 - No node per soldier. State lives in flat packed arrays (struct of arrays).
-- Rendering uses one MultiMesh per unit type with the animation frame chosen
-  in a shader, so a unit type is a single draw call.
+- Rendering uses one MultiMesh for all soldiers (and one for missiles) with
+  the sprite and tint chosen in a shader; the sim's packed arrays reach the
+  GPU with native calls only (two paths, see "8. Art").
 - Fixed simulation tick at 10 Hz; rendering interpolates to display rate.
 - Soldiers in a formed unit that is not near an enemy only move toward their
   formation slot. They skip collision and target search entirely.
@@ -2006,6 +2007,32 @@ greyscale sprites (sword and shield, spear, long pike, bow, javelins, horse
 and rider, gun crew, bolt thrower, stone thrower; cells 6 x 2.5 m), tinted per side and state in the shader; each sprite has its own
 quad size so pikes and horses are long. Still one MultiMesh draw call for all
 soldiers, plus one for missiles in flight.
+
+Soldier rendering has two paths with identical output (`game/soldier_layer.gd`,
+`game/soldiers.gdshaderinc`, `game/projectiles.gdshaderinc`):
+
+- **Texture (default, cheapest):** per tick the sim's int arrays are copied
+  as raw bytes into an RGBA8 data texture (one texel per int32); the vertex
+  shader fetches and decodes them per instance (texelFetch) and interpolates
+  between ticks. About 0.23 ms a tick at 4,000 men natively.
+- **CPU-fed (compatible fallback):** the same arrays are converted to floats
+  and interleaved into the MultiMesh buffer, one bulk upload per tick
+  (positions, previous positions, facing, state through the instance
+  transform, read back as MODEL_MATRIX with `skip_vertex_transform`; sprite
+  and side / selected / under fire in INSTANCE_CUSTOM, filled per unit run);
+  missiles are re-uploaded only when one is fired or lands, and only the
+  slots in use. No texture fetch, uniform array or int uniform in the vertex
+  stage. About 0.5 ms a tick at 4,000 men natively.
+
+Chrome on an Adreno 650 tablet (ANGLE on GLES) drew nothing from the texture
+path (Firefox on the same tablet did). A battle's self-check renders only the
+soldier layers around the biggest unit offscreen ~30 frames in (telemetry
+`soldier_probe` with `drawn`, `men`, `path`); zero pixels with men alive on
+the texture path switches to the CPU-fed path at once, probes again, and
+remembers it in `user://settings.cfg [video] soldiers=cpu` for later
+battles. The home menu's "Soldiers: auto / compatible" button sets the same
+preference; `--soldiers=cpu|gpu` (or `?soldiers=` in the URL) forces a path
+for testing and `--soldier-probe-fail` fakes a failing texture path.
 
 ## 9. Milestones
 

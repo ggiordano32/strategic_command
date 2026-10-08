@@ -7,6 +7,7 @@ const Battle := preload("res://game/battle.gd")
 const UnitBook := preload("res://game/unit_book.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const UiScale := preload("res://game/ui_scale.gd")
+const SoldierLayer := preload("res://game/soldier_layer.gd")
 const Controls := preload("res://game/controls.gd")
 const CampaignScreen := preload("res://game/campaign/campaign_screen.gd")
 const NewCampaign := preload("res://game/campaign/new_campaign.gd")
@@ -84,6 +85,7 @@ var _tests_box: Control
 var _tests_button: Button
 var _help: Label
 var _size_button: Button
+var _soldiers_button: Button
 
 
 func _ready() -> void:
@@ -423,8 +425,13 @@ func _build_home(bg: Control) -> Control:
 	_size_button = _menu_button("", _cycle_ui_size)
 	_size_button.tooltip_text = "Size of buttons and text (S / M / L)"
 	row.add_child(_size_button)
+	_soldiers_button = _menu_button("", _cycle_soldier_rendering)
+	_soldiers_button.name = "home_soldiers"
+	_soldiers_button.tooltip_text = "How soldiers are drawn. Auto: the fast way, switching by itself to compatible if this device shows no soldiers. Compatible: always the way that works on every device (a little more work per tick)."
+	row.add_child(_soldiers_button)
 	row.add_child(_menu_button("Fullscreen", _toggle_fullscreen))
 	_update_size_button()
+	_update_soldiers_button()
 	var info := Kit.label("Godot %s, %s renderer" % [Engine.get_version_info()["string"],
 		ProjectSettings.get_setting("rendering/renderer/rendering_method", "?")], 12, Color(1, 1, 1, 0.5))
 	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -794,6 +801,8 @@ func show_page(p: String) -> void:
 		(_pages[k] as Control).visible = k == p
 	if p == "continue":
 		_fill_continue()
+	if p == "home":
+		_update_soldiers_button()  # a battle may have switched it (soldier self-check)
 
 
 func _new_campaign_page(online: bool = false) -> void:
@@ -871,6 +880,19 @@ func _cycle_ui_size() -> void:
 func _update_size_button() -> void:
 	if _size_button != null:
 		_size_button.text = "UI size: " + UiScale.size_name()
+
+
+## Soldier rendering (user://settings.cfg [video] soldiers): auto (the data
+## texture, falling back by itself; game/soldier_layer.gd) or compatible
+## (always CPU-fed).
+func _cycle_soldier_rendering() -> void:
+	SoldierLayer.save_pref("auto" if SoldierLayer.load_pref() == "cpu" else "cpu")
+	_update_soldiers_button()
+
+
+func _update_soldiers_button() -> void:
+	if _soldiers_button != null:
+		_soldiers_button.text = "Soldiers: " + ("compatible" if SoldierLayer.load_pref() == "cpu" else "auto")
 
 
 ## Settlement battles: a seed, the level and walls, the ground kind, attack
@@ -1100,6 +1122,7 @@ func _end_battle() -> void:
 		custom.visible = true
 		return
 	_menu.visible = true
+	_update_soldiers_button()
 
 
 # --------------------------------------------------------- custom battles ---

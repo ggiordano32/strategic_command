@@ -637,10 +637,12 @@ func _finish_bench() -> void:
 
 # ------------------------------------------------------------ telemetry ---
 
-## The soldier layer's self-check: pixels drawn around the biggest unit.
-func _on_soldier_probe(drawn: int, men: int) -> void:
-	print("SOLDIER_PROBE drawn=%d men=%d" % [drawn, men])
-	_t("soldier_probe", {"drawn": drawn, "men": men, "tick": sim.tick})
+## The soldier layer's self-check: pixels drawn around the biggest unit on
+## the rendering path in use ("gpu" texture or "cpu" fed; a texture path
+## that draws nothing switches to the CPU-fed one and probes again).
+func _on_soldier_probe(drawn: int, men: int, path: String) -> void:
+	print("SOLDIER_PROBE drawn=%d men=%d path=%s" % [drawn, men, path])
+	_t("soldier_probe", {"drawn": drawn, "men": men, "tick": sim.tick, "path": path})
 
 
 func _t(kind: String, data: Dictionary) -> void:

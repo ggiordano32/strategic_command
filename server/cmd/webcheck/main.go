@@ -13,13 +13,15 @@
 //	    a live co-op battle instead (milestone 5): A opens the room, B joins in
 //	    the lobby, 600 frames in lockstep with every frame's hash compared over
 //	    the relay, then B leaves and joins again mid-battle (snapshot)
-//	go run ./cmd/webcheck -url http://127.0.0.1:8092 -soldiers
+//	go run ./cmd/webcheck -url http://127.0.0.1:8092 -soldiers [-shots DIR]
 //	    only the last check (works against tools/serve_web.py too)
 //
 // After the turn flow, A loads ?scenario=skirmish&speed=3 and the battle's
 // soldier self-check (game/soldier_layer.gd, console "SOLDIER_PROBE") must
 // report soldiers drawn in WebGL: the sim can run perfectly with nothing on
-// screen, which no other check notices.
+// screen, which no other check notices. Both rendering paths are checked
+// (the data texture and the CPU-fed fallback, ?soldiers=cpu), and the
+// automatic switch between them (see checkSoldiers).
 //
 // Exit code 0 when everything passed.
 package main
@@ -59,6 +61,13 @@ func (c *console) add(s string) {
 		fmt.Printf("  [%s] %s\n", c.who, strings.TrimSpace(s))
 	}
 	c.lines = append(c.lines, s)
+}
+
+// reset forgets the lines seen so far (find / wait look at later ones only).
+func (c *console) reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lines = nil
 }
 
 func (c *console) find(re *regexp.Regexp) []string {
@@ -168,7 +177,7 @@ func main() {
 		os.Exit(runLive(ctxA, ca, newBrowser, front, phone, *url, inv, check, &fails))
 	}
 	if *soldiersOnly {
-		checkSoldiers(ctxA, ca, phone, *url, check)
+		checkSoldiers(ctxA, ca, phone, *url, *shots, check)
 		if fails == 0 {
 			fmt.Println("RESULT: PASS")
 			return
@@ -222,7 +231,7 @@ func main() {
 		}
 	}
 	cancelB()
-	checkSoldiers(ctxA, ca, phone, *url, check)
+	checkSoldiers(ctxA, ca, phone, *url, *shots, check)
 	for _, c := range []*console{ca, cb} {
 		for _, l := range c.all {
 			if strings.Contains(l, "EXCEPTION") || strings.Contains(l, "SCRIPT ERROR") {
@@ -238,18 +247,56 @@ func main() {
 	os.Exit(1)
 }
 
-// checkSoldiers: a battle in the browser draws its soldiers. The battle's
-// self-check renders only the soldier layers around the biggest unit into a
-// small offscreen viewport ~30 frames in and prints the pixels drawn.
-func checkSoldiers(ctx context.Context, c *console, phone chromedp.Action[chromedp.Void], url string, check func(bool, string)) {
-	t0 := time.Now()
-	if err := chromedp.Do(ctx, phone, chromedp.Navigate(url+"/?scenario=skirmish&speed=3")); err != nil {
-		check(false, "navigate to the skirmish: "+err.Error())
-		return
+// checkSoldiers: a battle in the browser draws its soldiers, on both
+// rendering paths (game/soldier_layer.gd). The battle's self-check renders
+// only the soldier layers around the biggest unit into a small offscreen
+// viewport ~30 frames in and prints the pixels drawn and the path:
+//   - the default (texture) path;
+//   - the CPU-fed fallback, forced with ?soldiers=cpu;
+//   - the automatic switch: ?soldier-probe-fail=1 makes the texture path's
+//     probe report nothing drawn, as on the devices it fails on; the layer
+//     must switch to the CPU-fed path and draw there;
+//   - the next battle starts on the CPU-fed path (remembered in
+//     user://settings.cfg, the browser's storage).
+func checkSoldiers(ctx context.Context, c *console, phone chromedp.Action[chromedp.Void], url, shots string, check func(bool, string)) {
+	probe := regexp.MustCompile(`SOLDIER_PROBE drawn=(\d+) men=(\d+) path=(\w+)`)
+	run := func(query, what string, wantPath string, shot string) {
+		c.reset()
+		t0 := time.Now()
+		if err := chromedp.Do(ctx, phone, chromedp.Navigate(url+"/?scenario=skirmish&speed=3"+query)); err != nil {
+			check(false, what+": navigate: "+err.Error())
+			return
+		}
+		m := c.wait(probe, 90*time.Second)
+		check(m != nil && atoi(m[1]) >= 50 && m[3] == wantPath, fmt.Sprintf(
+			"%s: %v pixels around a unit of %v men on the %v path (want %s; %.1f s)",
+			what, idx(m, 1), idx(m, 2), idx(m, 3), wantPath, time.Since(t0).Seconds()))
+		if shots != "" && shot != "" && m != nil {
+			if png, err := chromedp.Run(ctx, chromedp.CaptureScreenshot()); err == nil {
+				p := filepath.Join(shots, shot)
+				os.WriteFile(p, png, 0o644)
+				fmt.Println("  screenshot", p)
+			}
+		}
 	}
-	m := c.wait(regexp.MustCompile(`SOLDIER_PROBE drawn=(\d+) men=(\d+)`), 90*time.Second)
-	check(m != nil && atoi(m[1]) >= 50, fmt.Sprintf("a battle draws its soldiers in WebGL: %v pixels around a unit of %v men (%.1f s)",
-		idx(m, 1), idx(m, 2), time.Since(t0).Seconds()))
+	run("", "a battle draws its soldiers in WebGL (texture path)", "gpu", "web_soldiers_gpu.png")
+	run("&soldiers=cpu", "a battle draws its soldiers in WebGL (CPU-fed path, forced)", "cpu", "web_soldiers_cpu.png")
+	// The automatic switch.
+	c.reset()
+	t0 := time.Now()
+	if err := chromedp.Do(ctx, phone, chromedp.Navigate(url+"/?scenario=skirmish&speed=3&soldier-probe-fail=1")); err != nil {
+		check(false, "automatic switch: navigate: "+err.Error())
+	} else {
+		first := c.wait(probe, 90*time.Second)
+		check(first != nil && first[1] == "0" && first[3] == "gpu", fmt.Sprintf(
+			"a failing texture path is seen: %v pixels on the %v path", idx(first, 1), idx(first, 3)))
+		second := c.wait(regexp.MustCompile(`SOLDIER_PROBE drawn=(\d+) men=(\d+) path=cpu`), 60*time.Second)
+		check(second != nil && atoi(second[1]) >= 50, fmt.Sprintf(
+			"... and the layer switches to the CPU-fed path, which draws: %v pixels (%.1f s)",
+			idx(second, 1), time.Since(t0).Seconds()))
+		time.Sleep(2 * time.Second) // let user:// reach the browser's storage
+	}
+	run("", "the next battle starts on the remembered CPU-fed path", "cpu", "")
 	for _, l := range c.all {
 		if strings.Contains(l, "SHADER ERROR") || strings.Contains(l, "Shader compilation failed") {
 			check(false, "shader error: "+strings.TrimSpace(l))
