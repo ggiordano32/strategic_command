@@ -1031,6 +1031,32 @@ fixes are all landed; see "Where we are"):
    priced offer (two-turn handshake like a treaty) and immediate for a
    free gift. No format bump if the pending offer lives in the existing
    diplomacy / proposal structures; else an optional key.
+4d. **Ammunition types** (asked 2026-10-08): a second missile kind per
+   shooter, chosen per unit in battle (a toggle on the card like Fire /
+   Skirmish, with a fixed share of the load, e.g. a third fire arrows),
+   available by faction / building and balanced against the standard
+   kind, never strictly better:
+   - **Fire arrows** (archers; Greeks, Syracuse, Carthage first): less
+     damage, more morale shock, −range; ignite wooden things they land
+     on (towers, gates, ladders, rams, engines) for chip damage over
+     time; a burning unit's morale drains until the fire is out.
+   - **Heavy bolts** (bolt throwers and arrow towers; Rome, Syracuse):
+     more damage and pierce, shorter range, slower rate.
+   - **Fire javelins** (javelin and light foot of Iberia, Gaul): as fire
+     arrows for the thrown kind.
+   - **Stones**: standard; **fire pots** (more damage to buildings and
+     towers, set them alight, less to men); **explosive** (bursts: a
+     blast radius against men and engines, less against walls; late,
+     expensive, rare by building).
+   Sim: ammunition kind per unit (hashed), a per-kind row in
+   sim/unit_types.gd's missile fields (damage, pierce, range, rate,
+   fear, blast, incendiary), fire as a per-object state on gates / towers
+   / equipment with a burn timer and chip damage; AI uses the kinds
+   (fire at wooden targets and wavering units, heavy bolts at engines
+   and armour) through profile knobs. Campaign: which kinds a faction's
+   units carry comes from the faction roster and a building (Fletcher /
+   Workshop chain), no state format change if stored on the unit entry
+   as an optional key. Battle screen and unit book show the kinds.
 5. **Elephants**, then camels, chariots, war dogs.
 6. **AI competency** (`docs/AI.md`): Easy / Average / Skilled on two
    independent axes (battle, campaign) plus personality, no cheats ever;
