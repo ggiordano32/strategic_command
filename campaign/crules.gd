@@ -52,6 +52,15 @@ extends RefCounted
 ##   {"t": "propose", "to": faction, "what": "peace" | "trade" | "cancel_trade"}
 ##   {"t": "war", "to": faction}                        (declare war)
 ##   {"t": "answer", "id": proposal id, "accept": 0 | 1}
+## Gifts between the human players (allied, both alive; see "gifts between
+## players" below; the AI never issues or receives these):
+##   {"t": "gift_region", "r": region, "to": faction, "price": n}: price 0
+##        hands the city over at once; price > 0 is an offer the receiver
+##        accepts next turn (a proposal, kind "offer_city")
+##   {"t": "buy_region", "r": region, "price": n}: an offer to buy the
+##        allied player's city r (a proposal, kind "ask_city")
+##   {"t": "gift_money", "to": faction, "amount": n}
+##   {"t": "accept_offer", "id": proposal id} / {"t": "decline_offer", "id"}
 ## A new army id from a split is the faction's next id: f * 100000 +
 ## factions[f].next_army, so it does not depend on the other player's orders.
 ## Invalid orders are skipped (with a reason) and never stop a turn.
@@ -134,6 +143,16 @@ static func apply_order(st: Dictionary, f: int, o: Dictionary) -> String:
 			return _declare_war(st, f, int(o.get("to", -1)))
 		"answer":
 			return _answer(st, f, int(o.get("id", -1)), int(o.get("accept", 0)))
+		"gift_region":
+			return _gift_region(st, f, int(o.get("r", -1)), int(o.get("to", -1)), int(o.get("price", 0)))
+		"buy_region":
+			return _buy_region(st, f, int(o.get("r", -1)), int(o.get("price", 0)))
+		"gift_money":
+			return _gift_money(st, f, int(o.get("to", -1)), int(o.get("amount", 0)))
+		"accept_offer":
+			return _answer_offer(st, f, int(o.get("id", -1)), true)
+		"decline_offer":
+			return _answer_offer(st, f, int(o.get("id", -1)), false)
 		"assault":
 			return can_assault(st, f, int(o.get("r", -1)))
 		"sally":
@@ -2153,7 +2172,7 @@ static func make_peace(st: Dictionary, f: int, g: int) -> void:
 
 static func _answer(st: Dictionary, f: int, id: int, accept: int) -> String:
 	for p in st["proposals"]:
-		if int(p["id"]) == id and int(p["to"]) == f:
+		if int(p["id"]) == id and int(p["to"]) == f and not p.has("kind"):
 			if accept != 0:
 				var g := int(p["from"])
 				if check_proposal(st, g, f, str(p["what"])) == "":
@@ -2175,6 +2194,176 @@ static func apply_agreement(st: Dictionary, f: int, g: int, what: String) -> voi
 		"cancel_trade":
 			CState.set_dip(st, f, g, CState.PEACE)
 			event(st, {"k": "trade_end", "a": f, "b": g})
+
+
+# ---------------------------------------------- gifts between players ---
+# The human players may hand each other a city (with its garrison,
+# buildings, level and any construction; never while an army of the giver
+# stands in it, or it is besieged, a battle is pending there or recruits are
+# queued there) and money. A free city gift and a money gift take effect when
+# the turn is resolved. A city for a price is a proposal in the state's
+# "proposals" list, {id, from, to, what = kind, kind ("offer_city": `from`
+# owns r and asks `price` of `to`; "ask_city": `from` offers `price` for
+# `to`'s city r), r, price, turn}; `to` answers it the next turn
+# (accept_offer / decline_offer); on acceptance every check runs again and
+# the city and the money move together, else the deal is refused with an
+# event saying why. Like the AI's proposals it lapses after that turn. The
+# AI never makes, sees or answers these entries.
+
+## "" if f and g are both alive human players (allied).
+static func gift_partner_check(st: Dictionary, f: int, g: int) -> String:
+	if g < 0 or g >= CState.nf() or g == f or not CState.alive(st, g) or not CState.alive(st, f):
+		return "no such faction"
+	if not (CState.is_human(st, f) and CState.is_human(st, g) and CState.friendly(st, f, g)):
+		return "only between allied players"
+	return ""
+
+
+## True if an army of faction f stands in settlement r (version 6: on its
+## site cell; older formats: in the region).
+static func army_in_city(st: Dictionary, f: int, r: int) -> bool:
+	var grid := CState.grid_on(st)
+	for a in st["armies"]:
+		if int(a["f"]) != f:
+			continue
+		if (grid and CState.cell(a) == CGrid.site(r)) or (not grid and int(a["r"]) == r):
+			return true
+	return false
+
+
+## "" if city r may pass from `giver` to `payer` for `price` now.
+static func city_deal_check(st: Dictionary, giver: int, payer: int, r: int, price: int) -> String:
+	var why := gift_partner_check(st, giver, payer)
+	if why != "":
+		return why
+	if r < 0 or r >= CData.region_count():
+		return "bad order"
+	if CState.owner(st, r) != giver:
+		return "not the giver's city"
+	if price < 0:
+		return "bad price"
+	if CState.regions_of(st, giver).size() <= 1:
+		return "the giver's last city"
+	if not CState.siege_at(st, r).is_empty():
+		return "besieged"
+	if not CState.battle_at(st, r).is_empty():
+		return "battle pending here"
+	if not (st["regions"][r]["queue"] as Array).is_empty():
+		return "recruits queued there"
+	if army_in_city(st, giver, r):
+		return "an army of the giver stands in the city"
+	if price > int(st["factions"][payer]["treasury"]):
+		return "%s cannot pay %d" % [CData.faction_name(payer), price]
+	return ""
+
+
+## A city proposal about r made this turn (one per city per turn).
+static func _city_offer_now(st: Dictionary, r: int) -> bool:
+	for p in st["proposals"]:
+		if p.has("kind") and int(p["r"]) == r and int(p["turn"]) == int(st["turn"]):
+			return true
+	return false
+
+
+## "" if faction f may give its city r to the allied player `to` (price 0)
+## or offer it for `price`.
+static func gift_region_check(st: Dictionary, f: int, r: int, to: int, price: int) -> String:
+	var why := city_deal_check(st, f, to, r, price)
+	if why == "" and price > 0 and _city_offer_now(st, r):
+		return "already offered this turn"
+	return why
+
+
+## "" if faction f may offer `price` (> 0) for the allied player's city r.
+static func buy_region_check(st: Dictionary, f: int, r: int, price: int) -> String:
+	if r < 0 or r >= CData.region_count():
+		return "bad order"
+	if price <= 0:
+		return "name a price"
+	var why := city_deal_check(st, CState.owner(st, r), f, r, price)
+	if why == "" and _city_offer_now(st, r):
+		return "already offered this turn"
+	return why
+
+
+## "" if faction f may give `amount` (> 0) to the allied player `to`.
+static func gift_money_check(st: Dictionary, f: int, to: int, amount: int) -> String:
+	var why := gift_partner_check(st, f, to)
+	if why != "":
+		return why
+	if amount <= 0:
+		return "name an amount"
+	if amount > int(st["factions"][f]["treasury"]):
+		return "not enough money"
+	return ""
+
+
+static func _gift_region(st: Dictionary, f: int, r: int, to: int, price: int) -> String:
+	var why := gift_region_check(st, f, r, to, price)
+	if why != "":
+		return why
+	if price == 0:
+		_transfer_city(st, f, to, r, 0)
+	else:
+		_city_proposal(st, f, to, r, price, "offer_city")
+	return ""
+
+
+static func _buy_region(st: Dictionary, f: int, r: int, price: int) -> String:
+	var why := buy_region_check(st, f, r, price)
+	if why != "":
+		return why
+	_city_proposal(st, f, CState.owner(st, r), r, price, "ask_city")
+	return ""
+
+
+static func _gift_money(st: Dictionary, f: int, to: int, amount: int) -> String:
+	var why := gift_money_check(st, f, to, amount)
+	if why != "":
+		return why
+	st["factions"][f]["treasury"] = int(st["factions"][f]["treasury"]) - amount
+	st["factions"][to]["treasury"] = int(st["factions"][to]["treasury"]) + amount
+	event(st, {"k": "gift_money", "f": f, "to": to, "amount": amount})
+	return ""
+
+
+static func _city_proposal(st: Dictionary, f: int, g: int, r: int, price: int, kind: String) -> void:
+	var id := int(st["next_proposal"])
+	st["next_proposal"] = id + 1
+	(st["proposals"] as Array).append({"id": id, "from": f, "to": g, "what": kind, "kind": kind, "r": r, "price": price,
+		"turn": int(st["turn"])})
+	event(st, {"k": "city_offer", "from": f, "to": g, "r": r, "price": price, "kind": kind, "id": id})
+
+
+## City r (with everything in it) passes from giver to payer, who pays price.
+static func _transfer_city(st: Dictionary, giver: int, payer: int, r: int, price: int) -> void:
+	st["factions"][payer]["treasury"] = int(st["factions"][payer]["treasury"]) - price
+	st["factions"][giver]["treasury"] = int(st["factions"][giver]["treasury"]) + price
+	st["regions"][r]["owner"] = payer
+	event(st, {"k": "gift_region", "f": giver, "to": payer, "r": r, "price": price})
+
+
+## The player's answer to a city proposal addressed to it.
+static func _answer_offer(st: Dictionary, f: int, id: int, accept: bool) -> String:
+	for p in st["proposals"]:
+		if int(p["id"]) != id or int(p["to"]) != f or not p.has("kind"):
+			continue
+		var g := int(p["from"])
+		var r := int(p["r"])
+		var price := int(p["price"])
+		var giver := g if str(p["kind"]) == "offer_city" else f
+		var payer := f if giver == g else g
+		st["proposals"].erase(p)
+		if not accept:
+			event(st, {"k": "city_declined", "f": f, "to": g, "r": r, "price": price})
+			return ""
+		var why := city_deal_check(st, giver, payer, r, price)
+		if why != "":
+			event(st, {"k": "city_refused", "f": f, "to": g, "r": r, "price": price, "why": why})
+		else:
+			_transfer_city(st, giver, payer, r, price)
+		return ""
+	return "no such offer"
 
 
 # --------------------------------------------------------------- economy ---

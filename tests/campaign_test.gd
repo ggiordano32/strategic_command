@@ -41,6 +41,11 @@ extends SceneTree
 ## stored destination, old-form orders muster their army too, one raised
 ## army that the end-of-turn gathering leaves apart that turn), recruits
 ## collecting in one army, the end-of-turn merge of idle armies in a city.
+## Gifts between the players: a free city gift at resolution (garrison and
+## buildings kept), a priced offer accepted / declined the next turn (the
+## city and the money move together), the buyer's offer, refusals (an army
+## of the giver in the city at acceptance, the treasury short), a money
+## gift, the AI left out, determinism.
 ## Exits 0 on success, 1 on failure.
 
 const CData := preload("res://campaign/cdata.gd")
@@ -103,6 +108,7 @@ func _init() -> void:
 	_grid_exchange()
 	_grid_arrange()
 	_grid_gift()
+	_city_gifts()
 	_grid_recruit_collect()
 	_grid_recruit_army()
 	_grid_auto_merge()
@@ -2172,6 +2178,119 @@ func _grid_gift() -> void:
 	_check(CRules.apply_order(s3, rome, {"t": "exchange", "from": int(mine["id"]), "to": int(theirs["id"]), "units": [0, 1, 2]}) == ""
 		and CState.army(s3, int(mine["id"])).is_empty() and CState.unit_count(CState.army(s3, int(theirs["id"]))) == 4,
 		"giving the whole army: the giver's army is gone")
+
+
+func _gift_setup() -> Dictionary:
+	var rome := _f("rome")
+	var cart := _f("carthage")
+	var st := _new6([rome, cart])
+	st["armies"] = []
+	_italy(st, rome)
+	st["factions"][rome]["treasury"] = 1000
+	st["factions"][cart]["treasury"] = 1000
+	return st
+
+
+func _city_gifts() -> void:
+	var rome := _f("rome")
+	var cart := _f("carthage")
+	var epi := _f("epirus")
+	var cap := _r("campania")
+	var st := _gift_setup()
+	(st["regions"][cap]["slots"] as Array).append([CData.MARKET, 1])
+	var gar := int(st["regions"][cap]["gar"])
+	_check(CRules.gift_region_check(st, rome, cap, cart, 0) == "", "Rome may give Capua to the allied player")
+	_check(CRules.gift_region_check(st, rome, cap, epi, 0) == "only between allied players", "not to an AI faction")
+	_check(CRules.gift_region_check(st, rome, _r("zeugitana"), cart, 0) == "not the giver's city", "nor a city not ours")
+	_check(CRules.gift_region_check(st, rome, cap, cart, 5000) != "", "nor for more than the receiver has")
+	_check(CRules.gift_money_check(st, rome, cart, 2000) == "not enough money" and CRules.gift_money_check(st, rome, epi, 10) != ""
+		and CRules.gift_money_check(st, rome, cart, 0) != "", "money: the treasury, a human ally, an amount")
+	# A free gift: at resolution, garrison and buildings kept.
+	var free := {"t": "gift_region", "r": cap, "to": cart, "price": 0}
+	var subs := [CTurn.submission(st, rome, [free]), CTurn.submission(st, cart, [])]
+	var r1 := CTurn.resolve_turn(st, subs)
+	var r1b := CTurn.resolve_turn(st, [subs[1], subs[0]])
+	_check(CState.owner(r1, cap) == cart and CState.building(r1, cap, CData.MARKET) == 1 and int(r1["regions"][cap]["gar"]) >= gar,
+		"a free gift: Capua is Carthage's after the turn, its market and garrison kept")
+	var ev := _events(r1, "gift_region")
+	_check(ev.size() == 1 and int(ev[0]["f"]) == rome and int(ev[0]["to"]) == cart and int(ev[0]["price"]) == 0 and _events(r1, "captured").is_empty(),
+		"one gift_region event, no capture")
+	_check(CState.state_hash(r1) == CState.state_hash(r1b), "the gift resolves the same on both clients")
+	# A priced gift: a proposal, accepted next turn.
+	var priced := {"t": "gift_region", "r": cap, "to": cart, "price": 300}
+	var t1 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [priced]), CTurn.submission(st, cart, [])])
+	var prop: Dictionary = {}
+	for p in t1["proposals"]:
+		if p.has("kind"):
+			prop = p
+	_check(CState.owner(t1, cap) == rome and not prop.is_empty() and str(prop["kind"]) == "offer_city" and int(prop["from"]) == rome
+		and int(prop["to"]) == cart and int(prop["r"]) == cap and int(prop["price"]) == 300, "a priced gift is an offer to Carthage, Capua still Roman")
+	_check(CRules.apply_order(CState.copy(st), rome, priced) == "" and CRules.gift_region_check(t1, rome, cap, cart, 0) == "",
+		"the offer is valid as an order")
+	var s2 := CState.copy(st)
+	CRules.apply_order(s2, rome, priced)
+	_check(CRules.apply_order(s2, rome, priced) == "already offered this turn", "one offer per city per turn")
+	var pid := int(prop.get("id", -1))
+	var tr_r := int(t1["factions"][rome]["treasury"])
+	var tr_c := int(t1["factions"][cart]["treasury"])
+	var acc := [CTurn.submission(t1, rome, []), CTurn.submission(t1, cart, [{"t": "accept_offer", "id": pid}])]
+	var t2 := CTurn.resolve_turn(t1, acc)
+	var t2b := CTurn.resolve_turn(t1, [acc[1], acc[0]])
+	_check(CState.owner(t2, cap) == cart and _events(t2, "gift_region").size() == 1 and int(_events(t2, "gift_region")[0]["price"]) == 300,
+		"accepted: Capua is Carthage's")
+	_check(CState.state_hash(t2) == CState.state_hash(t2b), "the handshake resolves the same on both clients")
+	_check(CRules.apply_order(CState.copy(t1), rome, {"t": "accept_offer", "id": pid}) == "no such offer"
+		and CRules.apply_order(CState.copy(t1), cart, {"t": "answer", "id": pid, "accept": 1}) == "no such proposal",
+		"only the receiver answers, and not by the AI-proposal answer")
+	# The money moved with it: compare against a turn where Carthage declined.
+	var dec := CTurn.resolve_turn(t1, [CTurn.submission(t1, rome, []), CTurn.submission(t1, cart, [{"t": "decline_offer", "id": pid}])])
+	_check(CState.owner(dec, cap) == rome and _events(dec, "city_declined").size() == 1, "declined: Capua stays Roman, an event says so")
+	var noans := CTurn.resolve_turn(t1, [CTurn.submission(t1, rome, []), CTurn.submission(t1, cart, [])])
+	var x1 := CState.copy(t1)
+	_check(CRules.apply_order(x1, cart, {"t": "accept_offer", "id": pid}) == "" and CState.owner(x1, cap) == cart
+		and int(x1["factions"][cart]["treasury"]) == tr_c - 300 and int(x1["factions"][rome]["treasury"]) == tr_r + 300,
+		"the city and the money move together (300)")
+	var lapsed := false
+	for p in noans["proposals"]:
+		lapsed = lapsed or int(p["id"]) == pid
+	_check(not lapsed, "an unanswered offer lapses after its turn")
+	# Refusal at acceptance: an army of the giver now stands in the city.
+	var t1a := CState.copy(t1)
+	_put(t1a, rome, CGrid.site(cap), ["spear"])
+	var ra := CTurn.resolve_turn(t1a, [CTurn.submission(t1a, rome, []), CTurn.submission(t1a, cart, [{"t": "accept_offer", "id": pid}])])
+	var rf := _events(ra, "city_refused")
+	_check(CState.owner(ra, cap) == rome and rf.size() == 1 and str(rf[0]["why"]).contains("army"), "refused at acceptance: an army of the giver in the city")
+	_check(CRules.gift_region_check(t1a, rome, cap, cart, 0).contains("army"), "and the check says so")
+	# Refusal at acceptance: the treasury no longer covers it.
+	var t1m := CState.copy(t1)
+	t1m["factions"][cart]["treasury"] = 100
+	var rm := CTurn.resolve_turn(t1m, [CTurn.submission(t1m, rome, []), CTurn.submission(t1m, cart, [{"t": "accept_offer", "id": pid}])])
+	rf = _events(rm, "city_refused")
+	_check(CState.owner(rm, cap) == rome and rf.size() == 1 and str(rf[0]["why"]).contains("cannot pay"), "refused at acceptance: Carthage cannot pay")
+	# The buyer's offer: Carthage asks for Capua, Rome accepts.
+	var bo := {"t": "buy_region", "r": cap, "price": 200}
+	var b1 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, []), CTurn.submission(st, cart, [bo])])
+	var bp := -1
+	for p in b1["proposals"]:
+		if p.has("kind") and str(p["kind"]) == "ask_city" and int(p["to"]) == rome and int(p["from"]) == cart:
+			bp = int(p["id"])
+	_check(bp >= 0, "an offer to buy is a proposal to the owner")
+	var b2 := CTurn.resolve_turn(b1, [CTurn.submission(b1, rome, [{"t": "accept_offer", "id": bp}]), CTurn.submission(b1, cart, [])])
+	_check(CState.owner(b2, cap) == cart and int(_events(b2, "gift_region")[0]["f"]) == rome, "the owner accepts: Capua is Carthage's")
+	_check(CRules.buy_region_check(st, cart, cap, 0) == "name a price" and CRules.buy_region_check(st, epi, cap, 10) != "", "a buyer names a price and is the ally")
+	# Money.
+	var m1 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [{"t": "gift_money", "to": cart, "amount": 400}]), CTurn.submission(st, cart, [])])
+	var m0 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, []), CTurn.submission(st, cart, [])])
+	_check(int(m1["factions"][rome]["treasury"]) == int(m0["factions"][rome]["treasury"]) - 400
+		and int(m1["factions"][cart]["treasury"]) == int(m0["factions"][cart]["treasury"]) + 400 and _events(m1, "gift_money").size() == 1,
+		"a money gift moves 400 at resolution")
+	# The AI: never offered (orders from an AI faction are refused) and its
+	# answers to AI proposals ignore these entries.
+	_check(CRules.apply_order(CState.copy(st), epi, {"t": "gift_money", "to": rome, "amount": 1}) != ""
+		and CRules.apply_order(CState.copy(st), epi, {"t": "gift_region", "r": _r("epirus"), "to": rome, "price": 0}) != "",
+		"an AI faction cannot give or be given")
+	_check(CState.state_hash(CState.from_json(CState.to_json(t1))) == CState.state_hash(t1),
+		"the offer survives a JSON round trip")
 
 
 ## A unit key faction f can recruit in r now.

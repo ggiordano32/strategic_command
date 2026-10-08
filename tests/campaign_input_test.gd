@@ -47,6 +47,12 @@ extends SceneTree
 ## keeps its scroll position; another dialog starts at the top. The map key: format 5 rows on the format 5 copy; on the
 ## overworld the Key button opens it (its version 6 rows, clear of End turn
 ## and the hint), a tap on the map closes it on a phone, its header closes it.
+## Gifts between the players: the region panel's "Gift to <ally>" plans a
+## gift_region order (Cancel and Undo take it back and bring it back), a
+## city with our army in it has the button off with the reason; Diplomacy
+## under the ally: Offer money, Offer to buy (city picker, price), the
+## planned deal's Cancel, an incoming city offer's Accept (Undo takes it
+## back).
 ## Exits 0 on success, 1 on failure.
 
 const CampaignScreen := preload("res://game/campaign/campaign_screen.gd")
@@ -101,7 +107,10 @@ func _initialize() -> void:
 		_r_region, _r_picker, _r_picker2, _r_picker3, _r_raise_check, _r_raise_x,
 		_a_setup, _a_scroll, _a_press, _a_wait, _a_drag, _a_up, _a_check1, _a_mouse, _a_mouse_up, _a_check2, _a_undo1, _a_undo2,
 		_a_scroll, _a_mouse_top, _a_mouse_top_up, _a_resolve,
-		_d_select, _d_tap, _d_check, _d_dip, _d_dip_tap, _d_dip_check, _d_other, _d_other_check, _s_done,
+		_d_select, _d_tap, _d_check, _d_dip, _d_dip_tap, _d_dip_check, _d_other, _d_other_check,
+		_gf_setup, _gf_tap, _gf_check, _gf_cancel, _gf_cancel_check, _gf_undo, _gf_undo_check, _gf_undo2, _gf_undo2_check,
+		_gf_dip, _gf_money, _gf_money_check, _gf_buy, _gf_buy_check, _gf_deal_cancel, _gf_deal_cancel_check,
+		_gf_offer, _gf_accept, _gf_accept_check, _gf_accept_undo, _gf_done, _s_done,
 	]
 
 
@@ -1002,6 +1011,155 @@ func _d_other_check() -> void:
 	_check(cs.dialog.visible and cs.dialog_scroll.scroll_vertical == 0, "another dialog opens at the top (%d)" % cs.dialog_scroll.scroll_vertical)
 	cs.close_dialog()
 	root.content_scale_size = _d_win
+
+
+# ----------------------------------------------- gifts between players ---
+
+var _gf_r := -1
+var _gf_army_r := -1
+
+
+func _gf_count(t: String) -> int:
+	var n := 0
+	for o in cs.orders:
+		if str(o["t"]) == t:
+			n += 1
+	return n
+
+
+func _gf_setup() -> void:
+	cs.close_dialog()
+	_ally = CData.faction_index("carthage")
+	if not (cs.st["humans"] as Array).has(_ally):
+		(cs.st["humans"] as Array).append(_ally)
+		(cs.st["humans"] as Array).sort()
+	CState.set_dip(cs.st, rome, _ally, CState.ALLIED)
+	cs.orders = []
+	cs._replan()
+	_check(cs.f == rome, "Rome is planning")
+	for r in CState.regions_of(cs.ps, rome):
+		if _gf_r < 0 and CRules.gift_region_check(cs.ps, rome, r, _ally, 0) == "":
+			_gf_r = r
+		if _gf_army_r < 0 and CRules.army_in_city(cs.ps, rome, r):
+			_gf_army_r = r
+	_check(_gf_r >= 0, "a Roman city that can be given")
+	if _gf_army_r >= 0:
+		cs.select_region(_gf_army_r)
+		await process_frame
+		var b := _button("gift_to_carthage")
+		var why := false
+		for l in cs.side_box.find_children("*", "Label", true, false):
+			why = why or (l as Label).text.contains("army of the giver")
+		_check(b != null and b.disabled and why, "a city with our army in it: Gift off, with the reason")
+	cs.select_region(_gf_r)
+
+
+func _gf_tap() -> void:
+	_tap_button("gift_to_carthage", "the region panel has Gift to Carthage")
+
+
+func _gf_check() -> void:
+	var ok := false
+	for o in cs.orders:
+		ok = ok or (str(o["t"]) == "gift_region" and int(o["r"]) == _gf_r and int(o["to"]) == _ally and int(o["price"]) == 0)
+	_check(ok and _gf_count("gift_region") == 1 and CState.owner(cs.ps, _gf_r) == _ally, "a free gift is planned; the preview shows the city as Carthage's")
+
+
+func _gf_cancel() -> void:
+	_tap_button("gift_cancel", "the planned gift shows with Cancel")
+
+
+func _gf_cancel_check() -> void:
+	_check(_gf_count("gift_region") == 0 and CState.owner(cs.ps, _gf_r) == rome, "Cancel takes the gift out")
+
+
+func _gf_undo() -> void:
+	cs.undo()
+
+
+func _gf_undo_check() -> void:
+	_check(_gf_count("gift_region") == 1, "Undo brings the gift back")
+
+
+func _gf_undo2() -> void:
+	cs.undo()
+
+
+func _gf_undo2_check() -> void:
+	_check(_gf_count("gift_region") == 0 and CState.owner(cs.ps, _gf_r) == rome, "Undo again: no gift")
+
+
+func _gf_dip() -> void:
+	cs.panels.show_diplomacy(_ally)
+	await process_frame
+	var mf = cs.dialog.find_child("money_amount_carthage", true, false)
+	_check(mf is LineEdit, "Diplomacy under the ally has a money field")
+	if mf is LineEdit:
+		(mf as LineEdit).text = "50"
+
+
+func _gf_money() -> void:
+	_tap_button("offer_money_carthage", "Offer money")
+
+
+func _gf_money_check() -> void:
+	var ok := false
+	for o in cs.orders:
+		ok = ok or (str(o["t"]) == "gift_money" and int(o["to"]) == _ally and int(o["amount"]) == 50)
+	_check(ok and cs.dialog.visible and cs.dialog_title.text == "Diplomacy", "Offer money plans gift_money 50; Diplomacy re-renders")
+	var pf = cs.dialog.find_child("buy_price_carthage", true, false)
+	var pick = cs.dialog.find_child("buy_city_carthage", true, false)
+	_check(pf is LineEdit and pick is OptionButton and (pick as OptionButton).item_count > 0, "Offer to buy: a city picker and a price")
+	if pf is LineEdit:
+		(pf as LineEdit).text = "20"
+
+
+func _gf_buy() -> void:
+	_tap_button("offer_buy_carthage", "Offer to buy")
+
+
+func _gf_buy_check() -> void:
+	var ok := false
+	for o in cs.orders:
+		ok = ok or (str(o["t"]) == "buy_region" and CState.owner(cs.st, int(o["r"])) == _ally and int(o["price"]) == 20)
+	_check(ok, "Offer to buy plans buy_region for 20")
+
+
+func _gf_deal_cancel() -> void:
+	_tap_button("deal_cancel", "the planned deals show with Cancel")
+
+
+func _gf_deal_cancel_check() -> void:
+	_check(_gf_count("gift_money") + _gf_count("buy_region") == 1, "Cancel takes one planned deal out")
+
+
+func _gf_offer() -> void:
+	cs.orders = []
+	var theirs := CState.regions_of(cs.st, _ally)
+	(cs.st["proposals"] as Array).append({"id": 999, "from": _ally, "to": rome, "what": "offer_city", "kind": "offer_city",
+		"r": theirs[0], "price": 10, "turn": int(cs.st["turn"])})
+	cs._replan()
+	cs.panels.show_diplomacy(_ally)
+
+
+func _gf_accept() -> void:
+	_tap_button("offer_accept_999", "an incoming city offer has Accept")
+
+
+func _gf_accept_check() -> void:
+	_check(_gf_count("accept_offer") == 1 and _button("offer_undo_999") != null, "Accept plans accept_offer; the offer shows accepted")
+	cs.undo()
+
+
+func _gf_accept_undo() -> void:
+	_check(_gf_count("accept_offer") == 0, "Undo takes the answer back")
+
+
+func _gf_done() -> void:
+	cs.close_dialog()
+	(cs.st["proposals"] as Array).clear()
+	cs.orders = []
+	cs._replan()
 
 
 func _s_done() -> void:

@@ -59,7 +59,9 @@ extends RefCounted
 ##     supplies left), held (turns maintained without an assault), from
 ##     [[army id, region it came from]...]}] sorted by region (version 4;
 ##     a state without the key plays without sieges, see sieges_on),
-##   proposals [{id, from, to, what, turn}] (AI proposals to humans),
+##   proposals [{id, from, to, what, turn}] (AI proposals to humans; a
+##     city offer between the human players adds kind, r, price, see
+##     crules.gd "gifts between players"),
 ##   next_proposal, events [{turn, k, ...}] (what happened, for the turn
 ##   summary), winner (-1 none, 1 players won, 0 players lost), stats {}.
 

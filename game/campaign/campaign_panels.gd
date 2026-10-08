@@ -131,6 +131,7 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 		_buildings(box, r)
 		if grid:
 			_trains(box, r)
+	_gift_section(box, r)
 	# Garrison: what the settlement provides (by level and walls).
 	var gar := CRules.garrison(ps, r)
 	var gs := Kit.section("Garrison (%d%% strength, walls %d)" % [int(rs["gar"]), CState.walls(ps, r)])
@@ -146,6 +147,215 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 		if grid:
 			row.pressed.connect(func(): s.open_unit_page(gty, Callable(), ""))
 		box.add_child(row)
+
+
+# ------------------------------------------------- gifts between players ---
+
+## A number-only field (digits; empty reads as 0).
+func _num_field(placeholder: String, nm: String, w: float = 90.0) -> LineEdit:
+	var le := Kit.text_field(placeholder, "", w)
+	le.name = nm
+	le.virtual_keyboard_type = LineEdit.KEYBOARD_TYPE_NUMBER
+	le.text_changed.connect(func(t: String):
+		var d := ""
+		for ch in t:
+			if ch >= "0" and ch <= "9":
+				d += ch
+		d = d.substr(0, 7)
+		if d != t:
+			le.text = d
+			le.caret_column = d.length())
+	return le
+
+
+func _num(le: LineEdit) -> int:
+	return int(le.text) if le.text.is_valid_int() else 0
+
+
+## Alive allied human players faction f may trade gifts with.
+func _gift_partners(ps: Dictionary, f: int) -> Array:
+	var out: Array = []
+	for g in ps["humans"]:
+		if CRules.gift_partner_check(ps, f, int(g)) == "":
+			out.append(int(g))
+	return out
+
+
+func _gift_order_text(o: Dictionary) -> String:
+	var price := int(o.get("price", 0))
+	var city := str(CData.REGIONS[int(o["r"])]["city"])
+	if str(o["t"]) == "buy_region":
+		return "Planned: offer %d for %s" % [price, city]
+	return "Planned: %s to %s%s" % [city, _fname(int(o["to"])), " for %d" % price if price > 0 else " as a gift"]
+
+
+## A planned gift / offer row with Cancel (the order is taken out; Undo
+## brings it back).
+func _planned_gift_row(box: Container, o: Dictionary, nm: String, after: Callable) -> void:
+	var h := Kit.hbox(6)
+	h.add_child(Kit.label(_gift_order_text(o) if str(o["t"]) != "gift_money" else "Planned: %d to %s" % [int(o["amount"]), _fname(int(o["to"]))],
+		Kit.FONT_SMALL, Kit.COL_GOOD, true))
+	var key := str(o)
+	var cb := Kit.button("Cancel", func():
+		s.remove_orders(func(x): return str(x) == key)
+		after.call(), 80, Kit.FONT_SMALL)
+	cb.name = nm
+	h.add_child(cb)
+	box.add_child(h)
+
+
+## Region panel: give this city to the allied player (free, or for a price:
+## an offer they accept next turn); the planned gift with Cancel.
+func _gift_section(box: VBoxContainer, r: int) -> void:
+	var ps: Dictionary = s.ps
+	var f: int = s.f
+	if f < 0:
+		return
+	var planned: Array = []
+	for o in s.orders:
+		if str(o["t"]) == "gift_region" and int(o.get("r", -1)) == r:
+			planned.append(o)
+	var partners := _gift_partners(ps, f)
+	var mine := CState.owner(ps, r) == f
+	if planned.is_empty() and (not mine or partners.is_empty()):
+		return
+	box.add_child(Kit.section("Gift to an ally"))
+	for o in planned:
+		_planned_gift_row(box, o, "gift_cancel", func(): pass)
+	if not mine or not planned.is_empty():
+		return
+	box.add_child(Kit.label("The city passes with its garrison and buildings when the turn is resolved; with a price it is an offer the ally accepts next turn, paying then.",
+		Kit.FONT_SMALL, Kit.COL_DIM, true))
+	for g in partners:
+		var why := CRules.gift_region_check(ps, f, r, g, 0)
+		var h := Kit.hbox(6)
+		var pf := _num_field("price", "gift_price_%s" % CData.FACTIONS[g]["key"])
+		h.add_child(pf)
+		var b := Kit.button("Gift to %s" % _fname(g), func():
+			s.add_order({"t": "gift_region", "r": r, "to": g, "price": _num(pf)}), 0)
+		b.name = "gift_to_%s" % CData.FACTIONS[g]["key"]
+		b.disabled = why != ""
+		h.add_child(b)
+		box.add_child(h)
+		if why != "":
+			box.add_child(Kit.label("Cannot give it now: %s." % why, Kit.FONT_SMALL, Kit.COL_BAD, true))
+
+
+## How faction f planned to answer city offer id: 1 accept, 0 decline, -1 not.
+func _offer_answer(id: int) -> int:
+	for o in s.orders:
+		if int(o.get("id", -1)) == id:
+			if str(o["t"]) == "accept_offer":
+				return 1
+			if str(o["t"]) == "decline_offer":
+				return 0
+	return -1
+
+
+## Diplomacy, under the allied player g: their offers to us (Accept /
+## Decline), our planned gifts and offers (Cancel), Offer money, Offer to
+## buy one of their cities.
+func _ally_deals(box: VBoxContainer, g: int) -> void:
+	var ps: Dictionary = s.ps
+	var f: int = s.f
+	var gk := str(CData.FACTIONS[g]["key"])
+	var redraw := func(): show_diplomacy(g)
+	for p in s.st["proposals"]:
+		if not p.has("kind") or int(p["to"]) != f or int(p["from"]) != g:
+			continue
+		var pid := int(p["id"])
+		var city := str(CData.REGIONS[int(p["r"])]["city"])
+		var txt := "%s offers you %s for %d." % [_fname(g), city, int(p["price"])] if str(p["kind"]) == "offer_city" \
+			else "%s offers %d for your %s." % [_fname(g), int(p["price"]), city]
+		var h := Kit.hbox(6)
+		h.add_child(Kit.label(txt, Kit.FONT, Kit.COL_GOLD, true))
+		var ans := _offer_answer(pid)
+		if ans < 0:
+			var ab := Kit.button("Accept", func():
+				s.add_order({"t": "accept_offer", "id": pid})
+				show_diplomacy(g), 80)
+			ab.name = "offer_accept_%d" % pid
+			h.add_child(ab)
+			var db := Kit.button("Decline", func():
+				s.add_order({"t": "decline_offer", "id": pid})
+				show_diplomacy(g), 80)
+			db.name = "offer_decline_%d" % pid
+			h.add_child(db)
+		else:
+			h.add_child(Kit.label("accepted" if ans == 1 else "declined", Kit.FONT_SMALL, Kit.COL_DIM))
+			var cb := Kit.button("Cancel", func():
+				s.remove_orders(func(o): return int(o.get("id", -1)) == pid and str(o["t"]) in ["accept_offer", "decline_offer"])
+				show_diplomacy(g), 80, Kit.FONT_SMALL)
+			cb.name = "offer_undo_%d" % pid
+			h.add_child(cb)
+		box.add_child(h)
+	for o in s.orders:
+		var t := str(o["t"])
+		if ((t == "gift_region" or t == "gift_money") and int(o.get("to", -1)) == g) \
+				or (t == "buy_region" and CState.owner(s.st, int(o.get("r", -1))) == g):
+			_planned_gift_row(box, o, "deal_cancel", redraw)
+	# Offer money.
+	var mh := Kit.hbox(6)
+	var mf := _num_field("amount", "money_amount_" + gk)
+	mh.add_child(mf)
+	var mb := Kit.button("Offer money", func():
+		if s.add_order({"t": "gift_money", "to": g, "amount": _num(mf)}) == "":
+			show_diplomacy(g), 0)
+	mb.name = "offer_money_" + gk
+	mh.add_child(mb)
+	box.add_child(mh)
+	# Offer to buy one of their cities (those that may change hands now:
+	# no army of theirs in it, not besieged, not their last).
+	var theirs: Array = []
+	for r in CState.regions_of(ps, g):
+		if CRules.city_deal_check(ps, g, f, r, 0) == "":
+			theirs.append(r)
+	if theirs.is_empty():
+		box.add_child(Kit.label("None of %s's cities can change hands now (an army of theirs in it, a siege or a battle there, or their last city)." % _fname(g),
+			Kit.FONT_SMALL, Kit.COL_DIM, true))
+		return
+	var bh := Kit.flow(6)
+	var pick := OptionButton.new()
+	pick.name = "buy_city_" + gk
+	pick.custom_minimum_size = Vector2(150, Kit.BTN_H)
+	for r in theirs:
+		pick.add_item(str(CData.REGIONS[r]["city"]), r)
+	bh.add_child(pick)
+	var pf := _num_field("price", "buy_price_" + gk)
+	bh.add_child(pf)
+	var bb := Kit.button("Offer to buy", func():
+		if pick.selected < 0:
+			return
+		if s.add_order({"t": "buy_region", "r": pick.get_item_id(pick.selected), "price": _num(pf)}) == "":
+			show_diplomacy(g), 0)
+	bb.name = "offer_buy_" + gk
+	bh.add_child(bb)
+	box.add_child(bh)
+
+
+func _gift_text(e: Dictionary, f: int) -> String:
+	var city := str(CData.REGIONS[int(e["r"])]["city"]) if e.has("r") else ""
+	var a := int(e["f"]) if e.has("f") else int(e.get("from", -1))
+	var b := int(e["to"])
+	if a != f and b != f:
+		return ""
+	var who := func(x: int) -> String: return "you" if x == f else _fname(x)
+	match str(e["k"]):
+		"gift_money":
+			return "%s gave %s %d." % ["You" if a == f else _fname(a), who.call(b), int(e["amount"])]
+		"gift_region":
+			var price := int(e["price"])
+			return "%s handed %s to %s%s." % ["You" if a == f else _fname(a), city, who.call(b), " for %d" % price if price > 0 else " as a gift"]
+		"city_offer":
+			var price2 := int(e["price"])
+			if str(e["kind"]) == "offer_city":
+				return "%s offered %s to %s for %d (answer in Diplomacy next turn)." % ["You" if a == f else _fname(a), city, who.call(b), price2]
+			return "%s offered %d for %s (answer in Diplomacy next turn)." % ["You" if a == f else _fname(a), price2, city]
+		"city_declined":
+			return "%s declined the offer about %s." % ["You" if a == f else _fname(a), city]
+		"city_refused":
+			return "The deal about %s fell through: %s." % [city, str(e["why"])]
+	return ""
 
 
 # ---------------------------------------------------------------- sieges ---
@@ -1393,7 +1603,7 @@ func show_diplomacy(focus: int = -1) -> void:
 	var box := Kit.vbox(8)
 	box.add_child(Kit.label("Proposals are answered when the turn is resolved; the other side weighs its strength against yours, how long the war has lasted and its losses.", Kit.FONT_SMALL, Kit.COL_DIM, true))
 	for p in ps["proposals"]:
-		if int(p["to"]) != f:
+		if int(p["to"]) != f or p.has("kind"):
 			continue
 		var pid := int(p["id"])
 		var answered := -1
@@ -1429,6 +1639,8 @@ func show_diplomacy(focus: int = -1) -> void:
 		row.add_child(l)
 		box.add_child(row)
 		if d == CState.ALLIED:
+			if CRules.gift_partner_check(ps, f, g) == "":
+				_ally_deals(box, g)
 			continue
 		var acts := Kit.hbox(6)
 		row.add_child(acts)
@@ -1622,8 +1834,14 @@ func _event_color(e: Dictionary, f: int) -> Color:
 			return Kit.COL_BAD if int(e["o"]) == f else Kit.COL_GOLD
 		"siege_lifted":
 			return Kit.COL_GOOD if int(e["o"]) == f else Kit.COL_DIM
-		"peace", "trade", "built", "recruited", "grew", "victory", "gift":
+		"peace", "trade", "built", "recruited", "grew", "victory", "gift", "gift_money":
 			return Kit.COL_GOOD
+		"gift_region":
+			return Kit.COL_GOOD if int(e["to"]) == f else Kit.COL_GOLD
+		"city_offer":
+			return Kit.COL_GOLD
+		"city_refused", "city_declined":
+			return Kit.COL_BAD
 	return Color.WHITE
 
 
@@ -1711,6 +1929,8 @@ func event_text(e: Dictionary, f: int) -> String:
 			if int(e["f"]) == f:
 				return "You gave %s %d unit%s at %s." % [CData.faction_name(int(e["to"])), n, "" if n == 1 else "s", city.call(e["r"])]
 			return ""
+		"gift_region", "gift_money", "city_offer", "city_refused", "city_declined":
+			return _gift_text(e, f)
 		"grew":
 			if int(e["f"]) != f:
 				return ""
@@ -1807,8 +2027,11 @@ func warnings() -> Array:
 				break
 	if can_build > 0:
 		out.append("%d region%s could start a building (from %d)." % [can_build, "" if can_build == 1 else "s", cheapest])
+	for p in s.st["proposals"]:
+		if int(p["to"]) == f and p.has("kind") and _offer_answer(int(p["id"])) < 0:
+			out.append("%s's offer about %s is unanswered (it lapses): Diplomacy." % [CData.faction_name(int(p["from"])), CData.REGIONS[int(p["r"])]["city"]])
 	for p in ps["proposals"]:
-		if int(p["to"]) == f:
+		if int(p["to"]) == f and not p.has("kind"):
 			var answered := false
 			for o in s.orders:
 				if str(o["t"]) == "answer" and int(o["id"]) == int(p["id"]):

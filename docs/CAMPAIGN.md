@@ -216,6 +216,10 @@ orders (plain data):
 | propose | to, what peace / trade / cancel_trade | step 4, AI answers |
 | war | to | step 1 |
 | answer | id (AI proposal), accept 0/1 | step 1 |
+| gift_region | r (our city), to (the allied player), price (0 = a free gift) | step 2: free, the city passes now; priced, an offer (proposal kind "offer_city") the receiver answers next turn |
+| buy_region | r (the allied player's city), price (> 0) | step 2: an offer to buy (proposal kind "ask_city") the owner answers next turn |
+| gift_money | to (the allied player), amount | step 2 (the treasury after our earlier orders) |
+| accept_offer / decline_offer | id (a city offer to us) | step 2: the checks run again; the city and the money move together, or the deal is refused with an event |
 | assault | r (a region one of our armies besieges; version 5 also one where our armies stand without a siege) | step 3b (version 4) |
 | sally | r (our besieged region, or an ally's with our army inside) | step 3b (version 4) |
 | siege | r (version 5: a hostile region where one of our armies stands, no siege yet) | step 3b |
@@ -1351,6 +1355,42 @@ the stance toggle).
   (all 8 factions, resolution included) 10.7-12.2 ms mean, 16.5 ms worst,
   native desktop. Carthage, rich and spread out, is the faction most likely
   to snowball in the second half.
+
+### Gifts between players
+
+The two human players can hand each other cities and money (orders in the
+table above; the rules in `crules.gd` "gifts between players"; the checks
+`gift_region_check` / `buy_region_check` / `gift_money_check` /
+`city_deal_check` are shared by the screens and the rules). Only between
+alive human players (allied); the AI never makes, receives or answers
+these. A city may change hands when the giver owns it, it is not the
+giver's last, it is not besieged, no battle is pending and no recruits
+are queued there, and **no army of the giver stands in it** (version 6:
+on its site cell; older formats: in the region): the garrison, buildings,
+level and any construction go with it; it is an ownership change, not a
+conquest (no "captured" event, no reset of the garrison or the queues).
+A **free gift** and a **money gift** take effect in step 2 of the turn
+(event `gift_region` / `gift_money` for both players). A **priced gift**
+(the owner asks a price) or an **offer to buy** (the other player names a
+price) is a two-turn handshake: the order adds an entry to the state's
+`proposals` list, `{id, from, to, what = kind, kind ("offer_city" |
+"ask_city"), r, price, turn}` (event `city_offer`), one per city per turn;
+the player it is addressed to answers it the next turn with `accept_offer`
+or `decline_offer`. On acceptance every check runs again (still owned, no
+army of the giver in it, the payer's treasury covers the price): the city
+and the money move together (event `gift_region` with the price), else
+event `city_refused` with the reason; a decline is event `city_declined`.
+Like the AI's proposals an unanswered offer lapses at the end of the turn
+it was answerable in. No format change (old states have no such entries;
+the AI's `answer` order ignores them). Screens: the region panel of our
+city has "Gift to <ally>" with a price field (empty or 0: free; off with
+the reason when the city cannot change hands, e.g. our army inside); the
+Diplomacy screen under the allied player lists their offers to us (Accept
+/ Decline, then Cancel), our planned gifts and offers (Cancel), "Offer
+money" (amount) and "Offer to buy" (a picker of their cities that can
+change hands, price); planned gifts show in the region panel with Cancel,
+Undo works as for any order, unanswered offers are in the end-turn
+warnings, and the events in the turn report.
 
 ## Victory and defeat
 
