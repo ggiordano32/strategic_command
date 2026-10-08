@@ -918,6 +918,26 @@ A tuning pass from playtest feedback (built, uncommitted):
 - bench_4000 (two armies a side) now runs ~10 min to a decision (2,000:
   ~5 min); the AI's second line and batteries could be looked at.
 
+## Next session (2026-10-08, 14:00)
+
+Where the evening of 2026-10-07 ended (build 20261008T010923Z live,
+server rebuilt with the battle "ask" / guest room changes):
+- **To confirm on the user's devices:** (1) Galaxy Tab S7 in Chrome: one
+  battle on the new build should log `soldier_probe path=gpu drawn=0`
+  then `path=cpu drawn>0` (nothing logged on this build yet; Firefox on
+  the tablet draws fine on the texture path); (2) the co-op join flow in
+  the running online campaign: Syracuse "Ask to join" -> Carthage sees
+  "Syracuse asks to join" -> Fight together -> Join battle -> gift units.
+- **Queue, in the agreed order:** part 2c (walls-1 defender layout, the
+  fair-sieges target), artillery engines as pick-up-able equipment with
+  crews as men (+ a per-unit kills counter for the battle screen), gifting
+  cities and money (4c), part 3 (fit the formula, shelter knob back on,
+  re-run the AI tables), then the rest of the list below.
+- Known: city benches' worst ticks 8-12 ms on this machine (needs a cold
+  measurement); walls-3 polis fights can stall at the acropolis;
+  touch_scroll_test's two recruit-list failures and menu script error
+  pre-exist.
+
 ## Where we are headed
 
 Agreed with the user on 2026-10-06, in this order (milestones 1-5, battle
