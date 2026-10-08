@@ -1082,6 +1082,16 @@ fixes are all landed; see "Where we are"):
      row, roster line "siege"), so it costs upkeep, can be gifted and
      exchanged, and auto-resolve counts it as a small strength plus a
      missile bonus for the army; no format change.
+     **Tiers and handling (decided 2026-10-08):** level 1 a hand cart the
+     crew pulls at walking pace or slower; level 2 one horse (marching
+     pace; the horse is a shootable hit box, dead -> crew pace); level 3
+     two horses (trot; one dead -> level-2 pace). Crew dead: the wagon
+     stands, anyone may harvest it, nobody moves it. **Any foot unit may
+     take the wagon** like the ram: it becomes the crew, moves at the
+     wagon's current pace (horses alive -> horse pace), cannot attack or
+     shoot, fights at the carrier penalty and is badly exposed to flank
+     and rear hits; Drop at any time. The enemy may take an abandoned
+     wagon too: refill from it or burn it (4d fire). Guarding it matters.
 5. **Elephants**, then camels, chariots, war dogs.
 6. **AI competency** (`docs/AI.md`): Easy / Average / Skilled on two
    independent axes (battle, campaign) plus personality, no cheats ever;
