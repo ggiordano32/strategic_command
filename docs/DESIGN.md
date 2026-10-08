@@ -2069,3 +2069,48 @@ for testing and `--soldier-probe-fail` fakes a failing texture path.
 3. Battle AI good enough to be worth fighting.
 4. Keeping the sim deterministic as features are added.
 5. Scope creep in the campaign layer.
+
+## 11. Future themes: the American West (not started)
+
+Once the Rome game is where we want it, the same engine should carry a
+second, fantastical American West campaign with hammed-up factions. It is a
+content pack over the existing engine, added non-destructively: nothing in
+the Rome data changes, and the shared sim, campaign rules, lockstep, server
+and tooling are untouched except for the new mechanics below. It is also the
+stress test for the sprite pipeline (section 8).
+
+**Factions (sketch).** Many distinct tribes (Comanche as the best cavalry,
+Iroquois woodland infantry, Apache raiders who win by attrition); colonists
+as a militia spectrum (Crockett-style frontiersmen with rifles and cover,
+cheap brittle farmers, mounted rangers, Quakers as a non-combat campaign
+bonus); Mexican militia and lancers; French trappers (woods, rivers, trade
+with tribes); the British Empire as the "Roman" line-and-artillery faction;
+Spanish horses and mercenaries as a recruitable market; Chinese medicine
+men (healing, morale), explosives (sapper gear using the equipment objects)
+and the railroad. Faction character comes from stat tables and per-faction
+AI profiles, the way skill profiles work today.
+
+**What carries over.** Campaign core (regions, armies, async turns,
+proposals, gifting, sieges as a fort holding out); the battle sim
+(formations, morale, occupancy grid, equipment objects, artillery); siege
+structure (a stockade fort is a walls-1 city, blockhouses are towers with a
+cannon); ammunition types and the ammunition wagon (ball, buckshot, shell,
+dynamite, wagon trains); animal roles (mustang vs draft horse is the
+camel/horse split with different numbers); AI profiles.
+
+**New mechanics.**
+1. Firearms: a volley mode on the missile code (long reload, high damage,
+   morale shock, smoke); rifles slow and accurate, pistols a cavalry melee
+   bonus.
+2. Cover and line of sight: terrain that reduces hits and blocks sight
+   (woods, rocks, buildings), reusing the wall shelter knob; makes ambush and
+   "fighting from the trees" real tactics.
+3. A railroad graph laid over the region map: buildable, raidable, a
+   movement and supply network.
+
+**Preparation while building Rome.** Keep unit types, ammunition, buildings,
+animals and faction AI knobs as data tables rather than code branches, so a
+theme is a data folder plus its art. Smaller units (companies of 30 to 80)
+mean every balance number is re-fitted; the fit-the-formula tooling from the
+siege work is what calibrates a new theme. Victory conditions for tribes
+(land and buffalo, not cities) are the open design problem.
