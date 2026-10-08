@@ -177,6 +177,18 @@ func _initialize() -> void:
 		_step_bc_check_deselect,
 		_step_bc_keys,
 		_step_bc_check_keys,
+		# Speed slider (solo).
+		_step_sp_open,
+		_step_sp_check_open,
+		_step_sp_drag_down,
+		_step_sp_drag_move,
+		_step_sp_check_dragging,
+		_step_sp_drag_up,
+		_step_sp_check_applied,
+		_step_sp_keys,
+		_step_sp_check_keys,
+		_step_sp_close,
+		_step_sp_check_closed,
 		_step_bc_controls_open,
 		_step_bc_controls_check,
 		_step_bc_controls_closed,
@@ -1438,6 +1450,90 @@ func _step_bc_check_keys() -> void:
 	_check(battle.selection.size() >= 3, "key 2 selects the infantry (%d)" % battle.selection.size())
 	_key(KEY_SPACE)
 	_key(KEY_ESCAPE)
+
+
+# ---- speed slider ----
+
+var _sp_cam := Vector2.ZERO
+
+
+## Window position of the slider's handle centre at quarter-step q.
+func _sp_pos(q: int) -> Vector2:
+	var sl: HSlider = battle.hud.speed_slider
+	var r := sl.get_global_rect()
+	var g := float(sl.get_theme_icon("grabber").get_width())
+	var x := r.position.x + g / 2.0 + (q - sl.min_value) / (sl.max_value - sl.min_value) * (r.size.x - g)
+	return _vp_to_window(Vector2(x, r.get_center().y))
+
+
+func _step_sp_open() -> void:
+	battle.speed_q = 4
+	battle._update_speed_text()
+	_tap_control(battle.hud.speed_button)
+
+
+func _step_sp_check_open() -> void:
+	var hud = battle.hud
+	_check(hud.speed_panel.visible, "the speed button opens the speed slider")
+	_check(hud.speed_value.text == "1x" and int(hud.speed_slider.value) == 4,
+		"the slider starts at the speed in force (%s)" % hud.speed_value.text)
+	var gs: Vector2 = hud.speed_slider.get_theme_icon("grabber").get_size()
+	_check(gs.x >= 28 and hud.speed_slider.get_combined_minimum_size().y >= 36,
+		"the slider handle is touch-sized (%s)" % str(gs))
+
+
+func _step_sp_drag_down() -> void:
+	_sp_cam = battle.camera.position
+	_no_double_tap()
+	_touch(0, _sp_pos(4), true)
+
+
+func _step_sp_drag_move() -> void:
+	_drag(0, _sp_pos(7), _sp_pos(7) - _sp_pos(4))
+	_drag(0, _sp_pos(10), _sp_pos(10) - _sp_pos(7))
+
+
+func _step_sp_check_dragging() -> void:
+	var hud = battle.hud
+	_check(hud.speed_value.text == "2.5x", "dragging the slider shows the value live (%s)" % hud.speed_value.text)
+	_check(battle.camera.position == _sp_cam, "dragging the slider does not pan the map")
+
+
+func _step_sp_drag_up() -> void:
+	_touch(0, _sp_pos(10), false)
+
+
+func _step_sp_check_applied() -> void:
+	_check(battle.speed_q == 10, "releasing the slider applies 2.5x solo (q %d)" % battle.speed_q)
+	_check(battle.hud.speed_button.text == "2.5x", "the speed button shows 2.5x (%s)" % battle.hud.speed_button.text)
+	_check(battle.camera.position == _sp_cam, "the map did not move")
+	_key(KEY_EQUAL)
+
+
+func _step_sp_keys() -> void:
+	_check(battle.speed_q == 12, "+ goes to the next labelled speed, 3x (q %d)" % battle.speed_q)
+	_check(int(battle.hud.speed_slider.value) == 12 and battle.hud.speed_value.text == "3x",
+		"the slider follows the keys (%s)" % battle.hud.speed_value.text)
+	_key(KEY_MINUS)
+	_key(KEY_MINUS)
+
+
+func _step_sp_check_keys() -> void:
+	_check(battle.speed_q == 4, "- twice: 3x -> 2x -> 1x (q %d)" % battle.speed_q)
+
+
+func _step_sp_close() -> void:
+	# A tap on the map outside the popover closes it.
+	_no_double_tap()
+	var p := _vp_to_window(Vector2(battle.get_viewport().get_visible_rect().size.x * 0.3,
+		battle.get_viewport().get_visible_rect().size.y * 0.5))
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_sp_check_closed() -> void:
+	_check(not battle.hud.speed_panel.visible, "a tap outside closes the speed slider")
+	battle._select(-1)
 
 
 func _step_bc_controls_open() -> void:

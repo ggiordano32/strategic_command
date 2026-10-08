@@ -7,6 +7,9 @@ extends CanvasLayer
 signal card_pressed(unit: int)
 signal pause_pressed
 signal speed_pressed
+## The speed slider: q in quarter steps (Lockstep.SPEED_Q_MIN..MAX, 4 = 1x).
+## final: the finger / button was released (co-op votes only then).
+signal speed_chosen(q: int, final: bool)
 signal menu_pressed
 signal run_pressed
 signal halt_pressed
@@ -33,6 +36,7 @@ signal ready_pressed
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const DragReorder := preload("res://game/drag_reorder.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
+const Lockstep := preload("res://sim/lockstep.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Icons := preload("res://game/unit_icons.gd")
 const UnitBook := preload("res://game/unit_book.gd")
@@ -60,6 +64,12 @@ var banner: Label
 var pause_button: Button
 var orders_button: Button
 var speed_button: Button
+## Speed popover under the speed button: value label, slider (quarter
+## steps), tick labels.
+var speed_panel: PanelContainer
+var speed_slider: HSlider
+var speed_value: Label
+var _speed_dragging := false
 var run_button: Button
 var halt_button: Button
 var fire_button: Button
@@ -164,7 +174,10 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	pause_button = _button("Pause", Vector2(74, BTN_H))
 	pause_button.pressed.connect(func(): pause_pressed.emit())
 	speed_button = _button("1x", Vector2(50, BTN_H))
-	speed_button.pressed.connect(func(): speed_pressed.emit())
+	speed_button.tooltip_text = "Battle speed: tap for the slider (+ / - keys)"
+	speed_button.pressed.connect(func():
+		set_speed_panel_open(not speed_panel.visible)
+		speed_pressed.emit())
 	withdraw_all_button = _button("Withdraw army", Vector2(0, BTN_H))
 	withdraw_all_button.tooltip_text = "Every unit leaves the battle (tap twice)"
 	withdraw_all_button.pressed.connect(_on_withdraw_all)
@@ -398,6 +411,8 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	dh.add_child(ready_button)
 	_ui_controls.append(deploy_panel)
 
+	_build_speed_panel(root)
+
 	# Unit book, above everything else.
 	book = UnitBook.new()
 	book.side_color = Icons.SIDE_COLORS[player_side]
@@ -551,6 +566,111 @@ func set_card_owner(u: int, foreign: bool, col: Color) -> void:
 		f.foreign = foreign
 		f.owner_col = col
 		f.queue_redraw()
+
+
+func _build_speed_panel(root: Control) -> void:
+	speed_panel = PanelContainer.new()
+	speed_panel.name = "speed_panel"
+	speed_panel.add_theme_stylebox_override("panel", _box(Color(0.05, 0.06, 0.09, 0.92), 10.0))
+	speed_panel.visible = false
+	root.add_child(speed_panel)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 2)
+	speed_panel.add_child(v)
+	var head := HBoxContainer.new()
+	v.add_child(head)
+	var t := Label.new()
+	t.text = "Speed"
+	t.add_theme_font_size_override("font_size", FONT_SMALL)
+	t.add_theme_color_override("font_color", Color(0.75, 0.78, 0.85))
+	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(t)
+	speed_value = Label.new()
+	speed_value.name = "speed_value"
+	speed_value.text = "1x"
+	speed_value.add_theme_font_size_override("font_size", 18)
+	head.add_child(speed_value)
+	speed_slider = HSlider.new()
+	speed_slider.name = "speed_slider"
+	speed_slider.min_value = Lockstep.SPEED_Q_MIN
+	speed_slider.max_value = Lockstep.SPEED_Q_MAX
+	speed_slider.step = 1
+	speed_slider.value = 4
+	speed_slider.focus_mode = Control.FOCUS_NONE
+	speed_slider.scrollable = false  # the wheel zooms the map, never the speed
+	speed_slider.custom_minimum_size = Vector2(270, 40)
+	# Touch-sized handle and a visible track.
+	var grab := _disc(30, Color(0.92, 0.93, 0.97))
+	speed_slider.add_theme_icon_override("grabber", grab)
+	speed_slider.add_theme_icon_override("grabber_highlight", _disc(30, Color(1, 1, 1)))
+	var track := StyleBoxFlat.new()
+	track.bg_color = Color(0.3, 0.32, 0.38)
+	track.set_corner_radius_all(3)
+	track.content_margin_top = 3
+	track.content_margin_bottom = 3
+	speed_slider.add_theme_stylebox_override("slider", track)
+	var fill := track.duplicate() as StyleBoxFlat
+	fill.bg_color = Color(0.45, 0.62, 0.9)
+	speed_slider.add_theme_stylebox_override("grabber_area", fill)
+	speed_slider.add_theme_stylebox_override("grabber_area_highlight", fill)
+	speed_slider.value_changed.connect(func(x: float):
+		speed_value.text = Lockstep.speed_text(int(x))
+		speed_chosen.emit(int(x), false))
+	speed_slider.drag_started.connect(func(): _speed_dragging = true)
+	# A tap on the track moves the handle without a drag in between; the
+	# value at release is what counts either way.
+	speed_slider.drag_ended.connect(func(_changed: bool):
+		_speed_dragging = false
+		speed_chosen.emit(int(speed_slider.value), true))
+	v.add_child(speed_slider)
+	var ticks := SpeedTicks.new()
+	ticks.slider = speed_slider
+	ticks.custom_minimum_size = Vector2(270, 16)
+	ticks.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_child(ticks)
+	_ui_controls.append(speed_panel)
+
+
+static func _disc(d: int, col: Color) -> ImageTexture:
+	var img := Image.create(d, d, false, Image.FORMAT_RGBA8)
+	var r := d / 2.0
+	for y in d:
+		for x in d:
+			var dist := Vector2(x + 0.5 - r, y + 0.5 - r).length()
+			var c := col if dist < r - 2.0 else Color(0.1, 0.12, 0.16)
+			c.a = clampf(r - dist, 0.0, 1.0)
+			img.set_pixel(x, y, c)
+	return ImageTexture.create_from_image(img)
+
+
+func set_speed_panel_open(on: bool) -> void:
+	speed_panel.visible = on
+	if on:
+		speed_panel.reset_size()
+		var r := speed_button.get_global_rect()
+		var w := speed_panel.size.x
+		speed_panel.position = Vector2(
+			clampf(r.end.x - w, MARGIN, _root.size.x - w - MARGIN), r.end.y + GAP)
+
+
+## The speed shown: the button has the speed in force, the slider (unless
+## the finger is on it) `slider_q`: the same, or this player's open co-op
+## proposal.
+func set_speed(q: int, slider_q: int) -> void:
+	speed_button.text = Lockstep.speed_text(q)
+	if not _speed_dragging and int(speed_slider.value) != slider_q:
+		speed_slider.set_value_no_signal(slider_q)
+		speed_value.text = Lockstep.speed_text(slider_q)
+
+
+func _input(event: InputEvent) -> void:
+	# A press anywhere outside the open speed popover (and its button) closes it.
+	if speed_panel != null and speed_panel.visible and event is InputEventScreenTouch \
+			and (event as InputEventScreenTouch).pressed:
+		var p := (event as InputEventScreenTouch).position
+		if not speed_panel.get_global_rect().has_point(p) \
+				and not speed_button.get_global_rect().has_point(p):
+			speed_panel.visible = false
 
 
 func is_over_ui(screen_pos: Vector2) -> bool:
@@ -844,3 +964,28 @@ class CardFace extends Control:
 			draw_rect(Rect2(Vector2(1, 1), sz - Vector2(2, 2)), Color(1, 1, 1, 0.95), false, 2.0)
 		elif fighting and state == ST_OK:
 			draw_rect(Rect2(Vector2(0.5, 0.5), sz - Vector2(1, 1)), Color(1, 1, 1, 0.25), false, 1.0)
+
+
+## Tick marks and labels under the speed slider, lined up with the handle's
+## centre at those values.
+class SpeedTicks extends Control:
+	var slider: HSlider
+
+	func _draw() -> void:
+		var font := get_theme_default_font()
+		var g := float(slider.get_theme_icon("grabber").get_width())
+		var lo := slider.min_value
+		var span := slider.max_value - lo
+		var prev_end := -100.0
+		for q in Lockstep.SPEED_QS:
+			var x: float = g / 2.0 + (float(q) - lo) / span * (size.x - g)
+			draw_line(Vector2(x, 0), Vector2(x, 3), Color(0.6, 0.62, 0.7), 1.0)
+			var t := Lockstep.speed_text(q).trim_suffix("x")
+			var w := font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
+			var tx := maxf(clampf(x - w / 2.0, 0.0, size.x - w), prev_end + 4.0)  # 0.25 / 0.5 sit close
+			prev_end = tx + w
+			draw_string(font, Vector2(tx, 14), t, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.75, 0.78, 0.85))
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_RESIZED:
+			queue_redraw()

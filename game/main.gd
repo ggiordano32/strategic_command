@@ -992,7 +992,7 @@ func _start_siege(params: Array) -> void:
 	_last_seed = b.seed_value
 	_replay_button.disabled = false
 	_replay_button.text = "Replay (seed %d)" % b.seed_value
-	b.speed_idx = clampi(_speed_idx, 0, Battle.SPEEDS.size() - 1)
+	b.speed_q = Battle.SPEED_PRESETS[clampi(_speed_idx, 0, Battle.SPEED_PRESETS.size() - 1)]
 	b.exit_requested.connect(_end_battle)
 	_battle = b
 	get_tree().root.add_child.call_deferred(b)
@@ -1106,7 +1106,7 @@ func _start_with(id: String, sd: int, terrain_kind: int) -> void:
 	_last_terrain = terrain_kind
 	_replay_button.disabled = false
 	_replay_button.text = "Replay (seed %d)" % sd
-	b.speed_idx = clampi(_speed_idx, 0, Battle.SPEEDS.size() - 1)
+	b.speed_q = Battle.SPEED_PRESETS[clampi(_speed_idx, 0, Battle.SPEED_PRESETS.size() - 1)]
 	b.exit_requested.connect(_end_battle)
 	_battle = b
 	get_tree().root.add_child.call_deferred(b)
@@ -1149,7 +1149,7 @@ func _custom_battle(built: Dictionary, st: Dictionary, me: int) -> Battle:
 	b.player_side = maxi(CustomSetup.side_of_player(st, me), 0)
 	b.custom_summary = CustomSetup.summary(st)
 	b.set_meta("custom", true)
-	b.speed_idx = clampi(_speed_idx, 0, Battle.SPEEDS.size() - 1)
+	b.speed_q = Battle.SPEED_PRESETS[clampi(_speed_idx, 0, Battle.SPEED_PRESETS.size() - 1)]
 	b.exit_requested.connect(_end_battle)
 	return b
 

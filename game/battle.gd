@@ -28,7 +28,7 @@ const PX_PER_M := 10.0
 const M := 1024.0
 const TICK_SEC := 0.1
 const MAX_TICKS_PER_FRAME := 4
-const SPEEDS := [0.5, 1.0, 2.0, 4.0]
+const SPEED_PRESETS := [2, 4, 8, 16]  # --speed=N (main.gd): N indexes these quarter-step speeds
 const DRAG_THRESHOLD := 18.0      # screen px before a touch becomes a drag
 const DOUBLE_TAP_SEC := 0.35
 const DOUBLE_TAP_DIST := 48.0
@@ -89,7 +89,10 @@ var hud: Hud
 var orders: OrderPreview  # queued-but-unapplied orders, for immediate display
 
 var paused := false
-var speed_idx := 1
+## Speed in quarter steps (4 = 1x; Lockstep.SPEED_Q_MIN..MAX). Solo it is
+## the battle's speed; in co-op a copy of Lockstep.speed_q (telemetry).
+var speed_q := 4
+var _shown_speed := Vector2i(-1, -1)  # (speed, slider) last shown on the HUD
 var interactive := true
 var bench_mode := false
 ## Primary selected unit (last one picked), -1 if none.
@@ -235,7 +238,8 @@ func _ready() -> void:
 	_fit_camera()
 	hud.card_pressed.connect(_on_card)
 	hud.pause_pressed.connect(_toggle_pause)
-	hud.speed_pressed.connect(_cycle_speed)
+	hud.speed_pressed.connect(func(): _count("speed_open"))
+	hud.speed_chosen.connect(_on_speed_chosen)
 	hud.menu_pressed.connect(_on_menu)
 	hud.run_pressed.connect(_toggle_run)
 	hud.halt_pressed.connect(_halt)
@@ -288,7 +292,7 @@ func _ready() -> void:
 		"terrain_build_ms": terrain.build_ms, "trees": trees.count, "trees_build_ms": trees.build_ms,
 		"city_build_ms": city.build_ms, "soldiers": sim.n,
 		"units": sim.n_units, "bench": bench_mode, "interactive": interactive,
-		"speed": SPEEDS[speed_idx], "start_tick": sim.tick, "hash_at_start": _hash_text})
+		"speed": speed_q / 4.0, "start_tick": sim.tick, "hash_at_start": _hash_text})
 
 
 ## Testing aids (desktop only): -- --ai-both --skip-ticks=N --cam=x_m,y_m --zoom=Z
@@ -447,7 +451,7 @@ func _process(delta: float) -> void:
 	if coop != null:
 		_coop_step(delta)
 	elif not paused and not _bench_done:
-		_acc += delta * SPEEDS[speed_idx]
+		_acc += delta * speed_q / 4.0
 		var steps := 0
 		while _acc >= TICK_SEC and steps < MAX_TICKS_PER_FRAME and not _bench_done:
 			_do_tick()
@@ -686,7 +690,7 @@ func _send_perf_sample() -> void:
 		"frame_ms_p95": (frames[mini(nf - 1, int(nf * 0.95))] * 1000.0) if nf > 0 else 0.0,
 		"frame_ms_max": fmax * 1000.0,
 		"ticks": sims.size(), "sim_ms_mean": smean, "sim_ms_max": smax,
-		"upload_ms": _upload_ms, "speed": SPEEDS[speed_idx], "paused": paused,
+		"upload_ms": _upload_ms, "speed": speed_q / 4.0, "paused": paused,
 		"zoom": camera.zoom.x, "input": _input_counts.duplicate(),
 		"orders": _orders_by_type.duplicate(),
 	})
@@ -1002,20 +1006,53 @@ func _toggle_pause() -> void:
 	hud.pause_button.text = "Play" if paused else "Pause"
 
 
-func _cycle_speed() -> void:
-	_count("speed_change")
+## The speed slider moved (final: released). Solo it applies at once; in
+## co-op the release is a speed vote through lockstep and nothing is
+## applied here.
+func _on_speed_chosen(q: int, final: bool) -> void:
+	if final:
+		_count("speed_change")
 	if coop != null:
-		_coop_speed(1, true)
+		if final:
+			_coop_request_speed(q)
 		return
-	speed_idx = (speed_idx + 1) % SPEEDS.size()
-	_update_speed_text()
+	if q != speed_q:
+		speed_q = clampi(q, Lockstep.SPEED_Q_MIN, Lockstep.SPEED_Q_MAX)
+		_update_speed_text()
 
 
+## + / - keys: to the next labelled speed (Lockstep.SPEED_QS) up / down.
+func _step_speed(dir: int) -> void:
+	var cur := speed_q
+	if coop != null:
+		if coop.ls == null:
+			return
+		cur = coop.ls.vote_speed_q if coop.ls.vote_speed_by == coop.me else coop.ls.speed_q
+	var next := cur
+	var qs: Array = Lockstep.SPEED_QS.duplicate()
+	if dir < 0:
+		qs.reverse()
+	for q in qs:
+		if (dir > 0 and int(q) > cur) or (dir < 0 and int(q) < cur):
+			next = int(q)
+			break
+	if coop != null:
+		_coop_request_speed(next)
+	else:
+		speed_q = next
+		_update_speed_text()
+
+
+## The HUD's speed: the button shows the speed in force; the slider the
+## same, or this player's open co-op proposal.
 func _update_speed_text() -> void:
-	var s: float = SPEEDS[speed_idx]
+	var q := speed_q
+	var sq := q
 	if coop != null and coop.ls != null:
-		s = coop.ls.speed_q / 4.0
-	hud.speed_button.text = ("%.1fx" % s) if s < 1.0 else ("%dx" % int(s))
+		q = coop.ls.speed_q
+		sq = coop.ls.vote_speed_q if coop.ls.vote_speed_by == coop.me else q
+	_shown_speed = Vector2i(q, sq)
+	hud.set_speed(q, sq)
 
 
 func _toggle_run() -> void:
@@ -1600,17 +1637,9 @@ func _on_key(e: InputEventKey) -> void:
 		"pause":
 			_toggle_pause()
 		"speed_up":
-			if coop != null:
-				_coop_speed(1, false)
-			else:
-				speed_idx = mini(speed_idx + 1, SPEEDS.size() - 1)
-				_update_speed_text()
+			_step_speed(1)
 		"speed_down":
-			if coop != null:
-				_coop_speed(-1, false)
-			else:
-				speed_idx = maxi(speed_idx - 1, 0)
-				_update_speed_text()
+			_step_speed(-1)
 		"select_all":
 			_select_group("all")
 		"select_inf":
@@ -2086,8 +2115,8 @@ func _coop_step(delta: float) -> void:
 		paused = p
 		hud.pause_button.text = "Play" if paused else "Pause"
 	var q: int = ls.speed_q
-	if q != int(SPEEDS[speed_idx] * 4.0):
-		speed_idx = maxi(SPEEDS.find(q / 4.0), 0)
+	speed_q = q
+	if Vector2i(q, ls.vote_speed_q if ls.vote_speed_by == coop.me else q) != _shown_speed:
 		_update_speed_text()
 	# Interpolation between the last two ticks.
 	var a := 1.0
@@ -2170,17 +2199,21 @@ func _coop_cards() -> void:
 		_prune_selection()
 
 
-## Speed request: one step up / down (wrap: the speed button cycles).
-func _coop_speed(dir: int, cycle: bool) -> void:
-	if coop.ls == null:
+## Co-op speed vote for q (a lockstep input; it applies at its frame when
+## agreed). Choosing this player's own open proposal again would withdraw
+## it, so that sends nothing; choosing the speed in force withdraws it.
+func _coop_request_speed(q: int) -> void:
+	var ls = coop.ls
+	if ls == null:
 		return
-	var qs: Array = Lockstep.SPEED_QS
-	var i: int = qs.find(coop.ls.vote_speed_q if coop.ls.vote_speed_by == coop.me else coop.ls.speed_q)
-	i += dir
-	if cycle:
-		i = (i + qs.size()) % qs.size()
-	i = clampi(i, 0, qs.size() - 1)
-	coop.request_speed(int(qs[i]))
+	var mine: bool = ls.vote_speed_by == coop.me
+	if mine and q == ls.vote_speed_q:
+		return
+	if q == ls.speed_q:
+		if mine:
+			coop.request_speed(ls.vote_speed_q)
+		return
+	coop.request_speed(q)
 
 
 ## The ally the selection can be gifted to (-1: none taking part).

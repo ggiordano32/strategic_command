@@ -574,7 +574,7 @@ func _script(p: Peer, step: int, enemy: Array) -> void:
 	elif r == 11 and step % 7 == 0:
 		p.issue({"type": Lockstep.C_PAUSE, "want": 1 - p.ls.paused})
 	elif r == 12:
-		p.issue({"type": Lockstep.C_SPEED, "q": [2, 4, 8, 4][p.rng.randi() % 4]})
+		p.issue({"type": Lockstep.C_SPEED, "q": [2, 4, 10, 5][p.rng.randi() % 4]})
 	elif r == 13:
 		# Answer whatever vote the other has pending (sometimes no).
 		if p.ls.vote_pause_by >= 0 and p.ls.vote_pause_by != p.me:
@@ -710,6 +710,7 @@ func _test_lockstep() -> void:
 	stats["pauses"] = 0
 	# Deterministic unit-level checks of the control inputs.
 	_check_controls(scen, home)
+	_check_speed_vote(scen, home)
 	_check_guest(scen, home)
 
 
@@ -813,6 +814,57 @@ func _check_controls(scen: Dictionary, home: Array) -> void:
 		_fail("lockstep snapshot round trip changed the hash")
 	else:
 		print("PASS controls: votes, refusal, gift and gift back, order refusal, drop + takeover, admit + return, snapshot round trip")
+
+
+## The speed slider's votes: any quarter step 1..16. A proposes 2.5x (q 10,
+## not one of the old 0.5 / 1 / 2 / 4x steps), B accepts; both peers apply
+## it at the same frame with equal hashes. Out-of-range q is refused.
+func _check_speed_vote(scen: Dictionary, home: Array) -> void:
+	var peers: Array = []
+	for me in [0, 1]:
+		var l := Lockstep.new()
+		l.setup(scen, 9, home, [0, 1], me)
+		peers.append(l)
+	var cnt := {0: 0, 1: 0}
+	var send := func(p: int, k: int, os: Array) -> void:
+		cnt[p] = int(cnt[p]) + 1
+		for o in os:
+			o["f"] = k
+		for l in peers:
+			l.receive({"p": p, "n": cnt[p], "k": k, "o": os.duplicate(true)})
+	var step := func() -> void:
+		for l in peers:
+			l.advance()
+	var a: Lockstep = peers[0]
+	var b: Lockstep = peers[1]
+	var rej0: int = a.rejected
+	send.call(0, 0, [{"type": Lockstep.C_SPEED, "q": 0}, {"type": Lockstep.C_SPEED, "q": 17}])
+	send.call(1, 0, [])
+	step.call()
+	if a.speed_q != 4 or a.vote_speed_by != -1 or a.rejected != rej0 + 2:
+		_fail("an out-of-range speed q was taken")
+	send.call(0, 1, [{"type": Lockstep.C_SPEED, "q": 10}])
+	send.call(1, 1, [])
+	step.call()
+	if a.speed_q != 4 or a.vote_speed_by != 0 or a.vote_speed_q != 10 or b.vote_speed_q != 10:
+		_fail("A's 2.5x proposal not pending on both (by %d q %d)" % [a.vote_speed_by, a.vote_speed_q])
+	send.call(1, 2, [{"type": Lockstep.C_ANSWER, "what": 1, "yes": 1}])
+	send.call(0, 2, [])
+	step.call()
+	if a.speed_q != 10 or b.speed_q != 10 or a.vote_speed_by != -1:
+		_fail("B's accept did not apply 2.5x (A q %d, B q %d)" % [a.speed_q, b.speed_q])
+	var t0: int = a.sim.tick
+	for k in range(3, 23):
+		send.call(0, k, [])
+		send.call(1, k, [])
+		step.call()
+		if a.state_hash() != b.state_hash():
+			_fail("speed vote: peers diverged at frame %d" % k)
+			return
+	# 20 frames at 2.5 ticks per frame: 50 ticks.
+	if a.sim.tick - t0 != 50:
+		_fail("2.5x did not step 2.5 ticks a frame (%d ticks in 20 frames)" % (a.sim.tick - t0))
+	print("PASS speed vote: A proposes 2.5x (q 10), B accepts, both apply it at one frame, hashes equal over 20 frames, q 0 / 17 refused")
 
 
 ## A guest (a campaign ally whose army is not in the battle): admitted

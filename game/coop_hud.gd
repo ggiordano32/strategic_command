@@ -17,6 +17,7 @@ extends CanvasLayer
 
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const CData := preload("res://campaign/cdata.gd")
+const Lockstep := preload("res://sim/lockstep.gd")
 
 signal leave_pressed
 
@@ -291,8 +292,7 @@ func _refresh_chips() -> void:
 	_fill_chip(_pause_chip, ls.vote_pause_by if ls else -1,
 		("Pause?" if ls and ls.vote_pause_want == 1 else "Resume?"), 0)
 	var q: int = ls.vote_speed_q if ls else 4
-	var sp := "%sx?" % (("%.1f" % (q / 4.0)) if q < 4 else str(q / 4))
-	_fill_chip(_speed_chip, ls.vote_speed_by if ls else -1, sp, 1)
+	_fill_chip(_speed_chip, ls.vote_speed_by if ls else -1, "proposes %s" % Lockstep.speed_text(q), 1)
 
 
 func _fill_chip(chip: PanelContainer, by: int, what: String, kind: int) -> void:
@@ -304,14 +304,15 @@ func _fill_chip(chip: PanelContainer, by: int, what: String, kind: int) -> void:
 	var h := Kit.hbox(4)
 	h.add_child(_swatch(coop.player_color(by), 12))
 	if by == coop.me:
-		h.add_child(Kit.label("%s asked" % what, 12, Color.WHITE))
+		h.add_child(Kit.label(("You %s" % what.replace("proposes", "proposed")) if kind == 1 \
+			else ("%s asked" % what), 12, Color.WHITE))
 	else:
 		h.add_child(Kit.label("%s %s" % [fname(by), what], 12, Color.WHITE))
 		var yes := Kit.button("Accept", func(): coop.answer(kind, true), 0, 12)
 		yes.name = "vote_yes_%d" % kind
 		yes.custom_minimum_size.y = 30
 		h.add_child(yes)
-		var no := Kit.button("No", func(): coop.answer(kind, false), 0, 12)
+		var no := Kit.button("Decline", func(): coop.answer(kind, false), 0, 12)
 		no.name = "vote_no_%d" % kind
 		no.custom_minimum_size.y = 30
 		h.add_child(no)
@@ -331,4 +332,6 @@ func _place_chips() -> void:
 		var y := r.position.y + r.size.y + 4.0
 		if pair[0] == _speed_chip and _pause_chip.visible:
 			y += _pause_chip.size.y + 4.0
+		if hud.speed_panel.visible:
+			y = maxf(y, hud.speed_panel.position.y + hud.speed_panel.size.y + 4.0)
 		chip.position = Vector2(x, y)

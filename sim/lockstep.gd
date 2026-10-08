@@ -55,12 +55,16 @@ const BattleSim := preload("res://sim/battle_sim.gd")
 
 const FRAME_HZ := 10
 const Q_TICK := 4                 # quarter ticks per sim tick
-const SPEED_QS := [2, 4, 8, 16]   # 0.5x, 1x, 2x, 4x
+## Speed in quarter steps: any q in SPEED_Q_MIN..SPEED_Q_MAX (0.25x..4x).
+## SPEED_QS are the slider's labelled ticks and the +/- key steps.
+const SPEED_Q_MIN := 1
+const SPEED_Q_MAX := 16
+const SPEED_QS := [1, 2, 4, 8, 12, 16]   # 0.25x, 0.5x, 1x, 2x, 3x, 4x
 const SERVER := 250               # player id of server events
 
 # Control input types (sim order types are 1..10).
 const C_PAUSE := 101    # want: 1 pause, 0 resume
-const C_SPEED := 102    # q: one of SPEED_QS
+const C_SPEED := 102    # q: SPEED_Q_MIN..SPEED_Q_MAX
 const C_ANSWER := 103   # what: 0 pause / 1 speed, yes: 1 / 0
 const C_GIFT := 104     # unit, to
 const C_ADMIT := 105    # who, keep (1: units held for them stay where they are)
@@ -409,8 +413,11 @@ func _apply(o: Dictionary) -> void:
 			_vote_pause(p, 1 if int(o.get("want", 1)) != 0 else 0)
 		C_SPEED:
 			var q := int(o.get("q", 4))
-			if SPEED_QS.has(q):
+			if q >= SPEED_Q_MIN and q <= SPEED_Q_MAX:
 				_vote_speed(p, q)
+			else:
+				rejected += 1
+				applied -= 1
 		C_ANSWER:
 			_answer(p, int(o.get("what", 0)), int(o.get("yes", 0)) != 0)
 		C_GIFT:
@@ -484,6 +491,13 @@ func _vote_pause(p: int, want: int) -> void:
 		return
 	vote_pause_by = p
 	vote_pause_want = want
+
+
+## "0.25x", "1.5x", "2x": a speed in quarter steps as players read it
+## (display only).
+static func speed_text(q: int) -> String:
+	var s := "%.2f" % (q / 4.0)
+	return s.rstrip("0").rstrip(".") + "x"
 
 
 func _vote_speed(p: int, q: int) -> void:

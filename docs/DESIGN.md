@@ -1642,7 +1642,7 @@ messages and limits: `docs/SERVER.md` section 17.
 
 **Frames.** Lockstep time is counted in frames of 100 ms of wall time,
 separate from sim ticks. A frame applies its inputs, then, unless paused,
-adds the speed (quarter ticks: 2 / 4 / 8 / 16 for 0.5x / 1x / 2x / 4x) to an
+adds the speed (quarter ticks: any q from 1 to 16, 0.25x to 4x, 4 = 1x) to an
 accumulator and steps the sim once per 4. So pause and speed are lockstep
 state, orders keep a wall-time delay whatever the speed, and frames (and
 input messages) keep flowing while paused, which is what lets a resume vote
@@ -1680,8 +1680,9 @@ selected units' action row has "Gift to <ally>".
 applies at once if only one player takes part; otherwise it waits until the
 other player asks for the same thing (tapping Pause, or the same speed) or
 taps Accept on the chip under the control (the requester's colour and
-"Rome Pause?"); No clears it; asking again withdraws it. Applied on the
-same frame for everyone. Solo battles keep immediate pause and speed; the
+"Rome Pause?", "Rome proposes 2.5x"); Decline clears it; asking again withdraws it. Applied on the
+same frame for everyone. A speed vote is the value the player releases the
+speed slider at (any quarter step 1..16; the command rules refuse others). Solo battles keep immediate pause and speed; the
 unit book and the controls page no longer pause a co-op battle.
 
 **Joining.** "Fight" / "Fight together" on a battle with both armies opens
@@ -1876,7 +1877,10 @@ the battlefield is drawn at full window resolution. Never laid out smaller
 than 800 x 400 logical. A 780 x 360 CSS phone is 886 x 409 logical; a
 1920 x 1080 desktop 2341 x 1317; 3840 x 2160 at DPR 1 4682 x 2634.
 Top bar (right): Withdraw army (tap twice), Units, Orders, Pause, speed,
-Menu; the readout (left) is one short line (fps, battle clock), tap for the
+Menu (the speed button shows the speed in force and opens a popover with a
+labelled slider, 0.25x to 4x in quarter steps, ticks at 0.25 / 0.5 / 1 / 2 /
+3 / 4 and the live value; solo it applies while dragging, + / - keys step
+between the ticks); the readout (left) is one short line (fps, battle clock), tap for the
 full readout below the bar (benchmarks open it). Bottom: one row with the
 group buttons (left) and the selection's actions (right), then the unit
 cards, wrapping into the fewest rows: 84-136 logical px wide, 34 tall;
