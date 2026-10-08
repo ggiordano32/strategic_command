@@ -1092,7 +1092,30 @@ fixes are all landed; see "Where we are"):
      shoot, fights at the carrier penalty and is badly exposed to flank
      and rear hits; Drop at any time. The enemy may take an abandoned
      wagon too: refill from it or burn it (4d fire). Guarding it matters.
-5. **Elephants**, then camels, chariots, war dogs.
+5. **Elephants**, then camels, chariots, war dogs. Roles agreed
+   2026-10-08 (shock cavalry as the yardstick: mass 400, charge 70, run
+   ~8 m/s, 90 degrees in 1.6 s):
+   - **Camels**: slower (run ~6.5 m/s, 90 degrees in ~2.2 s), weaker
+     charge (~45), better rider defence against foot, tire slower; their
+     job is the **horse scare**: enemy cavalry within ~30 m takes a
+     control penalty (lower charge, slower turns, a morale tick) and
+     horses charging camels suffer for it; camels vs spears lose like any
+     rider; unaffected by arid ground penalties, slow in woods. Carthage
+     and Numidian / eastern rosters; a camel-archer missile variant.
+   - **Elephants**: mass 2,000+, wide knock-down charge that breaks
+     formations (spears still hurt them), slow to accelerate and turn
+     (~4 s), run ~6 m/s; a **fear aura** (~25 m, horses more than men);
+     one big body with hit points and a crew (driver + 2-3 shooters from
+     height); missiles chip, fire (4d) is the counter; batter walls-0/1
+     gates only, kept out of narrow streets. On breaking they **run
+     amok**: erratic, trample anyone including their own side; the
+     driver can be ordered to kill it (delay). **Calming (user,
+     2026-10-08): a panicked elephant that ends up on its own, with no
+     enemy and no friendly units nearby, cools down and the rider takes
+     control again; while any units are near it stays amok.** Carthage,
+     Epirus (Pyrrhus).
+   - **Horses** stay speed and shock; camels the anti-cavalry screen;
+     elephants the slow terror that breaks lines or breaks you.
 6. **AI competency** (`docs/AI.md`): Easy / Average / Skilled on two
    independent axes (battle, campaign) plus personality, no cheats ever;
    skill is reaction, perception, planning, execution and deliberate
