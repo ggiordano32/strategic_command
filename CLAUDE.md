@@ -8,9 +8,19 @@ run things are in `docs/STATUS.md`. Read both before making changes, and keep
 ## Working model
 
 - The main session is for design, architecture and review with the user.
-- Delegate code generation and any other subagent or workflow work to the
-  latest Opus model (`model: "opus"`), not the main session's model, to save
-  tokens. `.claude/settings.json` sets this as the subagent default.
+- Delegate code generation and any other subagent or workflow work to a
+  subagent, never the main session's model. Model by task (agreed
+  2026-10-09, to save budget): **Sonnet** (`model: "sonnet"`, the
+  subagent default in `.claude/settings.json`) for builds with a fixed
+  brief: data rows, UI and icons, tests, scenario keys, campaign rules
+  with a clear spec, doc merges; **Opus** (`model: "opus"`) only for
+  changes inside the deterministic sim core (hashed state, snapshots,
+  lockstep), AI behaviour work and diagnosis (bisects, probes); **Haiku**
+  (`model: "haiku"`) for mechanical runs: harness re-runs tabulated
+  before / after, the verify suite, gallery regeneration, STATUS row
+  merges from a draft. Balance passes split into a measure-and-report
+  task (Haiku) and a change task (Sonnet or Opus); briefs fix the design
+  and the numbers so the builder decides little.
 
 ## Rules for battle simulation code
 
