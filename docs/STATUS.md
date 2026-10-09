@@ -957,6 +957,25 @@ are one rebalance block after Friday. 8c icons may be pulled forward ahead
 of the rebalance so Friday has icons. Audio and icons fit thin-budget
 evenings (no sim changes).
 
+**Tuning backlog for the rebalance block** (numbers chosen once, never
+tuned; collected 2026-10-09):
+- Walls 2-3 equal-force sieges 0-20 % attacker (targets 50 / 25 %): an
+  attacker-side fix (more escalade at high walls or wall attrition); the
+  1.5-2:1 sets moved the same way. Easy defenders about as good as
+  Average in the polis; Skilled vs Average at ring walls 1 is 0-10 %.
+- Ammunition kinds: fire arrows weak against gates (780 arrows took a
+  walls-1 gate down 57 %); fear values; the explosive's 1.5 m blast and
+  its free price (late and rare only by building / faction).
+- Resupply: forage rate (~37 ticks per arrow per man), wagon refill
+  30 s a load, the 30 % horse-hit chance, wagon stocks (100 / 150 /
+  220 %), the 20 % strength and +6-12 % auto-resolve bonus.
+- AI knobs: `WG_EMPTY_PCT` (15 % Average), `AK_WAVER_PCT` (35 %),
+  engine take-up radius 60 m.
+- Known AI gaps (not tuning): the campaign AI never recruits wagons; the
+  settlement AI never takes up engines and no AI recaptures enemy
+  engines; the wagon AI has no dedicated guard unit; the campaign AI
+  does not pick kinds beyond what its buildings give.
+
 Agreed with the user on 2026-10-06, in this order (milestones 1-5, battle
 maps, settlement variety, sieges, free movement and the wall/reachability
 fixes are all landed; see "Where we are"):
