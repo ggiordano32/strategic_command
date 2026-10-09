@@ -438,6 +438,20 @@ Elephants. One tier each (lines "camel", "camel_archer", "elephant", in
 `UNIT_NEEDS`), counted by price in auto-resolve; an army with elephants
 marches at the foot's pace. The AI recruits them through the mixes
 (Carthage camel 5, elephant 5; Epirus elephant 5), never as a fallback.
+Light horse and slingers (item 5b, 2026-10-09; docs/DESIGN.md "Missile
+cavalry and slingers"): line "cav_missile" Light Horse 480 (Stables 1 +
+Range 1) / tier 2 (Stables 2 + Range 1) Numidian Horse 648 (Carthage),
+Tarentine Horse 600 (Greeks, Epirus, Syracuse), Gallic Light Horse 600,
+Iberian Light Horse 600; line "sling" Slingers 320 (Range 1) / tier 2
+(Range 2) Balearic Slingers 416 (Carthage), Rhodian Slingers 416
+(Greeks), Iberian Slingers 384; Rome and Macedon have neither, Epirus,
+Syracuse and the Gauls no slingers. Lead bullets (`AMMO_AVAIL`): Carthage
+and the Greeks, Range 2 (the Range is the men's missiles' chain, as for
+fire arrows and javelins; the Workshop stays the engines'); light horse
+gets fire javelins by the javelin rule (Iberians, Gauls, Range 2).
+Auto-resolve by price. AI mixes: cav_missile 5 (Carthage, Epirus, Greeks,
+Syracuse, Iberians, Gauls), sling 5 (Carthage, Greeks, Iberians), only
+through the mix (`CAI.BEAST_LINES`, also what `--no-beasts` leaves out).
 Ammunition wagons (line "siege", 2026-10-09; docs/DESIGN.md "The
 ammunition wagon"): Hand Cart 200 (Workshop 1), Ammunition Wagon 320
 (Workshop 2, Stables 1), Supply Train 450 (Workshop 2, Stables 2), in

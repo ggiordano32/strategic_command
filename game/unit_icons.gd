@@ -10,6 +10,7 @@ extends RefCounted
 ##   8 stone thrower: frame, arm and stone 9 ammunition wagon: covered cart
 ##   10 camel: humped back, long neck       11 elephant: head, ears, trunk, tusks
 ##   12 camel archers: the camel and an arrow
+##   13 light horse: horseshoe and a javelin  14 slingers: the sling's cords, a stone
 ## Symbol ids above 99 carry a tier mark (see icon_of).
 
 const UT := preload("res://sim/unit_types.gd")
@@ -124,6 +125,18 @@ static func draw_glyph(ci: CanvasItem, icon: int, c: Vector2, s: float, col: Col
 				ci.draw_line(c + Vector2(-0.9, -0.75) * s, c + Vector2(0.1, -0.75) * s, col, w * 0.7, true)
 				ci.draw_colored_polygon(PackedVector2Array([c + Vector2(0.3, -0.75) * s,
 					c + Vector2(0.05, -0.92) * s, c + Vector2(0.05, -0.58) * s]), col)
+		13:  # light horse: a smaller horseshoe and a javelin over it
+			ci.draw_arc(c + Vector2(-0.1, 0.3) * s, 0.5 * s, PI * 0.85, PI * 2.15, 12, col, w * 1.2, true)
+			ci.draw_line(c + Vector2(-0.58, 0.42) * s, c + Vector2(-0.54, 0.9) * s, col, w * 1.2, true)
+			ci.draw_line(c + Vector2(0.38, 0.42) * s, c + Vector2(0.34, 0.9) * s, col, w * 1.2, true)
+			ci.draw_line(c + Vector2(-0.85, -0.1) * s, c + Vector2(0.55, -0.75) * s, col, w * 0.8, true)
+			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(0.92, -0.92) * s,
+				c + Vector2(0.48, -0.88) * s, c + Vector2(0.64, -0.6) * s]), col)
+		14:  # sling: two cords from the hand down to the pouch, a stone flying off
+			ci.draw_line(c + Vector2(-0.55, -0.8) * s, c + Vector2(-0.35, 0.55) * s, col, w * 0.8, true)
+			ci.draw_line(c + Vector2(-0.45, -0.8) * s, c + Vector2(0.15, 0.55) * s, col, w * 0.8, true)
+			ci.draw_arc(c + Vector2(-0.1, 0.6) * s, 0.28 * s, 0, PI, 8, col, w * 1.1, true)
+			ci.draw_circle(c + Vector2(0.6, -0.35) * s, 0.22 * s, col)
 		11:  # elephant's head from the front: ears, trunk curling down, tusks
 			ci.draw_arc(c + Vector2(0, -0.2) * s, 0.38 * s, 0, TAU, 14, col, w, true)
 			ci.draw_arc(c + Vector2(-0.6, -0.2) * s, 0.3 * s, PI * 0.5, PI * 1.5, 10, col, w, true)

@@ -142,7 +142,8 @@ func set_unit_type(ty: int, p_side_color: Color = Color(0.35, 0.6, 1.0)) -> void
 	var tier := UT.tier_of(ty)
 	var lines := {"heavy": "Barracks", "light": "Barracks", "spear": "Barracks", "pike": "Barracks",
 		"archer": "Range", "javelin": "Range", "cav": "Stables", "bolt": "Workshop", "stone": "Workshop",
-		"siege": "Workshop", "camel": "Stables", "camel_archer": "Stables", "elephant": "Stables"}
+		"siege": "Workshop", "camel": "Stables", "camel_archer": "Stables", "elephant": "Stables",
+		"cav_missile": "Stables", "sling": "Range"}
 	var bld: String = lines.get(UT.line_of(ty), "")
 	var need := tier if UT.cls(ty) != UT.CLS_ART else (2 if UT.base_of(ty) == UT.STONE else 1)
 	var need_txt := "%s %d" % [bld, need]
@@ -160,8 +161,9 @@ func set_unit_type(ty: int, p_side_color: Color = Color(0.35, 0.6, 1.0)) -> void
 		_tier.text += "\nWagon: %d horse%s, %s; stock %d%% of a hand cart's (%s); hit points %d. Auto-resolve: the army's missile and artillery strength +%d%%." % [
 			UT.wagon_stat(wt, "horses"), "" if UT.wagon_stat(wt, "horses") == 1 else "s",
 			"%.1f m/s" % (UT.wagon_pace(wt, UT.wagon_stat(wt, "horses")) / 102.4), UT.wagon_stat(wt, "stock_pct"),
-			"%d arrows, %d javelins, %d bolts, %d stones" % [UT.ammo_stat(0, "wagon"), UT.ammo_stat(1, "wagon"),
-				UT.ammo_stat(2, "wagon"), UT.ammo_stat(3, "wagon")], UT.wagon_stat(wt, "hp"), UT.wagon_stat(wt, "bonus_pct")]
+			"%d arrows, %d javelins, %d bolts, %d stones, %d sling stones" % [UT.ammo_stat(0, "wagon"), UT.ammo_stat(1, "wagon"),
+				UT.ammo_stat(2, "wagon"), UT.ammo_stat(3, "wagon"), UT.ammo_stat(UT.ammo_index("sling"), "wagon")],
+			UT.wagon_stat(wt, "hp"), UT.wagon_stat(wt, "bonus_pct")]
 	var bl := beast_line(ty)
 	if bl != "":
 		_tier.text += "\n" + bl

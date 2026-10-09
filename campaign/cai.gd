@@ -65,8 +65,10 @@ const UT := preload("res://sim/unit_types.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const CP := preload("res://campaign/cai_profile.gd")
 
-## The camel and elephant lines (recruited only through a faction's mix).
-const BEAST_LINES: Array[String] = ["camel", "camel_archer", "elephant"]
+## The lines added since the step-4 goldens, recruited only through a
+## faction's mix (never as _any_type's fallback): camels, elephants (both
+## 2026-10-09), light horse and slingers (5b, 2026-10-09).
+const BEAST_LINES: Array[String] = ["camel", "camel_archer", "elephant", "cav_missile", "sling"]
 ## Test switch (tests/campaign_sim.gd --no-beasts): recruit none of them,
 ## to show that only their recruitment changes a run.
 static var no_beasts := false
@@ -294,7 +296,7 @@ static func _recruit(st: Dictionary, f: int, moves: Array = []) -> void:
 	var up := CRules.upkeep(st, f)
 	var mix: Dictionary = CData.FACTIONS[f]["mix"]
 	if no_beasts:
-		# (Test switch: the mix without the camel and elephant lines.)
+		# (Test switch: the mix without the BEAST_LINES.)
 		mix = mix.duplicate()
 		for bl in BEAST_LINES:
 			mix.erase(bl)
@@ -458,8 +460,8 @@ static func _any_type(st: Dictionary, f: int, r: int) -> String:
 	for o in CRules.recruit_options(st, f, r):
 		var oty := UT.index_of(str(o["t"]))
 		if o["ok"] and UT.cls(oty) != UT.CLS_ART and UT.stat(oty, "wagon") < 0 \
-				and UT.stat(oty, "mount") < UT.MOUNT_CAMEL:
-			return str(o["t"])  # (camels and elephants only by the faction's mix)
+				and not BEAST_LINES.has(UT.line_of(oty)):
+			return str(o["t"])  # (the BEAST_LINES only by the faction's mix)
 	return ""
 
 

@@ -145,7 +145,8 @@ const FACTIONS: Array[Dictionary] = [
 		"armies": [["zeugitana", ["spear", "spear", "heavy", "light", "light", "javelin", "cav", "cav"]],
 			["sicilia_occ", ["spear", "light", "light", "archer", "cav"]],
 			["baetica", ["light", "light", "javelin", "javelin", "cav"]]],
-		"mix": {"spear": 25, "heavy": 15, "light": 15, "javelin": 15, "archer": 5, "cav": 25, "camel": 5, "elephant": 5},
+		"mix": {"spear": 25, "heavy": 15, "light": 15, "javelin": 15, "archer": 5, "cav": 25, "camel": 5, "elephant": 5,
+			"cav_missile": 5, "sling": 5},
 		"ai_style": AI_BALANCED, "composition": {"arms": ["cav", "spear", "light"], "art_pct": 0, "cav_pct": 25, "upgrade": 1}},
 	{"key": "macedon", "culture": GREEK, "name": "Macedon", "adj": "Macedonian", "color": "e0b02a", "capital": "macedonia",
 		"regions": ["macedonia", "thessalia"], "treasury": 1600,
@@ -156,31 +157,31 @@ const FACTIONS: Array[Dictionary] = [
 		"regions": ["epirus", "apulia"], "treasury": 1800,
 		"armies": [["apulia", ["pike", "pike", "pike", "pike", "cav", "cav", "cav", "light", "javelin", "archer"]],
 			["epirus", ["pike", "light", "javelin", "spear"]]],
-		"mix": {"pike": 40, "cav": 25, "light": 10, "javelin": 10, "archer": 10, "spear": 5, "elephant": 5},
+		"mix": {"pike": 40, "cav": 25, "light": 10, "javelin": 10, "archer": 10, "spear": 5, "elephant": 5, "cav_missile": 5},
 		"ai_style": AI_BALANCED, "composition": {"arms": ["pike", "cav", "light"], "art_pct": 0, "cav_pct": 25, "upgrade": 1}},
 	{"key": "greeks", "culture": GREEK, "name": "Greek League", "adj": "Greek", "color": "3f7fd8", "capital": "attica",
 		"regions": ["attica", "achaea", "aetolia"], "treasury": 1600,
 		"armies": [["attica", ["spear", "spear", "archer", "light", "javelin"]],
 			["achaea", ["spear", "spear", "archer", "cav"]]],
-		"mix": {"spear": 45, "archer": 20, "light": 10, "javelin": 10, "cav": 10, "bolt": 5},
+		"mix": {"spear": 45, "archer": 20, "light": 10, "javelin": 10, "cav": 10, "bolt": 5, "cav_missile": 5, "sling": 5},
 		"ai_style": AI_BALANCED, "composition": {"arms": ["spear", "archer", "light"], "art_pct": 5, "cav_pct": 10, "upgrade": 1}},
 	{"key": "syracuse", "culture": GREEK, "name": "Syracuse", "adj": "Syracusan", "color": "2fa8a0", "capital": "sicilia_or",
 		"regions": ["sicilia_or", "bruttium"], "treasury": 2200,
 		"armies": [["sicilia_or", ["spear", "spear", "spear", "spear", "archer", "archer", "heavy", "heavy", "cav", "bolt"]],
 			["bruttium", ["spear", "javelin", "light"]]],
-		"mix": {"spear": 40, "heavy": 15, "archer": 15, "javelin": 10, "cav": 10, "bolt": 5, "stone": 5},
+		"mix": {"spear": 40, "heavy": 15, "archer": 15, "javelin": 10, "cav": 10, "bolt": 5, "stone": 5, "cav_missile": 5},
 		"ai_style": AI_BALANCED, "composition": {"arms": ["spear", "archer", "heavy"], "art_pct": 10, "cav_pct": 10, "upgrade": 1}},
 	{"key": "iberians", "culture": CELTIC, "name": "Iberian Tribes", "adj": "Iberian", "color": "8a5a2b", "capital": "celtiberia",
 		"regions": ["celtiberia", "edetania", "carpetania"], "treasury": 1200,
 		"armies": [["celtiberia", ["light", "light", "light", "heavy", "javelin", "javelin", "cav"]],
 			["edetania", ["light", "light", "javelin", "cav"]]],
-		"mix": {"light": 35, "heavy": 20, "javelin": 25, "cav": 15, "spear": 5},
+		"mix": {"light": 35, "heavy": 20, "javelin": 25, "cav": 15, "spear": 5, "cav_missile": 5, "sling": 5},
 		"ai_style": AI_BALANCED, "composition": {"arms": ["light", "javelin", "heavy"], "art_pct": 0, "cav_pct": 15, "upgrade": 0}},
 	{"key": "gauls", "culture": CELTIC, "name": "Gallic Tribes", "adj": "Gallic", "color": "3c9a3c", "capital": "arverni",
 		"regions": ["arverni", "cisalpina", "volcae"], "treasury": 1200,
 		"armies": [["arverni", ["light", "light", "light", "heavy", "cav", "cav", "javelin"]],
 			["cisalpina", ["light", "light", "light", "cav", "javelin"]]],
-		"mix": {"light": 45, "heavy": 20, "cav": 20, "javelin": 10, "archer": 5},
+		"mix": {"light": 45, "heavy": 20, "cav": 20, "javelin": 10, "archer": 5, "cav_missile": 5},
 		"ai_style": AI_BALANCED, "composition": {"arms": ["light", "heavy", "cav"], "art_pct": 0, "cav_pct": 20, "upgrade": 0}},
 ]
 const INDEPENDENT := -1
@@ -195,33 +196,38 @@ const ROSTERS := {
 		"spear": ["spear", "spear2", "sacred_band"], "archer": ["archer", "archer2", ""],
 		"javelin": ["javelin", "javelin2", "javelin3"], "cav": ["cav", "cav2", "cav3"],
 		"siege": ["wagon", "wagon2", "wagon3"], "bolt": ["bolt"], "stone": ["stone"],
-		"camel": ["camel"], "camel_archer": ["camel_archer"], "elephant": ["elephant"]},
+		"camel": ["camel"], "camel_archer": ["camel_archer"], "elephant": ["elephant"],
+		"cav_missile": ["cav_jav", "numidians"], "sling": ["slinger", "balearic"]},
 	"macedon": {"pike": ["pike", "phalangites", "silver_shields"], "light": ["light", "light2", ""],
 		"archer": ["archer", "archer2", "archer3"], "javelin": ["javelin", "javelin2", ""],
 		"cav": ["cav", "cav2", "companions"], "siege": ["wagon", "wagon2", "wagon3"], "bolt": ["bolt"], "stone": ["stone"]},
 	"epirus": {"pike": ["pike", "pike2", "chaonians"], "spear": ["spear", "spear2", ""],
 		"light": ["light", "light2", ""], "archer": ["archer", "archer2", ""],
 		"javelin": ["javelin", "javelin2", ""], "cav": ["cav", "cav2", "agema"], "siege": ["wagon", "wagon2", "wagon3"], "bolt": ["bolt"],
-		"elephant": ["elephant"]},
+		"elephant": ["elephant"], "cav_missile": ["cav_jav", "tarentines"]},
 	"greeks": {"spear": ["spear", "hoplites", "picked_hoplites"], "pike": ["pike", "pike2", ""],
 		"archer": ["archer", "archer2", "cretans"], "light": ["light", "light2", ""],
 		"javelin": ["javelin", "javelin2", "javelin3"], "cav": ["cav", "cav2", ""],
-		"siege": ["wagon", "wagon2", "wagon3"], "bolt": ["bolt"], "stone": ["stone"]},
+		"siege": ["wagon", "wagon2", "wagon3"], "bolt": ["bolt"], "stone": ["stone"],
+		"cav_missile": ["cav_jav", "tarentines"], "sling": ["slinger", "rhodians"]},
 	"syracuse": {"spear": ["spear", "hoplites", "picked_hoplites"], "heavy": ["heavy", "heavy2", ""],
 		"archer": ["archer", "archer2", "cretans"], "javelin": ["javelin", "javelin2", ""],
-		"light": ["light", "light2", ""], "cav": ["cav", "cav2", ""], "siege": ["wagon", "wagon2", "wagon3"], "bolt": ["bolt"], "stone": ["stone"]},
+		"light": ["light", "light2", ""], "cav": ["cav", "cav2", ""], "siege": ["wagon", "wagon2", "wagon3"], "bolt": ["bolt"], "stone": ["stone"],
+		"cav_missile": ["cav_jav", "tarentines"]},
 	"iberians": {"light": ["light", "caetrati", "light3"], "heavy": ["heavy", "scutarii", "heavy3"],
 		"javelin": ["javelin", "javelin2", "javelin3"], "spear": ["spear", "spear2", ""],
-		"cav": ["cav", "cav2", ""], "siege": ["wagon", "", ""]},
+		"cav": ["cav", "cav2", ""], "siege": ["wagon", "", ""],
+		"cav_missile": ["cav_jav", "iberian_horse"], "sling": ["slinger", "iberian_slingers"]},
 	"gauls": {"light": ["light", "warband", "light3"], "heavy": ["heavy", "heavy2", "gallic_nobles"],
 		"spear": ["spear", "spear2", ""], "javelin": ["javelin", "javelin2", ""],
-		"archer": ["archer", "", ""], "cav": ["cav", "cav2", "noble_cav"], "siege": ["wagon", "", ""]},
+		"archer": ["archer", "", ""], "cav": ["cav", "cav2", "noble_cav"], "siege": ["wagon", "", ""],
+		"cav_missile": ["cav_jav", "gallic_horse"]},
 	"independent": {"spear": ["spear", "spear2", "spear3"], "archer": ["archer", "archer2", "archer3"],
 		"heavy": ["heavy", "heavy2", "heavy3"], "light": ["light", "light2", "light3"]},
 }
 ## Display order of lines in recruitment lists.
-const LINE_ORDER: Array[String] = ["heavy", "light", "spear", "pike", "archer", "javelin", "cav", "camel",
-	"camel_archer", "elephant", "bolt", "stone", "siege"]
+const LINE_ORDER: Array[String] = ["heavy", "light", "spear", "pike", "archer", "sling", "javelin", "cav",
+	"cav_missile", "camel", "camel_archer", "elephant", "bolt", "stone", "siege"]
 
 ## Starting wars (all other pairs start at peace without trade).
 const START_WARS: Array = [["rome", "epirus"], ["carthage", "syracuse"]]
@@ -236,9 +242,9 @@ const CHAINS: Array[Dictionary] = [
 	{"key": "barracks", "name": "Barracks", "levels": 3, "cost": [400, 900, 1600], "turns": [1, 2, 3],
 		"desc": "Infantry (swords, light, spears, pikes) of tier = level; faster replenishment"},
 	{"key": "range", "name": "Range", "levels": 3, "cost": [350, 800, 1400], "turns": [1, 2, 3],
-		"desc": "Archers and javelinmen of tier = level; faster replenishment"},
+		"desc": "Archers, slingers and javelinmen of tier = level (light horse needs a Range 1 too); faster replenishment"},
 	{"key": "stables", "name": "Stables", "levels": 3, "cost": [500, 1000, 1800], "turns": [1, 2, 3],
-		"desc": "Cavalry of tier = level (camels from level 1 for some peoples, war elephants at level 3); faster replenishment"},
+		"desc": "Cavalry and light horse of tier = level (camels from level 1 for some peoples, war elephants at level 3); faster replenishment"},
 	{"key": "workshop", "name": "Workshop", "levels": 2, "cost": [600, 1200], "turns": [2, 3],
 		"desc": "Level 1 bolt throwers and the hand cart (ammunition), level 2 stone throwers and ammunition wagons (with Stables); heavy bolts, fire pots and explosive stones for some peoples"},
 	{"key": "walls", "name": "Walls", "levels": 3, "cost": [400, 900, 1600], "turns": [2, 2, 3],
@@ -254,14 +260,18 @@ const WALLS := 6
 ## Military building per line.
 const LINE_CHAIN := {"heavy": BARRACKS, "light": BARRACKS, "spear": BARRACKS, "pike": BARRACKS,
 	"archer": RANGE, "javelin": RANGE, "cav": STABLES, "bolt": WORKSHOP, "stone": WORKSHOP, "siege": WORKSHOP,
-	"camel": STABLES, "camel_archer": STABLES, "elephant": STABLES}
+	"camel": STABLES, "camel_archer": STABLES, "elephant": STABLES, "cav_missile": STABLES, "sling": RANGE}
 ## Buildings a unit type needs where they differ from its line's chain at
 ## its tier (the ammunition wagons: the Workshop, and Stables for the
 ## horses): key -> [[chain, level], ...], all of them.
 ## Camels: Stables 1 (camel archers a Range 1 too); elephants: Stables 3.
+## Light horse: Stables of its tier and a Range 1 (javelins, as the camel
+## archers' bows); slingers need only their line's Range of their tier.
 const UNIT_NEEDS := {"wagon": [[WORKSHOP, 1]], "wagon2": [[WORKSHOP, 2], [STABLES, 1]],
 	"wagon3": [[WORKSHOP, 2], [STABLES, 2]], "camel": [[STABLES, 1]], "camel_archer": [[STABLES, 1], [RANGE, 1]],
-	"elephant": [[STABLES, 3]]}
+	"elephant": [[STABLES, 3]], "cav_jav": [[STABLES, 1], [RANGE, 1]], "numidians": [[STABLES, 2], [RANGE, 1]],
+	"tarentines": [[STABLES, 2], [RANGE, 1]], "gallic_horse": [[STABLES, 2], [RANGE, 1]],
+	"iberian_horse": [[STABLES, 2], [RANGE, 1]]}
 ## Workshop level needed per artillery line (other lines: level = tier).
 const ART_LEVEL := {"bolt": 1, "stone": 2}
 ## Special ammunition kinds (sim/unit_types.gd AMMO; docs/DESIGN.md
@@ -273,6 +283,7 @@ const ART_LEVEL := {"bolt": 1, "stone": 2}
 const AMMO_AVAIL: Array = [
 	["fire_arrows", ["greeks", "syracuse", "carthage"], RANGE, 2],
 	["fire_javelins", ["iberians", "gauls"], RANGE, 2],
+	["lead_bullets", ["carthage", "greeks"], RANGE, 2],
 	["heavy_bolts", ["rome", "syracuse"], WORKSHOP, 1],
 	["explosive", ["syracuse"], WORKSHOP, 2],
 	["fire_pots", ["rome", "carthage", "macedon", "greeks", "syracuse"], WORKSHOP, 2],

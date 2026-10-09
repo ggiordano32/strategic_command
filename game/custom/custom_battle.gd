@@ -381,7 +381,12 @@ func _build_picker() -> void:
 	var list := Kit.vbox(4)
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sc.add_child(list)
-	for line in UT.LINES:
+	# The base lines with the light missile troops' (slingers after the javelins,
+	# missile cavalry after the cavalry).
+	var lines: Array = UT.LINES.duplicate()
+	lines.insert(lines.find("javelin") + 1, "sling")
+	lines.insert(lines.find("cav") + 1, "cav_missile")
+	for line in lines:
 		var f := Kit.flow(6)
 		f.add_child(Kit.label(str(line).capitalize(), Kit.FONT, Kit.COL_DIM))
 		for ty in UT.count():

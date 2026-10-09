@@ -10,13 +10,17 @@ extends SceneTree
 ## ram) and the battle time limit reach the scenario; a unit's special
 ## ammunition kind ("ak") and a wagon's stock of its army's kinds ("aks")
 ## reach the sim, survive the online setup's JSON round trip and change the
-## scenario hash both peers compare.
+## scenario hash both peers compare; one unit of each light horse and
+## slinger row builds on a field and shoots (its weapon's kind, skirmish on,
+## the Balearics' lead bullets).
 
 const CS := preload("res://game/custom/custom_setup.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Lockstep := preload("res://sim/lockstep.gd")
 const UT := preload("res://sim/unit_types.gd")
 const CoopSession := preload("res://game/net/coop_session.gd")
+const Terrain := preload("res://sim/terrain.gd")
+const Scenarios := preload("res://sim/scenarios.gd")
 
 var _ok := true
 
@@ -99,6 +103,7 @@ func _init() -> void:
 			(sb["home"] as Array).size(), n_sc, str(sb["scenario"].get("time_limit", 0))])
 	_check_ammo(ammo, "field")
 	_check_ammo(ammo_town, "settlement")
+	_check_light_missile()
 	# Checks.
 	var bad := CS.default_setup(1)
 	bad["sides"][1]["armies"] = []
@@ -225,6 +230,88 @@ func _check_ammo(st: Dictionary, what: String) -> void:
 	if found != 3:
 		_fail("ammo %s: %d wagons in the sim" % [what, found])
 	print("PASS ammo %s: archers kind %d, battery kind %d, hash %s" % [what, sim.u_sk[arch], sim.eg_sk[sim.u_eg[bolt]], ha])
+
+
+## Missile cavalry and slingers (docs/DESIGN.md "Missile cavalry and
+## slingers"): one unit of each row on side 0 (the Balearics with lead
+## bullets), each told to attack a foot unit of the AI's, on an open field: each builds
+## with its weapon's standard kind (javelins, sling stones), skirmish on and
+## the riders mounted, and each has thrown or slung within 4 minutes.
+func _check_light_missile() -> void:
+	var rows := ["cav_jav", "numidians", "tarentines", "gallic_horse", "iberian_horse", "slinger", "balearic",
+		"rhodians", "iberian_slingers"]
+	var st := CS.default_setup(12)
+	st["deploy"] = 0
+	st["map"]["terrain"] = Terrain.K_FLAT
+	st["map"]["woods"] = 0
+	var a0: Array = []
+	for k in rows:
+		var e: Array = [k, UT.size_of(UT.index_of(k))]
+		if k == "balearic":
+			e.append("lead_bullets")
+		a0.append(e)
+	st["sides"][0]["armies"][0]["units"] = a0
+	st["sides"][1]["armies"][0]["units"] = [["heavy", 100], ["light", 100], ["light", 100], ["spear", 100]]
+	var b := CS.build(st)
+	if b.has("error"):
+		_fail("light missile: %s" % b["error"])
+		return
+	var sc: Dictionary = b["scenario"]
+	# Each of ours is told to attack an enemy unit (the battle AI's use of
+	# them is the AI's business, docs/AI.md); the AI fights side 1.
+	var foes: Array = []
+	for i in (sc["units"] as Array).size():
+		if int(sc["units"][i]["side"]) == 1:
+			foes.append(i)
+	var orders: Array = []
+	for i in (sc["units"] as Array).size():
+		if int(sc["units"][i]["side"]) == 0:
+			orders.append(Scenarios.attack(1, i, int(foes[orders.size() % foes.size()]), 1))
+	sc["orders"] = orders
+	sc["ai_sides"] = [1]
+	var sim = BattleSim.new()
+	sim.setup(sc, int(b["seed"]))
+	var jav := UT.ammo_index("javelins")
+	var sling := UT.ammo_index("sling")
+	var lead := UT.ammo_index("lead_bullets")
+	var units := {}   # row key -> sim unit
+	var full := {}
+	for u in sim.n_units:
+		var key := UT.key_of(sim.u_type[u])
+		if sim.u_side[u] == 0 and rows.has(key):
+			units[key] = u
+			full[key] = sim.u_ammo[u]
+	if units.size() != rows.size():
+		_fail("light missile: %d of %d rows in the sim" % [units.size(), rows.size()])
+		return
+	for k in rows:
+		var u: int = units[k]
+		var horse: bool = UT.line_of(sim.u_type[u]) == "cav_missile"
+		var want := jav if horse else sling
+		if sim.t_m_ak[sim.u_type[u]] != want or sim.u_skirm[u] != 1 or sim.u_cls[u] != UT.CLS_MISSILE \
+				or (sim.t_mount[sim.u_type[u]] == UT.MOUNT_HORSE) != horse:
+			_fail("light missile: %s builds with kind %d (want %d), skirmish %d, mount %d" % [k,
+				sim.t_m_ak[sim.u_type[u]], want, sim.u_skirm[u], sim.t_mount[sim.u_type[u]]])
+		if sim.u_sk[u] != (lead if k == "balearic" else -1):
+			_fail("light missile: %s carries special kind %d" % [k, sim.u_sk[u]])
+	var t := 0
+	while t < 2400:
+		sim.step()
+		t += 1
+		if t % 100 == 0:
+			var all := true
+			for k in rows:
+				if sim.u_ammo[units[k]] >= int(full[k]):
+					all = false
+			if all:
+				break
+	var out: Array[String] = []
+	for k in rows:
+		var shots: int = int(full[k]) - sim.u_ammo[units[k]]
+		out.append("%s %d" % [k, shots])
+		if shots <= 0:
+			_fail("light missile: %s never shot in %d ticks (ammo %d of %d)" % [k, t, sim.u_ammo[units[k]], int(full[k])])
+	print("PASS light missile: shots by tick %d: %s" % [t, ", ".join(out)])
 
 
 ## Deploy (place one unit of each human side, ready) and fight a little,

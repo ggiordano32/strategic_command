@@ -115,6 +115,7 @@ func _init() -> void:
 	_grid_auto_merge()
 	_ammo_wagon()
 	_beasts()
+	_light_missile()
 	_ai_skilled()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
 	quit(0 if fails == 0 else 1)
@@ -2157,6 +2158,98 @@ func _beasts() -> void:
 	for t in 200:
 		sim.step()
 	_check(ne == 12 and sim.tick == 200, "the battle with elephants and camels runs (%d elephants)" % ne)
+
+
+## Light horse and slingers in the campaign (docs/CAMPAIGN.md, rosters):
+## the faction rows behind the "cav_missile" and "sling" lines; light horse
+## needs Stables of its tier and a Range 1, slingers the Range of their
+## tier; Rome and Macedon have neither; the Balearics carry lead bullets
+## from a Range 2, Iberian light horse fire javelins; a turn recruiting them
+## resolves the same in either submission order and survives JSON;
+## auto-resolve counts them by price and a field battle with them runs.
+func _light_missile() -> void:
+	var cart := _f("carthage")
+	var zeu := _r("zeugitana")
+	var st := _new6([_f("rome"), cart])
+	st["factions"][cart]["treasury"] = 9000
+	var want := {"carthage": ["numidians", "balearic"], "greeks": ["tarentines", "rhodians"],
+		"epirus": ["tarentines", ""], "syracuse": ["tarentines", ""], "iberians": ["iberian_horse", "iberian_slingers"],
+		"gauls": ["gallic_horse", ""], "rome": ["", ""], "macedon": ["", ""]}
+	for fk in want:
+		var f := _f(fk)
+		var got := [CState.roster_type(f, "cav_missile", 2), CState.roster_type(f, "sling", 2)]
+		var base_ok: bool = CState.roster_type(f, "cav_missile", 1) == ("cav_jav" if got[0] != "" else "") \
+			and CState.roster_type(f, "sling", 1) == ("slinger" if got[1] != "" else "")
+		_check(str(got) == str(want[fk]) and base_ok, "%s: light horse / slingers %s" % [fk, str(got)])
+	_set_bld(st, zeu, CData.STABLES, 0)
+	_set_bld(st, zeu, CData.RANGE, 0)
+	_check(CRules.recruit_check(st, cart, zeu, "cav_jav") == "needs Stables 1", "light horse needs Stables 1 (%s)" % CRules.recruit_check(st, cart, zeu, "cav_jav"))
+	_check(CRules.recruit_check(st, cart, zeu, "slinger") == "needs Range 1", "slingers need a Range 1 (%s)" % CRules.recruit_check(st, cart, zeu, "slinger"))
+	_set_bld(st, zeu, CData.STABLES, 1)
+	_check(CRules.recruit_check(st, cart, zeu, "cav_jav") == "needs Range 1", "light horse needs a Range 1 too (%s)" % CRules.recruit_check(st, cart, zeu, "cav_jav"))
+	_set_bld(st, zeu, CData.RANGE, 1)
+	_check(CRules.recruit_check(st, cart, zeu, "cav_jav") == "" and CRules.recruit_check(st, cart, zeu, "slinger") == "",
+		"light horse with Stables 1 and Range 1, slingers with Range 1")
+	_check(CRules.recruit_check(st, cart, zeu, "numidians") == "needs Stables 2", "Numidians need Stables 2 (%s)" % CRules.recruit_check(st, cart, zeu, "numidians"))
+	_check(CRules.recruit_check(st, cart, zeu, "balearic") == "needs Range 2", "Balearics need Range 2 (%s)" % CRules.recruit_check(st, cart, zeu, "balearic"))
+	_check(CRules.ammo_for(st, cart, zeu, "slinger") == "", "no lead bullets from a Range 1")
+	_set_bld(st, zeu, CData.STABLES, 2)
+	_set_bld(st, zeu, CData.RANGE, 2)
+	_check(CRules.recruit_check(st, cart, zeu, "numidians") == "" and CRules.recruit_check(st, cart, zeu, "balearic") == "",
+		"Numidians with Stables 2, Balearics with Range 2")
+	_check(CRules.ammo_for(st, cart, zeu, "balearic") == "lead_bullets" and CRules.ammo_for(st, cart, zeu, "numidians") == "",
+		"Carthage's slingers carry lead bullets from a Range 2, its riders nothing special (%s / %s)" % [
+			CRules.ammo_for(st, cart, zeu, "balearic"), CRules.ammo_for(st, cart, zeu, "numidians")])
+	var ib := _f("iberians")
+	var cel := _r("celtiberia")
+	_set_bld(st, cel, CData.RANGE, 2)
+	_check(CRules.ammo_for(st, ib, cel, "iberian_horse") == "fire_javelins" and CRules.ammo_for(st, ib, cel, "iberian_slingers") == "",
+		"Iberian riders carry fire javelins from a Range 2, Iberian slingers no lead")
+	_check(CRules.recruit_check(st, _f("rome"), _r("latium"), "cav_jav") == "not in your roster"
+		and CRules.recruit_check(st, _f("rome"), _r("latium"), "slinger") == "not in your roster", "Rome has neither")
+	_check(CRules.recruit_check(st, cart, zeu, "tarentines") == "not in your roster", "Carthage has no Tarentines")
+	var lines := []
+	for o in CRules.recruit_options(st, cart, zeu):
+		if str(o["line"]) in ["cav_missile", "sling"]:
+			lines.append(str(o["t"]))
+	_check(str(lines) == str(["balearic", "slinger", "numidians", "cav_jav"]), "Carthage's recruit list shows them (%s)" % str(lines))
+	var subs2 := [CTurn.submission(st, cart, [{"t": "recruit", "r": zeu, "unit": "numidians"},
+		{"t": "recruit", "r": zeu, "unit": "balearic"}]), CTurn.submission(st, _f("rome"), [])]
+	var r2 := CTurn.resolve_turn(st, subs2)
+	var r3 := CTurn.resolve_turn(st, [subs2[1], subs2[0]])
+	var got2 := []
+	for a in CState.armies_of(r2, cart):
+		for u in a["units"]:
+			if str(u["t"]) in ["numidians", "balearic"]:
+				got2.append("%s:%d:%s" % [str(u["t"]), int(u["n"]), str(u.get("ak", ""))])
+	got2.sort()
+	_check(str(got2) == str(["balearic:80:lead_bullets", "numidians:60:"]), "recruited Numidians and Balearics (%s)" % str(got2))
+	_check(CState.state_hash(r2) == CState.state_hash(r3) and _plain(r2), "light missile recruits resolve deterministically, plain data")
+	var rt := CState.from_json(CState.to_json(r2))
+	_check(not rt.is_empty() and CState.state_hash(rt) == CState.state_hash(r2), "light missile recruits survive a JSON round trip")
+	var lh := UT.index_of("cav_jav")
+	_check(CState.strength({"units": [{"t": "cav_jav", "n": 60}]}) == UT.price_of(lh),
+		"auto-resolve: a full light horse unit counts its price (%d)" % CState.strength({"units": [{"t": "cav_jav", "n": 60}]}))
+	var sb := _new6([cart])
+	sb["armies"] = []
+	_italy(sb, cart)
+	var c0 := CState.field_cell(_r("latium"))
+	var am := _put(sb, cart, c0, ["spear", "cav_jav", "numidians", "slinger", "balearic"])
+	var en := _put(sb, _f("rome"), c0, ["heavy", "cav"])
+	var b := {"id": 1, "r": _r("latium"), "att": [int(am["id"])], "def": [int(en["id"])], "reinf": [], "att_f": cart,
+		"def_f": _f("rome"), "kind": "field", "settlement": 0}
+	var fo := CBattle.formula(CState.copy(sb), b)
+	_check(fo.has("winner") and (fo["units"] as Array).size() == 7, "auto-resolve with light horse and slingers (%d unit rows)" % (fo["units"] as Array).size())
+	var built := CBattle.build(sb, b, cart)
+	var sim := BattleSim.new()
+	sim.setup(built["scenario"], int(built["seed"]))
+	var nl := 0
+	for u in sim.n_units:
+		if UT.line_of(sim.u_type[u]) in ["cav_missile", "sling"]:
+			nl += 1
+	for t in 200:
+		sim.step()
+	_check(nl == 4 and sim.tick == 200, "the battle with light horse and slingers runs (%d units)" % nl)
 
 
 func _keys(a: Dictionary) -> Array:

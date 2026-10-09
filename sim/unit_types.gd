@@ -533,7 +533,8 @@ const TIER_DELTA := {
 ## --only=tiers): the tier bonuses are worth most to the low-attack spears
 ## and pikes and least to missile troops, whose numbers are their fire.
 const TIER_PRICE := {"heavy": [135, 190], "light": [140, 180], "spear": [153, 262],
-	"pike": [161, 275], "archer": [122, 128], "javelin": [120, 160], "cav": [147, 210]}
+	"pike": [161, 275], "archer": [122, 128], "javelin": [120, 160], "cav": [147, 210],
+	"cav_missile": [125], "sling": [120]}
 ## Attack and defence gains per line, % of TIER_DELTA: a formed pike wall
 ## multiplies small gains over four ranks of points.
 const TIER_SKILL := {"pike": 50}
@@ -798,6 +799,111 @@ const BEASTS: Array[Dictionary] = [
 ]
 
 
+## Light missile troops (docs/DESIGN.md "Missile cavalry and slingers"):
+## base rows of their own lines, appended after the beasts so every other
+## index is unchanged, with faction variants in LIGHT_MISSILE_TIERS (the
+## tier mechanism of TIERS: TIER_DELTA, TIER_PRICE, the row's "add" and
+## "price_add", on the row named by "of"). Numbers chosen once from the
+## existing rows (shock cavalry, camel archers, javelinmen, archers as the
+## yardsticks), not tuned; each with its reason.
+const LIGHT_MISSILE: Array[Dictionary] = [
+	{
+		"key": "cav_jav", "line": "cav_missile", "name": "Light Horse", "short": "Lt Horse", "icon": 13, "sprite": 5,
+		"size": 60, "files0": 15,
+		"role": "Missile cavalry",
+		"desc": "Javelin riders on small, quick horses. They ride in, throw from the saddle and ride off again: by default they keep their distance from anything that comes for them, and nothing on foot can catch them. Few javelins each, so they need targets worth them. Weak in melee and no charge to speak of; horses are big targets for archers.",
+		"good_vs": "Slow foot they can circle and pelt, the flanks and rear of engaged units, artillery crews, skirmishers caught in the open.",
+		"weak_vs": "Shock cavalry and camels that catch them, archers and slingers (who outrange them), any melee.",
+		"cls": CLS_MISSILE, "mount": MOUNT_HORSE,
+		"attack": 24,       # shock cavalry 36: a javelin kept in hand, no lance
+		"defence": 22,      # shock cavalry 28, camel archers 24: unarmoured, lives by not being there
+		"armour": 4,        # shock cavalry 10: a helmet at most
+		"shield": 20,       # the small round cavalry shield (as shock cavalry)
+		"mshield": 25,      # shock cavalry 15: held up against missiles while skirmishing
+		"damage": 26,       # shock cavalry 32: the javelin as a spear
+		"reach": 1638,
+		"mass": 330,        # shock cavalry 400: small horses, no armour
+		"walk": 225,        # 2.2 m/s (shock cavalry 2.1)
+		"run": 880,         # 8.6 m/s: a touch faster than shock cavalry's 8.2
+		"hp": 130,          # shock cavalry 150: a smaller horse
+		"cooldown": 10,
+		"morale": 620,      # camel archers 620, shock cavalry 760: skirmishers, not a battle line
+		"file_sp": 2048, "rank_sp": 3072,  # cavalry spacing
+		"turn": 20,         # ~7 degrees a tick: 90 degrees in 1.3 s (shock cavalry 1.6 s)
+		"m_vuln": 120, "m_down": 9,  # horses, as shock cavalry
+		"m_range": 40 * 1024,  # the javelinmen's 40 m
+		"m_damage": 38,     # javelinmen 42: thrown from a moving horse
+		"m_ap": 50,         # javelinmen 60, the elephants' crew 50: less weight behind it
+		"m_ammo": 5,        # javelinmen 6: a rider's sheaf of four or five
+		"m_reload": 30,     # javelinmen 28
+		"m_spread": 45,     # javelinmen 40: from the saddle
+		"m_spread0": 717, "m_speed": 2253, "m_arc": 0, "m_apex": 10, "m_hgain": 100,  # thrown flat, as javelinmen
+		"skirm": 1,         # keep their distance by default (as camel archers)
+		"m_ak": 1,          # javelins
+		"cost": 8,          # 480 a unit: the camel archers' price, shock cavalry 600
+		"climb": 24,        # horses labour uphill (shock cavalry 24)
+		"woods_pct": 180,   # the missile class's woods slowing x1.8 = about the cavalry's
+	},
+	{
+		"key": "slinger", "line": "sling", "name": "Slingers", "short": "Slingers", "icon": 14, "sprite": 3,
+		"size": 80, "files0": 20,
+		"role": "Missile infantry",
+		"desc": "Light troops with slings who outrange the bow and shoot faster. A sling stone hurts unarmoured men more than an arrow but does little against armour and big shields. They shoot over friendly units and hills, and by default fall back from melee troops that come for them. Weak in melee.",
+		"good_vs": "Light infantry, skirmishers, archers, javelin riders and other unarmoured troops, crews.",
+		"weak_vs": "Armoured and big-shielded infantry, cavalry that reaches them, any melee unit that closes.",
+		"cls": CLS_MISSILE,
+		"attack": 18, "defence": 16,  # archers' 18 / 16
+		"armour": 2,        # archers 3: no armour at all
+		"shield": 0, "mshield": 0,
+		"damage": 22,       # archers 24: a knife
+		"reach": 1024, "mass": 65,
+		"walk": 160,        # archers 1.5 m/s, javelinmen 1.7
+		"run": 430,         # 4.2 m/s, the javelinmen's: lighter than archers (4.0)
+		"hp": 75, "cooldown": 11,
+		"morale": 560,      # between archers (640) and javelinmen (500)
+		"file_sp": 1638, "rank_sp": 1843,  # room to whirl the sling (archers 1.3 x 1.6 m)
+		"m_range": 150 * 1024,  # archers 140 m: the sling outranges the bow
+		"m_damage": 28,     # archers 30 ...
+		"m_ap": 0,          # ... at 25 ap: a blunt stone, armour takes its full share
+		"m_ammo": 40,       # archers 40: a bag of stones
+		"m_reload": 30,     # archers 40: a faster shot
+		"m_spread": 50,     # archers 45: a little less accurate
+		"m_spread0": 1024,
+		"m_speed": 4096,    # 40 m/s (arrows 45)
+		"m_arc": 1,         # lobbed over friends and hills, as arrows
+		"skirm": 1,         # light troops: fall back by default (as javelinmen)
+		"m_hgain": 150,     # as arrows
+		"m_ak": 9,          # sling stones
+		"cost": 4,          # 320 a unit: archers 400 less the weak shot against armour
+		"climb": 13,        # light foot (javelinmen 13)
+	},
+]
+## Faction variants of the LIGHT_MISSILE rows ("of": the row's key): built
+## like TIERS (TIER_DELTA, TIER_PRICE of the line, "add", "price_add").
+const LIGHT_MISSILE_TIERS: Array[Dictionary] = [
+	{"key": "numidians", "of": "cav_jav", "tier": 2, "name": "Numidian Horse", "short": "Numidians",
+		"blurb": "Numidian javelin riders without saddle or bridle, the best light horse of the age.",
+		"add": {"m_damage": 3, "run": 20, "turn": 2, "m_ammo": 1}, "price_add": 10},
+	{"key": "tarentines", "of": "cav_jav", "tier": 2, "name": "Tarentine Horse", "short": "Tarentines",
+		"blurb": "Javelin riders of the Tarentine kind, with a shield to stand off fire.",
+		"add": {"m_damage": 3, "mshield": 10}},
+	{"key": "gallic_horse", "of": "cav_jav", "tier": 2, "name": "Gallic Light Horse", "short": "Gallic Horse",
+		"blurb": "Young Gallic riders who throw their javelins and close in readily.",
+		"add": {"m_damage": 3, "attack": 3, "damage": 2}},
+	{"key": "iberian_horse", "of": "cav_jav", "tier": 2, "name": "Iberian Light Horse", "short": "Iberian Horse",
+		"blurb": "Iberian riders who skirmish with javelins and fight on foot or horse.",
+		"add": {"m_damage": 3, "defence": 2, "armour": 1}},
+	{"key": "balearic", "of": "slinger", "tier": 2, "name": "Balearic Slingers", "short": "Balearics",
+		"blurb": "Islanders raised to the sling from boyhood, the most famous slingers of the age.",
+		"add": {"m_damage": 3, "m_spread": -5}, "price_add": 10},
+	{"key": "rhodians", "of": "slinger", "tier": 2, "name": "Rhodian Slingers", "short": "Rhodians",
+		"blurb": "Rhodian slingers, famed for their range.",
+		"add": {"m_damage": 2, "m_range": 10 * 1024}, "price_add": 10},
+	{"key": "iberian_slingers", "of": "slinger", "tier": 2, "name": "Iberian Slingers", "short": "Ib. Slingers",
+		"blurb": "Native Iberian slingers.", "add": {"m_damage": 2, "attack": 2}},
+]
+
+
 ## Field of wagon tier w (0 if out of range); "pace" with h horses alive.
 static func wagon_stat(w: int, field: String) -> int:
 	if w < 0 or w >= WAGONS.size():
@@ -832,30 +938,7 @@ static func _build_types() -> Array[Dictionary]:
 		out.append(row)
 	for t in TIERS:
 		var b: int = t["base"]
-		var tier: int = t["tier"]
-		var row: Dictionary = BASE[b].duplicate()
-		var delta: Dictionary = TIER_DELTA[tier]
-		for k in delta:
-			var dv := int(delta[k])
-			if k == "attack" or k == "defence":
-				dv = dv * int(TIER_SKILL.get(LINES[b], 100)) / 100
-			row[k] = int(row.get(k, DEFAULTS.get(k, 0))) + dv
-		var add: Dictionary = t.get("add", {})
-		for k in add:
-			row[k] = int(row.get(k, DEFAULTS.get(k, 0))) + int(add[k])
-		row["morale"] = mini(int(row["morale"]), 1000)
-		for k in ["key", "name", "short"]:
-			row[k] = t[k]
-		row["desc"] = str(t["blurb"]) + " " + str(BASE[b]["desc"])
-		row["base"] = b
-		row["tier"] = tier
-		row["line"] = LINES[b]
-		row["size"] = BASE_SIZE[b]
-		var pct: int = TIER_PRICE[LINES[b]][tier - 2] + int(t.get("price_add", 0))
-		var price: int = int(BASE[b]["cost"]) * BASE_SIZE[b] * pct / 100
-		row["price"] = price
-		row["cost"] = maxi((price + BASE_SIZE[b] / 2) / BASE_SIZE[b], 1)
-		out.append(row)
+		out.append(_derived(BASE[b], b, LINES[b], BASE_SIZE[b], t))
 	for sp in SPECIAL:
 		var row: Dictionary = sp.duplicate()
 		row["base"] = out.size()
@@ -877,7 +960,51 @@ static func _build_types() -> Array[Dictionary]:
 		row["tier"] = 1
 		row["price"] = int(row["cost"]) * int(row["size"])
 		out.append(row)
+	var first := out.size()
+	for lr in LIGHT_MISSILE:
+		var row: Dictionary = lr.duplicate()
+		row["base"] = out.size()
+		row["tier"] = 1
+		row["price"] = int(row["cost"]) * int(row["size"])
+		out.append(row)
+	for t in LIGHT_MISSILE_TIERS:
+		var b := first
+		while str(out[b]["key"]) != str(t["of"]):
+			b += 1
+		var br: Dictionary = out[b]
+		out.append(_derived(br, b, str(br["line"]), int(br["size"]), t))
 	return out
+
+
+## Derived tier row t (TIERS, LIGHT_MISSILE_TIERS) of base row `row0` (type
+## index b, line, unit size): the base row plus the tier's TIER_DELTA (attack
+## and defence by the line's TIER_SKILL), the row's "add", its own names, and
+## the base price times the line's TIER_PRICE (+ "price_add") %.
+static func _derived(row0: Dictionary, b: int, line: String, size: int, t: Dictionary) -> Dictionary:
+	var tier: int = t["tier"]
+	var row: Dictionary = row0.duplicate()
+	var delta: Dictionary = TIER_DELTA[tier]
+	for k in delta:
+		var dv := int(delta[k])
+		if k == "attack" or k == "defence":
+			dv = dv * int(TIER_SKILL.get(line, 100)) / 100
+		row[k] = int(row.get(k, DEFAULTS.get(k, 0))) + dv
+	var add: Dictionary = t.get("add", {})
+	for k in add:
+		row[k] = int(row.get(k, DEFAULTS.get(k, 0))) + int(add[k])
+	row["morale"] = mini(int(row["morale"]), 1000)
+	for k in ["key", "name", "short"]:
+		row[k] = t[k]
+	row["desc"] = str(t["blurb"]) + " " + str(row0["desc"])
+	row["base"] = b
+	row["tier"] = tier
+	row["line"] = line
+	row["size"] = size
+	var pct: int = TIER_PRICE[line][tier - 2] + int(t.get("price_add", 0))
+	var price: int = int(row0["cost"]) * size * pct / 100
+	row["price"] = price
+	row["cost"] = maxi((price + size / 2) / size, 1)
+	return row
 
 
 ## Index of the type with this key, -1 if none.
@@ -998,6 +1125,17 @@ const AMMO: Array[Dictionary] = [
 	{"key": "explosive", "name": "Explosive stones", "short": "blast", "base": 3, "share": 20, "dmg": 100, "obj": 50,
 		"ap": 0, "pierce": 130, "range": 85, "rate": 125, "fear": 40, "blast": 1536, "fire": 0,
 		"desc": "Rare charges that burst where they land, a fifth of the load: a wide blast against men and engines, weak against walls, shorter and slower."},
+	# Sling stones (index 9): the slingers' standard kind; a hand cart
+	# carries as many as arrows (small missiles by the bag).
+	{"key": "sling", "name": "Sling stones", "short": "sling", "base": -1, "share": 100, "dmg": 100, "obj": 100,
+		"ap": 0, "pierce": 100, "range": 100, "rate": 100, "fear": 0, "blast": 0, "fire": 0, "wagon": 1600,
+		"desc": "Smooth river stones for the sling."},
+	# Lead bullets: 130 % damage and +20 armour piercing (cast lead, heavier
+	# for its size), paid for with 85 % range (a special kind is never
+	# strictly better) and a third of the bag.
+	{"key": "lead_bullets", "name": "Lead bullets", "short": "lead", "base": 9, "share": 33, "dmg": 130, "obj": 100,
+		"ap": 20, "pierce": 100, "range": 85, "rate": 100, "fear": 0, "blast": 0, "fire": 0,
+		"desc": "Cast lead sling bullets, a third of the bag: they hit harder and bite through some armour, at a shorter range."},
 ]
 ## Fields of AMMO the sim reads, in t_k_* order (BattleSim._load_types).
 const AMMO_FIELDS: Array[String] = ["base", "share", "dmg", "obj", "ap", "pierce", "range", "rate", "fear",
