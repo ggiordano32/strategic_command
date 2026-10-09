@@ -148,7 +148,14 @@ const SK_INTERCEPT_WIN := SK_SUPPORT + 12    # (6) hunt an army that can relieve
 const SK_STORM_RELIEF_WIN := SK_SUPPORT + 13 # (6) storm a siege at these odds when a relief can arrive next turn (0 off)
 const SK_COUNTER_MIX := SK_SUPPORT + 14      # recruit: + this weight to spears / pikes against cavalry-heavy enemies (missiles: half, against light foot)
 const SK_COUNTER_SHARE := SK_SUPPORT + 15    # ... when that arm is at least this % of the enemies' units
-const N_KNOBS := SK_SUPPORT + 16
+# The military build-up (docs/AI.md 23, October 2026). 0 at Easy: it builds
+# as before (and never recruits wagons).
+const BU_RANGE := SK_SUPPORT + 16            # Range level wanted at the military centre when the mix has a Range line (0 off)
+const BU_WORKSHOP := SK_SUPPORT + 17         # Workshop level wanted there when the mix has engines or WAGON_MIN missile units (0 off)
+const BU_BUDGET_PCT := SK_SUPPORT + 18       # % of the money above the reserve the build-up may take a turn
+const BU_SAVE := SK_SUPPORT + 19             # while the build-up waits for money, nothing else is built (1)
+const WAGON_MIN := SK_SUPPORT + 20           # an army with this many missile / artillery units and no wagon gets one (0 never)
+const N_KNOBS := SK_SUPPORT + 21
 
 # Deliberate mistakes (docs/AI.md 4, "Deliberate mistakes (campaign)"),
 # rolled with CState.rand at the decision point (cai.gd _mistake); each is a
@@ -266,6 +273,12 @@ const KNOBS: Array = [
 	[SK_STORM_RELIEF_WIN, 0, 0, 50],
 	[SK_COUNTER_MIX, 0, 0, 20],
 	[SK_COUNTER_SHARE, 0, 0, 25],
+	# The military build-up and the wagon (Easy: off).
+	[BU_RANGE, 0, 2, 2],
+	[BU_WORKSHOP, 0, 1, 2],
+	[BU_BUDGET_PCT, 0, 100, 100],
+	[BU_SAVE, 0, 1, 1],
+	[WAGON_MIN, 0, 3, 2],
 ]
 
 ## Personality offsets [knob, CAUTIOUS, BALANCED, AGGRESSIVE] (docs/AI.md 5:

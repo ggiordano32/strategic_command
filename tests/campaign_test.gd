@@ -3153,6 +3153,7 @@ func _ai_skilled() -> void:
 	# change since.)
 	CAI.no_beasts = true
 	CData.no_generals = true  # (and without the starting generals, 2026-10-09)
+	CAI.no_buildup = true  # (and without the military build-up, docs/AI.md 23)
 	var g := CState.new_campaign("test", 4242, [])
 	for t in 20:
 		g = CTurn.resolve_turn(g, [])
@@ -3166,9 +3167,11 @@ func _ai_skilled() -> void:
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(ge), int(ge["rng"])])
 	CAI.no_beasts = false
 	CData.no_generals = false
-	# Knobs: every Skilled-only knob is 0 at Easy and Average.
+	CAI.no_buildup = false
+	# Knobs: every Skilled-only knob is 0 at Easy and Average (the build-up
+	# knobs after them are not Skilled-only).
 	var zero := true
-	for k in range(CP.SK_SUPPORT, CP.N_KNOBS):
+	for k in range(CP.SK_SUPPORT, CP.BU_RANGE):
 		for lv in [CP.EASY, CP.AVERAGE]:
 			for r in CP.KNOBS:
 				if int(r[0]) == k and int(r[1 + lv]) != 0:

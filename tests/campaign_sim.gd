@@ -30,6 +30,13 @@ extends SceneTree
 ## cavalry; CData.old_mp). Both together play as before the general.
 ## --no-dogs: the AI recruits no war dogs (mix weight 0; CData.no_dogs).
 ## --no-light-art: nor scorpions or gastraphetes (CData.no_light_art).
+## --no-buildup: no military build-up or wagons (CAI.no_buildup).
+## Each seed also prints the build-up (docs/AI.md 23): per faction alive at
+## the end its regions, best Workshop / Range / Barracks / Stables level,
+## wagons, scorpions, gastraphetes, light horse and missile units with a
+## special ammunition kind in its armies, and the buildings finished per
+## chain; the end table sums them per faction, with how many factions of 4+
+## regions at turn 40 had a Range 2 and a Workshop 1.
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -37,6 +44,7 @@ const CTurn := preload("res://campaign/cturn.gd")
 const CRules := preload("res://campaign/crules.gd")
 const CP := preload("res://campaign/cai_profile.gd")
 const CAI := preload("res://campaign/cai.gd")
+const UT := preload("res://sim/unit_types.gd")
 
 var seeds := 4
 var turns := 60
@@ -53,6 +61,9 @@ var watch: Array = []         # [faction, [regions at 15, 30, 60], eliminated at
 var knobs: Array = []         # --knob=: [level, knob id, value]
 var dg := {}                  # watched faction -> battle / capture tallies (this seed)
 var dg_all := {}              # the same summed over the seeds, per watched faction
+var bu_all := {}              # faction -> build-up sums over the seeds (_buildup)
+var built := []               # buildings finished per chain (this seed)
+var at40 := [0, 0, 0]         # over the seeds: factions with 4+ regions at turn 40, with a Range 2, with a Workshop 1
 const DG_KEYS: Array[String] = ["field_att_won", "field_att_lost", "field_def_won", "field_def_lost", "town_att_won",
 	"town_att_lost", "town_def_won", "town_def_lost", "siege_fights_won", "siege_fights_lost", "gained", "gained_surrender",
 	"lost", "lost_surrender", "lost_within_3_turns_of_taking", "armies_destroyed"]
@@ -76,6 +87,8 @@ func _init() -> void:
 			twice = true
 		elif a == "--no-beasts":
 			CAI.no_beasts = true  # (the AI recruits none of CAI.BEAST_LINES)
+		elif a == "--no-buildup":
+			CAI.no_buildup = true  # (no military build-up or wagons; docs/AI.md 23)
 		elif a == "--no-generals":
 			CData.no_generals = true  # (no starting generals, none recruited)
 		elif a == "--no-dogs":
@@ -118,6 +131,13 @@ func _init() -> void:
 			for key in DG_KEYS:
 				parts.append("%s %d" % [key, int(dg_all[f].get(key, 0))])
 			print("battles and captures of %s over the seeds: %s" % [short[int(f)], ", ".join(parts)])
+	print("\nbuild-up over the seeds (alive at the end): faction | seeds alive | regions | best W / R / B / S summed | W1+ R2+ seeds | wagons scorpions gastraphetes light-horse kind-units")
+	for f in CData.FACTIONS.size():
+		if bu_all.has(f):
+			var b: Array = bu_all[f]
+			print("  %s | %d | %d | %d / %d / %d / %d | %d %d | %d %d %d %d %d" % [short[f], b[0], b[1], b[2], b[3], b[4], b[5],
+				b[6], b[7], b[8], b[9], b[10], b[11], b[12]])
+	print("turn 40: factions with 4+ regions %d, with a Range 2 %d, with a Workshop 1 %d" % at40)
 	if twice:
 		print("determinism (each seed twice): %s" % ("OK" if ok else "FAILED"))
 	quit(0 if ok else 1)
@@ -129,6 +149,9 @@ func _run(sd: int, verbose: bool) -> String:
 	var largest := [0, 0, 0]
 	var first_win := -1
 	CP.reset_counters()
+	built = []
+	for c in CData.CHAINS.size():
+		built.append(0)
 	if true:
 		var settings := {}
 		if skill_all >= 0:
@@ -182,6 +205,12 @@ func _run(sd: int, verbose: bool) -> String:
 					largest[k] = big
 					for f in keys:
 						w_reg[f][k] = CState.regions_of(st, int(f)).size()
+			if verbose and int(st["turn"]) == 40:
+				for f in CState.nf():
+					if CState.alive(st, f) and CState.regions_of(st, f).size() >= 4:
+						at40[0] += 1
+						at40[1] += 1 if _best(st, f, CData.RANGE) >= 2 else 0
+						at40[2] += 1 if _best(st, f, CData.WORKSHOP) >= 1 else 0
 			for f in keys:
 				if int(w_dead[f]) < 0 and not CState.alive(st, int(f)):
 					w_dead[f] = int(st["turn"])
@@ -196,6 +225,7 @@ func _run(sd: int, verbose: bool) -> String:
 		print("eliminated: %s | treasury range %d..%d | battles %d | turn time mean %.1f ms max %.1f ms | hash %s" % [
 			str(elim), tr_min, tr_max, int(st["stats"]["battles"]), t_total / 1000.0 / turns, t_max / 1000.0,
 			CState.hash_text(st)])
+		_buildup(st)
 		var open_now: Array = []
 		for x in st.get("sieges", []):
 			open_now.append("%s %d turns" % [CData.REGIONS[int(x["r"])]["city"], int(st["turn"]) - int(x["turn"])])
@@ -310,6 +340,8 @@ func _count_sieges(st: Dictionary, t: int) -> void:
 					sg["field"] += 1
 			"intercepted":
 				sg["intercepted"] += 1
+			"built":
+				built[int(e["chain"])] += 1
 			"move_failed":
 				if str(e.get("why", "")) == "mustering":
 					sg["mustering"] += 1
@@ -318,6 +350,52 @@ func _count_sieges(st: Dictionary, t: int) -> void:
 	for r in CData.region_count():
 		if CRules.raider(st, r) >= 0:
 			sg["raided"] += 1
+
+
+## Best level of chain c in any region of faction f.
+static func _best(st: Dictionary, f: int, c: int) -> int:
+	var b := 0
+	for r in CState.regions_of(st, f):
+		b = maxi(b, CState.building(st, r, c))
+	return b
+
+
+## The build-up at the end of a seed (per faction alive) and the buildings
+## finished per chain; summed into bu_all.
+func _buildup(st: Dictionary) -> void:
+	var parts: Array = []
+	for c in CData.CHAINS.size():
+		parts.append("%s %d" % [CData.CHAINS[c]["key"], int(built[c])])
+	print("buildings finished: " + ", ".join(parts))
+	for f in CState.nf():
+		if not CState.alive(st, f):
+			continue
+		var n := [0, 0, 0, 0, 0]  # wagons, scorpions, gastraphetes, light horse, missile units with a kind
+		for a in CState.armies_of(st, f):
+			for u in a["units"]:
+				var ty := CState.unit_type(u)
+				var line := UT.line_of(ty)
+				if UT.stat(ty, "wagon") >= 0:
+					n[0] += 1
+				if line == "light_art":
+					n[1] += 1
+				if line == "belly_bow":
+					n[2] += 1
+				if line == "cav_missile":
+					n[3] += 1
+				if str(u.get("ak", "")) != "":
+					n[4] += 1
+		var lv := [_best(st, f, CData.WORKSHOP), _best(st, f, CData.RANGE), _best(st, f, CData.BARRACKS), _best(st, f, CData.STABLES)]
+		var nr := CState.regions_of(st, f).size()
+		print("  %s: regions %d | best W %d R %d B %d S %d | wagons %d scorpions %d gastraphetes %d light horse %d kind units %d" % [
+			short[f], nr, lv[0], lv[1], lv[2], lv[3], n[0], n[1], n[2], n[3], n[4]])
+		if not bu_all.has(f):
+			bu_all[f] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+		var b: Array = bu_all[f]
+		var add := [1, nr, lv[0], lv[1], lv[2], lv[3], 1 if lv[0] >= 1 else 0, 1 if lv[1] >= 2 else 0,
+			n[0], n[1], n[2], n[3], n[4]]
+		for k in add.size():
+			b[k] += int(add[k])
 
 
 func _report(st: Dictionary, us: int) -> void:

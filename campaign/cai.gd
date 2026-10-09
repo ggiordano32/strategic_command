@@ -8,9 +8,13 @@ extends RefCounted
 ##  2. build: one construction per region, cheapest useful first, keeping a
 ##     reserve; walls where threatened, farms and markets for money, the
 ##     military buildings of its preferred lines in its recruiting centres;
+##     first the military build-up at its best centre (_buildup: a Range 2,
+##     a Workshop for engines and the wagon; docs/AI.md 23);
 ##  3. recruit to a budget: army upkeep up to UPKEEP_SHARE of income (scaled by
 ##     the aggression setting and the number of wars), units by the faction's
-##     preferred mix, best tier the buildings allow, where the armies are;
+##     preferred mix, best tier the buildings allow, where the armies are
+##     (a line the centre lacks the building for at the next centre that
+##     has it); first a wagon for each army with WAGON_MIN missile units;
 ##  4. move: armies whose region is threatened stay; otherwise attack an
 ##     adjacent hostile region (land or sea) when the armies that can reach
 ##     it this turn are ATTACK_RATIO times its defence (garrison, armies there
@@ -76,6 +80,10 @@ const BEAST_LINES: Array[String] = ["camel", "camel_archer", "elephant", "cav_mi
 ## Test switch (tests/campaign_sim.gd --no-beasts): recruit none of them,
 ## to show that only their recruitment changes a run.
 static var no_beasts := false
+## Test switch (tests/campaign_test.gd goldens, tests/campaign_sim.gd
+## --no-buildup): no military build-up, wagons or raising a line at another
+## centre (docs/AI.md 23), as if BU_RANGE, BU_WORKSHOP and WAGON_MIN were 0.
+static var no_buildup := false
 
 # Every ratio, odds cutoff, turn count, share and weight the AI decides with
 # is a knob of the faction's skill / personality profile
@@ -227,6 +235,22 @@ static func _build(st: Dictionary, f: int) -> void:
 	var mix: Dictionary = CData.FACTIONS[f]["mix"]
 	var spent := 0
 	var budget := (int(st["factions"][f]["treasury"]) - _reserve(st, f)) * kn[CP.BUILD_BUDGET_PCT] / 100
+	# The military build-up first (docs/AI.md 23): its next building at its
+	# centre, from its own budget; waiting for money (BU_SAVE) nothing else
+	# is built; and a new building there keeps the centre's last free slot.
+	var bu := [] if no_buildup else _buildup(st, f, regions, mix, kn)
+	var keep := -1  # region whose last free slot is kept for the build-up
+	if not bu.is_empty():
+		var bi := CRules.build_info(st, f, bu[0], bu[1])
+		var bb := (int(st["factions"][f]["treasury"]) - _reserve(st, f)) * kn[CP.BU_BUDGET_PCT] / 100
+		if int(bi.get("level", 0)) == 1 and _free_slots(st, bu[0]) == 1:
+			keep = bu[0]
+		if not bi.has("why") and int(bi["cost"]) <= bb:
+			if CRules.apply_order(st, f, {"t": "build", "r": bu[0], "chain": bu[1]}) == "":
+				spent += int(bi["cost"])
+		elif kn[CP.BU_SAVE] != 0 and (not bi.has("why") or str(bi["why"]) == "not enough money") \
+				and CState.battle_at(st, bu[0]).is_empty():
+			return
 	for r in regions:
 		if not CState.battle_at(st, r).is_empty():
 			continue
@@ -241,11 +265,13 @@ static func _build(st: Dictionary, f: int) -> void:
 			for c in [CData.BARRACKS, CData.STABLES, CData.RANGE]:
 				if _wants_chain(mix, c):
 					want.append(c)
-			if mix.has("bolt") or mix.has("stone") or (mix.has("light_art") and not CData.no_light_art and not no_beasts):
-				want.append(CData.WORKSHOP)  # (scorpions too: their test switches leave them out)
+			if _wants_engines(mix):
+				want.append(CData.WORKSHOP)
 		if kn[CP.BUILD_CHEAPEST] != 0:
 			want = _by_cost(st, f, r, want)
 		for c in want:
+			if r == keep and c != CData.WALLS and CState.building(st, r, c) == 0:
+				continue  # (the last free slot is the build-up's)
 			var info := CRules.build_info(st, f, r, c)
 			if info.has("why"):
 				continue
@@ -254,6 +280,79 @@ static func _build(st: Dictionary, f: int) -> void:
 			if CRules.apply_order(st, f, {"t": "build", "r": r, "chain": c}) == "":
 				spent += int(info["cost"])
 				break
+
+
+## The mix has engines (bolt or stone throwers, or scorpions: their test
+## switches leave them out).
+static func _wants_engines(mix: Dictionary) -> bool:
+	return mix.has("bolt") or mix.has("stone") or (mix.has("light_art") and not CData.no_light_art and not no_beasts)
+
+
+## The military build-up (docs/AI.md 23): the next [region, chain] to build
+## ([] none): a Range up to BU_RANGE when the mix has a Range line, then a
+## Workshop up to BU_WORKSHOP when the mix has engines or the faction fields
+## WAGON_MIN missile units (for the wagon). Each at the first centre of
+## `regions` (richest and capital first) that has that building, else the
+## first with a free slot. It waits while that centre lacks a farm, or a
+## market while it has a free slot (the economy first, then the chain).
+static func _buildup(st: Dictionary, f: int, regions: Array[int], mix: Dictionary, kn: PackedInt32Array) -> Array:
+	var goals: Array = []
+	if kn[CP.BU_RANGE] > 0 and _wants_chain(mix, CData.RANGE):
+		goals.append([CData.RANGE, kn[CP.BU_RANGE]])
+	if kn[CP.BU_WORKSHOP] > 0 and (_wants_engines(mix) or (kn[CP.WAGON_MIN] > 0 and _missiles_of(st, f) >= kn[CP.WAGON_MIN])):
+		goals.append([CData.WORKSHOP, kn[CP.BU_WORKSHOP]])
+	for g in goals:
+		var c: int = g[0]
+		var site := -1
+		for r in regions:
+			if _centre(st, r) and CState.building(st, r, c) > 0:
+				site = r
+				break
+		if site < 0:
+			for r in regions:
+				if _centre(st, r) and _free_slots(st, r) > 0:
+					site = r
+					break
+		if site < 0 or CState.building(st, site, c) >= int(g[1]):
+			continue
+		if CState.building(st, site, CData.FARM) < 1 \
+				or (CState.building(st, site, CData.MARKET) < 1 and _free_slots(st, site) > 1):
+			return []
+		return [site, c]
+	return []
+
+
+static func _centre(st: Dictionary, r: int) -> bool:
+	return CData.is_capital(r) or int(st["regions"][r]["level"]) >= CData.TOWN
+
+
+static func _free_slots(st: Dictionary, r: int) -> int:
+	var rs: Dictionary = st["regions"][r]
+	return CState.slot_count(r, int(rs["level"])) - (rs["slots"] as Array).size()
+
+
+## Missile and artillery units (a missile kind, not a wagon) in army a.
+static func _missiles(a: Dictionary) -> int:
+	var n := 0
+	for u in a["units"]:
+		var ty := CState.unit_type(u)
+		if UT.stat(ty, "m_ak") >= 0 and UT.stat(ty, "wagon") < 0:
+			n += 1
+	return n
+
+
+static func _missiles_of(st: Dictionary, f: int) -> int:
+	var n := 0
+	for a in CState.armies_of(st, f):
+		n += _missiles(a)
+	return n
+
+
+static func _has_wagon(a: Dictionary) -> bool:
+	for u in a["units"]:
+		if UT.stat(CState.unit_type(u), "wagon") >= 0:
+			return true
+	return false
 
 
 ## The chains of `want` that can be built in r, cheapest first (ties: the
@@ -336,6 +435,25 @@ static func _recruit(st: Dictionary, f: int, moves: Array = []) -> void:
 		for mv in moves:
 			if int(mv[2]) == f:
 				marching[int(mv[0])] = 1
+	# The wagon (docs/AI.md 23): an army holding this turn with WAGON_MIN
+	# missile / artillery units and none gets one (the best tier the
+	# buildings allow) at a recruiting centre with a Workshop it stands at.
+	if kn[CP.WAGON_MIN] > 0 and CState.grid_on(st) and not no_buildup:
+		for a in CState.armies_of(st, f):
+			var id := int(a["id"])
+			if int(a["busy"]) != 0 or marching.has(id) or _has_wagon(a) or _missiles(a) < kn[CP.WAGON_MIN]:
+				continue
+			for e in scored:
+				var r: int = e[1]
+				var key := _best_type(st, f, r, "siege") if CState.building(st, r, CData.WORKSHOP) > 0 else ""
+				if key == "" or CRules.army_recruit_check(st, f, r, id, key) != "":
+					continue
+				var ty := UT.index_of(key)
+				if up + CState.upkeep_of(ty) <= cap \
+						and int(fs["treasury"]) - UT.price_of(ty) >= _reserve(st, f) / kn[CP.RECRUIT_RESERVE_DIV] \
+						and CRules.apply_order(st, f, {"t": "recruit", "r": r, "unit": key, "army": id}) == "":
+					up += CState.upkeep_of(ty)
+				break
 	var guard := 0
 	for e in scored:
 		var r: int = e[1]
@@ -346,6 +464,16 @@ static func _recruit(st: Dictionary, f: int, moves: Array = []) -> void:
 			if lean > 0 and CState.rand(st, 100) < lean:
 				line = _most_line(st, f, mix)  # more of what it already has
 			var key := _best_type(st, f, r, line)
+			var rr := r  # (where it is raised)
+			if key == "" and kn[CP.BU_RANGE] > 0 and not no_buildup:
+				# The build-up: a line r lacks the building for is raised at
+				# the next recruiting centre that has it (the Workshop's
+				# engines, the Range 2's gastraphetes).
+				for e2 in scored:
+					key = _best_type(st, f, int(e2[1]), line)
+					if key != "":
+						rr = int(e2[1])
+						break
 			if key == "":
 				key = _any_type(st, f, r)
 			if key == "":
@@ -355,7 +483,7 @@ static func _recruit(st: Dictionary, f: int, moves: Array = []) -> void:
 				return
 			if int(fs["treasury"]) - UT.price_of(ty) < _reserve(st, f) / kn[CP.RECRUIT_RESERVE_DIV]:
 				return
-			if CRules.apply_order(st, f, _recruit_order(st, f, r, key, marching, moves, kn)) != "":
+			if CRules.apply_order(st, f, _recruit_order(st, f, rr, key, marching, moves, kn)) != "":
 				break
 			up += CState.upkeep_of(ty)
 
