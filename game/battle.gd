@@ -253,6 +253,9 @@ func _ready() -> void:
 		hud.menu_button.text = "Leave"
 		hud.menu_button.custom_minimum_size.x = 0
 		Hud.Kit.set_icon(hud.menu_button, "withdraw")
+		# (set_icon centred the glyph while the button had no text: put it back
+		# beside the word, or it draws over the "v".)
+		hud.menu_button.icon_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	hud.set_stats_expanded(bench_mode)  # benchmarks show the full readout
 	_fit_camera()
 	hud.card_pressed.connect(_on_card)
@@ -960,6 +963,11 @@ func _refresh_actions() -> void:
 			dogs = maxi(dogs, sim.pack_left(u))
 	if dogs < 0:
 		release_armed = false
+	var only_fixed := not selection.is_empty()
+	for u in selection:
+		if UT.stat(sim.u_type[u], "fixed") == 0:
+			only_fixed = false
+	hud.engine_only = only_fixed
 	hud.set_selection(selection, run, fire, skirm, deploy, refill, ammo, ammo_word, forage, dogs, release_armed)
 	_refresh_wall_buttons()
 	if coop != null:
@@ -1025,6 +1033,23 @@ func _on_card(u: int) -> void:
 		# Release of a long press that opened the unit book: no selection.
 		hud.suppress_card = -1
 		_selection_changed()  # undo the card's toggle
+		return
+	var tg := hud.tower_group(u)
+	if interactive and UT.stat(sim.u_type[u], "fixed") != 0 and _mine(u):
+		# A wall-engine card: each tap goes on to the next engine of the kind
+		# still manned, and the camera goes to it.
+		var at := tg.find(selected) if selection.size() == 1 else -1
+		var pick := -1
+		for k in tg.size():
+			var c: int = tg[(at + 1 + k) % tg.size()]
+			if sim.u_state[c] == BattleSim.U_READY:
+				pick = c
+				break
+		if pick < 0:
+			_selection_changed()
+			return
+		_select(pick)
+		camera.position = Vector2(sim.u_cx[pick], sim.u_cy[pick]) / M * PX_PER_M
 		return
 	if not interactive or sim.u_state[u] != BattleSim.U_READY:
 		_selection_changed()  # undo the card's toggle

@@ -1571,7 +1571,10 @@ the view (`game/battle.gd`, `game/order_preview.gd`, `game/overlay.gd`,
   it landing within the tower takes `TOWER_BOLT_DMG` 70, a stone
   `TOWER_STONE_DMG` 330 (900 / 1,200 hit points; the crew falls with it).
   The order rule lets a tower only shoot (a unit, at will) or halt; the
-  player gets its card like a battery's (no Deploy / Refill). It does not
+  player gets its engines as one card per kind ("Bolt towers x6": shots
+  left, crew alive; a tap cycles through them, the camera follows, the panel
+  says "Wall engine: fixed, shoots on its own") and the pre-battle card lists
+  "Wall engines (up to)" with the Workshop note (no Deploy / Refill). It does not
   count toward a side's standing units (`_check_winner`) or the town-lost
   count.
 - **Siege equipment as objects** (part 2b, 2026-10-07; replaces part 1's

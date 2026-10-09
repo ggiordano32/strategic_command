@@ -113,6 +113,13 @@ var actions_box: HBoxContainer
 var group_box: HBoxContainer
 var _cards: Dictionary = {}  # unit -> Button
 var _faces: Dictionary = {}  # unit -> CardFace inside the card
+## Wall engines (fixed units on the towers): one card per engine kind, held by
+## the first of the group. leader unit -> the group's units.
+var _tgroups: Dictionary = {}
+var engine_note: Label
+## Set by the battle before set_selection: only wall engines are selected
+## (they take no orders).
+var engine_only := false
 var _sim
 var _player_side := 0
 var _root: Control
@@ -267,6 +274,15 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	var actions := HBoxContainer.new()
 	actions.add_theme_constant_override("separation", int(GAP))
 	row.add_child(actions)
+	engine_note = Label.new()
+	engine_note.text = "Wall engine: fixed, shoots on its own"
+	engine_note.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	engine_note.add_theme_color_override("font_color", Color(1, 0.9, 0.5))
+	engine_note.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
+	engine_note.add_theme_constant_override("outline_size", 4)
+	engine_note.size_flags_vertical = Control.SIZE_SHRINK_END
+	engine_note.visible = false
+	row.add_child(engine_note)
 	run_button = _button("Run: off", Vector2(0, BTN_H), "run")
 	run_button.pressed.connect(func(): run_pressed.emit())
 	halt_button = _button("Halt", Vector2(54, BTN_H), "cancel")
@@ -332,9 +348,17 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	cards_box.add_theme_constant_override("h_separation", int(CARD_GAP))
 	cards_box.add_theme_constant_override("v_separation", int(CARD_GAP))
 	cards_bar.add_child(cards_box)
+	var tleader := {}  # engine type -> the unit holding its card
 	for u in sim.n_units:
 		if sim.u_side[u] != player_side:
 			continue
+		if UT.stat(sim.u_type[u], "fixed") != 0:
+			var tk: int = sim.u_type[u]
+			if tleader.has(tk):
+				(_tgroups[tleader[tk]] as Array).append(u)
+				continue
+			tleader[tk] = u
+			_tgroups[u] = [u]
 		var b := Button.new()
 		b.toggle_mode = true
 		b.focus_mode = Control.FOCUS_NONE
@@ -775,12 +799,17 @@ func set_selection(units: Array[int], run: int, fire: int, skirm: int, deploy: i
 		refill: int = -1, ammo: int = -1, ammo_word: String = "", forage: int = -1, dogs: int = -1,
 		release_armed: bool = false) -> void:
 	for k in _cards:
-		(_cards[k] as Button).set_pressed_no_signal(units.has(k))
+		var on := units.has(k)
+		if _tgroups.has(k):
+			for t in _tgroups[k]:
+				on = on or units.has(t)
+		(_cards[k] as Button).set_pressed_no_signal(on)
 		var f: CardFace = _faces[k]
-		if f.selected != units.has(k):
-			f.selected = units.has(k)
+		if f.selected != on:
+			f.selected = on
 			f.queue_redraw()
-	actions_box.visible = not units.is_empty()
+	actions_box.visible = not units.is_empty() and not engine_only
+	engine_note.visible = not units.is_empty() and engine_only
 	run_button.visible = run >= 0
 	fire_button.visible = fire >= 0
 	skirm_button.visible = skirm >= 0
@@ -919,7 +948,43 @@ func update_cards(sim) -> void:
 					parts.append("%s %d" % [UT.ammo_text(k, "short"), n_s])
 			f.summary += " | stock " + (", ".join(parts) if not parts.is_empty() else "empty") \
 				+ (" | horses %d" % sim.q_hn[wq] if UT.wagon_stat(sim.q_tier[wq], "horses") > 0 else "")
+		if _tgroups.has(u):
+			_group_card(sim, u, f)
 		f.queue_redraw()
+
+
+## The units of the wall-engine card held by u ([u] alone for any other).
+func tower_group(u: int) -> Array:
+	return _tgroups.get(u, [u])
+
+
+## Fill the card of a wall-engine kind from its whole group: engines still
+## manned, shots left, crew alive.
+func _group_card(sim, u: int, f: CardFace) -> void:
+	var g: Array = _tgroups[u]
+	var shots := 0
+	var crew := 0
+	var crew0 := 0
+	var up := 0
+	var hit := false
+	for t in g:
+		if sim.u_state[t] < BattleSim.U_DESTROYED:
+			up += 1
+		shots += maxi(sim.u_ammo[t], 0)
+		crew += sim.u_alive[t]
+		crew0 += sim.u_count0[t]
+		hit = hit or sim.tick - sim.u_hit_t[t] < 10
+	var word := "Stone" if sim.u_otype[u] == UT.TOWER_STONE else "Bolt"
+	f.name_text = "%s towers x%d" % [word, g.size()]
+	f.number_text = "x%d" % g.size()
+	f.alive = crew
+	f.count0 = maxi(crew0, 1)
+	f.ammo_text = str(shots)
+	f.state_text = "" if up == g.size() else "%d manned" % up
+	f.summary = "%s: %d of %d manned, %d shots left, crew %d/%d. Tap to cycle through them." % [f.name_text, up, g.size(), shots, crew, crew0]
+	f.state = CardFace.ST_OK if up > 0 else CardFace.ST_GONE
+	f.under_fire = hit
+	f.fighting = false
 
 
 ## Battery card: crew, engines still working, shots left, set-up state (the

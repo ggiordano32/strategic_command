@@ -94,7 +94,37 @@ static func snapshot(st: Dictionary, b: Dictionary, viewer: int) -> Dictionary:
 	return {"bid": int(b["id"]), "r": r, "kind": kind, "settlement": int(b.get("settlement", 1)),
 		"facs": facs, "lead": [int(b["att_f"]), int(b["def_f"])], "sides": sides, "me": me,
 		"walls": CState.walls(st, r), "equip": CBattle.siege_equipment(st, b), "title": title(st, b),
-		"works": CBattle.works_of(st, b) if int(b.get("settlement", 1)) == 0 else {}}
+		"works": CBattle.works_of(st, b) if int(b.get("settlement", 1)) == 0 else {},
+		"towers": _tower_counts(st, b)}
+
+
+## The wall engines the sim will add to a walled settlement's defenders
+## (BattleSim._siege_towers): [bolt towers, stone towers, workshop 0/1], or []
+## when there are none. Upper bounds: a small ring may hold fewer.
+static func _tower_counts(st: Dictionary, b: Dictionary) -> Array:
+	if int(b.get("settlement", 1)) == 0 or str(b.get("kind", "")) == "field":
+		return []
+	var wl := CState.walls(st, int(b["r"]))
+	if wl < 2 or wl >= BattleSim.TOWERS_MAX.size():
+		return []
+	var shop := 1 if CBattle.city_buildings(st, int(b["r"])).has(BattleSim.TOWER_AMMO_BLD) else 0
+	return [BattleSim.TOWERS_MAX[wl], BattleSim.TOWERS_STONE[wl], shop]
+
+
+## The defenders' "Wall engines" line ("" none).
+static func towers_line(snap: Dictionary) -> String:
+	var t: Array = snap.get("towers", [])
+	if t.is_empty():
+		return ""
+	var bits: Array[String] = []
+	if int(t[0]) > 0:
+		bits.append("%d bolt throwers" % int(t[0]))
+	if int(t[1]) > 0:
+		bits.append("%d stone throwers" % int(t[1]))
+	var s := "Wall engines (up to): %s, on the towers, crewed and shooting on their own." % " and ".join(bits)
+	if int(t[2]) != 0:
+		s += " (Workshop: half as many shots again.)"
+	return s
 
 
 static func _names(list: Array) -> String:
@@ -356,6 +386,14 @@ static func _side(snap: Dictionary, sd: int, res: Dictionary) -> Control:
 			card.tooltip_text = card.describe()
 			fl.add_child(card)
 		col.add_child(fl)
+	var tl := towers_line(snap) if sd == 1 else ""
+	if tl != "":
+		if not res.is_empty():
+			tl += " (Their fate is not part of the battle record.)"
+		var tlab := Kit.label(tl, Kit.FONT_SMALL, Color.WHITE, true)
+		tlab.name = "wall_engines"
+		Kit.label_icon(tlab, "tower")
+		col.add_child(tlab)
 	if not res.is_empty():
 		col.set_meta("totals", tot)
 	return col
