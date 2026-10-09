@@ -1166,10 +1166,10 @@ func _build_ui() -> void:
 	side.visible = false
 	ui.add_child(side)
 	side_scroll = TouchScroll.new()
-	side_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	side_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER  # DISABLED would make the panel grow to its content's width
 	side.add_child(side_scroll)
 	side_box = Kit.vbox(6)
-	side_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	side_box.size_flags_horizontal = Control.SIZE_FILL
 	side_scroll.add_child(side_box)
 	# Bottom: hint (left), End turn (right).
 	hint = Kit.label("", Kit.FONT_SMALL, Color(1, 1, 1), true)
@@ -1351,6 +1351,7 @@ func show_side(content_builder: Callable) -> void:
 	var vp := _vp()
 	var w := minf(PANEL_W, vp.x * 0.48)
 	side.offset_left = -w - 4
+	side_box.custom_minimum_size.x = w - 16.0 - side_scroll.get_v_scroll_bar().get_combined_minimum_size().x  # the panel never grows with its content
 	side.visible = true
 	_restore_scroll(side_scroll, keep, _side_gen, false)
 	_update_deselect()

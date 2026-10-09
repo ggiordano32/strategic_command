@@ -965,6 +965,17 @@ Where 2026-10-09 ended (build 20261009T124650Z live; everything up to
   last (two empires working together already plays well).
 - **Open from playtests:** the co-op Ask-to-join flow unconfirmed; the
   general's upkeep decision (none) is in; the Leave button fix is in.
+- **Region panel overflow fixed (2026-10-09, user's PC screenshot):** the
+  side panel grew past the window edge on a besieged city on every
+  display: `side_scroll` had horizontal scrolling DISABLED, which makes a
+  ScrollContainer take its content's minimum width, and the siege row's
+  three fixed-width icon buttons (~400 px) exceeded `PANEL_W` 360 / the
+  48 % phone cap. Now `SCROLL_MODE_SHOW_NEVER`, `side_box` pinned to the
+  panel width (minus the scrollbar), the siege rows and the army card's
+  move row are `Kit.flow` rows that wrap. Screenshots desktop / tablet /
+  phone checked. **Known:** `tests/campaign_input_test.gd` has 7 failures
+  at HEAD (merge glyph, Diplomacy scroll, ...) that predate this fix,
+  from earlier today's UI changes; a pass is due.
 
 ## Previous session notes (2026-10-08, 14:00)
 
@@ -1043,7 +1054,27 @@ fixes are all landed; see "Where we are"):
 2. **Phone round on the overworld**, then a tuning pass from what it shows.
 3. **Roads, rivers and crossings** as grid-cell overrides (historic roads,
    rivers as barriers with fords and bridges; ford battles on the battle
-   map).
+   map). **Design (user, 2026-10-09):** a river crossing gets its **own
+   dedicated battle map**, generated from a **frozen seed per crossing**
+   (rivers do not change within the period: the same crossing is the same
+   map every time, so it can be learnt and planned for, as settlements
+   are from their seed). A **fortified army at a crossing sets up its
+   camp at the crossing** (the fortified camp placed against the ford /
+   bridge mouth, its ditch and palisade covering the exit), so attacking
+   a fortified army at a river is clearly more dangerous than meeting an
+   unfortified one there: the defender holds the bank, the attacker
+   crosses under fire into works. Ties into the formula (fortified at a
+   crossing) as the camp does.
+   **Pontoon bridges** (user idea, 2026-10-09; agreed in principle): a
+   field work the attacker (or defender) lays during the battle, never a
+   prerequisite: a foot unit ordered to a bank stretch builds it a section
+   at a time (seconds per section, as foraging), the allowance by Workshop
+   level like stakes / caltrops; finished, a narrow one-unit lane, slow to
+   cross as a ladder lane, wooden (fire arrows and artillery take it).
+   The ford is free but defended, the bridge undefended but costs time, a
+   unit and an allowance. Balance by a crossing row in the equal-force
+   harness (fortified defender vs attacker with / without spans); must
+   never be faster than marching to the ford.
 4. **Cities must be worth defending** (agreed 2026-10-07, moved ahead of
    everything else after the Skilled campaign AI found that an army is
    better off fortified outside a city than inside it: in the formula
@@ -1345,6 +1376,27 @@ fixes are all landed; see "Where we are"):
    co-op join flow generalised), seats and invites per faction on the
    server, AI / human per faction on the new-campaign screen, leaving a
    team (notice turns, as the AI's war declarations work).
+8a. **Heroes and agents** (asked 2026-10-09, after the N-player campaign;
+   Warhammer 3 style). **Heroes**: characters attached to an army without
+   taking a unit slot (a character list on the army, not a unit: a
+   `CState.VERSION` bump), one hero per army; a single man with a large
+   health pool and an **area buff by kind**: foot (steadiness, to-hit),
+   missile (range, accuracy), cavalry (charge, rally), siege (ladders,
+   reloads, ram / tower toughness); each fights well in his own field and
+   is a prime target for wall bolts. The general is the first hero
+   (command aura) and the model to generalise. Fallen: wounded for N
+   turns rather than dead (to decide). The AI must use them (an aura knob
+   per kind). **Agents** (the co-op partner's ask): an **assassin** and a
+   **diplomat**, one each per army, playable on the field as support
+   pieces when attached. Assassin: a single hidden man; orders Sabotage
+   (wreck an engine; in a siege open a gate from inside) and Attempt
+   (adjacent to the enemy hero / general: roll to wound or kill, the
+   general-falls morale hit). Diplomat: Parley on a broken or nearly
+   broken enemy unit so it surrenders instead of dying (prisoners:
+   ransom / recruits), a steadying aura on wavering friends, a beaten
+   garrison surrendering to him for the city intact. Hidden characters
+   and parley need hidden information: design with the N-player campaign
+   and the ambush stance (item 7).
 8b. **Audio** (asked 2026-10-07; the game has no sound at all today).
    Battle: melee clash, charge impact, volleys and artillery release /
    impact, gate blows and the gate breaking, ladders and towers, unit

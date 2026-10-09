@@ -473,7 +473,7 @@ func _siege_section(box: VBoxContainer, r: int) -> void:
 		var ordered := _has_order("assault", r)
 		v.add_child(Kit.label("Orders: storm the walls at the end of the turn." if ordered else "Orders: keep up the siege.",
 			Kit.FONT, Kit.COL_BAD if ordered else Color.WHITE, true))
-		var h := Kit.hbox(8)
+		var h := Kit.flow(8)
 		var ab := Kit.icon_button("Assault", "assault", func(): s.add_order({"t": "assault", "r": r}), 110)
 		ab.name = "siege_assault"
 		ab.disabled = ordered or CRules.can_assault(ps, f, r) != ""
@@ -1040,7 +1040,7 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 		if int(a["busy"]) != 0:
 			box.add_child(Kit.label("In a battle.", Kit.FONT, Kit.COL_BAD))
 		elif mv >= 0:
-			var h := Kit.hbox(6)
+			var h := Kit.vbox(4)
 			var kind: String = s.move_kind(id)
 			var verb: String = {"siege": "Lays siege to", "join": "Joins the siege of", "assault": "Assaults", "relief": "Relieves",
 				"move": "Moves to", "raid": "Marches into"}.get(kind, "Moves to")
@@ -1055,21 +1055,23 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 						when += ", marching on from an earlier turn"
 			h.add_child(Kit.label("%s %s%s" % [verb, CData.REGIONS[mv]["name"], when], Kit.FONT,
 				Kit.COL_GOOD if kind == "move" else Kit.COL_BAD, true))
+			var hb := Kit.flow(6)
 			if CState.moves_on(ps) and kind in ["raid", "siege", "assault"]:
 				var nxt := CData.MODE_SIEGE if kind == "raid" else (CData.MODE_ASSAULT if kind == "siege" else CData.MODE_MARCH)
 				var mb0 := Kit.icon_button({CData.MODE_SIEGE: "Lay siege", CData.MODE_ASSAULT: "Assault", CData.MODE_MARCH: "March only"}[nxt],
 					{CData.MODE_SIEGE: "siege", CData.MODE_ASSAULT: "assault", CData.MODE_MARCH: "move"}[nxt],
 					func(): s.set_move_mode(id, nxt), 96)
 				mb0.name = "move_mode"
-				h.add_child(mb0)
+				hb.add_child(mb0)
 			elif kind == "siege" or kind == "join" or (kind == "assault" and CState.sieges_on(ps)):
 				var to_mode := CData.MODE_SIEGE if kind == "assault" else CData.MODE_ASSAULT
 				var mb := Kit.icon_button("Lay siege" if kind == "assault" else "Assault", "siege" if kind == "assault" else "assault", func(): s.set_move_mode(id, to_mode), 96)
 				mb.name = "move_mode"
-				h.add_child(mb)
+				hb.add_child(mb)
 			var cb := Kit.icon_button("Cancel move", "cancel", func(): s.set_move(id, mv), 110)
 			cb.name = "cancel_move"
-			h.add_child(cb)
+			hb.add_child(cb)
+			h.add_child(hb)
 			box.add_child(h)
 		elif role == 1:
 			var sg := CState.siege_at(ps, r)
@@ -2357,7 +2359,7 @@ func _siege_section6(box: VBoxContainer, r: int) -> void:
 		var ol := Kit.label(txt, Kit.FONT, Kit.COL_BAD if ordered or leaving else Color.WHITE, true)
 		ol.name = "siege_orders"
 		v.add_child(ol)
-		var h := Kit.hbox(8)
+		var h := Kit.flow(8)
 		var ab := Kit.icon_button("Assault", "assault", func():
 			_cancel_withdraw(mine, r)
 			s.add_order({"t": "assault", "r": r})
