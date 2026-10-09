@@ -943,6 +943,16 @@ server rebuilt with the battle "ask" / guest room changes):
 
 ## Where we are headed
 
+**Agreed order on 2026-10-08 (evening):** engines as pick-up-able equipment
+with crews as men + per-unit kills (running); then 4d ammunition types and
+4e resupply / wagon together (shared ammo and pick-up code); then 5
+elephants and camels; then Friday 2026-10-10's co-op campaign as the phone
+round (item 2). **No balance tables until those are in**: siege part 3
+(fit the formula), the walls 2-3 attacker-side fix and the AI follow-ups
+are one rebalance block after Friday. 8c icons may be pulled forward ahead
+of the rebalance so Friday has icons. Audio and icons fit thin-budget
+evenings (no sim changes).
+
 Agreed with the user on 2026-10-06, in this order (milestones 1-5, battle
 maps, settlement variety, sieges, free movement and the wall/reachability
 fixes are all landed; see "Where we are"):
