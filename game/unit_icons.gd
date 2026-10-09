@@ -104,6 +104,13 @@ static func draw_glyph(ci: CanvasItem, icon: int, c: Vector2, s: float, col: Col
 			ci.draw_line(c + Vector2(-0.5, 0.7) * s, c + Vector2(0.3, 0.15) * s, col, w * 0.8, true)
 			ci.draw_line(c + Vector2(-0.25, 0.62) * s, c + Vector2(0.45, -0.55) * s, col, w * 1.1, true)
 			ci.draw_circle(c + Vector2(0.55, -0.72) * s, 0.24 * s, col)
+		9:  # ammunition wagon: covered cart on two wheels, a shaft in front
+			ci.draw_arc(c + Vector2(-0.12, 0.05) * s, 0.62 * s, PI, TAU, 12, col, w, true)
+			ci.draw_line(c + Vector2(-0.74, 0.05) * s, c + Vector2(0.5, 0.05) * s, col, w, true)
+			ci.draw_line(c + Vector2(-0.74, 0.4) * s, c + Vector2(0.5, 0.4) * s, col, w, true)
+			ci.draw_arc(c + Vector2(-0.42, 0.68) * s, 0.22 * s, 0, TAU, 10, col, w * 0.8, true)
+			ci.draw_arc(c + Vector2(0.22, 0.68) * s, 0.22 * s, 0, TAU, 10, col, w * 0.8, true)
+			ci.draw_line(c + Vector2(0.5, 0.3) * s, c + Vector2(0.95, 0.45) * s, col, w * 0.8, true)
 		_:
 			ci.draw_circle(c, s * 0.3, col)
 

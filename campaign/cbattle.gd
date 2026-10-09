@@ -84,6 +84,13 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct: i
 	for s in 2:
 		var field := 0
 		for a in arm[s]:
+			# The special kinds its missile troops carry: its wagons carry
+			# stock of them (scenario "aks").
+			var aks: Array = []
+			for u0 in a["units"]:
+				var ak0 := str(u0.get("ak", ""))
+				if ak0 != "" and not aks.has(ak0):
+					aks.append(ak0)
 			for k in CState.unit_count(a):
 				var u: Dictionary = a["units"][k]
 				if int(u["n"]) <= 0 or field >= CData.BATTLE_SIDE_MAX:
@@ -92,6 +99,10 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct: i
 				var ent := {"army": int(a["id"]), "unit": k, "t": str(u["t"]), "n": int(u["n"]), "f": int(a["f"])}
 				if CState.stance(a) == CData.ST_FORCED:
 					ent["morale"] = CData.FORCED_MORALE_PCT
+				if u.has("ak"):
+					ent["ak"] = str(u["ak"])  # its special ammunition kind
+				if UT.stat(UT.index_of(str(u["t"])), "wagon") >= 0 and not aks.is_empty():
+					ent["aks"] = aks
 				entries[s].append(ent)
 	for k in gar.size():
 		var g: Dictionary = gar[k]
@@ -157,6 +168,7 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct: i
 		var su := Scenarios.unit(ss, ty, cnt, x, y, face)
 		if int(e.get("morale", 100)) != 100:
 			su["morale_pct"] = int(e["morale"])  # version 6: caught on a forced march
+		_unit_extras(su, e)
 		units.append(su)
 		map.append({"side": cs, "army": int(e["army"]), "unit": int(e["unit"]), "n": int(e["n"]), "sim_n": cnt})
 		ufac.append(int(e["f"]))
@@ -407,6 +419,15 @@ static func _build_settlement(st: Dictionary, b: Dictionary, human_f: int, scale
 		"forest": int(rd["forest"]), "ground": int(rd["ground"])}
 	var ai: Array = [0, 1] if human_f < 0 else [1]
 	var res := Scenarios.settlement(city, terr, lists[0], lists[1], int(sim_side[1]), ai, siege_equipment(st, b))
+	var sunits: Array = res["scenario"]["units"]
+	for k in mini(sunits.size(), (res["order"] as Array).size()):
+		var o0: Array = res["order"][k]
+		_unit_extras(sunits[k], entries[int(o0[0])][int(o0[1])])
+	# The city's tower engines carry the owner's special kind for them (heavy
+	# bolts), as a unit of the owner recruited there would.
+	var tak := UT.ammo_index(CRules.ammo_for(st, CState.owner(st, r), r, "tower_bolt"))
+	if tak >= 0:
+		res["scenario"]["tower_ak"] = tak
 	var prof := _ai_profiles(st, b, sim_side, ai)
 	res["scenario"]["ai_skill"] = prof[0]
 	res["scenario"]["ai_style"] = prof[1]
@@ -426,6 +447,22 @@ static func _build_settlement(st: Dictionary, b: Dictionary, human_f: int, scale
 	return {"scenario": res["scenario"], "seed": battle_seed(st, r, 2), "map": map, "sim_side": sim_side,
 		"garrison": gar, "unit_faction": ufac, "controller": controller, "battle": int(b["id"]), "region": r,
 		"owner": int(st["regions"][r]["owner"])}
+
+
+## Scenario unit su from campaign entry e: its special ammunition kind
+## (scenario "ak", a UnitTypes.AMMO row).
+static func _unit_extras(su: Dictionary, e: Dictionary) -> void:
+	if e.has("ak"):
+		var k := UT.ammo_index(str(e["ak"]))
+		if k >= 0:
+			su["ak"] = k
+	if e.has("aks"):
+		var ks: Array = []
+		for a in e["aks"]:
+			var k2 := UT.ammo_index(str(a))
+			if k2 >= 0:
+				ks.append(k2)
+		su["aks"] = ks
 
 
 ## Settlement r's city dictionary for the battle map (integers only):

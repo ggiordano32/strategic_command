@@ -178,10 +178,18 @@ static func think(sim) -> void:
 			continue
 		if sim.ai_phase[side] == P_WITHDRAW or sim.u_order[u] == O_WITHDRAW:
 			continue
+		var kn := kn0 if side == 0 else kn1
+		if BattleAI.is_wagon(sim, u):
+			BattleAI.wagon_think(sim, u, kn)  # (docs/AI.md 18)
+			continue
+		if sim.u_cls[u] == UT.CLS_MISSILE and sim.n_eq > 0 and BattleAI.resupply(sim, u, kn):
+			continue
 		if side == sim.city_def:
 			_defender(sim, u)
 		else:
 			_attacker(sim, u)
+		if sim.spec_kind(u) >= 0 and sim.u_gtarget[u] < 0:
+			BattleAI.ammo_pick(sim, u, kn)  # (docs/AI.md 18)
 
 
 # ------------------------------------------------------------ army level ---
@@ -1697,6 +1705,28 @@ static func _att_missile(sim, u: int, phase: int) -> void:
 	var spot := _gate_point(sim, g, out, _spread(rk.x, rk.y, kn[AP.S_MIS_SPREAD]))
 	var face := FM.atan2_a(sim.g_y[g] - spot.y, sim.g_x[g] - spot.x)
 	_go_home(sim, u, spot.x, spot.y, face, 10)
+	if kn[AP.AK_FIRE_GATE] != 0 and BattleAI._d(spot.x - sim.u_ax[u], spot.y - sim.u_ay[u]) <= 10 * M:
+		_fire_at_gate(sim, u, g)
+
+
+## Attacking missile unit u with a fire kind, standing at its post: it sets
+## the attacked gate g alight (docs/AI.md 18, AK_FIRE_GATE) while the gate is
+## shut and in reach of its fire missiles and it has some left. True if so.
+static func _fire_at_gate(sim, u: int, g: int) -> bool:
+	var sk: int = sim.spec_kind(u)
+	if sk < 0 or UT.ammo_stat(sk, "fire") <= 0 or g < 0 or sim.g_state[g] != GATE_CLOSED:
+		return false
+	if sim.u_order[u] != O_NONE or sim.u_fighting[u] > 0 or sim.special_left(u) <= 0:
+		return false
+	var gf: Vector2i = sim.gate_face(g)
+	var rng: int = UT.stat(sim.u_type[u], "m_range") * UT.ammo_stat(sk, "range") / 100
+	if BattleAI._d(gf.x - sim.u_cx[u], gf.y - sim.u_cy[u]) > rng:
+		return false
+	if sim.u_akind[u] != 1:
+		BattleAI._order(sim, u, {"type": BattleAI.ORDER_AMMO, "on": 1}, 27)
+	if sim.u_gtarget[u] != g:
+		BattleAI._order(sim, u, {"type": ORDER_ATTACK, "target": -1, "gate": g, "run": 0}, 0)
+	return true
 
 
 static func _att_cav(sim, u: int, phase: int) -> void:
@@ -2087,7 +2117,7 @@ static func _equip_free(sim, u: int, side: int, q: int) -> bool:
 	if sim.u_side[u] != side or sim.u_state[u] != U_READY or sim.u_wall[u] > 0 or sim.u_stair[u] != 0:
 		return false
 	var m: int = sim.u_ai[u]
-	if m == A_LADDER or m == A_RAM or m == BattleAI.A_RETIRE or sim.u_carry[u] >= 0:
+	if m == A_LADDER or m == A_RAM or m == BattleAI.A_RETIRE or sim.u_carry[u] >= 0 or BattleAI.is_wagon(sim, u):
 		return false
 	if sim.u_fighting[u] > 0:
 		return false

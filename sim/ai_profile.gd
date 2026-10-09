@@ -290,7 +290,21 @@ const S_TOKEN_MEN := 229       # a quiet gate keeps a rider as its token, else i
 const S_MOUTH_FRONTS := 230    # the stack's front: this many units side by side across the gateway's inner end
 const S_MOUTH_BACK := 231      # ... standing this much further in while the gate is shut (out of the shots at it)
 const S_ROT_LULL := 232        # ... the front is relieved only between waves, not fighting (1), or only while it fights (0)
-const N_KNOBS := 233
+# Ammunition kinds (docs/AI.md 18): which kind a unit with a special one shoots.
+const AK_USE := 233            # the AI switches its units' ammunition kind at all (0: always the standard kind)
+const AK_FIRE_WOOD := 234      # fire kinds at wooden targets: batteries, towers, units carrying a ram, ladders or a wagon
+const AK_WAVER_PCT := 235      # kinds with fear or fire at units below this % of their type's morale (wavering)
+const AK_ARMOUR := 236         # harder-hitting kinds (damage or pierce above standard) at targets with this much armour, and at batteries
+const AK_BLAST_MEN := 237      # bursting kinds at units of at least this many men, and at batteries
+const AK_FIRE_GATE := 238      # attacking missile units with a fire kind shoot at the attacked gate when in range (0 never)
+# Resupply (docs/AI.md 18): the ammunition wagon and foraging.
+const WG_BACK := 239           # the wagon stands this far behind the army's centre
+const WG_THREAT := 240         # enemy foot or riders this near the wagon: the nearest free melee unit of ours goes for them (0: no guard)
+const WG_FLEE := 241           # ... and the wagon draws back from enemies this near
+const WG_EMPTY_PCT := 242      # missile units and batteries below this % of their load go to the wagon and refill (0: never)
+const WG_RANGE := 243          # ... when a wagon of ours with stock for them is this near
+const FORAGE_AI := 244         # an empty missile unit standing in woods, with no wagon in reach and no enemy near, forages (1)
+const N_KNOBS := 245
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
@@ -502,6 +516,18 @@ const KNOBS: Array = [
 	[S_MOUTH_FRONTS, 1, 1, 1],
 	[S_MOUTH_BACK, 0, 0, 20 * M],
 	[S_ROT_LULL, 0, 0, 1],
+	[AK_USE, 0, 1, 1],
+	[AK_FIRE_WOOD, 0, 1, 1],
+	[AK_WAVER_PCT, 0, 35, 50],
+	[AK_ARMOUR, 999, 12, 9],
+	[AK_BLAST_MEN, 9999, 80, 60],
+	[AK_FIRE_GATE, 0, 1, 1],
+	[WG_BACK, 40 * M, 40 * M, 50 * M],
+	[WG_THREAT, 0, 40 * M, 60 * M],
+	[WG_FLEE, 25 * M, 25 * M, 35 * M],
+	[WG_EMPTY_PCT, 0, 15, 30],
+	[WG_RANGE, 150 * M, 150 * M, 150 * M],
+	[FORAGE_AI, 0, 1, 1],
 	# Behaviours a level switches off (Average: on, as before).
 	[CLEAR_SPOT, 0, 1, 1],
 	[MIS_SKIRM, 0, 1, 1],

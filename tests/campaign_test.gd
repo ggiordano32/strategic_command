@@ -112,6 +112,7 @@ func _init() -> void:
 	_grid_recruit_collect()
 	_grid_recruit_army()
 	_grid_auto_merge()
+	_ammo_wagon()
 	_ai_skilled()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
 	quit(0 if fails == 0 else 1)
@@ -1968,6 +1969,115 @@ func _italy(st: Dictionary, f: int) -> void:
 	for key in ["latium", "etruria", "campania", "samnium", "apulia", "bruttium", "umbria"]:
 		if _r(key) >= 0:
 			st["regions"][_r(key)]["owner"] = f
+
+
+## Building chain c of region r at level lvl (the slot set or added).
+func _set_bld(st: Dictionary, r: int, c: int, lvl: int) -> void:
+	for sl in st["regions"][r]["slots"]:
+		if int(sl[0]) == c:
+			sl[1] = lvl
+			return
+	(st["regions"][r]["slots"] as Array).append([c, lvl])
+
+
+## Ammunition kinds and the wagon in the campaign (docs/DESIGN.md
+## "Ammunition kinds", "The ammunition wagon"): which special kind a new
+## unit carries comes from the faction and a building (CData.AMMO_AVAIL),
+## stored on the unit entry ("ak"); the wagon is a recruited unit (the
+## Workshop, Stables for the horses), given and exchanged like any; it
+## adds to the army's strength (auto-resolve) and carries its army's
+## special kinds into a battle ("aks").
+func _ammo_wagon() -> void:
+	var rome := _f("rome")
+	var cart := _f("carthage")
+	var greeks := _f("greeks")
+	var lat := _r("latium")
+	var att := _r("attica")
+	var st := _new6([rome, cart])
+	_set_bld(st, lat, CData.WORKSHOP, 0)
+	_check(CRules.ammo_for(st, rome, lat, "bolt") == "", "kinds: no Workshop, plain bolts")
+	_set_bld(st, lat, CData.WORKSHOP, 1)
+	_check(CRules.ammo_for(st, rome, lat, "bolt") == "heavy_bolts", "kinds: Rome with a Workshop: heavy bolts")
+	_check(CRules.ammo_for(st, rome, lat, "stone") == "", "kinds: fire pots need Workshop 2")
+	_check(CRules.ammo_for(st, rome, lat, "javelin") == "", "kinds: Rome's javelinmen carry none")
+	_set_bld(st, att, CData.RANGE, 1)
+	_check(CRules.ammo_for(st, greeks, att, "archer") == "", "kinds: Greek archers with a Range 1: none")
+	_set_bld(st, att, CData.RANGE, 2)
+	_check(CRules.ammo_for(st, greeks, att, "archer") == "fire_arrows", "kinds: Greek archers with a Range 2: fire arrows")
+	_check(CRules.ammo_for(st, rome, att, "archer") == "", "kinds: not for a faction not listed")
+	# Recruiting a wagon and a battery (heavy bolts on its entry).
+	st["factions"][rome]["treasury"] = 6000
+	_check(CRules.recruit_check(st, rome, lat, "wagon") == "", "wagon: the hand cart with a Workshop 1")
+	_check(CRules.recruit_check(st, rome, lat, "wagon2") == "needs Workshop 2", "wagon: one horse needs Workshop 2 (%s)" % CRules.recruit_check(st, rome, lat, "wagon2"))
+	_set_bld(st, lat, CData.WORKSHOP, 2)
+	_set_bld(st, lat, CData.STABLES, 1)
+	_check(CRules.recruit_check(st, rome, lat, "wagon2") == "", "wagon: one horse with Workshop 2 and Stables 1")
+	_check(CRules.recruit_check(st, rome, lat, "wagon3") == "needs Stables 2", "wagon: two horses need Stables 2 (%s)" % CRules.recruit_check(st, rome, lat, "wagon3"))
+	var subs := [CTurn.submission(st, rome, [{"t": "recruit", "r": lat, "unit": "wagon2"},
+		{"t": "recruit", "r": lat, "unit": "bolt"}]), CTurn.submission(st, cart, [])]
+	var r1 := CTurn.resolve_turn(st, subs)
+	var r2 := CTurn.resolve_turn(st, [subs[1], subs[0]])
+	var wag := false
+	var hb := false
+	for a in CState.armies_of(r1, rome):
+		for u in a["units"]:
+			if str(u["t"]) == "wagon2" and not u.has("ak"):
+				wag = true
+			if str(u["t"]) == "bolt" and str(u.get("ak", "")) == "heavy_bolts":
+				hb = true
+	_check(wag and hb, "recruited: a wagon, and a battery whose entry carries heavy bolts (wagon %s, heavy bolts %s)" % [wag, hb])
+	_check(CState.state_hash(r1) == CState.state_hash(r2) and _plain(r1), "kinds and wagons resolve deterministically, plain data")
+	var rt := CState.from_json(CState.to_json(r1))
+	_check(not rt.is_empty() and CState.state_hash(rt) == CState.state_hash(r1), "the unit entry's kind survives a JSON round trip")
+	# Gift (exchange) of a wagon to the ally.
+	var sg := _new6([rome, cart])
+	sg["armies"] = []
+	_italy(sg, rome)
+	var c0 := CState.field_cell(lat)
+	var mine := _put(sg, rome, c0, ["wagon", "heavy"])
+	var theirs := _put(sg, cart, c0, ["archer"])
+	var gs := [CTurn.submission(sg, rome, [{"t": "exchange", "from": int(mine["id"]), "to": int(theirs["id"]), "units": [0]}]),
+		CTurn.submission(sg, cart, [])]
+	var g1 := CTurn.resolve_turn(sg, gs)
+	_check(str(_keys(CState.army(g1, int(theirs["id"])))) == str(["archer", "wagon"]), "a wagon is given to the ally like any unit (%s)" % str(_keys(CState.army(g1, int(theirs["id"])))))
+	# Auto-resolve: the wagon is a little strength and a missile bonus.
+	var arch := {"units": [{"t": "archer", "n": 80, "ak": "fire_arrows"}]}
+	var with_w := {"units": [{"t": "archer", "n": 80, "ak": "fire_arrows"}, {"t": "wagon2", "n": 8}]}
+	var s0 := CState.strength(arch)
+	var w2 := UT.index_of("wagon2")
+	var s1 := CState.strength(with_w)
+	_check(s1 == s0 + 8 * UT.price_of(w2) / UT.size_of(w2) * UT.stat(w2, "str_pct") / 100 + s0 * UT.wagon_stat(1, "bonus_pct") / 100,
+		"auto-resolve strength: archers %d, with a wagon %d" % [s0, s1])
+	# A battle with the wagon: the formula, and the scenario (its army's kinds).
+	var sb := _new6([rome])
+	sb["armies"] = []
+	_italy(sb, rome)
+	var am := _put(sb, rome, c0, ["heavy", "archer", "wagon"])
+	am["units"][1]["ak"] = "fire_arrows"
+	var en := _put(sb, _f("epirus"), c0, ["spear", "spear"])
+	var b := {"id": 1, "r": lat, "att": [int(am["id"])], "def": [int(en["id"])], "reinf": [], "att_f": rome,
+		"def_f": _f("epirus"), "kind": "field", "settlement": 0}
+	var fo := CBattle.formula(CState.copy(sb), b)
+	_check(fo.has("winner") and (fo["units"] as Array).size() == 5, "auto-resolve with a wagon (formula: %d unit rows)" % (fo["units"] as Array).size())
+	var built := CBattle.build(sb, b, rome)
+	var sc: Dictionary = built["scenario"]
+	var wu: Dictionary = {}
+	var au: Dictionary = {}
+	for ud in sc["units"]:
+		if int(ud["type"]) == UT.index_of("wagon"):
+			wu = ud
+		if int(ud["type"]) == UT.ARCHER:
+			au = ud
+	_check(int(au.get("ak", -1)) == UT.ammo_index("fire_arrows") and str(wu.get("aks", [])) == str([UT.ammo_index("fire_arrows")]),
+		"the battle: the archers' kind and the wagon's stock of it (%s / %s)" % [str(au.get("ak", -1)), str(wu.get("aks", []))])
+	var sim := BattleSim.new()
+	sim.setup(sc, int(built["seed"]))
+	var q: int = sim.n_eq - 1
+	_check(sim.n_eq == 1 and sim.q_kind[q] == BattleSim.EQ_WAGON and sim.wagon_stock(q, UT.ammo_index("fire_arrows")) > 0,
+		"the sim: a wagon with fire arrows in its stock")
+	for t in 200:
+		sim.step()
+	_check(sim.tick == 200, "the battle with a wagon runs")
 
 
 func _keys(a: Dictionary) -> Array:

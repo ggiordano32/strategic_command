@@ -121,6 +121,14 @@ const ORDER_WITHDRAW := 7
 const ORDER_WITHDRAW_ALL := 8
 const ORDER_REFILL := 10
 const ORDER_PICKUP := 14
+const ORDER_AMMO := 16
+const ORDER_FORAGE := 17
+const ORDER_DROP := 15
+const EQ_WAGON := 3            # (BattleSim's siege equipment kinds and states)
+const Q_GROUND := 0
+const Q_CARRIED := 1
+const Q_WRECKED := 3
+const WAGON_TAKE_R := 60 * M   # a wagon crew without its wagon takes up one on the ground this near
 const PICK_ENG := 1 << 16      # (BattleSim.PICK_ENG: u_pick of a unit going to take up engines)
 const ENGINE_TAKE_R := 60 * M  # missile units out of ammunition take up their side's abandoned engines this near
 const FRONT_ARC := 170
@@ -464,9 +472,14 @@ static func _plan(sim, side: int) -> Dictionary:
 	return {"cx": ox, "cy": oy, "face": face, "fx": fx, "fy": fy, "gap": gap, "ex": ex, "ey": ey}
 
 
-## Line infantry (infantry or pikes).
+## Line infantry (infantry or pikes; not a wagon's crew).
 static func _is_foot(sim, u: int) -> bool:
-	return sim.u_cls[u] == UT.CLS_INF or sim.u_cls[u] == UT.CLS_PIKE
+	return (sim.u_cls[u] == UT.CLS_INF or sim.u_cls[u] == UT.CLS_PIKE) and not is_wagon(sim, u)
+
+
+## Unit u is an ammunition wagon's crew (kept out of the line: docs/AI.md 18).
+static func is_wagon(sim, u: int) -> bool:
+	return UT.stat(sim.u_otype[u], "wagon") >= 0
 
 
 static func _bbox_gap(sim, a: int, b: int) -> int:
@@ -501,6 +514,8 @@ static func _issue_line(sim, side: int, plan: Dictionary, cx: int, cy: int, depl
 		if not deploy and sim.u_ai[u] != A_LINE and sim.u_ai[u] != A_HOLD and sim.u_ai[u] != A_ART \
 				and sim.u_ai[u] != A_RESV:
 			continue
+		if is_wagon(sim, u):
+			continue  # (the wagon keeps behind the army: wagon_think)
 		var c: int = sim.u_cls[u]
 		if kn[AP.SK_RESERVE] > 0 and _sk_reserve_slot(sim, u, deploy, kn):
 			resv.append(u)
@@ -721,6 +736,9 @@ static func _unit_think(sim, u: int) -> void:
 	var cls: int = sim.u_cls[u]
 	var mode: int = sim.u_ai[u]
 	var kn := AP.of(sim, side)
+	if is_wagon(sim, u):
+		wagon_think(sim, u, kn)
+		return
 	# Badly mauled: fall back behind the line once.
 	if mode != A_RETIRE and sim.u_alive[u] * 100 < sim.u_count0[u] * kn[AP.RETIRE_ALIVE_PCT] \
 			and sim.u_morale[u] < kn[AP.RETIRE_MORALE]:
@@ -1199,13 +1217,20 @@ static func _missile_think(sim, u: int, phase: int) -> void:
 		_count(sim, side, AP.C_MISSILE_CAUGHT)
 	if sim.u_skirm[u] == 0 and kn[AP.MIS_SKIRM] != 0:
 		_order(sim, u, {"type": ORDER_SKIRMISH, "on": 1}, 20)
+	if sim.u_forage[u] != 0:
+		return  # making missiles in the woods (the sim stops it if attacked)
+	if sim.u_ammo[u] > 0 and resupply(sim, u, kn):
+		return
 	if sim.u_ammo[u] <= 0:
-		# Out of ammunition: finish off routers nearby, take up engines its
-		# side left near by, otherwise keep clear.
+		# Out of ammunition: finish off routers nearby, refill at a wagon of
+		# ours or forage in the woods, take up engines its side left near by,
+		# otherwise keep clear.
 		var r := _nearest_routing(sim, u, kn[AP.MIS_ROUTER_R])
 		if r >= 0:
 			if sim.u_order[u] != O_ATTACK or sim.u_target[u] != r:
 				_attack(sim, u, r, 1)
+		elif resupply(sim, u, kn) or forage(sim, u, kn):
+			pass
 		elif _take_engines(sim, u):
 			pass
 		elif sim.u_ai[u] != A_RETIRE and phase == P_ENGAGE:
@@ -1214,7 +1239,7 @@ static func _missile_think(sim, u: int, phase: int) -> void:
 	if kn[AP.SK_MIS_EARLY_R] > 0 and phase == P_ADVANCE and sim.u_ai[u] == A_LINE and _sk_mis_early(sim, u, kn):
 		return
 	# Hold fire unless an unengaged enemy is in range.
-	var rng := UT.stat(sim.u_type[u], "m_range")
+	var rng: int = sim.mrange(u)
 	var clean := kn[AP.MIS_CLEAN] == 0  # (0: fire at will regardless)
 	for o in sim.n_units:
 		if clean:
@@ -1250,6 +1275,7 @@ static func _missile_think(sim, u: int, phase: int) -> void:
 		_set_mode(sim, u, A_ATTACK)
 	if kn[AP.SK_FOCUS] != 0:
 		_sk_focus(sim, u, kn)
+	ammo_pick(sim, u, kn)
 
 
 # ------------------------------------------------------------ artillery ---
@@ -1283,7 +1309,7 @@ static func _art_think(sim, u: int, phase: int) -> void:
 		return
 	if sim.u_order[u] == O_MOVE:
 		return  # moving up with the line: set up again on arrival
-	var rng := UT.stat(ty, "m_range")
+	var rng: int = sim.mrange(u)
 	var mn := UT.stat(ty, "m_min")
 	var bolt := UT.stat(ty, "m_kind") == 1
 	var best := -1
@@ -1324,6 +1350,7 @@ static func _art_think(sim, u: int, phase: int) -> void:
 			_attack(sim, u, best, 0)
 		if sim.u_fire[u] == 0:
 			_order(sim, u, {"type": ORDER_FIRE, "on": 1}, 21)
+		ammo_pick(sim, u, kn, best)
 		return
 	if sim.u_order[u] == O_ATTACK:
 		# Nothing safe to shoot: stop (an attack order shoots regardless).
@@ -1357,7 +1384,7 @@ static func _art_think(sim, u: int, phase: int) -> void:
 ## Battery u has an enemy unit within its range band.
 static func _art_has_target(sim, u: int) -> bool:
 	var ty: int = sim.u_type[u]
-	var rng := UT.stat(ty, "m_range")
+	var rng: int = sim.mrange(u)
 	var mn := UT.stat(ty, "m_min")
 	for o in sim.n_units:
 		if sim.u_side[o] != sim.u_side[u] and sim.u_state[o] == U_READY \
@@ -1369,7 +1396,7 @@ static func _art_has_target(sim, u: int) -> bool:
 ## Battery u has shots in its baggage and a working engine short of its
 ## full load (abandoned or wrecked engines cannot be refilled).
 static func _can_refill(sim, u: int) -> bool:
-	if sim.u_reserve[u] <= 0:
+	if sim.u_reserve[u] <= 0 and (sim.n_eq == 0 or sim.wagon_for(u) < 0):
 		return false
 	var full := UT.stat(sim.u_type[u], "m_ammo")
 	for k in sim.u_neng[u]:
@@ -1407,7 +1434,7 @@ static func _pick_guard(sim, side: int, b: int) -> void:
 		if sim.u_side[u] != side or sim.u_state[u] != U_READY:
 			continue
 		var c: int = sim.u_cls[u]
-		if c != UT.CLS_INF:
+		if c != UT.CLS_INF or is_wagon(sim, u):
 			if c == UT.CLS_PIKE:
 				melee += 1
 			continue
@@ -2573,6 +2600,215 @@ static func _watch_cav(sim, u: int, r: int) -> void:
 			sim.dbg_cav_seen[u] = sim.tick
 	else:
 		sim.dbg_cav_seen[u] = -1
+
+
+# ---------------------------------------------------------------- resupply ---
+# docs/AI.md 18. The wagon keeps WG_BACK behind the army's centre (or goes
+# to a battery out of shots), draws back from enemies within WG_FLEE and
+# calls the nearest free melee unit on enemies within WG_THREAT; missile
+# units below WG_EMPTY_PCT of their load go to a wagon of ours within
+# WG_RANGE that has their kind and refill; an empty missile unit in woods
+# with none forages (FORAGE_AI).
+
+## Wagon unit u (its crew) thinks.
+static func wagon_think(sim, u: int, kn: PackedInt32Array) -> void:
+	var side: int = sim.u_side[u]
+	var q: int = sim.u_carry[u]
+	if q < 0 or sim.q_kind[q] != EQ_WAGON:
+		# Without its wagon: take up the nearest one standing within reach.
+		if sim.u_pick[u] >= 0:
+			return
+		var best := -1
+		var bd := 0
+		for q2 in sim.n_eq:
+			if sim.q_kind[q2] != EQ_WAGON or sim.q_state[q2] != Q_GROUND:
+				continue
+			var d := _d(sim.q_x[q2] - sim.u_cx[u], sim.q_y[q2] - sim.u_cy[u])
+			if d <= WAGON_TAKE_R and (best < 0 or d < bd) and sim.pickup_refusal(sim, u, q2) == "":
+				best = q2
+				bd = d
+		if best >= 0:
+			_order(sim, u, {"type": ORDER_PICKUP, "equip": best, "run": 0}, 25)
+		return
+	var qx: int = sim.q_x[q]
+	var qy: int = sim.q_y[q]
+	var thr := -1
+	var td := 0
+	for o in sim.n_units:
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY:
+			continue
+		var c: int = sim.u_cls[o]
+		if c == UT.CLS_MISSILE or c == UT.CLS_ART:
+			continue
+		var d := _d(sim.u_cx[o] - qx, sim.u_cy[o] - qy)
+		if thr < 0 or d < td:
+			thr = o
+			td = d
+	if thr >= 0 and kn[AP.WG_THREAT] > 0 and td <= kn[AP.WG_THREAT]:
+		_wagon_guard(sim, u, thr)
+	var back_dir := 1 if side == 0 else -1  # toward its own edge
+	var face := 768 if side == 0 else 256
+	if thr >= 0 and td <= kn[AP.WG_FLEE]:
+		var ny: int = clampi(sim.u_ay[u] + back_dir * 30 * M, 6 * M, sim.field_h - 6 * M)
+		_move(sim, u, sim.u_ax[u], ny, face, _width(sim, u), 0, 2)
+		return
+	# A battery of ours out of shots with an empty baggage: to it.
+	var bat := -1
+	var bbd := 0
+	if kn[AP.WG_EMPTY_PCT] > 0:
+		for b in sim.n_units:
+			if sim.u_side[b] != side or sim.u_state[b] != U_READY or sim.u_neng[b] <= 0 \
+					or UT.stat(sim.u_type[b], "fixed") != 0 or sim.u_reserve[b] > 0:
+				continue
+			var full: int = sim.u_neng[b] * UT.stat(sim.u_type[b], "m_ammo")
+			if sim.u_ammo[b] * 100 >= full * kn[AP.WG_EMPTY_PCT]:
+				continue
+			var d := _d(sim.u_cx[b] - qx, sim.u_cy[b] - qy)
+			if d <= kn[AP.WG_RANGE] and (bat < 0 or d < bbd):
+				bat = b
+				bbd = d
+	if bat >= 0:
+		var bx: int = sim.u_cx[bat]
+		var by: int = clampi(sim.u_cy[bat] + back_dir * 8 * M, 6 * M, sim.field_h - 6 * M)
+		if _d(bx - sim.u_ax[u], by - sim.u_ay[u]) > 6 * M:
+			_move(sim, u, bx, by, face, _width(sim, u), 0, 2)
+		return
+	# Behind the army's centre.
+	var plan := _plan(sim, side)
+	if plan.is_empty():
+		return
+	var fx: int = plan["fx"]
+	var fy: int = plan["fy"]
+	var px: int = clampi(plan["cx"] - (fx * kn[AP.WG_BACK] / FM.TRIG_ONE), 6 * M, sim.field_w - 6 * M)
+	var py: int = clampi(plan["cy"] - (fy * kn[AP.WG_BACK] / FM.TRIG_ONE), 6 * M, sim.field_h - 6 * M)
+	if _d(px - sim.u_ax[u], py - sim.u_ay[u]) > 10 * M:
+		_move(sim, u, px, py, plan["face"], _width(sim, u), 0, 2)
+
+
+## Enemy unit t comes for the wagon of unit w: the nearest free melee unit
+## of ours (not fighting, not falling back, not a wagon) within 120 m goes
+## for it.
+static func _wagon_guard(sim, w: int, t: int) -> void:
+	var side: int = sim.u_side[w]
+	var best := -1
+	var bd := 0
+	for f in sim.n_units:
+		if sim.u_side[f] != side or sim.u_state[f] != U_READY or f == w or is_wagon(sim, f):
+			continue
+		var c: int = sim.u_cls[f]
+		if c == UT.CLS_MISSILE or c == UT.CLS_ART or sim.u_fighting[f] > 0 or sim.u_ai[f] == A_RETIRE:
+			continue
+		if sim.u_order[f] == O_ATTACK and sim.u_target[f] == t:
+			return  # someone is on it
+		var d := _d(sim.u_cx[f] - sim.u_cx[t], sim.u_cy[f] - sim.u_cy[t])
+		if d <= 120 * M and (best < 0 or d < bd):
+			best = f
+			bd = d
+	if best >= 0:
+		_attack(sim, best, t, 1)
+
+
+## Missile unit u low on missiles (below WG_EMPTY_PCT of its load): to a
+## wagon of ours within WG_RANGE with its kind, then refill there; true
+## while it does (it stays refilling until threatened or full).
+static func resupply(sim, u: int, kn: PackedInt32Array) -> bool:
+	if kn[AP.WG_EMPTY_PCT] <= 0 or sim.n_eq == 0 or sim.u_cls[u] != UT.CLS_MISSILE:
+		return false
+	if sim.u_fighting[u] > 0 or sim.u_carry[u] >= 0 or sim.u_wall[u] > 0:
+		return false
+	if sim.u_refill[u] != 0 or sim.u_rprog[u] > 0:
+		if _art_threatened(sim, u):
+			_order(sim, u, {"type": ORDER_REFILL, "on": 0}, 23)
+			return false
+		return true
+	var ty: int = sim.u_type[u]
+	var full: int = sim.u_alive[u] * UT.stat(ty, "m_ammo")
+	if full <= 0 or sim.u_ammo[u] * 100 >= full * kn[AP.WG_EMPTY_PCT] or _art_threatened(sim, u):
+		return false
+	var kstd := UT.stat(ty, "m_ak")
+	var side: int = sim.u_side[u]
+	var best := -1
+	var bd := 0
+	for q in sim.n_eq:
+		if sim.q_kind[q] != EQ_WAGON or sim.q_state[q] == Q_WRECKED or sim.wagon_stock(q, kstd) <= 0:
+			continue
+		if sim.q_state[q] == Q_CARRIED and sim.u_side[sim.q_unit[q]] != side:
+			continue
+		if sim.q_state[q] == Q_GROUND and sim.q_side[q] != side:
+			continue  # (an enemy's wagon left standing: not the AI's habit)
+		var d := _d(sim.q_x[q] - sim.u_cx[u], sim.q_y[q] - sim.u_cy[u])
+		if d <= kn[AP.WG_RANGE] and (best < 0 or d < bd):
+			best = q
+			bd = d
+	if best < 0:
+		return false
+	if sim.wagon_for(u) == best:
+		_order(sim, u, {"type": ORDER_REFILL, "on": 1}, 23)
+		return true
+	# To the wagon, on its near side.
+	var dx: int = sim.u_cx[u] - sim.q_x[best]
+	var dy: int = sim.u_cy[u] - sim.q_y[best]
+	var dd := maxi(_d(dx, dy), 1)
+	var tx: int = clampi(sim.q_x[best] + dx * 6 * M / dd, 4 * M, sim.field_w - 4 * M)
+	var tyy: int = clampi(sim.q_y[best] + dy * 6 * M / dd, 4 * M, sim.field_h - 4 * M)
+	_move(sim, u, tx, tyy, sim.u_face[u], _width(sim, u), 0, 3)
+	return true
+
+
+## Missile unit u with nothing left, standing in woods, no enemy near:
+## it makes missiles there (FORAGE_AI). True if it forages.
+static func forage(sim, u: int, kn: PackedInt32Array) -> bool:
+	if kn[AP.FORAGE_AI] == 0 or sim.veg_on == 0:
+		return false
+	if sim.u_forage[u] != 0:
+		return true
+	if sim.forage_refusal(sim, u) != "" or _art_threatened(sim, u):
+		return false
+	_order(sim, u, {"type": ORDER_FORAGE, "on": 1}, 28)
+	return true
+
+
+# ------------------------------------------------------ ammunition kinds ---
+# docs/AI.md 18. A unit with a special ammunition kind shoots it at the
+# targets its fields suit (no per-kind code): a fire kind at wooden things
+# and, with any fear or fire, at wavering units; a harder-hitting kind
+# (damage or pierce above the standard) at armour and batteries; a bursting
+# kind at big units and batteries. Otherwise the standard kind. Knobs AK_*.
+
+## Unit u's choice of ammunition against its target t (default: what it
+## shoots at or is told to attack); orders the change if any.
+static func ammo_pick(sim, u: int, kn: PackedInt32Array, t: int = -1) -> void:
+	var sk: int = sim.spec_kind(u)
+	if sk < 0:
+		return
+	var want := 0
+	if kn[AP.AK_USE] != 0:
+		if t < 0:
+			t = sim.u_target[u] if sim.u_order[u] == O_ATTACK else sim.u_ftarget[u]
+		if t < 0 or sim.u_state[t] != U_READY:
+			return  # nothing to choose for: keep what it has
+		want = 1 if ammo_suits(sim, sk, t, kn) else 0
+	if sim.u_akind[u] != want:
+		_order(sim, u, {"type": ORDER_AMMO, "on": want}, 27)
+
+
+## Ammunition kind k suits shooting at unit t (by the kind's fields).
+static func ammo_suits(sim, k: int, t: int, kn: PackedInt32Array) -> bool:
+	var fire := UT.ammo_stat(k, "fire")
+	var art: bool = sim.u_neng[t] > 0
+	var carry: bool = sim.sg_on != 0 and sim.u_carry[t] >= 0
+	if fire > 0 and kn[AP.AK_FIRE_WOOD] != 0 and (art or carry):
+		return true
+	var ot: int = sim.u_otype[t]
+	if (fire > 0 or UT.ammo_stat(k, "fear") > 0) \
+			and sim.u_morale[t] * 100 < UT.stat(ot, "morale") * kn[AP.AK_WAVER_PCT]:
+		return true
+	if UT.ammo_stat(k, "blast") > 0 and (art or sim.u_alive[t] >= kn[AP.AK_BLAST_MEN]):
+		return true
+	if (UT.ammo_stat(k, "dmg") > 100 or UT.ammo_stat(k, "pierce") > 100) \
+			and (art or UT.stat(ot, "armour") >= kn[AP.AK_ARMOUR]):
+		return true
+	return false
 
 
 static func _order(sim, u: int, o: Dictionary, k: int) -> void:

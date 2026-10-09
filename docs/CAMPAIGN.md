@@ -431,6 +431,18 @@ Caetrati / Elite, heavy Heavy / Scutarii / Guard, javelin 1-3, spear 1-2, cav
 1-2. Gauls light Light / Warband / Elite, heavy Heavy / Veteran / Gallic
 Nobles, spear 1-2, javelin 1-2, archer 1, cav Cav / Veteran / Noble Cavalry.
 Independents: spear, archer, heavy, light 1-3 (garrisons only).
+Ammunition wagons (line "siege", 2026-10-09; docs/DESIGN.md "The
+ammunition wagon"): Hand Cart 200 (Workshop 1), Ammunition Wagon 320
+(Workshop 2, Stables 1), Supply Train 450 (Workshop 2, Stables 2), in
+every roster with engines (Iberians and Gauls: the cart); 20 % of the
+price counts as strength, plus the tier's % of the army's missile and
+artillery strength (`CState.strength`). Special ammunition kinds
+(`CData.AMMO_AVAIL`): a new unit carries the first kind for its weapon
+that its faction has and its recruiting city's building allows (fire
+arrows: Greeks, Syracuse, Carthage with a Range 2; fire javelins: Iberians,
+Gauls, Range 2; heavy bolts: Rome, Syracuse, Workshop 1; explosive:
+Syracuse, Workshop 2; fire pots: Rome, Carthage, Macedon, Greeks, Syracuse,
+Workshop 2), as the optional unit key `"ak"` (no format change).
 
 Tier balance (`tests/matchups.gd -- --only=tiers --seeds=12`, both units
 advancing into each other; equal price = the tier-1 side gets proportionally

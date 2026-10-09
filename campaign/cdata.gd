@@ -190,35 +190,36 @@ const INDEPENDENT_COLOR := "8c8c84"
 const ROSTERS := {
 	"rome": {"heavy": ["heavy", "principes", "extraordinarii"], "light": ["light", "light2", ""],
 		"spear": ["spear", "spear2", "triarii"], "javelin": ["javelin", "javelin2", "javelin3"],
-		"cav": ["cav", "cav2", ""], "bolt": ["bolt"], "stone": ["stone"]},
+		"cav": ["cav", "cav2", ""], "siege": ["wagon", "wagon2", "wagon3"], "bolt": ["bolt"], "stone": ["stone"]},
 	"carthage": {"heavy": ["heavy", "heavy2", ""], "light": ["light", "light2", "light3"],
 		"spear": ["spear", "spear2", "sacred_band"], "archer": ["archer", "archer2", ""],
 		"javelin": ["javelin", "javelin2", "javelin3"], "cav": ["cav", "cav2", "cav3"],
-		"bolt": ["bolt"], "stone": ["stone"]},
+		"siege": ["wagon", "wagon2", "wagon3"], "bolt": ["bolt"], "stone": ["stone"]},
 	"macedon": {"pike": ["pike", "phalangites", "silver_shields"], "light": ["light", "light2", ""],
 		"archer": ["archer", "archer2", "archer3"], "javelin": ["javelin", "javelin2", ""],
-		"cav": ["cav", "cav2", "companions"], "bolt": ["bolt"], "stone": ["stone"]},
+		"cav": ["cav", "cav2", "companions"], "siege": ["wagon", "wagon2", "wagon3"], "bolt": ["bolt"], "stone": ["stone"]},
 	"epirus": {"pike": ["pike", "pike2", "chaonians"], "spear": ["spear", "spear2", ""],
 		"light": ["light", "light2", ""], "archer": ["archer", "archer2", ""],
-		"javelin": ["javelin", "javelin2", ""], "cav": ["cav", "cav2", "agema"], "bolt": ["bolt"]},
+		"javelin": ["javelin", "javelin2", ""], "cav": ["cav", "cav2", "agema"], "siege": ["wagon", "wagon2", "wagon3"], "bolt": ["bolt"]},
 	"greeks": {"spear": ["spear", "hoplites", "picked_hoplites"], "pike": ["pike", "pike2", ""],
 		"archer": ["archer", "archer2", "cretans"], "light": ["light", "light2", ""],
 		"javelin": ["javelin", "javelin2", "javelin3"], "cav": ["cav", "cav2", ""],
-		"bolt": ["bolt"], "stone": ["stone"]},
+		"siege": ["wagon", "wagon2", "wagon3"], "bolt": ["bolt"], "stone": ["stone"]},
 	"syracuse": {"spear": ["spear", "hoplites", "picked_hoplites"], "heavy": ["heavy", "heavy2", ""],
 		"archer": ["archer", "archer2", "cretans"], "javelin": ["javelin", "javelin2", ""],
-		"light": ["light", "light2", ""], "cav": ["cav", "cav2", ""], "bolt": ["bolt"], "stone": ["stone"]},
+		"light": ["light", "light2", ""], "cav": ["cav", "cav2", ""], "siege": ["wagon", "wagon2", "wagon3"], "bolt": ["bolt"], "stone": ["stone"]},
 	"iberians": {"light": ["light", "caetrati", "light3"], "heavy": ["heavy", "scutarii", "heavy3"],
 		"javelin": ["javelin", "javelin2", "javelin3"], "spear": ["spear", "spear2", ""],
-		"cav": ["cav", "cav2", ""]},
+		"cav": ["cav", "cav2", ""], "siege": ["wagon", "", ""]},
 	"gauls": {"light": ["light", "warband", "light3"], "heavy": ["heavy", "heavy2", "gallic_nobles"],
 		"spear": ["spear", "spear2", ""], "javelin": ["javelin", "javelin2", ""],
-		"archer": ["archer", "", ""], "cav": ["cav", "cav2", "noble_cav"]},
+		"archer": ["archer", "", ""], "cav": ["cav", "cav2", "noble_cav"], "siege": ["wagon", "", ""]},
 	"independent": {"spear": ["spear", "spear2", "spear3"], "archer": ["archer", "archer2", "archer3"],
 		"heavy": ["heavy", "heavy2", "heavy3"], "light": ["light", "light2", "light3"]},
 }
 ## Display order of lines in recruitment lists.
-const LINE_ORDER: Array[String] = ["heavy", "light", "spear", "pike", "archer", "javelin", "cav", "bolt", "stone"]
+const LINE_ORDER: Array[String] = ["heavy", "light", "spear", "pike", "archer", "javelin", "cav", "bolt", "stone",
+	"siege"]
 
 ## Starting wars (all other pairs start at peace without trade).
 const START_WARS: Array = [["rome", "epirus"], ["carthage", "syracuse"]]
@@ -237,7 +238,7 @@ const CHAINS: Array[Dictionary] = [
 	{"key": "stables", "name": "Stables", "levels": 3, "cost": [500, 1000, 1800], "turns": [1, 2, 3],
 		"desc": "Cavalry of tier = level; faster replenishment"},
 	{"key": "workshop", "name": "Workshop", "levels": 2, "cost": [600, 1200], "turns": [2, 3],
-		"desc": "Level 1 bolt throwers, level 2 stone throwers"},
+		"desc": "Level 1 bolt throwers and the hand cart (ammunition), level 2 stone throwers and ammunition wagons (with Stables); heavy bolts, fire pots and explosive stones for some peoples"},
 	{"key": "walls", "name": "Walls", "levels": 3, "cost": [400, 900, 1600], "turns": [2, 2, 3],
 		"desc": "+1 garrison unit, better garrison and higher ground for the defenders per level"},
 ]
@@ -250,9 +251,27 @@ const WORKSHOP := 5
 const WALLS := 6
 ## Military building per line.
 const LINE_CHAIN := {"heavy": BARRACKS, "light": BARRACKS, "spear": BARRACKS, "pike": BARRACKS,
-	"archer": RANGE, "javelin": RANGE, "cav": STABLES, "bolt": WORKSHOP, "stone": WORKSHOP}
+	"archer": RANGE, "javelin": RANGE, "cav": STABLES, "bolt": WORKSHOP, "stone": WORKSHOP, "siege": WORKSHOP}
+## Buildings a unit type needs where they differ from its line's chain at
+## its tier (the ammunition wagons: the Workshop, and Stables for the
+## horses): key -> [[chain, level], ...], all of them.
+const UNIT_NEEDS := {"wagon": [[WORKSHOP, 1]], "wagon2": [[WORKSHOP, 2], [STABLES, 1]],
+	"wagon3": [[WORKSHOP, 2], [STABLES, 2]]}
 ## Workshop level needed per artillery line (other lines: level = tier).
 const ART_LEVEL := {"bolt": 1, "stone": 2}
+## Special ammunition kinds (sim/unit_types.gd AMMO; docs/DESIGN.md
+## "Ammunition kinds"): [kind key, factions (keys), building chain, level].
+## A unit recruited by a faction listed, where that building stands at that
+## level, carries the first row that rides on its weapon (CRules.ammo_for),
+## stored on its unit entry as "ak" (optional key). The Range is the
+## fletchers' chain; the Workshop makes the engines' shot.
+const AMMO_AVAIL: Array = [
+	["fire_arrows", ["greeks", "syracuse", "carthage"], RANGE, 2],
+	["fire_javelins", ["iberians", "gauls"], RANGE, 2],
+	["heavy_bolts", ["rome", "syracuse"], WORKSHOP, 1],
+	["explosive", ["syracuse"], WORKSHOP, 2],
+	["fire_pots", ["rome", "carthage", "macedon", "greeks", "syracuse"], WORKSHOP, 2],
+]
 ## Buildings standing at the start: capitals and the other regions per level.
 const START_CAPITAL_CITY := [[FARM, 1], [BARRACKS, 1], [RANGE, 1], [STABLES, 1], [MARKET, 1]]
 const START_CAPITAL_TOWN := [[FARM, 1], [BARRACKS, 1], [RANGE, 1], [STABLES, 1]]

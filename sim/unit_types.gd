@@ -74,6 +74,14 @@ extends RefCounted
 ##                places it on a tower of a walls-2/3 city (BattleSim
 ##                _siege_towers) and it is gone when its crew is dead or its
 ##                engine wrecked
+## Ammunition (docs/DESIGN.md "Ammunition kinds"):
+##   m_ak         the standard ammunition kind its weapon shoots (a row of
+##                AMMO, -1 none); special kinds ride on it (AMMO "base")
+##   wagon        an ammunition wagon's crew: the row of WAGONS (tier) of the
+##                wagon it comes with (-1 none; docs/DESIGN.md "The
+##                ammunition wagon")
+##   str_pct      campaign: % of its price per man that counts as fighting
+##                strength (auto-resolve, the AI); a wagon's crew little
 
 ## Display only (never read by the sim, not hashed): icon (marker / card
 ## symbol, see game/unit_icons.gd), role, desc, good_vs, weak_vs (unit book).
@@ -105,7 +113,7 @@ const DEFAULTS := {
 	"crew": 0, "crew_min": 0, "m_kind": 0, "m_min": 0, "m_pierce": 0, "m_plough": 0,
 	"m_blast": 0, "m_fear": 0, "arc": 0, "traverse": 0, "deploy": 0, "e_hp": 0,
 	"climb": 15, "m_hgain": 0, "m_apex": 0, "m_reserve": 0, "m_refill": 0,
-	"fixed": 0,
+	"fixed": 0, "m_ak": -1, "wagon": -1, "str_pct": 100,
 }
 
 ## The nine base types (tier 1 of their line). The sandbox battles use
@@ -262,6 +270,7 @@ const BASE: Array[Dictionary] = [
 		"cost": 5,
 		"climb": 14,
 		"m_hgain": 150,     # +15 m of range from 10 m higher
+		"m_ak": 0,          # arrows
 	},
 	{
 		"key": "javelin",
@@ -303,6 +312,7 @@ const BASE: Array[Dictionary] = [
 		"climb": 13,
 		"m_hgain": 100,
 		"m_apex": 10,       # thrown in a low arc: clears a man-high bump, not a crest
+		"m_ak": 1,          # javelins
 	},
 	{
 		"key": "cav",
@@ -390,6 +400,7 @@ const BASE: Array[Dictionary] = [
 		"climb": 40,         # dragging engines uphill is slow
 		"m_hgain": 60,
 		"m_apex": 2,        # flat: any crest between engine and target stops it
+		"m_ak": 2,          # bolts
 	},
 	{
 		"key": "stone",
@@ -446,6 +457,7 @@ const BASE: Array[Dictionary] = [
 		"cost": 30,
 		"climb": 45,
 		"m_hgain": 150,
+		"m_ak": 3,          # stones
 	},
 ]
 
@@ -580,7 +592,7 @@ const SPECIAL: Array[Dictionary] = [
 		"m_damage": 120, "m_ap": 80, "m_ammo": 20, "m_reload": 60, "m_spread": 10, "m_spread0": 300,
 		"m_speed": 5632, "m_arc": 0, "m_pierce": 5, "m_plough": 25 * 1024, "m_fear": 15,
 		"arc": 512, "traverse": 6, "deploy": 1, "e_hp": 900, "cost": 0, "size": 4,
-		"m_hgain": 60, "m_apex": 2,
+		"m_hgain": 60, "m_apex": 2, "m_ak": 2,
 	},
 	{
 		"key": "tower_stone",
@@ -601,9 +613,60 @@ const SPECIAL: Array[Dictionary] = [
 		"m_damage": 130, "m_ap": 50, "m_ammo": 12, "m_reload": 150, "m_spread": 48, "m_spread0": 1536,
 		"m_speed": 2867, "m_arc": 1, "m_lead": 90, "m_long": 50, "m_pierce": 6, "m_plough": 9 * 1024,
 		"m_blast": 900, "m_fear": 60, "arc": 512, "traverse": 4, "deploy": 1, "e_hp": 1200, "cost": 0,
-		"size": 6, "m_hgain": 150,
+		"size": 6, "m_hgain": 150, "m_ak": 3,
 	}
 ]
+
+## Ammunition wagons (docs/DESIGN.md "The ammunition wagon"): recruited
+## units (line "siege", the Workshop; appended after SPECIAL so every other
+## index is unchanged) whose men are the crew of a wagon (WAGONS row
+## "wagon"): unarmed but for knives, they pull, drive and guard it. The
+## wagon itself is a piece of equipment in the battle (BattleSim EQ_WAGON).
+const WAGON_CREW := {
+	"cls": CLS_INF, "sprite": 6, "icon": 9, "role": "Ammunition wagon",
+	"good_vs": "Nothing in a fight: it keeps the archers, javelinmen and engines shooting.",
+	"weak_vs": "Anything that reaches it, above all from the flank or rear; fire missiles.",
+	"attack": 8, "defence": 10, "armour": 2, "shield": 0, "mshield": 0, "damage": 14, "reach": 1024,
+	"mass": 70, "walk": 133, "run": 380, "hp": 70, "cooldown": 12, "morale": 380,
+	"file_sp": 1229, "rank_sp": 1331, "climb": 18,
+	"str_pct": 20,  # (its price is mostly the wagon: little fighting strength)
+}
+const WAGON_ROWS: Array[Dictionary] = [
+	{"key": "wagon", "name": "Hand Cart", "short": "Cart", "tier": 1, "wagon": 0, "size": 8, "cost": 25,
+		"desc": "A hand cart of arrows, javelins and shot pulled by its eight men at walking pace or slower. Missile units and batteries standing near it refill from its stock (Refill). Any foot unit can take it over (tap it) and pull it, fighting badly meanwhile; it burns."},
+	{"key": "wagon2", "name": "Ammunition Wagon", "short": "Wagon", "tier": 2, "wagon": 1, "size": 8, "cost": 40,
+		"desc": "A one-horse wagon with half as much again: it keeps up with marching foot while the horse lives (a horse shot down leaves it at the crew's pace). Missile units and batteries standing near it refill from its stock (Refill). Any foot unit can take it over; it burns."},
+	{"key": "wagon3", "name": "Supply Train", "short": "Train", "tier": 3, "wagon": 2, "size": 10, "cost": 45,
+		"desc": "A two-horse wagon with more than twice the hand cart's stock that moves at a trot (one horse down: a marching pace). Missile units and batteries standing near it refill from its stock (Refill). Any foot unit can take it over; it burns."},
+]
+## Wagon tiers (the hand cart, one horse, two horses), all ints:
+##   horses     horses in the traces (each a hit box: shot down, the wagon slows)
+##   pace       speed (sim units per tick) with 0, 1, 2 horses alive
+##   hp         the wagon's hit points (bolts, stones, fire)
+##   horse_hp   each horse's hit points
+##   stock_pct  stock carried, % of each standard kind's AMMO "wagon" amount
+##              (a special kind it carries: that x the kind's share)
+##   bonus_pct  auto-resolve: the army's missile and artillery strength +this %
+const WAGONS: Array[Dictionary] = [
+	{"horses": 0, "pace": [92, 92, 92], "hp": 600, "horse_hp": 0, "stock_pct": 100, "bonus_pct": 6},
+	{"horses": 1, "pace": [92, 133, 133], "hp": 800, "horse_hp": 240, "stock_pct": 150, "bonus_pct": 9},
+	{"horses": 2, "pace": [92, 133, 205], "hp": 1000, "horse_hp": 240, "stock_pct": 220, "bonus_pct": 12},
+]
+
+
+## Field of wagon tier w (0 if out of range); "pace" with h horses alive.
+static func wagon_stat(w: int, field: String) -> int:
+	if w < 0 or w >= WAGONS.size():
+		return 0
+	return int(WAGONS[w].get(field, 0))
+
+
+static func wagon_pace(w: int, horses: int) -> int:
+	if w < 0 or w >= WAGONS.size():
+		return 0
+	var p: Array = WAGONS[w]["pace"]
+	return int(p[clampi(horses, 0, p.size() - 1)])
+
 
 ## Every type: the base rows, the derived tier rows, then SPECIAL.
 static var TYPES: Array[Dictionary] = _build_types()
@@ -653,6 +716,14 @@ static func _build_types() -> Array[Dictionary]:
 		var row: Dictionary = sp.duplicate()
 		row["base"] = out.size()
 		row["tier"] = 1
+		row["line"] = "siege"
+		row["price"] = int(row["cost"]) * int(row["size"])
+		out.append(row)
+	for wr in WAGON_ROWS:
+		var row: Dictionary = WAGON_CREW.duplicate()
+		for k in wr:
+			row[k] = wr[k]
+		row["base"] = out.size()
 		row["line"] = "siege"
 		row["price"] = int(row["cost"]) * int(row["size"])
 		out.append(row)
@@ -713,3 +784,105 @@ static func text(ty: int, key: String) -> String:
 
 static func cls(ty: int) -> int:
 	return stat(ty, "cls")
+
+
+## ------------------------------------------------------ ammunition kinds ---
+## docs/DESIGN.md "Ammunition kinds". A missile weapon shoots its standard
+## kind (the type's m_ak); a unit may also carry one special kind that rides
+## on the same weapon (its "base"), a fixed share of its load, and the player
+## (or the AI) chooses which it shoots (BattleSim ORDER_AMMO). The sim copies
+## every field into packed arrays (t_k_*) and applies each generically: no
+## code branches on a kind. Which special kind a campaign unit carries comes
+## from campaign/cdata.gd AMMO_AVAIL (faction and building). All ints:
+##   base    -1: a standard kind; else the standard kind it replaces
+##   share   % of the load carried as this kind (special kinds)
+##   dmg     damage against men and engines, % of the weapon's
+##   obj     damage against gates, towers, rams, ladders and wagons, % of the weapon's
+##   ap      armour piercing: points added to the weapon's m_ap
+##   pierce  victims per shot (bolts, stones), % of the weapon's m_pierce
+##   range   % of the weapon's range
+##   rate    time to reload, % of the weapon's
+##   fear    morale lost by a unit for each man of it hit (artillery: added fright)
+##   blast   extra blast radius where it lands (sim units; stones)
+##   fire    % chance it sets a wooden thing it lands on alight (gate, tower,
+##           engine, ladders, ram, wagon); a man it hits sets his unit burning
+##   wagon   standard kinds: what a hand cart carries of it (WAGONS stock_pct)
+## Display only: key, name, short (the HUD toggle's word), desc.
+## Special kinds are never strictly better than the standard one: each pays
+## in range, rate or damage for what it adds (one-line reasons below).
+const AMMO: Array[Dictionary] = [
+	{"key": "arrows", "name": "Arrows", "short": "arrows", "base": -1, "share": 100, "dmg": 100, "obj": 100,
+		"ap": 0, "pierce": 100, "range": 100, "rate": 100, "fear": 0, "blast": 0, "fire": 0, "wagon": 1600,
+		"desc": "The bow's standard arrows."},
+	{"key": "javelins", "name": "Javelins", "short": "javelins", "base": -1, "share": 100, "dmg": 100, "obj": 100,
+		"ap": 0, "pierce": 100, "range": 100, "rate": 100, "fear": 0, "blast": 0, "fire": 0, "wagon": 240,
+		"desc": "Standard throwing javelins."},
+	{"key": "bolts", "name": "Bolts", "short": "bolts", "base": -1, "share": 100, "dmg": 100, "obj": 100,
+		"ap": 0, "pierce": 100, "range": 100, "rate": 100, "fear": 0, "blast": 0, "fire": 0, "wagon": 22,
+		"desc": "The bolt thrower's standard bolts."},
+	{"key": "stones", "name": "Stones", "short": "stones", "base": -1, "share": 100, "dmg": 100, "obj": 100,
+		"ap": 0, "pierce": 100, "range": 100, "rate": 100, "fear": 0, "blast": 0, "fire": 0, "wagon": 16,
+		"desc": "Plain dressed stones."},
+	# Fire arrows: 70 % damage, 85 % range, 125 % reload (lit before each
+	# shot) pay for a morale shock of 3 a man hit and fire (35 %).
+	{"key": "fire_arrows", "name": "Fire arrows", "short": "fire", "base": 0, "share": 33, "dmg": 70, "obj": 100,
+		"ap": 0, "pierce": 100, "range": 85, "rate": 125, "fear": 3, "blast": 0, "fire": 35,
+		"desc": "Pitch-soaked arrows, a third of the quiver: weaker and shorter than arrows, but they set gates, towers, engines, rams and wagons alight and a unit they burn loses heart."},
+	# Heavy bolts: +35 % damage, +10 armour piercing, 140 % victims and 150 %
+	# against towers and gates, paid for with 75 % range and 140 % reload.
+	{"key": "heavy_bolts", "name": "Heavy bolts", "short": "heavy", "base": 2, "share": 33, "dmg": 135, "obj": 150,
+		"ap": 10, "pierce": 140, "range": 75, "rate": 140, "fear": 0, "blast": 0, "fire": 0,
+		"desc": "Heavier bolts, a third of the load: they hit harder and go through more men and armour, at a shorter range and a slower rate."},
+	# Fire javelins: as fire arrows for the thrown kind (75 % damage, 85 %
+	# range, 120 % reload; fear 3, fire 35).
+	{"key": "fire_javelins", "name": "Fire javelins", "short": "fire", "base": 1, "share": 33, "dmg": 75, "obj": 100,
+		"ap": 0, "pierce": 100, "range": 85, "rate": 120, "fear": 3, "blast": 0, "fire": 35,
+		"desc": "Burning javelins, a third of the load: weaker and shorter, but they set wooden things alight and a unit they burn loses heart."},
+	# Fire pots: 200 % against gates and towers and fire (70 %), but only 55 %
+	# against men, 90 % range, 110 % reload; +30 fright.
+	{"key": "fire_pots", "name": "Fire pots", "short": "pots", "base": 3, "share": 33, "dmg": 55, "obj": 200,
+		"ap": 0, "pierce": 100, "range": 90, "rate": 110, "fear": 30, "blast": 0, "fire": 70,
+		"desc": "Clay pots of burning pitch, a third of the load: hard on gates, towers and wooden things, which they set alight; less against men."},
+	# Explosive: a 1.5 m wider burst against men and engines (+40 fright), but
+	# 50 % against walls, 85 % range, 125 % reload and a fifth of the load.
+	{"key": "explosive", "name": "Explosive stones", "short": "blast", "base": 3, "share": 20, "dmg": 100, "obj": 50,
+		"ap": 0, "pierce": 130, "range": 85, "rate": 125, "fear": 40, "blast": 1536, "fire": 0,
+		"desc": "Rare charges that burst where they land, a fifth of the load: a wide blast against men and engines, weak against walls, shorter and slower."},
+]
+## Fields of AMMO the sim reads, in t_k_* order (BattleSim._load_types).
+const AMMO_FIELDS: Array[String] = ["base", "share", "dmg", "obj", "ap", "pierce", "range", "rate", "fear",
+	"blast", "fire"]
+static var _ak_by_key := {}
+
+
+## Index of the ammunition kind with this key, -1 if none ("" too).
+static func ammo_index(key: String) -> int:
+	if _ak_by_key.is_empty():
+		for k in AMMO.size():
+			_ak_by_key[str(AMMO[k]["key"])] = k
+	return int(_ak_by_key.get(key, -1))
+
+
+## Field of ammunition kind k (0 if out of range).
+static func ammo_stat(k: int, field: String) -> int:
+	if k < 0 or k >= AMMO.size():
+		return 0
+	return int(AMMO[k].get(field, 0))
+
+
+static func ammo_text(k: int, field: String) -> String:
+	if k < 0 or k >= AMMO.size():
+		return ""
+	return str(AMMO[k].get(field, ""))
+
+
+## Special kinds that ride on unit type ty's weapon, in table order.
+static func ammo_specials(ty: int) -> Array[int]:
+	var out: Array[int] = []
+	var std := stat(ty, "m_ak")
+	if std < 0:
+		return out
+	for k in AMMO.size():
+		if int(AMMO[k]["base"]) == std:
+			out.append(k)
+	return out

@@ -121,8 +121,10 @@ func _draw() -> void:
 		_draw_deploy_zones(lw)
 	if sim.city_on != 0:
 		_draw_city_marks(lw)
-		if sim.sg_on != 0:
-			_draw_siege_gear(lw)
+	if sim.sg_on != 0:
+		_draw_siege_gear(lw)
+	if sim.fire_on != 0:
+		_draw_fires(lw)
 	if show_all_orders:
 		_draw_all_orders()
 	if sim.n_eng > 0:
@@ -295,7 +297,10 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 				_v(u, "dx") - sim.u_cx[u], _v(u, "dy") - sim.u_cy[u], d + Vector2(r, r * 1.2),
 				sim.u_cx[u], sim.u_cy[u])
 			if _v(u, "pick") >= 0 and _v(u, "pick") < sim.n_eq:
-				var ptxt := "PICK UP THE RAM" if sim.q_kind[_v(u, "pick")] == BattleSim.EQ_RAM else "PICK UP LADDERS"
+				var pk: int = sim.q_kind[_v(u, "pick")]
+				var ptxt := "PICK UP THE RAM" if pk == BattleSim.EQ_RAM else "PICK UP LADDERS"
+				if pk == BattleSim.EQ_WAGON:
+					ptxt = "TAKE THE WAGON"
 				draw_string(ThemeDB.fallback_font, d + Vector2(r, -r * 1.5), ptxt,
 					HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), Color(1.0, 0.8, 0.45))
 			elif _v(u, "pick") >= BattleSim.PICK_ENG:
@@ -303,6 +308,9 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 				var etxt := "TAKE UP THE BOLT THROWERS" if UT.stat(sim.eg_type[eg], "m_kind") == 1 else "TAKE UP THE STONE THROWERS"
 				draw_string(ThemeDB.fallback_font, d + Vector2(r, -r * 1.5), etxt,
 					HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), Color(1.0, 0.8, 0.45))
+			elif _v(u, "gtarget") >= 0 and sim.u_cls[u] == UT.CLS_MISSILE:
+				draw_string(ThemeDB.fallback_font, d + Vector2(r, -r * 1.5), "SHOOT THE GATE ALIGHT",
+					HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), Color(1.0, 0.65, 0.3))
 			elif _v(u, "gtarget") >= 0:
 				var gtxt := "BREAK THE GATE"
 				if BattleSim.carrying(sim, u) == BattleSim.EQ_RAM:
@@ -874,6 +882,72 @@ func _draw_free_engines(r: float, lw: float) -> void:
 ## Siege gear (view only): the attackers' ladder sets and rams, on the
 ## ground, carried (at the carriers' front, along their facing) or planted
 ## against a wall (five ladders, rails and rungs); a wrecked ram as wreckage.
+## An ammunition wagon: a covered box on two wheels with its team in front
+## (horses alive: dots; shot down: crosses), wrecked as a dark cross; the
+## stock left as a bar under it (standard kinds, all together).
+func _draw_wagon(q: int, c: Vector2, fwd: Vector2, side: Vector2, st: int, lw: float) -> void:
+	var dark := Color(0.2, 0.12, 0.05, 0.95)
+	var wrecked := st == BattleSim.Q_WRECKED
+	var body := Color(0.62, 0.5, 0.32, 0.95) if not wrecked else Color(0.25, 0.2, 0.15, 0.7)
+	var pts := PackedVector2Array([c + fwd * 2.2 + side * 1.1, c + fwd * 2.2 - side * 1.1,
+		c - fwd * 2.2 - side * 1.1, c - fwd * 2.2 + side * 1.1])
+	draw_colored_polygon(pts, body)
+	pts.append(pts[0])
+	draw_polyline(pts, dark, lw)
+	for sg in [-1.0, 1.0]:
+		draw_line(c + side * 1.3 * sg - fwd * 0.9, c + side * 1.3 * sg + fwd * 0.9, dark, lw * 2.0)
+	if wrecked:
+		draw_line(pts[0], pts[2], dark, lw * 1.5)
+		draw_line(pts[1], pts[3], dark, lw * 1.5)
+		return
+	var tier: int = sim.q_tier[q]
+	var horses := UT.wagon_stat(tier, "horses")
+	for h in horses:
+		var hp := c + fwd * 3.8 + side * (0.0 if horses == 1 else (h - 0.5) * 1.6)
+		if h < int(sim.q_hn[q]):
+			draw_circle(hp, maxf(px_per_m * 0.6, lw * 2.0), Color(0.42, 0.3, 0.2, 0.95))
+		else:
+			draw_line(hp - side * 0.5 - fwd * 0.5, hp + side * 0.5 + fwd * 0.5, dark, lw)
+			draw_line(hp + side * 0.5 - fwd * 0.5, hp - side * 0.5 + fwd * 0.5, dark, lw)
+	var left := 0
+	var full := 0
+	for k in UT.AMMO.size():
+		if UT.ammo_stat(k, "base") < 0:
+			left += sim.wagon_stock(q, k) * 100 / maxi(UT.ammo_stat(k, "wagon"), 1)
+			full += UT.wagon_stat(tier, "stock_pct")
+	if full > 0:
+		var bw := px_per_m * 4.0
+		var at := c + Vector2(-bw * 0.5, px_per_m * 2.6)
+		draw_rect(Rect2(at, Vector2(bw, maxf(px_per_m * 0.4, lw))), Color(0, 0, 0, 0.6))
+		draw_rect(Rect2(at, Vector2(bw * clampf(float(left) / full, 0.0, 1.0), maxf(px_per_m * 0.4, lw))),
+			Color(0.95, 0.8, 0.35, 0.95))
+
+
+## Burning things (gates, engines, equipment): a flicker of flame over each.
+func _draw_fires(lw: float) -> void:
+	var t := Time.get_ticks_msec() / 160.0
+	var pts: Array[Vector2] = []
+	for g in sim.n_gates:
+		if sim.g_burn[g] > 0:
+			pts.append(to_px(sim.g_x[g], sim.g_y[g]))
+	for e in sim.n_eng:
+		if sim.e_burn[e] > 0:
+			pts.append(to_px(sim.e_x[e], sim.e_y[e]))
+	for q in sim.n_eq:
+		if sim.q_burn[q] > 0:
+			pts.append(to_px(sim.q_x[q], sim.q_y[q]))
+	for k in pts.size():
+		var p: Vector2 = pts[k]
+		var f := 0.75 + 0.25 * sin(t + k * 1.7)
+		var h := maxf(px_per_m * 3.0, 14.0 / zoom) * f
+		var w := h * 0.45
+		draw_colored_polygon(PackedVector2Array([p + Vector2(-w, 0), p + Vector2(0, -h), p + Vector2(w, 0)]),
+			Color(1.0, 0.45, 0.1, 0.85))
+		draw_colored_polygon(PackedVector2Array([p + Vector2(-w * 0.5, 0), p + Vector2(0, -h * 0.6),
+			p + Vector2(w * 0.5, 0)]), Color(1.0, 0.85, 0.3, 0.9))
+		draw_line(p + Vector2(-w, 0), p + Vector2(w, 0), Color(0.3, 0.1, 0.0, 0.8), lw)
+
+
 func _draw_siege_gear(lw: float) -> void:
 	var wood := Color(0.55, 0.38, 0.2, 1.0)
 	var dark := Color(0.2, 0.12, 0.05, 0.95)
@@ -888,6 +962,9 @@ func _draw_siege_gear(lw: float) -> void:
 			ang = (sim.q_x[q] / 1024 % 7) * 0.4  # lying a little askew
 		var fwd := Vector2(cos(ang), sin(ang)) * px_per_m
 		var side := Vector2(-fwd.y, fwd.x)
+		if sim.q_kind[q] == BattleSim.EQ_WAGON:
+			_draw_wagon(q, c, fwd, side, st, lw)
+			continue
 		if sim.q_kind[q] == BattleSim.EQ_RAM:
 			if st == BattleSim.Q_CARRIED:
 				c -= fwd * 2.0  # (its head at the carriers' front)

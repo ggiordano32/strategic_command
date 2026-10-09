@@ -247,6 +247,8 @@ func _ready() -> void:
 	hud.skirmish_pressed.connect(_toggle_skirmish)
 	hud.deploy_pressed.connect(_toggle_deploy)
 	hud.refill_pressed.connect(_toggle_refill)
+	hud.ammo_pressed.connect(_toggle_ammo)
+	hud.forage_pressed.connect(_toggle_forage)
 	hud.man_wall_pressed.connect(_man_wall)
 	hud.come_down_pressed.connect(_come_down)
 	hud.drop_pressed.connect(_drop)
@@ -829,7 +831,7 @@ const ORDER_NAMES := {BattleSim.ORDER_MOVE: "move", BattleSim.ORDER_ATTACK: "att
 	BattleSim.ORDER_SKIRMISH: "skirmish", BattleSim.ORDER_WITHDRAW: "withdraw",
 	BattleSim.ORDER_WITHDRAW_ALL: "withdraw_all", BattleSim.ORDER_DEPLOY: "deploy",
 	BattleSim.ORDER_REFILL: "refill", BattleSim.ORDER_GATE: "gate", BattleSim.ORDER_PLACE: "place",
-	BattleSim.ORDER_READY: "ready"}
+	BattleSim.ORDER_READY: "ready", BattleSim.ORDER_AMMO: "ammo", BattleSim.ORDER_FORAGE: "forage"}
 
 
 ## Select only unit u (-1: clear the selection).
@@ -890,7 +892,23 @@ func _refresh_actions() -> void:
 	var skirm := -1
 	var deploy := -1
 	var refill := -1
+	var ammo := -1
+	var ammo_word := ""
+	var forage := -1
 	for u in selection:
+		if UT.cls(sim.u_type[u]) == UT.CLS_MISSILE and sim.u_state[u] == BattleSim.U_READY:
+			# Refill at a wagon (near one, or doing it); forage (in woods).
+			if sim.n_eq > 0 and (sim.wagon_for(u) >= 0 or orders.value(u, "refill") != 0):
+				refill = maxi(refill, orders.value(u, "refill"))
+			if BattleSim.forage_refusal(sim, u) == "" or orders.value(u, "forage") != 0:
+				forage = maxi(forage, orders.value(u, "forage"))
+		var sk: int = sim.spec_kind(u)
+		if sk >= 0 and sim.u_state[u] == BattleSim.U_READY:
+			# A second ammunition kind: the toggle shows what it shoots.
+			var on := orders.value(u, "akind")
+			if ammo < 0 or on > ammo:
+				ammo_word = UT.ammo_text(sk if on != 0 else sim.t_m_ak[sim.u_type[u]], "short")
+			ammo = maxi(ammo, on)
 		var art := UT.cls(sim.u_type[u]) == UT.CLS_ART
 		if not art:
 			run = maxi(run, 1 if orders.value(u, "run") != 0 else 0)
@@ -904,7 +922,7 @@ func _refresh_actions() -> void:
 			refill = maxi(refill, orders.value(u, "refill"))
 	if selection.is_empty():
 		run = 0
-	hud.set_selection(selection, run, fire, skirm, deploy, refill)
+	hud.set_selection(selection, run, fire, skirm, deploy, refill, ammo, ammo_word, forage)
 	_refresh_wall_buttons()
 	if coop != null:
 		var to := _gift_target()
@@ -1112,16 +1130,65 @@ func _toggle_deploy() -> void:
 	_refresh_actions()
 
 
+## Units with a special ammunition kind in the selection: back to the
+## standard kind if any shoots its special one, otherwise all to the special.
+func _toggle_ammo() -> void:
+	var any_on := false
+	for u in selection:
+		if sim.spec_kind(u) >= 0 and orders.value(u, "akind") != 0:
+			any_on = true
+	for u in selection:
+		if sim.spec_kind(u) >= 0:
+			_queue({"type": BattleSim.ORDER_AMMO, "unit": u, "on": 0 if any_on else 1})
+	_count("ammo")
+	_refresh_actions()
+
+
 ## Artillery in the selection: stop refilling if any battery is, otherwise
 ## start refilling them all.
 func _toggle_refill() -> void:
 	var any_on := false
 	for u in selection:
-		if UT.cls(sim.u_type[u]) == UT.CLS_ART and orders.value(u, "refill") != 0:
+		if _refiller(u) and orders.value(u, "refill") != 0:
 			any_on = true
 	for u in selection:
-		if UT.cls(sim.u_type[u]) == UT.CLS_ART:
+		if _refiller(u):
 			_queue(BattleSim.make_refill_order(0, u, 0 if any_on else 1))
+	_refresh_actions()
+
+
+## Unit u can be told to refill: a battery (its baggage, or a wagon near),
+## or missile troops with an ammunition wagon near (or refilling now).
+func _refiller(u: int) -> bool:
+	var c := UT.cls(sim.u_type[u])
+	if c == UT.CLS_ART:
+		return UT.stat(sim.u_type[u], "fixed") == 0
+	return c == UT.CLS_MISSILE and sim.n_eq > 0 and (sim.wagon_for(u) >= 0 or orders.value(u, "refill") != 0)
+
+
+## Missile troops in woods in the selection: stop foraging if any is,
+## otherwise start (those that can).
+func _toggle_forage() -> void:
+	var any_on := false
+	for u in selection:
+		if orders.value(u, "forage") != 0:
+			any_on = true
+	var sent := 0
+	var why := ""
+	for u in selection:
+		if any_on:
+			if orders.value(u, "forage") != 0:
+				_queue({"type": BattleSim.ORDER_FORAGE, "unit": u, "on": 0})
+			continue
+		var r: String = BattleSim.forage_refusal(sim, u)
+		if r == "":
+			_queue({"type": BattleSim.ORDER_FORAGE, "unit": u, "on": 1})
+			sent += 1
+		elif why == "":
+			why = r
+	_count("forage")
+	if not any_on and sent == 0 and why != "" and selected >= 0:
+		overlay.flash(why, Vector2(sim.u_cx[selected], sim.u_cy[selected]) / M * PX_PER_M)
 	_refresh_actions()
 
 
@@ -1134,7 +1201,7 @@ func _refresh_wall_buttons() -> void:
 	var down := false
 	var drop := false
 	for u in selection:
-		if sim.u_state[u] == BattleSim.U_READY and _works_engines(u):
+		if sim.u_state[u] == BattleSim.U_READY and (_works_engines(u) or BattleSim.carrying(sim, u) != 0):
 			drop = true
 	if sim.city_on != 0 and sim.ws_x0.size() > 0:
 		for u in selection:
@@ -1262,7 +1329,10 @@ func _tap_equip(q: int, w: Vector2) -> void:
 		overlay.flash(why, w)
 		return
 	_queue({"type": BattleSim.ORDER_PICKUP, "unit": best, "equip": q, "run": orders.value(best, "run")})
-	overlay.flash("Picking up the ram" if sim.q_kind[q] == BattleSim.EQ_RAM else "Picking up the ladders", w)
+	var what := "the ram" if sim.q_kind[q] == BattleSim.EQ_RAM else "the ladders"
+	if sim.q_kind[q] == BattleSim.EQ_WAGON:
+		what = "the wagon"
+	overlay.flash("Taking " + what, w)
 
 
 ## "Man the wall": each selected unit that may goes up onto the stretch
@@ -1493,6 +1563,7 @@ func _tap_gate(g: int, w: Vector2) -> bool:
 	var ram := false
 	var iron := not BattleSim.gate_hackable(sim, g)
 	var ladders := false
+	var fire := false
 	for u in selection:
 		var c := UT.cls(sim.u_type[u])
 		var k := BattleSim.carrying(sim, u)
@@ -1508,6 +1579,9 @@ func _tap_gate(g: int, w: Vector2) -> bool:
 			ok = true
 		elif (c == UT.CLS_INF or c == UT.CLS_PIKE) and not iron:
 			ok = true
+		elif c == UT.CLS_MISSILE and k == 0 and sim.u_wall[u] == 0 and UT.ammo_stat(sim.spec_kind(u), "fire") > 0:
+			ok = true  # fire missiles: shoot the gate alight from where they stand
+			fire = true
 		if ok:
 			_queue({"type": BattleSim.ORDER_ATTACK, "unit": u, "target": -1, "gate": g,
 				"run": orders.value(u, "run")})
@@ -1517,12 +1591,14 @@ func _tap_gate(g: int, w: Vector2) -> bool:
 	_count("gate_attack")
 	if ram:
 		overlay.flash("RAM THE GATE: the ram goes at it and batters it", w)
+	elif fire and sent > 0:
+		overlay.flash("Shoot the gate: fire missiles set it alight (Ammo: fire)", w)
 	elif sent == 0 and ladders:
 		overlay.flash("Carrying ladders: tap a stretch of wall to plant them", w)
 	elif sent == 0 and iron:
 		overlay.flash("Swords cannot break this iron-bound gate: a ram or artillery breaks it", w)
 	elif sent == 0:
-		overlay.flash("Cavalry and missile troops cannot break a gate", w)
+		overlay.flash("Cavalry cannot break a gate; missile troops only with fire missiles", w)
 	elif refused > 0:
 		overlay.flash("Foot hack at the gate, engines shoot it; the others stay", w)
 	return true
@@ -1731,6 +1807,10 @@ func _on_key(e: InputEventKey) -> void:
 			_toggle_deploy()
 		"refill":
 			_toggle_refill()
+		"ammo":
+			_toggle_ammo()
+		"forage":
+			_toggle_forage()
 		"man_wall":
 			_man_wall()
 		"come_down":
@@ -2244,8 +2324,8 @@ func _coop_pending() -> Array:
 	var out: Array = coop.ls.pending_sim_orders()
 	for o in coop.outbox:
 		var t := int(o.get("type", 0))
-		if (t >= BattleSim.ORDER_MOVE and t <= BattleSim.ORDER_REFILL or t == BattleSim.ORDER_PLACE) \
-				and t != BattleSim.ORDER_WITHDRAW_ALL:
+		if (t >= BattleSim.ORDER_MOVE and t <= BattleSim.ORDER_REFILL or t == BattleSim.ORDER_PLACE \
+				or t == BattleSim.ORDER_AMMO or t == BattleSim.ORDER_FORAGE) and t != BattleSim.ORDER_WITHDRAW_ALL:
 			var d: Dictionary = o.duplicate()
 			d["tick"] = sim.tick
 			out.append(d)

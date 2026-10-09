@@ -445,7 +445,8 @@ static func _best_type(st: Dictionary, f: int, r: int, line: String) -> String:
 
 static func _any_type(st: Dictionary, f: int, r: int) -> String:
 	for o in CRules.recruit_options(st, f, r):
-		if o["ok"] and UT.cls(UT.index_of(str(o["t"]))) != UT.CLS_ART:
+		var oty := UT.index_of(str(o["t"]))
+		if o["ok"] and UT.cls(oty) != UT.CLS_ART and UT.stat(oty, "wagon") < 0:
 			return str(o["t"])
 	return ""
 

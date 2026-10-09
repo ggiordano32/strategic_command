@@ -220,12 +220,42 @@ static func recruit_options(st: Dictionary, f: int, r: int) -> Array:
 			var ty := UT.index_of(key)
 			var why := recruit_check(st, f, r, key)
 			out.append({"t": key, "line": line, "tier": k + 1, "price": UT.price_of(ty),
-				"ok": why == "", "why": why})
+				"ok": why == "", "why": why, "ak": ammo_for(st, f, r, key)})
 	return out
+
+
+## The special ammunition kind (its key, "" none) a unit of type `key`
+## recruited by faction f in region r carries: the first CData.AMMO_AVAIL
+## row riding on its weapon that lists the faction and whose building
+## stands in r at its level. (Stored on the unit entry as "ak".)
+static func ammo_for(st: Dictionary, f: int, r: int, key: String) -> String:
+	var ty := UT.index_of(key)
+	if ty < 0 or f < 0 or f >= CData.FACTIONS.size() or r < 0 or UT.stat(ty, "m_ak") < 0:
+		return ""
+	var fk := str(CData.FACTIONS[f]["key"])
+	for row in CData.AMMO_AVAIL:
+		var k := UT.ammo_index(str(row[0]))
+		if k < 0 or UT.ammo_stat(k, "base") != UT.stat(ty, "m_ak") or not (row[1] as Array).has(fk):
+			continue
+		if CState.building(st, r, int(row[2])) >= int(row[3]):
+			return str(row[0])
+	return ""
+
+
+## A new unit entry of type `key` raised by faction f in region r (full
+## strength; its special ammunition kind, if any, as "ak").
+static func new_unit(st: Dictionary, f: int, r: int, key: String) -> Dictionary:
+	var unit := {"t": key, "n": UT.size_of(UT.index_of(key))}
+	var ak := ammo_for(st, f, r, key)
+	if ak != "":
+		unit["ak"] = ak
+	return unit
 
 
 ## Level of the building needed for a unit type (chain, level).
 static func needs(key: String) -> Array:
+	if CData.UNIT_NEEDS.has(key):
+		return CData.UNIT_NEEDS[key][0]
 	var ty := UT.index_of(key)
 	var line := UT.line_of(ty)
 	var lvl: int = CData.ART_LEVEL.get(line, UT.tier_of(ty))
@@ -252,6 +282,9 @@ static func recruit_check(st: Dictionary, f: int, r: int, key: String) -> String
 	var nd := needs(key)
 	if CState.building(st, r, nd[0]) < int(nd[1]):
 		return "needs %s %d" % [CData.CHAINS[nd[0]]["name"], nd[1]]
+	for nd2 in CData.UNIT_NEEDS.get(key, []):
+		if CState.building(st, r, int(nd2[0])) < int(nd2[1]):
+			return "needs %s %d" % [CData.CHAINS[int(nd2[0])]["name"], int(nd2[1])]
 	if (rs["queue"] as Array).size() >= int(CData.RECRUITS_PER_TURN[int(rs["level"])]):
 		return "recruitment full this turn"
 	if not CState.battle_at(st, r).is_empty():
@@ -2600,7 +2633,7 @@ static func _idle_in_town(a: Dictionary) -> bool:
 ## (the next turn's recruits join it while it stays; _auto_merge6 gathers
 ## any others standing idle there).
 static func _add_recruit(st: Dictionary, f: int, r: int, key: String) -> void:
-	var unit := {"t": key, "n": UT.size_of(UT.index_of(key))}
+	var unit := new_unit(st, f, r, key)
 	var grid := CState.grid_on(st)
 	for a in st["armies"]:
 		var here := CGrid.cheb(CState.cell(a), CGrid.site(r)) <= 1 if grid else int(a["r"]) == r
@@ -2635,7 +2668,7 @@ static func _place_recruits6(st: Dictionary, f: int, r: int, fresh: Dictionary) 
 	for e in queue_of(st, r):
 		var key := str(e[0])
 		var into := int(e[1])
-		var unit := {"t": key, "n": UT.size_of(UT.index_of(key))}
+		var unit := new_unit(st, f, r, key)
 		if into != QA_RAISE:
 			var a := CState.army(st, into) if into >= 0 else {}
 			if not a.is_empty() and int(a["f"]) == f and int(a["busy"]) == 0 \

@@ -1113,6 +1113,24 @@ func _test_lockstep_siege() -> void:
 	var scen := Scenarios.fair_siege(741, 3, 4, {"ladders": 3, "ram": 1})
 	scen["time_limit"] = 1200
 	scen["ai_sides"] = [1]
+	# Ammunition kinds and the wagon across peers: an archer unit of side 0
+	# carrying fire arrows, a quarter of its load left, with a one-horse
+	# wagon beside it; its commander switches it to fire arrows, then has it
+	# refill at the wagon (docs/DESIGN.md "Ammunition kinds", "The
+	# ammunition wagon").
+	var a0: Dictionary = {}
+	for ud in scen["units"]:
+		if int(ud["side"]) == 0:
+			a0 = ud
+			break
+	var arch2: int = (scen["units"] as Array).size()
+	var au := Scenarios.unit(0, UT.ARCHER, 40, int(a0["x_m"]) + 30, int(a0["y_m"]) + (25 if int(a0["facing"]) == Scenarios.FACE_UP else -25), int(a0["facing"]))
+	au["ak"] = UT.ammo_index("fire_arrows")
+	au["ammo_pct"] = 25
+	var wu := Scenarios.unit(0, UT.index_of("wagon2"), 8, int(a0["x_m"]) + 30, int(a0["y_m"]) + (36 if int(a0["facing"]) == Scenarios.FACE_UP else -36), int(a0["facing"]))
+	wu["aks"] = [UT.ammo_index("fire_arrows")]
+	scen["units"].append(au)
+	scen["units"].append(wu)
 	var probe := BattleSim.new()
 	probe.setup(scen, 4242)
 	var home := _home_split(probe)
@@ -1150,10 +1168,22 @@ func _test_lockstep_siege() -> void:
 	var a_eng_done := false
 	var e_stage := 0  # snapshots of A's sim: 1 on the way to the engines, 2 working them, 3 left again
 	var e_snaps: Array = []
+	var k_sent := false
+	var r_sent := false
+	var r_snap := -1
 	while now < total * 3 and mini(a.ls.frame, b.ls.frame) < total:
 		now += 1
 		for p in peers:
 			var sim = p.ls.sim
+			if p.ls.u_cmd[arch2] == p.me and now % 20 == 11:
+				if not k_sent and sim.tick > 40:
+					p.issue({"type": BattleSim.ORDER_AMMO, "unit": arch2, "on": 1})
+					k_sent = true
+					orders += 1
+				elif k_sent and not r_sent and sim.tick > 90 and sim.u_akind[arch2] == 1:
+					p.issue({"type": BattleSim.ORDER_REFILL, "unit": arch2, "on": 1})
+					r_sent = true
+					orders += 1
 			if now % 20 == 9 + p.me * 5 and arch >= 0:
 				if p.ls.u_cmd[bat] == p.me and not e_left and sim.tick > 150 and sim.u_eg[bat] == eg \
 						and sim.u_state[bat] == BattleSim.U_READY:
@@ -1236,6 +1266,23 @@ func _test_lockstep_siege() -> void:
 		elif e_stage == 2 and a_eng_done and sa.u_eg[arch] < 0:
 			e_stage = 3
 			e_take = true
+		if r_snap < 0 and sa.u_rprog[arch2] == BattleSim.REFILL_FULL and sa.stat_refill_shots > 0:
+			# Mid-refill at the wagon: two restored copies run on equal.
+			r_snap = sa.tick
+			var rb: PackedByteArray = sa.snapshot()
+			var y1 := BattleSim.new()
+			y1.setup(scen, 4242)
+			var y2 := BattleSim.new()
+			y2.setup(scen, 4242)
+			if not y1.restore(rb) or not y2.restore(rb) or y1.state_hash() != sa.state_hash():
+				_fail("siege lockstep: restoring A's sim mid-refill did not reproduce its hash")
+				return
+			for t in 200:
+				y1.step()
+				y2.step()
+				if y1.state_hash() != y2.state_hash():
+					_fail("siege lockstep: copies restored mid-refill diverged after %d ticks" % (t + 1))
+					return
 		if e_take:
 			var blob: PackedByteArray = sa.snapshot()
 			var x1 := BattleSim.new()
@@ -1284,6 +1331,12 @@ func _test_lockstep_siege() -> void:
 	else:
 		print("PASS siege lockstep engines: B's battery left them, A's archers took them up and left them (taken up %d, left %d), hashes equal; snapshot / restore on the way to them, while working them and once left (ticks %s) ran on identically" % [
 			sim_a.stat_epick, sim_a.stat_edrop, str(e_snaps)])
+	if not k_sent or not r_sent or r_snap < 0 or sim_a.stat_refill_shots <= 0 or sim_a.u_akind[arch2] != 1:
+		_fail("siege lockstep: the archers' kind switch / wagon refill did not happen (sent %s %s, snapshot %d, shots %d)" % [
+			str(k_sent), str(r_sent), r_snap, sim_a.stat_refill_shots])
+	else:
+		print("PASS siege lockstep kinds and wagon: archers switched to fire arrows, refilled %d missiles at the wagon; hashes equal; snapshot / restore mid-refill (tick %d) ran on identically" % [
+			sim_a.stat_refill_shots, r_snap])
 	if sim_a.stat_pickups < 3 or sim_a.stat_drops < 1 or not b_carried:
 		_fail("siege lockstep: the equipment was not picked up, dropped and picked up again (%d / %d)" % [
 			sim_a.stat_pickups, sim_a.stat_drops])

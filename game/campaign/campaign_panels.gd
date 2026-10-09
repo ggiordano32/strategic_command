@@ -745,6 +745,8 @@ func _recruit(box: VBoxContainer, r: int) -> void:
 		var why := str(o["why"])
 		var row := Kit.UnitRow.new(ty, -1, _fc(f), str(o["price"]))
 		row.sub_text = "Tier %d  -  upkeep %d" % [int(o["tier"]), CState.upkeep_of(ty)] if o["ok"] else why
+		if o["ok"] and str(o.get("ak", "")) != "":
+			row.sub_text += "  -  + " + UT.ammo_text(UT.ammo_index(str(o["ak"])), "name").to_lower()
 		var key := str(o["t"])
 		row.name = "recruit_row_" + key
 		var open_page := func(): s.open_unit_page(ty,
@@ -933,6 +935,8 @@ func show_raise(r: int) -> void:
 		row.name = "raise_row_" + key
 		row.selected = cnt > 0
 		row.sub_text = "Tier %d  -  upkeep %d" % [int(o["tier"]), CState.upkeep_of(ty)] if ok else str(o["why"])
+		if ok and str(o.get("ak", "")) != "":
+			row.sub_text += "  -  + " + UT.ammo_text(UT.ammo_index(str(o["ak"])), "name").to_lower()
 		row.pressed.connect(func(): s.open_unit_page(ty, Callable(), ""))
 		var h := Kit.hbox(4)
 		h.add_child(row)

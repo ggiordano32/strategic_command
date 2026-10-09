@@ -25,7 +25,7 @@ const NAMES: Array[String] = [
 	"farm", "market", "barracks", "range", "stables", "workshop", "walls", "build", "upgrade",
 	"fire", "hold_fire", "skirmish", "run", "deploy", "wall_up", "wall_down", "pick_up", "drop",
 	"victory", "defeat", "draw", "men", "killed", "routed", "captured",
-	"ladder", "ram", "tower", "siege_tower", "gate",
+	"ladder", "ram", "tower", "siege_tower", "gate", "ammo", "forage", "wagon",
 	"copy", "export", "plus", "minus",
 ]
 const STROKE := 0.16  # line weight, in half-sizes (unit_icons: 0.17 of its glyph radius)
@@ -578,6 +578,26 @@ static func _glyph(icon: String, c: Vector2, s: float) -> void:
 			for x in [-0.35, 0.0, 0.35]:
 				_l(x, -0.65 if x == 0.0 else -0.55, x, 0.85, 0.75)
 			_l(-0.7, 0.2, 0.7, 0.2, 0.75)
+		"ammo":  # quiver, two shafts out of it, one tipped with a flame
+			_pl([-0.55, -0.15, -0.3, 0.88, 0.3, 0.88, 0.55, -0.15], true)
+			_l(-0.2, -0.15, -0.45, -0.88, 0.85)
+			_l(0.2, -0.15, 0.45, -0.88, 0.85)
+			_head(-0.48, -0.92, -0.33, -1.0, 0.3)
+			_leaf(0.48, -0.78, -PI * 0.5, 0.32, 0.16)
+		"forage":  # a tree and a shaft cut from it
+			_ring(-0.25, -0.35, 0.5)
+			_l(-0.25, 0.15, -0.25, 0.88)
+			_l(-0.7, 0.88, 0.2, 0.88, 0.8)
+			_arrow(0.35, 0.85, 0.85, -0.2, 0.36)
+		"wagon":  # covered wagon on two wheels, a shaft in front
+			_arc(-0.1, 0.05, 0.62, PI, TAU)
+			_l(-0.72, 0.05, 0.52, 0.05)
+			_l(-0.72, 0.05, -0.72, 0.38, 0.8)
+			_l(0.52, 0.05, 0.52, 0.38, 0.8)
+			_l(-0.72, 0.38, 0.52, 0.38, 0.8)
+			_ring(-0.42, 0.66, 0.2, 0.8)
+			_ring(0.25, 0.66, 0.2, 0.8)
+			_l(0.52, 0.3, 0.92, 0.45, 0.8)
 		"copy":
 			_pl([-0.82, -0.45, -0.82, 0.85, 0.35, 0.85, 0.35, -0.45], true)
 			_pl([-0.4, -0.45, -0.4, -0.85, 0.82, -0.85, 0.82, 0.45, 0.35, 0.45])

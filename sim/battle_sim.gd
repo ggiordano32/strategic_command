@@ -69,7 +69,9 @@ const ORDER_PLACE := 12         # unit, x, y, facing, files (deployment phase on
 const ORDER_READY := 13         # who (deployment phase: player `who` is ready to start)
 const ORDER_PICKUP := 14        # unit, equip (siege equipment) or engines (an engine group): go there and pick it up
 const ORDER_DROP := 15          # unit (put down the piece it carries where it stands)
-const ORDER_LAST := 15
+const ORDER_AMMO := 16          # unit, on (1: shoot its special ammunition kind, 0: the standard one)
+const ORDER_FORAGE := 17        # unit, on (missile troops in woods: make arrows / javelins; cannot move or shoot)
+const ORDER_LAST := 17
 
 # Battle phase (scenario "deploy_time" > 0 starts in PHASE_DEPLOY, see the
 # "deployment phase" section at the end of this file).
@@ -80,7 +82,7 @@ const DZ_INSIDE := 1   # settlement defenders: open ground inside the walls with
 
 ## Unit fields an order can change; OrderPreview predicts exactly these.
 const ORDER_KEYS: Array[String] = ["order", "ax", "ay", "face", "files", "dx", "dy",
-	"dface", "target", "run", "fire", "skirm", "deploy", "refill", "gtarget", "pick"]
+	"dface", "target", "run", "fire", "skirm", "deploy", "refill", "gtarget", "pick", "akind", "forage"]
 
 # Formation geometry (spacing is per unit type, see unit_types.gd).
 const FILE_SPACING := 1126  # default, kept for callers that do not pass a type
@@ -181,6 +183,32 @@ const FX_CAP := 32               # view: recent stone impacts (not state)
 # shots from the battery's finite reserve (m_refill ticks per shot at full
 # crew, slower with fewer hands, nothing below the minimum crew).
 const REFILL_FULL := 60          # 6 s to settle in, 3 s to get back out
+# Ammunition kinds and fire (docs/DESIGN.md "Ammunition kinds", "Fire"):
+# the kinds are rows of UnitTypes.AMMO (t_k_*); fire is one burning state
+# on any wooden thing (a gate, a tower's engine, an engine, ladders, a ram,
+# a wagon: g_burn / e_burn / q_burn ticks left), which loses FIRE_CHIP per
+# mille of its full hit points every second while it burns.
+const FIRE_TICKS := 300          # an object set alight burns 30 s (each new fire missile on it restarts it)
+const FIRE_CHIP := 6             # per mille of its full hit points lost a second while burning (18 % a fire)
+const FIRE_R := 3 * M            # a fire missile landing this near an engine, ladders, a ram or a wagon (a tower: its radius)
+const BURN_UNIT := 40            # a unit a fire missile struck burns this many ticks ...
+const BURN_DRAIN := 1            # ... losing this much morale a tick meanwhile
+const LADDER_HP := 400           # ladder set hit points (fire)
+# Resupply (docs/DESIGN.md "Resupply: foraging and the ammunition wagon").
+# Ammunition wagons are equipment (EQ_WAGON, below) that a wagon unit's
+# crew pulls (or any foot unit that takes it over). A missile unit or a
+# battery told to refill (ORDER_REFILL) near a wagon settles REFILL_FULL
+# ticks, then draws from the wagon's stock per kind (q_stock) until full or
+# the stock is out; foraging (ORDER_FORAGE) in woods fills its men's
+# quivers with the standard kind, slowly. Both go one missile at a time to
+# the man next in turn (u_rptr) at WAGON_QUIVER / FORAGE_QUIVER ticks per
+# full load of the whole unit (u_racc).
+const WAGON_R := 15 * M          # a unit this near the wagon (its bounding box) may refill from it
+const WAGON_QUIVER := 300        # ticks for a unit's whole load at the wagon (30 s)
+const FORAGE_QUIVER := 1500      # ticks for a unit's whole quiver foraging in woods (2.5 min)
+const WAGON_EXPOSED := 15        # % to-hit added to a blow on the flank or rear of men pulling a wagon
+const HORSE_R := 3 * M           # missiles landing this near a wagon's horses ...
+const HORSE_HIT := 30            # ... strike one this often (% of them)
 
 # Terrain height (sim/terrain.gd builds the grid; docs/DESIGN.md "Terrain").
 # Grades are Q12: 4096 = a rise of 1 m per metre (100%). Every effect below
@@ -304,6 +332,9 @@ const ST_LADDER := 4             # ... climbing it (u_wall set, men go up a few 
 # Siege equipment objects (q_*: docs/DESIGN.md "Siege equipment as objects").
 const EQ_LADDERS := 1            # a set of LADDER_SET ladders
 const EQ_RAM := 2                # a battering ram
+const EQ_WAGON := 3              # an ammunition wagon (q_tier: its UnitTypes.WAGONS row)
+## Pieces with a roof (arrows on the men at it are often stopped), by EQ_*.
+const EQ_ROOF: Array[int] = [0, 0, 1, 1]
 const Q_GROUND := 0              # lying where it was put down
 const Q_CARRIED := 1             # carried by unit q_unit (at its anchor)
 const Q_PLANTED := 2             # ladders against stretch q_seg (foot q_x, q_y; for the battle)
@@ -391,6 +422,7 @@ var slot_of := PackedInt32Array()
 var target := PackedInt32Array()
 var ammo := PackedInt32Array()
 var chg := PackedInt32Array()        # cavalry: momentum 0..100 of this rider
+var sammo := PackedInt32Array()      # of ammo[i], missiles of his unit's special kind (u_sk)
 var struck := PackedInt32Array()     # cavalry: 1 once this rider made contact this charge
 
 # Units (struct of arrays).
@@ -473,6 +505,12 @@ var u_kills := PackedInt32Array()     # enemy soldiers killed by the unit's men 
 var u_otype := PackedInt32Array()     # the unit's own type (its men: body, melee, morale); u_type is what it does now
 var u_eg := PackedInt32Array()        # the engine group it works (-1 none)
 var u_oammo := PackedInt32Array()     # its own missiles (u_ammo of a missile unit) while it works engines
+var u_sk := PackedInt32Array()        # the special ammunition kind its own weapon carries (UT.AMMO row, -1 none; static)
+var u_akind := PackedInt32Array()     # shoot the special kind (1) or the standard one (0): order field "akind"
+var u_burn := PackedInt32Array()      # ticks its men burn on (fire missiles): morale drains
+var u_forage := PackedInt32Array()    # foraging in woods (order field "forage")
+var u_racc := PackedInt32Array()      # refill / forage work toward the next missile
+var u_rptr := PackedInt32Array()      # ... the man next in turn
 var slot_soldier := PackedInt32Array()  # u_slot_base[u] + slot -> soldier
 var off_x := PackedInt32Array()         # u_slot_base[u] + slot -> offset
 var off_y := PackedInt32Array()
@@ -490,6 +528,8 @@ var e_ammo := PackedInt32Array()
 var e_crew := PackedInt32Array()    # crew working it this tick
 var e_rwork := PackedInt32Array()   # crew-ticks of work toward the next shot refilled
 var e_grp := PackedInt32Array()     # the engine group (a battery's engines stay together)
+var e_sammo := PackedInt32Array()   # of e_ammo[e], shots of its group's special kind (eg_sk)
+var e_burn := PackedInt32Array()    # ticks it burns on (fire)
 var e_px := PackedInt32Array()      # view only: position last tick (not hashed)
 var e_py := PackedInt32Array()
 ## Engine groups (docs/DESIGN.md "Artillery": engines are equipment, crews
@@ -508,6 +548,7 @@ var eg_depl := PackedInt32Array()
 var eg_res := PackedInt32Array()
 var eg_face := PackedInt32Array()
 var eg_side := PackedInt32Array()
+var eg_sk := PackedInt32Array()     # the special ammunition kind its engines carry (-1 none; static)
 
 # Battle AI, per side.
 var ai_phase := PackedInt32Array([0, 0])
@@ -659,6 +700,7 @@ var pr_t1 := PackedInt32Array()
 var pr_unit := PackedInt32Array()     # shooter unit
 var pr_ty := PackedInt32Array()       # ... its missile type when it shot (a unit may take up or drop engines meanwhile)
 var pr_tu := PackedInt32Array()       # unit aimed at
+var pr_ak := PackedInt32Array()       # its ammunition kind (UT.AMMO row)
 var pr_next := PackedInt32Array()     # bucket / free list link
 var pr_bucket := PackedInt32Array()   # landing tick % PR_BUCKETS -> first
 var pr_free: int = 0
@@ -722,6 +764,19 @@ var t_m_apex := PackedInt32Array()
 var t_m_reserve := PackedInt32Array()
 var t_m_refill := PackedInt32Array()
 var t_fixed := PackedInt32Array()
+var t_m_ak := PackedInt32Array()
+# Ammunition kinds (UnitTypes.AMMO, UnitTypes.AMMO_FIELDS order).
+var t_k_base := PackedInt32Array()
+var t_k_share := PackedInt32Array()
+var t_k_dmg := PackedInt32Array()
+var t_k_obj := PackedInt32Array()
+var t_k_ap := PackedInt32Array()
+var t_k_pierce := PackedInt32Array()
+var t_k_range := PackedInt32Array()
+var t_k_rate := PackedInt32Array()
+var t_k_fear := PackedInt32Array()
+var t_k_blast := PackedInt32Array()
+var t_k_fire := PackedInt32Array()
 
 # Spatial grid, one per side so target search only walks enemies.
 var grid_w: int = 0
@@ -875,6 +930,9 @@ var u_lfy := PackedInt32Array()
 var u_lacc := PackedInt32Array()    # the ram's work toward the next blow
 var u_trad := PackedInt32Array()    # tower engines: the tower's radius (static)
 var g_unbar := PackedInt32Array()   # per gate: ticks ladder men have stood unbarring it
+var g_burn := PackedInt32Array()    # per gate: ticks it burns on (fire)
+## Some unit or engine carries a kind that sets things alight (set up once).
+var fire_on: int = 0
 ## Siege equipment objects (the attackers' ladder sets and rams), in index
 ## order: kind (EQ_*), where it is (the foot of planted ladders), state
 ## (Q_*), the unit carrying it, the stretch planted at (-1), the walkway
@@ -892,12 +950,29 @@ var q_wy := PackedInt32Array()
 var q_hp := PackedInt32Array()
 var q_acc := PackedInt32Array()
 var q_side := PackedInt32Array()
+var q_burn := PackedInt32Array()    # ticks it burns on (fire)
+var q_tier := PackedInt32Array()    # a wagon: its UnitTypes.WAGONS row (-1 not a wagon)
+var q_hn := PackedInt32Array()      # ... horses alive
+var q_hhp := PackedInt32Array()     # ... the lead horse's hit points
+## A wagon's stock: q * UT.AMMO.size() + kind (shots / missiles of each kind).
+var q_stock := PackedInt32Array()
+var wag_h: int = 0                  # wagon horses alive (all wagons)
+var stat_refill_shots: int = 0      # missiles and shots drawn from wagons
+var stat_forage: int = 0            # missiles made foraging
+var stat_horses_down: int = 0       # wagon horses shot down
+var stat_wagon_taken: int = 0       # wagons taken over by another unit
 var stat_pickups: int = 0           # pieces picked up
 var stat_drops: int = 0             # ... put down (ordered, routing, the gate broken)
 var stat_planted: int = 0           # ladder sets planted against a wall
 var stat_ram_wrecked: int = 0
 var stat_ladder_up: int = 0         # men up a ladder
 var stat_ladder_done: int = 0       # units wholly up
+var stat_ak_shots: int = 0          # missiles and shots of a special ammunition kind
+var stat_ignite: int = 0            # things set alight (gates, engines, equipment)
+var stat_burnt: int = 0             # ... burnt down (a gate broken, an engine wrecked, a piece wrecked)
+var stat_fire_dmg: int = 0          # hit points burnt off them
+var stat_blast: int = 0             # men struck inside the extra blast of a bursting stone
+var stat_unit_burn: int = 0         # units set burning
 var stat_ram_blows: int = 0
 var stat_unbar: int = 0             # gates opened from inside
 var stat_tower_hits: int = 0        # shots that struck a tower
@@ -1046,10 +1121,12 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		arr.fill(0)
 	g_unbar.resize(n_gates)
 	g_unbar.fill(0)
+	g_burn.resize(n_gates)
+	g_burn.fill(0)
 	sg_on = 0
 	for arr in [u_carry, u_pick, u_lq]:
 		arr.fill(-1)
-	_setup_equip(scenario)
+	_setup_equip(scenario, units)
 	u_gtarget.fill(-1)
 	pth_x.resize(n_units * PATH_MAX)
 	pth_x.fill(0)
@@ -1106,7 +1183,8 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		u_order[u] = O_NONE
 		u_fire[u] = 1 if t_m_ammo[ty] > 0 else 0
 		u_skirm[u] = t_skirm[ty]
-		u_ammo[u] = cnt * t_m_ammo[ty]
+		# (Scenario "ammo_pct": it starts with this % of its load; tests.)
+		u_ammo[u] = cnt * (t_m_ammo[ty] * clampi(int(ud.get("ammo_pct", 100)), 0, 100) / 100)
 		u_hit_t[u] = -1000
 		u_charged_t[u] = -1000
 		u_slot_base[u] = base
@@ -1115,6 +1193,12 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		u_ftarget[u] = -1
 		u_shelled_t[u] = -1000
 		u_shelled_by[u] = -1
+		# A special ammunition kind for its weapon (scenario "ak": a row of
+		# UnitTypes.AMMO riding on the type's standard kind).
+		var akk := int(ud.get("ak", -1))
+		if akk < 0 or akk >= t_k_base.size() or t_k_base[akk] < 0 or t_k_base[akk] != t_m_ak[ty]:
+			akk = -1
+		u_sk[u] = akk
 		if city_on != 0 and int(ud.get("wall", 0)) > 0 and int(ud.get("wall", 0)) <= ws_x0.size():
 			# Placed on a wall walkway: it holds that stretch of wall, in
 			# its wall line (as a unit sent up there would stand).
@@ -1167,6 +1251,7 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 				e_ammo[e] = t_m_ammo[ty]
 				if t_fixed[ty] != 0 and int(ud.get("tower_ammo", 100)) != 100:
 					e_ammo[e] = t_m_ammo[ty] * int(ud["tower_ammo"]) / 100
+				e_sammo[e] = e_ammo[e] * t_k_share[akk] / 100 if akk >= 0 else 0
 				# Staggered: engines are part way through loading.
 				e_reload[e] = _rand() % maxi(t_m_reload[ty] * t_crew[ty], 1)
 			if t_fixed[ty] != 0:
@@ -1184,6 +1269,8 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 			eg_op[grp] = u
 			eg_side[grp] = u_side[u]
 			eg_face[grp] = u_face[u]
+			eg_sk[grp] = akk  # (the engines carry the special kind; the crews have none)
+			u_sk[u] = -1
 			u_eg[u] = grp
 			grp += 1
 			eng += ne
@@ -1205,8 +1292,16 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 			state[i] = S_FORMED
 			cooldown[i] = 1 + _rand() % t_cooldown[ty]
 			target[i] = -1
-			ammo[i] = t_m_ammo[ty] if ne == 0 else 0
+			ammo[i] = t_m_ammo[ty] * clampi(int(ud.get("ammo_pct", 100)), 0, 100) / 100 if ne == 0 else 0
+			sammo[i] = ammo[i] * t_k_share[akk] / 100 if akk >= 0 and ne == 0 else 0
 		base += cnt
+	fire_on = 0
+	for u in n_units:
+		if u_sk[u] >= 0 and t_k_fire[u_sk[u]] > 0:
+			fire_on = 1
+	for g in n_eg:
+		if eg_sk[g] >= 0 and t_k_fire[eg_sk[g]] > 0:
+			fire_on = 1
 
 	# Projectile pool: every slot on the free list.
 	for arr in _projectile_arrays():
@@ -1251,12 +1346,12 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 
 func _soldier_arrays() -> Array:
 	return [pos_x, pos_y, prev_x, prev_y, facing, hp, state, cooldown, unit_of,
-		slot_of, target, ammo, chg, struck]
+		slot_of, target, ammo, chg, struck, sammo]
 
 
 func _soldier_hashed() -> Array:
 	return [pos_x, pos_y, facing, hp, state, cooldown, unit_of, slot_of, target,
-		ammo, chg, struck]
+		ammo, chg, struck, sammo]
 
 
 func _unit_arrays() -> Array:
@@ -1270,7 +1365,7 @@ func _unit_arrays() -> Array:
 		u_withdrawn, u_routed_off, u_recent, u_att, u_def, u_dmg, u_reach, u_nwalls,
 		u_ai, u_ai_t, u_ai_x, u_ai_y, u_eng0, u_neng, u_depl, u_deploy, u_fright,
 		u_shelled_t, u_shelled_by, u_emove, u_h, u_refill, u_rprog, u_reserve, u_blk, u_dodge,
-		u_kills, u_otype, u_eg, u_oammo]
+		u_kills, u_otype, u_eg, u_oammo, u_sk, u_akind, u_burn, u_forage, u_racc, u_rptr]
 
 
 ## Per-unit arrays of woods and settlement maps (hashed only on those maps,
@@ -1286,11 +1381,11 @@ func _stair_arrays() -> Array:
 
 
 func _engine_arrays() -> Array:
-	return [e_unit, e_x, e_y, e_face, e_hp, e_state, e_reload, e_ammo, e_crew, e_rwork, e_grp]
+	return [e_unit, e_x, e_y, e_face, e_hp, e_state, e_reload, e_ammo, e_crew, e_rwork, e_grp, e_sammo, e_burn]
 
 
 func _egroup_arrays() -> Array:
-	return [eg_e0, eg_ne, eg_type, eg_u0, eg_op, eg_depl, eg_res, eg_face, eg_side]
+	return [eg_e0, eg_ne, eg_type, eg_u0, eg_op, eg_depl, eg_res, eg_face, eg_side, eg_sk]
 
 
 ## Engines in a unit of `count` soldiers of type ty (0 unless artillery).
@@ -1302,7 +1397,7 @@ static func _engines_for(ty: int, count: int) -> int:
 
 
 func _projectile_arrays() -> Array:
-	return [pr_sx, pr_sy, pr_x, pr_y, pr_t0, pr_t1, pr_unit, pr_tu, pr_next, pr_ty]
+	return [pr_sx, pr_sy, pr_x, pr_y, pr_t0, pr_t1, pr_unit, pr_tu, pr_next, pr_ty, pr_ak]
 
 
 func _load_types() -> void:
@@ -1314,7 +1409,7 @@ func _load_types() -> void:
 		t_m_reload, t_m_spread, t_m_spread0, t_m_speed, t_m_arc, t_skirm, t_m_vuln, t_m_down,
 		t_m_lead, t_m_long, t_crew, t_crew_min, t_m_kind, t_m_min, t_m_pierce, t_m_plough, t_m_blast,
 		t_m_fear, t_arc, t_traverse, t_deploy, t_e_hp, t_climb, t_m_hgain, t_m_apex, t_m_reserve, t_m_refill,
-		t_fixed]
+		t_fixed, t_m_ak]
 	var keys := ["cls", "attack", "defence", "armour", "shield", "mshield",
 		"damage", "reach", "ranks_reach", "mass", "walk", "run", "hp", "cooldown",
 		"morale", "file_sp", "rank_sp", "turn", "brace", "vs_cav", "charge",
@@ -1322,12 +1417,20 @@ func _load_types() -> void:
 		"m_damage", "m_ap", "m_ammo", "m_reload", "m_spread", "m_spread0",
 		"m_speed", "m_arc", "skirm", "m_vuln", "m_down", "m_lead", "m_long", "crew", "crew_min",
 		"m_kind", "m_min", "m_pierce", "m_plough", "m_blast", "m_fear", "arc", "traverse",
-		"deploy", "e_hp", "climb", "m_hgain", "m_apex", "m_reserve", "m_refill", "fixed"]
+		"deploy", "e_hp", "climb", "m_hgain", "m_apex", "m_reserve", "m_refill", "fixed", "m_ak"]
 	for k in arrays.size():
 		var arr: PackedInt32Array = arrays[k]
 		arr.resize(nt)
 		for t in nt:
 			arr[t] = UT.stat(t, keys[k])
+	var ka := [t_k_base, t_k_share, t_k_dmg, t_k_obj, t_k_ap, t_k_pierce, t_k_range, t_k_rate, t_k_fear,
+		t_k_blast, t_k_fire]
+	var na := UT.AMMO.size()
+	for k in ka.size():
+		var arr: PackedInt32Array = ka[k]
+		arr.resize(na)
+		for a in na:
+			arr[a] = UT.ammo_stat(a, UT.AMMO_FIELDS[k])
 
 
 # -------------------------------------------------------------- terrain ---
@@ -1468,8 +1571,8 @@ func _fac_for(u: int, s: int) -> int:
 
 ## Missile range of type ty shooting from ground height hs at ground height
 ## ht: the type's m_hgain % of the height difference, at most RANGE_H_CAP %.
-func range_h(ty: int, hs: int, ht: int) -> int:
-	var rng := t_m_range[ty]
+func range_h(ty: int, hs: int, ht: int, pct: int = 100) -> int:
+	var rng := t_m_range[ty] * pct / 100
 	if ter_on == 0 and obs_on == 0:
 		return rng
 	var cap := rng * RANGE_H_CAP / 100
@@ -1479,7 +1582,7 @@ func range_h(ty: int, hs: int, ht: int) -> int:
 ## Effective range of missile unit u against unit t (centroid heights; from
 ## a wall at men below, WALL_RANGE_PCT further).
 func range_vs(u: int, t: int) -> int:
-	return range_h(u_type[u], u_h[u], u_h[t]) + _wall_rb(u, t)
+	return range_h(u_type[u], u_h[u], u_h[t], range_pct(u)) + _wall_rb(u, t)
 
 
 ## Missile troops on a wall shooting at men not on one: WALL_RANGE_PCT % of
@@ -2903,7 +3006,7 @@ static func seg_pt(sim, sg: int, t: int) -> Vector2i:
 ## map with walkways (attackers never: no ladders yet; no horses, pikes or
 ## engines).
 static func can_man_walls(sim, u: int) -> bool:
-	if sim.city_on == 0 or sim.ws_x0.size() == 0 or sim.u_side[u] != sim.city_def:
+	if sim.city_on == 0 or sim.ws_x0.size() == 0 or sim.u_side[u] != sim.city_def or carrying(sim, u) != 0:
 		return false
 	var c: int = sim.u_cls[u]
 	return c == UT.CLS_INF or c == UT.CLS_MISSILE
@@ -3834,6 +3937,8 @@ func _apply_orders(max_player: int = 1 << 30) -> void:
 			u_refill[u] = int(d["refill"])
 			u_gtarget[u] = int(d["gtarget"])
 			u_pick[u] = int(d["pick"])
+			u_akind[u] = int(d["akind"])
+			u_forage[u] = int(d["forage"])
 			u_dirty[u] = 1
 			u_settled[u] = 0
 			if int(o["type"]) == ORDER_DROP:
@@ -3860,7 +3965,7 @@ static func order_fields(sim, u: int) -> Dictionary:
 		"dy": sim.u_dy[u], "dface": sim.u_dface[u], "target": sim.u_target[u],
 		"run": sim.u_run[u], "fire": sim.u_fire[u], "skirm": sim.u_skirm[u],
 		"deploy": sim.u_deploy[u], "refill": sim.u_refill[u], "gtarget": sim.u_gtarget[u],
-		"pick": sim.u_pick[u]}
+		"pick": sim.u_pick[u], "akind": sim.u_akind[u], "forage": sim.u_forage[u]}
 
 
 ## Units an order applies to (in index order): its unit, or every ready unit
@@ -3895,11 +4000,17 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 			place_rule(sim, u, d, o)
 		return
 	if sim.phase == PHASE_DEPLOY and typ != ORDER_RUN and typ != ORDER_FIRE and typ != ORDER_SKIRMISH \
-			and typ != ORDER_DEPLOY:
+			and typ != ORDER_DEPLOY and typ != ORDER_AMMO:
+		return
+	if typ == ORDER_AMMO:
+		# Which ammunition: its special kind (on 1) or the standard one.
+		if sim.spec_kind(u) >= 0:
+			d["akind"] = 1 if int(o.get("on", 0)) != 0 else 0
 		return
 	# Siege: a tower's engine only shoots (at a unit, at will) or holds; a
 	# unit climbing ladders goes on climbing (or withdraws back down them).
-	if UT.stat(ty, "fixed") != 0 and typ != ORDER_ATTACK and typ != ORDER_HALT and typ != ORDER_FIRE:
+	if UT.stat(ty, "fixed") != 0 and typ != ORDER_ATTACK and typ != ORDER_HALT and typ != ORDER_FIRE \
+			and typ != ORDER_AMMO:
 		return
 	if u < sim.u_stair.size() and sim.u_stair[u] == ST_LADDER and typ != ORDER_FIRE and typ != ORDER_RUN \
 			and typ != ORDER_WITHDRAW and typ != ORDER_WITHDRAW_ALL:
@@ -3953,11 +4064,15 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 	# Artillery: frontage is set by its engines, and it never runs (the
 	# engines are dragged); it does not skirmish.
 	var art := UT.cls(ty) == UT.CLS_ART
+	var mis := UT.cls(ty) == UT.CLS_MISSILE
 	# A battery's refill ends with any order to move, shoot, withdraw or
-	# set up / pack up (it gets back out first: REFILL_FULL / 2 ticks).
-	if art and (typ == ORDER_MOVE or typ == ORDER_ATTACK or typ == ORDER_WITHDRAW \
-			or typ == ORDER_WITHDRAW_ALL or typ == ORDER_DEPLOY):
-		d["refill"] = 0
+	# set up / pack up (it gets back out first: REFILL_FULL / 2 ticks); so
+	# do missile troops' refill at a wagon and their foraging.
+	if (art or mis) and (typ == ORDER_MOVE or typ == ORDER_ATTACK or typ == ORDER_WITHDRAW \
+			or typ == ORDER_WITHDRAW_ALL or typ == ORDER_DEPLOY or typ == ORDER_HALT):
+		if typ != ORDER_HALT:
+			d["refill"] = 0
+		d["forage"] = 0
 	# Walls. A move onto a wall's body, walkway, stair or tower goes to the
 	# walkway of the stretch it belongs to (wall_snap); only units that may
 	# man the walls take it so (others: a ground move, refused by the view).
@@ -4062,6 +4177,17 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 				d["run"] = 0
 				return
 			var c := UT.cls(ty)
+			if c == UT.CLS_MISSILE and carry < 0 and wallu == 0:
+				# Missile troops shoot at it from where they stand (fire
+				# missiles set it alight; others glance off).
+				d["order"] = O_NONE
+				d["target"] = -1
+				d["gtarget"] = gt
+				d["dx"] = d["ax"]
+				d["dy"] = d["ay"]
+				d["dface"] = FM.atan2_a(sim.g_y[gt] - int(d["ay"]), sim.g_x[gt] - int(d["ax"]))
+				d["run"] = 0
+				return
 			var gfp: Vector3i = sim.gate_front(gt, sim.u_side[u])
 			if carry < 0 and u < sim.u_lq.size() and sim.u_lq[u] >= 0 and (wallu > 0 \
 					or sim.reach_at(int(d["ax"]), int(d["ay"])) == sim.reach_at(sim.g_ix[gt], sim.g_iy[gt])):
@@ -4101,10 +4227,24 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 	elif typ == ORDER_DEPLOY:
 		if art:
 			d["deploy"] = 1 if int(o.get("on", 0)) != 0 else 0
+	elif typ == ORDER_FORAGE:
+		if int(o.get("on", 0)) == 0:
+			d["forage"] = 0
+		elif forage_refusal(sim, u) == "":
+			# Making arrows in the woods: it stands, does not shoot.
+			d["forage"] = 1
+			d["refill"] = 0
+			d["order"] = O_NONE
+			d["target"] = -1
+			d["gtarget"] = -1
+			d["dx"] = d["ax"]
+			d["dy"] = d["ay"]
+			d["dface"] = d["face"]
 	elif typ == ORDER_REFILL:
-		if art:
+		if art or (mis and carry < 0 and wallu == 0):
 			var on := 1 if int(o.get("on", 0)) != 0 else 0
 			d["refill"] = on
+			d["forage"] = 0
 			if on != 0:
 				# Stand and resupply: stop moving and shooting.
 				d["order"] = O_NONE
@@ -4389,7 +4529,11 @@ func step() -> void:
 			if u_pick[u] >= PICK_ENG:
 				_pick_check(u)  # going to take up engines left on the field
 		_update_artillery()
+	if veg_on != 0 or sg_on != 0:
+		_update_supply()
 	_update_missiles()
+	if fire_on != 0:
+		_update_fire()
 	_refresh_offsets()
 	_update_morale()
 	if city_on != 0:
@@ -4702,8 +4846,13 @@ func _update_units() -> void:
 		var speed := t_run[ty] if u_run[u] != 0 else t_walk[ty]
 		if sg_on != 0 and u_carry[u] >= 0:
 			# Carrying siege equipment: no running, the ram's pace or a little
-			# below the walk with ladders.
-			speed = mini(t_walk[ty], RAM_WALK) if q_kind[u_carry[u]] == EQ_RAM else t_walk[ty] * LADDER_WALK_PCT / 100
+			# below the walk with ladders; a wagon at its pace (its horses
+			# alive: theirs; none: the crew's).
+			var cq := u_carry[u]
+			if q_kind[cq] == EQ_WAGON:
+				speed = UT.wagon_pace(q_tier[cq], q_hn[cq])
+			else:
+				speed = mini(t_walk[ty], RAM_WALK) if q_kind[cq] == EQ_RAM else t_walk[ty] * LADDER_WALK_PCT / 100
 		var aspeed := (speed * 7) >> 3
 		# Woods under the anchor: slower, and (below) disorder and a lower
 		# momentum cap; settlement streets cap a charge too.
@@ -4893,11 +5042,11 @@ func _update_units() -> void:
 					# flat thrower with a crest in the way keeps closing.
 					if d > 0:
 						want_face = FM.atan2_a(dy, dx)
-					var stop := t_m_range[ty] * 17 / 20
+					var stop := mrange(u) * 17 / 20
 					if ton or mon:
 						stop = range_vs(u, t) * 17 / 20
 						if not lof_units(u, t):
-							stop = t_m_range[ty] / 4
+							stop = mrange(u) / 4
 						if d > stop and ton:
 							aspeed = aspeed * _fac_dir(u, g0, dx, dy, d) / 1000
 					if u_wall[u] > 0:
@@ -4954,6 +5103,8 @@ func _update_units() -> void:
 			_refill_state(u, order, moved)
 			if u_rprog[u] == 0:
 				_deploy_state(u, order, moved)
+		elif u_refill[u] != 0 or u_rprog[u] > 0:
+			_refill_state(u, order, moved)  # (missile troops at a wagon)
 		var dis := maxi(u_disorder[u] - 2, 0)
 		if cls == UT.CLS_PIKE and u_run[u] != 0 and moved > 0:
 			dis = maxi(dis, DISORDER_RUN)
@@ -5056,6 +5207,8 @@ func _charge_state(u: int) -> void:
 ## when the battery is caught in melee.
 func _refill_state(u: int, order: int, moved: int) -> void:
 	var r := u_rprog[u]
+	if u_cls[u] != UT.CLS_ART and u_refill[u] != 0 and (order != O_NONE or moved > 0):
+		u_refill[u] = 0  # missile troops moved off (skirmishing): the refill is given up
 	if u_fighting[u] > 0 and (r > 0 or u_refill[u] != 0):
 		stat_refill_broken += 1
 		u_refill[u] = 0
@@ -5154,10 +5307,22 @@ func _missile_think(u: int) -> void:
 				u_settled[u] = 0
 				u_ftarget[u] = -1
 				return
+	if u_refill[u] != 0 or u_rprog[u] > 0 or u_forage[u] != 0:
+		u_ftarget[u] = -1  # refilling at a wagon or foraging: no shooting
+		return
 	# Fire target.
 	var ft := -1
+	var gt := u_gtarget[u]
+	if gt >= 0 and order == O_NONE:
+		# Told to shoot at a gate: while it stands shut and in range
+		# (_gate_volleys), nothing else.
+		if gt >= n_gates or g_state[gt] != GATE_CLOSED:
+			u_gtarget[u] = -1
+		elif _gate_shot_ok(u, gt):
+			u_ftarget[u] = -1
+			return
 	if u_ammo[u] > 0 and order != O_MOVE and order != O_WITHDRAW:
-		var rng := t_m_range[ty]
+		var rng := mrange(u)
 		if order == O_ATTACK:
 			var t := u_target[u]
 			if t >= 0 and u_state[t] < U_DESTROYED and _in_range(u, t, rng):
@@ -6211,6 +6376,8 @@ func _melee(a: int, d: int, pen: int, parting: bool = false) -> void:
 		bonus = REAR_BONUS
 	elif not frontal:
 		bonus = FLANK_BONUS
+	if bonus > 0 and sg_on != 0 and u_carry[ud] >= 0 and q_kind[u_carry[ud]] == EQ_WAGON:
+		bonus += WAGON_EXPOSED  # men in the traces of a wagon, hit from the side or behind
 	var att := u_att[ua]
 	var dmg0 := u_dmg[ua]
 	var def := u_def[ud]
@@ -6496,6 +6663,7 @@ func _remove(d: int, why: int) -> void:
 	else:
 		u_ammo[u] -= ammo[d]
 	ammo[d] = 0
+	sammo[d] = 0
 	var alive := u_alive[u]
 	var base := u_slot_base[u]
 	var files := maxi(files_of(u), 1)
@@ -6602,7 +6770,10 @@ func _update_missiles() -> void:
 		var ty := u_type[u]
 		var alive := u_alive[u]
 		var acc := u_fire_acc[u] + alive
-		var reload := t_m_reload[ty]
+		var ks := u_sk[u]
+		var kstd := t_m_ak[ty]
+		var pref := ks >= 0 and u_akind[u] != 0
+		var reload := t_m_reload[ty] * t_k_rate[ks if pref else kstd] / 100 if kstd >= 0 else t_m_reload[ty]
 		var tries := 0
 		while acc >= reload and tries < alive:
 			acc -= reload
@@ -6612,8 +6783,10 @@ func _update_missiles() -> void:
 			var i := slot_soldier[u_slot_base[u] + ptr]
 			if state[i] != S_FORMED or ammo[i] <= 0:
 				continue
-			_fire(i, u, ft, ty)
+			_fire(i, u, ft, ty, _shot_kind(i, ks, kstd, pref))
 		u_fire_acc[u] = mini(acc, reload)
+	if city_on != 0:
+		_gate_volleys()
 	# Land everything due this tick.
 	var b := tick % PR_BUCKETS
 	var p := pr_bucket[b]
@@ -6633,7 +6806,17 @@ func _update_missiles() -> void:
 		p = nxt
 
 
-func _fire(i: int, u: int, ft: int, ty: int) -> void:
+## The kind soldier i shoots: the one his unit means (pref: its special
+## kind ks, else the standard kstd) while he has it, else the other.
+func _shot_kind(i: int, ks: int, kstd: int, pref: bool) -> int:
+	if ks < 0:
+		return kstd
+	var sp := sammo[i] > 0
+	var st := ammo[i] > sammo[i]
+	return ks if sp and (pref or not st) else kstd
+
+
+func _fire(i: int, u: int, ft: int, ty: int, ak: int = -1) -> void:
 	var talive := u_alive[ft]
 	var j := slot_soldier[u_slot_base[ft] + _rand() % talive]
 	var sx := pos_x[i]
@@ -6652,17 +6835,21 @@ func _fire(i: int, u: int, ft: int, ty: int) -> void:
 	var dx := ax - sx
 	var dy := ay - sy
 	var dist := FM.approx_len(dx, dy)
+	var rp := t_k_range[ak] if ak >= 0 else 100
 	if ter_on == 0 and map_on == 0:
-		if dist > t_m_range[ty] or dist <= 0 or pr_free < 0:
+		if dist > t_m_range[ty] * rp / 100 or dist <= 0 or pr_free < 0:
 			return
 	else:
-		if dist <= 0 or pr_free < 0 or not _shot_ok(sx, sy, ax, ay, dist, ty, 0, _skip1(ft), _wall_rb(u, ft)):
+		if dist <= 0 or pr_free < 0 or not _shot_ok(sx, sy, ax, ay, dist, ty, 0, _skip1(ft), _wall_rb(u, ft), rp):
 			return
 	var p := pr_free
 	pr_free = pr_next[p]
 	pr_count += 1
 	ammo[i] -= 1
 	u_ammo[u] -= 1
+	if ak >= 0 and t_k_base[ak] >= 0:
+		sammo[i] -= 1
+		stat_ak_shots += 1
 	stat_shots += 1
 	facing[i] = FM.atan2_a(dy, dx)
 	# Scatter: lateral error, and a larger error along the line of flight.
@@ -6683,6 +6870,7 @@ func _fire(i: int, u: int, ft: int, ty: int) -> void:
 	pr_unit[p] = u
 	pr_ty[p] = ty
 	pr_tu[p] = ft
+	pr_ak[p] = ak
 	var b := (tick + flight) % PR_BUCKETS
 	pr_next[p] = pr_bucket[b]
 	pr_bucket[b] = p
@@ -6691,12 +6879,12 @@ func _fire(i: int, u: int, ft: int, ty: int) -> void:
 ## Hilly maps: a shot from (sx, sy) at (ax, ay), dist apart, is within the
 ## height-adjusted range and, for a flat weapon, has a line of fire.
 func _shot_ok(sx: int, sy: int, ax: int, ay: int, dist: int, ty: int, skip0: int = 0,
-		skip1: int = LOF_SKIP, wb: int = 0) -> bool:
+		skip1: int = LOF_SKIP, wb: int = 0, rp: int = 100) -> bool:
 	var hs := elev_at(sx, sy) if obs_on != 0 else height_at(sx, sy)
 	var ha := elev_at(ax, ay) if obs_on != 0 else height_at(ax, ay)
-	if dist > range_h(ty, hs, ha) + wb:
+	if dist > range_h(ty, hs, ha, rp) + wb:
 		return false
-	if dist > t_m_range[ty]:
+	if dist > t_m_range[ty] * rp / 100:
 		stat_range_up += 1
 	if t_m_arc[ty] == 0 and lof_block(sx, sy, hs + LOF_EYE, ax, ay, ha + LOF_BODY,
 			dist * t_m_apex[ty] / 100, 0, LOF_STEP, skip0, skip1) >= 0:
@@ -6708,6 +6896,8 @@ func _shot_ok(sx: int, sy: int, ax: int, ay: int, dist: int, ty: int, skip0: int
 ## A projectile lands: the nearest soldier (either side) within his hit radius
 ## of the landing point takes the hit.
 func _land(p: int) -> void:
+	if fire_on != 0 and pr_ak[p] >= 0 and t_k_fire[pr_ak[p]] > 0:
+		_ignite(p)
 	var kind := t_m_kind[pr_ty[p]]
 	if kind == 1:
 		_land_bolt(p)
@@ -6715,6 +6905,8 @@ func _land(p: int) -> void:
 	if kind == 2:
 		_land_stone(p)
 		return
+	if wag_h > 0 and _horse_hit(p):
+		return  # struck a wagon's horse
 	var x := pr_x[p]
 	var y := pr_y[p]
 	var best := -1
@@ -6745,7 +6937,7 @@ func _land(p: int) -> void:
 	# The unit aimed at, if it is not in the grid: find the slot under the
 	# landing point from the formation geometry.
 	var tu := pr_tu[p]
-	if best < 0 and u_contact[tu] == 0 and u_alive[tu] > 0:
+	if best < 0 and tu >= 0 and u_contact[tu] == 0 and u_alive[tu] > 0:
 		var j := -1
 		if u_state[tu] == U_READY and u_neng[tu] == 0 and u_wall[tu] == 0:
 			j = _slot_at(tu, x, y)
@@ -6771,10 +6963,10 @@ func _land(p: int) -> void:
 				and _rand() % 100 < WALL_COVER[city_walls]:
 			stat_wall_cover += 1
 			return
-		if sg_on != 0 and u_carry[ub] >= 0 and q_kind[u_carry[ub]] == EQ_RAM \
+		if sg_on != 0 and u_carry[ub] >= 0 and EQ_ROOF[q_kind[u_carry[ub]]] != 0 \
 				and FM.approx_len(pos_x[best] - q_x[u_carry[ub]], pos_y[best] - q_y[u_carry[ub]]) <= RAM_ROOF_R \
 				and _rand() % 100 < RAM_ROOF_PCT:
-			return  # on the ram's roof
+			return  # on the ram's (the wagon's) roof
 	if best >= 0:
 		_missile_hit(p, best)
 
@@ -6850,12 +7042,17 @@ func _missile_hit(p: int, d: int) -> void:
 	if frontal and _rand() % 100 < t_mshield[td]:
 		return
 	stat_missile_hits += 1
-	var arm := t_armour[td] * (100 - t_m_ap[ty]) / 100
-	var dmg := maxi(t_m_dmg[ty] - arm, 3) * t_m_vuln[td] / 100 * (85 + _rand() % 31) / 100
+	var k := pr_ak[p]
+	var ap := clampi(t_m_ap[ty] + t_k_ap[k], 0, 100) if k >= 0 else t_m_ap[ty]
+	var arm := t_armour[td] * (100 - ap) / 100
+	var md := t_m_dmg[ty] * t_k_dmg[k] / 100 if k >= 0 else t_m_dmg[ty]
+	var dmg := maxi(md - arm, 3) * t_m_vuln[td] / 100 * (85 + _rand() % 31) / 100
 	if u_state[ud] == U_READY:
 		var unit_rel := absi(FM.angle_diff(u_face[ud], from_def))
 		u_morale[ud] -= MORALE_MISSILE_HIT if unit_rel <= FRONT_ARC else MORALE_MISSILE_FLANK
 		u_hit_t[ud] = tick
+		if k >= 0:
+			_kind_shock(ud, k)
 	var h := hp[d] - dmg
 	# A horse struck may simply go down, rider and all.
 	if h <= 0 or (t_m_down[td] > 0 and _rand() % 100 < t_m_down[td]):
@@ -6865,6 +7062,460 @@ func _missile_hit(p: int, d: int) -> void:
 		_remove(d, GONE_KILLED)
 	else:
 		hp[d] = h
+
+
+# ------------------------------------------------------ ammunition kinds ---
+# docs/DESIGN.md "Ammunition kinds": a unit's weapon shoots its standard
+# kind (t_m_ak of what it uses now) and may carry one special kind (u_sk for
+# its own weapon, eg_sk for engines), a share of the load per man (sammo) or
+# per engine (e_sammo). ORDER_AMMO picks which it means to shoot (u_akind);
+# a man (an engine) out of that kind shoots the other.
+
+## The special kind of the weapon unit u uses now (its engines' while it
+## works engines, else its own), -1 none.
+func spec_kind(u: int) -> int:
+	if u_neng[u] > 0 and u_eg[u] >= 0:
+		return eg_sk[u_eg[u]]
+	return u_sk[u]
+
+
+## The kind unit u means to shoot (-1: no missile weapon).
+func cur_kind(u: int) -> int:
+	var sk := spec_kind(u)
+	if sk >= 0 and u_akind[u] != 0:
+		return sk
+	return t_m_ak[u_type[u]]
+
+
+## Range of unit u's missiles in % of its weapon's, by the kind it means to shoot.
+func range_pct(u: int) -> int:
+	var k := cur_kind(u)
+	return t_k_range[k] if k >= 0 else 100
+
+
+## Missile range of unit u (flat ground) with the kind it means to shoot.
+func mrange(u: int) -> int:
+	return t_m_range[u_type[u]] * range_pct(u) / 100
+
+
+## Missiles (shots) of its special kind unit u has left: its men's, or its
+## working engines' while it works engines.
+func special_left(u: int) -> int:
+	var n_s := 0
+	if u_neng[u] > 0:
+		for k in u_neng[u]:
+			var e := u_eng0[u] + k
+			if e_state[e] == E_OK:
+				n_s += e_sammo[e]
+		return n_s
+	if u_sk[u] < 0:
+		return 0
+	var base := u_slot_base[u]
+	for s in u_alive[u]:
+		n_s += sammo[slot_soldier[base + s]]
+	return n_s
+
+
+## A missile of kind k struck unit ud: its fear, and its fire sets the men
+## burning (their morale drains while it lasts). `fear`: false when the
+## caller added the kind's fear already (artillery fright).
+func _kind_shock(ud: int, k: int, fear: bool = true) -> void:
+	if fear and t_k_fear[k] > 0:
+		u_morale[ud] -= t_k_fear[k]
+	if t_k_fire[k] > 0:
+		if u_burn[ud] == 0:
+			stat_unit_burn += 1
+		u_burn[ud] = BURN_UNIT
+
+
+## A fire missile (projectile p) lands: each wooden thing within reach of
+## where it fell catches fire with its kind's chance: a shut or open gate
+## (its face), an engine (a tower's: anywhere on the tower), ladders on the
+## ground or carried, a ram, a wagon. Index order; the RNG is drawn only
+## for things in reach.
+func _ignite(p: int) -> void:
+	var k := pr_ak[p]
+	var ch := t_k_fire[k]
+	var x := pr_x[p]
+	var y := pr_y[p]
+	for g in n_gates:
+		if g_state[g] == GATE_BROKEN:
+			continue
+		var f := gate_frame(g, x, y)
+		if absi(f.x) > g_hw[g] * M + 1536 or absi(f.y) > wall_t / 2 + 3 * M:
+			continue
+		if _rand() % 100 < ch:
+			if g_burn[g] == 0:
+				stat_ignite += 1
+			g_burn[g] = FIRE_TICKS
+	for e in n_eng:
+		if e_state[e] == E_WRECKED:
+			continue
+		var r := FIRE_R
+		var eu := e_unit[e]
+		if eu >= 0 and eu < n_units and t_fixed[u_type[eu]] != 0:
+			r = u_trad[eu] + M
+		if absi(e_x[e] - x) > r or absi(e_y[e] - y) > r:
+			continue
+		if _rand() % 100 < ch:
+			if e_burn[e] == 0:
+				stat_ignite += 1
+			e_burn[e] = FIRE_TICKS
+	for q in n_eq:
+		if q_state[q] == Q_WRECKED or q_state[q] == Q_PLANTED:
+			continue  # (planted ladders stand against the wall, out of reach)
+		if absi(q_x[q] - x) > FIRE_R or absi(q_y[q] - y) > FIRE_R:
+			continue
+		if _rand() % 100 < ch:
+			if q_burn[q] == 0:
+				stat_ignite += 1
+			q_burn[q] = FIRE_TICKS
+
+
+## Full hit points of piece q (fire chips a share of them).
+func _eq_hp0(q: int) -> int:
+	if q_kind[q] == EQ_RAM:
+		return RAM_HP
+	if q_kind[q] == EQ_LADDERS:
+		return LADDER_HP
+	return _wagon_hp0(q)
+
+
+## Piece q is destroyed (burnt, smashed): put down by whoever carried it.
+func _eq_wreck(q: int) -> void:
+	var u := q_unit[q]
+	if u >= 0 and u_carry[u] == q:
+		u_carry[u] = -1
+	q_unit[q] = -1
+	q_state[q] = Q_WRECKED
+	q_hp[q] = 0
+	q_burn[q] = 0
+	_wagon_lost(q)
+
+
+## Burning things, once a tick: each loses FIRE_CHIP per mille of its full
+## hit points every second until the fire is out (FIRE_TICKS after the last
+## fire missile on it) or it is gone: a gate breaks, an engine is wrecked
+## (a tower falls with it), a piece of equipment is wrecked.
+func _update_fire() -> void:
+	var sec := tick % TICKS_PER_SECOND == 0
+	for g in n_gates:
+		if g_burn[g] <= 0:
+			continue
+		g_burn[g] -= 1
+		if g_state[g] == GATE_BROKEN:
+			g_burn[g] = 0
+			continue
+		if sec:
+			var chip := maxi(g_hp0[g] * FIRE_CHIP / 1000, 100)
+			g_hp[g] -= chip
+			g_hit_t[g] = tick
+			stat_fire_dmg += chip / 100
+			if g_hp[g] <= 0:
+				_break_gate(g)
+				g_burn[g] = 0
+				stat_burnt += 1
+	for e in n_eng:
+		if e_burn[e] <= 0:
+			continue
+		e_burn[e] -= 1
+		if e_state[e] == E_WRECKED:
+			e_burn[e] = 0
+			continue
+		if sec:
+			var chip := maxi(t_e_hp[eg_type[e_grp[e]]] * FIRE_CHIP / 1000, 1)
+			e_hp[e] -= chip
+			stat_fire_dmg += chip
+			if e_hp[e] <= 0:
+				if e_state[e] == E_OK:
+					_wreck(e)
+				else:
+					e_state[e] = E_WRECKED
+					e_hp[e] = 0
+				e_burn[e] = 0
+				stat_burnt += 1
+	for q in n_eq:
+		if q_burn[q] <= 0:
+			continue
+		q_burn[q] -= 1
+		if q_state[q] == Q_WRECKED:
+			q_burn[q] = 0
+			continue
+		if sec:
+			var chip := maxi(_eq_hp0(q) * FIRE_CHIP / 1000, 1)
+			q_hp[q] -= chip
+			stat_fire_dmg += chip
+			if q_hp[q] <= 0:
+				_eq_wreck(q)
+				stat_burnt += 1
+
+
+## Missile unit u (told to shoot at gate g) can reach its face from where
+## it stands with the kind it means to shoot.
+func _gate_shot_ok(u: int, g: int) -> bool:
+	if g < 0 or g >= n_gates or g_state[g] != GATE_CLOSED or u_ammo[u] <= 0:
+		return false
+	var gf := gate_face(g)
+	return FM.approx_len(gf.x - u_cx[u], gf.y - u_cy[u]) <= mrange(u)
+
+
+## Missile units told to shoot at a gate (gtarget, standing): volleys at its
+## face as at a unit (no lead, the same rate and scatter). Only fire
+## missiles do anything to a gate (they may set it alight).
+func _gate_volleys() -> void:
+	for u in n_units:
+		var g := u_gtarget[u]
+		if g < 0 or u_cls[u] != UT.CLS_MISSILE or u_order[u] != O_NONE or u_state[u] != U_READY:
+			continue
+		if u_moved[u] != 0 or u_ftarget[u] >= 0 or not _gate_shot_ok(u, g):
+			continue
+		var ty := u_type[u]
+		var alive := u_alive[u]
+		var acc := u_fire_acc[u] + alive
+		var ks := u_sk[u]
+		var kstd := t_m_ak[ty]
+		var pref := ks >= 0 and u_akind[u] != 0
+		var reload := t_m_reload[ty] * t_k_rate[ks if pref else kstd] / 100 if kstd >= 0 else t_m_reload[ty]
+		var tries := 0
+		while acc >= reload and tries < alive:
+			acc -= reload
+			tries += 1
+			var ptr := u_fire_ptr[u] % alive
+			u_fire_ptr[u] = ptr + 1
+			var i := slot_soldier[u_slot_base[u] + ptr]
+			if state[i] != S_FORMED or ammo[i] <= 0:
+				continue
+			_fire_gate(i, u, g, ty, _shot_kind(i, ks, kstd, pref))
+		u_fire_acc[u] = mini(acc, reload)
+
+
+## Soldier i of missile unit u shoots at gate g's face (kind k).
+func _fire_gate(i: int, u: int, g: int, ty: int, k: int) -> void:
+	if pr_free < 0:
+		return
+	var gf := gate_face(g)
+	var sx := pos_x[i]
+	var sy := pos_y[i]
+	var dx := gf.x - sx
+	var dy := gf.y - sy
+	var dist := FM.approx_len(dx, dy)
+	var rp := t_k_range[k] if k >= 0 else 100
+	if dist <= 0 or not _shot_ok(sx, sy, gf.x, gf.y, dist, ty, 0, LOF_SKIP, 0, rp):
+		return
+	var p := pr_free
+	pr_free = pr_next[p]
+	pr_count += 1
+	ammo[i] -= 1
+	u_ammo[u] -= 1
+	if k >= 0 and t_k_base[k] >= 0:
+		sammo[i] -= 1
+		stat_ak_shots += 1
+	stat_shots += 1
+	facing[i] = FM.atan2_a(dy, dx)
+	var spread := t_m_spread0[ty] + dist * t_m_spread[ty] / 1000
+	var lat := (_rand() % (spread + 1) + _rand() % (spread + 1)) - spread
+	var lon := ((_rand() % (spread + 1) + _rand() % (spread + 1)) - spread) * 3 / 2
+	var ux := dx * FM.TRIG_ONE / dist
+	var uy := dy * FM.TRIG_ONE / dist
+	var flight := clampi(dist / t_m_speed[ty] + 3, 3, PR_BUCKETS - 1)
+	pr_sx[p] = sx
+	pr_sy[p] = sy
+	pr_x[p] = clampi(gf.x + ((ux * lon - uy * lat) / FM.TRIG_ONE), 0, field_w)
+	pr_y[p] = clampi(gf.y + ((uy * lon + ux * lat) / FM.TRIG_ONE), 0, field_h)
+	pr_t0[p] = tick
+	pr_t1[p] = tick + flight
+	pr_unit[p] = u
+	pr_ty[p] = ty
+	pr_tu[p] = -2 - g
+	pr_ak[p] = k
+	var b := (tick + flight) % PR_BUCKETS
+	pr_next[p] = pr_bucket[b]
+	pr_bucket[b] = p
+
+
+# ---------------------------------------------------------------- resupply ---
+# docs/DESIGN.md "Resupply: foraging and the ammunition wagon".
+
+## The ammunition wagon unit u may refill from: within WAGON_R of its
+## bounding box, not wrecked, standing (anyone's: crew gone, left) or
+## pulled by a unit of u's side; the nearest, ties to the lower index. -1 none.
+func _wagon_for(u: int) -> int:
+	var best := -1
+	var bd := 0
+	for q in n_eq:
+		if q_kind[q] != EQ_WAGON or q_state[q] == Q_WRECKED:
+			continue
+		if q_state[q] == Q_CARRIED and (q_unit[q] < 0 or u_side[q_unit[q]] != u_side[u]):
+			continue
+		var gx := maxi(maxi(u_minx[u] - q_x[q], q_x[q] - u_maxx[u]), 0)
+		var gy := maxi(maxi(u_miny[u] - q_y[q], q_y[q] - u_maxy[u]), 0)
+		var d := maxi(gx, gy)
+		if d <= WAGON_R and (best < 0 or d < bd):
+			best = q
+			bd = d
+	return best
+
+
+## (For the AI and the view: _wagon_for as a public call.)
+func wagon_for(u: int) -> int:
+	return _wagon_for(u)
+
+
+## Shots / missiles of kind k left in wagon q.
+func wagon_stock(q: int, k: int) -> int:
+	if q < 0 or q >= n_eq or k < 0:
+		return 0
+	return q_stock[q * UT.AMMO.size() + k]
+
+
+## Why unit u cannot forage ("" if it can): missile troops (not working
+## engines, not carrying, not on a wall), ready, standing in woods.
+static func forage_refusal(sim, u: int) -> String:
+	if sim.u_state[u] != U_READY:
+		return "Not now"
+	if sim.u_cls[u] != UT.CLS_MISSILE or UT.stat(sim.u_type[u], "m_ammo") <= 0:
+		return "Only archers and javelinmen make their own missiles"
+	if sim.u_carry[u] >= 0:
+		return "Carrying something: put it down first (Drop)"
+	if sim.u_wall[u] > 0:
+		return "Not on a wall"
+	if sim.veg_d(sim.u_ax[u], sim.u_ay[u]) <= 0:
+		return "Only in woods"
+	return ""
+
+
+## Missile p (an arrow or javelin) lands by a wagon's team: one horse is
+## struck HORSE_HIT % of the time (the missile is spent on it). True if so.
+func _horse_hit(p: int) -> bool:
+	var x := pr_x[p]
+	var y := pr_y[p]
+	for q in n_eq:
+		if q_kind[q] != EQ_WAGON or q_hn[q] <= 0 or q_state[q] == Q_WRECKED:
+			continue
+		var hx := q_x[q]
+		var hy := q_y[q]
+		var c := q_unit[q]
+		if q_state[q] == Q_CARRIED and c >= 0:
+			# The team is in front of the wagon (the crew's facing).
+			hx += FM.cos_a(u_face[c]) * 3 * M / FM.TRIG_ONE
+			hy += FM.sin_a(u_face[c]) * 3 * M / FM.TRIG_ONE
+		if absi(hx - x) > HORSE_R or absi(hy - y) > HORSE_R:
+			continue
+		if _rand() % 100 >= HORSE_HIT:
+			return false
+		var k := pr_ak[p]
+		var ty := pr_ty[p]
+		var md := t_m_dmg[ty] * t_k_dmg[k] / 100 if k >= 0 else t_m_dmg[ty]
+		_horse_wound(q, md * 120 / 100)  # (a big target: as a horse's m_vuln)
+		return true
+	return false
+
+
+## Wagon q's lead horse takes dmg; at 0 it is down (the next one leads).
+func _horse_wound(q: int, dmg: int) -> void:
+	q_hhp[q] -= dmg
+	if q_hhp[q] <= 0:
+		q_hn[q] -= 1
+		wag_h -= 1
+		stat_horses_down += 1
+		q_hhp[q] = UT.wagon_stat(q_tier[q], "horse_hp") if q_hn[q] > 0 else 0
+
+
+## Once a tick: units foraging make missiles, missile units settled at a
+## wagon draw from it.
+func _update_supply() -> void:
+	for u in n_units:
+		if u_forage[u] != 0:
+			if u_state[u] != U_READY:
+				u_forage[u] = 0
+			else:
+				_forage_step(u)
+		elif u_rprog[u] == REFILL_FULL and u_cls[u] == UT.CLS_MISSILE and u_state[u] == U_READY:
+			_wagon_refill(u)
+
+
+## Missile unit u, settled at a wagon: missiles come up one at a time to
+## the man next in turn short of a full load (a unit's whole load in
+## WAGON_QUIVER ticks): its special kind first, up to its share, then the
+## standard kind, then the special kind again; until every man is full or
+## the wagon has nothing for them (the order ends).
+func _wagon_refill(u: int) -> void:
+	var q := _wagon_for(u)
+	var ty := u_type[u]
+	var full := t_m_ammo[ty]
+	var kstd := t_m_ak[ty]
+	var alive := u_alive[u]
+	if q < 0 or kstd < 0 or full <= 0 or alive <= 0:
+		u_refill[u] = 0
+		return
+	var nak := UT.AMMO.size()
+	var ks := u_sk[u]
+	var sfull := full * t_k_share[ks] / 100 if ks >= 0 else 0
+	u_racc[u] += alive * full
+	var give := u_racc[u] / WAGON_QUIVER
+	u_racc[u] -= give * WAGON_QUIVER
+	var idle := 0
+	var base := u_slot_base[u]
+	while give > 0 and idle < alive:
+		var ptr := u_rptr[u] % alive
+		u_rptr[u] = ptr + 1
+		var i := slot_soldier[base + ptr]
+		var k := -1
+		if ammo[i] < full:
+			if ks >= 0 and sammo[i] < sfull and q_stock[q * nak + ks] > 0:
+				k = ks
+			elif q_stock[q * nak + kstd] > 0:
+				k = kstd
+			elif ks >= 0 and q_stock[q * nak + ks] > 0:
+				k = ks
+		if k < 0:
+			idle += 1
+			continue
+		idle = 0
+		give -= 1
+		q_stock[q * nak + k] -= 1
+		ammo[i] += 1
+		u_ammo[u] += 1
+		if k == ks:
+			sammo[i] += 1
+		stat_refill_shots += 1
+	if idle >= alive:
+		u_refill[u] = 0  # every man full, or nothing more for them
+
+
+## Missile unit u foraging in woods: its men make missiles of the standard
+## kind for their own quivers (the whole unit's in FORAGE_QUIVER ticks).
+## It stops when hit, in melee, moved or out of the woods, or once full.
+func _forage_step(u: int) -> void:
+	if u_fighting[u] > 0 or tick - u_hit_t[u] <= 1 or tick - u_charged_t[u] <= 1 or u_order[u] != O_NONE \
+			or u_moved[u] > 0 or u_neng[u] > 0 or veg_d(u_ax[u], u_ay[u]) <= 0:
+		u_forage[u] = 0
+		return
+	var ty := u_type[u]
+	var full := t_m_ammo[ty]
+	var alive := u_alive[u]
+	if full <= 0 or alive <= 0:
+		u_forage[u] = 0
+		return
+	u_racc[u] += alive * full
+	var give := u_racc[u] / FORAGE_QUIVER
+	u_racc[u] -= give * FORAGE_QUIVER
+	var idle := 0
+	var base := u_slot_base[u]
+	while give > 0 and idle < alive:
+		var ptr := u_rptr[u] % alive
+		u_rptr[u] = ptr + 1
+		var i := slot_soldier[base + ptr]
+		if ammo[i] >= full:
+			idle += 1
+			continue
+		idle = 0
+		give -= 1
+		ammo[i] += 1
+		u_ammo[u] += 1
+		stat_forage += 1
+	if idle >= alive:
+		u_forage[u] = 0  # every quiver full
 
 
 # ------------------------------------------------------------- artillery ---
@@ -6880,7 +7531,7 @@ func _art_think(u: int) -> void:
 	var order := u_order[u]
 	var ft := -1
 	if u_ammo[u] > 0 and order != O_MOVE and order != O_WITHDRAW and u_rprog[u] == 0:
-		var rng := t_m_range[ty]
+		var rng := mrange(u)
 		var mn := t_m_min[ty]
 		if order == O_ATTACK and u_gtarget[u] >= 0:
 			pass  # shooting at a gate (_update_artillery)
@@ -7063,13 +7714,15 @@ func _update_artillery() -> void:
 		# Shoot: set up, standing, a target, loaded, crewed and on the bearing.
 		if u_depl[u] < full or not aim or u_moved[u] != 0 or u_rprog[u] > 0:
 			continue
-		var need := t_m_reload[ty] * t_crew[ty]
+		var need0 := t_m_reload[ty] * t_crew[ty]
 		for k in ne:
 			var e := e0 + k
 			if e_state[e] != E_OK or e_ammo[e] <= 0:
 				continue
 			if e_crew[e] < t_crew_min[ty]:
 				continue  # silent: too few hands
+			var ek := _eng_kind(e, u)
+			var need := need0 * t_k_rate[ek] / 100 if ek >= 0 else need0
 			if e_reload[e] < need:
 				e_reload[e] = mini(e_reload[e] + e_crew[e], need)
 			if e_reload[e] < need:
@@ -7091,9 +7744,23 @@ func _refill_work(u: int) -> void:
 	var need := t_m_refill[ty] * t_crew[ty]
 	var e0 := u_eng0[u]
 	var more := false
+	# An ammunition wagon near (docs/DESIGN.md "The ammunition wagon"): shots
+	# of the engines' special kind (up to its share) and, once the baggage
+	# is empty, of the standard kind come from its stock; with the engines
+	# full it tops up the baggage too.
+	var w := _wagon_for(u) if sg_on != 0 else -1
+	var nak := UT.AMMO.size()
+	var kstd := t_m_ak[ty]
+	var g := u_eg[u]
+	var ks := eg_sk[g] if g >= 0 and g < n_eg else -1
+	var sfull := t_m_ammo[ty] * t_k_share[ks] / 100 if ks >= 0 else 0
 	for k in u_neng[u]:
 		var e := e0 + k
-		if e_state[e] != E_OK or e_ammo[e] >= t_m_ammo[ty] or u_reserve[u] <= 0:
+		if e_state[e] != E_OK or e_ammo[e] >= t_m_ammo[ty]:
+			continue
+		var wsp := w >= 0 and ks >= 0 and e_sammo[e] < sfull and q_stock[w * nak + ks] > 0
+		var wst := w >= 0 and kstd >= 0 and q_stock[w * nak + kstd] > 0
+		if u_reserve[u] <= 0 and not wsp and not wst:
 			continue
 		more = true
 		if e_crew[e] < t_crew_min[ty]:
@@ -7103,8 +7770,25 @@ func _refill_work(u: int) -> void:
 			e_rwork[e] -= need
 			e_ammo[e] += 1
 			u_ammo[u] += 1
-			u_reserve[u] -= 1
+			if wsp:
+				q_stock[w * nak + ks] -= 1
+				e_sammo[e] += 1
+				stat_refill_shots += 1
+			elif u_reserve[u] > 0:
+				u_reserve[u] -= 1
+			else:
+				q_stock[w * nak + kstd] -= 1
+				stat_refill_shots += 1
 			stat_refilled += 1
+	if not more and w >= 0 and kstd >= 0 and u_reserve[u] < u_neng[u] * t_m_reserve[ty] \
+			and q_stock[w * nak + kstd] > 0:
+		more = true
+		u_racc[u] += 1
+		if u_racc[u] >= 10:
+			u_racc[u] = 0
+			u_reserve[u] += 1
+			q_stock[w * nak + kstd] -= 1
+			stat_refill_shots += 1
 	if not more:
 		u_refill[u] = 0
 
@@ -7244,6 +7928,7 @@ func _to_engines(u: int, g: int) -> void:
 	u_formed[u] = 0
 	u_braced[u] = 0
 	u_ammo[u] = 0
+	u_akind[u] = 0
 	for k in eg_ne[g]:
 		var e := eg_e0[g] + k
 		if e_state[e] == E_ABANDONED:
@@ -7284,6 +7969,7 @@ func _to_plain(u: int) -> void:
 	u_emove[u] = 0
 	u_fire_acc[u] = 0
 	u_ftarget[u] = -1
+	u_akind[u] = 0
 	u_fire[u] = 1 if t_m_ammo[ty] > 0 else 0
 	u_skirm[u] = t_skirm[ty] if u_wall[u] == 0 else 0
 	u_files[u] = ground_files(ty, maxi(u_alive[u], 1))
@@ -7360,6 +8046,27 @@ func _wreck(e: int) -> void:
 	u_settled[u] = 0
 
 
+## The kind engine e (worked by u) shoots next: its group's special kind
+## while it has one and u means to shoot it (or has nothing else), else the
+## standard kind.
+func _eng_kind(e: int, u: int) -> int:
+	var kstd := t_m_ak[u_type[u]]
+	var g := e_grp[e]
+	var ks := eg_sk[g] if g >= 0 and g < n_eg else -1
+	if ks < 0 or e_sammo[e] <= 0:
+		return kstd
+	return ks if u_akind[u] != 0 or e_ammo[e] <= e_sammo[e] else kstd
+
+
+## Engine e takes a shot of kind k from its load.
+func _eng_spend(e: int, u: int, k: int) -> void:
+	e_ammo[e] -= 1
+	u_ammo[u] -= 1
+	if k >= 0 and t_k_base[k] >= 0:
+		e_sammo[e] -= 1
+		stat_ak_shots += 1
+
+
 ## Engine e of battery u shoots at unit ft: at a random man of it (bolts lead
 ## him, stones do not), with scatter. Returns false if no shot was possible.
 func _art_fire(e: int, u: int, ft: int, ty: int) -> bool:
@@ -7399,16 +8106,17 @@ func _art_fire(e: int, u: int, ft: int, ty: int) -> bool:
 	var dx := ax - sx
 	var dy := ay - sy
 	var dist := FM.approx_len(dx, dy)
+	var k := _eng_kind(e, u)
+	var rp := t_k_range[k] if k >= 0 else 100
 	if ter_on == 0 and map_on == 0:
-		if dist > t_m_range[ty] or dist < t_m_min[ty] or dist <= 0:
+		if dist > t_m_range[ty] * rp / 100 or dist < t_m_min[ty] or dist <= 0:
 			return false
-	elif dist < t_m_min[ty] or dist <= 0 or not _shot_ok(sx, sy, ax, ay, dist, ty, _skip0(u), _skip1(ft)):
+	elif dist < t_m_min[ty] or dist <= 0 or not _shot_ok(sx, sy, ax, ay, dist, ty, _skip0(u), _skip1(ft), 0, rp):
 		return false
 	var p := pr_free
 	pr_free = pr_next[p]
 	pr_count += 1
-	e_ammo[e] -= 1
-	u_ammo[u] -= 1
+	_eng_spend(e, u, k)
 	if t_m_kind[ty] == 1:
 		stat_bolts += 1
 	else:
@@ -7432,6 +8140,7 @@ func _art_fire(e: int, u: int, ft: int, ty: int) -> bool:
 	pr_unit[p] = u
 	pr_ty[p] = ty
 	pr_tu[p] = ft
+	pr_ak[p] = k
 	var b := (tick + flight) % PR_BUCKETS
 	pr_next[p] = pr_bucket[b]
 	pr_bucket[b] = p
@@ -7449,13 +8158,14 @@ func _art_fire_gate(e: int, u: int, g: int, ty: int) -> bool:
 	var dx := gf.x - sx
 	var dy := gf.y - sy
 	var dist := FM.approx_len(dx, dy)
-	if dist < t_m_min[ty] or dist <= 0 or not _shot_ok(sx, sy, gf.x, gf.y, dist, ty, _skip0(u)):
+	var k := _eng_kind(e, u)
+	var rp := t_k_range[k] if k >= 0 else 100
+	if dist < t_m_min[ty] or dist <= 0 or not _shot_ok(sx, sy, gf.x, gf.y, dist, ty, _skip0(u), LOF_SKIP, 0, rp):
 		return false
 	var p := pr_free
 	pr_free = pr_next[p]
 	pr_count += 1
-	e_ammo[e] -= 1
-	u_ammo[u] -= 1
+	_eng_spend(e, u, k)
 	if t_m_kind[ty] == 1:
 		stat_bolts += 1
 	else:
@@ -7477,6 +8187,7 @@ func _art_fire_gate(e: int, u: int, g: int, ty: int) -> bool:
 	pr_unit[p] = u
 	pr_ty[p] = ty
 	pr_tu[p] = -2 - g
+	pr_ak[p] = k
 	var b := (tick + flight) % PR_BUCKETS
 	pr_next[p] = pr_bucket[b]
 	pr_bucket[b] = p
@@ -7614,13 +8325,15 @@ func _sw_insert(v: int, al: int, lt: int) -> void:
 ## armour is mostly pierced, each body absorbs BOLT_BODY + armour, and later
 ## men are less likely to be struck. An engine on the line stops it.
 func _land_bolt(p: int) -> void:
-	if pr_tu[p] <= -2 and _gate_hit(p, GATE_BOLT):
+	var k := pr_ak[p]
+	var ob := t_k_obj[k] if k >= 0 else 100
+	if pr_tu[p] <= -2 and _gate_hit(p, GATE_BOLT * ob / 100):
 		return
 	if sg_on != 0:
-		if _tower_hit(p, TOWER_BOLT_DMG):
+		if _tower_hit(p, TOWER_BOLT_DMG * ob / 100):
 			return  # into the tower's masonry
 		if n_eq > 0:
-			_ram_hit(pr_x[p], pr_y[p], RAM_BOLT_DMG)
+			_ram_hit(pr_x[p], pr_y[p], RAM_BOLT_DMG * ob / 100)
 	var u := pr_unit[p]
 	var ty := pr_ty[p]
 	var sx := pr_sx[p]
@@ -7646,18 +8359,20 @@ func _land_bolt(p: int) -> void:
 			a1 = mini(a1, blk)
 			stat_bolt_ground += 1
 	_sweep(sx, sy, ux, uy, maxi(BOLT_SKIP, _skip0(u)), a1, BOLT_R_INF, BOLT_R_CAV)
-	var energy := t_m_dmg[ty]
+	var energy := t_m_dmg[ty] * t_k_dmg[k] / 100 if k >= 0 else t_m_dmg[ty]
+	var pierce := t_m_pierce[ty] * t_k_pierce[k] / 100 if k >= 0 else t_m_pierce[ty]
+	var ap := clampi(t_m_ap[ty] + t_k_ap[k], 0, 100) if k >= 0 else t_m_ap[ty]
 	var from := FM.atan2_a(-dy, -dx)
 	var hits := 0
 	_hit_units.fill(-1)
-	for k in _sw_n:
-		if energy < SHOT_STOP or hits >= t_m_pierce[ty]:
+	for sk in _sw_n:
+		if energy < SHOT_STOP or hits >= pierce:
 			break
-		var v := _sw_v[k]
+		var v := _sw_v[sk]
 		if ter_on != 0 or obs_on != 0:
 			var vx := e_x[-v - 1] if v < 0 else pos_x[v]
 			var vy := e_y[-v - 1] if v < 0 else pos_y[v]
-			var rel := z0 + dz * _sw_a[k] / dist - elev_at(vx, vy)
+			var rel := z0 + dz * _sw_a[sk] / dist - elev_at(vx, vy)
 			if rel < BOLT_BODY_LO or rel > BOLT_BODY_HI:
 				continue
 		if v < 0:
@@ -7673,12 +8388,12 @@ func _land_bolt(p: int) -> void:
 		if sv != S_ROUTING and sv != S_DOWN and absi(FM.angle_diff(facing[v], from)) <= FRONT_ARC:
 			sh = t_mshield[td] * BOLT_SHIELD_K / 100
 		var e1 := energy - sh
-		var dmg := maxi(e1 - t_armour[td] * (100 - t_m_ap[ty]) / 100, 1) * t_m_vuln[td] / 100 \
+		var dmg := maxi(e1 - t_armour[td] * (100 - ap) / 100, 1) * t_m_vuln[td] / 100 \
 			* (85 + _rand() % 31) / 100
 		_art_wound(v, dmg, u, 0)
 		energy = e1 - BOLT_BODY - t_armour[td]
 		hits += 1
-	_art_fright(ty)
+	_art_fright(ty, k)
 
 
 ## A stone: lobbed over everything, it smashes whoever is within m_blast of
@@ -7687,12 +8402,14 @@ func _land_bolt(p: int) -> void:
 ## body (STONE_BODY + armour) and every metre. Friend or foe alike. Engines
 ## it reaches take double damage (counter-battery fire).
 func _land_stone(p: int) -> void:
-	if pr_tu[p] <= -2 and _gate_hit(p, GATE_STONE):
+	var ak := pr_ak[p]
+	var ob := t_k_obj[ak] if ak >= 0 else 100
+	if pr_tu[p] <= -2 and _gate_hit(p, GATE_STONE * ob / 100):
 		return
 	if sg_on != 0:
-		_tower_hit(p, TOWER_STONE_DMG)  # (and it smashes on among the crew)
+		_tower_hit(p, TOWER_STONE_DMG * ob / 100)  # (and it smashes on among the crew)
 		if n_eq > 0:
-			_ram_hit(pr_x[p], pr_y[p], RAM_STONE_DMG)
+			_ram_hit(pr_x[p], pr_y[p], RAM_STONE_DMG * ob / 100)
 	var u := pr_unit[p]
 	var ty := pr_ty[p]
 	var lx := pr_x[p]
@@ -7702,7 +8419,8 @@ func _land_stone(p: int) -> void:
 	var dist := maxi(FM.approx_len(dx, dy), 1)
 	var ux := dx * FM.TRIG_ONE / dist
 	var uy := dy * FM.TRIG_ONE / dist
-	var blast := t_m_blast[ty]
+	var blast0 := t_m_blast[ty]
+	var blast := blast0 + t_k_blast[ak] if ak >= 0 else blast0
 	var r := maxi(blast, STONE_R_INF)
 	var plough := t_m_plough[ty]
 	if ter_on != 0:
@@ -7727,7 +8445,9 @@ func _land_stone(p: int) -> void:
 		if obs_on != 0:
 			plough = _obs_run(lx, ly, ux, uy, plough)
 	_sweep(lx, ly, ux, uy, -blast, plough, r, maxi(blast, STONE_R_CAV))
-	var energy0 := t_m_dmg[ty]
+	var energy0 := t_m_dmg[ty] * t_k_dmg[ak] / 100 if ak >= 0 else t_m_dmg[ty]
+	var pierce := t_m_pierce[ty] * t_k_pierce[ak] / 100 if ak >= 0 else t_m_pierce[ty]
+	var ap := clampi(t_m_ap[ty] + t_k_ap[ak], 0, 100) if ak >= 0 else t_m_ap[ty]
 	var hits := 0
 	_hit_units.fill(-1)
 	# View: impact mark (not state).
@@ -7739,7 +8459,7 @@ func _land_stone(p: int) -> void:
 	fx_head = (fx_head + 1) % FX_CAP
 	var absorbed := 0
 	for k in _sw_n:
-		if hits >= t_m_pierce[ty]:
+		if hits >= pierce:
 			break
 		var al := _sw_a[k]
 		var lt := _sw_l[k]
@@ -7749,6 +8469,8 @@ func _land_stone(p: int) -> void:
 			# Direct hit: within the blast circle round the landing point.
 			if al * al + lt * lt > blast * blast:
 				continue
+			if blast > blast0 and al * al + lt * lt > blast0 * blast0:
+				stat_blast += 1  # (inside a bursting stone's wider blast only)
 		elif absi(lt) > (STONE_R_CAV if cav else STONE_R_INF):
 			continue
 		var energy := energy0 - absorbed - maxi(al, 0) * STONE_ROLL_LOSS / M
@@ -7760,12 +8482,12 @@ func _land_stone(p: int) -> void:
 		if state[v] >= S_DEAD:
 			continue
 		var td := u_otype[unit_of[v]]
-		var dmg := maxi(energy - t_armour[td] * (100 - t_m_ap[ty]) / 100, 1) * t_m_vuln[td] / 100 \
+		var dmg := maxi(energy - t_armour[td] * (100 - ap) / 100, 1) * t_m_vuln[td] / 100 \
 			* (85 + _rand() % 31) / 100
 		_art_wound(v, dmg, u, mini(energy / 2 + STONE_KNOCK, 90))
 		absorbed += STONE_BODY + t_armour[td]
 		hits += 1
-	_art_fright(ty)
+	_art_fright(ty, ak)
 
 
 func _engine_hit(e: int, energy: int) -> void:
@@ -7805,14 +8527,18 @@ func _art_wound(v: int, dmg: int, by: int, knock: int) -> void:
 		_knock_down(v)
 
 
-## Fright for every unit one shot struck (once per unit per shot).
-func _art_fright(ty: int) -> void:
+## Fright for every unit one shot struck (once per unit per shot), plus
+## its ammunition kind's fear and fire.
+func _art_fright(ty: int, ak: int = -1) -> void:
+	var fear := t_m_fear[ty] + (t_k_fear[ak] if ak >= 0 else 0)
 	for k in 4:
 		var uv := _hit_units[k]
 		if uv < 0:
 			break
 		if u_state[uv] == U_READY:
-			u_fright[uv] = mini(u_fright[uv] + t_m_fear[ty], FRIGHT_MAX)
+			u_fright[uv] = mini(u_fright[uv] + fear, FRIGHT_MAX)
+			if ak >= 0 and t_k_fire[ak] > 0:
+				_kind_shock(uv, ak, false)
 
 
 # ---------------------------------------------------------------- morale ---
@@ -7828,6 +8554,11 @@ func _update_morale() -> void:
 		var m := u_morale[u]
 		var periodic := (u + tick) % TICKS_PER_SECOND == 0
 		u_recent[u] -= u_recent[u] >> RECENT_DECAY_SHIFT
+		if u_burn[u] > 0:
+			# Fire missiles set its men burning: heart drains till it is out.
+			u_burn[u] -= 1
+			if us == U_READY:
+				m -= BURN_DRAIN
 		if u_fright[u] > 0:
 			u_fright[u] = maxi(u_fright[u] - FRIGHT_DECAY, 0)
 		if us == U_READY:
@@ -8173,6 +8904,7 @@ func state_hash() -> int:
 		if n_gates > 0:
 			ctx.update(g_hp.to_byte_array())
 			ctx.update(g_state.to_byte_array())
+			ctx.update(g_burn.to_byte_array())
 		ctx.update(ai_prog.to_byte_array())
 	if dep_on != 0:
 		# The deployment phase (battles without one hash as before).
@@ -8184,10 +8916,12 @@ func state_hash() -> int:
 		# Siege equipment and tower engines (battles without them hash as before).
 		for arr in _siege_unit_arrays():
 			ctx.update((arr as PackedInt32Array).to_byte_array())
-		ctx.update(g_unbar.to_byte_array())
+		if n_gates > 0:
+			ctx.update(g_unbar.to_byte_array())
 		if n_eq > 0:
 			for arr in _equip_arrays():
 				ctx.update((arr as PackedInt32Array).to_byte_array())
+			ctx.update(q_stock.to_byte_array())
 	var digest := ctx.finish()
 	return digest.decode_u32(0)
 
@@ -8513,7 +9247,7 @@ func _siege_unit_arrays() -> Array:
 
 
 func _equip_arrays() -> Array:
-	return [q_kind, q_x, q_y, q_state, q_unit, q_seg, q_wx, q_wy, q_hp, q_acc, q_side]
+	return [q_kind, q_x, q_y, q_state, q_unit, q_seg, q_wx, q_wy, q_hp, q_acc, q_side, q_burn, q_tier, q_hn, q_hhp]
 
 
 ## The engines a walls-2/3 city mounts on its towers, as scenario unit
@@ -8607,7 +9341,8 @@ func _siege_towers(sc: Dictionary) -> Array:
 		var ty: int = pk[1]
 		var face := FM.atan2_a(int(c[1]) - cy, int(c[0]) - cx)
 		out.append({"side": city_def, "type": ty, "count": UT.stat(ty, "crew"), "x_m": int(c[0]),
-			"y_m": int(c[1]), "facing": face, "files": 1, "tower_r": int(c[2]), "tower_ammo": t_ammo})
+			"y_m": int(c[1]), "facing": face, "files": 1, "tower_r": int(c[2]), "tower_ammo": t_ammo,
+			"ak": int(sc.get("tower_ak", -1))})  # (setup keeps it where it rides on the engine's kind)
 	return out
 
 
@@ -8630,26 +9365,81 @@ func is_tower(u: int) -> bool:
 ## where the scenario puts them (behind the attackers' line). Only on a
 ## settlement map with walls; any piece makes the battle a siege-gear one
 ## (sg_on).
-func _setup_equip(sc: Dictionary) -> void:
+func _setup_equip(sc: Dictionary, units: Array) -> void:
 	var lst: Array = sc.get("equip", [])
 	if city_on == 0 or ws_x0.size() == 0:
 		lst = []
-	n_eq = lst.size()
+	# Ammunition wagons (any map): one per wagon unit, on its men's
+	# shoulders (carried) where it stands, after the scenario's pieces.
+	var wag: Array[int] = []
+	for u in units.size():
+		if UT.stat(int(units[u]["type"]), "wagon") >= 0:
+			wag.append(u)
+	n_eq = lst.size() + wag.size()
 	for arr in _equip_arrays():
 		arr.resize(n_eq)
 		arr.fill(0)
 	q_unit.fill(-1)
 	q_seg.fill(-1)
-	for q in n_eq:
+	q_tier.fill(-1)
+	var nak := UT.AMMO.size()
+	q_stock.resize(n_eq * nak)
+	q_stock.fill(0)
+	for q in lst.size():
 		var e: Array = lst[q]
 		q_kind[q] = EQ_RAM if int(e[0]) == EQ_RAM else EQ_LADDERS
 		q_x[q] = clampi(int(e[1]) * M, 0, field_w)
 		q_y[q] = clampi(int(e[2]) * M, 0, field_h)
 		q_state[q] = Q_GROUND
-		q_hp[q] = RAM_HP if q_kind[q] == EQ_RAM else 0
+		q_hp[q] = RAM_HP if q_kind[q] == EQ_RAM else LADDER_HP
 		q_side[q] = 1 - city_def
+	for k in wag.size():
+		var q := lst.size() + k
+		var u := wag[k]
+		var ud: Dictionary = units[u]
+		var w := UT.stat(int(ud["type"]), "wagon")
+		q_kind[q] = EQ_WAGON
+		q_tier[q] = w
+		q_x[q] = clampi(int(ud["x_m"]) * M, 0, field_w)
+		q_y[q] = clampi(int(ud["y_m"]) * M, 0, field_h)
+		q_state[q] = Q_CARRIED
+		q_unit[q] = u
+		u_carry[u] = q
+		q_side[q] = int(ud["side"])
+		q_hp[q] = UT.wagon_stat(w, "hp")
+		q_hn[q] = UT.wagon_stat(w, "horses")
+		q_hhp[q] = UT.wagon_stat(w, "horse_hp")
+		# Stock: each standard kind's hand-cart amount x the tier's %; each
+		# special kind it carries (scenario "aks": its army's) that x the
+		# kind's share.
+		var pct := UT.wagon_stat(w, "stock_pct")
+		for a in nak:
+			if UT.ammo_stat(a, "base") < 0:
+				q_stock[q * nak + a] = UT.ammo_stat(a, "wagon") * pct / 100
+		for ak in ud.get("aks", []):
+			var a := int(ak)
+			var b := UT.ammo_stat(a, "base")
+			if a >= 0 and a < nak and b >= 0:
+				q_stock[q * nak + a] = UT.ammo_stat(b, "wagon") * pct / 100 * UT.ammo_stat(a, "share") / 100
+	wag_h = 0
+	for q in n_eq:
+		wag_h += q_hn[q]
 	if n_eq > 0:
 		sg_on = 1
+
+
+## Full hit points of wagon q (its tier's).
+func _wagon_hp0(q: int) -> int:
+	return UT.wagon_stat(q_tier[q], "hp")
+
+
+## Piece q, if a wagon, is lost: its stock with it.
+func _wagon_lost(q: int) -> void:
+	if q_kind[q] != EQ_WAGON:
+		return
+	var nak := UT.AMMO.size()
+	for a in nak:
+		q_stock[q * nak + a] = 0
 
 
 ## Unit u carries the ram.
@@ -8678,17 +9468,20 @@ static func ladders_of(sim, u: int) -> int:
 static func pickup_refusal(sim, u: int, q: int) -> String:
 	if q < 0 or q >= sim.n_eq:
 		return "Nothing to pick up there"
-	if sim.q_side[q] != sim.u_side[u]:
+	var wag: bool = sim.q_kind[q] == EQ_WAGON
+	if sim.q_side[q] != sim.u_side[u] and not wag:
 		return "Only the attackers use siege equipment"
 	if sim.q_state[q] == Q_PLANTED:
 		return "Planted ladders stay against the wall: order foot onto that wall to climb"
 	if sim.q_state[q] == Q_WRECKED:
-		return "The ram is wrecked"
+		return "The wagon is wrecked" if wag else "The ram is wrecked"
 	if sim.q_state[q] == Q_CARRIED:
+		if wag and sim.u_side[sim.q_unit[q]] != sim.u_side[u]:
+			return "The enemy has this wagon: drive its men off first"
 		return "Another unit carries it"
 	var c: int = sim.u_cls[u]
 	if c == UT.CLS_CAV:
-		return "Cavalry cannot carry siege equipment"
+		return "Cavalry cannot pull a wagon" if wag else "Cavalry cannot carry siege equipment"
 	if c == UT.CLS_ART:
 		return "Engines cannot carry siege equipment"
 	if sim.u_wall[u] > 0 or sim.u_stair[u] != 0:
@@ -8721,6 +9514,11 @@ func _pick_check(u: int) -> void:
 	u_carry[u] = q
 	u_pick[u] = -1
 	u_run[u] = 0
+	u_refill[u] = 0
+	u_forage[u] = 0
+	if q_kind[q] == EQ_WAGON and q_side[q] != u_side[u]:
+		q_side[q] = u_side[u]  # taken over by the other side
+		stat_wagon_taken += 1
 	if u_order[u] == O_MOVE:
 		u_order[u] = O_NONE
 		u_dx[u] = u_ax[u]
@@ -8795,18 +9593,18 @@ func _update_equip() -> void:
 ## on the ground) takes dmg off it; at 0 it is wrecked (dropped).
 func _ram_hit(x: int, y: int, dmg: int) -> void:
 	for q in n_eq:
-		if q_kind[q] != EQ_RAM or (q_state[q] != Q_GROUND and q_state[q] != Q_CARRIED):
+		var kq := q_kind[q]
+		if (kq != EQ_RAM and kq != EQ_WAGON) or (q_state[q] != Q_GROUND and q_state[q] != Q_CARRIED):
 			continue
 		if absi(q_x[q] - x) > RAM_HIT_R or absi(q_y[q] - y) > RAM_HIT_R:
 			continue
+		if kq == EQ_WAGON and q_hn[q] > 0:
+			_horse_wound(q, dmg)  # (the team in the traces takes it too)
 		q_hp[q] -= dmg
 		if q_hp[q] <= 0:
-			var u := q_unit[q]
-			if u >= 0 and u_carry[u] == q:
-				u_carry[u] = -1
-			q_unit[q] = -1
-			q_state[q] = Q_WRECKED
-			stat_ram_wrecked += 1
+			_eq_wreck(q)
+			if kq == EQ_RAM:
+				stat_ram_wrecked += 1
 
 
 ## Swords can break gate g (walls 0-1: GATE_HACK_BY_WALLS of a few per cent
@@ -8827,7 +9625,7 @@ static func may_ladder(sim, u: int) -> bool:
 		return false
 	var c: int = sim.u_cls[u]
 	var k := carrying(sim, u)
-	if k == EQ_RAM:
+	if k == EQ_RAM or k == EQ_WAGON:
 		return false
 	if k == EQ_LADDERS:
 		return c == UT.CLS_INF or c == UT.CLS_MISSILE or c == UT.CLS_PIKE

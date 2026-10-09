@@ -1384,3 +1384,32 @@ engine group last worked by its own side within `ENGINE_TAKE_R` 60 m (an
 `ORDER_PICKUP`, then it is a battery to the AI). AI batteries never drop
 their engines; the settlement AI (`siege_ai.gd`) has no such rule; nobody
 recaptures enemy engines. No knob, no tuning.
+
+## 18. Ammunition kinds and resupply (2026-10-09)
+
+Knobs in `sim/ai_profile.gd` (E / A / S). A unit with a special kind
+shoots it at the targets its fields suit (`BattleAI.ammo_pick`, also
+called for every unit by the settlement AI): a fire kind at wooden
+targets (batteries, towers, carriers of a ram, ladders or a wagon) and,
+with fear or fire, at wavering units; a harder-hitting kind at armour and
+batteries; a bursting kind at big units and batteries.
+
+| Knob | E / A / S | What |
+|---|---|---|
+| `AK_USE` | 0 / 1 / 1 | switch kinds at all |
+| `AK_FIRE_WOOD` | 0 / 1 / 1 | fire kinds at wooden targets |
+| `AK_WAVER_PCT` | 0 / 35 / 50 | fear / fire kinds at units below this % of their morale |
+| `AK_ARMOUR` | 999 / 12 / 9 | harder-hitting kinds at this much armour |
+| `AK_BLAST_MEN` | 9999 / 80 / 60 | bursting kinds at units this big |
+| `AK_FIRE_GATE` | 0 / 1 / 1 | attacking missile units with a fire kind, at their post, shoot the attacked gate alight |
+| `WG_BACK` | 40 / 40 / 50 m | the wagon stands this far behind the army's centre (or by a battery out of shots) |
+| `WG_THREAT` | 0 / 40 / 60 m | enemy melee this near the wagon: the nearest free melee unit goes for it |
+| `WG_FLEE` | 25 / 25 / 35 m | the wagon draws back from enemies this near |
+| `WG_EMPTY_PCT` | 0 / 15 / 30 | missile units below this % go to a wagon of ours within `WG_RANGE` (150 m) and refill |
+| `FORAGE_AI` | 0 / 1 / 1 | an empty missile unit in woods, no wagon, no enemy near, forages |
+
+Wagon crews are kept out of the line, guards and ladder parties
+(`BattleAI.is_wagon`); the campaign AI does not recruit wagons (its
+`_any_type` skips them). None of it runs without kinds or wagons, so
+every older battle plays as before, except that empty missile units in
+woods may now forage.

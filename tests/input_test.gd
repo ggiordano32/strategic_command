@@ -251,6 +251,17 @@ func _initialize() -> void:
 		_step_en_check_drop,
 		_step_en_tap,
 		_step_en_check_tap,
+		# Ammunition kinds and resupply: the Ammo toggle, Forage in woods,
+		# Refill at a wagon, Drop for the wagon's crew.
+		_step_rs_start,
+		_step_rs_ammo,
+		_step_rs_ammo_tap,
+		_step_rs_check_ammo,
+		_step_rs_forage,
+		_step_rs_check_forage,
+		_step_rs_wait,
+		_step_rs_refill,
+		_step_rs_check_refill,
 		_step_done,
 	]
 
@@ -2155,6 +2166,95 @@ func _step_en_check_tap() -> void:
 	_check(po.size() == 1 and int(po[0]["unit"]) == _en_foot and int(po[0].get("engines", -1)) == _en_g,
 		"a tap on the engines with foot selected: it goes to take them up (%s)" % str(po))
 	_check(battle.orders.value(_en_foot, "pick") == BattleSim.PICK_ENG + _en_g, "the preview knows the pick-up")
+
+
+# Ammunition kinds and resupply (docs/DESIGN.md "Ammunition kinds",
+# "Resupply: foraging and the ammunition wagon"): a field with a wood;
+# archers carrying fire arrows stand in it; javelinmen beside a wagon.
+var _rs_arch := -1
+var _rs_wag := -1
+var _rs_jav := -1
+
+
+func _step_rs_start() -> void:
+	if is_instance_valid(battle):
+		battle.queue_free()
+	var arch := Scenarios.unit(0, UT.ARCHER, 40, 80, 250, Scenarios.FACE_UP)
+	arch["ak"] = UT.ammo_index("fire_arrows")
+	battle = Battle.new()
+	battle.custom_scenario = {"width_m": 300, "height_m": 300, "ai_sides": [1], "orders": [], "units": [
+		arch, Scenarios.unit(0, UT.index_of("wagon2"), 8, 160, 240, Scenarios.FACE_UP),
+		Scenarios.unit(0, UT.JAVELIN, 40, 160, 226, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.LIGHT, 60, 160, 60, Scenarios.FACE_DOWN)],
+		"terrain": {"kind": 0, "woods": [[80, 250, 30, 22, 2]]}}
+	battle.seed_value = 7
+	root.add_child(battle)
+	_rs_arch = 0
+	_rs_wag = 1
+	_rs_jav = 2
+
+
+## The archers (a second kind: fire arrows) selected: the Ammo toggle shows
+## "arrows"; a tap on it switches them to fire arrows.
+func _step_rs_ammo() -> void:
+	if not battle.paused:
+		battle._toggle_pause()
+	battle.sim.pending_orders.clear()
+	battle.orders.refresh()
+	battle._select(_rs_arch)
+	_check(battle.hud.ammo_button.visible, "Ammo: shows for a unit with a second ammunition kind")
+	_check(battle.hud.ammo_button.text.contains("arrows"), "Ammo: reads the standard kind first (%s)" % battle.hud.ammo_button.text)
+	_check(battle.hud.forage_button.visible, "Forage: shows for missile troops standing in woods")
+	_check(not battle.hud.refill_button.visible, "Refill: hidden away from a wagon")
+
+
+func _step_rs_ammo_tap() -> void:
+	_tap_control(battle.hud.ammo_button)
+
+
+func _step_rs_check_ammo() -> void:
+	var ao := _eq_orders(BattleSim.ORDER_AMMO)
+	_check(ao.size() == 1 and int(ao[0]["unit"]) == _rs_arch and int(ao[0]["on"]) == 1,
+		"a tap on Ammo: the archers switch to fire arrows (%s)" % str(ao))
+	_check(battle.orders.value(_rs_arch, "akind") == 1, "the preview knows the kind")
+	_check(battle.hud.ammo_button.text.contains("fire"), "Ammo now reads fire (%s)" % battle.hud.ammo_button.text)
+
+
+func _step_rs_forage() -> void:
+	_tap_control(battle.hud.forage_button)
+
+
+func _step_rs_check_forage() -> void:
+	var fo := _eq_orders(BattleSim.ORDER_FORAGE)
+	_check(fo.size() == 1 and int(fo[0]["unit"]) == _rs_arch and int(fo[0]["on"]) == 1,
+		"a tap on Forage: the archers make arrows in the wood (%s)" % str(fo))
+	_check(battle.orders.value(_rs_arch, "forage") == 1, "the preview knows the foraging")
+	_check(battle.hud.forage_button.text.contains("on"), "Forage reads on (%s)" % battle.hud.forage_button.text)
+	# The javelinmen beside the wagon: Refill shows (no wood: no Forage, no
+	# second kind: no Ammo); the wagon's crew: Drop.
+	battle.sim.pending_orders.clear()
+	battle.orders.refresh()
+	battle._select(_rs_wag)
+	_check(battle.hud.drop_button.visible, "Drop: shows for the wagon's crew")
+	battle._select(_rs_jav)
+	_check(battle.hud.refill_button.visible and not battle.hud.forage_button.visible and not battle.hud.ammo_button.visible,
+		"javelinmen by the wagon: Refill only (refill %s forage %s ammo %s)" % [battle.hud.refill_button.visible,
+			battle.hud.forage_button.visible, battle.hud.ammo_button.visible])
+
+
+func _step_rs_wait() -> void:
+	pass  # (the action row lays out the buttons shown)
+
+
+func _step_rs_refill() -> void:
+	_tap_control(battle.hud.refill_button)
+
+
+func _step_rs_check_refill() -> void:
+	var ro := _eq_orders(BattleSim.ORDER_REFILL)
+	_check(ro.size() == 1 and int(ro[0]["unit"]) == _rs_jav and int(ro[0]["on"]) == 1,
+		"a tap on Refill by the wagon: the javelinmen refill from it (%s)" % str(ro))
+	_check(battle.orders.value(_rs_jav, "refill") == 1, "the preview knows the refill")
 
 
 func _step_done() -> void:

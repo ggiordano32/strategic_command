@@ -17,6 +17,8 @@ signal fire_pressed
 signal skirmish_pressed
 signal deploy_pressed
 signal refill_pressed
+signal ammo_pressed
+signal forage_pressed
 signal man_wall_pressed
 signal come_down_pressed
 signal drop_pressed
@@ -78,6 +80,8 @@ var fire_button: Button
 var skirm_button: Button
 var deploy_button: Button
 var refill_button: Button
+var ammo_button: Button
+var forage_button: Button
 var man_wall_button: Button
 var come_down_button: Button
 var drop_button: Button
@@ -260,8 +264,16 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	deploy_button.tooltip_text = "Artillery: set up to shoot, or pack up to move (takes time either way)"
 	deploy_button.pressed.connect(func(): deploy_pressed.emit())
 	refill_button = _button("Refill: off", Vector2(0, BTN_H), "pick_up")
-	refill_button.tooltip_text = "Artillery: bring up shots from the baggage (cannot move or shoot meanwhile)"
+	refill_button.tooltip_text = "Artillery: bring up shots from the baggage; missile troops and batteries near an ammunition wagon: refill from it (cannot move or shoot meanwhile)"
 	refill_button.pressed.connect(func(): refill_pressed.emit())
+	ammo_button = _button("Ammo: arrows", Vector2(0, BTN_H), "ammo")
+	ammo_button.name = "ammo"
+	ammo_button.tooltip_text = "Units with a second ammunition kind (fire arrows, heavy bolts ...): shoot it, or the standard kind (V)"
+	ammo_button.pressed.connect(func(): ammo_pressed.emit())
+	forage_button = _button("Forage: off", Vector2(0, BTN_H), "forage")
+	forage_button.name = "forage"
+	forage_button.tooltip_text = "Missile troops in woods: make arrows / javelins for their quivers, slowly; they cannot move or shoot meanwhile (J)"
+	forage_button.pressed.connect(func(): forage_pressed.emit())
 	man_wall_button = _button("Man the wall", Vector2(0, BTN_H), "wall_up")
 	man_wall_button.tooltip_text = "Up onto the nearest stretch of wall (facing the enemy) by its stair (M)"
 	man_wall_button.pressed.connect(func(): man_wall_pressed.emit())
@@ -271,7 +283,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	come_down_button.pressed.connect(func(): come_down_pressed.emit())
 	come_down_button.visible = false
 	drop_button = _button("Drop", Vector2(0, BTN_H), "drop")
-	drop_button.tooltip_text = "Put down the ladders or the ram where the unit stands, free to fight (X); any foot unit picks it up again (tap it)"
+	drop_button.tooltip_text = "Put down the ladders, the ram, a wagon or engines where the unit stands, free to fight (X); any foot unit takes it up again (tap it)"
 	drop_button.pressed.connect(func(): drop_pressed.emit())
 	drop_button.visible = false
 	withdraw_button = _button("Withdraw", Vector2(0, BTN_H), "withdraw")
@@ -282,8 +294,8 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	gift_button.tooltip_text = "Give the selected units to your ally (they can give them back)"
 	gift_button.pressed.connect(func(): gift_pressed.emit())
 	gift_button.visible = false
-	for b in [run_button, halt_button, fire_button, skirm_button, deploy_button, refill_button, man_wall_button,
-			come_down_button, drop_button, withdraw_button, gift_button]:
+	for b in [run_button, halt_button, fire_button, skirm_button, ammo_button, deploy_button, refill_button,
+			forage_button, man_wall_button, come_down_button, drop_button, withdraw_button, gift_button]:
 		actions.add_child(b)
 	actions.visible = false
 	actions_box = actions
@@ -690,7 +702,7 @@ func is_over_ui(screen_pos: Vector2) -> bool:
 ## predicted ones (pending orders included); -1 hides a missile-only (or
 ## artillery-only) button. run -1 hides Run (only artillery selected).
 func set_selection(units: Array[int], run: int, fire: int, skirm: int, deploy: int = -1,
-		refill: int = -1) -> void:
+		refill: int = -1, ammo: int = -1, ammo_word: String = "", forage: int = -1) -> void:
 	for k in _cards:
 		(_cards[k] as Button).set_pressed_no_signal(units.has(k))
 		var f: CardFace = _faces[k]
@@ -703,10 +715,13 @@ func set_selection(units: Array[int], run: int, fire: int, skirm: int, deploy: i
 	skirm_button.visible = skirm >= 0
 	deploy_button.visible = deploy >= 0
 	refill_button.visible = refill >= 0
+	ammo_button.visible = ammo >= 0
+	forage_button.visible = forage >= 0
 	Kit.set_icon(fire_button, "fire" if fire > 0 else "hold_fire")
 	_toggles = {run_button: ["Run", "on" if run > 0 else "off"], fire_button: ["Fire", "at will" if fire > 0 else "hold"],
 		skirm_button: ["Skirmish", "on" if skirm > 0 else "off"], deploy_button: ["Deploy", "on" if deploy > 0 else "off"],
-		refill_button: ["Refill", "on" if refill > 0 else "off"]}
+		refill_button: ["Refill", "on" if refill > 0 else "off"], ammo_button: ["Ammo", ammo_word],
+		forage_button: ["Forage", "on" if forage > 0 else "off"]}
 	_fit_actions()
 
 
@@ -769,6 +784,15 @@ func update_cards(sim) -> void:
 			var per: int = (sim.u_ammo[u] + maxi(sim.u_alive[u], 1) - 1) / maxi(sim.u_alive[u], 1)
 			f.ammo_text = "%d" % per
 			summary += " ammo %d" % per
+		var sk: int = sim.spec_kind(u)
+		if sk >= 0:
+			# A special ammunition kind: how much of it is left, and which
+			# kind the unit shoots now.
+			var spl: int = sim.special_left(u)
+			if not art:
+				var al := maxi(sim.u_alive[u], 1)
+				spl = (spl + al - 1) / al
+			summary += " %s %d%s" % [UT.ammo_text(sk, "short"), spl, " (shooting)" if sim.u_akind[u] != 0 else ""]
 		# Short state word: art set-up / refill state, else the morale word
 		# unless steady.
 		var word := mstate if mstate != "Steady" else ""
@@ -796,7 +820,21 @@ func update_cards(sim) -> void:
 		f.state = st
 		f.under_fire = tick - sim.u_hit_t[u] < 10 or tick - sim.u_charged_t[u] < 15
 		f.fighting = sim.u_fighting[u] > 0
-		f.refilling = art and (sim.u_refill[u] != 0 or sim.u_rprog[u] > 0)
+		f.refilling = sim.u_refill[u] != 0 or sim.u_rprog[u] > 0 or sim.u_forage[u] != 0
+		if not art and (sim.u_refill[u] != 0 or sim.u_rprog[u] > 0):
+			f.state_text = "REFILLING" if sim.u_rprog[u] >= BattleSim.REFILL_FULL else "To refill"
+		elif sim.u_forage[u] != 0:
+			f.state_text = "FORAGING"
+		var wq: int = sim.u_carry[u] if sim.sg_on != 0 else -1
+		if wq >= 0 and sim.q_kind[wq] == BattleSim.EQ_WAGON:
+			# The wagon's stock (standard kinds; special ones it carries).
+			var parts: Array[String] = []
+			for k in UT.AMMO.size():
+				var n_s: int = sim.wagon_stock(wq, k)
+				if n_s > 0:
+					parts.append("%s %d" % [UT.ammo_text(k, "short"), n_s])
+			f.summary += " | stock " + (", ".join(parts) if not parts.is_empty() else "empty") \
+				+ (" | horses %d" % sim.q_hn[wq] if UT.wagon_stat(sim.q_tier[wq], "horses") > 0 else "")
 		f.queue_redraw()
 
 
@@ -819,6 +857,8 @@ static func carry_text(sim, u: int) -> String:
 		return "carrying ladders"
 	if k == BattleSim.EQ_RAM:
 		return "carrying ram"
+	if k == BattleSim.EQ_WAGON:
+		return "with the wagon"
 	return ""
 
 

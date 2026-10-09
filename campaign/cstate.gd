@@ -760,7 +760,18 @@ static func upkeep_of(ty: int) -> int:
 ## the battle formula use it).
 static func strength(a: Dictionary) -> int:
 	var s := 0
+	var mis := 0
+	var bonus := 0
 	for u in a["units"]:
 		var ty := unit_type(u)
-		s += int(u["n"]) * UT.price_of(ty) / maxi(UT.size_of(ty), 1)
-	return s
+		var v := int(u["n"]) * UT.price_of(ty) / maxi(UT.size_of(ty), 1) * UT.stat(ty, "str_pct") / 100
+		s += v
+		var c := UT.cls(ty)
+		if c == UT.CLS_MISSILE or c == UT.CLS_ART:
+			mis += v
+		var w := UT.stat(ty, "wagon")
+		if w >= 0 and int(u["n"]) > 0:
+			bonus = maxi(bonus, UT.wagon_stat(w, "bonus_pct"))
+	# An ammunition wagon keeps the missile troops and engines shooting
+	# (the best wagon of the army: UnitTypes.WAGONS bonus_pct).
+	return s + mis * bonus / 100

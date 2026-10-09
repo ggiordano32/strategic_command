@@ -139,12 +139,30 @@ func set_unit_type(ty: int, p_side_color: Color = Color(0.35, 0.6, 1.0)) -> void
 		soldiers, files, UT.stat(ty, "file_sp") / M, UT.stat(ty, "rank_sp") / M, UT.stat(ty, "cost")]
 	var tier := UT.tier_of(ty)
 	var lines := {"heavy": "Barracks", "light": "Barracks", "spear": "Barracks", "pike": "Barracks",
-		"archer": "Range", "javelin": "Range", "cav": "Stables", "bolt": "Workshop", "stone": "Workshop"}
+		"archer": "Range", "javelin": "Range", "cav": "Stables", "bolt": "Workshop", "stone": "Workshop",
+		"siege": "Workshop"}
 	var bld: String = lines.get(UT.line_of(ty), "")
 	var need := tier if UT.cls(ty) != UT.CLS_ART else (2 if UT.base_of(ty) == UT.STONE else 1)
-	_tier.text = "Tier %d (%s line).  Campaign: %d to recruit, %d upkeep per turn; needs %s %d." % [
+	var need_txt := "%s %d" % [bld, need]
+	var tkey := UT.key_of(ty)
+	if CData.UNIT_NEEDS.has(tkey):
+		var nl: Array[String] = []
+		for nd in CData.UNIT_NEEDS[tkey]:
+			nl.append("%s %d" % [str(CData.CHAINS[int(nd[0])]["name"]), int(nd[1])])
+		need_txt = " and ".join(nl)
+	_tier.text = "Tier %d (%s line).  Campaign: %d to recruit, %d upkeep per turn; needs %s." % [
 		tier, str(UT.TYPES[UT.base_of(ty)]["name"]).to_lower(), UT.price_of(ty),
-		UT.price_of(ty) * CData.UPKEEP_PCT / 100, bld, need]
+		UT.price_of(ty) * CData.UPKEEP_PCT / 100, need_txt]
+	var wt := UT.stat(ty, "wagon")
+	if wt >= 0:
+		_tier.text += "\nWagon: %d horse%s, %s; stock %d%% of a hand cart's (%s); hit points %d. Auto-resolve: the army's missile and artillery strength +%d%%." % [
+			UT.wagon_stat(wt, "horses"), "" if UT.wagon_stat(wt, "horses") == 1 else "s",
+			"%.1f m/s" % (UT.wagon_pace(wt, UT.wagon_stat(wt, "horses")) / 102.4), UT.wagon_stat(wt, "stock_pct"),
+			"%d arrows, %d javelins, %d bolts, %d stones" % [UT.ammo_stat(0, "wagon"), UT.ammo_stat(1, "wagon"),
+				UT.ammo_stat(2, "wagon"), UT.ammo_stat(3, "wagon")], UT.wagon_stat(wt, "hp"), UT.wagon_stat(wt, "bonus_pct")]
+	var aml := ammo_line(ty)
+	if aml != "":
+		_tier.text += "\n" + aml
 	if UT.cls(ty) == UT.CLS_ART:
 		_formation.text = "%d engines with %d crew each (%d soldiers), %d m apart. Cost %d per crew member (%d per battery)." % [
 			value(ty, "_engines"), UT.stat(ty, "crew"), soldiers, UT.stat(ty, "file_sp") / 1024,
@@ -187,6 +205,35 @@ func set_unit_type(ty: int, p_side_color: Color = Color(0.35, 0.6, 1.0)) -> void
 			else:
 				for i in 3:
 					_grid.add_child(Control.new())
+
+
+## Ammunition: the standard kind and the special kinds that ride on the
+## weapon, with who carries them (campaign: faction and building), from
+## the data (UnitTypes.AMMO, CData.AMMO_AVAIL). "" for a type without
+## missiles.
+static func ammo_line(ty: int) -> String:
+	var std := UT.stat(ty, "m_ak")
+	if std < 0:
+		return ""
+	var parts: Array[String] = []
+	for k in UT.ammo_specials(ty):
+		var who: Array[String] = []
+		var key := str(UT.AMMO[k]["key"])
+		for row in CData.AMMO_AVAIL:
+			if str(row[0]) != key:
+				continue
+			var fs: Array[String] = []
+			for fk in row[1]:
+				fs.append(CData.faction_name(CData.faction_index(str(fk))))
+			who.append("%s, %s %d" % [", ".join(fs), str(CData.CHAINS[int(row[2])]["name"]), int(row[3])])
+		parts.append("%s (%d%% of the load, %d%% damage, %d%% range%s): %s%s" % [UT.ammo_text(k, "name"),
+			UT.ammo_stat(k, "share"), UT.ammo_stat(k, "dmg"), UT.ammo_stat(k, "range"),
+			", sets things alight" if UT.ammo_stat(k, "fire") > 0 else "", UT.ammo_text(k, "desc"),
+			(" Carried by: " + "; ".join(who) + ".") if not who.is_empty() else ""])
+	var head := "Ammunition: %s." % UT.ammo_text(std, "name").to_lower()
+	if parts.is_empty():
+		return head
+	return head + " Special: " + " ".join(parts)
 
 
 ## Special rules as short tags, derived from the data so they follow tuning.

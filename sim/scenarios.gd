@@ -290,7 +290,7 @@ static func unit(side: int, ty: int, count: int, x_m: int, y_m: int, face: int,
 		files: int = -1) -> Dictionary:
 	if files < 0:
 		var b := UT.base_of(ty)  # tier types form up like their base type
-		files = int(FILES[b]) * count / maxi(int(SIZE[b]), 1)
+		files = int(FILES.get(b, 4)) * count / maxi(int(SIZE.get(b, count)), 1)
 		files = maxi(files, 4)
 	return {"side": side, "type": ty, "count": count, "x_m": x_m, "y_m": y_m,
 		"facing": face, "files": files}
@@ -359,7 +359,7 @@ static func _row(types: Array, sizes: Dictionary, cx: int, y: int, gap: int) -> 
 ## Frontage in metres of a unit of `count` soldiers of type ty at default files.
 static func _width_m(ty: int, count: int) -> int:
 	var b := UT.base_of(ty)
-	var files := maxi(int(FILES[b]) * count / maxi(int(SIZE[b]), 1), 4)
+	var files := maxi(int(FILES.get(b, 4)) * count / maxi(int(SIZE.get(b, count)), 1), 4)
 	return files * UT.stat(ty, "file_sp") / 1024
 
 

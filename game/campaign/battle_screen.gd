@@ -68,7 +68,8 @@ static func snapshot(st: Dictionary, b: Dictionary, viewer: int) -> Dictionary:
 				var on := n > 0 and fielded < CData.BATTLE_SIDE_MAX
 				if on:
 					fielded += 1
-				g["units"].append({"unit": k, "ty": ty, "n": n, "full": maxi(UT.size_of(ty), 1), "on": 1 if on else 0})
+				g["units"].append({"unit": k, "ty": ty, "n": n, "full": maxi(UT.size_of(ty), 1), "on": 1 if on else 0,
+					"ak": str(u.get("ak", ""))})
 			sides[sd].append(g)
 	if kind != "field":
 		var gar := CRules.garrison(st, r)
@@ -275,6 +276,7 @@ static func _side(snap: Dictionary, sd: int, res: Dictionary) -> Control:
 		for u in g["units"]:
 			var card := UnitCard.new(int(u["ty"]), int(u["n"]), int(u["full"]), CData.faction_color(int(g["f"])))
 			card.fielded = int(u["on"]) != 0
+			card.ak = UT.ammo_index(str(u.get("ak", "")))
 			var key := "%d:%d" % [int(g["army"]), int(u["unit"])]
 			if not res.is_empty() and card.fielded:
 				var e: Dictionary = res.get(key, {})
@@ -466,6 +468,7 @@ class UnitCard extends Control:
 	var back := -1
 	var dead := 0
 	var kills := -1  # enemies its men killed (a fought battle), -1 not known
+	var ak := -1  # its special ammunition kind (UT.AMMO row), -1 none
 	var fielded := true
 	var col := Color.WHITE
 
@@ -491,6 +494,8 @@ class UnitCard extends Control:
 			t += "; %d back, %d lost (%d dead)" % [back, men - back, dead]
 		if kills >= 0:
 			t += "; %d kills" % kills
+		if ak >= 0:
+			t += "; carries %s" % UT.ammo_text(ak, "name").to_lower()
 		return t
 
 	func _draw() -> void:
@@ -517,6 +522,10 @@ class UnitCard extends Control:
 				var tt := "T%d" % tier
 				var tw := font.get_string_size(tt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
 				draw_string(font, Vector2(sz.x - tw - 3, 13), tt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Kit.COL_GOLD)
+		if ak >= 0:
+			# Its special ammunition kind (fire, heavy, pots, blast).
+			draw_string(font, Vector2(x0, 31), "+" + UT.ammo_text(ak, "short"), HORIZONTAL_ALIGNMENT_LEFT, -1, 10,
+				Color(1.0, 0.62, 0.3))
 		var nm := str(UT.TYPES[ty].get("short", UT.TYPES[ty]["name"]))
 		if not fielded:
 			nm = "(reserve)"

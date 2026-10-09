@@ -1681,6 +1681,79 @@ below). Everywhere (field and city maps).
   (10 seeds; 46-60 % over 30); walls 2-3 now go to the defender 80-100 %
   of the time, below their targets (docs/STATUS.md item 4).
 
+### Ammunition kinds and fire (as built, 2026-10-09)
+
+Data in `sim/unit_types.gd` `AMMO` (rows referenced by index; a second
+theme replaces the table, not code). A type's weapon shoots its standard
+kind (`m_ak`); a unit may carry one special kind riding on it (its row's
+`base`), a fixed `share` of its load per man (`sammo`) or per engine
+(`e_sammo`). ORDER_AMMO (`u_akind`, hashed) picks which it means to shoot;
+a man or engine out of that kind shoots the other. Each field is applied
+generically: `dmg` (vs men and engines), `obj` (vs gates, towers, rams,
+ladders, wagons), `ap`, `pierce`, `range`, `rate` (reload), `fear` (morale
+per man hit; artillery: added fright), `blast` (extra radius), `fire`.
+
+| Kind | On | Share | Dmg | Obj | Range | Rate | Fear | Blast | Fire | Pays with |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Fire arrows | arrows | 33 | 70 | 100 | 85 | 125 | 3 | - | 35 | damage, range, rate |
+| Heavy bolts | bolts | 33 | 135 (+10 ap, 140 pierce) | 150 | 75 | 140 | - | - | - | range, rate |
+| Fire javelins | javelins | 33 | 75 | 100 | 85 | 120 | 3 | - | 35 | damage, range, rate |
+| Fire pots | stones | 33 | 55 | 200 | 90 | 110 | 30 | - | 70 | damage vs men |
+| Explosive stones | stones | 20 | 100 (130 pierce) | 50 | 85 | 125 | 40 | +1.5 m | - | walls, range, rate, share |
+
+**Fire** is one state on any wooden thing: a gate (`g_burn`), an engine or
+a tower's engine (`e_burn`), ladders on the ground or carried, a ram, a
+wagon (`q_burn`). A fire missile landing within reach (a gate's face, 3 m
+of an engine or piece, a tower's radius) sets it alight with its `fire`
+chance; it burns FIRE_TICKS (30 s, restarted by each new fire missile)
+losing FIRE_CHIP (0.6 %) of its full hit points a second: a gate breaks, an
+engine is wrecked (a tower falls), a piece is wrecked (a wagon's stock
+lost). Planted ladders do not burn (out of reach). A man hit by a fire
+missile sets his unit burning (BURN_UNIT 4 s, 1 morale a tick). Missile
+troops can be told to shoot a gate (tap it): only fire missiles do
+anything to it. HUD: an Ammo toggle (V) like Fire / Skirmish; cards and
+the battle screen name the kind; the unit book lists the kinds and who
+carries them. Campaign: `CData.AMMO_AVAIL` (faction, building: the Range
+for arrows and javelins, the Workshop for shot), stored on the unit entry
+as `"ak"` (optional key); a city's tower engines carry the owner's kind
+for them (scenario `tower_ak`).
+
+### Resupply: foraging and the ammunition wagon (as built, 2026-10-09)
+
+**Foraging** (ORDER_FORAGE, `u_forage`): archers and javelinmen standing
+in woods make missiles of the standard kind for their own quivers, a whole
+unit's load in FORAGE_QUIVER (2.5 min); they cannot move or shoot, and
+stop when hit, in melee, moved (or skirmishing away), out of the woods or
+full. HUD: Forage (J), shown only in woods.
+
+**The wagon** is a unit (crew: `WAGON_CREW`, line "siege") whose men pull
+a piece of equipment (`EQ_WAGON`, created at setup, carried). Tiers are
+data (`UnitTypes.WAGONS`):
+
+| Tier | Unit | Horses | Pace (0 / 1 / 2 horses) | Hit points | Horse hp | Stock | Auto-resolve |
+|---|---|---|---|---|---|---|---|
+| 1 | Hand Cart | 0 | 0.9 m/s | 600 | - | 100 % | +6 % |
+| 2 | Ammunition Wagon | 1 | 0.9 / 1.3 m/s | 800 | 240 | 150 % | +9 % |
+| 3 | Supply Train | 2 | 0.9 / 1.3 / 2.0 m/s | 1000 | 240 each | 220 % | +12 % |
+
+Stock at 100 %: 1,600 arrows, 240 javelins, 22 bolts, 16 stones (AMMO
+`wagon`), and of each special kind of its army a share of its base's.
+Horses are hit boxes in front of the wagon (arrows / javelins landing
+within 3 m strike one 30 % of the time; bolts and stones near it hit
+wagon and team); a dead horse slows it to the next pace. Crew gone: the
+wagon stands where it is; **any foot unit of either side may take it**
+(tap it): it pulls it at the wagon's pace, cannot attack or shoot, fights
+at the carrier penalty and +15 % to-hit against it from the flank or rear;
+Drop any time. Roofed like the ram. **Refill** generalised: a missile unit
+or battery near a wagon (15 m) told to refill settles REFILL_FULL ticks,
+then draws a missile at a time (its special kind up to its share, then the
+standard kind) until full or the stock is out (a unit's whole load in 30
+s); a battery's engines draw from it once their baggage is empty and the
+baggage is topped up from it after. Campaign: recruited from the Workshop
+(cart: Workshop 1; one horse: Workshop 2 + Stables 1; two: Workshop 2 +
+Stables 2), counts 20 % of its price as strength, and adds its tier's %
+to the army's missile and artillery strength in auto-resolve.
+
 ## 5. Networking
 
 ### Live battles: deterministic lockstep

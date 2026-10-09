@@ -134,6 +134,16 @@ var _ok := true
 
 
 func _init() -> void:
+	if "--only=ammo" in OS.get_cmdline_user_args():
+		_check_ammo()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
+	if "--only=wagon" in OS.get_cmdline_user_args():
+		_check_wagon()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=engines" in OS.get_cmdline_user_args():
 		_check_engines()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -152,6 +162,8 @@ func _init() -> void:
 	_check_equipment()
 	_check_shut_inner_gate()
 	_check_engines()
+	_check_ammo()
+	_check_wagon()
 	if "--only=equipment" in OS.get_cmdline_user_args():
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
@@ -1152,6 +1164,231 @@ func _check_engines() -> void:
 	print("PASS engines: the battery left them at %d; the archers took them up at %d, shot %d bolts (%d kills), left them at %d with their arrows back; the enemy took them at %d (%d shots left in them) and shot (%d kills); per-unit kills %s sum to the sides' kills %s; identical on repeat and across snapshot / restore (tick %d)" % [
 		int(ev["drop0"]), int(ev["pick1"]), int(ev["bolts1"]), kills[1], int(ev["drop1"]), int(ev["cap3"]), int(ev["ammo3"]),
 		kills[3], str(kills), str(a["side_kills"]), int(a["snap_t"])])
+
+
+# ------------------------------------------------------ ammunition kinds ---
+# docs/DESIGN.md "Ammunition kinds", "Fire".
+
+## A walls-1 town: archers carrying fire arrows switch to them (tick 1),
+## march to 70 m off the main gate and are told to shoot at it: the gate
+## catches fire and burns (chip damage); snapshot / restore while it burns.
+func _fire_gate_run(snap_check: bool) -> Dictionary:
+	var city := {"seed": 4242, "level": 1, "walls": 1, "bld": []}
+	var terr := {"kind": Terrain.K_FLAT, "seed": 11, "forest": 0, "ground": 2}
+	var r := Scenarios.settlement(city, terr, [[UT.ARCHER, 60]], [[UT.SPEAR, 40]], 1, [])
+	var sc: Dictionary = r["scenario"]
+	sc["units"][0]["ak"] = UT.ammo_index("fire_arrows")
+	var sim := BattleSim.new()
+	sim.setup(sc, 31)
+	var hashes := PackedInt64Array()
+	var ev := {}
+	var snap_t := -1
+	var snap_bad := -1
+	var hp0: int = sim.g_hp[0]
+	for t in 2400:
+		var tk: int = sim.tick
+		if tk == 1:
+			sim.queue_order({"tick": tk, "type": BattleSim.ORDER_AMMO, "unit": 0, "on": 1})
+		if tk == 2:
+			ev["akind"] = sim.u_akind[0]
+			var gp := SiegeAI._gate_point(sim, 0, 70 * M, 0)
+			sim.queue_order(BattleSim.make_move_order(tk, 0, gp.x, gp.y,
+				FM.atan2_a(sim.g_y[0] - gp.y, sim.g_x[0] - gp.x), 20 * M, 0))
+		if tk > 10 and not ev.has("ordered") and sim.u_order[0] == BattleSim.O_NONE:
+			ev["ordered"] = tk
+			sim.queue_order({"tick": tk, "type": BattleSim.ORDER_ATTACK, "unit": 0, "target": -1, "gate": 0, "run": 0})
+		sim.step()
+		hashes.append(sim.state_hash())
+		if not ev.has("lit") and sim.g_burn[0] > 0:
+			ev["lit"] = sim.tick
+		if snap_check and snap_t < 0 and ev.has("lit") and sim.tick >= int(ev["lit"]) + 20:
+			snap_t = sim.tick
+			var a2 := BattleSim.new()
+			a2.setup(sc, 31)
+			a2.restore(sim.snapshot())
+			var b2 := BattleSim.new()
+			b2.setup(sc, 31)
+			b2.restore(sim.snapshot())
+			for k in 300:
+				a2.step()
+				b2.step()
+				if a2.state_hash() != b2.state_hash():
+					snap_bad = k
+					break
+	return {"hashes": hashes, "ev": ev, "ak_shots": sim.stat_ak_shots, "ignite": sim.stat_ignite,
+		"fire_dmg": sim.stat_fire_dmg, "hp0": hp0, "hp": sim.g_hp[0], "state": sim.g_state[0],
+		"special_left": sim.special_left(0), "snap_t": snap_t, "snap_bad": snap_bad}
+
+
+## A field: a stone battery carrying explosive stones switches to them and
+## shoots a big heavy unit 130 m off: the stones burst (men struck inside
+## the wider blast).
+func _blast_run(snap_check: bool) -> Dictionary:
+	var sc := {"width_m": 300, "height_m": 300, "ai_sides": [], "orders": [], "units": [
+		Scenarios.unit(0, UT.STONE, 18, 150, 250, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.HEAVY, 120, 150, 120, Scenarios.FACE_DOWN)]}
+	sc["units"][0]["ak"] = UT.ammo_index("explosive")
+	var sim := BattleSim.new()
+	sim.setup(sc, 4242)
+	var hashes := PackedInt64Array()
+	var snap_bad := -1
+	for t in 1200:
+		var tk: int = sim.tick
+		if tk == 1:
+			sim.queue_order({"tick": tk, "type": BattleSim.ORDER_AMMO, "unit": 0, "on": 1})
+			sim.queue_order(BattleSim.make_attack_order(tk, 0, 1, 0))
+		sim.step()
+		hashes.append(sim.state_hash())
+		if snap_check and sim.tick == 600:
+			var a2 := BattleSim.new()
+			a2.setup(sc, 4242)
+			a2.restore(sim.snapshot())
+			for k in 200:
+				a2.step()
+				sim.step()
+				hashes.append(sim.state_hash())
+				if a2.state_hash() != sim.state_hash() and snap_bad < 0:
+					snap_bad = k
+	return {"hashes": hashes, "blast": sim.stat_blast, "ak_shots": sim.stat_ak_shots, "stones": sim.stat_stones,
+		"killed": sim.u_killed[1], "snap_bad": snap_bad}
+
+
+func _check_ammo() -> void:
+	var a := _fire_gate_run(true)
+	var b := _fire_gate_run(false)
+	var ev: Dictionary = a["ev"]
+	if a["hashes"] != b["hashes"]:
+		_fail("ammo: the fire-arrow run diverged on repeat")
+		return
+	if int(ev.get("akind", 0)) != 1 or not ev.has("ordered") or not ev.has("lit") or int(a["ak_shots"]) <= 0 \
+			or int(a["ignite"]) <= 0 or int(a["fire_dmg"]) <= 0 or int(a["hp"]) >= int(a["hp0"]):
+		a.erase("hashes")
+		_fail("ammo: fire arrows at the gate: %s" % str(a))
+		return
+	if int(a["snap_t"]) < 0 or int(a["snap_bad"]) >= 0:
+		_fail("ammo: no snapshot while the gate burned, or the restored copy diverged (%d)" % int(a["snap_bad"]))
+		return
+	var c := _blast_run(true)
+	var d := _blast_run(true)
+	if c["hashes"] != d["hashes"] or int(c["snap_bad"]) >= 0:
+		_fail("ammo: the explosive run diverged (repeat or snapshot %d)" % int(c["snap_bad"]))
+		return
+	if int(c["blast"]) <= 0 or int(c["ak_shots"]) <= 0:
+		c.erase("hashes")
+		_fail("ammo: the explosive stones never burst: %s" % str(c))
+		return
+	print("PASS ammo: archers switched to fire arrows, shot %d of them at the gate from tick %d, set it alight at %d (%d fires), %d hp burnt off (gate %d -> %d centi-hp, state %d, %d fire arrows left); explosive stones: %d shots, %d men struck in the wider blast, %d killed; identical on repeat and across snapshot / restore (tick %d; tick 600)" % [
+		int(a["ak_shots"]), int(ev["ordered"]), int(ev["lit"]), int(a["ignite"]), int(a["fire_dmg"]), int(a["hp0"]),
+		int(a["hp"]), int(a["state"]), int(a["special_left"]), int(c["ak_shots"]), int(c["blast"]), int(c["killed"]),
+		int(a["snap_t"])])
+
+
+# ---------------------------------------------------------------- resupply ---
+# docs/DESIGN.md "Resupply: foraging and the ammunition wagon".
+
+## A field with a wood: archers with empty quivers standing in it forage
+## (tick 1, for 400 ticks), then march off (the order ends it); javelinmen
+## with one javelin a man beside a one-horse wagon refill from it (tick 1);
+## the enemy's light infantry (tick 450) attack the wagon's crew until it
+## is gone, take the wagon (a capture) and put it down again. Scripted, no
+## AI.
+func _wagon_run(snap_check: bool) -> Dictionary:
+	var sc := {"width_m": 300, "height_m": 300, "ai_sides": [], "orders": [], "units": [
+		Scenarios.unit(0, UT.ARCHER, 40, 80, 250, Scenarios.FACE_UP),
+		Scenarios.unit(0, UT.index_of("wagon2"), 8, 160, 240, Scenarios.FACE_UP),
+		Scenarios.unit(0, UT.JAVELIN, 40, 160, 226, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.LIGHT, 60, 160, 120, Scenarios.FACE_DOWN)],
+		"terrain": {"kind": Terrain.K_FLAT, "woods": [[80, 250, 30, 22, 2]]}}
+	var sim := BattleSim.new()
+	sim.setup(sc, 909)
+	for u in [0, 2]:
+		var base: int = sim.u_slot_base[u]
+		for s2 in sim.u_alive[u]:
+			sim.ammo[sim.slot_soldier[base + s2]] = 0 if u == 0 else 1
+		sim.u_ammo[u] = 0 if u == 0 else sim.u_alive[u]
+		sim.u_fire[u] = 0
+	var q: int = sim.u_carry[1]
+	var nak := UT.AMMO.size()
+	var ev := {"q": q, "jav0": sim.q_stock[q * nak + 1] if q >= 0 else -1}
+	var hashes := PackedInt64Array()
+	var snap_t := -1
+	var snap_bad := -1
+	for t in 2600:
+		var tk: int = sim.tick
+		if tk == 1:
+			sim.queue_order({"tick": tk, "type": BattleSim.ORDER_FORAGE, "unit": 0, "on": 1})
+			sim.queue_order(BattleSim.make_refill_order(tk, 2, 1))
+		if tk == 3:
+			ev["foraging"] = sim.u_forage[0]
+		if tk == 400:
+			ev["forage_ammo"] = sim.u_ammo[0]
+			sim.queue_order(BattleSim.make_move_order(tk, 0, 60 * M, 280 * M, Scenarios.FACE_UP, 15 * M, 0))
+		if tk == 402:
+			ev["forage_after_move"] = sim.u_forage[0]
+		if not ev.has("refilled") and tk > 1 and sim.u_refill[2] == 0 and sim.u_ammo[2] > sim.u_alive[2]:
+			ev["refilled"] = tk
+			ev["jav_ammo"] = sim.u_ammo[2]
+			ev["jav_left"] = sim.q_stock[q * nak + 1]
+		if tk == 450:
+			sim.queue_order(BattleSim.make_attack_order(tk, 3, 1, 1))
+		if not ev.has("crew_gone") and tk > 450 and (sim.u_state[1] >= BattleSim.U_ROUTING) \
+				and sim.q_state[q] == BattleSim.Q_GROUND:
+			ev["crew_gone"] = tk
+			ev["crew_alive"] = sim.u_alive[1]
+			sim.queue_order({"tick": tk, "type": BattleSim.ORDER_PICKUP, "unit": 3, "equip": q, "run": 0})
+		if ev.has("crew_gone") and not ev.has("taken") and sim.u_carry[3] == q:
+			ev["taken"] = tk
+			ev["side"] = sim.q_side[q]
+		if ev.has("taken") and not ev.has("dropped") and tk >= int(ev["taken"]) + 150:
+			ev["dropped"] = tk
+			sim.queue_order({"tick": tk, "type": BattleSim.ORDER_DROP, "unit": 3})
+		sim.step()
+		hashes.append(sim.state_hash())
+		if snap_check and snap_t < 0 and ev.has("taken") and sim.tick >= int(ev["taken"]) + 40:
+			snap_t = sim.tick
+			var a2 := BattleSim.new()
+			a2.setup(sc, 909)
+			a2.restore(sim.snapshot())
+			var b2 := BattleSim.new()
+			b2.setup(sc, 909)
+			b2.restore(sim.snapshot())
+			for k in 300:
+				a2.step()
+				b2.step()
+				if a2.state_hash() != b2.state_hash():
+					snap_bad = k
+					break
+		if ev.has("dropped") and sim.tick > int(ev["dropped"]) + 5:
+			break
+	ev["q_state"] = sim.q_state[q]
+	return {"hashes": hashes, "ev": ev, "forage": sim.stat_forage, "refill_shots": sim.stat_refill_shots,
+		"taken": sim.stat_wagon_taken, "snap_t": snap_t, "snap_bad": snap_bad}
+
+
+func _check_wagon() -> void:
+	var a := _wagon_run(true)
+	var b := _wagon_run(false)
+	var ev: Dictionary = a["ev"]
+	if a["hashes"] != b["hashes"] or str(ev) != str(b["ev"]):
+		_fail("wagon: the repeat diverged")
+		return
+	for k in ["refilled", "crew_gone", "taken", "dropped"]:
+		if not ev.has(k):
+			_fail("wagon: step %s never happened (%s)" % [k, str(ev)])
+			return
+	if int(ev["foraging"]) != 1 or int(ev["forage_ammo"]) <= 0 or int(ev["forage_after_move"]) != 0 or int(a["forage"]) <= 0:
+		_fail("wagon: foraging did not fill quivers or did not stop when ordered away (%s)" % str(ev))
+		return
+	if int(ev["jav_ammo"]) != 6 * 40 or int(ev["jav_left"]) >= int(ev["jav0"]) or int(ev["side"]) != 1 \
+			or int(ev["q_state"]) != BattleSim.Q_GROUND or int(a["taken"]) != 1:
+		_fail("wagon: %s" % str(ev))
+		return
+	if int(a["snap_t"]) < 0 or int(a["snap_bad"]) >= 0:
+		_fail("wagon: no snapshot with the wagon taken, or the restored copy diverged (%d)" % int(a["snap_bad"]))
+		return
+	print("PASS wagon: archers foraged %d arrows in 400 ticks in the wood and stopped when moved off; javelinmen refilled from the wagon by tick %d (%d javelins, the wagon's %d -> %d); the crew was gone at %d (%d alive), the enemy took the wagon at %d (side %d) and put it down at %d; identical on repeat and across snapshot / restore (tick %d)" % [
+		int(ev["forage_ammo"]), int(ev["refilled"]), int(ev["jav_ammo"]), int(ev["jav0"]), int(ev["jav_left"]),
+		int(ev["crew_gone"]), int(ev["crew_alive"]), int(ev["taken"]), int(ev["side"]), int(ev["dropped"]), int(a["snap_t"])])
 
 
 ## The shut inner gate: an equal-force walls-2 polis with a ram, both
