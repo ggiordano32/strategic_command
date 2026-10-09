@@ -1192,6 +1192,7 @@ func _yardsticks() -> void:
 	_shoot("yard: slingers 80 vs heavy 120 at 100 m (rear)", sling, 80, UT.HEAVY, 120, 100, UP)
 	_shoot("yard: scorpions 12 vs pikes 120 at 150 m (front)", sco, 12, UT.PIKE, 120, 150, DOWN)
 	_shoot("yard: archers 80 vs pikes 120 at 150 m (front)", UT.ARCHER, 80, UT.PIKE, 120, 140, DOWN)
+	_blast_yard("yard: stones 18 explosive load vs pikes 120 at 150 m")
 	_pin("yard: heavy 100 walks 200 m at bolts 16 (pin)", UT.BOLT, 16)
 	_pin("yard: heavy 100 walks 200 m at scorpions 12 (pin)", sco, 12)
 	_section("Yardsticks: the new rows")
@@ -1290,6 +1291,46 @@ func _shoot(name: String, sty: int, sn: int, tty: int, tn: int, dist: int, tface
 			broke += 1
 	print("%-58s killed %5.1f of %d (%4.1f%%) | broke %d/%d | peak fright %3.0f | %4.0f shots" % [
 		name, killed / seeds, tn, 100.0 * killed / seeds / tn, broke, seeds, fright / seeds, shots / seeds])
+
+
+## A stone battery's full load of explosive stones into a standing pike
+## block 150 m off, against as many ordinary stones (docs/DESIGN.md
+## "Explosive stones: blast and knockback"): killed, struck, knocked.
+func _blast_yard(name: String) -> void:
+	if _skip(name):
+		return
+	var r := [[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]]  # killed, struck, knocked, shots
+	for s in seeds:
+		var want := -1
+		for kind in 2:
+			var units := [_u(0, UT.STONE, 18, 150, 260, UP), _u(1, UT.PIKE, 120, 150, 110, DOWN)]
+			var orders := [_atk(0, 0, 1, 0)]
+			if kind == 0:
+				units[0]["ak"] = UT.ammo_index("explosive")
+				orders.append({"tick": 0, "type": BattleSim.ORDER_AMMO, "unit": 0, "on": 1})
+			var sim := BattleSim.new()
+			sim.setup(_scenario(units, orders), 3000 + s * 4243)
+			var out := false
+			while sim.tick < 3000 and sim.u_state[1] == BattleSim.U_READY:
+				var shots: int = sim.stat_ak_shots if kind == 0 else sim.stat_stones
+				if not out and (sim.special_left(0) <= 0 if kind == 0 else shots >= want):
+					# The load (or as many ordinary stones) is away: no more.
+					out = true
+					for k in sim.u_neng[0]:
+						sim.e_ammo[sim.u_eng0[0] + k] = 0
+				if out and sim.projectiles_in_flight() == 0:
+					break
+				sim.step()
+			if kind == 0:
+				want = sim.stat_ak_shots
+			r[kind][0] += sim.u_killed[1]
+			r[kind][1] += sim.stat_blast if kind == 0 else sim.stat_art_victims
+			r[kind][2] += sim.stat_blast_knock
+			r[kind][3] += sim.stat_ak_shots if kind == 0 else sim.stat_stones
+	for kind in 2:
+		print("%-58s killed %5.1f of 120 | struck %5.1f | knocked %5.1f | %4.1f shots" % [
+			name if kind == 0 else "  (as many ordinary stones)", r[kind][0] / seeds, r[kind][1] / seeds,
+			r[kind][2] / seeds, r[kind][3] / seeds])
 
 
 ## Heavy 100 walks 200 m straight at a battery (side 0): seconds to close

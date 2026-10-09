@@ -190,6 +190,16 @@ const STONE_R_CAV := 1000
 const STONE_ROLL_LOSS := 5       # energy lost per metre ploughed
 const STONE_KNOCK := 20          # knockdown % = energy left / 2 + this
 const SWEEP_CAP := 12            # victims considered per shot
+# A bursting stone (an ammunition kind with aoe 1; docs/DESIGN.md
+# "Explosive stones: blast and knockback"): every man within its blast
+# radius is struck, full damage at the centre falling to a third at the
+# edge; survivors are thrown outward and lie down a while.
+const BLAST_KNOCK_MAX := 30      # men knocked per landing (nearest first)
+const BLAST_THROW := 1024        # thrown 1 m ...
+const BLAST_THROW_RND := 1024    # ... plus up to 1 m more (sim RNG)
+const BLAST_DOWN := 20           # down for 20 ticks ...
+const BLAST_DOWN_RND := 11       # ... plus 0-10 (mean 2.5 s); riders and beasts half
+const BLAST_DOWN_BIG := 10       # an elephant is not thrown: down 1 s
 const FRIGHT_MAX := 200
 const FRIGHT_DECAY := 1          # per tick: a stone's fright (60) lasts 6 s
 const FX_CAP := 32               # view: recent stone impacts (not state)
@@ -1005,6 +1015,7 @@ var t_k_rate := PackedInt32Array()
 var t_k_fear := PackedInt32Array()
 var t_k_blast := PackedInt32Array()
 var t_k_fire := PackedInt32Array()
+var t_k_aoe := PackedInt32Array()
 
 # Spatial grid, one per side so target search only walks enemies.
 var grid_w: int = 0
@@ -1233,7 +1244,10 @@ var stat_ak_shots: int = 0          # missiles and shots of a special ammunition
 var stat_ignite: int = 0            # things set alight (gates, engines, equipment)
 var stat_burnt: int = 0             # ... burnt down (a gate broken, an engine wrecked, a piece wrecked)
 var stat_fire_dmg: int = 0          # hit points burnt off them
-var stat_blast: int = 0             # men struck inside the extra blast of a bursting stone
+var stat_blast: int = 0             # men struck inside the extra blast of a bursting stone (aoe: every man in it)
+var stat_blast_knock: int = 0       # men thrown / downed by a bursting stone
+var stat_blast_down: int = 0        # ... their down ticks in all
+var stat_blast_held: int = 0        # ... throws blocked (a wall, a building, a walk's edge): only downed
 var stat_unit_burn: int = 0         # units set burning
 var stat_ram_blows: int = 0
 var stat_unbar: int = 0             # gates opened from inside
@@ -1778,7 +1792,7 @@ func _load_types() -> void:
 		else:
 			t_hit_r[t] = HIT_R_INF
 	var ka := [t_k_base, t_k_share, t_k_dmg, t_k_obj, t_k_ap, t_k_pierce, t_k_range, t_k_rate, t_k_fear,
-		t_k_blast, t_k_fire]
+		t_k_blast, t_k_fire, t_k_aoe]
 	var na := UT.AMMO.size()
 	for k in ka.size():
 		var arr: PackedInt32Array = ka[k]
@@ -9417,6 +9431,9 @@ func _land_stone(p: int) -> void:
 	var uy := dy * FM.TRIG_ONE / dist
 	var blast0 := t_m_blast[ty]
 	var blast := blast0 + t_k_blast[ak] if ak >= 0 else blast0
+	if ak >= 0 and t_k_aoe[ak] != 0:
+		_land_blast(u, ty, ak, lx, ly, ux, uy, blast)
+		return
 	var r := maxi(blast, STONE_R_INF)
 	var plough := t_m_plough[ty]
 	if ter_on != 0:
@@ -9484,6 +9501,141 @@ func _land_stone(p: int) -> void:
 		absorbed += STONE_BODY + t_armour[td]
 		hits += 1
 	_art_fright(ty, ak)
+
+
+## A bursting stone (ammunition kind with aoe; docs/DESIGN.md "Explosive
+## stones: blast and knockback"): no plough. Every man within `blast` of
+## the landing point is struck (armour as for a stone), the damage falling
+## from full at the centre to a third at the edge; engines within it take
+## double (as a stone). Then the survivors, nearest first (ties: index
+## order), at most BLAST_KNOCK_MAX of them, are thrown outward
+## BLAST_THROW + rand BLAST_THROW_RND (riders and beasts half; an elephant
+## not at all) unless a wall, a building or a walk's edge is in the way,
+## and lie down (S_DOWN, cooldown = ticks left; riders and beasts half,
+## an elephant BLAST_DOWN_BIG).
+func _land_blast(u: int, ty: int, ak: int, lx: int, ly: int, ux: int, uy: int, blast: int) -> void:
+	var energy0 := t_m_dmg[ty] * t_k_dmg[ak] / 100
+	var ap := clampi(t_m_ap[ty] + t_k_ap[ak], 0, 100)
+	_hit_units.fill(-1)
+	fx_x[fx_head] = lx
+	fx_y[fx_head] = ly
+	fx_dx[fx_head] = ux
+	fx_dy[fx_head] = uy
+	fx_t[fx_head] = tick
+	fx_head = (fx_head + 1) % FX_CAP
+	var r := maxi(blast, 1)
+	var r2 := r * r
+	# Gather the men inside, nearest first (ties: lower index).
+	var vs := PackedInt32Array()
+	var ds := PackedInt32Array()
+	for v in n_units:
+		if u_alive[v] <= 0 or u_state[v] >= U_DESTROYED:
+			continue
+		if u_maxx[v] < lx - r - M or u_minx[v] > lx + r + M or u_maxy[v] < ly - r - M or u_miny[v] > ly + r + M:
+			continue
+		var base := u_slot_base[v]
+		for s in u_alive[v]:
+			var i := slot_soldier[base + s]
+			if state[i] >= S_DEAD:
+				continue
+			var rx := pos_x[i] - lx
+			var ry := pos_y[i] - ly
+			if absi(rx) > r or absi(ry) > r or rx * rx + ry * ry > r2:
+				continue
+			var d := FM.approx_len(rx, ry)
+			var k := vs.size()
+			vs.append(i)
+			ds.append(d)
+			while k > 0 and (ds[k - 1] > d or (ds[k - 1] == d and vs[k - 1] > i)):
+				vs[k] = vs[k - 1]
+				ds[k] = ds[k - 1]
+				k -= 1
+			vs[k] = i
+			ds[k] = d
+	for e in n_eng:
+		if e_state[e] != E_OK:
+			continue
+		var erx := e_x[e] - lx
+		var ery := e_y[e] - ly
+		if absi(erx) <= r and absi(ery) <= r and erx * erx + ery * ery <= r2:
+			var ed := mini(FM.approx_len(erx, ery), r)
+			_engine_hit(e, energy0 * 2 * (3 * r - 2 * ed) / (3 * r))
+	# Strike them all, nearest first.
+	for k in vs.size():
+		var v := vs[k]
+		if state[v] >= S_DEAD:
+			continue
+		var d := mini(ds[k], r)
+		var energy := energy0 * (3 * r - 2 * d) / (3 * r)
+		var td := u_otype[unit_of[v]]
+		var dmg := maxi(energy - t_armour[td] * (100 - ap) / 100, 1) * t_m_vuln[td] / 100 \
+			* (85 + _rand() % 31) / 100
+		stat_blast += 1
+		_art_wound(v, dmg, u, 0)
+	# Throw and down the survivors, nearest first.
+	var knocked := 0
+	for k in vs.size():
+		if knocked >= BLAST_KNOCK_MAX:
+			break
+		var v := vs[k]
+		if state[v] >= S_DEAD:
+			continue
+		knocked += 1
+		_blast_throw(v, lx, ly, ux, uy)
+	_art_fright(ty, ak)
+
+
+## Soldier v, caught in a blast at (lx, ly) (flight direction ux, uy): thrown
+## outward and knocked down (see _land_blast).
+func _blast_throw(v: int, lx: int, ly: int, ux: int, uy: int) -> void:
+	var uv := unit_of[v]
+	var td := u_otype[uv]
+	var big := big_on != 0 and t_body_r[td] > 0
+	var half := t_cls[td] == UT.CLS_CAV or t_mount[td] != UT.MOUNT_FOOT
+	stat_blast_knock += 1
+	var dist := 0
+	if not big:
+		dist = BLAST_THROW + _rand() % BLAST_THROW_RND
+		if half:
+			dist /= 2
+	var down := BLAST_DOWN_BIG
+	if not big:
+		down = BLAST_DOWN + _rand() % BLAST_DOWN_RND
+		if half:
+			down /= 2
+	if dist > 0:
+		var x := pos_x[v]
+		var y := pos_y[v]
+		var rx := x - lx
+		var ry := y - ly
+		var l := FM.approx_len(rx, ry)
+		if l <= 0:
+			rx = ux
+			ry = uy
+			l = FM.approx_len(rx, ry)
+		if l > 0:
+			var nx := clampi(x + rx * dist / l, 0, field_w)
+			var ny := clampi(y + ry * dist / l, 0, field_h)
+			# Only over the kind of ground he stands on (no passing through a
+			# wall, a gate or a building, nor off a walkway with nothing below).
+			var okm := nav_at(x, y) & _mask_of(uv)
+			if okm != 0 and (nav_at((x + nx) >> 1, (y + ny) >> 1) & okm) != 0 and (nav_at(nx, ny) & okm) != 0:
+				pos_x[v] = nx
+				pos_y[v] = ny
+			else:
+				stat_blast_held += 1
+	var st := state[v]
+	if st == S_ROUTING:
+		return  # thrown, but he keeps running
+	stat_blast_down += down
+	if st == S_DOWN:
+		cooldown[v] = maxi(cooldown[v], down)
+		return
+	state[v] = S_DOWN
+	target[v] = -1
+	cooldown[v] = down
+	u_down[uv] += 1
+	u_settled[uv] = 0
 
 
 func _engine_hit(e: int, energy: int) -> void:

@@ -1937,7 +1937,7 @@ per man hit; artillery: added fright), `blast` (extra radius), `fire`.
 | Heavy bolts | bolts | 33 | 135 (+10 ap, 140 pierce) | 150 | 75 | 140 | - | - | - | range, rate |
 | Fire javelins | javelins | 33 | 75 | 100 | 85 | 120 | 3 | - | 35 | damage, range, rate |
 | Fire pots | stones | 33 | 55 | 200 | 90 | 110 | 30 | - | 70 | damage vs men |
-| Explosive stones | stones | 20 | 100 (130 pierce) | 50 | 85 | 125 | 40 | +1.5 m | - | walls, range, rate, share |
+| Explosive stones | stones | 20 | 100 (aoe) | 50 | 85 | 125 | 40 | +3.12 m (4 m round) | - | walls, range, rate, share |
 | Lead bullets | sling stones | 33 | 130 (+20 ap) | 100 | 85 | 100 | - | - | - | range, share |
 
 **Fire** is one state on any wooden thing: a gate (`g_burn`), an engine or
@@ -1956,6 +1956,50 @@ carries them. Campaign: `CData.AMMO_AVAIL` (faction, building: the Range
 for arrows and javelins, the Workshop for shot), stored on the unit entry
 as `"ak"` (optional key); a city's tower engines carry the owner's kind
 for them (scenario `tower_ak`).
+
+### Explosive stones: blast and knockback (as built, 2026-10-09)
+
+Owner: "is the blast any different from the rocks? They should do an area
+of effect and knock back some of the soldiers". An ammunition kind with
+`aoe` 1 (only Explosive stones) replaces the stone's plough and pierce
+(`_land_blast`); ordinary stones keep theirs. Numbers chosen once:
+
+- **Area**: the blast is the stone's `m_blast` (0.9 m) + the kind's
+  `blast` 3196 = 4 m round the landing point. Every man inside is struck
+  (friend or foe; no cap): energy = stone damage x kind `dmg` x (3R - 2d)
+  / 3R (full at the centre, a third at the edge), less armour (`ap` as
+  for stones; no shield), x vulnerability, x 85-115 %. Engines inside take
+  double (as a stone). Gates, towers and rams as before (`obj`). Trees do
+  not catch it, slopes do not matter (no plough).
+- **Knockback**: the survivors, nearest first (ties: index order), at
+  most `BLAST_KNOCK_MAX` 30 per landing, are thrown outward from the
+  landing point (straight on along the flight if dead centre)
+  `BLAST_THROW` 1 m + RNG 0-1 m (`BLAST_THROW_RND`) and lie down
+  (`S_DOWN`, the existing knocked-down state; its timer is the hashed
+  per-man `cooldown`) `BLAST_DOWN` 20 + RNG 0-10 ticks (`BLAST_DOWN_RND`;
+  mean 2.5 s). Riders and beasts (cavalry class or not on foot): half the
+  throw and half the time; elephants (big bodies) are not thrown and lie
+  1 s (`BLAST_DOWN_BIG` 10). A man already down keeps the longer timer; a
+  router is thrown but keeps running. The throw is taken only if its
+  midpoint and its end are on the same kind of ground he stands on (his
+  unit's mask: no passing a wall, a shut gate or a building, no stepping
+  off a walkway or into a ditch); else he stays where he is, only down.
+- **Down** (as any knocked-down man): no moving (his place waits; the
+  formation closes up only for the dead), no attacking, not counted in
+  `u_inreach`, no shield against missiles, `DOWN_BONUS` to be hit in melee
+  (35, beside the rear's 40: kept). The unit's `u_down` counts them.
+- **Fear**: the kind's 40 on top of the stone's 60, once per unit struck
+  (every man in the blast is struck, so downed men count).
+- **View**: the effects pass's blast ring (now 4 m) and smoke; a downed
+  man is already drawn lying (turned 90 degrees, darker, smaller) on both
+  the GPU and CPU paths (state 3 in `soldiers.gdshaderinc`).
+- Probe (`determinism_test --only=blast`, battery 18 men into a 160-man
+  pike block at 150 m, 120 s): 7 bursts, 23 men struck and 14 knocked a
+  burst, mean down 25 ticks, 27 men more than 1.5 m off their places
+  right after a burst (most 44); ordinary stones none knocked.
+  Yardstick (`matchups --only=yard`, 20 seeds): the explosive load (8.7
+  shots) kills 58.0 of 120 pikes (136 struck, 78 knocked) against 8.1
+  killed by as many ordinary stones (not tuned).
 
 ### Resupply: foraging and the ammunition wagon (as built, 2026-10-09)
 

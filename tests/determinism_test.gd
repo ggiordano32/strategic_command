@@ -101,6 +101,13 @@ extends SceneTree
 ## screens stop missiles, the dropped one faces its unit's way; identical on
 ## repeat and across snapshot / restore. Battles without the key hash as
 ## before (the golden digests are unchanged).
+## Explosive stones: blast and knockback (2026-10-09; "--only=blast", also
+## in the full run): a stone battery shoots its explosive stones into a
+## standing pike block 150 m off (every man within 4 m struck, survivors
+## thrown and down), against the same battery with ordinary stones: men
+## struck, knocked, mean down time, the hole (men over 1.5 m off their
+## places right after a burst); identical on repeat and across snapshot /
+## restore.
 ## Units flow into the space (2026-10-09; "--only=flow", also in the full
 ## run): a 90-man unit up a 5-ladder set at walls 1 and 2 with and without
 ## 60 defenders on the walkway (all up with every ladder in use, a move
@@ -189,6 +196,11 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=blast" in OS.get_cmdline_user_args():
+		_check_blast()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=ammo" in OS.get_cmdline_user_args():
 		_check_ammo()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -234,6 +246,7 @@ func _init() -> void:
 	_check_shut_inner_gate()
 	_check_engines()
 	_check_ammo()
+	_check_blast()
 	_check_wagon()
 	_check_camels()
 	_check_elephants()
@@ -1706,10 +1719,101 @@ func _check_ammo() -> void:
 		c.erase("hashes")
 		_fail("ammo: the explosive stones never burst: %s" % str(c))
 		return
-	print("PASS ammo: archers switched to fire arrows, shot %d of them at the gate from tick %d, set it alight at %d (%d fires), %d hp burnt off (gate %d -> %d centi-hp, state %d, %d fire arrows left); explosive stones: %d shots, %d men struck in the wider blast, %d killed; identical on repeat and across snapshot / restore (tick %d; tick 600)" % [
+	print("PASS ammo: archers switched to fire arrows, shot %d of them at the gate from tick %d, set it alight at %d (%d fires), %d hp burnt off (gate %d -> %d centi-hp, state %d, %d fire arrows left); explosive stones: %d shots, %d men struck in the blast, %d killed; identical on repeat and across snapshot / restore (tick %d; tick 600)" % [
 		int(a["ak_shots"]), int(ev["ordered"]), int(ev["lit"]), int(a["ignite"]), int(a["fire_dmg"]), int(a["hp0"]),
 		int(a["hp"]), int(a["state"]), int(a["special_left"]), int(c["ak_shots"]), int(c["blast"]), int(c["killed"]),
 		int(a["snap_t"])])
+
+
+## A stone battery (explosive stones or ordinary ones) shooting a standing
+## pike block 150 m off for 120 s. Per burst: the men of the block more
+## than 1.5 m off their places just after it, less just before (the hole).
+func _blast_pike_run(explosive: bool, snap_check: bool) -> Dictionary:
+	var sc := {"width_m": 300, "height_m": 300, "ai_sides": [], "orders": [], "units": [
+		Scenarios.unit(0, UT.STONE, 18, 150, 250, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.PIKE, 160, 150, 100, Scenarios.FACE_DOWN)]}
+	if explosive:
+		sc["units"][0]["ak"] = UT.ammo_index("explosive")
+	var sim := BattleSim.new()
+	sim.setup(sc, 4243)
+	var hashes := PackedInt64Array()
+	var snap_bad := -1
+	var bursts := 0
+	var hole := 0
+	var hole_max := 0
+	var downed_max := 0
+	for t in 1200:
+		var tk: int = sim.tick
+		if tk == 1:
+			if explosive:
+				sim.queue_order({"tick": tk, "type": BattleSim.ORDER_AMMO, "unit": 0, "on": 1})
+			sim.queue_order(BattleSim.make_attack_order(tk, 0, 1, 0))
+		var kn0: int = sim.stat_blast_knock
+		var off0 := _off_place(sim, 1)
+		sim.step()
+		hashes.append(sim.state_hash())
+		if sim.stat_blast_knock > kn0:
+			bursts += 1
+			var h := _off_place(sim, 1) - off0
+			hole += h
+			hole_max = maxi(hole_max, h)
+		downed_max = maxi(downed_max, sim.u_down[1])
+		if snap_check and sim.tick == 600:
+			var a2 := BattleSim.new()
+			a2.setup(sc, 4243)
+			a2.restore(sim.snapshot())
+			for k in 200:
+				a2.step()
+				sim.step()
+				hashes.append(sim.state_hash())
+				if a2.state_hash() != sim.state_hash() and snap_bad < 0:
+					snap_bad = k
+	return {"hashes": hashes, "struck": sim.stat_blast, "knocked": sim.stat_blast_knock,
+		"down_ticks": sim.stat_blast_down, "held": sim.stat_blast_held, "bursts": bursts, "hole": hole,
+		"hole_max": hole_max, "downed_max": downed_max, "killed": sim.u_killed[1], "victims": sim.stat_art_victims,
+		"stones": sim.stat_stones, "ak_shots": sim.stat_ak_shots, "snap_bad": snap_bad}
+
+
+## Men of unit u more than 1.5 m off their formation places.
+func _off_place(sim: BattleSim, u: int) -> int:
+	var base: int = sim.u_slot_base[u]
+	var cnt := 0
+	for s in sim.u_alive[u]:
+		var i: int = sim.slot_soldier[base + s]
+		if sim.state[i] >= BattleSim.S_DEAD:
+			continue
+		var k: int = base + sim.slot_of[i]
+		var dx: int = sim.pos_x[i] - (sim.u_ax[u] + sim.off_x[k])
+		var dy: int = sim.pos_y[i] - (sim.u_ay[u] + sim.off_y[k])
+		if dx * dx + dy * dy > 1536 * 1536:
+			cnt += 1
+	return cnt
+
+
+func _check_blast() -> void:
+	var a := _blast_pike_run(true, true)
+	var b := _blast_pike_run(true, false)
+	var c := _blast_pike_run(false, true)
+	var d := _blast_pike_run(false, false)
+	if a["hashes"].slice(0, 1200) != b["hashes"] or int(a["snap_bad"]) >= 0:
+		_fail("blast: the explosive run diverged (repeat or snapshot %d)" % int(a["snap_bad"]))
+		return
+	if c["hashes"].slice(0, 1200) != d["hashes"] or int(c["snap_bad"]) >= 0:
+		_fail("blast: the ordinary-stone run diverged (repeat or snapshot %d)" % int(c["snap_bad"]))
+		return
+	a.erase("hashes")
+	c.erase("hashes")
+	var nb := maxi(int(a["bursts"]), 1)
+	var nk := maxi(int(a["knocked"]), 1)
+	if int(a["bursts"]) <= 0 or int(a["knocked"]) <= 0 or int(a["struck"]) <= 0 or int(a["hole"]) <= 0 \
+			or int(a["knocked"]) > 30 * int(a["bursts"]) or int(c["knocked"]) != 0:
+		_fail("blast: explosive %s / ordinary %s" % [str(a), str(c)])
+		return
+	print("PASS blast: explosive stones into a pike block at 150 m: %d bursts (%d special shots, %d stones), %d men struck (%d per burst), %d killed, %d knocked (%d per burst, %d throws blocked), mean down %d ticks, hole %d men per burst (most %d), most down at once %d; ordinary stones: %d stones, %d victims, %d killed, none knocked; identical on repeat and across snapshot / restore (tick 600)" % [
+		int(a["bursts"]), int(a["ak_shots"]), int(a["stones"]), int(a["struck"]), int(a["struck"]) / nb,
+		int(a["killed"]), int(a["knocked"]), int(a["knocked"]) / nb, int(a["held"]), int(a["down_ticks"]) / nk,
+		int(a["hole"]) / nb, int(a["hole_max"]), int(a["downed_max"]), int(c["stones"]), int(c["victims"]),
+		int(c["killed"])])
 
 
 # ---------------------------------------------------------------- resupply ---

@@ -1426,10 +1426,13 @@ const AMMO: Array[Dictionary] = [
 	{"key": "fire_pots", "name": "Fire pots", "short": "pots", "base": 3, "share": 33, "dmg": 55, "obj": 200,
 		"ap": 0, "pierce": 100, "range": 90, "rate": 110, "fear": 30, "blast": 0, "fire": 70,
 		"desc": "Clay pots of burning pitch, a third of the load: hard on gates, towers and wooden things, which they set alight; less against men."},
-	# Explosive: a 1.5 m wider burst against men and engines (+40 fright), but
-	# 50 % against walls, 85 % range, 125 % reload and a fifth of the load.
+	# Explosive: a burst 4 m round where it lands (the stone's 0.9 m + 3.12 m;
+	# aoe: every man in it struck, full damage at the centre to a third at
+	# the edge, the survivors thrown 1-2 m and down ~2.5 s; no plough) against
+	# men and engines (+40 fright), but 50 % against walls, 85 % range, 125 %
+	# reload and a fifth of the load.
 	{"key": "explosive", "name": "Explosive stones", "short": "blast", "base": 3, "share": 20, "dmg": 100, "obj": 50,
-		"ap": 0, "pierce": 130, "range": 85, "rate": 125, "fear": 40, "blast": 1536, "fire": 0,
+		"ap": 0, "pierce": 130, "range": 85, "rate": 125, "fear": 40, "blast": 3196, "fire": 0, "aoe": 1,
 		"desc": "Rare charges that burst where they land, a fifth of the load: a wide blast against men and engines, weak against walls, shorter and slower."},
 	# Sling stones (index 9): the slingers' standard kind; a hand cart
 	# carries as many as arrows (small missiles by the bag).
@@ -1445,7 +1448,7 @@ const AMMO: Array[Dictionary] = [
 ]
 ## Fields of AMMO the sim reads, in t_k_* order (BattleSim._load_types).
 const AMMO_FIELDS: Array[String] = ["base", "share", "dmg", "obj", "ap", "pierce", "range", "rate", "fear",
-	"blast", "fire"]
+	"blast", "fire", "aoe"]
 static var _ak_by_key := {}
 
 
