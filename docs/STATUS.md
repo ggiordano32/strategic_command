@@ -1176,6 +1176,29 @@ fixes are all landed; see "Where we are"):
      Epirus (Pyrrhus).
    - **Horses** stay speed and shock; camels the anti-cavalry screen;
      elephants the slow terror that breaks lines or breaks you.
+5b. **More units before the rebalance** (agreed 2026-10-09, in this
+   order, so the field is tuned once with the whole roster present):
+   1. **Missile cavalry** (javelins from the saddle, skirmish mode, fast,
+      weak in melee): Numidian horse for Carthage, Tarentines for the
+      Greeks, Epirus and Syracuse, light horse for Gauls and Iberians.
+      Data rows on the existing cavalry / missile / mount fields (camel
+      archers with mount 1).
+   2. **Slingers** (long range, low damage, good against unarmoured men;
+      lead bullets as an ammunition kind): Balearic for Carthage, Rhodian
+      for the Greeks, native for Iberia. A "sling" base missile row.
+   3. **A general and his bodyguard**: a command aura (the fear aura
+      inverted: morale held up within a radius, a rally bonus, a big hit
+      when he falls); campaign armies get a leader.
+   4. **War dogs**: a handler unit (weak light foot) that releases its
+      pack as an order; the pack is a fast, fragile unit strong against
+      skirmishers, missile troops, routers and crews, useless against
+      formed heavy foot and spears; it fights until dead or until no enemy
+      is near, then returns to the handlers (the elephant calming rule
+      reused); never routs; a small scare on light troops only. Epirus,
+      the Greeks, Rome, Gauls. Dogs are the pursuit tool now that ranks
+      hold together and men no longer chase routers on their own.
+   Not for these factions: chariots (Britons, Pontus, Seleucids), naval.
+   Mercenaries are a campaign recruitment feature for later.
 6. **AI competency** (`docs/AI.md`): Easy / Average / Skilled on two
    independent axes (battle, campaign) plus personality, no cheats ever;
    skill is reaction, perception, planning, execution and deliberate
