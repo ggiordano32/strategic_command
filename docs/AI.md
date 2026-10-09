@@ -1482,3 +1482,31 @@ rally 12 times and makes 3 decisive charges in 2,400 ticks (both generals
 fall by then: not tuned); Easy sends him in at tick 348, before the lines
 meet (491). The campaign AI keeps a few through its mixes ("general" 4,
 `CAI.BEAST_LINES`).
+
+## 21. War dogs (2026-10-09)
+
+By the row's fields (a handler row has `pack_n` / `pack_type`; a pack is a
+unit with `u_hand` set), never by name (`sim/battle_ai.gd` `dog_think`,
+`dog_prey`). Field battles: handlers with their dogs in the kennel release
+them (ORDER_RELEASE) at the nearest enemy unit within `DOG_R` (and the
+row's `pack_r`) that the pack is good against: a routing unit (not a big
+body), missile troops, a battery's crew (CLS_ART) or a wagon; never formed
+foot, spears, riders or elephants. Otherwise the handlers are plain weak
+foot in the line. The AI never orders a released pack (`_order` drops
+orders for it; `think` and `_issue_line` skip it): the sim's own rules run
+it (it goes for the nearest enemy within `return_r` when its target is
+gone, runs home once none has been within `return_r` for `return_t`, and
+is recalled by that rule only). Easy's mistake: `DOG_ANY` 1, the first
+enemy unit within `DOG_R` in index order, whatever it is (heavy foot,
+spears, elephants included). The settlement AI never releases a pack (the
+handlers are plain foot there; inside walls a pack would only find the
+streets): `siege_ai.gd` skips packs. Counter `dog_release`.
+
+| Knob | E / A / S | What |
+|---|---|---|
+| `DOG_R` | 60 / 60 / 75 m | release at prey this near the handlers (the row's `pack_r`, 80 m, caps it) |
+| `DOG_ANY` | 1 / 0 / 0 | release at the first enemy in range, whatever it is (Easy's mistake) |
+
+The campaign AI recruits them through the mixes only ("dogs" 3 for Rome,
+Epirus, the Greeks and the Gauls; `CAI.BEAST_LINES`; `CData.no_dogs` /
+`campaign_sim --no-dogs` sets the weight to 0). Not tuned.

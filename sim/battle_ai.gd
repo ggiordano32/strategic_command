@@ -108,6 +108,7 @@ const AI_PLAYER_BASE := 100  # order "player" id so AI orders sort after humans
 const U_READY := 0
 const U_ROUTING := 1
 const U_DESTROYED := 2
+const U_KENNEL := 4            # (a war dog pack with its handlers)
 const O_NONE := 0
 const O_MOVE := 1
 const O_ATTACK := 2
@@ -124,6 +125,7 @@ const ORDER_PICKUP := 14
 const ORDER_AMMO := 16
 const ORDER_FORAGE := 17
 const ORDER_KILL := 18
+const ORDER_RELEASE := 19
 const ORDER_DROP := 15
 const EQ_WAGON := 3            # (BattleSim's siege equipment kinds and states)
 const Q_GROUND := 0
@@ -192,6 +194,8 @@ static func think(sim) -> void:
 			continue
 		if sim.ai_phase[side] == P_WITHDRAW or sim.u_order[u] == O_WITHDRAW:
 			continue
+		if sim.u_hand[u] >= 0:
+			continue  # a war dog pack: the sim's return rule recalls it (docs/AI.md 21)
 		_unit_think(sim, u)
 
 
@@ -566,6 +570,49 @@ static func _general_think(sim, u: int, kn: PackedInt32Array) -> void:
 		_move(sim, u, px2, py2, plan["face"], _width(sim, u), 1, 3)
 
 
+## War dogs (docs/AI.md 21): handlers with dogs in the kennel release them
+## at the nearest enemy unit within DOG_R that the pack is good against: a
+## routing unit (not a big body), missile troops, a battery's crew or a
+## wagon (never formed foot, spears, riders or elephants); DOG_ANY (Easy's
+## mistake): the first enemy unit within DOG_R in index order, whatever it
+## is. True when the order went out.
+static func dog_think(sim, u: int, kn: PackedInt32Array) -> bool:
+	if sim.pack_left(u) <= 0 or sim.u_pack[u] < 0 or sim.u_state[sim.u_pack[u]] != U_KENNEL:
+		return false
+	var r := mini(kn[AP.DOG_R], UT.stat(sim.u_otype[u], "pack_r"))
+	var best := -1
+	var bd := 0
+	for o in sim.n_units:
+		if sim.u_side[o] == sim.u_side[u] or sim.u_state[o] >= U_DESTROYED or sim.u_alive[o] <= 0:
+			continue
+		var g: int = sim._box_gap(u, o)
+		if g > r:
+			continue
+		if kn[AP.DOG_ANY] != 0:
+			best = o
+			break
+		if not dog_prey(sim, o) or (best >= 0 and g >= bd):
+			continue
+		best = o
+		bd = g
+	if best < 0 or sim.release_refusal(sim, u, best) != "":
+		return false
+	_order(sim, u, {"type": ORDER_RELEASE, "target": best}, 30)
+	_count(sim, sim.u_side[u], AP.C_DOG_RELEASE)
+	return true
+
+
+## A unit a pack is good against: routing (not a big body), missile troops,
+## a battery's crew, a wagon; by its row's fields, never by name.
+static func dog_prey(sim, o: int) -> bool:
+	var ty: int = sim.u_otype[o]
+	if UT.stat(ty, "body_r") > 0:
+		return false  # elephants ignore dogs
+	if sim.u_state[o] == U_ROUTING:
+		return true
+	return UT.cls(sim.u_type[o]) == UT.CLS_MISSILE or UT.cls(sim.u_type[o]) == UT.CLS_ART or is_wagon(sim, o)
+
+
 ## A beast that charges lines: its row has a fear aura (elephants).
 static func is_beast(sim, u: int) -> bool:
 	return UT.stat(sim.u_type[u], "fear_r") > 0
@@ -626,8 +673,8 @@ static func _issue_line(sim, side: int, plan: Dictionary, cx: int, cy: int, depl
 		if not deploy and sim.u_ai[u] != A_LINE and sim.u_ai[u] != A_HOLD and sim.u_ai[u] != A_ART \
 				and sim.u_ai[u] != A_RESV:
 			continue
-		if is_wagon(sim, u):
-			continue  # (the wagon keeps behind the army: wagon_think)
+		if is_wagon(sim, u) or sim.u_hand[u] >= 0:
+			continue  # (the wagon keeps behind the army: wagon_think; a war dog pack is the sim's)
 		if kn[AP.GEN_THINK] != 0 and is_general(sim, u):
 			continue  # (the general keeps behind the line: _general_think)
 		var c: int = sim.u_cls[u]
@@ -852,6 +899,8 @@ static func _unit_think(sim, u: int) -> void:
 	var kn := AP.of(sim, side)
 	if is_wagon(sim, u):
 		wagon_think(sim, u, kn)
+		return
+	if kn[AP.DOG_R] > 0 and sim.dog_on != 0 and dog_think(sim, u, kn):
 		return
 	# Badly mauled: fall back behind the line once.
 	if mode != A_RETIRE and sim.u_alive[u] * 100 < sim.u_count0[u] * kn[AP.RETIRE_ALIVE_PCT] \
@@ -2944,6 +2993,8 @@ static func ammo_suits(sim, k: int, t: int, kn: PackedInt32Array) -> bool:
 
 
 static func _order(sim, u: int, o: Dictionary, k: int) -> void:
+	if sim.u_hand[u] >= 0:
+		return  # a released war dog pack takes no AI orders (docs/AI.md 21)
 	o["tick"] = sim.tick
 	o["unit"] = u
 	o["player"] = AI_PLAYER_BASE + sim.u_side[u]

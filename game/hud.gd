@@ -23,6 +23,7 @@ signal man_wall_pressed
 signal come_down_pressed
 signal drop_pressed
 signal kill_pressed
+signal release_pressed
 signal withdraw_pressed
 signal withdraw_all_pressed
 signal group_pressed(kind: String)
@@ -88,6 +89,8 @@ var come_down_button: Button
 var drop_button: Button
 ## "Kill elephant": shown while a beast unit of the player's runs amok.
 var kill_button: Button
+## "Release": handlers with dogs in the kennel selected; then a tap on an enemy.
+var release_button: Button
 var withdraw_button: Button
 var gift_button: Button
 var withdraw_all_button: Button
@@ -296,6 +299,12 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	drop_button.tooltip_text = "Put down the ladders, the ram, a wagon or engines where the unit stands, free to fight (X); any foot unit takes it up again (tap it)"
 	drop_button.pressed.connect(func(): drop_pressed.emit())
 	drop_button.visible = false
+	release_button = _button("Release: 0", Vector2(0, BTN_H), "release")
+	release_button.name = "release"
+	release_button.toggle_mode = true
+	release_button.tooltip_text = "War dogs: let the pack loose, then tap an enemy unit within 80 m (U); they come back when no enemy is near"
+	release_button.pressed.connect(func(): release_pressed.emit())
+	release_button.visible = false
 	withdraw_button = _button("Withdraw", Vector2(0, BTN_H), "withdraw")
 	withdraw_button.tooltip_text = "Leave the battle by your own map edge"
 	withdraw_button.pressed.connect(func(): withdraw_pressed.emit())
@@ -305,7 +314,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	gift_button.pressed.connect(func(): gift_pressed.emit())
 	gift_button.visible = false
 	for b in [run_button, halt_button, fire_button, skirm_button, ammo_button, deploy_button, refill_button,
-			forage_button, man_wall_button, come_down_button, drop_button, withdraw_button, gift_button]:
+			forage_button, man_wall_button, come_down_button, drop_button, release_button, withdraw_button, gift_button]:
 		actions.add_child(b)
 	actions.visible = false
 	actions_box = actions
@@ -327,6 +336,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 		b.focus_mode = Control.FOCUS_NONE
 		b.disabled = not interactive
 		b.flat = true
+		b.visible = sim.u_state[u] != BattleSim.U_KENNEL  # (a war dog pack: shown once let loose)
 		b.custom_minimum_size = Vector2(CARD_MIN_W, CARD_H)
 		b.pressed.connect(func(): card_pressed.emit(u))
 		b.gui_input.connect(_on_card_input.bind(u))
@@ -713,7 +723,8 @@ func is_over_ui(screen_pos: Vector2) -> bool:
 ## predicted ones (pending orders included); -1 hides a missile-only (or
 ## artillery-only) button. run -1 hides Run (only artillery selected).
 func set_selection(units: Array[int], run: int, fire: int, skirm: int, deploy: int = -1,
-		refill: int = -1, ammo: int = -1, ammo_word: String = "", forage: int = -1) -> void:
+		refill: int = -1, ammo: int = -1, ammo_word: String = "", forage: int = -1, dogs: int = -1,
+		release_armed: bool = false) -> void:
 	for k in _cards:
 		(_cards[k] as Button).set_pressed_no_signal(units.has(k))
 		var f: CardFace = _faces[k]
@@ -728,11 +739,14 @@ func set_selection(units: Array[int], run: int, fire: int, skirm: int, deploy: i
 	refill_button.visible = refill >= 0
 	ammo_button.visible = ammo >= 0
 	forage_button.visible = forage >= 0
+	release_button.visible = dogs >= 0
+	release_button.set_pressed_no_signal(release_armed)
 	Kit.set_icon(fire_button, "fire" if fire > 0 else "hold_fire")
 	_toggles = {run_button: ["Run", "on" if run > 0 else "off"], fire_button: ["Fire", "at will" if fire > 0 else "hold"],
 		skirm_button: ["Skirmish", "on" if skirm > 0 else "off"], deploy_button: ["Deploy", "on" if deploy > 0 else "off"],
 		refill_button: ["Refill", "on" if refill > 0 else "off"], ammo_button: ["Ammo", ammo_word],
-		forage_button: ["Forage", "on" if forage > 0 else "off"]}
+		forage_button: ["Forage", "on" if forage > 0 else "off"],
+		release_button: ["Release", "tap an enemy" if release_armed else "%d dogs" % maxi(dogs, 0)]}
 	_fit_actions()
 
 
@@ -788,6 +802,16 @@ func update_cards(sim) -> void:
 		f.count0 = sim.u_count0[u]
 		f.ammo_text = ""
 		var summary := "%s %d/%d" % [f.name_text, f.alive, f.count0]
+		var pk: int = sim.u_pack[u]
+		if pk >= 0:
+			# War dog handlers: the dogs with them (or the pack is out).
+			var out: bool = sim.u_state[pk] == BattleSim.U_READY
+			f.ammo_text = "out" if out else "%d" % sim.u_kept[pk]
+			summary += " dogs %s" % ("out (%d)" % sim.u_alive[pk] if out else str(sim.u_kept[pk]))
+		if sim.u_hand[u] >= 0:
+			(_cards[u] as Button).visible = sim.u_state[u] != BattleSim.U_KENNEL  # (the pack: only while loose)
+			if sim.u_ret[u] != 0:
+				summary += " returning"
 		if art:
 			f.ammo_text = "%d+%d" % [maxi(sim.u_ammo[u], 0), maxi(sim.u_reserve[u], 0)]
 			summary = art_card_text(sim, u).replace("\n", " | ")
@@ -907,6 +931,8 @@ static func morale_text(sim, u: int) -> String:
 		return "Destroyed"
 	if s == BattleSim.U_LEFT:
 		return "Left field"
+	if s == BattleSim.U_KENNEL:
+		return "With handlers"
 	if s == BattleSim.U_ROUTING:
 		return "Amok" if sim.u_amok[u] != 0 else "Routing"
 	if sim.u_order[u] == BattleSim.O_WITHDRAW:

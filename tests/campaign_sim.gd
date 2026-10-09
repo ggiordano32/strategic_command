@@ -28,6 +28,7 @@ extends SceneTree
 ## have no generals and the AI recruits none (CData.no_generals); --old-mp:
 ## armies march at the pace counted before 2026-10-09 (only CLS_CAV as
 ## cavalry; CData.old_mp). Both together play as before the general.
+## --no-dogs: the AI recruits no war dogs (mix weight 0; CData.no_dogs).
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -76,6 +77,8 @@ func _init() -> void:
 			CAI.no_beasts = true  # (the AI recruits none of CAI.BEAST_LINES)
 		elif a == "--no-generals":
 			CData.no_generals = true  # (no starting generals, none recruited)
+		elif a == "--no-dogs":
+			CData.no_dogs = true  # (war dogs at mix weight 0)
 		elif a == "--old-mp":
 			CData.old_mp = true  # (light horse / camel archers at the foot's pace)
 		elif a.begins_with("--skill="):

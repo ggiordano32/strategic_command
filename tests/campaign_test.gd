@@ -117,6 +117,7 @@ func _init() -> void:
 	_beasts()
 	_light_missile()
 	_general()
+	_war_dogs()
 	_ai_skilled()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
 	quit(0 if fails == 0 else 1)
@@ -2251,6 +2252,83 @@ func _light_missile() -> void:
 	for t in 200:
 		sim.step()
 	_check(nl == 4 and sim.tick == 200, "the battle with light horse and slingers runs (%d units)" % nl)
+
+
+## War dogs (docs/CAMPAIGN.md rosters, docs/DESIGN.md "War dogs"): the line
+## "dogs" for Epirus, the Greeks, Rome and the Gauls; Barracks 1 and Stables
+## 1; a turn recruiting them resolves the same in either order and survives
+## JSON; auto-resolve counts the handlers' price (the pack's in it); a
+## fought battle builds the pack from the handlers and the outcome credits
+## the pack's kills to the handlers' row.
+func _war_dogs() -> void:
+	var have := {"epirus": true, "greeks": true, "rome": true, "gauls": true}
+	var ok := true
+	for f in CData.FACTIONS.size():
+		var fk := str(CData.FACTIONS[f]["key"])
+		if (CState.roster_type(f, "dogs", 1) == "dog_handlers") != have.has(fk):
+			ok = false
+	_check(ok, "war dogs in the rosters of Epirus, the Greeks, Rome and the Gauls only")
+	var rome := _f("rome")
+	var lat := _r("latium")
+	var st := _new6([rome, _f("epirus")])
+	st["factions"][rome]["treasury"] = 9000
+	_set_bld(st, lat, CData.STABLES, 0)
+	_check(CRules.recruit_check(st, rome, lat, "dog_handlers") == "needs Stables 1",
+		"war dogs need Stables 1 (%s)" % CRules.recruit_check(st, rome, lat, "dog_handlers"))
+	_set_bld(st, lat, CData.STABLES, 1)
+	_set_bld(st, lat, CData.BARRACKS, 0)
+	_check(CRules.recruit_check(st, rome, lat, "dog_handlers") == "needs Barracks 1",
+		"war dogs need Barracks 1 too (%s)" % CRules.recruit_check(st, rome, lat, "dog_handlers"))
+	_set_bld(st, lat, CData.BARRACKS, 1)
+	_check(CRules.recruit_check(st, rome, lat, "dog_handlers") == "", "war dogs with Barracks 1 and Stables 1")
+	_check(CRules.recruit_check(st, _f("carthage"), _r("zeugitana"), "dog_handlers") == "not in your roster",
+		"Carthage has no war dogs")
+	var subs := [CTurn.submission(st, rome, [{"t": "recruit", "r": lat, "unit": "dog_handlers"}]),
+		CTurn.submission(st, _f("epirus"), [])]
+	var r2 := CTurn.resolve_turn(st, subs)
+	var r3 := CTurn.resolve_turn(st, [subs[1], subs[0]])
+	var n_dogs := 0
+	for a in CState.armies_of(r2, rome):
+		for u in a["units"]:
+			if str(u["t"]) == "dog_handlers":
+				n_dogs += int(u["n"])
+	_check(n_dogs == 16, "recruited 16 war dog handlers (%d)" % n_dogs)
+	_check(CState.state_hash(r2) == CState.state_hash(r3) and _plain(r2), "war dog recruits resolve deterministically, plain data")
+	var rt := CState.from_json(CState.to_json(r2))
+	_check(not rt.is_empty() and CState.state_hash(rt) == CState.state_hash(r2), "war dog recruits survive a JSON round trip")
+	var dh := UT.index_of("dog_handlers")
+	_check(CState.strength({"units": [{"t": "dog_handlers", "n": 16}]}) == UT.price_of(dh),
+		"auto-resolve: the handlers count their price, the pack's in it (%d)" % UT.price_of(dh))
+	var sb := _new6([rome])
+	sb["armies"] = []
+	_italy(sb, rome)
+	var c0 := CState.field_cell(_r("latium"))
+	var am := _put(sb, rome, c0, ["heavy", "dog_handlers"])
+	var en := _put(sb, _f("carthage"), c0, ["javelin", "archer"])
+	var b := {"id": 1, "r": _r("latium"), "att": [int(am["id"])], "def": [int(en["id"])], "reinf": [], "att_f": rome,
+		"def_f": _f("carthage"), "kind": "field", "settlement": 0}
+	var fo := CBattle.formula(CState.copy(sb), b)
+	_check(fo.has("winner") and (fo["units"] as Array).size() == 4, "auto-resolve with war dogs (%d unit rows)" % (fo["units"] as Array).size())
+	var built := CBattle.build(sb, b, rome)
+	var sim := BattleSim.new()
+	sim.setup(built["scenario"], int(built["seed"]))
+	var h := -1
+	for u in sim.n_units:
+		if sim.u_pack[u] >= 0:
+			h = u
+	_check(h >= 0 and sim.n_units == (built["scenario"]["units"] as Array).size() + 1,
+		"the battle builds the pack from the handlers (handlers %d, %d units)" % [h, sim.n_units])
+	var res := sim.result()
+	var pk: int = sim.u_pack[h] if h >= 0 else -1
+	for r in res["units"]:
+		if int(r["unit"]) == pk:
+			r["kills"] = 7  # (as if the pack had killed seven)
+	var out := CBattle.outcome_from_result(built, res, "fought")
+	var hk := -1
+	for e in out["units"]:
+		if int(e["army"]) == int(am["id"]) and int(e["unit"]) == 1:
+			hk = int(e.get("kills", -1))
+	_check(hk == 7 and (out["units"] as Array).size() == 4, "a fought outcome credits the pack's kills to its handlers (%d)" % hk)
 
 
 ## The general (docs/CAMPAIGN.md "The general"): every starting army has

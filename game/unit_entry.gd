@@ -59,7 +59,8 @@ const ART_ROWS := [
 const SPECIAL_ROWS := [
 	["Charge impact", "charge", "int"], ["Brace vs charges", "brace", "int"],
 	["Bonus vs cavalry", "vs_cav", "int"], ["Horse scare", "scare_r", "m"], ["Fear aura", "fear_r", "m"],
-	["Command aura", "cmd_r", "m"],
+	["Command aura", "cmd_r", "m"], ["Dogs a man", "pack_n", "count"], ["Release range", "pack_r", "m"],
+	["Returns, none within", "return_r", "m"],
 ]
 
 var unit_type := -1
@@ -223,7 +224,10 @@ func set_unit_type(ty: int, p_side_color: Color = Color(0.35, 0.6, 1.0)) -> void
 ## the horse scare, the fear aura, the body, its crew, amok and calming.
 static func beast_line(ty: int) -> String:
 	var parts: Array[String] = []
-	if UT.stat(ty, "scare_r") > 0:
+	if UT.stat(ty, "scare_r") > 0 and UT.stat(ty, "scare_am") >= 0:
+		parts.append("scare: enemy units with armour %d or less within %d m lose %d morale a second" % [
+			UT.stat(ty, "scare_am"), UT.stat(ty, "scare_r") / 1024, UT.stat(ty, "scare_mor")])
+	elif UT.stat(ty, "scare_r") > 0:
 		parts.append("Horse scare: enemy horsemen within %d m keep %d%% of their charge and turn rate and lose %d morale a second" % [
 			UT.stat(ty, "scare_r") / 1024, UT.stat(ty, "scare_pct"), UT.stat(ty, "scare_mor")])
 	if UT.stat(ty, "fear_r") > 0:
@@ -241,6 +245,15 @@ static func beast_line(ty: int) -> String:
 		parts.append("command: units of ours within %d m gain %d morale a second (also fighting and under fire), routers %d more toward rallying; if he routs or falls, every unit of ours loses %d morale at once (%d within %d m); campaign: his army +%d%% in auto-resolve, one general an army" % [
 			UT.stat(ty, "cmd_r") / 1024, UT.stat(ty, "cmd_mor"), UT.stat(ty, "cmd_rally"), UT.stat(ty, "cmd_loss"),
 			UT.stat(ty, "cmd_loss_r"), UT.stat(ty, "cmd_r") / 1024, UT.stat(ty, "cmd_pct")])
+	var pt := UT.stat(ty, "pack_type")
+	if UT.stat(ty, "pack_n") > 0 and pt >= 0:
+		parts.append("war dogs: %d dogs (%d a man) released at an enemy unit within %d m; they run at %d m/s and come back once no enemy has been within %d m for %d s, to be released again" % [
+			UT.size_of(ty) * UT.stat(ty, "pack_n"), UT.stat(ty, "pack_n"), UT.stat(ty, "pack_r") / 1024,
+			UT.stat(pt, "run") / 102, UT.stat(pt, "return_r") / 1024, UT.stat(pt, "return_t") / 10])
+	if UT.stat(ty, "nobreak") != 0:
+		parts.append("never breaks")
+	if UT.stat(ty, "as_cav") != 0:
+		parts.append("spears fight it as they fight riders")
 	if parts.is_empty():
 		return ""
 	var t := "; ".join(parts) + "."

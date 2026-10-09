@@ -127,6 +127,22 @@ extends RefCounted
 ##   cmd_loss_r   ... and those within cmd_r this much instead
 ##   cmd_pct      campaign auto-resolve: its army's strength +this % while
 ##                it has men (the best of the army's units)
+## War dogs (docs/DESIGN.md "War dogs"; generic: any row may use them):
+##   pack_n       a handler unit: dogs per man in the pack it carries (0 none);
+##                the pack is a unit of row pack_type the sim keeps off the
+##                field until the Release order (BattleSim ORDER_RELEASE)
+##   pack_type    the pack's row (built from "pack_key"; -1 none)
+##   pack_r       release range: a target unit at most this far (box to box)
+##   return_r     a released pack: once no enemy unit has been within this
+##   return_t     ... for this many ticks (and it has no live target), it runs
+##                back to its handlers and rejoins the pack (absorbed)
+##   nobreak      1: it never routs (its morale only counts for show)
+##   scare_am     the scare (scare_*) strikes any enemy unit whose armour is
+##                at most this (horses or not); -1: horses only (camels)
+##   as_cav       1: spears' vs_cav bonus applies against it as against riders
+##   chase        1: on an attack its anchor runs on into its target whatever
+##                the target does (a skirmisher falling back, as a router),
+##                not waiting for its men to come within reach (a pack)
 
 ## Display only (never read by the sim, not hashed): icon (marker / card
 ## symbol, see game/unit_icons.gd), role, desc, good_vs, weak_vs (unit book).
@@ -164,12 +180,15 @@ const DEFAULTS := {
 	"scare_r": 0, "scare_pct": 100, "scare_mor": 0, "fear_r": 0, "fear_horse": 0, "fear_foot": 0,
 	"burn_pct": 100, "amok": 0, "amok_r": 0, "amok_calm": 0, "kill_delay": 0, "gate_walls": -1, "gate_pct": 0,
 	"cmd_r": 0, "cmd_mor": 0, "cmd_rally": 0, "cmd_loss": 0, "cmd_loss_r": 0, "cmd_pct": 0,
+	"pack_n": 0, "pack_type": -1, "pack_r": 0, "return_r": 0, "return_t": 0, "nobreak": 0,
+	"scare_am": -1, "as_cav": 0, "chase": 0,
 }
 ## Mounts (the "mount" field).
 const MOUNT_FOOT := 0
 const MOUNT_HORSE := 1
 const MOUNT_CAMEL := 2
 const MOUNT_ELEPHANT := 3
+const MOUNT_DOG := 4  # a dog: a man's small body (missiles, footprint), its own sprite
 
 ## The nine base types (tier 1 of their line). The sandbox battles use
 ## these; derived tier types are appended by _build_types() (see TIERS).
@@ -981,6 +1000,76 @@ const GENERAL_TIERS: Array[Dictionary] = [
 const CMD_FIELDS: Array[String] = ["cmd_r", "cmd_mor", "cmd_rally", "cmd_loss", "cmd_loss_r", "cmd_pct"]
 
 
+
+
+## War dogs (docs/DESIGN.md "War dogs"): the handlers, a light foot row of
+## its own line ("dogs", recruited) that carries a pack (pack_n dogs a man,
+## of row pack_key), and the pack's row (line "dog_pack", never recruited:
+## the sim makes the pack from the handlers). Appended after the general's
+## rows so every other index is unchanged. Numbers chosen once from the
+## existing rows (light infantry, javelinmen, archers, slingers as the
+## yardsticks), not tuned; each with its reason.
+const DOGS: Array[Dictionary] = [
+	{
+		"key": "dog_handlers", "line": "dogs", "name": "War Dogs", "short": "Dogs", "icon": 16, "sprite": 0,
+		"size": 16, "files0": 8,
+		"role": "Handlers and a pack of war dogs",
+		"desc": "Sixteen handlers with a pack of two dogs each. Release the pack at an enemy unit within 80 m: the dogs run it down at 9 m/s, fight until nothing is left within 30 m for 5 s, then run back to their handlers (who can release them again). The pack never breaks and frightens unarmoured troops near it. Deadly to skirmishers, archers, slingers, crews and routers; useless against armoured foot and spears, and elephants ignore them. The handlers themselves are poor fighters.",
+		"good_vs": "Skirmishers, archers and slingers, artillery crews, wagons, routers (the pursuit).",
+		"weak_vs": "Armoured foot and spears (the pack), elephants, any melee unit that reaches the handlers.",
+		"attack": 20,       # archers 18, light infantry 36: a knife and a whip
+		"defence": 18,      # archers 16
+		"armour": 2,        # slingers' 2: no armour
+		"shield": 10, "mshield": 20,  # a small buckler
+		"damage": 22,       # slingers' knife
+		"reach": 1229, "mass": 70,
+		"walk": 164, "run": 451,  # light infantry's pace: they must keep up with the dogs' return
+		"hp": 75,           # archers'
+		"cooldown": 10,
+		"morale": 520,      # javelinmen 500: they hang back while the dogs fight
+		"file_sp": 1434, "rank_sp": 1638,  # loose order, room for the leashes
+		"cost": 24,         # 384 a unit: slingers' 320 for the 32 dogs' bite on light troops and the pursuit, plus 16 weak men (light infantry 400)
+		"climb": 13,        # light foot
+		"pack_n": 2,        # two dogs a man: 32 dogs for 16 handlers
+		"pack_key": "war_dogs",
+		"pack_r": 80 * 1024,  # 80 m: twice the javelin's throw, about half the bow's range
+	},
+	{
+		"key": "war_dogs", "line": "dog_pack", "name": "War Dog Pack", "short": "Pack", "icon": 17, "sprite": 11,
+		"size": 32, "files0": 8,
+		"role": "A released pack of war dogs",
+		"desc": "Mastiffs let off the leash. Fast and fierce against unarmoured men and anyone running away; they never break, but a formed line of armour, shields or spears kills them. They run back to their handlers once no enemy is near.",
+		"good_vs": "Skirmishers, archers, crews, routers.",
+		"weak_vs": "Armoured foot, spears, elephants.",
+		"mount": MOUNT_DOG,
+		"attack": 40,       # light infantry 36: the lunge of a big dog at a man's throat
+		"defence": 22,      # light infantry 26: quick, but no shield and no parry
+		"armour": 0, "shield": 0, "mshield": 0,
+		"damage": 34,       # 31 on an archer's armour 3, 20 on heavy swords' 14 (damage less armour, no piercing)
+		"reach": 922,       # 0.9 m: a bite
+		"mass": 35,
+		"walk": 205,        # 2 m/s at heel
+		"run": 922,         # 9 m/s: faster than any rider (light horse 8.6): they catch routers and skirmishers
+		"hp": 45,           # half a light infantryman's 85: one spear thrust (30 + 20 vs riders), two sword cuts or knife stabs
+		"cooldown": 8,      # quick bites (light infantry 9)
+		"morale": 600,      # (never breaks: nobreak)
+		"file_sp": 1434, "rank_sp": 1434,  # a loose pack
+		"cost": 4,          # (never recruited: the handlers' price carries the pack)
+		"str_pct": 0,
+		"climb": 8,         # dogs take slopes easily (light foot 13)
+		"nobreak": 1,
+		"return_r": 30 * 1024,  # 30 m: the elephants' calm rule shortened (amok_r 50 m): nothing within a short dash
+		"return_t": 50,     # ... for 5 s
+		"scare_r": 15 * 1024,  # 15 m: half the camels' horse scare
+		"scare_pct": 100,   # no hold on charges or turning (that is the camels')
+		"scare_mor": 4,     # 4 morale a second (camels' scare on horses 2, elephants' fear on horses 6): light troops dread dogs
+		"scare_am": 4,      # light troops only: armour 4 and below (light infantry, missile troops, light horse)
+		"as_cav": 1,        # spears hold them off as they hold riders (vs_cav)
+		"chase": 1,         # a pack runs its quarry down, skirmishers falling back included
+	},
+]
+
+
 ## Field of wagon tier w (0 if out of range); "pace" with h horses alive.
 static func wagon_stat(w: int, field: String) -> int:
 	if w < 0 or w >= WAGONS.size():
@@ -1070,6 +1159,19 @@ static func _build_types() -> Array[Dictionary]:
 			row["role"] = "Heavy cavalry"
 			row["desc"] = str(t["blurb"])
 		out.append(row)
+	first = out.size()
+	for dr in DOGS:
+		var row: Dictionary = dr.duplicate()
+		row["base"] = out.size()
+		row["tier"] = 1
+		row["price"] = int(row["cost"]) * int(row["size"])
+		out.append(row)
+	# A handler row's pack: its row index.
+	for t in range(first, out.size()):
+		if out[t].has("pack_key"):
+			for t2 in range(first, out.size()):
+				if str(out[t2]["key"]) == str(out[t]["pack_key"]):
+					out[t]["pack_type"] = t2
 	return out
 
 

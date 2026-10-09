@@ -45,7 +45,7 @@ const SETTINGS := "user://settings.cfg"
 
 ## Sprite cells (see soldiers.gdshaderinc): local box x -1.6..4.4 m forward,
 ## y -1.25..1.25 m to the right, ATLAS_PX_PER_M pixels per metre.
-const SPRITES := 11
+const SPRITES := 12
 const CELL_X0 := -1.6
 const CELL_W := 6.0
 const CELL_Y0 := -1.25
@@ -65,6 +65,7 @@ const SPR_RECT: Array[Vector4] = [
 	Vector4(-1.6, 1.75, -1.0, 1.0),   # 8 stone thrower (engine)
 	Vector4(-1.55, 1.95, -0.62, 0.62), # 9 camel and rider
 	Vector4(-1.6, 2.55, -1.25, 1.25), # 10 war elephant (the big body: a size of its own)
+	Vector4(-0.6, 0.65, -0.3, 0.3),   # 11 war dog
 ]
 const ENGINE_OK := 6
 const ENGINE_OUT := 7
@@ -666,6 +667,8 @@ static func _sprite_pixel(spr: int, p: Vector2) -> Color:
 		return _camel_pixel(p)
 	if spr == 10:
 		return _elephant_pixel(p)
+	if spr == 11:
+		return _dog_pixel(p)
 	# Body: shoulders (or the horse first) and head.
 	if spr == 5:
 		var hb := Vector2(p.x / 1.15, p.y / 0.36).length()
@@ -758,6 +761,28 @@ static func _camel_pixel(p: Vector2) -> Color:
 		col = Color(1, 1, 1) if head < 0.1 else dark
 	if _seg_dist(p, Vector2(-0.7, 0.42), Vector2(0.6, 0.42)) < 0.035:
 		col = Color(0.92, 0.92, 0.92)
+	return col
+
+
+## War dog from above, facing +x: a long low body, the head forward with
+## ears, a tail behind.
+static func _dog_pixel(p: Vector2) -> Color:
+	var col := Color(0, 0, 0, 0)
+	var coat := Color(0.6, 0.6, 0.6)
+	var dark := Color(0.18, 0.18, 0.18)
+	var b := Vector2((p.x + 0.05) / 0.42, p.y / 0.17).length()
+	if b <= 1.0:
+		col = coat if b < 0.82 else dark
+	var hd := Vector2((p.x - 0.42) / 0.16, p.y / 0.12).length()
+	if hd <= 1.0:
+		col = Color(0.72, 0.72, 0.72) if hd < 0.75 else dark
+	if _seg_dist(p, Vector2(0.5, 0.0), Vector2(0.62, 0.0)) < 0.05:
+		col = dark  # muzzle
+	for sgn in [-1.0, 1.0]:
+		if p.distance_to(Vector2(0.36, 0.11 * sgn)) <= 0.05:
+			col = dark  # ears
+	if _seg_dist(p, Vector2(-0.45, 0.0), Vector2(-0.58, 0.08)) < 0.03:
+		col = dark  # tail
 	return col
 
 

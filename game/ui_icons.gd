@@ -25,7 +25,7 @@ const NAMES: Array[String] = [
 	"farm", "market", "barracks", "range", "stables", "workshop", "walls", "build", "upgrade",
 	"fire", "hold_fire", "skirmish", "run", "deploy", "wall_up", "wall_down", "pick_up", "drop",
 	"victory", "defeat", "draw", "men", "killed", "routed", "captured",
-	"ladder", "ram", "tower", "siege_tower", "gate", "ammo", "forage", "wagon", "kill_beast", "general",
+	"ladder", "ram", "tower", "siege_tower", "gate", "ammo", "forage", "wagon", "kill_beast", "general", "release",
 	"copy", "export", "plus", "minus",
 ]
 const STROKE := 0.16  # line weight, in half-sizes (unit_icons: 0.17 of its glyph radius)
@@ -610,6 +610,14 @@ static func _glyph(icon: String, c: Vector2, s: float) -> void:
 			_pl([-0.12, 0.4, -0.12, 0.72, 0.1, 0.92], false, 0.9)
 			_l(0.55, -0.92, 0.12, -0.38, 0.9)
 			_l(0.42, -0.95, 0.72, -0.72, 1.2)
+		"release":  # a dog's head, the leash cut loose and an arrow off to the right
+			_arc(-0.45, -0.1, 0.36, PI * 0.6, PI * 2.1, 0.9)
+			_l(-0.13, -0.28, 0.35, -0.08, 0.9)
+			_l(0.35, -0.08, 0.25, 0.12, 0.9)
+			_l(0.25, 0.12, -0.15, 0.15, 0.9)
+			_fill([-0.62, -0.4, -0.38, -0.85, -0.3, -0.38])
+			_l(-0.6, 0.3, -0.9, 0.75, 0.75)
+			_arrow(0.1, 0.62, 0.92, 0.62, 0.35)
 		"copy":
 			_pl([-0.82, -0.45, -0.82, 0.85, 0.35, 0.85, 0.35, -0.45], true)
 			_pl([-0.4, -0.45, -0.4, -0.85, 0.82, -0.85, 0.82, 0.45, 0.35, 0.45])

@@ -101,6 +101,9 @@ var selected := -1
 var selection: Array[int] = []
 ## "+ Add" mode: taps on units and cards add to / remove from the selection.
 var add_mode := false
+## "Release" pressed: the next tap on an enemy unit lets the selected
+## handlers' war dogs loose at it (any other tap cancels).
+var release_armed := false
 
 var _acc := 0.0
 var _sim_ms := PackedFloat64Array()
@@ -257,6 +260,7 @@ func _ready() -> void:
 	hud.come_down_pressed.connect(_come_down)
 	hud.drop_pressed.connect(_drop)
 	hud.kill_pressed.connect(_kill_beasts)
+	hud.release_pressed.connect(_toggle_release)
 	hud.withdraw_pressed.connect(_withdraw)
 	hud.withdraw_all_pressed.connect(_withdraw_all)
 	hud.group_pressed.connect(_select_group)
@@ -839,7 +843,7 @@ const ORDER_NAMES := {BattleSim.ORDER_MOVE: "move", BattleSim.ORDER_ATTACK: "att
 	BattleSim.ORDER_WITHDRAW_ALL: "withdraw_all", BattleSim.ORDER_DEPLOY: "deploy",
 	BattleSim.ORDER_REFILL: "refill", BattleSim.ORDER_GATE: "gate", BattleSim.ORDER_PLACE: "place",
 	BattleSim.ORDER_READY: "ready", BattleSim.ORDER_AMMO: "ammo", BattleSim.ORDER_FORAGE: "forage",
-	BattleSim.ORDER_KILL: "kill"}
+	BattleSim.ORDER_KILL: "kill", BattleSim.ORDER_RELEASE: "release"}
 
 
 ## Select only unit u (-1: clear the selection).
@@ -930,7 +934,13 @@ func _refresh_actions() -> void:
 			refill = maxi(refill, orders.value(u, "refill"))
 	if selection.is_empty():
 		run = 0
-	hud.set_selection(selection, run, fire, skirm, deploy, refill, ammo, ammo_word, forage)
+	var dogs := -1
+	for u in selection:
+		if sim.u_state[u] == BattleSim.U_READY and _pack_ready(u):
+			dogs = maxi(dogs, sim.pack_left(u))
+	if dogs < 0:
+		release_armed = false
+	hud.set_selection(selection, run, fire, skirm, deploy, refill, ammo, ammo_word, forage, dogs, release_armed)
 	_refresh_wall_buttons()
 	if coop != null:
 		var to := _gift_target()
@@ -1244,6 +1254,48 @@ func _drop() -> void:
 			Vector2(sim.u_cx[selected], sim.u_cy[selected]) / M * PX_PER_M)
 
 
+## Unit u is handlers whose pack is with them (dogs to release).
+func _pack_ready(u: int) -> bool:
+	var p: int = sim.u_pack[u]
+	return p >= 0 and sim.u_state[p] == BattleSim.U_KENNEL and sim.u_kept[p] > 0
+
+
+## "Release": arm (or disarm) the next tap on an enemy unit.
+func _toggle_release() -> void:
+	if not interactive:
+		return
+	var any := false
+	for u in selection:
+		if sim.u_state[u] == BattleSim.U_READY and _pack_ready(u):
+			any = true
+	release_armed = any and not release_armed
+	_count("release_arm" if release_armed else "release_disarm")
+	if release_armed and selected >= 0:
+		overlay.flash("Tap an enemy unit to set the dogs on it",
+			Vector2(sim.u_cx[selected], sim.u_cy[selected]) / M * PX_PER_M)
+	_refresh_actions()
+
+
+## The armed Release on enemy unit t: every selected handler unit with dogs
+## in the kennel lets them loose at it (BattleSim.release_refusal).
+func _release_at(t: int, w: Vector2) -> void:
+	release_armed = false
+	var sent := 0
+	var why := ""
+	for u in selection:
+		if not _pack_ready(u):
+			continue
+		var r: String = BattleSim.release_refusal(sim, u, t)
+		if r == "":
+			_queue(BattleSim.make_release_order(0, u, t))
+			sent += 1
+		elif why == "":
+			why = r
+	_count("release")
+	overlay.flash("The dogs are loose" if sent > 0 else ("Cannot release: " + why if why != "" else "No dogs"), w)
+	_refresh_actions()
+
+
 ## The player's beast units running amok whose drivers can still be told
 ## to kill them (BattleSim.kill_refusal).
 func _amok_mine() -> Array[int]:
@@ -1489,6 +1541,14 @@ func _tap(screen_pos: Vector2, double: bool) -> void:
 		if eg >= 0:
 			_tap_engines(eg, w)
 			return
+	if release_armed:
+		if u >= 0:
+			_release_at(u, w)
+			return
+		release_armed = false  # (a tap elsewhere: no release)
+		_count("release_cancelled")
+		_refresh_actions()
+		return
 	if u >= 0:
 		# Enemy: attack (missile troops shoot it; double tap = charge at the run).
 		var carriers := 0
@@ -1864,6 +1924,8 @@ func _on_key(e: InputEventKey) -> void:
 			_come_down()
 		"drop":
 			_drop()
+		"release":
+			_toggle_release()
 		"orders_overlay":
 			hud.orders_button.button_pressed = not hud.orders_button.button_pressed
 		"ready":

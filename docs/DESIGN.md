@@ -1935,6 +1935,76 @@ docs/CAMPAIGN.md "The general".
   army may lose him); the general in the settlement AI (`siege_ai.gd`
   uses him as any rider).
 
+### War dogs (as built, 2026-10-09)
+
+A handler unit carries a pack; the pack is a unit of its own that the sim
+keeps with its handlers until released. Generic fields of any row
+(`sim/unit_types.gd`): `pack_n` (dogs a man), `pack_type` (the pack's
+row, from `pack_key`), `pack_r` (release range, box to box), `return_r` /
+`return_t` (the return rule), `nobreak`, `scare_am` (the scare's armour
+cut-off), `as_cav` (spears' vs_cav applies against it), `chase` (its
+anchor runs on into its quarry); mount 4 (`MOUNT_DOG`: a man's small body
+for missiles and footprint, its own sprite). Rows `UnitTypes.DOGS`
+(appended after the general's: every other index unchanged). Numbers
+chosen once (light infantry, archers, slingers, javelinmen the yardsticks),
+not tuned:
+
+| | War Dogs (`dog_handlers`, line "dogs") | War Dog Pack (`war_dogs`, line "dog_pack", never recruited) |
+|---|---|---|
+| Men / price | 16 handlers, 2 dogs each / 384 (slingers' 320 for the dogs, plus weak men) | 32 (16 x 2) / in the handlers' price |
+| Att / def / armour / hp / morale | 20 / 18 / 2 / 75 / 520 (archers' body, a knife) | 40 / 22 / 0 / 45 / never breaks |
+| Damage / reach / cooldown | 22 / 1.2 m / 1 s | 34 (31 on armour 3, 20 on armour 14) / 0.9 m / 0.8 s |
+| Pace | light infantry's (1.6 / 4.4 m/s) | 2 / 9 m/s (faster than any rider) |
+| Other | release range 80 m | scare 15 m on armour 4 or less, 4 morale/s; returns when no enemy within 30 m for 5 s; spears' +20 vs riders applies |
+
+- **The pack unit is pre-created** (not grown mid-battle): at setup, after
+  the scenario's units and the towers, one unit per handler unit of its
+  `pack_type` with `count x pack_n` dogs (`BattleSim._dog_packs`); it
+  starts in the kennel (`U_KENNEL` 4, at or above `U_DESTROYED` so every
+  "on the field" test skips it; no men alive, its dogs `S_OFF` with their
+  hp). `n` and `n_units` never change, so `snapshot()` / `restore()` and
+  the lockstep work as before; the dog arrays (`u_pack`, `u_hand`,
+  `u_kept`, `u_dogt`, `u_ret`) are hashed only when a battle has handlers
+  (`dog_on`), so every other battle hashes as before.
+- **Release** (`ORDER_RELEASE` 19: unit, target; `release_refusal`): the
+  handlers ready, off the walls, dogs in the kennel, an enemy unit within
+  `pack_r`. The dogs come out among the handlers' men (slots rebuilt from
+  the dogs still alive), the pack attacks the target at the run. The
+  handlers keep their own unit and orders.
+- **Fighting**: the pack never routs (`nobreak`); with `chase` its anchor
+  presses into the middle of its target and runs after it whatever it does
+  (skirmishers falling back, routers: the unit-level pursuit of the melee
+  fix, which against a scattered router stopped too short); with no live
+  target it goes for the nearest enemy within `return_r` (unless it was
+  given a move).
+- **Return** (the elephants' calming rule reused, once a second): no live
+  target and no enemy within `return_r` for `return_t` -> it runs back to
+  its handlers and, within 3 m of them, is absorbed (the dogs alive go
+  back in the kennel; a second release is possible). An order to the pack
+  cancels a return. A pack whose handlers are dead, routed or on a wall
+  fights on and then stands. The pack does not withdraw and does not hold
+  the field (`_check_winner` ignores it).
+- **Scare** (`scare_am` >= 0): the horse scare's fields strike any enemy
+  unit with armour at most `scare_am` (light troops), horses or not; the
+  camels' scare keeps `scare_am` -1 (horses only). Elephants (armour 10)
+  ignore it, and the dogs' bites hardly scratch them. The elephants' fear
+  aura strikes the pack as foot (`fear_foot`); the pack never breaks, so
+  it changes nothing.
+- View: the HUD's Release button (UI icon "release", key U; "Release: 32
+  dogs", phone-compact "32 dogs") for selected handlers with dogs in the
+  kennel; then a tap on an enemy unit releases (any other tap cancels);
+  the handlers' card shows the dogs left ("out" while loose); the pack has
+  its own card and marker only while loose ("With handlers" otherwise);
+  unit icons 16 (handlers) / 17 (pack), soldier sprite 11 (a dog) on both
+  render paths; unit book rows "Dogs a man", "Release range", "Returns,
+  none within" and a line of the pack facts; the custom picker lists the
+  handlers. The battle screen shows the pack's kills under the handlers
+  (`CBattle.outcome_from_result` adds the pack's row, `pack_of`).
+- Battle AI: docs/AI.md 21. Campaign: docs/CAMPAIGN.md rosters.
+- Not modelled: dogs lost in a battle are not a campaign loss (the pack is
+  made again from the handlers' men); the pack in a siege (the settlement
+  AI never releases; a player may).
+
 ## 5. Networking
 
 ### Live battles: deterministic lockstep

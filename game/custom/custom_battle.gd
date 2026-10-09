@@ -382,10 +382,11 @@ func _build_picker() -> void:
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sc.add_child(list)
 	# The base lines with the light missile troops' (slingers after the javelins,
-	# missile cavalry after the cavalry), the beasts after the riders and the
-	# generals last.
+	# missile cavalry after the cavalry), war dogs after the slingers, the
+	# beasts after the riders and the generals last.
 	var lines: Array = UT.LINES.duplicate()
 	lines.insert(lines.find("javelin") + 1, "sling")
+	lines.insert(lines.find("sling") + 1, "dogs")  # War Dogs (handlers; the pack comes with them)
 	lines.insert(lines.find("cav") + 1, "cav_missile")
 	lines.insert(lines.find("cav_missile") + 1, "camel")  # Camel Riders
 	lines.insert(lines.find("camel") + 1, "camel_archer")  # Camel Archers

@@ -152,6 +152,8 @@ func setup(scenario: Dictionary, p_seed: int, home: Array, present: Array, host:
 			u_home[u] = int(home[u])
 		elif u >= n_scn and home.size() > n_scn and sim.is_tower(u):
 			u_home[u] = int(home[n_scn])
+		elif u >= n_scn and sim.u_hand[u] >= 0:
+			u_home[u] = u_home[sim.u_hand[u]]  # a war dog pack: its handlers' player
 		else:
 			u_home[u] = -1
 	for u in n_units:
@@ -427,6 +429,10 @@ func _apply(o: Dictionary) -> void:
 					and side_of(to) == sim.u_side[u]:
 				u_cmd[u] = to
 				u_away[u] = -1
+				var pk: int = sim.u_pack[u]
+				if pk >= 0 and pk < u_cmd.size() and u_cmd[pk] == p:
+					u_cmd[pk] = to  # (the handlers' pack goes with them)
+					u_away[pk] = -1
 			else:
 				rejected += 1
 				applied -= 1

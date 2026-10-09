@@ -12,6 +12,7 @@ extends RefCounted
 ##   12 camel archers: the camel and an arrow
 ##   13 light horse: horseshoe and a javelin  14 slingers: the sling's cords, a stone
 ##   15 general: his standard (pole, crossbar, banner, a wreath on top)
+##   16 war dogs (handlers): a dog's head and a leash   17 the released pack: a running dog
 ## Symbol ids above 99 carry a tier mark (see icon_of).
 
 const UT := preload("res://sim/unit_types.gd")
@@ -144,6 +145,21 @@ static func draw_glyph(ci: CanvasItem, icon: int, c: Vector2, s: float, col: Col
 			ci.draw_polyline(PackedVector2Array([c + Vector2(-0.52, -0.42) * s, c + Vector2(-0.52, 0.28) * s,
 				c + Vector2(0, 0.1) * s, c + Vector2(0.52, 0.28) * s, c + Vector2(0.52, -0.42) * s]), col, w * 0.9, true)
 			ci.draw_arc(c + Vector2(0, -0.78) * s, 0.17 * s, 0, TAU, 10, col, w * 0.8, true)
+		16, 17:  # a dog's head in profile: skull, muzzle, a pricked ear, the jaw
+			ci.draw_arc(c + Vector2(-0.15, -0.1) * s, 0.42 * s, PI * 0.6, PI * 2.1, 12, col, w, true)
+			ci.draw_line(c + Vector2(0.22, -0.3) * s, c + Vector2(0.88, -0.05) * s, col, w, true)
+			ci.draw_line(c + Vector2(0.88, -0.05) * s, c + Vector2(0.75, 0.18) * s, col, w, true)
+			ci.draw_line(c + Vector2(0.75, 0.18) * s, c + Vector2(0.2, 0.2) * s, col, w, true)
+			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(-0.35, -0.45) * s,
+				c + Vector2(-0.05, -0.98) * s, c + Vector2(0.05, -0.42) * s]), col)
+			if icon == 16:  # the handlers: a leash from the collar
+				ci.draw_polyline(PackedVector2Array([c + Vector2(-0.3, 0.3) * s, c + Vector2(-0.55, 0.65) * s,
+					c + Vector2(-0.95, 0.75) * s]), col, w * 0.7, true)
+				ci.draw_line(c + Vector2(-0.5, 0.25) * s, c + Vector2(-0.1, 0.38) * s, col, w * 1.2, true)
+			else:  # the pack loose: speed lines
+				for k in 2:
+					ci.draw_line(c + Vector2(-0.95, 0.35 + 0.25 * k) * s, c + Vector2(-0.45, 0.35 + 0.25 * k) * s,
+						col, w * 0.7, true)
 		11:  # elephant's head from the front: ears, trunk curling down, tusks
 			ci.draw_arc(c + Vector2(0, -0.2) * s, 0.38 * s, 0, TAU, 14, col, w, true)
 			ci.draw_arc(c + Vector2(-0.6, -0.2) * s, 0.3 * s, PI * 0.5, PI * 1.5, 10, col, w, true)

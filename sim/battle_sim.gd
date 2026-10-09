@@ -46,6 +46,7 @@ const U_READY := 0
 const U_ROUTING := 1
 const U_DESTROYED := 2  # every soldier killed
 const U_LEFT := 3       # no soldiers on the field, some left by the edge
+const U_KENNEL := 4     # a war dog pack with its handlers, not on the field (docs/DESIGN.md "War dogs")
 
 # Unit orders (current standing order of a unit).
 const O_NONE := 0
@@ -72,7 +73,8 @@ const ORDER_DROP := 15          # unit (put down the piece it carries where it s
 const ORDER_AMMO := 16          # unit, on (1: shoot its special ammunition kind, 0: the standard one)
 const ORDER_FORAGE := 17        # unit, on (missile troops in woods: make arrows / javelins; cannot move or shoot)
 const ORDER_KILL := 18          # unit (a beast running amok: its drivers kill it after its kill_delay)
-const ORDER_LAST := 18
+const ORDER_RELEASE := 19       # unit (handlers), target (an enemy unit): the pack is let loose at it
+const ORDER_LAST := 19
 
 # Battle phase (scenario "deploy_time" > 0 starts in PHASE_DEPLOY, see the
 # "deployment phase" section at the end of this file).
@@ -535,6 +537,15 @@ var u_kill := PackedInt32Array()      # ticks until its drivers kill it (0: no K
 var u_awe := PackedInt32Array()       # 1: inside an enemy's horse scare or fear aura this second (no recovery)
 var u_led := PackedInt32Array()       # 1: inside a friendly general's command aura this second (docs/DESIGN.md "The general")
 var u_cmdgone := PackedInt32Array()   # 1: this unit's command loss has struck the army (it routed or fell; once)
+# War dogs (docs/DESIGN.md "War dogs"; _dog_arrays: hashed only in battles with
+# handlers). A handler unit's pack is a unit of its own, made at setup after
+# the scenario's units and the towers, kept off the field (U_KENNEL, no men
+# alive, its dogs S_OFF with their hp) until released.
+var u_pack := PackedInt32Array()      # handlers: their pack's unit (-1 none)
+var u_hand := PackedInt32Array()      # a pack: its handlers' unit (-1: not a pack)
+var u_kept := PackedInt32Array()      # a pack: dogs with the handlers (in the kennel)
+var u_dogt := PackedInt32Array()      # a released pack: ticks with no enemy within its return_r
+var u_ret := PackedInt32Array()       # a released pack: 1 running back to its handlers
 var slot_soldier := PackedInt32Array()  # u_slot_base[u] + slot -> soldier
 var off_x := PackedInt32Array()         # u_slot_base[u] + slot -> offset
 var off_y := PackedInt32Array()
@@ -816,6 +827,15 @@ var t_cmd_mor := PackedInt32Array()
 var t_cmd_rally := PackedInt32Array()
 var t_cmd_loss := PackedInt32Array()
 var t_cmd_loss_r := PackedInt32Array()
+var t_pack_n := PackedInt32Array()
+var t_pack_type := PackedInt32Array()
+var t_pack_r := PackedInt32Array()
+var t_return_r := PackedInt32Array()
+var t_return_t := PackedInt32Array()
+var t_nobreak := PackedInt32Array()
+var t_scare_am := PackedInt32Array()
+var t_as_cav := PackedInt32Array()
+var t_chase := PackedInt32Array()
 var t_rider := PackedInt32Array()     # derived: builds charge momentum (cavalry, or mounted with a charge)
 var t_hit_r := PackedInt32Array()     # derived: a missile landing this near strikes the man (horse, body)
 # Beasts in this battle (static, set up from the units: not hashed).
@@ -835,6 +855,10 @@ var stat_trample_ff: int = 0          # ... of the beasts' own side
 var stat_calmed: int = 0              # amok beasts calmed (alone long enough)
 var stat_beast_killed: int = 0        # beasts killed by their drivers
 var stat_beast_gate: int = 0          # gate damage by beasts
+var dog_on: int = 0                   # some unit carries a war dog pack (static)
+var stat_released: int = 0            # packs released
+var stat_absorbed: int = 0            # packs back with their handlers
+var stat_dog_hunt: int = 0            # packs that went for the nearest enemy on their own
 # Ammunition kinds (UnitTypes.AMMO, UnitTypes.AMMO_FIELDS order).
 var t_k_base := PackedInt32Array()
 var t_k_share := PackedInt32Array()
@@ -1138,6 +1162,13 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		# The city's tower engines come after the scenario's own units.
 		units = units.duplicate()
 		units.append_array(towers)
+	# War dogs: each handler unit's pack, a unit of its own after these
+	# (kept with its handlers until released).
+	var packs := _dog_packs(units)
+	dog_on = 1 if not packs.is_empty() else 0
+	if dog_on != 0:
+		units = units.duplicate()
+		units.append_array(packs)
 	n_units = units.size()
 	var total := 0
 	n_eng = 0
@@ -1189,6 +1220,11 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	for arr in _siege_unit_arrays():
 		arr.resize(n_units)
 		arr.fill(0)
+	for arr in _dog_arrays():
+		arr.resize(n_units)
+		arr.fill(0)
+	u_pack.fill(-1)
+	u_hand.fill(-1)
 	g_unbar.resize(n_gates)
 	g_unbar.fill(0)
 	g_burn.resize(n_gates)
@@ -1365,6 +1401,10 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 			ammo[i] = t_m_ammo[ty] * clampi(int(ud.get("ammo_pct", 100)), 0, 100) / 100 if ne == 0 else 0
 			sammo[i] = ammo[i] * t_k_share[akk] / 100 if akk >= 0 and ne == 0 else 0
 		base += cnt
+	if dog_on != 0:
+		for u in n_units:
+			if units[u].has("pack_of"):
+				_kennel_setup(u, int(units[u]["pack_of"]))
 	fire_on = 0
 	for u in n_units:
 		if u_sk[u] >= 0 and t_k_fire[u_sk[u]] > 0:
@@ -1462,6 +1502,12 @@ func _stair_arrays() -> Array:
 	return [u_stair, u_sseg, u_send, u_st0, u_wx, u_wy, u_lagt]
 
 
+## Per-unit war dog arrays (hashed only in battles with handlers, so the
+## hash of any other battle is what it always was).
+func _dog_arrays() -> Array:
+	return [u_pack, u_hand, u_kept, u_dogt, u_ret]
+
+
 func _engine_arrays() -> Array:
 	return [e_unit, e_x, e_y, e_face, e_hp, e_state, e_reload, e_ammo, e_crew, e_rwork, e_grp, e_sammo, e_burn]
 
@@ -1493,7 +1539,8 @@ func _load_types() -> void:
 		t_m_fear, t_arc, t_traverse, t_deploy, t_e_hp, t_climb, t_m_hgain, t_m_apex, t_m_reserve, t_m_refill,
 		t_fixed, t_m_ak, t_mount, t_acc, t_body_r, t_crew_sh, t_woods, t_tr_n, t_tr_r, t_tr_pct, t_crush,
 		t_scare_r, t_scare_pct, t_scare_mor, t_fear_r, t_fear_h, t_fear_f, t_burn_pct, t_amok, t_amok_r,
-		t_amok_calm, t_kill_delay, t_gate_w, t_gate_pct, t_cmd_r, t_cmd_mor, t_cmd_rally, t_cmd_loss, t_cmd_loss_r]
+		t_amok_calm, t_kill_delay, t_gate_w, t_gate_pct, t_cmd_r, t_cmd_mor, t_cmd_rally, t_cmd_loss, t_cmd_loss_r,
+		t_pack_n, t_pack_type, t_pack_r, t_return_r, t_return_t, t_nobreak, t_scare_am, t_as_cav, t_chase]
 	var keys := ["cls", "attack", "defence", "armour", "shield", "mshield",
 		"damage", "reach", "ranks_reach", "mass", "walk", "run", "hp", "cooldown",
 		"morale", "file_sp", "rank_sp", "turn", "brace", "vs_cav", "charge",
@@ -1504,7 +1551,8 @@ func _load_types() -> void:
 		"deploy", "e_hp", "climb", "m_hgain", "m_apex", "m_reserve", "m_refill", "fixed", "m_ak",
 		"mount", "acc", "body_r", "crew_shoot", "woods_pct", "trample_n", "trample_r", "trample_pct", "crush",
 		"scare_r", "scare_pct", "scare_mor", "fear_r", "fear_horse", "fear_foot", "burn_pct", "amok", "amok_r",
-		"amok_calm", "kill_delay", "gate_walls", "gate_pct", "cmd_r", "cmd_mor", "cmd_rally", "cmd_loss", "cmd_loss_r"]
+		"amok_calm", "kill_delay", "gate_walls", "gate_pct", "cmd_r", "cmd_mor", "cmd_rally", "cmd_loss", "cmd_loss_r",
+		"pack_n", "pack_type", "pack_r", "return_r", "return_t", "nobreak", "scare_am", "as_cav", "chase"]
 	for k in arrays.size():
 		var arr: PackedInt32Array = arrays[k]
 		arr.resize(nt)
@@ -1520,7 +1568,7 @@ func _load_types() -> void:
 	for t in nt:
 		if t_body_r[t] > 0:
 			t_hit_r[t] = t_body_r[t]
-		elif t_cls[t] == UT.CLS_CAV or t_mount[t] != UT.MOUNT_FOOT:
+		elif t_cls[t] == UT.CLS_CAV or (t_mount[t] != UT.MOUNT_FOOT and t_mount[t] != UT.MOUNT_DOG):
 			t_hit_r[t] = HIT_R_CAV
 		else:
 			t_hit_r[t] = HIT_R_INF
@@ -4028,6 +4076,13 @@ func _apply_orders(max_player: int = 1 << 30) -> void:
 			if phase != PHASE_DEPLOY and kill_refusal(self, ku) == "":
 				u_kill[ku] = t_kill_delay[u_type[ku]]
 			continue
+		if int(o["type"]) == ORDER_RELEASE:
+			# (The pack is a unit of its own: the handlers' orders do not change.)
+			var hu := int(o.get("unit", -1))
+			var rt := int(o.get("target", -1))
+			if phase != PHASE_DEPLOY and release_refusal(self, hu, rt) == "":
+				_unleash(hu, rt)
+			continue
 		for u in order_units(self, o):
 			var d := order_fields(self, u)
 			apply_order_rule(self, u, d, o)
@@ -4051,6 +4106,9 @@ func _apply_orders(max_player: int = 1 << 30) -> void:
 			u_forage[u] = int(d["forage"])
 			u_dirty[u] = 1
 			u_settled[u] = 0
+			if dog_on != 0 and u_hand[u] >= 0:
+				u_ret[u] = 0  # a pack given an order: no longer on its way back
+				u_dogt[u] = 0
 			if int(o["type"]) == ORDER_DROP:
 				_drop(u)
 				if n_eng > 0 and u_eg[u] >= 0:
@@ -4082,8 +4140,8 @@ static func order_fields(sim, u: int) -> Dictionary:
 ## of the side for an army-wide withdrawal. Shared with OrderPreview.
 static func order_units(sim, o: Dictionary) -> Array[int]:
 	var out: Array[int] = []
-	if int(o["type"]) == ORDER_GATE or int(o["type"]) == ORDER_KILL:
-		return out  # not a unit order (applied by the sim to the gate; the drivers of an amok beast)
+	if int(o["type"]) == ORDER_GATE or int(o["type"]) == ORDER_KILL or int(o["type"]) == ORDER_RELEASE:
+		return out  # not a unit order (applied by the sim to the gate; the drivers of an amok beast; a pack)
 	if int(o["type"]) == ORDER_WITHDRAW_ALL:
 		var side := int(o.get("side", -1))
 		for u in sim.n_units:
@@ -4112,6 +4170,8 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 	if sim.phase == PHASE_DEPLOY and typ != ORDER_RUN and typ != ORDER_FIRE and typ != ORDER_SKIRMISH \
 			and typ != ORDER_DEPLOY and typ != ORDER_AMMO:
 		return
+	if (typ == ORDER_WITHDRAW or typ == ORDER_WITHDRAW_ALL) and u < sim.u_hand.size() and sim.u_hand[u] >= 0:
+		return  # a war dog pack does not leave the field (it runs back to its handlers)
 	if typ == ORDER_AMMO:
 		# Which ammunition: its special kind (on 1) or the standard one.
 		if sim.spec_kind(u) >= 0:
@@ -4880,7 +4940,7 @@ func _anchor_step(u: int, ox: int, oy: int, nx: int, ny: int, t: int, spd: int) 
 			return _half_step(ox, oy, sx, sy, spd)
 		return Vector2i(nx, ny)
 	var b := _blk_u
-	if k == BLK_ENEMY and b == t and u_inreach[u] == 0:
+	if k == BLK_ENEMY and b == t and (u_inreach[u] == 0 or t_chase[u_type[u]] != 0):
 		# Its own target, and none of its men within reach yet (they keep
 		# to within PLACE_LEAD of their places): press on into contact.
 		u_dodge[u] = 0
@@ -5185,7 +5245,7 @@ func _update_units() -> void:
 							t, aspeed)
 						u_ax[u] = ss.x
 						u_ay[u] = ss.y
-				elif d > 0 and (u_state[t] == U_ROUTING or (u_inreach[u] == 0 and (u_fighting[u] == 0 \
+				elif d > 0 and (u_state[t] == U_ROUTING or t_chase[ty] != 0 or (u_inreach[u] == 0 and (u_fighting[u] == 0 \
 						or ((u_ax[u] - u_cx[u]) * dx + (u_ay[u] - u_cy[u]) * dy) / d <= unit_depth(u) / 2 + ANCHOR_LEAD))):
 					# Closing until a man is within reach of his (its men
 					# walk at most PLACE_LEAD ahead of their places), but not
@@ -5200,6 +5260,8 @@ func _update_units() -> void:
 					var hh := (u_maxy[t] - u_miny[t]) >> 1
 					var ext := (absi(dx) * hw + absi(dy) * hh) / d
 					var stop := ext + M
+					if t_chase[ty] != 0:
+						stop = M  # a pack: into the middle of its quarry (scattered routers too)
 					if oon:
 						# Among buildings a unit stopping short of a deep column
 						# may have a corner between its men and the enemy's:
@@ -6592,7 +6654,7 @@ func _melee(a: int, d: int, pen: int, parting: bool = false) -> void:
 	# Pikemen caught from the flank or rear fight with the short sword.
 	if u_cls[ud] == UT.CLS_PIKE and zone != ZONE_FRONT:
 		def = t_sec_def[td]
-	if u_cls[ud] == UT.CLS_CAV:
+	if u_cls[ud] == UT.CLS_CAV or t_as_cav[td] != 0:
 		var vc := t_vs_cav[u_otype[ua]]
 		att += vc
 		dmg0 += vc
@@ -8786,6 +8848,8 @@ func _art_fright(ty: int, ak: int = -1) -> void:
 func _update_morale() -> void:
 	if aura_src.size() > 0 and tick % TICKS_PER_SECOND == 0:
 		_update_auras()
+	if dog_on != 0 and tick % TICKS_PER_SECOND == 0:
+		_update_packs()
 	for u in n_units:
 		var us := u_state[u]
 		if us >= U_DESTROYED:
@@ -8894,6 +8958,8 @@ func _nearest_enemy_unit(u: int, ready_only: bool) -> int:
 func _start_rout(u: int) -> void:
 	if t_fixed[u_type[u]] != 0:
 		return  # a tower's crew stays at its engine
+	if t_nobreak[u_otype[u]] != 0:
+		return  # (a war dog pack never breaks)
 	if u_cls[u] == UT.CLS_MISSILE:
 		stat_aic[u_side[u] * AIProfile.N_COUNTERS + AIProfile.C_AMMO_AT_ROUT] += u_ammo[u]
 		stat_aic[u_side[u] * AIProfile.N_COUNTERS + AIProfile.C_MISSILE_ROUTS] += 1
@@ -9008,7 +9074,8 @@ func _update_auras() -> void:
 					held = t_cmd_mor[sty]
 				continue
 			var gap := _box_gap(src, u)
-			if horse and t_scare_r[sty] > 0 and gap <= t_scare_r[sty]:
+			var scared := horse if t_scare_am[sty] < 0 else t_armour[tu] <= t_scare_am[sty]
+			if scared and t_scare_r[sty] > 0 and gap <= t_scare_r[sty]:
 				keep = t_scare_pct[sty] if keep == 0 else mini(keep, t_scare_pct[sty])
 				loss += t_scare_mor[sty]
 			if t_fear_r[sty] > 0 and t_fear_r[tu] == 0 and gap <= t_fear_r[sty]:
@@ -9159,21 +9226,300 @@ static func kill_refusal(sim, u: int) -> String:
 	return ""
 
 
+# ------------------------------------------------------------- war dogs ---
+# docs/DESIGN.md "War dogs". A handler row (pack_n > 0) carries a pack of
+# pack_n dogs a man of row pack_type: a unit of its own, made at setup after
+# every other unit and kept with its handlers (U_KENNEL: no men on the field,
+# its dogs S_OFF with their hp) until ORDER_RELEASE lets it loose at an enemy
+# unit. Released, it fights (never breaking: nobreak); with no live target it
+# goes for the nearest enemy within its return_r; once none has been within
+# return_r for return_t it runs back to its handlers and rejoins them (the
+# dogs still alive go back in the kennel, ready for another release). A pack
+# whose handlers are gone or broken fights on and then stands.
+
+const RETURN_GAP := 3 * M  # a returning pack this near its handlers (box to box) is back
+
+
+## The pack units for scenario units `units` (dictionaries): one per handler
+## unit, after them, "pack_of" naming the handlers.
+static func _dog_packs(units: Array) -> Array:
+	var out: Array = []
+	for h in units.size():
+		var ud: Dictionary = units[h]
+		var ty := int(ud["type"])
+		var pn := UT.stat(ty, "pack_n")
+		var pt := UT.stat(ty, "pack_type")
+		if pn <= 0 or pt < 0:
+			continue
+		out.append({"type": pt, "count": maxi(int(ud["count"]) * pn, 1), "side": int(ud["side"]),
+			"x_m": int(ud["x_m"]), "y_m": int(ud["y_m"]), "facing": int(ud["facing"]), "files": 8, "pack_of": h})
+	return out
+
+
+## Setup: pack unit p of handlers h goes in the kennel.
+func _kennel_setup(p: int, h: int) -> void:
+	u_hand[p] = h
+	u_pack[h] = p
+	var base := u_slot_base[p]
+	for s in u_count0[p]:
+		var i := base + s
+		state[i] = S_OFF
+		slot_of[i] = -1
+		slot_soldier[base + s] = -1
+		target[i] = -1
+	u_kept[p] = u_count0[p]
+	u_alive[p] = 0
+	u_state[p] = U_KENNEL
+	u_order[p] = O_NONE
+
+
+## Why handlers h cannot release their pack at enemy unit t ("" they can).
+static func release_refusal(sim, h: int, t: int) -> String:
+	if h < 0 or h >= sim.n_units or sim.u_state[h] != U_READY or sim.u_alive[h] <= 0:
+		return "no unit"
+	var p: int = sim.u_pack[h]
+	if p < 0:
+		return "no dogs"
+	if sim.u_state[p] != U_KENNEL:
+		return "the pack is out"
+	if sim.u_kept[p] <= 0:
+		return "no dogs left"
+	if sim.u_wall[h] > 0 or sim.u_stair[h] != 0:
+		return "not from the wall"
+	if t < 0 or t >= sim.n_units or sim.u_side[t] == sim.u_side[h] or sim.u_state[t] >= U_DESTROYED \
+			or sim.u_alive[t] <= 0:
+		return "no target"
+	var r: int = sim.t_pack_r[sim.u_otype[h]]
+	if sim._box_gap(h, t) > r:
+		return "too far (%d m)" % (r / M)
+	return ""
+
+
+static func make_release_order(p_tick: int, unit: int, target_unit: int) -> Dictionary:
+	return {"tick": p_tick, "type": ORDER_RELEASE, "unit": unit, "target": target_unit}
+
+
+## Dogs ready to be released by unit h (0: none, or no pack).
+func pack_left(h: int) -> int:
+	var p := u_pack[h] if h >= 0 and h < n_units else -1
+	if p < 0:
+		return 0
+	return u_kept[p]
+
+
+## Handlers h let their pack loose at enemy unit t: every dog in the kennel
+## comes out among the handlers' men and runs at it.
+func _unleash(h: int, t: int) -> void:
+	var p := u_pack[h]
+	var base := u_slot_base[p]
+	var k := 0
+	for s in u_count0[p]:
+		var i := base + s
+		if state[i] == S_OFF and hp[i] > 0:
+			slot_soldier[base + k] = i
+			slot_of[i] = k
+			k += 1
+	for s in range(k, u_count0[p]):
+		slot_soldier[base + s] = -1
+	if k == 0:
+		return
+	var face := FM.atan2_a(u_cy[t] - u_cy[h], u_cx[t] - u_cx[h])
+	u_alive[p] = k
+	u_kept[p] = 0
+	u_state[p] = U_READY
+	u_morale[p] = t_morale[u_otype[p]]
+	u_files[p] = clampi((k + 3) / 4, 1, k)
+	u_ax[p] = u_cx[h]
+	u_ay[p] = u_cy[h]
+	u_dx[p] = u_cx[h]
+	u_dy[p] = u_cy[h]
+	u_face[p] = face
+	u_dface[p] = face
+	u_order[p] = O_ATTACK
+	u_target[p] = t
+	u_ftarget[p] = -1
+	u_run[p] = 1
+	u_disorder[p] = 0
+	u_formed[p] = 0
+	u_braced[p] = 0
+	u_mom[p] = 0
+	u_charge[p] = 0
+	u_down[p] = 0
+	u_fighting[p] = 0
+	u_contact[p] = 0
+	u_inreach[p] = 0
+	u_scare[p] = 0
+	u_awe[p] = 0
+	u_ret[p] = 0
+	u_dogt[p] = 0
+	u_wall[p] = 0
+	u_stair[p] = 0
+	u_lagt[p] = 0
+	if obs_on != 0:
+		u_pn[p] = 0
+	u_dirty[p] = 1
+	u_settled[p] = 0
+	_compute_offsets(p)
+	# Out among the handlers' men (ground they stand on), a little apart.
+	var hb := u_slot_base[h]
+	var ha := maxi(u_alive[h], 1)
+	for s in k:
+		var i := slot_soldier[base + s]
+		var j := slot_soldier[hb + s % ha]
+		var ring := s / ha
+		pos_x[i] = clampi(pos_x[j] + (ring % 2) * 512 - 256, 0, field_w)
+		pos_y[i] = clampi(pos_y[j] + ((ring + 1) % 2) * 512 - 256, 0, field_h)
+		prev_x[i] = pos_x[i]
+		prev_y[i] = pos_y[i]
+		facing[i] = face
+		state[i] = S_FORMED
+		target[i] = -1
+		cooldown[i] = 1 + s % maxi(t_cooldown[u_type[p]], 1)
+		chg[i] = 0
+		struck[i] = 0
+	_bounds_of(p)
+	if ter_on != 0 or obs_on != 0:
+		u_h[p] = _unit_elev(p)
+	stat_released += 1
+
+
+## Centroid and box of unit u from its men (a released pack).
+func _bounds_of(u: int) -> void:
+	var base := u_slot_base[u]
+	var alive := u_alive[u]
+	var i0 := slot_soldier[base]
+	var minx := pos_x[i0]
+	var maxx := minx
+	var miny := pos_y[i0]
+	var maxy := miny
+	var sx := 0
+	var sy := 0
+	for s in alive:
+		var i := slot_soldier[base + s]
+		sx += pos_x[i]
+		sy += pos_y[i]
+		minx = mini(minx, pos_x[i])
+		maxx = maxi(maxx, pos_x[i])
+		miny = mini(miny, pos_y[i])
+		maxy = maxi(maxy, pos_y[i])
+	_set_bounds(u, sx / alive, sy / alive, minx, miny, maxx, maxy)
+
+
+## Released packs, once a second (units in index order): the return rule,
+## the hunt for the nearest enemy, the absorb at the handlers.
+func _update_packs() -> void:
+	for p in n_units:
+		var h := u_hand[p]
+		if h < 0 or u_state[p] != U_READY or u_alive[p] <= 0:
+			continue
+		var ty := u_otype[p]
+		var home := u_state[h] == U_READY and u_alive[h] > 0 and u_wall[h] == 0
+		if u_ret[p] != 0:
+			if not home:
+				# The handlers are gone or broken: it stands where it is.
+				u_ret[p] = 0
+				u_order[p] = O_NONE
+				u_dx[p] = u_ax[p]
+				u_dy[p] = u_ay[p]
+				continue
+			if _box_gap(p, h) <= RETURN_GAP:
+				_absorb(p)
+			else:
+				_pack_to(p, h)  # (the handlers may have moved)
+			continue
+		var t := u_target[p] if u_order[p] == O_ATTACK else -1
+		if t >= 0 and u_state[t] < U_DESTROYED and u_alive[t] > 0:
+			u_dogt[p] = 0
+			continue
+		var e := _nearest_foe_within(p, t_return_r[ty])
+		if e >= 0:
+			u_dogt[p] = 0
+			if u_order[p] != O_MOVE:
+				# Nothing to bite: the nearest enemy it sees.
+				u_order[p] = O_ATTACK
+				u_target[p] = e
+				u_run[p] = 1
+				u_dirty[p] = 1
+				u_settled[p] = 0
+				if obs_on != 0:
+					u_pn[p] = 0
+				stat_dog_hunt += 1
+			continue
+		u_dogt[p] += TICKS_PER_SECOND
+		if u_dogt[p] >= t_return_t[ty] and home:
+			u_ret[p] = 1
+			_pack_to(p, h)
+
+
+## The nearest enemy unit (ready or routing, box to box) within r of unit u, -1 none.
+func _nearest_foe_within(u: int, r: int) -> int:
+	var best := -1
+	var bd := 0
+	for o in n_units:
+		if u_side[o] == u_side[u] or u_state[o] >= U_DESTROYED or u_alive[o] <= 0:
+			continue
+		var g := _box_gap(u, o)
+		if g <= r and (best < 0 or g < bd):
+			best = o
+			bd = g
+	return best
+
+
+## Pack p runs back to its handlers h.
+func _pack_to(p: int, h: int) -> void:
+	u_order[p] = O_MOVE
+	u_target[p] = -1
+	u_dx[p] = u_cx[h]
+	u_dy[p] = u_cy[h]
+	u_dface[p] = u_face[h]
+	u_run[p] = 1
+	u_dirty[p] = 1
+	u_settled[p] = 0
+	if obs_on != 0:
+		u_pn[p] = 0
+
+
+## Pack p is back with its handlers: its dogs go back in the kennel.
+func _absorb(p: int) -> void:
+	var base := u_slot_base[p]
+	for s in u_alive[p]:
+		var i := slot_soldier[base + s]
+		state[i] = S_OFF
+		target[i] = -1
+		slot_of[i] = -1
+		slot_soldier[base + s] = -1
+	u_kept[p] = u_alive[p]
+	u_alive[p] = 0
+	u_state[p] = U_KENNEL
+	u_order[p] = O_NONE
+	u_target[p] = -1
+	u_ftarget[p] = -1
+	u_ret[p] = 0
+	u_dogt[p] = 0
+	u_fighting[p] = 0
+	u_contact[p] = 0
+	u_inreach[p] = 0
+	u_down[p] = 0
+	stat_absorbed += 1
+
+
 func _check_winner() -> void:
 	if winner >= 0:
 		if ended == 0:
 			var loser_on := 0
 			for u in n_units:
-				if winner < 2 and u_side[u] != winner and u_state[u] < U_DESTROYED and t_fixed[u_type[u]] == 0:
+				if winner < 2 and u_side[u] != winner and u_state[u] < U_DESTROYED and t_fixed[u_type[u]] == 0 \
+						and u_hand[u] < 0:
 					loser_on += 1
 			if winner == 2 or loser_on == 0 or tick - decided_tick >= END_AFTER:
 				ended = 1
 		return
 	# A side still fights while it has a ready unit that is not withdrawing
-	# (a tower's engine does not hold a city on its own).
+	# (a tower's engine does not hold a city on its own, nor a war dog pack
+	# the field).
 	var ready := [0, 0]
 	for u in n_units:
-		if u_state[u] == U_READY and u_order[u] != O_WITHDRAW and t_fixed[u_type[u]] == 0:
+		if u_state[u] == U_READY and u_order[u] != O_WITHDRAW and t_fixed[u_type[u]] == 0 and u_hand[u] < 0:
 			ready[u_side[u]] += 1
 	if ready[0] == 0 and ready[1] > 0:
 		winner = 1
@@ -9219,6 +9565,10 @@ func result() -> Dictionary:
 			"started": u_count0[u], "killed": u_killed[u],
 			"routed_off": u_routed_off[u], "withdrawn": u_withdrawn[u],
 			"remaining": u_alive[u], "state": u_state[u], "kills": u_kills[u]}
+		if u_hand[u] >= 0:
+			# A war dog pack: its handlers' unit (its dogs with them count as remaining).
+			r["pack_of"] = u_hand[u]
+			r["remaining"] = u_alive[u] + u_kept[u]
 		units.append(r)
 		var t: Dictionary = sides[u_side[u]]
 		for k in ["started", "killed", "routed_off", "withdrawn", "remaining"]:
@@ -9380,6 +9730,10 @@ func state_hash() -> int:
 			for arr in _equip_arrays():
 				ctx.update((arr as PackedInt32Array).to_byte_array())
 			ctx.update(q_stock.to_byte_array())
+	if dog_on != 0:
+		# War dogs (battles without handlers hash as before).
+		for arr in _dog_arrays():
+			ctx.update((arr as PackedInt32Array).to_byte_array())
 	var digest := ctx.finish()
 	return digest.decode_u32(0)
 

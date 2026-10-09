@@ -618,9 +618,13 @@ static func outcome_from_result(built: Dictionary, res: Dictionary, mode: String
 	var gar_back := 0
 	for g in gar:
 		gar_full += int(g["full"])
+	var by_k := {}  # sim unit -> its outcome row (a war dog pack's kills go to its handlers)
 	for r in res["units"]:
 		var k := int(r["unit"])
 		if k >= map.size():
+			var hk := int(r.get("pack_of", -1))
+			if mode != "auto" and by_k.has(hk) and (by_k[hk] as Dictionary).has("kills"):
+				by_k[hk]["kills"] = int(by_k[hk]["kills"]) + int(r.get("kills", 0))
 			continue
 		var m: Dictionary = map[k]
 		var e := {"army": int(m["army"]), "unit": int(m["unit"]), "killed": int(r["killed"]),
@@ -638,6 +642,7 @@ static func outcome_from_result(built: Dictionary, res: Dictionary, mode: String
 			# key; auto-resolved battles leave it out).
 			e["kills"] = int(r.get("kills", 0)) * cn / sn if sn > 0 and cn != sn else int(r.get("kills", 0))
 		units.append(e)
+		by_k[k] = e
 		if int(m["army"]) < 0:
 			gar_back += int(e["remaining"]) + int(e["withdrawn"]) + int(e["routed"]) * CData.ROUT_RETURN / 100
 	var w := int(res["winner"])

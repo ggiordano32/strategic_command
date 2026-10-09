@@ -180,6 +180,8 @@ static func think(sim) -> void:
 			continue
 		if sim.ai_phase[side] == P_WITHDRAW or sim.u_order[u] == O_WITHDRAW:
 			continue
+		if sim.u_hand[u] >= 0:
+			continue  # a war dog pack (the settlement AI never releases one: docs/AI.md 21)
 		var kn := kn0 if side == 0 else kn1
 		if BattleAI.is_wagon(sim, u):
 			BattleAI.wagon_think(sim, u, kn)  # (docs/AI.md 18)

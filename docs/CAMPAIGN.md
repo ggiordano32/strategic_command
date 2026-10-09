@@ -465,6 +465,16 @@ Gauls, Range 2; heavy bolts: Rome, Syracuse, Workshop 1; explosive:
 Syracuse, Workshop 2; fire pots: Rome, Carthage, Macedon, Greeks, Syracuse,
 Workshop 2), as the optional unit key `"ak"` (no format change).
 
+War dogs (item 5b.4, 2026-10-09; docs/DESIGN.md "War dogs"): line "dogs"
+War Dogs 384 (16 handlers with a pack of 32 dogs; `UNIT_NEEDS`: Barracks
+1 and Stables 1, the kennels kept with the horses, so every capital has
+them from the start and towns not) for Rome, Epirus, the Greeks and the
+Gauls; the pack is not a campaign unit (a battle makes it from the
+handlers, two dogs a man, so dogs lost in a battle come back with the
+handlers' men); auto-resolve by the handlers' price (the pack's in it); a
+fought outcome adds the pack's kills to the handlers' row. AI mixes "dogs"
+3, only through the mix (`CAI.BEAST_LINES`; `--no-dogs`: weight 0).
+
 **The general** (2026-10-09; docs/DESIGN.md "The general"): line
 "general", one key per faction (`ROSTERS`: Rome `legate`, Carthage
 `sufet`, Macedon and Epirus `hetairoi_guard`, Greeks and Syracuse

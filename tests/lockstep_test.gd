@@ -613,6 +613,15 @@ func _test_lockstep() -> void:
 	var gen_u: int = (scen["units"] as Array).size()
 	scen["units"].append(Scenarios.unit(0, UT.index_of("general"), 6, 280, 225, Scenarios.FACE_UP))
 	var gen_snap := -1
+	# War dogs across peers (docs/DESIGN.md "War dogs"): side 0's handlers
+	# before the line release their pack (a unit the sim keeps with them
+	# until then: it comes onto the field on both peers) at the first enemy
+	# unit in range; A's sim is snapshotted the tick the pack is out.
+	var dog_u: int = (scen["units"] as Array).size()
+	scen["units"].append(Scenarios.unit(0, UT.index_of("dog_handlers"), 16, int(scen["width_m"]) / 2, 270,
+		Scenarios.FACE_UP))
+	var dog_sent := false
+	var dog_snap := -1
 	var probe := BattleSim.new()
 	probe.setup(scen, 4242)
 	var home := _home_split(probe)
@@ -654,6 +663,12 @@ func _test_lockstep() -> void:
 					and BattleSim.kill_refusal(psim, el_u) == "":
 				p.issue({"type": BattleSim.ORDER_KILL, "unit": el_u})
 				kill_sent = true
+			if not dog_sent and p.ls.u_cmd[dog_u] == p.me and psim.tick > 20:
+				for t in psim.n_units:
+					if BattleSim.release_refusal(psim, dog_u, t) == "":
+						p.issue({"type": BattleSim.ORDER_RELEASE, "unit": dog_u, "target": t})
+						dog_sent = true
+						break
 			if p.me == 1 and now == withdraw_at and p.ls.is_active(1):
 				p.issue({"type": BattleSim.ORDER_WITHDRAW_ALL, "side": 0})
 			p.flush(relay, now)
@@ -687,6 +702,24 @@ func _test_lockstep() -> void:
 					return
 			if k1.u_state[el_u] != BattleSim.U_DESTROYED:
 				_fail("lockstep: the drivers did not kill the elephants (state %d)" % k1.u_state[el_u])
+		var pk: int = a.ls.sim.u_pack[dog_u]
+		if dog_snap < 0 and pk >= 0 and a.ls.sim.u_state[pk] == BattleSim.U_READY:
+			# The pack just out: two copies restored from A's sim run on equal.
+			dog_snap = a.ls.sim.tick
+			var db: PackedByteArray = a.ls.sim.snapshot()
+			var d1 := BattleSim.new()
+			d1.setup(scen, 4242)
+			var d2 := BattleSim.new()
+			d2.setup(scen, 4242)
+			if not d1.restore(db) or not d2.restore(db) or d1.state_hash() != a.ls.sim.state_hash():
+				_fail("lockstep: restoring A's sim with the pack out changed its hash")
+				return
+			for t in 300:
+				d1.step()
+				d2.step()
+				if d1.state_hash() != d2.state_hash():
+					_fail("lockstep: copies restored with the pack out diverged after %d ticks" % (t + 1))
+					return
 		if gen_snap < 0 and a.ls.sim.u_cmdgone[gen_u] == 0 and a.ls.sim.u_killed[gen_u] >= 1:
 			# The general's riders falling: two copies restored from A's sim run
 			# on equal through his rout and the army's loss.
@@ -783,6 +816,16 @@ func _test_lockstep() -> void:
 	else:
 		print("PASS lockstep general: his riders fell under the enemy screen (state %d), the army's loss on both peers; snapshot before the fall at tick %d ran on equal through it" % [
 			a.ls.sim.u_state[gen_u], gen_snap])
+	var pa: int = a.ls.sim.u_pack[dog_u]
+	var pb: int = b.ls.sim.u_pack[dog_u]
+	if dog_snap < 0 or pa < 0 or pa != pb or a.ls.sim.stat_released < 1 or b.ls.sim.stat_released < 1 \
+			or a.ls.u_cmd[pa] != a.ls.u_cmd[dog_u]:
+		_fail("lockstep dogs: snapshot at tick %d, pack %d / %d, released %d / %d" % [dog_snap, pa, pb,
+			a.ls.sim.stat_released, b.ls.sim.stat_released])
+	else:
+		print("PASS lockstep dogs: the pack (unit %d, commanded with its handlers) released through the lockstep on both peers (%d / %d releases, %d absorbs; kills %d / %d), snapshot with the pack out at tick %d ran on equal" % [
+			pa, a.ls.sim.stat_released, b.ls.sim.stat_released, a.ls.sim.stat_absorbed, a.ls.sim.u_kills[pa],
+			b.ls.sim.u_kills[pb], dog_snap])
 	stats["pauses"] = 0
 	# Deterministic unit-level checks of the control inputs.
 	_check_controls(scen, home)

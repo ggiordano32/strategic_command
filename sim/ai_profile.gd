@@ -322,7 +322,10 @@ const GEN_RALLY_R := 255       # ... and this near him: he rides to it and stays
 const GEN_CHARGE_MOR := 256    # an enemy unit below this morale, fighting ours (not a braced front toward him) ...
 const GEN_CHARGE_R := 257      # ... and this near him: he charges it (the decisive charge)
 const GEN_MELEE := 258         # ... and pulls out of the melee after this long
-const N_KNOBS := 259
+# War dogs (docs/AI.md 21): handlers (a row with a pack), never by name.
+const DOG_R := 259             # handlers release the pack at prey (routers, missile troops, crews, wagons) this near (0: never)
+const DOG_ANY := 260           # 1: at the first enemy unit within DOG_R, whatever it is (Easy's mistake)
+const N_KNOBS := 261
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
@@ -560,6 +563,8 @@ const KNOBS: Array = [
 	[GEN_CHARGE_MOR, 0, 200, 260],
 	[GEN_CHARGE_R, 0, 100 * M, 140 * M],
 	[GEN_MELEE, 150, 150, 100],
+	[DOG_R, 60 * M, 60 * M, 75 * M],
+	[DOG_ANY, 1, 0, 0],
 	# Behaviours a level switches off (Average: on, as before).
 	[CLEAR_SPOT, 0, 1, 1],
 	[MIS_SKIRM, 0, 1, 1],
@@ -661,12 +666,13 @@ const C_SIEGE := C_CAV_STAY + 5    # siege moves: feints, wall shifts, missiles 
 const C_ART_PULL := C_CAV_STAY + 6  # battery crews pulled back from an enemy coming for them
 const C_GEN_RALLY := C_CAV_STAY + 7  # the general rode to a wavering or routing unit of ours
 const C_GEN_CHARGE := C_CAV_STAY + 8  # the general's decisive charges
-const N_COUNTERS := C_CAV_STAY + 9
+const C_DOG_RELEASE := C_CAV_STAY + 9  # war dog packs released
+const N_COUNTERS := C_CAV_STAY + 10
 const COUNTER_NAMES: Array[String] = ["flank_hits", "pull_outs", "rotations", "saved", "inf_chase",
 	"spear_resp", "spear_resp_ticks", "missile_caught", "ammo_at_rout", "missile_routs", "reserve_commits",
 	"mk_late_flank", "mk_wrong_target", "mk_idle", "mk_chase", "mk_spear_charge", "mk_mis_forget",
 	"mk_commit_early", "mk_gate_open", "mk_early_wd", "cav_stay", "double_charges", "focus_orders",
-	"guard_free", "waver_pull", "siege_moves", "art_pull", "gen_rally", "gen_charge"]
+	"guard_free", "waver_pull", "siege_moves", "art_pull", "gen_rally", "gen_charge", "dog_release"]
 
 # Skilled memory layout (BattleSim.ai_mem): MU_K ints per unit, then SD_K
 # per side at n_units * MU_K + side * SD_K.

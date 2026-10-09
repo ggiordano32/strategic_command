@@ -141,6 +141,11 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=dogs" in OS.get_cmdline_user_args():
+		_check_dogs()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=camels" in OS.get_cmdline_user_args():
 		_check_camels()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -184,6 +189,7 @@ func _init() -> void:
 	_check_camels()
 	_check_elephants()
 	_check_general()
+	_check_dogs()
 	if "--only=equipment" in OS.get_cmdline_user_args():
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
@@ -1703,6 +1709,166 @@ func _check_general() -> void:
 		str(wi) if wi >= 0 else "never", wo, int(ev["mor_in"]), int(ev["mor_out"]), int(ev["lost_in"]), int(ev["lost_out"]),
 		"routed" if int(ev["gen_state"]) == BattleSim.U_ROUTING else "fell", int(ev["fall_t"]),
 		int(ev["drop_near"]), int(ev["drop_far"]), int(ev["lh_mom"]), int(ev["lh_impacts"]), int(ev["lh_kills"])])
+
+
+## War dogs (docs/DESIGN.md "War dogs"; "--only=dogs"), three groups far
+## apart on a flat field, no AI: (A) handlers release their pack at archers
+## 60 m off (the pack arrives and kills), with nothing left within 30 m for
+## 5 s it runs back and is absorbed (dogs back in the kennel); light
+## infantry near the handlers is then broken (morale 0) and the pack
+## released at it again runs it down; (B) a pack released at braced
+## spearmen dies; (C) a pack released at javelinmen while heavy swords
+## break its handlers fights on, then stands. Identical on repeat and
+## across snapshot / restore before the release, when the pack turns for
+## home and while it is back in the kennel (each restored copy run on to
+## the end with the same script, hash for hash).
+const DOG_SEED := 4242
+
+
+func _dog_scenario() -> Dictionary:
+	var dh := UT.index_of("dog_handlers")
+	return {"width_m": 1000, "height_m": 1000, "ai_sides": [], "orders": [], "units": [
+		Scenarios.unit(0, dh, 16, 200, 260, Scenarios.FACE_UP),          # 0 handlers A
+		Scenarios.unit(1, UT.ARCHER, 80, 200, 200, Scenarios.FACE_DOWN),  # 1 archers
+		Scenarios.unit(1, UT.LIGHT, 60, 270, 305, Scenarios.FACE_LEFT),   # 2 light infantry (broken later)
+		Scenarios.unit(0, dh, 16, 600, 700, Scenarios.FACE_UP),          # 3 handlers B
+		Scenarios.unit(1, UT.SPEAR, 100, 600, 635, Scenarios.FACE_DOWN),  # 4 spearmen (braced)
+		Scenarios.unit(0, dh, 16, 880, 500, Scenarios.FACE_UP),          # 5 handlers C
+		Scenarios.unit(1, UT.JAVELIN, 60, 880, 435, Scenarios.FACE_DOWN), # 6 javelinmen
+		Scenarios.unit(1, UT.HEAVY, 100, 880, 600, Scenarios.FACE_UP)],   # 7 heavy swords (go for C)
+		"terrain": {"kind": Terrain.K_FLAT}}
+
+
+## The scripted orders of the dog run at tick tk (the pursuit release once
+## pack A has been back for 2 s); pack units: 8 (A), 9 (B), 10 (C).
+func _dog_script(sim, tk: int, ev: Dictionary) -> void:
+	if tk == 1:
+		for u in [1, 6]:
+			sim.queue_order(BattleSim.make_fire_order(tk, u, 0))
+		sim.queue_order(BattleSim.make_release_order(tk, 0, 1))
+		sim.queue_order(BattleSim.make_release_order(tk, 3, 4))
+		sim.queue_order(BattleSim.make_release_order(tk, 5, 6))
+		sim.queue_order(BattleSim.make_attack_order(tk, 7, 5, 1))
+	if int(ev.get("absorbed", -1)) >= 0 and tk == int(ev["absorbed"]) + 20:
+		sim.u_morale[2] = 0  # (the light infantry breaks)
+	if int(ev.get("absorbed", -1)) >= 0 and tk == int(ev["absorbed"]) + 25:
+		ev["refusal2"] = BattleSim.release_refusal(sim, 0, 2)
+		sim.queue_order(BattleSim.make_release_order(tk, 0, 2))
+
+
+func _dog_run(snap_at: Dictionary, restored: Dictionary = {}) -> Dictionary:
+	var sc := _dog_scenario()
+	var sim := BattleSim.new()
+	sim.setup(sc, DOG_SEED)
+	var ev := {}
+	var t0 := 0
+	var ref: PackedInt64Array = restored.get("hashes", PackedInt64Array())
+	var bad := -1
+	if restored.has("blob"):
+		if not sim.restore(restored["blob"]):
+			_fail("dogs: restore refused")
+			return {}
+		ev = (restored["ev"] as Dictionary).duplicate()
+		t0 = sim.tick
+	var hashes := PackedInt64Array()
+	var snaps := {}
+	for t in range(t0, 4000):
+		var tk: int = sim.tick
+		_dog_script(sim, tk, ev)
+		sim.step()
+		var h: int = sim.state_hash()
+		hashes.append(h)
+		# Events the script reads (every run).
+		if not ev.has("a_ret") and sim.u_ret[8] != 0:
+			ev["a_ret"] = tk
+			ev["a_kills_then"] = sim.u_kills[8]
+			ev["archers_then"] = "%d/%d st %d" % [sim.u_alive[1], sim.u_count0[1], sim.u_state[1]]
+		if ev.has("a_ret") and not ev.has("absorbed") and sim.u_state[8] == BattleSim.U_KENNEL:
+			ev["absorbed"] = tk
+			ev["kept"] = sim.u_kept[8]
+		if restored.has("blob"):
+			if tk < ref.size() and ref[tk] != h and bad < 0:
+				bad = tk
+			if tk >= ref.size() - 1:
+				break
+			continue
+		# Events (the first run only).
+		if not ev.has("a_first_kill") and sim.u_kills[8] > 0:
+			ev["a_first_kill"] = tk
+			ev["a_alive_then"] = sim.u_alive[8]
+		if ev.has("absorbed") and not ev.has("released2") and sim.u_state[8] == BattleSim.U_READY:
+			ev["released2"] = tk
+			ev["li_state"] = sim.u_state[2]
+			ev["li_killed0"] = sim.u_killed[2]
+		if ev.has("released2"):
+			ev["li_killed"] = sim.u_killed[2] - int(ev["li_killed0"])
+			ev["li_final"] = sim.u_state[2]
+		if not ev.has("b_dead") and sim.u_state[9] == BattleSim.U_DESTROYED:
+			ev["b_dead"] = tk
+			ev["spears_lost"] = sim.u_killed[4]
+			ev["b_kills"] = sim.u_kills[9]
+		if not ev.has("c_lost") and sim.u_state[5] != BattleSim.U_READY:
+			ev["c_lost"] = tk
+		ev["c_state"] = "%d order %d ret %d alive %d kills %d" % [sim.u_state[10], sim.u_order[10], sim.u_ret[10],
+			sim.u_alive[10], sim.u_kills[10]]
+		if ev.has("c_lost") and sim.u_state[10] == BattleSim.U_READY and sim.u_order[10] == BattleSim.O_NONE \
+				and sim.u_fighting[10] == 0:
+			if not ev.has("c_stands"):
+				ev["c_stands"] = tk
+		elif ev.has("c_stands") and sim.u_state[10] < BattleSim.U_DESTROYED:
+			ev.erase("c_stands")  # (not standing yet: it went on fighting)
+		for k in snap_at:
+			if not snaps.has(k) and bool(snap_at[k].call(sim, ev)):
+				snaps[k] = {"blob": sim.snapshot(), "ev": ev.duplicate(), "tick": sim.tick}
+		if ev.has("released2") and tk > int(ev["released2"]) + 300 and ev.has("b_dead") and ev.has("c_stands") \
+				and tk > int(ev["c_stands"]) + 100:
+			break
+	ev["released"] = sim.stat_released
+	ev["absorbed_n"] = sim.stat_absorbed
+	ev["hunts"] = sim.stat_dog_hunt
+	return {"hashes": hashes, "ev": ev, "snaps": snaps, "bad": bad, "ticks": sim.tick}
+
+
+func _check_dogs() -> void:
+	var snap_at := {
+		"before_release": func(sim, _ev): return sim.tick == 1,
+		"turning_home": func(sim, _ev): return sim.u_ret[8] != 0,
+		"in_kennel": func(sim, e): return e.has("absorbed") and sim.tick == int(e["absorbed"]) + 10,
+	}
+	var a := _dog_run(snap_at)
+	var b := _dog_run({})
+	var ev: Dictionary = a["ev"]
+	print("  dogs: %s" % str(ev))
+	if a["hashes"] != b["hashes"]:
+		_fail("dogs: the repeat diverged")
+	if not ev.has("a_first_kill"):
+		_fail("dogs: the pack released at the archers never killed")
+	if not ev.has("absorbed") or int(ev.get("kept", 0)) <= 0:
+		_fail("dogs: the pack did not come back to its handlers (%s)" % str(ev))
+	if not ev.has("released2") or int(ev.get("li_killed", 0)) <= 0 or int(ev.get("li_state", -1)) != BattleSim.U_ROUTING:
+		_fail("dogs: the second release did not run the routers down (%s)" % str(ev))
+	if not ev.has("b_dead") or int(ev.get("spears_lost", 99)) > 20:
+		_fail("dogs: the pack against braced spears did not die cheaply (%s)" % str(ev))
+	if not ev.has("c_lost") or not ev.has("c_stands"):
+		_fail("dogs: the pack without its handlers did not fight on and stand (%s)" % str(ev))
+	var snaps: Dictionary = a["snaps"]
+	for k in ["before_release", "turning_home", "in_kennel"]:
+		if not snaps.has(k):
+			_fail("dogs: no snapshot %s" % k)
+			continue
+		var r := _dog_run({}, {"blob": snaps[k]["blob"], "ev": snaps[k]["ev"], "hashes": a["hashes"]})
+		if r.is_empty() or int(r["bad"]) >= 0:
+			_fail("dogs: restored at %s (tick %d) diverged at tick %d" % [k, int(snaps[k]["tick"]),
+				int(r.get("bad", -2))])
+		else:
+			print("  dogs: restored at %s (tick %d) runs on equal to tick %d" % [k, int(snaps[k]["tick"]),
+				int(snaps[k]["tick"]) + (r["hashes"] as PackedInt64Array).size()])
+	print("PASS dogs: pack A first kill at tick %d, turned home at %d (%d kills; archers %s), absorbed at %d with %d dogs; released at the broken light infantry at %d, killed %d of them (final state %d); pack B at braced spears dead at tick %d (spears lost %d, dogs killed %d); handlers C lost at %d, pack C stands from %d (%s); %d releases, %d absorbs, %d hunts; identical on repeat and across snapshot / restore" % [
+		int(ev.get("a_first_kill", -1)), int(ev.get("a_ret", -1)), int(ev.get("a_kills_then", -1)), str(ev.get("archers_then", "")),
+		int(ev.get("absorbed", -1)), int(ev.get("kept", -1)), int(ev.get("released2", -1)), int(ev.get("li_killed", -1)),
+		int(ev.get("li_final", -1)), int(ev.get("b_dead", -1)), int(ev.get("spears_lost", -1)), int(ev.get("b_kills", -1)),
+		int(ev.get("c_lost", -1)), int(ev.get("c_stands", -1)), str(ev.get("c_state", "")), int(ev["released"]),
+		int(ev["absorbed_n"]), int(ev["hunts"])])
 
 
 ## Elephants ("--only=elephants"): a unit of elephants charges a heavy line

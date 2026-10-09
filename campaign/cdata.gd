@@ -138,7 +138,7 @@ const FACTIONS: Array[Dictionary] = [
 		"regions": ["latium", "etruria", "campania", "samnium"], "treasury": 1500,
 		"armies": [["latium", ["heavy", "heavy", "heavy", "spear", "javelin", "javelin", "cav", "legate"]],
 			["samnium", ["heavy", "heavy", "spear", "javelin", "cav", "legate"]]],
-		"mix": {"heavy": 45, "spear": 15, "javelin": 20, "cav": 15, "bolt": 5, "general": 4},
+		"mix": {"heavy": 45, "spear": 15, "javelin": 20, "cav": 15, "bolt": 5, "general": 4, "dogs": 3},
 		"ai_style": AI_BALANCED, "composition": {"arms": ["heavy", "spear", "javelin"], "art_pct": 10, "cav_pct": 10, "upgrade": 2}},
 	{"key": "carthage", "culture": PUNIC, "name": "Carthage", "adj": "Carthaginian", "color": "7a4fc4", "capital": "zeugitana",
 		"regions": ["zeugitana", "byzacena", "sicilia_occ", "sardinia", "baetica"], "treasury": 2200,
@@ -158,14 +158,14 @@ const FACTIONS: Array[Dictionary] = [
 		"armies": [["apulia", ["pike", "pike", "pike", "pike", "cav", "cav", "cav", "light", "javelin", "archer", "hetairoi_guard"]],
 			["epirus", ["pike", "light", "javelin", "spear", "hetairoi_guard"]]],
 		"mix": {"pike": 40, "cav": 25, "light": 10, "javelin": 10, "archer": 10, "spear": 5, "elephant": 5, "cav_missile": 5,
-			"general": 4},
+			"general": 4, "dogs": 3},
 		"ai_style": AI_BALANCED, "composition": {"arms": ["pike", "cav", "light"], "art_pct": 0, "cav_pct": 25, "upgrade": 1}},
 	{"key": "greeks", "culture": GREEK, "name": "Greek League", "adj": "Greek", "color": "3f7fd8", "capital": "attica",
 		"regions": ["attica", "achaea", "aetolia"], "treasury": 1600,
 		"armies": [["attica", ["spear", "spear", "archer", "light", "javelin", "strategos"]],
 			["achaea", ["spear", "spear", "archer", "cav", "strategos"]]],
 		"mix": {"spear": 45, "archer": 20, "light": 10, "javelin": 10, "cav": 10, "bolt": 5, "cav_missile": 5, "sling": 5,
-			"general": 4},
+			"general": 4, "dogs": 3},
 		"ai_style": AI_BALANCED, "composition": {"arms": ["spear", "archer", "light"], "art_pct": 5, "cav_pct": 10, "upgrade": 1}},
 	{"key": "syracuse", "culture": GREEK, "name": "Syracuse", "adj": "Syracusan", "color": "2fa8a0", "capital": "sicilia_or",
 		"regions": ["sicilia_or", "bruttium"], "treasury": 2200,
@@ -184,7 +184,7 @@ const FACTIONS: Array[Dictionary] = [
 		"regions": ["arverni", "cisalpina", "volcae"], "treasury": 1200,
 		"armies": [["arverni", ["light", "light", "light", "heavy", "cav", "cav", "javelin", "chieftain"]],
 			["cisalpina", ["light", "light", "light", "cav", "javelin", "chieftain"]]],
-		"mix": {"light": 45, "heavy": 20, "cav": 20, "javelin": 10, "archer": 5, "cav_missile": 5, "general": 4},
+		"mix": {"light": 45, "heavy": 20, "cav": 20, "javelin": 10, "archer": 5, "cav_missile": 5, "general": 4, "dogs": 3},
 		"ai_style": AI_BALANCED, "composition": {"arms": ["light", "heavy", "cav"], "art_pct": 0, "cav_pct": 20, "upgrade": 0}},
 ]
 const INDEPENDENT := -1
@@ -195,7 +195,7 @@ const ROSTERS := {
 	"rome": {"heavy": ["heavy", "principes", "extraordinarii"], "light": ["light", "light2", ""],
 		"spear": ["spear", "spear2", "triarii"], "javelin": ["javelin", "javelin2", "javelin3"],
 		"cav": ["cav", "cav2", ""], "siege": ["wagon", "wagon2", "wagon3"], "bolt": ["bolt"], "stone": ["stone"],
-		"general": ["legate"]},
+		"general": ["legate"], "dogs": ["dog_handlers"]},
 	"carthage": {"heavy": ["heavy", "heavy2", ""], "light": ["light", "light2", "light3"],
 		"spear": ["spear", "spear2", "sacred_band"], "archer": ["archer", "archer2", ""],
 		"javelin": ["javelin", "javelin2", "javelin3"], "cav": ["cav", "cav2", "cav3"],
@@ -209,12 +209,14 @@ const ROSTERS := {
 	"epirus": {"pike": ["pike", "pike2", "chaonians"], "spear": ["spear", "spear2", ""],
 		"light": ["light", "light2", ""], "archer": ["archer", "archer2", ""],
 		"javelin": ["javelin", "javelin2", ""], "cav": ["cav", "cav2", "agema"], "siege": ["wagon", "wagon2", "wagon3"], "bolt": ["bolt"],
-		"elephant": ["elephant"], "cav_missile": ["cav_jav", "tarentines"], "general": ["hetairoi_guard"]},
+		"elephant": ["elephant"], "cav_missile": ["cav_jav", "tarentines"], "general": ["hetairoi_guard"],
+		"dogs": ["dog_handlers"]},
 	"greeks": {"spear": ["spear", "hoplites", "picked_hoplites"], "pike": ["pike", "pike2", ""],
 		"archer": ["archer", "archer2", "cretans"], "light": ["light", "light2", ""],
 		"javelin": ["javelin", "javelin2", "javelin3"], "cav": ["cav", "cav2", ""],
 		"siege": ["wagon", "wagon2", "wagon3"], "bolt": ["bolt"], "stone": ["stone"],
-		"cav_missile": ["cav_jav", "tarentines"], "sling": ["slinger", "rhodians"], "general": ["strategos"]},
+		"cav_missile": ["cav_jav", "tarentines"], "sling": ["slinger", "rhodians"], "general": ["strategos"],
+		"dogs": ["dog_handlers"]},
 	"syracuse": {"spear": ["spear", "hoplites", "picked_hoplites"], "heavy": ["heavy", "heavy2", ""],
 		"archer": ["archer", "archer2", "cretans"], "javelin": ["javelin", "javelin2", ""],
 		"light": ["light", "light2", ""], "cav": ["cav", "cav2", ""], "siege": ["wagon", "wagon2", "wagon3"], "bolt": ["bolt"], "stone": ["stone"],
@@ -226,12 +228,12 @@ const ROSTERS := {
 	"gauls": {"light": ["light", "warband", "light3"], "heavy": ["heavy", "heavy2", "gallic_nobles"],
 		"spear": ["spear", "spear2", ""], "javelin": ["javelin", "javelin2", ""],
 		"archer": ["archer", "", ""], "cav": ["cav", "cav2", "noble_cav"], "siege": ["wagon", "", ""],
-		"cav_missile": ["cav_jav", "gallic_horse"], "general": ["chieftain"]},
+		"cav_missile": ["cav_jav", "gallic_horse"], "general": ["chieftain"], "dogs": ["dog_handlers"]},
 	"independent": {"spear": ["spear", "spear2", "spear3"], "archer": ["archer", "archer2", "archer3"],
 		"heavy": ["heavy", "heavy2", "heavy3"], "light": ["light", "light2", "light3"]},
 }
 ## Display order of lines in recruitment lists.
-const LINE_ORDER: Array[String] = ["heavy", "light", "spear", "pike", "archer", "sling", "javelin", "cav",
+const LINE_ORDER: Array[String] = ["heavy", "light", "spear", "pike", "archer", "sling", "javelin", "dogs", "cav",
 	"cav_missile", "camel", "camel_archer", "elephant", "general", "bolt", "stone", "siege"]
 
 ## Starting wars (all other pairs start at peace without trade).
@@ -245,7 +247,7 @@ const CHAINS: Array[Dictionary] = [
 	{"key": "market", "name": "Market", "levels": 3, "cost": [500, 1000, 1800], "turns": [1, 2, 3],
 		"desc": "+90 income per level; +15% trade income per level"},
 	{"key": "barracks", "name": "Barracks", "levels": 3, "cost": [400, 900, 1600], "turns": [1, 2, 3],
-		"desc": "Infantry (swords, light, spears, pikes) of tier = level, and the general's bodyguard (level 1; one general an army); faster replenishment"},
+		"desc": "Infantry (swords, light, spears, pikes) of tier = level, and the general's bodyguard (level 1; one general an army); war dogs (level 1, with Stables 1); faster replenishment"},
 	{"key": "range", "name": "Range", "levels": 3, "cost": [350, 800, 1400], "turns": [1, 2, 3],
 		"desc": "Archers, slingers and javelinmen of tier = level (light horse needs a Range 1 too); faster replenishment"},
 	{"key": "stables", "name": "Stables", "levels": 3, "cost": [500, 1000, 1800], "turns": [1, 2, 3],
@@ -266,18 +268,20 @@ const WALLS := 6
 const LINE_CHAIN := {"heavy": BARRACKS, "light": BARRACKS, "spear": BARRACKS, "pike": BARRACKS,
 	"archer": RANGE, "javelin": RANGE, "cav": STABLES, "bolt": WORKSHOP, "stone": WORKSHOP, "siege": WORKSHOP,
 	"camel": STABLES, "camel_archer": STABLES, "elephant": STABLES, "cav_missile": STABLES, "sling": RANGE,
-	"general": BARRACKS}
+	"general": BARRACKS, "dogs": BARRACKS}
 ## Buildings a unit type needs where they differ from its line's chain at
 ## its tier (the ammunition wagons: the Workshop, and Stables for the
 ## horses): key -> [[chain, level], ...], all of them.
 ## Camels: Stables 1 (camel archers a Range 1 too); elephants: Stables 3.
 ## Light horse: Stables of its tier and a Range 1 (javelins, as the camel
 ## archers' bows); slingers need only their line's Range of their tier.
+## War dogs: Barracks 1 (their line) and Stables 1 (the kennels are kept
+## with the horses): every capital has both from the start, towns not.
 const UNIT_NEEDS := {"wagon": [[WORKSHOP, 1]], "wagon2": [[WORKSHOP, 2], [STABLES, 1]],
 	"wagon3": [[WORKSHOP, 2], [STABLES, 2]], "camel": [[STABLES, 1]], "camel_archer": [[STABLES, 1], [RANGE, 1]],
 	"elephant": [[STABLES, 3]], "cav_jav": [[STABLES, 1], [RANGE, 1]], "numidians": [[STABLES, 2], [RANGE, 1]],
 	"tarentines": [[STABLES, 2], [RANGE, 1]], "gallic_horse": [[STABLES, 2], [RANGE, 1]],
-	"iberian_horse": [[STABLES, 2], [RANGE, 1]]}
+	"iberian_horse": [[STABLES, 2], [RANGE, 1]], "dog_handlers": [[BARRACKS, 1], [STABLES, 1]]}
 ## Workshop level needed per artillery line (other lines: level = tier).
 const ART_LEVEL := {"bolt": 1, "stone": 2}
 ## Special ammunition kinds (sim/unit_types.gd AMMO; docs/DESIGN.md
@@ -340,6 +344,9 @@ const ARMY_MAX := 12             # units per army
 ## old_mp (--old-mp) marches armies at the pace counted before 2026-10-09
 ## (only CLS_CAV as cavalry: light horse and camel archers at the foot's).
 static var no_generals := false
+## no_dogs (tests/campaign_sim.gd --no-dogs): the AI recruits no war dogs
+## (their mix weight 0), to show that only their recruitment changes a run.
+static var no_dogs := false
 static var old_mp := false
 const BATTLE_SIDE_MAX := 24      # field units per side in a real-time battle (+ garrison)
 ## Sieges (state version 4). Turns a besieged settlement's supplies last per

@@ -269,6 +269,15 @@ func _initialize() -> void:
 		_step_el_check_button,
 		_step_el_tap,
 		_step_el_check_kill,
+		# War dogs: Release for selected handlers, then a tap on an enemy.
+		_step_dog_start,
+		_step_dog_select,
+		_step_dog_check_button,
+		_step_dog_arm,
+		_step_dog_check_armed,
+		_step_dog_tap_enemy,
+		_step_dog_check_order,
+		_step_dog_check_out,
 		_step_done,
 	]
 
@@ -2304,6 +2313,77 @@ func _step_el_check_kill() -> void:
 	var ko := _eq_orders(BattleSim.ORDER_KILL)
 	_check(ko.size() == 1 and int(ko[0]["unit"]) == 0, "a tap on Kill elephant: the drivers' order (%s)" % str(ko))
 	_check(not battle.hud.kill_button.visible, "Kill elephant hides once ordered")
+
+
+# War dogs (docs/DESIGN.md "War dogs"): handlers selected show Release
+# with their dogs; a tap arms it, a tap on an enemy unit releases the pack
+# (ORDER_RELEASE); the pack comes out with a card of its own.
+func _step_dog_start() -> void:
+	if is_instance_valid(battle):
+		battle.queue_free()
+	battle = Battle.new()
+	battle.custom_scenario = {"width_m": 300, "height_m": 300, "ai_sides": [1], "orders": [], "units": [
+		Scenarios.unit(0, UT.index_of("dog_handlers"), 16, 150, 220, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.ARCHER, 80, 150, 160, Scenarios.FACE_DOWN),
+		Scenarios.unit(1, UT.HEAVY, 100, 40, 40, Scenarios.FACE_DOWN)],
+		"terrain": {"kind": 0}}
+	battle.seed_value = 7
+	root.add_child(battle)
+
+
+func _step_dog_select() -> void:
+	if not battle.paused:
+		battle._toggle_pause()
+	_no_double_tap()
+	var sim := battle.sim
+	_focus(sim.u_cx[0], sim.u_cy[0] - 30 * 1024)
+	var p := _unit_screen(0)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_dog_check_button() -> void:
+	_check(battle.selection.size() == 1 and battle.selection[0] == 0, "the handlers are selected (%s)" % str(battle.selection))
+	_check(battle.hud.release_button.visible and battle.hud.release_button.text.contains("32"),
+		"Release shows with the 32 dogs (%s)" % battle.hud.release_button.text)
+	var pk: int = battle.sim.u_pack[0]
+	_check(pk >= 0 and not (battle.hud._cards[pk] as Button).visible, "the pack has no card while with its handlers")
+
+
+func _step_dog_arm() -> void:
+	_tap_control(battle.hud.release_button)
+
+
+func _step_dog_check_armed() -> void:
+	_check(battle.release_armed and battle.hud.release_button.button_pressed,
+		"a tap on Release arms it (%s)" % battle.hud.release_button.text)
+
+
+func _step_dog_tap_enemy() -> void:
+	_no_double_tap()
+	var p := _unit_screen(1)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_dog_check_order() -> void:
+	var ro := _eq_orders(BattleSim.ORDER_RELEASE)
+	_check(ro.size() == 1 and int(ro[0]["unit"]) == 0 and int(ro[0]["target"]) == 1,
+		"a tap on the archers: the pack is released at them (%s)" % str(ro))
+	_check(not battle.release_armed and _eq_orders(BattleSim.ORDER_ATTACK).is_empty(),
+		"the tap released, it did not order an attack")
+	battle.sim.step()
+	battle.hud.update_cards(battle.sim)
+	battle._refresh_actions()
+
+
+func _step_dog_check_out() -> void:
+	var sim := battle.sim
+	var pk: int = sim.u_pack[0]
+	_check(sim.u_state[pk] == BattleSim.U_READY and sim.u_alive[pk] == 32 and sim.u_target[pk] == 1,
+		"the pack is out after the step: 32 dogs at the archers (state %d)" % sim.u_state[pk])
+	_check((battle.hud._cards[pk] as Button).visible, "the pack's card shows once it is loose")
+	_check(not battle.hud.release_button.visible, "Release hides while the pack is out")
 
 
 func _step_done() -> void:

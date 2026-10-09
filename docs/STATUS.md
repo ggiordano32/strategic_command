@@ -1237,7 +1237,7 @@ fixes are all landed; see "Where we are"):
       "Where we are"): a command aura (the fear aura
       inverted: morale held up within a radius, a rally bonus, a big hit
       when he falls); campaign armies get a leader.
-   4. **War dogs**: a handler unit (weak light foot) that releases its
+   4. **War dogs** (built 2026-10-09, not committed; see "Where we are"): a handler unit (weak light foot) that releases its
       pack as an order; the pack is a fast, fragile unit strong against
       skirmishers, missile troops, routers and crews, useless against
       formed heavy foot and spears; it fights until dead or until no enemy
