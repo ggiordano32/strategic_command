@@ -325,7 +325,10 @@ const GEN_MELEE := 258         # ... and pulls out of the melee after this long
 # War dogs (docs/AI.md 21): handlers (a row with a pack), never by name.
 const DOG_R := 259             # handlers release the pack at prey (routers, missile troops, crews, wagons) this near (0: never)
 const DOG_ANY := 260           # 1: at the first enemy unit within DOG_R, whatever it is (Easy's mistake)
-const N_KNOBS := 261
+# Siege towers (docs/AI.md 15): the attackers' rolling towers.
+const S_TOWER_FOLLOW := 261    # attacking infantry sent across a planted siege tower after its own crew
+const S_TOWER_CREW := 262      # the siege tower goes to the free infantry unit with the most men (1) or the nearest (0: Easy's mistake, it may crawl)
+const N_KNOBS := 263
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
@@ -565,6 +568,8 @@ const KNOBS: Array = [
 	[GEN_MELEE, 150, 150, 100],
 	[DOG_R, 60 * M, 60 * M, 75 * M],
 	[DOG_ANY, 1, 0, 0],
+	[S_TOWER_FOLLOW, 1, 2, 3],
+	[S_TOWER_CREW, 0, 1, 1],
 	# Behaviours a level switches off (Average: on, as before).
 	[CLEAR_SPOT, 0, 1, 1],
 	[MIS_SKIRM, 0, 1, 1],

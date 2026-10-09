@@ -67,6 +67,8 @@ const Lockstep := preload("res://sim/lockstep.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const UT := preload("res://sim/unit_types.gd")
 const AIProfile := preload("res://sim/ai_profile.gd")
+const MapGen := preload("res://sim/mapgen.gd")
+const FM := preload("res://sim/fixed_math.gd")
 
 var _ok := true
 var quick := false
@@ -1225,11 +1227,14 @@ func _test_siege_snapshots() -> void:
 ## defenders AI, with the city's tower engines; a 20 minute time limit):
 ## A's first infantry picks up a ladder set and puts it down again; B's
 ## second infantry picks that set up and plants it on the stretch nearest
-## (climbing it); B's first foot carries the ram to the main gate. A third
-## peer joins by snapshot while B carries the ladders A dropped. Every
-## frame's lockstep hash must agree.
+## (climbing it); B's first foot carries the ram to the main gate; A's
+## second infantry pushes the siege tower to the stretch nearest it, plants
+## it and crosses (snapshots of A's sim while it pushes and once it is
+## planted: two restored copies run on equal). A third peer joins by
+## snapshot while B carries the ladders A dropped. Every frame's lockstep
+## hash must agree.
 func _test_lockstep_siege() -> void:
-	var scen := Scenarios.fair_siege(741, 3, 4, {"ladders": 3, "ram": 1})
+	var scen := Scenarios.fair_siege(741, 3, 4, {"ladders": 3, "ram": 1, "towers": 1})
 	scen["time_limit"] = 1200
 	scen["ai_sides"] = [1]
 	# Ammunition kinds and the wagon across peers: an archer unit of side 0
@@ -1252,6 +1257,34 @@ func _test_lockstep_siege() -> void:
 	scen["units"].append(wu)
 	var probe := BattleSim.new()
 	probe.setup(scen, 4242)
+	# The siege tower is slow (about half a metre a second): it starts 25 m
+	# out from the land-wall stretch nearest the attackers' first unit
+	# (instead of at their edge) so that it is planted within the test.
+	var tw_e := -1
+	for k in (scen["equip"] as Array).size():
+		if int(scen["equip"][k][0]) == BattleSim.EQ_TOWER:
+			tw_e = k
+	if tw_e >= 0:
+		var u0 := -1
+		for u in probe.n_units:
+			if probe.u_side[u] == 0 and u0 < 0:
+				u0 = u
+		var bsg := -1
+		var bd0 := 0
+		for sg in probe.ws_x0.size():
+			if (probe.ws_fl[sg] & (MapGen.SEG_SEA | MapGen.SEG_CIT)) != 0:
+				continue
+			var mp: Vector2i = BattleSim.seg_pt(probe, sg, BattleSim.seg_len(probe, sg) / 2)
+			var d := absi(mp.x - probe.u_cx[u0]) + absi(mp.y - probe.u_cy[u0])
+			if bsg < 0 or d < bd0:
+				bsg = sg
+				bd0 = d
+		var mp0: Vector2i = BattleSim.seg_pt(probe, bsg, BattleSim.seg_len(probe, bsg) / 2)
+		var dir: int = probe.ws_dir[bsg]
+		scen["equip"][tw_e] = [BattleSim.EQ_TOWER, (mp0.x + FM.cos_a(dir) * 25 * 1024 / FM.TRIG_ONE) / 1024,
+			(mp0.y + FM.sin_a(dir) * 25 * 1024 / FM.TRIG_ONE) / 1024]
+		probe = BattleSim.new()
+		probe.setup(scen, 4242)
 	var home := _home_split(probe)
 	var relay := Relay.new()
 	var a := _new_peer(scen, home, 0, "A", [0, 1])
@@ -1269,9 +1302,22 @@ func _test_lockstep_siege() -> void:
 	var a_carry_t := -1
 	var b_carried := false
 	var ram_q := -1
+	var tw_q := -1
 	for q in probe.n_eq:
 		if probe.q_kind[q] == BattleSim.EQ_RAM:
 			ram_q = q
+		if probe.q_kind[q] == BattleSim.EQ_TOWER:
+			tw_q = q
+	var tw_snaps: Array = []  # A's sim: [tick, "pushing" / "planted"]
+	# Its pushers: A's biggest plain infantry unit but the first (the ladders').
+	var tw_u := -1
+	var a_inf: Array = []
+	for u in probe.n_units:
+		if int(home[u]) == 0 and probe.u_cls[u] == UT.CLS_INF and UT.stat(probe.u_type[u], "wagon") < 0:
+			a_inf.append(u)
+	for k in range(1, a_inf.size()):
+		if tw_u < 0 or probe.u_alive[a_inf[k]] > probe.u_alive[tw_u]:
+			tw_u = a_inf[k]
 	# Engines as equipment across peers: B leaves its bolt battery's engines,
 	# A's archers take them up and later leave them.
 	var bat := -1
@@ -1340,6 +1386,27 @@ func _test_lockstep_siege() -> void:
 							p.issue({"type": BattleSim.ORDER_DROP, "unit": ua})
 							dropped = true
 							orders += 1
+					# The siege tower: A's second infantry to the nearest stretch.
+					var ut: int = tw_u
+					if tw_q >= 0 and ut >= 0 and sim.u_carry[ut] < 0 and sim.q_state[tw_q] == BattleSim.Q_GROUND and sim.u_pick[ut] != tw_q:
+						p.issue({"type": BattleSim.ORDER_PICKUP, "unit": ut, "equip": tw_q, "run": 1})
+						orders += 1
+					elif tw_q >= 0 and ut >= 0 and sim.u_carry[ut] == tw_q and sim.u_stair[ut] == 0 and sim.u_order[ut] != BattleSim.O_MOVE:
+						var tbest := -1
+						var tbd := 0
+						for sg in sim.ws_x0.size():
+							var mp: Vector2i = BattleSim.seg_pt(sim, sg, BattleSim.seg_len(sim, sg) / 2)
+							if BattleSim.ladder_set_for(sim, ut, sg, mp.x, mp.y) < 0:
+								continue
+							var d := absi(mp.x - sim.u_cx[ut]) + absi(mp.y - sim.u_cy[ut])
+							if tbest < 0 or d < tbd:
+								tbest = sg
+								tbd = d
+						if tbest >= 0:
+							var tp: Vector2i = BattleSim.seg_pt(sim, tbest, BattleSim.seg_len(sim, tbest) / 2)
+							p.issue({"type": BattleSim.ORDER_MOVE, "unit": ut, "x": tp.x, "y": tp.y, "facing": 768,
+								"width": 20 * 1024, "run": 0})
+							orders += 1
 				else:
 					var ur: int = mine[0]
 					var ub: int = mine[1]
@@ -1385,6 +1452,27 @@ func _test_lockstep_siege() -> void:
 		elif e_stage == 2 and a_eng_done and sa.u_eg[arch] < 0:
 			e_stage = 3
 			e_take = true
+		var tw_what := ""
+		if tw_q >= 0 and tw_snaps.size() == 0 and sa.q_state[tw_q] == BattleSim.Q_CARRIED and sa.tick > 300:
+			tw_what = "pushing"
+		elif tw_q >= 0 and tw_snaps.size() == 1 and sa.q_state[tw_q] == BattleSim.Q_PLANTED:
+			tw_what = "planted"
+		if tw_what != "":
+			var tb: PackedByteArray = sa.snapshot()
+			var z1 := BattleSim.new()
+			z1.setup(scen, 4242)
+			var z2 := BattleSim.new()
+			z2.setup(scen, 4242)
+			if not z1.restore(tb) or not z2.restore(tb) or z1.state_hash() != sa.state_hash():
+				_fail("siege lockstep: restoring A's sim with the siege tower %s did not reproduce its hash" % tw_what)
+				return
+			for t in 200:
+				z1.step()
+				z2.step()
+				if z1.state_hash() != z2.state_hash():
+					_fail("siege lockstep: copies restored with the siege tower %s diverged after %d ticks" % [tw_what, t + 1])
+					return
+			tw_snaps.append([sa.tick, tw_what])
 		if r_snap < 0 and sa.u_rprog[arch2] == BattleSim.REFILL_FULL and sa.stat_refill_shots > 0:
 			# Mid-refill at the wagon: two restored copies run on equal.
 			r_snap = sa.tick
@@ -1461,6 +1549,12 @@ func _test_lockstep_siege() -> void:
 			sim_a.stat_pickups, sim_a.stat_drops])
 	elif not quick and sim_a.stat_planted == 0:
 		_fail("siege lockstep: the ladders were never planted")
+	if tw_snaps.size() < (1 if quick else 2) or (not quick and sim_a.stat_stw_planted < 1):
+		_fail("siege lockstep: the siege tower was not pushed and planted across snapshots (%s; planted %d, men across %d, wrecked %d)" % [
+			str(tw_snaps), sim_a.stat_stw_planted, sim_a.stat_stw_up, sim_a.stat_stw_wrecked])
+	else:
+		print("PASS siege lockstep siege tower: A pushed it and planted it (planted %d, men across %d), hashes equal; snapshot / restore %s ran on identically" % [
+			sim_a.stat_stw_planted, sim_a.stat_stw_up, str(tw_snaps)])
 
 
 # -------------------------------------------------------------- blocking ---

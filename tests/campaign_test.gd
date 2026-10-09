@@ -1749,6 +1749,29 @@ func _grid_siege_equipment() -> void:
 	var eq2 := CBattle.siege_equipment(st, b)
 	_check(int(eq2.get("ladders", 0)) == 3 and int(eq2.get("ram", 0)) == 1, "after two turns: three sets of ladders and a ram")
 	_check(CBattle.equipment_text(st, ap).contains("ram"), "the siege panel line names the ram")
+	# Siege towers (4f.1): walls 2-3 only, one after three turns, two after four.
+	var slots0: Array = (st["regions"][ap]["slots"] as Array).duplicate(true)
+	var tw := {}
+	for wl in [1, 2, 3]:
+		_set_walls(st, ap, wl)
+		for n in [2, 3, 4, 6]:
+			sg["turn"] = t0 - n
+			tw["%d/%d" % [wl, n]] = int(CBattle.siege_equipment(st, b).get("towers", 0))
+	_check(str(tw) == str({"1/2": 0, "1/3": 0, "1/4": 0, "1/6": 0, "2/2": 0, "2/3": 1, "2/4": 2, "2/6": 2,
+		"3/2": 0, "3/3": 1, "3/4": 2, "3/6": 2}), "siege towers by walls / siege turns: %s" % str(tw))
+	_set_walls(st, ap, 2)
+	sg["turn"] = t0 - 2
+	_check(CBattle.equipment_text(st, ap).contains("siege tower next turn"), "the siege panel line: " + CBattle.equipment_text(st, ap))
+	sg["turn"] = t0 - 3
+	var tb := CBattle.build(st, b, -1)
+	var n_tw := 0
+	for eq_e in (tb["scenario"].get("equip", []) as Array):
+		if int(eq_e[0]) == BattleSim.EQ_TOWER:
+			n_tw += 1
+	_check(n_tw == 1 and CBattle.equipment_text(st, ap).contains("a siege tower"),
+		"after three turns at walls 2: a siege tower on the ground (%d); %s" % [n_tw, CBattle.equipment_text(st, ap)])
+	st["regions"][ap]["slots"] = slots0
+	sg["turn"] = t0 - 2
 	var built := CBattle.build(st, b, -1)
 	var lad := 0
 	var ram := 0
@@ -1769,6 +1792,15 @@ func _grid_siege_equipment() -> void:
 	var nc2 := CState.new_campaign("t", 7, [rome], {"time_limit": 2700})
 	_check(not (nc["settings"] as Dictionary).has("time_limit") and int(nc2["settings"]["time_limit"]) == 2700,
 		"time_limit is stored only when longer than 15 minutes")
+
+
+## Region r's walls set to level wl (a test helper: its walls slot).
+func _set_walls(st: Dictionary, r: int, wl: int) -> void:
+	for sl in st["regions"][r]["slots"]:
+		if int(sl[0]) == CData.WALLS:
+			sl[1] = wl
+			return
+	(st["regions"][r]["slots"] as Array).append([CData.WALLS, wl])
 
 
 func _grid_support() -> void:

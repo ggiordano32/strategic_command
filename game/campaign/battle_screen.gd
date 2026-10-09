@@ -133,7 +133,14 @@ static func equipment_line(snap: Dictionary) -> String:
 		parts.append("%d sets of ladders" % int(eq["ladders"]))
 	if int(eq.get("ram", 0)) > 0:
 		parts.append("a ram")
-	var t := "Siege equipment: " + (" and ".join(parts) if not parts.is_empty() else "none (the attackers' own artillery only)")
+	var nt := int(eq.get("towers", 0))
+	if nt > 0:
+		parts.append("a siege tower" if nt == 1 else "%d siege towers" % nt)
+	var lst := ""
+	for k in parts.size():
+		lst += (", " if k < parts.size() - 1 else " and ") if k > 0 else ""
+		lst += parts[k]
+	var t := "Siege equipment: " + (lst if not parts.is_empty() else "none (the attackers' own artillery only)")
 	if w >= 2:
 		t += ". The walls (level %d) carry towers with engines." % w
 	else:

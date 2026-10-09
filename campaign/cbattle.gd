@@ -58,6 +58,8 @@ const EDGE_IN := 45      # m from the map edge to an arriving column's front
 const LADDER_TURNS := 1  # an assault after a siege of this many turns brings ladders ...
 const RAM_TURNS := 2     # ... and of this many a ram
 const LADDER_SETS := [2, 3]  # ... sets of ladders after LADDER_TURNS, RAM_TURNS turns
+const TOWER_TURNS := [3, 4]  # ... a siege tower after this many turns, two after that many ...
+const TOWER_WALLS := 2       # ... against walls of at least this level (BattleSim.EQ_WALLS)
 const DEFAULT_TIME_LIMIT := 900  # s: the sim's own battle time limit (settings "time_limit")
 const WIN_ROUT := 5      # formula: % routed on the winning side ...
 const LOSE_ROUT := 20    # ... and on the losing side
@@ -222,7 +224,8 @@ static func siege_turns(st: Dictionary, r: int) -> int:
 
 ## The attackers' siege equipment for battle b (Scenarios.settlement
 ## "equip"): an assault after a siege of a full turn or more brings two
-## sets of ladders, of two turns or more three and a ram; an assault on
+## sets of ladders, of two turns or more three and a ram, and against walls
+## 2-3 of three turns or more a siege tower, of four two; an assault on
 ## arrival (and any other battle) nothing but the armies' own artillery.
 static func siege_equipment(st: Dictionary, b: Dictionary) -> Dictionary:
 	if str(b.get("kind", "")) != "assault":
@@ -236,7 +239,19 @@ static func siege_equipment(st: Dictionary, b: Dictionary) -> Dictionary:
 		out["ladders"] = int(LADDER_SETS[1 if n >= RAM_TURNS else 0])
 	if n >= RAM_TURNS:
 		out["ram"] = 1
+	var nt := towers_after(n)
+	if nt > 0 and CState.walls(st, int(b["r"])) >= TOWER_WALLS:
+		out["towers"] = nt
 	return out
+
+
+## Siege towers an assault after a siege of n turns brings (walls 2-3).
+static func towers_after(n: int) -> int:
+	var nt := 0
+	for t in TOWER_TURNS:
+		if n >= int(t):
+			nt += 1
+	return nt
 
 
 ## One line for the siege panel on what an assault on besieged region r
@@ -245,7 +260,16 @@ static func equipment_text(st: Dictionary, r: int) -> String:
 	var n := siege_turns(st, r)
 	if n < 0 or CState.walls(st, r) <= 0:
 		return ""
+	if CState.walls(st, r) >= TOWER_WALLS and n >= int(TOWER_TURNS[0]):
+		var nt := towers_after(n)
+		var more := "" if nt >= TOWER_TURNS.size() else "; a second next turn"
+		return "Siege equipment: %d sets of ladders, a ram and %s%s." % [int(LADDER_SETS[1]),
+			"a siege tower" if nt == 1 else "%d siege towers" % nt, more]
 	if n >= RAM_TURNS:
+		if CState.walls(st, r) >= TOWER_WALLS:
+			var dt := int(TOWER_TURNS[0]) - n
+			return "Siege equipment: %d sets of ladders and a ram; a siege tower %s." % [int(LADDER_SETS[1]),
+				"next turn" if dt == 1 else "in %d turns" % dt]
 		return "Siege equipment: %d sets of ladders and a ram." % int(LADDER_SETS[1])
 	if n >= LADDER_TURNS:
 		return "Siege equipment: %d sets of ladders; a ram next turn." % int(LADDER_SETS[0])

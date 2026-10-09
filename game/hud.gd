@@ -885,7 +885,8 @@ static func art_card_text(sim, u: int) -> String:
 		maxi(sim.u_reserve[u], 0), deploy_text(sim, u)]
 
 
-## Siege equipment a unit carries: "carrying ladders" / "carrying ram", else "".
+## Siege equipment a unit carries: "carrying ladders" / "carrying ram" /
+## "pushing a tower", else "".
 static func carry_text(sim, u: int) -> String:
 	var k := BattleSim.carrying(sim, u)
 	if k == BattleSim.EQ_LADDERS:
@@ -894,6 +895,8 @@ static func carry_text(sim, u: int) -> String:
 		return "carrying ram"
 	if k == BattleSim.EQ_WAGON:
 		return "with the wagon"
+	if k != 0 and BattleSim.EQ_EXPOSED[k] != 0:
+		return "pushing a tower"
 	return ""
 
 

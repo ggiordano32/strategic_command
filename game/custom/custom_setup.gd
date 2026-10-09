@@ -11,8 +11,9 @@ extends RefCounted
 ##   "map": {"kind": "field" | "settlement", "terrain": Terrain.K_*, "ground": MapGen.PAL_*,
 ##           "woods": 0-100, "mseed": int, "plan": MapGen.PLAN_*, "level": 0-2, "walls": 0-3,
 ##           "coast": 0/1, "def": defending sim side,
-##           "ladders": 0/1, "ram": 0/1 (the attackers' siege equipment, objects on
-##           the ground: LADDER_SETS sets of ladders, a ram; walls only)},
+##           "ladders": 0/1, "ram": 0/1, "towers": 0-MAX_TOWERS (the attackers' siege
+##           equipment, objects on the ground: LADDER_SETS sets of ladders, a ram,
+##           siege towers; walls only, siege towers walls 2-3)},
 ##   "sides": [{"skill": AIProfile level, "style": AIProfile personality,
 ##              "armies": [{"ctrl": "p1" | "p2" | "ai", "units": [[type key, men(, ammo kind key)], ...]}, ...]}, x2]
 ## }
@@ -35,6 +36,7 @@ const MapGen := preload("res://sim/mapgen.gd")
 const AIProfile := preload("res://sim/ai_profile.gd")
 
 const LADDER_SETS := 3         # the Ladders toggle: sets of ladders (as a campaign siege of two turns)
+const MAX_TOWERS := 2          # the Siege towers option: 0, 1 or 2 (as a campaign siege of three / four turns)
 const MAX_ARMIES := 3          # per side
 const MAX_UNITS := 12          # per army (the campaign's army size)
 const FUNDS := [0, 4500, 7500, 12000]
@@ -271,6 +273,9 @@ static func build(st: Dictionary, solo: bool = false) -> Dictionary:
 			equip["ladders"] = LADDER_SETS
 		if int(mp.get("ram", 0)) != 0:
 			equip["ram"] = 1
+		var n_tw := clampi(int(mp.get("towers", 0)), 0, MAX_TOWERS)
+		if n_tw > 0:
+			equip["towers"] = n_tw  # (Scenarios.settlement: walls 2-3 only)
 		var r := Scenarios.settlement(city, terr, lists[att_side], lists[def_side], def_side, ai, equip)
 		sc = r["scenario"]
 		for k in (r["order"] as Array).size():
@@ -352,4 +357,4 @@ static func summary(st: Dictionary) -> Dictionary:
 			"skill": int(st["sides"][s].get("skill", 1)), "style": int(st["sides"][s].get("style", 1))})
 	return {"map": str(mp.get("kind", "field")), "terrain": int(mp.get("terrain", 0)), "deploy": int(st.get("deploy", 0)),
 		"funds": int(st.get("funds", 0)), "sides": sides, "time": int(st.get("time", 900)),
-		"ladders": int(mp.get("ladders", 0)), "ram": int(mp.get("ram", 0))}
+		"ladders": int(mp.get("ladders", 0)), "ram": int(mp.get("ram", 0)), "towers": int(mp.get("towers", 0))}

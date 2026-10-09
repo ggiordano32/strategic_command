@@ -166,6 +166,11 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=siege_tower" in OS.get_cmdline_user_args():
+		_check_siege_tower()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=engines" in OS.get_cmdline_user_args():
 		_check_engines()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -182,6 +187,7 @@ func _init() -> void:
 		quit(0 if _ok else 1)
 		return
 	_check_equipment()
+	_check_siege_tower()
 	_check_shut_inner_gate()
 	_check_engines()
 	_check_ammo()
@@ -1073,6 +1079,178 @@ func _check_equipment() -> void:
 		return
 	print("PASS equipment: picked up %d, put down %d (the light's set at tick %d, the ram as the gate broke), planted %d, men up %d, ram blows %d; identical on repeat and across snapshot / restore mid-carry (tick %d)" % [
 		a["pickups"], a["drops"], a["dropped"], a["planted"], a["up"], a["blows"], a["snap_t"]])
+
+
+# ------------------------------------------------------- siege towers ---
+# docs/DESIGN.md "Siege equipment as objects" (the siege tower, 4f.1).
+
+## A walls-2 ring (no tower engines), scripted (no AI), two siege towers:
+## the attackers' heavy (unit 0) pushes tower 0 to the nearest stretch it
+## can, plants it and crosses onto the walkway; the second heavy (unit 1)
+## picks up tower 1 and puts it down again; a defending light unit outside
+## the walls takes it up (the other side's now), pushes it 15 m and puts it
+## down by it; the attackers' archers (fire arrows) shoot at that unit and
+## set tower 1 alight: it burns down (a test shortcut: tower 1 is left with
+## 300 hit points when the defenders put it down, so one fire does it).
+## Hashes every tick; a second run equal; snapshots while pushing, while
+## crossing the planted tower and while tower 1 burns: a restored copy has
+## the same hash and two restored copies run on equal.
+func _tower_run(snap_check: bool) -> Dictionary:
+	var city := {"seed": 4242, "level": 2, "walls": 2, "bld": []}
+	var terr := {"kind": Terrain.K_FLAT, "seed": 11, "forest": 0, "ground": 2}
+	var r := Scenarios.settlement(city, terr, [[UT.HEAVY, 60], [UT.HEAVY, 60], [UT.ARCHER, 40]], [[UT.SPEAR, 20]], 1, [],
+		{"towers": 2})
+	var sc: Dictionary = r["scenario"]
+	sc["terrain"]["city"]["towers"] = 0  # (no tower engines: the fire is the archers')
+	var order: Array = r["order"]
+	var arch := -1
+	for k in order.size():
+		if int(order[k][0]) == 0 and int(order[k][1]) == 2:
+			arch = k
+	sc["units"][arch]["ak"] = UT.ammo_index("fire_arrows")
+	var eq: Array = sc["equip"]
+	var t1: Array = eq[1]
+	var dl := Scenarios.unit(1, UT.LIGHT, 60, int(t1[1]) + 35, int(t1[2]), Scenarios.FACE_LEFT)
+	(sc["units"] as Array).append(dl)
+	var dn: int = (sc["units"] as Array).size() - 1
+	var h0 := -1
+	var h1 := -1
+	for k in order.size():
+		if int(order[k][0]) == 0 and int(order[k][1]) == 0:
+			h0 = k
+		if int(order[k][0]) == 0 and int(order[k][1]) == 1:
+			h1 = k
+	var sim := BattleSim.new()
+	sim.setup(sc, 91)
+	var hashes := PackedInt64Array()
+	var ev := {}
+	var snaps: Array = []  # [tick, what, restored hash equal, steps to divergence (-1: none)]
+	for t in 6000:
+		var tk: int = sim.tick
+		if t % 10 == 0:
+			# Unit h0: tower 0 to the wall.
+			if sim.u_carry[h0] < 0 and sim.q_state[0] == BattleSim.Q_GROUND and sim.u_pick[h0] != 0:
+				sim.queue_order({"tick": tk, "type": BattleSim.ORDER_PICKUP, "unit": h0, "equip": 0, "run": 1})
+			elif sim.u_carry[h0] == 0 and sim.u_stair[h0] == 0 and sim.u_order[h0] != BattleSim.O_MOVE:
+				if not ev.has("pushing"):
+					ev["pushing"] = tk
+					ev["pace"] = BattleSim.carry_pace(UT.stat(sim.u_type[h0], "walk"), BattleSim.EQ_TOWER, sim.u_alive[h0])
+				var best := -1
+				var bd := 0
+				for sg in sim.ws_x0.size():
+					var mp: Vector2i = BattleSim.seg_pt(sim, sg, BattleSim.seg_len(sim, sg) / 2)
+					if BattleSim.ladder_set_for(sim, h0, sg, mp.x, mp.y) < 0:
+						continue
+					var d := absi(mp.x - sim.u_cx[h0]) + absi(mp.y - sim.u_cy[h0])
+					if best < 0 or d < bd:
+						best = sg
+						bd = d
+				if best >= 0:
+					var lp: Vector2i = BattleSim.seg_pt(sim, best, BattleSim.seg_len(sim, best) / 2)
+					sim.queue_order(BattleSim.make_move_order(tk, h0, lp.x, lp.y, 768, 20 * 1024, 0))
+			# Unit h1: tower 1 up and down again, then away.
+			if not ev.has("drop1"):
+				if sim.u_carry[h1] < 0 and sim.u_pick[h1] != 1:
+					sim.queue_order({"tick": tk, "type": BattleSim.ORDER_PICKUP, "unit": h1, "equip": 1, "run": 1})
+				elif sim.u_carry[h1] == 1:
+					ev["drop1"] = tk
+					sim.queue_order({"tick": tk, "type": BattleSim.ORDER_DROP, "unit": h1})
+					sim.queue_order(BattleSim.make_move_order(tk + 1, h1, sim.u_ax[h1] - 40 * M, sim.u_ay[h1],
+						Scenarios.FACE_LEFT, 20 * M, 0))
+			# The defenders' light unit outside: takes tower 1, pushes it 15 m, puts it down.
+			elif not ev.has("taken"):
+				if sim.q_state[1] == BattleSim.Q_GROUND and sim.u_pick[dn] != 1 and tk >= int(ev["drop1"]) + 30:
+					sim.queue_order({"tick": tk, "type": BattleSim.ORDER_PICKUP, "unit": dn, "equip": 1, "run": 1})
+				elif sim.u_carry[dn] == 1:
+					ev["taken"] = tk
+					ev["side1"] = sim.q_side[1]
+					sim.queue_order(BattleSim.make_move_order(tk, dn, sim.u_ax[dn] + 15 * M, sim.u_ay[dn],
+						Scenarios.FACE_LEFT, 20 * M, 0))
+			elif not ev.has("drop_d") and sim.u_carry[dn] == 1 and sim.u_order[dn] != BattleSim.O_MOVE:
+				ev["drop_d"] = tk
+				sim.queue_order({"tick": tk, "type": BattleSim.ORDER_DROP, "unit": dn})
+			elif ev.has("drop_d") and not ev.has("shoot"):
+				if sim.q_state[1] == BattleSim.Q_GROUND:
+					ev["shoot"] = tk
+					sim.q_hp[1] = 300  # (the shortcut: one fire burns it down)
+					sim.queue_order({"tick": tk, "type": BattleSim.ORDER_AMMO, "unit": arch, "on": 1})
+					sim.queue_order({"tick": tk, "type": BattleSim.ORDER_ATTACK, "unit": arch, "target": dn, "run": 0})
+		sim.step()
+		hashes.append(sim.state_hash())
+		if not ev.has("planted") and sim.q_state[0] == BattleSim.Q_PLANTED:
+			ev["planted"] = sim.tick
+		if not ev.has("lit") and sim.q_burn[1] > 0:
+			ev["lit"] = sim.tick
+		if not ev.has("burnt") and sim.q_state[1] == BattleSim.Q_WRECKED:
+			ev["burnt"] = sim.tick
+		if not ev.has("over") and ev.has("planted") and sim.u_wall[h0] > 0 and sim.u_stair[h0] == 0:
+			ev["over"] = sim.tick
+		var what := ""
+		if snap_check:
+			if not ev.has("s_push") and ev.has("pushing") and sim.tick >= int(ev["pushing"]) + 200:
+				what = "pushing"
+			elif not ev.has("s_cross") and sim.u_stair[h0] == BattleSim.ST_LADDER and sim.stat_stw_up >= 10:
+				what = "crossing"
+			elif not ev.has("s_burn") and ev.has("lit") and sim.q_burn[1] > 0 and sim.tick >= int(ev["lit"]) + 30:
+				what = "burning"
+			if what != "":
+				ev[{"pushing": "s_push", "crossing": "s_cross", "burning": "s_burn"}[what]] = sim.tick
+		if what != "":
+			var blob := sim.snapshot()
+			var a2 := BattleSim.new()
+			a2.setup(sc, 91)
+			a2.restore(blob)
+			var b2 := BattleSim.new()
+			b2.setup(sc, 91)
+			b2.restore(blob)
+			var same: bool = a2.state_hash() == sim.state_hash()
+			var bad := -1
+			for k in 300:
+				a2.step()
+				b2.step()
+				if a2.state_hash() != b2.state_hash():
+					bad = k
+					break
+			snaps.append([sim.tick, what, same, bad])
+		if ev.has("over") and ev.has("burnt") and (not snap_check or snaps.size() >= 3):
+			break
+	return {"hashes": hashes, "ev": ev, "snaps": snaps, "up": sim.stat_stw_up, "planted": sim.stat_stw_planted,
+		"taken": sim.stat_stw_taken, "wrecked": sim.stat_stw_wrecked, "q0": sim.q_state[0], "q1": sim.q_state[1],
+		"wall0": sim.u_wall[h0], "alive0": sim.u_alive[h0], "tick": sim.tick}
+
+
+func _check_siege_tower() -> void:
+	var a := _tower_run(true)
+	var b := _tower_run(false)
+	var n := mini((a["hashes"] as PackedInt64Array).size(), (b["hashes"] as PackedInt64Array).size())
+	for t in n:
+		if a["hashes"][t] != b["hashes"][t]:
+			_fail("siege_tower: the repeat diverged at tick %d" % t)
+			return
+	var ev: Dictionary = a["ev"]
+	a.erase("hashes")
+	for k in ["pushing", "planted", "over", "drop1", "taken", "drop_d", "shoot", "lit", "burnt"]:
+		if not ev.has(k):
+			_fail("siege_tower: step %s never happened (%s)" % [k, str(a)])
+			return
+	if int(a["planted"]) != 1 or int(a["up"]) <= 0 or int(a["taken"]) != 1 or int(a["wrecked"]) != 1 \
+			or int(a["q0"]) != BattleSim.Q_PLANTED or int(a["q1"]) != BattleSim.Q_WRECKED or int(a["wall0"]) <= 0 \
+			or int(ev["side1"]) != 1:
+		_fail("siege_tower: %s" % str(a))
+		return
+	var snaps: Array = a["snaps"]
+	if snaps.size() < 3:
+		_fail("siege_tower: snapshots %s" % str(snaps))
+		return
+	for sn in snaps:
+		if not bool(sn[2]) or int(sn[3]) >= 0:
+			_fail("siege_tower: snapshot / restore %s: restored hash equal %s, copies diverged at %d" % [sn[1], str(sn[2]), int(sn[3])])
+			return
+	var cross: int = int(ev["over"]) - int(ev["planted"])
+	print("PASS siege_tower: pushed from tick %d at %d.%02d m/s (tick pace %d), planted at %d, %d men across in %d ticks (%d alive), the second tower put down at %d, taken by the defenders at %d (side %d), put down at %d, lit at %d, burnt down at %d; identical on repeat and across snapshot / restore while %s (ticks %s)" % [
+		ev["pushing"], int(ev["pace"]) * 10 / 1024, int(ev["pace"]) * 1000 / 1024 % 100, ev["pace"], ev["planted"],
+		a["up"], cross, a["alive0"], ev["drop1"], ev["taken"], ev["side1"], ev["drop_d"], ev["lit"], ev["burnt"],
+		", ".join(snaps.map(func(x): return str(x[1]))), ", ".join(snaps.map(func(x): return str(x[0])))])
 
 
 # ------------------------------------------------- engines as equipment ---

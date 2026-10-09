@@ -248,6 +248,12 @@ static func siege_help() -> String:
 			BattleSim.LADDER_TICKS[1] / 10, BattleSim.LADDER_TICKS[2] / 10, BattleSim.LADDER_TICKS[3] / 10,
 			BattleSim.UNBAR_MEN, BattleSim.UNBAR_TICKS / 10, BattleSim.RAM_CREW, BattleSim.RAM_DMG, BattleSim.RAM_HP],
 		"",
+		"Siege towers. Against walls 2-3, an army that has besieged the city for %d turns brings a rolling siege tower, after %d turns two (custom battles: Siege towers). They start at the attackers' edge. A foot unit pushes one (select it, tap the tower): at most %d.%d m/s with %d men or more, slower with fewer; it never runs, and the tower's roof keeps most arrows off the men behind it. Tap a stretch of wall with them selected: they push it to the wall, plant it (for the battle) and cross onto the walkway over its ramp, %d men abreast, a man a lane every %d.%d seconds whatever the walls' height; any foot unit (not pikes) ordered onto that stretch crosses it too, the enemy's as well. Drop (X) leaves it where it stands and anyone, the defenders too, may push it away; a planted tower stays. It is wooden (%d hit points): fire missiles set it burning, tower bolts and stones batter it, men standing at it on the ground smash it; when a planted tower falls the men still on it come back down." % [
+			int(CBattleL.TOWER_TURNS[0]), int(CBattleL.TOWER_TURNS[1]), BattleSim.EQ_PACE[BattleSim.EQ_TOWER] * 10 / 1024,
+			BattleSim.EQ_PACE[BattleSim.EQ_TOWER] * 100 / 1024 % 10, BattleSim.EQ_MEN[BattleSim.EQ_TOWER],
+			BattleSim.EQ_LANES[BattleSim.EQ_TOWER], BattleSim.EQ_CLIMB[BattleSim.EQ_TOWER] / 10,
+			BattleSim.EQ_CLIMB[BattleSim.EQ_TOWER] % 10, BattleSim.EQ_HP[BattleSim.EQ_TOWER]],
+		"",
 		"Taking the city. Besides breaking the defenders' army, the attackers win by holding the plaza: a unit of at least %d men in it, and no defending unit within %d m beyond it, for %d seconds in a row (the ring round the plaza fills) - then every defender breaks. Where there is a citadel (acropolis or Byrsa) its court is the place to hold, so the attackers must break two gates; its gate starts open and the defenders shut it when they fall back into it." % [
 			BattleSim.CAPTURE_MEN, BattleSim.CAPTURE_CLEAR / 1024, BattleSim.CAPTURE_TICKS / 10],
 		"",

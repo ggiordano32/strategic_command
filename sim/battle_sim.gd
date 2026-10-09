@@ -351,15 +351,49 @@ const ST_LADDER := 4             # ... climbing it (u_wall set, men go up a few 
 const EQ_LADDERS := 1            # a set of LADDER_SET ladders
 const EQ_RAM := 2                # a battering ram
 const EQ_WAGON := 3              # an ammunition wagon (q_tier: its UnitTypes.WAGONS row)
-## Pieces with a roof (arrows on the men at it are often stopped), by EQ_*.
-const EQ_ROOF: Array[int] = [0, 0, 1, 1]
+const EQ_TOWER := 4              # a rolling siege tower (the helepolis)
+# What each kind of piece is, by EQ_* (index 0 unused); the sim reads these
+# fields, never the kind (docs/DESIGN.md "Siege equipment as objects").
+## Pieces with a roof (arrows on the men at it are often stopped).
+const EQ_ROOF: Array[int] = [0, 0, 1, 1, 1]
+## Arrows landing on the carriers this near it are stopped by its roof RAM_ROOF_PCT of the time.
+const EQ_ROOF_R: Array[int] = [0, 0, RAM_ROOF_R, RAM_ROOF_R, 8 * M]
+## Full hit points (a wagon: its tier's).
+const EQ_HP: Array[int] = [0, LADDER_HP, RAM_HP, 0, 2000]
+## Planted against a stretch, men cross it this many abreast (0: never planted) ...
+const EQ_LANES: Array[int] = [0, LADDER_SET, 0, 0, 8]
+## ... the lanes this far apart along the wall ...
+const EQ_LANE_GAP: Array[int] = [0, LADDER_GAP, 0, 0, 768]
+## ... a man up each lane every this many ticks (0: LADDER_TICKS by wall level) ...
+const EQ_CLIMB: Array[int] = [0, 0, 0, 0, 16]
+## ... and only against walls of at least this level.
+const EQ_WALLS: Array[int] = [0, 1, 0, 0, 2]
+## Carried: at most this pace (0: none) and this % of the carriers' walk ...
+const EQ_PACE: Array[int] = [0, 0, RAM_WALK, 0, 62]
+const EQ_WALK_PCT: Array[int] = [0, LADDER_WALK_PCT, 100, 100, 100]
+## ... with fewer men than this (0: any number) proportionally slower (at least a quarter).
+const EQ_MEN: Array[int] = [0, 0, 0, 0, 40]
+## Either side may take it up (else only the side it belongs to).
+const EQ_ANY: Array[int] = [0, 0, 0, 1, 1]
+## Bolts and stones landing on it hit it.
+const EQ_SHOT: Array[int] = [0, 0, 1, 1, 1]
+## Planted, it can still be set alight and hit (planted ladders are out of reach).
+const EQ_EXPOSED: Array[int] = [0, 0, 0, 0, 1]
+## Planted, its middle stands this far out from the foot (its depth / 2).
+const EQ_DEPTH2: Array[int] = [0, 0, 0, 0, 3072]
+## Enemy foot standing at it on the ground smash it.
+const EQ_SMASH: Array[int] = [0, 0, 1, 0, 1]
+## A siege engine the defenders' towers and wall archers single out.
+const EQ_FOCUS: Array[int] = [0, 0, 1, 0, 1]
+## Wall archers with a fire kind single out its carriers (docs/AI.md 15).
+const EQ_FIRE_AT: Array[int] = [0, 0, 0, 0, 1]
 const Q_GROUND := 0              # lying where it was put down
 const Q_CARRIED := 1             # carried by unit q_unit (at its anchor)
 const Q_PLANTED := 2             # ladders against stretch q_seg (foot q_x, q_y; for the battle)
 const Q_WRECKED := 3             # a ram smashed (artillery, defenders at it)
 const RAM_CREW := 20             # men of the carrying unit who work the ram at most
-const RAM_WALK := 123            # a unit carrying the ram walks at most this fast (1.2 m/s) ...
-const LADDER_WALK_PCT := 80      # ... one carrying ladders at this % of its walk; neither runs
+const RAM_WALK := 123            # a unit carrying the ram walks at most this fast (1.2 m/s) (EQ_PACE) ...
+const LADDER_WALK_PCT := 80      # ... one carrying ladders at this % of its walk; neither runs (EQ_WALK_PCT)
 const CARRY_MELEE_PCT := 60      # a carrying unit's melee attack and defence (it defends poorly)
 const PICK_R := 6 * M            # the anchor this close to a piece on the ground picks it up
 const RAM_HP := 2500             # a ram's hit points ...
@@ -1059,6 +1093,10 @@ var stat_pickups: int = 0           # pieces picked up
 var stat_drops: int = 0             # ... put down (ordered, routing, the gate broken)
 var stat_planted: int = 0           # ladder sets planted against a wall
 var stat_ram_wrecked: int = 0
+var stat_stw_planted: int = 0       # siege towers planted against a wall
+var stat_stw_up: int = 0            # men across a siege tower onto the wall
+var stat_stw_wrecked: int = 0       # siege towers wrecked (burnt, smashed, shot)
+var stat_stw_taken: int = 0         # siege towers taken up by the other side
 var stat_ladder_up: int = 0         # men up a ladder
 var stat_ladder_done: int = 0       # units wholly up
 var stat_ak_shots: int = 0          # missiles and shots of a special ammunition kind
@@ -5026,14 +5064,15 @@ func _update_units() -> void:
 		var cls := u_cls[u]
 		var speed := t_run[ty] if u_run[u] != 0 else t_walk[ty]
 		if sg_on != 0 and u_carry[u] >= 0:
-			# Carrying siege equipment: no running, the ram's pace or a little
-			# below the walk with ladders; a wagon at its pace (its horses
-			# alive: theirs; none: the crew's).
+			# Carrying siege equipment: no running, the piece's pace (the
+			# ram's, a little below the walk with ladders, a siege tower's
+			# slower still and slower again with too few men pushing); a
+			# wagon at its pace (its horses alive: theirs; none: the crew's).
 			var cq := u_carry[u]
 			if q_kind[cq] == EQ_WAGON:
 				speed = UT.wagon_pace(q_tier[cq], q_hn[cq])
 			else:
-				speed = mini(t_walk[ty], RAM_WALK) if q_kind[cq] == EQ_RAM else t_walk[ty] * LADDER_WALK_PCT / 100
+				speed = carry_pace(t_walk[ty], q_kind[cq], u_alive[u])
 		var aspeed := (speed * 7) >> 3
 		# Woods under the anchor: slower, and (below) disorder and a lower
 		# momentum cap; settlement streets cap a charge too.
@@ -7266,7 +7305,7 @@ func _land(p: int) -> void:
 			stat_wall_cover += 1
 			return
 		if sg_on != 0 and u_carry[ub] >= 0 and EQ_ROOF[q_kind[u_carry[ub]]] != 0 \
-				and FM.approx_len(pos_x[best] - q_x[u_carry[ub]], pos_y[best] - q_y[u_carry[ub]]) <= RAM_ROOF_R \
+				and FM.approx_len(pos_x[best] - q_x[u_carry[ub]], pos_y[best] - q_y[u_carry[ub]]) <= EQ_ROOF_R[q_kind[u_carry[ub]]] \
 				and _rand() % 100 < RAM_ROOF_PCT:
 			return  # on the ram's (the wagon's) roof
 	if best >= 0:
@@ -7464,9 +7503,10 @@ func _ignite(p: int) -> void:
 				stat_ignite += 1
 			e_burn[e] = FIRE_TICKS
 	for q in n_eq:
-		if q_state[q] == Q_WRECKED or q_state[q] == Q_PLANTED:
+		if q_state[q] == Q_WRECKED or (q_state[q] == Q_PLANTED and EQ_EXPOSED[q_kind[q]] == 0):
 			continue  # (planted ladders stand against the wall, out of reach)
-		if absi(q_x[q] - x) > FIRE_R or absi(q_y[q] - y) > FIRE_R:
+		var qc := eq_centre(q)
+		if absi(qc.x - x) > FIRE_R or absi(qc.y - y) > FIRE_R:
 			continue
 		if _rand() % 100 < ch:
 			if q_burn[q] == 0:
@@ -7476,11 +7516,20 @@ func _ignite(p: int) -> void:
 
 ## Full hit points of piece q (fire chips a share of them).
 func _eq_hp0(q: int) -> int:
-	if q_kind[q] == EQ_RAM:
-		return RAM_HP
-	if q_kind[q] == EQ_LADDERS:
-		return LADDER_HP
-	return _wagon_hp0(q)
+	if q_kind[q] == EQ_WAGON:
+		return _wagon_hp0(q)
+	return EQ_HP[q_kind[q]]
+
+
+## The middle of piece q: where it lies or its carriers' anchor; planted,
+## EQ_DEPTH2 out from its foot (a siege tower's body before the wall).
+func eq_centre(q: int) -> Vector2i:
+	var k := q_kind[q]
+	if q_state[q] != Q_PLANTED or EQ_DEPTH2[k] == 0 or q_seg[q] < 0:
+		return Vector2i(q_x[q], q_y[q])
+	var dir := ws_dir[q_seg[q]]
+	return Vector2i(q_x[q] + FM.cos_a(dir) * EQ_DEPTH2[k] / FM.TRIG_ONE,
+		q_y[q] + FM.sin_a(dir) * EQ_DEPTH2[k] / FM.TRIG_ONE)
 
 
 ## Piece q is destroyed (burnt, smashed): put down by whoever carried it.
@@ -7488,6 +7537,13 @@ func _eq_wreck(q: int) -> void:
 	var u := q_unit[q]
 	if u >= 0 and u_carry[u] == q:
 		u_carry[u] = -1
+	if q_state[q] == Q_PLANTED:
+		# A planted siege tower falls: men still crossing it come back down.
+		for o in n_units:
+			if u_lq[o] == q and u_stair[o] == ST_LADDER and u_state[o] == U_READY:
+				_ladder_down(o)
+	if q_kind[q] == EQ_TOWER:
+		stat_stw_wrecked += 1
 	q_unit[q] = -1
 	q_state[q] = Q_WRECKED
 	q_hp[q] = 0
@@ -10052,6 +10108,11 @@ func _place_unit(u: int, wall: int) -> void:
 #   man-ticks of at most RAM_CREW men) and put it down once it breaks;
 #   walls-2/3 gates do not yield to swords at all (gate_hackable). Tower
 #   bolts and stones can wreck it, defenders standing at it smash it.
+# - The siege tower (EQ_TOWER): pushed like the ram (slower, slower again
+#   with fewer than EQ_MEN men), planted against a walls-2/3 stretch like a
+#   ladder set and crossed EQ_LANES abreast by any unit of either side;
+#   anyone takes it up off the ground; it burns and is battered even
+#   planted (EQ_EXPOSED). All of it by the per-kind EQ_* fields.
 # All of it is state hashed when the battle has any (sg_on).
 
 func _siege_unit_arrays() -> Array:
@@ -10199,11 +10260,12 @@ func _setup_equip(sc: Dictionary, units: Array) -> void:
 	q_stock.fill(0)
 	for q in lst.size():
 		var e: Array = lst[q]
-		q_kind[q] = EQ_RAM if int(e[0]) == EQ_RAM else EQ_LADDERS
+		var ek := int(e[0])
+		q_kind[q] = ek if ek == EQ_RAM or ek == EQ_TOWER else EQ_LADDERS
 		q_x[q] = clampi(int(e[1]) * M, 0, field_w)
 		q_y[q] = clampi(int(e[2]) * M, 0, field_h)
 		q_state[q] = Q_GROUND
-		q_hp[q] = RAM_HP if q_kind[q] == EQ_RAM else LADDER_HP
+		q_hp[q] = EQ_HP[q_kind[q]]
 		q_side[q] = 1 - city_def
 	for k in wag.size():
 		var q := lst.size() + k
@@ -10254,24 +10316,38 @@ func _wagon_lost(q: int) -> void:
 		q_stock[q * nak + a] = 0
 
 
+## The pace (per tick) of a unit walking at `walk` carrying a piece of kind
+## k (not a wagon) with `men` men: EQ_WALK_PCT of the walk, at most EQ_PACE,
+## and with fewer than EQ_MEN men that times men / EQ_MEN (at least a
+## quarter). Shared with the view.
+static func carry_pace(walk: int, k: int, men: int) -> int:
+	var sp := walk * EQ_WALK_PCT[k] / 100
+	if EQ_PACE[k] > 0:
+		sp = mini(sp, EQ_PACE[k])
+	var need := EQ_MEN[k]
+	if need > 0 and men < need:
+		sp = sp * maxi(men, need / 4) / need
+	return sp
+
+
 ## Unit u carries the ram.
 func carries_ram(u: int) -> bool:
 	var c := u_carry[u]
 	return c >= 0 and q_kind[c] == EQ_RAM
 
 
-## What unit u carries: 0 nothing, EQ_LADDERS or EQ_RAM.
+## What unit u carries: 0 nothing, else its kind (EQ_*).
 static func carrying(sim, u: int) -> int:
 	if u >= sim.u_carry.size() or sim.u_carry[u] < 0:
 		return 0
 	return sim.q_kind[sim.u_carry[u]]
 
 
-## Ladders unit u goes up by (a set: LADDER_SET), 0 if it is not on a ladder move.
+## Ladders unit u goes up by (a set: LADDER_SET; a siege tower: its lanes), 0 if it is not on a ladder move.
 static func ladders_of(sim, u: int) -> int:
 	if u >= sim.u_lq.size() or sim.u_lq[u] < 0:
 		return 0
-	return LADDER_SET
+	return EQ_LANES[sim.q_kind[sim.u_lq[u]]]
 
 
 ## Why unit u cannot pick up piece q ("" if it can): attacking foot (not
@@ -10280,13 +10356,16 @@ static func ladders_of(sim, u: int) -> int:
 static func pickup_refusal(sim, u: int, q: int) -> String:
 	if q < 0 or q >= sim.n_eq:
 		return "Nothing to pick up there"
-	var wag: bool = sim.q_kind[q] == EQ_WAGON
-	if sim.q_side[q] != sim.u_side[u] and not wag:
+	var k: int = sim.q_kind[q]
+	var wag: bool = k == EQ_WAGON
+	if sim.q_side[q] != sim.u_side[u] and EQ_ANY[k] == 0:
 		return "Only the attackers use siege equipment"
 	if sim.q_state[q] == Q_PLANTED:
+		if EQ_EXPOSED[k] != 0:
+			return "A planted siege tower stays against the wall: order foot onto that wall to cross"
 		return "Planted ladders stay against the wall: order foot onto that wall to climb"
 	if sim.q_state[q] == Q_WRECKED:
-		return "The wagon is wrecked" if wag else "The ram is wrecked"
+		return "The wagon is wrecked" if wag else ("The siege tower is wrecked" if EQ_LANES[k] > 0 else "The ram is wrecked")
 	if sim.q_state[q] == Q_CARRIED:
 		if wag and sim.u_side[sim.q_unit[q]] != sim.u_side[u]:
 			return "The enemy has this wagon: drive its men off first"
@@ -10328,9 +10407,12 @@ func _pick_check(u: int) -> void:
 	u_run[u] = 0
 	u_refill[u] = 0
 	u_forage[u] = 0
-	if q_kind[q] == EQ_WAGON and q_side[q] != u_side[u]:
+	if EQ_ANY[q_kind[q]] != 0 and q_side[q] != u_side[u]:
 		q_side[q] = u_side[u]  # taken over by the other side
-		stat_wagon_taken += 1
+		if q_kind[q] == EQ_WAGON:
+			stat_wagon_taken += 1
+		else:
+			stat_stw_taken += 1
 	if u_order[u] == O_MOVE:
 		u_order[u] = O_NONE
 		u_dx[u] = u_ax[u]
@@ -10359,7 +10441,6 @@ func _drop(u: int) -> void:
 ## ground is smashed by defenders standing at it; units going to pick a
 ## piece up take it once there.
 func _update_equip() -> void:
-	var per: int = LADDER_TICKS[city_walls]
 	for q in n_eq:
 		var st := q_state[q]
 		if st == Q_CARRIED:
@@ -10374,15 +10455,15 @@ func _update_equip() -> void:
 				q_x[q] = u_ax[u]
 				q_y[q] = u_ay[u]
 		elif st == Q_PLANTED:
-			q_acc[q] = mini(q_acc[q] + LADDER_SET, per)
-		elif st == Q_GROUND and q_kind[q] == EQ_RAM:
-			# Defenders at a ram left on the ground smash it (a sally).
+			q_acc[q] = mini(q_acc[q] + EQ_LANES[q_kind[q]], climb_per(self, q))
+		elif st == Q_GROUND and EQ_SMASH[q_kind[q]] != 0:
+			# The enemy at a ram or siege tower left on the ground smash it (a sally).
 			var qx := q_x[q]
 			var qy := q_y[q]
 			var r := ENGINE_NEAR
 			var men := 0
 			for u in n_units:
-				if u_side[u] != city_def or u_state[u] != U_READY or u_alive[u] <= 0 or u_wall[u] > 0:
+				if u_side[u] == q_side[q] or u_state[u] != U_READY or u_alive[u] <= 0 or u_wall[u] > 0:
 					continue
 				if u_maxx[u] < qx - r or u_minx[u] > qx + r or u_maxy[u] < qy - r or u_miny[u] > qy + r:
 					continue
@@ -10395,7 +10476,10 @@ func _update_equip() -> void:
 				q_hp[q] -= RAM_WRECK * mini(men, 6)
 				if q_hp[q] <= 0:
 					q_state[q] = Q_WRECKED
-					stat_ram_wrecked += 1
+					if q_kind[q] == EQ_RAM:
+						stat_ram_wrecked += 1
+					else:
+						stat_stw_wrecked += 1
 	for u in n_units:
 		if u_pick[u] >= 0 and u_pick[u] < PICK_ENG:
 			_pick_check(u)
@@ -10406,9 +10490,11 @@ func _update_equip() -> void:
 func _ram_hit(x: int, y: int, dmg: int) -> void:
 	for q in n_eq:
 		var kq := q_kind[q]
-		if (kq != EQ_RAM and kq != EQ_WAGON) or (q_state[q] != Q_GROUND and q_state[q] != Q_CARRIED):
+		var st := q_state[q]
+		if EQ_SHOT[kq] == 0 or (st != Q_GROUND and st != Q_CARRIED and (st != Q_PLANTED or EQ_EXPOSED[kq] == 0)):
 			continue
-		if absi(q_x[q] - x) > RAM_HIT_R or absi(q_y[q] - y) > RAM_HIT_R:
+		var qc := eq_centre(q)
+		if absi(qc.x - x) > RAM_HIT_R or absi(qc.y - y) > RAM_HIT_R:
 			continue
 		if kq == EQ_WAGON and q_hn[q] > 0:
 			_horse_wound(q, dmg)  # (the team in the traces takes it too)
@@ -10417,6 +10503,13 @@ func _ram_hit(x: int, y: int, dmg: int) -> void:
 			_eq_wreck(q)
 			if kq == EQ_RAM:
 				stat_ram_wrecked += 1
+
+
+## Ticks between men up each lane of planted piece q: its kind's EQ_CLIMB,
+## else (ladders) LADDER_TICKS by wall level.
+static func climb_per(sim, q: int) -> int:
+	var c: int = EQ_CLIMB[sim.q_kind[q]]
+	return c if c > 0 else LADDER_TICKS[sim.city_walls]
 
 
 ## Swords can break gate g (walls 0-1: GATE_HACK_BY_WALLS of a few per cent
@@ -10433,19 +10526,32 @@ static func gate_hackable(sim, _g: int) -> bool:
 static func may_ladder(sim, u: int) -> bool:
 	if sim.n_eq == 0 or sim.city_on == 0 or sim.ws_x0.size() == 0:
 		return false
-	if sim.u_side[u] == sim.city_def or sim.u_wall[u] > 0:
+	if sim.u_wall[u] > 0:
 		return false
+	var att: bool = sim.u_side[u] != sim.city_def
 	var c: int = sim.u_cls[u]
 	var k := carrying(sim, u)
-	if k == EQ_RAM or k == EQ_WAGON:
-		return false
-	if k == EQ_LADDERS:
+	if k != 0:
+		if EQ_LANES[k] == 0 or sim.city_walls < EQ_WALLS[k] or not att:
+			return false
 		return c == UT.CLS_INF or c == UT.CLS_MISSILE or c == UT.CLS_PIKE
 	if c != UT.CLS_INF and c != UT.CLS_MISSILE:
 		return false
+	var ra: int = -2
 	for q in sim.n_eq:
-		if sim.q_state[q] == Q_PLANTED and sim.q_side[q] == sim.u_side[u]:
+		if sim.q_state[q] != Q_PLANTED:
+			continue
+		if att and sim.q_side[q] == sim.u_side[u]:
 			return true
+		if EQ_ANY[sim.q_kind[q]] != 0:
+			# A planted siege tower serves either side: defenders only from
+			# outside the walls (the tower's foot on their own ground).
+			if att:
+				return true
+			if ra == -2:
+				ra = sim.reach_at(sim.u_ax[u], sim.u_ay[u])
+			if ra >= 0 and sim.reach_at(sim.q_x[q], sim.q_y[q]) == ra:
+				return true
 	return false
 
 
@@ -10461,7 +10567,8 @@ static func ladder_set_for(sim, u: int, sg: int, x: int, y: int) -> int:
 		return c if ladder_ok(sim, u, sg, x, y) else -1
 	var ra: int = sim.reach_at(sim.u_ax[u], sim.u_ay[u])
 	for q in sim.n_eq:
-		if sim.q_state[q] == Q_PLANTED and sim.q_seg[q] == sg and sim.q_side[q] == sim.u_side[u] \
+		if sim.q_state[q] == Q_PLANTED and sim.q_seg[q] == sg \
+				and (sim.q_side[q] == sim.u_side[u] or EQ_ANY[sim.q_kind[q]] != 0) \
 				and ra >= 0 and sim.reach_at(sim.q_x[q], sim.q_y[q]) == ra:
 			return q
 	return -1
@@ -10591,6 +10698,8 @@ func _ladder_start(u: int) -> void:
 		q_wy[q] = u_wy[u]
 		q_acc[q] = 0
 		stat_planted += 1
+		if q_kind[q] == EQ_TOWER:
+			stat_stw_planted += 1
 	if q < 0 or q_state[q] != Q_PLANTED or u_cls[u] == UT.CLS_PIKE:
 		u_stair[u] = 0  # (pikes plant the ladders but do not climb)
 		u_lq[u] = -1
@@ -10621,7 +10730,8 @@ func _ladder_start(u: int) -> void:
 ## along the wall about the unit's foot point).
 func _ladder_k_foot(u: int, k: int, n_l: int) -> Vector2i:
 	var dir := ws_dir[u_sseg[u]]
-	var off := (2 * k - (n_l - 1)) * LADDER_GAP / 2
+	var gap: int = EQ_LANE_GAP[q_kind[u_lq[u]]] if u_lq[u] >= 0 else LADDER_GAP
+	var off := (2 * k - (n_l - 1)) * gap / 2
 	return Vector2i(u_lfx[u] - FM.sin_a(dir) * off / FM.TRIG_ONE, u_lfy[u] + FM.cos_a(dir) * off / FM.TRIG_ONE)
 
 
@@ -10629,7 +10739,7 @@ func _ladder_k_foot(u: int, k: int, n_l: int) -> Vector2i:
 ## along its stretch about the set's foot). For the view.
 func set_ladder_foot(q: int, k: int) -> Vector2i:
 	var dir := ws_dir[q_seg[q]]
-	var off := (2 * k - (LADDER_SET - 1)) * LADDER_GAP / 2
+	var off := (2 * k - (EQ_LANES[q_kind[q]] - 1)) * EQ_LANE_GAP[q_kind[q]] / 2
 	return Vector2i(q_x[q] - FM.sin_a(dir) * off / FM.TRIG_ONE, q_y[q] + FM.cos_a(dir) * off / FM.TRIG_ONE)
 
 
@@ -10677,10 +10787,10 @@ func _ladder_step(u: int) -> void:
 		stat_ladder_done += 1
 		return
 	var n_l := maxi(ladders_of(self, u), 1)
-	var per: int = LADDER_TICKS[city_walls]
 	var q := u_lq[u]
-	if q < 0 or q_acc[q] < per or nxt < 0:
+	if q < 0 or q_state[q] != Q_PLANTED or q_acc[q] < climb_per(self, q) or nxt < 0:
 		return
+	var per := climb_per(self, q)
 	q_acc[q] -= per
 	var sg := u_sseg[u]
 	var lf := _ladder_k_foot(u, up % n_l, n_l)
@@ -10695,6 +10805,8 @@ func _ladder_step(u: int) -> void:
 	target[nxt] = -1
 	u_settled[u] = 0
 	stat_ladder_up += 1
+	if EQ_EXPOSED[q_kind[q]] != 0:
+		stat_stw_up += 1
 
 
 ## An attacking unit up a ladder (or climbing) comes back down the ladders

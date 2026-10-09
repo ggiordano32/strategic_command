@@ -123,6 +123,9 @@ const ST_LADDER := 4
 const ST_LADDER_GO := 5
 const EQ_LADDERS := 1
 const EQ_RAM := 2
+const EQ_TOWER := 4
+const TOWER_WALLS := 2  # (BattleSim.EQ_WALLS of the siege tower)
+const WALL_TOWER_SHOT := -100000  # u_ai_y of a wall unit told to shoot at a siege tower's crew (less its index)
 const Q_GROUND := 0
 const Q_CARRIED := 1
 const Q_PLANTED := 2
@@ -490,6 +493,8 @@ static func _defender(sim, u: int) -> void:
 			return
 		if sim.u_fire[u] == 0 and sim.u_ammo[u] > 0:
 			BattleAI._order(sim, u, {"type": ORDER_FIRE, "on": 1}, 21)
+		if sim.n_eq > 0 and _wall_fire_tower(sim, u, kn):
+			return
 		_off_wall(sim, u)
 		return
 	if mode == A_CIT:
@@ -508,6 +513,38 @@ static func _defender(sim, u: int) -> void:
 		_plaza_unit(sim, u)
 		return
 	# Not yet classified (the army thinks first on the same tick).
+
+
+## A wall missile unit with fire missiles left (AK_FIRE_WOOD) shoots at the
+## nearest enemy unit in its reach pushing a siege tower (the fire kind is
+## chosen by ammo_pick: its target carries a wooden piece); once none is,
+## it goes back to fire at will. True while it shoots at one.
+static func _wall_fire_tower(sim, u: int, kn: PackedInt32Array) -> bool:
+	var best := -1
+	var sk: int = sim.spec_kind(u)
+	if kn[AP.AK_FIRE_WOOD] != 0 and sim.u_cls[u] == UT.CLS_MISSILE and sk >= 0 and UT.ammo_stat(sk, "fire") > 0 \
+			and sim.special_left(u) > 0:
+		var bd := 0
+		var rng: int = sim.mrange(u)
+		for o in sim.n_units:
+			if sim.u_side[o] == sim.u_side[u] or sim.u_state[o] != U_READY or sim.carrying(sim, o) != EQ_TOWER:
+				continue
+			if not sim._in_range(u, o, rng):
+				continue
+			var d := BattleAI._d(sim.u_cx[o] - sim.u_cx[u], sim.u_cy[o] - sim.u_cy[u])
+			if best < 0 or d < bd:
+				best = o
+				bd = d
+	if best >= 0:
+		if sim.u_order[u] != O_ATTACK or sim.u_target[u] != best:
+			BattleAI._attack(sim, u, best, 0)
+		sim.u_ai_y[u] = WALL_TOWER_SHOT - best  # (marked: it was told to by this)
+		return true
+	if sim.u_ai_y[u] <= WALL_TOWER_SHOT:
+		sim.u_ai_y[u] = 0
+		if sim.u_order[u] == O_ATTACK:
+			BattleAI._order(sim, u, {"type": 3}, 22)  # halt: fire at will again
+	return false
 
 
 ## A wall unit whose gate is open or broken with attackers in the town
@@ -2197,6 +2234,37 @@ static func _assign_equip(sim, side: int, phase: int, kn: PackedInt32Array) -> v
 				BattleAI._count(sim, side, AP.C_SIEGE)
 	if phase != SP_APPROACH or g < 0:
 		return
+	# Siege towers (walls 2-3): each of ours on the ground goes at once (it
+	# is slow) to the free infantry unit with the most men (S_TOWER_CREW;
+	# Easy: the nearest, which may be too few to push it well); a planted
+	# one gets S_TOWER_FOLLOW more infantry crossing it.
+	if sim.city_walls >= TOWER_WALLS:
+		for q in sim.n_eq:
+			if sim.q_kind[q] != EQ_TOWER or sim.q_side[q] != side:
+				continue
+			if sim.q_state[q] == Q_PLANTED:
+				_follow(sim, side, q, kn[AP.S_TOWER_FOLLOW])
+				continue
+			if sim.q_state[q] != Q_GROUND and sim.q_state[q] != Q_CARRIED:
+				continue
+			if _holder(sim, side, q) >= 0:
+				continue
+			var best := -1
+			var bk := 0
+			for u in sim.n_units:
+				if sim.u_cls[u] != UT.CLS_INF or not _equip_free(sim, u, side, q):
+					continue
+				var k: int = BattleAI._d(sim.u_cx[u] - sim.q_x[q], sim.u_cy[u] - sim.q_y[q]) / M
+				if kn[AP.S_TOWER_CREW] != 0:
+					k = (10000 - sim.u_alive[u]) * 10 + _foot_key(sim, u)
+				k = k * 1000 + u
+				if best < 0 or k < bk:
+					best = u
+					bk = k
+			if best >= 0:
+				BattleAI._set_mode(sim, best, A_LADDER)
+				sim.u_ai_x[best] = q + 1
+				BattleAI._count(sim, side, AP.C_SIEGE)
 	if sim.city_walls < kn[AP.S_LADDER_WALLS] and _art_ready(sim, side):
 		return  # the engines will have the gate down before the ladders are up
 	# Ladder parties: the sets on the ground or carried, heaviest infantry
@@ -2208,33 +2276,13 @@ static func _assign_equip(sim, side: int, phase: int, kn: PackedInt32Array) -> v
 	for u in sim.n_units:
 		if sim.u_side[u] == side and sim.u_state[u] == U_READY and sim.u_ai[u] == A_LADDER and sim.u_ai_x[u] > 0:
 			var q0: int = sim.u_ai_x[u] - 1
-			if sim.q_state[q0] != Q_PLANTED:
+			if sim.q_state[q0] != Q_PLANTED and sim.q_kind[q0] == EQ_LADDERS:
 				parties += 1
 	for q in sim.n_eq:
 		if sim.q_kind[q] != EQ_LADDERS or sim.q_side[q] != side:
 			continue
 		if sim.q_state[q] == Q_PLANTED:
-			# Followers: more infantry up the planted set.
-			var on := 0
-			for u in sim.n_units:
-				if sim.u_side[u] == side and sim.u_state[u] == U_READY and sim.u_ai[u] == A_LADDER \
-						and sim.u_ai_x[u] == q + 1:
-					on += 1
-			if on >= 1 + kn[AP.S_LADDER_FOLLOW]:
-				continue
-			var fb := -1
-			var fd := 0
-			for u in sim.n_units:
-				if sim.u_cls[u] != UT.CLS_INF or sim.u_ai[u] != A_WAIT or not _equip_free(sim, u, side, q):
-					continue
-				var d := BattleAI._d(sim.u_cx[u] - sim.q_x[q], sim.u_cy[u] - sim.q_y[q])
-				if fb < 0 or d < fd:
-					fb = u
-					fd = d
-			if fb >= 0:
-				BattleAI._set_mode(sim, fb, A_LADDER)
-				sim.u_ai_x[fb] = q + 1
-				BattleAI._count(sim, side, AP.C_SIEGE)
+			_follow(sim, side, q, kn[AP.S_LADDER_FOLLOW])  # more infantry up the planted set
 			continue
 		if sim.q_state[q] != Q_GROUND and sim.q_state[q] != Q_CARRIED:
 			continue
@@ -2254,6 +2302,31 @@ static func _assign_equip(sim, side: int, phase: int, kn: PackedInt32Array) -> v
 		BattleAI._set_mode(sim, best, A_LADDER)
 		sim.u_ai_x[best] = q + 1
 		parties += 1
+		BattleAI._count(sim, side, AP.C_SIEGE)
+
+
+## Followers for planted piece q (ladders, a siege tower): while fewer than
+## 1 + n units of ours are on it, the nearest waiting infantry is sent up.
+static func _follow(sim, side: int, q: int, n: int) -> void:
+	var on := 0
+	for u in sim.n_units:
+		if sim.u_side[u] == side and sim.u_state[u] == U_READY and sim.u_ai[u] == A_LADDER \
+				and sim.u_ai_x[u] == q + 1:
+			on += 1
+	if on >= 1 + n:
+		return
+	var fb := -1
+	var fd := 0
+	for u in sim.n_units:
+		if sim.u_cls[u] != UT.CLS_INF or sim.u_ai[u] != A_WAIT or not _equip_free(sim, u, side, q):
+			continue
+		var d := BattleAI._d(sim.u_cx[u] - sim.q_x[q], sim.u_cy[u] - sim.q_y[q])
+		if fb < 0 or d < fd:
+			fb = u
+			fd = d
+	if fb >= 0:
+		BattleAI._set_mode(sim, fb, A_LADDER)
+		sim.u_ai_x[fb] = q + 1
 		BattleAI._count(sim, side, AP.C_SIEGE)
 
 
@@ -2383,8 +2456,9 @@ static func _escalade(sim, u: int, g: int, kn: PackedInt32Array) -> void:
 			BattleAI._order(sim, u, {"type": ORDER_ATTACK, "target": -1, "gate": tg, "run": 1}, 0)
 		return
 	var q: int = sim.u_ai_x[u] - 1
-	if q < 0 or q >= sim.n_eq or sim.q_kind[q] != EQ_LADDERS or sim.q_state[q] == Q_WRECKED \
-			or (sim.q_state[q] == Q_CARRIED and sim.q_unit[q] != u):
+	if q < 0 or q >= sim.n_eq or (sim.q_kind[q] != EQ_LADDERS and sim.q_kind[q] != EQ_TOWER) \
+			or sim.q_state[q] == Q_WRECKED or (sim.q_state[q] == Q_CARRIED and sim.q_unit[q] != u) \
+			or sim.q_side[q] != sim.u_side[u]:
 		_release(sim, u)
 		return
 	if sim.q_state[q] == Q_GROUND:
@@ -2397,7 +2471,7 @@ static func _escalade(sim, u: int, g: int, kn: PackedInt32Array) -> void:
 		return
 	var p := Vector3i(sim.q_wx[q], sim.q_wy[q], sim.q_seg[q])
 	if sim.q_state[q] == Q_CARRIED:
-		if not _ladder_time(sim, sim.u_side[u], g, kn):
+		if sim.q_kind[q] != EQ_TOWER and not _ladder_time(sim, sim.u_side[u], g, kn):
 			# Ladders ready: wait with the foot.
 			var rk := _rank(sim, u, func(o): return sim.u_cls[o] == UT.CLS_INF or sim.u_cls[o] == UT.CLS_PIKE)
 			var spot := _gate_point(sim, g, kn[AP.S_STAGE_OUT], _spread(rk.x, rk.y, kn[AP.S_FOOT_SPREAD]))
@@ -2461,7 +2535,7 @@ static func _ladder_spot(sim, u: int, g: int, kn: PackedInt32Array) -> Vector3i:
 
 
 ## A tower's engine (defenders): with S_TOWER_FOCUS it picks, in reach and
-## safe to shoot, the ram, then batteries, then men at a gate's face, on a
+## safe to shoot, the ram or a siege tower's crew, then batteries, then men at a gate's face, on a
 ## ladder or up on the wall (nearest first in each class); else it fires at
 ## will.
 static func _tower(sim, u: int) -> void:
@@ -2480,7 +2554,8 @@ static func _tower(sim, u: int) -> void:
 		if sim.u_side[o] == sim.u_side[u] or sim.u_state[o] != U_READY or sim.u_alive[o] <= 0:
 			continue
 		var cls := 0
-		if sim.carrying(sim, o) == EQ_RAM:
+		var ck: int = sim.carrying(sim, o)
+		if ck == EQ_RAM or ck == EQ_TOWER:
 			cls = 3
 		elif sim.u_cls[o] == UT.CLS_ART:
 			cls = 2

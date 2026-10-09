@@ -51,8 +51,9 @@ func _init() -> void:
 	storm["map"]["level"] = 2
 	storm["map"]["ladders"] = 1
 	storm["map"]["ram"] = 1
+	storm["map"]["towers"] = 2
 	storm["time"] = 1800
-	setups["settlement, players storm with ladders and a ram, 30 min"] = storm
+	setups["settlement, players storm with ladders, a ram and two siege towers, 30 min"] = storm
 	var coop := CS.default_setup(7)
 	coop["sides"][0]["armies"].append({"ctrl": "p2", "units": [["heavy2", 100], ["cav3", 60]]})
 	setups["co-op"] = coop
@@ -91,16 +92,39 @@ func _init() -> void:
 	var sb := CS.build(storm)
 	var lad := 0
 	var ram := 0
+	var tws := 0
 	for e in (sb["scenario"].get("equip", []) as Array):
 		if int(e[0]) == BattleSim.EQ_LADDERS:
 			lad += 1
 		elif int(e[0]) == BattleSim.EQ_RAM:
 			ram += 1
+		elif int(e[0]) == BattleSim.EQ_TOWER:
+			tws += 1
 	var n_sc: int = (sb["scenario"]["units"] as Array).size()
-	if lad != CS.LADDER_SETS or ram != 1 or (sb["home"] as Array).size() != n_sc + 1 \
+	if lad != CS.LADDER_SETS or ram != 1 or tws != 2 or (sb["home"] as Array).size() != n_sc + 1 \
 			or int(sb["scenario"].get("time_limit", 0)) != 1800:
-		_fail("storm: %d ladder sets, %d rams, %d home entries for %d units, time limit %s" % [lad, ram,
-			(sb["home"] as Array).size(), n_sc, str(sb["scenario"].get("time_limit", 0))])
+		_fail("storm: %d ladder sets, %d rams, %d siege towers, %d home entries for %d units, time limit %s" % [lad, ram,
+			tws, (sb["home"] as Array).size(), n_sc, str(sb["scenario"].get("time_limit", 0))])
+	else:
+		var tsim := BattleSim.new()
+		tsim.setup(sb["scenario"], int(sb["seed"]))
+		var tq := 0
+		for q in tsim.n_eq:
+			if tsim.q_kind[q] == BattleSim.EQ_TOWER and tsim.q_state[q] == BattleSim.Q_GROUND \
+					and tsim.q_hp[q] == BattleSim.EQ_HP[BattleSim.EQ_TOWER]:
+				tq += 1
+		# Walls 1: the option gives no towers (they serve walls 2-3).
+		var low: Dictionary = JSON.parse_string(JSON.stringify(storm))
+		low["map"]["walls"] = 1
+		var lb := CS.build(low)
+		var low_t := 0
+		for e in (lb["scenario"].get("equip", []) as Array):
+			if int(e[0]) == BattleSim.EQ_TOWER:
+				low_t += 1
+		if tq != 2 or low_t != 0:
+			_fail("storm: %d siege towers on the ground at the start (walls 1: %d)" % [tq, low_t])
+		else:
+			print("PASS storm with siege towers: 2 on the ground at the start (%d hit points each), none at walls 1" % BattleSim.EQ_HP[BattleSim.EQ_TOWER])
 	_check_ammo(ammo, "field")
 	_check_ammo(ammo_town, "settlement")
 	_check_light_missile()

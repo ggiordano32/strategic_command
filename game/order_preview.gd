@@ -125,6 +125,7 @@ func plan_from(u: int, d: Dictionary, pending: bool) -> Dictionary:
 		out["seg"] = wall - 1
 		out["slots"] = BattleSim.wall_slots(sim, wall - 1, sim.u_ax[u], sim.u_ay[u], alive, ty)
 		out["foot"] = Vector2i(sim.u_lfx[u], sim.u_lfy[u])
+		out["tower"] = sim.u_lq[u] >= 0 and BattleSim.EQ_EXPOSED[sim.q_kind[sim.u_lq[u]]] != 0
 		return out
 	var lad_go := stair == BattleSim.ST_LADDER_GO and not pending
 	if wall == 0 and int(d["order"]) == BattleSim.O_MOVE and (lad_go or BattleSim.may_ladder(sim, u)):
@@ -158,6 +159,7 @@ func plan_from(u: int, d: Dictionary, pending: bool) -> Dictionary:
 				lf = Vector3i(sim.q_x[lq], sim.q_y[lq], 1)
 			out["mode"] = "ladder"
 			out["plant"] = lq >= 0 and sim.q_state[lq] != BattleSim.Q_PLANTED
+			out["tower"] = lq >= 0 and BattleSim.EQ_EXPOSED[sim.q_kind[lq]] != 0
 			out["seg"] = lsg
 			out["foot"] = Vector2i(lf.x, lf.y)
 			var ap := BattleSim.ladder_approach(sim, lsg, lf.x, lf.y)
@@ -278,12 +280,16 @@ func wall_refusal(u: int, x: int, y: int) -> String:
 		if BattleSim.ladder_set_for(sim, u, ws.z, ws.x, ws.y) < 0:
 			if kc == BattleSim.EQ_LADDERS:
 				return "No ladders there: a tower, a gate, the sea, the citadel or out of reach"
-			return "No ladders planted on that wall: a unit carrying a set plants them"
+			if kc != 0:
+				return "The siege tower cannot stand there: a tower, a gate, the sea, the citadel or out of reach"
+			return "No ladders or siege tower planted on that wall: a unit carrying one plants it"
 		return ""
 	if not BattleSim.can_man_walls(sim, u):
 		if sim.u_side[u] != sim.city_def:
 			if kc == BattleSim.EQ_RAM:
 				return "Not with the ram: tap a gate to batter it (or Drop it)"
+			if kc != 0 and BattleSim.EQ_LANES[kc] > 0 and sim.city_walls < BattleSim.EQ_WALLS[kc]:
+				return "These walls are too low for a siege tower: use ladders (or Drop it)"
 			if sim.u_wall[u] > 0:
 				return "Down into the town first (Come down), or along this wall"
 			var c0: int = sim.u_cls[u]

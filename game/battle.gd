@@ -1425,6 +1425,8 @@ func _tap_equip(q: int, w: Vector2) -> void:
 	var what := "the ram" if sim.q_kind[q] == BattleSim.EQ_RAM else "the ladders"
 	if sim.q_kind[q] == BattleSim.EQ_WAGON:
 		what = "the wagon"
+	elif BattleSim.EQ_EXPOSED[sim.q_kind[q]] != 0:
+		what = "the siege tower"
 	overlay.flash("Taking " + what, w)
 
 
@@ -1675,7 +1677,7 @@ func _tap_gate(g: int, w: Vector2) -> bool:
 		if k == BattleSim.EQ_RAM:
 			ok = true
 			ram = true
-		elif k == BattleSim.EQ_LADDERS:
+		elif k != 0 and BattleSim.EQ_LANES[k] > 0:
 			ladders = true
 		elif c == UT.CLS_ART or (inside and c != UT.CLS_CAV):
 			ok = true
@@ -1701,7 +1703,7 @@ func _tap_gate(g: int, w: Vector2) -> bool:
 	elif beast and sent > 0:
 		overlay.flash("The elephants batter the gate", w)
 	elif sent == 0 and ladders:
-		overlay.flash("Carrying ladders: tap a stretch of wall to plant them", w)
+		overlay.flash("Carrying ladders or a siege tower: tap a stretch of wall to plant it", w)
 	elif sent == 0 and iron:
 		overlay.flash("Swords cannot break this iron-bound gate: a ram or artillery breaks it", w)
 	elif sent == 0:

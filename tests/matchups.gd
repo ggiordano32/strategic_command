@@ -1540,7 +1540,9 @@ func _garrison_defence() -> void:
 ## defenders' garrison plus field army as strong as SIEGE_ARMY), ring and
 ## polis on flat ground, walls 1-3, 10 seeds, both AI sides Average
 ## (--skill=A:B), the attacker with ladders and a ram (row 0: a siege of two
-## turns) or artillery only (row 1: an assault on arrival). Targets
+## turns) or artillery only (row 1: an assault on arrival); at walls 2-3
+## also row 2: ladders, a ram and two siege towers (a siege of four turns).
+## Targets
 ## (docs/STATUS.md): walls 3 about 25 % attacker wins, walls 1 about 45 %
 ## (row 0); row 1 lower at walls 2-3. --plans / --walls / --rows shard it;
 ## --time-limit=S sets the battle time limit.
@@ -1553,10 +1555,14 @@ func _fair_sieges() -> void:
 		for walls in [1, 2, 3]:
 			if not walls_only.is_empty() and not walls_only.has(walls):
 				continue
-			for row in 2:
+			for row in 3:
 				if not rows_only.is_empty() and not rows_only.has(row):
 					continue
+				if row == 2 and walls < 2:
+					continue  # (siege towers serve walls 2-3)
 				var eq := {"ladders": 3, "ram": 1} if row == 0 else {}  # (a siege of two turns)
+				if row == 2:
+					eq = {"ladders": 3, "ram": 1, "towers": 2}  # (a siege of four turns)
 				var aw := 0
 				var dr := 0
 				var withdrew := 0
@@ -1608,7 +1614,7 @@ func _fair_sieges() -> void:
 						else:
 							gate_by[2] += 1
 				print("%-6s walls %d %-15s attacker %3d%%, defender %3d%%, draws %3d%% (withdrew %d) | %4.1f min (max %4.1f) | killed att %5.1f def %5.1f | ladder men up %5.1f, gates opened from inside %d, ram blows %4.1f, gate broken by art/ram/hack %d/%d/%d | towers hit %4.1f, down %3.1f, killed %5.1f | captures %d/%d" % [
-					spec[0], walls, "ladders + ram:" if row == 0 else "artillery only:", aw * 100 / n_runs,
+					spec[0], walls, ["ladders + ram:", "artillery only:", "+ 2 towers:"][row], aw * 100 / n_runs,
 					(n_runs - aw - dr) * 100 / n_runs, dr * 100 / n_runs, withdrew, t_sum / n_runs, t_max,
 					att_lost / n_runs, def_lost / n_runs, float(lad) / n_runs, unbar, float(blows) / n_runs,
 					gate_by[0], gate_by[1], gate_by[2], float(tw_hits) / n_runs, float(tw_down) / n_runs, float(tw_kills) / n_runs, caps, n_runs])

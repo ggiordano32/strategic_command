@@ -731,6 +731,14 @@ battle cards), `campaign_screen.gd` (move toast), `map_overlay.gd`
   none yet (artillery only); ladders next turn, a ram in 2 turns" /
   "2 sets of ladders; a ram next turn" / "3 sets of ladders and a ram"; the
   lay-siege toast says "Ladders after a turn of siege, a ram after two".
+  Siege towers (2026-10-09): against walls 2-3, a siege of three turns
+  or more also brings a siege tower and of four two (`CBattle.TOWER_TURNS`
+  [3, 4], `TOWER_WALLS` 2; `siege_equipment` "towers"); panel line "3 sets
+  of ladders and a ram; a siege tower next turn" / "3 sets of ladders, a
+  ram and a siege tower; a second next turn"; the battle screen's
+  equipment line lists them. Still derived, no state (VERSION 6); the
+  auto-resolve formula and the campaign AI do not read the equipment
+  (campaign_sim hashes unchanged).
 - **Battle time limit** (2026-10-07): `settings.time_limit` in seconds
   (new-campaign "Battle time: 15 / 20 / 30 / 45 min", default 15; stored
   only when longer, read with a default of 900, so no format change) goes

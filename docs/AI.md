@@ -1227,6 +1227,22 @@ sends that many extra infantry up each planted set; `S_LADDER_AFTER` is
 no ram the AI waits 50 m out instead of hacking (iron gates ignore
 swords at every level). Skilled's wait-for-towers rule is unchanged.
 
+Siege towers (4f.1, 2026-10-09): against walls 2-3 each tower of the
+attackers on the ground is given at once (it is slow; no waiting for
+ladder time) to the free infantry unit with the most men (`S_TOWER_CREW`
+1; Easy 0: the nearest, which may be too few to push it at full pace),
+mode `A_LADDER` with the piece, so `_escalade` runs it: pick it up, push
+it to the stretch `_ladder_spot` picks (near the attacked gate, few
+defenders, not one already taken), plant it, cross, then down to unbar a
+gate; ladder parties and the ram go on beside it (towers do not count
+against `S_LADDER_UNITS`). A planted tower gets `S_TOWER_FOLLOW` (1 / 2 /
+3) more infantry crossing it (`_follow`, shared with ladders). Defenders:
+tower engines count a tower's pushers with the ram's (`S_TOWER_FOCUS`,
+stones and bolts landing by it batter it); wall missile units with fire
+missiles left shoot at the nearest pushing crew in reach (`AK_FIRE_WOOD`,
+`_wall_fire_tower`; `ammo_pick` then switches them to the fire kind) and
+go back to fire at will once none is.
+
 ## 16. Defender layout (part 2c, 2026-10-08)
 
 Why (part 2a's traces): equal-force walls 1 went to the attacker 80-100 %

@@ -1563,6 +1563,48 @@ the view (`game/battle.gd`, `game/order_preview.gd`, `game/overlay.gd`,
     within 3 m takes 70, a stone 330, defenders standing at a ram on the
     ground smash it; its roof stops 70 % of the arrows landing on carriers
     within 5 m of it.
+  - **The siege tower** (the helepolis; STATUS 4f.1, built 2026-10-09):
+    `EQ_TOWER`, a piece in the same tables. What a piece is lives in
+    per-kind fields indexed by `EQ_*` (`EQ_ROOF`, `EQ_ROOF_R`, `EQ_HP`,
+    `EQ_LANES`, `EQ_LANE_GAP`, `EQ_CLIMB`, `EQ_WALLS`, `EQ_PACE`,
+    `EQ_WALK_PCT`, `EQ_MEN`, `EQ_ANY`, `EQ_SHOT`, `EQ_EXPOSED`,
+    `EQ_DEPTH2`, `EQ_SMASH`, `EQ_FOCUS`, `EQ_FIRE_AT`); the sim reads the
+    fields, ladders and the ram keep their old numbers through them. The
+    tower: about 6 x 6 m (`EQ_DEPTH2` 3 m), 2,000 hit points (the biggest
+    wagon's 1,000 twice: a frame of twice the timber; seven stones or 29
+    bolts wreck it, a fire chips 18 % as for anything wooden), roofed
+    (70 % of the arrows on the men within 8 m of it, a whole unit pushes
+    it, where the ram's 20 men fit in 5 m). Pushed at most 0.6 m/s (half
+    the ram's pace: twice its mass for twice its crew) by a unit of 40 men
+    or more, slower with fewer (pace x men / 40, at least a quarter: it
+    crawls) (`carry_pace`). Planted like a ladder set (tap a stretch from
+    outside with its pushers: they push it to the wall's foot), but only
+    against walls 2-3 (`EQ_WALLS`: walls 1 have ladders; the view refuses
+    "too low for a siege tower"); then it is a wide fast ladder: men cross
+    8 abreast (`EQ_LANES`, 0.75 m apart along the wall), a man a lane every
+    16 ticks (`EQ_CLIMB`; one man every 2 ticks in all, 5 a second, whatever
+    the wall's height: three times a ladder set's 1.7 a second at walls 2,
+    four times its 1.25 at walls 3). The pushers cross first, then any
+    infantry or missile unit ordered onto that stretch, of either side
+    (`EQ_ANY`; the defenders only from outside the walls, the tower's foot
+    on their own ground). Carriers drop it (`ORDER_DROP`); anyone picks it
+    up (`ORDER_PICKUP`), the enemy too (it becomes theirs, `q_side`); a
+    planted tower stays (refused). Wooden and exposed even planted
+    (`EQ_EXPOSED`: its middle 3 m out from the foot, `eq_centre`): fire
+    missiles set it alight (the fire state `q_burn`), bolts and stones
+    landing within 3 m of its middle batter it (70 / 330), the enemy's foot
+    at it on the ground smash it like the ram; when a planted tower is
+    wrecked, men still crossing it come back down (`_ladder_down`).
+    Scenario `equip` kind 4; `Scenarios.settlement(..., {"towers": n})`
+    puts them in a row of their own 14 m behind the ladders and ram (the
+    attackers' edge), walls 2-3 only. View: a tall box with its storeys
+    and a ramp (raised while moving, down onto the walkway when planted),
+    burning flicker, a marker with the siege tower symbol and a dashed
+    ring while it lies on the ground, previews "PUSH THE SIEGE TOWER",
+    "PLANT THE SIEGE TOWER HERE", "ACROSS THE SIEGE TOWER", "CROSSING: n OF
+    m OVER", cards "pushing a tower", Drop as for any piece; custom battles
+    "Siege towers: 0 / 1 / 2" (walls 2-3); the campaign's equipment line
+    names them.
 - **Field artillery is equipment too** (2026-10-09): a battery's engines
   are dropped and taken up with the same orders and UI as ladders and the
   ram, by either side (section "Artillery", "Engines are equipment, crews

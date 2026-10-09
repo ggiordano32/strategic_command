@@ -19,6 +19,8 @@ const FACE_LEFT := 512
 const ORDER_ATTACK := 2
 const EQ_LADDERS := 1   # BattleSim's siege equipment kinds (scenario "equip")
 const EQ_RAM := 2
+const EQ_TOWER := 4
+const TOWER_WALLS := 2  # siege towers only against walls of this level or more (BattleSim.EQ_WALLS)
 
 const IDS: Array[String] = ["skirmish", "battle_2000", "battle_4000",
 	"bench_2000", "bench_4000", "bench_4000_hills",
@@ -477,11 +479,13 @@ static func _lay_row(units: Array, row: Array, back: int, gap: int, placed: Arra
 ## {"scenario", "order": [[0 attacker / 1 defender, index], ...] in sim unit
 ## order, "layout": the generator's layout (metres, final frame)}.
 ## equip: the attackers' siege equipment (docs/DESIGN.md "Siege equipment
-## and wall towers"): {"ladders": sets of ladders, "ram": rams}, objects on
-## the ground behind the middle of the attackers' line, 12 m apart (the
-## rams in the middle), in the scenario's "equip" list (BattleSim
-## EQ_LADDERS / EQ_RAM, x_m, y_m); only against walls. The walls-2/3
-## city's tower engines are added by the sim.
+## and wall towers"): {"ladders": sets of ladders, "ram": rams, "towers":
+## siege towers}, objects on the ground behind the middle of the attackers'
+## line, 12 m apart (the rams in the middle), the siege towers in a row of
+## their own 14 m further back (at the attackers' edge), in the scenario's
+## "equip" list (BattleSim EQ_LADDERS / EQ_RAM / EQ_TOWER, x_m, y_m); only
+## against walls, siege towers only against walls 2-3 (TOWER_WALLS).
+## The walls-2/3 city's tower engines are added by the sim.
 static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Array, def_side: int,
 		ai_sides: Array, equip: Dictionary = {}) -> Dictionary:
 	var c := MapGen.city_params(city)
@@ -670,7 +674,10 @@ static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Arra
 	if walled:
 		var eq_l := clampi(int(equip.get("ladders", 0)), 0, 8)
 		var eq_r := clampi(int(equip.get("ram", 0)), 0, 2)
-		if eq_l + eq_r > 0:
+		var eq_t := clampi(int(equip.get("towers", 0)), 0, 3)
+		if int(c["walls"]) < TOWER_WALLS:
+			eq_t = 0
+		if eq_l + eq_r + eq_t > 0:
 			# Behind the middle of the attackers' line, in a row 12 m apart.
 			var row: Array = []
 			for k in eq_l / 2 + eq_l % 2:
@@ -694,6 +701,10 @@ static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Arra
 			for e in eqs:
 				if int(e[0]) == EQ_RAM:
 					out_eq.append(e)
+			# Siege towers last, in a row of their own behind (18 m apart).
+			var ty := clampi(ay + (back + 14) * sgn, 10, h - 10)
+			for k in eq_t:
+				out_eq.append([EQ_TOWER, clampi(ax + (k * 2 - (eq_t - 1)) * 9, 10, w - 10), ty])
 			sc["equip"] = out_eq
 	return {"scenario": sc, "order": order, "layout": lay}
 

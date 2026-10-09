@@ -6,6 +6,7 @@ extends Node2D
 const BattleSim := preload("res://sim/battle_sim.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Icons := preload("res://game/unit_icons.gd")
+const UIIcons := preload("res://game/ui_icons.gd")
 ## Marker radius in screen pixels (never below MARKER_MIN_R world pixels).
 const MARKER_SCREEN_R := 11.0
 const MARKER_MIN_R := 5.5
@@ -130,6 +131,8 @@ func _draw() -> void:
 	if sim.n_eng > 0:
 		_draw_impacts(lw)
 		_draw_free_engines(r, lw)
+	if sim.sg_on != 0:
+		_draw_free_towers(r, lw)
 	_draw_markers(r, lw)
 	var primary := selected_units[0] if not selected_units.is_empty() else -1
 	for u in selected_units:
@@ -301,6 +304,8 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 				var ptxt := "PICK UP THE RAM" if pk == BattleSim.EQ_RAM else "PICK UP LADDERS"
 				if pk == BattleSim.EQ_WAGON:
 					ptxt = "TAKE THE WAGON"
+				elif BattleSim.EQ_EXPOSED[pk] != 0:
+					ptxt = "PUSH THE SIEGE TOWER"
 				draw_string(ThemeDB.fallback_font, d + Vector2(r, -r * 1.5), ptxt,
 					HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), Color(1.0, 0.8, 0.45))
 			elif _v(u, "pick") >= BattleSim.PICK_ENG:
@@ -836,8 +841,11 @@ func _draw_wall_plan(u: int, wp: Dictionary, lw: float, primary: bool) -> void:
 	if primary and wp["mode"] != "hold":
 		var txt: String = {"up": "UP BY THE STAIR", "down": "DOWN BY THE STAIR", "along": "ALONG THE WALL",
 			"ladder": "UP BY LADDERS"}.get(wp["mode"], "")
+		var tower_mv: bool = wp["mode"] == "ladder" and bool(wp.get("tower", false))
+		if tower_mv:
+			txt = "ACROSS THE SIEGE TOWER"
 		if wp["mode"] == "ladder" and bool(wp.get("plant", false)):
-			txt = "PLANT LADDERS HERE"
+			txt = "PLANT THE SIEGE TOWER HERE" if tower_mv else "PLANT LADDERS HERE"
 		if wp["mode"] == "climb":
 			var up := 0
 			var base: int = sim.u_slot_base[u]
@@ -845,7 +853,7 @@ func _draw_wall_plan(u: int, wp: Dictionary, lw: float, primary: bool) -> void:
 				var i: int = sim.slot_soldier[base + k]
 				if sim._on_walk(sim.pos_x[i], sim.pos_y[i]):
 					up += 1
-			txt = "CLIMBING: %d OF %d UP" % [up, sim.u_alive[u]]
+			txt = ("CROSSING: %d OF %d OVER" if bool(wp.get("tower", false)) else "CLIMBING: %d OF %d UP") % [up, sim.u_alive[u]]
 		if wp["mode"] == "down" and sg >= 0:
 			txt = "DOWN, THEN UP ONTO THAT WALL"
 		var at := to_px(sim.u_cx[u], sim.u_cy[u])
@@ -877,6 +885,68 @@ func _draw_free_engines(r: float, lw: float) -> void:
 			draw_arc(c, rad, a0, a0 + TAU / 32.0, 3, col, lw)
 		Icons.draw_marker(self, Icons.icon_of(sim.eg_type[g]), c + Vector2(0, -r * 2.2), r * 0.85,
 			Color(0.55, 0.55, 0.52), Color.WHITE)
+
+
+## A siege tower (view only): a tall box seen from above (the storeys as
+## inset squares), its ramp toward the way it faces (carried: its carriers'
+## front; planted: over the wall's walkway, the ramp down); wrecked, a dark
+## frame with a cross.
+func _draw_siege_tower(q: int, c: Vector2, fwd: Vector2, side: Vector2, st: int, lw: float) -> void:
+	var dark := Color(0.2, 0.12, 0.05, 0.95)
+	var h := float(BattleSim.EQ_DEPTH2[sim.q_kind[q]]) / 1024.0  # half its side, m
+	if st == BattleSim.Q_PLANTED:
+		var dir: float = sim.ws_dir[sim.q_seg[q]] * TAU / 1024.0
+		var qc: Vector2i = sim.eq_centre(q)
+		c = to_px(qc.x, qc.y)
+		fwd = -Vector2(cos(dir), sin(dir)) * px_per_m  # toward the wall
+		side = Vector2(-fwd.y, fwd.x)
+	elif st == BattleSim.Q_CARRIED:
+		c += fwd * 1.0  # (pushed ahead of its men)
+	var wrecked := st == BattleSim.Q_WRECKED
+	var body := Color(0.5, 0.34, 0.18, 0.95) if not wrecked else Color(0.25, 0.2, 0.15, 0.7)
+	var pts := PackedVector2Array([c + fwd * h + side * h, c + fwd * h - side * h,
+		c - fwd * h - side * h, c - fwd * h + side * h])
+	draw_colored_polygon(pts, body)
+	pts.append(pts[0])
+	draw_polyline(pts, dark, lw * 1.5)
+	if wrecked:
+		draw_line(pts[0], pts[2], dark, lw * 1.5)
+		draw_line(pts[1], pts[3], dark, lw * 1.5)
+		return
+	for k in [0.65, 0.3]:
+		var ins := PackedVector2Array([c + (fwd + side) * h * k, c + (fwd - side) * h * k,
+			c - (fwd + side) * h * k, c - (fwd - side) * h * k])
+		ins.append(ins[0])
+		draw_polyline(ins, Color(0.32, 0.2, 0.1, 0.9), lw)
+	# The ramp (the drawbridge): down onto the walkway when planted, raised
+	# (a short flap) while it moves.
+	var rl := 3.5 if st == BattleSim.Q_PLANTED else 1.0
+	var r0 := c + fwd * h
+	var ramp := PackedVector2Array([r0 + side * h * 0.7, r0 - side * h * 0.7,
+		r0 + fwd * rl - side * h * 0.7, r0 + fwd * rl + side * h * 0.7])
+	draw_colored_polygon(ramp, Color(0.62, 0.45, 0.25, 0.95))
+	for k in 4:
+		var rq := r0 + fwd * rl * (0.2 + 0.2 * k)
+		draw_line(rq - side * h * 0.7, rq + side * h * 0.7, dark, lw * 0.6)
+
+
+## Siege towers on the ground (anyone's for the taking, the enemy's too): a
+## marker with the siege tower's symbol over it and a dashed ring round it,
+## as for engines left on the field.
+func _draw_free_towers(r: float, lw: float) -> void:
+	for q in sim.n_eq:
+		if sim.q_state[q] != BattleSim.Q_GROUND or BattleSim.EQ_EXPOSED[sim.q_kind[q]] == 0:
+			continue
+		var c := to_px(sim.q_x[q], sim.q_y[q])
+		var rad := (float(BattleSim.EQ_DEPTH2[sim.q_kind[q]]) / 1024.0 + 2.5) * px_per_m
+		var col := Color(0.85, 0.85, 0.8, 0.8)
+		for k in 16:
+			var a0 := TAU * k / 16.0
+			draw_arc(c, rad, a0, a0 + TAU / 32.0, 3, col, lw)
+		var mc := c + Vector2(0, -r * 2.2)
+		draw_circle(mc, r * 0.85, Color(0.55, 0.55, 0.52))
+		draw_arc(mc, r * 0.85, 0.0, TAU, 24, Color.WHITE, lw)
+		UIIcons.draw_icon(self, "siege_tower", Rect2(mc - Vector2(r, r) * 0.7, Vector2(r, r) * 1.4), Color.WHITE)
 
 
 ## Siege gear (view only): the attackers' ladder sets and rams, on the
@@ -935,7 +1005,8 @@ func _draw_fires(lw: float) -> void:
 			pts.append(to_px(sim.e_x[e], sim.e_y[e]))
 	for q in sim.n_eq:
 		if sim.q_burn[q] > 0:
-			pts.append(to_px(sim.q_x[q], sim.q_y[q]))
+			var qc: Vector2i = sim.eq_centre(q)
+			pts.append(to_px(qc.x, qc.y))
 	for k in pts.size():
 		var p: Vector2 = pts[k]
 		var f := 0.75 + 0.25 * sin(t + k * 1.7)
@@ -964,6 +1035,9 @@ func _draw_siege_gear(lw: float) -> void:
 		var side := Vector2(-fwd.y, fwd.x)
 		if sim.q_kind[q] == BattleSim.EQ_WAGON:
 			_draw_wagon(q, c, fwd, side, st, lw)
+			continue
+		if BattleSim.EQ_EXPOSED[sim.q_kind[q]] != 0:
+			_draw_siege_tower(q, c, fwd, side, st, lw)
 			continue
 		if sim.q_kind[q] == BattleSim.EQ_RAM:
 			if st == BattleSim.Q_CARRIED:

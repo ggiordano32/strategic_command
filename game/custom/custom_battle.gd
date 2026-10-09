@@ -205,6 +205,14 @@ func _map_row() -> Control:
 			rb.name = "custom_ram"
 			rb.tooltip_text = "The attackers bring a battering ram: tap a gate with it selected to batter it"
 			row.add_child(rb)
+			if int(mp["walls"]) >= CS.Scenarios.TOWER_WALLS:
+				var nt := int(mp.get("towers", 0))
+				var tb := _opt("Siege towers: %d" % nt, func():
+					mp["towers"] = (int(mp.get("towers", 0)) + 1) % (CS.MAX_TOWERS + 1)
+					_changed(), ed)
+				tb.name = "custom_towers"
+				tb.tooltip_text = "The attackers bring rolling siege towers: a big unit pushes one to a stretch of wall and whole units cross onto the wall through it"
+				row.add_child(tb)
 	row.add_child(_opt("Ground: " + MapGen.PALETTE_NAMES[int(mp["ground"])], func():
 		mp["ground"] = (int(mp["ground"]) + 1) % MapGen.PALETTE_NAMES.size()
 		_changed(), ed))
