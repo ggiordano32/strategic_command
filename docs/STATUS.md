@@ -1184,6 +1184,34 @@ fixes are all landed; see "Where we are"):
      Epirus (Pyrrhus).
    - **Horses** stay speed and shock; camels the anti-cavalry screen;
      elephants the slow terror that breaks lines or breaks you.
+4f. **Siege towers, field works, light artillery, mantlets** (agreed
+   2026-10-09; field works also asked for by the co-op partner). In this
+   order, the first two before the walls 2-3 rebalance because they bear
+   on it:
+   1. **Siege towers** (the helepolis): a rolling tower given to the
+      attacker by siege turns like ladders / the ram (walls 2+, e.g. 3+
+      siege turns), moved into place by a unit like the ram, planted
+      against a stretch; then whole units cross onto the wall through it
+      (a wide, fast "ladder"), the escalade the walls 2-3 attacker is
+      missing. Wooden: it burns (fire kinds are its counter); towers and
+      stones wreck it. Icon exists (siege_tower).
+   2. **Field works**: in the deployment phase a stakes line and caltrops
+      as placeable pieces (limited by the army's siege building / an
+      engineer count), stopping or wrecking a cavalry / elephant charge
+      across them and slowing foot; the **fortify stance** puts a ditch
+      and rampart on the battle map for the fortified army (a low wall
+      with no gate: attackers climb it slowly, defenders on it get the
+      wall missile bonus), giving fortify teeth against horse and
+      elephants. Ties into the formula (fortified field army bonus).
+   3. **Light artillery** (scorpions, the gastraphetes): a small bolt
+      engine row between archers and bolt throwers that a unit carries
+      and sets up fast, for the ladder-and-ram army.
+   4. **Mantlets / sheds**: a moveable missile shelter piece (the ram's
+      roof generalised) a unit stands behind.
+   **Later / campaign:** mining (undermining a wall over several siege
+   turns as a campaign action), a Syracusan tower upgrade (Archimedes'
+   engines: range and reload). Not of the period: onagers, cart
+   ballistae, scythed chariots.
 5b. **More units before the rebalance** (agreed 2026-10-09, in this
    order, so the field is tuned once with the whole roster present):
    1. **Missile cavalry** (javelins from the saddle, skirmish mode, fast,
