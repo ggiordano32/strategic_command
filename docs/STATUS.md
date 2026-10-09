@@ -1221,14 +1221,20 @@ fixes are all landed; see "Where we are"):
    reused by `unit_icons.gd`'s approach; text labels kept beside icons on
    buttons where a bare icon would be unclear. Includes a pass on
    spacing / alignment of the rows that gained buttons this week.
-   Phase 1 built 2026-10-09 (not committed): `game/ui_icons.gd`, Kit
+   Phase 1 built 2026-10-09, committed (9d7ddf3): `game/ui_icons.gd`, Kit
    helpers, icons on the overworld (top bar, buttons, army card, region
    panel, recruit lists, diplomacy / gifts, map key, dialogs), online UI and
    custom battle setup; bottom-right row and diplomacy deal rows aligned
    (DESIGN section 8 "Icons"). Tested: check_scripts, icon_gallery,
    windowed campaign_input_test, touch_scroll_test (only its known
-   failures), custom_battle_test. Phase 2 pending (battle HUD, battle
-   screen: the icons exist, not wired yet).
+   failures), custom_battle_test. Phase 2 built 2026-10-09 (not
+   committed): battle HUD buttons with icons (Menu and Deselect bare; fire /
+   hold fire swap; on a narrow screen the order toggles drop the order word
+   and keep icon + state, e.g. "hold"), battle screen Auto-resolve / Fight,
+   equipment line, result banner between two icons, totals as an icon row
+   (men, dead, fled, kills). Tested: check_scripts, windowed input_test,
+   battle_screen_test, custom_battle_test, windowed campaign_input_test.
+   Screenshots `docs/screenshots/icons_{before,after}_phone_battle_*.png`.
 9. **Server to Proxmox** via `server/deploy/docker-compose.yml` (Podman),
    plus delete-campaign and revoke-device admin. Independent; whenever the
    user wants the server off the dev machine.

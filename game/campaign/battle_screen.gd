@@ -27,6 +27,7 @@ const CBattle := preload("res://campaign/cbattle.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
+const UiIcons := preload("res://game/ui_icons.gd")
 const Icons := preload("res://game/unit_icons.gd")
 const CityPreview := preload("res://game/campaign/city_preview.gd")
 const GroundPalette := preload("res://game/ground_palette.gd")
@@ -197,6 +198,7 @@ static func pre(s, st: Dictionary, b: Dictionary) -> Control:
 	if eq != "":
 		var el := Kit.label(eq, Kit.FONT_SMALL, Color.WHITE, true)
 		el.name = "siege_equipment"
+		Kit.label_icon(el, "ladder")
 		info.add_child(el)
 	var facs: Array = snap["facs"]
 	var hs := CRules.battle_humans(st, b)
@@ -217,10 +219,10 @@ static func pre(s, st: Dictionary, b: Dictionary) -> Control:
 	h.name = "battle_buttons"
 	h.alignment = BoxContainer.ALIGNMENT_END
 	var bid := int(b["id"])
-	var ab := Kit.button("Auto-resolve", func(): s.auto_resolve(bid), 130)
+	var ab := Kit.icon_button("Auto-resolve", "end_turn", func(): s.auto_resolve(bid), 130)
 	ab.name = "auto_%d" % bid
 	h.add_child(ab)
-	var fb := Kit.button("Fight", func(): s.fight(bid), 110)
+	var fb := Kit.icon_button("Fight", "battles", func(): s.fight(bid), 110)
 	fb.name = "fight_%d" % bid
 	h.add_child(fb)
 	info.add_child(h)
@@ -314,22 +316,42 @@ static func result(s, snap: Dictionary, outcome: Dictionary, st: Dictionary, eve
 	var draw := int(outcome.get("draw", 0)) != 0
 	var word := "DRAW"
 	var wcol := Kit.COL_GOLD
+	var wicon := "draw"
 	if not draw:
 		if me < 0:
 			word = "ATTACKERS WIN" if winner == 0 else "DEFENDERS WIN"
 			wcol = Color.WHITE
+			wicon = "victory"
 		elif winner == me:
 			word = "VICTORY"
 			wcol = Kit.COL_GOOD
+			wicon = "victory"
 		else:
 			word = "DEFEAT"
 			wcol = Kit.COL_BAD
+			wicon = "defeat"
 	var banner := Kit.label(word, 40, wcol)
 	banner.name = "result_banner"
 	banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	banner.add_theme_constant_override("outline_size", 6)
 	banner.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
-	v.add_child(banner)
+	# The word between two copies of its icon (laurel, broken sword, scales).
+	var bh := Kit.hbox(14)
+	bh.name = "result_banner_row"
+	bh.alignment = BoxContainer.ALIGNMENT_CENTER
+	for k in 3:
+		if k == 1:
+			bh.add_child(banner)
+			continue
+		var ic := TextureRect.new()
+		ic.name = "result_icon_%d" % (k / 2)
+		ic.texture = UiIcons.tex(wicon, 38)
+		ic.self_modulate = wcol
+		ic.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
+		ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		bh.add_child(ic)
+	v.add_child(bh)
 	var mode := "Auto-resolved" if str(outcome.get("mode", "")) == "auto" else "Fought"
 	if int(outcome.get("forfeit", 0)) != 0:
 		mode = "Fought (left the field)"
@@ -359,8 +381,20 @@ static func result(s, snap: Dictionary, outcome: Dictionary, st: Dictionary, eve
 		var lost := int(t["fielded"]) - int(t["back"])
 		var txt := "Fielded %d, back %d, lost %d (%d dead, %d fled). Kills: %d." % [int(t["fielded"]), int(t["back"]), lost,
 			int(t["dead"]), int(t["fled"]), int(tots[1 - sd]["dead"])]
+		# Shown as a row of icon figures (men fielded / back, dead, fled,
+		# kills); the sentence stays as the row's tooltip and in a hidden
+		# label (totals_N) for the tests and the record.
+		var row := Kit.flow(12)
+		row.name = "totals_row_%d" % sd
+		row.tooltip_text = txt
+		row.add_child(Kit.icon_label("%d fielded, %d back" % [int(t["fielded"]), int(t["back"])], "men", Kit.FONT_SMALL, Kit.COL_GOLD))
+		row.add_child(Kit.icon_label("%d dead" % int(t["dead"]), "killed", Kit.FONT_SMALL, Kit.COL_GOLD))
+		row.add_child(Kit.icon_label("%d fled" % int(t["fled"]), "routed", Kit.FONT_SMALL, Kit.COL_GOLD))
+		row.add_child(Kit.icon_label("%d kills" % int(tots[1 - sd]["dead"]), "battles", Kit.FONT_SMALL, Kit.COL_GOLD))
+		(sides.get_child(sd) as Container).add_child(row)
 		var tl := Kit.label(txt, Kit.FONT_SMALL, Kit.COL_GOLD, true)
 		tl.name = "totals_%d" % sd
+		tl.visible = false
 		(sides.get_child(sd) as Container).add_child(tl)
 	var per_unit := false
 	for e2 in outcome.get("units", []):
