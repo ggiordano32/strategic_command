@@ -111,10 +111,10 @@ func _rebuild() -> void:
 		head.add_child(tb)
 	head.add_child(Kit.button("Back", _back, 80))
 	if session == null:
-		var ps := Kit.button("Play solo", _play_solo, 120, 17)
+		var ps := Kit.icon_button("Play solo", "battles", _play_solo, 120, 17)
 		ps.name = "custom_play_solo"
 		head.add_child(ps)
-		var po := Kit.button("Play online", _create_online, 130, 17)
+		var po := Kit.icon_button("Play online", "online", _create_online, 130, 17)
 		po.name = "custom_play_online"
 		head.add_child(po)
 	_box.add_child(head)
@@ -124,7 +124,7 @@ func _rebuild() -> void:
 		_code_edit = Kit.text_field("ABC-DEF", "", 150, "Your friend's code", true)
 		_code_edit.name = "custom_code"
 		jr.add_child(Kit.field_box(_code_edit))
-		var jb := Kit.button("Join", _join, 80)
+		var jb := Kit.icon_button("Join", "online", _join, 80)
 		jb.name = "custom_join"
 		jr.add_child(jb)
 		_box.add_child(jr)
@@ -302,7 +302,7 @@ func _army_view(s: int, ai: int) -> Control:
 		cb.add_theme_color_override("font_color", PLAYER_COLORS[0 if ctrl == "p1" else 1])
 	h.add_child(cb)
 	if _can_edit_all() and (setup["sides"][s]["armies"] as Array).size() > 1:
-		h.add_child(Kit.button("Remove", func():
+		h.add_child(Kit.icon_button("Remove", "cancel", func():
 			(setup["sides"][s]["armies"] as Array).remove_at(ai)
 			_changed(), 0, 13))
 	v.add_child(h)
@@ -352,7 +352,7 @@ func _build_picker() -> void:
 	var t := Kit.label("Add a unit (full strength; price in campaign gold)", Kit.FONT_TITLE, Kit.COL_GOLD)
 	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h.add_child(t)
-	h.add_child(Kit.button("Close", func(): _picker.visible = false, 90))
+	h.add_child(Kit.icon_button("Close", "close", func(): _picker.visible = false, 90))
 	v.add_child(h)
 	var sc := TouchScroll.new()
 	sc.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -536,11 +536,11 @@ func _lobby_view() -> Control:
 	var cl := Kit.label(NetScript.show_code(session.custom_code), 30, Kit.COL_GOLD)
 	cl.name = "custom_room_code"
 	h.add_child(cl)
-	h.add_child(Kit.button("Copy", func(): DisplayServer.clipboard_set(NetScript.show_code(session.custom_code)), 70))
-	_ready_btn = Kit.button("Ready", func(): session.lobby_ready(not session.want_ready), 110, 16)
+	h.add_child(Kit.icon_button("Copy", "copy", func(): DisplayServer.clipboard_set(NetScript.show_code(session.custom_code)), 70))
+	_ready_btn = Kit.icon_button("Ready", "accept", func(): session.lobby_ready(not session.want_ready), 110, 16)
 	_ready_btn.name = "custom_ready"
 	h.add_child(_ready_btn)
-	_start_btn = Kit.button("Start battle", func(): session.start_battle(), 130, 16)
+	_start_btn = Kit.icon_button("Start battle", "battles", func(): session.start_battle(), 130, 16)
 	_start_btn.name = "custom_start"
 	_start_btn.visible = session.me == 0
 	h.add_child(_start_btn)

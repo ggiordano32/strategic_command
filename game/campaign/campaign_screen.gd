@@ -120,6 +120,10 @@ var _mouse_pan := false
 # Version 6.
 var undo_button: Button
 var deselect_button: Button    # bottom right, while something is selected
+var bottom_bar: HBoxContainer  # Deselect, Undo, End turn
+var top_date: Label
+var top_money: Label
+var top_income: Label
 var _side_key := ""            # what the side panel shows ("a<army>" / "r<region>")
 var _side_gen := 0             # side panel builds (a stale scroll restore is dropped)
 var _dlg_gen := 0              # dialog builds (likewise)
@@ -213,7 +217,7 @@ func _load_data() -> void:
 	call_deferred("_apply_debug_args")
 
 
-## Testing aids: --cam-zoom=Z --cam-region=key --close-dialog
+## Testing aids: --cam-zoom=Z --cam-region=key --close-dialog --handover-start
 ## --select-region=key --select-army=N (Nth army of the player)
 ## --plan-move=N:key --camp-attack=N:key --camp-siege=N:key[:turns] --camp-assault=key --camp-besieged=key:faction --camp-fight --camp-auto --sim-turns=N --dialog-scroll=PX --side-scroll=PX
 ## --camp-exchange=N:M:k (version 6: the exchange panel)
@@ -231,6 +235,11 @@ func _apply_debug_args() -> void:
 			focus_region(CData.region_index(v))
 		elif a == "--close-dialog":
 			close_dialog()
+		elif a == "--handover-start":
+			if cover.visible:  # testing aid: press "Start my turn" on the hand-over
+				cover.visible = false
+				_set_planner(f, true)
+				close_dialog()
 		elif a.begins_with("--map-key="):
 			map_key.persist = false  # testing aid: open (1) or close (0) the map key
 			map_key.set_expanded(v == "1")
@@ -1071,7 +1080,7 @@ func show_toast(text: String, action: Array = []) -> void:
 			_toast = null, 56)
 	h.add_child(x)
 	ui.add_child(_toast)
-	ui.move_child(_toast, end_button.get_index())
+	ui.move_child(_toast, bottom_bar.get_index())
 	_place_toast()
 	_place_toast.call_deferred()  # again once the wrapped label has its height
 	ui.move_child(_toast, -1)
@@ -1107,15 +1116,27 @@ func _build_ui() -> void:
 	ui.add_child(top)
 	top_box = Kit.hbox(5)
 	top.add_child(top_box)
-	top_label = Kit.label("", Kit.FONT)
-	top_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	top_label.clip_text = true
-	top_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	top_label.mouse_filter = Control.MOUSE_FILTER_STOP
-	top_label.gui_input.connect(func(e):
+	# Faction, then the date (season icon), treasury and income a turn, each
+	# with its icon; a tap opens the realm.
+	var info := Kit.hbox(14)
+	info.name = "top_info"
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info.clip_contents = true
+	info.mouse_filter = Control.MOUSE_FILTER_STOP
+	info.gui_input.connect(func(e):
 		if e is InputEventMouseButton and not e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
 			panels.show_faction())
-	top_box.add_child(top_label)
+	top_box.add_child(info)
+	top_label = Kit.label("", Kit.FONT)
+	top_date = Kit.icon_label("", "summer", Kit.FONT)
+	top_money = Kit.label_icon(Kit.label("", Kit.FONT), "treasury", Kit.COL_GOLD)
+	top_income = Kit.icon_label("", "income", Kit.FONT)
+	for l: Label in [top_label, top_date, top_money, top_income]:
+		l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		l.size_flags_vertical = Control.SIZE_FILL
+		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		info.add_child(l)
+	top_label.text = " "  # an indent before the faction name, as before
 	net_button = Kit.button("Online", func():
 		if onl != null:
 			onl.show_online(), 0)
@@ -1124,13 +1145,17 @@ func _build_ui() -> void:
 	net_button.clip_text = true
 	net_button.custom_minimum_size.x = 96
 	top_box.add_child(net_button)
-	battles_button = Kit.button("Battles", func(): panels.show_battles(), 0)
+	Kit.set_icon(net_button, "online")
+	battles_button = Kit.icon_button("Battles", "battles", func(): panels.show_battles(), 0)
 	top_box.add_child(battles_button)
-	top_box.add_child(Kit.button("Realm", func(): panels.show_faction(), 0))
-	top_box.add_child(Kit.button("Diplomacy", func(): panels.show_diplomacy(), 0))
-	top_box.add_child(Kit.button("Goals", func(): panels.show_objectives(), 0))
-	top_box.add_child(Kit.button("Units", func(): book.open(), 0))
-	top_box.add_child(Kit.button("Menu", func(): panels.show_menu(), 0))
+	top_box.add_child(Kit.icon_button("Realm", "realm", func(): panels.show_faction(), 0))
+	top_box.add_child(Kit.icon_button("Diplomacy", "diplomacy", func(): panels.show_diplomacy(), 0))
+	top_box.add_child(Kit.icon_button("Goals", "goals", func(): panels.show_objectives(), 0))
+	top_box.add_child(Kit.icon_button("Units", "units", func(): book.open(), 0))
+	var menu_b := Kit.icon_button("", "menu", func(): panels.show_menu(), 46)
+	menu_b.name = "menu"
+	menu_b.tooltip_text = "Menu"
+	top_box.add_child(menu_b)
 	# Side panel (right).
 	side = Kit.panel(Kit.PANEL_BG, 8)
 	side.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
@@ -1163,35 +1188,35 @@ func _build_ui() -> void:
 	map_key = MapKey.new()
 	ui.add_child(map_key)
 	map_key.set_expanded(MapKey.load_pref())
-	end_button = Kit.button("End turn", func(): end_turn(), 130, 17)
-	end_button.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
-	end_button.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	end_button.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	end_button.offset_right = -8
-	end_button.offset_bottom = -8
-	end_button.custom_minimum_size = Vector2(130, 48)
-	ui.add_child(end_button)
-	undo_button = Kit.button("Undo", func(): undo(), 80, 15)
-	undo_button.name = "undo"
-	undo_button.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
-	undo_button.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	undo_button.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	undo_button.offset_right = -146
-	undo_button.offset_bottom = -8
-	undo_button.custom_minimum_size = Vector2(80, 48)
-	undo_button.visible = false
-	ui.add_child(undo_button)
+	# Bottom right, one row: Deselect, Undo (bare icons), End turn; hidden
+	# ones leave no gap and a longer End turn text pushes the others left.
+	bottom_bar = Kit.hbox(8)
+	bottom_bar.name = "bottom_bar"
+	bottom_bar.alignment = BoxContainer.ALIGNMENT_END
+	bottom_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bottom_bar.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	bottom_bar.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	bottom_bar.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	bottom_bar.offset_right = -8
+	bottom_bar.offset_bottom = -8
+	ui.add_child(bottom_bar)
 	# Deselect: clears the selection and closes its panel without scrolling
 	# back to it (never a move: a button takes the tap from the map).
-	deselect_button = Kit.button("Deselect", func(): deselect_all(), 110, 15)
+	deselect_button = Kit.icon_button("", "deselect", func(): deselect_all(), 56, 15)
 	deselect_button.name = "deselect"
-	deselect_button.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
-	deselect_button.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	deselect_button.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	deselect_button.offset_bottom = -8
-	deselect_button.custom_minimum_size = Vector2(110, 48)
+	deselect_button.tooltip_text = "Deselect"
+	deselect_button.custom_minimum_size = Vector2(56, 48)
 	deselect_button.visible = false
-	ui.add_child(deselect_button)
+	bottom_bar.add_child(deselect_button)
+	undo_button = Kit.icon_button("", "undo", func(): undo(), 56, 15)
+	undo_button.name = "undo"
+	undo_button.tooltip_text = "Undo"
+	undo_button.custom_minimum_size = Vector2(56, 48)
+	undo_button.visible = false
+	bottom_bar.add_child(undo_button)
+	end_button = Kit.icon_button("End turn", "end_turn", func(): end_turn(), 130, 17)
+	end_button.custom_minimum_size = Vector2(130, 48)
+	bottom_bar.add_child(end_button)
 	wait_panel = Kit.panel(Color(0.1, 0.12, 0.1, 0.95), 8)
 	wait_panel.name = "wait_panel"
 	wait_panel.visible = false
@@ -1260,6 +1285,9 @@ func show_dialog(title: String, content: Control, buttons: Array, width: float =
 			else:
 				close_dialog(), 110)
 		b.name = "dlg_" + str(bdef[0]).replace(" ", "_")
+		var di := _dialog_icon(str(bdef[0]))
+		if di != "":
+			Kit.set_icon(b, di)
 		dialog_buttons.add_child(b)
 	var vp := _vp()
 	var w := minf(width, vp.x - 24)
@@ -1275,6 +1303,19 @@ func show_dialog(title: String, content: Control, buttons: Array, width: float =
 	(dialog.get_meta("dim") as Control).visible = true
 	call_deferred("_center_dialog")
 	_restore_scroll(dialog_scroll, keep, _dlg_gen, true)
+
+
+## Icons for the dialogs' common buttons, by the start of their text.
+const DIALOG_ICONS := [["Close", "close"], ["Cancel", "cancel"], ["Declare war", "war"], ["End turn", "end_turn"],
+	["Raise army", "raise"], ["Recruit", "recruit"], ["Confirm", "accept"], ["Copy", "copy"],
+	["Submit turn", "end_turn"], ["Lay siege", "siege"], ["Assault", "assault"], ["Cancel recruits", "cancel"]]
+
+
+static func _dialog_icon(text: String) -> String:
+	for d in DIALOG_ICONS:
+		if text.begins_with(str(d[0])):
+			return str(d[1])
+	return ""
 
 
 func _center_dialog() -> void:
@@ -1355,7 +1396,6 @@ func _update_deselect() -> void:
 	if deselect_button == null:
 		return
 	deselect_button.visible = side.visible or sel_army >= 0 or sel_region >= 0 or merge_tap >= 0
-	deselect_button.offset_right = -234.0 if undo_button.visible else -146.0
 
 
 ## Unit book page as a recruitment card: the UnitEntry view with a Recruit
@@ -1423,9 +1463,20 @@ func _refresh_top() -> void:
 	var fs := f if f >= 0 else (int(st["humans"][0]) if not (st["humans"] as Array).is_empty() else 0)
 	var inc := CRules.income(ps, fs)
 	var up := CRules.upkeep(ps, fs)
-	top_label.text = "  %s   %s   Treasury %s (%+d)" % [CData.faction_name(fs), CData.date_text(int(st["turn"])),
-		Kit.money(int(ps["factions"][fs]["treasury"])), int(inc["total"]) - up]
-	top_label.add_theme_color_override("font_color", CData.faction_color(fs).lightened(0.45))
+	# Date with the season as its icon ("280 BC, summer" in the tooltip and
+	# the realm dialog), treasury, income a turn.
+	var lc := CData.faction_color(fs).lightened(0.45)
+	var turn := int(st["turn"])
+	top_label.text = " " + CData.faction_name(fs)
+	top_date.text = CData.date_text(turn).get_slice(",", 0)
+	Kit.label_icon(top_date, "summer" if turn % 2 == 0 else "winter")
+	top_money.text = Kit.money(int(ps["factions"][fs]["treasury"]))
+	top_income.text = "%+d" % (int(inc["total"]) - up)
+	Kit.label_icon(top_income, "income", Kit.COL_GOOD if int(inc["total"]) >= up else Kit.COL_BAD)
+	for l: Label in [top_label, top_date, top_money, top_income]:
+		l.add_theme_color_override("font_color", lc)
+	top_box.get_node("top_info").tooltip_text = "%s, %s. Treasury %s, %+d a turn." % [CData.faction_name(fs), CData.date_text(turn),
+		top_money.text, int(inc["total"]) - up]
 	var nb := CTurn.pending_for(st).size()
 	battles_button.text = "Battles (%d)" % nb if nb > 0 else "Battles"
 	battles_button.modulate = Color(1, 0.6, 0.5) if nb > 0 else Color(1, 1, 1)

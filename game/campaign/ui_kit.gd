@@ -8,6 +8,7 @@ const UT := preload("res://sim/unit_types.gd")
 const Icons := preload("res://game/unit_icons.gd")
 const UiScale := preload("res://game/ui_scale.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
+const UiIcons := preload("res://game/ui_icons.gd")
 
 const BTN_H := 40.0
 const FONT := 15
@@ -18,6 +19,8 @@ const COL_GOOD := Color(0.6, 0.95, 0.6)
 const COL_BAD := Color(1.0, 0.6, 0.5)
 const COL_GOLD := Color(1.0, 0.85, 0.45)
 const PANEL_BG := Color(0.1, 0.12, 0.11, 0.96)
+const COL_TEXT := Color(0.875, 0.875, 0.875)  # the default theme's button text
+const ICON_GAP := 6
 
 
 static func label(text: String, size: int = FONT, col: Color = Color.WHITE, p_wrap: bool = false) -> Label:
@@ -41,6 +44,81 @@ static func button(text: String, cb: Callable, min_w: float = 0.0, size: int = F
 	if cb.is_valid():
 		b.pressed.connect(cb)
 	return b
+
+
+## A button with an icon left of its text (game/ui_icons.gd); text "" makes
+## a bare icon button (only where the icon is plain: Undo, Deselect, Menu),
+## which gets the icon's name as its tooltip.
+static func icon_button(text: String, icon: String, cb: Callable, min_w: float = 0.0, size: int = FONT) -> Button:
+	var b := button(text, cb, min_w, size)
+	set_icon(b, icon)
+	return b
+
+
+## Put an icon on a button, sized to its text and coloured like it in every
+## state (col: the text colour when the button overrides it). Disabled is an
+## opaque grey so overlapping strokes do not show.
+static func set_icon(b: Button, icon: String, col: Color = Color(0, 0, 0, 0)) -> void:
+	b.icon = UiIcons.tex(icon, UiIcons.px_for(b.get_theme_font_size("font_size")))
+	b.add_theme_constant_override("h_separation", ICON_GAP)
+	if b.text == "":
+		b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		if b.tooltip_text == "":
+			b.tooltip_text = icon.capitalize()
+	tint_icon(b, col if col.a > 0.0 else COL_TEXT)
+
+
+static func tint_icon(b: Button, col: Color) -> void:
+	b.add_theme_color_override("icon_normal_color", col)
+	b.add_theme_color_override("icon_focus_color", col)
+	b.add_theme_color_override("icon_hover_color", col.lightened(0.3))
+	b.add_theme_color_override("icon_pressed_color", col.lightened(0.3))
+	b.add_theme_color_override("icon_hover_pressed_color", col.lightened(0.3))
+	b.add_theme_color_override("icon_disabled_color", Color(col.darkened(0.45), 1.0))
+
+
+## A label with an icon left of its first line.
+static func icon_label(text: String, icon: String, size: int = FONT, col: Color = Color.WHITE, p_wrap: bool = false) -> Label:
+	return label_icon(label(text, size, col, p_wrap), icon)
+
+
+## Give a label an icon left of its first line (again to change it; ""
+## removes it). The text moves right by the icon's width (a content margin),
+## so wrapping, names and .text are those of the plain label. icon_col: the
+## icon's colour if not the text's.
+static func label_icon(l: Label, icon: String, icon_col: Color = Color(0, 0, 0, 0)) -> Label:
+	var px := UiIcons.px_for(l.get_theme_font_size("font_size"))
+	var sb := StyleBoxEmpty.new()
+	sb.content_margin_left = float(px + ICON_GAP) if icon != "" else 0.0
+	l.add_theme_stylebox_override("normal", sb)
+	l.set_meta("icon", icon)
+	l.set_meta("icon_col", icon_col)
+	if not l.has_meta("icon_hooked"):
+		l.set_meta("icon_hooked", true)
+		l.draw.connect(_draw_label_icon.bind(l))
+	l.queue_redraw()
+	return l
+
+
+static func _draw_label_icon(l: Label) -> void:
+	var icon := str(l.get_meta("icon", ""))
+	if icon == "":
+		return
+	var fs := l.get_theme_font_size("font_size")
+	var px := float(UiIcons.px_for(fs))
+	var fh := l.get_theme_font("font").get_height(fs)
+	var ls := float(l.get_theme_constant("line_spacing"))
+	var n := maxi(l.get_visible_line_count(), 1)
+	var block := n * (fh + ls) - ls
+	var y0 := 0.0
+	if l.vertical_alignment == VERTICAL_ALIGNMENT_CENTER:
+		y0 = floorf((l.size.y - block) * 0.5)
+	elif l.vertical_alignment == VERTICAL_ALIGNMENT_BOTTOM:
+		y0 = l.size.y - block
+	var col: Color = l.get_meta("icon_col", Color(0, 0, 0, 0))
+	if col.a <= 0.0:
+		col = l.get_theme_color("font_color")
+	UiIcons.draw_icon(l, icon, Rect2(0.0, y0 + (fh - px) * 0.5, px, px), col)
 
 
 static func box(col: Color = PANEL_BG, margin: float = 10.0, radius: int = 6) -> StyleBoxFlat:
@@ -82,8 +160,10 @@ static func spacer() -> Control:
 	return c
 
 
-static func section(text: String) -> Label:
+static func section(text: String, icon: String = "") -> Label:
 	var l := label(text, FONT, COL_GOLD)
+	if icon != "":
+		label_icon(l, icon)
 	return l
 
 

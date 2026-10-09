@@ -257,14 +257,14 @@ func _refresh_wait_panel() -> void:
 	v.add_child(l)
 	if not all_in:
 		var h := Kit.flow(6)
-		var ub := Kit.button("Unsubmit", func(): _unsubmit(), 0, Kit.FONT_SMALL)
+		var ub := Kit.icon_button("Unsubmit", "undo", func(): _unsubmit(), 0, Kit.FONT_SMALL)
 		ub.name = "net_unsubmit"
 		h.add_child(ub)
 		var pb := Kit.button("Ping " + _missing_names(), func(): _ping(-1), 0, Kit.FONT_SMALL)
 		pb.name = "net_ping"
 		h.add_child(pb)
 		if bool(oc.summary.get("deadline_expired", false)):
-			var fb := Kit.button("Resolve without " + _missing_names(), func(): _force(), 0, Kit.FONT_SMALL)
+			var fb := Kit.icon_button("Resolve without " + _missing_names(), "end_turn", func(): _force(), 0, Kit.FONT_SMALL)
 			fb.name = "net_force"
 			h.add_child(fb)
 		v.add_child(h)
@@ -455,7 +455,7 @@ func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 		if live_ok:
 			# Opens the live battle's lobby; the allies are told and can join
 			# (with their army if it is in it, else to be given units).
-			tb = Kit.button("Fight together", func(): s.fight_live(bid, true), 0)
+			tb = Kit.icon_button("Fight together", "alliance", func(): s.fight_live(bid, true), 0)
 			tb.name = "together_%d" % bid
 			tb.tooltip_text = "Open the battle for %s to join: they command their own army, or the units you give them." % _names(allies)
 			if not wanting.is_empty():
@@ -466,7 +466,7 @@ func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 		h.add_child(ab)
 		var why := ("%s asked to join." % _names(asks)) if not asks.is_empty() else ("%s is waiting for you." % _names(wanting))
 		var with_ally: bool = not others.is_empty() and oc.live_ok()
-		var fb := Kit.button("Fight", func():
+		var fb := Kit.icon_button("Fight", "battles", func():
 			if with_ally:
 				s.fight_live(bid, true)  # the ally's army is in it: they can join at any time
 			elif wanting.is_empty():
@@ -494,7 +494,7 @@ func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 		cb.tooltip_text = "For when %s is away: you take command of their army here (they are told)." % _names(others)
 		h.add_child(cb)
 		if mine and live_ok:
-			var lb := Kit.button("Fight together", func(): s.fight_live(bid, true), 0)
+			var lb := Kit.icon_button("Fight together", "alliance", func(): s.fight_live(bid, true), 0)
 			lb.name = "together_%d" % bid
 			h.add_child(lb)
 	return card
@@ -542,7 +542,7 @@ func _live_card(card: Control, v: VBoxContainer, h: HBoxContainer, bid: int, liv
 		text += " You are in it on another device."
 	v.add_child(Kit.label(text, Kit.FONT_SMALL, Kit.COL_GOOD, true))
 	h.alignment = BoxContainer.ALIGNMENT_END
-	var jb := Kit.button("Join battle", func(): s.fight_live(bid, false), 130)
+	var jb := Kit.icon_button("Join battle", "battles", func(): s.fight_live(bid, false), 130)
 	jb.name = "join_%d" % bid
 	h.add_child(jb)
 	if str(live.get("state", "")) != "lobby" and not others.is_empty() and mine:
@@ -633,16 +633,16 @@ func show_online() -> void:
 		box.add_child(h)
 	if str(sm.get("join_code", "")) != "":
 		var code := str(sm["join_code"])
-		box.add_child(Kit.section("Invite your ally"))
+		box.add_child(Kit.section("Invite your ally", "alliance"))
 		box.add_child(Kit.label("Join code %s, or send this link: %s" % [NetScript.show_code(code), net.join_link(code) if net else ""], Kit.FONT, Color.WHITE, true))
-		var cb := Kit.button("Copy link", func():
+		var cb := Kit.icon_button("Copy link", "copy", func():
 			DisplayServer.clipboard_set(net.join_link(code) if net else code)
 			s._flash("Copied."), 0)
 		box.add_child(cb)
-	box.add_child(Kit.section("Play on another device"))
+	box.add_child(Kit.section("Play on another device", "online"))
 	var link_box := Kit.vbox(6)
 	link_box.add_child(Kit.label("Get a code to continue this campaign on your desktop or another phone (valid 30 minutes; this device keeps working too).", Kit.FONT_SMALL, Kit.COL_DIM, true))
-	var lb := Kit.button("Get a device code", func(): _make_link(link_box), 0)
+	var lb := Kit.icon_button("Get a device code", "online", func(): _make_link(link_box), 0)
 	lb.name = "net_device_code"
 	link_box.add_child(lb)
 	box.add_child(link_box)
@@ -670,7 +670,7 @@ func show_online() -> void:
 		show_online(), 0)
 	vt.tooltip_text = "Re-runs your ally's turn resolutions here and warns if this device gets a different result."
 	box.add_child(vt)
-	box.add_child(Kit.button("History and rollback", func(): show_history(), 0))
+	box.add_child(Kit.icon_button("History and rollback", "undo", func(): show_history(), 0))
 	box.add_child(Kit.label("Version %d, state %s, rules %s." % [oc.version, oc.state_hash, oc.rules], Kit.FONT_SMALL, Kit.COL_DIM))
 	s.show_dialog("Online", box, [["Close", Callable()]], 620)
 	s.dialog_kind = "online_menu"
@@ -691,7 +691,7 @@ func _make_link(box: VBoxContainer) -> void:
 	cl.name = "device_code"
 	box.add_child(cl)
 	box.add_child(Kit.label(link, Kit.FONT_SMALL, Kit.COL_DIM, true))
-	box.add_child(Kit.button("Copy link", func():
+	box.add_child(Kit.icon_button("Copy link", "copy", func():
 		DisplayServer.clipboard_set(link)
 		s._flash("Copied."), 0))
 	s._t("online_device_code", {})
@@ -750,7 +750,7 @@ func show_history() -> void:
 		h.add_child(l)
 		if int(v["version"]) < oc.version:
 			var vv := int(v["version"])
-			var rb := Kit.button("Roll back here", Callable(), 0, Kit.FONT_SMALL)
+			var rb := Kit.icon_button("Roll back here", "undo", Callable(), 0, Kit.FONT_SMALL)
 			rb.pressed.connect(func():
 				if rb.text == "Sure? Tap again":
 					_rollback(vv)

@@ -22,11 +22,13 @@ const TouchScroll := preload("res://game/touch_scroll.gd")
 const CData := preload("res://campaign/cdata.gd")
 
 const SETTINGS := "user://settings.cfg"
-const BUTTON_W := 64.0
+const BUTTON_W := 76.0
 const BUTTON_H := 48.0
 const PANEL_W := 300.0
 const SAMPLE := Vector2(66, 30)
 const MARGIN := 8.0
+## Icons of the key's section headings (the rows show the map's own marks).
+const SECTION_ICONS := {"Planned marches": "move", "Planned moves": "move", "Armies": "men", "Map": "view_map"}
 
 ## Format shown: 6 the overworld, 5 free movement, 4 older (arrows).
 var format := -1
@@ -46,7 +48,7 @@ func _init() -> void:
 	name = "map_key"
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	button = Kit.button("Key", func(): set_expanded(true), BUTTON_W)
+	button = Kit.icon_button("Key", "key", func(): set_expanded(true), BUTTON_W)
 	button.name = "map_key_button"
 	button.custom_minimum_size = Vector2(BUTTON_W, BUTTON_H)
 	button.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
@@ -68,6 +70,7 @@ func _init() -> void:
 	header.flat = true
 	header.add_theme_color_override("font_color", Kit.COL_GOLD)
 	header.add_theme_color_override("font_hover_color", Kit.COL_GOLD.lightened(0.3))
+	Kit.set_icon(header, "key", Kit.COL_GOLD)
 	v.add_child(header)
 	scroll = TouchScroll.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -115,6 +118,8 @@ func set_format(p_format: int, p_own: Color, p_enemy: Color) -> void:
 	for r in rows():
 		if r.size() == 1:
 			var s := Kit.label(str(r[0]), Kit.FONT_SMALL, Kit.COL_DIM)
+			if SECTION_ICONS.has(str(r[0])):
+				Kit.label_icon(s, str(SECTION_ICONS[str(r[0])]))
 			s.set_meta("key_section", true)
 			list.add_child(s)
 			continue

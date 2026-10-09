@@ -1373,3 +1373,14 @@ Findings (30-seed runs at walls 1 unless said):
   still 0-10 % (ring) and 20-30 % (polis). Without the router rule ring
   walls 2-3 were 80 / 40 % and 20 / 0 %. Not tuned further (attackers
   unchanged; see docs/STATUS.md item 4).
+
+## 17. Engines left on the field (2026-10-09)
+
+Engines are equipment (docs/DESIGN.md "Artillery", "Engines are equipment,
+crews are men"). The battle AI (`sim/battle_ai.gd`, `_take_engines`, field
+maps only) adds one rule: a missile unit out of ammunition with no router
+to chase, not fighting and not in contact, takes up the nearest abandoned
+engine group last worked by its own side within `ENGINE_TAKE_R` 60 m (an
+`ORDER_PICKUP`, then it is a battery to the AI). AI batteries never drop
+their engines; the settlement AI (`siege_ai.gd`) has no such rule; nobody
+recaptures enemy engines. No knob, no tuning.

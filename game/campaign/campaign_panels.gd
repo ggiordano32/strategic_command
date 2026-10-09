@@ -12,6 +12,7 @@ const CBattle := preload("res://campaign/cbattle.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
+const UiIcons := preload("res://game/ui_icons.gd")
 const Saves := preload("res://game/campaign/saves.gd")
 const CityPreview := preload("res://game/campaign/city_preview.gd")
 const MapGen := preload("res://sim/mapgen.gd")
@@ -40,7 +41,7 @@ func _close_row(box: Container, title: String, col: Color) -> void:
 	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	h.add_child(t)
-	var b := Kit.button("Close", func(): s.close_side(), 70)
+	var b := Kit.icon_button("Close", "close", func(): s.close_side(), 70)
 	b.name = "side_close"
 	h.add_child(b)
 	box.add_child(h)
@@ -87,6 +88,7 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 			rtxt = "Raided by %s: it takes %d%% of the income." % [CData.faction_name(rd_f), CData.RAID_PCT]
 		var rl := Kit.label(rtxt, Kit.FONT, Kit.COL_BAD if o == f else Kit.COL_GOLD, true)
 		rl.name = "raided_note"
+		Kit.label_icon(rl, "raid")
 		box.add_child(rl)
 	if not CState.siege_at(ps, r).is_empty():
 		if CState.grid_on(ps):
@@ -104,7 +106,7 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 	if not b.is_empty():
 		box.add_child(Kit.label("A battle is pending here.", Kit.FONT, Kit.COL_BAD))
 	box.add_child(Kit.label(CBattle.city_caption(ps, r) + ".", Kit.FONT_SMALL, Kit.COL_DIM, true))
-	var vb := Kit.button("View battle map", show_city_map.bind(r))
+	var vb := Kit.icon_button("View battle map", "view_map", show_city_map.bind(r))
 	vb.name = "view_battle_map"
 	box.add_child(vb)
 	# Armies here.
@@ -121,6 +123,7 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 				s.select_army.bind(int(a["id"])))
 			bt.alignment = HORIZONTAL_ALIGNMENT_LEFT
 			bt.add_theme_color_override("font_color", _fc(int(a["f"])).lightened(0.5))
+			Kit.set_icon(bt, "men", _fc(int(a["f"])).lightened(0.5))
 			box.add_child(bt)
 	var grid := CState.grid_on(ps)
 	if mine:
@@ -134,7 +137,7 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 	_gift_section(box, r)
 	# Garrison: what the settlement provides (by level and walls).
 	var gar := CRules.garrison(ps, r)
-	var gs := Kit.section("Garrison (%d%% strength, walls %d)" % [int(rs["gar"]), CState.walls(ps, r)])
+	var gs := Kit.section("Garrison (%d%% strength, walls %d)" % [int(rs["gar"]), CState.walls(ps, r)], "walls")
 	gs.name = "garrison_section"
 	box.add_child(gs)
 	if grid:
@@ -196,7 +199,7 @@ func _planned_gift_row(box: Container, o: Dictionary, nm: String, after: Callabl
 	h.add_child(Kit.label(_gift_order_text(o) if str(o["t"]) != "gift_money" else "Planned: %d to %s" % [int(o["amount"]), _fname(int(o["to"]))],
 		Kit.FONT_SMALL, Kit.COL_GOOD, true))
 	var key := str(o)
-	var cb := Kit.button("Cancel", func():
+	var cb := Kit.icon_button("Cancel", "cancel", func():
 		s.remove_orders(func(x): return str(x) == key)
 		after.call(), 80, Kit.FONT_SMALL)
 	cb.name = nm
@@ -219,7 +222,7 @@ func _gift_section(box: VBoxContainer, r: int) -> void:
 	var mine := CState.owner(ps, r) == f
 	if planned.is_empty() and (not mine or partners.is_empty()):
 		return
-	box.add_child(Kit.section("Gift to an ally"))
+	box.add_child(Kit.section("Gift to an ally", "gift"))
 	for o in planned:
 		_planned_gift_row(box, o, "gift_cancel", func(): pass)
 	if not mine or not planned.is_empty():
@@ -231,9 +234,10 @@ func _gift_section(box: VBoxContainer, r: int) -> void:
 		var h := Kit.hbox(6)
 		var pf := _num_field("price", "gift_price_%s" % CData.FACTIONS[g]["key"])
 		h.add_child(pf)
-		var b := Kit.button("Gift to %s" % _fname(g), func():
+		var b := Kit.icon_button("Gift to %s" % _fname(g), "gift", func():
 			s.add_order({"t": "gift_region", "r": r, "to": g, "price": _num(pf)}), 0)
 		b.name = "gift_to_%s" % CData.FACTIONS[g]["key"]
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL  # the row spans the panel
 		b.disabled = why != ""
 		h.add_child(b)
 		box.add_child(h)
@@ -255,7 +259,15 @@ func _offer_answer(id: int) -> int:
 ## Diplomacy, under the allied player g: their offers to us (Accept /
 ## Decline), our planned gifts and offers (Cancel), Offer money, Offer to
 ## buy one of their cities.
-func _ally_deals(box: VBoxContainer, g: int) -> void:
+func _ally_deals(outer: VBoxContainer, g: int) -> void:
+	# Indented under the ally's row (past its colour swatch), so the deals
+	# read as that faction's.
+	var mc := MarginContainer.new()
+	mc.name = "deals_" + str(CData.FACTIONS[g]["key"])
+	mc.add_theme_constant_override("margin_left", 24)
+	outer.add_child(mc)
+	var box := Kit.vbox(6)
+	mc.add_child(box)
 	var ps: Dictionary = s.ps
 	var f: int = s.f
 	var gk := str(CData.FACTIONS[g]["key"])
@@ -271,19 +283,19 @@ func _ally_deals(box: VBoxContainer, g: int) -> void:
 		h.add_child(Kit.label(txt, Kit.FONT, Kit.COL_GOLD, true))
 		var ans := _offer_answer(pid)
 		if ans < 0:
-			var ab := Kit.button("Accept", func():
+			var ab := Kit.icon_button("Accept", "accept", func():
 				s.add_order({"t": "accept_offer", "id": pid})
 				show_diplomacy(g), 80)
 			ab.name = "offer_accept_%d" % pid
 			h.add_child(ab)
-			var db := Kit.button("Decline", func():
+			var db := Kit.icon_button("Decline", "decline", func():
 				s.add_order({"t": "decline_offer", "id": pid})
 				show_diplomacy(g), 80)
 			db.name = "offer_decline_%d" % pid
 			h.add_child(db)
 		else:
 			h.add_child(Kit.label("accepted" if ans == 1 else "declined", Kit.FONT_SMALL, Kit.COL_DIM))
-			var cb := Kit.button("Cancel", func():
+			var cb := Kit.icon_button("Cancel", "cancel", func():
 				s.remove_orders(func(o): return int(o.get("id", -1)) == pid and str(o["t"]) in ["accept_offer", "decline_offer"])
 				show_diplomacy(g), 80, Kit.FONT_SMALL)
 			cb.name = "offer_undo_%d" % pid
@@ -298,7 +310,7 @@ func _ally_deals(box: VBoxContainer, g: int) -> void:
 	var mh := Kit.hbox(6)
 	var mf := _num_field("amount", "money_amount_" + gk)
 	mh.add_child(mf)
-	var mb := Kit.button("Offer money", func():
+	var mb := Kit.icon_button("Offer money", "coin", func():
 		if s.add_order({"t": "gift_money", "to": g, "amount": _num(mf)}) == "":
 			show_diplomacy(g), 0)
 	mb.name = "offer_money_" + gk
@@ -323,7 +335,7 @@ func _ally_deals(box: VBoxContainer, g: int) -> void:
 	bh.add_child(pick)
 	var pf := _num_field("price", "buy_price_" + gk)
 	bh.add_child(pf)
-	var bb := Kit.button("Offer to buy", func():
+	var bb := Kit.icon_button("Offer to buy", "buy", func():
 		if pick.selected < 0:
 			return
 		if s.add_order({"t": "buy_region", "r": pick.get_item_id(pick.selected), "price": _num(pf)}) == "":
@@ -443,6 +455,7 @@ func _siege_section(box: VBoxContainer, r: int) -> void:
 	if eq_t != "":
 		var eql := Kit.label(eq_t, Kit.FONT_SMALL, Color.WHITE, true)
 		eql.name = "siege_equipment"
+		Kit.label_icon(eql, "ladder")
 		v.add_child(eql)
 	var note := Kit.label("%d besieging arm%s, %d men. No income, recruits or building while besieged; with no garrison and no army inside it surrenders." % [
 		bs.size(), "y" if bs.size() == 1 else "ies", men], Kit.FONT_SMALL, Kit.COL_DIM, true)
@@ -461,11 +474,11 @@ func _siege_section(box: VBoxContainer, r: int) -> void:
 		v.add_child(Kit.label("Orders: storm the walls at the end of the turn." if ordered else "Orders: keep up the siege.",
 			Kit.FONT, Kit.COL_BAD if ordered else Color.WHITE, true))
 		var h := Kit.hbox(8)
-		var ab := Kit.button("Assault", func(): s.add_order({"t": "assault", "r": r}), 110)
+		var ab := Kit.icon_button("Assault", "assault", func(): s.add_order({"t": "assault", "r": r}), 110)
 		ab.name = "siege_assault"
 		ab.disabled = ordered or CRules.can_assault(ps, f, r) != ""
 		h.add_child(ab)
-		var mb := Kit.button("Maintain", func(): s.remove_orders(func(x): return str(x["t"]) == "assault" and int(x.get("r", -1)) == r), 110)
+		var mb := Kit.icon_button("Maintain", "siege", func(): s.remove_orders(func(x): return str(x["t"]) == "assault" and int(x.get("r", -1)) == r), 110)
 		mb.name = "siege_maintain"
 		mb.disabled = not ordered
 		h.add_child(mb)
@@ -479,7 +492,7 @@ func _siege_section(box: VBoxContainer, r: int) -> void:
 			else "If the garrison sallies (a field battle outside the walls):"))
 		var ordered2 := _has_order("sally", r)
 		var h2 := Kit.hbox(8)
-		var sb := Kit.button("Cancel sally" if ordered2 else "Sally", func():
+		var sb := Kit.icon_button("Cancel sally" if ordered2 else "Sally", "cancel" if ordered2 else "sally", func():
 			if ordered2:
 				s.remove_orders(func(x): return str(x["t"]) == "sally" and int(x.get("r", -1)) == r)
 			else:
@@ -545,7 +558,7 @@ func _raid_section(box: VBoxContainer, r: int) -> void:
 		v.add_child(Kit.odds_view(fo, 0, [_fname(f), _fname(int(foes[0]["f"]))], [_fc(f), _fc(int(foes[0]["f"]))],
 			"Their army stands in the field here: a siege or an assault starts with a field battle:"))
 	var h := Kit.hbox(8)
-	var sb := Kit.button("Cancel siege" if sieging else "Lay siege", func():
+	var sb := Kit.icon_button("Cancel siege" if sieging else "Lay siege", "cancel" if sieging else "siege", func():
 		if sieging:
 			s.remove_orders(func(x): return str(x["t"]) == "siege" and int(x.get("r", -1)) == r)
 		else:
@@ -554,7 +567,7 @@ func _raid_section(box: VBoxContainer, r: int) -> void:
 	sb.name = "raid_siege"
 	sb.disabled = not sieging and CRules.can_siege(ps, f, r) != ""
 	h.add_child(sb)
-	var ab := Kit.button("Cancel assault" if storming else "Assault", func():
+	var ab := Kit.icon_button("Cancel assault" if storming else "Assault", "cancel" if storming else "assault", func():
 		if storming:
 			s.remove_orders(func(x): return str(x["t"]) == "assault" and int(x.get("r", -1)) == r)
 		else:
@@ -671,7 +684,7 @@ func _buildings(box: VBoxContainer, r: int) -> void:
 	var ps: Dictionary = s.ps
 	var f: int = s.f
 	var rs: Dictionary = ps["regions"][r]
-	box.add_child(Kit.section("Buildings (%d of %d slots)" % [(rs["slots"] as Array).size(), CState.slot_count(r, int(rs["level"]))]))
+	box.add_child(Kit.section("Buildings (%d of %d slots)" % [(rs["slots"] as Array).size(), CState.slot_count(r, int(rs["level"]))], "build"))
 	var bld: Array = rs["build"]
 	var planned := -1
 	for o in s.orders:
@@ -682,15 +695,15 @@ func _buildings(box: VBoxContainer, r: int) -> void:
 		var cur := CState.building(ps, r, c)
 		var h := Kit.hbox(6)
 		var name := "%s %d" % [ch["name"], cur] if cur > 0 else str(ch["name"])
-		var l := Kit.label(name, Kit.FONT, Color.WHITE if cur > 0 else Kit.COL_DIM)
-		l.custom_minimum_size.x = 104
+		var l := Kit.icon_label(name, str(ch["key"]), Kit.FONT, Color.WHITE if cur > 0 else Kit.COL_DIM)
+		l.custom_minimum_size.x = 104 + UiIcons.px_for(Kit.FONT) + Kit.ICON_GAP
 		l.tooltip_text = str(ch["desc"])
 		h.add_child(l)
 		if not bld.is_empty() and int(bld[0]) == c:
 			var t := Kit.label("-> %d: %d turn%s left" % [int(bld[1]), int(bld[2]), "" if int(bld[2]) == 1 else "s"], Kit.FONT_SMALL, Kit.COL_GOOD, true)
 			h.add_child(t)
 			if planned == c:
-				var cb := Kit.button("Cancel", func(): s.remove_orders(func(o): return str(o["t"]) == "build" and int(o["r"]) == r), 70)
+				var cb := Kit.icon_button("Cancel", "cancel", func(): s.remove_orders(func(o): return str(o["t"]) == "build" and int(o["r"]) == r), 70)
 				h.add_child(cb)
 		else:
 			var info := CRules.build_info(ps, f, r, c)
@@ -704,7 +717,7 @@ func _buildings(box: VBoxContainer, r: int) -> void:
 			else:
 				var t := Kit.label("%d (%d turn%s)" % [int(info["cost"]), int(info["turns"]), "" if int(info["turns"]) == 1 else "s"], Kit.FONT_SMALL, Kit.COL_GOLD, true)
 				h.add_child(t)
-				var bb := Kit.button("Build %d" % int(info["level"]) if cur == 0 else "Upgrade", func(): s.add_order({"t": "build", "r": r, "chain": c}), 84)
+				var bb := Kit.icon_button("Build %d" % int(info["level"]) if cur == 0 else "Upgrade", "build" if cur == 0 else "upgrade", func(): s.add_order({"t": "build", "r": r, "chain": c}), 84)
 				bb.name = "build_%s" % ch["key"]
 				bb.tooltip_text = str(ch["desc"])
 				h.add_child(bb)
@@ -717,7 +730,7 @@ func _recruit(box: VBoxContainer, r: int) -> void:
 	var rs: Dictionary = ps["regions"][r]
 	var q: Array = rs["queue"]
 	var cap := int(CData.RECRUITS_PER_TURN[int(rs["level"])])
-	box.add_child(Kit.section("Recruit (%d of %d this turn; ready next turn)" % [q.size(), cap]))
+	box.add_child(Kit.section("Recruit (%d of %d this turn; ready next turn)" % [q.size(), cap], "recruit"))
 	for k in q.size():
 		var ty := UT.index_of(str(q[k]))
 		var row := Kit.UnitRow.new(ty, -1, _fc(f), "planned")
@@ -725,7 +738,7 @@ func _recruit(box: VBoxContainer, r: int) -> void:
 		var h := Kit.hbox(4)
 		h.add_child(row)
 		var key := str(q[k])
-		h.add_child(Kit.button("X", func(): _cancel_recruit(r, key), 44))
+		h.add_child(Kit.icon_button("", "close", func(): _cancel_recruit(r, key), 44))
 		box.add_child(h)
 	for o in best_options(ps, f, r):
 		var ty := UT.index_of(str(o["t"]))
@@ -741,7 +754,7 @@ func _recruit(box: VBoxContainer, r: int) -> void:
 		row.long_pressed.connect(open_page)
 		var h := Kit.hbox(4)
 		h.add_child(row)
-		var add := Kit.button("+", func(): s.add_order({"t": "recruit", "r": r, "unit": key}), 44)
+		var add := Kit.icon_button("", "plus", func(): s.add_order({"t": "recruit", "r": r, "unit": key}), 44)
 		add.name = "recruit_" + key
 		add.disabled = not o["ok"]
 		h.add_child(add)
@@ -775,7 +788,7 @@ func _raise_section(box: VBoxContainer, r: int) -> void:
 	var rs: Dictionary = ps["regions"][r]
 	var cap := int(CData.RECRUITS_PER_TURN[int(rs["level"])])
 	var used := (rs["queue"] as Array).size()
-	var sec := Kit.section("Recruits (%d of %d here this turn)" % [used, cap])
+	var sec := Kit.section("Recruits (%d of %d here this turn)" % [used, cap], "recruit")
 	sec.name = "recruit_slots"
 	box.add_child(sec)
 	var raising := _raise_orders(r)
@@ -788,7 +801,7 @@ func _raise_section(box: VBoxContainer, r: int) -> void:
 			"" if raising.size() == 1 else "s", ", ".join(names)], Kit.FONT, Kit.COL_GOOD, true)
 		l.name = "raise_planned"
 		h.add_child(l)
-		var x := Kit.button("X", func(): s.remove_orders(func(o): return _is_raise(o, r)), 44)
+		var x := Kit.icon_button("", "close", func(): s.remove_orders(func(o): return _is_raise(o, r)), 44)
 		x.name = "raise_cancel"
 		h.add_child(x)
 		box.add_child(h)
@@ -801,11 +814,11 @@ func _raise_section(box: VBoxContainer, r: int) -> void:
 			orow.sub_text = "arrives at the end of the turn"
 			var oh := Kit.hbox(4)
 			oh.add_child(orow)
-			var ox := Kit.button("X", func(): s.remove_orders(func(x): return is_same(x, o)), 44)
+			var ox := Kit.icon_button("", "close", func(): s.remove_orders(func(x): return is_same(x, o)), 44)
 			oh.add_child(ox)
 			box.add_child(oh)
 	var why := raise_why(ps, f, r)
-	var b := Kit.button("Raise new army" if raising.is_empty() else "Add to the new army", func(): show_raise(r), 0)
+	var b := Kit.icon_button("Raise new army" if raising.is_empty() else "Add to the new army", "raise", func(): show_raise(r), 0)
 	b.name = "raise_army"
 	b.disabled = why != ""
 	box.add_child(b)
@@ -845,7 +858,7 @@ static func raise_why(ps: Dictionary, f: int, r: int) -> String:
 func _trains(box: VBoxContainer, r: int) -> void:
 	var ps: Dictionary = s.ps
 	var f: int = s.f
-	var sec := Kit.section("Trains here")
+	var sec := Kit.section("Trains here", "barracks")
 	sec.name = "trains_section"
 	box.add_child(sec)
 	var ro: Dictionary = CData.roster(f)
@@ -923,7 +936,7 @@ func show_raise(r: int) -> void:
 		row.pressed.connect(func(): s.open_unit_page(ty, Callable(), ""))
 		var h := Kit.hbox(4)
 		h.add_child(row)
-		var minus := Kit.button("-", func(): _raise_pick(key, -1), 44)
+		var minus := Kit.icon_button("", "minus", func(): _raise_pick(key, -1), 44)
 		minus.name = "raise_minus_" + key
 		minus.disabled = cnt == 0
 		h.add_child(minus)
@@ -932,7 +945,7 @@ func show_raise(r: int) -> void:
 		cl.custom_minimum_size.x = 22
 		cl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		h.add_child(cl)
-		var plus := Kit.button("+", func(): _raise_pick(key, 1), 44)
+		var plus := Kit.icon_button("", "plus", func(): _raise_pick(key, 1), 44)
 		plus.name = "raise_plus_" + key
 		plus.disabled = not ok or n >= free or cost + price > money
 		h.add_child(plus)
@@ -1012,6 +1025,7 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 	var cnt_l := Kit.label("%d of %d units%s, %d men, upkeep %d" % [CState.unit_count(a), CData.ARMY_MAX,
 		" (+%d arriving)" % arriving.size() if not arriving.is_empty() else "", CState.men(a), up], Kit.FONT_SMALL, Kit.COL_DIM, true)
 	cnt_l.name = "army_count"
+	Kit.label_icon(cnt_l, "men")
 	box.add_child(cnt_l)
 	if mine and CState.grid_on(ps):
 		_together_row(box, a)
@@ -1039,16 +1053,17 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 				Kit.COL_GOOD if kind == "move" else Kit.COL_BAD, true))
 			if CState.moves_on(ps) and kind in ["raid", "siege", "assault"]:
 				var nxt := CData.MODE_SIEGE if kind == "raid" else (CData.MODE_ASSAULT if kind == "siege" else CData.MODE_MARCH)
-				var mb0 := Kit.button({CData.MODE_SIEGE: "Lay siege", CData.MODE_ASSAULT: "Assault", CData.MODE_MARCH: "March only"}[nxt],
+				var mb0 := Kit.icon_button({CData.MODE_SIEGE: "Lay siege", CData.MODE_ASSAULT: "Assault", CData.MODE_MARCH: "March only"}[nxt],
+					{CData.MODE_SIEGE: "siege", CData.MODE_ASSAULT: "assault", CData.MODE_MARCH: "move"}[nxt],
 					func(): s.set_move_mode(id, nxt), 96)
 				mb0.name = "move_mode"
 				h.add_child(mb0)
 			elif kind == "siege" or kind == "join" or (kind == "assault" and CState.sieges_on(ps)):
 				var to_mode := CData.MODE_SIEGE if kind == "assault" else CData.MODE_ASSAULT
-				var mb := Kit.button("Lay siege" if kind == "assault" else "Assault", func(): s.set_move_mode(id, to_mode), 96)
+				var mb := Kit.icon_button("Lay siege" if kind == "assault" else "Assault", "siege" if kind == "assault" else "assault", func(): s.set_move_mode(id, to_mode), 96)
 				mb.name = "move_mode"
 				h.add_child(mb)
-			var cb := Kit.button("Cancel move", func(): s.set_move(id, mv), 110)
+			var cb := Kit.icon_button("Cancel move", "cancel", func(): s.set_move(id, mv), 110)
 			cb.name = "cancel_move"
 			h.add_child(cb)
 			box.add_child(h)
@@ -1057,7 +1072,7 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 			var h2 := Kit.hbox(6)
 			h2.add_child(Kit.label("Besieging %s (turn %d). It stays until ordered away." % [CData.REGIONS[r]["city"],
 				int(ps["turn"]) - int(sg["turn"])], Kit.FONT, Kit.COL_GOLD, true))
-			var sp := Kit.button("Siege", func(): s.select_region(r), 80)
+			var sp := Kit.icon_button("Siege", "siege", func(): s.select_region(r), 80)
 			sp.name = "army_siege"
 			h2.add_child(sp)
 			box.add_child(h2)
@@ -1065,7 +1080,7 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 			var h3 := Kit.hbox(6)
 			h3.add_child(Kit.label("Inside the besieged walls of %s: it can only leave by a sally." % CData.REGIONS[r]["city"],
 				Kit.FONT, Kit.COL_BAD, true))
-			var sp2 := Kit.button("Siege", func(): s.select_region(r), 80)
+			var sp2 := Kit.icon_button("Siege", "siege", func(): s.select_region(r), 80)
 			sp2.name = "army_siege"
 			h3.add_child(sp2)
 			box.add_child(h3)
@@ -1073,7 +1088,7 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 			var h4 := Kit.hbox(6)
 			h4.add_child(Kit.label("Raiding %s: %s gets half its income." % [CData.REGIONS[r]["name"], _fname(CState.owner(ps, r))],
 				Kit.FONT, Kit.COL_GOLD, true))
-			var rb := Kit.button("Siege / assault", func(): s.select_region(r), 120)
+			var rb := Kit.icon_button("Siege / assault", "siege", func(): s.select_region(r), 120)
 			rb.name = "army_raid"
 			h4.add_child(rb)
 			box.add_child(h4)
@@ -1127,7 +1142,7 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 		arow.pressed.connect(func(): s.open_unit_page(rty, Callable(), ""))
 		var ah := Kit.hbox(4)
 		ah.add_child(arow)
-		var xb := Kit.button("X", func(): s.remove_orders(func(o): return is_same(o, ro)), 44)
+		var xb := Kit.icon_button("", "close", func(): s.remove_orders(func(o): return is_same(o, ro)), 44)
 		xb.name = "recruit_cancel_%d" % k
 		ah.add_child(xb)
 		box.add_child(ah)
@@ -1137,14 +1152,14 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 		return
 	var fl := Kit.flow(6)
 	var nsel := sel.size()
-	var split := Kit.button("Split off %d" % nsel, func(): _split(id), 0)
+	var split := Kit.icon_button("Split off %d" % nsel, "split", func(): _split(id), 0)
 	split.name = "split"
 	split.disabled = nsel == 0 or nsel >= units.size()
 	fl.add_child(split)
-	var dis := Kit.button("Disband %d" % nsel, func(): _disband(id), 0)
+	var dis := Kit.icon_button("Disband %d" % nsel, "disband", func(): _disband(id), 0)
 	dis.disabled = nsel == 0
 	fl.add_child(dis)
-	fl.add_child(Kit.button("Book", func():
+	fl.add_child(Kit.icon_button("Book", "units", func():
 		var ty := CState.unit_type(units[sel[0]] if nsel > 0 else units[0])
 		s.open_unit_page(ty, Callable(), ""), 0))
 	var near := CState.armies_in(ps, r)
@@ -1153,7 +1168,7 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 	for o in near:
 		if int(o["id"]) != id and int(o["f"]) == af and int(o["busy"]) == 0 and CRules.siege_role(ps, o) == 0:
 			var oid := int(o["id"])
-			var mb := Kit.button("Merge into army (%d units)" % CState.unit_count(o), func():
+			var mb := Kit.icon_button("Merge into army (%d units)" % CState.unit_count(o), "merge", func():
 				_split_sel.erase(id)
 				s.add_order({"t": "merge", "army": id, "into": oid})
 				s.select_army(oid), 0)
@@ -1188,7 +1203,7 @@ func _army_recruit(box: VBoxContainer, a: Dictionary) -> void:
 	var rs: Dictionary = ps["regions"][r]
 	var cap := int(CData.RECRUITS_PER_TURN[int(rs["level"])])
 	var used := (rs["queue"] as Array).size()
-	var sec := Kit.section("Recruit at %s" % CData.REGIONS[r]["city"])
+	var sec := Kit.section("Recruit at %s" % CData.REGIONS[r]["city"], "recruit")
 	sec.name = "recruit_section"
 	box.add_child(sec)
 	var sl := Kit.label("%d of %d recruits here this turn; they join this army at the end of the turn, and it cannot march this turn." % [used, cap],
@@ -1217,7 +1232,7 @@ func _army_recruit(box: VBoxContainer, a: Dictionary) -> void:
 		row.long_pressed.connect(open_page)
 		var h := Kit.hbox(4)
 		h.add_child(row)
-		var add := Kit.button("+", add_it, 44)
+		var add := Kit.icon_button("", "plus", add_it, 44)
 		add.name = "recruit_" + key
 		add.disabled = not ok
 		h.add_child(add)
@@ -1240,7 +1255,7 @@ func _together_row(box: VBoxContainer, a: Dictionary) -> void:
 		var oid := int(o["id"])
 		if int(o["f"]) != int(a["f"]):
 			continue
-		var mb := Kit.button("Merge into army (%d units)" % CState.unit_count(o), func():
+		var mb := Kit.icon_button("Merge into army (%d units)" % CState.unit_count(o), "merge", func():
 			_split_sel.erase(id)
 			if s.add_order({"t": "merge", "army": id, "into": oid}) == "":
 				s.select_army(oid), 0)
@@ -1249,7 +1264,7 @@ func _together_row(box: VBoxContainer, a: Dictionary) -> void:
 		fl.add_child(mb)
 	if not any:
 		return
-	var xb := Kit.button("Exchange units", func(): show_exchange(id, -1), 0)
+	var xb := Kit.icon_button("Exchange units", "exchange", func(): show_exchange(id, -1), 0)
 	xb.name = "exchange_units"
 	fl.add_child(xb)
 	box.add_child(fl)
@@ -1444,12 +1459,12 @@ func _movement_rows(box: VBoxContainer, a: Dictionary) -> void:
 	var own := CState.friendly(ps, int(a["f"]), CState.owner(ps, r))
 	var stance := CState.stance(a)
 	var h := Kit.hbox(6)
-	var inb := Kit.button("Inside the walls" + (" (now)" if stance == CData.STANCE_GARRISON else ""),
+	var inb := Kit.icon_button("Inside the walls" + (" (now)" if stance == CData.STANCE_GARRISON else ""), "inside",
 		func(): _set_stance(id, CData.STANCE_GARRISON), 0)
 	inb.name = "stance_inside"
 	inb.disabled = stance == CData.STANCE_GARRISON or not own
 	h.add_child(inb)
-	var fb := Kit.button("In the field" + (" (now)" if stance == CData.STANCE_FIELD else ""),
+	var fb := Kit.icon_button("In the field" + (" (now)" if stance == CData.STANCE_FIELD else ""), "field",
 		func(): _set_stance(id, CData.STANCE_FIELD), 0)
 	fb.name = "stance_field"
 	fb.disabled = stance == CData.STANCE_FIELD
@@ -1557,12 +1572,12 @@ func show_faction() -> void:
 	var box := Kit.vbox(6)
 	var inc := CRules.income(ps, f)
 	var up := CRules.upkeep(ps, f)
-	box.add_child(Kit.label("Treasury %s after this turn's spending." % Kit.money(int(ps["factions"][f]["treasury"])), Kit.FONT, Color.WHITE, true))
-	box.add_child(Kit.label("Income %d (regions %d, trade %d, cost of a large realm -%d), upkeep %d: %+d a turn." % [
-		int(inc["total"]), int(inc["regions"]), int(inc["trade"]), int(inc.get("corruption", 0)), up, int(inc["total"]) - up],
-		Kit.FONT, Kit.COL_GOLD, true))
+	box.add_child(Kit.label_icon(Kit.label("Treasury %s after this turn's spending." % Kit.money(int(ps["factions"][f]["treasury"])), Kit.FONT, Color.WHITE, true),
+		"treasury", Kit.COL_GOLD))
+	box.add_child(Kit.icon_label("Income %d (regions %d, trade %d, cost of a large realm -%d), upkeep %d: %+d a turn." % [
+		int(inc["total"]), int(inc["regions"]), int(inc["trade"]), int(inc.get("corruption", 0)), up, int(inc["total"]) - up], "income", Kit.FONT, Kit.COL_GOLD, true))
 	box.add_child(Kit.label("A turn ending with less than nothing costs every unit a tenth of its men.", Kit.FONT_SMALL, Kit.COL_DIM, true))
-	box.add_child(Kit.section("Regions"))
+	box.add_child(Kit.section("Regions", "realm"))
 	var fl := Kit.flow(6)
 	for r in CState.regions_of(ps, f):
 		var rs: Dictionary = ps["regions"][r]
@@ -1588,7 +1603,7 @@ func show_faction() -> void:
 	for g in CState.nf():
 		if g != f and CState.alive(ps, g) and CState.dip(ps, f, g) == CState.WAR:
 			wars.append(CData.faction_name(g))
-	box.add_child(Kit.label("At war with: " + (", ".join(wars) if not wars.is_empty() else "nobody"), Kit.FONT, Kit.COL_BAD, true))
+	box.add_child(Kit.icon_label("At war with: " + (", ".join(wars) if not wars.is_empty() else "nobody"), "war", Kit.FONT, Kit.COL_BAD, true))
 	s.show_dialog(CData.faction_name(f), box, [["Close", Callable()]])
 
 
@@ -1613,10 +1628,10 @@ func show_diplomacy(focus: int = -1) -> void:
 		var h := Kit.hbox(6)
 		h.add_child(Kit.label("%s offers %s." % [CData.faction_name(int(p["from"])), _what(str(p["what"]))], Kit.FONT, Kit.COL_GOLD, true))
 		if answered < 0:
-			h.add_child(Kit.button("Accept", func():
+			h.add_child(Kit.icon_button("Accept", "accept", func():
 				s.add_order({"t": "answer", "id": pid, "accept": 1})
 				show_diplomacy(), 80))
-			h.add_child(Kit.button("Refuse", func():
+			h.add_child(Kit.icon_button("Refuse", "decline", func():
 				s.add_order({"t": "answer", "id": pid, "accept": 0})
 				show_diplomacy(), 80))
 		else:
@@ -1650,19 +1665,20 @@ func show_diplomacy(focus: int = -1) -> void:
 				planned = str(o.get("what", "war"))
 		if planned != "":
 			acts.add_child(Kit.label("Planned: " + _what(planned), Kit.FONT_SMALL, Kit.COL_GOOD))
-			acts.add_child(Kit.button("Cancel", func():
+			acts.add_child(Kit.icon_button("Cancel", "cancel", func():
 				s.remove_orders(func(o): return (str(o["t"]) == "propose" or str(o["t"]) == "war") and int(o["to"]) == g)
 				show_diplomacy(), 80))
 		else:
 			if d == CState.WAR:
-				acts.add_child(_dip_button("Offer peace", {"t": "propose", "to": g, "what": "peace"}))
+				acts.add_child(_dip_button("Offer peace", "peace", {"t": "propose", "to": g, "what": "peace"}))
 			if d == CState.PEACE:
-				acts.add_child(_dip_button("Offer trade", {"t": "propose", "to": g, "what": "trade"}))
+				acts.add_child(_dip_button("Offer trade", "trade", {"t": "propose", "to": g, "what": "trade"}))
 			if d == CState.TRADE:
-				acts.add_child(_dip_button("End trade", {"t": "propose", "to": g, "what": "cancel_trade"}))
+				acts.add_child(_dip_button("End trade", "trade_end", {"t": "propose", "to": g, "what": "cancel_trade"}))
 			if d != CState.WAR:
-				var wb := Kit.button("Declare war", func(): _confirm_war(g), 0)
+				var wb := Kit.icon_button("Declare war", "war", func(): _confirm_war(g), 0)
 				wb.add_theme_color_override("font_color", Kit.COL_BAD)
+				Kit.tint_icon(wb, Kit.COL_BAD)
 				acts.add_child(wb)
 	s.show_dialog("Diplomacy", box, [["Close", Callable()]], 700)
 	if focus_row != null:
@@ -1678,8 +1694,8 @@ func show_diplomacy(focus: int = -1) -> void:
 		s.dialog_scroll.call_deferred("ensure_control_visible", focus_row)
 
 
-func _dip_button(text: String, o: Dictionary) -> Button:
-	return Kit.button(text, func():
+func _dip_button(text: String, icon: String, o: Dictionary) -> Button:
+	return Kit.icon_button(text, icon, func():
 		s.add_order(o)
 		show_diplomacy(), 0)
 
@@ -2061,12 +2077,12 @@ func show_menu() -> void:
 	box.add_child(Kit.label("State %s" % CState.hash_text(s.st), Kit.FONT_SMALL, Kit.COL_DIM))
 	var fl := Kit.flow(8)
 	if s.online != null:
-		fl.add_child(Kit.button("Online", func(): s.onl.show_online(), 0))
+		fl.add_child(Kit.icon_button("Online", "online", func(): s.onl.show_online(), 0))
 	else:
-		fl.add_child(Kit.button("Export save as text", func(): show_export(), 0))
+		fl.add_child(Kit.icon_button("Export save as text", "export", func(): show_export(), 0))
 		var net: Node = s.get_node_or_null("/root/Net")
 		if net != null and net.has_server() and str(s.st["phase"]) == "plan" and int(s.st["turn"]) >= 0:
-			var ob := Kit.button("Play online", func(): show_go_online(), 0)
+			var ob := Kit.icon_button("Play online", "online", func(): show_go_online(), 0)
 			ob.name = "menu_go_online"
 			fl.add_child(ob)
 	fl.add_child(Kit.button("Controls", func():
@@ -2117,7 +2133,7 @@ func show_export() -> void:
 	te.custom_minimum_size = Vector2(300, 140)
 	te.editable = false
 	box.add_child(te)
-	var copy := Kit.button("Copy to clipboard", func():
+	var copy := Kit.icon_button("Copy to clipboard", "copy", func():
 		DisplayServer.clipboard_set(text)
 		s._flash("Copied."), 0)
 	box.add_child(copy)
@@ -2134,6 +2150,7 @@ const STANCE_HELP := {
 	4: "Raiding: a slower pace; standing in enemy land it takes half that region's income for you.",
 }
 const STANCE_ORDER: Array[int] = [0, 2, 3, 4]
+const STANCE_ICONS := {0: "stance_default", 2: "forced_march", 3: "fortify", 4: "raid"}
 
 
 ## The siege the army stands round (its region), -1 if none.
@@ -2161,7 +2178,7 @@ func _army_orders6(box: VBoxContainer, a: Dictionary) -> void:
 		var sg := CState.siege_at(ps, sr)
 		h2.add_child(Kit.label("Besieging %s (turn %d)." % [CData.REGIONS[sr]["city"], int(ps["turn"]) - int(sg.get("turn", ps["turn"]))],
 			Kit.FONT, Kit.COL_GOLD, true))
-		var sp := Kit.button("Siege", func(): s.select_region(sr), 80)
+		var sp := Kit.icon_button("Siege", "siege", func(): s.select_region(sr), 80)
 		sp.name = "army_siege"
 		h2.add_child(sp)
 		box.add_child(h2)
@@ -2169,7 +2186,7 @@ func _army_orders6(box: VBoxContainer, a: Dictionary) -> void:
 		var h3 := Kit.hbox(6)
 		h3.add_child(Kit.label("Inside the besieged walls of %s: tap a besieger to sally against it." % CData.REGIONS[int(a["r"])]["city"],
 			Kit.FONT, Kit.COL_BAD, true))
-		var sp2 := Kit.button("Siege", func(): s.select_region(int(a["r"])), 80)
+		var sp2 := Kit.icon_button("Siege", "siege", func(): s.select_region(int(a["r"])), 80)
 		sp2.name = "army_siege"
 		h3.add_child(sp2)
 		box.add_child(h3)
@@ -2217,15 +2234,15 @@ func _army_orders6(box: VBoxContainer, a: Dictionary) -> void:
 		if kind in ["siege", "join", "assault"]:
 			h.add_child(Kit.label("On arrival:", Kit.FONT_SMALL, Kit.COL_DIM))
 			var assault := int(p6["mode"]) == CData.MODE_ASSAULT
-			var b1 := Kit.button("Lay siege" + (" (now)" if not assault else ""), func(): s.set_move_mode(id, CData.MODE_SIEGE), 0)
+			var b1 := Kit.icon_button("Lay siege" + (" (now)" if not assault else ""), "siege", func(): s.set_move_mode(id, CData.MODE_SIEGE), 0)
 			b1.name = "arrive_siege"
 			b1.disabled = not assault
 			h.add_child(b1)
-			var b2 := Kit.button("Assault" + (" (now)" if assault else ""), func(): s.set_move_mode(id, CData.MODE_ASSAULT), 0)
+			var b2 := Kit.icon_button("Assault" + (" (now)" if assault else ""), "assault", func(): s.set_move_mode(id, CData.MODE_ASSAULT), 0)
 			b2.name = "arrive_assault"
 			b2.disabled = assault
 			h.add_child(b2)
-		var cb := Kit.button("Cancel move", func():
+		var cb := Kit.icon_button("Cancel move", "cancel", func():
 			s.set_move6(id, int(p6["cell"]), int(p6["tgt"]))
 			s.select_army(id), 110)
 		cb.name = "cancel_move"
@@ -2255,7 +2272,7 @@ func _movement_rows6(box: VBoxContainer, a: Dictionary) -> void:
 	box.add_child(Kit.label("Stance", Kit.FONT_SMALL, Kit.COL_GOLD))
 	var fl := Kit.flow(6)
 	for sv in STANCE_ORDER:
-		var b := Kit.button(str(CData.STANCE_NAMES[sv]), func(): _set_stance6(id, sv), 0)
+		var b := Kit.icon_button(str(CData.STANCE_NAMES[sv]), str(STANCE_ICONS[sv]), func(): _set_stance6(id, sv), 0)
 		b.name = "stance_%d" % sv
 		b.toggle_mode = true
 		b.button_pressed = sv == cur
@@ -2316,6 +2333,7 @@ func _siege_section6(box: VBoxContainer, r: int) -> void:
 	if eq_t != "":
 		var eql := Kit.label(eq_t, Kit.FONT_SMALL, Color.WHITE, true)
 		eql.name = "siege_equipment"
+		Kit.label_icon(eql, "ladder")
 		v.add_child(eql)
 	var note := Kit.label("%d besieging arm%s, %d men. No income, recruits or building while besieged; with no garrison and no army inside it surrenders." % [
 		bs.size(), "y" if bs.size() == 1 else "ies", men], Kit.FONT_SMALL, Kit.COL_DIM, true)
@@ -2336,21 +2354,21 @@ func _siege_section6(box: VBoxContainer, r: int) -> void:
 		ol.name = "siege_orders"
 		v.add_child(ol)
 		var h := Kit.hbox(8)
-		var ab := Kit.button("Assault", func():
+		var ab := Kit.icon_button("Assault", "assault", func():
 			_cancel_withdraw(mine, r)
 			s.add_order({"t": "assault", "r": r})
 			s.select_region(r), 100)
 		ab.name = "siege_assault"
 		ab.disabled = ordered or CRules.can_assault(ps, f, r) != ""
 		h.add_child(ab)
-		var cb := Kit.button("Continue siege", func():
+		var cb := Kit.icon_button("Continue siege", "siege", func():
 			s.remove_orders(func(x): return str(x["t"]) == "assault" and int(x.get("r", -1)) == r)
 			_cancel_withdraw(mine, r)
 			s.select_region(r), 130)
 		cb.name = "siege_continue"
 		cb.disabled = not ordered and not leaving
 		h.add_child(cb)
-		var wb := Kit.button("Withdraw", func():
+		var wb := Kit.icon_button("Withdraw", "withdraw", func():
 			s.remove_orders(func(x): return str(x["t"]) == "assault" and int(x.get("r", -1)) == r)
 			_withdraw(mine, sg)
 			s.select_region(r), 100)

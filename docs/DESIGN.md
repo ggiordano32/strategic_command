@@ -377,7 +377,9 @@ equal-cost open-field duels javelinmen now beat pikes and archers by
 kiting them (spears and heavy still beat them), and javelins 150 beat
 light 100 every time (was 65%).
 
-**Artillery.** A battery is a unit whose soldiers are the crews; its
+**Artillery.** A battery is a unit whose soldiers are the crews (since
+2026-10-09 its engines are equipment the crews can leave and any foot can
+take up: "Engines are equipment, crews are men" below); its
 engines are their own packed arrays (`e_*`: position, facing, hp, state
 working / wrecked / abandoned, reload work, ammunition, crew at it), hashed
 with everything else. Files = engines, laid out in a row (bolts 7 m apart,
@@ -482,8 +484,46 @@ as men fall or engines are wrecked the survivors re-man the rest.
   overlay; the paused preview covers the order like every other.
 - *Engines* are wrecked at 0 hp: enemy soldiers within 2 m (counted through
   the melee grid, up to 6) take 3 hp each per tick, so a unit that reaches a
-  battery wrecks it in seconds. A battery that routs or dies abandons its
-  engines for good (no capture).
+  battery wrecks it in seconds. A battery that routs or dies leaves its
+  engines on the field, abandoned (no longer for good: see below).
+- *Engines are equipment, crews are men* (built 2026-10-09, decided with
+  the user; Rome 2's model). A battery's engines are a group (`eg_*`:
+  first engine, count, type, the unit working it `eg_op`, and while
+  abandoned the set-up progress, baggage shots and facing they were left
+  with; `e_grp` per engine) that the unit works. **Drop** (`ORDER_DROP`,
+  the ladders' and ram's order and button) leaves them where they stand,
+  abandoned and neutral (hit points, shots, packed / set-up state kept);
+  the crews fight on as plain men (`u_type` light infantry for pace,
+  formation and class, their own body and arms: `u_otype`). **Pick up**
+  (`ORDER_PICKUP` with `"engines": g`; tap the engines with a unit
+  selected; `u_pick` = `PICK_ENG` + g): any foot unit of either side (not
+  cavalry, not one carrying siege gear or already working engines, not on
+  a wall) marches to them and, within 6 m, works them: it becomes a
+  battery of the engines' type (`u_type`: range, reload, shots per engine,
+  traverse, set-up, packed pace, refill, crew and minimum crew), its own
+  missiles put aside (`u_oammo`) until it drops them again; its men keep
+  their own melee, armour and morale (`u_otype`); men beyond the full crew
+  stand in rows behind and do not work them (a battery working engines of
+  its own kind keeps the old rule: all its men re-man what is left). A
+  capture is the same pick-up by the enemy. A battery that breaks leaves
+  them abandoned at once (free to anyone while it runs; one that rallies
+  first stands by them as before, and can Drop and take them up again). Tower
+  engines stay fixed. A shot in flight keeps the type it was fired with
+  (`pr_ty`). The battle AI's missile units out of ammunition take up their
+  own side's abandoned engines within 60 m (AI.md 17); AI batteries never
+  drop. View: a grey marker with the engine's symbol and a dashed ring over
+  free engines, "TAKE UP THE BOLT / STONE THROWERS" in the order preview,
+  "on bolts" on the card, the engines drawn in the colours of the unit
+  working them. Tests: determinism `--only=engines`, lockstep siege (B's
+  battery leaves its engines, A's archers take them up and leave them,
+  snapshots on the way), input_test (Drop, tap to take up).
+- *Kills per unit* (`u_kills`, 2026-10-09, hashed): enemies killed by the
+  unit's men in melee, by charge impacts, missiles, its engines (credited
+  to the unit working them when the shot was fired) and a tower's engine
+  (the tower unit); friendly fire is counted apart (`stat_ff`, not hashed).
+  `result()` rows carry `"kills"`; a fought campaign battle's outcome rows
+  too (an optional key the rules ignore), shown on the battle screen's
+  cards.
 - *Fright.* Each shot that strikes a unit adds its fear (bolt 15, stone 60,
   cap 200) to `u_fright`, which decays 1 per tick and counts against morale
   only for the rout check and the displayed state: a stone tips a wavering
@@ -1491,6 +1531,10 @@ the view (`game/battle.gd`, `game/order_preview.gd`, `game/overlay.gd`,
     within 3 m takes 70, a stone 330, defenders standing at a ram on the
     ground smash it; its roof stops 70 % of the arrows landing on carriers
     within 5 m of it.
+- **Field artillery is equipment too** (2026-10-09): a battery's engines
+  are dropped and taken up with the same orders and UI as ladders and the
+  ram, by either side (section "Artillery", "Engines are equipment, crews
+  are men"); the towers' engines stay fixed.
 - **No blows at walls** (bug C): walls-2/3 gates do not yield to swords
   at all (`gate_hackable`: the order rule refuses foot at them, the sim
   skips their hacking, the AI never sends hackers); a man holding a target
@@ -2058,6 +2102,22 @@ remembers it in `user://settings.cfg [video] soldiers=cpu` for later
 battles. The home menu's "Soldiers: auto / compatible" button sets the same
 preference; `--soldiers=cpu|gpu` (or `?soldiers=` in the URL) forces a path
 for testing and `--soldier-probe-fail` fakes a failing texture path.
+
+Icons (2026-10-09, phase 1): every UI icon is drawn in code by
+`game/ui_icons.gd` (80 icons, no asset files), one line style matching the
+unit glyphs: round-capped strokes 0.16 of the half-size, the glyph filling
+90% of its cell, one colour. An icon is a `VecIcon` (a Texture2D drawing
+vector strokes through the RenderingServer), so it is crisp at any UI scale,
+sits in a Button's `icon` and takes the button's icon colour per state
+(Kit sets them to the text colour; disabled is an opaque grey). Size follows
+the text (13 px text: 18 px icon, 15: 20, 17: 22). Kit helpers:
+`icon_button(text, icon, ...)`, `set_icon`, `tint_icon`, `icon_label`,
+`label_icon` (a content margin plus a draw hook: the label keeps its name,
+text and wrapping) and `section(text, icon)`. Text stays beside the icon
+everywhere except Undo, Deselect and Menu (bare, with tooltips). The top bar
+reads faction, season icon + year, treasury, income; Deselect / Undo / End
+turn are one bottom-right row. Gallery: `tests/icon_gallery.gd` writes
+`docs/screenshots/icons.png`; before / after: `docs/screenshots/icons_*_phone_*.png`.
 
 ## 9. Milestones
 

@@ -44,6 +44,7 @@ anti-cheat and original art only if it proves fun.
 | Gifting cities and money between co-op players (item 4c, 2026-10-08): orders `gift_region` (free: at resolution; priced: an offer), `buy_region` (offer to buy the ally's city), `gift_money`, `accept_offer` / `decline_offer`; a priced deal is a two-turn handshake in the existing `proposals` list (new keys kind / r / price, no format bump), checks run again at acceptance (still owned, no army of the giver in the city, treasury covers it); region panel "Gift to <ally>" with a price, Diplomacy under the ally: Offer money, Offer to buy, incoming offers Accept / Decline; see CAMPAIGN.md "Gifts between players" | Built 2026-10-08, committed; campaign_test (free gift, handshake accepted / declined / lapsed, army and treasury refusals at acceptance, buyer's offer, money, AI refused, both submission orders hash-equal, JSON round trip), windowed campaign_input_test (gift / Cancel / Undo, the disabled button with its reason, Offer money / Offer to buy / Cancel, Accept / Undo), campaign_solo, online_e2e, check_scripts; campaign_sim 6 seeds x 60 turns hashes unchanged (056bfc4c 7e5be9e9 4ddf4d22 27da886c 892fc13f 01cad53e); the rules hash changes (online clients must update); not yet played on phones |
 | 6. Depth (siege towers, tech, more factions) | Not started |
 | Cities worth defending, part 2c (defender layout at the attacked gate; routers run inward) | Built 2026-10-08, committed; determinism (new `--only=layout`), lockstep, custom_battle_test, check_scripts pass; campaign_sim 6x60 hashes unchanged; field battles unchanged; not yet played on phones |
+| Engines are equipment, crews are men (+ per-unit kills on the battle screen), 2026-10-09: a battery Drops its engines (abandoned, neutral; hp, shots, set-up state kept) and fights on as plain men (light infantry's pace / formation, own arms); any foot unit of either side taps them to take them up and works them as a battery of the engine type (its own arrows put aside until it drops them; spare men stand behind); a routed / dead battery's engines are free to anyone; tower engines fixed; battle AI: missile units out of ammo take up their side's abandoned engines within 60 m (field maps only). Sim `u_kills` (melee, charge, missiles, engines, towers; friendly fire apart), hashed; fought outcomes carry `kills` per unit row (optional key, auto-resolve none), cards show "kills N". See DESIGN.md "Artillery" ("Engines are equipment, crews are men", "Kills per unit"), AI.md 17 | Built 2026-10-09, committed; check_scripts clean; determinism (new `--only=engines`; flat golden digests unchanged; every run's alive / winner unchanged except bench_2000 seed 12345, where an AI javelin unit takes up its side's abandoned bolts at tick 2258), lockstep (full; siege case: B's battery drops, A's archers take up and drop, snapshots across), custom_battle_test, windowed input_test (Drop for a battery, tap to take up), battle_screen_test (fought cards with kills, auto without), campaign_test; campaign_sim 6x60 hashes unchanged (056bfc4c 7e5be9e9 4ddf4d22 27da886c 892fc13f 01cad53e); bench_4000_city same battle, mean 3.20 -> 3.21 ms, state_hash 0.53 -> 0.56 ms; rules hash changes; not yet played on phones |
 
 ### What exists
 
@@ -179,7 +180,8 @@ bullets). In short:
 - **Next (decided): part 2c, the walls-1 defender layout (former D: hold the
   attacked gate's inner mouth early, quiet gates' guards to the breach,
   plaza reserve) and the fair-sieges calibration**; then artillery engines
-  as pick-up-able equipment with crews as men (decided with the user).
+  as pick-up-able equipment with crews as men (decided with the user;
+  built 2026-10-09, see "Where we are").
 
 **Cities must be worth defending, part 2a: units do not pass through each
 other (built 2026-10-07).** As built in DESIGN.md "Unit blocking and street
@@ -932,9 +934,9 @@ server rebuilt with the battle "ask" / guest room changes):
   the running online campaign: Syracuse "Ask to join" -> Carthage sees
   "Syracuse asks to join" -> Fight together -> Join battle -> gift units.
 - **Queue, in the agreed order:** part 2c (walls-1 defender layout, the
-  fair-sieges target), artillery engines as pick-up-able equipment with
-  crews as men (+ a per-unit kills counter for the battle screen), gifting
-  cities and money (4c, built 2026-10-08), part 3 (fit the formula, shelter knob back on,
+  fair-sieges target), ~~artillery engines as pick-up-able equipment with
+  crews as men (+ a per-unit kills counter for the battle screen)~~ (built
+  2026-10-09), gifting cities and money (4c, built 2026-10-08), part 3 (fit the formula, shelter knob back on,
   re-run the AI tables), then the rest of the list below.
 - Known: city benches' worst ticks 8-12 ms on this machine (needs a cold
   measurement); walls-3 polis fights can stall at the acropolis;
@@ -1219,6 +1221,14 @@ fixes are all landed; see "Where we are"):
    reused by `unit_icons.gd`'s approach; text labels kept beside icons on
    buttons where a bare icon would be unclear. Includes a pass on
    spacing / alignment of the rows that gained buttons this week.
+   Phase 1 built 2026-10-09 (not committed): `game/ui_icons.gd`, Kit
+   helpers, icons on the overworld (top bar, buttons, army card, region
+   panel, recruit lists, diplomacy / gifts, map key, dialogs), online UI and
+   custom battle setup; bottom-right row and diplomacy deal rows aligned
+   (DESIGN section 8 "Icons"). Tested: check_scripts, icon_gallery,
+   windowed campaign_input_test, touch_scroll_test (only its known
+   failures), custom_battle_test. Phase 2 pending (battle HUD, battle
+   screen: the icons exist, not wired yet).
 9. **Server to Proxmox** via `server/deploy/docker-compose.yml` (Podman),
    plus delete-campaign and revoke-device admin. Independent; whenever the
    user wants the server off the dev machine.
