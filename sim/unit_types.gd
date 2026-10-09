@@ -34,7 +34,11 @@ extends RefCounted
 ##                front ranks)
 ##   cost         recruitment cost per soldier (balance bookkeeping)
 ## Artillery (cls CLS_ART; the unit's soldiers are the crews, "count" in a
-## scenario is crews x engines, files = engines):
+## scenario is crews x engines, files = engines). The engines are equipment
+## (docs/DESIGN.md "Artillery"): any foot unit that takes them up works them
+## with these stats (its men keep their own melee, armour and morale), and a
+## battery that leaves them fights on with its own body stats at light
+## infantry's pace and formation:
 ##   crew         crew per engine at full strength
 ##   crew_min     an engine with fewer crew at it falls silent
 ##   m_kind       1 bolt (flat, pierces along its line), 2 stone (lobbed,

@@ -247,6 +247,10 @@ func _initialize() -> void:
 		_step_eq_check_wall,
 		_step_eq_drop,
 		_step_eq_check_drop,
+		_step_en_drop,
+		_step_en_check_drop,
+		_step_en_tap,
+		_step_en_check_tap,
 		_step_done,
 	]
 
@@ -2090,6 +2094,67 @@ func _step_eq_drop() -> void:
 func _step_eq_check_drop() -> void:
 	var dr := _eq_orders(BattleSim.ORDER_DROP)
 	_check(dr.size() == 1 and int(dr[0]["unit"]) == _eq_inf, "Drop: the carrier puts the ladders down (%s)" % str(dr))
+
+
+# Engines as equipment (docs/DESIGN.md "Artillery"): the Drop button for a
+# selected battery; its engines left on the field, a tap on them with a
+# foot unit selected sends that unit to take them up.
+var _en_bat := -1
+var _en_foot := -1
+var _en_g := -1
+
+
+func _step_en_drop() -> void:
+	var sim := battle.sim
+	sim.pending_orders.clear()
+	battle.orders.refresh()
+	for u in sim.n_units:
+		if sim.u_side[u] != 0:
+			continue
+		if sim.u_type[u] == UT.BOLT and _en_bat < 0:
+			_en_bat = u
+		elif sim.u_cls[u] == UT.CLS_INF and u != _eq_inf and _en_foot < 0:
+			_en_foot = u
+	_check(_en_bat >= 0 and _en_foot >= 0, "engines: a bolt battery and a foot unit of the player's")
+	_en_g = sim.u_eg[_en_bat]
+	battle._select(_en_bat)
+	battle._refresh_actions()
+	_check(battle.hud.drop_button.visible, "the Drop button shows for a selected battery")
+	battle.hud.drop_button.pressed.emit()
+
+
+func _step_en_check_drop() -> void:
+	var sim := battle.sim
+	var dr := _eq_orders(BattleSim.ORDER_DROP)
+	_check(dr.size() == 1 and int(dr[0]["unit"]) == _en_bat, "Drop: the battery leaves its engines (%s)" % str(dr))
+	sim.pending_orders.clear()
+	battle.orders.refresh()
+	# (Test set-up: the drop applied at once and the crews walked 40 m back.)
+	sim._to_plain(_en_bat)
+	var base: int = sim.u_slot_base[_en_bat]
+	for k in sim.u_alive[_en_bat]:
+		var i: int = sim.slot_soldier[base + k]
+		sim.pos_y[i] += 40 * 1024
+		sim.prev_y[i] = sim.pos_y[i]
+	sim.u_ay[_en_bat] += 40 * 1024
+	sim.u_dy[_en_bat] = sim.u_ay[_en_bat]
+	sim._update_bounds()
+	_check(sim.engines_free(_en_g), "the engines lie on the field, free")
+	battle._select(_en_foot)
+	var at: Vector2i = BattleSim.engines_at(sim, _en_g)
+	_focus(at.x, at.y)
+
+
+func _step_en_tap() -> void:
+	var at: Vector2i = BattleSim.engines_at(battle.sim, _en_g)
+	_gd_tap(Vector2(at.x, at.y) / 1024.0 * Battle.PX_PER_M)
+
+
+func _step_en_check_tap() -> void:
+	var po := _eq_orders(BattleSim.ORDER_PICKUP)
+	_check(po.size() == 1 and int(po[0]["unit"]) == _en_foot and int(po[0].get("engines", -1)) == _en_g,
+		"a tap on the engines with foot selected: it goes to take them up (%s)" % str(po))
+	_check(battle.orders.value(_en_foot, "pick") == BattleSim.PICK_ENG + _en_g, "the preview knows the pick-up")
 
 
 func _step_done() -> void:

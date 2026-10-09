@@ -116,7 +116,7 @@ func _draw() -> void:
 	if _icon.size() != sim.n_units:
 		_icon.resize(sim.n_units)
 		for u in sim.n_units:
-			_icon[u] = Icons.icon_of(sim.u_type[u])
+			_icon[u] = Icons.icon_of(sim.u_otype[u])
 	if sim.phase == BattleSim.PHASE_DEPLOY:
 		_draw_deploy_zones(lw)
 	if sim.city_on != 0:
@@ -127,6 +127,7 @@ func _draw() -> void:
 		_draw_all_orders()
 	if sim.n_eng > 0:
 		_draw_impacts(lw)
+		_draw_free_engines(r, lw)
 	_draw_markers(r, lw)
 	var primary := selected_units[0] if not selected_units.is_empty() else -1
 	for u in selected_units:
@@ -296,6 +297,11 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 			if _v(u, "pick") >= 0 and _v(u, "pick") < sim.n_eq:
 				var ptxt := "PICK UP THE RAM" if sim.q_kind[_v(u, "pick")] == BattleSim.EQ_RAM else "PICK UP LADDERS"
 				draw_string(ThemeDB.fallback_font, d + Vector2(r, -r * 1.5), ptxt,
+					HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), Color(1.0, 0.8, 0.45))
+			elif _v(u, "pick") >= BattleSim.PICK_ENG:
+				var eg: int = _v(u, "pick") - BattleSim.PICK_ENG
+				var etxt := "TAKE UP THE BOLT THROWERS" if UT.stat(sim.eg_type[eg], "m_kind") == 1 else "TAKE UP THE STONE THROWERS"
+				draw_string(ThemeDB.fallback_font, d + Vector2(r, -r * 1.5), etxt,
 					HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), Color(1.0, 0.8, 0.45))
 			elif _v(u, "gtarget") >= 0:
 				var gtxt := "BREAK THE GATE"
@@ -839,6 +845,30 @@ func _draw_wall_plan(u: int, wp: Dictionary, lw: float, primary: bool) -> void:
 			at = to_px(slots[0], slots[1])
 		draw_string(ThemeDB.fallback_font, at + Vector2(0, -px_per_m * 4.0), txt,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), COL_WALL)
+
+
+## Engines left on the field (abandoned, neutral; any foot can take them
+## up): a grey marker with the engine's symbol over their middle and a
+## dashed ring round them.
+func _draw_free_engines(r: float, lw: float) -> void:
+	for g in sim.n_eg:
+		if not sim.engines_free(g) or UT.stat(sim.eg_type[g], "fixed") != 0:
+			continue
+		var whole := false
+		for k in sim.eg_ne[g]:
+			if sim.e_state[sim.eg_e0[g] + k] != BattleSim.E_WRECKED:
+				whole = true
+		if not whole:
+			continue
+		var at: Vector2i = BattleSim.engines_at(sim, g)
+		var c := to_px(at.x, at.y)
+		var rad: float = ((int(sim.eg_ne[g]) - 1) * UT.stat(sim.eg_type[g], "file_sp") / 2.0 / 1024.0 + 4.0) * px_per_m
+		var col := Color(0.85, 0.85, 0.8, 0.8)
+		for k in 16:
+			var a0 := TAU * k / 16.0
+			draw_arc(c, rad, a0, a0 + TAU / 32.0, 3, col, lw)
+		Icons.draw_marker(self, Icons.icon_of(sim.eg_type[g]), c + Vector2(0, -r * 2.2), r * 0.85,
+			Color(0.55, 0.55, 0.52), Color.WHITE)
 
 
 ## Siege gear (view only): the attackers' ladder sets and rams, on the

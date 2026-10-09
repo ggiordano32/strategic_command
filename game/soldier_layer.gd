@@ -130,6 +130,7 @@ var _cpu_mats: Array[ShaderMaterial] = []
 var _cbuf: Image
 var _ccol: Image
 var _runs := PackedInt32Array()   # [first instance, count, unit] per run of one unit
+var _last_eu := PackedInt32Array()  # sim.e_unit at the last upload (engines left / taken up)
 var _pr_mm_cpu: MultiMesh
 var _pr_cpu_mat: ShaderMaterial
 var _pr_cbuf: Image
@@ -155,15 +156,10 @@ func setup(p_sim, p_px_per_m: float) -> void:
 	_e_state.resize(sim.n_eng)
 	_pr_flags.resize(sim.n_units)
 	for u in sim.n_units:
-		var ty: int = sim.u_type[u]
-		_unit_sprite[u] = UT.stat(ty, "sprite")
-		var kind := UT.stat(ty, "m_kind") if UT.cls(ty) == UT.CLS_ART else 0
-		_unit_engine[u] = 7 if kind == 1 else (8 if kind == 2 else 0)
-		# Missiles: bit 0 side, bits 1-2: 0 arrow, 1 javelin, 2 bolt, 3 stone.
-		var mk := 0 if UT.stat(ty, "m_arc") != 0 else 1
-		if UT.cls(ty) == UT.CLS_ART:
-			mk = 2 if UT.stat(ty, "m_kind") == 1 else 3
-		_pr_flags[u] = (sim.u_side[u] & 1) | (mk << 1)
+		_unit_sprite[u] = UT.stat(sim.u_otype[u], "sprite")
+		_unit_engine[u] = _engine_sprite_of(u)
+		_pr_flags[u] = _pr_flag_of(u)
+	_last_eu = sim.e_unit.duplicate()
 
 	var fw: float = sim.field_w / 1024.0 * px_per_m
 	var fh: float = sim.field_h / 1024.0 * px_per_m
@@ -279,23 +275,7 @@ func _build_cpu() -> void:
 	_mm_cpu = _cpu_multimesh(_n_inst)
 	_cbuf = Image.create(STRIDE, maxi(_n_inst, 1), false, Image.FORMAT_RF)
 	_ccol = Image.create(1, maxi(_n_inst, 1), false, Image.FORMAT_RF)
-	# Runs of consecutive instances of one unit (soldiers, then engines):
-	# the per-unit columns are filled a run at a time. unit_of / e_unit never
-	# change after the sim's setup.
-	_runs.clear()
-	var units: PackedInt32Array = sim.unit_of + sim.e_unit
-	var i := 0
-	while i < _n_inst:
-		var j := i + 1
-		while j < _n_inst and units[j] == units[i]:
-			j += 1
-		_runs.append_array(PackedInt32Array([i, j - i, units[i]]))
-		i = j
-	# Sprites never change: soldiers their unit's, engines the engine's.
-	for r in range(0, _runs.size(), 3):
-		var u := _runs[r + 2]
-		var spr := _unit_sprite[u] if _runs[r] < sim.n else _unit_engine[u]
-		_cbuf.fill_rect(Rect2i(C_SPRITE, _runs[r], 1, _runs[r + 1]), Color(float(spr), 0.0, 0.0))
+	_build_runs()
 	for pass_id in 2:
 		_cpu_mats.append(_soldier_material(SHADER_CPU, pass_id))
 	_pr_mm_cpu = _cpu_multimesh(0)
@@ -303,6 +283,64 @@ func _build_cpu() -> void:
 	_pr_free_tail.resize(_pr_cap)
 	_pr_free_tail.fill(-1)
 	_pr_cpu_mat = _missile_material(PR_SHADER_CPU)
+
+
+## Runs of consecutive instances of one unit (soldiers, then engines): the
+## per-unit columns are filled a run at a time; the sprite column too.
+## unit_of never changes; e_unit and the engine sprites change when engines
+## are left or taken up (_refresh_engines rebuilds the runs then).
+func _build_runs() -> void:
+	_runs.clear()
+	var units: PackedInt32Array = sim.unit_of + sim.e_unit
+	var i := 0
+	while i < _n_inst:
+		var j := i + 1
+		while j < _n_inst and j != sim.n and units[j] == units[i]:
+			j += 1
+		_runs.append_array(PackedInt32Array([i, j - i, units[i]]))
+		i = j
+	# Sprites: soldiers their unit's own, engines the engine's.
+	for r in range(0, _runs.size(), 3):
+		var u := _runs[r + 2]
+		var spr := _unit_sprite[u] if _runs[r] < sim.n else _unit_engine[u]
+		_cbuf.fill_rect(Rect2i(C_SPRITE, _runs[r], 1, _runs[r + 1]), Color(float(spr), 0.0, 0.0))
+
+
+## Engine sprite of the engines whose e_unit is u: those it works (its
+## current type), else, for a battery, its own engines (left on the field,
+## they keep pointing at it); 0 none.
+func _engine_sprite_of(u: int) -> int:
+	var ty: int = sim.u_type[u] if UT.cls(sim.u_type[u]) == UT.CLS_ART else sim.u_otype[u]
+	var kind := UT.stat(ty, "m_kind") if UT.cls(ty) == UT.CLS_ART else 0
+	return 7 if kind == 1 else (8 if kind == 2 else 0)
+
+
+## Missile look of unit u's shots: bit 0 side, bits 1-2: 0 arrow, 1
+## javelin, 2 bolt, 3 stone (what it shoots now: its own missiles or the
+## engines it works).
+func _pr_flag_of(u: int) -> int:
+	var ty: int = sim.u_type[u]
+	var mk := 0 if UT.stat(ty, "m_arc") != 0 else 1
+	if UT.cls(ty) == UT.CLS_ART:
+		mk = 2 if UT.stat(ty, "m_kind") == 1 else 3
+	return (sim.u_side[u] & 1) | (mk << 1)
+
+
+## Engines left or taken up since the last upload: the engine sprites and
+## missile looks per unit follow, and the CPU path's runs are rebuilt.
+func _refresh_engines() -> void:
+	var changed := false
+	for u in sim.n_units:
+		var k := _engine_sprite_of(u)
+		if k != _unit_engine[u]:
+			_unit_engine[u] = k
+			changed = true
+		_pr_flags[u] = _pr_flag_of(u)
+	if sim.e_unit != _last_eu:
+		_last_eu = sim.e_unit.duplicate()
+		changed = true
+	if changed and _cpu_built:
+		_build_runs()
 
 
 func _cpu_multimesh(count: int) -> MultiMesh:
@@ -378,6 +416,8 @@ func _probe() -> void:
 ## Copy the sim arrays to the GPU (the path in use). Call once after each tick.
 func upload() -> void:
 	var t0 := Time.get_ticks_usec()
+	if sim.n_eg > 0:
+		_refresh_engines()
 	var nu: int = sim.n_units
 	var tick: int = sim.tick
 	for u in nu:

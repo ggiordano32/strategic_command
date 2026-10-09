@@ -134,6 +134,11 @@ var _ok := true
 
 
 func _init() -> void:
+	if "--only=engines" in OS.get_cmdline_user_args():
+		_check_engines()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	_check_deploy()
 	if "--only=deploy" in OS.get_cmdline_user_args():
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -146,6 +151,7 @@ func _init() -> void:
 		return
 	_check_equipment()
 	_check_shut_inner_gate()
+	_check_engines()
 	if "--only=equipment" in OS.get_cmdline_user_args():
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
@@ -1020,6 +1026,132 @@ func _check_equipment() -> void:
 		return
 	print("PASS equipment: picked up %d, put down %d (the light's set at tick %d, the ram as the gate broke), planted %d, men up %d, ram blows %d; identical on repeat and across snapshot / restore mid-carry (tick %d)" % [
 		a["pickups"], a["drops"], a["dropped"], a["planted"], a["up"], a["blows"], a["snap_t"]])
+
+
+# ------------------------------------------------- engines as equipment ---
+# Engines are equipment, crews are men (docs/DESIGN.md "Artillery").
+
+## A bolt battery leaves its engines (tick 10) and walks off as plain men; an
+## archer unit (2 arrows a man, holding fire) takes them up, shoots the heavy
+## foot with them, leaves them once it has 3 kills and has its 80 arrows
+## back; an enemy light unit then takes them (a capture) and shoots with
+## them. Scripted, no AI. Returns the tick of each step, what was seen at
+## it, the hashes of every tick and the kill tallies.
+func _engine_run(snap_check: bool) -> Dictionary:
+	var sc := {"width_m": 300, "height_m": 300, "ai_sides": [], "orders": [], "units": [
+		Scenarios.unit(0, UT.BOLT, 16, 150, 200, Scenarios.FACE_UP),
+		Scenarios.unit(0, UT.ARCHER, 40, 110, 215, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.HEAVY, 60, 150, 60, Scenarios.FACE_DOWN),
+		Scenarios.unit(1, UT.LIGHT, 40, 250, 120, Scenarios.FACE_DOWN)]}
+	var sim := BattleSim.new()
+	sim.setup(sc, 4242)
+	var base: int = sim.u_slot_base[1]
+	for s in sim.u_alive[1]:
+		sim.ammo[sim.slot_soldier[base + s]] = 2
+	sim.u_ammo[1] = 2 * sim.u_alive[1]
+	sim.u_fire[1] = 0
+	sim.u_fire[0] = 0
+	var ev := {}
+	var bad: Array[String] = []
+	var hashes := PackedInt64Array()
+	var snap_t := -1
+	var snap_bad := -1
+	for t in 1500:
+		var tk: int = sim.tick
+		if tk == 10:
+			sim.queue_order({"tick": tk, "type": BattleSim.ORDER_DROP, "unit": 0})
+		if tk == 11:
+			ev["drop0"] = tk
+			var all_left := true
+			for k in 4:
+				all_left = all_left and sim.e_state[k] == BattleSim.E_ABANDONED
+			if sim.u_eg[0] != -1 or sim.u_type[0] != UT.LIGHT or sim.u_cls[0] != UT.CLS_INF or sim.u_neng[0] != 0 \
+					or not all_left or not sim.engines_free(0) or sim.u_ammo[0] != 0:
+				bad.append("the battery did not leave its engines as plain men")
+			sim.queue_order(BattleSim.make_move_order(tk, 0, 50 * M, 260 * M, Scenarios.FACE_UP, 10 * M, 0))
+		if tk == 20:
+			sim.queue_order({"tick": tk, "type": BattleSim.ORDER_PICKUP, "unit": 1, "engines": 0, "run": 0})
+		if not ev.has("pick1") and sim.u_eg[1] == 0:
+			ev["pick1"] = tk
+			if sim.u_type[1] != UT.BOLT or sim.u_cls[1] != UT.CLS_ART or sim.u_ammo[1] != 44 or sim.u_oammo[1] != 80 \
+					or sim.u_depl[1] != UT.stat(UT.BOLT, "deploy") or sim.e_unit[0] != 1 or sim.e_state[0] != BattleSim.E_OK:
+				bad.append("the archers did not take the engines up as a set-up battery with their own arrows put aside")
+			sim.queue_order({"tick": tk, "type": BattleSim.ORDER_ATTACK, "unit": 1, "target": 2, "run": 0})
+		if ev.has("pick1") and not ev.has("drop1") and sim.u_kills[1] >= 3:
+			ev["drop1"] = tk
+			ev["bolts1"] = sim.stat_bolts
+			sim.queue_order({"tick": tk, "type": BattleSim.ORDER_DROP, "unit": 1})
+		if ev.has("drop1") and not ev.has("plain1") and sim.u_eg[1] < 0:
+			ev["plain1"] = tk
+			if sim.u_type[1] != UT.ARCHER or sim.u_cls[1] != UT.CLS_MISSILE or sim.u_ammo[1] != 2 * sim.u_alive[1] \
+					or sim.u_alive[1] != 40 or sim.e_state[0] != BattleSim.E_ABANDONED:
+				bad.append("the archers did not get their arrows back (ammo %d)" % sim.u_ammo[1])
+			sim.queue_order(BattleSim.make_move_order(tk, 1, 110 * M, 260 * M, Scenarios.FACE_UP, 20 * M, 0))
+			sim.queue_order({"tick": tk, "type": BattleSim.ORDER_PICKUP, "unit": 3, "engines": 0, "run": 1})
+		if ev.has("plain1") and not ev.has("cap3") and sim.u_eg[3] == 0:
+			ev["cap3"] = tk
+			ev["ammo3"] = sim.u_ammo[3]
+			if sim.u_type[3] != UT.BOLT or sim.e_unit[0] != 3 or sim.eg_side[0] != 1:
+				bad.append("the enemy did not capture the engines")
+		sim.step()
+		hashes.append(sim.state_hash())
+		if snap_check and snap_t < 0 and ev.has("plain1") and sim.u_pick[3] >= BattleSim.PICK_ENG:
+			# Mid-flow: the engines on the ground, the enemy on its way to them.
+			snap_t = sim.tick
+			var a2 := BattleSim.new()
+			a2.setup(sc, 4242)
+			a2.restore(sim.snapshot())
+			var b2 := BattleSim.new()
+			b2.setup(sc, 4242)
+			b2.restore(sim.snapshot())
+			for k in 400:
+				a2.step()
+				b2.step()
+				if a2.state_hash() != b2.state_hash():
+					snap_bad = k
+					break
+			if snap_bad < 0 and a2.u_eg[3] != 0:
+				snap_bad = 999  # the restored copy never captured them
+	var ks := [0, 0]
+	for u in sim.n_units:
+		ks[sim.u_side[u]] += sim.u_kills[u]
+	var dead := [0, 0]
+	for s in 2:
+		for c in 5:
+			dead[s] += sim.stat_kside[s * 5 + c]
+		dead[s] -= sim.stat_ff[s]
+	return {"ev": ev, "bad": bad, "hashes": hashes, "kills": sim.u_kills.duplicate(), "side_kills": ks,
+		"enemy_dead": [dead[1], dead[0]], "bolts": sim.stat_bolts, "epick": sim.stat_epick, "edrop": sim.stat_edrop,
+		"snap_t": snap_t, "snap_bad": snap_bad}
+
+
+func _check_engines() -> void:
+	var a := _engine_run(true)
+	var b := _engine_run(false)
+	var ev: Dictionary = a["ev"]
+	if a["hashes"] != b["hashes"] or str(ev) != str(b["ev"]):
+		_fail("engines: the repeat diverged")
+		return
+	if not (a["bad"] as Array).is_empty():
+		_fail("engines: %s" % str(a["bad"]))
+		return
+	for k in ["drop0", "pick1", "drop1", "plain1", "cap3"]:
+		if not ev.has(k):
+			_fail("engines: step %s never happened (%s)" % [k, str(ev)])
+			return
+	var kills: PackedInt32Array = a["kills"]
+	if int(a["bolts"]) <= int(ev["bolts1"]) or kills[3] <= 0 or kills[1] < 3:
+		_fail("engines: the captors never shot with them (kills %s)" % str(kills))
+		return
+	if str(a["side_kills"]) != str(a["enemy_dead"]):
+		_fail("engines: per-unit kills %s do not sum to each side's kills %s" % [str(a["side_kills"]), str(a["enemy_dead"])])
+		return
+	if int(a["snap_t"]) < 0 or int(a["snap_bad"]) >= 0:
+		_fail("engines: no snapshot mid-flow, or the restored copy diverged (%d at %d)" % [int(a["snap_bad"]), int(a["snap_t"])])
+		return
+	print("PASS engines: the battery left them at %d; the archers took them up at %d, shot %d bolts (%d kills), left them at %d with their arrows back; the enemy took them at %d (%d shots left in them) and shot (%d kills); per-unit kills %s sum to the sides' kills %s; identical on repeat and across snapshot / restore (tick %d)" % [
+		int(ev["drop0"]), int(ev["pick1"]), int(ev["bolts1"]), kills[1], int(ev["drop1"]), int(ev["cap3"]), int(ev["ammo3"]),
+		kills[3], str(kills), str(a["side_kills"]), int(a["snap_t"])])
 
 
 ## The shut inner gate: an equal-force walls-2 polis with a ram, both

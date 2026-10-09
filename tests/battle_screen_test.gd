@@ -9,7 +9,10 @@ extends SceneTree
 ## right banner for the player, "Auto-resolved", the outcome line, survivors
 ## on the cards and the totals (a side's kills are the other side's dead);
 ## Continue goes on. A second assault fought and left: "Fought (left the
-## field)" and DEFEAT. A field battle (an interception, format 5): the
+## field)" and DEFEAT. Per-unit kills: a fought battle's cards show "kills
+## N" (its outcome rows carry them), an auto-resolved one's do not and say
+## kills are counted per side; a fought outcome with kills drawn on the
+## first assault's cards. A field battle (an interception, format 5): the
 ## terrain preview instead of the city, no equipment line, the cards.
 
 const CampaignScreen := preload("res://game/campaign/campaign_screen.gd")
@@ -149,7 +152,59 @@ func _check_result(auto: bool) -> void:
 	_check(t0.ends_with("Kills: %d." % dead1), "the attackers' kills are the defenders' dead (%d)" % dead1)
 	_check(int(ev.get("att_men", -1)) == fielded[0] and int(ev.get("att_lost", -1)) == fielded[0] - back[0],
 		"the attackers' fielded and lost men match the battle event (%d, %d)" % [int(ev.get("att_men", -1)), int(ev.get("att_lost", -1))])
+	# Per-unit kills: only a fought battle's outcome carries them.
+	var with_k := 0
+	var n_f := 0
+	for c in cards:
+		if c.fielded:
+			n_f += 1
+			if c.kills >= 0:
+				with_k += 1
+	var note := _label(res, "kills_note")
+	if auto:
+		_check(with_k == 0 and note.begins_with(BattleScreen.KILLS_NOTE), "auto-resolved: no per-unit kills, kills counted per side")
+	else:
+		_check(n_f > 0 and with_k == n_f and note.begins_with(BattleScreen.KILLS_NOTE_UNITS),
+			"fought: every fielded card shows its kills (%d of %d)" % [with_k, n_f])
 	_check(_button("dlg_Continue") != null, "Continue")
+
+
+## A fought outcome for the first assault's snapshot with made-up losses
+## and kills: each fielded card shows its own kills, the footer still sums
+## the enemy's dead.
+func _check_kills_cards() -> void:
+	var rows: Array = []
+	var want := {}
+	var k := 0
+	for sd in 2:
+		for g in _snap["sides"][sd]:
+			for u in g["units"]:
+				if int(u["on"]) == 0:
+					continue
+				var n := int(u["n"])
+				var key := "card_%d_%s" % [sd, ("%d:%d" % [int(g["army"]), int(u["unit"])]).replace(":", "_").replace("-", "g")]
+				rows.append({"army": int(g["army"]), "unit": int(u["unit"]), "killed": n / 4, "routed": 0,
+					"withdrawn": 0, "remaining": n - n / 4, "kills": 3 + k})
+				want[key] = 3 + k
+				k += 1
+	var out := {"winner": 0, "mode": "fought", "units": rows, "garrison_pct": 50}
+	var res: Control = BattleScreen.result(cs, _snap, out, cs.st, [])
+	var ok := not want.is_empty()
+	for c in _cards(res):
+		if want.has(str(c.name)):
+			ok = ok and c.kills == int(want[str(c.name)]) and c.describe().contains("%d kills" % int(want[str(c.name)]))
+			want.erase(str(c.name))
+	_check(ok and want.is_empty(), "a fought outcome's kills on each card ('kills N')")
+	var t0 := ""
+	var t1 := ""
+	for l in res.find_children("totals_*", "Label", true, false):
+		if str(l.name) == "totals_0":
+			t0 = (l as Label).text
+		else:
+			t1 = (l as Label).text
+	var dead1 := int(t1.get_slice("(", 1).get_slice(" ", 0))
+	_check(dead1 > 0 and t0.ends_with("Kills: %d." % dead1), "the per-side kills footer stays (the enemy's dead): " + t0)
+	res.free()
 
 
 func _process(_d: float) -> bool:
@@ -207,6 +262,7 @@ func _process(_d: float) -> bool:
 			_check(cs.battle == null and CState.battle(cs.st, _bid).is_empty(), "leaving the battle applies it (forfeit)")
 			_check_result(false)
 			_check(_label(cs.dialog_box, "result_banner") == "DEFEAT", "a forfeit is a DEFEAT")
+			_check_kills_cards()
 			_button("dlg_Continue").pressed.emit()
 			_wait = 3
 		10:

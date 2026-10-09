@@ -120,6 +120,9 @@ const ORDER_SKIRMISH := 6
 const ORDER_WITHDRAW := 7
 const ORDER_WITHDRAW_ALL := 8
 const ORDER_REFILL := 10
+const ORDER_PICKUP := 14
+const PICK_ENG := 1 << 16      # (BattleSim.PICK_ENG: u_pick of a unit going to take up engines)
+const ENGINE_TAKE_R := 60 * M  # missile units out of ammunition take up their side's abandoned engines this near
 const FRONT_ARC := 170
 const LOF_EYE := 1536
 const LOF_BODY := 1024
@@ -1164,6 +1167,31 @@ static func _threatens(sim, t: int, side: int) -> bool:
 	return false
 
 
+## A missile unit out of ammunition and not fighting: engines of its side
+## left on the field (a battery broke or died) within ENGINE_TAKE_R of it
+## are worth taking up (docs/AI.md 17). Orders the pick-up (once); true
+## while it goes for them.
+static func _take_engines(sim, u: int) -> bool:
+	if sim.n_eg == 0 or sim.u_fighting[u] > 0 or sim.u_contact[u] != 0:
+		return false
+	if sim.u_pick[u] >= PICK_ENG:
+		return true  # on its way
+	var best := -1
+	var bd := 0
+	for g in sim.n_eg:
+		if sim.eg_side[g] != sim.u_side[u] or not sim.engines_free(g) or not sim.may_take_engines(u, g):
+			continue
+		var at: Vector2i = sim.engines_xy(g)
+		var d := _d(at.x - sim.u_cx[u], at.y - sim.u_cy[u])
+		if d <= ENGINE_TAKE_R and (best < 0 or d < bd):
+			best = g
+			bd = d
+	if best < 0:
+		return false
+	_order(sim, u, {"type": ORDER_PICKUP, "engines": best, "run": 0}, 26)
+	return true
+
+
 static func _missile_think(sim, u: int, phase: int) -> void:
 	var side: int = sim.u_side[u]
 	var kn := AP.of(sim, side)
@@ -1172,11 +1200,14 @@ static func _missile_think(sim, u: int, phase: int) -> void:
 	if sim.u_skirm[u] == 0 and kn[AP.MIS_SKIRM] != 0:
 		_order(sim, u, {"type": ORDER_SKIRMISH, "on": 1}, 20)
 	if sim.u_ammo[u] <= 0:
-		# Out of ammunition: finish off routers nearby, otherwise keep clear.
+		# Out of ammunition: finish off routers nearby, take up engines its
+		# side left near by, otherwise keep clear.
 		var r := _nearest_routing(sim, u, kn[AP.MIS_ROUTER_R])
 		if r >= 0:
 			if sim.u_order[u] != O_ATTACK or sim.u_target[u] != r:
 				_attack(sim, u, r, 1)
+		elif _take_engines(sim, u):
+			pass
 		elif sim.u_ai[u] != A_RETIRE and phase == P_ENGAGE:
 			_retire(sim, u)
 		return

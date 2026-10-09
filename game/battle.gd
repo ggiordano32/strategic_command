@@ -258,7 +258,7 @@ func _ready() -> void:
 		_count("add_mode_on" if on else "add_mode_off"))
 	hud.orders_toggled.connect(_on_orders_toggled)
 	hud.book_pressed.connect(func(): _open_book(-1, "book_open"))
-	hud.card_long_pressed.connect(func(u: int): _open_book(sim.u_type[u], "book_open_card"))
+	hud.card_long_pressed.connect(func(u: int): _open_book(sim.u_otype[u], "book_open_card"))
 	hud.cards_reordered.connect(func(): _count("card_reorder"))
 	hud.book.closed.connect(_on_book_closed)
 	hud.deselect_pressed.connect(func():
@@ -550,8 +550,8 @@ func _after_tick(ms: float) -> void:
 			lost = true
 	if lost:
 		_prune_selection()
-	elif sim.city_on != 0 and not selection.is_empty() and sim.tick % 5 == 0:
-		_refresh_wall_buttons()  # units walk in and out of reach of a wall
+	elif (sim.city_on != 0 or sim.n_eg > 0) and not selection.is_empty() and sim.tick % 5 == 0:
+		_refresh_wall_buttons()  # units walk in and out of reach of a wall, take up or leave engines
 	if sim.ended != 0 and not _result_shown and not bench_mode:
 		_result_shown = true
 		var secs: int = maxi(sim.decided_tick, 0) / 10
@@ -1127,11 +1127,15 @@ func _toggle_refill() -> void:
 
 ## Walls: "Man the wall" shows while a selected unit may go up onto a
 ## stretch within reach (BattleSim.man_wall_target), "Come down" while one
-## stands on a wall; "Drop" while one carries siege equipment.
+## stands on a wall; "Drop" while one carries siege equipment or works
+## engines it can leave (not a tower's).
 func _refresh_wall_buttons() -> void:
 	var man := false
 	var down := false
 	var drop := false
+	for u in selection:
+		if sim.u_state[u] == BattleSim.U_READY and _works_engines(u):
+			drop = true
 	if sim.city_on != 0 and sim.ws_x0.size() > 0:
 		for u in selection:
 			if sim.u_state[u] != BattleSim.U_READY:
@@ -1146,16 +1150,73 @@ func _refresh_wall_buttons() -> void:
 
 
 ## "Drop": each selected unit carrying siege equipment puts it down where
-## it stands (anyone's foot can pick it up again).
+## it stands, each working engines leaves them there (anyone's foot can
+## pick them up again).
 func _drop() -> void:
 	var sent := 0
+	var eng := 0
 	for u in selection:
-		if sim.u_state[u] == BattleSim.U_READY and BattleSim.carrying(sim, u) != 0:
+		if sim.u_state[u] != BattleSim.U_READY:
+			continue
+		if BattleSim.carrying(sim, u) != 0 or _works_engines(u):
 			_queue({"type": BattleSim.ORDER_DROP, "unit": u})
 			sent += 1
+			if _works_engines(u):
+				eng += 1
 	_count("drop")
 	if sent > 0 and selected >= 0:
-		overlay.flash("Put down: free to fight", Vector2(sim.u_cx[selected], sim.u_cy[selected]) / M * PX_PER_M)
+		overlay.flash("Engines left: the men fight on foot" if eng > 0 else "Put down: free to fight",
+			Vector2(sim.u_cx[selected], sim.u_cy[selected]) / M * PX_PER_M)
+
+
+## Unit u works engines it may leave (a battery, or men who took engines
+## up; not a tower's engine).
+func _works_engines(u: int) -> bool:
+	return sim.n_eg > 0 and sim.u_eg[u] >= 0 and UT.stat(sim.u_type[u], "fixed") == 0
+
+
+## The engine group left on the field under world point w (px), or -1: the
+## nearest whose middle is within its half width + 5 m.
+func _engines_at(w: Vector2) -> int:
+	var x := int(w.x / PX_PER_M * M)
+	var y := int(w.y / PX_PER_M * M)
+	var best := -1
+	var bd := 0
+	for g in sim.n_eg:
+		if not sim.engines_free(g) or UT.stat(sim.eg_type[g], "fixed") != 0:
+			continue
+		var c: Vector2i = BattleSim.engines_at(sim, g)
+		var r: int = maxi((int(sim.eg_ne[g]) - 1) * UT.stat(sim.eg_type[g], "file_sp") / 2 + 5 * 1024, _marker_hit_r() / 2)
+		var d := (c.x - x) * (c.x - x) + (c.y - y) * (c.y - y)
+		if d <= r * r and (best < 0 or d < bd):
+			best = g
+			bd = d
+	return best
+
+
+## A tap on engine group g left on the field with units selected: the
+## selected unit nearest it that may work it goes and takes it up.
+func _tap_engines(g: int, w: Vector2) -> void:
+	var best := -1
+	var bd := 0
+	var why := ""
+	var c: Vector2i = BattleSim.engines_at(sim, g)
+	for u in selection:
+		var r: String = BattleSim.engine_refusal(sim, u, g)
+		if r != "":
+			if why == "" or u == selected:
+				why = r
+			continue
+		var d := FM.approx_len(sim.u_cx[u] - c.x, sim.u_cy[u] - c.y)
+		if best < 0 or d < bd:
+			best = u
+			bd = d
+	_count("engine_pickup" if best >= 0 else "engine_refused")
+	if best < 0:
+		overlay.flash(why, w)
+		return
+	_queue({"type": BattleSim.ORDER_PICKUP, "unit": best, "engines": g, "run": orders.value(best, "run")})
+	overlay.flash("Taking up the engines", w)
 
 
 ## The piece of siege equipment on the ground under world point w (px), or
@@ -1312,6 +1373,10 @@ func _tap(screen_pos: Vector2, double: bool) -> void:
 		var q := _equip_at(w)
 		if q >= 0:
 			_tap_equip(q, w)
+			return
+		var eg := _engines_at(w) if sim.n_eg > 0 else -1
+		if eg >= 0:
+			_tap_engines(eg, w)
 			return
 	if u >= 0:
 		# Enemy: attack (missile troops shoot it; double tap = charge at the run).
@@ -1599,7 +1664,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			# Right click on a unit (or its symbol): its unit book page.
 			var u := _pick_unit(_screen_to_world(mb.position))
 			if u >= 0:
-				_open_book(sim.u_type[u], "book_open_field")
+				_open_book(sim.u_otype[u], "book_open_field")
 				return
 			_mouse_pan = true
 			_count("mouse_pan")
@@ -1683,7 +1748,7 @@ func _on_key(e: InputEventKey) -> void:
 		"readout":
 			hud.set_stats_expanded(not hud.stats_expanded)
 		"book":
-			_open_book(sim.u_type[selected] if selected >= 0 else -1, "book_open_key")
+			_open_book(sim.u_otype[selected] if selected >= 0 else -1, "book_open_key")
 		"controls":
 			_open_controls()
 		"zoom_in":
@@ -1719,7 +1784,7 @@ func _keys_held(delta: float) -> void:
 		_field_lp_start = -1.0
 		var u := _pick_unit(_screen_to_world(_press_pos))
 		if u >= 0:
-			_open_book(sim.u_type[u], "book_open_longpress")
+			_open_book(sim.u_otype[u], "book_open_longpress")
 
 
 func _on_touch(e: InputEventScreenTouch) -> void:

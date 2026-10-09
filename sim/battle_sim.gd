@@ -67,7 +67,7 @@ const ORDER_REFILL := 10        # unit, on (artillery: bring up shots from the b
 const ORDER_GATE := 11          # unit (any of the defenders'), gate, on (1 close / 0 open)
 const ORDER_PLACE := 12         # unit, x, y, facing, files (deployment phase only, inside its side's zone)
 const ORDER_READY := 13         # who (deployment phase: player `who` is ready to start)
-const ORDER_PICKUP := 14        # unit, equip (siege equipment: go to the piece and pick it up)
+const ORDER_PICKUP := 14        # unit, equip (siege equipment) or engines (an engine group): go there and pick it up
 const ORDER_DROP := 15          # unit (put down the piece it carries where it stands)
 const ORDER_LAST := 15
 
@@ -152,7 +152,8 @@ const SKIRM_BACK := 35 * M
 # so crews re-man engines as men fall. See docs/DESIGN.md.
 const E_OK := 0
 const E_WRECKED := 1             # smashed (melee next to it, or a stone)
-const E_ABANDONED := 2           # its battery broke or died: out of action
+const E_ABANDONED := 2           # left on the field (dropped, or its crew broke or died): any foot may pick it up
+const PICK_ENG := 1 << 16        # u_pick of a unit going to pick up engine group g: PICK_ENG + g
 const MAN_DIST := 5 * M          # crew within this of their engine work it
 const ENGINE_NEAR := 2 * M       # enemy soldiers this close wreck an engine
 const ENGINE_WRECK := 3          # engine hp per tick per enemy soldier (max 6)
@@ -468,6 +469,10 @@ var u_emove := PackedInt32Array()     # artillery: engines still rolling to thei
 var u_refill := PackedInt32Array()    # artillery: told to refill (order)
 var u_rprog := PackedInt32Array()     # artillery: 0 normal .. REFILL_FULL refilling
 var u_reserve := PackedInt32Array()   # artillery: shots left in the baggage
+var u_kills := PackedInt32Array()     # enemy soldiers killed by the unit's men (melee, charge, missiles, its engines)
+var u_otype := PackedInt32Array()     # the unit's own type (its men: body, melee, morale); u_type is what it does now
+var u_eg := PackedInt32Array()        # the engine group it works (-1 none)
+var u_oammo := PackedInt32Array()     # its own missiles (u_ammo of a missile unit) while it works engines
 var slot_soldier := PackedInt32Array()  # u_slot_base[u] + slot -> soldier
 var off_x := PackedInt32Array()         # u_slot_base[u] + slot -> offset
 var off_y := PackedInt32Array()
@@ -484,8 +489,25 @@ var e_reload := PackedInt32Array()  # crew-ticks of work toward the next shot
 var e_ammo := PackedInt32Array()
 var e_crew := PackedInt32Array()    # crew working it this tick
 var e_rwork := PackedInt32Array()   # crew-ticks of work toward the next shot refilled
+var e_grp := PackedInt32Array()     # the engine group (a battery's engines stay together)
 var e_px := PackedInt32Array()      # view only: position last tick (not hashed)
 var e_py := PackedInt32Array()
+## Engine groups (docs/DESIGN.md "Artillery": engines are equipment, crews
+## are men): the engines of one battery, in battery order. The unit working
+## them (eg_op, -1 none: abandoned, neutral), and while abandoned the set-up
+## progress, shots left in the baggage and facing they were left with; the
+## battery they came with (eg_u0, static), their type (eg_type, static) and
+## the side that last worked them (eg_side).
+var n_eg: int = 0
+var eg_e0 := PackedInt32Array()
+var eg_ne := PackedInt32Array()
+var eg_type := PackedInt32Array()
+var eg_u0 := PackedInt32Array()
+var eg_op := PackedInt32Array()
+var eg_depl := PackedInt32Array()
+var eg_res := PackedInt32Array()
+var eg_face := PackedInt32Array()
+var eg_side := PackedInt32Array()
 
 # Battle AI, per side.
 var ai_phase := PackedInt32Array([0, 0])
@@ -635,6 +657,7 @@ var pr_y := PackedInt32Array()
 var pr_t0 := PackedInt32Array()
 var pr_t1 := PackedInt32Array()
 var pr_unit := PackedInt32Array()     # shooter unit
+var pr_ty := PackedInt32Array()       # ... its missile type when it shot (a unit may take up or drop engines meanwhile)
 var pr_tu := PackedInt32Array()       # unit aimed at
 var pr_next := PackedInt32Array()     # bucket / free list link
 var pr_bucket := PackedInt32Array()   # landing tick % PR_BUCKETS -> first
@@ -743,6 +766,11 @@ var stat_knockdowns: int = 0
 var stat_kills := PackedInt32Array([0, 0, 0, 0, 0])
 ## ... per side of the men killed: side * 5 + cause (not hashed).
 var stat_kside := PackedInt32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+## ... of those, per side of the men killed, killed by their own side
+## (friendly fire: not in anyone's u_kills). Not hashed.
+var stat_ff := PackedInt32Array([0, 0])
+var stat_epick: int = 0         # engine groups picked up
+var stat_edrop: int = 0         # ... dropped (ordered)
 var stat_parting: int = 0          # free blows at riders / soldiers turning away
 var stat_impact_blocked: int = 0   # charge impacts taken on a formed front's shields
 ## Battle AI decisions by unit mode (BattleAI.A_*), plus [8] army withdrawals,
@@ -968,12 +996,19 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	n_units = units.size()
 	var total := 0
 	n_eng = 0
+	n_eg = 0
 	for ud in units:
 		total += int(ud["count"])
-		n_eng += _engines_for(int(ud["type"]), int(ud["count"]))
+		var ne0 := _engines_for(int(ud["type"]), int(ud["count"]))
+		n_eng += ne0
+		if ne0 > 0:
+			n_eg += 1
 	n = total
 	for arr in _engine_arrays():
 		arr.resize(n_eng)
+		arr.fill(0)
+	for arr in _egroup_arrays():
+		arr.resize(n_eg)
 		arr.fill(0)
 	e_px.resize(n_eng)
 	e_py.resize(n_eng)
@@ -1043,12 +1078,15 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 
 	var base := 0
 	var eng := 0
+	var grp := 0
 	for u in n_units:
 		var ud: Dictionary = units[u]
 		var ty := int(ud["type"])
 		var cnt := int(ud["count"])
 		u_side[u] = int(ud["side"])
 		u_type[u] = ty
+		u_otype[u] = ty
+		u_eg[u] = -1
 		u_cls[u] = t_cls[ty]
 		u_count0[u] = cnt
 		u_alive[u] = cnt
@@ -1135,6 +1173,19 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 				u_ammo[u] = 0
 				for k in ne:
 					u_ammo[u] += e_ammo[eng + k]
+			# The battery's engines are a group it works (equipment: any foot
+			# can take it up once it is left on the field).
+			for k in ne:
+				e_grp[eng + k] = grp
+			eg_e0[grp] = eng
+			eg_ne[grp] = ne
+			eg_type[grp] = ty
+			eg_u0[grp] = u
+			eg_op[grp] = u
+			eg_side[grp] = u_side[u]
+			eg_face[grp] = u_face[u]
+			u_eg[u] = grp
+			grp += 1
 			eng += ne
 		_compute_offsets(u)
 		for s in cnt:
@@ -1218,7 +1269,8 @@ func _unit_arrays() -> Array:
 		u_fire_acc, u_fire_ptr, u_ammo, u_hit_t, u_charged_t, u_killed,
 		u_withdrawn, u_routed_off, u_recent, u_att, u_def, u_dmg, u_reach, u_nwalls,
 		u_ai, u_ai_t, u_ai_x, u_ai_y, u_eng0, u_neng, u_depl, u_deploy, u_fright,
-		u_shelled_t, u_shelled_by, u_emove, u_h, u_refill, u_rprog, u_reserve, u_blk, u_dodge]
+		u_shelled_t, u_shelled_by, u_emove, u_h, u_refill, u_rprog, u_reserve, u_blk, u_dodge,
+		u_kills, u_otype, u_eg, u_oammo]
 
 
 ## Per-unit arrays of woods and settlement maps (hashed only on those maps,
@@ -1234,7 +1286,11 @@ func _stair_arrays() -> Array:
 
 
 func _engine_arrays() -> Array:
-	return [e_unit, e_x, e_y, e_face, e_hp, e_state, e_reload, e_ammo, e_crew, e_rwork]
+	return [e_unit, e_x, e_y, e_face, e_hp, e_state, e_reload, e_ammo, e_crew, e_rwork, e_grp]
+
+
+func _egroup_arrays() -> Array:
+	return [eg_e0, eg_ne, eg_type, eg_u0, eg_op, eg_depl, eg_res, eg_face, eg_side]
 
 
 ## Engines in a unit of `count` soldiers of type ty (0 unless artillery).
@@ -1246,7 +1302,7 @@ static func _engines_for(ty: int, count: int) -> int:
 
 
 func _projectile_arrays() -> Array:
-	return [pr_sx, pr_sy, pr_x, pr_y, pr_t0, pr_t1, pr_unit, pr_tu, pr_next]
+	return [pr_sx, pr_sy, pr_x, pr_y, pr_t0, pr_t1, pr_unit, pr_tu, pr_next, pr_ty]
 
 
 func _load_types() -> void:
@@ -3459,7 +3515,7 @@ func _update_gates() -> void:
 				continue
 			if u_maxx[u] < gx - r or u_minx[u] > gx + r or u_maxy[u] < gy - r or u_miny[u] > gy + r:
 				continue
-			var ty := u_type[u]
+			var ty := u_otype[u]
 			if sg_on != 0 and u_carry[u] >= 0:
 				continue  # carrying: no hacking (the ram works the gate itself: _siege_gate)
 			var rate := maxi(t_damage[ty] - GATE_ARMOUR, 2) * hack_pct / maxi(t_cooldown[ty], 1)
@@ -3782,6 +3838,8 @@ func _apply_orders(max_player: int = 1 << 30) -> void:
 			u_settled[u] = 0
 			if int(o["type"]) == ORDER_DROP:
 				_drop(u)
+				if n_eng > 0 and u_eg[u] >= 0:
+					_drop_engines(u)
 			elif u_pick[u] >= 0:
 				_pick_check(u)
 			if int(o["type"]) == ORDER_PLACE:
@@ -3851,6 +3909,22 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 	# unit carrying a piece never runs and attacks no unit (the ram's
 	# carriers go at gates); any other order forgets a pick-up.
 	var carry: int = sim.u_carry[u] if u < sim.u_carry.size() else -1
+	if typ == ORDER_PICKUP and o.has("engines"):
+		var g := int(o["engines"])
+		if engine_refusal(sim, u, g) != "":
+			return
+		var at := engines_at(sim, g)
+		d["order"] = O_MOVE
+		d["dx"] = at.x
+		d["dy"] = at.y
+		var gdx: int = at.x - int(d["ax"])
+		var gdy: int = at.y - int(d["ay"])
+		d["dface"] = FM.atan2_a(gdy, gdx) if gdx != 0 or gdy != 0 else int(d["face"])
+		d["target"] = -1
+		d["gtarget"] = -1
+		d["run"] = 1 if int(o.get("run", 0)) != 0 and carry < 0 else 0
+		d["pick"] = PICK_ENG + g
+		return
 	if typ == ORDER_PICKUP:
 		var q := int(o.get("equip", -1))
 		if pickup_refusal(sim, u, q) != "":
@@ -4244,11 +4318,31 @@ func _art_offsets(u: int) -> void:
 	var nw := w.size()
 	var base := u_slot_base[u]
 	var ty := u_type[u]
+	var cap := _crew_cap(u)
 	for slot in u_alive[u]:
 		var e := w[slot % nw]
-		var co := _crew_offset(slot / nw, e_face[e], ty)
+		var j := slot / nw
+		var co := _crew_offset(j, e_face[e], ty) if j < cap else _spare_offset(j - cap, e_face[e], ty)
 		off_x[base + slot] = e_x[e] - u_ax[u] + co.x
 		off_y[base + slot] = e_y[e] - u_ay[u] + co.y
+
+
+## Men of unit u who work each of its engines at most. A battery working
+## engines of its own kind: all of them (its survivors re-man the engines
+## left, as always); other men taking up engines: the engines' full crew,
+## the rest stand behind (_spare_offset) and do not work them.
+func _crew_cap(u: int) -> int:
+	return 1 << 20 if u_otype[u] == u_type[u] else t_crew[u_type[u]]
+
+
+## Where spare man k (beyond the crew) of an engine stands: in rows of four
+## behind it.
+static func _spare_offset(k: int, face: int, ty: int) -> Vector2i:
+	var back := (5600 if UT.stat(ty, "m_kind") == 2 else 4400) + (k / 4) * 1200
+	var side := (k % 4) * 1100 - 1650
+	var c := FM.cos_a(face)
+	var s := FM.sin_a(face)
+	return Vector2i((-back * c - side * s) / FM.TRIG_ONE, (-back * s + side * c) / FM.TRIG_ONE)
 
 
 ## Depth (front to back) of a unit's formation in sim units.
@@ -4291,6 +4385,9 @@ func step() -> void:
 	if n_gates > 0:
 		_update_gates()
 	if n_eng > 0:
+		for u in n_units:
+			if u_pick[u] >= PICK_ENG:
+				_pick_check(u)  # going to take up engines left on the field
 		_update_artillery()
 	_update_missiles()
 	_refresh_offsets()
@@ -4997,8 +5094,8 @@ func _deploy_state(u: int, order: int, moved: int) -> void:
 
 ## Effective melee stats of unit u this tick (pikes switch weapons).
 func _unit_stats(u: int) -> void:
-	var ty := u_type[u]
-	if u_cls[u] == UT.CLS_PIKE and u_formed[u] == 0:
+	var ty := u_otype[u]  # (the men's own weapons, also while they work engines)
+	if t_cls[ty] == UT.CLS_PIKE and u_formed[u] == 0:
 		u_att[u] = t_sec_att[ty]
 		u_def[u] = t_sec_def[ty]
 		u_dmg[u] = t_sec_dmg[ty]
@@ -5430,7 +5527,7 @@ func _update_soldiers() -> void:
 		var reach := u_reach[u]
 		var want := (reach * 3) >> 2
 		var half_reach := reach >> 1
-		var cool := t_cooldown[ty]
+		var cool := t_cooldown[u_otype[u]]
 		var side := u_side[u]
 		var enemy_head: PackedInt32Array = grid_head1 if side == 0 else grid_head0
 		_enemy_bn = blk_n1 if side == 0 else blk_n0
@@ -6117,12 +6214,12 @@ func _melee(a: int, d: int, pen: int, parting: bool = false) -> void:
 	var att := u_att[ua]
 	var dmg0 := u_dmg[ua]
 	var def := u_def[ud]
-	var td := u_type[ud]
+	var td := u_otype[ud]  # (the men's own arms and armour, whatever they work)
 	# Pikemen caught from the flank or rear fight with the short sword.
 	if u_cls[ud] == UT.CLS_PIKE and zone != ZONE_FRONT:
 		def = t_sec_def[td]
 	if u_cls[ud] == UT.CLS_CAV:
-		var vc := t_vs_cav[u_type[ua]]
+		var vc := t_vs_cav[u_otype[ua]]
 		att += vc
 		dmg0 += vc
 	if veg_on != 0:
@@ -6163,6 +6260,7 @@ func _melee(a: int, d: int, pen: int, parting: bool = false) -> void:
 	if h <= 0:
 		stat_kills[0 if frontal else 1] += 1
 		stat_kside[u_side[ud] * 5 + (0 if frontal else 1)] += 1
+		_credit(ua, ud)
 		_remove(d, GONE_KILLED)
 	else:
 		hp[d] = h
@@ -6195,8 +6293,8 @@ func _add_disorder(u: int, amt: int) -> void:
 func _impact(r: int, t: int, mom: int) -> void:
 	var ur := unit_of[r]
 	var ut := unit_of[t]
-	var rty := u_type[ur]
-	var td := u_type[ut]
+	var rty := u_otype[ur]
+	var td := u_otype[ut]
 	var zone := _zone(ut, pos_x[r], pos_y[r])
 	dbg_impacted[r] = 1
 	struck[r] = 1
@@ -6280,7 +6378,7 @@ func _impact(r: int, t: int, mom: int) -> void:
 ## down, or was not standing in a steady front facing it).
 func _impact_victim(r: int, v: int, power: int, ma: int, zone: int) -> bool:
 	var uv := unit_of[v]
-	var tv := u_type[uv]
+	var tv := u_otype[uv]
 	var sv := state[v]
 	var md := t_mass[tv]
 	var from_v := FM.atan2_a(pos_y[r] - pos_y[v], pos_x[r] - pos_x[v])
@@ -6331,6 +6429,7 @@ func _impact_victim(r: int, v: int, power: int, ma: int, zone: int) -> bool:
 	if h <= 0:
 		stat_kills[2] += 1
 		stat_kside[u_side[uv] * 5 + 2] += 1
+		_credit(unit_of[r], uv)
 		_remove(v, GONE_KILLED)
 		return true
 	hp[v] = h
@@ -6359,6 +6458,17 @@ func _knock_down(i: int) -> void:
 
 
 ## Take soldier d off the field: killed, withdrawn or routed off the edge.
+## A soldier of unit ud killed by the men (or engines) of unit k: an enemy
+## counts in k's u_kills, a friend in stat_ff.
+func _credit(k: int, ud: int) -> void:
+	if k < 0 or k >= n_units:
+		return
+	if u_side[k] != u_side[ud]:
+		u_kills[k] += 1
+	else:
+		stat_ff[u_side[ud]] += 1
+
+
 func _remove(d: int, why: int) -> void:
 	if state[d] >= S_DEAD:
 		return  # already off the field
@@ -6381,7 +6491,10 @@ func _remove(d: int, why: int) -> void:
 		if sea_on != 0 and u_side[u] == city_def:
 			stat_sea_exit += 1
 	target[d] = -1
-	u_ammo[u] -= ammo[d]
+	if u_eg[u] >= 0:
+		u_oammo[u] -= ammo[d]  # (working engines: his own arrows go with him)
+	else:
+		u_ammo[u] -= ammo[d]
 	ammo[d] = 0
 	var alive := u_alive[u]
 	var base := u_slot_base[u]
@@ -6484,6 +6597,8 @@ func _update_missiles() -> void:
 			continue
 		if u_moved[u] != 0:
 			continue  # no shooting on the move
+		if u_cls[u] == UT.CLS_ART:
+			continue  # engines shoot in _update_artillery (men working them keep their own arrows)
 		var ty := u_type[u]
 		var alive := u_alive[u]
 		var acc := u_fire_acc[u] + alive
@@ -6566,6 +6681,7 @@ func _fire(i: int, u: int, ft: int, ty: int) -> void:
 	pr_t0[p] = tick
 	pr_t1[p] = tick + flight
 	pr_unit[p] = u
+	pr_ty[p] = ty
 	pr_tu[p] = ft
 	var b := (tick + flight) % PR_BUCKETS
 	pr_next[p] = pr_bucket[b]
@@ -6592,7 +6708,7 @@ func _shot_ok(sx: int, sy: int, ax: int, ay: int, dist: int, ty: int, skip0: int
 ## A projectile lands: the nearest soldier (either side) within his hit radius
 ## of the landing point takes the hit.
 func _land(p: int) -> void:
-	var kind := t_m_kind[u_type[pr_unit[p]]]
+	var kind := t_m_kind[pr_ty[p]]
 	if kind == 1:
 		_land_bolt(p)
 		return
@@ -6646,7 +6762,7 @@ func _land(p: int) -> void:
 		# on a wall from shots from below.
 		var vd := veg_d(x, y)
 		if vd > 0:
-			var stop: int = VEG_STOP_ARROW[vd] if t_m_arc[u_type[pr_unit[p]]] != 0 else VEG_STOP_JAV[vd]
+			var stop: int = VEG_STOP_ARROW[vd] if t_m_arc[pr_ty[p]] != 0 else VEG_STOP_JAV[vd]
 			if _rand() % 100 < stop:
 				stat_veg_stop += 1
 				return
@@ -6722,9 +6838,9 @@ func _nearest_in_unit(u: int, x: int, y: int) -> int:
 
 
 func _missile_hit(p: int, d: int) -> void:
-	var ty := u_type[pr_unit[p]]
+	var ty := pr_ty[p]
 	var ud := unit_of[d]
-	var td := u_type[ud]
+	var td := u_otype[ud]
 	if _rand() % 100 >= MISSILE_HIT:
 		return
 	var from_def := FM.atan2_a(pr_sy[p] - pr_y[p], pr_sx[p] - pr_x[p])
@@ -6745,6 +6861,7 @@ func _missile_hit(p: int, d: int) -> void:
 	if h <= 0 or (t_m_down[td] > 0 and _rand() % 100 < t_m_down[td]):
 		stat_kills[3] += 1
 		stat_kside[u_side[ud] * 5 + 3] += 1
+		_credit(pr_unit[p], ud)
 		_remove(d, GONE_KILLED)
 	else:
 		hp[d] = h
@@ -6847,6 +6964,7 @@ func _update_artillery() -> void:
 					e_crew[e] = 0
 					u_ammo[u] -= e_ammo[e]
 					stat_abandoned += 1
+					e_unit[e] = eg_u0[e_grp[e]]
 			continue
 		var full := t_deploy[ty]
 		var packed := u_depl[u] == 0
@@ -6915,9 +7033,10 @@ func _update_artillery() -> void:
 		var w := _working_engines(u)
 		var nw := w.size()
 		var base := u_slot_base[u]
+		var cap := _crew_cap(u)
 		for slot in u_alive[u]:
 			var i := slot_soldier[base + slot]
-			if state[i] != S_FORMED:
+			if state[i] != S_FORMED or slot / nw >= cap:
 				continue
 			var e := w[slot % nw]
 			if e_state[e] != E_OK:
@@ -6988,6 +7107,223 @@ func _refill_work(u: int) -> void:
 			stat_refilled += 1
 	if not more:
 		u_refill[u] = 0
+
+
+# ------------------------------------------------- engines as equipment ---
+# docs/DESIGN.md "Artillery": a battery's engines are a group (eg_*) that
+# its unit works. ORDER_DROP leaves them where they stand, abandoned and
+# neutral (hit points, shots, set-up state and the baggage's shots kept),
+# and the men fight on as plain foot (a battery's crews with light
+# infantry's pace and formation, their own arms). ORDER_PICKUP with
+# "engines" sends any foot unit of either side to an abandoned group; it
+# works it as a battery of that kind (the engine type's range, reload,
+# crew, set-up, traverse, refill; men beyond the crew stand behind), and
+# its own missiles wait until it drops them. A battery that breaks or dies
+# leaves its engines abandoned. Tower engines are fixed (never dropped or
+# taken up).
+
+## Engine group g is left on the field: no ready unit works it. (A battery
+## that broke and rallied stands by its abandoned engines as before, still
+## theirs: Drop, then a pick-up, mans them again.)
+func engines_free(g: int) -> bool:
+	var op := eg_op[g]
+	return op < 0 or u_state[op] != U_READY or u_eg[op] != g
+
+
+## Where engine group g stands: the middle of its engines (a battery's
+## anchor, the front centre of its line of engines).
+static func engines_at(sim, g: int) -> Vector2i:
+	var ne: int = sim.eg_ne[g]
+	var e0: int = sim.eg_e0[g]
+	var sx := 0
+	var sy := 0
+	for k in ne:
+		sx += sim.e_x[e0 + k]
+		sy += sim.e_y[e0 + k]
+	return Vector2i(sx / maxi(ne, 1), sy / maxi(ne, 1))
+
+
+## Why unit u cannot take up engine group g ("" if it can): foot of either
+## side (not horses, not a unit already working engines or carrying siege
+## gear, not on a wall), the engines left on the field and not all wrecked,
+## not a tower's. Shared with the view.
+static func engine_refusal(sim, u: int, g: int) -> String:
+	if g < 0 or g >= sim.n_eg:
+		return "Nothing to pick up there"
+	if UT.stat(sim.eg_type[g], "fixed") != 0:
+		return "Tower engines stay on their towers"
+	if not sim.engines_free(g):
+		if sim.eg_op[g] == u:
+			return "It works these engines already"
+		if sim.u_side[sim.eg_op[g]] == sim.u_side[u]:
+			return "Another unit works these engines"
+		return "The enemy works these engines: drive the crews off first"
+	var whole := false
+	for k in sim.eg_ne[g]:
+		if sim.e_state[sim.eg_e0[g] + k] != E_WRECKED:
+			whole = true
+	if not whole:
+		return "The engines are wrecked"
+	var c: int = sim.u_cls[u]
+	if c == UT.CLS_CAV:
+		return "Cavalry cannot work engines"
+	if c == UT.CLS_ART:
+		return "Already working engines: drop them first (Drop)"
+	if sim.u_wall[u] > 0 or sim.u_stair[u] != 0:
+		return "Down off the wall first"
+	if sim.u_carry[u] >= 0:
+		return "Carrying siege equipment: put it down first (Drop)"
+	var at := engines_at(sim, g)
+	var ra: int = sim.reach_at(sim.u_ax[u], sim.u_ay[u])
+	var rg: int = sim.reach_at(at.x, at.y)
+	if ra >= 0 and rg >= 0 and ra != rg:
+		return "No way to them from here"
+	return ""
+
+
+## (For the battle AI, which does not load this script: engine_refusal is
+## "" / engines_at, as instance calls.)
+func may_take_engines(u: int, g: int) -> bool:
+	return engine_refusal(self, u, g) == ""
+
+
+func engines_xy(g: int) -> Vector2i:
+	return engines_at(self, g)
+
+
+## Unit u (going to take up engine group g) is within PICK_R of it: it takes
+## them up there; a group taken or wrecked meanwhile is forgotten.
+func _pick_engines(u: int, g: int) -> void:
+	if g >= n_eg or u_state[u] != U_READY or engine_refusal(self, u, g) != "":
+		u_pick[u] = -1
+		return
+	var at := engines_at(self, g)
+	if FM.approx_len(u_ax[u] - at.x, u_ay[u] - at.y) > PICK_R:
+		return
+	var prev := eg_op[g]
+	if prev >= 0 and prev != u and u_eg[prev] == g:
+		_to_plain(prev)  # the crew that broke or died: off its engines
+	_to_engines(u, g)
+	u_pick[u] = -1
+	stat_epick += 1
+
+
+## Unit u works engine group g from now on: a battery of the engines' type
+## (u_type), its men's own type kept (u_otype), its own missiles put aside.
+func _to_engines(u: int, g: int) -> void:
+	var ty := eg_type[g]
+	var at := engines_at(self, g)
+	u_oammo[u] = u_ammo[u]
+	u_type[u] = ty
+	u_cls[u] = t_cls[ty]
+	u_eg[u] = g
+	u_eng0[u] = eg_e0[g]
+	u_neng[u] = eg_ne[g]
+	u_files[u] = eg_ne[g]
+	u_ax[u] = at.x
+	u_ay[u] = at.y
+	u_face[u] = eg_face[g]
+	u_dface[u] = eg_face[g]
+	u_dx[u] = at.x
+	u_dy[u] = at.y
+	u_order[u] = O_NONE
+	u_target[u] = -1
+	u_ftarget[u] = -1
+	u_gtarget[u] = -1
+	u_run[u] = 0
+	u_skirm[u] = 0
+	u_fire[u] = 1
+	u_sq[u] = 0
+	u_depl[u] = eg_depl[g]
+	u_deploy[u] = 1
+	u_refill[u] = 0
+	u_rprog[u] = 0
+	u_emove[u] = 0
+	u_reserve[u] = eg_res[g]
+	u_fire_acc[u] = 0
+	u_formed[u] = 0
+	u_braced[u] = 0
+	u_ammo[u] = 0
+	for k in eg_ne[g]:
+		var e := eg_e0[g] + k
+		if e_state[e] == E_ABANDONED:
+			e_state[e] = E_OK
+		e_crew[e] = 0
+		if e_state[e] == E_OK:
+			e_unit[e] = u
+			u_ammo[u] += e_ammo[e]
+	eg_op[g] = u
+	eg_side[g] = u_side[u]
+	if obs_on != 0:
+		u_pn[u] = 0
+	u_dirty[u] = 1
+	u_settled[u] = 0
+
+
+## Unit u stops working its engines (they are left where they stand,
+## abandoned) and fights on as plain men: its own type, a battery's crews
+## at light infantry's pace and formation; its own missiles back.
+func _to_plain(u: int) -> void:
+	var g := u_eg[u]
+	if g >= 0 and eg_op[g] == u:
+		_release(g, u)
+	u_eg[u] = -1
+	var ot := u_otype[u]
+	var ty := UT.LIGHT if t_cls[ot] == UT.CLS_ART else ot
+	u_type[u] = ty
+	u_cls[u] = t_cls[ty]
+	u_eng0[u] = 0
+	u_neng[u] = 0
+	u_ammo[u] = u_oammo[u]
+	u_oammo[u] = 0
+	u_reserve[u] = 0
+	u_depl[u] = 0
+	u_deploy[u] = 0
+	u_refill[u] = 0
+	u_rprog[u] = 0
+	u_emove[u] = 0
+	u_fire_acc[u] = 0
+	u_ftarget[u] = -1
+	u_fire[u] = 1 if t_m_ammo[ty] > 0 else 0
+	u_skirm[u] = t_skirm[ty] if u_wall[u] == 0 else 0
+	u_files[u] = ground_files(ty, maxi(u_alive[u], 1))
+	if u_state[u] == U_READY:
+		u_order[u] = O_NONE
+		u_dx[u] = u_ax[u]
+		u_dy[u] = u_ay[u]
+		u_dface[u] = u_face[u]
+		u_target[u] = -1
+		u_gtarget[u] = -1
+		if obs_on != 0:
+			u_pn[u] = 0
+	u_dirty[u] = 1
+	u_settled[u] = 0
+
+
+## Engine group g, worked by unit u until now, is left on the field: its
+## working engines abandoned (neutral), with the set-up state, facing and
+## the baggage's shots they had.
+func _release(g: int, u: int) -> void:
+	eg_op[g] = -1
+	eg_depl[g] = u_depl[u]
+	eg_res[g] = u_reserve[u]
+	eg_face[g] = u_face[u]
+	for k in eg_ne[g]:
+		var e := eg_e0[g] + k
+		if e_state[e] == E_OK:
+			e_state[e] = E_ABANDONED
+			stat_abandoned += 1
+		e_crew[e] = 0
+		e_unit[e] = eg_u0[g]  # (the view draws a group by the battery it came with)
+
+
+## ORDER_DROP for a unit working engines (not a tower's): it leaves them.
+func _drop_engines(u: int) -> void:
+	var g := u_eg[u]
+	if g < 0 or u_state[u] != U_READY or t_fixed[eg_type[g]] != 0 or eg_op[g] != u:
+		return
+	_to_plain(u)
+	stat_edrop += 1
 
 
 ## Enemy soldiers (in grid `head`) within r of (x, y), counting up to cap.
@@ -7094,6 +7430,7 @@ func _art_fire(e: int, u: int, ft: int, ty: int) -> bool:
 	pr_t0[p] = tick
 	pr_t1[p] = tick + flight
 	pr_unit[p] = u
+	pr_ty[p] = ty
 	pr_tu[p] = ft
 	var b := (tick + flight) % PR_BUCKETS
 	pr_next[p] = pr_bucket[b]
@@ -7138,6 +7475,7 @@ func _art_fire_gate(e: int, u: int, g: int, ty: int) -> bool:
 	pr_t0[p] = tick
 	pr_t1[p] = tick + flight
 	pr_unit[p] = u
+	pr_ty[p] = ty
 	pr_tu[p] = -2 - g
 	var b := (tick + flight) % PR_BUCKETS
 	pr_next[p] = pr_bucket[b]
@@ -7284,7 +7622,7 @@ func _land_bolt(p: int) -> void:
 		if n_eq > 0:
 			_ram_hit(pr_x[p], pr_y[p], RAM_BOLT_DMG)
 	var u := pr_unit[p]
-	var ty := u_type[u]
+	var ty := pr_ty[p]
 	var sx := pr_sx[p]
 	var sy := pr_sy[p]
 	var dx := pr_x[p] - sx
@@ -7329,7 +7667,7 @@ func _land_bolt(p: int) -> void:
 			continue
 		if _rand() % 100 >= 100 - 12 * hits:
 			continue  # passes him by
-		var td := u_type[unit_of[v]]
+		var td := u_otype[unit_of[v]]
 		var sv := state[v]
 		var sh := 0
 		if sv != S_ROUTING and sv != S_DOWN and absi(FM.angle_diff(facing[v], from)) <= FRONT_ARC:
@@ -7356,7 +7694,7 @@ func _land_stone(p: int) -> void:
 		if n_eq > 0:
 			_ram_hit(pr_x[p], pr_y[p], RAM_STONE_DMG)
 	var u := pr_unit[p]
-	var ty := u_type[u]
+	var ty := pr_ty[p]
 	var lx := pr_x[p]
 	var ly := pr_y[p]
 	var dx := lx - pr_sx[p]
@@ -7421,7 +7759,7 @@ func _land_stone(p: int) -> void:
 			break
 		if state[v] >= S_DEAD:
 			continue
-		var td := u_type[unit_of[v]]
+		var td := u_otype[unit_of[v]]
 		var dmg := maxi(energy - t_armour[td] * (100 - t_m_ap[ty]) / 100, 1) * t_m_vuln[td] / 100 \
 			* (85 + _rand() % 31) / 100
 		_art_wound(v, dmg, u, mini(energy / 2 + STONE_KNOCK, 90))
@@ -7456,6 +7794,7 @@ func _art_wound(v: int, dmg: int, by: int, knock: int) -> void:
 	if h <= 0:
 		stat_kills[4] += 1
 		stat_kside[u_side[unit_of[v]] * 5 + 4] += 1
+		_credit(by, uv)
 		stat_art_kills += 1
 		if t_fixed[u_type[by]] != 0:
 			stat_tower_kills += 1
@@ -7493,7 +7832,7 @@ func _update_morale() -> void:
 			u_fright[u] = maxi(u_fright[u] - FRIGHT_DECAY, 0)
 		if us == U_READY:
 			if u_contact[u] == 0 and u_fighting[u] == 0 and tick - u_hit_t[u] > UNDER_FIRE_TICKS:
-				var base_m := t_morale[ty]
+				var base_m := t_morale[u_otype[u]]
 				var cap := base_m - (u_count0[u] - u_alive[u]) * base_m / (2 * u_count0[u])
 				if m < cap:
 					m = mini(m + MORALE_RECOVER, cap)
@@ -7678,7 +8017,8 @@ func projectiles_in_flight() -> int:
 
 ## Battle outcome as plain data, for the result screen and the campaign:
 ## per unit how many soldiers started, were killed, routed off the field,
-## withdrew, and are still on the field ("remaining"), plus side totals.
+## withdrew, and are still on the field ("remaining"), and how many enemies
+## its men killed ("kills"), plus side totals.
 func result() -> Dictionary:
 	var units: Array = []
 	var sides: Array = []
@@ -7686,10 +8026,10 @@ func result() -> Dictionary:
 		sides.append({"side": s, "started": 0, "killed": 0, "routed_off": 0,
 			"withdrawn": 0, "remaining": 0})
 	for u in n_units:
-		var r := {"unit": u, "side": u_side[u], "type": u_type[u],
+		var r := {"unit": u, "side": u_side[u], "type": u_otype[u],
 			"started": u_count0[u], "killed": u_killed[u],
 			"routed_off": u_routed_off[u], "withdrawn": u_withdrawn[u],
-			"remaining": u_alive[u], "state": u_state[u]}
+			"remaining": u_alive[u], "state": u_state[u], "kills": u_kills[u]}
 		units.append(r)
 		var t: Dictionary = sides[u_side[u]]
 		for k in ["started", "killed", "routed_off", "withdrawn", "remaining"]:
@@ -7798,6 +8138,10 @@ func state_hash() -> int:
 	if n_eng > 0:
 		for arr in _engine_arrays():
 			ctx.update((arr as PackedInt32Array).to_byte_array())
+		for arr in _egroup_arrays():
+			ctx.update((arr as PackedInt32Array).to_byte_array())
+		if sg_on == 0:
+			ctx.update(u_pick.to_byte_array())  # (engine pick-ups; with siege gear it is hashed below)
 	ctx.update(ai_phase.to_byte_array())
 	ctx.update(ai_t.to_byte_array())
 	ctx.update(ai_hold.to_byte_array())
@@ -8364,6 +8708,9 @@ func _pick_check(u: int) -> void:
 	var q := u_pick[u]
 	if q < 0:
 		return
+	if q >= PICK_ENG:
+		_pick_engines(u, q - PICK_ENG)
+		return
 	if u_state[u] != U_READY or q_state[q] != Q_GROUND or u_carry[u] >= 0 or u_wall[u] > 0:
 		u_pick[u] = -1
 		return
@@ -8440,7 +8787,7 @@ func _update_equip() -> void:
 					q_state[q] = Q_WRECKED
 					stat_ram_wrecked += 1
 	for u in n_units:
-		if u_pick[u] >= 0:
+		if u_pick[u] >= 0 and u_pick[u] < PICK_ENG:
 			_pick_check(u)
 
 

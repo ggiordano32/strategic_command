@@ -565,7 +565,10 @@ static func _row(row: Array, back: int, gap: int, placed: Array) -> int:
 	return total
 
 
-## BattleSim.result() -> campaign outcome for crules.apply_outcome().
+## BattleSim.result() -> campaign outcome for crules.apply_outcome(). Each
+## unit row: army, unit, killed, routed, withdrawn, remaining; a fought
+## battle's rows (mode other than "auto") also carry "kills" (enemies its
+## men killed), which the rules ignore and the battle screen shows.
 static func outcome_from_result(built: Dictionary, res: Dictionary, mode: String) -> Dictionary:
 	var map: Array = built["map"]
 	var sim_side: Array = built["sim_side"]
@@ -590,6 +593,10 @@ static func outcome_from_result(built: Dictionary, res: Dictionary, mode: String
 			e["routed"] = int(e["routed"]) * cn / sn
 			e["withdrawn"] = int(e["withdrawn"]) * cn / sn
 			e["remaining"] = maxi(cn - int(e["killed"]) - int(e["routed"]) - int(e["withdrawn"]), 0)
+		if mode != "auto":
+			# A fought battle: the enemies each unit's men killed (optional
+			# key; auto-resolved battles leave it out).
+			e["kills"] = int(r.get("kills", 0)) * cn / sn if sn > 0 and cn != sn else int(r.get("kills", 0))
 		units.append(e)
 		if int(m["army"]) < 0:
 			gar_back += int(e["remaining"]) + int(e["withdrawn"]) + int(e["routed"]) * CData.ROUT_RETURN / 100

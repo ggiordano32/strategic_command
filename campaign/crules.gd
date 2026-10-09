@@ -92,8 +92,9 @@ extends RefCounted
 ## battle sim's result() or from the formula): {winner: 0 attacker / 1
 ## defender (a draw counts as 1), mode: "fought" | "auto" | "formula",
 ## units: [{army, unit, killed, routed, withdrawn, remaining}] (army -1 =
-## garrison, unit = index in the garrison list), garrison_pct: garrison
-## strength left (%)}.
+## garrison, unit = index in the garrison list; a fought battle's rows also
+## carry "kills", the enemies the unit's men killed: for the battle screen,
+## never read by the rules), garrison_pct: garrison strength left (%)}.
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")

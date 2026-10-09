@@ -306,7 +306,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 		var face := CardFace.new()
 		face.set_anchors_preset(Control.PRESET_FULL_RECT)
 		face.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		face.icon = Icons.icon_of(sim.u_type[u])
+		face.icon = Icons.icon_of(sim.u_otype[u])
 		face.side_col = Icons.SIDE_COLORS[player_side]
 		b.add_child(face)
 		cards_box.add_child(b)
@@ -719,7 +719,7 @@ func update_cards(sim) -> void:
 		var f: CardFace = _faces[u]
 		var mstate := morale_text(sim, u)
 		var art := UT.cls(ty) == UT.CLS_ART
-		f.name_text = "%s %d" % [UT.TYPES[ty]["short"], u + 1]
+		f.name_text = "%s %d" % [UT.TYPES[sim.u_otype[u]]["short"], u + 1]
 		f.number_text = str(u + 1)
 		f.alive = sim.u_alive[u]
 		f.count0 = sim.u_count0[u]
@@ -739,6 +739,8 @@ func update_cards(sim) -> void:
 			var dt := deploy_text(sim, u)
 			word = dt if dt != "Ready" else word
 		var carry := carry_text(sim, u)
+		if carry == "":
+			carry = work_text(sim, u)
 		if carry != "":
 			summary += " " + carry
 			if word == "":
@@ -764,12 +766,11 @@ func update_cards(sim) -> void:
 ## Battery card: crew, engines still working, shots left, set-up state (the
 ## caller adds the morale word after it).
 static func art_card_text(sim, u: int) -> String:
-	var ty: int = sim.u_type[u]
 	var ok := 0
 	for k in sim.u_neng[u]:
 		if sim.e_state[sim.u_eng0[u] + k] == 0:
 			ok += 1
-	return "%s %d  %d/%d\neng %d/%d  %d shots +%d\n%s" % [UT.TYPES[ty]["short"], u + 1,
+	return "%s %d  %d/%d\neng %d/%d  %d shots +%d\n%s" % [UT.TYPES[sim.u_otype[u]]["short"], u + 1,
 		sim.u_alive[u], sim.u_count0[u], ok, sim.u_neng[u], maxi(sim.u_ammo[u], 0),
 		maxi(sim.u_reserve[u], 0), deploy_text(sim, u)]
 
@@ -782,6 +783,14 @@ static func carry_text(sim, u: int) -> String:
 	if k == BattleSim.EQ_RAM:
 		return "carrying ram"
 	return ""
+
+
+## Men working engines not their own (taken up on the field): "on bolts" /
+## "on stones", else "".
+static func work_text(sim, u: int) -> String:
+	if sim.n_eg == 0 or sim.u_eg[u] < 0 or sim.u_otype[u] == sim.u_type[u]:
+		return ""
+	return "on " + str(UT.TYPES[sim.u_type[u]]["short"]).to_lower()
 
 
 ## Artillery set-up / refill state as a word.

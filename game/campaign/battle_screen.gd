@@ -12,9 +12,10 @@ extends RefCounted
 ## Result (after auto-resolve or a fought battle): VICTORY / DEFEAT / DRAW
 ## for the viewing player, the one-line outcome, "Auto-resolved" / "Fought",
 ## and the same card rows with survivors against fielded (the lost part
-## marked) and each unit's losses; per-side totals with the side's kills.
-## The battle sim counts kills per side, not per unit, so a card shows its
-## own losses and the foot of each side its kills (the enemy's dead).
+## marked) and each unit's losses; per-side totals with the side's kills
+## (the enemy's dead). A fought battle's outcome also carries each unit's
+## kills (the sim's u_kills): its cards show "kills N"; an auto-resolved one
+## does not, and the note says kills are counted per side.
 ##
 ## View only: reads the state, a snapshot taken when the battle starts and
 ## the outcome dictionary (CBattle.outcome_from_result); never writes state.
@@ -34,6 +35,8 @@ const WIDE := 640.0       # logical px: sides side by side from this dialog widt
 const COL_HEALTH := Color(0.45, 0.8, 0.4)
 const COL_LOST := Color(0.9, 0.22, 0.18)
 const KILLS_NOTE := "Each card shows that unit's own losses; kills are counted per side (the battle does not record which unit killed whom)."
+## A fought battle's outcome carries each unit's kills (CBattle.outcome_from_result).
+const KILLS_NOTE_UNITS := "Each card shows that unit's own losses and the enemies its men killed (kills)."
 
 
 # ------------------------------------------------------------- snapshot ---
@@ -278,6 +281,7 @@ static func _side(snap: Dictionary, sd: int, res: Dictionary) -> Control:
 					var back := mini(int(e["remaining"]) + int(e["withdrawn"]) + routed * CData.ROUT_RETURN / 100, card.men)
 					card.back = back
 					card.dead = int(e["killed"])
+					card.set_kills(int(e.get("kills", -1)))
 					tot["fielded"] += card.men
 					tot["back"] += back
 					tot["dead"] += int(e["killed"])
@@ -358,8 +362,14 @@ static func result(s, snap: Dictionary, outcome: Dictionary, st: Dictionary, eve
 		var tl := Kit.label(txt, Kit.FONT_SMALL, Kit.COL_GOLD, true)
 		tl.name = "totals_%d" % sd
 		(sides.get_child(sd) as Container).add_child(tl)
-	v.add_child(Kit.label(KILLS_NOTE + " Of the men who fled, %d%% return to their units." % CData.ROUT_RETURN,
-		Kit.FONT_SMALL, Kit.COL_DIM, true))
+	var per_unit := false
+	for e2 in outcome.get("units", []):
+		if (e2 as Dictionary).has("kills"):
+			per_unit = true
+	var note := Kit.label((KILLS_NOTE_UNITS if per_unit else KILLS_NOTE) + " Of the men who fled, %d%% return to their units." % CData.ROUT_RETURN,
+		Kit.FONT_SMALL, Kit.COL_DIM, true)
+	note.name = "kills_note"
+	v.add_child(note)
 	if not events.is_empty():
 		v.add_child(Kit.section("Reports"))
 		for t2 in events:
@@ -421,6 +431,7 @@ class UnitCard extends Control:
 	var full := 1
 	var back := -1
 	var dead := 0
+	var kills := -1  # enemies its men killed (a fought battle), -1 not known
 	var fielded := true
 	var col := Color.WHITE
 
@@ -432,12 +443,20 @@ class UnitCard extends Control:
 		custom_minimum_size = Vector2(W, H)
 		mouse_filter = Control.MOUSE_FILTER_PASS
 
+	## A fought battle's card: the enemies its men killed, on a row of its
+	## own above the name (the card grows by it).
+	func set_kills(k: int) -> void:
+		kills = k
+		custom_minimum_size = Vector2(W, H + (12.0 if k >= 0 else 0.0))
+
 	func describe() -> String:
 		var t := "%s (tier %d): %d of %d men" % [UT.TYPES[ty]["name"], UT.tier_of(ty), men, full]
 		if not fielded:
 			return t + ", not fielded (the side is full)"
 		if back >= 0:
 			t += "; %d back, %d lost (%d dead)" % [back, men - back, dead]
+		if kills >= 0:
+			t += "; %d kills" % kills
 		return t
 
 	func _draw() -> void:
@@ -468,6 +487,8 @@ class UnitCard extends Control:
 		if not fielded:
 			nm = "(reserve)"
 		draw_string(font, Vector2(4, sz.y - 15), nm, HORIZONTAL_ALIGNMENT_LEFT, sz.x - 8, 11, txt)
+		if kills >= 0 and back >= 0:
+			draw_string(font, Vector2(4, sz.y - 28), "kills %d" % kills, HORIZONTAL_ALIGNMENT_LEFT, sz.x - 8, 11, Kit.COL_GOLD)
 		# Health bar: men (or survivors) against full strength.
 		var bx := 4.0
 		var by := sz.y - 10

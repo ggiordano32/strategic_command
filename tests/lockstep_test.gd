@@ -1135,15 +1135,48 @@ func _test_lockstep_siege() -> void:
 	for q in probe.n_eq:
 		if probe.q_kind[q] == BattleSim.EQ_RAM:
 			ram_q = q
+	# Engines as equipment across peers: B leaves its bolt battery's engines,
+	# A's archers take them up and later leave them.
+	var bat := -1
+	var arch := -1
+	for u in probe.n_units:
+		if probe.u_side[u] == 0 and bat < 0 and probe.u_type[u] == UT.BOLT:
+			bat = u
+		if probe.u_side[u] == 0 and arch < 0 and probe.u_type[u] == UT.ARCHER and int(home[u]) != int(home[bat]):
+			arch = u
+	var eg: int = probe.u_eg[bat]
+	var e_left := false
+	var a_eng_t := -1
+	var a_eng_done := false
+	var e_stage := 0  # snapshots of A's sim: 1 on the way to the engines, 2 working them, 3 left again
+	var e_snaps: Array = []
 	while now < total * 3 and mini(a.ls.frame, b.ls.frame) < total:
 		now += 1
 		for p in peers:
 			var sim = p.ls.sim
+			if now % 20 == 9 + p.me * 5 and arch >= 0:
+				if p.ls.u_cmd[bat] == p.me and not e_left and sim.tick > 150 and sim.u_eg[bat] == eg \
+						and sim.u_state[bat] == BattleSim.U_READY:
+					p.issue({"type": BattleSim.ORDER_DROP, "unit": bat})
+					e_left = true
+					orders += 1
+				if p.ls.u_cmd[arch] == p.me and sim.u_state[arch] == BattleSim.U_READY and sim.engines_free(eg) \
+						and sim.u_eg[bat] < 0 and not a_eng_done and sim.u_pick[arch] != BattleSim.PICK_ENG + eg:
+					p.issue({"type": BattleSim.ORDER_PICKUP, "unit": arch, "engines": eg, "run": 1})
+					orders += 1
+				elif p.ls.u_cmd[arch] == p.me and sim.u_eg[arch] == eg:
+					if a_eng_t < 0:
+						a_eng_t = now
+					elif now - a_eng_t > 300 and not a_eng_done:
+						p.issue({"type": BattleSim.ORDER_DROP, "unit": arch})
+						a_eng_done = true
+						orders += 1
 			if now % 20 == 5 + p.me * 7:
 				var mine: Array = []
 				for u in sim.n_units:
-					if p.ls.u_cmd[u] == p.me and sim.u_state[u] == BattleSim.U_READY and sim.u_cls[u] == UT.CLS_INF:
-						mine.append(u)
+					if p.ls.u_cmd[u] == p.me and sim.u_state[u] == BattleSim.U_READY and sim.u_cls[u] == UT.CLS_INF \
+							and sim.u_otype[u] == sim.u_type[u]:
+						mine.append(u)  # (not the battery that left its engines)
 				if mine.size() < 2:
 					continue
 				if p.me == 0:
@@ -1190,6 +1223,35 @@ func _test_lockstep_siege() -> void:
 			p.flush(relay, now)
 			p.deliver(relay, now)
 			p.run(p.rng.randi() % 3, true)
+		# Snapshot / restore across the pick-up and the drop: two copies of
+		# A's sim restored from it run on equal.
+		var sa = a.ls.sim
+		var e_take := false
+		if e_stage == 0 and sa.u_pick[arch] == BattleSim.PICK_ENG + eg:
+			e_stage = 1
+			e_take = true
+		elif e_stage == 1 and sa.u_eg[arch] == eg and a_eng_t >= 0 and now - a_eng_t >= 60:
+			e_stage = 2
+			e_take = true
+		elif e_stage == 2 and a_eng_done and sa.u_eg[arch] < 0:
+			e_stage = 3
+			e_take = true
+		if e_take:
+			var blob: PackedByteArray = sa.snapshot()
+			var x1 := BattleSim.new()
+			x1.setup(scen, 4242)
+			var x2 := BattleSim.new()
+			x2.setup(scen, 4242)
+			if not x1.restore(blob) or not x2.restore(blob) or x1.state_hash() != sa.state_hash():
+				_fail("siege lockstep: restoring A's sim at the engines (stage %d) did not reproduce its hash" % e_stage)
+				return
+			for t in 200:
+				x1.step()
+				x2.step()
+				if x1.state_hash() != x2.state_hash():
+					_fail("siege lockstep: copies restored at the engines (stage %d) diverged after %d ticks" % [e_stage, t + 1])
+					return
+			e_snaps.append(sa.tick)
 		if c != null:
 			c.flush(relay, now)
 			c.deliver(relay, now)
@@ -1216,6 +1278,12 @@ func _test_lockstep_siege() -> void:
 		print("PASS siege lockstep: walls 3, ladders, a ram, tower engines, 20 min limit: %d frames A/B and %d A/C equal (C joined at frame %d, mid-carry %s); %d siege orders; picked up %d, dropped %d, planted %d, men up ladders %d, ram blows %d, tower hits %d, gates %s; sim tick %d" % [
 			n_ab, n_ac, c_join, str(b_carried), orders, sim_a.stat_pickups, sim_a.stat_drops, sim_a.stat_planted,
 			sim_a.stat_ladder_up, sim_a.stat_ram_blows, sim_a.stat_tower_hits, str(sim_a.g_state), sim_a.tick])
+	if sim_a.stat_epick < 1 or sim_a.stat_edrop < 2 or e_snaps.size() < 3:
+		_fail("siege lockstep: the engines were not left by B's battery, taken up and left by A's archers with snapshots on the way (%d / %d, snapshots at %s)" % [
+			sim_a.stat_epick, sim_a.stat_edrop, str(e_snaps)])
+	else:
+		print("PASS siege lockstep engines: B's battery left them, A's archers took them up and left them (taken up %d, left %d), hashes equal; snapshot / restore on the way to them, while working them and once left (ticks %s) ran on identically" % [
+			sim_a.stat_epick, sim_a.stat_edrop, str(e_snaps)])
 	if sim_a.stat_pickups < 3 or sim_a.stat_drops < 1 or not b_carried:
 		_fail("siege lockstep: the equipment was not picked up, dropped and picked up again (%d / %d)" % [
 			sim_a.stat_pickups, sim_a.stat_drops])
