@@ -67,6 +67,224 @@ var _flash_at := Vector2.ZERO
 var _flash_until := 0
 
 
+# View-only effects (fire and blast): no sim state, no hash. Missiles of the
+# kinds that matter are followed from the sim's landing buckets; one that is
+# gone landed at its aim point. The effects live on the view clock.
+const FX_CAP := 64
+const FX_FIRE := 1     # a fire missile: sparks, then smoke
+const FX_BLAST := 2    # an explosive stone: flash, ring, lingering smoke
+const FX_DUST := 3     # an ordinary stone: a puff
+const FX_LIFE := [0.0, 2.0, 3.0, 0.8]
+const COL_SMOKE := Color(0.22, 0.2, 0.19)
+var _clock := 0.0
+var fx_trk_us := 0
+var fx_us := 0                         # view cost of the effects (track + draw), microseconds, for benchmarks
+var _fx_kind := PackedInt32Array()
+var _fx_age := PackedFloat32Array()
+var _fx_pos := PackedVector2Array()
+var _fx_rad := PackedFloat32Array()    # blast radius in px
+var _tr_t0 := PackedInt32Array()       # per slot: t0 of the missile last classified (-1 none)
+var _tr_stamp := PackedInt32Array()    # per slot: the walk that saw it
+var _tr_live := PackedInt32Array()     # slots of fire / explosive / stone missiles in flight
+var _tr_rec := {}                      # slot -> [kind, x, y, radius (sim units)]
+var _tr_walk := 0
+var _fx_cell := {}                     # landing cell -> view clock of the last effect there
+var _tr_tick := -1
+
+
+func _process(delta: float) -> void:
+	if sim == null:
+		return
+	_clock += delta
+	var i := 0
+	while i < _fx_kind.size():
+		_fx_age[i] += delta
+		if _fx_age[i] >= FX_LIFE[_fx_kind[i]]:
+			_fx_kind.remove_at(i)
+			_fx_age.remove_at(i)
+			_fx_pos.remove_at(i)
+			_fx_rad.remove_at(i)
+		else:
+			i += 1
+	if sim.tick != _tr_tick and sim.pr_bucket.size() > 0:
+		var t0 := Time.get_ticks_usec()
+		_track_missiles()
+		fx_trk_us += Time.get_ticks_usec() - t0
+	_tr_tick = sim.tick
+
+
+## Walk the landing buckets (only the missiles in flight), note the fire,
+## explosive and stone ones, and turn those no longer in flight into effects.
+func _track_missiles() -> void:
+	var cap: int = sim.pr_t1.size()
+	if _tr_t0.size() != cap:
+		_tr_t0.resize(cap)
+		_tr_t0.fill(-1)
+		_tr_stamp.resize(cap)
+		_tr_stamp.fill(0)
+		_tr_live.clear()
+		_tr_rec.clear()
+	_tr_walk += 1
+	var buckets: PackedInt32Array = sim.pr_bucket
+	var pr_next: PackedInt32Array = sim.pr_next
+	var pr_t0: PackedInt32Array = sim.pr_t0
+	for b in buckets.size():
+		var p := buckets[b]
+		while p >= 0:
+			_tr_stamp[p] = _tr_walk
+			if _tr_t0[p] != pr_t0[p]:
+				_tr_note(p)
+			p = pr_next[p]
+	var k := 0
+	while k < _tr_live.size():
+		var p := _tr_live[k]
+		if _tr_stamp[p] == _tr_walk and _tr_t0[p] == _tr_rec[p][4]:
+			k += 1
+			continue
+		var rec: Array = _tr_rec[p]
+		_tr_rec.erase(p)
+		_tr_live.remove_at(k)
+		_fx_spawn(rec[0], to_px(rec[1], rec[2]), rec[3] * px_per_m / M)
+
+
+func _tr_note(p: int) -> void:
+	var ak: int = sim.pr_ak[p]
+	var ty: int = sim.pr_ty[p]
+	var kind := 0
+	var rad := 0
+	if ak >= 0 and UT.ammo_stat(ak, "fire") > 0:
+		kind = FX_FIRE
+	elif ak >= 0 and UT.ammo_stat(ak, "blast") > 0:
+		kind = FX_BLAST
+		rad = UT.stat(ty, "m_blast") + UT.ammo_stat(ak, "blast")
+	elif UT.stat(ty, "m_kind") == 2:
+		kind = FX_DUST
+	if _tr_rec.has(p):
+		# the slot was reused within one walk: the old missile landed
+		var old: Array = _tr_rec[p]
+		_tr_rec.erase(p)
+		_tr_live.remove_at(_tr_live.find(p))
+		_fx_spawn(old[0], to_px(old[1], old[2]), old[3] * px_per_m / M)
+	_tr_t0[p] = sim.pr_t0[p]
+	if kind != 0:
+		_tr_rec[p] = [kind, sim.pr_x[p], sim.pr_y[p], rad, sim.pr_t0[p]]
+		_tr_live.append(p)
+
+
+func _fx_spawn(kind: int, at: Vector2, rad: float) -> void:
+	if kind != FX_BLAST:
+		# A volley lands as one: no second spark / puff in the same 2 m cell for 0.4 s.
+		var cell := Vector2i(at / (px_per_m * 2.0)) * 4 + Vector2i(kind, 0)
+		if _fx_cell.get(cell, -10.0) > _clock - 0.4:
+			return
+		_fx_cell[cell] = _clock
+		if _fx_cell.size() > 512:
+			_fx_cell.clear()
+	if _fx_kind.size() >= FX_CAP:
+		# Drop the oldest, but keep blasts over sparks and dust.
+		var drop := 0
+		while drop < _fx_kind.size() - 1 and _fx_kind[drop] == FX_BLAST and kind != FX_BLAST:
+			drop += 1
+		_fx_kind.remove_at(drop)
+		_fx_age.remove_at(drop)
+		_fx_pos.remove_at(drop)
+		_fx_rad.remove_at(drop)
+	_fx_kind.append(kind)
+	_fx_age.append(0.0)
+	_fx_pos.append(at)
+	_fx_rad.append(rad)
+
+
+## The visible part of the world (px), with a margin, for culling effects.
+func _view_rect() -> Rect2:
+	var r := get_canvas_transform().affine_inverse() * get_viewport_rect()
+	return r.grow(80.0)
+
+
+## A column of drifting smoke over p: n puffs through their life, rising
+## `rise` px and spreading to `rad` px; a is the strongest alpha.
+func _smoke_column(p: Vector2, seed_k: int, n: int, rise: float, rad: float, a: float, phase: float) -> void:
+	for k in n:
+		var s := fposmod(phase + float(k) / n, 1.0)
+		var sway := sin(float(seed_k) * 1.3 + s * 5.0 + k) * rad * 0.5
+		var c := p + Vector2(sway + rise * 0.25 * s, -rise * s)
+		draw_circle(c, rad * (0.35 + 0.65 * s), Color(COL_SMOKE, a * sin(PI * s) * (1.0 - 0.5 * s)))
+
+
+func _draw_fx(lw: float) -> void:
+	var vr := _view_rect()
+	var pm := px_per_m
+	for i in _fx_kind.size():
+		var p := _fx_pos[i]
+		if not vr.has_point(p):
+			continue
+		var a := _fx_age[i]
+		var sd := int(absf(p.x) * 7.0 + absf(p.y) * 13.0)
+		match _fx_kind[i]:
+			FX_FIRE:
+				if a < 0.38:
+					var f := a / 0.4
+					var h := pm * 1.3 * (1.0 - f)
+					draw_colored_polygon(PackedVector2Array([p + Vector2(-h * 0.4, 0), p + Vector2(0, -h * 1.3),
+						p + Vector2(h * 0.4, 0)]), Color(1.0, 0.5, 0.12, 0.9 * (1.0 - f)))
+					for k in 4:
+						var ang := float(sd % 7) + k * 1.6
+						var d := pm * (0.3 + 1.3 * f) * (0.7 + 0.1 * (k % 3))
+						draw_circle(p + Vector2(cos(ang), sin(ang) * 0.6 - 0.6 * f) * d, maxf(pm * 0.14, 1.2 / zoom),
+							Color(1.0, 0.85 - 0.4 * f, 0.25, 1.0 - f))
+				var s := a / 2.0
+				for k in 2:
+					var c := p + Vector2((k - 0.5) * pm * 0.7 * s + pm * 1.2 * s, -pm * (0.6 + 3.0 * s) - k * pm * 0.5 * s)
+					draw_circle(c, pm * (0.5 + 1.1 * s), Color(COL_SMOKE, 0.38 * (1.0 - s) * (0.8 + 0.1 * k)))
+			FX_BLAST:
+				var rr := maxf(_fx_rad[i], pm * 1.5)
+				if a < 0.15:
+					draw_circle(p, rr * 0.9, Color(1.0, 0.95, 0.7, 0.9 * (1.0 - a / 0.15)))
+				if a < 0.5:
+					var f := a / 0.5
+					draw_circle(p, rr * (0.3 + 0.8 * f), Color(0.45, 0.38, 0.3, 0.5 * (1.0 - f)))
+					draw_arc(p, rr * (0.35 + 0.9 * f), 0.0, TAU, 28, Color(0.8, 0.7, 0.55, 0.85 * (1.0 - f)), lw * 2.0)
+				var s := a / 3.0
+				for k in 4:
+					var ang := float(sd % 5) + k * 1.57
+					var c := p + Vector2(cos(ang) * rr * 0.4 * (0.4 + s) + pm * s, sin(ang) * rr * 0.3 - rr * (0.3 + 1.2 * s))
+					draw_circle(c, rr * (0.45 + 0.5 * s), Color(COL_SMOKE, 0.42 * clampf(1.0 - s, 0.0, 1.0) * minf(1.0, a * 5.0)))
+			FX_DUST:
+				var f := a / 0.8
+				draw_circle(p, pm * (0.35 + 0.9 * f), Color(0.55, 0.45, 0.32, 0.4 * (1.0 - f)))
+
+
+## Burning units: a few of the men (every 7th, at most 12) carry a flame and
+## a thread of smoke while u_burn lasts.
+func _draw_burning_units(vr: Rect2) -> void:
+	var t := _clock * 6.0
+	var pm := px_per_m
+	for u in sim.n_units:
+		if sim.u_burn[u] <= 0 or sim.u_alive[u] <= 0:
+			continue
+		var alive: int = sim.u_alive[u]
+		var base: int = sim.u_slot_base[u]
+		var step := maxi(7, alive / 12)
+		var k: int = (u * 3) % step
+		var n := 0
+		while k < alive and n < 12:
+			var i: int = sim.slot_soldier[base + k]
+			var p := to_px(sim.pos_x[i], sim.pos_y[i])
+			if vr.has_point(p):
+				var f := 0.75 + 0.25 * sin(t + i * 1.9)
+				var h := maxf(pm * 1.3, 8.0 / zoom) * f
+				var w := h * 0.4
+				p += Vector2(0, -pm * 0.8)
+				draw_colored_polygon(PackedVector2Array([p + Vector2(-w, 0), p + Vector2(0, -h), p + Vector2(w, 0)]),
+					Color(1.0, 0.45, 0.1, 0.85))
+				draw_colored_polygon(PackedVector2Array([p + Vector2(-w * 0.5, 0), p + Vector2(0, -h * 0.6),
+					p + Vector2(w * 0.5, 0)]), Color(1.0, 0.85, 0.3, 0.9))
+				if n % 2 == 0:
+					_smoke_column(p - Vector2(0, h * 0.5), i, 2, pm * 3.0, pm * 0.9, 0.32, _clock * 0.5 + i * 0.17)
+			k += step
+			n += 1
+
+
 ## Show `text` at world point `at` for a couple of seconds.
 func flash(text: String, at: Vector2) -> void:
 	_flash_text = text
@@ -129,6 +347,12 @@ func _draw() -> void:
 		_draw_siege_gear(lw)
 	if sim.fire_on != 0:
 		_draw_fires(lw)
+	var fx0 := Time.get_ticks_usec()
+	if sim.stat_unit_burn > 0:
+		_draw_burning_units(_view_rect())
+	if not _fx_kind.is_empty():
+		_draw_fx(lw)
+	fx_us += Time.get_ticks_usec() - fx0
 	if show_all_orders:
 		_draw_all_orders()
 	if sim.n_eng > 0:
@@ -1054,6 +1278,7 @@ func _draw_fires(lw: float) -> void:
 		draw_colored_polygon(PackedVector2Array([p + Vector2(-w * 0.5, 0), p + Vector2(0, -h * 0.6),
 			p + Vector2(w * 0.5, 0)]), Color(1.0, 0.85, 0.3, 0.9))
 		draw_line(p + Vector2(-w, 0), p + Vector2(w, 0), Color(0.3, 0.1, 0.0, 0.8), lw)
+		_smoke_column(p - Vector2(0, h * 0.7), k, 4, px_per_m * 9.0, px_per_m * 1.5, 0.4, _clock * 0.25 + k * 0.31)
 
 
 func _draw_siege_gear(lw: float) -> void:

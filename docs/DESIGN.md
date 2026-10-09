@@ -1580,7 +1580,7 @@ the view (`game/battle.gd`, `game/order_preview.gd`, `game/overlay.gd`,
   `EQ_RAM`), the attackers', on the ground behind their line
   (`Scenarios.settlement(..., {"ladders": sets, "ram": n})`, 12 m apart).
   Sim arrays `q_kind / q_x / q_y / q_state (GROUND, CARRIED, PLANTED,
-  WRECKED) / q_unit / q_seg / q_wx / q_wy / q_hp / q_acc / q_side`, per
+  WRECKED) / q_unit / q_seg / q_wx / q_wy / q_hp / q_side (`q_acc` until 2026-10-09, now `q_lt` per lane)`, per
   unit `u_carry`, `u_pick` (an order field: "pick"), `u_lq` (the set it
   climbs / came up by); hashed with the other siege arrays (`sg_on`),
   in snapshots. Orders `ORDER_PICKUP` (unit, equip: it marches to the
@@ -1597,7 +1597,9 @@ the view (`game/battle.gd`, `game/order_preview.gd`, `game/overlay.gd`,
     climb (pikes plant but do not climb); any infantry or missile unit of
     theirs ordered onto that stretch later climbs the same set. The set
     brings a man up every `LADDER_TICKS` / 5 ticks between all who climb
-    it (`q_acc`). Climb, walkway fighting, the way down (`_ladder_down`)
+    it (`q_acc`; since 2026-10-09 each ladder its own man every
+    `LADDER_TICKS`, `q_lt`, queues at the feet, orders taken while
+    climbing: "Units flow into the space"). Climb, walkway fighting, the way down (`_ladder_down`)
     and unbarring a gate from inside (men who came up by ladders) as
     before. Bug B fixed: a unit whose last leg ran along the wall arrived
     pressing its men into it (the anchor never reached the foot, its men
@@ -1805,6 +1807,119 @@ below). Everywhere (field and city maps).
   levers). Equal-force walls 1 went from 80-100 % attacker wins to 30-60 %
   (10 seeds; 46-60 % over 30); walls 2-3 now go to the defender 80-100 %
   of the time, below their targets (docs/STATUS.md item 4).
+
+### Units flow into the space (as built, 2026-10-09)
+
+Why: playtests had units jam at walls and buildings (a unit 87 of 90 up a
+wall and frozen, refusing orders; one ladder of five in use; units wedged
+between a house and a friend; attackers unable to press out of a gateway).
+A unit was a rigid rectangle. This build is for chokepoints in general
+(gateways, breaches, ladder feet, tower ramps, stairs, streets, a house's
+corner), on maps with buildings or walls only (`obs_on`): field battles
+play and hash exactly as before (golden digests unchanged). Code:
+`sim/battle_sim.gd` (`_stuck_tick`, `_stuck_release`, `_flow_slots`,
+`_ladder_step`, `_ladder_move`, `_anchor_step`, `open_snap`, `_way_clear`),
+probe `tests/determinism_test.gd --only=flow`, `tests/matchups.gd
+--only=fair-sieges` (stuck columns).
+
+- **Measurement: the no-progress counter.** `u_stuck` (hashed, with its
+  reference point `u_srx` / `u_sry` and `u_sprog`): ticks a unit has wanted
+  to get on (a move, an attack still closing, a march to a stair or ladder,
+  a stair or ladder move, or its men more than `LAG_CUT` behind their
+  places) while its men's middle stayed within `STUCK_DIST` 2 m of where it
+  last got on, and it was neither fighting at its frontage (half its front
+  rank within reach) nor waiting by rule (`BLK_QUEUE`, a ladder queue with
+  every ladder busy). A man reaching the walkway (a climb) or the other
+  level (a stair move, `u_sprog`) is progress. Diagnostics (not hashed):
+  `stat_stuck_max`, per unit `stat_stuck_u` (longest) and `stat_stuck_t`
+  (ticks in all).
+- **Ladders** (`_ladder_step`; replaces the shared `q_acc` pool and the
+  slot-fixed wait spots). Every man still below picks a ladder of the set
+  in slot order: the way to its foot plus `LADDER_QCOST` 1.2 m for each man
+  already in its queue, `LADDER_BUSY` 8 m more where there is no room above
+  (ties to the lower ladder), and waits in its queue, two abreast
+  (`LADDER_QW` 0.6 m either side) a metre apart back from the foot. Each
+  ladder takes its first man up when he is within `LADDER_AT` 1.5 m of its
+  foot and it is free: `q_lt` (hashed, per planted piece and lane) holds
+  the tick each lane takes its next man, `climb_per` ticks after the last,
+  all lanes at once (the set's throughput as before: `LADDER_TICKS` per
+  ladder). A ladder whose top has `LADDER_TOP_MEN` 2 of the climbers' own
+  men within `LADDER_TOP_R` 1 m who are not yet at their places takes
+  nobody (no room on the walkway); the others go on. A move order is taken
+  while climbing (`_ladder_move`): along its stretch the line slides and
+  the climb goes on; out on the foot's side (or nobody up yet) the men up
+  come back down the ladders and the whole unit goes; inland or onto
+  another stretch the men below go on climbing and the unit goes on from
+  the wall once all are up. With a ladder free and nobody coming to it for
+  `LADDER_STALL` 30 s the climb is given up (all come down the ladders;
+  `stat_ladder_cut`). No man is left below a wall unit.
+- **Slots that flow** (`_flow_slots`, from `_compute_offsets`, units near
+  obstacles on the ground or at a stair's foot). The rectangle is laid out
+  as before; places that are cut (across a wall, in a house, on another
+  piece of ground) are laid out again by a flood from the anchor's 2 m
+  cell (the nearest open cell if the anchor is at a house's edge):
+  neighbours +x, -x, +y, -y, open ground of the unit's mask, at most
+  `FLOW_AHEAD` 4 m ahead of the anchor and, ahead of it, no other unit's
+  footprint; each cell takes up to its share of men at `FLOW_PACK` 125 % of
+  the formation's density (whole places in it count first); places in slot
+  order, so the front rank is nearest the anchor. A unit queuing behind
+  friends (`BLK_QUEUE`), or squeezed in a corridor and fighting, flows all
+  its places (it packs to the front: the queue zone at a gateway, a breach
+  or a street). `PLACE_LEAD` / `PLACE_SIDE` are measured from the flowed
+  place, so men press forward because their places do. Budget: a flowed
+  unit is laid out again at most every `FLOW_EVERY` 10 ticks (and on any
+  order); in between deaths only drop places off the end; a flood visits at
+  most `FLOW_CELLS` 160 cells and stops once every cut place has room.
+  `u_flow` / `u_flt` hashed; the cell marks are scratch (stamped, not in
+  snapshots).
+- **Stuck release** (`_stuck_release`, every `STUCK_CYCLE` 150 ticks of
+  `u_stuck`): at 50 the places are flowed afresh; at 100 the way is planned
+  again (and while stuck a moving goal no longer replans it unless it moved
+  48 m; the street graph's distance tables are built at once for it), or a
+  move within `STUCK_NEAR` 8 m of its destination, or to ground no longer
+  reachable (a gate shut since), ends where it got to; at 150 the anchor
+  goes back to its men (`_regroup`; the man farthest back on its own
+  ground when they are strung out past `LAG_HOLD`) and goes on from there.
+  Only the anchor and the places move: no man steps through a wall or an
+  enemy. Not on a wall, a stair or its ladders; routing units do not count.
+- **Movement bugs the counter found** (each a long freeze in the
+  fair-sieges set): the street squeeze's keep-to-the-middle shift is not
+  applied on a move's last 12 m (the unit faces its final way there and the
+  shift pushed it back along its way: defenders 2-3 m short of their stack
+  places for minutes); an attack order after an attack keeps its path (the
+  AI retargeting every second had a unit at a corner replan, turn back to
+  an entry node behind it and never get on); a unit coming down a stair
+  forms on the ground at the foot (its block stood across the wall, men
+  whose places were on the walkway stayed up until `STAIR_MAX`); men on a
+  stair move take the trail point before the next one when the way to it
+  is not clear (men in a junction tower went for the stair through the
+  wall), and men on the walkway with no clear way go along the stretch's
+  centre line; a ground anchor does not step into a wall or a house (it
+  slides along it, or plans again; a shortcut past a corner had anchors cut
+  through walls, their men left on the other side); a waypoint counts as
+  reached only with a clear way on to the next; a short move among
+  buildings snaps the anchor only with a clear way from the men (else it
+  marches, its men on its trail); a tap on a house on a map without a town
+  goes beside it (`open_snap`).
+- **AI**: no AI rule or knob changed (docs/AI.md 25).
+- **Measured** (`--only=flow` set pieces, HEAD with the counter only ->
+  this build): a 90-man heavy unit up a 5-ladder set, no defenders: walls 1
+  all up in 360 -> 388 ticks, walls 2 540 -> 568 (the first men walk into
+  their queues), 5 ladders in use at once, a mean of 4.7 -> 4.4-4.6; a move
+  given as the last man went up was refused and left the unit split 40 up
+  / 50 below at walls 2, now taken (the unit whole). With 60 defenders on
+  the walkway both versions rout back down after half their men (none left
+  below); men up 77 / 57 -> 55 / 56 and defenders lost 20 / 12 -> 4 / 9 (a
+  ladder whose top is crowded with men who cannot reach their places takes
+  nobody). A unit ordered across a house's corner never formed (53 men more
+  than 3 m off their places) -> formed in place round it. Four units
+  through one gate, the street fight: unchanged. Equal-force fair sieges
+  (full kit, both Average, 10 seeds, ring / polis walls 1-2): units stuck
+  past 20 s 8 / 20 / 29 / 31 -> 2 / 3 / 6 / 12, longest 3629 / 4255 /
+  2232 / 2906 -> 257 / 368 / 2466 / 854 ticks (not yet under 200: men in a
+  narrow alley the 3 m path line cannot use, stair approaches with
+  stragglers far behind, defenders moving through their own stack, a
+  battery). Tick cost: see docs/STATUS.md.
 
 ### Ammunition kinds and fire (as built, 2026-10-09)
 
@@ -2615,6 +2730,25 @@ round, swelling at the top of their arc) go through the projectile shader;
 stone impacts leave a 1.5 s dust ring and furrow drawn by the overlay from a
 small view-only ring buffer in the sim (not state). Unit book pages for both
 types show an Artillery stat section and derived tags.
+
+**Fire and blast effects (view only, 2026-10-09)**: nothing here is sim state
+or in any hash; it is all read from arrays the view already has. A fire
+missile in flight (its slot's `pr_ak` has `fire` > 0: fire arrows, javelins,
+pots) draws a hot head and a flame tail fading to smoke: the projectile
+shaders get the slot's kind (GPU: texture block 8 and a `fire_mask`
+uniform; CPU: +16 on the missile's flag) and enlarge the quad behind the
+head. `overlay.gd` walks the sim's landing buckets once per tick, follows the
+fire, explosive and stone missiles, and a slot that is gone landed at its
+aim point: a fire missile leaves 0.4 s of sparks and flame and 2 s of drifting
+smoke, an explosive stone a flash, a ring out to its blast radius (`m_blast`
++ the kind's `blast`) in 0.5 s and 3 s of smoke, a plain stone a dust puff.
+The effects are one capped list (64, blasts kept over sparks; a volley landing
+in one 2 m cell gives one effect), advanced by the view clock so they fade
+while the sim is paused, and drawn in the overlay's single `_draw` pass. A
+unit with `u_burn` > 0 carries a flame on every 7th man (at most 12) with a
+thread of smoke, and burning gates, engines and equipment send up a smoke
+column. Cost on a 4-battery, 2-archer-unit fire test: about 0.8 ms of view
+time per frame at the cap.
 
 Terrain controls: the menu's "Terrain:" button cycles the ground for the
 three playable battles (random from the seed, flat, rolling, ridge, valley,

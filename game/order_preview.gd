@@ -279,8 +279,6 @@ func wall_refusal(u: int, x: int, y: int) -> String:
 		return ""
 	if UT.stat(sim.u_type[u], "fixed") != 0:
 		return "A tower's engine stays on its tower: tap an enemy to shoot at it"
-	if sim.u_stair[u] == BattleSim.ST_LADDER:
-		return "Climbing the ladders: orders wait until all are up"
 	var ws := BattleSim.wall_snap(sim, x, y)
 	if ws.z < 0 or (sim.u_wall[u] > 0 and ws.z == sim.u_wall[u] - 1):
 		return ""

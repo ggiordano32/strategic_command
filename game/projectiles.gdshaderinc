@@ -11,17 +11,23 @@
 // Texture variant, blocks (each `rows_per_block` rows of `tex_width` texels):
 //   0 sx, 1 sy, 2 x, 3 y, 4 t0, 5 t1 (-1 = free slot), 6 shooter unit,
 //   7 unit flags (indexed by unit: bit0 side, bits 1-3 kind: 0 arrow,
-//     1 javelin, 2 bolt, 3 stone, 4 sling bullet)
+//     1 javelin, 2 bolt, 3 stone, 4 sling bullet),
+//   8 ammunition kind of the slot's missile (fire kinds: bits of fire_mask)
 // CPU-fed variant (skip_vertex_transform), through MODEL_MATRIX: [3].xy
 // firing point, [0].xy landing point, [1].x t0, [1].y t1; INSTANCE_CUSTOM.x
-// the shooter's flags (side + 2 x kind).
+// the shooter's flags (side + 2 x kind, + 16 for a fire missile).
+// Fire missiles (arrows, javelins, pots) glow at the head and trail a short
+// flame fading to smoke (view only).
 
 uniform float now = 0.0;            // sim tick of the frame being drawn
 uniform float px_per_unit = 0.01;
+uniform float fire_mask = 0.0;      // sum of 2^k over the ammunition rows that set fire
 
 varying vec4 v_color;
 varying vec2 v_uv;
 varying float v_kind;
+varying float v_fire;
+varying float v_aspect;
 
 #ifndef CPU_FED
 uniform sampler2D data_tex : filter_nearest;
@@ -48,7 +54,7 @@ int fetch_int(int block, int idx) {
 // One missile in flight from s to e (sim units) at fraction f; side 0 / 1,
 // kind 0 arrow, 1 javelin, 2 bolt, 3 stone, 4 sling bullet. Returns the corner's position
 // in the layer's space; col: its colour.
-vec2 place(vec2 s, vec2 e, float f, int side, int kind, vec2 uv, out vec4 col) {
+vec2 place(vec2 s, vec2 e, float f, int side, int kind, bool fire, vec2 uv, out vec4 col) {
 	vec2 p = mix(s, e, f) * px_per_unit;
 	vec2 d = e - s;
 	float ang = atan(d.y, d.x);
@@ -72,6 +78,12 @@ vec2 place(vec2 s, vec2 e, float f, int side, int kind, vec2 uv, out vec4 col) {
 	}
 	size *= 1.0 + lift * sin(3.14159 * f);
 	vec2 v = (uv - vec2(0.5)) * size * m;
+	if (fire && kind < 3) {
+		// The quad is a glowing head (at uv.x 0.8) and a trail behind it.
+		float q = size.x * 3.2;
+		float w = 0.6 * (1.0 + lift * sin(3.14159 * f));
+		v = vec2((uv.x - 0.8) * q, (uv.y - 0.5) * w) * m;
+	}
 	float cs = cos(ang);
 	float sn = sin(ang);
 	vec3 tint = side == 0 ? vec3(0.75, 0.85, 1.0) : vec3(1.0, 0.82, 0.75);
@@ -79,6 +91,9 @@ vec2 place(vec2 s, vec2 e, float f, int side, int kind, vec2 uv, out vec4 col) {
 		tint = mix(tint, vec3(0.35, 0.25, 0.15), 0.55);
 	} else if (kind >= 3) {
 		tint = mix(tint, vec3(0.45, 0.43, 0.4), 0.8);
+	}
+	if (fire && kind >= 3) {
+		tint = mix(tint, vec3(1.0, 0.55, 0.15), 0.55);
 	}
 	col = vec4(tint, 0.95);
 	return vec2(v.x * cs - v.y * sn, v.x * sn + v.y * cs) + p;
@@ -95,6 +110,8 @@ void vertex() {
 #endif
 	v_uv = UV;
 	v_kind = 0.0;
+	v_fire = 0.0;
+	v_aspect = 1.0;
 	if (t1 < 0.0 || now < t0 || now > t1 || t1 <= t0) {
 		VERTEX = vec2(-100000.0);
 		v_color = vec4(0.0);
@@ -102,19 +119,30 @@ void vertex() {
 		float f = (now - t0) / (t1 - t0);
 		vec4 col;
 		int kind;
+		bool fire = false;
 #ifdef CPU_FED
-		float fl = floor(INSTANCE_CUSTOM.x + 0.5);  // side + 2 x kind
+		float fl = floor(INSTANCE_CUSTOM.x + 0.5);  // side + 2 x kind (+ 16: fire)
+		if (fl >= 16.0) {
+			fire = true;
+			fl -= 16.0;
+		}
 		kind = int(floor(fl / 2.0));
-		VERTEX = place(MODEL_MATRIX[3].xy, MODEL_MATRIX[0].xy, f, int(mod(fl, 2.0)), kind, UV, col);
+		VERTEX = place(MODEL_MATRIX[3].xy, MODEL_MATRIX[0].xy, f, int(mod(fl, 2.0)), kind, fire, UV, col);
 #else
 		vec2 s = vec2(float(fetch_int(0, i)), float(fetch_int(1, i)));
 		vec2 e = vec2(float(fetch_int(2, i)), float(fetch_int(3, i)));
 		int flags = fetch_int(7, fetch_int(6, i));
 		int side = flags - (flags / 2) * 2;
 		kind = flags / 2 - (flags / 16) * 8;
-		VERTEX = place(s, e, f, side, kind, UV, col) - MODEL_MATRIX[3].xy;
+		int ak = fetch_int(8, i);
+		fire = ak >= 0 && mod(floor(fire_mask / exp2(float(ak)) + 0.001), 2.0) > 0.5;
+		VERTEX = place(s, e, f, side, kind, fire, UV, col) - MODEL_MATRIX[3].xy;
 #endif
 		v_kind = float(kind);
+		if (fire) {
+			v_fire = 1.0;
+			v_aspect = (kind == 1 ? 1.6 : (kind == 2 ? 2.0 : 0.9)) * 3.2 / 0.6;
+		}
 		v_color = col;
 	}
 }
@@ -130,6 +158,20 @@ void fragment() {
 			c *= 0.45;
 		}
 		COLOR = vec4(c, v_color.a * a);
+	} else if (v_fire > 0.5) {
+		// Fire missile: a hot head and a flame tail fading to smoke.
+		float dx = (v_uv.x - 0.8) * v_aspect;
+		float dy = (v_uv.y - 0.5) * 2.0;
+		float r = length(vec2(dx, dy));
+		float glow = 1.0 - smoothstep(0.2, 1.0, r);
+		float core = 1.0 - smoothstep(0.0, 0.5, r);
+		float t = clamp((0.8 - v_uv.x) / 0.8, 0.0, 1.0);
+		float across = abs(dy);
+		float tail = (1.0 - smoothstep(0.0, 0.55 * (1.0 - t) + 0.05, across)) * (1.0 - t) * step(v_uv.x, 0.8);
+		vec3 flame = mix(vec3(1.0, 0.55, 0.12), vec3(0.3, 0.27, 0.25), smoothstep(0.35, 0.9, t));
+		vec3 c = mix(flame, vec3(1.0, 0.92, 0.55), core);
+		float a = max(max(glow * 0.9, tail * 0.85), core);
+		COLOR = vec4(c, a);
 	} else {
 		// A shaft with a darker head at the front.
 		float across = abs(v_uv.y - 0.5) * 2.0;

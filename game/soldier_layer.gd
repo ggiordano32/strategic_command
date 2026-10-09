@@ -26,7 +26,7 @@ const PR_SHADER_CPU := preload("res://game/projectiles_cpu.gdshader")
 const UT := preload("res://sim/unit_types.gd")
 const TEX_W := 1024
 const BLOCKS := 8
-const PR_BLOCKS := 8
+const PR_BLOCKS := 9
 ## CPU-fed MultiMesh buffer: floats per instance (2D transform 8, custom 4)
 ## and where each field goes (the shaders read them through MODEL_MATRIX:
 ## [3].xy = floats 3, 7; [0].xy = 0, 4; [1].xy = 1, 5; INSTANCE_CUSTOM = 8-11).
@@ -141,6 +141,8 @@ var _pr_ccol: Image
 var _pr_n := 0                            # missile slots in the MultiMesh
 var _pr_code := PackedFloat32Array()
 var _pr_unit_seen := PackedInt32Array()
+var _pr_ak_seen := PackedInt32Array()
+var _ak_fire := {}                        # ammunition rows that set fire
 var _pr_t0_seen := PackedInt32Array()
 var _pr_t1_seen := PackedInt32Array()
 var _pr_free_tail := PackedInt32Array()   # cap x -1 (t1 of free slots)
@@ -153,6 +155,9 @@ func setup(p_sim, p_px_per_m: float) -> void:
 	px_per_m = p_px_per_m
 	_n_inst = sim.n + sim.n_eng
 	_pr_cap = sim.pr_t1.size()
+	for k in UT.AMMO.size():
+		if UT.ammo_stat(k, "fire") > 0:
+			_ak_fire[k] = true
 	_flags.resize(sim.n_units)
 	_unit_sprite.resize(sim.n_units)
 	_unit_engine.resize(sim.n_units)
@@ -220,6 +225,11 @@ func _missile_material(shader: Shader) -> ShaderMaterial:
 	var mat := ShaderMaterial.new()
 	mat.shader = shader
 	mat.set_shader_parameter("px_per_unit", px_per_m / 1024.0)
+	var mask := 0
+	for k in UT.AMMO.size():
+		if UT.ammo_stat(k, "fire") > 0:
+			mask += 1 << k
+	mat.set_shader_parameter("fire_mask", float(mask))
 	return mat
 
 
@@ -467,7 +477,7 @@ func _upload_gpu(xs: PackedInt32Array, ys: PackedInt32Array, pxs: PackedInt32Arr
 		var pblock := _pr_rows * TEX_W * 4
 		_pr_image.set_data(TEX_W, PR_BLOCKS * _pr_rows, false, Image.FORMAT_RGBA8, _pack([
 			sim.pr_sx, sim.pr_sy, sim.pr_x, sim.pr_y, sim.pr_t0, sim.pr_t1, sim.pr_unit,
-			_pr_flags], pblock))
+			_pr_flags, sim.pr_ak], pblock))
 		_pr_tex.update(_pr_image)
 
 
@@ -499,14 +509,18 @@ func _upload_cpu(xs: PackedInt32Array, ys: PackedInt32Array, pxs: PackedInt32Arr
 		_column(_pr_cbuf, _pr_ccol, C_A, sim.pr_t0, m)
 		_column(_pr_cbuf, _pr_ccol, C_B, sim.pr_t1, m)
 		var pu: PackedInt32Array = sim.pr_unit.slice(0, m)
-		if pu != _pr_unit_seen:
+		var pa: PackedInt32Array = sim.pr_ak.slice(0, m)
+		if pu != _pr_unit_seen or pa != _pr_ak_seen:
 			# The shooters' flags (side + 2 x kind) per slot; slots change
 			# hands only when missiles are fired.
 			var nu: int = _pr_flags.size()
 			for i in m:
 				var u := pu[i]
 				_pr_code[i] = float(_pr_flags[u]) if u >= 0 and u < nu else 0.0
+				if pa[i] >= 0 and _ak_fire.has(pa[i]):
+					_pr_code[i] += 16.0  # a fire missile
 			_pr_unit_seen = pu
+			_pr_ak_seen = pa
 			_pr_ccol.set_data(1, m, false, Image.FORMAT_RF, _pr_code.to_byte_array())
 			_pr_cbuf.blit_rect(_pr_ccol, Rect2i(0, 0, 1, m), Vector2i(C_SPRITE, 0))
 		_pr_mm_cpu.buffer = _pr_cbuf.get_data().to_float32_array()
@@ -528,6 +542,7 @@ func _pr_fit() -> void:
 	_pr_ccol = Image.create(1, _pr_n, false, Image.FORMAT_RF)
 	_pr_code.resize(_pr_n)
 	_pr_unit_seen = PackedInt32Array()
+	_pr_ak_seen = PackedInt32Array()
 
 
 ## Column c of the buffer image `buf` = the ints of `a` as floats (exact
