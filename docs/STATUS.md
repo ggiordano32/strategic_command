@@ -971,6 +971,14 @@ tuned; collected 2026-10-09):
 - Resupply: forage rate (~37 ticks per arrow per man), wagon refill
   30 s a load, the 30 % horse-hit chance, wagon stocks (100 / 150 /
   220 %), the 20 % strength and +6-12 % auto-resolve bonus.
+- Missiles, from play (user, 2026-10-09): arrows feel a little weak
+  (should bite light troops and horses in the open; heavy shielded foot
+  from the front is right to shrug them); bolt throwers feel almost
+  useless in the field (kill rate and / or the fright per bolt too low:
+  historically scorpions were feared for pinning units); javelins
+  should hurt on impact, above all horses (big unarmoured targets; the
+  period's cavalry feared javelin skirmishers) and light foot, with the
+  pilum-style armour piercing as their edge against shields.
 - AI knobs: `WG_EMPTY_PCT` (15 % Average), `AK_WAVER_PCT` (35 %),
   engine take-up radius 60 m.
 - Known AI gaps (not tuning): the campaign AI never recruits wagons; the
