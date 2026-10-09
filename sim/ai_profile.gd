@@ -304,7 +304,16 @@ const WG_FLEE := 241           # ... and the wagon draws back from enemies this 
 const WG_EMPTY_PCT := 242      # missile units and batteries below this % of their load go to the wagon and refill (0: never)
 const WG_RANGE := 243          # ... when a wagon of ours with stock for them is this near
 const FORAGE_AI := 244         # an empty missile unit standing in woods, with no wagon in reach and no enemy near, forages (1)
-const N_KNOBS := 245
+# Camels and elephants (docs/AI.md 19): by the rows' fields (a horse scare,
+# a fear aura and a body), never by name.
+const CAMEL_HORSE := 245       # a rider with a horse scare (camels) scores enemy horse cavalry this (0: as any rider)
+const EL_LINE := 246           # a rider with a fear aura (elephants) scores enemy foot in formation this (0: as any rider)
+const EL_PIKE := 247           # ... less this for a pike block or braced spears (Skilled sends them at softer lines)
+const EL_NO_STAGE := 248       # ... and charges a front head-on, never riding round to a flank first (1)
+const EL_KILL_R := 249         # an amok beast of ours this near a unit of ours: the drivers are told to kill it (0: never)
+const EL_GATE := 250           # settlement attackers: beasts batter the attacked gate when they can (walls up to their gate_walls) (1)
+const EL_STORM := 251          # ... and go into the streets with the storm (1; 0: they stay outside the walls)
+const N_KNOBS := 252
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
@@ -528,6 +537,13 @@ const KNOBS: Array = [
 	[WG_EMPTY_PCT, 0, 15, 30],
 	[WG_RANGE, 150 * M, 150 * M, 150 * M],
 	[FORAGE_AI, 0, 1, 1],
+	[CAMEL_HORSE, 0, 4500, 5000],
+	[EL_LINE, 0, 4300, 4300],
+	[EL_PIKE, 0, 0, 1500],
+	[EL_NO_STAGE, 0, 1, 1],
+	[EL_KILL_R, 0, 30 * M, 60 * M],
+	[EL_GATE, 0, 1, 1],
+	[EL_STORM, 1, 0, 0],
 	# Behaviours a level switches off (Average: on, as before).
 	[CLEAR_SPOT, 0, 1, 1],
 	[MIS_SKIRM, 0, 1, 1],

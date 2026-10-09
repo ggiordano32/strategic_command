@@ -431,6 +431,13 @@ Caetrati / Elite, heavy Heavy / Scutarii / Guard, javelin 1-3, spear 1-2, cav
 1-2. Gauls light Light / Warband / Elite, heavy Heavy / Veteran / Gallic
 Nobles, spear 1-2, javelin 1-2, archer 1, cav Cav / Veteran / Noble Cavalry.
 Independents: spear, archer, heavy, light 1-3 (garrisons only).
+Camels and elephants (2026-10-09; docs/DESIGN.md "Camels and elephants"):
+Carthage Camel Riders 540 and Camel Archers 480 (Stables 1; the archers a
+Range 1 too) and War Elephants 960 (12 beasts, Stables 3); Epirus War
+Elephants. One tier each (lines "camel", "camel_archer", "elephant", in
+`UNIT_NEEDS`), counted by price in auto-resolve; an army with elephants
+marches at the foot's pace. The AI recruits them through the mixes
+(Carthage camel 5, elephant 5; Epirus elephant 5), never as a fallback.
 Ammunition wagons (line "siege", 2026-10-09; docs/DESIGN.md "The
 ammunition wagon"): Hand Cart 200 (Workshop 1), Ammunition Wagon 320
 (Workshop 2, Stables 1), Supply Train 450 (Workshop 2, Stables 2), in

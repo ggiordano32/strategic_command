@@ -58,7 +58,7 @@ const ART_ROWS := [
 ]
 const SPECIAL_ROWS := [
 	["Charge impact", "charge", "int"], ["Brace vs charges", "brace", "int"],
-	["Bonus vs cavalry", "vs_cav", "int"],
+	["Bonus vs cavalry", "vs_cav", "int"], ["Horse scare", "scare_r", "m"], ["Fear aura", "fear_r", "m"],
 ]
 
 var unit_type := -1
@@ -135,12 +135,14 @@ func set_unit_type(ty: int, p_side_color: Color = Color(0.35, 0.6, 1.0)) -> void
 		_tags.add_child(_chip(t))
 	var soldiers: int = UT.size_of(ty)
 	var files: int = Scenarios.FILES.get(UT.base_of(ty), 0)
+	if UT.stat(ty, "files0") > 0:
+		files = UT.stat(ty, "files0")
 	_formation.text = "%d soldiers per unit in %d files. Spacing %.1f m between files, %.1f m between ranks. Cost %d per soldier." % [
 		soldiers, files, UT.stat(ty, "file_sp") / M, UT.stat(ty, "rank_sp") / M, UT.stat(ty, "cost")]
 	var tier := UT.tier_of(ty)
 	var lines := {"heavy": "Barracks", "light": "Barracks", "spear": "Barracks", "pike": "Barracks",
 		"archer": "Range", "javelin": "Range", "cav": "Stables", "bolt": "Workshop", "stone": "Workshop",
-		"siege": "Workshop"}
+		"siege": "Workshop", "camel": "Stables", "camel_archer": "Stables", "elephant": "Stables"}
 	var bld: String = lines.get(UT.line_of(ty), "")
 	var need := tier if UT.cls(ty) != UT.CLS_ART else (2 if UT.base_of(ty) == UT.STONE else 1)
 	var need_txt := "%s %d" % [bld, need]
@@ -160,6 +162,9 @@ func set_unit_type(ty: int, p_side_color: Color = Color(0.35, 0.6, 1.0)) -> void
 			"%.1f m/s" % (UT.wagon_pace(wt, UT.wagon_stat(wt, "horses")) / 102.4), UT.wagon_stat(wt, "stock_pct"),
 			"%d arrows, %d javelins, %d bolts, %d stones" % [UT.ammo_stat(0, "wagon"), UT.ammo_stat(1, "wagon"),
 				UT.ammo_stat(2, "wagon"), UT.ammo_stat(3, "wagon")], UT.wagon_stat(wt, "hp"), UT.wagon_stat(wt, "bonus_pct")]
+	var bl := beast_line(ty)
+	if bl != "":
+		_tier.text += "\n" + bl
 	var aml := ammo_line(ty)
 	if aml != "":
 		_tier.text += "\n" + aml
@@ -211,6 +216,30 @@ func set_unit_type(ty: int, p_side_color: Color = Color(0.35, 0.6, 1.0)) -> void
 ## weapon, with who carries them (campaign: faction and building), from
 ## the data (UnitTypes.AMMO, CData.AMMO_AVAIL). "" for a type without
 ## missiles.
+## The camel / elephant facts of type ty in a line ("" for other rows):
+## the horse scare, the fear aura, the body, its crew, amok and calming.
+static func beast_line(ty: int) -> String:
+	var parts: Array[String] = []
+	if UT.stat(ty, "scare_r") > 0:
+		parts.append("Horse scare: enemy horsemen within %d m keep %d%% of their charge and turn rate and lose %d morale a second" % [
+			UT.stat(ty, "scare_r") / 1024, UT.stat(ty, "scare_pct"), UT.stat(ty, "scare_mor")])
+	if UT.stat(ty, "fear_r") > 0:
+		parts.append("fear: enemies within %d m lose %d morale a second (horses), %d (others)" % [UT.stat(ty, "fear_r") / 1024,
+			UT.stat(ty, "fear_horse"), UT.stat(ty, "fear_foot")])
+	if UT.stat(ty, "body_r") > 0:
+		parts.append("one body of %d hit points with %d javelin men on its back, never knocked down; its charge carries into %d more men" % [
+			UT.stat(ty, "hp"), UT.stat(ty, "crew_shoot"), UT.stat(ty, "trample_n")])
+	if UT.stat(ty, "amok") != 0:
+		parts.append("breaking, it runs amok and tramples anyone; alone for %d s (nobody within %d m) it calms; its drivers kill it in %d s on order" % [
+			UT.stat(ty, "amok_calm") / 10, UT.stat(ty, "amok_r") / 1024, UT.stat(ty, "kill_delay") / 10])
+	if UT.stat(ty, "gate_walls") >= 0:
+		parts.append("batters the gates of walls up to level %d" % UT.stat(ty, "gate_walls"))
+	if parts.is_empty():
+		return ""
+	var t := "; ".join(parts) + "."
+	return t.substr(0, 1).to_upper() + t.substr(1)
+
+
 static func ammo_line(ty: int) -> String:
 	var std := UT.stat(ty, "m_ak")
 	if std < 0:

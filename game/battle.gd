@@ -256,6 +256,7 @@ func _ready() -> void:
 	hud.man_wall_pressed.connect(_man_wall)
 	hud.come_down_pressed.connect(_come_down)
 	hud.drop_pressed.connect(_drop)
+	hud.kill_pressed.connect(_kill_beasts)
 	hud.withdraw_pressed.connect(_withdraw)
 	hud.withdraw_all_pressed.connect(_withdraw_all)
 	hud.group_pressed.connect(_select_group)
@@ -550,6 +551,8 @@ func _after_tick(ms: float) -> void:
 			_checkpoint_hashes[str(sim.tick)] = _hash_text
 			_t("hash_checkpoint", {"scenario": scenario_id, "seed": seed_value,
 				"tick": sim.tick, "hash": _hash_text, "player_orders": _player_orders})
+	if sim.tick % 5 == 0 or hud.kill_button.visible:
+		_refresh_kill_button()
 	var lost := false
 	for u in selection:
 		if sim.u_state[u] != BattleSim.U_READY:
@@ -835,7 +838,8 @@ const ORDER_NAMES := {BattleSim.ORDER_MOVE: "move", BattleSim.ORDER_ATTACK: "att
 	BattleSim.ORDER_SKIRMISH: "skirmish", BattleSim.ORDER_WITHDRAW: "withdraw",
 	BattleSim.ORDER_WITHDRAW_ALL: "withdraw_all", BattleSim.ORDER_DEPLOY: "deploy",
 	BattleSim.ORDER_REFILL: "refill", BattleSim.ORDER_GATE: "gate", BattleSim.ORDER_PLACE: "place",
-	BattleSim.ORDER_READY: "ready", BattleSim.ORDER_AMMO: "ammo", BattleSim.ORDER_FORAGE: "forage"}
+	BattleSim.ORDER_READY: "ready", BattleSim.ORDER_AMMO: "ammo", BattleSim.ORDER_FORAGE: "forage",
+	BattleSim.ORDER_KILL: "kill"}
 
 
 ## Select only unit u (-1: clear the selection).
@@ -1240,6 +1244,39 @@ func _drop() -> void:
 			Vector2(sim.u_cx[selected], sim.u_cy[selected]) / M * PX_PER_M)
 
 
+## The player's beast units running amok whose drivers can still be told
+## to kill them (BattleSim.kill_refusal).
+func _amok_mine() -> Array[int]:
+	var out: Array[int] = []
+	if sim.big_on == 0:
+		return out
+	for u in sim.n_units:
+		if sim.u_side[u] == player_side and _mine(u) and BattleSim.kill_refusal(sim, u) == "":
+			out.append(u)
+	return out
+
+
+## "Kill elephant" shows while a beast unit of ours runs amok.
+func _refresh_kill_button() -> void:
+	hud.kill_button.visible = not _amok_mine().is_empty()
+
+
+## "Kill elephant": the drivers of every amok beast unit of ours kill them
+## (ORDER_KILL; they die after the row's kill_delay).
+func _kill_beasts() -> void:
+	if not interactive:
+		return
+	var us := _amok_mine()
+	for u in us:
+		_queue({"type": BattleSim.ORDER_KILL, "unit": u})
+	_count("kill_beast")
+	if not us.is_empty():
+		var u: int = us[0]
+		overlay.flash("The drivers kill their elephants (%d s)" % (UT.stat(sim.u_type[u], "kill_delay") / 10),
+			Vector2(sim.u_cx[u], sim.u_cy[u]) / M * PX_PER_M)
+	hud.kill_button.visible = false
+
+
 ## Unit u works engines it may leave (a battery, or men who took engines
 ## up; not a tower's engine).
 func _works_engines(u: int) -> bool:
@@ -1568,6 +1605,7 @@ func _tap_gate(g: int, w: Vector2) -> bool:
 	var iron := not BattleSim.gate_hackable(sim, g)
 	var ladders := false
 	var fire := false
+	var beast := false
 	for u in selection:
 		var c := UT.cls(sim.u_type[u])
 		var k := BattleSim.carrying(sim, u)
@@ -1583,6 +1621,9 @@ func _tap_gate(g: int, w: Vector2) -> bool:
 			ok = true
 		elif (c == UT.CLS_INF or c == UT.CLS_PIKE) and not iron:
 			ok = true
+		elif not iron and k == 0 and UT.stat(sim.u_type[u], "gate_walls") >= sim.city_walls:
+			ok = true  # elephants batter the gates of low walls
+			beast = true
 		elif c == UT.CLS_MISSILE and k == 0 and sim.u_wall[u] == 0 and UT.ammo_stat(sim.spec_kind(u), "fire") > 0:
 			ok = true  # fire missiles: shoot the gate alight from where they stand
 			fire = true
@@ -1597,12 +1638,14 @@ func _tap_gate(g: int, w: Vector2) -> bool:
 		overlay.flash("RAM THE GATE: the ram goes at it and batters it", w)
 	elif fire and sent > 0:
 		overlay.flash("Shoot the gate: fire missiles set it alight (Ammo: fire)", w)
+	elif beast and sent > 0:
+		overlay.flash("The elephants batter the gate", w)
 	elif sent == 0 and ladders:
 		overlay.flash("Carrying ladders: tap a stretch of wall to plant them", w)
 	elif sent == 0 and iron:
 		overlay.flash("Swords cannot break this iron-bound gate: a ram or artillery breaks it", w)
 	elif sent == 0:
-		overlay.flash("Cavalry cannot break a gate; missile troops only with fire missiles", w)
+		overlay.flash("Cavalry cannot break a gate (elephants only at walls 0-1); missile troops only with fire missiles", w)
 	elif refused > 0:
 		overlay.flash("Foot hack at the gate, engines shoot it; the others stay", w)
 	return true

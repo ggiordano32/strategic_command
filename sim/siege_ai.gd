@@ -173,6 +173,8 @@ static func think(sim) -> void:
 		var k: int = local[side]
 		local[side] = k + 1
 		if sim.ai_sides[side] == 0 or sim.u_state[u] != U_READY:
+			if sim.ai_sides[side] != 0 and sim.u_amok[u] != 0 and (k + tick) % unit_period[side] == 0:
+				BattleAI.amok_think(sim, u)  # (docs/AI.md 19)
 			continue
 		if (k + tick) % unit_period[side] != 0:
 			continue
@@ -1738,7 +1740,12 @@ static func _att_cav(sim, u: int, phase: int) -> void:
 			if sim.u_order[u] != O_ATTACK or sim.u_target[u] != r:
 				BattleAI._attack(sim, u, r, 1)
 			return
-	if phase == SP_ASSAULT and (sim.ai_prog[2] != 0 or _no_foot(sim, side)):
+	# Beasts (a body: elephants) batter the gates of low walls and stay out
+	# of the streets (docs/AI.md 19).
+	var beast: bool = UT.stat(sim.u_type[u], "body_r") > 0
+	if beast and _beast_gate(sim, u, kn):
+		return
+	if phase == SP_ASSAULT and (sim.ai_prog[2] != 0 or _no_foot(sim, side)) and not (beast and kn[AP.EL_STORM] == 0):
 		_storm(sim, u)
 		return
 	BattleAI._set_mode(sim, u, A_CAVOUT)
@@ -1766,6 +1773,19 @@ static func _att_cav(sim, u: int, phase: int) -> void:
 	var spot := _gate_point(sim, g, kn[AP.S_STAGE_OUT] + kn[AP.S_CAV_BACK], lat)
 	var face := FM.atan2_a(sim.g_y[g] - spot.y, sim.g_x[g] - spot.x)
 	_go_home(sim, u, spot.x, spot.y, face, 12)
+
+
+## A beast unit of the attackers goes at the attacked gate while it stands
+## shut and its row may batter it (EL_GATE; walls up to its gate_walls).
+static func _beast_gate(sim, u: int, kn: PackedInt32Array) -> bool:
+	var g: int = sim.ai_gate[sim.u_side[u]]
+	if kn[AP.EL_GATE] == 0 or g < 0 or sim.g_state[g] != GATE_CLOSED or not sim.gate_hackable(sim, g) \
+			or UT.stat(sim.u_type[u], "gate_walls") < sim.city_walls:
+		return false
+	BattleAI._set_mode(sim, u, A_HACK)
+	if not _engaged(sim, u) and sim.u_gtarget[u] != g:
+		BattleAI._order(sim, u, {"type": ORDER_ATTACK, "target": -1, "gate": g, "run": 0}, 0)
+	return true
 
 
 # ------------------------------------------------------ Skilled (step 3) ---

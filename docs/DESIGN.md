@@ -1754,6 +1754,55 @@ baggage is topped up from it after. Campaign: recruited from the Workshop
 Stables 2), counts 20 % of its price as strength, and adds its tier's %
 to the army's missile and artillery strength in auto-resolve.
 
+### Camels and elephants (as built, 2026-10-09)
+
+Rows of `sim/unit_types.gd` `BEASTS` (lines "camel", "camel_archer",
+"elephant"; one tier each) with generic fields any row could use: `mount`
+(0 foot, 1 horse, 2 camel, 3 elephant), `files0`, `acc` (momentum per tick),
+`body_r`, `crew_shoot`, `woods_pct`, `trample_n` / `_r` / `_pct`, `crush`,
+the horse scare `scare_r` / `scare_pct` / `scare_mor`, the fear aura
+`fear_r` / `fear_horse` / `fear_foot`, `burn_pct`, `amok` / `amok_r` /
+`amok_calm`, `kill_delay`, `gate_walls` / `gate_pct`. Numbers chosen once
+(shock cavalry the yardstick), not tuned:
+
+| | Camel Riders | Camel Archers | War Elephants (12) |
+|---|---|---|---|
+| Run / turn 90 deg / full momentum | 6.5 m/s / 2.1 s / 3.3 s | 6.2 m/s / 2.1 s | 6.0 m/s / 4.3 s / 5 s |
+| Att / def / armour / hp | 32 / 34 / 8 / 150 | 20 / 24 / 4 / 140 | 34 / 20 / 10 / 2500 a beast |
+| Mass / charge | 450 / 45 | 450 / - | 2200 / 85, into 4 more men within 4 m at 80 %; 50 % through braced points |
+| Missiles | - | 110 m bow, 30 arrows | 2 javelin men a beast, 50 m, 16 shots |
+| Aura | horse scare 30 m: 70 %, 2 morale/s | the same | fear 25 m: horses 6, others 2 morale/s |
+| Other | woods 150 % | woods 150 %, skirmish | woods 200 %, fire drains 200 %, gates of walls 0-1 at 6 men's rate |
+| Price | 540 | 480 | 960 |
+
+- **Horse scare** (once a second, box to box): enemy units on horses within
+  `scare_r` keep `scare_pct` of their charge power and turn rate
+  (`u_scare`) and lose `scare_mor` a second; a horse charging a unit with a
+  scare hits at its `scare_pct` and loses heart (the shy). Camels vs spears
+  are riders like any (vs_cav, braced points).
+- **Fear aura**: enemy units within `fear_r` (but those with an aura of
+  their own) lose `fear_horse` / `fear_foot` a second. A unit inside any
+  aura recovers no morale (`u_awe`).
+- **Elephants**: one soldier per beast, a big body (`body_r` 1.5 m): blows
+  reach its edge, missiles within it strike it, never knocked down, its
+  footprint padded by it; shields and the ranks behind do not stop its
+  charge (`crush`); its crew shoots from its back while it fights.
+- **Amok**: an `amok` row breaking runs amok (`u_amok`, routing): it veers
+  at random each second (back from the edges), tramples every man of any
+  unit, its own side's too, within its body and a metre (every 0.5 s a
+  beast, an impact at 60 % momentum; friends count as friendly fire) and
+  never rallies. **Calming** (the user's rule): once no unit of either side
+  has been within `amok_r` (50 m) for `amok_calm` (20 s) it calms and its
+  rider takes control (rallied at the rally threshold); any unit near
+  resets the count. **Kill elephant** (`ORDER_KILL`, only an amok unit):
+  its drivers kill every beast after `kill_delay` (5 s).
+- HUD: "Kill elephant" in the bottom row while one of ours runs amok; cards
+  read "Amok"; the soldier layers draw a camel and an elephant sprite on
+  both paths; unit icons 10-12; the unit book lists the rows and a line of
+  their beast facts. AI: docs/AI.md 19. Campaign: docs/CAMPAIGN.md rosters.
+- Not modelled: fatigue (camels "tire slower") and arid ground (no such
+  penalty exists).
+
 ## 5. Networking
 
 ### Live battles: deterministic lockstep

@@ -598,6 +598,14 @@ func _compare(a: Peer, b: Peer, from_frame: int, what: String) -> int:
 func _test_lockstep() -> void:
 	var scen: Dictionary = Scenarios.make("battle_2000")
 	scen["ai_sides"] = [1]
+	# Elephants across peers (docs/DESIGN.md "Camels and elephants"): a unit
+	# of side 0 behind its line, starting broken (morale 10 %): it runs amok
+	# at once; its commander has its drivers kill it (ORDER_KILL) and A's sim
+	# is snapshotted while the drivers are at it.
+	var el_u: int = (scen["units"] as Array).size()
+	scen["units"].append(Scenarios.unit(0, UT.index_of("elephant"), 12, int(scen["width_m"]) / 2,
+		int(scen["height_m"]) - 40, Scenarios.FACE_UP))
+	scen["units"][el_u]["morale_pct"] = 10
 	var probe := BattleSim.new()
 	probe.setup(scen, 4242)
 	var home := _home_split(probe)
@@ -622,6 +630,9 @@ func _test_lockstep() -> void:
 	var c: Peer = null
 	var c_join := total / 3
 	var max_frames := 0
+	var kill_sent := false
+	var kill_snap := -1
+	var amok_seen := false
 	while now < total * 3 and max_frames < total:
 		now += 1
 		for p in peers:
@@ -629,6 +640,13 @@ func _test_lockstep() -> void:
 			if not p.online:
 				continue
 			_script(p, now, enemy)
+			var psim = p.ls.sim
+			if psim.u_amok[el_u] != 0:
+				amok_seen = true
+			if not kill_sent and p.ls.u_cmd[el_u] == p.me and psim.tick > 30 \
+					and BattleSim.kill_refusal(psim, el_u) == "":
+				p.issue({"type": BattleSim.ORDER_KILL, "unit": el_u})
+				kill_sent = true
 			if p.me == 1 and now == withdraw_at and p.ls.is_active(1):
 				p.issue({"type": BattleSim.ORDER_WITHDRAW_ALL, "side": 0})
 			p.flush(relay, now)
@@ -643,6 +661,25 @@ func _test_lockstep() -> void:
 			c.deliver(relay, now)
 			c.run(4, true)  # catches up faster
 		max_frames = mini(a.ls.frame, b.ls.frame) if b.online else a.ls.frame
+		if kill_snap < 0 and a.ls.sim.u_kill[el_u] > 0 and a.ls.sim.u_kill[el_u] < 40:
+			# The drivers at work: two copies restored from A's sim run on equal.
+			kill_snap = a.ls.sim.tick
+			var kb: PackedByteArray = a.ls.sim.snapshot()
+			var k1 := BattleSim.new()
+			k1.setup(scen, 4242)
+			var k2 := BattleSim.new()
+			k2.setup(scen, 4242)
+			if not k1.restore(kb) or not k2.restore(kb) or k1.state_hash() != a.ls.sim.state_hash():
+				_fail("lockstep: restoring A's sim while the drivers kill the elephants changed its hash")
+				return
+			for t in 200:
+				k1.step()
+				k2.step()
+				if k1.state_hash() != k2.state_hash():
+					_fail("lockstep: copies restored mid-kill diverged after %d ticks" % (t + 1))
+					return
+			if k1.u_state[el_u] != BattleSim.U_DESTROYED:
+				_fail("lockstep: the drivers did not kill the elephants (state %d)" % k1.u_state[el_u])
 		# Third peer (an observer of player 1's seat) joins mid-battle by
 		# snapshot + the relay's buffer.
 		if now == c_join:
@@ -707,6 +744,12 @@ func _test_lockstep() -> void:
 		_fail("B did not regain command after being admitted again")
 	if a.ls.sim.tick < 300:
 		_fail("the sim hardly ran (tick %d)" % a.ls.sim.tick)
+	if not amok_seen or kill_snap < 0 or a.ls.sim.u_state[el_u] != BattleSim.U_DESTROYED \
+			or b.ls.sim.u_state[el_u] != BattleSim.U_DESTROYED:
+		_fail("lockstep elephants: amok %s, snapshot mid-kill at tick %d, states %d / %d" % [amok_seen, kill_snap,
+			a.ls.sim.u_state[el_u], b.ls.sim.u_state[el_u]])
+	else:
+		print("PASS lockstep elephants: amok from the start, the Kill order through the lockstep, snapshot mid-kill at tick %d ran on equal, dead on both peers" % kill_snap)
 	stats["pauses"] = 0
 	# Deterministic unit-level checks of the control inputs.
 	_check_controls(scen, home)

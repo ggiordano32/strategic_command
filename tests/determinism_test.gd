@@ -134,6 +134,16 @@ var _ok := true
 
 
 func _init() -> void:
+	if "--only=camels" in OS.get_cmdline_user_args():
+		_check_camels()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
+	if "--only=elephants" in OS.get_cmdline_user_args():
+		_check_elephants()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=ammo" in OS.get_cmdline_user_args():
 		_check_ammo()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -164,6 +174,8 @@ func _init() -> void:
 	_check_engines()
 	_check_ammo()
 	_check_wagon()
+	_check_camels()
+	_check_elephants()
 	if "--only=equipment" in OS.get_cmdline_user_args():
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
@@ -1389,6 +1401,211 @@ func _check_wagon() -> void:
 	print("PASS wagon: archers foraged %d arrows in 400 ticks in the wood and stopped when moved off; javelinmen refilled from the wagon by tick %d (%d javelins, the wagon's %d -> %d); the crew was gone at %d (%d alive), the enemy took the wagon at %d (side %d) and put it down at %d; identical on repeat and across snapshot / restore (tick %d)" % [
 		int(ev["forage_ammo"]), int(ev["refilled"]), int(ev["jav_ammo"]), int(ev["jav0"]), int(ev["jav_left"]),
 		int(ev["crew_gone"]), int(ev["crew_alive"]), int(ev["taken"]), int(ev["side"]), int(ev["dropped"]), int(a["snap_t"])])
+
+
+## Camels (docs/DESIGN.md "Camels and elephants"; "--only=camels"): camels
+## standing within 30 m of a horse unit: the horses keep 70 % of their turn
+## rate (a wheel in place against an unscared horse unit's), lose heart
+## while they stay (no recovery), and charging the camels they shy (scare
+## hits); camels charging braced spears lose like any riders. Identical on
+## repeat and across snapshot / restore.
+func _camel_run(snap_check: bool) -> Dictionary:
+	var camel := UT.index_of("camel")
+	var sc := {"width_m": 300, "height_m": 300, "ai_sides": [], "orders": [], "units": [
+		Scenarios.unit(0, camel, 60, 150, 200, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.CAVALRY, 60, 150, 172, Scenarios.FACE_DOWN),
+		Scenarios.unit(1, UT.CAVALRY, 60, 40, 60, Scenarios.FACE_DOWN)],
+		"terrain": {"kind": Terrain.K_FLAT}}
+	var sim := BattleSim.new()
+	sim.setup(sc, 515)
+	var ev := {}
+	var hashes := PackedInt64Array()
+	var snap_t := -1
+	var snap_bad := -1
+	for t in 900:
+		var tk: int = sim.tick
+		if tk == 12:
+			ev["scare1"] = sim.u_scare[1]
+			ev["scare2"] = sim.u_scare[2]
+			# Wheel 90 degrees in place: the scared unit turns slower.
+			for u in [1, 2]:
+				sim.queue_order(BattleSim.make_move_order(tk, u, sim.u_ax[u], sim.u_ay[u],
+					(Scenarios.FACE_DOWN + 256) & 1023, 30 * M, 0))
+		if tk == 20:
+			ev["turn1"] = absi(FM.angle_diff(sim.u_face[1], Scenarios.FACE_DOWN))
+			ev["turn2"] = absi(FM.angle_diff(sim.u_face[2], Scenarios.FACE_DOWN))
+		if tk == 120:
+			ev["mor1"] = sim.u_morale[1]
+			ev["mor2"] = sim.u_morale[2]
+			# Back off and charge the camels.
+			sim.queue_order(BattleSim.make_move_order(tk, 1, 150 * M, 120 * M, Scenarios.FACE_DOWN, 30 * M, 1))
+		if tk == 260:
+			sim.queue_order(BattleSim.make_attack_order(tk, 1, 0, 1))
+		sim.step()
+		hashes.append(sim.state_hash())
+		if snap_check and snap_t < 0 and sim.tick == 300:
+			snap_t = sim.tick
+			snap_bad = _snap_diverges(sim, sc, 515, 300)
+	ev["scare_hits"] = sim.stat_scare_hits
+	ev["scared"] = sim.stat_scared
+	# Camels against braced spears (the spears stand: braced).
+	var sc2 := {"width_m": 300, "height_m": 300, "ai_sides": [], "orders": [], "units": [
+		Scenarios.unit(0, camel, 60, 150, 230, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.SPEAR, 100, 150, 140, Scenarios.FACE_DOWN)],
+		"terrain": {"kind": Terrain.K_FLAT}}
+	var s2 := BattleSim.new()
+	s2.setup(sc2, 516)
+	s2.queue_order(BattleSim.make_attack_order(1, 0, 1, 1))
+	for t in 1200:
+		s2.step()
+		hashes.append(s2.state_hash())
+	ev["camels_lost"] = s2.u_killed[0]
+	ev["spears_lost"] = s2.u_killed[1]
+	ev["camel_state"] = s2.u_state[0]
+	ev["reflects"] = s2.stat_reflects
+	return {"hashes": hashes, "ev": ev, "snap_t": snap_t, "snap_bad": snap_bad}
+
+
+func _check_camels() -> void:
+	var a := _camel_run(true)
+	var b := _camel_run(false)
+	var ev: Dictionary = a["ev"]
+	print("  camels: %s" % str(ev))
+	if a["hashes"] != b["hashes"] or str(ev) != str(b["ev"]):
+		_fail("camels: the repeat diverged")
+		return
+	if int(ev["scare1"]) != 70 or int(ev["scare2"]) != 0:
+		_fail("camels: the horse unit near the camels is not scared (or the far one is)")
+		return
+	if int(ev["turn1"]) >= int(ev["turn2"]) or int(ev["turn1"]) <= 0:
+		_fail("camels: the scared horses did not turn slower (%d against %d)" % [int(ev["turn1"]), int(ev["turn2"])])
+		return
+	if int(ev["mor1"]) >= int(ev["mor2"]):
+		_fail("camels: the scared horses kept their heart (%d against %d)" % [int(ev["mor1"]), int(ev["mor2"])])
+		return
+	if int(ev["scare_hits"]) <= 0:
+		_fail("camels: the horses charging the camels did not shy")
+		return
+	if int(ev["camels_lost"]) <= int(ev["spears_lost"]) or int(ev["reflects"]) <= 0:
+		_fail("camels: camels charging braced spears did not lose (%s)" % str(ev))
+		return
+	if int(a["snap_t"]) < 0 or int(a["snap_bad"]) != 0:
+		_fail("camels: the restored copy diverged (%d)" % int(a["snap_bad"]))
+		return
+	print("PASS camels: horses within 30 m keep %d %% (far ones %d), wheel %d against %d angle units in 8 ticks, morale %d against %d after 11 s near the camels; %d horse impacts on the camels shied; camels into braced spears lost %d, killed %d (%d reflected, state %d); identical on repeat and across snapshot / restore (tick %d)" % [
+		int(ev["scare1"]), int(ev["scare2"]), int(ev["turn1"]), int(ev["turn2"]), int(ev["mor1"]), int(ev["mor2"]),
+		int(ev["scare_hits"]), int(ev["camels_lost"]), int(ev["spears_lost"]), int(ev["reflects"]),
+		int(ev["camel_state"]), int(a["snap_t"])])
+
+
+## Elephants ("--only=elephants"): a unit of elephants charges a heavy line
+## (knock-downs; fire arrows chip it and set it burning on the way in); a
+## second unit standing among its own light infantry breaks (its morale
+## put to nothing at tick 20) and runs amok, trampling them, then, alone,
+## calms after its cooling time; a third breaks at tick 30 and its drivers
+## are told to kill it at 35 (dead after the delay). Identical on repeat
+## and across snapshot / restore mid-amok.
+func _elephant_run(snap_check: bool) -> Dictionary:
+	var el := UT.index_of("elephant")
+	var fire := UT.ammo_index("fire_arrows")
+	var arch := Scenarios.unit(1, UT.ARCHER, 80, 560, 300, Scenarios.FACE_LEFT)
+	arch["ak"] = fire
+	var sc := {"width_m": 700, "height_m": 700, "ai_sides": [], "orders": [], "units": [
+		Scenarios.unit(0, el, 12, 480, 330, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.HEAVY, 100, 480, 220, Scenarios.FACE_DOWN),
+		arch,
+		Scenarios.unit(0, UT.LIGHT, 40, 150, 470, Scenarios.FACE_UP),
+		Scenarios.unit(0, el, 12, 150, 462, Scenarios.FACE_UP),
+		Scenarios.unit(0, el, 12, 560, 640, Scenarios.FACE_UP)],
+		"terrain": {"kind": Terrain.K_FLAT}}
+	var sim := BattleSim.new()
+	sim.setup(sc, 717)
+	var full := 12 * UT.stat(el, "hp")
+	var ev := {"down_max": 0, "burned": 0}
+	var hashes := PackedInt64Array()
+	var snap_t := -1
+	var snap_bad := -1
+	for t in 2400:
+		var tk: int = sim.tick
+		if tk == 1:
+			sim.queue_order(BattleSim.make_attack_order(tk, 0, 1, 1))
+			sim.queue_order({"tick": tk, "type": BattleSim.ORDER_AMMO, "unit": 2, "on": 1})
+			sim.queue_order(BattleSim.make_fire_order(tk, 2, 0))
+		if tk == 100:
+			sim.queue_order(BattleSim.make_attack_order(tk, 2, 0, 0))
+		if tk == 20:
+			sim.u_morale[4] = 0  # (the second unit breaks)
+		if tk == 30:
+			sim.u_morale[5] = 0  # (the third)
+		if tk == 35:
+			sim.queue_order({"tick": tk, "type": BattleSim.ORDER_KILL, "unit": 5})
+			ev["refused_ready"] = BattleSim.kill_refusal(sim, 0)
+		if tk == 22:
+			ev["amok"] = sim.u_amok[4]
+		ev["down_max"] = maxi(int(ev["down_max"]), sim.u_down[1])
+		if sim.u_burn[0] > 0:
+			ev["burned"] = 1
+		if not ev.has("contact") and sim.u_charge[0] != 0:
+			ev["contact"] = tk
+			var hp0 := 0
+			var base: int = sim.u_slot_base[0]
+			for s2 in sim.u_alive[0]:
+				hp0 += sim.hp[sim.slot_soldier[base + s2]]
+			ev["hp_lost_approach"] = full - hp0
+			ev["alive_at_contact"] = sim.u_alive[0]
+		if not ev.has("killed_at") and sim.u_state[5] == BattleSim.U_DESTROYED:
+			ev["killed_at"] = tk
+		if not ev.has("calmed") and tk > 22 and sim.u_amok[4] == 0 and sim.u_state[4] == BattleSim.U_READY:
+			ev["calmed"] = tk
+		sim.step()
+		hashes.append(sim.state_hash())
+		if snap_check and snap_t < 0 and sim.tick == 60:
+			snap_t = sim.tick
+			snap_bad = _snap_diverges(sim, sc, 717, 300)
+		if ev.has("calmed") and ev.has("killed_at") and sim.tick > 900:
+			break
+	ev["impacts"] = sim.stat_impacts
+	ev["knockdowns"] = sim.stat_knockdowns
+	ev["trample_ff"] = sim.stat_trample_ff
+	ev["friends_lost"] = sim.u_killed[3]
+	ev["driver_killed"] = sim.stat_beast_killed
+	ev["missile_hits"] = sim.stat_missile_hits
+	ev["feared"] = sim.stat_feared
+	ev["heavy_lost"] = sim.u_killed[1]
+	ev["el_lost"] = sim.u_killed[0]
+	return {"hashes": hashes, "ev": ev, "snap_t": snap_t, "snap_bad": snap_bad}
+
+
+func _check_elephants() -> void:
+	var a := _elephant_run(true)
+	var b := _elephant_run(false)
+	var ev: Dictionary = a["ev"]
+	print("  elephants: %s" % str(ev))
+	if a["hashes"] != b["hashes"] or str(ev) != str(b["ev"]):
+		_fail("elephants: the repeat diverged")
+		return
+	if not ev.has("contact") or int(ev["down_max"]) < 5 or int(ev["impacts"]) <= 0:
+		_fail("elephants: the charge did not knock the line down (%s)" % str(ev))
+		return
+	if int(ev["hp_lost_approach"]) <= 0 or int(ev["burned"]) == 0:
+		_fail("elephants: missiles and fire did not chip them on the way in (%s)" % str(ev))
+		return
+	if int(ev.get("amok", 0)) != 1 or int(ev["trample_ff"]) <= 0:
+		_fail("elephants: the broken unit did not run amok through its friends (%s)" % str(ev))
+		return
+	if not ev.has("calmed"):
+		_fail("elephants: the amok unit never calmed (%s)" % str(ev))
+		return
+	if not ev.has("killed_at") or int(ev["driver_killed"]) != 12 or str(ev["refused_ready"]) == "":
+		_fail("elephants: the drivers' Kill order (%s)" % str(ev))
+		return
+	if int(a["snap_t"]) < 0 or int(a["snap_bad"]) != 0:
+		_fail("elephants: the restored copy diverged (%d)" % int(a["snap_bad"]))
+		return
+	print("PASS elephants: the charge met the line at tick %d (%d of 12 alive; missiles took %d hp on the way in, fire set them burning) and knocked down up to %d men at once (%d impacts, %d knock-downs); the broken unit ran amok and trampled %d friends (%d killed), then calmed at tick %d; the third unit's drivers killed it at tick %d (%d beasts); identical on repeat and across snapshot / restore (tick %d)" % [
+		int(ev["contact"]), int(ev["alive_at_contact"]), int(ev["hp_lost_approach"]), int(ev["down_max"]),
+		int(ev["impacts"]), int(ev["knockdowns"]), int(ev["trample_ff"]), int(ev["friends_lost"]), int(ev["calmed"]),
+		int(ev["killed_at"]), int(ev["driver_killed"]), int(a["snap_t"])])
 
 
 ## The shut inner gate: an equal-force walls-2 polis with a ram, both

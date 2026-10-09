@@ -31,7 +31,7 @@
 // SPR_RECT), so infantry stay small and pikes and horses get long quads,
 // all in this one draw call.
 
-const int SPRITES = 9;
+const int SPRITES = 11;
 const float CELL_X0 = -1.6;
 const float CELL_W = 6.0;
 const float CELL_Y0 = -1.25;
@@ -57,6 +57,8 @@ vec4 sprite_rect(int spr) {
 	if (spr == 5) { return vec4(-1.45, 1.7, -0.62, 0.62); }
 	if (spr == 6) { return vec4(-0.55, 0.6, -0.55, 0.55); }
 	if (spr == 7) { return vec4(-1.2, 1.45, -1.05, 1.05); }
+	if (spr == 9) { return vec4(-1.55, 1.95, -0.62, 0.62); }
+	if (spr == 10) { return vec4(-1.6, 2.55, -1.25, 1.25); }
 	return vec4(-1.6, 1.75, -1.0, 1.0);
 }
 #else
@@ -65,7 +67,7 @@ uniform int rows_per_block = 1;
 uniform int tex_width = 1024;
 uniform int layer_pass = 1;         // 0 = corpses only, 1 = living only
 // xmin, xmax, ymin, ymax in metres per sprite (see soldier_layer.gd).
-uniform vec4 spr_rect[9];
+uniform vec4 spr_rect[11];
 
 // Portability (mobile WebGL drivers): the instance's index comes from
 // INSTANCE_CUSTOM (x + 2048 * y, written once by soldier_layer.gd), not

@@ -82,6 +82,38 @@ extends RefCounted
 ##                ammunition wagon")
 ##   str_pct      campaign: % of its price per man that counts as fighting
 ##                strength (auto-resolve, the AI); a wagon's crew little
+## Beasts (docs/DESIGN.md "Camels and elephants"; generic: any row may use them):
+##   mount        what its men ride: 0 on foot, 1 horse, 2 camel, 3 elephant
+##                (the auras pick their victims by it)
+##   files0       formation files at full size (0: Scenarios' table by base type)
+##   acc          charge momentum gained per tick at speed (acceleration)
+##   body_r       a big body's radius: missiles landing within it strike it,
+##                blows reach its edge, it is never knocked down and its
+##                footprint is padded by it (0: a man or a horse)
+##   crew_shoot   missile shooters per soldier (an elephant's crew on its
+##                back); more than one also shoot while the body fights
+##   woods_pct    % of the woods' slowing it suffers (100 as its class)
+##   trample_n    victims a charge impact carries on into after the first
+##   trample_r    ... within this of the rider
+##   trample_pct  ... each at this % of the impact
+##   crush        % of a charge that still goes into a braced front (the
+##                rider takes the points all the same)
+##   scare_r      horse scare: enemy horse units (mount 1) this near take
+##   scare_pct    ... this % of their charge power and turn rate,
+##   scare_mor    ... and lose this much morale a second; a horse charging
+##                a unit with a scare hits at scare_pct and loses heart
+##   fear_r       fear aura: enemy units this near (but those with a fear
+##   fear_horse   aura of their own) lose this much morale a second when
+##   fear_foot    mounted on horses, this much otherwise
+##   burn_pct     % of the morale burning drains (fire is the elephant's bane)
+##   amok         1: on breaking it runs amok (erratic, tramples anyone)
+##                instead of fleeing to its edge, and never rallies on its own
+##   amok_r       ... it calms (the rider takes control again) once no unit of
+##   amok_calm    either side has been within amok_r for amok_calm ticks
+##   kill_delay   ticks from the Kill order to the driver killing his beast
+##   gate_walls   it batters closed gates of cities with walls up to this
+##                level like foot hack them (-1 never) ...
+##   gate_pct     ... at this % of a foot soldier's rate (its own damage)
 
 ## Display only (never read by the sim, not hashed): icon (marker / card
 ## symbol, see game/unit_icons.gd), role, desc, good_vs, weak_vs (unit book).
@@ -114,7 +146,16 @@ const DEFAULTS := {
 	"m_blast": 0, "m_fear": 0, "arc": 0, "traverse": 0, "deploy": 0, "e_hp": 0,
 	"climb": 15, "m_hgain": 0, "m_apex": 0, "m_reserve": 0, "m_refill": 0,
 	"fixed": 0, "m_ak": -1, "wagon": -1, "str_pct": 100,
+	"mount": 0, "files0": 0, "acc": 4, "body_r": 0, "crew_shoot": 1, "woods_pct": 100,
+	"trample_n": 1, "trample_r": 1843, "trample_pct": 60, "crush": 0,
+	"scare_r": 0, "scare_pct": 100, "scare_mor": 0, "fear_r": 0, "fear_horse": 0, "fear_foot": 0,
+	"burn_pct": 100, "amok": 0, "amok_r": 0, "amok_calm": 0, "kill_delay": 0, "gate_walls": -1, "gate_pct": 0,
 }
+## Mounts (the "mount" field).
+const MOUNT_FOOT := 0
+const MOUNT_HORSE := 1
+const MOUNT_CAMEL := 2
+const MOUNT_ELEPHANT := 3
 
 ## The nine base types (tier 1 of their line). The sandbox battles use
 ## these; derived tier types are appended by _build_types() (see TIERS).
@@ -325,6 +366,7 @@ const BASE: Array[Dictionary] = [
 		"weak_vs": "Braced spears and pike fronts (the charge is turned back), the front of heavy infantry (a costly grind), charging uphill, archers shooting at them in the open, long melee with heavy infantry.",
 		"cls": CLS_CAV,
 		"sprite": 5,
+		"mount": MOUNT_HORSE,
 		"attack": 36,
 		"defence": 28,
 		"armour": 10,
@@ -654,6 +696,108 @@ const WAGONS: Array[Dictionary] = [
 ]
 
 
+## Camels and elephants (docs/DESIGN.md "Camels and elephants"): recruited
+## rows of their own lines (one tier), appended after the wagons so every
+## other index is unchanged. Numbers chosen once from the design (shock
+## cavalry as the yardstick: mass 400, charge 70, run 8.2 m/s, 90 degrees in
+## 1.6 s), not tuned; each with its reason.
+const BEASTS: Array[Dictionary] = [
+	{
+		"key": "camel", "line": "camel", "name": "Camel Riders", "short": "Camels", "icon": 10, "sprite": 9,
+		"size": 60, "files0": 15,
+		"role": "Anti-cavalry riders",
+		"desc": "Riders on camels. Slower than horsemen and weaker in the charge, but they sit high and fight foot well, and horses will not face them: enemy horsemen within 30 m lose much of their charge and turn sluggishly, losing heart while they stay, and a horse charging camels hits them weakly and shies. Slow in woods. Spears and pikes stop them like any riders.",
+		"good_vs": "Horse cavalry (the scare), skirmishers and archers they catch, the flanks of engaged foot.",
+		"weak_vs": "Braced spears and pikes, heavy infantry from the front, archers shooting at them in the open.",
+		"cls": CLS_CAV, "mount": MOUNT_CAMEL,
+		"attack": 32,       # a little below shock cavalry: a slashing sword, no lance
+		"defence": 34,      # high seat: guards better against foot than a horseman (28)
+		"armour": 8, "shield": 20, "mshield": 15, "damage": 30, "reach": 1638,
+		"mass": 450,        # camel and rider outweigh a horse a little
+		"walk": 185,        # 1.8 m/s
+		"run": 666,         # 6.5 m/s (horses 8.2)
+		"hp": 150, "cooldown": 10,
+		"morale": 720,      # steady beasts, a little below shock cavalry's 760
+		"file_sp": 2048, "rank_sp": 3277,  # longer than a horse: 3.2 m ranks
+		"charge": 45,       # the design's ~45 against the horse's 70
+		"turn": 12,         # ~4.2 degrees a tick: 90 degrees in ~2.1 s
+		"acc": 3,           # full momentum after ~3.3 s at the run (horses 2.5 s)
+		"m_vuln": 120, "m_down": 7,  # big targets, a little harder to bring down than a horse
+		"cost": 9,          # a horseman's 10 less the weaker charge
+		"climb": 22, "woods_pct": 150,  # sure on slopes, lost among trees
+		"scare_r": 30 * 1024,  # the design's ~30 m
+		"scare_pct": 70,    # horses keep 70 % of their charge and turn rate
+		"scare_mor": 2,     # ... and lose 2 morale a second near them
+	},
+	{
+		"key": "camel_archer", "line": "camel_archer", "name": "Camel Archers", "short": "Camel Arch.",
+		"icon": 12, "sprite": 9, "size": 60, "files0": 15,
+		"role": "Mounted archers on camels",
+		"desc": "Archers on camels: they shoot from the saddle at a fair range, ride away from what comes for them, and scare horses like any camels (enemy horsemen within 30 m lose much of their charge and turn rate and lose heart). Weak in melee; slow in woods.",
+		"good_vs": "Slow foot they can shoot and outride, horse cavalry (the scare), skirmishers.",
+		"weak_vs": "Shock cavalry or camels that catch them, archers on foot (who outrange them), anything in melee.",
+		"cls": CLS_MISSILE, "mount": MOUNT_CAMEL,
+		"attack": 20, "defence": 24, "armour": 4, "shield": 0, "mshield": 10, "damage": 26, "reach": 1229,
+		"mass": 450, "walk": 185, "run": 640,  # 6.2 m/s: lighter riders, a little slower than lancers on camels with the bows and quivers
+		"hp": 140, "cooldown": 11, "morale": 620,
+		"file_sp": 2048, "rank_sp": 3277, "turn": 12, "acc": 3,
+		"m_range": 110 * 1024,  # a saddle bow: shorter than foot archers' 140 m
+		"m_damage": 26, "m_ap": 20, "m_ammo": 30, "m_reload": 45,  # a little weaker and slower than foot archers
+		"m_spread": 50, "m_spread0": 1024, "m_speed": 4608, "m_arc": 1,
+		"skirm": 1,         # mounted archers keep their distance by default
+		"m_vuln": 120, "m_down": 7, "cost": 8, "climb": 22, "m_hgain": 150, "m_ak": 0,
+		"woods_pct": 150, "scare_r": 30 * 1024, "scare_pct": 70, "scare_mor": 2,
+	},
+	{
+		"key": "elephant", "line": "elephant", "name": "War Elephants", "short": "Elephants", "icon": 11, "sprite": 10,
+		"size": 12, "files0": 6,
+		"role": "Shock beasts",
+		"desc": "Twelve war elephants, each a driver and two javelin men on its back. Slow to get going and to turn, but a charge at full tilt bowls over whole files and breaks formations, braced spears included (the points still hurt them); horses within 25 m lose heart fast and men somewhat. Arrows and javelins only chip them; fire is their bane. They batter down the gates of towns with walls up to level 1. When they break they run amok, trampling anyone in their way, their own side included, until they find themselves alone and calm down; their drivers can be told to kill them (Kill elephant).",
+		"good_vs": "Infantry lines (the charge), horse cavalry (the fear), the gates of small towns.",
+		"weak_vs": "Fire missiles, skirmishers and archers who chip them from a distance, being surrounded, narrow streets; when they break they are a danger to their own side.",
+		"cls": CLS_CAV, "mount": MOUNT_ELEPHANT,
+		"attack": 34, "defence": 20,   # strikes well, easy to hit (a big body)
+		"armour": 10,       # thick hide: blows and arrows lose a little
+		"shield": 0, "mshield": 0,
+		"damage": 70,       # tusks, trunk and feet
+		"reach": 3072,      # 3 m: its body (1.5 m) and tusks
+		"mass": 2200,       # the design's 2,000+
+		"walk": 154,        # 1.5 m/s
+		"run": 615,         # 6 m/s
+		"hp": 2500,         # a body: some 80 sword blows through its hide; missiles chip
+		"cooldown": 15, "morale": 640,
+		"file_sp": 6144, "rank_sp": 8192,  # 6 m between beasts, 8 m ranks
+		"charge": 85,       # above the horse's 70: its mass does the rest
+		"turn": 6,          # ~2.1 degrees a tick: 90 degrees in ~4.3 s
+		"acc": 2,           # full momentum after 5 s at the run (horses 2.5 s)
+		"m_vuln": 100, "m_down": 0,
+		"body_r": 1536,     # 1.5 m
+		"crew_shoot": 2,    # two javelin men on its back (and the driver)
+		"m_range": 50 * 1024, "m_damage": 36, "m_ap": 50,  # javelins thrown down from height
+		"m_ammo": 16, "m_reload": 30, "m_spread": 40, "m_spread0": 717, "m_speed": 2253,
+		"m_arc": 1,         # over friends, from 3 m up
+		"m_hgain": 100, "m_ak": 1,
+		"trample_n": 4,     # a wide knock-down: four more men after the first ...
+		"trample_r": 4096,  # ... within 4 m of its middle (its body and 2.5 m) ...
+		"trample_pct": 80,  # ... each at 80 % of the impact
+		"crush": 50,        # half the charge still goes into braced points; shields and ranks do not stop it
+		"fear_r": 25 * 1024,  # the design's ~25 m
+		"fear_horse": 6,    # horses: 6 morale a second (a cavalry unit of 760 wavers in ~1 min)
+		"fear_foot": 2,     # men: 2 a second
+		"burn_pct": 200,    # burning drains twice the heart (20 a second while it burns)
+		"amok": 1,
+		"amok_r": 50 * 1024,  # alone: nobody within 50 m (the rally's safe range)
+		"amok_calm": 200,   # ... for 20 s, then the driver has it in hand again
+		"kill_delay": 50,   # 5 s for the driver's chisel and mallet
+		"gate_walls": 1,    # gates of walls 0-1 only (iron-bound gates above)
+		"gate_pct": 600,    # a beast batters like six men
+		"woods_pct": 200,   # crawls through trees
+		"climb": 20,
+		"cost": 80,         # 960 a unit: about one and a half shock cavalry units
+	},
+]
+
+
 ## Field of wagon tier w (0 if out of range); "pace" with h horses alive.
 static func wagon_stat(w: int, field: String) -> int:
 	if w < 0 or w >= WAGONS.size():
@@ -725,6 +869,12 @@ static func _build_types() -> Array[Dictionary]:
 			row[k] = wr[k]
 		row["base"] = out.size()
 		row["line"] = "siege"
+		row["price"] = int(row["cost"]) * int(row["size"])
+		out.append(row)
+	for br in BEASTS:
+		var row: Dictionary = br.duplicate()
+		row["base"] = out.size()
+		row["tier"] = 1
 		row["price"] = int(row["cost"]) * int(row["size"])
 		out.append(row)
 	return out

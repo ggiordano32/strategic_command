@@ -57,6 +57,7 @@ const BattleSim := preload("res://sim/battle_sim.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Saves := preload("res://game/campaign/saves.gd")
 const CP := preload("res://campaign/cai_profile.gd")
+const CAI := preload("res://campaign/cai.gd")
 
 var fails := 0
 
@@ -113,6 +114,7 @@ func _init() -> void:
 	_grid_recruit_army()
 	_grid_auto_merge()
 	_ammo_wagon()
+	_beasts()
 	_ai_skilled()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
 	quit(0 if fails == 0 else 1)
@@ -2080,6 +2082,83 @@ func _ammo_wagon() -> void:
 	_check(sim.tick == 200, "the battle with a wagon runs")
 
 
+## Camels and elephants in the campaign (docs/CAMPAIGN.md, rosters):
+## Carthage recruits camels with Stables 1 (camel archers a Range 1 too)
+## and elephants with Stables 3, Epirus elephants, Rome neither; a turn
+## recruiting them resolves the same in either submission order and
+## survives JSON; elephants march at the foot's pace; auto-resolve counts
+## them by price (a field battle with them resolves and its scenario runs).
+func _beasts() -> void:
+	var rome := _f("rome")
+	var cart := _f("carthage")
+	var epi := _f("epirus")
+	var zeu := _r("zeugitana")
+	var epr := _r("epirus")
+	var st := _new6([rome, cart])
+	st["factions"][cart]["treasury"] = 9000
+	st["factions"][epi]["treasury"] = 9000
+	_set_bld(st, zeu, CData.STABLES, 0)
+	_set_bld(st, zeu, CData.RANGE, 0)
+	_check(CRules.recruit_check(st, cart, zeu, "camel") == "needs Stables 1", "camels need Stables 1 (%s)" % CRules.recruit_check(st, cart, zeu, "camel"))
+	_set_bld(st, zeu, CData.STABLES, 1)
+	_check(CRules.recruit_check(st, cart, zeu, "camel") == "", "camels with Stables 1 (%s)" % CRules.recruit_check(st, cart, zeu, "camel"))
+	_check(CRules.recruit_check(st, cart, zeu, "camel_archer") == "needs Range 1", "camel archers need a Range (%s)" % CRules.recruit_check(st, cart, zeu, "camel_archer"))
+	_check(CRules.recruit_check(st, cart, zeu, "elephant") == "needs Stables 3", "elephants need Stables 3 (%s)" % CRules.recruit_check(st, cart, zeu, "elephant"))
+	_set_bld(st, zeu, CData.STABLES, 3)
+	_set_bld(st, zeu, CData.RANGE, 1)
+	_check(CRules.recruit_check(st, cart, zeu, "elephant") == "" and CRules.recruit_check(st, cart, zeu, "camel_archer") == "",
+		"elephants with Stables 3, camel archers with a Range 1")
+	_check(CRules.recruit_check(st, rome, _r("latium"), "camel") == "not in your roster", "Rome has no camels")
+	_set_bld(st, epr, CData.STABLES, 3)
+	_check(CRules.recruit_check(st, epi, epr, "elephant") == "", "Epirus recruits elephants (%s)" % CRules.recruit_check(st, epi, epr, "elephant"))
+	_check(CRules.recruit_check(st, epi, epr, "camel") == "not in your roster", "Epirus has no camels")
+	var lines := []
+	for o in CRules.recruit_options(st, cart, zeu):
+		if str(o["line"]) in ["camel", "camel_archer", "elephant"]:
+			lines.append(str(o["t"]))
+	_check(str(lines) == str(["camel", "camel_archer", "elephant"]), "Carthage's recruit list shows them (%s)" % str(lines))
+	var subs := [CTurn.submission(st, rome, []), CTurn.submission(st, cart, [{"t": "recruit", "r": zeu, "unit": "elephant"},
+		{"t": "recruit", "r": zeu, "unit": "camel"}])]
+	var r1 := CTurn.resolve_turn(st, subs)
+	var r2 := CTurn.resolve_turn(st, [subs[1], subs[0]])
+	var got := []
+	for a in CState.armies_of(r1, cart):
+		for u in a["units"]:
+			if str(u["t"]) in ["camel", "elephant"]:
+				got.append("%s:%d" % [str(u["t"]), int(u["n"])])
+	got.sort()
+	_check(str(got) == str(["camel:60", "elephant:12"]), "recruited a camel unit and an elephant unit (%s)" % str(got))
+	_check(CState.state_hash(r1) == CState.state_hash(r2) and _plain(r1), "beasts resolve deterministically, plain data")
+	var rt := CState.from_json(CState.to_json(r1))
+	_check(not rt.is_empty() and CState.state_hash(rt) == CState.state_hash(r1), "beasts survive a JSON round trip")
+	_check(CState.max_mp({"units": [{"t": "cav", "n": 60}, {"t": "camel", "n": 60}]}) == CData.MP_CAV
+		and CState.max_mp({"units": [{"t": "cav", "n": 60}, {"t": "elephant", "n": 12}]}) == CData.MP_FOOT,
+		"riders on camels keep the cavalry's pace, elephants the foot's")
+	var el := UT.index_of("elephant")
+	_check(CState.strength({"units": [{"t": "elephant", "n": 12}]}) == UT.price_of(el),
+		"auto-resolve: a full elephant unit counts its price (%d)" % CState.strength({"units": [{"t": "elephant", "n": 12}]}))
+	var sb := _new6([cart])
+	sb["armies"] = []
+	_italy(sb, cart)
+	var c0 := CState.field_cell(_r("latium"))
+	var am := _put(sb, cart, c0, ["spear", "elephant", "camel", "camel_archer"])
+	var en := _put(sb, rome, c0, ["heavy", "cav"])
+	var b := {"id": 1, "r": _r("latium"), "att": [int(am["id"])], "def": [int(en["id"])], "reinf": [], "att_f": cart,
+		"def_f": rome, "kind": "field", "settlement": 0}
+	var fo := CBattle.formula(CState.copy(sb), b)
+	_check(fo.has("winner") and (fo["units"] as Array).size() == 6, "auto-resolve with camels and elephants (%d unit rows)" % (fo["units"] as Array).size())
+	var built := CBattle.build(sb, b, cart)
+	var sim := BattleSim.new()
+	sim.setup(built["scenario"], int(built["seed"]))
+	var ne := 0
+	for u in sim.n_units:
+		if sim.u_type[u] == el:
+			ne += sim.u_alive[u]
+	for t in 200:
+		sim.step()
+	_check(ne == 12 and sim.tick == 200, "the battle with elephants and camels runs (%d elephants)" % ne)
+
+
 func _keys(a: Dictionary) -> Array:
 	var out: Array = []
 	for u in a["units"]:
@@ -2604,7 +2683,10 @@ func _grid_recruit_army() -> void:
 ## it existed (golden hashes and RNG state from the commit before step 4).
 func _ai_skilled() -> void:
 	# Average and Easy unchanged: an AI-only campaign of 20 turns, every
-	# faction Average, then with Macedon Easy.
+	# faction Average, then with Macedon Easy. (Without the camel and
+	# elephant lines in the mixes, 2026-10-09: recruiting them is the only
+	# change since.)
+	CAI.no_beasts = true
 	var g := CState.new_campaign("test", 4242, [])
 	for t in 20:
 		g = CTurn.resolve_turn(g, [])
@@ -2616,6 +2698,7 @@ func _ai_skilled() -> void:
 		ge = CTurn.resolve_turn(ge, [])
 	_check(CState.hash_text(ge) == "1379013c" and int(ge["rng"]) == 694925818,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(ge), int(ge["rng"])])
+	CAI.no_beasts = false
 	# Knobs: every Skilled-only knob is 0 at Easy and Average.
 	var zero := true
 	for k in range(CP.SK_SUPPORT, CP.N_KNOBS):

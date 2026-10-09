@@ -71,7 +71,8 @@ const ORDER_PICKUP := 14        # unit, equip (siege equipment) or engines (an e
 const ORDER_DROP := 15          # unit (put down the piece it carries where it stands)
 const ORDER_AMMO := 16          # unit, on (1: shoot its special ammunition kind, 0: the standard one)
 const ORDER_FORAGE := 17        # unit, on (missile troops in woods: make arrows / javelins; cannot move or shoot)
-const ORDER_LAST := 17
+const ORDER_KILL := 18          # unit (a beast running amok: its drivers kill it after its kill_delay)
+const ORDER_LAST := 18
 
 # Battle phase (scenario "deploy_time" > 0 starts in PHASE_DEPLOY, see the
 # "deployment phase" section at the end of this file).
@@ -209,6 +210,12 @@ const FORAGE_QUIVER := 1500      # ticks for a unit's whole quiver foraging in w
 const WAGON_EXPOSED := 15        # % to-hit added to a blow on the flank or rear of men pulling a wagon
 const HORSE_R := 3 * M           # missiles landing this near a wagon's horses ...
 const HORSE_HIT := 30            # ... strike one this often (% of them)
+# Camels and elephants (docs/DESIGN.md "Camels and elephants"); the numbers
+# per beast are fields of its row (UnitTypes), these are the sim's own.
+const AMOK_MOM := 60             # an amok beast tramples with this momentum ...
+const AMOK_EVERY := 5            # ... each beast at most every this many ticks
+const AMOK_EDGE := 60 * M        # it veers back from the map edges within this
+const AMOK_VEER := 256           # each second it veers up to this either way (90 degrees)
 
 # Terrain height (sim/terrain.gd builds the grid; docs/DESIGN.md "Terrain").
 # Grades are Q12: 4096 = a rise of 1 m per metre (100%). Every effect below
@@ -511,6 +518,11 @@ var u_burn := PackedInt32Array()      # ticks its men burn on (fire missiles): m
 var u_forage := PackedInt32Array()    # foraging in woods (order field "forage")
 var u_racc := PackedInt32Array()      # refill / forage work toward the next missile
 var u_rptr := PackedInt32Array()      # ... the man next in turn
+var u_scare := PackedInt32Array()     # horse scare: % of its charge and turn rate it keeps (0: not scared), set each second
+var u_amok := PackedInt32Array()      # 1: a beast unit running amok (u_state U_ROUTING)
+var u_calm := PackedInt32Array()      # ... ticks it has been alone (calms at its amok_calm)
+var u_kill := PackedInt32Array()      # ticks until its drivers kill it (0: no Kill order)
+var u_awe := PackedInt32Array()       # 1: inside an enemy's horse scare or fear aura this second (no recovery)
 var slot_soldier := PackedInt32Array()  # u_slot_base[u] + slot -> soldier
 var off_x := PackedInt32Array()         # u_slot_base[u] + slot -> offset
 var off_y := PackedInt32Array()
@@ -765,6 +777,43 @@ var t_m_reserve := PackedInt32Array()
 var t_m_refill := PackedInt32Array()
 var t_fixed := PackedInt32Array()
 var t_m_ak := PackedInt32Array()
+var t_mount := PackedInt32Array()
+var t_acc := PackedInt32Array()
+var t_body_r := PackedInt32Array()
+var t_crew_sh := PackedInt32Array()
+var t_woods := PackedInt32Array()
+var t_tr_n := PackedInt32Array()
+var t_tr_r := PackedInt32Array()
+var t_tr_pct := PackedInt32Array()
+var t_crush := PackedInt32Array()
+var t_scare_r := PackedInt32Array()
+var t_scare_pct := PackedInt32Array()
+var t_scare_mor := PackedInt32Array()
+var t_fear_r := PackedInt32Array()
+var t_fear_h := PackedInt32Array()
+var t_fear_f := PackedInt32Array()
+var t_burn_pct := PackedInt32Array()
+var t_amok := PackedInt32Array()
+var t_amok_r := PackedInt32Array()
+var t_amok_calm := PackedInt32Array()
+var t_kill_delay := PackedInt32Array()
+var t_gate_w := PackedInt32Array()
+var t_gate_pct := PackedInt32Array()
+var t_hit_r := PackedInt32Array()     # derived: a missile landing this near strikes the man (horse, body)
+# Beasts in this battle (static, set up from the units: not hashed).
+var big_on: int = 0                   # some unit has a big body (body_r): blows measured to its edge
+var aura_src := PackedInt32Array()    # units with a horse scare or a fear aura
+var _hit_rmax: int = HIT_R_CAV        # widest hit radius of any type
+var stat_scared: int = 0              # unit-seconds of horses scared
+var stat_feared: int = 0              # unit-seconds in a fear aura
+var stat_scare_hits: int = 0          # horse charges into a scaring unit
+var stat_crush: int = 0               # impacts that went through braced points
+var stat_amok: int = 0                # beast units gone amok
+var stat_trampled: int = 0            # men trampled by amok beasts ...
+var stat_trample_ff: int = 0          # ... of the beasts' own side
+var stat_calmed: int = 0              # amok beasts calmed (alone long enough)
+var stat_beast_killed: int = 0        # beasts killed by their drivers
+var stat_beast_gate: int = 0          # gate damage by beasts
 # Ammunition kinds (UnitTypes.AMMO, UnitTypes.AMMO_FIELDS order).
 var t_k_base := PackedInt32Array()
 var t_k_share := PackedInt32Array()
@@ -1302,6 +1351,17 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	for g in n_eg:
 		if eg_sk[g] >= 0 and t_k_fire[eg_sk[g]] > 0:
 			fire_on = 1
+	# Beasts: big bodies, auras (none in most battles: every rule below is skipped).
+	big_on = 0
+	_hit_rmax = HIT_R_CAV
+	aura_src = PackedInt32Array()
+	for u in n_units:
+		var bty := u_type[u]
+		if t_body_r[bty] > 0:
+			big_on = 1
+		_hit_rmax = maxi(_hit_rmax, t_hit_r[bty])
+		if t_scare_r[bty] > 0 or t_fear_r[bty] > 0:
+			aura_src.append(u)
 
 	# Projectile pool: every slot on the free list.
 	for arr in _projectile_arrays():
@@ -1365,7 +1425,8 @@ func _unit_arrays() -> Array:
 		u_withdrawn, u_routed_off, u_recent, u_att, u_def, u_dmg, u_reach, u_nwalls,
 		u_ai, u_ai_t, u_ai_x, u_ai_y, u_eng0, u_neng, u_depl, u_deploy, u_fright,
 		u_shelled_t, u_shelled_by, u_emove, u_h, u_refill, u_rprog, u_reserve, u_blk, u_dodge,
-		u_kills, u_otype, u_eg, u_oammo, u_sk, u_akind, u_burn, u_forage, u_racc, u_rptr]
+		u_kills, u_otype, u_eg, u_oammo, u_sk, u_akind, u_burn, u_forage, u_racc, u_rptr,
+		u_scare, u_amok, u_calm, u_kill, u_awe]
 
 
 ## Per-unit arrays of woods and settlement maps (hashed only on those maps,
@@ -1409,7 +1470,9 @@ func _load_types() -> void:
 		t_m_reload, t_m_spread, t_m_spread0, t_m_speed, t_m_arc, t_skirm, t_m_vuln, t_m_down,
 		t_m_lead, t_m_long, t_crew, t_crew_min, t_m_kind, t_m_min, t_m_pierce, t_m_plough, t_m_blast,
 		t_m_fear, t_arc, t_traverse, t_deploy, t_e_hp, t_climb, t_m_hgain, t_m_apex, t_m_reserve, t_m_refill,
-		t_fixed, t_m_ak]
+		t_fixed, t_m_ak, t_mount, t_acc, t_body_r, t_crew_sh, t_woods, t_tr_n, t_tr_r, t_tr_pct, t_crush,
+		t_scare_r, t_scare_pct, t_scare_mor, t_fear_r, t_fear_h, t_fear_f, t_burn_pct, t_amok, t_amok_r,
+		t_amok_calm, t_kill_delay, t_gate_w, t_gate_pct]
 	var keys := ["cls", "attack", "defence", "armour", "shield", "mshield",
 		"damage", "reach", "ranks_reach", "mass", "walk", "run", "hp", "cooldown",
 		"morale", "file_sp", "rank_sp", "turn", "brace", "vs_cav", "charge",
@@ -1417,12 +1480,24 @@ func _load_types() -> void:
 		"m_damage", "m_ap", "m_ammo", "m_reload", "m_spread", "m_spread0",
 		"m_speed", "m_arc", "skirm", "m_vuln", "m_down", "m_lead", "m_long", "crew", "crew_min",
 		"m_kind", "m_min", "m_pierce", "m_plough", "m_blast", "m_fear", "arc", "traverse",
-		"deploy", "e_hp", "climb", "m_hgain", "m_apex", "m_reserve", "m_refill", "fixed", "m_ak"]
+		"deploy", "e_hp", "climb", "m_hgain", "m_apex", "m_reserve", "m_refill", "fixed", "m_ak",
+		"mount", "acc", "body_r", "crew_shoot", "woods_pct", "trample_n", "trample_r", "trample_pct", "crush",
+		"scare_r", "scare_pct", "scare_mor", "fear_r", "fear_horse", "fear_foot", "burn_pct", "amok", "amok_r",
+		"amok_calm", "kill_delay", "gate_walls", "gate_pct"]
 	for k in arrays.size():
 		var arr: PackedInt32Array = arrays[k]
 		arr.resize(nt)
 		for t in nt:
 			arr[t] = UT.stat(t, keys[k])
+	# Missile hit radius per type: a big body's, a mount's, a man's.
+	t_hit_r.resize(nt)
+	for t in nt:
+		if t_body_r[t] > 0:
+			t_hit_r[t] = t_body_r[t]
+		elif t_cls[t] == UT.CLS_CAV or t_mount[t] != UT.MOUNT_FOOT:
+			t_hit_r[t] = HIT_R_CAV
+		else:
+			t_hit_r[t] = HIT_R_INF
 	var ka := [t_k_base, t_k_share, t_k_dmg, t_k_obj, t_k_ap, t_k_pierce, t_k_range, t_k_rate, t_k_fear,
 		t_k_blast, t_k_fire]
 	var na := UT.AMMO.size()
@@ -3612,8 +3687,8 @@ func _update_gates() -> void:
 			if u_side[u] == city_def or u_state[u] != U_READY or u_alive[u] <= 0:
 				continue
 			var cl := u_cls[u]
-			if cl != UT.CLS_INF and cl != UT.CLS_PIKE:
-				continue
+			if cl != UT.CLS_INF and cl != UT.CLS_PIKE and t_gate_w[u_otype[u]] < city_walls:
+				continue  # (foot hack; beasts batter the gates of low walls)
 			if u_order[u] == O_MOVE and u_gtarget[u] != g:
 				continue
 			if u_maxx[u] < gx - r or u_minx[u] > gx + r or u_maxy[u] < gy - r or u_miny[u] > gy + r:
@@ -3622,6 +3697,9 @@ func _update_gates() -> void:
 			if sg_on != 0 and u_carry[u] >= 0:
 				continue  # carrying: no hacking (the ram works the gate itself: _siege_gate)
 			var rate := maxi(t_damage[ty] - GATE_ARMOUR, 2) * hack_pct / maxi(t_cooldown[ty], 1)
+			if cl != UT.CLS_INF and cl != UT.CLS_PIKE:
+				rate = rate * t_gate_pct[ty] / 100
+				stat_beast_gate += 1
 			var base := u_slot_base[u]
 			for s in u_alive[u]:
 				var i := slot_soldier[base + s]
@@ -3918,6 +3996,12 @@ func _apply_orders(max_player: int = 1 << 30) -> void:
 			if phase != PHASE_DEPLOY:
 				_gate_order(o)
 			continue
+		if int(o["type"]) == ORDER_KILL:
+			# (A routing unit: not through the unit order rules.)
+			var ku := int(o.get("unit", -1))
+			if phase != PHASE_DEPLOY and kill_refusal(self, ku) == "":
+				u_kill[ku] = t_kill_delay[u_type[ku]]
+			continue
 		for u in order_units(self, o):
 			var d := order_fields(self, u)
 			apply_order_rule(self, u, d, o)
@@ -3972,8 +4056,8 @@ static func order_fields(sim, u: int) -> Dictionary:
 ## of the side for an army-wide withdrawal. Shared with OrderPreview.
 static func order_units(sim, o: Dictionary) -> Array[int]:
 	var out: Array[int] = []
-	if int(o["type"]) == ORDER_GATE:
-		return out  # not a unit order (applied by the sim to the gate)
+	if int(o["type"]) == ORDER_GATE or int(o["type"]) == ORDER_KILL:
+		return out  # not a unit order (applied by the sim to the gate; the drivers of an amok beast)
 	if int(o["type"]) == ORDER_WITHDRAW_ALL:
 		var side := int(o.get("side", -1))
 		for u in sim.n_units:
@@ -4194,8 +4278,9 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 				gfp = sim.gate_front(gt, sim.city_def)  # over the wall by ladders: its inside, to unbar it
 				if c == UT.CLS_CAV or c == UT.CLS_ART:
 					return
-			elif carry < 0 and (c != UT.CLS_INF and c != UT.CLS_PIKE or not gate_hackable(sim, gt)):
-				return  # (only foot hack, and only at a gate swords can break)
+			elif carry < 0 and (c != UT.CLS_INF and c != UT.CLS_PIKE and UT.stat(ty, "gate_walls") < sim.city_walls \
+					or not gate_hackable(sim, gt)):
+				return  # (only foot hack, beasts batter low walls' gates, and only at a gate swords can break)
 			d["order"] = O_MOVE
 			d["dx"] = gfp.x
 			d["dy"] = gfp.y
@@ -4548,6 +4633,8 @@ func _turn(u: int, want: int) -> void:
 	var rate := t_turn[u_type[u]]
 	if u_neng[u] > 0 and u_depl[u] == 0:
 		rate = PACKED_TURN
+	if rate > 0 and u_scare[u] > 0:
+		rate = maxi(rate * u_scare[u] / 100, 1)  # horses balking at camels near
 	if rate == 0:
 		if absi(diff) > 3:
 			u_face[u] = want
@@ -4610,11 +4697,12 @@ func _build_occ() -> void:
 		# next ones queue behind them rather than in them. u_blk is last tick's.)
 		var add := 257 if ufi[u] > 0 or ubk[u] == BLK_QUEUE else 1
 		var own := (u + 1) << 16
-		# Cells of the men's box (padded).
-		var i0 := maxi((mnx[u] - OCC_PAD) >> 12, 0)
-		var i1 := mini((mxx[u] + OCC_PAD) >> 12, gw - 1)
-		var j0 := maxi((mny[u] - OCC_PAD) >> 12, 0)
-		var j1 := mini((mxy[u] + OCC_PAD) >> 12, gh - 1)
+		# Cells of the men's box (padded; beasts by their bodies too).
+		var pad := OCC_PAD + t_body_r[ty]
+		var i0 := maxi((mnx[u] - pad) >> 12, 0)
+		var i1 := mini((mxx[u] + pad) >> 12, gw - 1)
+		var j0 := maxi((mny[u] - pad) >> 12, 0)
+		var j1 := mini((mxy[u] + pad) >> 12, gh - 1)
 		if ucl[u] == UT.CLS_ART:
 			# A battery: its engines and crews stand round the line of engines;
 			# the men's box is close enough.
@@ -4863,6 +4951,8 @@ func _update_units() -> void:
 			vd = vb & MapGen.V_DENS
 			urban = (vb & MapGen.V_URBAN) != 0
 			var vf: int = VEG_SPEED[cls][vd]
+			if vd > 0 and t_woods[ty] != 100:
+				vf = maxi(1000 - (1000 - vf) * t_woods[ty] / 100, 100)  # (camels, elephants among trees)
 			_u_vfac[u] = vf
 			if vf < 1000:
 				aspeed = aspeed * vf / 1000
@@ -5147,7 +5237,7 @@ func _update_units() -> void:
 			# Momentum builds only while charging a target at speed: a run
 			# away from a melee (pulling out) does not count as a run-up.
 			if u_run[u] != 0 and moved * 10 >= aspeed * 6 and order == O_ATTACK and u_charge[u] == 0:
-				var gain := MOM_GAIN
+				var gain := t_acc[ty]  # (MOM_GAIN for horses; beasts get going slower)
 				var cap := 100
 				if ton:
 					# Uphill a charge cannot build full momentum; a good
@@ -5164,6 +5254,8 @@ func _update_units() -> void:
 			else:
 				u_mom[u] = maxi(u_mom[u] - MOM_LOSS, 0)
 			_charge_state(u)
+			if t_m_ammo[ty] > 0 and (u + tick) % FIRE_THINK == 0:
+				_missile_think(u)  # (an elephant's crew shoots from its back)
 		elif cls == UT.CLS_MISSILE:
 			if (u + tick) % FIRE_THINK == 0:
 				_missile_think(u)
@@ -5571,6 +5663,8 @@ func _update_soldiers() -> void:
 					n_rm += 1
 			_set_bounds(u, rsx / alive, rsy / alive, rminx, rminy, rmaxx, rmaxy)
 			_flush_removals(n_rm)
+			if u_amok[u] != 0 and u_alive[u] > 0:
+				_amok_trample(u)
 			continue
 
 		var ax := u_ax[u]
@@ -5713,6 +5807,9 @@ func _update_soldiers() -> void:
 		var fcos := FM.cos_a(face)
 		var fsin := FM.sin_a(face)
 		var sep := CAV_SEPARATION if is_cav else SEPARATION
+		var bigb := big_on != 0
+		if bigb and t_body_r[ty] > 0:
+			sep = 2 * t_body_r[ty]  # beasts keep their bodies apart
 		var charging := u_charge[u] != 0
 		# Wrap: front-rank soldiers of an engaged attacking unit who have no
 		# enemy in reach close on the target unit instead of holding their
@@ -5907,7 +6004,10 @@ func _update_soldiers() -> void:
 				st[i] = S_FIGHTING
 				var dx := px[t] - x
 				var dy := py[t] - y
-				var d := FM.approx_len(dx, dy)
+				var dl := FM.approx_len(dx, dy)
+				var d := dl
+				if bigb:
+					d = maxi(dl - t_body_r[u_type[unit_of[t]]], 0)  # a big body is reached at its edge
 				var mom := 0
 				if is_cav:
 					mom = cg[i]
@@ -5922,14 +6022,14 @@ func _update_soldiers() -> void:
 						if to == O_MOVE or to == O_WITHDRAW:
 							stp = run_cap  # run down enemies pulling away
 					var step_len := mini(stp, d - want)
-					nx = x + dx * step_len / d
-					ny = y + dy * step_len / d
+					nx = x + dx * step_len / dl
+					ny = y + dy * step_len / dl
 					if is_cav and step_len * 3 < run_cap:
 						mom = maxi(mom - 15, 0)
-				elif d < half_reach and d > 0:
+				elif d < half_reach and dl > 0:
 					var back := mini(walk >> 1, half_reach - d)
-					nx = x - dx * back / d
-					ny = y - dy * back / d
+					nx = x - dx * back / dl
+					ny = y - dy * back / dl
 					if is_cav:
 						mom = maxi(mom - 15, 0)
 				fc[i] = FM.atan2_a(dy, dx)
@@ -6042,7 +6142,8 @@ func _update_soldiers() -> void:
 				if t >= 0:
 					var ex := px[t] - x
 					var ey := py[t] - y
-					var in_reach := ex * ex + ey * ey <= reach * reach
+					var rch := reach + t_body_r[u_type[unit_of[t]]] if bigb else reach
+					var in_reach := ex * ex + ey * ey <= rch * rch
 					# Only pikemen who can strike hold the block in place, so
 					# a block keeps closing until its points reach.
 					if in_reach:
@@ -6457,6 +6558,11 @@ func _add_disorder(u: int, amt: int) -> void:
 
 
 ## Cavalry impact: rider r with momentum mom reaches enemy soldier t.
+## Beasts (their rows' fields): a braced front still takes crush % of an
+## elephant's charge; the impact carries on into trample_n more men within
+## trample_r (a horse: one, 1.8 m, 60 %); horses scared by camels near
+## (u_scare) hit at that %, and a horse charging a unit with a horse scare
+## hits at its scare_pct and loses heart.
 func _impact(r: int, t: int, mom: int) -> void:
 	var ur := unit_of[r]
 	var ut := unit_of[t]
@@ -6465,6 +6571,7 @@ func _impact(r: int, t: int, mom: int) -> void:
 	var zone := _zone(ut, pos_x[r], pos_y[r])
 	dbg_impacted[r] = 1
 	struck[r] = 1
+	var through := 100
 	if zone == ZONE_FRONT and u_braced[ut] != 0 and state[t] != S_ROUTING:
 		# Braced points: the impact is turned back on the rider.
 		stat_reflects += 1
@@ -6480,9 +6587,22 @@ func _impact(r: int, t: int, mom: int) -> void:
 			_remove(r, GONE_KILLED)
 		else:
 			hp[r] = h
-		return
+		if t_crush[rty] == 0 or state[r] >= S_DEAD:
+			return
+		# A beast's weight carries on into the points all the same.
+		through = t_crush[rty]
+		stat_crush += 1
 	stat_impacts += 1
 	var power := t_charge[rty] * mom / 100
+	if through != 100:
+		power = power * through / 100
+	if u_scare[ur] > 0:
+		power = power * u_scare[ur] / 100  # a horse that smells camels near
+	if t_mount[rty] == UT.MOUNT_HORSE and t_scare_r[td] > 0:
+		# Charging camels: the horse shies at the last moment.
+		power = power * t_scare_pct[td] / 100
+		u_morale[ur] -= MORALE_REFLECT
+		stat_scare_hits += 1
 	if ter_on != 0:
 		# Riding down onto a man hits harder; riding up at him, weaker.
 		var g := grade_between(height_at(pos_x[t], pos_y[t]), height_at(pos_x[r], pos_y[r]),
@@ -6503,33 +6623,42 @@ func _impact(r: int, t: int, mom: int) -> void:
 	if not _impact_victim(r, t, power, ma, zone):
 		return  # stopped by a man who stood his ground in a steady front
 	# The horse breaks through and carries on into another soldier within
-	# reach: the least hurt one (then the nearest), a rule that does not
-	# depend on direction (the first found in grid scan order favoured one
-	# side of the field) and does not pile every carry-on onto the same men.
+	# reach (a beast into several): the least hurt one (then the nearest), a
+	# rule that does not depend on direction (the first found in grid scan
+	# order favoured one side of the field) and does not pile every carry-on
+	# onto the same men.
 	var head: PackedInt32Array = grid_head1 if u_side[ur] == 0 else grid_head0
 	var gs := GRID_SHIFT
-	var x := pos_x[r]
-	var y := pos_y[r]
-	var cx := x >> gs
-	var cy := y >> gs
-	var best := -1
-	var best_d := 0
-	for gy in range(maxi(cy - 1, 0), mini(cy + 1, grid_h - 1) + 1):
-		for gx in range(maxi(cx - 1, 0), mini(cx + 1, grid_w - 1) + 1):
-			var j := head[gy * grid_w + gx]
-			while j >= 0:
-				if j != t and state[j] < S_DOWN:
-					var dx := pos_x[j] - x
-					var dy := pos_y[j] - y
-					if absi(dx) < IMPACT_RADIUS and absi(dy) < IMPACT_RADIUS:
-						var d2 := dx * dx + dy * dy
-						if best < 0 or hp[j] > hp[best] or (hp[j] == hp[best] and (d2 < best_d \
-								or (d2 == best_d and j < best))):
-							best = j
-							best_d = d2
-				j = grid_next[j]
-	if best >= 0:
-		_impact_victim(r, best, power * 6 / 10, ma, zone)
+	var rad := t_tr_r[rty]
+	var carry := power * t_tr_pct[rty] / 100
+	var hit := PackedInt32Array([t])
+	for k in t_tr_n[rty]:
+		if k > 0 and state[r] >= S_DEAD:
+			return  # (a horse carries on into its one man as it always did)
+		var x := pos_x[r]
+		var y := pos_y[r]
+		var cx := x >> gs
+		var cy := y >> gs
+		var best := -1
+		var best_d := 0
+		for gy in range(maxi(cy - 1, 0), mini(cy + 1, grid_h - 1) + 1):
+			for gx in range(maxi(cx - 1, 0), mini(cx + 1, grid_w - 1) + 1):
+				var j := head[gy * grid_w + gx]
+				while j >= 0:
+					if state[j] < S_DOWN and (k == 0 and j != t or k > 0 and not hit.has(j)):
+						var dx := pos_x[j] - x
+						var dy := pos_y[j] - y
+						if absi(dx) < rad and absi(dy) < rad:
+							var d2 := dx * dx + dy * dy
+							if best < 0 or hp[j] > hp[best] or (hp[j] == hp[best] and (d2 < best_d \
+									or (d2 == best_d and j < best))):
+								best = j
+								best_d = d2
+					j = grid_next[j]
+		if best < 0:
+			return
+		hit.append(best)
+		_impact_victim(r, best, carry, ma, zone)
 
 
 ## One soldier v hit by rider r's charge (power before direction and mass).
@@ -6572,10 +6701,12 @@ func _impact_victim(r: int, v: int, power: int, ma: int, zone: int) -> bool:
 		stat_aic[u_side[unit_of[r]] * AIProfile.N_COUNTERS + AIProfile.C_FLANK_HIT] += 1
 	var arm := t_armour[tv] / 2
 	var knock := mini(force + 10, 90)
+	# A beast (crush) goes through shields and the ranks behind: no man stops it.
+	var crush := t_crush[u_otype[unit_of[r]]] > 0
 	if frontal:
 		arm = t_armour[tv]
 		# (Impacts pile up disorder within a tick, so only morale counts here.)
-		var steady := u_morale[uv] >= WAVER
+		var steady := u_morale[uv] >= WAVER and not crush
 		if steady:
 			if _rand() % 100 < t_shield[tv]:
 				force /= 2  # taken on the shield
@@ -6587,6 +6718,8 @@ func _impact_victim(r: int, v: int, power: int, ma: int, zone: int) -> bool:
 				knock = mini(force + 10, 90)
 		else:
 			knock = mini(force + 10, 90)
+	if big_on != 0 and t_body_r[tv] > 0:
+		knock = 0  # a big body stands (and stops the rider: below)
 	var dmg := maxi(force - arm, 1) * (85 + _rand() % 31) / 100
 	if u_state[uv] == U_READY:
 		u_morale[uv] -= shock
@@ -6606,13 +6739,15 @@ func _impact_victim(r: int, v: int, power: int, ma: int, zone: int) -> bool:
 	if frontal and state[r] < S_DEAD:
 		# Still on his feet facing the horse: he strikes back as it arrives.
 		_melee(v, r, 0)
-	return not (frontal and u_morale[uv] >= WAVER)
+	return crush or not (frontal and u_morale[uv] >= WAVER)
 
 
 func _knock_down(i: int) -> void:
 	var st := state[i]
 	if st == S_DOWN or st >= S_DEAD:
 		return
+	if big_on != 0 and t_body_r[u_otype[unit_of[i]]] > 0:
+		return  # nothing bowls over an elephant
 	stat_knockdowns += 1
 	if st == S_ROUTING:
 		return  # routers keep running; the hit was enough
@@ -6769,19 +6904,21 @@ func _update_missiles() -> void:
 			continue  # engines shoot in _update_artillery (men working them keep their own arrows)
 		var ty := u_type[u]
 		var alive := u_alive[u]
-		var acc := u_fire_acc[u] + alive
+		var shooters := alive * t_crew_sh[ty]  # (an elephant: its crew)
+		var acc := u_fire_acc[u] + shooters
 		var ks := u_sk[u]
 		var kstd := t_m_ak[ty]
 		var pref := ks >= 0 and u_akind[u] != 0
 		var reload := t_m_reload[ty] * t_k_rate[ks if pref else kstd] / 100 if kstd >= 0 else t_m_reload[ty]
 		var tries := 0
-		while acc >= reload and tries < alive:
+		var high := t_crew_sh[ty] > 1  # shooters on a beast's back shoot while it fights
+		while acc >= reload and tries < shooters:
 			acc -= reload
 			tries += 1
 			var ptr := u_fire_ptr[u] % alive
 			u_fire_ptr[u] = ptr + 1
 			var i := slot_soldier[u_slot_base[u] + ptr]
-			if state[i] != S_FORMED or ammo[i] <= 0:
+			if (state[i] != S_FORMED and not (high and state[i] == S_FIGHTING)) or ammo[i] <= 0:
 				continue
 			_fire(i, u, ft, ty, _shot_kind(i, ks, kstd, pref))
 		u_fire_acc[u] = mini(acc, reload)
@@ -6913,7 +7050,7 @@ func _land(p: int) -> void:
 	var best_d := 0
 	# Soldiers of units near the enemy (melee, friend or foe) are in the grid.
 	if stat_grid_soldiers > 0:
-		var r := HIT_R_CAV
+		var r := _hit_rmax
 		var gs := GRID_SHIFT
 		var gx0 := maxi((x - r) >> gs, 0)
 		var gx1 := mini((x + r) >> gs, grid_w - 1)
@@ -6929,7 +7066,7 @@ func _land(p: int) -> void:
 							var dx := pos_x[j] - x
 							var dy := pos_y[j] - y
 							var d2 := dx * dx + dy * dy
-							var hr := HIT_R_CAV if u_cls[unit_of[j]] == UT.CLS_CAV else HIT_R_INF
+							var hr := t_hit_r[u_type[unit_of[j]]]
 							if d2 <= hr * hr and (best < 0 or d2 < best_d or (d2 == best_d and j < best)):
 								best = j
 								best_d = d2
@@ -6946,7 +7083,7 @@ func _land(p: int) -> void:
 		if j >= 0:
 			var dx := pos_x[j] - x
 			var dy := pos_y[j] - y
-			var hr := HIT_R_CAV if u_cls[tu] == UT.CLS_CAV else HIT_R_INF
+			var hr := t_hit_r[u_type[tu]]
 			if dx * dx + dy * dy <= hr * hr:
 				best = j
 	if best >= 0 and map_on != 0:
@@ -8544,6 +8681,8 @@ func _art_fright(ty: int, ak: int = -1) -> void:
 # ---------------------------------------------------------------- morale ---
 
 func _update_morale() -> void:
+	if aura_src.size() > 0 and tick % TICKS_PER_SECOND == 0:
+		_update_auras()
 	for u in n_units:
 		var us := u_state[u]
 		if us >= U_DESTROYED:
@@ -8551,18 +8690,25 @@ func _update_morale() -> void:
 		var ty := u_type[u]
 		if t_fixed[ty] != 0:
 			continue  # a tower's crew stays at its engine
+		if u_kill[u] > 0:
+			# The drivers were told to kill their beasts: done when the time is up.
+			u_kill[u] -= 1
+			if u_kill[u] == 0:
+				_driver_kill(u)
+				continue
 		var m := u_morale[u]
 		var periodic := (u + tick) % TICKS_PER_SECOND == 0
 		u_recent[u] -= u_recent[u] >> RECENT_DECAY_SHIFT
 		if u_burn[u] > 0:
-			# Fire missiles set its men burning: heart drains till it is out.
+			# Fire missiles set its men burning: heart drains till it is out
+			# (a beast's much faster: burn_pct).
 			u_burn[u] -= 1
 			if us == U_READY:
-				m -= BURN_DRAIN
+				m -= BURN_DRAIN * t_burn_pct[u_otype[u]] / 100
 		if u_fright[u] > 0:
 			u_fright[u] = maxi(u_fright[u] - FRIGHT_DECAY, 0)
 		if us == U_READY:
-			if u_contact[u] == 0 and u_fighting[u] == 0 and tick - u_hit_t[u] > UNDER_FIRE_TICKS:
+			if u_contact[u] == 0 and u_fighting[u] == 0 and tick - u_hit_t[u] > UNDER_FIRE_TICKS and u_awe[u] == 0:
 				var base_m := t_morale[u_otype[u]]
 				var cap := base_m - (u_count0[u] - u_alive[u]) * base_m / (2 * u_count0[u])
 				if m < cap:
@@ -8580,6 +8726,18 @@ func _update_morale() -> void:
 			# Artillery fright counts against morale while it lasts.
 			if m - u_fright[u] < ROUT_THRESHOLD:
 				_start_rout(u)
+		elif u_amok[u] != 0:
+			# Running amok: erratic, never rallying; it calms once alone.
+			if periodic:
+				if _anyone_near(u, t_amok_r[u_otype[u]]):
+					u_calm[u] = 0
+				else:
+					u_calm[u] += TICKS_PER_SECOND
+				if u_calm[u] >= t_amok_calm[u_otype[u]]:
+					_calm(u)
+					continue
+				_amok_veer(u)
+			u_morale[u] = clampi(m, -MORALE_MAX, MORALE_MAX)
 		else:  # routing
 			if periodic:
 				var e := _nearest_enemy_unit(u, true)
@@ -8638,6 +8796,10 @@ func _start_rout(u: int) -> void:
 		stat_aic[u_side[u] * AIProfile.N_COUNTERS + AIProfile.C_MISSILE_ROUTS] += 1
 	u_state[u] = U_ROUTING
 	u_routs[u] += 1
+	if t_amok[u_otype[u]] != 0:
+		u_amok[u] = 1  # a beast breaking runs amok (below: its first veer)
+		u_calm[u] = 0
+		stat_amok += 1
 	u_sq[u] = 0
 	u_gtarget[u] = -1
 	if obs_on != 0:
@@ -8664,6 +8826,8 @@ func _start_rout(u: int) -> void:
 		_set_flee(u, dx, dy, FM.isqrt(dx * dx + dy * dy))
 	else:
 		_set_flee(u, 0, 0, 0)
+	if u_amok[u] != 0:
+		_amok_veer(u)
 	var base := u_slot_base[u]
 	for s in u_alive[u]:
 		var i := slot_soldier[base + s]
@@ -8699,6 +8863,142 @@ func _rally(u: int) -> void:
 		var i := slot_soldier[base + s]
 		state[i] = S_FORMED
 		target[i] = -1
+
+
+## Horse scare and fear auras, once a second: each ready unit within an
+## enemy aura source's radius (box to box) takes its effects: horses
+## (mount 1) near a scaring unit keep its scare_pct of their charge and
+## turn rate (u_scare, until the next second) and lose its scare_mor; any
+## unit without a fear aura of its own near a fear source loses its
+## fear_horse (horses) or fear_foot a second. Sources in index order.
+func _update_auras() -> void:
+	for u in n_units:
+		if u_state[u] != U_READY or u_alive[u] <= 0:
+			u_scare[u] = 0
+			u_awe[u] = 0
+			continue
+		var tu := u_otype[u]
+		var horse := t_mount[tu] == UT.MOUNT_HORSE
+		var keep := 0
+		var loss := 0
+		var feared := false
+		for src in aura_src:
+			if u_side[src] == u_side[u] or u_state[src] != U_READY or u_alive[src] <= 0:
+				continue
+			var sty := u_type[src]
+			var gap := _box_gap(src, u)
+			if horse and t_scare_r[sty] > 0 and gap <= t_scare_r[sty]:
+				keep = t_scare_pct[sty] if keep == 0 else mini(keep, t_scare_pct[sty])
+				loss += t_scare_mor[sty]
+			if t_fear_r[sty] > 0 and t_fear_r[tu] == 0 and gap <= t_fear_r[sty]:
+				loss += t_fear_h[sty] if horse else t_fear_f[sty]
+				feared = true
+		u_scare[u] = keep
+		u_awe[u] = 1 if keep > 0 or feared else 0  # (no recovery of heart meanwhile)
+		if keep > 0:
+			stat_scared += 1
+		if feared:
+			stat_feared += 1
+		if loss > 0:
+			u_morale[u] -= loss
+
+
+## Gap between the boxes of units a and b (0 overlapping).
+func _box_gap(a: int, b: int) -> int:
+	var dx := maxi(maxi(u_minx[a] - u_maxx[b], u_minx[b] - u_maxx[a]), 0)
+	var dy := maxi(maxi(u_miny[a] - u_maxy[b], u_miny[b] - u_maxy[a]), 0)
+	return FM.approx_len(dx, dy)
+
+
+## Any other unit (either side, routing too) on the field within r of u's box.
+func _anyone_near(u: int, r: int) -> bool:
+	for o in n_units:
+		if o != u and u_alive[o] > 0 and u_state[o] < U_DESTROYED and _box_gap(u, o) <= r:
+			return true
+	return false
+
+
+## An amok beast veers: up to AMOK_VEER either way (the sim's RNG), back
+## toward the middle of the field when near an edge.
+func _amok_veer(u: int) -> void:
+	var a := FM.atan2_a(u_flee_y[u], u_flee_x[u])
+	if u_cx[u] < AMOK_EDGE or u_cx[u] > field_w - AMOK_EDGE or u_cy[u] < AMOK_EDGE or u_cy[u] > field_h - AMOK_EDGE:
+		a = FM.atan2_a(field_h / 2 - u_cy[u], field_w / 2 - u_cx[u])
+	a = (a + _rand() % (2 * AMOK_VEER + 1) - AMOK_VEER) & FM.ANGLE_MASK
+	u_flee_x[u] = FM.cos_a(a)
+	u_flee_y[u] = FM.sin_a(a)
+
+
+## An amok beast left alone long enough: its rider has it in hand again.
+func _calm(u: int) -> void:
+	u_amok[u] = 0
+	u_calm[u] = 0
+	stat_calmed += 1
+	_rally(u)
+
+
+## Each beast of amok unit u tramples (every AMOK_EVERY ticks) every man of
+## any other unit, friend or foe, within its body and a metre: a charge
+## impact at AMOK_MOM (kills of friends count as friendly fire). Units and
+## men in index order.
+func _amok_trample(u: int) -> void:
+	var ty := u_type[u]
+	var rr := t_body_r[ty] + M
+	var power := t_charge[ty] * AMOK_MOM / 100
+	var base := u_slot_base[u]
+	var beasts := slot_soldier.slice(base, base + u_alive[u])
+	for i in beasts:
+		if state[i] >= S_DEAD or (tick + i) % AMOK_EVERY != 0:
+			continue
+		var x := pos_x[i]
+		var y := pos_y[i]
+		for o in n_units:
+			if o == u or u_alive[o] <= 0 or u_state[o] >= U_DESTROYED:
+				continue
+			if u_maxx[o] < x - rr or u_minx[o] > x + rr or u_maxy[o] < y - rr or u_miny[o] > y + rr:
+				continue
+			var ob := u_slot_base[o]
+			var men := slot_soldier.slice(ob, ob + u_alive[o])
+			for v in men:
+				if state[v] >= S_DEAD:
+					continue
+				var dx := pos_x[v] - x
+				var dy := pos_y[v] - y
+				if absi(dx) > rr or absi(dy) > rr or dx * dx + dy * dy > rr * rr:
+					continue
+				stat_trampled += 1
+				if u_side[o] == u_side[u]:
+					stat_trample_ff += 1
+				_impact_victim(i, v, power, t_mass[ty], _zone(o, x, y))
+				if state[i] >= S_DEAD:
+					break
+			if state[i] >= S_DEAD:
+				break
+
+
+## The drivers of unit u kill their beasts (the Kill order's delay is up).
+func _driver_kill(u: int) -> void:
+	var base := u_slot_base[u]
+	var beasts := slot_soldier.slice(base, base + u_alive[u])
+	for i in beasts:
+		if state[i] < S_DEAD:
+			stat_beast_killed += 1
+			_remove(i, GONE_KILLED)
+	u_amok[u] = 0
+
+
+## Why unit u's drivers cannot be told to kill their beasts ("" they can):
+## only a beast unit running amok, once.
+static func kill_refusal(sim, u: int) -> String:
+	if u < 0 or u >= sim.n_units or sim.u_alive[u] <= 0:
+		return "no unit"
+	if UT.stat(sim.u_type[u], "kill_delay") <= 0:
+		return "not a beast"
+	if sim.u_amok[u] == 0:
+		return "only when running amok"
+	if sim.u_kill[u] > 0:
+		return "already ordered"
+	return ""
 
 
 func _check_winner() -> void:

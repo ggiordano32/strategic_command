@@ -290,7 +290,10 @@ static func unit(side: int, ty: int, count: int, x_m: int, y_m: int, face: int,
 		files: int = -1) -> Dictionary:
 	if files < 0:
 		var b := UT.base_of(ty)  # tier types form up like their base type
-		files = int(FILES.get(b, 4)) * count / maxi(int(SIZE.get(b, count)), 1)
+		if UT.stat(ty, "files0") > 0:
+			files = UT.stat(ty, "files0") * count / maxi(UT.size_of(ty), 1)  # (rows that say so: camels, elephants)
+		else:
+			files = int(FILES.get(b, 4)) * count / maxi(int(SIZE.get(b, count)), 1)
 		files = maxi(files, 4)
 	return {"side": side, "type": ty, "count": count, "x_m": x_m, "y_m": y_m,
 		"facing": face, "files": files}
@@ -360,6 +363,8 @@ static func _row(types: Array, sizes: Dictionary, cx: int, y: int, gap: int) -> 
 static func _width_m(ty: int, count: int) -> int:
 	var b := UT.base_of(ty)
 	var files := maxi(int(FILES.get(b, 4)) * count / maxi(int(SIZE.get(b, count)), 1), 4)
+	if UT.stat(ty, "files0") > 0:
+		files = maxi(UT.stat(ty, "files0") * count / maxi(UT.size_of(ty), 1), 4)
 	return files * UT.stat(ty, "file_sp") / 1024
 
 
@@ -369,8 +374,10 @@ static func _width_m(ty: int, count: int) -> int:
 ## behind the front line) the way the campaign does: cavalry on the wings,
 ## bolt throwers at the line ends, infantry inside with pikes in the
 ## centre, missile troops 15 m ahead, stone throwers 25 m behind, a second
-## line past 12 units. units: Array of [type, count]. Returns {"placed":
-## [{"i", "x", "back"}], "width", "depth"}.
+## line past 12 units; ammunition wagons in a row behind all that, war
+## elephants (rows with a body) in a row 30 m ahead of the line. units:
+## Array of [type, count]. Returns {"placed": [{"i", "x", "back"}], "width",
+## "depth"}.
 static func army_layout(units: Array) -> Dictionary:
 	var inf: Array = []
 	var pikes: Array = []
@@ -378,8 +385,16 @@ static func army_layout(units: Array) -> Dictionary:
 	var screen: Array = []
 	var bolts: Array = []
 	var rear: Array = []
+	var wagons: Array = []
+	var beasts: Array = []
 	for i in units.size():
 		var ty: int = units[i][0]
+		if UT.stat(ty, "wagon") >= 0:
+			wagons.append(i)
+			continue
+		if UT.stat(ty, "body_r") > 0:
+			beasts.append(i)
+			continue
 		match UT.cls(ty):
 			UT.CLS_PIKE:
 				pikes.append(i)
@@ -422,11 +437,15 @@ static func army_layout(units: Array) -> Dictionary:
 	width = maxi(width, _lay_row(units, second, 45, 6, placed))
 	var rb := 70 if not second.is_empty() else 25
 	width = maxi(width, _lay_row(units, rear, rb, 8, placed))
+	width = maxi(width, _lay_row(units, beasts, -30, 8, placed))
 	var depth := 20
 	if not rear.is_empty():
 		depth = rb + 20
 	elif not second.is_empty():
 		depth = 60
+	if not wagons.is_empty():
+		width = maxi(width, _lay_row(units, wagons, depth + 10, 10, placed))
+		depth += 25
 	return {"placed": placed, "width": width, "depth": depth}
 
 

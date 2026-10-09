@@ -22,6 +22,7 @@ signal forage_pressed
 signal man_wall_pressed
 signal come_down_pressed
 signal drop_pressed
+signal kill_pressed
 signal withdraw_pressed
 signal withdraw_all_pressed
 signal group_pressed(kind: String)
@@ -85,6 +86,8 @@ var forage_button: Button
 var man_wall_button: Button
 var come_down_button: Button
 var drop_button: Button
+## "Kill elephant": shown while a beast unit of the player's runs amok.
+var kill_button: Button
 var withdraw_button: Button
 var gift_button: Button
 var withdraw_all_button: Button
@@ -241,6 +244,13 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	deselect_button.pressed.connect(func(): deselect_pressed.emit())
 	deselect_button.disabled = not interactive
 	groups.add_child(deselect_button)
+	kill_button = _button("Kill elephant", Vector2(0, BTN_H), "kill_beast")
+	kill_button.name = "kill_beast"
+	kill_button.tooltip_text = "Your elephants are running amok: their drivers kill them (5 s) before they trample more of your men"
+	kill_button.pressed.connect(func(): kill_pressed.emit())
+	kill_button.visible = false
+	kill_button.disabled = not interactive
+	groups.add_child(kill_button)
 	group_box = groups
 	_ui_controls.append(groups)
 	var spacer := Control.new()
@@ -897,7 +907,7 @@ static func morale_text(sim, u: int) -> String:
 	if s == BattleSim.U_LEFT:
 		return "Left field"
 	if s == BattleSim.U_ROUTING:
-		return "Routing"
+		return "Amok" if sim.u_amok[u] != 0 else "Routing"
 	if sim.u_order[u] == BattleSim.O_WITHDRAW:
 		return "Withdrawing"
 	var m: int = sim.u_morale[u] - sim.u_fright[u]

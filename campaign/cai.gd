@@ -65,6 +65,12 @@ const UT := preload("res://sim/unit_types.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const CP := preload("res://campaign/cai_profile.gd")
 
+## The camel and elephant lines (recruited only through a faction's mix).
+const BEAST_LINES: Array[String] = ["camel", "camel_archer", "elephant"]
+## Test switch (tests/campaign_sim.gd --no-beasts): recruit none of them,
+## to show that only their recruitment changes a run.
+static var no_beasts := false
+
 # Every ratio, odds cutoff, turn count, share and weight the AI decides with
 # is a knob of the faction's skill / personality profile
 # (campaign/cai_profile.gd, read as kn[CP.X] with kn = CP.of(st, f)); the
@@ -287,6 +293,11 @@ static func _recruit(st: Dictionary, f: int, moves: Array = []) -> void:
 		cap = maxi(cap, inc * kn[CP.OVER_RECRUIT_PCT] / 100)
 	var up := CRules.upkeep(st, f)
 	var mix: Dictionary = CData.FACTIONS[f]["mix"]
+	if no_beasts:
+		# (Test switch: the mix without the camel and elephant lines.)
+		mix = mix.duplicate()
+		for bl in BEAST_LINES:
+			mix.erase(bl)
 	if kn[CP.SK_COUNTER_MIX] > 0:
 		mix = _counter_mix(st, f, mix, kn)
 	# Where to recruit: regions with armies or on the frontier, richest
@@ -446,8 +457,9 @@ static func _best_type(st: Dictionary, f: int, r: int, line: String) -> String:
 static func _any_type(st: Dictionary, f: int, r: int) -> String:
 	for o in CRules.recruit_options(st, f, r):
 		var oty := UT.index_of(str(o["t"]))
-		if o["ok"] and UT.cls(oty) != UT.CLS_ART and UT.stat(oty, "wagon") < 0:
-			return str(o["t"])
+		if o["ok"] and UT.cls(oty) != UT.CLS_ART and UT.stat(oty, "wagon") < 0 \
+				and UT.stat(oty, "mount") < UT.MOUNT_CAMEL:
+			return str(o["t"])  # (camels and elephants only by the faction's mix)
 	return ""
 
 

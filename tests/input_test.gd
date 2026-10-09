@@ -262,6 +262,13 @@ func _initialize() -> void:
 		_step_rs_wait,
 		_step_rs_refill,
 		_step_rs_check_refill,
+		# Elephants: "Kill elephant" shows while ours run amok; a tap
+		# orders their drivers to kill them.
+		_step_el_start,
+		_step_el_run,
+		_step_el_check_button,
+		_step_el_tap,
+		_step_el_check_kill,
 		_step_done,
 	]
 
@@ -2255,6 +2262,48 @@ func _step_rs_check_refill() -> void:
 	_check(ro.size() == 1 and int(ro[0]["unit"]) == _rs_jav and int(ro[0]["on"]) == 1,
 		"a tap on Refill by the wagon: the javelinmen refill from it (%s)" % str(ro))
 	_check(battle.orders.value(_rs_jav, "refill") == 1, "the preview knows the refill")
+
+
+# Elephants (docs/DESIGN.md "Camels and elephants"): a unit of ours that
+# starts broken runs amok at once; a heavy unit keeps the battle going.
+func _step_el_start() -> void:
+	if is_instance_valid(battle):
+		battle.queue_free()
+	var el := Scenarios.unit(0, UT.index_of("elephant"), 12, 150, 250, Scenarios.FACE_UP)
+	el["morale_pct"] = 10
+	battle = Battle.new()
+	battle.custom_scenario = {"width_m": 300, "height_m": 300, "ai_sides": [1], "orders": [], "units": [
+		el, Scenarios.unit(0, UT.HEAVY, 100, 60, 260, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.LIGHT, 60, 150, 40, Scenarios.FACE_DOWN)],
+		"terrain": {"kind": 0}}
+	battle.seed_value = 7
+	root.add_child(battle)
+
+
+func _step_el_run() -> void:
+	if battle.paused:
+		battle._toggle_pause()
+	if battle.sim.tick < 15:
+		steps.push_front(_step_el_run)  # (until the beasts have broken and the button had its tick)
+
+
+func _step_el_check_button() -> void:
+	if not battle.paused:
+		battle._toggle_pause()
+	_check(battle.sim.u_amok[0] == 1, "the broken elephants run amok (tick %d)" % battle.sim.tick)
+	battle._refresh_kill_button()
+	_check(battle.hud.kill_button.visible, "Kill elephant: shows while our elephants run amok")
+	battle.sim.pending_orders.clear()
+
+
+func _step_el_tap() -> void:
+	_tap_control(battle.hud.kill_button)
+
+
+func _step_el_check_kill() -> void:
+	var ko := _eq_orders(BattleSim.ORDER_KILL)
+	_check(ko.size() == 1 and int(ko[0]["unit"]) == 0, "a tap on Kill elephant: the drivers' order (%s)" % str(ko))
+	_check(not battle.hud.kill_button.visible, "Kill elephant hides once ordered")
 
 
 func _step_done() -> void:

@@ -1413,3 +1413,27 @@ Wagon crews are kept out of the line, guards and ladder parties
 `_any_type` skips them). None of it runs without kinds or wagons, so
 every older battle plays as before, except that empty missile units in
 woods may now forage.
+
+## 19. Camels and elephants (2026-10-09)
+
+By the rows' fields, never by name (`sim/battle_ai.gd` `_cav_pick`,
+`_cav_think`, `amok_think`; `sim/siege_ai.gd` `_att_cav`, `_beast_gate`).
+Knobs in `sim/ai_profile.gd` (E / A / S):
+
+| Knob | E / A / S | What |
+|---|---|---|
+| `CAMEL_HORSE` | 0 / 4500 / 5000 | a rider with a horse scare scores enemy horse cavalry this (the screen) |
+| `EL_LINE` | 0 / 4300 / 4300 | a rider with a fear aura scores enemy formed foot this (at the line) |
+| `EL_PIKE` | 0 / 0 / 1500 | ... less this for pikes and braced spears |
+| `EL_NO_STAGE` | 0 / 1 / 1 | ... and charges the front, never riding round to a flank first |
+| `EL_KILL_R` | 0 / 30 m / 60 m | an amok beast of ours this near a unit of ours: Kill elephant |
+| `EL_GATE` | 0 / 1 / 1 | settlement attackers: beasts batter the attacked gate where they can (walls up to `gate_walls`) |
+| `EL_STORM` | 1 / 0 / 0 | ... and go into the streets with the storm (0: they stay outside) |
+
+At Easy camels and elephants are plain riders (and Easy storms the
+streets with its elephants: a mistake). Elephants deploy on the wings like
+cavalry (the battle AI's line); the custom and settlement layouts
+(`Scenarios.army_layout`) put them 30 m ahead of the line. The campaign AI
+recruits them through its factions' mixes only (`CAI.BEAST_LINES`;
+`_any_type` never falls back on them). Nothing runs without such rows, so
+every older battle plays as before.

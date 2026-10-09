@@ -21,13 +21,15 @@ extends SceneTree
 ## its regions at turns 15 / 30 / 60, when it was eliminated and its
 ## mistakes, and the end table sums them over the seeds.
 ## --knob=LEVEL:ID=VALUE (e.g. --knob=s:85=0) overrides one knob of a level
-## for the run (ablations; repeatable).
+## for the run (ablations; repeatable). --no-beasts: the AI recruits no
+## camels or elephants (CAI.no_beasts).
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
 const CTurn := preload("res://campaign/cturn.gd")
 const CRules := preload("res://campaign/crules.gd")
 const CP := preload("res://campaign/cai_profile.gd")
+const CAI := preload("res://campaign/cai.gd")
 
 var seeds := 4
 var turns := 60
@@ -65,6 +67,8 @@ func _init() -> void:
 			no_sieges = fmt <= 3
 		elif a == "--twice":
 			twice = true
+		elif a == "--no-beasts":
+			CAI.no_beasts = true  # (the AI recruits no camels or elephants)
 		elif a.begins_with("--skill="):
 			skill_all = _level(a.get_slice("=", 1))
 		elif a.begins_with("--skill-f="):

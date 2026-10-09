@@ -7,7 +7,9 @@ extends RefCounted
 ##   2 spear: shaft with leaf tip             3 pike: three long levelled pikes
 ##   4 bow: bow, string, arrow                5 javelin: two short shafts
 ##   6 cavalry: horseshoe                 7 bolt thrower: bow on a stock, bolt
-##   8 stone thrower: frame, arm and stone
+##   8 stone thrower: frame, arm and stone 9 ammunition wagon: covered cart
+##   10 camel: humped back, long neck       11 elephant: head, ears, trunk, tusks
+##   12 camel archers: the camel and an arrow
 ## Symbol ids above 99 carry a tier mark (see icon_of).
 
 const UT := preload("res://sim/unit_types.gd")
@@ -111,6 +113,25 @@ static func draw_glyph(ci: CanvasItem, icon: int, c: Vector2, s: float, col: Col
 			ci.draw_arc(c + Vector2(-0.42, 0.68) * s, 0.22 * s, 0, TAU, 10, col, w * 0.8, true)
 			ci.draw_arc(c + Vector2(0.22, 0.68) * s, 0.22 * s, 0, TAU, 10, col, w * 0.8, true)
 			ci.draw_line(c + Vector2(0.5, 0.3) * s, c + Vector2(0.95, 0.45) * s, col, w * 0.8, true)
+		10, 12:  # camel from the side: legs, a humped back, a long neck up to the head
+			ci.draw_arc(c + Vector2(-0.2, 0.1) * s, 0.45 * s, PI * 1.05, PI * 1.95, 10, col, w * 1.2, true)
+			ci.draw_line(c + Vector2(-0.62, 0.15) * s, c + Vector2(0.25, 0.15) * s, col, w, true)
+			ci.draw_line(c + Vector2(-0.5, 0.15) * s, c + Vector2(-0.55, 0.85) * s, col, w * 0.8, true)
+			ci.draw_line(c + Vector2(0.15, 0.15) * s, c + Vector2(0.2, 0.85) * s, col, w * 0.8, true)
+			ci.draw_line(c + Vector2(0.25, 0.15) * s, c + Vector2(0.55, -0.55) * s, col, w, true)
+			ci.draw_line(c + Vector2(0.55, -0.55) * s, c + Vector2(0.85, -0.5) * s, col, w * 1.2, true)
+			if icon == 12:
+				ci.draw_line(c + Vector2(-0.9, -0.75) * s, c + Vector2(0.1, -0.75) * s, col, w * 0.7, true)
+				ci.draw_colored_polygon(PackedVector2Array([c + Vector2(0.3, -0.75) * s,
+					c + Vector2(0.05, -0.92) * s, c + Vector2(0.05, -0.58) * s]), col)
+		11:  # elephant's head from the front: ears, trunk curling down, tusks
+			ci.draw_arc(c + Vector2(0, -0.2) * s, 0.38 * s, 0, TAU, 14, col, w, true)
+			ci.draw_arc(c + Vector2(-0.6, -0.2) * s, 0.3 * s, PI * 0.5, PI * 1.5, 10, col, w, true)
+			ci.draw_arc(c + Vector2(0.6, -0.2) * s, 0.3 * s, -PI * 0.5, PI * 0.5, 10, col, w, true)
+			ci.draw_polyline(PackedVector2Array([c + Vector2(0, 0.15) * s, c + Vector2(0, 0.65) * s,
+				c + Vector2(0.2, 0.9) * s]), col, w * 1.1, true)
+			ci.draw_line(c + Vector2(-0.22, 0.1) * s, c + Vector2(-0.45, 0.55) * s, col, w * 0.7, true)
+			ci.draw_line(c + Vector2(0.22, 0.1) * s, c + Vector2(0.45, 0.55) * s, col, w * 0.7, true)
 		_:
 			ci.draw_circle(c, s * 0.3, col)
 

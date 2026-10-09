@@ -473,8 +473,8 @@ static func max_mp(a: Dictionary) -> int:
 		var c := UT.cls(unit_type(u))
 		if c == UT.CLS_ART:
 			return CData.MP_ART
-		if c != UT.CLS_CAV:
-			all_cav = false
+		if c != UT.CLS_CAV or UT.stat(unit_type(u), "mount") == UT.MOUNT_ELEPHANT:
+			all_cav = false  # (elephants march at the foot's pace)
 	return CData.MP_CAV if all_cav and not units.is_empty() else CData.MP_FOOT
 
 

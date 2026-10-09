@@ -45,7 +45,7 @@ const SETTINGS := "user://settings.cfg"
 
 ## Sprite cells (see soldiers.gdshaderinc): local box x -1.6..4.4 m forward,
 ## y -1.25..1.25 m to the right, ATLAS_PX_PER_M pixels per metre.
-const SPRITES := 9
+const SPRITES := 11
 const CELL_X0 := -1.6
 const CELL_W := 6.0
 const CELL_Y0 := -1.25
@@ -63,6 +63,8 @@ const SPR_RECT: Array[Vector4] = [
 	Vector4(-0.55, 0.6, -0.55, 0.55), # 6 artillery crew
 	Vector4(-1.2, 1.45, -1.05, 1.05), # 7 bolt thrower (engine)
 	Vector4(-1.6, 1.75, -1.0, 1.0),   # 8 stone thrower (engine)
+	Vector4(-1.55, 1.95, -0.62, 0.62), # 9 camel and rider
+	Vector4(-1.6, 2.55, -1.25, 1.25), # 10 war elephant (the big body: a size of its own)
 ]
 const ENGINE_OK := 6
 const ENGINE_OUT := 7
@@ -619,7 +621,8 @@ func _make_quad() -> ArrayMesh:
 
 ## Top-down placeholder sprites facing +x, greyscale so the shader can tint
 ## them per side and state: sword and shield, spear, long pike, bow,
-## javelins, horse and rider, artillery crew, bolt thrower, stone thrower.
+## javelins, horse and rider, artillery crew, bolt thrower, stone thrower,
+## camel and rider, war elephant with its tower and crew.
 static func _make_atlas() -> ImageTexture:
 	if _atlas_cache != null:
 		return _atlas_cache
@@ -657,6 +660,10 @@ static func _sprite_pixel(spr: int, p: Vector2) -> Color:
 		return _bolt_thrower_pixel(p)
 	if spr == 8:
 		return _stone_thrower_pixel(p)
+	if spr == 9:
+		return _camel_pixel(p)
+	if spr == 10:
+		return _elephant_pixel(p)
 	# Body: shoulders (or the horse first) and head.
 	if spr == 5:
 		var hb := Vector2(p.x / 1.15, p.y / 0.36).length()
@@ -721,6 +728,66 @@ static func _sprite_pixel(spr: int, p: Vector2) -> Color:
 		6:  # gun crew: a handspike carried across the body
 			if _seg_dist(p, Vector2(0.15, -0.5), Vector2(0.35, 0.5)) < 0.04:
 				col = wood
+	return col
+
+
+## Camel and rider from above, facing +x: a long body with the hump under
+## the rider, a long neck curving forward to a small head, a bow or sword.
+static func _camel_pixel(p: Vector2) -> Color:
+	var col := Color(0, 0, 0, 0)
+	var body := Color(0.55, 0.55, 0.55)
+	var dark := Color(0.18, 0.18, 0.18)
+	var hb := Vector2((p.x + 0.15) / 1.2, p.y / 0.4).length()
+	if hb <= 1.0:
+		col = body if hb < 0.86 else dark
+	var hump := Vector2((p.x + 0.25) / 0.42, p.y / 0.3).length()
+	if hump <= 1.0:
+		col = Color(0.66, 0.66, 0.66) if hump < 0.8 else dark
+	if _seg_dist(p, Vector2(0.9, 0.0), Vector2(1.55, 0.0)) < 0.11:
+		col = body
+	var hd := Vector2((p.x - 1.7) / 0.22, p.y / 0.13).length()
+	if hd <= 1.0:
+		col = body if hd < 0.75 else dark
+	var rider := Vector2((p.x + 0.3) / 0.2, p.y / 0.34).length()
+	if rider <= 1.0:
+		col = Color(0.72, 0.72, 0.72) if rider < 0.8 else dark
+	var head := p.distance_to(Vector2(-0.28, 0.0))
+	if head <= 0.14:
+		col = Color(1, 1, 1) if head < 0.1 else dark
+	if _seg_dist(p, Vector2(-0.7, 0.42), Vector2(0.6, 0.42)) < 0.035:
+		col = Color(0.92, 0.92, 0.92)
+	return col
+
+
+## War elephant from above, facing +x: a broad body, ears spread at the
+## shoulders, trunk and tusks forward, a tower on its back with its crew.
+static func _elephant_pixel(p: Vector2) -> Color:
+	var col := Color(0, 0, 0, 0)
+	var skin := Color(0.5, 0.5, 0.5)
+	var dark := Color(0.16, 0.16, 0.16)
+	var light := Color(0.78, 0.78, 0.78)
+	var b := Vector2((p.x + 0.2) / 1.5, p.y / 1.0).length()
+	if b <= 1.0:
+		col = skin if b < 0.9 else dark
+	for sgn in [-1.0, 1.0]:
+		var ear := Vector2((p.x - 0.95) / 0.35, (p.y - 0.72 * sgn) / 0.5).length()
+		if ear <= 1.0:
+			col = Color(0.42, 0.42, 0.42) if ear < 0.82 else dark
+		if _seg_dist(p, Vector2(1.45, 0.22 * sgn), Vector2(2.2, 0.35 * sgn)) < 0.06:
+			col = Color(1, 1, 1)
+	var hd := Vector2((p.x - 1.25) / 0.45, p.y / 0.42).length()
+	if hd <= 1.0:
+		col = skin if hd < 0.85 else dark
+	if _seg_dist(p, Vector2(1.6, 0.0), Vector2(2.45, 0.0)) < 0.12:
+		col = skin
+	# The tower and its crew.
+	if absf(p.x + 0.35) <= 0.55 and absf(p.y) <= 0.55:
+		var edge := absf(p.x + 0.35) > 0.47 or absf(p.y) > 0.47
+		col = dark if edge else light
+	for c in [Vector2(-0.15, -0.22), Vector2(-0.15, 0.22), Vector2(-0.6, 0.0)]:
+		var d := p.distance_to(c)
+		if d <= 0.13:
+			col = Color(1, 1, 1) if d < 0.09 else dark
 	return col
 
 

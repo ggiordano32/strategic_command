@@ -185,6 +185,22 @@ func _check_ammo(st: Dictionary, what: String) -> void:
 			aks[key] = ud.get("aks", [])
 	if str(aks.get("wagon3")) != str([fire]) or str(aks.get("wagon")) != str([heavy]) or str(aks.get("wagon2")) != "[]":
 		_fail("ammo %s: wagon stocks %s" % [what, str(aks)])
+	# Field: the wagon stands in a rear line behind the rest of its army
+	# (Scenarios.army_layout), not in the infantry line.
+	if what == "field":
+		var hh := int(sc["height_m"]) / 2
+		var wy := -1
+		var deepest := -1
+		for ud in sc["units"]:
+			if int(ud["side"]) != 0:
+				continue
+			var depth := absi(int(ud["y_m"]) - hh)
+			if UT.stat(int(ud["type"]), "wagon") >= 0:
+				wy = depth
+			else:
+				deepest = maxi(deepest, depth)
+		if wy <= deepest:
+			_fail("ammo %s: the wagon stands %d m from the middle, not behind its army (%d m)" % [what, wy, deepest])
 	# The sim: the archers' kind, the battery's engines' kind, the wagons' stock.
 	var sim = BattleSim.new()
 	sim.setup(sc, int(a["seed"]))

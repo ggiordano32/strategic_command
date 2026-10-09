@@ -123,6 +123,7 @@ const ORDER_REFILL := 10
 const ORDER_PICKUP := 14
 const ORDER_AMMO := 16
 const ORDER_FORAGE := 17
+const ORDER_KILL := 18
 const ORDER_DROP := 15
 const EQ_WAGON := 3            # (BattleSim's siege equipment kinds and states)
 const Q_GROUND := 0
@@ -184,6 +185,8 @@ static func think(sim) -> void:
 		var k: int = local[side]
 		local[side] = k + 1
 		if sim.ai_sides[side] == 0 or sim.u_state[u] != U_READY:
+			if sim.ai_sides[side] != 0 and sim.u_amok[u] != 0 and (k + tick) % unit_period[side] == 0:
+				amok_think(sim, u)
 			continue
 		if (k + tick) % unit_period[side] != 0:
 			continue
@@ -470,6 +473,24 @@ static func _plan(sim, side: int) -> Dictionary:
 			var gy := maxi(maxi(mny[o] - ay1, ay0 - mxy[o]), 0)
 			gap = mini(gap, maxi(gx, gy))
 	return {"cx": ox, "cy": oy, "face": face, "fx": fx, "fy": fy, "gap": gap, "ex": ex, "ey": ey}
+
+
+## A beast that charges lines: its row has a fear aura (elephants).
+static func is_beast(sim, u: int) -> bool:
+	return UT.stat(sim.u_type[u], "fear_r") > 0
+
+
+## An amok beast unit of an AI side: once it is near units of its own side
+## (EL_KILL_R), its drivers are told to kill it.
+static func amok_think(sim, u: int) -> void:
+	var r := AP.of(sim, sim.u_side[u])[AP.EL_KILL_R]
+	if r <= 0 or sim.kill_refusal(sim, u) != "":
+		return
+	for o in sim.n_units:
+		if o != u and sim.u_side[o] == sim.u_side[u] and sim.u_state[o] == U_READY and sim.u_alive[o] > 0 \
+				and sim._box_gap(u, o) <= r:
+			_order(sim, u, {"type": ORDER_KILL}, 29)
+			return
 
 
 ## Line infantry (infantry or pikes; not a wagon's crew).
@@ -983,6 +1004,8 @@ static func _cav_think(sim, u: int, phase: int) -> void:
 			return
 		elif sim.u_ai_y[u] == 1:
 			return  # charging a braced front on purpose (a mistake): no going round
+		elif kn[AP.EL_NO_STAGE] != 0 and is_beast(sim, u):
+			return  # an elephant goes through the front, points or not
 		elif _is_braced_front(sim, t, u) and _dist2(sim, u, t) > kn[AP.CAV_RESTAGE_DIST] * kn[AP.CAV_RESTAGE_DIST]:
 			# The target turned its points toward us: go round.
 			_stage(sim, u, t)
@@ -1038,7 +1061,10 @@ static func _cav_think(sim, u: int, phase: int) -> void:
 		var near := _nearest_foot(sim, u)
 		if near >= 0:
 			pick = near
-	if _frontal(sim, pick, u) and (UT.stat(sim.u_type[pick], "brace") > 0 or sim.u_fighting[pick] == 0) \
+	if kn[AP.EL_NO_STAGE] != 0 and is_beast(sim, u):
+		_attack(sim, u, pick, 1)  # elephants into the front of the line
+		_set_mode(sim, u, A_CHARGE)
+	elif _frontal(sim, pick, u) and (UT.stat(sim.u_type[pick], "brace") > 0 or sim.u_fighting[pick] == 0) \
 			and sim.u_cls[pick] != UT.CLS_MISSILE and sim.u_cls[pick] != UT.CLS_CAV \
 			and sim.u_cls[pick] != UT.CLS_ART and sim.u_state[pick] == U_READY:
 		var braced := UT.stat(sim.u_type[pick], "brace") > 0
@@ -1107,6 +1133,9 @@ static func _cav_pick(sim, u: int, phase: int) -> int:
 	var kn := AP.of(sim, side)
 	var best := -1
 	var best_score := 0
+	var uty: int = sim.u_type[u]
+	var scare := kn[AP.CAMEL_HORSE] > 0 and UT.stat(uty, "scare_r") > 0
+	var beast := kn[AP.EL_LINE] > 0 and UT.stat(uty, "fear_r") > 0
 	for t in sim.n_units:
 		if sim.u_side[t] == side or sim.u_state[t] >= U_DESTROYED:
 			continue
@@ -1131,6 +1160,14 @@ static func _cav_pick(sim, u: int, phase: int) -> int:
 			score = kn[AP.CAV_SC_ENGAGED] if not _is_braced_front(sim, t, u) else kn[AP.CAV_SC_ENGAGED_BRACED]
 		elif phase == P_ENGAGE and cls == UT.CLS_MISSILE:
 			score = kn[AP.CAV_SC_MISSILE_LATE]
+		if scare and cls == UT.CLS_CAV and sim.u_state[t] == U_READY \
+				and UT.stat(sim.u_otype[t], "mount") == UT.MOUNT_HORSE:
+			score = maxi(score, kn[AP.CAMEL_HORSE])  # camels: the screen against horsemen
+		if beast and sim.u_state[t] == U_READY and (cls == UT.CLS_INF or cls == UT.CLS_PIKE) and not is_wagon(sim, t):
+			var el := kn[AP.EL_LINE]
+			if cls == UT.CLS_PIKE or UT.stat(sim.u_type[t], "brace") > 0:
+				el -= kn[AP.EL_PIKE]
+			score = maxi(score, el)  # elephants: at the enemy's line
 		if score == 0:
 			continue
 		if kn[AP.SK_MEM] != 0:
