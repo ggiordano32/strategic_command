@@ -549,6 +549,33 @@ as men fall or engines are wrecked the survivors re-man the rest.
   working them. Tests: determinism `--only=engines`, lockstep siege (B's
   battery leaves its engines, A's archers take them up and leave them,
   snapshots on the way), input_test (Drop, tap to take up).
+- *Light artillery* (built 2026-10-09, STATUS 4f.3; not tuned). Two plain
+  rows (`UnitTypes.LIGHT_ART`, appended after the war dogs), no new sim
+  code. **Scorpions** (`scorpions`, line "light_art", CLS_ART): a battery
+  of six small bolt engines with two crew each (12 men, `crew_min` 1),
+  4 m apart; the crews carry them, so the packed pace is the row's `walk`
+  (1.5 m/s, archers 1.5, Bolt Throwers 0.8) and `deploy` 15 (1.5 s to set
+  up, under a second to pack); 160 m (70 % of Bolt Throwers' 230), 72
+  damage (60 % of 120) at 70 ap, a bolt goes through at most 2 men
+  (`m_pierce` 2; heavy bolts' 140 % is still 2), 5 s a bolt, 8 bolts an
+  engine plus 8 in the baggage, engines of 60 hp (Bolt Throwers 160),
+  396 a unit (Archers and Bolt Throwers both cost 400). Engines as
+  equipment apply unchanged: the crew drops them, any foot takes them up
+  and walks them at the row's pace. Heavy bolts ride on their bolts
+  (`AMMO_AVAIL`). A new generic field `carried` (1: the crews carry the
+  engines) is read only by the AI and the campaign: the siege AI brings
+  them up with the assault (AI.md 15) and they never count as a gate
+  breaker; an army with them marches at the foot's pace (`CState.max_mp`).
+  **Gastraphetes** (`gastraphetes`, line "belly_bow", CLS_MISSILE; Greeks
+  and Syracuse, Range 2): 80 belly-bowmen, archers' body, 160 m (archers
+  140), 48 damage at 50 ap (an arrow 30 / 25, a scorpion bolt 72 / 70),
+  10 s a shot (2.5 x the bow), 20 shots, flat (`m_arc` 0, `m_apex` 3: a
+  clear line past friends and over the ground, like javelins and bolts),
+  no skirmish, arrows as their kind (fire arrows ride on them, a wagon
+  refills them; drawn as arrows), 400 a unit. View: unit icons 18 (a
+  small engine on a tripod) and 19 (a bow on a stock with the belly rest);
+  the scorpions draw with the bolt thrower's engine sprite (no sprite of
+  their own yet). Test: determinism `--only=light_art`.
 - *Kills per unit* (`u_kills`, 2026-10-09, hashed): enemies killed by the
   unit's men in melee, by charge impacts, missiles, its engines (credited
   to the unit working them when the shot was fired) and a tower's engine

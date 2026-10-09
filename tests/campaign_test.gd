@@ -119,6 +119,7 @@ func _init() -> void:
 	_light_missile()
 	_general()
 	_war_dogs()
+	_light_art()
 	_ai_skilled()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
 	quit(0 if fails == 0 else 1)
@@ -2403,6 +2404,103 @@ func _war_dogs() -> void:
 		if int(e["army"]) == int(am["id"]) and int(e["unit"]) == 1:
 			hk = int(e.get("kills", -1))
 	_check(hk == 7 and (out["units"] as Array).size() == 4, "a fought outcome credits the pack's kills to its handlers (%d)" % hk)
+
+
+## Light artillery (docs/CAMPAIGN.md rosters, docs/DESIGN.md "Light
+## artillery"): scorpions (line "light_art") for every faction with Bolt
+## Throwers, a Workshop 1; gastraphetes (line "belly_bow") for the Greeks
+## and Syracuse, a Range 2; Rome's scorpions carry heavy bolts, the Greek
+## belly-bows fire arrows from a Range 2; a turn recruiting them resolves
+## the same in either order and survives JSON; auto-resolve counts them by
+## price; an army with scorpions marches at the foot's pace (the crews carry
+## them; Bolt Throwers at the artillery's); a field battle with them runs.
+func _light_art() -> void:
+	var with_art := ["rome", "carthage", "macedon", "epirus", "greeks", "syracuse"]
+	var with_bow := ["greeks", "syracuse"]
+	var ok := true
+	for f in CData.FACTIONS.size():
+		var fk := str(CData.FACTIONS[f]["key"])
+		if (CState.roster_type(f, "light_art", 1) == "scorpions") != with_art.has(fk) \
+				or (CState.roster_type(f, "bolt", 1) == "bolt") != with_art.has(fk) \
+				or (CState.roster_type(f, "belly_bow", 1) == "gastraphetes") != with_bow.has(fk):
+			ok = false
+	_check(ok, "scorpions for every faction with Bolt Throwers, gastraphetes for the Greeks and Syracuse only")
+	var gr := _f("greeks")
+	var att := _r("attica")
+	var rome := _f("rome")
+	var lat := _r("latium")
+	var st := _new6([gr, rome])
+	st["factions"][gr]["treasury"] = 9000
+	st["factions"][rome]["treasury"] = 9000
+	_set_bld(st, att, CData.WORKSHOP, 0)
+	_set_bld(st, att, CData.RANGE, 1)
+	_check(CRules.recruit_check(st, gr, att, "scorpions") == "needs Workshop 1",
+		"scorpions need a Workshop 1 (%s)" % CRules.recruit_check(st, gr, att, "scorpions"))
+	_check(CRules.recruit_check(st, gr, att, "gastraphetes") == "needs Range 2",
+		"gastraphetes need a Range 2 (%s)" % CRules.recruit_check(st, gr, att, "gastraphetes"))
+	_set_bld(st, att, CData.WORKSHOP, 1)
+	_set_bld(st, att, CData.RANGE, 2)
+	_check(CRules.recruit_check(st, gr, att, "scorpions") == "" and CRules.recruit_check(st, gr, att, "gastraphetes") == "",
+		"scorpions with a Workshop 1, gastraphetes with a Range 2")
+	_check(CRules.ammo_for(st, gr, att, "gastraphetes") == "fire_arrows" and CRules.ammo_for(st, gr, att, "scorpions") == "",
+		"Greek belly-bows carry fire arrows from a Range 2, Greek scorpions nothing special (%s / %s)" % [
+			CRules.ammo_for(st, gr, att, "gastraphetes"), CRules.ammo_for(st, gr, att, "scorpions")])
+	_set_bld(st, lat, CData.WORKSHOP, 1)
+	_check(CRules.ammo_for(st, rome, lat, "scorpions") == "heavy_bolts", "Rome's scorpions carry heavy bolts from a Workshop 1 (%s)" % CRules.ammo_for(st, rome, lat, "scorpions"))
+	_check(CRules.recruit_check(st, rome, lat, "gastraphetes") == "not in your roster", "Rome has no gastraphetes")
+	var lines := []
+	for o in CRules.recruit_options(st, gr, att):
+		if str(o["line"]) in ["light_art", "belly_bow"]:
+			lines.append(str(o["t"]))
+	_check(str(lines) == str(["gastraphetes", "scorpions"]), "the Greeks' recruit list shows them (%s)" % str(lines))
+	var subs := [CTurn.submission(st, gr, [{"t": "recruit", "r": att, "unit": "scorpions"},
+		{"t": "recruit", "r": att, "unit": "gastraphetes"}]),
+		CTurn.submission(st, rome, [{"t": "recruit", "r": lat, "unit": "scorpions"}])]
+	var r2 := CTurn.resolve_turn(st, subs)
+	var r3 := CTurn.resolve_turn(st, [subs[1], subs[0]])
+	var got := []
+	for f in [gr, rome]:
+		for a in CState.armies_of(r2, f):
+			for u in a["units"]:
+				if str(u["t"]) in ["scorpions", "gastraphetes"]:
+					got.append("%s:%d:%s" % [str(u["t"]), int(u["n"]), str(u.get("ak", ""))])
+	got.sort()
+	_check(str(got) == str(["gastraphetes:80:fire_arrows", "scorpions:12:", "scorpions:12:heavy_bolts"]),
+		"recruited scorpions and gastraphetes (%s)" % str(got))
+	_check(CState.state_hash(r2) == CState.state_hash(r3) and _plain(r2), "light artillery recruits resolve deterministically, plain data")
+	var rt := CState.from_json(CState.to_json(r2))
+	_check(not rt.is_empty() and CState.state_hash(rt) == CState.state_hash(r2), "light artillery recruits survive a JSON round trip")
+	var sco := UT.index_of("scorpions")
+	var gas := UT.index_of("gastraphetes")
+	_check(CState.strength({"units": [{"t": "scorpions", "n": 12}]}) == UT.price_of(sco)
+		and CState.strength({"units": [{"t": "gastraphetes", "n": 80}]}) == UT.price_of(gas),
+		"auto-resolve: full units count their price (%d, %d)" % [UT.price_of(sco), UT.price_of(gas)])
+	var mp_s := CState.max_mp({"units": [{"t": "spear", "n": 100}, {"t": "scorpions", "n": 12}]})
+	var mp_b := CState.max_mp({"units": [{"t": "spear", "n": 100}, {"t": "bolt", "n": 16}]})
+	_check(mp_s == CData.MP_FOOT and mp_b == CData.MP_ART, "scorpions march at the foot's pace (%d), Bolt Throwers at the artillery's (%d)" % [mp_s, mp_b])
+	var sb := _new6([gr])
+	sb["armies"] = []
+	_italy(sb, gr)
+	var c0 := CState.field_cell(_r("latium"))
+	var am := _put(sb, gr, c0, ["spear", "scorpions", "gastraphetes"])
+	var en := _put(sb, rome, c0, ["heavy", "cav"])
+	var b := {"id": 1, "r": _r("latium"), "att": [int(am["id"])], "def": [int(en["id"])], "reinf": [], "att_f": gr,
+		"def_f": rome, "kind": "field", "settlement": 0}
+	var fo := CBattle.formula(CState.copy(sb), b)
+	_check(fo.has("winner") and (fo["units"] as Array).size() == 5, "auto-resolve with scorpions and gastraphetes (%d unit rows)" % (fo["units"] as Array).size())
+	var built := CBattle.build(sb, b, gr)
+	var sim := BattleSim.new()
+	sim.setup(built["scenario"], int(built["seed"]))
+	var ne := -1
+	var nb := 0
+	for u in sim.n_units:
+		if sim.u_type[u] == sco:
+			ne = sim.u_neng[u]
+		elif sim.u_type[u] == gas:
+			nb += 1
+	for t in 200:
+		sim.step()
+	_check(ne == 6 and nb == 1 and sim.tick == 200, "the battle with scorpions (%d engines) and gastraphetes runs" % ne)
 
 
 ## The general (docs/CAMPAIGN.md "The general"): every starting army has

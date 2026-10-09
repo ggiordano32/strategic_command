@@ -145,7 +145,7 @@ func set_unit_type(ty: int, p_side_color: Color = Color(0.35, 0.6, 1.0)) -> void
 	var lines := {"heavy": "Barracks", "light": "Barracks", "spear": "Barracks", "pike": "Barracks",
 		"archer": "Range", "javelin": "Range", "cav": "Stables", "bolt": "Workshop", "stone": "Workshop",
 		"siege": "Workshop", "camel": "Stables", "camel_archer": "Stables", "elephant": "Stables",
-		"cav_missile": "Stables", "sling": "Range"}
+		"cav_missile": "Stables", "sling": "Range", "light_art": "Workshop", "belly_bow": "Range"}
 	var bld: String = lines.get(UT.line_of(ty), "")
 	var need := tier if UT.cls(ty) != UT.CLS_ART else (2 if UT.base_of(ty) == UT.STONE else 1)
 	var need_txt := "%s %d" % [bld, need]
@@ -341,9 +341,12 @@ static func tags(ty: int) -> Array[String]:
 			out.append("Smashes engines")
 		out.append("Minimum range %d m" % (UT.stat(ty, "m_min") / 1024))
 		out.append("Turns to shoot outside its %d deg arc" % int(round(UT.stat(ty, "arc") * 720.0 / 1024.0)))
-		out.append("Cannot shoot while moving; sets up in %d s, packs up in %d s" % [
-			UT.stat(ty, "deploy") / 10, UT.stat(ty, "deploy") / 20])
-		out.append("Slow: %.1f m/s, never runs" % (UT.stat(ty, "walk") * TICKS_PER_SEC / M))
+		out.append("Cannot shoot while moving; sets up in %s s, packs up in %s s" % [
+			str(snappedf(UT.stat(ty, "deploy") / 10.0, 0.1)), str(snappedf(UT.stat(ty, "deploy") / 20.0, 0.1))])
+		if UT.stat(ty, "carried") != 0:
+			out.append("Carried by the crews: %.1f m/s, keeps up with foot" % (UT.stat(ty, "walk") * TICKS_PER_SEC / M))
+		else:
+			out.append("Slow: %.1f m/s, never runs" % (UT.stat(ty, "walk") * TICKS_PER_SEC / M))
 		out.append("Crews re-man engines; silent below %d crew" % UT.stat(ty, "crew_min"))
 		out.append("Wrecked by enemies next to it")
 		out.append("Frightens the unit it hits (a few seconds)")

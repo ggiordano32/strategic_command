@@ -12,7 +12,8 @@ extends SceneTree
 ## reach the sim, survive the online setup's JSON round trip and change the
 ## scenario hash both peers compare; one unit of each light horse and
 ## slinger row builds on a field and shoots (its weapon's kind, skirmish on,
-## the Balearics' lead bullets).
+## the Balearics' lead bullets); scorpions (with heavy bolts) and
+## gastraphetes build on a field and both shoot.
 
 const CS := preload("res://game/custom/custom_setup.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -133,6 +134,7 @@ func _init() -> void:
 	_check_ammo(ammo, "field")
 	_check_ammo(ammo_town, "settlement")
 	_check_light_missile()
+	_check_light_art()
 	# Checks.
 	var bad := CS.default_setup(1)
 	bad["sides"][1]["armies"] = []
@@ -341,6 +343,69 @@ func _check_light_missile() -> void:
 		if shots <= 0:
 			_fail("light missile: %s never shot in %d ticks (ammo %d of %d)" % [k, t, sim.u_ammo[units[k]], int(full[k])])
 	print("PASS light missile: shots by tick %d: %s" % [t, ", ".join(out)])
+
+
+## Light artillery (docs/DESIGN.md "Light artillery"): scorpions carrying
+## heavy bolts and gastraphetes on side 0 of an open field, the AI's foot
+## coming at them: both build (a battery of six engines with the heavy
+## bolts, the belly-bows flat-shooting missile foot with arrows) and both
+## shoot within 4 minutes (the battery at will, the belly-bows on an attack
+## order).
+func _check_light_art() -> void:
+	var st := CS.default_setup(13)
+	st["deploy"] = 0
+	st["map"]["terrain"] = Terrain.K_FLAT
+	st["map"]["woods"] = 0
+	st["sides"][0]["armies"][0]["units"] = [["scorpions", 12, "heavy_bolts"], ["gastraphetes", 80], ["spear", 100]]
+	st["sides"][1]["armies"][0]["units"] = [["heavy", 100], ["light", 100], ["spear", 100]]
+	var b := CS.build(st)
+	if b.has("error"):
+		_fail("light art: %s" % b["error"])
+		return
+	var sc: Dictionary = b["scenario"]
+	var foes: Array = []
+	var sco := -1
+	var gas := -1
+	for i in (sc["units"] as Array).size():
+		var key := UT.key_of(int(sc["units"][i]["type"]))
+		if int(sc["units"][i]["side"]) == 1:
+			foes.append(i)
+		elif key == "scorpions":
+			sco = i
+		elif key == "gastraphetes":
+			gas = i
+	if sco < 0 or gas < 0:
+		_fail("light art: rows missing from the scenario (%d, %d)" % [sco, gas])
+		return
+	sc["orders"] = [Scenarios.attack(1, gas, int(foes[0]), 0)]
+	sc["ai_sides"] = [1]
+	var sim = BattleSim.new()
+	sim.setup(sc, int(b["seed"]))
+	var su: int = -1
+	var gu: int = -1
+	for u in sim.n_units:
+		if sim.u_side[u] == 0 and UT.key_of(sim.u_type[u]) == "scorpions":
+			su = u
+		elif sim.u_side[u] == 0 and UT.key_of(sim.u_type[u]) == "gastraphetes":
+			gu = u
+	if su < 0 or gu < 0 or sim.u_neng[su] != 6 or sim.u_cls[su] != UT.CLS_ART \
+			or sim.eg_sk[sim.u_eg[su]] != UT.ammo_index("heavy_bolts") or sim.u_cls[gu] != UT.CLS_MISSILE \
+			or sim.t_m_arc[sim.u_type[gu]] != 0 or sim.t_m_ak[sim.u_type[gu]] != UT.ammo_index("arrows") or sim.u_skirm[gu] != 0:
+		_fail("light art: built wrong (battery %d with %d engines, belly-bows %d)" % [su, sim.u_neng[su] if su >= 0 else -1, gu])
+		return
+	var a0: int = sim.u_ammo[su]
+	var g0: int = sim.u_ammo[gu]
+	var t := 0
+	while t < 2400:
+		sim.step()
+		t += 1
+		if t % 100 == 0 and sim.u_ammo[su] < a0 and sim.u_ammo[gu] < g0:
+			break
+	if sim.u_ammo[su] >= a0 or sim.u_ammo[gu] >= g0:
+		_fail("light art: by tick %d scorpions shot %d, gastraphetes %d" % [t, a0 - sim.u_ammo[su], g0 - sim.u_ammo[gu]])
+		return
+	print("PASS light art: 6 scorpions with heavy bolts and flat-shooting gastraphetes built; by tick %d the scorpions shot %d bolts, the gastraphetes %d" % [
+		t, a0 - sim.u_ammo[su], g0 - sim.u_ammo[gu]])
 
 
 ## Deploy (place one unit of each human side, ready) and fight a little,

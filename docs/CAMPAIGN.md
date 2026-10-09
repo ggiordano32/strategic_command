@@ -452,6 +452,18 @@ gets fire javelins by the javelin rule (Iberians, Gauls, Range 2).
 Auto-resolve by price. AI mixes: cav_missile 5 (Carthage, Epirus, Greeks,
 Syracuse, Iberians, Gauls), sling 5 (Carthage, Greeks, Iberians), only
 through the mix (`CAI.BEAST_LINES`, also what `--no-beasts` leaves out).
+Light artillery (item 4f.3, 2026-10-09; docs/DESIGN.md "Artillery", light
+artillery): line "light_art" Scorpions 396 (6 engines, 12 crew; Workshop
+1, `ART_LEVEL`) for every faction with Bolt Throwers (Rome, Carthage,
+Macedon, Epirus, Greeks, Syracuse); heavy bolts ride on their bolts
+(Rome, Syracuse, Workshop 1). Line "belly_bow" Gastraphetes 400 (80
+belly-bowmen; `UNIT_NEEDS` Range 2) for the Greeks and Syracuse; fire
+arrows by the arrow rule (Range 2). An army with scorpions marches at the
+foot's pace (the crews carry them; Bolt / Stone Throwers keep `MP_ART`).
+Auto-resolve by price. AI mixes: light_art 3 (the six), belly_bow 3
+(Greeks, Syracuse), only through the mix (`CAI.BEAST_LINES`); a mix with
+light_art also builds a Workshop; `--no-light-art` (`CData.no_light_art`)
+leaves both out.
 Ammunition wagons (line "siege", 2026-10-09; docs/DESIGN.md "The
 ammunition wagon"): Hand Cart 200 (Workshop 1), Ammunition Wagon 320
 (Workshop 2, Stables 1), Supply Train 450 (Workshop 2, Stables 2), in

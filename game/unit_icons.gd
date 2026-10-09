@@ -13,6 +13,7 @@ extends RefCounted
 ##   13 light horse: horseshoe and a javelin  14 slingers: the sling's cords, a stone
 ##   15 general: his standard (pole, crossbar, banner, a wreath on top)
 ##   16 war dogs (handlers): a dog's head and a leash   17 the released pack: a running dog
+##   18 scorpions: a small bolt engine on a tripod   19 gastraphetes: a bow on a stock, the belly rest
 ## Symbol ids above 99 carry a tier mark (see icon_of).
 
 const UT := preload("res://sim/unit_types.gd")
@@ -160,6 +161,20 @@ static func draw_glyph(ci: CanvasItem, icon: int, c: Vector2, s: float, col: Col
 				for k in 2:
 					ci.draw_line(c + Vector2(-0.95, 0.35 + 0.25 * k) * s, c + Vector2(-0.45, 0.35 + 0.25 * k) * s,
 						col, w * 0.7, true)
+		18:  # scorpion: a small bow on a short stock, the bolt laid on it, a tripod under it
+			ci.draw_arc(c + Vector2(0, 0.05) * s, 0.62 * s, -PI * 0.86, -PI * 0.14, 10, col, w, true)
+			ci.draw_line(c + Vector2(0, -0.6) * s, c + Vector2(0, 0.25) * s, col, w * 0.8, true)
+			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(0, -0.9) * s,
+				c + Vector2(0.17, -0.6) * s, c + Vector2(-0.17, -0.6) * s]), col)
+			ci.draw_line(c + Vector2(0, 0.25) * s, c + Vector2(-0.6, 0.92) * s, col, w * 0.85, true)
+			ci.draw_line(c + Vector2(0, 0.25) * s, c + Vector2(0.6, 0.92) * s, col, w * 0.85, true)
+			ci.draw_line(c + Vector2(0, 0.25) * s, c + Vector2(0, 0.95) * s, col, w * 0.85, true)
+		19:  # gastraphetes: a bow across a long stock, the curved belly rest at its end
+			ci.draw_arc(c + Vector2(0, -0.05) * s, 0.8 * s, -PI * 0.88, -PI * 0.12, 12, col, w, true)
+			ci.draw_line(c + Vector2(0, -0.95) * s, c + Vector2(0, 0.62) * s, col, w * 1.1, true)
+			ci.draw_line(c + Vector2(-0.76, -0.3) * s, c + Vector2(0, 0.05) * s, col, w * 0.55, true)
+			ci.draw_line(c + Vector2(0.76, -0.3) * s, c + Vector2(0, 0.05) * s, col, w * 0.55, true)
+			ci.draw_arc(c + Vector2(0, 0.95) * s, 0.36 * s, -PI * 0.95, -PI * 0.05, 8, col, w * 1.1, true)
 		11:  # elephant's head from the front: ears, trunk curling down, tusks
 			ci.draw_arc(c + Vector2(0, -0.2) * s, 0.38 * s, 0, TAU, 14, col, w, true)
 			ci.draw_arc(c + Vector2(-0.6, -0.2) * s, 0.3 * s, PI * 0.5, PI * 1.5, 10, col, w, true)

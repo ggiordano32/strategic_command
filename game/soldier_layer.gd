@@ -323,7 +323,7 @@ func _engine_sprite_of(u: int) -> int:
 ## engines it works).
 func _pr_flag_of(u: int) -> int:
 	var ty: int = sim.u_type[u]
-	var mk := 0 if UT.stat(ty, "m_arc") != 0 else 1
+	var mk := 0 if UT.stat(ty, "m_arc") != 0 or UT.stat(ty, "m_ak") == UT.ammo_index("arrows") else 1  # (flat bolt-arrows: arrows)
 	if UT.cls(ty) == UT.CLS_ART:
 		mk = 2 if UT.stat(ty, "m_kind") == 1 else 3
 	elif UT.stat(ty, "m_ak") >= 0 and UT.stat(ty, "m_ak") == UT.ammo_index("sling"):

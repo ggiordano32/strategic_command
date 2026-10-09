@@ -181,6 +181,11 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=light_art" in OS.get_cmdline_user_args():
+		_check_light_art()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=engines" in OS.get_cmdline_user_args():
 		_check_engines()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -208,6 +213,7 @@ func _init() -> void:
 	_check_dogs()
 	_check_stakes()
 	_check_fortified()
+	_check_light_art()
 	if "--only=equipment" in OS.get_cmdline_user_args():
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
@@ -1389,6 +1395,174 @@ func _check_engines() -> void:
 	print("PASS engines: the battery left them at %d; the archers took them up at %d, shot %d bolts (%d kills), left them at %d with their arrows back; the enemy took them at %d (%d shots left in them) and shot (%d kills); per-unit kills %s sum to the sides' kills %s; identical on repeat and across snapshot / restore (tick %d)" % [
 		int(ev["drop0"]), int(ev["pick1"]), int(ev["bolts1"]), kills[1], int(ev["drop1"]), int(ev["cap3"]), int(ev["ammo3"]),
 		kills[3], str(kills), str(a["side_kills"]), int(a["snap_t"])])
+
+
+# ------------------------------------------------------- light artillery ---
+# docs/DESIGN.md "Light artillery" (STATUS 4f.3).
+
+## A flat 300 x 300 m field, scripted, no AI: a scorpion battery (carrying
+## heavy bolts) packs up, marches 40 m and sets up again, then shoots a pike
+## block 105 m off along its depth with heavy bolts (75 % range); its crews
+## leave the engines (tick 700) and an archer unit takes them up and shoots
+## on with them. Gastraphetes meanwhile close on a heavy unit 150 m off and
+## shoot it from beyond where archers would stand (85 % of 140 m). Returns what was seen and the hashes of every tick.
+func _light_art_run(snap_check: bool) -> Dictionary:
+	var sco := UT.index_of("scorpions")
+	var gas := UT.index_of("gastraphetes")
+	var sc := {"width_m": 300, "height_m": 300, "ai_sides": [], "orders": [], "units": [
+		Scenarios.unit(0, sco, 12, 120, 270, Scenarios.FACE_UP),
+		Scenarios.unit(0, UT.ARCHER, 40, 60, 235, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.PIKE, 120, 120, 125, Scenarios.FACE_DOWN),
+		Scenarios.unit(0, gas, 80, 235, 235, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.HEAVY, 60, 235, 85, Scenarios.FACE_DOWN)]}
+	sc["units"][0]["ak"] = UT.ammo_index("heavy_bolts")
+	var sim := BattleSim.new()
+	sim.setup(sc, 4242)
+	sim.u_fire[1] = 0
+	sim.u_fire[0] = 0
+	sim.u_fire[3] = 0
+	var ev := {}
+	var bad: Array[String] = []
+	var hashes := PackedInt64Array()
+	var snap_t := -1
+	var snap_bad := -1
+	var full := UT.stat(sco, "deploy")
+	var y0 := 0
+	var moving := 0
+	var gas_ammo0: int = sim.u_ammo[3]
+	var gas_win := [-1, -1]   # its ammo at ticks 300 and 600
+	var max_vic := 0          # most men struck by one scorpion bolt (ticks with one landing)
+	var over := 0             # ticks with more men struck than 2 a bolt landing
+	for t in 1300:
+		var tk: int = sim.tick
+		if tk == 1:
+			sim.queue_order(BattleSim.make_move_order(tk, 0, 120 * M, 230 * M, Scenarios.FACE_UP, 25 * M, 0))
+			sim.queue_order(BattleSim.make_attack_order(tk, 3, 4, 0))
+		if not ev.has("packed") and tk > 1 and sim.u_depl[0] == 0:
+			ev["packed"] = tk
+			y0 = sim.u_ay[0]
+		if ev.has("packed") and not ev.has("stopped") and sim.u_depl[0] == 0 and sim.u_moved[0] > 0:
+			moving += 1
+		if ev.has("packed") and not ev.has("stopped") and sim.u_order[0] == BattleSim.O_NONE:
+			ev["stopped"] = tk
+			ev["pace"] = (y0 - sim.u_ay[0]) / maxi(moving, 1)  # sim units a tick while moving
+		if ev.has("stopped") and not ev.has("set_up") and sim.u_depl[0] >= full:
+			ev["set_up"] = tk
+			sim.queue_order({"tick": tk, "type": BattleSim.ORDER_AMMO, "unit": 0, "on": 1})
+			sim.queue_order(BattleSim.make_attack_order(tk, 0, 2, 0))
+		if not ev.has("gas_first") and sim.u_ammo[3] < gas_ammo0:
+			ev["gas_first"] = tk
+			ev["gas_d"] = sim._unit_dist(3, 4) / M
+		if tk == 300:
+			gas_win[0] = sim.u_ammo[3]
+		if tk == 600:
+			gas_win[1] = sim.u_ammo[3]
+		if tk == 700:
+			ev["bolts0"] = sim.stat_bolts
+			ev["vic0"] = sim.stat_art_victims
+			sim.queue_order({"tick": tk, "type": BattleSim.ORDER_DROP, "unit": 0})
+		if tk == 702:
+			if sim.u_eg[0] != -1 or sim.u_cls[0] == UT.CLS_ART or not sim.engines_free(0):
+				bad.append("the crews did not leave the scorpions")
+			sim.queue_order({"tick": tk, "type": BattleSim.ORDER_PICKUP, "unit": 1, "engines": 0, "run": 0})
+		if not ev.has("pick1") and sim.u_eg[1] == 0:
+			ev["pick1"] = tk
+			ev["bolts_pick"] = sim.stat_bolts
+			if sim.u_type[1] != sco or sim.u_otype[1] != UT.ARCHER:
+				bad.append("the archers did not take the scorpions up")
+			sim.queue_order(BattleSim.make_attack_order(tk, 1, 2, 0))
+		var b0: int = sim.stat_bolts
+		var v0: int = sim.stat_art_victims
+		var f0 := _bolts_flying(sim, sco)
+		sim.step()
+		hashes.append(sim.state_hash())
+		# Bolts landed this tick (in flight before + fired - in flight after)
+		# and the men they struck.
+		var landed: int = f0 + sim.stat_bolts - b0 - _bolts_flying(sim, sco)
+		var vic: int = sim.stat_art_victims - v0
+		if vic > 2 * landed:
+			over += 1
+		if landed == 1:
+			max_vic = maxi(max_vic, vic)
+		if snap_check and snap_t < 0 and ev.has("pick1") and sim.tick >= int(ev["pick1"]) + 30:
+			snap_t = sim.tick
+			var a2 := BattleSim.new()
+			a2.setup(sc, 4242)
+			a2.restore(sim.snapshot())
+			var b2 := BattleSim.new()
+			b2.setup(sc, 4242)
+			b2.restore(sim.snapshot())
+			for k in 300:
+				a2.step()
+				b2.step()
+				if a2.state_hash() != b2.state_hash():
+					snap_bad = k
+					break
+	var ak: int = UT.ammo_index("heavy_bolts")
+	return {"ev": ev, "bad": bad, "hashes": hashes, "bolts": sim.stat_bolts, "victims": sim.stat_art_victims,
+		"max_vic": max_vic, "over": over, "pierce_heavy": UT.stat(sco, "m_pierce") * UT.ammo_stat(ak, "pierce") / 100,
+		"kills1": sim.u_kills[1], "kills0": sim.u_kills[0], "gas_win": gas_win, "gas_kills": sim.u_kills[3],
+		"gas_ammo0": gas_ammo0, "gas_ammo": sim.u_ammo[3], "gas_alive": sim.u_alive[3],
+		"snap_t": snap_t, "snap_bad": snap_bad}
+
+
+## Scorpion bolts (type sco) in flight.
+func _bolts_flying(sim: BattleSim, sco: int) -> int:
+	var n := 0
+	for p in sim.pr_t1.size():
+		if sim.pr_t1[p] >= 0 and sim.pr_ty[p] == sco:
+			n += 1
+	return n
+
+
+func _check_light_art() -> void:
+	var a := _light_art_run(true)
+	var b := _light_art_run(false)
+	var ev: Dictionary = a["ev"]
+	if a["hashes"] != b["hashes"] or str(ev) != str(b["ev"]):
+		_fail("light_art: the repeat diverged")
+		return
+	if not (a["bad"] as Array).is_empty():
+		_fail("light_art: %s" % str(a["bad"]))
+		return
+	for k in ["packed", "stopped", "set_up", "pick1", "gas_first"]:
+		if not ev.has(k):
+			_fail("light_art: step %s never happened (%s)" % [k, str(ev)])
+			return
+	var sco := UT.index_of("scorpions")
+	var bolt_pace := UT.stat(UT.BOLT, "walk") * 7 / 8
+	var pace: int = ev["pace"]
+	var setup_t: int = int(ev["set_up"]) - int(ev["stopped"])
+	var pack_t: int = int(ev["packed"]) - 1
+	if pace * 100 < UT.stat(sco, "walk") * 7 / 8 * 90 or pace <= bolt_pace * 3 / 2:
+		_fail("light_art: packed pace %d a tick (want ~%d; Bolt Throwers %d)" % [pace, UT.stat(sco, "walk") * 7 / 8, bolt_pace])
+		return
+	if setup_t > 40 or pack_t > 20:
+		_fail("light_art: set up in %d ticks, packed in %d" % [setup_t, pack_t])
+		return
+	var bolts0: int = ev["bolts0"]
+	if bolts0 <= 0 or int(a["max_vic"]) != 2 or int(a["over"]) > 0 or int(a["pierce_heavy"]) != 2 or int(a["victims"]) > 2 * int(a["bolts"]) \
+			or int(a["victims"]) <= int(a["bolts"]) / 2:
+		a.erase("hashes")
+		_fail("light_art: bolts / pierce: %s" % str(a))
+		return
+	if int(a["bolts"]) <= int(ev["bolts_pick"]) or int(a["kills1"]) <= 0:
+		_fail("light_art: the archers never shot with the scorpions (%d bolts, %d kills)" % [int(a["bolts"]) - int(ev["bolts_pick"]), int(a["kills1"])])
+		return
+	var gw: Array = a["gas_win"]
+	var per_man := (int(gw[0]) - int(gw[1])) * 100 / maxi(int(a["gas_alive"]), 1)  # shots a man in 300 ticks, x100
+	var bow_stand := UT.stat(UT.ARCHER, "m_range") * 17 / 20 / M  # where archers stand to shoot (85 % of 140 m)
+	if int(ev["gas_d"]) <= bow_stand or per_man < 200 or per_man > 360 or int(a["gas_kills"]) <= 0:
+		_fail("light_art: gastraphetes first shot at %d m, %d.%02d shots a man in 30 s, %d kills" % [int(ev["gas_d"]), per_man / 100, per_man % 100, int(a["gas_kills"])])
+		return
+	if int(a["snap_t"]) < 0 or int(a["snap_bad"]) >= 0:
+		_fail("light_art: no snapshot, or the restored copy diverged (%d at %d)" % [int(a["snap_bad"]), int(a["snap_t"])])
+		return
+	print("PASS light_art: scorpions packed by tick %d, marched packed at %d.%02d m/s (Bolt Throwers %d.%02d), set up %d ticks after stopping; %d bolts by tick 700 (heavy bolts pierce %d), %d bolts in all striking %d men, at most %d men by one bolt, %d kills; the crews left them at 700, the archers took them up at %d and shot on (%d kills); gastraphetes first shot at tick %d from %d m (archers stand at %d m), flat (m_arc %d), %d.%02d shots a man in 30 s (archers ~7.5), %d kills; identical on repeat and across snapshot / restore (tick %d)" % [
+		int(ev["packed"]), pace * 10 / M, pace * 1000 / M % 100, bolt_pace * 10 / M, bolt_pace * 1000 / M % 100, setup_t, bolts0,
+		int(a["pierce_heavy"]), int(a["bolts"]), int(a["victims"]), int(a["max_vic"]), int(a["kills0"]), int(ev["pick1"]),
+		int(a["kills1"]), int(ev["gas_first"]), int(ev["gas_d"]), bow_stand, UT.stat(UT.index_of("gastraphetes"), "m_arc"),
+		per_man / 100, per_man % 100, int(a["gas_kills"]), int(a["snap_t"])])
 
 
 # ------------------------------------------------------ ammunition kinds ---

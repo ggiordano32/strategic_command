@@ -468,15 +468,15 @@ static func moves_on(st: Dictionary) -> bool:
 
 ## Movement points a turn of army a (its slowest arm): riders only (any
 ## row on a horse or a camel: cavalry, light horse, camel archers) MP_CAV,
-## any artillery MP_ART, else MP_FOOT.
+## any artillery MP_ART (not batteries whose crews carry them: "carried"), else MP_FOOT.
 static func max_mp(a: Dictionary) -> int:
 	var all_cav := true
 	var units: Array = a.get("units", [])
 	for u in units:
 		var ty := unit_type(u)
 		var c := UT.cls(ty)
-		if c == UT.CLS_ART:
-			return CData.MP_ART
+		if c == UT.CLS_ART and UT.stat(ty, "carried") == 0:
+			return CData.MP_ART  # (scorpions' crews carry them: the foot's pace)
 		var mount := UT.stat(ty, "mount")
 		var rider := mount == UT.MOUNT_HORSE or mount == UT.MOUNT_CAMEL
 		if CData.old_mp:

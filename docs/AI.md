@@ -1243,6 +1243,25 @@ missiles left shoot at the nearest pushing crew in reach (`AK_FIRE_WOOD`,
 `_wall_fire_tower`; `ammo_pick` then switches them to the fire kind) and
 go back to fire at will once none is.
 
+Light artillery (4f.3, 2026-10-09): batteries whose row has `carried`
+(scorpions; never by name) are not gate breakers: `_art_ready` ignores
+them, so they neither hold the hackers back nor stop the ladders going up
+(`S_LADDER_WALLS`), and they march with the ladder-and-ram army (they walk
+at foot pace). In the approach `_att_art` sets them up at
+`min(S_ART_OUT, range x S_LART_PCT %)` from the attacked gate (85 %: 136 m
+for scorpions; the heavy batteries stay on the 165 m line), spread among
+themselves, a clear flat line sought as for bolts; there they shoot the
+enemy wall unit nearest the gate within `S_LART_WALL_R` (Average 80 m,
+Skilled 120 m) that they reach (`_lart_wall_target`), else the gate. Easy
+(`S_LART_PCT` 0) leaves them where they stand, firing at will (also at a
+citadel). The field battle AI uses them like any bolt battery; the
+campaign AI recruits them through the mixes only (`light_art` 3, Greek and
+Syracusan `belly_bow` 3; `CAI.BEAST_LINES`; `CData.no_light_art` /
+`campaign_sim --no-light-art` leaves both out), and a mix with
+`light_art` builds a Workshop. Gastraphetes are missile foot to both AIs.
+Not tuned: whether 136 m is outside the wall archers' reach (it is not
+on walls 2-3 with their range bonus).
+
 ## 16. Defender layout (part 2c, 2026-10-08)
 
 Why (part 2a's traces): equal-force walls 1 went to the attacker 80-100 %

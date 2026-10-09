@@ -144,6 +144,13 @@ extends RefCounted
 ##   chase        1: on an attack its anchor runs on into its target whatever
 ##                the target does (a skirmisher falling back, as a router),
 ##                not waiting for its men to come within reach (a pack)
+## Light artillery (docs/DESIGN.md "Light artillery"; generic):
+##   carried      1: a battery whose engines its crews carry (scorpions): its
+##                pace (walk) and set-up time (deploy) already say how it
+##                moves; the AI reads it (never the sim): it marches with the
+##                assault, sets up in its own range of the attacked gate and
+##                shoots the men on the wall, and it does not count as a
+##                battery that batters the gate down (sim/siege_ai.gd)
 
 ## Display only (never read by the sim, not hashed): icon (marker / card
 ## symbol, see game/unit_icons.gd), role, desc, good_vs, weak_vs (unit book).
@@ -182,7 +189,7 @@ const DEFAULTS := {
 	"burn_pct": 100, "amok": 0, "amok_r": 0, "amok_calm": 0, "kill_delay": 0, "gate_walls": -1, "gate_pct": 0,
 	"cmd_r": 0, "cmd_mor": 0, "cmd_rally": 0, "cmd_loss": 0, "cmd_loss_r": 0, "cmd_pct": 0,
 	"pack_n": 0, "pack_type": -1, "pack_r": 0, "return_r": 0, "return_t": 0, "nobreak": 0,
-	"scare_am": -1, "as_cav": 0, "chase": 0,
+	"scare_am": -1, "as_cav": 0, "chase": 0, "carried": 0,
 }
 ## Mounts (the "mount" field).
 const MOUNT_FOOT := 0
@@ -1072,6 +1079,94 @@ const DOGS: Array[Dictionary] = [
 ]
 
 
+## Light artillery and the belly-bow (docs/DESIGN.md "Light artillery";
+## STATUS 4f.3): two base rows of their own lines, appended after the war
+## dogs so every other index is unchanged. Scorpions are a battery (CLS_ART,
+## engines as equipment like any battery) whose small engines the crews
+## carry ("carried"); the gastraphetes a missile foot row. Numbers chosen
+## once from the existing rows (Bolt Throwers, Archers, heavy bolts as the
+## yardsticks), not tuned; each with its reason.
+const LIGHT_ART: Array[Dictionary] = [
+	{
+		"key": "scorpions", "line": "light_art", "name": "Scorpions", "short": "Scorpions", "icon": 18, "sprite": 6,
+		"size": 12, "files0": 6,
+		"role": "Light artillery (carried scorpions)",
+		"desc": "Six small bolt engines, two men to each, light enough for the crews to carry: they march at a man's walking pace and set up or pack up in a moment, so they keep up with an assault and shoot the men on the wall above the ladders and the ram. A small bolt flies flat and true but goes through at most two men; shorter range and a lighter blow than the big bolt throwers, a faster shot, fewer bolts. Crews are poor fighters and the little engines break easily.",
+		"good_vs": "Men on a wall over the gate or the ladders, archers and skirmishers in range, enemy crews.",
+		"weak_vs": "Cavalry and any melee troops that reach them, big shields and armour, deep blocks (a bolt stops after two men), targets behind friends or a crest.",
+		"cls": CLS_ART,
+		"attack": 14, "defence": 14, "armour": 3, "shield": 0, "mshield": 0,  # Bolt Throwers' crews
+		"damage": 22, "reach": 1024, "mass": 70,
+		"walk": 150,         # 1.5 m/s: archers' 154 less a little for the load (Bolt Throwers drag at 0.8)
+		"run": 400,          # Bolt Throwers' crews running away
+		"hp": 75, "cooldown": 12,
+		"morale": 450,       # Bolt Throwers' crews
+		"file_sp": 4 * 1024, # engines 4 m apart (Bolt Throwers 7 m): small machines
+		"rank_sp": 1229,
+		"turn": 4,           # twice the heavy battery's turn: light frames
+		"crew": 2,
+		"crew_min": 1,       # one man can still shoot one (slower)
+		"m_kind": 1,
+		"m_range": 160 * 1024,  # 70 % of Bolt Throwers' 230 m, still beyond the bow (140 m)
+		"m_min": 10 * 1024,  # Bolt Throwers 15 m: a short engine depresses further
+		"m_damage": 72,      # 60 % of Bolt Throwers' 120: a light bolt (an arrow 30)
+		"m_ap": 70,          # Bolt Throwers 80, arrows 25
+		"m_ammo": 8,         # Bolt Throwers 11: what two men carry with the engine
+		"m_reserve": 8,      # one more load in the baggage (Refill)
+		"m_refill": 40,      # 4 s a bolt (Bolt Throwers 6.5 s): light bolts
+		"m_reload": 50,      # 5 s a bolt at full crew (Bolt Throwers 7.5 s)
+		"m_spread": 12,      # Bolt Throwers 10: a lighter frame
+		"m_spread0": 300,
+		"m_speed": 5120,     # 50 m/s (Bolt Throwers 55)
+		"m_arc": 0,
+		"m_pierce": 2,       # at most two men (Bolt Throwers 5); heavy bolts' 140 % still 2
+		"m_plough": 15 * 1024,  # Bolt Throwers 25 m
+		"m_fear": 8,         # Bolt Throwers 15
+		"arc": 85,           # +-30 degrees (Bolt Throwers +-25): each engine is turned by hand
+		"traverse": 6,       # twice Bolt Throwers' 3
+		"deploy": 15,        # 1.5 s to set up, under a second to pack (Bolt Throwers 6 / 3 s)
+		"e_hp": 60,          # Bolt Throwers 160: a small frame breaks under a few blows
+		"cost": 33,          # 396 a unit: Archers and Bolt Throwers both cost 400; between them in reach and blow, so the same price
+		"climb": 16,         # foot with a load (archers 14; Bolt Throwers dragged 40)
+		"m_hgain": 60, "m_apex": 2,  # flat, as Bolt Throwers
+		"m_ak": 2,           # bolts: heavy bolts ride on them where the faction has them
+		"carried": 1,
+	},
+	{
+		"key": "gastraphetes", "line": "belly_bow", "name": "Gastraphetes", "short": "Belly-bows", "icon": 19, "sprite": 3,
+		"size": 80, "files0": 20,
+		"role": "Missile infantry (belly-bows)",
+		"desc": "Greek belly-bowmen: a composite bow on a stock, spanned by leaning on it with the belly, shot like a small bolt engine. Each shot outranges the bow and goes through armour, but loading takes a long time and the shot flies flat, so they need a clear line past friends and over the ground (no shooting over a crest). They stand their ground rather than skirmish. Weak in melee.",
+		"good_vs": "Armoured men in the open, crews and men on walls in a clear line, archers (which they outrange).",
+		"weak_vs": "Anything that closes fast (cavalry, light infantry), targets behind friends or a crest, swarms (few shots).",
+		"cls": CLS_MISSILE,
+		"attack": 18, "defence": 16,  # archers'
+		"armour": 4,         # archers 3: citizen bowmen with a little more kit
+		"shield": 0, "mshield": 0,
+		"damage": 24, "reach": 1024, "mass": 70,
+		"walk": 154, "run": 400,  # archers' walk; a heavier weapon to run with (archers 410)
+		"hp": 75, "cooldown": 11,
+		"morale": 640,       # archers'
+		"file_sp": 1331, "rank_sp": 1638,  # archers'
+		"m_range": 160 * 1024,  # archers 140 m: the stock bow throws further
+		"m_damage": 48,      # between an arrow (30) and a scorpion bolt (72)
+		"m_ap": 50,          # between arrows (25) and a scorpion bolt (70)
+		"m_ammo": 20,        # archers 40: heavier missiles, half as many
+		"m_reload": 100,     # 10 s a shot: 2.5 x the bow's 4 s (spanned against the belly)
+		"m_spread": 30,      # archers 45: aimed along a stock
+		"m_spread0": 800,
+		"m_speed": 5120,     # 50 m/s (arrows 45)
+		"m_arc": 0,          # flat, as bolts: needs a clear line past friends
+		"m_apex": 3,         # a crest between them and the target stops it (javelins 10, bolts 2)
+		"m_hgain": 100,
+		"skirm": 0,
+		"m_ak": 0,           # arrows (bolt-arrows): fire arrows ride on them, a wagon refills them
+		"cost": 5,           # 400 a unit, archers': two thirds of the bow's damage a second (4.8 vs 7.5), paid back in range and armour piercing
+		"climb": 14,         # archers'
+	},
+]
+
+
 ## Field of wagon tier w (0 if out of range); "pace" with h horses alive.
 static func wagon_stat(w: int, field: String) -> int:
 	if w < 0 or w >= WAGONS.size():
@@ -1164,6 +1259,12 @@ static func _build_types() -> Array[Dictionary]:
 	first = out.size()
 	for dr in DOGS:
 		var row: Dictionary = dr.duplicate()
+		row["base"] = out.size()
+		row["tier"] = 1
+		row["price"] = int(row["cost"]) * int(row["size"])
+		out.append(row)
+	for lr in LIGHT_ART:
+		var row: Dictionary = lr.duplicate()
 		row["base"] = out.size()
 		row["tier"] = 1
 		row["price"] = int(row["cost"]) * int(row["size"])

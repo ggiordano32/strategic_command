@@ -407,7 +407,8 @@ func _build_picker() -> void:
 	sc.add_child(list)
 	# The base lines with the light missile troops' (slingers after the javelins,
 	# missile cavalry after the cavalry), war dogs after the slingers, the
-	# beasts after the riders and the generals last.
+	# beasts after the riders, gastraphetes after the archers, scorpions
+	# before the bolt throwers and the generals last.
 	var lines: Array = UT.LINES.duplicate()
 	lines.insert(lines.find("javelin") + 1, "sling")
 	lines.insert(lines.find("sling") + 1, "dogs")  # War Dogs (handlers; the pack comes with them)
@@ -415,6 +416,8 @@ func _build_picker() -> void:
 	lines.insert(lines.find("cav_missile") + 1, "camel")  # Camel Riders
 	lines.insert(lines.find("camel") + 1, "camel_archer")  # Camel Archers
 	lines.insert(lines.find("camel_archer") + 1, "elephant")  # War Elephants
+	lines.insert(lines.find("archer") + 1, "belly_bow")  # Gastraphetes
+	lines.insert(lines.find("bolt"), "light_art")  # Scorpions (before the bolt throwers)
 	lines.append("general")  # the general and his faction variants
 	for line in lines:
 		var f := Kit.flow(6)

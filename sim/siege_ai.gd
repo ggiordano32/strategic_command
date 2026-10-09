@@ -76,6 +76,13 @@ extends RefCounted
 ##             within 60 m; one unit a stretch); once up they go down into
 ##             the town to the inside of the nearest closed gate and unbar it.
 ##   batteries shoot the towers within S_COUNTER_BAT of the gate first.
+##   carried   batteries whose crews carry the engines (scorpions, row field
+##             "carried") come up to S_LART_PCT of their own range from the
+##             gate (no closer than the others' line, S_ART_OUT) and shoot
+##             the wall's men within S_LART_WALL_R of it, nearest the gate
+##             first (none in reach: the gate); Easy (S_LART_PCT 0) leaves
+##             them where they stand, firing at will. They never count as
+##             the battery that batters the gate (_art_ready).
 ##   towers    (defenders) shoot the ram, then batteries, then men at a gate
 ##             or on the ladders, in reach (S_TOWER_FOCUS), else at will.
 ##   reply     (defenders, S_ESC_REPLY) a reserve foot unit goes up onto a
@@ -1411,15 +1418,23 @@ static func _att_art(sim, u: int, phase: int) -> void:
 		BattleAI._order(sim, u, {"type": ORDER_REFILL, "on": 1}, 23)
 		return
 	var g: int = sim.ai_gate[side]
+	var carried := UT.stat(ty, "carried") != 0
+	var left := carried and kn[AP.S_LART_PCT] <= 0  # (Easy: left where they stand, firing at will)
+	if left:
+		g = -1
 	if phase == SP_APPROACH and g >= 0 and sim.g_state[g] == GATE_CLOSED and sim.u_ammo[u] > 0:
-		var rk := _rank(sim, u, func(o): return sim.u_cls[o] == UT.CLS_ART)
+		var rk := _rank(sim, u, func(o): return sim.u_cls[o] == UT.CLS_ART \
+			and (UT.stat(sim.u_type[o], "carried") != 0) == carried)
 		var lat := _spread(rk.x, rk.y, kn[AP.S_ART_SPREAD])
-		var spot := _gate_point(sim, g, kn[AP.S_ART_OUT], lat)
+		var out: int = kn[AP.S_ART_OUT]
+		if carried:
+			out = mini(out, UT.stat(ty, "m_range") * kn[AP.S_LART_PCT] / 100)
+		var spot := _gate_point(sim, g, out, lat)
 		if UT.stat(ty, "m_kind") == 1:
 			# Bolts need a clear flat line to the gate: try further aside.
 			var f: Vector2i = sim.gate_face(g)
 			for off in [0, 20, -20, 40, -40]:
-				var cand := _gate_point(sim, g, kn[AP.S_ART_OUT], lat + off * M)
+				var cand := _gate_point(sim, g, out, lat + off * M)
 				if sim.lof_block(cand.x, cand.y, sim.height_at(cand.x, cand.y) + 1536, f.x, f.y,
 						sim.height_at(f.x, f.y) + 1024, 0, 0, 8192) < 0:
 					spot = cand
@@ -1428,6 +1443,8 @@ static func _att_art(sim, u: int, phase: int) -> void:
 			if sim.u_order[u] != O_MOVE or BattleAI._d(sim.u_dx[u] - spot.x, sim.u_dy[u] - spot.y) > 6 * M:
 				var face := FM.atan2_a(sim.g_y[g] - spot.y, sim.g_x[g] - spot.x)
 				BattleAI._move(sim, u, spot.x, spot.y, face, BattleAI._width(sim, u), 0, 6)
+			return
+		if carried and _lart_wall_target(sim, u, g, kn):
 			return
 		if kn[AP.SK_WALL_ART] > 0 and _sk_wall_target(sim, u, g, kn):
 			return
@@ -1441,7 +1458,7 @@ static func _att_art(sim, u: int, phase: int) -> void:
 			BattleAI._order(sim, u, {"type": ORDER_ATTACK, "target": -1, "gate": g, "run": 0}, 0)
 		return
 	var cg: int = sim.cit_gate
-	if phase == SP_ASSAULT and cg >= 0 and sim.g_state[cg] == GATE_CLOSED and sim.u_ammo[u] > 0:
+	if phase == SP_ASSAULT and cg >= 0 and sim.g_state[cg] == GATE_CLOSED and sim.u_ammo[u] > 0 and not left:
 		# The citadel's gate, if it is within reach from here.
 		var f: Vector2i = sim.gate_face(cg)
 		var dcg := BattleAI._d(f.x - sim.u_cx[u], f.y - sim.u_cy[u])
@@ -1465,11 +1482,41 @@ static func _att_art(sim, u: int, phase: int) -> void:
 		BattleAI._order(sim, u, {"type": ORDER_FIRE, "on": 1}, 21)
 
 
-## Working batteries with shots left on side `side`.
+## A carried battery (scorpions) at the attacked gate g: it shoots the
+## nearest-to-the-gate wall unit of the enemy within S_LART_WALL_R of it
+## that it can reach; false when there is none (it shoots the gate).
+static func _lart_wall_target(sim, u: int, g: int, kn: PackedInt32Array) -> bool:
+	var wr: int = kn[AP.S_LART_WALL_R]
+	if wr <= 0:
+		return false
+	var side: int = sim.u_side[u]
+	var ty: int = sim.u_type[u]
+	var rng := UT.stat(ty, "m_range")
+	var mn := UT.stat(ty, "m_min")
+	var best := -1
+	var bd := 0
+	for o in sim.n_units:
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.u_wall[o] == 0 or sim.u_alive[o] <= 0:
+			continue
+		var d := BattleAI._d(sim.u_cx[o] - sim.g_x[g], sim.u_cy[o] - sim.g_y[g])
+		if d > wr or not sim._art_in_range(u, o, mn, rng):
+			continue
+		if best < 0 or d < bd:
+			best = o
+			bd = d
+	if best < 0:
+		return false
+	if sim.u_order[u] != O_ATTACK or sim.u_target[u] != best:
+		BattleAI._attack(sim, u, best, 0)
+	return true
+
+
+## Working batteries with shots left on side `side` (not the carried ones:
+## scorpions do not batter a gate down).
 static func _art_ready(sim, side: int) -> bool:
 	for u in sim.n_units:
 		if sim.u_side[u] == side and sim.u_state[u] == U_READY and sim.u_cls[u] == UT.CLS_ART \
-				and (sim.u_ammo[u] > 0 or sim.u_reserve[u] > 0):
+				and UT.stat(sim.u_type[u], "carried") == 0 and (sim.u_ammo[u] > 0 or sim.u_reserve[u] > 0):
 			for k in sim.u_neng[u]:
 				if sim.e_state[sim.u_eng0[u] + k] == 0:
 					return true

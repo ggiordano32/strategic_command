@@ -333,7 +333,11 @@ const FW_PLACE := 263          # its stakes / caltrops: 0 none placed (Easy), 1 
 const FW_AHEAD := 264          # stakes this far before the front (caltrops 12 m further)
 const FW_CAMP := 265           # a fortified side: 1 man the rampart with missile troops, foot behind the gaps; 0 ignore the works (Easy)
 const CAMP_HOLD := 266         # ... and hold the camp at most this long, until a third of the foot fights
-const N_KNOBS := 267
+# Light artillery (docs/AI.md 15): attacking batteries whose crews carry their
+# engines (the row's "carried": scorpions), never by name.
+const S_LART_PCT := 267        # they set up at most this % of their range from the attacked gate (0: they stay where they stand, Easy)
+const S_LART_WALL_R := 268     # ... and shoot the wall's men within this of that gate, nearest it first (0: the gate)
+const N_KNOBS := 269
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
@@ -579,6 +583,8 @@ const KNOBS: Array = [
 	[FW_AHEAD, 10 * M, 10 * M, 10 * M],
 	[FW_CAMP, 0, 1, 1],
 	[CAMP_HOLD, 0, 6000, 6000],
+	[S_LART_PCT, 0, 85, 85],
+	[S_LART_WALL_R, 0, 80 * M, 120 * M],
 	# Behaviours a level switches off (Average: on, as before).
 	[CLEAR_SPOT, 0, 1, 1],
 	[MIS_SKIRM, 0, 1, 1],
