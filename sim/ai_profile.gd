@@ -251,7 +251,7 @@ const SK_WD_COVER := 195       # withdrawing in good order: cavalry and missiles
 const SK_STORM_STAGGER := 196  # sieges, attacking: storming units spread over the streets (1) or all to the plaza (0)
 const SK_FEINT := 197          # ... a feint: waiting foot units show at another gate
 const SK_WALL_ART := 198       # ... batteries shoot the wall units over the gate before the gate (ticks)
-const SK_WALL_SHIFT := 199     # sieges, defending: wall units shift to the attacked face (1)
+const S_WALL_SHIFT := 199      # sieges, defending: idle wall missile units shift to the stretches by the attacked gate (1; was Skilled's SK_WALL_SHIFT)
 const SK_MIS_DOWN_PCT := 200   # ... wall missile units come down when the gate is below this % of its hit points
 const SK_BREACH := 201         # ... reserves counter-charge the breach (1)
 const SK_SALLY_R := 202        # ... sally against an isolated attacker this close to a gate (0: never)
@@ -270,14 +270,27 @@ const S_ESC_REPLY := 213       # defenders send a foot unit up against ladder me
 const S_RAM_WAIT := 214        # the ram waits for the gate's towers to be silenced at most this long into the approach
 const S_LADDER_WALLS := 215    # with working artillery, ladders only against walls of this level or more (no artillery: any)
 # Street fights (docs/AI.md 14; units do not pass through each other).
-const S_BREACH_HOLD := 216     # defenders hold the inside of a breached gate: foot units along the wall either side (1) or not (0)
-const S_BREACH_LAT := 217      # ... their posts this far along the wall from the gate's middle
-const S_BREACH_REACT := 218    # ... they attack attackers this close to their post
-const S_GUARD_JOIN := 219      # ... and the guards of gates with no attacker this near come to the breach (0: they stay)
+# Sieges, defending: the layout at the attacked gate (docs/AI.md 16, part 2c;
+# ids 216-219 were part 2a's Skilled breach hold, folded into it).
+const S_MOUTH := 216           # the foot reserve stacks up in the attacked gate's inner mouth, plaza reserve behind (1) or the old reserves (0)
+const S_MOUTH_IN := 217        # ... the front's anchor this far inside the wall's inner face
+const S_MOUTH_REACT := 218     # ... units of the stack attack attackers (inside the gate's outer face) this close to their post
+const S_GUARD_JOIN := 219      # ... the guards of gates with no attacking foot this near (and not hit) join the stack (0: they stay)
 # Siege equipment as objects, shut inner gates (docs/AI.md 15).
 const S_LADDER_FOLLOW := 220   # attacking infantry sent up a planted ladder set after its own party
 const S_CIT_WAIT := 221        # attackers before a shut gate nobody can hurt wait this far from it
-const N_KNOBS := 222
+const S_READ_R := 222          # the attacked gate read from the field: attacking foot within this of a gate, batteries' / the ram's / ladders' gate (0: only once it is hit or open)
+const S_READ_PCT := 223        # ... once that gate has at least this % of the attackers' strength ...
+const S_READ_TICKS := 224      # ... for this long (hit or open: at once)
+const S_MOUTH_W := 225         # the stack's front unit stands this wide across the gateway's inner end
+const S_PLAZA_REACT := 226     # the plaza reserve attacks attackers within the plaza's radius + this
+const S_ROT_PCT := 227         # the front is relieved by the next unit of the stack below this % of its type's morale (0: never)
+const S_SHUT_EMPTY := 228      # an open gate with no unit of ours in its mouth is shut, a sally's behind it (1) or only with attackers near (0)
+const S_TOKEN_MEN := 229       # a quiet gate keeps a rider as its token, else its guard if at most this many men
+const S_MOUTH_FRONTS := 230    # the stack's front: this many units side by side across the gateway's inner end
+const S_MOUTH_BACK := 231      # ... standing this much further in while the gate is shut (out of the shots at it)
+const S_ROT_LULL := 232        # ... the front is relieved only between waves, not fighting (1), or only while it fights (0)
+const N_KNOBS := 233
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
@@ -431,10 +444,6 @@ const KNOBS: Array = [
 	[S_ESC_REPLY, 0, 1, 1],
 	[S_RAM_WAIT, 0, 0, 900],
 	[S_LADDER_WALLS, 1, 2, 2],
-	[S_BREACH_HOLD, 0, 0, 1],
-	[S_BREACH_LAT, 14 * M, 14 * M, 14 * M],
-	[S_BREACH_REACT, 22 * M, 22 * M, 22 * M],
-	[S_GUARD_JOIN, 0, 0, 120 * M],
 	[S_LADDER_FOLLOW, 0, 1, 1],
 	[S_CIT_WAIT, 50 * M, 50 * M, 50 * M],
 	[S_STORM_R, 45 * M, 45 * M, 45 * M],
@@ -477,6 +486,22 @@ const KNOBS: Array = [
 	[S_CIT_SHUT_R, 25 * M, 25 * M, 25 * M],
 	[S_CIT_REACT, 8 * M, 8 * M, 8 * M],
 	[S_CIT_OUTNUMBER_PCT, 200, 100, 100],
+	# The layout at the attacked gate (part 2c).
+	[S_MOUTH, 0, 1, 1],
+	[S_MOUTH_IN, 2 * M, 2 * M, 2 * M],
+	[S_MOUTH_REACT, 24 * M, 24 * M, 24 * M],
+	[S_GUARD_JOIN, 0, 120 * M, 120 * M],
+	[S_READ_R, 0, 220 * M, 260 * M],
+	[S_READ_PCT, 0, 50, 35],
+	[S_READ_TICKS, 0, 100, 30],
+	[S_MOUTH_W, 20 * M, 20 * M, 20 * M],
+	[S_PLAZA_REACT, 20 * M, 20 * M, 20 * M],
+	[S_ROT_PCT, 0, 40, 60],
+	[S_SHUT_EMPTY, 0, 1, 1],
+	[S_TOKEN_MEN, 60, 60, 60],
+	[S_MOUTH_FRONTS, 1, 1, 1],
+	[S_MOUTH_BACK, 0, 0, 20 * M],
+	[S_ROT_LULL, 0, 0, 1],
 	# Behaviours a level switches off (Average: on, as before).
 	[CLEAR_SPOT, 0, 1, 1],
 	[MIS_SKIRM, 0, 1, 1],
@@ -530,7 +555,7 @@ const KNOBS: Array = [
 	[SK_STORM_STAGGER, 0, 0, 1],
 	[SK_FEINT, 0, 0, 1],
 	[SK_WALL_ART, 0, 0, 0],
-	[SK_WALL_SHIFT, 0, 0, 1],
+	[S_WALL_SHIFT, 0, 1, 1],
 	[SK_MIS_DOWN_PCT, 0, 0, 25],
 	[SK_BREACH, 0, 0, 1],
 	[SK_SALLY_R, 0, 0, 60 * M],

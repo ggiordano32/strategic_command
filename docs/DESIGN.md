@@ -1553,7 +1553,8 @@ town went through the defenders in the streets and a street fight was
 over as soon as it started ("cities must be worth defending", part 2a).
 Code: "unit footprints" in `sim/battle_sim.gd` (`_build_occ`, `_occ_probe`,
 `_anchor_step`), `_slots_off_enemy`, `place_clear`; `sim/siege_ai.gd`
-`_breach_hold` / `_guards_join`. Everywhere (field and city maps).
+`_breach_hold` / `_guards_join` (since replaced by the defender layout,
+below). Everywhere (field and city maps).
 - **Footprints.** At the start of each tick's unit update every ready unit
   on the ground (not routing, not on a wall, a stair or its ladders, not a
   tower's engine) marks its footprint in the 4 m cells of the soldier
@@ -1615,6 +1616,26 @@ Code: "unit footprints" in `sim/battle_sim.gd` (`_build_occ`, `_occ_probe`,
   round only where a free cell lies 4 m on). (An earlier build that probed
   the front corners along the step instead of across the facing let the
   riders slip round by the ring road and take the plaza.)
+- **Defender layout (part 2c, 2026-10-08).** The settlement AI now uses
+  the narrow end (docs/AI.md 16): once it reads the attacked gate from the
+  field (batteries' and the ram's targets, ladders, attacking foot massing
+  before it; Easy keeps the old reserves), the defenders' foot stack up in
+  that gate's inner mouth, the front unit across the gateway's inner end
+  facing out and the rest behind it, ready to fall on anything that comes
+  out past it; the guards of the quiet gates join the stack (a rider or a
+  small guard left as each gate's token, a unit sent back if a second
+  attack develops there); the riders and the stack's tail hold the plaza
+  and counter-attack anyone reaching it; wall archers keep to the stretches
+  over the gate; a tired front is relieved by the unit behind it (Average
+  while it fights, Skilled between waves); open gates with nobody in their
+  mouth are shut, a sally's behind it. One rule changed with it: a
+  defending unit that routs inside the walls runs to the inside of the shut
+  gate farthest from the enemy instead of along the street paths to its
+  map edge, which had led routers out through the breach into the
+  attackers queuing there (`BattleSim.ROUT_INWARD`, a lever like the wall
+  levers). Equal-force walls 1 went from 80-100 % attacker wins to 30-60 %
+  (10 seeds; 46-60 % over 30); walls 2-3 now go to the defender 80-100 %
+  of the time, below their targets (docs/STATUS.md item 4).
 
 ## 5. Networking
 

@@ -43,6 +43,7 @@ anti-cheat and original art only if it proves fun.
 | Battle speed slider (2026-10-08): the speed button ("1x") opens a popover with a labelled slider, 0.25x-4x in quarter steps (`Lockstep.SPEED_Q_MIN..MAX` = 1..16; `SPEED_QS` is now the tick labels / key steps 0.25, 0.5, 1, 2, 3, 4), live value label, 30 px handle; drags never pan the map, a tap outside closes it. Solo: applies while dragging. Co-op / head-to-head: the release is the speed vote (`C_SPEED`, nothing applied locally); the chip reads "Rome proposes 2.5x — Accept / Decline". Lockstep's command rule widened from the four old steps to 1..16 (out of range is rejected); hashed state unchanged, but the rules hash changes | Built 2026-10-08, **not committed**; check_scripts, input_test (slider drag / value / keys), lockstep_test (2.5x vote A→B, hash-equal), custom_battle_test; screenshot `docs/screenshots/speed_slider_phone.png`; not yet played on phones |
 | Gifting cities and money between co-op players (item 4c, 2026-10-08): orders `gift_region` (free: at resolution; priced: an offer), `buy_region` (offer to buy the ally's city), `gift_money`, `accept_offer` / `decline_offer`; a priced deal is a two-turn handshake in the existing `proposals` list (new keys kind / r / price, no format bump), checks run again at acceptance (still owned, no army of the giver in the city, treasury covers it); region panel "Gift to <ally>" with a price, Diplomacy under the ally: Offer money, Offer to buy, incoming offers Accept / Decline; see CAMPAIGN.md "Gifts between players" | Built 2026-10-08, **not committed**; campaign_test (free gift, handshake accepted / declined / lapsed, army and treasury refusals at acceptance, buyer's offer, money, AI refused, both submission orders hash-equal, JSON round trip), windowed campaign_input_test (gift / Cancel / Undo, the disabled button with its reason, Offer money / Offer to buy / Cancel, Accept / Undo), campaign_solo, online_e2e, check_scripts; campaign_sim 6 seeds x 60 turns hashes unchanged (056bfc4c 7e5be9e9 4ddf4d22 27da886c 892fc13f 01cad53e); the rules hash changes (online clients must update); not yet played on phones |
 | 6. Depth (siege towers, tech, more factions) | Not started |
+| Cities worth defending, part 2c (defender layout at the attacked gate; routers run inward) | Built 2026-10-08, committed; determinism (new `--only=layout`), lockstep, custom_battle_test, check_scripts pass; campaign_sim 6x60 hashes unchanged; field battles unchanged; not yet played on phones |
 
 ### What exists
 
@@ -997,6 +998,25 @@ fixes are all landed; see "Where we are"):
       throwers over the walls at the army inside. Then siege equipment
       over turns (ladders / towers after 2-3 turns), suburbs and river
       sites, sallies from inside.
+      **Part 2c done 2026-10-08: the defender layout** (AI.md 16,
+      DESIGN.md "Unit blocking and street fights"): the attacked gate read
+      from the field, the foot stacked in its inner mouth (front across
+      the gateway, the rest behind and falling on whatever comes out),
+      quiet gates' guards to the stack (tokens left, re-garrison on a
+      second attack), plaza reserve, relief (Average while fighting under
+      40 %, Skilled between waves; Easy keeps the old reserves), gates
+      shut with nobody in their mouth; sim rule: defending routers inside
+      the walls run to the shut gate farthest from the enemy
+      (`ROUT_INWARD`), not out through the breach. Fair sieges (both
+      Average, 10 seeds, attacker wins ladders + ram / artillery only;
+      HEAD -> now): ring walls 1 100 / 100 -> 40 / 30 %, walls 2 50 / 20
+      -> 20 / 20 %, walls 3 20 / 40 -> 0 / 0 %; polis walls 1 80 / 100 ->
+      50 / 60 % (20 % draws each), walls 2 50 / 40 -> 20 / 0 %, walls 3
+      20 / 0 -> 10 / 0 % (30 seeds walls 1: ring 46 / 46, polis 53 / 60 %).
+      **Open:** walls 2-3 now far below their targets (50 % / 25 %): the
+      attackers lose 200-300 men at the wall and can no longer win the
+      street; wall levers alone do not restore it (AI.md 16). Easy
+      defenders do about as well as Average in the polis.
    3. **Fit the formula** to the measured siege results across force
       ratios (a walls term for the armies inside is a prediction of the
       sim, not a bonus), turn the campaign AI's shelter knob back on and

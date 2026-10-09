@@ -85,6 +85,15 @@ extends SceneTree
 ## never behind it in the gateway, the plaza clock never starts); each
 ## identical on repeat and across snapshot / restore. The flat-map golden
 ## digests of skirmish and bench_2000 were re-recorded for it.
+## The defenders' layout at the attacked gate (2026-10-08, part 2c;
+## "--only=layout"): an equal-force walls-1 ring town, both sides Average:
+## the stack's front at the attacked gate's inner mouth before the gate
+## falls, the quiet gates' guards at their places in the stack, the plaza
+## reserve counter-attacking; identical on repeat and across snapshot /
+## restore. Settlement battles hash differently (the layout, defenders'
+## routers running to a shut gate inside instead of out by the breach);
+## field battles and the golden digests are unchanged. "siege_city@ai~ea"
+## runs 5,000 ticks (the Easy attackers get into the town later).
 ## Exits 0 on success, 1 on failure.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -94,6 +103,7 @@ const Terrain := preload("res://sim/terrain.gd")
 const SiegeAI := preload("res://sim/siege_ai.gd")
 const BattleAI := preload("res://sim/battle_ai.gd")
 const FM := preload("res://sim/fixed_math.gd")
+const AIP := preload("res://sim/ai_profile.gd")
 
 const M := 1024
 
@@ -105,7 +115,7 @@ const RUNS := {"skirmish@0": 1500, "battle_2000@0": 1800, "bench_2000": 2500, "t
 	"ai_hill": 1800, "ai_ridge": 600, "test_woods": 1200, "siege_village@ai": 3500,
 	"siege_city@ai": 4200, "siege_hill@ai": 3000, "gate_ops": 1800,
 	"siege_castrum@ai": 3600, "siege_polis@ai": 4500, "siege_punic@ai": 6500, "siege_oppidum@ai": 3600,
-	"cit_ops": 3200, "bench_2000~ee": 2500, "bench_2000@4~ea": 3000, "siege_city@ai~ea": 4200,
+	"cit_ops": 3200, "bench_2000~ee": 2500, "bench_2000@4~ea": 3000, "siege_city@ai~ea": 5000,
 	"siege_city@ai~ae": 4200, "bench_2000~ss": 2500, "bench_2000@4~sa": 3000, "ai_woods~as": 2500,
 	"siege_city@ai~sa": 4200, "siege_city@ai~as": 4200, "siege_eq_ring3": 4500, "siege_eq_polis2~sa": 4500}
 
@@ -126,6 +136,11 @@ var _ok := true
 func _init() -> void:
 	_check_deploy()
 	if "--only=deploy" in OS.get_cmdline_user_args():
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
+	_check_layout()
+	if "--only=layout" in OS.get_cmdline_user_args():
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
@@ -227,7 +242,7 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 		"siege_village@ai":
 			need = ["paths", "clamp", "squeeze", "veg_slow"]
 		"siege_city@ai":
-			need = ["paths", "clamp", "squeeze", "gate_art", "gate_broken", "obs_lof", "wall_cover"]
+			need = ["paths", "clamp", "squeeze", "gate_art", "gate_broken", "obs_lof", "wall_cover", "layout"]
 		"siege_hill@ai":
 			# (Walls 3 since the tower engines: the batteries batter the towers
 			# by the gate first, so the gate stands past the run, and the
@@ -239,11 +254,15 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 		"siege_castrum@ai":
 			need = ["paths", "clamp", "gate_broken", "wall_cover", "obs_lof"]
 		"siege_polis@ai":
-			need = ["paths", "gate_broken", "stair_down", "gate_close", "obs_lof"]
+			# (Part 2c: the defenders hold the gate's mouth and their wall
+			# units stay up, nobody falls back to the acropolis within the
+			# run: stair moves and the shut gate are cit_ops' and punic's.)
+			need = ["paths", "gate_broken", "obs_lof", "layout"]
 		"siege_punic@ai":
 			need = ["paths", "gate_broken", "stair_down", "gate_art", "gate_close"]
 		"siege_oppidum@ai":
-			need = ["paths", "gate_broken", "gate_art", "stair_rout"]
+			# (Part 2c: no wall unit routs off its stretch within the run.)
+			need = ["paths", "gate_broken", "gate_art", "layout"]
 		"cit_ops":
 			need = ["stair_down", "stair_up", "gate_close", "gate_open", "gate_hack", "gate_broken", "capture"]
 		"bench_2000~ee", "bench_2000@4~ea", "siege_city@ai~ea", "siege_city@ai~ae":
@@ -517,7 +536,8 @@ func _run(scen: String, p_seed: int, ticks: int) -> Dictionary:
 		"stair_down": sim.stat_stair_down, "stair_up": sim.stat_stair_up, "stair_rout": sim.stat_stair_rout,
 		"ditch": sim.stat_ditch, "sea_exit": sim.stat_sea_exit, "mistakes": _mistakes(sim),
 		"ladder_up": sim.stat_ladder_up, "ram_blows": sim.stat_ram_blows, "tower_hits": sim.stat_tower_hits,
-		"unbar": sim.stat_unbar, "pickups": sim.stat_pickups, "planted": sim.stat_planted, "drops": sim.stat_drops}
+		"unbar": sim.stat_unbar, "pickups": sim.stat_pickups, "planted": sim.stat_planted, "drops": sim.stat_drops,
+		"layout": sim.stat_ai[SiegeAI.A_MOUTH] + sim.stat_ai[SiegeAI.A_PLAZA]}
 	if not sim.ai_mem.is_empty():
 		stats["skilled"] = _skilled(sim)
 	print("  %s seed %d: alive %d/%d after %d ticks, winner %d" % [scen, p_seed,
@@ -1078,6 +1098,83 @@ func _check_shut_inner_gate() -> void:
 		return
 	print("PASS shut inner gate: the acropolis shut at tick %d; hacked 0; man-ticks within reach of a man behind a wall %d; the ram sent at it at tick %d (%d blows); winner %d at %d; identical on repeat and across snapshot / restore" % [
 		a["shut"], a["across"], a["ram_at"], a["blows"], a["winner"], a["tick"]])
+
+
+# ------------------------------------------------------ defender layout ---
+# The defenders' layout at the attacked gate (docs/AI.md 16, part 2c).
+
+## An equal-force walls-1 ring town (fair siege seed 1, artillery only),
+## both sides Average: the attacked gate is read and a unit of the stack
+## stands at its inner mouth before the gate falls, the guards of the quiet
+## gates join the stack (at their places in it), the plaza reserve
+## counter-attacks an attacker; hashes every tick, the repeat equal, copies
+## restored at three points run on equal.
+func _layout_run(snap_check: bool) -> Dictionary:
+	var sc := Scenarios.fair_siege(741, 1, 4, {})
+	var sim := BattleSim.new()
+	sim.setup(sc, 53197)
+	var hashes := PackedInt64Array()
+	var guards := {}
+	var ag := -1
+	var mouth_t := -1
+	var fall_t := -1
+	var arrived := {}
+	var plaza_t := -1
+	var snap_bad := 0
+	while sim.tick < 4500 and sim.winner < 0:
+		sim.step()
+		hashes.append(sim.state_hash())
+		if snap_check and (sim.tick == 600 or sim.tick == 2000 or sim.tick == 4000):
+			snap_bad += _snap_diverges(sim, sc, 53197, 120)
+		if sim.tick == 20:
+			for u in sim.n_units:
+				if sim.u_side[u] == 1 and sim.u_ai[u] == SiegeAI.A_GATE:
+					guards[u] = sim.u_ai_y[u]
+		if ag < 0:
+			ag = sim.ai_gate[1]
+			if ag < 0:
+				continue
+		var kn: PackedInt32Array = AIP.of(sim, 1)
+		if fall_t < 0 and sim.g_state[ag] != BattleSim.GATE_CLOSED:
+			fall_t = sim.tick
+		if fall_t < 0 and mouth_t < 0:
+			var fp: Vector3i = SiegeAI._mouth_front(sim, ag, kn, 0)
+			for u in sim.n_units:
+				if sim.u_side[u] == 1 and sim.u_state[u] == 0 and sim.u_ai[u] == SiegeAI.A_MOUTH \
+						and sim.u_ai_y[u] == 0 and FM.approx_len(sim.u_ax[u] - fp.x, sim.u_ay[u] - fp.y) < 6 * M:
+					mouth_t = sim.tick
+		for u in guards:
+			if int(guards[u]) == ag or arrived.has(u) or sim.u_state[u] != 0 or sim.u_ai[u] != SiegeAI.A_MOUTH:
+				continue
+			var pp: Vector3i = SiegeAI._mouth_post(sim, u, ag, kn)
+			if FM.approx_len(sim.u_ax[u] - pp.x, sim.u_ay[u] - pp.y) < 12 * M:
+				arrived[u] = sim.tick
+		if plaza_t < 0:
+			for u in sim.n_units:
+				if sim.u_side[u] == 1 and sim.u_state[u] == 0 and sim.u_ai[u] == SiegeAI.A_PLAZA \
+						and sim.u_order[u] == BattleSim.O_ATTACK and sim.u_target[u] >= 0 and sim.u_side[sim.u_target[u]] == 0:
+					plaza_t = sim.tick
+	return {"hashes": hashes, "ag": ag, "mouth": mouth_t, "fall": fall_t, "arrived": arrived.size(),
+		"arrived_t": str(arrived.values()), "plaza": plaza_t, "snap_bad": snap_bad, "winner": sim.winner, "tick": sim.tick,
+		"rot": sim.stat_aic[AIP.N_COUNTERS + AIP.C_ROTATION]}
+
+
+func _check_layout() -> void:
+	var a := _layout_run(true)
+	var b := _layout_run(false)
+	if a["hashes"] != b["hashes"]:
+		_fail("layout: the repeat diverged")
+		return
+	if int(a["snap_bad"]) > 0:
+		_fail("layout: restored copies diverged (%d ticks)" % int(a["snap_bad"]))
+		return
+	a.erase("hashes")
+	if int(a["ag"]) < 0 or int(a["mouth"]) < 0 or int(a["fall"]) < 0 or int(a["mouth"]) >= int(a["fall"]) \
+			or int(a["arrived"]) < 2 or int(a["plaza"]) < 0:
+		_fail("layout: %s" % str(a))
+		return
+	print("PASS layout: gate %d read, the stack's front at its inner mouth at tick %d (the gate fell at %d); %d quiet-gate guards at their places in the stack (ticks %s); the plaza reserve attacked at tick %d; %d reliefs; winner %d at %d; identical on repeat and across snapshot / restore at 600, 2000, 4000" % [
+		a["ag"], a["mouth"], a["fall"], a["arrived"], a["arrived_t"], a["plaza"], a["rot"], a["winner"], a["tick"]])
 
 
 # ------------------------------------------------------------- blocking ---

@@ -1215,3 +1215,161 @@ sends that many extra infantry up each planted set; `S_LADDER_AFTER` is
 300 ticks (carrying is slow); `S_CIT_WAIT`: at a shut walls-2/3 gate with
 no ram the AI waits 50 m out instead of hacking (iron gates ignore
 swords at every level). Skilled's wait-for-towers rule is unchanged.
+
+## 16. Defender layout (part 2c, 2026-10-08)
+
+Why (part 2a's traces): equal-force walls 1 went to the attacker 80-100 %
+of the time. About 300 defender men guarded the three gates nobody
+attacked and never fought; the reserves marched down the main street into
+attackers already spread out inside the gate; the plaza capture then broke
+everyone. Code: `sim/siege_ai.gd`, section "defenders: the layout"
+(`_layout` and what it calls, `_mouth_unit`, `_plaza_unit`,
+`_close_gates`); one sim rule in `sim/battle_sim.gd` (`_rout_gate`, below).
+
+- **Reading the attacked gate** (`_read_gate`, the defending side's
+  `ai_gate`): at once for a gate hit in the last 5 s or open / broken with
+  attackers within 100 m; otherwise (`S_READ_R` > 0) the gate the attackers'
+  army points at (`_field_gate`): every ready attacking unit counts its
+  strength for the outer gate nearest it within `S_READ_R` (a battery or
+  foot ordered at a gate: that gate, twice; a unit carrying the ram or
+  ladders: the gate nearest where it goes, twice; each planted ladder set a
+  quarter of the army for the gate nearest it), and a gate holding
+  `S_READ_PCT` % of the army for `S_READ_TICKS` is read. A gate still under
+  attack stays the attacked one. In the walls-1 fair sieges Average reads
+  it at 10 s; the gate falls 50-230 s later. `ai_lay` (per side: the gate the field
+  points at and since when) is new hashed state on settlement maps.
+- **The stack** (`A_MOUTH` 34, `u_ai_x` the gate, `u_ai_y` the place; was
+  part 2a's `A_BREACH`): at the read, the reserve's foot and the attacked
+  gate's guard, nearest first (spears count 10 m, light foot 40 m further,
+  and 1 m per man under 100: heavy foot and pikes of full strength in
+  front). Place 0, the front, stands `S_MOUTH_IN` inside the wall's inner
+  face on the gate's axis, `S_MOUTH_W` wide, facing out (Skilled
+  `S_MOUTH_BACK` further in while the gate is shut, out of the shots at it);
+  its men fight whoever comes through the gateway (it is never given an
+  attack order: an attack would draw it into the gateway). The others stand
+  one behind the other inward (each unit's depth + 3 m; where that is not
+  open ground, along the way from the gate to the plaza) and attack the
+  nearest attacker out of the gateway (inside the wall's inner face) within
+  `S_MOUTH_REACT` of the front's post. Units that rally, come down from a
+  wall or back from a wall reply join the tail. Wall units over the gate
+  stay up while the front stands (they came down with attackers within 40 m
+  in the town); idle wall missile units shift to the stretches by the gate
+  (`S_WALL_SHIFT`, Skilled's old `SK_WALL_SHIFT`, now without Skilled
+  memory: `u_ai_x` = stretch + 1 in transit).
+- **Quiet gates** (`_pull_guards`, `S_GUARD_JOIN`): a gate not hit for 30 s
+  with no attacking foot within `S_GUARD_JOIN` nearer it than any other
+  outer gate is quiet; its guard joins the stack's tail and leaves a token
+  (`A_GATE`, `u_ai_x` 1): a rider of ours not fighting, else the guard
+  itself if it has at most `S_TOKEN_MEN` men. A threatened gate with no
+  guard but a token gets the stack's last unit (third place or later, not
+  fighting) back. In the ring fair siege all three guards (280 men) leave
+  at the read (10 s): two stand in their places in the stack 25-35 s
+  later, the last (the stack's tail) holds the plaza, the riders are the
+  tokens.
+- **Plaza reserve** (`A_PLAZA` 35): the riders (not tokens) and, with none,
+  the tail of a stack of three or more; they attack any attacker within
+  the plaza's radius + `S_PLAZA_REACT` (the capture clock never runs while
+  one stands) and otherwise hold the plaza.
+- **Relief** (`_relieve`): a front whose morale is under `S_ROT_PCT` % of
+  its type's, the unit behind it 15 points above that: the unit behind
+  becomes the front and walks up through it (friends pass at half speed, so
+  the gateway is never open); the old front (`u_ai_y` -1) holds until its
+  relief stands at the post or fights, then goes to the plaza (a foot unit
+  holding the plaza, fresher, takes the stack's tail) or to the tail.
+  Average does it while the front fights (`S_ROT_LULL` 0); Skilled only
+  between waves (`S_ROT_LULL` 1), at 60 %.
+- **Gates** (`_close_gates`, `S_SHUT_EMPTY`): an open outer gate with no
+  unit of ours within 16 m of its faces is shut (not only with attackers
+  within `S_CLOSE_R`); a Skilled sally's gate is shut once the party is out
+  of the town and the gate, and a shut gate is opened for units of ours
+  back at it with no attacker within 20 m of it and no sally out.
+- **Folded part 2a knobs**: ids 216-219 are now `S_MOUTH`, `S_MOUTH_IN`,
+  `S_MOUTH_REACT`, `S_GUARD_JOIN` (`S_BREACH_LAT` / `S_BREACH_REACT` and
+  the posts either side of the gate are gone; the `--knob=a:216=1` runs in
+  section 14 refer to the old meaning). With the layout, Skilled's
+  `SK_MIS_DOWN_PCT` (wall missiles down before the gate falls) and its own
+  wall shift do not run; `SK_BREACH` finds no reserves to move.
+- **Sim rule: routers inside the walls** (`BattleSim._rout_gate`, lever
+  `ROUT_INWARD` 1, `--tune=ROUT_INWARD=0` for the old rule): a defending
+  unit routing inside the walls runs to the inside of the shut outer gate
+  on its own ground farthest from any enemy (chosen again once a second),
+  not toward its map edge; with no shut gate, or enemies within 30 m of
+  every one, as before. Before, the street paths to the edge led routers
+  out through the breach into the attackers queuing there (most of the
+  defenders' dead were men cut down from behind); they rally there or are
+  caught inside. Any defending side (AI or player), every settlement map.
+
+Knobs (`sim/ai_profile.gd`; personality offsets 0):
+
+| Knob | E / A / S | What |
+|---|---|---|
+| `S_MOUTH` (216) | 0 / 1 / 1 | the layout (Easy keeps the old reserves) |
+| `S_MOUTH_IN` (217) | 2 / 2 / 2 m | the front's anchor this far inside the wall's inner face |
+| `S_MOUTH_REACT` (218) | 24 / 24 / 24 m | the stack's other units attack attackers out of the gateway this close to the front's post |
+| `S_GUARD_JOIN` (219) | 0 / 120 / 120 m | quiet gates' guards join the stack (quiet: no attacking foot this near, nearer it than another gate) |
+| `S_READ_R` (222) | 0 / 220 / 260 m | the attacked gate read from the field within this (0: only once hit or open) |
+| `S_READ_PCT` (223) | 0 / 50 / 35 | ... once that gate has this % of the attackers' strength ... |
+| `S_READ_TICKS` (224) | 0 / 100 / 30 | ... for this long |
+| `S_MOUTH_W` (225) | 20 / 20 / 20 m | the front's frontage |
+| `S_PLAZA_REACT` (226) | 20 / 20 / 20 m | the plaza reserve attacks attackers within the plaza's radius + this |
+| `S_ROT_PCT` (227) | 0 / 40 / 60 | the front is relieved below this % of its type's morale (0: never) |
+| `S_SHUT_EMPTY` (228) | 0 / 1 / 1 | open gates with nobody of ours in the mouth are shut (sallies: behind them) |
+| `S_TOKEN_MEN` (229) | 60 / 60 / 60 | a quiet gate's guard this small stays as its token when no rider can |
+| `S_MOUTH_FRONTS` (230) | 1 / 1 / 1 | units side by side at the front |
+| `S_MOUTH_BACK` (231) | 0 / 0 / 20 m | the stack stands this much further in while the gate is shut |
+| `S_ROT_LULL` (232) | 0 / 0 / 1 | relief only between waves (1) or only while the front fights (0) |
+| `S_WALL_SHIFT` (199) | 0 / 1 / 1 | idle wall missile units shift to the stretches by the attacked gate |
+
+Measured (`tests/matchups.gd --only=fair-sieges`, both Average, 10 seeds;
+attacker wins, draws, mean / max minutes; HEAD 7cc3fd8 -> now):
+
+| City | Ladders + ram | Artillery only |
+|---|---|---|
+| ring, walls 1 | 100 % (7.2 / 8.0) -> 40 % (8.3 / 11.0) | 100 % (7.1 / 8.0) -> 30 % (8.2 / 11.4) |
+| ring, walls 2 | 50 % (8.8 / 10.7) -> 20 % (9.0 / 12.8) | 20 % (9.7 / 12.0) -> 20 % (9.8 / 12.1) |
+| ring, walls 3 | 20 %, 10 % draws (10.1 / 15.0) -> 0 % (9.5 / 11.7) | 40 % (10.3 / 14.6) -> 0 % (10.6 / 13.7) |
+| polis, walls 1 | 80 %, 20 % draws (11.0 / 15.0) -> 50 %, 20 % draws (11.5 / 15.0) | 100 % (10.0 / 14.5) -> 60 %, 20 % draws (10.2 / 15.0) |
+| polis, walls 2 | 50 % (11.0 / 13.9) -> 20 % (9.0 / 11.4) | 40 %, 20 % draws (10.7 / 15.0) -> 0 %, 10 % draws (9.1 / 15.0) |
+| polis, walls 3 | 20 %, 10 % draws (11.9 / 15.0) -> 10 % (9.5 / 10.7) | 0 %, 50 % draws (11.4 / 15.0) -> 0 % (9.9 / 12.8) |
+
+Walls 3 with a 30 minute limit: ring 20 % (10 % draws) / 40 % -> 0 / 0 %,
+polis 30 % / 10 % (40 % draws) -> 10 / 0 % (nothing reaches 15 minutes now:
+the attackers withdraw). Over 30 seeds, walls 1: ring 46 / 46 %, polis
+53 / 60 %. Defender skill at walls 1 (Average attackers; 10 seeds, ladders
++ ram / artillery only; 30 seeds in brackets): Easy ring 80 / 70 % (73 /
+70), polis 20 / 20 % (36 / 50); Average as above; Skilled ring 0 / 10 %,
+polis 50 / 30 %.
+
+Findings (30-seed runs at walls 1 unless said):
+- The layout without the router rule: ring 70 / 100 %, polis 80 / 80 %
+  (10 seeds); routers running out through the breach were most of the
+  defenders' dead. With it but without the layout (`--knob=a:216=0`): ring
+  93 / 93 %, polis 60 / 70 %.
+- A unit at the front fights a column of several attacking units that
+  pass through each other in the gateway: in a scripted probe one heavy
+  unit of 100 at the mouth breaks even against one attacking heavy unit,
+  and routs first against two or four. The stack's other units therefore
+  attack whatever comes out of the gateway (`S_MOUTH_REACT`; ring walls 1
+  went from 53-73 % to 20-26 % with it, before the other choices below).
+- A relief while the front fights costs more than it gains (the old
+  front's men turn away and take free blows, the relief arrives through
+  it): ring 50 / 53 % with Average's swap, 20 / 30 % with no relief at all,
+  26 / 30 % relieving only between waves. Average keeps the swap (the
+  brief), Skilled relieves between waves; this is most of the Skilled /
+  Average gap in the ring.
+- Standing back while the gate is shut (Skilled) keeps the front out of
+  the shots at the gate: ring 26 / 20 % with it for Average, 50 / 53 %
+  without.
+- Tried and dropped: two units side by side at the front (ring 66 / 70 %,
+  polis 66 / 50 %); the stack waiting beside the gate along the wall
+  instead of in a column (16-32 m out: equal or worse, and in reach of the
+  attackers' archers at the breach); the relieved front stepping aside
+  along the wall; Average's citadel fallback made later (no change).
+- Walls 2-3 now go to the defender far more often than their targets
+  (about 50 % and 25 %): the attackers lose 200-300 men at the wall before
+  the breach (towers, wall archers) and can no longer win the street. The
+  wall levers are not what holds them: walls 2-3 with walls-1 values
+  (no towers, cover 25 %, no range bonus, gate hit points 100 %) were
+  still 0-10 % (ring) and 20-30 % (polis). Without the router rule ring
+  walls 2-3 were 80 / 40 % and 20 / 0 %. Not tuned further (attackers
+  unchanged; see docs/STATUS.md item 4).

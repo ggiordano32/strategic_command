@@ -107,7 +107,8 @@ func _init() -> void:
 		elif a.begins_with("--tune="):
 			# Tuning aid: --tune=NAME=v0,v1,v2,v3 sets a siege lever of BattleSim
 			# (static: WALL_COVER, WALL_RANGE_PCT, GATE_HACK_BY_WALLS, GATE_HP_PCT,
-			# LADDER_TICKS, TOWERS_MAX, TOWERS_STONE; RAM_DMG one value).
+			# LADDER_TICKS, TOWERS_MAX, TOWERS_STONE; RAM_DMG and ROUT_INWARD one
+			# value).
 			_tune(a.get_slice("=", 1), a.get_slice("=", 2))
 		elif a.begins_with("--knob="):
 			# Tuning aid: --knob=LEVEL:ID=VALUE overrides one knob of a level
@@ -258,6 +259,8 @@ func _tune(name: String, vals: String) -> void:
 			BattleSim.TOWERS_STONE = arr
 		"RAM_DMG":
 			BattleSim.RAM_DMG = arr[0]
+		"ROUT_INWARD":
+			BattleSim.ROUT_INWARD = arr[0]
 		_:
 			push_error("unknown lever " + name)
 	print("TUNE %s = %s" % [name, str(arr)])

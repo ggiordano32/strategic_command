@@ -283,6 +283,7 @@ static var GATE_HP_PCT: Array[int] = [100, 100, 130, 130]   # gate hit points (%
 const RAM_REACH := 6 * M         # a ram's crew this close outside a closed gate's face works it ...
 const RAM_MEN := 6               # ... at least this many of them ...
 const RAM_WORK := 480            # ... man-ticks per blow (20 men: a blow every 2.4 s) ...
+static var ROUT_INWARD := 1     # defenders routing inside the walls run to the inside of the shut gate farthest from the enemy (1), or toward their map edge, out by any way (0)
 static var RAM_DMG := 160        # ... hit points per blow
 static var TOWERS_MAX: Array[int] = [0, 0, 6, 8]          # bolt-thrower towers by wall level ...
 static var TOWERS_STONE: Array[int] = [0, 0, 0, 2]        # ... and stone-thrower towers
@@ -492,6 +493,10 @@ var ai_t := PackedInt32Array([0, 0])
 var ai_hold := PackedInt32Array([-1, -1])  # tick the side began holding high ground, -1 not
 var ai_gate := PackedInt32Array([-1, -1])  # settlement maps: the gate a side's assault is aimed at
 var ai_cit := PackedInt32Array([0, 0])  # settlement maps: the defenders fell back into the citadel (1)
+## Settlement maps, defenders' layout (sim/siege_ai.gd _read_gate): per side
+## the gate the field points at that is not yet the read one (-1 none) and
+## the tick it began to (hashed on settlement maps).
+var ai_lay := PackedInt32Array([-1, 0, -1, 0])
 var ai_prog := PackedInt32Array([0, 0, 0])  # settlement maps: deaths + gate damage seen, tick it last changed, all-out (1)
 ## Deliberate mistakes (sim/ai_profile.gd M_*): per side * AIProfile.N_MISTAKES
 ## + M_*, the tick before which that mistake cannot be made again (0 none).
@@ -944,6 +949,7 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	ai_gate = PackedInt32Array([-1, -1])
 	ai_prog = PackedInt32Array([0, 0, 0])
 	ai_cit = PackedInt32Array([0, 0])
+	ai_lay = PackedInt32Array([-1, 0, -1, 0])
 	ai_mist = PackedInt32Array()
 	ai_mist.resize(2 * AIProfile.N_MISTAKES)
 	ai_mist.fill(0)
@@ -3562,6 +3568,21 @@ func _flee_step(u: int) -> void:
 		var fp := sea_exit(u_cx[u])
 		gx = fp.x
 		gy = fp.y
+	if ROUT_INWARD != 0 and u_side[u] == city_def and n_gates > 0 \
+			and (veg_bits(u_cx[u], u_cy[u]) & MapGen.V_URBAN) != 0:
+		var rg := -1
+		if u_pn[u] > 0 and (u + tick) % TICKS_PER_SECOND != 0:
+			# (The gate is chosen again once a second; meanwhile the one the
+			# path goes to, while it is still shut.)
+			for g in n_gates:
+				if g_ix[g] == u_pgx[u] and g_iy[g] == u_pgy[u] and g_state[g] == GATE_CLOSED and g_cit[g] == 0:
+					rg = g
+					break
+		if rg < 0:
+			rg = _rout_gate(u)
+		if rg >= 0:
+			gx = g_ix[rg]
+			gy = g_iy[rg]
 	u_ax[u] = u_cx[u]
 	u_ay[u] = u_cy[u]
 	var p := _path_point(u, gx, gy, true)
@@ -3571,6 +3592,27 @@ func _flee_step(u: int) -> void:
 	if d > 0:
 		u_flee_x[u] = dx * FM.TRIG_ONE / d
 		u_flee_y[u] = dy * FM.TRIG_ONE / d
+
+
+## A defending router inside the walls: the inside of the shut outer gate
+## on its own ground farthest from any enemy (not out through the breach
+## into the attackers); -1 none (no shut gate, or enemies within 30 m of
+## every one).
+func _rout_gate(u: int) -> int:
+	var piece := reach_at(u_cx[u], u_cy[u])
+	var best := -1
+	var bd := 30 * M
+	for g in n_gates:
+		if g_cit[g] != 0 or g_state[g] != GATE_CLOSED or reach_at(g_ix[g], g_iy[g]) != piece:
+			continue
+		var near := 1 << 30
+		for o in n_units:
+			if u_side[o] != u_side[u] and u_state[o] == U_READY:
+				near = mini(near, FM.approx_len(g_ix[g] - u_cx[o], g_iy[g] - u_cy[o]))
+		if near > bd:
+			best = g
+			bd = near
+	return best
 
 
 ## Tree depth along a flat shot from (x0, y0) to (x1, y1): the distance at
@@ -7780,6 +7822,7 @@ func state_hash() -> int:
 			ctx.update(ai_cit.to_byte_array())
 		if city_on != 0:
 			ctx.update(PackedInt64Array([cit_siege]).to_byte_array())
+			ctx.update(ai_lay.to_byte_array())
 		if obs_on != 0:
 			for arr in _stair_arrays():
 				ctx.update((arr as PackedInt32Array).to_byte_array())
