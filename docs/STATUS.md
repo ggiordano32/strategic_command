@@ -933,7 +933,35 @@ A tuning pass from playtest feedback (built, uncommitted):
 - bench_4000 (two armies a side) now runs ~10 min to a decision (2,000:
   ~5 min); the AI's second line and batteries could be looked at.
 
-## Next session (2026-10-08, 14:00)
+## Next session (2026-10-10, the co-op campaign)
+
+Where 2026-10-09 ended (build 20261009T124650Z live; everything up to
+8fea8b1 committed; the user pushes to origin himself):
+- **Landed today, in order:** siege part 2c (defender layout, routers
+  run inward); engines as equipment with crews as men + per-unit kills;
+  UI icon pass (both phases); ammunition kinds, fire, foraging, the
+  wagon; custom picker for all rows; camels and elephants; the melee fix
+  (ranks hold together, in-reach advance, pursuit as a unit move, flank /
+  rear by unit); missile cavalry and slingers; the general (no upkeep);
+  war dogs; siege towers; field works and the fortified camp (palisade,
+  no gates); light artillery. The rules hash changed many times: both
+  machines must reload before an online turn.
+- **For Friday:** set the campaign battle limit to 30 (field battles are
+  slower and less lethal since the melee fix; 15 min can draw). Manual
+  sieges at walls 2-3 at equal force are hard; bring artillery or
+  numbers. Nothing has been played on phones since the icon pass.
+- **Next (agreed):** mantlets / sheds (4f.4) when wanted; then the
+  rebalance block with the whole roster present: the tuning backlog
+  under "Where we are headed" (walls 1-3 AI sieges now 0-30 %, field
+  lethality and battle length, AI skill margins 60 / 68 %, missile feel,
+  every new row's numbers, the wrap rule at the anchor level, the AI
+  reading enemy works, the campaign AI's Workshop / Range build-up so it
+  fields wagons / scorpions / kinds). Then roads and rivers, shared
+  empire, audio, Proxmox, the sprite pipeline (West pack as its test).
+- **Open from playtests:** the co-op Ask-to-join flow unconfirmed; the
+  general's upkeep decision (none) is in; the Leave button fix is in.
+
+## Previous session notes (2026-10-08, 14:00)
 
 Where the evening of 2026-10-07 ended (build 20261008T010923Z live,
 server rebuilt with the battle "ask" / guest room changes):
