@@ -81,6 +81,7 @@ extends RefCounted
 ##                wagon it comes with (-1 none; docs/DESIGN.md "The
 ##                ammunition wagon")
 ##   str_pct      campaign: % of its price per man that counts as fighting
+##   upkeep_pct   campaign: % of the normal upkeep (price x UPKEEP_PCT) it costs a turn (generals 0)
 ##                strength (auto-resolve, the AI); a wagon's crew little
 ## Beasts (docs/DESIGN.md "Camels and elephants"; generic: any row may use them):
 ##   mount        what its men ride: 0 on foot, 1 horse, 2 camel, 3 elephant
@@ -174,7 +175,7 @@ const DEFAULTS := {
 	"crew": 0, "crew_min": 0, "m_kind": 0, "m_min": 0, "m_pierce": 0, "m_plough": 0,
 	"m_blast": 0, "m_fear": 0, "arc": 0, "traverse": 0, "deploy": 0, "e_hp": 0,
 	"climb": 15, "m_hgain": 0, "m_apex": 0, "m_reserve": 0, "m_refill": 0,
-	"fixed": 0, "m_ak": -1, "wagon": -1, "str_pct": 100,
+	"fixed": 0, "m_ak": -1, "wagon": -1, "str_pct": 100, "upkeep_pct": 100,
 	"mount": 0, "files0": 0, "acc": 4, "body_r": 0, "crew_shoot": 1, "woods_pct": 100,
 	"trample_n": 1, "trample_r": 1843, "trample_pct": 60, "crush": 0,
 	"scare_r": 0, "scare_pct": 100, "scare_mor": 0, "fear_r": 0, "fear_horse": 0, "fear_foot": 0,
@@ -971,6 +972,7 @@ const GENERAL: Array[Dictionary] = [
 		"turn": 16, "m_vuln": 120, "m_down": 9, "climb": 24,  # shock cavalry's
 		"cost": 40,         # 1,200 a unit: Guard Cavalry's 1,260 for half the men; the aura pays for the other half
 		"str_pct": 50,      # campaign strength: its riders count half its price (the rest is cmd_pct)
+		"upkeep_pct": 0,    # a general costs no upkeep (decided 2026-10-09; Rome 2 generals have none)
 		"cmd_r": 40 * 1024,  # 40 m: between the elephants' fear (25 m) and the rally's safe range (50 m)
 		"cmd_mor": 5,       # +5 a second: cancels one routing friend near (-5) or two elephants' fear on foot (-2 each)
 		"cmd_rally": 40,    # +40 a second: doubles a router's safe recovery (40), and works with an enemy near

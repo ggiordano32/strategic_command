@@ -761,7 +761,7 @@ static func roster_type(f: int, line: String, tier: int) -> String:
 
 ## Unit upkeep per turn (a unit costs its full upkeep whatever its strength).
 static func upkeep_of(ty: int) -> int:
-	return UT.price_of(ty) * CData.UPKEEP_PCT / 100
+	return UT.price_of(ty) * CData.UPKEEP_PCT / 100 * UT.stat(ty, "upkeep_pct") / 100
 
 
 ## Military strength of an army (men weighted by price per man; the AI and

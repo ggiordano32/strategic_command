@@ -475,7 +475,7 @@ handlers' men); auto-resolve by the handlers' price (the pack's in it); a
 fought outcome adds the pack's kills to the handlers' row. AI mixes "dogs"
 3, only through the mix (`CAI.BEAST_LINES`; `--no-dogs`: weight 0).
 
-**The general** (2026-10-09; docs/DESIGN.md "The general"): line
+**The general** (2026-10-09; docs/DESIGN.md "The general"; **no upkeep**: the row's `upkeep_pct` is 0, decided 2026-10-09): line
 "general", one key per faction (`ROSTERS`: Rome `legate`, Carthage
 `sufet`, Macedon and Epirus `hetairoi_guard`, Greeks and Syracuse
 `strategos`, Iberians and Gauls `chieftain`), 1,200, recruited with
