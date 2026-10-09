@@ -1689,3 +1689,20 @@ alike. Skilled (2 x 60) reaches Workshop 2. Not tuned. Gaps: kinds only on
 units raised at the building's centre; no refit of older units; the
 Workshop is often not at the capital (its slots are full), so engines and
 wagons are raised away from the main army's usual centre.
+
+## 25. Units flow into the space (2026-10-09)
+
+No AI rule or knob changed (docs/DESIGN.md "Units flow into the space").
+What the AI's units now do differently comes from the sim: an attack order
+given to a unit already attacking keeps its path (the AI retargets every
+second; a fresh plan each time had units at corners turn back to an entry
+node behind them and never get on), a unit stuck past `STUCK_ROUTE` keeps
+its path against a moving goal unless it moved 48 m, a move stuck near its
+destination or to ground no longer reachable (a gate the defenders shut
+since) ends where the unit got to, a short move among buildings marches
+when there is no clear way from the men, and a unit climbing ladders takes
+a move order (the AI gives none: `_escalade` leaves climbing units alone).
+The siege coverage cases still see every behaviour of sections 13-16
+(the `--only=layout` case moved to fair-siege seed 2: in seed 1 the attack
+now stalls at the gate and nobody reaches the plaza reserve in 4,500
+ticks).

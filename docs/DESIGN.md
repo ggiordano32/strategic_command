@@ -1836,16 +1836,16 @@ probe `tests/determinism_test.gd --only=flow`, `tests/matchups.gd
 - **Ladders** (`_ladder_step`; replaces the shared `q_acc` pool and the
   slot-fixed wait spots). Every man still below picks a ladder of the set
   in slot order: the way to its foot plus `LADDER_QCOST` 1.2 m for each man
-  already in its queue, `LADDER_BUSY` 8 m more where there is no room above
-  (ties to the lower ladder), and waits in its queue, two abreast
+  already in its queue (ties to the lower ladder), and waits in its queue, two abreast
   (`LADDER_QW` 0.6 m either side) a metre apart back from the foot. Each
   ladder takes its first man up when he is within `LADDER_AT` 1.5 m of its
   foot and it is free: `q_lt` (hashed, per planted piece and lane) holds
   the tick each lane takes its next man, `climb_per` ticks after the last,
   all lanes at once (the set's throughput as before: `LADDER_TICKS` per
-  ladder). A ladder whose top has `LADDER_TOP_MEN` 2 of the climbers' own
-  men within `LADDER_TOP_R` 1 m who are not yet at their places takes
-  nobody (no room on the walkway); the others go on. A move order is taken
+  ladder); he steps onto the walkway whoever stands there. (A rule holding
+  a ladder whose top was crowded with the climbers' own men was tried and
+  dropped: probe (b) walls 1 fell from 77 men up / 20 defenders killed to
+  55 / 4; with 4 men in 1.5 m 68 / 15, 6 in 2 m 67 / 12, off 75 / 17.) A move order is taken
   while climbing (`_ladder_move`): along its stretch the line slides and
   the climb goes on; out on the foot's side (or nobody up yet) the men up
   come back down the ladders and the whole unit goes; inland or onto
@@ -1904,14 +1904,12 @@ probe `tests/determinism_test.gd --only=flow`, `tests/matchups.gd
 - **AI**: no AI rule or knob changed (docs/AI.md 25).
 - **Measured** (`--only=flow` set pieces, HEAD with the counter only ->
   this build): a 90-man heavy unit up a 5-ladder set, no defenders: walls 1
-  all up in 360 -> 388 ticks, walls 2 540 -> 568 (the first men walk into
+  all up in 360 -> 369 ticks, walls 2 540 -> 568 (the first men walk into
   their queues), 5 ladders in use at once, a mean of 4.7 -> 4.4-4.6; a move
   given as the last man went up was refused and left the unit split 40 up
   / 50 below at walls 2, now taken (the unit whole). With 60 defenders on
   the walkway both versions rout back down after half their men (none left
-  below); men up 77 / 57 -> 55 / 56 and defenders lost 20 / 12 -> 4 / 9 (a
-  ladder whose top is crowded with men who cannot reach their places takes
-  nobody). A unit ordered across a house's corner never formed (53 men more
+  below); men up 77 / 57 -> 75 / 56, defenders lost 20 / 12 -> 17 / 2. A unit ordered across a house's corner never formed (53 men more
   than 3 m off their places) -> formed in place round it. Four units
   through one gate, the street fight: unchanged. Equal-force fair sieges
   (full kit, both Average, 10 seeds, ring / polis walls 1-2): units stuck

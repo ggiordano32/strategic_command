@@ -345,7 +345,13 @@ const TOWER_BOLT_DMG := 70       # tower hit points per bolt landing on a tower 
 const TOWER_STONE_DMG := 330     # ... per stone
 const LADDER_SET := 5            # ladders in a set (one piece of equipment)
 static var LADDER_TICKS: Array[int] = [0, 20, 30, 40]    # ticks per man up one ladder, by wall level
-const LADDER_NEAR := 8 * M       # men this close to the foot go up in turn
+const LADDER_NEAR := 8 * M       # the anchor this close to the foot: the climb begins
+const LADDER_AT := 3 * M / 2     # a man this near his ladder's foot, first in its queue, goes up when it is free
+const LADDER_QSP := M            # a ladder's queue: two abreast (LADDER_QW apart along the wall), a man every this much back from the foot
+const LADDER_QW := 1229          # ... the two files of a queue this far apart (0.6 m either side of the ladder)
+const LADDER_QCOST := 1229       # a man choosing his ladder counts each man already in its queue as this much more way
+const LADDER_STALL := 300        # men below, a ladder free and nobody at its foot this long: the climb is given up (all come down the ladders)
+const LANES_MAX := 8             # most lanes a planted piece has (EQ_LANES)
 const LADDER_GAP := 2560         # ladders this far apart along the wall
 const UNBAR_MEN := 4             # ladder men this many at the inside of a closed gate ...
 const UNBAR_TICKS := 150         # ... for this long open it
@@ -833,11 +839,22 @@ var u_st0 := PackedInt32Array()      # ... tick the stair move began
 var u_wx := PackedInt32Array()       # going up: the walkway point it was ordered to
 var u_wy := PackedInt32Array()
 var u_lagt := PackedInt32Array()     # ticks its men have lagged far behind the anchor (regroup after REGROUP)
+var u_stuck := PackedInt32Array()    # ticks it has wanted to get on (an order, a climb, men short of their places) and got nowhere
+var u_srx := PackedInt32Array()      # ... its men's middle when it last got on (STUCK_DIST)
+var u_sry := PackedInt32Array()
+var u_sprog := PackedInt32Array()    # ... on a stair move, its men already on the level it goes to (more: it gets on)
+var u_flow := PackedInt32Array()     # its places are flowed into the free space (1), else its formation's rectangle (0)
+var u_flt := PackedInt32Array()      # ... the tick they were last laid out (an order: long ago)
 var tr_x := PackedInt32Array()       # u * TRAIL + k, oldest first
 var tr_y := PackedInt32Array()
 var pth_x := PackedInt32Array()      # u * PATH_MAX + k
 var pth_y := PackedInt32Array()
 var _u_obs := PackedInt32Array()     # scratch: unit near obstacles this tick
+var _lw_x := PackedInt32Array()      # scratch (by slot, base + s): where a climbing unit's man below waits (_ladder_step, every tick before use)
+var _lw_y := PackedInt32Array()
+var _fl_mark := PackedInt32Array()   # scratch (2 m cells): stamp << 8 | men placed there by the flow layout now running
+var _fl_q := PackedInt32Array()      # scratch: its cells in the order visited
+var _fl_stamp: int = 0
 var _u_vfac := PackedInt32Array()    # scratch: woods speed factor (per mille) this tick
 
 # Projectiles. A projectile is fired at (sx, sy) on tick t0 and lands at
@@ -1159,7 +1176,7 @@ var q_seg := PackedInt32Array()
 var q_wx := PackedInt32Array()
 var q_wy := PackedInt32Array()
 var q_hp := PackedInt32Array()
-var q_acc := PackedInt32Array()
+var q_lt := PackedInt32Array()       # q * LANES_MAX + k: the tick lane k of planted piece q takes its next man up
 var q_side := PackedInt32Array()
 var q_burn := PackedInt32Array()    # ticks it burns on (fire)
 var q_tier := PackedInt32Array()    # a wagon: its UnitTypes.WAGONS row (-1 not a wagon)
@@ -1205,6 +1222,13 @@ var stat_stw_wrecked: int = 0       # siege towers wrecked (burnt, smashed, shot
 var stat_stw_taken: int = 0         # siege towers taken up by the other side
 var stat_ladder_up: int = 0         # men up a ladder
 var stat_ladder_done: int = 0       # units wholly up
+var stat_flow: int = 0              # flowed layouts of a unit's places
+var stat_anchor_kept: int = 0       # anchor steps kept off a wall or a house
+var stat_unstick := PackedInt32Array([0, 0, 0, 0])  # stuck releases: places laid afresh, moves ended near, ways replanned, regroups
+var stat_ladder_cut: int = 0        # climbs ended with men below (a move outward, the set gone, nobody coming to a free ladder): all came down
+var stat_stuck_max: int = 0         # longest u_stuck any unit reached (ticks)
+var stat_stuck_u := PackedInt32Array()  # ... per unit (its longest)
+var stat_stuck_t := PackedInt32Array()  # ... per unit, ticks stuck in all
 var stat_ak_shots: int = 0          # missiles and shots of a special ammunition kind
 var stat_ignite: int = 0            # things set alight (gates, engines, equipment)
 var stat_burnt: int = 0             # ... burnt down (a gate broken, an engine wrecked, a piece wrecked)
@@ -1234,6 +1258,18 @@ const DODGE_LOOK := 4 * M         # ... each looked along this far (a cell): roo
 const BLK_FRIEND := 1             # u_blk: passing through a friend (half speed)
 const BLK_QUEUE := 2              # ... waiting behind friends fighting its target
 const BLK_ENEMY := 3              # ... stopped at an enemy's footprint (its men fight)
+# Units flow into the space (docs/DESIGN.md "Units flow into the space"),
+# maps with buildings or walls only.
+const STUCK_DIST := 2 * M         # u_stuck: a unit that wants to get on and whose men's middle has not moved this far ...
+const STUCK_CYCLE := 150         # stuck release (_stuck_release), once per this many ticks of u_stuck: ...
+const STUCK_FLOW := 50            # ... at this count its places are laid out afresh (flowed round what cuts them) ...
+const STUCK_ROUTE := 100          # ... at this one its way is planned again (and kept while it is stuck: no replanning after a moving goal) ...
+                                  # ... and at the cycle's end it regroups where its men are (_regroup) and goes on from there
+const STUCK_NEAR := 8 * M         # a move stuck this near its destination (STUCK_ROUTE ticks) is over: it stands where it got to
+const FLOW_EVERY := 10            # flowed places are laid out again this often (and on an order)
+const FLOW_AHEAD := 4 * M         # ... reach at most this far ahead of the anchor
+const FLOW_PACK := 125            # ... men pack in them to this % of their formation's density
+const FLOW_CELLS := 160           # ... a layout visits at most this many 2 m cells
 var u_blk := PackedInt32Array()   # what the anchor met this tick (BLK_*, 0 nothing)
 var u_dodge := PackedInt32Array() # the side it steers round an obstacle (-1 / 1, 0 none)
 var occ0 := PackedInt32Array()    # derived (rebuilt every other tick, kept in snapshots): side 0's footprints per 4 m cell:
@@ -1361,6 +1397,13 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	for arr in _stair_arrays():
 		arr.resize(n_units)
 		arr.fill(0)
+	for arr in _flow_arrays():
+		arr.resize(n_units)
+		arr.fill(0)
+	stat_stuck_u.resize(n_units)
+	stat_stuck_u.fill(0)
+	stat_stuck_t.resize(n_units)
+	stat_stuck_t.fill(0)
 	for arr in _siege_unit_arrays():
 		arr.resize(n_units)
 		arr.fill(0)
@@ -1387,6 +1430,12 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	tr_y.resize(n_units * TRAIL)
 	tr_y.fill(0)
 	_u_obs.resize(n_units)
+	_lw_x.resize(n)
+	_lw_y.resize(n)
+	_fl_mark.resize(ob_w * ob_h)
+	_fl_mark.fill(0)
+	_fl_q.resize(FLOW_CELLS)
+	_fl_stamp = 0
 	_u_obs.fill(0)
 	_u_vfac.resize(n_units)
 	_u_vfac.fill(1000)
@@ -1650,6 +1699,12 @@ func _map_unit_arrays() -> Array:
 ## hashed only there).
 func _stair_arrays() -> Array:
 	return [u_stair, u_sseg, u_send, u_st0, u_wx, u_wy, u_lagt]
+
+
+## Per-unit flow state (docs/DESIGN.md "Units flow into the space"; maps
+## with buildings or walls; hashed only there).
+func _flow_arrays() -> Array:
+	return [u_stuck, u_srx, u_sry, u_sprog, u_flow, u_flt]
 
 
 ## Per-unit war dog arrays (hashed only in battles with handlers, so the
@@ -2384,6 +2439,26 @@ func reach_at(x: int, y: int) -> int:
 	return -1
 
 
+## The nearest open point for `mask` to (x, y): itself if open, else the
+## middle of the first open 2 m cell in rings of 2 m out to 12 m (each ring
+## in index order); else (x, y). Shared with the view.
+static func open_snap(sim, x: int, y: int, mask: int) -> Vector2i:
+	if (sim.nav_at(x, y) & mask) != 0:
+		return Vector2i(x, y)
+	var ci := x >> 11
+	var cj := y >> 11
+	for r in range(1, 7):
+		for dj in range(-r, r + 1):
+			for di in range(-r, r + 1):
+				if maxi(absi(di), absi(dj)) != r:
+					continue
+				var px := (ci + di) * 2048 + 1024
+				var py := (cj + dj) * 2048 + 1024
+				if px >= 0 and py >= 0 and (sim.nav_at(px, py) & mask) != 0:
+					return Vector2i(px, py)
+	return Vector2i(x, y)
+
+
 ## Where a ground unit with its anchor at (ax, ay) goes when ordered to
 ## (x, y): (x, y, 0) if it can get there; (x', y', 1) the nearest open
 ## ground of its own piece within 12 m of a tap on a house or a wall; else
@@ -2716,11 +2791,12 @@ func _stair_foot(x: int, y: int, top: bool = false) -> Vector2i:
 ## else going up): where he heads (z 1), else z 0 (he takes his place).
 func _stair_leave(u: int, x: int, y: int, mode: int, s: int = 0) -> Vector3i:
 	if mode == ST_LADDER:
-		# Climbing ladders: a man below waits his turn behind his ladder.
+		# Climbing ladders: a man below waits his turn in his ladder's queue
+		# (_ladder_step chose it this tick).
 		if _on_walk(x, y):
 			return Vector3i.ZERO
-		var lw := _ladder_wait(u, s)
-		return Vector3i(lw.x, lw.y, 1)
+		var k := u_slot_base[u] + s
+		return Vector3i(_lw_x[k], _lw_y[k], 1)
 	var nvh := nav_at(x, y)
 	if ((nvh & (NAV_WALK | NAV_TOWER)) != 0) != (mode == 1):
 		return Vector3i.ZERO
@@ -2768,7 +2844,36 @@ func _stair_goal(u: int, x: int, y: int) -> Vector2i:
 		var dn := FM.approx_len(tr_x[base + best + 1] - x, tr_y[base + best + 1] - y)
 		if best_d <= 2560 or dn < gap:
 			best += 1
+	if u_stair[u] == 1 or u_stair[u] == 3:
+		# No clear way to it (a wall between: men in a tower on the junction
+		# went for the stair through the wall instead of by the walkway point,
+		# and stood there until STAIR_MAX): the trail point before it, if
+		# that one is clear.
+		var mm := _stair_mask(u, x, y, _mask_of(u), u_stair[u])
+		if not _way_clear(x, y, tr_x[base + best], tr_y[base + best], mm):
+			var b := best - 1
+			while b >= 0 and not _way_clear(x, y, tr_x[base + b], tr_y[base + b], mm):
+				b -= 1
+			if b >= 0:
+				best = b
+			elif u_stair[u] == 1 and (nav_at(x, y) & NAV_WALK) != 0:
+				# On the walkway with no clear way to any of it (a bend of the
+				# walkway between): along its stretch's centre line, 4 m at a
+				# time, toward the stair's end.
+				var sg := u_sseg[u]
+				var t0 := seg_t(self, sg, x, y)
+				var t1 := maxi(t0 - 4 * M, 0) if u_send[u] == 0 else mini(t0 + 4 * M, seg_len(self, sg))
+				return seg_pt(self, sg, t1)
 	return Vector2i(tr_x[base + best], tr_y[base + best])
+
+
+## Every metre from (x0, y0) to (x1, y1) passable for `mask`.
+func _way_clear(x0: int, y0: int, x1: int, y1: int, mask: int) -> bool:
+	var nk := FM.approx_len(x1 - x0, y1 - y0) / M + 1
+	for k in range(1, nk + 1):
+		if (nav_at(x0 + (x1 - x0) * k / nk, y0 + (y1 - y0) * k / nk) & mask) == 0:
+			return false
+	return true
 
 
 ## Append a passed waypoint to unit u's trail (the oldest drops out).
@@ -3008,7 +3113,10 @@ func _plan_path(u: int, gx: int, gy: int) -> void:
 		srcs = _near_nodes(ax, ay, 3, gm)
 		dsts = _near_nodes(gx, gy, 2, gm)  # each exit node needs a distance table
 		for b in dsts:
-			var dt := _dist_table(b)
+			# (A unit stuck a while gets its table now: with the budget taken
+			# by lower units every tick, one went straight at its goal into a
+			# house for half a minute.)
+			var dt := _dist_table(b, obs_on != 0 and u_stuck[u] >= STUCK_FLOW)
 			if dt.is_empty():
 				# Over this tick's budget: keep the old path a little longer,
 				# or (none yet) head straight for the goal and plan again
@@ -3153,7 +3261,10 @@ func _path_point(u: int, gx: int, gy: int, moving_goal: bool) -> Vector2i:
 		# (A gate changed: replans are spread over half a second.)
 		_plan_path(u, gx, gy)
 	elif moving_goal and (u + tick) % 10 == 0 \
-			and FM.approx_len(gx - u_pgx[u], gy - u_pgy[u]) > 12 * M:
+			and FM.approx_len(gx - u_pgx[u], gy - u_pgy[u]) > (12 * M if u_stuck[u] < STUCK_ROUTE else 48 * M):
+		# (Stuck: it keeps the way it has unless the goal is far off it; a
+		# goal jumping about, a unit split round a house, had it plan, turn
+		# back a step, plan again, for minutes.)
 		_plan_path(u, gx, gy)
 	elif not moving_goal and (u_pgx[u] != gx or u_pgy[u] != gy):
 		_plan_path(u, gx, gy)
@@ -3164,7 +3275,12 @@ func _path_point(u: int, gx: int, gy: int, moving_goal: bool) -> Vector2i:
 		return Vector2i(gx, gy)
 	var wx := pth_x[base + k]
 	var wy := pth_y[base + k]
-	if FM.approx_len(wx - u_ax[u], wy - u_ay[u]) <= WP_REACH:
+	var wd := FM.approx_len(wx - u_ax[u], wy - u_ay[u])
+	if wd <= WP_REACH and (wd <= M or _way_clear(u_ax[u], u_ay[u], pth_x[base + k + 1] if k + 1 < last else gx,
+			pth_y[base + k + 1] if k + 1 < last else gy, _ground_mask(u))):
+		# (Reached, unless the way on to the next is not straight from here:
+		# then on to the waypoint itself. A unit 3.5 m to the side of one
+		# went for the next straight into a house's corner, 2026-10-09.)
 		_trail_push(u, wx, wy)
 		k += 1
 		u_pk[u] = k
@@ -3184,15 +3300,23 @@ func _path_point(u: int, gx: int, gy: int, moving_goal: bool) -> Vector2i:
 ## Unit u's men are cut off from its anchor (a wall or houses between): the
 ## anchor goes back to the man nearest their centre (on open ground) and
 ## the unit plans its way again from there.
-func _regroup(u: int) -> void:
+func _regroup(u: int, back: bool = false) -> void:
 	var best := -1
 	var best_d := 1 << 40
 	var base := u_slot_base[u]
+	var ra := reach_at(u_ax[u], u_ay[u])
 	for s in u_alive[u]:
 		var i := slot_soldier[base + s]
 		if state[i] >= S_DEAD or (nav_at(pos_x[i], pos_y[i]) & MapGen.NAV_GROUND) == 0:
 			continue
 		var d := FM.approx_len(pos_x[i] - u_cx[u], pos_y[i] - u_cy[u])
+		if back:
+			# (Stuck release, its men strung out: back to the man farthest
+			# from the anchor on its own ground, so the stragglers stuck
+			# behind a house walk on with it.)
+			if ra >= 0 and reach_at(pos_x[i], pos_y[i]) != ra:
+				continue
+			d = -FM.approx_len(pos_x[i] - u_ax[u], pos_y[i] - u_ay[u])
 		if d < best_d:
 			best_d = d
 			best = i
@@ -3267,9 +3391,13 @@ func _squeeze(u: int) -> void:
 		u_sq[u] = sq
 		u_dirty[u] = 1
 		u_settled[u] = 0
-	if sq > 0 and u_order[u] != O_NONE and absi(fl - fr) > 2 * M and u_stair[u] != 2:
+	if sq > 0 and u_order[u] != O_NONE and absi(fl - fr) > 2 * M and u_stair[u] != 2 \
+			and not (u_order[u] == O_MOVE and FM.approx_len(u_dx[u] - ax, u_dy[u] - ay) <= REFORM_IN_PLACE_DIST):
 		# Keep to the middle of the street (a metre at a time: at a corner
 		# the free width either side can flip from one check to the next).
+		# Not on the last stretch of a move (it faces its final way there,
+		# so the shift went back along its way and it never arrived: units
+		# 2-3 m short of their places for minutes, 2026-10-09).
 		var sh := clampi((fr - fl) / 2, -M, M)
 		u_ax[u] = clampi(ax - s * sh / FM.TRIG_ONE, 0, field_w)
 		u_ay[u] = clampi(ay + c * sh / FM.TRIG_ONE, 0, field_h)
@@ -3584,8 +3712,11 @@ func sea_exit(x: int) -> Vector2i:
 ## walkway: see wall_snap) goes up one (via the street to its foot); any
 ## other order ends a march to a stair.
 func _wall_order(u: int, typ: int) -> void:
+	if u_stair[u] == ST_LADDER and typ == ORDER_MOVE and u_order[u] == O_MOVE:
+		_ladder_move(u)  # climbing: a move (along its stretch the order rule kept it climbing)
+		return
 	if u_stair[u] == ST_LADDER and u_order[u] != O_WITHDRAW:
-		return  # climbing: the order waits (only fire and run apply)
+		return  # climbing: other orders wait (fire and run apply)
 	if u_wall[u] > 0 and u_order[u] == O_WITHDRAW and u_side[u] != city_def:
 		_ladder_down(u)  # back down the ladders and away
 		return
@@ -3714,6 +3845,7 @@ func _stair_set(u: int, sg: int, e: int, mode: int) -> void:
 		tr_y[base + q] = p.y
 	u_trn[u] = 3
 	u_pn[u] = 0
+	u_sprog[u] = 0
 
 
 ## The middle of the stair cell nearest (x, y) (within 2 cells; else (x, y)):
@@ -3769,6 +3901,7 @@ func _stair_check(u: int) -> void:
 	var done := tick - u_st0[u] > STAIR_MAX
 	if not done:
 		done = true
+		var across := 0
 		var base := u_slot_base[u]
 		for s in u_alive[u]:
 			var i := slot_soldier[base + s]
@@ -3780,7 +3913,11 @@ func _stair_check(u: int) -> void:
 			var on_wall := k == MapGen.C_WALK or k == MapGen.C_TOWER
 			if on_wall == down:
 				done = false
-				break
+			else:
+				across += 1
+		if across > u_sprog[u]:
+			u_sprog[u] = across
+			u_stuck[u] = 0  # (men across: the stair move gets on)
 	if not done:
 		return
 	u_stair[u] = 0
@@ -4239,6 +4376,7 @@ func _apply_orders(max_player: int = 1 << 30) -> void:
 			continue
 		for u in order_units(self, o):
 			var d := order_fields(self, u)
+			var o0 := u_order[u]  # (the order it had: an attack after an attack keeps its way)
 			apply_order_rule(self, u, d, o)
 			u_order[u] = int(d["order"])
 			u_ax[u] = int(d["ax"])
@@ -4260,6 +4398,8 @@ func _apply_orders(max_player: int = 1 << 30) -> void:
 			u_forage[u] = int(d["forage"])
 			u_dirty[u] = 1
 			u_settled[u] = 0
+			if obs_on != 0:
+				u_flt[u] = -FLOW_EVERY  # (an order: its places are laid out afresh)
 			if dog_on != 0 and u_hand[u] >= 0:
 				u_ret[u] = 0  # a pack given an order: no longer on its way back
 				u_dogt[u] = 0
@@ -4274,7 +4414,12 @@ func _apply_orders(max_player: int = 1 << 30) -> void:
 					_place_unit(u, int(d.get("wall", 0)))
 				continue
 			if obs_on != 0:
-				u_pn[u] = 0  # plan a new path
+				if not (o0 == O_ATTACK and u_order[u] == O_ATTACK):
+					u_pn[u] = 0  # plan a new path
+				# (An attack after an attack keeps its way: _path_point plans again
+				# once the goal has moved off it. The AI retargeting every second
+				# had a unit at a corner plan from scratch, turn back to the
+				# street graph's entry node behind it, and never get on.)
 			if city_on != 0 and ws_e.size() > 0:
 				_wall_order(u, int(o["type"]))
 	_placing = PackedInt32Array()
@@ -4338,7 +4483,7 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 			and typ != ORDER_AMMO:
 		return
 	if u < sim.u_stair.size() and sim.u_stair[u] == ST_LADDER and typ != ORDER_FIRE and typ != ORDER_RUN \
-			and typ != ORDER_WITHDRAW and typ != ORDER_WITHDRAW_ALL:
+			and typ != ORDER_WITHDRAW and typ != ORDER_WITHDRAW_ALL and typ != ORDER_MOVE:
 		return
 	# Siege equipment: a unit goes to a piece and picks it up (ORDER_PICKUP);
 	# putting it down (ORDER_DROP) is the sim's (no order field changes). A
@@ -4468,6 +4613,13 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 				x = rs.x
 				y = rs.y
 			d["snap"] = rs.z
+		elif sim.obs_on != 0 and (sim.nav_at(x, y) & sim._ground_mask(u)) == 0:
+			# Maps with buildings but no town: a tap on a house goes beside
+			# it (the nearest open 2 m cell within 12 m, rings in index
+			# order), so the anchor does not stop at its edge short of it.
+			var op := open_snap(sim, x, y, sim._ground_mask(u))
+			x = op.x
+			y = op.y
 		if not art:
 			d["files"] = width_to_files(int(o["width"]), sim.u_alive[u], ty)
 		d["run"] = 1 if int(o.get("run", 0)) != 0 and not art and carry < 0 else 0
@@ -4475,7 +4627,11 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 		d["gtarget"] = -1
 		var dx: int = x - d["ax"]
 		var dy: int = y - d["ay"]
-		if dx * dx + dy * dy <= REFORM_IN_PLACE_DIST * REFORM_IN_PLACE_DIST:
+		# (Among buildings only with a clear way from its men to there: else
+		# a march, whose trail its men follow; snapped behind a house corner,
+		# men stood on the far side of it for minutes, 2026-10-09.)
+		if dx * dx + dy * dy <= REFORM_IN_PLACE_DIST * REFORM_IN_PLACE_DIST \
+				and (sim.obs_on == 0 or sim._los_fat(sim.u_cx[u], sim.u_cy[u], x, y, sim._ground_mask(u))):
 			d["ax"] = x
 			d["ay"] = y
 			# Slow-turning formations (pikes) wheel to the new facing.
@@ -4673,9 +4829,20 @@ func _compute_offsets(u: int) -> void:
 		return
 	var files := mini(files_of(u), alive)
 	var ty := u_type[u]
+	# (Also coming down a stair, at its foot: before 2026-10-09 the block
+	# stood across the wall there, men whose places lay on the walkway stayed
+	# up, and the stair move waited its STAIR_MAX for them.)
+	var flow := obs_on != 0 and u < _u_obs.size() and _u_obs[u] != 0
+	if flow and u_flow[u] != 0 and tick - u_flt[u] < FLOW_EVERY:
+		u_dirty[u] = 0  # (flowed a moment ago: the places stand; the dead's drop off the end)
+		return
 	_fill_offsets(off_x, u_slot_base[u], alive, files, u_face[u], false, off_y,
 		t_fsp[ty], t_rsp[ty])
-	if city_on != 0 and n_cmp > 0 and u_stair[u] == 0 and u < _u_obs.size() and _u_obs[u] != 0:
+	if flow:
+		_flow_slots(u)
+	elif obs_on != 0:
+		u_flow[u] = 0
+	if not flow and city_on != 0 and n_cmp > 0 and u_stair[u] == 0 and u < _u_obs.size() and _u_obs[u] != 0:
 		_project_slots(u)
 	if u_contact[u] != 0 and occ0.size() > 0:
 		_slots_off_enemy(u)
@@ -4713,6 +4880,158 @@ func _slots_off_enemy(u: int) -> void:
 		off_y[base + s] = y - ay
 
 
+## Units flow into the space (docs/DESIGN.md "Units flow into the space";
+## maps with buildings or walls, foot only): unit u's formation rectangle
+## (just laid out in off_x / off_y) is kept where it is whole. Where it is
+## cut (places across a wall, in a house, on another piece of ground), or
+## where the unit stands squeezed in a corridor fighting or queuing behind
+## friends (it presses: all its places flow), the cut places are laid out
+## again over the free 2 m cells nearest the anchor: a flood from the
+## anchor's cell (neighbours +x, -x, +y, -y; open ground of its own, at
+## most FLOW_AHEAD ahead of the anchor and, ahead of it, no other unit's
+## footprint; at most FLOW_CELLS cells), each cell taking up to its share
+## of men at FLOW_PACK % of the formation's density, places in slot order
+## (the front rank nearest the anchor). Men keep to PLACE_LEAD / PLACE_SIDE
+## of these places, so a column pressing into a gateway mouth spreads
+## along it, a unit cut by a house corner goes round it, and the unit forms
+## its rectangle again once that is whole. u_flow says which; u_flt when
+## (the places stand FLOW_EVERY ticks, re-laid then or on an order).
+func _flow_slots(u: int) -> void:
+	var base := u_slot_base[u]
+	var alive := u_alive[u]
+	var ax := u_ax[u]
+	var ay := u_ay[u]
+	var gm := _ground_mask(u)
+	var city := city_on != 0 and n_cmp > 0
+	# The flood starts at the anchor's cell, else (the anchor at a house's
+	# edge) the nearest open cell round it (rings of 2 m, in index order).
+	var a0 := Vector2i(ax, ay)
+	if (nav_at(ax, ay) & gm) == 0:
+		a0 = Vector2i(-1, -1)
+		for r in range(1, 3):
+			for dj in range(-r, r + 1):
+				for di in range(-r, r + 1):
+					if a0.x < 0 and maxi(absi(di), absi(dj)) == r \
+							and (nav_at(ax + di * 2048, ay + dj * 2048) & gm) != 0:
+						a0 = Vector2i(ax + di * 2048, ay + dj * 2048)
+	var ra := reach_at(a0.x, a0.y)
+	if a0.x < 0 or (city and ra < 0):
+		u_flow[u] = 0
+		if city:
+			_project_slots(u)
+		return
+	var press := u_blk[u] == BLK_QUEUE or (u_sq[u] > 0 and u_fighting[u] > 0)
+	# Which places are cut.
+	var cut := PackedInt32Array()
+	if press:
+		cut.resize(alive)
+		for s in alive:
+			cut[s] = s
+	else:
+		for s in alive:
+			var x := ax + off_x[base + s]
+			var y := ay + off_y[base + s]
+			if (reach_at(x, y) != ra) if city else (nav_at(x, y) & gm) == 0:
+				cut.append(s)
+	if cut.is_empty():
+		u_flow[u] = 0
+		return
+	u_flow[u] = 1
+	u_flt[u] = tick
+	var ty := u_type[u]
+	var cap := clampi(4194304 * FLOW_PACK / 100 / maxi(t_fsp[ty] * t_rsp[ty], 1), 1, 6)
+	_fl_stamp += 1
+	if _fl_stamp >= 1 << 22:
+		_fl_stamp = 1
+		_fl_mark.fill(0)
+	var stp := _fl_stamp << 8
+	var mk := _fl_mark
+	var obw := ob_w
+	var obh := ob_h
+	if not press:
+		# The whole places take their cells' room first.
+		var cj := 0
+		for s in alive:
+			if cj < cut.size() and cut[cj] == s:
+				cj += 1
+				continue
+			var x := ax + off_x[base + s]
+			var y := ay + off_y[base + s]
+			var k := clampi(y >> 11, 0, obh - 1) * obw + clampi(x >> 11, 0, obw - 1)
+			mk[k] = (mk[k] + 1) if (mk[k] & ~255) == stp else stp + 1  # (count bits 0-3; cap <= 6)
+	var fc := FM.cos_a(u_face[u])
+	var fs := FM.sin_a(u_face[u])
+	var mine: PackedInt32Array = occ0 if u_side[u] == 0 else occ1
+	var theirs: PackedInt32Array = occ1 if u_side[u] == 0 else occ0
+	var gw := grid_w
+	var gmax := grid_w * grid_h - 1
+	var q := _fl_q
+	var k0 := clampi(a0.y >> 11, 0, obh - 1) * obw + clampi(a0.x >> 11, 0, obw - 1)
+	q[0] = k0
+	var qn := 1
+	var qh := 0
+	mk[k0] = ((mk[k0] & 15) if (mk[k0] & ~255) == stp else 0) | stp | 16  # (16: queued)
+	var need := cut.size()
+	var ci := 0
+	var spots := [Vector2i(-512, -512), Vector2i(512, 512), Vector2i(512, -512), Vector2i(-512, 512),
+		Vector2i(0, 0), Vector2i(0, -768)]
+	while qh < qn and ci < need:
+		var k := q[qh]
+		qh += 1
+		var ki := k % obw
+		var kj := k / obw
+		# Men into this cell (its room after the whole places in it).
+		var used := mk[k] & 15
+		if used < cap:
+			var cx := ki * 2048 + 1024
+			var cy := kj * 2048 + 1024
+			while used < cap and ci < need:
+				var s := cut[ci]
+				var sp: Vector2i = spots[used]
+				off_x[base + s] = cx + sp.x - ax
+				off_y[base + s] = cy + sp.y - ay
+				used += 1
+				ci += 1
+			mk[k] = stp | 16 | used
+		# On to its neighbours.
+		for nb in 4:
+			if qn >= FLOW_CELLS:
+				break
+			var ni := ki + (1 if nb == 0 else (-1 if nb == 1 else 0))
+			var nj := kj + (1 if nb == 2 else (-1 if nb == 3 else 0))
+			if ni < 0 or nj < 0 or ni >= obw or nj >= obh:
+				continue
+			var kk := nj * obw + ni
+			var mv := mk[kk]
+			if (mv & ~255) == stp and (mv & 16) != 0:
+				continue  # (queued already)
+			if (nav[kk] & gm) == 0:
+				continue
+			var nx := ni * 2048 + 1024
+			var ny := nj * 2048 + 1024
+			var fwd := ((nx - ax) * fc + (ny - ay) * fs) / FM.TRIG_ONE
+			if fwd > FLOW_AHEAD:
+				continue
+			if fwd > 0:
+				# Ahead of the anchor: not into another unit's footprint.
+				var oc := clampi((ny >> 12) * gw + (nx >> 12), 0, gmax)
+				if theirs[oc] != 0:
+					continue
+				var w := mine[oc]
+				if w != 0 and (((w >> 16) - 1) != u or (w & 255) > 1):
+					continue
+			mk[kk] = ((mv & 15) if (mv & ~255) == stp else 0) | stp | 16
+			q[qn] = kk
+			qn += 1
+	if ci < need:
+		# (No more room near: the rest keep their places, brought in to
+		# their own ground as before.)
+		if city:
+			for t in range(ci, need):
+				_project_one(u, cut[t], ra)
+	stat_flow += 1
+
+
 ## Settlement maps: a man's place that falls across a wall, in a house or on
 ## ground of another piece than the anchor's comes in toward the anchor to
 ## the first open ground of its piece (his side of the anchor), so no man
@@ -4724,22 +5043,30 @@ func _project_slots(u: int) -> void:
 	var ra := reach_at(ax, ay)
 	if ra < 0:
 		return
-	var base := u_slot_base[u]
 	for s in u_alive[u]:
-		var ox := off_x[base + s]
-		var oy := off_y[base + s]
-		if reach_at(ax + ox, ay + oy) == ra:
-			continue
-		var steps := FM.approx_len(ox, oy) / M + 1
-		var q := 1
-		while q <= steps:
-			var px := ox * (steps - q) / steps
-			var py := oy * (steps - q) / steps
-			if reach_at(ax + px, ay + py) == ra or q == steps:
-				off_x[base + s] = px
-				off_y[base + s] = py
-				break
-			q += 1
+		_project_one(u, s, ra)
+
+
+## Place s of unit u (anchor on piece ra) in toward the anchor to the first
+## open ground of its piece (_project_slots).
+func _project_one(u: int, s: int, ra: int) -> void:
+	var ax := u_ax[u]
+	var ay := u_ay[u]
+	var base := u_slot_base[u]
+	var ox := off_x[base + s]
+	var oy := off_y[base + s]
+	if reach_at(ax + ox, ay + oy) == ra:
+		return
+	var steps := FM.approx_len(ox, oy) / M + 1
+	var q := 1
+	while q <= steps:
+		var px := ox * (steps - q) / steps
+		var py := oy * (steps - q) / steps
+		if reach_at(ax + px, ay + py) == ra or q == steps:
+			off_x[base + s] = px
+			off_y[base + s] = py
+			break
+		q += 1
 
 
 ## Where crew member j of an engine stands, relative to the engine facing
@@ -5070,6 +5397,41 @@ func _occ_probe(u: int, ox: int, oy: int, x: int, y: int, rx: int, ry: int, t: i
 ## fighting its target it waits (or goes round them), through other friends
 ## it goes at half speed. Sets u_blk / u_dodge. Returns where it gets to.
 func _anchor_step(u: int, ox: int, oy: int, nx: int, ny: int, t: int, spd: int) -> Vector2i:
+	var p := _anchor_step0(u, ox, oy, nx, ny, t, spd)
+	if obs_on == 0 or (p.x == ox and p.y == oy):
+		return p
+	# Maps with buildings or walls: the anchor keeps to ground its men can
+	# stand on (from open ground it does not step into a wall or a house:
+	# along one axis, else it stays). A path's shortcut past a wall's corner
+	# had an anchor cut through it, its men left on the other side.
+	var gm := _ground_mask(u)
+	if (nav_at(p.x, p.y) & gm) != 0 or (nav_at(ox, oy) & gm) == 0:
+		return p
+	stat_anchor_kept += 1
+	# Along the obstacle: the whole step on the axis it goes most along,
+	# else the other (the sign of its way on that axis).
+	var sx := p.x - ox
+	var sy := p.y - oy
+	var l := FM.approx_len(sx, sy)
+	var ax1 := Vector2i(ox + (l if sx > 0 else -l), oy)
+	var ay1 := Vector2i(ox, oy + (l if sy > 0 else -l))
+	var first := ax1 if absi(sx) >= absi(sy) else ay1
+	var second := ay1 if absi(sx) >= absi(sy) else ax1
+	if (absi(sx) >= absi(sy) and sx != 0) or (absi(sy) > absi(sx) and sy != 0):
+		if (nav_at(first.x, first.y) & gm) != 0:
+			return first
+	if (absi(sx) >= absi(sy) and sy != 0) or (absi(sy) > absi(sx) and sx != 0):
+		if (nav_at(second.x, second.y) & gm) != 0:
+			return second
+	# Square against it: no way along it from here. Its way is planned again
+	# (now and then): the path's straight stretch to its next waypoint was
+	# found clear from where it was, not from here.
+	if (tick + u) % 10 == 0:
+		u_pn[u] = 0
+	return Vector2i(ox, oy)
+
+
+func _anchor_step0(u: int, ox: int, oy: int, nx: int, ny: int, t: int, spd: int) -> Vector2i:
 	var sx := nx - ox
 	var sy := ny - oy
 	if sx == 0 and sy == 0:
@@ -5246,8 +5608,9 @@ func _update_units() -> void:
 		var ax0 := u_ax[u]
 		var ay0 := u_ay[u]
 		var order := u_order[u]
-		if u_stair[u] == 1:
-			order = O_NONE  # waiting at the stair's foot for its men to come down
+		if u_stair[u] == 1 or u_stair[u] == ST_LADDER:
+			order = O_NONE  # waiting at the stair's foot for its men to come down; climbing (a move waits)
+		var want := lag > LAG_CUT  # (u_stuck: it wants to get on; its men short of their places)
 		var want_face := u_dface[u]
 		var art := cls == UT.CLS_ART
 		# Ground under the anchor (hilly maps; one lookup serves the whole
@@ -5309,6 +5672,7 @@ func _update_units() -> void:
 			var mnx := wx if arrive else u_ax[u] + dx * aspeed / d
 			var mny := wy if arrive else u_ay[u] + dy * aspeed / d
 			if d > 0:
+				want = true
 				# Other units in the way: round them, through friends slowly.
 				var ms := _anchor_step(u, u_ax[u], u_ay[u], mnx, mny, -1, aspeed)
 				if ms.x != mnx or ms.y != mny:
@@ -5376,6 +5740,7 @@ func _update_units() -> void:
 						var vy := wp.y - u_ay[u]
 						var vdd := FM.isqrt(vx * vx + vy * vy)
 						if vdd > 0:
+							want = true
 							want_face = FM.atan2_a(vy, vx)
 							var mv0 := mini(aspeed, vdd)
 							var vs := _anchor_step(u, u_ax[u], u_ay[u], u_ax[u] + vx * mv0 / vdd,
@@ -5412,6 +5777,7 @@ func _update_units() -> void:
 							and unreach_goal(u, t, Vector2i(u_cx[t], u_cy[t])).z != 0:
 						stop = d  # in range of a target out of reach: no closer (a wall between)
 					if d > stop:
+						want = true
 						var mv := mini(aspeed, d - stop)
 						var ss := _anchor_step(u, u_ax[u], u_ay[u], u_ax[u] + dx * mv / d, u_ay[u] + dy * mv / d,
 							t, aspeed)
@@ -5442,6 +5808,7 @@ func _update_units() -> void:
 					if ton and d > stop:
 						aspeed = aspeed * _fac_dir(u, g0, dx, dy, d) / 1000
 					if d > stop:
+						want = true
 						var mv := mini(aspeed, d - stop)
 						var ms2 := _anchor_step(u, u_ax[u], u_ay[u], u_ax[u] + dx * mv / d, u_ay[u] + dy * mv / d,
 							t, aspeed)
@@ -5449,6 +5816,11 @@ func _update_units() -> void:
 						u_ay[u] = ms2.y
 				u_dface[u] = want_face
 		_turn(u, want_face)
+		if oon and u_flow[u] != 0 and tick - u_flt[u] >= FLOW_EVERY and (order != O_NONE or u_contact[u] != 0 or u_face[u] != u_dface[u]):
+			u_dirty[u] = 1  # flowed and on the go: laid out again (the cut may have changed)
+		elif oon and u_flow[u] == 0 and _u_obs[u] != 0 and (tick + u) % FLOW_EVERY == 0 \
+				and (u_blk[u] == BLK_QUEUE or (u_sq[u] > 0 and u_fighting[u] > 0)):
+			u_dirty[u] = 1  # queuing behind friends, or fighting squeezed in a corridor: it packs (_flow_slots)
 		if oon and _u_obs[u] != 0 and u_wall[u] == 0 and not art and (u + tick) % 3 == 0:
 			_squeeze(u)
 		elif u_sq[u] != 0 and (not oon or _u_obs[u] == 0):
@@ -5460,6 +5832,12 @@ func _update_units() -> void:
 		var mdy := u_ay[u] - ay0
 		var moved := FM.approx_len(mdx, mdy)
 		u_moved[u] = moved
+		if oon:
+			if want or u_stair[u] != 0 or u_stuck[u] != 0:
+				_stuck_tick(u, want)
+			else:
+				u_srx[u] = u_cx[u]  # (nothing to get on with: the counter rests)
+				u_sry[u] = u_cy[u]
 		if u_dirty[u] != 0:
 			_compute_offsets(u)
 			u_settled[u] = 0
@@ -5542,6 +5920,77 @@ func _update_units() -> void:
 			if (u + tick) % FIRE_THINK == 0:
 				_art_think(u)
 		_unit_stats(u)
+
+
+## Unit u's no-progress counter (maps with buildings or walls): while it
+## wants to get on (a move or an attack still closing, a stair or ladder
+## move, its men short of their places) and is not fighting at its full
+## frontage (half its front rank within reach) nor waiting by rule in a
+## queue behind friends, u_stuck counts the ticks its men's middle stays
+## within STUCK_DIST of where it last got on; otherwise it is 0. Read by
+## the stuck release; stat_stuck_* for the probes.
+func _stuck_tick(u: int, want: bool) -> void:
+	var st := u_stair[u]
+	if st == 1 or st == 3 or st == ST_LADDER:
+		want = true
+	if want and (u_blk[u] == BLK_QUEUE or u_charge[u] != 0 \
+			or u_inreach[u] * 2 >= mini(files_of(u), u_alive[u])):
+		want = false
+	if not want or FM.approx_len(u_cx[u] - u_srx[u], u_cy[u] - u_sry[u]) > STUCK_DIST:
+		u_stuck[u] = 0
+		u_srx[u] = u_cx[u]
+		u_sry[u] = u_cy[u]
+		return
+	var k := u_stuck[u] + 1
+	u_stuck[u] = k
+	stat_stuck_t[u] += 1
+	if k > stat_stuck_u[u]:
+		stat_stuck_u[u] = k
+		if k > stat_stuck_max:
+			stat_stuck_max = k
+	_stuck_release(u, k)
+
+
+## Stuck release (docs/DESIGN.md "Units flow into the space"): unit u has
+## got nowhere for k ticks (u_stuck). Each STUCK_CYCLE ticks of it: at
+## STUCK_FLOW its places are laid out afresh (they flow round what cuts
+## them); at STUCK_ROUTE its way is planned again (a move this near its
+## destination, or to ground it can no longer reach, is over instead: it
+## stands where it got to); at the cycle's
+## end its anchor comes back to its men (_regroup: the man nearest their
+## middle, on open ground) and it plans its way from there, its places
+## flowing round him. Nothing is moved but the anchor and the places: no man
+## steps through a wall or an enemy. Not on a wall, a stair or its ladders
+## (those moves end by their own rules; a march to a stair's or a ladder's
+## foot is a ground move and is released) nor a routing unit (it does not
+## count).
+func _stuck_release(u: int, k: int) -> void:
+	var st := u_stair[u]
+	if u_wall[u] > 0 or st == 1 or st == 3 or st == ST_LADDER:
+		return
+	var c := k % STUCK_CYCLE
+	if c == STUCK_FLOW:
+		u_flt[u] = -FLOW_EVERY
+		u_dirty[u] = 1
+		u_settled[u] = 0
+		stat_unstick[0] += 1
+	elif c == STUCK_ROUTE:
+		if u_order[u] == O_MOVE and st == 0 and (FM.approx_len(u_dx[u] - u_ax[u], u_dy[u] - u_ay[u]) <= STUCK_NEAR \
+				or (city_on != 0 and reach_at(u_dx[u], u_dy[u]) != reach_at(u_ax[u], u_ay[u]))):
+			# (Or it cannot get there any more: a gate shut since, its goal on
+			# another piece of ground; it went straight at it into a house.)
+			u_order[u] = O_NONE
+			stat_unstick[1] += 1
+		else:
+			u_pn[u] = 0
+			stat_unstick[2] += 1
+		u_flt[u] = -FLOW_EVERY
+		u_dirty[u] = 1
+		u_settled[u] = 0
+	elif c == 0:
+		_regroup(u, FM.approx_len(u_cx[u] - u_ax[u], u_cy[u] - u_ay[u]) - unit_depth(u) / 2 > LAG_HOLD)
+		u_flt[u] = -FLOW_EVERY
+		stat_unstick[3] += 1
 
 
 ## Cavalry charge state. A running cavalry unit with momentum that comes
@@ -9832,7 +10281,7 @@ const _SNAP_SKIP := {"ter_h": true, "ter_gx": true, "ter_gy": true, "ter_info": 
 	"ws_x0": true, "ws_y0": true, "ws_x1": true, "ws_y1": true, "ws_dir": true, "ng_x": true,
 	"ng_y": true, "ng_gate": true, "ng_e0": true, "ng_to": true, "ng_w": true, "_dist_cache": true,
 	"g_hw": true, "g_cit": true, "ws_e": true, "ws_fl": true, "sea_flee": true, "ws_nb": true,
-	"ws_jx": true, "ws_jy": true, "cmp": true, "n_cmp": true, "g_cmp": true, "_croot": true, "_croot_ep": true}
+	"ws_jx": true, "ws_jy": true, "_lw_x": true, "_lw_y": true, "_fl_mark": true, "cmp": true, "n_cmp": true, "g_cmp": true, "_croot": true, "_croot_ep": true}
 const _SNAP_MAGIC := 0x31534353  # "SCS1"
 
 
@@ -9954,6 +10403,8 @@ func state_hash() -> int:
 		if obs_on != 0:
 			for arr in _stair_arrays():
 				ctx.update((arr as PackedInt32Array).to_byte_array())
+			for arr in _flow_arrays():
+				ctx.update((arr as PackedInt32Array).to_byte_array())
 		if n_gates > 0:
 			ctx.update(g_hp.to_byte_array())
 			ctx.update(g_state.to_byte_array())
@@ -9974,6 +10425,7 @@ func state_hash() -> int:
 		if n_eq > 0:
 			for arr in _equip_arrays():
 				ctx.update((arr as PackedInt32Array).to_byte_array())
+			ctx.update(q_lt.to_byte_array())
 			ctx.update(q_stock.to_byte_array())
 			if fw_on != 0:
 				# Field works (battles without them hash as before).
@@ -10316,7 +10768,7 @@ func _siege_unit_arrays() -> Array:
 
 
 func _equip_arrays() -> Array:
-	return [q_kind, q_x, q_y, q_state, q_unit, q_seg, q_wx, q_wy, q_hp, q_acc, q_side, q_burn, q_tier, q_hn, q_hhp]
+	return [q_kind, q_x, q_y, q_state, q_unit, q_seg, q_wx, q_wy, q_hp, q_side, q_burn, q_tier, q_hn, q_hhp]
 
 
 ## The engines a walls-2/3 city mounts on its towers, as scenario unit
@@ -10453,6 +10905,8 @@ func _setup_equip(sc: Dictionary, units: Array) -> void:
 	for arr in [q_face, q_len, q_seen]:
 		arr.resize(n_eq)
 		arr.fill(0)
+	q_lt.resize(n_eq * LANES_MAX)
+	q_lt.fill(0)
 	q_unit.fill(-1)
 	q_seg.fill(-1)
 	q_tier.fill(-1)
@@ -10700,8 +11154,6 @@ func _update_equip() -> void:
 			else:
 				q_x[q] = u_ax[u]
 				q_y[q] = u_ay[u]
-		elif st == Q_PLANTED:
-			q_acc[q] = mini(q_acc[q] + EQ_LANES[q_kind[q]], climb_per(self, q))
 		elif st == Q_GROUND and EQ_SMASH[q_kind[q]] != 0:
 			# The enemy at a ram or siege tower left on the ground smash it (a sally).
 			var qx := q_x[q]
@@ -10942,7 +11394,6 @@ func _ladder_start(u: int) -> void:
 		q_y[q] = u_lfy[u]
 		q_wx[q] = u_wx[u]
 		q_wy[q] = u_wy[u]
-		q_acc[q] = 0
 		stat_planted += 1
 		if q_kind[q] == EQ_TOWER:
 			stat_stw_planted += 1
@@ -10989,70 +11440,185 @@ func set_ladder_foot(q: int, k: int) -> Vector2i:
 	return Vector2i(q_x[q] - FM.sin_a(dir) * off / FM.TRIG_ONE, q_y[q] + FM.cos_a(dir) * off / FM.TRIG_ONE)
 
 
-## Where a man of climbing unit u in slot s still below the wall waits:
-## in a file behind his ladder's foot (the ladder his slot takes).
-func _ladder_wait(u: int, s: int) -> Vector2i:
-	var n_l := maxi(ladders_of(self, u), 1)
-	var f := _ladder_k_foot(u, s % n_l, n_l)
-	var back := ((s / n_l) % 6) * 1229
-	var dir := ws_dir[u_sseg[u]]
-	return Vector2i(f.x + FM.cos_a(dir) * back / FM.TRIG_ONE, f.y + FM.sin_a(dir) * back / FM.TRIG_ONE)
-
-
 ## (x, y) is on a walkway or in a tower.
 func _on_walk(x: int, y: int) -> bool:
 	var k := obs_kind(x, y)
 	return k == MapGen.C_WALK or k == MapGen.C_TOWER
 
 
-## A climbing unit, once a tick: its ladders bring men up in turn (each
-## ladder a man every LADDER_TICKS[walls]; the next man below, in slot
-## order, standing within LADDER_NEAR of the foot); he steps onto the
-## walkway above his ladder. Once every man is up the climb is over.
+## A climbing unit, once a tick (docs/DESIGN.md "Units flow into the
+## space"): each man still below picks a ladder of the set, nearest men
+## first (the way to its foot plus LADDER_QCOST for each man already in its
+## queue; ties to the lower ladder) and waits in its queue, two abreast back from
+## the foot (_lw_x / _lw_y, read by _stair_leave). Every ladder takes the
+## first man of its queue up once he is within LADDER_AT of its foot and
+## the ladder is free (q_lt: a man up each lane every climb_per ticks, all
+## lanes at once); he steps onto the walkway above his ladder, defenders
+## there or not (a rule holding a ladder whose top was crowded was tried
+## and dropped: it cut defended escalades from 77 to 55 men up). Once every man is up the climb is over (a move given while
+## climbing then goes on, down a stair); with a ladder free and nobody at
+## its foot for LADDER_STALL ticks the climb is given up and all come back
+## down the ladders (_ladder_down): no man is ever left below.
+## (Until 2026-10-09 the next man was the first in slot order within
+## LADDER_NEAR of the set's middle, so men waiting farther off never went
+## up while the unit refused orders.)
 func _ladder_step(u: int) -> void:
+	var q := u_lq[u]
+	if q < 0 or q_state[q] != Q_PLANTED:
+		_ladder_down(u)  # (the set is gone)
+		stat_ladder_cut += 1
+		return
 	var base := u_slot_base[u]
-	var up := 0
-	var nxt := -1
-	var all_up := true
-	var fx := u_lfx[u]
-	var fy := u_lfy[u]
-	for s in u_alive[u]:
+	var alive := u_alive[u]
+	var n_l := clampi(ladders_of(self, u), 1, LANES_MAX)
+	var sg := u_sseg[u]
+	var per := climb_per(self, q)
+	var gm := _ground_mask(u)
+	var oc := FM.cos_a(ws_dir[sg])  # (outward from the wall)
+	var os := FM.sin_a(ws_dir[sg])
+	var lfx := PackedInt32Array()
+	var lfy := PackedInt32Array()
+	var ltx := PackedInt32Array()
+	var lty := PackedInt32Array()
+	var ok := PackedInt32Array()
+	var qn := PackedInt32Array()
+	for arr in [lfx, lfy, ltx, lty, ok, qn]:
+		arr.resize(n_l)
+		arr.fill(0)
+	var n_ok := 0
+	for k in n_l:
+		var f := _ladder_k_foot(u, k, n_l)
+		var top := seg_pt(self, sg, seg_t(self, sg, f.x, f.y))
+		if obs_kind(top.x, top.y) != MapGen.C_WALK:
+			top = Vector2i(u_wx[u], u_wy[u])
+		lfx[k] = f.x
+		lfy[k] = f.y
+		ltx[k] = top.x
+		lty[k] = top.y
+		if (nav_at(f.x, f.y) & gm) != 0:
+			ok[k] = 1
+			n_ok += 1
+	if n_ok == 0:
+		# (No lane's foot on open ground: the set's own foot, which is.)
+		var kc := n_l / 2
+		ok[kc] = 1
+		lfx[kc] = u_lfx[u]
+		lfy[kc] = u_lfy[u]
+	# Men below, in slot order.
+	var keys := PackedInt32Array()
+	for s in alive:
 		var i := slot_soldier[base + s]
 		if state[i] >= S_DEAD:
 			continue
-		if _on_walk(pos_x[i], pos_y[i]):
-			up += 1
+		var x := pos_x[i]
+		var y := pos_y[i]
+		if _on_walk(x, y):
 			continue
-		all_up = false
-		if nxt < 0 and state[i] == S_FORMED and FM.approx_len(pos_x[i] - fx, pos_y[i] - fy) <= LADDER_NEAR:
-			nxt = i
-	if all_up:
-		u_stair[u] = 0
+		_lw_x[base + s] = x
+		_lw_y[base + s] = y
+		if state[i] == S_DOWN:
+			continue  # (lying where he fell: no queue yet)
+		keys.append(s)
+	var below := keys.size()
+	if below == 0:
+		var still := false
+		for s in alive:
+			var i := slot_soldier[base + s]
+			if state[i] < S_DEAD and not _on_walk(pos_x[i], pos_y[i]):
+				still = true  # (a man knocked down below: wait for him)
+		if not still:
+			u_stair[u] = 0
+			u_settled[u] = 0
+			u_dirty[u] = 1
+			stat_ladder_done += 1
+			if u_order[u] == O_MOVE and u_state[u] == U_READY:
+				_start_descent(u)  # (a move given while it climbed: on from the wall)
+		return
+	var lat_x := -os  # (along the wall)
+	var lat_y := oc
+	var climbed := 0
+	var free := false  # some ladder free and nobody at its foot
+	for key in keys:
+		var s := int(key)
+		var i := slot_soldier[base + s]
+		var x := pos_x[i]
+		var y := pos_y[i]
+		var bk := -1
+		var bc := 0
+		for k in n_l:
+			if ok[k] == 0:
+				continue
+			var c := FM.approx_len(x - lfx[k], y - lfy[k]) + qn[k] * LADDER_QCOST
+			if bk < 0 or c < bc:
+				bk = k
+				bc = c
+		var j := qn[bk]
+		if j == 0 and tick >= q_lt[q * LANES_MAX + bk]:
+			if FM.approx_len(x - lfx[bk], y - lfy[bk]) <= LADDER_AT:
+				# Up he goes: onto the walkway above his ladder.
+				q_lt[q * LANES_MAX + bk] = tick + per
+				pos_x[i] = ltx[bk]
+				pos_y[i] = lty[bk]
+				prev_x[i] = ltx[bk]
+				prev_y[i] = lty[bk]
+				facing[i] = ws_dir[sg]
+				target[i] = -1
+				state[i] = S_FORMED
+				climbed += 1
+				stat_ladder_up += 1
+				if EQ_EXPOSED[q_kind[q]] != 0:
+					stat_stw_up += 1
+				continue
+			free = true
+		qn[bk] = j + 1
+		var sd := LADDER_QW if (j & 1) != 0 else -LADDER_QW
+		var bkd := (j >> 1) * LADDER_QSP
+		_lw_x[base + s] = lfx[bk] + (lat_x * sd + oc * bkd) / FM.TRIG_ONE
+		_lw_y[base + s] = lfy[bk] + (lat_y * sd + os * bkd) / FM.TRIG_ONE
+	if climbed > 0:
 		u_settled[u] = 0
-		u_dirty[u] = 1
-		stat_ladder_done += 1
+		u_st0[u] = tick
+		u_stuck[u] = 0  # (men up: the climb gets on)
 		return
-	var n_l := maxi(ladders_of(self, u), 1)
-	var q := u_lq[u]
-	if q < 0 or q_state[q] != Q_PLANTED or q_acc[q] < climb_per(self, q) or nxt < 0:
+	if not free:
+		# Every ladder busy (a man just went up it): the men below
+		# wait their turn in the queues, by rule (not stuck, not stalled).
+		u_st0[u] = tick
+		u_blk[u] = BLK_QUEUE
 		return
-	var per := climb_per(self, q)
-	q_acc[q] -= per
-	var sg := u_sseg[u]
-	var lf := _ladder_k_foot(u, up % n_l, n_l)
-	var top := seg_pt(self, sg, seg_t(self, sg, lf.x, lf.y))
-	if obs_kind(top.x, top.y) != MapGen.C_WALK:
-		top = Vector2i(u_wx[u], u_wy[u])
-	pos_x[nxt] = top.x
-	pos_y[nxt] = top.y
-	prev_x[nxt] = top.x
-	prev_y[nxt] = top.y
-	facing[nxt] = ws_dir[sg]
-	target[nxt] = -1
-	u_settled[u] = 0
-	stat_ladder_up += 1
-	if EQ_EXPOSED[q_kind[q]] != 0:
-		stat_stw_up += 1
+	if tick - u_st0[u] > LADDER_STALL:
+		_ladder_down(u)  # nobody comes to a free ladder: all back down, the unit on the ground again
+		stat_ladder_cut += 1
+
+
+## A move given to unit u while it climbs (the order rule took it, as for
+## a unit on its stretch: u_order O_MOVE to u_dx / u_dy). Out on the
+## ladders' side (its foot's ground), or nobody up yet: the men up come back
+## down the ladders and the unit goes from the foot, all together. Inland or
+## onto another stretch: the men below go on climbing (in their wall line)
+## and once all are up it goes on from the wall (_ladder_step).
+func _ladder_move(u: int) -> void:
+	var base := u_slot_base[u]
+	var up := 0
+	for s in u_alive[u]:
+		var i := slot_soldier[base + s]
+		if state[i] < S_DEAD and _on_walk(pos_x[i], pos_y[i]):
+			up += 1
+	var rf := reach_at(u_lfx[u], u_lfy[u])
+	var ws := wall_snap(self, u_dx[u], u_dy[u])
+	if up == 0 or (ws.z < 0 and rf >= 0 and reach_at(u_dx[u], u_dy[u]) == rf):
+		var fl := u_files[u]
+		_ladder_down(u)
+		u_files[u] = fl  # (the frontage it was ordered to)
+		stat_ladder_cut += 1
+		return
+	var wa := wall_anchor(self, u_sseg[u], u_wx[u], u_wy[u], u_alive[u], u_type[u])
+	u_files[u] = wall_nf(u_alive[u])
+	u_ax[u] = wa.x
+	u_ay[u] = wa.y
+	u_face[u] = wa.z
+	u_dface[u] = wa.z
+	u_dirty[u] = 1
 
 
 ## An attacking unit up a ladder (or climbing) comes back down the ladders

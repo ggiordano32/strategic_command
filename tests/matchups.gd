@@ -1770,6 +1770,9 @@ func _fair_sieges() -> void:
 				var tw_kills := 0
 				var gate_by := [0, 0, 0]  # broken (artillery / ram / hack), opened from inside counted in unbar
 				var caps := 0
+				var stuck_max := 0  # longest no-progress count of any unit (u_stuck, ticks)
+				var stuck_n := 0    # units past 200 ticks (20 s)
+				var stuck_who := ""
 				for s in n_runs:
 					var sc := Scenarios.fair_siege(700 + s * 41, walls, int(spec[1]), eq)
 					if time_limit > 0:
@@ -1798,6 +1801,13 @@ func _fair_sieges() -> void:
 					tw_hits += sim.stat_tower_hits
 					tw_kills += sim.stat_tower_kills
 					caps += sim.stat_capture
+					for u in sim.n_units:
+						var su: int = sim.stat_stuck_u[u] if u < sim.stat_stuck_u.size() else 0
+						if su > 200:
+							stuck_n += 1
+						if su > stuck_max:
+							stuck_max = su
+							stuck_who = "seed %d unit %d (side %d, %s)" % [s, u, sim.u_side[u], UT.key_of(sim.u_type[u])]
 					if sim.stat_gate_broken > 0:
 						if sim.stat_ram_blows > 0:
 							gate_by[1] += 1
@@ -1805,11 +1815,12 @@ func _fair_sieges() -> void:
 							gate_by[0] += 1
 						else:
 							gate_by[2] += 1
-				print("%-6s walls %d %-15s attacker %3d%%, defender %3d%%, draws %3d%% (withdrew %d) | %4.1f min (max %4.1f) | killed att %5.1f def %5.1f | ladder men up %5.1f, gates opened from inside %d, ram blows %4.1f, gate broken by art/ram/hack %d/%d/%d | towers hit %4.1f, down %3.1f, killed %5.1f | captures %d/%d" % [
+				print("%-6s walls %d %-15s attacker %3d%%, defender %3d%%, draws %3d%% (withdrew %d) | %4.1f min (max %4.1f) | killed att %5.1f def %5.1f | ladder men up %5.1f, gates opened from inside %d, ram blows %4.1f, gate broken by art/ram/hack %d/%d/%d | towers hit %4.1f, down %3.1f, killed %5.1f | captures %d/%d | stuck max %d (%s), units past 20 s %d" % [
 					spec[0], walls, ["ladders + ram:", "artillery only:", "full kit:"][row], aw * 100 / n_runs,
 					(n_runs - aw - dr) * 100 / n_runs, dr * 100 / n_runs, withdrew, t_sum / n_runs, t_max,
 					att_lost / n_runs, def_lost / n_runs, float(lad) / n_runs, unbar, float(blows) / n_runs,
-					gate_by[0], gate_by[1], gate_by[2], float(tw_hits) / n_runs, float(tw_down) / n_runs, float(tw_kills) / n_runs, caps, n_runs])
+					gate_by[0], gate_by[1], gate_by[2], float(tw_hits) / n_runs, float(tw_down) / n_runs, float(tw_kills) / n_runs, caps, n_runs,
+					stuck_max, stuck_who, stuck_n])
 
 
 ## The settlement tests AI vs AI over seeds: decided by when, no draws.

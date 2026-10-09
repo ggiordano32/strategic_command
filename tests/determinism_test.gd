@@ -101,6 +101,13 @@ extends SceneTree
 ## screens stop missiles, the dropped one faces its unit's way; identical on
 ## repeat and across snapshot / restore. Battles without the key hash as
 ## before (the golden digests are unchanged).
+## Units flow into the space (2026-10-09; "--only=flow", also in the full
+## run): a 90-man unit up a 5-ladder set at walls 1 and 2 with and without
+## 60 defenders on the walkway (all up with every ladder in use, a move
+## taken after, nobody left below), four units through one gate, a street
+## fight, a unit ordered across a house's corner; the no-progress counter
+## and the probe numbers printed; identical on repeat and across snapshot /
+## restore.
 ## Exits 0 on success, 1 on failure.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -147,6 +154,11 @@ var _ok := true
 
 
 func _init() -> void:
+	if "--only=flow" in OS.get_cmdline_user_args():
+		_check_flow()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=stakes" in OS.get_cmdline_user_args():
 		_check_stakes()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -236,6 +248,7 @@ func _init() -> void:
 		quit(0 if _ok else 1)
 		return
 	_check_blocking()
+	_check_flow()
 	if "--only=blocking" in OS.get_cmdline_user_args():
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
@@ -2451,16 +2464,18 @@ func _check_shut_inner_gate() -> void:
 # ------------------------------------------------------ defender layout ---
 # The defenders' layout at the attacked gate (docs/AI.md 16, part 2c).
 
-## An equal-force walls-1 ring town (fair siege seed 1, artillery only),
-## both sides Average: the attacked gate is read and a unit of the stack
-## stands at its inner mouth before the gate falls, the guards of the quiet
-## gates join the stack (at their places in it), the plaza reserve
+## An equal-force walls-1 ring town (fair siege seed 2, artillery only;
+## seed 1 until units flowed into the space, 2026-10-09: there the attack
+## now stalls at the gate and nobody reaches the plaza reserve in 4,500
+## ticks), both sides Average: the attacked gate is read and a unit of the
+## stack stands at its inner mouth before the gate falls, the guards of the
+## quiet gates join the stack (at their places in it), the plaza reserve
 ## counter-attacks an attacker; hashes every tick, the repeat equal, copies
 ## restored at three points run on equal.
 func _layout_run(snap_check: bool) -> Dictionary:
-	var sc := Scenarios.fair_siege(741, 1, 4, {})
+	var sc := Scenarios.fair_siege(782, 1, 4, {})
 	var sim := BattleSim.new()
-	sim.setup(sc, 53197)
+	sim.setup(sc, 53394)
 	var hashes := PackedInt64Array()
 	var guards := {}
 	var ag := -1
@@ -2473,7 +2488,7 @@ func _layout_run(snap_check: bool) -> Dictionary:
 		sim.step()
 		hashes.append(sim.state_hash())
 		if snap_check and (sim.tick == 600 or sim.tick == 2000 or sim.tick == 4000):
-			snap_bad += _snap_diverges(sim, sc, 53197, 120)
+			snap_bad += _snap_diverges(sim, sc, 53394, 120)
 		if sim.tick == 20:
 			for u in sim.n_units:
 				if sim.u_side[u] == 1 and sim.u_ai[u] == SiegeAI.A_GATE:
@@ -2769,6 +2784,255 @@ func _check_blocking() -> void:
 				else:
 					print("PASS blocking gate jam: four units through one open gate to the plaza by tick %d; %s; identical across snapshot / restore mid-jam" % [
 						a["arrived"], info])
+
+
+# ------------------------------------------------------------------ flow ---
+# docs/DESIGN.md "Units flow into the space" ("--only=flow"): set pieces
+# that measure how units get through places that pinch them (ladder feet,
+# gateways, streets, a building's corner): the hashed no-progress counter
+# u_stuck, men up, ladders in use, men left behind; identical on repeat and
+# across snapshot / restore.
+
+## A walls-`walls` ring (no tower engines), no AI: a 90-man heavy unit 12 m
+## out from the stretch nearest it with a ladder set at its feet; it picks
+## the set up and is ordered onto the stretch's middle. `dfn`: a 60-man
+## heavy unit holds that stretch's walkway (else 10 javelinmen at the
+## plaza, told to hold fire). Returns {sc, sg, wx, wy}.
+static func _flow_ladder_sc(walls: int, dfn: bool) -> Dictionary:
+	var city := {"seed": 4242, "level": 2, "walls": walls, "bld": [], "towers": 0}
+	var terr := {"kind": Terrain.K_FLAT, "seed": 11, "forest": 0, "ground": 2}
+	var d_arm: Array = [[UT.HEAVY, 60]] if dfn else [[UT.JAVELIN, 10]]
+	var r := Scenarios.settlement(city, terr, [[UT.HEAVY, 90]], d_arm, 1, [], {"ladders": 1})
+	var sc: Dictionary = r["scenario"]
+	var probe := BattleSim.new()
+	probe.setup(sc, 77)
+	var best := -1
+	var bd := 0
+	var bap := Vector2i.ZERO
+	var bmp := Vector2i.ZERO
+	for sg in probe.ws_x0.size():
+		var mp: Vector2i = BattleSim.seg_pt(probe, sg, BattleSim.seg_len(probe, sg) / 2)
+		var lf: Vector3i = BattleSim.ladder_foot(probe, sg, mp.x, mp.y)
+		if lf.z == 0 or not BattleSim.ladder_ok(probe, 0, sg, mp.x, mp.y):
+			continue
+		var d := absi(mp.x - probe.u_cx[0]) + absi(mp.y - probe.u_cy[0])
+		if best < 0 or d < bd:
+			best = sg
+			bd = d
+			bap = BattleSim.ladder_approach(probe, sg, lf.x, lf.y)
+			bmp = mp
+	var c := FM.cos_a(probe.ws_dir[best])
+	var s := FM.sin_a(probe.ws_dir[best])
+	var ux: int = (bap.x + c * 12 * M / FM.TRIG_ONE) / M
+	var uy: int = (bap.y + s * 12 * M / FM.TRIG_ONE) / M
+	for ud in sc["units"]:
+		if int(ud["side"]) == 0:
+			ud["x_m"] = ux
+			ud["y_m"] = uy
+			ud["facing"] = (probe.ws_dir[best] + 512) & 1023
+			ud["files"] = 15
+		elif dfn:
+			ud["x_m"] = bmp.x / M
+			ud["y_m"] = bmp.y / M
+			ud["wall"] = best + 1
+	sc["equip"] = [[BattleSim.EQ_LADDERS, ux, uy]]
+	return {"sc": sc, "sg": best, "wx": bmp.x, "wy": bmp.y}
+
+
+## Run a ladder set piece: hashes every tick and the climb's measures.
+func _flow_ladder_run(walls: int, dfn: bool, snap: bool) -> Dictionary:
+	var ls := _flow_ladder_sc(walls, dfn)
+	var sc: Dictionary = ls["sc"]
+	var sim := BattleSim.new()
+	sim.setup(sc, 77)
+	var hashes := PackedInt64Array()
+	if not dfn:
+		sim.queue_order({"tick": 0, "type": BattleSim.ORDER_FIRE, "unit": 1, "on": 0, "player": 51})
+	sim.queue_order({"tick": 1, "type": BattleSim.ORDER_PICKUP, "unit": 0, "equip": 0, "run": 0, "player": 50})
+	var ordered := false
+	var t_start := -1
+	var t_all := -1
+	var lanes := PackedInt32Array([-1000, -1000, -1000, -1000, -1000, -1000, -1000, -1000])
+	var max_use := 0
+	var use_sum := 0
+	var use_n := 0
+	var px := PackedInt32Array()
+	var py := PackedInt32Array()
+	var mv_t := -1
+	var mv_ok := -1
+	var snap_bad := 0
+	var end_t := 3000
+	for t in 3000:
+		if not ordered and sim.u_carry[0] == 0:
+			ordered = true
+			sim.queue_order(BattleSim.make_move_order(sim.tick, 0, int(ls["wx"]), int(ls["wy"]), 768, 20 * M, 0))
+		px = sim.pos_x.duplicate()
+		py = sim.pos_y.duplicate()
+		sim.step()
+		hashes.append(sim.state_hash())
+		if snap and t == 700:
+			snap_bad = _snap_diverges(sim, sc, 77, 120)
+		if t_start < 0 and sim.u_stair[0] == BattleSim.ST_LADDER:
+			t_start = sim.tick
+		if t_start >= 0 and t_all < 0:
+			var per: int = BattleSim.climb_per(sim, 0)
+			var base: int = sim.u_slot_base[0]
+			var up := 0
+			for sl in sim.u_alive[0]:
+				var i: int = sim.slot_soldier[base + sl]
+				if not sim._on_walk(sim.pos_x[i], sim.pos_y[i]):
+					continue
+				up += 1
+				if sim._on_walk(px[i], py[i]):
+					continue
+				var bk := 0
+				var bkd := 1 << 40
+				for k in BattleSim.LADDER_SET:
+					var f: Vector2i = sim.set_ladder_foot(0, k)
+					var dd := FM.approx_len(px[i] - f.x, py[i] - f.y)
+					if dd < bkd:
+						bkd = dd
+						bk = k
+				lanes[bk] = sim.tick
+			var use := 0
+			for k in BattleSim.LADDER_SET:
+				if lanes[k] > sim.tick - per:
+					use += 1
+			max_use = maxi(max_use, use)
+			use_sum += use
+			use_n += 1
+			if sim.u_alive[0] > 0 and up == sim.u_alive[0]:
+				t_all = sim.tick
+		if mv_t < 0 and t_start >= 0 and sim.u_state[0] == BattleSim.U_READY \
+				and (t_all >= 0 or sim.tick - t_start >= 1200 or (sim.u_stair[0] != BattleSim.ST_LADDER and sim.u_wall[0] == 0)):
+			mv_t = sim.tick
+			var gx: int = sim.u_cx[0] + FM.cos_a(sim.ws_dir[int(ls["sg"])]) * 40 * M / FM.TRIG_ONE
+			var gy: int = sim.u_cy[0] + FM.sin_a(sim.ws_dir[int(ls["sg"])]) * 40 * M / FM.TRIG_ONE
+			sim.queue_order(BattleSim.make_move_order(sim.tick, 0, gx, gy, 768, 20 * M, 0))
+		if mv_t >= 0 and sim.tick == mv_t + 3:
+			mv_ok = 1 if sim.u_order[0] == BattleSim.O_MOVE or sim.u_stair[0] == 1 else 0
+		if mv_t >= 0 and sim.tick >= mv_t + 300:
+			end_t = sim.tick
+			break
+	var below := 0
+	var up_end := 0
+	var base2: int = sim.u_slot_base[0]
+	for sl in sim.u_alive[0]:
+		var i: int = sim.slot_soldier[base2 + sl]
+		if sim._on_walk(sim.pos_x[i], sim.pos_y[i]):
+			up_end += 1
+		else:
+			below += 1
+	return {"hashes": hashes, "t_start": t_start, "t_all": t_all, "climb": t_all - t_start if t_all >= 0 else -1,
+		"max_use": max_use, "mean_use10": use_sum * 10 / maxi(use_n, 1), "up": sim.stat_ladder_up, "alive": sim.u_alive[0],
+		"state": sim.u_state[0], "below": below, "up_end": up_end, "mv_ok": mv_ok, "stuck": sim.stat_stuck_u[0],
+		"killed": sim.u_killed[0], "snap_bad": snap_bad, "end": end_t, "def_alive": sim.u_alive[1],
+		"whole": "on the wall" if up_end == sim.u_alive[0] and sim.u_wall[0] > 0 else ("on the ground" if below == sim.u_alive[0] \
+			and sim.u_wall[0] == 0 and sim.u_stair[0] != BattleSim.ST_LADDER else "split")}
+
+
+## A unit ordered to a point where its formation would stand across the
+## corner of a building (a 30 x 30 m block on a plain field); a lone enemy
+## far off. Returns the scenario.
+static func _corner_sc() -> Dictionary:
+	var units: Array = [Scenarios.unit(0, UT.HEAVY, 90, 150, 250, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.SPEAR, 20, 30, 20, Scenarios.FACE_DOWN)]
+	units[0]["files"] = 15
+	return {"width_m": 300, "height_m": 300, "units": units,
+		"orders": [{"tick": 2, "type": BattleSim.ORDER_MOVE, "unit": 0, "x": 145 * M, "y": 132 * M, "facing": Scenarios.FACE_UP,
+			"width": 16 * M, "run": 0, "player": 50}],
+		"terrain": {"kind": 0, "blocks": [[145, 120, 175, 150]], "urban": [[100, 100, 200, 200]]}}
+
+
+## Run a pinch set piece ("gate": four units through one open gate to the
+## plaza; "street": three a side meeting in a 10 m street; "corner"):
+## hashes, arrival, the longest no-progress count, men far from their
+## places and men within reach at the end.
+func _flow_pinch_run(kind: String, snap: bool) -> Dictionary:
+	var sc: Dictionary
+	var ticks := 1500
+	match kind:
+		"gate":
+			sc = _gate_jam_scenario()
+			ticks = 3000
+		"street":
+			sc = _street_fight_scenario()
+		_:
+			sc = _corner_sc()
+			ticks = 1500
+	var sim := BattleSim.new()
+	sim.setup(sc, 777)
+	if kind == "gate":
+		_gate_jam_orders(sim)
+	var hashes := PackedInt64Array()
+	var arrived := -1
+	var snap_bad := 0
+	var inreach_max := 0
+	for t in ticks:
+		sim.step()
+		hashes.append(sim.state_hash())
+		if snap and t == ticks / 3:
+			snap_bad = _snap_diverges(sim, sc, 777, 120)
+		if kind == "street":
+			var ir := 0
+			for u in 3:
+				ir += sim.u_inreach[u]
+			inreach_max = maxi(inreach_max, ir)
+		elif arrived < 0 and t > 25:
+			var all_in := true
+			for u in sim.n_units:
+				if sim.u_side[u] == 0 and sim.u_state[u] == BattleSim.U_READY and (sim.u_order[u] != BattleSim.O_NONE \
+						or _off_places(sim, u) > sim.u_alive[u] / 10):
+					all_in = false
+			if all_in:
+				arrived = t
+	var stuck := 0
+	var off := 0
+	for u in sim.n_units:
+		if sim.u_side[u] == 0:
+			stuck = maxi(stuck, sim.stat_stuck_u[u])
+			if sim.u_state[u] == BattleSim.U_READY:
+				off += _off_places(sim, u)
+	return {"hashes": hashes, "arrived": arrived, "stuck": stuck, "off": off, "inreach": inreach_max,
+		"killed": [sim.u_killed[0] + sim.u_killed[1] + sim.u_killed[2], sim.u_killed[3] + sim.u_killed[4] + sim.u_killed[5]] if kind == "street" else [],
+		"snap_bad": snap_bad, "flow": sim.stat_flow, "unstick": sim.stat_unstick}
+
+
+## Men of unit u more than 3 m from their places.
+static func _off_places(sim, u: int) -> int:
+	var n := 0
+	var base: int = sim.u_slot_base[u]
+	for sl in sim.u_alive[u]:
+		var i: int = sim.slot_soldier[base + sl]
+		if FM.approx_len(sim.pos_x[i] - sim.u_ax[u] - sim.off_x[base + sl], sim.pos_y[i] - sim.u_ay[u] - sim.off_y[base + sl]) > 3 * M:
+			n += 1
+	return n
+
+
+func _check_flow() -> void:
+	for walls in [1, 2]:
+		for dfn in [false, true]:
+			var a := _flow_ladder_run(walls, dfn, true)
+			var b := _flow_ladder_run(walls, dfn, false)
+			var nm := "flow ladders walls %d %s" % [walls, "60 defenders above" if dfn else "no defenders"]
+			if a["hashes"] != b["hashes"]:
+				_fail("%s: the repeat diverged" % nm)
+			if int(a["snap_bad"]) != 0:
+				_fail("%s: snapshot / restore diverged" % nm)
+			print("PROBE %s: climb from tick %d, all up after %d ticks, ladders in use at most %d (mean x10 %d), men up %d, alive %d (state %d), up at the end %d, below %d (%s), killed %d, defenders left %d, move order taken after %d, longest no-progress %d" % [
+				nm, a["t_start"], a["climb"], a["max_use"], a["mean_use10"], a["up"], a["alive"], a["state"], a["up_end"],
+				a["below"], a["whole"], a["killed"], a["def_alive"], a["mv_ok"], a["stuck"]])
+			if str(a["whole"]) == "split" or (not dfn and (int(a["climb"]) < 0 or int(a["mv_ok"]) != 1)):
+				_fail("%s: men left below, or the climb unfinished, or the unit refused a move after it" % nm)
+	for kind in ["gate", "street", "corner"]:
+		var a := _flow_pinch_run(kind, true)
+		var b := _flow_pinch_run(kind, false)
+		if a["hashes"] != b["hashes"]:
+			_fail("flow %s: the repeat diverged" % kind)
+		if int(a["snap_bad"]) != 0:
+			_fail("flow %s: snapshot / restore diverged" % kind)
+		print("PROBE flow %s: arrived and formed at %d, longest no-progress %d, men > 3 m off their places at the end %d, most men in reach %d, killed %s; flowed layouts %d, releases %s" % [
+			kind, a["arrived"], a["stuck"], a["off"], a["inreach"], str(a["killed"]), a["flow"], str(a["unstick"])])
 
 
 # ---------------------------------------------------------------- walls ---
