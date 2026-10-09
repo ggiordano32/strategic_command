@@ -358,93 +358,111 @@ const EQ_STAKES := 5             # field works: a line of sharpened stakes (plac
 const EQ_CALTROPS := 6           # ... a field of caltrops (hidden from the enemy until crossed)
 const EQ_DITCH := 7              # ... a fortified camp's ditch (built by the scenario, "fortified")
 const EQ_RAMPART := 8            # ... and its rampart: a low wall whose top is a fighting walk
+const EQ_MANTLET := 9            # a mantlet: a wooden missile screen a foot unit carries and sets down
 # What each kind of piece is, by EQ_* (index 0 unused); the sim reads these
 # fields, never the kind (docs/DESIGN.md "Siege equipment as objects").
-## Pieces with a roof (arrows on the men at it are often stopped).
-const EQ_ROOF: Array[int] = [0, 0, 1, 1, 1, 0, 0, 0, 0]
-## Arrows landing on the carriers this near it are stopped by its roof RAM_ROOF_PCT of the time.
-const EQ_ROOF_R: Array[int] = [0, 0, RAM_ROOF_R, RAM_ROOF_R, 8 * M, 0, 0, 0, 0]
+## Pieces with a roof: % of the arrows landing on the carriers near it stopped (0: none).
+const EQ_ROOF: Array[int] = [0, 0, RAM_ROOF_PCT, RAM_ROOF_PCT, RAM_ROOF_PCT, 0, 0, 0, 0, MANTLET_CARRY_PCT]
+## Arrows landing on the carriers this near it are stopped by its roof EQ_ROOF % of the time.
+const EQ_ROOF_R: Array[int] = [0, 0, RAM_ROOF_R, RAM_ROOF_R, 8 * M, 0, 0, 0, 0, MANTLET_W]
 ## Full hit points (a wagon: its tier's).
-const EQ_HP: Array[int] = [0, LADDER_HP, RAM_HP, 0, 2000, 400, 300, 0, 900]
+const EQ_HP: Array[int] = [0, LADDER_HP, RAM_HP, 0, 2000, 400, 300, 0, 900, MANTLET_HP]
 ## Planted against a stretch, men cross it this many abreast (0: never planted) ...
-const EQ_LANES: Array[int] = [0, LADDER_SET, 0, 0, 8, 0, 0, 0, 0]
+const EQ_LANES: Array[int] = [0, LADDER_SET, 0, 0, 8, 0, 0, 0, 0, 0]
 ## ... the lanes this far apart along the wall ...
-const EQ_LANE_GAP: Array[int] = [0, LADDER_GAP, 0, 0, 768, 0, 0, 0, 0]
+const EQ_LANE_GAP: Array[int] = [0, LADDER_GAP, 0, 0, 768, 0, 0, 0, 0, 0]
 ## ... a man up each lane every this many ticks (0: LADDER_TICKS by wall level) ...
-const EQ_CLIMB: Array[int] = [0, 0, 0, 0, 16, 0, 0, 0, 0]
+const EQ_CLIMB: Array[int] = [0, 0, 0, 0, 16, 0, 0, 0, 0, 0]
 ## ... and only against walls of at least this level.
-const EQ_WALLS: Array[int] = [0, 1, 0, 0, 2, 0, 0, 0, 0]
+const EQ_WALLS: Array[int] = [0, 1, 0, 0, 2, 0, 0, 0, 0, 0]
 ## Carried: at most this pace (0: none) and this % of the carriers' walk ...
-const EQ_PACE: Array[int] = [0, 0, RAM_WALK, 0, 62, 0, 0, 0, 0]
-const EQ_WALK_PCT: Array[int] = [0, LADDER_WALK_PCT, 100, 100, 100, 100, 100, 100, 100]
+const EQ_PACE: Array[int] = [0, 0, RAM_WALK, 0, 62, 0, 0, 0, 0, 0]
+const EQ_WALK_PCT: Array[int] = [0, LADDER_WALK_PCT, 100, 100, 100, 100, 100, 100, 100, 100]
 ## ... with fewer men than this (0: any number) proportionally slower (at least a quarter).
-const EQ_MEN: Array[int] = [0, 0, 0, 0, 40, 0, 0, 0, 0]
+const EQ_MEN: Array[int] = [0, 0, 0, 0, 40, 0, 0, 0, 0, 0]
 ## Either side may take it up (else only the side it belongs to).
-const EQ_ANY: Array[int] = [0, 0, 0, 1, 1, 0, 0, 0, 0]
+const EQ_ANY: Array[int] = [0, 0, 0, 1, 1, 0, 0, 0, 0, 1]
 ## Bolts and stones landing on it hit it.
-const EQ_SHOT: Array[int] = [0, 0, 1, 1, 1, 0, 0, 0, 0]
+const EQ_SHOT: Array[int] = [0, 0, 1, 1, 1, 0, 0, 0, 0, 1]
 ## Planted, it can still be set alight and hit (planted ladders are out of reach).
-const EQ_EXPOSED: Array[int] = [0, 0, 0, 0, 1, 0, 0, 0, 0]
+const EQ_EXPOSED: Array[int] = [0, 0, 0, 0, 1, 0, 0, 0, 0, 0]
 ## Planted, its middle stands this far out from the foot (its depth / 2).
-const EQ_DEPTH2: Array[int] = [0, 0, 0, 0, 3072, 0, 0, 0, 0]
+const EQ_DEPTH2: Array[int] = [0, 0, 0, 0, 3072, 0, 0, 0, 0, 0]
 ## Enemy foot standing at it on the ground smash it.
-const EQ_SMASH: Array[int] = [0, 0, 1, 0, 1, 0, 0, 0, 0]
+const EQ_SMASH: Array[int] = [0, 0, 1, 0, 1, 0, 0, 0, 0, 0]
 ## A siege engine the defenders' towers and wall archers single out.
-const EQ_FOCUS: Array[int] = [0, 0, 1, 0, 1, 0, 0, 0, 0]
+const EQ_FOCUS: Array[int] = [0, 0, 1, 0, 1, 0, 0, 0, 0, 0]
 ## Wall archers with a fire kind single out its carriers (docs/AI.md 15).
-const EQ_FIRE_AT: Array[int] = [0, 0, 0, 0, 1, 0, 0, 0, 0]
+const EQ_FIRE_AT: Array[int] = [0, 0, 0, 0, 1, 0, 0, 0, 0, 0]
 ## Fire takes it (a fire missile near it sets it alight).
-const EQ_BURN: Array[int] = [0, 1, 1, 1, 1, 1, 0, 0, 1]
+const EQ_BURN: Array[int] = [0, 1, 1, 1, 1, 1, 0, 0, 1, 1]
+# Screens (docs/DESIGN.md "Mantlets"): standing on the ground (Q_GROUND)
+# facing q_face, the piece shelters its side's (q_side) men in the
+# rectangle behind it, EQ_SCREEN_W along its line by EQ_SCREEN_D deep, from
+# missiles shot from in front of its line.
+## % of arrows, sling stones and javelins about to strike a sheltered man stopped ...
+const EQ_SCREEN: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, MANTLET_COVER_PCT]
+## ... and of bolts (stones go over it or through it: none).
+const EQ_SCREEN_BOLT: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, MANTLET_BOLT_PCT]
+const EQ_SCREEN_W: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, MANTLET_W]
+const EQ_SCREEN_D: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, MANTLET_D]
+const MANTLET_COVER_PCT := 60    # a standing mantlet stops this % of the arrows, slings, javelins at the men behind it ...
+const MANTLET_BOLT_PCT := 30     # ... and this % of the bolts
+const MANTLET_CARRY_PCT := 40    # carried: the carriers within MANTLET_W of it are covered this often (its roof rule)
+const MANTLET_HP := 600          # a plank screen: two stones (RAM_STONE_DMG) wreck it
+const MANTLET_W := 6 * M         # its width along its line ...
+const MANTLET_D := 6 * M         # ... and the depth behind it it shelters
+const MANTLET_AHEAD := 2 * M     # at setup it stands this far before its unit's front
 # Field works (docs/DESIGN.md "Field works and the fortified camp"): pieces
 # fixed where they are put for the battle (Q_FIXED), an oriented rectangle
 # q_len along the line (q_face: the way its front faces) by EQ_FW_DEPTH
 # across; every man inside one is affected by these fields, never the kind.
 ## A field work (placed in the deployment or built by the scenario).
-const EQ_FW: Array[int] = [0, 0, 0, 0, 0, 1, 1, 1, 1]
+const EQ_FW: Array[int] = [0, 0, 0, 0, 0, 1, 1, 1, 1, 0]
 ## Its length along the line when placed (0: the scenario's) and its depth across.
-const EQ_FW_LEN: Array[int] = [0, 0, 0, 0, 0, 20 * M, 10 * M, 0, 0]
-const EQ_FW_DEPTH: Array[int] = [0, 0, 0, 0, 0, 3 * M, 10 * M, 4 * M, 4 * M]
+const EQ_FW_LEN: Array[int] = [0, 0, 0, 0, 0, 20 * M, 10 * M, 0, 0, 0]
+const EQ_FW_DEPTH: Array[int] = [0, 0, 0, 0, 0, 3 * M, 10 * M, 4 * M, 4 * M, 0]
 ## Its own side's men are hindered too (stakes and the ditch are in everyone's
 ## way; the owner knows where its caltrops lie and climbs its own rampart).
-const EQ_OWN: Array[int] = [0, 0, 0, 0, 0, 1, 0, 1, 0]
+const EQ_OWN: Array[int] = [0, 0, 0, 0, 0, 1, 0, 1, 0, 0]
 ## Men crossing it move at this % of their pace: foot, and riders / beasts
 ## (stakes: foot pick their way through at half pace, a horse barely at all).
-const EQ_SLOW_FOOT: Array[int] = [100, 100, 100, 100, 100, 50, 60, 45, 100]
-const EQ_SLOW_RIDE: Array[int] = [100, 100, 100, 100, 100, 25, 35, 30, 100]
+const EQ_SLOW_FOOT: Array[int] = [100, 100, 100, 100, 100, 50, 60, 45, 100, 100]
+const EQ_SLOW_RIDE: Array[int] = [100, 100, 100, 100, 100, 25, 35, 30, 100, 100]
 ## Ticks an enemy takes to climb across its depth (0: no climb): the rampart,
 ## 4 m of steep earth bank in 5 s, a short ladder's pace with no ladder.
-const EQ_CROSS_T: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 50]
+const EQ_CROSS_T: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 50, 0]
 ## Charge momentum a rider (horse, camel, elephant) loses each tick inside
 ## it: 100 stops a charge dead (stakes, the ditch, the rampart's bank).
-const EQ_STOP: Array[int] = [0, 0, 0, 0, 0, 100, 25, 100, 100]
+const EQ_STOP: Array[int] = [0, 0, 0, 0, 0, 100, 25, 100, 100, 0]
 ## % of a man's full hit points he loses stepping into it: foot, riders,
 ## beasts (a big body); a charging rider (and his beast) that times
 ## (100 + momentum) / 100: impaled on the stakes at the gallop.
-const EQ_DMG_FOOT: Array[int] = [0, 0, 0, 0, 0, 0, 6, 0, 0]
-const EQ_DMG_RIDE: Array[int] = [0, 0, 0, 0, 0, 5, 12, 3, 0]
-const EQ_DMG_BEAST: Array[int] = [0, 0, 0, 0, 0, 3, 8, 2, 0]
+const EQ_DMG_FOOT: Array[int] = [0, 0, 0, 0, 0, 0, 6, 0, 0, 0]
+const EQ_DMG_RIDE: Array[int] = [0, 0, 0, 0, 0, 5, 12, 3, 0, 0]
+const EQ_DMG_BEAST: Array[int] = [0, 0, 0, 0, 0, 3, 8, 2, 0, 0]
 ## A charging rider stepping into it is thrown this % x momentum / 100 of the time.
-const EQ_KNOCK: Array[int] = [0, 0, 0, 0, 0, 40, 0, 50, 0]
+const EQ_KNOCK: Array[int] = [0, 0, 0, 0, 0, 40, 0, 50, 0, 0]
 ## Hit points (its stock) used up by each man stepping into it (caltrops).
-const EQ_USE: Array[int] = [0, 0, 0, 0, 0, 0, 1, 0, 0]
+const EQ_USE: Array[int] = [0, 0, 0, 0, 0, 0, 1, 0, 0, 0]
 ## Hit points a tick each enemy foot soldier standing inside it hacks off
 ## (stakes pulled up; at most FW_HACKERS men at once; men crossing do not).
-const EQ_HACK: Array[int] = [0, 0, 0, 0, 0, 1, 0, 0, 0]
+const EQ_HACK: Array[int] = [0, 0, 0, 0, 0, 1, 0, 0, 0, 0]
 ## Hidden from the enemy until one of its men steps into it (q_seen).
-const EQ_HIDE: Array[int] = [0, 0, 0, 0, 0, 0, 1, 0, 0]
+const EQ_HIDE: Array[int] = [0, 0, 0, 0, 0, 0, 1, 0, 0, 0]
 ## Height of the ground inside it (sim units): the ditch's floor, the
 ## rampart's fighting step (2 m: a wooden palisade on an earth bank, about
 ## half walls 1's 5 m walkway; a section burnt down leaves a gap: it is
 ## wrecked and none of its fields apply). The
 ## height rules (melee from above, a charge uphill, range from height)
 ## read it on any map.
-const EQ_H: Array[int] = [0, 0, 0, 0, 0, 0, 0, -1536, 2048]
+const EQ_H: Array[int] = [0, 0, 0, 0, 0, 0, 0, -1536, 2048, 0]
 ## Its side's men standing on it: % of the missiles from men not on it
 ## stopped (half walls 1's battlements, WALL_COVER) ...
-const EQ_COVER: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 12]
+const EQ_COVER: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 12, 0]
 ## ... and % of their range more at men not on it (half walls 2-3's
 ## WALL_RANGE_PCT; walls 1 gives none, a rampart is a fighting platform).
-const EQ_RANGE: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 8]
+const EQ_RANGE: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 8, 0]
 const FW_HACKERS := 12           # men at a piece who hack at it at most ...
 const FW_HACK_STILL := M / 32    # ... standing in it (moved less than this in the tick)
 const Q_GROUND := 0              # lying where it was put down
@@ -1022,7 +1040,7 @@ var stat_impact_blocked: int = 0   # charge impacts taken on a formed front's sh
 ## [12] holds of high ground, [13] missile / artillery slots moved onto a
 ## rise, [14] deployments shifted to higher ground.
 var stat_ai := PackedInt32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
 ## Per-competency AI counters, side * AIProfile.N_COUNTERS + AIProfile.C_*
 ## (docs/AI.md 6: flank hits, pull-outs, units saved, spear responses,
 ## missiles caught, ammunition left at rout ...). Not hashed, never read by
@@ -1157,6 +1175,11 @@ var q_len := PackedInt32Array()     # ... its length along the line (sim units)
 var q_seen := PackedInt32Array()    # ... bit per side that knows where it is (caltrops: the enemy once one of its men stepped in)
 var u_fws := PackedInt32Array()     # per unit: % of its pace its men in field works had last tick (100 none): its anchor keeps to it ...
 var u_fwc := PackedInt32Array()     # ... and to this step a tick (a rampart's climb; 0 none)
+## Mantlets (EQ_SCREEN pieces; section "mantlets" at the end): the battle
+## has some (set up once). Their facing (q_face) is hashed only then, so
+## battles without them hash as before.
+var mt_on: int = 0
+var stat_mantlet_cover: int = 0     # missiles stopped by a standing mantlet (not hashed)
 var stat_fw_cross: int = 0          # men stepping into a field work
 var stat_fw_stop: int = 0           # rider-ticks a field work took a charge's momentum
 var stat_fw_dmg: int = 0            # hit points field works took off men
@@ -7404,12 +7427,17 @@ func _land(p: int) -> void:
 				and _rand() % 100 < WALL_COVER[city_walls]:
 			stat_wall_cover += 1
 			return
-		if sg_on != 0 and u_carry[ub] >= 0 and EQ_ROOF[q_kind[u_carry[ub]]] != 0 \
-				and FM.approx_len(pos_x[best] - q_x[u_carry[ub]], pos_y[best] - q_y[u_carry[ub]]) <= EQ_ROOF_R[q_kind[u_carry[ub]]] \
-				and _rand() % 100 < RAM_ROOF_PCT:
-			return  # on the ram's (the wagon's) roof
+	if best >= 0 and (map_on != 0 or mt_on != 0) and sg_on != 0:
+		# (Roofs count on plain maps only in battles with mantlets: the others play as before.)
+		var uc := u_carry[unit_of[best]]
+		if uc >= 0 and EQ_ROOF[q_kind[uc]] != 0 \
+				and FM.approx_len(pos_x[best] - q_x[uc], pos_y[best] - q_y[uc]) <= EQ_ROOF_R[q_kind[uc]] \
+				and _rand() % 100 < EQ_ROOF[q_kind[uc]]:
+			return  # on the ram's (the wagon's) roof, under the carried mantlet
 	if best >= 0 and fwh_on != 0 and _works_cover(pr_sx[p], pr_sy[p], best):
 		return  # behind the palisade
+	if best >= 0 and mt_on != 0 and _screen_cover(pr_sx[p], pr_sy[p], best, false):
+		return  # behind a mantlet
 	if best >= 0:
 		_missile_hit(p, best)
 
@@ -8851,6 +8879,8 @@ func _land_bolt(p: int) -> void:
 			continue
 		if _rand() % 100 >= 100 - 12 * hits:
 			continue  # passes him by
+		if mt_on != 0 and _screen_cover(sx, sy, v, true):
+			break  # into a mantlet
 		var td := u_otype[unit_of[v]]
 		var sv := state[v]
 		var sh := 0
@@ -9901,6 +9931,9 @@ func state_hash() -> int:
 				# Field works (battles without them hash as before).
 				for arr in [q_face, q_len, q_seen, u_fws, u_fwc]:
 					ctx.update((arr as PackedInt32Array).to_byte_array())
+			if mt_on != 0:
+				# Mantlets: which way each stands (battles without them hash as before).
+				ctx.update(q_face.to_byte_array())
 	if dog_on != 0:
 		# War dogs (battles without handlers hash as before).
 		for arr in _dog_arrays():
@@ -10364,7 +10397,8 @@ func _setup_equip(sc: Dictionary, units: Array) -> void:
 		if UT.stat(int(units[u]["type"]), "wagon") >= 0:
 			wag.append(u)
 	var fws := _field_works(sc, units)
-	n_eq = lst.size() + wag.size() + fws.size()
+	var mts := _mantlets_at_setup(sc, units)
+	n_eq = lst.size() + wag.size() + fws.size() + mts.size()
 	for arr in _equip_arrays():
 		arr.resize(n_eq)
 		arr.fill(0)
@@ -10436,6 +10470,20 @@ func _setup_equip(sc: Dictionary, units: Array) -> void:
 		q_seen[q] = (1 << q_side[q]) if EQ_HIDE[q_kind[q]] != 0 else 3
 		if EQ_H[q_kind[q]] != 0:
 			fwh_on = 1
+	# Mantlets (any map): last, standing before their units.
+	mt_on = 1 if not mts.is_empty() else 0
+	var qm := q0 + fws.size()
+	for k in mts.size():
+		var m: Array = mts[k]
+		var q := qm + k
+		q_kind[q] = EQ_MANTLET
+		q_side[q] = int(m[0])
+		q_x[q] = int(m[1])
+		q_y[q] = int(m[2])
+		q_face[q] = int(m[3])
+		q_state[q] = Q_GROUND
+		q_hp[q] = EQ_HP[EQ_MANTLET]
+		q_seen[q] = 3
 	wag_h = 0
 	for q in n_eq:
 		wag_h += q_hn[q]
@@ -10506,6 +10554,8 @@ static func pickup_refusal(sim, u: int, q: int) -> String:
 			return "A planted siege tower stays against the wall: order foot onto that wall to cross"
 		return "Planted ladders stay against the wall: order foot onto that wall to climb"
 	if sim.q_state[q] == Q_WRECKED:
+		if EQ_SCREEN[k] != 0:
+			return "The mantlet is wrecked"
 		return "The wagon is wrecked" if wag else ("The siege tower is wrecked" if EQ_LANES[k] > 0 else "The ram is wrecked")
 	if sim.q_state[q] == Q_CARRIED:
 		if wag and sim.u_side[sim.q_unit[q]] != sim.u_side[u]:
@@ -10516,6 +10566,8 @@ static func pickup_refusal(sim, u: int, q: int) -> String:
 		return "Cavalry cannot pull a wagon" if wag else "Cavalry cannot carry siege equipment"
 	if c == UT.CLS_ART:
 		return "Engines cannot carry siege equipment"
+	if EQ_SCREEN[k] != 0 and sim.t_mount[sim.u_type[u]] != UT.MOUNT_FOOT:
+		return "Only men on foot carry a mantlet"
 	if sim.u_wall[u] > 0 or sim.u_stair[u] != 0:
 		return "Down off the wall first"
 	if sim.u_carry[u] >= 0:
@@ -10552,7 +10604,7 @@ func _pick_check(u: int) -> void:
 		q_side[q] = u_side[u]  # taken over by the other side
 		if q_kind[q] == EQ_WAGON:
 			stat_wagon_taken += 1
-		else:
+		elif EQ_SCREEN[q_kind[q]] == 0:
 			stat_stw_taken += 1
 	if u_order[u] == O_MOVE:
 		u_order[u] = O_NONE
@@ -10562,7 +10614,8 @@ func _pick_check(u: int) -> void:
 	stat_pickups += 1
 
 
-## Unit u puts down what it carries, at its anchor (where it stands).
+## Unit u puts down what it carries, at its anchor (where it stands); a
+## mantlet stands facing the way the unit faces.
 func _drop(u: int) -> void:
 	var q := u_carry[u]
 	if q < 0:
@@ -10572,6 +10625,8 @@ func _drop(u: int) -> void:
 	q_unit[q] = -1
 	q_x[q] = clampi(u_ax[u], 0, field_w)
 	q_y[q] = clampi(u_ay[u], 0, field_h)
+	if EQ_SCREEN[q_kind[q]] != 0:
+		q_face[q] = u_face[u]
 	stat_drops += 1
 
 
@@ -10589,6 +10644,8 @@ func _update_equip() -> void:
 			if u < 0 or u_state[u] != U_READY or u_alive[u] <= 0 or u_carry[u] != q:
 				if u >= 0 and u_carry[u] == q:
 					u_carry[u] = -1
+				if u >= 0 and EQ_SCREEN[q_kind[q]] != 0:
+					q_face[q] = u_face[u]
 				q_state[q] = Q_GROUND
 				q_unit[q] = -1
 				stat_drops += 1
@@ -11400,3 +11457,96 @@ func _fw_near(q: int, x: int, y: int, r: int) -> bool:
 	var f := absi((dx * c + dy * s) / FM.TRIG_ONE)
 	var l := absi((dy * c - dx * s) / FM.TRIG_ONE)
 	return f <= (EQ_FW_DEPTH[q_kind[q]] >> 1) + r and l <= (q_len[q] >> 1) + r
+
+
+# --------------------------------------------------------------- mantlets ---
+# docs/DESIGN.md "Mantlets". A mantlet (EQ_MANTLET) is a piece in the q_*
+# tables like the ram: a plank screen about 6 m wide that any foot unit of
+# either side carries (EQ_ANY; at its walk, EQ_WALK_PCT) and sets down with
+# ORDER_DROP at its anchor, facing the way the unit faces (q_face); picked up
+# again with ORDER_PICKUP. Standing (Q_GROUND) it shelters the men of the
+# side that last carried it (q_side) in the rectangle behind it from
+# missiles shot from in front of its line (EQ_SCREEN: arrows, slings and
+# javelins; EQ_SCREEN_BOLT: bolts; stones none); carried, its carriers
+# near it are covered by the roof rule (EQ_ROOF). Wooden (EQ_BURN), hit by
+# bolts and stones landing on it (EQ_SHOT, _ram_hit). Scenario key
+# "mantlets": [side 0 count, side 1 count], set up standing before the
+# side's missile and artillery units (mt_on; battles without hash as
+# before).
+
+## The scenario's mantlets as [side, x, y, facing] (sim units): each side's
+## count (at most 8) dealt in turn to its missile and artillery units in
+## index order (no such unit: any of its units; tower engines never),
+## standing MANTLET_AHEAD before the unit's front facing its way, side by
+## side when a unit gets more than one.
+func _mantlets_at_setup(sc: Dictionary, units: Array) -> Array:
+	var out: Array = []
+	var nm: Array = sc.get("mantlets", [])
+	if nm.size() < 2:
+		return out
+	for s in 2:
+		var cnt := clampi(int(nm[s]), 0, 8)
+		if cnt == 0:
+			continue
+		var mis: Array[int] = []
+		var any: Array[int] = []
+		for u in units.size():
+			var ud: Dictionary = units[u]
+			var ty := int(ud["type"])
+			if int(ud["side"]) != s or UT.stat(ty, "fixed") != 0:
+				continue
+			any.append(u)
+			if UT.cls(ty) == UT.CLS_MISSILE or UT.cls(ty) == UT.CLS_ART:
+				mis.append(u)
+		if mis.is_empty():
+			mis = any
+		var nc := mis.size()
+		if nc == 0:
+			continue
+		for k in cnt:
+			var ud: Dictionary = units[mis[k % nc]]
+			var per := (cnt - k % nc + nc - 1) / nc
+			var lat := (2 * (k / nc) - (per - 1)) * (MANTLET_W + M) / 2
+			var face := int(ud["facing"]) & FM.ANGLE_MASK
+			var c := FM.cos_a(face)
+			var sn := FM.sin_a(face)
+			var x := int(ud["x_m"]) * M + (c * MANTLET_AHEAD - sn * lat) / FM.TRIG_ONE
+			var y := int(ud["y_m"]) * M + (sn * MANTLET_AHEAD + c * lat) / FM.TRIG_ONE
+			out.append([s, clampi(x, 0, field_w), clampi(y, 0, field_h), face])
+	return out
+
+
+## A missile shot from (sx, sy) about to strike soldier v: a standing
+## mantlet of his side he is sheltered behind (within EQ_SCREEN_W / 2 of its
+## middle along its line, up to EQ_SCREEN_D behind it), the shooter in
+## front of its line, stops it EQ_SCREEN % of the time (a bolt:
+## EQ_SCREEN_BOLT). One screen at most a missile (the first in index order).
+func _screen_cover(sx: int, sy: int, v: int, bolt: bool) -> bool:
+	var side := u_side[unit_of[v]]
+	var px := pos_x[v]
+	var py := pos_y[v]
+	for q in n_eq:
+		var k := q_kind[q]
+		var pct: int = EQ_SCREEN_BOLT[k] if bolt else EQ_SCREEN[k]
+		if pct <= 0 or q_state[q] != Q_GROUND or q_side[q] != side:
+			continue
+		var dx := px - q_x[q]
+		var dy := py - q_y[q]
+		var r: int = EQ_SCREEN_D[k] + EQ_SCREEN_W[k]
+		if dx > r or dx < -r or dy > r or dy < -r:
+			continue
+		var c := FM.cos_a(q_face[q])
+		var s := FM.sin_a(q_face[q])
+		var f := (dx * c + dy * s) / FM.TRIG_ONE
+		if f > 0 or f < -EQ_SCREEN_D[k]:
+			continue  # not behind it
+		var l := (dy * c - dx * s) / FM.TRIG_ONE
+		if l > EQ_SCREEN_W[k] >> 1 or l < -(EQ_SCREEN_W[k] >> 1):
+			continue
+		if ((sx - q_x[q]) * c + (sy - q_y[q]) * s) / FM.TRIG_ONE <= 0:
+			continue  # shot from behind its line: the screen does not stand in the way
+		if _rand() % 100 < pct:
+			stat_mantlet_cover += 1
+			return true
+		return false
+	return false

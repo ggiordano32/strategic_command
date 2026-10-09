@@ -1751,6 +1751,10 @@ func _grid_siege_equipment() -> void:
 	var eq2 := CBattle.siege_equipment(st, b)
 	_check(int(eq2.get("ladders", 0)) == 3 and int(eq2.get("ram", 0)) == 1, "after two turns: three sets of ladders and a ram")
 	_check(CBattle.equipment_text(st, ap).contains("ram"), "the siege panel line names the ram")
+	_check(int(eq2.get("mantlets", 0)) == 2 and not eq1.has("mantlets") and CBattle.equipment_text(st, ap).contains("2 mantlets"),
+		"after two turns: two mantlets too (none after one): " + CBattle.equipment_text(st, ap))
+	sg["turn"] = t0 - 3
+	_check(int(CBattle.siege_equipment(st, b).get("mantlets", 0)) == 4, "after three turns: four mantlets")
 	# Siege towers (4f.1): walls 2-3 only, one after three turns, two after four.
 	var slots0: Array = (st["regions"][ap]["slots"] as Array).duplicate(true)
 	var tw := {}
@@ -1784,6 +1788,8 @@ func _grid_siege_equipment() -> void:
 			ram += 1
 	_check(lad == 3 and ram == 1 and (built["map"] as Array).size() == (built["scenario"]["units"] as Array).size(),
 		"the assault's scenario: %d sets of ladders and %d ram on the ground (objects, not units), the result map unchanged" % [lad, ram])
+	var mts: Array = built["scenario"].get("mantlets", [0, 0])
+	_check(int(mts[0]) + int(mts[1]) == 2, "the assault's scenario: the attackers' two mantlets %s" % str(mts))
 	_check(not built["scenario"].has("time_limit"), "no time limit setting: the sim's 15 minutes")
 	st["settings"]["time_limit"] = 1800
 	_check(int(CBattle.build(st, b, -1)["scenario"].get("time_limit", 0)) == 1800, "the battle time setting reaches the scenario")

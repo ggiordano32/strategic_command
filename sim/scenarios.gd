@@ -629,7 +629,9 @@ static func _lay_row(units: Array, row: Array, back: int, gap: int, placed: Arra
 ## their own 14 m further back (at the attackers' edge), in the scenario's
 ## "equip" list (BattleSim EQ_LADDERS / EQ_RAM / EQ_TOWER, x_m, y_m); only
 ## against walls, siege towers only against walls 2-3 (TOWER_WALLS).
-## The walls-2/3 city's tower engines are added by the sim.
+## "mantlets": that many mantlets for the attackers (the scenario's
+## "mantlets" key: the sim stands them before their missile and artillery
+## units). The walls-2/3 city's tower engines are added by the sim.
 static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Array, def_side: int,
 		ai_sides: Array, equip: Dictionary = {}) -> Dictionary:
 	var c := MapGen.city_params(city)
@@ -850,6 +852,11 @@ static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Arra
 			for k in eq_t:
 				out_eq.append([EQ_TOWER, clampi(ax + (k * 2 - (eq_t - 1)) * 9, 10, w - 10), ty])
 			sc["equip"] = out_eq
+		var eq_m := clampi(int(equip.get("mantlets", 0)), 0, 8)
+		if eq_m > 0:
+			var mt := [0, 0]
+			mt[att_side] = eq_m
+			sc["mantlets"] = mt
 	return {"scenario": sc, "order": order, "layout": lay}
 
 

@@ -2189,6 +2189,85 @@ tables `EQ_*` and the section "field works" at the end), `sim/scenarios.gd`
   where two overlap); the palisade does not block movement (the climb and
   the ditch do the work) and nobody can be ordered "onto" it like a wall.
 
+### Mantlets (as built, 2026-10-09)
+
+A moveable wooden missile screen (STATUS item 4f, point 4): a plank
+shield on a frame about 6 m wide that a foot unit carries and sets down
+facing the enemy; its side's men behind it are sheltered from missiles
+coming through it. The ram's roof generalised. Code: `sim/battle_sim.gd`
+(per-kind tables, section "mantlets" at the end, hooks in `_land`,
+`_land_bolt`, `_drop`, `_update_equip`, `pickup_refusal`, `state_hash`),
+`sim/siege_ai.gd` (section "mantlets"), `sim/scenarios.gd` (`settlement`
+"mantlets"), `campaign/cbattle.gd` (`MANTLETS`, `siege_equipment`,
+`equipment_text`), `game/campaign/battle_screen.gd` (`mantlet_line`),
+`game/custom/*` (per-side option), `game/overlay.gd` (`_draw_mantlet`),
+`game/hud.gd` / `game/battle.gd` (texts), `game/ui_icons.gd` ("mantlet").
+
+- **Piece.** `EQ_MANTLET` 9 in the `q_*` tables, a column in every per-kind
+  table; the rules read the fields, never the kind. States `Q_GROUND`
+  (standing at `q_x / q_y` facing `q_face`, sheltering), `Q_CARRIED`,
+  `Q_WRECKED`; no planted state. `ORDER_DROP` leaves it standing at the
+  unit's anchor (the middle of its front) facing the unit's facing (also
+  when its carriers rout or die); `ORDER_PICKUP` (or a tap on it) carries
+  it. Any foot unit of either side (`EQ_ANY`: taken by the enemy it
+  becomes theirs, `q_side`); not cavalry, camels, elephants, engines, and
+  no mounted or dog row ("Only men on foot carry a mantlet"). Carriers
+  walk at their walk, never run, shoot nothing and fight at 60 % (as for
+  any piece). New fields:
+
+  | field | mantlet | meaning |
+  |---|---|---|
+  | `EQ_HP` (`MANTLET_HP`) | 600 | hit points: two stones (330) or nine bolts (70) landing within 3 m wreck it |
+  | `EQ_ROOF` / `EQ_ROOF_R` | 40 % / 6 m | carried: arrows landing on its carriers this near it stopped (the roof rule; `EQ_ROOF` now holds the % per kind, ram / wagon / tower 70) |
+  | `EQ_SCREEN` (`MANTLET_COVER_PCT`) | 60 % | standing: arrows, sling stones and javelins about to strike a sheltered man stopped |
+  | `EQ_SCREEN_BOLT` (`MANTLET_BOLT_PCT`) | 30 % | ... bolts (the bolt ends in the screen); stones 0 % |
+  | `EQ_SCREEN_W` / `EQ_SCREEN_D` | 6 m / 6 m | the sheltered rectangle: 6 m along its line, 6 m deep behind it |
+  | `EQ_WALK_PCT`, `EQ_ANY`, `EQ_SHOT`, `EQ_BURN` | 100, 1, 1, 1 | walking pace, either side, bolts / stones hit it, fire takes it |
+
+- **Shelter rule** (`_screen_cover`): a missile about to strike a man
+  (`_land` after the wall, roof and palisade covers; `_land_bolt` for each
+  man on the bolt's line) is stopped by the first standing mantlet (index
+  order) of the man's side whose rectangle he is in, if the shooter
+  stands in front of its line, `EQ_SCREEN` / `EQ_SCREEN_BOLT` % of the
+  time (`stat_mantlet_cover`, not hashed). Men on either side may stand by
+  it; only the back is sheltered. Line of sight is unaffected; stopped
+  arrows do not damage it. Fire missiles set it alight as any wooden
+  piece; bolts and stones landing on it batter it (`_ram_hit`).
+  Carried: the roof rule (`EQ_ROOF` 40 % within 6 m; on plain maps the
+  roof is read only in battles with mantlets, so others play as before).
+- **Scenario / entitlement.** Key `"mantlets": [side 0, side 1]` (at most
+  8 each): at setup standing `MANTLET_AHEAD` 2 m before the side's missile
+  and artillery units (dealt in turn, side by side 7 m apart; none: any
+  unit of the side; tower engines never), facing their way, after every
+  other piece (`mt_on`; `q_face` is hashed then, battles without the key
+  hash as before). Campaign: an assault after 2 siege turns brings 2,
+  after 3 four (any wall level; `CBattle.MANTLETS`, no state); campaign
+  field battles none. Custom battles: "Mantlets: none / 2 / 4" per side,
+  field and settlement maps.
+- **AI** (docs/AI.md 23): the settlement attackers carry them to 2 m
+  before their missile units' posts on the line they shoot the wall from
+  (one a unit, the middle first), then before their scorpion batteries,
+  the rest before the heavy batteries (none of those: 60 m from the
+  attacked gate), and set them down facing the wall; a set one is carried
+  again only when its line moves. The defenders and the field battle AI
+  do not use them.
+- **View.** A brown plank bar 6 m wide across its facing with a lighter
+  plank face on its front and two posts behind; carried, at the carriers'
+  front; charred with a cross when wrecked; fire flicker as for other
+  wooden things (`_draw_fires`). Pick-up preview "PICK UP THE MANTLET",
+  card "carrying a mantlet", "Taking the mantlet", Drop as for any piece.
+  UI icon "mantlet" (custom option, the pre-battle card's "Mantlets: n for
+  the attackers ..." line). Overlay drawing, both soldier paths.
+- **Measured once** (scratch probe, fair siege walls 1 ring, ladders + ram,
+  3 seeds, 4 attacker mantlets vs none): see STATUS. In a field set piece
+  (two 80-archer units shooting at will, two mantlets before one) the
+  screened unit lost 11 men in 75 s against 32 without, 39 arrows stopped.
+- **Not modelled / gaps:** the defenders and the field AI ignore them; no
+  sheds (a roofed mantlet against stones); enemy foot do not smash a
+  standing mantlet (only fire, bolts and stones); one screen per missile;
+  a mantlet does not block movement or line of sight. **Needs tuning (not
+  done):** every number above.
+
 ## 5. Networking
 
 ### Live battles: deterministic lockstep

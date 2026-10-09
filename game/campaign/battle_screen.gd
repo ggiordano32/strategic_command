@@ -25,6 +25,7 @@ const CState := preload("res://campaign/cstate.gd")
 const CRules := preload("res://campaign/crules.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
 const UT := preload("res://sim/unit_types.gd")
+const BattleSim := preload("res://sim/battle_sim.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const UiIcons := preload("res://game/ui_icons.gd")
@@ -149,6 +150,18 @@ static func equipment_line(snap: Dictionary) -> String:
 	return t
 
 
+## The mantlets line of an assault ("" none): the attackers' wooden missile
+## screens (BattleSim EQ_MANTLET).
+static func mantlet_line(snap: Dictionary) -> String:
+	if int(snap["settlement"]) == 0 or int(snap["walls"]) <= 0:
+		return ""
+	var n := int((snap["equip"] as Dictionary).get("mantlets", 0))
+	if n <= 0:
+		return ""
+	return "Mantlets: %d for the attackers, wooden screens their foot carry and set down before their archers and engines (%d %% of the arrows at the men behind one stopped)." % [
+		n, BattleSim.MANTLET_COVER_PCT]
+
+
 ## The field works line of a field battle ("" none): each side's stakes
 ## lines and caltrop fields to place in the deployment, and the defenders'
 ## camp when they stand fortified.
@@ -234,6 +247,12 @@ static func pre(s, st: Dictionary, b: Dictionary) -> Control:
 		el.name = "siege_equipment"
 		Kit.label_icon(el, "ladder")
 		info.add_child(el)
+	var ml := mantlet_line(snap)
+	if ml != "":
+		var mlab := Kit.label(ml, Kit.FONT_SMALL, Color.WHITE, true)
+		mlab.name = "mantlets"
+		Kit.label_icon(mlab, "mantlet")
+		info.add_child(mlab)
 	var wl := works_line(snap)
 	if wl != "":
 		var wlab := Kit.label(wl, Kit.FONT_SMALL, Color.WHITE, true)

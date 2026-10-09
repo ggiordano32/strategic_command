@@ -751,6 +751,16 @@ battle cards), `campaign_screen.gd` (move toast), `map_overlay.gd`
   equipment line lists them. Still derived, no state (VERSION 6); the
   auto-resolve formula and the campaign AI do not read the equipment
   (campaign_sim hashes unchanged).
+  Mantlets (2026-10-09; docs/DESIGN.md "Mantlets"): an assault after a
+  siege of two turns or more also brings two mantlets, of three turns or
+  more four, at any wall level (`CBattle.MANTLETS` [2, 4];
+  `siege_equipment` "mantlets", `Scenarios.settlement` puts them in the
+  scenario's "mantlets" for the attackers). Panel line "3 sets of ladders,
+  a ram and 2 mantlets; 4 mantlets next turn" (walls 1) / "...; a siege
+  tower next turn" (walls 2-3) / "3 sets of ladders, a ram, 4 mantlets and
+  a siege tower"; the pre-battle screen has a "Mantlets: n for the
+  attackers ..." line with the mantlet icon. Derived, no state (VERSION
+  6); the formula and the campaign AI ignore them.
 - **Battle time limit** (2026-10-07): `settings.time_limit` in seconds
   (new-campaign "Battle time: 15 / 20 / 30 / 45 min", default 15; stored
   only when longer, read with a default of 900, so no format change) goes

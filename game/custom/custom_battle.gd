@@ -301,6 +301,15 @@ func _side_view(s: int) -> Control:
 		else:
 			ar.add_child(Kit.label("AI armies on a side with a player are commanded by that player.", Kit.FONT_SMALL, Kit.COL_DIM, true))
 		v.add_child(ar)
+	# Mantlets (any map): screens set up before the side's missile troops and engines.
+	var nm := CS.mantlets_of(setup, s)
+	var mb := _opt("Mantlets: " + ("none" if nm == 0 else str(nm)), func():
+		sd["mantlets"] = CS.MANTLET_CHOICES[(CS.MANTLET_CHOICES.find(CS.mantlets_of(setup, s)) + 1) % CS.MANTLET_CHOICES.size()]
+		_changed(), _can_edit_all())
+	Kit.set_icon(mb, "mantlet")
+	mb.name = "custom_mantlets_%d" % s
+	mb.tooltip_text = "Wooden screens standing before this side's archers and engines at the start: men behind one are sheltered from most arrows shot from in front; any foot unit carries one (tap it) and sets it down (Drop)"
+	v.add_child(mb)
 	for ai in (sd["armies"] as Array).size():
 		v.add_child(_army_view(s, ai))
 	if (sd["armies"] as Array).size() < CS.MAX_ARMIES and _can_edit_all():

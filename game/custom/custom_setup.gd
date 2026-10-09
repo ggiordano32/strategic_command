@@ -18,6 +18,7 @@ extends RefCounted
 ##           that level, Scenarios.works_allowance), "fortified": -1 none / the
 ##           sim side standing in a fortified camp (its own works on top)},
 ##   "sides": [{"skill": AIProfile level, "style": AIProfile personality,
+##              "mantlets": 0 / 2 / 4 (MANTLET_CHOICES: that side's mantlets, any map),
 ##              "armies": [{"ctrl": "p1" | "p2" | "ai", "units": [[type key, men(, ammo kind key)], ...]}, ...]}, x2]
 ## }
 ## A unit's optional third element is the special ammunition kind it
@@ -40,6 +41,7 @@ const AIProfile := preload("res://sim/ai_profile.gd")
 
 const LADDER_SETS := 3         # the Ladders toggle: sets of ladders (as a campaign siege of two turns)
 const MAX_TOWERS := 2          # the Siege towers option: 0, 1 or 2 (as a campaign siege of three / four turns)
+const MANTLET_CHOICES := [0, 2, 4]  # a side's Mantlets option (as a campaign siege of two / three turns)
 const MAX_ARMIES := 3          # per side
 const MAX_UNITS := 12          # per army (the campaign's army size)
 const FUNDS := [0, 4500, 7500, 12000]
@@ -308,6 +310,9 @@ static func build(st: Dictionary, solo: bool = false) -> Dictionary:
 			sc["caltrops"] = caltrops
 		if fort == 0 or fort == 1:
 			sc["fortified"] = fort
+	var mt := [mantlets_of(st, 0), mantlets_of(st, 1)]
+	if mt[0] + mt[1] > 0:
+		sc["mantlets"] = mt  # (the sim stands them before each side's missile and artillery units)
 	sc["ai_skill"] = skill
 	sc["ai_style"] = style
 	var dt := int(st.get("deploy", 0))
@@ -357,6 +362,12 @@ static func _field(st: Dictionary, lists: Array, ctrl_of: Array, home: Array, ex
 	return {"width_m": width, "height_m": height, "units": units}
 
 
+## Side s's mantlets (one of MANTLET_CHOICES).
+static func mantlets_of(st: Dictionary, s: int) -> int:
+	var n := int(st["sides"][s].get("mantlets", 0))
+	return n if MANTLET_CHOICES.has(n) else 0
+
+
 ## A one-line summary (telemetry, the lobby).
 static func summary(st: Dictionary) -> Dictionary:
 	var mp: Dictionary = st["map"]
@@ -375,4 +386,5 @@ static func summary(st: Dictionary) -> Dictionary:
 	return {"map": str(mp.get("kind", "field")), "terrain": int(mp.get("terrain", 0)), "deploy": int(st.get("deploy", 0)),
 		"funds": int(st.get("funds", 0)), "sides": sides, "time": int(st.get("time", 900)),
 		"ladders": int(mp.get("ladders", 0)), "ram": int(mp.get("ram", 0)), "towers": int(mp.get("towers", 0)),
-		"works": int(mp.get("works", 0)), "fortified": int(mp.get("fortified", -1))}
+		"works": int(mp.get("works", 0)), "fortified": int(mp.get("fortified", -1)),
+		"mantlets": [mantlets_of(st, 0), mantlets_of(st, 1)]}

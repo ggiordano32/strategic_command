@@ -25,7 +25,7 @@ const NAMES: Array[String] = [
 	"farm", "market", "barracks", "range", "stables", "workshop", "walls", "build", "upgrade",
 	"fire", "hold_fire", "skirmish", "run", "deploy", "wall_up", "wall_down", "pick_up", "drop",
 	"victory", "defeat", "draw", "men", "killed", "routed", "captured",
-	"ladder", "ram", "tower", "siege_tower", "gate", "ammo", "forage", "wagon", "kill_beast", "general", "release",
+	"ladder", "ram", "tower", "siege_tower", "mantlet", "gate", "ammo", "forage", "wagon", "kill_beast", "general", "release",
 	"stakes", "caltrops", "palisade", "rotate",
 	"copy", "export", "plus", "minus",
 ]
@@ -594,6 +594,16 @@ static func _glyph(icon: String, c: Vector2, s: float) -> void:
 			_l(0.42, -0.85, 0.85, -0.45, 0.9)
 			_ring(-0.32, 0.75, 0.15, 0.8)
 			_ring(0.32, 0.75, 0.15, 0.8)
+		"mantlet":  # a plank screen on two legs, propped from behind, an arrow stuck in its face
+			_pl([-0.55, 0.5, -0.55, -0.85, 0.35, -0.85, 0.35, 0.5], true)
+			_l(-0.25, -0.85, -0.25, 0.5, 0.75)
+			_l(0.05, -0.85, 0.05, 0.5, 0.75)
+			_l(-0.42, 0.5, -0.42, 0.9, 0.85)
+			_l(0.22, 0.5, 0.22, 0.9, 0.85)
+			_l(0.35, -0.45, 0.88, 0.9, 0.8)
+			_l(-0.98, -0.2, -0.55, -0.2, 0.75)
+			_l(-0.84, -0.2, -0.98, -0.36, 0.6)
+			_l(-0.84, -0.2, -0.98, -0.04, 0.6)
 		"gate":  # arch with a portcullis
 			_pl([-0.7, 0.85, -0.7, -0.15])
 			_arc(0.0, -0.15, 0.7, PI, TAU)

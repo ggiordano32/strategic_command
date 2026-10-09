@@ -94,6 +94,13 @@ extends SceneTree
 ## routers running to a shut gate inside instead of out by the breach);
 ## field battles and the golden digests are unchanged. "siege_city@ai~ea"
 ## runs 5,000 ticks (the Easy attackers get into the town later).
+## Mantlets (2026-10-09; "--only=mantlets"): a field battle (archers and a
+## bolt thrower against archers, mantlets on both sides, light foot carrying
+## one forward and setting it down) and a walls-1 assault with mantlets on
+## both sides (the attackers' AI carries its own to the screen line): the
+## screens stop missiles, the dropped one faces its unit's way; identical on
+## repeat and across snapshot / restore. Battles without the key hash as
+## before (the golden digests are unchanged).
 ## Exits 0 on success, 1 on failure.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -186,6 +193,11 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=mantlets" in OS.get_cmdline_user_args():
+		_check_mantlets()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=engines" in OS.get_cmdline_user_args():
 		_check_engines()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -214,6 +226,7 @@ func _init() -> void:
 	_check_stakes()
 	_check_fortified()
 	_check_light_art()
+	_check_mantlets()
 	if "--only=equipment" in OS.get_cmdline_user_args():
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
@@ -3579,3 +3592,130 @@ func _check_fortified() -> void:
 		int(ev["rampart"]), int(ev["ditch"]), int(ev["on_rampart"]), int(ev["rng"]), int(ev["base_rng"]), int(ev["cover"]),
 		int(ev["climb"]), int(ev["h_melee"]), int(ev["el_ditch"]), int(ev["el_mom"]), int(ev["el_impacts"]),
 		int(ew["el_impacts"]), str(ev["alive"]), str(ew["alive"]), str(snaps)])
+
+
+# --------------------------------------------------------------- mantlets ---
+
+## The field case: side 0 archers (u0) and light foot (u1), side 1 archers
+## (u2) and a bolt thrower (u3) shooting at u0, the archers standing and
+## shooting at will; mantlets [3, 2] stand before the archers (side 1's
+## second before the bolt thrower); at tick 5 the light
+## foot (behind the archers) picks up side 0's third mantlet, carries it
+## forward and aside and drops it there facing up.
+func _mantlet_field_sc(with: bool) -> Dictionary:
+	var sc := {"width_m": 300, "height_m": 300, "ai_sides": [], "units": [
+		Scenarios.unit(0, UT.ARCHER, 80, 150, 230, Scenarios.FACE_UP),
+		Scenarios.unit(0, UT.LIGHT, 60, 130, 250, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.ARCHER, 80, 150, 100, Scenarios.FACE_DOWN),
+		Scenarios.unit(1, UT.BOLT, 16, 150, 40, Scenarios.FACE_DOWN)],
+		"orders": [{"tick": 1, "type": BattleSim.ORDER_FIRE, "unit": 0, "on": 1},
+			{"tick": 1, "type": BattleSim.ORDER_FIRE, "unit": 2, "on": 1}, BattleSim.make_attack_order(1, 3, 0, 0)]}
+	if with:
+		sc["mantlets"] = [3, 2]
+	return sc
+
+
+func _mantlet_field_run(with: bool, snap_check: bool) -> Dictionary:
+	var sc := _mantlet_field_sc(with)
+	var sim := BattleSim.new()
+	sim.setup(sc, 4242)
+	var hashes := PackedInt64Array()
+	var ev := {}
+	var snap_bad := 0
+	var q3 := sim.n_eq - 3  # side 0's third mantlet (the scenario's are the last: 3 then 2)
+	for t in 1200:
+		var tk: int = sim.tick
+		if with and tk == 5:
+			sim.queue_order({"tick": tk, "type": BattleSim.ORDER_PICKUP, "unit": 1, "equip": q3, "run": 0})
+		if with and not ev.has("picked") and sim.q_state[q3] == BattleSim.Q_CARRIED:
+			ev["picked"] = tk
+			sim.queue_order(BattleSim.make_move_order(tk, 1, 100 * M, 200 * M, Scenarios.FACE_UP, 20 * M, 0))
+		if with and ev.has("picked") and not ev.has("dropped") and tk >= int(ev["picked"]) + 20 \
+				and sim.u_order[1] == BattleSim.O_NONE:
+			ev["dropped"] = tk
+			sim.queue_order({"tick": tk, "type": BattleSim.ORDER_DROP, "unit": 1})
+		sim.step()
+		hashes.append(sim.state_hash())
+		if snap_check and (sim.tick == 200 or sim.tick == 700):
+			snap_bad += _snap_diverges(sim, sc, 4242, 120)
+	ev["cover"] = sim.stat_mantlet_cover
+	ev["lost0"] = 80 - sim.u_alive[0]
+	ev["lost2"] = 80 - sim.u_alive[2]
+	if with:
+		ev["face"] = sim.q_face[q3]
+		ev["state"] = sim.q_state[q3]
+		ev["q_y"] = sim.q_y[q3] / M
+	return {"hashes": hashes, "ev": ev, "snap_bad": snap_bad}
+
+
+## The assault: a walls-1 fair siege with ladders, a ram and four mantlets
+## for the attackers (side 0) and two for the defenders, both sides AI.
+func _mantlet_siege_sc() -> Dictionary:
+	var sc := Scenarios.fair_siege(741, 1, 4, {"ladders": 2, "ram": 1, "mantlets": 4})
+	sc["mantlets"] = [4, 2]
+	return sc
+
+
+func _mantlet_siege_run(snap_check: bool) -> Dictionary:
+	var sc := _mantlet_siege_sc()
+	var sim := BattleSim.new()
+	sim.setup(sc, 53197)
+	var hashes := PackedInt64Array()
+	var snap_bad := 0
+	var carried := {}
+	var set_t := -1
+	while sim.tick < 3000 and sim.winner < 0:
+		sim.step()
+		hashes.append(sim.state_hash())
+		if snap_check and (sim.tick == 300 or sim.tick == 1500):
+			snap_bad += _snap_diverges(sim, sc, 53197, 120)
+		for q in sim.n_eq:
+			if sim.q_kind[q] == BattleSim.EQ_MANTLET and sim.q_state[q] == BattleSim.Q_CARRIED:
+				carried[q] = sim.q_unit[q]
+		if set_t < 0 and not carried.is_empty() and sim.ai_gate[0] >= 0:
+			# Every attacker mantlet carried so far now stands on its place.
+			var all_set := true
+			for q in carried:
+				var rk: Vector2i = SiegeAI._mantlet_rank(sim, 0, q)
+				var sp: Vector2i = SiegeAI._mantlet_spot(sim, 0, rk.x, rk.y, sim.ai_gate[0])
+				if sim.q_state[q] != BattleSim.Q_GROUND or not SiegeAI._mantlet_set(sim, q, sp, sim.ai_gate[0]):
+					all_set = false
+			if all_set and carried.size() >= 4:
+				set_t = sim.tick
+	return {"hashes": hashes, "snap_bad": snap_bad, "carried": carried.size(), "set_t": set_t,
+		"cover": sim.stat_mantlet_cover, "ticks": sim.tick, "winner": sim.winner}
+
+
+func _check_mantlets() -> void:
+	var a := _mantlet_field_run(true, true)
+	var b := _mantlet_field_run(true, false)
+	var w := _mantlet_field_run(false, false)
+	if a["hashes"] != b["hashes"]:
+		_fail("mantlets field: the repeat diverged")
+		return
+	var ev: Dictionary = a["ev"]
+	var ew: Dictionary = w["ev"]
+	var bad := ""
+	if int(a["snap_bad"]) != 0:
+		bad += "snapshot / restore diverged (%d); " % int(a["snap_bad"])
+	if int(ev["cover"]) <= 0 or int(ew["cover"]) != 0 or int(ev["lost0"]) >= int(ew["lost0"]):
+		bad += "missiles stopped %d (without %d), side 0 archers lost %d (without %d); " % [int(ev["cover"]),
+			int(ew["cover"]), int(ev["lost0"]), int(ew["lost0"])]
+	if not ev.has("picked") or not ev.has("dropped") or int(ev["state"]) != BattleSim.Q_GROUND \
+			or int(ev["face"]) != Scenarios.FACE_UP or int(ev["q_y"]) > 215:
+		bad += "carried mantlet: %s; " % str(ev)
+	if bad != "":
+		_fail("mantlets field: " + bad)
+		return
+	var sa := _mantlet_siege_run(true)
+	var sb := _mantlet_siege_run(false)
+	if sa["hashes"] != sb["hashes"]:
+		_fail("mantlets siege: the repeat diverged")
+		return
+	if int(sa["snap_bad"]) != 0 or int(sa["carried"]) < 4 or int(sa["set_t"]) < 0:
+		_fail("mantlets siege: %s" % str({"snap_bad": sa["snap_bad"], "carried": sa["carried"], "set_t": sa["set_t"],
+			"cover": sa["cover"]}))
+		return
+	print("PASS mantlets: field: %d missiles stopped by mantlets, side 0 archers lost %d (without mantlets %d), side 1 archers %d (%d); light foot picked one up at tick %d, dropped it at %d, standing at y %d m facing up; assault: the attackers' AI carried %d mantlets, all set on the screen line by tick %d, %d missiles stopped by tick %d (winner %d); identical on repeat and across snapshot / restore" % [
+		int(ev["cover"]), int(ev["lost0"]), int(ew["lost0"]), int(ev["lost2"]), int(ew["lost2"]), int(ev["picked"]),
+		int(ev["dropped"]), int(ev["q_y"]), int(sa["carried"]), int(sa["set_t"]), int(sa["cover"]), int(sa["ticks"]), int(sa["winner"])])

@@ -60,6 +60,7 @@ const RAM_TURNS := 2     # ... and of this many a ram
 const LADDER_SETS := [2, 3]  # ... sets of ladders after LADDER_TURNS, RAM_TURNS turns
 const TOWER_TURNS := [3, 4]  # ... a siege tower after this many turns, two after that many ...
 const TOWER_WALLS := 2       # ... against walls of at least this level (BattleSim.EQ_WALLS)
+const MANTLETS := [2, 4]     # ... mantlets after RAM_TURNS, TOWER_TURNS[0] turns (walls any level)
 const DEFAULT_TIME_LIMIT := 900  # s: the sim's own battle time limit (settings "time_limit")
 const WIN_ROUT := 5      # formula: % routed on the winning side ...
 const LOSE_ROUT := 20    # ... and on the losing side
@@ -273,9 +274,10 @@ static func siege_turns(st: Dictionary, r: int) -> int:
 
 ## The attackers' siege equipment for battle b (Scenarios.settlement
 ## "equip"): an assault after a siege of a full turn or more brings two
-## sets of ladders, of two turns or more three and a ram, and against walls
-## 2-3 of three turns or more a siege tower, of four two; an assault on
-## arrival (and any other battle) nothing but the armies' own artillery.
+## sets of ladders, of two turns or more three, a ram and two mantlets (four
+## after three turns), and against walls 2-3 of three turns or more a siege
+## tower, of four two; an assault on arrival (and any other battle) nothing
+## but the armies' own artillery.
 static func siege_equipment(st: Dictionary, b: Dictionary) -> Dictionary:
 	if str(b.get("kind", "")) != "assault":
 		return {}
@@ -288,6 +290,7 @@ static func siege_equipment(st: Dictionary, b: Dictionary) -> Dictionary:
 		out["ladders"] = int(LADDER_SETS[1 if n >= RAM_TURNS else 0])
 	if n >= RAM_TURNS:
 		out["ram"] = 1
+		out["mantlets"] = int(MANTLETS[1 if n >= int(TOWER_TURNS[0]) else 0])
 	var nt := towers_after(n)
 	if nt > 0 and CState.walls(st, int(b["r"])) >= TOWER_WALLS:
 		out["towers"] = nt
@@ -312,17 +315,19 @@ static func equipment_text(st: Dictionary, r: int) -> String:
 	if CState.walls(st, r) >= TOWER_WALLS and n >= int(TOWER_TURNS[0]):
 		var nt := towers_after(n)
 		var more := "" if nt >= TOWER_TURNS.size() else "; a second next turn"
-		return "Siege equipment: %d sets of ladders, a ram and %s%s." % [int(LADDER_SETS[1]),
-			"a siege tower" if nt == 1 else "%d siege towers" % nt, more]
+		return "Siege equipment: %d sets of ladders, a ram, %d mantlets and %s%s." % [int(LADDER_SETS[1]),
+			int(MANTLETS[1]), "a siege tower" if nt == 1 else "%d siege towers" % nt, more]
 	if n >= RAM_TURNS:
+		var nm := int(MANTLETS[1 if n >= int(TOWER_TURNS[0]) else 0])
 		if CState.walls(st, r) >= TOWER_WALLS:
 			var dt := int(TOWER_TURNS[0]) - n
-			return "Siege equipment: %d sets of ladders and a ram; a siege tower %s." % [int(LADDER_SETS[1]),
-				"next turn" if dt == 1 else "in %d turns" % dt]
-		return "Siege equipment: %d sets of ladders and a ram." % int(LADDER_SETS[1])
+			return "Siege equipment: %d sets of ladders, a ram and %d mantlets; a siege tower %s." % [int(LADDER_SETS[1]),
+				nm, "next turn" if dt == 1 else "in %d turns" % dt]
+		return "Siege equipment: %d sets of ladders, a ram and %d mantlets%s." % [int(LADDER_SETS[1]), nm,
+			"; %d mantlets next turn" % int(MANTLETS[1]) if n + 1 == int(TOWER_TURNS[0]) else ""]
 	if n >= LADDER_TURNS:
-		return "Siege equipment: %d sets of ladders; a ram next turn." % int(LADDER_SETS[0])
-	return "Siege equipment: none yet (artillery only); ladders next turn, a ram in %d turns." % RAM_TURNS
+		return "Siege equipment: %d sets of ladders; a ram and %d mantlets next turn." % [int(LADDER_SETS[0]), int(MANTLETS[0])]
+	return "Siege equipment: none yet (artillery only); ladders next turn, a ram and mantlets in %d turns." % RAM_TURNS
 
 
 ## [ai_skill per sim side, ai_style per sim side] for battle b: an AI side

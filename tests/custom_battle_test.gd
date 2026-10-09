@@ -17,6 +17,7 @@ extends SceneTree
 
 const CS := preload("res://game/custom/custom_setup.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
+const FM := preload("res://sim/fixed_math.gd")
 const Lockstep := preload("res://sim/lockstep.gd")
 const UT := preload("res://sim/unit_types.gd")
 const CoopSession := preload("res://game/net/coop_session.gd")
@@ -68,6 +69,15 @@ func _init() -> void:
 	ammo_town["map"]["kind"] = "settlement"
 	ammo_town["map"]["walls"] = 1
 	setups["wagon and fire arrows, settlement"] = ammo_town
+	var mant := CS.default_setup(12)
+	mant["sides"][0]["mantlets"] = 4
+	mant["sides"][1]["mantlets"] = 2
+	setups["mantlets 4 / 2, field"] = mant
+	var mant_town: Dictionary = JSON.parse_string(JSON.stringify(mant))
+	mant_town["map"]["kind"] = "settlement"
+	mant_town["map"]["walls"] = 1
+	mant_town["map"]["ladders"] = 1
+	setups["mantlets 4 / 2, settlement"] = mant_town
 	for name in setups:
 		var st: Dictionary = setups[name]
 		var a := CS.build(st)
@@ -135,6 +145,7 @@ func _init() -> void:
 	_check_ammo(ammo_town, "settlement")
 	_check_light_missile()
 	_check_light_art()
+	_check_mantlets(mant, mant_town)
 	# Checks.
 	var bad := CS.default_setup(1)
 	bad["sides"][1]["armies"] = []
@@ -410,6 +421,43 @@ func _check_light_art() -> void:
 
 ## Deploy (place one unit of each human side, ready) and fight a little,
 ## through the lockstep layer with every player present.
+## Mantlets (any map): each side's count reaches the scenario and the sim
+## stands them, whole, before that side's missile troops and engines where
+## the scenario puts them (an AI side's deployment moves its units after);
+## a setup without them has no key.
+func _check_mantlets(field: Dictionary, town: Dictionary) -> void:
+	if CS.build(CS.default_setup(12))["scenario"].has("mantlets"):
+		_fail("mantlets: a setup without them puts the key in the scenario")
+		return
+	for st in [field, town]:
+		var b := CS.build(st)
+		var sc: Dictionary = b["scenario"]
+		if str(sc.get("mantlets", [])) != str([4, 2]):
+			_fail("mantlets %s: scenario key %s" % [str(st["map"]["kind"]), str(sc.get("mantlets", []))])
+			continue
+		var sim := BattleSim.new()
+		sim.setup(sc, int(b["seed"]))
+		var per := [0, 0]
+		var near := 0
+		for q in sim.n_eq:
+			if sim.q_kind[q] != BattleSim.EQ_MANTLET:
+				continue
+			if sim.q_state[q] != BattleSim.Q_GROUND or sim.q_hp[q] != BattleSim.MANTLET_HP:
+				continue
+			per[sim.q_side[q]] += 1
+			for ud in sc["units"]:
+				var c := UT.cls(int(ud["type"]))
+				if int(ud["side"]) == sim.q_side[q] and (c == UT.CLS_MISSILE or c == UT.CLS_ART) \
+						and FM.approx_len(int(ud["x_m"]) * 1024 - sim.q_x[q], int(ud["y_m"]) * 1024 - sim.q_y[q]) <= 12 * 1024:
+					near += 1
+					break
+		if per[0] != 4 or per[1] != 2 or near != 6:
+			_fail("mantlets %s: standing %s, %d by a missile unit or engine" % [str(st["map"]["kind"]), str(per), near])
+		else:
+			print("PASS mantlets %s: 4 and 2 standing at the start (%d hit points each), each before a missile unit or engine of its side" % [
+				str(st["map"]["kind"]), BattleSim.MANTLET_HP])
+
+
 func _run(name: String, b: Dictionary) -> void:
 	var sc: Dictionary = b["scenario"]
 	var players: Array = []

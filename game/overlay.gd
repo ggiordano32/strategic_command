@@ -309,6 +309,8 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 				var ptxt := "PICK UP THE RAM" if pk == BattleSim.EQ_RAM else "PICK UP LADDERS"
 				if pk == BattleSim.EQ_WAGON:
 					ptxt = "TAKE THE WAGON"
+				elif BattleSim.EQ_SCREEN[pk] != 0:
+					ptxt = "PICK UP THE MANTLET"
 				elif BattleSim.EQ_EXPOSED[pk] != 0:
 					ptxt = "PUSH THE SIEGE TOWER"
 				draw_string(ThemeDB.fallback_font, d + Vector2(r, -r * 1.5), ptxt,
@@ -935,6 +937,36 @@ func _draw_siege_tower(q: int, c: Vector2, fwd: Vector2, side: Vector2, st: int,
 		draw_line(rq - side * h * 0.7, rq + side * h * 0.7, dark, lw * 0.6)
 
 
+## A mantlet (view only), seen from above: a thick short bar of planks
+## EQ_SCREEN_W wide across the way it faces, a lighter plank face on its
+## front, two posts behind; carried, at its carriers' front along their
+## facing; wrecked, charred with a cross. (Fire: _draw_fires.)
+func _draw_mantlet(q: int, c: Vector2, fwd: Vector2, st: int, lw: float) -> void:
+	if st != BattleSim.Q_CARRIED:
+		var a: float = sim.q_face[q] * TAU / 1024.0
+		fwd = Vector2(cos(a), sin(a)) * px_per_m
+	else:
+		c += fwd * 0.8  # (held up before the front rank)
+	var side := Vector2(-fwd.y, fwd.x)
+	var hw := float(BattleSim.EQ_SCREEN_W[sim.q_kind[q]]) / 1024.0 / 2.0  # half its width, m
+	var wrecked := st == BattleSim.Q_WRECKED
+	var dark := Color(0.2, 0.12, 0.05, 0.95)
+	var body := Color(0.45, 0.3, 0.15, 0.95) if not wrecked else Color(0.18, 0.15, 0.12, 0.8)
+	var pts := PackedVector2Array([c + fwd * 0.3 + side * hw, c + fwd * 0.3 - side * hw,
+		c - fwd * 0.3 - side * hw, c - fwd * 0.3 + side * hw])
+	draw_colored_polygon(pts, body)
+	pts.append(pts[0])
+	draw_polyline(pts, dark, lw)
+	if wrecked:
+		draw_line(pts[0], pts[2], dark, lw * 1.5)
+		draw_line(pts[1], pts[3], dark, lw * 1.5)
+		return
+	draw_line(c + fwd * 0.3 + side * hw * 0.95, c + fwd * 0.3 - side * hw * 0.95, Color(0.75, 0.58, 0.35, 1.0), lw * 1.5)
+	for sg in [-1.0, 1.0]:
+		var pp: Vector2 = c - fwd * 0.6 + side * hw * 0.7 * sg
+		draw_circle(pp, maxf(px_per_m * 0.25, lw), dark)
+
+
 ## Siege towers on the ground (anyone's for the taking, the enemy's too): a
 ## marker with the siege tower's symbol over it and a dashed ring round it,
 ## as for engines left on the field.
@@ -1045,6 +1077,9 @@ func _draw_siege_gear(lw: float) -> void:
 			continue
 		if BattleSim.EQ_EXPOSED[sim.q_kind[q]] != 0:
 			_draw_siege_tower(q, c, fwd, side, st, lw)
+			continue
+		if BattleSim.EQ_SCREEN[sim.q_kind[q]] != 0:
+			_draw_mantlet(q, c, fwd, st, lw)
 			continue
 		if sim.q_kind[q] == BattleSim.EQ_RAM:
 			if st == BattleSim.Q_CARRIED:

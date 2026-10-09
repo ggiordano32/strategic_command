@@ -131,6 +131,7 @@ const ST_LADDER_GO := 5
 const EQ_LADDERS := 1
 const EQ_RAM := 2
 const EQ_TOWER := 4
+const EQ_MANTLET := 9
 const TOWER_WALLS := 2  # (BattleSim.EQ_WALLS of the siege tower)
 const WALL_TOWER_SHOT := -100000  # u_ai_y of a wall unit told to shoot at a siege tower's crew (less its index)
 const Q_GROUND := 0
@@ -164,6 +165,11 @@ const A_TOWER := 32     # defending tower engine
 const A_ESC := 33       # defender sent up against ladder men (u_ai_y = the attacking unit)
 const A_MOUTH := 34     # defender in the stack at the attacked gate's inner mouth (u_ai_x = gate, u_ai_y = place, 0 the front)
 const A_PLAZA := 35     # defender holding the plaza (the plaza reserve)
+const A_MANTLET := 36   # attacker carrying a mantlet to the screen line (u_ai_x = the mantlet + 1)
+const MANTLET_BEFORE := 2 * 1024  # mantlets stand this far before the front of the unit they screen ...
+const MANTLET_OUT := 60 * 1024    # ... or, with none, this far out from the attacked gate
+const MANTLET_GAP := 7 * 1024     # ... side by side this far apart
+const MANTLET_SET_R := 8 * 1024   # a mantlet on its place's line (this near its distance from the gate) is set
 
 
 
@@ -1360,6 +1366,8 @@ static func _attacker(sim, u: int) -> void:
 		BattleAI._set_mode(sim, u, A_WAIT)
 	if sim.n_eq > 0 and sim.u_ai[u] == A_RAM and _att_ram(sim, u, phase):
 		return
+	if sim.n_eq > 0 and sim.u_ai[u] == A_MANTLET and _att_mantlet(sim, u, phase):
+		return
 	if cls == UT.CLS_ART:
 		_att_art(sim, u, phase)
 	elif cls == UT.CLS_CAV:
@@ -2223,7 +2231,8 @@ static func _equip_free(sim, u: int, side: int, q: int) -> bool:
 	if sim.u_side[u] != side or sim.u_state[u] != U_READY or sim.u_wall[u] > 0 or sim.u_stair[u] != 0:
 		return false
 	var m: int = sim.u_ai[u]
-	if m == A_LADDER or m == A_RAM or m == BattleAI.A_RETIRE or sim.u_carry[u] >= 0 or BattleAI.is_wagon(sim, u):
+	if m == A_LADDER or m == A_RAM or m == A_MANTLET or m == BattleAI.A_RETIRE or sim.u_carry[u] >= 0 \
+			or BattleAI.is_wagon(sim, u):
 		return false
 	if sim.u_fighting[u] > 0:
 		return false
@@ -2239,8 +2248,8 @@ static func _holder(sim, side: int, q: int) -> int:
 		if c >= 0 and sim.u_side[c] == side:
 			return c
 	for u in sim.n_units:
-		if sim.u_side[u] == side and sim.u_state[u] == U_READY and (sim.u_ai[u] == A_RAM or sim.u_ai[u] == A_LADDER) \
-				and sim.u_ai_x[u] == q + 1:
+		if sim.u_side[u] == side and sim.u_state[u] == U_READY \
+				and (sim.u_ai[u] == A_RAM or sim.u_ai[u] == A_LADDER or sim.u_ai[u] == A_MANTLET) and sim.u_ai_x[u] == q + 1:
 			return u
 	return -1
 
@@ -2281,6 +2290,7 @@ static func _assign_equip(sim, side: int, phase: int, kn: PackedInt32Array) -> v
 				BattleAI._count(sim, side, AP.C_SIEGE)
 	if phase != SP_APPROACH or g < 0:
 		return
+	_assign_mantlets(sim, side, g)
 	# Siege towers (walls 2-3): each of ours on the ground goes at once (it
 	# is slow) to the free infantry unit with the most men (S_TOWER_CREW;
 	# Easy: the nearest, which may be too few to push it well); a planted
@@ -2702,3 +2712,160 @@ static func _esc_unit(sim, u: int) -> void:
 		return  # on its way up
 	if sim.u_wall[u] != sim.u_wall[o]:
 		_esc_send(sim, u, o)
+
+
+# --------------------------------------------------------------- mantlets ---
+# docs/AI.md 23. The attackers carry their mantlets (BattleSim EQ_MANTLET,
+# screens against missiles) to a screen line before the heavy batteries
+# (where the stone and bolt throwers set up; none: MANTLET_OUT from the
+# attacked gate) in the approach, set them down facing the wall and go back
+# to their plan. One plan, every level; the defenders ignore mantlets.
+
+## Mantlet q's rank among side's mantlets (any state, index order) and how
+## many there are: Vector2i(rank, count).
+static func _mantlet_rank(sim, side: int, q: int) -> Vector2i:
+	var k := 0
+	var n := 0
+	for o in sim.n_eq:
+		if sim.q_kind[o] != EQ_MANTLET or sim.q_side[o] != side:
+			continue
+		if o < q:
+			k += 1
+		n += 1
+	return Vector2i(k, n)
+
+
+## Where the side's mantlet of rank k (of n) stands against gate g,
+## MANTLET_BEFORE toward the gate from the front of the unit it screens:
+## one a missile unit at its post on its shooting line (the post
+## _att_missile sends it to; the middle of the line first), then one a
+## carried battery (scorpions) where it sets up (not Easy's, left where
+## they stand), the rest before the heavy batteries (k % batteries, side by
+## side MANTLET_GAP apart) where they set up (going, else standing); none of
+## those: a line MANTLET_OUT from the gate.
+static func _mantlet_spot(sim, side: int, k: int, n: int, g: int) -> Vector2i:
+	var kn := AP.of(sim, side)
+	var f: Vector2i = sim.gate_face(g)
+	var posts: Array[Vector2i] = []
+	var keys: Array[int] = []
+	var lart: Array[int] = []
+	var bats: Array[int] = []
+	for u in sim.n_units:
+		if sim.u_side[u] != side or sim.u_state[u] != U_READY:
+			continue
+		var c: int = sim.u_cls[u]
+		if c == UT.CLS_MISSILE:
+			var rk := _rank(sim, u, func(o): return sim.u_cls[o] == UT.CLS_MISSILE)
+			var lat := _spread(rk.x, rk.y, kn[AP.S_MIS_SPREAD])
+			var out: int = kn[AP.S_COVER_OUT] if UT.stat(sim.u_type[u], "m_arc") != 0 else kn[AP.S_STAGE_OUT]
+			posts.append(_gate_point(sim, g, out, lat))
+			keys.append(absi(lat) / M * 1000 + u)
+		elif c == UT.CLS_ART and UT.stat(sim.u_type[u], "carried") != 0:
+			if kn[AP.S_LART_PCT] > 0:
+				lart.append(u)
+		elif c == UT.CLS_ART:
+			bats.append(u)
+	# Missile posts, the middle of the line first.
+	var order: Array[int] = []
+	for p in posts.size():
+		order.append(p)
+	order.sort_custom(func(a, b): return keys[a] < keys[b])
+	var base := Vector2i(-1, -1)
+	var lat2 := 0
+	if k < order.size():
+		base = posts[order[k]]
+	elif k < order.size() + lart.size():
+		base = _set_up_at(sim, lart[k - order.size()])
+	elif not bats.is_empty():
+		var kb := k - order.size() - lart.size()
+		var nb := bats.size()
+		var per := (n - order.size() - lart.size() - kb % nb + nb - 1) / nb
+		base = _set_up_at(sim, bats[kb % nb])
+		lat2 = _spread(kb / nb, per, MANTLET_GAP)
+	else:
+		var kr := k - order.size() - lart.size()
+		return _gate_point(sim, g, MANTLET_OUT, _spread(kr, n - order.size() - lart.size(), MANTLET_GAP))
+	var d := maxi(BattleAI._d(f.x - base.x, f.y - base.y), 1)
+	var ux := (f.x - base.x) * FM.TRIG_ONE / d
+	var uy := (f.y - base.y) * FM.TRIG_ONE / d
+	var x := base.x + (ux * MANTLET_BEFORE - uy * lat2) / FM.TRIG_ONE
+	var y := base.y + (uy * MANTLET_BEFORE + ux * lat2) / FM.TRIG_ONE
+	return Vector2i(clampi(x, 8 * M, sim.field_w - 8 * M), clampi(y, 8 * M, sim.field_h - 8 * M))
+
+
+## Where battery u sets up: where it is going, else where it stands.
+static func _set_up_at(sim, u: int) -> Vector2i:
+	if sim.u_order[u] == O_MOVE:
+		return Vector2i(sim.u_dx[u], sim.u_dy[u])
+	return Vector2i(sim.u_ax[u], sim.u_ay[u])
+
+
+## Mantlet q (on the ground) is set for its place `spot` against gate g: on
+## the same line (its distance from the gate within MANTLET_SET_R of the
+## place's), so it is carried again only when the line it screens moves.
+static func _mantlet_set(sim, q: int, spot: Vector2i, g: int) -> bool:
+	var f: Vector2i = sim.gate_face(g)
+	return absi(BattleAI._d(sim.q_x[q] - f.x, sim.q_y[q] - f.y) - BattleAI._d(spot.x - f.x, spot.y - f.y)) <= MANTLET_SET_R
+
+
+## Attackers, army level: each of the side's mantlets on the ground away
+## from its place, held by nobody, goes to the nearest spare foot unit that
+## may carry it: light infantry or missile troops first, then any foot (never
+## the ram's, a tower's or a ladder party, _equip_free).
+static func _assign_mantlets(sim, side: int, g: int) -> void:
+	for q in sim.n_eq:
+		if sim.q_kind[q] != EQ_MANTLET or sim.q_side[q] != side or sim.q_state[q] != Q_GROUND:
+			continue
+		var rk := _mantlet_rank(sim, side, q)
+		var spot := _mantlet_spot(sim, side, rk.x, rk.y, g)
+		if _mantlet_set(sim, q, spot, g) or _holder(sim, side, q) >= 0:
+			continue
+		var best := -1
+		var bk := 0
+		for u in sim.n_units:
+			var c: int = sim.u_cls[u]
+			if (c != UT.CLS_INF and c != UT.CLS_MISSILE and c != UT.CLS_PIKE) or BattleAI.is_general(sim, u) \
+					or not _equip_free(sim, u, side, q) or sim.pickup_refusal(sim, u, q) != "":
+				continue
+			var pref := 0 if c == UT.CLS_MISSILE or (c == UT.CLS_INF and _foot_key(sim, u) == 1) else 1
+			var k: int = (pref * 100000 + BattleAI._d(sim.u_cx[u] - sim.q_x[q], sim.u_cy[u] - sim.q_y[q]) / M) * 1000 + u
+			if best < 0 or k < bk:
+				best = u
+				bk = k
+		if best >= 0:
+			BattleAI._set_mode(sim, best, A_MANTLET)
+			sim.u_ai_x[best] = q + 1
+			BattleAI._count(sim, side, AP.C_SIEGE)
+
+
+## A mantlet's unit (A_MANTLET, u_ai_x = the mantlet + 1): to the mantlet
+## and picks it up, carries it to its place (_mantlet_spot) facing the gate
+## and sets it down there; then (or once the approach is over, the mantlet
+## gone or the unit caught in a fight) back to the plan. Returns true while
+## it handled the unit.
+static func _att_mantlet(sim, u: int, phase: int) -> bool:
+	var side: int = sim.u_side[u]
+	var q: int = sim.u_ai_x[u] - 1
+	var g: int = sim.ai_gate[side]
+	if phase != SP_APPROACH or g < 0 or q < 0 or q >= sim.n_eq or sim.q_kind[q] != EQ_MANTLET \
+			or sim.q_side[q] != side or sim.q_state[q] == Q_WRECKED or sim.u_fighting[u] > 0 \
+			or (sim.q_state[q] == Q_CARRIED and sim.q_unit[q] != u):
+		_release(sim, u)
+		return false
+	var rk := _mantlet_rank(sim, side, q)
+	var spot := _mantlet_spot(sim, side, rk.x, rk.y, g)
+	if sim.q_state[q] == Q_GROUND:
+		if _mantlet_set(sim, q, spot, g):
+			_release(sim, u)  # set down in its place
+			return false
+		if sim.u_carry[u] >= 0:
+			BattleAI._order(sim, u, {"type": ORDER_DROP}, 24)
+		elif sim.u_pick[u] != q:
+			var far := BattleAI._d(sim.u_cx[u] - sim.q_x[q], sim.u_cy[u] - sim.q_y[q]) > 40 * M
+			BattleAI._order(sim, u, {"type": ORDER_PICKUP, "equip": q, "run": 1 if far else 0}, 25)
+		return true
+	if sim.u_order[u] == O_NONE and BattleAI._d(sim.u_ax[u] - spot.x, sim.u_ay[u] - spot.y) <= 6 * M:
+		BattleAI._order(sim, u, {"type": ORDER_DROP}, 24)
+		return true
+	_go_home(sim, u, spot.x, spot.y, FM.atan2_a(sim.g_y[g] - spot.y, sim.g_x[g] - spot.x), 2)
+	return true

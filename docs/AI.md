@@ -1455,8 +1455,8 @@ batteries; a bursting kind at big units and batteries.
 | `FORAGE_AI` | 0 / 1 / 1 | an empty missile unit in woods, no wagon, no enemy near, forages |
 
 Wagon crews are kept out of the line, guards and ladder parties
-(`BattleAI.is_wagon`); the campaign AI does not recruit wagons (its
-`_any_type` skips them). None of it runs without kinds or wagons, so
+(`BattleAI.is_wagon`); the campaign AI recruits wagons only by
+section 24's rule (its `_any_type` still skips them). None of it runs without kinds or wagons, so
 every older battle plays as before, except that empty missile units in
 woods may now forage.
 
@@ -1566,3 +1566,112 @@ fights as usual. Easy ignores the works (deploys as anywhere, places
 none). The AI never reads the enemy's works (no cheats: caltrops are
 hidden; stakes it could see are not avoided yet: a gap).
 
+
+## 23. Mantlets (2026-10-09)
+
+Mantlets are wooden missile screens (docs/DESIGN.md "Mantlets"). The
+settlement AI's attackers (`sim/siege_ai.gd`, section "mantlets"; every
+level, no knob, no tuning) use them in the approach: at army level
+(`_assign_mantlets`, from `_assign_equip` once a gate is picked) each of
+the side's mantlets on the ground away from its place, held by nobody,
+goes to the nearest spare foot unit that may carry it (light infantry or
+missile troops first, then any foot; never the ram's unit, a tower's or a
+ladder party, never the general), mode `A_MANTLET` 36 (`u_ai_x` = piece +
+1). Its place (`_mantlet_spot`), `MANTLET_BEFORE` 2 m toward the
+attacked gate from the front of the unit it screens: one a missile unit
+(archers, slingers, javelins) at the post `_att_missile` sends it to on
+its shooting line (the cover line `S_COVER_OUT`; javelins the waiting
+line), the middle of the line first; then one a scorpion battery where
+it sets up (not Easy's, left where they stand); the rest before the heavy
+batteries (stone / bolt throwers, index order, side by side
+`MANTLET_GAP` 7 m apart) where they set up; none of those: a line
+`MANTLET_OUT` 60 m from the gate. The unit (`_att_mantlet`) picks it up,
+walks it there facing the gate, drops it (it stands facing the unit's
+way) and goes back to its plan (`A_WAIT`). A mantlet on its place's line
+(its distance from the gate within `MANTLET_SET_R` 8 m of the place's) is
+left alone: it is carried again only when the line it screens moves (a
+new gate). The approach over, the piece wrecked or
+the unit caught in a fight: it drops it where it is and fights. Counted
+in `C_SIEGE`.
+
+Gaps: the defenders ignore mantlets (they neither carry their own nor
+shoot or burn the attackers'); the field battle AI (`battle_ai.gd`) does
+not use them (a side's mantlets stand where the setup put them, before its
+missile units, and the line advances past them; carrying them forward
+with the missile line was left out).
+
+## 24. Campaign build-up: Range 2, the Workshop and the wagon (2026-10-09)
+
+Measured before (`campaign_sim` 6 seeds x 60 turns, all Average): no AI
+faction built a Workshop in any seed, and only 9 of the 25 factions holding
+4+ regions at turn 40 had a Range 2. So no wagons, scorpions, gastraphetes
+or Workshop ammunition kinds. The reasons, in `_build`:
+
+- **No slot.** Every capital city starts with all 6 slots full (walls,
+  farm, barracks, range, stables, market); a capital town fills its 5 the
+  same way (no market) and spends the slot it gets as a city on the market.
+  Towns and cities fill theirs with farm, market and barracks first. The
+  Workshop came last in the want list, so a slot was never left for it (no
+  order removes a building).
+- **Priority and budget.** Average builds in priority order (walls, farm,
+  market, then the military chains), one building a region a turn, from 60 %
+  of the money above the reserve. The capital worked through farm 2-3 and
+  market 2-3 (900-1800 each) first, and while those were over budget the
+  money went to cheap level-1 farms and markets in other regions. Range 2
+  was never wanted for itself.
+
+As built (`campaign/cai.gd` `_buildup`, `_build`, `_recruit`):
+
+- **The build-up goes first.** Its next building: a Range up to `BU_RANGE`
+  when the mix has a Range line (archers, javelins, slingers, belly-bows),
+  then a Workshop up to `BU_WORKSHOP` when the mix has engines (bolt, stone,
+  scorpions) or the faction fields `WAGON_MIN` missile / artillery units
+  (for the wagon). Each goes at the first centre (capital or town; richest
+  and capital first, the build order's sort) that already has that
+  building, else the first with a free slot. It waits while that centre
+  lacks a farm, or a market while it has more than one free slot (the
+  economy first, then the chain). It may spend `BU_BUDGET_PCT` of the money
+  above the reserve; while it waits for money (`BU_SAVE`) nothing else is
+  built that turn; and a centre whose last free slot the build-up needs
+  builds nothing new there but walls.
+- **The wagon.** Before the usual recruiting, each army holding this turn
+  (not planned to march) with `WAGON_MIN` missile / artillery units (a unit
+  type with a missile kind, `m_ak`, not a wagon) and no wagon gets one: the
+  best tier of its "siege" line the buildings allow, at a recruiting centre
+  with a Workshop it stands at, into that army (`"army": id`, as
+  `_recruit_order` gives it), within the usual upkeep cap and reserve. One
+  wagon an army. Version 6 only.
+- **A line at another centre.** When the line the mix asks for cannot be
+  raised at the recruiting centre in hand (no Workshop for scorpions or bolt
+  throwers, no Range 2 for gastraphetes), it is raised at the next
+  recruiting centre that can (before: the centre's first other type, so the
+  engines' share never grew).
+- **Ammunition kinds** need no order: a missile unit takes the kind of the
+  first `CData.AMMO_AVAIL` row for its faction whose building stands where
+  it is recruited (`CRules.ammo_for`, stored as "ak"). The build-up gives
+  the kinds; units raised elsewhere, and older units, carry none.
+
+| Knob | E / A / S | What |
+|---|---|---|
+| `BU_RANGE` | 0 / 2 / 2 | Range level wanted at the military centre (0 off) |
+| `BU_WORKSHOP` | 0 / 1 / 2 | Workshop level wanted there (0 off) |
+| `BU_BUDGET_PCT` | 0 / 100 / 100 | % of the money above the reserve the build-up may take a turn |
+| `BU_SAVE` | 0 / 1 / 1 | while it waits for money nothing else is built |
+| `WAGON_MIN` | 0 / 3 / 2 | missile / artillery units in an army for a wagon (0 never) |
+
+Easy builds and recruits as before (all 0). Test switch `CAI.no_buildup`
+(`campaign_sim --no-buildup`; set in `campaign_test`'s step-4 goldens):
+none of the above; with it the 6x60 hashes are the old ones
+(`7dbe4251 a56c5e4f b1ee756c 0e0d3920 9c156d00 b3ae1fa9`).
+
+Measured after (6 x 60, Average; hashes `324307b6 bb0532b7 b9e5ae32
+0bf0a9f8 b77014f8 481344a4`): at turn 40, 28 of 29 factions with 4+
+regions have a Range 2 and 26 a Workshop 1; 42 Workshops finished over the
+seeds (0 before); alive at turn 60: 13 wagons, 5 scorpions, 6 gastraphetes
+and 141 missile units with a special kind (23 before). Pacing of the same
+order: battles 57-82 a seed (58-75 before), largest faction 9-15 regions at
+60 (11-13), units on the map at turn 60 179-254 (196-255), treasury ranges
+alike. Skilled (2 x 60) reaches Workshop 2. Not tuned. Gaps: kinds only on
+units raised at the building's centre; no refit of older units; the
+Workshop is often not at the capital (its slots are full), so engines and
+wagons are raised away from the main army's usual centre.

@@ -97,6 +97,8 @@ func _check_pre() -> void:
 	_check(scr.find_child("battle_preview", true, false) is CityPreview, "with the settlement's map preview")
 	var eq := _label(scr, "siege_equipment")
 	_check(eq.contains("3 sets of ladders") and eq.contains("ram"), "the siege equipment line: " + eq)
+	var ml := _label(scr, "mantlets")
+	_check(ml.contains("Mantlets: 2"), "the mantlets line: " + ml)
 	_check(scr.find_child("odds_bar", true, false) != null and scr.find_child("odds_text", true, false) != null, "the odds bar")
 	var b := CState.battle(cs.st, _bid)
 	_snap = BattleScreen.snapshot(cs.st, b, rome)
@@ -276,7 +278,8 @@ func _process(_d: float) -> bool:
 			_check(scr != null, "a field battle's pre-battle screen")
 			if scr != null:
 				_check(scr.find_child("battle_preview", true, false) is BattleScreen.FieldPreview, "with the terrain preview")
-				_check(scr.find_child("siege_equipment", true, false) == null, "and no siege equipment line")
+				_check(scr.find_child("siege_equipment", true, false) == null and scr.find_child("mantlets", true, false) == null,
+					"and no siege equipment or mantlets line")
 				var b: Dictionary = CTurn.pending_for(cs.st)[0]
 				var sn := BattleScreen.snapshot(cs.st, b, rome)
 				var want := 0

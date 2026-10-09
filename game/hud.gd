@@ -944,6 +944,8 @@ static func carry_text(sim, u: int) -> String:
 		return "carrying ram"
 	if k == BattleSim.EQ_WAGON:
 		return "with the wagon"
+	if k != 0 and BattleSim.EQ_SCREEN[k] != 0:
+		return "carrying a mantlet"
 	if k != 0 and BattleSim.EQ_EXPOSED[k] != 0:
 		return "pushing a tower"
 	return ""

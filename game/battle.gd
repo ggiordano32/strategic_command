@@ -1445,6 +1445,8 @@ func _tap_equip(q: int, w: Vector2) -> void:
 	var what := "the ram" if sim.q_kind[q] == BattleSim.EQ_RAM else "the ladders"
 	if sim.q_kind[q] == BattleSim.EQ_WAGON:
 		what = "the wagon"
+	elif BattleSim.EQ_SCREEN[sim.q_kind[q]] != 0:
+		what = "the mantlet"
 	elif BattleSim.EQ_EXPOSED[sim.q_kind[q]] != 0:
 		what = "the siege tower"
 	overlay.flash("Taking " + what, w)
