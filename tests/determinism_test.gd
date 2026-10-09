@@ -126,8 +126,10 @@ const RUNS := {"skirmish@0": 1500, "battle_2000@0": 1800, "bench_2000": 2500, "t
 ## re-recorded for more ammunition, stones aimed at the near face and the
 ## artillery Refill order (October 2026), and for units that do not pass
 ## through each other (2026-10-07: skirmish and bench_2000 changed, the two
-## artillery set pieces did not).
-const GOLDEN := {"skirmish": "65e6f576f5248be9", "bench_2000": "45a3d1affeff41e8",
+## artillery set pieces did not), and for ranks that hold together in melee
+## (2026-10-09: men within 1.5 m of their places, the anchor closes to
+## reach, flank / rear by the unit; skirmish and bench_2000 changed).
+const GOLDEN := {"skirmish": "4d470af826781320", "bench_2000": "617adc20e3e7d792",
 	"test_cav_art": "2614adc80bd29eb4", "test_stone_line": "62b07015506232ff"}
 
 var _ok := true
@@ -243,7 +245,9 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 				"pike_wall", "attacks", "bolts", "stones", "art_hits", "art_kills", "refills", "refilled",
 				"packs", "deploys", "parting", "engines_out"]
 		"bench_2000":
-			need = ["shots", "impacts", "routed_off", "ai_flank", "ai_pull", "attacks",
+			# (ai_flank: since 2026-10-09 - men keep to their places - the
+			# AI's flank march happens on the hill run below, not here.)
+			need = ["shots", "impacts", "routed_off", "ai_pull", "attacks",
 				"bolts", "stones", "art_hits", "ai_art", "ai_guard"]
 		"test_cav_spears":
 			need = ["reflects"]
@@ -254,7 +258,7 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 				"bolts", "stones", "bolt_ground", "plough_short"]
 		"bench_2000@4":
 			need = ["h_melee", "slow_up", "range_up", "charge_down", "charge_up", "ai_hold",
-				"ai_rise", "steep_dis"]
+				"ai_rise", "steep_dis", "ai_flank"]
 		"ai_hill":
 			need = ["ai_detour", "ai_hold", "h_melee", "charge_up"]
 		"ai_ridge":
@@ -289,7 +293,10 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 			# run: stair moves and the shut gate are cit_ops' and punic's.)
 			need = ["paths", "gate_broken", "obs_lof", "layout"]
 		"siege_punic@ai":
-			need = ["paths", "gate_broken", "stair_down", "gate_art", "gate_close"]
+			# (No gate_close since 2026-10-09, ranks holding together: the
+			# defenders are not yet back in the citadel within the run; the
+			# shut gate is gate_ops', cit_ops' and the shut inner gate's.)
+			need = ["paths", "gate_broken", "stair_down", "gate_art"]
 		"siege_oppidum@ai":
 			# (Part 2c: no wall unit routs off its stretch within the run.)
 			need = ["paths", "gate_broken", "gate_art", "layout"]
@@ -326,10 +333,14 @@ func _script_orders(sim, scen: String) -> void:
 			enemy_units.append(u)
 	if scen == "test_cav_art":
 		# One cavalry unit rides down the stone throwers, the other pins the
-		# spearmen, the light infantry runs in on the bolt throwers.
+		# spearmen, the light infantry runs round the spearmen's flank and in
+		# on the bolt throwers. (Until 2026-10-09 it attacked straight away:
+		# its anchor stuck on the spearmen's flank, its men ran on 30 m to
+		# the engines; men now keep to within 1.5 m of their places.)
 		sim.queue_order(BattleSim.make_attack_order(5, 0, 4, 1))
 		sim.queue_order(BattleSim.make_attack_order(5, 1, 5, 1))
-		sim.queue_order(BattleSim.make_attack_order(5, 2, 3, 1))
+		sim.queue_order(BattleSim.make_move_order(5, 2, 95 * M, 115 * M, Scenarios.FACE_UP, 25 * M, 1))
+		sim.queue_order(BattleSim.make_attack_order(300, 2, 3, 1))
 		# The enemy batteries keep trying to refill as the riders come in:
 		# melee breaks the refill off.
 		for t in range(150, 700, 20):
@@ -1679,7 +1690,12 @@ func _check_shut_inner_gate() -> void:
 		_fail("shut inner gate: the repeat or the restored copy diverged (%d)" % int(a["snap_bad"]))
 		return
 	a.erase("hashes")
-	if int(a["shut"]) < 0 or int(a["hack"]) > 0 or int(a["across"]) > 40 or int(a["ram_at"]) < 0:
+	# (across: 0 until 2026-10-09; since men keep to their places the
+	# attackers' anchors press up to the citadel and about 40 single-tick
+	# cases remain - a man who picked his man this tick, then one of them
+	# stepped so the wall lies between; he drops him the next tick, before
+	# any blow.)
+	if int(a["shut"]) < 0 or int(a["hack"]) > 0 or int(a["across"]) > 60 or int(a["ram_at"]) < 0:
 		_fail("shut inner gate: %s" % str(a))
 		return
 	print("PASS shut inner gate: the acropolis shut at tick %d; hacked 0; man-ticks within reach of a man behind a wall %d; the ram sent at it at tick %d (%d blows); winner %d at %d; identical on repeat and across snapshot / restore" % [

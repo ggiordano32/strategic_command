@@ -205,6 +205,17 @@ one routing unit while three others fight.
 - Skilled: cavalry pursues in pairs; infantry re-forms and faces the next
   threat.
 
+As built (2026-10-09): pursuit is a unit move, not something the men do on
+their own. Fighting men keep within 1.5 m of their places (docs/DESIGN.md
+"Ranks hold together in melee"), so a unit only follows routers when its
+attack order targets a routing unit; the sim then runs its anchor after
+them. The AI needed no change: foot already re-target the nearest formed
+enemy when theirs routs and attack routers only when none is nearer (the
+Easy "chase" mistake sends them after a nearer router on purpose), cavalry
+ride routers down by attack order (pairs at Skilled), and missiles out of
+ammunition and storming foot attack routers by order. Units with no attack
+order (holding, waiting in reserve) no longer lose men to a chase.
+
 ### 3.14 Knowing when to quit
 Good: withdraw the army when the battle is lost and the army is worth more
 alive (campaign consequence); fight to the end when the city is at stake.

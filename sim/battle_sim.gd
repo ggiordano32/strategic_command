@@ -100,6 +100,15 @@ const SEARCH_ENGAGED := 9 * M / 2  # ... a little further while their unit fight
                                  # side files instead of idle rear ranks)
 const ENGAGED_AFTER_CHARGE := 150  # ticks after the last charge impact
 const TARGET_KEEP_EXTRA := 2 * M
+const PLACE_LEAD := 3 * M / 2    # a fighting man walks at most this far ahead of
+                                 # his place (along the unit's facing): the
+                                 # front rank stays with its body
+const PLACE_SIDE := 3 * M        # ... and at most this far to either side of it
+const INREACH_EXTRA := M         # a man this close past his reach counts as
+                                 # in reach (u_inreach: the anchor stops closing)
+const ANCHOR_LEAD := 2 * M       # an engaged unit's anchor closes only while it is
+                                 # at most this far beyond its men's middle
+                                 # (half the depth ahead of it)
 const SEPARATION := 717          # 0.7 m: friendly fighters push apart
 const CAV_SEPARATION := 1434     # 1.4 m between riders
 const CATCH_UP_DIST := 3 * M     # soldiers further than this from slot run
@@ -457,6 +466,7 @@ var u_skirm := PackedInt32Array()     # skirmish mode
 var u_slot_base := PackedInt32Array()
 var u_contact := PackedInt32Array()
 var u_fighting := PackedInt32Array()  # soldiers fighting last tick
+var u_inreach := PackedInt32Array()  # of them, within reach (+INREACH_EXTRA) of their man
 var u_settled := PackedInt32Array()   # every soldier at its slot and idle
 var u_dirty := PackedInt32Array()     # slot offsets need recomputing
 var u_cx := PackedInt32Array()        # centroid and bbox of living soldiers
@@ -1417,7 +1427,7 @@ func _soldier_hashed() -> Array:
 func _unit_arrays() -> Array:
 	return [u_side, u_type, u_cls, u_count0, u_alive, u_state, u_morale, u_routs,
 		u_files, u_ax, u_ay, u_face, u_order, u_dx, u_dy, u_dface, u_target,
-		u_run, u_fire, u_skirm, u_slot_base, u_contact, u_fighting, u_settled,
+		u_run, u_fire, u_skirm, u_slot_base, u_contact, u_fighting, u_inreach, u_settled,
 		u_dirty, u_cx, u_cy, u_minx, u_miny, u_maxx, u_maxy, u_flee_x, u_flee_y,
 		u_moved, u_disorder, u_formed, u_braced, u_mom, u_charge, u_charge_t,
 		u_charge_left, u_charge_act, u_down, u_ftarget,
@@ -4822,7 +4832,8 @@ func _occ_probe(u: int, ox: int, oy: int, x: int, y: int, rx: int, ry: int, t: i
 ## attacks, -1 a move): into an enemy's footprint it may not (it steers
 ## round it if there is room: 30 or 60 degrees off with a free cell beyond,
 ## on the side it chose first, never round its own target; else it stops
-## there), behind friends
+## there, except into its own target while none of its men is within reach
+## of his man yet), behind friends
 ## fighting its target it waits (or goes round them), through other friends
 ## it goes at half speed. Sets u_blk / u_dodge. Returns where it gets to.
 func _anchor_step(u: int, ox: int, oy: int, nx: int, ny: int, t: int, spd: int) -> Vector2i:
@@ -4853,6 +4864,12 @@ func _anchor_step(u: int, ox: int, oy: int, nx: int, ny: int, t: int, spd: int) 
 			return _half_step(ox, oy, sx, sy, spd)
 		return Vector2i(nx, ny)
 	var b := _blk_u
+	if k == BLK_ENEMY and b == t and u_inreach[u] == 0:
+		# Its own target, and none of its men within reach yet (they keep
+		# to within PLACE_LEAD of their places): press on into contact.
+		u_dodge[u] = 0
+		u_blk[u] = 0
+		return Vector2i(nx, ny)
 	if not (k == BLK_ENEMY and b == t):
 		# Round it: first on the side chosen before, else away from its
 		# centre (the side it lies less on).
@@ -5089,7 +5106,9 @@ func _update_units() -> void:
 				# cannot be reached straight.
 				var via := false
 				var held := false
-				if oon and u_wall[u] == 0 and u_charge[u] == 0 and u_fighting[u] == 0 \
+				# (u_inreach, not u_fighting: men holding to their places
+				# leave the closing to the anchor, which goes by the streets.)
+				if oon and u_wall[u] == 0 and u_charge[u] == 0 and u_inreach[u] == 0 \
 						and not (cls == UT.CLS_MISSILE and u_ammo[u] > 0 and d <= range_vs(u, t)):
 					var goal := _attack_goal(u, t)
 					if city_on != 0:
@@ -5150,8 +5169,17 @@ func _update_units() -> void:
 							t, aspeed)
 						u_ax[u] = ss.x
 						u_ay[u] = ss.y
-				elif (u_fighting[u] == 0 or u_state[t] == U_ROUTING) and d > 0:
+				elif d > 0 and (u_state[t] == U_ROUTING or (u_inreach[u] == 0 and (u_fighting[u] == 0 \
+						or ((u_ax[u] - u_cx[u]) * dx + (u_ay[u] - u_cy[u]) * dy) / d <= unit_depth(u) / 2 + ANCHOR_LEAD))):
+					# Closing until a man is within reach of his (its men
+					# walk at most PLACE_LEAD ahead of their places), but not
+					# away from its men while they fight (their men out of
+					# reach, it waits for them); after a routing target it
+					# goes on, at the run: pursuit is the unit's move, not
+					# its men's.
 					want_face = FM.atan2_a(dy, dx)
+					if u_state[t] == U_ROUTING and u_run[u] == 0 and not (sg_on != 0 and u_carry[u] >= 0):
+						aspeed = aspeed * t_run[ty] / maxi(t_walk[ty], 1)
 					var hw := (u_maxx[t] - u_minx[t]) >> 1
 					var hh := (u_maxy[t] - u_miny[t]) >> 1
 					var ext := (absi(dx) * hw + absi(dy) * hh) / d
@@ -5756,6 +5784,7 @@ func _update_soldiers() -> void:
 					n_rm += 1
 			_set_bounds(u, sumx / alive, sumy / alive, minx, miny, maxx, maxy)
 			u_fighting[u] = 0
+			u_inreach[u] = 0
 			if moved == 0 and u_order[u] == O_NONE and u_dirty[u] == 0 and u_face[u] == u_dface[u]:
 				u_settled[u] = 1
 			_flush_removals(n_rm)
@@ -5832,6 +5861,12 @@ func _update_soldiers() -> void:
 			wp[w * 5 + 4] = unit_half_width(p) + PIKE_WALL_EXTRA
 		var run_cap := run
 		var fighting := 0
+		var inreach := 0
+		# Fighting men keep to within PLACE_LEAD ahead of their places (not
+		# on a stair or ladder move, not on a wall: those follow their own
+		# trails).
+		var lead_cap := stair_mv == 0 and not (ob and u_wall[u] != 0)
+		var reach_in := reach + INREACH_EXTRA
 		var counted := 0
 		# Slots can be reshuffled by deaths inside this loop (gap filling), so
 		# walk a snapshot of the slot list.
@@ -5978,9 +6013,12 @@ func _update_soldiers() -> void:
 						if ddx * ddx + ddy * ddy > (keep_front if front and not shy else keep_rear):
 							t = -1
 							lost = true
-						elif ob and ((tk + i) & 1) == 0 and not _reach_ok(x, y, px[t], py[t]):
+						elif ob and (((tk + i) & 1) == 0 or ddx * ddx + ddy * ddy <= reach_in * reach_in) \
+								and not _reach_ok(x, y, px[t], py[t]):
 							# Out of reach behind a wall (or a gate, a corner): look
-							# again (every other tick: nobody stands fighting a wall).
+							# again (every other tick: nobody stands fighting a wall;
+							# every tick once he is within reach, so no blow goes
+							# through it).
 							t = -1
 							lost = true
 				if t < 0:
@@ -6011,9 +6049,13 @@ func _update_soldiers() -> void:
 				var mom := 0
 				if is_cav:
 					mom = cg[i]
+				if d <= reach_in:
+					inreach += 1
 				if d > want:
-					# Walk in; charge at the run with momentum, and run down
-					# fleeing enemies.
+					# Walk in; charge at the run with momentum, and run after
+					# fleeing enemies - but only as far as PLACE_LEAD ahead of
+					# his place: further pursuit is the unit's (its anchor
+					# follows a routing target).
 					var stp := walk
 					if mom > 0 or st[t] == S_ROUTING:
 						stp = run_cap
@@ -6024,6 +6066,11 @@ func _update_soldiers() -> void:
 					var step_len := mini(stp, d - want)
 					nx = x + dx * step_len / dl
 					ny = y + dy * step_len / dl
+					if lead_cap and mom == 0:
+						var kc := base + slot
+						var cap := _cap_lead(x, y, nx, ny, ax + oxs[kc], ay + oys[kc], fcos, fsin, PLACE_SIDE)
+						nx = cap.x
+						ny = cap.y
 					if is_cav and step_len * 3 < run_cap:
 						mom = maxi(mom - 15, 0)
 				elif d < half_reach and dl > 0:
@@ -6122,7 +6169,8 @@ func _update_soldiers() -> void:
 					if sgs.z != 0:
 						dx = sgs.x - x
 						dy = sgs.y - y
-				if wrap_t >= 0 and front and t < 0:
+				var wrapping := wrap_t >= 0 and front and t < 0
+				if wrapping:
 					dx = u_cx[wrap_t] - x
 					dy = u_cy[wrap_t] - y
 				if dx != 0 or dy != 0:
@@ -6134,6 +6182,11 @@ func _update_soldiers() -> void:
 					else:
 						nx = x + dx * spd / d
 						ny = y + dy * spd / d
+					if wrapping and lead_cap:
+						# Lapping round: sideways, not out ahead of the line.
+						var capw := _cap_lead(x, y, nx, ny, ax + oxs[k], ay + oys[k], fcos, fsin, 1 << 30)
+						nx = capw.x
+						ny = capw.y
 				fc[i] = face
 				if is_cav:
 					# Riders keep their own momentum a moment after the unit
@@ -6148,6 +6201,7 @@ func _update_soldiers() -> void:
 					# a block keeps closing until its points reach.
 					if in_reach:
 						fighting += 1
+						inreach += 1
 					st[i] = S_FIGHTING
 					var c3 := cd[i] - 1
 					if c3 <= 0:
@@ -6206,6 +6260,7 @@ func _update_soldiers() -> void:
 				_rm_why[n_rm] = GONE_WITHDRAWN
 				n_rm += 1
 		u_fighting[u] = fighting
+		u_inreach[u] = inreach
 		if charging:
 			u_charge_left[u] = ch_left
 			u_charge_act[u] = ch_act
@@ -6424,10 +6479,11 @@ func _find_target_cone_obs(x: int, y: int, r: int, fc: int, fs: int, head: Packe
 
 
 ## Where (x, y) is relative to unit u's formation: ahead of its front line
-## (front), behind its rear rank (rear) or alongside (flank). Unit-level
-## effects (morale, pike disorder, bracing) use this rather than the angle
-## between two duellists, so oblique blows inside a frontal melee stay
-## frontal.
+## (front), behind its rear rank (rear) or alongside (flank). Melee blows
+## (shield, flank / rear to-hit bonus, morale, pike disorder) and bracing
+## use this rather than the angle between two duellists, so oblique blows
+## inside a frontal melee stay frontal and a man turned to face a flanker
+## is still taken in the flank.
 func _zone(u: int, x: int, y: int) -> int:
 	if u_state[u] != U_READY:
 		return ZONE_REAR
@@ -6447,6 +6503,38 @@ func _zone(u: int, x: int, y: int) -> int:
 	return ZONE_FLANK
 
 
+## A fighting man's step from (x, y) to (nx, ny), cut so it takes him no
+## further than PLACE_LEAD ahead of his place (plx, ply) along the unit's
+## facing (c, s), nor further than `side` to either side of it. Only the
+## part of the step that goes beyond is cut, and a man already beyond is
+## not pulled back, just stops going further that way.
+static func _cap_lead(x: int, y: int, nx: int, ny: int, plx: int, ply: int, c: int, s: int,
+		side: int) -> Vector2i:
+	var rx := nx - x
+	var ry := ny - y
+	var ox := x - plx
+	var oy := y - ply
+	var sf := (rx * c + ry * s) / FM.TRIG_ONE
+	if sf > 0:
+		var over := (ox * c + oy * s) / FM.TRIG_ONE + sf - PLACE_LEAD
+		if over > 0:
+			over = mini(over, sf)
+			nx -= c * over / FM.TRIG_ONE
+			ny -= s * over / FM.TRIG_ONE
+	var sl := (ry * c - rx * s) / FM.TRIG_ONE
+	if sl != 0:
+		var l1 := (oy * c - ox * s) / FM.TRIG_ONE + sl
+		var cut := 0
+		if sl > 0 and l1 > side:
+			cut = mini(l1 - side, sl)
+		elif sl < 0 and l1 < -side:
+			cut = maxi(l1 + side, sl)
+		if cut != 0:
+			nx += s * cut / FM.TRIG_ONE
+			ny -= c * cut / FM.TRIG_ONE
+	return Vector2i(nx, ny)
+
+
 ## Melee blow by soldier a at soldier d. `pen` is a hit penalty; `parting`
 ## is a free blow at the back of a soldier turning away from the fight
 ## (rear bonus, no shield, no unit-level flank effects).
@@ -6456,10 +6544,11 @@ func _melee(a: int, d: int, pen: int, parting: bool = false) -> void:
 	stat_attacks += 1
 	var ua := unit_of[a]
 	var ud := unit_of[d]
-	var from_def := FM.atan2_a(pos_y[a] - pos_y[d], pos_x[a] - pos_x[d])
-	var rel := absi(FM.angle_diff(facing[d], from_def))
+	# Front, flank or rear by where the attacker stands relative to the
+	# defender's *unit* (its line and facing), not how the struck man is
+	# turned: the shield, the to-hit bonus and the morale hit all follow it.
 	var zone := _zone(ud, pos_x[a], pos_y[a])
-	var frontal := rel <= FRONT_ARC
+	var frontal := zone == ZONE_FRONT
 	var bonus := 0
 	var sd := state[d]
 	if parting:
@@ -6473,9 +6562,9 @@ func _melee(a: int, d: int, pen: int, parting: bool = false) -> void:
 	elif sd == S_DOWN:
 		frontal = false
 		bonus = DOWN_BONUS
-	elif rel > REAR_ARC:
+	elif zone == ZONE_REAR:
 		bonus = REAR_BONUS
-	elif not frontal:
+	elif zone == ZONE_FLANK:
 		bonus = FLANK_BONUS
 	if bonus > 0 and sg_on != 0 and u_carry[ud] >= 0 and q_kind[u_carry[ud]] == EQ_WAGON:
 		bonus += WAGON_EXPOSED  # men in the traces of a wagon, hit from the side or behind
@@ -6511,12 +6600,7 @@ func _melee(a: int, d: int, pen: int, parting: bool = false) -> void:
 		return
 	var dmg := maxi(dmg0 - t_armour[td], 4)
 	dmg = dmg * (85 + _rand() % 31) / 100
-	# Morale cares whether the *unit* is hit in the flank or rear (relative
-	# to the unit's facing), not how an individual duellist is turned.
-	# A blow from beside the formation that the man has turned to face is
-	# not a flank attack on the unit (as for charge impacts).
-	if zone == ZONE_FLANK and frontal:
-		zone = ZONE_FRONT
+	# Morale and disorder: the same unit-relative zone.
 	if sd != S_ROUTING and u_state[ud] == U_READY:
 		if zone == ZONE_REAR:
 			u_morale[ud] -= MORALE_REAR_HIT

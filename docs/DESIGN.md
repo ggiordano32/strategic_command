@@ -232,13 +232,44 @@ are the reference for balance.
 | Bolt throwers (crew) | 14 | 14 | 3 | 0 / 0 | 22 | 1.0 | 75 | 0.8 packed | 4 engines x 4 crew, cost 25/crew |
 | Stone throwers (crew) | 14 | 14 | 3 | 0 / 0 | 22 | 1.0 | 75 | 0.7 packed | 3 engines x 6 crew, cost 30/crew |
 
-**Flank and rear** for morale, disorder and bracing are judged by where the
-attacker stands relative to the defending formation (ahead of its front line,
-behind its rear rank, or alongside / beyond the end of the line), not by the
-angle between two duellists, so oblique blows inside a frontal melee stay
-frontal. Shields and the per-hit flank bonus still use the individual
-soldier's facing, and a blow from beside the formation that the man has
-turned to face does not count as a flank attack on the unit.
+**Flank and rear** are judged by where the attacker stands relative to the
+defending *unit* (its anchor and facing: ahead of its front line, behind its
+rear rank, or alongside / beyond the end of the line; `BattleSim._zone`), not
+by the angle between two duellists or how the struck man is turned. One
+function decides it for every melee blow: the shield (frontal blows only),
+the to-hit bonus (+25 flank, +40 rear), the morale and disorder hit and the
+pike's short sword. Oblique blows inside a frontal melee stay frontal, and a
+man at the end of the line who turns to face a flanker is still taken in the
+flank (until 2026-10-09 the shield and bonus used the man's own facing, so
+men drawn out of the line took 40-65 % of their blows "from the side").
+
+**Ranks hold together in melee** (2026-10-09). A fighting man walks in on his
+enemy only as far as `PLACE_LEAD` (1.5 m) ahead of his place in the
+formation, measured along the unit's facing, and `PLACE_SIDE` (3 m) to
+either side of it (`BattleSim._cap_lead`: only the part of a step that goes
+beyond is cut; a man already beyond stops going further rather than being
+pulled back). The search ranges are unchanged (the front rank still picks a
+man up to 8 m ahead, keeps him to 10 m), so "fighting" (`u_fighting`, which
+the AI reads) still means engaged; what moves the fight forward is the
+anchor: an attacking unit keeps closing until one of its men is within
+reach + 1 m of his man (`u_inreach`, hashed), then stands. It may step into
+its own target's footprint to get there (unit blocking, below), and while
+its men are engaged elsewhere it does not walk away from them (it closes
+only while it is at most half its depth + 2 m ahead of its men's middle,
+`ANCHOR_LEAD`). On settlement maps the street path is taken while no man is
+in reach (it was: while none fights). A unit standing without an order
+holds its ground: its front rank leans out at most 1.5 m. Wrapping (below)
+is capped ahead the same way (not sideways), so wrapping men lap round
+sideways, not out ahead of the line. Not capped: riders with charge
+momentum, men on a stair or ladder move, units on a wall. Before this a unit's front rank walked up to
+8-17 m ahead of rank 2 (gap mean 6-9 m), enemy men got into the gap, and
+half a unit chased routers 100 m off while the rest stood at the marker.
+
+**Pursuit is the unit's move.** Men do not run after routers beyond the
+cap. A unit whose attack target is routing advances its anchor after it
+(the in-reach stop does not apply) at the run, so pursuit happens when the
+player orders an attack on a routing unit or the AI does (it already targets
+routers once no formed enemy is nearer, docs/AI.md 3.13).
 
 **Wrapping.** Front-rank soldiers of an engaged attacking unit who have no
 enemy within reach close on the target unit instead of holding their slots,
@@ -250,7 +281,8 @@ until their points meet.
 **Moving disengages.** A unit with a move (or withdraw) order does not fight:
 its soldiers drop their targets and follow their slots. This is what lets
 cavalry pull out and units withdraw; to fight, halt or attack. Soldiers whose
-target is routing or pulling away chase at the run. Turning away costs a
+target is routing or pulling away close at the run, within the 1.5 m lead
+above. Turning away costs a
 *parting blow*: on the tick a soldier disengages, the enemy he was fighting
 (if still fighting and within reach) gets one free blow at his back (rear
 bonus, no shield). This is what makes pulling cavalry out of a melee cost
@@ -1616,7 +1648,9 @@ below). Everywhere (field and city maps).
   once). Into an *enemy's* footprint it may not step: it steers round it
   (30 or 60 degrees off, on the side it chose before, else away from the
   enemy's middle, only with a free cell 4 m on that way; never
-  round the unit it attacks) or stops there (`u_blk` BLK_ENEMY). A unit
+  round the unit it attacks) or stops there (`u_blk` BLK_ENEMY; since
+  2026-10-09 not at its own target's footprint while none of its men is
+  within reach: it presses on into contact, "Ranks hold together"). A unit
   already inside an enemy's cells (it came to us) may back away from its
   middle. A move stopped by an enemy fights where it stands (its men do
   not disengage). Through a *friend's* footprint it goes at half speed
@@ -1700,6 +1734,7 @@ per man hit; artillery: added fright), `blast` (extra radius), `fire`.
 | Fire javelins | javelins | 33 | 75 | 100 | 85 | 120 | 3 | - | 35 | damage, range, rate |
 | Fire pots | stones | 33 | 55 | 200 | 90 | 110 | 30 | - | 70 | damage vs men |
 | Explosive stones | stones | 20 | 100 (130 pierce) | 50 | 85 | 125 | 40 | +1.5 m | - | walls, range, rate, share |
+| Lead bullets | sling stones | 33 | 130 (+20 ap) | 100 | 85 | 100 | - | - | - | range, share |
 
 **Fire** is one state on any wooden thing: a gate (`g_burn`), an engine or
 a tower's engine (`e_burn`), ladders on the ground or carried, a ram, a
@@ -1736,8 +1771,8 @@ data (`UnitTypes.WAGONS`):
 | 2 | Ammunition Wagon | 1 | 0.9 / 1.3 m/s | 800 | 240 | 150 % | +9 % |
 | 3 | Supply Train | 2 | 0.9 / 1.3 / 2.0 m/s | 1000 | 240 each | 220 % | +12 % |
 
-Stock at 100 %: 1,600 arrows, 240 javelins, 22 bolts, 16 stones (AMMO
-`wagon`), and of each special kind of its army a share of its base's.
+Stock at 100 %: 1,600 arrows, 240 javelins, 22 bolts, 16 stones, 1,600
+sling stones (AMMO `wagon`), and of each special kind of its army a share of its base's.
 Horses are hit boxes in front of the wagon (arrows / javelins landing
 within 3 m strike one 30 % of the time; bolts and stones near it hit
 wagon and team); a dead horse slows it to the next pace. Crew gone: the
@@ -1802,6 +1837,46 @@ the horse scare `scare_r` / `scare_pct` / `scare_mor`, the fear aura
   their beast facts. AI: docs/AI.md 19. Campaign: docs/CAMPAIGN.md rosters.
 - Not modelled: fatigue (camels "tire slower") and arid ground (no such
   penalty exists).
+
+### Missile cavalry and slingers (as built, 2026-10-09)
+
+Data only (no sim change): rows of `sim/unit_types.gd` `LIGHT_MISSILE`
+(lines "cav_missile", "sling"; base rows appended after `BEASTS`) with
+faction variants in `LIGHT_MISSILE_TIERS`, derived like `TIERS` (tier 2:
+`TIER_DELTA`, `TIER_PRICE` cav_missile 125 % / sling 120 %, the row's `add`
+and `price_add`). Both are `CLS_MISSILE` with skirmish on by default; the
+riders `mount` 1 (horse), drawn with the cavalry sprite; slingers drawn
+with the archers' sprite, their stones with the arrow (any `m_arc` 1
+missile draws as one). A new standard kind **Sling stones** (`AMMO` 9, a
+hand cart carries 1,600) and a special kind **Lead bullets** on it.
+Numbers chosen once, not tuned (yardsticks: shock cavalry, camel archers,
+javelinmen, archers):
+
+| | Light Horse (`cav_jav`) | Slingers (`slinger`) |
+|---|---|---|
+| Size / price | 60 / 480 (camel archers' price; shock cavalry 600) | 80 / 320 (archers 400 less the weak shot against armour) |
+| Run / turn 90 deg | 8.6 m/s (shock cavalry 8.2) / 1.3 s (1.6) | 4.2 m/s (javelinmen's) |
+| Att / def / armour / hp / morale | 24 / 22 / 4 / 130 / 620 (no lance, unarmoured, smaller horse) | 18 / 16 / 2 / 75 / 560 (archers' body, no armour) |
+| Missile | javelins 40 m, 38 dmg, 50 ap, 5 a man, 3 s (javelinmen 42 / 60 / 6 / 2.8 s: thrown from a moving horse) | sling 150 m (bow 140), 28 dmg, 0 ap, 40 a man, 3 s (bow 30 / 25 ap / 4 s) |
+| Other | mshield 25, woods 180 % (about the cavalry's), climb 24, needs Stables + Range 1 | loose order 1.6 x 1.8 m, lobbed over friends |
+
+"Good against unarmoured" falls out of the damage rule (`damage - armour x
+(100 - ap) %`): 25 a hit on armour 3 (arrows 28, but a stone every 3 s, not
+4), 14 on the heavy swords' 14 (arrows 20). Lead bullets: a third of the
+bag, 130 % damage, +20 ap, 85 % range (Range 2: Carthage, the Greeks).
+Variants (tier 2; +3 missile damage unless said): Numidian Horse
+(Carthage: +0.2 m/s run, quicker turn, +1 javelin, +10 % price), Tarentine
+Horse (Greeks, Epirus, Syracuse: +10 mshield), Gallic Light Horse (+3 att,
++2 dmg), Iberian Light Horse (+2 def, +1 armour); Balearic Slingers
+(Carthage: tighter spread, +10 %), Rhodian Slingers (Greeks: +2 missile
+damage, +10 m range, +10 %), Iberian Slingers (+2 missile damage, +2 att). Campaign: docs/CAMPAIGN.md rosters.
+
+- Not expressed: the riders' "weak charge" (`CLS_MISSILE` builds no
+  momentum and never charges; like the camel archers); a damage bonus
+  against armour 0-2 (no such field: low damage and no ap give it);
+  a sling bullet of its own look (it draws as an arrow); an army of light
+  horse marches at the foot's pace (`CState.max_mp` counts only
+  `CLS_CAV` as cavalry, as for the camel archers).
 
 ## 5. Networking
 
