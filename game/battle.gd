@@ -233,7 +233,11 @@ func _ready() -> void:
 	hud.build(sim, player_side, interactive)
 	if campaign_mode:
 		hud.result_menu_button.text = "Back to campaign"
+		# The menu button is a bare 50 px icon; as "Leave" it needs its width
+		# back and an exit icon instead of the menu glyph.
 		hud.menu_button.text = "Leave"
+		hud.menu_button.custom_minimum_size.x = 0
+		Hud.Kit.set_icon(hud.menu_button, "withdraw")
 	hud.set_stats_expanded(bench_mode)  # benchmarks show the full readout
 	_fit_camera()
 	hud.card_pressed.connect(_on_card)
