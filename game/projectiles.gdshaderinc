@@ -10,8 +10,8 @@
 //
 // Texture variant, blocks (each `rows_per_block` rows of `tex_width` texels):
 //   0 sx, 1 sy, 2 x, 3 y, 4 t0, 5 t1 (-1 = free slot), 6 shooter unit,
-//   7 unit flags (indexed by unit: bit0 side, bits 1-2 kind: 0 arrow,
-//     1 javelin, 2 bolt, 3 stone)
+//   7 unit flags (indexed by unit: bit0 side, bits 1-3 kind: 0 arrow,
+//     1 javelin, 2 bolt, 3 stone, 4 sling bullet)
 // CPU-fed variant (skip_vertex_transform), through MODEL_MATRIX: [3].xy
 // firing point, [0].xy landing point, [1].x t0, [1].y t1; INSTANCE_CUSTOM.x
 // the shooter's flags (side + 2 x kind).
@@ -46,7 +46,7 @@ int fetch_int(int block, int idx) {
 #endif
 
 // One missile in flight from s to e (sim units) at fraction f; side 0 / 1,
-// kind 0 arrow, 1 javelin, 2 bolt, 3 stone. Returns the corner's position
+// kind 0 arrow, 1 javelin, 2 bolt, 3 stone, 4 sling bullet. Returns the corner's position
 // in the layer's space; col: its colour.
 vec2 place(vec2 s, vec2 e, float f, int side, int kind, vec2 uv, out vec4 col) {
 	vec2 p = mix(s, e, f) * px_per_unit;
@@ -66,6 +66,9 @@ vec2 place(vec2 s, vec2 e, float f, int side, int kind, vec2 uv, out vec4 col) {
 	} else if (kind == 3) {
 		size = vec2(0.9, 0.9);
 		lift = 2.2;
+	} else if (kind == 4) {
+		size = vec2(0.45, 0.3);  // a sling bullet: small, a little drawn out along its flight
+		lift = 0.8;
 	}
 	size *= 1.0 + lift * sin(3.14159 * f);
 	vec2 v = (uv - vec2(0.5)) * size * m;
@@ -74,7 +77,7 @@ vec2 place(vec2 s, vec2 e, float f, int side, int kind, vec2 uv, out vec4 col) {
 	vec3 tint = side == 0 ? vec3(0.75, 0.85, 1.0) : vec3(1.0, 0.82, 0.75);
 	if (kind == 2) {
 		tint = mix(tint, vec3(0.35, 0.25, 0.15), 0.55);
-	} else if (kind == 3) {
+	} else if (kind >= 3) {
 		tint = mix(tint, vec3(0.45, 0.43, 0.4), 0.8);
 	}
 	col = vec4(tint, 0.95);
@@ -108,7 +111,7 @@ void vertex() {
 		vec2 e = vec2(float(fetch_int(2, i)), float(fetch_int(3, i)));
 		int flags = fetch_int(7, fetch_int(6, i));
 		int side = flags - (flags / 2) * 2;
-		kind = flags / 2 - (flags / 8) * 4;
+		kind = flags / 2 - (flags / 16) * 8;
 		VERTEX = place(s, e, f, side, kind, UV, col) - MODEL_MATRIX[3].xy;
 #endif
 		v_kind = float(kind);
@@ -118,7 +121,7 @@ void vertex() {
 
 void fragment() {
 	if (v_kind > 2.5) {
-		// Stone: a shaded ball with a dark rim.
+		// Stone (and a sling bullet): a shaded ball with a dark rim.
 		vec2 q = (v_uv - vec2(0.5)) * 2.0;
 		float r = length(q);
 		float a = 1.0 - smoothstep(0.85, 1.0, r);

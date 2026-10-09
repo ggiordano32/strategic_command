@@ -156,6 +156,8 @@ static func new_campaign(p_name: String, p_seed: int, humans: Array, settings: D
 			for k in ad[1]:
 				var ty := UT.index_of(k)
 				assert(ty >= 0, "unknown unit " + str(k))
+				if CData.no_generals and UT.line_of(ty) == "general":
+					continue  # (test switch)
 				units.append({"t": k, "n": UT.size_of(ty)})
 			var na := {"id": f * 100000 + int(fs["next_army"]), "f": f,
 				"r": CData.region_index(ad[0]), "units": units, "from": -1, "moved": 0, "busy": 0}
@@ -464,17 +466,23 @@ static func moves_on(st: Dictionary) -> bool:
 	return int(st.get("version", 0)) >= 5
 
 
-## Movement points a turn of army a (its slowest arm): cavalry only MP_CAV,
+## Movement points a turn of army a (its slowest arm): riders only (any
+## row on a horse or a camel: cavalry, light horse, camel archers) MP_CAV,
 ## any artillery MP_ART, else MP_FOOT.
 static func max_mp(a: Dictionary) -> int:
 	var all_cav := true
 	var units: Array = a.get("units", [])
 	for u in units:
-		var c := UT.cls(unit_type(u))
+		var ty := unit_type(u)
+		var c := UT.cls(ty)
 		if c == UT.CLS_ART:
 			return CData.MP_ART
-		if c != UT.CLS_CAV or UT.stat(unit_type(u), "mount") == UT.MOUNT_ELEPHANT:
-			all_cav = false  # (elephants march at the foot's pace)
+		var mount := UT.stat(ty, "mount")
+		var rider := mount == UT.MOUNT_HORSE or mount == UT.MOUNT_CAMEL
+		if CData.old_mp:
+			rider = c == UT.CLS_CAV and mount != UT.MOUNT_ELEPHANT  # (test switch: before 2026-10-09)
+		if not rider:
+			all_cav = false  # (foot, and elephants, march at the foot's pace)
 	return CData.MP_CAV if all_cav and not units.is_empty() else CData.MP_FOOT
 
 
@@ -762,6 +770,7 @@ static func strength(a: Dictionary) -> int:
 	var s := 0
 	var mis := 0
 	var bonus := 0
+	var cmd := 0
 	for u in a["units"]:
 		var ty := unit_type(u)
 		var v := int(u["n"]) * UT.price_of(ty) / maxi(UT.size_of(ty), 1) * UT.stat(ty, "str_pct") / 100
@@ -772,6 +781,27 @@ static func strength(a: Dictionary) -> int:
 		var w := UT.stat(ty, "wagon")
 		if w >= 0 and int(u["n"]) > 0:
 			bonus = maxi(bonus, UT.wagon_stat(w, "bonus_pct"))
+		if int(u["n"]) > 0:
+			cmd = maxi(cmd, UT.stat(ty, "cmd_pct"))
 	# An ammunition wagon keeps the missile troops and engines shooting
-	# (the best wagon of the army: UnitTypes.WAGONS bonus_pct).
-	return s + mis * bonus / 100
+	# (the best wagon of the army: UnitTypes.WAGONS bonus_pct). A general
+	# (cmd_pct, the best of the army) adds to the whole.
+	s += mis * bonus / 100
+	if cmd > 0:
+		s = s * (100 + cmd) / 100
+	return s
+
+
+## Units of army a whose row carries a command aura (the general).
+static func generals(a: Dictionary) -> int:
+	var n := 0
+	for u in a["units"]:
+		if is_general(str(u["t"])):
+			n += 1
+	return n
+
+
+## Unit type `key` is a general (its row has a command aura).
+static func is_general(key: String) -> bool:
+	var ty := UT.index_of(key)
+	return ty >= 0 and UT.stat(ty, "cmd_r") > 0

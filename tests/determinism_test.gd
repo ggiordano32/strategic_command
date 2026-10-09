@@ -136,6 +136,11 @@ var _ok := true
 
 
 func _init() -> void:
+	if "--only=general" in OS.get_cmdline_user_args():
+		_check_general()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=camels" in OS.get_cmdline_user_args():
 		_check_camels()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -178,6 +183,7 @@ func _init() -> void:
 	_check_wagon()
 	_check_camels()
 	_check_elephants()
+	_check_general()
 	if "--only=equipment" in OS.get_cmdline_user_args():
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
@@ -1507,6 +1513,196 @@ func _check_camels() -> void:
 		int(ev["scare1"]), int(ev["scare2"]), int(ev["turn1"]), int(ev["turn2"]), int(ev["mor1"]), int(ev["mor2"]),
 		int(ev["scare_hits"]), int(ev["camels_lost"]), int(ev["spears_lost"]), int(ev["reflects"]),
 		int(ev["camel_state"]), int(a["snap_t"])])
+
+
+## The general (docs/DESIGN.md "The general"; "--only=general"): two
+## mirrored light infantry units of ours under the same archers' fire, one
+## within the general's command aura, keep their heart longer inside it; the
+## general's unit (six men) is charged and routs or falls: every friendly
+## unit loses cmd_loss at once, the one within his cmd_r cmd_loss_r; light
+## horse out of javelins charge with momentum like cavalry. Identical on
+## repeat and across snapshot / restore.
+func _general_run(snap_check: bool) -> Dictionary:
+	var gen := UT.index_of("general")
+	var lh := UT.index_of("cav_jav")
+	var ev := {}
+	var hashes := PackedInt64Array()
+	var snap_t := -1
+	var snap_bad := -1
+	# A: under fire, inside and outside the aura (mirrored, 160 m apart).
+	var sc := {"width_m": 400, "height_m": 300, "ai_sides": [], "orders": [], "units": [
+		Scenarios.unit(0, gen, 30, 100, 225, Scenarios.FACE_UP),
+		Scenarios.unit(0, UT.LIGHT, 100, 100, 190, Scenarios.FACE_UP),
+		Scenarios.unit(0, UT.LIGHT, 100, 260, 190, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.ARCHER, 80, 100, 90, Scenarios.FACE_DOWN),
+		Scenarios.unit(1, UT.ARCHER, 80, 260, 90, Scenarios.FACE_DOWN)],
+		"terrain": {"kind": Terrain.K_FLAT}}
+	var sim := BattleSim.new()
+	sim.setup(sc, 717)
+	sim.queue_order(BattleSim.make_attack_order(1, 3, 1, 0))
+	sim.queue_order(BattleSim.make_attack_order(1, 4, 2, 0))
+	ev["waver_in"] = -1
+	ev["waver_out"] = -1
+	for t in 1500:
+		sim.step()
+		hashes.append(sim.state_hash())
+		if sim.tick == 30:
+			ev["cmd_in"] = sim.u_led[1]
+			ev["cmd_out"] = sim.u_led[2]
+		for k in 2:
+			var key: String = ["waver_in", "waver_out"][k]
+			if int(ev[key]) < 0 and (sim.u_morale[1 + k] < BattleSim.WAVER or sim.u_state[1 + k] != BattleSim.U_READY):
+				ev[key] = sim.tick
+		if sim.tick == 600:
+			ev["mor_in"] = sim.u_morale[1]
+			ev["mor_out"] = sim.u_morale[2]
+			ev["lost_in"] = sim.u_killed[1]
+			ev["lost_out"] = sim.u_killed[2]
+		if snap_check and snap_t < 0 and sim.tick == 400:
+			snap_t = sim.tick
+			snap_bad = _snap_diverges(sim, sc, 717, 300)
+	ev["cmd_s"] = sim.stat_cmd
+	# B: the general's six men charged by cavalry: the loss strikes the army.
+	var sc2 := {"width_m": 400, "height_m": 300, "ai_sides": [], "orders": [], "units": [
+		Scenarios.unit(0, gen, 6, 150, 150, Scenarios.FACE_UP),
+		Scenarios.unit(0, UT.HEAVY, 100, 150, 185, Scenarios.FACE_UP),
+		Scenarios.unit(0, UT.HEAVY, 100, 330, 185, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.CAVALRY, 60, 150, 60, Scenarios.FACE_DOWN)],
+		"terrain": {"kind": Terrain.K_FLAT}}
+	var s2 := BattleSim.new()
+	s2.setup(sc2, 718)
+	s2.queue_order(BattleSim.make_attack_order(1, 3, 0, 1))
+	ev["fall_t"] = -1
+	var pm1: int = s2.u_morale[1]
+	var pm2: int = s2.u_morale[2]
+	for t in 900:
+		s2.step()
+		hashes.append(s2.state_hash())
+		if int(ev["fall_t"]) < 0 and s2.stat_cmd_falls > 0:
+			ev["fall_t"] = s2.tick
+			ev["gen_state"] = s2.u_state[0]
+			ev["drop_near"] = pm1 - s2.u_morale[1]
+			ev["drop_far"] = pm2 - s2.u_morale[2]
+		pm1 = s2.u_morale[1]
+		pm2 = s2.u_morale[2]
+		if snap_check and int(ev["fall_t"]) < 0 and s2.tick == 40:
+			# Across a snapshot taken before the fall (the loss happens in the copies).
+			var bad := _snap_diverges(s2, sc2, 718, 400)
+			snap_bad = maxi(snap_bad, bad)
+	ev["falls"] = s2.stat_cmd_falls
+	# C: light horse out of javelins charge light infantry.
+	var sc3 := {"width_m": 300, "height_m": 300, "ai_sides": [], "orders": [], "units": [
+		Scenarios.unit(0, lh, 60, 150, 230, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.LIGHT, 100, 150, 120, Scenarios.FACE_DOWN)],
+		"terrain": {"kind": Terrain.K_FLAT}}
+	sc3["units"][0]["ammo_pct"] = 0
+	var s3 := BattleSim.new()
+	s3.setup(sc3, 719)
+	s3.queue_order({"tick": 1, "type": BattleSim.ORDER_SKIRMISH, "unit": 0, "on": 0})
+	s3.queue_order(BattleSim.make_attack_order(2, 0, 1, 1))
+	var mom := 0
+	for t in 400:
+		s3.step()
+		hashes.append(s3.state_hash())
+		mom = maxi(mom, s3.u_mom[0])
+	ev["lh_mom"] = mom
+	ev["lh_impacts"] = s3.stat_impacts
+	ev["lh_kills"] = s3.u_killed[1]
+	# D: the AI's general (docs/AI.md 20), battle_2000 with a general a side,
+	# both Average, then both Easy (he fights as any rider: GEN_THINK 0).
+	for lvl in [AIP.AVERAGE, AIP.EASY]:
+		var sc4: Dictionary = Scenarios.make("battle_2000")
+		sc4["ai_sides"] = [0, 1]
+		sc4["ai_skill"] = [lvl, lvl]
+		sc4["terrain"] = {"kind": Terrain.K_FLAT}
+		var gs: Array = []
+		for sd in 2:
+			gs.append((sc4["units"] as Array).size())
+			sc4["units"].append(Scenarios.unit(sd, gen, 30, 280, 420 if sd == 0 else 140,
+				Scenarios.FACE_UP if sd == 0 else Scenarios.FACE_DOWN))
+		var s4 := BattleSim.new()
+		s4.setup(sc4, 720)
+		var tag := "avg" if lvl == AIP.AVERAGE else "easy"
+		ev[tag + "_charge_t"] = -1
+		ev[tag + "_behind"] = 0
+		var engage_t := -1
+		for t in (2400 if lvl == AIP.AVERAGE else 1500):
+			s4.step()
+			hashes.append(s4.state_hash())
+			if engage_t < 0 and s4.ai_phase[0] == BattleAI.P_ENGAGE:
+				engage_t = s4.tick
+			for sd in 2:
+				var g: int = gs[sd]
+				if int(ev[tag + "_charge_t"]) < 0 and s4.u_ai[g] == BattleAI.A_CHARGE:
+					ev[tag + "_charge_t"] = s4.tick
+				if s4.tick % 100 == 0 and s4.u_state[g] == BattleSim.U_READY and engage_t < 0:
+					# Behind his own foot line (its mean depth) before the lines meet.
+					var ly := 0
+					var ln := 0
+					for o in s4.n_units:
+						if s4.u_side[o] == sd and s4.u_state[o] == BattleSim.U_READY and (s4.u_cls[o] == UT.CLS_INF or s4.u_cls[o] == UT.CLS_PIKE):
+							ly += s4.u_cy[o]
+							ln += 1
+					if ln > 0 and (s4.u_cy[g] - ly / ln) * (1 if sd == 0 else -1) > 10 * M:
+						ev[tag + "_behind"] = int(ev[tag + "_behind"]) + 1
+		ev[tag + "_engage_t"] = engage_t
+		var n_r := 0
+		var n_c := 0
+		for sd in 2:
+			n_r += s4.stat_aic[sd * AIP.N_COUNTERS + AIP.C_GEN_RALLY]
+			n_c += s4.stat_aic[sd * AIP.N_COUNTERS + AIP.C_GEN_CHARGE]
+		ev[tag + "_rallies"] = n_r
+		ev[tag + "_charges"] = n_c
+		ev[tag + "_falls"] = s4.stat_cmd_falls
+	return {"hashes": hashes, "ev": ev, "snap_t": snap_t, "snap_bad": snap_bad}
+
+
+func _check_general() -> void:
+	var a := _general_run(true)
+	var b := _general_run(false)
+	var ev: Dictionary = a["ev"]
+	print("  general: %s" % str(ev))
+	var gen := UT.index_of("general")
+	if a["hashes"] != b["hashes"] or str(ev) != str(b["ev"]):
+		_fail("general: the repeat diverged")
+		return
+	if int(ev["cmd_in"]) != 1 or int(ev["cmd_out"]) != 0 or int(ev["cmd_s"]) <= 0:
+		_fail("general: the aura is not where it should be (%s)" % str(ev))
+		return
+	var wi := int(ev["waver_in"])
+	var wo := int(ev["waver_out"])
+	if wo < 0 or (wi >= 0 and wi <= wo) or int(ev["mor_in"]) <= int(ev["mor_out"]):
+		_fail("general: the unit inside the aura did not hold longer (wavered at %d, outside %d)" % [wi, wo])
+		return
+	if int(ev["falls"]) != 1 or int(ev["fall_t"]) < 0:
+		_fail("general: the general's fall did not strike the army once (%d)" % int(ev["falls"]))
+		return
+	var near := UT.stat(gen, "cmd_loss_r")
+	var far := UT.stat(gen, "cmd_loss")
+	if int(ev["drop_near"]) < near - 10 or int(ev["drop_far"]) < far - 10 or int(ev["drop_far"]) > far + 10:
+		_fail("general: the loss hit is wrong (near %d, want %d; far %d, want %d)" % [int(ev["drop_near"]), near,
+			int(ev["drop_far"]), far])
+		return
+	if int(ev["lh_mom"]) < BattleSim.CHARGE_MIN or int(ev["lh_impacts"]) <= 0:
+		_fail("general: the light horse built no charge (momentum %d, impacts %d)" % [int(ev["lh_mom"]), int(ev["lh_impacts"])])
+		return
+	if int(ev["avg_behind"]) <= 0 or int(ev["avg_rallies"]) + int(ev["avg_charges"]) <= 0:
+		_fail("general: the Average AI's general did not keep behind the line or never rode to rally or charge (%s)" % str(ev))
+		return
+	if int(ev["easy_charge_t"]) < 0 or (int(ev["avg_charge_t"]) >= 0 and int(ev["avg_charge_t"]) <= int(ev["easy_charge_t"])):
+		_fail("general: the Easy AI did not throw its general in first (Easy %d, Average %d)" % [int(ev["easy_charge_t"]),
+			int(ev["avg_charge_t"])])
+		return
+	if int(a["snap_t"]) < 0 or int(a["snap_bad"]) != 0:
+		_fail("general: the restored copy diverged (%d)" % int(a["snap_bad"]))
+		return
+	print("PASS general (AI): Average keeps him behind the line (%d samples before the lines met at %d), rides to rally %d times, charges %d (first at %d), generals fallen %d; Easy sends him in at tick %d (lines met at %d)" % [
+		int(ev["avg_behind"]), int(ev["avg_engage_t"]), int(ev["avg_rallies"]), int(ev["avg_charges"]), int(ev["avg_charge_t"]),
+		int(ev["avg_falls"]), int(ev["easy_charge_t"]), int(ev["easy_engage_t"])])
+	print("PASS general: under the same fire the unit inside the aura wavered at tick %s, the one outside at %d (morale %d against %d at 600, %d and %d men lost); the general's unit %s at tick %d: the unit near him lost %d morale at once, the far one %d; light horse charged with momentum %d (%d impacts, %d killed); identical on repeat and across snapshot / restore" % [
+		str(wi) if wi >= 0 else "never", wo, int(ev["mor_in"]), int(ev["mor_out"]), int(ev["lost_in"]), int(ev["lost_out"]),
+		"routed" if int(ev["gen_state"]) == BattleSim.U_ROUTING else "fell", int(ev["fall_t"]),
+		int(ev["drop_near"]), int(ev["drop_far"]), int(ev["lh_mom"]), int(ev["lh_impacts"]), int(ev["lh_kills"])])
 
 
 ## Elephants ("--only=elephants"): a unit of elephants charges a heavy line

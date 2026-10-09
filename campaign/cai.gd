@@ -67,8 +67,9 @@ const CP := preload("res://campaign/cai_profile.gd")
 
 ## The lines added since the step-4 goldens, recruited only through a
 ## faction's mix (never as _any_type's fallback): camels, elephants (both
-## 2026-10-09), light horse and slingers (5b, 2026-10-09).
-const BEAST_LINES: Array[String] = ["camel", "camel_archer", "elephant", "cav_missile", "sling"]
+## 2026-10-09), light horse and slingers (5b, 2026-10-09), the general
+## (5b.3, 2026-10-09; also left out of the mix with CData.no_generals).
+const BEAST_LINES: Array[String] = ["camel", "camel_archer", "elephant", "cav_missile", "sling", "general"]
 ## Test switch (tests/campaign_sim.gd --no-beasts): recruit none of them,
 ## to show that only their recruitment changes a run.
 static var no_beasts := false
@@ -300,6 +301,9 @@ static func _recruit(st: Dictionary, f: int, moves: Array = []) -> void:
 		mix = mix.duplicate()
 		for bl in BEAST_LINES:
 			mix.erase(bl)
+	elif CData.no_generals:
+		mix = mix.duplicate()
+		mix.erase("general")  # (test switch: no generals)
 	if kn[CP.SK_COUNTER_MIX] > 0:
 		mix = _counter_mix(st, f, mix, kn)
 	# Where to recruit: regions with armies or on the frontier, richest
@@ -368,7 +372,7 @@ static func _recruit_order(st: Dictionary, f: int, r: int, key: String, marching
 		if int(a["f"]) != f or int(a["busy"]) != 0 or CGrid.cheb(CState.cell(a), site) > 1:
 			continue
 		var id := int(a["id"])
-		if CRules.army_recruit_check(st, f, r, id) != "":
+		if CRules.army_recruit_check(st, f, r, id, key) != "":
 			continue
 		if not marching.has(id):
 			hold = id

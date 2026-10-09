@@ -465,6 +465,32 @@ Gauls, Range 2; heavy bolts: Rome, Syracuse, Workshop 1; explosive:
 Syracuse, Workshop 2; fire pots: Rome, Carthage, Macedon, Greeks, Syracuse,
 Workshop 2), as the optional unit key `"ak"` (no format change).
 
+**The general** (2026-10-09; docs/DESIGN.md "The general"): line
+"general", one key per faction (`ROSTERS`: Rome `legate`, Carthage
+`sufet`, Macedon and Epirus `hetairoi_guard`, Greeks and Syracuse
+`strategos`, Iberians and Gauls `chieftain`), 1,200, recruited with
+Barracks 1 (`LINE_CHAIN` "general": the Barracks; every settlement starts
+with one). Every starting army has one (the `FACTIONS` "armies" lists).
+One general an army: recruiting refuses a second for an army (`army_recruit_check`
+with the key: "the army already has a general", also one queued for it)
+and a second a turn at one settlement (`recruit_check`: "a general is
+already raised here this turn"); an old-form recruit and the end-of-turn
+placement put a general only into an army without one (else a new army).
+Armies that come together (merge, the march to merge, the town
+auto-merge, exchange) are never refused for it: the first general stays
+and every later one becomes a plain **Bodyguard Cavalry** unit (key
+`bodyguard`, the same riders without the aura; `CRules._one_general`).
+Auto-resolve: `str_pct` 50 of his price, and his army +8 % (`cmd_pct`,
+`CState.strength`) while he has men; a lost battle may kill him (the
+outcome's unit rows). AI mixes "general" 4 in every faction, only through
+the mix (`CAI.BEAST_LINES`). Riders-only armies on horses or camels (light
+horse, camel archers, the general) march at horse pace (`CState.max_mp`).
+Test switches (never set by the game): `CData.no_generals` (no starting
+generals, none recruited; `campaign_sim --no-generals`, the step-4 AI
+goldens in campaign_test) and `CData.old_mp` (`--old-mp`: only `CLS_CAV`
+counts as cavalry, as before). No format change: a unit entry is
+`{"t": "legate", "n": 30}` like any.
+
 Tier balance (`tests/matchups.gd -- --only=tiers --seeds=12`, both units
 advancing into each other; equal price = the tier-1 side gets proportionally
 more men in one wider unit):

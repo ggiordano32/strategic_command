@@ -496,6 +496,8 @@ class UnitCard extends Control:
 			t += "; %d kills" % kills
 		if ak >= 0:
 			t += "; carries %s" % UT.ammo_text(ak, "name").to_lower()
+		if UT.stat(ty, "cmd_r") > 0:
+			t += "; the army's general"
 		return t
 
 	func _draw() -> void:
@@ -505,6 +507,9 @@ class UnitCard extends Control:
 		var r := 11.0
 		var disc := col if fielded else Color(0.45, 0.45, 0.45)
 		Icons.draw_marker(self, Icons.icon_of(ty), Vector2(r + 4, r + 4), r, disc)
+		if UT.stat(ty, "cmd_r") > 0:
+			# The general: his standard in gold in the top right corner.
+			Kit.UiIcons.draw_icon(self, "general", Rect2(sz.x - 16, 3, 13, 13), Kit.COL_GOLD if fielded else Kit.COL_DIM)
 		var x0 := r * 2 + 9
 		var txt := Color.WHITE if fielded else Color(0.6, 0.6, 0.6)
 		var big := str(back) if back >= 0 else str(men)

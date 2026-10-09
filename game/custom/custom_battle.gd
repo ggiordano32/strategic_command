@@ -382,16 +382,21 @@ func _build_picker() -> void:
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sc.add_child(list)
 	# The base lines with the light missile troops' (slingers after the javelins,
-	# missile cavalry after the cavalry).
+	# missile cavalry after the cavalry), the beasts after the riders and the
+	# generals last.
 	var lines: Array = UT.LINES.duplicate()
 	lines.insert(lines.find("javelin") + 1, "sling")
 	lines.insert(lines.find("cav") + 1, "cav_missile")
+	lines.insert(lines.find("cav_missile") + 1, "camel")  # Camel Riders
+	lines.insert(lines.find("camel") + 1, "camel_archer")  # Camel Archers
+	lines.insert(lines.find("camel_archer") + 1, "elephant")  # War Elephants
+	lines.append("general")  # the general and his faction variants
 	for line in lines:
 		var f := Kit.flow(6)
 		f.add_child(Kit.label(str(line).capitalize(), Kit.FONT, Kit.COL_DIM))
 		for ty in UT.count():
-			if UT.line_of(ty) != line:
-				continue
+			if UT.line_of(ty) != line or (line == "general" and UT.stat(ty, "cmd_r") <= 0):
+				continue  # (not the plain bodyguard: a campaign army's second general)
 			var key := UT.key_of(ty)
 			var b := Kit.button("%s  %d" % [UT.text(ty, "name"), UT.price_of(ty)], func(): _pick(key), 0, 13)
 			b.name = "pick_" + key

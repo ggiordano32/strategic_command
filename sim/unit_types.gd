@@ -114,6 +114,19 @@ extends RefCounted
 ##   gate_walls   it batters closed gates of cities with walls up to this
 ##                level like foot hack them (-1 never) ...
 ##   gate_pct     ... at this % of a foot soldier's rate (its own damage)
+## Command (docs/DESIGN.md "The general"; generic: the fear aura inverted):
+##   cmd_r        command aura: friendly units this near (box to box, once a
+##                second; not the unit itself) ...
+##   cmd_mor      ... in formation gain this much morale a second (also in
+##                melee and under fire; up to what rest would bring back)
+##   cmd_rally    ... routing gain this much more a second toward rallying
+##                (with an enemy near too)
+##   cmd_loss     when this unit routs or its last man falls (once a
+##                battle): every other friendly unit on the field loses this
+##                much morale at once ...
+##   cmd_loss_r   ... and those within cmd_r this much instead
+##   cmd_pct      campaign auto-resolve: its army's strength +this % while
+##                it has men (the best of the army's units)
 
 ## Display only (never read by the sim, not hashed): icon (marker / card
 ## symbol, see game/unit_icons.gd), role, desc, good_vs, weak_vs (unit book).
@@ -150,6 +163,7 @@ const DEFAULTS := {
 	"trample_n": 1, "trample_r": 1843, "trample_pct": 60, "crush": 0,
 	"scare_r": 0, "scare_pct": 100, "scare_mor": 0, "fear_r": 0, "fear_horse": 0, "fear_foot": 0,
 	"burn_pct": 100, "amok": 0, "amok_r": 0, "amok_calm": 0, "kill_delay": 0, "gate_walls": -1, "gate_pct": 0,
+	"cmd_r": 0, "cmd_mor": 0, "cmd_rally": 0, "cmd_loss": 0, "cmd_loss_r": 0, "cmd_pct": 0,
 }
 ## Mounts (the "mount" field).
 const MOUNT_FOOT := 0
@@ -830,6 +844,7 @@ const LIGHT_MISSILE: Array[Dictionary] = [
 		"morale": 620,      # camel archers 620, shock cavalry 760: skirmishers, not a battle line
 		"file_sp": 2048, "rank_sp": 3072,  # cavalry spacing
 		"turn": 20,         # ~7 degrees a tick: 90 degrees in 1.3 s (shock cavalry 1.6 s)
+		"charge": 30,       # a small charge (mounted with charge > 0: momentum as cavalry); shock cavalry 70, camels 45: no lance, light horses
 		"m_vuln": 120, "m_down": 9,  # horses, as shock cavalry
 		"m_range": 40 * 1024,  # the javelinmen's 40 m
 		"m_damage": 38,     # javelinmen 42: thrown from a moving horse
@@ -904,6 +919,68 @@ const LIGHT_MISSILE_TIERS: Array[Dictionary] = [
 ]
 
 
+## The general and his bodyguard (docs/DESIGN.md "The general"): one base
+## row of its own line ("general"), appended after the light missile rows so
+## every other index is unchanged, with faction variants in GENERAL_TIERS
+## (built like LIGHT_MISSILE_TIERS, at tier 1: no TIER_DELTA, the base
+## price). A small elite cavalry unit carrying the command aura (cmd_*).
+## Numbers chosen once from the existing rows (Guard Cavalry, cav3, the
+## yardstick: att 46, def 38, armour 16, hp 162, morale 900, charge 80;
+## 60 men, 1,260), not tuned; each with its reason.
+const GENERAL: Array[Dictionary] = [
+	{
+		"key": "general", "line": "general", "name": "General's Bodyguard", "short": "General", "icon": 15, "sprite": 5,
+		"size": 30, "files0": 10,  # 24-32 men: half a cavalry unit, three ranks
+		"role": "The general and his guard",
+		"desc": "The army's commander and his picked riders. Friendly units near him stand longer under fire and in melee, and routers near him rally sooner; if he flees or falls, the whole army is shaken, the units near him most. Keep him behind the line and commit him only to finish a wavering enemy or to steady a breaking unit.",
+		"good_vs": "Wavering or engaged enemy units hit in the flank, routers; steadying his own line.",
+		"weak_vs": "Braced spears and pikes, missile fire, a long melee: losing him costs the army more than his men.",
+		"cls": CLS_CAV, "mount": MOUNT_HORSE,
+		"attack": 44,       # Guard Cavalry 46: picked riders, not a shock unit
+		"defence": 40,      # Guard Cavalry 38: the best armour, guarding one man
+		"armour": 16,       # Guard Cavalry's 16
+		"shield": 25, "mshield": 20,  # shock cavalry 20 / 15: bigger shields held over the general
+		"damage": 36,       # Guard Cavalry's 36
+		"reach": 1638,
+		"mass": 420,        # shock cavalry 400: armoured riders on the best horses
+		"walk": 215, "run": 840,  # shock cavalry's pace (8.2 m/s): he must keep up with the wings
+		"hp": 160,          # Guard Cavalry 162
+		"cooldown": 10,
+		"morale": 950,      # Guard Cavalry 900: the commander's own guard almost never breaks
+		"file_sp": 2048, "rank_sp": 3072,
+		"charge": 75,       # shock cavalry 70, Guard Cavalry 80: fewer riders on the same horses
+		"turn": 16, "m_vuln": 120, "m_down": 9, "climb": 24,  # shock cavalry's
+		"cost": 40,         # 1,200 a unit: Guard Cavalry's 1,260 for half the men; the aura pays for the other half
+		"str_pct": 50,      # campaign strength: its riders count half its price (the rest is cmd_pct)
+		"cmd_r": 40 * 1024,  # 40 m: between the elephants' fear (25 m) and the rally's safe range (50 m)
+		"cmd_mor": 5,       # +5 a second: cancels one routing friend near (-5) or two elephants' fear on foot (-2 each)
+		"cmd_rally": 40,    # +40 a second: doubles a router's safe recovery (40), and works with an enemy near
+		"cmd_loss": 120,    # -120 at once: about ten men of a 100-man unit falling together
+		"cmd_loss_r": 250,  # -250 near him: a steady heavy line (900) holds, a shaken one (under 350) breaks
+		"cmd_pct": 8,       # auto-resolve: the army +8 % (the design's "small percentage")
+	},
+]
+## Faction variants of the general ("of": the base row's key), tier 1.
+const GENERAL_TIERS: Array[Dictionary] = [
+	{"key": "legate", "of": "general", "tier": 1, "name": "Legate's Guard", "short": "Legate",
+		"blurb": "A Roman legate and the picked horsemen of his staff.", "add": {"defence": 2}},
+	{"key": "sufet", "of": "general", "tier": 1, "name": "Sufet's Guard", "short": "Sufet",
+		"blurb": "A Carthaginian general of the great families and his Punic noble horse.", "add": {"charge": 5}},
+	{"key": "hetairoi_guard", "of": "general", "tier": 1, "name": "Royal Hetairoi", "short": "Hetairoi",
+		"blurb": "The king and his royal squadron of Companions, who lead from the front.", "add": {"charge": 6, "attack": 2}},
+	{"key": "strategos", "of": "general", "tier": 1, "name": "Strategos' Guard", "short": "Strategos",
+		"blurb": "An elected Greek general and his mounted guard of citizens.", "add": {"mshield": 5}},
+	{"key": "chieftain", "of": "general", "tier": 1, "name": "Chieftain's Guard", "short": "Chieftain",
+		"blurb": "A chieftain and his sworn retinue, who will die before he does.", "add": {"damage": 4, "defence": -2}},
+	# Never recruited: a second general's guard in one campaign army (CRules
+	# _one_general) serves on as these plain riders, without the aura.
+	{"key": "bodyguard", "of": "general", "tier": 1, "name": "Bodyguard Cavalry", "short": "Bodyguard",
+		"blurb": "A second general's riders, serving under the army's commander: no command of their own.", "plain": 1},
+]
+## The command fields a "plain" GENERAL_TIERS row clears.
+const CMD_FIELDS: Array[String] = ["cmd_r", "cmd_mor", "cmd_rally", "cmd_loss", "cmd_loss_r", "cmd_pct"]
+
+
 ## Field of wagon tier w (0 if out of range); "pace" with h horses alive.
 static func wagon_stat(w: int, field: String) -> int:
 	if w < 0 or w >= WAGONS.size():
@@ -973,17 +1050,37 @@ static func _build_types() -> Array[Dictionary]:
 			b += 1
 		var br: Dictionary = out[b]
 		out.append(_derived(br, b, str(br["line"]), int(br["size"]), t))
+	first = out.size()
+	for gr in GENERAL:
+		var row: Dictionary = gr.duplicate()
+		row["base"] = out.size()
+		row["tier"] = 1
+		row["price"] = int(row["cost"]) * int(row["size"])
+		out.append(row)
+	for t in GENERAL_TIERS:
+		var b := first
+		while str(out[b]["key"]) != str(t["of"]):
+			b += 1
+		var br: Dictionary = out[b]
+		var row := _derived(br, b, str(br["line"]), int(br["size"]), t)
+		if int(t.get("plain", 0)) != 0:
+			for k in CMD_FIELDS:
+				row[k] = 0
+			row["icon"] = 6
+			row["role"] = "Heavy cavalry"
+			row["desc"] = str(t["blurb"])
+		out.append(row)
 	return out
 
 
-## Derived tier row t (TIERS, LIGHT_MISSILE_TIERS) of base row `row0` (type
+## Derived tier row t (TIERS, LIGHT_MISSILE_TIERS, GENERAL_TIERS) of base row `row0` (type
 ## index b, line, unit size): the base row plus the tier's TIER_DELTA (attack
 ## and defence by the line's TIER_SKILL), the row's "add", its own names, and
 ## the base price times the line's TIER_PRICE (+ "price_add") %.
 static func _derived(row0: Dictionary, b: int, line: String, size: int, t: Dictionary) -> Dictionary:
 	var tier: int = t["tier"]
 	var row: Dictionary = row0.duplicate()
-	var delta: Dictionary = TIER_DELTA[tier]
+	var delta: Dictionary = TIER_DELTA.get(tier, {})  # (tier 1 variants: none)
 	for k in delta:
 		var dv := int(delta[k])
 		if k == "attack" or k == "defence":
@@ -1000,7 +1097,7 @@ static func _derived(row0: Dictionary, b: int, line: String, size: int, t: Dicti
 	row["tier"] = tier
 	row["line"] = line
 	row["size"] = size
-	var pct: int = TIER_PRICE[line][tier - 2] + int(t.get("price_add", 0))
+	var pct: int = (TIER_PRICE[line][tier - 2] if tier >= 2 else 100) + int(t.get("price_add", 0))
 	var price: int = int(row0["cost"]) * size * pct / 100
 	row["price"] = price
 	row["cost"] = maxi((price + size / 2) / size, 1)

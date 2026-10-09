@@ -475,6 +475,97 @@ static func _plan(sim, side: int) -> Dictionary:
 	return {"cx": ox, "cy": oy, "face": face, "fx": fx, "fy": fy, "gap": gap, "ex": ex, "ey": ey}
 
 
+## The general: his row has a command aura (docs/AI.md 20).
+static func is_general(sim, u: int) -> bool:
+	return UT.stat(sim.u_type[u], "cmd_r") > 0
+
+
+## The general (docs/AI.md 20; GEN_THINK on): committed, he sees a charge
+## through and pulls out of a melee after GEN_MELEE; otherwise he rides to
+## a unit of ours that wavers or routes within GEN_RALLY_R (and stays by
+## it), charges an enemy unit below GEN_CHARGE_MOR that fights ours within
+## GEN_CHARGE_R (the decisive charge), else keeps his post GEN_BACK behind
+## the centre of the main line.
+static func _general_think(sim, u: int, kn: PackedInt32Array) -> void:
+	var side: int = sim.u_side[u]
+	var tick: int = sim.tick
+	var mode: int = sim.u_ai[u]
+	if mode == A_PULL:
+		if sim.u_order[u] == O_MOVE and tick - sim.u_ai_t[u] < kn[AP.CAV_PULL_TICKS]:
+			return
+		_set_mode(sim, u, A_HOLD)
+		mode = A_HOLD
+	if mode == A_CHARGE:
+		var t: int = sim.u_target[u] if sim.u_order[u] == O_ATTACK else -1
+		if t >= 0 and sim.u_state[t] == U_READY:
+			if sim.u_fighting[u] == 0:
+				sim.u_ai_x[u] = 0
+				return  # riding in
+			if sim.u_ai_x[u] == 0:
+				sim.u_ai_x[u] = tick
+				return
+			if tick - sim.u_ai_x[u] <= kn[AP.GEN_MELEE]:
+				return
+			_pull_out(sim, u, t)
+			return
+		_set_mode(sim, u, A_HOLD)  # broken or gone: back to his post (no long pursuit)
+	var cr := UT.stat(sim.u_type[u], "cmd_r")
+	# A unit of ours breaking near him: ride to it.
+	var w := -1
+	var wd := 0
+	if kn[AP.GEN_RALLY_MOR] > 0:
+		for o in sim.n_units:
+			if o == u or sim.u_side[o] != side or sim.u_alive[o] <= 0 or sim.u_amok[o] != 0:
+				continue
+			var st: int = sim.u_state[o]
+			if st != U_ROUTING and (st != U_READY or sim.u_morale[o] >= kn[AP.GEN_RALLY_MOR] or is_wagon(sim, o)):
+				continue
+			if st == U_ROUTING and sim.u_routs[o] > 1:
+				continue  # (a second rout is final)
+			var d := _d(sim.u_cx[o] - sim.u_cx[u], sim.u_cy[o] - sim.u_cy[u])
+			if d <= kn[AP.GEN_RALLY_R] and (w < 0 or d < wd):
+				w = o
+				wd = d
+	if w >= 0:
+		if _bbox_gap(sim, u, w) > cr / 2:
+			var back := 12 * M if side == 0 else -12 * M  # just behind it
+			var px: int = clampi(sim.u_cx[w], 6 * M, sim.field_w - 6 * M)
+			var py: int = clampi(sim.u_cy[w] + back, 6 * M, sim.field_h - 6 * M)
+			var face := 768 if side == 0 else 256
+			if sim.u_order[u] != O_MOVE or _d(sim.u_dx[u] - px, sim.u_dy[u] - py) > cr / 4:
+				_count(sim, side, AP.C_GEN_RALLY)
+			_move(sim, u, px, py, face, _width(sim, u), 1, 3)
+		return
+	# The decisive charge: an enemy unit wavering in a fight with ours.
+	if kn[AP.GEN_CHARGE_MOR] > 0:
+		var t := -1
+		var td := 0
+		for o in sim.n_units:
+			if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.u_alive[o] <= 0:
+				continue
+			if sim.u_morale[o] >= kn[AP.GEN_CHARGE_MOR] or sim.u_fighting[o] == 0 or _is_braced_front(sim, o, u):
+				continue
+			var d := _d(sim.u_cx[o] - sim.u_cx[u], sim.u_cy[o] - sim.u_cy[u])
+			if d <= kn[AP.GEN_CHARGE_R] and (t < 0 or d < td):
+				t = o
+				td = d
+		if t >= 0:
+			_attack(sim, u, t, 1)
+			_set_mode(sim, u, A_CHARGE)
+			_count(sim, side, AP.C_GEN_CHARGE)
+			return
+	# His post behind the centre of the line.
+	var plan := _plan(sim, side)
+	if plan.is_empty():
+		return
+	var fx: int = plan["fx"]
+	var fy: int = plan["fy"]
+	var px2: int = clampi(plan["cx"] - (fx * kn[AP.GEN_BACK] / FM.TRIG_ONE), 6 * M, sim.field_w - 6 * M)
+	var py2: int = clampi(plan["cy"] - (fy * kn[AP.GEN_BACK] / FM.TRIG_ONE), 6 * M, sim.field_h - 6 * M)
+	if _d(px2 - sim.u_ax[u], py2 - sim.u_ay[u]) > 10 * M or sim.u_order[u] == O_ATTACK:
+		_move(sim, u, px2, py2, plan["face"], _width(sim, u), 1, 3)
+
+
 ## A beast that charges lines: its row has a fear aura (elephants).
 static func is_beast(sim, u: int) -> bool:
 	return UT.stat(sim.u_type[u], "fear_r") > 0
@@ -537,6 +628,8 @@ static func _issue_line(sim, side: int, plan: Dictionary, cx: int, cy: int, depl
 			continue
 		if is_wagon(sim, u):
 			continue  # (the wagon keeps behind the army: wagon_think)
+		if kn[AP.GEN_THINK] != 0 and is_general(sim, u):
+			continue  # (the general keeps behind the line: _general_think)
 		var c: int = sim.u_cls[u]
 		if kn[AP.SK_RESERVE] > 0 and _sk_reserve_slot(sim, u, deploy, kn):
 			resv.append(u)
@@ -803,7 +896,9 @@ static func _unit_think(sim, u: int) -> void:
 	if mode == A_RESV:
 		_resv_think(sim, u, kn)
 		return
-	if cls == UT.CLS_CAV:
+	if kn[AP.GEN_THINK] != 0 and is_general(sim, u):
+		_general_think(sim, u, kn)
+	elif cls == UT.CLS_CAV:
 		_cav_think(sim, u, phase)
 	elif cls == UT.CLS_MISSILE:
 		_missile_think(sim, u, phase)
@@ -1925,7 +2020,7 @@ static func _sk_pick_reserves(sim, side: int, kn: PackedInt32Array) -> void:
 			continue
 		if _is_foot(sim, u):
 			foot.append(u)
-		elif sim.u_cls[u] == UT.CLS_CAV:
+		elif sim.u_cls[u] == UT.CLS_CAV and (kn[AP.GEN_THINK] == 0 or not is_general(sim, u)):
 			cav.append(u)
 	var want := kn[AP.SK_RESERVE]
 	if foot.size() >= 4 + want:

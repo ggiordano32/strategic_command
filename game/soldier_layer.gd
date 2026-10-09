@@ -325,6 +325,8 @@ func _pr_flag_of(u: int) -> int:
 	var mk := 0 if UT.stat(ty, "m_arc") != 0 else 1
 	if UT.cls(ty) == UT.CLS_ART:
 		mk = 2 if UT.stat(ty, "m_kind") == 1 else 3
+	elif UT.stat(ty, "m_ak") >= 0 and UT.stat(ty, "m_ak") == UT.ammo_index("sling"):
+		mk = 4  # sling stones and lead bullets: small bullets
 	return (sim.u_side[u] & 1) | (mk << 1)
 
 

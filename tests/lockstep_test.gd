@@ -606,6 +606,13 @@ func _test_lockstep() -> void:
 	scen["units"].append(Scenarios.unit(0, UT.index_of("elephant"), 12, int(scen["width_m"]) / 2,
 		int(scen["height_m"]) - 40, Scenarios.FACE_UP))
 	scen["units"][el_u]["morale_pct"] = 10
+	# The general across peers (docs/DESIGN.md "The general"): six of side
+	# 0's general's riders stand 30 m before side 1's missile screen; they
+	# rout or fall early and the loss strikes side 0's army; A's sim is
+	# snapshotted just before (while they are taking losses).
+	var gen_u: int = (scen["units"] as Array).size()
+	scen["units"].append(Scenarios.unit(0, UT.index_of("general"), 6, 280, 225, Scenarios.FACE_UP))
+	var gen_snap := -1
 	var probe := BattleSim.new()
 	probe.setup(scen, 4242)
 	var home := _home_split(probe)
@@ -680,6 +687,26 @@ func _test_lockstep() -> void:
 					return
 			if k1.u_state[el_u] != BattleSim.U_DESTROYED:
 				_fail("lockstep: the drivers did not kill the elephants (state %d)" % k1.u_state[el_u])
+		if gen_snap < 0 and a.ls.sim.u_cmdgone[gen_u] == 0 and a.ls.sim.u_killed[gen_u] >= 1:
+			# The general's riders falling: two copies restored from A's sim run
+			# on equal through his rout and the army's loss.
+			gen_snap = a.ls.sim.tick
+			var gb: PackedByteArray = a.ls.sim.snapshot()
+			var g1 := BattleSim.new()
+			g1.setup(scen, 4242)
+			var g2 := BattleSim.new()
+			g2.setup(scen, 4242)
+			if not g1.restore(gb) or not g2.restore(gb) or g1.state_hash() != a.ls.sim.state_hash():
+				_fail("lockstep: restoring A's sim before the general's fall changed its hash")
+				return
+			for t in 300:
+				g1.step()
+				g2.step()
+				if g1.state_hash() != g2.state_hash():
+					_fail("lockstep: copies restored before the general's fall diverged after %d ticks" % (t + 1))
+					return
+			if g1.u_cmdgone[gen_u] == 0 or g1.stat_cmd_falls != 1:
+				_fail("lockstep: the general did not fall in the restored copies (state %d)" % g1.u_state[gen_u])
 		# Third peer (an observer of player 1's seat) joins mid-battle by
 		# snapshot + the relay's buffer.
 		if now == c_join:
@@ -750,6 +777,12 @@ func _test_lockstep() -> void:
 			a.ls.sim.u_state[el_u], b.ls.sim.u_state[el_u]])
 	else:
 		print("PASS lockstep elephants: amok from the start, the Kill order through the lockstep, snapshot mid-kill at tick %d ran on equal, dead on both peers" % kill_snap)
+	if gen_snap < 0 or a.ls.sim.u_cmdgone[gen_u] == 0 or b.ls.sim.u_cmdgone[gen_u] == 0:
+		_fail("lockstep general: snapshot at tick %d, fallen on A %d, on B %d" % [gen_snap, a.ls.sim.u_cmdgone[gen_u],
+			b.ls.sim.u_cmdgone[gen_u]])
+	else:
+		print("PASS lockstep general: his riders fell under the enemy screen (state %d), the army's loss on both peers; snapshot before the fall at tick %d ran on equal through it" % [
+			a.ls.sim.u_state[gen_u], gen_snap])
 	stats["pauses"] = 0
 	# Deterministic unit-level checks of the control inputs.
 	_check_controls(scen, home)

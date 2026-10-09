@@ -1448,3 +1448,37 @@ cavalry (the battle AI's line); the custom and settlement layouts
 recruits them through its factions' mixes only (`CAI.BEAST_LINES`;
 `_any_type` never falls back on them). Nothing runs without such rows, so
 every older battle plays as before.
+
+## 20. The general (2026-10-09)
+
+By the row's command aura (`cmd_r`, `BattleAI.is_general`), never by
+name; field battles (`sim/battle_ai.gd` `_general_think`; the settlement
+AI uses him as a rider). With `GEN_THINK` on he is left out of the line
+(`_issue_line`) and of the Skilled reserve cavalry, and each think: if
+committed (`A_CHARGE`) he sees the charge through and pulls out after
+`GEN_MELEE`, but does not pursue a broken target; otherwise he rides to
+the nearest unit of ours within `GEN_RALLY_R` that is routing (not on its
+final rout) or below `GEN_RALLY_MOR` and stays by it (12 m behind it,
+inside half his aura); else charges the nearest enemy unit within
+`GEN_CHARGE_R` that is below `GEN_CHARGE_MOR` and fighting ours (not a
+braced front toward him: the decisive charge); else keeps his post
+`GEN_BACK` behind the centre of the main line. Counters `gen_rally`,
+`gen_charge`. Easy's mistake: `GEN_THINK` 0, he is a plain rider in the
+line, charges with the first cavalry (and with the commit-early mistake).
+
+| Knob | E / A / S | What |
+|---|---|---|
+| `GEN_THINK` | 0 / 1 / 1 | keep him back and commit him only as below (0: any rider) |
+| `GEN_BACK` | 30 / 30 / 25 m | his post behind the line's centre |
+| `GEN_RALLY_MOR` | 0 / 300 / 400 | ride to a unit of ours below this morale (or routing) ... |
+| `GEN_RALLY_R` | 0 / 120 / 160 m | ... this near him |
+| `GEN_CHARGE_MOR` | 0 / 200 / 260 | charge an enemy unit below this morale, fighting ours ... |
+| `GEN_CHARGE_R` | 0 / 100 / 140 m | ... this near him |
+| `GEN_MELEE` | 150 / 150 / 100 ticks | pull out of the melee after this long |
+
+Determinism `--only=general` (battle_2000, a general a side, flat, seed
+720): Average keeps him behind the line until the lines meet, rides to
+rally 12 times and makes 3 decisive charges in 2,400 ticks (both generals
+fall by then: not tuned); Easy sends him in at tick 348, before the lines
+meet (491). The campaign AI keeps a few through its mixes ("general" 4,
+`CAI.BEAST_LINES`).

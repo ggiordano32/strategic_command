@@ -59,6 +59,7 @@ const ART_ROWS := [
 const SPECIAL_ROWS := [
 	["Charge impact", "charge", "int"], ["Brace vs charges", "brace", "int"],
 	["Bonus vs cavalry", "vs_cav", "int"], ["Horse scare", "scare_r", "m"], ["Fear aura", "fear_r", "m"],
+	["Command aura", "cmd_r", "m"],
 ]
 
 var unit_type := -1
@@ -218,7 +219,7 @@ func set_unit_type(ty: int, p_side_color: Color = Color(0.35, 0.6, 1.0)) -> void
 ## weapon, with who carries them (campaign: faction and building), from
 ## the data (UnitTypes.AMMO, CData.AMMO_AVAIL). "" for a type without
 ## missiles.
-## The camel / elephant facts of type ty in a line ("" for other rows):
+## The camel / elephant / general facts of type ty in a line ("" for other rows):
 ## the horse scare, the fear aura, the body, its crew, amok and calming.
 static func beast_line(ty: int) -> String:
 	var parts: Array[String] = []
@@ -236,6 +237,10 @@ static func beast_line(ty: int) -> String:
 			UT.stat(ty, "amok_calm") / 10, UT.stat(ty, "amok_r") / 1024, UT.stat(ty, "kill_delay") / 10])
 	if UT.stat(ty, "gate_walls") >= 0:
 		parts.append("batters the gates of walls up to level %d" % UT.stat(ty, "gate_walls"))
+	if UT.stat(ty, "cmd_r") > 0:
+		parts.append("command: units of ours within %d m gain %d morale a second (also fighting and under fire), routers %d more toward rallying; if he routs or falls, every unit of ours loses %d morale at once (%d within %d m); campaign: his army +%d%% in auto-resolve, one general an army" % [
+			UT.stat(ty, "cmd_r") / 1024, UT.stat(ty, "cmd_mor"), UT.stat(ty, "cmd_rally"), UT.stat(ty, "cmd_loss"),
+			UT.stat(ty, "cmd_loss_r"), UT.stat(ty, "cmd_r") / 1024, UT.stat(ty, "cmd_pct")])
 	if parts.is_empty():
 		return ""
 	var t := "; ".join(parts) + "."

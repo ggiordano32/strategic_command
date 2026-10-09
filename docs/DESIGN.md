@@ -1871,12 +1871,69 @@ Horse (Greeks, Epirus, Syracuse: +10 mshield), Gallic Light Horse (+3 att,
 (Carthage: tighter spread, +10 %), Rhodian Slingers (Greeks: +2 missile
 damage, +10 m range, +10 %), Iberian Slingers (+2 missile damage, +2 att). Campaign: docs/CAMPAIGN.md rosters.
 
-- Not expressed: the riders' "weak charge" (`CLS_MISSILE` builds no
-  momentum and never charges; like the camel archers); a damage bonus
-  against armour 0-2 (no such field: low damage and no ap give it);
-  a sling bullet of its own look (it draws as an arrow); an army of light
-  horse marches at the foot's pace (`CState.max_mp` counts only
-  `CLS_CAV` as cavalry, as for the camel archers).
+- Not expressed: a damage bonus against armour 0-2 (no such field: low
+  damage and no ap give it).
+- Fixed with the general (2026-10-09): the riders' small charge (any
+  mounted row with `charge` > 0 builds momentum and charges by the cavalry
+  code path, `BattleSim.t_rider`; Light Horse `charge` 30, shock cavalry
+  70, camels 45; camel archers have none); sling stones and lead bullets
+  draw as small grey bullets (projectile kind 4, a third flag bit); armies
+  of riders on horses or camels (light horse, camel archers) march at horse
+  pace (`CState.max_mp`).
+
+### The general (as built, 2026-10-09)
+
+The command aura is the fear aura inverted: generic fields of any row
+(`sim/unit_types.gd`), checked in the same once-a-second aura pass
+(`BattleSim._update_auras`; the aura sources now include `cmd_r` rows, so
+a battle without one runs no new code):
+
+- `cmd_r` 40 m (box to box): friendly units within it (not his own) gain
+  `cmd_mor` 5 morale a second, also fighting and under fire, up to what
+  rest would bring them back to (the recovery cap); a routing friend
+  within it (not amok) gains `cmd_rally` 40 a second more toward rallying,
+  also with an enemy near. Several generals do not stack (the best).
+  `u_led` (hashed) marks a unit inside this second.
+- `cmd_loss` 120 / `cmd_loss_r` 250: when the general's unit routs or its
+  last man is killed (once a battle, `u_cmdgone`, hashed), every other
+  friendly unit on the field loses 120 morale at once, those within his
+  `cmd_r` 250; the routs follow at the next morale update.
+- `cmd_pct` 8: campaign auto-resolve, his army's strength +8 % while he
+  has men (`CState.strength`).
+
+Rows: one base row of its own line "general" (`UnitTypes.GENERAL`, after
+the light missile rows) and faction variants at tier 1 (`GENERAL_TIERS`,
+the variant mechanism of `LIGHT_MISSILE_TIERS`; `_derived` takes tier 1
+with no `TIER_DELTA` and the base price). Numbers chosen once from Guard
+Cavalry (cav3: 46 / 38 / 16 / 162 hp / 900 morale / charge 80, 60 men
+for 1,260), not tuned:
+
+| | General's Bodyguard (`general`) |
+|---|---|
+| Men / price | 30 / 1,200 (Guard Cavalry's price for half the men: the aura pays for the rest) |
+| Att / def / armour / hp / morale | 44 / 40 / 16 / 160 / 950 (picked riders guarding one man; almost never breaks) |
+| Charge / run / mass | 75 / 8.2 m/s / 420 (the wings' pace) |
+| Shield / mshield | 25 / 20 (shields held over the general) |
+| Campaign | `str_pct` 50 (his riders), `cmd_pct` 8 |
+
+Variants (names short): Legate's Guard (Rome, +2 def), Sufet's Guard
+(Carthage, +5 charge), Royal Hetairoi (Macedon, Epirus: +6 charge, +2
+att), Strategos' Guard (Greeks, Syracuse: +5 mshield), Chieftain's Guard
+(Iberians, Gauls: +4 damage, -2 def); and Bodyguard Cavalry (never
+recruited: a campaign army's second general serves on as these, the same
+riders with the `cmd_*` fields cleared). Layouts (`Scenarios.army_layout`,
+`CBattle._layout`) put him in the row behind the centre. View: unit icon 15
+(a standard: pole, crossbar, banner, a wreath on top), UI icon "general"
+(the same) as a gold mark on his HUD card and on his battle-screen card,
+the unit book's "Command aura" row and a line of his command facts; the
+custom battle picker lists the generals (and, since this change, camels,
+camel archers and elephants). Battle AI: docs/AI.md 20; campaign:
+docs/CAMPAIGN.md "The general".
+
+- Not modelled: a named general, his traits or death and succession in
+  the campaign (his unit's men are what the outcome rows carry: a beaten
+  army may lose him); the general in the settlement AI (`siege_ai.gd`
+  uses him as any rider).
 
 ## 5. Networking
 

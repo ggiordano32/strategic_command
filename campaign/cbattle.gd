@@ -543,6 +543,9 @@ static func _layout(entries: Array) -> Dictionary:
 	var rear: Array = []
 	for e in entries:
 		var ty := UT.index_of(str(e["t"]))
+		if UT.stat(ty, "cmd_r") > 0:
+			rear.append(e)  # the general behind the centre
+			continue
 		match UT.cls(ty):
 			UT.CLS_PIKE:
 				pikes.append(e)

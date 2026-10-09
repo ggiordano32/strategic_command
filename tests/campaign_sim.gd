@@ -21,8 +21,13 @@ extends SceneTree
 ## its regions at turns 15 / 30 / 60, when it was eliminated and its
 ## mistakes, and the end table sums them over the seeds.
 ## --knob=LEVEL:ID=VALUE (e.g. --knob=s:85=0) overrides one knob of a level
-## for the run (ablations; repeatable). --no-beasts: the AI recruits no
-## camels or elephants (CAI.no_beasts).
+## for the run (ablations; repeatable). --no-beasts: the AI recruits none of
+## the lines added since the step-4 goldens, recruited only through the
+## mixes (CAI.BEAST_LINES: camels, camel archers, elephants, light horse,
+## slingers, generals; CAI.no_beasts). --no-generals: the starting armies
+## have no generals and the AI recruits none (CData.no_generals); --old-mp:
+## armies march at the pace counted before 2026-10-09 (only CLS_CAV as
+## cavalry; CData.old_mp). Both together play as before the general.
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -68,7 +73,11 @@ func _init() -> void:
 		elif a == "--twice":
 			twice = true
 		elif a == "--no-beasts":
-			CAI.no_beasts = true  # (the AI recruits no camels or elephants)
+			CAI.no_beasts = true  # (the AI recruits none of CAI.BEAST_LINES)
+		elif a == "--no-generals":
+			CData.no_generals = true  # (no starting generals, none recruited)
+		elif a == "--old-mp":
+			CData.old_mp = true  # (light horse / camel archers at the foot's pace)
 		elif a.begins_with("--skill="):
 			skill_all = _level(a.get_slice("=", 1))
 		elif a.begins_with("--skill-f="):

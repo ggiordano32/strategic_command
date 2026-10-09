@@ -334,6 +334,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 		face.set_anchors_preset(Control.PRESET_FULL_RECT)
 		face.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		face.icon = Icons.icon_of(sim.u_otype[u])
+		face.general = UT.stat(sim.u_type[u], "cmd_r") > 0
 		face.side_col = Icons.SIDE_COLORS[player_side]
 		b.add_child(face)
 		cards_box.add_child(b)
@@ -998,6 +999,8 @@ class CardFace extends Control:
 	## Live co-op: commanded by the ally (drawn with their colour, dimmer).
 	var foreign := false
 	var owner_col := Color.WHITE
+	## The general (a command aura): a gold standard in the top right corner.
+	var general := false
 
 	func _draw() -> void:
 		var sz := size
@@ -1060,6 +1063,10 @@ class CardFace extends Control:
 		draw_string(font, Vector2(bx + 2, by + 10), line, HORIZONTAL_ALIGNMENT_LEFT, maxf(bw - aw - 4, 8), 11, txt)
 		if narrow and state_text != "" and state != ST_OK:
 			draw_rect(Rect2(sz.x - 6, 3, 3, 8), txt)
+		if general:
+			var gx := sz.x - (26.0 if foreign else 15.0)
+			Kit.UiIcons.draw_icon(self, "general", Rect2(gx, 2, 12, 12),
+				Color(0.5, 0.5, 0.5) if state == ST_GONE else Color(1.0, 0.82, 0.25))
 		if selected:
 			draw_rect(Rect2(Vector2(1, 1), sz - Vector2(2, 2)), Color(1, 1, 1, 0.95), false, 2.0)
 		elif fighting and state == ST_OK:

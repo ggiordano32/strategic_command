@@ -533,6 +533,8 @@ var u_amok := PackedInt32Array()      # 1: a beast unit running amok (u_state U_
 var u_calm := PackedInt32Array()      # ... ticks it has been alone (calms at its amok_calm)
 var u_kill := PackedInt32Array()      # ticks until its drivers kill it (0: no Kill order)
 var u_awe := PackedInt32Array()       # 1: inside an enemy's horse scare or fear aura this second (no recovery)
+var u_led := PackedInt32Array()       # 1: inside a friendly general's command aura this second (docs/DESIGN.md "The general")
+var u_cmdgone := PackedInt32Array()   # 1: this unit's command loss has struck the army (it routed or fell; once)
 var slot_soldier := PackedInt32Array()  # u_slot_base[u] + slot -> soldier
 var off_x := PackedInt32Array()         # u_slot_base[u] + slot -> offset
 var off_y := PackedInt32Array()
@@ -809,13 +811,22 @@ var t_amok_calm := PackedInt32Array()
 var t_kill_delay := PackedInt32Array()
 var t_gate_w := PackedInt32Array()
 var t_gate_pct := PackedInt32Array()
+var t_cmd_r := PackedInt32Array()
+var t_cmd_mor := PackedInt32Array()
+var t_cmd_rally := PackedInt32Array()
+var t_cmd_loss := PackedInt32Array()
+var t_cmd_loss_r := PackedInt32Array()
+var t_rider := PackedInt32Array()     # derived: builds charge momentum (cavalry, or mounted with a charge)
 var t_hit_r := PackedInt32Array()     # derived: a missile landing this near strikes the man (horse, body)
 # Beasts in this battle (static, set up from the units: not hashed).
 var big_on: int = 0                   # some unit has a big body (body_r): blows measured to its edge
-var aura_src := PackedInt32Array()    # units with a horse scare or a fear aura
+var aura_src := PackedInt32Array()    # units with a horse scare, a fear aura or a command aura
 var _hit_rmax: int = HIT_R_CAV        # widest hit radius of any type
 var stat_scared: int = 0              # unit-seconds of horses scared
 var stat_feared: int = 0              # unit-seconds in a fear aura
+var stat_cmd: int = 0                 # unit-seconds in a friendly command aura
+var stat_cmd_rally: int = 0           # router-seconds of the command rally bonus
+var stat_cmd_falls: int = 0           # generals routed or fallen (the loss struck)
 var stat_scare_hits: int = 0          # horse charges into a scaring unit
 var stat_crush: int = 0               # impacts that went through braced points
 var stat_amok: int = 0                # beast units gone amok
@@ -1370,7 +1381,7 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		if t_body_r[bty] > 0:
 			big_on = 1
 		_hit_rmax = maxi(_hit_rmax, t_hit_r[bty])
-		if t_scare_r[bty] > 0 or t_fear_r[bty] > 0:
+		if t_scare_r[bty] > 0 or t_fear_r[bty] > 0 or t_cmd_r[bty] > 0:
 			aura_src.append(u)
 
 	# Projectile pool: every slot on the free list.
@@ -1436,7 +1447,7 @@ func _unit_arrays() -> Array:
 		u_ai, u_ai_t, u_ai_x, u_ai_y, u_eng0, u_neng, u_depl, u_deploy, u_fright,
 		u_shelled_t, u_shelled_by, u_emove, u_h, u_refill, u_rprog, u_reserve, u_blk, u_dodge,
 		u_kills, u_otype, u_eg, u_oammo, u_sk, u_akind, u_burn, u_forage, u_racc, u_rptr,
-		u_scare, u_amok, u_calm, u_kill, u_awe]
+		u_scare, u_amok, u_calm, u_kill, u_awe, u_led, u_cmdgone]
 
 
 ## Per-unit arrays of woods and settlement maps (hashed only on those maps,
@@ -1482,7 +1493,7 @@ func _load_types() -> void:
 		t_m_fear, t_arc, t_traverse, t_deploy, t_e_hp, t_climb, t_m_hgain, t_m_apex, t_m_reserve, t_m_refill,
 		t_fixed, t_m_ak, t_mount, t_acc, t_body_r, t_crew_sh, t_woods, t_tr_n, t_tr_r, t_tr_pct, t_crush,
 		t_scare_r, t_scare_pct, t_scare_mor, t_fear_r, t_fear_h, t_fear_f, t_burn_pct, t_amok, t_amok_r,
-		t_amok_calm, t_kill_delay, t_gate_w, t_gate_pct]
+		t_amok_calm, t_kill_delay, t_gate_w, t_gate_pct, t_cmd_r, t_cmd_mor, t_cmd_rally, t_cmd_loss, t_cmd_loss_r]
 	var keys := ["cls", "attack", "defence", "armour", "shield", "mshield",
 		"damage", "reach", "ranks_reach", "mass", "walk", "run", "hp", "cooldown",
 		"morale", "file_sp", "rank_sp", "turn", "brace", "vs_cav", "charge",
@@ -1493,12 +1504,17 @@ func _load_types() -> void:
 		"deploy", "e_hp", "climb", "m_hgain", "m_apex", "m_reserve", "m_refill", "fixed", "m_ak",
 		"mount", "acc", "body_r", "crew_shoot", "woods_pct", "trample_n", "trample_r", "trample_pct", "crush",
 		"scare_r", "scare_pct", "scare_mor", "fear_r", "fear_horse", "fear_foot", "burn_pct", "amok", "amok_r",
-		"amok_calm", "kill_delay", "gate_walls", "gate_pct"]
+		"amok_calm", "kill_delay", "gate_walls", "gate_pct", "cmd_r", "cmd_mor", "cmd_rally", "cmd_loss", "cmd_loss_r"]
 	for k in arrays.size():
 		var arr: PackedInt32Array = arrays[k]
 		arr.resize(nt)
 		for t in nt:
 			arr[t] = UT.stat(t, keys[k])
+	# Riders: cavalry, and any mounted row with a charge (light horse): they
+	# build momentum at the run and charge (the cavalry code path).
+	t_rider.resize(nt)
+	for t in nt:
+		t_rider[t] = 1 if t_cls[t] == UT.CLS_CAV or (t_mount[t] != UT.MOUNT_FOOT and t_charge[t] > 0) else 0
 	# Missile hit radius per type: a big body's, a mount's, a man's.
 	t_hit_r.resize(nt)
 	for t in nt:
@@ -5261,9 +5277,10 @@ func _update_units() -> void:
 			elif moved == 0 and order != O_MOVE and order != O_WITHDRAW:
 				braced = 1
 		u_braced[u] = braced
-		if cls == UT.CLS_CAV:
+		if t_rider[ty] != 0:
 			# Momentum builds only while charging a target at speed: a run
 			# away from a melee (pulling out) does not count as a run-up.
+			# (Cavalry, and mounted missile troops with a charge.)
 			if u_run[u] != 0 and moved * 10 >= aspeed * 6 and order == O_ATTACK and u_charge[u] == 0:
 				var gain := t_acc[ty]  # (MOM_GAIN for horses; beasts get going slower)
 				var cap := 100
@@ -5283,7 +5300,7 @@ func _update_units() -> void:
 				u_mom[u] = maxi(u_mom[u] - MOM_LOSS, 0)
 			_charge_state(u)
 			if t_m_ammo[ty] > 0 and (u + tick) % FIRE_THINK == 0:
-				_missile_think(u)  # (an elephant's crew shoots from its back)
+				_missile_think(u)  # (an elephant's crew shoots from its back; light horse)
 		elif cls == UT.CLS_MISSILE:
 			if (u + tick) % FIRE_THINK == 0:
 				_missile_think(u)
@@ -5703,7 +5720,7 @@ func _update_soldiers() -> void:
 		var exit_y := fh - EDGE_EXIT if u_side[u] == 0 else EDGE_EXIT
 		# Coast: the defenders withdraw along the shore and leave by a side.
 		var side_exit := withdrawing and sea_on != 0 and u_side[u] == city_def
-		var is_cav := u_cls[u] == UT.CLS_CAV
+		var is_cav := t_rider[u_type[u]] != 0
 		var umom := u_mom[u]
 		var cg := chg
 
@@ -6107,7 +6124,7 @@ func _update_soldiers() -> void:
 						# at once, so the unit that happens to be processed
 						# first this tick does not win the clash by
 						# knocking the other down before he strikes.
-						var tmom := cg[t] if u_cls[unit_of[t]] == UT.CLS_CAV else 0
+						var tmom := cg[t] if t_rider[u_type[unit_of[t]]] != 0 else 0
 						_impact(i, t, mom)
 						if tmom >= CHARGE_MIN and st[t] < S_DEAD:
 							_impact(t, i, tmom)
@@ -6906,6 +6923,8 @@ func _remove(d: int, why: int) -> void:
 	u_dirty[u] = 1
 	u_settled[u] = 0
 	if alive <= 0:
+		if why == GONE_KILLED and (t_cmd_loss[u_type[u]] > 0 or t_cmd_loss_r[u_type[u]] > 0):
+			_cmd_fall(u)  # the general's last man falls
 		u_state[u] = U_LEFT if u_withdrawn[u] + u_routed_off[u] > 0 else U_DESTROYED
 		u_order[u] = O_NONE
 		u_target[u] = -1
@@ -8880,6 +8899,8 @@ func _start_rout(u: int) -> void:
 		stat_aic[u_side[u] * AIProfile.N_COUNTERS + AIProfile.C_MISSILE_ROUTS] += 1
 	u_state[u] = U_ROUTING
 	u_routs[u] += 1
+	if t_cmd_loss[u_type[u]] > 0 or t_cmd_loss_r[u_type[u]] > 0:
+		_cmd_fall(u)  # the general flees: the army is shaken
 	if t_amok[u_otype[u]] != 0:
 		u_amok[u] = 1  # a beast breaking runs amok (below: its first veer)
 		u_calm[u] = 0
@@ -8954,22 +8975,38 @@ func _rally(u: int) -> void:
 ## (mount 1) near a scaring unit keep its scare_pct of their charge and
 ## turn rate (u_scare, until the next second) and lose its scare_mor; any
 ## unit without a fear aura of its own near a fear source loses its
-## fear_horse (horses) or fear_foot a second. Sources in index order.
+## fear_horse (horses) or fear_foot a second. Command (the fear aura
+## inverted, docs/DESIGN.md "The general"): a friendly unit within a ready
+## general's cmd_r (not his own) gains the best cmd_mor a second, up to the
+## morale rest would bring it back to (also fighting and under fire); a
+## routing one (not amok) the best cmd_rally. Sources in index order.
 func _update_auras() -> void:
 	for u in n_units:
 		if u_state[u] != U_READY or u_alive[u] <= 0:
 			u_scare[u] = 0
 			u_awe[u] = 0
+			u_led[u] = 0
+			if u_state[u] == U_ROUTING and u_alive[u] > 0 and u_amok[u] == 0:
+				var rb := _cmd_near(u)
+				if rb > 0:
+					u_led[u] = 1
+					u_morale[u] = mini(u_morale[u] + rb, MORALE_MAX)
+					stat_cmd_rally += 1
 			continue
 		var tu := u_otype[u]
 		var horse := t_mount[tu] == UT.MOUNT_HORSE
 		var keep := 0
 		var loss := 0
 		var feared := false
+		var held := 0
 		for src in aura_src:
-			if u_side[src] == u_side[u] or u_state[src] != U_READY or u_alive[src] <= 0:
+			if src == u or u_state[src] != U_READY or u_alive[src] <= 0:
 				continue
 			var sty := u_type[src]
+			if u_side[src] == u_side[u]:
+				if t_cmd_r[sty] > 0 and t_cmd_mor[sty] > held and _box_gap(src, u) <= t_cmd_r[sty]:
+					held = t_cmd_mor[sty]
+				continue
 			var gap := _box_gap(src, u)
 			if horse and t_scare_r[sty] > 0 and gap <= t_scare_r[sty]:
 				keep = t_scare_pct[sty] if keep == 0 else mini(keep, t_scare_pct[sty])
@@ -8979,12 +9016,49 @@ func _update_auras() -> void:
 				feared = true
 		u_scare[u] = keep
 		u_awe[u] = 1 if keep > 0 or feared else 0  # (no recovery of heart meanwhile)
+		u_led[u] = 1 if held > 0 else 0
 		if keep > 0:
 			stat_scared += 1
 		if feared:
 			stat_feared += 1
 		if loss > 0:
 			u_morale[u] -= loss
+		if held > 0:
+			stat_cmd += 1
+			var base_m := t_morale[tu]
+			var cap := base_m - (u_count0[u] - u_alive[u]) * base_m / (2 * u_count0[u])
+			if u_morale[u] < cap:
+				u_morale[u] = mini(u_morale[u] + held, cap)
+
+
+## The best rally bonus (cmd_rally) of a ready friendly general within his
+## cmd_r of routing unit u (0 none).
+func _cmd_near(u: int) -> int:
+	var best := 0
+	for src in aura_src:
+		if src == u or u_side[src] != u_side[u] or u_state[src] != U_READY or u_alive[src] <= 0:
+			continue
+		var sty := u_type[src]
+		if t_cmd_r[sty] > 0 and t_cmd_rally[sty] > best and _box_gap(src, u) <= t_cmd_r[sty]:
+			best = t_cmd_rally[sty]
+	return best
+
+
+## General u routed or lost his last man: every other friendly unit on the
+## field (ready or routing) loses his cmd_loss, those within his cmd_r his
+## cmd_loss_r instead; once a battle (u_cmdgone). The rout follows at the
+## next morale update.
+func _cmd_fall(u: int) -> void:
+	var ty := u_type[u]
+	if t_cmd_loss[ty] <= 0 and t_cmd_loss_r[ty] <= 0 or u_cmdgone[u] != 0:
+		return
+	u_cmdgone[u] = 1
+	stat_cmd_falls += 1
+	for o in n_units:
+		if o == u or u_side[o] != u_side[u] or u_alive[o] <= 0 or u_state[o] >= U_DESTROYED:
+			continue
+		var hit := t_cmd_loss_r[ty] if _box_gap(u, o) <= t_cmd_r[ty] else t_cmd_loss[ty]
+		u_morale[o] = clampi(u_morale[o] - hit, -MORALE_MAX, MORALE_MAX)
 
 
 ## Gap between the boxes of units a and b (0 overlapping).

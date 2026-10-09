@@ -116,6 +116,7 @@ func _init() -> void:
 	_ammo_wagon()
 	_beasts()
 	_light_missile()
+	_general()
 	_ai_skilled()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
 	quit(0 if fails == 0 else 1)
@@ -1161,7 +1162,7 @@ func _sieges() -> void:
 		# Lost: the besiegers fall back to Etruria, the siege is lifted.
 		var s5 := CTurn.apply_battle(s3, int(b["id"]), {"winner": 1, "mode": "fought", "units": [], "garrison_pct": 80})
 		_check(int(CState.army(s5, aid)["r"]) == _r("etruria") and int(CState.army(s5, bid)["r"]) == _r("etruria")
-			and CState.siege_at(s5, co).is_empty() and _events(s5, "siege_lifted").size() == 1,
+			and CState.siege_at(s5, co).is_empty() and _events(s5, "siege_lifted").filter(func(e): return int(e["r"]) == co).size() == 1,
 			"a failed assault: the besiegers fall back where they came from and the siege is lifted")
 	# Lifting by marching away: one leaves (the siege stays), then the last.
 	var l1 := CTurn.resolve_turn(s2, _sub(s2, rome, [{"t": "move", "army": aid, "to": _r("etruria")}]))
@@ -1350,7 +1351,7 @@ func _odds() -> void:
 	var last_loss := 1000
 	var mono := true
 	var last_band := -1
-	for n in range(1, 25):
+	for n in range(1, 31):  # (to 30: the defenders have their general since 2026-10-09)
 		var us: Array = []
 		for k in n:
 			us.append({"t": "heavy", "n": 100})
@@ -2252,6 +2253,127 @@ func _light_missile() -> void:
 	_check(nl == 4 and sim.tick == 200, "the battle with light horse and slingers runs (%d units)" % nl)
 
 
+## The general (docs/CAMPAIGN.md "The general"): every starting army has
+## one (its faction's variant); Barracks 1 recruits him; recruiting refuses
+## a second for an army (and a second a turn at one settlement); armies
+## that come together keep the first and the others serve on as plain
+## bodyguards; he adds cmd_pct to his army in auto-resolve; riders-only
+## armies (light horse, camel archers) march at horse pace.
+func _general() -> void:
+	var want := {"rome": "legate", "carthage": "sufet", "macedon": "hetairoi_guard", "epirus": "hetairoi_guard",
+		"greeks": "strategos", "syracuse": "strategos", "iberians": "chieftain", "gauls": "chieftain"}
+	var st0 := _new6([])
+	var ok := true
+	var n_armies := 0
+	for a in st0["armies"]:
+		var fk := str(CData.FACTIONS[int(a["f"])]["key"])
+		n_armies += 1
+		if CState.generals(a) != 1 or not _keys(a).has(want[fk]) or CState.roster_type(int(a["f"]), "general", 1) != want[fk]:
+			ok = false
+	_check(ok and n_armies > 0, "each of the %d starting armies has one general, its faction's" % n_armies)
+	CData.no_generals = true
+	var st0b := _new6([])
+	CData.no_generals = false
+	var none := 0
+	for a in st0b["armies"]:
+		none += CState.generals(a)
+	_check(none == 0, "the test switch no_generals starts the armies without them")
+	# Recruiting: Barracks 1; one an army; one a turn at a settlement.
+	var rome := _f("rome")
+	var lat := _r("latium")
+	var st := _empty6()
+	_italy(st, rome)
+	st["factions"][rome]["treasury"] = 20000
+	var site := CGrid.site(lat)
+	var withg := _put(st, rome, site, ["heavy", "legate"])
+	var nog := _put(st, rome, CState.field_cell(lat), ["heavy"])  # (not in town: no auto-merge)
+	_set_bld(st, lat, CData.BARRACKS, 0)
+	_check(CRules.recruit_check(st, rome, lat, "legate") == "needs Barracks 1", "a general needs Barracks 1 (%s)" % CRules.recruit_check(st, rome, lat, "legate"))
+	_set_bld(st, lat, CData.BARRACKS, 1)
+	_check(CRules.recruit_check(st, rome, lat, "legate") == "", "with Barracks 1 Rome raises a Legate's Guard")
+	_check(CRules.recruit_check(st, rome, lat, "sufet") == "not in your roster", "not another faction's general")
+	var s1 := CState.copy(st)
+	_check(CRules.apply_order(s1, rome, {"t": "recruit", "r": lat, "unit": "legate", "army": int(withg["id"])}) == "the army already has a general",
+		"a second general for an army is refused")
+	_check(CRules.apply_order(s1, rome, {"t": "recruit", "r": lat, "unit": "legate", "army": int(nog["id"])}) == "",
+		"a general for an army without one")
+	_check(CRules.apply_order(s1, rome, {"t": "recruit", "r": lat, "unit": "legate", "new": 1}) == "a general is already raised here this turn",
+		"a second general at one settlement in a turn is refused")
+	var s2 := CTurn.resolve_turn(s1, [CTurn.submission(s1, rome, [])])
+	var gens := []
+	for a in CState.armies_of(s2, rome):
+		gens.append(CState.generals(a))
+	_check(CState.generals(CState.army(s2, int(nog["id"]))) == 1 and CState.generals(CState.army(s2, int(withg["id"]))) == 1,
+		"the recruit joined the army without a general (%s)" % str(gens))
+	# An old-form recruit (no army named) goes to an army without a general.
+	var s3 := CState.copy(st)
+	_check(CRules.apply_order(s3, rome, {"t": "recruit", "r": lat, "unit": "legate"}) == "", "an old-form general recruit")
+	var s3b := CTurn.resolve_turn(s3, [CTurn.submission(s3, rome, [])])
+	var two := 0
+	for a in CState.armies_of(s3b, rome):
+		if CState.generals(a) > 1:
+			two += 1
+	_check(two == 0 and CState.generals(CState.army(s3b, int(nog["id"]))) == 1, "it joined the army without one")
+	# Armies coming together: the first general stays, the next becomes a plain bodyguard.
+	var sm := CState.copy(st)
+	var g2 := _put(sm, rome, site, ["spear", "legate"])
+	_check(CRules.apply_order(sm, rome, {"t": "merge", "army": int(g2["id"]), "into": int(withg["id"])}) == "",
+		"two armies with generals may merge")
+	var mk := _keys(CState.army(sm, int(withg["id"])))
+	_check(str(mk) == str(["heavy", "legate", "spear", "bodyguard"]) and CState.generals(CState.army(sm, int(withg["id"]))) == 1,
+		"the merged army keeps one general, the other serves on as a plain bodyguard (%s)" % str(mk))
+	var bg := UT.index_of("bodyguard")
+	_check(bg >= 0 and UT.stat(bg, "cmd_r") == 0 and UT.stat(bg, "cmd_pct") == 0 and UT.stat(bg, "attack") == UT.stat(UT.index_of("general"), "attack"),
+		"the plain bodyguard: the same riders without the aura")
+	var sx := CState.copy(st)
+	var g3 := _put(sx, rome, site, ["spear", "legate"])
+	_check(CRules.apply_order(sx, rome, {"t": "exchange", "from": int(g3["id"]), "to": int(withg["id"]), "units": [1]}) == "",
+		"a general handed to an army that has one")
+	_check(CState.generals(CState.army(sx, int(withg["id"]))) == 1 and _keys(CState.army(sx, int(withg["id"]))).has("bodyguard"),
+		"... serves on as a plain bodyguard (%s)" % str(_keys(CState.army(sx, int(withg["id"])))))
+	# Auto-resolve: +cmd_pct while he has men.
+	var plain := {"units": [{"t": "heavy", "n": 100}, {"t": "spear", "n": 100}]}
+	var led := {"units": [{"t": "heavy", "n": 100}, {"t": "spear", "n": 100}, {"t": "legate", "n": 30}]}
+	var dead := {"units": [{"t": "heavy", "n": 100}, {"t": "spear", "n": 100}, {"t": "legate", "n": 0}]}
+	var lg := UT.index_of("legate")
+	var s_own := 30 * UT.price_of(lg) / 30 * UT.stat(lg, "str_pct") / 100
+	_check(CState.strength(led) == (CState.strength(plain) + s_own) * (100 + UT.stat(lg, "cmd_pct")) / 100
+		and CState.strength(dead) == CState.strength(plain),
+		"auto-resolve: the general's army +%d %% (%d against %d), nothing once his men are gone" % [UT.stat(lg, "cmd_pct"),
+			CState.strength(led), CState.strength(plain)])
+	_check(_plain(s2) and CState.state_hash(CState.from_json(CState.to_json(s2))) == CState.state_hash(s2),
+		"generals in the state: plain data, JSON round trip")
+	# A battle with generals on both sides runs.
+	var sb := _new6([rome])
+	sb["armies"] = []
+	_italy(sb, rome)
+	var c0 := CState.field_cell(lat)
+	var am := _put(sb, rome, c0, ["heavy", "legate"])
+	var en := _put(sb, _f("epirus"), c0, ["pike", "hetairoi_guard"])
+	var b := {"id": 1, "r": lat, "att": [int(am["id"])], "def": [int(en["id"])], "reinf": [], "att_f": rome,
+		"def_f": _f("epirus"), "kind": "field", "settlement": 0}
+	var fo := CBattle.formula(CState.copy(sb), b)
+	var built := CBattle.build(sb, b, rome)
+	var sim := BattleSim.new()
+	sim.setup(built["scenario"], int(built["seed"]))
+	var ng := 0
+	for u in sim.n_units:
+		if UT.stat(sim.u_type[u], "cmd_r") > 0:
+			ng += 1
+	for t in 300:
+		sim.step()
+	_check(fo.has("winner") and ng == 2 and sim.tick == 300, "auto-resolve and a fought battle with a general a side (%d)" % ng)
+	# March pace: riders only, horses or camels.
+	var lh := {"units": [{"t": "cav_jav", "n": 60}, {"t": "camel_archer", "n": 60}, {"t": "legate", "n": 30}]}
+	var mixed := {"units": [{"t": "cav_jav", "n": 60}, {"t": "heavy", "n": 100}]}
+	var el := {"units": [{"t": "cav", "n": 60}, {"t": "elephant", "n": 12}]}
+	_check(CState.max_mp(lh) == CData.MP_CAV and CState.max_mp(mixed) == CData.MP_FOOT and CState.max_mp(el) == CData.MP_FOOT,
+		"light horse and camel archers march at horse pace, foot or elephants at the foot's")
+	CData.old_mp = true
+	_check(CState.max_mp(lh) == CData.MP_FOOT, "(the old_mp test switch: the foot's pace, as before)")
+	CData.old_mp = false
+
+
 func _keys(a: Dictionary) -> Array:
 	var out: Array = []
 	for u in a["units"]:
@@ -2780,6 +2902,7 @@ func _ai_skilled() -> void:
 	# elephant lines in the mixes, 2026-10-09: recruiting them is the only
 	# change since.)
 	CAI.no_beasts = true
+	CData.no_generals = true  # (and without the starting generals, 2026-10-09)
 	var g := CState.new_campaign("test", 4242, [])
 	for t in 20:
 		g = CTurn.resolve_turn(g, [])
@@ -2792,6 +2915,7 @@ func _ai_skilled() -> void:
 	_check(CState.hash_text(ge) == "1379013c" and int(ge["rng"]) == 694925818,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(ge), int(ge["rng"])])
 	CAI.no_beasts = false
+	CData.no_generals = false
 	# Knobs: every Skilled-only knob is 0 at Easy and Average.
 	var zero := true
 	for k in range(CP.SK_SUPPORT, CP.N_KNOBS):
@@ -2827,7 +2951,7 @@ func _ai_skilled() -> void:
 	# campaign, every faction Skilled.
 	CP.reset_counters()
 	var sk := CState.new_campaign("test", 4242, [], {"ai_campaign_skill": CP.SKILLED})
-	for t in 40:
+	for t in 60:  # (60 turns since the generals, 2026-10-09: an army in danger falls back later)
 		sk = CTurn.resolve_turn(sk, [])
 	var used: Array = []
 	for key in [CP.C_SK_TWO_TO_ONE, CP.C_SK_HUNT_DECLINED, CP.C_SK_TIMED, CP.C_SK_MERGE, CP.C_SK_RALLY, CP.C_SK_FALLBACK]:
@@ -2835,7 +2959,7 @@ func _ai_skilled() -> void:
 		for f in CState.nf():
 			n += CP.counter(key, f)
 		used.append("%s %d" % [key, n])
-		_check(n > 0, "Skilled behaviour used in 40 AI turns: %s (%d)" % [key, n])
+		_check(n > 0, "Skilled behaviour used in 60 AI turns: %s (%d)" % [key, n])
 	var mk := 0
 	for key in CP.MISTAKE_KEYS:
 		for f in CState.nf():

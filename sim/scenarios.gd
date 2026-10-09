@@ -395,6 +395,9 @@ static func army_layout(units: Array) -> Dictionary:
 		if UT.stat(ty, "body_r") > 0:
 			beasts.append(i)
 			continue
+		if UT.stat(ty, "cmd_r") > 0:
+			rear.append(i)  # the general behind the centre
+			continue
 		match UT.cls(ty):
 			UT.CLS_PIKE:
 				pikes.append(i)

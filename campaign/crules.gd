@@ -287,6 +287,10 @@ static func recruit_check(st: Dictionary, f: int, r: int, key: String) -> String
 			return "needs %s %d" % [CData.CHAINS[int(nd2[0])]["name"], int(nd2[1])]
 	if (rs["queue"] as Array).size() >= int(CData.RECRUITS_PER_TURN[int(rs["level"])]):
 		return "recruitment full this turn"
+	if CState.is_general(key):
+		for k in rs["queue"]:
+			if CState.is_general(str(k)):
+				return "a general is already raised here this turn"
 	if not CState.battle_at(st, r).is_empty():
 		return "battle pending here"
 	if UT.price_of(ty) > int(st["factions"][f]["treasury"]):
@@ -316,7 +320,7 @@ static func _recruit(st: Dictionary, f: int, o: Dictionary) -> String:
 		return why
 	var into := -1
 	if CState.grid_on(st):
-		into = army if army >= 0 else (QA_RAISE if raise else recruit_target(st, f, r))
+		into = army if army >= 0 else (QA_RAISE if raise else recruit_target(st, f, r, key))
 	st["factions"][f]["treasury"] = int(st["factions"][f]["treasury"]) - UT.price_of(UT.index_of(key))
 	var rs: Dictionary = st["regions"][r]
 	(rs["queue"] as Array).append(key)
@@ -338,14 +342,16 @@ static func recruit_order_check(st: Dictionary, f: int, r: int, key: String, arm
 	var why := recruit_check(st, f, r, key)
 	if why != "" or army < 0:
 		return why
-	return army_recruit_check(st, f, r, army)
+	return army_recruit_check(st, f, r, army, key)
 
 
 ## "" if army id of faction f can take recruits from region r this turn
 ## (version 6): it stands on or next to the settlement's cell, is not in a
 ## battle and has room (its units plus the recruits already queued for it
-## below CData.ARMY_MAX). The region's own checks are recruit_check's.
-static func army_recruit_check(st: Dictionary, f: int, r: int, id: int) -> String:
+## below CData.ARMY_MAX); a general (key, when given) only into an army
+## without one, none queued for it. The region's own checks are
+## recruit_check's.
+static func army_recruit_check(st: Dictionary, f: int, r: int, id: int, key: String = "") -> String:
 	var a := CState.army(st, id)
 	if a.is_empty() or int(a["f"]) != f:
 		return "no such army"
@@ -355,7 +361,22 @@ static func army_recruit_check(st: Dictionary, f: int, r: int, id: int) -> Strin
 		return "in a battle"
 	if CState.unit_count(a) + queued_into(st, id) >= CData.ARMY_MAX:
 		return "the army is full"
+	if key != "" and CState.is_general(key) and (CState.generals(a) > 0 or generals_queued_into(st, id) > 0):
+		return "the army already has a general"
 	return ""
+
+
+## General recruits queued this turn (all regions) that join army id.
+static func generals_queued_into(st: Dictionary, id: int) -> int:
+	var n := 0
+	for rs in st["regions"]:
+		if rs.has("qa"):
+			var q: Array = rs["queue"]
+			var qa: Array = rs["qa"]
+			for k in mini(q.size(), qa.size()):
+				if int(qa[k]) == id and CState.is_general(str(q[k])):
+					n += 1
+	return n
 
 
 ## Version 6: the settlement of faction f (a region it owns) army a stands
@@ -405,12 +426,14 @@ static func queue_of(st: Dictionary, r: int) -> Array:
 ## for each army): the first army of f by id on or next to the
 ## settlement's cell, not in a battle, with room; QA_ANY if none (placed
 ## by _add_recruit at the end of the turn: usually a new army inside the
-## walls).
-static func recruit_target(st: Dictionary, f: int, r: int) -> int:
+## walls). A general (key) only joins an army without one.
+static func recruit_target(st: Dictionary, f: int, r: int, key: String = "") -> int:
 	var site := CGrid.site(r)
+	var gen := key != "" and CState.is_general(key)
 	for a in st["armies"]:
 		if int(a["f"]) == f and CGrid.cheb(CState.cell(a), site) <= 1 and int(a["busy"]) == 0 \
-				and CState.unit_count(a) + queued_into(st, int(a["id"])) < CData.ARMY_MAX:
+				and CState.unit_count(a) + queued_into(st, int(a["id"])) < CData.ARMY_MAX \
+				and (not gen or (CState.generals(a) == 0 and generals_queued_into(st, int(a["id"])) == 0)):
 			return int(a["id"])
 	return QA_ANY
 
@@ -457,10 +480,28 @@ static func merge_check(st: Dictionary, f: int, id: int, into: int) -> String:
 	return ""
 
 
+## One general an army (docs/CAMPAIGN.md "The general"): when units come
+## together (merge, exchange, recruits placed), every general unit after
+## the army's first becomes a plain bodyguard (UnitTypes "bodyguard": the
+## same riders, no command aura). Recruiting refuses a second outright.
+static func _one_general(a: Dictionary) -> void:
+	var seen := false
+	for u in a["units"]:
+		if CState.is_general(str(u["t"])):
+			if seen:
+				u["t"] = PLAIN_GUARD
+			seen = true
+
+
+const PLAIN_GUARD := "bodyguard"
+
+
 ## Army a joins army b: its units after b's, b keeps its id, stance and
-## cell and moves at the pace of the slower part; a is gone.
+## cell and moves at the pace of the slower part; a is gone. (A second
+## general becomes a plain bodyguard.)
 static func _absorb(st: Dictionary, b: Dictionary, a: Dictionary) -> void:
 	(b["units"] as Array).append_array(a["units"])
+	_one_general(b)
 	if CState.moves_on(st):
 		b["mp"] = mini(mini(CState.mp(a), CState.mp(b)), CState.full_mp(st, b))
 		b["moved"] = maxi(int(a["moved"]), int(b["moved"]))
@@ -485,6 +526,7 @@ static func _merge(st: Dictionary, f: int, id: int, into: int) -> String:
 	if CState.unit_count(a) + CState.unit_count(b) > CData.ARMY_MAX:
 		return "more than %d units" % CData.ARMY_MAX
 	(b["units"] as Array).append_array(a["units"])
+	_one_general(b)
 	if CState.moves_on(st):
 		# The merged army moves at the pace of its slower part.
 		b["mp"] = mini(mini(CState.mp(a), CState.mp(b)), CState.full_mp(st, b))
@@ -610,6 +652,8 @@ static func _exchange(st: Dictionary, f: int, from: int, to: int, units, back) -
 	var mpb := CState.mp(b)
 	a["units"] = keep_a + take
 	b["units"] = keep_b + give
+	_one_general(a)
+	_one_general(b)
 	if CState.moves_on(st):
 		# A receiving army moves at the pace of the slower part.
 		if not give.is_empty():
@@ -2609,6 +2653,7 @@ static func _auto_merge6(st: Dictionary, fresh: Dictionary = {}) -> void:
 			if CState.unit_count(a) + CState.unit_count(b) > CData.ARMY_MAX:
 				continue
 			(a["units"] as Array).append_array(b["units"])
+			_one_general(a)
 			a["idle"] = mini(int(a.get("idle", 0)), int(b.get("idle", 0)))
 			gone[j] = 1
 			any = true
@@ -2635,9 +2680,11 @@ static func _idle_in_town(a: Dictionary) -> bool:
 static func _add_recruit(st: Dictionary, f: int, r: int, key: String) -> void:
 	var unit := new_unit(st, f, r, key)
 	var grid := CState.grid_on(st)
+	var gen := CState.is_general(key)
 	for a in st["armies"]:
 		var here := CGrid.cheb(CState.cell(a), CGrid.site(r)) <= 1 if grid else int(a["r"]) == r
-		if int(a["f"]) == f and here and int(a["busy"]) == 0 and CState.unit_count(a) < CData.ARMY_MAX:
+		if int(a["f"]) == f and here and int(a["busy"]) == 0 and CState.unit_count(a) < CData.ARMY_MAX \
+				and (not gen or CState.generals(a) == 0):
 			(a["units"] as Array).append(unit)
 			return
 	_raise_army(st, f, r, unit)
@@ -2672,13 +2719,15 @@ static func _place_recruits6(st: Dictionary, f: int, r: int, fresh: Dictionary) 
 		if into != QA_RAISE:
 			var a := CState.army(st, into) if into >= 0 else {}
 			if not a.is_empty() and int(a["f"]) == f and int(a["busy"]) == 0 \
-					and CGrid.cheb(CState.cell(a), CGrid.site(r)) <= 1 and CState.unit_count(a) < CData.ARMY_MAX:
+					and CGrid.cheb(CState.cell(a), CGrid.site(r)) <= 1 and CState.unit_count(a) < CData.ARMY_MAX \
+					and not (CState.is_general(key) and CState.generals(a) > 0):
 				(a["units"] as Array).append(unit)
 			else:
 				_add_recruit(st, f, r, key)
 			continue
 		var ra := CState.army(st, raised) if raised >= 0 else {}
-		if raised >= 0 and not ra.is_empty() and CState.unit_count(ra) < CData.ARMY_MAX:
+		if raised >= 0 and not ra.is_empty() and CState.unit_count(ra) < CData.ARMY_MAX \
+				and not (CState.is_general(key) and CState.generals(ra) > 0):
 			(ra["units"] as Array).append(unit)
 			continue
 		raised = _raise_army(st, f, r, unit)
