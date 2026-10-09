@@ -15,6 +15,8 @@ extends RefCounted
 ##   mshield      % chance to block a missile arriving from the frontal arc
 ##   m_vuln       % damage taken from missiles (horses are big, exposed targets)
 ##   m_down       % of missile hits that bring the soldier down outright (horses)
+##   m_spen       % of the target's missile shield its missiles go through
+##                (a javelin's weight drives through a shield: pilum-style)
 ##   ranks_reach  ranks that can strike to the front from formation (pikes)
 ##   mass         used by cavalry impact (rider and horse together)
 ##   file_sp/rank_sp  formation spacing
@@ -189,7 +191,7 @@ const DEFAULTS := {
 	"burn_pct": 100, "amok": 0, "amok_r": 0, "amok_calm": 0, "kill_delay": 0, "gate_walls": -1, "gate_pct": 0,
 	"cmd_r": 0, "cmd_mor": 0, "cmd_rally": 0, "cmd_loss": 0, "cmd_loss_r": 0, "cmd_pct": 0,
 	"pack_n": 0, "pack_type": -1, "pack_r": 0, "return_r": 0, "return_t": 0, "nobreak": 0,
-	"scare_am": -1, "as_cav": 0, "chase": 0, "carried": 0,
+	"scare_am": -1, "as_cav": 0, "chase": 0, "carried": 0, "m_spen": 0,
 }
 ## Mounts (the "mount" field).
 const MOUNT_FOOT := 0
@@ -384,6 +386,7 @@ const BASE: Array[Dictionary] = [
 		"m_damage": 42,
 		"m_ap": 60,
 		"m_ammo": 6,         # was 4 (8 let skirmishers kite spearmen to death too)
+		"m_spen": 15,        # pilum-style: 15 % of the target's missile shield is driven through (2026-10-09)
 		"m_reload": 28,
 		"m_spread": 40,
 		"m_spread0": 717,
@@ -474,7 +477,7 @@ const BASE: Array[Dictionary] = [
 		"m_arc": 0,
 		"m_pierce": 5,
 		"m_plough": 25 * 1024,
-		"m_fear": 15,
+		"m_fear": 22,        # 15 until 2026-10-09 (a struck unit is also pinned 0.8 s: BattleSim.PIN_TICKS)
 		"arc": 71,           # +-25 degrees
 		"traverse": 3,       # ~1 degree per tick
 		"deploy": 60,        # 6 s to set up, 3 s to pack up
@@ -876,6 +879,7 @@ const LIGHT_MISSILE: Array[Dictionary] = [
 		"m_range": 40 * 1024,  # the javelinmen's 40 m
 		"m_damage": 38,     # javelinmen 42: thrown from a moving horse
 		"m_ap": 50,         # javelinmen 60, the elephants' crew 50: less weight behind it
+		"m_spen": 10,       # javelinmen 15: through a tenth of the shield
 		"m_ammo": 5,        # javelinmen 6: a rider's sheaf of four or five
 		"m_reload": 30,     # javelinmen 28
 		"m_spread": 45,     # javelinmen 40: from the saddle
@@ -1109,7 +1113,7 @@ const LIGHT_ART: Array[Dictionary] = [
 		"m_kind": 1,
 		"m_range": 160 * 1024,  # 70 % of Bolt Throwers' 230 m, still beyond the bow (140 m)
 		"m_min": 10 * 1024,  # Bolt Throwers 15 m: a short engine depresses further
-		"m_damage": 72,      # 60 % of Bolt Throwers' 120: a light bolt (an arrow 30)
+		"m_damage": 90,      # 75 % of Bolt Throwers' 120 (72 until 2026-10-09: it never killed a pikeman outright)
 		"m_ap": 70,          # Bolt Throwers 80, arrows 25
 		"m_ammo": 8,         # Bolt Throwers 11: what two men carry with the engine
 		"m_reserve": 8,      # one more load in the baggage (Refill)
@@ -1121,7 +1125,7 @@ const LIGHT_ART: Array[Dictionary] = [
 		"m_arc": 0,
 		"m_pierce": 2,       # at most two men (Bolt Throwers 5); heavy bolts' 140 % still 2
 		"m_plough": 15 * 1024,  # Bolt Throwers 25 m
-		"m_fear": 8,         # Bolt Throwers 15
+		"m_fear": 15,        # Bolt Throwers 22 (8 until 2026-10-09)
 		"arc": 85,           # +-30 degrees (Bolt Throwers +-25): each engine is turned by hand
 		"traverse": 6,       # twice Bolt Throwers' 3
 		"deploy": 15,        # 1.5 s to set up, under a second to pack (Bolt Throwers 6 / 3 s)

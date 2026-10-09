@@ -57,6 +57,7 @@ anti-cheat and original art only if it proves fun.
 | Light artillery (item 4f, point 3), 2026-10-09: two data rows (`UnitTypes.LIGHT_ART`, appended after the war dogs; no new sim code): **Scorpions** (`scorpions`, line "light_art", CLS_ART): 6 engines x 2 crew (12 men, crew_min 1), carried: packed pace = the row's walk 150 (1.26 m/s measured; Bolt Throwers 0.69), set up 1.5 s / pack 0.8 s (`deploy` 15), 160 m (70 % of 230), 72 dmg (60 % of 120) / 70 ap, `m_pierce` 2 (heavy bolts still 2), 5 s reload, 8 + 8 bolts an engine, e_hp 60, 396 a unit (Archers and Bolt Throwers both 400); Rome, Carthage, Macedon, Epirus, Greeks, Syracuse, Workshop 1 (`ART_LEVEL`); heavy bolts by `AMMO_AVAIL`. **Gastraphetes** (`gastraphetes`, line "belly_bow", CLS_MISSILE): archers' body, 160 m, 48 dmg / 50 ap, 10 s a shot, 20 shots, flat (`m_arc` 0, `m_apex` 3), no skirmish, arrows kind (drawn as arrows), 400; Greeks and Syracuse, `UNIT_NEEDS` Range 2. New generic field `carried` (AI and campaign only): siege AI `_att_art` sets carried batteries up at min(S_ART_OUT, range x `S_LART_PCT` 85 %) of the attacked gate and shoots the wall unit nearest the gate within `S_LART_WALL_R` (80 / 120 m; `_lart_wall_target`), else the gate; Easy (`S_LART_PCT` 0) leaves them where they stand; `_art_ready` ignores them (not gate breakers: ladders and hackers unaffected); armies with them march at the foot's pace (`CState.max_mp`). Campaign: rosters, LINE_CHAIN, LINE_ORDER, mixes light_art 3 / belly_bow 3 through `CAI.BEAST_LINES`, a mix with light_art builds a Workshop, test switch `CData.no_light_art` / `campaign_sim --no-light-art`. View: unit icons 18 / 19, picker rows (belly-bows after archers, scorpions before bolts), unit book (fractional set-up time, "Carried by the crews" pace line), building names. icons.png regenerated (gallery reads `UiIcons.NAMES`). See DESIGN.md "Artillery" (light artillery), AI.md 15, CAMPAIGN.md rosters | Built 2026-10-09, committed; check_scripts clean; determinism full PASS (new `--only=light_art`: packed by tick 9, marched packed at 1.26 m/s, set up 15 ticks after stopping, 48 bolts striking 95 men, at most 2 men a bolt, crews drop them and archers take them up and shoot on, gastraphetes first shot from 132 m (archers stand at 119), 3 shots a man in 30 s, identical on repeat and across snapshot / restore; golden digests unchanged; all 103 runs' alive / winner and final hashes identical to HEAD); lockstep not run (lockstep.gd and engine sim code untouched); custom_battle_test (field case: both rows build and shoot), campaign_test (rosters, needs, kinds, recruit determinism + JSON, auto-resolve by price, march pace, battle runs); campaign_sim 6x60 unchanged 7dbe4251 a56c5e4f b1ee756c 0e0d3920 9c156d00 b3ae1fa9 (also with `--no-light-art`: the AI never recruited them in these runs); bench_2000 1.31 -> 1.30 ms. **Needs tuning (not done):** every number of both rows; the 136 m firing line is inside walls-2/3 archers' reach; no own engine sprite (bolt thrower's); no balance run; not yet played on phones |
 | Mantlets (item 4f, point 4), 2026-10-09: `EQ_MANTLET` 9, a piece in the `q_*` tables with a column in every per-kind table and new fields `EQ_SCREEN` 60 % (arrows, slings, javelins), `EQ_SCREEN_BOLT` 30 % (stones 0), `EQ_SCREEN_W` / `EQ_SCREEN_D` 6 x 6 m; `EQ_ROOF` now holds the roof % per kind (ram / wagon / tower 70, mantlet 40 within 6 m). Standing (`Q_GROUND`, facing `q_face`) it stops that share of the missiles about to strike its side's (`q_side`) men in the rectangle behind it when the shooter is in front of its line (`_screen_cover` in `_land` / `_land_bolt`, `stat_mantlet_cover`); carried by any foot unit of either side at its walk (not riders, beasts, dogs, engines); Drop stands it at the unit's anchor facing its way; 600 hp, burns, bolts / stones landing on it batter it. Scenario key `mantlets` [side 0, side 1]: standing 2 m before each side's missile / artillery units (`mt_on`; `q_face` hashed only then). Campaign: assault after 2 siege turns 2, after 3 four, any walls (`CBattle.MANTLETS`, derived, VERSION 6), panel and pre-battle card lines; custom battles "Mantlets: none / 2 / 4" per side, any map. Siege AI (attackers, every level): spare light foot / missile units carry them to 2 m before the missile units' posts on their shooting line, then scorpions, then the heavy batteries (none: 60 m from the gate), drop facing the wall, back to the plan (`A_MANTLET` 36). View: plank bar with posts, carried / charred / burning, "PICK UP THE MANTLET", "carrying a mantlet", UI icon "mantlet" (custom option, card line; icons.png regenerated). See DESIGN.md "Mantlets", AI.md 23, CAMPAIGN.md "Siege equipment" | Built 2026-10-09, committed; check_scripts clean; determinism full PASS (new `--only=mantlets`: field 50 missiles stopped, screened archers lost 42 vs 52, a carried mantlet dropped facing up; walls-1 assault: the AI carried 4 and set them by tick 759, 17 missiles stopped; identical on repeat and across snapshot / restore; golden digests unchanged), lockstep full PASS, custom_battle_test (mantlets 4 / 2 field and settlement), campaign_test, battle_screen_test; campaign_sim 6x60 324307b6 bb0532b7 b9e5ae32 0bf0a9f8 b77014f8 481344a4 = HEAD 60e59b7's own output (the campaign AI build-up commit changed them; nothing here enters the formula). Probe (walls-1 ring fair siege, ladders + ram, seeds 1-3, 4 mantlets vs none), screens before the missile units' posts on the cover line: 11-14 missiles stopped a battle, attacker missile / artillery men lost by the breach 8 / 3 / 9 vs 10 / 1 / 3, by tick 4000 182 / 163 / 159 vs 155 / 157 / 157 (a first placement at the battery line stopped none: out of the wall archers' reach). **Gaps:** defenders and the field AI ignore mantlets; no sheds; numbers untuned; not yet played on phones |
 | Campaign AI build-up (AI.md 24), 2026-10-09: the AI never built a Workshop (every capital's slots start full; the Workshop came last in the want list) and few Range 2s (farm / market upgrades first, money spent on cheap level-1 buildings elsewhere). Now `_buildup` builds a Range 2 and then a Workshop (Skilled: Workshop 2) at the first centre that has it or a free slot, first once that centre has a farm and a market, saving for it and keeping its last free slot; each army with 3+ (Skilled 2+) missile / artillery units holding at a Workshop centre gets a wagon; a line the recruiting centre cannot raise is raised at the next centre that can (scorpions, gastraphetes). Knobs `BU_RANGE`, `BU_WORKSHOP`, `BU_BUDGET_PCT`, `BU_SAVE`, `WAGON_MIN` (Easy 0: as before). Kinds need no order (automatic from the buildings). campaign_sim 6x60: turn 40 Range 2 28/29 and Workshop 1 26/29 of the 4+-region factions (before 9/25 and 0/25); at 60: 13 wagons, 5 scorpions, 6 gastraphetes, 141 units with a kind (before 0 / 0 / 0 / 23); pacing of the same order; new hashes `324307b6 bb0532b7 b9e5ae32 0bf0a9f8 b77014f8 481344a4`; `--no-buildup` gives the old ones. Not tuned | Built 2026-10-09, committed (60e59b7); check_mine clean; campaign_test PASS; campaign_sim hashes reproduced by the main session |
+| Field rebalance (2026-10-09; bounded: baseline once, one change set, one correction round): `BASE_HIT` 35 -> 40 (`FLANK_BONUS` / `REAR_BONUS` were raised to 35 / 50 in the correction round and put back to 25 / 40 by the main session: with them Skilled vs Average fell to 40 % and bench_2000 stayed undecided) (melee after "ranks hold together" was too slow); **wrap at the anchor level** (`_curl`, `WRAP_GAP` 1 m, no state: the front-rank places of files beyond an engaged target's flank curl forward round it by as far as they stand out, at most its depth, so the men keep their 1.5 m / 3 m caps but lap round a narrower enemy; three units on a 10-man remnant had 3 men in reach); **bolts pin**: a unit an artillery shot strikes does not advance for `PIN_TICKS` 0.8 s (`u_shelled_t`, hashed already; walking units on field maps only: a charge or a rush goes through, wall and tower engines untouched), bolt fear 15 -> 22, scorpion fear 8 -> 15; scorpions 72 -> 90 damage (a bolt now kills a pikeman outright); new generic field `m_spen` (% of the missile shield a missile goes through): javelinmen 15, Light Horse 10 (pilum-style); battle AI: a missile unit back from falling back out of ammunition with no wagon, woods, engines or routers near **withdraws** (such units at their own edge kept beaten sides on the field to the time limit); new `tests/matchups.gd --only=yard` (30 yardsticks: missiles, pinning, camels, elephants, dogs, light horse, the general, stakes, mantlets) and minutes in the FAIR line. Before -> after (`--fair=20`, 40 battles each; scripted 20 seeds):<br>Average mirror 22-17-1 draw, 8.4 / 15.0 min mean / max -> 24-16-0 (bottom-side bias within noise), 6.5 / 9.8; Skilled vs Average 60 % -> **47.5 %** (after the change set alone 55 %, with the 35 / 50 bonuses 40 %; 40 battles carry about 8 points of noise); Average vs Easy 67.5 % (3 draws) -> 76 % (1 draw, at the limit); matchups `full` bench_2000 10 seeds 8.1 / 10.5 min -> 7.0 / 12.2; terrain AI battles 8.1-9.8 min mean, 1 draw -> 6.4-8.2, max 9.8, none; benchmark: bench_2000 (seed 42) undecided at 6000 -> decided 5091, bench_4000 decided 4751 -> 4791, bench_4000_city undecided -> decided 5731.<br>Yardsticks (full load, standing target): arrows vs light 120 at 100 m 71 %, cav 86 %, heavy front 5.3 % (unchanged: far above the "quarter" asked for; not cut against the owner's "a little weak"); slingers vs light at 140 m 51 % (archers at 100 m 71 %: ~2/3), vs heavy 0.2 % (unchanged); javelins vs cav walking in 54 -> 55 %, light 16 -> 19 %, heavy 2.0 -> 3.6 % (asked 15-25 / - / 5-10 %); bolts along a pike block 35.6 % (asked 15-25 %, unchanged), heavy 100 walking 200 m at a battery closes in 157 -> 183 s (bolts) / 180 s (scorpions); scorpions on the pike block 12.5 -> 17.5 % (archers 88, bolts 36); new rows as their tables intend: camels charging cav win 95 %, cav charging camels loses (as a standing cav line), elephants break heavy 100 in 12/20 and break under javelins 20/20, dogs break javelins / slingers 20/20 and lose 32 of 48 on heavy foot, light horse loses to archers (36 of 60, 0 killed), the general flips heavy vs heavy from 30 % to 100 % (never broke), stakes cut a frontal charge's kills 25.6 -> 3.5, 4 mantlets 39 -> 29 archers lost. Scripted matchups otherwise within noise (round robin: javelins now beat spears 90 %, was 40 %); light infantry still wrecks bolts in 3.9 s. **Still off:** Skilled vs Average (47.5 %, target 65: its reserves and rotation seem to cost more than they gain now that melee is faster; an AI-competency pass of its own, by the AI.md 11 ablations, not a sim number) and the javelin / arrow / bolt kill bands (see above; they need the owner's call on the yardsticks); the mirror's longest battle 9.8 min; the AI knobs `WG_EMPTY_PCT`, `AK_WAVER_PCT`, take-up 60 m kept (not measured against). Not changed: sieges, walls, ammunition, resupply, the formula. See DESIGN.md "Ranks hold together in melee" (wrap at the anchor level), "Artillery" (pinning) | Built 2026-10-09; check_scripts clean; determinism full PASS (golden skirmish d618e203..., bench_2000 5a0aadfb..., test_stone_line b9d30256... re-baselined; test_cav_art unchanged; every coverage case still exercised once pinning was limited to walking units on field maps), lockstep full PASS, custom_battle_test, campaign_test, battle_screen_test PASS; campaign_sim 6x60 unchanged 324307b6 bb0532b7 b9e5ae32 0bf0a9f8 b77014f8 481344a4 (auto-resolve by the formula); rules hash changes; not yet played on phones |
 
 ### What exists
 
@@ -958,8 +959,10 @@ Where 2026-10-09 ended (build 20261009T124650Z live; everything up to
   lethality and battle length, AI skill margins 60 / 68 %, missile feel,
   every new row's numbers, the wrap rule at the anchor level, the AI
   reading enemy works, the campaign AI's Workshop / Range build-up so it
-  fields wagons / scorpions / kinds). Then roads and rivers, shared
-  empire, audio, Proxmox, the sprite pipeline (West pack as its test).
+  fields wagons / scorpions / kinds). Then roads and rivers, the
+  N-player campaign (every faction AI or human; asked 2026-10-09), audio,
+  Proxmox, the sprite pipeline (West pack as its test); the shared empire
+  last (two empires working together already plays well).
 - **Open from playtests:** the co-op Ask-to-join flow unconfirmed; the
   general's upkeep decision (none) is in; the Leave button fix is in.
 
@@ -997,13 +1000,6 @@ evenings (no sim changes).
 
 **Tuning backlog for the rebalance block** (numbers chosen once, never
 tuned; collected 2026-10-09):
-- Melee after "ranks hold together" (2026-10-09): field fights are slower
-  with fewer casualties (bench_2000 / bench_4000_city undecided at 6000
-  ticks, several determinism runs lost their winner), Skilled vs Average
-  60 % and Average vs Easy 68 % (`--fair=20`, targets 65 / 70 %);
-  constants `PLACE_LEAD` 1.5 m, `PLACE_SIDE` 3 m, `INREACH_EXTRA` 1 m,
-  `ANCHOR_LEAD` 2 m, and FLANK / REAR_BONUS now that they apply far less
-  often (rank-1 side / back blows 0 % in a line mirror).
 - Walls 2-3 equal-force sieges 0-20 % attacker (targets 50 / 25 %): an
   attacker-side fix (more escalade at high walls or wall attrition); the
   1.5-2:1 sets moved the same way. Easy defenders about as good as
@@ -1014,16 +1010,13 @@ tuned; collected 2026-10-09):
 - Resupply: forage rate (~37 ticks per arrow per man), wagon refill
   30 s a load, the 30 % horse-hit chance, wagon stocks (100 / 150 /
   220 %), the 20 % strength and +6-12 % auto-resolve bonus.
-- Missiles, from play (user, 2026-10-09): arrows feel a little weak
-  (should bite light troops and horses in the open; heavy shielded foot
-  from the front is right to shrug them); bolt throwers feel almost
-  useless in the field (kill rate and / or the fright per bolt too low:
-  historically scorpions were feared for pinning units); javelins
-  should hurt on impact, above all horses (big unarmoured targets; the
-  period's cavalry feared javelin skirmishers) and light foot, with the
-  pilum-style armour piercing as their edge against shields.
 - AI knobs: `WG_EMPTY_PCT` (15 % Average), `AK_WAVER_PCT` (35 %),
-  engine take-up radius 60 m.
+  engine take-up radius 60 m (kept by the field rebalance, not measured).
+- Left by the field rebalance (2026-10-09, STATUS row): Skilled vs Average
+  40 % (target 65; Skilled's reserves / rotation after the faster melee);
+  the missile yardsticks' bands (arrows 71 / 86 % on light / cav, javelins
+  55 % on cav, bolts 36 % on a pike block: far above the bands asked for,
+  owner's call whether to cut).
 - Mantlets (2026-10-09): standing cover 60 % of arrows / slings /
   javelins, 30 % of bolts, 0 % of stones for men in the 6 x 6 m behind
   it; carried cover 40 % within 6 m (roof rule); 600 hp (two stones);
@@ -1332,7 +1325,26 @@ fixes are all landed; see "Where we are"):
    **Step 4 done (2026-10-07): Skilled campaign AI** (`docs/AI.md` section 12; `SK_*` knobs in `campaign/cai_profile.gd`, 0 at Easy / Average): never shelters inside the walls (fortifies outside), support-aware hunting at two to one, spare armies merge into / stand by the main army, staging and falling back out of the enemy's reach next turn, storming before a relief, counter-composition, war when the neighbour's armies are away from the border, peace offers to close a second front; no mistakes. One faction Skilled ends turn 60 with +47 % regions over 24 seeds (6.58 against 4.48; +44 % on 6) and 41 eliminations against 70; Macedon not better (3.7 against 4.0, noise). ~0.8 ms per Skilled faction-turn. Average / Easy byte-identical (campaign_sim hashes; golden hash and RNG in campaign_test); no state change, VERSION 6. UI: Campaign AI Skilled without "(soon)". `campaign_sim --knob=` for ablations. Next: step 5 (personalities and composition styles per faction, the Advanced per-faction UI, the split setting).
 7. **Mid-battle reinforcements** from the map edge; ambush stance once
    hidden information in an async game is designed.
-8. **Shared empire** (both humans running one faction).
+8. **N-player campaign** (asked 2026-10-09; moved ahead of the shared
+   empire: two empires working together already plays well): three or
+   more players in one campaign, with the end goal that **every faction
+   can be an AI or a real player**. The state already keeps `humans` as a
+   sorted list (permanently allied today). **Design (user, 2026-10-09):**
+   **teams** as a campaign setting rather than a fixed human alliance:
+   every faction starts as a team of its own and may join or be joined by
+   others; the new-campaign screen shows a dropdown per faction with the
+   team it is on, plus two buttons, "all humans one team" and "everyone
+   on their own"; the permanent-alliance rule becomes "factions on one
+   team". Once the campaign runs, **the diplomacy screen offers a team
+   (alliance) proposal** to any faction, human or AI; accepted, it grants
+   movement through the ally's territory and repair / resupply of armies
+   standing in allied zones (today's co-op perks generalised). Open
+   points: humans on different teams at war with each other (hidden
+   information, diplomacy between humans), the turn deadline with N
+   submitters, battles with several humans on one or both sides (the
+   co-op join flow generalised), seats and invites per faction on the
+   server, AI / human per faction on the new-campaign screen, leaving a
+   team (notice turns, as the AI's war declarations work).
 8b. **Audio** (asked 2026-10-07; the game has no sound at all today).
    Battle: melee clash, charge impact, volleys and artillery release /
    impact, gate blows and the gate breaking, ladders and towers, unit
@@ -1404,6 +1416,10 @@ changes (view-only), but art cost, not code, is the deciding factor.
 - Game rules run on the clients; the server stores saves and relays traffic.
 - No generals, family, politics, agents or naval combat in the first version.
 - Web first (Godot export with threads off). Notifications through Discord.
+
+Last of all (moved 2026-10-09): **shared empire** (both humans running one
+faction); two empires working together plays well enough that this waits
+behind the N-player campaign.
 
 ## How to run things
 

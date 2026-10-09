@@ -937,6 +937,16 @@ static func _unit_think(sim, u: int) -> void:
 					and not _art_threatened(sim, u):
 				_order(sim, u, {"type": ORDER_REFILL, "on": 1}, 23)
 			return
+		if cls == UT.CLS_MISSILE and sim.u_ammo[u] <= 0 and phase == P_ENGAGE \
+				and _nearest_routing(sim, u, kn[AP.MIS_ROUTER_R]) < 0:
+			# Fell back out of ammunition and still has none: refill at a
+			# wagon, forage, take up engines, else it leaves the field (it
+			# lives on in the campaign) instead of keeping a beaten side on
+			# the field from behind its own lines (field rebalance,
+			# 2026-10-09: such units kept battles undecided to the limit).
+			if not (resupply(sim, u, kn) or forage(sim, u, kn) or _take_engines(sim, u)):
+				_order(sim, u, {"type": ORDER_WITHDRAW}, 24)
+			return
 		if sim.u_routs[u] == 0 and sim.u_alive[u] * 100 < sim.u_count0[u] * kn[AP.RETIRE_ALIVE_PCT]:
 			_count(sim, side, AP.C_SAVED)  # fell back mauled and returns without having broken
 		elif kn[AP.SK_MEM] != 0 and sim.u_routs[u] == 0 and _mem(sim, u, AP.MU_X) == 2:

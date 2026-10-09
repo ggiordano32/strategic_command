@@ -888,6 +888,20 @@ draws (Average vs Average: none either), a little longer than Average's
 (the reserves). Noise: a 200-battle rate has a standard error of about
 3.4 points, a 100-battle one about 4.5.
 
+**Field rebalance (2026-10-09; `--fair=20`, 40 battles each, flat).**
+After "ranks hold together" (DESIGN.md) the numbers above no longer held:
+Skilled vs Average 60 %, Average vs Easy 67.5 % (3 draws), the Average
+mirror 22-17-1 at 8.4 / 15.0 min mean / max. The rebalance (to-hit 40,
+flank / rear +35 / +50, the wrap at the anchor level, bolts pin, and here:
+a missile unit that fell back out of ammunition and still has no wagon,
+woods, engines or routers near withdraws instead of standing at its own
+edge, which kept beaten armies on the field to the limit) gives: Average
+mirror 20-20-0, 7.1 / 12.2 min; Average vs Easy **77.5 %** (1 draw);
+Skilled vs Average **40 %** (55 % before the flank / rear bonus went up:
+below the 65 % target, not fixed; Skilled's reserves and rotation seem to
+cost more than they gain once melee is faster). Knobs `WG_EMPTY_PCT`,
+`AK_WAVER_PCT` and the 60 m take-up radius were kept.
+
 Counters per 200 flat battles, Skilled / Average: flank or rear charge
 hits 4,396 / 4,300; cavalry pull-outs 838 / 625, melees stayed in because
 winning 281; rotations 159; units saved (rotated, pulled back wavering or

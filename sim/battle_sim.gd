@@ -110,6 +110,8 @@ const PLACE_LEAD := 3 * M / 2    # a fighting man walks at most this far ahead o
 const PLACE_SIDE := 3 * M        # ... and at most this far to either side of it
 const INREACH_EXTRA := M         # a man this close past his reach counts as
                                  # in reach (u_inreach: the anchor stops closing)
+const WRAP_GAP := M              # wrap at the anchor level: outer front-rank places curl round the target's flank this far out from it
+const PIN_TICKS := 8             # a unit an artillery shot struck is pinned this long (u_shelled_t): its anchor does not advance
 const ANCHOR_LEAD := 2 * M       # an engaged unit's anchor closes only while it is
                                  # at most this far beyond its men's middle
                                  # (half the depth ahead of it)
@@ -120,7 +122,7 @@ const GRID_SHIFT := 12           # 4 m cells (4096 units)
 const EDGE_EXIT := 3 * M / 2     # soldiers this close to the edge leave
 
 # Melee.
-const BASE_HIT := 35
+const BASE_HIT := 40             # (35 until the field rebalance, 2026-10-09: melee after "ranks hold together" was too slow)
 const FLANK_BONUS := 25
 const REAR_BONUS := 40
 const DOWN_BONUS := 35           # hitting a knocked-down soldier
@@ -893,6 +895,7 @@ var t_m_arc := PackedInt32Array()
 var t_skirm := PackedInt32Array()
 var t_m_vuln := PackedInt32Array()
 var t_m_down := PackedInt32Array()
+var t_m_spen := PackedInt32Array()  # % of the target's missile shield its missiles go through (javelins)
 var t_m_lead := PackedInt32Array()
 var t_m_long := PackedInt32Array()
 var t_crew := PackedInt32Array()
@@ -1687,7 +1690,7 @@ func _load_types() -> void:
 		t_fixed, t_m_ak, t_mount, t_acc, t_body_r, t_crew_sh, t_woods, t_tr_n, t_tr_r, t_tr_pct, t_crush,
 		t_scare_r, t_scare_pct, t_scare_mor, t_fear_r, t_fear_h, t_fear_f, t_burn_pct, t_amok, t_amok_r,
 		t_amok_calm, t_kill_delay, t_gate_w, t_gate_pct, t_cmd_r, t_cmd_mor, t_cmd_rally, t_cmd_loss, t_cmd_loss_r,
-		t_pack_n, t_pack_type, t_pack_r, t_return_r, t_return_t, t_nobreak, t_scare_am, t_as_cav, t_chase]
+		t_pack_n, t_pack_type, t_pack_r, t_return_r, t_return_t, t_nobreak, t_scare_am, t_as_cav, t_chase, t_m_spen]
 	var keys := ["cls", "attack", "defence", "armour", "shield", "mshield",
 		"damage", "reach", "ranks_reach", "mass", "walk", "run", "hp", "cooldown",
 		"morale", "file_sp", "rank_sp", "turn", "brace", "vs_cav", "charge",
@@ -1699,7 +1702,7 @@ func _load_types() -> void:
 		"mount", "acc", "body_r", "crew_shoot", "woods_pct", "trample_n", "trample_r", "trample_pct", "crush",
 		"scare_r", "scare_pct", "scare_mor", "fear_r", "fear_horse", "fear_foot", "burn_pct", "amok", "amok_r",
 		"amok_calm", "kill_delay", "gate_walls", "gate_pct", "cmd_r", "cmd_mor", "cmd_rally", "cmd_loss", "cmd_loss_r",
-		"pack_n", "pack_type", "pack_r", "return_r", "return_t", "nobreak", "scare_am", "as_cav", "chase"]
+		"pack_n", "pack_type", "pack_r", "return_r", "return_t", "nobreak", "scare_am", "as_cav", "chase", "m_spen"]
 	for k in arrays.size():
 		var arr: PackedInt32Array = arrays[k]
 		arr.resize(nt)
@@ -5211,6 +5214,14 @@ func _update_units() -> void:
 			aspeed = aspeed * u_fws[u] / 100
 			if u_fwc[u] > 0:
 				aspeed = mini(aspeed, u_fwc[u])
+		if tick - u_shelled_t[u] < PIN_TICKS and u_run[u] == 0 and city_on == 0 and u_order[u] != O_WITHDRAW \
+				and u_fighting[u] == 0 and u_charge[u] == 0 and cls != UT.CLS_ART:
+			# Pinned: a unit just struck by an artillery shot goes to ground
+			# for 0.8 s (docs/DESIGN.md "Artillery"): its anchor does not
+			# advance, so a unit walking into a battery's fire is held (not
+			# one running in: a charge or a rush goes through; field maps
+			# only: wall and tower engines are the siege block's).
+			aspeed = 0
 		if city_ditch != 0 and obs_kind(u_ax[u], u_ay[u]) == MapGen.C_DITCH:
 			# Crossing the ditch (foot only): slowly.
 			aspeed = aspeed * DITCH_SPEED / 1000
@@ -6087,6 +6098,23 @@ func _update_soldiers() -> void:
 		var wrap_t := -1
 		if u_order[u] == O_ATTACK and u_fighting[u] > 0 and not pike_formed and not shy and not charging:
 			wrap_t = u_target[u]
+		# Wrap at the anchor level (2026-10-09): when the target is narrower
+		# than this unit, the places of its front-rank files out beyond the
+		# target's flank curl forward round it (as far as they stand out, at
+		# most the target's depth), so those men's lead and side caps keep
+		# them along its flank instead of idle beyond it (_curl). Computed
+		# from the target's bounding box each tick: no state.
+		var wr_tl := 0
+		var wr_lim := 0
+		var wr_dep := 0
+		if wrap_t >= 0:
+			var whx := (u_maxx[wrap_t] - u_minx[wrap_t]) >> 1
+			var why := (u_maxy[wrap_t] - u_miny[wrap_t]) >> 1
+			var wcx := (u_maxx[wrap_t] + u_minx[wrap_t]) >> 1
+			var wcy := (u_maxy[wrap_t] + u_miny[wrap_t]) >> 1
+			wr_tl = ((wcy - ay) * fcos - (wcx - ax) * fsin) / FM.TRIG_ONE
+			wr_lim = (absi(fsin) * whx + absi(fcos) * why) / FM.TRIG_ONE + WRAP_GAP
+			wr_dep = 2 * ((absi(fcos) * whx + absi(fsin) * why) / FM.TRIG_ONE) + WRAP_GAP
 		var sk := struck
 		var ch_left := 0
 		var ch_act := 0
@@ -6308,7 +6336,10 @@ func _update_soldiers() -> void:
 					ny = y + dy * step_len / dl
 					if lead_cap and mom == 0:
 						var kc := base + slot
-						var cap := _cap_lead(x, y, nx, ny, ax + oxs[kc], ay + oys[kc], fcos, fsin, PLACE_SIDE)
+						var pl := Vector2i(ax + oxs[kc], ay + oys[kc])
+						if wrap_t >= 0 and slot < files:
+							pl = _curl(pl.x, pl.y, ax, ay, fcos, fsin, wr_tl, wr_lim, wr_dep)
+						var cap := _cap_lead(x, y, nx, ny, pl.x, pl.y, fcos, fsin, PLACE_SIDE)
 						nx = cap.x
 						ny = cap.y
 					if is_cav and step_len * 3 < run_cap:
@@ -6423,8 +6454,10 @@ func _update_soldiers() -> void:
 						nx = x + dx * spd / d
 						ny = y + dy * spd / d
 					if wrapping and lead_cap:
-						# Lapping round: sideways, not out ahead of the line.
-						var capw := _cap_lead(x, y, nx, ny, ax + oxs[k], ay + oys[k], fcos, fsin, 1 << 30)
+						# Lapping round: sideways, not out ahead of the line
+						# (of its place curled round the target's flank).
+						var plw := _curl(ax + oxs[k], ay + oys[k], ax, ay, fcos, fsin, wr_tl, wr_lim, wr_dep)
+						var capw := _cap_lead(x, y, nx, ny, plw.x, plw.y, fcos, fsin, 1 << 30)
 						nx = capw.x
 						ny = capw.y
 				fc[i] = face
@@ -6741,6 +6774,21 @@ func _zone(u: int, x: int, y: int) -> int:
 	if f < -(unit_depth(u) + M):
 		return ZONE_REAR
 	return ZONE_FLANK
+
+
+## Wrap at the anchor level: the place (plx, ply) of a front-rank man of a
+## unit (anchor ax, ay, facing c, s) engaged with a target whose middle is
+## `tl` to the side of the anchor and which reaches `lim` either side of
+## it: a place standing out beyond that by e curls forward by f = min(e,
+## dep) and in by f, round the target's flank (the line bends into an L).
+static func _curl(plx: int, ply: int, ax: int, ay: int, c: int, s: int, tl: int, lim: int, dep: int) -> Vector2i:
+	var rel := ((ply - ay) * c - (plx - ax) * s) / FM.TRIG_ONE - tl
+	var e := absi(rel) - lim
+	if e <= 0:
+		return Vector2i(plx, ply)
+	var f := mini(e, dep)
+	var sg := 1 if rel > 0 else -1
+	return Vector2i(plx + (c * f + sg * s * f) / FM.TRIG_ONE, ply + (s * f - sg * c * f) / FM.TRIG_ONE)
 
 
 ## A fighting man's step from (x, y) to (nx, ny), cut so it takes him no
@@ -7510,8 +7558,8 @@ func _missile_hit(p: int, d: int) -> void:
 	var sd := state[d]
 	var frontal := sd != S_ROUTING and sd != S_DOWN \
 		and absi(FM.angle_diff(facing[d], from_def)) <= FRONT_ARC
-	if frontal and _rand() % 100 < t_mshield[td]:
-		return
+	if frontal and _rand() % 100 < t_mshield[td] * (100 - t_m_spen[ty]) / 100:
+		return  # (a javelin's weight drives through part of the shields: m_spen)
 	stat_missile_hits += 1
 	var k := pr_ak[p]
 	var ap := clampi(t_m_ap[ty] + t_k_ap[k], 0, 100) if k >= 0 else t_m_ap[ty]

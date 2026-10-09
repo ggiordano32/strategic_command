@@ -16,6 +16,17 @@ extends SceneTree
 ##   throwers kill fewer, frighten, and miss small or moving targets; melee
 ##   troops that reach artillery wreck it quickly; armies stay fair when
 ##   mirrored (--fair=N).
+## Yardsticks (--only=yard, docs/STATUS.md "Field rebalance"): a full load
+##   of arrows at 100 m into light infantry or standing cavalry in the open
+##   kills about a quarter, into heavy shielded foot from the front under
+##   10 %; javelins' load into cavalry 15-25 %, into heavy foot 5-10 %;
+##   slingers about two thirds of the archers' kills on unarmoured men,
+##   far less on armour; scorpions between archers and bolt throwers on a
+##   pike block; bolts pin an advancing unit (it is slowed, not shrugging);
+##   camels beat cavalry, elephants break a line and are routed by
+##   javelins, dogs run down skirmishers but not heavy foot, light horse
+##   loses to archers, a general's aura holds a line, stakes stop a
+##   charge, mantlets screen archers.
 ## Terrain (--only=terrain): holding good high ground against an equal unit
 ##   is a clear but beatable edge (~60-70% on a moderate slope, more on
 ##   steep ground); archers on a hill outrange archers below; cavalry hits
@@ -58,6 +69,7 @@ const UP := Scenarios.FACE_UP
 const DOWN := Scenarios.FACE_DOWN
 const LEFT := Scenarios.FACE_LEFT
 const ATTACK := BattleSim.ORDER_ATTACK
+const M := BattleSim.M
 
 var seeds := 20
 var only := ""
@@ -226,6 +238,7 @@ func _init() -> void:
 	_round_robin()
 	_section("Artillery")
 	_artillery()
+	_yardsticks()
 	_section("Stone aim: where stones land relative to the target formation")
 	_stone_aim()
 	_section("Mirrored fairness: identical units face each other, both attack (bottom side 0 vs top side 1, both unit orders)")
@@ -290,8 +303,11 @@ func _cycle_charge(cav: int, target: int) -> Array:
 	return o
 
 
-func _scenario(units: Array, orders: Array) -> Dictionary:
-	return {"width_m": 300, "height_m": 300, "ai_sides": [], "units": units, "orders": orders}
+func _scenario(units: Array, orders: Array, extra: Dictionary = {}) -> Dictionary:
+	var sc := {"width_m": 300, "height_m": 300, "ai_sides": [], "units": units, "orders": orders}
+	for k in extra:
+		sc[k] = extra[k]
+	return sc
 
 
 func _skip(name: String) -> bool:
@@ -300,7 +316,7 @@ func _skip(name: String) -> bool:
 
 ## Run a scripted duel over the seeds. `focus` >= 0 reports that unit's
 ## fate in detail (rout tick, losses).
-func _duel(name: String, units: Array, orders: Array, focus: int = -1) -> void:
+func _duel(name: String, units: Array, orders: Array, focus: int = -1, extra: Dictionary = {}) -> void:
 	if _skip(name):
 		return
 	var wins := [0, 0, 0]
@@ -312,7 +328,7 @@ func _duel(name: String, units: Array, orders: Array, focus: int = -1) -> void:
 	var focus_loss := 0.0
 	for s in seeds:
 		var sim := BattleSim.new()
-		sim.setup(_scenario(units, orders), 1000 + s * 7919)
+		sim.setup(_scenario(units, orders, extra), 1000 + s * 7919)
 		var routed_at := -1
 		while sim.tick < max_ticks and sim.ended == 0:
 			sim.step()
@@ -567,6 +583,8 @@ func _fairness(n: int) -> void:
 	for variant in fair_variants:
 		var wins := [0, 0, 0]
 		var killed := [0, 0]
+		var mins := 0.0
+		var max_min := 0.0
 		for k in n:
 			var s := seed0 + k
 			var scn := Scenarios.make("bench_2000")
@@ -606,11 +624,14 @@ func _fairness(n: int) -> void:
 			while sim.tick < 12000 and sim.winner < 0:
 				sim.step()
 			wins[sim.winner if sim.winner >= 0 else 2] += 1
+			var dt: float = (sim.decided_tick if sim.decided_tick >= 0 else sim.tick) / 600.0
+			mins += dt
+			max_min = maxf(max_min, dt)
 			var r: Dictionary = sim.result()
 			for side in 2:
 				killed[side] += int(r["sides"][side]["killed"])
-		print("FAIR %s n=%d bottom(side0)=%d top(side1)=%d draw=%d killed0=%d killed1=%d" % [
-			variant, n, wins[0], wins[1], wins[2], killed[0], killed[1]])
+		print("FAIR %s n=%d bottom(side0)=%d top(side1)=%d draw=%d killed0=%d killed1=%d minutes_sum=%.1f max=%.1f" % [
+			variant, n, wins[0], wins[1], wins[2], killed[0], killed[1], mins, max_min])
 
 
 ## "e" / "a" / "s" (or 0 / 1 / 2) to a skill level.
@@ -1136,6 +1157,160 @@ func _terrain_battles() -> void:
 ## (front = nearest soldier within 3 m of the line of flight, rear =
 ## farthest): short (before the front), inside, beyond the rear, or wide
 ## (no soldier within 3 m of its line at all).
+## Yardsticks for the field rebalance (2026-10-09, docs/STATUS.md "Field
+## rebalance"): one scripted matchup per missile / new-row intent, so the
+## numbers are measured, not guessed (--only=yard; each also by name).
+func _yardsticks() -> void:
+	if only != "" and not only.begins_with("yard"):
+		return
+	_section("Yardsticks: missiles (a full load at a target that stands in the open)")
+	var sling := UT.index_of("slinger")
+	var sco := UT.index_of("scorpions")
+	_shoot("yard: archers 80 vs light 120 at 100 m", UT.ARCHER, 80, UT.LIGHT, 120, 100, DOWN)
+	_shoot("yard: archers 80 vs cav 60 standing at 100 m", UT.ARCHER, 80, UT.CAVALRY, 60, 100, DOWN)
+	_shoot("yard: archers 80 vs heavy 120 at 100 m (front)", UT.ARCHER, 80, UT.HEAVY, 120, 100, DOWN)
+	_shoot("yard: slingers 80 vs light 120 at 100 m", sling, 80, UT.LIGHT, 120, 100, DOWN)
+	_shoot("yard: slingers 80 vs light 120 at 140 m", sling, 80, UT.LIGHT, 120, 140, DOWN)
+	_shoot("yard: slingers 80 vs heavy 120 at 100 m (front)", sling, 80, UT.HEAVY, 120, 100, DOWN)
+	_shoot("yard: javelins 60 vs cav 60 at 35 m (front)", UT.JAVELIN, 60, UT.CAVALRY, 60, 35, DOWN)
+	_shoot("yard: javelins 60 vs cav 60 walking in from 40 m", UT.JAVELIN, 60, UT.CAVALRY, 60, 40, DOWN, true)
+	_shoot("yard: javelins 60 vs light 100 at 35 m (front)", UT.JAVELIN, 60, UT.LIGHT, 100, 35, DOWN)
+	_shoot("yard: javelins 60 vs heavy 100 at 35 m (front)", UT.JAVELIN, 60, UT.HEAVY, 100, 35, DOWN)
+	_shoot("yard: scorpions 12 vs pikes 120 at 150 m (front)", sco, 12, UT.PIKE, 120, 150, DOWN)
+	_shoot("yard: archers 80 vs pikes 120 at 150 m (front)", UT.ARCHER, 80, UT.PIKE, 120, 140, DOWN)
+	_pin("yard: heavy 100 walks 200 m at bolts 16 (pin)", UT.BOLT, 16)
+	_pin("yard: heavy 100 walks 200 m at scorpions 12 (pin)", sco, 12)
+	_section("Yardsticks: the new rows")
+	var camel := UT.index_of("camel")
+	var el := UT.index_of("elephant")
+	var dh := UT.index_of("dog_handlers")
+	var lh := UT.index_of("cav_jav")
+	var gen := UT.index_of("general")
+	_duel("yard: cav 60 charges cav 60 standing (control)",
+		[_u(0, UT.CAVALRY, 60, 150, 200, UP), _u(1, UT.CAVALRY, 60, 150, 80, DOWN)],
+		[_atk(0, 1, 0, 1)])
+	_duel("yard: cav 60 charges camels 60 standing",
+		[_u(0, camel, 60, 150, 200, UP), _u(1, UT.CAVALRY, 60, 150, 80, DOWN)],
+		[_atk(0, 1, 0, 1)])
+	_duel("yard: camels 60 charge cav 60 standing",
+		[_u(0, camel, 60, 150, 200, UP), _u(1, UT.CAVALRY, 60, 150, 80, DOWN)],
+		[_atk(0, 0, 1, 1)])
+	_duel("yard: elephants 12 charge heavy 100 standing (front)",
+		[_u(0, el, 12, 150, 230, UP), _u(1, UT.HEAVY, 100, 150, 110, DOWN)],
+		[_atk(0, 0, 1, 1)], 1)
+	_duel("yard: elephants 12 vs heavy 100 + javelins 60 x2 on the flanks",
+		[_u(0, el, 12, 150, 230, UP), _u(1, UT.HEAVY, 100, 150, 110, DOWN),
+			_u(1, UT.JAVELIN, 60, 90, 150, DOWN), _u(1, UT.JAVELIN, 60, 210, 150, DOWN)],
+		[_atk(0, 0, 1, 1), _atk(0, 2, 0, 0), _atk(0, 3, 0, 0)], 0)
+	_duel("yard: dogs 16 released on javelins 60",
+		[_u(0, dh, 16, 150, 200, UP), _u(1, UT.JAVELIN, 60, 150, 140, DOWN)],
+		[{"tick": 0, "type": BattleSim.ORDER_FIRE, "unit": 1, "on": 0},
+			BattleSim.make_release_order(1, 0, 1)], 1)
+	_duel("yard: dogs 16 released on slingers 80",
+		[_u(0, dh, 16, 150, 200, UP), _u(1, UT.index_of("slinger"), 80, 150, 140, DOWN)],
+		[{"tick": 0, "type": BattleSim.ORDER_FIRE, "unit": 1, "on": 0},
+			BattleSim.make_release_order(1, 0, 1)], 1)
+	_duel("yard: dogs 16 released on heavy 100",
+		[_u(0, dh, 16, 150, 200, UP), _u(1, UT.HEAVY, 100, 150, 140, DOWN)],
+		[BattleSim.make_release_order(1, 0, 1)], 1)
+	_duel("yard: light horse 60 vs archers 80, both attack",
+		[_u(0, lh, 60, 150, 230, UP), _u(1, UT.ARCHER, 80, 150, 90, DOWN)],
+		[_atk(0, 0, 1, 0), _atk(0, 1, 0, 0)])
+	_duel("yard: light horse 60 vs javelins 60, both attack",
+		[_u(0, lh, 60, 150, 230, UP), _u(1, UT.JAVELIN, 60, 150, 120, DOWN)],
+		[_atk(0, 0, 1, 0), _atk(0, 1, 0, 0)])
+	_duel("yard: heavy vs heavy attacking, no general (control)",
+		[_u(0, UT.HEAVY, 100, 150, 170, UP), _u(1, UT.HEAVY, 100, 150, 140, DOWN)],
+		[_atk(0, 1, 0, 0)], 1)
+	_duel("yard: heavy vs heavy attacking with its general behind",
+		[_u(0, UT.HEAVY, 100, 150, 170, UP), _u(1, UT.HEAVY, 100, 150, 140, DOWN),
+			_u(1, gen, 30, 150, 124, DOWN)],
+		[_atk(0, 1, 0, 0)], 1)
+	_duel("yard: cav 60 charges heavy 100 standing (control)",
+		[_u(0, UT.CAVALRY, 60, 150, 220, UP), _u(1, UT.HEAVY, 100, 150, 110, DOWN)],
+		[_atk(0, 0, 1, 1)])
+	_duel("yard: cav 60 charges heavy 100 behind stakes",
+		[_u(0, UT.CAVALRY, 60, 150, 220, UP), _u(1, UT.HEAVY, 100, 150, 110, DOWN)],
+		[_atk(0, 0, 1, 1)], -1, {"field_works": [[BattleSim.EQ_STAKES, 1, 150, 117, DOWN, 40]]})
+	_duel("yard: archers 80 vs archers 80 at 120 m (control)",
+		[_u(0, UT.ARCHER, 80, 150, 210, UP), _u(1, UT.ARCHER, 80, 150, 90, DOWN)],
+		[_atk(0, 0, 1, 0), _atk(0, 1, 0, 0)])
+	_duel("yard: archers 80 behind 4 mantlets vs archers 80 at 120 m",
+		[_u(0, UT.ARCHER, 80, 150, 210, UP), _u(1, UT.ARCHER, 80, 150, 90, DOWN)],
+		[_atk(0, 0, 1, 0), _atk(0, 1, 0, 0)], -1, {"mantlets": [4, 0]})
+
+
+## A missile unit (side 0) shoots its whole load at a standing target `dist`
+## m away (skirmish off, an explicit shoot order): % killed, peak fright,
+## how often the target broke.
+func _shoot(name: String, sty: int, sn: int, tty: int, tn: int, dist: int, tface: int, walk_in := false) -> void:
+	if _skip(name):
+		return
+	var killed := 0.0
+	var fright := 0.0
+	var broke := 0
+	var shots := 0.0
+	for s in seeds:
+		var units := [_u(0, sty, sn, 150, 260, UP), _u(1, tty, tn, 150, 260 - dist, tface)]
+		var orders := [{"tick": 0, "type": BattleSim.ORDER_SKIRMISH, "unit": 0, "on": 0}, _atk(0, 0, 1, 0)]
+		if walk_in:
+			# The target walks straight at the shooters and stops 8 m short.
+			orders.append(BattleSim.make_move_order(0, 1, 150 * M, 252 * M, DOWN, 30 * M, 0))
+		var sim := BattleSim.new()
+		sim.setup(_scenario(units, orders), 3000 + s * 4243)
+		var peak := 0
+		var fired := false
+		while sim.tick < 2400:
+			sim.step()
+			peak = maxi(peak, sim.u_fright[1])
+			if sim.projectiles_in_flight() > 0:
+				fired = true
+			if fired and sim.u_ammo[0] <= 0 and sim.projectiles_in_flight() == 0:
+				break
+			if sim.u_state[0] != BattleSim.U_READY:
+				break
+		killed += sim.u_killed[1]
+		fright += peak
+		shots += sim.stat_shots + sim.stat_bolts
+		if sim.u_state[1] != BattleSim.U_READY:
+			broke += 1
+	print("%-58s killed %5.1f of %d (%4.1f%%) | broke %d/%d | peak fright %3.0f | %4.0f shots" % [
+		name, killed / seeds, tn, 100.0 * killed / seeds / tn, broke, seeds, fright / seeds, shots / seeds])
+
+
+## Heavy 100 walks 200 m straight at a battery (side 0): seconds to close
+## to 30 m with the battery shooting and with it holding fire, men lost.
+func _pin(name: String, bty: int, bn: int) -> void:
+	if _skip(name):
+		return
+	var secs := [0.0, 0.0]
+	var lost := 0.0
+	var fright := 0.0
+	var broke := 0
+	for s in seeds:
+		for shoot in 2:
+			var units := [_u(0, bty, bn, 150, 270, UP), _u(1, UT.HEAVY, 100, 150, 60, DOWN)]
+			var orders := [BattleSim.make_move_order(0, 1, 150 * M, 240 * M, DOWN, 30 * M, 0)]
+			if shoot == 1:
+				orders.append(_atk(0, 0, 1, 0))
+			else:
+				orders.append({"tick": 0, "type": BattleSim.ORDER_FIRE, "unit": 0, "on": 0})
+			var sim := BattleSim.new()
+			sim.setup(_scenario(units, orders), 3500 + s * 4243)
+			var peak := 0
+			while sim.tick < 2400 and sim.u_ay[1] < 238 * M and sim.u_state[1] == BattleSim.U_READY:
+				sim.step()
+				peak = maxi(peak, sim.u_fright[1])
+			secs[shoot] += sim.tick / 10.0
+			if shoot == 1:
+				lost += sim.u_killed[1]
+				fright += peak
+				if sim.u_state[1] != BattleSim.U_READY:
+					broke += 1
+	print("%-58s closed in %5.1f s under fire vs %5.1f s unshot | lost %4.1f | broke %d/%d | peak fright %3.0f" % [
+		name, secs[1] / seeds, secs[0] / seeds, lost / seeds, broke, seeds, fright / seeds])
+
+
 func _stone_aim() -> void:
 	if only != "" and only != "stoneaim" and only != "art":
 		return

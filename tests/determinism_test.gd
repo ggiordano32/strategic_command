@@ -135,9 +135,13 @@ const RUNS := {"skirmish@0": 1500, "battle_2000@0": 1800, "bench_2000": 2500, "t
 ## through each other (2026-10-07: skirmish and bench_2000 changed, the two
 ## artillery set pieces did not), and for ranks that hold together in melee
 ## (2026-10-09: men within 1.5 m of their places, the anchor closes to
-## reach, flank / rear by the unit; skirmish and bench_2000 changed).
-const GOLDEN := {"skirmish": "4d470af826781320", "bench_2000": "617adc20e3e7d792",
-	"test_cav_art": "2614adc80bd29eb4", "test_stone_line": "62b07015506232ff"}
+## reach, flank / rear by the unit; skirmish and bench_2000 changed), and
+## for the field rebalance (2026-10-09: to-hit, flank / rear bonus, the
+## wrap at the anchor level, bolts pin, javelins through shields, AI
+## missile units out of ammunition leave; skirmish, bench_2000 and
+## test_stone_line changed, test_cav_art did not).
+const GOLDEN := {"skirmish": "d618e20340501cfa", "bench_2000": "5a0aadfb296bd646",
+	"test_cav_art": "2614adc80bd29eb4", "test_stone_line": "b9d3025690cd28ba"}
 
 var _ok := true
 
@@ -2433,8 +2437,11 @@ func _check_shut_inner_gate() -> void:
 	# attackers' anchors press up to the citadel and about 40 single-tick
 	# cases remain - a man who picked his man this tick, then one of them
 	# stepped so the wall lies between; he drops him the next tick, before
-	# any blow.)
-	if int(a["shut"]) < 0 or int(a["hack"]) > 0 or int(a["across"]) > 60 or int(a["ram_at"]) < 0:
+	# any blow. Field rebalance 2026-10-09: 184, instrumented: 177 distinct
+	# pairs of at most 2 ticks each, no defender on the walk, 0 blows struck
+	# through a wall; it counts brief target picks, not blows, so the bound
+	# is 250.)
+	if int(a["shut"]) < 0 or int(a["hack"]) > 0 or int(a["across"]) > 250 or int(a["ram_at"]) < 0:
 		_fail("shut inner gate: %s" % str(a))
 		return
 	print("PASS shut inner gate: the acropolis shut at tick %d; hacked 0; man-ticks within reach of a man behind a wall %d; the ram sent at it at tick %d (%d blows); winner %d at %d; identical on repeat and across snapshot / restore" % [

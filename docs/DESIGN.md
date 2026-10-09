@@ -227,7 +227,7 @@ are the reference for balance.
 | Spearmen | 15 | 30 | 9 | 35% / 55% | 30 | 2.2 | 90 | 3.6 | brace 55, +20 vs cavalry |
 | Pikemen | 34 | 40 | 8 | 20% / 30% | 30 | 5.5 | 90 | 3.0 | 4 ranks strike, brace 80, sword 18/16/24 |
 | Archers | 18 | 16 | 3 | 0 / 0 | 24 | 1.0 | 75 | 4.0 | 140 m, 40 arrows (was 20), 4 s reload |
-| Javelinmen | 28 | 22 | 3 | 20% / 35% | 28 | 1.2 | 80 | 4.2 | 40 m, 6 javelins (was 4), 2.8 s reload |
+| Javelinmen | 28 | 22 | 3 | 20% / 35% | 28 | 1.2 | 80 | 4.2 | 40 m, 6 javelins (was 4), 2.8 s reload, through 15% of a missile shield (`m_spen`, 2026-10-09) |
 | Shock cavalry | 36 | 28 | 10 | 20% / 15% | 32 | 1.6 | 150 | 8.2 | mass 400, charge 70, turns 90 deg in 1.6 s; arrows x1.2, 9% of hits down the horse |
 | Bolt throwers (crew) | 14 | 14 | 3 | 0 / 0 | 22 | 1.0 | 75 | 0.8 packed | 4 engines x 4 crew, cost 25/crew |
 | Stone throwers (crew) | 14 | 14 | 3 | 0 / 0 | 22 | 1.0 | 75 | 0.7 packed | 3 engines x 6 crew, cost 30/crew |
@@ -237,7 +237,8 @@ defending *unit* (its anchor and facing: ahead of its front line, behind its
 rear rank, or alongside / beyond the end of the line; `BattleSim._zone`), not
 by the angle between two duellists or how the struck man is turned. One
 function decides it for every melee blow: the shield (frontal blows only),
-the to-hit bonus (+25 flank, +40 rear), the morale and disorder hit and the
+the to-hit bonus (+35 flank, +50 rear; +25 / +40 until the field
+rebalance of 2026-10-09, when the base to-hit `BASE_HIT` also went 35 -> 40), the morale and disorder hit and the
 pike's short sword. Oblique blows inside a frontal melee stay frontal, and a
 man at the end of the line who turns to face a flanker is still taken in the
 flank (until 2026-10-09 the shield and bonus used the man's own facing, so
@@ -277,6 +278,17 @@ so a wide unit laps round a narrow face (a flank) instead of leaving most of
 its men idle. Formed pikemen only count as "fighting" (which holds the unit's
 anchor) while their target is within pike reach, so two pike blocks close
 until their points meet.
+
+**Wrap at the anchor level** (field rebalance, 2026-10-09). With men capped
+to 1.5 m ahead / 3 m aside of their places, a wide line's outer files stood
+idle beyond a narrow enemy's flank (three units on a 10-man pike remnant
+had 3 men in reach). Now, while a unit attacks and is engaged (`wrap_t`),
+the place of each front-rank man whose file stands out beyond the
+target's bounding box (plus `WRAP_GAP` 1 m) by e curls forward by f =
+min(e, the target's depth + 1 m) and in by f (`BattleSim._curl`): the line
+bends into an L round the target's flank and the caps apply to the curled
+place, so those men fight it from the flank (+35 to hit, no shield). No
+state: computed each tick from the target's bounding box.
 
 **Moving disengages.** A unit with a move (or withdraw) order does not fight:
 its soldiers drop their targets and follow their slots. This is what lets
@@ -432,7 +444,7 @@ as men fall or engines are wrecked the survivors re-man the rest.
 | Arc / traverse | +-25 deg / ~10 deg/s | +-20 deg / ~7 deg/s |
 | Set up / pack up | 6 s / 3 s | 12 s / 6 s |
 | Engine hp | 160 | 260 |
-| Fright per hit | 15 | 60 |
+| Fright per hit | 22 (15 until 2026-10-09) + pins 0.8 s | 60 + pins 0.8 s |
 
 - *Deployed / packed.* `u_depl` counts 0 (packed) .. set-up time (ready).
   A battery shoots only when set up and standing; a move or withdraw order
@@ -555,8 +567,9 @@ as men fall or engines are wrecked the survivors re-man the rest.
   of six small bolt engines with two crew each (12 men, `crew_min` 1),
   4 m apart; the crews carry them, so the packed pace is the row's `walk`
   (1.5 m/s, archers 1.5, Bolt Throwers 0.8) and `deploy` 15 (1.5 s to set
-  up, under a second to pack); 160 m (70 % of Bolt Throwers' 230), 72
-  damage (60 % of 120) at 70 ap, a bolt goes through at most 2 men
+  up, under a second to pack); 160 m (70 % of Bolt Throwers' 230), 90
+  damage (75 % of 120; tuned 2026-10-09 from 72, which never killed a
+  pikeman outright: a full load on a 120-pike block 12.5 -> 17.5 %) at 70 ap, a bolt goes through at most 2 men
   (`m_pierce` 2; heavy bolts' 140 % is still 2), 5 s a bolt, 8 bolts an
   engine plus 8 in the baggage, engines of 60 hp (Bolt Throwers 160),
   396 a unit (Archers and Bolt Throwers both cost 400). Engines as
@@ -583,10 +596,19 @@ as men fall or engines are wrecked the survivors re-man the rest.
   `result()` rows carry `"kills"`; a fought campaign battle's outcome rows
   too (an optional key the rules ignore), shown on the battle screen's
   cards.
-- *Fright.* Each shot that strikes a unit adds its fear (bolt 15, stone 60,
-  cap 200) to `u_fright`, which decays 1 per tick and counts against morale
+- *Fright.* Each shot that strikes a unit adds its fear (bolt 22, tuned
+  2026-10-09 from 15; scorpions 15, from 8; stone 60, cap 200) to
+  `u_fright`, which decays 1 per tick and counts against morale
   only for the rout check and the displayed state: a stone tips a wavering
   unit over but does not break a steady one; deaths still do the real work.
+- *Pinning* (field rebalance, 2026-10-09, after "bolt throwers feel almost
+  useless in the field"): a unit an artillery shot strikes goes to ground
+  for `PIN_TICKS` (0.8 s, from `u_shelled_t`): its anchor does not advance.
+  Only walking units on field maps (a charge or a rush at the run goes
+  through; units fighting, withdrawing or charging are not held; wall and
+  tower engines in sieges do not pin). Heavy 100 walking 200 m at a bolt
+  battery closes in 183 s instead of 157 s (scorpions 180 s), losing 12
+  men (`matchups --only=yard`).
 - *Cost*: the sweep culls units by bounding box against the path, so a shot
   looks only at soldiers of units its line really crosses; shots are few.
 
@@ -611,7 +633,7 @@ slow grind. Small extra penalties: -1 per hit on the flank, -2 on the rear,
 -1 / -2 / -4 per soldier hit by a charge from front / flank / rear, -5 per
 second per routing friend within 30 m (at most two). Missile wounds cost
 nothing by themselves (the deaths do), but a unit hit in the last 3 s does
-not recover. Flank and rear attacks do their work through kills: +25 / +40 to
+not recover. Flank and rear attacks do their work through kills: +35 / +50 to
 hit, no shield, and pike disorder +6 / +10 per hit. Base morale sets the
 class gap; in an even frontal fight units break at about: heavy 58%, spear
 53%, pike 55%, cavalry 39%, archers 40%, javelins 34%, light 35% killed. A
@@ -1926,7 +1948,7 @@ javelinmen, archers):
 | Size / price | 60 / 480 (camel archers' price; shock cavalry 600) | 80 / 320 (archers 400 less the weak shot against armour) |
 | Run / turn 90 deg | 8.6 m/s (shock cavalry 8.2) / 1.3 s (1.6) | 4.2 m/s (javelinmen's) |
 | Att / def / armour / hp / morale | 24 / 22 / 4 / 130 / 620 (no lance, unarmoured, smaller horse) | 18 / 16 / 2 / 75 / 560 (archers' body, no armour) |
-| Missile | javelins 40 m, 38 dmg, 50 ap, 5 a man, 3 s (javelinmen 42 / 60 / 6 / 2.8 s: thrown from a moving horse) | sling 150 m (bow 140), 28 dmg, 0 ap, 40 a man, 3 s (bow 30 / 25 ap / 4 s) |
+| Missile | javelins 40 m, 38 dmg, 50 ap, 5 a man, 3 s (javelinmen 42 / 60 / 6 / 2.8 s: thrown from a moving horse); through 10 % of a shield (`m_spen`, tuned 2026-10-09; javelinmen 15) | sling 150 m (bow 140), 28 dmg, 0 ap, 40 a man, 3 s (bow 30 / 25 ap / 4 s) |
 | Other | mshield 25, woods 180 % (about the cavalry's), climb 24, needs Stables + Range 1 | loose order 1.6 x 1.8 m, lobbed over friends |
 
 "Good against unarmoured" falls out of the damage rule (`damage - armour x
