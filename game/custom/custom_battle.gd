@@ -315,6 +315,26 @@ func _army_view(s: int, ai: int) -> Control:
 		var nm := Kit.label("%s  %d" % [UT.text(ty, "name") if ty >= 0 else str(e[0]), int(e[1])], Kit.FONT_SMALL, Color.WHITE)
 		nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		r.add_child(nm)
+		var kinds := CS.ammo_choices(ty)
+		if not kinds.is_empty():
+			# A special ammunition kind (riding on its weapon): tap to cycle none / each kind.
+			var ak := CS.unit_ak(e)
+			var kb := _opt("Ammo: " + (UT.ammo_text(ak, "name") if ak >= 0 else "standard"), func():
+				var i := kinds.find(ak) + 1
+				CS.set_unit_ak(e, kinds[i] if i < kinds.size() else -1)
+				_changed(), ed)
+			kb.name = "custom_ammo_%d_%d_%d" % [s, ai, k]
+			kb.tooltip_text = UT.ammo_text(ak, "desc") if ak >= 0 else "Carry a special kind too: " + ", ".join(PackedStringArray(
+				kinds.map(func(x: int) -> String: return UT.ammo_text(x, "name"))))
+			if ak >= 0:
+				kb.add_theme_color_override("font_color", Kit.COL_GOLD)
+			r.add_child(kb)
+		elif CS.is_wagon(ty):
+			var ks := CS.army_kinds(army)
+			var sl := Kit.label("stocks: " + ("standard" if ks.is_empty() else "standard + " + ", ".join(PackedStringArray(
+				ks.map(func(x: int) -> String: return UT.ammo_text(x, "name"))))), Kit.FONT_SMALL, Kit.COL_DIM)
+			sl.name = "custom_stock_%d_%d_%d" % [s, ai, k]
+			r.add_child(sl)
 		r.add_child(Kit.label(str(CS.unit_cost(str(e[0]), int(e[1]))), Kit.FONT_SMALL, Kit.COL_DIM))
 		if ed:
 			r.add_child(Kit.button("x", func():
@@ -372,6 +392,18 @@ func _build_picker() -> void:
 			b.name = "pick_" + key
 			f.add_child(b)
 		list.add_child(f)
+	# Ammunition wagons (line "siege", not in UT.LINES): they refill the
+	# army's missile units and batteries and stock its special kinds.
+	var wf := Kit.flow(6)
+	wf.add_child(Kit.label("Wagons", Kit.FONT, Kit.COL_DIM))
+	for ty in UT.count():
+		if CS.is_wagon(ty):
+			var key := UT.key_of(ty)
+			var b := Kit.button("%s  %d" % [UT.text(ty, "name"), UT.price_of(ty)], func(): _pick(key), 0, 13)
+			b.name = "pick_" + key
+			b.tooltip_text = UT.text(ty, "desc")
+			wf.add_child(b)
+	list.add_child(wf)
 
 
 func _open_picker(s: int, ai: int) -> void:

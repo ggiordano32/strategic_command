@@ -14,8 +14,13 @@ extends RefCounted
 ##           "ladders": 0/1, "ram": 0/1 (the attackers' siege equipment, objects on
 ##           the ground: LADDER_SETS sets of ladders, a ram; walls only)},
 ##   "sides": [{"skill": AIProfile level, "style": AIProfile personality,
-##              "armies": [{"ctrl": "p1" | "p2" | "ai", "units": [[type key, men], ...]}, ...]}, x2]
+##              "armies": [{"ctrl": "p1" | "p2" | "ai", "units": [[type key, men(, ammo kind key)], ...]}, ...]}, x2]
 ## }
+## A unit's optional third element is the special ammunition kind it
+## carries (a UnitTypes.AMMO key riding on its weapon; "" or absent: none),
+## the scenario's "ak". An ammunition wagon (a type with a "wagon" row)
+## stocks the special kinds its own army's units carry (the scenario's
+## "aks"), as a campaign army's wagon does.
 ## Side 0 deploys at the bottom, side 1 at the top. Controllers: an army of
 ## Player 1 / Player 2 is commanded by that player; a side with no player's
 ## army is fought by the battle AI at the side's skill and personality. The
@@ -67,7 +72,11 @@ static func template(id: String, p_seed: int) -> Dictionary:
 		var s := int(ud["side"])
 		var ty := int(ud["type"])
 		var line: Array = lists[s]
-		line.append([UT.key_of(ty), int(ud["count"])])
+		var e := [UT.key_of(ty), int(ud["count"])]
+		var ak := int(ud.get("ak", -1))
+		if ammo_choices(ty).has(ak):
+			e.append(UT.ammo_text(ak, "key"))
+		line.append(e)
 	for s in 2:
 		var all: Array = lists[s]
 		var armies: Array = []
@@ -108,6 +117,45 @@ static func unit_cost(key: String, men: int) -> int:
 	if ty < 0:
 		return 0
 	return UT.price_of(ty) * men / maxi(UT.size_of(ty), 1)
+
+
+## Special ammunition kinds (UnitTypes.AMMO rows) a unit of type ty may
+## carry: those riding on its weapon ([] for none).
+static func ammo_choices(ty: int) -> Array[int]:
+	if ty < 0:
+		return []
+	return UT.ammo_specials(ty)
+
+
+## The special kind unit entry e carries (-1 none, or not one its weapon takes).
+static func unit_ak(e: Array) -> int:
+	if e.size() < 3:
+		return -1
+	var ak := UT.ammo_index(str(e[2]))
+	return ak if ammo_choices(UT.index_of(str(e[0]))).has(ak) else -1
+
+
+## Set (ak -1: clear) the special kind of unit entry e.
+static func set_unit_ak(e: Array, ak: int) -> void:
+	if e.size() > 2:
+		e.resize(2)
+	if ak >= 0:
+		e.append(UT.ammo_text(ak, "key"))
+
+
+static func is_wagon(ty: int) -> bool:
+	return ty >= 0 and UT.stat(ty, "wagon") >= 0
+
+
+## The special kinds an army's units carry (ascending): what its wagons stock.
+static func army_kinds(army: Dictionary) -> Array:
+	var out: Array = []
+	for e in army["units"]:
+		var ak := unit_ak(e)
+		if ak >= 0 and not out.has(ak):
+			out.append(ak)
+	out.sort()
+	return out
 
 
 static func side_cost(st: Dictionary, s: int) -> int:
@@ -174,6 +222,7 @@ static func build(st: Dictionary, solo: bool = false) -> Dictionary:
 	var mp: Dictionary = st["map"]
 	var ctrl_of := [[], []]   # per side: per unit (in setup order) its player or -1
 	var lists := [[], []]     # per side: [ty, men]
+	var extra := [[], []]     # per side: per unit the scenario's ammunition keys ({} none)
 	var players := [side_players(st, 0), side_players(st, 1)]
 	if solo:
 		for s in 2:
@@ -185,12 +234,19 @@ static func build(st: Dictionary, solo: bool = false) -> Dictionary:
 			var p := 0 if c == "p1" else (1 if c == "p2" else -1)
 			if not (players[s] as Array).has(p):
 				p = lead
+			var kinds := army_kinds(a)
 			for e in a["units"]:
 				var ty := UT.index_of(str(e[0]))
 				if ty < 0:
 					return {"error": "Unknown unit type %s." % str(e[0])}
 				lists[s].append([ty, clampi(int(e[1]), 1, UT.size_of(ty) * 2)])
 				ctrl_of[s].append(p)
+				var x := {}
+				if unit_ak(e) >= 0:
+					x["ak"] = unit_ak(e)
+				if is_wagon(ty) and not kinds.is_empty():
+					x["aks"] = kinds.duplicate()
+				extra[s].append(x)
 	var ai: Array = []
 	for s in 2:
 		if (players[s] as Array).is_empty():
@@ -217,13 +273,15 @@ static func build(st: Dictionary, solo: bool = false) -> Dictionary:
 			equip["ram"] = 1
 		var r := Scenarios.settlement(city, terr, lists[att_side], lists[def_side], def_side, ai, equip)
 		sc = r["scenario"]
-		for o in r["order"]:
+		for k in (r["order"] as Array).size():
+			var o: Array = r["order"][k]
 			var s := att_side if int(o[0]) == 0 else def_side
 			home.append(ctrl_of[s][int(o[1])])
+			(sc["units"][k] as Dictionary).merge(extra[s][int(o[1])])
 		# The city's towers (added by the sim): the defending side's lead player.
 		home.append(players[def_side][0] if not (players[def_side] as Array).is_empty() else -1)
 	else:
-		sc = _field(st, lists, ctrl_of, home)
+		sc = _field(st, lists, ctrl_of, home, extra)
 		sc["ai_sides"] = ai
 		sc["terrain"] = {"kind": int(mp.get("terrain", Terrain.K_ROLLING)), "seed": int(mp.get("mseed", 1)),
 			"forest": clampi(int(mp.get("woods", 0)), 0, 100), "ground": int(mp.get("ground", MapGen.PAL_GREEN))}
@@ -241,7 +299,7 @@ static func build(st: Dictionary, solo: bool = false) -> Dictionary:
 
 ## Field battle: each side's armies one behind the other (the first in
 ## front, laid out as the campaign does), side 1 the mirror image of side 0.
-static func _field(st: Dictionary, lists: Array, ctrl_of: Array, home: Array) -> Dictionary:
+static func _field(st: Dictionary, lists: Array, ctrl_of: Array, home: Array, extra: Array) -> Dictionary:
 	var lays := [[], []]
 	var width := 560
 	var depth := [0, 0]
@@ -270,7 +328,9 @@ static func _field(st: Dictionary, lists: Array, ctrl_of: Array, home: Array) ->
 					x = width - x
 					y = height - y
 					face = Scenarios.FACE_DOWN
-				units.append(Scenarios.unit(s, int(lists[s][i][0]), int(lists[s][i][1]), x, y, face))
+				var ud := Scenarios.unit(s, int(lists[s][i][0]), int(lists[s][i][1]), x, y, face)
+				ud.merge(extra[s][i])
+				units.append(ud)
 				home.append(ctrl_of[s][i])
 	return {"width_m": width, "height_m": height, "units": units}
 

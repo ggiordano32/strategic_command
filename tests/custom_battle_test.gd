@@ -7,12 +7,16 @@ extends SceneTree
 ## with a player for every unit of a human side and the AI on the others;
 ## the battle deploys (the player places a unit, readies) and runs; the
 ## setup checks refuse what cannot be played; siege equipment (ladders, a
-## ram) and the battle time limit reach the scenario.
+## ram) and the battle time limit reach the scenario; a unit's special
+## ammunition kind ("ak") and a wagon's stock of its army's kinds ("aks")
+## reach the sim, survive the online setup's JSON round trip and change the
+## scenario hash both peers compare.
 
 const CS := preload("res://game/custom/custom_setup.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Lockstep := preload("res://sim/lockstep.gd")
 const UT := preload("res://sim/unit_types.gd")
+const CoopSession := preload("res://game/net/coop_session.gd")
 
 var _ok := true
 
@@ -48,6 +52,12 @@ func _init() -> void:
 	var coop := CS.default_setup(7)
 	coop["sides"][0]["armies"].append({"ctrl": "p2", "units": [["heavy2", 100], ["cav3", 60]]})
 	setups["co-op"] = coop
+	var ammo := _ammo_setup()
+	setups["wagon and fire arrows, head-to-head"] = ammo
+	var ammo_town: Dictionary = _ammo_setup()
+	ammo_town["map"]["kind"] = "settlement"
+	ammo_town["map"]["walls"] = 1
+	setups["wagon and fire arrows, settlement"] = ammo_town
 	for name in setups:
 		var st: Dictionary = setups[name]
 		var a := CS.build(st)
@@ -87,6 +97,8 @@ func _init() -> void:
 			or int(sb["scenario"].get("time_limit", 0)) != 1800:
 		_fail("storm: %d ladder sets, %d rams, %d home entries for %d units, time limit %s" % [lad, ram,
 			(sb["home"] as Array).size(), n_sc, str(sb["scenario"].get("time_limit", 0))])
+	_check_ammo(ammo, "field")
+	_check_ammo(ammo_town, "settlement")
 	# Checks.
 	var bad := CS.default_setup(1)
 	bad["sides"][1]["armies"] = []
@@ -110,6 +122,93 @@ func _init() -> void:
 		_fail("solo: Player 2's side is not the AI's")
 	print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 	quit(0 if _ok else 1)
+
+
+## Player 1: archers with fire arrows, javelinmen with none, a supply
+## train; Player 2: bolts with heavy bolts, a hand cart; an AI army with a
+## wagon and no kinds.
+func _ammo_setup() -> Dictionary:
+	var st := CS.default_setup(9)
+	var a0: Array = [["heavy", 100], ["archer", 80, "fire_arrows"], ["javelin", 60], ["wagon3", 10]]
+	st["sides"][0]["armies"][0]["units"] = a0
+	st["sides"][1]["armies"][0]["ctrl"] = "p2"
+	st["sides"][1]["armies"][0]["units"] = [["spear", 100], ["bolt", 16, "heavy_bolts"], ["wagon", 8],
+		["archer", 80, "heavy_bolts"]]  # (not a kind for bows: ignored)
+	st["sides"][1]["armies"].append({"ctrl": "ai", "units": [["heavy", 100], ["wagon2", 8]]})
+	return st
+
+
+func _check_ammo(st: Dictionary, what: String) -> void:
+	var fire := UT.ammo_index("fire_arrows")
+	var heavy := UT.ammo_index("heavy_bolts")
+	# Helpers.
+	var e: Array = ["archer", 80]
+	CS.set_unit_ak(e, fire)
+	if CS.unit_ak(e) != fire or CS.unit_ak(["javelin", 60, "fire_arrows"]) >= 0:
+		_fail("ammo %s: unit_ak / set_unit_ak" % what)
+	CS.set_unit_ak(e, -1)
+	if e.size() != 2:
+		_fail("ammo %s: clearing the kind left %s" % [what, str(e)])
+	# Online: the setup as the relay passes it on builds the same scenario,
+	# with the same hash, and a different kind gives a different hash.
+	var a := CS.build(st)
+	var rt: Dictionary = JSON.parse_string(JSON.stringify(st))
+	var b := CS.build(rt)
+	var ha := CoopSession.scenario_hash(a["scenario"], int(a["seed"]), a["home"])
+	var hb := CoopSession.scenario_hash(b["scenario"], int(b["seed"]), b["home"])
+	if ha != hb or str(rt["sides"][0]["armies"][0]["units"][1][2]) != "fire_arrows":
+		_fail("ammo %s: the online setup does not round-trip (%s / %s)" % [what, ha, hb])
+	var other: Dictionary = st.duplicate(true)
+	other["sides"][0]["armies"][0]["units"][1].resize(2)
+	var c := CS.build(other)
+	if CoopSession.scenario_hash(c["scenario"], int(c["seed"]), c["home"]) == ha:
+		_fail("ammo %s: the kind does not change the scenario hash" % what)
+	# The scenario's keys.
+	var sc: Dictionary = a["scenario"]
+	var arch := -1
+	var bolt := -1
+	var aks := {}   # type key -> "aks"
+	for i in (sc["units"] as Array).size():
+		var ud: Dictionary = sc["units"][i]
+		var key := UT.key_of(int(ud["type"]))
+		if key == "archer" and int(ud["side"]) == 0:
+			arch = i
+			if int(ud.get("ak", -1)) != fire:
+				_fail("ammo %s: the archers' ak is %s" % [what, str(ud.get("ak"))])
+		elif key == "archer" and ud.has("ak"):
+			_fail("ammo %s: bows carry heavy bolts" % what)
+		elif key == "bolt":
+			bolt = i
+			if int(ud.get("ak", -1)) != heavy:
+				_fail("ammo %s: the bolts' ak is %s" % [what, str(ud.get("ak"))])
+		elif key.begins_with("wagon"):
+			aks[key] = ud.get("aks", [])
+	if str(aks.get("wagon3")) != str([fire]) or str(aks.get("wagon")) != str([heavy]) or str(aks.get("wagon2")) != "[]":
+		_fail("ammo %s: wagon stocks %s" % [what, str(aks)])
+	# The sim: the archers' kind, the battery's engines' kind, the wagons' stock.
+	var sim = BattleSim.new()
+	sim.setup(sc, int(a["seed"]))
+	if sim.u_sk[arch] != fire:
+		_fail("ammo %s: sim archers carry kind %d" % [what, sim.u_sk[arch]])
+	if sim.u_eg[bolt] < 0 or sim.eg_sk[sim.u_eg[bolt]] != heavy:
+		_fail("ammo %s: sim battery's engines carry no heavy bolts" % what)
+	var found := 0
+	for q in sim.n_eq:
+		if sim.q_kind[q] != BattleSim.EQ_WAGON:
+			continue
+		var key := UT.key_of(sim.u_type[sim.q_unit[q]])
+		var pct := UT.wagon_stat(UT.stat(sim.u_type[sim.q_unit[q]], "wagon"), "stock_pct")
+		var want_fire := 1600 * pct / 100 * 33 / 100 if key == "wagon3" else 0
+		var want_heavy := 22 * pct / 100 * 33 / 100 if key == "wagon" else 0
+		if sim.wagon_stock(q, fire) != want_fire or sim.wagon_stock(q, heavy) != want_heavy \
+				or sim.wagon_stock(q, UT.ammo_index("arrows")) != 1600 * pct / 100:
+			_fail("ammo %s: %s stocks fire %d heavy %d" % [what, key, sim.wagon_stock(q, fire), sim.wagon_stock(q, heavy)])
+		found += 1
+		print("  %s: %s stocks arrows %d, fire arrows %d, heavy bolts %d" % [what, key,
+			sim.wagon_stock(q, UT.ammo_index("arrows")), sim.wagon_stock(q, fire), sim.wagon_stock(q, heavy)])
+	if found != 3:
+		_fail("ammo %s: %d wagons in the sim" % [what, found])
+	print("PASS ammo %s: archers kind %d, battery kind %d, hash %s" % [what, sim.u_sk[arch], sim.eg_sk[sim.u_eg[bolt]], ha])
 
 
 ## Deploy (place one unit of each human side, ready) and fight a little,
