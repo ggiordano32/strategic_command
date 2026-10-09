@@ -15,7 +15,8 @@ extends SceneTree
 ##   15-25% of it and much less of a wide heavy line from the front; stone
 ##   throwers kill fewer, frighten, and miss small or moving targets; melee
 ##   troops that reach artillery wreck it quickly; armies stay fair when
-##   mirrored (--fair=N).
+##   mirrored (--fair=N; --fair-variants=fort0,fort1 puts that side in its
+##   fortified camp: the fitted CData.FORTIFY_DEF_PCT).
 ## Yardsticks (--only=yard, docs/STATUS.md "Field rebalance"): a full load
 ##   of arrows at 100 m into light infantry or standing cavalry in the open
 ##   kills about a quarter, into heavy shielded foot from the front under
@@ -43,7 +44,8 @@ extends SceneTree
 ##   12 minutes or less, without draws.
 ## Equal-force sieges (--only=fair-sieges, docs/STATUS.md item 4): a city
 ##   held by a garrison and field army as strong as the attacker, walls 1-3,
-##   ring and polis, with ladders and a ram or artillery only; --rows,
+##   ring and polis, with ladders and a ram, artillery only or the full kit
+##   of a three-turn siege (row 2); --rows,
 ##   --walls, --plans shard it, --time-limit=S sets the battle time limit and
 ##   --tune=NAME=v0,v1,v2,v3 sets a siege lever of BattleSim for the run.
 ## Skill levels (docs/AI.md 6): --skill=A:B (levels e, a, s or 0, 1, 2) with
@@ -82,7 +84,7 @@ var plans_only: Array = []  # --plans=0,4: settlement plans to run (--only=siege
 var walls_only: Array = []  # --walls=3: wall levels to run (--only=sieges / plans)
 var skill: Array = []       # --skill=A:B: AI skill of side 0 / attacker and side 1 / defender
 var fair_forest := 0        # --fair-forest=N: woods coverage N on the mirrored maps (--fair with --skill)
-var rows_only: Array = []   # --rows=0,1: fair-sieges rows to run (0 ladders + ram, 1 artillery only)
+var rows_only: Array = []   # --rows=0,1: fair-sieges rows to run (0 ladders + ram, 1 artillery only, 2 full kit)
 var time_limit := 0         # --time-limit=S: battle time limit (s) for the settlement sets (0: default)
 
 
@@ -619,6 +621,10 @@ func _fairness(n: int) -> void:
 				scn["units"] = a
 			if fair_terrain >= 0:
 				scn["terrain"] = {"kind": fair_terrain, "sym": 1}
+			if variant.begins_with("fort"):
+				# fort0 / fort1: that side stands in its fortified camp (the
+				# campaign's fortify stance; CData.FORTIFY_DEF_PCT is fitted to it).
+				scn["fortified"] = int(variant.substr(4, 1))
 			var sim := BattleSim.new()
 			sim.setup(scn, 77 + s * 31)
 			while sim.tick < 12000 and sim.winner < 0:
@@ -1176,6 +1182,14 @@ func _yardsticks() -> void:
 	_shoot("yard: javelins 60 vs cav 60 walking in from 40 m", UT.JAVELIN, 60, UT.CAVALRY, 60, 40, DOWN, true)
 	_shoot("yard: javelins 60 vs light 100 at 35 m (front)", UT.JAVELIN, 60, UT.LIGHT, 100, 35, DOWN)
 	_shoot("yard: javelins 60 vs heavy 100 at 35 m (front)", UT.JAVELIN, 60, UT.HEAVY, 100, 35, DOWN)
+	_shoot("yard: archers 80 vs pikes 120 at 100 m (flank)", UT.ARCHER, 80, UT.PIKE, 120, 100, LEFT)
+	_shoot("yard: archers 80 vs pikes 120 at 100 m (rear)", UT.ARCHER, 80, UT.PIKE, 120, 100, UP)
+	_shoot("yard: archers 80 vs heavy 120 at 100 m (flank)", UT.ARCHER, 80, UT.HEAVY, 120, 100, LEFT)
+	_shoot("yard: archers 80 vs heavy 120 at 100 m (rear)", UT.ARCHER, 80, UT.HEAVY, 120, 100, UP)
+	_shoot("yard: slingers 80 vs pikes 120 at 100 m (flank)", sling, 80, UT.PIKE, 120, 100, LEFT)
+	_shoot("yard: slingers 80 vs pikes 120 at 100 m (rear)", sling, 80, UT.PIKE, 120, 100, UP)
+	_shoot("yard: slingers 80 vs heavy 120 at 100 m (flank)", sling, 80, UT.HEAVY, 120, 100, LEFT)
+	_shoot("yard: slingers 80 vs heavy 120 at 100 m (rear)", sling, 80, UT.HEAVY, 120, 100, UP)
 	_shoot("yard: scorpions 12 vs pikes 120 at 150 m (front)", sco, 12, UT.PIKE, 120, 150, DOWN)
 	_shoot("yard: archers 80 vs pikes 120 at 150 m (front)", UT.ARCHER, 80, UT.PIKE, 120, 140, DOWN)
 	_pin("yard: heavy 100 walks 200 m at bolts 16 (pin)", UT.BOLT, 16)
@@ -1715,8 +1729,9 @@ func _garrison_defence() -> void:
 ## defenders' garrison plus field army as strong as SIEGE_ARMY), ring and
 ## polis on flat ground, walls 1-3, 10 seeds, both AI sides Average
 ## (--skill=A:B), the attacker with ladders and a ram (row 0: a siege of two
-## turns) or artillery only (row 1: an assault on arrival); at walls 2-3
-## also row 2: ladders, a ram and two siege towers (a siege of four turns).
+## turns) or artillery only (row 1: an assault on arrival); row 2, the full
+## kit of a three-turn siege: ladders, a ram, 4 mantlets, a siege tower at
+## walls 2-3 and a unit of scorpions.
 ## Targets
 ## (docs/STATUS.md): walls 3 about 25 % attacker wins, walls 1 about 45 %
 ## (row 0); row 1 lower at walls 2-3. --plans / --walls / --rows shard it;
@@ -1733,11 +1748,13 @@ func _fair_sieges() -> void:
 			for row in 3:
 				if not rows_only.is_empty() and not rows_only.has(row):
 					continue
-				if row == 2 and walls < 2:
-					continue  # (siege towers serve walls 2-3)
 				var eq := {"ladders": 3, "ram": 1} if row == 0 else {}  # (a siege of two turns)
 				if row == 2:
-					eq = {"ladders": 3, "ram": 1, "towers": 2}  # (a siege of four turns)
+					# Full kit: what a campaign assault after three siege turns
+					# brings (CBattle.siege_equipment: 3 ladder sets, a ram, 4
+					# mantlets, a tower at walls 2-3) and the attackers' scorpions.
+					eq = {"ladders": 3, "ram": 1, "mantlets": 4, "towers": 1 if walls >= 2 else 0,
+						"extra": [[UT.index_of("scorpions"), 12]]}
 				var aw := 0
 				var dr := 0
 				var withdrew := 0
@@ -1789,7 +1806,7 @@ func _fair_sieges() -> void:
 						else:
 							gate_by[2] += 1
 				print("%-6s walls %d %-15s attacker %3d%%, defender %3d%%, draws %3d%% (withdrew %d) | %4.1f min (max %4.1f) | killed att %5.1f def %5.1f | ladder men up %5.1f, gates opened from inside %d, ram blows %4.1f, gate broken by art/ram/hack %d/%d/%d | towers hit %4.1f, down %3.1f, killed %5.1f | captures %d/%d" % [
-					spec[0], walls, ["ladders + ram:", "artillery only:", "+ 2 towers:"][row], aw * 100 / n_runs,
+					spec[0], walls, ["ladders + ram:", "artillery only:", "full kit:"][row], aw * 100 / n_runs,
 					(n_runs - aw - dr) * 100 / n_runs, dr * 100 / n_runs, withdrew, t_sum / n_runs, t_max,
 					att_lost / n_runs, def_lost / n_runs, float(lad) / n_runs, unbar, float(blows) / n_runs,
 					gate_by[0], gate_by[1], gate_by[2], float(tw_hits) / n_runs, float(tw_down) / n_runs, float(tw_kills) / n_runs, caps, n_runs])

@@ -941,8 +941,13 @@ static func siege_test(city_seed: int, level: int, walls: int, ground: int, kind
 ## attacked by SIEGE_ARMY; the defenders' field army is SIEGE_ARMY less the
 ## garrison's strength (count x cost per man, campaign CState.strength)
 ## taken from its end, so both sides are equally strong. equip: the
-## attackers' siege equipment (settlement()). Both sides AI.
+## attackers' siege equipment (settlement()); its optional key "extra"
+## ([[type, men], ...]) adds units to the attackers' end (light artillery
+## in the "full kit" row), so the defenders' field army leaves out the same
+## strength and both sides stay equal. Both sides AI.
 static func fair_siege(city_seed: int, walls: int, plan: int, equip: Dictionary) -> Dictionary:
+	var att: Array = SIEGE_ARMY.duplicate(true)
+	att.append_array(equip.get("extra", []).duplicate(true))
 	var level := 2
 	var gar: Array = []
 	var n_gar := 2 + level + walls + 1
@@ -951,7 +956,7 @@ static func fair_siege(city_seed: int, walls: int, plan: int, equip: Dictionary)
 		var ty: int = SIEGE_GARRISON[k % SIEGE_GARRISON.size()]
 		gar.append([ty, 60])
 		g_str += 60 * UT.stat(ty, "cost")
-	var field: Array = SIEGE_ARMY.duplicate(true)
+	var field: Array = att.duplicate(true)
 	var left := g_str
 	while left > 0 and not field.is_empty():
 		var e: Array = field[field.size() - 1]
@@ -968,7 +973,7 @@ static func fair_siege(city_seed: int, walls: int, plan: int, equip: Dictionary)
 	var terr := {"kind": Terrain.K_FLAT, "seed": city_seed * 7 + 3, "forest": MapGen.PALETTE_FOREST[MapGen.PAL_DRY],
 		"ground": MapGen.PAL_DRY}
 	var city := {"seed": city_seed, "level": level, "walls": walls, "bld": [1, 2, 4], "plan": plan, "coast": 0}
-	var r := settlement(city, terr, SIEGE_ARMY.duplicate(true), dfn, 1, [0, 1], equip)
+	var r := settlement(city, terr, att, dfn, 1, [0, 1], equip)
 	return r["scenario"]
 
 
