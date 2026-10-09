@@ -749,6 +749,8 @@ func _recruit(box: VBoxContainer, r: int) -> void:
 			row.sub_text += "  -  + " + UT.ammo_text(UT.ammo_index(str(o["ak"])), "name").to_lower()
 		var key := str(o["t"])
 		row.name = "recruit_row_" + key
+		if o["lower"]:
+			row.modulate = Color(1, 1, 1, 0.82)
 		var open_page := func(): s.open_unit_page(ty,
 			(func(): s.add_order({"t": "recruit", "r": r, "unit": key})) if o["ok"] else Callable(),
 			"Recruit (%d)" % int(o["price"]))
@@ -763,22 +765,20 @@ func _recruit(box: VBoxContainer, r: int) -> void:
 		box.add_child(h)
 
 
-## The recruit list's rows: the best available tier per line (and a
-## better one greyed when only money or this turn's slots are missing);
-## locked higher tiers are left to the unit book.
+## The recruit list's rows: every tier the buildings unlock, per line, best
+## tier first (a "lower" key marks the tiers under the best one, shown a
+## little dimmer); locked higher tiers are left to the unit book.
 static func best_options(ps: Dictionary, f: int, r: int) -> Array:
 	var out: Array = []
 	var shown := {}
 	for o in CRules.recruit_options(ps, f, r):
 		var line := str(o["line"])
-		if shown.has(line) and not o["ok"]:
-			continue
-		if shown.has(line) and int(shown[line]) == 1:
-			continue
 		if str(o["why"]).begins_with("needs") and int(o["tier"]) > 1:
 			continue
-		shown[line] = 1 if o["ok"] else 0
-		out.append(o)
+		var e: Dictionary = o.duplicate()
+		e["lower"] = shown.has(line)
+		shown[line] = 1
+		out.append(e)
 	return out
 
 
@@ -933,6 +933,8 @@ func show_raise(r: int) -> void:
 		var ok: bool = o["ok"] or (cnt > 0)
 		var row := Kit.UnitRow.new(ty, -1, _fc(f), str(price))
 		row.name = "raise_row_" + key
+		if o["lower"]:
+			row.modulate = Color(1, 1, 1, 0.82)
 		row.selected = cnt > 0
 		row.sub_text = "Tier %d  -  upkeep %d" % [int(o["tier"]), CState.upkeep_of(ty)] if ok else str(o["why"])
 		if ok and str(o.get("ak", "")) != "":
@@ -1195,7 +1197,7 @@ func _army_recruits(id: int) -> Array:
 
 
 ## Version 6 army card: the recruit list when the army stands on or next to
-## a settlement of ours: the slots used this turn, the best tier per line
+## a settlement of ours: the slots used this turn, every unlocked tier per line
 ## (tap: the unit book with a Recruit button; "+" recruits at once); off
 ## while the army has a march planned (an army taking recruits cannot march
 ## this turn).
@@ -1229,6 +1231,8 @@ func _army_recruit(box: VBoxContainer, a: Dictionary) -> void:
 		row.sub_text = "Tier %d  -  upkeep %d" % [int(o["tier"]), CState.upkeep_of(ty)] if ok else (why_a if o["ok"] else str(o["why"]))
 		var key := str(o["t"])
 		row.name = "recruit_row_" + key
+		if o["lower"]:
+			row.modulate = Color(1, 1, 1, 0.82)
 		var order := {"t": "recruit", "r": r, "unit": key, "army": id}
 		var add_it := func():
 			if s.add_order(order.duplicate()) == "":

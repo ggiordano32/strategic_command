@@ -1393,13 +1393,13 @@ the stance toggle).
   needs; a tap opens the unit book), the buildings and the garrison (the
   units the settlement provides by level and walls, with the garrison's
   strength; a tap opens the unit book). "Raise new army" opens a picker:
-  the best tier per line with price and upkeep, - / count / + per line (up
+  every tier the buildings unlock, one row per tier per line (best first, lower tiers a little dimmer) with price and upkeep, - / count / + per row (up
   to the free slots and the treasury), the total; "Raise army (N)" adds N
   `recruit` orders with `new: 1` in one Undo step. The army card of an army
   of ours standing at one of our cities (on or next to its cell) has a
   "Recruit at Roma" section at the end: "N of M recruits here this turn;
   they join this army at the end of the turn, and it cannot march this
-  turn", then the best tier per line (price, tier, upkeep, or why not;
+  turn", then every unlocked tier per line, best first (price, tier, upkeep, or why not;
   tap: the unit book page with a Recruit button; "+" recruits at once).
   Planned recruits show in the unit list greyed, "arriving", with an X, and
   the count reads "7 of 12 units (+1 arriving)"; the preview treasury has
@@ -1532,7 +1532,7 @@ and its armies disband.
   Tap an army: its panel, its destinations highlighted (red = attack); tap a
   destination to plan the move (arrow), again to cancel; right click works too.
   Tap a region: its panel. Tab cycles armies; Ctrl+Enter ends the turn.
-- **Region panel:** income, growth, armies, recruit list (best tier per line,
+- **Region panel:** income, growth, armies, recruit list (every unlocked tier per line, best first,
   price and upkeep; tap a unit for its unit book page with a Recruit button;
   "+" recruits at once; planned recruits with X), buildings (build / upgrade
   with cost and turns, or why not), garrison. Version 6: no recruit list

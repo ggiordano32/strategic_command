@@ -998,6 +998,7 @@ Where 2026-10-09 ended (build 20261009T124650Z live; everything up to
   and the preview Sonnet. After the settlement-movement item (same code).
 - **Open from playtests:** the co-op Ask-to-join flow unconfirmed; the
   general's upkeep decision (none) is in; the Leave button fix is in.
+  Recruit lists show every unlocked tier per line (done 2026-10-09): region panel, army card and the Raise-new-army picker (one row per tier).
 - **Region panel overflow fixed (2026-10-09, user's PC screenshot):** the
   side panel grew past the window edge on a besieged city on every
   display: `side_scroll` had horizontal scrolling DISABLED, which makes a
