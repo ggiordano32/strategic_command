@@ -160,6 +160,9 @@ const A_GUARD := 10    # infantry guarding the batteries
 const A_DETOUR := 11   # infantry going round a steep slope to a gentler approach
 const A_IDLE := 30     # line unit left idle by a mistake (M_IDLE) until IDLE_TICKS or attacked
 const A_RESV := 31     # Skilled: foot held in reserve behind the centre (SK_RESERVE)
+const A_WORKS := 32    # missile troops manning their camp's rampart (FW_CAMP)
+const Q_FIXED := 4             # (BattleSim field works states)
+const Q_STOWED := 5
 # (stat_ai[12] holds of high ground, [13] slots moved onto a rise,
 # [14] deployments shifted to higher ground)
 
@@ -234,6 +237,12 @@ static func _army_think(sim, side: int) -> void:
 	var plan := _plan(sim, side)
 	if plan.is_empty():
 		return
+	if phase == P_DEPLOY and is_camp(sim, side):
+		_camp_deploy(sim, side)
+		sim.ai_phase[side] = P_ADVANCE
+		sim.ai_t[side] = sim.tick
+		sim.ai_hold[side] = sim.tick
+		return
 	if phase == P_DEPLOY:
 		var dcx: int = plan["cx"]
 		var dcy: int = plan["cy"]
@@ -251,8 +260,9 @@ static func _army_think(sim, side: int) -> void:
 		sim.ai_phase[side] = P_ADVANCE
 		sim.ai_t[side] = sim.tick
 		return
+	var camp := is_camp(sim, side)
 	if phase == P_ENGAGE:
-		if sim.ai_hold[side] >= 0 and not _keep_holding(sim, side):
+		if sim.ai_hold[side] >= 0 and not (_camp_keep(sim, side) if camp else _keep_holding(sim, side)):
 			sim.ai_hold[side] = -2  # over for good
 		if kn[AP.SK_MEM] != 0:
 			_sk_army(sim, side, kn, plan)
@@ -289,6 +299,11 @@ static func _army_think(sim, side: int) -> void:
 			if kn[AP.SK_MEM] != 0:
 				_sk_army(sim, side, kn, plan)
 			return
+		if camp:
+			# Holding the camp: the line stays on and behind the rampart.
+			if sim.ai_hold[side] >= 0 and _camp_keep(sim, side):
+				return
+			sim.ai_hold[side] = -2
 		# Halt line: `halt` short of the enemy front, never backwards.
 		var fx: int = plan["fx"]
 		var fy: int = plan["fy"]
@@ -945,6 +960,9 @@ static func _unit_think(sim, u: int) -> void:
 	if mode == A_RESV:
 		_resv_think(sim, u, kn)
 		return
+	if mode == A_WORKS:
+		_works_missile(sim, u)
+		return
 	if kn[AP.GEN_THINK] != 0 and is_general(sim, u):
 		_general_think(sim, u, kn)
 	elif cls == UT.CLS_CAV:
@@ -1067,11 +1085,12 @@ static func _melee_think(sim, u: int) -> void:
 		var alt_pct := kn[AP.PIKE_ALT_PCT]
 		if alt >= 0 and _dist2(sim, u, alt) * 10000 <= _dist2(sim, u, best) * (alt_pct * alt_pct):
 			best = alt
-	if sim.ter_on != 0:
-		# Holding high ground: let the enemy come.
+	if sim.ter_on != 0 or (sim.fwh_on != 0 and is_camp(sim, side)):
+		# Holding high ground (or the camp): let the enemy come.
 		if sim.ai_hold[side] >= 0 and _bbox_gap(sim, u, best) > kn[AP.HOLD_REACT] \
 				and sim.u_fighting[u] == 0:
 			return
+	if sim.ter_on != 0:
 		if sim.u_ai_x[u] != best + 1 and sim.u_fighting[u] == 0 and _detour(sim, u, best):
 			return
 	var cr := kn[AP.CHARGE_RANGE]
@@ -3087,3 +3106,231 @@ static func _nearest_routing(sim, u: int, within: int) -> int:
 			best = o
 			best_d = d
 	return best
+
+
+# ------------------------------------------------------------ field works ---
+# (docs/AI.md 22) Stakes and caltrops: the side's unplaced pieces go before
+# its line at the start (FW_PLACE: Easy none, Average across the centre,
+# Skilled before its missile troops and on the flanks; a fortified side
+# before its camp's gaps). The fortified camp (FW_CAMP): missile troops man
+# the front rampart (A_WORKS: they stand and shoot), the foot stand just
+# inside the gaps and hold (ai_hold) until the enemy comes close or a third
+# of them fight (CAMP_HOLD at most); Easy ignores the works. All by the
+# pieces' per-kind fields (EQ_COVER: a rampart), never by kind names.
+
+## Side `side` holds a camp it means to defend: a standing piece of its own
+## with cover (a rampart) and the knob.
+static func is_camp(sim, side: int) -> bool:
+	if sim.fwh_on == 0 or AP.of(sim, side)[AP.FW_CAMP] == 0:
+		return false
+	for q in sim.n_eq:
+		if sim.q_side[q] == side and sim.q_state[q] == Q_FIXED and sim.EQ_COVER[sim.q_kind[q]] > 0:
+			return true
+	return false
+
+
+## The camp's front rampart sections of side (facing the enemy), by x.
+static func _camp_front(sim, side: int) -> Array:
+	var bottom := _bottom(sim, side)
+	var ff := 768 if bottom else 256
+	var out: Array = []
+	for q in sim.n_eq:
+		if sim.q_side[q] == side and sim.q_state[q] == Q_FIXED and sim.EQ_COVER[sim.q_kind[q]] > 0 \
+				and sim.q_face[q] == ff:
+			out.append(q)
+	out.sort_custom(func(a, b): return sim.q_x[a] < sim.q_x[b] or (sim.q_x[a] == sim.q_x[b] and a < b))
+	return out
+
+
+## Side `side` stands at the bottom of the field (faces up).
+static func _bottom(sim, side: int) -> bool:
+	var sy := 0
+	var n := 0
+	for u in sim.n_units:
+		if sim.u_side[u] == side:
+			sy += sim.u_ay[u] / M
+			n += 1
+	return n > 0 and sy / n > sim.field_h / M / 2
+
+
+## The gaps in the camp's front: [x, y] of each gap's middle (sim units).
+static func camp_gaps(sim, side: int) -> Array:
+	var fr := _camp_front(sim, side)
+	var out: Array = []
+	for k in range(1, fr.size()):
+		var a: int = fr[k - 1]
+		var b: int = fr[k]
+		var ea: int = sim.q_x[a] + sim.q_len[a] / 2
+		var sb: int = sim.q_x[b] - sim.q_len[b] / 2
+		if sb - ea > 2 * M:
+			out.append([(ea + sb) / 2, sim.q_y[a]])
+	return out
+
+
+static func _camp_deploy(sim, side: int) -> void:
+	var fr := _camp_front(sim, side)
+	if fr.is_empty():
+		return
+	var bottom := _bottom(sim, side)
+	var dir := -1 if bottom else 1     # outward (toward the enemy) along y
+	var face := 768 if bottom else 256
+	var fy: int = sim.q_y[fr[0]]
+	var lx: int = sim.q_x[fr[0]] - sim.q_len[fr[0]] / 2
+	var rx: int = sim.q_x[fr[fr.size() - 1]] + sim.q_len[fr[fr.size() - 1]] / 2
+	var gaps := camp_gaps(sim, side)
+	var mis: Array[int] = []
+	var foot: Array[int] = []
+	var rest: Array[int] = []
+	for u in sim.n_units:
+		if sim.u_side[u] != side or sim.u_state[u] != U_READY or sim.u_hand[u] >= 0:
+			continue
+		var c: int = sim.u_cls[u]
+		if c == UT.CLS_MISSILE and not is_wagon(sim, u) and UT.stat(sim.u_type[u], "fixed") == 0:
+			mis.append(u)
+		elif (c == UT.CLS_INF or c == UT.CLS_PIKE) and not is_wagon(sim, u):
+			foot.append(u)
+		else:
+			rest.append(u)
+	# Missile troops on the front rampart, two ranks, their front at its outer edge.
+	for j in mis.size():
+		var u := mis[j]
+		var x := lx + (rx - lx) * (2 * j + 1) / (2 * mis.size())
+		var y := fy + dir * 3 * M / 2
+		if sim.works_at(x, fy, sim.EQ_COVER, side) < 0:
+			x += 8 * M  # (not in a gap)
+		var files := maxi(sim.u_alive[u] / 2, 4)
+		_move(sim, u, x, y, face, files * UT.stat(sim.u_type[u], "file_sp"), 0, 7)
+		_set_mode(sim, u, A_WORKS)
+		_order(sim, u, {"type": ORDER_SKIRMISH, "on": 0}, 8)
+	# Foot just inside the gaps, the rest in a row behind the middle.
+	var cx := (lx + rx) / 2
+	for j in foot.size():
+		var u := foot[j]
+		var x := cx
+		var y := fy - dir * 14 * M
+		if j < gaps.size():
+			x = int(gaps[j][0])
+		else:
+			var k := j - gaps.size()
+			x = cx + (k - (foot.size() - gaps.size() - 1) / 2) * 40 * M
+			y = fy - dir * 40 * M
+		_move(sim, u, x, y, face, _width(sim, u), 0, 7)
+	for j in rest.size():
+		var u := rest[j]
+		var x := cx + (j - (rest.size() - 1) / 2) * 35 * M
+		_move(sim, u, x, fy - dir * 70 * M, face, _width(sim, u), 0, 7)
+
+
+## Hold the camp: within CAMP_HOLD and while under a third of the foot fights.
+static func _camp_keep(sim, side: int) -> bool:
+	var kn := AP.of(sim, side)
+	if sim.tick - sim.ai_hold[side] > kn[AP.CAMP_HOLD]:
+		return false
+	var foot := 0
+	var fighting := 0
+	for u in sim.n_units:
+		if sim.u_side[u] == side and sim.u_state[u] == U_READY and _is_foot(sim, u):
+			foot += 1
+			if sim.u_fighting[u] > 0:
+				fighting += 1
+	return fighting * kn[AP.HOLD_FIGHT_DIV] < foot
+
+
+## Missile troops on the rampart: stand and shoot (fire at will is theirs);
+## out of missiles, back to the line's rules.
+static func _works_missile(sim, u: int) -> void:
+	if sim.u_ammo[u] <= 0:
+		_set_mode(sim, u, A_LINE)
+
+
+## Put side's unplaced stakes and caltrops before its line (setup: after its
+## deployment), by FW_PLACE; a fortified side's before its camp's gaps
+## first. Applied at once (the AI's deployment), kept to its zone.
+static func place_works(sim, side: int) -> void:
+	var kn := AP.of(sim, side)
+	var mode := kn[AP.FW_PLACE]
+	if mode == 0:
+		return
+	var bottom := _bottom(sim, side)
+	var dir := -1 if bottom else 1
+	var face := 768 if bottom else 256
+	var front := -1
+	var minx := 1 << 40
+	var maxx := -(1 << 40)
+	var sx := 0
+	var n := 0
+	var mis: Array[int] = []
+	for u in sim.n_units:
+		if sim.u_side[u] != side or sim.u_state[u] != U_READY or is_wagon(sim, u) or sim.u_hand[u] >= 0:
+			continue
+		var y: int = sim.u_ay[u]
+		if front < 0 or (y < front if bottom else y > front):
+			front = y
+		if sim.u_cls[u] == UT.CLS_MISSILE:
+			mis.append(u)
+		if _is_foot(sim, u):
+			minx = mini(minx, sim.u_minx[u])
+			maxx = maxi(maxx, sim.u_maxx[u])
+			sx += sim.u_ax[u]
+			n += 1
+	if front < 0:
+		return
+	if n == 0:
+		minx = 0
+		maxx = sim.field_w
+		sx = sim.field_w / 2
+		n = 1
+	var cx := sx / n
+	var ahead := kn[AP.FW_AHEAD]
+	# Stakes spots, in order of preference.
+	var spots: Array = []
+	for g in camp_gaps(sim, side) if is_camp(sim, side) else []:
+		spots.append([int(g[0]), int(g[1]) + dir * (ahead + 6 * M)])
+	if mode >= 2:
+		for u in mis:
+			spots.append([sim.u_ax[u], sim.u_ay[u] + dir * ahead])
+		spots.append([minx, front + dir * ahead])
+		spots.append([maxx, front + dir * ahead])
+	var ns := 0
+	var nc := 0
+	for q in sim.n_eq:
+		if sim.q_side[q] == side and sim.q_state[q] == Q_STOWED:
+			if sim.EQ_STOP[sim.q_kind[q]] >= 100:
+				ns += 1
+			else:
+				nc += 1
+	var k_s := 0
+	var k_c := 0
+	for q in sim.n_eq:
+		if sim.q_side[q] != side or sim.q_state[q] != Q_STOWED:
+			continue
+		var x := cx
+		var y := front + dir * ahead
+		if sim.EQ_STOP[sim.q_kind[q]] >= 100:
+			# A line that stops a charge.
+			if k_s < spots.size():
+				x = int(spots[k_s][0])
+				y = int(spots[k_s][1])
+			else:
+				var j := k_s - spots.size()
+				var m := ns - spots.size()
+				x = cx + (2 * j - (m - 1)) * 12 * M
+			k_s += 1
+		else:
+			# A hidden field: before the centre (Skilled: beyond the flanks,
+			# where riders come round).
+			y = front + dir * (ahead + 12 * M)
+			if mode >= 2:
+				x = minx - 8 * M if k_c % 2 == 0 else maxx + 8 * M
+				y = front + dir * (ahead / 2)
+			else:
+				x = cx + (2 * k_c - (nc - 1)) * 12 * M
+			k_c += 1
+		var p: Vector3i = sim.deploy_clamp(sim, side, x, y)
+		if p.z == 0:
+			continue
+		sim.q_x[q] = p.x
+		sim.q_y[q] = p.y
+		sim.q_face[q] = face
+		sim.q_state[q] = Q_FIXED
+		_count(sim, side, AP.C_WORKS)

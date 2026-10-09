@@ -1078,13 +1078,29 @@ contact, sieges, sally / relief, support, stances, raiding, retreats),
   units start the battle at `FORCED_MORALE_PCT` 75 % morale: the scenario's
   `morale_pct`; a smaller deployment zone was not done); fortify (only for
   an army that has not moved this turn; cannot move; zone 3, support 6;
-  defending in the field it counts 125 % in the formula and the odds; the
-  real battle has no fortification yet: odds only); raiding (-30 % points;
+  defending in the field it counts 125 % in the formula and the odds,
+  unchanged; since 2026-10-09 the fought battle matches it: a defender
+  with any army fortified fights in its camp, scenario key "fortified",
+  a ditch and a wooden palisade on an earth bank with open gaps round its
+  deployment, see "Field works" below and DESIGN.md "Field works and the
+  fortified camp"); raiding (-30 % points;
   standing in an enemy region without a siege it takes `RAID_PCT` 50 % of
   the region's income: the owner's region income loses it, the raider's
   realm gains it, income "raid"). Version 5's automatic raiding is gone:
   an army in enemy land in the default stance takes nothing. Ambush is
   later.
+- **Field works** (2026-10-09; `CBattle.works_of`, no state change,
+  `VERSION` stays 6): each side of a field battle gets stakes lines and
+  caltrop fields to place in the deployment (the AI places its own) by
+  its lead faction's best Workshop level over its regions
+  (`CBattle.workshop_level`; `Scenarios.works_allowance`: Workshop 0 none,
+  1 two lines, 2 four lines and two fields), a fortified defender two
+  lines and a field more of its own (whatever its workshop). Scenario keys
+  "stakes" / "caltrops" ([sim side 0, side 1]) and "fortified" (the
+  defenders' sim side). Settlement battles get none. The pre-battle card
+  lists them and says when the defenders are fortified. Auto-resolve and
+  the formula are untouched (the formula's 125 % already stands for the
+  camp).
 - **Retreats** (`CRules._retreat6`): a beaten army falls back to the best
   cell within 5 of where it stands, at least 2 from the battle, outside
   every enemy zone, not a settlement cell, in land its side may enter:

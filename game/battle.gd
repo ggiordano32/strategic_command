@@ -14,6 +14,7 @@ const OrderPreview := preload("res://game/order_preview.gd")
 const TerrainLayer := preload("res://game/terrain_layer.gd")
 const TreeLayer := preload("res://game/tree_layer.gd")
 const CityLayer := preload("res://game/city_layer.gd")
+const WorksLayer := preload("res://game/works_layer.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const UT := preload("res://sim/unit_types.gd")
@@ -82,6 +83,11 @@ var sim: BattleSim
 var camera: Camera2D
 var terrain: TerrainLayer
 var city: CityLayer
+var works: WorksLayer
+## Deployment: the field works palette's armed mode ("" none, "stakes",
+## "caltrops", "rotate", "remove") and a stakes line being dragged.
+var works_mode := ""
+var _works_drag := false
 var trees: TreeLayer
 var soldiers: SoldierLayer
 var overlay: Overlay
@@ -205,6 +211,12 @@ func _ready() -> void:
 	add_child(city)
 	city.setup(sim, PX_PER_M)
 
+	# Field works (stakes, caltrops, a camp's ditch and palisade): under the men.
+	works = WorksLayer.new()
+	works.viewer_side = player_side
+	add_child(works)
+	works.setup(sim, PX_PER_M)
+
 	soldiers = SoldierLayer.new()
 	add_child(soldiers)
 	soldiers.setup(sim, PX_PER_M)
@@ -278,6 +290,7 @@ func _ready() -> void:
 		_select(-1))
 	hud.controls_pressed.connect(_open_controls)
 	hud.ready_pressed.connect(_deploy_ready)
+	hud.works_pressed.connect(_on_works_mode)
 	hud.controls.closed.connect(func(): _set_paused(_paused_before_controls))
 	if coop != null:
 		_coop_ready()
@@ -533,6 +546,7 @@ func _frame_stats(delta: float) -> void:
 func _view_tick() -> void:
 	trees.update_occupancy()
 	city.refresh()
+	works.refresh()
 
 
 func _do_tick() -> void:
@@ -762,7 +776,8 @@ func _queue(order: Dictionary) -> void:
 				overlay.flash("Another unit stands there", Vector2(int(order["x"]), int(order["y"])) / M * PX_PER_M)
 				return
 		elif typ != BattleSim.ORDER_RUN and typ != BattleSim.ORDER_FIRE and typ != BattleSim.ORDER_SKIRMISH \
-				and typ != BattleSim.ORDER_DEPLOY and typ != BattleSim.ORDER_PLACE and typ != BattleSim.ORDER_READY:
+				and typ != BattleSim.ORDER_DEPLOY and typ != BattleSim.ORDER_PLACE and typ != BattleSim.ORDER_READY \
+				and typ != BattleSim.ORDER_WORKS:
 			_count("order_in_deployment")
 			if selected >= 0:
 				overlay.flash("Deployment: place your units; orders wait for the battle",
@@ -779,6 +794,8 @@ func _queue(order: Dictionary) -> void:
 	else:
 		# Solo play: orders apply on the next tick.
 		order["tick"] = sim.tick
+		if int(order["type"]) == BattleSim.ORDER_WORKS:
+			order["side"] = player_side  # (live: the lockstep sets the issuer's side)
 		sim.queue_order(order)
 		orders.add(order)
 	overlay.queue_redraw()
@@ -808,6 +825,9 @@ func _deploy_ready() -> void:
 
 ## The deployment bar: countdown, who is ready, Start battle / Ready.
 func _refresh_deploy() -> void:
+	if works != null:
+		works.refresh()
+	_refresh_works_palette()
 	if sim.phase != BattleSim.PHASE_DEPLOY:
 		if hud.deploy_panel.visible:
 			hud.set_deploy("", "", false)
@@ -843,7 +863,7 @@ const ORDER_NAMES := {BattleSim.ORDER_MOVE: "move", BattleSim.ORDER_ATTACK: "att
 	BattleSim.ORDER_WITHDRAW_ALL: "withdraw_all", BattleSim.ORDER_DEPLOY: "deploy",
 	BattleSim.ORDER_REFILL: "refill", BattleSim.ORDER_GATE: "gate", BattleSim.ORDER_PLACE: "place",
 	BattleSim.ORDER_READY: "ready", BattleSim.ORDER_AMMO: "ammo", BattleSim.ORDER_FORAGE: "forage",
-	BattleSim.ORDER_KILL: "kill", BattleSim.ORDER_RELEASE: "release"}
+	BattleSim.ORDER_KILL: "kill", BattleSim.ORDER_RELEASE: "release", BattleSim.ORDER_WORKS: "works"}
 
 
 ## Select only unit u (-1: clear the selection).
@@ -1504,6 +1524,9 @@ func _tap(screen_pos: Vector2, double: bool) -> void:
 	if not interactive:
 		return
 	var w := _screen_to_world(screen_pos)
+	if works_mode != "" and sim.phase == BattleSim.PHASE_DEPLOY:
+		_works_tap(w)
+		return
 	# A tap in a gate's doorway is about the gate: it is tested before the
 	# units, so a marker floating over the gate (men on the wall above it)
 	# or a unit box cannot steal it. Outside the doorway units pick first and
@@ -2034,6 +2057,11 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 	var double := now - _last_tap_time < DOUBLE_TAP_SEC and e.position.distance_to(_last_tap_pos) < DOUBLE_TAP_DIST
 	if _dragging:
 		_dragging = false
+		if _works_drag:
+			_works_drag = false
+			overlay.works_drag = false
+			_works_line(overlay.preview_a, overlay.preview_b)
+			return
 		if _gm and _gm_mouse:
 			_gm_commit()
 			return
@@ -2074,7 +2102,13 @@ func _on_drag(e: InputEventScreenDrag) -> void:
 	if not _dragging and e.position.distance_to(_press_pos) > DRAG_THRESHOLD:
 		_dragging = true
 		_field_lp_start = -1.0
-		if is_mouse and _mouse_alt and interactive and not selection.is_empty():
+		if works_mode == "stakes" and sim.phase == BattleSim.PHASE_DEPLOY and interactive:
+			# Lay a stakes line along the drag.
+			_works_drag = true
+			overlay.works_drag = true
+			overlay.preview_a = _screen_to_world(_press_pos)
+			overlay.preview_b = overlay.preview_a
+		elif is_mouse and _mouse_alt and interactive and not selection.is_empty():
 			# Alt (or G) + drag: move the selection as it stands.
 			_gm_begin()
 			_gm_mouse = true
@@ -2091,7 +2125,10 @@ func _on_drag(e: InputEventScreenDrag) -> void:
 			overlay.preview_on = true
 	if not _dragging:
 		return
-	if _gm and _gm_mouse:
+	if _works_drag:
+		overlay.preview_b = _screen_to_world(e.position)
+		overlay.queue_redraw()
+	elif _gm and _gm_mouse:
 		_gm_move = (e.position - _gm_mouse_start) / camera.zoom.x
 		_gm_update()
 	elif _box:
@@ -2410,6 +2447,7 @@ func _rebind(s) -> void:
 	terrain.sim = s
 	city.sim = s
 	trees.sim = s
+	works.sim = s
 	hud._sim = s
 	soldiers.upload()
 	_view_tick()
@@ -2521,3 +2559,100 @@ func coop_exit_result() -> Dictionary:
 		out = {"res": res, "decided": false}
 	coop.leave()
 	return out
+
+
+# ----------------------------------------------------------- field works ---
+# Deployment: the palette arms a mode; a tap in our zone places a stakes
+# line / a caltrop field facing the enemy, a drag lays a stakes line along
+# it, a tap on a placed stakes line turns it an eighth (Rotate mode, or
+# again in Stakes mode), Remove takes a piece back. Orders go through
+# _queue (ORDER_WORKS, the lockstep in a live battle); the sim's
+# works_rule keeps them to the zone.
+
+func _on_works_mode(mode: String) -> void:
+	works_mode = "" if works_mode == mode else mode
+	_count("works_" + (mode if works_mode != "" else "off"))
+	if works_mode != "":
+		_select(-1)
+	_refresh_works_palette()
+
+
+func _refresh_works_palette() -> void:
+	if hud == null:
+		return
+	var on: bool = sim.phase == BattleSim.PHASE_DEPLOY and sim.fw_on != 0 and interactive
+	var ks := Vector2i.ZERO
+	var kc := Vector2i.ZERO
+	if on:
+		ks = sim.works_count(player_side, BattleSim.EQ_STAKES)
+		kc = sim.works_count(player_side, BattleSim.EQ_CALTROPS)
+		on = ks.x + ks.y + kc.x + kc.y > 0
+	if not on:
+		works_mode = ""
+	hud.set_works(on, ks, kc, works_mode)
+
+
+## Our placed stakes / caltrops piece at world point w (-1 none).
+func _own_work_at(w: Vector2) -> int:
+	var x := int(w.x / PX_PER_M * M)
+	var y := int(w.y / PX_PER_M * M)
+	for q in sim.n_eq:
+		var k: int = sim.q_kind[q]
+		if sim.q_side[q] == player_side and sim.q_state[q] == BattleSim.Q_FIXED and BattleSim.EQ_FW[k] != 0 \
+				and BattleSim.EQ_H[k] == 0 and sim.fw_inside(q, x, y):
+			return q
+	return -1
+
+
+func _enemy_face() -> int:
+	return 768 if player_side == 0 else 256
+
+
+func _works_tap(w: Vector2) -> void:
+	var q := _own_work_at(w)
+	var x := int(w.x / PX_PER_M * M)
+	var y := int(w.y / PX_PER_M * M)
+	if works_mode == "remove":
+		if q < 0:
+			overlay.flash("Tap a stakes line or caltrop field of yours to take it back", w)
+			return
+		_queue({"type": BattleSim.ORDER_WORKS, "equip": q, "on": 0})
+		_count("works_remove")
+	elif works_mode == "rotate" or (works_mode == "stakes" and q >= 0 and BattleSim.EQ_HIDE[sim.q_kind[q]] == 0):
+		if q < 0:
+			overlay.flash("Tap a stakes line of yours to turn it", w)
+			return
+		_queue({"type": BattleSim.ORDER_WORKS, "equip": q, "x": sim.q_x[q], "y": sim.q_y[q],
+			"facing": (sim.q_face[q] + 128) & 1023})
+		_count("works_rotate")
+	else:
+		var k := BattleSim.EQ_STAKES if works_mode == "stakes" else BattleSim.EQ_CALTROPS
+		if sim.works_count(player_side, k).x <= 0:
+			overlay.flash("None left to place: tap one to turn it or use Remove", w)
+			return
+		if BattleSim.deploy_clamp(sim, player_side, x, y).z == 0:
+			overlay.flash("Place field works in your zone", w)
+			return
+		_queue({"type": BattleSim.ORDER_WORKS, "kind": k, "x": x, "y": y, "facing": _enemy_face()})
+		_count("works_place")
+	_refresh_works_palette()
+
+
+## A drag from a to b (world px) in Stakes mode: a stakes line on the
+## drag's middle, along it, its front toward the enemy.
+func _works_line(a: Vector2, b: Vector2) -> void:
+	var d := b - a
+	if d.length() < MIN_LINE_M * PX_PER_M:
+		_works_tap(a)
+		return
+	var n := Vector2(-d.y, d.x)
+	if (n.y > 0.0) == (player_side == 0):
+		n = -n  # (the side toward the enemy)
+	var face := int(round(atan2(n.y, n.x) * 1024.0 / TAU)) & 1023
+	var c := (a + b) * 0.5 / PX_PER_M * M
+	if sim.works_count(player_side, BattleSim.EQ_STAKES).x <= 0:
+		overlay.flash("No stakes lines left to place", b)
+		return
+	_queue({"type": BattleSim.ORDER_WORKS, "kind": BattleSim.EQ_STAKES, "x": int(c.x), "y": int(c.y), "facing": face})
+	_count("works_line")
+	_refresh_works_palette()

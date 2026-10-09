@@ -36,6 +36,7 @@ signal controls_pressed
 signal gift_pressed
 signal cards_reordered
 signal ready_pressed
+signal works_pressed(mode: String)  # deployment: field works palette ("stakes", "caltrops", "rotate", "remove")
 
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const DragReorder := preload("res://game/drag_reorder.gd")
@@ -134,6 +135,9 @@ var _reorder: DragReorder
 var deploy_panel: PanelContainer
 var deploy_label: Label
 var ready_button: Button
+## Deployment: the field works palette (under the deployment bar) and its buttons by mode.
+var works_panel: PanelContainer
+var works_buttons := {}
 var _ui_controls: Array[Control] = []
 var _confirm_left := 0.0
 
@@ -450,6 +454,33 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	dh.add_child(ready_button)
 	_ui_controls.append(deploy_panel)
 
+	# Field works palette, under the deployment bar: a button per kind with
+	# the count left to place, then Rotate and Remove (toggles: the mode the
+	# next tap or drag on the field uses).
+	works_panel = PanelContainer.new()
+	works_panel.add_theme_stylebox_override("panel", _box(Color(0.10, 0.07, 0.03, 0.85)))
+	works_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	works_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	works_panel.position.y = 2 * BTN_H + 5 * MARGIN
+	works_panel.visible = false
+	root.add_child(works_panel)
+	var wh := HBoxContainer.new()
+	wh.add_theme_constant_override("separation", int(GAP))
+	works_panel.add_child(wh)
+	for m in [["stakes", "Stakes", "Stakes line: tap your zone to place one (drag to lay it along a line); tap a placed one to turn it"],
+			["caltrops", "Caltrops", "Caltrop field (hidden from the enemy until crossed): tap your zone to place one"],
+			["rotate", "Rotate", "Tap a placed stakes line to turn it an eighth"],
+			["remove", "Remove", "Tap a placed piece to take it back"]]:
+		var mode: String = m[0]
+		var b := _button(m[1], Vector2(0, BTN_H), mode)
+		b.toggle_mode = true
+		b.name = "works_" + mode
+		b.tooltip_text = m[2]
+		b.pressed.connect(func(): works_pressed.emit(mode))
+		wh.add_child(b)
+		works_buttons[mode] = b
+	_ui_controls.append(works_panel)
+
 	_build_speed_panel(root)
 
 	# Unit book, above everything else.
@@ -589,6 +620,24 @@ func set_deploy(text: String, btn: String, btn_on: bool) -> void:
 	ready_button.text = btn
 	ready_button.disabled = not btn_on
 	ready_button.visible = btn != ""
+
+
+## The field works palette: counts left to place per kind (Vector2i(left,
+## placed)), the armed mode ("" none); hidden when `on` is false.
+func set_works(on: bool, stakes: Vector2i, caltrops: Vector2i, mode: String) -> void:
+	if works_panel == null:
+		return
+	works_panel.visible = on
+	if not on:
+		return
+	(works_buttons["stakes"] as Button).text = "Stakes %d" % stakes.x
+	(works_buttons["stakes"] as Button).visible = stakes.x + stakes.y > 0
+	(works_buttons["caltrops"] as Button).text = "Caltrops %d" % caltrops.x
+	(works_buttons["caltrops"] as Button).visible = caltrops.x + caltrops.y > 0
+	(works_buttons["rotate"] as Button).visible = stakes.y > 0
+	(works_buttons["remove"] as Button).visible = stakes.y + caltrops.y > 0
+	for k in works_buttons:
+		(works_buttons[k] as Button).set_pressed_no_signal(k == mode)
 
 
 func add_ui_control(c: Control) -> void:

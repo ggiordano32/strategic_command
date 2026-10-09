@@ -136,6 +136,16 @@ var _ok := true
 
 
 func _init() -> void:
+	if "--only=stakes" in OS.get_cmdline_user_args():
+		_check_stakes()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
+	if "--only=fortified" in OS.get_cmdline_user_args():
+		_check_fortified()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=general" in OS.get_cmdline_user_args():
 		_check_general()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -196,6 +206,8 @@ func _init() -> void:
 	_check_elephants()
 	_check_general()
 	_check_dogs()
+	_check_stakes()
+	_check_fortified()
 	if "--only=equipment" in OS.get_cmdline_user_args():
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
@@ -3126,3 +3138,270 @@ func _check_deploy() -> void:
 			_fail("%s deployment: the countdown did not start the battle (%d steps)" % [kind, int(c["steps"])])
 		else:
 			print("PASS %s deployment: the countdown starts the battle after 600 steps" % kind)
+
+
+# ------------------------------------------------------------ field works ---
+# docs/DESIGN.md "Field works and the fortified camp".
+
+## Field works ("--only=stakes"), side 1's pieces placed by the scenario:
+## a cavalry charge (u0) into the stakes before a heavy line (u1) loses its
+## momentum and takes losses where the same charge without stakes lands;
+## heavy foot (u2) crossing a stakes line arrive later than the same foot
+## (u3) on open ground, unhurt, then go back and stand in the stakes and
+## hack them down; riders (u4) through a caltrop field lose men's hit points
+## and the field's stock and find it (q_seen), slower than riders (u5) on
+## open ground; a stakes line set alight (test shortcut: 60 hp left) burns
+## down. Identical on repeat and across snapshot / restore.
+func _stakes_sc(works: bool) -> Dictionary:
+	var units := [Scenarios.unit(0, UT.CAVALRY, 60, 100, 220, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.HEAVY, 100, 100, 100, Scenarios.FACE_DOWN),
+		Scenarios.unit(0, UT.HEAVY, 100, 220, 200, Scenarios.FACE_UP),
+		Scenarios.unit(0, UT.HEAVY, 100, 270, 200, Scenarios.FACE_UP),
+		Scenarios.unit(0, UT.CAVALRY, 40, 25, 220, Scenarios.FACE_UP),
+		Scenarios.unit(0, UT.CAVALRY, 40, 165, 220, Scenarios.FACE_UP)]
+	var orders := [Scenarios.attack(0, 0, 1, 1),
+		BattleSim.make_move_order(0, 2, 220 * M, 140 * M, Scenarios.FACE_UP, 28 * M, 0),
+		BattleSim.make_move_order(0, 3, 270 * M, 140 * M, Scenarios.FACE_UP, 28 * M, 0),
+		BattleSim.make_move_order(0, 4, 25 * M, 110 * M, Scenarios.FACE_UP, 18 * M, 0),
+		BattleSim.make_move_order(0, 5, 165 * M, 110 * M, Scenarios.FACE_UP, 18 * M, 0),
+		BattleSim.make_move_order(800, 2, 220 * M, 170 * M, Scenarios.FACE_UP, 28 * M, 0)]
+	var sc := {"width_m": 300, "height_m": 300, "ai_sides": [], "units": units, "orders": orders}
+	if works:
+		sc["field_works"] = [[BattleSim.EQ_STAKES, 1, 100, 106, Scenarios.FACE_DOWN, 34],
+			[BattleSim.EQ_STAKES, 1, 220, 170, Scenarios.FACE_DOWN, 34],
+			[BattleSim.EQ_CALTROPS, 1, 25, 160, Scenarios.FACE_DOWN, 0],
+			[BattleSim.EQ_STAKES, 1, 270, 40, Scenarios.FACE_DOWN, 20]]
+	return sc
+
+
+func _stakes_run(works: bool, snaps: Array) -> Dictionary:
+	var sc := _stakes_sc(works)
+	var sim := BattleSim.new()
+	sim.setup(sc, 4242)
+	var hashes := PackedInt64Array()
+	var ev := {"snaps": []}
+	var hp0 := UT.stat(UT.HEAVY, "hp")
+	var q_st := sim.n_eq - 4  # (no wagons: the scenario's pieces are the last)
+	for t in 1300:
+		if works and t == 5:
+			sim.q_burn[q_st + 3] = BattleSim.FIRE_TICKS  # test shortcut: set alight, 60 hp left
+			sim.q_hp[q_st + 3] = 60
+			sim.fire_on = 1
+		if t in snaps:
+			ev["snaps"].append([t, _snap_follow(sim, sc, 4242, 60)])
+		sim.step()
+		hashes.append(sim.state_hash())
+		if not ev.has("u0_in") and works:
+			var b := sim.u_slot_base[0]
+			for s in sim.u_alive[0]:
+				var i: int = sim.slot_soldier[b + s]
+				if sim.fw_inside(q_st, sim.pos_x[i], sim.pos_y[i]):
+					ev["u0_in"] = sim.tick
+					ev["mom_in"] = sim.u_mom[0]
+					break
+		# How far the units through the works lag behind those in the open.
+		if t < 800:
+			ev["lag2"] = maxi(int(ev.get("lag2", 0)), (sim.u_cy[2] - sim.u_cy[3]) / M)
+		# Riders inside the caltrop field (10 x 10 m round 25, 160) vs the
+		# same box on open ground in the path of the others (165, 160).
+		for u in [4, 5]:
+			var bx := 25 * M if u == 4 else 165 * M
+			var bu := sim.u_slot_base[u]
+			for s2 in sim.u_alive[u]:
+				var j: int = sim.slot_soldier[bu + s2]
+				if absi(sim.pos_x[j] - bx) <= 5 * M and absi(sim.pos_y[j] - 160 * M) <= 5 * M:
+					ev["in%d" % u] = int(ev.get("in%d" % u, 0)) + 1
+		for u in [2, 3, 4, 5]:
+			var key := "arr%d" % u
+			var line := 150 if u <= 3 else 125
+			if not ev.has(key) and sim.u_maxy[u] < line * M:
+				ev[key] = sim.tick  # (its last man past the line)
+		if t == 780:
+			var hs := 0
+			var b2 := sim.u_slot_base[2]
+			for s in sim.u_alive[2]:
+				hs += sim.hp[sim.slot_soldier[b2 + s]]
+			ev["u2_hp"] = hs
+			ev["u2_full"] = sim.u_alive[2] * hp0
+			ev["impacts"] = sim.stat_impacts
+			ev["u0_alive"] = sim.u_alive[0]
+		if works and not ev.has("hacked") and sim.q_state[q_st + 1] == BattleSim.Q_WRECKED:
+			ev["hacked"] = sim.tick
+		if works and not ev.has("burnt") and sim.q_state[q_st + 3] == BattleSim.Q_WRECKED:
+			ev["burnt"] = sim.tick
+	var hc := 0
+	var bc := sim.u_slot_base[4]
+	for s in sim.u_alive[4]:
+		hc += sim.hp[sim.slot_soldier[bc + s]]
+	ev["u4_hp"] = hc
+	ev["u4_full"] = 40 * UT.stat(UT.CAVALRY, "hp")
+	if works:
+		ev["cal_hp"] = sim.q_hp[q_st + 2]
+		ev["cal_seen"] = sim.q_seen[q_st + 2]
+		ev["fw"] = "cross %d stop %d dmg %d kills %d knock %d hack %d" % [sim.stat_fw_cross, sim.stat_fw_stop,
+			sim.stat_fw_dmg, sim.stat_fw_kills, sim.stat_fw_knock, sim.stat_fw_hack]
+	return {"hashes": hashes, "ev": ev}
+
+
+## Snapshot sim now, restore into a fresh copy and step both n ticks: the
+## first diverging tick (-1 none, -2 restore refused / hash differs).
+func _snap_follow(sim, sc: Dictionary, p_seed: int, n: int) -> int:
+	var blob: PackedByteArray = sim.snapshot()
+	var c := BattleSim.new()
+	c.setup(sc, p_seed)
+	var o := BattleSim.new()
+	o.setup(sc, p_seed)
+	if not c.restore(blob) or not o.restore(blob) or c.state_hash() != sim.state_hash():
+		return -2
+	for t in n:
+		c.step()
+		o.step()
+		if c.state_hash() != o.state_hash():
+			return t
+	return -1
+
+
+func _check_stakes() -> void:
+	var snaps := [100, 130, 160, 820]
+	var a := _stakes_run(true, snaps)
+	var b := _stakes_run(true, [])
+	var w := _stakes_run(false, [])
+	var ha: PackedInt64Array = a["hashes"]
+	var hb: PackedInt64Array = b["hashes"]
+	for t in ha.size():
+		if ha[t] != hb[t]:
+			_fail("stakes: the repeat diverged at tick %d" % t)
+			return
+	var ev: Dictionary = a["ev"]
+	var ew: Dictionary = w["ev"]
+	for sn in ev["snaps"]:
+		if int(sn[1]) != -1:
+			_fail("stakes: snapshot / restore at tick %d: %d" % [int(sn[0]), int(sn[1])])
+			return
+	for k in ["u0_in", "arr2", "arr3", "arr4", "arr5", "hacked", "burnt"]:
+		if not ev.has(k):
+			_fail("stakes: %s never happened %s" % [k, str(ev)])
+			return
+	var bad := ""
+	if int(ev["impacts"]) * 3 >= int(ew["impacts"]):
+		bad += "charge impacts %d with stakes vs %d without; " % [int(ev["impacts"]), int(ew["impacts"])]
+	if int(ev["mom_in"]) >= BattleSim.CHARGE_MIN and int(ev["impacts"]) > 0:
+		bad += "momentum %d in the stakes; " % int(ev["mom_in"])
+	if int(ev["lag2"]) < 2 or int(ev["u2_hp"]) != int(ev["u2_full"]) or int(ew["lag2"]) != 0:
+		bad += "foot through stakes lag %d m (without %d), hp %d / %d; " % [int(ev["lag2"]), int(ew["lag2"]), int(ev["u2_hp"]), int(ev["u2_full"])]
+	if int(ev["in4"]) <= int(ev["in5"]) or int(ev["u4_hp"]) >= int(ew["u4_hp"]) \
+			or int(ev["cal_hp"]) >= BattleSim.EQ_HP[BattleSim.EQ_CALTROPS] or (int(ev["cal_seen"]) & 1) == 0:
+		bad += "caltrops: rider-ticks in the field %d vs %d, at %d vs %d, hp %d vs %d, stock %d, seen %d; " % [int(ev["in4"]), int(ev["in5"]), int(ev["arr4"]), int(ev["arr5"]),
+			int(ev["u4_hp"]), int(ew["u4_hp"]), int(ev["cal_hp"]), int(ev["cal_seen"])]
+	if bad != "":
+		_fail("stakes: " + bad + str(ev))
+		return
+	print("PASS stakes: the charge met the stakes at tick %d (momentum %d there), %d impacts (without stakes %d), riders %d left at tick 780 (without %d); foot through stakes up to %d m behind the same foot in the open (all past the line at %d vs %d), unhurt; riders through caltrops %d rider-ticks in the field vs %d in the same box in the open (all past at %d vs %d), hit points %d vs %d of %d, stock %d of %d, found by side 0 (seen %d); stakes hacked down at %d, burnt down at %d; %s; identical on repeat and across snapshot / restore at ticks %s" % [
+		int(ev["u0_in"]), int(ev["mom_in"]), int(ev["impacts"]), int(ew["impacts"]), int(ev["u0_alive"]), int(ew["u0_alive"]),
+		int(ev["lag2"]), int(ev["arr2"]), int(ev["arr3"]), int(ev["in4"]), int(ev["in5"]), int(ev["arr4"]), int(ev["arr5"]),
+		int(ev["u4_hp"]), int(ew["u4_hp"]),
+		int(ev["u4_full"]), int(ev["cal_hp"]), BattleSim.EQ_HP[BattleSim.EQ_CALTROPS], int(ev["cal_seen"]),
+		int(ev["hacked"]), int(ev["burnt"]), str(ev["fw"]), str(snaps)])
+
+
+## The fortified camp ("--only=fortified"): side 1 (Average AI) stands
+## fortified ("fortified": 1): its ditch and palisade are built round its
+## units from the scenario key; its archers go up on the front rampart and
+## get the range bonus and the cover against side 0's archers; side 0's
+## heavy foot attack and climb slowly (stat_fw_climb), fighting from below
+## (height melee); side 0's elephants charge and stop at the ditch (no
+## impact; without the camp the same charge lands). Identical on repeat and
+## across snapshot / restore.
+func _fort_sc(fort: bool) -> Dictionary:
+	var eleph := UT.index_of("elephant")
+	var units := [Scenarios.unit(1, UT.HEAVY, 100, 200, 125, Scenarios.FACE_DOWN),
+		Scenarios.unit(1, UT.ARCHER, 80, 200, 140, Scenarios.FACE_DOWN),
+		Scenarios.unit(1, UT.HEAVY, 100, 150, 125, Scenarios.FACE_DOWN),
+		Scenarios.unit(0, UT.HEAVY, 100, 205, 300, Scenarios.FACE_UP),
+		Scenarios.unit(0, eleph, UT.size_of(eleph), 140, 300, Scenarios.FACE_UP),
+		Scenarios.unit(0, UT.ARCHER, 80, 270, 260, Scenarios.FACE_UP)]
+	var orders := [Scenarios.attack(250, 3, 0, 0), Scenarios.attack(250, 4, 2, 1),
+		Scenarios.attack(60, 5, 1, 0)]
+	var sc := {"width_m": 400, "height_m": 400, "ai_sides": [1], "units": units, "orders": orders}
+	if fort:
+		sc["fortified"] = 1
+	return sc
+
+
+func _fort_run(fort: bool, snaps: Array) -> Dictionary:
+	var sc := _fort_sc(fort)
+	var sim := BattleSim.new()
+	sim.setup(sc, 4242)
+	var ev := {"snaps": []}
+	var hashes := PackedInt64Array()
+	var nr := 0
+	var nd := 0
+	for q in sim.n_eq:
+		if sim.q_kind[q] == BattleSim.EQ_RAMPART and sim.q_state[q] == BattleSim.Q_FIXED:
+			nr += 1
+		elif sim.q_kind[q] == BattleSim.EQ_DITCH:
+			nd += 1
+	ev["rampart"] = nr
+	ev["ditch"] = nd
+	var base_rng := UT.stat(UT.ARCHER, "m_range")
+	for t in 1500:
+		if t in snaps:
+			ev["snaps"].append([t, _snap_follow(sim, sc, 4242, 60)])
+		sim.step()
+		hashes.append(sim.state_hash())
+		if not ev.has("on_rampart") and sim.works_at(sim.u_cx[1], sim.u_cy[1], BattleSim.EQ_COVER, 1) >= 0:
+			ev["on_rampart"] = sim.tick
+			ev["rng"] = sim.range_vs(1, 5)
+		if not ev.has("el_ditch"):
+			var b := sim.u_slot_base[4]
+			for s in sim.u_alive[4]:
+				var i: int = sim.slot_soldier[b + s]
+				if sim.works_at(sim.pos_x[i], sim.pos_y[i], BattleSim.EQ_STOP) >= 0:
+					ev["el_ditch"] = sim.tick
+					break
+		elif not ev.has("el_mom"):
+			ev["el_mom"] = sim.u_mom[4]
+	var imp := 0
+	var b4 := sim.u_slot_base[4]
+	for s in sim.u_count0[4]:
+		imp += sim.dbg_impacted[b4 + s] if b4 + s < sim.n else 0
+	ev["el_impacts"] = imp
+	ev["climb"] = sim.stat_fw_climb
+	ev["h_melee"] = sim.stat_h_melee
+	ev["cover"] = sim.stat_fw_cover
+	ev["charge_up"] = sim.stat_charge_up
+	ev["base_rng"] = base_rng
+	ev["alive"] = "%d/%d winner %d" % [sim.alive_count(0), sim.alive_count(1), sim.winner]
+	return {"hashes": hashes, "ev": ev}
+
+
+func _check_fortified() -> void:
+	var snaps := [200, 400, 700]
+	var a := _fort_run(true, snaps)
+	var b := _fort_run(true, [])
+	var w := _fort_run(false, [])
+	var ha: PackedInt64Array = a["hashes"]
+	var hb: PackedInt64Array = b["hashes"]
+	for t in ha.size():
+		if ha[t] != hb[t]:
+			_fail("fortified: the repeat diverged at tick %d" % t)
+			return
+	var ev: Dictionary = a["ev"]
+	var ew: Dictionary = w["ev"]
+	for sn in ev["snaps"]:
+		if int(sn[1]) != -1:
+			_fail("fortified: snapshot / restore at tick %d: %d" % [int(sn[0]), int(sn[1])])
+			return
+	for k in ["on_rampart", "el_ditch", "el_mom"]:
+		if not ev.has(k):
+			_fail("fortified: %s never happened %s" % [k, str(ev)])
+			return
+	if int(ev["rampart"]) < 4 or int(ev["ditch"]) < 4 or int(ew["rampart"]) != 0 or int(ev["climb"]) <= 0 \
+			or int(ev["h_melee"]) <= 0 or int(ev["rng"]) <= int(ev["base_rng"]) or int(ev["cover"]) <= 0 \
+			or int(ev["el_mom"]) >= BattleSim.CHARGE_MIN or int(ev["el_impacts"]) * 3 > int(ew["el_impacts"]):
+		_fail("fortified: %s / without the camp %s" % [str(ev), str(ew)])
+		return
+	print("PASS fortified: %d palisade sections and %d ditch runs built from the scenario key (none without); the AI's archers on the rampart at tick %d, range %d vs %d on the ground, %d missiles stopped by the palisade; attackers climbing %d man-ticks, %d melee rolls with height; the elephants at the ditch at tick %d, momentum %d after, %d impacts (without the camp %d); alive %s (without the camp %s); identical on repeat and across snapshot / restore at ticks %s" % [
+		int(ev["rampart"]), int(ev["ditch"]), int(ev["on_rampart"]), int(ev["rng"]), int(ev["base_rng"]), int(ev["cover"]),
+		int(ev["climb"]), int(ev["h_melee"]), int(ev["el_ditch"]), int(ev["el_mom"]), int(ev["el_impacts"]),
+		int(ew["el_impacts"]), str(ev["alive"]), str(ew["alive"]), str(snaps)])

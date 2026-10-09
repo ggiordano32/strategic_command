@@ -21,6 +21,26 @@ const EQ_LADDERS := 1   # BattleSim's siege equipment kinds (scenario "equip")
 const EQ_RAM := 2
 const EQ_TOWER := 4
 const TOWER_WALLS := 2  # siege towers only against walls of this level or more (BattleSim.EQ_WALLS)
+const EQ_STAKES := 5    # BattleSim's field works kinds (scenario "field_works")
+const EQ_CALTROPS := 6
+const EQ_DITCH := 7
+const EQ_RAMPART := 8
+## A fortified camp (scenario "fortified"; camp()): the rampart this far
+## beyond the box of the side's units (room on and behind it), gaps this
+## wide for sallies, ditch and rampart this deep (BattleSim.EQ_FW_DEPTH),
+## no back face nearer its map edge than CAMP_EDGE.
+const CAMP_PAD := 14
+const CAMP_GAP := 10
+const CAMP_DEPTH := 4
+const CAMP_EDGE := 12
+const CAMP_SECTION := 20  # palisade sections at most this long (one burnt down opens a gap)
+## Field works allowance (stakes lines, caltrop fields) by the army's best
+## Workshop level (campaign: its faction's; 0 none): a workshop's carpenters
+## and smiths, 2 lines at level 1, 4 lines and 2 fields at level 2 ...
+const WORKS_BY_WORKSHOP: Array = [[0, 0], [2, 0], [4, 2]]
+## ... plus a fortified army's own (cut on the spot, whatever its workshop):
+## two lines in front of its gaps and a caltrop field.
+const WORKS_FORTIFIED: Array[int] = [2, 1]
 
 const IDS: Array[String] = ["skirmish", "battle_2000", "battle_4000",
 	"bench_2000", "bench_4000", "bench_4000_hills",
@@ -368,6 +388,130 @@ static func _width_m(ty: int, count: int) -> int:
 	if UT.stat(ty, "files0") > 0:
 		files = maxi(UT.stat(ty, "files0") * count / maxi(UT.size_of(ty), 1), 4)
 	return files * UT.stat(ty, "file_sp") / 1024
+
+
+# ----------------------------------------------------- the fortified camp ---
+
+## Field works allowance [stakes lines, caltrop fields] of an army with
+## Workshop level `workshop` (0-2), fortified (true) or not.
+static func works_allowance(workshop: int, fortified: bool) -> Array[int]:
+	var w: Array = WORKS_BY_WORKSHOP[clampi(workshop, 0, WORKS_BY_WORKSHOP.size() - 1)]
+	var out: Array[int] = [int(w[0]), int(w[1])]
+	if fortified:
+		out[0] += WORKS_FORTIFIED[0]
+		out[1] += WORKS_FORTIFIED[1]
+	return out
+
+
+## The ditch and rampart of a fortified camp round side `side`'s units
+## (scenario "fortified": BattleSim builds it at setup; docs/DESIGN.md
+## "Field works and the fortified camp"): a rampart CAMP_PAD m beyond the
+## box of its units on the front and both flanks, and behind them when
+## there is room before its map edge; open sally gaps (no gates: two in the
+## front, one in the back if there is a back); the rampart (a wooden
+## palisade on an earth bank) in sections of at most CAMP_SECTION m, each
+## of which can burn down on its own; the ditch just outside it (round the
+## front corners). Returns [[kind (BattleSim EQ_*), side, x_m, y_m, facing,
+## len_m], ...] (the scenario's "field_works" form); integers only, the
+## units in order.
+static func camp(units: Array, w_m: int, h_m: int, side: int) -> Array:
+	var x0 := 1 << 30
+	var x1 := -(1 << 30)
+	var y0 := 1 << 30
+	var y1 := -(1 << 30)
+	var sy := 0
+	var cnt := 0
+	for ud in units:
+		if int(ud["side"]) != side:
+			continue
+		var ty := int(ud["type"])
+		var n := maxi(int(ud["count"]), 1)
+		var x := int(ud["x_m"])
+		var y := int(ud["y_m"])
+		var files := clampi(int(ud.get("files", 20)), 1, n)
+		var hw := files * UT.stat(ty, "file_sp") / 2048 + 1
+		var dep := (n + files - 1) / files * UT.stat(ty, "rank_sp") / 1024 + 1
+		var face := int(ud.get("facing", FACE_UP))
+		var ya := y
+		var yb := y + dep
+		if face == FACE_DOWN:
+			ya = y - dep
+			yb = y
+		elif face != FACE_UP:
+			hw = maxi(hw, dep)
+			ya = y - hw
+			yb = y + hw
+		x0 = mini(x0, x - hw)
+		x1 = maxi(x1, x + hw)
+		y0 = mini(y0, ya)
+		y1 = maxi(y1, yb)
+		sy += y
+		cnt += 1
+	var out: Array = []
+	if cnt == 0:
+		return out
+	var bottom := sy / cnt > h_m / 2
+	var lx := maxi(x0 - CAMP_PAD, CAMP_EDGE)
+	var rx := mini(x1 + CAMP_PAD, w_m - CAMP_EDGE)
+	var fy := maxi(y0 - CAMP_PAD, CAMP_EDGE) if bottom else mini(y1 + CAMP_PAD, h_m - CAMP_EDGE)
+	var by := y1 + CAMP_PAD if bottom else y0 - CAMP_PAD
+	var back := by <= h_m - CAMP_EDGE if bottom else by >= CAMP_EDGE
+	if not back:
+		by = h_m - CAMP_EDGE if bottom else CAMP_EDGE
+	var ff := FACE_UP if bottom else FACE_DOWN
+	var fb := FACE_DOWN if bottom else FACE_UP
+	var dn := -1 if bottom else 1  # the front's outward direction along y
+	# Front (the ditch round the corners), flanks, back.
+	_camp_face(out, side, lx, fy, rx, fy, ff, 0, dn, 2, CAMP_DEPTH)
+	_camp_face(out, side, lx, fy, lx, by, FACE_LEFT, -1, 0, 0, 0)
+	_camp_face(out, side, rx, fy, rx, by, FACE_RIGHT, 1, 0, 0, 0)
+	if back:
+		_camp_face(out, side, lx, by, rx, by, fb, 0, -dn, 1, CAMP_DEPTH)
+	return out
+
+
+## One face of a camp from (ax, ay) to (bx, by) (m, axis-aligned), facing
+## `face` (outward unit (nx, ny)), with `gaps` sally gaps evenly spaced: the
+## rampart's runs between them and the ditch's CAMP_DEPTH m further out
+## (its outer runs `ext` m longer at the ends).
+static func _camp_face(out: Array, side: int, ax: int, ay: int, bx: int, by: int, face: int,
+		nx: int, ny: int, gaps: int, ext: int) -> void:
+	var horiz := ay == by
+	var a := ax if horiz else ay
+	var b := bx if horiz else by
+	if b < a:
+		var t := a
+		a = b
+		b = t
+	var cuts: Array = [a]
+	for k in gaps:
+		var g := a + (b - a) * (k + 1) / (gaps + 1)
+		cuts.append(g - CAMP_GAP / 2)
+		cuts.append(g + CAMP_GAP / 2)
+	cuts.append(b)
+	var line := ay if horiz else ax
+	for k in range(0, cuts.size(), 2):
+		var r0: int = cuts[k]
+		var r1: int = cuts[k + 1]
+		if r1 - r0 < CAMP_DEPTH:
+			continue
+		var d0 := r0 - (ext if k == 0 else 0)
+		var d1 := r1 + (ext if k + 2 >= cuts.size() else 0)
+		var dmid := (d0 + d1) / 2
+		# The palisade in sections (each burns on its own), then the ditch.
+		var ns := (r1 - r0 + CAMP_SECTION - 1) / CAMP_SECTION
+		for j in ns:
+			var s0 := r0 + (r1 - r0) * j / ns
+			var s1 := r0 + (r1 - r0) * (j + 1) / ns
+			var sm := (s0 + s1) / 2
+			if horiz:
+				out.append([EQ_RAMPART, side, sm, line, face, s1 - s0])
+			else:
+				out.append([EQ_RAMPART, side, line, sm, face, s1 - s0])
+		if horiz:
+			out.append([EQ_DITCH, side, dmid, line + ny * CAMP_DEPTH, face, d1 - d0])
+		else:
+			out.append([EQ_DITCH, side, line + nx * CAMP_DEPTH, dmid, face, d1 - d0])
 
 
 # ------------------------------------------------------------ settlements ---

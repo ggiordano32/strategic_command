@@ -54,6 +54,10 @@ func _init() -> void:
 	storm["map"]["towers"] = 2
 	storm["time"] = 1800
 	setups["settlement, players storm with ladders, a ram and two siege towers, 30 min"] = storm
+	var works := CS.default_setup(9)
+	works["map"]["works"] = 2
+	works["map"]["fortified"] = 1
+	setups["field works, side 2 fortified"] = works
 	var coop := CS.default_setup(7)
 	coop["sides"][0]["armies"].append({"ctrl": "p2", "units": [["heavy2", 100], ["cav3", 60]]})
 	setups["co-op"] = coop
@@ -125,6 +129,7 @@ func _init() -> void:
 			_fail("storm: %d siege towers on the ground at the start (walls 1: %d)" % [tq, low_t])
 		else:
 			print("PASS storm with siege towers: 2 on the ground at the start (%d hit points each), none at walls 1" % BattleSim.EQ_HP[BattleSim.EQ_TOWER])
+	_check_works()
 	_check_ammo(ammo, "field")
 	_check_ammo(ammo_town, "settlement")
 	_check_light_missile()
@@ -391,3 +396,44 @@ func _run(name: String, b: Dictionary) -> void:
 		_fail("%s: the battle hardly ran (tick %d)" % [name, sim.tick])
 	print("PASS %s: %d units, %d soldiers, players %s, AI sides %s, deploy %s, %d ticks in %d ms" % [name, sim.n_units,
 		sim.n, str(players), str(sc["ai_sides"]), str(deploy), sim.tick, Time.get_ticks_msec() - t0])
+
+
+## Field works options (DESIGN.md "Field works and the fortified camp"):
+## "works" 2 gives each side 4 stakes lines and 2 caltrop fields (as a
+## Workshop 2), "fortified" 1 a camp round side 1 and its own 2 lines and a
+## field on top; the sim builds them (stowed, the camp standing); none on a
+## settlement map or without the options.
+func _check_works() -> void:
+	var st := CS.default_setup(9)
+	st["map"]["works"] = 2
+	st["map"]["fortified"] = 1
+	var b := CS.build(st)
+	var sc: Dictionary = b["scenario"]
+	var sim := BattleSim.new()
+	sim.setup(sc, int(b["seed"]))
+	var cnt := {}
+	for q in sim.n_eq:
+		var key := "%d/%d/%d" % [sim.q_side[q], sim.q_kind[q], sim.q_state[q]]
+		cnt[key] = int(cnt.get(key, 0)) + 1
+	var plain := CS.build(CS.default_setup(9))
+	var town := CS.default_setup(9)
+	town["map"]["kind"] = "settlement"
+	town["map"]["works"] = 2
+	town["map"]["fortified"] = 1
+	var tb := CS.build(town)
+	var s0 := "0/%d/%d" % [BattleSim.EQ_STAKES, BattleSim.Q_STOWED]
+	var c0 := "0/%d/%d" % [BattleSim.EQ_CALTROPS, BattleSim.Q_STOWED]
+	var s1 := "1/%d/%d" % [BattleSim.EQ_STAKES, BattleSim.Q_FIXED]  # (the AI side places its own at the start)
+	var c1 := "1/%d/%d" % [BattleSim.EQ_CALTROPS, BattleSim.Q_FIXED]
+	var r1 := "1/%d/%d" % [BattleSim.EQ_RAMPART, BattleSim.Q_FIXED]
+	var d1 := "1/%d/%d" % [BattleSim.EQ_DITCH, BattleSim.Q_FIXED]
+	if str(sc.get("stakes", [])) != str([4, 6]) or str(sc.get("caltrops", [])) != str([2, 3]) \
+			or int(sc.get("fortified", -1)) != 1 or int(cnt.get(s0, 0)) != 4 or int(cnt.get(c0, 0)) != 2 \
+			or int(cnt.get(s1, 0)) != 6 or int(cnt.get(c1, 0)) != 3 or int(cnt.get(r1, 0)) < 4 or int(cnt.get(d1, 0)) < 4 \
+			or (plain["scenario"] as Dictionary).has("stakes") or (plain["scenario"] as Dictionary).has("fortified") \
+			or (tb["scenario"] as Dictionary).has("fortified") or (tb["scenario"] as Dictionary).has("stakes"):
+		_fail("field works: scenario stakes %s caltrops %s fortified %s, pieces %s" % [str(sc.get("stakes")),
+			str(sc.get("caltrops")), str(sc.get("fortified")), str(cnt)])
+		return
+	print("PASS field works: options give side 1 (fortified) 6 stakes lines and 3 caltrop fields, side 0 (the player) 4 and 2 to place, the AI's placed; the camp's %d palisade sections and %d ditch runs stand; none without the options or on a settlement map" % [
+		int(cnt.get(r1, 0)), int(cnt.get(d1, 0))])

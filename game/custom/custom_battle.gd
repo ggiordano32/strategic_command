@@ -172,6 +172,22 @@ func _map_row() -> Control:
 		row.add_child(_opt("Terrain: " + Terrain.KIND_NAMES[int(mp["terrain"])], func():
 			mp["terrain"] = CS.FIELD_KINDS[(CS.FIELD_KINDS.find(int(mp["terrain"])) + 1) % CS.FIELD_KINDS.size()]
 			_changed(), ed))
+		# Field works: both sides' stakes / caltrops (as a Workshop of that
+		# level), and a side standing in a fortified camp.
+		var wl := int(mp.get("works", 0))
+		var wb := _opt("Field works: " + ["none", "2 stakes", "4 stakes, 2 caltrops"][clampi(wl, 0, 2)], func():
+			mp["works"] = (int(mp.get("works", 0)) + 1) % 3
+			_changed(), ed)
+		wb.name = "custom_works"
+		wb.tooltip_text = "Stakes lines and caltrop fields each side places in the deployment (as a Workshop of level 1 / 2)"
+		row.add_child(wb)
+		var fo := int(mp.get("fortified", -1))
+		var fb := _opt("Fortified: " + ("none" if fo < 0 else SIDE_NAMES[fo].get_slice(" (", 0)), func():
+			mp["fortified"] = [0, 1, -1][int(mp.get("fortified", -1)) + 1]
+			_changed(), ed)
+		fb.name = "custom_fortified"
+		fb.tooltip_text = "That side stands in a fortified camp: a ditch and a wooden palisade with gaps, and 2 more stakes lines and a caltrop field"
+		row.add_child(fb)
 	else:
 		row.add_child(_opt("Plan: " + MapGen.PLAN_NAMES[int(mp["plan"])], func():
 			mp["plan"] = (int(mp["plan"]) + 1) % (MapGen.PLAN_RING + 1)

@@ -53,6 +53,7 @@ const CState := preload("res://campaign/cstate.gd")
 const CRules := preload("res://campaign/crules.gd")
 const CTurn := preload("res://campaign/cturn.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
+const Scenarios := preload("res://sim/scenarios.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Saves := preload("res://game/campaign/saves.gd")
@@ -1881,6 +1882,47 @@ func _grid_stances() -> void:
 	_check(CRules._can_move6(st2, f2, row[3]) == "fortified" and CRules.zone_r(st2, f2) == CData.ZOC + 1, "a fortified army cannot move; its zone is one wider")
 	var o1 := CBattle.odds(st2, [e2], [f2], int(f2["r"]), false, -1)
 	_check(int(o1["win"]) < int(o0["win"]), "attacking a fortified army is harder (%d%% vs %d%%)" % [int(o1["win"]), int(o0["win"])])
+	# The battle map matches it: a fortified defender's field battle carries
+	# "fortified" (its camp) and its own field works on top of its
+	# Workshop's (Scenarios.works_allowance); the attacker only its Workshop's.
+	var fst := CState.copy(st2)
+	var ff := CState.army(fst, int(f2["id"]))
+	CRules.execute_moves6(fst, [[int(e2["id"]), CState.cell(ff), ep, 0, 0, int(ff["id"])]])
+	var fb: Dictionary = fst["battles"][0] if not (fst["battles"] as Array).is_empty() else {}
+	if fb.is_empty():
+		_check(false, "a battle against the fortified army")
+	else:
+		var fbu := CBattle.build(fst, fb, rome)
+		var fsc: Dictionary = fbu["scenario"]
+		var dside: int = fbu["sim_side"][1]
+		var wl := CBattle.workshop_level(fst, rome)
+		var want := Scenarios.works_allowance(wl, true)
+		var want_a := Scenarios.works_allowance(CBattle.workshop_level(fst, ep), false)
+		_check(int(fsc.get("fortified", -1)) == dside and int(fsc["stakes"][dside]) == want[0]
+			and int(fsc["caltrops"][dside]) == want[1] and int(fsc["stakes"][1 - dside]) == want_a[0],
+			"a fortified defender's battle is fought in its camp (side %s) with %s stakes lines / %s caltrop fields (Workshop %d + the fortified army's own)" % [
+				str(fsc.get("fortified")), str(fsc.get("stakes")), str(fsc.get("caltrops")), wl])
+		ff["stance"] = CData.ST_DEFAULT
+		var fsc0: Dictionary = CBattle.build(fst, fb, rome)["scenario"]
+		_check(not fsc0.has("fortified"), "the same battle without the stance has no camp")
+		# Workshop 2 in one of the defender's regions: 4 lines and 2 fields more.
+		var rr := CState.regions_of(fst, rome)
+		if not rr.is_empty():
+			var slots: Array = fst["regions"][rr[0]]["slots"]
+			var had := false
+			for sl in slots:
+				if int(sl[0]) == CData.WORKSHOP:
+					sl[1] = 2
+					had = true
+			if not had:
+				slots.append([CData.WORKSHOP, 2])
+			ff["stance"] = CData.ST_FORTIFY
+			var fsc2: Dictionary = CBattle.build(fst, fb, rome)["scenario"]
+			_check(CBattle.workshop_level(fst, rome) == 2 and int(fsc2["stakes"][dside]) == 6 and int(fsc2["caltrops"][dside]) == 3,
+				"Workshop 2 and fortified: 6 stakes lines and 3 caltrop fields (%s, %s)" % [str(fsc2.get("stakes")), str(fsc2.get("caltrops"))])
+	_check(str(Scenarios.works_allowance(0, false)) == str([0, 0]) and str(Scenarios.works_allowance(1, false)) == str([2, 0])
+		and str(Scenarios.works_allowance(2, false)) == str([4, 2]) and str(Scenarios.works_allowance(0, true)) == str([2, 1]),
+		"field works allowance by Workshop level 0 / 1 / 2: none, 2 lines, 4 lines and 2 fields; fortified +2 lines +1 field")
 	f2["moved"] = 1
 	f2["stance"] = CData.ST_DEFAULT
 	_check(CRules.apply_order(st2, rome, {"t": "stance", "a": int(f2["id"]), "s": CData.ST_FORTIFY}) != "", "an army that moved this turn cannot fortify")

@@ -7,6 +7,7 @@ const BattleSim := preload("res://sim/battle_sim.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Icons := preload("res://game/unit_icons.gd")
 const UIIcons := preload("res://game/ui_icons.gd")
+const WorksLayer := preload("res://game/works_layer.gd")
 ## Marker radius in screen pixels (never below MARKER_MIN_R world pixels).
 const MARKER_SCREEN_R := 11.0
 const MARKER_MIN_R := 5.5
@@ -27,6 +28,8 @@ var preview_a := Vector2.ZERO
 var preview_b := Vector2.ZERO
 var preview_ok := false  # long enough to be a formation line
 var preview_clamped := false  # pulled out to the selection's single-rank length (the line stops there)
+## Deployment: a stakes line being dragged (preview_a -> preview_b).
+var works_drag := false
 ## Mouse over the field (world px; x < 0: none): the wall stretch under it
 ## is highlighted while a unit that can man the walls is selected.
 var hover_w := Vector2(-1, -1)
@@ -142,6 +145,8 @@ func _draw() -> void:
 		_draw_wall_hover(hover_w, lw)
 	if preview_on:
 		_draw_preview(lw)
+	if sim.phase == BattleSim.PHASE_DEPLOY and sim.fw_on != 0:
+		_draw_works_pending(lw)
 	for g in ghosts:
 		var u: int = g["unit"]
 		_draw_footprint(u, g["front"], g["face"], g["files"], sim.u_alive[u],
@@ -1023,6 +1028,8 @@ func _draw_siege_gear(lw: float) -> void:
 	var wood := Color(0.55, 0.38, 0.2, 1.0)
 	var dark := Color(0.2, 0.12, 0.05, 0.95)
 	for q in sim.n_eq:
+		if BattleSim.EQ_FW[sim.q_kind[q]] != 0:
+			continue  # (field works: the works layer)
 		var st: int = sim.q_state[q]
 		var c := to_px(sim.q_x[q], sim.q_y[q])
 		var ang := 0.0
@@ -1076,3 +1083,38 @@ func _draw_siege_gear(lw: float) -> void:
 		for r in 6:
 			var rq := c + fwd * (-2.6 + r * 1.04)
 			draw_line(rq - side * 0.9, rq + side * 0.9, wood, lw * 0.7)
+
+
+## Deployment: field works placements not applied yet, and a stakes line
+## being dragged, as ghosts where the sim's placement rule (works_rule)
+## will put them.
+func _draw_works_pending(lw: float) -> void:
+	if orders != null:
+		for o in orders.pending_works():
+			var od: Dictionary = (o as Dictionary).duplicate()
+			if not od.has("side"):
+				od["side"] = player_side
+			var r: Vector4i = BattleSim.works_rule(sim, od)
+			if r.x < 0:
+				continue
+			if int(od.get("on", 1)) == 0:
+				var c0 := to_px(sim.q_x[r.x], sim.q_y[r.x])
+				draw_line(c0 + Vector2(-1, -1) * px_per_m * 2.0, c0 + Vector2(1, 1) * px_per_m * 2.0, COL_BLOCKED, lw * 2.0)
+				draw_line(c0 + Vector2(-1, 1) * px_per_m * 2.0, c0 + Vector2(1, -1) * px_per_m * 2.0, COL_BLOCKED, lw * 2.0)
+				continue
+			WorksLayer.draw_piece(self, sim, r.x, px_per_m, lw, true, to_px(r.y, r.z), r.w)
+	if works_drag:
+		var d := preview_b - preview_a
+		_dash_outlined(preview_a, preview_b, Color(1.0, 0.85, 0.45, 0.9), lw, px_per_m * 1.5)
+		if d.length() > 1.0:
+			var n := Vector2(-d.y, d.x).normalized()
+			if (n.y > 0.0) == (player_side == 0):
+				n = -n
+			var mid := (preview_a + preview_b) * 0.5
+			var hl := float(BattleSim.EQ_FW_LEN[BattleSim.EQ_STAKES]) / M * px_per_m / 2.0
+			var t := d.normalized()
+			draw_line(mid - t * hl, mid + t * hl, Color(0.62, 0.45, 0.24, 0.9), lw * 2.0)
+			draw_line(mid, mid + n * px_per_m * 3.0, Color(1.0, 0.85, 0.45, 0.9), lw)
+			var fs := _font_size(13.0)
+			draw_string(ThemeDB.fallback_font, mid + n * px_per_m * 3.5, "STAKES FACE THIS WAY",
+				HORIZONTAL_ALIGNMENT_CENTER, -1, fs, Color(1.0, 0.9, 0.6))

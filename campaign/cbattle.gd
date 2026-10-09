@@ -183,11 +183,60 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct: i
 	var prof := _ai_profiles(st, b, sim_side, ai)
 	var scn := {"width_m": width, "height_m": height, "ai_sides": ai, "ai_skill": prof[0],
 		"ai_style": prof[1], "units": units, "terrain": terrain}
+	_field_works(st, b, arm, scn, sim_side)
 	_deployment(st, scn, human_f)
 	_time_limit(st, scn)
 	return {"scenario": scn,
 		"seed": battle_seed(st, r, 2), "map": map, "sim_side": sim_side, "garrison": gar,
 		"unit_faction": ufac, "controller": controller, "battle": int(b["id"]), "region": r}
+
+
+## Field works of a field battle (docs/CAMPAIGN.md "Field works"): each
+## side's stakes lines and caltrop fields by its lead faction's best
+## Workshop (Scenarios.works_allowance), and a defender standing fortified
+## (any of its armies in the fortify stance) gets its camp ("fortified":
+## the ditch and palisade on the battle map, matching the formula's
+## FORTIFY_DEF_PCT) and the fortified army's own works on top.
+static func _field_works(st: Dictionary, b: Dictionary, arm: Array, scn: Dictionary, sim_side: Array) -> void:
+	var wk := works_of(st, b, arm)
+	var stakes := [0, 0]
+	var caltrops := [0, 0]
+	for cs in 2:
+		stakes[int(sim_side[cs])] = int(wk["w"][cs][0])
+		caltrops[int(sim_side[cs])] = int(wk["w"][cs][1])
+	if stakes[0] + stakes[1] > 0:
+		scn["stakes"] = stakes
+	if caltrops[0] + caltrops[1] > 0:
+		scn["caltrops"] = caltrops
+	if bool(wk["fort"]):
+		scn["fortified"] = int(sim_side[1])
+
+
+## Field works of field battle b per campaign side (0 attackers, 1
+## defenders): {"fort": the defenders stand fortified, "w": [[stakes lines,
+## caltrop fields] x 2]}; arm: CRules.battle_armies (computed if empty).
+static func works_of(st: Dictionary, b: Dictionary, arm: Array = []) -> Dictionary:
+	if arm.is_empty():
+		arm = CRules.battle_armies(st, b)
+	var fort := false
+	for a in arm[1]:
+		if CState.stance(a) == CData.ST_FORTIFY:
+			fort = true
+	var w: Array = []
+	for cs in 2:
+		var f := int(b["att_f"]) if cs == 0 else int(b["def_f"])
+		w.append(Scenarios.works_allowance(workshop_level(st, f), fort and cs == 1))
+	return {"fort": fort, "w": w}
+
+
+## Faction f's best Workshop level over its regions (0 none; -1 f: none).
+static func workshop_level(st: Dictionary, f: int) -> int:
+	if f < 0:
+		return 0
+	var best := 0
+	for r in CState.regions_of(st, f):
+		best = maxi(best, CState.building(st, r, CData.WORKSHOP))
+	return best
 
 
 ## A battle fought by players (human_f >= 0) gets the campaign's deployment

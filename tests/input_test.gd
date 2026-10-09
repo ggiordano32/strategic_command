@@ -278,6 +278,30 @@ func _initialize() -> void:
 		_step_dog_tap_enemy,
 		_step_dog_check_order,
 		_step_dog_check_out,
+		# Field works in the deployment: the palette, a stakes line dragged,
+		# turned by a second tap, taken back, a caltrop field, ready.
+		_step_fw_start,
+		_step_fw_check_palette,
+		_step_fw_arm_stakes,
+		_step_fw_drag_begin,
+		_step_fw_drag_move,
+		_step_fw_drag_end,
+		_step_fw_settle,
+		_step_fw_check_line,
+		_step_fw_tap_turn,
+		_step_fw_settle,
+		_step_fw_check_turn,
+		_step_fw_arm_remove,
+		_step_fw_tap_remove,
+		_step_fw_settle,
+		_step_fw_check_remove,
+		_step_fw_arm_caltrops,
+		_step_fw_tap_caltrops,
+		_step_fw_settle,
+		_step_fw_check_caltrops,
+		_step_fw_ready,
+		_step_fw_settle,
+		_step_fw_check_ready,
 		_step_done,
 	]
 
@@ -2384,6 +2408,145 @@ func _step_dog_check_out() -> void:
 		"the pack is out after the step: 32 dogs at the archers (state %d)" % sim.u_state[pk])
 	_check((battle.hud._cards[pk] as Button).visible, "the pack's card shows once it is loose")
 	_check(not battle.hud.release_button.visible, "Release hides while the pack is out")
+
+
+# ---------------------------------------------------------- field works ---
+
+func _fw_screen(x_m: float, y_m: float) -> Vector2:
+	return _world_to_screen(Vector2(x_m, y_m) * Battle.PX_PER_M)
+
+
+func _fw_piece(k: int) -> int:
+	var sim := battle.sim
+	for q in sim.n_eq:
+		if sim.q_kind[q] == k and sim.q_side[q] == 0 and sim.q_state[q] == BattleSim.Q_FIXED:
+			return q
+	return -1
+
+
+## Wait (up to ~3 s) until the sim has applied the view's orders (the
+## deployment steps a tick at a time at the battle's pace).
+var _fw_tries := 0
+
+
+func _step_fw_settle() -> void:
+	var busy := false
+	for o in battle.sim.pending_orders:
+		if int(o["player"]) < 50:
+			busy = true
+	if busy and _fw_tries < 300:
+		_fw_tries += 1
+		steps.push_front(_step_fw_settle)
+		return
+	_fw_tries = 0
+	battle.works.refresh()
+	battle._refresh_works_palette()
+
+
+func _step_fw_start() -> void:
+	if is_instance_valid(battle):
+		battle.queue_free()
+	battle = Battle.new()
+	battle.custom_scenario = {"width_m": 300, "height_m": 300, "ai_sides": [1], "orders": [], "units": [
+		Scenarios.unit(0, UT.HEAVY, 100, 150, 230, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.HEAVY, 100, 150, 60, Scenarios.FACE_DOWN)],
+		"terrain": {"kind": 0}, "deploy_time": 120, "stakes": [2, 0], "caltrops": [1, 0]}
+	battle.seed_value = 7
+	root.add_child(battle)
+
+
+func _step_fw_check_palette() -> void:
+	_focus(150 * 1024, 200 * 1024)
+	var h = battle.hud
+	_check(battle.sim.phase == BattleSim.PHASE_DEPLOY and h.works_panel.visible
+		and (h.works_buttons["stakes"] as Button).text == "Stakes 2" and (h.works_buttons["caltrops"] as Button).text == "Caltrops 1",
+		"field works palette in the deployment (%s, %s)" % [(h.works_buttons["stakes"] as Button).text,
+		(h.works_buttons["caltrops"] as Button).text])
+
+
+func _step_fw_arm_stakes() -> void:
+	_tap_control(battle.hud.works_buttons["stakes"])
+
+
+func _step_fw_drag_begin() -> void:
+	_check(battle.works_mode == "stakes", "Stakes armed (%s)" % battle.works_mode)
+	_no_double_tap()
+	_touch(0, _fw_screen(135, 195), true)
+
+
+func _step_fw_drag_move() -> void:
+	for k in 5:
+		_drag(0, _fw_screen(135 + 6 * (k + 1), 195), Vector2(6, 0))
+
+
+func _step_fw_drag_end() -> void:
+	_touch(0, _fw_screen(165, 195), false)
+
+
+func _step_fw_check_line() -> void:
+	var sim := battle.sim
+	var q := _fw_piece(BattleSim.EQ_STAKES)
+	_check(q >= 0 and absi(sim.q_x[q] / 1024 - 150) <= 1 and absi(sim.q_y[q] / 1024 - 195) <= 1 and sim.q_face[q] == 768,
+		"a stakes line dragged along the field, facing the enemy (%s)" % ("none" if q < 0 else "%d,%d face %d" % [
+			sim.q_x[q] / 1024, sim.q_y[q] / 1024, sim.q_face[q]]))
+	_check((battle.hud.works_buttons["stakes"] as Button).text == "Stakes 1", "one stakes line left to place")
+
+
+func _step_fw_tap_turn() -> void:
+	_no_double_tap()
+	var p := _fw_screen(150, 195)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_fw_check_turn() -> void:
+	var sim := battle.sim
+	var q := _fw_piece(BattleSim.EQ_STAKES)
+	_check(q >= 0 and sim.q_face[q] == 896 and sim.works_count(0, BattleSim.EQ_STAKES) == Vector2i(1, 1),
+		"a second tap on it turns it an eighth (face %d)" % (sim.q_face[q] if q >= 0 else -1))
+
+
+func _step_fw_arm_remove() -> void:
+	_tap_control(battle.hud.works_buttons["remove"])
+
+
+func _step_fw_tap_remove() -> void:
+	_check(battle.works_mode == "remove", "Remove armed")
+	_no_double_tap()
+	var p := _fw_screen(150, 195)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_fw_check_remove() -> void:
+	_check(_fw_piece(BattleSim.EQ_STAKES) < 0 and battle.sim.works_count(0, BattleSim.EQ_STAKES) == Vector2i(2, 0),
+		"Remove takes it back (%s)" % str(battle.sim.works_count(0, BattleSim.EQ_STAKES)))
+
+
+func _step_fw_arm_caltrops() -> void:
+	_tap_control(battle.hud.works_buttons["caltrops"])
+
+
+func _step_fw_tap_caltrops() -> void:
+	_no_double_tap()
+	var p := _fw_screen(120, 205)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_fw_check_caltrops() -> void:
+	var q := _fw_piece(BattleSim.EQ_CALTROPS)
+	_check(q >= 0 and absi(battle.sim.q_x[q] / 1024 - 120) <= 1, "a caltrop field placed by a tap")
+	_check(battle.works.visible, "the works layer draws")
+
+
+func _step_fw_ready() -> void:
+	_tap_control(battle.hud.ready_button)
+
+
+func _step_fw_check_ready() -> void:
+	_check(battle.sim.phase == BattleSim.PHASE_BATTLE and not battle.hud.works_panel.visible
+		and _fw_piece(BattleSim.EQ_CALTROPS) >= 0, "ready: the battle starts with the caltrops in place, the palette gone")
 
 
 func _step_done() -> void:

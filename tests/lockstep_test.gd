@@ -1663,6 +1663,11 @@ func _test_deploy(mode: String) -> void:
 	scen["deploy_zones"] = Scenarios.field_zones(scen)
 	var h2h := mode != "coop"
 	scen["ai_sides"] = [] if h2h else [1]
+	if not h2h:
+		# Field works: both sides' stakes (the players place side 0's in the
+		# deployment through the lockstep, the AI side 1's at the start).
+		scen["stakes"] = [2, 2]
+		scen["caltrops"] = [1, 0]
 	var probe := BattleSim.new()
 	probe.setup(scen, 4242)
 	var home: Array = []
@@ -1681,6 +1686,8 @@ func _test_deploy(mode: String) -> void:
 	var c: Peer = null
 	var start_frame := {}
 	var placed := {"A": 0, "B": 0}
+	var works_n := 0
+	var charged := {}
 	var refused0: int = a.ls.rejected
 	var now := 0
 	var b_drop := 80 if mode == "h2h_drop" else (600 if mode == "h2h" else -1)
@@ -1718,12 +1725,50 @@ func _test_deploy(mode: String) -> void:
 						if h2h:
 							# A gift to the enemy: refused.
 							p.issue({"type": Lockstep.C_GIFT, "unit": mine[0], "to": 1 - p.me})
-				var ready_at := 30 if p.me == 0 else (120 if mode == "coop" else -1)
+				if not h2h and (now == 40 + p.me or now == 80 + p.me):
+					# Field works of our side before our line: A a stakes line
+					# (then turns it), B a stakes line and the caltrops.
+					var fy := 1 << 30
+					for u in sim.n_units:
+						if sim.u_side[u] == 0:
+							fy = mini(fy, sim.u_ay[u])
+					var wx: int = sim.field_w / 2 + (p.me * 2 - 1) * 40 * 1024
+					if now < 60:
+						p.issue({"type": BattleSim.ORDER_WORKS, "kind": BattleSim.EQ_STAKES, "x": wx,
+							"y": fy - 12 * 1024, "facing": 768})
+						works_n += 1
+					elif p.me == 0:
+						for q in sim.n_eq:
+							if sim.q_side[q] == 0 and sim.q_state[q] == BattleSim.Q_FIXED:
+								p.issue({"type": BattleSim.ORDER_WORKS, "equip": q, "x": sim.q_x[q], "y": sim.q_y[q],
+									"facing": 768 + 64})
+								works_n += 1
+								break
+					else:
+						p.issue({"type": BattleSim.ORDER_WORKS, "kind": BattleSim.EQ_CALTROPS, "x": wx,
+							"y": fy - 30 * 1024, "facing": 768})
+						works_n += 1
+				var ready_at := 30 if p.me == 0 else (140 if mode == "coop" else -1)
 				if now == ready_at:
 					p.issue({"type": BattleSim.ORDER_READY})
 			elif not start_frame.has(p.name):
 				start_frame[p.name] = p.ls.frame
-			elif now % 9 == p.me:
+			elif not h2h and not charged.has(p.name):
+				# Our riders charge the nearest enemy (across the AI's stakes).
+				charged[p.name] = true
+				for u in sim.n_units:
+					if p.ls.u_cmd[u] == p.me and sim.u_cls[u] == UT.CLS_CAV:
+						var t := -1
+						var bd := 0
+						for o in sim.n_units:
+							if sim.u_side[o] == 1 and sim.u_state[o] == BattleSim.U_READY:
+								var dd: int = absi(sim.u_ax[o] - sim.u_ax[u]) + absi(sim.u_ay[o] - sim.u_ay[u])
+								if t < 0 or dd < bd:
+									t = o
+									bd = dd
+						if t >= 0:
+							p.issue({"type": BattleSim.ORDER_ATTACK, "unit": u, "target": t, "run": 1})
+			elif now % 9 == p.me and (h2h or now > 400):
 				_script(p, now, [])
 			p.flush(relay, now)
 			p.deliver(relay, now)
@@ -1785,7 +1830,16 @@ func _test_deploy(mode: String) -> void:
 				_fail("deploy coop: the battle started at frame %d (want after B's ready, before the countdown)" % sf)
 			if c == null or n_ac < 100:
 				_fail("deploy coop: too few frames compared for the joiner (%d)" % n_ac)
-			why = "started at frame %d on both readies; C joined during the deployment (%d frames equal)" % [sf, n_ac]
+			var ws: BattleSim = a.ls.sim
+			var fixed := [0, 0]
+			for q in ws.n_eq:
+				if ws.q_state[q] == BattleSim.Q_FIXED or ws.q_state[q] == BattleSim.Q_WRECKED:
+					fixed[ws.q_side[q]] += 1
+			if int(fixed[0]) != 3 or int(fixed[1]) != 2 or ws.stat_fw_cross <= 0:
+				_fail("deploy coop: field works side 0 %d (want 3: two stakes, the caltrops), side 1 %d (the AI's 2), crossings %d" % [
+					int(fixed[0]), int(fixed[1]), ws.stat_fw_cross])
+			why = "started at frame %d on both readies; C joined during the deployment (%d frames equal); %d field works orders through the lockstep (A and B placed 3, the AI 2), riders crossed works %d times (%d rider-ticks stopped)" % [
+				sf, n_ac, works_n, ws.stat_fw_cross, ws.stat_fw_stop]
 		"h2h":
 			if sf < 395 or sf > 410:
 				_fail("deploy h2h: the countdown did not start the battle (frame %d)" % sf)

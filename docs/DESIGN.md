@@ -2047,6 +2047,121 @@ not tuned:
   made again from the handlers' men); the pack in a siege (the settlement
   AI never releases; a player may).
 
+### Field works and the fortified camp (as built, 2026-10-09)
+
+Stakes, caltrops and the fortify stance's camp (STATUS item 4f, point 2;
+asked for by the co-op partner). Code: `sim/battle_sim.gd` (per-kind
+tables `EQ_*` and the section "field works" at the end), `sim/scenarios.gd`
+(`camp`, `works_allowance`), `sim/battle_ai.gd` ("field works"),
+`sim/lockstep.gd`, `campaign/cbattle.gd` (`works_of`, `workshop_level`),
+`game/works_layer.gd`, `game/battle.gd` / `game/hud.gd` (palette),
+`game/overlay.gd` (ghosts), `game/campaign/battle_screen.gd` (the card line).
+
+- **Pieces.** Four new kinds in the `q_*` tables: `EQ_STAKES`,
+  `EQ_CALTROPS`, `EQ_DITCH`, `EQ_RAMPART`. A field work is an oriented
+  rectangle: middle `q_x / q_y`, `q_face` (the way its front faces),
+  `q_len` along the line, `EQ_FW_DEPTH` across. States `Q_FIXED` (standing
+  for the battle) and `Q_STOWED` (its side has not placed it). Every rule
+  reads the kind's fields, never the kind:
+
+  | field | stakes | caltrops | ditch | rampart | meaning |
+  |---|---|---|---|---|---|
+  | `EQ_FW_LEN` | 20 m | 10 m | scenario | scenario | length when placed |
+  | `EQ_FW_DEPTH` | 3 m | 10 m | 4 m | 4 m | depth across |
+  | `EQ_OWN` | 1 | 0 | 1 | 0 | its own side is hindered too |
+  | `EQ_SLOW_FOOT / _RIDE` | 50 / 25 % | 60 / 35 % | 45 / 30 % | - | pace inside (foot / riders and beasts) |
+  | `EQ_CROSS_T` | - | - | - | 50 ticks | an enemy climbs its 4 m in 5 s |
+  | `EQ_STOP` | 100 | 25 | 100 | 100 | charge momentum lost a tick inside |
+  | `EQ_DMG_FOOT / _RIDE / _BEAST` | 0 / 5 / 3 % | 6 / 12 / 8 % | 0 / 3 / 2 % | - | % of full hp stepping in; a charging rider x (100 + momentum) / 100 |
+  | `EQ_KNOCK` | 40 | - | 50 | - | % x momentum / 100 a charging horse is thrown |
+  | `EQ_HP` / `EQ_USE` | 400 / - | 300 / 1 a man | - | 900 | hit points; caltrops: a stock used up a man at a time |
+  | `EQ_HACK` | 1 | - | - | - | hp a tick per enemy foot soldier standing in it (12 at most) |
+  | `EQ_BURN` | 1 | 0 | 0 | 1 | fire takes it (wooden) |
+  | `EQ_HIDE` | 0 | 1 | 0 | 0 | hidden from the enemy until one of its men steps in |
+  | `EQ_H` | - | - | -1.5 m | +2 m | height of the ground inside it |
+  | `EQ_COVER` / `EQ_RANGE` | - | - | - | 12 / 8 % | its side's men on it: missiles from men not on one stopped; missile range more |
+
+  Rationale, once: stakes stop horses dead and cost a rider a few % of
+  his hit points (more at the gallop) but only make foot pick their way;
+  caltrops are the horse's and the elephant's bane and are trodden in;
+  the rampart is a makeshift wooden palisade on an earth bank (Rome 2's
+  fortified army), about half a walls-1 wall: 2 m against walls 1's 5 m,
+  half walls 1's battlement cover (25 -> 12 %), half walls 2-3's range
+  bonus (walls 1 has none); the ditch is the settlement ditch's pace
+  (`DITCH_SPEED` 45 %). **Needs tuning** (no balance run): all of these.
+- **Each tick** (`_update_works`, after the men moved; in index order of
+  pieces, units, slots): a man inside a piece has his step this tick cut
+  to its pace (`EQ_SLOW_*`) and, an enemy on a rampart, to the climb
+  (`EQ_CROSS_T`); his formation's anchor keeps to the slowest pace its men
+  had (`u_fws`, `u_fwc`, hashed) so the unit does not run ahead and drag
+  them through. Stepping in (he was outside last tick) he is wounded and
+  uses up the stock; a rider loses `EQ_STOP` momentum each tick inside
+  (`chg` and the unit's `u_mom`: a charge that meets stakes or the ditch
+  has nothing left to hit with). Enemy foot standing in stakes (moved less
+  than `FW_HACK_STILL` this tick, i.e. not crossing) hack them down. A
+  piece at 0 hp (hacked, used up, burnt) is wrecked: no effect any more (a
+  palisade section burnt down is a gap). Fire: a fire missile within
+  `FIRE_R` of a wooden piece's rectangle sets it alight (`EQ_BURN`), the
+  existing fire chip burns it.
+- **Height.** A camp's ditch and rampart have `EQ_H`; with any (`fwh_on`)
+  the ground height every height rule reads is `gh_at` = terrain + the
+  works' height: melee from above / below (`_height_bonus`, per-mille
+  roll), the charge uphill (`_impact`), range from height (`range_h`,
+  `_shot_ok`, unit elevations), on a flat map too. Missile troops whose
+  middle is on their rampart get `EQ_RANGE` % more at men not on one
+  (`_works_rb`); a missile striking a man on his side's rampart from a
+  shooter not on one is stopped `EQ_COVER` % of the time
+  (`_works_cover`). Line of fire ignores the works.
+- **Scenario keys.** `"stakes"` / `"caltrops"`: [side 0, side 1] pieces
+  each side gets to place (stowed at setup); `"field_works"`: [[kind, side,
+  x_m, y_m, facing, len_m], ...] standing from the start (tests);
+  `"fortified"`: side, the camp `Scenarios.camp` builds round that side's
+  units: a rampart 14 m beyond their box on the front and both flanks and
+  behind them when there is room (12 m) before its map edge, in sections
+  of at most 20 m (each burns on its own), **open gaps only** (no gates:
+  two 10 m gaps in the front, one in the back), the ditch 4 m outside it
+  (round the front corners). Field maps only (no settlement). Battles
+  without any of these keys hash and play exactly as before (`fw_on`).
+- **Deployment.** `ORDER_WORKS {side, equip | kind, x, y, facing, on}`
+  (deployment phase only; `works_rule`, shared with the view's ghosts):
+  places the first stowed piece of `kind` (or moves / turns piece `equip`)
+  inside the side's zone (clamped), or takes it back (`on` 0); the camp's
+  pieces are the scenario's. Live: the lockstep feeds it with the issuer's
+  side (`side_of`), so a player places only their own side's works. The
+  battle AI places its side's at the start (AI.md 22). Once the battle
+  starts they stay where they are.
+- **Visibility.** `q_seen`: bit per side that knows a piece (its own; any
+  piece not hidden; caltrops once an enemy man stepped in). Both peers
+  hash the same bits; the view draws a piece only for a side that knows it
+  (`works_known`).
+- **Entitlement** (`Scenarios.works_allowance`): by Workshop level 0 / 1 /
+  2: none / 2 stakes lines / 4 lines and 2 caltrop fields (a workshop's
+  carpenters and smiths), plus a fortified army's own 2 lines and 1 field
+  (cut on the spot, whatever its workshop). Campaign: each side by its
+  lead faction's best Workshop over its regions; custom battles: "Field
+  works: none / 2 stakes / 4 stakes, 2 caltrops" for both sides and
+  "Fortified: none / side 1 / side 2".
+- **View.** `game/works_layer.gd` under the soldiers (both soldier paths):
+  the ditch dark, the rampart an earth bank with a palisade of posts and a
+  plank along its outer edge (charred stumps once burnt down), stakes a
+  row of short diagonal stakes leaning at the enemy, caltrops scattered
+  dots (fewer as used up) for sides that know them; fire flicker as for
+  other wooden things. Deployment palette under the deployment bar:
+  "Stakes n" / "Caltrops n" (left to place), "Rotate", "Remove" (toggles);
+  armed, a tap in the zone places a piece facing the enemy, a drag lays a
+  stakes line along it ("STAKES FACE THIS WAY" preview), a second tap on a
+  placed stakes line turns it an eighth, Remove takes one back; pending
+  placements are drawn as ghosts where the rule puts them. The campaign's
+  pre-battle card: "The defenders are fortified: ..." and "Field works
+  (placed in the deployment): attackers ...; defenders ...". UI icons
+  stakes, caltrops, palisade, rotate.
+- **Not modelled / gaps:** the AI does not read the enemy's works (its
+  cavalry may charge stakes; it never hacks stakes or burns the palisade on
+  purpose); no stakes or camps in settlement battles; a placed piece may
+  overlap units or other pieces (the first piece in index order counts
+  where two overlap); the palisade does not block movement (the climb and
+  the ditch do the work) and nobody can be ordered "onto" it like a wall.
+
 ## 5. Networking
 
 ### Live battles: deterministic lockstep

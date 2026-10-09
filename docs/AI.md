@@ -1526,3 +1526,24 @@ streets): `siege_ai.gd` skips packs. Counter `dog_release`.
 The campaign AI recruits them through the mixes only ("dogs" 3 for Rome,
 Epirus, the Greeks and the Gauls; `CAI.BEAST_LINES`; `CData.no_dogs` /
 `campaign_sim --no-dogs` sets the weight to 0). Not tuned.
+
+## 22. Field works and the fortified camp (2026-10-09)
+
+Knobs `FW_PLACE` (Easy 0 none, Average 1, Skilled 2), `FW_AHEAD` (10 m),
+`FW_CAMP` (Easy 0, else 1), `CAMP_HOLD` (6,000 ticks). At the start (after
+its deployment) the battle AI puts its side's unplaced stakes and caltrops
+before its line (`place_works`): a fortified side first before its
+camp's gaps (beyond the ditch); Average across the centre, stakes
+`FW_AHEAD` before the front, caltrops 12 m further; Skilled before each
+missile unit and the ends of the foot line first, its caltrops just
+beyond the flanks where riders come round. A side standing in its own camp
+(a rampart of its side and `FW_CAMP`) deploys into it (`_camp_deploy`):
+missile troops on the front rampart in two ranks, skirmish off, standing
+and shooting (mode `A_WORKS` until out of missiles), foot just inside the
+gaps (then a row behind the middle), the rest behind; it holds (`ai_hold`,
+the high-ground hold's machinery: foot only go for enemies within
+`HOLD_REACT`) until a third of its foot fights or `CAMP_HOLD` runs out, then
+fights as usual. Easy ignores the works (deploys as anywhere, places
+none). The AI never reads the enemy's works (no cheats: caltrops are
+hidden; stakes it could see are not avoided yet: a gap).
+

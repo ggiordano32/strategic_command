@@ -13,7 +13,10 @@ extends RefCounted
 ##           "coast": 0/1, "def": defending sim side,
 ##           "ladders": 0/1, "ram": 0/1, "towers": 0-MAX_TOWERS (the attackers' siege
 ##           equipment, objects on the ground: LADDER_SETS sets of ladders, a ram,
-##           siege towers; walls only, siege towers walls 2-3)},
+##           siege towers; walls only, siege towers walls 2-3),
+##           "works": 0-2 (field maps: both sides' field works as a Workshop of
+##           that level, Scenarios.works_allowance), "fortified": -1 none / the
+##           sim side standing in a fortified camp (its own works on top)},
 ##   "sides": [{"skill": AIProfile level, "style": AIProfile personality,
 ##              "armies": [{"ctrl": "p1" | "p2" | "ai", "units": [[type key, men(, ammo kind key)], ...]}, ...]}, x2]
 ## }
@@ -291,6 +294,20 @@ static func build(st: Dictionary, solo: bool = false) -> Dictionary:
 		sc["terrain"] = {"kind": int(mp.get("terrain", Terrain.K_ROLLING)), "seed": int(mp.get("mseed", 1)),
 			"forest": clampi(int(mp.get("woods", 0)), 0, 100), "ground": int(mp.get("ground", MapGen.PAL_GREEN))}
 		sc["deploy_zones"] = Scenarios.field_zones(sc)
+		var wl := clampi(int(mp.get("works", 0)), 0, Scenarios.WORKS_BY_WORKSHOP.size() - 1)
+		var fort := int(mp.get("fortified", -1))
+		var stakes := [0, 0]
+		var caltrops := [0, 0]
+		for s in 2:
+			var w := Scenarios.works_allowance(wl, fort == s)
+			stakes[s] = w[0]
+			caltrops[s] = w[1]
+		if stakes[0] + stakes[1] > 0:
+			sc["stakes"] = stakes
+		if caltrops[0] + caltrops[1] > 0:
+			sc["caltrops"] = caltrops
+		if fort == 0 or fort == 1:
+			sc["fortified"] = fort
 	sc["ai_skill"] = skill
 	sc["ai_style"] = style
 	var dt := int(st.get("deploy", 0))
@@ -357,4 +374,5 @@ static func summary(st: Dictionary) -> Dictionary:
 			"skill": int(st["sides"][s].get("skill", 1)), "style": int(st["sides"][s].get("style", 1))})
 	return {"map": str(mp.get("kind", "field")), "terrain": int(mp.get("terrain", 0)), "deploy": int(st.get("deploy", 0)),
 		"funds": int(st.get("funds", 0)), "sides": sides, "time": int(st.get("time", 900)),
-		"ladders": int(mp.get("ladders", 0)), "ram": int(mp.get("ram", 0)), "towers": int(mp.get("towers", 0))}
+		"ladders": int(mp.get("ladders", 0)), "ram": int(mp.get("ram", 0)), "towers": int(mp.get("towers", 0)),
+		"works": int(mp.get("works", 0)), "fortified": int(mp.get("fortified", -1))}

@@ -92,7 +92,8 @@ static func snapshot(st: Dictionary, b: Dictionary, viewer: int) -> Dictionary:
 					me = sd
 	return {"bid": int(b["id"]), "r": r, "kind": kind, "settlement": int(b.get("settlement", 1)),
 		"facs": facs, "lead": [int(b["att_f"]), int(b["def_f"])], "sides": sides, "me": me,
-		"walls": CState.walls(st, r), "equip": CBattle.siege_equipment(st, b), "title": title(st, b)}
+		"walls": CState.walls(st, r), "equip": CBattle.siege_equipment(st, b), "title": title(st, b),
+		"works": CBattle.works_of(st, b) if int(b.get("settlement", 1)) == 0 else {}}
 
 
 static func _names(list: Array) -> String:
@@ -146,6 +147,31 @@ static func equipment_line(snap: Dictionary) -> String:
 	else:
 		t += ". Walls level 1, no towers."
 	return t
+
+
+## The field works line of a field battle ("" none): each side's stakes
+## lines and caltrop fields to place in the deployment, and the defenders'
+## camp when they stand fortified.
+static func works_line(snap: Dictionary) -> String:
+	var wk: Dictionary = snap.get("works", {})
+	if wk.is_empty():
+		return ""
+	var parts: Array[String] = []
+	for cs in 2:
+		var w: Array = wk["w"][cs]
+		var bits: Array[String] = []
+		if int(w[0]) > 0:
+			bits.append("%d stakes line%s" % [int(w[0]), "" if int(w[0]) == 1 else "s"])
+		if int(w[1]) > 0:
+			bits.append("%d caltrop field%s" % [int(w[1]), "" if int(w[1]) == 1 else "s"])
+		if not bits.is_empty():
+			parts.append("%s %s" % ["attackers" if cs == 0 else "defenders", " and ".join(bits)])
+	var t := ""
+	if bool(wk["fort"]):
+		t = "The defenders are fortified: they fight in a camp, a ditch and a wooden palisade with open gaps. "
+	if not parts.is_empty():
+		t += "Field works (placed in the deployment): " + "; ".join(parts) + "."
+	return t.strip_edges()
 
 
 # ------------------------------------------------------------ pre-battle ---
@@ -208,6 +234,12 @@ static func pre(s, st: Dictionary, b: Dictionary) -> Control:
 		el.name = "siege_equipment"
 		Kit.label_icon(el, "ladder")
 		info.add_child(el)
+	var wl := works_line(snap)
+	if wl != "":
+		var wlab := Kit.label(wl, Kit.FONT_SMALL, Color.WHITE, true)
+		wlab.name = "field_works"
+		Kit.label_icon(wlab, "palisade" if bool(snap["works"]["fort"]) else "stakes")
+		info.add_child(wlab)
 	var facs: Array = snap["facs"]
 	var hs := CRules.battle_humans(st, b)
 	var human_att: bool = not hs.is_empty() and facs[0].has(hs[0])

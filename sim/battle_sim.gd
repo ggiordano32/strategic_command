@@ -29,6 +29,7 @@ const SiegeAI := preload("res://sim/siege_ai.gd")
 const AIProfile := preload("res://sim/ai_profile.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const MapGen := preload("res://sim/mapgen.gd")
+const Scenarios := preload("res://sim/scenarios.gd")
 
 const TICKS_PER_SECOND := 10
 const M := 1024  # sim units per metre
@@ -74,7 +75,8 @@ const ORDER_AMMO := 16          # unit, on (1: shoot its special ammunition kind
 const ORDER_FORAGE := 17        # unit, on (missile troops in woods: make arrows / javelins; cannot move or shoot)
 const ORDER_KILL := 18          # unit (a beast running amok: its drivers kill it after its kill_delay)
 const ORDER_RELEASE := 19       # unit (handlers), target (an enemy unit): the pack is let loose at it
-const ORDER_LAST := 19
+const ORDER_WORKS := 20         # side, equip (a field work; -1: the first unplaced one of `kind`), x, y, facing, on (1 place / 0 take back); deployment only
+const ORDER_LAST := 20
 
 # Battle phase (scenario "deploy_time" > 0 starts in PHASE_DEPLOY, see the
 # "deployment phase" section at the end of this file).
@@ -352,45 +354,105 @@ const EQ_LADDERS := 1            # a set of LADDER_SET ladders
 const EQ_RAM := 2                # a battering ram
 const EQ_WAGON := 3              # an ammunition wagon (q_tier: its UnitTypes.WAGONS row)
 const EQ_TOWER := 4              # a rolling siege tower (the helepolis)
+const EQ_STAKES := 5             # field works: a line of sharpened stakes (placed in the deployment)
+const EQ_CALTROPS := 6           # ... a field of caltrops (hidden from the enemy until crossed)
+const EQ_DITCH := 7              # ... a fortified camp's ditch (built by the scenario, "fortified")
+const EQ_RAMPART := 8            # ... and its rampart: a low wall whose top is a fighting walk
 # What each kind of piece is, by EQ_* (index 0 unused); the sim reads these
 # fields, never the kind (docs/DESIGN.md "Siege equipment as objects").
 ## Pieces with a roof (arrows on the men at it are often stopped).
-const EQ_ROOF: Array[int] = [0, 0, 1, 1, 1]
+const EQ_ROOF: Array[int] = [0, 0, 1, 1, 1, 0, 0, 0, 0]
 ## Arrows landing on the carriers this near it are stopped by its roof RAM_ROOF_PCT of the time.
-const EQ_ROOF_R: Array[int] = [0, 0, RAM_ROOF_R, RAM_ROOF_R, 8 * M]
+const EQ_ROOF_R: Array[int] = [0, 0, RAM_ROOF_R, RAM_ROOF_R, 8 * M, 0, 0, 0, 0]
 ## Full hit points (a wagon: its tier's).
-const EQ_HP: Array[int] = [0, LADDER_HP, RAM_HP, 0, 2000]
+const EQ_HP: Array[int] = [0, LADDER_HP, RAM_HP, 0, 2000, 400, 300, 0, 900]
 ## Planted against a stretch, men cross it this many abreast (0: never planted) ...
-const EQ_LANES: Array[int] = [0, LADDER_SET, 0, 0, 8]
+const EQ_LANES: Array[int] = [0, LADDER_SET, 0, 0, 8, 0, 0, 0, 0]
 ## ... the lanes this far apart along the wall ...
-const EQ_LANE_GAP: Array[int] = [0, LADDER_GAP, 0, 0, 768]
+const EQ_LANE_GAP: Array[int] = [0, LADDER_GAP, 0, 0, 768, 0, 0, 0, 0]
 ## ... a man up each lane every this many ticks (0: LADDER_TICKS by wall level) ...
-const EQ_CLIMB: Array[int] = [0, 0, 0, 0, 16]
+const EQ_CLIMB: Array[int] = [0, 0, 0, 0, 16, 0, 0, 0, 0]
 ## ... and only against walls of at least this level.
-const EQ_WALLS: Array[int] = [0, 1, 0, 0, 2]
+const EQ_WALLS: Array[int] = [0, 1, 0, 0, 2, 0, 0, 0, 0]
 ## Carried: at most this pace (0: none) and this % of the carriers' walk ...
-const EQ_PACE: Array[int] = [0, 0, RAM_WALK, 0, 62]
-const EQ_WALK_PCT: Array[int] = [0, LADDER_WALK_PCT, 100, 100, 100]
+const EQ_PACE: Array[int] = [0, 0, RAM_WALK, 0, 62, 0, 0, 0, 0]
+const EQ_WALK_PCT: Array[int] = [0, LADDER_WALK_PCT, 100, 100, 100, 100, 100, 100, 100]
 ## ... with fewer men than this (0: any number) proportionally slower (at least a quarter).
-const EQ_MEN: Array[int] = [0, 0, 0, 0, 40]
+const EQ_MEN: Array[int] = [0, 0, 0, 0, 40, 0, 0, 0, 0]
 ## Either side may take it up (else only the side it belongs to).
-const EQ_ANY: Array[int] = [0, 0, 0, 1, 1]
+const EQ_ANY: Array[int] = [0, 0, 0, 1, 1, 0, 0, 0, 0]
 ## Bolts and stones landing on it hit it.
-const EQ_SHOT: Array[int] = [0, 0, 1, 1, 1]
+const EQ_SHOT: Array[int] = [0, 0, 1, 1, 1, 0, 0, 0, 0]
 ## Planted, it can still be set alight and hit (planted ladders are out of reach).
-const EQ_EXPOSED: Array[int] = [0, 0, 0, 0, 1]
+const EQ_EXPOSED: Array[int] = [0, 0, 0, 0, 1, 0, 0, 0, 0]
 ## Planted, its middle stands this far out from the foot (its depth / 2).
-const EQ_DEPTH2: Array[int] = [0, 0, 0, 0, 3072]
+const EQ_DEPTH2: Array[int] = [0, 0, 0, 0, 3072, 0, 0, 0, 0]
 ## Enemy foot standing at it on the ground smash it.
-const EQ_SMASH: Array[int] = [0, 0, 1, 0, 1]
+const EQ_SMASH: Array[int] = [0, 0, 1, 0, 1, 0, 0, 0, 0]
 ## A siege engine the defenders' towers and wall archers single out.
-const EQ_FOCUS: Array[int] = [0, 0, 1, 0, 1]
+const EQ_FOCUS: Array[int] = [0, 0, 1, 0, 1, 0, 0, 0, 0]
 ## Wall archers with a fire kind single out its carriers (docs/AI.md 15).
-const EQ_FIRE_AT: Array[int] = [0, 0, 0, 0, 1]
+const EQ_FIRE_AT: Array[int] = [0, 0, 0, 0, 1, 0, 0, 0, 0]
+## Fire takes it (a fire missile near it sets it alight).
+const EQ_BURN: Array[int] = [0, 1, 1, 1, 1, 1, 0, 0, 1]
+# Field works (docs/DESIGN.md "Field works and the fortified camp"): pieces
+# fixed where they are put for the battle (Q_FIXED), an oriented rectangle
+# q_len along the line (q_face: the way its front faces) by EQ_FW_DEPTH
+# across; every man inside one is affected by these fields, never the kind.
+## A field work (placed in the deployment or built by the scenario).
+const EQ_FW: Array[int] = [0, 0, 0, 0, 0, 1, 1, 1, 1]
+## Its length along the line when placed (0: the scenario's) and its depth across.
+const EQ_FW_LEN: Array[int] = [0, 0, 0, 0, 0, 20 * M, 10 * M, 0, 0]
+const EQ_FW_DEPTH: Array[int] = [0, 0, 0, 0, 0, 3 * M, 10 * M, 4 * M, 4 * M]
+## Its own side's men are hindered too (stakes and the ditch are in everyone's
+## way; the owner knows where its caltrops lie and climbs its own rampart).
+const EQ_OWN: Array[int] = [0, 0, 0, 0, 0, 1, 0, 1, 0]
+## Men crossing it move at this % of their pace: foot, and riders / beasts
+## (stakes: foot pick their way through at half pace, a horse barely at all).
+const EQ_SLOW_FOOT: Array[int] = [100, 100, 100, 100, 100, 50, 60, 45, 100]
+const EQ_SLOW_RIDE: Array[int] = [100, 100, 100, 100, 100, 25, 35, 30, 100]
+## Ticks an enemy takes to climb across its depth (0: no climb): the rampart,
+## 4 m of steep earth bank in 5 s, a short ladder's pace with no ladder.
+const EQ_CROSS_T: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 50]
+## Charge momentum a rider (horse, camel, elephant) loses each tick inside
+## it: 100 stops a charge dead (stakes, the ditch, the rampart's bank).
+const EQ_STOP: Array[int] = [0, 0, 0, 0, 0, 100, 25, 100, 100]
+## % of a man's full hit points he loses stepping into it: foot, riders,
+## beasts (a big body); a charging rider (and his beast) that times
+## (100 + momentum) / 100: impaled on the stakes at the gallop.
+const EQ_DMG_FOOT: Array[int] = [0, 0, 0, 0, 0, 0, 6, 0, 0]
+const EQ_DMG_RIDE: Array[int] = [0, 0, 0, 0, 0, 5, 12, 3, 0]
+const EQ_DMG_BEAST: Array[int] = [0, 0, 0, 0, 0, 3, 8, 2, 0]
+## A charging rider stepping into it is thrown this % x momentum / 100 of the time.
+const EQ_KNOCK: Array[int] = [0, 0, 0, 0, 0, 40, 0, 50, 0]
+## Hit points (its stock) used up by each man stepping into it (caltrops).
+const EQ_USE: Array[int] = [0, 0, 0, 0, 0, 0, 1, 0, 0]
+## Hit points a tick each enemy foot soldier standing inside it hacks off
+## (stakes pulled up; at most FW_HACKERS men at once; men crossing do not).
+const EQ_HACK: Array[int] = [0, 0, 0, 0, 0, 1, 0, 0, 0]
+## Hidden from the enemy until one of its men steps into it (q_seen).
+const EQ_HIDE: Array[int] = [0, 0, 0, 0, 0, 0, 1, 0, 0]
+## Height of the ground inside it (sim units): the ditch's floor, the
+## rampart's fighting step (2 m: a wooden palisade on an earth bank, about
+## half walls 1's 5 m walkway; a section burnt down leaves a gap: it is
+## wrecked and none of its fields apply). The
+## height rules (melee from above, a charge uphill, range from height)
+## read it on any map.
+const EQ_H: Array[int] = [0, 0, 0, 0, 0, 0, 0, -1536, 2048]
+## Its side's men standing on it: % of the missiles from men not on it
+## stopped (half walls 1's battlements, WALL_COVER) ...
+const EQ_COVER: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 12]
+## ... and % of their range more at men not on it (half walls 2-3's
+## WALL_RANGE_PCT; walls 1 gives none, a rampart is a fighting platform).
+const EQ_RANGE: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 8]
+const FW_HACKERS := 12           # men at a piece who hack at it at most ...
+const FW_HACK_STILL := M / 32    # ... standing in it (moved less than this in the tick)
 const Q_GROUND := 0              # lying where it was put down
 const Q_CARRIED := 1             # carried by unit q_unit (at its anchor)
 const Q_PLANTED := 2             # ladders against stretch q_seg (foot q_x, q_y; for the battle)
 const Q_WRECKED := 3             # a ram smashed (artillery, defenders at it)
+const Q_FIXED := 4               # a field work standing where it was put (for the battle)
+const Q_STOWED := 5              # a field work its side has not placed (nothing on the field)
 const RAM_CREW := 20             # men of the carrying unit who work the ram at most
 const RAM_WALK := 123            # a unit carrying the ram walks at most this fast (1.2 m/s) (EQ_PACE) ...
 const LADDER_WALK_PCT := 80      # ... one carrying ladders at this % of its walk; neither runs (EQ_WALK_PCT)
@@ -1085,6 +1147,24 @@ var q_hhp := PackedInt32Array()     # ... the lead horse's hit points
 ## A wagon's stock: q * UT.AMMO.size() + kind (shots / missiles of each kind).
 var q_stock := PackedInt32Array()
 var wag_h: int = 0                  # wagon horses alive (all wagons)
+## Field works (EQ_FW pieces; section "field works" at the end): hashed
+## only when the battle has any (fw_on), so battles without them hash as
+## before.
+var fw_on: int = 0
+var fwh_on: int = 0                 # some field work has a height (a camp's ditch and rampart; static)
+var q_face := PackedInt32Array()    # a field work: the way its front faces (angle)
+var q_len := PackedInt32Array()     # ... its length along the line (sim units)
+var q_seen := PackedInt32Array()    # ... bit per side that knows where it is (caltrops: the enemy once one of its men stepped in)
+var u_fws := PackedInt32Array()     # per unit: % of its pace its men in field works had last tick (100 none): its anchor keeps to it ...
+var u_fwc := PackedInt32Array()     # ... and to this step a tick (a rampart's climb; 0 none)
+var stat_fw_cross: int = 0          # men stepping into a field work
+var stat_fw_stop: int = 0           # rider-ticks a field work took a charge's momentum
+var stat_fw_dmg: int = 0            # hit points field works took off men
+var stat_fw_kills: int = 0          # men killed by them
+var stat_fw_knock: int = 0          # charging riders thrown at them
+var stat_fw_hack: int = 0           # hit points hacked off stakes
+var stat_fw_cover: int = 0          # missiles stopped by a rampart's cover
+var stat_fw_climb: int = 0          # man-ticks climbing a rampart
 var stat_refill_shots: int = 0      # missiles and shots drawn from wagons
 var stat_forage: int = 0            # missiles made foraging
 var stat_horses_down: int = 0       # wagon horses shot down
@@ -1491,7 +1571,7 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	grid_next.resize(n)
 	_update_bounds()
 	_update_units_stats()
-	if ter_on != 0 or obs_on != 0:
+	if ter_on != 0 or obs_on != 0 or fwh_on != 0:
 		for u in n_units:
 			u_h[u] = _unit_elev(u)
 
@@ -1501,6 +1581,12 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 			od["player"] = 50
 		queue_order(od)
 	_setup_deploy(scenario)
+	if fw_on != 0:
+		# The battle AI puts its side's field works in front of its line
+		# (after its deployment, if there is one).
+		for s in 2:
+			if ai_sides[s] != 0:
+				BattleAI.place_works(self, s)
 
 
 func _soldier_arrays() -> Array:
@@ -1760,7 +1846,7 @@ func _fac_for(u: int, s: int) -> int:
 ## ht: the type's m_hgain % of the height difference, at most RANGE_H_CAP %.
 func range_h(ty: int, hs: int, ht: int, pct: int = 100) -> int:
 	var rng := t_m_range[ty] * pct / 100
-	if ter_on == 0 and obs_on == 0:
+	if ter_on == 0 and obs_on == 0 and fwh_on == 0:
 		return rng
 	var cap := rng * RANGE_H_CAP / 100
 	return rng + clampi((hs - ht) * t_m_hgain[ty] / 100, -cap, cap)
@@ -1769,7 +1855,7 @@ func range_h(ty: int, hs: int, ht: int, pct: int = 100) -> int:
 ## Effective range of missile unit u against unit t (centroid heights; from
 ## a wall at men below, WALL_RANGE_PCT further).
 func range_vs(u: int, t: int) -> int:
-	return range_h(u_type[u], u_h[u], u_h[t], range_pct(u)) + _wall_rb(u, t)
+	return range_h(u_type[u], u_h[u], u_h[t], range_pct(u)) + _wall_rb(u, t) + _works_rb(u, t)
 
 
 ## Missile troops on a wall shooting at men not on one: WALL_RANGE_PCT % of
@@ -2439,7 +2525,7 @@ func nav_at(x: int, y: int) -> int:
 
 ## Height a man stands at: the ground, or the walkway on a wall.
 func elev_at(x: int, y: int) -> int:
-	var h := height_at(x, y)
+	var h := gh_at(x, y)
 	if obs_on != 0:
 		var k := obs_kind(x, y)
 		if k == MapGen.C_WALK or k == MapGen.C_TOWER:
@@ -2451,7 +2537,7 @@ func elev_at(x: int, y: int) -> int:
 
 ## Unit u's height: its ground (or its walkway).
 func _unit_elev(u: int) -> int:
-	return height_at(u_cx[u], u_cy[u]) + (wall_h if u_wall[u] > 0 else 0)
+	return gh_at(u_cx[u], u_cy[u]) + (wall_h if u_wall[u] > 0 else 0)
 
 
 ## How far an obstacle at (x, y) rises above the ground (line of fire).
@@ -4108,6 +4194,10 @@ func _apply_orders(max_player: int = 1 << 30) -> void:
 			if phase != PHASE_DEPLOY:
 				_gate_order(o)
 			continue
+		if int(o["type"]) == ORDER_WORKS:
+			if phase == PHASE_DEPLOY:
+				_works_order(o)
+			continue
 		if int(o["type"]) == ORDER_KILL:
 			# (A routing unit: not through the unit order rules.)
 			var ku := int(o.get("unit", -1))
@@ -4178,7 +4268,8 @@ static func order_fields(sim, u: int) -> Dictionary:
 ## of the side for an army-wide withdrawal. Shared with OrderPreview.
 static func order_units(sim, o: Dictionary) -> Array[int]:
 	var out: Array[int] = []
-	if int(o["type"]) == ORDER_GATE or int(o["type"]) == ORDER_KILL or int(o["type"]) == ORDER_RELEASE:
+	if int(o["type"]) == ORDER_GATE or int(o["type"]) == ORDER_KILL or int(o["type"]) == ORDER_RELEASE \
+			or int(o["type"]) == ORDER_WORKS:
 		return out  # not a unit order (applied by the sim to the gate; the drivers of an amok beast; a pack)
 	if int(o["type"]) == ORDER_WITHDRAW_ALL:
 		var side := int(o.get("side", -1))
@@ -4729,6 +4820,8 @@ func step() -> void:
 	_update_contacts()
 	_build_grid()
 	_update_soldiers()
+	if fw_on != 0:
+		_update_works()
 	if n_eq > 0:
 		_update_equip()
 	if n_gates > 0:
@@ -5041,8 +5134,8 @@ func _update_units() -> void:
 	for u in n_units:
 		u_moved[u] = 0
 		u_blk[u] = 0
-		if (ton or oon) and u_alive[u] > 0:
-			u_h[u] = _unit_elev(u) if oon else height_at(u_cx[u], u_cy[u])
+		if (ton or oon or fwh_on != 0) and u_alive[u] > 0:
+			u_h[u] = _unit_elev(u) if oon or fwh_on != 0 else height_at(u_cx[u], u_cy[u])
 		if oon and u_alive[u] > 0:
 			_u_obs[u] = _near_obs(u)
 			if u_stair[u] == 1 or u_stair[u] == 3:
@@ -5089,6 +5182,12 @@ func _update_units() -> void:
 			if vf < 1000:
 				aspeed = aspeed * vf / 1000
 				stat_veg_slow += 1
+		if fw_on != 0 and (u_fws[u] < 100 or u_fwc[u] > 0):
+			# Men in field works (stakes, caltrops, a ditch, a rampart's
+			# bank): the formation keeps to their pace.
+			aspeed = aspeed * u_fws[u] / 100
+			if u_fwc[u] > 0:
+				aspeed = mini(aspeed, u_fwc[u])
 		if city_ditch != 0 and obs_kind(u_ax[u], u_ay[u]) == MapGen.C_DITCH:
 			# Crossing the ditch (foot only): slowly.
 			aspeed = aspeed * DITCH_SPEED / 1000
@@ -5578,7 +5677,7 @@ func _missile_think(u: int) -> void:
 			var best := 0
 			var best_engaged := true
 			var flat_lof := (ter_on != 0 or map_on != 0) and t_m_arc[ty] == 0
-			var hgt := ter_on != 0 or obs_on != 0
+			var hgt := ter_on != 0 or obs_on != 0 or fwh_on != 0
 			for o in n_units:
 				if u_side[o] == u_side[u] or u_state[o] >= U_DESTROYED:
 					continue
@@ -5605,7 +5704,7 @@ func _missile_think(u: int) -> void:
 ## ground the height-adjusted range).
 func _in_range(u: int, t: int, rng: int) -> bool:
 	var d := _unit_dist(u, t)
-	if ter_on == 0 and obs_on == 0:
+	if ter_on == 0 and obs_on == 0 and fwh_on == 0:
 		return d <= rng
 	return d <= range_vs(u, t)
 
@@ -6704,7 +6803,7 @@ func _melee(a: int, d: int, pen: int, parting: bool = false) -> void:
 		if u_cls[ud] == UT.CLS_CAV:
 			bonus += VEG_CAV_MELEE[veg_d(pos_x[d], pos_y[d])]
 	var chance := clampi(BASE_HIT + att - def + bonus - pen, 5, 95)
-	if ter_on == 0:
+	if ter_on == 0 and fwh_on == 0:
 		if _rand() % 100 >= chance:
 			return
 	else:
@@ -6744,7 +6843,7 @@ func _height_bonus(a: int, d: int) -> int:
 	var ya := pos_y[a]
 	var xd := pos_x[d]
 	var yd := pos_y[d]
-	var g := grade_between(height_at(xd, yd), height_at(xa, ya), FM.approx_len(xa - xd, ya - yd))
+	var g := grade_between(gh_at(xd, yd), gh_at(xa, ya), FM.approx_len(xa - xd, ya - yd))
 	var b := clampi(g * MELEE_H_K / FM.TRIG_ONE, -MELEE_H_CAP, MELEE_H_CAP)
 	if b != 0:
 		stat_h_melee += 1
@@ -6805,9 +6904,9 @@ func _impact(r: int, t: int, mom: int) -> void:
 		power = power * t_scare_pct[td] / 100
 		u_morale[ur] -= MORALE_REFLECT
 		stat_scare_hits += 1
-	if ter_on != 0:
+	if ter_on != 0 or fwh_on != 0:
 		# Riding down onto a man hits harder; riding up at him, weaker.
-		var g := grade_between(height_at(pos_x[t], pos_y[t]), height_at(pos_x[r], pos_y[r]),
+		var g := grade_between(gh_at(pos_x[t], pos_y[t]), gh_at(pos_x[r], pos_y[r]),
 			FM.approx_len(pos_x[r] - pos_x[t], pos_y[r] - pos_y[t]))
 		var f := clampi(100 + g * CHG_H_K / FM.TRIG_ONE, CHG_H_MIN, CHG_H_MAX)
 		if f > 100:
@@ -7177,11 +7276,12 @@ func _fire(i: int, u: int, ft: int, ty: int, ak: int = -1) -> void:
 	var dy := ay - sy
 	var dist := FM.approx_len(dx, dy)
 	var rp := t_k_range[ak] if ak >= 0 else 100
-	if ter_on == 0 and map_on == 0:
+	if ter_on == 0 and map_on == 0 and fwh_on == 0:
 		if dist > t_m_range[ty] * rp / 100 or dist <= 0 or pr_free < 0:
 			return
 	else:
-		if dist <= 0 or pr_free < 0 or not _shot_ok(sx, sy, ax, ay, dist, ty, 0, _skip1(ft), _wall_rb(u, ft), rp):
+		if dist <= 0 or pr_free < 0 or not _shot_ok(sx, sy, ax, ay, dist, ty, 0, _skip1(ft),
+				_wall_rb(u, ft) + _works_rb(u, ft), rp):
 			return
 	var p := pr_free
 	pr_free = pr_next[p]
@@ -7221,8 +7321,8 @@ func _fire(i: int, u: int, ft: int, ty: int, ak: int = -1) -> void:
 ## height-adjusted range and, for a flat weapon, has a line of fire.
 func _shot_ok(sx: int, sy: int, ax: int, ay: int, dist: int, ty: int, skip0: int = 0,
 		skip1: int = LOF_SKIP, wb: int = 0, rp: int = 100) -> bool:
-	var hs := elev_at(sx, sy) if obs_on != 0 else height_at(sx, sy)
-	var ha := elev_at(ax, ay) if obs_on != 0 else height_at(ax, ay)
+	var hs := elev_at(sx, sy) if obs_on != 0 else gh_at(sx, sy)
+	var ha := elev_at(ax, ay) if obs_on != 0 else gh_at(ax, ay)
 	if dist > range_h(ty, hs, ha, rp) + wb:
 		return false
 	if dist > t_m_range[ty] * rp / 100:
@@ -7308,6 +7408,8 @@ func _land(p: int) -> void:
 				and FM.approx_len(pos_x[best] - q_x[u_carry[ub]], pos_y[best] - q_y[u_carry[ub]]) <= EQ_ROOF_R[q_kind[u_carry[ub]]] \
 				and _rand() % 100 < RAM_ROOF_PCT:
 			return  # on the ram's (the wagon's) roof
+	if best >= 0 and fwh_on != 0 and _works_cover(pr_sx[p], pr_sy[p], best):
+		return  # behind the palisade
 	if best >= 0:
 		_missile_hit(p, best)
 
@@ -7505,9 +7607,18 @@ func _ignite(p: int) -> void:
 	for q in n_eq:
 		if q_state[q] == Q_WRECKED or (q_state[q] == Q_PLANTED and EQ_EXPOSED[q_kind[q]] == 0):
 			continue  # (planted ladders stand against the wall, out of reach)
-		var qc := eq_centre(q)
-		if absi(qc.x - x) > FIRE_R or absi(qc.y - y) > FIRE_R:
-			continue
+		if EQ_BURN[q_kind[q]] == 0 or q_state[q] == Q_STOWED:
+			continue  # (iron, earth; not on the field)
+		if EQ_FW[q_kind[q]] != 0:
+			# A field work: anywhere along it (within FIRE_R of its middle line).
+			var fe := fw_extent(q)
+			if absi(q_x[q] - x) > fe.x + FIRE_R or absi(q_y[q] - y) > fe.y + FIRE_R \
+					or not _fw_near(q, x, y, FIRE_R):
+				continue
+		else:
+			var qc := eq_centre(q)
+			if absi(qc.x - x) > FIRE_R or absi(qc.y - y) > FIRE_R:
+				continue
 		if _rand() % 100 < ch:
 			if q_burn[q] == 0:
 				stat_ignite += 1
@@ -9434,7 +9545,7 @@ func _unleash(h: int, t: int) -> void:
 		chg[i] = 0
 		struck[i] = 0
 	_bounds_of(p)
-	if ter_on != 0 or obs_on != 0:
+	if ter_on != 0 or obs_on != 0 or fwh_on != 0:
 		u_h[p] = _unit_elev(p)
 	stat_released += 1
 
@@ -9786,6 +9897,10 @@ func state_hash() -> int:
 			for arr in _equip_arrays():
 				ctx.update((arr as PackedInt32Array).to_byte_array())
 			ctx.update(q_stock.to_byte_array())
+			if fw_on != 0:
+				# Field works (battles without them hash as before).
+				for arr in [q_face, q_len, q_seen, u_fws, u_fwc]:
+					ctx.update((arr as PackedInt32Array).to_byte_array())
 	if dog_on != 0:
 		# War dogs (battles without handlers hash as before).
 		for arr in _dog_arrays():
@@ -10074,7 +10189,7 @@ func _place_unit(u: int, wall: int) -> void:
 		target[i] = -1
 	u_settled[u] = 0
 	_update_bounds()
-	if ter_on != 0 or obs_on != 0:
+	if ter_on != 0 or obs_on != 0 or fwh_on != 0:
 		u_h[u] = _unit_elev(u)
 
 
@@ -10248,8 +10363,12 @@ func _setup_equip(sc: Dictionary, units: Array) -> void:
 	for u in units.size():
 		if UT.stat(int(units[u]["type"]), "wagon") >= 0:
 			wag.append(u)
-	n_eq = lst.size() + wag.size()
+	var fws := _field_works(sc, units)
+	n_eq = lst.size() + wag.size() + fws.size()
 	for arr in _equip_arrays():
+		arr.resize(n_eq)
+		arr.fill(0)
+	for arr in [q_face, q_len, q_seen]:
 		arr.resize(n_eq)
 		arr.fill(0)
 	q_unit.fill(-1)
@@ -10295,6 +10414,28 @@ func _setup_equip(sc: Dictionary, units: Array) -> void:
 			var b := UT.ammo_stat(a, "base")
 			if a >= 0 and a < nak and b >= 0:
 				q_stock[q * nak + a] = UT.ammo_stat(b, "wagon") * pct / 100 * UT.ammo_stat(a, "share") / 100
+	# Field works (field maps): after the siege pieces and the wagons.
+	fw_on = 1 if not fws.is_empty() else 0
+	fwh_on = 0
+	u_fws.resize(n_units)
+	u_fws.fill(100)
+	u_fwc.resize(n_units)
+	u_fwc.fill(0)
+	var q0 := lst.size() + wag.size()
+	for k in fws.size():
+		var f: Array = fws[k]
+		var q := q0 + k
+		q_kind[q] = int(f[0])
+		q_side[q] = int(f[1])
+		q_x[q] = int(f[2])
+		q_y[q] = int(f[3])
+		q_face[q] = int(f[4])
+		q_len[q] = int(f[5])
+		q_state[q] = int(f[6])
+		q_hp[q] = EQ_HP[q_kind[q]]
+		q_seen[q] = (1 << q_side[q]) if EQ_HIDE[q_kind[q]] != 0 else 3
+		if EQ_H[q_kind[q]] != 0:
+			fwh_on = 1
 	wag_h = 0
 	for q in n_eq:
 		wag_h += q_hn[q]
@@ -10943,3 +11084,319 @@ func _skip0(u: int) -> int:
 ## ... and this near the far end (a tower aimed at is not in its own way).
 func _skip1(t: int) -> int:
 	return u_trad[t] + M if t >= 0 and t < u_trad.size() and u_trad[t] > 0 else LOF_SKIP
+
+
+# ---------------------------------------------------------- field works ---
+# Field works (docs/DESIGN.md "Field works and the fortified camp"): pieces
+# of the q_* tables whose kind has EQ_FW, fixed where they stand for the
+# battle (Q_FIXED; Q_STOWED: not placed). Every rule reads the per-kind
+# fields, never the kind:
+# - Stakes and caltrops: each side's entitlement (scenario "stakes" /
+#   "caltrops": [side 0, side 1]) starts stowed; in the deployment phase a
+#   player places, moves, turns or takes back its own (ORDER_WORKS, applied
+#   at once like ORDER_PLACE, kept to the side's zone); the battle AI places
+#   its side's at the start (BattleAI.place_works). Scenario "field_works"
+#   [[kind, side, x_m, y_m, facing, len_m], ...] stand placed from the start.
+# - The fortified camp (scenario "fortified": side): Scenarios.camp builds a
+#   ditch and a rampart round the side's units, both field works with a
+#   height (EQ_H): the height rules (melee from above, a charge uphill,
+#   range from height) read it on any map (fwh_on); the rampart is climbed
+#   slowly by the enemy (EQ_CROSS_T) and shelters and lifts its side's
+#   missile troops (EQ_COVER, EQ_RANGE); the ditch slows everyone and stops
+#   charges.
+# - Each tick (_update_works, after the men have moved) a man inside a piece
+#   is slowed (EQ_SLOW_*, EQ_CROSS_T: his step this tick cut short), takes a
+#   wound stepping in (EQ_DMG_*, more at the gallop; a charging rider may be
+#   thrown, EQ_KNOCK), uses up its stock (EQ_USE), takes a rider's charge
+#   momentum (EQ_STOP) and, if he is enemy foot, hacks at it (EQ_HACK).
+#   Hidden pieces (EQ_HIDE) become known to a side once one of its men has
+#   stepped in (q_seen; the view draws them for the sides that know).
+#   Stakes burn (EQ_BURN).
+# Only on field maps (no settlement). All of it hashed when the battle has
+# any (fw_on).
+
+## The field works of scenario sc (units: the battle's unit dictionaries):
+## [kind, side, x, y, facing, len, state] (sim units), placed ones first,
+## then each side's unplaced entitlement.
+func _field_works(sc: Dictionary, units: Array) -> Array:
+	var out: Array = []
+	if city_on != 0:
+		return out
+	var lst: Array = (sc.get("field_works", []) as Array).duplicate()
+	if sc.has("fortified"):
+		var fs := int(sc["fortified"])
+		if fs == 0 or fs == 1:
+			lst.append_array(Scenarios.camp(units, field_w / M, field_h / M, fs))
+	for e in lst:
+		var k := int(e[0])
+		var s := int(e[1])
+		if k <= 0 or k >= EQ_FW.size() or EQ_FW[k] == 0 or s < 0 or s > 1:
+			continue
+		var ln := int(e[5]) * M if (e as Array).size() > 5 and int(e[5]) > 0 else EQ_FW_LEN[k]
+		out.append([k, s, clampi(int(e[2]) * M, 0, field_w), clampi(int(e[3]) * M, 0, field_h),
+			int(e[4]) & FM.ANGLE_MASK, maxi(ln, M), Q_FIXED])
+	for key in ["stakes", "caltrops"]:
+		var k := EQ_STAKES if key == "stakes" else EQ_CALTROPS
+		var ent: Array = sc.get(key, [])
+		for s in mini(ent.size(), 2):
+			for j in clampi(int(ent[s]), 0, 16):
+				out.append([k, s, 0, 0, 0, EQ_FW_LEN[k], Q_STOWED])
+	return out
+
+
+## Field work q covers the point (x, y): inside its oriented rectangle.
+func fw_inside(q: int, x: int, y: int) -> bool:
+	var dx := x - q_x[q]
+	var dy := y - q_y[q]
+	var hl := q_len[q] >> 1
+	var hd := EQ_FW_DEPTH[q_kind[q]] >> 1
+	var r := hl + hd
+	if dx > r or dx < -r or dy > r or dy < -r:
+		return false
+	var c := FM.cos_a(q_face[q])
+	var s := FM.sin_a(q_face[q])
+	var f := (dx * c + dy * s) / FM.TRIG_ONE
+	if f > hd or f < -hd:
+		return false
+	var l := (dy * c - dx * s) / FM.TRIG_ONE
+	return l <= hl and l >= -hl
+
+
+## Half extents (x, y) of field work q's rectangle's bounding box.
+func fw_extent(q: int) -> Vector2i:
+	var hl := q_len[q] >> 1
+	var hd := EQ_FW_DEPTH[q_kind[q]] >> 1
+	var c := absi(FM.cos_a(q_face[q]))
+	var s := absi(FM.sin_a(q_face[q]))
+	return Vector2i((c * hd + s * hl) / FM.TRIG_ONE + 1, (s * hd + c * hl) / FM.TRIG_ONE + 1)
+
+
+## The first standing field work at (x, y) with a non-zero `field` (an
+## EQ_* table) of side `side` (-1 either), or -1.
+func works_at(x: int, y: int, field: Array[int], side: int = -1) -> int:
+	for q in n_eq:
+		if q_state[q] != Q_FIXED or field[q_kind[q]] == 0 or (side >= 0 and q_side[q] != side):
+			continue
+		if fw_inside(q, x, y):
+			return q
+	return -1
+
+
+## Height of the field works at (x, y) (a camp's ditch and rampart).
+func _fw_h(x: int, y: int) -> int:
+	var q := works_at(x, y, EQ_H)
+	return EQ_H[q_kind[q]] if q >= 0 else 0
+
+
+## Ground height with the field works (sim units).
+func gh_at(x: int, y: int) -> int:
+	if fwh_on == 0:
+		return height_at(x, y)
+	return height_at(x, y) + _fw_h(x, y)
+
+
+## Missile troops of u standing on their side's rampart shooting at men
+## not on one: EQ_RANGE % of their range more (0 elsewhere).
+func _works_rb(u: int, t: int) -> int:
+	if fwh_on == 0 or t_cls[u_type[u]] != UT.CLS_MISSILE:
+		return 0
+	var q := works_at(u_cx[u], u_cy[u], EQ_RANGE, u_side[u])
+	if q < 0 or works_at(u_cx[t], u_cy[t], EQ_RANGE) >= 0:
+		return 0
+	return t_m_range[u_type[u]] * EQ_RANGE[q_kind[q]] / 100
+
+
+## A missile shot from (sx, sy) striking soldier v: stopped by the cover of
+## a field work of v's side he stands on (EQ_COVER), unless the shooter
+## stands on one too.
+func _works_cover(sx: int, sy: int, v: int) -> bool:
+	var q := works_at(pos_x[v], pos_y[v], EQ_COVER, u_side[unit_of[v]])
+	if q < 0 or works_at(sx, sy, EQ_COVER) >= 0:
+		return false
+	if _rand() % 100 < EQ_COVER[q_kind[q]]:
+		stat_fw_cover += 1
+		return true
+	return false
+
+
+## The placement rule for a field work (ORDER_WORKS, deployment phase only;
+## shared with the view's preview): the piece it moves (its "equip", or the
+## first stowed piece of "kind" of `side`), and where it goes. Returns
+## Vector4i(piece, x, y, facing) with piece -1 when refused; "on" 0 takes
+## the piece back (x, y unchanged).
+static func works_rule(sim, o: Dictionary) -> Vector4i:
+	var no := Vector4i(-1, 0, 0, 0)
+	if sim.phase != PHASE_DEPLOY or sim.fw_on == 0:
+		return no
+	var side := int(o.get("side", -1))
+	var q := int(o.get("equip", -1))
+	if q < 0:
+		var k := int(o.get("kind", -1))
+		for j in sim.n_eq:
+			if sim.q_kind[j] == k and sim.q_side[j] == side and sim.q_state[j] == Q_STOWED:
+				q = j
+				break
+	if q < 0 or q >= sim.n_eq or sim.q_side[q] != side or EQ_FW[sim.q_kind[q]] == 0 \
+			or EQ_H[sim.q_kind[q]] != 0:
+		return no  # (a camp's ditch and rampart are the scenario's)
+	if sim.q_state[q] != Q_STOWED and sim.q_state[q] != Q_FIXED:
+		return no
+	if int(o.get("on", 1)) == 0:
+		return Vector4i(q, sim.q_x[q], sim.q_y[q], sim.q_face[q])
+	var p := deploy_clamp(sim, side, int(o.get("x", sim.q_x[q])), int(o.get("y", sim.q_y[q])))
+	if p.z == 0:
+		return no
+	return Vector4i(q, p.x, p.y, int(o.get("facing", sim.q_face[q])) & FM.ANGLE_MASK)
+
+
+## Apply a field works order (deployment phase).
+func _works_order(o: Dictionary) -> void:
+	var r := works_rule(self, o)
+	if r.x < 0:
+		return
+	var q := r.x
+	if int(o.get("on", 1)) == 0:
+		q_state[q] = Q_STOWED
+		return
+	q_state[q] = Q_FIXED
+	q_x[q] = r.y
+	q_y[q] = r.z
+	q_face[q] = r.w
+
+
+## Field works, once a tick after the men have moved (see the section).
+func _update_works() -> void:
+	u_fws.fill(100)
+	u_fwc.fill(0)
+	for q in n_eq:
+		var k := q_kind[q]
+		if q_state[q] != Q_FIXED or EQ_FW[k] == 0:
+			continue
+		var qx := q_x[q]
+		var qy := q_y[q]
+		var ext := fw_extent(q)
+		var own_too := EQ_OWN[k] != 0
+		var cross := EQ_CROSS_T[k]
+		var climb_step := EQ_FW_DEPTH[k] / cross if cross > 0 else 0
+		var hackers := 0
+		for u in n_units:
+			if u_alive[u] <= 0 or u_state[u] >= U_DESTROYED:
+				continue
+			var own := u_side[u] == q_side[q]
+			if own and not own_too:
+				continue
+			if u_maxx[u] < qx - ext.x - M or u_minx[u] > qx + ext.x + M \
+					or u_maxy[u] < qy - ext.y - M or u_miny[u] > qy + ext.y + M:
+				continue
+			var ty := u_type[u]
+			var beast := t_body_r[ty] > 0
+			var rider := not beast and (t_cls[ty] == UT.CLS_CAV or t_mount[ty] == UT.MOUNT_HORSE \
+				or t_mount[ty] == UT.MOUNT_CAMEL)
+			var slow := EQ_SLOW_RIDE[k] if rider or beast else EQ_SLOW_FOOT[k]
+			var dmg_pct := EQ_DMG_BEAST[k] if beast else (EQ_DMG_RIDE[k] if rider else EQ_DMG_FOOT[k])
+			var charger := t_rider[ty] != 0
+			var hacks := EQ_HACK[k] > 0 and not own and not rider and not beast and u_state[u] == U_READY \
+				and t_cls[ty] != UT.CLS_ART
+			var base := u_slot_base[u]
+			var order := slot_soldier.slice(base, base + u_alive[u])
+			for i in order:
+				if state[i] >= S_DEAD or not fw_inside(q, pos_x[i], pos_y[i]):
+					continue
+				u_fws[u] = mini(u_fws[u], slow)
+				if climb_step > 0 and not own:
+					u_fwc[u] = climb_step if u_fwc[u] == 0 else mini(u_fwc[u], climb_step)
+				var mx := pos_x[i] - prev_x[i]
+				var my := pos_y[i] - prev_y[i]
+				if hacks and state[i] != S_DOWN and absi(mx) + absi(my) < FW_HACK_STILL:
+					hackers += 1  # (standing at it, not crossing)
+				if mx != 0 or my != 0:
+					if slow < 100:
+						mx = mx * slow / 100
+						my = my * slow / 100
+					if climb_step > 0 and not own:
+						var ml := FM.approx_len(mx, my)
+						if ml > climb_step:
+							mx = mx * climb_step / ml
+							my = my * climb_step / ml
+						stat_fw_climb += 1
+					pos_x[i] = prev_x[i] + mx
+					pos_y[i] = prev_y[i] + my
+				if charger and EQ_STOP[k] > 0 and (chg[i] > 0 or u_mom[u] > 0):
+					var mom := chg[i]
+					chg[i] = maxi(chg[i] - EQ_STOP[k], 0)
+					u_mom[u] = maxi(u_mom[u] - EQ_STOP[k], 0)
+					stat_fw_stop += 1
+					if fw_inside(q, prev_x[i], prev_y[i]):
+						continue
+					# Riding into it at the gallop: impaled, thrown.
+					if mom > 0 and EQ_KNOCK[k] > 0 and not beast and _rand() % 100 < EQ_KNOCK[k] * mom / 100:
+						_knock_down(i)
+						stat_fw_knock += 1
+					if dmg_pct > 0:
+						_fw_wound(i, ty, dmg_pct * (100 + mom) / 100)
+					_fw_step_in(q, u)
+					continue
+				if fw_inside(q, prev_x[i], prev_y[i]):
+					continue
+				# Stepping in.
+				if dmg_pct > 0:
+					_fw_wound(i, ty, dmg_pct)
+				_fw_step_in(q, u)
+		if hackers > 0:
+			var h := EQ_HACK[k] * mini(hackers, FW_HACKERS)
+			q_hp[q] -= h
+			stat_fw_hack += h
+		if q_hp[q] <= 0 and (EQ_USE[k] > 0 or EQ_HACK[k] > 0):
+			_eq_wreck(q)
+
+
+## A man of unit u stepped into field work q: counted, its stock used, it
+## is no longer hidden from his side.
+func _fw_step_in(q: int, u: int) -> void:
+	stat_fw_cross += 1
+	q_seen[q] |= 1 << u_side[u]
+	if EQ_USE[q_kind[q]] > 0:
+		q_hp[q] -= EQ_USE[q_kind[q]]
+
+
+## Soldier i (type ty) loses pct % of his type's full hit points to a field work.
+func _fw_wound(i: int, ty: int, pct: int) -> void:
+	if state[i] >= S_DEAD:
+		return
+	var d := maxi(t_hp[ty] * pct / 100, 1)
+	stat_fw_dmg += d
+	var h := hp[i] - d
+	if h <= 0:
+		stat_fw_kills += 1
+		_remove(i, GONE_KILLED)
+	else:
+		hp[i] = h
+
+
+## Field work q is known to `side` (drawn for it): its own, or one not
+## hidden, or one its men have found.
+func works_known(q: int, side: int) -> bool:
+	return q_side[q] == side or EQ_HIDE[q_kind[q]] == 0 or (q_seen[q] & (1 << side)) != 0
+
+
+## A side's field works left to place / placed: Vector2i(stowed, fixed) of kind k.
+func works_count(side: int, k: int) -> Vector2i:
+	var r := Vector2i.ZERO
+	for q in n_eq:
+		if q_kind[q] == k and q_side[q] == side:
+			if q_state[q] == Q_STOWED:
+				r.x += 1
+			elif q_state[q] == Q_FIXED:
+				r.y += 1
+	return r
+
+
+## (x, y) lies within r of field work q's rectangle (along it, across it).
+func _fw_near(q: int, x: int, y: int, r: int) -> bool:
+	var dx := x - q_x[q]
+	var dy := y - q_y[q]
+	var c := FM.cos_a(q_face[q])
+	var s := FM.sin_a(q_face[q])
+	var f := absi((dx * c + dy * s) / FM.TRIG_ONE)
+	var l := absi((dy * c - dx * s) / FM.TRIG_ONE)
+	return f <= (EQ_FW_DEPTH[q_kind[q]] >> 1) + r and l <= (q_len[q] >> 1) + r

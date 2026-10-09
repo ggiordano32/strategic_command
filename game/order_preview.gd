@@ -59,6 +59,15 @@ func snap_of(u: int) -> int:
 	return int((_view[u] as Dictionary).get("snap", 0))
 
 
+## Pending field works orders (deployment), in order.
+func pending_works() -> Array:
+	var out: Array = []
+	for o in _pending:
+		if int(o["type"]) == BattleSim.ORDER_WORKS:
+			out.append(o)
+	return out
+
+
 func has_pending(u: int) -> bool:
 	return _view.has(u)
 

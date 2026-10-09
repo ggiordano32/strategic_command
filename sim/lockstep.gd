@@ -45,7 +45,8 @@ extends RefCounted
 ## back when a player of that side is admitted again.
 ##
 ## Deployment phase (scenario "deploy_time"): placements are ordinary sim
-## orders (BattleSim.ORDER_PLACE, for the player's own units); "ready" is
+## orders (BattleSim.ORDER_PLACE, for the player's own units; ORDER_WORKS,
+## field works of the player's own side); "ready" is
 ## the sim's ORDER_READY with the issuer as `who`. Who must be ready
 ## (sim.dep_need) is kept here: the players taking part (set at the start,
 ## a dropped player's bit cleared, an admitted player's set), so the battle
@@ -441,6 +442,14 @@ func _apply(o: Dictionary) -> void:
 				# Deployment: this player is ready (applied by the sim's next step).
 				sim.queue_order({"tick": sim.tick, "type": BattleSim.ORDER_READY, "who": p, "player": p,
 					"seq": int(o["n"]) * 64 + int(o["i"])})
+			elif typ == BattleSim.ORDER_WORKS:
+				# Deployment: field works of the issuer's own side.
+				var d := {"tick": sim.tick, "type": typ, "side": side_of(p), "player": p,
+					"seq": int(o["n"]) * 64 + int(o["i"])}
+				for key in ["equip", "kind", "x", "y", "facing", "on"]:
+					if o.has(key):
+						d[key] = int(o[key])
+				sim.queue_order(d)
 			elif typ >= BattleSim.ORDER_MOVE and typ <= BattleSim.ORDER_LAST:
 				_sim_order(p, o)
 			else:
@@ -596,6 +605,12 @@ func pending_sim_orders() -> Array:
 			for u in u_cmd.size():
 				if u_cmd[u] == int(o["p"]) and sim.u_state[u] == BattleSim.U_READY:
 					out.append({"tick": sim.tick, "type": BattleSim.ORDER_WITHDRAW, "unit": u})
+			continue
+		if typ == BattleSim.ORDER_WORKS:
+			var dw: Dictionary = o.duplicate()
+			dw["tick"] = sim.tick
+			dw["side"] = side_of(int(o["p"]))
+			out.append(dw)
 			continue
 		var u := int(o.get("unit", -1))
 		if u < 0 or u >= u_cmd.size() or u_cmd[u] != int(o["p"]):

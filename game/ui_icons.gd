@@ -26,6 +26,7 @@ const NAMES: Array[String] = [
 	"fire", "hold_fire", "skirmish", "run", "deploy", "wall_up", "wall_down", "pick_up", "drop",
 	"victory", "defeat", "draw", "men", "killed", "routed", "captured",
 	"ladder", "ram", "tower", "siege_tower", "gate", "ammo", "forage", "wagon", "kill_beast", "general", "release",
+	"stakes", "caltrops", "palisade", "rotate",
 	"copy", "export", "plus", "minus",
 ]
 const STROKE := 0.16  # line weight, in half-sizes (unit_icons: 0.17 of its glyph radius)
@@ -565,6 +566,28 @@ static func _glyph(icon: String, c: Vector2, s: float) -> void:
 			_pl([-0.45, 0.85, -0.45, -0.85, -0.25, -0.85, -0.25, -0.65, -0.08, -0.65, -0.08, -0.85, 0.08, -0.85, 0.08, -0.65,
 				0.25, -0.65, 0.25, -0.85, 0.45, -0.85, 0.45, 0.85], true)
 			_l(0.0, -0.3, 0.0, -0.05, 0.85)
+		"stakes":  # three sharpened stakes leaning toward the enemy, the ground line
+			_l(-0.92, 0.82, 0.92, 0.82, 0.8)
+			for x in [-0.55, 0.05, 0.65]:
+				_l(x - 0.3, 0.82, x + 0.22, -0.72)
+				_head(x + 0.22, -0.72, 0.52, -1.54, 0.28)
+		"caltrops":  # a caltrop (four points) and two more scattered
+			_l(-0.1, 0.05, -0.62, 0.42)
+			_l(-0.1, 0.05, 0.42, 0.42)
+			_l(-0.1, 0.05, -0.1, -0.6)
+			_dot(-0.1, 0.05, 0.14)
+			_dot(0.62, -0.62, 0.14)
+			_dot(0.7, 0.72, 0.14)
+			_dot(-0.75, -0.55, 0.12)
+		"palisade":  # pointed wooden posts, a plank across, on a bank
+			for x in [-0.6, -0.2, 0.2, 0.6]:
+				_pl([x - 0.15, 0.62, x - 0.15, -0.5, x, -0.85, x + 0.15, -0.5, x + 0.15, 0.62], false, 0.8)
+			_l(-0.85, 0.05, 0.85, 0.05, 0.8)
+			_earc(0.0, 0.9, 0.95, 0.28, PI, TAU, 0.8)
+		"rotate":  # a turn arrow round a short line
+			_arc(0.0, 0.0, 0.62, PI * 0.2, PI * 1.7)
+			_head(0.5, -0.36, 0.9, 1.0, 0.42)
+			_l(-0.35, 0.35, 0.35, -0.35, 0.8)
 		"siege_tower":  # tall tower on wheels, its bridge up
 			_pl([-0.5, 0.6, -0.42, -0.85, 0.42, -0.85, 0.5, 0.6], true)
 			_l(-0.46, -0.12, 0.46, -0.12, 0.8)
