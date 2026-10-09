@@ -82,6 +82,13 @@ sieges [{r, f (besieging faction), turn (started), supply (turns left),
   held (turns without an assault), from [[army id, region]...]}] by region
   (version 4)
 proposals [{id, from (AI), to (player), what, turn}], next_proposal
+chronicle (optional, version 6, absent in older saves = empty): [{turn, k,
+  ...}] the world-level events (battle, captured, destroyed, eliminated, war,
+  peace, trade, trade_end, siege, siege_lifted, starving, victory, defeat) of
+  the last 60 turns, the same rows as `events`, appended by `CRules.event`
+  as they happen (so the turn resolution and `apply_battle` both write it);
+  hashed with the rest of the state. Private rows (built, recruited, grew,
+  debt, order_failed ...) are in `events` only.
 events [{turn, k, ...}] (the last two turns: battle (version 4: + kind),
   captured (version 4: how "surrendered" after a siege), retreat,
   destroyed, war, peace, trade, trade_end, refused, proposal, built,
@@ -743,9 +750,11 @@ battle cards), `campaign_screen.gd` (move toast), `map_overlay.gd`
   none yet (artillery only); ladders next turn, a ram in 2 turns" /
   "2 sets of ladders; a ram next turn" / "3 sets of ladders and a ram"; the
   lay-siege toast says "Ladders after a turn of siege, a ram after two".
-  Siege towers (2026-10-09): against walls 2-3, a siege of three turns
-  or more also brings a siege tower and of four two (`CBattle.TOWER_TURNS`
-  [3, 4], `TOWER_WALLS` 2; `siege_equipment` "towers"); panel line "3 sets
+  Siege towers (2026-10-09): against walls 2-3, a siege of two turns
+  or more also brings a siege tower and of three two (`CBattle.TOWER_TURNS`
+  [2, 3] since 2026-10-09 evening: with [3, 4] a town's 3 turns of
+  supplies ran out before the tower came, so it was never seen in play;
+  `TOWER_WALLS` 2; `siege_equipment` "towers"); panel line "3 sets
   of ladders and a ram; a siege tower next turn" / "3 sets of ladders, a
   ram and a siege tower; a second next turn"; the battle screen's
   equipment line lists them. Still derived, no state (VERSION 6); the
@@ -1438,10 +1447,21 @@ the stance toggle).
 ## Diplomacy and AI
 
 - Per pair: war, peace, trade; the players are allied for good.
-- Player proposals are answered at resolution. AI accepts **peace** after 3+
-  turns of war if its strength < the proposer's, after 18 turns, or when down
-  to 2 regions; **trade** after 2+ turns of peace unless it is 2.5x stronger;
-  ending trade always.
+- Player proposals are answered at resolution, by `CAI.accepts` (= `CAI.why`
+  returns ""), knobs in `cai_profile.gd` (all levels today):
+
+  | Proposal | The AI accepts when |
+  |---|---|
+  | peace | at war `PEACE_MIN_TURNS` 3+ turns, and (its strength < `PEACE_ACCEPT_PCT` 100 % of the proposer's, or the war is `PEACE_ACCEPT_LONG` 18+ turns old, or it is down to `PEACE_ACCEPT_REGIONS` 2 regions) |
+  | trade | at peace `TRADE_ACCEPT_TURNS` 2+ turns and its strength < `TRADE_ACCEPT_PCT` 250 % of the proposer's |
+  | cancel_trade | always |
+
+- **The stance is shown**: on the Diplomacy screen each row of an AI faction
+  you could propose to (peace at war, trade at peace) has a line "Would accept
+  peace." (green) or "Would refuse trade: <reason>." (dim), the reason from
+  `CAI.why(preview state, you, them, what)` ("at war only 1 of 3 turns", "at
+  peace only 1 of 2 turns", "they expect to win (...)", "they see themselves
+  as the stronger"). Nothing is shown for another human (they answer).
 - AI factions each turn (version 5 moves: see "Free movement"): merge armies together; disband the most depleted
   units while in debt; build (budget 60% of treasury above one turn of
   upkeep): walls where threatened, farms and markets, the military buildings
@@ -1542,9 +1562,12 @@ and its armies disband.
 - **Army panel:** units with strength bars; tap units to choose them; Split
   off, Disband (confirm), Merge into another army there, Book; planned move
   with Cancel.
-- **Realm, Diplomacy, Goals, Battles, Menu** dialogs; turn summary ("since you
-  last played": your battles, gains and losses, diplomacy, buildings,
-  recruits, growth, failed orders; captures and wars elsewhere); battle result;
+- **Realm, Diplomacy, Goals, Battles, Menu** dialogs; **Chronicle** (Realm ->
+  Chronicle; `show_chronicle`): one section per turn, newest first, the
+  world's rows (`chronicle`) then "Yours" (your rows from `events`: battles,
+  gains and losses, buildings, recruits, growth, failed orders; so only the
+  last two turns); the turn summary ("since you last played") is the same
+  layout for the turns after the one last seen; battle result;
   End turn with a short warning list (armies next to an enemy without orders,
   regions that could build, unanswered offers) that can be skipped.
 - **Battle screen** (2026-10-07, `game/campaign/battle_screen.gd`): the

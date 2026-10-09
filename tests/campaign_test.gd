@@ -92,6 +92,7 @@ func _init() -> void:
 	_persist()
 	_format5()
 	_end_conditions()
+	_chronicle()
 	# Format 6: the continuous overworld.
 	_grid()
 	_grid_paths()
@@ -1065,6 +1066,50 @@ func _format5() -> void:
 	_check(CRules.apply_order(s, rome, {"t": "stance", "a": int(la["id"]), "s": 1}) == "not your settlement", "not inside an enemy's walls")
 
 
+## The chronicle (optional key): world-level events kept for 60 turns.
+func _chronicle() -> void:
+	var st := _new([_f("rome")])
+	var rome := _f("rome")
+	var car := _f("carthage")
+	_check(not st.has("chronicle"), "a new state has no chronicle key yet")
+	var sub := CTurn.submission(st, rome, [{"t": "war", "to": car}])
+	var s1 := CTurn.resolve_turn(st, [sub])
+	var s1b := CTurn.resolve_turn(st, [sub])
+	_check(CState.state_hash(s1) == CState.state_hash(s1b), "the chronicle is written deterministically")
+	var has_war := false
+	for e in s1.get("chronicle", []):
+		if str(e["k"]) == "war" and int(e["a"]) == rome and int(e["b"]) == car and int(e["turn"]) == int(st["turn"]):
+			has_war = true
+	_check(has_war, "a declaration of war is in the chronicle")
+	# A capture and an elimination.
+	var s2 := _new([rome])
+	var ep := _f("epirus")
+	for r in CState.regions_of(s2, ep):
+		CRules._capture(s2, r, rome)
+	CRules.check_eliminations(s2)
+	var kinds := {}
+	for e in s2["chronicle"]:
+		kinds[str(e["k"])] = 1
+	_check(kinds.has("captured") and kinds.has("eliminated"), "a capture and an elimination are in the chronicle")
+	# Private rows stay out of it.
+	CRules.event(s2, {"k": "built", "f": rome, "r": 0, "chain": 0, "level": 1})
+	_check(not (s2["chronicle"] as Array).any(func(e): return str(e["k"]) == "built"), "private events are not chronicled")
+	# Capped at 60 turns.
+	s2["turn"] = int(s2["turn"]) + 70
+	CRules.event(s2, {"k": "peace", "a": rome, "b": car})
+	_check((s2["chronicle"] as Array).size() == 1, "the chronicle keeps the last 60 turns")
+	# A format-6 save without the key loads and plays on.
+	var old := CState.from_json(CState.to_json(st))
+	_check(not old.is_empty() and not old.has("chronicle"), "a save without a chronicle loads")
+	_check(not CTurn.resolve_turn(old, [sub]).is_empty(), "and resolves")
+	# The AI's diplomacy rule explains itself and agrees with accepts().
+	var ai := _new([rome])
+	for g in CState.nf():
+		for w in ["peace", "trade", "cancel_trade"]:
+			if g != rome:
+				_check((CAI.why(ai, rome, g, w) == "") == CAI.accepts(ai, rome, g, w), "why() agrees with accepts() for %s/%s" % [w, g])
+
+
 func _end_conditions() -> void:
 	var st := _new([_f("rome")])
 	var ep := _f("epirus")
@@ -1763,19 +1808,22 @@ func _grid_siege_equipment() -> void:
 		for n in [2, 3, 4, 6]:
 			sg["turn"] = t0 - n
 			tw["%d/%d" % [wl, n]] = int(CBattle.siege_equipment(st, b).get("towers", 0))
-	_check(str(tw) == str({"1/2": 0, "1/3": 0, "1/4": 0, "1/6": 0, "2/2": 0, "2/3": 1, "2/4": 2, "2/6": 2,
-		"3/2": 0, "3/3": 1, "3/4": 2, "3/6": 2}), "siege towers by walls / siege turns: %s" % str(tw))
+	_check(str(tw) == str({"1/2": 0, "1/3": 0, "1/4": 0, "1/6": 0, "2/2": 1, "2/3": 2, "2/4": 2, "2/6": 2,
+		"3/2": 1, "3/3": 2, "3/4": 2, "3/6": 2}), "siege towers by walls / siege turns: %s" % str(tw))
 	_set_walls(st, ap, 2)
+	sg["turn"] = t0 - 1
+	_check(CBattle.equipment_text(st, ap).contains("mantlets next turn"), "the siege panel line after one turn: " + CBattle.equipment_text(st, ap))
 	sg["turn"] = t0 - 2
-	_check(CBattle.equipment_text(st, ap).contains("siege tower next turn"), "the siege panel line: " + CBattle.equipment_text(st, ap))
-	sg["turn"] = t0 - 3
 	var tb := CBattle.build(st, b, -1)
 	var n_tw := 0
 	for eq_e in (tb["scenario"].get("equip", []) as Array):
 		if int(eq_e[0]) == BattleSim.EQ_TOWER:
 			n_tw += 1
-	_check(n_tw == 1 and CBattle.equipment_text(st, ap).contains("a siege tower"),
-		"after three turns at walls 2: a siege tower on the ground (%d); %s" % [n_tw, CBattle.equipment_text(st, ap)])
+	_check(n_tw == 1 and CBattle.equipment_text(st, ap).contains("a siege tower; a second next turn"),
+		"after two turns at walls 2: a siege tower on the ground (%d); %s" % [n_tw, CBattle.equipment_text(st, ap)])
+	sg["turn"] = t0 - 3
+	_check(int(CBattle.siege_equipment(st, b).get("towers", 0)) == 2 and CBattle.equipment_text(st, ap).contains("4 mantlets and 2 siege towers"),
+		"after three turns at walls 2: two towers and four mantlets; " + CBattle.equipment_text(st, ap))
 	st["regions"][ap]["slots"] = slots0
 	sg["turn"] = t0 - 2
 	var built := CBattle.build(st, b, -1)
@@ -3163,13 +3211,13 @@ func _ai_skilled() -> void:
 	var g := CState.new_campaign("test", 4242, [])
 	for t in 20:
 		g = CTurn.resolve_turn(g, [])
-	_check(CState.hash_text(g) == "63ea40c5" and int(g["rng"]) == 3394658370,
+	_check(CState.hash_text(g) == "6e1095cd" and int(g["rng"]) == 3394658370,
 		"Average plays and draws the RNG exactly as before step 4 (%s, rng %d)" % [CState.hash_text(g), int(g["rng"])])
 	var ge := CState.new_campaign("test", 4242, [])
 	ge["factions"][_f("macedon")]["ai_skill"] = CP.EASY
 	for t in 20:
 		ge = CTurn.resolve_turn(ge, [])
-	_check(CState.hash_text(ge) == "1379013c" and int(ge["rng"]) == 694925818,
+	_check(CState.hash_text(ge) == "08e7391a" and int(ge["rng"]) == 694925818,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(ge), int(ge["rng"])])
 	CAI.no_beasts = false
 	CData.no_generals = false
