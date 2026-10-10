@@ -1091,6 +1091,37 @@ Where 2026-10-09 ended (build 20261009T124650Z live; everything up to
   phone checked. `tests/campaign_input_test.gd`'s 7 failures were stale
   expectations, fixed 2026-10-10 (it passes, also headless).
 
+## Next session (week of 2026-10-13; paused 2026-10-10 midday)
+
+- **Live build 20261010T105314Z (commit 4b0c40d), version 6.** Everything
+  through the battlefield visual upgrade and audio is live. The Friday
+  game did not happen; the online campaign on the server is still
+  version 6 and playable on that build.
+- **Committed, NOT exported:** the team rules (5ed4a0c, VERSION 7 with a
+  6 -> 7 migration; a default-shaped state hashes as its format-6 equal
+  so goldens and campaign_sim are unchanged: a deliberate trick, noted
+  here in case it surprises later). The next export carries version 7:
+  online campaigns of version 6 are refused by the client, so export
+  only once the UI below is in and start a fresh online campaign.
+- **N-player, remaining parts, in order:** (1) server: N seats per
+  campaign (one per human faction), invites per seat, the turn deadline
+  when every human seat has submitted, notifications to all seats
+  (`server/`, `game/net/`; Sonnet, Go tests + online_e2e); (2) UI: the
+  new-campaign screen with Human / AI per faction, a team dropdown per
+  faction, "all humans one team" / "everyone on their own" buttons; the
+  diplomacy screen's "join our team" proposal with the stance, and Leave
+  team with its notice; the chronicle names for team rows; the Realm /
+  victory text per team (Sonnet); (3) battles with several humans: any
+  human on a side joins a fought battle as a lockstep guest (the lockstep
+  already has host / guests / present), units gifted across a team; a
+  3-peer lockstep_test case (Opus). Then heroes and agents (item 8a).
+- **From the user's next listen / look:** audio levels (`tools/make_sounds.py`
+  gains, `AU_MELEE_MIN`, the 90 m volley / whoosh split), the Tab S7's
+  cost of the battlefield shader and the overworld relief.
+- **Tuning list (unchanged):** Skilled vs Average ~47 % (AI-competency
+  pass); walls 2-3 attackers lose 300 men outside before the gate falls;
+  Epirus's start (two shores, at war with Rome, idle AI armies).
+
 ## Previous session notes (2026-10-08, 14:00)
 
 Where the evening of 2026-10-07 ended (build 20261008T010923Z live,
