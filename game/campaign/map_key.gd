@@ -310,6 +310,7 @@ func rows() -> Array:
 		out.append(["Hills %d a cell, ridge %d (a battle there is on that ground)" % [int(CData.GRID_COST[CData.HILL]),
 				int(CData.GRID_COST[CData.RIDGE])], func(ci: Control, sz: Vector2):
 			_land(ci, sz)
+			MapView.draw_shade_sample(ci, Rect2(Vector2.ZERO, sz))
 			var cpx := sz.y * 0.8
 			MapView.draw_hills(ci, MapView.hill_mark(Vector2(sz.x * 0.3, sz.y * 0.55), cpx, 0), 0, 1.6)
 			MapView.draw_hills(ci, MapView.hill_mark(Vector2(sz.x * 0.72, sz.y * 0.55), cpx, 1), 1, 1.6)])

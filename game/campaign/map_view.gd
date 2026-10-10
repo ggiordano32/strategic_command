@@ -48,8 +48,18 @@ const COL_RIVER := Color(0.22, 0.46, 0.78, 0.95)
 const RIVER_W := 2.4
 const COL_ROAD := Color(0.55, 0.4, 0.22, 0.85)
 const ROAD_W := 1.7
-const COL_HILL := Color(0.25, 0.18, 0.08, 0.3)
-const COL_RIDGE := Color(0.2, 0.13, 0.05, 0.45)
+const COL_HILL := Color(0.25, 0.18, 0.08, 0.2)
+const COL_RIDGE := Color(0.2, 0.13, 0.05, 0.3)
+## Relief shading (2026-10-10): an elevation field from the grid (ridge 2,
+## hill 1, else 0), blurred, lit from the north-west, baked once into an
+## image of the grid's size and drawn bilinear over the land fill.
+const SHADE_BLUR := 2          # box blur radius in cells, applied twice
+const SHADE_SLOPE := 3.0       # slope gain
+const SHADE_ALPHA := 0.5       # opacity of the shade at full slope
+const SHADE_HEIGHT_A := 0.10   # opacity of the warm height tint per elevation unit
+const SHADE_LIGHT := Color(1.0, 0.96, 0.8)
+const SHADE_DARK := Color(0.12, 0.08, 0.1)
+const SHADE_TINT := Color(1.0, 0.9, 0.62)
 const HILL_W := 1.2
 const COL_FORD := Color(0.93, 0.9, 0.8, 1.0)
 const COL_BRIDGE := Color(0.45, 0.3, 0.15, 1.0)
@@ -57,6 +67,8 @@ const COL_BRIDGE := Color(0.45, 0.3, 0.15, 1.0)
 ## Built once from the grid (view only): hatch segments per kind, road
 ## polylines, river polylines, crossing glyphs [point, step direction, kind].
 static var _hill_segs: Array = []
+static var _shade_tex: ImageTexture = null
+static var _shade_ms := -1.0   # bake time, ms (for the record)
 static var _road_lines: Array = []
 static var _river_lines: Array = []
 static var _cross_marks: Array = []
@@ -85,6 +97,10 @@ var _next_dashes_lw := -1.0      # ... for this line scale
 
 ## Set the reach (per cell: 0 this turn, 1 next turn, -1 not), or clear it
 ## (empty array).
+func _ready() -> void:
+	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+
+
 func set_reach(rt: PackedInt32Array) -> void:
 	reach_rects = []
 	reach_loops = []
@@ -227,6 +243,13 @@ func _draw() -> void:
 			draw_colored_polygon(piece, col)
 	if grid:
 		_terrain_geometry()
+		if _shade_tex != null:
+			var sz := Vector2(CGrid.width(), CGrid.height()) * float(CGrid.cell_px())
+			for poly in Geo.lands() + Geo.islands():
+				var uvs := PackedVector2Array()
+				for pt in poly:
+					uvs.append(pt / sz)
+				draw_colored_polygon(poly, Color.WHITE, uvs, _shade_tex)
 		draw_hills(self, _hill_segs[0], 0, lw)
 		draw_hills(self, _hill_segs[1], 1, lw)
 		_draw_reach(lw)
@@ -335,6 +358,14 @@ static func _terrain_geometry() -> void:
 		else:
 			hills.append_array(hill_mark(ctr, px, 0))
 	_hill_segs = [hills, ridges]
+	var t0 := Time.get_ticks_usec()
+	var elev := PackedFloat32Array()
+	elev.resize(CGrid.count())
+	for c in CGrid.count():
+		var ov2 := CGrid.terrain_override(c)
+		elev[c] = 2.0 if ov2 == CData.RIDGE else (1.0 if ov2 >= 0 else 0.0)
+	_shade_tex = ImageTexture.create_from_image(shade_image(elev, CGrid.width(), CGrid.height()))
+	_shade_ms = (Time.get_ticks_usec() - t0) / 1000.0
 	var w := CGrid.width()
 	for ri in Geo.ROADS.size():
 		var cells := Geo.line_cells(Geo.road_line(ri), px, w, CGrid.height())
@@ -390,6 +421,64 @@ static func _smooth_open(pts: PackedVector2Array) -> PackedVector2Array:
 		out.append(pts[i].lerp(pts[i + 1], 0.75))
 	out.append(pts[pts.size() - 1])
 	return out
+
+
+## Relief image of an elevation field (w x h floats): blurred, lit from the
+## north-west; transparent on flat ground, dark on south-east slopes, light
+## on north-west ones, a faint warm tint with height.
+static func shade_image(elev: PackedFloat32Array, w: int, h: int) -> Image:
+	var e := elev
+	for _pass in 2:
+		for horiz in 2:
+			var o := PackedFloat32Array()
+			o.resize(w * h)
+			for y in h:
+				for x in w:
+					var sum := 0.0
+					var n := 0
+					for d in range(-SHADE_BLUR, SHADE_BLUR + 1):
+						var xx := x + d if horiz == 0 else x
+						var yy := y if horiz == 0 else y + d
+						if xx >= 0 and yy >= 0 and xx < w and yy < h:
+							sum += e[yy * w + xx]
+							n += 1
+					o[y * w + x] = sum / n
+			e = o
+	var light := Vector3(-1.0, -1.0, 1.1).normalized()
+	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	for y in h:
+		for x in w:
+			var dx := (e[y * w + mini(x + 1, w - 1)] - e[y * w + maxi(x - 1, 0)]) * 0.5
+			var dy := (e[mini(y + 1, h - 1) * w + x] - e[maxi(y - 1, 0) * w + x]) * 0.5
+			var nrm := Vector3(-dx * SHADE_SLOPE, -dy * SHADE_SLOPE, 1.0).normalized()
+			var sh := clampf((nrm.dot(light) - light.z) * 2.2, -1.0, 1.0)
+			var ht := clampf(e[y * w + x], 0.0, 2.0)
+			var col := SHADE_LIGHT if sh > 0.0 else SHADE_DARK
+			var a := absf(sh) * SHADE_ALPHA
+			# warm tint with height: composite under the shade
+			var ta := ht * SHADE_HEIGHT_A
+			var oa := a + ta * (1.0 - a)
+			var rgb := Color(col.r * a + SHADE_TINT.r * ta * (1.0 - a), col.g * a + SHADE_TINT.g * ta * (1.0 - a),
+				col.b * a + SHADE_TINT.b * ta * (1.0 - a)) / maxf(oa, 0.001)
+			img.set_pixel(x, y, Color(rgb.r, rgb.g, rgb.b, oa))
+	return img
+
+
+static var _sample_tex: ImageTexture = null
+
+## The key's hills row: a hill and a ridge shaded as on the map.
+static func draw_shade_sample(ci: CanvasItem, rc: Rect2) -> void:
+	if _sample_tex == null:
+		var w := 16
+		var h := 6
+		var el := PackedFloat32Array()
+		el.resize(w * h)
+		for y in h:
+			for x in w:
+				el[y * w + x] = (1.0 if x >= 3 and x <= 5 and y >= 1 and y <= 4 else 0.0) \
+					+ (2.0 if x >= 10 and x <= 12 and y >= 1 and y <= 4 else 0.0)
+		_sample_tex = ImageTexture.create_from_image(shade_image(el, w, h))
+	ci.draw_texture_rect(_sample_tex, rc, false)
 
 
 ## Hatch of a hill (kind 0: one chevron) or ridge (1: two) cell of size

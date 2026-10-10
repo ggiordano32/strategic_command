@@ -60,6 +60,12 @@ original art.
   open ground, 15 hills, 20 ridges, +5 in heavy woods, diagonals 14/10);
   marches continue on later turns. Rome to Tarentum: two turns on foot, one
   for cavalry. Sea lanes join port cells (a full turn's points).
+- Relief shading (view only, 2026-10-10): the map bakes once an elevation
+  field from the grid (ridge 2, hill 1, else 0), blurs it over about 4 cells,
+  lights it from the north-west and draws it as one bilinear texture over the
+  land, under borders, rivers, roads and armies; slopes facing the light are
+  pale and warm, the others dark. The hill hatch marks stay, lighter. No state
+  or rules change.
 - Zones of control: every army in the field holds a circle of 2 cells
   (fortified 3); paths keep out of enemy zones unless that army is the
   target. An army stepping next to an enemy army attacks it: a field battle
