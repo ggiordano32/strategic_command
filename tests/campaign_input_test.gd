@@ -940,11 +940,17 @@ func _a_resolve() -> void:
 var _d_orders := ""
 var _d_sv := 0
 var _d_win := Vector2i.ZERO
+var _d_root := Vector2i.ZERO
 
 
 func _d_select() -> void:
 	_d_win = root.content_scale_size
 	root.content_scale_size = Vector2i(844, 390)  # a phone, landscape
+	if DisplayServer.get_name() == "headless":
+		# headless has no real window: size the root too, or the scale does
+		# nothing and the Diplomacy dialog is tall enough not to scroll
+		_d_root = root.size
+		root.size = Vector2i(844, 390)
 	await process_frame
 	await process_frame
 	cs.close_side()
@@ -1011,6 +1017,8 @@ func _d_other_check() -> void:
 	_check(cs.dialog.visible and cs.dialog_scroll.scroll_vertical == 0, "another dialog opens at the top (%d)" % cs.dialog_scroll.scroll_vertical)
 	cs.close_dialog()
 	root.content_scale_size = _d_win
+	if _d_root != Vector2i.ZERO:
+		root.size = _d_root
 
 
 # ----------------------------------------------- gifts between players ---
@@ -1530,6 +1538,11 @@ func _m_setup() -> void:
 	CState.place(CState.army(cs.st, g1), _neighbour(c0))
 	CState.army(cs.st, g0)["dest_x"] = -1
 	CState.army(cs.st, g0)["dest_y"] = -1
+	# the starting armies now hold 7 units each (cap 12): trim the neighbour so
+	# the two can merge (the old expectation assumed smaller starting armies)
+	var gu: Array = CState.army(cs.st, g1)["units"]
+	while gu.size() > 3:
+		gu.pop_back()
 	cs._replan()
 	cs.close_side()
 	cs.focus_region(CData.region_index("latium"), 1.6)
@@ -1659,12 +1672,13 @@ var _blocker_dip := 0
 func _m_block_setup() -> void:
 	# Our other army standing next to an enemy army, within the selected
 	# army's reach: the march to merge into it is refused (no route past the
-	# enemy's zone), so no merge glyph may show on it.
+	# enemy's zone), so no merge glyph may show on it. (North of Latium: the
+	# coast south of it became sea in the geography pass.)
 	var en := greeks
 	_blocker_dip = CState.dip(cs.st, rome, en)
 	CState.set_dip(cs.st, rome, en, CState.WAR)
 	var c0 := CState.field_cell(CData.region_index("latium"))
-	var ec := CGrid.at(CGrid.cx(c0), CGrid.cy(c0) + 2)
+	var ec := CGrid.at(CGrid.cx(c0), CGrid.cy(c0) - 2)
 	var id := CRules.new_army_id(cs.st, en)
 	cs.st["factions"][en]["next_army"] = int(cs.st["factions"][en]["next_army"]) + 1
 	var na := {"id": id, "f": en, "r": CGrid.region(ec), "units": [{"t": "spear", "n": 100}, {"t": "spear", "n": 100}],
@@ -1673,7 +1687,7 @@ func _m_block_setup() -> void:
 	CRules._insert_army(cs.st, na)
 	_blocker = id
 	CState.place(CState.army(cs.st, g0), c0)
-	CState.place(CState.army(cs.st, g1), CGrid.at(CGrid.cx(c0), CGrid.cy(c0) + 3))
+	CState.place(CState.army(cs.st, g1), CGrid.at(CGrid.cx(c0), CGrid.cy(c0) - 3))
 	cs._replan()
 	cs.close_side()
 	cs.focus_region(CData.region_index("latium"), 1.6)
@@ -1690,6 +1704,9 @@ func _m_block_check() -> void:
 	for k in CGrid.disc(CState.cell(CState.army(cs.ps, g1)), 1):
 		if rt6.size() == CGrid.count() and rt6[k] == 0:
 			reached = true
+	var dbg := []
+	for k in CGrid.disc(CState.cell(CState.army(cs.ps, g1)), 1):
+		dbg.append(rt6[k])
 	_check(why != "" and reached, "set-up: our army next to the enemy is within reach but its merge is refused (%s)" % why)
 	var marks := 0
 	var wrong := 0

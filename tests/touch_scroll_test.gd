@@ -139,6 +139,7 @@ func _campaign_lists() -> void:
 	_check(sc.get_v_scroll_bar().max_value > sc.get_v_scroll_bar().page, "the army card with its recruit list overflows the phone screen (scrollable)")
 	# (a) drag starting on a recruit + button.
 	var plus: Button = cs.side_box.find_child("recruit_heavy", true, false)
+	await _settle(plus)  # the button sits below the fold of the compact card
 	var y0: int = sc.scroll_vertical
 	var start := _centre(plus)
 	await _drag(start, start + Vector2(0, -120))
@@ -149,6 +150,7 @@ func _campaign_lists() -> void:
 	sc.scroll_vertical = 0
 	await _frames(2)
 	plus = cs.side_box.find_child("recruit_heavy", true, false)
+	await _settle(plus)
 	start = _centre(plus)
 	await _drag(start, start + Vector2(0, -90), 3)
 	var after_release: int = sc.scroll_vertical
@@ -189,6 +191,12 @@ func _campaign_lists() -> void:
 		(a["units"] as Array).append({"t": "spear", "n": 100})
 	cs.select_army(int(a["id"]))
 	await _frames(4)
+	# Armies of more than 6 units start with the unit rows folded behind the
+	# composition strip: open it, as a player does (state is kept per army).
+	var strip: Button = cs.side_box.find_child("army_strip", true, false)
+	if strip != null and not cs.side_box.find_child("unit_2", true, false).is_visible_in_tree():
+		strip.pressed.emit()
+		await _frames(4)
 	sc.scroll_vertical = 0
 	await _frames(2)
 	var urow: Control = cs.side_box.find_child("unit_2", true, false)
@@ -278,11 +286,14 @@ func _menu_lists() -> void:
 	m.show_page("continue")
 	await _frames(4)
 	var sc = m._continue_box.get_parent()
+	while sc != null and not (sc is ScrollContainer):  # the list sits in a box inside the scroll area
+		sc = sc.get_parent()
 	var btns: Array = []
 	for b in m._continue_box.find_children("*", "Button", true, false):
 		if (b as Button).text != "Delete":
 			btns.append(b)
 	var b0: Button = btns[1]
+	await _settle(b0)
 	var start := _centre(b0)
 	await _drag(start, start + Vector2(0, -100))
 	_check(sc.scroll_vertical > 40, "save list: a drag from a save button scrolls (%d)" % sc.scroll_vertical)

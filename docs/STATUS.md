@@ -445,8 +445,8 @@ short:
   (`--format=5`, `--twice`), campaign_solo, campaign_battles,
   campaign_input_test (windowed; v6 and v5 parts), check_scripts,
   determinism_test, online_e2e (scratch port 8077), go test.
-  `tests/touch_scroll_test.gd` fails two recruit-list scroll checks, the
-  same on HEAD (not from this change).
+  `tests/touch_scroll_test.gd` now passes (2026-10-10; it needed to scroll
+  its target into view and open the folded army strip).
 - **Merging, exchanging and gifting (fixed after the playtest "lots of 1
   and 2 stacks at the same location", 2026-10-06, uncommitted):** tap your
   other army to merge (marches to it and follows it over the turns), the
@@ -1088,9 +1088,8 @@ Where 2026-10-09 ended (build 20261009T124650Z live; everything up to
   48 % phone cap. Now `SCROLL_MODE_SHOW_NEVER`, `side_box` pinned to the
   panel width (minus the scrollbar), the siege rows and the army card's
   move row are `Kit.flow` rows that wrap. Screenshots desktop / tablet /
-  phone checked. **Known:** `tests/campaign_input_test.gd` has 7 failures
-  at HEAD (merge glyph, Diplomacy scroll, ...) that predate this fix,
-  from earlier today's UI changes; a pass is due.
+  phone checked. `tests/campaign_input_test.gd`'s 7 failures were stale
+  expectations, fixed 2026-10-10 (it passes, also headless).
 
 ## Previous session notes (2026-10-08, 14:00)
 
@@ -1109,8 +1108,7 @@ server rebuilt with the battle "ask" / guest room changes):
   re-run the AI tables), then the rest of the list below.
 - Known: city benches' worst ticks 8-12 ms on this machine (needs a cold
   measurement); walls-3 polis fights can stall at the acropolis;
-  touch_scroll_test's two recruit-list failures and menu script error
-  pre-exist.
+  touch_scroll_test passes again (2026-10-10).
 
 ## Where we are headed
 
