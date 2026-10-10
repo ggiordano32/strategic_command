@@ -3379,14 +3379,14 @@ func _ai_skilled() -> void:
 	for t in 20:
 		g = CTurn.resolve_turn(g, [])
 	# (Goldens moved with the roads, rivers and hills, 2026-10-09: movement
-	# differs; were 6e1095cd / 3394658370 and 08e7391a / 694925818.)
-	_check(CState.hash_text(g) == "3666c3b2" and int(g["rng"]) == 694925818,
+	# differs; were 6e1095cd / 3394658370 and 08e7391a / 694925818; then 3666c3b2 / 694925818 and d517c822 / 3622865195 before the Tempe ford and the Tempe and Haliacmon roads.)
+	_check(CState.hash_text(g) == "caadf49a" and int(g["rng"]) == 1570113520,
 		"Average plays and draws the RNG exactly as before step 4 (%s, rng %d)" % [CState.hash_text(g), int(g["rng"])])
 	var ge := CState.new_campaign("test", 4242, [])
 	ge["factions"][_f("macedon")]["ai_skill"] = CP.EASY
 	for t in 20:
 		ge = CTurn.resolve_turn(ge, [])
-	_check(CState.hash_text(ge) == "d517c822" and int(ge["rng"]) == 3622865195,
+	_check(CState.hash_text(ge) == "95bb7116" and int(ge["rng"]) == 2555935071,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(ge), int(ge["rng"])])
 	CAI.no_beasts = false
 	CData.no_generals = false
