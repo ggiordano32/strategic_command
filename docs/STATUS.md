@@ -1040,6 +1040,18 @@ Where 2026-10-09 ended (build 20261009T124650Z live; everything up to
   of 5 turns" / "Would refuse: they see themselves as the stronger"),
   computed from the same rule, no hidden information today. Per-faction
   personalities may blur it later.
+- **Battlefield visual upgrade (user, 2026-10-10, after seeing the
+  overworld's real relief: "the overworld is gorgeous").** The battle
+  maps get the same treatment the overworld just did: the ground from
+  the real elevation and ground palette of the battle cell (slopes
+  shaded, crest lines, rock above the tree line), vegetation by
+  elevation band and water (woods in the valley floors and along the
+  river on crossing maps, scrub on dry slopes), fields and tracks near
+  settlements, the river's banks and shallows, better walls / houses /
+  roofs from the city palette, and the unit sprites when the sprite
+  pipeline lands. View-only (terrain_layer / tree_layer / city_layer and
+  the terrain shader), nothing in the sim; the code-drawn pass first,
+  the sprite pass as the pipeline's second test after the West pack.
 - **Order after that (user, 2026-10-09):** roads, rivers (with crossing
   maps and the camp at the crossing, item 3) **and hills on the overworld**
   (hill cells as movement cost and as the battle map's ground, so a
