@@ -1323,7 +1323,7 @@ Static data and rules only: no state change, `CState.VERSION` stays 6
   ford; Iberus: Dertosa bridge, Salduie ford; Baetis: Corduba bridge,
   Hispalis ford; Tagus: Toletum ford, Norba bridge; Bagradas: Utica road
   bridge, Vaga ford; Achelous: Stratos ford; Peneus: Larissa bridge,
-  Trikka ford. 17 roads between settlements: Via Appia (Roma - Capua -
+  Trikka ford. 19 roads between settlements: Via Appia (Roma - Capua -
   Beneventum - Venusia - Tarentum), Via Latina, Via Aurelia (to Pisae and
   Genua), Via Cassia (to Arretium), Via Flaminia (to Ariminum), Via
   Aemilia (Ariminum - Placentia - Mediolanum), the Patavium road, the
@@ -1369,6 +1369,10 @@ Static data and rules only: no state change, `CState.VERSION` stays 6
   b)` (id or -1), `crossing(id)` [a, b, kind], `crossings_from(c)`.
   Measured: Roma to Tarentum's walls 132 points along the Via Appia (one
   turn on foot; 211 before), from Etruria two turns.
+  The army card's movement paragraph states it: "A cell of open ground costs
+  10, hills 15, ridges 20, heavy woods +5 (diagonals 1.4x), roads 6, fords +5,
+  bridges nothing extra; rivers cannot be crossed elsewhere; a sea lane takes a
+  whole turn." A tap on a crossing shows its name in the hint bar.
 - **The battle hook** (`CBattle.river_crossing`): a field battle whose lead
   attacker reached the defender across a crossing (the cheapest way from
   its cell to the battle cell, at most 4 steps, takes a crossing's step;

@@ -34,6 +34,10 @@ var works_drag := false
 ## is highlighted while a unit that can man the walls is selected.
 var hover_w := Vector2(-1, -1)
 var _icon := PackedInt32Array()  # unit -> symbol id
+## Matchup mark: the enemy unit under the pointer / finger while a unit is
+## selected (-1 none) and the selected unit's matchup against it (1 / 0 / -1).
+var match_u := -1
+var match_v := 0
 
 const COL_SIDE := [Color(0.35, 0.6, 1.0), Color(1.0, 0.36, 0.28)]
 const COL_FIRE := Color(1.0, 0.75, 0.25, 0.8)
@@ -464,6 +468,15 @@ func _draw_markers(r: float, lw: float) -> void:
 		# with a dark glyph for contrast).
 		var glyph := Color(0.12, 0.1, 0.05) if sim.u_state[u] == BattleSim.U_ROUTING else Color.WHITE
 		Icons.draw_marker(self, _icon[u], c, r, col, glyph)
+		if u == match_u:
+			var mc := c + Vector2(r * 2.0, 0)
+			var mcol := Color(0.3, 0.9, 0.35) if match_v > 0 else (Color(1.0, 0.3, 0.25) if match_v < 0 else Color(0.7, 0.7, 0.7))
+			var dy := -1.0 if match_v > 0 else 1.0
+			var pts := PackedVector2Array([mc + Vector2(0, dy * r * 0.7), mc + Vector2(-r * 0.7, -dy * r * 0.5), mc + Vector2(r * 0.7, -dy * r * 0.5)])
+			if match_v == 0:
+				pts = PackedVector2Array([mc + Vector2(-r * 0.5, 0), mc + Vector2(0, -r * 0.5), mc + Vector2(r * 0.5, 0), mc + Vector2(0, r * 0.5)])
+			draw_colored_polygon(pts, mcol)
+			draw_polyline(pts + PackedVector2Array([pts[0]]), Color(0, 0, 0, 0.8), lw)
 		if selected_units.has(u):
 			draw_arc(c, r * 1.6, 0, TAU, 20, Color.WHITE, lw)
 		if sim.u_state[u] != BattleSim.U_READY:

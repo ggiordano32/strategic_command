@@ -24,6 +24,7 @@ const CoopHud := preload("res://game/coop_hud.gd")
 const Lockstep := preload("res://sim/lockstep.gd")
 const CData := preload("res://campaign/cdata.gd")
 const FM := preload("res://sim/fixed_math.gd")
+const Traits := preload("res://game/unit_traits.gd")
 
 const PX_PER_M := 10.0
 const M := 1024.0
@@ -1819,6 +1820,20 @@ func _finish_line(double_run: bool) -> void:
 			1 if double_run else orders.value(u, "run")))
 
 
+## The matchup mark: with a unit selected, the enemy unit at screen point
+## sp gets a triangle beside its marker (a HUD mark only; no sim state).
+func _update_matchup(sp: Vector2) -> void:
+	var u := -1
+	if selected >= 0 and not selection.is_empty() and not hud.is_over_ui(sp):
+		var t := _pick_unit(_screen_to_world(sp))
+		if t >= 0 and sim.u_side[t] != player_side and sim.u_state[t] < BattleSim.U_DESTROYED:
+			u = t
+	if u != overlay.match_u or (u >= 0 and overlay.match_v != Traits.matchup(sim.u_otype[selected], sim.u_otype[u])):
+		overlay.match_u = u
+		overlay.match_v = Traits.matchup(sim.u_otype[selected], sim.u_otype[u]) if u >= 0 else 0
+		overlay.queue_redraw()
+
+
 func _pick_unit(w: Vector2) -> int:
 	var x := int(w.x / PX_PER_M * M)
 	var y := int(w.y / PX_PER_M * M)
@@ -1891,8 +1906,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	if hud.book.visible or hud.controls.visible:
 		return  # the book and the controls page are modal; they handle their own keys
 	if event is InputEventScreenTouch:
+		_update_matchup(event.position if event.pressed else Vector2(-1e6, -1e6))
 		_on_touch(event)
 	elif event is InputEventScreenDrag:
+		_update_matchup(event.position)
 		_on_drag(event)
 	elif event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
@@ -1915,6 +1932,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				_count("mouse_pan")
 		# Left button arrives again as an emulated touch; ignore it here.
 	elif event is InputEventMouseMotion:
+		_update_matchup((event as InputEventMouseMotion).position)
 		if _mouse_pan:
 			camera.position -= (event as InputEventMouseMotion).relative / camera.zoom
 			_clamp_camera()

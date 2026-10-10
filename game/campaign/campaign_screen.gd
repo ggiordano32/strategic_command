@@ -236,6 +236,16 @@ func _apply_debug_args() -> void:
 			focus_region(CData.region_index(v))
 		elif a == "--close-dialog":
 			close_dialog()
+		elif a.begins_with("--tap-crossing="):
+			# testing aid: centre on crossing N and tap it (its name in the hint bar)
+			await get_tree().create_timer(0.3).timeout
+			var cp: Vector2 = Geo.crossings()[int(v)]["p"]
+			zoom = 1.2
+			offset = _vp() * 0.5 - cp * zoom
+			_clamp_view()
+			_refresh_map()
+			await get_tree().process_frame
+			_tap(cp * zoom + offset)
 		elif a == "--handover-start":
 			if cover.visible:  # testing aid: press "Start my turn" on the hand-over
 				cover.visible = false
@@ -1107,6 +1117,23 @@ func _flash(text: String) -> void:
 	var tw := create_tween()
 	tw.tween_interval(2.5)
 	tw.tween_callback(func(): hint.modulate = Color(1, 1, 1); _update_hint())
+
+
+## A tap that lands on a river crossing (and nothing else): its name in the
+## hint bar for a few seconds. True when it did.
+func _crossing_note(p: Vector2) -> bool:
+	var id := MapView.crossing_near(_map_point(p), 16.0 / zoom)
+	var info := Geo.crossings()
+	if id < 0 or id >= info.size():
+		return false
+	var c: Dictionary = info[id]
+	var river := str(Geo.RIVERS[int(c["river"])]["name"])
+	hint.text = ("Bridge at %s (%s)" if int(c["kind"]) == 1 else "Ford of %s (%s)") % [str(c["name"]), river]
+	hint.modulate = Color(1, 1, 1)
+	var tw := create_tween()
+	tw.tween_interval(4.0)
+	tw.tween_callback(func(): _update_hint())
+	return true
 
 
 # ------------------------------------------------------------------- UI ---
@@ -2598,6 +2625,8 @@ func _tap(p: Vector2) -> void:
 		select_army(id)
 		_t("campaign_input", {"what": "select_army"})
 		return
+	if sel_army < 0 and _crossing_note(p):
+		return
 	if r >= 0:
 		select_region(r)
 		return
@@ -2637,6 +2666,8 @@ func _tap6(p: Vector2) -> void:
 	var sr := overlay.settlement_at(p)
 	if sr >= 0:
 		select_region(sr)
+		return
+	if _crossing_note(p):
 		return
 	var r := Geo.region_at(_map_point(p))
 	if r >= 0:

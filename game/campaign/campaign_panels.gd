@@ -2056,13 +2056,28 @@ func _names(list: Array) -> String:
 	return " and ".join(out)
 
 
+## "Losses 267 of 599 and 40 of 300 men."; a side that fielded no men (a
+## garrison-only defence, no army rows) is "the garrison" instead of "0 of 0".
+func _loss_text(e: Dictionary) -> String:
+	var am := int(e["att_men"])
+	var dm := int(e["def_men"])
+	if am > 0 and dm > 0:
+		return "Losses %d of %d and %d of %d men." % [int(e["att_lost"]), am, int(e["def_lost"]), dm]
+	var win := int(e["winner"])
+	if am == 0 and dm == 0:
+		return "Losses: none counted."
+	if dm == 0:
+		return "Losses %d of %d; the garrison %s." % [int(e["att_lost"]), am, "fell" if win == 0 else "held"]
+	return "Losses %d of %d; the attackers' losses are not recorded." % [int(e["def_lost"]), dm]
+
+
 func event_text(e: Dictionary, f: int) -> String:
 	var city := func(r): return str(CData.REGIONS[int(r)]["city"])
 	match str(e["k"]):
 		"battle":
 			var w := "the attackers won" if int(e["winner"]) == 0 else "the defenders held"
 			var how := str(e["mode"]).replace("formula", "fought out of sight")
-			var loss := "Losses %d of %d and %d of %d men." % [int(e["att_lost"]), int(e["att_men"]), int(e["def_lost"]), int(e["def_men"])]
+			var loss := _loss_text(e)
 			match str(e.get("kind", "")):
 				"assault":
 					return "Assault on %s: %s stormed the walls of %s; %s (%s). %s" % [city.call(e["r"]), _names(e["att"]), _names(e["def"]),
@@ -2449,9 +2464,9 @@ func _movement_rows6(box: VBoxContainer, a: Dictionary) -> void:
 	var left := CState.mp(a)
 	var base := CState.max_mp(a)
 	var pace := "cavalry only" if base == CData.MP_CAV else ("artillery sets the pace" if base == CData.MP_ART else "on foot")
-	var ml := Kit.label("Movement %d of %d points this turn (%s). A cell of open ground costs %d, hills %d, ridges %d, heavy woods +%d (diagonals 1.4x); a sea lane takes a whole turn." % [
+	var ml := Kit.label("Movement %d of %d points this turn (%s). A cell of open ground costs %d, hills %d, ridges %d, heavy woods +%d (diagonals 1.4x), roads %d, fords +%d, bridges nothing extra; rivers cannot be crossed elsewhere; a sea lane takes a whole turn." % [
 		left, full, pace, int(CData.GRID_COST[CData.FLAT]), int(CData.GRID_COST[CData.HILL]), int(CData.GRID_COST[CData.RIDGE]),
-		CData.GRID_WOODS], Kit.FONT_SMALL, Kit.COL_DIM, true)
+		CData.GRID_WOODS, CData.GRID_ROAD, CData.GRID_FORD], Kit.FONT_SMALL, Kit.COL_DIM, true)
 	ml.name = "army_points"
 	box.add_child(ml)
 	if CRules.siege_role(ps, a) == 2:
