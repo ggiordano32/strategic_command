@@ -147,6 +147,7 @@ const REPLAY_ROUND := 0.13     # seconds per round of steps
 func _ready() -> void:
 	_tele = get_node_or_null("/root/Telemetry")
 	panels = Panels.new(self)
+	Kit.hint_cb = func(t: String): show_toast(t)
 	world = Node2D.new()
 	add_child(world)
 	map_view = MapView.new()

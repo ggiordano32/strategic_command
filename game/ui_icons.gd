@@ -28,6 +28,8 @@ const NAMES: Array[String] = [
 	"ladder", "ram", "tower", "siege_tower", "mantlet", "gate", "ammo", "forage", "wagon", "kill_beast", "general", "release",
 	"stakes", "caltrops", "palisade", "rotate",
 	"copy", "export", "plus", "minus",
+	"tr_siege", "tr_shock", "tr_anti_cav", "tr_fearsome", "tr_ap", "tr_long_range", "tr_skirmish", "tr_fire", "tr_beast", "tr_fast",
+	"cl_foot", "cl_spear", "cl_horse", "cl_missile", "cl_beast", "cl_engine",
 ]
 const STROKE := 0.16  # line weight, in half-sizes (unit_icons: 0.17 of its glyph radius)
 const FILL := 0.9     # glyph extent in the cell (5% padding each side)
@@ -668,5 +670,62 @@ static func _glyph(icon: String, c: Vector2, s: float) -> void:
 			_l(-0.7, 0.0, 0.7, 0.0, 1.15)
 		"minus":
 			_l(-0.7, 0.0, 0.7, 0.0, 1.15)
+		"tr_siege":  # trait: siege engines (the covered ram)
+			_sub("ram", 0.0, 0.0, 1.0)
+		"tr_shock":  # trait: the charge (a lightning bolt)
+			_fill([0.25, -0.95, -0.6, 0.15, -0.08, 0.15, -0.3, 0.95, 0.6, -0.2, 0.08, -0.2])
+		"tr_anti_cav":  # trait: braced spears against a charge
+			_l(-0.95, 0.85, 0.95, 0.85, 0.8)
+			_arrow(-0.85, 0.7, 0.75, -0.25, 0.45)
+			_arrow(-0.85, 0.15, 0.75, -0.8, 0.45)
+		"tr_fearsome":  # trait: fear (a warning triangle)
+			_pl([0.0, -0.85, 0.9, 0.7, -0.9, 0.7], true)
+			_l(0.0, -0.25, 0.0, 0.25, 1.1)
+			_dot(0.0, 0.5, 0.09)
+		"tr_ap":  # trait: armour piercing (an arrow through a plate)
+			_l(0.15, -0.85, 0.15, 0.85, 1.7)
+			_arrow(-0.95, 0.0, 0.95, 0.0, 0.5)
+		"tr_long_range":  # trait: long range (a dashed flight to a target)
+			_ring(0.52, 0.0, 0.38)
+			_dot(0.52, 0.0, 0.1)
+			_l(-0.92, 0.0, -0.62, 0.0)
+			_l(-0.4, 0.0, -0.1, 0.0)
+			_head(0.0, 0.0, 1.0, 0.0, 0.36)
+		"tr_skirmish":  # trait: skirmisher (keeps its distance)
+			_sub("skirmish", 0.0, 0.0, 1.0)
+		"tr_fire":  # trait: fire ammunition (a flame)
+			_pl([0.05, -0.95, 0.5, -0.25, 0.6, 0.3, 0.3, 0.8, -0.1, 0.9, -0.5, 0.65, -0.6, 0.15, -0.3, -0.2, -0.15, -0.5], true)
+			_pl([0.05, 0.25, 0.22, 0.52, 0.0, 0.72, -0.2, 0.55], true, 0.8)
+		"tr_fast":  # trait: fast (double chevron)
+			_pl([-0.7, -0.7, 0.0, 0.0, -0.7, 0.7], false, 1.1)
+			_pl([0.05, -0.7, 0.75, 0.0, 0.05, 0.7], false, 1.1)
+		"tr_beast", "cl_beast":  # a paw
+			_dot(0.0, 0.38, 0.4)
+			for q in [[-0.68, -0.05], [-0.25, -0.55], [0.25, -0.55], [0.68, -0.05]]:
+				_dot(q[0], q[1], 0.19)
+		"cl_foot":  # a soldier on foot
+			_ring(0.0, -0.62, 0.24)
+			_l(0.0, -0.32, 0.0, 0.22)
+			_l(-0.5, -0.1, 0.5, -0.1)
+			_l(0.0, 0.22, -0.4, 0.88)
+			_l(0.0, 0.22, 0.4, 0.88)
+		"cl_spear":  # a spear
+			_l(-0.7, 0.9, 0.45, -0.5, 1.0)
+			_head(0.75, -0.85, 0.8, -1.0, 0.55)
+			_l(-0.2, 0.15, 0.2, 0.45, 0.8)
+		"cl_horse":  # a horse's head
+			_pl([-0.7, 0.9, -0.5, 0.0, -0.2, -0.65, 0.3, -0.9, 0.65, -0.2, 0.9, 0.25, 0.55, 0.45, 0.25, 0.15, 0.0, 0.3, 0.0, 0.9])
+			_l(-0.2, -0.65, -0.35, -0.95, 0.9)
+			_dot(0.38, -0.2, 0.07)
+		"cl_missile":  # a bow with an arrow
+			_arc(-0.35, 0.0, 0.9, -1.15, 1.15)
+			_l(-0.35 + cos(1.15) * 0.9, sin(1.15) * 0.9, -0.35 + cos(1.15) * 0.9, -sin(1.15) * 0.9, 0.6)
+			_arrow(-0.45, 0.0, 0.95, 0.0, 0.45)
+		"cl_engine":  # a cog
+			_ring(0.0, 0.0, 0.48)
+			for k in 8:
+				var a := TAU * k / 8.0
+				_l(cos(a) * 0.62, sin(a) * 0.62, cos(a) * 0.9, sin(a) * 0.9, 1.5)
+			_dot(0.0, 0.0, 0.12)
 		_:
 			_ring(0.0, 0.0, 0.5)

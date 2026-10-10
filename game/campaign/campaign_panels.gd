@@ -13,6 +13,7 @@ const CBattle := preload("res://campaign/cbattle.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
+const Traits := preload("res://game/unit_traits.gd")
 const UiIcons := preload("res://game/ui_icons.gd")
 const Saves := preload("res://game/campaign/saves.gd")
 const CityPreview := preload("res://game/campaign/city_preview.gd")
@@ -22,6 +23,9 @@ const DragReorder := preload("res://game/drag_reorder.gd")
 const BattleScreen := preload("res://game/campaign/battle_screen.gd")
 
 var s  # the campaign screen
+## Open / closed state of the collapsible card groups this session (never in
+## the campaign state): key -> bool.
+var _fold: Dictionary = {}
 var _split_sel: Dictionary = {}  # army id -> Array of selected unit indices
 ## The exchange panel's pending trade: {a (this army), b (the other), out
 ## [indices of a's units going to b], back [indices of b's coming to a]}.
@@ -741,10 +745,11 @@ func _recruit(box: VBoxContainer, r: int) -> void:
 		var key := str(q[k])
 		h.add_child(Kit.icon_button("", "close", func(): _cancel_recruit(r, key), 44))
 		box.add_child(h)
-	for o in best_options(ps, f, r):
+	var make_rec := func(o: Dictionary) -> Control:
 		var ty := UT.index_of(str(o["t"]))
 		var why := str(o["why"])
 		var row := Kit.UnitRow.new(ty, -1, _fc(f), str(o["price"]))
+		row.faction = f
 		row.sub_text = "Tier %d  -  upkeep %d" % [int(o["tier"]), CState.upkeep_of(ty)] if o["ok"] else why
 		if o["ok"] and str(o.get("ak", "")) != "":
 			row.sub_text += "  -  + " + UT.ammo_text(UT.ammo_index(str(o["ak"])), "name").to_lower()
@@ -763,7 +768,77 @@ func _recruit(box: VBoxContainer, r: int) -> void:
 		add.name = "recruit_" + key
 		add.disabled = not o["ok"]
 		h.add_child(add)
-		box.add_child(h)
+		return h
+	_grouped(box, best_options(ps, f, r), make_rec, "rec")
+
+
+## The recruit options as collapsible class groups (Foot, Spears, Missile,
+## Horse, Beasts, Engines, Support), each line's best tier first with a
+## "+n tiers" chip that shows the lower tiers (kept, just folded). make(o)
+## builds one option's row (an HBox); a lower tier carrying o["force"] stays
+## open. Open / closed state lives in _fold for the session.
+func _grouped(box: VBoxContainer, opts: Array, make: Callable, tag: String) -> void:
+	var groups: Array = []
+	for g in Traits.GROUP_LABEL.size():
+		groups.append([])
+	var lines: Dictionary = {}
+	for o in opts:
+		var line := str(o["line"])
+		if o["lower"] and lines.has(line):
+			(lines[line] as Array).append(o)
+			continue
+		var l: Array = [o]
+		lines[line] = l
+		(groups[Traits.group_of(UT.index_of(str(o["t"])))] as Array).append(l)
+	for g in groups.size():
+		var glines: Array = groups[g]
+		if glines.is_empty():
+			continue
+		var n := 0
+		for l in glines:
+			n += (l as Array).size()
+		var gkey := "%s_g%d" % [tag, g]
+		var open: bool = bool(_fold.get(gkey, true))
+		var head := Kit.icon_button("%s (%d)" % [Traits.GROUP_LABEL[g], n], Traits.GROUP_ICONS[g], Callable(), 0)
+		head.name = "group_%s_%d" % [tag, g]
+		head.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		head.custom_minimum_size.y = 44
+		var body := Kit.vbox(4)
+		body.visible = open
+		head.pressed.connect(func():
+			_fold[gkey] = not body.visible
+			body.visible = not body.visible
+			head.text = ("%s (%d)" % [Traits.GROUP_LABEL[g], n]) + ("" if body.visible else "  +"))
+		if not open:
+			head.text += "  +"
+		box.add_child(head)
+		box.add_child(body)
+		for l in glines:
+			var rows: Array = l
+			var h: Control = make.call(rows[0])
+			body.add_child(h)
+			if rows.size() == 1:
+				continue
+			var lkey := "%s_l%s" % [tag, str(rows[0]["line"])]
+			var forced := false
+			for k in range(1, rows.size()):
+				forced = forced or bool(rows[k].get("force", false))
+			var lopen: bool = bool(_fold.get(lkey, forced))
+			var lower := Kit.vbox(4)
+			lower.visible = lopen
+			var chip := Kit.button(("%d tier%s" % [rows.size() - 1, "" if rows.size() == 2 else "s"]) if lopen else "+%d tier%s" % [rows.size() - 1, "" if rows.size() == 2 else "s"], Callable(), 64, Kit.FONT_SMALL)
+			chip.name = "tiers_%s_%s" % [tag, str(rows[0]["line"])]
+			chip.custom_minimum_size.y = 44
+			chip.pressed.connect(func():
+				lower.visible = not lower.visible
+				_fold[lkey] = lower.visible
+				var m := rows.size() - 1
+				chip.text = ("%d tier%s" % [m, "" if m == 1 else "s"]) if lower.visible else "+%d tier%s" % [m, "" if m == 1 else "s"])
+			(h as Container).add_child(chip)
+			(h as Container).move_child(chip, 1)
+			body.add_child(lower)
+			for k in range(1, rows.size()):
+				lower.add_child(make.call(rows[k]))
 
 
 ## The recruit list's rows: every tier the buildings unlock, per line, best
@@ -918,21 +993,24 @@ func show_raise(r: int) -> void:
 	var money := int(ps["factions"][f]["treasury"])
 	var n := 0
 	var cost := 0
-	for o in best_options(ps, f, r):
+	var opts_rz := best_options(ps, f, r)
+	for o in opts_rz:
 		var key := str(o["t"])
 		n += int(picks.get(key, 0))
 		cost += int(picks.get(key, 0)) * int(o["price"])
+		o["force"] = int(picks.get(key, 0)) > 0
 	var v := Kit.vbox(6)
 	v.name = "raise_panel"
 	v.add_child(Kit.label("Choose the units of a new army: up to %d this turn (%d of %d recruit slots used at %s). It forms inside the walls at the end of the turn." % [
 		free, cap - free, cap, CData.REGIONS[r]["city"]], Kit.FONT_SMALL, Kit.COL_DIM, true))
-	for o in best_options(ps, f, r):
+	var make_rz := func(o: Dictionary) -> Control:
 		var key := str(o["t"])
 		var ty := UT.index_of(key)
 		var price := int(o["price"])
 		var cnt := int(picks.get(key, 0))
 		var ok: bool = o["ok"] or (cnt > 0)
 		var row := Kit.UnitRow.new(ty, -1, _fc(f), str(price))
+		row.faction = f
 		row.name = "raise_row_" + key
 		if o["lower"]:
 			row.modulate = Color(1, 1, 1, 0.82)
@@ -956,7 +1034,8 @@ func show_raise(r: int) -> void:
 		plus.name = "raise_plus_" + key
 		plus.disabled = not ok or n >= free or cost + price > money
 		h.add_child(plus)
-		v.add_child(h)
+		return h
+	_grouped(v, opts_rz, make_rz, "rz")
 	var tl := Kit.label("%d unit%s, %s (treasury %s)." % [n, "" if n == 1 else "s", Kit.money(cost), Kit.money(money)],
 		Kit.FONT, Kit.COL_GOLD if n > 0 else Kit.COL_DIM, true)
 	tl.name = "raise_total"
@@ -1119,6 +1198,41 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 		box.add_child(reorder)
 		reorder.moved.connect(func(from: int, to: int): _arrange(id, from, to))
 		reorder.held.connect(func(i: int): s.open_unit_page(CState.unit_type(units[i]), Callable(), ""))
+	# Composition strip: class glyphs with unit counts; a tap shows / hides the
+	# unit rows (state per army for the session; small armies start open).
+	var host: Control = Kit.vbox(0)
+	box.add_child(host)
+	if units.size() > 1:
+		var fkey := "army%d" % id
+		host.visible = bool(_fold.get(fkey, units.size() <= 6))
+		var strip := Button.new()
+		strip.name = "army_strip"
+		strip.focus_mode = Control.FOCUS_NONE
+		strip.custom_minimum_size = Vector2(0, 44)
+		strip.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		var counts: Array = [0, 0, 0, 0, 0, 0]
+		for u in units:
+			counts[Traits.own_class(CState.unit_type(u))] += 1
+		var sh := Kit.hbox(10)
+		sh.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		sh.alignment = BoxContainer.ALIGNMENT_BEGIN
+		strip.add_child(sh)
+		sh.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 8)
+		for c in 6:
+			if counts[c] == 0:
+				continue
+			var cl := Kit.icon_label("%d" % counts[c], Traits.CLASS_ICONS[c], Kit.FONT)
+			cl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			sh.add_child(cl)
+		var tl := Kit.label("units  " + ("-" if host.visible else "+"), Kit.FONT_SMALL, Kit.COL_DIM)
+		tl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		sh.add_child(tl)
+		strip.pressed.connect(func():
+			host.visible = not host.visible
+			_fold[fkey] = host.visible
+			tl.text = "units  " + ("-" if host.visible else "+"))
+		box.add_child(strip)
+		box.move_child(strip, host.get_index())
 	for k in units.size():
 		var u: Dictionary = units[k]
 		var ty := CState.unit_type(u)
@@ -1139,7 +1253,7 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 				cur.append(kk)
 			_split_sel[id] = cur
 			s.select_army(id))
-		box.add_child(row)
+		host.add_child(row)
 	# Planned recruits joining it at the end of the turn (version 6), greyed.
 	for k in arriving.size():
 		var ro: Dictionary = arriving[k]
@@ -1225,10 +1339,11 @@ func _army_recruit(box: VBoxContainer, a: Dictionary) -> void:
 		box.add_child(ml)
 		return
 	var why_a := CRules.army_recruit_check(ps, f, r, id)
-	for o in best_options(ps, f, r):
+	var make_arm := func(o: Dictionary) -> Control:
 		var ty := UT.index_of(str(o["t"]))
 		var ok: bool = o["ok"] and why_a == ""
 		var row := Kit.UnitRow.new(ty, -1, _fc(f), str(o["price"]))
+		row.faction = f
 		row.sub_text = "Tier %d  -  upkeep %d" % [int(o["tier"]), CState.upkeep_of(ty)] if ok else (why_a if o["ok"] else str(o["why"]))
 		var key := str(o["t"])
 		row.name = "recruit_row_" + key
@@ -1247,7 +1362,8 @@ func _army_recruit(box: VBoxContainer, a: Dictionary) -> void:
 		add.name = "recruit_" + key
 		add.disabled = not ok
 		h.add_child(add)
-		box.add_child(h)
+		return h
+	_grouped(box, best_options(ps, f, r), make_arm, "arm")
 
 
 ## Version 6, top of the army card: "Merge into army (N units)" for each

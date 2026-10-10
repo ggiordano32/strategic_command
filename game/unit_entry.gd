@@ -15,6 +15,8 @@ const Scenarios := preload("res://sim/scenarios.gd")
 const Icons := preload("res://game/unit_icons.gd")
 const IconView := preload("res://game/unit_icon_view.gd")
 const CData := preload("res://campaign/cdata.gd")
+const Traits := preload("res://game/unit_traits.gd")
+const Kit := preload("res://game/campaign/ui_kit.gd")
 
 const M := 1024.0
 const TICKS_PER_SEC := 10.0
@@ -70,6 +72,7 @@ var _box: VBoxContainer
 var _icon: IconView
 var _name: Label
 var _role: Label
+var _glyphs: VBoxContainer
 var _desc: Label
 var _good: Label
 var _bad: Label
@@ -98,6 +101,10 @@ func _init() -> void:
 	names.add_child(_name)
 	_role = _label("", 16, COL_DIM)
 	names.add_child(_role)
+	_glyphs = VBoxContainer.new()
+	_glyphs.name = "glyphs"
+	_glyphs.add_theme_constant_override("separation", 4)
+	_box.add_child(_glyphs)
 	_desc = _label("", 16, Color.WHITE, true)
 	_box.add_child(_desc)
 	_good = _label("", 15, COL_GOOD, true)
@@ -129,6 +136,7 @@ func set_unit_type(ty: int, p_side_color: Color = Color(0.35, 0.6, 1.0)) -> void
 	var cname := _class_name(UT.cls(ty))
 	_role.text = role if role.to_lower() == cname else "%s  -  %s" % [role, cname]
 	_desc.text = UT.text(ty, "desc")
+	_fill_glyphs(ty)
 	_good.text = "Good against: " + UT.text(ty, "good_vs")
 	_bad.text = "Countered by: " + UT.text(ty, "weak_vs")
 	for c in _tags.get_children():
@@ -214,6 +222,36 @@ func set_unit_type(ty: int, p_side_color: Color = Color(0.35, 0.6, 1.0)) -> void
 			else:
 				for i in 3:
 					_grid.add_child(Control.new())
+
+
+## The traits and the class counters as glyphs (same as the unit cards).
+func _fill_glyphs(ty: int) -> void:
+	for c in _glyphs.get_children():
+		c.queue_free()
+	var trf := Kit.flow(10)
+	for t in Traits.traits(ty):
+		var l := Kit.icon_label(str(t).replace("_", " ").capitalize() if t != "ap" else "Armour piercing", str(Traits.TRAIT_ICONS[t]), 15, Color(1, 0.9, 0.6))
+		l.tooltip_text = Traits.trait_text(t)
+		l.mouse_filter = Control.MOUSE_FILTER_PASS
+		trf.add_child(l)
+	_glyphs.add_child(trf)
+	for pair in [[true, COL_GOOD, "Good against"], [false, COL_BAD, "Weak against"]]:
+		var list: Array = Traits.classes_good(ty) if pair[0] else Traits.classes_bad(ty)
+		if list.is_empty():
+			continue
+		var row := Kit.flow(10)
+		row.add_child(Kit.label(str(pair[2]), 15, pair[1]))
+		for c in list:
+			var l := Kit.icon_label(Traits.CLASS_LABEL[c], Traits.CLASS_ICONS[c], 15, pair[1])
+			l.tooltip_text = Traits.classes_text(ty, pair[0])
+			row.add_child(l)
+		_glyphs.add_child(row)
+	var p := Traits.pips(ty)
+	var pr := Kit.flow(12)
+	for k in 5:
+		var v := int(p[Traits.PIP_NAMES[k]])
+		pr.add_child(Kit.label("%s %s" % [str(Traits.PIP_NAMES[k]).capitalize(), "|".repeat(v) + ".".repeat(4 - v)], 14, COL_DIM))
+	_glyphs.add_child(pr)
 
 
 ## Ammunition: the standard kind and the special kinds that ride on the

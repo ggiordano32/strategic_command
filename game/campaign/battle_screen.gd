@@ -28,6 +28,7 @@ const UT := preload("res://sim/unit_types.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
+const Traits := preload("res://game/unit_traits.gd")
 const UiIcons := preload("res://game/ui_icons.gd")
 const Icons := preload("res://game/unit_icons.gd")
 const CityPreview := preload("res://game/campaign/city_preview.gd")
@@ -594,6 +595,13 @@ class UnitCard extends Control:
 			t += "; carries %s" % UT.ammo_text(ak, "name").to_lower()
 		if UT.stat(ty, "cmd_r") > 0:
 			t += "; the army's general"
+		var trs := Traits.traits(ty)
+		if not trs.is_empty():
+			var names: Array[String] = []
+			for x in trs:
+				names.append(Traits.trait_text(x).get_slice(":", 0).to_lower())
+			t += ". " + ", ".join(names)
+		t += ". " + Traits.classes_text(ty, true) + " " + Traits.classes_text(ty, false)
 		return t
 
 	func _draw() -> void:
@@ -623,6 +631,10 @@ class UnitCard extends Control:
 				var tt := "T%d" % tier
 				var tw := font.get_string_size(tt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
 				draw_string(font, Vector2(sz.x - tw - 3, 13), tt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Kit.COL_GOLD)
+		var gx := sz.x - 4.0
+		for t in Traits.traits(ty):
+			gx -= 12.0
+			Kit.UiIcons.draw_icon(self, str(Traits.TRAIT_ICONS[t]), Rect2(gx, 17, 11, 11), Color(1, 0.9, 0.6) if fielded else Kit.COL_DIM)
 		if ak >= 0:
 			# Its special ammunition kind (fire, heavy, pots, blast).
 			draw_string(font, Vector2(x0, 31), "+" + UT.ammo_text(ak, "short"), HORIZONTAL_ALIGNMENT_LEFT, -1, 10,

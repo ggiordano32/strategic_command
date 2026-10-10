@@ -9,6 +9,7 @@ const Icons := preload("res://game/unit_icons.gd")
 const UiScale := preload("res://game/ui_scale.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const UiIcons := preload("res://game/ui_icons.gd")
+const Traits := preload("res://game/unit_traits.gd")
 
 const BTN_H := 40.0
 const FONT := 15
@@ -185,10 +186,21 @@ static func money(v: int) -> String:
 	return ("-" if v < 0 else "") + s + out
 
 
+## Where a tap on a card glyph shows its one-line meaning (the campaign screen
+## sets it to its toast); a Callable taking the text.
+static var hint_cb := Callable()
+
+
+static func show_hint(text: String) -> void:
+	if hint_cb.is_valid():
+		hint_cb.call(text)
+
+
 ## A unit as one drawn row: symbol (with tier mark) in the side colour, name,
 ## strength bar with men / full, and optional right-hand text. Toggleable
 ## (selected rows are framed). Emits `pressed`.
 class UnitRow extends Control:
+	const KitSelf := preload("res://game/campaign/ui_kit.gd")
 	signal pressed
 	signal long_pressed
 	const LONG_PRESS_SEC := 0.5
@@ -199,9 +211,18 @@ class UnitRow extends Control:
 	var full := 1
 	var col := Color(0.35, 0.6, 1.0)
 	var right_text := ""
-	var sub_text := ""
+	var sub_text := "":
+		set(v):
+			sub_text = v
+			update_minimum_size()
 	var selected := false
 	var toggle := false
+	## Compact card: trait glyphs after the name, good / weak against class
+	## rows, the five pips (game/unit_traits.gd). faction: for the fire trait.
+	var detail := true
+	var faction := -1
+	var _hits: Array = []  # [Rect2, hint text] of the glyphs drawn last
+	var _tap_hint := ""
 
 	func _init(p_ty: int, p_men: int, p_col: Color, p_right: String = "", p_toggle: bool = false) -> void:
 		ty = p_ty
@@ -210,9 +231,16 @@ class UnitRow extends Control:
 		col = p_col
 		right_text = p_right
 		toggle = p_toggle
-		custom_minimum_size = Vector2(200, 40)
 		size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		mouse_filter = Control.MOUSE_FILTER_STOP
+
+	func _get_minimum_size() -> Vector2:
+		if not detail:
+			return Vector2(200, 40)
+		var h := 56.0
+		if men >= 0 or sub_text != "":
+			h += 16.0
+		return Vector2(200, h)
 
 	## Press on release, only if the pointer is still on the row (a touch
 	## that became a scroll is moved far away by TouchScroll, which cancels
@@ -223,13 +251,16 @@ class UnitRow extends Control:
 			if event.pressed:
 				_press_t = Time.get_ticks_msec() / 1000.0
 				_long_fired = false
+				_tap_hint = _hit_at(event.position)
 				queue_redraw()
 			else:
 				var inside := Rect2(Vector2.ZERO, size).has_point(event.position)
 				var was := _press_t >= 0.0
 				_press_t = -1.0
 				queue_redraw()
-				if was and inside and not _long_fired:
+				if was and inside and not _long_fired and _tap_hint != "" and _tap_hint == _hit_at(event.position):
+					KitSelf.show_hint(_tap_hint)
+				elif was and inside and not _long_fired:
 					if toggle:
 						selected = not selected
 						queue_redraw()
@@ -239,6 +270,12 @@ class UnitRow extends Control:
 			if not Rect2(Vector2.ZERO, size).has_point(event.position):
 				_press_t = -1.0
 				queue_redraw()
+
+	func _hit_at(pos: Vector2) -> String:
+		for h in _hits:
+			if (h[0] as Rect2).grow_individual(3, 5, 3, 5).has_point(pos):
+				return str(h[1])
+		return ""
 
 	## Forget the press in progress (a drag to reorder took it over: no
 	## press, no long press on release).
@@ -255,22 +292,65 @@ class UnitRow extends Control:
 
 	func _draw() -> void:
 		var sz := size
+		_hits = []
 		var bg := Color(1, 1, 1, 0.13) if selected else Color(1, 1, 1, 0.05)
 		if _press_t >= 0.0:
 			bg = Color(1, 1, 1, 0.22)  # pressed feedback while the finger is down
 		draw_rect(Rect2(Vector2.ZERO, sz), bg)
 		if selected:
 			draw_rect(Rect2(Vector2(1, 1), sz - Vector2(2, 2)), Color(1, 0.95, 0.5), false, 2.0)
-		var r := minf(sz.y * 0.36, 15.0)
-		Icons.draw_marker(self, Icons.icon_of(ty), Vector2(r + 5, sz.y * 0.5), r, col)
+		var r := minf(sz.y * 0.36, 15.0) if not detail else 15.0
+		var cy := sz.y * 0.5 if not detail else 24.0
+		Icons.draw_marker(self, Icons.icon_of(ty), Vector2(r + 5, cy), r, col)
 		var font := ThemeDB.fallback_font
 		var x0 := r * 2 + 12
 		var rw := 0.0
 		if right_text != "":
 			rw = font.get_string_size(right_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x + 8
-			draw_string(font, Vector2(sz.x - rw, sz.y * 0.5 + 5), right_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 0.88, 0.55))
+			draw_string(font, Vector2(sz.x - rw, 18.0 if detail else sz.y * 0.5 + 5.0), right_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 0.88, 0.55))
 		var nm := str(UT.TYPES[ty]["name"])
+		var nw := minf(font.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x, sz.x - x0 - rw - 4)
 		draw_string(font, Vector2(x0, 16), nm, HORIZONTAL_ALIGNMENT_LEFT, sz.x - x0 - rw - 4, 14, Color.WHITE)
+		if detail:
+			# Line 1: up to three trait glyphs after the name.
+			var gx := x0 + nw + 8
+			for t in Traits.traits(ty, faction):
+				if gx + 16 > sz.x - rw:
+					break
+				var rc := Rect2(gx, 3, 16, 16)
+				UiIcons.draw_icon(self, str(Traits.TRAIT_ICONS[t]), rc, Color(1, 0.9, 0.6))
+				_hits.append([rc, Traits.trait_text(t)])
+				gx += 20
+			# Line 2: green row (good against), red row (weak against).
+			var cx := x0
+			var y2 := 24.0
+			for pair in [[true, COL_GOOD], [false, COL_BAD]]:
+				var list: Array = Traits.classes_good(ty) if pair[0] else Traits.classes_bad(ty)
+				if list.is_empty():
+					continue
+				var c: Color = pair[1]
+				var x1 := cx
+				var tri := PackedVector2Array([Vector2(cx, y2 + 11), Vector2(cx + 5, y2 + 11), Vector2(cx + 2.5, y2 + 4)]) if pair[0] \
+					else PackedVector2Array([Vector2(cx, y2 + 4), Vector2(cx + 5, y2 + 4), Vector2(cx + 2.5, y2 + 11)])
+				draw_colored_polygon(tri, c)
+				cx += 8
+				for k in list:
+					UiIcons.draw_icon(self, str(Traits.CLASS_ICONS[k]), Rect2(cx, y2, 15, 15), c)
+					cx += 17
+				_hits.append([Rect2(x1, y2, cx - x1, 15), Traits.classes_text(ty, pair[0])])
+				cx += 8
+			# Line 3: the five pips.
+			var p := Traits.pips(ty)
+			var px := x0
+			var y3 := 43.0
+			var letters := ["A", "D", "R", "M", "S"]
+			for k in 5:
+				var v := int(p[Traits.PIP_NAMES[k]])
+				draw_string(font, Vector2(px, y3 + 8), letters[k], HORIZONTAL_ALIGNMENT_LEFT, -1, 10, COL_DIM)
+				for sg in 4:
+					draw_rect(Rect2(px + 9 + sg * 6, y3, 5, 8), Color(col.lightened(0.25), 0.95) if sg < v else Color(1, 1, 1, 0.14))
+				px += 38
+			_hits.append([Rect2(x0, y3, px - x0, 10), Traits.pips_text(ty)])
 		var bw := minf(sz.x - x0 - rw - 8, 150.0)
 		var by := sz.y - 14
 		var frac := clampf(float(men) / full, 0.0, 1.0)
