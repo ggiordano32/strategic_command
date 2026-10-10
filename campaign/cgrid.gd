@@ -8,13 +8,18 @@ extends RefCounted
 ## A cell is an int index y * W + x; cells are square on the map (CELL_PX
 ## map pixels; the map view draws cell c at (x + 0.5, y + 0.5) * CELL_PX).
 ## Per cell: the region it belongs to (-1 sea, -2 unclaimed land: both
-## impassable), its landmass and its movement cost (CData.GRID_COST by the
-## region's terrain, + GRID_WOODS in heavy woods; OVERRIDES set a cost for
-## roads or fords later). Steps are 8-connected within one landmass; a
-## diagonal costs 14/10 of the cell it enters and needs one of its two
-## orthogonal cells passable (no squeezing through a corner). Sea lanes join
-## the port cells of CData.SEA_LANES (embark with full points, using them
-## all).
+## impassable), its landmass, its terrain kind (the region's, or the
+## grid's hill / ridge override) and its movement cost (CData.GRID_COST by
+## that kind, + GRID_WOODS in heavy woods; a road cell GRID_ROAD, never more
+## than its terrain; OVERRIDES set a cost directly, last). Steps are
+## 8-connected within one landmass; a diagonal costs 14/10 of the cell it
+## enters and needs one of its two orthogonal cells passable (no squeezing
+## through a corner). Rivers (roads, rivers and hills, 2026-10-09): a step
+## across a river edge (the grid's RIVER masks) is impossible, except the
+## crossings' steps (CROSS): a ford costs the cell entered + GRID_FORD, a
+## bridge just the cell; a diagonal across a river is never a step (the
+## grid tool marks it). Sea lanes join the port cells of CData.SEA_LANES
+## (embark with full points, using them all).
 ##
 ## Searches use g = turn * full + (full - points left), which orders
 ## positions by (turn reached, most points left): exactly the movement rule
@@ -36,6 +41,12 @@ static var _nb: PackedInt32Array = []    # n * 8: neighbour cell or -1
 static var _nbc: PackedInt32Array = []   # n * 8: step cost
 static var _links := {}                  # port cell -> Array of [cell, region]
 static var _cells: Array = []            # per region: PackedInt32Array of its cells
+static var _terr: PackedInt32Array = []  # terrain kind per cell (-1 impassable)
+static var _ovr: PackedByteArray = []    # 1: the kind is the grid's hill / ridge override
+static var _road: PackedByteArray = []   # 1: a road cell
+static var _rmask: PackedInt32Array = [] # bit k: the step in direction k crosses a river
+static var _cross := {}                  # a * n + b (both orders) -> crossing id
+static var _cross_list: Array = []       # per crossing id: [a, b, kind]
 static var _fields := {}                 # memo: static distance fields
 static var last_nodes := 0
 
@@ -49,12 +60,21 @@ static func ensure() -> void:
 	_reg.resize(n)
 	_mass.resize(n)
 	_cost.resize(n)
+	_terr.resize(n)
+	_terr.fill(-1)
+	_ovr.resize(n)
+	_ovr.fill(0)
+	_road.resize(n)
+	_road.fill(0)
+	_rmask.resize(n)
+	_rmask.fill(0)
 	var nreg := CData.region_count()
 	var per: Array = []
 	for r in nreg:
 		per.append([])
 	for y in h:
 		var row: String = D.ROWS[y]
+		var trow: String = D.TERRAIN[y]
 		for x in w:
 			var i := y * w + x
 			var ch := row.unicode_at(x)
@@ -70,12 +90,40 @@ static func ensure() -> void:
 			_cost[i] = _region_cost(r) if r >= 0 else 0
 			if r >= 0:
 				(per[r] as Array).append(i)
+				_terr[i] = int(CData.REGIONS[r]["terrain"])
+				# "." own terrain, "h" hill, "r" ridge; upper case also a road.
+				var tc := trow.unicode_at(x)
+				var kind := -1
+				if tc == 104 or tc == 72:  # h H
+					kind = CData.HILL
+				elif tc == 114 or tc == 82:  # r R
+					kind = CData.RIDGE
+				if kind >= 0:
+					_terr[i] = kind
+					_ovr[i] = 1
+					_cost[i] = int(CData.GRID_COST[kind]) + (CData.GRID_WOODS if int(CData.REGIONS[r]["forest"]) >= CData.WOODS_HEAVY else 0)
+				if tc == 61 or tc == 72 or tc == 82:  # = H R
+					_road[i] = 1
+					_cost[i] = mini(_cost[i], CData.GRID_ROAD)
 	for r in nreg:
 		_cells.append(PackedInt32Array(per[r]))
 	for k in range(0, D.OVERRIDES.size(), 2):
 		var c := int(D.OVERRIDES[k])
 		if _reg[c] >= 0:
 			_cost[c] = int(D.OVERRIDES[k + 1])
+	for k in range(0, D.RIVER.size(), 2):
+		_rmask[int(D.RIVER[k])] = int(D.RIVER[k + 1])
+	_cross = {}
+	_cross_list = []
+	for k in range(0, D.CROSS.size(), 4):
+		var a := int(D.CROSS[k])
+		var b := int(D.CROSS[k + 1])
+		var id := int(D.CROSS[k + 2])
+		_cross[a * n + b] = id
+		_cross[b * n + a] = id
+		while _cross_list.size() <= id:
+			_cross_list.append([])
+		_cross_list[id] = [a, b, int(D.CROSS[k + 3])]
 	_nb.resize(n * 8)
 	_nbc.resize(n * 8)
 	_nb.fill(-1)
@@ -93,6 +141,14 @@ static func ensure() -> void:
 			var j := ny * w + nx
 			if _reg[j] < 0 or _mass[j] != _mass[i]:
 				continue
+			var extra := 0
+			if _rmask[i] & (1 << k) != 0:
+				# A river: only at a crossing (never a diagonal).
+				var cid := int(_cross.get(i * n + j, -1))
+				if cid < 0 or k % 2 == 1:
+					continue
+				if int(_cross_list[cid][2]) == CData.CROSS_FORD:
+					extra = CData.GRID_FORD
 			if k % 2 == 1:
 				var oa := y * w + nx
 				var ob := ny * w + x
@@ -100,7 +156,7 @@ static func ensure() -> void:
 					continue
 				_nbc[i * 8 + k] = _cost[j] * 14 / 10
 			else:
-				_nbc[i * 8 + k] = _cost[j]
+				_nbc[i * 8 + k] = _cost[j] + extra
 			_nb[i * 8 + k] = j
 	for pair in CData.SEA_LANES:
 		var a := CData.region_index(pair[0])
@@ -171,6 +227,65 @@ static func passable(c: int) -> bool:
 static func cost(c: int) -> int:
 	ensure()
 	return _cost[c]
+
+
+## Terrain kind of cell c (a sim/terrain.gd kind: the region's own, or the
+## grid's hill / ridge override), -1 for the sea and unclaimed land.
+static func cell_terrain(c: int) -> int:
+	ensure()
+	return _terr[c] if c >= 0 and c < _n else -1
+
+
+## The grid's hill / ridge override of cell c (a terrain kind), -1 none.
+static func terrain_override(c: int) -> int:
+	ensure()
+	return _terr[c] if c >= 0 and c < _n and _ovr[c] != 0 else -1
+
+
+static func is_road(c: int) -> bool:
+	ensure()
+	return c >= 0 and c < _n and _road[c] != 0
+
+
+## River mask of cell c: bit k set when the step in direction k (N, NE, E,
+## SE, S, SW, W, NW) crosses a river (crossing or not).
+static func river_mask(c: int) -> int:
+	ensure()
+	return _rmask[c] if c >= 0 and c < _n else 0
+
+
+## The crossing whose step joins cells a and b (either way round), -1 none.
+static func crossing_at(a: int, b: int) -> int:
+	ensure()
+	if a < 0 or b < 0 or a >= _n or b >= _n:
+		return -1
+	return int(_cross.get(a * _n + b, -1))
+
+
+static func crossing_count() -> int:
+	ensure()
+	return _cross_list.size()
+
+
+## Crossing id's [cell a, cell b, kind (CData.CROSS_FORD / CROSS_BRIDGE)].
+static func crossing(id: int) -> Array:
+	ensure()
+	return _cross_list[id]
+
+
+## Crossings with a step from cell c: [[id, other cell], ...] (id order).
+static func crossings_from(c: int) -> Array:
+	ensure()
+	var out: Array = []
+	if c < 0 or c >= _n or _rmask[c] == 0:
+		return out
+	for id in _cross_list.size():
+		var cr: Array = _cross_list[id]
+		if int(cr[0]) == c:
+			out.append([id, int(cr[1])])
+		elif int(cr[1]) == c:
+			out.append([id, int(cr[0])])
+	return out
 
 
 static func site(r: int) -> int:

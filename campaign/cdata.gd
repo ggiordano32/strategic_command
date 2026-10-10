@@ -389,10 +389,19 @@ const STANCE_GARRISON := 1
 ## on cells of a static nav grid (campaign/data/grid_data.gd, generated from
 ## the map by tools/campaign_grid.gd) and walk 8-connected paths; a cell
 ## costs by its region's terrain (GRID_COST, + GRID_WOODS in heavy woods), a
-## diagonal step 14/10 of that; a cell override (roads, fords: later) sets
-## the cost directly. Movement points a turn by the slowest arm.
+## diagonal step 14/10 of that. Roads, rivers and hills (2026-10-09, still
+## format 6: static data only): a hill / ridge cell (the grid's terrain
+## override) costs GRID_COST of that kind; a road cell GRID_ROAD (never more
+## than its terrain); a river edge cannot be stepped across except at a
+## crossing: a ford costs GRID_FORD on top of the cell entered, a bridge
+## nothing extra. Movement points a turn by the slowest arm.
 const GRID_COST := {FLAT: 10, ROLLING: 10, VALLEY: 10, HILL: 15, RIDGE: 20}
 const GRID_WOODS := 5
+const GRID_ROAD := 6
+const GRID_FORD := 5
+## Crossing kinds (the grid's CROSS list; the battle scenario's "river" key).
+const CROSS_FORD := 0
+const CROSS_BRIDGE := 1
 const MP6_FOOT := 200
 const MP6_CAV := 300
 const MP6_ART := 150

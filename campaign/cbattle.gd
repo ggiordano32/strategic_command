@@ -48,6 +48,7 @@ const Scenarios := preload("res://sim/scenarios.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const CP := preload("res://campaign/cai_profile.gd")
+const CGrid := preload("res://campaign/cgrid.gd")
 
 const FRONT := 100       # m from the centre line to each side's front
 const SECOND_LINE := 45  # m behind the first
@@ -176,7 +177,14 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct: i
 		units.append(su)
 		map.append({"side": cs, "army": int(e["army"]), "unit": int(e["unit"]), "n": int(e["n"]), "sim_n": cnt})
 		ufac.append(int(e["f"]))
-	var terrain := {"kind": int(CData.REGIONS[r]["terrain"]), "seed": battle_seed(st, r, 1),
+	# Roads, rivers and hills: a battle on a hill / ridge cell gets that
+	# ground (else the region's terrain, as before).
+	var kind := int(CData.REGIONS[r]["terrain"])
+	if b.has("x"):
+		var ov := CGrid.terrain_override(CGrid.at(int(b["x"]), int(b["y"])))
+		if ov >= 0:
+			kind = ov
+	var terrain := {"kind": kind, "seed": battle_seed(st, r, 1),
 		"forest": int(CData.REGIONS[r]["forest"]), "ground": int(CData.REGIONS[r]["ground"])}
 	var ai: Array = [0, 1] if human_f < 0 else [1]
 	var controller: Array = []
@@ -185,12 +193,61 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct: i
 	var prof := _ai_profiles(st, b, sim_side, ai)
 	var scn := {"width_m": width, "height_m": height, "ai_sides": ai, "ai_skill": prof[0],
 		"ai_style": prof[1], "units": units, "terrain": terrain}
+	var cross := river_crossing(st, b)
+	if cross >= 0:
+		# The sim ignores this key for now (the crossing map is the next
+		# build): the battle plays as before.
+		scn["river"] = {"id": cross, "kind": int(CGrid.crossing(cross)[2]), "seed": crossing_seed(cross),
+			"bank": int(sim_side[1])}
 	_field_works(st, b, arm, scn, sim_side)
 	_deployment(st, scn, human_f)
 	_time_limit(st, scn)
 	return {"scenario": scn,
 		"seed": battle_seed(st, r, 2), "map": map, "sim_side": sim_side, "garrison": gar,
 		"unit_faction": ufac, "controller": controller, "battle": int(b["id"]), "region": r}
+
+
+## Roads, rivers and hills (2026-10-09): the river crossing field battle b
+## is fought over, -1 none. The attackers came across it when (1) the
+## cheapest way from the lead attacker's cell to the battle cell (the
+## defender's), at most 4 steps, takes a crossing's step (the defender holds
+## the far bank of the crossing in front of it), or (2) the lead attacker
+## stands on one end of a crossing whose other end lies on its approach
+## (b["app"], the bearing of the cell it stepped from) farther from the
+## defender (its last step was the crossing). Pure: the same on every client.
+static func river_crossing(st: Dictionary, b: Dictionary) -> int:
+	if int(b.get("settlement", 1)) != 0 or not b.has("x") or (b.get("att", []) as Array).is_empty():
+		return -1
+	var bc := CGrid.at(int(b["x"]), int(b["y"]))
+	var lead := CState.army(st, int(b["att"][0]))
+	if bc < 0 or lead.is_empty():
+		return -1
+	var ac := CState.cell(lead)
+	if ac == bc:
+		return -1
+	var pth := CGrid.find_path(ac, bc, 1000, 1000, PackedByteArray(), PackedInt32Array(), false, 1, 200)
+	if not pth.is_empty() and (pth["path"] as Array).size() <= 4:
+		var prev := ac
+		for c in pth["path"]:
+			var x := CGrid.crossing_at(prev, int(c))
+			if x >= 0:
+				return x
+			prev = int(c)
+	var app := int(b.get("app", -1))
+	if app >= 0:
+		for pr in CGrid.crossings_from(ac):
+			var o := int(pr[1])
+			if CGrid.sector(bc, o) == app and CGrid.cheb(o, bc) > CGrid.cheb(ac, bc):
+				return int(pr[0])
+	return -1
+
+
+## The frozen seed of crossing id's battle map (the crossing alone: the
+## same map every time).
+static func crossing_seed(id: int) -> int:
+	var h := (id + 1) * 0x9E3779B1 + 0x5F356495
+	h = (h ^ (h >> 16)) * 0x45D9F3B
+	return (h ^ (h >> 16)) & 0x7FFFFFFF
 
 
 ## Field works of a field battle (docs/CAMPAIGN.md "Field works"): each

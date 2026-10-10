@@ -98,6 +98,140 @@ const PHANTOMS := [
 	[2.0, 34.4, 1], [6.5, 34.2, 1], [-3.0, 34.0, 1], [-5.5, 33.6, 1], [9.0, 33.6, 1],
 ]
 
+## Rivers (roads, rivers and hills, 2026-10-09; static, rules read the
+## baked grid): {name, into (-1: the sea, else the index of the river it
+## flows into), pts [lon, lat] from the source down to the mouth, cross
+## [[name, kind (0 ford, 1 bridge), lon, lat], ...]}. The grid tool
+## (tools/campaign_grid.gd) runs the mouth on until it is in a sea cell (or
+## across the river it joins), makes every step between two cells whose
+## centres the line separates a river edge and puts each crossing on the
+## river's step nearest its point (a road's own step there first).
+## Crossing ids: their order over the whole list (crossings()).
+const RIVERS := [
+	{"name": "Padus", "into": -1,
+	"pts": [[7.1, 44.7], [7.65, 45.05], [8.2, 45.15], [8.7, 45.1], [9.2, 45.15], [9.69, 45.07],
+	[10.05, 45.12], [10.6, 45.0], [11.2, 45.05], [11.8, 45.0], [12.45, 44.95]],
+	"cross": [["Placentia", 1, 9.69, 45.07], ["Cremona", 0, 10.05, 45.12], ["Hostilia", 0, 11.2, 45.05]]},
+	{"name": "Tiberis", "into": -1,
+	"pts": [[12.05, 43.75], [12.25, 43.35], [12.4, 43.0], [12.45, 42.6], [12.5, 42.35], [12.55, 42.05],
+	[12.48, 41.9], [12.35, 41.8], [12.22, 41.72]],
+	"cross": [["Pons Sublicius", 1, 12.48, 41.9], ["Tuder", 0, 12.42, 42.78]]},
+	{"name": "Arnus", "into": -1,
+	"pts": [[11.7, 43.87], [11.8, 43.62], [11.8, 43.5], [11.55, 43.66], [11.25, 43.77], [10.8, 43.7],
+	[10.4, 43.72], [10.28, 43.68]],
+	"cross": [["Pisae", 1, 10.4, 43.72], ["Faesulae", 0, 11.25, 43.77]]},
+	{"name": "Volturnus", "into": -1,
+	"pts": [[14.2, 41.75], [14.3, 41.45], [14.4, 41.25], [14.25, 41.12], [14.05, 41.05], [13.93, 41.02]],
+	"cross": [["Casilinum", 1, 14.2, 41.1]]},
+	{"name": "Aufidus", "into": -1,
+	"pts": [[15.1, 40.85], [15.45, 40.95], [15.8, 41.1], [16.05, 41.25], [16.18, 41.5]],
+	"cross": [["Pons Aufidi", 1, 15.45, 40.95], ["Cannae", 0, 16.08, 41.32]]},
+	{"name": "Rhodanus", "into": -1,
+	"pts": [[6.15, 46.3], [5.8, 46.1], [5.5, 45.8], [4.83, 45.76], [4.8, 45.52], [4.82, 45.0],
+	[4.75, 44.5], [4.75, 44.1], [4.8, 43.95], [4.63, 43.68], [4.6, 43.38]],
+	"cross": [["Arelate", 1, 4.63, 43.68], ["Arausio", 0, 4.75, 44.1], ["Vienna", 0, 4.8, 45.52]]},
+	{"name": "Garumna", "into": -1,
+	"pts": [[1.5, 43.5], [1.3, 43.75], [1.0, 44.0], [0.5, 44.25], [-0.1, 44.5],
+	[-0.57, 44.84], [-0.8, 45.1], [-1.1, 45.55]],
+	"cross": [["Tolosa", 0, 1.3, 43.75]]},
+	{"name": "Iberus", "into": -1,
+	"pts": [[-4.05, 43.0], [-3.5, 42.75], [-2.9, 42.6], [-2.45, 42.45], [-1.9, 42.2], [-1.4, 41.85],
+	[-0.88, 41.65], [-0.3, 41.4], [0.2, 41.15], [0.52, 40.81], [0.85, 40.72]],
+	"cross": [["Dertosa", 1, 0.52, 40.81], ["Salduie", 0, -0.88, 41.65]]},
+	{"name": "Baetis", "into": -1,
+	"pts": [[-2.95, 37.9], [-3.5, 38.0], [-4.1, 37.95], [-4.78, 37.88], [-5.4, 37.6], [-5.98, 37.39],
+	[-6.2, 37.05], [-6.38, 36.66]],
+	"cross": [["Corduba", 1, -4.85, 37.85], ["Hispalis", 0, -5.98, 37.39]]},
+	{"name": "Tagus", "into": -1,
+	"pts": [[-1.8, 40.4], [-2.6, 40.5], [-3.4, 40.1], [-4.02, 39.8], [-4.8, 39.92], [-5.6, 39.75],
+	[-6.5, 39.65], [-7.4, 39.5], [-8.2, 39.35], [-8.7, 39.1], [-9.05, 38.66], [-9.42, 38.66]],
+	"cross": [["Toletum", 0, -4.02, 39.8], ["Norba", 1, -6.5, 39.65]]},
+	{"name": "Bagradas", "into": -1,
+	"pts": [[8.0, 36.3], [8.6, 36.45], [9.18, 36.73], [9.6, 36.75], [9.9, 36.88], [10.05, 37.0],
+	[10.12, 37.06]],
+	"cross": [["Utica road", 1, 10.0, 36.96], ["Vaga", 0, 9.18, 36.73]]},
+	{"name": "Achelous", "into": -1,
+	"pts": [[21.1, 39.8], [21.25, 39.4], [21.3, 39.0], [21.35, 38.7], [21.22, 38.47]],
+	"cross": [["Stratos", 0, 21.33, 38.68]]},
+	{"name": "Peneus", "into": -1,
+	"pts": [[21.2, 39.75], [21.6, 39.6], [22.0, 39.55], [22.42, 39.7], [22.6, 39.85], [22.73, 39.86]],
+	"cross": [["Larissa", 1, 22.47, 39.74], ["Trikka", 0, 21.77, 39.56]]},
+]
+
+## Roads: [name, [lon, lat] points]. The grid tool marks every cell the
+## line runs through (4-connected: a diagonal run becomes a staircase) a
+## road cell; where a road crosses a river it must do so at a crossing.
+const ROADS := [
+	["Via Appia", [[12.5, 41.9], [12.9, 41.6], [13.25, 41.29], [13.8, 41.25], [14.2, 41.1], [14.25, 41.08],
+	[14.78, 41.3], [15.45, 40.95], [15.81, 40.96], [16.55, 40.65], [17.24, 40.47]]],
+	["Via Latina", [[12.5, 41.9], [13.16, 41.73], [13.83, 41.49], [14.1, 41.3], [14.2, 41.1]]],
+	["Via Aurelia", [[12.5, 41.9], [12.1, 42.0], [11.6, 42.35], [11.1, 42.6], [10.75, 43.1], [10.45, 43.6],
+	[10.4, 43.72], [10.05, 44.05], [9.4, 44.45], [8.95, 44.5]]],
+	["Via Cassia", [[12.1, 42.0], [11.99, 42.64], [11.95, 43.02], [11.88, 43.46]]],
+	["Via Flaminia", [[12.5, 41.9], [12.62, 42.25], [12.65, 42.55], [12.75, 42.95], [12.85, 43.3],
+	[12.95, 43.6], [12.7, 43.9], [12.45, 44.0]]],
+	["Via Aemilia", [[12.45, 44.0], [11.9, 44.3], [11.34, 44.49], [10.93, 44.65], [10.3, 44.8], [9.69, 44.95],
+	[9.69, 45.25], [9.19, 45.46]]],
+	["Patavium road", [[11.34, 44.49], [11.2, 44.8], [11.2, 45.05], [11.5, 45.2], [11.88, 45.41]]],
+	["Utica road", [[10.32, 36.85], [10.2, 36.9], [10.0, 36.96], [9.6, 37.05], [9.1, 36.85], [8.5, 36.75],
+	[7.77, 36.7], [7.2, 36.55], [6.61, 36.36]]],
+	["Hadrumetum road", [[10.32, 36.85], [10.3, 36.5], [10.5, 36.1], [10.6, 35.85]]],
+	["Heraklean Way", [[5.37, 43.3], [5.0, 43.5], [4.63, 43.68], [4.36, 43.84], [3.7, 43.55], [3.0, 43.18],
+	[2.9, 42.7], [3.0, 42.3], [3.05, 42.15]]],
+	["Iberian coast road", [[3.05, 42.15], [2.4, 41.7], [1.2, 41.25], [0.52, 40.81], [0.1, 40.3],
+	[-0.27, 39.68], [-0.45, 39.5], [-0.45, 39.1], [-0.9, 38.5], [-1.0, 37.7]]],
+	["Baetis road", [[-1.0, 37.7], [-1.8, 37.9], [-3.0, 38.15], [-3.63, 38.15], [-4.3, 38.15], [-4.78, 38.1],
+	[-4.9, 37.7], [-5.2, 37.4], [-5.8, 37.0], [-6.25, 36.6]]],
+	["Rhone road", [[5.37, 43.3], [5.1, 43.6], [5.05, 44.0], [5.0, 44.5], [5.0, 45.0], [4.95, 45.35],
+	[4.87, 45.52]]],
+	["Isthmus road", [[23.73, 38.0], [23.4, 38.07], [23.1, 37.98], [22.93, 37.9], [22.85, 37.8],
+	[22.72, 37.63], [22.5, 37.35], [22.43, 37.07]]],
+	["Thessalian road", [[22.52, 40.76], [22.45, 40.3], [22.55, 40.0], [22.55, 39.85], [22.47, 39.74],
+	[22.42, 39.64], [22.38, 39.3], [22.43, 38.95], [22.55, 38.8], [23.0, 38.5], [23.32, 38.32], [23.73, 38.0]]],
+	["Sicilian coast road", [[12.6, 37.7], [12.83, 37.7], [13.58, 37.42], [14.25, 37.2], [14.75, 37.0],
+	[15.2, 37.1]]],
+	["Sicilian east road", [[15.2, 37.1], [15.0, 37.5], [15.1, 37.85], [15.45, 38.15]]],
+]
+
+## Hills: {kind (0 hill, 1 ridge), and either "w" (half width, degrees of
+## latitude) with "pts" (a ribbon along a line) or "poly" (an area)}, all
+## [lon, lat]. A cell whose centre is in one takes that kind where it is
+## rougher than its region's own terrain (the region's kind stays the
+## default for its other cells). The Alps are ridge, not impassable (their
+## high ground is unclaimed land already).
+const HILLS := [
+	# The Alps' foot (the Maritime Alps round to the Julian).
+	{"kind": 1, "poly": [[6.0, 44.2], [7.6, 44.0], [7.5, 44.6], [7.6, 45.3], [8.3, 45.75], [9.5, 45.85],
+	[10.5, 45.75], [11.5, 45.8], [12.5, 46.0], [13.6, 46.1], [13.6, 47.0], [5.6, 47.0], [5.6, 45.6],
+	[6.0, 45.0]]},
+	# The Apennines: hills north and south, a ridge in the middle.
+	{"kind": 0, "w": 0.25, "pts": [[8.6, 44.5], [9.5, 44.5], [10.3, 44.3], [11.2, 44.05], [11.9, 43.8], [12.4, 43.5]]},
+	{"kind": 1, "w": 0.25, "pts": [[12.4, 43.5], [12.9, 43.0], [13.3, 42.6], [13.6, 42.2], [14.0, 41.85], [14.4, 41.55]]},
+	{"kind": 0, "w": 0.25, "pts": [[14.4, 41.55], [15.0, 41.2], [15.5, 40.7], [15.8, 40.2], [16.1, 39.6], [16.2, 39.0],
+	[16.1, 38.4]]},
+	# Iberia: the Pyrenees, the Cantabrian range, the meseta's edges, the
+	# Sierra Nevada.
+	{"kind": 1, "w": 0.25, "pts": [[-1.9, 43.05], [-1.0, 42.95], [0.0, 42.75], [1.0, 42.6], [2.0, 42.45], [2.9, 42.45]]},
+	{"kind": 1, "w": 0.2, "pts": [[-7.2, 42.9], [-6.0, 43.0], [-4.8, 43.05], [-3.6, 43.0]]},
+	{"kind": 0, "w": 0.25, "pts": [[-7.0, 40.2], [-6.0, 40.3], [-5.0, 40.35], [-4.0, 40.75], [-3.3, 41.1]]},
+	{"kind": 0, "w": 0.3, "pts": [[-3.0, 42.0], [-2.3, 41.4], [-1.6, 40.8], [-1.2, 40.2]]},
+	{"kind": 0, "w": 0.18, "pts": [[-6.5, 38.15], [-5.5, 38.2], [-4.5, 38.35], [-3.5, 38.4], [-2.6, 38.45]]},
+	{"kind": 1, "w": 0.2, "pts": [[-5.2, 36.75], [-4.3, 37.0], [-3.3, 37.05], [-2.4, 37.25]]},
+	# Africa: the Rif, the Tell Atlas, the Aures.
+	{"kind": 0, "w": 0.25, "pts": [[-5.4, 35.3], [-4.5, 35.0], [-3.6, 34.95]]},
+	{"kind": 0, "w": 0.3, "pts": [[-1.5, 35.0], [0.5, 35.6], [2.5, 36.1], [4.5, 36.2], [6.0, 36.3], [7.5, 36.35],
+	[8.5, 36.3]]},
+	{"kind": 1, "w": 0.25, "pts": [[5.8, 35.3], [6.8, 35.2]]},
+	# Greece: the Pindus, Olympus, Arcadia, Taygetus.
+	{"kind": 1, "w": 0.25, "pts": [[20.3, 40.6], [20.8, 40.1], [21.15, 39.6], [21.45, 39.1], [21.7, 38.8]]},
+	{"kind": 1, "w": 0.15, "pts": [[22.1, 40.2], [22.4, 40.05]]},
+	{"kind": 0, "w": 0.3, "pts": [[21.9, 37.75], [22.3, 37.5], [22.25, 37.25]]},
+	{"kind": 1, "w": 0.12, "pts": [[22.33, 37.2], [22.38, 36.75]]},
+	# Sicily's interior and Etna.
+	{"kind": 0, "w": 0.25, "pts": [[13.2, 37.75], [13.8, 37.65], [14.4, 37.6], [14.8, 37.55]]},
+	{"kind": 1, "w": 0.15, "pts": [[14.9, 37.75], [15.0, 37.75]]},
+]
+
 static var _cells: Array = []
 static var _anchors: Array = []
 static var _lands: Array = []
@@ -237,3 +371,55 @@ static func region_at(p: Vector2) -> int:
 			if Geometry2D.is_point_in_polygon(p, piece):
 				return r
 	return -1
+
+
+## Every river crossing in id order: {id, name, kind (0 ford, 1 bridge),
+## river (index in RIVERS), p (map pixels)}.
+static func crossings() -> Array:
+	var out: Array = []
+	for i in RIVERS.size():
+		for c in RIVERS[i]["cross"]:
+			out.append({"id": out.size(), "name": str(c[0]), "kind": int(c[1]), "river": i,
+				"p": project(float(c[2]), float(c[3]))})
+	return out
+
+
+## River i's line in map pixels (source to mouth, as authored).
+static func river_line(i: int) -> PackedVector2Array:
+	return _poly(RIVERS[i]["pts"])
+
+
+## Road i's line in map pixels.
+static func road_line(i: int) -> PackedVector2Array:
+	return _poly(ROADS[i][1])
+
+
+## The cells (index y * w + x of a grid of `cpx` px cells, w wide) a
+## polyline runs through, in order and 4-connected (a diagonal move gets
+## the orthogonal cell nearer the line in between). Shared by the grid tool
+## (road cells) and the map view (the road drawn through them).
+static func line_cells(line: PackedVector2Array, cpx: float, w: int, h: int) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	var last := Vector2i(-1, -1)
+	for i in line.size() - 1:
+		var a := line[i]
+		var b := line[i + 1]
+		var n := maxi(int(ceil(a.distance_to(b) / (cpx * 0.1))), 1)
+		for k in n + 1:
+			var p := a.lerp(b, float(k) / n)
+			var q := Vector2i(clampi(int(p.x / cpx), 0, w - 1), clampi(int(p.y / cpx), 0, h - 1))
+			if q == last:
+				continue
+			if last.x >= 0 and q.x != last.x and q.y != last.y:
+				# Diagonal: the orthogonal cell whose centre is nearer the line.
+				var o1 := Vector2i(q.x, last.y)
+				var o2 := Vector2i(last.x, q.y)
+				var c1 := (Vector2(o1) + Vector2(0.5, 0.5)) * cpx
+				var c2 := (Vector2(o2) + Vector2(0.5, 0.5)) * cpx
+				var d1 := c1.distance_to(Geometry2D.get_closest_point_to_segment(c1, a, b))
+				var d2 := c2.distance_to(Geometry2D.get_closest_point_to_segment(c2, a, b))
+				var o := o1 if d1 <= d2 else o2
+				out.append(o.y * w + o.x)
+			out.append(q.y * w + q.x)
+			last = q
+	return out

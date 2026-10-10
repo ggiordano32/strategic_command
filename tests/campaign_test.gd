@@ -30,7 +30,9 @@ extends SceneTree
 ## by moving onto a city (and storming on arrival), sally and relief by
 ## moving onto a besieger, support by radius with the bearing, stances
 ## (forced march, fortify, raiding) and the raiders' income, migration
-## 5 -> 6 and from the format 1 file, the step log, determinism; merging
+## 5 -> 6 and from the format 1 file, the step log, determinism; roads,
+## rivers and hills (river steps blocked, fords and bridges, road and hill
+## costs, the battle's "river" key and hill ground); merging
 ## by marching onto an army (same turn, following it across turns, the cap,
 ## the army gone), the exchange order both ways (an army emptied is gone),
 ## the arrange order (a permutation of the army's units: validation, JSON
@@ -107,6 +109,7 @@ func _init() -> void:
 	_grid_migration()
 	_grid_steps()
 	_grid_determinism()
+	_grid_terrain()
 	_grid_merge()
 	_grid_exchange()
 	_grid_arrange()
@@ -1508,10 +1511,12 @@ func _put(st: Dictionary, f: int, c: int, units: Array) -> Dictionary:
 
 
 ## A row of n passable cells of region r (left to right), away from its
-## settlement; [] if none.
-func _row(r: int, n: int) -> Array:
+## settlement, on grid row from_y or below; [] if none.
+func _row(r: int, n: int, from_y: int = 0) -> Array:
 	var site := CGrid.site(r)
 	for c in CGrid.cells_of(r):
+		if CGrid.cy(c) < from_y:
+			continue
 		var ok := true
 		var out: Array = []
 		for k in n:
@@ -1588,18 +1593,29 @@ func _grid_paths() -> void:
 	_check(CState.max_mp6(foot) == CData.MP6_FOOT and CState.max_mp6(cav) == CData.MP6_CAV and CState.max_mp6(art) == CData.MP6_ART,
 		"points by the slowest arm (%d, %d, %d)" % [CState.max_mp6(foot), CState.max_mp6(cav), CState.max_mp6(art)])
 	var tar := CGrid.site(_r("apulia"))
-	var pf := CRules.plan_path(st, foot, tar)
-	var pc := CRules.plan_path(st, cav, tar)
+	# Since the roads (2026-10-09) the Via Appia takes foot from Latium to
+	# Tarentum in one turn; from Etruria it is two (Cassia, then Appia).
+	var pl := CRules.plan_path(st, foot, tar)
+	var on_road := 0
+	for c in pl.get("path", []):
+		if CGrid.is_road(int(c)):
+			on_road += 1
+	_check(not pl.has("why") and int(pl["t"][-1]) == 0 and on_road * 10 >= (pl["path"] as Array).size() * 8,
+		"foot from Latium reaches Tarentum's walls this turn along the Via Appia (%d of %d cells road)" % [on_road, (pl.get("path", []) as Array).size()])
+	var foot_e := _put(st, rome, CState.field_cell(_r("etruria")), ["heavy", "heavy", "spear"])
+	var cav_e := _put(st, rome, CState.field_cell(_r("etruria")), ["cav", "cav"])
+	var pf := CRules.plan_path(st, foot_e, tar)
+	var pc := CRules.plan_path(st, cav_e, tar)
 	_check(not pf.has("why") and int(pf["t"][-1]) == 1 and str(pf["aim"]["kind"]) == "siege",
-		"foot from Latium reaches Tarentum's walls next turn (%d cells): Italy in two turns" % (pf.get("path", []) as Array).size())
+		"foot from Etruria reaches Tarentum's walls next turn (%d cells): Italy in two turns" % (pf.get("path", []) as Array).size())
 	_check(not pc.has("why") and int(pc["t"][-1]) == 0, "cavalry gets there this turn")
 	_check(CGrid.cheb(int(pf["path"][-1]), tar) == 1, "the march ends next to the city (its ring), not in it")
-	var p2 := CRules.plan_path(st, foot, tar)
+	var p2 := CRules.plan_path(st, foot_e, tar)
 	_check(str(p2["path"]) == str(pf["path"]), "the path search is deterministic")
 	# An enemy army across the way: the path goes round its zone of control,
 	# unless it is the target.
-	var row := _row(_r("lusitania"), 11)
-	_check(row.size() == 11, "a row of 11 cells in Lusitania (independent)")
+	var row := _row(_r("gallaecia"), 11, 21)
+	_check(row.size() == 11, "a row of 11 cells in Gallaecia (independent; Lusitania is cut by the Tagus since the rivers)")
 	if row.size() < 11:
 		return
 	var st2 := _empty6()
@@ -1621,7 +1637,7 @@ func _grid_paths() -> void:
 func _grid_turns() -> void:
 	var st := _empty6()
 	var rome := _f("rome")
-	var foot := _put(st, rome, CState.field_cell(_r("latium")), ["heavy", "heavy", "spear"])
+	var foot := _put(st, rome, CState.field_cell(_r("etruria")), ["heavy", "heavy", "spear"])
 	var id := int(foot["id"])
 	var tar := CGrid.site(_r("apulia"))
 	var s1 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [_move6(foot, tar)])])
@@ -1644,8 +1660,159 @@ func _grid_turns() -> void:
 		and int(pb["m"][(pb["path"] as Array).find(land)]) == 0, "from Tarentum's port across the lane to Epirus: it lands this turn with no points left")
 
 
+## Roads, rivers and hills (2026-10-09; static grid data, no state change):
+## a river edge blocks a step, a ford passes at the cell's cost + GRID_FORD,
+## a bridge at the cell's cost, a road cell costs GRID_ROAD, a hill override
+## GRID_COST[HILL]; crossing_at both ways; a field battle fought across a
+## crossing carries the scenario's "river" key (direct and through a real
+## march), one on the same bank does not; a battle on a hill cell gets hill
+## ground.
+func _grid_terrain() -> void:
+	CGrid.ensure()
+	var n := CGrid.count()
+	# A river step that is not a crossing.
+	var blocked := -1
+	var blocked_to := -1
+	for c in n:
+		if not CGrid.passable(c) or CGrid.river_mask(c) == 0:
+			continue
+		for k in [2, 4]:
+			if CGrid.river_mask(c) & (1 << k) == 0:
+				continue
+			var d := CGrid.at(CGrid.cx(c) + CGrid.DX[k], CGrid.cy(c) + CGrid.DY[k])
+			if CGrid.passable(d) and CGrid.crossing_at(c, d) < 0:
+				blocked = c
+				blocked_to = d
+				break
+		if blocked >= 0:
+			break
+	_check(blocked >= 0 and CGrid.step_cost(blocked, blocked_to) == 0 and CGrid.step_cost(blocked_to, blocked) == 0,
+		"a river edge blocks the step both ways")
+	# Fords and bridges.
+	var ford := -1
+	var bridge := -1
+	for id in CGrid.crossing_count():
+		var kind := int(CGrid.crossing(id)[2])
+		if kind == CData.CROSS_FORD and ford < 0:
+			ford = id
+		elif kind == CData.CROSS_BRIDGE and bridge < 0:
+			bridge = id
+	_check(ford >= 0 and bridge >= 0, "the grid has fords and bridges (%d crossings)" % CGrid.crossing_count())
+	if ford >= 0:
+		var fa := int(CGrid.crossing(ford)[0])
+		var fb := int(CGrid.crossing(ford)[1])
+		_check(CGrid.step_cost(fa, fb) == CGrid.cost(fb) + CData.GRID_FORD and CGrid.step_cost(fb, fa) == CGrid.cost(fa) + CData.GRID_FORD,
+			"a ford passes at the cell's cost + %d (%d, %d)" % [CData.GRID_FORD, CGrid.step_cost(fa, fb), CGrid.cost(fb)])
+		_check(CGrid.crossing_at(fa, fb) == ford and CGrid.crossing_at(fb, fa) == ford and CGrid.crossing_at(fa, fa) == -1,
+			"crossing_at finds the ford both ways")
+	if bridge >= 0:
+		var ba := int(CGrid.crossing(bridge)[0])
+		var bb := int(CGrid.crossing(bridge)[1])
+		_check(CGrid.step_cost(ba, bb) == CGrid.cost(bb) and CGrid.step_cost(bb, ba) == CGrid.cost(ba),
+			"a bridge passes at the cell's cost (%d)" % CGrid.step_cost(ba, bb))
+		_check(CGrid.crossing_at(bb, ba) == bridge, "crossing_at finds the bridge both ways")
+	# A road cell, entered straight from an open neighbour.
+	var road_ok := false
+	for c in n:
+		if not CGrid.is_road(c):
+			continue
+		for k in [0, 2, 4, 6]:
+			var d := CGrid.at(CGrid.cx(c) - CGrid.DX[k], CGrid.cy(c) - CGrid.DY[k])
+			if CGrid.passable(d) and CGrid.step_cost(d, c) > 0 and CGrid.crossing_at(d, c) < 0:
+				road_ok = CGrid.cost(c) == CData.GRID_ROAD and CGrid.step_cost(d, c) == CData.GRID_ROAD
+				break
+		break
+	_check(road_ok, "a road cell costs %d" % CData.GRID_ROAD)
+	# A hill override (not a road, a region without heavy woods).
+	var hill := -1
+	for c in n:
+		if CGrid.terrain_override(c) == CData.HILL and not CGrid.is_road(c) \
+				and int(CData.REGIONS[CGrid.region(c)]["forest"]) < CData.WOODS_HEAVY:
+			hill = c
+			break
+	_check(hill >= 0 and CGrid.cost(hill) == int(CData.GRID_COST[CData.HILL]) and CGrid.cell_terrain(hill) == CData.HILL
+		and int(CData.REGIONS[CGrid.region(hill)]["terrain"]) != CData.HILL,
+		"a hill override costs %d and reads as hill ground (its region's own terrain is not)" % int(CData.GRID_COST[CData.HILL]))
+	# Battles across a crossing: a crossing whose banks Rome may walk (its own,
+	# Epirus's or unclaimed land) with room for a march up to it.
+	var st0 := _empty6()
+	var rome := _f("rome")
+	var ep := _f("epirus")
+	var pick: Array = []
+	for id in CGrid.crossing_count():
+		var a0 := int(CGrid.crossing(id)[0])
+		var b0 := int(CGrid.crossing(id)[1])
+		for pr in [[a0, b0], [b0, a0]]:
+			var near: int = pr[0]
+			var far: int = pr[1]
+			var dx := CGrid.cx(near) - CGrid.cx(far)
+			var dy := CGrid.cy(near) - CGrid.cy(far)
+			var mid := CGrid.at(CGrid.cx(near) + dx, CGrid.cy(near) + dy)
+			var back := CGrid.at(CGrid.cx(near) + 2 * dx, CGrid.cy(near) + 2 * dy)
+			var ok := pick.is_empty() and mid >= 0 and back >= 0 and CGrid.step_cost(back, mid) > 0 and CGrid.step_cost(mid, near) > 0
+			for c in [near, far, mid, back]:
+				var o := CState.owner(st0, CGrid.region(c)) if c >= 0 and CGrid.region(c) >= 0 else -2
+				if c < 0 or not (o == -1 or o == rome or o == ep) or CGrid.site_region(c) >= 0:
+					ok = false
+			if ok:
+				pick = [id, near, far, mid, back]
+	_check(not pick.is_empty(), "a crossing with open banks for the battle test")
+	if pick.is_empty():
+		return
+	var cid: int = pick[0]
+	# Direct: the attacker at the near end, the defender at the far end.
+	var st := _empty6()
+	var a := _put(st, rome, int(pick[1]), ["heavy", "heavy"])
+	var e := _put(st, ep, int(pick[2]), ["spear", "spear"])
+	var b := CRules.start_field_battle(st, CGrid.region(int(pick[2])), [a], [e])
+	b["x"] = CGrid.cx(int(pick[2]))
+	b["y"] = CGrid.cy(int(pick[2]))
+	b["app"] = CGrid.sector(int(pick[2]), int(pick[1]))
+	var built := CBattle.build(st, b, rome)
+	var rv: Dictionary = built["scenario"].get("river", {})
+	_check(int(rv.get("id", -1)) == cid and int(rv.get("kind", -1)) == int(CGrid.crossing(cid)[2])
+		and int(rv.get("seed", -1)) == CBattle.crossing_seed(cid) and int(rv.get("bank", -1)) == int(built["sim_side"][1]),
+		"a battle across crossing %d carries the river key (%s)" % [cid, str(rv)])
+	_check(CBattle.crossing_seed(cid) == CBattle.crossing_seed(cid) and CBattle.crossing_seed(cid) != CBattle.crossing_seed(cid + 1),
+		"the crossing's seed is frozen per crossing")
+	# Same bank: the attacker beyond the defender, on the far side.
+	var beyond := CGrid.at(2 * CGrid.cx(int(pick[2])) - CGrid.cx(int(pick[1])), 2 * CGrid.cy(int(pick[2])) - CGrid.cy(int(pick[1])))
+	if CGrid.passable(beyond) and CGrid.step_cost(beyond, int(pick[2])) > 0 and CGrid.crossing_at(beyond, int(pick[2])) < 0:
+		var st2 := _empty6()
+		var a2 := _put(st2, rome, beyond, ["heavy", "heavy"])
+		var e2 := _put(st2, ep, int(pick[2]), ["spear", "spear"])
+		var b2 := CRules.start_field_battle(st2, CGrid.region(int(pick[2])), [a2], [e2])
+		b2["x"] = CGrid.cx(int(pick[2]))
+		b2["y"] = CGrid.cy(int(pick[2]))
+		b2["app"] = CGrid.sector(int(pick[2]), beyond)
+		_check(not CBattle.build(st2, b2, rome)["scenario"].has("river"), "a battle on one bank has no river key")
+	# A real march: the Romans march on the Epirotes holding the far end.
+	var st3 := _empty6()
+	var a3 := _put(st3, rome, int(pick[4]), ["heavy", "heavy"])
+	var e3 := _put(st3, ep, int(pick[2]), ["spear", "spear"])
+	CRules.execute_moves6(st3, [[int(a3["id"]), CState.cell(e3), rome, CData.MODE_SIEGE, 1, int(e3["id"])]])
+	var b3: Dictionary = st3["battles"][0] if not (st3["battles"] as Array).is_empty() else {}
+	_check(not b3.is_empty() and CBattle.build(st3, b3, rome)["scenario"].has("river"),
+		"marching on an army across a crossing: the battle carries the river key")
+	# A hill cell: the battle's ground is hill.
+	var hn := -1
+	for k in [0, 2, 4, 6]:
+		var d := CGrid.at(CGrid.cx(hill) + CGrid.DX[k], CGrid.cy(hill) + CGrid.DY[k])
+		if CGrid.passable(d) and CGrid.step_cost(d, hill) > 0 and CGrid.site_region(d) < 0:
+			hn = d
+			break
+	if hn >= 0:
+		var st4 := _empty6()
+		var a4 := _put(st4, rome, hn, ["heavy"])
+		var e4 := _put(st4, ep, hill, ["spear"])
+		var b4 := CRules.start_field_battle(st4, CGrid.region(hill), [a4], [e4])
+		b4["x"] = CGrid.cx(hill)
+		b4["y"] = CGrid.cy(hill)
+		_check(int(CBattle.build(st4, b4, rome)["scenario"]["terrain"]["kind"]) == CData.HILL, "a battle on a hill cell has hill ground")
+
+
 func _grid_contact() -> void:
-	var row := _row(_r("lusitania"), 11)
+	var row := _row(_r("gallaecia"), 11, 21)
 	if row.size() < 11:
 		return
 	var rome := _f("rome")
@@ -1665,7 +1832,7 @@ func _grid_contact() -> void:
 		var bc := CGrid.at(int(b["x"]), int(b["y"]))
 		_check(bc == CState.cell(CState.army(s1, int(e["id"]))) and CGrid.cheb(CState.cell(CState.army(s1, int(a["id"]))), bc) == 1,
 			"the battle is on the defender's cell, the attacker next to it")
-		_check(int(b["r"]) == _r("lusitania") and CGrid.region(bc) == int(b["r"]), "the battle's region is its cell's")
+		_check(int(b["r"]) == _r("gallaecia") and CGrid.region(bc) == int(b["r"]), "the battle's region is its cell's")
 	# The marching Epirotes did not walk into Rome's zone (they were not
 	# attacking): they stopped at its edge or were caught.
 	var ea := CState.army(s1, int(e["id"]))
@@ -1689,7 +1856,7 @@ func _grid_contact() -> void:
 	# zone that moves into its way (its path was planned round the zones as
 	# the phase began).
 	var n3 := CGrid.at(CGrid.cx(row[3]), CGrid.cy(row[3]) - 3)
-	if CGrid.passable(n3) and CGrid.region(n3) == _r("lusitania"):
+	if CGrid.passable(n3) and CGrid.region(n3) == _r("gallaecia"):
 		var st3 := _empty6()
 		var a3 := _put(st3, rome, n3, ["heavy"])
 		var e3 := _put(st3, ep, row[10], ["spear"])
@@ -1860,7 +2027,7 @@ func _set_walls(st: Dictionary, r: int, wl: int) -> void:
 
 
 func _grid_support() -> void:
-	var row := _row(_r("lusitania"), 11)
+	var row := _row(_r("gallaecia"), 11, 21)
 	if row.size() < 11:
 		return
 	var rome := _f("rome")
@@ -1903,7 +2070,7 @@ func _grid_support() -> void:
 func _grid_stances() -> void:
 	var rome := _f("rome")
 	var ep := _f("epirus")
-	var row := _row(_r("lusitania"), 11)
+	var row := _row(_r("gallaecia"), 11, 21)
 	if row.size() < 11:
 		return
 	var st := _empty6()
@@ -3211,13 +3378,15 @@ func _ai_skilled() -> void:
 	var g := CState.new_campaign("test", 4242, [])
 	for t in 20:
 		g = CTurn.resolve_turn(g, [])
-	_check(CState.hash_text(g) == "6e1095cd" and int(g["rng"]) == 3394658370,
+	# (Goldens moved with the roads, rivers and hills, 2026-10-09: movement
+	# differs; were 6e1095cd / 3394658370 and 08e7391a / 694925818.)
+	_check(CState.hash_text(g) == "3666c3b2" and int(g["rng"]) == 694925818,
 		"Average plays and draws the RNG exactly as before step 4 (%s, rng %d)" % [CState.hash_text(g), int(g["rng"])])
 	var ge := CState.new_campaign("test", 4242, [])
 	ge["factions"][_f("macedon")]["ai_skill"] = CP.EASY
 	for t in 20:
 		ge = CTurn.resolve_turn(ge, [])
-	_check(CState.hash_text(ge) == "08e7391a" and int(ge["rng"]) == 694925818,
+	_check(CState.hash_text(ge) == "d517c822" and int(ge["rng"]) == 3622865195,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(ge), int(ge["rng"])])
 	CAI.no_beasts = false
 	CData.no_generals = false

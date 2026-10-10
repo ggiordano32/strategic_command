@@ -4,7 +4,8 @@ extends Control
 ## colours (map_overlay.gd, map_view.gd static draw_* and COL_*), so the key
 ## cannot drift from the drawing code, and what each one means. The rows
 ## follow the campaign's format: version 6 (the continuous overworld: paths
-## along cells, reach, zones of control, links, merge glyphs, stances),
+## along cells, reach, zones of control, links, merge glyphs, stances,
+## rivers, fords, bridges, roads and hills),
 ## version 5 (free movement: region destinations, hops solid / dotted) or
 ## older (arrows).
 ##
@@ -289,6 +290,29 @@ func rows() -> Array:
 			var c: Color = pair[1]
 			ci.draw_rect(pair[0], MapView.LAND.lerp(c, MapView.TINT))
 			ci.draw_polyline(_closed((pair[0] as Rect2).grow(-1.5)), Color(c, MapView.OWNER_EDGE_A), MapView.OWNER_EDGE_W, true)])
+	if format >= 6:
+		# Roads, rivers and hills (2026-10-09): the map's own painters.
+		out.append(["River: cross only at a ford or a bridge", func(ci: Control, sz: Vector2):
+			_land(ci, sz)
+			MapView.draw_river(ci, PackedVector2Array([Vector2(4, sz.y * 0.75), Vector2(sz.x * 0.5, sz.y * 0.4),
+				Vector2(sz.x - 4, sz.y * 0.25)]), 1.0)])
+		out.append(["Ford: crossing costs %d more" % CData.GRID_FORD, func(ci: Control, sz: Vector2):
+			_land(ci, sz)
+			MapView.draw_river(ci, PackedVector2Array([Vector2(sz.x * 0.5, 2), Vector2(sz.x * 0.5, sz.y - 2)]), 1.0)
+			MapView.draw_ford(ci, sz * 0.5, Vector2(1, 0), 1.3)])
+		out.append(["Bridge: crossing at no extra cost", func(ci: Control, sz: Vector2):
+			_land(ci, sz)
+			MapView.draw_river(ci, PackedVector2Array([Vector2(sz.x * 0.5, 2), Vector2(sz.x * 0.5, sz.y - 2)]), 1.0)
+			MapView.draw_bridge(ci, sz * 0.5, Vector2(1, 0), 1.3)])
+		out.append(["Road: %d a cell (open ground %d)" % [CData.GRID_ROAD, int(CData.GRID_COST[CData.FLAT])], func(ci: Control, sz: Vector2):
+			_land(ci, sz)
+			MapView.draw_road(ci, PackedVector2Array([_l(sz), Vector2(sz.x * 0.5, sz.y * 0.35), _r(sz)]), 1.0)])
+		out.append(["Hills %d a cell, ridge %d (a battle there is on that ground)" % [int(CData.GRID_COST[CData.HILL]),
+				int(CData.GRID_COST[CData.RIDGE])], func(ci: Control, sz: Vector2):
+			_land(ci, sz)
+			var cpx := sz.y * 0.8
+			MapView.draw_hills(ci, MapView.hill_mark(Vector2(sz.x * 0.3, sz.y * 0.55), cpx, 0), 0, 1.6)
+			MapView.draw_hills(ci, MapView.hill_mark(Vector2(sz.x * 0.72, sz.y * 0.55), cpx, 1), 1, 1.6)])
 	if format <= 5:
 		out.append(["Land route", func(ci: Control, sz: Vector2):
 			_land(ci, sz)

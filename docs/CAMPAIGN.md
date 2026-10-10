@@ -1022,7 +1022,8 @@ contact, sieges, sally / relief, support, stances, raiding, retreats),
   cell nearest the settlement, not the settlement's own cell; -1 inland)
   and a camp (a field cell 3 or more from the settlement near the
   territory's middle: where a raid goes); `OVERRIDES` [cell, cost] pairs
-  (empty: roads, rivers and fords later set costs here). Two land routes
+  (a cost set directly, applied last; empty); `TERRAIN`, `RIVER`, `CROSS`:
+  roads, rivers and hills (see "Roads, rivers and hills"). Two land routes
   whose regions did not touch get a corridor along the line between their
   settlements (Venetia - Illyria along the Dalmatian coast, 34 cells;
   Numidia - Mauretania along the Algerian coast, 37). Checks (tool and
@@ -1301,6 +1302,95 @@ contact, sieges, sally / relief, support, stances, raiding, retreats),
   ms mean, 23-31 ms worst after the first turn (the first builds the
   distance fields: ~130 ms native, perhaps 0.4-0.5 s in a phone browser);
   before 12-13 ms mean. Deterministic (each seed twice, same hash).
+### Roads, rivers and hills (2026-10-09, still format 6)
+
+Static data and rules only: no state change, `CState.VERSION` stays 6
+(the rules hash changes: movement differs). Code: `game/campaign/map_geo.gd`
+(`RIVERS`, `ROADS`, `HILLS`, `crossings()`, `line_cells()`),
+`tools/campaign_grid.gd` (baking and checks), `campaign/cgrid.gd`
+(costs, steps, lookups), `campaign/cbattle.gd` (the battle hook),
+`game/campaign/map_view.gd` / `map_key.gd` (drawing, key rows).
+
+- **Data** (hand-authored [lon, lat] lines, rough, c. 280 BC). 13 rivers,
+  each from its source to its mouth (the tool runs the mouth on until it
+  is in a sea cell): Padus, Tiberis, Arnus, Volturnus, Aufidus, Rhodanus,
+  Garumna (from Tolosa down only: Aquitaine is unclaimed land), Iberus,
+  Baetis, Tagus, Bagradas, Achelous, Peneus. 25 crossings (id = order):
+  Padus: Placentia bridge, Cremona ford, Hostilia ford; Tiberis: Pons
+  Sublicius (Roma) bridge, Tuder ford; Arnus: Pisae bridge, Faesulae ford;
+  Volturnus: Casilinum bridge; Aufidus: Pons Aufidi bridge, Cannae ford;
+  Rhodanus: Arelate bridge, Arausio ford, Vienna ford; Garumna: Tolosa
+  ford; Iberus: Dertosa bridge, Salduie ford; Baetis: Corduba bridge,
+  Hispalis ford; Tagus: Toletum ford, Norba bridge; Bagradas: Utica road
+  bridge, Vaga ford; Achelous: Stratos ford; Peneus: Larissa bridge,
+  Trikka ford. 17 roads between settlements: Via Appia (Roma - Capua -
+  Beneventum - Venusia - Tarentum), Via Latina, Via Aurelia (to Pisae and
+  Genua), Via Cassia (to Arretium), Via Flaminia (to Ariminum), Via
+  Aemilia (Ariminum - Placentia - Mediolanum), the Patavium road, the
+  Utica road (Carthago - Utica - Hippo - Cirta), the Hadrumetum road, the
+  Heraklean Way (Massalia - Arelate - Narbo - Emporion), the Iberian coast
+  road (Emporion - Dertosa - Saguntum - Mastia), the Baetis road (Mastia -
+  Castulo - Corduba - Gades), the Rhone road (Massalia - Vienna), the
+  Isthmus road (Athenae - Corinthus - Sparta), the Thessalian road (Pella -
+  Larissa - Thermopylae - Athenae), the Sicilian coast and east roads.
+  19 hill areas (ribbons along a line with a half width, or polygons):
+  the Alps' foot (ridge: cost 20, not impassable; the high Alps are
+  unclaimed land already), the Apennines (hills north and south, a ridge
+  in the middle), the Pyrenees and the Cantabrian range (ridge), the
+  Sistema Central, the Iberian range and the Sierra Morena (hills), the
+  Sierra Nevada (ridge), the Rif and the Tell Atlas (hills), the Aures,
+  the Pindus, Olympus, Taygetus and Etna (ridge), Arcadia and Sicily's
+  interior (hills).
+- **Baking** (`tools/campaign_grid.gd`, integers out): a cell inside a hill
+  area takes its kind where that is rougher than its region's terrain
+  (200 hill, 215 ridge cells); a road marks every cell its line runs
+  through, 4-connected (290 road cells); a river makes every step between
+  two passable cells of one landmass whose centres its line separates a
+  river edge, a diagonal one also when any orthogonal step of its 2 x 2
+  block is one (634 river steps); each crossing takes its river's
+  orthogonal step nearest its point, a road's step there first. Output:
+  `TERRAIN` (a string per row: "." the region's terrain, "h" hill, "r"
+  ridge; "=", "H", "R" the same with a road), `RIVER` ([cell, mask]
+  pairs, bit k = the step in direction k crosses a river), `CROSS` ([cell
+  a, cell b, id, kind] per crossing). The build fails (and `--check` with
+  it) unless every river mouth reaches a sea cell, every crossing joins two
+  passable cells of one landmass, every road cell is land, every road
+  crosses rivers only at crossings and each landmass stays one component
+  with the rivers in place. `--png=path` draws hills, roads, river edges
+  and crossings (red ford, green bridge) over the regions.
+- **Rules** (`CGrid.ensure`): a hill / ridge cell costs `GRID_COST[HILL]`
+  15 / `[RIDGE]` 20 (+ woods as before); a road cell `GRID_ROAD` 6 (never
+  more than its terrain); a step across a river edge is not a step,
+  except a crossing's: a ford costs the cell entered + `GRID_FORD` 5, a
+  bridge the cell; diagonals never cross. Paths, reach, the distance
+  fields, the AI, the move preview and forced march all go through the
+  step table, so they all follow. Lookups: `cell_terrain(c)`,
+  `terrain_override(c)`, `is_road(c)`, `river_mask(c)`, `crossing_at(a,
+  b)` (id or -1), `crossing(id)` [a, b, kind], `crossings_from(c)`.
+  Measured: Roma to Tarentum's walls 132 points along the Via Appia (one
+  turn on foot; 211 before), from Etruria two turns.
+- **The battle hook** (`CBattle.river_crossing`): a field battle whose lead
+  attacker reached the defender across a crossing (the cheapest way from
+  its cell to the battle cell, at most 4 steps, takes a crossing's step;
+  or it stands on a crossing's end whose other end lies on its approach
+  bearing, farther from the defender) gets the scenario key `"river":
+  {"id", "kind" (0 ford, 1 bridge), "seed" (`crossing_seed(id)`: from the
+  id alone, the same map every time), "bank" (the sim side holding the far
+  bank: the defenders)}`; the sim ignores it until the crossing map is
+  built. A field battle on a hill / ridge override cell gets that terrain
+  kind (else the region's, as before). Gap: contact still happens between
+  armies next to each other across a river edge without a crossing; such
+  a battle has no river key.
+- **View**: hills a faint chevron per cell (two for a ridge), rivers blue
+  lines (the authored lines: an orthogonal step is a river edge exactly
+  when it crosses one), a ford three pale stepping stones on a dark spot,
+  a bridge a short deck, both where the crossing's step meets the line;
+  roads thin tan lines through their cells' centres (the corner cells of
+  a diagonal run left out, smoothed). Drawn only in format 6. The key's
+  "Map" section gains river, ford, bridge, road and hills rows.
+  `MapView.crossing_near(p, rad)` finds the crossing at a map point (for a
+  tap hint: not wired into the campaign screen yet).
+
 ### View (version 6)
 
 Code: `game/campaign/map_overlay.gd` (positions, reach, zones, lines, paths,
@@ -1680,7 +1770,8 @@ As built 2026-10-05; the server side is in `docs/SERVER.md`.
 - `tests/campaign_test.gd` (version 6): the grid (every region has cells,
   settlements and camps in their region, one component per landmass, land
   routes joined, ports with their lanes, Sicily apart), points by arm, a
-  foot march Roma -> Tarentum in two turns and cavalry in one, deterministic
+  foot march Roma -> Tarentum in one turn along the Via Appia (since the
+  roads; from Etruria two turns, cavalry one), deterministic
   search, a path round an enemy zone and straight into the target's, a
   destination in a zone refused, a march over two turns (stored, resumed,
   siege on arrival, cancel), a sea lane landing with no points, contact
@@ -1694,7 +1785,13 @@ As built 2026-10-05; the server side is in `docs/SERVER.md`.
   immobile, wider zone, better odds, not after moving; raiding points),
   raiding income both ways, migration 5 -> 6 and from the format 1 file,
   the step log, determinism and a save / load in the middle, plain-data
-  state. Recruiting into armies (`_grid_recruit_army`): into an army at
+  state. Roads, rivers and hills (`_grid_terrain`): a river step blocked
+  both ways, a ford at the cell's cost + 5, a bridge at the cell's cost,
+  `crossing_at` both ways, a road cell 6, a hill override 15 and hill
+  ground; a field battle across a crossing carries the scenario's `river`
+  key (set up directly and through a real march), one on a single bank
+  does not, a battle on a hill cell gets hill ground. The contact tests
+  use a row of Gallaecia (Lusitania is cut by the Tagus). Recruiting into armies (`_grid_recruit_army`): into an army at
   the city and one next to it, the slots shared with a new army and the
   old form, the cap counting queued recruits, an army away from the city,
   an ally's city, `army` with `new`, format 5 refusing targets, mustering
@@ -1771,7 +1868,7 @@ Agreed order after milestone 4 (the server), from the user on 2026-10-05:
    above). Later: fleets and free movement at sea (sea lanes stay
    port-to-port), ambush (a stance), siege equipment built over turns
    (ladders and towers after 2-3 turns of siege), roads, rivers and fords
-   as grid cost overrides (`OVERRIDES` in the grid data), a fortified camp
+   (built 2026-10-09: "Roads, rivers and hills" above), a fortified camp
    on the battle map, a smaller deployment for an army caught on a forced
    march, reinforcements arriving outside the walls in settlement
    battles.

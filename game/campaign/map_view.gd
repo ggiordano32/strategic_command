@@ -8,7 +8,12 @@ extends Node2D
 ## State version 6: the selected army's reach this turn is a filled
 ## translucent area with a smoothed outline (cells from CRules.reach6; next
 ## turn's a dashed outline); land routes are gone (armies walk the grid),
-## sea lanes join the port cells.
+## sea lanes join the port cells. Roads, rivers and hills (2026-10-09, from
+## the grid the rules read): hill / ridge cells a faint chevron each (two
+## for a ridge), rivers blue lines (map_geo.gd's lines: an orthogonal step
+## is a river edge exactly when it crosses one), a ford stepping stones
+## across the river and a bridge a deck over it, both where the crossing's
+## step meets the line, roads thin tan lines through their cells' centres.
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -38,6 +43,23 @@ const OWNER_EDGE_A := 0.85                         # owner band inside each terr
 const OWNER_EDGE_W := 3.5
 const COL_BLOCKED := Color(0.1, 0.1, 0.1, 0.32)    # version 5: a neighbour it cannot enter
 const COL_BLOCKED_EDGE := Color(0.15, 0.15, 0.15, 0.85)
+## Roads, rivers and hills (version 6). Widths are screen px (times lw).
+const COL_RIVER := Color(0.22, 0.46, 0.78, 0.95)
+const RIVER_W := 2.4
+const COL_ROAD := Color(0.55, 0.4, 0.22, 0.85)
+const ROAD_W := 1.7
+const COL_HILL := Color(0.25, 0.18, 0.08, 0.3)
+const COL_RIDGE := Color(0.2, 0.13, 0.05, 0.45)
+const HILL_W := 1.2
+const COL_FORD := Color(0.93, 0.9, 0.8, 1.0)
+const COL_BRIDGE := Color(0.45, 0.3, 0.15, 1.0)
+
+## Built once from the grid (view only): hatch segments per kind, road
+## polylines, river polylines, crossing glyphs [point, step direction, kind].
+static var _hill_segs: Array = []
+static var _road_lines: Array = []
+static var _river_lines: Array = []
+static var _cross_marks: Array = []
 
 var state: Dictionary = {}
 var zoom := 1.0
@@ -204,6 +226,9 @@ func _draw() -> void:
 		for piece in Geo.cell(r):
 			draw_colored_polygon(piece, col)
 	if grid:
+		_terrain_geometry()
+		draw_hills(self, _hill_segs[0], 0, lw)
+		draw_hills(self, _hill_segs[1], 1, lw)
 		_draw_reach(lw)
 	# Destinations of the selected army.
 	var a := 0.25 + 0.15 * sin(pulse * 4.0)
@@ -264,6 +289,16 @@ func _draw() -> void:
 		draw_polyline(closed, COAST, 1.6 * lw, true)
 	# Land routes (dashed) and sea lanes (dotted, light blue).
 	if grid:
+		# Roads, rivers and the crossings over them.
+		for ln in _road_lines:
+			draw_road(self, ln, lw)
+		for ln in _river_lines:
+			draw_river(self, ln, lw)
+		for cm in _cross_marks:
+			if int(cm[2]) == 0:
+				draw_ford(self, cm[0], cm[1], lw)
+			else:
+				draw_bridge(self, cm[0], cm[1], lw)
 		# Version 6: armies walk the grid; sea lanes join the port cells.
 		var px := float(CGrid.cell_px())
 		for pair in CData.SEA_LANES:
@@ -281,6 +316,121 @@ func _draw() -> void:
 		var p0 := Geo.site(CData.region_index(pair[0]))
 		var p1 := Geo.site(CData.region_index(pair[1]))
 		draw_sea_lane(self, p0, p1, lw)
+
+
+## The roads, rivers and hills geometry from the grid (once).
+static func _terrain_geometry() -> void:
+	if not _hill_segs.is_empty():
+		return
+	var px := float(CGrid.cell_px())
+	var hills := PackedVector2Array()
+	var ridges := PackedVector2Array()  # (packed arrays are values: one variable each)
+	for c in CGrid.count():
+		var ov := CGrid.terrain_override(c)
+		if ov < 0:
+			continue
+		var ctr := Vector2((CGrid.cx(c) + 0.5) * px, (CGrid.cy(c) + 0.5) * px)
+		if ov == CData.RIDGE:
+			ridges.append_array(hill_mark(ctr, px, 1))
+		else:
+			hills.append_array(hill_mark(ctr, px, 0))
+	_hill_segs = [hills, ridges]
+	var w := CGrid.width()
+	for ri in Geo.ROADS.size():
+		var cells := Geo.line_cells(Geo.road_line(ri), px, w, CGrid.height())
+		var pts := PackedVector2Array()
+		for k in cells.size():
+			var c := cells[k]
+			# Leave out the corner cells a diagonal run steps through (the
+			# line reads straighter); keep both ends.
+			if k > 0 and k < cells.size() - 1:
+				var p0 := cells[k - 1]
+				var p1 := cells[k + 1]
+				if absi(p0 % w - p1 % w) == 1 and absi(p0 / w - p1 / w) == 1:
+					continue
+			pts.append(Vector2((c % w + 0.5) * px, (c / w + 0.5) * px))
+		if pts.size() >= 2:
+			_road_lines.append(_smooth_open(_smooth_open(pts)))
+	for vi in Geo.RIVERS.size():
+		_river_lines.append(Geo.river_line(vi))
+	var info := Geo.crossings()
+	for id in CGrid.crossing_count():
+		var cr := CGrid.crossing(id)
+		var a := Vector2((CGrid.cx(int(cr[0])) + 0.5) * px, (CGrid.cy(int(cr[0])) + 0.5) * px)
+		var b := Vector2((CGrid.cx(int(cr[1])) + 0.5) * px, (CGrid.cy(int(cr[1])) + 0.5) * px)
+		var at := (a + b) * 0.5
+		if id < info.size():
+			var line: PackedVector2Array = _river_lines[int(info[id]["river"])]
+			for k in line.size() - 1:
+				var hit: Variant = Geometry2D.segment_intersects_segment(a, b, line[k], line[k + 1])
+				if hit != null:
+					at = hit
+					break
+		_cross_marks.append([at, (b - a).normalized(), int(cr[2])])
+
+
+## Crossing id at map point p (within `rad` map px of its glyph), -1 none.
+static func crossing_near(p: Vector2, rad: float) -> int:
+	_terrain_geometry()
+	var best := -1
+	var bd := rad
+	for id in _cross_marks.size():
+		var d := p.distance_to(_cross_marks[id][0])
+		if d <= bd:
+			bd = d
+			best = id
+	return best
+
+
+## One Chaikin pass over an open polyline (ends kept).
+static func _smooth_open(pts: PackedVector2Array) -> PackedVector2Array:
+	var out := PackedVector2Array([pts[0]])
+	for i in pts.size() - 1:
+		out.append(pts[i].lerp(pts[i + 1], 0.25))
+		out.append(pts[i].lerp(pts[i + 1], 0.75))
+	out.append(pts[pts.size() - 1])
+	return out
+
+
+## Hatch of a hill (kind 0: one chevron) or ridge (1: two) cell of size
+## `px` centred on ctr: segment pairs for draw_multiline.
+static func hill_mark(ctr: Vector2, px: float, kind: int) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	var hw := px * (0.22 if kind == 0 else 0.26)
+	var hh := px * (0.16 if kind == 0 else 0.22)
+	var offs: Array = [Vector2(0, px * 0.08)] if kind == 0 else [Vector2(-px * 0.18, px * 0.12), Vector2(px * 0.18, px * 0.12)]
+	for o in offs:
+		var base: Vector2 = ctr + o
+		out.append_array(PackedVector2Array([base + Vector2(-hw, 0), base + Vector2(0, -hh),
+			base + Vector2(0, -hh), base + Vector2(hw, 0)]))
+	return out
+
+
+static func draw_hills(ci: CanvasItem, segs: PackedVector2Array, kind: int, lw: float) -> void:
+	if segs.size() >= 2:
+		ci.draw_multiline(segs, COL_HILL if kind == 0 else COL_RIDGE, HILL_W * lw, true)
+
+
+static func draw_river(ci: CanvasItem, pts: PackedVector2Array, lw: float) -> void:
+	ci.draw_polyline(pts, COL_RIVER, RIVER_W * lw, true)
+
+
+static func draw_road(ci: CanvasItem, pts: PackedVector2Array, lw: float) -> void:
+	ci.draw_polyline(pts, COL_ROAD, ROAD_W * lw, true)
+
+
+## A ford: the river broken by three pale stepping stones along the step.
+static func draw_ford(ci: CanvasItem, p: Vector2, dir: Vector2, lw: float) -> void:
+	ci.draw_circle(p, 5.2 * lw, Color(0.2, 0.15, 0.08, 0.6))
+	for k in [-1, 0, 1]:
+		ci.draw_circle(p + dir * (3.1 * lw * k), 1.4 * lw, COL_FORD)
+
+
+## A bridge: a short deck over the river along the step, dark edged.
+static func draw_bridge(ci: CanvasItem, p: Vector2, dir: Vector2, lw: float) -> void:
+	var half := dir * (6.5 * lw)
+	ci.draw_line(p - half, p + half, Color(0.1, 0.07, 0.03, 0.9), 5.4 * lw, true)
+	ci.draw_line(p - half, p + half, COL_BRIDGE.lightened(0.3), 3.2 * lw, true)
 
 
 ## A sea lane (dotted, light blue) between two ports.
