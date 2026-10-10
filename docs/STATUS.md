@@ -1097,6 +1097,20 @@ Where 2026-10-09 ended (build 20261009T124650Z live; everything up to
 
 ## Next session (week of 2026-10-13; paused 2026-10-10 midday)
 
+- **Update, 2026-10-10 evening (hold here):** the user resumed; landed
+  and EXPORTED as version 7 (the client migrates older online campaigns
+  on load; both machines reload before an online turn): the team rules,
+  heroes and agents (both halves), the finer coast and water shader, the
+  deployment / battle-time dropdowns (Unlimited), kills by enemy type on
+  the result screens, the campaign loading panel, two-finger tap to
+  deselect, speeds 0.5 / 1 / 2 / 4x, the wall / street column fight fix.
+  The N-player UI, server seats and multi-human battles are still the
+  next pieces; the new-campaign screen still picks two factions (one
+  team). Open from this evening: the walk exchange 1.7 : 1 vs 3.8 : 1
+  open (siege pass); yardsticks 5-6 (two wall lines) never make contact;
+  the enemy's hidden assassin is still drawn by soldier_layer head to
+  head; no HUD keys for Sabotage / Attempt / Parley; the AI seldom
+  builds Barracks 2 so its heroes are rare; audio levels untuned.
 - **Live build 20261010T105314Z (commit 4b0c40d), version 6.** Everything
   through the battlefield visual upgrade and audio is live. The Friday
   game did not happen; the online campaign on the server is still
