@@ -348,7 +348,7 @@ static func _bake_relief() -> void:
 	# The shading is the slow part of the bake (about 1.5 s, several times
 	# that in the web build): cached as a PNG in user://, keyed by the data
 	# and the look parameters.
-	var key := str([GeoFields.Relief.FINE.hash(), RELIEF_CODE, TINT_STOPS, SUN, EXAG, SHADE_GAIN, LIGHT_TINT,
+	var key := str([GeoFields.Relief.FINE.hash(), GeoFields.Relief.COAST.hash(), RELIEF_CODE, BEACH_KM, COL_BEACH, COL_CLIFF, TINT_STOPS, SUN, EXAG, SHADE_GAIN, LIGHT_TINT,
 		SHADOW_TINT, CREST_COL, UPSAMPLE]).hash()
 	var path := "user://relief_%d.png" % key
 	var img: Image = null
@@ -357,7 +357,7 @@ static func _bake_relief() -> void:
 		if img != null and (img.get_width() != w * UPSAMPLE or img.get_height() != h * UPSAMPLE):
 			img = null
 	if img == null:
-		img = relief_image(_elev, w, h, GeoFields.sample_m())
+		img = relief_image(_elev, w, h, GeoFields.sample_m(), UPSAMPLE, GeoFields.coast())
 		var tmp := "user://relief_tmp_%d.png" % Time.get_ticks_usec()
 		if img.save_png(tmp) == OK:
 			DirAccess.rename_absolute(tmp, path)
@@ -366,7 +366,13 @@ static func _bake_relief() -> void:
 
 
 # Hillshade and tint of the elevation field (metres; one pixel per sample).
-const RELIEF_CODE := 2                    # bump when relief_image changes
+const RELIEF_CODE := 3                    # bump when relief_image changes
+## Beaches and cliffs (2026-10-10): within BEACH_KM of the coast (the signed
+## distance field of tools/geo_fit.py, geo_fields.gd coast()), low ground
+## takes a band of sand, a steep rise from the coast a dark cliff line.
+const BEACH_KM := 3.0
+const COL_BEACH := Color(0.90, 0.83, 0.62)
+const COL_CLIFF := Color(0.22, 0.17, 0.12)
 const UPSAMPLE := 2                       # relief image pixels per elevation sample
 const SUN := Vector3(-0.55, -0.55, 0.63)   # towards the light: north-west, 39 deg up
 const EXAG := 2.0                          # vertical exaggeration of the slopes
@@ -419,7 +425,8 @@ static func _tint_lut() -> Array:
 ## pix_m metres a sample): Lambert shading from the north-west, a subtle
 ## tint by height, a thin dark line where the ground is a local crest.
 ## Transparent on the flat and low ground, so the ground texture shows.
-static func relief_image(e0: PackedFloat32Array, w0: int, h0: int, pix_m0: float, up: int = UPSAMPLE) -> Image:
+static func relief_image(e0: PackedFloat32Array, w0: int, h0: int, pix_m0: float, up: int = UPSAMPLE,
+		coast0: PackedByteArray = PackedByteArray()) -> Image:
 	var e := e0
 	var w := w0
 	var h := h0
@@ -433,6 +440,15 @@ static func relief_image(e0: PackedFloat32Array, w0: int, h0: int, pix_m0: float
 		w = w0 * up
 		h = h0 * up
 		pix_m = pix_m0 / up
+	# Signed distance to the coast (km, land negative), upsampled like the elevation.
+	var cst := PackedFloat32Array()
+	if coast0.size() == w0 * h0:
+		var ci := Image.create_from_data(w0, h0, false, Image.FORMAT_L8, coast0)
+		ci.convert(Image.FORMAT_RF)
+		if up > 1:
+			ci.resize(w0 * up, h0 * up, Image.INTERPOLATE_BILINEAR)
+		cst = ci.get_data().to_float32_array()
+	var has_coast := cst.size() == w * h
 	var data := PackedByteArray()
 	data.resize(w * h * 4)
 	var lut := _tint_lut()
@@ -461,8 +477,24 @@ static func relief_image(e0: PackedFloat32Array, w0: int, h0: int, pix_m0: float
 			var d := e[i + w]
 			var dx := r - l
 			var dy := d - u
+			# Beach and cliff (the land side of the coast, within BEACH_KM).
+			var sand_a := 0.0
+			var cliff_a := 0.0
+			if has_coast:
+				var lk := 128.0 - cst[i] * 255.0   # km inland (negative: sea side)
+				if lk > 0.0 and lk < BEACH_KM:
+					sand_a = (1.0 - smoothstep(1.0, BEACH_KM, lk)) * (1.0 - smoothstep(30.0, 120.0, v)) * 0.8
+					var rise := sqrt(dx * dx + dy * dy) * 0.5 / pix_m
+					cliff_a = smoothstep(0.10, 0.30, rise) * (1.0 - smoothstep(1.0, 2.4, lk)) * smoothstep(20.0, 80.0, v) * 0.6
+					sand_a *= 1.0 - cliff_a
 			if v < 140.0 and absf(dx) < 25.0 and absf(dy) < 25.0:
-				continue   # sea, plain and low flat ground: the ground shows
+				if sand_a > 0.02:
+					var o2 := i * 4   # sea, plain and low flat ground: the ground shows, but the beach
+					data[o2] = int(COL_BEACH.r * 255.0)
+					data[o2 + 1] = int(COL_BEACH.g * 255.0)
+					data[o2 + 2] = int(COL_BEACH.b * 255.0)
+					data[o2 + 3] = clampi(int(sand_a * 255.0), 0, 255)
+				continue
 			var gx := dx * inv2
 			var gy := dy * inv2
 			var lit := (-gx * sx - gy * sy + sz) / sqrt(gx * gx + gy * gy + 1.0)
@@ -520,6 +552,19 @@ static func relief_image(e0: PackedFloat32Array, w0: int, h0: int, pix_m0: float
 				cg_ = (CREST_COL.g * cr_a + cg_ * a * (1.0 - cr_a)) / a2
 				cb_ = (CREST_COL.b * cr_a + cb_ * a * (1.0 - cr_a)) / a2
 				a = a2
+			if sand_a > 0.02:
+				# The beach under what is there.
+				var a3 := a + sand_a * (1.0 - a)
+				cr_ = (cr_ * a + COL_BEACH.r * sand_a * (1.0 - a)) / a3
+				cg_ = (cg_ * a + COL_BEACH.g * sand_a * (1.0 - a)) / a3
+				cb_ = (cb_ * a + COL_BEACH.b * sand_a * (1.0 - a)) / a3
+				a = a3
+			if cliff_a > 0.02:
+				var a4 := cliff_a + a * (1.0 - cliff_a)
+				cr_ = (COL_CLIFF.r * cliff_a + cr_ * a * (1.0 - cliff_a)) / a4
+				cg_ = (COL_CLIFF.g * cliff_a + cg_ * a * (1.0 - cliff_a)) / a4
+				cb_ = (COL_CLIFF.b * cliff_a + cb_ * a * (1.0 - cliff_a)) / a4
+				a = a4
 			if a < 0.01:
 				continue
 			var o := i * 4

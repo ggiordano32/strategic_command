@@ -3,7 +3,8 @@ extends RefCounted
 ## rules never read this). Decodes what tools/geo_fit.py baked:
 ##  - game/campaign/relief_data.gd: the FINE elevation field (FS samples per
 ##    grid cell side, 8: 0.025 degrees of latitude, 2.5 map px), SLOPE and
-##    RELIEF_F at the same resolution;
+##    RELIEF_F at the same resolution, and COAST: the signed distance to the
+##    coast (km, sea side positive, land side negative, about 80 km at most);
 ##  - campaign/data/elev_data.gd: per grid cell mean / max elevation, relief,
 ##    distance to the nearest river and the terrain class.
 ## Everything is decoded once on first use (about 0.1 s) and cached.
@@ -12,6 +13,7 @@ extends RefCounted
 ##   GeoFields.elev_m(p)            metres at a map point (bilinear)
 ##   GeoFields.slope_pct(p)         gradient in percent
 ##   GeoFields.relief_m(p)          highest minus lowest metres in 5 x 5 samples
+##   GeoFields.coast_km(p)          signed km to the coast (sea side positive)
 ##   GeoFields.cell_class(c)        CLASS_* of grid cell c
 ##   GeoFields.river_dist(c)        cells to the nearest river (float)
 ##   GeoFields.fine() / slope() / relief_field()  the raw fields (FW x FH, row 0 north)
@@ -30,6 +32,7 @@ const CLASS_RIDGE := 4
 static var _fine := PackedFloat32Array()     # metres
 static var _slope := PackedByteArray()       # percent
 static var _relief := PackedByteArray()      # units of 8 m
+static var _coast := PackedByteArray()       # 128 + km, sea side positive
 static var _px := 2.5                        # map pixels per fine sample
 
 
@@ -51,6 +54,7 @@ static func ensure() -> void:
 		_fine[i] = lut[raw[i]]
 	_slope = _decode(Relief.SLOPE, n)
 	_relief = _decode(Relief.RELIEF_F, n)
+	_coast = _decode(Relief.COAST, n)
 	_px = 20.0 / float(Relief.FS)
 
 
@@ -85,6 +89,28 @@ static func slope() -> PackedByteArray:
 static func relief_field() -> PackedByteArray:
 	ensure()
 	return _relief
+
+
+## The coast field as baked: byte = 128 + signed km (sea side positive).
+static func coast() -> PackedByteArray:
+	ensure()
+	return _coast
+
+
+## Signed distance in km from map point p to the coast: positive on the sea,
+## negative on the land (bilinear between sample centres; capped near 80).
+static func coast_km(p: Vector2) -> float:
+	ensure()
+	var fx := p.x / _px - 0.5
+	var fy := p.y / _px - 0.5
+	var x0 := clampi(int(floor(fx)), 0, Relief.FW - 2)
+	var y0 := clampi(int(floor(fy)), 0, Relief.FH - 2)
+	var tx := clampf(fx - x0, 0.0, 1.0)
+	var ty := clampf(fy - y0, 0.0, 1.0)
+	var i := y0 * Relief.FW + x0
+	var a := lerpf(_coast[i], _coast[i + 1], tx)
+	var b := lerpf(_coast[i + Relief.FW], _coast[i + Relief.FW + 1], tx)
+	return lerpf(a, b, ty) - 128.0
 
 
 ## Elevation in metres at map point p (bilinear between sample centres).

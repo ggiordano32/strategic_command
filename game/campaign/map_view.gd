@@ -21,11 +21,13 @@ const Geo := preload("res://game/campaign/map_geo.gd")
 const GroundPalette := preload("res://game/ground_palette.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const Landscape := preload("res://game/campaign/landscape.gd")
+const GeoFields := preload("res://game/campaign/geo_fields.gd")
+const WATER_SHADER := preload("res://game/campaign/water.gdshader")
 
 const SEA := Color(0.13, 0.25, 0.34)
 const SEA_SHALLOW := Color(0.22, 0.38, 0.47)
 const LAND := Color(0.80, 0.76, 0.62)
-const COAST := Color(0.16, 0.18, 0.16, 0.9)
+const COAST := Color(0.16, 0.18, 0.16, 0.75)
 const TINT := 0.55         # owner colour over the region's ground
 const GROUND_LIFT := 0.36  # the battle palettes are darker than a map should be
 ## Lines and highlights, shared with the map key (map_key.gd draws its
@@ -77,6 +79,15 @@ const COL_BANK_GREEN := Color(0.30, 0.52, 0.26, 0.30)
 const BANK_GREEN_W := 11.0
 const BANK_W := 4.8
 static var terrain_view := true
+## The sea (2026-10-10, water.gdshader): a depth tint, waves, currents and
+## foam from the coast distance field; "low" keeps the depth tint and foam
+## only. A view preference in user://settings.cfg [map] water = low | high
+## ("--map-water=low|high" overrides it for the session).
+static var water_high := true
+static var _land_meshes: Array = []   # triangulated once: the polygons are fine now
+static var _land_sz := Vector2.ZERO
+static var _cell_meshes: Dictionary = {}   # region -> Array of ArrayMesh
+var _water: Node2D = null
 static var _pref_loaded := false
 static var instance: Node2D = null
 
@@ -117,6 +128,38 @@ func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 	load_view_pref()
 	instance = self
+	_make_water()
+
+
+## The sea: one quad behind this node's own drawing (the land polygons cover
+## it), with water.gdshader reading the coast distance field.
+func _make_water() -> void:
+	_water = Node2D.new()
+	_water.show_behind_parent = true
+	var m := ShaderMaterial.new()
+	m.shader = WATER_SHADER
+	var f := GeoFields.coast()
+	var img := Image.create_from_data(GeoFields.fine_width(), GeoFields.fine_height(), false, Image.FORMAT_L8, f)
+	m.set_shader_parameter("coast", ImageTexture.create_from_image(img))
+	m.set_shader_parameter("field_px", Vector2(GeoFields.fine_width(), GeoFields.fine_height()) * GeoFields.sample_px())
+	m.set_shader_parameter("hi", 1.0 if water_high else 0.0)
+	_water.material = m
+	_water.draw.connect(func(): _water.draw_rect(Rect2(Vector2(-4000, -4000), Geo.SIZE + Vector2(8000, 8000)), SEA))
+	add_child(_water)
+
+
+## Water quality (saved): high = waves, currents and foam, low = depth tint and foam.
+static func set_water_high(on: bool, save := true) -> void:
+	water_high = on
+	if save:
+		var cf := ConfigFile.new()
+		cf.load(SETTINGS)
+		cf.set_value("map", "water", "high" if on else "low")
+		cf.save(SETTINGS)
+	if instance != null and is_instance_valid(instance):
+		var w: Node2D = instance.get("_water")
+		if w != null:
+			(w.material as ShaderMaterial).set_shader_parameter("hi", 1.0 if on else 0.0)
 
 
 static func load_view_pref() -> void:
@@ -126,9 +169,12 @@ static func load_view_pref() -> void:
 	var cf := ConfigFile.new()
 	if cf.load(SETTINGS) == OK:
 		terrain_view = int(cf.get_value("map", "terrain", 1)) != 0
+		water_high = str(cf.get_value("map", "water", "high")) != "low"
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--map-view="):
 			terrain_view = a.substr(11) != "political"
+		elif a.begins_with("--map-water="):
+			water_high = a.substr(12) != "low"
 
 
 ## Switch the view (saved) and redraw the map.
@@ -261,42 +307,77 @@ static func region_color(r: int, o: int) -> Color:
 	return g.lerp(CData.faction_color(o), TINT)
 
 
+## A polygon as a mesh (triangulated once, with uv = point / sz), or null.
+static func _poly_mesh(poly: PackedVector2Array, sz: Vector2) -> ArrayMesh:
+	var idx := Geometry2D.triangulate_polygon(poly)
+	if idx.is_empty():
+		return null
+	var uv := PackedVector2Array()
+	uv.resize(poly.size())
+	for i in poly.size():
+		uv[i] = poly[i] / sz
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = poly
+	arr[Mesh.ARRAY_TEX_UV] = uv
+	arr[Mesh.ARRAY_INDEX] = idx
+	var m := ArrayMesh.new()
+	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	return m
+
+
+## The land and island polygons as meshes, uv over the grid's size sz.
+static func land_meshes(sz: Vector2) -> Array:
+	if _land_meshes.is_empty() or _land_sz != sz:
+		_land_meshes = []
+		_land_sz = sz
+		for poly in Geo.lands() + Geo.islands():
+			var m := _poly_mesh(poly, sz)
+			if m != null:
+				_land_meshes.append(m)
+	return _land_meshes
+
+
+## Fill region r's territory with col (cached meshes: the territory polygons
+## follow the fine coast and are too big to triangulate at every redraw).
+func _fill_cell(r: int, col: Color) -> void:
+	if not _cell_meshes.has(r):
+		var ms: Array = []
+		for piece in Geo.cell(r):
+			var m := _poly_mesh(piece, Vector2.ONE)
+			if m != null:
+				ms.append(m)
+		_cell_meshes[r] = ms
+	for m in _cell_meshes[r]:
+		draw_mesh(m, null, Transform2D.IDENTITY, col)
+
+
 func _draw() -> void:
 	var lw := 1.0 / maxf(zoom, 0.05)
 	var land_view := terrain_view and grid and not state.is_empty()
 	if land_view:
 		_terrain_geometry()
-	draw_rect(Rect2(Vector2(-4000, -4000), Geo.SIZE + Vector2(8000, 8000)), SEA)
-	# Shallow water: a soft band along every coast.
-	for poly in Geo.lands() + Geo.islands():
-		var closed: PackedVector2Array = poly.duplicate()
-		closed.append(poly[0])
-		draw_polyline(closed, SEA_SHALLOW, 14.0, true)
-	for poly in Geo.islands():
-		draw_colored_polygon(poly, LAND)
-	for poly in Geo.lands():
-		draw_colored_polygon(poly, LAND)
+	# (The sea is the water node behind this one.)
+	var lsz := Vector2(CGrid.width(), CGrid.height()) * float(CGrid.cell_px())
+	var lmeshes := land_meshes(lsz)
+	for m in lmeshes:
+		draw_mesh(m, null, Transform2D.IDENTITY, LAND)
 	if state.is_empty():
 		return
 	# Territories.
 	# Each region's land is its ground palette (the colour of its battle
 	# maps: arid, dry, green, rocky), tinted by its owner.
-	var sz := Vector2(CGrid.width(), CGrid.height()) * float(CGrid.cell_px())
 	if land_view:
 		# Terrain view: the ground texture over the land, the owner a
 		# translucent tint over it.
-		for poly in Geo.lands() + Geo.islands():
-			var guv := PackedVector2Array()
-			for pt in poly:
-				guv.append(pt / sz)
-			draw_colored_polygon(poly, Color.WHITE, guv, Landscape.ground_tex)
+		for m in lmeshes:
+			draw_mesh(m, Landscape.ground_tex)
 		for r in CData.region_count():
 			var o := CState.owner(state, r)
 			if o >= 0:
 				var tc := CData.faction_color(o)
 				tc.a = TERRAIN_TINT
-				for piece in Geo.cell(r):
-					draw_colored_polygon(piece, tc)
+				_fill_cell(r, tc)
 		# Rivers: a faint green and a pale bank under the blue line.
 		for ln in _river_lines:
 			draw_polyline(ln, COL_BANK_GREEN, BANK_GREEN_W * lw, true)
@@ -305,17 +386,13 @@ func _draw() -> void:
 		for r in CData.region_count():
 			var o := CState.owner(state, r)
 			var col := region_color(r, o)
-			for piece in Geo.cell(r):
-				draw_colored_polygon(piece, col)
+			_fill_cell(r, col)
 	if grid:
 		_terrain_geometry()
 		var rtex: Texture2D = Landscape.relief_tex if land_view else _shade_tex
 		if rtex != null:
-			for poly in Geo.lands() + Geo.islands():
-				var uvs := PackedVector2Array()
-				for pt in poly:
-					uvs.append(pt / sz)
-				draw_colored_polygon(poly, Color.WHITE, uvs, rtex)
+			for m in lmeshes:
+				draw_mesh(m, rtex)
 		if land_view:
 			draw_mesh(Landscape.mesh, null)
 		else:
@@ -329,14 +406,11 @@ func _draw() -> void:
 		if tt >= 2:
 			continue
 		var hc := target_fill(attack_targets.has(r), tt, a)
-		for piece in Geo.cell(r):
-			draw_colored_polygon(piece, hc)
+		_fill_cell(r, hc)
 	for r in blocked_targets:
-		for piece in Geo.cell(r):
-			draw_colored_polygon(piece, COL_BLOCKED)
+		_fill_cell(r, COL_BLOCKED)
 	if selected_region >= 0:
-		for piece in Geo.cell(selected_region):
-			draw_colored_polygon(piece, Color(1, 1, 0.8, 0.22))
+		_fill_cell(selected_region, Color(1, 1, 0.8, 0.22))
 	# Owner edge: a band of the owner's colour inside each territory, so the
 	# owner reads at once whatever the ground.
 	for r in CData.region_count():
@@ -378,7 +452,7 @@ func _draw() -> void:
 	for poly in Geo.lands() + Geo.islands():
 		var closed: PackedVector2Array = poly.duplicate()
 		closed.append(poly[0])
-		draw_polyline(closed, COAST, 1.6 * lw, true)
+		draw_polyline(closed, COAST, 1.3 * lw, true)
 	# Land routes (dashed) and sea lanes (dotted, light blue).
 	if grid:
 		# Roads, rivers and the crossings over them.

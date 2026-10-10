@@ -29,8 +29,12 @@ PARAMETERS (config keys)
             game/campaign/map_geo.gd must equal them: checked).
   cell_px: grid cell size in map pixels (tools/campaign_grid.gd --cell).
   fine_per_cell: fine elevation samples per cell side (8: 0.025 degrees).
-  simplify_deg: Douglas-Peucker tolerance for coasts and rivers (degrees).
+  simplify_deg: Douglas-Peucker tolerance for rivers (degrees).
+  coast_simplify_deg: ... for the coasts (default simplify_deg; 0.01 since
+            2026-10-10: about 1 km).
   island_min_deg: islands smaller than this across are dropped.
+  coast_island_min_deg: ... for the coasts' islands (default island_min_deg;
+            0.05 since 2026-10-10).
   landmass_clip: {"index": {"lon_max": x}} extra clips of a landmass.
   thresholds: terrain class thresholds (below).
   rivers: [{name, into, ne_names, hand, cross, ne_from?}]: the Natural Earth
@@ -46,7 +50,9 @@ PARAMETERS (config keys)
 Outputs (written unless --dry)
   game/campaign/map_geo.gd: LANDS, ISLANDS, RIVERS replaced (marked GENERATED).
   campaign/data/elev_data.gd: per grid cell integer arrays (see its header).
-  game/campaign/relief_data.gd: the fine fields (see its header).
+  game/campaign/relief_data.gd: the fine fields (see its header), among them
+            COAST, the signed distance to the coast (land and sea side) of
+            every fine sample, for the water shader and the beaches.
 
 Fetching the data (once, into a fresh directory; treat it as untrusted data)
   DEM: curl -o z.dods "https://www.ngdc.noaa.gov/thredds/dodsC/global/ETOPO2022/30s/30s_surface_elev_netcdf/ETOPO_2022_v1_30s_N90W180_surface.nc.dods?z.z[r0:r1][c0:c1]"
@@ -364,7 +370,8 @@ def lines_of(g):
 
 def build_land(cfg, proj, ne):
     aspect = proj.px_lon / proj.px_lat
-    tol = cfg["simplify_deg"]
+    tol = cfg.get("coast_simplify_deg", cfg["simplify_deg"])
+    island_min = cfg.get("coast_island_min_deg", cfg["island_min_deg"])
     d = read_geojson(os.path.join(ne, "ne_10m_land.geojson"))
     x0, x1, y1, y0 = proj.lon0, proj.lon1, proj.lat1, proj.lat0   # ymin = lat1 (south), ymax = lat0
     pieces = []
@@ -423,7 +430,7 @@ def build_land(cfg, proj, ne):
         xs = [p[0] for p in rg]
         ys = [p[1] for p in rg]
         ext = max((max(xs) - min(xs)) * aspect, max(ys) - min(ys))
-        if ext < cfg["island_min_deg"]:
+        if ext < island_min:
             dropped += 1
             continue
         s = simplify_ring(rg, tol, aspect)
@@ -611,6 +618,72 @@ def check_projection(path, proj):
             sys.exit("map_geo.gd %s = %s differs from the config's %s" % (name, val(name), v))
 
 
+# ------------------------------------------------------------ coast field
+
+COAST_CAP_PX = 72.0     # distances beyond this (about 80 km) are not told apart
+COAST_STEP_PX = 0.4     # spacing of the coast points the distance is taken to
+
+
+def coast_field(cfg, proj, rings, fw, fh, fpx):
+    """Signed distance of every fine sample centre to the nearest coast (the
+    baked land and island polygons, their edges along the window border or a
+    landmass_clip cut are not coast), in km, sea side positive, land side
+    negative; as bytes: 128 + round(km), clamped (sea 0..127 km, land
+    -128..-1; capped at COAST_CAP_PX map pixels). Rows north first."""
+    x0, x1, y0, y1 = 0.0, proj.size[0], 0.0, proj.size[1]
+    cuts = [proj.px(c["lon_max"], 0)[0] for c in cfg.get("landmass_clip", {}).values() if "lon_max" in c]
+    eps = 1e-3
+    pts, mask_edges = [], []
+    for ring in rings:
+        q = np.array([proj.px(a, b) for a, b in ring], float)
+        a, b = q, np.roll(q, -1, axis=0)
+        mask_edges.append(np.hstack([a, b]))
+        for i in range(len(q)):
+            p0, p1 = a[i], b[i]
+            on_border = any(abs(p0[0] - v) < eps and abs(p1[0] - v) < eps for v in [x0, x1] + cuts) or \
+                any(abs(p0[1] - v) < eps and abs(p1[1] - v) < eps for v in (y0, y1))
+            if on_border:
+                continue
+            L = math.hypot(p1[0] - p0[0], p1[1] - p0[1])
+            n = max(1, int(math.ceil(L / COAST_STEP_PX)))
+            t = (np.arange(n) / n)[:, None]
+            pts.append(p0 + (p1 - p0) * t)
+    P = np.vstack(pts)
+    E = np.vstack(mask_edges)          # x0 y0 x1 y1
+    # Inside test (even-odd) per sample row.
+    cy = (np.arange(fh) + 0.5) * fpx
+    cx = (np.arange(fw) + 0.5) * fpx
+    land = np.zeros((fh, fw), bool)
+    ey0, ey1 = E[:, 1], E[:, 3]
+    for r in range(fh):
+        y = cy[r]
+        sel = (ey0 > y) != (ey1 > y)
+        if not sel.any():
+            continue
+        e = E[sel]
+        xi = e[:, 0] + (y - e[:, 1]) * (e[:, 2] - e[:, 0]) / (e[:, 3] - e[:, 1])
+        xi.sort()
+        # samples between crossing 2k and 2k+1 are land
+        k = np.searchsorted(xi, cx)
+        land[r] = (k % 2) == 1
+    # Distance by splatting each coast point onto the samples around it.
+    D = np.full((fh, fw), COAST_CAP_PX, np.float32)
+    R = int(COAST_CAP_PX / fpx) + 1
+    X, Y = np.meshgrid(cx, cy)
+    for px_, py_ in P:
+        ix = int(px_ / fpx)
+        iy = int(py_ / fpx)
+        xa, xb = max(ix - R, 0), min(ix + R + 1, fw)
+        ya, yb = max(iy - R, 0), min(iy + R + 1, fh)
+        if xa >= xb or ya >= yb:
+            continue
+        d = np.hypot(X[ya:yb, xa:xb] - px_, Y[ya:yb, xa:xb] - py_)
+        np.minimum(D[ya:yb, xa:xb], d, out=D[ya:yb, xa:xb])
+    km = D.astype(np.float64) / proj.px_lat * 111.32
+    sgn = np.where(land, -km, km)
+    return np.clip(np.round(128 + sgn), 0, 255).astype(np.uint8)
+
+
 # ------------------------------------------------------------ elevation
 
 def classify(mean, mx, relief, land, th, w, h):
@@ -647,7 +720,7 @@ def b64z(raw):
     return base64.b64encode(zlib.compress(bytes(raw), 9)).decode()
 
 
-def bake_elevation(cfg, proj, dem, rivers, repo, dry):
+def bake_elevation(cfg, proj, dem, rivers, repo, dry, rings=None):
     cpx = cfg["cell_px"]
     fs = cfg["fine_per_cell"]
     w = int(math.ceil(proj.size[0] / cpx))
@@ -722,6 +795,7 @@ def bake_elevation(cfg, proj, dem, rivers, repo, dry):
     pad2 = np.pad(dec, 2, mode="edge")
     win = np.stack([pad2[2 + dy:2 + dy + fh, 2 + dx:2 + dx + fw] for dy in range(-2, 3) for dx in range(-2, 3)])
     rel = np.clip(np.round((win.max(0) - win.min(0)) / 8.0), 0, 255).astype(np.uint8)
+    coast = coast_field(cfg, proj, rings, fw, fh, fpx) if rings else None
     stats = {"w": w, "h": h, "fw": fw, "fh": fh, "cells_by_class": {k: int((cls == k).sum()) for k in range(5)},
              "max_m": int(mx.max()), "fine_bytes": [len(zlib.compress(code.tobytes(), 9)), len(zlib.compress(slope.tobytes(), 9)),
                                                     len(zlib.compress(rel.tobytes(), 9))]}
@@ -758,13 +832,18 @@ def bake_elevation(cfg, proj, dem, rivers, repo, dry):
           "## FINE: mean land elevation of the sample's footprint, v = round(sqrt(metres) *",
           "## FINE_K), so metres = (v / FINE_K)^2 (0: sea); SLOPE: gradient in percent (rise",
           "## over run, 0-255); RELIEF_F: highest minus lowest FINE in the 5 x 5 window, in",
-          "## units of 8 m. Decode with game/campaign/geo_fields.gd.",
+          "## units of 8 m; COAST: signed distance to the nearest coast of the map's land and",
+          "## island polygons, byte = 128 + km (sea side positive up to 127, capped at about",
+          "## 80 km; land side negative), not counting the window border. Decode with",
+          "## game/campaign/geo_fields.gd.",
           "",
           "const FS := %d" % fs, "const FW := %d" % fw, "const FH := %d" % fh,
           "const FINE_K := %s" % FINE_K,
           'const FINE := "%s"' % b64z(code.tobytes()),
           'const SLOPE := "%s"' % b64z(slope.tobytes()),
           'const RELIEF_F := "%s"' % b64z(rel.tobytes())]
+    if coast is not None:
+        rd.append('const COAST := "%s"' % b64z(coast.tobytes()))
     open(os.path.join(repo, "game/campaign/relief_data.gd"), "w").write("\n".join(rd) + "\n")
     return stats
 
@@ -803,7 +882,7 @@ def main():
         write_map_geo(mg, cfg, lands, islands, rivers)
     z = load_dem(args.dem, args)
     dem = Dem(z, args.dem_lon0, args.dem_lat0, args.dem_step)
-    print(bake_elevation(cfg, proj, dem, rivers, args.repo, args.dry))
+    print(bake_elevation(cfg, proj, dem, rivers, args.repo, args.dry, lands + islands))
 
 
 if __name__ == "__main__":

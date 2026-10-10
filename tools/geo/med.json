@@ -11,7 +11,9 @@
  "cell_px": 20,
  "fine_per_cell": 8,
  "simplify_deg": 0.05,
+ "coast_simplify_deg": 0.01,
  "island_min_deg": 0.25,
+ "coast_island_min_deg": 0.05,
  "landmass_clip": {
   "1": {
    "lon_max": 11.55
