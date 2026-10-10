@@ -2804,9 +2804,28 @@ static func check_victory(st: Dictionary) -> void:
 		event(st, {"k": "victory"})
 
 
+## The chronicle (optional state key, absent in older saves): the world-level
+## events of the last CHRONICLE_TURNS turns, appended as they happen (so a
+## battle applied later is in too). Private rows (built, recruited, failed
+## orders ...) stay in `events` only.
+const CHRONICLE_KINDS := ["battle", "captured", "destroyed", "eliminated", "war", "peace", "trade", "trade_end",
+	"siege", "siege_lifted", "starving", "victory", "defeat"]
+const CHRONICLE_TURNS := 60
+
+
 static func event(st: Dictionary, e: Dictionary) -> void:
 	e["turn"] = int(st["turn"])
 	(st["events"] as Array).append(e)
+	if CHRONICLE_KINDS.has(str(e.get("k", ""))):
+		if not st.has("chronicle"):
+			st["chronicle"] = []
+		var ch: Array = st["chronicle"]
+		ch.append(e.duplicate(true))
+		var cut := 0
+		while cut < ch.size() and int(ch[cut]["turn"]) <= int(st["turn"]) - CHRONICLE_TURNS:
+			cut += 1
+		if cut > 0:
+			st["chronicle"] = ch.slice(cut)
 
 
 # ------------------------------------------ the continuous overworld (v6) ---

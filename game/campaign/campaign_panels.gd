@@ -8,6 +8,7 @@ const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
 const CRules := preload("res://campaign/crules.gd")
 const CTurn := preload("res://campaign/cturn.gd")
+const CAI := preload("res://campaign/cai.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Terrain := preload("res://sim/terrain.gd")
@@ -1614,7 +1615,7 @@ func show_faction() -> void:
 		if g != f and CState.alive(ps, g) and CState.dip(ps, f, g) == CState.WAR:
 			wars.append(CData.faction_name(g))
 	box.add_child(Kit.icon_label("At war with: " + (", ".join(wars) if not wars.is_empty() else "nobody"), "war", Kit.FONT, Kit.COL_BAD, true))
-	s.show_dialog(CData.faction_name(f), box, [["Close", Callable()]])
+	s.show_dialog(CData.faction_name(f), box, [["Chronicle", func(): show_chronicle()], ["Close", Callable()]])
 
 
 # ------------------------------------------------------------ diplomacy ---
@@ -1663,6 +1664,9 @@ func show_diplomacy(focus: int = -1) -> void:
 		var l := Kit.label(desc, Kit.FONT, Kit.COL_BAD if d == CState.WAR else Color.WHITE, true)
 		row.add_child(l)
 		box.add_child(row)
+		var stance := _stance(ps, f, g, d)
+		if stance != null:
+			box.add_child(stance)
 		if d == CState.ALLIED:
 			if CRules.gift_partner_check(ps, f, g) == "":
 				_ally_deals(box, g)
@@ -1702,6 +1706,24 @@ func show_diplomacy(focus: int = -1) -> void:
 		p.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		focus_row.add_child(p)
 		s.dialog_scroll.call_deferred("ensure_control_visible", focus_row)
+
+
+## What an AI faction would answer to the proposal this row offers (the same
+## rule as CAI.accepts); null for humans, allies and when nothing is offered.
+func _stance(ps: Dictionary, f: int, g: int, d: int) -> Control:
+	if CState.is_human(ps, g):
+		return null
+	var what := "peace" if d == CState.WAR else ("trade" if d == CState.PEACE else "")
+	if what == "":
+		return null
+	var why: String = CAI.why(ps, f, g, what)
+	var l: Control
+	if why == "":
+		l = Kit.label("Would accept %s." % _what(what), Kit.FONT_SMALL, Kit.COL_GOOD, true)
+	else:
+		l = Kit.label("Would refuse %s: %s." % [_what(what), why], Kit.FONT_SMALL, Kit.COL_DIM, true)
+	l.name = "stance"
+	return l
 
 
 func _dip_button(text: String, icon: String, o: Dictionary) -> Button:
@@ -1788,32 +1810,72 @@ func show_battle_result(events_before: int, outcome: Dictionary) -> void:
 
 # -------------------------------------------------------------- summary ---
 
-## "What happened since you last played": events of the turns after `seen`.
+## The chronicle's layout, one section per turn after `seen`, newest first:
+## the world's rows (the state's `chronicle`, else the world kinds of the
+## kept `events`), then "Yours" (the viewer's own rows from `events`).
+func _chronicle_box(seen: int) -> Control:
+	var st: Dictionary = s.st
+	var f: int = s.f
+	var world := {}  # turn -> Array of rows
+	var yours := {}
+	var ch: Array = st.get("chronicle", [])
+	var ch_turns := {}
+	for e in ch:
+		ch_turns[int(e["turn"])] = 1
+	var turns := {}
+	for e in ch:
+		if int(e["turn"]) > seen and (not _involves(e, f) or int(e["turn"]) <= int(st["turn"]) - CTurn.KEEP_EVENTS_TURNS):
+			(world.get_or_add(int(e["turn"]), []) as Array).append(e)
+			turns[int(e["turn"])] = 1
+	for e in st["events"]:
+		var t := int(e["turn"])
+		if t <= seen or str(e["k"]) == "moves":
+			continue
+		if _involves(e, f):
+			if event_text(e, f) != "":
+				(yours.get_or_add(t, []) as Array).append(e)
+				turns[t] = 1
+		elif not ch_turns.has(t) and CRules.CHRONICLE_KINDS.has(str(e["k"])):
+			(world.get_or_add(t, []) as Array).append(e)
+			turns[t] = 1
+	var list: Array = turns.keys()
+	list.sort()
+	list.reverse()
+	var box := Kit.vbox(6)
+	for t in list:
+		box.add_child(Kit.section(CData.date_text(int(t))))
+		for e in world.get(t, []):
+			var tx := event_text(e, -1)
+			if tx != "":
+				box.add_child(Kit.label(tx, Kit.FONT_SMALL, Kit.COL_DIM, true))
+		if yours.has(t):
+			if world.has(t):
+				box.add_child(Kit.label("Yours", Kit.FONT_SMALL, Kit.COL_GOLD))
+			for e in yours[t]:
+				box.add_child(Kit.label(event_text(e, f), Kit.FONT, _event_color(e, f), true))
+	return box
+
+
+## Realm -> Chronicle: every turn the state still remembers.
+func show_chronicle() -> void:
+	var box := _chronicle_box(-1)
+	if box.get_child_count() == 0:
+		box.add_child(Kit.label("Nothing has happened yet.", Kit.FONT, Color.WHITE))
+	else:
+		box.add_child(Kit.label("The world's events are kept for 60 turns; yours for the last two.", Kit.FONT_SMALL, Kit.COL_DIM, true))
+	s.show_dialog("Chronicle", box, [["Close", Callable()]], 700, true)
+
+
+## "What happened since you last played": the chronicle of the turns after `seen`.
 func show_summary(seen: int, then: Callable = Callable()) -> void:
 	var st: Dictionary = s.st
 	var f: int = s.f
-	var mine := Kit.vbox(4)
-	var world := Kit.vbox(4)
-	for e in st["events"]:
-		if int(e["turn"]) <= seen and seen >= 0:
-			continue
-		var t := event_text(e, f)
-		if t == "":
-			continue
-		var col := Color.WHITE
-		if _involves(e, f):
-			mine.add_child(Kit.label(t, Kit.FONT, _event_color(e, f), true))
-		elif str(e["k"]) in ["captured", "eliminated", "war", "peace"]:
-			world.add_child(Kit.label(t, Kit.FONT_SMALL, Kit.COL_DIM, true))
-		col = col
 	var box := Kit.vbox(8)
 	box.add_child(Kit.label("%s. Treasury %s." % [CData.date_text(int(st["turn"])), Kit.money(int(st["factions"][f]["treasury"]))], Kit.FONT, Kit.COL_GOLD))
-	if mine.get_child_count() == 0:
-		mine.add_child(Kit.label("A quiet season for you.", Kit.FONT, Color.WHITE))
-	box.add_child(mine)
-	if world.get_child_count() > 0:
-		box.add_child(Kit.section("Elsewhere"))
-		box.add_child(world)
+	var ch := _chronicle_box(seen)
+	if ch.get_child_count() == 0:
+		ch.add_child(Kit.label("A quiet season for you.", Kit.FONT, Color.WHITE))
+	box.add_child(ch)
 	var nb := CTurn.pending_for(st, f).size()
 	if nb > 0:
 		box.add_child(Kit.label("%d battle%s to resolve before planning." % [nb, "" if nb == 1 else "s"], Kit.FONT, Kit.COL_BAD))
@@ -1908,7 +1970,7 @@ func event_text(e: Dictionary, f: int) -> String:
 			return "The siege of %s by %s was lifted%s." % [city.call(e["r"]), CData.faction_name(int(e["f"])),
 				": the besiegers marched away" if str(e.get("why", "")) == "left" else ""]
 		"starving":
-			if int(e["f"]) != f and int(e["by"]) != f:
+			if f >= 0 and int(e["f"]) != f and int(e["by"]) != f:
 				return ""
 			return "%s is starving under siege: garrison at %d%%." % [city.call(e["r"]), int(e["gar"])]
 		"intercepted":

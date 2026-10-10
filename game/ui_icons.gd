@@ -18,7 +18,7 @@ extends RefCounted
 ## result, siege equipment, generic.
 const NAMES: Array[String] = [
 	"treasury", "coin", "income", "turn", "summer", "winter",
-	"battles", "realm", "diplomacy", "goals", "units", "menu", "undo", "deselect", "end_turn", "online", "key",
+	"battles", "realm", "chronicle", "diplomacy", "goals", "units", "menu", "undo", "deselect", "end_turn", "online", "key",
 	"move", "siege", "assault", "sally", "raid", "inside", "field", "stance_default", "forced_march", "fortify",
 	"merge", "exchange", "recruit", "raise", "disband", "split", "gift", "withdraw", "view_map",
 	"war", "peace", "trade", "trade_end", "alliance", "accept", "decline", "cancel", "close", "buy",
@@ -276,6 +276,12 @@ static func _glyph(icon: String, c: Vector2, s: float) -> void:
 			_l(-0.85, 0.82, 0.85, 0.82)
 			for x in [-0.6, -0.2, 0.2, 0.6]:
 				_l(x, -0.18, x, 0.62, 0.9)
+		"chronicle":  # an open book
+			_pl([0.0, -0.55, -0.9, -0.7, -0.9, 0.6, 0.0, 0.75, 0.9, 0.6, 0.9, -0.7, 0.0, -0.55], false)
+			_l(0.0, -0.55, 0.0, 0.75)
+			for y in [-0.25, 0.05, 0.35]:
+				_l(-0.68, y - 0.03, -0.22, y + 0.06, 0.75)
+				_l(0.22, y + 0.06, 0.68, y - 0.03, 0.75)
 		"diplomacy":  # a scroll
 			_pl([-0.5, -0.72, 0.62, -0.72, 0.62, 0.62])
 			_pl([0.5, 0.82, -0.62, 0.82, -0.62, -0.58])

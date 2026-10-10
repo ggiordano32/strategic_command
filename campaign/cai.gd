@@ -1438,6 +1438,12 @@ static func _must_hold(st: Dictionary, f: int, a: Dictionary) -> bool:
 
 ## Would AI faction `to` accept `what` from faction `from`?
 static func accepts(st: Dictionary, from: int, to: int, what: String) -> bool:
+	return why(st, from, to, what) == ""
+
+
+## Why AI faction `to` would refuse `what` from `from`, in plain words for
+## the diplomacy screen; "" when it would accept. The one place the rule is.
+static func why(st: Dictionary, from: int, to: int, what: String) -> String:
 	var mine := faction_strength(st, to)
 	var theirs := faction_strength(st, from)
 	var kn := CP.of(st, to)
@@ -1445,16 +1451,23 @@ static func accepts(st: Dictionary, from: int, to: int, what: String) -> bool:
 		"peace":
 			var since := CState.dip_since(st, from, to)
 			if since < kn[CP.PEACE_MIN_TURNS]:
-				return false
+				return "at war only %d of %d turns" % [since, kn[CP.PEACE_MIN_TURNS]]
 			# Accept when not clearly winning, after a long war, or when
 			# down to few regions.
-			return mine * 100 < theirs * kn[CP.PEACE_ACCEPT_PCT] or since >= kn[CP.PEACE_ACCEPT_LONG] \
-				or CState.regions_of(st, to).size() <= kn[CP.PEACE_ACCEPT_REGIONS]
+			if mine * 100 < theirs * kn[CP.PEACE_ACCEPT_PCT] or since >= kn[CP.PEACE_ACCEPT_LONG] \
+					or CState.regions_of(st, to).size() <= kn[CP.PEACE_ACCEPT_REGIONS]:
+				return ""
+			return "they expect to win (the war is %d of %d turns old)" % [since, kn[CP.PEACE_ACCEPT_LONG]]
 		"trade":
-			return CState.dip_since(st, from, to) >= kn[CP.TRADE_ACCEPT_TURNS] and mine * 100 < theirs * kn[CP.TRADE_ACCEPT_PCT]
+			var since2 := CState.dip_since(st, from, to)
+			if since2 < kn[CP.TRADE_ACCEPT_TURNS]:
+				return "at peace only %d of %d turns" % [since2, kn[CP.TRADE_ACCEPT_TURNS]]
+			if mine * 100 < theirs * kn[CP.TRADE_ACCEPT_PCT]:
+				return ""
+			return "they see themselves as the stronger"
 		"cancel_trade":
-			return true
-	return false
+			return ""
+	return "unknown proposal"
 
 
 static func diplomacy(st: Dictionary, f: int) -> void:

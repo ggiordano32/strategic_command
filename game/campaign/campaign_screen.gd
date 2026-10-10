@@ -464,6 +464,8 @@ func _apply_debug_args() -> void:
 					panels.show_diplomacy()
 				"realm":
 					panels.show_faction()
+				"chronicle":
+					panels.show_chronicle()
 				"goals":
 					panels.show_objectives()
 				"citymap":
