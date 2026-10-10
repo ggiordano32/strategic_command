@@ -298,6 +298,22 @@ func _v(u: int, key: String) -> int:
 	return (sim.get("u_" + key) as PackedInt32Array)[u]
 
 
+## Files unit u's formation is drawn with: its carry pattern's while it
+## carries a piece (or, in the deployment, has one assigned pending), else
+## its predicted ordered files.
+func _fv(u: int) -> int:
+	var q: int = sim.u_carry[u] if u < sim.u_carry.size() else -1
+	if q < 0 and sim.phase == BattleSim.PHASE_DEPLOY:
+		var pk := _v(u, "pick")
+		if pk >= 0 and pk < sim.n_eq:
+			q = pk
+	if q >= 0:
+		var cf := BattleSim.carry_files(sim, u, q)
+		if cf > 0:
+			return cf
+	return _v(u, "files")
+
+
 func to_px(x: int, y: int) -> Vector2:
 	return Vector2(x, y) * (px_per_m / M)
 
@@ -495,9 +511,16 @@ func _draw_markers(r: float, lw: float) -> void:
 
 func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 	var ty: int = sim.u_type[u]
-	var files := mini(_v(u, "files"), sim.u_alive[u])
+	var files := mini(_fv(u), sim.u_alive[u])
 	var half := (files - 1) * UT.stat(ty, "file_sp") / 2
 	var a := to_px(_v(u, "ax"), _v(u, "ay"))
+	if sim.phase == BattleSim.PHASE_DEPLOY and sim.u_carry[u] < 0 and _v(u, "pick") >= 0 \
+			and _v(u, "pick") < sim.n_eq:
+		# Deployment pick-up pending: the pair, the unit in its carry pattern
+		# at the piece.
+		_draw_footprint(u, a, _v(u, "face"), files, sim.u_alive[u], Color(0.6, 1.0, 1.0, 0.95),
+			Color(0.6, 1.0, 1.0, 0.16), lw)
+	_draw_mantlet_cover(u, lw, primary)
 	var ang: float = _v(u, "face") * TAU / 1024.0
 	var fwd := Vector2(cos(ang), sin(ang))
 	var right := Vector2(-fwd.y, fwd.x)
@@ -822,7 +845,10 @@ func _draw_preview(lw: float) -> void:
 			if not wpl.is_empty() and wpl["mode"] != "hold":
 				_draw_wall_plan(u, wpl, lw, true)
 				continue
-		var offs := BattleSim.formation_offsets(sim.u_alive[u], p["files"], face, sim.u_type[u])
+		var pfiles: int = p["files"]
+		if sim.u_carry[u] >= 0 and BattleSim.carry_files(sim, u, sim.u_carry[u]) > 0:
+			pfiles = BattleSim.carry_files(sim, u, sim.u_carry[u])  # (carrying: the ghost of its carry pattern)
+		var offs := BattleSim.formation_offsets(sim.u_alive[u], pfiles, face, sim.u_type[u])
 		var feat: bool = sim.map_on != 0
 		for k in range(0, offs.size(), 2):
 			var dp := centre + Vector2(offs[k], offs[k + 1]) * (px_per_m / M)
@@ -886,16 +912,16 @@ func _draw_all_orders() -> void:
 		if order == BattleSim.O_MOVE:
 			var dest := to_px(_v(u, "dx"), _v(u, "dy"))
 			draw_line(to_px(sim.u_cx[u], sim.u_cy[u]), dest, Color(col_move, 0.3), w)
-			_draw_footprint(u, dest, _v(u, "dface"), _v(u, "files"), alive, col_move, fill_move, w)
+			_draw_footprint(u, dest, _v(u, "dface"), _fv(u), alive, col_move, fill_move, w)
 		elif order == BattleSim.O_ATTACK and _v(u, "target") >= 0:
 			var t: int = _v(u, "target")
 			if not (sim.u_ammo[u] > 0 and _draw_blocked(u, t, w)):
 				draw_dashed_line(anchor, to_px(sim.u_cx[t], sim.u_cy[t]), col_attack, w, 6.0 / zoom)
-			_draw_footprint(u, anchor, _v(u, "face"), _v(u, "files"), alive, Color(col_attack, 0.3), Color(0, 0, 0, 0), w)
+			_draw_footprint(u, anchor, _v(u, "face"), _fv(u), alive, Color(col_attack, 0.3), Color(0, 0, 0, 0), w)
 		elif order == BattleSim.O_WITHDRAW:
 			_draw_withdraw(u, anchor, Color(COL_WITHDRAW, 0.5), w)
 		else:
-			_draw_footprint(u, anchor, _v(u, "face"), _v(u, "files"), alive, col_still, Color(0, 0, 0, 0), w)
+			_draw_footprint(u, anchor, _v(u, "face"), _fv(u), alive, col_still, Color(0, 0, 0, 0), w)
 		var ucls := UT.cls(sim.u_type[u])
 		if ucls == UT.CLS_MISSILE or ucls == UT.CLS_ART:
 			_draw_fire_line(u, w)
@@ -1162,7 +1188,7 @@ func _draw_siege_tower(q: int, c: Vector2, fwd: Vector2, side: Vector2, st: int,
 
 
 ## A mantlet (view only), seen from above: a thick short bar of planks
-## EQ_SCREEN_W wide across the way it faces, a lighter plank face on its
+## its panel line's length (q_len) across the way it faces, a lighter plank face on its
 ## front, two posts behind; carried, at its carriers' front along their
 ## facing; wrecked, charred with a cross. (Fire: _draw_fires.)
 func _draw_mantlet(q: int, c: Vector2, fwd: Vector2, st: int, lw: float) -> void:
@@ -1172,7 +1198,8 @@ func _draw_mantlet(q: int, c: Vector2, fwd: Vector2, st: int, lw: float) -> void
 	else:
 		c += fwd * 0.8  # (held up before the front rank)
 	var side := Vector2(-fwd.y, fwd.x)
-	var hw := float(BattleSim.EQ_SCREEN_W[sim.q_kind[q]]) / 1024.0 / 2.0  # half its width, m
+	var ln: int = sim.q_len[q] if sim.q_len[q] > 0 else BattleSim.EQ_SCREEN_W[sim.q_kind[q]]
+	var hw := float(ln) / 1024.0 / 2.0  # half its panel line's length, m
 	var wrecked := st == BattleSim.Q_WRECKED
 	var dark := Color(0.2, 0.12, 0.05, 0.95)
 	var body := Color(0.45, 0.3, 0.15, 0.95) if not wrecked else Color(0.18, 0.15, 0.12, 0.8)
@@ -1189,6 +1216,45 @@ func _draw_mantlet(q: int, c: Vector2, fwd: Vector2, st: int, lw: float) -> void
 	for sg in [-1.0, 1.0]:
 		var pp: Vector2 = c - fwd * 0.6 + side * hw * 0.7 * sg
 		draw_circle(pp, maxf(px_per_m * 0.25, lw), dark)
+
+
+## Mantlet cover hints for selected unit u: carrying one, where its cover
+## would be if put down now (its frontage long, EQ_SCREEN_D deep behind its
+## front); and (primary only) the cover behind its side's standing mantlets.
+func _draw_mantlet_cover(u: int, lw: float, primary: bool) -> void:
+	if sim.mt_on == 0:
+		return
+	var col := Color(0.55, 0.85, 1.0, 0.5)
+	var fill := Color(0.55, 0.85, 1.0, 0.08)
+	var cq: int = sim.u_carry[u]
+	if cq >= 0 and BattleSim.EQ_SCREEN[sim.q_kind[cq]] != 0:
+		_cover_rect(to_px(sim.u_ax[u], sim.u_ay[u]), sim.u_face[u], BattleSim.mantlet_len(sim, u),
+			BattleSim.EQ_SCREEN_D[sim.q_kind[cq]], col, fill, lw)
+	if not primary:
+		return
+	for q in sim.n_eq:
+		var k: int = sim.q_kind[q]
+		if BattleSim.EQ_SCREEN[k] == 0 or sim.q_state[q] != BattleSim.Q_GROUND or sim.q_side[q] != sim.u_side[u]:
+			continue
+		var ln: int = sim.q_len[q] if sim.q_len[q] > 0 else BattleSim.EQ_SCREEN_W[k]
+		_cover_rect(to_px(sim.q_x[q], sim.q_y[q]), sim.q_face[q], ln, BattleSim.EQ_SCREEN_D[k],
+			Color(col, 0.35), fill, lw)
+
+
+## A dashed cover rectangle: `ln` along a line through `front` across
+## `face`, `depth` behind it (sim units).
+func _cover_rect(front: Vector2, face: int, ln: int, depth: int, col: Color, fill: Color, lw: float) -> void:
+	var ang := face * TAU / 1024.0
+	var fwd := Vector2(cos(ang), sin(ang))
+	var right := Vector2(-fwd.y, fwd.x)
+	var hl := ln * px_per_m / M / 2.0
+	var dp := depth * px_per_m / M
+	var pts := PackedVector2Array([front - right * hl, front + right * hl,
+		front + right * hl - fwd * dp, front - right * hl - fwd * dp])
+	draw_colored_polygon(pts, fill)
+	pts.append(pts[0])
+	for k in 4:
+		draw_dashed_line(pts[k], pts[k + 1], col, lw, 5.0 / zoom)
 
 
 ## Siege towers on the ground (anyone's for the taking, the enemy's too): a

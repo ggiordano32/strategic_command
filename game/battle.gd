@@ -780,7 +780,8 @@ func _queue(order: Dictionary) -> void:
 				return
 		elif typ != BattleSim.ORDER_RUN and typ != BattleSim.ORDER_FIRE and typ != BattleSim.ORDER_SKIRMISH \
 				and typ != BattleSim.ORDER_DEPLOY and typ != BattleSim.ORDER_PLACE and typ != BattleSim.ORDER_READY \
-				and typ != BattleSim.ORDER_WORKS:
+				and typ != BattleSim.ORDER_WORKS and typ != BattleSim.ORDER_DROP \
+				and not (typ == BattleSim.ORDER_PICKUP and order.has("equip")):
 			_count("order_in_deployment")
 			if selected >= 0:
 				overlay.flash("Deployment: place your units; orders wait for the battle",
@@ -1277,6 +1278,7 @@ func _refresh_wall_buttons() -> void:
 			elif sim.u_wall[u] == 0 and sim.u_stair[u] != 1 and BattleSim.man_wall_target(sim, u).z >= 0:
 				man = true
 	hud.set_wall_buttons(man, down, drop)
+	hud.set_carry_note(Hud.carry_note_text(sim, selected) if selected >= 0 and sim.u_state[selected] == BattleSim.U_READY else "")
 
 
 ## "Drop": each selected unit carrying siege equipment puts it down where
@@ -1474,6 +1476,10 @@ func _tap_equip(q: int, w: Vector2) -> void:
 		what = "the mantlet"
 	elif BattleSim.EQ_EXPOSED[sim.q_kind[q]] != 0:
 		what = "the siege tower"
+	if sim.phase == BattleSim.PHASE_DEPLOY:
+		overlay.flash("Assigned to %s: %s" % [what, Hud.carry_pattern_text(sim.q_kind[q],
+			BattleSim.carry_files(sim, best, q))], w)
+		return
 	overlay.flash("Taking " + what, w)
 
 

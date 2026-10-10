@@ -1922,6 +1922,25 @@ probe `tests/determinism_test.gd --only=flow`, `tests/matchups.gd
   stragglers far behind, defenders moving through their own stack, a
   battery). Tick cost: see docs/STATUS.md.
 
+### Compact unit cards (as built, 2026-10-09)
+
+View only: `game/unit_traits.gd` derives everything from the unit rows, so a
+new row gets it free. A unit card (`Kit.UnitRow`: recruit lists, army cards,
+the raise picker, exchange, garrison) has three lines: the name with up to
+three **trait** glyphs (siege, shock, anti-cavalry, fearsome, armour piercing,
+long range, skirmish, fire for the viewer's faction, beast, fast; tap =
+one-line toast), a green row (good against) and a red row (weak against) of
+the six enemy **class** glyphs (foot, spear, horse, missile, beast, engine),
+and five **pips** (attack, defence, armour, missile, speed, four segments,
+scaled against the best of the unit's class; speed and missile against all
+rows). The rule table is in the file's head comment; the unit book page and
+the battle card tooltip show the same. Recruit lists and the raise picker sit
+under collapsible class headers with the best tier of each line and a
+"+n tiers" chip for the lower ones; an army card opens with a composition
+strip (class glyphs with unit counts) that folds the unit rows (armies of up
+to six units start open). Fold state is per session, never in the campaign
+state.
+
 ### Ammunition kinds and fire (as built, 2026-10-09)
 
 Data in `sim/unit_types.gd` `AMMO` (rows referenced by index; a second
@@ -2403,7 +2422,7 @@ coming through it. The ram's roof generalised. Code: `sim/battle_sim.gd`
   | `EQ_ROOF` / `EQ_ROOF_R` | 40 % / 6 m | carried: arrows landing on its carriers this near it stopped (the roof rule; `EQ_ROOF` now holds the % per kind, ram / wagon / tower 70) |
   | `EQ_SCREEN` (`MANTLET_COVER_PCT`) | 60 % | standing: arrows, sling stones and javelins about to strike a sheltered man stopped |
   | `EQ_SCREEN_BOLT` (`MANTLET_BOLT_PCT`) | 30 % | ... bolts (the bolt ends in the screen); stones 0 % |
-  | `EQ_SCREEN_W` / `EQ_SCREEN_D` | 6 m / 6 m | the sheltered rectangle: 6 m along its line, 6 m deep behind it |
+  | `EQ_SCREEN_W` / `EQ_SCREEN_D` | 6 m / 6 m | the sheltered rectangle: 6 m along its line, 6 m deep behind it (since 2026-10-10 along its line `q_len`, the carrying unit's frontage: "Siege equipment usability") |
   | `EQ_WALK_PCT`, `EQ_ANY`, `EQ_SHOT`, `EQ_BURN` | 100, 1, 1, 1 | walking pace, either side, bolts / stones hit it, fire takes it |
 
 - **Shelter rule** (`_screen_cover`): a missile about to strike a man
@@ -2449,6 +2468,92 @@ coming through it. The ram's roof generalised. Code: `sim/battle_sim.gd`
   standing mantlet (only fire, bolts and stones); one screen per missile;
   a mantlet does not block movement or line of sight. **Needs tuning (not
   done):** every number above.
+
+### Siege equipment usability (as built, 2026-10-10)
+
+The owner's playtest notes (STATUS, 2026-10-09): siege equipment could only
+be taken up once the battle ran, a 6 m mantlet covered a few files and
+nothing showed where to stand, and carriers walked in their ordinary block.
+Three parts. Code: `sim/battle_sim.gd` (`EQ_CARRY_F`, `carry_files`,
+`_base_files` / `files_of`, `deploy_pick_rule`, `pickup_refusal`'s
+deployment checks, `_drop` / `_mantlet_set`, `mantlet_len`, `mantlet_hp`,
+`_screen_near`, `_mantlets_at_setup`, `_place_unit`, `_apply_orders`),
+the view (`game/battle.gd` `_queue` / `_tap_equip` / `_refresh_wall_buttons`,
+`game/overlay.gd` `_fv` / `_draw_mantlet` / `_draw_mantlet_cover`,
+`game/hud.gd` `carry_note`), tests `tests/determinism_test.gd --only=carry`,
+`tests/lockstep_test.gd --only=siege` (`_test_lockstep_siege_deploy`).
+
+- **Pick up and drop in the deployment phase.** `ORDER_PICKUP {unit,
+  equip}` is accepted in the deployment (`deploy_pick_rule`, shared with
+  the order preview, like `place_rule` / `works_rule`): a unit of the side
+  that owns a piece lying in its zone takes it at once and is placed with
+  its anchor at the piece, facing as it faces, in the piece's carry
+  pattern; refused (`pickup_refusal`, the view's flash) for the other
+  side's piece ("Not your side's: take it in the battle"), a piece outside
+  the zone, or a placement inside another unit ("Another unit stands
+  there": pieces lie in a row behind the line, so a column taking the ram
+  may cover the siege tower behind it). The carrier and the piece then
+  move as a pair with `ORDER_PLACE` (the placement is checked in the carry
+  pattern; the piece follows the anchor in `_place_unit`). `ORDER_DROP` in
+  the deployment puts the piece down where the unit stands and stands the
+  men in their ordered formation at once. Engines are still taken up in
+  the battle only. Through the lockstep as ordinary unit orders; nothing
+  new is hashed (the pieces and `u_carry` already are). The view lets
+  Pick up (a tap on a piece with units selected) and Drop through in the
+  deployment ("Assigned to the ladders: a file a ladder (5)"); the order
+  preview draws the pending pair (the unit's footprint in its pattern at
+  the piece). There is no separate Pick up button: the tap is it. The AI
+  does not pre-assign in the deployment (the siege AI starts with the
+  battle on settlement maps; its plan counters are unchanged).
+- **Carry patterns.** While a unit carries a piece its formation's files
+  are the piece's (`files_of` -> `_base_files` -> `carry_files`, derived
+  from the piece's kind each tick, no hashed field of its own; `u_files`
+  keeps the ordered frontage, so the unit reforms into it when it puts the
+  piece down). Every formation rule that reads the files (offsets, the
+  flow and queue code of "Units flow into the space", the squeeze, the
+  occupancy grid, depth / width) sees the pattern. Pick-up, drop, a
+  wreck, planting and a rout lay the places out afresh (`_carry_changed`).
+
+  | piece | `EQ_CARRY_F` | pattern |
+  |---|---|---|
+  | ladders | `LADDER_SET` 5 | a file a ladder behind the set |
+  | ram | `RAM_FILES` 4 | a column behind it, the crew at the beam |
+  | siege tower | 8 (its lanes) | a column behind it, ready to cross |
+  | mantlet | 0: its line's length / the carriers' file spacing | the ranks behind the panels |
+  | wagon | `WAGON_FILES` 4 | a column with it (its crew of 8-10: two or three ranks) |
+
+  The HUD shows it beside the order buttons ("Carrying a ram: column of
+  4", "Carrying ladders: a file a ladder (5)", "Pushing a siege tower:
+  column of 8", "Carrying a mantlet: 20 files behind the panels", "With
+  the wagon: column of 4"); the drag preview draws a carrier's ghost in
+  its pattern.
+- **Mantlets sized for a unit.** A mantlet put down (an order, its
+  carriers routing or gone) becomes a line of panels along the carrying
+  unit's front at its ordered frontage: `q_len` = files x file spacing,
+  at least `MANTLET_W` 6 m, at most `MANTLET_MAX` 40 m (`mantlet_len`);
+  the cover rectangle is that long by `EQ_SCREEN_D` 6 m deep behind it
+  (`_screen_cover` reads `q_len`); full hit points `MANTLET_HP` 600 a 6 m
+  (`mantlet_hp`; re-sized, it keeps its share of them); a bolt or stone
+  landing within `RAM_HIT_R` of its line (`_screen_near`) hits it. Still
+  one piece (one `q_*` entry, `q_len` as the field works use it, now
+  hashed with `q_face` when the battle has mantlets); picked up again it
+  is carried as one piece, its carriers in as many files as the line is
+  long. Scenario `mantlets` at setup: each laid before its unit at that
+  unit's frontage (shared side by side when a unit gets more than one).
+  80 archers in 20 files put down a 26 m line (2,599 hit points). View:
+  the plank bar drawn at the length (carried too, before the front rank);
+  a selected unit carrying one shows the cover it would give if put down
+  now (dashed), and the primary selected unit shows the cover behind its
+  side's standing mantlets. The siege AI is unchanged: its carriers' own
+  frontage gives the width.
+- **Measured** (`--only=carry`, 80 archers under 80 enemy archers shooting
+  at will for 60 s): a 26 m line stopped 174 missiles and the unit lost 18
+  men; a 6 m line before the same unit (put down in 4 files, then the unit
+  placed again in its 20) stopped 42 and it lost 40.
+- **Gaps:** the AI does not take pieces up in the deployment; the group
+  move (three fingers) ghost draws the ordered frontage, not the pattern;
+  a wagon's column is not drawn alongside the wagon (the wagon rides at
+  the anchor like every piece).
 
 ## 5. Networking
 

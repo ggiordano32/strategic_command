@@ -424,6 +424,18 @@ const EQ_SCREEN: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, MANTLET_COVER_PCT]
 const EQ_SCREEN_BOLT: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, MANTLET_BOLT_PCT]
 const EQ_SCREEN_W: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, MANTLET_W]
 const EQ_SCREEN_D: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, MANTLET_D]
+# Carry patterns (docs/DESIGN.md "Siege equipment usability"): while a unit
+# carries a piece its men stand in the piece's pattern (files_of: this many
+# files, derived from the piece each tick, nothing hashed of its own) and
+# form their ordered frontage (u_files) again once it is put down.
+## Files of its carriers: ladders one a ladder behind the set, the ram a
+## column of RAM_FILES at the beam, the siege tower a column of its lanes,
+## the wagon a column of WAGON_FILES; 0: from the piece (a mantlet: its panel
+## line's length / the carriers' file spacing, two ranks behind the panels).
+const EQ_CARRY_F: Array[int] = [0, LADDER_SET, RAM_FILES, WAGON_FILES, 8, 0, 0, 0, 0, 0]
+const RAM_FILES := 4             # the ram's carriers: a column this many men wide (the beam's width in men)
+const WAGON_FILES := 4           # a wagon's crew: a column this many wide alongside it
+const MANTLET_MAX := 40 * M      # a mantlet's panel line is the carrying unit's frontage, at most this long (at least MANTLET_W)
 const MANTLET_COVER_PCT := 60    # a standing mantlet stops this % of the arrows, slings, javelins at the men behind it ...
 const MANTLET_BOLT_PCT := 30     # ... and this % of the bolts
 const MANTLET_CARRY_PCT := 40    # carried: the carriers within MANTLET_W of it are covered this often (its roof rule)
@@ -2671,9 +2683,21 @@ func _obs_top(x: int, y: int) -> int:
 	return wall_h + WALL_PARAPET
 
 
-## Files of unit u's formation now (squeezed in a street, or as ordered).
+## Files of unit u's formation now (squeezed in a street, or as ordered;
+## carrying a piece: its carry pattern's).
 func files_of(u: int) -> int:
-	return u_sq[u] if u_sq[u] > 0 else u_files[u]
+	return u_sq[u] if u_sq[u] > 0 else _base_files(u)
+
+
+## Files of unit u's formation unsqueezed: its carry pattern's while it
+## carries a piece (EQ_CARRY_F), else as ordered (u_files).
+func _base_files(u: int) -> int:
+	var q := u_carry[u]
+	if q >= 0:
+		var cf := carry_files(self, u, q)
+		if cf > 0:
+			return cf
+	return u_files[u]
 
 
 ## Unit u is near an obstacle (or on a wall): its men are kept out of
@@ -3376,7 +3400,7 @@ func _attack_goal(u: int, t: int) -> Vector2i:
 func _squeeze(u: int) -> void:
 	var ty := u_type[u]
 	var fsp := t_fsp[ty]
-	var want := mini(u_files[u], u_alive[u])
+	var want := mini(_base_files(u), u_alive[u])
 	var half := want * fsp / 2 + M
 	var c := FM.cos_a(u_face[u])
 	var s := FM.sin_a(u_face[u])
@@ -4418,12 +4442,15 @@ func _apply_orders(max_player: int = 1 << 30) -> void:
 				u_ret[u] = 0  # a pack given an order: no longer on its way back
 				u_dogt[u] = 0
 			if int(o["type"]) == ORDER_DROP:
+				var had := u_carry[u] >= 0
 				_drop(u)
 				if n_eng > 0 and u_eg[u] >= 0:
 					_drop_engines(u)
+				if phase == PHASE_DEPLOY and had:
+					_place_unit(u, 0)  # (deployment: the men stand in their ordered formation at once)
 			elif u_pick[u] >= 0:
 				_pick_check(u)
-			if int(o["type"]) == ORDER_PLACE:
+			if int(o["type"]) == ORDER_PLACE or (phase == PHASE_DEPLOY and int(o["type"]) == ORDER_PICKUP):
 				if int(d.get("placed", 0)) != 0:
 					_place_unit(u, int(d.get("wall", 0)))
 				continue
@@ -4480,6 +4507,9 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 	if typ == ORDER_PLACE:
 		if sim.phase == PHASE_DEPLOY:
 			place_rule(sim, u, d, o)
+		return
+	if typ == ORDER_PICKUP and sim.phase == PHASE_DEPLOY:
+		deploy_pick_rule(sim, u, d, o)
 		return
 	if sim.phase == PHASE_DEPLOY and typ != ORDER_RUN and typ != ORDER_FIRE and typ != ORDER_SKIRMISH \
 			and typ != ORDER_DEPLOY and typ != ORDER_AMMO:
@@ -5299,7 +5329,7 @@ func _build_occ() -> void:
 		# The formation rectangle in the unit's frame: along its facing
 		# f in [-back, OCC_FRONT], across it l in [-hw, hw] (x 4096).
 		# (unit_half_width / unit_depth inlined.)
-		var files := maxi(mini(u_sq[u] if u_sq[u] > 0 else u_files[u], alive), 1)
+		var files := maxi(mini(u_sq[u] if u_sq[u] > 0 else _base_files(u), alive), 1)
 		var c := FM.cos_a(ufc[u])
 		var s := FM.sin_a(ufc[u])
 		var hw := maxi((files - 1) * t_fsp[ty] / 2 + t_fsp[ty] / 2 + OCC_PAD, OCC_MIN)
@@ -8168,6 +8198,8 @@ func _ignite(p: int) -> void:
 func _eq_hp0(q: int) -> int:
 	if q_kind[q] == EQ_WAGON:
 		return _wagon_hp0(q)
+	if EQ_SCREEN[q_kind[q]] != 0 and q_len[q] > 0:
+		return mantlet_hp(q_len[q])
 	return EQ_HP[q_kind[q]]
 
 
@@ -8187,6 +8219,7 @@ func _eq_wreck(q: int) -> void:
 	var u := q_unit[q]
 	if u >= 0 and u_carry[u] == q:
 		u_carry[u] = -1
+		_carry_changed(u)
 	if q_state[q] == Q_PLANTED:
 		# A planted siege tower falls: men still crossing it come back down.
 		for o in n_units:
@@ -10584,8 +10617,10 @@ func state_hash() -> int:
 				for arr in [q_face, q_len, q_seen, u_fws, u_fwc]:
 					ctx.update((arr as PackedInt32Array).to_byte_array())
 			if mt_on != 0:
-				# Mantlets: which way each stands (battles without them hash as before).
+				# Mantlets: which way each stands and its panel line's length
+				# (battles without them hash as before).
 				ctx.update(q_face.to_byte_array())
+				ctx.update(q_len.to_byte_array())
 	if dog_on != 0:
 		# War dogs (battles without handlers hash as before).
 		for arr in _dog_arrays():
@@ -10761,7 +10796,11 @@ static func place_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 		if sim.u_wall[u] > 0 and not o.has("files"):
 			f = ground_files(ty, alive)
 		nf = clampi(f, mini(MIN_FILES, maxi(alive, 1)), maxi(alive, 1))
-	if not place_clear(sim, u, p.x, p.y, face, nf):
+	var cq: int = sim.u_carry[u]
+	var pf := nf
+	if cq >= 0 and carry_files(sim, u, cq) > 0:
+		pf = carry_files(sim, u, cq)  # (carrying: placed in its carry pattern, the piece with it)
+	if not place_clear(sim, u, p.x, p.y, face, pf):
 		return  # inside another unit
 	d["ax"] = p.x
 	d["ay"] = p.y
@@ -10819,6 +10858,26 @@ static func place_clear(sim, u: int, x: int, y: int, face: int, files: int) -> b
 	return true
 
 
+## Pick-up in the deployment phase (ORDER_PICKUP {unit, equip}; shared with
+## OrderPreview): a unit of the side owning piece q on the ground in its
+## zone takes it at once and is placed with its anchor at the piece, facing
+## as it faces, in the piece's carry pattern (carry_files). Sets d like
+## place_rule ("placed") and d["pick"] = q; nothing if refused
+## (pickup_refusal says why). Engines are picked up in the battle only.
+static func deploy_pick_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
+	if o.has("engines"):
+		return
+	var q := int(o.get("equip", -1))
+	if pickup_refusal(sim, u, q) != "":
+		return
+	d["ax"] = sim.q_x[q]
+	d["ay"] = sim.q_y[q]
+	d["wall"] = 0
+	_placed(d)
+	d["run"] = 0
+	d["pick"] = q
+
+
 static func _placed(d: Dictionary) -> void:
 	d["dface"] = d["face"]
 	d["dx"] = d["ax"]
@@ -10859,6 +10918,10 @@ func _place_unit(u: int, wall: int) -> void:
 			e_face[e] = u_face[u]
 			e_px[e] = e_x[e]
 			e_py[e] = e_y[e]
+	var cq := u_carry[u]
+	if cq >= 0:
+		q_x[cq] = u_ax[u]  # (the piece it carries goes with it)
+		q_y[cq] = u_ay[u]
 	if obs_on != 0 and u < _u_obs.size():
 		_u_obs[u] = _near_obs(u)
 	_compute_offsets(u)
@@ -11135,8 +11198,9 @@ func _setup_equip(sc: Dictionary, units: Array) -> void:
 		q_x[q] = int(m[1])
 		q_y[q] = int(m[2])
 		q_face[q] = int(m[3])
+		q_len[q] = int(m[4])
 		q_state[q] = Q_GROUND
-		q_hp[q] = EQ_HP[EQ_MANTLET]
+		q_hp[q] = mantlet_hp(q_len[q])
 		q_seen[q] = 3
 	wag_h = 0
 	for q in n_eq:
@@ -11171,6 +11235,41 @@ static func carry_pace(walk: int, k: int, men: int) -> int:
 	if need > 0 and men < need:
 		sp = sp * maxi(men, need / 4) / need
 	return sp
+
+
+## Files unit u forms carrying piece q (its carry pattern, EQ_CARRY_F; a
+## mantlet: its panel line's length / u's file spacing), at most its men;
+## 0: none (its ordered frontage). Shared with the view.
+static func carry_files(sim, u: int, q: int) -> int:
+	var k: int = sim.q_kind[q]
+	var f: int = EQ_CARRY_F[k]
+	if f == 0 and EQ_SCREEN[k] != 0:
+		f = maxi(sim.q_len[q] / UT.stat(sim.u_type[u], "file_sp"), 1)
+	if f <= 0:
+		return 0
+	return clampi(f, 1, maxi(sim.u_alive[u], 1))
+
+
+## The length of the panel line a mantlet put down by unit u stands in: the
+## unit's ordered frontage (its files x file spacing), MANTLET_W to
+## MANTLET_MAX. Shared with the view.
+static func mantlet_len(sim, u: int) -> int:
+	var f: int = mini(sim.u_files[u], maxi(sim.u_alive[u], 1))
+	return clampi(f * UT.stat(sim.u_type[u], "file_sp"), MANTLET_W, MANTLET_MAX)
+
+
+## Full hit points of a mantlet line `ln` long: MANTLET_HP a MANTLET_W.
+static func mantlet_hp(ln: int) -> int:
+	return maxi(MANTLET_HP * ln / MANTLET_W, 1)
+
+
+## Unit u's men take up or leave a carry pattern: its places are laid out
+## afresh.
+func _carry_changed(u: int) -> void:
+	u_dirty[u] = 1
+	u_settled[u] = 0
+	if obs_on != 0:
+		u_flt[u] = -FLOW_EVERY
 
 
 ## Unit u carries the ram.
@@ -11226,6 +11325,19 @@ static func pickup_refusal(sim, u: int, q: int) -> String:
 		return "Down off the wall first"
 	if sim.u_carry[u] >= 0:
 		return "Already carrying something: put it down first (Drop)"
+	if sim.phase == PHASE_DEPLOY:
+		# Deployment: the unit is placed at the piece in its carry pattern
+		# (deploy_pick_rule), its own side's piece in its zone.
+		if sim.q_side[q] != sim.u_side[u]:
+			return "Not your side's: take it in the battle"
+		if UT.stat(sim.u_type[u], "fixed") != 0:
+			return "A tower's engine stays on its tower"
+		var dz := deploy_clamp(sim, sim.u_side[u], sim.q_x[q], sim.q_y[q])
+		if dz.z == 0 or dz.x != sim.q_x[q] or dz.y != sim.q_y[q]:
+			return "Outside your deployment zone"
+		if not place_clear(sim, u, sim.q_x[q], sim.q_y[q], sim.u_face[u], carry_files(sim, u, q) if carry_files(sim, u, q) > 0 else sim.u_files[u]):
+			return "Another unit stands there"
+		return ""
 	var ra: int = sim.reach_at(sim.u_ax[u], sim.u_ay[u])
 	var rq: int = sim.reach_at(sim.q_x[q], sim.q_y[q])
 	if ra >= 0 and rq >= 0 and ra != rq:
@@ -11264,12 +11376,14 @@ func _pick_check(u: int) -> void:
 		u_order[u] = O_NONE
 		u_dx[u] = u_ax[u]
 		u_dy[u] = u_ay[u]
-	u_settled[u] = 0
+	_carry_changed(u)
 	stat_pickups += 1
 
 
 ## Unit u puts down what it carries, at its anchor (where it stands); a
-## mantlet stands facing the way the unit faces.
+## mantlet stands facing the way the unit faces, a line of panels along its
+## front at its ordered frontage (_mantlet_set). The men form that frontage
+## again.
 func _drop(u: int) -> void:
 	var q := u_carry[u]
 	if q < 0:
@@ -11280,8 +11394,21 @@ func _drop(u: int) -> void:
 	q_x[q] = clampi(u_ax[u], 0, field_w)
 	q_y[q] = clampi(u_ay[u], 0, field_h)
 	if EQ_SCREEN[q_kind[q]] != 0:
-		q_face[q] = u_face[u]
+		_mantlet_set(q, u)
+	_carry_changed(u)
 	stat_drops += 1
+
+
+## Mantlet q is set down by unit u: facing u's way, its panel line u's
+## frontage long (mantlet_len); its hit points keep their share of the
+## full ones for the new length.
+func _mantlet_set(q: int, u: int) -> void:
+	q_face[q] = u_face[u]
+	var ln := mantlet_len(self, u)
+	var old := q_len[q] if q_len[q] > 0 else MANTLET_W
+	if ln != old:
+		q_hp[q] = maxi(q_hp[q] * ln / old, 1) if q_hp[q] > 0 else q_hp[q]
+		q_len[q] = ln
 
 
 ## Siege equipment once a tick: a carried piece goes with its carriers'
@@ -11298,8 +11425,9 @@ func _update_equip() -> void:
 			if u < 0 or u_state[u] != U_READY or u_alive[u] <= 0 or u_carry[u] != q:
 				if u >= 0 and u_carry[u] == q:
 					u_carry[u] = -1
+					_carry_changed(u)
 				if u >= 0 and EQ_SCREEN[q_kind[q]] != 0:
-					q_face[q] = u_face[u]
+					_mantlet_set(q, u)
 				q_state[q] = Q_GROUND
 				q_unit[q] = -1
 				stat_drops += 1
@@ -11344,6 +11472,8 @@ func _ram_hit(x: int, y: int, dmg: int) -> void:
 		if EQ_SHOT[kq] == 0 or (st != Q_GROUND and st != Q_CARRIED and (st != Q_PLANTED or EQ_EXPOSED[kq] == 0)):
 			continue
 		var qc := eq_centre(q)
+		if EQ_SCREEN[kq] != 0 and q_len[q] > MANTLET_W:
+			qc = _screen_near(q, x, y)
 		if absi(qc.x - x) > RAM_HIT_R or absi(qc.y - y) > RAM_HIT_R:
 			continue
 		if kq == EQ_WAGON and q_hn[q] > 0:
@@ -11353,6 +11483,20 @@ func _ram_hit(x: int, y: int, dmg: int) -> void:
 			_eq_wreck(q)
 			if kq == EQ_RAM:
 				stat_ram_wrecked += 1
+
+
+## The point of mantlet q's panel line nearest (x, y), drawn in by
+## MANTLET_W / 2 at each end (a MANTLET_W line: its middle, as for any piece).
+func _screen_near(q: int, x: int, y: int) -> Vector2i:
+	var face := q_face[q]
+	if q_state[q] == Q_CARRIED and q_unit[q] >= 0:
+		face = u_face[q_unit[q]]
+	var c := FM.cos_a(face)
+	var s := FM.sin_a(face)
+	var l := ((y - q_y[q]) * c - (x - q_x[q]) * s) / FM.TRIG_ONE
+	var hl := (q_len[q] - MANTLET_W) >> 1
+	l = clampi(l, -hl, hl)
+	return Vector2i(q_x[q] - s * l / FM.TRIG_ONE, q_y[q] + c * l / FM.TRIG_ONE)
 
 
 ## Ticks between men up each lane of planted piece q: its kind's EQ_CLIMB,
@@ -11539,6 +11683,7 @@ func _ladder_start(u: int) -> void:
 	var q := u_lq[u]
 	if q >= 0 and u_carry[u] == q:
 		u_carry[u] = -1
+		_carry_changed(u)
 		q_unit[q] = -1
 		q_state[q] = Q_PLANTED
 		q_seg[q] = sg
@@ -12240,11 +12385,12 @@ func _fw_near(q: int, x: int, y: int, r: int) -> bool:
 # side's missile and artillery units (mt_on; battles without hash as
 # before).
 
-## The scenario's mantlets as [side, x, y, facing] (sim units): each side's
-## count (at most 8) dealt in turn to its missile and artillery units in
-## index order (no such unit: any of its units; tower engines never),
-## standing MANTLET_AHEAD before the unit's front facing its way, side by
-## side when a unit gets more than one.
+## The scenario's mantlets as [side, x, y, facing, length] (sim units):
+## each side's count (at most 8) dealt in turn to its missile and artillery
+## units in index order (no such unit: any of its units; tower engines
+## never), standing MANTLET_AHEAD before the unit's front facing its way, a
+## line of panels at the unit's frontage (MANTLET_W to MANTLET_MAX; shared
+## side by side when a unit gets more than one).
 func _mantlets_at_setup(sc: Dictionary, units: Array) -> Array:
 	var out: Array = []
 	var nm: Array = sc.get("mantlets", [])
@@ -12272,19 +12418,25 @@ func _mantlets_at_setup(sc: Dictionary, units: Array) -> Array:
 		for k in cnt:
 			var ud: Dictionary = units[mis[k % nc]]
 			var per := (cnt - k % nc + nc - 1) / nc
-			var lat := (2 * (k / nc) - (per - 1)) * (MANTLET_W + M) / 2
+			# The unit's frontage (files x file spacing, as the sim sets
+			# u_files), shared between its mantlets side by side.
+			var uty := int(ud["type"])
+			var ucnt := maxi(int(ud["count"]), 1)
+			var fr := clampi(int(ud.get("files", 20)), 1, ucnt) * UT.stat(uty, "file_sp")
+			var ln := clampi(fr / per, MANTLET_W, MANTLET_MAX)
+			var lat := (2 * (k / nc) - (per - 1)) * (ln + M) / 2
 			var face := int(ud["facing"]) & FM.ANGLE_MASK
 			var c := FM.cos_a(face)
 			var sn := FM.sin_a(face)
 			var x := int(ud["x_m"]) * M + (c * MANTLET_AHEAD - sn * lat) / FM.TRIG_ONE
 			var y := int(ud["y_m"]) * M + (sn * MANTLET_AHEAD + c * lat) / FM.TRIG_ONE
-			out.append([s, clampi(x, 0, field_w), clampi(y, 0, field_h), face])
+			out.append([s, clampi(x, 0, field_w), clampi(y, 0, field_h), face, ln])
 	return out
 
 
 ## A missile shot from (sx, sy) about to strike soldier v: a standing
-## mantlet of his side he is sheltered behind (within EQ_SCREEN_W / 2 of its
-## middle along its line, up to EQ_SCREEN_D behind it), the shooter in
+## mantlet of his side he is sheltered behind (within q_len / 2 of its
+## middle along its line (EQ_SCREEN_W without a length), up to EQ_SCREEN_D behind it), the shooter in
 ## front of its line, stops it EQ_SCREEN % of the time (a bolt:
 ## EQ_SCREEN_BOLT). One screen at most a missile (the first in index order).
 func _screen_cover(sx: int, sy: int, v: int, bolt: bool) -> bool:
@@ -12298,7 +12450,8 @@ func _screen_cover(sx: int, sy: int, v: int, bolt: bool) -> bool:
 			continue
 		var dx := px - q_x[q]
 		var dy := py - q_y[q]
-		var r: int = EQ_SCREEN_D[k] + EQ_SCREEN_W[k]
+		var sw: int = q_len[q] if q_len[q] > 0 else EQ_SCREEN_W[k]  # (its panel line's length)
+		var r: int = EQ_SCREEN_D[k] + sw
 		if dx > r or dx < -r or dy > r or dy < -r:
 			continue
 		var c := FM.cos_a(q_face[q])
@@ -12307,7 +12460,7 @@ func _screen_cover(sx: int, sy: int, v: int, bolt: bool) -> bool:
 		if f > 0 or f < -EQ_SCREEN_D[k]:
 			continue  # not behind it
 		var l := (dy * c - dx * s) / FM.TRIG_ONE
-		if l > EQ_SCREEN_W[k] >> 1 or l < -(EQ_SCREEN_W[k] >> 1):
+		if l > sw >> 1 or l < -(sw >> 1):
 			continue
 		if ((sx - q_x[q]) * c + (sy - q_y[q]) * s) / FM.TRIG_ONE <= 0:
 			continue  # shot from behind its line: the screen does not stand in the way

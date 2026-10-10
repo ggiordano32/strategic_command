@@ -86,6 +86,7 @@ func _init() -> void:
 	if OS.get_cmdline_user_args().has("--only=siege"):
 		_test_siege_snapshots()
 		_test_lockstep_siege()
+		_test_lockstep_siege_deploy()
 		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 		quit(0 if _ok else 1)
 		return
@@ -104,6 +105,7 @@ func _init() -> void:
 	_test_lockstep_city(0, true)
 	_test_siege_snapshots()
 	_test_lockstep_siege()
+	_test_lockstep_siege_deploy()
 	_test_lockstep_street()
 	_test_easy_snapshots()
 	_test_lockstep_easy()
@@ -1233,6 +1235,79 @@ func _test_siege_snapshots() -> void:
 ## planted: two restored copies run on equal). A third peer joins by
 ## snapshot while B carries the ladders A dropped. Every frame's lockstep
 ## hash must agree.
+func _test_lockstep_siege_deploy() -> void:
+	# (Part of the siege case: siege equipment taken up in the deployment.)
+	var scen := Scenarios.fair_siege(741, 2, 4, {"ladders": 2, "ram": 1, "mantlets": 2})
+	scen["ai_sides"] = [1]
+	scen["deploy_time"] = 40
+	var probe := BattleSim.new()
+	probe.setup(scen, 4242)
+	var home := _home_split(probe)
+	var relay := Relay.new()
+	var a := _new_peer(scen, home, 0, "A", [0, 1])
+	var b := _new_peer(scen, home, 1, "B", [0, 1])
+	a.latency = 1
+	b.latency = 3
+	b.d = 4
+	var peers: Array[Peer] = [a, b]
+	var lad := -1
+	var mq := -1
+	for q in probe.n_eq:
+		if probe.q_side[q] != 0 or probe.q_state[q] != BattleSim.Q_GROUND:
+			continue
+		if lad < 0 and probe.q_kind[q] == BattleSim.EQ_LADDERS:
+			lad = q
+		if mq < 0 and probe.q_kind[q] == BattleSim.EQ_MANTLET:
+			mq = q
+	var ua := -1  # A's first infantry: the ladders
+	var ub := -1  # B's first missile foot: a mantlet
+	for u in probe.n_units:
+		if ua < 0 and int(home[u]) == 0 and probe.u_cls[u] == UT.CLS_INF and UT.stat(probe.u_type[u], "wagon") < 0:
+			ua = u
+		if ub < 0 and int(home[u]) == 1 and probe.u_cls[u] == UT.CLS_MISSILE:
+			ub = u
+	if lad < 0 or mq < 0 or ua < 0 or ub < 0:
+		_fail("siege deploy: no ladders / mantlet / units (%d %d %d %d)" % [lad, mq, ua, ub])
+		return
+	var total := 300 if quick else 700
+	var now := 0
+	var seen := {}  # peer -> [ladders carried by ua in the deployment, mantlet down, its length]
+	while now < total * 3 and mini(a.ls.frame, b.ls.frame) < total:
+		now += 1
+		for p in peers:
+			var sim = p.ls.sim
+			if sim.phase == BattleSim.PHASE_DEPLOY:
+				if p.me == 0 and now == 10:
+					p.issue({"type": BattleSim.ORDER_PICKUP, "unit": ua, "equip": lad})
+				if p.me == 0 and now == 30 and sim.u_carry[ua] == lad:
+					p.issue({"type": BattleSim.ORDER_PLACE, "unit": ua, "x": sim.u_ax[ua] + 10 * 1024, "y": sim.u_ay[ua],
+						"facing": sim.u_face[ua], "files": sim.u_files[ua]})
+				if p.me == 1 and now == 12:
+					p.issue({"type": BattleSim.ORDER_PICKUP, "unit": ub, "equip": mq})
+					p.issue({"type": BattleSim.ORDER_PICKUP, "unit": ua, "equip": mq})  # (not B's unit: refused)
+				if p.me == 1 and now == 40 and sim.u_carry[ub] == mq:
+					p.issue({"type": BattleSim.ORDER_DROP, "unit": ub})
+				if now == 70:
+					p.issue({"type": BattleSim.ORDER_READY})
+			elif not seen.has(p.name):
+				seen[p.name] = [sim.q_state[lad] == BattleSim.Q_CARRIED and sim.q_unit[lad] == ua \
+					and sim.q_x[lad] == sim.u_ax[ua], sim.q_state[mq] == BattleSim.Q_GROUND, sim.q_len[mq], sim.q_x[lad]]
+			p.flush(relay, now)
+			p.deliver(relay, now)
+			p.run(p.rng.randi() % 3, true)
+	var n_ab := _compare(a, b, 0, "siege deploy A/B")
+	if n_ab <= 0:
+		_fail("siege deploy: no frames compared")
+		return
+	var sa: Array = seen.get("A", [])
+	if sa.is_empty() or str(sa) != str(seen.get("B", [])) or not bool(sa[0]) or not bool(sa[1]):
+		_fail("siege deploy: after the deployment A saw %s, B %s (want the ladders carried by A's unit, the mantlet down)" % [
+			str(sa), str(seen.get("B", []))])
+		return
+	print("PASS siege deploy: A assigned its infantry to a ladder set in the deployment (carried from the start, moved with it), B its archers to a mantlet and put it down (%.1f m line); %d frames identical on both peers" % [
+		int(sa[2]) / 1024.0, n_ab])
+
+
 func _test_lockstep_siege() -> void:
 	var scen := Scenarios.fair_siege(741, 3, 4, {"ladders": 3, "ram": 1, "towers": 1})
 	scen["time_limit"] = 1200

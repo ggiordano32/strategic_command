@@ -117,6 +117,8 @@ var _faces: Dictionary = {}  # unit -> CardFace inside the card
 ## the first of the group. leader unit -> the group's units.
 var _tgroups: Dictionary = {}
 var engine_note: Label
+## The selected unit's carry pattern ("Carrying a ram: column of 4").
+var carry_note: Label
 ## Set by the battle before set_selection: only wall engines are selected
 ## (they take no orders).
 var engine_only := false
@@ -283,6 +285,15 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	engine_note.size_flags_vertical = Control.SIZE_SHRINK_END
 	engine_note.visible = false
 	row.add_child(engine_note)
+	carry_note = Label.new()
+	carry_note.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	carry_note.add_theme_color_override("font_color", Color(0.75, 0.92, 1.0))
+	carry_note.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
+	carry_note.add_theme_constant_override("outline_size", 4)
+	carry_note.size_flags_vertical = Control.SIZE_SHRINK_END
+	carry_note.visible = false
+	row.add_child(carry_note)
+	row.move_child(carry_note, actions.get_index())  # (left of the order buttons)
 	run_button = _button("Run: off", Vector2(0, BTN_H), "run")
 	run_button.pressed.connect(func(): run_pressed.emit())
 	halt_button = _button("Halt", Vector2(54, BTN_H), "cancel")
@@ -861,6 +872,13 @@ func _button_w(b: Button, t: String) -> float:
 
 ## Walls: show "Man the wall" / "Come down" (battle.gd decides when);
 ## siege equipment: "Drop" while a selected unit carries a piece.
+## The selected unit's carry pattern line ("" hides it).
+func set_carry_note(text: String) -> void:
+	if carry_note.text != text:
+		carry_note.text = text
+	carry_note.visible = text != ""
+
+
 func set_wall_buttons(man: bool, down: bool, drop: bool = false) -> void:
 	man_wall_button.visible = man
 	come_down_button.visible = down
@@ -1014,6 +1032,35 @@ static func carry_text(sim, u: int) -> String:
 	if k != 0 and BattleSim.EQ_EXPOSED[k] != 0:
 		return "pushing a tower"
 	return ""
+
+
+## The carry pattern of `files` files for a piece of kind k: "column of 4",
+## "a file a ladder (5)", "20 files behind the panels".
+static func carry_pattern_text(k: int, files: int) -> String:
+	if k == BattleSim.EQ_LADDERS:
+		return "a file a ladder (%d)" % files
+	if k != 0 and BattleSim.EQ_SCREEN[k] != 0:
+		return "%d files behind the panels" % files
+	return "column of %d" % files
+
+
+## Unit u's carry line for the unit panel ("Carrying a ram: column of 4"),
+## else "".
+static func carry_note_text(sim, u: int) -> String:
+	var q: int = sim.u_carry[u] if u >= 0 and u < sim.u_carry.size() else -1
+	if q < 0:
+		return ""
+	var k: int = sim.q_kind[q]
+	var what := "Carrying ladders"
+	if k == BattleSim.EQ_RAM:
+		what = "Carrying a ram"
+	elif k == BattleSim.EQ_WAGON:
+		what = "With the wagon"
+	elif BattleSim.EQ_SCREEN[k] != 0:
+		what = "Carrying a mantlet"
+	elif BattleSim.EQ_EXPOSED[k] != 0:
+		what = "Pushing a siege tower"
+	return "%s: %s" % [what, carry_pattern_text(k, BattleSim.carry_files(sim, u, q))]
 
 
 ## Men working engines not their own (taken up on the field): "on bolts" /

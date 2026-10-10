@@ -442,19 +442,19 @@ func _check_mantlets(field: Dictionary, town: Dictionary) -> void:
 		for q in sim.n_eq:
 			if sim.q_kind[q] != BattleSim.EQ_MANTLET:
 				continue
-			if sim.q_state[q] != BattleSim.Q_GROUND or sim.q_hp[q] != BattleSim.MANTLET_HP:
+			if sim.q_state[q] != BattleSim.Q_GROUND or sim.q_hp[q] != BattleSim.mantlet_hp(sim.q_len[q]):  # (a line at its unit's frontage)
 				continue
 			per[sim.q_side[q]] += 1
 			for ud in sc["units"]:
 				var c := UT.cls(int(ud["type"]))
 				if int(ud["side"]) == sim.q_side[q] and (c == UT.CLS_MISSILE or c == UT.CLS_ART) \
-						and FM.approx_len(int(ud["x_m"]) * 1024 - sim.q_x[q], int(ud["y_m"]) * 1024 - sim.q_y[q]) <= 12 * 1024:
+						and FM.approx_len(int(ud["x_m"]) * 1024 - sim.q_x[q], int(ud["y_m"]) * 1024 - sim.q_y[q]) <= 12 * 1024 + sim.q_len[q] / 2:
 					near += 1
 					break
 		if per[0] != 4 or per[1] != 2 or near != 6:
 			_fail("mantlets %s: standing %s, %d by a missile unit or engine" % [str(st["map"]["kind"]), str(per), near])
 		else:
-			print("PASS mantlets %s: 4 and 2 standing at the start (%d hit points each), each before a missile unit or engine of its side" % [
+			print("PASS mantlets %s: 4 and 2 standing at the start (%d hit points a 6 m of line), each before a missile unit or engine of its side at its frontage" % [
 				str(st["map"]["kind"]), BattleSim.MANTLET_HP])
 
 

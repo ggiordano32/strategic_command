@@ -1608,6 +1608,12 @@ new gate). The approach over, the piece wrecked or
 the unit caught in a fight: it drops it where it is and fights. Counted
 in `C_SIEGE`.
 
+Since 2026-10-10 (docs/DESIGN.md "Siege equipment usability") a set-down
+mantlet is a line of panels at its carrying unit's frontage (6-40 m): the
+AI's plan is unchanged and its carriers' own frontage gives the width; it
+does not take pieces up in the deployment phase (the siege AI starts with
+the battle).
+
 Gaps: the defenders ignore mantlets (they neither carry their own nor
 shoot or burn the attackers'); the field battle AI (`battle_ai.gd`) does
 not use them (a side's mantlets stand where the setup put them, before its

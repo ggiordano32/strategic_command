@@ -221,6 +221,11 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=carry" in OS.get_cmdline_user_args():
+		_check_carry()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=mantlets" in OS.get_cmdline_user_args():
 		_check_mantlets()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -256,6 +261,7 @@ func _init() -> void:
 	_check_fortified()
 	_check_light_art()
 	_check_mantlets()
+	_check_carry()
 	if "--only=equipment" in OS.get_cmdline_user_args():
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
@@ -4059,6 +4065,220 @@ func _mantlet_siege_run(snap_check: bool) -> Dictionary:
 				set_t = sim.tick
 	return {"hashes": hashes, "snap_bad": snap_bad, "carried": carried.size(), "set_t": set_t,
 		"cover": sim.stat_mantlet_cover, "ticks": sim.tick, "winner": sim.winner}
+
+
+# ------------------------------------------ siege equipment usability ---
+# docs/DESIGN.md "Siege equipment usability" ("--only=carry", also in the
+# full run): pieces taken up and put down in the deployment phase, the carry
+# patterns, a mantlet line at the carrying unit's frontage.
+
+## The walls-2 siege with ladders, a ram, a siege tower, two mantlets and a
+## wagon for the attackers (side 0), in a deployment phase, no AI.
+func _carry_siege_sc() -> Dictionary:
+	var sc := Scenarios.fair_siege(741, 2, 4, {"ladders": 2, "ram": 1, "towers": 1, "mantlets": 2,
+		"extra": [[UT.index_of("wagon2"), 8]]})
+	sc["ai_sides"] = []
+	sc["deploy_time"] = 60
+	sc["deploy_need"] = 1
+	return sc
+
+
+## Deployment pick-up run: returns {hashes, ev, snap_bad}.
+func _carry_siege_run(snap_check: bool) -> Dictionary:
+	var sc := _carry_siege_sc()
+	var sim := BattleSim.new()
+	sim.setup(sc, 9090)
+	var att := 1 - sim.city_def
+	var ev := {}
+	var pq := {}  # kind -> first piece of the attackers on the ground
+	for q in sim.n_eq:
+		var k: int = sim.q_kind[q]
+		if sim.q_side[q] == att and not pq.has(k):
+			pq[k] = q
+	var by := {}  # what each unit takes: "lad", "ram", "tower", "mant", "wagon"
+	var heavy: Array[int] = []
+	for u in sim.n_units:
+		if sim.u_side[u] != att:
+			continue
+		var ty: int = sim.u_type[u]
+		if UT.stat(ty, "wagon") >= 0:
+			by["wagon"] = u
+		elif ty == UT.HEAVY:
+			heavy.append(u)
+		elif ty == UT.LIGHT and not by.has("ram"):
+			by["ram"] = u
+		elif ty == UT.ARCHER and not by.has("mant"):
+			by["mant"] = u
+	if heavy.size() < 2 or not by.has("ram") or not by.has("mant") or not by.has("wagon") \
+			or not pq.has(BattleSim.EQ_LADDERS) or not pq.has(BattleSim.EQ_RAM) or not pq.has(BattleSim.EQ_TOWER) \
+			or not pq.has(BattleSim.EQ_MANTLET):
+		_fail("carry: the scenario lacks a piece or a unit (%s, %s)" % [str(pq), str(by)])
+		return {"hashes": PackedInt64Array(), "ev": ev, "snap_bad": 1}
+	by["lad"] = heavy[0]
+	by["tower"] = heavy[1]
+	var ql: int = pq[BattleSim.EQ_LADDERS]
+	# The mantlet set up before the archers (the first stands before the bolt battery).
+	var qm := -1
+	var um0: int = by["mant"]
+	for q in sim.n_eq:
+		if sim.q_kind[q] == BattleSim.EQ_MANTLET and (qm < 0 or absi(sim.q_x[q] - sim.u_ax[um0]) < absi(sim.q_x[qm] - sim.u_ax[um0])):
+			qm = q
+	var hashes := PackedInt64Array([sim.state_hash()])
+	var snap_bad := 0
+	var dstep := func(o: Array) -> void:
+		for od in o:
+			var d: Dictionary = (od as Dictionary).duplicate()
+			d["tick"] = 0
+			sim.queue_order(d)
+		sim.step()
+		hashes.append(sim.state_hash())
+	# 1. Ladders, ram, mantlet, then (the ram's pair moved off the tower's
+	# column: it stood behind the ram) the tower: each assigned in the
+	# deployment.
+	var ur: int = by["ram"]
+	var ut: int = by["tower"]
+	dstep.call([{"type": BattleSim.ORDER_PICKUP, "unit": by["lad"], "equip": ql},
+		{"type": BattleSim.ORDER_PICKUP, "unit": ur, "equip": pq[BattleSim.EQ_RAM]},
+		{"type": BattleSim.ORDER_PICKUP, "unit": ut, "equip": pq[BattleSim.EQ_TOWER]},
+		{"type": BattleSim.ORDER_PICKUP, "unit": by["mant"], "equip": qm}])
+	ev["tower_first"] = sim.u_carry[ut]  # (refused: inside the ram's column)
+	dstep.call([{"type": BattleSim.ORDER_PLACE, "unit": ur, "x": sim.u_ax[ur] - 40 * M, "y": sim.u_ay[ur],
+		"facing": sim.u_face[ur], "files": sim.u_files[ur]}])
+	dstep.call([{"type": BattleSim.ORDER_PICKUP, "unit": ut, "equip": pq[BattleSim.EQ_TOWER]}])
+	var files := {}
+	for key in ["lad", "ram", "tower", "mant", "wagon"]:
+		var u: int = by[key]
+		var q: int = sim.u_carry[u]
+		files[key] = sim.files_of(u) if q >= 0 else -1
+		if q >= 0 and (sim.q_x[q] != sim.u_ax[u] or sim.q_y[q] != sim.u_ay[u]):
+			files[key] = -2  # (the piece not at its carriers' anchor)
+	ev["files"] = files
+	ev["mlen0"] = sim.q_len[qm]
+	ev["phase1"] = sim.phase
+	if snap_check:
+		snap_bad += _snap_diverges(sim, sc, 9090, 30)
+	# 2. The pair placed: the ladder carriers 20 m to the side, the set with them.
+	var ul: int = by["lad"]
+	var x0: int = sim.q_x[ql]
+	dstep.call([{"type": BattleSim.ORDER_PLACE, "unit": ul, "x": sim.u_ax[ul] + 20 * M, "y": sim.u_ay[ul],
+		"facing": sim.u_face[ul], "files": sim.u_files[ul]}])
+	ev["moved"] = (sim.q_x[ql] - x0) / M
+	ev["with"] = 1 if sim.q_state[ql] == BattleSim.Q_CARRIED and sim.q_x[ql] == sim.u_ax[ul] else 0
+	# 3. Dropped: on the ground where they stand, the men in their ordered files.
+	var um: int = by["mant"]
+	dstep.call([{"type": BattleSim.ORDER_DROP, "unit": ul}, {"type": BattleSim.ORDER_DROP, "unit": um}])
+	ev["drop_l"] = [sim.q_state[ql], sim.q_x[ql] == sim.u_ax[ul], sim.files_of(ul) == sim.u_files[ul]]
+	ev["drop_m"] = [sim.q_state[qm], sim.q_len[qm], BattleSim.mantlet_len(sim, um), sim.files_of(um) == sim.u_files[um]]
+	# 4. Picked up again.
+	dstep.call([{"type": BattleSim.ORDER_PICKUP, "unit": ul, "equip": ql},
+		{"type": BattleSim.ORDER_PICKUP, "unit": um, "equip": qm}])
+	ev["again"] = [sim.q_unit[ql] == ul, sim.q_unit[qm] == um, sim.files_of(ul), sim.files_of(um)]
+	# 5. The other side's piece (a mantlet: either side's in the battle) in
+	# the deployment: refused.
+	var du := -1
+	for u in sim.n_units:
+		if du < 0 and sim.u_side[u] == sim.city_def and sim.u_cls[u] == UT.CLS_INF:
+			du = u
+	ev["refused"] = du >= 0 and BattleSim.pickup_refusal(sim, du, pq[BattleSim.EQ_MANTLET]) != ""
+	dstep.call([{"type": BattleSim.ORDER_READY, "who": 0}])
+	ev["battle"] = sim.phase
+	while sim.tick < 400:
+		sim.step()
+		hashes.append(sim.state_hash())
+		if snap_check and sim.tick == 200:
+			snap_bad += _snap_diverges(sim, sc, 9090, 60)
+	return {"hashes": hashes, "ev": ev, "snap_bad": snap_bad}
+
+
+## The mantlet line wide and narrow: 80 archers (side 0) carry their mantlet
+## from the deployment and put it down at their frontage (wide) or with 4
+## files (a 6 m line; then placed again at their frontage); the enemy's
+## archers shoot at them for 60 s. Returns {cover, len, lost, hashes}.
+func _carry_width_run(wide: bool, snap_check: bool) -> Dictionary:
+	var sc := {"width_m": 300, "height_m": 300, "ai_sides": [], "deploy_time": 30, "deploy_need": 1, "units": [
+		Scenarios.unit(0, UT.ARCHER, 80, 150, 200, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.ARCHER, 80, 150, 100, Scenarios.FACE_DOWN)],
+		"orders": [{"tick": 1, "type": BattleSim.ORDER_FIRE, "unit": 1, "on": 1},
+			BattleSim.make_attack_order(1, 1, 0, 0), {"tick": 1, "type": BattleSim.ORDER_FIRE, "unit": 0, "on": 0}],
+		"mantlets": [1, 0]}
+	var sim := BattleSim.new()
+	sim.setup(sc, 4242)
+	var q := sim.n_eq - 1
+	var hashes := PackedInt64Array()
+	var snap_bad := 0
+	var f0: int = sim.u_files[0]
+	var ax: int = sim.u_ax[0]
+	var ay: int = sim.u_ay[0]
+	var plan: Array = [[{"type": BattleSim.ORDER_PICKUP, "unit": 0, "equip": q}]]
+	if not wide:
+		plan.append([{"type": BattleSim.ORDER_PLACE, "unit": 0, "x": ax, "y": ay - 2 * M, "facing": Scenarios.FACE_UP, "files": 4}])
+	plan.append([{"type": BattleSim.ORDER_DROP, "unit": 0}])
+	if not wide:
+		plan.append([{"type": BattleSim.ORDER_PLACE, "unit": 0, "x": ax, "y": ay - 2 * M, "facing": Scenarios.FACE_UP, "files": f0}])
+	plan.append([{"type": BattleSim.ORDER_READY, "who": 0}])
+	for os in plan:
+		for o in os:
+			var d: Dictionary = (o as Dictionary).duplicate()
+			d["tick"] = 0
+			sim.queue_order(d)
+		sim.step()
+		hashes.append(sim.state_hash())
+	var ln: int = sim.q_len[q]
+	var placed := [sim.q_state[q], sim.u_files[0], sim.u_ax[0] == sim.q_x[q]]
+	while sim.tick < 600:
+		sim.step()
+		hashes.append(sim.state_hash())
+		if snap_check and sim.tick == 300:
+			snap_bad += _snap_diverges(sim, sc, 4242, 60)
+	return {"cover": sim.stat_mantlet_cover, "len": ln, "lost": 80 - sim.u_alive[0], "hashes": hashes,
+		"snap_bad": snap_bad, "placed": placed, "hp": sim.q_hp[q]}
+
+
+func _check_carry() -> void:
+	var a := _carry_siege_run(true)
+	var b := _carry_siege_run(false)
+	if a["hashes"].is_empty():
+		return
+	if a["hashes"] != b["hashes"]:
+		_fail("carry: the deployment pick-up run diverged on repeat")
+		return
+	var ev: Dictionary = a["ev"]
+	var bad := ""
+	if int(a["snap_bad"]) != 0:
+		bad += "snapshot / restore diverged (%d); " % int(a["snap_bad"])
+	var fl: Dictionary = ev["files"]
+	var mfiles: int = int(ev["mlen0"]) / UT.stat(UT.ARCHER, "file_sp")
+	if int(fl["lad"]) != BattleSim.LADDER_SET or int(fl["ram"]) != BattleSim.RAM_FILES or int(fl["tower"]) != 8 \
+			or int(fl["wagon"]) != BattleSim.WAGON_FILES or int(fl["mant"]) != mfiles or int(ev["phase1"]) != BattleSim.PHASE_DEPLOY:
+		bad += "carry files %s (mantlet want %d); " % [str(fl), mfiles]
+	if int(ev["moved"]) != 20 or int(ev["with"]) != 1:
+		bad += "the pair placed: piece moved %d m, with its carriers %d; " % [int(ev["moved"]), int(ev["with"])]
+	var dl: Array = ev["drop_l"]
+	var dm: Array = ev["drop_m"]
+	if int(dl[0]) != BattleSim.Q_GROUND or not bool(dl[1]) or not bool(dl[2]) or int(dm[0]) != BattleSim.Q_GROUND \
+			or int(dm[1]) != int(dm[2]) or not bool(dm[3]):
+		bad += "dropped: ladders %s, mantlet %s; " % [str(dl), str(dm)]
+	var ag: Array = ev["again"]
+	if not bool(ag[0]) or not bool(ag[1]) or int(ag[2]) != BattleSim.LADDER_SET:
+		bad += "picked up again: %s; " % str(ag)
+	if not bool(ev["refused"]) or int(ev["battle"]) != BattleSim.PHASE_BATTLE or int(ev["tower_first"]) >= 0:
+		bad += "refusal %s (tower first %d), phase after ready %d; " % [str(ev["refused"]), int(ev["tower_first"]), int(ev["battle"])]
+	var w := _carry_width_run(true, true)
+	var w2 := _carry_width_run(true, false)
+	var n := _carry_width_run(false, false)
+	if w["hashes"] != w2["hashes"]:
+		bad += "the mantlet width run diverged on repeat; "
+	if int(w["snap_bad"]) != 0:
+		bad += "mantlet width snapshot / restore diverged; "
+	if int(w["len"]) < 20 * M or int(w["len"]) > 28 * M or int(n["len"]) != BattleSim.MANTLET_W \
+			or int(w["cover"]) <= int(n["cover"]):
+		bad += "mantlet line %d mm stopped %d, narrow %d mm stopped %d (placed %s / %s); " % [int(w["len"]), int(w["cover"]),
+			int(n["len"]), int(n["cover"]), str(w["placed"]), str(n["placed"])]
+	if bad != "":
+		_fail("carry: " + bad)
+		return
+	print("PASS carry: deployment pick-up of ladders / ram / siege tower / mantlet, carry files %s; the ladder pair placed 20 m over, dropped, picked up again; a mantlet put down by 80 archers (%d files) is a %.1f m line (%d hp): %d missiles stopped in 60 s, %d archers lost; a 6 m line before the same unit: %d stopped, %d lost; identical on repeat and across snapshot / restore" % [
+		str(fl), int(w["placed"][1]), int(w["len"]) / 1024.0, int(w["hp"]), int(w["cover"]), int(w["lost"]), int(n["cover"]), int(n["lost"])])
 
 
 func _check_mantlets() -> void:
