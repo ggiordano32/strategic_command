@@ -1413,6 +1413,15 @@ const FLOW_EVERY := 10            # flowed places are laid out again this often 
 const FLOW_AHEAD := 4 * M         # ... reach at most this far ahead of the anchor
 const FLOW_PACK := 125            # ... men pack in them to this % of their formation's density
 const FLOW_CELLS := 160           # ... a layout visits at most this many 2 m cells
+# The fight at the head of a column on a wall walk or in a narrow street
+# (docs/DESIGN.md "Units flow into the space", 2026-10-10).
+const WALK_REACH_MAX := 3         # a man on a walk (or of a unit squeezed in a street) is within reach of at most this many enemies
+const WALL_FRONT_GAP := M         # a wall line packed behind the enemy's front ahead of it: its head this far short of it
+const WALL_PACK_MIN := M / 2      # ... its files at most this close along the walk (where the walk behind is short)
+var _rc_tk := PackedInt32Array()  # scratch (per man, rebuilt each tick before use): the tick _rc_n was counted
+var _rc_n := PackedInt32Array()   # ... enemies within reach of him that have him as their man (at most WALK_REACH_MAX)
+var _rc_ok := PackedInt32Array()  # ... the tick he was counted in reach of his own man
+var _rc_act: int = 0              # scratch: the cap is in play this tick
 var u_blk := PackedInt32Array()   # what the anchor met this tick (BLK_*, 0 nothing)
 var u_dodge := PackedInt32Array() # the side it steers round an obstacle (-1 / 1, 0 none)
 var occ0 := PackedInt32Array()    # derived (rebuilt every other tick, kept in snapshots): side 0's footprints per 4 m cell:
@@ -1599,6 +1608,13 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	_u_obs.resize(n_units)
 	_lw_x.resize(n)
 	_lw_y.resize(n)
+	_rc_tk.resize(n)
+	_rc_tk.fill(-1)
+	_rc_n.resize(n)
+	_rc_n.fill(0)
+	_rc_ok.resize(n)
+	_rc_ok.fill(-1)
+	_rc_act = 0
 	_fl_mark.resize(ob_w * ob_h)
 	_fl_mark.fill(0)
 	_fl_q.resize(FLOW_CELLS)
@@ -3874,13 +3890,13 @@ static func wall_files_at(sim, sg: int, ax: int, ay: int, nf: int, fsp: int) -> 
 ## Two ranks either side of the walkway's centre line (at most WALL_RG
 ## apart; the back rank's last files centred), each man moved to the
 ## nearest walkway cell if his place falls off it.
-static func wall_slots(sim, sg: int, ax: int, ay: int, count: int, ty: int) -> PackedInt32Array:
+static func wall_slots(sim, sg: int, ax: int, ay: int, count: int, ty: int, fsp := 0) -> PackedInt32Array:
 	var out := PackedInt32Array()
 	out.resize(count * 2)
 	if count <= 0:
 		return out
 	var nf := wall_nf(count)
-	var files := wall_files_at(sim, sg, ax, ay, nf, UT.stat(ty, "file_sp"))
+	var files := wall_files_at(sim, sg, ax, ay, nf, fsp if fsp > 0 else UT.stat(ty, "file_sp"))
 	var half := mini(UT.stat(ty, "rank_sp"), WALL_RG) / 2
 	var back_n := count - nf
 	for s in count:
@@ -3932,13 +3948,164 @@ func _wall_join(u: int) -> Vector3i:
 	return Vector3i(ws_jx[sg * 2 + e], ws_jy[sg * 2 + e], 1)
 
 
-## Formation offsets of wall unit u (its wall line, see wall_slots).
+## Formation offsets of wall unit u (its wall line, see wall_slots). Its line
+## is packed behind a head instead (u_flow 2 / 3, docs/DESIGN.md "Units flow
+## into the space", the column on the walk) when it goes along the walk at
+## its man as a column (u_flow 2: the anchor is its head, _wall_col_goal)
+## or when its centred line would reach into walk an enemy holds ahead of it
+## (u_flow 3: the head WALL_FRONT_GAP short of the enemy's front,
+## _wall_front): two files along the walk at FLOW_PACK % of its file
+## spacing, closer (down to WALL_PACK_MIN) where the walk behind the head is
+## too short for them.
 func _wall_offsets(u: int) -> void:
-	var sl := wall_slots(self, u_wall[u] - 1, u_ax[u], u_ay[u], u_alive[u], u_type[u])
+	var sl: PackedInt32Array
+	var sg := u_wall[u] - 1
+	var l := seg_len(self, sg)
+	var ty := u_type[u]
+	var nf := wall_nf(u_alive[u])
+	var at := seg_t(self, sg, u_ax[u], u_ay[u])
+	var dir := 0
+	var head := 0
+	var col := false
+	if u_flow[u] == 2:
+		var wc := _wall_col_goal(u)
+		if wc.z != 0:
+			col = true
+			dir = wc.z
+			head = at
+	var fr := _wall_front(u) if col or u_contact[u] != 0 else Vector3i.ZERO
+	if fr.z != 0 and (dir == 0 or dir == fr.y):
+		var lim := fr.x - fr.y * WALL_FRONT_GAP
+		if dir == 0:
+			var end := at + fr.y * nf * t_fsp[ty] / 2  # its centred line's end that way
+			if (end - lim) * fr.y > 0:
+				dir = fr.y
+				head = lim
+		elif (head - lim) * dir > 0:
+			head = lim
+	if dir != 0:
+		head = clampi(head, 0, l)
+		var room := head if dir > 0 else l - head
+		var fsp := clampi(room / nf, WALL_PACK_MIN, t_fsp[ty] * 100 / FLOW_PACK)
+		var cp := seg_pt(self, sg, clampi(head - dir * nf * fsp / 2, 0, l))
+		sl = wall_slots(self, sg, cp.x, cp.y, u_alive[u], ty, fsp)
+		u_flt[u] = tick
+		if not col:
+			u_flow[u] = 3
+	else:
+		if u_flow[u] >= 2:
+			u_flow[u] = 0
+		sl = wall_slots(self, sg, u_ax[u], u_ay[u], u_alive[u], ty)
 	var base := u_slot_base[u]
 	for s in u_alive[u]:
 		off_x[base + s] = sl[s * 2] - u_ax[u]
 		off_y[base + s] = sl[s * 2 + 1] - u_ay[u]
+
+
+## The column on the walk (docs/DESIGN.md "Units flow into the space",
+## 2026-10-10): wall unit u (foot, not on a stair or ladder move) attacking
+## a unit on the walk of its own stretch, or of the stretch joined to it
+## through a tower, goes along the walk at it. Its head (the anchor) makes
+## for its man's middle on its stretch (on a joined stretch: the end at the
+## tower), never past the enemy's front (_wall_front), while none of its
+## men is in reach, its line packed behind the head (_wall_offsets), so the
+## men behind queue in reach of the fight at its head. Only when the man is
+## ahead of its line (his middle along the stretch beyond its line's middle
+## by more than half its length less 4 m); once a column (u_flow 2) it
+## stays one while the order holds. Returns (x, y, way along the stretch:
+## 1 toward its far end, -1 back), z 0 if it is no column. No state but
+## u_flow.
+func _wall_col_goal(u: int) -> Vector3i:
+	if u_wall[u] == 0 or u_stair[u] != 0 or u_order[u] != O_ATTACK or u_cls[u] == UT.CLS_MISSILE \
+			or u_state[u] != U_READY or u_alive[u] <= 0:
+		return Vector3i.ZERO
+	var t := u_target[u]
+	if t < 0 or t >= n_units or u_state[t] >= U_DESTROYED or u_wall[t] == 0 or u_alive[t] <= 0:
+		return Vector3i.ZERO
+	var sg := u_wall[u] - 1
+	var l := seg_len(self, sg)
+	var gt := -1
+	if u_wall[t] - 1 == sg:
+		gt = seg_t(self, sg, u_cx[t], u_cy[t])
+	else:
+		for e in 2:
+			var nb := ws_nb[sg * 2 + e]
+			if gt < 0 and nb >= 0 and nb / 2 == u_wall[t] - 1:
+				gt = 0 if e == 0 else l
+	if gt < 0:
+		return Vector3i.ZERO
+	var ct := seg_t(self, sg, u_cx[u], u_cy[u])
+	var dir := 1 if gt >= ct else -1
+	if u_flow[u] != 2 and absi(gt - ct) <= wall_nf(u_alive[u]) * t_fsp[u_type[u]] / 2 - 4 * M:
+		return Vector3i.ZERO  # its man is beside it, not ahead: it holds and its men fight there
+	var p := seg_pt(self, sg, gt)
+	return Vector3i(p.x, p.y, dir)
+
+
+## Where wall unit u's head stands as it turns into a column going `dir`
+## along its stretch: its line's end that way (on the stretch), not past
+## the enemy's front.
+func _wall_col_head(u: int, dir: int) -> Vector2i:
+	var sg := u_wall[u] - 1
+	var ct := seg_t(self, sg, u_ax[u], u_ay[u])
+	var hl := wall_nf(u_alive[u]) * t_fsp[u_type[u]] / 2
+	var h := ct + dir * hl
+	var fr := _wall_front(u)
+	if fr.z != 0 and fr.y == dir:
+		var lim := fr.x - dir * WALL_FRONT_GAP
+		if (h - lim) * dir > 0:
+			h = lim
+	return seg_pt(self, sg, clampi(h, 0, seg_len(self, sg)))
+
+
+## The walk an enemy holds ahead of wall unit u on its stretch: of the enemy
+## units on the same stretch whose middle along it lies beyond u's line's
+## middle by more than half its length less 4 m (ahead of it, not beside
+## it), the one whose front is nearest u's middle; its front is its
+## WALL_FRONT_K-th man nearest u along the stretch (of its men on the walk;
+## so one man slipped past does not move it). Returns (t along the stretch,
+## way: 1 toward the far end, -1 back, 1), z 0 if none.
+func _wall_front(u: int) -> Vector3i:
+	var sg := u_wall[u] - 1
+	var ct := seg_t(self, sg, u_cx[u], u_cy[u])
+	var hl := wall_nf(u_alive[u]) * t_fsp[u_type[u]] / 2
+	var best := Vector3i.ZERO
+	var bd := 1 << 40
+	for e in n_units:
+		if u_side[e] == u_side[u] or u_wall[e] != u_wall[u] or u_state[e] != U_READY or u_alive[e] <= 0:
+			continue
+		var te := seg_t(self, sg, u_cx[e], u_cy[e])
+		if absi(te - ct) <= hl - 4 * M:
+			continue
+		var dir := 1 if te > ct else -1
+		var lad := u_stair[e] == ST_LADDER
+		var k1 := 1 << 40
+		var k2 := 1 << 40
+		var k3 := 1 << 40
+		var base := u_slot_base[e]
+		for s in u_alive[e]:
+			var i := slot_soldier[base + s]
+			if state[i] >= S_DEAD or (lad and not _on_walk(pos_x[i], pos_y[i])):
+				continue
+			var v := seg_t(self, sg, pos_x[i], pos_y[i]) * dir
+			if v < k3:
+				if v < k1:
+					k3 = k2
+					k2 = k1
+					k1 = v
+				elif v < k2:
+					k3 = k2
+					k2 = v
+				else:
+					k3 = v
+		var kv := k3 if k3 < (1 << 40) else (k2 if k2 < (1 << 40) else k1)
+		if kv >= (1 << 40):
+			continue
+		var d := kv - ct * dir
+		if d < bd:
+			bd = d
+			best = Vector3i(kv * dir, dir, 1)
+	return best
 
 
 ## (x, y) is on unit u's own stretch of wall (a move there keeps it on it).
@@ -5178,7 +5345,7 @@ func _compute_offsets(u: int) -> void:
 	# stood across the wall there, men whose places lay on the walkway stayed
 	# up, and the stair move waited its STAIR_MAX for them.)
 	var flow := obs_on != 0 and u < _u_obs.size() and _u_obs[u] != 0
-	if flow and u_flow[u] != 0 and tick - u_flt[u] < FLOW_EVERY:
+	if flow and u_flow[u] == 1 and tick - u_flt[u] < FLOW_EVERY:
 		u_dirty[u] = 0  # (flowed a moment ago: the places stand; the dead's drop off the end)
 		return
 	_fill_offsets(off_x, u_slot_base[u], alive, files, u_face[u], false, off_y,
@@ -6114,7 +6281,33 @@ func _update_units() -> void:
 				elif u_charge[u] != 0:
 					pass  # riders resolve the charge themselves; anchor waits
 				elif u_wall[u] > 0 and cls != UT.CLS_MISSILE:
-					pass  # on the wall: it holds its stretch
+					# On the wall it holds its stretch, unless its man is on
+					# the walk ahead of its line: then it goes along the walk
+					# at him as a column, its head first (_wall_col_goal).
+					var wc := _wall_col_goal(u)
+					if wc.z != 0 and u_flow[u] != 2:
+						# Into a column: the anchor goes to its head.
+						var hd := _wall_col_head(u, wc.z)
+						u_ax[u] = hd.x
+						u_ay[u] = hd.y
+						u_flow[u] = 2
+						u_dirty[u] = 1
+					elif wc.z == 0 and u_flow[u] == 2:
+						u_flow[u] = 0  # its line again, about where its head got to
+						u_dirty[u] = 1
+					elif wc.z != 0 and u_inreach[u] == 0:
+						var sgc := u_wall[u] - 1
+						var at := seg_t(self, sgc, u_ax[u], u_ay[u])
+						var gt := seg_t(self, sgc, wc.x, wc.y)
+						var frc := _wall_front(u)
+						if frc.z != 0 and frc.y == wc.z and (gt - (frc.x - wc.z * WALL_FRONT_GAP)) * wc.z > 0:
+							gt = frc.x - wc.z * WALL_FRONT_GAP  # not past the enemy's front
+						var mvc := mini(aspeed, absi(gt - at))
+						if mvc > 0:
+							want = true
+							var np := seg_pt(self, sgc, at + mvc if gt > at else at - mvc)
+							u_ax[u] = np.x
+							u_ay[u] = np.y
 				elif cls == UT.CLS_MISSILE and u_ammo[u] > 0:
 					# Shoot it: close to most of the range, then stand. On
 					# hilly ground the range is the height-adjusted one, and a
@@ -6178,6 +6371,8 @@ func _update_units() -> void:
 		elif oon and u_flow[u] == 0 and _u_obs[u] != 0 and (tick + u) % FLOW_EVERY == 0 \
 				and (u_blk[u] == BLK_QUEUE or (u_sq[u] > 0 and u_fighting[u] > 0)):
 			u_dirty[u] = 1  # queuing behind friends, or fighting squeezed in a corridor: it packs (_flow_slots)
+		elif oon and u_wall[u] > 0 and u_flow[u] < 2 and u_contact[u] != 0 and (tick + u) % FLOW_EVERY == 0:
+			u_dirty[u] = 1  # on a wall in contact: its line packs behind an enemy's front ahead of it (_wall_offsets)
 		if oon and _u_obs[u] != 0 and u_wall[u] == 0 and not art and (u + tick) % 3 == 0:
 			_squeeze(u)
 		elif u_sq[u] != 0 and (not oon or _u_obs[u] == 0):
@@ -6707,6 +6902,13 @@ func _update_soldiers() -> void:
 	# geometry, so the same side always went first in the clash.)
 	var nu := n_units
 	var flip := (_rand() & 1) != 0
+	_rc_act = 0
+	if obs_on != 0:
+		_reach_cap_count()
+	var rca := _rc_act != 0
+	var rct := _rc_tk
+	var rcn := _rc_n
+	var rco := _rc_ok
 	for k_u in nu:
 		var u := nu - 1 - k_u if flip else k_u
 		var alive := u_alive[u]
@@ -6925,7 +7127,11 @@ func _update_soldiers() -> void:
 		# slot, so a wide unit laps round a narrow face (a flank) rather than
 		# leaving most of its men idle.
 		var wrap_t := -1
-		if u_order[u] == O_ATTACK and u_fighting[u] > 0 and not pike_formed and not shy and not charging:
+		# A wall line packed along the walk (a column, or cut by an enemy's
+		# front ahead, u_flow 2 / 3): its men on the walk keep to PLACE_SIDE
+		# (along the walk) of their places, and do not wrap.
+		var wcap := ob and u_wall[u] != 0 and u_flow[u] >= 2
+		if u_order[u] == O_ATTACK and u_fighting[u] > 0 and not pike_formed and not shy and not charging and not wcap:
 			wrap_t = u_target[u]
 		# Wrap at the anchor level (2026-10-09): when the target is narrower
 		# than this unit, the places of its front-rank files out beyond the
@@ -7062,7 +7268,7 @@ func _update_soldiers() -> void:
 					_rm_why[n_rm] = GONE_WITHDRAWN
 					n_rm += 1
 				continue
-			var front := slot < files
+			var front := slot < files or wcap  # (a packed wall line: both files face along the walk)
 			var t := tg[i]
 			if disengage:
 				# Turning away from a melee: the man he was fighting gets a
@@ -7119,6 +7325,11 @@ func _update_soldiers() -> void:
 							# through it).
 							t = -1
 							lost = true
+						elif rca and rco[i] != tk and rct[t] == tk and rcn[t] >= WALK_REACH_MAX:
+							# His man on a walk (or in a narrow street) already
+							# has WALK_REACH_MAX enemies at him: another man.
+							t = -1
+							lost = true
 				if t < 0:
 					# Every rider looks ahead, not just the front rank.
 					var wide := front or is_cav
@@ -7147,9 +7358,24 @@ func _update_soldiers() -> void:
 				var mom := 0
 				if is_cav:
 					mom = cg[i]
-				if d <= reach_in:
+				var barred := false
+				if rca and rco[i] != tk and _rc_capped(t):
+					# His man is one the cap holds (on a walk, in a narrow
+					# street): within reach he is counted, once WALK_REACH_MAX
+					# are he stands off (and the search passes over that man).
+					if rct[t] != tk:
+						rct[t] = tk
+						rcn[t] = 0
+					if rcn[t] >= WALK_REACH_MAX:
+						barred = true
+					elif d <= reach_in:
+						rcn[t] += 1
+						rco[i] = tk
+				if d <= reach_in and not barred:
 					inreach += 1
-				if d > want:
+				if barred:
+					pass
+				elif d > want:
 					# Walk in; charge at the run with momentum, and run after
 					# fleeing enemies - but only as far as PLACE_LEAD ahead of
 					# his place: further pursuit is the unit's (its anchor
@@ -7164,7 +7390,7 @@ func _update_soldiers() -> void:
 					var step_len := mini(stp, d - want)
 					nx = x + dx * step_len / dl
 					ny = y + dy * step_len / dl
-					if lead_cap and mom == 0:
+					if mom == 0 and (lead_cap or (wcap and _on_walk(x, y))):
 						var kc := base + slot
 						var pl := Vector2i(ax + oxs[kc], ay + oys[kc])
 						if wrap_t >= 0 and slot < files:
@@ -7224,10 +7450,10 @@ func _update_soldiers() -> void:
 				if st[t] >= S_DEAD:
 					tg[i] = -1  # the impact killed it
 				elif c2 <= 0:
-					if d <= reach and st[i] == S_FIGHTING:
+					if d <= reach and st[i] == S_FIGHTING and not barred:
 						_melee(i, t, 0)
 						c2 = cool + _rand() % 4
-					elif nwalls > 0 and d <= reach + PIKE_PRESS and st[i] == S_FIGHTING:
+					elif nwalls > 0 and d <= reach + PIKE_PRESS and st[i] == S_FIGHTING and not barred:
 						# Pressed against the points: grab a pike shaft, lunge.
 						_melee(i, t, PIKE_PRESS_PEN)
 						c2 = cool + _rand() % 4
@@ -7372,6 +7598,68 @@ func _update_soldiers() -> void:
 		_flush_removals(n_rm)
 
 
+## The reach cap (docs/DESIGN.md "Units flow into the space", the column on
+## the walk): a man on a wall walk is reachable only from along it (two
+## abreast and one behind each), a man of a unit squeezed in a street only
+## from its width, so at most WALK_REACH_MAX enemies are within reach of
+## him; a man whose man is full stands off and looks for another. At the
+## start of the soldier update (positions and targets as the last tick
+## left them, units and men in index order) the men already in reach of
+## such a man are counted, the first WALK_REACH_MAX of them kept
+## (_rc_ok); the update adds those who close in and bars the rest. Only on
+## maps with buildings or walls, and only while a unit on a wall or
+## squeezed is in contact (else _rc_act stays 0 and nothing changes).
+func _reach_cap_count() -> void:
+	var any := false
+	for u in n_units:
+		if u_alive[u] > 0 and u_contact[u] != 0 and u_state[u] == U_READY and (u_wall[u] > 0 or u_sq[u] > 0):
+			any = true
+			break
+	if not any:
+		return
+	_rc_act = 1
+	var tk := tick
+	var px := pos_x
+	var py := pos_y
+	var st := state
+	var tg := target
+	var rct := _rc_tk
+	var rcn := _rc_n
+	var rco := _rc_ok
+	for u in n_units:
+		if u_alive[u] <= 0 or u_contact[u] == 0 or u_state[u] != U_READY or u_formed[u] != 0 or u_charge[u] != 0:
+			continue
+		var base := u_slot_base[u]
+		var rin := u_reach[u] + INREACH_EXTRA
+		var rin2 := rin * rin
+		for s in u_alive[u]:
+			var i := slot_soldier[base + s]
+			var t := tg[i]
+			if t < 0 or st[i] >= S_DEAD or st[t] >= S_DEAD:
+				continue
+			var dx := px[t] - px[i]
+			var dy := py[t] - py[i]
+			if dx * dx + dy * dy > rin2 or not _rc_capped(t):
+				continue
+			if rct[t] != tk:
+				rct[t] = tk
+				rcn[t] = 0
+			if rcn[t] < WALK_REACH_MAX:
+				rcn[t] += 1
+				rco[i] = tk
+
+
+## Man t is one the reach cap holds: on a wall walk (or a tower) of a wall
+## unit, or of a unit squeezed in a corridor (u_sq).
+func _rc_capped(t: int) -> bool:
+	var ut := unit_of[t]
+	if u_sq[ut] > 0:
+		return true
+	if u_wall[ut] == 0:
+		return false
+	return u_stair[ut] != ST_LADDER or _on_walk(pos_x[t], pos_y[t])
+
+
 func _flush_removals(count: int) -> void:
 	for k in count:
 		var i := _rm[k]
@@ -7463,6 +7751,11 @@ func _find_target_obs(x: int, y: int, r: int, cr: int, head: PackedInt32Array) -
 	var st := state
 	var nxt := grid_next
 	var gw := grid_w
+	# (The reach cap: a man with WALK_REACH_MAX enemies at him is passed over.)
+	var rca := _rc_act != 0
+	var rct := _rc_tk
+	var rcn := _rc_n
+	var tk := tick
 	# Rings of cells outward from his own; past a ring no cell can hold a
 	# nearer man than one already found (each is a whole cell further).
 	var gh1 := grid_h - 1
@@ -7505,7 +7798,8 @@ func _find_target_obs(x: int, y: int, r: int, cr: int, head: PackedInt32Array) -
 						var d2 := dx * dx + dy * dy
 						# Tie-break on index so the result never depends on
 						# list order. (Not through a wall, gate or building.)
-						if (d2 < best_d or (d2 == best_d and j < best)) and (ob == 0 or _reach_ok(x, y, px[j], py[j])):
+						if (d2 < best_d or (d2 == best_d and j < best)) and (ob == 0 or _reach_ok(x, y, px[j], py[j])) \
+								and not (rca and rct[j] == tk and rcn[j] >= WALK_REACH_MAX):
 							best_d = d2
 							best = j
 					j = nxt[j]
@@ -11418,7 +11712,7 @@ const _SNAP_SKIP := {"ter_h": true, "ter_gx": true, "ter_gy": true, "ter_info": 
 	"ng_y": true, "ng_gate": true, "ng_e0": true, "ng_to": true, "ng_w": true, "_dist_cache": true,
 	"g_hw": true, "g_cit": true, "ws_e": true, "ws_fl": true, "sea_flee": true, "ws_nb": true,
 	"rv": true, "riv": true,
-	"ws_jx": true, "ws_jy": true, "_lw_x": true, "_lw_y": true, "_fl_mark": true, "cmp": true, "n_cmp": true, "g_cmp": true, "_croot": true, "_croot_ep": true}
+	"ws_jx": true, "ws_jy": true, "_lw_x": true, "_lw_y": true, "_fl_mark": true, "_rc_tk": true, "_rc_n": true, "_rc_ok": true, "cmp": true, "n_cmp": true, "g_cmp": true, "_croot": true, "_croot_ep": true}
 const _SNAP_MAGIC := 0x31534353  # "SCS1"
 
 

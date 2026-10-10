@@ -1986,6 +1986,67 @@ probe `tests/determinism_test.gd --only=flow`, `tests/matchups.gd
   buildings snaps the anchor only with a clear way from the men (else it
   marches, its men on its trail); a tap on a house on a map without a town
   goes beside it (`open_snap`).
+- **The column on the walk (2026-10-10).** Owner's playtest: his heavy
+  infantry moving along a wall walk "fought in 2s" while light infantry up
+  the ladders "made a ball on the front 2 and killed them like a feeding
+  machine". Yardstick `tests/matchups.gd --only=wall-col` (also in
+  `--only=wall-yard`): 100 light climb a 5-ladder set a quarter of the way
+  along a 95 m stretch nobody holds; 100 heavy stand on that walk (their
+  line's near end 6 m from the ladder top) and are ordered at them once 40
+  are up ("yard wall 8": an attack order; "yard wall 9": a move along the
+  stretch to the ladder top); the open-field heavy-vs-light baseline is
+  "yard wall 10". Before: a wall unit with an attack order held its
+  stretch, its men walked in unbounded (no lead cap on walls), the
+  climbers' line was laid centred on the ladder top through the heavy's,
+  and nothing limited how many enemies stood at one man: light men in
+  reach 23.5 against 7.5 heavy 5 s after the order, heavy lost 13 men in
+  those 5 s, 35 light / 22.9 heavy killed in all (20 seeds; open field
+  37.2 / 9.9). Three rules, on walls and in streets only (field battles
+  hash as before):
+  - *Column*: a wall unit (foot) attacking a unit on its own stretch, or
+    on the stretch joined to it through a tower, whose middle is ahead of
+    its line (beyond its line's middle by more than half its length less
+    4 m) goes along the walk at it (`_wall_col_goal`): its anchor becomes
+    its head (`_wall_col_head`), which walks along the centre line toward
+    its man's middle (on a joined stretch: the tower end) while none of
+    its men is in reach and never past the enemy's front; `u_flow` 2.
+  - *Cut line*: any wall unit in contact whose centred line would reach
+    into walk held by an enemy ahead of it (the enemy's 3rd man nearest it
+    along the stretch, so one man slipped past does not move it;
+    `_wall_front`) has its line laid behind that front instead
+    (`WALL_FRONT_GAP` 1 m short of it); `u_flow` 3. Both layouts are the
+    wall line's two files packed at `FLOW_PACK` % of the file spacing,
+    closer where the walk behind is short (down to `WALL_PACK_MIN` 0.5 m),
+    re-laid every `FLOW_EVERY` ticks (`_wall_offsets`); their men keep to
+    `PLACE_SIDE` 3 m along the walk of their places (the "Ranks hold
+    together" cap, which walls had been exempt from), both files search
+    as the front rank, and they do not wrap.
+  - *Reach cap* (`WALK_REACH_MAX` 3, the one new balance number): a man
+    on a wall walk (or a tower) of a wall unit, or of a unit squeezed in a
+    street (`u_sq`), is within reach of at most 3 enemies (two abreast and
+    one behind each on a 4 m walk). At the start of the soldier update the
+    men already in reach of such a man are counted, the first 3 by unit
+    and slot order kept (`_reach_cap_count`, scratch `_rc_tk` / `_rc_n` /
+    `_rc_ok`, stamped by tick, not in snapshots); a man whose man is full
+    neither steps in nor strikes and looks for another, and the target
+    search passes over full men (`_find_target_obs`).
+  After: 5 s after the order light 6.7 / heavy 2.7 in reach, heavy lost
+  6.2 in those 5 s and 1-2.5 a 5 s after; in all 37.8 light / 22.1 heavy
+  killed, decided at 75 s instead of 40 (a grind at the walk's width, no
+  ball; the light keep about 1.5 times the heavy's men in reach, packed
+  closer at the ladder tops, so the heavy win about 1.7 : 1 against 3.8 :
+  1 in the open). Side effects: the existing wall yardsticks (20 seeds)
+  barely move (heavy climbing against light on the walk lose 12 instead of
+  19); the `--only=flow` ladder probe with 60 defenders above: attackers
+  lost 40 -> 25 at walls 1, 51 -> 50 at walls 2 (defenders lost 39 -> 40,
+  8 -> 18); the street fight probe is unchanged. Equal-force fair
+  sieges (both Average, 10 seeds, attacker wins before -> after), ladders
+  + ram / full kit: ring walls 1 20 -> 20 / 40 -> 50 %, walls 2 0 -> 20
+  / 20 -> 20 %; polis walls 1 40 -> 60 / 40 -> 60 %, walls 2 30 -> 10 / 10
+  -> 30 % (escalades a little easier; within 10-seed noise cell by cell).
+  Tick cost bench_4000_city 3.77 -> 3.96 ms a tick (+5 %; engaged 4.73 ->
+  5.01, the battle 110 ticks longer). No new hashed array: the anchor,
+  offsets and `u_flow` (now 0-3) were hashed already.
 - **AI**: no AI rule or knob changed (docs/AI.md 25).
 - **Measured** (`--only=flow` set pieces, HEAD with the counter only ->
   this build): a 90-man heavy unit up a 5-ladder set, no defenders: walls 1

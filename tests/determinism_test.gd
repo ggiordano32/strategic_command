@@ -111,8 +111,11 @@ extends SceneTree
 ## Units flow into the space (2026-10-09; "--only=flow", also in the full
 ## run): a 90-man unit up a 5-ladder set at walls 1 and 2 with and without
 ## 60 defenders on the walkway (all up with every ladder in use, a move
-## taken after, nobody left below), four units through one gate, a street
-## fight, a unit ordered across a house's corner; the no-progress counter
+## taken after, nobody left below), the column on the walk (2026-10-10: a
+## heavy unit on the walk attacks light men massing at the ladder tops: it
+## goes along the walk as a column, the reach cap holds), four units
+## through one gate, a street fight, a unit ordered across a house's
+## corner; the no-progress counter
 ## and the probe numbers printed; identical on repeat and across snapshot /
 ## restore.
 ## River crossings (2026-10-10; "--only=crossing", also in the full run):
@@ -3070,6 +3073,110 @@ func _flow_ladder_run(walls: int, dfn: bool, snap: bool) -> Dictionary:
 			and sim.u_wall[0] == 0 and sim.u_stair[0] != BattleSim.ST_LADDER else "split")}
 
 
+## The column on the walk (2026-10-10; docs/DESIGN.md "Units flow into the
+## space"): 100 light (side 0) climb a planted 5-ladder set a quarter of the
+## way along the longest stretch of a walls-1 town (seed 1234: 95 m) that
+## nobody holds; 100 heavy (side 1) stand on that walk, their line's near
+## end 6 m along from the ladder top (as tests/matchups.gd "yard wall 8").
+## Returns {sc, wx, wy}.
+static func _flow_col_sc() -> Dictionary:
+	var city := {"seed": 1234, "level": 2, "walls": 1, "bld": [], "towers": 0}
+	var terr := {"kind": Terrain.K_FLAT, "seed": 11, "forest": 0, "ground": 2}
+	var r := Scenarios.settlement(city, terr, [[UT.LIGHT, 100]], [[UT.HEAVY, 100]], 1, [], {"ladders": 1})
+	var sc: Dictionary = r["scenario"]
+	var keep: Array = []
+	var got := [false, false]
+	for ud in sc["units"]:
+		if not got[int(ud["side"])]:
+			got[int(ud["side"])] = true
+			keep.append(ud)
+	sc["units"] = keep
+	sc["orders"] = []
+	var probe := BattleSim.new()
+	probe.setup(sc, 77)
+	var best := -1
+	var bl := 0
+	for sg in probe.ws_x0.size():
+		var l0 := BattleSim.seg_len(probe, sg)
+		var mp0: Vector2i = BattleSim.seg_pt(probe, sg, l0 / 4)
+		var lf0: Vector3i = BattleSim.ladder_foot(probe, sg, mp0.x, mp0.y)
+		if lf0.z != 0 and BattleSim.ladder_ok(probe, 0, sg, mp0.x, mp0.y) and l0 > bl:
+			best = sg
+			bl = l0
+	var l := BattleSim.seg_len(probe, best)
+	var mp: Vector2i = BattleSim.seg_pt(probe, best, l / 4)
+	var lf: Vector3i = BattleSim.ladder_foot(probe, best, mp.x, mp.y)
+	var ap: Vector2i = BattleSim.ladder_approach(probe, best, lf.x, lf.y)
+	var c := FM.cos_a(probe.ws_dir[best])
+	var s := FM.sin_a(probe.ws_dir[best])
+	var ux: int = (ap.x + c * 12 * M / FM.TRIG_ONE) / M
+	var uy: int = (ap.y + s * 12 * M / FM.TRIG_ONE) / M
+	var dp: Vector2i = BattleSim.seg_pt(probe, best, mini(l / 4 + 6 * M + BattleSim.wall_nf(100) * UT.stat(UT.HEAVY, "file_sp") / 2, l))
+	for ud in sc["units"]:
+		if int(ud["side"]) == 0:
+			ud["x_m"] = ux
+			ud["y_m"] = uy
+			ud["facing"] = (probe.ws_dir[best] + 512) & 1023
+			ud["files"] = 15
+		else:
+			ud["x_m"] = dp.x / M
+			ud["y_m"] = dp.y / M
+			ud["wall"] = best + 1
+	sc["equip"] = [[BattleSim.EQ_LADDERS, ux, uy]]
+	return {"sc": sc, "wx": mp.x, "wy": mp.y}
+
+
+## Run the column set piece: the light climb, the heavy ordered at them once
+## 40 are up; 1500 ticks. Hashes, whether the heavy went along the walk as
+## a column (u_flow 2, its anchor moved), the most men in reach per side and
+## the losses.
+func _flow_col_run(snap: bool) -> Dictionary:
+	var cs := _flow_col_sc()
+	var sc: Dictionary = cs["sc"]
+	var sim := BattleSim.new()
+	sim.setup(sc, 77)
+	var hashes := PackedInt64Array()
+	sim.queue_order({"tick": 1, "type": BattleSim.ORDER_PICKUP, "unit": 0, "equip": 0, "run": 0, "player": 50})
+	var climbing := false
+	var t_ord_k := -1
+	var col := 0
+	var moved := 0
+	var ax0 := 0
+	var ay0 := 0
+	var r0 := 0
+	var r1 := 0
+	var snap_bad := 0
+	for t in 1500:
+		if not climbing and sim.u_carry[0] == 0:
+			climbing = true
+			sim.queue_order(BattleSim.make_move_order(sim.tick, 0, int(cs["wx"]), int(cs["wy"]), 768, 20 * M, 0))
+		sim.step()
+		hashes.append(sim.state_hash())
+		if t_ord_k < 0 and climbing:
+			var up := 0
+			var b0: int = sim.u_slot_base[0]
+			for sl in sim.u_alive[0]:
+				if sim._on_walk(sim.pos_x[sim.slot_soldier[b0 + sl]], sim.pos_y[sim.slot_soldier[b0 + sl]]):
+					up += 1
+			if up >= 40:
+				t_ord_k = sim.tick
+				sim.queue_order({"tick": sim.tick, "type": BattleSim.ORDER_ATTACK, "unit": 1, "target": 0, "run": 0, "player": 51})
+		if t_ord_k >= 0 and sim.tick == t_ord_k + 2:
+			ax0 = sim.u_ax[1]
+			ay0 = sim.u_ay[1]
+		if t_ord_k >= 0 and sim.tick > t_ord_k + 2 and sim.u_flow[1] == 2:
+			col += 1
+			moved = maxi(moved, FM.approx_len(sim.u_ax[1] - ax0, sim.u_ay[1] - ay0) / M)
+		if sim.u_state[0] == BattleSim.U_READY:
+			r0 = maxi(r0, sim.u_inreach[0])
+		if sim.u_state[1] == BattleSim.U_READY:
+			r1 = maxi(r1, sim.u_inreach[1])
+		if snap and t_ord_k >= 0 and sim.tick == t_ord_k + 60:
+			snap_bad = _snap_diverges(sim, sc, 77, 120)
+	return {"hashes": hashes, "t_ord_k": t_ord_k, "col": col, "moved": moved, "r0": r0, "r1": r1,
+		"k0": sim.u_killed[0], "k1": sim.u_killed[1], "snap_bad": snap_bad}
+
+
 ## A unit ordered to a point where its formation would stand across the
 ## corner of a building (a 30 x 30 m block on a plain field); a lone enemy
 ## far off. Returns the scenario.
@@ -3163,6 +3270,16 @@ func _check_flow() -> void:
 				a["below"], a["whole"], a["killed"], a["def_alive"], a["mv_ok"], a["stuck"]])
 			if str(a["whole"]) == "split" or (not dfn and (int(a["climb"]) < 0 or int(a["mv_ok"]) != 1)):
 				_fail("%s: men left below, or the climb unfinished, or the unit refused a move after it" % nm)
+	var ca := _flow_col_run(true)
+	var cb := _flow_col_run(false)
+	if ca["hashes"] != cb["hashes"]:
+		_fail("flow walk column: the repeat diverged")
+	if int(ca["snap_bad"]) != 0:
+		_fail("flow walk column: snapshot / restore diverged")
+	print("PROBE flow walk column: heavy ordered at tick %d, a column for %d ticks, its head went %d m, most men in reach light %d / heavy %d, killed light %d / heavy %d" % [
+		ca["t_ord_k"], ca["col"], ca["moved"], ca["r0"], ca["r1"], ca["k0"], ca["k1"]])
+	if int(ca["t_ord_k"]) < 0 or int(ca["col"]) == 0:
+		_fail("flow walk column: the heavy never went along the walk as a column")
 	for kind in ["gate", "street", "corner"]:
 		var a := _flow_pinch_run(kind, true)
 		var b := _flow_pinch_run(kind, false)

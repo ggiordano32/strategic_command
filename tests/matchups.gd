@@ -151,6 +151,10 @@ func _init() -> void:
 		_wall_yards()
 		quit(0)
 		return
+	if only == "wall-col":
+		_wall_cols()
+		quit(0)
+		return
 	if only == "tiers":
 		_tiers()
 		quit(0)
@@ -1313,8 +1317,10 @@ const WY_N := 18         # samples: 5 s .. 90 s
 ## Climb set-up: the attackers (side 0) by the ladder approach of the walk
 ## stretch nearest them, the defenders (side 1) on that stretch's walk at its
 ## middle (the ladder top). Returns {sc, sg, wx, wy}.
-func _wall_climb_sc(att_ty: int, n_att: int, dfn_ty: int, n_dfn: int) -> Dictionary:
-	var city := {"seed": 4242, "level": 2, "walls": 1, "bld": [], "towers": 0}
+## (city_seed, at_pct: the column set-up below takes the longest stretch with
+## a ladder spot at_pct % along it, of another town.)
+func _wall_climb_sc(att_ty: int, n_att: int, dfn_ty: int, n_dfn: int, city_seed := 4242, at_pct := -1) -> Dictionary:
+	var city := {"seed": city_seed, "level": 2, "walls": 1, "bld": [], "towers": 0}
 	var terr := {"kind": Terrain.K_FLAT, "seed": 11, "forest": 0, "ground": 2}
 	var r := Scenarios.settlement(city, terr, [[att_ty, n_att]], [[dfn_ty, n_dfn]], 1, [], {"ladders": 1})
 	var sc: Dictionary = _wall_keep_one(r["scenario"])
@@ -1325,11 +1331,13 @@ func _wall_climb_sc(att_ty: int, n_att: int, dfn_ty: int, n_dfn: int) -> Diction
 	var bap := Vector2i.ZERO
 	var bmp := Vector2i.ZERO
 	for sg in probe.ws_x0.size():
-		var mp: Vector2i = BattleSim.seg_pt(probe, sg, BattleSim.seg_len(probe, sg) / 2)
+		var mp: Vector2i = BattleSim.seg_pt(probe, sg, BattleSim.seg_len(probe, sg) * (50 if at_pct < 0 else at_pct) / 100)
 		var lf: Vector3i = BattleSim.ladder_foot(probe, sg, mp.x, mp.y)
 		if lf.z == 0 or not BattleSim.ladder_ok(probe, 0, sg, mp.x, mp.y):
 			continue
 		var d := absi(mp.x - probe.u_cx[0]) + absi(mp.y - probe.u_cy[0])
+		if at_pct >= 0:
+			d = -BattleSim.seg_len(probe, sg)  # the longest
 		if best < 0 or d < bd:
 			best = sg
 			bd = d
@@ -1400,7 +1408,7 @@ static func _wall_keep_one(sc: Dictionary) -> Dictionary:
 ## its men go up), "walk" (both on the walk, attacker orders the attack) or
 ## "field" (open ground, 20 m apart, attacker orders the attack).
 func _wall_yard(name: String, kind: String, att_ty: int, n_att: int, dfn_ty: int, n_dfn: int, detail: bool) -> void:
-	if only != "wall-yard" and _skip(name):
+	if only != "wall-yard" and only != "wall-col" and _skip(name):
 		return
 	var base: Dictionary = {}
 	var top := Vector2i.ZERO
@@ -1501,6 +1509,113 @@ func _wall_yards() -> void:
 	_wall_yard("yard wall 5: light attacks heavy, both on the walk 20 m apart", "walk", LI, 100, HS, 100, false)
 	_wall_yard("yard wall 6: heavy attacks light, both on the walk 20 m apart", "walk", HS, 100, LI, 100, false)
 	_wall_yard("yard wall 7: light attacks heavy, open field 20 m apart (baseline)", "field", LI, 100, HS, 100, false)
+	_wall_cols()
+
+
+## The column on the walk (--only=wall-col, and inside --only=wall-yard / yard).
+func _wall_cols() -> void:
+	_section("Yardsticks: a column along the walk into men massing at the ladder tops (walls 1, 100 a side)")
+	var LI := UT.LIGHT
+	var HS := UT.HEAVY
+	_wall_col("yard wall 8: heavy along the walk attack 100 light massing at the ladder tops", "attack", LI, HS, true)
+	_wall_col("yard wall 9: heavy along the walk moved to the ladder top, into the light", "move", LI, HS, true)
+	_wall_yard("yard wall 10: heavy attacks light, open field 20 m apart (baseline)", "field", HS, 100, LI, 100, false)
+
+
+## The column on the walk (the owner's "fought in 2s ... a feeding machine",
+## 2026-10-10): side 0 climbs a planted 5-ladder set onto a stretch nobody
+## holds and masses at the ladder tops; side 1 stands on the same walk, its
+## line's near end WC_GAP m along from the ladder top, and once WC_UP of
+## side 0 are up it is ordered at them along the walk (mode "attack": an
+## attack order; "move": a move along its stretch to the ladder top). Per
+## 5 s for 90 s from the order: men in reach (u_inreach) per side, men on
+## the walk, and the men each side lost in those 5 s.
+const WC_GAP := 6        # m from the ladder top to the near end of side 1's line
+const WC_UP := 40        # side 0 men up before side 1 is ordered
+const WC_CITY := 1234    # a town whose longest stretch (95 m) holds both lines
+const WC_AT := 25        # the ladder set planted this % along it
+
+
+func _wall_col(name: String, mode: String, att_ty: int, dfn_ty: int, detail: bool) -> void:
+	if only != "wall-yard" and only != "wall-col" and _skip(name):
+		return
+	var base: Dictionary = _wall_climb_sc(att_ty, 100, dfn_ty, 100, WC_CITY, WC_AT)
+	var sc0: Dictionary = base["sc"]
+	var sg: int = base["sg"]
+	var probe := BattleSim.new()
+	probe.setup(sc0, 77)
+	var l := BattleSim.seg_len(probe, sg)
+	var tt := BattleSim.seg_t(probe, sg, int(base["wx"]), int(base["wy"]))
+	var hl := BattleSim.wall_nf(100) * UT.stat(dfn_ty, "file_sp")
+	# Along the stretch toward its longer side from the ladder top.
+	var dirn := 1 if l - tt >= tt else -1
+	var dp: Vector2i = BattleSim.seg_pt(probe, sg, clampi(tt + dirn * (WC_GAP * M + hl / 2), 0, l))
+	for ud in sc0["units"]:
+		if int(ud["side"]) == 1:
+			ud["x_m"] = dp.x / M
+			ud["y_m"] = dp.y / M
+	var wins := [0, 0, 0]
+	var lost := [0.0, 0.0]
+	var acc := PackedFloat64Array()  # per sample: reach0, reach1, walk0, walk1, lost0, lost1
+	acc.resize(WY_N * 6)
+	var t_ord := 0.0
+	var ended_t := 0.0
+	for s in seeds:
+		var sc: Dictionary = sc0.duplicate(true)
+		var sim := BattleSim.new()
+		sim.setup(sc, 77 + s * 7919)
+		sim.queue_order({"tick": 1, "type": BattleSim.ORDER_PICKUP, "unit": 0, "equip": 0, "run": 0, "player": 50})
+		var climbing := false
+		var t_ord_k := -1
+		var k0 := [0, 0]
+		while sim.tick < WY_T and sim.ended == 0:
+			if not climbing and sim.u_carry[0] == 0:
+				climbing = true
+				sim.queue_order(BattleSim.make_move_order(sim.tick, 0, int(base["wx"]), int(base["wy"]), 768, 20 * M, 0))
+			sim.step()
+			if t_ord_k < 0 and climbing:
+				var up := 0
+				var bi: int = sim.u_slot_base[0]
+				for sl in sim.u_alive[0]:
+					var i: int = sim.slot_soldier[bi + sl]
+					if sim.state[i] < BattleSim.S_DEAD and sim._on_walk(sim.pos_x[i], sim.pos_y[i]):
+						up += 1
+				if up >= WC_UP:
+					t_ord_k = sim.tick
+					t_ord += t_ord_k / 10.0
+					if mode == "attack":
+						sim.queue_order(_atk(sim.tick, 1, 0, 0))
+					else:
+						sim.queue_order(BattleSim.make_move_order(sim.tick, 1, int(base["wx"]), int(base["wy"]), 0, 20 * M, 0))
+			if t_ord_k >= 0 and (sim.tick - t_ord_k) % WY_SAMP == 0 and sim.tick > t_ord_k and sim.tick - t_ord_k <= WY_N * WY_SAMP:
+				var k := (sim.tick - t_ord_k) / WY_SAMP - 1
+				var w := [0, 0]
+				for u in sim.n_units:
+					var bu: int = sim.u_slot_base[u]
+					for sl in sim.u_alive[u]:
+						var i: int = sim.slot_soldier[bu + sl]
+						if sim.state[i] < BattleSim.S_DEAD and sim._on_walk(sim.pos_x[i], sim.pos_y[i]):
+							w[sim.u_side[u]] += 1
+				var v := [sim.u_inreach[0] if sim.u_state[0] == BattleSim.U_READY else 0,
+					sim.u_inreach[1] if sim.u_state[1] == BattleSim.U_READY else 0, w[0], w[1],
+					sim.u_killed[0] - k0[0], sim.u_killed[1] - k0[1]]
+				k0 = [sim.u_killed[0], sim.u_killed[1]]
+				for j in 6:
+					acc[k * 6 + j] += v[j]
+		var wn: int = sim.winner if sim.winner >= 0 else 2
+		wins[wn] += 1
+		ended_t += (sim.decided_tick if sim.decided_tick >= 0 else sim.tick) / 10.0
+		for sd in 2:
+			lost[sd] += sim.u_killed[sd]
+	print("%-64s side0 wins %3d%%  side1 %3d%%  draw %3d%% | killed %5.1f vs %5.1f | decided %5.1f s | ordered at %.1f s (stretch %d m)" % [
+		name, wins[0] * 100 / seeds, wins[1] * 100 / seeds, wins[2] * 100 / seeds,
+		lost[0] / seeds, lost[1] / seeds, ended_t / seeds, t_ord / seeds, l / M])
+	if detail:
+		print("   t(s)  reach 0/1 | men on walk 0/1 | lost in 5 s 0/1")
+		for k in WY_N:
+			print("   %4d   %5.1f / %5.1f   |   %5.1f / %5.1f    |  %4.1f / %4.1f" % [
+				(k + 1) * 5, acc[k * 6] / seeds, acc[k * 6 + 1] / seeds, acc[k * 6 + 2] / seeds,
+				acc[k * 6 + 3] / seeds, acc[k * 6 + 4] / seeds, acc[k * 6 + 5] / seeds])
 
 
 ## A missile unit (side 0) shoots its whole load at a standing target `dist`
