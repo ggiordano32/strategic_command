@@ -204,6 +204,13 @@ static func think(sim) -> void:
 			continue
 		if sim.u_cls[u] == UT.CLS_MISSILE and sim.n_eq > 0 and BattleAI.resupply(sim, u, kn):
 			continue
+		# Engines whose crew broke or died (an attacking battery shot off, a
+		# battery of the field army inside): a missile unit of that side out of
+		# ammunition and out of the fight takes them up (BattleAI._take_engines,
+		# ENGINE_TAKE_R) as in the field (docs/AI.md 25).
+		if sim.u_cls[u] == UT.CLS_MISSILE and sim.u_ammo[u] <= 0 and sim.n_eg > 0 and sim.u_wall[u] == 0 \
+				and BattleAI._take_engines(sim, u):
+			continue
 		if side == sim.city_def:
 			_defender(sim, u)
 		else:
@@ -1969,6 +1976,8 @@ static func _wall_shift(sim, side: int, ag: int) -> void:
 		var sg0: int = sim.u_wall[u] - 1
 		if sim._seg_off(sg0, gx, gy) <= 80 * M or _anyone_in_range(sim, u):
 			continue
+		if (sim.ws_fl[sg0] & MapGen.SEG_CIT) != 0:
+			continue  # (the citadel's wall men stay on it: its gate is shut, a fair siege's acropolis archers marched at it all battle, 2026-10-10)
 		var best := -1
 		var bd := 0
 		var d0: int = sim._seg_off(sg0, gx, gy)

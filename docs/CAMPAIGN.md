@@ -360,7 +360,7 @@ Allobroges, Corsica, Illyria): `CData.move_cost`.
 | Numidia (Cirta) | rolling | 3 | village | Zeugitana, Byzacena, Mauretania | Contestania | punic |
 | Mauretania (Tingis) | hill | 2 | village | Numidia | Baetica | punic |
 
-The map screen draws hand-authored low-polygon coastlines (Europe as one
+The map screen draws low-polygon coastlines (hand-authored until 2026-10-10, now Natural Earth, see "Real geography") (Europe as one
 polygon closed by the map edges, North Africa, Sicily, Sardinia, Corsica;
 Balearics, Crete, Euboea, Ionian islands, Elba, Malta as decoration),
 projected equirectangularly (lon x 76.6, lat x 100 px per degree). A region's
@@ -1306,7 +1306,7 @@ contact, sieges, sally / relief, support, stances, raiding, retreats),
 
 Static data and rules only: no state change, `CState.VERSION` stays 6
 (the rules hash changes: movement differs). Code: `game/campaign/map_geo.gd`
-(`RIVERS`, `ROADS`, `HILLS`, `crossings()`, `line_cells()`),
+(`RIVERS`, `ROADS`, `crossings()`, `line_cells()`; the hill areas were replaced by real elevation, see "Real geography" below),
 `tools/campaign_grid.gd` (baking and checks), `campaign/cgrid.gd`
 (costs, steps, lookups), `campaign/cbattle.gd` (the battle hook),
 `game/campaign/map_view.gd` / `map_key.gd` (drawing, key rows).
@@ -1333,21 +1333,16 @@ Static data and rules only: no state change, `CState.VERSION` stays 6
   Castulo - Corduba - Gades), the Rhone road (Massalia - Vienna), the
   Isthmus road (Athenae - Corinthus - Sparta), the Thessalian road (Pella -
   Larissa - Thermopylae - Athenae), the Sicilian coast and east roads.
-  19 hill areas (ribbons along a line with a half width, or polygons):
-  the Alps' foot (ridge: cost 20, not impassable; the high Alps are
-  unclaimed land already), the Apennines (hills north and south, a ridge
-  in the middle), the Pyrenees and the Cantabrian range (ridge), the
-  Sistema Central, the Iberian range and the Sierra Morena (hills), the
-  Sierra Nevada (ridge), the Rif and the Tell Atlas (hills), the Aures,
-  the Pindus, Olympus, Taygetus and Etna (ridge), Arcadia and Sicily's
-  interior (hills).
-- **Baking** (`tools/campaign_grid.gd`, integers out): a cell inside a hill
-  area takes its kind where that is rougher than its region's terrain
-  (200 hill, 215 ridge cells); a road marks every cell its line runs
-  through, 4-connected (290 road cells); a river makes every step between
+  Hills and ridges no longer come from hand-drawn areas: see "Real
+  geography" below (the 19 hand areas were deleted, 2026-10-10).
+- **Baking** (`tools/campaign_grid.gd`, integers out): a cell whose real
+  elevation class is hill or ridge takes that kind where it is rougher than
+  its region's terrain (434 hill, 140 ridge cells since the real
+  geography; 200 / 215 from the hand areas); a road marks every cell its line runs
+  through, 4-connected (303 road cells); a river makes every step between
   two passable cells of one landmass whose centres its line separates a
   river edge, a diagonal one also when any orthogonal step of its 2 x 2
-  block is one (634 river steps); each crossing takes its river's
+  block is one (676 river steps); each crossing takes its river's
   orthogonal step nearest its point, a road's step there first. Output:
   `TERRAIN` (a string per row: "." the region's terrain, "h" hill, "r"
   ridge; "=", "H", "R" the same with a road), `RIVER` ([cell, mask]
@@ -1394,6 +1389,90 @@ Static data and rules only: no state change, `CState.VERSION` stays 6
   "Map" section gains river, ford, bridge, road and hills rows.
   `MapView.crossing_near(p, rad)` finds the crossing at a map point (for a
   tap hint: not wired into the campaign screen yet).
+
+### Real geography (2026-10-10, still format 6)
+
+The overworld is fitted to public-domain data: elevation from ETOPO 2022
+(NOAA NCEI, 30 arc-second surface model, public domain) and the coasts and
+rivers from Natural Earth 1:10m (land, rivers + lake centerlines, rivers
+Europe, v5.1.2, public domain). The game never reads the raw data: the
+tool `tools/geo_fit.py` bakes it into the files below (run it from a
+python3 with numpy; it needs the DEM as an OPeNDAP `.dods` response or a
+`.npy`, and the Natural Earth GeoJSON directory; exact commands in its head
+comment). No state change, `CState.VERSION` stays 6; the rules hash changes
+(`campaign/data` holds the new grid and `elev_data.gd`).
+
+- **Parameters** (nothing Mediterranean is in the tool): a JSON config,
+  `tools/geo/med.json` (the default), holds the window (`lon0`, `lat0`,
+  `lon_span`, `lat_span`), the projection (`px_lat`, `px_lon`; they must
+  equal the constants of `map_geo.gd`, which the tool checks), `cell_px`,
+  `fine_per_cell` (8), `simplify_deg` (0.05), `island_min_deg` (0.25),
+  `landmass_clip`, the class `thresholds`, the `regions` list (key, lon,
+  lat, landmass index: the settlement list, a data file, not CData) and the
+  `rivers` (name, Natural Earth names, hand fallback line, crossings,
+  optional `ne_from`). Another setting (the Americas) is another config
+  file; the output format is the same for any window. `tools/campaign_grid.gd
+  --cell=` takes the cell size.
+- **Coasts** (`map_geo.gd` `LANDS`, `ISLANDS`, generated, marked so):
+  Natural Earth land clipped to the window (each ring run inside the
+  window closed along the window edge, so Europe and Africa, one polygon in
+  Natural Earth, stay apart), Douglas-Peucker 0.05 degrees (vertices near a
+  settlement are kept, so it stays on land), landmass k = the polygon
+  holding the settlements with land k, islands under 0.25 degrees dropped
+  (178 dropped, 21 kept for drawing: the Balearics, Crete, Euboea, the
+  Ionian islands, Elba, Malta and a few Aegean ones). 694 + 139 + 88 + 65 + 26 vertices for landmasses 0
+  to 4 (was 236 in all by hand). Africa is cut at 11.55 E (the Libyan
+  border). Settlements nudged: Carthago (10.32, 36.85 -> 36.87) and
+  Hadrumetum (10.64, 35.83 -> 10.63, 35.82), both off the real coast by a
+  hair. Region territories, phantom sites, ports and roads are unchanged
+  code; a piece with no area is no longer drawn.
+- **Rivers** (`RIVERS`, generated): the 13 named rivers from Natural
+  Earth, the main stem (shortest path along the data's lines from the
+  source side to the mouth side; `ne_from` where the data's longest line
+  runs up a tributary: Volturnus from Capua, Baetis from Corduba), a
+  missing upstream or mouth stretch kept from the hand line (Padus
+  source, Arnus, Volturnus, Garumna and Tagus mouths, Iberus, Achelous,
+  Peneus upstream), the Bagradas (Medjerda) not in the data: kept by hand.
+  Crossings keep their names and kinds and snap to the nearest point of
+  the real line. Roads are unchanged except a few vertices moved so that a
+  road crosses a river only at a crossing and stays on land (Via Aurelia,
+  Via Flaminia, Via Appia).
+- **Elevation** (`campaign/data/elev_data.gd`, per grid cell, integers;
+  `game/campaign/relief_data.gd`, the fine fields): `MEAN`, `MAXH`,
+  `RELIEF` metres per cell, `RIVER_DIST` tenths of a cell to the nearest
+  river line, `CLASS` a string per row ("." sea, 0 plain, 1 rolling, 2
+  valley, 3 hill, 4 ridge). Thresholds (cell of 0.2 x 0.26 degrees; land
+  samples only): ridge = mean >= 1500 m, or max >= 2200 m with relief >=
+  1000 m; hill = mean >= 1100 m or relief >= 700 m; valley = mean < 350 m
+  with the ring of cells two away at least 200 m higher; rolling = mean
+  >= 150 m or relief >= 120 m. (First tried 1100 / 500: hill on half the
+  land, a cost change nobody asked for.) `campaign_grid.gd` turns hill /
+  ridge into `TERRAIN` overrides where rougher than the region's own kind;
+  the rules are unchanged (hill 15, ridge 20). Fine fields at 0.025
+  degrees (8 samples a cell side, 1104 x 560): `FINE` (land-only mean
+  of the footprint, sqrt-coded bytes, metres = (v / 3.8)^2), `SLOPE`
+  (percent), `RELIEF_F` (5 x 5 range, 8 m units), each deflated + base64.
+- **For the view**: `game/campaign/geo_fields.gd` decodes them once:
+  `elev_m(p)`, `slope_pct(p)`, `relief_m(p)` at a map point,
+  `fine()` / `slope()` / `relief_field()` raw, `cell_class(c)`,
+  `cell_mean(c)`, `cell_max(c)`, `cell_relief(c)`, `river_dist(c)`.
+- **Relief render** (`landscape.gd`, one texture as before): the fine field
+  upsampled 2x (cubic), Lambert hillshade from the north-west (sun
+  (-0.55, -0.55, 0.63), slopes exaggerated 2x, gentle slopes lifted), a
+  subtle hypsometric tint (green to tan to grey-brown, pale grey only above
+  2,000 m), and a thin dark line along the main crests (the highest of 5
+  samples across that also stands 250+ m over the ground 11 km either side).
+  No glyphs for mountains. The shading takes 1.5 s, so the image is cached
+  in `user://relief_<hash>.png` (key: data, look parameters, a code
+  version); trees stop above 1,900 m, rocks above 2,600 m.
+- **Checks** (`campaign_grid.gd`, also `--check`): every settlement lies
+  on its landmass polygon, every sea-lane port cell is a coast cell of its
+  region; land components under 4 cells (the tips of Athos and Sithonia)
+  are dropped as sea; the same landmass / river / road checks as before.
+  Re-pinned in `tests/campaign_test.gd`: the two 20-turn goldens (now
+  3007c1ab / 4197043257 and be6e10a3 / 3786296811) and the two Tarentum
+  march rows, which start from Venetia (from Etruria the Apennines cost less
+  and the walls are one turn).
 
 ### View (version 6)
 

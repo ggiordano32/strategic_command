@@ -389,7 +389,11 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 		"gate_ops":
 			need = ["gate_close", "gate_open", "gate_hack", "gate_art", "gate_broken", "paths"]
 		"siege_castrum@ai":
-			need = ["paths", "clamp", "gate_broken", "wall_cover", "obs_lof"]
+			# (No gate_broken since the 2026-10-09 siege rebalance: with fewer
+			# tower engines the batteries spend the run on them and the walls-3
+			# gate stands past 5,000 ticks; gate_broken is covered by siege_city,
+			# gate_ops, the polis, Punic and oppidum runs.)
+			need = ["paths", "clamp", "wall_cover", "obs_lof"]
 		"siege_polis@ai":
 			# (Part 2c: the defenders hold the gate's mouth and their wall
 			# units stay up, nobody falls back to the acropolis within the

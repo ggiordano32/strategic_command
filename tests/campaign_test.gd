@@ -1402,7 +1402,7 @@ func _odds() -> void:
 	var last_loss := 1000
 	var mono := true
 	var last_band := -1
-	for n in range(1, 31):  # (to 30: the defenders have their general since 2026-10-09)
+	for n in range(1, 51):  # (to 50: the defenders have their general since 2026-10-09, and the walls term covers them since the 2026-10-09 fit)
 		var us: Array = []
 		for k in n:
 			us.append({"t": "heavy", "n": 100})
@@ -1602,12 +1602,14 @@ func _grid_paths() -> void:
 			on_road += 1
 	_check(not pl.has("why") and int(pl["t"][-1]) == 0 and on_road * 10 >= (pl["path"] as Array).size() * 8,
 		"foot from Latium reaches Tarentum's walls this turn along the Via Appia (%d of %d cells road)" % [on_road, (pl.get("path", []) as Array).size()])
-	var foot_e := _put(st, rome, CState.field_cell(_r("etruria")), ["heavy", "heavy", "spear"])
-	var cav_e := _put(st, rome, CState.field_cell(_r("etruria")), ["cav", "cav"])
+	# (Real geography, 2026-10-10: from Etruria the Apennines cost less and it
+	# is one turn too; Venetia is the far start now.)
+	var foot_e := _put(st, rome, CState.field_cell(_r("venetia")), ["heavy", "heavy", "spear"])
+	var cav_e := _put(st, rome, CState.field_cell(_r("venetia")), ["cav", "cav"])
 	var pf := CRules.plan_path(st, foot_e, tar)
 	var pc := CRules.plan_path(st, cav_e, tar)
 	_check(not pf.has("why") and int(pf["t"][-1]) == 1 and str(pf["aim"]["kind"]) == "siege",
-		"foot from Etruria reaches Tarentum's walls next turn (%d cells): Italy in two turns" % (pf.get("path", []) as Array).size())
+		"foot from Venetia reaches Tarentum's walls next turn (%d cells): Italy in two turns" % (pf.get("path", []) as Array).size())
 	_check(not pc.has("why") and int(pc["t"][-1]) == 0, "cavalry gets there this turn")
 	_check(CGrid.cheb(int(pf["path"][-1]), tar) == 1, "the march ends next to the city (its ring), not in it")
 	var p2 := CRules.plan_path(st, foot_e, tar)
@@ -1637,7 +1639,7 @@ func _grid_paths() -> void:
 func _grid_turns() -> void:
 	var st := _empty6()
 	var rome := _f("rome")
-	var foot := _put(st, rome, CState.field_cell(_r("etruria")), ["heavy", "heavy", "spear"])
+	var foot := _put(st, rome, CState.field_cell(_r("venetia")), ["heavy", "heavy", "spear"])
 	var id := int(foot["id"])
 	var tar := CGrid.site(_r("apulia"))
 	var s1 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [_move6(foot, tar)])])
@@ -3375,20 +3377,22 @@ func _ai_skilled() -> void:
 	CAI.no_beasts = true
 	CData.no_generals = true  # (and without the starting generals, 2026-10-09)
 	CAI.no_buildup = true  # (and without the military build-up, docs/AI.md 23)
+	CBattle.old_walls = true  # (and the formula before the 2026-10-09 walls fit)
 	var g := CState.new_campaign("test", 4242, [])
 	for t in 20:
 		g = CTurn.resolve_turn(g, [])
 	# (Goldens moved with the roads, rivers and hills, 2026-10-09: movement
-	# differs; were 6e1095cd / 3394658370 and 08e7391a / 694925818; then 3666c3b2 / 694925818 and d517c822 / 3622865195 before the Tempe ford and the Tempe and Haliacmon roads.)
-	_check(CState.hash_text(g) == "caadf49a" and int(g["rng"]) == 1570113520,
+	# differs; were 6e1095cd / 3394658370 and 08e7391a / 694925818; then 3666c3b2 / 694925818 and d517c822 / 3622865195 before the Tempe ford and the Tempe and Haliacmon roads; then caadf49a / 1570113520 and 95bb7116 / 2555935071 before the real coasts, rivers and relief, 2026-10-10.)
+	_check(CState.hash_text(g) == "3007c1ab" and int(g["rng"]) == 4197043257,
 		"Average plays and draws the RNG exactly as before step 4 (%s, rng %d)" % [CState.hash_text(g), int(g["rng"])])
 	var ge := CState.new_campaign("test", 4242, [])
 	ge["factions"][_f("macedon")]["ai_skill"] = CP.EASY
 	for t in 20:
 		ge = CTurn.resolve_turn(ge, [])
-	_check(CState.hash_text(ge) == "95bb7116" and int(ge["rng"]) == 2555935071,
+	_check(CState.hash_text(ge) == "be6e10a3" and int(ge["rng"]) == 3786296811,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(ge), int(ge["rng"])])
 	CAI.no_beasts = false
+	CBattle.old_walls = false
 	CData.no_generals = false
 	CAI.no_buildup = false
 	# Knobs: every Skilled-only knob is 0 at Easy and Average (the build-up

@@ -79,8 +79,8 @@ const REGIONS: Array[Dictionary] = [
 	{"key": "attica", "name": "Attica", "city": "Athenae", "area": "Greece", "terrain": ROLLING, "lon": 2373, "lat": 3798, "wealth": 6, "level": CITY, "walls": 2, "land": 0, "ground": DRY, "forest": 12, "culture": GREEK},
 	{"key": "achaea", "name": "Achaea", "city": "Corinthus", "area": "Greece", "terrain": HILL, "lon": 2288, "lat": 3790, "wealth": 5, "level": TOWN, "walls": 1, "land": 0, "ground": DRY, "forest": 18, "culture": GREEK},
 	{"key": "laconia", "name": "Laconia", "city": "Sparta", "area": "Greece", "terrain": VALLEY, "lon": 2243, "lat": 3707, "wealth": 3, "level": TOWN, "walls": 0, "land": 0, "ground": DRY, "forest": 20, "culture": GREEK},
-	{"key": "zeugitana", "name": "Zeugitana", "city": "Carthago", "area": "Africa", "terrain": FLAT, "lon": 1032, "lat": 3685, "wealth": 7, "level": CITY, "walls": 2, "land": 1, "ground": ARID, "forest": 5, "culture": PUNIC},
-	{"key": "byzacena", "name": "Byzacena", "city": "Hadrumetum", "area": "Africa", "terrain": FLAT, "lon": 1064, "lat": 3583, "wealth": 4, "level": TOWN, "walls": 0, "land": 1, "ground": ARID, "forest": 4, "culture": PUNIC},
+	{"key": "zeugitana", "name": "Zeugitana", "city": "Carthago", "area": "Africa", "terrain": FLAT, "lon": 1032, "lat": 3687, "wealth": 7, "level": CITY, "walls": 2, "land": 1, "ground": ARID, "forest": 5, "culture": PUNIC},
+	{"key": "byzacena", "name": "Byzacena", "city": "Hadrumetum", "area": "Africa", "terrain": FLAT, "lon": 1063, "lat": 3582, "wealth": 4, "level": TOWN, "walls": 0, "land": 1, "ground": ARID, "forest": 4, "culture": PUNIC},
 	{"key": "numidia", "name": "Numidia", "city": "Cirta", "area": "Africa", "terrain": ROLLING, "lon": 661, "lat": 3636, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 1, "ground": ARID, "forest": 10, "culture": PUNIC},
 	{"key": "mauretania", "name": "Mauretania", "city": "Tingis", "area": "Africa", "terrain": HILL, "lon": -580, "lat": 3577, "wealth": 2, "level": VILLAGE, "walls": 0, "land": 1, "ground": ARID, "forest": 14, "culture": PUNIC},
 ]
@@ -424,7 +424,7 @@ const STANCE_NAMES := {0: "Default", 2: "Forced march", 3: "Fortify", 4: "Raidin
 const FORCED_MP_PCT := 150
 const RAID_MP_PCT := 70
 const RAID_PCT := 50
-const FORTIFY_DEF_PCT := 125   # formula / odds: fortified defenders' strength
+const FORTIFY_DEF_PCT := 119   # formula / odds: fortified defenders' strength (fitted 2026-10-10: an Average army in its camp beat an equal one 25 of 40 (13 / 20 on 2026-10-09, 12 / 20 on 2026-10-10 against a mirrored 10 / 20), (62.5 / 37.5)^(1/3) = 1.19; was 125)
 const FORCED_DEF_PCT := 75     # ... an army caught on a forced march
 const FORCED_MORALE_PCT := 75  # battle: its units start with this % of their morale
 ## Besiegers lose this % of their men a turn once the city's supplies are gone.

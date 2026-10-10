@@ -16,7 +16,8 @@ extends SceneTree
 ##   throwers kill fewer, frighten, and miss small or moving targets; melee
 ##   troops that reach artillery wreck it quickly; armies stay fair when
 ##   mirrored (--fair=N; --fair-variants=fort0,fort1 puts that side in its
-##   fortified camp: the fitted CData.FORTIFY_DEF_PCT).
+##   fortified camp: the fitted CData.FORTIFY_DEF_PCT); --only=crossing-fort
+##   the same at a ford and a bridge (Scenarios.crossing, side 1 holding).
 ## Yardsticks (--only=yard, docs/STATUS.md "Field rebalance"): a full load
 ##   of arrows at 100 m into light infantry or standing cavalry in the open
 ##   kills about a quarter, into heavy shielded foot from the front under
@@ -121,8 +122,8 @@ func _init() -> void:
 		elif a.begins_with("--tune="):
 			# Tuning aid: --tune=NAME=v0,v1,v2,v3 sets a siege lever of BattleSim
 			# (static: WALL_COVER, WALL_RANGE_PCT, GATE_HACK_BY_WALLS, GATE_HP_PCT,
-			# LADDER_TICKS, TOWERS_MAX, TOWERS_STONE; RAM_DMG and ROUT_INWARD one
-			# value).
+			# LADDER_TICKS, TOWERS_MAX, TOWERS_STONE, GATE_FIRE_CHIP; RAM_DMG,
+			# ROUT_INWARD and TOWN_PLACE_LEAD (decimetres) one value).
 			_tune(a.get_slice("=", 1), a.get_slice("=", 2))
 		elif a.begins_with("--knob="):
 			# Tuning aid: --knob=LEVEL:ID=VALUE overrides one knob of a level
@@ -147,6 +148,11 @@ func _init() -> void:
 		return
 	if only == "tiers":
 		_tiers()
+		quit(0)
+		return
+	if only == "crossing-fort":
+		_section("River crossings: side 1 holds the far bank (Scenarios.crossing), equal armies, AI vs AI, both Average")
+		_crossing_fort()
 		quit(0)
 		return
 	if only == "fair-sieges":
@@ -276,6 +282,10 @@ func _tune(name: String, vals: String) -> void:
 			BattleSim.RAM_DMG = arr[0]
 		"ROUT_INWARD":
 			BattleSim.ROUT_INWARD = arr[0]
+		"TOWN_PLACE_LEAD":
+			BattleSim.TOWN_PLACE_LEAD = arr[0] * BattleSim.M / 10
+		"GATE_FIRE_CHIP":
+			BattleSim.GATE_FIRE_CHIP = arr
 		_:
 			push_error("unknown lever " + name)
 	print("TUNE %s = %s" % [name, str(arr)])
@@ -638,6 +648,34 @@ func _fairness(n: int) -> void:
 				killed[side] += int(r["sides"][side]["killed"])
 		print("FAIR %s n=%d bottom(side0)=%d top(side1)=%d draw=%d killed0=%d killed1=%d minutes_sum=%.1f max=%.1f" % [
 			variant, n, wins[0], wins[1], wins[2], killed[0], killed[1], mins, max_min])
+
+
+## --only=crossing-fort: the equal armies of Scenarios.crossing (side 1
+## holding the far bank) at a ford and at a bridge, the holder fortified
+## (its camp at the crossing's mouth) or not, `seeds` crossings each (the
+## crossing's seed 100 + k): the holder's wins, the attacker's, draws and
+## minutes. Fits CData.FORTIFY_DEF_PCT at a crossing (docs/CAMPAIGN.md).
+func _crossing_fort() -> void:
+	var n := mini(seeds, 10)
+	for kind in [0, 1]:
+		for fort in [false, true]:
+			var w := [0, 0, 0]
+			var mins := 0.0
+			var killed := [0, 0]
+			for k in n:
+				var sc := Scenarios.crossing(kind, 100 + seed0 + k, fort)
+				var sim := BattleSim.new()
+				sim.setup(sc, 4242 + 31 * (seed0 + k))
+				while sim.tick < 12000 and sim.winner < 0:
+					sim.step()
+				w[sim.winner if sim.winner >= 0 and sim.winner < 2 else 2] += 1
+				mins += (sim.decided_tick if sim.decided_tick >= 0 else sim.tick) / 600.0
+				var r: Dictionary = sim.result()
+				for side in 2:
+					killed[side] += int(r["sides"][side]["killed"])
+			print("CROSS %-6s holder %-10s n=%d holder=%d attacker=%d draw=%d | %4.1f min | killed att %d def %d" % [
+				["ford", "bridge"][kind], "fortified" if fort else "open", n, w[1], w[0], w[2], mins / n,
+				killed[0] / n, killed[1] / n])
 
 
 ## "e" / "a" / "s" (or 0 / 1 / 2) to a skill level.

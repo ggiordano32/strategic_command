@@ -635,7 +635,7 @@ const KNOBS: Array = [
 	[SK_ART_PULL, 0, 0, 1],
 	[SK_CAV_COUNTER, 0, 0, 1500],
 	[SK_WD_COVER, 0, 0, 150],
-	[SK_STORM_STAGGER, 0, 0, 1],
+	[SK_STORM_STAGGER, 0, 0, 0],
 	[SK_FEINT, 0, 0, 1],
 	[SK_WALL_ART, 0, 0, 0],
 	[S_WALL_SHIFT, 0, 1, 1],

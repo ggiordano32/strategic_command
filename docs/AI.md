@@ -989,7 +989,9 @@ sees where they went, never their orders. This is the pipeline's, not
 Skilled's.)
 
 **Knobs (SKILLED column; Easy and Average 0 for every `SK_*`).** Average's
-values except `SHELTER_PCT` 0 (never shelters inside the walls), `IDLE_WIN`
+values except `SHELTER_PCT` 0 (never shelters inside the walls; back to
+Average's 70 on 2026-10-10 once the formula's walls term covers the
+armies inside, section 26 / CAMPAIGN.md "The formula"), `IDLE_WIN`
 50 and `SIEGE_ASSAULT_WIN` 50 (no battle under even odds unless a city is
 at stake). `SK_SUPPORT` 1, `SK_HUNT_WIN` 75; `SK_RALLY` 2 turns;
 `SK_SAFE_WIN` 70, `SK_SAFE_HOLD` 0, `SK_SAFE_GAIN` 15; `SK_STAGE_SAFE` 70;
@@ -1434,6 +1436,31 @@ Findings (30-seed runs at walls 1 unless said):
   walls 2-3 were 80 / 40 % and 20 / 0 %. Not tuned further (attackers
   unchanged; see docs/STATUS.md item 4).
 
+Re-measured 2026-10-09 / 2026-10-10 (siege pass, docs/STATUS.md "Siege
+pass (2026-10-10)"): after the melee commit 15ef028 ("ranks hold
+together") the stack at the mouth won almost every walls-1 street fight
+(ring 0 %, polis 30 %; bisected); the sim lever `TOWN_PLACE_LEAD` 10 m
+(DESIGN.md "Unit blocking and street fights") restores walls 1 (after the
+movement build, full kit: 40 / 40 % with it, 10 / 30 % at the field's
+1.5 m). The layout knobs were scanned against it first (`S_MOUTH_IN` 10 /
+18 m, `S_MOUTH_REACT` 8 m, `S_GUARD_JOIN` 0) and moved little. Knobs
+unchanged. Final equal-force table (both Average, 10 seeds; ladders + ram
+/ artillery only / full kit): ring walls 1 20 / 60 / 40 %, walls 2 0 / 20
+/ 20 %, walls 3 0 / 0 / 0 %; polis walls 1 40 / 40 / 40 %, walls 2 30 /
+30 / 10 %, walls 3 30 / 10 / 50 %. Easy defenders (full kit, walls 1 / 2):
+ring 80 / 0 %, polis 40 / 20 % (Average 40 / 20, 40 / 10): weaker only in
+the ring at walls 1 (no Easy mistake added: not measured to a cause). Where
+the attackers lose at walls 2-3 (deaths by place, 10 seeds, full kit):
+290-350 men outside the walls (their archers to the last man, 110-130,
+and the ram's and ladders' carriers) against 55-65 defenders outside and
+60-110 on the walls; inside the town the attackers kill more than they
+lose (ring walls 2 394 / 208). The gate falls at about 125 s at walls 1,
+200 s at walls 2, 290 s at walls 3 (ring), the storm going in with 840 /
+740 / 660 attackers left; the walls-2 gate's time does not change with its
+hit points (100 / 85 / 70 %: the batteries' setting up and their duel with
+the wall towers, `S_COUNTER_BAT`, set it; counter-battery off: 20-30 s
+sooner and no more wins).
+
 ## 17. Engines left on the field (2026-10-09)
 
 Engines are equipment (docs/DESIGN.md "Artillery", "Engines are equipment,
@@ -1620,6 +1647,11 @@ not use them (a side's mantlets stand where the setup put them, before its
 missile units, and the line advances past them; carrying them forward
 with the missile line was left out).
 
+Measured with the full kit (4 mantlets, a tower at walls 2-3, scorpions;
+2026-10-10 siege pass): see section 16's final table; the screens' own
+share was not isolated (the attackers' archers behind them still die to
+the last man in the duel with the walls).
+
 ## 24. Campaign build-up: Range 2, the Workshop and the wagon (2026-10-09)
 
 Measured before (`campaign_sim` 6 seeds x 60 turns, all Average): no AI
@@ -1712,3 +1744,32 @@ The siege coverage cases still see every behaviour of sections 13-16
 (the `--only=layout` case moved to fair-siege seed 2: in seed 1 the attack
 now stalls at the gate and nobody reaches the plaza reserve in 4,500
 ticks).
+
+
+## 26. Siege pass: the Skilled storm, engines taken up, wall shifts (2026-10-10)
+
+- **Skilled no longer staggers the storm** (`SK_STORM_STAGGER` 1 -> 0 for
+  Skilled). Measured cause (2026-10-09): a staggered storm sends the units
+  into the town one by one, each into the stack at the gate mouth (traces:
+  90-300 men inside at a time against Average's 450 at once); ablation at
+  ring / polis walls 1, full kit: stagger off 0 / 20 -> 70 / 40 %; feint,
+  ram wait, ladder units, memory, reserve, rotation off: unchanged. After
+  the movement build (2026-10-10, 10 seeds, full kit walls 1 / 2): Skilled
+  attacker vs Average ring 50 / 10 %, polis 40 / 30 % (Average attacker 40
+  / 20, 40 / 10).
+- **The settlement AI takes up engines** (`sim/siege_ai.gd`, the unit
+  dispatcher): a missile unit of either side out of ammunition, on the
+  ground, takes up its side's engines whose crew broke or died within
+  `ENGINE_TAKE_R` 60 m (`BattleAI._take_engines`, as the field AI).
+  Recapturing the enemy's engines is not built (gap). Not measured on its
+  own.
+- **Wall shifts stay off the citadel** (`_wall_shift`): a wall missile unit
+  on a citadel stretch is not sent to an outer stretch (the citadel's gate
+  is shut in a siege; a polis walls-3 seed's 60 acropolis archers came
+  down, could not get through and marched at a house all battle).
+- Gaps left: the AI reading enemy field works (cavalry charging stakes
+  head-on, the camp assaulted at a gap) is not built; the defenders and the
+  field AI still ignore mantlets; attacking archers fight the wall duel to
+  the last man (no pull-back when losing it); a fortified holder at a
+  crossing stays in its camp at the mouth and loses more than an open one
+  (CAMPAIGN.md formula notes; docs/STATUS.md "Siege pass (2026-10-10)").

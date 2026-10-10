@@ -20,9 +20,10 @@ extends SceneTree
 ## along the line between their settlements (the cells taken by the nearer
 ## of the two regions). Every region must have cells and each landmass must
 ## be one connected component; the tool prints what it fixed and checks.
-## Roads, rivers and hills (2026-10-09, map_geo.gd ROADS / RIVERS / HILLS):
-## per cell a terrain override (hill / ridge where a hill area is rougher
-## than the region's own terrain) and a road flag (every cell a road line
+## Roads, rivers and hills (2026-10-09, map_geo.gd ROADS / RIVERS, real
+## elevation from campaign/data/elev_data.gd): per cell a terrain override
+## (hill / ridge where the cell's elevation class, tools/geo_fit.py, is
+## rougher than the region's own terrain) and a road flag (every cell a road line
 ## runs through, 4-connected); rivers as edges: a step between two passable
 ## cells whose centres a river line separates is a river edge (a diagonal
 ## also when any orthogonal step of its 2 x 2 block is one), except at the
@@ -37,6 +38,7 @@ extends SceneTree
 
 const Geo := preload("res://game/campaign/map_geo.gd")
 const CData := preload("res://campaign/cdata.gd")
+const Elev := preload("res://campaign/data/elev_data.gd")
 
 const OUT := "res://campaign/data/grid_data.gd"
 const SEA := "."
@@ -191,6 +193,31 @@ func build() -> String:
 			if best >= 0 and int(CData.REGIONS[best]["land"]) != mass[i]:
 				best = -2
 			reg[i] = best
+	# Slivers: a land component of fewer than 4 cells (the tip of a thin
+	# peninsula, a tiny island next to the coast) is not playable ground.
+	var comp0 := _components()
+	var csize := {}
+	for i in n:
+		if comp0[i] >= 0:
+			csize[comp0[i]] = int(csize.get(comp0[i], 0)) + 1
+	var slivers := 0
+	for i in n:
+		if comp0[i] >= 0 and int(csize[comp0[i]]) < 4:
+			reg[i] = -1
+			mass[i] = -1
+			slivers += 1
+	if slivers > 0:
+		print("dropped %d sliver cells (components under 4 cells)" % slivers)
+	# Checks on the geography: every settlement lies on the landmass its region
+	# says, the elevation data is for this grid.
+	if Elev.W != w or Elev.H != h:
+		printerr("elev_data.gd is %d x %d, the grid %d x %d: run tools/geo_fit.py" % [Elev.W, Elev.H, w, h])
+		return ""
+	for r in nreg:
+		var lk := int(CData.REGIONS[r]["land"])
+		if not Geometry2D.is_point_in_polygon(Geo.site(r), lands[lk]):
+			printerr("settlement of %s (%s) is not on landmass %d" % [CData.REGIONS[r]["key"], CData.REGIONS[r]["city"], lk])
+			return ""
 	# Every region has cells; settlements on their nearest cell.
 	var sites: Array = []
 	for r in nreg:
@@ -223,7 +250,13 @@ func build() -> String:
 			if reg[i] >= 0 and mass[i] == k:
 				seen[comp2[i]] = 1
 		if seen.size() != 1:
-			printerr("landmass %d has %d components" % [k, seen.size()])
+			var sizes2 := {}
+			for i in n:
+				if reg[i] >= 0 and mass[i] == k:
+					if not sizes2.has(comp2[i]):
+						sizes2[comp2[i]] = [0, i % w, i / w]
+					sizes2[comp2[i]][0] += 1
+			printerr("landmass %d has %d components: [cells, x, y of the first] %s" % [k, seen.size(), str(sizes2.values())])
 			ok = false
 	for pair in CData.ROUTES:
 		var a := CData.region_index(pair[0])
@@ -240,6 +273,12 @@ func build() -> String:
 		var s: int = sites[r]
 		ports.append(_port(r, s) if CData.is_port(r) else -1)
 		camps.append(_camp(r, s))
+	for pair in CData.SEA_LANES:
+		for key in pair:
+			var rp := CData.region_index(key)
+			if ports[rp] < 0 or not _coastal(ports[rp]) or reg[ports[rp]] != rp:
+				printerr("sea lane %s - %s: the port cell of %s is not a coast cell of its region" % [pair[0], pair[1], key])
+				return ""
 	var counts: Array = []
 	for r in nreg:
 		var cnt := 0
@@ -494,35 +533,15 @@ func _terrain() -> bool:
 	rmask.fill(0)
 	cross = []
 	_cross_key = {}
-	# Hills.
-	var areas: Array = []  # [kind 1 / 2, poly or line, half width px]
-	for hl in Geo.HILLS:
-		var kind := 1 + int(hl["kind"])
-		if hl.has("poly"):
-			areas.append([kind, Geo._poly(hl["poly"]), -1.0])
-		else:
-			areas.append([kind, Geo._poly(hl["pts"]), float(hl["w"]) * Geo.PX_LAT])
+	# Hills and ridges from the real elevation (campaign/data/elev_data.gd,
+	# tools/geo_fit.py): a cell classed hill / ridge takes that kind where it
+	# is rougher than its region's own terrain.
 	var nh := [0, 0, 0]
 	for i in n:
 		if reg[i] < 0:
 			continue
-		var p := _centre(i)
-		var best := 0
-		for ar in areas:
-			var k: int = ar[0]
-			if k <= best:
-				continue
-			var line: PackedVector2Array = ar[1]
-			var hit := false
-			if float(ar[2]) < 0.0:
-				hit = Geometry2D.is_point_in_polygon(p, line)
-			else:
-				for s2 in line.size() - 1:
-					if p.distance_to(Geometry2D.get_closest_point_to_segment(p, line[s2], line[s2 + 1])) <= float(ar[2]):
-						hit = true
-						break
-			if hit:
-				best = k
+		var cl := Elev.CLASS[i / w].unicode_at(i % w) - 48
+		var best := 2 if cl == 4 else (1 if cl == 3 else 0)
 		if best == 0:
 			continue
 		var kind_t: int = CData.HILL if best == 1 else CData.RIDGE

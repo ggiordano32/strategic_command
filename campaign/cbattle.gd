@@ -63,6 +63,22 @@ const MANTLET_TURNS := 3    # the second mantlet step (4) after this many turns 
 const TOWER_TURNS := [2, 3]  # ... a siege tower after this many turns, two after that many (3 / 4 until 2026-10-09: supplies ran out first) ...
 const TOWER_WALLS := 2       # ... against walls of at least this level (BattleSim.EQ_WALLS)
 const MANTLETS := [2, 4]     # ... mantlets after RAM_TURNS, MANTLET_TURNS turns (walls any level)
+## The walls term of the formula (docs/CAMPAIGN.md "The formula"): the whole
+## defending side of a settlement battle (garrison and the armies inside)
+## counts this % by wall level (rows) and the attackers' kit (columns: 0 an
+## assault on arrival, artillery only; 1 ladders / a ram, one or two siege
+## turns; 2 the full kit of three turns or more). A prediction of the sim,
+## not a bonus: fitted 2026-10-10 to the equal-force sieges
+## (tests/matchups.gd --only=fair-sieges, both Average, ring and polis, 20
+## battles a cell, draws left out) as (lost / won)^(1/3), pooled where more
+## kit or lower walls came out better for the defenders (noise at 20
+## battles): attacker won by column (artillery only / ladders + ram / full
+## kit) walls 1 50 / 32 / 40 %, walls 2 26 / 17 / 16 %, walls 3 5 / 15 /
+## 26 %. (Was: the garrison alone +15 % a level.)
+const WALLS_PCT := [[100, 100, 100], [115, 115, 114], [162, 162, 158], [262, 178, 158]]
+## Test switch (tests/campaign_test.gd golden campaigns): the formula as it
+## was before the fit (the garrison alone +15 % a wall level, fortified 125 %).
+static var old_walls := false
 const DEFAULT_TIME_LIMIT := 900  # s: the sim's own battle time limit (settings "time_limit")
 const WIN_ROUT := 5      # formula: % routed on the winning side ...
 const LOSE_ROUT := 20    # ... and on the losing side
@@ -798,16 +814,34 @@ static func outcome_from_result(built: Dictionary, res: Dictionary, mode: String
 static func side_strengths(st: Dictionary, b: Dictionary) -> Array:
 	var arm := CRules.battle_armies(st, b)
 	var gs := -1 if str(b.get("kind", "")) == "field" else 1  # version 5 field battles: no garrison
-	return strengths(st, arm[0], arm[1], int(b["r"]), int(b.get("settlement", 1)) != 0, gs)
+	return strengths(st, arm[0], arm[1], int(b["r"]), int(b.get("settlement", 1)) != 0, gs, kit_of(st, b))
+
+
+## The attackers' kit for battle b (a WALLS_PCT column): 0 none (an assault
+## on arrival, any battle but an assault), 1 ladders and / or a ram, 2 the
+## full kit of a siege of TOWER_TURNS[0] turns or more.
+static func kit_of(st: Dictionary, b: Dictionary) -> int:
+	var eq := siege_equipment(st, b)
+	if eq.is_empty():
+		return 0
+	return 2 if int(eq.get("mantlets", 0)) >= int(MANTLETS[1]) else 1
+
+
+## WALLS_PCT for region r's walls against kit k.
+static func walls_pct(st: Dictionary, r: int, k: int) -> int:
+	return int(WALLS_PCT[clampi(CState.walls(st, r), 0, 3)][clampi(k, 0, 2)])
 
 
 ## Formula strengths [attackers, defenders] of two groups of armies in
 ## region r. A settlement battle: the garrison (with its walls) joins the
 ## defenders, who also get the ground. A field battle: the garrison (without
 ## walls) joins side gar_side (0, 1, or -1: not there); no ground bonus.
-## gar_side -2: 1 for a settlement battle, -1 for a field battle.
+## gar_side -2: 1 for a settlement battle, -1 for a field battle. A
+## settlement battle's defending side (garrison and armies) counts
+## WALLS_PCT of its strength for the walls against the attackers' kit
+## (0: an assault on arrival).
 static func strengths(st: Dictionary, attackers: Array, defenders: Array, r: int, settlement: bool,
-		gar_side: int = -2) -> Array:
+		gar_side: int = -2, kit: int = 0) -> Array:
 	var s := [0, 0]
 	for a in attackers:
 		s[0] += CState.strength(a) * _stance_pct(a, false) / 100
@@ -817,9 +851,14 @@ static func strengths(st: Dictionary, attackers: Array, defenders: Array, r: int
 	if gs == -2:
 		gs = 1 if settlement else -1
 	if settlement:
+		if old_walls:
+			if gs >= 0:
+				s[gs] += garrison_men_strength(st, r) * (100 + 15 * CState.walls(st, r)) / 100
+			s[1] = s[1] * (100 + ground_bonus(r)) / 100
+			return s
 		if gs >= 0:
-			s[gs] += garrison_strength(st, r)
-		s[1] = s[1] * (100 + ground_bonus(r)) / 100
+			s[gs] += garrison_men_strength(st, r)
+		s[1] = s[1] * (100 + ground_bonus(r)) / 100 * walls_pct(st, r, kit) / 100
 	elif gs >= 0:
 		s[gs] += garrison_men_strength(st, r)
 	return s
@@ -833,13 +872,16 @@ static func _stance_pct(a: Dictionary, field_def: bool) -> int:
 		CData.ST_FORCED:
 			return CData.FORCED_DEF_PCT
 		CData.ST_FORTIFY:
-			return CData.FORTIFY_DEF_PCT if field_def else 100
+			return (125 if old_walls else CData.FORTIFY_DEF_PCT) if field_def else 100
 	return 100
 
 
-## Garrison strength including the wall bonus.
+## Garrison strength with its walls as an assault after a full siege meets
+## them (WALLS_PCT, kit 2; the campaign AI's defence and threat estimates).
 static func garrison_strength(st: Dictionary, r: int) -> int:
-	return garrison_men_strength(st, r) * (100 + 15 * CState.walls(st, r)) / 100
+	if old_walls:
+		return garrison_men_strength(st, r) * (100 + 15 * CState.walls(st, r)) / 100
+	return garrison_men_strength(st, r) * walls_pct(st, r, 2) / 100
 
 
 ## Garrison strength in the open (no walls). A pure function of the

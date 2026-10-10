@@ -557,7 +557,11 @@ as men fall or engines are wrecked the survivors re-man the rest.
   its own kind keeps the old rule: all its men re-man what is left). A
   capture is the same pick-up by the enemy. A battery that breaks leaves
   them abandoned at once (free to anyone while it runs; one that rallies
-  first stands by them as before, and can Drop and take them up again). Tower
+  goes on as plain men and may take them up again: until 2026-10-10 it
+  stood by them, its men held at their places round engines that no longer
+  rolled, so a rallied battery ordered on never moved again; the same for
+  a battery whose engines are all wrecked; settlement maps only, the field
+  keeps the old rule until the field pass re-records its battles). Tower
   engines stay fixed. A shot in flight keeps the type it was fired with
   (`pr_ty`). The battle AI's missile units out of ammunition take up their
   own side's abandoned engines within 60 m (AI.md 17); AI batteries never
@@ -1021,8 +1025,8 @@ per soldier on open ground.
   troops). Since October 2026 towers are stairs: a move order off the
   stretch takes the unit down the stair at one of its ends and on through
   the streets, routers leave the wall the same way, and defenders can be
-  sent up (see "Stairs" below). Battlements stop 25 / 45 / 70 % (wall level
-  1 / 2 / 3; 35 % at every level before round 3) of missiles that would
+  sent up (see "Stairs" below). Battlements stop 25 / 25 / 40 % (wall level
+  1 / 2 / 3; tuned 2026-10-10, were 25 / 45 / 70; 35 % at every level before round 3) of missiles that would
   hit a man on a wall from below. Lines of fire (flat shots) are blocked by
   buildings (4-6 m), walls (walkway + 0.6 m parapet), towers (+4 m) and
   closed gates; a shooter on a wall looks over his own battlements. Arrows
@@ -1031,8 +1035,10 @@ per soldier on open ground.
 - *Gates*: start closed. The defenders may open or close one (order
   `ORDER_GATE`, any of their units; closing is refused while anyone stands
   in it; a broken gate stays broken). Hit points 1,800 / 2,700 / 3,800 by
-  wall level (walls 2-3 x 130 % since 2026-10-07: "Siege equipment and
-  wall towers"). Batteries ordered at a gate (`ORDER_ATTACK` with `gate`)
+  wall level (x 100 % at every level, tuned 2026-10-10; walls 2-3 x 130 %
+  from 2026-10-07: "Siege equipment and wall towers"). A burning gate loses
+  `GATE_FIRE_CHIP` 1.5 / 0.8 / 0.6 % of its hit points a second at walls
+  1 / 2 / 3 (a walls-1 gate is wood: about 70 s of fire; tuned 2026-10-10). Batteries ordered at a gate (`ORDER_ATTACK` with `gate`)
   shoot its outer face: a bolt landing within it (1.5 m round) takes 80 hp,
   a stone 360. Foot (not missile troops, cavalry or crews) of the attackers
   standing at a closed gate (within 2 m of its face, not marching past)
@@ -1554,15 +1560,19 @@ fire, `_land`, `_land_bolt` / `_land_stone`, morale, `_check_winner`,
 the view (`game/battle.gd`, `game/order_preview.gd`, `game/overlay.gd`,
 `game/custom/*`, `game/main.gd`, new-campaign and siege panel).
 
-- **Hard gates.** Walls-2/3 gates have `GATE_HP_PCT` 130 % of their old
-  hit points (3,510 / 4,940) and take `GATE_HACK_BY_WALLS` 1 % instead of
+- **Hard gates.** Walls-2/3 gates had `GATE_HP_PCT` 130 % of their old
+  hit points (3,510 / 4,940; tuned 2026-10-10: 100 / 100 %, 2,700 / 3,800:
+  a walls-3 gate falls to the ram 8-9 times in 10 and its blows scale with
+  the hit points; a walls-2 gate falls to the batteries, whose time did
+  not change between 100 / 85 / 70 %) and take `GATE_HACK_BY_WALLS` 1 % instead of
   25 % per sword blow (a few hours of hacking): they yield to rams and
   artillery. Walls 0-1 gates are unchanged.
 - **Tower engines** (walls 2-3; city key `towers`: 0 leaves them out). At
   setup the sim appends engine units of the defenders (UT "fixed") on the
   generator's towers (`map_info.city.towers`, in order): bolt throwers on
   the towers flanking each outer gate first, then on others nearest the
-  main gate at least 40 m apart, 6 in all at walls 2 and 8 at walls 3; at
+  main gate at least 40 m apart, 6 in all at walls 2 and 8 at walls 3
+  (tuned 2026-10-10: 3 and 4, `TOWERS_MAX`); at
   walls 3 first two stone throwers on the biggest towers not by a gate
   (`_siege_towers`). None on a citadel's towers or on the sea wall. Each is
   one engine (bolt: crew 4, 20 bolts, 180 m, reload 6 s; stone: crew 6, 12
@@ -1733,6 +1743,18 @@ Code: "unit footprints" in `sim/battle_sim.gd` (`_build_occ`, `_occ_probe`,
 `_anchor_step`), `_slots_off_enemy`, `place_clear`; `sim/siege_ai.gd`
 `_breach_hold` / `_guards_join` (since replaced by the defender layout,
 below). Everywhere (field and city maps).
+- **The press in a town (tuned 2026-10-10).** On settlement maps a
+  fighting man may get `TOWN_PLACE_LEAD` 10 m ahead of his place instead
+  of the field's `PLACE_LEAD` 1.5 m ("Ranks hold together"): in a gateway
+  or a street the formation's places stand in the walls and houses, and
+  with the field's cap a column coming out of a gateway fought only with
+  the men at its places, against a stack that had its whole frontage.
+  Measured: equal-force walls-1 sieges (ladders + ram) went from 40 / 50 %
+  (ring / polis) to 0 / 30 % with the melee commit 15ef028 (bisected over
+  the day's commits); 3 m gave 0-30 %, 10 m 40-60 %, no cap 70-100 %.
+  Re-measured after "Units flow into the space" (2026-10-10, full kit,
+  10 seeds): 10 m ring / polis walls 1 40 / 40 %, the field's 1.5 m
+  10 / 30 %; kept.
 - **Footprints.** At the start of each tick's unit update every ready unit
   on the ground (not routing, not on a wall, a stair or its ladders, not a
   tower's engine) marks its footprint in the 4 m cells of the soldier
@@ -1843,12 +1865,13 @@ probe `tests/determinism_test.gd --only=flow`, `tests/matchups.gd
   `stat_stuck_max`, per unit `stat_stuck_u` (longest) and `stat_stuck_t`
   (ticks in all).
 - **Ladders** (`_ladder_step`; replaces the shared `q_acc` pool and the
-  slot-fixed wait spots). Every man still below picks a ladder of the set
-  in slot order: the way to its foot plus `LADDER_QCOST` 1.2 m for each man
+  slot-fixed wait spots). Every man still below picks a ladder of the set,
+  the men nearest a ladder's foot first (ties: lower slot; in slot order
+  until 2026-10-10, see below): the way to its foot plus `LADDER_QCOST` 1.2 m for each man
   already in its queue (ties to the lower ladder), and waits in its queue, two abreast
   (`LADDER_QW` 0.6 m either side) a metre apart back from the foot. Each
-  ladder takes its first man up when he is within `LADDER_AT` 1.5 m of its
-  foot and it is free: `q_lt` (hashed, per planted piece and lane) holds
+  ladder takes its first man up when he is within `LADDER_AT` 8 m of its
+  foot (1.5 m until 2026-10-10) and it is free: `q_lt` (hashed, per planted piece and lane) holds
   the tick each lane takes its next man, `climb_per` ticks after the last,
   all lanes at once (the set's throughput as before: `LADDER_TICKS` per
   ladder); he steps onto the walkway whoever stands there. (A rule holding
@@ -1862,6 +1885,20 @@ probe `tests/determinism_test.gd --only=flow`, `tests/matchups.gd
   the wall once all are up. With a ladder free and nobody coming to it for
   `LADDER_STALL` 30 s the climb is given up (all come down the ladders;
   `stat_ladder_cut`). No man is left below a wall unit.
+  **Fix (siege pass, 2026-10-10):** after this build a defended escalade
+  killed far fewer defenders (probe (b), 8 sim seeds, men up / defenders
+  killed: before the build walls 1 88 / 42, walls 2 66 / 16; with it 78 /
+  22 and 56 / 4). Bisected inside `_ladder_step` (the old step restored
+  in the current tree gave 90 / 44 and 66 / 15): under fire the queues
+  were assigned in slot order and every death refills slots from behind,
+  so who stood first at each ladder changed every few ticks and the
+  ladders stood idle a fifth of the climb (360 idle lane-ticks a battle,
+  the queue's first man 3 m off the foot on average). Nearest-first order
+  and `LADDER_AT` 8 m (the old step's reach): 88 / 38 and 60 / 7. The rest
+  of the walls-2 gap is the old step's arrivals, which repeated the top of
+  the ladder whose man had just died (any man to any top at the set's
+  rate: friends within 3 m of an arrival 3.4-5.1 against 1.6 now); only
+  that unphysical rule restores it (65 / 14), so it is not rebuilt.
 - **Slots that flow** (`_flow_slots`, from `_compute_offsets`, units near
   obstacles on the ground or at a stair's foot). The rectangle is laid out
   as before; places that are cut (across a wall, in a house, on another
@@ -1886,7 +1923,11 @@ probe `tests/determinism_test.gd --only=flow`, `tests/matchups.gd
   again (and while stuck a moving goal no longer replans it unless it moved
   48 m; the street graph's distance tables are built at once for it), or a
   move within `STUCK_NEAR` 8 m of its destination, or to ground no longer
-  reachable (a gate shut since), ends where it got to; at 150 the anchor
+  reachable (a gate shut since), ends where it got to (since 2026-10-10
+  also a march to a stair's foot, and any move with no way through the
+  street graph: a pocket reached by an alley too narrow for its 3 m line;
+  a fair siege's 60 wall archers come down into one marched at a house for
+  the rest of the battle); at 150 the anchor
   goes back to its men (`_regroup`; the man farthest back on its own
   ground when they are strung out past `LAG_HOLD`) and goes on from there.
   Only the anchor and the places move: no man steps through a wall or an
@@ -3239,3 +3280,8 @@ theme is a data folder plus its art. Smaller units (companies of 30 to 80)
 mean every balance number is re-fitted; the fit-the-formula tooling from the
 siege work is what calibrates a new theme. Victory conditions for tribes
 (land and buffalo, not cities) are the open design problem.
+
+### Overworld: real geography and the landscape layer (as built, 2026-10-10)
+
+## STATUS row
+- Real geography (view data + static grid, no state change, `CState.VERSION` 6): the overworld is fitted to ETOPO 2022 elevation (NOAA, public domain) and Natural Earth 1:10m coasts and rivers (public domain). `tools/geo_fit.py` (+ `tools/geo/med.json`: window, projection, cell size, settlements, rivers; the Mediterranean is only the default config) writes `map_geo.gd` LANDS / ISLANDS / RIVERS, `campaign/data/elev_data.gd` (per cell mean / max / relief / distance to river / class plain-rolling-valley-hill-ridge) and `game/campaign/relief_data.gd` (0.025 degree fine elevation, slope, relief); `campaign_grid.gd` derives hill / ridge from the real class (434 hill, 140 ridge override cells; was 200 / 215 from hand areas, now deleted) and asserts every settlement is on its landmass and every sea-lane port is a coast cell. Terrain view renders the real relief (hillshade + subtle hypsometric tint + crest line, one cached texture; `geo_fields.gd` serves elevation / slope / class to the view). Nudged: Carthago, Hadrumetum by 0.01-0.02 degrees. Re-pinned: campaign_test goldens (3007c1ab / 4197043257, be6e10a3 / 3786296811) and the Tarentum march rows (from Venetia). campaign_sim --seeds=6 --turns=60: hash 8562cf3a (HEAD 803bf309); no collapse; Epirus is eliminated in 5 of 6 seeds (3 of 6 at HEAD), Macedon in 0 (2 of 6).

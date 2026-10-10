@@ -108,6 +108,14 @@ const PLACE_LEAD := 3 * M / 2    # a fighting man walks at most this far ahead o
                                  # his place (along the unit's facing): the
                                  # front rank stays with its body
 const PLACE_SIDE := 3 * M        # ... and at most this far to either side of it
+## ... on settlement maps (city_on) this far instead: in a gateway or a street
+## the formation's places stand in the walls and houses (its frontage clamped
+## to the way it is in), and the press spills forward out of it; with the
+## field's 1.5 m a column coming out of a gateway fought only with the men
+## at its places and walls-1 equal-force sieges fell from 40 % to 0 %
+## (siege rebalance, 2026-10-09; docs/DESIGN.md "Unit blocking and street
+## fights").
+static var TOWN_PLACE_LEAD := 10 * M
 const INREACH_EXTRA := M         # a man this close past his reach counts as
                                  # in reach (u_inreach: the anchor stops closing)
 const WRAP_GAP := M              # wrap at the anchor level: outer front-rank places curl round the target's flank this far out from it
@@ -216,6 +224,7 @@ const REFILL_FULL := 60          # 6 s to settle in, 3 s to get back out
 # mille of its full hit points every second while it burns.
 const FIRE_TICKS := 300          # an object set alight burns 30 s (each new fire missile on it restarts it)
 const FIRE_CHIP := 6             # per mille of its full hit points lost a second while burning (18 % a fire)
+static var GATE_FIRE_CHIP: Array[int] = [6, 15, 8, 6]  # ... a gate's, by wall level: a walls-1 gate is wood and burns down in about 70 s of fire (2026-10-09; 780 fire arrows took it 57 % at 6)
 const FIRE_R := 3 * M            # a fire missile landing this near an engine, ladders, a ram or a wagon (a tower: its radius)
 const BURN_UNIT := 40            # a unit a fire missile struck burns this many ticks ...
 const BURN_DRAIN := 1            # ... losing this much morale a tick meanwhile
@@ -310,7 +319,7 @@ const GATE_BOLT := 80            # gate hp per bolt that hits it ...
 const GATE_STONE := 360          # ... per stone
 ## Siege levers (docs/DESIGN.md "Siege equipment and wall towers"): static
 ## so tests/matchups.gd --tune can try values; the game never changes them.
-static var WALL_COVER: Array[int] = [0, 25, 45, 70]  # % of missiles from below stopped by the battlements, by wall level (was 25 / 35 / 65)
+static var WALL_COVER: Array[int] = [0, 25, 25, 40]  # % of missiles from below stopped by the battlements, by wall level (tuned 2026-10-09; was 25 / 45 / 70)
 static var WALL_RANGE_PCT: Array[int] = [0, 0, 15, 15]  # missile troops on a wall reach this % further at men below
 const WALL_PARAPET := 614        # parapet top above the walkway (line of fire)
 const CAPTURE_TICKS := 600       # attackers hold the plaza this long: the defenders break
@@ -341,13 +350,13 @@ const REGROUP := 100             # ... for this long: the unit regroups where it
 # Siege equipment and wall towers (docs/DESIGN.md "Siege equipment and wall
 # towers"). Walls 2-3 gates shrug off swords; rams and artillery break them.
 static var GATE_HACK_BY_WALLS: Array[int] = [25, 25, 1, 1]  # GATE_HACK_PCT by wall level
-static var GATE_HP_PCT: Array[int] = [100, 100, 130, 130]   # gate hit points (% of MapGen.GATE_HP) by wall level
+static var GATE_HP_PCT: Array[int] = [100, 100, 100, 100]   # gate hit points (% of MapGen.GATE_HP) by wall level (tuned 2026-10-10: walls-3 gates fall to the ram 8-9 times in 10 and its blows scale with these; walls-2 gates fall to the batteries, whose time 100 / 85 / 70 % did not change; was 130 / 130)
 const RAM_REACH := 6 * M         # a ram's crew this close outside a closed gate's face works it ...
 const RAM_MEN := 6               # ... at least this many of them ...
 const RAM_WORK := 480            # ... man-ticks per blow (20 men: a blow every 2.4 s) ...
 static var ROUT_INWARD := 1     # defenders routing inside the walls run to the inside of the shut gate farthest from the enemy (1), or toward their map edge, out by any way (0)
 static var RAM_DMG := 160        # ... hit points per blow
-static var TOWERS_MAX: Array[int] = [0, 0, 6, 8]          # bolt-thrower towers by wall level ...
+static var TOWERS_MAX: Array[int] = [0, 0, 3, 4]          # bolt-thrower towers by wall level (tuned 2026-10-09; was 6 / 8) ...
 static var TOWERS_STONE: Array[int] = [0, 0, 0, 2]        # ... and stone-thrower towers
 const TOWER_SPACING := 40        # m between towers given engines (a gate's pair excepted)
 const TOWER_AMMO_BLD := 5        # a city with this building (cdata "workshop", MapGen.B_WORKSHOP) ...
@@ -357,7 +366,11 @@ const TOWER_STONE_DMG := 330     # ... per stone
 const LADDER_SET := 5            # ladders in a set (one piece of equipment)
 static var LADDER_TICKS: Array[int] = [0, 20, 30, 40]    # ticks per man up one ladder, by wall level
 const LADDER_NEAR := 8 * M       # the anchor this close to the foot: the climb begins
-const LADDER_AT := 3 * M / 2     # a man this near his ladder's foot, first in its queue, goes up when it is free
+const LADDER_AT := 8 * M         # a man this near his ladder's foot, first in its queue, goes up when it is free
+                                 # (1.5 m until 2026-10-10: in the crush at the feet of a
+                                 # defended set the queue's first man stood 3 m off on
+                                 # average and the ladders stood idle a fifth of the climb;
+                                 # 8 m is the pre-queue reach, LADDER_NEAR)
 const LADDER_QSP := M            # a ladder's queue: two abreast (LADDER_QW apart along the wall), a man every this much back from the foot
 const LADDER_QW := 1229          # ... the two files of a queue this far apart (0.6 m either side of the ladder)
 const LADDER_QCOST := 1229       # a man choosing his ladder counts each man already in its queue as this much more way
@@ -1111,6 +1124,7 @@ var stat_deploys: int = 0      # batteries finished setting up
 var stat_packs: int = 0        # batteries finished packing up
 var stat_wrecked: int = 0      # engines wrecked
 var stat_abandoned: int = 0    # engines abandoned
+var stat_eng_plain: int = 0       # batteries with no working engine left that went on as plain men
 var stat_engine_hits: int = 0  # shots that struck an engine
 ## Terrain diagnostics (not hashed): melee blows with a height bonus for the
 ## higher man / against the lower, charge impacts downhill / uphill, shots
@@ -6087,6 +6101,17 @@ func _stuck_release(u: int, k: int) -> void:
 			# another piece of ground; it went straight at it into a house.)
 			u_order[u] = O_NONE
 			stat_unstick[1] += 1
+		elif u_order[u] == O_MOVE and (st == 0 or st == 2) and city_on != 0 and u_pn[u] > 0 \
+				and (reach_at(u_pgx[u], u_pgy[u]) != reach_at(u_ax[u], u_ay[u]) \
+				or route_to(u_ax[u], u_ay[u], u_pgx[u], u_pgy[u], _ground_mask(u)).is_empty()):
+			# No way to where it is going (a march to a stair's foot across a
+			# shut gate; the street graph not reaching a pocket by an alley
+			# too narrow for its 3 m line): the move is over, as above.
+			# (2026-10-10: a fair siege's wall archers come down into such a
+			# pocket marched at a house for the rest of the battle.)
+			u_stair[u] = 0
+			u_order[u] = O_NONE
+			stat_unstick[1] += 1
 		else:
 			u_pn[u] = 0
 			stat_unstick[2] += 1
@@ -6689,6 +6714,7 @@ func _update_soldiers() -> void:
 		# on a stair or ladder move, not on a wall: those follow their own
 		# trails).
 		var lead_cap := stair_mv == 0 and not (ob and u_wall[u] != 0)
+		var lead := PLACE_LEAD if city_on == 0 else TOWN_PLACE_LEAD
 		var reach_in := reach + INREACH_EXTRA
 		var counted := 0
 		# Slots can be reshuffled by deaths inside this loop (gap filling), so
@@ -6894,7 +6920,7 @@ func _update_soldiers() -> void:
 						var pl := Vector2i(ax + oxs[kc], ay + oys[kc])
 						if wrap_t >= 0 and slot < files:
 							pl = _curl(pl.x, pl.y, ax, ay, fcos, fsin, wr_tl, wr_lim, wr_dep)
-						var cap := _cap_lead(x, y, nx, ny, pl.x, pl.y, fcos, fsin, PLACE_SIDE)
+						var cap := _cap_lead(x, y, nx, ny, pl.x, pl.y, fcos, fsin, PLACE_SIDE, lead)
 						nx = cap.x
 						ny = cap.y
 					if is_cav and step_len * 3 < run_cap:
@@ -7012,7 +7038,7 @@ func _update_soldiers() -> void:
 						# Lapping round: sideways, not out ahead of the line
 						# (of its place curled round the target's flank).
 						var plw := _curl(ax + oxs[k], ay + oys[k], ax, ay, fcos, fsin, wr_tl, wr_lim, wr_dep)
-						var capw := _cap_lead(x, y, nx, ny, plw.x, plw.y, fcos, fsin, 1 << 30)
+						var capw := _cap_lead(x, y, nx, ny, plw.x, plw.y, fcos, fsin, 1 << 30, lead)
 						nx = capw.x
 						ny = capw.y
 				fc[i] = face
@@ -7347,19 +7373,20 @@ static func _curl(plx: int, ply: int, ax: int, ay: int, c: int, s: int, tl: int,
 
 
 ## A fighting man's step from (x, y) to (nx, ny), cut so it takes him no
-## further than PLACE_LEAD ahead of his place (plx, ply) along the unit's
+## further than `lead` (PLACE_LEAD; TOWN_PLACE_LEAD in a town) ahead of his
+## place (plx, ply) along the unit's
 ## facing (c, s), nor further than `side` to either side of it. Only the
 ## part of the step that goes beyond is cut, and a man already beyond is
 ## not pulled back, just stops going further that way.
 static func _cap_lead(x: int, y: int, nx: int, ny: int, plx: int, ply: int, c: int, s: int,
-		side: int) -> Vector2i:
+		side: int, lead: int = PLACE_LEAD) -> Vector2i:
 	var rx := nx - x
 	var ry := ny - y
 	var ox := x - plx
 	var oy := y - ply
 	var sf := (rx * c + ry * s) / FM.TRIG_ONE
 	if sf > 0:
-		var over := (ox * c + oy * s) / FM.TRIG_ONE + sf - PLACE_LEAD
+		var over := (ox * c + oy * s) / FM.TRIG_ONE + sf - lead
 		if over > 0:
 			over = mini(over, sf)
 			nx -= c * over / FM.TRIG_ONE
@@ -8310,7 +8337,7 @@ func _update_fire() -> void:
 			g_burn[g] = 0
 			continue
 		if sec:
-			var chip := maxi(g_hp0[g] * FIRE_CHIP / 1000, 100)
+			var chip := maxi(g_hp0[g] * GATE_FIRE_CHIP[clampi(city_walls, 0, 3)] / 1000, 100)
 			g_hp[g] -= chip
 			g_hit_t[g] = tick
 			stat_fire_dmg += chip / 100
@@ -8720,6 +8747,23 @@ func _update_artillery() -> void:
 					stat_abandoned += 1
 					e_unit[e] = eg_u0[e_grp[e]]
 			continue
+		if t_fixed[ty] == 0 and u_eg[u] >= 0 and city_on != 0:
+			var working := false
+			for k in ne:
+				if e_state[e0 + k] == E_OK:
+					working = true
+					break
+			if not working:
+				# Rallied after its crews broke (the engines left where they
+				# stood) or every engine wrecked: it fights on as plain men.
+				# (Until 2026-10-10 its men kept to their places at the dead
+				# engines: a battery ordered on never moved again; fair sieges
+				# showed attacking batteries "stuck" 3,000-4,000 ticks. Settlement
+				# maps only for now: on the field it changes the recorded
+				# battles, which the field pass owns.)
+				_to_plain(u)
+				stat_eng_plain += 1
+				continue
 		var full := t_deploy[ty]
 		var packed := u_depl[u] == 0
 		var face := u_face[u]
@@ -11812,8 +11856,8 @@ func _on_walk(x: int, y: int) -> bool:
 
 
 ## A climbing unit, once a tick (docs/DESIGN.md "Units flow into the
-## space"): each man still below picks a ladder of the set, nearest men
-## first (the way to its foot plus LADDER_QCOST for each man already in its
+## space"): each man still below picks a ladder of the set, the men nearest
+## a ladder's foot first (the way to its foot plus LADDER_QCOST for each man already in its
 ## queue; ties to the lower ladder) and waits in its queue, two abreast back from
 ## the foot (_lw_x / _lw_y, read by _stair_leave). Every ladder takes the
 ## first man of its queue up once he is within LADDER_AT of its foot and
@@ -11869,8 +11913,12 @@ func _ladder_step(u: int) -> void:
 		ok[kc] = 1
 		lfx[kc] = u_lfx[u]
 		lfy[kc] = u_lfy[u]
-	# Men below, in slot order.
+	# Men below, nearest a ladder's foot first (ties: lower slot). (Until
+	# 2026-10-10 in slot order: a death refills slots from behind, so under
+	# fire who stood first in each queue changed every few ticks and the
+	# ladders waited for men walking up from the back of the crowd.)
 	var keys := PackedInt32Array()
+	var sk := PackedInt64Array()
 	for s in alive:
 		var i := slot_soldier[base + s]
 		if state[i] >= S_DEAD:
@@ -11883,7 +11931,14 @@ func _ladder_step(u: int) -> void:
 		_lw_y[base + s] = y
 		if state[i] == S_DOWN:
 			continue  # (lying where he fell: no queue yet)
-		keys.append(s)
+		var dm := 1 << 30
+		for k in n_l:
+			if ok[k] != 0:
+				dm = mini(dm, FM.approx_len(x - lfx[k], y - lfy[k]))
+		sk.append((dm << 12) | s)
+	sk.sort()
+	for v in sk:
+		keys.append(int(v & 4095))
 	var below := keys.size()
 	if below == 0:
 		var still := false

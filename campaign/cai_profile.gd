@@ -200,7 +200,7 @@ const KNOBS: Array = [
 	[TOWARD_PCT, 150, 150, 150],
 	[FORCED_HELP, 1, 1, 1],
 	# Defence, screening and zones of control.
-	[SHELTER_PCT, 0, 70, 0],
+	[SHELTER_PCT, 0, 70, 70],
 	[SCREEN_PCT, 80, 80, 80],
 	[SCREEN_NEAR, 2, 2, 2],
 	# Sieges and relief.
