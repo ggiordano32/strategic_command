@@ -259,6 +259,8 @@ func _init() -> void:
 		quit(0 if _ok else 1)
 		return
 	_check_deploy()
+	_check_deploy_unlimited()
+	_check_kills_by()
 	if "--only=deploy" in OS.get_cmdline_user_args():
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
@@ -3547,6 +3549,95 @@ func _check_reach() -> void:
 	else:
 		for x in bad:
 			_fail(str(x))
+
+
+## Unlimited deployment (scenario "deploy_time" -1; "--only=deploy"): no
+## countdown, so 2,000 ticks pass without the battle starting; the battle
+## starts on the Ready of the player in dep_need (and at once when nobody
+## is needed); snapshot / restore in the phase keeps it; repeats are equal.
+func _check_deploy_unlimited() -> void:
+	var sc := _deploy_scenario("field")
+	sc["deploy_time"] = -1
+	var hashes: Array = []
+	for rep in 2:
+		var sim := BattleSim.new()
+		sim.setup(sc, 4711)
+		if sim.phase != BattleSim.PHASE_DEPLOY or sim.deploy_secs_left() != -1:
+			_fail("unlimited deployment: not in the deployment phase with secs_left -1 (%d)" % sim.deploy_secs_left())
+			return
+		for i in 2000:
+			sim.step()
+		if sim.phase != BattleSim.PHASE_DEPLOY or sim.tick != 0:
+			_fail("unlimited deployment: the battle started by itself (phase %d)" % sim.phase)
+			return
+		var blob := sim.snapshot()
+		var sim2 := BattleSim.new()
+		sim2.setup(sc, 4711)
+		sim2.restore(blob)
+		if sim2.state_hash() != sim.state_hash() or sim2.deploy_secs_left() != -1:
+			_fail("unlimited deployment: snapshot / restore differs")
+		sim.queue_order({"tick": 0, "type": BattleSim.ORDER_READY, "who": 0})
+		var n := 0
+		while sim.phase == BattleSim.PHASE_DEPLOY and n < 10:
+			sim.step()
+			n += 1
+		if sim.phase != BattleSim.PHASE_BATTLE:
+			_fail("unlimited deployment: Ready did not start the battle")
+			return
+		for i in 50:
+			sim.step()
+		hashes.append(sim.state_hash())
+	if hashes[0] != hashes[1]:
+		_fail("unlimited deployment: two runs differ")
+	elif _ok:
+		print("PASS unlimited deployment: no auto start in 2000 ticks, starts on Ready, snapshot-safe, repeatable")
+
+
+## Kills by enemy type (u_kills_ty, result "kills_by"): after a battle the
+## per-type counts of each unit add up to its u_kills, the lists are sorted
+## (n desc, then type), the counter survives snapshot / restore and is in
+## the hash.
+func _check_kills_by() -> void:
+	var sim := BattleSim.new()
+	sim.setup(Scenarios.make("battle_2000"), 99)
+	for i in 1500:
+		sim.step()
+	var tot := 0
+	var shown := ""
+	var bad := 0
+	for u in sim.n_units:
+		var by := sim.kills_by(u)
+		var sum := 0
+		for i in by.size():
+			sum += int(by[i][1])
+			if i > 0 and (int(by[i][1]) > int(by[i - 1][1]) or (int(by[i][1]) == int(by[i - 1][1]) and int(by[i][0]) <= int(by[i - 1][0]))):
+				bad += 1
+		if sum != sim.u_kills[u]:
+			bad += 1
+		tot += sum
+		if shown == "" and by.size() > 1:
+			shown = "unit %d (%s): kills %d = %s" % [u, UT.TYPES[sim.u_otype[u]]["name"], sim.u_kills[u], str(by)]
+	var res := sim.result()
+	for r in res["units"]:
+		if not r.has("kills_by"):
+			bad += 1
+	var blob := sim.snapshot()
+	var sim2 := BattleSim.new()
+	sim2.setup(Scenarios.make("battle_2000"), 99)
+	sim2.restore(blob)
+	if sim2.u_kills_ty != sim.u_kills_ty or sim2.state_hash() != sim.state_hash():
+		bad += 1
+	var h0 := sim.state_hash()
+	for k in sim.u_kills_ty.size():
+		if sim.u_kills_ty[k] > 0:
+			sim.u_kills_ty[k] += 1
+			break
+	if sim.state_hash() == h0:
+		bad += 1
+	if bad > 0 or tot == 0:
+		_fail("kills by type: %d problems, %d kills in all" % [bad, tot])
+	else:
+		print("PASS kills by type: sums equal u_kills for all %d units (%d kills), sorted, snapshot-safe, hashed. %s" % [sim.n_units, tot, shown])
 
 
 # ------------------------------------------------------------ deployment ---

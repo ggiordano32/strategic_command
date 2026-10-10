@@ -12,6 +12,8 @@ const SoldierLayer := preload("res://game/soldier_layer.gd")
 const Controls := preload("res://game/controls.gd")
 const CampaignScreen := preload("res://game/campaign/campaign_screen.gd")
 const NewCampaign := preload("res://game/campaign/new_campaign.gd")
+const LoadingPanel := preload("res://game/campaign/loading_panel.gd")
+const MapView := preload("res://game/campaign/map_view.gd")
 const Saves := preload("res://game/campaign/saves.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -63,6 +65,7 @@ var _rotate_hint: Label
 var book: UnitBook
 var controls: Controls
 var campaign: CampaignScreen = null
+var _preparing := false  # a campaign is opening behind the loading panel
 var _new_campaign: NewCampaign = null
 ## Menu pages: "home", "sandbox", "continue", "import", "join", "share".
 var _pages := {}
@@ -205,7 +208,7 @@ func _ready() -> void:
 		elif a == "--new-online":
 			_new_campaign_page(true)  # testing aid
 		elif a.begins_with("--open-online="):
-			_open_online(a.get_slice("=", 1))  # testing aid
+			_open_online.call_deferred(a.get_slice("=", 1))  # testing aid
 		elif a.begins_with("--share="):
 			_show_share(a.get_slice("=", 1).get_slice(":", 0), a.get_slice(":", 1))  # testing aid
 		elif a == "--controls":
@@ -221,12 +224,12 @@ func _ready() -> void:
 			var data := {"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}
 			var sl := Saves.slot_for("test", sd)
 			Saves.save(sl, data)
-			_open_campaign(data, sl)
+			_open_campaign.call_deferred(data, sl)
 		elif a.begins_with("--campaign-slot="):
 			var sl2: String = a.get_slice("=", 1)
 			var d2 := Saves.load_slot(sl2)
 			if not d2.is_empty():
-				_open_campaign(d2, sl2)
+				_open_campaign.call_deferred(d2, sl2)
 	_check_server.call_deferred()
 	var net := _net()
 	if net != null and net.launch.has("nettest"):
@@ -473,11 +476,15 @@ func _fill_continue() -> void:
 	for m in list:
 		var h := Kit.hbox(6)
 		var sl := str(m["slot"])
-		var b := _menu_button("%s - %s - %s" % [m.get("name", sl), " & ".join(m.get("factions", [])), m.get("date", "")],
-			func():
-				var d := Saves.load_slot(sl)
-				if not d.is_empty():
-					_open_campaign(d, sl))
+		var b := _menu_button("%s - %s - %s" % [m.get("name", sl), " & ".join(m.get("factions", [])), m.get("date", "")], Callable())
+		b.pressed.connect(func():
+			# (off at once: a second tap cannot open it twice; the panel follows in the same frame)
+			b.disabled = true
+			var d := Saves.load_slot(sl)
+			if not d.is_empty():
+				_open_campaign(d, sl)
+			else:
+				b.disabled = false)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		b.clip_text = true
@@ -788,13 +795,20 @@ func _open_online(cid: String) -> void:
 	if net == null or campaign != null:
 		return
 	var oc = net.open_campaign(cid)
-	if oc == null:
+	if oc == null or _preparing:
 		return
+	_preparing = true
+	var lp = LoadingPanel.open(get_tree().root, "Preparing the campaign", 5)
 	_menu.visible = false
+	await lp.step("Contacting the server")
+	await oc.prefetch()
+	await _prepare_map(lp)
+	await lp.step("Building the screen")
 	campaign = CampaignScreen.new()
 	campaign.open_online(oc)
 	campaign.exit_requested.connect(_close_campaign)
-	get_tree().root.add_child.call_deferred(campaign)
+	get_tree().root.add_child(campaign)
+	await _finish_loading(lp)
 
 
 func show_page(p: String) -> void:
@@ -815,10 +829,10 @@ func _new_campaign_page(online: bool = false) -> void:
 		_new_campaign.queue_free()
 		_new_campaign = null
 		_show_share(cid, code))
-	_new_campaign.start.connect(func(d, sl):
+	_new_campaign.start.connect(func(d, sl, lp):
 		_new_campaign.queue_free()
 		_new_campaign = null
-		_open_campaign(d, sl))
+		_open_campaign(d, sl, lp))
 	_new_campaign.back.connect(func():
 		_new_campaign.queue_free()
 		_new_campaign = null
@@ -827,14 +841,41 @@ func _new_campaign_page(online: bool = false) -> void:
 	move_child(_new_campaign, _menu.get_index() + 1)
 
 
-func _open_campaign(d: Dictionary, sl: String) -> void:
-	if campaign != null:
+## Open a campaign behind the "Preparing the campaign" panel: lp is the panel
+## a new campaign's tap already opened (its first step done), else it opens
+## here (a saved game: 4 steps). The map's bakes run a step at a time with a
+## frame between, then the screen is built.
+func _open_campaign(d: Dictionary, sl: String, lp = null) -> void:
+	if campaign != null or _preparing:
+		if lp != null:
+			lp.close()
 		return
+	_preparing = true
+	if lp == null:
+		lp = LoadingPanel.open(get_tree().root, "Preparing the campaign", 4)
 	_menu.visible = false
+	await _prepare_map(lp)
+	await lp.step("Building the screen")
 	campaign = CampaignScreen.new()
 	campaign.open(d, sl)
 	campaign.exit_requested.connect(_close_campaign)
-	get_tree().root.add_child.call_deferred(campaign)
+	get_tree().root.add_child(campaign)
+	await _finish_loading(lp)
+
+
+## The map's bake steps (MapView.prepare_steps) on the panel.
+func _prepare_map(lp) -> void:
+	for s in MapView.prepare_steps():
+		await lp.step(s[0])
+		(s[1] as Callable).call()
+
+
+## The screen is built: let its first frame draw, then drop the panel.
+func _finish_loading(lp) -> void:
+	await lp.done()
+	await get_tree().process_frame
+	lp.close()
+	_preparing = false
 
 
 func _close_campaign() -> void:
@@ -915,11 +956,15 @@ func _build_siege_row() -> Control:
 	_siege_seed.custom_minimum_size = Vector2(96, 42)
 	_siege_seed.tooltip_text = "Settlement seed: the same seed, level and walls always give the same map"
 	box.add_child(_siege_seed)
-	for key in ["plan", "level", "walls", "kind", "coast", "side", "equip", "time"]:
+	for key in ["plan", "level", "walls", "kind", "coast", "side", "equip"]:
 		var b := _menu_button("", _cycle_siege.bind(key))
 		b.custom_minimum_size = Vector2(110, 42)
 		_siege_buttons[key] = b
 		box.add_child(b)
+	var tdd := Kit.dropdown(Kit.TIME_OPTIONS, _siege_time, func(v): _siege_time = int(v), 110, 15)
+	tdd.name = "siege_time"
+	tdd.custom_minimum_size.y = 42
+	box.add_child(tdd)
 	var go := _menu_button("Start", func(): _start_siege(_siege_params()))
 	go.custom_minimum_size = Vector2(100, 42)
 	box.add_child(go)
@@ -943,8 +988,6 @@ func _cycle_siege(key: String) -> void:
 			_siege_coast = 1 - _siege_coast
 		"equip":
 			_siege_equip = (_siege_equip + 1) % 3
-		"time":
-			_siege_time = [900, 1200, 1800, 2700][([900, 1200, 1800, 2700].find(_siege_time) + 1) % 4]
 	_update_siege_buttons()
 
 
@@ -958,7 +1001,6 @@ func _update_siege_buttons() -> void:
 	(_siege_buttons["plan"] as Button).text = MapGen.PLAN_NAMES[_siege_plan]
 	(_siege_buttons["coast"] as Button).text = "Coast" if _siege_coast != 0 else "Inland"
 	(_siege_buttons["equip"] as Button).text = ["No ladders", "Ladders", "Ladders, ram"][_siege_equip]
-	(_siege_buttons["time"] as Button).text = "%d min" % (_siege_time / 60)
 
 
 func _siege_params() -> Array:
@@ -985,7 +1027,7 @@ func _start_siege(params: Array) -> void:
 	b.custom_scenario = Scenarios.siege_test(params[0], params[1], params[2], params[3], params[4], params[5],
 		-1, int(params[6]) if params.size() > 6 else MapGen.PLAN_RING, int(params[7]) if params.size() > 7 else 0,
 		equip)
-	if params.size() > 9 and int(params[9]) > 900:
+	if params.size() > 9 and int(params[9]) >= 60 and int(params[9]) != 900:
 		b.custom_scenario["time_limit"] = int(params[9])
 	b.ai_skill = _ai_skill
 	b.seed_value = _seed if _seed >= 0 else int(Time.get_unix_time_from_system()) & 0x7FFFFFFF

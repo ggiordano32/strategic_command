@@ -123,9 +123,24 @@ func _set_offline(v: bool) -> void:
 
 # ------------------------------------------------------------- lifecycle ---
 
+var _cache_loaded := false
+
+
+## Before the screen opens (the loading panel's "contacting the server"
+## step): the local cache, and the server's state when there is no cache.
+func prefetch() -> void:
+	if not _cache_loaded:
+		_load_cache()
+		_cache_loaded = true
+	if st.is_empty():
+		await sync(true)
+
+
 ## Open: local cache, then the server; starts watching for changes.
 func open() -> void:
-	_load_cache()
+	if not _cache_loaded:
+		_load_cache()
+		_cache_loaded = true
 	if not st.is_empty():
 		changed.emit("state")
 	await sync(true)

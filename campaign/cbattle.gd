@@ -350,7 +350,7 @@ static func workshop_level(st: Dictionary, f: int) -> int:
 ## theirs.
 static func _deployment(st: Dictionary, scn: Dictionary, human_f: int) -> void:
 	var dt := int((st.get("settings", {}) as Dictionary).get("deploy_time", 0))
-	if human_f < 0 or dt <= 0:
+	if human_f < 0 or dt == 0:  # -1: unlimited (waits for every player's Ready)
 		return
 	scn["deploy_time"] = dt
 	if not scn.has("deploy_zones"):
@@ -786,10 +786,39 @@ static func _row(row: Array, back: int, gap: int, placed: Array) -> int:
 	return total
 
 
+## A result row's "kills_by" ([[type index, n], ...]) as [[type key, n], ...]
+## (n scaled by num / den), most first.
+static func _kills_by_keys(r: Dictionary, num: int, den: int) -> Array:
+	var out: Array = []
+	for kb in r.get("kills_by", []):
+		var n := int(kb[1]) * num / den
+		if n > 0:
+			out.append([str(UT.TYPES[int(kb[0])]["key"]), n])
+	return out
+
+
+## Add the kills_by list b into a (same type key: the counts sum), sorted by
+## count (most first) then key.
+static func _merge_kills_by(a: Array, b: Array) -> Array:
+	var out: Array = []
+	for src in [a, b]:
+		for kb in src:
+			var hit := false
+			for o in out:
+				if o[0] == kb[0]:
+					o[1] = int(o[1]) + int(kb[1])
+					hit = true
+			if not hit:
+				out.append([kb[0], int(kb[1])])
+	out.sort_custom(func(x, y): return int(x[1]) > int(y[1]) or (int(x[1]) == int(y[1]) and str(x[0]) < str(y[0])))
+	return out
+
+
 ## BattleSim.result() -> campaign outcome for crules.apply_outcome(). Each
 ## unit row: army, unit, killed, routed, withdrawn, remaining; a fought
 ## battle's rows (mode other than "auto") also carry "kills" (enemies its
-## men killed), which the rules ignore and the battle screen shows.
+## men killed) and "kills_by" ([[enemy type key, n], ...], most first),
+## which the rules ignore and the battle screen shows.
 static func outcome_from_result(built: Dictionary, res: Dictionary, mode: String) -> Dictionary:
 	var map: Array = built["map"]
 	var sim_side: Array = built["sim_side"]
@@ -817,6 +846,7 @@ static func outcome_from_result(built: Dictionary, res: Dictionary, mode: String
 			var hk := int(r.get("pack_of", -1))
 			if mode != "auto" and by_k.has(hk) and (by_k[hk] as Dictionary).has("kills"):
 				by_k[hk]["kills"] = int(by_k[hk]["kills"]) + int(r.get("kills", 0))
+				by_k[hk]["kills_by"] = _merge_kills_by(by_k[hk].get("kills_by", []), _kills_by_keys(r, 1, 1))
 			continue
 		var m: Dictionary = map[k]
 		var e := {"army": int(m["army"]), "unit": int(m["unit"]), "killed": int(r["killed"]),
@@ -833,6 +863,7 @@ static func outcome_from_result(built: Dictionary, res: Dictionary, mode: String
 			# A fought battle: the enemies each unit's men killed (optional
 			# key; auto-resolved battles leave it out).
 			e["kills"] = int(r.get("kills", 0)) * cn / sn if sn > 0 and cn != sn else int(r.get("kills", 0))
+			e["kills_by"] = _kills_by_keys(r, cn if sn > 0 and cn != sn else 1, sn if sn > 0 and cn != sn else 1)
 		units.append(e)
 		by_k[k] = e
 		if int(m["army"]) < 0:

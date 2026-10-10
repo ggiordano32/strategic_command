@@ -63,9 +63,37 @@ static var _i := PackedInt32Array()
 static var _rings: Array = []   # unit rings: broadleaf x3, pine x3, scrub x3, cypress, small disc
 
 
+static var _baked := false
+
+
+## The whole bake (once). The campaign's loading panel runs its two stages
+## separately (a frame between them): bake_relief() then bake_land().
 static func bake() -> void:
-	if ground_tex != null:
+	if _baked:
 		return
+	bake_relief()
+	bake_land()
+
+
+## Stage 1: the relief shading (cached in user:// after the first run).
+static func bake_relief() -> void:
+	if relief_tex != null:
+		return
+	var t0 := Time.get_ticks_usec()
+	_bake_relief()
+	bake_ms = maxf(bake_ms, 0.0) + (Time.get_ticks_usec() - t0) / 1000.0
+
+
+## True when the relief shading is in the user:// cache (or already made).
+static func relief_cached() -> bool:
+	return relief_tex != null or FileAccess.file_exists(_relief_path())
+
+
+## Stage 2: the ground texture and the glyphs (needs the relief's elevation).
+static func bake_land() -> void:
+	if _baked:
+		return
+	bake_relief()
 	var t0 := Time.get_ticks_usec()
 	_land_polys = Geo.lands() + Geo.islands()
 	_land_boxes = []
@@ -76,9 +104,9 @@ static func bake() -> void:
 		_land_boxes.append(bx.grow(1.0))
 	_flood()
 	_bake_ground()
-	_bake_relief()
 	_bake_glyphs()
-	bake_ms = (Time.get_ticks_usec() - t0) / 1000.0
+	_baked = true
+	bake_ms = maxf(bake_ms, 0.0) + (Time.get_ticks_usec() - t0) / 1000.0
 
 
 static func _flood() -> void:
@@ -341,16 +369,20 @@ static func _stamp(e: PackedFloat32Array, w: int, h: int, cx: int, cy: int, hgt:
 				e[i] = v
 
 
+static func _relief_path() -> String:
+	# Keyed by the data and the look parameters.
+	var key := str([GeoFields.Relief.FINE.hash(), GeoFields.Relief.COAST.hash(), RELIEF_CODE, BEACH_KM, COL_BEACH, COL_CLIFF, TINT_STOPS, SUN, EXAG, SHADE_GAIN, LIGHT_TINT,
+		SHADOW_TINT, CREST_COL, UPSAMPLE]).hash()
+	return "user://relief_%d.png" % key
+
+
 static func _bake_relief() -> void:
 	_elev = GeoFields.fine()
 	var w := CGrid.width() * RS
 	var h := CGrid.height() * RS
 	# The shading is the slow part of the bake (about 1.5 s, several times
-	# that in the web build): cached as a PNG in user://, keyed by the data
-	# and the look parameters.
-	var key := str([GeoFields.Relief.FINE.hash(), GeoFields.Relief.COAST.hash(), RELIEF_CODE, BEACH_KM, COL_BEACH, COL_CLIFF, TINT_STOPS, SUN, EXAG, SHADE_GAIN, LIGHT_TINT,
-		SHADOW_TINT, CREST_COL, UPSAMPLE]).hash()
-	var path := "user://relief_%d.png" % key
+	# that in the web build): cached as a PNG in user://.
+	var path := _relief_path()
 	var img: Image = null
 	if FileAccess.file_exists(path):
 		img = Image.load_from_file(path)

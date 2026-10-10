@@ -730,6 +730,8 @@ var u_refill := PackedInt32Array()    # artillery: told to refill (order)
 var u_rprog := PackedInt32Array()     # artillery: 0 normal .. REFILL_FULL refilling
 var u_reserve := PackedInt32Array()   # artillery: shots left in the baggage
 var u_kills := PackedInt32Array()     # enemy soldiers killed by the unit's men (melee, charge, missiles, its engines)
+var u_kills_ty := PackedInt32Array()  # n_units x kty_n: enemy men the unit killed, by the killed man's own type (u_otype); hashed
+var kty_n: int = 1                    # the width of u_kills_ty (UT.TYPES.size())
 var u_otype := PackedInt32Array()     # the unit's own type (its men: body, melee, morale); u_type is what it does now
 var u_eg := PackedInt32Array()        # the engine group it works (-1 none)
 var u_oammo := PackedInt32Array()     # its own missiles (u_ammo of a missile unit) while it works engines
@@ -1542,6 +1544,9 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	for arr in _unit_arrays():
 		arr.resize(n_units)
 		arr.fill(0)
+	kty_n = maxi(UT.TYPES.size(), 1)
+	u_kills_ty.resize(n_units * kty_n)
+	u_kills_ty.fill(0)
 	u_walls.resize(n_units * 4)
 	u_walls.fill(-1)
 	dbg_cav_seen.resize(n_units)
@@ -7981,6 +7986,7 @@ func _credit(k: int, ud: int) -> void:
 		return
 	if u_side[k] != u_side[ud]:
 		u_kills[k] += 1
+		u_kills_ty[k * kty_n + u_otype[ud]] += 1
 	else:
 		stat_ff[u_side[ud]] += 1
 
@@ -11347,6 +11353,18 @@ func projectiles_in_flight() -> int:
 ## per unit how many soldiers started, were killed, routed off the field,
 ## withdrew, and are still on the field ("remaining"), and how many enemies
 ## its men killed ("kills"), plus side totals.
+## Unit u's kills by enemy type: [[type index, n], ...], most first, then by
+## type index (a type is one the killed man's own, u_otype).
+func kills_by(u: int) -> Array:
+	var out: Array = []
+	for t in kty_n:
+		var c := u_kills_ty[u * kty_n + t]
+		if c > 0:
+			out.append([t, c])
+	out.sort_custom(func(a, b): return a[1] > b[1] or (a[1] == b[1] and a[0] < b[0]))
+	return out
+
+
 func result() -> Dictionary:
 	var units: Array = []
 	var sides: Array = []
@@ -11357,7 +11375,7 @@ func result() -> Dictionary:
 		var r := {"unit": u, "side": u_side[u], "type": u_otype[u],
 			"started": u_count0[u], "killed": u_killed[u],
 			"routed_off": u_routed_off[u], "withdrawn": u_withdrawn[u],
-			"remaining": u_alive[u], "state": u_state[u], "kills": u_kills[u]}
+			"remaining": u_alive[u], "state": u_state[u], "kills": u_kills[u], "kills_by": kills_by(u)}
 		if u_hand[u] >= 0:
 			# A war dog pack: its handlers' unit (its dogs with them count as remaining).
 			r["pack_of"] = u_hand[u]
@@ -11480,6 +11498,7 @@ func state_hash() -> int:
 		ctx.update((arr as PackedInt32Array).to_byte_array())
 	for arr in _unit_arrays():
 		ctx.update((arr as PackedInt32Array).to_byte_array())
+	ctx.update(u_kills_ty.to_byte_array())
 	ctx.update(u_walls.to_byte_array())
 	ctx.update(slot_soldier.to_byte_array())
 	ctx.update(off_x.to_byte_array())
@@ -11573,7 +11592,7 @@ func state_hash() -> int:
 
 
 # ------------------------------------------------------- deployment phase ---
-# A scenario with "deploy_time" (seconds) > 0 starts in PHASE_DEPLOY, as in
+# A scenario with "deploy_time" (seconds) > 0, or -1 (no countdown), starts in PHASE_DEPLOY, as in
 # Total War: nothing moves, shoots or loses heart; the players place their
 # units inside their side's zone (ORDER_PLACE, applied at once: the men
 # stand in their new places on the next step) and say they are ready
@@ -11604,10 +11623,11 @@ func _setup_deploy(sc: Dictionary) -> void:
 	dep_z = PackedInt32Array()
 	dep_out = -1
 	var secs := int(sc.get("deploy_time", 0))
-	if secs <= 0:
+	if secs == 0:
 		return
 	dep_on = 1
-	dep_ticks = secs * TICKS_PER_SECOND
+	# deploy_time -1: no countdown (the battle starts when dep_need is ready).
+	dep_ticks = secs * TICKS_PER_SECOND if secs > 0 else -1
 	dep_left = dep_ticks
 	dep_need = int(sc.get("deploy_need", 0 if ai_sides[0] != 0 and ai_sides[1] != 0 else 1))
 	var zones: Array = sc.get("deploy_zones", [])
@@ -11657,13 +11677,16 @@ func _deploy_step() -> void:
 	_apply_orders(50)
 	if dep_left > 0:
 		dep_left -= 1
-	if dep_left <= 0 or dep_need == 0 or (dep_ready & dep_need) == dep_need:
+	if (dep_ticks >= 0 and dep_left <= 0) or dep_need == 0 or (dep_ready & dep_need) == dep_need:
 		phase = PHASE_BATTLE
 		dep_left = 0
 
 
-## Seconds of the countdown left (deployment phase), else 0.
+## Seconds of the countdown left (deployment phase), else 0; -1 while the
+## deployment has no time limit (scenario "deploy_time" -1).
 func deploy_secs_left() -> int:
+	if phase == PHASE_DEPLOY and dep_ticks < 0:
+		return -1
 	return (dep_left + TICKS_PER_SECOND - 1) / TICKS_PER_SECOND if phase == PHASE_DEPLOY else 0
 
 

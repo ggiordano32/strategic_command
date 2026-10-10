@@ -87,6 +87,7 @@ func _init() -> void:
 		_test_deploy("coop")
 		_test_deploy("h2h")
 		_test_deploy("h2h_drop")
+		_test_deploy_unlimited()
 		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 		quit(0 if _ok else 1)
 		return
@@ -127,6 +128,7 @@ func _init() -> void:
 	_test_deploy("coop")
 	_test_deploy("h2h")
 	_test_deploy("h2h_drop")
+	_test_deploy_unlimited()
 	print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 	quit(0 if _ok else 1)
 
@@ -1731,6 +1733,52 @@ func _test_lockstep_street() -> void:
 			sim_a.u_killed[0] + sim_a.u_killed[1] + sim_a.u_killed[2], sim_a.u_killed[3] + sim_a.u_killed[4] + sim_a.u_killed[5], sim_a.tick])
 	if sim_a.stat_queued == 0:
 		_fail("street lockstep: nobody waited behind a fighting friend")
+
+
+## Unlimited deployment ("deploy_time" -1): two peers on side 0 against the
+## AI; A is ready early, B much later: no countdown ends the deployment, the
+## battle starts on B's Ready (frame after 140), on both peers at the same
+## frame, and every frame's hash agrees.
+func _test_deploy_unlimited() -> void:
+	var scen: Dictionary = Scenarios.make("battle_2000")
+	scen["terrain"] = {"kind": 2, "seed": 5}
+	scen["deploy_time"] = -1
+	scen["deploy_zones"] = Scenarios.field_zones(scen)
+	scen["ai_sides"] = [1]
+	var probe := BattleSim.new()
+	probe.setup(scen, 4242)
+	var home := _home_split(probe)
+	var relay := Relay.new()
+	var a := _new_peer(scen, home, 0, "A", [0, 1])
+	var b := _new_peer(scen, home, 1, "B", [0, 1])
+	a.latency = 1
+	b.latency = 3
+	b.d = 4
+	var peers: Array[Peer] = [a, b]
+	var start_frame := {}
+	var still := true
+	var now := 0
+	while now < 1500 and (a.ls.frame < 400 or b.ls.frame < 400):
+		now += 1
+		for p in peers:
+			var sim = p.ls.sim
+			if sim.phase == BattleSim.PHASE_DEPLOY:
+				if now == 30 + p.me * 110:
+					p.issue({"type": BattleSim.ORDER_READY})
+			elif not start_frame.has(p.name):
+				start_frame[p.name] = p.ls.frame
+				if p.ls.frame < 100:  # (B's Ready is issued at step 140: A's alone started it)
+					still = false
+			p.flush(relay, now)
+			p.deliver(relay, now)
+			p.run(p.rng.randi() % 3, true)
+	var n_ab := _compare(a, b, 0, "deploy unlimited A/B")
+	if n_ab <= 0 or not still or not start_frame.has("A") or not start_frame.has("B") \
+			or a.ls.sim.dep_ticks != -1:
+		_fail("deploy unlimited: frames %d, no early start %s, start frames %s" % [n_ab, str(still), str(start_frame)])
+		return
+	print("PASS deploy unlimited: no countdown, the battle started only after both Readies (frames %s); %d frames identical on both peers" % [
+		str(start_frame), n_ab])
 
 
 # ------------------------------------------------------------ deployment ---

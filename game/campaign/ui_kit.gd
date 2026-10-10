@@ -49,6 +49,70 @@ static func button(text: String, cb: Callable, min_w: float = 0.0, size: int = F
 	return b
 
 
+## Deployment time choices ([label, seconds]; -1: no countdown, the battle
+## starts when every player is ready) and battle time choices ([label,
+## seconds]; 36000 s = 10 hours: "Unlimited", the sim has no unlimited value).
+const DEPLOY_OPTIONS := [["0", 0], ["30 s", 30], ["1 min", 60], ["2 min", 120], ["5 min", 300], ["Unlimited", -1]]
+const TIME_OPTIONS := [["10 min", 600], ["15 min", 900], ["20 min", 1200], ["30 min", 1800], ["45 min", 2700],
+	["60 min", 3600], ["Unlimited", 36000]]
+
+
+## A drop-down in the kit's style: options are [label, value] pairs, value the
+## selected one's value (an unknown value adds an item "<value>"), cb(value)
+## is called when the player picks. The popup's text and rows are touch-sized.
+static func dropdown(options: Array, value, cb: Callable, min_w: float = 0.0, size: int = FONT) -> OptionButton:
+	var ob := OptionButton.new()
+	ob.custom_minimum_size = Vector2(min_w, BTN_H)
+	ob.focus_mode = Control.FOCUS_NONE
+	ob.fit_to_longest_item = true
+	ob.add_theme_font_size_override("font_size", size)
+	var pop := ob.get_popup()
+	pop.add_theme_font_size_override("font_size", size)
+	pop.add_theme_constant_override("v_separation", 12)
+	var sel := -1
+	for o in options:
+		ob.add_item(str((o as Array)[0]))
+		ob.set_item_metadata(ob.item_count - 1, (o as Array)[1])
+		if (o as Array)[1] == value:
+			sel = ob.item_count - 1
+	if sel < 0:
+		ob.add_item(str(value))
+		ob.set_item_metadata(ob.item_count - 1, value)
+		sel = ob.item_count - 1
+	ob.select(sel)
+	ob.pressed.connect(AudioFx.click)
+	ob.item_selected.connect(func(i: int):
+		if cb.is_valid():
+			cb.call(ob.get_item_metadata(i)))
+	return ob
+
+
+## Effectiveness of a unit in a battle: its kills per 10 men it lost (kills
+## and lost of one unit), "" when nothing was lost (then kills stand alone).
+static func effect_short(kills: int, lost: int) -> String:
+	return "%d/10" % (kills * 10 / lost) if lost > 0 else ""
+
+
+## The expanded kills of one unit: "Killed 47, lost 10 (47 per 10 lost): 30 x
+## Hoplite, 12 x Archer, +5 others". by: [[type key (String) or type index
+## (int), n], ...] most first; the top 5 are named, the rest are "+n others".
+static func kills_detail(who: String, kills: int, lost: int, by: Array) -> String:
+	var t := "%s killed %d" % [who, kills]
+	t += ", lost %d (%d per 10 lost)" % [lost, kills * 10 / lost] if lost > 0 else ", lost none"
+	var parts: Array[String] = []
+	var rest := 0
+	for i in by.size():
+		var kb: Array = by[i]
+		if i < 5:
+			var ty: int = int(kb[0]) if typeof(kb[0]) == TYPE_INT else UT.index_of(str(kb[0]))
+			parts.append("%d x %s" % [int(kb[1]), UT.TYPES[ty]["name"]])
+		else:
+			rest += int(kb[1])
+	if rest > 0:
+		parts.append("+%d others" % rest)
+	return t + (": " + ", ".join(parts) if not parts.is_empty() else "")
+
+
 ## A button with an icon left of its text (game/ui_icons.gd); text "" makes
 ## a bare icon button (only where the icon is plain: Undo, Deselect, Menu),
 ## which gets the icon's name as its tooltip.

@@ -341,6 +341,11 @@ static func land_meshes(sz: Vector2) -> Array:
 ## Fill region r's territory with col (cached meshes: the territory polygons
 ## follow the fine coast and are too big to triangulate at every redraw).
 func _fill_cell(r: int, col: Color) -> void:
+	for m in cell_meshes(r):
+		draw_mesh(m, null, Transform2D.IDENTITY, col)
+
+
+static func cell_meshes(r: int) -> Array:
 	if not _cell_meshes.has(r):
 		var ms: Array = []
 		for piece in Geo.cell(r):
@@ -348,8 +353,7 @@ func _fill_cell(r: int, col: Color) -> void:
 			if m != null:
 				ms.append(m)
 		_cell_meshes[r] = ms
-	for m in _cell_meshes[r]:
-		draw_mesh(m, null, Transform2D.IDENTITY, col)
+	return _cell_meshes[r]
 
 
 func _draw() -> void:
@@ -484,11 +488,32 @@ func _draw() -> void:
 		draw_sea_lane(self, p0, p1, lw)
 
 
+## The steps of preparing the campaign map for the loading panel:
+## [[label, Callable], ...] (each is cheap once done).
+static func prepare_steps() -> Array:
+	return [["Building the map", geometry_lines],
+		["Shading the relief (first time only)" if not Landscape.relief_cached() else "Loading the relief", Landscape.bake_relief],
+		["Painting the landscape", Landscape.bake_land]]
+
+
 ## The roads, rivers and hills geometry from the grid (once).
 static func _terrain_geometry() -> void:
 	if not _hill_segs.is_empty():
 		return
 	Landscape.bake()
+	geometry_lines()
+
+
+## The map's own geometry without the landscape bake: the territory and land
+## meshes, hills, the shade, roads, rivers and crossings (once). The loading
+## panel runs it as its own step.
+static func geometry_lines() -> void:
+	if not _hill_segs.is_empty():
+		return
+	var gsz := Vector2(CGrid.width(), CGrid.height()) * float(CGrid.cell_px())
+	land_meshes(gsz)
+	for r in CData.region_count():
+		cell_meshes(r)
 	var px := float(CGrid.cell_px())
 	var hills := PackedVector2Array()
 	var ridges := PackedVector2Array()  # (packed arrays are values: one variable each)

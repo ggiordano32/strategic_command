@@ -630,8 +630,8 @@ func _update_stats_label() -> void:
 		avg /= _sim_ms.size()
 	var a0 := sim.alive_count(0)
 	var a1 := sim.alive_count(1)
-	hud.set_stats("%d fps  %d:%02d / %d:%02d" % [Engine.get_frames_per_second(), sim.tick / 600, (sim.tick / 10) % 60,
-		sim.time_limit / 600, (sim.time_limit / 10) % 60],
+	var lim := "no limit" if sim.time_limit >= 360000 else "%d:%02d" % [sim.time_limit / 600, (sim.time_limit / 10) % 60]
+	hud.set_stats("%d fps  %d:%02d / %s" % [Engine.get_frames_per_second(), sim.tick / 600, (sim.tick / 10) % 60, lim],
 		"FPS %d   sim %.2f ms avg / %.2f worst (2 s)   upload %.2f ms\nsoldiers %d  (%d v %d)   missiles %d   tick %d   hash %s\n%s   seed %d" % [
 		Engine.get_frames_per_second(), avg, worst, _upload_ms, a0 + a1, a0, a1,
 		sim.projectiles_in_flight(), sim.tick, _hash_text, terrain_name(sim), seed_value])
@@ -861,7 +861,7 @@ func _refresh_deploy() -> void:
 			_t("battle_start", {"scenario": scenario_id, "tick": sim.tick})
 		return
 	var s: int = sim.deploy_secs_left()
-	var text := "Deployment  %d:%02d" % [s / 60, s % 60]
+	var text := "Deploying: waiting for players" if s < 0 else "Deployment  %d:%02d" % [s / 60, s % 60]
 	if coop != null and coop.ls != null:
 		var me_ready := false
 		var parts: Array[String] = []

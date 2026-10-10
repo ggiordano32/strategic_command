@@ -36,6 +36,7 @@ const CTurn := preload("res://campaign/cturn.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Geo := preload("res://game/campaign/map_geo.gd")
+const LoadingPanel := preload("res://game/campaign/loading_panel.gd")
 const MapView := preload("res://game/campaign/map_view.gd")
 const MapOverlay := preload("res://game/campaign/map_overlay.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
@@ -2245,7 +2246,29 @@ func fight(bid: int) -> void:
 	close_dialog()
 	_set_visible(false)
 	_t("campaign_battle_start", {"turn": int(st["turn"]), "region": int(b["r"]), "units": (_battle_built["map"] as Array).size()})
-	get_tree().root.add_child.call_deferred(battle)
+	_enter_battle()
+
+
+## Add the battle node (its map bakes run in its _ready) behind a short
+## "Preparing the battlefield" panel when the build is slow: always the first
+## time (unknown), later only when the last build took more than 300 ms.
+func _enter_battle() -> void:
+	var lp = null
+	if LoadingPanel.slow_battle():
+		lp = LoadingPanel.open(get_tree().root, "Preparing the battlefield", 1)
+		await lp.step("Building the battlefield")
+	if battle == null or not is_instance_valid(battle):
+		if lp != null:
+			lp.close()
+		return
+	var t0 := Time.get_ticks_usec()
+	get_tree().root.add_child(battle)
+	LoadingPanel.last_battle_ms = (Time.get_ticks_usec() - t0) / 1000.0
+	print("loading: battle build %.0f ms" % LoadingPanel.last_battle_ms)
+	if lp != null:
+		await lp.done()
+		await get_tree().process_frame
+		lp.close()
 
 
 ## Server changes that arrived during a battle are shown afterwards.
@@ -2309,7 +2332,7 @@ func fight_live(bid: int, create: bool, keep: bool = false) -> void:
 	_set_visible(false)
 	_t("campaign_battle_start", {"turn": int(st["turn"]), "region": int(b["r"]), "units": (_battle_built["map"] as Array).size(),
 		"live": true, "create": create})
-	get_tree().root.add_child.call_deferred(battle)
+	_enter_battle()
 
 
 func _coop_failed(code: String, text: String) -> void:

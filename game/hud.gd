@@ -110,6 +110,7 @@ var result_panel: PanelContainer
 var menu_button: Button
 var result_menu_button: Button
 var result_grid: GridContainer
+var result_detail: Label
 var result_title: Label
 var actions_box: HBoxContainer
 var group_box: HBoxContainer
@@ -454,8 +455,16 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	rscroll.custom_minimum_size = Vector2(560, 240)
 	rscroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	rvb.add_child(rscroll)
+	result_detail = Label.new()
+	result_detail.name = "result_kills_detail"
+	result_detail.add_theme_font_size_override("font_size", 14)
+	result_detail.add_theme_color_override("font_color", Color(1, 0.85, 0.45))
+	result_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	result_detail.custom_minimum_size = Vector2(560, 0)
+	result_detail.text = "Tap a unit's kills for the enemy types it killed."
+	rvb.add_child(result_detail)
 	result_grid = GridContainer.new()
-	result_grid.columns = 6
+	result_grid.columns = 7
 	result_grid.add_theme_constant_override("h_separation", 18)
 	rscroll.add_child(result_grid)
 	var rbuttons := HBoxContainer.new()
@@ -1124,7 +1133,7 @@ func show_result(res: Dictionary, title: String, player_side: int) -> void:
 	for side in [player_side, 1 - player_side]:
 		var s: Dictionary = res["sides"][side]
 		_cell("Your army" if side == player_side else "Enemy", Color(0.35, 0.6, 1.0) if side == 0 else Color(1.0, 0.45, 0.35))
-		for h in ["Start", "Killed", "Routed off", "Withdrawn", "Remain"]:
+		for h in ["Start", "Killed", "Routed off", "Withdrawn", "Remain", "Kills"]:
 			_cell(h, Color(0.8, 0.8, 0.8))
 		for r in res["units"]:
 			if int(r["side"]) != side:
@@ -1132,18 +1141,41 @@ func show_result(res: Dictionary, title: String, player_side: int) -> void:
 			_cell("%s %d" % [UT.TYPES[int(r["type"])]["short"], int(r["unit"]) + 1], Color.WHITE)
 			for k in ["started", "killed", "routed_off", "withdrawn", "remaining"]:
 				_cell(str(r[k]), Color.WHITE)
+			var ef := Kit.effect_short(int(r.get("kills", 0)), int(r["killed"]))
+			var kc := _cell("%d%s" % [int(r.get("kills", 0)), " (" + ef + ")" if ef != "" else ""], Color(1, 0.85, 0.45))
+			kc.name = "kills_%d" % int(r["unit"])
+			kc.mouse_filter = Control.MOUSE_FILTER_STOP
+			kc.gui_input.connect(_kills_tap.bind(r, kc))
 		_cell("Total", Color(1, 1, 0.7))
 		for k in ["started", "killed", "routed_off", "withdrawn", "remaining"]:
 			_cell(str(s[k]), Color(1, 1, 0.7))
+		var tk := 0
+		for r in res["units"]:
+			if int(r["side"]) == side:
+				tk += int(r.get("kills", 0))
+		_cell(str(tk), Color(1, 1, 0.7))
 	result_panel.visible = true
 
 
-func _cell(text: String, col: Color) -> void:
+func _kills_tap(e: InputEvent, r: Dictionary, cell: Label) -> void:
+	if e is InputEventMouseButton and not e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
+		show_kills(r)
+		cell.accept_event()
+
+
+## Under the table: unit r's kills by enemy type (top 5) and effectiveness.
+func show_kills(r: Dictionary) -> void:
+	result_detail.text = Kit.kills_detail("%s %d" % [UT.TYPES[int(r["type"])]["short"], int(r["unit"]) + 1],
+		int(r.get("kills", 0)), int(r["killed"]), r.get("kills_by", []))
+
+
+func _cell(text: String, col: Color) -> Label:
 	var l := Label.new()
 	l.text = text
 	l.add_theme_font_size_override("font_size", 16)
 	l.add_theme_color_override("font_color", col)
 	result_grid.add_child(l)
+	return l
 
 
 ## A HUD button; with an icon (game/ui_icons.gd) left of the text, or bare

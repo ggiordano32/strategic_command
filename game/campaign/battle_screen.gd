@@ -40,7 +40,7 @@ const COL_HEALTH := Color(0.45, 0.8, 0.4)
 const COL_LOST := Color(0.9, 0.22, 0.18)
 const KILLS_NOTE := "Each card shows that unit's own losses; kills are counted per side (the battle does not record which unit killed whom)."
 ## A fought battle's outcome carries each unit's kills (CBattle.outcome_from_result).
-const KILLS_NOTE_UNITS := "Each card shows that unit's own losses and the enemies its men killed (kills)."
+const KILLS_NOTE_UNITS := "Each card shows that unit's own losses and the enemies its men killed (kills, with kills per 10 men lost); tap a card for its kills by enemy type."
 
 
 # ------------------------------------------------------------- snapshot ---
@@ -345,6 +345,23 @@ static func pre(s, st: Dictionary, b: Dictionary) -> Control:
 	return p
 
 
+## Tap on a result card: show (or hide, tapped again) that unit's kills by
+## enemy type under its group's cards.
+static func _toggle_kills(card: Control, detail: Label, cards: Array) -> void:
+	if detail.visible and detail.get_meta("card", null) == card:
+		detail.visible = false
+		card.picked = false
+		return
+	for c in cards:
+		c.picked = false
+		c.queue_redraw()
+	detail.set_meta("card", card)
+	card.picked = true
+	detail.text = Kit.kills_detail("%s (%d men)" % [UT.TYPES[card.ty]["name"], card.men], card.kills, card.dead, card.kills_by)
+	detail.visible = true
+	card.queue_redraw()
+
+
 ## Both sides' card rows: attackers left, defenders right (stacked when
 ## narrow). res: outcome units keyed "army:unit" (empty: pre-battle).
 static func _sides(snap: Dictionary, res: Dictionary, wide: bool) -> Control:
@@ -387,6 +404,9 @@ static func _side(snap: Dictionary, sd: int, res: Dictionary) -> Control:
 		gh.add_child(Kit.label("%s, %d men" % [gt, gmen], Kit.FONT_SMALL, Color.WHITE, true))
 		col.add_child(gh)
 		var fl := Kit.flow(5)
+		var detail := Kit.label("", Kit.FONT_SMALL, Kit.COL_GOLD, true)
+		detail.visible = false
+		var gcards: Array = []
 		for u in g["units"]:
 			var card := UnitCard.new(int(u["ty"]), int(u["n"]), int(u["full"]), CData.faction_color(int(g["f"])))
 			card.fielded = int(u["on"]) != 0
@@ -400,6 +420,7 @@ static func _side(snap: Dictionary, sd: int, res: Dictionary) -> Control:
 					card.back = back
 					card.dead = int(e["killed"])
 					card.set_kills(int(e.get("kills", -1)))
+					card.kills_by = e.get("kills_by", [])
 					tot["fielded"] += card.men
 					tot["back"] += back
 					tot["dead"] += int(e["killed"])
@@ -411,7 +432,12 @@ static func _side(snap: Dictionary, sd: int, res: Dictionary) -> Control:
 			card.name = "card_%d_%s" % [sd, key.replace(":", "_").replace("-", "g")]
 			card.tooltip_text = card.describe()
 			fl.add_child(card)
+			gcards.append(card)
+			if card.kills >= 0 and card.back >= 0:
+				card.tapped.connect(_toggle_kills.bind(card, detail, gcards))
 		col.add_child(fl)
+		detail.name = "kills_detail_%d_%d" % [sd, int(g["army"])]
+		col.add_child(detail)
 		for c in g.get("chars", []):
 			var ty_c := UT.index_of(str(c["kind"]))
 			var fell := res.has("c:%d" % int(c["id"])) and int(res["c:%d" % int(c["id"])]) == 0
@@ -607,6 +633,9 @@ class UnitCard extends Control:
 	var back := -1
 	var dead := 0
 	var kills := -1  # enemies its men killed (a fought battle), -1 not known
+	var kills_by: Array = []  # [[enemy type key, n], ...] most first
+	var picked := false  # its kills are expanded under the cards
+	signal tapped
 	var ak := -1  # its special ammunition kind (UT.AMMO row), -1 none
 	var fielded := true
 	var col := Color.WHITE
@@ -618,6 +647,11 @@ class UnitCard extends Control:
 		col = p_col
 		custom_minimum_size = Vector2(W, H)
 		mouse_filter = Control.MOUSE_FILTER_PASS
+
+	func _gui_input(e: InputEvent) -> void:
+		if e is InputEventMouseButton and e.pressed == false and e.button_index == MOUSE_BUTTON_LEFT and kills >= 0 and back >= 0:
+			tapped.emit()
+			accept_event()
 
 	## A fought battle's card: the enemies its men killed, on a row of its
 	## own above the name (the card grows by it).
@@ -633,6 +667,10 @@ class UnitCard extends Control:
 			t += "; %d back, %d lost (%d dead)" % [back, men - back, dead]
 		if kills >= 0:
 			t += "; %d kills" % kills
+			var ef := Kit.effect_short(kills, dead)
+			if ef != "":
+				t += " (%s per 10 men lost)" % ef
+			t += ". Tap for the kills by enemy type"
 		if ak >= 0:
 			t += "; carries %s" % UT.ammo_text(ak, "name").to_lower()
 		if UT.stat(ty, "cmd_r") > 0:
@@ -687,6 +725,13 @@ class UnitCard extends Control:
 		draw_string(font, Vector2(4, sz.y - 15), nm, HORIZONTAL_ALIGNMENT_LEFT, sz.x - 8, 11, txt)
 		if kills >= 0 and back >= 0:
 			draw_string(font, Vector2(4, sz.y - 28), "kills %d" % kills, HORIZONTAL_ALIGNMENT_LEFT, sz.x - 8, 11, Kit.COL_GOLD)
+			var ef := Kit.effect_short(kills, dead) if kills > 0 else ""
+			if ef != "":
+				# Effectiveness (kills per 10 men lost), right-aligned on the same row.
+				var ew := font.get_string_size(ef, HORIZONTAL_ALIGNMENT_LEFT, -1, 10).x
+				draw_string(font, Vector2(sz.x - ew - 3, sz.y - 28), ef, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Kit.COL_GOLD.darkened(0.25))
+			if picked:
+				draw_rect(Rect2(Vector2.ZERO, sz), Kit.COL_GOLD, false, 2.0)
 		# Health bar: men (or survivors) against full strength.
 		var bx := 4.0
 		var by := sz.y - 10

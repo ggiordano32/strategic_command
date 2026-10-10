@@ -114,11 +114,12 @@ static func new_campaign(p_name: String, p_seed: int, humans: Array, settings: D
 			s.erase(k)
 	# Deployment phase of real-time battles (seconds; read with a default
 	# of none, so no format change): kept only when set.
-	if s.has("deploy_time") and int(s["deploy_time"]) <= 0:
+	if s.has("deploy_time") and int(s["deploy_time"]) == 0:
 		s.erase("deploy_time")
 	# Battle time limit (seconds; read with a default of 900, the sim's 15
-	# minutes, so no format change): kept only when longer.
-	if s.has("time_limit") and int(s["time_limit"]) <= 900:
+	# minutes, so no format change): kept only when not 900. 36000 s is the
+	# "Unlimited" choice (the sim has no unlimited value; 10 hours never ends).
+	if s.has("time_limit") and int(s["time_limit"]) in [0, 900]:
 		s.erase("time_limit")
 	st["settings"] = s
 	var hs: Array = []

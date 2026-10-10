@@ -5,7 +5,7 @@ extends RefCounted
 ## relay compares their hashes before the start).
 ##
 ## setup = {
-##   "v": 1, "seed": int, "deploy": seconds (0 / 60 / 120), "funds": FUNDS index,
+##   "v": 1, "seed": int, "deploy": seconds (DEPLOY_CHOICES; -1 unlimited), "funds": FUNDS index,
 ##   "time": battle time limit in seconds (TIME_CHOICES; absent or 900 = the
 ##           sim's 15 minutes),
 ##   "map": {"kind": "field" | "settlement", "terrain": Terrain.K_*, "ground": MapGen.PAL_*,
@@ -49,8 +49,8 @@ const MAX_ARMIES := 3          # per side
 const MAX_UNITS := 12          # per army (the campaign's army size)
 const FUNDS := [0, 4500, 7500, 12000]
 const FUNDS_NAMES := ["No limit", "Small (4,500)", "Medium (7,500)", "Large (12,000)"]
-const DEPLOY_CHOICES := [0, 60, 120]
-const TIME_CHOICES := [900, 1200, 1800, 2700]
+const DEPLOY_CHOICES := [0, 30, 60, 120, 300, -1]  # s; -1: unlimited (waits for every Ready)
+const TIME_CHOICES := [600, 900, 1200, 1800, 2700, 3600, 36000]  # s; 36000: unlimited
 const CTRL_NAMES := {"p1": "Player 1", "p2": "Player 2", "ai": "AI"}
 ## Heroes and agents a side may bring (docs/DESIGN.md "Heroes and agents"):
 ## a side's "chars" (keys, at most one of each) go in as the scenario's "chars".
@@ -356,10 +356,10 @@ static func build(st: Dictionary, solo: bool = false) -> Dictionary:
 	if not (chars[0] as Array).is_empty() or not (chars[1] as Array).is_empty():
 		sc["chars"] = chars  # (one-man units the sim adds after the scenario's; commanded by the side's first unit's player)
 	var dt := int(st.get("deploy", 0))
-	if dt > 0:
+	if dt != 0:
 		sc["deploy_time"] = dt
 	var tl := int(st.get("time", 900))
-	if tl > 900:
+	if tl >= 60 and tl != 900:
 		sc["time_limit"] = tl
 	return {"scenario": sc, "seed": int(st.get("seed", 1)) & 0x7FFFFFFF, "home": home, "sides": players}
 

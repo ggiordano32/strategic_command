@@ -23,6 +23,7 @@ const CRules := preload("res://campaign/crules.gd")
 const CTurn := preload("res://campaign/cturn.gd")
 const CChars := preload("res://campaign/cchars.gd")
 const UT := preload("res://sim/unit_types.gd")
+const Kit := preload("res://game/campaign/ui_kit.gd")
 const CityPreview := preload("res://game/campaign/city_preview.gd")
 
 var cs: CampaignScreen
@@ -193,7 +194,8 @@ func _check_kills_cards() -> void:
 				var n := int(u["n"])
 				var key := "card_%d_%s" % [sd, ("%d:%d" % [int(g["army"]), int(u["unit"])]).replace(":", "_").replace("-", "g")]
 				rows.append({"army": int(g["army"]), "unit": int(u["unit"]), "killed": n / 4, "routed": 0,
-					"withdrawn": 0, "remaining": n - n / 4, "kills": 3 + k})
+					"withdrawn": 0, "remaining": n - n / 4, "kills": 3 + k,
+					"kills_by": [["heavy", 2 + k], ["archer", 1]] if k > 0 else [["heavy", 3]]})
 				want[key] = 3 + k
 				k += 1
 	var out := {"winner": 0, "mode": "fought", "units": rows, "garrison_pct": 50}
@@ -204,6 +206,23 @@ func _check_kills_cards() -> void:
 			ok = ok and c.kills == int(want[str(c.name)]) and c.describe().contains("%d kills" % int(want[str(c.name)]))
 			want.erase(str(c.name))
 	_check(ok and want.is_empty(), "a fought outcome's kills on each card ('kills N')")
+	# A tap on a card with kills expands them under its group's cards.
+	var tap = null
+	for c in _cards(res):
+		if c.kills > 3 and tap == null:
+			tap = c
+	var shown := ""
+	if tap != null:
+		tap.tapped.emit()
+		for l in res.find_children("kills_detail_*", "Label", true, false):
+			if (l as Label).visible:
+				shown = (l as Label).text
+	_check(tap != null and shown.contains("killed %d" % tap.kills) and shown.contains("x Heavy") and shown.contains("per 10 lost"),
+		"a tap on a card lists its kills by enemy type: " + shown)
+	var kd := Kit.kills_detail("U", 40, 10, [["heavy", 30], [1, 5], ["archer", 1], ["spear", 1], ["javelin", 1], ["cav", 2]])
+	_check(kd.contains("(40 per 10 lost)") and kd.contains("30 x Heavy") and kd.ends_with("+2 others")
+		and Kit.kills_detail("U", 5, 0, []).contains("lost none") and Kit.effect_short(40, 10) == "40/10" and Kit.effect_short(5, 0) == "",
+		"kills_detail names the top 5 and sums the rest; nothing lost reads 'lost none': " + kd)
 	var t0 := ""
 	var t1 := ""
 	for l in res.find_children("totals_*", "Label", true, false):

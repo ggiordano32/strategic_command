@@ -2019,7 +2019,19 @@ func _grid_siege_equipment() -> void:
 	var nc := CState.new_campaign("t", 7, [rome], {"time_limit": 900})
 	var nc2 := CState.new_campaign("t", 7, [rome], {"time_limit": 2700})
 	_check(not (nc["settings"] as Dictionary).has("time_limit") and int(nc2["settings"]["time_limit"]) == 2700,
-		"time_limit is stored only when longer than 15 minutes")
+		"time_limit is stored unless it is the default 15 minutes")
+	var nc3 := CState.new_campaign("t", 7, [rome], {"time_limit": 600, "deploy_time": -1})
+	_check(int(nc3["settings"]["time_limit"]) == 600 and int(nc3["settings"]["deploy_time"]) == -1,
+		"10 minutes and unlimited deployment (-1) are stored")
+	var nc4 := CState.new_campaign("t", 7, [rome], {"deploy_time": 0})
+	_check(not (nc4["settings"] as Dictionary).has("deploy_time"), "deployment time 0 is not stored")
+	st["settings"]["time_limit"] = 36000
+	st["settings"]["deploy_time"] = -1
+	var ub := CBattle.build(st, b, rome)
+	_check(int(ub["scenario"].get("time_limit", 0)) == 36000 and int(ub["scenario"].get("deploy_time", 0)) == -1,
+		"unlimited battle time (36000 s) and deployment (-1) reach the scenario of a fought battle")
+	st["settings"].erase("time_limit")
+	st["settings"].erase("deploy_time")
 
 
 ## Region r's walls set to level wl (a test helper: its walls slot).
@@ -2621,15 +2633,31 @@ func _war_dogs() -> void:
 		"the battle builds the pack from the handlers (handlers %d, %d units)" % [h, sim.n_units])
 	var res := sim.result()
 	var pk: int = sim.u_pack[h] if h >= 0 else -1
+	var ty_a := UT.index_of("javelin")
+	var ty_b := UT.index_of("archer")
 	for r in res["units"]:
 		if int(r["unit"]) == pk:
 			r["kills"] = 7  # (as if the pack had killed seven)
+			r["kills_by"] = [[ty_a, 5], [ty_b, 2]]
+		elif int(r["unit"]) == h:
+			r["kills"] = 3
+			r["kills_by"] = [[ty_a, 3]]
 	var out := CBattle.outcome_from_result(built, res, "fought")
 	var hk := -1
 	for e in out["units"]:
 		if int(e["army"]) == int(am["id"]) and int(e["unit"]) == 1:
 			hk = int(e.get("kills", -1))
-	_check(hk == 7 and (out["units"] as Array).size() == 4, "a fought outcome credits the pack's kills to its handlers (%d)" % hk)
+	_check(hk == 7 + 3 and (out["units"] as Array).size() == 4, "a fought outcome credits the pack's kills to its handlers (%d)" % hk)
+	var kb: Array = []
+	for e in out["units"]:
+		if int(e["army"]) == int(am["id"]) and int(e["unit"]) == 1:
+			kb = e.get("kills_by", [])
+	_check(str(kb) == '[["javelin", 8], ["archer", 2]]', "a fought outcome carries kills_by with type keys, the pack's merged into its handlers' (%s)" % str(kb))
+	var kb_all := true
+	for e in out["units"]:
+		kb_all = kb_all and (e as Dictionary).has("kills_by")
+	_check(kb_all and not (CBattle.outcome_from_result(built, res, "auto")["units"][0] as Dictionary).has("kills_by"),
+		"every fought row has kills_by; auto-resolved rows do not")
 
 
 ## Light artillery (docs/CAMPAIGN.md rosters, docs/DESIGN.md "Light

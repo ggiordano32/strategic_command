@@ -9,7 +9,8 @@ extends Control
 ## Skilled, campaign/cai_profile.gd) for every AI faction, stored in the
 ## campaign's settings (only when not Average); docs/AI.md sections 10-12.
 
-signal start(data: Dictionary, slot: String)
+## panel: the loading panel opened by the tap (it carries on to the map).
+signal start(data: Dictionary, slot: String, panel: Node)
 signal back
 signal created_online(id: String, join_code: String)
 
@@ -17,6 +18,7 @@ const TouchScroll := preload("res://game/touch_scroll.gd")
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
+const LoadingPanel := preload("res://game/campaign/loading_panel.gd")
 const Saves := preload("res://game/campaign/saves.gd")
 
 const BLURB := {
@@ -134,16 +136,18 @@ func _ready() -> void:
 		_setting_buttons[k] = b
 		dr.add_child(b)
 	settings["deploy_time"] = 60
-	var db := Kit.button("", _cycle.bind("deploy_time"), 0, 14)
+	dr.add_child(Kit.label("Deployment", Kit.FONT, Kit.COL_DIM))
+	var db := Kit.dropdown(Kit.DEPLOY_OPTIONS, 60, func(x): settings["deploy_time"] = int(x), 0, 14)
 	db.name = "deploy_time"
-	db.tooltip_text = "Before a battle you fight yourself: time to place your units in your zone (Total War style); auto-resolve ignores it"
-	_setting_buttons["deploy_time"] = db
+	db.tooltip_text = "Before a battle you fight yourself: time to place your units in your zone (Total War style); Unlimited waits until every player is ready; auto-resolve ignores it"
+	_deploy_dd = db
 	dr.add_child(db)
 	settings["time_limit"] = 900
-	var tb := Kit.button("", _cycle.bind("time_limit"), 0, 14)
+	dr.add_child(Kit.label("Battle time", Kit.FONT, Kit.COL_DIM))
+	var tb := Kit.dropdown(Kit.TIME_OPTIONS, 900, func(x): settings["time_limit"] = int(x), 0, 14)
 	tb.name = "time_limit"
 	tb.tooltip_text = "How long a battle lasts before it is a draw (a long siege may need more than 15 minutes)"
-	_setting_buttons["time_limit"] = tb
+	_time_dd = tb
 	dr.add_child(tb)
 	v.add_child(dr)
 	_online_box = Kit.vbox(6)
@@ -175,10 +179,12 @@ func _ready() -> void:
 	_update()
 
 
+var _deploy_dd: OptionButton
+var _time_dd: OptionButton
+
 const CHOICES := {"victory_regions": [15, 20, 25, 30], "victory_capitals": [2, 3, 4, 5],
 	"turn_timeout_h": [0, 12, 24, 48, 72], "autoresolve": ["ask", "auto"], "ai_aggression": [70, 100, 130],
-	"ai_battle_skill": [0, 1, 2], "ai_campaign_skill": [0, 1, 2], "deploy_time": [0, 60, 120],
-	"time_limit": [900, 1200, 1800, 2700]}
+	"ai_battle_skill": [0, 1, 2], "ai_campaign_skill": [0, 1, 2]}
 ## AI skill levels (campaign/cai_profile.gd EASY / AVERAGE / SKILLED).
 const AI_AVERAGE := 1
 const SKILL_LABELS: Array[String] = ["Easy", "Average", "Skilled"]
@@ -245,8 +251,6 @@ func _update() -> void:
 	vr["ai_aggression"].text = "AI: " + {70: "calm", 100: "normal", 130: "aggressive"}[int(settings["ai_aggression"])]
 	vr["ai_battle_skill"].text = "Battle AI: " + SKILL_LABELS[int(settings["ai_battle_skill"])]
 	vr["ai_campaign_skill"].text = "Campaign AI: " + SKILL_LABELS[int(settings["ai_campaign_skill"])]
-	vr["deploy_time"].text = "Deployment time: " + {0: "none", 60: "1 min", 120: "2 min"}[int(settings["deploy_time"])]
-	vr["time_limit"].text = "Battle time: %d min" % (int(settings["time_limit"]) / 60)
 	vr["ai_battle_skill"].tooltip_text = "Easy makes a new player's mistakes; Skilled reads the battle and punishes yours."
 	vr["ai_campaign_skill"].tooltip_text = "Easy makes a new player's mistakes; Skilled concentrates its armies, picks its wars and fights one front at a time."
 
@@ -259,11 +263,19 @@ func _start() -> void:
 	var nm := name_edit.text.strip_edges()
 	if nm == "":
 		nm = "Campaign"
+	if _creating:
+		return
+	# The tap answers at once: the button is off and the panel is up before
+	# any work starts (a second tap cannot start a second campaign).
+	_creating = true
+	_update()
+	var lp := LoadingPanel.open(get_tree().root, "Preparing the campaign", 5)
+	await lp.step("Creating the campaign")
 	var st := CState.new_campaign(nm, sd, picks.duplicate(), settings)
 	var slot := Saves.slot_for(nm, sd)
 	var data := {"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}
 	Saves.save(slot, data)
-	start.emit(data, slot)
+	start.emit(data, slot, lp)
 
 
 func _start_online() -> void:

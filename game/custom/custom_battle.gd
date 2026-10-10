@@ -258,17 +258,19 @@ func _map_row() -> Control:
 	row.add_child(se)
 	v.add_child(row)
 	var r2 := Kit.flow(8)
-	var dt := int(setup.get("deploy", 60))
-	var db := _opt("Deployment: " + ({0: "none", 60: "1 min", 120: "2 min"}[dt] if dt in [0, 60, 120] else "%d s" % dt), func():
-		setup["deploy"] = CS.DEPLOY_CHOICES[(CS.DEPLOY_CHOICES.find(dt) + 1) % CS.DEPLOY_CHOICES.size()]
-		_changed(), ed)
+	r2.add_child(Kit.label("Deployment", Kit.FONT_SMALL, Kit.COL_DIM))
+	var db := Kit.dropdown(Kit.DEPLOY_OPTIONS, int(setup.get("deploy", 60)), func(x):
+		setup["deploy"] = int(x)
+		_changed(), 0, 14)
 	db.name = "custom_deploy"
+	db.disabled = not ed
 	r2.add_child(db)
-	var tl := int(setup.get("time", 900))
-	var tlb := _opt("Battle time: %d min" % (tl / 60), func():
-		setup["time"] = CS.TIME_CHOICES[(CS.TIME_CHOICES.find(tl) + 1) % CS.TIME_CHOICES.size()]
-		_changed(), ed)
+	r2.add_child(Kit.label("Battle time", Kit.FONT_SMALL, Kit.COL_DIM))
+	var tlb := Kit.dropdown(Kit.TIME_OPTIONS, int(setup.get("time", 900)), func(x):
+		setup["time"] = int(x)
+		_changed(), 0, 14)
 	tlb.name = "custom_time"
+	tlb.disabled = not ed
 	r2.add_child(tlb)
 	var fi := int(setup.get("funds", 0))
 	r2.add_child(_opt("Funds per side: " + CS.FUNDS_NAMES[fi], func():
