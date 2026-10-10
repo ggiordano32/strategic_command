@@ -118,6 +118,34 @@ const DITCH_W := 6                      # ditch width
 const CAUSEWAY_HW := 4                  # causeway half width beyond a gate's opening
 const CIT_N := 6                        # citadel wall: corners
 
+## River crossings (scenario "river": {id, kind, seed, bank}; field maps
+## only; docs/DESIGN.md "River crossings"). One river across the field
+## between the two deployment edges, generated in a canonical frame (the
+## far bank, held by sim side `bank`, at the top) from the crossing's own
+## seed, then turned 180 degrees when side 0 holds it. Numbers chosen once:
+const RIV_HW: Array[int] = [10, 20]     # half width (m): the river 20-40 m wide
+const RIV_A1: Array[int] = [8, 18]      # main meander amplitude (m) ...
+const RIV_L1: Array[int] = [320, 480]   # ... and wavelength (m); its bend toward the far bank at the crossing
+const RIV_A2: Array[int] = [2, 5]       # small wiggle amplitude (m) ...
+const RIV_L2: Array[int] = [100, 160]   # ... and wavelength
+const RIV_OFF := 40                     # crossing within this of the field's centre line (x, m)
+const FORD_W: Array[int] = [12, 20]     # ford width (m, even)
+const BRIDGE_W := 6                     # bridge width (m): one unit wide
+const RIV_DEPTH := 2                    # river bed / ford below the plain (m) ...
+const RIV_BANK := 16                    # ... rising to it over this from the water (max grade ~19 %)
+const RISE_H: Array[int] = [3, 6]       # a low rise on each bank (m high) ...
+const RISE_R: Array[int] = [45, 70]     # ... radius (m) ...
+const RISE_BACK: Array[int] = [45, 80]  # ... its top this far back from the water
+const RIV_CLEAR := 6                    # no trees within this of the water
+const RIV_ROW := 14                     # nav nodes along each bank this far from the water ...
+const RIV_STEP := 30                    # ... this far apart
+const RIV_MOUTH := 5                    # crossing mouth nodes this far beyond the water
+# River cells (the "rv" grid, 2 m like obs).
+const R_LAND := 0
+const R_WATER := 1
+const R_FORD := 2
+const R_BRIDGE := 3
+
 ## Walkway segment entries ("segs"): SEG_LEN ints: x0, y0, x1, y1 (walkway
 ## centre line), outward direction, then for each end (start, end) the
 ## walkway point E, the stair point S (in the wall's inner face) and its
@@ -333,16 +361,23 @@ static func build(terr: Dictionary, battle_seed: int, w_m: int, h_m: int, hgt: D
 	var woods: Array = terr.get("woods", [])
 	var blocks: Array = terr.get("blocks", [])
 	var has_city: bool = terr.has("city") and terr["city"] is Dictionary
-	if dens <= 0 and woods.is_empty() and not has_city and blocks.is_empty():
+	var rg := {}
+	if not has_city and terr.get("river") is Dictionary:
+		rg = river_geom(terr["river"], w_m, h_m)
+	if dens <= 0 and woods.is_empty() and not has_city and blocks.is_empty() and rg.is_empty():
 		return out
 	var tseed := int(terr.get("seed", -1))
 	if tseed < 0:
 		tseed = battle_seed
+	if not rg.is_empty():
+		tseed = int(rg["seed"])  # a crossing's woods are its own (frozen)
 	var key := "%s|%d|%d|%d|%d" % [str(terr), tseed, w_m, h_m, int(hgt.get("on", 0))]
 	if key == _cache_key and not _cache.is_empty():
 		var hit := _cache.duplicate()
 		hit["veg"] = (_cache["veg"] as PackedByteArray).duplicate()
 		hit["obs"] = (_cache["obs"] as PackedByteArray).duplicate()
+		if _cache.has("rv"):
+			hit["rv"] = (_cache["rv"] as PackedByteArray).duplicate()
 		if _cache.has("h_flipped"):
 			hgt["h"] = (_cache["h_flipped"] as PackedInt32Array).duplicate()
 		return hit
@@ -366,6 +401,12 @@ static func build(terr: Dictionary, battle_seed: int, w_m: int, h_m: int, hgt: D
 			oy = int(city["cy"]) - 260
 			bw = 600
 			bh = 640
+		elif not rg.is_empty():
+			# A crossing: round the field's centre (canonical frame).
+			ox = w_m / 2 - 320
+			oy = h_m / 2 - 300
+			bw = 640
+			bh = 600
 		_forest(veg, vw, vh, dens, tseed * 31 + 7, hgt, ox, oy, bw, bh, excl, int(terr.get("sym", 0)))
 	for wd in woods:
 		var a: Array = wd
@@ -391,17 +432,22 @@ static func build(terr: Dictionary, battle_seed: int, w_m: int, h_m: int, hgt: D
 		out["ow"] = ow
 		out["oh"] = oh
 		out["obs_on"] = 1
+	if not rg.is_empty():
+		_river(out, rg, veg, vw, vh, hgt, w_m, h_m)
 	for k in veg.size():
 		if (veg[k] & V_DENS) != 0:
 			out["veg_on"] = 1
 			break
 	if has_city and int(city["def"]) == 0:
 		_flip_all(out, hgt, w_m, h_m)
+	var flipped := (has_city and int(city["def"]) == 0) or (not rg.is_empty() and int(rg["flip"]) != 0)
 	_cache_key = key
 	_cache = out.duplicate()
 	_cache["veg"] = (out["veg"] as PackedByteArray).duplicate()
 	_cache["obs"] = (out["obs"] as PackedByteArray).duplicate()
-	if has_city and int(city["def"]) == 0:
+	if out.has("rv"):
+		_cache["rv"] = (out["rv"] as PackedByteArray).duplicate()
+	if flipped:
 		_cache["h_flipped"] = (hgt["h"] as PackedInt32Array).duplicate()
 	return out
 
@@ -2587,6 +2633,260 @@ static func _clear_fat(obs: PackedByteArray, ow: int, oh: int, ax: int, ay: int,
 			if k != C_OPEN and k != C_GATE + allow:
 				return false
 	return true
+
+
+# ------------------------------------------------------------- river ------
+
+## A crossing's geometry from its scenario key {id, kind (0 ford / 1
+## bridge), seed, bank (the sim side holding the far bank)} on a field
+## w_m x h_m: every number drawn from the seed alone (so the ford and the
+## bridge of one seed share their river), the crossing's x range [xa, xb)
+## (even metres) about the field's centre line.
+static func river_geom(rv: Dictionary, w_m: int, h_m: int) -> Dictionary:
+	var sd := int(rv.get("seed", int(rv.get("id", 0)) * 7 + 1)) & 0x7FFFFFFF
+	var rng := _rng(sd * 7919 + 4111)
+	var hw := _rr(rng, RIV_HW[0], RIV_HW[1])
+	var a1 := _rr(rng, RIV_A1[0], RIV_A1[1])
+	var l1 := _rr(rng, RIV_L1[0], RIV_L1[1])
+	var ph := _rr(rng, -60, 60)
+	var a2 := _rr(rng, RIV_A2[0], RIV_A2[1])
+	var l2 := _rr(rng, RIV_L2[0], RIV_L2[1])
+	var p2 := _r(rng, 1024)
+	var off := _rr(rng, -RIV_OFF, RIV_OFF)
+	var fw := _rr(rng, FORD_W[0] / 2, FORD_W[1] / 2) * 2
+	var rises: Array = []
+	for s in 2:
+		# [x offset from the crossing, back from the water, radius, height]:
+		# s 0 the far bank (canonical top), 1 the near bank.
+		rises.append([_rr(rng, -70, 70), _rr(rng, RISE_BACK[0], RISE_BACK[1]), _rr(rng, RISE_R[0], RISE_R[1]),
+			_rr(rng, RISE_H[0], RISE_H[1])])
+	var kind := clampi(int(rv.get("kind", 0)), 0, 1)
+	var cw := BRIDGE_W if kind == 1 else fw
+	var xc := w_m / 2 + off
+	var xa := (xc - cw / 2) & ~1
+	return {"seed": sd, "id": int(rv.get("id", 0)), "kind": kind, "hw": hw, "a1": a1, "l1": l1, "ph": ph,
+		"a2": a2, "l2": l2, "p2": p2, "xc": xc, "xa": xa, "xb": xa + cw, "fw": fw, "rises": rises,
+		"bank": clampi(int(rv.get("bank", 1)), 0, 1), "flip": 1 if int(rv.get("bank", 1)) == 0 else 0,
+		"w": w_m, "h": h_m}
+
+
+## Canonical centre line's y (cm) at x (m): the main bend's apex (toward
+## the far bank, the top) at the crossing, plus a small wiggle.
+static func river_y(g: Dictionary, x: int) -> int:
+	var d := x - int(g["xc"])
+	var a := (d * 1024 / int(g["l1"]) + int(g["ph"])) & 1023
+	var b := (d * 1024 / int(g["l2"]) + int(g["p2"])) & 1023
+	return int(g["h"]) * 50 - int(g["a1"]) * 100 * FM.cos_a(a) / FM.TRIG_ONE \
+		+ int(g["a2"]) * 100 * FM.sin_a(b) / FM.TRIG_ONE
+
+
+## Final frame (as the battle sees it): the river's centre y (cm) at x (m).
+static func river_cy(g: Dictionary, x: int) -> int:
+	if int(g["flip"]) != 0:
+		return int(g["h"]) * 100 - river_y(g, int(g["w"]) - x)
+	return river_y(g, x)
+
+
+## Final frame: y (cm) of the water's edge facing side `side` (0: the
+## bottom bank, 1: the top) at x (m).
+static func river_edge(g: Dictionary, x: int, side: int) -> int:
+	var c := river_cy(g, x)
+	return c + int(g["hw"]) * 100 if side == 0 else c - int(g["hw"]) * 100
+
+
+## Final frame: the water's edge facing `side` nearest that side's edge of
+## the field over [x0, x1] (m; sampled every 2 m), in metres rounded away
+## from the water.
+static func river_reach(g: Dictionary, x0: int, x1: int, side: int) -> int:
+	var best := -(1 << 30) if side == 0 else (1 << 30)
+	var x := x0
+	while true:
+		var e := river_edge(g, clampi(x, 0, int(g["w"])), side)
+		best = maxi(best, e) if side == 0 else mini(best, e)
+		if x >= x1:
+			break
+		x = mini(x + 2, x1)
+	return (best + 99) / 100 if side == 0 else best / 100
+
+
+## Final frame: the crossing's mouth on side `side`'s bank (m): the middle
+## of the crossing, RIV_MOUTH beyond the water.
+static func river_mouth(g: Dictionary, side: int) -> Vector2i:
+	var xm := (int(g["xa"]) + int(g["xb"])) / 2
+	if int(g["flip"]) != 0:
+		xm = int(g["w"]) - xm
+	var xa := xm - (int(g["xb"]) - int(g["xa"])) / 2
+	var xb := xm + (int(g["xb"]) - int(g["xa"])) / 2
+	var y := river_reach(g, xa, xb, side)
+	return Vector2i(xm, y + RIV_MOUTH if side == 0 else y - RIV_MOUTH)
+
+
+## Height features of a crossing (terrain.gd F_BUMP rows, canonical frame):
+## a low rise on each bank.
+static func river_rises(g: Dictionary) -> Array:
+	var out: Array = []
+	var xc := int(g["xc"])
+	for s in 2:
+		var r: Array = g["rises"][s]
+		var x := xc + int(r[0])
+		var e := river_y(g, x) / 100 + (-int(g["hw"]) if s == 0 else int(g["hw"]))
+		var y := e - int(r[1]) if s == 0 else e + int(r[1])
+		out.append([1, x, y, int(r[2]), int(r[3])])
+	return out
+
+
+## Carve the river's bed into the canonical height grid (nodes 4 m apart):
+## RIV_DEPTH below where it lies, rising to the plain over RIV_BANK.
+static func river_carve(h: PackedInt32Array, nx: int, ny: int, g: Dictionary) -> void:
+	var hw := int(g["hw"]) * 100
+	var band := RIV_BANK * 100
+	for i in nx:
+		var yc := river_y(g, i * 4)
+		for j in ny:
+			var d := absi(j * 400 - yc) - hw
+			if d >= band:
+				continue
+			var t := 0
+			if d > 0:
+				# smoothstep(d / band) in 1/1024
+				var u := d * 1024 / band
+				t = u * u * (3072 - 2 * u) / (1024 * 1024)
+			h[j * nx + i] -= RIV_DEPTH * M * (1024 - t) / 1024
+
+
+## The river on a field map: rasterise water, ford and bridge (canonical
+## frame) into obs (C_WATER where nobody goes; ford and bridge open ground)
+## and the rv grid; the sea bit on the water's 4 m cells (the view's water)
+## and no trees near it; then turn everything round if side 0 holds the far
+## bank, and build the way across (nav graph, final frame) and the layout.
+static func _river(out: Dictionary, g: Dictionary, veg: PackedByteArray, vw: int, vh: int, hgt: Dictionary,
+		w_m: int, h_m: int) -> void:
+	var ow := w_m / 2
+	var oh := h_m / 2
+	var obs := PackedByteArray()
+	obs.resize(ow * oh)
+	obs.fill(C_OPEN)
+	var rvg := PackedByteArray()
+	rvg.resize(ow * oh)
+	rvg.fill(R_LAND)
+	var hw := int(g["hw"]) * 100
+	var xa := int(g["xa"])
+	var xb := int(g["xb"])
+	var cross := R_BRIDGE if int(g["kind"]) == 1 else R_FORD
+	for i in ow:
+		var x := i * 2 + 1
+		var yc := river_y(g, x)
+		var in_x := x >= xa and x < xb
+		for j in range(maxi((yc - hw) / 200 - 1, 0), mini((yc + hw) / 200 + 2, oh)):
+			if absi((j * 2 + 1) * 100 - yc) >= hw:
+				continue
+			var c := j * ow + i
+			if in_x:
+				rvg[c] = cross
+			else:
+				rvg[c] = R_WATER
+				obs[c] = C_WATER
+	# The view's water (4 m cells whose centre is water or under the bridge)
+	# and no trees on or near it.
+	var clear := hw + RIV_CLEAR * 100
+	for i in vw:
+		var x := i * 4 + 2
+		var yc := river_y(g, mini(x, w_m))
+		for j in range(maxi((yc - clear) / 400 - 1, 0), mini((yc + clear) / 400 + 2, vh)):
+			var d := absi((j * 4 + 2) * 100 - yc)
+			if d >= clear:
+				continue
+			var k := j * vw + i
+			veg[k] &= ~V_DENS
+			var oc := mini(j * 2 + 1, oh - 1) * ow + mini(i * 2 + 1, ow - 1)
+			if rvg[oc] == R_WATER or rvg[oc] == R_BRIDGE:
+				veg[k] |= V_WATER
+	# The crossing's approaches stay clear of trees (40 m either side).
+	var ycx := river_y(g, (xa + xb) / 2) / 100
+	_veg_rect(veg, vw, vh, xa - 12, ycx - int(g["hw"]) - 40, xb + 12, ycx + int(g["hw"]) + 40, 0)
+	out["obs"] = obs
+	out["ow"] = ow
+	out["oh"] = oh
+	out["obs_on"] = 1
+	out["rv"] = rvg
+	out["riv_on"] = 1
+	if int(g["flip"]) != 0:
+		for key in ["veg", "obs", "rv"]:
+			var gr: PackedByteArray = out[key]
+			var gn := gr.size()
+			for k in gn / 2:
+				var a := gr[k]
+				gr[k] = gr[gn - 1 - k]
+				gr[gn - 1 - k] = a
+		if hgt.has("h"):
+			var hh: PackedInt32Array = hgt["h"]
+			var n2 := hh.size()
+			for k in n2 / 2:
+				var a2 := hh[k]
+				hh[k] = hh[n2 - 1 - k]
+				hh[n2 - 1 - k] = a2
+	# The way across (final frame): a row of nodes along each bank, the
+	# crossing's two mouths and its middle.
+	var nxs := PackedInt32Array()
+	var nys := PackedInt32Array()
+	var add := func(x: int, y: int) -> void:
+		if x < 4 or y < 4 or x > w_m - 4 or y > h_m - 4:
+			return
+		if obs[mini(y / 2, oh - 1) * ow + mini(x / 2, ow - 1)] != C_OPEN:
+			return
+		for q in nxs.size():
+			if absi(nxs[q] - x) < 4 and absi(nys[q] - y) < 4:
+				return
+		nxs.append(x)
+		nys.append(y)
+	var m0 := river_mouth(g, 0)
+	var m1 := river_mouth(g, 1)
+	add.call(m0.x, m0.y)
+	add.call(m1.x, m1.y)
+	add.call(m0.x, river_cy(g, m0.x) / 100)
+	for s in 2:
+		var k := -(m0.x / RIV_STEP)
+		while m0.x + k * RIV_STEP < w_m:
+			var x := m0.x + k * RIV_STEP
+			k += 1
+			if x < 8 or x > w_m - 8:
+				continue
+			var e := river_reach(g, maxi(x - 16, 0), mini(x + 16, w_m), s)
+			add.call(x, e + RIV_ROW if s == 0 else e - RIV_ROW)
+	var n := nxs.size()
+	var adj: Array = []
+	var ng := PackedInt32Array()
+	ng.resize(n)
+	ng.fill(-1)
+	for a in n:
+		adj.append([])
+	for a in n:
+		for b in range(a + 1, n):
+			var dx := nxs[b] - nxs[a]
+			var dy := nys[b] - nys[a]
+			if absi(dx) > EDGE_MAX or absi(dy) > EDGE_MAX:
+				continue
+			var l2 := dx * dx + dy * dy
+			if l2 > EDGE_MAX * EDGE_MAX or not _clear_fat(obs, ow, oh, nxs[a], nys[a], nxs[b], nys[b], -1):
+				continue
+			var wgt := FM.isqrt(l2 * 64)
+			(adj[a] as Array).append([b, wgt])
+			(adj[b] as Array).append([a, wgt])
+	_join_components(obs, ow, oh, nxs, nys, ng, adj)
+	var e0 := PackedInt32Array()
+	var to := PackedInt32Array()
+	var ww := PackedInt32Array()
+	for a in n:
+		e0.append(to.size())
+		for e in adj[a]:
+			to.append(int(e[0]))
+			ww.append(int(e[1]))
+	e0.append(to.size())
+	var xm := m0.x
+	var half := (xb - xa) / 2
+	out["river"] = {"kind": int(g["kind"]), "id": int(g["id"]), "seed": int(g["seed"]), "hw": int(g["hw"]),
+		"bank": int(g["bank"]), "x0": xm - half, "x1": xm + half, "mouth": [[m0.x, m0.y], [m1.x, m1.y]],
+		"geom": g, "nav": {"x": nxs, "y": nys, "gate": ng, "e0": e0, "to": to, "w": ww}}
 
 
 # --------------------------------------------------------------- flip -----

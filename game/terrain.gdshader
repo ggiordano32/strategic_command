@@ -46,6 +46,12 @@ uniform sampler2D seamap : filter_linear, repeat_disable;
 uniform bool sea_on = false;
 uniform vec3 sea_col = vec3(0.18, 0.36, 0.5);
 uniform vec3 ditch_col = vec3(0.27, 0.21, 0.15);
+// A river crossing (field maps): R water (under a bridge too), G the ford's
+// shallows, one texel per 2 m.
+uniform sampler2D rivmap : filter_linear, repeat_disable;
+uniform bool riv_on = false;
+uniform vec2 riv_size_px = vec2(1.0);
+uniform vec3 ford_col = vec3(0.50, 0.58, 0.54);
 
 varying highp vec2 world;
 
@@ -76,6 +82,12 @@ void fragment() {
 		sea = smoothstep(0.35, 0.65, sv.r);
 		ditch = smoothstep(0.3, 0.7, sv.g);
 	}
+	float ford = 0.0;
+	if (riv_on) {
+		vec2 rw = texture(rivmap, world / riv_size_px).rg;
+		sea = max(sea, smoothstep(0.35, 0.65, rw.r));
+		ford = smoothstep(0.3, 0.7, rw.g);
+	}
 	if (veg_on) {
 		vec4 v = texture(vegmap, world / veg_size_px);
 		// Forest floor: darker and a little greener under the trees.
@@ -90,7 +102,7 @@ void fragment() {
 	}
 	// A ditch: dark earth, its floor in shadow.
 	col = mix(col, ditch_col, ditch * 0.85);
-	contour_k *= 1.0 - max(sea, ditch);
+	contour_k *= 1.0 - max(max(sea, ditch), ford);
 	if (terrain_on) {
 		highp vec2 tp = world / texel_px;
 		highp vec2 f0 = floor(tp);
@@ -127,7 +139,7 @@ void fragment() {
 			col = mix(col, line_col.rgb, line_col.a * contour_k * fade * line_a(dist, fw, 0.5));
 		}
 	}
-	if (sea_on && sea > 0.0) {
+	if ((sea_on || riv_on) && sea > 0.0) {
 		// Water: flat colour with a slow ripple and a light band of foam
 		// along the shore.
 		highp vec2 wv = world / 90.0;
@@ -136,6 +148,19 @@ void fragment() {
 		col = mix(col, water, sea);
 		float foam = sea * (1.0 - sea) * 4.0;
 		col = mix(col, vec3(0.88, 0.92, 0.9), foam * 0.45);
+	}
+	if (riv_on && ford > 0.0) {
+		// The ford: pale shallows over a gravel bed, ripples across the
+		// current and a light edge where it meets the deep water.
+		highp vec2 fv = world / 14.0;
+		float gravel = 0.5 + 0.5 * sin(fv.x * 2.9 + sin(fv.y * 3.7) * 1.9) * sin(fv.y * 2.3 + fv.x * 0.7);
+		vec3 shallow = ford_col * (0.93 + 0.12 * gravel);
+		col = mix(col, shallow, ford * 0.92);
+		float wv = sin(world.x / 7.0 + sin(world.y / 19.0) * 2.4);
+		float rip = smoothstep(0.7, 0.98, wv) * (0.6 + 0.4 * sin(world.y / 5.0));
+		col = mix(col, vec3(0.9, 0.95, 0.94), rip * ford * 0.25);
+		float lip = ford * (1.0 - ford) * 4.0;
+		col = mix(col, vec3(0.85, 0.9, 0.88), lip * 0.35);
 	}
 	// Faint 50 m grid, about one pixel wide at any zoom.
 	highp vec2 g = world / grid_px;

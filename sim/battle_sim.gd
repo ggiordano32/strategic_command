@@ -323,6 +323,7 @@ const PATH_INF := 1 << 28
 const SEARCH_CAP := 64           # settlement maps: a target search looks at most at this many men
 const DIST_PER_TICK := 2         # street graph distance tables built per tick at most (the rest wait)
 const DITCH_SPEED := 450         # per mille of the speed while crossing a ditch (foot only)
+const FORD_SPEED := DITCH_SPEED  # per mille of the pace wading a ford (everyone; docs/DESIGN.md "River crossings")
 const STAIR_MAX := 400           # a stair move gives up waiting for stragglers after this long
 const WALL_RG := 1229            # a unit on a wall stands in two ranks at most this far apart (1.2 m)
 const WALL_SNAP := 14 * M        # a move onto wall / tower cells this near a stretch's walkway goes onto it
@@ -785,6 +786,15 @@ var oc_w: int = 0
 var oc_h: int = 0
 var map_hash: int = 0
 var map_info: Dictionary = {}     # generator output for the view (palette, city layout)
+# River crossings (scenario "river"; sim/mapgen.gd river_geom): the water
+# is obs C_WATER (nobody); the ford and the bridge are open ground; the rv
+# grid (2 m, MapGen.R_*) tells the ford's cells. Static (hashed into
+# ter_hash); u_frd is state.
+var riv_on: int = 0
+var rv := PackedByteArray()       # 2 m cells: MapGen.R_* (static)
+var riv: Dictionary = {}          # the crossing's geometry (MapGen.river_geom; static)
+var riv_box := PackedInt32Array([0, 0, 0, 0])  # the ford's cells' bounding box (sim units; static)
+var u_frd := PackedInt32Array()   # per unit: 1 if any of its men stood in the ford after the last tick
 var city_on: int = 0
 var city_def: int = -1            # defending side
 var city_walls: int = 0
@@ -1146,6 +1156,8 @@ var stat_unreach: int = 0         # unit-ticks attacking a unit out of reach (to
 var stat_stair_up: int = 0        # units that climbed onto a wall
 var stat_stair_rout: int = 0      # wall units that routed off by a stair
 var stat_ditch: int = 0           # unit-ticks crossing a ditch
+var stat_ford: int = 0            # unit-ticks wading a ford (river crossings)
+var stat_ford_stop: int = 0       # rider-ticks a charge's momentum was lost in the ford
 var stat_sea_exit: int = 0        # defenders who left a coast map along the shore
 var stat_cit_siege: int = 0       # defender unit-seconds of morale lost with the town lost
 var stat_regroup: int = 0         # units that regrouped where their cut-off men were
@@ -1357,12 +1369,21 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	ai_mist.resize(2 * AIProfile.N_MISTAKES)
 	ai_mist.fill(0)
 	_dist_new = 0
-	_setup_terrain(scenario.get("terrain", {}), p_seed)
+	var terr0: Dictionary = scenario.get("terrain", {})
+	if scenario.get("river") is Dictionary and not (terr0.get("city") is Dictionary):
+		# A river crossing: the map is the crossing's own (sim/mapgen.gd).
+		terr0 = terr0.duplicate()
+		terr0["river"] = scenario["river"]
+	_setup_terrain(terr0, p_seed)
 
 	_load_types()
 
 	time_limit = maxi(int(scenario.get("time_limit", TIME_LIMIT / TICKS_PER_SECOND)), 60) * TICKS_PER_SECOND
 	var units: Array = scenario["units"]
+	if riv_on != 0:
+		# Off the water; the far bank's holder faces the crossing (fortified:
+		# its line brought up to the camp at the crossing's mouth).
+		units = Scenarios.river_units(units, field_w / M, field_h / M, riv, int(scenario.get("fortified", -1)))
 	var towers := _siege_towers(scenario)
 	if not towers.is_empty():
 		# The city's tower engines come after the scenario's own units.
@@ -2066,6 +2087,10 @@ func _setup_map(f: Dictionary) -> void:
 	veg_on = int(f["veg_on"])
 	obs_on = int(f["obs_on"])
 	city_on = int(f["city_on"])
+	riv_on = int(f.get("riv_on", 0))
+	rv = f["rv"] if riv_on != 0 else PackedByteArray()
+	riv = {}
+	riv_box = PackedInt32Array([0, 0, 0, 0])
 	map_on = 1 if veg_on != 0 or obs_on != 0 else 0
 	veg_w = int(f["vw"])
 	veg_h = int(f["vh"])
@@ -2190,6 +2215,31 @@ func _setup_map(f: Dictionary) -> void:
 		ng_e0 = (gr["e0"] as PackedInt32Array).duplicate()
 		ng_to = (gr["to"] as PackedInt32Array).duplicate()
 		ng_w = (gr["w"] as PackedInt32Array).duplicate()
+	if riv_on != 0:
+		var rl: Dictionary = f["river"]
+		map_info["river"] = rl
+		riv = rl["geom"]
+		var rgr: Dictionary = rl["nav"]
+		for k in (rgr["x"] as PackedInt32Array).size():
+			ng_x.append(int(rgr["x"][k]) * M)
+			ng_y.append(int(rgr["y"][k]) * M)
+		ng_gate = (rgr["gate"] as PackedInt32Array).duplicate()
+		ng_e0 = (rgr["e0"] as PackedInt32Array).duplicate()
+		ng_to = (rgr["to"] as PackedInt32Array).duplicate()
+		ng_w = (rgr["w"] as PackedInt32Array).duplicate()
+		var bx0 := ob_w
+		var by0 := ob_h
+		var bx1 := -1
+		var by1 := -1
+		for j in ob_h:
+			for i in ob_w:
+				if rv[j * ob_w + i] == MapGen.R_FORD:
+					bx0 = mini(bx0, i)
+					by0 = mini(by0, j)
+					bx1 = maxi(bx1, i)
+					by1 = maxi(by1, j)
+		if bx1 >= 0:
+			riv_box = PackedInt32Array([bx0 * 2 * M, by0 * 2 * M, (bx1 + 1) * 2 * M, (by1 + 1) * 2 * M])
 	if obs_on != 0:
 		nav.resize(ob_w * ob_h)
 		_rebuild_nav()
@@ -2212,6 +2262,8 @@ func _setup_map(f: Dictionary) -> void:
 			ctx.update(veg)
 		if obs_on != 0:
 			ctx.update(obs)
+			if riv_on != 0:
+				ctx.update(rv)
 			if ng_to.size() > 0:
 				ctx.update(ng_to.to_byte_array())
 			if ws_x0.size() > 0:
@@ -5219,6 +5271,8 @@ func step() -> void:
 	_update_soldiers()
 	if fw_on != 0:
 		_update_works()
+	if riv_on != 0:
+		_update_ford()
 	if n_eq > 0:
 		_update_equip()
 	if n_gates > 0:
@@ -5633,6 +5687,12 @@ func _update_units() -> void:
 			aspeed = aspeed * DITCH_SPEED / 1000
 			_u_vfac[u] = _u_vfac[u] * DITCH_SPEED / 1000
 			stat_ditch += 1
+		if riv_on != 0 and (u_frd[u] != 0 or river_at(u_ax[u], u_ay[u]) == MapGen.R_FORD):
+			# Wading the ford (horses too): the formation keeps to the
+			# pace of its men in the water.
+			aspeed = aspeed * FORD_SPEED / 1000
+			_u_vfac[u] = _u_vfac[u] * FORD_SPEED / 1000
+			stat_ford += 1
 		var lag := 0
 		if oon and _u_obs[u] != 0 and u_fighting[u] == 0 and u_charge[u] == 0 and u_wall[u] == 0 \
 				and u_stair[u] == 0:
@@ -5951,6 +6011,8 @@ func _update_units() -> void:
 					cap = mini(cap, VEG_MOM_CAP[vd])
 					if urban:
 						cap = mini(cap, URBAN_MOM_CAP)
+				if riv_on != 0 and u_frd[u] != 0:
+					cap = 0  # no run-up in the water
 				u_mom[u] = mini(u_mom[u] + gain, cap)
 			else:
 				u_mom[u] = maxi(u_mom[u] - MOM_LOSS, 0)
@@ -10466,6 +10528,7 @@ const _SNAP_SKIP := {"ter_h": true, "ter_gx": true, "ter_gy": true, "ter_info": 
 	"ws_x0": true, "ws_y0": true, "ws_x1": true, "ws_y1": true, "ws_dir": true, "ng_x": true,
 	"ng_y": true, "ng_gate": true, "ng_e0": true, "ng_to": true, "ng_w": true, "_dist_cache": true,
 	"g_hw": true, "g_cit": true, "ws_e": true, "ws_fl": true, "sea_flee": true, "ws_nb": true,
+	"rv": true, "riv": true,
 	"ws_jx": true, "ws_jy": true, "_lw_x": true, "_lw_y": true, "_fl_mark": true, "cmp": true, "n_cmp": true, "g_cmp": true, "_croot": true, "_croot_ep": true}
 const _SNAP_MAGIC := 0x31534353  # "SCS1"
 
@@ -10625,6 +10688,9 @@ func state_hash() -> int:
 		# War dogs (battles without handlers hash as before).
 		for arr in _dog_arrays():
 			ctx.update((arr as PackedInt32Array).to_byte_array())
+	if riv_on != 0:
+		# River crossings (battles without one hash as before).
+		ctx.update(u_frd.to_byte_array())
 	var digest := ctx.finish()
 	return digest.decode_u32(0)
 
@@ -11172,6 +11238,8 @@ func _setup_equip(sc: Dictionary, units: Array) -> void:
 	u_fws.fill(100)
 	u_fwc.resize(n_units)
 	u_fwc.fill(0)
+	u_frd.resize(n_units)
+	u_frd.fill(0)
 	var q0 := lst.size() + wag.size()
 	for k in fws.size():
 		var f: Array = fws[k]
@@ -12094,7 +12162,7 @@ func _field_works(sc: Dictionary, units: Array) -> Array:
 	if sc.has("fortified"):
 		var fs := int(sc["fortified"])
 		if fs == 0 or fs == 1:
-			lst.append_array(Scenarios.camp(units, field_w / M, field_h / M, fs))
+			lst.append_array(Scenarios.camp(units, field_w / M, field_h / M, fs, riv))
 	for e in lst:
 		var k := int(e[0])
 		var s := int(e[1])
@@ -12469,3 +12537,62 @@ func _screen_cover(sx: int, sy: int, v: int, bolt: bool) -> bool:
 			return true
 		return false
 	return false
+
+
+
+# ------------------------------------------------------- river crossings ---
+# A crossing map (scenario "river"; docs/DESIGN.md "River crossings"):
+# the river is C_WATER (nobody steps or reaches across it; missiles fly
+# over), the bridge open ground one unit wide (the street squeeze and the
+# queue behind friends apply), the ford open ground where every man wades
+# at FORD_SPEED and a rider's charge momentum is lost (as in a ditch); men
+# in the ford have no cover (open ground: no trees there). Heights from
+# the banks through the usual height rules.
+
+## River cell (MapGen.R_*) at (x, y) (sim units); R_LAND off a crossing map.
+func river_at(x: int, y: int) -> int:
+	if riv_on == 0 or x < 0 or y < 0:
+		return MapGen.R_LAND
+	var i := x >> 11
+	var j := y >> 11
+	if i >= ob_w or j >= ob_h:
+		return MapGen.R_LAND
+	return rv[j * ob_w + i]
+
+
+## The ford, once a tick after the men have moved: a man in it has his step
+## cut to FORD_SPEED and, a rider, his charge's momentum lost (u_mom too);
+## u_frd marks the units with men in it (their anchors keep to the pace).
+func _update_ford() -> void:
+	u_frd.fill(0)
+	if riv_box[2] <= riv_box[0]:
+		return  # a bridge
+	for u in n_units:
+		if u_alive[u] <= 0 or u_state[u] >= U_DESTROYED:
+			continue
+		if u_maxx[u] < riv_box[0] - 2 * M or u_minx[u] > riv_box[2] + 2 * M \
+				or u_maxy[u] < riv_box[1] - 2 * M or u_miny[u] > riv_box[3] + 2 * M:
+			continue
+		var charger := t_rider[u_type[u]] != 0
+		var base := u_slot_base[u]
+		for s in u_alive[u]:
+			var i := slot_soldier[base + s]
+			if state[i] >= S_DEAD or river_at(pos_x[i], pos_y[i]) != MapGen.R_FORD:
+				continue
+			u_frd[u] = 1
+			var mx := pos_x[i] - prev_x[i]
+			var my := pos_y[i] - prev_y[i]
+			if mx != 0 or my != 0:
+				var wx := prev_x[i] + mx * FORD_SPEED / 1000
+				var wy := prev_y[i] + my * FORD_SPEED / 1000
+				if river_at(wx, wy) == MapGen.R_WATER:
+					# (A step past the ford's corner cut short would end in
+					# the water: he stays where he was.)
+					wx = prev_x[i]
+					wy = prev_y[i]
+				pos_x[i] = wx
+				pos_y[i] = wy
+			if charger and (chg[i] > 0 or u_mom[u] > 0):
+				chg[i] = 0
+				u_mom[u] = 0
+				stat_ford_stop += 1

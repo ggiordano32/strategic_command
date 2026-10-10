@@ -227,18 +227,50 @@ func _build_veg() -> void:
 	sb.resize(vw * vh * 2)
 	for k in vw * vh:
 		var b2 := veg[k]
-		if (b2 & MapGen.V_WATER) != 0:
+		if (b2 & MapGen.V_WATER) != 0 and sim.riv_on == 0:
 			sb[k * 2] = 255
 			any = true
 		if (b2 & MapGen.V_DITCH) != 0:
 			sb[k * 2 + 1] = 255
 			any = true
 	m.set_shader_parameter("sea_on", any)
+	var base: Color = GroundPalette.get_palette(int(sim.ter_info.get("palette", 0)))["base"]
+	if any or sim.riv_on != 0:
+		m.set_shader_parameter("sea_col", Vector3(0.16 + base.r * 0.1, 0.33 + base.g * 0.1, 0.46 + base.b * 0.05))
 	if any:
 		var simg := Image.create_from_data(vw, vh, false, Image.FORMAT_RG8, sb)
 		m.set_shader_parameter("seamap", ImageTexture.create_from_image(simg))
-		var base: Color = GroundPalette.get_palette(int(sim.ter_info.get("palette", 0)))["base"]
-		m.set_shader_parameter("sea_col", Vector3(0.16 + base.r * 0.1, 0.33 + base.g * 0.1, 0.46 + base.b * 0.05))
+	# A river crossing: the water and the ford's shallows, 1 m texels, each
+	# a soft coverage of the river's own line (MapGen.river_cy; the sim's
+	# 2 m cells lie within a metre of the drawn bank).
+	m.set_shader_parameter("riv_on", sim.riv_on != 0)
+	if sim.riv_on != 0:
+		var g: Dictionary = sim.riv
+		var rl: Dictionary = sim.map_info["river"]
+		var fw_m: int = sim.field_w / 1024
+		var fh_m: int = sim.field_h / 1024
+		var hw := float(int(g["hw"]))
+		var fx0 := float(int(rl["x0"]))
+		var fx1 := float(int(rl["x1"]))
+		var ford_k := int(rl["kind"]) == 0
+		var rb := PackedByteArray()
+		rb.resize(fw_m * fh_m * 2)
+		for i in fw_m:
+			var cy := MapGen.river_cy(g, i) / 100.0
+			var xm := i + 0.5
+			var band := clampf(minf(xm - fx0, fx1 - xm) + 0.5, 0.0, 1.0) if ford_k else 0.0
+			var j0 := maxi(int(cy - hw) - 3, 0)
+			var j1 := mini(int(cy + hw) + 4, fh_m)
+			for j in range(j0, j1):
+				var d := absf(j + 0.5 - cy) - hw  # metres outside the water (negative inside)
+				var cov := clampf(0.5 - d / 2.0, 0.0, 1.0)
+				var k := (j * fw_m + i) * 2
+				rb[k] = int(cov * (1.0 - band) * 255.0)
+				rb[k + 1] = int(cov * band * 255.0)
+		var rimg := Image.create_from_data(fw_m, fh_m, false, Image.FORMAT_RG8, rb)
+		m.set_shader_parameter("rivmap", ImageTexture.create_from_image(rimg))
+		m.set_shader_parameter("riv_size_px", Vector2(fw_m, fh_m) * px_per_m)
+		m.set_shader_parameter("ford_col", Vector3(0.40 + base.r * 0.25, 0.48 + base.g * 0.2, 0.46 + base.b * 0.15))
 
 
 ## The most common height (to 0.1 m): the plain, if the map has one.

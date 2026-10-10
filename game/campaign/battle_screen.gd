@@ -224,6 +224,15 @@ static func _dialog_w(s) -> float:
 	return minf(900.0, s._vp().x - 24) - 48
 
 
+## Field battle b's scenario if it is fought at a river crossing (the
+## scenario's "river" key, campaign/cbattle.gd), else {}.
+static func _crossing(st: Dictionary, b: Dictionary) -> Dictionary:
+	if int(b.get("settlement", 1)) != 0:
+		return {}
+	var sc: Dictionary = CBattle.build(st, b)["scenario"]
+	return sc if sc.get("river") is Dictionary else {}
+
+
 ## The pre-battle screen of pending battle b as a card. The button row
 ## ("battle_buttons") sits under the odds, near the top, with a box for
 ## status lines above it ("battle_status"; the online dialog swaps the
@@ -246,6 +255,7 @@ static func pre(s, st: Dictionary, b: Dictionary) -> Control:
 	var pw := minf(w * (0.42 if wide else 1.0), 360.0)
 	var prev: Control
 	var cap := ""
+	var csc := _crossing(st, b) if int(snap["settlement"]) == 0 else {}
 	if int(snap["settlement"]) != 0:
 		prev = CityPreview.for_region(st, r, pw)
 		var sz: Vector2 = prev.custom_minimum_size
@@ -257,6 +267,17 @@ static func pre(s, st: Dictionary, b: Dictionary) -> Control:
 		if sz.y > maxh:
 			prev.custom_minimum_size = sz * (maxh / sz.y)
 		cap = CBattle.city_caption(st, r) + ". Defenders inside, the arrow is the attackers' approach."
+	elif not csc.is_empty():
+		# A river crossing: the crossing's own map (docs/DESIGN.md "River crossings").
+		var rv: Dictionary = csc["river"]
+		prev = CityPreview.for_crossing(csc["terrain"], rv, pw, int(csc["width_m"]), int(csc["height_m"]))
+		var cmin: Vector2 = prev.custom_minimum_size
+		var cmax := 140.0 if s._vp().y < 600 else 230.0
+		if cmin.y > cmax:
+			prev.custom_minimum_size = cmin * (cmax / cmin.y)
+		cap = "A river crossing by a %s: the defenders hold the far bank%s; the arrow is the attackers' way over." % [
+			"bridge" if int(rv.get("kind", 0)) == 1 else "ford",
+			", fortified at the crossing" if csc.has("fortified") else ""]
 	else:
 		prev = FieldPreview.new(r, [CData.faction_color(int(snap["lead"][0])), CData.faction_color(int(snap["lead"][1]))],
 			Vector2(pw, minf(pw * 0.55, 120.0 if s._vp().y < 600 else 170.0)))

@@ -34,6 +34,14 @@ const CAMP_GAP := 10
 const CAMP_DEPTH := 4
 const CAMP_EDGE := 12
 const CAMP_SECTION := 20  # palisade sections at most this long (one burnt down opens a gap)
+## River crossings (river_units): the camp's front rampart this far from the
+## crossing's exit on the bank, and at least this far from the water all
+## along it (its ditch dry); units no nearer the water than RIV_KEEP; the
+## deployment zones end RIV_ZONE short of the water.
+const RIV_CAMP := 14
+const RIV_CAMP_DRY := 8
+const RIV_KEEP := 10
+const RIV_ZONE := 10
 ## Field works allowance (stakes lines, caltrop fields) by the army's best
 ## Workshop level (campaign: its faction's; 0 none): a workshop's carpenters
 ## and smiths, 2 lines at level 1, 4 lines and 2 fields at level 2 ...
@@ -364,6 +372,19 @@ static func _battle(armies: int, ai_sides: Array, line: Array, screen: Array,
 	return {"width_m": width_m, "height_m": height_m, "ai_sides": ai_sides, "units": units}
 
 
+## A river crossing battle (docs/DESIGN.md "River crossings"; tests,
+## probes): bench_2000's two armies on a 560 x 560 field with the crossing
+## of `seed` (kind 0 ford / 1 bridge) between them, side 1 holding the far
+## bank (fortified if `fort`); rolling ground; ai_sides as given.
+static func crossing(kind: int, seed_v: int, fort: bool, ai_sides: Array = [0, 1]) -> Dictionary:
+	var sc := _battle(1, ai_sides, ARMY_LINE, ARMY_SCREEN, SIZE, 560, 560, 100, ARMY_REAR)
+	sc["terrain"] = {"kind": Terrain.K_ROLLING, "seed": seed_v, "forest": 15, "ground": MapGen.PAL_GREEN}
+	sc["river"] = {"id": seed_v, "kind": kind, "seed": seed_v, "bank": 1}
+	if fort:
+		sc["fortified"] = 1
+	return sc
+
+
 ## One row of side-0 units (facing up), left to right, centred on x = cx,
 ## front at y, `gap` metres apart.
 static func _row(types: Array, sizes: Dictionary, cx: int, y: int, gap: int) -> Array:
@@ -414,7 +435,11 @@ static func works_allowance(workshop: int, fortified: bool) -> Array[int]:
 ## front corners). Returns [[kind (BattleSim EQ_*), side, x_m, y_m, facing,
 ## len_m], ...] (the scenario's "field_works" form); integers only, the
 ## units in order.
-static func camp(units: Array, w_m: int, h_m: int, side: int) -> Array:
+## river: the crossing's geometry (MapGen.river_geom) when the camp stands
+## at a crossing (the side holds the far bank; river_units brought its line
+## up to the mouth): no sally gaps in the front facing the water, one in
+## each flank instead.
+static func camp(units: Array, w_m: int, h_m: int, side: int, river: Dictionary = {}) -> Array:
 	var x0 := 1 << 30
 	var x1 := -(1 << 30)
 	var y0 := 1 << 30
@@ -424,28 +449,12 @@ static func camp(units: Array, w_m: int, h_m: int, side: int) -> Array:
 	for ud in units:
 		if int(ud["side"]) != side:
 			continue
-		var ty := int(ud["type"])
-		var n := maxi(int(ud["count"]), 1)
-		var x := int(ud["x_m"])
-		var y := int(ud["y_m"])
-		var files := clampi(int(ud.get("files", 20)), 1, n)
-		var hw := files * UT.stat(ty, "file_sp") / 2048 + 1
-		var dep := (n + files - 1) / files * UT.stat(ty, "rank_sp") / 1024 + 1
-		var face := int(ud.get("facing", FACE_UP))
-		var ya := y
-		var yb := y + dep
-		if face == FACE_DOWN:
-			ya = y - dep
-			yb = y
-		elif face != FACE_UP:
-			hw = maxi(hw, dep)
-			ya = y - hw
-			yb = y + hw
-		x0 = mini(x0, x - hw)
-		x1 = maxi(x1, x + hw)
-		y0 = mini(y0, ya)
-		y1 = maxi(y1, yb)
-		sy += y
+		var b := unit_box(ud)
+		x0 = mini(x0, b[0])
+		x1 = maxi(x1, b[2])
+		y0 = mini(y0, b[1])
+		y1 = maxi(y1, b[3])
+		sy += int(ud["y_m"])
 		cnt += 1
 	var out: Array = []
 	if cnt == 0:
@@ -461,12 +470,108 @@ static func camp(units: Array, w_m: int, h_m: int, side: int) -> Array:
 	var ff := FACE_UP if bottom else FACE_DOWN
 	var fb := FACE_DOWN if bottom else FACE_UP
 	var dn := -1 if bottom else 1  # the front's outward direction along y
+	var at_river := not river.is_empty() and int(river["bank"]) == side
 	# Front (the ditch round the corners), flanks, back.
-	_camp_face(out, side, lx, fy, rx, fy, ff, 0, dn, 2, CAMP_DEPTH)
-	_camp_face(out, side, lx, fy, lx, by, FACE_LEFT, -1, 0, 0, 0)
-	_camp_face(out, side, rx, fy, rx, by, FACE_RIGHT, 1, 0, 0, 0)
+	_camp_face(out, side, lx, fy, rx, fy, ff, 0, dn, 0 if at_river else 2, CAMP_DEPTH)
+	_camp_face(out, side, lx, fy, lx, by, FACE_LEFT, -1, 0, 1 if at_river else 0, 0)
+	_camp_face(out, side, rx, fy, rx, by, FACE_RIGHT, 1, 0, 1 if at_river else 0, 0)
 	if back:
 		_camp_face(out, side, lx, by, rx, by, fb, 0, -dn, 1, CAMP_DEPTH)
+	return out
+
+
+## The box a scenario unit stands in (m): [x0, y0, x1, y1].
+static func unit_box(ud: Dictionary) -> Array:
+	var ty := int(ud["type"])
+	var n := maxi(int(ud["count"]), 1)
+	var x := int(ud["x_m"])
+	var y := int(ud["y_m"])
+	var files := clampi(int(ud.get("files", 20)), 1, n)
+	var hw := files * UT.stat(ty, "file_sp") / 2048 + 1
+	var dep := (n + files - 1) / files * UT.stat(ty, "rank_sp") / 1024 + 1
+	var face := int(ud.get("facing", FACE_UP))
+	var ya := y
+	var yb := y + dep
+	if face == FACE_DOWN:
+		ya = y - dep
+		yb = y
+	elif face != FACE_UP:
+		hw = maxi(hw, dep)
+		ya = y - hw
+		yb = y + hw
+	return [x - hw, ya, x + hw, yb]
+
+
+## A river crossing (scenario "river"; geometry `g`, MapGen.river_geom, on
+## a w_m x h_m field): the units as they stand at setup. The side holding
+## the far bank (g "bank") is moved along its bank to face the crossing
+## (its middle on the mouth, kept on the field); fortified there (`fort`
+## is that side) its line is also brought up so the camp's front rampart
+## (CAMP_PAD beyond its box) stands RIV_CAMP m from the crossing's exit (or
+## RIV_CAMP_DRY clear of the water anywhere along the camp, if further).
+## Then any unit (either side) whose box comes within RIV_KEEP of the water
+## is moved straight back onto its own bank (side 0 the bottom, 1 the top).
+## Returns a new list (changed units are copies); integers only, units in
+## order.
+static func river_units(units: Array, w_m: int, _h_m: int, g: Dictionary, fort: int) -> Array:
+	var out: Array = []
+	for ud in units:
+		out.append(ud)
+	var hs := int(g["bank"])
+	var x0 := 1 << 30
+	var x1 := -(1 << 30)
+	var sx := 0
+	var cnt := 0
+	for ud in out:
+		if int(ud["side"]) != hs:
+			continue
+		var b := unit_box(ud)
+		x0 = mini(x0, b[0])
+		x1 = maxi(x1, b[2])
+		sx += int(ud["x_m"])
+		cnt += 1
+	if cnt > 0:
+		var mouth := MapGen.river_mouth(g, hs)
+		var dx := clampi(mouth.x - sx / cnt, RIV_KEEP - x0, w_m - RIV_KEEP - x1)
+		var dy := 0
+		if fort == hs:
+			var y0 := 1 << 30
+			var y1 := -(1 << 30)
+			for ud in out:
+				if int(ud["side"]) == hs:
+					var b := unit_box(ud)
+					y0 = mini(y0, b[1])
+					y1 = maxi(y1, b[3])
+			var reach := MapGen.river_reach(g, x0 + dx - CAMP_PAD - CAMP_DEPTH, x1 + dx + CAMP_PAD + CAMP_DEPTH, hs)
+			var exit_y := mouth.y + (-MapGen.RIV_MOUTH if hs == 0 else MapGen.RIV_MOUTH)
+			if hs == 0:
+				var fy := maxi(exit_y + RIV_CAMP, reach + RIV_CAMP_DRY)
+				dy = fy + CAMP_PAD - y0
+			else:
+				var fy2 := mini(exit_y - RIV_CAMP, reach - RIV_CAMP_DRY)
+				dy = fy2 - CAMP_PAD - y1
+		for k in out.size():
+			var ud: Dictionary = out[k]
+			if int(ud["side"]) != hs or (dx == 0 and dy == 0):
+				continue
+			var c := ud.duplicate()
+			c["x_m"] = int(ud["x_m"]) + dx
+			c["y_m"] = int(ud["y_m"]) + dy
+			out[k] = c
+	for k in out.size():
+		var ud: Dictionary = out[k]
+		var s := clampi(int(ud["side"]), 0, 1)
+		var b := unit_box(ud)
+		var e := MapGen.river_reach(g, b[0], b[2], s)
+		var push := 0
+		if s == 0 and b[1] < e + RIV_KEEP:
+			push = e + RIV_KEEP - b[1]
+		elif s == 1 and b[3] > e - RIV_KEEP:
+			push = e - RIV_KEEP - b[3]
+		if push != 0:
+			var c2 := ud.duplicate()
+			c2["y_m"] = int(ud["y_m"]) + push
+			out[k] = c2
 	return out
 
 
@@ -868,6 +973,11 @@ static func field_zones(sc: Dictionary, gap: int = 30, pad: int = 40) -> Array:
 	var w := int(sc["width_m"])
 	var h := int(sc["height_m"])
 	var zones: Array = []
+	var rg := {}
+	if sc.get("river") is Dictionary:
+		# A river crossing: each side's zone ends RIV_ZONE short of the water
+		# (side 0 below it, side 1 above), never across it.
+		rg = MapGen.river_geom(sc["river"], w, h)
 	for s in 2:
 		var sy := 0
 		var cnt := 0
@@ -876,7 +986,14 @@ static func field_zones(sc: Dictionary, gap: int = 30, pad: int = 40) -> Array:
 				sy += int(ud["y_m"])
 				cnt += 1
 		var bottom := cnt == 0 and s == 0 or cnt > 0 and sy / cnt > h / 2
+		if not rg.is_empty():
+			bottom = s == 0
 		var band := [s, 0, 0, h / 2 + gap, w, h] if bottom else [s, 0, 0, 0, w, h / 2 - gap]
+		if not rg.is_empty():
+			if bottom:
+				band[3] = maxi(int(band[3]), MapGen.river_reach(rg, 0, w, 0) + RIV_ZONE)
+			else:
+				band[5] = mini(int(band[5]), MapGen.river_reach(rg, 0, w, 1) - RIV_ZONE)
 		zones.append(band)
 		for ud in sc["units"]:
 			if int(ud["side"]) != s:

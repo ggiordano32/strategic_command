@@ -115,6 +115,17 @@ extends SceneTree
 ## fight, a unit ordered across a house's corner; the no-progress counter
 ## and the probe numbers printed; identical on repeat and across snapshot /
 ## restore.
+## River crossings (2026-10-10; "--only=crossing", also in the full run):
+## the ford and the bridge maps of one crossing id are the same on every
+## build and differ for another id, and side 0 holding the far bank gets
+## the same crossing turned round; AI battles over a ford, a bridge and a
+## ford held by a fortified army (the camp at the crossing's mouth: rampart
+## within 20 m of the exit, no gap facing the water, nothing in the water):
+## the attacker crosses (men on the far bank by tick 2400), nobody (formed,
+## fighting, routing or down) ever stands in the water; a cavalry charge
+## through the ford at foot holding its far exit arrives with no momentum
+## (no impact; the same charge on the plain strikes home); identical on
+## repeat and across snapshot / restore.
 ## Exits 0 on success, 1 on failure.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -125,6 +136,7 @@ const SiegeAI := preload("res://sim/siege_ai.gd")
 const BattleAI := preload("res://sim/battle_ai.gd")
 const FM := preload("res://sim/fixed_math.gd")
 const AIP := preload("res://sim/ai_profile.gd")
+const MapGen := preload("res://sim/mapgen.gd")
 
 const M := 1024
 
@@ -231,6 +243,11 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=crossing" in OS.get_cmdline_user_args():
+		_check_crossing()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=engines" in OS.get_cmdline_user_args():
 		_check_engines()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -262,6 +279,7 @@ func _init() -> void:
 	_check_light_art()
 	_check_mantlets()
 	_check_carry()
+	_check_crossing()
 	if "--only=equipment" in OS.get_cmdline_user_args():
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
@@ -895,7 +913,6 @@ func _cit_orders(sim) -> void:
 ## its causeways); the citadel is the capture zone; the view-only style
 ## keys (owner, founder, banner, bstyle, hstyle) change no map or hash.
 func _check_plans() -> void:
-	var MapGen := preload("res://sim/mapgen.gd")
 	var pol := BattleSim.new()
 	pol.setup(Scenarios.make("siege_polis"), 77)
 	var lay: Dictionary = pol.map_info["city"]
@@ -3158,7 +3175,6 @@ static func _wall_scenario() -> Dictionary:
 
 ## The wall orders run: returns {hashes, log, bad}.
 func _wall_run(snap_check: bool) -> Dictionary:
-	var MapGen := preload("res://sim/mapgen.gd")
 	var sim := BattleSim.new()
 	sim.setup(_wall_scenario(), 31)
 	var hashes := PackedInt64Array()
@@ -3298,7 +3314,6 @@ func _wall_run(snap_check: bool) -> Dictionary:
 ## Men of wall unit u more than 1.5 m from their place in its wall line or
 ## off the walkway (towers count as walkway: a spilled line passes them).
 static func _off_line(sim, u: int) -> int:
-	var MapGen := preload("res://sim/mapgen.gd")
 	var sl := BattleSim.wall_slots(sim, sim.u_wall[u] - 1, sim.u_ax[u], sim.u_ay[u], sim.u_alive[u], sim.u_type[u])
 	var base: int = sim.u_slot_base[u]
 	var off := 0
@@ -4314,3 +4329,199 @@ func _check_mantlets() -> void:
 	print("PASS mantlets: field: %d missiles stopped by mantlets, side 0 archers lost %d (without mantlets %d), side 1 archers %d (%d); light foot picked one up at tick %d, dropped it at %d, standing at y %d m facing up; assault: the attackers' AI carried %d mantlets, all set on the screen line by tick %d, %d missiles stopped by tick %d (winner %d); identical on repeat and across snapshot / restore" % [
 		int(ev["cover"]), int(ev["lost0"]), int(ew["lost0"]), int(ev["lost2"]), int(ew["lost2"]), int(ev["picked"]),
 		int(ev["dropped"]), int(ev["q_y"]), int(sa["carried"]), int(sa["set_t"]), int(sa["cover"]), int(sa["ticks"]), int(sa["winner"])])
+
+
+
+# ---------------------------------------------------------- river crossings ---
+
+const CROSS_SEED := 7
+const CROSS_TICKS := 3000
+const CROSS_BY := 2400
+
+
+## An AI battle over the crossing CROSS_SEED (kind 0 ford / 1 bridge, side 1
+## holding the far bank, fortified or not): hashes, the first tick 50 of
+## side 0's men stand on the far bank, men-ticks in the water (by state),
+## snapshot / restore follow-ups at `snaps`.
+func _cross_run(kind: int, fort: bool, snaps: Array) -> Dictionary:
+	var sc := Scenarios.crossing(kind, CROSS_SEED, fort)
+	var sim := BattleSim.new()
+	sim.setup(sc, 4242)
+	var g: Dictionary = sim.riv
+	var hashes := PackedInt64Array()
+	var ev := {"far_at": -1, "wet": 0, "wet_rout": 0, "snaps": [], "map": sim.map_hash, "ter": sim.ter_hash}
+	for t in CROSS_TICKS:
+		if t in snaps:
+			ev["snaps"].append([t, _snap_follow(sim, sc, 4242, 60)])
+		sim.step()
+		hashes.append(sim.state_hash())
+		var far := 0
+		for i in sim.n:
+			var st: int = sim.state[i]
+			if st >= BattleSim.S_DEAD:
+				continue
+			if sim.river_at(sim.pos_x[i], sim.pos_y[i]) == MapGen.R_WATER:
+				ev["wet"] = int(ev["wet"]) + 1
+				if st == BattleSim.S_ROUTING:
+					ev["wet_rout"] = int(ev["wet_rout"]) + 1
+			if int(ev["far_at"]) < 0 and sim.u_side[sim.unit_of[i]] == 0 \
+					and sim.pos_y[i] * 100 / M < MapGen.river_edge(g, sim.pos_x[i] / M, 1):
+				far += 1
+		if int(ev["far_at"]) < 0 and far >= 50:
+			ev["far_at"] = sim.tick
+		if sim.ended != 0:
+			break
+	ev["ford"] = sim.stat_ford
+	ev["routed"] = sim.stat_ai[8] if sim.stat_ai.size() > 8 else 0
+	var rout_men := 0
+	for u in sim.n_units:
+		rout_men += sim.u_routs[u]
+	ev["routs"] = rout_men
+	ev["alive"] = "%d/%d winner %d at %d" % [sim.alive_count(0), sim.alive_count(1), sim.winner, sim.tick]
+	return {"hashes": hashes, "ev": ev, "sim": sim}
+
+
+## Cavalry (side 0) charging heavy foot (side 1) that stands at the far
+## exit of the ford of crossing CROSS_SEED (river: false, the same set
+## piece on the same ground without the river): u0's momentum when it
+## reaches them, its charge impacts, its highest momentum while wading.
+func _ford_charge(river: bool) -> Dictionary:
+	var rk := {"id": CROSS_SEED, "kind": 0, "seed": CROSS_SEED, "bank": 1}
+	var g := MapGen.river_geom(rk, 560, 560)
+	var m0 := MapGen.river_mouth(g, 0)
+	var m1 := MapGen.river_mouth(g, 1)
+	var units := [Scenarios.unit(0, UT.CAVALRY, 60, m0.x, m0.y + 45, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.HEAVY, 60, m1.x, m1.y - 20, Scenarios.FACE_DOWN, 12)]
+	var sc := {"width_m": 560, "height_m": 560, "ai_sides": [], "units": units,
+		"terrain": {"kind": Terrain.K_ROLLING, "seed": CROSS_SEED},
+		"orders": [{"tick": 2, "type": BattleSim.ORDER_MOVE, "unit": 1, "x": m1.x * M, "y": (m1.y + 3) * M,
+			"facing": Scenarios.FACE_DOWN, "width": 12 * M, "run": 0, "player": 50},
+			Scenarios.attack(260, 0, 1, 1)]}
+	if river:
+		sc["river"] = rk
+	var sim := BattleSim.new()
+	sim.setup(sc, 4242)
+	var ev := {"contact": -1, "mom": -1, "wade_mom": 0, "impacts": 0}
+	for t in 700:
+		sim.step()
+		if sim.u_frd.size() > 0 and sim.u_frd[0] != 0:
+			ev["wade_mom"] = maxi(int(ev["wade_mom"]), sim.u_mom[0])
+		if int(ev["contact"]) < 0 and (sim.u_contact[0] > 0 or sim.u_fighting[0] > 0):
+			ev["contact"] = sim.tick
+			ev["mom"] = sim.u_mom[0]
+	var imp := 0
+	var b := sim.u_slot_base[0]
+	for s2 in sim.u_count0[0]:
+		imp += sim.dbg_impacted[b + s2] if b + s2 < sim.n else 0
+	for i in sim.n:
+		if sim.unit_of[i] == 1:
+			imp += sim.dbg_impacted[i]
+	ev["impacts"] = imp
+	ev["stop"] = sim.stat_ford_stop
+	return ev
+
+
+func _check_crossing() -> void:
+	# Maps: the same id the same map, another id another, side 0 holding
+	# the far bank the same crossing turned round.
+	var maps := {}
+	for k in [[0, CROSS_SEED, 1], [0, CROSS_SEED, 1], [1, CROSS_SEED, 1], [0, CROSS_SEED + 1, 1], [0, CROSS_SEED, 0]]:
+		var sc := Scenarios.crossing(int(k[0]), int(k[1]), false)
+		sc["river"]["bank"] = int(k[2])
+		var sim := BattleSim.new()
+		sim.setup(sc, 4242 + maps.size())  # (the battle seed plays no part in the map)
+		maps[maps.size()] = sim
+	var m0: BattleSim = maps[0]
+	var flipped := true
+	var o2: PackedByteArray = (maps[4] as BattleSim).obs
+	for c in m0.obs.size():
+		if m0.obs[c] != o2[o2.size() - 1 - c]:
+			flipped = false
+			break
+	var h0: PackedInt32Array = m0.ter_h
+	var h4: PackedInt32Array = (maps[4] as BattleSim).ter_h
+	for c in h0.size():
+		if h0[c] != h4[h4.size() - 1 - c]:
+			flipped = false
+			break
+	if m0.riv_on == 0 or m0.ter_hash != (maps[1] as BattleSim).ter_hash or m0.ter_hash == (maps[2] as BattleSim).ter_hash \
+			or m0.ter_hash == (maps[3] as BattleSim).ter_hash or not flipped or m0.ng_x.size() < 10:
+		_fail("crossing maps: riv_on %d, hashes %08x %08x (bridge %08x, other id %08x), turned round %s, nodes %d" % [
+			m0.riv_on, m0.ter_hash, (maps[1] as BattleSim).ter_hash, (maps[2] as BattleSim).ter_hash,
+			(maps[3] as BattleSim).ter_hash, str(flipped), m0.ng_x.size()])
+		return
+	var nw := 0
+	var nf := 0
+	for c in m0.rv.size():
+		if m0.rv[c] == MapGen.R_WATER:
+			nw += 1
+		elif m0.rv[c] == MapGen.R_FORD:
+			nf += 1
+	print("PASS crossing maps: the ford of id %d is the same map on every build (%08x), its bridge (%08x) and id %d (%08x) differ, side 0 holding the far bank gets it turned round; river %d m wide, %d water cells, %d ford cells, %d nodes on the way across" % [
+		CROSS_SEED, m0.ter_hash, (maps[2] as BattleSim).ter_hash, CROSS_SEED + 1, (maps[3] as BattleSim).ter_hash,
+		int(m0.riv["hw"]) * 2, nw, nf, m0.ng_x.size()])
+	# The charge through the ford.
+	var ch := _ford_charge(true)
+	var cp := _ford_charge(false)
+	if int(ch["contact"]) < 0 or int(ch["mom"]) >= BattleSim.CHARGE_MIN or int(ch["impacts"]) != 0 \
+			or int(ch["wade_mom"]) != 0 or int(ch["stop"]) <= 0 or int(cp["impacts"]) <= 0:
+		_fail("crossing charge: through the ford %s, on the plain %s" % [str(ch), str(cp)])
+	else:
+		print("PASS crossing charge: cavalry charging through the ford reaches the foot at its exit at tick %d with momentum %d (0 all the way through the water, %d rider-ticks stopped), %d impacts; the same charge without the river: momentum %d, %d impacts" % [
+			int(ch["contact"]), int(ch["mom"]), int(ch["stop"]), int(ch["impacts"]), int(cp["mom"]), int(cp["impacts"])])
+	# AI battles.
+	var snaps := [300, 1200, 2100]
+	for kf in [[0, false], [1, false], [0, true]]:
+		var kind: int = kf[0]
+		var fort: bool = kf[1]
+		var name := "%s%s" % ["ford" if kind == 0 else "bridge", ", fortified" if fort else ""]
+		var a := _cross_run(kind, fort, snaps)
+		var ev: Dictionary = a["ev"]
+		var b := _cross_run(kind, fort, [])
+		var ha: PackedInt64Array = a["hashes"]
+		var hb: PackedInt64Array = b["hashes"]
+		for t in mini(ha.size(), hb.size()):
+			if ha[t] != hb[t] or ha.size() != hb.size():
+				_fail("crossing %s: the repeat diverged at tick %d" % [name, t])
+				return
+		for sn in ev["snaps"]:
+			if int(sn[1]) != -1:
+				_fail("crossing %s: snapshot / restore at tick %d: %d" % [name, int(sn[0]), int(sn[1])])
+				return
+		var sim: BattleSim = a["sim"]
+		var camp := ""
+		if fort:
+			var g: Dictionary = sim.riv
+			var mo := MapGen.river_mouth(g, 1)
+			var ex := mo.x * M
+			var ey := (mo.y + MapGen.RIV_MOUTH) * M
+			var near := 0
+			var wet := 0
+			var nr := 0
+			for q in sim.n_eq:
+				var kq: int = sim.q_kind[q]
+				if kq != BattleSim.EQ_RAMPART and kq != BattleSim.EQ_DITCH:
+					continue
+				var ext := sim.fw_extent(q)
+				for cx in [-1, 0, 1]:
+					for cy in [-1, 0, 1]:
+						if sim.river_at(sim.q_x[q] + cx * ext.x, sim.q_y[q] + cy * ext.y) == MapGen.R_WATER:
+							wet += 1
+				if kq != BattleSim.EQ_RAMPART:
+					continue
+				nr += 1
+				var dx := maxi(absi(ex - sim.q_x[q]) - ext.x, 0)
+				var dy := maxi(absi(ey - sim.q_y[q]) - ext.y, 0)
+				if FM.approx_len(dx, dy) <= 20 * M:
+					near += 1
+			var gaps: Array = BattleAI.camp_gaps(sim, 1)
+			if near <= 0 or wet != 0 or not gaps.is_empty() or nr < 6:
+				_fail("crossing %s: camp %d sections, %d within 20 m of the exit, %d corners in the water, front gaps %s" % [
+					name, nr, near, wet, str(gaps)])
+				return
+			camp = "; the camp: %d palisade sections, %d within 20 m of the exit, no gap facing the water, nothing in it" % [nr, near]
+		if int(ev["far_at"]) < 0 or int(ev["far_at"]) > CROSS_BY or int(ev["wet"]) != 0 or (kind == 0 and int(ev["ford"]) <= 0):
+			_fail("crossing %s: %s" % [name, str(ev)])
+			return
+		print("PASS crossing %s: the AI attacker has 50 men on the far bank at tick %d (by %d), %d unit-ticks wading, nobody in the water (%d unit routs), alive %s%s; identical on repeat and across snapshot / restore at ticks %s" % [
+			name, int(ev["far_at"]), CROSS_BY, int(ev["ford"]), int(ev["routs"]), str(ev["alive"]), camp, str(snaps)])

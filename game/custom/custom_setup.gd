@@ -16,7 +16,10 @@ extends RefCounted
 ##           siege towers; walls only, siege towers walls 2-3),
 ##           "works": 0-2 (field maps: both sides' field works as a Workshop of
 ##           that level, Scenarios.works_allowance), "fortified": -1 none / the
-##           sim side standing in a fortified camp (its own works on top)},
+##           sim side standing in a fortified camp (its own works on top),
+##           "river": -1 none / 0 ford / 1 bridge (field maps: a river crossing
+##           between the armies from the map seed, side 1, or the fortified
+##           side, holding the far bank; Scenarios "river")},
 ##   "sides": [{"skill": AIProfile level, "style": AIProfile personality,
 ##              "mantlets": 0 / 2 / 4 (MANTLET_CHOICES: that side's mantlets, any map),
 ##              "armies": [{"ctrl": "p1" | "p2" | "ai", "units": [[type key, men(, ammo kind key)], ...]}, ...]}, x2]
@@ -295,9 +298,15 @@ static func build(st: Dictionary, solo: bool = false) -> Dictionary:
 		sc["ai_sides"] = ai
 		sc["terrain"] = {"kind": int(mp.get("terrain", Terrain.K_ROLLING)), "seed": int(mp.get("mseed", 1)),
 			"forest": clampi(int(mp.get("woods", 0)), 0, 100), "ground": int(mp.get("ground", MapGen.PAL_GREEN))}
+		var fort := int(mp.get("fortified", -1))
+		var rk := int(mp.get("river", -1))
+		if rk == 0 or rk == 1:
+			# A river crossing from the map seed (the same seed, the same
+			# river; the ford and the bridge share it).
+			var ms := int(mp.get("mseed", 1))
+			sc["river"] = {"id": ms, "kind": rk, "seed": (ms * 31 + 17) & 0x7FFFFFFF, "bank": fort if fort == 0 else 1}
 		sc["deploy_zones"] = Scenarios.field_zones(sc)
 		var wl := clampi(int(mp.get("works", 0)), 0, Scenarios.WORKS_BY_WORKSHOP.size() - 1)
-		var fort := int(mp.get("fortified", -1))
 		var stakes := [0, 0]
 		var caltrops := [0, 0]
 		for s in 2:
@@ -387,4 +396,5 @@ static func summary(st: Dictionary) -> Dictionary:
 		"funds": int(st.get("funds", 0)), "sides": sides, "time": int(st.get("time", 900)),
 		"ladders": int(mp.get("ladders", 0)), "ram": int(mp.get("ram", 0)), "towers": int(mp.get("towers", 0)),
 		"works": int(mp.get("works", 0)), "fortified": int(mp.get("fortified", -1)),
+		"river": int(mp.get("river", -1)),
 		"mantlets": [mantlets_of(st, 0), mantlets_of(st, 1)]}

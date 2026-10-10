@@ -6,12 +6,18 @@ extends Control
 ## small image at 2 m a pixel, then buildings, walls, towers, gates, the
 ## plaza and the attackers' approach as shapes on top. View only; cached per
 ## map (seed, level, walls, buildings, ground).
+## A river crossing (for_crossing; the battle scenario's "river" key): the
+## crossing's own field map (sim/mapgen.gd river_geom) the same way: ground,
+## woods, the river, the ford's shallows or the bridge, and the attackers'
+## way over it.
 
 const Terrain := preload("res://sim/terrain.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
 const GroundPalette := preload("res://game/ground_palette.gd")
 const CityDraw := preload("res://game/city_draw.gd")
+const CityLayer := preload("res://game/city_layer.gd")
+const FORD := Color(0.55, 0.63, 0.58)
 const SEA := Color(0.20, 0.38, 0.52)
 const DITCH := Color(0.30, 0.24, 0.17)
 
@@ -43,6 +49,44 @@ static func make(terr: Dictionary) -> Dictionary:
 	var y1 := clampi(int(lay["att_y"]) + 25, 0, fs.y)
 	var crop := Rect2(x0, y0, x1 - x0, y1 - y0)
 	# Ground at 2 m a pixel.
+	var img := _ground(t, f, pal, x0, y0, x1, y1)
+	var out := {"tex": ImageTexture.create_from_image(img), "crop": crop, "lay": lay, "pal": pal,
+		"houses": (lay["buildings"] as Array).size()}
+	_cache[key] = out
+	return out
+
+
+## Preview data of a river crossing's field map: terrain dictionary `terr`
+## (kind, seed, forest, ground) with the scenario's `river` key, on a field
+## w_m x h_m (the campaign's field battle: 560 x 560 or wider), cropped to
+## the river and RIV_VIEW m either side of it.
+const RIV_VIEW := 130
+
+static func make_crossing(terr: Dictionary, river: Dictionary, w_m: int = 560, h_m: int = 560) -> Dictionary:
+	var t2 := terr.duplicate()
+	t2["river"] = river
+	var key := str(t2) + "|%d|%d" % [w_m, h_m]
+	if _cache.has(key):
+		return _cache[key]
+	var t := Terrain.build(t2, 0, w_m * 1024, h_m * 1024)
+	var f := MapGen.build(t2, 0, w_m, h_m, t)
+	var rl: Dictionary = f["river"]
+	var g: Dictionary = rl["geom"]
+	var cy := MapGen.river_cy(g, w_m / 2) / 100
+	var y0 := clampi(cy - RIV_VIEW, 0, h_m) & ~1
+	var y1 := clampi(cy + RIV_VIEW, 0, h_m) & ~1
+	var crop := Rect2(0, y0, w_m, y1 - y0)
+	var pal := GroundPalette.get_palette(int(terr.get("ground", 0)))
+	var img := _ground(t, f, pal, 0, y0, w_m, y1)
+	var out := {"tex": ImageTexture.create_from_image(img), "crop": crop, "river": rl, "pal": pal,
+		"field": Vector2i(w_m, h_m)}
+	_cache[key] = out
+	return out
+
+
+## Ground at 2 m a pixel over [x0, x1) x [y0, y1) (m): palette and height
+## shading, woods, fields and streets, the sea, a ditch, a river and its ford.
+static func _ground(t: Dictionary, f: Dictionary, pal: Dictionary, x0: int, y0: int, x1: int, y1: int) -> Image:
 	var iw := (x1 - x0) / 2
 	var ih := (y1 - y0) / 2
 	var img := Image.create(maxi(iw, 1), maxi(ih, 1), false, Image.FORMAT_RGB8)
@@ -59,6 +103,7 @@ static func make(terr: Dictionary) -> Dictionary:
 	var vw: int = f["vw"]
 	var obs: PackedByteArray = f["obs"]
 	var ow: int = f["ow"]
+	var rvg: PackedByteArray = f.get("rv", PackedByteArray())
 	var base: Color = pal["base"]
 	var lo: Color = pal["low"]
 	var hi: Color = pal["high"]
@@ -96,14 +141,31 @@ static func make(terr: Dictionary) -> Dictionary:
 			elif (vb & MapGen.V_DITCH) != 0:
 				col = DITCH
 			if ow > 0:
-				var k: int = obs[(my / 2) * ow + mx / 2]
+				var c: int = (my / 2) * ow + mx / 2
+				var k: int = obs[c]
 				if k == MapGen.C_BUILDING:
 					col = col.darkened(0.25)  # under the roofs (shapes drawn on top)
+				if not rvg.is_empty():
+					var rk: int = rvg[c]
+					if rk == MapGen.R_WATER or rk == MapGen.R_BRIDGE:
+						col = SEA
+					elif rk == MapGen.R_FORD:
+						col = FORD
+					elif col == SEA:
+						col = base  # (the 4 m water bit spills past the bank)
 			img.set_pixel(i, j, Color(col.r, col.g, col.b))
-	var out := {"tex": ImageTexture.create_from_image(img), "crop": crop, "lay": lay, "pal": pal,
-		"houses": (lay["buildings"] as Array).size()}
-	_cache[key] = out
-	return out
+	return img
+
+
+## A preview control for a river crossing (make_crossing), `width` logical
+## px wide.
+static func for_crossing(terr: Dictionary, river: Dictionary, width: float, w_m: int = 560, h_m: int = 560) -> Control:
+	var c := new()
+	c.data = make_crossing(terr, river, w_m, h_m)
+	var crop: Rect2 = c.data["crop"]
+	c.custom_minimum_size = Vector2(width, width * crop.size.y / maxf(crop.size.x, 1.0))
+	c.mouse_filter = Control.MOUSE_FILTER_PASS
+	return c
 
 
 ## A preview control for settlement r of state st, `width` logical px wide.
@@ -123,6 +185,9 @@ func _draw() -> void:
 	var sc := size.x / crop.size.x
 	var o := -crop.position * sc
 	draw_texture_rect(data["tex"], Rect2(Vector2.ZERO, size), false)
+	if data.has("river"):
+		_draw_crossing(sc, o)
+		return
 	var lay: Dictionary = data["lay"]
 	var m := func(x: float, y: float) -> Vector2: return o + Vector2(x, y) * sc
 	# Houses, shrine, walls, towers, citadel, harbour, gates and banners.
@@ -148,6 +213,31 @@ func _draw() -> void:
 		var tip := tgt - u * 6.0
 		draw_line(ax, tip - u * 10.0, Color(0, 0, 0, 0.5), 6.0, true)
 		draw_line(ax, tip - u * 10.0, Color(1.0, 0.85, 0.35, 0.95), 3.5, true)
+		var nrm := Vector2(-u.y, u.x)
+		draw_colored_polygon(PackedVector2Array([tip, tip - u * 13.0 + nrm * 7.0, tip - u * 13.0 - nrm * 7.0]),
+			Color(1.0, 0.85, 0.35, 0.95))
+	draw_rect(Rect2(Vector2.ZERO, size), Color(0, 0, 0, 0.6), false, 1.0)
+
+
+
+## A crossing: the bridge, and the attackers' way from their bank over the
+## crossing (the far bank's holder at the top of the preview when it is
+## sim side 1; the map is drawn as the battle sees it).
+func _draw_crossing(sc: float, o: Vector2) -> void:
+	var rl: Dictionary = data["river"]
+	if int(rl["kind"]) == 1:
+		CityLayer.draw_bridge(self, rl, sc, o)
+	var hold := int(rl["bank"])
+	var near: Array = rl["mouth"][1 - hold]
+	var far: Array = rl["mouth"][hold]
+	var dir := 1.0 if hold == 1 else -1.0  # the attackers' side along y (down when the holder is at the top)
+	var from := o + Vector2(float(int(near[0])), float(int(near[1])) + dir * 60.0) * sc
+	var tip := o + Vector2(float(int(far[0])), float(int(far[1])) - dir * 14.0) * sc
+	var dv := tip - from
+	if dv.length() > 20.0:
+		var u := dv.normalized()
+		draw_line(from, tip - u * 10.0, Color(0, 0, 0, 0.5), 6.0, true)
+		draw_line(from, tip - u * 10.0, Color(1.0, 0.85, 0.35, 0.95), 3.5, true)
 		var nrm := Vector2(-u.y, u.x)
 		draw_colored_polygon(PackedVector2Array([tip, tip - u * 13.0 + nrm * 7.0, tip - u * 13.0 - nrm * 7.0]),
 			Color(1.0, 0.85, 0.35, 0.95))

@@ -188,6 +188,13 @@ func _map_row() -> Control:
 		fb.name = "custom_fortified"
 		fb.tooltip_text = "That side stands in a fortified camp: a ditch and a wooden palisade with gaps, and 2 more stakes lines and a caltrop field"
 		row.add_child(fb)
+		var rk := int(mp.get("river", -1))
+		var rb := _opt("River crossing: " + ["none", "ford", "bridge"][clampi(rk + 1, 0, 2)], func():
+			mp["river"] = [0, 1, -1][clampi(int(mp.get("river", -1)) + 1, 0, 2)]
+			_changed(), ed)
+		rb.name = "custom_river"
+		rb.tooltip_text = "A river between the armies with one crossing (from the map seed): a ford (slow wading, no charge) or a bridge one unit wide; side 2 (or the fortified side, its camp at the crossing) holds the far bank"
+		row.add_child(rb)
 	else:
 		row.add_child(_opt("Plan: " + MapGen.PLAN_NAMES[int(mp["plan"])], func():
 			mp["plan"] = (int(mp["plan"]) + 1) % (MapGen.PLAN_RING + 1)

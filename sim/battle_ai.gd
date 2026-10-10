@@ -100,6 +100,10 @@ extends RefCounted
 const FM := preload("res://sim/fixed_math.gd")
 const UT := preload("res://sim/unit_types.gd")
 const AP := preload("res://sim/ai_profile.gd")
+const MapGen := preload("res://sim/mapgen.gd")
+## River crossings: the attacker's line forms this far beyond the crossing's
+## mouth on the far bank (and skirmishes this far back from its own).
+const RIV_FORM := 30 * 1024
 
 const M := 1024
 const AI_PLAYER_BASE := 100  # order "player" id so AI orders sort after humans
@@ -259,10 +263,12 @@ static func _army_think(sim, side: int) -> void:
 		_issue_line(sim, side, plan, dcx, dcy, true)
 		sim.ai_phase[side] = P_ADVANCE
 		sim.ai_t[side] = sim.tick
+		if river_holder(sim, side) and AP.of(sim, side)[AP.CAMP_HOLD] > 0:
+			sim.ai_hold[side] = sim.tick  # holding the far bank (docs/DESIGN.md "River crossings")
 		return
 	var camp := is_camp(sim, side)
 	if phase == P_ENGAGE:
-		if sim.ai_hold[side] >= 0 and not (_camp_keep(sim, side) if camp else _keep_holding(sim, side)):
+		if sim.ai_hold[side] >= 0 and not (_camp_keep(sim, side) if camp or river_holder(sim, side) else _keep_holding(sim, side)):
 			sim.ai_hold[side] = -2  # over for good
 		if kn[AP.SK_MEM] != 0:
 			_sk_army(sim, side, kn, plan)
@@ -299,11 +305,21 @@ static func _army_think(sim, side: int) -> void:
 			if kn[AP.SK_MEM] != 0:
 				_sk_army(sim, side, kn, plan)
 			return
-		if camp:
-			# Holding the camp: the line stays on and behind the rampart.
+		if camp or river_holder(sim, side):
+			# Holding the camp (or the far bank of a crossing): the line
+			# stays on and behind the rampart (where it deployed).
 			if sim.ai_hold[side] >= 0 and _camp_keep(sim, side):
 				return
 			sim.ai_hold[side] = -2
+		elif sim.riv_on != 0 and _river_behind(sim, side):
+			# Attacking across a river: skirmish from our own bank, then the
+			# line crosses by the ford / bridge (each unit's way goes over
+			# it, so they cross in column) and forms on the far bank.
+			var rp := _river_point(sim, side, skirmishing)
+			_issue_line(sim, side, plan, rp.x, rp.y, false)
+			if kn[AP.SK_MEM] != 0:
+				_sk_army(sim, side, kn, plan)
+			return
 		# Halt line: `halt` short of the enemy front, never backwards.
 		var fx: int = plan["fx"]
 		var fy: int = plan["fy"]
@@ -1095,8 +1111,8 @@ static func _melee_think(sim, u: int) -> void:
 		var alt_pct := kn[AP.PIKE_ALT_PCT]
 		if alt >= 0 and _dist2(sim, u, alt) * 10000 <= _dist2(sim, u, best) * (alt_pct * alt_pct):
 			best = alt
-	if sim.ter_on != 0 or (sim.fwh_on != 0 and is_camp(sim, side)):
-		# Holding high ground (or the camp): let the enemy come.
+	if sim.ter_on != 0 or (sim.fwh_on != 0 and is_camp(sim, side)) or river_holder(sim, side):
+		# Holding high ground (or the camp, the far bank): let the enemy come.
 		if sim.ai_hold[side] >= 0 and _bbox_gap(sim, u, best) > kn[AP.HOLD_REACT] \
 				and sim.u_fighting[u] == 0:
 			return
@@ -3344,3 +3360,45 @@ static func place_works(sim, side: int) -> void:
 		sim.q_face[q] = face
 		sim.q_state[q] = Q_FIXED
 		_count(sim, side, AP.C_WORKS)
+
+
+
+# --------------------------------------------------------- river crossings ---
+# docs/DESIGN.md "River crossings": the side holding the far bank holds
+# where it deployed (the camp's hold rule and time, CAMP_HOLD: its foot
+# attack only enemies within HOLD_REACT until a third of them fight); the
+# other side skirmishes from its own bank, then its line goes over the
+# crossing (the sim's paths take every unit by it) and forms on the far
+# bank, engaging as the lines meet.
+
+## Side holds the far bank of a crossing map.
+static func river_holder(sim, side: int) -> bool:
+	return sim.riv_on != 0 and int(sim.riv["bank"]) == side
+
+
+## Most of side's foot (men) is still on its own bank.
+static func _river_behind(sim, side: int) -> bool:
+	var own := 0
+	var over := 0
+	for u in sim.n_units:
+		if sim.u_side[u] != side or sim.u_state[u] != U_READY or not _is_foot(sim, u):
+			continue
+		var c := MapGen.river_cy(sim.riv, sim.u_cx[u] / M)
+		var below: bool = sim.u_cy[u] / M * 100 > c
+		if below == (side == 0):
+			own += sim.u_alive[u]
+		else:
+			over += sim.u_alive[u]
+	return own > over
+
+
+## Where the attacking line goes: skirmishing, RIV_FORM back from its own
+## mouth; else RIV_FORM beyond the far bank's mouth (sim units).
+static func _river_point(sim, side: int, skirmishing: bool) -> Vector2i:
+	var hold := int(sim.riv["bank"])
+	var dir := 1 if side == 0 else -1  # toward side's own edge along y
+	if skirmishing:
+		var m := MapGen.river_mouth(sim.riv, side)
+		return Vector2i(m.x * M, m.y * M + dir * RIV_FORM)
+	var f := MapGen.river_mouth(sim.riv, hold)
+	return Vector2i(f.x * M, f.y * M - dir * RIV_FORM)

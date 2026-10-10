@@ -2555,6 +2555,151 @@ the view (`game/battle.gd` `_queue` / `_tap_equip` / `_refresh_wall_buttons`,
   a wagon's column is not drawn alongside the wagon (the wagon rides at
   the anchor like every piece).
 
+**Roads, rivers and hills (2026-10-09, static data, still format 6).** The
+grid carries three layers baked from hand-drawn lines on the map: a
+terrain override per cell (hill 15 / ridge 20 where a range is rougher
+than its region's own terrain; the Alps' foot is ridge, the high Alps stay
+unclaimed land), a road flag (a road cell costs 6, so a road is two thirds
+again as fast as open ground: the Via Appia takes foot from Roma to
+Tarentum in one turn) and rivers as edges between cells: a step across a
+river is not a step except at a named crossing, a ford costing 5 more
+than the cell entered and a bridge nothing extra; a diagonal never crosses.
+Every search reads one step table, so paths, reach, the AI's distance
+fields and the move preview obey it without their own code. Rivers end
+on a coast, so the land on either bank stays connected round the source;
+the crossings decide where armies meet. A field battle fought across a
+crossing carries the crossing (id, ford or bridge, a seed from the id
+alone, the bank the defender holds) for the dedicated crossing map, and a
+battle on a hill cell is fought on hill ground, so high ground on the
+overworld is a real position.
+
+### River crossings (as built, 2026-10-10)
+
+A field battle fought over a river crossing (STATUS item 3, the user's
+design of 2026-10-09; pontoon bridges are not in this build) gets the
+crossing's own map. Code: `sim/mapgen.gd` (`river_geom`, `river_y` /
+`river_cy` / `river_edge` / `river_reach` / `river_mouth`, `river_rises`,
+`river_carve`, `_river`), `sim/terrain.gd` (the crossing's ground),
+`sim/battle_sim.gd` (section "river crossings": `river_at`, `_update_ford`,
+`FORD_SPEED`), `sim/scenarios.gd` (`river_units`, `camp(..., river)`,
+`field_zones`, `crossing()`), `sim/battle_ai.gd` (section "river
+crossings"), `game/terrain_layer.gd` + `game/terrain.gdshader` (water, the
+ford), `game/city_layer.gd` (`draw_bridge`), `game/campaign/city_preview.gd`
+(`for_crossing`), `game/campaign/battle_screen.gd` (the pre-battle preview),
+`game/custom/` ("River crossing: none / ford / bridge"). Probe:
+`tests/determinism_test.gd --only=crossing`.
+
+- **Scenario key** `"river": {id, kind (0 ford / 1 bridge), seed, bank}`
+  (campaign/cbattle.gd sets it when the attackers came over a crossing;
+  `bank` is the sim side holding the far bank, the defenders). Field maps
+  only (ignored with a city). Battles without it hash and play as before.
+- **The map, frozen per crossing.** Everything comes from the key's seed
+  (MapGen's own xorshift): the river's half width, a main bend whose apex
+  (toward the far bank) is at the crossing plus a small wiggle, the
+  crossing's place (within 40 m of the centre line), the ford's width, a
+  low rise on each bank; the ground's relief (the region's kind) and woods
+  are drawn from the crossing's seed too, round the field's centre (the
+  terrain's own seed is not used). A ford and a bridge of one seed share
+  their river. Generated in a canonical frame (the far bank at the top)
+  and turned 180 degrees when side 0 holds it, so the attackers always
+  come from their own edge (the test checks the turned map is exactly the
+  same crossing). The same id gives the same map; the river, the heights
+  and the crossing do not depend on the field size (the woods' thresholds
+  do a little: they are quantiles over the whole field).
+- **Numbers (chosen once):** river 20-40 m wide (`RIV_HW` 10-20 m half
+  width); main bend 8-18 m over 320-480 m, wiggle 2-5 m over 100-160 m;
+  ford 12-20 m wide (`FORD_W`, even); bridge 6 m (`BRIDGE_W`); river bed
+  and ford 2 m below the plain rising to it over 16 m from the water
+  (`RIV_DEPTH`, `RIV_BANK`: the bank's steepest grade ~19 %, under the
+  steep-ground 20 %); a rise on each bank 3-6 m high, 45-70 m radius, its
+  top 45-80 m back from the water (`RISE_*`); no trees within 6 m of the
+  water or 40 m of the crossing either side; `FORD_SPEED` = `DITCH_SPEED`
+  450 per mille.
+- **Cells.** The water is `C_WATER` in obs (the sea's kind: nav 0, so no
+  man steps into it and melee does not reach across it; missiles fly over,
+  line of fire ignores it); ford and bridge cells are open ground. The rv
+  grid (2 m, `R_WATER` / `R_FORD` / `R_BRIDGE`; static, hashed into
+  `ter_hash` with obs and the way across) tells the ford. The obstacle
+  machinery of settlement maps applies near the river (men kept out of
+  blocked cells, the street squeeze, flowing slots, the stuck release).
+- **The way across.** A small graph (MapGen, final frame) like a town's
+  street graph: a row of nodes along each bank (14 m from the water, every
+  30 m), the crossing's two mouths (5 m beyond the water) and its middle;
+  edges up to 48 m with a clear 3 m line. Paths, routers (they run to their
+  edge by it: a router on the wrong bank goes back over the crossing) and
+  the AI's orders all use the existing `_plan_path` / `route_to`.
+- **Ford** (`_update_ford`, after the men moved, units near the ford's box
+  only): a man in a ford cell has his step cut to `FORD_SPEED` (a step cut
+  short past the ford's corner that would end in the water leaves him where
+  he was); a rider there loses his charge's momentum (`chg` and `u_mom` to
+  0, `EQ_STOP` 100-like, `stat_ford_stop`); `u_frd` (per unit, hashed when
+  there is a river) marks units with men in it, and such a unit's anchor
+  (or one whose anchor is in the ford) keeps to `FORD_SPEED` and its
+  momentum cap is 0. Horses wade too (unlike the town ditch). No cover in
+  the ford: it is open ground (no trees, no works). Height: the men in it
+  stand 2 m below the plain, so the bank's defenders strike down and shoot
+  from height through the usual rules.
+- **Bridge:** normal pace, one unit wide. A unit's path goes over its
+  middle node; on the span the street squeeze closes its files to the 6 m
+  (at least 4 files) and it opens out on the far side; units behind it
+  queue at the mouth (`BLK_QUEUE`, flowing their slots into the space
+  before it), so the army crosses as a column a unit at a time (AI battle,
+  seed 12345: 78 squeezes, 515 unit-ticks queued, longest no-progress 109
+  ticks; the ford's 14 m: 76 / 569 / 112).
+- **Deployment** (`Scenarios.river_units`, applied by the sim at setup, so
+  campaign and custom scenarios need no geometry): the far bank's holder
+  is moved along its bank to face the crossing (its middle on the mouth,
+  kept 10 m inside the field); any unit of either side whose box comes
+  within 10 m (`RIV_KEEP`) of the water is moved straight back onto its
+  own bank (a flank arrival included). `field_zones` ends each side's zone
+  10 m (`RIV_ZONE`) short of the water on its side.
+- **Fortified at the crossing** (`"fortified"` = the holder): its line is
+  brought up so the camp's front rampart (`CAMP_PAD` 14 m beyond its box)
+  stands `RIV_CAMP` 14 m from the crossing's exit, or `RIV_CAMP_DRY` 8 m
+  clear of the water all along the camp if that is further (the ditch dry):
+  14-18 m on the generated maps; `camp(..., river)` builds it with no
+  sally gaps in the front facing the water and one in each flank (and the
+  back's as before). The attackers come out of the ford or off the bridge
+  under the rampart's archers into the ditch. A fortified army not at a
+  crossing (or the other side fortified) gets the camp as before.
+- **AI** (minimal; no knob or counter changed): the holder holds where it
+  deployed with the camp's rule and time (`ai_hold` from the deployment,
+  `_camp_keep`: `CAMP_HOLD`, until a third of its foot fights; its foot
+  attack only enemies within `HOLD_REACT`), fortified or not (Easy, whose
+  `CAMP_HOLD` is 0, advances as before). The attacker, while most of its
+  foot (men) is on its own bank, skirmishes from there (its line
+  `RIV_FORM` 30 m back from its own mouth while the skirmish rule holds),
+  then sends its line to form `RIV_FORM` beyond the far mouth: every unit's
+  way goes over the crossing (in column at a bridge), and the lines engage
+  by the usual rule as they meet. No hint is needed for the paths.
+- **View.** Water drawn from a 1 m texture of the river's own line (soft
+  coverage, so the bank is smooth; the sim's 2 m cells lie within a metre
+  of it) in the sea's colour and ripple with a light shore band; the ford
+  as pale shallows over gravel with ripple streaks across the current; the
+  bridge as a stone span with parapets, paving courses, cutwaters and
+  abutments (`CityLayer.draw_bridge`). The campaign's pre-battle screen
+  shows the crossing's map (`CityPreview.for_crossing`: ground, woods,
+  river, ford or bridge, the attackers' way over) with "A river crossing
+  by a ford / bridge: the defenders hold the far bank (, fortified at the
+  crossing)". Custom battles: "River crossing: none / ford / bridge" on
+  field maps (the river from the map seed; side 2, or the fortified side,
+  holds the far bank).
+- **Measured** (`--only=crossing`, crossing 7, battle seed 4242, both sides
+  Average AI, 3000 ticks): 50 attackers on the far bank at tick 2100 over
+  the ford (alive 599 / 787, undecided), 1399 over the bridge (455 / 630,
+  the holder won), 1648 over the ford against the fortified camp (714 /
+  671); nobody ever in the water (routers included); 60 cavalry charging
+  through the ford at heavy foot standing at its exit reach them with
+  momentum 0 and no impact (the same charge without the river: momentum 84,
+  51 impacts). Setup ~40 ms (map, heights, way across). Field battles
+  without the key: the golden digests unchanged.
+- **Not modelled / gaps:** pontoon bridges (designed, STATUS item 3); the
+  map follows the battle's sides (the far bank is the holder's), not the
+  river's geography; the attacker's units cross as each gets there (no
+  waiting to form the whole army on the far bank); the holder's cavalry
+  may still charge over the crossing; the bridge cannot be broken or
+  burnt; no balance run (crossing row in the equal-force harness: later).
+
 ## 5. Networking
 
 ### Live battles: deterministic lockstep

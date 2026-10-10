@@ -13,7 +13,12 @@ extends SceneTree
 ## scenario hash both peers compare; one unit of each light horse and
 ## slinger row builds on a field and shoots (its weapon's kind, skirmish on,
 ## the Balearics' lead bullets); scorpions (with heavy bolts) and
-## gastraphetes build on a field and both shoot.
+## gastraphetes build on a field and both shoot. River crossings: "River
+## crossing: ford / bridge" gives the scenario its "river" key from the map
+## seed (side 2, or the fortified side, holding the far bank), the
+## deployment zones end short of the water, the sim builds the crossing map
+## (its camp at the crossing when fortified); none on a settlement map or
+## without the option; a ford and a bridge battle run.
 
 const CS := preload("res://game/custom/custom_setup.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -23,6 +28,7 @@ const UT := preload("res://sim/unit_types.gd")
 const CoopSession := preload("res://game/net/coop_session.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
+const MapGen := preload("res://sim/mapgen.gd")
 
 var _ok := true
 
@@ -78,6 +84,13 @@ func _init() -> void:
 	mant_town["map"]["walls"] = 1
 	mant_town["map"]["ladders"] = 1
 	setups["mantlets 4 / 2, settlement"] = mant_town
+	var ford := CS.default_setup(13)
+	ford["map"]["river"] = 0
+	ford["map"]["fortified"] = 1
+	setups["river crossing: a ford, side 2 fortified at it"] = ford
+	var bridge := CS.default_setup(14)
+	bridge["map"]["river"] = 1
+	setups["river crossing: a bridge"] = bridge
 	for name in setups:
 		var st: Dictionary = setups[name]
 		var a := CS.build(st)
@@ -146,6 +159,7 @@ func _init() -> void:
 	_check_light_missile()
 	_check_light_art()
 	_check_mantlets(mant, mant_town)
+	_check_river(ford, bridge)
 	# Checks.
 	var bad := CS.default_setup(1)
 	bad["sides"][1]["armies"] = []
@@ -550,3 +564,52 @@ func _check_works() -> void:
 		return
 	print("PASS field works: options give side 1 (fortified) 6 stakes lines and 3 caltrop fields, side 0 (the player) 4 and 2 to place, the AI's placed; the camp's %d palisade sections and %d ditch runs stand; none without the options or on a settlement map" % [
 		int(cnt.get(r1, 0)), int(cnt.get(d1, 0))])
+
+
+
+## River crossings (DESIGN.md "River crossings"): the option's scenario key,
+## zones short of the water, the crossing map and the camp at it.
+func _check_river(ford: Dictionary, bridge: Dictionary) -> void:
+	var fb := CS.build(ford)
+	var bb := CS.build(bridge)
+	var fsc: Dictionary = fb["scenario"]
+	var bsc: Dictionary = bb["scenario"]
+	var plain := CS.build(CS.default_setup(13))
+	var town: Dictionary = JSON.parse_string(JSON.stringify(ford))
+	town["map"]["kind"] = "settlement"
+	var tb := CS.build(town)
+	var fr: Dictionary = fsc.get("river", {})
+	var br: Dictionary = bsc.get("river", {})
+	if fr.is_empty() or br.is_empty() or int(fr["kind"]) != 0 or int(br["kind"]) != 1 or int(fr["bank"]) != 1 \
+			or int(br["bank"]) != 1 or (plain["scenario"] as Dictionary).has("river") \
+			or (tb["scenario"] as Dictionary).has("river"):
+		_fail("river: ford key %s, bridge key %s, plain %s, settlement %s" % [str(fr), str(br),
+			str((plain["scenario"] as Dictionary).has("river")), str((tb["scenario"] as Dictionary).has("river"))])
+		return
+	var sim := BattleSim.new()
+	sim.setup(fsc, int(fb["seed"]))
+	var g: Dictionary = sim.riv
+	var zone_wet := 0
+	for z in fsc["deploy_zones"]:
+		var s := int(z[0])
+		for x in range(int(z[2]), int(z[4]) + 1, 8):
+			var e := MapGen.river_edge(g, x, s)
+			# side 0's zone below the water, side 1's above it
+			if (s == 0 and int(z[3]) * 100 < e) or (s == 1 and int(z[5]) * 100 > e):
+				zone_wet += 1
+	var ramp := 0
+	for q in sim.n_eq:
+		if sim.q_kind[q] == BattleSim.EQ_RAMPART:
+			ramp += 1
+	var bsim := BattleSim.new()
+	bsim.setup(bsc, int(bb["seed"]))
+	var bridge_cells := 0
+	for c in bsim.rv.size():
+		if bsim.rv[c] == MapGen.R_BRIDGE:
+			bridge_cells += 1
+	if sim.riv_on == 0 or zone_wet != 0 or ramp < 4 or bsim.riv_on == 0 or bridge_cells <= 0 or sim.riv_box[2] <= sim.riv_box[0]:
+		_fail("river: riv_on %d / %d, zone samples in or across the water %d, camp sections %d, bridge cells %d" % [
+			sim.riv_on, bsim.riv_on, zone_wet, ramp, bridge_cells])
+		return
+	print("PASS river crossing option: a ford (side 2 fortified at it: %d palisade sections) and a bridge (%d cells) from the map seed, the zones short of the water, none without the option or on a settlement map" % [
+		ramp, bridge_cells])

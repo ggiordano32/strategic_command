@@ -67,6 +67,13 @@ static func build(terrain: Dictionary, battle_seed: int, field_w: int, field_h: 
 	var tseed := int(terrain.get("seed", -1))
 	if tseed < 0:
 		tseed = battle_seed
+	# A river crossing (field maps): its own frozen ground, from the
+	# crossing's seed (sim/mapgen.gd river_geom; canonical frame, the far
+	# bank at the top: mapgen turns it round with everything else).
+	var rg := {}
+	if not (terrain.get("city") is Dictionary) and terrain.get("river") is Dictionary:
+		rg = MapGen.river_geom(terrain["river"], field_w / M, field_h / M)
+		tseed = int(rg["seed"])
 	var rng := PackedInt32Array([((tseed & 0x7FFFFFFF) * 69069 + 0x3C6EF35F) & 0x7FFFFFFF])
 	if rng[0] == 0:
 		rng[0] = 0x2468ACE
@@ -126,13 +133,23 @@ static func build(terrain: Dictionary, battle_seed: int, field_w: int, field_h: 
 					feats.append([F_MESA, fr.x, fr.y, rmax + 14, maxi(relief * 3 / 4, 8), 0, 70])
 				else:
 					feats.append([F_MESA, fr.x, fr.y, rmax + 6, 5, 0, 60])
+	elif not rg.is_empty():
+		# Round the field's centre, so the crossing's ground does not move
+		# with the field size; a low rise on each bank.
+		if kind != K_FLAT and kind != K_CUSTOM:
+			for f in _features(kind, rng, 640, 600, relief, scale):
+				var a3: Array = (f as Array).duplicate()
+				a3[1] = int(a3[1]) + field_w / M / 2 - 320
+				a3[2] = int(a3[2]) + field_h / M / 2 - 300
+				feats.append(a3)
+		feats.append_array(MapGen.river_rises(rg))
 	elif kind != K_FLAT and kind != K_CUSTOM:
 		feats = _features(kind, rng, field_w / M, field_h / M, relief, scale)
 	for f in terrain.get("features", []):
 		feats.append(f)
 	var out := {"on": 0, "nx": nx, "ny": ny, "h": h, "kind": kind, "seed": tseed,
 		"relief_m": relief, "scale_m": scale, "sym": sym, "features": feats}
-	if feats.is_empty():
+	if feats.is_empty() and rg.is_empty():
 		return out
 	for f in feats:
 		var a: Array = f
@@ -157,6 +174,8 @@ static func build(terrain: Dictionary, battle_seed: int, field_w: int, field_h: 
 			_level_city(h, nx, ny, fr, 250)
 		else:
 			_city_ground(h, nx, ny, fr, cp, site, kind, outl, rng)
+	if not rg.is_empty():
+		MapGen.river_carve(h, nx, ny, rg)
 	if sym != 0:
 		# Exact 180-degree symmetry: node k and node (last - k) take the same
 		# height (the integer mean is commutative, so both get one value).
