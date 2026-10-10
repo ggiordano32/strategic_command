@@ -53,6 +53,70 @@ your own time, then meet up for the battles.
 | ![A Greek coastal city](docs/screenshots/settlements_polis_hill_coast.png) | ![Raising an army: unit cards with traits, counters and stat pips](docs/screenshots/recruit_cards_tablet.png) |
 | A Greek city on a coastal hill with its acropolis | Raising an army: what each unit is good and bad against |
 
+## The units
+
+Every unit is a row of data: its men, weapons, armour, nerve and quirks. Three
+tiers per line as the buildings grow, and each faction's own named troops on top.
+
+**Infantry**
+
+| Unit | Role | |
+|---|---|---|
+| Heavy Swords | Line infantry | Armoured swordsmen with large shields, the backbone of the line. |
+| Light Infantry | Fast infantry | Fast, lightly armoured fighters. |
+| Spearmen | Anti-cavalry infantry | Steady spearmen whose second rank can also reach. |
+| Pikemen | Phalanx | A dense block whose first four ranks all strike with 5.5 m pikes. |
+
+**Missile troops**
+
+| Unit | Role | |
+|---|---|---|
+| Archers | Missile infantry | Long-range bowmen who shoot over friendly units and hills and lead moving targets. |
+| Javelinmen | Skirmishers | Loose-order skirmishers throwing armour-piercing javelins at short range. |
+| Slingers | Missile infantry | Light troops with slings who outrange the bow and shoot faster. |
+| Gastraphetes | Missile infantry (belly-bows) | Greek belly-bowmen: a composite bow on a stock, spanned by leaning on it with the belly, shot like a small bolt engine. |
+
+**Cavalry and beasts**
+
+| Unit | Role | |
+|---|---|---|
+| Shock Cavalry | Shock cavalry | Heavy horsemen. |
+| Light Horse | Missile cavalry | Javelin riders on small, quick horses. |
+| Camel Riders | Anti-cavalry riders | Riders on camels. |
+| Camel Archers | Mounted archers on camels | Archers on camels: they shoot from the saddle at a fair range, ride away from what comes for them, and scare horses like any camels (enemy horsemen within 30 m lose much of their charge and turn rate and lose heart). |
+| War Elephants | Shock beasts | Twelve war elephants, each a driver and two javelin men on its back. |
+
+**Artillery and the train**
+
+| Unit | Role | |
+|---|---|---|
+| Bolt Throwers | Light artillery (scorpions) | Four torsion bolt throwers with their crews. |
+| Stone Throwers | Heavy artillery (onagers) | Three onagers lobbing heavy stones over friendly troops and hills at very long range. |
+| Scorpions | Light artillery (carried scorpions) | Six small bolt engines, two men to each, light enough for the crews to carry: they march at a man's walking pace and set up or pack up in a moment, so they keep up with an assault and shoot the men on the wall above the ladders and the ram. |
+| Hand Cart | Ammunition wagon | A hand cart of arrows, javelins and shot pulled by its eight men at walking pace or slower. |
+
+**Commanders and dogs**
+
+| Unit | Role | |
+|---|---|---|
+| General's Bodyguard | The general and his guard | The army's commander and his picked riders. |
+| War Dogs | Handlers and a pack of war dogs | Sixteen handlers with a pack of two dogs each. |
+
+**Named troops by faction**
+
+- **Rome:** Principes, Extraordinarii, Triarii, Legate's Guard.
+- **Carthage:** Sacred Band, Balearic Slingers, Numidian Horse, Sufet's Guard.
+- **Macedon:** Phalangites, Silver Shields, Companion Cavalry, Royal Hetairoi.
+- **The Greek League:** Hoplites, Picked Hoplites, Cretan Archers, Rhodian Slingers, Tarentine Horse, Strategos' Guard.
+- **Syracuse:** Hoplites, Picked Hoplites, Cretan Archers, Gastraphetes, Strategos' Guard.
+- **Epirus:** Chaonian Guard, Agema, Tarentine Horse, War Elephants, Royal Hetairoi.
+- **The Gauls:** Gallic Warband, Gallic Nobles, Noble Cavalry, Gallic Light Horse, Chieftain's Guard.
+- **The Iberians:** Scutarii, Caetrati, Iberian Slingers, Iberian Light Horse, Chieftain's Guard.
+
+Special ammunition comes with the buildings and the faction: fire arrows and
+javelins that burn gates, wagons and palisades, lead sling bullets, heavy
+bolts, and explosive stones that burst in a 4 m blast and throw men down.
+
 ## Co-op play
 
 1. One of you creates a campaign and sends the other a join code.
