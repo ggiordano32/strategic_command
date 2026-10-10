@@ -193,6 +193,11 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=chars" in OS.get_cmdline_user_args():
+		_check_chars()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=dogs" in OS.get_cmdline_user_args():
 		_check_dogs()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -274,6 +279,7 @@ func _init() -> void:
 	_check_elephants()
 	_check_general()
 	_check_dogs()
+	_check_chars()
 	_check_stakes()
 	_check_fortified()
 	_check_light_art()
@@ -4529,3 +4535,444 @@ func _check_crossing() -> void:
 			return
 		print("PASS crossing %s: the AI attacker has 50 men on the far bank at tick %d (by %d), %d unit-ticks wading, nobody in the water (%d unit routs), alive %s%s; identical on repeat and across snapshot / restore at ticks %s" % [
 			name, int(ev["far_at"]), CROSS_BY, int(ev["ford"]), int(ev["routs"]), str(ev["alive"]), camp, str(snaps)])
+
+
+# ------------------------------------------------------ heroes and agents ---
+# docs/DESIGN.md "Heroes and agents" ("--only=chars", also in the full run):
+# flat set pieces, no AI unless said: (A) each aura measured against the same
+# units out of it (to-hit and kills, range and shots, charge impacts, the
+# siege hero's climb / reload / batter for the side); (B) a champion cut
+# down: his side near him shaken by fall_loss, the far one not, the enemy
+# near him heartened; (C) the assassin hidden (the enemy's target lists
+# skip him) until he comes near; (D) sabotage of an enemy battery; (E) a shut
+# gate unbarred from inside (gate_ops); (F) attempts on a general by seed
+# (outcomes); (G) parleys with routers, one that ends in a surrender
+# (prisoners, the result rows) and one that does not; (H) the AI's
+# characters in battle_2000. Identical on repeat and across snapshot /
+# restore.
+
+func _chars_sc(units: Array, chars: Array, w: int = 400, h: int = 400) -> Dictionary:
+	return {"width_m": w, "height_m": h, "ai_sides": [], "orders": [], "units": units, "chars": chars,
+		"terrain": {"kind": Terrain.K_FLAT}}
+
+
+func _ch(key: String) -> Dictionary:
+	return {"key": key, "name": key.capitalize()}
+
+
+## The first unit of character kind k on side s (-1 none).
+func _ch_unit(sim, s: int, k: int) -> int:
+	for u in sim.n_units:
+		if sim.u_side[u] == s and sim.u_char[u] == k:
+			return u
+	return -1
+
+
+## Place unit u's anchor and men at (x, y) metres (set pieces).
+func _ch_put(sim, u: int, x: int, y: int) -> void:
+	sim.u_ax[u] = x * M
+	sim.u_ay[u] = y * M
+	sim.u_dx[u] = x * M
+	sim.u_dy[u] = y * M
+	var base: int = sim.u_slot_base[u]
+	for s in sim.u_alive[u]:
+		var i: int = sim.slot_soldier[base + s]
+		sim.pos_x[i] = x * M + sim.off_x[base + s]
+		sim.pos_y[i] = y * M + sim.off_y[base + s]
+	sim.u_dirty[u] = 1
+	sim.u_settled[u] = 0
+	sim._update_bounds()
+
+
+func _chars_run(snap_check: bool) -> Dictionary:
+	var ev := {}
+	var hashes := PackedInt64Array()
+	var snap_bad := 0
+	var snaps := 0
+	# A1: to-hit and morale. Two mirrored light infantry fights 200 m apart,
+	# the champion behind ours on the left (within his 40 m), none on the right.
+	var sc := _chars_sc([
+		Scenarios.unit(0, UT.LIGHT, 60, 100, 230, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.LIGHT, 60, 100, 200, Scenarios.FACE_DOWN),
+		Scenarios.unit(0, UT.LIGHT, 60, 300, 230, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.LIGHT, 60, 300, 200, Scenarios.FACE_DOWN)], [[_ch("hero_foot")], []])
+	var sim := BattleSim.new()
+	sim.setup(sc, 901)
+	var hf := _ch_unit(sim, 0, UT.CK_FOOT)
+	_ch_put(sim, hf, 100, 255)
+	sim.queue_order(BattleSim.make_attack_order(1, 0, 1, 0))
+	sim.queue_order(BattleSim.make_attack_order(1, 2, 3, 0))
+	sim.queue_order(BattleSim.make_attack_order(1, 1, 0, 0))
+	sim.queue_order(BattleSim.make_attack_order(1, 3, 2, 0))
+	for t in 400:
+		sim.step()
+		hashes.append(sim.state_hash())
+		if sim.tick == 20:
+			ev["foot_aura_in"] = sim.u_aura[0]
+			ev["foot_aura_out"] = sim.u_aura[2]
+		if snap_check and sim.tick == 150:
+			snap_bad += _snap_diverges(sim, sc, 901, 200)
+			snaps += 1
+	ev["foot_kills_in"] = sim.u_kills[0]
+	ev["foot_kills_out"] = sim.u_kills[2]
+	ev["foot_mor_in"] = sim.u_morale[0]
+	ev["foot_mor_out"] = sim.u_morale[2]
+	ev["foot_hits"] = sim.stat_ch_hit
+	ev["foot_hit_pct_in"] = sim.stat_ch_rolls[3] * 100 / maxi(sim.stat_ch_rolls[2], 1)
+	ev["foot_hit_pct_out"] = sim.stat_ch_rolls[1] * 100 / maxi(sim.stat_ch_rolls[0], 1)
+	# A2: range and accuracy. Archers 148 m from light infantry: the ones by
+	# the missile hero (154 m) shoot, the others (140 m) cannot.
+	sc = _chars_sc([
+		Scenarios.unit(0, UT.ARCHER, 80, 100, 300, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.LIGHT, 60, 100, 150, Scenarios.FACE_DOWN),
+		Scenarios.unit(0, UT.ARCHER, 80, 300, 300, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.LIGHT, 60, 300, 150, Scenarios.FACE_DOWN)], [[_ch("hero_missile")], []])
+	sim = BattleSim.new()
+	sim.setup(sc, 902)
+	var hm := _ch_unit(sim, 0, UT.CK_MISSILE)
+	_ch_put(sim, hm, 100, 325)
+	sim.queue_order(BattleSim.make_fire_order(1, hm, 0))
+	sim.queue_order(BattleSim.make_fire_order(1, 1, 0))
+	sim.queue_order(BattleSim.make_fire_order(1, 3, 0))
+	for t in 300:
+		sim.step()
+		hashes.append(sim.state_hash())
+		if sim.tick == 20:
+			ev["mis_range_in"] = sim.mrange(0) / M
+			ev["mis_range_out"] = sim.mrange(2) / M
+	ev["mis_shots"] = sim.stat_ch_rng
+	ev["mis_kills_in"] = sim.u_kills[0]
+	ev["mis_kills_out"] = sim.u_kills[2]
+	# A3: charge. Two cavalry units charge two light infantry units; the
+	# horse hero rides in with the left ones.
+	sc = _chars_sc([
+		Scenarios.unit(0, UT.CAVALRY, 40, 100, 300, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.LIGHT, 60, 100, 200, Scenarios.FACE_DOWN),
+		Scenarios.unit(0, UT.CAVALRY, 40, 300, 300, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.LIGHT, 60, 300, 200, Scenarios.FACE_DOWN)], [[_ch("hero_cav")], []])
+	sim = BattleSim.new()
+	sim.setup(sc, 903)
+	var hc := _ch_unit(sim, 0, UT.CK_CAV)
+	_ch_put(sim, hc, 100, 318)
+	sim.queue_order(BattleSim.make_attack_order(1, 0, 1, 1))
+	sim.queue_order(BattleSim.make_attack_order(1, 2, 3, 1))
+	sim.queue_order(BattleSim.make_attack_order(1, hc, 1, 1))
+	for t in 250:
+		sim.step()
+		hashes.append(sim.state_hash())
+		if sim.tick == 10:
+			ev["cav_aura_in"] = sim.u_aura[0]
+			ev["cav_aura_out"] = sim.u_aura[2]
+	ev["cav_bonus_impacts"] = sim.stat_ch_mom
+	ev["cav_impacts"] = sim.stat_impacts
+	ev["cav_kills_in"] = sim.u_kills[0]
+	ev["cav_kills_out"] = sim.u_kills[2]
+	# A4: the siege hero (the whole side): a battery of ours and one of
+	# theirs shoot heavy infantry for 60 s; ours with the engineer reloads
+	# faster (and the climb / batter factors for the side).
+	sc = _chars_sc([
+		Scenarios.unit(0, UT.BOLT, 16, 100, 330, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.HEAVY, 100, 100, 150, Scenarios.FACE_DOWN),
+		Scenarios.unit(1, UT.BOLT, 16, 300, 70, Scenarios.FACE_DOWN),
+		Scenarios.unit(0, UT.HEAVY, 100, 300, 250, Scenarios.FACE_UP)], [[_ch("hero_siege")], []])
+	sim = BattleSim.new()
+	sim.setup(sc, 904)
+	for u in [1, 3]:
+		sim.queue_order(BattleSim.make_halt_order(1, u))
+	for t in 600:
+		sim.step()
+		hashes.append(sim.state_hash())
+		if sim.tick == 20:
+			ev["sg_side"] = "%d/%d" % [sim.ch_sg[0], sim.ch_sg[1]]
+	ev["sg_fired_in"] = 4 * UT.stat(UT.BOLT, "m_ammo") - sim.u_ammo[0]
+	ev["sg_fired_out"] = 4 * UT.stat(UT.BOLT, "m_ammo") - sim.u_ammo[2]
+	ev["sg_climb"] = "%d/%d" % [sim.climb_pct(0), sim.climb_pct(1)]
+	ev["sg_reload"] = "%d/%d" % [sim.reload_pct(0), sim.reload_pct(1)]
+	ev["sg_batter"] = "%d/%d" % [sim.batter_pct(0), sim.batter_pct(1)]
+	# B: a champion cut down by heavy infantry: his side near him (within
+	# 60 m) and far, the enemy near and far.
+	sc = _chars_sc([
+		Scenarios.unit(0, UT.HEAVY, 100, 120, 260, Scenarios.FACE_UP),
+		Scenarios.unit(0, UT.HEAVY, 100, 360, 330, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.HEAVY, 100, 150, 180, Scenarios.FACE_DOWN),
+		Scenarios.unit(1, UT.HEAVY, 100, 360, 60, Scenarios.FACE_DOWN)], [[_ch("hero_foot")], []])
+	sim = BattleSim.new()
+	sim.setup(sc, 905)
+	hf = _ch_unit(sim, 0, UT.CK_FOOT)
+	_ch_put(sim, hf, 150, 215)
+	sim.queue_order(BattleSim.make_attack_order(1, 2, hf, 0))
+	var pm := PackedInt32Array([0, 0, 0, 0])
+	ev["fall_t"] = -1
+	for t in 1500:
+		for k in 4:
+			pm[k] = sim.u_morale[k]
+		sim.step()
+		hashes.append(sim.state_hash())
+		if int(ev["fall_t"]) < 0 and sim.stat_ch_fall > 0:
+			ev["fall_t"] = sim.tick
+			ev["fall_near"] = pm[0] - sim.u_morale[0]
+			ev["fall_far"] = pm[1] - sim.u_morale[1]
+			ev["fall_enemy_near"] = sim.u_morale[2] - pm[2]
+			ev["fall_enemy_far"] = sim.u_morale[3] - pm[3]
+			var rr: Dictionary = sim.result()
+			ev["fall_row"] = "char %d alive %d" % [int(rr["units"][hf].get("char", 0)), int(rr["units"][hf].get("alive", -1))]
+			break
+		if snap_check and sim.tick == 60:
+			snap_bad += _snap_diverges(sim, sc, 905, 300)
+			snaps += 1
+	# C: the assassin hidden: archers firing at will 100 m off do not see him
+	# (no target in the sim's or the AI's lists) until he walks within 10 m.
+	sc = _chars_sc([
+		Scenarios.unit(0, UT.HEAVY, 60, 380, 380, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.ARCHER, 80, 150, 150, Scenarios.FACE_DOWN)], [[_ch("assassin")], []])
+	sim = BattleSim.new()
+	sim.setup(sc, 906)
+	var asn := _ch_unit(sim, 0, UT.CK_ASSASSIN)
+	_ch_put(sim, asn, 150, 250)
+	sim.queue_order(BattleSim.make_move_order(100, asn, 150 * M, 159 * M, Scenarios.FACE_UP, 1 * M, 1))
+	ev["seen_t"] = -1
+	for t in 500:
+		sim.step()
+		hashes.append(sim.state_hash())
+		if sim.tick == 50:
+			ev["hid_hidden"] = sim.u_hidden[asn]
+			ev["hid_ai_nearest"] = BattleAI._nearest_enemy(sim, 1, false)
+			ev["hid_fire"] = sim.u_ftarget[1]
+		if int(ev["seen_t"]) < 0 and sim.u_hidden[asn] == 0:
+			ev["seen_t"] = sim.tick
+		if int(ev["seen_t"]) >= 0 and sim.tick == int(ev["seen_t"]) + 10:
+			ev["seen_ai_nearest"] = BattleAI._nearest_enemy(sim, 1, false)
+			ev["seen_fire"] = sim.u_ftarget[1]
+	# D: sabotage: the assassin walks to their battery (its crews shooting at
+	# our heavy infantry far off) and wrecks its engines.
+	sc = _chars_sc([
+		Scenarios.unit(0, UT.HEAVY, 60, 300, 350, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.BOLT, 16, 120, 120, Scenarios.FACE_DOWN)], [[_ch("assassin")], []])
+	sim = BattleSim.new()
+	sim.setup(sc, 907)
+	asn = _ch_unit(sim, 0, UT.CK_ASSASSIN)
+	_ch_put(sim, asn, 60, 160)
+	sim.queue_order(BattleSim.make_sabotage_order(1, asn, 0))
+	ev["sab_refusal_own"] = BattleSim.char_refusal(sim, {"type": BattleSim.ORDER_SABOTAGE, "unit": 1, "eg": 0})
+	for t in 900:
+		sim.step()
+		hashes.append(sim.state_hash())
+		if snap_check and sim.tick == 100:
+			snap_bad += _snap_diverges(sim, sc, 907, 400)
+			snaps += 1
+	ev["sab_wrecked"] = sim.stat_sabotage
+	ev["sab_engines"] = sim.eg_ne[0]
+	ev["sab_alive"] = sim.u_alive[asn]
+	ev["sab_captured"] = sim.stat_captured
+	# E: a shut gate unbarred from inside: the attackers' assassin walks to
+	# its outer face, over the wall beside it, and unbars it.
+	sc = _scenario("gate_ops")
+	sc["chars"] = [[_ch("assassin")], []]
+	sim = BattleSim.new()
+	sim.setup(sc, 908)
+	asn = _ch_unit(sim, 0, UT.CK_ASSASSIN)
+	var gq := 1  # (the north-west gate: away from the defenders' spearmen)
+	for u in sim.n_units:
+		if sim.u_side[u] == 1 and UT.cls(sim.u_type[u]) == UT.CLS_MISSILE:
+			var fo := BattleSim.make_fire_order(1, u, 0)  # (their archers hold their fire)
+			fo["player"] = 51
+			sim.queue_order(fo)
+	ev["gate"] = gq
+	ev["gate_open_t"] = -1
+	if gq >= 0:
+		sim.queue_order(BattleSim.make_sabotage_order(1, asn, -1, gq))
+		for t in 1500:
+			sim.step()
+			hashes.append(sim.state_hash())
+			if snap_check and sim.tick == 200:
+				snap_bad += _snap_diverges(sim, sc, 908, 300)
+				snaps += 1
+			if int(ev["gate_open_t"]) < 0 and sim.g_state[gq] == BattleSim.GATE_OPEN:
+				ev["gate_open_t"] = sim.tick
+				break
+	ev["gate_over"] = sim.stat_ch_over
+	ev["gate_unbar"] = sim.stat_ch_unbar
+	ev["gate_alive"] = sim.u_alive[asn]
+	# F: attempts on a general's unit standing behind its line (a seed each).
+	var outs := []
+	for sd in 8:
+		sc = _chars_sc([
+			Scenarios.unit(1, UT.index_of("general"), 30, 200, 120, Scenarios.FACE_DOWN),
+			Scenarios.unit(1, UT.HEAVY, 100, 200, 160, Scenarios.FACE_DOWN),
+			Scenarios.unit(0, UT.HEAVY, 100, 200, 300, Scenarios.FACE_UP)], [[_ch("assassin")], []])
+		sim = BattleSim.new()
+		sim.setup(sc, 910 + sd)
+		asn = _ch_unit(sim, 0, UT.CK_ASSASSIN)
+		_ch_put(sim, asn, 150, 112)
+		sim.queue_order(BattleSim.make_attempt_order(1, asn, 0))
+		for t in 300:
+			sim.step()
+			hashes.append(sim.state_hash())
+			if sim.u_chk[asn] != 0 and (sim.u_chf[asn] & BattleSim.CHF_TRIED) != 0:
+				break
+		outs.append("%d:%s" % [sim.u_chk[asn], "gone" if sim.u_cmdgone[0] != 0 else "led"])
+	ev["attempts"] = " ".join(outs)
+	# G: parleys: their light infantry breaks (morale 0) beside our
+	# diplomat; he walks up, it stands for 5 s, then it surrenders or not
+	# (the first seed of each).
+	ev["parley_ok_seed"] = -1
+	ev["parley_fail_seed"] = -1
+	for sd in 12:
+		sc = _chars_sc([
+			Scenarios.unit(0, UT.HEAVY, 100, 200, 330, Scenarios.FACE_UP),
+			Scenarios.unit(1, UT.LIGHT, 60, 200, 200, Scenarios.FACE_DOWN)], [[_ch("diplomat")], []])
+		sim = BattleSim.new()
+		sim.setup(sc, 930 + sd)
+		var dip := _ch_unit(sim, 0, UT.CK_DIPLOMAT)
+		_ch_put(sim, dip, 235, 190)
+		sim.u_morale[1] = 0
+		sim.step()
+		var ref := BattleSim.char_refusal(sim, BattleSim.make_parley_order(sim.tick, dip, 1))
+		sim.queue_order(BattleSim.make_parley_order(sim.tick, dip, 1))
+		var held := 0
+		for t in 400:
+			sim.step()
+			hashes.append(sim.state_hash())
+			if sim.u_hold[1] >= sim.tick:
+				held += 1
+			if sim.stat_parley_ok + sim.stat_parley_fail > 0:
+				break
+		if sim.stat_parley_ok > 0 and int(ev["parley_ok_seed"]) < 0:
+			var rr: Dictionary = sim.result()
+			ev["parley_ok_seed"] = 930 + sd
+			ev["parley_ok"] = "refusal '%s' held %d prisoners %d row surrendered %d state %d sides %s" % [ref, held,
+				sim.ch_pris[0], int(rr["units"][1].get("surrendered", -1)), int(rr["units"][1]["state"]),
+				str([int(rr["sides"][0].get("prisoners", -1)), int(rr["sides"][1].get("surrendered", -1))])]
+			ev["parley_men"] = int(rr["units"][1]["started"]) - int(rr["units"][1]["killed"])
+		elif sim.stat_parley_fail > 0 and int(ev["parley_fail_seed"]) < 0:
+			ev["parley_fail_seed"] = 930 + sd
+			ev["parley_fail"] = "held %d prisoners %d wait %d state %d" % [held, sim.ch_pris[0],
+				sim.u_chcd[dip] - sim.tick, sim.u_state[1]]
+		if int(ev["parley_ok_seed"]) >= 0 and int(ev["parley_fail_seed"]) >= 0:
+			break
+	# H: the AI's characters (docs/AI.md 26): battle_2000, a general and the
+	# six characters a side, both Average, then both Skilled.
+	var all6 := []
+	for key in ["hero_foot", "hero_missile", "hero_cav", "hero_siege", "assassin", "diplomat"]:
+		all6.append(_ch(key))
+	for lvl in [AIP.AVERAGE, AIP.SKILLED]:
+		var sc4: Dictionary = Scenarios.make("battle_2000")
+		sc4["ai_sides"] = [0, 1]
+		sc4["ai_skill"] = [lvl, lvl]
+		sc4["terrain"] = {"kind": Terrain.K_FLAT}
+		for sd in 2:
+			sc4["units"].append(Scenarios.unit(sd, UT.index_of("general"), 30, 280, 420 if sd == 0 else 140,
+				Scenarios.FACE_UP if sd == 0 else Scenarios.FACE_DOWN))
+		sc4["chars"] = [all6, all6]
+		var s4 := BattleSim.new()
+		s4.setup(sc4, 940)
+		var tag := "avg" if lvl == AIP.AVERAGE else "sk"
+		var behind := 0
+		var ahead := 0
+		var attack := 0
+		for t in 1800:
+			s4.step()
+			hashes.append(s4.state_hash())
+			if snap_check and lvl == AIP.AVERAGE and s4.tick == 900:
+				snap_bad += _snap_diverges(s4, sc4, 940, 200)
+				snaps += 1
+			if s4.tick % 100 != 0:
+				continue
+			for u in s4.n_units:
+				if s4.u_char[u] < UT.CK_FOOT or s4.u_char[u] > UT.CK_SIEGE or s4.u_state[u] != BattleSim.U_READY:
+					continue
+				if s4.u_order[u] == BattleSim.O_ATTACK:
+					attack += 1
+				# Behind or ahead of his own foot line's mean depth.
+				var sd: int = s4.u_side[u]
+				var ly := 0
+				var ln := 0
+				for o in s4.n_units:
+					if s4.u_side[o] == sd and s4.u_state[o] == BattleSim.U_READY and s4.u_char[o] == 0 \
+							and (s4.u_cls[o] == UT.CLS_INF or s4.u_cls[o] == UT.CLS_PIKE):
+						ly += s4.u_cy[o]
+						ln += 1
+				if ln > 0:
+					var dep: int = (s4.u_cy[u] - ly / ln) * (1 if sd == 0 else -1)
+					if dep > 0:
+						behind += 1
+					elif dep < -10 * M:
+						ahead += 1
+		var heroes_alive := 0
+		for u in s4.n_units:
+			if s4.u_char[u] >= UT.CK_FOOT and s4.u_char[u] <= UT.CK_SIEGE and s4.u_alive[u] > 0:
+				heroes_alive += 1
+		ev[tag + "_ai"] = "behind %d ahead %d attack-orders %d heroes alive %d/8 attempts %d parleys %d ok %d fail %d prisoners %d/%d falls %d winner %d" % [
+			behind, ahead, attack, heroes_alive,
+			s4.stat_aic[AIP.C_CH_ATTEMPT] + s4.stat_aic[AIP.N_COUNTERS + AIP.C_CH_ATTEMPT],
+			s4.stat_aic[AIP.C_CH_PARLEY] + s4.stat_aic[AIP.N_COUNTERS + AIP.C_CH_PARLEY],
+			s4.stat_parley_ok, s4.stat_parley_fail, s4.ch_pris[0], s4.ch_pris[1], s4.stat_ch_fall, s4.winner]
+		ev[tag + "_attempts"] = s4.stat_aic[AIP.C_CH_ATTEMPT] + s4.stat_aic[AIP.N_COUNTERS + AIP.C_CH_ATTEMPT]
+		ev[tag + "_parleys"] = s4.stat_aic[AIP.C_CH_PARLEY] + s4.stat_aic[AIP.N_COUNTERS + AIP.C_CH_PARLEY]
+		ev[tag + "_behind"] = behind
+		ev[tag + "_ahead"] = ahead
+		ev[tag + "_attack"] = attack
+	return {"hashes": hashes, "ev": ev, "snap_bad": snap_bad, "snaps": snaps}
+
+
+func _check_chars() -> void:
+	var a := _chars_run(true)
+	var b := _chars_run(false)
+	var ev: Dictionary = a["ev"]
+	print("  chars: %s" % str(ev))
+	if a["hashes"] != b["hashes"] or str(ev) != str(b["ev"]):
+		_fail("chars: the repeat diverged")
+	if int(a["snap_bad"]) != 0:
+		_fail("chars: a restored copy diverged (%d)" % int(a["snap_bad"]))
+	if int(a["snaps"]) < 5:
+		_fail("chars: only %d snapshot checks ran" % int(a["snaps"]))
+	if int(ev["foot_aura_in"]) != BattleSim.AU_FOOT or int(ev["foot_aura_out"]) != 0 \
+			or int(ev["foot_hit_pct_in"]) <= int(ev["foot_hit_pct_out"]) or int(ev["foot_mor_in"]) <= int(ev["foot_mor_out"]):
+		_fail("chars: the champion's aura (to-hit, morale) did not tell (%s)" % str(ev))
+	if int(ev["mis_range_in"]) != 154 or int(ev["mis_range_out"]) != 140 or int(ev["mis_kills_in"]) <= 0 \
+			or int(ev["mis_kills_out"]) != 0 or int(ev["mis_shots"]) <= 0:
+		_fail("chars: the missile hero's range / accuracy did not tell (%s)" % str(ev))
+	if int(ev["cav_aura_in"]) != BattleSim.AU_CAV or int(ev["cav_aura_out"]) != 0 or int(ev["cav_bonus_impacts"]) <= 0:
+		_fail("chars: the horse hero's charge bonus did not tell (%s)" % str(ev))
+	if str(ev["sg_side"]) != "1/0" or int(ev["sg_fired_in"]) <= int(ev["sg_fired_out"]) or str(ev["sg_climb"]) != "80/100" \
+			or str(ev["sg_reload"]) != "83/100" or str(ev["sg_batter"]) != "75/100":
+		_fail("chars: the siege hero's side effects did not tell (%s)" % str(ev))
+	if int(ev["fall_t"]) < 0 or absi(int(ev["fall_near"]) - 120) > 10 or absi(int(ev["fall_far"])) > 5 \
+			or absi(int(ev["fall_enemy_near"]) - 60) > 10 or absi(int(ev["fall_enemy_far"])) > 5 \
+			or str(ev["fall_row"]) != "char 1 alive 0":
+		_fail("chars: the champion's fall did not strike as it should (%s)" % str(ev))
+	if int(ev["hid_hidden"]) != 1 or int(ev["hid_ai_nearest"]) == 2 or int(ev["hid_fire"]) != -1 \
+			or int(ev["seen_t"]) < 0 or int(ev.get("seen_ai_nearest", -1)) != 2 or int(ev.get("seen_fire", -1)) != 2:
+		_fail("chars: the hidden assassin was seen, or never (%s)" % str(ev))
+	if int(ev["sab_wrecked"]) <= 0:
+		_fail("chars: the assassin wrecked no engine (%s)" % str(ev))
+	if int(ev["gate_open_t"]) < 0 or int(ev["gate_unbar"]) != 1 or int(ev["gate_over"]) != 1:
+		_fail("chars: the gate was not unbarred from inside (%s)" % str(ev))
+	var att_s := str(ev["attempts"])
+	var kinds := 0
+	for c in ["1:", "2:", "3:"]:
+		if att_s.find(c) >= 0:
+			kinds += 1
+	if kinds < 2 or att_s.find("1:led") >= 0 or att_s.find("2:gone") >= 0 or att_s.find("3:gone") >= 0:
+		_fail("chars: the attempts' outcomes are wrong (%s)" % att_s)
+	if int(ev["parley_ok_seed"]) < 0 or int(ev["parley_fail_seed"]) < 0 or int(ev.get("parley_men", 0)) != 60 \
+			or str(ev.get("parley_ok", "")).find("prisoners 60 row surrendered 60 state 3 sides [60, 60]") < 0:
+		_fail("chars: the parleys did not end as they should (%s)" % str(ev))
+	if int(ev["avg_attack"]) != 0 or int(ev["sk_attack"]) != 0 or int(ev["avg_behind"]) <= int(ev["avg_ahead"]) \
+			or int(ev["avg_attempts"]) != 0 or int(ev["avg_parleys"]) <= 0:
+		_fail("chars: the AI's characters misbehaved (%s / %s)" % [str(ev["avg_ai"]), str(ev["sk_ai"])])
+	if not _ok:
+		return
+	print("PASS chars (auras): champion: to-hit %d %% in his aura against %d %% out, morale %d against %d after 40 s, kills %d / %d; missile hero: range %d m against %d, %d shots aimed by him, kills at 148 m %d / %d; horse hero: %d of %d impacts with his bonus, kills %d / %d; engineer (the side): bolts fired in 60 s %d against %d, ladder ticks %s %%, reload work %s %%, ram / tower battering %s %%" % [
+		int(ev["foot_hit_pct_in"]), int(ev["foot_hit_pct_out"]), int(ev["foot_mor_in"]), int(ev["foot_mor_out"]),
+		int(ev["foot_kills_in"]), int(ev["foot_kills_out"]), int(ev["mis_range_in"]), int(ev["mis_range_out"]),
+		int(ev["mis_shots"]), int(ev["mis_kills_in"]), int(ev["mis_kills_out"]), int(ev["cav_bonus_impacts"]),
+		int(ev["cav_impacts"]), int(ev["cav_kills_in"]), int(ev["cav_kills_out"]), int(ev["sg_fired_in"]),
+		int(ev["sg_fired_out"]), str(ev["sg_climb"]), str(ev["sg_reload"]), str(ev["sg_batter"])])
+	print("PASS chars (fall, agents): the champion fell at tick %d: his side near -%d, far -%d, the enemy near +%d, far +%d (%s); the assassin hidden (AI nearest %d, fire target %d) until seen at tick %d (AI nearest %d, fire target %d); sabotage wrecked %d of %d engines; gate %d unbarred from inside at tick %d; attempts by seed %s; parley seed %d: %s; seed %d: %s" % [
+		int(ev["fall_t"]), int(ev["fall_near"]), int(ev["fall_far"]), int(ev["fall_enemy_near"]), int(ev["fall_enemy_far"]),
+		str(ev["fall_row"]), int(ev["hid_ai_nearest"]), int(ev["hid_fire"]), int(ev["seen_t"]), int(ev["seen_ai_nearest"]),
+		int(ev["seen_fire"]), int(ev["sab_wrecked"]), int(ev["sab_engines"]), int(ev["gate"]), int(ev["gate_open_t"]),
+		att_s, int(ev["parley_ok_seed"]), str(ev["parley_ok"]), int(ev["parley_fail_seed"]), str(ev["parley_fail"])])
+	print("PASS chars (AI): Average %s; Skilled %s; identical on repeat and across %d snapshot / restore checks" % [
+		str(ev["avg_ai"]), str(ev["sk_ai"]), int(a["snaps"])])

@@ -317,6 +317,24 @@ func _side_view(s: int) -> Control:
 	mb.name = "custom_mantlets_%d" % s
 	mb.tooltip_text = "Wooden screens standing before this side's archers and engines at the start: men behind one are sheltered from most arrows shot from in front; any foot unit carries one (tap it) and sets it down (Drop)"
 	v.add_child(mb)
+	# Heroes and agents: a toggle per character (gold: this side brings him).
+	var cr := Kit.flow(6)
+	cr.add_child(Kit.label("Characters", Kit.FONT_SMALL, Kit.COL_DIM))
+	var have := CS.chars_of(setup, s)
+	for key in CS.CHAR_KEYS:
+		var ty := UT.index_of(key)
+		if ty < 0:
+			continue
+		var on := have.has(key)
+		var cb2 := _opt("%s %d" % [UT.text(ty, "short"), UT.price_of(ty)], func():
+			CS.toggle_char(setup, s, key)
+			_changed(), _can_edit_all())
+		cb2.name = "custom_char_%d_%s" % [s, key]
+		cb2.tooltip_text = UT.text(ty, "desc")
+		if on:
+			cb2.add_theme_color_override("font_color", Kit.COL_GOLD)
+		cr.add_child(cb2)
+	v.add_child(cr)
 	for ai in (sd["armies"] as Array).size():
 		v.add_child(_army_view(s, ai))
 	if (sd["armies"] as Array).size() < CS.MAX_ARMIES and _can_edit_all():

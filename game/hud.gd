@@ -48,6 +48,7 @@ const Icons := preload("res://game/unit_icons.gd")
 const UnitBook := preload("res://game/unit_book.gd")
 const Controls := preload("res://game/controls.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
+const Traits := preload("res://game/unit_traits.gd")
 const CONFIRM_SEC := 3.0
 const LONG_PRESS_SEC := 0.5
 # Layout in logical pixels (game/ui_scale.gd turns them into device sizes).
@@ -385,6 +386,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 		face.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		face.icon = Icons.icon_of(sim.u_otype[u])
 		face.general = UT.stat(sim.u_type[u], "cmd_r") > 0
+		face.char_icon = Traits.char_icon(sim.u_otype[u])  # a hero or agent: crown / dagger / scroll
 		face.side_col = Icons.SIDE_COLORS[player_side]
 		b.add_child(face)
 		cards_box.add_child(b)
@@ -940,6 +942,8 @@ func update_cards(sim) -> void:
 				word = carry
 		f.state_text = word
 		f.summary = summary + " " + mstate
+		if f.char_icon != "":
+			f.summary += " | " + Traits.char_text(sim.u_otype[u])
 		var st := 0
 		if sim.u_state[u] >= BattleSim.U_DESTROYED:
 			st = CardFace.ST_GONE
@@ -1195,6 +1199,8 @@ class CardFace extends Control:
 	var owner_col := Color.WHITE
 	## The general (a command aura): a gold standard in the top right corner.
 	var general := false
+	## A hero or agent (campaign characters): "crown", "dagger" or "scroll" in the same corner.
+	var char_icon := ""
 
 	func _draw() -> void:
 		var sz := size
@@ -1257,6 +1263,10 @@ class CardFace extends Control:
 		draw_string(font, Vector2(bx + 2, by + 10), line, HORIZONTAL_ALIGNMENT_LEFT, maxf(bw - aw - 4, 8), 11, txt)
 		if narrow and state_text != "" and state != ST_OK:
 			draw_rect(Rect2(sz.x - 6, 3, 3, 8), txt)
+		if char_icon != "":
+			var cxg := sz.x - (26.0 if foreign else 15.0)
+			Kit.UiIcons.draw_icon(self, char_icon, Rect2(cxg, 2, 12, 12),
+				Color(0.5, 0.5, 0.5) if state == ST_GONE else Color(1.0, 0.82, 0.25))
 		if general:
 			var gx := sz.x - (26.0 if foreign else 15.0)
 			Kit.UiIcons.draw_icon(self, "general", Rect2(gx, 2, 12, 12),

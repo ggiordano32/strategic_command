@@ -112,6 +112,13 @@ var add_mode := false
 ## "Release" pressed: the next tap on an enemy unit lets the selected
 ## handlers' war dogs loose at it (any other tap cancels).
 var release_armed := false
+## A character's act armed (docs/DESIGN.md "Heroes and agents"):
+## BattleSim.ORDER_SABOTAGE / ORDER_ATTEMPT / ORDER_PARLEY, 0 none; the next
+## tap on its target (an enemy battery or a shut gate; an enemy hero or
+## general; a routing or wavering enemy unit) gives it, any other cancels.
+var char_armed := 0
+var _char_bar: HBoxContainer
+var _char_btns := {}  # order type -> Button
 
 var _acc := 0.0
 var _sim_ms := PackedFloat64Array()
@@ -281,6 +288,7 @@ func _ready() -> void:
 	hud.drop_pressed.connect(_drop)
 	hud.kill_pressed.connect(_kill_beasts)
 	hud.release_pressed.connect(_toggle_release)
+	_build_char_bar()
 	hud.withdraw_pressed.connect(_withdraw)
 	hud.withdraw_all_pressed.connect(_withdraw_all)
 	hud.group_pressed.connect(_select_group)
@@ -882,7 +890,8 @@ const ORDER_NAMES := {BattleSim.ORDER_MOVE: "move", BattleSim.ORDER_ATTACK: "att
 	BattleSim.ORDER_WITHDRAW_ALL: "withdraw_all", BattleSim.ORDER_DEPLOY: "deploy",
 	BattleSim.ORDER_REFILL: "refill", BattleSim.ORDER_GATE: "gate", BattleSim.ORDER_PLACE: "place",
 	BattleSim.ORDER_READY: "ready", BattleSim.ORDER_AMMO: "ammo", BattleSim.ORDER_FORAGE: "forage",
-	BattleSim.ORDER_KILL: "kill", BattleSim.ORDER_RELEASE: "release", BattleSim.ORDER_WORKS: "works"}
+	BattleSim.ORDER_KILL: "kill", BattleSim.ORDER_RELEASE: "release", BattleSim.ORDER_WORKS: "works",
+	BattleSim.ORDER_SABOTAGE: "sabotage", BattleSim.ORDER_ATTEMPT: "attempt", BattleSim.ORDER_PARLEY: "parley"}
 
 
 ## Select only unit u (-1: clear the selection).
@@ -979,6 +988,7 @@ func _refresh_actions() -> void:
 			dogs = maxi(dogs, sim.pack_left(u))
 	if dogs < 0:
 		release_armed = false
+	_refresh_char_bar()
 	var only_fixed := not selection.is_empty()
 	for u in selection:
 		if UT.stat(sim.u_type[u], "fixed") == 0:
@@ -1316,6 +1326,130 @@ func _drop() -> void:
 			Vector2(sim.u_cx[selected], sim.u_cy[selected]) / M * PX_PER_M)
 
 
+# ---------------------------------------------------- heroes and agents ---
+# docs/DESIGN.md "Heroes and agents": a bar of the selected character's acts
+# (Sabotage, Attempt for an assassin; Parley for a diplomat) over the HUD;
+# a press arms the act, the next tap on its target gives the order (the sim
+# walks him there: BattleSim.char_refusal says why not), any other tap
+# cancels. The hidden assassin of the enemy is neither drawn nor picked.
+
+const CHAR_ACTS := [[BattleSim.ORDER_SABOTAGE, "Sabotage", "Assassin: tap an enemy battery (he wrecks its engines) or a shut gate (he unbars it from inside)"],
+	[BattleSim.ORDER_ATTEMPT, "Attempt", "Assassin: tap an enemy hero or general: one strike, 40 % kills, 30 % wounds"],
+	[BattleSim.ORDER_PARLEY, "Parley", "Diplomat: tap a routing or wavering enemy unit: it may surrender (prisoners)"]]
+
+
+func _build_char_bar() -> void:
+	_char_bar = HBoxContainer.new()
+	_char_bar.name = "char_bar"
+	_char_bar.add_theme_constant_override("separation", 6)
+	_char_bar.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	_char_bar.offset_top = 64
+	_char_bar.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_char_bar.visible = false
+	hud.add_child(_char_bar)
+	for a in CHAR_ACTS:
+		var typ: int = a[0]
+		var b := Hud.Kit.button(str(a[1]), func(): _toggle_char(typ), 0, 14)
+		b.name = "char_" + str(a[1]).to_lower()
+		b.toggle_mode = true
+		b.tooltip_text = str(a[2])
+		_char_btns[typ] = b
+		_char_bar.add_child(b)
+
+
+## The acts the selection's characters can arm (order type -> any).
+func _char_acts() -> Dictionary:
+	var out := {}
+	if sim.ch_on == 0:
+		return out
+	for u in selection:
+		if sim.u_state[u] != BattleSim.U_READY:
+			continue
+		if sim.u_char[u] == UT.CK_ASSASSIN:
+			out[BattleSim.ORDER_SABOTAGE] = true
+			if (sim.u_chf[u] & BattleSim.CHF_TRIED) == 0:
+				out[BattleSim.ORDER_ATTEMPT] = true
+		elif sim.u_char[u] == UT.CK_DIPLOMAT:
+			out[BattleSim.ORDER_PARLEY] = true
+	return out
+
+
+func _refresh_char_bar() -> void:
+	if _char_bar == null:
+		return
+	var acts := _char_acts()
+	if not acts.has(char_armed):
+		char_armed = 0
+	_char_bar.visible = not acts.is_empty() and sim.phase != BattleSim.PHASE_DEPLOY
+	for typ in _char_btns:
+		var b: Button = _char_btns[typ]
+		b.visible = acts.has(typ)
+		b.set_pressed_no_signal(char_armed == typ)
+		b.text = str(CHAR_ACTS[[BattleSim.ORDER_SABOTAGE, BattleSim.ORDER_ATTEMPT, BattleSim.ORDER_PARLEY].find(typ)][1]) \
+			+ (": tap" if char_armed == typ else "")
+
+
+## A character's act button: arm (or disarm) the next tap.
+func _toggle_char(typ: int) -> void:
+	if not interactive:
+		return
+	char_armed = typ if char_armed != typ and _char_acts().has(typ) else 0
+	release_armed = false
+	_count("char_arm_" + str(ORDER_NAMES.get(typ, typ)) if char_armed != 0 else "char_disarm")
+	if char_armed != 0 and selected >= 0:
+		var hint := {BattleSim.ORDER_SABOTAGE: "Tap an enemy battery or a shut gate",
+			BattleSim.ORDER_ATTEMPT: "Tap an enemy hero or general", BattleSim.ORDER_PARLEY: "Tap a routing or wavering enemy unit"}
+		overlay.flash(str(hint[char_armed]), Vector2(sim.u_cx[selected], sim.u_cy[selected]) / M * PX_PER_M)
+	_refresh_actions()
+
+
+## The armed act on what is under w: every selected character of the right
+## kind is given it (BattleSim.char_refusal).
+func _char_tap(w: Vector2) -> void:
+	var typ := char_armed
+	char_armed = 0
+	var o := {"type": typ}
+	if typ == BattleSim.ORDER_SABOTAGE:
+		var eg := _engines_at(w) if sim.n_eg > 0 else -1
+		var g := _gate_at(w) if sim.city_on != 0 else -1
+		var t0 := _pick_unit(w)
+		if eg < 0 and t0 >= 0 and sim.u_side[t0] != player_side and sim.u_eg[t0] >= 0:
+			eg = sim.u_eg[t0]  # (a tap on the battery's marker: its engines)
+		if eg >= 0:
+			o["eg"] = eg
+			o["gate"] = -1
+		elif g >= 0:
+			o["eg"] = -1
+			o["gate"] = g
+		else:
+			_count("char_cancelled")
+			_refresh_actions()
+			return
+	else:
+		var t := _pick_unit(w)
+		if t < 0 or sim.u_side[t] == player_side:
+			_count("char_cancelled")
+			_refresh_actions()
+			return
+		o["target"] = t
+	var sent := 0
+	var why := ""
+	for u in selection:
+		var oc: Dictionary = o.duplicate()
+		oc["unit"] = u
+		var r: String = BattleSim.char_refusal(sim, oc)
+		if r == "":
+			_queue(oc)
+			sent += 1
+		elif why == "" and sim.u_char[u] != 0:
+			why = r
+	_count(str(ORDER_NAMES.get(typ, "char")))
+	var done := {BattleSim.ORDER_SABOTAGE: "He goes to work", BattleSim.ORDER_ATTEMPT: "He goes for him",
+		BattleSim.ORDER_PARLEY: "He goes with a white flag"}
+	overlay.flash(str(done[typ]) if sent > 0 else ("Cannot: " + why if why != "" else "Nothing to do there"), w)
+	_refresh_actions()
+
+
 ## Unit u is handlers whose pack is with them (dogs to release).
 func _pack_ready(u: int) -> bool:
 	var p: int = sim.u_pack[u]
@@ -1579,6 +1713,9 @@ func _tap(screen_pos: Vector2, double: bool) -> void:
 	# units, so a marker floating over the gate (men on the wall above it)
 	# or a unit box cannot steal it. Outside the doorway units pick first and
 	# the gate's wider reach is the fallback.
+	if char_armed != 0:
+		_char_tap(w)
+		return
 	var door := _gate_doorway(w)
 	if door >= 0 and _tap_gate(door, w):
 		return
@@ -1861,7 +1998,7 @@ func _pick_unit(w: Vector2) -> int:
 	var marker_r := _marker_hit_r()
 	var lift := int(2.2 * mr / PX_PER_M * M)
 	for u in sim.n_units:
-		if sim.u_state[u] >= BattleSim.U_DESTROYED:
+		if sim.u_state[u] >= BattleSim.U_DESTROYED or sim.hidden_from(u, player_side):
 			continue
 		var mdx: int = x - sim.u_cx[u]
 		var mdy: int = y - (sim.u_cy[u] - lift)
@@ -1872,7 +2009,7 @@ func _pick_unit(w: Vector2) -> int:
 	if best >= 0:
 		return best
 	for u in sim.n_units:
-		if sim.u_state[u] >= BattleSim.U_DESTROYED:
+		if sim.u_state[u] >= BattleSim.U_DESTROYED or sim.hidden_from(u, player_side):
 			continue
 		var in_box: bool = x >= sim.u_minx[u] - margin and x <= sim.u_maxx[u] + margin \
 			and y >= sim.u_miny[u] - margin and y <= sim.u_maxy[u] + margin

@@ -54,6 +54,13 @@ extends SceneTree
 ##    fight (two columns meeting in a 10 m street, the enemy AI), a third
 ##    joining by snapshot while units wait behind the fighting ones: every
 ##    frame equal.
+## 12. Heroes and agents (docs/DESIGN.md "Heroes and agents"): two peers,
+##    player 0 commanding side 0's characters (two assassins, a diplomat,
+##    a champion); one order of each new kind through the lockstep
+##    (ORDER_SABOTAGE at their battery, ORDER_ATTEMPT on their general,
+##    ORDER_PARLEY with their routing light infantry); every frame equal,
+##    the acts done on both peers, copies restored from A's sim mid-act run
+##    on equal.
 ## 10. Siege equipment and wall towers: the equal-force walls-3 siege with
 ##    ladders, a ram, tower engines and a 20 minute limit, restored from a
 ##    snapshot taken mid-climb (and at other ticks) runs on identically;
@@ -90,6 +97,11 @@ func _init() -> void:
 		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 		quit(0 if _ok else 1)
 		return
+	if OS.get_cmdline_user_args().has("--only=chars"):
+		_test_lockstep_chars()
+		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
+		quit(0 if _ok else 1)
+		return
 	if OS.get_cmdline_user_args().has("--only=street"):
 		_test_lockstep_street()
 		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
@@ -107,6 +119,7 @@ func _init() -> void:
 	_test_lockstep_siege()
 	_test_lockstep_siege_deploy()
 	_test_lockstep_street()
+	_test_lockstep_chars()
 	_test_easy_snapshots()
 	_test_lockstep_easy()
 	_test_skilled_snapshots()
@@ -1938,3 +1951,91 @@ func _test_deploy(mode: String) -> void:
 	if int(placed["A"]) == 0 or int(placed["B"]) == 0:
 		_fail("deploy %s: nothing placed" % mode)
 	print("PASS deploy %s: %d frames equal A/B; %s; placements A %d B %d" % [mode, n_ab, why, int(placed["A"]), int(placed["B"])])
+
+
+# ------------------------------------------------------ heroes and agents ---
+
+func _test_lockstep_chars() -> void:
+	var units: Array = [
+		Scenarios.unit(0, UT.HEAVY, 60, 200, 270, Scenarios.FACE_UP),
+		Scenarios.unit(0, UT.HEAVY, 60, 300, 270, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.BOLT, 16, 110, 160, Scenarios.FACE_DOWN),
+		Scenarios.unit(1, UT.index_of("general"), 30, 240, 150, Scenarios.FACE_DOWN),
+		Scenarios.unit(1, UT.LIGHT, 60, 310, 225, Scenarios.FACE_DOWN)]
+	units[4]["morale_pct"] = 10
+	# (Their battery holds its fire: its bolts would cut down the assassin
+	# walking in along its line of fire.)
+	var scen := {"width_m": 400, "height_m": 400, "units": units, "ai_sides": [],
+		"orders": [{"tick": 0, "type": BattleSim.ORDER_FIRE, "unit": 2, "on": 0}],
+		"terrain": {"kind": 0},
+		"chars": [[{"key": "assassin", "name": "A1"}, {"key": "assassin", "name": "A2"},
+			{"key": "diplomat", "name": "D"}, {"key": "hero_foot", "name": "C"}], []]}
+	var probe := BattleSim.new()
+	probe.setup(scen, 4242)
+	var home := _home_split(probe)
+	var relay := Relay.new()
+	var a := _new_peer(scen, home, 0, "A", [0, 1])
+	var b := _new_peer(scen, home, 1, "B", [0, 1])
+	a.latency = 1
+	b.latency = 3
+	b.d = 4
+	var peers: Array[Peer] = [a, b]
+	var chars: Array[int] = []
+	for u in probe.n_units:
+		if probe.u_char[u] != 0:
+			chars.append(u)
+	var total := 1200
+	var now := 0
+	var sent := {"sab": false, "att": false, "par": false}
+	var snap_t := -1
+	while now < total * 3 and mini(a.ls.frame, b.ls.frame) < total:
+		now += 1
+		for p in peers:
+			var sim = p.ls.sim
+			if p.me == 0 and sim.tick > 5:
+				if not sent["sab"] and p.ls.u_cmd[chars[0]] == 0:
+					p.issue({"type": BattleSim.ORDER_SABOTAGE, "unit": chars[0], "eg": 0, "gate": -1})
+					sent["sab"] = true
+				if not sent["att"] and p.ls.u_cmd[chars[1]] == 0:
+					p.issue({"type": BattleSim.ORDER_ATTEMPT, "unit": chars[1], "target": 3})
+					sent["att"] = true
+				if not sent["par"] and BattleSim.char_refusal(sim, {"type": BattleSim.ORDER_PARLEY, "unit": chars[2], "target": 4}) == "":
+					p.issue({"type": BattleSim.ORDER_PARLEY, "unit": chars[2], "target": 4})
+					sent["par"] = true
+			if p.me == 1 and now == 50:
+				# B's orders for A's characters are refused alike on both peers.
+				p.issue({"type": BattleSim.ORDER_PARLEY, "unit": chars[2], "target": 4})
+			p.flush(relay, now)
+			p.deliver(relay, now)
+			p.run(p.rng.randi() % 3, true)
+		var sa = a.ls.sim
+		if snap_t < 0 and sa.u_cho[chars[0]] == BattleSim.CHO_SAB_ENG and sa.u_chk[chars[0]] > 10:
+			# Mid-sabotage: two copies restored from A's sim run on equal.
+			snap_t = sa.tick
+			var blob: PackedByteArray = sa.snapshot()
+			var s1 := BattleSim.new()
+			s1.setup(scen, 4242)
+			var s2 := BattleSim.new()
+			s2.setup(scen, 4242)
+			if not s1.restore(blob) or not s2.restore(blob) or s1.state_hash() != sa.state_hash():
+				_fail("chars lockstep: restoring A's sim mid-sabotage changed its hash")
+				return
+			for t in 300:
+				s1.step()
+				s2.step()
+				if s1.state_hash() != s2.state_hash():
+					_fail("chars lockstep: copies restored mid-sabotage diverged after %d ticks" % (t + 1))
+					return
+	var n_ab := _compare(a, b, 0, "chars A/B")
+	var sa2 = a.ls.sim
+	var sb2 = b.ls.sim
+	var acts := "sabotage %d / %d, attempts %s / %s, parleys %d+%d / %d+%d, prisoners %d / %d" % [
+		sa2.stat_sabotage, sb2.stat_sabotage, str(sa2.stat_attempt), str(sb2.stat_attempt),
+		sa2.stat_parley_ok, sa2.stat_parley_fail, sb2.stat_parley_ok, sb2.stat_parley_fail, sa2.ch_pris[0], sb2.ch_pris[0]]
+	if n_ab < total / 2 or snap_t < 0 or sa2.stat_sabotage <= 0 or sa2.stat_sabotage != sb2.stat_sabotage \
+			or sa2.stat_attempt[0] + sa2.stat_attempt[1] + sa2.stat_attempt[2] != 1 \
+			or sa2.stat_parley_ok + sa2.stat_parley_fail != 1 or str(sa2.stat_attempt) != str(sb2.stat_attempt):
+		_fail("chars lockstep: %d frames compared, snapshot at %d, %s" % [n_ab, snap_t, acts])
+	else:
+		print("PASS chars lockstep: %d frames A/B equal; one order of each kind through the lockstep (%s; rejected %d); snapshot mid-sabotage at tick %d ran on equal" % [
+			n_ab, acts, a.ls.rejected, snap_t])

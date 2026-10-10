@@ -49,6 +49,7 @@ const Terrain := preload("res://sim/terrain.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const CP := preload("res://campaign/cai_profile.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
+const CChars := preload("res://campaign/cchars.gd")
 
 const FRONT := 100       # m from the centre line to each side's front
 const SECOND_LINE := 45  # m behind the first
@@ -94,6 +95,34 @@ static func battle_seed(st: Dictionary, r: int, salt: int = 0) -> int:
 ## Scenario for pending battle b. human_f: faction whose side is sim side 0
 ## and player-controlled (-1: both sides AI, auto-resolve).
 static func build(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct: int = 100) -> Dictionary:
+	var res := _build0(st, b, human_f, scale_pct)
+	# Heroes and agents: the fit characters of the armies in the battle go in
+	# as the scenario's "chars" (per sim side [{key, name}]); "char_ids" says
+	# which campaign character each of a side's entries is (outcome_from_result).
+	var cl := chars_for(st, CRules.battle_armies(st, b), res["sim_side"])
+	if not cl.is_empty():
+		res["scenario"]["chars"] = cl["scn"]
+		res["char_ids"] = cl["ids"]
+	return res
+
+
+## The characters of campaign sides `arm` ([attacker armies, defender armies])
+## for sim sides sim_side: {scn: [[{key, name}] per sim side], ids: [[char id]
+## per sim side]}, {} when there are none.
+static func chars_for(st: Dictionary, arm: Array, sim_side: Array) -> Dictionary:
+	var scn: Array = [[], []]
+	var ids: Array = [[], []]
+	var any := false
+	for cs in 2:
+		var ss: int = sim_side[cs]
+		for c in CChars.side_list(st, arm[cs]):
+			(scn[ss] as Array).append({"key": str(c["kind"]), "name": str(c["name"])})
+			(ids[ss] as Array).append(int(c["id"]))
+			any = true
+	return {"scn": scn, "ids": ids} if any else {}
+
+
+static func _build0(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct: int = 100) -> Dictionary:
 	var r := int(b["r"])
 	var arm := CRules.battle_armies(st, b)
 	# Version 5 interceptions ("field"): armies only, the garrison stays in.
@@ -771,7 +800,18 @@ static func outcome_from_result(built: Dictionary, res: Dictionary, mode: String
 	for g in gar:
 		gar_full += int(g["full"])
 	var by_k := {}  # sim unit -> its outcome row (a war dog pack's kills go to its handlers)
+	var chars: Array = []
+	var char_seen := [0, 0]
 	for r in res["units"]:
+		if int(r.get("char", 0)) != 0:
+			# A hero or agent (a one-man unit past the army units): the side's
+			# n-th row is the side's n-th entry of the scenario's "chars".
+			var cs_i := clampi(int(r.get("side", 0)), 0, 1)
+			var cids: Array = (built.get("char_ids", [[], []]) as Array)[cs_i]
+			if char_seen[cs_i] < cids.size():
+				chars.append({"id": int(cids[char_seen[cs_i]]), "alive": int(r.get("alive", 1))})
+			char_seen[cs_i] += 1
+			continue
 		var k := int(r["unit"])
 		if k >= map.size():
 			var hk := int(r.get("pack_of", -1))
@@ -806,6 +846,16 @@ static func outcome_from_result(built: Dictionary, res: Dictionary, mode: String
 		"sim_winner": w, "ticks": int(res["tick"])}
 	if w != int(sim_side[0]) and w != int(sim_side[1]):
 		out["draw"] = 1  # mutual destruction or time out
+	if not chars.is_empty():
+		out["chars"] = chars
+	# Prisoners each campaign side's army took (its sim side total "prisoners").
+	var pris := [0, 0]
+	for cs in 2:
+		for sd in res.get("sides", []):
+			if int(sd.get("side", -1)) == int(sim_side[cs]):
+				pris[cs] = int(sd.get("prisoners", 0))
+	if pris[0] > 0 or pris[1] > 0:
+		out["prisoners"] = pris
 	return out
 
 
@@ -844,9 +894,9 @@ static func strengths(st: Dictionary, attackers: Array, defenders: Array, r: int
 		gar_side: int = -2, kit: int = 0) -> Array:
 	var s := [0, 0]
 	for a in attackers:
-		s[0] += CState.strength(a) * _stance_pct(a, false) / 100
+		s[0] += CState.strength(a) * (100 + CChars.pct(st, a)) / 100 * _stance_pct(a, false) / 100
 	for a in defenders:
-		s[1] += CState.strength(a) * _stance_pct(a, not settlement) / 100
+		s[1] += CState.strength(a) * (100 + CChars.pct(st, a)) / 100 * _stance_pct(a, not settlement) / 100
 	var gs := gar_side
 	if gs == -2:
 		gs = 1 if settlement else -1

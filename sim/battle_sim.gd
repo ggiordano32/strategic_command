@@ -76,7 +76,10 @@ const ORDER_FORAGE := 17        # unit, on (missile troops in woods: make arrows
 const ORDER_KILL := 18          # unit (a beast running amok: its drivers kill it after its kill_delay)
 const ORDER_RELEASE := 19       # unit (handlers), target (an enemy unit): the pack is let loose at it
 const ORDER_WORKS := 20         # side, equip (a field work; -1: the first unplaced one of `kind`), x, y, facing, on (1 place / 0 take back); deployment only
-const ORDER_LAST := 20
+const ORDER_SABOTAGE := 21      # unit (an assassin), eg (an enemy engine group) or gate (a shut gate): wreck the engines / unbar it from inside
+const ORDER_ATTEMPT := 22       # unit (an assassin), target (an enemy character or general's unit): strike once
+const ORDER_PARLEY := 23        # unit (a diplomat), target (a routing or wavering enemy unit): ask it to surrender
+const ORDER_LAST := 23
 
 # Battle phase (scenario "deploy_time" > 0 starts in PHASE_DEPLOY, see the
 # "deployment phase" section at the end of this file).
@@ -565,6 +568,54 @@ const END_AFTER := 600            # pursuit continues 60 s after the decision
 const GONE_KILLED := 0
 const GONE_WITHDRAWN := 1
 const GONE_ROUTED := 2
+const GONE_SURR := 3      # taken prisoner (a parley; docs/DESIGN.md "Heroes and agents")
+
+# Heroes and agents (docs/DESIGN.md "Heroes and agents"): one-man units the
+# scenario's "chars" adds (ch_on; every rule below is skipped without them).
+const CHO_NONE := 0       # u_cho: what a character is about
+const CHO_SAB_ENG := 1    # ... sabotage engine group u_cht
+const CHO_SAB_GATE := 2   # ... sabotage (unbar) gate u_cht
+const CHO_ATTEMPT := 3    # ... an attempt on unit u_cht
+const CHO_PARLEY := 4     # ... a parley with unit u_cht
+const CHF_ACTED := 1      # u_chf: the assassin has acted (seen from then on)
+const CHF_TRIED := 2      # ... his attempt is spent (once a battle)
+const CHF_INSIDE := 4     # ... he is over the wall (gate sabotage)
+const AU_FOOT := 1        # u_aura bits: in a foot hero's aura this second
+const AU_MIS := 2         # ... a missile hero's
+const AU_CAV := 4         # ... a cavalry hero's
+const AU_STEADY := 8      # ... a diplomat's (fear losses cut)
+const CV_HIT := 0         # t_chv: the character rows' aura values (the best of each field)
+const CV_MOR := 1
+const CV_RNG := 2
+const CV_SPR := 3
+const CV_MOM := 4
+const CV_RALLY := 5
+const CV_CLIMB := 6
+const CV_RELOAD := 7
+const CV_BATTER := 8
+const CV_STEADY := 9
+const CH_FIELDS: Array[String] = ["au_hit", "au_mor", "au_rng", "au_spr", "au_mom", "au_rally", "au_climb",
+	"au_reload", "au_batter", "au_steady"]
+const SEEN_R := 10 * M    # a hidden man within this of an enemy unit (box to box) in the open is seen
+const SAB_R := 6 * M      # an assassin this near an engine wrecks it (its crew stand round it) ...
+const SABOTAGE_T := 50    # ... one every this many ticks (5 s)
+const SAB_OVER_R := 5 * M # ... this near a shut gate's outer face he slips over the wall beside it
+const SAB_GATE_R := 3 * M # ... this near its inner face he unbars it ...
+const SAB_UNBAR := 150    # ... in this many ticks (15 s, the ladder men's UNBAR_TICKS)
+const ATTEMPT_R := 3 * M  # an attempt: his man this near the target's nearest man strikes
+const ATTEMPT_PCT := 40   # ... % the target man is killed outright ...
+const ATTEMPT_WOUND := 30 # ... % wounded (half his hit points); the rest fail
+const CAPTURE_R := 1536   # an assassin with CAPTURE_N enemy men this near (formed or fighting) ...
+const CAPTURE_N := 3      # ... is taken (dies); checked once a second
+const PARLEY_R := 20 * M  # a parley: the diplomat this near the unit (box to box) ...
+const PARLEY_SEE := 80 * M  # routers this near a diplomat coming to parley with them stop for his white flag
+const PARLEY_T := 50      # ... it stops fighting this long (5 s; men within PARLEY_R hold) ...
+const PARLEY_MOR := 25    # ... a unit below this % of its morale (or routing) may be asked ...
+const PARLEY_PCT := 60    # ... and surrenders this often routing ...
+const PARLEY_PCT_W := 35  # ... this often wavering
+const PARLEY_WAIT := 300  # a parley refused: the diplomat may try again after this long (30 s)
+const CH_BACK := 25 * M   # heroes placed this far behind their side's line centre ...
+const CH_REAR := 15 * M   # ... agents this far behind its rearmost unit, at its corners
 
 # ---------------------------------------------------------------- state ---
 
@@ -704,6 +755,18 @@ var u_hand := PackedInt32Array()      # a pack: its handlers' unit (-1: not a pa
 var u_kept := PackedInt32Array()      # a pack: dogs with the handlers (in the kennel)
 var u_dogt := PackedInt32Array()      # a released pack: ticks with no enemy within its return_r
 var u_ret := PackedInt32Array()       # a released pack: 1 running back to its handlers
+# Heroes and agents (docs/DESIGN.md "Heroes and agents"; _char_arrays: hashed
+# only in battles with characters, ch_on).
+var u_char := PackedInt32Array()      # a character's kind (UT.CK_*, 0: not a character; static)
+var u_aura := PackedInt32Array()      # AU_* bits: the friendly characters' auras it is in this second
+var u_hidden := PackedInt32Array()    # 1: the enemy does not see it (an assassin who has not acted, nobody near)
+var u_cho := PackedInt32Array()       # CHO_*: what the character is about (its order)
+var u_cht := PackedInt32Array()       # ... its target (engine group, gate or unit)
+var u_chk := PackedInt32Array()       # ... ticks of work (sabotage, unbarring, parley); after an attempt its outcome (1 kill, 2 wound, 3 fail)
+var u_chf := PackedInt32Array()       # CHF_* flags
+var u_chcd := PackedInt32Array()      # a diplomat: no parley before this tick
+var u_hold := PackedInt32Array()      # held by a parley until this tick (no melee, the anchor stands)
+var u_surr := PackedInt32Array()      # its men taken prisoner (a parley)
 var slot_soldier := PackedInt32Array()  # u_slot_base[u] + slot -> soldier
 var off_x := PackedInt32Array()         # u_slot_base[u] + slot -> offset
 var off_y := PackedInt32Array()
@@ -1035,6 +1098,32 @@ var stat_calmed: int = 0              # amok beasts calmed (alone long enough)
 var stat_beast_killed: int = 0        # beasts killed by their drivers
 var stat_beast_gate: int = 0          # gate damage by beasts
 var dog_on: int = 0                   # some unit carries a war dog pack (static)
+var ch_on: int = 0                    # some unit is a character (hero or agent; static)
+var ch_sg := PackedInt32Array([0, 0]) # per side: a siege hero on the field this second (his effects for the whole side)
+var ch_pris := PackedInt32Array([0, 0])  # per side: enemy men it took prisoner (parley)
+var t_chv := PackedInt32Array()       # the character rows' aura values (CV_*; rebuilt by setup)
+var t_char := PackedInt32Array()
+var t_char_kind := PackedInt32Array()
+var t_ch_r := PackedInt32Array()
+var t_fall_r := PackedInt32Array()
+var t_fall_loss := PackedInt32Array()
+var t_fall_gain := PackedInt32Array()
+var t_duel := PackedInt32Array()
+var t_unarmed := PackedInt32Array()
+var t_hidden := PackedInt32Array()
+var stat_ch_aura: int = 0             # unit-seconds in a hero's or diplomat's aura
+var stat_ch_hit: int = 0              # blows struck with a foot hero's to-hit bonus
+var stat_ch_rolls := PackedInt32Array([0, 0, 0, 0])  # battles with characters: blows, hits out of a foot hero's aura; blows, hits in it
+var stat_ch_mom: int = 0              # charge impacts with a cavalry hero's bonus
+var stat_ch_rng: int = 0              # shots with a missile hero's range and accuracy
+var stat_ch_fall: int = 0             # heroes fallen (the morale blow struck)
+var stat_sabotage: int = 0            # engines wrecked by assassins
+var stat_ch_over: int = 0             # assassins over a wall beside a gate
+var stat_ch_unbar: int = 0            # gates unbarred by assassins
+var stat_attempt := PackedInt32Array([0, 0, 0])  # attempts: killed, wounded, failed
+var stat_captured: int = 0            # assassins taken
+var stat_parley_ok: int = 0           # parleys that ended in a surrender
+var stat_parley_fail: int = 0         # ... that did not
 var stat_released: int = 0            # packs released
 var stat_absorbed: int = 0            # packs back with their handlers
 var stat_dog_hunt: int = 0            # packs that went for the nearest enemy on their own
@@ -1398,6 +1487,15 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		# Off the water; the far bank's holder faces the crossing (fortified:
 		# its line brought up to the camp at the crossing's mouth).
 		units = Scenarios.river_units(units, field_w / M, field_h / M, riv, int(scenario.get("fortified", -1)))
+	# Heroes and agents: one-man units after the scenario's own (behind
+	# their side's line centre, the agents at its rear corners).
+	var chars := _char_units(scenario, units)
+	ch_on = 1 if not chars.is_empty() else 0
+	if ch_on != 0:
+		units = units.duplicate()
+		units.append_array(chars)
+	ch_sg = PackedInt32Array([0, 0])
+	ch_pris = PackedInt32Array([0, 0])
 	var towers := _siege_towers(scenario)
 	if not towers.is_empty():
 		# The city's tower engines come after the scenario's own units.
@@ -1469,6 +1567,9 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		arr.resize(n_units)
 		arr.fill(0)
 	for arr in _dog_arrays():
+		arr.resize(n_units)
+		arr.fill(0)
+	for arr in _char_arrays():
 		arr.resize(n_units)
 		arr.fill(0)
 	u_pack.fill(-1)
@@ -1553,6 +1654,10 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		u_ftarget[u] = -1
 		u_shelled_t[u] = -1000
 		u_shelled_by[u] = -1
+		if t_char[ty] != 0:
+			u_char[u] = t_char_kind[ty]
+			u_hidden[u] = t_hidden[ty]
+			u_files[u] = 1
 		# A special ammunition kind for its weapon (scenario "ak": a row of
 		# UnitTypes.AMMO riding on the type's standard kind).
 		var akk := int(ud.get("ak", -1))
@@ -1675,7 +1780,8 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		if t_body_r[bty] > 0:
 			big_on = 1
 		_hit_rmax = maxi(_hit_rmax, t_hit_r[bty])
-		if t_scare_r[bty] > 0 or t_fear_r[bty] > 0 or t_cmd_r[bty] > 0:
+		if t_scare_r[bty] > 0 or t_fear_r[bty] > 0 or t_cmd_r[bty] > 0 or t_ch_r[bty] > 0 \
+				or (t_char[bty] != 0 and t_char_kind[bty] == UT.CK_SIEGE):
 			aura_src.append(u)
 
 	# Projectile pool: every slot on the free list.
@@ -1774,6 +1880,112 @@ func _dog_arrays() -> Array:
 	return [u_pack, u_hand, u_kept, u_dogt, u_ret]
 
 
+## The scenario's "chars" (per side a list of {"key": unit key, "name"}, as
+## an Array of two lists or a Dictionary "0" / "1") as one-man units of
+## their side, in side order then list order ("ci": its place in the list):
+## heroes behind the side's line centre (CH_BACK from the mean of its units'
+## fronts, 8 m apart), the assassin at its rear left corner and the diplomat
+## at its rear right (CH_REAR behind its rearmost unit, beyond its flank),
+## facing as the side does; on maps with buildings onto the nearest open
+## ground. Unknown keys and non-character rows are skipped.
+func _char_units(sc: Dictionary, units: Array) -> Array:
+	var out: Array = []
+	var raw = sc.get("chars", [])
+	if not (raw is Array or raw is Dictionary):
+		return out
+	for side in 2:
+		var lst: Array = []
+		if raw is Array and (raw as Array).size() > side and raw[side] is Array:
+			lst = raw[side]
+		elif raw is Dictionary and (raw as Dictionary).get(str(side)) is Array:
+			lst = raw[str(side)]
+		if lst.is_empty():
+			continue
+		# The side's line: mean front, facing, lateral extent and rear.
+		var sx := 0
+		var sy := 0
+		var fcx := 0
+		var fcy := 0
+		var nn := 0
+		for ud in units:
+			if int(ud["side"]) != side:
+				continue
+			sx += int(ud["x_m"])
+			sy += int(ud["y_m"])
+			fcx += FM.cos_a(int(ud["facing"]))
+			fcy += FM.sin_a(int(ud["facing"]))
+			nn += 1
+		var face := Scenarios.FACE_UP if side == 0 else Scenarios.FACE_DOWN
+		var cx := field_w / M / 2
+		var cy := field_h / M - 40 if side == 0 else 40
+		if nn > 0:
+			cx = sx / nn
+			cy = sy / nn
+			if fcx != 0 or fcy != 0:
+				face = FM.atan2_a(fcy, fcx)
+		var fx := FM.cos_a(face)
+		var fy := FM.sin_a(face)
+		var rx := -fy  # right of the facing
+		var ry := fx
+		var dmin := 0
+		var lmin := 0
+		var lmax := 0
+		var first := true
+		for ud in units:
+			if int(ud["side"]) != side:
+				continue
+			var ox := int(ud["x_m"]) - cx
+			var oy := int(ud["y_m"]) - cy
+			var dep := (ox * fx + oy * fy) / FM.TRIG_ONE
+			var lat := (ox * rx + oy * ry) / FM.TRIG_ONE
+			if first:
+				dmin = dep
+				lmin = lat
+				lmax = lat
+				first = false
+			dmin = mini(dmin, dep)
+			lmin = mini(lmin, lat)
+			lmax = maxi(lmax, lat)
+		var heroes := 0
+		for c in lst:
+			var ty0 := UT.index_of(str((c as Dictionary).get("key", ""))) if c is Dictionary else -1
+			if ty0 >= 0 and UT.stat(ty0, "char") != 0 and UT.stat(ty0, "char_kind") <= UT.CK_SIEGE:
+				heroes += 1
+		var hk := 0
+		for ci in lst.size():
+			if not (lst[ci] is Dictionary):
+				continue
+			var ty := UT.index_of(str(lst[ci].get("key", "")))
+			if ty < 0 or UT.stat(ty, "char") == 0:
+				continue
+			var kind := UT.stat(ty, "char_kind")
+			var dep := -CH_BACK / M
+			var lat := 0
+			if kind <= UT.CK_SIEGE:
+				lat = (2 * hk - (heroes - 1)) * 4
+				hk += 1
+			else:
+				dep = dmin - CH_REAR / M
+				lat = lmin - 10 if kind == UT.CK_ASSASSIN else lmax + 10
+			var x := cx + (dep * fx + lat * rx) / FM.TRIG_ONE
+			var y := cy + (dep * fy + lat * ry) / FM.TRIG_ONE
+			x = clampi(x, 10, field_w / M - 10)
+			y = clampi(y, 10, field_h / M - 10)
+			if obs_on != 0:
+				var op := open_snap(self, x * M, y * M, MapGen.NAV_GROUND)
+				x = op.x / M
+				y = op.y / M
+			out.append({"type": ty, "count": 1, "side": side, "x_m": x, "y_m": y, "facing": face,
+				"files": 1, "char": kind, "ci": ci, "name": str(lst[ci].get("name", ""))})
+	return out
+
+
+## Per-unit character arrays (hashed only in battles with heroes or agents,
+## ch_on, so the hash of any other battle is what it always was).
+func _char_arrays() -> Array:
+	return [u_char, u_aura, u_hidden, u_cho, u_cht, u_chk, u_chf, u_chcd, u_hold, u_surr]
+
+
 func _engine_arrays() -> Array:
 	return [e_unit, e_x, e_y, e_face, e_hp, e_state, e_reload, e_ammo, e_crew, e_rwork, e_grp, e_sammo, e_burn]
 
@@ -1806,7 +2018,8 @@ func _load_types() -> void:
 		t_fixed, t_m_ak, t_mount, t_acc, t_body_r, t_crew_sh, t_woods, t_tr_n, t_tr_r, t_tr_pct, t_crush,
 		t_scare_r, t_scare_pct, t_scare_mor, t_fear_r, t_fear_h, t_fear_f, t_burn_pct, t_amok, t_amok_r,
 		t_amok_calm, t_kill_delay, t_gate_w, t_gate_pct, t_cmd_r, t_cmd_mor, t_cmd_rally, t_cmd_loss, t_cmd_loss_r,
-		t_pack_n, t_pack_type, t_pack_r, t_return_r, t_return_t, t_nobreak, t_scare_am, t_as_cav, t_chase, t_m_spen]
+		t_pack_n, t_pack_type, t_pack_r, t_return_r, t_return_t, t_nobreak, t_scare_am, t_as_cav, t_chase, t_m_spen,
+		t_char, t_char_kind, t_ch_r, t_fall_r, t_fall_loss, t_fall_gain, t_duel, t_unarmed, t_hidden]
 	var keys := ["cls", "attack", "defence", "armour", "shield", "mshield",
 		"damage", "reach", "ranks_reach", "mass", "walk", "run", "hp", "cooldown",
 		"morale", "file_sp", "rank_sp", "turn", "brace", "vs_cav", "charge",
@@ -1818,7 +2031,8 @@ func _load_types() -> void:
 		"mount", "acc", "body_r", "crew_shoot", "woods_pct", "trample_n", "trample_r", "trample_pct", "crush",
 		"scare_r", "scare_pct", "scare_mor", "fear_r", "fear_horse", "fear_foot", "burn_pct", "amok", "amok_r",
 		"amok_calm", "kill_delay", "gate_walls", "gate_pct", "cmd_r", "cmd_mor", "cmd_rally", "cmd_loss", "cmd_loss_r",
-		"pack_n", "pack_type", "pack_r", "return_r", "return_t", "nobreak", "scare_am", "as_cav", "chase", "m_spen"]
+		"pack_n", "pack_type", "pack_r", "return_r", "return_t", "nobreak", "scare_am", "as_cav", "chase", "m_spen",
+		"char", "char_kind", "ch_r", "fall_r", "fall_loss", "fall_gain", "duel", "unarmed", "hidden"]
 	for k in arrays.size():
 		var arr: PackedInt32Array = arrays[k]
 		arr.resize(nt)
@@ -1838,6 +2052,13 @@ func _load_types() -> void:
 			t_hit_r[t] = HIT_R_CAV
 		else:
 			t_hit_r[t] = HIT_R_INF
+	# The character rows' aura values (the best of each field over the rows).
+	t_chv.resize(CH_FIELDS.size())
+	t_chv.fill(0)
+	for t in nt:
+		if t_char[t] != 0:
+			for f in CH_FIELDS.size():
+				t_chv[f] = maxi(t_chv[f], UT.stat(t, CH_FIELDS[f]))
 	var ka := [t_k_base, t_k_share, t_k_dmg, t_k_obj, t_k_ap, t_k_pierce, t_k_range, t_k_rate, t_k_fear,
 		t_k_blast, t_k_fire, t_k_aoe]
 	var na := UT.AMMO.size()
@@ -4478,6 +4699,12 @@ func _apply_orders(max_player: int = 1 << 30) -> void:
 			if phase != PHASE_DEPLOY and release_refusal(self, hu, rt) == "":
 				_unleash(hu, rt)
 			continue
+		if int(o["type"]) == ORDER_SABOTAGE or int(o["type"]) == ORDER_ATTEMPT or int(o["type"]) == ORDER_PARLEY:
+			# (A character's act: the sim walks him there and does it; no
+			# unit order fields change.)
+			if phase != PHASE_DEPLOY and char_refusal(self, o) == "":
+				_char_order(o)
+			continue
 		for u in order_units(self, o):
 			var d := order_fields(self, u)
 			var o0 := u_order[u]  # (the order it had: an attack after an attack keeps its way)
@@ -4507,6 +4734,9 @@ func _apply_orders(max_player: int = 1 << 30) -> void:
 			if dog_on != 0 and u_hand[u] >= 0:
 				u_ret[u] = 0  # a pack given an order: no longer on its way back
 				u_dogt[u] = 0
+			if ch_on != 0 and u_char[u] != 0 and u_cho[u] != CHO_NONE:
+				u_cho[u] = CHO_NONE  # a character given an order: his act is called off
+				u_chk[u] = 0
 			if int(o["type"]) == ORDER_DROP:
 				var had := u_carry[u] >= 0
 				_drop(u)
@@ -4547,7 +4777,7 @@ static func order_fields(sim, u: int) -> Dictionary:
 static func order_units(sim, o: Dictionary) -> Array[int]:
 	var out: Array[int] = []
 	if int(o["type"]) == ORDER_GATE or int(o["type"]) == ORDER_KILL or int(o["type"]) == ORDER_RELEASE \
-			or int(o["type"]) == ORDER_WORKS:
+			or int(o["type"]) == ORDER_WORKS or int(o["type"]) >= ORDER_SABOTAGE:
 		return out  # not a unit order (applied by the sim to the gate; the drivers of an amok beast; a pack)
 	if int(o["type"]) == ORDER_WITHDRAW_ALL:
 		var side := int(o.get("side", -1))
@@ -5274,6 +5504,8 @@ func step() -> void:
 	else:
 		BattleAI.think(self)
 	_apply_orders()  # AI orders are queued for this tick
+	if ch_on != 0:
+		_update_chars()
 	prev_x = pos_x.duplicate()
 	prev_y = pos_y.duplicate()
 	if n_eng > 0:
@@ -5650,7 +5882,7 @@ func _update_units() -> void:
 				stat_refill_broken += 1  # routed: the refill is abandoned
 				u_rprog[u] = 0
 				u_refill[u] = 0
-			if oon and u_state[u] == U_ROUTING and u_alive[u] > 0:
+			if oon and u_state[u] == U_ROUTING and u_alive[u] > 0 and (ch_on == 0 or u_hold[u] <= tick):
 				_flee_step(u)
 			continue
 		var ty := u_type[u]
@@ -5696,6 +5928,8 @@ func _update_units() -> void:
 			# one running in: a charge or a rush goes through; field maps
 			# only: wall and tower engines are the siege block's).
 			aspeed = 0
+		if ch_on != 0 and u_hold[u] > tick:
+			aspeed = 0  # held by a parley: it stands
 		if city_ditch != 0 and obs_kind(u_ax[u], u_ay[u]) == MapGen.C_DITCH:
 			# Crossing the ditch (foot only): slowly.
 			aspeed = aspeed * DITCH_SPEED / 1000
@@ -6284,7 +6518,7 @@ func _missile_think(u: int) -> void:
 			# otherwise the nearest enemy in range, preferring units that are
 			# not locked in melee with our own side.
 			var cur := u_ftarget[u]
-			if cur >= 0 and u_state[cur] < U_DESTROYED and u_side[cur] != u_side[u] \
+			if cur >= 0 and u_state[cur] < U_DESTROYED and u_side[cur] != u_side[u] and (ch_on == 0 or u_hidden[cur] == 0) \
 					and _in_range(u, cur, rng) and (u_fighting[cur] == 0 or not _any_clean_target(u, rng)):
 				u_ftarget[u] = cur if t_m_arc[ty] != 0 or (_clear_line(u, cur) and lof_units(u, cur)) else -1
 				return
@@ -6295,6 +6529,8 @@ func _missile_think(u: int) -> void:
 			for o in n_units:
 				if u_side[o] == u_side[u] or u_state[o] >= U_DESTROYED:
 					continue
+				if ch_on != 0 and u_hidden[o] != 0:
+					continue  # (a hidden man is not seen)
 				var d := _unit_dist(u, o)
 				if d > rng and (not hgt or d > range_vs(u, o)):
 					continue
@@ -6393,6 +6629,12 @@ func _update_contacts() -> void:
 			if u_formed[a] != 0 and u_nwalls[b] < 4:
 				u_walls[b * 4 + u_nwalls[b]] = a
 				u_nwalls[b] += 1
+	if ch_on != 0:
+		# Heroes and agents: an unarmed man, a hidden one and units held by a
+		# parley do not seek a fight (their men keep to their places).
+		for u in n_units:
+			if u_contact[u] != 0 and (u_hold[u] > tick or u_hidden[u] != 0 or t_unarmed[u_otype[u]] != 0):
+				u_contact[u] = 0
 	for u in n_units:
 		if u_contact[u] != 0:
 			u_settled[u] = 0
@@ -6488,6 +6730,8 @@ func _update_soldiers() -> void:
 				rs = rs * _slope_fac(u, u_cx[u], u_cy[u], flx, fly) / 1000
 			if map_on != 0:
 				rs = rs * VEG_SPEED[u_cls[u]][veg_d(u_cx[u], u_cy[u])] / 1000
+			if ch_on != 0 and u_hold[u] > tick:
+				rs = 0  # held by a parley: the routers stop to hear him
 			var rminx := fw
 			var rmaxx := 0
 			var rminy := fh
@@ -7456,6 +7700,17 @@ func _melee(a: int, d: int, pen: int, parting: bool = false) -> void:
 		if u_cls[ud] == UT.CLS_CAV:
 			bonus += VEG_CAV_MELEE[veg_d(pos_x[d], pos_y[d])]
 	var chance := clampi(BASE_HIT + att - def + bonus - pen, 5, 95)
+	var hk := -1
+	if ch_on != 0:
+		# A champion's duel edge; a foot hero's aura: to-hit +au_hit %.
+		var raw := BASE_HIT + att - def + bonus - pen + t_duel[u_otype[ua]]
+		hk = 0
+		if (u_aura[ua] & AU_FOOT) != 0:
+			raw = raw * (100 + t_chv[CV_HIT]) / 100
+			stat_ch_hit += 1
+			hk = 2
+		chance = clampi(raw, 5, 95)
+		stat_ch_rolls[hk] += 1
 	if ter_on == 0 and fwh_on == 0:
 		if _rand() % 100 >= chance:
 			return
@@ -7466,6 +7721,8 @@ func _melee(a: int, d: int, pen: int, parting: bool = false) -> void:
 		var cpm := clampi(chance * 10 + _height_bonus(a, d), 50, 950)
 		if _rand() % 1000 >= cpm:
 			return
+	if hk >= 0:
+		stat_ch_rolls[hk + 1] += 1  # (blows past the to-hit roll: in / out of a foot hero's aura)
 	if frontal and _rand() % 100 < t_shield[td]:
 		return
 	var dmg := maxi(dmg0 - t_armour[td], 4)
@@ -7548,6 +7805,9 @@ func _impact(r: int, t: int, mom: int) -> void:
 		stat_crush += 1
 	stat_impacts += 1
 	var power := t_charge[rty] * mom / 100
+	if ch_on != 0 and (u_aura[ur] & AU_CAV) != 0:
+		power = power * (100 + t_chv[CV_MOM]) / 100  # a cavalry hero near: the charge goes in harder
+		stat_ch_mom += 1
 	if through != 100:
 		power = power * through / 100
 	if u_scare[ur] > 0:
@@ -7742,6 +8002,8 @@ func _remove(d: int, why: int) -> void:
 		state[d] = S_OFF
 		if why == GONE_WITHDRAWN:
 			u_withdrawn[u] += 1
+		elif why == GONE_SURR:
+			u_surr[u] += 1
 		else:
 			u_routed_off[u] += 1
 		if sea_on != 0 and u_side[u] == city_def:
@@ -7778,7 +8040,9 @@ func _remove(d: int, why: int) -> void:
 	if alive <= 0:
 		if why == GONE_KILLED and (t_cmd_loss[u_type[u]] > 0 or t_cmd_loss_r[u_type[u]] > 0):
 			_cmd_fall(u)  # the general's last man falls
-		u_state[u] = U_LEFT if u_withdrawn[u] + u_routed_off[u] > 0 else U_DESTROYED
+		if ch_on != 0 and why == GONE_KILLED and t_fall_r[u_otype[u]] > 0:
+			_ch_fall(u)  # a hero falls
+		u_state[u] = U_LEFT if u_withdrawn[u] + u_routed_off[u] + u_surr[u] > 0 else U_DESTROYED
 		u_order[u] = O_NONE
 		u_target[u] = -1
 		u_ftarget[u] = -1
@@ -7929,6 +8193,9 @@ func _fire(i: int, u: int, ft: int, ty: int, ak: int = -1) -> void:
 	var dy := ay - sy
 	var dist := FM.approx_len(dx, dy)
 	var rp := t_k_range[ak] if ak >= 0 else 100
+	var heroed := ch_on != 0 and (u_aura[u] & AU_MIS) != 0
+	if heroed:
+		rp = rp * (100 + t_chv[CV_RNG]) / 100
 	if ter_on == 0 and map_on == 0 and fwh_on == 0:
 		if dist > t_m_range[ty] * rp / 100 or dist <= 0 or pr_free < 0:
 			return
@@ -7948,6 +8215,9 @@ func _fire(i: int, u: int, ft: int, ty: int, ak: int = -1) -> void:
 	facing[i] = FM.atan2_a(dy, dx)
 	# Scatter: lateral error, and a larger error along the line of flight.
 	var spread := t_m_spread0[ty] + dist * t_m_spread[ty] / 1000
+	if heroed:
+		spread = spread * (100 - t_chv[CV_SPR]) / 100  # a missile hero near: straighter
+		stat_ch_rng += 1
 	var lat := (_rand() % (spread + 1) + _rand() % (spread + 1)) - spread
 	var lon := ((_rand() % (spread + 1) + _rand() % (spread + 1)) - spread) * 3 / 2
 	var ux := dx * FM.TRIG_ONE / dist
@@ -8191,7 +8461,10 @@ func cur_kind(u: int) -> int:
 ## Range of unit u's missiles in % of its weapon's, by the kind it means to shoot.
 func range_pct(u: int) -> int:
 	var k := cur_kind(u)
-	return t_k_range[k] if k >= 0 else 100
+	var p := t_k_range[k] if k >= 0 else 100
+	if ch_on != 0 and (u_aura[u] & AU_MIS) != 0:
+		p = p * (100 + t_chv[CV_RNG]) / 100  # a missile hero near: further
+	return p
 
 
 ## Missile range of unit u (flat ground) with the kind it means to shoot.
@@ -8674,7 +8947,7 @@ func _art_think(u: int) -> void:
 					ft = -1  # a crest in the way: the bolts would bury themselves
 		elif u_fire[u] != 0:
 			var cur := u_ftarget[u]
-			if cur >= 0 and u_state[cur] < U_DESTROYED and u_side[cur] != u_side[u] \
+			if cur >= 0 and u_state[cur] < U_DESTROYED and u_side[cur] != u_side[u] and (ch_on == 0 or u_hidden[cur] == 0) \
 					and _art_in_range(u, cur, mn, rng) and art_safe(u, cur):
 				ft = cur
 			else:
@@ -8682,9 +8955,13 @@ func _art_think(u: int) -> void:
 				for o in n_units:
 					if u_side[o] == u_side[u] or u_state[o] >= U_DESTROYED or u_alive[o] <= 0:
 						continue
+					if ch_on != 0 and u_hidden[o] != 0:
+						continue  # (a hidden man is not seen)
 					if not _art_in_range(u, o, mn, rng):
 						continue
 					var score := 1000 + u_alive[o] * 4 - _unit_dist(u, o) / M
+					if ch_on != 0 and u_char[o] >= UT.CK_FOOT and u_char[o] <= UT.CK_SIEGE:
+						score += 3000  # a hero in range: the engines look for him
 					if u_moved[o] == 0:
 						score += 200
 					var bear := FM.atan2_a(u_cy[o] - u_cy[u], u_cx[o] - u_cx[u])
@@ -8870,6 +9147,8 @@ func _update_artillery() -> void:
 				continue  # silent: too few hands
 			var ek := _eng_kind(e, u)
 			var need := need0 * t_k_rate[ek] / 100 if ek >= 0 else need0
+			if ch_on != 0 and ch_sg[u_side[u]] != 0:
+				need = need * reload_pct(u_side[u]) / 100  # a siege hero: engines reload faster
 			if e_reload[e] < need:
 				e_reload[e] = mini(e_reload[e] + e_crew[e], need)
 			if e_reload[e] < need:
@@ -9255,6 +9534,9 @@ func _art_fire(e: int, u: int, ft: int, ty: int) -> bool:
 	var dist := FM.approx_len(dx, dy)
 	var k := _eng_kind(e, u)
 	var rp := t_k_range[k] if k >= 0 else 100
+	var heroed := ch_on != 0 and (u_aura[u] & AU_MIS) != 0
+	if heroed:
+		rp = rp * (100 + t_chv[CV_RNG]) / 100
 	if ter_on == 0 and map_on == 0:
 		if dist > t_m_range[ty] * rp / 100 or dist < t_m_min[ty] or dist <= 0:
 			return false
@@ -9269,6 +9551,9 @@ func _art_fire(e: int, u: int, ft: int, ty: int) -> bool:
 	else:
 		stat_stones += 1
 	var spread := t_m_spread0[ty] + dist * t_m_spread[ty] / 1000
+	if heroed:
+		spread = spread * (100 - t_chv[CV_SPR]) / 100
+		stat_ch_rng += 1
 	var lat := (_rand() % (spread + 1) + _rand() % (spread + 1)) - spread
 	var lon := ((_rand() % (spread + 1) + _rand() % (spread + 1)) - spread) * 3 / 2
 	if lon > 0:
@@ -9873,10 +10158,16 @@ func _update_morale() -> void:
 						var dy := u_cy[o] - u_cy[u]
 						if absi(dx) < ROUTING_FRIEND_RANGE and absi(dy) < ROUTING_FRIEND_RANGE:
 							routing_near += 1
-				m -= MORALE_ROUTING_FRIEND * mini(routing_near, MAX_ROUTING_FRIENDS)
+				var rl := MORALE_ROUTING_FRIEND * mini(routing_near, MAX_ROUTING_FRIENDS)
+				if ch_on != 0 and (u_aura[u] & AU_STEADY) != 0:
+					rl = rl * (100 - t_chv[CV_STEADY]) / 100  # a diplomat near: fear bites half as hard
+				m -= rl
 			u_morale[u] = clampi(m, -MORALE_MAX, MORALE_MAX)
 			# Artillery fright counts against morale while it lasts.
-			if m - u_fright[u] < ROUT_THRESHOLD:
+			var fr := u_fright[u]
+			if ch_on != 0 and (u_aura[u] & AU_STEADY) != 0:
+				fr = fr * (100 - t_chv[CV_STEADY]) / 100
+			if m - fr < ROUT_THRESHOLD:
 				_start_rout(u)
 		elif u_amok[u] != 0:
 			# Running amok: erratic, never rallying; it calms once alone.
@@ -9900,8 +10191,8 @@ func _update_morale() -> void:
 					var d := FM.isqrt(dx * dx + dy * dy)
 					safe = d > RALLY_SAFE_RANGE
 					_set_flee(u, dx, dy, d)
-				if safe:
-					m += 40
+				if safe and (ch_on == 0 or u_hold[u] <= tick):
+					m += 40  # (routers stopped by a diplomat's white flag wait: no rally meanwhile)
 			u_morale[u] = clampi(m, -MORALE_MAX, MORALE_MAX)
 			# u_routs counts this rout too: a unit may rally from its first
 			# MAX_ROUTS routs; after that the rout is final.
@@ -10032,17 +10323,32 @@ func _rally(u: int) -> void:
 ## morale rest would bring it back to (also fighting and under fire); a
 ## routing one (not amok) the best cmd_rally. Sources in index order.
 func _update_auras() -> void:
+	if ch_on != 0:
+		# A siege hero on the field works for his whole side (siege works are
+		# spread out: not bound to a radius).
+		ch_sg[0] = 0
+		ch_sg[1] = 0
+		for src in aura_src:
+			if u_char[src] == UT.CK_SIEGE and u_state[src] == U_READY and u_alive[src] > 0:
+				ch_sg[u_side[src]] = 1
 	for u in n_units:
 		if u_state[u] != U_READY or u_alive[u] <= 0:
 			u_scare[u] = 0
 			u_awe[u] = 0
 			u_led[u] = 0
+			if ch_on != 0:
+				u_aura[u] = 0
 			if u_state[u] == U_ROUTING and u_alive[u] > 0 and u_amok[u] == 0:
 				var rb := _cmd_near(u)
 				if rb > 0:
 					u_led[u] = 1
 					u_morale[u] = mini(u_morale[u] + rb, MORALE_MAX)
 					stat_cmd_rally += 1
+				if ch_on != 0 and _ch_mounted(u_otype[u]) and _ch_near(u, UT.CK_CAV):
+					# A cavalry hero near routing riders: they rally sooner.
+					u_aura[u] = AU_CAV
+					u_morale[u] = mini(u_morale[u] + t_chv[CV_RALLY], MORALE_MAX)
+					stat_ch_aura += 1
 			continue
 		var tu := u_otype[u]
 		var horse := t_mount[tu] == UT.MOUNT_HORSE
@@ -10050,13 +10356,16 @@ func _update_auras() -> void:
 		var loss := 0
 		var feared := false
 		var held := 0
+		var bits := 0
 		for src in aura_src:
 			if src == u or u_state[src] != U_READY or u_alive[src] <= 0:
 				continue
 			var sty := u_type[src]
 			if u_side[src] == u_side[u]:
-				if t_cmd_r[sty] > 0 and t_cmd_mor[sty] > held and _box_gap(src, u) <= t_cmd_r[sty]:
+				if t_cmd_r[sty] > 0 and t_cmd_mor[sty] > held and u_cmdgone[src] == 0 and _box_gap(src, u) <= t_cmd_r[sty]:
 					held = t_cmd_mor[sty]
+				if ch_on != 0 and t_ch_r[sty] > 0 and _box_gap(src, u) <= t_ch_r[sty]:
+					bits |= _ch_bit(u_char[src], tu)
 				continue
 			var gap := _box_gap(src, u)
 			var scared := horse if t_scare_am[sty] < 0 else t_armour[tu] <= t_scare_am[sty]
@@ -10069,6 +10378,14 @@ func _update_auras() -> void:
 		u_scare[u] = keep
 		u_awe[u] = 1 if keep > 0 or feared else 0  # (no recovery of heart meanwhile)
 		u_led[u] = 1 if held > 0 else 0
+		if ch_on != 0:
+			u_aura[u] = bits
+			if bits != 0:
+				stat_ch_aura += 1
+			if (bits & AU_STEADY) != 0:
+				loss = loss * (100 - t_chv[CV_STEADY]) / 100  # a diplomat near: fear bites half as hard
+			if (bits & AU_FOOT) != 0:
+				held += t_chv[CV_MOR]  # a foot hero near: foot stand longer
 		if keep > 0:
 			stat_scared += 1
 		if feared:
@@ -10488,13 +10805,503 @@ func _absorb(p: int) -> void:
 	stat_absorbed += 1
 
 
+# ------------------------------------------------------ heroes and agents ---
+# docs/DESIGN.md "Heroes and agents". The scenario's "chars" adds one-man
+# units (u_char: their kind) that never count toward holding the field.
+# Heroes carry an aura (by kind, in the once-a-second aura pass: u_aura;
+# the siege hero's works for the whole side: ch_sg) and shake their side when
+# they fall (_ch_fall). The assassin is hidden (u_hidden) until he acts or an
+# enemy unit is within SEEN_R of him in the open; ORDER_SABOTAGE walks him to
+# an enemy engine group (an engine wrecked every SABOTAGE_T beside it) or a
+# shut gate (over the wall beside it, unbarred from inside in SAB_UNBAR);
+# ORDER_ATTEMPT walks him up to an enemy hero or general and strikes once
+# (ATTEMPT_PCT kill, ATTEMPT_WOUND wound, else fail); CAPTURE_N enemy men
+# within CAPTURE_R take him. The diplomat is unarmed with a steadying aura;
+# ORDER_PARLEY walks him to within PARLEY_R of a routing or wavering enemy
+# unit, which stops fighting for PARLEY_T (u_hold: the men near it hold) and
+# then surrenders (GONE_SURR, ch_pris) or fights on. All acts run each tick
+# in unit index order (_update_chars).
+
+## Unit u is hidden from side `side` (the view and the AI do not see it).
+func hidden_from(u: int, side: int) -> bool:
+	return ch_on != 0 and u >= 0 and u < n_units and u_hidden[u] != 0 and u_side[u] != side
+
+
+## Unit t is a target for an attempt: an enemy character, or a general whose
+## command has not fallen yet.
+func attempt_target(t: int) -> bool:
+	if t < 0 or t >= n_units or u_state[t] >= U_DESTROYED or u_alive[t] <= 0:
+		return false
+	return u_char[t] != 0 or (t_cmd_r[u_otype[t]] > 0 and u_cmdgone[t] == 0)
+
+
+## The side that owns engine group g now (its operator's, else its own).
+func eg_owner(g: int) -> int:
+	var op := eg_op[g]
+	if op >= 0 and u_state[op] == U_READY and u_eg[op] == g:
+		return u_side[op]
+	return eg_side[g]
+
+
+## Unit t may be asked to parley: an enemy unit routing or below PARLEY_MOR
+## % of its morale (a garrison on a wall only once its plaza is held).
+func parley_open(t: int) -> bool:
+	if t < 0 or t >= n_units or u_alive[t] <= 0 or u_char[t] != 0 or t_fixed[u_type[t]] != 0 \
+			or u_hand[t] >= 0:
+		return false
+	if u_state[t] != U_READY and u_state[t] != U_ROUTING:
+		return false
+	if u_wall[t] > 0 and cap_t <= 0:
+		return false
+	return u_state[t] == U_ROUTING or u_morale[t] * 100 < t_morale[u_otype[t]] * PARLEY_MOR
+
+
+## Why a character order (ORDER_SABOTAGE / ATTEMPT / PARLEY) cannot be
+## carried out ("" it can). Shared with the view and the AI.
+static func char_refusal(sim, o: Dictionary) -> String:
+	var typ := int(o.get("type", 0))
+	var u := int(o.get("unit", -1))
+	if u < 0 or u >= sim.n_units or sim.u_state[u] != U_READY or sim.u_alive[u] <= 0:
+		return "no unit"
+	var k: int = sim.u_char[u]
+	if typ == ORDER_SABOTAGE:
+		if k != UT.CK_ASSASSIN:
+			return "only an assassin"
+		var g := int(o.get("eg", -1))
+		var gt := int(o.get("gate", -1))
+		if g >= 0:
+			if g >= sim.n_eg or sim.eg_owner(g) == sim.u_side[u]:
+				return "not an enemy battery"
+			if UT.stat(sim.eg_type[g], "fixed") != 0:
+				return "tower engines are out of reach"
+			for kk in sim.eg_ne[g]:
+				if sim.e_state[sim.eg_e0[g] + kk] != E_WRECKED:
+					return ""
+			return "the engines are wrecked"
+		if gt >= 0:
+			if sim.city_on == 0 or gt >= sim.n_gates or sim.u_side[u] == sim.city_def:
+				return "not an enemy gate"
+			if sim.g_state[gt] != GATE_CLOSED:
+				return "the gate is open"
+			return ""
+		return "no target"
+	if typ == ORDER_ATTEMPT:
+		if k != UT.CK_ASSASSIN:
+			return "only an assassin"
+		if (sim.u_chf[u] & CHF_TRIED) != 0:
+			return "his attempt is spent"
+		var t := int(o.get("target", -1))
+		if not sim.attempt_target(t) or sim.u_side[t] == sim.u_side[u]:
+			return "not an enemy hero or general"
+		return ""
+	if typ == ORDER_PARLEY:
+		if k != UT.CK_DIPLOMAT:
+			return "only a diplomat"
+		if sim.tick < sim.u_chcd[u]:
+			return "not yet (%d s)" % ((sim.u_chcd[u] - sim.tick + 9) / TICKS_PER_SECOND)
+		var t := int(o.get("target", -1))
+		if t < 0 or t >= sim.n_units or sim.u_side[t] == sim.u_side[u]:
+			return "not an enemy unit"
+		if sim.u_wall[t] > 0 and sim.cap_t <= 0 and sim.u_alive[t] > 0:
+			return "a garrison yields only once its plaza is held"
+		if not sim.parley_open(t):
+			return "only a routing or wavering unit"
+		return ""
+	return "not a character order"
+
+
+static func make_sabotage_order(p_tick: int, unit: int, eg: int, gate: int = -1) -> Dictionary:
+	return {"tick": p_tick, "type": ORDER_SABOTAGE, "unit": unit, "eg": eg, "gate": gate}
+
+
+static func make_attempt_order(p_tick: int, unit: int, target_unit: int) -> Dictionary:
+	return {"tick": p_tick, "type": ORDER_ATTEMPT, "unit": unit, "target": target_unit}
+
+
+static func make_parley_order(p_tick: int, unit: int, target_unit: int) -> Dictionary:
+	return {"tick": p_tick, "type": ORDER_PARLEY, "unit": unit, "target": target_unit}
+
+
+## A character order (checked): what he is about from now.
+func _char_order(o: Dictionary) -> void:
+	var u := int(o["unit"])
+	var typ := int(o["type"])
+	u_chk[u] = 0
+	if typ == ORDER_SABOTAGE:
+		if int(o.get("eg", -1)) >= 0:
+			u_cho[u] = CHO_SAB_ENG
+			u_cht[u] = int(o["eg"])
+		else:
+			u_cho[u] = CHO_SAB_GATE
+			u_cht[u] = int(o["gate"])
+	elif typ == ORDER_ATTEMPT:
+		u_cho[u] = CHO_ATTEMPT
+		u_cht[u] = int(o["target"])
+	else:
+		u_cho[u] = CHO_PARLEY
+		u_cht[u] = int(o["target"])
+
+
+## Each tick (index order): the assassin's cover, then every character's act.
+func _update_chars() -> void:
+	for u in n_units:
+		var k := u_char[u]
+		if k == 0:
+			continue
+		if u_state[u] != U_READY or u_alive[u] <= 0:
+			u_cho[u] = CHO_NONE
+			continue
+		if t_hidden[u_otype[u]] != 0:
+			_ch_cover(u)
+		var cho := u_cho[u]
+		if cho == CHO_SAB_ENG:
+			_ch_sab_eng(u)
+		elif cho == CHO_SAB_GATE:
+			_ch_sab_gate(u)
+		elif cho == CHO_ATTEMPT:
+			_ch_attempt(u)
+		elif cho == CHO_PARLEY:
+			_ch_parley(u)
+		if k == UT.CK_ASSASSIN and (u + tick) % TICKS_PER_SECOND == 0 and u_alive[u] > 0:
+			_ch_capture(u)
+
+
+## The assassin's cover: hidden while he has not acted and no enemy unit is
+## within SEEN_R of him (box to box), unless he stands in woods.
+func _ch_cover(u: int) -> void:
+	if (u_chf[u] & CHF_ACTED) != 0:
+		u_hidden[u] = 0
+		return
+	var seen := false
+	if veg_on == 0 or veg_d(u_cx[u], u_cy[u]) == 0:
+		for o in n_units:
+			if u_side[o] != u_side[u] and u_alive[o] > 0 and u_state[o] < U_DESTROYED and _box_gap(u, o) <= SEEN_R:
+				seen = true
+				break
+	u_hidden[u] = 0 if seen else 1
+
+
+## He acts: seen from now on.
+func _ch_act(u: int) -> void:
+	u_chf[u] |= CHF_ACTED
+	u_hidden[u] = 0
+
+
+## His one man.
+func _ch_man(u: int) -> int:
+	return slot_soldier[u_slot_base[u]]
+
+
+## Walk (run) unit u to (x, y); a goal near the one it has is kept.
+func _ch_goto(u: int, x: int, y: int) -> void:
+	x = clampi(x, 0, field_w)
+	y = clampi(y, 0, field_h)
+	if u_order[u] == O_MOVE and FM.approx_len(u_dx[u] - x, u_dy[u] - y) < 2 * M:
+		return
+	u_order[u] = O_MOVE
+	u_dx[u] = x
+	u_dy[u] = y
+	var dx := x - u_ax[u]
+	var dy := y - u_ay[u]
+	if dx != 0 or dy != 0:
+		u_dface[u] = FM.atan2_a(dy, dx)
+	u_run[u] = 1
+	u_target[u] = -1
+	u_gtarget[u] = -1
+	u_dirty[u] = 1
+	u_settled[u] = 0
+	if obs_on != 0:
+		u_pn[u] = 0
+
+
+## Stand where he is.
+func _ch_stop(u: int) -> void:
+	if u_order[u] == O_MOVE:
+		u_order[u] = O_NONE
+		u_dx[u] = u_ax[u]
+		u_dy[u] = u_ay[u]
+		u_dirty[u] = 1
+
+
+func _ch_done(u: int) -> void:
+	u_cho[u] = CHO_NONE
+	_ch_stop(u)
+
+
+## Sabotage an engine group: to the nearest engine not yet wrecked, one
+## wrecked every SABOTAGE_T beside it (abandoned ones too).
+func _ch_sab_eng(u: int) -> void:
+	var g := u_cht[u]
+	var i := _ch_man(u)
+	var best := -1
+	var bd := 0
+	for kk in eg_ne[g]:
+		var e := eg_e0[g] + kk
+		if e_state[e] == E_WRECKED:
+			continue
+		var d := FM.approx_len(e_x[e] - pos_x[i], e_y[e] - pos_y[i])
+		if best < 0 or d < bd:
+			best = e
+			bd = d
+	if best < 0:
+		u_chk[u] = 0
+		_ch_done(u)
+		return
+	if bd > SAB_R:
+		u_chk[u] = 0
+		_ch_goto(u, e_x[best], e_y[best])
+		return
+	_ch_stop(u)
+	_ch_act(u)
+	u_chk[u] += 1
+	if u_chk[u] >= SABOTAGE_T:
+		u_chk[u] = 0
+		if e_state[best] == E_OK:
+			_wreck(best)
+		else:
+			e_state[best] = E_WRECKED
+			e_hp[best] = 0
+			stat_wrecked += 1
+		stat_sabotage += 1
+
+
+## Sabotage a shut gate: to its outer face, over the wall beside it (onto
+## its inner face), then SAB_UNBAR ticks there unbar it (as the ladder men's
+## UNBAR rule).
+func _ch_sab_gate(u: int) -> void:
+	var g := u_cht[u]
+	if g >= n_gates or g_state[g] != GATE_CLOSED:
+		u_chk[u] = 0
+		_ch_done(u)
+		return
+	var i := _ch_man(u)
+	var fi := gate_front(g, city_def)
+	if (u_chf[u] & CHF_INSIDE) == 0:
+		var ra := reach_at(pos_x[i], pos_y[i])
+		var ri := reach_at(fi.x, fi.y)
+		if ra >= 0 and ra == ri:
+			u_chf[u] |= CHF_INSIDE  # inside already (a breach elsewhere)
+		else:
+			var fo := gate_front(g, u_side[u])
+			if FM.approx_len(fo.x - pos_x[i], fo.y - pos_y[i]) > SAB_OVER_R:
+				_ch_goto(u, fo.x, fo.y)
+				return
+			# Over the wall beside the gate: a single man with a rope.
+			pos_x[i] = fi.x
+			pos_y[i] = fi.y
+			prev_x[i] = fi.x
+			prev_y[i] = fi.y
+			u_ax[u] = fi.x
+			u_ay[u] = fi.y
+			u_face[u] = fi.z
+			u_dface[u] = fi.z
+			u_chf[u] |= CHF_INSIDE
+			stat_ch_over += 1
+			_ch_stop(u)
+			u_order[u] = O_NONE
+			if obs_on != 0:
+				u_pn[u] = 0
+			_set_bounds(u, fi.x, fi.y, fi.x, fi.y, fi.x, fi.y)
+			return
+	if FM.approx_len(fi.x - pos_x[i], fi.y - pos_y[i]) > SAB_GATE_R:
+		u_chk[u] = 0
+		_ch_goto(u, fi.x, fi.y)
+		return
+	_ch_stop(u)
+	_ch_act(u)
+	u_chk[u] += 1
+	if u_chk[u] >= SAB_UNBAR:
+		u_chk[u] = 0
+		g_state[g] = GATE_OPEN
+		g_unbar[g] = 0
+		stat_ch_unbar += 1
+		stat_gate_open += 1
+		_gate_cells(g)
+		_ch_done(u)
+
+
+## An attempt: up to the target's nearest man, then one roll (the sim's
+## RNG): ATTEMPT_PCT his man killed (a general's unit: the general, his
+## command falls on his army), ATTEMPT_WOUND wounded (half his hit points),
+## else it fails. He is seen either way; u_chk keeps the outcome.
+func _ch_attempt(u: int) -> void:
+	var t := u_cht[u]
+	if not attempt_target(t):
+		_ch_done(u)
+		return
+	var i := _ch_man(u)
+	var j := -1
+	var bd := 0
+	var base := u_slot_base[t]
+	for s in u_alive[t]:
+		var jj := slot_soldier[base + s]
+		var d := FM.approx_len(pos_x[jj] - pos_x[i], pos_y[jj] - pos_y[i])
+		if j < 0 or d < bd:
+			j = jj
+			bd = d
+	if j < 0:
+		_ch_done(u)
+		return
+	if bd > ATTEMPT_R:
+		_ch_goto(u, pos_x[j], pos_y[j])
+		return
+	_ch_act(u)
+	u_chf[u] |= CHF_TRIED
+	_ch_done(u)
+	var r := _rand() % 100
+	if r < ATTEMPT_PCT:
+		stat_attempt[0] += 1
+		u_chk[u] = 1
+		var gen := u_char[t] == 0
+		_credit(u, t)
+		_remove(j, GONE_KILLED)
+		if gen:
+			_cmd_fall(t)  # the general is dead: his army is shaken, his aura gone
+	elif r < ATTEMPT_PCT + ATTEMPT_WOUND:
+		stat_attempt[1] += 1
+		u_chk[u] = 2
+		hp[j] = maxi(hp[j] - t_hp[u_otype[t]] / 2, 1)
+	else:
+		stat_attempt[2] += 1
+		u_chk[u] = 3
+
+
+## A parley: to within PARLEY_R of the unit, then PARLEY_T ticks in which
+## it and every unit within PARLEY_R of it or of him hold (no melee, their
+## anchors and routers stand); then one roll: PARLEY_PCT routing /
+## PARLEY_PCT_W wavering (0 if it has recovered) it surrenders, else it
+## fights on and he may try again after PARLEY_WAIT.
+func _ch_parley(u: int) -> void:
+	var t := u_cht[u]
+	var open := parley_open(t)
+	if u_chk[u] == 0:
+		if not open:
+			_ch_done(u)
+			return
+		var gp := _box_gap(u, t)
+		if gp > PARLEY_R:
+			if u_state[t] == U_ROUTING and gp <= PARLEY_SEE:
+				u_hold[t] = tick + 1  # routers who see the white flag stop and wait for him
+			_ch_goto(u, u_cx[t], u_cy[t])
+			return
+		_ch_stop(u)
+		u_chk[u] = 1
+	if u_alive[t] <= 0 or u_state[t] >= U_DESTROYED:
+		u_chk[u] = 0
+		_ch_done(u)
+		return
+	for o in n_units:
+		if u_alive[o] > 0 and u_state[o] < U_DESTROYED and (o == t or o == u or _box_gap(o, t) <= PARLEY_R \
+				or _box_gap(o, u) <= PARLEY_R):
+			u_hold[o] = tick + 1
+	u_chk[u] += 1
+	if u_chk[u] <= PARLEY_T:
+		return
+	u_chk[u] = 0
+	_ch_done(u)
+	var pct := 0
+	if open:
+		pct = PARLEY_PCT if u_state[t] == U_ROUTING else PARLEY_PCT_W
+	if _rand() % 100 < pct:
+		_surrender(t, u_side[u])
+	else:
+		stat_parley_fail += 1
+		u_chcd[u] = tick + PARLEY_WAIT
+
+
+## Unit t surrenders to side `by`: its men leave the field as prisoners.
+func _surrender(t: int, by: int) -> void:
+	var men := u_alive[t]
+	var base := u_slot_base[t]
+	if sg_on != 0 and u_carry[t] >= 0:
+		_drop(t)
+	while u_alive[t] > 0:
+		_remove(slot_soldier[base + u_alive[t] - 1], GONE_SURR)
+	ch_pris[by] += men
+	stat_parley_ok += 1
+	if t_cmd_loss[u_type[t]] > 0 or t_cmd_loss_r[u_type[t]] > 0:
+		_cmd_fall(t)  # (a general taken)
+
+
+## Once a second: CAPTURE_N enemy men (formed or fighting) within CAPTURE_R
+## of the assassin take him.
+func _ch_capture(u: int) -> void:
+	if tick == 0:
+		return  # (the soldier grid is built from the first step on)
+	var i := _ch_man(u)
+	var head: PackedInt32Array = grid_head1 if u_side[u] == 0 else grid_head0
+	if head.is_empty():
+		return
+	if _count_near(pos_x[i], pos_y[i], CAPTURE_R, head, CAPTURE_N) >= CAPTURE_N:
+		stat_captured += 1
+		u_cho[u] = CHO_NONE
+		_remove(i, GONE_KILLED)
+
+
+## A hero fell: his side's units within his fall_r lose fall_loss morale at
+## once, the enemy's gain fall_gain.
+func _ch_fall(u: int) -> void:
+	var ty := u_otype[u]
+	stat_ch_fall += 1
+	for o in n_units:
+		if o == u or u_alive[o] <= 0 or u_state[o] >= U_DESTROYED or _box_gap(u, o) > t_fall_r[ty]:
+			continue
+		if u_side[o] == u_side[u]:
+			u_morale[o] = clampi(u_morale[o] - t_fall_loss[ty], -MORALE_MAX, MORALE_MAX)
+		else:
+			u_morale[o] = clampi(u_morale[o] + t_fall_gain[ty], -MORALE_MAX, MORALE_MAX)
+
+
+## The siege hero's factors for side s (100 without one this second): % of
+## the ticks a man takes up a ladder, of the work an engine's reload needs,
+## of the battering the ram and siege towers take.
+func climb_pct(s: int) -> int:
+	return 10000 / (100 + t_chv[CV_CLIMB]) if ch_on != 0 and ch_sg[s] != 0 else 100
+
+
+func reload_pct(s: int) -> int:
+	return 10000 / (100 + t_chv[CV_RELOAD]) if ch_on != 0 and ch_sg[s] != 0 else 100
+
+
+func batter_pct(s: int) -> int:
+	return 100 - t_chv[CV_BATTER] if ch_on != 0 and ch_sg[s] != 0 else 100
+
+
+## Which aura bit a character of kind k gives a friendly unit of type tu.
+func _ch_bit(k: int, tu: int) -> int:
+	if k == UT.CK_FOOT:
+		return AU_FOOT if t_mount[tu] == UT.MOUNT_FOOT and t_cls[tu] != UT.CLS_ART else 0
+	if k == UT.CK_MISSILE:
+		return AU_MIS if t_cls[tu] == UT.CLS_MISSILE or t_cls[tu] == UT.CLS_ART else 0
+	if k == UT.CK_CAV:
+		return AU_CAV if _ch_mounted(tu) else 0
+	if k == UT.CK_DIPLOMAT:
+		return AU_STEADY
+	return 0
+
+
+## Riders (horse, camel, elephant; not dogs).
+func _ch_mounted(tu: int) -> bool:
+	var mt := t_mount[tu]
+	return mt == UT.MOUNT_HORSE or mt == UT.MOUNT_CAMEL or mt == UT.MOUNT_ELEPHANT
+
+
+## A ready friendly character of kind k has unit u within his ch_r.
+func _ch_near(u: int, k: int) -> bool:
+	for src in aura_src:
+		if src != u and u_char[src] == k and u_side[src] == u_side[u] and u_state[src] == U_READY \
+				and u_alive[src] > 0 and _box_gap(src, u) <= t_ch_r[u_type[src]]:
+			return true
+	return false
+
+
 func _check_winner() -> void:
 	if winner >= 0:
 		if ended == 0:
 			var loser_on := 0
 			for u in n_units:
 				if winner < 2 and u_side[u] != winner and u_state[u] < U_DESTROYED and t_fixed[u_type[u]] == 0 \
-						and u_hand[u] < 0:
+						and u_hand[u] < 0 and u_char[u] == 0:
 					loser_on += 1
 			if winner == 2 or loser_on == 0 or tick - decided_tick >= END_AFTER:
 				ended = 1
@@ -10504,7 +11311,8 @@ func _check_winner() -> void:
 	# the field).
 	var ready := [0, 0]
 	for u in n_units:
-		if u_state[u] == U_READY and u_order[u] != O_WITHDRAW and t_fixed[u_type[u]] == 0 and u_hand[u] < 0:
+		if u_state[u] == U_READY and u_order[u] != O_WITHDRAW and t_fixed[u_type[u]] == 0 and u_hand[u] < 0 \
+				and u_char[u] == 0:
 			ready[u_side[u]] += 1
 	if ready[0] == 0 and ready[1] > 0:
 		winner = 1
@@ -10554,10 +11362,29 @@ func result() -> Dictionary:
 			# A war dog pack: its handlers' unit (its dogs with them count as remaining).
 			r["pack_of"] = u_hand[u]
 			r["remaining"] = u_alive[u] + u_kept[u]
+		if ch_on != 0:
+			# Heroes and agents: "char" 1, "alive" 1 unless he was killed
+			# (withdrawn or still on the field: alive), "ci" his place in his
+			# side's scenario "chars" list; any unit: men taken prisoner.
+			r["surrendered"] = u_surr[u]
+			if u_char[u] != 0:
+				r["char"] = 1
+				r["kind"] = u_char[u]
+				r["alive"] = 0 if u_killed[u] > 0 else 1
+				var ci := 0
+				for o in u:
+					if u_char[o] != 0 and u_side[o] == u_side[u]:
+						ci += 1
+				r["ci"] = ci
 		units.append(r)
 		var t: Dictionary = sides[u_side[u]]
 		for k in ["started", "killed", "routed_off", "withdrawn", "remaining"]:
 			t[k] = int(t[k]) + int(r[k])
+		if ch_on != 0:
+			t["surrendered"] = int(t.get("surrendered", 0)) + u_surr[u]
+	if ch_on != 0:
+		for s in 2:
+			sides[s]["prisoners"] = ch_pris[s]  # enemy men this side took prisoner by parley
 	return {"winner": winner, "decided_tick": decided_tick, "ended": ended,
 		"tick": tick, "units": units, "sides": sides}
 
@@ -10735,6 +11562,12 @@ func state_hash() -> int:
 	if riv_on != 0:
 		# River crossings (battles without one hash as before).
 		ctx.update(u_frd.to_byte_array())
+	if ch_on != 0:
+		# Heroes and agents (battles without them hash as before).
+		for arr in _char_arrays():
+			ctx.update((arr as PackedInt32Array).to_byte_array())
+		ctx.update(ch_sg.to_byte_array())
+		ctx.update(ch_pris.to_byte_array())
 	var digest := ctx.finish()
 	return digest.decode_u32(0)
 
@@ -11563,7 +12396,10 @@ func _update_equip() -> void:
 					if state[i] < S_DEAD and absi(pos_x[i] - qx) <= r and absi(pos_y[i] - qy) <= r:
 						men += 1
 			if men > 0:
-				q_hp[q] -= RAM_WRECK * mini(men, 6)
+				var sm := RAM_WRECK * mini(men, 6)
+				if ch_on != 0 and ch_sg[q_side[q]] != 0:
+					sm = sm * batter_pct(q_side[q]) / 100  # a siege hero: the ram / tower stands more
+				q_hp[q] -= sm
 				if q_hp[q] <= 0:
 					q_state[q] = Q_WRECKED
 					if q_kind[q] == EQ_RAM:
@@ -11590,7 +12426,10 @@ func _ram_hit(x: int, y: int, dmg: int) -> void:
 			continue
 		if kq == EQ_WAGON and q_hn[q] > 0:
 			_horse_wound(q, dmg)  # (the team in the traces takes it too)
-		q_hp[q] -= dmg
+		if ch_on != 0 and (kq == EQ_RAM or kq == EQ_TOWER) and ch_sg[q_side[q]] != 0:
+			q_hp[q] -= dmg * batter_pct(q_side[q]) / 100  # a siege hero: the ram / tower stands more
+		else:
+			q_hp[q] -= dmg
 		if q_hp[q] <= 0:
 			_eq_wreck(q)
 			if kq == EQ_RAM:
@@ -11882,6 +12721,8 @@ func _ladder_step(u: int) -> void:
 	var n_l := clampi(ladders_of(self, u), 1, LANES_MAX)
 	var sg := u_sseg[u]
 	var per := climb_per(self, q)
+	if ch_on != 0 and ch_sg[u_side[u]] != 0:
+		per = maxi(per * climb_pct(u_side[u]) / 100, 1)  # a siege hero: the ladders are climbed faster
 	var gm := _ground_mask(u)
 	var oc := FM.cos_a(ws_dir[sg])  # (outward from the wall)
 	var os := FM.sin_a(ws_dir[sg])

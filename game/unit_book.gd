@@ -94,6 +94,15 @@ func _init() -> void:
 	sb2.pressed.connect(show_type.bind(UT.count() + 1))
 	list.add_child(sb2)
 	_list.append(sb2)
+	var cb3 := Button.new()
+	cb3.custom_minimum_size = Vector2(200, 56)
+	cb3.toggle_mode = true
+	cb3.focus_mode = Control.FOCUS_NONE
+	cb3.text = "Heroes and agents"
+	cb3.add_theme_font_size_override("font_size", 16)
+	cb3.pressed.connect(show_type.bind(UT.count() + 2))
+	list.add_child(cb3)
+	_list.append(cb3)
 	# Page with its header.
 	var page := VBoxContainer.new()
 	page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -134,7 +143,42 @@ func _init() -> void:
 
 
 func _pages() -> int:
-	return UT.count() + 2
+	return UT.count() + 3
+
+
+## The Heroes and agents page (docs/DESIGN.md "Heroes and agents"), with the
+## numbers the sim uses (each character also has his own page above).
+static func chars_help() -> String:
+	var f := UT.index_of("hero_foot")
+	var mi := UT.index_of("hero_missile")
+	var cv := UT.index_of("hero_cav")
+	var sg := UT.index_of("hero_siege")
+	var asn := UT.index_of("assassin")
+	var dip := UT.index_of("diplomat")
+	if f < 0 or asn < 0 or dip < 0:
+		return "HEROES AND AGENTS"
+	var lines: Array[String] = [
+		"HEROES AND AGENTS",
+		"",
+		"Heroes and agents ride with an army without taking a unit's place. On the field each is a single man with a gold-rimmed marker: a crown for a hero, a dagger for the assassin, a scroll for the diplomat. They never break and never hold the field on their own: when the army is beaten they leave with it.",
+		"",
+		"Heroes (%d hit points: only a crowd or a lucky shot cuts one down). Each strengthens the friendly units of his field within %d m of him, once a second:" % [UT.stat(f, "hp"), UT.stat(f, "ch_r") / 1024],
+		"- Champion (on foot): foot strike %d%% truer and gain %d morale a second; he duels any single man." % [UT.stat(f, "au_hit"), UT.stat(f, "au_mor")],
+		"- Master of Archers: missile troops and engines shoot %d%% further and %d%% straighter." % [UT.stat(mi, "au_rng"), UT.stat(mi, "au_spr")],
+		"- Master of Horse: riders charge %d%% harder and their routers rally %d a second faster." % [UT.stat(cv, "au_mom"), UT.stat(cv, "au_rally")],
+		"- Master Engineer: for the whole army (siege works are spread out): ladders climbed %d%% faster, engines reload %d%% faster, the ram and siege towers take %d%% less battering." % [UT.stat(sg, "au_climb"), UT.stat(sg, "au_reload"), UT.stat(sg, "au_batter")],
+		"A hero who falls shakes his side within %d m (-%d morale at once) and heartens the enemy there (+%d). Enemy wall engines and batteries look for heroes in range." % [UT.stat(f, "fall_r") / 1024, UT.stat(f, "fall_loss"), UT.stat(f, "fall_gain")],
+		"",
+		"Assassin. The enemy does not see him until he acts or comes within %d m of their men in the open (woods hide him). Sabotage: tap an enemy battery (he wrecks an engine every %d s beside it) or a shut gate (he slips over the wall beside it and unbars it in %d s). Attempt (once a battle): tap an enemy hero or general; he walks up and strikes: %d%% kills, %d%% wounds (half his hit points), the rest fail. A general killed so shakes his whole army. Three enemy men around him take him." % [
+			BattleSim.SEEN_R / 1024, BattleSim.SABOTAGE_T / 10, BattleSim.SAB_UNBAR / 10, BattleSim.ATTEMPT_PCT, BattleSim.ATTEMPT_WOUND],
+		"",
+		"Diplomat. Unarmed. Friendly units within %d m lose only %d%% of the heart fear would cost them (beasts, routing friends, artillery). Parley: tap a routing enemy unit or one below %d%% of its morale; he walks within %d m under a white flag (routers within %d m stop for it), it stops fighting for %d s (the men near it hold; only missiles can hurt him then), then it surrenders (%d%% routing, %d%% wavering) and its men are taken prisoner, or it fights on and he may try again after %d s. A garrison on a wall yields only once its plaza is held." % [
+			UT.stat(dip, "ch_r") / 1024, 100 - UT.stat(dip, "au_steady"), BattleSim.PARLEY_MOR, BattleSim.PARLEY_R / 1024,
+			BattleSim.PARLEY_SEE / 1024, BattleSim.PARLEY_T / 10, BattleSim.PARLEY_PCT, BattleSim.PARLEY_PCT_W, BattleSim.PARLEY_WAIT / 10],
+		"",
+		"Orders: select the assassin or the diplomat, press Sabotage, Attempt or Parley over the unit cards, then tap the target.",
+	]
+	return "\n".join(lines)
 
 
 ## The Terrain page, in plain words, with the numbers the sim uses.
@@ -277,14 +321,14 @@ func close() -> void:
 
 
 func show_type(ty: int) -> void:
-	current = clampi(ty, 0, UT.count() + 1)
+	current = clampi(ty, 0, UT.count() + 2)
 	for k in _list.size():
 		_list[k].set_pressed_no_signal(k == current)
 	var terr := current >= UT.count()
 	terrain_page.visible = terr
 	entry.visible = not terr
 	if terr:
-		terrain_text.text = terrain_help() if current == UT.count() else siege_help()
+		terrain_text.text = terrain_help() if current == UT.count() else (siege_help() if current == UT.count() + 1 else chars_help())
 		terrain_page.scroll_vertical = 0
 	else:
 		entry.set_unit_type(current, side_color)

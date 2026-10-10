@@ -969,12 +969,21 @@ func _step_book_next() -> void:
 
 func _step_check_book_next() -> void:
 	var b = battle.hud.book
-	_check(b.current == (_book_seq + 1) % (UT.count() + 2) and b.entry.unit_type == b.current,
+	_check(b.current == (_book_seq + 1) % (UT.count() + 3) and b.entry.unit_type == b.current,
 		"Next shows the next unit type (%d -> %d)" % [_book_seq, b.current])
-	# The last pages are Terrain and Settlements: Prev from the first page
-	# wraps to Settlements, and once more to Terrain.
+	# The last pages are Terrain, Settlements and Heroes and agents: Prev
+	# from the first page wraps to Heroes, then Settlements, then Terrain.
 	steps.push_front(_step_check_book_terrain)
+	steps.push_front(_step_check_book_heroes)
 	b.show_type(0)
+	_tap_control(b.prev_button)
+
+
+func _step_check_book_heroes() -> void:
+	var b = battle.hud.book
+	_check(b.current == UT.count() + 2 and b.terrain_page.visible and not b.entry.visible
+		and b.terrain_text.text.find("HEROES") >= 0,
+		"Prev from the first page shows the Heroes and agents page")
 	_tap_control(b.prev_button)
 
 

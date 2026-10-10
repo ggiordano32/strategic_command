@@ -21,6 +21,7 @@ const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
 const CRules := preload("res://campaign/crules.gd")
 const CTurn := preload("res://campaign/cturn.gd")
+const CChars := preload("res://campaign/cchars.gd")
 const UT := preload("res://sim/unit_types.gd")
 const CityPreview := preload("res://game/campaign/city_preview.gd")
 
@@ -33,6 +34,7 @@ var _step := 0
 var _wait := 0
 var _bid := -1
 var _snap: Dictionary = {}
+var _hero: Dictionary = {}
 
 
 func _check(c: bool, what: String) -> void:
@@ -116,6 +118,9 @@ func _check_pre() -> void:
 	_check(c0 != null and c0.men == 60 and c0.full == UT.size_of(int(c0.ty)) and c0.back == -1,
 		"the mauled unit's card: 60 of %d men (health bar)" % (c0.full if c0 != null else 0))
 	_check(_button("auto_%d" % _bid) != null and _button("fight_%d" % _bid) != null, "Auto-resolve and Fight")
+	var hl = scr.find_child("char_0_%d" % int(_hero["id"]), true, false)
+	_check(hl is Label and (hl as Label).text.contains(str(_hero["name"])) and (hl as Label).text.contains("Master of Horse"),
+		"the pre-battle card lists the attackers' hero: " + ((hl as Label).text if hl is Label else "-"))
 
 
 func _check_result(auto: bool) -> void:
@@ -134,6 +139,8 @@ func _check_result(auto: bool) -> void:
 	_check(banner == want or banner == "DRAW", "the banner from Rome's side: %s (winner %d)" % [banner, int(ev.get("winner", -1))])
 	_check(mode.begins_with("Auto-resolved") if auto else mode.begins_with("Fought (left the field)"), "labelled: " + mode)
 	_check(_label(res, "result_outcome") != "", "the one-line outcome")
+	if auto:
+		_check(res.find_child("char_0_%d" % int(_hero["id"]), true, false) != null, "the result card still lists the hero")
 	var cards := _cards(res)
 	var fielded := [0, 0]
 	var back := [0, 0]
@@ -219,7 +226,10 @@ func _process(_d: float) -> bool:
 	_step += 1
 	match _step:
 		1:
-			_assault(CState.armies_of(cs.st, rome)[0], true)
+			var a1: Dictionary = CState.armies_of(cs.st, rome)[0]
+			# A Master of Horse rides with it (heroes and agents).
+			_hero = CChars.make_char(cs.st, rome, "hero_cav", int(a1["r"]), int(a1["id"]))
+			_assault(a1, true)
 			_wait = 3
 		2:
 			_check_pre()

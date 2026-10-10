@@ -18,7 +18,11 @@ extends SceneTree
 ## seed (side 2, or the fortified side, holding the far bank), the
 ## deployment zones end short of the water, the sim builds the crossing map
 ## (its camp at the crossing when fortified); none on a settlement map or
-## without the option; a ford and a bridge battle run.
+## without the option; a ford and a bridge battle run. Heroes and agents:
+## a side's character toggles (all six a side) reach the scenario's "chars",
+## cost their price, build into one-man units after the scenario's own
+## (commanded by the side's player, the AI's on its side) on a field and in
+## a settlement, and the result rows carry "char" / "alive".
 
 const CS := preload("res://game/custom/custom_setup.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -91,6 +95,15 @@ func _init() -> void:
 	var bridge := CS.default_setup(14)
 	bridge["map"]["river"] = 1
 	setups["river crossing: a bridge"] = bridge
+	var chf := CS.default_setup(15)
+	for sd in 2:
+		for k in CS.CHAR_KEYS:
+			CS.toggle_char(chf, sd, k)
+	setups["heroes and agents, all six a side, field"] = chf
+	var cht: Dictionary = JSON.parse_string(JSON.stringify(chf))
+	cht["map"]["kind"] = "settlement"
+	cht["map"]["walls"] = 1
+	setups["heroes and agents, all six a side, settlement"] = cht
 	for name in setups:
 		var st: Dictionary = setups[name]
 		var a := CS.build(st)
@@ -160,6 +173,7 @@ func _init() -> void:
 	_check_light_art()
 	_check_mantlets(mant, mant_town)
 	_check_river(ford, bridge)
+	_check_chars(chf, cht)
 	# Checks.
 	var bad := CS.default_setup(1)
 	bad["sides"][1]["armies"] = []
@@ -613,3 +627,51 @@ func _check_river(ford: Dictionary, bridge: Dictionary) -> void:
 		return
 	print("PASS river crossing option: a ford (side 2 fortified at it: %d palisade sections) and a bridge (%d cells) from the map seed, the zones short of the water, none without the option or on a settlement map" % [
 		ramp, bridge_cells])
+
+
+## Heroes and agents (docs/DESIGN.md "Heroes and agents"): the toggles reach
+## the scenario, cost their price, become one-man character units after the
+## scenario's own (Player 1's on side 1, the AI's on side 2), and the result
+## rows carry "char" and "alive".
+func _check_chars(field: Dictionary, town: Dictionary) -> void:
+	var plain := CS.default_setup(15)
+	var extra := CS.side_cost(field, 0) - CS.side_cost(plain, 0)
+	var want := 0
+	for k in CS.CHAR_KEYS:
+		want += UT.price_of(UT.index_of(k))
+	if extra != want:
+		_fail("chars: the six cost %d, want %d" % [extra, want])
+		return
+	for st in [field, town]:
+		var b := CS.build(st)
+		var sc: Dictionary = b["scenario"]
+		var lists: Array = sc.get("chars", [])
+		if lists.size() != 2 or (lists[0] as Array).size() != 6 or (lists[1] as Array).size() != 6:
+			_fail("chars: the scenario's chars are %s" % str(lists))
+			return
+		var players: Array = []
+		for p in b["home"]:
+			if int(p) >= 0 and not players.has(int(p)):
+				players.append(int(p))
+		var ls := Lockstep.new()
+		ls.setup(sc, int(b["seed"]), b["home"], players, 0)
+		var sim = ls.sim
+		var n_scn: int = (sc["units"] as Array).size()
+		var kinds := [[], []]
+		var homes := [[], []]
+		for u in range(n_scn, sim.n_units):
+			if sim.u_char[u] != 0:
+				kinds[sim.u_side[u]].append(sim.u_char[u])
+				homes[sim.u_side[u]].append(ls.u_home[u])
+		var r: Dictionary = sim.result()
+		var rows := 0
+		for row in r["units"]:
+			if int(row.get("char", 0)) == 1 and int(row.get("alive", -1)) == 1:
+				rows += 1
+		var human: int = 0 if not (sc["ai_sides"] as Array).has(0) else 1
+		if str(kinds[0]) != str([1, 2, 3, 4, 5, 6]) or str(kinds[1]) != str([1, 2, 3, 4, 5, 6]) or rows != 12 \
+				or str(homes[human]) != str([0, 0, 0, 0, 0, 0]) or str(homes[1 - human]) != str([-1, -1, -1, -1, -1, -1]):
+			_fail("chars (%s): kinds %s, homes %s, %d result rows" % [str(st["map"]["kind"]), str(kinds), str(homes), rows])
+			return
+		print("PASS chars (%s): six characters a side after the %d scenario units, kinds %s, Player 1 commands side %d's, the AI the other's; %d result rows with char 1 / alive 1; +%d gold a side" % [
+			str(st["map"]["kind"]), n_scn, str(kinds[0]), human + 1, rows, extra])

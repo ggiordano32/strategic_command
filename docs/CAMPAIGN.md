@@ -496,6 +496,8 @@ handlers' men); auto-resolve by the handlers' price (the pack's in it); a
 fought outcome adds the pack's kills to the handlers' row. AI mixes "dogs"
 3, only through the mix (`CAI.BEAST_LINES`; `--no-dogs`: weight 0).
 
+**Heroes and agents** (2026-10-10, STATUS 8a; `campaign/cchars.gd`): a hero (Champion, Master of Archers, Master of Horse, Master Engineer), an assassin and a diplomat ride with an army without a unit slot or upkeep, one of each slot per army. State: `chars` [{id, kind, f, name, army (-1 in a city), r, wounded}], `next_char` (both absent until the first is raised), region `cq`, faction `ransom`. Orders `recruit_char`, `attach`, `detach` (checks in cchars.gd); characters move with their army and merge with it; an army lost sends them to the nearest city of ours wounded 3 turns; left in a city that falls they are captured. Battles: fit characters go in as the scenario's `chars`; a fallen one is wounded 5 turns; prisoners pay 5 gold a man at the end of the turn; auto-resolve adds the hero's `char_pct` (6 %). AI: knobs `CHAR_HERO`, `CHAR_DIPLOMAT`.
+
 **The general** (2026-10-09; docs/DESIGN.md "The general"; **no upkeep**: the row's `upkeep_pct` is 0, decided 2026-10-09): line
 "general", one key per faction (`ROSTERS`: Rome `legate`, Carthage
 `sufet`, Macedon and Epirus `hetairoi_guard`, Greeks and Syracuse

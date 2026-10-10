@@ -102,6 +102,7 @@ extends RefCounted
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
 const UT := preload("res://sim/unit_types.gd")
+const CChars := preload("res://campaign/cchars.gd")
 
 
 # --------------------------------------------------------------- orders ---
@@ -131,6 +132,12 @@ static func apply_order(st: Dictionary, f: int, o: Dictionary) -> String:
 			return _build(st, f, int(o.get("r", -1)), int(o.get("chain", -1)))
 		"recruit":
 			return _recruit(st, f, o)
+		"recruit_char":
+			return CChars.recruit(st, f, o)
+		"attach":
+			return CChars.attach(st, f, o)
+		"detach":
+			return CChars.detach(st, f, o)
 		"merge":
 			return _merge(st, f, int(o.get("army", -1)), int(o.get("into", -1)))
 		"split":
@@ -482,6 +489,8 @@ static func merge_check(st: Dictionary, f: int, id: int, into: int) -> String:
 		return why
 	if CState.unit_count(a) + CState.unit_count(b) > CData.ARMY_MAX:
 		return "more than %d units" % CData.ARMY_MAX
+	if CChars.merge_conflict(st, id, into):
+		return "both armies have a hero, assassin or diplomat of the same kind"
 	return ""
 
 
@@ -505,6 +514,7 @@ const PLAIN_GUARD := "bodyguard"
 ## cell and moves at the pace of the slower part; a is gone. (A second
 ## general becomes a plain bodyguard.)
 static func _absorb(st: Dictionary, b: Dictionary, a: Dictionary) -> void:
+	CChars.transfer(st, int(a["id"]), int(b["id"]))
 	(b["units"] as Array).append_array(a["units"])
 	_one_general(b)
 	if CState.moves_on(st):
@@ -530,6 +540,9 @@ static func _merge(st: Dictionary, f: int, id: int, into: int) -> String:
 		return "not in the same region"
 	if CState.unit_count(a) + CState.unit_count(b) > CData.ARMY_MAX:
 		return "more than %d units" % CData.ARMY_MAX
+	if CChars.merge_conflict(st, id, into):
+		return "both armies have a hero, assassin or diplomat of the same kind"
+	CChars.transfer(st, id, into)
 	(b["units"] as Array).append_array(a["units"])
 	_one_general(b)
 	if CState.moves_on(st):
@@ -595,6 +608,7 @@ static func _disband(st: Dictionary, f: int, id: int, idx) -> String:
 	for k in range(list.size() - 1, -1, -1):
 		(a["units"] as Array).remove_at(list[k])
 	if CState.unit_count(a) == 0:
+		CChars.release(st, a)
 		st["armies"].remove_at(CState.army_index(st, id))
 	return ""
 
@@ -1992,6 +2006,7 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 		return
 	var r := int(b["r"])
 	var kind := str(b.get("kind", ""))
+	CChars.track(st)  # (the characters stand where their armies do, before any is lost)
 	# A sally or relief (field battle of a siege): the owner's side is "def".
 	var field := kind == "sally" or kind == "relief"
 	# Version 5: an interception or a fight before a siege ("field"): two
@@ -2036,6 +2051,14 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 		for a in arm[s]:
 			now += CState.men(a)
 		lost[s] = before[s] - now
+	# Heroes and agents: the fallen are wounded; prisoners are ransomed.
+	for ce in outcome.get("chars", []):
+		if int(ce.get("alive", 1)) == 0:
+			CChars.wound(st, int(ce["id"]))
+	var pris: Array = outcome.get("prisoners", [])
+	if pris.size() >= 2:
+		CChars.add_ransom(st, int(b["att_f"]), int(pris[0]))
+		CChars.add_ransom(st, int(b["def_f"]), int(pris[1]))
 	var rs: Dictionary = st["regions"][r]
 	if not open_field:
 		rs["gar"] = clampi(int(outcome.get("garrison_pct", rs["gar"])), 0, 100)
@@ -2103,6 +2126,7 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 		ev["kind"] = kind
 	event(st, ev)
 	check_eliminations(st)
+	CChars.sweep(st)
 	check_sieges(st)
 	check_victory(st)
 	if (st["battles"] as Array).is_empty() and str(st["phase"]) == "battles":
@@ -2117,6 +2141,7 @@ static func _capture(st: Dictionary, r: int, f: int, how: String = "") -> void:
 	rs["build"] = []
 	rs["queue"] = []
 	rs.erase("qa")
+	rs.erase("cq")
 	var e := {"k": "captured", "r": r, "f": f, "from": old}
 	if how != "":
 		e["how"] = how
@@ -2705,6 +2730,8 @@ static func end_of_turn(st: Dictionary) -> void:
 			event(st, {"k": "recruited", "r": r, "f": o, "units": q.duplicate()})
 			rs["queue"] = []
 		rs.erase("qa")
+	CChars.appear(st)
+	CChars.pay_ransom(st)
 	# Money.
 	for f in CState.nf():
 		var fs: Dictionary = st["factions"][f]
@@ -2728,6 +2755,7 @@ static func end_of_turn(st: Dictionary) -> void:
 				keep.append(unit)
 		a["units"] = keep
 	_drop_empty_armies(st)
+	CChars.sweep(st)
 	if CState.grid_on(st):
 		_auto_merge6(st, fresh)
 	# Replenishment in friendly land.
@@ -2797,8 +2825,10 @@ static func _auto_merge6(st: Dictionary, fresh: Dictionary = {}) -> void:
 			if gone[j] != 0 or int(b["f"]) != int(a["f"]) or CState.cell(b) != CState.cell(a) \
 					or CState.stance(b) != CState.stance(a) or not _idle_in_town(b) or fresh.has(int(b["id"])):
 				continue
-			if CState.unit_count(a) + CState.unit_count(b) > CData.ARMY_MAX:
+			if CState.unit_count(a) + CState.unit_count(b) > CData.ARMY_MAX \
+					or CChars.merge_conflict(st, int(a["id"]), int(b["id"])):
 				continue
+			CChars.transfer(st, int(b["id"]), int(a["id"]))
 			(a["units"] as Array).append_array(b["units"])
 			_one_general(a)
 			a["idle"] = mini(int(a.get("idle", 0)), int(b.get("idle", 0)))
@@ -3004,7 +3034,8 @@ static func _check_victory_teams(st: Dictionary) -> void:
 ## battle applied later is in too). Private rows (built, recruited, failed
 ## orders ...) stay in `events` only.
 const CHRONICLE_KINDS := ["battle", "captured", "destroyed", "eliminated", "war", "peace", "trade", "trade_end",
-	"siege", "siege_lifted", "starving", "victory", "defeat", "team_joined", "team_notice", "team_left"]
+	"siege", "siege_lifted", "starving", "victory", "defeat", "team_joined", "team_notice", "team_left",
+	"char_captured", "char_wounded", "ransom"]
 const CHRONICLE_TURNS := 60
 
 
@@ -3300,6 +3331,8 @@ static func join_check(st: Dictionary, a: Dictionary, join: int) -> String:
 		return "no such army"
 	if CState.unit_count(a) + CState.unit_count(j) > CData.ARMY_MAX:
 		return "too many units to merge"
+	if CChars.merge_conflict(st, int(a["id"]), join):
+		return "both armies have a hero, assassin or diplomat of the same kind"
 	return ""
 
 
@@ -3634,6 +3667,8 @@ static func _arrive_merge(st: Dictionary, a: Dictionary, p: Dictionary) -> void:
 	var why := together(st, a, t)
 	if why == "" and CState.unit_count(a) + CState.unit_count(t) > CData.ARMY_MAX:
 		why = "too many units to merge"
+	if why == "" and CChars.merge_conflict(st, int(a["id"]), int(t["id"])):
+		why = "both armies have a hero, assassin or diplomat of the same kind"
 	if why != "":
 		event(st, {"k": "move_failed", "f": int(a["f"]), "army": int(a["id"]), "to": -1, "why": why})
 		return

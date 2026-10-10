@@ -17,6 +17,7 @@ extends RefCounted
 ## Symbol ids above 99 carry a tier mark (see icon_of).
 
 const UT := preload("res://sim/unit_types.gd")
+const UIIcons := preload("res://game/ui_icons.gd")
 
 const SIDE_COLORS := [Color(0.35, 0.6, 1.0), Color(1.0, 0.36, 0.28)]
 const ROUT_COLOR := Color(1.0, 0.9, 0.3)
@@ -183,6 +184,8 @@ static func draw_glyph(ci: CanvasItem, icon: int, c: Vector2, s: float, col: Col
 				c + Vector2(0.2, 0.9) * s]), col, w * 1.1, true)
 			ci.draw_line(c + Vector2(-0.22, 0.1) * s, c + Vector2(-0.45, 0.55) * s, col, w * 0.7, true)
 			ci.draw_line(c + Vector2(0.22, 0.1) * s, c + Vector2(0.45, 0.55) * s, col, w * 0.7, true)
+		20, 21, 22:  # heroes and agents (sim/unit_types.gd CHARS): crown, dagger, scroll (game/ui_icons.gd)
+			UIIcons.draw_icon(ci, ["crown", "dagger", "scroll"][icon - 20], Rect2(c - Vector2(s, s), Vector2(s, s) * 2.0), col)
 		_:
 			ci.draw_circle(c, s * 0.3, col)
 

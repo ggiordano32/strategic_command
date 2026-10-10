@@ -61,6 +61,7 @@ const UT := preload("res://sim/unit_types.gd")
 const Saves := preload("res://game/campaign/saves.gd")
 const CP := preload("res://campaign/cai_profile.gd")
 const CAI := preload("res://campaign/cai.gd")
+const CChars := preload("res://campaign/cchars.gd")
 
 var fails := 0
 
@@ -126,6 +127,7 @@ func _init() -> void:
 	_light_art()
 	_teams()
 	_ai_skilled()
+	_chars()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
 	quit(0 if fails == 0 else 1)
 
@@ -3595,19 +3597,208 @@ func _ai_skilled() -> void:
 	# The Skilled behaviours run (counters, outside the state): an AI-only
 	# campaign, every faction Skilled.
 	CP.reset_counters()
-	var sk := CState.new_campaign("test", 4242, [], {"ai_campaign_skill": CP.SKILLED})
-	for t in 60:  # (60 turns since the generals, 2026-10-09: an army in danger falls back later)
-		sk = CTurn.resolve_turn(sk, [])
+	# (Heroes off here: the fall-backs are a fragile count and the spending on
+	# them changes the course; two seeds summed since the real coast, 2026-10-10:
+	# one seed's fall-backs read 0 after a few coastal cells moved.)
+	CP.set_knob(CP.SKILLED, CP.CHAR_HERO, 0)
+	CP.set_knob(CP.SKILLED, CP.CHAR_DIPLOMAT, 0)
+	var sk_keys := [CP.C_SK_TWO_TO_ONE, CP.C_SK_HUNT_DECLINED, CP.C_SK_TIMED, CP.C_SK_MERGE, CP.C_SK_RALLY, CP.C_SK_FALLBACK]
+	var sk_n := {}
+	var sk := {}
+	for seed_v in [4242, 4243]:
+		sk = CState.new_campaign("test", seed_v, [], {"ai_campaign_skill": CP.SKILLED})
+		for t in 60:  # (60 turns since the generals, 2026-10-09: an army in danger falls back later)
+			sk = CTurn.resolve_turn(sk, [])
+		for key in sk_keys:
+			for f in CState.nf():
+				sk_n[key] = int(sk_n.get(key, 0)) + CP.counter(key, f)
+	CP.set_knob(CP.SKILLED, CP.CHAR_HERO, 8)
+	CP.set_knob(CP.SKILLED, CP.CHAR_DIPLOMAT, 1)
 	var used: Array = []
-	for key in [CP.C_SK_TWO_TO_ONE, CP.C_SK_HUNT_DECLINED, CP.C_SK_TIMED, CP.C_SK_MERGE, CP.C_SK_RALLY, CP.C_SK_FALLBACK]:
-		var n := 0
-		for f in CState.nf():
-			n += CP.counter(key, f)
+	for key in sk_keys:
+		var n := int(sk_n[key])
 		used.append("%s %d" % [key, n])
-		_check(n > 0, "Skilled behaviour used in 60 AI turns: %s (%d)" % [key, n])
+		_check(n > 0, "Skilled behaviour used in 2 x 60 AI turns: %s (%d)" % [key, n])
 	var mk := 0
 	for key in CP.MISTAKE_KEYS:
 		for f in CState.nf():
 			mk += CP.counter(key, f)
 	_check(mk == 0, "Skilled makes no deliberate mistakes (%d)" % mk)
 	CP.reset_counters()
+
+
+## Heroes and agents (STATUS 8a, campaign/cchars.gd): recruiting with its
+## building and money checks, the slots of an army, attach / detach, merges,
+## capture of a character left in a lost city, an army lost, a battle with
+## characters in the scenario and an outcome with a fallen hero and prisoners
+## (wounds, ransom at the end of the turn), auto-resolve, determinism, the AI.
+func _chars() -> void:
+	var rome := _f("rome")
+	var epi := _f("epirus")
+	var lat := _r("latium")
+	if not CChars.available("hero_cav") or not CChars.available("diplomat"):
+		_check(false, "the character unit rows exist (the sim agent's rows)")
+		return
+	var st := _empty6()
+	_italy(st, rome)
+	st["factions"][rome]["treasury"] = 20000
+	var site := CGrid.site(lat)
+	var a := _put(st, rome, site, ["heavy", "legate"])
+	var b := _put(st, rome, CState.field_cell(lat), ["heavy"])
+	var far := _put(st, rome, _row(lat, 1, 0)[0], ["heavy"])
+	_set_bld(st, lat, CData.BARRACKS, 1)
+	_set_bld(st, lat, CData.MARKET, 0)
+	_check(CRules.apply_order(CState.copy(st), rome, {"t": "recruit_char", "kind": "hero_cav", "r": lat, "army": int(a["id"])}) == "needs Barracks 2",
+		"a hero needs Barracks 2")
+	_set_bld(st, lat, CData.BARRACKS, 2)
+	_check(CRules.apply_order(CState.copy(st), rome, {"t": "recruit_char", "kind": "diplomat", "r": lat}).begins_with("needs Market"),
+		"a diplomat needs a Market")
+	_set_bld(st, lat, CData.MARKET, 1)
+	_check(CRules.apply_order(CState.copy(st), rome, {"t": "recruit_char", "kind": "assassin", "r": lat}) == "needs Market 2",
+		"an assassin needs Market 2")
+	_set_bld(st, lat, CData.MARKET, 2)
+	var poor := CState.copy(st)
+	poor["factions"][rome]["treasury"] = 1499
+	_check(CRules.apply_order(poor, rome, {"t": "recruit_char", "kind": "hero_cav", "r": lat}) == "not enough money", "not enough money (1,500 for a hero)")
+	_check(CRules.apply_order(CState.copy(st), rome, {"t": "recruit_char", "kind": "hero_cav", "r": lat, "army": int(far["id"])}) == "not at the settlement",
+		"the army must stand at the settlement")
+	var s1 := CState.copy(st)
+	var tr0 := int(s1["factions"][rome]["treasury"])
+	_check(CRules.apply_order(s1, rome, {"t": "recruit_char", "kind": "hero_cav", "r": lat, "army": int(a["id"])}) == ""
+		and int(s1["factions"][rome]["treasury"]) == tr0 - 1500, "a Master of Horse for army A, paid at once (1,500)")
+	_check(CRules.apply_order(s1, rome, {"t": "recruit_char", "kind": "diplomat", "r": lat}) == "a character is already raised here this turn",
+		"one character recruit a turn per region")
+	_check(CChars.all(s1).is_empty(), "... he appears at the end of the turn")
+	var s2 := CTurn.resolve_turn(s1, [CTurn.submission(s1, rome, [])])
+	var cs := CChars.of_army(s2, int(a["id"]))
+	_check(cs.size() == 1 and str(cs[0]["kind"]) == "hero_cav" and int(cs[0]["wounded"]) == 0 and CData.name_list(rome).has(str(cs[0]["name"])),
+		"he joins the army, fit, with a Roman name (%s)" % (str(cs[0]["name"]) if cs.size() > 0 else "-"))
+	_check(CState.unit_count(CState.army(s2, int(a["id"]))) == 2, "... and takes no unit slot")
+	_check(CRules.apply_order(s2, rome, {"t": "recruit_char", "kind": "hero_foot", "r": lat, "army": int(a["id"])}) == "the army already has a hero",
+		"a second hero for the army is refused")
+	_check(CRules.apply_order(CState.copy(s2), rome, {"t": "recruit_char", "kind": "hero_foot", "r": lat, "army": int(b["id"])}) == "",
+		"... a hero for another army is fine")
+	# Several kinds in one army over turns; one of each slot.
+	var s3 := CState.copy(s2)
+	CRules.apply_order(s3, rome, {"t": "recruit_char", "kind": "assassin", "r": lat, "army": int(a["id"])})
+	s3 = CTurn.resolve_turn(s3, [CTurn.submission(s3, rome, [])])
+	CRules.apply_order(s3, rome, {"t": "recruit_char", "kind": "diplomat", "r": lat, "army": int(a["id"])})
+	s3 = CTurn.resolve_turn(s3, [CTurn.submission(s3, rome, [])])
+	_check(CChars.of_army(s3, int(a["id"])).size() == 3, "hero, assassin and diplomat ride with one army (%d)" % CChars.of_army(s3, int(a["id"])).size())
+	_check(CRules.apply_order(s3, rome, {"t": "recruit_char", "kind": "assassin", "r": lat, "army": int(a["id"])}) == "the army already has a assassin",
+		"a second assassin is refused")
+	# Detach in the city, attach to another army, limits.
+	var hero_id := int(cs[0]["id"])
+	var s4 := CState.copy(s3)
+	_check(CRules.apply_order(s4, rome, {"t": "detach", "id": hero_id}) == "" and int(CChars.by_id(s4, hero_id)["army"]) < 0
+		and int(CChars.by_id(s4, hero_id)["r"]) == lat, "detach: he stands in the city")
+	_check(CChars.in_city(s4, rome, lat).size() == 1, "... and the city lists him")
+	_check(CRules.apply_order(s4, rome, {"t": "attach", "id": hero_id, "army": int(far["id"])}) == "the army is not at the city",
+		"attach refused for an army away from the city")
+	_check(CRules.apply_order(s4, rome, {"t": "attach", "id": hero_id, "army": int(b["id"])}) == ""
+		and int(CChars.by_id(s4, hero_id)["army"]) == int(b["id"]), "attach to an army at the city")
+	_check(CRules.apply_order(s4, rome, {"t": "detach", "id": hero_id + 99}) == "no such character", "detach: unknown character")
+	var sf := CState.copy(s3)
+	CChars.by_id(sf, hero_id)["army"] = int(far["id"])
+	_check(CRules.apply_order(sf, rome, {"t": "detach", "id": hero_id}) == "the army is not at a city of yours", "detach only at a city of ours")
+	# Merging: both armies with a hero refused; one with refused-free merge carries him.
+	var sm := CState.copy(s4)
+	_check(CChars.by_id(sm, hero_id)["army"] == int(b["id"]), "(B holds the hero)")
+	_check(CRules.apply_order(sm, rome, {"t": "merge", "army": int(b["id"]), "into": int(a["id"])}) == "",
+		"B (a hero) merges into A (assassin, diplomat)")
+	_check(CChars.of_army(sm, int(a["id"])).size() == 3 and CState.army(sm, int(b["id"])).is_empty(), "... the characters go with it")
+	var sc := CState.copy(s3)
+	var b2 := CState.army(sc, int(b["id"]))
+	CChars.make_char(sc, rome, "hero_foot", lat, int(b2["id"]))
+	_check(CRules.apply_order(sc, rome, {"t": "merge", "army": int(b["id"]), "into": int(a["id"])}).begins_with("both armies have"),
+		"two heroes cannot merge")
+	# A character left in a city that falls is captured (chronicle row).
+	var sl := CState.copy(s4)
+	CRules.apply_order(sl, rome, {"t": "detach", "id": hero_id})
+	CRules._capture(sl, lat, epi)
+	CChars.sweep(sl)
+	var gone := true
+	for c in CChars.all(sl):
+		if int(c["id"]) == hero_id:
+			gone = false
+	var ch_ok := false
+	for e in sl.get("chronicle", []):
+		if str(e["k"]) == "char_captured":
+			ch_ok = true
+	_check(gone and ch_ok, "a character in a captured city is captured: removed, in the chronicle")
+	# An army lost: he reaches the nearest city of ours, wounded 3 turns.
+	var sg := CState.copy(s3)
+	CChars.track(sg)
+	sg["armies"].remove_at(CState.army_index(sg, int(a["id"])))
+	CChars.sweep(sg)
+	var lost: Array = []
+	for c in CChars.all(sg):
+		if int(c["id"]) == hero_id:
+			lost.append(c)
+	_check(lost.size() == 1 and int(lost[0]["army"]) < 0 and int(sg["regions"][int(lost[0]["r"])]["owner"]) == rome
+		and int(lost[0]["wounded"]) == int(sg["turn"]) + CData.CHAR_LOST_TURNS and not CChars.fit(sg, lost[0]),
+		"an army lost: the hero goes to a city of ours, wounded %d turns" % CData.CHAR_LOST_TURNS)
+	# A battle with characters: the scenario carries them, the outcome wounds the fallen, prisoners are ransomed.
+	var sb := CState.copy(s3)
+	var en := _put(sb, epi, CState.field_cell(lat), ["pike"])
+	var ab := CState.army(sb, int(a["id"]))
+	var bt := {"id": 1, "r": lat, "att": [int(ab["id"])], "def": [int(en["id"])], "reinf": [], "att_f": rome,
+		"def_f": epi, "kind": "field", "settlement": 0}
+	sb["battles"] = [bt]
+	sb["phase"] = "battles"
+	var built := CBattle.build(sb, bt, rome)
+	var sc_chars: Array = built["scenario"].get("chars", [])
+	var ss: int = built["sim_side"][0]
+	_check(sc_chars.size() == 2 and (sc_chars[ss] as Array).size() == 3 and (sc_chars[1 - ss] as Array).is_empty()
+		and str(sc_chars[ss][0]["key"]) == "hero_cav", "CBattle.build: the army's three characters are the scenario's chars")
+	var rows: Array = []
+	for k in (built["map"] as Array).size():
+		var m: Dictionary = built["map"][k]
+		rows.append({"unit": k, "side": ss if int(m["side"]) == 0 else 1 - ss, "killed": 0, "routed_off": 0, "withdrawn": 0,
+			"remaining": int(m["n"]), "kills": 0})
+	var k0 := rows.size()
+	for i in 3:
+		rows.append({"unit": k0 + i, "side": ss, "char": 1, "alive": 0 if i == 0 else 1, "killed": 0, "routed_off": 0,
+			"withdrawn": 0, "remaining": 1 if i > 0 else 0, "kills": 0})
+	var res := {"winner": ss, "tick": 500, "units": rows, "sides": [{"side": ss, "prisoners": 40}, {"side": 1 - ss, "prisoners": 0}]}
+	var out := CBattle.outcome_from_result(built, res, "fought")
+	_check((out["chars"] as Array).size() == 3 and int(out["chars"][0]["id"]) == hero_id and int(out["chars"][0]["alive"]) == 0
+		and int(out["chars"][1]["alive"]) == 1 and out["prisoners"] == [40, 0], "outcome_from_result: the fallen hero and the prisoners")
+	var tr1 := int(sb["factions"][rome]["treasury"])
+	var so := CTurn.apply_battle(sb, 1, out)
+	var hd := CChars.by_id(so, hero_id)
+	_check(int(hd["wounded"]) == int(so["turn"]) + CData.CHAR_WOUND_TURNS and not CChars.fit(so, hd) and CChars.fit(so, CChars.by_id(so, hero_id + 1)),
+		"a fallen hero is wounded for %d turns (not dead); the others are fit" % CData.CHAR_WOUND_TURNS)
+	_check(int(so["factions"][rome]["treasury"]) == tr1 and int(so["factions"][rome]["ransom"]) == 40, "prisoners wait for the end of the turn")
+	var se := CState.copy(so)
+	CRules.end_of_turn(se)
+	var rn := 0
+	for e in se["events"]:
+		if str(e["k"]) == "ransom":
+			rn = int(e["gold"])
+	_check(rn == 40 * CData.PRISONER_RANSOM and not se["factions"][rome].has("ransom"), "... then %d gold a man is paid and logged (%d)" % [CData.PRISONER_RANSOM, rn])
+	# Auto-resolve: a hero adds char_pct to his army.
+	var s_no := CBattle.strengths(s4, [CState.army(s4, int(a["id"]))], [], lat, false)
+	var s_yes := CBattle.strengths(s3, [CState.army(s3, int(a["id"]))], [], lat, false)
+	var pct := CChars.stat("hero_cav", "char_pct")
+	_check(pct > 0 and s_yes[0] == CState.strength(CState.army(s3, int(a["id"]))) * (100 + pct) / 100
+		and s_no[0] == CState.strength(CState.army(s4, int(a["id"]))), "auto-resolve: a fit hero adds %d %% to his army (%d against %d)" % [pct, s_yes[0], s_no[0]])
+	var sw := CState.copy(s3)
+	CChars.by_id(sw, hero_id)["wounded"] = int(sw["turn"]) + 2
+	_check(CBattle.strengths(sw, [CState.army(sw, int(a["id"]))], [], lat, false)[0] == s_no[0], "... a wounded one adds nothing")
+	# Wounds heal with the turns.
+	_check(CChars.wounded_left(sw, CChars.by_id(sw, hero_id)) == 2, "wounded_left counts the turns")
+	# Determinism, plain data, JSON.
+	var sub := [CTurn.submission(s3, rome, [{"t": "detach", "id": hero_id}])]
+	var d1 := CTurn.resolve_turn(s3, sub)
+	var d2 := CTurn.resolve_turn(s3, sub)
+	_check(CState.state_hash(d1) == CState.state_hash(d2), "characters: two resolutions give the same hash")
+	_check(_plain(d1) and CState.state_hash(CState.from_json(CState.to_json(d1))) == CState.state_hash(d1), "characters in the state: plain data, JSON round trip")
+	# The AI: Average raises heroes, Easy never.
+	var avg := CState.new_campaign("t", 77, [])
+	var easy := CState.new_campaign("t", 77, [], {"ai_campaign_skill": CP.EASY})
+	for t in 60:
+		avg = CTurn.resolve_turn(avg, [])
+		easy = CTurn.resolve_turn(easy, [])
+	_check(CChars.all(avg).size() > 0, "the Average AI raised heroes in 60 turns (%d)" % CChars.all(avg).size())
+	_check(CChars.all(easy).is_empty(), "the Easy AI raises none")

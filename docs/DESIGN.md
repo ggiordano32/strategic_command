@@ -2782,6 +2782,127 @@ ford), `game/city_layer.gd` (`draw_bridge`), `game/campaign/city_preview.gd`
   may still charge over the crossing; the bridge cannot be broken or
   burnt; no balance run (crossing row in the equal-force harness: later).
 
+### Heroes and agents (as built, battle side, 2026-10-10)
+
+STATUS 8a. Characters are one-man units the scenario adds; the campaign
+side (recruiting, attaching, wounds, ransoms) is docs/CAMPAIGN.md's. The
+general's command aura is the model: generic row fields read in the
+once-a-second aura pass, every rule skipped in a battle without characters
+(`ch_on`), so every other battle plays and hashes as before.
+
+**Rows** (`sim/unit_types.gd` `CHARS`, appended after the light artillery:
+every other index unchanged; `"char": 1`, `"char_kind"` `UT.CK_*`; size 1;
+`upkeep_pct` 0, `str_pct` 0; `char_pct` the auto-resolve bonus). Numbers
+chosen once (Guard Cavalry / Agema 46 / 40 / armour 16 the hero
+yardstick), not tuned:
+
+| Key | Name | Kind | Price | Body | Aura (`ch_r`) |
+|---|---|---|---|---|---|
+| `hero_foot` | Champion | 1, foot, infantry | 1,500 | 46 / 40 / 16, shield 40, hp 600, light infantry's pace, `duel` +35 to-hit | 40 m: foot units' to-hit +15 % (`au_hit`), +3 morale a second (`au_mor`) |
+| `hero_missile` | Master of Archers | 2, horse, missile | 1,500 | 46 / 40 / 16, hp 600, a 160 m bow (40 dmg, 40 ap, 60 shots, scatter 25) | 40 m: missile units' and engines' range +10 % (`au_rng`), scatter -20 % (`au_spr`) |
+| `hero_cav` | Master of Horse | 3, horse, cavalry | 1,500 | 46 / 40 / 16, hp 600, charge 80 | 40 m: riders' (horse, camel, elephant) charge impact +20 % (`au_mom`), routing riders +40 a second (`au_rally`) |
+| `hero_siege` | Master Engineer | 4, horse, cavalry | 1,500 | 46 / 40 / 16, hp 600, charge 40 | the whole side (siege works are spread out: no radius): ladder ticks 80 % (`au_climb` 25: 25 % faster), engine reload work 83 % (`au_reload` 20), ram / siege tower battering 75 % (`au_batter` 25) |
+| `assassin` | Assassin | 5, foot | 800 | 30 / 20 / 3, hp 80 (a weak light man), `hidden` | none |
+| `diplomat` | Diplomat | 6, foot, `unarmed` | 800 | attack 0 / 15 / 2, hp 100 | 30 m: any friendly unit's fear losses x 50 % (`au_steady`) |
+
+Heroes: `char_pct` 6 (campaign auto-resolve), never break (`nobreak`,
+morale 1000), riders `m_down` 1 (a lucky arrow), `fall_r` 60 m,
+`fall_loss` 120, `fall_gain` 60. Agents `char_pct` 0. Unit icons 20 / 21 /
+22 (`game/unit_icons.gd` draws them with `game/ui_icons.gd`'s crown,
+dagger and scroll; the battle markers use `Overlay.draw_char_glyph`).
+
+**Scenario key `"chars"`**: per side a list of `{"key", "name"}` (an Array
+of two lists, or a Dictionary "0" / "1"). Setup (`BattleSim._char_units`)
+adds each as a one-man unit after the scenario's own units (before the
+towers and the dog packs), side 0's list then side 1's: heroes 25 m
+(`CH_BACK`) behind the mean of their side's unit fronts, 8 m apart; the
+assassin 15 m (`CH_REAR`) behind the side's rearmost unit beyond its left
+flank, the diplomat beyond its right; facing as the side does; on maps
+with buildings onto the nearest open ground. They never count toward
+holding the field (`_check_winner`); the lockstep gives them to the player
+of their side's first scenario unit. Result rows (only with characters):
+every row `"surrendered"` (men taken prisoner); a character's row `"char"`
+1, `"kind"`, `"alive"` (0 only if he was killed: withdrawn or still
+standing is alive), `"ci"` (his place in his side's list); side totals
+`"prisoners"` (enemy men this side took) and `"surrendered"`.
+
+**State** (`_char_arrays`, hashed only with `ch_on`; snapshot-safe as
+script variables): `u_char` (kind), `u_aura` (`AU_*` bits this second),
+`u_hidden`, `u_cho` / `u_cht` / `u_chk` / `u_chf` (the act, its target,
+its work ticks or an attempt's outcome, flags acted / tried / inside),
+`u_chcd` (parley wait), `u_hold` (held by a parley until tick), `u_surr`;
+per side `ch_sg` (a siege hero on the field this second), `ch_pris`.
+
+**Auras** (`_update_auras`, sources: rows with `ch_r` and the siege hero):
+a friendly unit (not the hero's own) within `ch_r` box to box gets the
+kind's bit; several heroes of one kind do not stack. Effects: `_melee`
+(`raw * (100 + au_hit) / 100`, plus the attacker's `duel`), the foot hero's
+morale up to the recovery cap (as `cmd_mor`), `range_pct` / `_fire` /
+`_art_fire` (range and scatter), `_impact` (power), the routing branch
+(rally), `climb_pct` / `reload_pct` / `batter_pct` for the siege hero's
+side (ladder step, `_update_artillery`, `_ram_hit` and the smash of a ram
+or tower on the ground), and the steadying aura on the elephants' / camels'
+/ dogs' aura losses, the routing-friends loss and artillery fright in the
+rout test.
+
+**A hero falls** (his man killed: `_remove` -> `_ch_fall`): units of his
+side within `fall_r` lose `fall_loss` morale at once, the enemy's there
+gain `fall_gain`. Battery fire at will adds 3,000 to a hero's score; tower
+engines rank him with the ram's crew.
+
+**Assassin.** Hidden (`u_hidden`) while he has not acted and no enemy unit
+is within `SEEN_R` 10 m of him (box to box) unless he stands in woods;
+hidden from that side's view and AI (`hidden_from`: markers, taps, the
+AI's and the sim's target lists) and he never seeks a fight (his unit's
+contact is cleared). Orders (lockstep inputs; `char_refusal` shared by the
+sim, the view and the AI; any unit order to him calls his act off):
+- `ORDER_SABOTAGE` 21 {unit, eg | gate}. An enemy engine group (not a
+  tower's): he walks (runs) to its nearest engine not wrecked; within
+  `SAB_R` 6 m of it (the crews stand round it) he wrecks one every
+  `SABOTAGE_T` 5 s (`stat_sabotage`; abandoned ones too). A shut gate
+  (attackers only): he walks to its outer face; within 5 m he is over the
+  wall beside it, onto its inner face (or he is inside already), and
+  unbars it in `SAB_UNBAR` 15 s there (the ladder men's UNBAR time).
+- `ORDER_ATTEMPT` 22 {unit, target: an enemy character or a general's unit
+  whose command has not fallen}; once a battle. He walks to within
+  `ATTEMPT_R` 3 m of the target's nearest man and rolls once (the sim's
+  RNG): `ATTEMPT_PCT` 40 % that man is killed (a general's unit: the
+  general, `_cmd_fall`: the army's command loss and his aura gone),
+  `ATTEMPT_WOUND` 30 % wounded (half his row's hit points), else nothing;
+  `u_chk` keeps 1 / 2 / 3.
+- Acting reveals him for good; `CAPTURE_N` 3 enemy men formed or fighting
+  within `CAPTURE_R` 1.5 m of him (once a second) take him (he dies).
+
+**Diplomat.** Unarmed (never seeks a fight); his steadying aura above.
+`ORDER_PARLEY` 23 {unit, target}: an enemy unit routing or below
+`PARLEY_MOR` 25 % of its row's morale (a garrison on a wall only while the
+plaza is being held, `cap_t` > 0; not a character, a tower or a pack), and
+not within `PARLEY_WAIT` 30 s of a refused one. He walks to within
+`PARLEY_R` 20 m (routers within `PARLEY_SEE` 80 m of him stop for his white
+flag and do not rally meanwhile); then for `PARLEY_T` 5 s it, he and every
+unit within 20 m of either hold (`u_hold`: no melee, anchors and routers
+stand; missiles still fly, so only missiles can kill him then); then one
+roll: `PARLEY_PCT` 60 % routing / `PARLEY_PCT_W` 35 % wavering (0 if it has
+recovered) it surrenders: its men leave the field (`GONE_SURR`, `u_surr`,
+the unit `U_LEFT`; `ch_pris` of his side += men; a general's
+unit taken: `_cmd_fall`); else it fights on.
+
+**View**: markers with a gold rim and the glyph (our hidden assassin
+faded, the enemy's not drawn and not tappable), a white flag while the
+diplomat goes to parley, a ring filling over a parley / sabotage /
+unbarring; a bar of Sabotage / Attempt / Parley buttons over the HUD for a
+selected assassin or diplomat (press, then tap the target; refusals
+flashed); the unit book's own page per row and a "Heroes and agents"
+page; the custom battle setup a toggle per character per side (their
+price counts against the funds). Battle AI: docs/AI.md 27.
+
+- Not built / gaps: the soldier layer still draws the enemy's hidden
+  assassin's man (`game/soldier_layer.gd` needs a skip by
+  `hidden_from`; matters in head-to-head only); the HUD card buttons and key bindings
+  for the three acts (the bar is `game/battle.gd`'s); a wounded hero keeps
+  his aura; a general wounded by an attempt keeps his; the AI never
+  sabotages; prisoners only by parley (no capture of routers otherwise).
+
 ## 5. Networking
 
 ### Live battles: deterministic lockstep

@@ -46,6 +46,7 @@ const CRules := preload("res://campaign/crules.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
 const CAI := preload("res://campaign/cai.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
+const CChars := preload("res://campaign/cchars.gd")
 
 const KEEP_EVENTS_TURNS := 2
 
@@ -237,6 +238,7 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 	CRules.end_of_turn(st)
 	CRules.process_leaving(st)
 	CRules.check_eliminations(st)
+	CChars.sweep(st)
 	CRules.check_victory(st)
 	st["turn"] = turn + 1
 	if str(st["phase"]) != "over":

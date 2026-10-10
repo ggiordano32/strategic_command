@@ -569,3 +569,44 @@ static func is_capital(r: int) -> bool:
 ## "280 BC, summer" for turn t.
 static func date_text(turn: int) -> String:
 	return "%d BC, %s" % [START_YEAR - turn / 2, "summer" if turn % 2 == 0 else "winter"]
+
+
+# ------------------------------------------------ heroes and agents (8a) ---
+## Characters (campaign/cchars.gd): a hero (Champion, Master of Archers,
+## Master of Horse, Master Engineer), an assassin and a diplomat ride with an
+## army without taking a unit slot (one of each slot per army). Unit rows are
+## in sim/unit_types.gd; these are the campaign rules' numbers.
+const CHAR_WOUND_TURNS := 5      # a character who fell in a battle is out this many turns
+const CHAR_LOST_TURNS := 3       # ... one whose army was destroyed, after he reached a city of ours
+const PRISONER_RANSOM := 5       # gold a man for a winner's prisoners, paid at the end of the turn
+## Where each kind is recruited: [building chain, level] (hero Barracks 2,
+## assassin Market 2, diplomat Market 1). One character recruit a turn per region.
+const CHAR_NEEDS := {"hero_foot": [BARRACKS, 2], "hero_missile": [BARRACKS, 2], "hero_cav": [BARRACKS, 2],
+	"hero_siege": [BARRACKS, 2], "assassin": [MARKET, 2], "diplomat": [MARKET, 1]}
+## Names by culture (12 each), picked with the state's RNG. The Iberian
+## tribes use their own list (their culture is Celtic for the buildings).
+const NAMES_LATIN: Array[String] = ["Marcus Valerius", "Gaius Fabius", "Lucius Cornelius", "Quintus Aemilius",
+	"Publius Decius", "Titus Manlius", "Aulus Sempronius", "Gnaeus Domitius", "Servius Claudius", "Manius Curius",
+	"Spurius Postumius", "Decimus Junius"]
+const NAMES_PUNIC: Array[String] = ["Hanno", "Himilco", "Mago", "Hasdrubal", "Bomilcar", "Maharbal", "Adherbal",
+	"Gisco", "Hannibal Gisco", "Carthalo", "Sophoniba", "Mutines"]
+const NAMES_GREEK: Array[String] = ["Alexandros", "Demetrios", "Philon", "Kleomenes", "Aristides", "Lysandros",
+	"Nikanor", "Perdikkas", "Theron", "Xenophon", "Antigonos", "Menelaos"]
+const NAMES_CELTIC: Array[String] = ["Brennus", "Vercingos", "Cathbad", "Dumnorix", "Orgetorix", "Viridomarus",
+	"Boiorix", "Cativolcus", "Segovax", "Ambiorix", "Teutorix", "Catumandus"]
+const NAMES_IBERIAN: Array[String] = ["Indibil", "Mandonio", "Viriato", "Culcas", "Corbis", "Orisson", "Edeco",
+	"Moericanos", "Istolatios", "Luxinio", "Abilyx", "Attenes"]
+
+
+## The name list of faction f (an independent: Celtic).
+static func name_list(f: int) -> Array[String]:
+	if f >= 0 and str(FACTIONS[f]["key"]) == "iberians":
+		return NAMES_IBERIAN
+	match faction_culture(f):
+		LATIN:
+			return NAMES_LATIN
+		PUNIC:
+			return NAMES_PUNIC
+		GREEK:
+			return NAMES_GREEK
+	return NAMES_CELTIC

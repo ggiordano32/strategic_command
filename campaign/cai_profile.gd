@@ -162,7 +162,12 @@ const WAGON_MIN := SK_SUPPORT + 20           # an army with this many missile / 
 const TEAM_ACCEPT_TURNS := SK_SUPPORT + 21
 const TEAM_ACCEPT_PCT := SK_SUPPORT + 22
 const TEAM_PROPOSE := SK_SUPPORT + 23
-const N_KNOBS := SK_SUPPORT + 24
+# Heroes and agents (docs/CAMPAIGN.md): CHAR_HERO raises a hero for each army
+# of at least this many units when the money allows (0: never; Easy);
+# CHAR_DIPLOMAT (1) raises a diplomat for the main army. Never an assassin.
+const CHAR_HERO := SK_SUPPORT + 24
+const CHAR_DIPLOMAT := SK_SUPPORT + 25
+const N_KNOBS := SK_SUPPORT + 26
 
 # Deliberate mistakes (docs/AI.md 4, "Deliberate mistakes (campaign)"),
 # rolled with CState.rand at the decision point (cai.gd _mistake); each is a
@@ -248,6 +253,8 @@ const KNOBS: Array = [
 	[TEAM_ACCEPT_TURNS, 4, 4, 4],
 	[TEAM_ACCEPT_PCT, 250, 250, 250],
 	[TEAM_PROPOSE, 0, 0, 0],
+	[CHAR_HERO, 0, 8, 8],
+	[CHAR_DIPLOMAT, 0, 0, 1],
 	# Behaviours a level switches off (Average: as before).
 	[BUILD_CHEAPEST, 1, 0, 0],
 	[RECRUIT_LEAN_PCT, 70, 0, 0],

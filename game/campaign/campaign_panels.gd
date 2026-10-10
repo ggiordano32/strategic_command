@@ -9,6 +9,7 @@ const CState := preload("res://campaign/cstate.gd")
 const CRules := preload("res://campaign/crules.gd")
 const CTurn := preload("res://campaign/cturn.gd")
 const CAI := preload("res://campaign/cai.gd")
+const CChars := preload("res://campaign/cchars.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Terrain := preload("res://sim/terrain.gd")
@@ -134,6 +135,7 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 	if mine:
 		if grid:
 			_raise_section(box, r)  # version 6: recruiting is in the army card
+			_city_chars(box, r)
 		else:
 			_recruit(box, r)
 		_buildings(box, r)
@@ -777,7 +779,59 @@ func _recruit(box: VBoxContainer, r: int) -> void:
 ## "+n tiers" chip that shows the lower tiers (kept, just folded). make(o)
 ## builds one option's row (an HBox); a lower tier carrying o["force"] stays
 ## open. Open / closed state lives in _fold for the session.
-func _grouped(box: VBoxContainer, opts: Array, make: Callable, tag: String) -> void:
+func _grouped(box: VBoxContainer, opts_all: Array, make: Callable, tag: String) -> void:
+	# Only what the buildings here allow now (a row held back by money or the
+	# turn's slots stays, disabled); the locked rows ("needs Range 1") sit
+	# behind one folded line at the end.
+	var opts: Array = []
+	var locked: Array = []
+	var seen_line := {}
+	for o0 in opts_all:
+		if _is_locked(str(o0["why"])):
+			var lo: Dictionary = o0.duplicate()
+			lo["lower"] = false
+			locked.append(lo)
+			continue
+		var e0: Dictionary = o0.duplicate()
+		e0["lower"] = seen_line.has(str(o0["line"]))
+		seen_line[str(o0["line"])] = 1
+		opts.append(e0)
+	_grouped_open(box, opts, make, tag)
+	_locked_fold(box, locked.size(), tag, func(body: VBoxContainer):
+		for lo2 in locked:
+			body.add_child(make.call(lo2)))
+
+
+## A refusal that is about what the settlement lacks (building, roster), not
+## about money or this turn's slots.
+static func _is_locked(why: String) -> bool:
+	return why.begins_with("needs") or why == "not in your roster"
+
+
+## "Not available here (n)": a folded line that expands to the locked rows
+## (fill: called with the body box when it is built).
+func _locked_fold(box: VBoxContainer, n: int, tag: String, fill: Callable) -> void:
+	if n <= 0:
+		return
+	var fkey := "%s_locked" % tag
+	var open: bool = bool(_fold.get(fkey, false))
+	var head := Kit.button("Not available here (%d)%s" % [n, "" if open else "  +"], Callable(), 0, Kit.FONT_SMALL)
+	head.name = "locked_%s" % tag
+	head.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	head.custom_minimum_size.y = 44
+	var body := Kit.vbox(4)
+	body.name = "locked_body_%s" % tag
+	body.visible = open
+	fill.call(body)
+	head.pressed.connect(func():
+		body.visible = not body.visible
+		_fold[fkey] = body.visible
+		head.text = "Not available here (%d)%s" % [n, "" if body.visible else "  +"])
+	box.add_child(head)
+	box.add_child(body)
+
+
+func _grouped_open(box: VBoxContainer, opts: Array, make: Callable, tag: String) -> void:
 	var groups: Array = []
 	for g in Traits.GROUP_LABEL.size():
 		groups.append([])
@@ -1113,6 +1167,7 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 	cnt_l.name = "army_count"
 	Kit.label_icon(cnt_l, "men")
 	box.add_child(cnt_l)
+	_chars_block(box, a, mine)
 	if mine and CState.grid_on(ps):
 		_together_row(box, a)
 		_army_orders6(box, a)
@@ -1271,6 +1326,7 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 		box.add_child(ah)
 	if mine and CState.grid_on(ps):
 		_army_recruit(box, a)
+		_army_char_recruit(box, a)
 	if not mine or int(a["busy"]) != 0 or CRules.siege_role(ps, a) != 0:
 		return
 	var fl := Kit.flow(6)
@@ -1300,6 +1356,196 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 	box.add_child(fl)
 	box.add_child(Kit.label("Tap units to choose them for splitting or disbanding. Drag a unit (on a touch screen: hold it until it lifts) to change the order the army takes the field in.",
 		Kit.FONT_SMALL, Kit.COL_DIM, true))
+
+
+# ------------------------------------------------ heroes and agents (8a) ---
+
+const CHAR_GLYPH: Array[String] = ["crown", "dagger", "scroll"]
+
+
+## The "Characters" block of an army card: the three slots (hero, assassin,
+## diplomat) with the character's name and kind, how long he is wounded and
+## a Detach button (at a city of ours); a planned recruit for the army shows
+## greyed until the end of the turn. Enemy armies show the characters that
+## are not hidden (no assassins).
+func _chars_block(box: VBoxContainer, a: Dictionary, mine: bool) -> void:
+	var ps: Dictionary = s.ps
+	var id := int(a["id"])
+	var queued: Array = []
+	if mine:
+		for o in s.orders:
+			if str(o["t"]) == "recruit_char" and int(o.get("army", -1)) == id:
+				queued.append(o)
+	var rows: Array = []
+	for slot in 3:
+		var c := CChars.in_slot(ps, id, slot)
+		if not c.is_empty() and (mine or slot != CChars.SLOT_ASSASSIN):
+			rows.append(_char_row(c, mine))
+			continue
+		var q: Dictionary = {}
+		for o in queued:
+			if CChars.slot_of(str(o["kind"])) == slot:
+				q = o
+		if not q.is_empty():
+			rows.append(_char_queued_row(q))
+		elif mine and CChars.available(CChars.KINDS[0]):
+			var e := Kit.label("No %s" % CChars.SLOT_NAMES[slot].to_lower(), Kit.FONT_SMALL, Kit.COL_DIM)
+			e.name = "char_none_%d" % slot
+			Kit.label_icon(e, CHAR_GLYPH[slot])
+			rows.append(e)
+	if CChars.of_army(ps, id).is_empty() and queued.is_empty():
+		return  # (no character: the recruit rows further down offer them)
+	var sec := Kit.section("Characters", "crown")
+	sec.name = "chars_section"
+	box.add_child(sec)
+	for rw in rows:
+		box.add_child(rw)
+
+
+## One character of an army or a city: glyph, "Master of Horse  Marcus
+## Valerius", wounded note; tap opens the unit page; Detach when allowed.
+func _char_row(c: Dictionary, mine: bool, with_detach: bool = true) -> Control:
+	var ps: Dictionary = s.ps
+	var ty := UT.index_of(str(c["kind"]))
+	var h := Kit.hbox(4)
+	h.name = "char_row_%d" % int(c["id"])
+	var col := _fc(int(c["f"])).lightened(0.5)
+	var txt := "%s  %s" % [CChars.display(str(c["kind"])), str(c["name"])]
+	var left := CChars.wounded_left(ps, c)
+	var b := Kit.button(txt, func(): s.open_unit_page(ty, Callable(), ""), 0.0, Kit.FONT_SMALL)
+	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.clip_text = true
+	b.add_theme_color_override("font_color", Kit.COL_BAD if left > 0 else col)
+	Kit.set_icon(b, CHAR_GLYPH[CChars.slot_of(str(c["kind"]))], Kit.COL_BAD if left > 0 else col)
+	b.name = "char_%d" % int(c["id"])
+	b.tooltip_text = Traits.char_text(ty)
+	h.add_child(b)
+	if left > 0:
+		var wl := Kit.label("wounded %d" % left, Kit.FONT_SMALL, Kit.COL_BAD)
+		wl.name = "char_wounded_%d" % int(c["id"])
+		wl.tooltip_text = "Out of battle for %d more turn%s." % [left, "" if left == 1 else "s"]
+		h.add_child(wl)
+	if mine and with_detach and CChars.detach_check(ps, int(c["f"]), int(c["id"])) == "":
+		var cid := int(c["id"])
+		var d := Kit.icon_button("", "split", func(): s.add_order({"t": "detach", "id": cid}), 48)
+		d.name = "detach_%d" % cid
+		d.tooltip_text = "Detach: he stays in the city"
+		h.add_child(d)
+	return h
+
+
+## A character planned for the army (a recruit order), greyed, with Cancel.
+func _char_queued_row(o: Dictionary) -> Control:
+	var h := Kit.hbox(4)
+	var l := Kit.label("%s  (arrives at the end of the turn)" % CChars.display(str(o["kind"])), Kit.FONT_SMALL, Kit.COL_DIM)
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	Kit.label_icon(l, CHAR_GLYPH[CChars.slot_of(str(o["kind"]))])
+	h.name = "char_queued_%s" % str(o["kind"])
+	h.add_child(l)
+	h.add_child(Kit.icon_button("", "close", func(): s.remove_orders(func(x): return is_same(x, o)), 44))
+	return h
+
+
+## The characters standing in city r (not with an army): Attach to each of
+## our armies there that has the slot free, and the planned recruits.
+func _city_chars(box: VBoxContainer, r: int) -> void:
+	var ps: Dictionary = s.ps
+	var f: int = s.f
+	var list := CChars.in_city(ps, f, r)
+	var queued: Array = []
+	for o in s.orders:
+		if str(o["t"]) == "recruit_char" and int(o["r"]) == r and int(o.get("army", -1)) < 0:
+			queued.append(o)
+	var avail := CChars.available(CChars.KINDS[0])
+	if list.is_empty() and queued.is_empty() and not avail:
+		return
+	var sec := Kit.section("Characters at %s" % CData.REGIONS[r]["city"], "crown")
+	sec.name = "city_chars_section"
+	box.add_child(sec)
+	var armies: Array = []
+	for a in ps["armies"]:
+		if int(a["f"]) == f and int(a["busy"]) == 0 and CGrid.cheb(CState.cell(a), CGrid.site(r)) <= 1:
+			armies.append(a)
+	for c in list:
+		box.add_child(_char_row(c, true, false))
+		var fl := Kit.flow(4)
+		for a in armies:
+			var aid := int(a["id"])
+			var cid := int(c["id"])
+			var bt := Kit.icon_button("Attach to army (%d units)" % CState.unit_count(a), "merge",
+				func(): s.add_order({"t": "attach", "id": cid, "army": aid}), 0)
+			bt.name = "attach_%d_%d" % [cid, aid]
+			bt.disabled = CChars.attach_check(ps, f, cid, aid) != ""
+			fl.add_child(bt)
+		if armies.is_empty():
+			box.add_child(Kit.label("No army of ours is here to take him.", Kit.FONT_SMALL, Kit.COL_DIM, true))
+		else:
+			box.add_child(fl)
+	for o in queued:
+		box.add_child(_char_queued_row(o))
+	if list.is_empty() and queued.is_empty():
+		box.add_child(Kit.label("No hero, assassin or diplomat waits here.", Kit.FONT_SMALL, Kit.COL_DIM, true))
+	_char_recruit_rows(box, r, -1)
+
+
+## The army card's "Recruit character" rows, when it stands at a settlement of ours.
+func _army_char_recruit(box: VBoxContainer, a: Dictionary) -> void:
+	var r := CRules.recruit_region(s.ps, a)
+	if r < 0 or int(a["busy"]) != 0 or not CChars.available(CChars.KINDS[0]):
+		return
+	_char_recruit_rows(box, r, int(a["id"]))
+
+
+## "Recruit character": the three kinds with price and the building needed;
+## army >= 0: he joins that army at the end of the turn, else he waits in
+## the city. One character a turn per settlement.
+func _char_recruit_rows(box: VBoxContainer, r: int, army: int) -> void:
+	var ps: Dictionary = s.ps
+	var sec := Kit.section("Recruit character at %s" % CData.REGIONS[r]["city"], "crown")
+	sec.name = "char_recruit_section"
+	box.add_child(sec)
+	box.add_child(Kit.label("One a turn at a settlement; paid now, no unit slot, no upkeep.", Kit.FONT_SMALL, Kit.COL_DIM, true))
+	var locked: Array = []
+	for kind in ["hero_foot", "hero_missile", "hero_cav", "hero_siege", "assassin", "diplomat"]:
+		if not CChars.available(kind):
+			continue
+		var nd0 := CChars.needs(kind)
+		if CState.building(ps, r, int(nd0[0])) < int(nd0[1]):
+			locked.append(kind)
+			continue
+		box.add_child(_char_recruit_row(r, army, kind))
+	_locked_fold(box, locked.size(), "chr%d" % army, func(body: VBoxContainer):
+		for k2 in locked:
+			body.add_child(_char_recruit_row(r, army, str(k2))))
+
+
+func _char_recruit_row(r: int, army: int, kind: String) -> Control:
+	var ps: Dictionary = s.ps
+	var f: int = s.f
+	if true:
+		var ty := UT.index_of(kind)
+		var why := CChars.recruit_check(ps, f, r, kind, army)
+		var nd := CChars.needs(kind)
+		var row := Kit.UnitRow.new(ty, -1, _fc(f), str(CChars.price_of(kind)))
+		row.faction = f
+		row.sub_text = ("%s %d" % [CData.CHAINS[int(nd[0])]["name"], int(nd[1])]) if why == "" else why
+		row.name = "recruit_char_row_" + kind
+		var order := {"t": "recruit_char", "kind": kind, "r": r}
+		if army >= 0:
+			order["army"] = army
+		var add_it := func(): s.add_order(order.duplicate())
+		var open_page := func(): s.open_unit_page(ty, add_it if why == "" else Callable(), "Recruit (%d)" % CChars.price_of(kind))
+		row.pressed.connect(open_page)
+		row.long_pressed.connect(open_page)
+		var h := Kit.hbox(4)
+		h.add_child(row)
+		var add := Kit.icon_button("", "plus", add_it, 44)
+		add.name = "recruit_char_" + kind
+		add.disabled = why != ""
+		h.add_child(add)
+		return h
+	return null
 
 
 ## The planned recruit orders into army id (version 6), in order.
@@ -2038,8 +2284,10 @@ func _event_color(e: Dictionary, f: int) -> Color:
 			return Kit.COL_BAD if int(e["o"]) == f else Kit.COL_GOLD
 		"siege_lifted":
 			return Kit.COL_GOOD if int(e["o"]) == f else Kit.COL_DIM
-		"peace", "trade", "built", "recruited", "grew", "victory", "gift", "gift_money":
+		"peace", "trade", "built", "recruited", "grew", "victory", "gift", "gift_money", "ransom", "char_recruited":
 			return Kit.COL_GOOD
+		"char_wounded", "char_captured":
+			return Kit.COL_BAD if int(e["f"]) == f else Kit.COL_GOOD
 		"gift_region":
 			return Kit.COL_GOOD if int(e["to"]) == f else Kit.COL_GOLD
 		"city_offer":
@@ -2141,6 +2389,24 @@ func event_text(e: Dictionary, f: int) -> String:
 			for k in e["units"]:
 				names.append(str(UT.TYPES[UT.index_of(str(k))]["name"]))
 			return "%s: recruited %s." % [city.call(e["r"]), ", ".join(names)]
+		"char_recruited":
+			if int(e["f"]) != f:
+				return ""
+			return "%s: %s %s joined you." % [city.call(e["r"]), CChars.display(str(e["kind"])), str(e["name"])]
+		"char_wounded":
+			var who := "%s %s" % [CChars.display(str(e["kind"])), str(e["name"])]
+			if int(e["f"]) == f:
+				return "%s fell in battle and is wounded for %d turns." % [who, int(e["turns"])]
+			return "%s of %s fell in battle." % [who, CData.faction_name(int(e["f"]))]
+		"char_captured":
+			var who2 := "%s %s" % [CChars.display(str(e["kind"])), str(e["name"])]
+			if int(e["f"]) == f:
+				return "%s was left in %s and has been captured." % [who2, city.call(e["r"])]
+			return "%s of %s was captured at %s." % [who2, CData.faction_name(int(e["f"])), city.call(e["r"])]
+		"ransom":
+			if int(e["f"]) != f:
+				return ""
+			return "Ransom for %d prisoners: %d gold." % [int(e["men"]), int(e["gold"])]
 		"gift":
 			var n := int(e["n"])
 			if int(e["to"]) == f:

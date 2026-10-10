@@ -25,7 +25,7 @@ const NAMES: Array[String] = [
 	"farm", "market", "barracks", "range", "stables", "workshop", "walls", "build", "upgrade",
 	"fire", "hold_fire", "skirmish", "run", "deploy", "wall_up", "wall_down", "pick_up", "drop",
 	"victory", "defeat", "draw", "men", "killed", "routed", "captured",
-	"ladder", "ram", "tower", "siege_tower", "mantlet", "gate", "ammo", "forage", "wagon", "kill_beast", "general", "release",
+	"ladder", "ram", "tower", "siege_tower", "mantlet", "gate", "ammo", "forage", "wagon", "kill_beast", "general", "release", "crown", "dagger", "scroll",
 	"stakes", "caltrops", "palisade", "rotate",
 	"copy", "export", "plus", "minus",
 	"tr_siege", "tr_shock", "tr_anti_cav", "tr_fearsome", "tr_ap", "tr_long_range", "tr_skirmish", "tr_fire", "tr_beast", "tr_fast",
@@ -644,6 +644,20 @@ static func _glyph(icon: String, c: Vector2, s: float) -> void:
 			_l(-0.62, -0.42, 0.62, -0.42)
 			_pl([-0.52, -0.42, -0.52, 0.28, 0.0, 0.1, 0.52, 0.28, 0.52, -0.42], false, 0.9)
 			_ring(0.0, -0.78, 0.17, 0.8)
+		"crown":  # a hero: a crown, three points on a band
+			_pl([-0.8, 0.55, -0.8, -0.35, -0.4, 0.05, 0.0, -0.7, 0.4, 0.05, 0.8, -0.35, 0.8, 0.55], true)
+			_l(-0.8, 0.85, 0.8, 0.85)
+		"dagger":  # an assassin: a blade pointing up, guard and grip
+			_pl([0.0, -0.92, 0.2, -0.2, 0.2, 0.28, -0.2, 0.28, -0.2, -0.2], true)
+			_l(-0.5, 0.28, 0.5, 0.28)
+			_l(0.0, 0.28, 0.0, 0.88, 1.2)
+		"scroll":  # a diplomat: a rolled letter with lines of writing and a seal
+			_pl([-0.62, -0.78, 0.62, -0.78, 0.62, 0.55, -0.62, 0.55], true)
+			_arc(-0.62, -0.5, 0.28, PI * 0.5, PI * 1.5, 0.9)
+			_arc(0.62, 0.55, 0.28, -PI * 0.5, PI * 0.5, 0.9)
+			_l(-0.3, -0.35, 0.3, -0.35, 0.8)
+			_l(-0.3, -0.05, 0.3, -0.05, 0.8)
+			_ring(0.0, 0.3, 0.14, 0.8)
 		"kill_beast":  # an elephant's head, the driver's chisel driven in at the top
 			_ring(-0.12, 0.0, 0.42)
 			_arc(-0.72, 0.0, 0.3, PI * 0.5, PI * 1.5, 0.85)

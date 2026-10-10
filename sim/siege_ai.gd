@@ -199,6 +199,11 @@ static func think(sim) -> void:
 		if sim.u_hand[u] >= 0:
 			continue  # a war dog pack (the settlement AI never releases one: docs/AI.md 21)
 		var kn := kn0 if side == 0 else kn1
+		if BattleAI.is_char(sim, u):
+			# A hero or agent (docs/AI.md 27): the attackers' keep with their
+			# field; the defenders' stand where they were placed.
+			BattleAI.char_think(sim, u, kn, side != sim.city_def)
+			continue
 		if BattleAI.is_wagon(sim, u):
 			BattleAI.wagon_think(sim, u, kn)  # (docs/AI.md 18)
 			continue
@@ -231,7 +236,7 @@ static func _army(sim, side: int) -> void:
 			sim.ai_phase[side] = SD_HOLD
 			sim.ai_t[side] = sim.tick
 			for u in sim.n_units:
-				if sim.u_side[u] == side and sim.u_state[u] == U_READY:
+				if sim.u_side[u] == side and sim.u_state[u] == U_READY and not BattleAI.is_char(sim, u):
 					_classify_defender(sim, u)
 		_close_gates(sim, side)
 		if sim.sg_on != 0 and kn[AP.S_ESC_REPLY] != 0:
@@ -317,7 +322,7 @@ static func _army(sim, side: int) -> void:
 static func _ground_strength(sim, side: int) -> int:
 	var s := 0
 	for u in sim.n_units:
-		if sim.u_side[u] == side and sim.u_state[u] == U_READY and sim.u_wall[u] == 0:
+		if sim.u_side[u] == side and sim.u_state[u] == U_READY and sim.u_wall[u] == 0 and not BattleAI.is_char(sim, u):
 			s += sim.u_alive[u] * UT.stat(sim.u_type[u], "cost")
 	return s
 
@@ -326,7 +331,7 @@ static func _ground_strength(sim, side: int) -> int:
 static func _no_foot(sim, side: int) -> bool:
 	for u in sim.n_units:
 		if sim.u_side[u] == side and sim.u_state[u] == U_READY and \
-				(sim.u_cls[u] == UT.CLS_INF or sim.u_cls[u] == UT.CLS_PIKE):
+				(sim.u_cls[u] == UT.CLS_INF or sim.u_cls[u] == UT.CLS_PIKE) and not BattleAI.is_char(sim, u):
 			return false
 	return true
 
@@ -334,7 +339,7 @@ static func _no_foot(sim, side: int) -> bool:
 ## Any ready defender unit off the walls (or the plaza not yet theirs).
 static func _defenders_standing(sim, side: int) -> bool:
 	for u in sim.n_units:
-		if sim.u_side[u] != side and sim.u_state[u] == U_READY and sim.u_wall[u] == 0:
+		if sim.u_side[u] != side and sim.u_state[u] == U_READY and sim.u_wall[u] == 0 and not BattleAI.is_char(sim, u):
 			return true
 	return false
 
@@ -846,7 +851,7 @@ static func _field_gate(sim, side: int, kn: PackedInt32Array) -> int:
 	var r: int = kn[AP.S_READ_R]
 	var total := 0
 	for o in sim.n_units:
-		if sim.u_side[o] == side or sim.u_state[o] != U_READY:
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY or BattleAI.is_char(sim, o):
 			continue
 		var w: int = sim.u_alive[o] * UT.stat(sim.u_type[o], "cost")
 		total += w
@@ -1340,7 +1345,7 @@ static func _nearest_attacker(sim, u: int, x: int, y: int, r: int, inside: bool)
 	var best := -1
 	var best_d := r
 	for o in sim.n_units:
-		if sim.u_side[o] == sim.u_side[u] or sim.u_state[o] != U_READY:
+		if sim.u_side[o] == sim.u_side[u] or sim.u_state[o] != U_READY or sim.hidden_from(o, sim.u_side[u]):
 			continue
 		var d := BattleAI._d(sim.u_cx[o] - x, sim.u_cy[o] - y)
 		if d > best_d:
@@ -2085,7 +2090,8 @@ static func _sk_sally(sim, side: int, kn: PackedInt32Array) -> void:
 			continue
 		var att := 0
 		for o in sim.n_units:
-			if sim.u_side[o] != side and sim.u_state[o] == U_READY and BattleAI._d(sim.u_cx[o] - ox, sim.u_cy[o] - oy) < r:
+			if sim.u_side[o] != side and sim.u_state[o] == U_READY and BattleAI._d(sim.u_cx[o] - ox, sim.u_cy[o] - oy) < r \
+					and not BattleAI.is_char(sim, o):
 				att += sim.u_alive[o] * UT.stat(sim.u_type[o], "cost")
 		var dfn := 0
 		var party: Array = []
@@ -2093,7 +2099,7 @@ static func _sk_sally(sim, side: int, kn: PackedInt32Array) -> void:
 			if sim.u_side[u] != side or sim.u_state[u] != U_READY or sim.u_wall[u] != 0:
 				continue
 			var c: int = sim.u_cls[u]
-			if c == UT.CLS_MISSILE or c == UT.CLS_ART or sim.u_ai[u] == A_CIT:
+			if c == UT.CLS_MISSILE or c == UT.CLS_ART or sim.u_ai[u] == A_CIT or BattleAI.is_char(sim, u):
 				continue
 			if BattleAI._d(sim.u_cx[u] - sim.g_ix[g], sim.u_cy[u] - sim.g_iy[g]) < 60 * M:
 				dfn += sim.u_alive[u] * UT.stat(sim.u_type[u], "cost")
@@ -2241,7 +2247,7 @@ static func _equip_free(sim, u: int, side: int, q: int) -> bool:
 		return false
 	var m: int = sim.u_ai[u]
 	if m == A_LADDER or m == A_RAM or m == A_MANTLET or m == BattleAI.A_RETIRE or sim.u_carry[u] >= 0 \
-			or BattleAI.is_wagon(sim, u):
+			or BattleAI.is_wagon(sim, u) or BattleAI.is_char(sim, u):
 		return false
 	if sim.u_fighting[u] > 0:
 		return false
@@ -2617,12 +2623,13 @@ static func _tower(sim, u: int) -> void:
 	var best := -1
 	var best_s := 0
 	for o in sim.n_units:
-		if sim.u_side[o] == sim.u_side[u] or sim.u_state[o] != U_READY or sim.u_alive[o] <= 0:
+		if sim.u_side[o] == sim.u_side[u] or sim.u_state[o] != U_READY or sim.u_alive[o] <= 0 \
+				or sim.hidden_from(o, sim.u_side[u]):
 			continue
 		var cls := 0
 		var ck: int = sim.carrying(sim, o)
-		if ck == EQ_RAM or ck == EQ_TOWER:
-			cls = 3
+		if ck == EQ_RAM or ck == EQ_TOWER or (sim.ch_on != 0 and sim.u_char[o] >= UT.CK_FOOT and sim.u_char[o] <= UT.CK_SIEGE):
+			cls = 3  # (a hero in reach: as the ram's crew)
 		elif sim.u_cls[o] == UT.CLS_ART:
 			cls = 2
 		elif sim.u_wall[o] > 0 or sim.u_stair[o] == ST_LADDER:

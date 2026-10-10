@@ -155,6 +155,13 @@ func setup(scenario: Dictionary, p_seed: int, home: Array, present: Array, host:
 			u_home[u] = int(home[n_scn])
 		elif u >= n_scn and sim.u_hand[u] >= 0:
 			u_home[u] = u_home[sim.u_hand[u]]  # a war dog pack: its handlers' player
+		elif u >= n_scn and sim.ch_on != 0 and sim.u_char[u] != 0:
+			# A hero or agent: the player of his side's first scenario unit.
+			u_home[u] = -1
+			for k in mini(home.size(), n_scn):
+				if sim.u_side[k] == sim.u_side[u]:
+					u_home[u] = int(home[k])
+					break
 		else:
 			u_home[u] = -1
 	for u in n_units:

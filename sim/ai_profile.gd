@@ -337,7 +337,12 @@ const CAMP_HOLD := 266         # ... and hold the camp at most this long, until 
 # engines (the row's "carried": scorpions), never by name.
 const S_LART_PCT := 267        # they set up at most this % of their range from the attacked gate (0: they stay where they stand, Easy)
 const S_LART_WALL_R := 268     # ... and shoot the wall's men within this of that gate, nearest it first (0: the gate)
-const N_KNOBS := 269
+# Heroes and agents (docs/AI.md 27): the side's characters.
+const CH_ATTEMPT := 269        # 1: the assassin makes his attempt on an enemy general within CH_ATTEMPT_R (Skilled); 0 never
+const CH_ATTEMPT_R := 270      # ... this near the assassin
+const CH_PARLEY_R := 271       # the diplomat parleys a routing enemy unit this near (0: never, Easy)
+const CH_BACK := 272           # heroes keep this far behind the unit they go with (the champion: the line's centre)
+const N_KNOBS := 273
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
@@ -585,6 +590,10 @@ const KNOBS: Array = [
 	[CAMP_HOLD, 0, 6000, 6000],
 	[S_LART_PCT, 0, 85, 85],
 	[S_LART_WALL_R, 0, 80 * M, 120 * M],
+	[CH_ATTEMPT, 0, 0, 1],
+	[CH_ATTEMPT_R, 60 * M, 60 * M, 60 * M],
+	[CH_PARLEY_R, 0, 80 * M, 80 * M],
+	[CH_BACK, 15 * M, 15 * M, 15 * M],
 	# Behaviours a level switches off (Average: on, as before).
 	[CLEAR_SPOT, 0, 1, 1],
 	[MIS_SKIRM, 0, 1, 1],
@@ -688,13 +697,15 @@ const C_GEN_RALLY := C_CAV_STAY + 7  # the general rode to a wavering or routing
 const C_GEN_CHARGE := C_CAV_STAY + 8  # the general's decisive charges
 const C_DOG_RELEASE := C_CAV_STAY + 9  # war dog packs released
 const C_WORKS := C_CAV_STAY + 10  # field works placed
-const N_COUNTERS := C_CAV_STAY + 11
+const C_CH_ATTEMPT := C_CAV_STAY + 11  # assassins' attempts ordered
+const C_CH_PARLEY := C_CAV_STAY + 12   # diplomats' parleys ordered
+const N_COUNTERS := C_CAV_STAY + 13
 const COUNTER_NAMES: Array[String] = ["flank_hits", "pull_outs", "rotations", "saved", "inf_chase",
 	"spear_resp", "spear_resp_ticks", "missile_caught", "ammo_at_rout", "missile_routs", "reserve_commits",
 	"mk_late_flank", "mk_wrong_target", "mk_idle", "mk_chase", "mk_spear_charge", "mk_mis_forget",
 	"mk_commit_early", "mk_gate_open", "mk_early_wd", "cav_stay", "double_charges", "focus_orders",
 	"guard_free", "waver_pull", "siege_moves", "art_pull", "gen_rally", "gen_charge", "dog_release",
-	"works_placed"]
+	"works_placed", "ch_attempt", "ch_parley"]
 
 # Skilled memory layout (BattleSim.ai_mem): MU_K ints per unit, then SD_K
 # per side at n_units * MU_K + side * SD_K.

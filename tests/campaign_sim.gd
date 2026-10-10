@@ -43,6 +43,7 @@ const CState := preload("res://campaign/cstate.gd")
 const CTurn := preload("res://campaign/cturn.gd")
 const CRules := preload("res://campaign/crules.gd")
 const CP := preload("res://campaign/cai_profile.gd")
+const CChars := preload("res://campaign/cchars.gd")
 const CAI := preload("res://campaign/cai.gd")
 const UT := preload("res://sim/unit_types.gd")
 
@@ -63,6 +64,7 @@ var dg := {}                  # watched faction -> battle / capture tallies (thi
 var dg_all := {}              # the same summed over the seeds, per watched faction
 var bu_all := {}              # faction -> build-up sums over the seeds (_buildup)
 var built := []               # buildings finished per chain (this seed)
+var char_ev := {}             # heroes and agents (this seed): raised / wounded / captured / ransom gold
 var at40 := [0, 0, 0]         # over the seeds: factions with 4+ regions at turn 40, with a Range 2, with a Workshop 1
 const DG_KEYS: Array[String] = ["field_att_won", "field_att_lost", "field_def_won", "field_def_lost", "town_att_won",
 	"town_att_lost", "town_def_won", "town_def_lost", "siege_fights_won", "siege_fights_lost", "gained", "gained_surrender",
@@ -150,6 +152,7 @@ func _run(sd: int, verbose: bool) -> String:
 	var first_win := -1
 	CP.reset_counters()
 	built = []
+	char_ev = {}
 	for c in CData.CHAINS.size():
 		built.append(0)
 	if true:
@@ -342,6 +345,10 @@ func _count_sieges(st: Dictionary, t: int) -> void:
 				sg["intercepted"] += 1
 			"built":
 				built[int(e["chain"])] += 1
+			"char_recruited", "char_wounded", "char_captured":
+				char_ev[str(e["k"])] = int(char_ev.get(str(e["k"]), 0)) + 1
+			"ransom":
+				char_ev["ransom_gold"] = int(char_ev.get("ransom_gold", 0)) + int(e["gold"])
 			"move_failed":
 				if str(e.get("why", "")) == "mustering":
 					sg["mustering"] += 1
@@ -367,6 +374,8 @@ func _buildup(st: Dictionary) -> void:
 	for c in CData.CHAINS.size():
 		parts.append("%s %d" % [CData.CHAINS[c]["key"], int(built[c])])
 	print("buildings finished: " + ", ".join(parts))
+	print("characters: raised %d, wounded %d, captured %d, ransom %d gold; alive at the end %d" % [int(char_ev.get("char_recruited", 0)),
+		int(char_ev.get("char_wounded", 0)), int(char_ev.get("char_captured", 0)), int(char_ev.get("ransom_gold", 0)), CChars.all(st).size()])
 	for f in CState.nf():
 		if not CState.alive(st, f):
 			continue

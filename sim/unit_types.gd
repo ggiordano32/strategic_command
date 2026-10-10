@@ -117,6 +117,30 @@ extends RefCounted
 ##   gate_walls   it batters closed gates of cities with walls up to this
 ##                level like foot hack them (-1 never) ...
 ##   gate_pct     ... at this % of a foot soldier's rate (its own damage)
+## Heroes and agents (docs/DESIGN.md "Heroes and agents"; one-man units the
+## scenario's "chars" add, never counted toward holding the field):
+##   char         1: a character (hero or agent) row
+##   char_kind    CK_* (1 foot hero .. 4 siege hero, 5 assassin, 6 diplomat)
+##   char_pct     campaign auto-resolve: his army's strength +this % (heroes)
+##   ch_r         aura radius (box to box, once a second; not his own unit);
+##                the siege hero's works for the whole side instead
+##   au_hit       foot hero: friendly foot units' melee to-hit +this %
+##   au_mor       ... and +this morale a second (up to the recovery cap)
+##   au_rng       missile hero: missile units' and engines' range +this % ...
+##   au_spr       ... and their scatter -this %
+##   au_mom       cavalry hero: mounted units' charge impact +this % ...
+##   au_rally     ... and routing mounted units +this a second toward rallying
+##   au_climb     siege hero (the side): ladder climbs this % faster ...
+##   au_reload    ... engines reload this % faster ...
+##   au_batter    ... the ram and siege towers take this % less battering
+##   au_steady    diplomat: friendly units' morale loss from fear (auras,
+##                routing friends, artillery fright) cut by this %
+##   fall_r       a hero falls: units within this (box to box) ...
+##   fall_loss    ... of his side lose this morale at once ...
+##   fall_gain    ... and of the enemy gain this
+##   duel         to-hit added to each of his blows (a champion against single men)
+##   unarmed      1: never strikes (the diplomat)
+##   hidden       1: hidden from the enemy until he acts or an enemy is near (the assassin)
 ## Command (docs/DESIGN.md "The general"; generic: the fear aura inverted):
 ##   cmd_r        command aura: friendly units this near (box to box, once a
 ##                second; not the unit itself) ...
@@ -192,7 +216,17 @@ const DEFAULTS := {
 	"cmd_r": 0, "cmd_mor": 0, "cmd_rally": 0, "cmd_loss": 0, "cmd_loss_r": 0, "cmd_pct": 0,
 	"pack_n": 0, "pack_type": -1, "pack_r": 0, "return_r": 0, "return_t": 0, "nobreak": 0,
 	"scare_am": -1, "as_cav": 0, "chase": 0, "carried": 0, "m_spen": 0,
+	"char": 0, "char_kind": 0, "char_pct": 0, "ch_r": 0, "au_hit": 0, "au_mor": 0, "au_rng": 0,
+	"au_spr": 0, "au_mom": 0, "au_rally": 0, "au_climb": 0, "au_reload": 0, "au_batter": 0,
+	"au_steady": 0, "fall_r": 0, "fall_loss": 0, "fall_gain": 0, "duel": 0, "unarmed": 0, "hidden": 0,
 }
+## Character kinds (the "char_kind" field; docs/DESIGN.md "Heroes and agents").
+const CK_FOOT := 1      # Champion: foot units' to-hit and steadiness
+const CK_MISSILE := 2   # Master of Archers: missile units' and engines' range and accuracy
+const CK_CAV := 3       # Master of Horse: mounted units' charge and rally
+const CK_SIEGE := 4     # Master Engineer: the side's ladders, engines, ram and tower
+const CK_ASSASSIN := 5
+const CK_DIPLOMAT := 6
 ## Mounts (the "mount" field).
 const MOUNT_FOOT := 0
 const MOUNT_HORSE := 1
@@ -1171,6 +1205,123 @@ const LIGHT_ART: Array[Dictionary] = [
 ]
 
 
+## Heroes and agents (docs/DESIGN.md "Heroes and agents"; STATUS 8a): one-man
+## rows of their own lines, appended after the light artillery so every
+## other index is unchanged. The campaign recruits them (campaign/cchars.gd,
+## price_of) and the scenario's "chars" puts them in a battle. Numbers
+## chosen once (Guard Cavalry and Agema, 46 / 40 / 16, the yardstick for a
+## hero), not tuned; each with its reason.
+const CHARS: Array[Dictionary] = [
+	{
+		"key": "hero_foot", "line": "hero_foot", "name": "Champion", "short": "Champion", "icon": 20, "sprite": 0,
+		"size": 1, "files0": 1, "char": 1, "char_kind": CK_FOOT,
+		"role": "Hero: champion on foot",
+		"desc": "A famous fighter on foot. Friendly foot within 40 m strike truer (+15 % to-hit) and stand longer (+3 morale a second). He never breaks and is cut down only by a crowd or a lucky shot; if he falls, his side near him (60 m) is shaken and the enemy heartened. Keep him in the second line.",
+		"good_vs": "Single men: he duels any of them; steadying a foot line.",
+		"weak_vs": "Being surrounded, missiles, a charge.",
+		"cls": CLS_INF, "mount": MOUNT_FOOT,
+		"attack": 46, "defence": 40,  # Agema's 46 / 40: the best guard rider's skill
+		"armour": 16, "shield": 40, "mshield": 70,  # a guard's armour, a heavy infantryman's shield
+		"damage": 44, "reach": 1331, "mass": 100,
+		"walk": 164, "run": 451,  # light infantry's pace: he keeps up with any foot
+		"hp": 600,          # six heavy infantrymen: only a crowd or a lucky shot cuts him down
+		"cooldown": 9, "morale": 1000, "nobreak": 1,
+		"cost": 1500, "str_pct": 0, "upkeep_pct": 0, "char_pct": 6,
+		"ch_r": 40 * 1024,  # the general's command radius
+		"au_hit": 15, "au_mor": 3,
+		"fall_r": 60 * 1024, "fall_loss": 120, "fall_gain": 60,  # the general's cmd_loss near him; half of it heartens the enemy
+		"duel": 35,         # DOWN_BONUS: the edge a man has on one who is down
+		"climb": 13,
+	},
+	{
+		"key": "hero_missile", "line": "hero_missile", "name": "Master of Archers", "short": "Archer Lord", "icon": 20, "sprite": 5,
+		"size": 1, "files0": 1, "char": 1, "char_kind": CK_MISSILE,
+		"role": "Hero: master of archers (mounted)",
+		"desc": "A mounted master bowman. Friendly missile units and engines within 40 m shoot 10 % further and 20 % straighter. He shoots well himself and never breaks; if he falls, his side near him is shaken. Keep him behind the archers.",
+		"good_vs": "Anything in bow range; making the archers and engines near him count.",
+		"weak_vs": "Cavalry that reaches him, being surrounded.",
+		"cls": CLS_MISSILE, "mount": MOUNT_HORSE,
+		"attack": 46, "defence": 40, "armour": 16, "shield": 20, "mshield": 40,
+		"damage": 36, "reach": 1638, "mass": 420,
+		"walk": 215, "run": 840,  # shock cavalry's pace
+		"hp": 600, "cooldown": 10, "morale": 1000, "nobreak": 1,
+		"file_sp": 2048, "rank_sp": 3072, "turn": 16, "m_vuln": 100, "m_down": 1, "climb": 24,
+		"m_range": 160 * 1024,  # archers 140 m: the best bow, from the saddle
+		"m_damage": 40, "m_ap": 40,  # archers 30 at 25: a heavy war arrow
+		"m_ammo": 60, "m_reload": 30,  # archers 40 shots, 4 s
+		"m_spread": 25, "m_spread0": 512,  # archers 45 / 1 m: a master's aim
+		"m_speed": 4608, "m_arc": 1, "m_hgain": 150, "m_ak": 0,
+		"cost": 1500, "str_pct": 0, "upkeep_pct": 0, "char_pct": 6,
+		"ch_r": 40 * 1024, "au_rng": 10, "au_spr": 20,
+		"fall_r": 60 * 1024, "fall_loss": 120, "fall_gain": 60,
+	},
+	{
+		"key": "hero_cav", "line": "hero_cav", "name": "Master of Horse", "short": "Horse Lord", "icon": 20, "sprite": 5,
+		"size": 1, "files0": 1, "char": 1, "char_kind": CK_CAV,
+		"role": "Hero: master of horse",
+		"desc": "A great horseman. Friendly mounted units within 40 m charge 20 % harder and their routers rally faster (+40 a second). He charges with them and never breaks; if he falls, his side near him is shaken. Keep him with the cavalry reserve.",
+		"good_vs": "Charging with the cavalry, rallying broken horse.",
+		"weak_vs": "Braced spears, being surrounded, missiles.",
+		"cls": CLS_CAV, "mount": MOUNT_HORSE,
+		"attack": 46, "defence": 40, "armour": 16, "shield": 25, "mshield": 20,
+		"damage": 36, "reach": 1638, "mass": 420,
+		"walk": 215, "run": 840, "charge": 80,  # Guard Cavalry's charge
+		"hp": 600, "cooldown": 10, "morale": 1000, "nobreak": 1,
+		"file_sp": 2048, "rank_sp": 3072, "turn": 16, "m_vuln": 100, "m_down": 1, "climb": 24,
+		"cost": 1500, "str_pct": 0, "upkeep_pct": 0, "char_pct": 6,
+		"ch_r": 40 * 1024, "au_mom": 20, "au_rally": 40,  # the general's rally again, for riders
+		"fall_r": 60 * 1024, "fall_loss": 120, "fall_gain": 60,
+	},
+	{
+		"key": "hero_siege", "line": "hero_siege", "name": "Master Engineer", "short": "Engineer", "icon": 20, "sprite": 5,
+		"size": 1, "files0": 1, "char": 1, "char_kind": CK_SIEGE,
+		"role": "Hero: master engineer (mounted)",
+		"desc": "A master of siegecraft riding between the works. For his whole side (siege works are spread out, so not bound to a radius): ladders are climbed 25 % faster, engines reload 20 % faster, the ram and siege towers take 25 % less battering. He never breaks; if he falls, his side near him is shaken. Keep him near the batteries.",
+		"good_vs": "Sieges: assaults by ladder, ram or tower, batteries.",
+		"weak_vs": "Being caught alone, missiles (wall engines look for him).",
+		"cls": CLS_CAV, "mount": MOUNT_HORSE,
+		"attack": 46, "defence": 40, "armour": 16, "shield": 25, "mshield": 20,
+		"damage": 32, "reach": 1638, "mass": 420,
+		"walk": 215, "run": 840, "charge": 40,  # light horse's: he is no shock rider
+		"hp": 600, "cooldown": 10, "morale": 1000, "nobreak": 1,
+		"file_sp": 2048, "rank_sp": 3072, "turn": 16, "m_vuln": 100, "m_down": 1, "climb": 24,
+		"cost": 1500, "str_pct": 0, "upkeep_pct": 0, "char_pct": 6,
+		"au_climb": 25, "au_reload": 20, "au_batter": 25,
+		"fall_r": 60 * 1024, "fall_loss": 120, "fall_gain": 60,
+	},
+	{
+		"key": "assassin", "line": "assassin", "name": "Assassin", "short": "Assassin", "icon": 21, "sprite": 0,
+		"size": 1, "files0": 1, "char": 1, "char_kind": CK_ASSASSIN,
+		"role": "Agent: assassin (hidden)",
+		"desc": "A single man the enemy does not see until he acts or comes within 10 m of them in the open. Sabotage: he walks to an enemy battery and wrecks an engine every 5 s beside it, or slips over the wall by a gate and unbars it from inside in 15 s. Attempt: he walks up to an enemy hero or general and strikes once (40 % kills, 30 % wounds, 30 % fails). Once he has acted he fights as a weak light man; three enemy men around him take him.",
+		"good_vs": "Batteries left unguarded, a shut gate, an enemy general or hero.",
+		"weak_vs": "Any fight once he is seen.",
+		"cls": CLS_INF, "mount": MOUNT_FOOT,
+		"attack": 30, "defence": 20, "armour": 3, "shield": 0, "mshield": 0,  # a weak light man (light infantry 36 / 26 / 4)
+		"damage": 30, "reach": 1024, "mass": 70,
+		"walk": 164, "run": 451,  # light infantry's pace
+		"hp": 80, "cooldown": 9, "morale": 1000, "nobreak": 1,
+		"cost": 800, "str_pct": 0, "upkeep_pct": 0, "char_pct": 0,
+		"hidden": 1, "climb": 13,
+	},
+	{
+		"key": "diplomat", "line": "diplomat", "name": "Diplomat", "short": "Diplomat", "icon": 22, "sprite": 0,
+		"size": 1, "files0": 1, "char": 1, "char_kind": CK_DIPLOMAT,
+		"role": "Agent: diplomat (unarmed)",
+		"desc": "An envoy under a white flag. Friendly units within 30 m lose only half the heart they would from fear (beasts, routing friends, artillery). Parley: he walks to within 20 m of a routing enemy unit, or one below a quarter of its morale; for 5 s it stops fighting (the men near it hold), then it surrenders (60 % routing, 35 % wavering) and its men are taken prisoner. A garrison on a wall surrenders only once its plaza is held. He never fights; only missiles can kill him during a parley.",
+		"good_vs": "Broken or wavering enemy units: prisoners instead of a pursuit.",
+		"weak_vs": "Anything that reaches him: he never strikes back.",
+		"cls": CLS_INF, "mount": MOUNT_FOOT,
+		"attack": 0, "defence": 15, "armour": 2, "shield": 0, "mshield": 0,
+		"damage": 4, "reach": 1024, "mass": 70,
+		"walk": 140, "run": 400,
+		"hp": 100, "cooldown": 10, "morale": 1000, "nobreak": 1, "unarmed": 1,
+		"cost": 800, "str_pct": 0, "upkeep_pct": 0, "char_pct": 0,
+		"ch_r": 30 * 1024, "au_steady": 50, "climb": 13,
+	},
+]
+
+
 ## Field of wagon tier w (0 if out of range); "pace" with h horses alive.
 static func wagon_stat(w: int, field: String) -> int:
 	if w < 0 or w >= WAGONS.size():
@@ -1269,6 +1420,12 @@ static func _build_types() -> Array[Dictionary]:
 		out.append(row)
 	for lr in LIGHT_ART:
 		var row: Dictionary = lr.duplicate()
+		row["base"] = out.size()
+		row["tier"] = 1
+		row["price"] = int(row["cost"]) * int(row["size"])
+		out.append(row)
+	for cr in CHARS:
+		var row: Dictionary = cr.duplicate()
 		row["base"] = out.size()
 		row["tier"] = 1
 		row["price"] = int(row["cost"]) * int(row["size"])

@@ -326,3 +326,48 @@ static func classes_text(ty: int, good: bool) -> String:
 	if names.is_empty():
 		return "Nothing in particular."
 	return ("Good against " if good else "Weak against ") + ", ".join(names) + "."
+
+
+# ------------------------------------------------ heroes and agents (8a) ---
+
+## UI icon of a character row (char_kind 1-4 a hero: "crown", 5 assassin:
+## "dagger", 6 diplomat: "scroll"); "" for any other row.
+static func char_icon(ty: int) -> String:
+	match UT.stat(ty, "char_kind"):
+		1, 2, 3, 4:
+			return "crown"
+		5:
+			return "dagger"
+		6:
+			return "scroll"
+	return ""
+
+
+## "Hero: Master of Horse, aura: ..." for a character row, derived from its
+## fields (au_* / fall_* / duel / hidden / unarmed); "" for other rows.
+static func char_text(ty: int) -> String:
+	var ck := UT.stat(ty, "char_kind")
+	if ck <= 0:
+		return ""
+	var nm := str(UT.TYPES[ty]["name"])
+	var parts: Array[String] = []
+	var pairs := [["au_hit", "foot melee to-hit +%d %%"], ["au_mor", "morale +%d a second"], ["au_rng", "missile range +%d %%"],
+		["au_spr", "scatter -%d %%"], ["au_mom", "charge impact +%d %%"], ["au_rally", "routers rally +%d a second"],
+		["au_climb", "ladders %d %% faster"], ["au_reload", "engines reload %d %% faster"],
+		["au_batter", "ram and towers take %d %% less battering"], ["au_steady", "fear costs %d %% less morale"]]
+	for p in pairs:
+		var v := UT.stat(ty, str(p[0]))
+		if v != 0:
+			parts.append(str(p[1]) % v)
+	var kind := "Hero" if ck <= 4 else "Agent"
+	var out := "%s: %s" % [kind, nm]
+	if not parts.is_empty():
+		var r := UT.stat(ty, "ch_r") / 1024
+		out += ", aura%s: %s" % [(" (%d m)" % r) if r > 0 and ck != 4 else (" (the whole side)" if ck == 4 else ""), "; ".join(parts)]
+	if ck == 5:
+		out += ", hidden until he acts"
+	if ck == 6:
+		out += ", unarmed"
+	if UT.stat(ty, "fall_r") > 0:
+		out += ". If he falls, units near him lose heart"
+	return out + "."

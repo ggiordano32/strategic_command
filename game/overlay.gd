@@ -453,13 +453,80 @@ func _draw_city_marks(lw: float) -> void:
 		draw_string(ThemeDB.fallback_font, pc + Vector2(-tw2 * 0.5, -r - fs * 0.5), txt2, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col2.lightened(0.3))
 
 
+## A hero's or agent's marker (docs/DESIGN.md "Heroes and agents"): his
+## disc with a gold rim and his glyph (a crown for the heroes, a dagger for
+## the assassin, a scroll for the diplomat); our hidden assassin faded (the
+## enemy does not see him); a white flag while the diplomat goes to parley
+## (and a ring filling over the 5 s it lasts); a ring filling while the
+## assassin works at engines or a gate.
+func _draw_char_marker(u: int, c: Vector2, r: float, col: Color, lw: float) -> void:
+	var a := 0.45 if sim.u_hidden[u] != 0 else 1.0
+	draw_circle(c, r, Color(col, a))
+	draw_arc(c, r, 0, TAU, 20, Color(1.0, 0.82, 0.25, a), maxf(r * 0.16, 1.2), true)
+	draw_char_glyph(self, sim.u_char[u], c, r * 0.72, Color(1, 1, 1, 0.97 * a))
+	var cho: int = sim.u_cho[u]
+	if cho == BattleSim.CHO_PARLEY:
+		var pole := c + Vector2(r * 1.3, r * 0.9)
+		draw_line(pole, pole + Vector2(0, -r * 2.4), Color(0.25, 0.2, 0.15), lw)
+		draw_colored_polygon(PackedVector2Array([pole + Vector2(0, -r * 2.4), pole + Vector2(r * 1.4, -r * 2.1),
+			pole + Vector2(0, -r * 1.6)]), Color(1, 1, 1, 0.95))
+	var k: int = sim.u_chk[u]
+	var full := 0
+	if cho == BattleSim.CHO_PARLEY and k > 0:
+		full = BattleSim.PARLEY_T
+	elif cho == BattleSim.CHO_SAB_ENG and k > 0:
+		full = BattleSim.SABOTAGE_T
+	elif cho == BattleSim.CHO_SAB_GATE and k > 0:
+		full = BattleSim.SAB_UNBAR
+	if full > 0:
+		draw_arc(c, r * 1.35, -PI * 0.5, -PI * 0.5 + TAU * clampf(float(k) / full, 0.0, 1.0), 16,
+			Color(1.0, 0.9, 0.5, 0.95), lw * 1.2)
+
+
+## A character's glyph by kind (UT.CK_*), fitting a circle of radius s: a
+## crown (heroes: CK_FOOT .. CK_SIEGE), a dagger (the assassin), a scroll
+## (the diplomat). Static: the HUD cards and the unit book may use it too.
+static func draw_char_glyph(ci: CanvasItem, kind: int, c: Vector2, s: float, col: Color) -> void:
+	var w := maxf(s * 0.17, 1.0)
+	if kind == UT.CK_ASSASSIN:
+		# A dagger point down: blade, guard, grip, pommel.
+		ci.draw_colored_polygon(PackedVector2Array([c + Vector2(-0.16, -0.3) * s, c + Vector2(0.16, -0.3) * s,
+			c + Vector2(0, 0.95) * s]), col)
+		ci.draw_line(c + Vector2(-0.5, -0.32) * s, c + Vector2(0.5, -0.32) * s, col, w * 1.2, true)
+		ci.draw_line(c + Vector2(0, -0.32) * s, c + Vector2(0, -0.75) * s, col, w * 1.1, true)
+		ci.draw_circle(c + Vector2(0, -0.85) * s, 0.13 * s, col)
+	elif kind == UT.CK_DIPLOMAT:
+		# A scroll: a sheet between two rolls, lines of writing.
+		ci.draw_rect(Rect2(c + Vector2(-0.5, -0.55) * s, Vector2(1.0, 1.1) * s), col, false, w)
+		ci.draw_circle(c + Vector2(-0.5, -0.55) * s, 0.16 * s, col)
+		ci.draw_circle(c + Vector2(0.5, -0.55) * s, 0.16 * s, col)
+		ci.draw_circle(c + Vector2(-0.5, 0.55) * s, 0.16 * s, col)
+		ci.draw_circle(c + Vector2(0.5, 0.55) * s, 0.16 * s, col)
+		for k in 3:
+			ci.draw_line(c + Vector2(-0.3, -0.25 + 0.25 * k) * s, c + Vector2(0.3, -0.25 + 0.25 * k) * s, col, w * 0.6, true)
+	else:
+		# A crown: band, three points, a jewel on each.
+		ci.draw_colored_polygon(PackedVector2Array([c + Vector2(-0.75, 0.55) * s, c + Vector2(0.75, 0.55) * s,
+			c + Vector2(0.75, -0.45) * s, c + Vector2(0.38, 0.05) * s, c + Vector2(0, -0.6) * s,
+			c + Vector2(-0.38, 0.05) * s, c + Vector2(-0.75, -0.45) * s]), col)
+		for x in [-0.75, 0.0, 0.75]:
+			ci.draw_circle(c + Vector2(x, -0.62 if x == 0.0 else -0.5) * s, 0.12 * s, col)
+		# His field under the crown: a small mark by kind (foot, bow, horse, engine).
+		var mk := [Vector2(-0.3, 0.75), Vector2(-0.1, 0.75), Vector2(0.1, 0.75), Vector2(0.3, 0.75)]
+		for k in clampi(kind, 1, 4):
+			ci.draw_circle(c + mk[k] * s, 0.07 * s, col)
+
+
 ## Unit markers at the centroid: side colour, white ring when selected,
 ## yellow when routing, plus small state signs.
 func _draw_markers(r: float, lw: float) -> void:
 	var tick: int = sim.tick
+	var chs: bool = sim.ch_on != 0
 	for u in sim.n_units:
 		if sim.u_state[u] >= BattleSim.U_DESTROYED:
 			continue
+		if chs and sim.hidden_from(u, player_side):
+			continue  # (the enemy's hidden assassin: not seen)
 		var c := to_px(sim.u_cx[u], sim.u_cy[u]) + Vector2(0, -r * 2.2)
 		var col: Color = COL_SIDE[sim.u_side[u]]
 		if sim.u_state[u] == BattleSim.U_ROUTING:
@@ -467,7 +534,10 @@ func _draw_markers(r: float, lw: float) -> void:
 		# Unit type symbol on a disc in the side colour (yellow when broken,
 		# with a dark glyph for contrast).
 		var glyph := Color(0.12, 0.1, 0.05) if sim.u_state[u] == BattleSim.U_ROUTING else Color.WHITE
-		Icons.draw_marker(self, _icon[u], c, r, col, glyph)
+		if chs and sim.u_char[u] != 0:
+			_draw_char_marker(u, c, r, col, lw)
+		else:
+			Icons.draw_marker(self, _icon[u], c, r, col, glyph)
 		if u == match_u:
 			var mc := c + Vector2(r * 2.0, 0)
 			var mcol := Color(0.3, 0.9, 0.35) if match_v > 0 else (Color(1.0, 0.3, 0.25) if match_v < 0 else Color(0.7, 0.7, 0.7))

@@ -1773,3 +1773,61 @@ ticks).
   the last man (no pull-back when losing it); a fortified holder at a
   crossing stays in its camp at the mouth and loses more than an open one
   (CAMPAIGN.md formula notes; docs/STATUS.md "Siege pass (2026-10-10)").
+
+
+## 27. Heroes and agents in battle (2026-10-10)
+
+The battle side of STATUS 8a (docs/DESIGN.md "Heroes and agents"). A
+side's characters (`BattleSim.u_char`) are routed by both dispatchers
+(`BattleAI.think`, `SiegeAI.think`) to `BattleAI.char_think` and take no
+part in the army plan: `_issue_line`, `_plan` (both centroids), `_strength`
+/ `_start_strength`, `_is_foot`, the settlement AI's ground strength,
+`_no_foot`, `_defenders_standing`, `_classify_defender`, the gate-sally
+weights and `_equip_free` (no character carries a ram or ladders) all skip
+them. Knobs (`sim/ai_profile.gd`, Easy / Average / Skilled):
+
+| Knob | E / A / S | Meaning |
+|---|---|---|
+| `CH_ATTEMPT` | 0 / 0 / 1 | the assassin makes his one attempt on an enemy general (`is_general`, command not fallen) within `CH_ATTEMPT_R` of him |
+| `CH_ATTEMPT_R` | 60 m | ... box to box |
+| `CH_PARLEY_R` | 0 / 80 / 80 m | the diplomat parleys the nearest routing enemy unit this near that `char_refusal` accepts (0: never) |
+| `CH_BACK` | 15 m | how far a hero keeps behind the unit he goes with |
+
+- **Heroes never charge alone**: no attack order is ever given to one; idle
+  (`_char_post`, at each unit think) each keeps `CH_BACK` (+ half the
+  unit's depth) behind the nearest friendly unit of his field, along the
+  army's facing: the cavalry hero behind a cavalry unit (the reserve, then
+  the wings as they go in), the missile hero behind a missile unit, the
+  siege hero behind a battery (none: twice `CH_BACK` behind the line), the
+  champion `CH_BACK` + 10 m behind the main line's centre (the second
+  line). His own men fight whatever reaches him (the sim's melee); a hero
+  fighting within 20 m of his post is left to it.
+- **The assassin** (Skilled only, by `CH_ATTEMPT`): an enemy general within
+  60 m: `ORDER_ATTEMPT` (counter `C_CH_ATTEMPT`); otherwise he shadows the
+  line 15 m behind its left of centre (an enemy general posted 30 m behind
+  his own line comes within reach once the lines meet). He never sabotages
+  (gap: the AI does not read enemy batteries or gates for him).
+- **The diplomat** (Average, Skilled): the nearest routing enemy unit within
+  80 m that may be asked: `ORDER_PARLEY` (counter `C_CH_PARLEY`); otherwise
+  he keeps 30 m behind the line's right. Routers within `PARLEY_SEE` 80 m of
+  a diplomat coming for them stop and wait (the sim), so he reaches them.
+- **Settlement maps**: the attackers' characters keep posts as above; the
+  defenders' stand where they were placed (they still parley / attempt).
+  The tower engines rank a hero in reach with the ram's crew (class 3,
+  nearest first); the field batteries' fire-at-will adds 3,000 to a hero's
+  score; `BattleAI._art_think` already prefers one (one man at his price,
+  1,500, against a unit's men times their cost).
+- **Hidden units**: `sim.hidden_from(o, side)` is skipped by
+  `_nearest_enemy`, `_nearest_not`, `_nearest`, `_nearest_routing`,
+  `_cav_pick`, the missile clean-target check, `_art_think`, the tower's
+  target choice and `_nearest_attacker`; the sim's own fire-at-will
+  (`_missile_think`, `_art_think`) skips them too.
+- Measured (`tests/determinism_test.gd --only=chars`, battle_2000 with a
+  general and all six characters a side, 1,800 ticks): Average heroes
+  behind their foot line in 109 of 118 samples (9 more than 10 m ahead:
+  the cavalry hero with the wings), no attack order, 7 of 8 heroes alive,
+  2 parleys (1 surrender: 35 prisoners, 1 refused), no attempt; Skilled 2
+  attempts, 3 parleys.
+- Gaps: the AI never sabotages; it does not pull a hero out of a losing
+  fight or shield him from missile fire; no aura knob per kind (the posts
+  are the knob: each hero stands where his aura counts).

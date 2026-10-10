@@ -30,6 +30,7 @@ const Terrain := preload("res://sim/terrain.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const Traits := preload("res://game/unit_traits.gd")
 const UiIcons := preload("res://game/ui_icons.gd")
+const CChars := preload("res://campaign/cchars.gd")
 const Icons := preload("res://game/unit_icons.gd")
 const CityPreview := preload("res://game/campaign/city_preview.gd")
 const GroundPalette := preload("res://game/ground_palette.gd")
@@ -62,7 +63,10 @@ static func snapshot(st: Dictionary, b: Dictionary, viewer: int) -> Dictionary:
 		for a in arm[sd]:
 			var f := int(a["f"])
 			var g := {"army": int(a["id"]), "f": f, "name": "%s army" % str(CData.FACTIONS[f]["adj"]),
-				"support": 1 if reinf.has(int(a["id"])) else 0, "units": []}
+				"support": 1 if reinf.has(int(a["id"])) else 0, "units": [], "chars": []}
+			# Heroes and agents that go in with it (the fit ones).
+			for c in CChars.side_list(st, [a]):
+				g["chars"].append({"id": int(c["id"]), "kind": str(c["kind"]), "name": str(c["name"])})
 			for k in CState.unit_count(a):
 				var u: Dictionary = a["units"][k]
 				var n := int(u["n"])
@@ -408,6 +412,15 @@ static func _side(snap: Dictionary, sd: int, res: Dictionary) -> Control:
 			card.tooltip_text = card.describe()
 			fl.add_child(card)
 		col.add_child(fl)
+		for c in g.get("chars", []):
+			var ty_c := UT.index_of(str(c["kind"]))
+			var fell := res.has("c:%d" % int(c["id"])) and int(res["c:%d" % int(c["id"])]) == 0
+			var cl := Kit.label("%s %s%s" % [CChars.display(str(c["kind"])), str(c["name"]), " fell, wounded" if fell else ""],
+				Kit.FONT_SMALL, Kit.COL_BAD if fell else Kit.COL_GOLD, true)
+			cl.name = "char_%d_%d" % [sd, int(c["id"])]
+			cl.tooltip_text = Traits.char_text(ty_c)
+			Kit.label_icon(cl, Traits.char_icon(ty_c))
+			col.add_child(cl)
 	var tl := towers_line(snap) if sd == 1 else ""
 	if tl != "":
 		if not res.is_empty():
@@ -490,6 +503,8 @@ static func result(s, snap: Dictionary, outcome: Dictionary, st: Dictionary, eve
 	var res := {}
 	for e in outcome.get("units", []):
 		res["%d:%d" % [int(e["army"]), int(e["unit"])]] = e
+	for ce in outcome.get("chars", []):
+		res["c:%d" % int(ce["id"])] = int(ce.get("alive", 1))
 	var sides := _sides(snap, res, wide)
 	v.add_child(sides)
 	# Totals at the foot of each side; a side's kills are the other's dead.
@@ -512,6 +527,12 @@ static func result(s, snap: Dictionary, outcome: Dictionary, st: Dictionary, eve
 		row.add_child(Kit.icon_label("%d fled" % int(t["fled"]), "routed", Kit.FONT_SMALL, Kit.COL_GOLD))
 		row.add_child(Kit.icon_label("%d kills" % int(tots[1 - sd]["dead"]), "battles", Kit.FONT_SMALL, Kit.COL_GOLD))
 		(sides.get_child(sd) as Container).add_child(row)
+		var pris: Array = outcome.get("prisoners", [0, 0])
+		if pris.size() > sd and int(pris[sd]) > 0:
+			var pl := Kit.icon_label("%d prisoners taken (%d gold ransom at the end of the turn)" % [int(pris[sd]),
+				int(pris[sd]) * CData.PRISONER_RANSOM], "captured", Kit.FONT_SMALL, Kit.COL_GOLD, true)
+			pl.name = "prisoners_%d" % sd
+			(sides.get_child(sd) as Container).add_child(pl)
 		var tl := Kit.label(txt, Kit.FONT_SMALL, Kit.COL_GOLD, true)
 		tl.name = "totals_%d" % sd
 		tl.visible = false

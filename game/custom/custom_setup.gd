@@ -52,6 +52,9 @@ const FUNDS_NAMES := ["No limit", "Small (4,500)", "Medium (7,500)", "Large (12,
 const DEPLOY_CHOICES := [0, 60, 120]
 const TIME_CHOICES := [900, 1200, 1800, 2700]
 const CTRL_NAMES := {"p1": "Player 1", "p2": "Player 2", "ai": "AI"}
+## Heroes and agents a side may bring (docs/DESIGN.md "Heroes and agents"):
+## a side's "chars" (keys, at most one of each) go in as the scenario's "chars".
+const CHAR_KEYS: Array[String] = ["hero_foot", "hero_missile", "hero_cav", "hero_siege", "assassin", "diplomat"]
 const FIELD_KINDS := [Terrain.K_FLAT, Terrain.K_ROLLING, Terrain.K_RIDGE, Terrain.K_VALLEY, Terrain.K_HILL,
 	Terrain.K_SLOPE]
 const SITE_KINDS := [Terrain.K_ROLLING, Terrain.K_FLAT, Terrain.K_HILL, Terrain.K_RIDGE]
@@ -173,7 +176,29 @@ static func side_cost(st: Dictionary, s: int) -> int:
 	for a in st["sides"][s]["armies"]:
 		for e in a["units"]:
 			c += unit_cost(str(e[0]), int(e[1]))
+	for k in chars_of(st, s):
+		c += unit_cost(str(k), 1)
 	return c
+
+
+## The characters side s brings (CHAR_KEYS order, known rows only).
+static func chars_of(st: Dictionary, s: int) -> Array:
+	var have: Array = st["sides"][s].get("chars", [])
+	var out: Array = []
+	for k in CHAR_KEYS:
+		if have.has(k) and UT.index_of(k) >= 0:
+			out.append(k)
+	return out
+
+
+## Toggle character `key` for side s.
+static func toggle_char(st: Dictionary, s: int, key: String) -> void:
+	var have: Array = chars_of(st, s)
+	if have.has(key):
+		have.erase(key)
+	else:
+		have.append(key)
+	st["sides"][s]["chars"] = have
 
 
 ## Who controls side s: the players with an army on it ([] = the AI).
@@ -324,6 +349,12 @@ static func build(st: Dictionary, solo: bool = false) -> Dictionary:
 		sc["mantlets"] = mt  # (the sim stands them before each side's missile and artillery units)
 	sc["ai_skill"] = skill
 	sc["ai_style"] = style
+	var chars := [[], []]
+	for s in 2:
+		for k in chars_of(st, s):
+			(chars[s] as Array).append({"key": k, "name": UT.text(UT.index_of(k), "name")})
+	if not (chars[0] as Array).is_empty() or not (chars[1] as Array).is_empty():
+		sc["chars"] = chars  # (one-man units the sim adds after the scenario's; commanded by the side's first unit's player)
 	var dt := int(st.get("deploy", 0))
 	if dt > 0:
 		sc["deploy_time"] = dt

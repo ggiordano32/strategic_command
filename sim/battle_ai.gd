@@ -131,6 +131,9 @@ const ORDER_FORAGE := 17
 const ORDER_KILL := 18
 const ORDER_RELEASE := 19
 const ORDER_DROP := 15
+const ORDER_SABOTAGE := 21      # (BattleSim's character orders)
+const ORDER_ATTEMPT := 22
+const ORDER_PARLEY := 23
 const EQ_WAGON := 3            # (BattleSim's siege equipment kinds and states)
 const Q_GROUND := 0
 const Q_CARRIED := 1
@@ -203,6 +206,9 @@ static func think(sim) -> void:
 			continue
 		if sim.u_hand[u] >= 0:
 			continue  # a war dog pack: the sim's return rule recalls it (docs/AI.md 21)
+		if is_char(sim, u):
+			char_think(sim, u, kn0 if side == 0 else kn1, true)  # a hero or agent (docs/AI.md 27)
+			continue
 		_unit_think(sim, u)
 
 
@@ -379,7 +385,8 @@ static func _nearest_foot(sim, u: int) -> int:
 static func _strength(sim, side: int) -> int:
 	var s := 0
 	for u in sim.n_units:
-		if sim.u_side[u] == side and sim.u_state[u] == U_READY and sim.u_order[u] != O_WITHDRAW:
+		if sim.u_side[u] == side and sim.u_state[u] == U_READY and sim.u_order[u] != O_WITHDRAW \
+				and not is_char(sim, u):
 			var cost := UT.stat(sim.u_type[u], "cost")
 			if sim.u_cls[u] == UT.CLS_ART and sim.u_ammo[u] <= 0 and sim.u_reserve[u] <= 0:
 				cost = 2  # crews with nothing left to shoot
@@ -390,7 +397,7 @@ static func _strength(sim, side: int) -> int:
 static func _start_strength(sim, side: int) -> int:
 	var s := 0
 	for u in sim.n_units:
-		if sim.u_side[u] == side:
+		if sim.u_side[u] == side and not is_char(sim, u):
 			s += sim.u_count0[u] * UT.stat(sim.u_type[u], "cost")
 	return s
 
@@ -454,9 +461,12 @@ static func _plan(sim, side: int) -> Dictionary:
 	var ex := 0
 	var ey := 0
 	var en := 0
+	var chs: bool = sim.ch_on != 0
 	for u in nu:
 		if st[u] != U_READY:
 			continue
+		if chs and sim.u_char[u] != 0:
+			continue  # (heroes and agents do not move the line)
 		var w := al[u]
 		if sd[u] == side:
 			# The plan is anchored on the main line (missile screens and
@@ -664,7 +674,7 @@ static func amok_think(sim, u: int) -> void:
 
 ## Line infantry (infantry or pikes; not a wagon's crew).
 static func _is_foot(sim, u: int) -> bool:
-	return (sim.u_cls[u] == UT.CLS_INF or sim.u_cls[u] == UT.CLS_PIKE) and not is_wagon(sim, u)
+	return (sim.u_cls[u] == UT.CLS_INF or sim.u_cls[u] == UT.CLS_PIKE) and not is_wagon(sim, u) and not is_char(sim, u)
 
 
 ## Unit u is an ammunition wagon's crew (kept out of the line: docs/AI.md 18).
@@ -704,8 +714,8 @@ static func _issue_line(sim, side: int, plan: Dictionary, cx: int, cy: int, depl
 		if not deploy and sim.u_ai[u] != A_LINE and sim.u_ai[u] != A_HOLD and sim.u_ai[u] != A_ART \
 				and sim.u_ai[u] != A_RESV:
 			continue
-		if is_wagon(sim, u) or sim.u_hand[u] >= 0:
-			continue  # (the wagon keeps behind the army: wagon_think; a war dog pack is the sim's)
+		if is_wagon(sim, u) or sim.u_hand[u] >= 0 or is_char(sim, u):
+			continue  # (the wagon keeps behind the army: wagon_think; a war dog pack is the sim's; a character: char_think)
 		if kn[AP.GEN_THINK] != 0 and is_general(sim, u):
 			continue  # (the general keeps behind the line: _general_think)
 		var c: int = sim.u_cls[u]
@@ -1326,7 +1336,7 @@ static func _cav_pick(sim, u: int, phase: int) -> int:
 	var scare := kn[AP.CAMEL_HORSE] > 0 and UT.stat(uty, "scare_r") > 0
 	var beast := kn[AP.EL_LINE] > 0 and UT.stat(uty, "fear_r") > 0
 	for t in sim.n_units:
-		if sim.u_side[t] == side or sim.u_state[t] >= U_DESTROYED:
+		if sim.u_side[t] == side or sim.u_state[t] >= U_DESTROYED or sim.hidden_from(t, side):
 			continue
 		var d := _d(sim.u_cx[t] - sim.u_cx[u], sim.u_cy[t] - sim.u_cy[u]) / M
 		var score := 0
@@ -1470,7 +1480,7 @@ static func _missile_think(sim, u: int, phase: int) -> void:
 	for o in sim.n_units:
 		if clean:
 			break
-		if sim.u_side[o] == side or sim.u_state[o] >= U_DESTROYED:
+		if sim.u_side[o] == side or sim.u_state[o] >= U_DESTROYED or sim.hidden_from(o, side):
 			continue
 		if sim.u_fighting[o] == 0 and sim._in_range(u, o, rng):
 			clean = true
@@ -1543,7 +1553,7 @@ static func _art_think(sim, u: int, phase: int) -> void:
 	var any_in_range := false
 	var blocked := 0  # in range but behind a crest (bolts on hilly ground)
 	for o in sim.n_units:
-		if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.u_alive[o] <= 0:
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.u_alive[o] <= 0 or sim.hidden_from(o, side):
 			continue
 		if not sim._art_in_range(u, o, mn, rng):
 			continue
@@ -3078,7 +3088,7 @@ static func _nearest_enemy(sim, u: int, ready_only: bool) -> int:
 	var best_d := 0
 	var side: int = sim.u_side[u]
 	for o in sim.n_units:
-		if sim.u_side[o] == side:
+		if sim.u_side[o] == side or sim.hidden_from(o, side):
 			continue
 		var s: int = sim.u_state[o]
 		if s >= U_DESTROYED or (ready_only and s != U_READY):
@@ -3095,7 +3105,7 @@ static func _nearest_not(sim, u: int, skip: int) -> int:
 	var best_d := 0
 	var side: int = sim.u_side[u]
 	for o in sim.n_units:
-		if o == skip or sim.u_side[o] == side or sim.u_state[o] != U_READY:
+		if o == skip or sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.hidden_from(o, side):
 			continue
 		if sim.u_formed[o] != 0 and _frontal(sim, o, u):
 			continue
@@ -3111,7 +3121,7 @@ static func _nearest(sim, u: int, cls: int, within: int) -> int:
 	var best_d := within * within
 	var side: int = sim.u_side[u]
 	for o in sim.n_units:
-		if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.u_cls[o] != cls:
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.u_cls[o] != cls or sim.hidden_from(o, side):
 			continue
 		var d := _dist2(sim, u, o)
 		if d < best_d:
@@ -3125,7 +3135,7 @@ static func _nearest_routing(sim, u: int, within: int) -> int:
 	var best_d := within * within
 	var side: int = sim.u_side[u]
 	for o in sim.n_units:
-		if sim.u_side[o] == side or sim.u_state[o] != U_ROUTING:
+		if sim.u_side[o] == side or sim.u_state[o] != U_ROUTING or sim.hidden_from(o, side):
 			continue
 		var d := _dist2(sim, u, o)
 		if d < best_d:
@@ -3402,3 +3412,120 @@ static func _river_point(sim, side: int, skirmishing: bool) -> Vector2i:
 		return Vector2i(m.x * M, m.y * M + dir * RIV_FORM)
 	var f := MapGen.river_mouth(sim.riv, hold)
 	return Vector2i(f.x * M, f.y * M - dir * RIV_FORM)
+
+
+# ------------------------------------------------------ heroes and agents ---
+# (docs/AI.md 27) The side's characters (BattleSim u_char) never take a place
+# in the line and never charge alone: each hero keeps CH_BACK behind the unit
+# of his field (the cavalry hero behind the nearest cavalry unit, the missile
+# hero behind the nearest missile unit, the siege hero behind the nearest
+# battery, the champion behind the centre of the main line: the second line);
+# his own men fight whatever reaches them. The assassin (Skilled: CH_ATTEMPT)
+# makes his one attempt on an enemy general within CH_ATTEMPT_R of him and
+# otherwise shadows the line's left rear; the diplomat (Average, Skilled:
+# CH_PARLEY_R) parleys the nearest routing enemy unit within CH_PARLEY_R and
+# otherwise keeps behind the line's right. Settlement maps: the defenders'
+# characters stand where they were placed (post false).
+
+## Unit u is a hero or an agent.
+static func is_char(sim, u: int) -> bool:
+	return sim.ch_on != 0 and sim.u_char[u] != 0
+
+
+static func char_think(sim, u: int, kn: PackedInt32Array, post: bool) -> void:
+	if sim.u_cho[u] != 0:
+		return  # about his act (the sim walks him there)
+	var side: int = sim.u_side[u]
+	var k: int = sim.u_char[u]
+	if k == UT.CK_ASSASSIN:
+		if kn[AP.CH_ATTEMPT] != 0 and (sim.u_chf[u] & 2) == 0:
+			var best := -1
+			var bd := 0
+			for o in sim.n_units:
+				if sim.u_side[o] == side or sim.u_state[o] != U_READY or not is_general(sim, o) \
+						or sim.u_cmdgone[o] != 0:
+					continue
+				var d := _bbox_gap(sim, u, o)
+				if d <= kn[AP.CH_ATTEMPT_R] and (best < 0 or d < bd):
+					best = o
+					bd = d
+			if best >= 0:
+				var oa := {"type": ORDER_ATTEMPT, "target": best, "unit": u}
+				if sim.char_refusal(sim, oa) == "":
+					_order(sim, u, oa, 26)
+					_count(sim, side, AP.C_CH_ATTEMPT)
+					return
+	elif k == UT.CK_DIPLOMAT:
+		if kn[AP.CH_PARLEY_R] > 0 and sim.tick >= sim.u_chcd[u]:
+			var best := -1
+			var bd := 0
+			for o in sim.n_units:
+				if sim.u_side[o] == side or sim.u_state[o] != U_ROUTING or sim.u_alive[o] <= 0:
+					continue
+				var d := _bbox_gap(sim, u, o)
+				if d <= kn[AP.CH_PARLEY_R] and (best < 0 or d < bd):
+					var op := {"type": ORDER_PARLEY, "target": o, "unit": u}
+					if sim.char_refusal(sim, op) == "":
+						best = o
+						bd = d
+			if best >= 0:
+				_order(sim, u, {"type": ORDER_PARLEY, "target": best}, 27)
+				_count(sim, side, AP.C_CH_PARLEY)
+				return
+	if not post:
+		return
+	_char_post(sim, u, k, kn)
+
+
+## Where a character of kind k keeps when idle: behind the unit of his field
+## (or the line's centre), facing as the army does.
+static func _char_post(sim, u: int, k: int, kn: PackedInt32Array) -> void:
+	var side: int = sim.u_side[u]
+	var plan := _plan(sim, side)
+	if plan.is_empty():
+		return
+	var fx: int = plan["fx"]
+	var fy: int = plan["fy"]
+	var face: int = plan["face"]
+	var want := -1
+	if k == UT.CK_CAV:
+		want = UT.CLS_CAV
+	elif k == UT.CK_MISSILE:
+		want = UT.CLS_MISSILE
+	elif k == UT.CK_SIEGE:
+		want = UT.CLS_ART
+	var ax: int = plan["cx"]
+	var ay: int = plan["cy"]
+	var back: int = kn[AP.CH_BACK]
+	if want >= 0:
+		var best := -1
+		var bd := 0
+		for o in sim.n_units:
+			if o == u or sim.u_side[o] != side or sim.u_state[o] != U_READY or sim.u_cls[o] != want \
+					or is_char(sim, o) or is_wagon(sim, o) or is_general(sim, o):
+				continue
+			var d := _dist2(sim, u, o)
+			if best < 0 or d < bd:
+				best = o
+				bd = d
+		if best >= 0:
+			ax = sim.u_cx[best]
+			ay = sim.u_cy[best]
+			back = kn[AP.CH_BACK] + sim.unit_depth(best) / 2
+		else:
+			back = kn[AP.CH_BACK] * 2  # (none of his kind: behind the line)
+	elif k == UT.CK_FOOT:
+		back = kn[AP.CH_BACK] + 10 * M  # the second line
+	else:
+		# The agents: the assassin close behind the line's left of centre
+		# (an enemy general posted behind his line comes within reach), the
+		# diplomat further back on the right.
+		back = kn[AP.CH_BACK] if k == UT.CK_ASSASSIN else kn[AP.CH_BACK] * 2
+		var lat := -15 * M if k == UT.CK_ASSASSIN else 30 * M
+		ax += -fy * lat / FM.TRIG_ONE
+		ay += fx * lat / FM.TRIG_ONE
+	var x := clampi(ax - fx * back / FM.TRIG_ONE, 8 * M, sim.field_w - 8 * M)
+	var y := clampi(ay - fy * back / FM.TRIG_ONE, 8 * M, sim.field_h - 8 * M)
+	if sim.u_fighting[u] > 0 and _d(x - sim.u_cx[u], y - sim.u_cy[u]) < 20 * M:
+		return  # (fighting where he stands: his men see it through)
+	_move(sim, u, x, y, face, 0, 0, 25)

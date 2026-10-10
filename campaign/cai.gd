@@ -68,6 +68,7 @@ const CBattle := preload("res://campaign/cbattle.gd")
 const UT := preload("res://sim/unit_types.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const CP := preload("res://campaign/cai_profile.gd")
+const CChars := preload("res://campaign/cchars.gd")
 
 ## The lines added since the step-4 goldens, recruited only through a
 ## faction's mix (never as _any_type's fallback): camels, elephants (both
@@ -106,6 +107,7 @@ static func act(st: Dictionary, f: int, moves: Array = []) -> void:
 		# recruits cannot march this turn; see _recruit_order).
 		_move_grid(st, f, moves)
 		_recruit(st, f, moves)
+		_characters(st, f, moves)
 		return
 	_recruit(st, f)
 	if CState.moves_on(st):
@@ -486,6 +488,81 @@ static func _recruit(st: Dictionary, f: int, moves: Array = []) -> void:
 			if CRules.apply_order(st, f, _recruit_order(st, f, rr, key, marching, moves, kn)) != "":
 				break
 			up += CState.upkeep_of(ty)
+
+
+## Heroes and agents (CP.CHAR_HERO / CHAR_DIPLOMAT): characters waiting in a
+## city join an army standing there; each army of at least CHAR_HERO units
+## at a city with Barracks 2 and no hero gets one (the kind of its main arm)
+## and, at Skilled, the strongest army a diplomat from a Market 1, when the
+## money stays above the recruiting reserve. Never an assassin.
+static func _characters(st: Dictionary, f: int, moves: Array) -> void:
+	var kn := CP.of(st, f)
+	if kn[CP.CHAR_HERO] <= 0 and kn[CP.CHAR_DIPLOMAT] <= 0 and not st.has("chars"):
+		return
+	var marching := {}
+	for mv in moves:
+		if int(mv[2]) == f:
+			marching[int(mv[0])] = 1
+	var mine := CState.armies_of(st, f)
+	# Waiting characters go to an army at their city with the slot free.
+	for c in CChars.all(st).duplicate():
+		if int(c["f"]) != f or int(c["army"]) >= 0:
+			continue
+		for a in mine:
+			if CChars.attach_check(st, f, int(c["id"]), int(a["id"])) == "":
+				CRules.apply_order(st, f, {"t": "attach", "id": int(c["id"]), "army": int(a["id"])})
+				break
+	var floor_gold := _reserve(st, f) / kn[CP.RECRUIT_RESERVE_DIV]
+	if kn[CP.CHAR_HERO] > 0:
+		for a in mine:
+			if int(a["busy"]) != 0 or CState.unit_count(a) < kn[CP.CHAR_HERO] or marching.has(int(a["id"])):
+				continue
+			if CChars.slot_taken(st, int(a["id"]), CChars.SLOT_HERO):
+				continue
+			var kind := _hero_kind(a)
+			_raise_char(st, f, a, kind, floor_gold)
+	if kn[CP.CHAR_DIPLOMAT] > 0 and not mine.is_empty():
+		var main: Dictionary = mine[0]
+		for a in mine:
+			if CState.strength(a) > CState.strength(main):
+				main = a
+		if int(main["busy"]) == 0 and not marching.has(int(main["id"])) \
+				and not CChars.slot_taken(st, int(main["id"]), CChars.SLOT_DIPLOMAT):
+			_raise_char(st, f, main, "diplomat", floor_gold)
+
+
+## The hero kind for army a: the arm with the most men (foot on a tie).
+static func _hero_kind(a: Dictionary) -> String:
+	var n := [0, 0, 0]  # foot, cavalry, missile ... then engines
+	var eng := 0
+	for u in a["units"]:
+		var c := UT.cls(CState.unit_type(u))
+		if c == UT.CLS_CAV:
+			n[1] += int(u["n"])
+		elif c == UT.CLS_MISSILE:
+			n[2] += int(u["n"])
+		elif c == UT.CLS_ART:
+			eng += int(u["n"]) * 4
+		else:
+			n[0] += int(u["n"])
+	var best := 0
+	for k in 3:
+		if n[k] > n[best]:
+			best = k
+	if eng > n[best]:
+		return "hero_siege"
+	return ["hero_foot", "hero_cav", "hero_missile"][best]
+
+
+static func _raise_char(st: Dictionary, f: int, a: Dictionary, kind: String, floor_gold: int) -> void:
+	if not CChars.available(kind):
+		return
+	if int(st["factions"][f]["treasury"]) - CChars.price_of(kind) < floor_gold:
+		return
+	var r := CChars.city_of(st, a)
+	if r < 0:
+		return
+	CRules.apply_order(st, f, {"t": "recruit_char", "kind": kind, "r": r, "army": int(a["id"])})
 
 
 ## The recruit order for unit key in region r. Formats 1-5: the old form.
