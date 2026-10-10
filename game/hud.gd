@@ -38,6 +38,8 @@ signal cards_reordered
 signal ready_pressed
 signal works_pressed(mode: String)  # deployment: field works palette ("stakes", "caltrops", "rotate", "remove")
 
+## The only battle speeds offered, in quarter steps: 0.5x, 1x, 2x, 4x.
+const SPEED_QS := [2, 4, 8, 16]
 const AudioFx := preload("res://game/audio.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const DragReorder := preload("res://game/drag_reorder.gd")
@@ -79,6 +81,16 @@ var speed_panel: PanelContainer
 var speed_slider: HSlider
 var speed_value: Label
 var _speed_dragging := false
+var _speed_last_emit := -1
+
+
+## The nearest offered speed (SPEED_QS) to a q.
+static func snap_speed(q: int) -> int:
+	var best: int = SPEED_QS[0]
+	for c in SPEED_QS:
+		if absi(int(c) - q) < absi(best - q):
+			best = int(c)
+	return best
 var run_button: Button
 var halt_button: Button
 var fire_button: Button
@@ -727,7 +739,7 @@ func _build_speed_panel(root: Control) -> void:
 	head.add_child(speed_value)
 	speed_slider = HSlider.new()
 	speed_slider.name = "speed_slider"
-	speed_slider.min_value = Lockstep.SPEED_Q_MIN
+	speed_slider.min_value = SPEED_QS[0]
 	speed_slider.max_value = Lockstep.SPEED_Q_MAX
 	speed_slider.step = 1
 	speed_slider.value = 4
@@ -749,14 +761,20 @@ func _build_speed_panel(root: Control) -> void:
 	speed_slider.add_theme_stylebox_override("grabber_area", fill)
 	speed_slider.add_theme_stylebox_override("grabber_area_highlight", fill)
 	speed_slider.value_changed.connect(func(x: float):
-		speed_value.text = Lockstep.speed_text(int(x))
-		speed_chosen.emit(int(x), false))
+		var sq := snap_speed(int(round(x)))
+		if float(sq) != x:
+			speed_slider.set_value_no_signal(sq)  # snaps to 0.5 / 1 / 2 / 4
+		speed_value.text = Lockstep.speed_text(sq)
+		if sq != _speed_last_emit:
+			_speed_last_emit = sq
+			speed_chosen.emit(sq, false))
 	speed_slider.drag_started.connect(func(): _speed_dragging = true)
 	# A tap on the track moves the handle without a drag in between; the
 	# value at release is what counts either way.
 	speed_slider.drag_ended.connect(func(_changed: bool):
 		_speed_dragging = false
-		speed_chosen.emit(int(speed_slider.value), true))
+		_speed_last_emit = -1
+		speed_chosen.emit(snap_speed(int(round(speed_slider.value))), true))
 	v.add_child(speed_slider)
 	var ticks := SpeedTicks.new()
 	ticks.slider = speed_slider
@@ -1320,7 +1338,7 @@ class SpeedTicks extends Control:
 		var lo := slider.min_value
 		var span := slider.max_value - lo
 		var prev_end := -100.0
-		for q in Lockstep.SPEED_QS:
+		for q in SPEED_QS:
 			var x: float = g / 2.0 + (float(q) - lo) / span * (size.x - g)
 			draw_line(Vector2(x, 0), Vector2(x, 3), Color(0.6, 0.62, 0.7), 1.0)
 			var t := Lockstep.speed_text(q).trim_suffix("x")

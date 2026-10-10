@@ -1080,6 +1080,7 @@ Where 2026-10-09 ended (build 20261009T124650Z live; everything up to
 - **Open from playtests:** the co-op Ask-to-join flow unconfirmed; the
   general's upkeep decision (none) is in; the Leave button fix is in.
   Tower engines shown (done 2026-10-09): pre-battle card "Wall engines (up to)" line, defender HUD one card per engine kind with shots and crew, tap cycles.
+  Two-finger tap deselects all units on the battle screen (done 2026-10-10; 120 / 250 ms, 12 px; "Deselected" flash in co-op only, the solo HUD has no hint bar).
   Recruit lists show every unlocked tier per line (done 2026-10-09): region panel, army card and the Raise-new-army picker (one row per tier).
   Overworld relief shading (done 2026-10-10): hillshade texture baked once from the grid (about 40 ms), hatch marks kept lighter, key hills row shaded; view only.
 - **Region panel overflow fixed (2026-10-09, user's PC screenshot):** the

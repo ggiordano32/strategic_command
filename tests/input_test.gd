@@ -69,6 +69,13 @@ func _initialize() -> void:
 		_step_pinch_move,
 		_step_pinch_end,
 		_step_check_pinch,
+		_step_select_for_two,
+		_step_two_pan_begin,
+		_step_two_pan_move,
+		_step_two_pan_end,
+		_step_check_two_pan_keeps,
+		_step_two_tap,
+		_step_check_two_tap,
 		_step_tap_card,
 		_step_check_card,
 		_step_tap_orders_toggle,
@@ -540,6 +547,46 @@ func _step_check_pinch() -> void:
 	var z := battle.camera.zoom.x
 	_check(z > _zoom_before * 1.5, "pinch out zooms in (%.3f -> %.3f)" % [_zoom_before, z])
 	_check(battle.sim._order_seq == _order_count_before, "pinch issues no orders")
+
+
+func _step_select_for_two() -> void:
+	battle._select(u_inf)
+
+
+func _step_two_pan_begin() -> void:
+	_no_double_tap()
+	var c := _vp_to_window(Vector2(500, 260))
+	_touch(0, c - Vector2(50, 0), true)
+	_touch(1, c + Vector2(50, 0), true)
+
+
+func _step_two_pan_move() -> void:
+	var c := _vp_to_window(Vector2(500, 260))
+	_drag(0, c - Vector2(50, -40), Vector2(0, 40))
+	_drag(1, c + Vector2(50, 40), Vector2(0, 40))
+
+
+func _step_two_pan_end() -> void:
+	var c := _vp_to_window(Vector2(500, 260))
+	_touch(0, c - Vector2(50, -40), false)
+	_touch(1, c + Vector2(50, 40), false)
+
+
+func _step_check_two_pan_keeps() -> void:
+	_check(battle.selection.size() == 1, "two-finger pan does not deselect")
+
+
+func _step_two_tap() -> void:
+	_no_double_tap()
+	var c := _vp_to_window(Vector2(500, 260))
+	_touch(0, c - Vector2(50, 0), true)
+	_touch(1, c + Vector2(50, 0), true)
+	_touch(0, c - Vector2(50, 0), false)
+	_touch(1, c + Vector2(50, 0), false)
+
+
+func _step_check_two_tap() -> void:
+	_check(battle.selection.is_empty() and battle.selected == -1, "two-finger tap deselects all")
 
 
 func _step_tap_card() -> void:
@@ -1553,37 +1600,37 @@ func _step_sp_drag_down() -> void:
 
 
 func _step_sp_drag_move() -> void:
-	_drag(0, _sp_pos(7), _sp_pos(7) - _sp_pos(4))
-	_drag(0, _sp_pos(10), _sp_pos(10) - _sp_pos(7))
+	_drag(0, _sp_pos(6), _sp_pos(6) - _sp_pos(4))
+	_drag(0, _sp_pos(9), _sp_pos(9) - _sp_pos(6))
 
 
 func _step_sp_check_dragging() -> void:
 	var hud = battle.hud
-	_check(hud.speed_value.text == "2.5x", "dragging the slider shows the value live (%s)" % hud.speed_value.text)
+	_check(hud.speed_value.text == "2x", "dragging the slider snaps to 2x and shows it live (%s)" % hud.speed_value.text)
 	_check(battle.camera.position == _sp_cam, "dragging the slider does not pan the map")
 
 
 func _step_sp_drag_up() -> void:
-	_touch(0, _sp_pos(10), false)
+	_touch(0, _sp_pos(9), false)
 
 
 func _step_sp_check_applied() -> void:
-	_check(battle.speed_q == 10, "releasing the slider applies 2.5x solo (q %d)" % battle.speed_q)
-	_check(battle.hud.speed_button.text == "2.5x", "the speed button shows 2.5x (%s)" % battle.hud.speed_button.text)
+	_check(battle.speed_q == 8, "releasing the slider applies 2x solo (q %d)" % battle.speed_q)
+	_check(battle.hud.speed_button.text == "2x", "the speed button shows 2x (%s)" % battle.hud.speed_button.text)
 	_check(battle.camera.position == _sp_cam, "the map did not move")
 	_key(KEY_EQUAL)
 
 
 func _step_sp_keys() -> void:
-	_check(battle.speed_q == 12, "+ goes to the next labelled speed, 3x (q %d)" % battle.speed_q)
-	_check(int(battle.hud.speed_slider.value) == 12 and battle.hud.speed_value.text == "3x",
+	_check(battle.speed_q == 16, "+ goes to the next offered speed, 4x (q %d)" % battle.speed_q)
+	_check(int(battle.hud.speed_slider.value) == 16 and battle.hud.speed_value.text == "4x",
 		"the slider follows the keys (%s)" % battle.hud.speed_value.text)
 	_key(KEY_MINUS)
 	_key(KEY_MINUS)
 
 
 func _step_sp_check_keys() -> void:
-	_check(battle.speed_q == 4, "- twice: 3x -> 2x -> 1x (q %d)" % battle.speed_q)
+	_check(battle.speed_q == 4, "- twice: 4x -> 2x -> 1x (q %d)" % battle.speed_q)
 
 
 func _step_sp_close() -> void:

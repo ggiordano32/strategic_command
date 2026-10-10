@@ -34,7 +34,7 @@ static var BINDINGS: Array = [
 	{"id": "select_cav", "s": "battle", "label": "Select cavalry",
 		"touch": "Cav button", "mouse": "Cav button", "keys": [KEY_4]},
 	{"id": "deselect", "s": "battle", "label": "Deselect all",
-		"touch": "None button (with the group buttons)", "mouse": "None button", "keys": [KEY_ESCAPE]},
+		"touch": "Two-finger tap, or the None button (with the group buttons)", "mouse": "None button", "keys": [KEY_ESCAPE]},
 	{"id": "box_select", "s": "battle", "label": "Select units in a box",
 		"touch": "-", "mouse": "Left drag on empty ground with nothing selected", "keys": []},
 	# ---- battle: orders

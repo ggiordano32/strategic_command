@@ -35,6 +35,13 @@ const SPEED_PRESETS := [2, 4, 8, 16]  # --speed=N (main.gd): N indexes these qua
 const DRAG_THRESHOLD := 18.0      # screen px before a touch becomes a drag
 const DOUBLE_TAP_SEC := 0.35
 const DOUBLE_TAP_DIST := 48.0
+# Two-finger tap = deselect all. Both fingers down within TWO_TAP_DOWN_MS of
+# each other, both up within TWO_TAP_TOTAL_MS of the first touch, each moved
+# under TWO_TAP_MOVE px (logical), no third finger. Any pinch / pan motion
+# (a finger past TWO_TAP_MOVE) cancels it, so it cannot fire after those.
+const TWO_TAP_DOWN_MS := 120
+const TWO_TAP_TOTAL_MS := 250
+const TWO_TAP_MOVE := 12.0
 const MIN_LINE_M := 3.0           # shorter drags keep the current frontage
 const ZOOM_MIN := 0.12
 const ZOOM_MAX := 4.0
@@ -154,6 +161,9 @@ var _press_pos := Vector2.ZERO
 var _dragging := false
 var _gesture_multi := false        # two-finger gesture in progress
 var _pinch_dist := 0.0
+var _tt_t0 := 0                    # msec of the first finger down (two-finger tap)
+var _tt_ok := false                # still a possible two-finger tap
+var _tt_start: Dictionary = {}     # index -> press pos
 var _pinch_mid := Vector2.ZERO
 var _last_tap_time := -10.0
 var _last_tap_pos := Vector2.ZERO
@@ -1128,7 +1138,7 @@ func _on_speed_chosen(q: int, final: bool) -> void:
 		_update_speed_text()
 
 
-## + / - keys: to the next labelled speed (Lockstep.SPEED_QS) up / down.
+## + / - keys: to the next labelled speed (Hud.SPEED_QS) up / down.
 func _step_speed(dir: int) -> void:
 	var cur := speed_q
 	if coop != null:
@@ -1136,7 +1146,7 @@ func _step_speed(dir: int) -> void:
 			return
 		cur = coop.ls.vote_speed_q if coop.ls.vote_speed_by == coop.me else coop.ls.speed_q
 	var next := cur
-	var qs: Array = Lockstep.SPEED_QS.duplicate()
+	var qs: Array = Hud.SPEED_QS.duplicate()
 	if dir < 0:
 		qs.reverse()
 	for q in qs:
@@ -2213,6 +2223,17 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 			_mouse_add = false
 			_mouse_alt = false
 		_touches[e.index] = e.position
+		if not is_mouse:
+			var tnow := Time.get_ticks_msec()
+			if _touches.size() == 1:
+				_tt_t0 = tnow
+				_tt_ok = false
+				_tt_start.clear()
+			elif _touches.size() == 2:
+				_tt_ok = tnow - _tt_t0 <= TWO_TAP_DOWN_MS
+			else:
+				_tt_ok = false
+			_tt_start[e.index] = e.position
 		if _touches.size() == 1:
 			_primary = e.index
 			_press_pos = e.position
@@ -2241,6 +2262,18 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 	if not _touches.has(e.index):
 		return
 	_touches.erase(e.index)
+	if _tt_ok and _touches.is_empty():
+		_tt_ok = false
+		if Time.get_ticks_msec() - _tt_t0 <= TWO_TAP_TOTAL_MS and interactive:
+			_gm_pending = false
+			_gesture_multi = false
+			_primary = -1
+			_count("deselect_two_finger")
+			_gm_cancel()
+			_select(-1)
+			if coop_hud != null:
+				coop_hud.flash("Deselected", 1.5)
+			return
 	if _gm and not _gm_mouse:
 		# Lifting a finger places the group.
 		_gm_commit()
@@ -2291,6 +2324,8 @@ func _on_drag(e: InputEventScreenDrag) -> void:
 	if not _touches.has(e.index):
 		return
 	_touches[e.index] = e.position
+	if _tt_ok and _tt_start.has(e.index) and e.position.distance_to(_tt_start[e.index]) > TWO_TAP_MOVE:
+		_tt_ok = false
 	if _gesture_multi:
 		if _gm_pending or _gm:
 			_gm_touch_update()

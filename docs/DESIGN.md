@@ -3292,6 +3292,9 @@ selecting or ordering anything.
 - Mouse drag on empty ground with nothing selected (or with Shift) draws a
   selection box; pan with right / middle drag or keys (left-drag pan with
   nothing selected is gone on desktop; touch still pans with one finger).
+- Two-finger tap deselects all (touch, battle only): both fingers down within
+  120 ms, both up within 250 ms of the first touch, each moved under 12 px;
+  pinch / pan motion cancels it (`TWO_TAP_*` in `game/battle.gd`).
 - Group move: three fingers on the screen with units selected; after 24 px
   of movement or 8 degrees of twist a ghost of every unit's destination
   (real frontage, depth and facing) follows the touches' centre and twist;
