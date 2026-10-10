@@ -8,10 +8,16 @@ shader_type canvas_item;
 //   R, G  height, 16 bits (R high byte), 0..65535 over 0..h_range_m metres
 //   B     shade: 128 = flat; (B - 128) / 160 = relative brightness (hill
 //         shading from the upper left plus a soft darkening of valley floors)
-//   A     unused
+//   A     slope: ground grade (rise / run) 0..0.8 over 0..255 (rock tint and
+//         slope darkening; interpolated like the height)
 // Ground features texture (RGBA8, one texel per 4 m cell, linear filter):
 //   R woods (tree density / 3), G inside a settlement, B farm field,
 //   A 0.5 main street / 1.0 plaza.
+// The ground also carries low-frequency colour variation (patches of lusher
+// and of drier or stonier ground from hash noise), rock on steep slopes and
+// above a notional tree line on hill maps, wet sand along water and a
+// moving ripple on the river and the sea (the built-in TIME, nothing from
+// the sim).
 // The four height nodes around a fragment are decoded and interpolated here
 // (manual bilinear in highp), so contours are exact and stable when panning
 // and zooming. Contour lines keep a constant screen width via fwidth() and
@@ -53,6 +59,15 @@ uniform bool riv_on = false;
 uniform vec2 riv_size_px = vec2(1.0);
 uniform vec3 ford_col = vec3(0.50, 0.58, 0.54);
 
+// Ground variation, rock and wet sand (set by terrain_layer.gd).
+uniform float ppm = 10.0;             // world pixels per metre
+uniform vec3 patch_a = vec3(-0.02, 0.04, -0.02); // colour added in lusher patches
+uniform vec3 patch_b = vec3(0.05, 0.02, -0.03);  // ... and in drier / stonier ones
+uniform float patch_k = 1.0;
+uniform vec3 rock_col = vec3(0.5, 0.48, 0.42);
+uniform float tree_line = 2.0;        // fraction of the height range above which rock shows (> 1: none)
+uniform vec3 sand_col = vec3(0.55, 0.49, 0.36);
+
 varying highp vec2 world;
 
 void vertex() {
@@ -62,7 +77,7 @@ void vertex() {
 highp vec3 node(ivec2 p) {
 	vec4 t = texelFetch(hmap, clamp(p, ivec2(0), hmap_size - ivec2(1)), 0);
 	highp float h = floor(t.r * 255.0 + 0.5) * 256.0 + floor(t.g * 255.0 + 0.5);
-	return vec3(h, t.b, 0.0);
+	return vec3(h, t.b, t.a);
 }
 
 // Coverage of a line at distance `d` (in line units) given the derivative
@@ -72,9 +87,36 @@ float line_a(highp float d, highp float fw, float half_px) {
 	return 1.0 - smoothstep(half_px - 0.5, half_px + 0.5, px);
 }
 
+float hash12(vec2 p) {
+	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.x + p3.y) * p3.z);
+}
+
+float vnoise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	float a = hash12(i);
+	float b = hash12(i + vec2(1.0, 0.0));
+	float c = hash12(i + vec2(0.0, 1.0));
+	float d = hash12(i + vec2(1.0, 1.0));
+	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
 void fragment() {
-	vec3 col = base_col;
+	highp vec2 wm = world / ppm;  // metres
+	float n1 = vnoise(wm / 58.0 + vec2(3.1, 7.7));
+	float n2 = vnoise(wm / 21.0 + vec2(11.7, 2.3));
+	float n3 = vnoise(wm / 3.4 + vec2(5.3, 9.1));
+	// Patches of lusher / drier ground, then a fine grain.
+	float patchv = (n1 - 0.5) * 1.5 + (n2 - 0.5) * 0.7;
+	vec3 col = base_col + (patchv > 0.0 ? patch_a : patch_b) * abs(patchv) * 1.6 * patch_k;
+	float mpp = fwidth(wm.x);
+	float grain = (n3 - 0.5) * 0.07 + (vnoise(wm / 1.15 + vec2(1.7, 4.1)) - 0.5) * 0.05 * (1.0 - smoothstep(0.25, 0.7, mpp));
+	col *= 1.0 + grain;
 	float contour_k = 1.0;
+	highp float hm_w = 0.0;
 	float sea = 0.0;
 	float ditch = 0.0;
 	if (sea_on) {
@@ -83,21 +125,28 @@ void fragment() {
 		ditch = smoothstep(0.3, 0.7, sv.g);
 	}
 	float ford = 0.0;
+	float wet = 0.0;
+	if (sea_on) {
+		wet = texture(seamap, world / veg_size_px).b;
+	}
 	if (riv_on) {
-		vec2 rw = texture(rivmap, world / riv_size_px).rg;
+		vec3 rw = texture(rivmap, world / riv_size_px).rgb;
 		sea = max(sea, smoothstep(0.35, 0.65, rw.r));
 		ford = smoothstep(0.3, 0.7, rw.g);
+		wet = max(wet, rw.b);
 	}
 	if (veg_on) {
 		vec4 v = texture(vegmap, world / veg_size_px);
 		// Forest floor: darker and a little greener under the trees.
 		col = mix(col, wood_col, v.r * 0.55);
 		// Settlement ground, main streets and the plaza: paving.
-		col = mix(col, pave_col, v.g * 0.45);
-		col = mix(col, pave_col * 1.12, clamp(v.a, 0.0, 1.0) * 0.55);
+		// worn: packed earth mottled, the plaza lighter and scuffed
+		float worn = 0.88 + 0.24 * n2 + (n3 - 0.5) * 0.12;
+		col = mix(col, pave_col * worn, v.g * 0.45);
+		col = mix(col, pave_col * 1.12 * (0.92 + 0.16 * n3), clamp(v.a, 0.0, 1.0) * 0.55);
 		// Fields: straw-coloured strips.
 		float strip = 0.85 + 0.15 * step(0.5, fract(world.y / 30.0));
-		col = mix(col, field_col * strip, v.b * 0.55);
+		col = mix(col, field_col * strip * (0.92 + 0.16 * n2), v.b * 0.55);
 		contour_k = 1.0 - v.g * 0.5;
 	}
 	// A ditch: dark earth, its floor in shadow.
@@ -114,7 +163,9 @@ void fragment() {
 		highp vec3 d = node(i + ivec2(1, 1));
 		highp vec3 v = mix(mix(a, b, fr.x), mix(c, d, fr.x), fr.y);
 		highp float hm = v.x * (h_range_m / 65535.0);
+		hm_w = hm;
 		float shade = (v.y * 255.0 - 128.0) / 160.0;
+		float grade = v.z * (255.0 / 255.0) * 0.8;
 		// Elevation tint (low ground darker and cooler, high ground paler and
 		// warmer), then hill shading from the upper left.
 		float e = clamp((hm - h_mid_m) / tint_span_m, -1.0, 1.0);
@@ -122,6 +173,15 @@ void fragment() {
 		col = col + (tint - base_col);
 		// Lit slopes brighten less than shaded ones darken (no washed-out crests).
 		col *= 1.0 + shade_k * (shade > 0.0 ? shade * 0.7 : shade) * (1.0 - sea);
+		// Slopes darken a little; steep ground and, on hill maps, ground
+		// above the tree line turns to bare rock (less in the woods).
+		float wood = veg_on ? texture(vegmap, world / veg_size_px).r : 0.0;
+		col *= 1.0 - 0.2 * smoothstep(0.08, 0.45, grade) * (1.0 - sea);
+		float hf = hm / h_range_m;
+		float above = smoothstep(tree_line, tree_line + 0.12, hf + (n2 - 0.5) * 0.18);
+		float rock = max(smoothstep(0.2, 0.5, grade + (n2 - 0.5) * 0.12), above * 0.7);
+		rock *= (1.0 - wood * 0.7) * (1.0 - sea) * (1.0 - ford);
+		col = mix(col, rock_col * (0.88 + 0.24 * n3) * (1.0 + shade_k * shade * 0.8), rock * 0.78);
 		// Contours at h_base + (k + 0.5) * minor_m: the plain (the commonest
 		// height) lies midway between two lines, never on one.
 		highp float lv = (hm - h_base_m) / minor_m;
@@ -139,26 +199,41 @@ void fragment() {
 			col = mix(col, line_col.rgb, line_col.a * contour_k * fade * line_a(dist, fw, 0.5));
 		}
 	}
+	// Wet sand along the banks and the shore: darker, sandy, ragged edge.
+	if (wet > 0.0) {
+		float w2 = clamp(wet * (0.75 + 0.6 * n3), 0.0, 1.0) * (1.0 - sea) * (1.0 - ford);
+		col = mix(col, sand_col * (0.9 + 0.2 * n2), w2 * 0.8);
+		col *= 1.0 - 0.18 * w2;
+	}
 	if ((sea_on || riv_on) && sea > 0.0) {
-		// Water: flat colour with a slow ripple and a light band of foam
-		// along the shore.
-		highp vec2 wv = world / 90.0;
-		float rip = 0.5 + 0.5 * sin(wv.x * 1.7 + sin(wv.y * 2.3) * 1.3) * sin(wv.y * 1.1);
-		vec3 water = sea_col * (0.94 + 0.1 * rip);
+		// Water: depth tint (the river bed lies below the plain), two
+		// scrolling ripple layers, glints, and a light animated band of
+		// foam along the shore.
+		float t = TIME;
+		float depth = terrain_on && riv_on ? clamp((h_base_m - hm_w) / 2.2, 0.0, 1.0) : 0.5;
+		float r1 = vnoise(wm / 7.0 + vec2(t * 0.30, t * 0.10));
+		float r2 = vnoise(wm / 2.9 + vec2(-t * 0.21, t * 0.33) + 17.0);
+		float rip = r1 * 0.6 + r2 * 0.4;
+		vec3 water = mix(sea_col * 1.1, sea_col * 0.74, depth) * (0.9 + 0.2 * rip);
+		float glint = smoothstep(0.74, 0.9, rip) * (0.5 + 0.5 * sin(t * 1.7 + wm.x * 0.9 + wm.y * 0.6));
+		water += vec3(0.5, 0.58, 0.6) * glint * 0.2;
 		col = mix(col, water, sea);
 		float foam = sea * (1.0 - sea) * 4.0;
+		foam *= 0.75 + 0.25 * sin(t * 1.3 + wm.x * 0.5 + wm.y * 0.35);
 		col = mix(col, vec3(0.88, 0.92, 0.9), foam * 0.45);
 	}
 	if (riv_on && ford > 0.0) {
-		// The ford: pale shallows over a gravel bed, ripples across the
-		// current and a light edge where it meets the deep water.
-		highp vec2 fv = world / 14.0;
-		float gravel = 0.5 + 0.5 * sin(fv.x * 2.9 + sin(fv.y * 3.7) * 1.9) * sin(fv.y * 2.3 + fv.x * 0.7);
-		vec3 shallow = ford_col * (0.93 + 0.12 * gravel);
-		col = mix(col, shallow, ford * 0.92);
-		float wv = sin(world.x / 7.0 + sin(world.y / 19.0) * 2.4);
-		float rip = smoothstep(0.7, 0.98, wv) * (0.6 + 0.4 * sin(world.y / 5.0));
-		col = mix(col, vec3(0.9, 0.95, 0.94), rip * ford * 0.25);
+		// The ford: pale shallows over a pale gravel bed, ripples running
+		// with the current, and a light edge where it meets the deep water.
+		float t = TIME;
+		float gravel = 0.5 + 0.5 * sin(wm.x * 2.0 + sin(wm.y * 2.4) * 1.9) * sin(wm.y * 1.7 + wm.x * 0.5);
+		vec3 bed = mix(vec3(0.46, 0.64, 0.6), sand_col * 1.05, 0.3);
+		vec3 shallow = bed * (0.94 + 0.1 * gravel);
+		col = mix(col, shallow, ford * 0.94);
+		float cur = vnoise(vec2(wm.x * 0.55 - t * 0.6, wm.y * 1.7) + 3.0);
+		float cur2 = vnoise(vec2(wm.x * 1.3 - t * 0.9, wm.y * 3.1) + 9.0);
+		float rp = smoothstep(0.62, 0.86, cur * 0.6 + cur2 * 0.4);
+		col = mix(col, vec3(0.92, 0.97, 0.96), rp * ford * 0.26);
 		float lip = ford * (1.0 - ford) * 4.0;
 		col = mix(col, vec3(0.85, 0.9, 0.88), lip * 0.35);
 	}

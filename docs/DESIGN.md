@@ -846,6 +846,41 @@ downhill N%" on the selected unit's attack line and move destination when
 the average slope is 4% or more, and a flat shot blocked by the ground as a
 broken red line to the crest, a red cross there and "NO LINE OF FIRE".
 
+**Battlefield look (2026-10-10, view only; the overworld's relief as the model).**
+Ground: the height texture's A channel now holds the grade (rise / run, 0 to
+0.8) and a thin lit crest line along ridges goes into the shade; the shader
+adds low-frequency colour patches (hash noise, 58 m / 21 m / 3 m, lusher or
+drier and stonier by palette: `lush` / `dry` / `rock` / `sand` in
+`ground_palette.gd`) so flat fields are not one colour, slope darkening,
+bare rock above grade 0.2 to 0.5 and, on maps with 14 m or more of relief,
+above 80% of the height range (the notional tree line), less in woods.
+Water (sea and river) has depth tint, two ripple layers and glints moving
+with the shader's `TIME`; the ford's pale shallows have a current; wet sand
+(a third channel of the sea / river textures) lies 2 to 4 m along the banks.
+Vegetation: woods keep the sim's placement; inside them size (saplings, old
+giants), species (stands of 8 x 8 cells lean to one kind, pines on high
+ground) and edge bushes vary by hash. Non-gameplay cover, at most
+`EXTRA_CAP` = 1900 glyphs in all, in two MultiMeshes on the trees' shader
+(atlas kinds 4 tuft, 5 reeds, 6 willow, 7 bush): tufts, scrub (dry slopes)
+and bushes in clumps on clear ground, reeds on the banks and the ford's
+edges, willows up the banks, and orchard rows beyond a settlement's walls;
+the low cover is drawn under the soldiers (z_index -1; the ground layer is
+-2) and does not fade, the willows and orchards with the trees over them.
+Settlement surroundings (`city_draw.gd` `plan_surround`, laid out once from
+the map hash on the sim's veg grid): a dirt track from each outer gate to
+the map edge (meandering), and ploughed, crop, stubble and fallow patches
+and orchards 26 to 120 m beyond the walls, never on streets, the ditch,
+woods, water, the deployment zones, the attackers' approach (45 m round the
+approach point), within 16 m of siege equipment, on slopes over 2.2 m
+across or on a track; drawn as ground decals by `terrain_layer.gd`. Houses
+have a contact and a long shadow, a ridge with a lit edge and tile courses;
+walls and towers a dark footing line; gates posts, a lintel, planks and
+studs; the plaza worn patches and joints. The preview of a settlement
+(`city_preview.gd`) shares the houses, walls and gates and has the colour
+patches. Measured (desktop, RTX 3070): +0.0 to +0.3 ms a frame; bakes: ground
+100-160 ms, trees 70-80 ms.
+
+
 **Measured** (`tests/matchups.gd`, 20 seeds unless noted):
 - Equal heavy 100 vs heavy 100 on a slope, side above wins (60 runs per
   cell, high side at the top and at the bottom equally; flat control 55%):
@@ -3285,3 +3320,27 @@ siege work is what calibrates a new theme. Victory conditions for tribes
 
 ## STATUS row
 - Real geography (view data + static grid, no state change, `CState.VERSION` 6): the overworld is fitted to ETOPO 2022 elevation (NOAA, public domain) and Natural Earth 1:10m coasts and rivers (public domain). `tools/geo_fit.py` (+ `tools/geo/med.json`: window, projection, cell size, settlements, rivers; the Mediterranean is only the default config) writes `map_geo.gd` LANDS / ISLANDS / RIVERS, `campaign/data/elev_data.gd` (per cell mean / max / relief / distance to river / class plain-rolling-valley-hill-ridge) and `game/campaign/relief_data.gd` (0.025 degree fine elevation, slope, relief); `campaign_grid.gd` derives hill / ridge from the real class (434 hill, 140 ridge override cells; was 200 / 215 from hand areas, now deleted) and asserts every settlement is on its landmass and every sea-lane port is a coast cell. Terrain view renders the real relief (hillshade + subtle hypsometric tint + crest line, one cached texture; `geo_fields.gd` serves elevation / slope / class to the view). Nudged: Carthago, Hadrumetum by 0.01-0.02 degrees. Re-pinned: campaign_test goldens (3007c1ab / 4197043257, be6e10a3 / 3786296811) and the Tarentum march rows (from Venetia). campaign_sim --seeds=6 --turns=60: hash 8562cf3a (HEAD 803bf309); no collapse; Epirus is eliminated in 5 of 6 seeds (3 of 6 at HEAD), Macedon in 0 (2 of 6).
+
+### Audio (as built, 2026-10-10)
+
+## DESIGN paragraph (Audio)
+Sound is view-only: nothing in `sim/` or `campaign/` knows about it and nothing
+is hashed. `game/audio.gd` (autoload `Audio`, reached through the static
+helpers of `preload("res://game/audio.gd")`) holds a pool of 14 sample
+players on buses Master <- Effects / Ambient (Effects <- five pan buses with
+a Panner each). The battle reads sim counters and states after each tick
+(melee `stat_attacks`, `stat_impacts`, `stat_shots`, `stat_bolts` /
+`stat_stones`, `stat_crush` / `stat_amok`, `stat_released`, `u_state`
+transitions, `u_stair`, gate `g_hp` / `g_state`, artillery landings from the
+`pr_*` buckets, `u_burn` for the fire loop) and plays at most one clip per
+event bucket per 100 ms (CAPS in audio.gd), at a volume and pan from the
+event's distance and side from the camera centre. The overworld plays on
+`Kit.button` clicks, orders placed / refused, end of turn, turn resolved,
+battle pending (also the online notification in `OnlineCampaign._adopt`),
+and the chime for treaty / trade / gift orders. Ambient beds: a battle bed
+(wind and a distant march) and a map bed (quiet wind), 3 s seamless loops.
+Web: nothing plays until the first tap / click / key. Volumes
+(master 80 / effects 100 / ambient 60 %) and mute are in
+`user://settings.cfg [audio]`, set from the home page's sound row.
+Clips are generated by `tools/make_sounds.py` (numpy, fixed seeds, 22,050 Hz
+mono 16-bit, about 1.3 MB for 29 files in `game/sounds/`).

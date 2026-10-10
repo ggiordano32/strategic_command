@@ -12,18 +12,28 @@ extends Node2D
 ## same channel. Colours come from the map's ground palette
 ## (game/ground_palette.gd, sim.ter_info["palette"]); woods, settlement
 ## ground, streets, plaza and fields from the sim's vegetation grid go into a
-## second, 4 m texture.
+## second, 4 m texture. The alpha channel of the height texture holds the
+## grade (rock on steep ground), the shade also a thin lit crest along
+## ridges. The ground decals outside a settlement (dirt tracks from the
+## gates, ploughed fields; city_draw.gd plan_surround) are drawn by a child
+## node over the ground, under everything else (this layer's z_index is
+## below the others').
 
 const SHADER := preload("res://game/terrain.gdshader")
 const GroundPalette := preload("res://game/ground_palette.gd")
 const MapGen := preload("res://sim/mapgen.gd")
+const CityDraw := preload("res://game/city_draw.gd")
 const NODE_M := 2.0                       # texture node spacing (metres)
 const LIGHT := Vector3(-0.55, -0.7, 0.85) # from the upper left, fairly high
 const RELIEF_EXAGGERATE := 3.4            # shading reads on gentle slopes too
-const SHADE_K := 0.6                      # brightness range of the hill shading
+const SHADE_K := 0.78                     # brightness range of the hill shading
 const VALLEY_R := 12                      # nodes (24 m): valley = lower than the mean round it
 const VALLEY_K := 0.09                    # shade per metre below that mean ...
 const VALLEY_MAX := 0.28                  # ... at most
+const CREST_R := 3                        # nodes (6 m): crest = higher than the mean round it
+const CREST_K := 0.5                      # lit shade per metre above that mean (a thin line)
+const CREST_MAX := 0.2
+const GRADE_FULL := 0.8                   # grade stored as 255
 
 var sim
 var px_per_m := 10.0
@@ -46,14 +56,23 @@ func setup(p_sim, p_px_per_m: float) -> void:
 	material_ref.shader = SHADER
 	rect.material = material_ref
 	add_child(rect)
+	z_index = -2  # the ground, then the cover (tree layer, -1), then everything else
 	var t0 := Time.get_ticks_usec()
 	_build()
+	if sim.city_on != 0 and sim.map_info.has("city"):
+		var dec := _Decals.new()
+		dec.plan = CityDraw.plan_surround(sim)
+		dec.k = px_per_m
+		dec.base = GroundPalette.get_palette(int(sim.ter_info.get("palette", 0)))["base"]
+		dec.pal_i = int(sim.ter_info.get("palette", 0))
+		add_child(dec)
 	build_ms = (Time.get_ticks_usec() - t0) / 1000.0
 
 
 func _build() -> void:
 	var m := material_ref
 	m.set_shader_parameter("grid_px", 50.0 * px_per_m)
+	m.set_shader_parameter("ppm", px_per_m)
 	var pal := GroundPalette.get_palette(int(sim.ter_info.get("palette", 0)))
 	var base: Color = pal["base"]
 	var line: Color = pal["line"]
@@ -62,6 +81,11 @@ func _build() -> void:
 	m.set_shader_parameter("high_col", _v3(pal["high"]))
 	m.set_shader_parameter("line_col", Vector4(line.r, line.g, line.b, line.a))
 	m.set_shader_parameter("major_col", Vector4(line.r * 0.8, line.g * 0.8, line.b * 0.8, minf(line.a * 1.55, 0.6)))
+	m.set_shader_parameter("patch_k", 0.85)
+	m.set_shader_parameter("patch_a", pal["lush"])
+	m.set_shader_parameter("patch_b", pal["dry"])
+	m.set_shader_parameter("rock_col", _v3(pal["rock"]))
+	m.set_shader_parameter("sand_col", _v3(pal["sand"]))
 	m.set_shader_parameter("wood_col", Vector3(base.r * 0.55, base.g * 0.68, base.b * 0.5))
 	m.set_shader_parameter("pave_col", Vector3(base.r * 0.4 + 0.33, base.g * 0.35 + 0.33, base.b * 0.3 + 0.3))
 	m.set_shader_parameter("field_col", Vector3(minf(base.r * 0.6 + 0.38, 1.0), minf(base.g * 0.55 + 0.36, 1.0), base.b * 0.5 + 0.18))
@@ -116,7 +140,8 @@ func _build() -> void:
 		hi = maxf(hi, v)
 		sum += v
 	var range_m := maxf(hi - lo, 0.01)
-	var valley := _valley_depth()
+	var valley := _mean_diff(VALLEY_R)
+	var crest := _mean_diff(CREST_R)
 	var light := LIGHT.normalized()
 	var flat_l := light.z
 	var bytes := PackedByteArray()
@@ -133,18 +158,22 @@ func _build() -> void:
 			var gy := (heights[jp * nx + i] - heights[jm * nx + i]) * inv
 			var n := Vector3(-gx * RELIEF_EXAGGERATE, -gy * RELIEF_EXAGGERATE, 1.0).normalized()
 			var s := n.dot(light) / flat_l - 1.0
-			s -= minf(valley[k] * VALLEY_K, VALLEY_MAX)
+			s -= minf(maxf(valley[k], 0.0) * VALLEY_K, VALLEY_MAX)
+			s += minf(maxf(-crest[k], 0.0) * CREST_K, CREST_MAX)
 			var o4 := k * 4
 			bytes[o4] = q >> 8
 			bytes[o4 + 1] = q & 255
 			bytes[o4 + 2] = clampi(int(round(128.0 + s * 160.0)), 0, 255)
-			bytes[o4 + 3] = 255
+			bytes[o4 + 3] = clampi(int(round(sqrt(gx * gx + gy * gy) / GRADE_FULL * 255.0)), 0, 255)
 	var img := Image.create_from_data(nx, ny, false, Image.FORMAT_RGBA8, bytes)
 	m.set_shader_parameter("hmap", ImageTexture.create_from_image(img))
 	m.set_shader_parameter("hmap_size", Vector2i(nx, ny))
 	m.set_shader_parameter("texel_px", NODE_M * px_per_m)
 	m.set_shader_parameter("h_range_m", range_m)
 	m.set_shader_parameter("shade_k", SHADE_K)
+	# Rock above a notional tree line, on hill maps only (a relief of 14 m
+	# or more): the top fifth of the range.
+	m.set_shader_parameter("tree_line", 0.8 if range_m >= 14.0 else 2.0)
 	# The tint spans the map's own relief, so low and high ground read
 	# apart on gentle maps too.
 	m.set_shader_parameter("tint_span_m", clampf(range_m * 0.55, 5.0, 22.0))
@@ -158,12 +187,12 @@ static func _v3(c: Color) -> Vector3:
 	return Vector3(c.r, c.g, c.b)
 
 
-## How far each 2 m node lies below the mean height within VALLEY_R nodes
-## round it (metres, 0 if above): two separable box blurs with running sums.
-func _valley_depth() -> PackedFloat32Array:
+## The mean height within r nodes round each 2 m node minus its own height
+## (metres; positive in a hollow, negative on a crest): two separable box
+## blurs with running sums.
+func _mean_diff(r: int) -> PackedFloat32Array:
 	var tmp := PackedFloat32Array()
 	tmp.resize(nx * ny)
-	var r := VALLEY_R
 	for j in ny:
 		var row := j * nx
 		var acc := 0.0
@@ -194,7 +223,7 @@ func _valley_depth() -> PackedFloat32Array:
 			if j - r - 1 >= 0:
 				acc2 -= tmp[(j - r - 1) * nx + i]
 				cnt2 -= 1
-			out[j * nx + i] = maxf(acc2 / cnt2 - heights[j * nx + i], 0.0)
+			out[j * nx + i] = acc2 / cnt2 - heights[j * nx + i]
 	return out
 
 
@@ -224,21 +253,38 @@ func _build_veg() -> void:
 	# R sea, G ditch; nothing is bound on other maps.
 	var any := false
 	var sb := PackedByteArray()
-	sb.resize(vw * vh * 2)
+	sb.resize(vw * vh * 3)
 	for k in vw * vh:
 		var b2 := veg[k]
 		if (b2 & MapGen.V_WATER) != 0 and sim.riv_on == 0:
-			sb[k * 2] = 255
+			sb[k * 3] = 255
 			any = true
 		if (b2 & MapGen.V_DITCH) != 0:
-			sb[k * 2 + 1] = 255
+			sb[k * 3 + 1] = 255
 			any = true
-	m.set_shader_parameter("sea_on", any)
+	if any:
+		# Wet sand: land cells beside the sea, two cells deep (B).
+		for j in vh:
+			for i in vw:
+				var q := j * vw + i
+				if sb[q * 3] != 0:
+					continue
+				var near := 0
+				for dj in range(-2, 3):
+					var jj := j + dj
+					if jj < 0 or jj >= vh:
+						continue
+					for di in range(-2, 3):
+						var ii := i + di
+						if ii < 0 or ii >= vw or sb[(jj * vw + ii) * 3] == 0:
+							continue
+						near = maxi(near, 255 - (maxi(absi(di), absi(dj)) - 1) * 110)
+				sb[q * 3 + 2] = near
 	var base: Color = GroundPalette.get_palette(int(sim.ter_info.get("palette", 0)))["base"]
 	if any or sim.riv_on != 0:
 		m.set_shader_parameter("sea_col", Vector3(0.16 + base.r * 0.1, 0.33 + base.g * 0.1, 0.46 + base.b * 0.05))
 	if any:
-		var simg := Image.create_from_data(vw, vh, false, Image.FORMAT_RG8, sb)
+		var simg := Image.create_from_data(vw, vh, false, Image.FORMAT_RGB8, sb)
 		m.set_shader_parameter("seamap", ImageTexture.create_from_image(simg))
 	# A river crossing: the water and the ford's shallows, 1 m texels, each
 	# a soft coverage of the river's own line (MapGen.river_cy; the sim's
@@ -254,20 +300,22 @@ func _build_veg() -> void:
 		var fx1 := float(int(rl["x1"]))
 		var ford_k := int(rl["kind"]) == 0
 		var rb := PackedByteArray()
-		rb.resize(fw_m * fh_m * 2)
+		rb.resize(fw_m * fh_m * 3)
 		for i in fw_m:
 			var cy := MapGen.river_cy(g, i) / 100.0
 			var xm := i + 0.5
 			var band := clampf(minf(xm - fx0, fx1 - xm) + 0.5, 0.0, 1.0) if ford_k else 0.0
-			var j0 := maxi(int(cy - hw) - 3, 0)
-			var j1 := mini(int(cy + hw) + 4, fh_m)
+			var j0 := maxi(int(cy - hw) - 8, 0)
+			var j1 := mini(int(cy + hw) + 9, fh_m)
 			for j in range(j0, j1):
 				var d := absf(j + 0.5 - cy) - hw  # metres outside the water (negative inside)
 				var cov := clampf(0.5 - d / 2.0, 0.0, 1.0)
-				var k := (j * fw_m + i) * 2
+				var k := (j * fw_m + i) * 3
 				rb[k] = int(cov * (1.0 - band) * 255.0)
 				rb[k + 1] = int(cov * band * 255.0)
-		var rimg := Image.create_from_data(fw_m, fh_m, false, Image.FORMAT_RG8, rb)
+				if d > 0.0:
+					rb[k + 2] = int(clampf(1.0 - d / 4.0, 0.0, 1.0) * 255.0)
+		var rimg := Image.create_from_data(fw_m, fh_m, false, Image.FORMAT_RGB8, rb)
 		m.set_shader_parameter("rivmap", ImageTexture.create_from_image(rimg))
 		m.set_shader_parameter("riv_size_px", Vector2(fw_m, fh_m) * px_per_m)
 		m.set_shader_parameter("ford_col", Vector3(0.40 + base.r * 0.25, 0.48 + base.g * 0.2, 0.46 + base.b * 0.15))
@@ -295,3 +343,16 @@ func height_m_at(p: Vector2) -> float:
 	var x := int(p.x / px_per_m * 1024.0)
 	var y := int(p.y / px_per_m * 1024.0)
 	return sim.height_at(x, y) / 1024.0
+
+
+## Ground decals outside a settlement (city_draw.gd plan_surround): dirt
+## tracks from the gates to the map edge and ploughed fields, over the ground
+## shader and under everything else. Drawn once.
+class _Decals extends Node2D:
+	var plan: Dictionary = {}
+	var k := 10.0
+	var base := Color(0.3, 0.4, 0.2)
+	var pal_i := 0
+
+	func _draw() -> void:
+		CityDraw.draw_surround(self, plan, k, Vector2.ZERO, base, pal_i)

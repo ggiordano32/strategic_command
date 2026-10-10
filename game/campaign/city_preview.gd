@@ -110,10 +110,18 @@ static func _ground(t: Dictionary, f: Dictionary, pal: Dictionary, x0: int, y0: 
 	var tree: Color = (pal["trees"] as Array)[0]
 	var street := base.lerp(Color(0.86, 0.80, 0.68), 0.55)
 	var field_c := base.lerp(Color(0.85, 0.74, 0.40), 0.55)
+	# Patches of lusher / drier ground, as on the battle map's ground.
+	var nz := FastNoiseLite.new()
+	nz.seed = 7
+	nz.frequency = 1.0 / 55.0
+	var lush: Vector3 = pal["lush"]
+	var dry: Vector3 = pal["dry"]
 	for j in ih:
 		var my := y0 + j * 2 + 1
 		for i in iw:
 			var mx := x0 + i * 2 + 1
+			var pv := nz.get_noise_2d(mx, my) * 1.6 * 0.85
+			var dv := lush if pv > 0.0 else dry
 			var col := base
 			if on:
 				var ni := mini(mx / 4, nx - 2)
@@ -126,6 +134,7 @@ static func _ground(t: Dictionary, f: Dictionary, pal: Dictionary, x0: int, y0: 
 				# Light from the upper left (grade of 4 m cells, metres x 1024).
 				var sh := clampf(-(gx + gy) / 1024.0 * 0.11, -0.22, 0.22)
 				col = col * (1.0 + sh)
+			col = Color(col.r + dv.x * absf(pv), col.g + dv.y * absf(pv), col.b + dv.z * absf(pv))
 			var vb: int = veg[mini(my / 4, (veg.size() / vw) - 1) * vw + mini(mx / 4, vw - 1)]
 			if (vb & MapGen.V_FIELD) != 0:
 				col = field_c
