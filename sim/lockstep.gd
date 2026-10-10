@@ -60,7 +60,7 @@ const Q_TICK := 4                 # quarter ticks per sim tick
 ## SPEED_QS are the slider's labelled ticks and the +/- key steps.
 const SPEED_Q_MIN := 1
 const SPEED_Q_MAX := 16
-const SPEED_QS := [1, 2, 4, 8, 12, 16]   # 0.25x, 0.5x, 1x, 2x, 3x, 4x
+const SPEED_QS := [2, 4, 8, 16]   # 0.5x, 1x, 2x, 4x (the four speeds offered, 2026-10-10; Hud.SPEED_QS matches)
 const SERVER := 250               # player id of server events
 
 # Control input types (sim order types are 1..10).
