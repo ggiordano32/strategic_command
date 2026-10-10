@@ -68,14 +68,14 @@ func _ready() -> void:
 
 
 ## Rules hash: "rules:xxxxxxxx" from the build stamp, else SHA-1 of
-## campaign/*.gd + sim/*.gd (sorted paths, concatenated), first 8 hex digits
+## campaign/*.gd + campaign/data/*.gd + sim/*.gd (sorted paths, concatenated), first 8 hex digits
 ## (tools/export_web.sh computes the same).
 static func rules_hash(stamp: String = "") -> String:
 	for part in stamp.split(" "):
 		if part.begins_with("rules:"):
 			return part.substr(6)
 	var paths: Array[String] = []
-	for dir in ["campaign", "sim"]:
+	for dir in ["campaign", "campaign/data", "sim"]:
 		for fn in DirAccess.get_files_at("res://" + dir):
 			if fn.ends_with(".gd"):
 				paths.append(dir + "/" + fn)
