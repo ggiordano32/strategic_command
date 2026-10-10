@@ -11,7 +11,7 @@ extends RefCounted
 ## by the rules (JSON load does not keep key order). The state carries its own
 ## RNG ("rng", xorshift32) used by the rules and the AI.
 ##
-## Format (VERSION 6; version 1 has no city_seed, versions 1-2 no builder
+## Format (VERSION 7; version 7 adds the teams; version 1 has no city_seed, versions 1-2 no builder
 ## data "built", versions 1-3 no "sieges", versions 1-4 no free movement
 ## (army mp / dest / mode / stance / idle), versions 1-5 no cells (army x,
 ## y, dest_x, dest_y, tgt; battle x, y, app); older states are migrated on
@@ -22,7 +22,12 @@ extends RefCounted
 ##     ("ask" | "auto"), ai_aggression (50-150, %); optional (absent =
 ##     Average, campaign/cai_profile.gd): ai_battle_skill, ai_campaign_skill
 ##     (0 Easy, 1 Average, 2 Skilled)},
-##   humans [faction ...] (permanently allied),
+##   humans [faction ...] (who is a player, sorted; any count; version 6:
+##     permanently allied, version 7: allied through "teams" below),
+##   teams [team id per faction] (version 7; factions with one id are on one
+##     team: friendly, never at war, one victory; see team(), and the
+##     "teams" section of crules.gd), optional leaving [[faction, turn it
+##     gave notice]] (absent when nobody is leaving),
 ##   factions [{alive, treasury, next_army, income, upkeep, war_turns;
 ##     optional AI profile overrides (absent = the settings / default, see
 ##     campaign/cai_profile.gd): ai_skill, ai_battle_skill, ai_style (0
@@ -70,7 +75,7 @@ const CGrid := preload("res://campaign/cgrid.gd")
 const UT := preload("res://sim/unit_types.gd")
 
 const FORMAT := "strategic_command_campaign"
-const VERSION := 6
+const VERSION := 7
 ## Oldest format this build reads (older states are migrated on load).
 const MIN_VERSION := 1
 
@@ -90,7 +95,10 @@ const TIMEOUT_CHOICES := [0, 12, 24, 48, 72]
 
 
 ## A new campaign. humans: faction indices (1 or 2).
-static func new_campaign(p_name: String, p_seed: int, humans: Array, settings: Dictionary = {}) -> Dictionary:
+## teams: optional team id per faction (index order, nf() ints); absent or
+## of the wrong size: the humans on team 0, each AI faction on a team of its
+## own (default_teams), exactly the campaign of format 6.
+static func new_campaign(p_name: String, p_seed: int, humans: Array, settings: Dictionary = {}, p_teams: Array = []) -> Dictionary:
 	var n_f := CData.faction_count()
 	var st := {"format": FORMAT, "version": VERSION, "name": p_name, "seed": p_seed, "turn": 0,
 		"phase": "plan", "winner": -1}
@@ -180,9 +188,17 @@ static func new_campaign(p_name: String, p_seed: int, humans: Array, settings: D
 	st["dip_turn"] = dip_turn
 	for w in CData.START_WARS:
 		set_dip(st, CData.faction_index(w[0]), CData.faction_index(w[1]), WAR)
-	for a in hs:
-		for b in hs:
-			if a != b:
+	if p_teams.size() == n_f:
+		var tm: Array = []
+		for t in p_teams:
+			tm.append(int(t))
+		st["teams"] = tm
+	else:
+		st["teams"] = default_teams(hs)
+	# Team mates are allied (the dip matrix keeps it for the record).
+	for a in n_f:
+		for b in range(a + 1, n_f):
+			if int(st["teams"][a]) == int(st["teams"][b]):
 				set_dip(st, a, b, ALLIED)
 	st["battles"] = []
 	st["next_battle"] = 1
@@ -239,7 +255,59 @@ static func migrate(st: Dictionary, upto: int = VERSION) -> Dictionary:
 	_migrate_old(st)
 	if int(st.get("version", 0)) < 6 and upto >= 6:
 		_migrate6(st)
+	if int(st.get("version", 0)) < 7 and upto >= 7:
+		_migrate7(st)
 	return st
+
+
+## 6 -> 7: the teams. All humans on team 0 (they were permanently allied),
+## each AI faction on a team of its own, 1.. in index order.
+static func _migrate7(st: Dictionary) -> void:
+	st["teams"] = default_teams(st.get("humans", []))
+	st["version"] = 7
+
+
+## The teams of a campaign that sets none: the humans (sorted) on team 0,
+## each other faction alone on team 1, 2 ... in index order.
+static func default_teams(humans: Array) -> Array:
+	var out: Array = []
+	var next := 1
+	for f in nf():
+		if humans.has(f):
+			out.append(0)
+		else:
+			out.append(next)
+			next += 1
+	return out
+
+
+## Team id of faction f (independents: -1). A state without the key (format
+## 6 as built before the teams) reads the default shape.
+static func team(st: Dictionary, f: int) -> int:
+	if f < 0:
+		return -1
+	if st.has("teams"):
+		return int((st["teams"] as Array)[f])
+	return 0 if is_human(st, f) else 1000 + f
+
+
+static func same_team(st: Dictionary, a: int, b: int) -> bool:
+	return a >= 0 and b >= 0 and team(st, a) == team(st, b)
+
+
+## The factions of team t, in index order.
+static func team_members(st: Dictionary, t: int) -> Array:
+	var out: Array = []
+	for f in nf():
+		if team(st, f) == t:
+			out.append(f)
+	return out
+
+
+## True if the teams are the default shape (no notices pending): the state
+## then hashes as the format 6 state it equals (state_hash).
+static func default_shape(st: Dictionary) -> bool:
+	return st.has("teams") and not st.has("leaving") and (st["teams"] as Array) == default_teams(st["humans"])
 
 
 ## 5 -> 6: the continuous overworld. Every army stands on a cell: inside the
@@ -335,6 +403,9 @@ static func as_format(st_in: Dictionary, v: int) -> Dictionary:
 		for b in c["battles"]:
 			for k in ["x", "y", "app"]:
 				(b as Dictionary).erase(k)
+	if v < 7:
+		c.erase("teams")
+		c.erase("leaving")
 	if v < 5:
 		for a in c["armies"]:
 			for k in ["mp", "dest", "mode", "stance", "idle"]:
@@ -562,7 +633,14 @@ static func normalise(v):
 static func state_hash(st: Dictionary) -> int:
 	var ctx := HashingContext.new()
 	ctx.start(HashingContext.HASH_MD5)
-	ctx.update(to_json(st).to_utf8_buffer())
+	var view := st
+	if int(st.get("version", 0)) == 7 and default_shape(st):
+		# The default teams are what format 6 always was: hash that state,
+		# so a campaign that uses no teams keeps its hash.
+		view = st.duplicate()
+		view.erase("teams")
+		view["version"] = 6
+	ctx.update(to_json(view).to_utf8_buffer())
 	return ctx.finish().decode_u32(0)
 
 
@@ -618,14 +696,14 @@ static func dip_since(st: Dictionary, a: int, b: int) -> int:
 static func at_war(st: Dictionary, a: int, b: int) -> bool:
 	if a == b or (a < 0 and b < 0):
 		return false
-	return dip(st, a, b) == WAR
+	return dip(st, a, b) == WAR and not same_team(st, a, b)
 
 
-## Same side: the same faction, or allied (the human players).
+## Same side: the same faction, the same team, or allied (the dip matrix).
 static func friendly(st: Dictionary, a: int, b: int) -> bool:
 	if a < 0 or b < 0:
 		return a == b
-	return a == b or dip(st, a, b) == ALLIED
+	return a == b or team(st, a) == team(st, b) or dip(st, a, b) == ALLIED
 
 
 static func is_human(st: Dictionary, f: int) -> bool:

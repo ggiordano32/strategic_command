@@ -198,7 +198,11 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 				continue
 			var g := int(o.get("to", -1))
 			var what := str(o.get("what", ""))
-			if CRules.check_proposal(st, f, g, what) != "" or CState.is_human(st, g):
+			if CRules.check_proposal(st, f, g, what) != "":
+				continue
+			if CState.is_human(st, g):
+				if what == "team":  # a player answers it next turn
+					CRules.post_proposal(st, f, g, what)
 				continue
 			if CAI.accepts(st, f, g, what):
 				CRules.apply_agreement(st, f, g, what)
@@ -231,6 +235,7 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 	for f in CState.nf():
 		CAI.diplomacy(st, f)
 	CRules.end_of_turn(st)
+	CRules.process_leaving(st)
 	CRules.check_eliminations(st)
 	CRules.check_victory(st)
 	st["turn"] = turn + 1

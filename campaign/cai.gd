@@ -149,7 +149,7 @@ static func faction_strength(st: Dictionary, f: int) -> int:
 static func wars(st: Dictionary, f: int) -> Array[int]:
 	var out: Array[int] = []
 	for g in CState.nf():
-		if g != f and CState.alive(st, g) and CState.dip(st, f, g) == CState.WAR:
+		if g != f and CState.alive(st, g) and CState.at_war(st, f, g):
 			out.append(g)
 	return out
 
@@ -1467,7 +1467,43 @@ static func why(st: Dictionary, from: int, to: int, what: String) -> String:
 			return "they see themselves as the stronger"
 		"cancel_trade":
 			return ""
+		"team":
+			return _why_team(st, from, to, kn)
 	return "unknown proposal"
+
+
+## A "team" proposal: accepted after TEAM_ACCEPT_TURNS turns at peace with
+## every member of the proposer's team, with no war between either team,
+## when the proposer's team is at most TEAM_ACCEPT_PCT % of our strength or
+## we are losing a war (a region lost in the last 5 turns).
+static func _why_team(st: Dictionary, from: int, to: int, kn: PackedInt32Array) -> String:
+	var tf := CState.team(st, from)
+	if tf == CState.team(st, to):
+		return "already on one team"
+	var theirs := 0
+	for p in CState.team_members(st, tf):
+		if not CState.alive(st, p):
+			continue
+		theirs += faction_strength(st, p)
+		for q in CState.team_members(st, CState.team(st, to)):
+			if CState.alive(st, q) and CState.dip(st, p, q) == CState.WAR:
+				return "their teams are at war"
+		var since := CState.dip_since(st, p, to)
+		if since < kn[CP.TEAM_ACCEPT_TURNS]:
+			return "at peace with your team only %d of %d turns" % [since, kn[CP.TEAM_ACCEPT_TURNS]]
+	if faction_strength(st, to) * kn[CP.TEAM_ACCEPT_PCT] >= theirs * 100 or _losing_war(st, to):
+		return ""
+	return "your team is too strong to join"
+
+
+## At war and a region lost in the last 5 turns.
+static func _losing_war(st: Dictionary, f: int) -> bool:
+	if wars(st, f).is_empty():
+		return false
+	for e in st.get("chronicle", []):
+		if str(e.get("k", "")) == "captured" and int(e.get("from", -2)) == f and int(e["turn"]) >= int(st["turn"]) - 5:
+			return true
+	return false
 
 
 static func diplomacy(st: Dictionary, f: int) -> void:
@@ -1492,6 +1528,12 @@ static func diplomacy(st: Dictionary, f: int) -> void:
 		# next turn; ties: the weakest).
 		_one_front(st, f, my_wars, kn)
 		my_wars = wars(st, f)
+	# A team with a player, only if we would accept the reverse (off by default).
+	if kn[CP.TEAM_PROPOSE] > 0:
+		for g in st["humans"]:
+			if g != f and CState.alive(st, g) and not CState.friendly(st, f, g) and accepts(st, g, f, "team") \
+					and CState.rand(st, 100) < kn[CP.TEAM_PROPOSE]:
+				_propose(st, f, g, "team")
 	# Trade with neighbours at peace.
 	for g in CState.nf():
 		if g == f or not CState.alive(st, g) or CState.dip(st, f, g) != CState.PEACE:

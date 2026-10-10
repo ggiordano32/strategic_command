@@ -49,7 +49,10 @@ extends RefCounted
 ##        x, y / tgt: march to it and merge into it on arrival (it keeps its
 ##        id, stance and cell); with persist the army keeps following it
 ##        (army key "dest_army") until it merges or the army is gone.
-##   {"t": "propose", "to": faction, "what": "peace" | "trade" | "cancel_trade"}
+##   {"t": "propose", "to": faction, "what": "peace" | "trade" | "cancel_trade" | "team"}
+##        ("team": join my team; an AI answers by CAI.why at once, a human
+##        gets a proposal to answer next turn; see "teams" below)
+##   {"t": "leave_team"}                                (a player; notice turns)
 ##   {"t": "war", "to": faction}                        (declare war)
 ##   {"t": "answer", "id": proposal id, "accept": 0 | 1}
 ## Gifts between the human players (allied, both alive; see "gifts between
@@ -140,6 +143,8 @@ static func apply_order(st: Dictionary, f: int, o: Dictionary) -> String:
 			return _arrange(st, f, int(o.get("army", -1)), o.get("order", []))
 		"propose":
 			return check_proposal(st, f, int(o.get("to", -1)), str(o.get("what", "")))
+		"leave_team":
+			return _leave_team(st, f)
 		"war":
 			return _declare_war(st, f, int(o.get("to", -1)))
 		"answer":
@@ -2214,10 +2219,12 @@ static func _drop_empty_armies(st: Dictionary) -> void:
 static func check_proposal(st: Dictionary, f: int, g: int, what: String) -> String:
 	if g < 0 or g >= CState.nf() or g == f or not CState.alive(st, g):
 		return "no such faction"
-	if CState.is_human(st, g) and CState.is_human(st, f):
-		return "you are allies"
+	if CState.friendly(st, f, g):
+		return "you are allies" if what != "team" else "you are on one team"
 	var d := CState.dip(st, f, g)
 	match what:
+		"team":
+			return team_merge_check(st, f, g)
 		"peace":
 			return "" if d == CState.WAR else "not at war"
 		"trade":
@@ -2272,6 +2279,146 @@ static func apply_agreement(st: Dictionary, f: int, g: int, what: String) -> voi
 		"cancel_trade":
 			CState.set_dip(st, f, g, CState.PEACE)
 			event(st, {"k": "trade_end", "a": f, "b": g})
+		"team":
+			merge_teams(st, f, g)
+
+
+# ------------------------------------------------------------- teams ---
+# Version 7. Factions with one id in the state's "teams" are on one team:
+# friendly (CState.friendly: movement through each other's land,
+# replenishment there, support in battle, joining each other's battles),
+# never at war, one victory. Their dip is kept ALLIED. Joining: the "team"
+# proposal (an AI answers by CAI.why); leaving: the "leave_team" order, with
+# a notice of TEAM_NOTICE_TURNS turns, then a fresh team id and PEACE with
+# the old mates.
+
+const TEAM_NOTICE_TURNS := 2
+
+
+## "" if the teams of f and g may merge now: no battle pending and no siege
+## between them (a siege or a battle across the two teams).
+static func team_merge_check(st: Dictionary, f: int, g: int) -> String:
+	var tf := CState.team(st, f)
+	var tg := CState.team(st, g)
+	if tf == tg:
+		return "you are on one team"
+	for b in st["battles"]:
+		var seen := [false, false]
+		for side in battle_factions(st, b):
+			for m in side:
+				if CState.team(st, m) == tf:
+					seen[0] = true
+				elif CState.team(st, m) == tg:
+					seen[1] = true
+		if seen[0] and seen[1]:
+			return "a battle is pending between the teams"
+	for sg in st["sieges"]:
+		var bf := CState.team(st, int(sg["f"]))
+		var ow := CState.owner(st, int(sg["r"]))
+		if ow >= 0 and ((bf == tf and CState.team(st, ow) == tg) or (bf == tg and CState.team(st, ow) == tf)):
+			return "a siege is on between the teams"
+	return ""
+
+
+## The smaller team (members) joins the larger; a tie: f's team is the
+## larger. Wars between the two end (dip ALLIED for every pair across).
+static func merge_teams(st: Dictionary, f: int, g: int) -> void:
+	var tf := CState.team(st, f)
+	var tg := CState.team(st, g)
+	if tf == tg:
+		return
+	var mf := CState.team_members(st, tf)
+	var mg := CState.team_members(st, tg)
+	var big := tf
+	var small := tg
+	var movers := mg
+	if mg.size() > mf.size():
+		big = tg
+		small = tf
+		movers = mf
+	for m in movers:
+		st["teams"][m] = big
+	for a in CState.nf():
+		for b in range(a + 1, CState.nf()):
+			if CState.team(st, a) == big and CState.team(st, b) == big and CState.dip(st, a, b) != CState.ALLIED:
+				CState.set_dip(st, a, b, CState.ALLIED)
+	if st.has("leaving"):
+		var kl: Array = []
+		for e in st["leaving"]:
+			if not movers.has(int(e[0])):
+				kl.append(e)
+		_set_leaving(st, kl)
+	event(st, {"k": "team_joined", "from": f, "to": g, "team": big, "was": small, "members": movers.duplicate()})
+
+
+static func _set_leaving(st: Dictionary, l: Array) -> void:
+	if l.is_empty():
+		st.erase("leaving")
+	else:
+		st["leaving"] = l
+
+
+## Turn faction f gave notice of leaving its team (-1: not leaving).
+static func leaving_since(st: Dictionary, f: int) -> int:
+	for e in st.get("leaving", []):
+		if int(e[0]) == f:
+			return int(e[1])
+	return -1
+
+
+static func _leave_team(st: Dictionary, f: int) -> String:
+	if not CState.is_human(st, f):
+		return "only a player can leave a team"
+	if CState.team_members(st, CState.team(st, f)).size() < 2:
+		return "not on a team"
+	if leaving_since(st, f) >= 0:
+		return "already leaving"
+	var l: Array = (st["leaving"] as Array).duplicate() if st.has("leaving") else []
+	l.append([f, int(st["turn"])])
+	l.sort_custom(func(a, b): return int(a[0]) < int(b[0]))
+	st["leaving"] = l
+	event(st, {"k": "team_notice", "f": f, "team": CState.team(st, f), "turns": TEAM_NOTICE_TURNS})
+	return ""
+
+
+## End of a turn: leavers whose notice has run out get a team of their own
+## and peace with their old mates.
+static func process_leaving(st: Dictionary) -> void:
+	if not st.has("leaving"):
+		return
+	var keep: Array = []
+	var gone: Array = []
+	for e in st["leaving"]:
+		if int(st["turn"]) - int(e[1]) >= TEAM_NOTICE_TURNS:
+			gone.append(int(e[0]))
+		else:
+			keep.append(e)
+	_set_leaving(st, keep)
+	for f in gone:
+		var old := CState.team(st, f)
+		var mates := CState.team_members(st, old)
+		mates.erase(f)
+		if mates.is_empty():
+			continue
+		var fresh := 0
+		for t in st["teams"]:
+			fresh = maxi(fresh, int(t) + 1)
+		st["teams"][f] = fresh
+		for m in mates:
+			CState.set_dip(st, f, int(m), CState.PEACE)
+		event(st, {"k": "team_left", "f": f, "team": old, "mates": mates.duplicate()})
+
+
+## Post a proposal for human g to answer next turn (once per from / to /
+## what a turn).
+static func post_proposal(st: Dictionary, f: int, g: int, what: String) -> void:
+	for p in st["proposals"]:
+		if int(p["from"]) == f and int(p["to"]) == g and str(p["what"]) == what:
+			return
+	var id := int(st["next_proposal"])
+	st["next_proposal"] = id + 1
+	(st["proposals"] as Array).append({"id": id, "from": f, "to": g, "what": what, "turn": int(st["turn"])})
+	event(st, {"k": "proposal", "from": f, "to": g, "what": what, "id": id})
 
 
 # ---------------------------------------------- gifts between players ---
@@ -2775,11 +2922,13 @@ static func check_eliminations(st: Dictionary) -> void:
 
 ## Players' progress toward victory: {regions, capitals, need_regions,
 ## need_capitals}.
-static func victory_progress(st: Dictionary) -> Dictionary:
+## With `team` >= 0: that team's members together instead of the players.
+static func victory_progress(st: Dictionary, team: int = -1) -> Dictionary:
 	var regions := 0
 	var caps := 0
 	for r in CData.region_count():
-		if CState.is_human(st, CState.owner(st, r)):
+		var ow := CState.owner(st, r)
+		if (CState.is_human(st, ow) if team < 0 else (ow >= 0 and CState.team(st, ow) == team)):
 			regions += 1
 			if CData.KEY_CITIES.has(str(CData.REGIONS[r]["key"])):
 				caps += 1
@@ -2790,6 +2939,9 @@ static func victory_progress(st: Dictionary) -> Dictionary:
 
 static func check_victory(st: Dictionary) -> void:
 	if int(st["winner"]) >= 0 or (st["humans"] as Array).is_empty():
+		return
+	if not _players_one_team(st):
+		_check_victory_teams(st)
 		return
 	for h in st["humans"]:
 		if not CState.alive(st, int(h)):
@@ -2804,12 +2956,55 @@ static func check_victory(st: Dictionary) -> void:
 		event(st, {"k": "victory"})
 
 
+## True if the players are exactly one team (the format 6 shape: the old
+## victory rule, any player's fall loses).
+static func _players_one_team(st: Dictionary) -> bool:
+	var hs: Array = st["humans"]
+	var t := CState.team(st, int(hs[0]))
+	return CState.team_members(st, t) == hs
+
+
+## Victory with teams: a team wins when its members together hold the
+## regions and the key cities the settings ask. winner stays 1 (a team with
+## a player won) / 0 (players lost) for old readers; winner_team is the
+## winning team's id. Players lose when none of their teams has a member
+## left alive.
+static func _check_victory_teams(st: Dictionary) -> void:
+	var left := false
+	for h in st["humans"]:
+		for m in CState.team_members(st, CState.team(st, int(h))):
+			if CState.alive(st, m):
+				left = true
+	if not left:
+		st["winner"] = 0
+		st["phase"] = "over"
+		event(st, {"k": "defeat", "f": int((st["humans"] as Array)[0])})
+		return
+	var seen: Array = []
+	for f in CState.nf():
+		var t := CState.team(st, f)
+		if seen.has(t):
+			continue
+		seen.append(t)
+		var p := victory_progress(st, t)
+		if int(p["regions"]) >= int(p["need_regions"]) and int(p["capitals"]) >= int(p["need_capitals"]):
+			var players := false
+			for m in CState.team_members(st, t):
+				if CState.is_human(st, m):
+					players = true
+			st["winner"] = 1 if players else 0
+			st["winner_team"] = t
+			st["phase"] = "over"
+			event(st, {"k": "victory" if players else "defeat", "team": t, "f": f})
+			return
+
+
 ## The chronicle (optional state key, absent in older saves): the world-level
 ## events of the last CHRONICLE_TURNS turns, appended as they happen (so a
 ## battle applied later is in too). Private rows (built, recruited, failed
 ## orders ...) stay in `events` only.
 const CHRONICLE_KINDS := ["battle", "captured", "destroyed", "eliminated", "war", "peace", "trade", "trade_end",
-	"siege", "siege_lifted", "starving", "victory", "defeat"]
+	"siege", "siege_lifted", "starving", "victory", "defeat", "team_joined", "team_notice", "team_left"]
 const CHRONICLE_TURNS := 60
 
 

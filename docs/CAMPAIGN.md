@@ -38,7 +38,7 @@ a little worse than good play. No fleets, generals, politics or agents.
   sorted keys; `from_json` turns JSON's floats back into ints (`normalise`).
   `state_hash` = first 32 bits of the MD5 of that canonical JSON.
 
-### State format (version 6)
+### State format (version 7; the teams are described in "Teams")
 
 ```
 format "strategic_command_campaign", version 6, name, seed, turn (0 = 280 BC
@@ -47,7 +47,9 @@ settings {victory_regions 20, victory_capitals 3, turn_timeout_h 0|12|24|48|72
   (the initial value for online campaigns; the server enforces its own
   copy, see SERVER.md), autoresolve "ask"|"auto", ai_aggression 70|100|130;
   optional: deploy_time s, time_limit s (> 900 only), AI skills},
-humans [faction...]   (sorted; permanently allied: dip ALLIED)
+humans [faction...]   (sorted; who is a player, any count; version 6: permanently allied)
+teams [id per faction]   (version 7; see "Teams"); leaving [[faction, turn]]   (optional)
+winner_team   (optional, version 7: set with winner when the victory was by teams)
 factions [{alive, treasury, next_army, income, upkeep, war_turns}]  (CData order)
 dip [8*8] 0 war / 1 peace / 2 trade / 3 allied;  dip_turn [8*8] turn of change
 regions [{owner (-1 independent), level 0 village|1 town|2 city, growth,
@@ -1699,6 +1701,55 @@ money" (amount) and "Offer to buy" (a picker of their cities that can
 change hands, price); planned gifts show in the region panel with Cancel,
 Undo works as for any order, unanswered offers are in the end-turn
 warnings, and the events in the turn report.
+
+## Teams (version 7, asked 2026-10-09)
+
+`teams` is a team id per faction (index order). Factions with one id are
+**friendly** (`CState.friendly` = same faction, same team or dip ALLIED),
+**never at war** (`at_war` is false inside a team), share the co-op perks
+(movement through each other's land, replenishment there, support in
+battle, joining each other's battles; unit and city gifts stay between
+players) and **win together**. Their dip is kept ALLIED. `humans` is only
+who is a player; players on different teams may fight each other. Helpers:
+`CState.team`, `same_team`, `team_members`, `default_teams`.
+
+- **New campaign:** `new_campaign(name, seed, humans, settings, teams)`;
+  `teams` absent: the humans on team 0, each AI faction alone on 1.. in
+  index order (`default_teams`), exactly the format 6 campaign. A state
+  whose teams are the default shape (and nobody is leaving) hashes as the
+  format 6 state it equals (`state_hash` drops `teams` and reads version 6),
+  so campaigns that use no teams keep their hashes.
+- **Migration 6 -> 7** (`_migrate7`): `teams` = the default shape.
+  `as_format(st, 6)` removes `teams` and `leaving`.
+- **Order `propose` what "team"** (join my team): to any faction, AI or
+  player. An AI answers at once by `CAI.why` (steps 4 of the turn); a player
+  gets a proposal and answers with `answer` next turn. Refused by
+  `check_proposal` if already on one team, a battle is pending or a siege on
+  between the two teams. The AI accepts when it has been at peace with every
+  member of the proposer's team for `TEAM_ACCEPT_TURNS` turns (4), no member
+  of either team is at war with a member of the other, and the proposer's
+  team is at most `TEAM_ACCEPT_PCT` % (250) of its own strength or it is
+  losing a war (a region lost in the last 5 turns, read from the
+  chronicle). Accepted (`merge_teams`): the team with fewer members joins the
+  larger (a tie: the proposer's team id stays), their dip becomes ALLIED
+  (wars end). AI knob `TEAM_PROPOSE` (% chance a turn, default 0): an AI
+  proposes a team to a player only if it would accept the reverse.
+- **Order `leave_team`** (a player on a team of two or more): marks
+  `leaving` [[faction, turn]]; after `TEAM_NOTICE_TURNS` (2) turns
+  (`process_leaving`, end of the turn) the leaver gets a fresh team id (max
+  + 1) and dip PEACE with its old mates. The AI never leaves.
+- **Events / chronicle:** `team_notice` {f, team, turns}, `team_left` {f,
+  team, mates}, `team_joined` {from, to, team, was, members}; the view looks
+  the names up.
+- **Victory:** with the players exactly one team (the old shape) the rule is
+  unchanged (all players' regions together; any player's fall is defeat).
+  Otherwise each team is checked in index order of its first member: it wins
+  when its members together hold `victory_regions` regions and
+  `victory_capitals` key cities. `winner` stays 1 (the team has a player) /
+  0 (an AI team won); `winner_team` is its id. Players lose (winner 0) when
+  no team with a player has a member alive.
+- **Server facts** are unchanged: `humans`, `turn`, `phase`;
+  `battle_humans` returns every player on either side.
 
 ## Victory and defeat
 

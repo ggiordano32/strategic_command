@@ -155,7 +155,14 @@ const BU_WORKSHOP := SK_SUPPORT + 17         # Workshop level wanted there when 
 const BU_BUDGET_PCT := SK_SUPPORT + 18       # % of the money above the reserve the build-up may take a turn
 const BU_SAVE := SK_SUPPORT + 19             # while the build-up waits for money, nothing else is built (1)
 const WAGON_MIN := SK_SUPPORT + 20           # an army with this many missile / artillery units and no wagon gets one (0 never)
-const N_KNOBS := SK_SUPPORT + 21
+# Teams (version 7): accept a "team" proposal after this many turns at peace
+# with the proposer's team, when that team is at most this % of our strength
+# (or we are losing a war); propose a team to a player (% chance a turn,
+# when we would accept the reverse; 0: never, the default).
+const TEAM_ACCEPT_TURNS := SK_SUPPORT + 21
+const TEAM_ACCEPT_PCT := SK_SUPPORT + 22
+const TEAM_PROPOSE := SK_SUPPORT + 23
+const N_KNOBS := SK_SUPPORT + 24
 
 # Deliberate mistakes (docs/AI.md 4, "Deliberate mistakes (campaign)"),
 # rolled with CState.rand at the decision point (cai.gd _mistake); each is a
@@ -238,6 +245,9 @@ const KNOBS: Array = [
 	[TRADE_ASK_CHANCE, 15, 15, 15],
 	[TRADE_ACCEPT_TURNS, 2, 2, 2],
 	[TRADE_ACCEPT_PCT, 250, 250, 250],
+	[TEAM_ACCEPT_TURNS, 4, 4, 4],
+	[TEAM_ACCEPT_PCT, 250, 250, 250],
+	[TEAM_PROPOSE, 0, 0, 0],
 	# Behaviours a level switches off (Average: as before).
 	[BUILD_CHEAPEST, 1, 0, 0],
 	[RECRUIT_LEAN_PCT, 70, 0, 0],

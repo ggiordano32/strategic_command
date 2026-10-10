@@ -124,6 +124,7 @@ func _init() -> void:
 	_general()
 	_war_dogs()
 	_light_art()
+	_teams()
 	_ai_skilled()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
 	quit(0 if fails == 0 else 1)
@@ -2186,7 +2187,7 @@ func _grid_migration() -> void:
 	var raider: Dictionary = CState.armies_of(v5, _f("rome"))[1]
 	raider["r"] = _r("apulia")
 	var mig := CState.from_json(CState.to_json(v5))
-	_check(int(mig["version"]) == 6, "a format 5 save migrates to format 6")
+	_check(int(mig["version"]) == CState.VERSION, "a format 5 save migrates to the current format (through 6)")
 	var ok := true
 	for m in mig["armies"]:
 		if not m.has("x") or CGrid.region(CState.cell(m)) != int(m["r"]) or m.has("dest") or int(m["mp"]) != CState.max_mp6(m):
@@ -2200,11 +2201,11 @@ func _grid_migration() -> void:
 	var other: Dictionary = CState.armies_of(mig, _f("carthage"))[0]
 	_check(CGrid.cheb(CState.cell(other), CGrid.site(int(other["r"]))) == 1, "the others stand in the field next to their settlement")
 	var v1 := CState.from_json(FileAccess.get_file_as_string("res://tests/data/campaign_v1.json"))
-	var ok1 := not v1.is_empty() and int(v1["version"]) == 6
+	var ok1 := not v1.is_empty() and int(v1["version"]) == CState.VERSION
 	for m in v1.get("armies", []):
 		if not m.has("x"):
 			ok1 = false
-	_check(ok1, "the format 1 save migrates all the way to format 6")
+	_check(ok1, "the format 1 save migrates all the way to the current format")
 	var r1 := CTurn.resolve_turn(v1, [])
 	var r2 := CTurn.resolve_turn(CState.from_json(FileAccess.get_file_as_string("res://tests/data/campaign_v1.json")), [])
 	_check(CState.state_hash(r1) == CState.state_hash(r2) and int(r1["turn"]) == int(v1["turn"]) + 1, "and resolves a turn deterministically")
@@ -3363,6 +3364,170 @@ func _grid_recruit_army() -> void:
 	_check(CRules.apply_order(st7, rome, {"t": "recruit", "r": sa, "unit": k7, "army": int(inside["id"])}) == "besieged"
 		and CRules.apply_order(st7, rome, {"t": "recruit", "r": sa, "unit": k7, "new": 1}) == "besieged",
 		"a besieged city recruits nothing (into an army or a new one)")
+
+
+## Resolve one turn with the given submissions, applying any pending battle
+## by the formula.
+func _turn(st: Dictionary, subs: Array) -> Dictionary:
+	var s := CTurn.resolve_turn(st, subs)
+	while str(s["phase"]) == "battles":
+		var b: Dictionary = s["battles"][0]
+		s = CTurn.apply_battle(s, int(b["id"]), CBattle.formula(s, b))
+	return s
+
+
+## Teams (version 7, docs/CAMPAIGN.md "Teams").
+func _teams() -> void:
+	var rome := _f("rome")
+	var carth := _f("carthage")
+	var mace := _f("macedon")
+	var syra := _f("syracuse")
+	var n := CState.nf()
+	# Migration 6 -> 7.
+	var v6 := CState.as_format(CState.new_campaign("test", 4242, [rome, carth]), 6)
+	_check(int(v6["version"]) == 6 and not v6.has("teams"), "a format 6 state has no teams")
+	var m1 := CState.from_json(CState.to_json(v6))
+	var m2 := CState.from_json(CState.to_json(m1))
+	var want: Array = []
+	var nxt := 1
+	for f in n:
+		if f == rome or f == carth:
+			want.append(0)
+		else:
+			want.append(nxt)
+			nxt += 1
+	_check(int(m1["version"]) == 7 and m1["teams"] == want, "migration 6 -> 7: humans on team 0, each AI alone from 1 in index order")
+	_check(CState.state_hash(m1) == CState.state_hash(m2) and CState.state_hash(m1) == CState.state_hash(v6),
+		"the migration is stable (two loads agree) and a default-teams state hashes as format 6 did")
+	_check(CState.friendly(m1, rome, carth) and not CState.friendly(m1, rome, mace) and CState.is_human(m1, carth),
+		"migrated: the two humans are friendly, the AI is not")
+	# No teams given = the old campaign.
+	var d1 := CState.new_campaign("test", 4242, [rome, carth])
+	_check(d1["teams"] == want and CState.state_hash(d1) == CState.state_hash(v6), "no teams given: the default shape, the format 6 hash")
+	# Three humans, two on one team.
+	var teams: Array = []
+	for f in n:
+		teams.append(5 if (f == rome or f == carth) else (6 if f == mace else 10 + f))
+	var st := CState.new_campaign("test", 4242, [mace, rome, carth], {"victory_capitals": 0}, teams)
+	_check((st["humans"] as Array).size() == 3 and (st["humans"] as Array) == (st["humans"] as Array).duplicate() and int((st["humans"] as Array)[0]) < int((st["humans"] as Array)[2]),
+		"three humans, sorted")
+	_check(CState.friendly(st, rome, carth) and CState.dip(st, rome, carth) == CState.ALLIED
+		and not CState.friendly(st, rome, mace) and not CState.friendly(st, mace, syra),
+		"teams: mates friendly (allied in the dip), others not")
+	CState.set_dip(st, rome, carth, CState.WAR)
+	_check(not CState.at_war(st, rome, carth) and CState.friendly(st, rome, carth), "mates are never at war")
+	CState.set_dip(st, rome, carth, CState.ALLIED)
+	_check(CState.team_members(st, 5) == [rome, carth] and CState.team(st, mace) == 6, "team_members in index order")
+	# A team proposal to an AI: accepted by the rule.
+	for f in n:
+		if f != mace:
+			CState.set_dip(st, mace, f, CState.PEACE)
+	st["turn"] = 10
+	_check(CRules.check_proposal(st, mace, syra, "team") == "" and CRules.check_proposal(st, mace, rome, "team") == "",
+		"a player may propose a team to an AI or to another player")
+	_check(CRules.check_proposal(st, rome, carth, "team") != "", "no team proposal to a team mate")
+	# Too short a peace.
+	var young := CState.copy(st)
+	CState.set_dip(young, mace, syra, CState.PEACE)  # (dip_turn = 10)
+	_check(CAI.why(young, mace, syra, "team") != "", "refused while the peace is under TEAM_ACCEPT_TURNS old (%s)" % CAI.why(young, mace, syra, "team"))
+	_check(CAI.why(st, mace, syra, "team") == "", "accepted: at peace long enough, similar strength (%s)" % CAI.why(st, mace, syra, "team"))
+	# The strength clause.
+	var big := CState.copy(st)
+	for a in CState.armies_of(big, mace):
+		for u in a["units"]:
+			u["n"] = int(u["n"]) * 60
+	_check(CAI.why(big, mace, syra, "team") != "", "refused: the proposer's team is far stronger (%s)" % CAI.why(big, mace, syra, "team"))
+	# ... unless the AI is losing a war (a region lost in the last 5 turns).
+	var losing := CState.copy(big)
+	CState.set_dip(losing, syra, carth, CState.WAR)
+	losing["turn"] = 10
+	CRules.event(losing, {"k": "captured", "r": 0, "f": carth, "from": syra})
+	_check(CAI.why(losing, mace, syra, "team") == "" or CAI.why(losing, mace, syra, "team").contains("war"),
+		"a losing AI accepts a strong team (or says the teams are at war)")
+	# At war with a member of the proposer's team: refused.
+	var war := CState.copy(st)
+	CState.set_dip(war, syra, mace, CState.WAR)
+	_check(CAI.why(war, mace, syra, "team") != "", "refused while at war with the proposer")
+	# Resolving the turn: the AI accepts the order, the teams merge.
+	var r1 := _turn(CState.copy(st), [CTurn.submission(st, mace, [{"t": "propose", "to": syra, "what": "team"}])])
+	var r2 := _turn(CState.copy(st), [CTurn.submission(st, mace, [{"t": "propose", "to": syra, "what": "team"}])])
+	_check(CState.state_hash(r1) == CState.state_hash(r2), "resolve_turn with teams and a team proposal is deterministic")
+	_check(CState.team(r1, syra) == CState.team(r1, mace) and CState.friendly(r1, mace, syra) and CState.dip(r1, mace, syra) == CState.ALLIED,
+		"the AI joined the proposer's team")
+	var joined := false
+	for e in r1["events"]:
+		if str(e["k"]) == "team_joined" and (e["members"] as Array) == [syra]:
+			joined = true
+	var chron := false
+	for e in r1.get("chronicle", []):
+		if str(e["k"]) == "team_joined":
+			chron = true
+	_check(joined and chron, "team_joined in the events and the chronicle")
+	# Merge rules: the smaller team joins the larger; wars between them end.
+	var mg := CState.copy(st)
+	CState.set_dip(mg, mace, rome, CState.WAR)
+	CRules.merge_teams(mg, mace, rome)
+	_check(CState.team(mg, mace) == 5 and CState.dip(mg, mace, rome) == CState.ALLIED and CState.dip(mg, mace, carth) == CState.ALLIED,
+		"the smaller team joins the larger and their war ends")
+	var tie := CState.copy(st)
+	CRules.merge_teams(tie, mace, syra)
+	_check(CState.team(tie, syra) == 6, "a tie: the proposer's team stays")
+	# A human proposal to a human is answered next turn.
+	var h1 := _turn(CState.copy(st), [CTurn.submission(st, mace, [{"t": "propose", "to": rome, "what": "team"}])])
+	var pid := -1
+	for p in h1["proposals"]:
+		if int(p["from"]) == mace and int(p["to"]) == rome and str(p["what"]) == "team":
+			pid = int(p["id"])
+	_check(pid >= 0 and CState.team(h1, mace) == 6, "a player's team proposal to a player waits for the answer")
+	var h2 := _turn(CState.copy(h1), [CTurn.submission(h1, rome, [{"t": "answer", "id": pid, "accept": 1}])])
+	_check(CState.team(h2, mace) == 5 and CState.friendly(h2, mace, carth), "accepted: the smaller team joined")
+	var h3 := _turn(CState.copy(h1), [CTurn.submission(h1, rome, [{"t": "answer", "id": pid, "accept": 0}])])
+	_check(CState.team(h3, mace) == 6, "refused: nothing changes")
+	# Leaving with a notice.
+	_check(CRules.apply_order(CState.copy(st), mace, {"t": "leave_team"}) != "" and CRules.apply_order(CState.copy(st), syra, {"t": "leave_team"}) != "",
+		"only a player on a team of two or more can leave")
+	var lv := _turn(CState.copy(st), [CTurn.submission(st, carth, [{"t": "leave_team"}])])
+	_check(CRules.leaving_since(lv, carth) == 10 and CState.team(lv, carth) == 5, "leave_team: marked, still on the team during the notice")
+	_check(CRules.apply_order(CState.copy(lv), carth, {"t": "leave_team"}) != "", "no second notice")
+	var l2 := _turn(CState.copy(lv), [])
+	_check(CState.team(l2, carth) == 5, "one turn on, still on the team")
+	var l3 := _turn(CState.copy(l2), [])
+	var gone := CState.team(l3, carth) != CState.team(l3, rome) and CRules.leaving_since(l3, carth) < 0 and not l3.has("leaving")
+	_check(gone and CState.dip(l3, carth, rome) == CState.PEACE and not CState.friendly(l3, carth, rome),
+		"after the notice: a team of its own, peace with the old mate")
+	var notice := false
+	var left := false
+	for e in l3.get("chronicle", []):
+		notice = notice or str(e["k"]) == "team_notice"
+		left = left or (str(e["k"]) == "team_left" and int(e["f"]) == carth)
+	_check(notice and left, "chronicle rows at both moments")
+	var l3b := _turn(CState.copy(l2), [])
+	_check(CState.state_hash(l3) == CState.state_hash(l3b), "leaving is deterministic")
+	# Team victory: the two mates together hold what neither holds alone.
+	var vc := CState.copy(st)
+	var need := CState.regions_of(vc, rome).size() + CState.regions_of(vc, carth).size()
+	vc["settings"]["victory_regions"] = need
+	CRules.check_victory(vc)
+	_check(int(vc["winner"]) == 1 and int(vc["winner_team"]) == 5 and str(vc["phase"]) == "over", "the team wins when its members together meet the condition")
+	var vn := CState.copy(st)
+	vn["settings"]["victory_regions"] = need + 1
+	CRules.check_victory(vn)
+	_check(int(vn["winner"]) == -1, "and not below it")
+	var vs := CState.copy(st)
+	vs["settings"]["victory_regions"] = CState.regions_of(vs, rome).size()
+	vs["settings"]["victory_capitals"] = 0
+	CRules.check_victory(vs)
+	_check(int(vs["winner"]) == 1, "a member's own regions count too")
+	# Players lose when no player's team has a member left.
+	var dead := CState.copy(st)
+	for f in [rome, carth, mace]:
+		dead["factions"][f]["alive"] = 0
+	CRules.check_victory(dead)
+	_check(int(dead["winner"]) == 0, "all players' teams fallen: defeat")
+	# A year of play with teams: deterministic and plain data.
+	var p1 := _play(CState.copy(st), 10, -1)
+	var p2 := _play(CState.copy(st), 10, 5)
+	_check(CState.state_hash(p1) == CState.state_hash(p2) and _plain(p1), "10 turns with teams: same hash through a save / load, plain data")
 
 
 ## The Skilled campaign AI (docs/AI.md 12): deterministic, its behaviours
