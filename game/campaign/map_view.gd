@@ -20,6 +20,7 @@ const CState := preload("res://campaign/cstate.gd")
 const Geo := preload("res://game/campaign/map_geo.gd")
 const GroundPalette := preload("res://game/ground_palette.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
+const Landscape := preload("res://game/campaign/landscape.gd")
 
 const SEA := Color(0.13, 0.25, 0.34)
 const SEA_SHALLOW := Color(0.22, 0.38, 0.47)
@@ -64,6 +65,21 @@ const HILL_W := 1.2
 const COL_FORD := Color(0.93, 0.9, 0.8, 1.0)
 const COL_BRIDGE := Color(0.45, 0.3, 0.15, 1.0)
 
+## Terrain view (2026-10-10): the land is its ground (landscape.gd: palette
+## texture, peaks, domes, trees, speckles) with the owner a translucent tint;
+## Political is the older look (region fills in owner colour, hatch marks).
+## A view preference in user://settings.cfg [map] terrain (never in the
+## state); "--map-view=political|terrain" on the command line overrides it
+## for the session without saving.
+const SETTINGS := "user://settings.cfg"
+const TERRAIN_TINT := 0.30   # owner colour alpha over the ground
+const COL_BANK_GREEN := Color(0.30, 0.52, 0.26, 0.30)
+const BANK_GREEN_W := 11.0
+const BANK_W := 4.8
+static var terrain_view := true
+static var _pref_loaded := false
+static var instance: Node2D = null
+
 ## Built once from the grid (view only): hatch segments per kind, road
 ## polylines, river polylines, crossing glyphs [point, step direction, kind].
 static var _hill_segs: Array = []
@@ -99,6 +115,32 @@ var _next_dashes_lw := -1.0      # ... for this line scale
 ## (empty array).
 func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	load_view_pref()
+	instance = self
+
+
+static func load_view_pref() -> void:
+	if _pref_loaded:
+		return
+	_pref_loaded = true
+	var cf := ConfigFile.new()
+	if cf.load(SETTINGS) == OK:
+		terrain_view = int(cf.get_value("map", "terrain", 1)) != 0
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--map-view="):
+			terrain_view = a.substr(11) != "political"
+
+
+## Switch the view (saved) and redraw the map.
+static func set_terrain_view(on: bool, save := true) -> void:
+	terrain_view = on
+	if save:
+		var cf := ConfigFile.new()
+		cf.load(SETTINGS)
+		cf.set_value("map", "terrain", 1 if on else 0)
+		cf.save(SETTINGS)
+	if instance != null and is_instance_valid(instance):
+		instance.queue_redraw()
 
 
 func set_reach(rt: PackedInt32Array) -> void:
@@ -221,6 +263,9 @@ static func region_color(r: int, o: int) -> Color:
 
 func _draw() -> void:
 	var lw := 1.0 / maxf(zoom, 0.05)
+	var land_view := terrain_view and grid and not state.is_empty()
+	if land_view:
+		_terrain_geometry()
 	draw_rect(Rect2(Vector2(-4000, -4000), Geo.SIZE + Vector2(8000, 8000)), SEA)
 	# Shallow water: a soft band along every coast.
 	for poly in Geo.lands() + Geo.islands():
@@ -236,22 +281,46 @@ func _draw() -> void:
 	# Territories.
 	# Each region's land is its ground palette (the colour of its battle
 	# maps: arid, dry, green, rocky), tinted by its owner.
-	for r in CData.region_count():
-		var o := CState.owner(state, r)
-		var col := region_color(r, o)
-		for piece in Geo.cell(r):
-			draw_colored_polygon(piece, col)
+	var sz := Vector2(CGrid.width(), CGrid.height()) * float(CGrid.cell_px())
+	if land_view:
+		# Terrain view: the ground texture over the land, the owner a
+		# translucent tint over it.
+		for poly in Geo.lands() + Geo.islands():
+			var guv := PackedVector2Array()
+			for pt in poly:
+				guv.append(pt / sz)
+			draw_colored_polygon(poly, Color.WHITE, guv, Landscape.ground_tex)
+		for r in CData.region_count():
+			var o := CState.owner(state, r)
+			if o >= 0:
+				var tc := CData.faction_color(o)
+				tc.a = TERRAIN_TINT
+				for piece in Geo.cell(r):
+					draw_colored_polygon(piece, tc)
+		# Rivers: a faint green and a pale bank under the blue line.
+		for ln in _river_lines:
+			draw_polyline(ln, COL_BANK_GREEN, BANK_GREEN_W * lw, true)
+			draw_polyline(ln, Landscape.COL_BANK, (RIVER_W + BANK_W) * lw, true)
+	else:
+		for r in CData.region_count():
+			var o := CState.owner(state, r)
+			var col := region_color(r, o)
+			for piece in Geo.cell(r):
+				draw_colored_polygon(piece, col)
 	if grid:
 		_terrain_geometry()
-		if _shade_tex != null:
-			var sz := Vector2(CGrid.width(), CGrid.height()) * float(CGrid.cell_px())
+		var rtex: Texture2D = Landscape.relief_tex if land_view else _shade_tex
+		if rtex != null:
 			for poly in Geo.lands() + Geo.islands():
 				var uvs := PackedVector2Array()
 				for pt in poly:
 					uvs.append(pt / sz)
-				draw_colored_polygon(poly, Color.WHITE, uvs, _shade_tex)
-		draw_hills(self, _hill_segs[0], 0, lw)
-		draw_hills(self, _hill_segs[1], 1, lw)
+				draw_colored_polygon(poly, Color.WHITE, uvs, rtex)
+		if land_view:
+			draw_mesh(Landscape.mesh, null)
+		else:
+			draw_hills(self, _hill_segs[0], 0, lw)
+			draw_hills(self, _hill_segs[1], 1, lw)
 		_draw_reach(lw)
 	# Destinations of the selected army.
 	var a := 0.25 + 0.15 * sin(pulse * 4.0)
@@ -345,6 +414,7 @@ func _draw() -> void:
 static func _terrain_geometry() -> void:
 	if not _hill_segs.is_empty():
 		return
+	Landscape.bake()
 	var px := float(CGrid.cell_px())
 	var hills := PackedVector2Array()
 	var ridges := PackedVector2Array()  # (packed arrays are values: one variable each)

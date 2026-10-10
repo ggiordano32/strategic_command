@@ -21,6 +21,7 @@ const MapView := preload("res://game/campaign/map_view.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const CData := preload("res://campaign/cdata.gd")
+const Landscape := preload("res://game/campaign/landscape.gd")
 
 const SETTINGS := "user://settings.cfg"
 const BUTTON_W := 76.0
@@ -39,6 +40,8 @@ var own_col := CData.faction_color(0)
 var enemy_col := CData.faction_color(1)
 
 var button: Button
+var view_button: Button     # Terrain / Political, above the Key button
+var view_row: Button        # the same toggle inside the open key
 var panel: PanelContainer
 var header: Button
 var scroll: ScrollContainer
@@ -59,6 +62,17 @@ func _init() -> void:
 	button.offset_bottom = -MARGIN
 	button.offset_top = -MARGIN - BUTTON_H
 	add_child(button)
+	MapView.load_view_pref()
+	view_button = Kit.button("", func(): _toggle_view(), BUTTON_W, Kit.FONT_SMALL)
+	view_button.name = "map_view_button"
+	view_button.custom_minimum_size = Vector2(BUTTON_W, 40.0)
+	view_button.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+	view_button.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	view_button.offset_left = MARGIN
+	view_button.offset_right = MARGIN + BUTTON_W
+	view_button.offset_bottom = -MARGIN - BUTTON_H - 4.0
+	view_button.offset_top = -MARGIN - BUTTON_H - 4.0 - 40.0
+	add_child(view_button)
 	panel = Kit.panel(Color(Kit.PANEL_BG, 0.94), 6)
 	panel.name = "map_key_panel"
 	panel.visible = false
@@ -73,12 +87,28 @@ func _init() -> void:
 	header.add_theme_color_override("font_hover_color", Kit.COL_GOLD.lightened(0.3))
 	Kit.set_icon(header, "key", Kit.COL_GOLD)
 	v.add_child(header)
+	view_row = Kit.button("", func(): _toggle_view(), 0, Kit.FONT_SMALL)
+	view_row.name = "map_view_row"
+	v.add_child(view_row)
+	_refresh_view_buttons()
 	scroll = TouchScroll.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	v.add_child(scroll)
 	list = Kit.vbox(3)
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(list)
+
+
+func _toggle_view() -> void:
+	MapView.set_terrain_view(not MapView.terrain_view)
+	_refresh_view_buttons()
+
+
+func _refresh_view_buttons() -> void:
+	var t := "Terrain" if MapView.terrain_view else "Political"
+	view_button.text = t
+	view_row.text = "Map view: %s (tap to switch to %s)" % [t, "Political" if MapView.terrain_view else "Terrain"]
+	view_button.tooltip_text = "Switch the map between Terrain and Political view"
 
 
 static func load_pref() -> bool:
@@ -101,6 +131,7 @@ func set_expanded(on: bool) -> void:
 	expanded = on
 	panel.visible = on
 	button.visible = not on
+	view_button.visible = not on
 	if persist:
 		save_pref(on)
 	toggled.emit(on)
@@ -154,7 +185,7 @@ func place(top: float, bottom: float, vp_w: float) -> void:
 	var w := minf(PANEL_W, vp_w - 2.0 * MARGIN)
 	var room := maxf(bottom - top, 120.0)
 	var want := list.get_combined_minimum_size().y
-	var hh := header.get_combined_minimum_size().y + 4.0 + 12.0  # header, gap, panel margins
+	var hh := header.get_combined_minimum_size().y + view_row.get_combined_minimum_size().y + 8.0 + 12.0  # header, toggle, gaps, panel margins
 	var sh := minf(want, room - hh)
 	if not is_equal_approx(scroll.custom_minimum_size.y, sh) or not is_equal_approx(scroll.custom_minimum_size.x, w - 12.0):
 		scroll.custom_minimum_size = Vector2(w - 12.0, sh)
@@ -314,6 +345,10 @@ func rows() -> Array:
 			var cpx := sz.y * 0.8
 			MapView.draw_hills(ci, MapView.hill_mark(Vector2(sz.x * 0.3, sz.y * 0.55), cpx, 0), 0, 1.6)
 			MapView.draw_hills(ci, MapView.hill_mark(Vector2(sz.x * 0.72, sz.y * 0.55), cpx, 1), 1, 1.6)])
+	if format >= 6:
+		out.append(["Mountains (Terrain view)", func(ci: Control, sz: Vector2): Landscape.draw_sample_peaks(ci, sz)])
+		out.append(["Woods (denser where a region is wooded)", func(ci: Control, sz: Vector2): Landscape.draw_sample_trees(ci, sz)])
+		out.append(["Desert and dry ground: rocks and scrub", func(ci: Control, sz: Vector2): Landscape.draw_sample_desert(ci, sz)])
 	if format <= 5:
 		out.append(["Land route", func(ci: Control, sz: Vector2):
 			_land(ci, sz)
