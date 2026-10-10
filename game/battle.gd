@@ -5,6 +5,7 @@ extends Node2D
 
 signal exit_requested
 
+const AudioFx := preload("res://game/audio.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const SoldierLayer := preload("res://game/soldier_layer.gd")
@@ -259,6 +260,9 @@ func _ready() -> void:
 		hud.menu_button.icon_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	hud.set_stats_expanded(bench_mode)  # benchmarks show the full readout
 	_fit_camera()
+	_au_on = not bench_mode and AudioFx.on()
+	if _au_on:
+		AudioFx.enter_battle()
 	hud.card_pressed.connect(_on_card)
 	hud.pause_pressed.connect(_toggle_pause)
 	hud.speed_pressed.connect(func(): _count("speed_open"))
@@ -492,6 +496,8 @@ func _process(delta: float) -> void:
 			soldiers.upload()
 			_view_tick()
 			_upload_ms = (Time.get_ticks_usec() - t0) / 1000.0
+	if _au_on and paused:
+		AudioFx.fire_level(0.0)
 	if coop == null:
 		soldiers.set_alpha(clampf(_acc / TICK_SEC, 0.0, 1.0))
 	_keys_held(delta)
@@ -561,6 +567,8 @@ func _do_tick() -> void:
 
 ## Bookkeeping after the sim stepped (ms: the step's time).
 func _after_tick(ms: float) -> void:
+	if _au_on:
+		_audio_tick()
 	_sim_ms.append(ms)
 	_win_sim.append(ms)
 	if _sim_ms.size() > STATS_WINDOW:
@@ -585,6 +593,8 @@ func _after_tick(ms: float) -> void:
 		_refresh_wall_buttons()  # units walk in and out of reach of a wall, take up or leave engines
 	if sim.ended != 0 and not _result_shown and not bench_mode:
 		_result_shown = true
+		if _au_on:
+			AudioFx.play("horn_victory" if sim.winner == player_side else ("horn_start" if sim.winner >= 2 else "horn_defeat"), 0.9, 0.0, "horn")
 		var secs: int = maxi(sim.decided_tick, 0) / 10
 		hud.banner.visible = false
 		hud.show_result(sim.result(), "%s   (decided after %d:%02d)" % [hud.banner.text, secs / 60, secs % 60], player_side)
@@ -758,6 +768,10 @@ func _on_page_hiding() -> void:
 
 
 func _exit_tree() -> void:
+	if _au_on:
+		_au_on = false
+		AudioFx.fire_level(0.0)
+		AudioFx.leave_battle()
 	_end_scenario("exit")
 
 
@@ -2707,3 +2721,251 @@ func _works_line(a: Vector2, b: Vector2) -> void:
 	_queue({"type": BattleSim.ORDER_WORKS, "kind": BattleSim.EQ_STAKES, "x": int(c.x), "y": int(c.y), "facing": face})
 	_count("works_line")
 	_refresh_works_palette()
+
+
+# ---------------------------------------------------------------- sounds ---
+# View only (docs/STATUS.md 8b): after each tick, compare the sim's counters
+# and unit / gate states with the last tick and play one clip per event
+# bucket (AudioFx caps them per 100 ms), placed by the distance and side of
+# the camera centre. Nothing here writes the sim.
+
+var _au_on := false
+var _au_started := false
+var _au_prev := {}            # counter name -> last value
+var _au_state := PackedInt32Array()
+var _au_stair := PackedInt32Array()
+var _au_ghp := PackedInt32Array()
+var _au_gst := PackedInt32Array()
+var _au_t0 := PackedInt32Array()      # artillery landing tracking (as game/overlay.gd does)
+var _au_stamp := PackedInt32Array()
+var _au_walk := 0
+var _au_live: Array[int] = []
+var _au_rec := {}
+const AU_MELEE_MIN := 3
+
+
+func _au_delta(key: String, v: int) -> int:
+	var d := v - int(_au_prev.get(key, v))
+	_au_prev[key] = v
+	return d
+
+
+## Volume and pan of a sim point as heard from the camera centre.
+func _au_mix(sx: int, sy: int) -> Vector2:
+	var p := Vector2(sx, sy) / M * PX_PER_M
+	var half := get_viewport_rect().size / camera.zoom * 0.5
+	var d := (p - camera.position) / half
+	return Vector2(clampf(1.15 - d.length() * 0.55, 0.0, 1.0), clampf(d.x, -1.0, 1.0))
+
+
+## The unit nearest the camera centre meeting a test (see the match), -1 none.
+func _au_nearest(kind: int) -> int:
+	var best := -1
+	var bd := 1.0e30
+	var tick: int = sim.tick
+	for u in sim.n_units:
+		if sim.u_alive[u] <= 0 or sim.u_state[u] >= BattleSim.U_DESTROYED:
+			continue
+		var ok := false
+		match kind:
+			0: ok = sim.u_fighting[u] > 0
+			1: ok = tick - sim.u_charged_t[u] <= 1
+			2: ok = sim.u_ftarget[u] >= 0 and sim.u_neng[u] == 0
+			3: ok = sim.u_neng[u] > 0 and sim.u_ftarget[u] >= 0
+			4: ok = sim.u_amok[u] != 0
+			5: ok = sim.u_hand[u] >= 0
+			6: ok = sim.u_burn[u] > 0
+		if not ok:
+			continue
+		var d := Vector2(sim.u_cx[u] - camera.position.x / PX_PER_M * M, sim.u_cy[u] - camera.position.y / PX_PER_M * M).length_squared()
+		if d < bd:
+			bd = d
+			best = u
+	return best
+
+
+func _au_at_unit(kind: int, clip: String, bucket: String, gain: float = 1.0) -> void:
+	var u := _au_nearest(kind)
+	if u < 0:
+		return
+	var m := _au_mix(sim.u_cx[u], sim.u_cy[u])
+	AudioFx.play(clip, m.x * gain, m.y, bucket)
+
+
+func _audio_tick() -> void:
+	if not _au_started:
+		if sim.phase == BattleSim.PHASE_DEPLOY:
+			return
+		_au_started = true
+		AudioFx.play("horn_start", 0.9, 0.0, "horn")
+		_au_prev["att"] = sim.stat_attacks
+		_au_prev["imp"] = sim.stat_impacts
+		_au_prev["shots"] = sim.stat_shots
+		_au_prev["bolts"] = sim.stat_bolts
+		_au_prev["stones"] = sim.stat_stones
+		_au_prev["crush"] = sim.stat_crush
+		_au_prev["amok"] = sim.stat_amok
+		_au_prev["rel"] = sim.stat_released
+		_au_prev["tup"] = sim.stat_tower_hits
+		_au_prev["tdown"] = sim.stat_towers_down
+		_au_state = sim.u_state.duplicate()
+		_au_stair = sim.u_stair.duplicate()
+		_au_ghp = sim.g_hp.duplicate()
+		_au_gst = sim.g_state.duplicate()
+		return
+	# melee, charge impacts, volleys
+	if _au_delta("att", sim.stat_attacks) >= AU_MELEE_MIN:
+		_au_at_unit(0, "melee", "melee", 0.8)
+	if _au_delta("imp", sim.stat_impacts) > 0:
+		_au_at_unit(1, "charge", "impact")
+	var crush := _au_delta("crush", sim.stat_crush)
+	if _au_delta("amok", sim.stat_amok) > 0:
+		_au_at_unit(4, "elephant", "beast", 0.9)
+	elif crush > 0:
+		_au_at_unit(1, "elephant", "beast", 0.9)
+	if _au_delta("shots", sim.stat_shots) > 0:
+		var u := _au_nearest(2)
+		if u >= 0:
+			var m := _au_mix(sim.u_cx[u], sim.u_cy[u])
+			var far: bool = UT.stat(sim.u_type[u], "m_range") >= 90 * 1024
+			AudioFx.play("volley" if far else "whoosh", m.x * 0.8, m.y, "volley")
+	var nb := _au_delta("bolts", sim.stat_bolts)
+	var ns := _au_delta("stones", sim.stat_stones)
+	if nb > 0:
+		_au_at_unit(3, "bolt_release", "art")
+	if ns > 0:
+		_au_at_unit(3, "stone_release", "art")
+	if _au_delta("rel", sim.stat_released) > 0:
+		_au_at_unit(5, "dogs", "beast")
+	if _au_delta("tup", sim.stat_tower_hits) > 0:
+		AudioFx.play("bolt_impact", 0.5, 0.0, "ladder")
+	if _au_delta("tdown", sim.stat_towers_down) > 0:
+		AudioFx.play("gate_break", 0.6, 0.0, "ladder")
+	if sim.stat_bolts + sim.stat_stones > 0:
+		_au_landings()
+	_au_units()
+	if sim.n_gates > 0:
+		_au_gates()
+	if sim.tick % 5 == 0:
+		var f := 0.0
+		var u := _au_nearest(6)
+		if u >= 0:
+			f = _au_mix(sim.u_cx[u], sim.u_cy[u]).x
+		AudioFx.fire_level(f)
+
+
+## Units breaking / rallying and climbs starting: the loudest event of the tick.
+func _au_units() -> void:
+	var nu: int = sim.n_units
+	if _au_state.size() != nu:
+		_au_state = sim.u_state.duplicate()
+		_au_stair = sim.u_stair.duplicate()
+		return
+	var best := 0.0
+	var clip := ""
+	var pan := 0.0
+	var bucket := ""
+	for u in nu:
+		var st: int = sim.u_state[u]
+		var old: int = _au_state[u]
+		var sg: int = sim.u_stair[u]
+		var og: int = _au_stair[u]
+		_au_state[u] = st
+		_au_stair[u] = sg
+		var c := ""
+		var b := "state"
+		if st != old:
+			if st == BattleSim.U_ROUTING and old == BattleSim.U_READY and sim.u_amok[u] == 0:
+				c = "unit_break"
+			elif st == BattleSim.U_READY and old == BattleSim.U_ROUTING:
+				c = "unit_rally"
+		elif sg != og and sg >= 2 and og < 2:
+			c = "creak"
+			b = "ladder"
+		if c == "":
+			continue
+		var m := _au_mix(sim.u_cx[u], sim.u_cy[u])
+		if m.x > best:
+			best = m.x
+			clip = c
+			pan = m.y
+			bucket = b
+	if clip != "":
+		AudioFx.play(clip, best, pan, bucket)
+
+
+func _au_gates() -> void:
+	var ng: int = sim.n_gates
+	if _au_ghp.size() != ng:
+		_au_ghp = sim.g_hp.duplicate()
+		_au_gst = sim.g_state.duplicate()
+		return
+	var best := 0.0
+	var clip := ""
+	var pan := 0.0
+	for g in ng:
+		var hp: int = sim.g_hp[g]
+		var st: int = sim.g_state[g]
+		var c := ""
+		if st == BattleSim.GATE_BROKEN and _au_gst[g] != BattleSim.GATE_BROKEN:
+			c = "gate_break"
+		elif hp < _au_ghp[g]:
+			c = "gate_blow"
+		_au_ghp[g] = hp
+		_au_gst[g] = st
+		if c == "":
+			continue
+		var m := _au_mix(sim.g_x[g], sim.g_y[g])
+		if m.x > best or (c == "gate_break" and clip == "gate_blow"):
+			best = m.x
+			clip = c
+			pan = m.y
+	if clip != "":
+		AudioFx.play(clip, best, pan, "gate")
+
+
+## Artillery landings: the walk of game/overlay.gd's _track_missiles, kept
+## for bolts, stones and bursts only (arrows land silently).
+func _au_landings() -> void:
+	var cap: int = sim.pr_t1.size()
+	if _au_t0.size() != cap:
+		_au_t0.resize(cap)
+		_au_t0.fill(-1)
+		_au_stamp.resize(cap)
+		_au_stamp.fill(0)
+		_au_live.clear()
+		_au_rec.clear()
+	_au_walk += 1
+	var buckets: PackedInt32Array = sim.pr_bucket
+	var nxt: PackedInt32Array = sim.pr_next
+	for b in buckets.size():
+		var p := buckets[b]
+		while p >= 0:
+			_au_stamp[p] = _au_walk
+			if _au_t0[p] != sim.pr_t0[p]:
+				if _au_rec.has(p):
+					_au_live.erase(p)
+					_au_land(p)
+				_au_t0[p] = sim.pr_t0[p]
+				var mk: int = UT.stat(sim.pr_ty[p], "m_kind")
+				if mk > 0:
+					var ak: int = sim.pr_ak[p]
+					var blast: int = UT.stat(sim.pr_ty[p], "m_blast") + (UT.ammo_stat(ak, "blast") if ak >= 0 else 0)
+					_au_rec[p] = [sim.pr_x[p], sim.pr_y[p], mk, blast, sim.pr_t0[p]]
+					_au_live.append(p)
+			p = nxt[p]
+	var k := 0
+	while k < _au_live.size():
+		var p := _au_live[k]
+		if _au_stamp[p] == _au_walk and _au_t0[p] == _au_rec[p][4]:
+			k += 1
+			continue
+		_au_land(p)
+		_au_live.remove_at(k)
+
+
+func _au_land(p: int) -> void:
+	var r: Array = _au_rec[p]
+	_au_rec.erase(p)
+	var m := _au_mix(r[0], r[1])
+	AudioFx.play("burst" if r[3] > 0 else ("bolt_impact" if r[2] == 1 else "stone_impact"), m.x, m.y, "art")

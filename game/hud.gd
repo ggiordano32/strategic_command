@@ -38,6 +38,7 @@ signal cards_reordered
 signal ready_pressed
 signal works_pressed(mode: String)  # deployment: field works palette ("stakes", "caltrops", "rotate", "remove")
 
+const AudioFx := preload("res://game/audio.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const DragReorder := preload("res://game/drag_reorder.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -1149,6 +1150,7 @@ func _button(text: String, size: Vector2, icon: String = "") -> Button:
 	b.custom_minimum_size = size
 	b.focus_mode = Control.FOCUS_NONE
 	b.add_theme_font_size_override("font_size", FONT)
+	b.pressed.connect(AudioFx.click)
 	if icon != "":
 		Kit.set_icon(b, icon)
 	return b

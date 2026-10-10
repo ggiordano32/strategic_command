@@ -27,6 +27,7 @@ extends Node
 
 signal exit_requested
 
+const AudioFx := preload("res://game/audio.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -526,6 +527,7 @@ func _next_step() -> void:
 		return
 	var pending := CTurn.pending_for(st)
 	if not pending.is_empty():
+		AudioFx.play("battle_pending", 0.9, 0.0, "horn")
 		f = int(CRules.battle_humans(st, pending[0])[0])
 		_set_planner(f, false)
 		var seen := int(data["session"]["seen"].get(str(f), -1))
@@ -616,6 +618,7 @@ func end_turn(skip_warnings: bool = false) -> void:
 		if not warn.is_empty():
 			panels.show_warnings(warn)
 			return
+	AudioFx.play("end_turn", 0.9, 0.0, "ui")
 	if online != null:
 		online.set_plan(orders)
 		onl.submit(orders.duplicate(true))
@@ -639,6 +642,7 @@ func _resolve_turn() -> void:
 	_t("campaign_turn_resolved", {"turn": int(st["turn"]), "ms": Time.get_ticks_msec() - t0,
 		"hash": CState.hash_text(st), "battles": (st["battles"] as Array).size()})
 	f = -1
+	AudioFx.play("turn_resolved", 0.8, 0.0, "horn")
 	save()
 	_next_step()
 
@@ -676,9 +680,11 @@ func add_order(o: Dictionary) -> String:
 	var pv := CTurn.preview(st, f, orders + [o])
 	for e in pv["errors"]:
 		if int(e[0]) == orders.size():
+			AudioFx.play("refused", 0.9, 0.0, "ui")
 			_flash(str(e[1]))
 			return str(e[1])
 	_push_undo()
+	AudioFx.play("chime" if str(o.get("t", "")) in ["propose", "answer", "accept_offer", "decline_offer", "gift_money", "gift_region", "buy_region"] else "order_ok", 0.8, 0.0, "ui")
 	orders.append(o)
 	_replan()
 	save()
@@ -690,9 +696,11 @@ func add_orders(list: Array) -> String:
 	var pv := CTurn.preview(st, f, orders + list)
 	for e in pv["errors"]:
 		if int(e[0]) >= orders.size():
+			AudioFx.play("refused", 0.9, 0.0, "ui")
 			_flash(str(e[1]))
 			return str(e[1])
 	_push_undo()
+	AudioFx.play("order_ok", 0.8, 0.0, "ui")
 	orders.append_array(list)
 	_replan()
 	save()

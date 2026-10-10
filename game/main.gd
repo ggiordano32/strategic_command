@@ -1,6 +1,7 @@
 extends Control
 ## Start screen: pick a scenario, then hand over to the battle view.
 
+const AudioFx := preload("res://game/audio.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const Battle := preload("res://game/battle.gd")
@@ -430,6 +431,7 @@ func _build_home(bg: Control) -> Control:
 	_soldiers_button.tooltip_text = "How soldiers are drawn. Auto: the fast way, switching by itself to compatible if this device shows no soldiers. Compatible: always the way that works on every device (a little more work per tick)."
 	row.add_child(_soldiers_button)
 	row.add_child(_menu_button("Fullscreen", _toggle_fullscreen))
+	vb.add_child(_build_audio_row())
 	_update_size_button()
 	_update_soldiers_button()
 	var info := Kit.label("Godot %s, %s renderer" % [Engine.get_version_info()["string"],
@@ -1042,13 +1044,71 @@ func _replay() -> void:
 	_start_with(_last_id, _last_seed, _last_terrain)
 
 
+## Sound settings ([audio] in user://settings.cfg; game/audio.gd): a mute
+## toggle and -/+ steps of 10 % for master, effects and ambient.
+func _build_audio_row() -> Control:
+	var box := HFlowContainer.new()
+	box.add_theme_constant_override("h_separation", 8)
+	box.add_theme_constant_override("v_separation", 8)
+	box.alignment = FlowContainer.ALIGNMENT_CENTER
+	box.name = "audio_row"
+	var mute := _menu_button("", Callable())
+	mute.name = "audio_mute"
+	box.add_child(mute)
+	var labels := {}
+	for k in ["master", "effects", "ambient"]:
+		var h := HBoxContainer.new()
+		h.add_theme_constant_override("separation", 4)
+		var minus := _menu_button("-", Callable())
+		minus.custom_minimum_size = Vector2(42, 42)
+		var l := Label.new()
+		l.custom_minimum_size = Vector2(120, 0)
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		l.add_theme_font_size_override("font_size", 15)
+		var plus := _menu_button("+", Callable())
+		plus.custom_minimum_size = Vector2(42, 42)
+		h.add_child(minus)
+		h.add_child(l)
+		h.add_child(plus)
+		box.add_child(h)
+		labels[k] = l
+		minus.name = "audio_%s_minus" % k
+		plus.name = "audio_%s_plus" % k
+		var step := func(d: int):
+			var a = AudioFx.inst()
+			if a != null:
+				a.set_volume(k, int(a.vol[k]) + d)
+				AudioFx.play("tap", 1.0)
+			_update_audio_row(mute, labels)
+		minus.pressed.connect(step.bind(-10))
+		plus.pressed.connect(step.bind(10))
+	mute.pressed.connect(func():
+		var a = AudioFx.inst()
+		if a != null:
+			a.set_muted(not a.muted)
+		_update_audio_row(mute, labels))
+	_update_audio_row(mute, labels)
+	return box
+
+
+func _update_audio_row(mute: Button, labels: Dictionary) -> void:
+	var a = AudioFx.inst()
+	var vol: Dictionary = a.vol if a != null else AudioFx.DEFAULTS
+	mute.text = "Sound: " + ("off" if a != null and a.muted else "on")
+	for k in labels:
+		labels[k].text = "%s %d%%" % [str(k).capitalize(), int(vol[k])]
+
+
 func _menu_button(text: String, cb: Callable) -> Button:
 	var b := Button.new()
 	b.text = text
 	b.custom_minimum_size = Vector2(150, 42)
 	b.add_theme_font_size_override("font_size", 15)
 	b.focus_mode = Control.FOCUS_NONE
-	b.pressed.connect(cb)
+	b.pressed.connect(AudioFx.click)
+	if cb.is_valid():
+		b.pressed.connect(cb)
 	return b
 
 

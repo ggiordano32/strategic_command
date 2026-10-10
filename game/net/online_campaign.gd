@@ -28,6 +28,7 @@ signal changed(what: String)             ## "state", "summary", "session"
 signal note(text: String, kind: String)  ## a message for the player (kind: info, warn, error)
 signal desync(version: int, local_hash: String, server_hash: String)
 
+const AudioFx := preload("res://game/audio.gd")
 const CState := preload("res://campaign/cstate.gd")
 const CTurn := preload("res://campaign/cturn.gd")
 const CRules := preload("res://campaign/crules.gd")
@@ -416,6 +417,9 @@ func _resolve(forced: bool) -> String:
 
 
 func _adopt(nst: Dictionary, v: int, h: String) -> void:
+	# The notification sound: a new turn (or a battle waiting) arrived.
+	if not st.is_empty() and int(nst.get("turn", 0)) != int(st.get("turn", 0)):
+		AudioFx.play("battle_pending" if not (nst.get("battles", []) as Array).is_empty() else "turn_resolved", 0.9, 0.0, "horn")
 	st = nst
 	version = v
 	state_hash = h

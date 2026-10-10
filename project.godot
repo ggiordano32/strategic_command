@@ -46,3 +46,4 @@ environment/defaults/default_clear_color=Color(0.09, 0.1, 0.09, 1)
 
 Telemetry="*res://game/telemetry.gd"
 Net="*res://game/net/net.gd"
+Audio="*res://game/audio.gd"

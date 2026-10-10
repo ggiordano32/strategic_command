@@ -4,6 +4,7 @@ extends RefCounted
 ## on phones and compact on desktops), matching the battle HUD: 42 px
 ## buttons, 15 px text.
 
+const AudioFx := preload("res://game/audio.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Icons := preload("res://game/unit_icons.gd")
 const UiScale := preload("res://game/ui_scale.gd")
@@ -42,6 +43,7 @@ static func button(text: String, cb: Callable, min_w: float = 0.0, size: int = F
 	b.custom_minimum_size = Vector2(min_w, BTN_H)
 	b.focus_mode = Control.FOCUS_NONE
 	b.add_theme_font_size_override("font_size", size)
+	b.pressed.connect(AudioFx.click)  # every button's click sound (game/audio.gd)
 	if cb.is_valid():
 		b.pressed.connect(cb)
 	return b
