@@ -59,6 +59,24 @@ hash matches its content. It does not validate orders or results.
 
 ## 2. Running it
 
+**Quick start: the playtest server.** Playtests use
+`https://strategiccommand.ggior32.dev`; Caddy holds the certificate and
+forwards plain HTTP to this machine's port 8060. From the repository root:
+
+```sh
+tools/run_server.sh 8060                     # rebuilds if any .go file changed; Ctrl+C stops it
+curl -s http://127.0.0.1:8060/healthz        # expect {"ok":true,...}
+curl -s -o /dev/null -w '%{http_code}\n' https://strategiccommand.ggior32.dev/   # expect 200
+```
+
+It does not run as a service, so start it again after a reboot or when the
+terminal / session that started it ends (run it in the background, or in
+`tmux`, to keep it up). Restart it only between turns, when nobody is
+playing: live battle rooms and custom rooms are in memory and are lost.
+Stop: `pkill -f '^build/server/scserver -addr :8060'`. The web build it
+serves is `build/web` (re-export to update; no restart needed for a new
+export). For a permanent install see section 15.
+
 **Go toolchain (installed 2026-10-05):** Go 1.27.1 for linux-amd64 from the
 official tarball `https://go.dev/dl/go1.27.1.linux-amd64.tar.gz`, SHA-256
 `63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445` checked

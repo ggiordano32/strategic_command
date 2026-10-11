@@ -55,7 +55,8 @@ run things are in `docs/STATUS.md`. Read both before making changes, and keep
   pure Go, no cgo): serves `build/web`, the playtest telemetry endpoint and
   the campaign API. Reference, deployment and operations: `docs/SERVER.md`.
   Go is installed at user level in `~/.local/go` (`tools/build_server.sh`
-  finds it); `tools/run_server.sh [port]` runs it.
+  finds it); `tools/run_server.sh [port]` runs it. Starting the playtest
+  server (port 8060 behind Caddy): `docs/SERVER.md` section 2, quick start.
 - **The server never runs game rules.** Clients resolve turns and apply
   battle results with `campaign/` and upload the new state with the version
   it was computed from (compare-and-swap). The server only reads a few
