@@ -46,6 +46,11 @@ const DOUBLE_TAP_SEC := 0.35
 # the order line; rubber-band select needs an empty selection or shift/ctrl.
 # Friendly picks use the tight radius when a selection exists, so a tap
 # between units reaches the ground; enemies keep the generous one.
+# MOUSE (real mouse; the touch rules above are unchanged): left click selects
+# (empty ground deselects), left drag is a selection box, right click orders
+# (ground: the whole selection moves keeping its shape; enemy: attack; our
+# unit: move to it; double = run / charge), right drag lays the selection out
+# along the dragged line (the touch drag-to-line rule). Middle drag pans.
 const SELECT_LONG_PRESS_SEC := 0.35
 const TIGHT_PICK_K := 1.0        # marker hit radius factor when units are selected
 const END_BANNER_SEC := 1.5      # campaign battles: the end banner before returning
@@ -190,6 +195,14 @@ var _pinch_mid := Vector2.ZERO
 var _last_tap_time := -10.0
 var _last_tap_pos := Vector2.ZERO
 var _mouse_pan := false
+# Right button (real mouse only, the Rome scheme): click = order, drag = line.
+var _rmb := false
+var _rmb_pos := Vector2.ZERO
+var _rmb_drag := false      # the drag lays out a line (preview shown)
+var _rmb_pan := false       # nothing selected: the drag pans
+var _rmb_order := false     # inside _tap for a right click: never selects
+var _last_rtap_time := -10.0
+var _last_rtap_pos := Vector2.ZERO
 # Modifiers of the last left mouse press (Shift / Ctrl / Cmd add to the
 # selection; Alt starts a group move) - read from the event itself, which
 # is reliable in browsers where key state can be missed.
@@ -1836,7 +1849,7 @@ func _tap(screen_pos: Vector2, double: bool, long_press := false) -> void:
 	var u := -1 if door >= 0 else _pick_unit(w)
 	var friend_move := false
 	if u >= 0 and sim.u_side[u] == player_side and not selection.is_empty():
-		var wants_select := double or long_press or add_mode or _shift_held()
+		var wants_select := not _rmb_order and (double or long_press or add_mode or _shift_held())
 		if not wants_select or _pick_unit(w, true) != u:
 			# A plain tap on our own unit while units are selected is a move
 			# there (see the rules at the top); a select needs the tight pick.
@@ -2198,22 +2211,26 @@ func _unhandled_input(event: InputEvent) -> void:
 			_zoom_at(mb.position, 1.15)
 		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
 			_zoom_at(mb.position, 1.0 / 1.15)
-		elif mb.button_index == MOUSE_BUTTON_RIGHT and mb.pressed:
-			# Right click on a unit (or its symbol): its unit book page.
-			var u := _pick_unit(_screen_to_world(mb.position))
-			if u >= 0:
-				_open_book(sim.u_otype[u], "book_open_field")
+		elif mb.button_index == MOUSE_BUTTON_RIGHT:
+			if mb.device == InputEvent.DEVICE_ID_EMULATION:
 				return
-			_mouse_pan = true
-			_count("mouse_pan")
-		elif mb.button_index == MOUSE_BUTTON_RIGHT or mb.button_index == MOUSE_BUTTON_MIDDLE:
+			if mb.pressed:
+				_rmb = true
+				_rmb_pos = mb.position
+				_rmb_drag = false
+				_rmb_pan = false
+			elif _rmb:
+				_right_release(mb.position)
+		elif mb.button_index == MOUSE_BUTTON_MIDDLE:
 			_mouse_pan = mb.pressed
 			if mb.pressed:
 				_count("mouse_pan")
 		# Left button arrives again as an emulated touch; ignore it here.
 	elif event is InputEventMouseMotion:
 		_update_matchup((event as InputEventMouseMotion).position)
-		if _mouse_pan:
+		if _rmb:
+			_right_motion(event as InputEventMouseMotion)
+		elif _mouse_pan:
 			camera.position -= (event as InputEventMouseMotion).relative / camera.zoom
 			_clamp_camera()
 		elif sim.city_on != 0 and not selection.is_empty():
@@ -2230,6 +2247,91 @@ func _unhandled_input(event: InputEvent) -> void:
 		_clamp_camera()
 	elif event is InputEventKey and event.pressed and not event.echo:
 		_on_key(event as InputEventKey)
+
+
+## Right button moved: past the drag threshold it either lays out a line
+## (units selected) or pans (nothing selected).
+func _right_motion(e: InputEventMouseMotion) -> void:
+	if not _rmb_drag and not _rmb_pan:
+		if e.position.distance_to(_rmb_pos) <= DRAG_THRESHOLD:
+			return
+		if interactive and not selection.is_empty() and _exit_timer <= 0.0:
+			_rmb_drag = true
+			overlay.preview_on = true
+			_cancel_left_drag()
+			_count("right_drag_line")
+		else:
+			_rmb_pan = true
+			_count("mouse_pan")
+	if _rmb_drag:
+		_line_preview(_rmb_pos, e.position)
+	elif _rmb_pan:
+		camera.position -= e.relative / camera.zoom
+		_clamp_camera()
+
+
+func _cancel_left_drag() -> void:
+	if _box:
+		_box_end(false)
+
+
+func _right_release(pos: Vector2) -> void:
+	_rmb = false
+	if _rmb_drag:
+		_rmb_drag = false
+		overlay.preview_on = false
+		_finish_line(false)
+		return
+	if _rmb_pan:
+		_rmb_pan = false
+		return
+	var now := Time.get_ticks_msec() / 1000.0
+	var double := now - _last_rtap_time < DOUBLE_TAP_SEC and pos.distance_to(_last_rtap_pos) < DOUBLE_TAP_DIST
+	if double:
+		_last_rtap_time = -10.0
+	else:
+		_last_rtap_time = now
+		_last_rtap_pos = pos
+	if selection.is_empty() and _exit_timer <= 0.0:
+		return
+	_count("right_click")
+	_rmb_order = true
+	_tap(pos, double)
+	_rmb_order = false
+
+
+## Left click with a real mouse: select the unit under it (shift / ctrl adds
+## or removes), empty ground deselects. Targeting modes, the end banner, the
+## deployment works and the gates / engines / equipment keep the tap rules.
+func _left_click(pos: Vector2, double: bool, long_press: bool) -> void:
+	var w := _screen_to_world(pos)
+	var armed := char_armed != 0 or release_armed or (works_mode != "" and sim.phase == BattleSim.PHASE_DEPLOY)
+	if _exit_timer > 0.0 or not interactive or armed or _gate_doorway(w) >= 0:
+		_tap(pos, double, long_press)
+		return
+	var u := _pick_unit(w)
+	if u >= 0:
+		if sim.u_side[u] != player_side:
+			_count("click_enemy")
+			return
+		if sim.u_state[u] != BattleSim.U_READY:
+			_count("tap_on_broken_unit")
+			return
+		if not _mine(u):
+			_not_mine_hint(u)
+			return
+		_count("tap_select")
+		if _shift_held() or add_mode:
+			_toggle_in_selection(u)
+		else:
+			_select(u)
+		return
+	if not selection.is_empty() and (_gate_at(w) >= 0 or _equip_at(w) >= 0 or (sim.n_eg > 0 and _engines_at(w) >= 0)):
+		_tap(pos, double, long_press)
+		return
+	_count("click_ground")
+	if not (_shift_held() or add_mode):
+		_select(-1)
 
 
 ## Keyboard shortcuts, from the controls table (game/controls.gd).
@@ -2446,7 +2548,10 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 	if _field_lp_start < 0.0 and not is_mouse:
 		return  # the long press opened the unit book
 	_field_lp_start = -1.0
-	_tap(e.position, double, is_mouse and now - _press_sec >= SELECT_LONG_PRESS_SEC)
+	if is_mouse:
+		_left_click(e.position, double, now - _press_sec >= SELECT_LONG_PRESS_SEC)
+	else:
+		_tap(e.position, double, false)
 	if double:
 		_last_tap_time = -10.0
 	else:
@@ -2485,9 +2590,8 @@ func _on_drag(e: InputEventScreenDrag) -> void:
 			_gm_mouse = true
 			_gm_mouse_start = _press_pos
 			_count("alt_drag_move")
-		elif is_mouse and interactive and (selection.is_empty() or _mouse_add) and _pick_unit(_screen_to_world(_press_pos)) < 0:
-			# Mouse drag from empty ground with nothing selected (or Shift):
-			# box select.
+		elif is_mouse and interactive and not _rmb:
+			# Mouse left drag: box select (Shift adds).
 			_box = true
 			overlay.box_on = true
 			overlay.box_a = _screen_to_world(_press_pos)
@@ -2505,20 +2609,26 @@ func _on_drag(e: InputEventScreenDrag) -> void:
 	elif _box:
 		overlay.box_b = _screen_to_world(e.position)
 	elif overlay.preview_on:
-		overlay.preview_a = _screen_to_world(_press_pos)
-		overlay.preview_b = _screen_to_world(e.position)
-		# One rank is the longest line (the order rule clamps the
-		# frontage the same way): the line stops growing there.
-		var lmax: float = overlay.max_line_px()
-		var dv := overlay.preview_b - overlay.preview_a
-		overlay.preview_clamped = lmax > 0.0 and dv.length() > lmax
-		if overlay.preview_clamped:
-			overlay.preview_b = overlay.preview_a + dv.normalized() * lmax
-		overlay.preview_ok = overlay.preview_a.distance_to(overlay.preview_b) >= MIN_LINE_M * PX_PER_M
+		_line_preview(_press_pos, e.position)
 	else:
 		# No unit selected: one-finger drag pans.
 		camera.position -= e.relative / camera.zoom
 		_clamp_camera()
+
+
+## The drag-to-line preview from screen point a to b (touch drag, right drag).
+func _line_preview(a: Vector2, b: Vector2) -> void:
+	overlay.preview_a = _screen_to_world(a)
+	overlay.preview_b = _screen_to_world(b)
+	# One rank is the longest line (the order rule clamps the frontage the
+	# same way): the line stops growing there.
+	var lmax: float = overlay.max_line_px()
+	var dv: Vector2 = overlay.preview_b - overlay.preview_a
+	overlay.preview_clamped = lmax > 0.0 and dv.length() > lmax
+	if overlay.preview_clamped:
+		overlay.preview_b = overlay.preview_a + dv.normalized() * lmax
+	overlay.preview_ok = overlay.preview_a.distance_to(overlay.preview_b) >= MIN_LINE_M * PX_PER_M
+	overlay.queue_redraw()
 
 
 # ------------------------------------------------------------ box select ---
@@ -2538,7 +2648,8 @@ func _box_end(apply: bool) -> void:
 		if sim.u_side[u] != player_side or sim.u_state[u] != BattleSim.U_READY or not _mine(u):
 			continue
 		var c := Vector2(sim.u_cx[u], sim.u_cy[u]) / M * PX_PER_M
-		if rect.has_point(c) and not selection.has(u):
+		var mk := c - Vector2(0, 2.2 * maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / camera.zoom.x))
+		if (rect.has_point(c) or rect.has_point(mk)) and not selection.has(u):
 			if not any and selection.is_empty():
 				_select(u)
 			else:

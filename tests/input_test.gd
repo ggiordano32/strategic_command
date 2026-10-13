@@ -223,6 +223,21 @@ func _initialize() -> void:
 		_step_bc_box_drag,
 		_step_bc_box_up,
 		_step_bc_check_box,
+		# Total War: Rome mouse scheme (real mouse; touch steps above/below unchanged).
+		_step_rm_ground_deselect,
+		_step_rm_check_deselect,
+		_step_rm_select_replace,
+		_step_rm_check_replace,
+		_step_rm_box_down,
+		_step_rm_box_drag,
+		_step_rm_box_up,
+		_step_rm_check_box,
+		_step_rm_right_move,
+		_step_rm_check_move,
+		_step_rm_right_attack,
+		_step_rm_check_attack,
+		_step_rm_right_drag,
+		_step_rm_check_drag,
 		# Card strip: drag to reorder (a view-only mapping).
 		_step_ro_start,
 		_step_ro_mouse_up,
@@ -1850,6 +1865,182 @@ func _step_bc_box_up() -> void:
 
 func _step_bc_check_box() -> void:
 	_check(battle.selection.has(_bc[0]) and battle.selection.has(_bc[1]), "a mouse drag box selects the units inside (%s)" % str(battle.selection))
+
+
+# ---- Rome mouse scheme ----
+
+var _rm_spot := Vector2.ZERO   # viewport position of empty ground
+var _rm_seq := 0
+var _rm_off := 0.0
+var _rm_order: Array[int] = []
+
+
+func _rm_mouse_move_r(pos: Vector2, rel: Vector2) -> void:
+	var e := InputEventMouseMotion.new()
+	e.position = _vp_to_window(pos)
+	e.global_position = e.position
+	e.relative = rel
+	e.button_mask = MOUSE_BUTTON_MASK_RIGHT
+	Input.parse_input_event(e)
+
+
+## A viewport point near the middle with no unit marker or footprint under it.
+func _rm_empty_spot(from_x: float) -> Vector2:
+	var vs := get_root().get_visible_rect().size
+	for yy in range(2, 9):
+		for xx in range(2, 9):
+			var p := Vector2(vs.x * (from_x + xx * 0.05), vs.y * yy * 0.1)
+			var w := battle._screen_to_world(p)
+			if battle._pick_unit(w) < 0 and battle._pick_unit(w + Vector2(60, 0)) < 0 \
+					and battle._pick_unit(w - Vector2(60, 0)) < 0 and not battle.hud.is_over_ui(p):
+				return p
+	return vs * 0.5
+
+
+func _rm_orders_since(seq_n: int, typ: int) -> Array:
+	var out: Array = []
+	for o in battle.sim.pending_orders:
+		if int(o["type"]) == typ:
+			out.append(o)
+	return out.slice(maxi(0, out.size() - seq_n))
+
+
+func _step_rm_ground_deselect() -> void:
+	_no_double_tap()
+	battle._select(_bc[0])
+	_rm_spot = _rm_empty_spot(0.0)
+	_mouse(_rm_spot, true)
+	_mouse(_rm_spot, false)
+
+
+func _step_rm_check_deselect() -> void:
+	_check(battle.selection.is_empty(), "mouse: left click on empty ground deselects (%s)" % str(battle.selection))
+
+
+func _step_rm_select_replace() -> void:
+	_no_double_tap()
+	battle._select(_bc[1])
+	_seq_pm = _pending_moves()
+	var p := _marker_screen(_bc[0])
+	_mouse(p, true)
+	_mouse(p, false)
+
+
+var _seq_pm := 0
+
+
+func _step_rm_check_replace() -> void:
+	_check(battle.selection == [_bc[0]], "mouse: left click on a unit replaces the selection (%s)" % str(battle.selection))
+	_check(_pending_moves() == _seq_pm, "mouse: left click on a friendly unit issues no move")
+
+
+func _step_rm_box_down() -> void:
+	_no_double_tap()
+	battle._select(_bc[2])
+	var a := _unit_screen(_bc[0])
+	var b := _unit_screen(_bc[1])
+	_three[0] = Vector2(minf(a.x, b.x), minf(a.y, b.y)) - Vector2(10, 60)
+	_three[1] = Vector2(maxf(a.x, b.x), maxf(a.y, b.y)) + Vector2(10, 10)
+	_mouse(_root_from_window(_three[0]), true)
+
+
+func _step_rm_box_drag() -> void:
+	var a := _root_from_window(_three[0])
+	var b := _root_from_window(_three[1])
+	for k in range(1, 6):
+		_mouse_move(a.lerp(b, k / 5.0), (b - a) / 5.0)
+
+
+func _step_rm_box_up() -> void:
+	_mouse(_root_from_window(_three[1]), false)
+
+
+func _step_rm_check_box() -> void:
+	_check(battle.selection.has(_bc[0]) and battle.selection.has(_bc[1]) and not battle.selection.has(_bc[2]),
+		"mouse: left drag with a selection draws a box that replaces it (%s)" % str(battle.selection))
+	_check(_pending_moves() == _seq_pm, "mouse: the box issues no order")
+	battle._select(-1)
+	battle._select(_bc[0])
+	battle._toggle_in_selection(_bc[1])
+
+
+func _step_rm_right_move() -> void:
+	_rm_seq = _pending_moves()
+	_rm_off = Vector2(battle.sim.u_cx[_bc[1]] - battle.sim.u_cx[_bc[0]], battle.sim.u_cy[_bc[1]] - battle.sim.u_cy[_bc[0]]).length()
+	_rm_spot = _rm_empty_spot(0.0)
+	_no_double_tap()
+	battle._last_rtap_time = -10.0
+	_mouse(_rm_spot, true, {}, MOUSE_BUTTON_RIGHT)
+	_mouse(_rm_spot, false, {}, MOUSE_BUTTON_RIGHT)
+
+
+func _step_rm_check_move() -> void:
+	var os := _rm_orders_since(2, BattleSim.ORDER_MOVE)
+	_check(_pending_moves() - _rm_seq == 2 and os.size() == 2, "mouse: right click on the ground moves both selected units (%d)" % (_pending_moves() - _rm_seq))
+	if os.size() == 2:
+		var d := Vector2(os[0]["x"] - os[1]["x"], os[0]["y"] - os[1]["y"]).length()
+		_check(absf(d - _rm_off) < 2.0 * 1024.0, "mouse: the group keeps its relative positions (%.1f m apart, was %.1f)" % [d / 1024.0, _rm_off / 1024.0])
+		var c := Vector2(os[0]["x"] + os[1]["x"], os[0]["y"] + os[1]["y"]) * 0.5 / 1024.0 * Battle.PX_PER_M
+		var want: Vector2 = battle._screen_to_world(_rm_spot)
+		_check(c.distance_to(want) < 15.0, "mouse: the group's centre goes to the clicked point (%.1f px off)" % c.distance_to(want))
+	_check(battle.selection.size() == 2, "mouse: the selection stays after the order")
+
+
+func _step_rm_right_attack() -> void:
+	_rm_seq = _rm_orders_since(100, BattleSim.ORDER_ATTACK).size()
+	var e := -1
+	for u in battle.sim.n_units:
+		if battle.sim.u_side[u] != 0 and battle.sim.u_state[u] == BattleSim.U_READY:
+			e = u
+			break
+	_rm_off = e
+	_focus(battle.sim.u_cx[e], battle.sim.u_cy[e])
+	_no_double_tap()
+	battle._last_rtap_time = -10.0
+	var p := _marker_screen(e)
+	_mouse(p, true, {}, MOUSE_BUTTON_RIGHT)
+	_mouse(p, false, {}, MOUSE_BUTTON_RIGHT)
+
+
+func _step_rm_check_attack() -> void:
+	var n := _rm_orders_since(100, BattleSim.ORDER_ATTACK).size()
+	_check(n - _rm_seq == 2, "mouse: right click on an enemy orders both selected units to attack (%d)" % (n - _rm_seq))
+	_focus(battle.sim.u_cx[_bc[0]], battle.sim.u_cy[_bc[0]])
+	battle._select(_bc[2])
+	battle._toggle_in_selection(_bc[0])
+	battle._toggle_in_selection(_bc[1])
+
+
+func _step_rm_right_drag() -> void:
+	_rm_seq = _pending_moves()
+	_rm_order.clear()
+	for u in battle.selection:
+		_rm_order.append(u)
+	var a := get_root().get_visible_rect().size * Vector2(0.3, 0.6)
+	var b := a + Vector2(150, 0)
+	_rm_spot = b - a
+	_mouse(a, true, {}, MOUSE_BUTTON_RIGHT)
+	for k in range(1, 6):
+		_rm_mouse_move_r(a.lerp(b, k / 5.0), (b - a) / 5.0)
+	_check(battle.overlay.preview_on and battle.overlay.preview_group().size() == 3, "mouse: right drag shows the line preview with a slot per unit")
+	_mouse(b, false, {}, MOUSE_BUTTON_RIGHT)
+
+
+func _step_rm_check_drag() -> void:
+	var os := _rm_orders_since(3, BattleSim.ORDER_MOVE)
+	_check(_pending_moves() - _rm_seq == 3 and os.size() == 3 and not battle.overlay.preview_on, "mouse: right drag lays out a line, one move per unit (%d)" % (_pending_moves() - _rm_seq))
+	if os.size() == 3:
+		# Left to right along the drag (+x on screen) in the units' current order.
+		var before: Array = _rm_order.duplicate()
+		before.sort_custom(func(x: int, y: int) -> bool: return battle.sim.u_cx[x] < battle.sim.u_cx[y])
+		var after: Array = os.duplicate()
+		after.sort_custom(func(x, y) -> bool: return x["x"] < y["x"])
+		var same := true
+		for i in 3:
+			same = same and int(after[i]["unit"]) == int(before[i])
+		_check(same, "mouse: the units keep their left-to-right order along the line")
+		_check(os[0]["y"] == os[1]["y"] or absi(int(os[0]["y"]) - int(os[1]["y"])) < 1024, "mouse: the line is straight along the drag")
+	battle._select(-1)
 
 
 # ---- card strip: drag to reorder ----
