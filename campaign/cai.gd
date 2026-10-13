@@ -293,7 +293,8 @@ static func _wants_engines(mix: Dictionary) -> bool:
 ## The military build-up (docs/AI.md 23): the next [region, chain] to build
 ## ([] none): a Range up to BU_RANGE when the mix has a Range line, then a
 ## Workshop up to BU_WORKSHOP when the mix has engines or the faction fields
-## WAGON_MIN missile units (for the wagon). Each at the first centre of
+## WAGON_MIN missile units (for the wagon), then Barracks 2 when it raises
+## heroes (CHAR_HERO; AI.md 24). Each at the first centre of
 ## `regions` (richest and capital first) that has that building, else the
 ## first with a free slot. It waits while that centre lacks a farm, or a
 ## market while it has a free slot (the economy first, then the chain).
@@ -303,6 +304,10 @@ static func _buildup(st: Dictionary, f: int, regions: Array[int], mix: Dictionar
 		goals.append([CData.RANGE, kn[CP.BU_RANGE]])
 	if kn[CP.BU_WORKSHOP] > 0 and (_wants_engines(mix) or (kn[CP.WAGON_MIN] > 0 and _missiles_of(st, f) >= kn[CP.WAGON_MIN])):
 		goals.append([CData.WORKSHOP, kn[CP.BU_WORKSHOP]])
+	if kn[CP.CHAR_HERO] > 0:
+		# Heroes (CData.CHAR_NEEDS) come from Barracks 2: a faction that
+		# raises them wants one at its military centre (after the above).
+		goals.append([CData.BARRACKS, int(CData.CHAR_NEEDS["hero_foot"][1])])
 	for g in goals:
 		var c: int = g[0]
 		var site := -1

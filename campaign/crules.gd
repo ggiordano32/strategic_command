@@ -1679,16 +1679,23 @@ static func order_assault(st: Dictionary, f: int, r: int) -> String:
 	var b := CState.battle_at(st, r) if r >= 0 and r < CData.region_count() else {}
 	if not b.is_empty() and str(b.get("kind", "")) in ["assault", "", "field"] and int(b["turn"]) == int(st["turn"]) \
 			and int(b.get("new", 0)) != 0 and CState.friendly(st, f, int(b["att_f"])):
-		return ""  # an ally's assault this turn already (both armies are in it)
+		# An ally's assault this turn already (both armies are in it); a
+		# battle of ours there without our besiegers (a field battle in
+		# the region) leaves the assault undone: say so.
+		for a in besiegers(st, r) if not CState.siege_at(st, r).is_empty() else _mine_here(st, f, r):
+			if int(a["f"]) == f and (b["att"] as Array).has(int(a["id"])):
+				return ""
+		return "a battle there this turn already"
 	var why := can_assault(st, f, r)
 	if why != "":
 		return why
 	if CState.grid_on(st):
+		var nb := {}
 		if CState.siege_at(st, r).is_empty():
-			_assault6(st, r, _mine_here(st, f, r)[0])
+			nb = _assault6(st, r, _mine_here(st, f, r)[0])
 		else:
-			_siege_battle6(st, r, "assault", {})
-		return ""
+			nb = _siege_battle6(st, r, "assault", {})
+		return "" if not nb.is_empty() else "no besieger free to storm it"
 	if CState.siege_at(st, r).is_empty():
 		_act_here(st, _mine_here(st, f, r)[0], CData.MODE_ASSAULT)
 		return ""

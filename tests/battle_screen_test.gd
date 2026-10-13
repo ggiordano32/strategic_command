@@ -138,7 +138,7 @@ func _check_result(auto: bool) -> void:
 	var mode := _label(res, "result_mode")
 	print("  banner %s, %s, %s" % [banner, mode, _label(res, "result_outcome")])
 	_check(banner == want or banner == "DRAW", "the banner from Rome's side: %s (winner %d)" % [banner, int(ev.get("winner", -1))])
-	_check(mode.begins_with("Auto-resolved") if auto else mode.begins_with("Fought (left the field)"), "labelled: " + mode)
+	_check(mode.begins_with("Auto-resolved") if auto else mode.begins_with("Fought (you left the battle)"), "labelled: " + mode)
 	_check(_label(res, "result_outcome") != "", "the one-line outcome")
 	if auto:
 		_check(res.find_child("char_0_%d" % int(_hero["id"]), true, false) != null, "the result card still lists the hero")
@@ -284,10 +284,17 @@ func _process(_d: float) -> bool:
 			_check(cs.battle != null and cs.battle.campaign_mode, "Fight opens the battle")
 			if cs.battle != null:
 				cs.battle.hud.menu_pressed.emit()
+				_check(cs.battle.leave_dialog == null, "a Leave tap while the battle opens does nothing")
+				cs.battle.leave_grace = 0.0
+				cs.battle.hud.menu_pressed.emit()
 			_wait = 5
 		8:
 			if cs.battle != null:
-				cs.battle.hud.menu_pressed.emit()
+				var dlg: Control = cs.battle.leave_dialog
+				_check(dlg != null and dlg.visible, "then Leave asks in a modal")
+				var go: Button = dlg.find_child("leave_go", true, false) if dlg != null else null
+				if go != null:
+					go.pressed.emit()
 			_wait = 8
 		9:
 			_check(cs.battle == null and CState.battle(cs.st, _bid).is_empty(), "leaving the battle applies it (forfeit)")

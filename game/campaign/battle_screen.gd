@@ -548,7 +548,7 @@ static func result(s, snap: Dictionary, outcome: Dictionary, st: Dictionary, eve
 	v.add_child(bh)
 	var mode := "Auto-resolved" if str(outcome.get("mode", "")) == "auto" else "Fought"
 	if int(outcome.get("forfeit", 0)) != 0:
-		mode = "Fought (left the field)"
+		mode = "Fought (you left the battle)"
 	if int(outcome.get("live", 0)) != 0:
 		mode = "Fought together"
 	var ml := Kit.label("%s. %s" % [mode, str(snap["title"]).get_slice(":", 0)], Kit.FONT_SMALL, Kit.COL_DIM, true)
@@ -626,7 +626,7 @@ static func outcome_line(snap: Dictionary, outcome: Dictionary, st: Dictionary) 
 		loser = 1  # a drawn sortie leaves the besiegers where they are
 	var t := ""
 	if int(outcome.get("forfeit", 0)) != 0:
-		t = "You left the field: the army withdrew and the battle counts as lost."
+		t = "You left the battle: your army withdrew (a defeat)."
 	elif kind in ["sally", "relief"]:
 		t = "The siege of %s continues." % city if loser == 1 else "The siege of %s is broken; the besiegers fall back." % city
 	elif kind == "field":

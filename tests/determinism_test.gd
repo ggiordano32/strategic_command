@@ -5111,8 +5111,78 @@ func _chars_run(snap_check: bool) -> Dictionary:
 			hashes.append(sim.state_hash())
 			if sim.u_chk[asn] != 0 and (sim.u_chf[asn] & BattleSim.CHF_TRIED) != 0:
 				break
-		outs.append("%d:%s" % [sim.u_chk[asn], "gone" if sim.u_cmdgone[0] != 0 else "led"])
+		outs.append("%d:%s%s" % [sim.u_chk[asn], "gone" if sim.u_cmdgone[0] != 0 else "led",
+			"w" if (sim.u_chf[0] & BattleSim.CHF_WOUNDED) != 0 else ""])
 	ev["attempts"] = " ".join(outs)
+	# I: a wounded hero (an attempt's wound, CHF_WOUNDED) reaches half as
+	# far: our light infantry 30 m from the champion (his 40 m) is in his
+	# aura before the attempt, out of it after a wound, in it after a miss
+	# (the first seed of each).
+	ev["wound_seed"] = -1
+	ev["miss_seed"] = -1
+	for sd in 16:
+		sc = _chars_sc([
+			Scenarios.unit(0, UT.LIGHT, 60, 200, 300, Scenarios.FACE_UP),
+			Scenarios.unit(1, UT.LIGHT, 60, 200, 60, Scenarios.FACE_DOWN)], [[_ch("hero_foot")], [_ch("assassin")]])
+		sim = BattleSim.new()
+		sim.setup(sc, 960 + sd)
+		var hh := _ch_unit(sim, 0, UT.CK_FOOT)
+		var ea := _ch_unit(sim, 1, UT.CK_ASSASSIN)
+		sim.step()
+		var ry: int = sim.u_maxy[0] / M + 30
+		_ch_put(sim, hh, 200, ry)
+		_ch_put(sim, ea, 204, ry + 2)
+		for t in 15:
+			sim.step()
+			hashes.append(sim.state_hash())
+		var before: int = sim.u_aura[0]
+		var gap: int = sim._box_gap(hh, 0) / M
+		sim.queue_order(BattleSim.make_attempt_order(sim.tick, ea, hh))
+		for t in 60:
+			sim.step()
+			hashes.append(sim.state_hash())
+			if (sim.u_chf[ea] & BattleSim.CHF_TRIED) != 0:
+				break
+		for t in 15:
+			sim.step()
+			hashes.append(sim.state_hash())
+		var row := "gap %d m aura %d -> %d hp %d flags %d" % [gap, before, sim.u_aura[0], sim.hp[sim.slot_soldier[sim.u_slot_base[hh]]],
+			sim.u_chf[hh]]
+		if sim.u_chk[ea] == 2 and int(ev["wound_seed"]) < 0:
+			ev["wound_seed"] = 960 + sd
+			ev["wound"] = row
+			ev["wound_ok"] = 1 if before == BattleSim.AU_FOOT and sim.u_aura[0] == 0 \
+				and (sim.u_chf[hh] & BattleSim.CHF_WOUNDED) != 0 and gap > 20 and gap < 40 else 0
+		elif sim.u_chk[ea] == 3 and int(ev["miss_seed"]) < 0:
+			ev["miss_seed"] = 960 + sd
+			ev["miss"] = row
+			ev["miss_ok"] = 1 if before == BattleSim.AU_FOOT and sim.u_aura[0] == BattleSim.AU_FOOT \
+				and (sim.u_chf[hh] & BattleSim.CHF_WOUNDED) == 0 else 0
+		if int(ev["wound_seed"]) >= 0 and int(ev["miss_seed"]) >= 0:
+			break
+	# J: the AI's assassin sabotages (docs/AI.md 27): their battery 80 m
+	# from him, alone (Skilled: once; Average: never) or with their foot
+	# beside it (Skilled: not).
+	for cs in [["sk", AIP.SKILLED, false], ["avg", AIP.AVERAGE, false], ["skg", AIP.SKILLED, true]]:
+		var us := [Scenarios.unit(0, UT.HEAVY, 60, 300, 360, Scenarios.FACE_UP),
+			Scenarios.unit(1, UT.BOLT, 16, 120, 120, Scenarios.FACE_DOWN)]
+		if bool(cs[2]):
+			us.append(Scenarios.unit(1, UT.HEAVY, 60, 120, 132, Scenarios.FACE_DOWN))
+		sc = _chars_sc(us, [[_ch("assassin")], []])
+		sc["ai_sides"] = [0]
+		sc["ai_skill"] = [int(cs[1]), int(cs[1])]
+		sim = BattleSim.new()
+		sim.setup(sc, 970)
+		asn = _ch_unit(sim, 0, UT.CK_ASSASSIN)
+		_ch_put(sim, asn, 120, 200)
+		for t in 900:
+			sim.step()
+			hashes.append(sim.state_hash())
+		var wr := 0
+		for e in sim.n_eng:
+			if sim.e_state[e] == BattleSim.E_WRECKED:
+				wr += 1
+		ev["aisab_" + str(cs[0])] = "%d/%d" % [sim.stat_aic[AIP.C_CH_SABOTAGE], wr]
 	# G: parleys: their light infantry breaks (morale 0) beside our
 	# diplomat; he walks up, it stands for 5 s, then it surrenders or not
 	# (the first seed of each).
@@ -5254,8 +5324,15 @@ func _check_chars() -> void:
 	for c in ["1:", "2:", "3:"]:
 		if att_s.find(c) >= 0:
 			kinds += 1
-	if kinds < 2 or att_s.find("1:led") >= 0 or att_s.find("2:gone") >= 0 or att_s.find("3:gone") >= 0:
-		_fail("chars: the attempts' outcomes are wrong (%s)" % att_s)
+	if kinds < 2 or att_s.find("1:led") >= 0 or att_s.find("2:led") >= 0 or att_s.find("3:gone") >= 0 \
+			or (att_s.find("2:") >= 0 and att_s.find("2:gonew") < 0):
+		_fail("chars: the attempts' outcomes are wrong (a wounded general's command is gone) (%s)" % att_s)
+	if int(ev["wound_seed"]) < 0 or int(ev["miss_seed"]) < 0 or int(ev.get("wound_ok", 0)) != 1 or int(ev.get("miss_ok", 0)) != 1:
+		_fail("chars: a wounded hero's aura did not shrink to half (%s / %s)" % [str(ev.get("wound", "")), str(ev.get("miss", ""))])
+	if not str(ev["aisab_sk"]).begins_with("1/") or str(ev["aisab_sk"]) == "1/0" or str(ev["aisab_avg"]) != "0/0" \
+			or not str(ev["aisab_skg"]).begins_with("0/"):
+		_fail("chars: the AI's sabotage (Skilled once, unescorted only; Average never) (%s %s %s)" % [
+			str(ev["aisab_sk"]), str(ev["aisab_avg"]), str(ev["aisab_skg"])])
 	if int(ev["parley_ok_seed"]) < 0 or int(ev["parley_fail_seed"]) < 0 or int(ev.get("parley_men", 0)) != 60 \
 			or str(ev.get("parley_ok", "")).find("prisoners 60 row surrendered 60 state 3 sides [60, 60]") < 0:
 		_fail("chars: the parleys did not end as they should (%s)" % str(ev))
@@ -5275,5 +5352,8 @@ func _check_chars() -> void:
 		str(ev["fall_row"]), int(ev["hid_ai_nearest"]), int(ev["hid_fire"]), int(ev["seen_t"]), int(ev["seen_ai_nearest"]),
 		int(ev["seen_fire"]), int(ev["sab_wrecked"]), int(ev["sab_engines"]), int(ev["gate"]), int(ev["gate_open_t"]),
 		att_s, int(ev["parley_ok_seed"]), str(ev["parley_ok"]), int(ev["parley_fail_seed"]), str(ev["parley_fail"])])
+	print("PASS chars (wounds, AI sabotage): attempts by seed %s; a wounded champion (seed %d): %s; missed (seed %d): %s; the AI's assassin sent to sabotage / engines wrecked: Skilled %s, Average %s, Skilled with their foot by the battery %s" % [
+		att_s, int(ev["wound_seed"]), str(ev["wound"]), int(ev["miss_seed"]), str(ev["miss"]),
+		str(ev["aisab_sk"]), str(ev["aisab_avg"]), str(ev["aisab_skg"])])
 	print("PASS chars (AI): Average %s; Skilled %s; identical on repeat and across %d snapshot / restore checks" % [
 		str(ev["avg_ai"]), str(ev["sk_ai"]), int(a["snaps"])])

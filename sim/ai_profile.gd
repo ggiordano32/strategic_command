@@ -342,7 +342,9 @@ const CH_ATTEMPT := 269        # 1: the assassin makes his attempt on an enemy g
 const CH_ATTEMPT_R := 270      # ... this near the assassin
 const CH_PARLEY_R := 271       # the diplomat parleys a routing enemy unit this near (0: never, Easy)
 const CH_BACK := 272           # heroes keep this far behind the unit they go with (the champion: the line's centre)
-const N_KNOBS := 273
+const CH_SAB_R := 273          # the assassin (not acted yet) sabotages the nearest enemy battery this near him (0: never; Skilled)
+const CH_SAB_GUARD := 274      # ... one with no enemy foot this near its engines (unescorted)
+const N_KNOBS := 275
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
@@ -594,6 +596,8 @@ const KNOBS: Array = [
 	[CH_ATTEMPT_R, 60 * M, 60 * M, 60 * M],
 	[CH_PARLEY_R, 0, 80 * M, 80 * M],
 	[CH_BACK, 15 * M, 15 * M, 15 * M],
+	[CH_SAB_R, 0, 0, 120 * M],
+	[CH_SAB_GUARD, 20 * M, 20 * M, 20 * M],
 	# Behaviours a level switches off (Average: on, as before).
 	[CLEAR_SPOT, 0, 1, 1],
 	[MIS_SKIRM, 0, 1, 1],
@@ -699,13 +703,14 @@ const C_DOG_RELEASE := C_CAV_STAY + 9  # war dog packs released
 const C_WORKS := C_CAV_STAY + 10  # field works placed
 const C_CH_ATTEMPT := C_CAV_STAY + 11  # assassins' attempts ordered
 const C_CH_PARLEY := C_CAV_STAY + 12   # diplomats' parleys ordered
-const N_COUNTERS := C_CAV_STAY + 13
+const C_CH_SABOTAGE := C_CAV_STAY + 13  # assassins sent to sabotage a battery
+const N_COUNTERS := C_CAV_STAY + 14
 const COUNTER_NAMES: Array[String] = ["flank_hits", "pull_outs", "rotations", "saved", "inf_chase",
 	"spear_resp", "spear_resp_ticks", "missile_caught", "ammo_at_rout", "missile_routs", "reserve_commits",
 	"mk_late_flank", "mk_wrong_target", "mk_idle", "mk_chase", "mk_spear_charge", "mk_mis_forget",
 	"mk_commit_early", "mk_gate_open", "mk_early_wd", "cav_stay", "double_charges", "focus_orders",
 	"guard_free", "waver_pull", "siege_moves", "art_pull", "gen_rally", "gen_charge", "dog_release",
-	"works_placed", "ch_attempt", "ch_parley"]
+	"works_placed", "ch_attempt", "ch_parley", "ch_sabotage"]
 
 # Skilled memory layout (BattleSim.ai_mem): MU_K ints per unit, then SD_K
 # per side at n_units * MU_K + side * SD_K.

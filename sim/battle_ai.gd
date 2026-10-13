@@ -3421,8 +3421,10 @@ static func _river_point(sim, side: int, skirmishing: bool) -> Vector2i:
 # hero behind the nearest missile unit, the siege hero behind the nearest
 # battery, the champion behind the centre of the main line: the second line);
 # his own men fight whatever reaches them. The assassin (Skilled: CH_ATTEMPT)
-# makes his one attempt on an enemy general within CH_ATTEMPT_R of him and
-# otherwise shadows the line's left rear; the diplomat (Average, Skilled:
+# makes his one attempt on an enemy general within CH_ATTEMPT_R of him; else
+# (Skilled: CH_SAB_R, once, before he has acted) he sabotages the nearest
+# enemy battery within CH_SAB_R with no enemy foot within CH_SAB_GUARD of it;
+# otherwise he shadows the line's left rear; the diplomat (Average, Skilled:
 # CH_PARLEY_R) parleys the nearest routing enemy unit within CH_PARLEY_R and
 # otherwise keeps behind the line's right. Settlement maps: the defenders'
 # characters stand where they were placed (post false).
@@ -3455,6 +3457,16 @@ static func char_think(sim, u: int, kn: PackedInt32Array, post: bool) -> void:
 					_order(sim, u, oa, 26)
 					_count(sim, side, AP.C_CH_ATTEMPT)
 					return
+		if kn[AP.CH_SAB_R] > 0 and (sim.u_chf[u] & 1) == 0:
+			# Skilled: once (before he has acted), the nearest unescorted
+			# enemy battery within CH_SAB_R.
+			var g := _sab_target(sim, u, kn)
+			if g >= 0:
+				var os := {"type": ORDER_SABOTAGE, "eg": g, "gate": -1, "unit": u}
+				if sim.char_refusal(sim, os) == "":
+					_order(sim, u, os, 28)
+					_count(sim, side, AP.C_CH_SABOTAGE)
+					return
 	elif k == UT.CK_DIPLOMAT:
 		if kn[AP.CH_PARLEY_R] > 0 and sim.tick >= sim.u_chcd[u]:
 			var best := -1
@@ -3475,6 +3487,40 @@ static func char_think(sim, u: int, kn: PackedInt32Array, post: bool) -> void:
 	if not post:
 		return
 	_char_post(sim, u, k, kn)
+
+
+## The enemy battery (engine group) assassin u would sabotage: the nearest
+## one he may (BattleSim.char_refusal) within CH_SAB_R of him with no ready
+## enemy foot unit within CH_SAB_GUARD of its engines (-1 none).
+static func _sab_target(sim, u: int, kn: PackedInt32Array) -> int:
+	var side: int = sim.u_side[u]
+	var best := -1
+	var bd := 0
+	for g in sim.n_eg:
+		if sim.eg_owner(g) == side:
+			continue
+		var at: Vector2i = sim.engines_xy(g)
+		var d := _d(at.x - sim.u_cx[u], at.y - sim.u_cy[u])
+		if d > kn[AP.CH_SAB_R] or (best >= 0 and d >= bd):
+			continue
+		if sim.char_refusal(sim, {"type": ORDER_SABOTAGE, "eg": g, "gate": -1, "unit": u}) != "":
+			continue
+		var guarded := false
+		for o in sim.n_units:
+			if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.u_alive[o] <= 0 or is_char(sim, o):
+				continue
+			var c: int = sim.u_cls[o]
+			if c == UT.CLS_CAV or c == UT.CLS_ART or UT.stat(sim.u_type[o], "mount") != UT.MOUNT_FOOT:
+				continue
+			var gx := maxi(maxi(sim.u_minx[o] - at.x, at.x - sim.u_maxx[o]), 0)
+			var gy := maxi(maxi(sim.u_miny[o] - at.y, at.y - sim.u_maxy[o]), 0)
+			if maxi(gx, gy) <= kn[AP.CH_SAB_GUARD]:
+				guarded = true
+				break
+		if not guarded:
+			best = g
+			bd = d
+	return best
 
 
 ## Where a character of kind k keeps when idle: behind the unit of his field

@@ -1678,7 +1678,10 @@ As built (`campaign/cai.gd` `_buildup`, `_build`, `_recruit`):
   when the mix has a Range line (archers, javelins, slingers, belly-bows),
   then a Workshop up to `BU_WORKSHOP` when the mix has engines (bolt, stone,
   scorpions) or the faction fields `WAGON_MIN` missile / artillery units
-  (for the wagon). Each goes at the first centre (capital or town; richest
+  (for the wagon), then (2026-10-13) Barracks 2 when it raises heroes
+  (`CHAR_HERO` > 0: Average, Skilled; heroes need Barracks 2,
+  `CData.CHAR_NEEDS`), so the AI fields heroes; the same site, wait and
+  budget rules. Each goes at the first centre (capital or town; richest
   and capital first, the build order's sort) that already has that
   building, else the first with a free slot. It waits while that centre
   lacks a farm, or a market while it has more than one free slot (the
@@ -1792,6 +1795,8 @@ them. Knobs (`sim/ai_profile.gd`, Easy / Average / Skilled):
 | `CH_ATTEMPT_R` | 60 m | ... box to box |
 | `CH_PARLEY_R` | 0 / 80 / 80 m | the diplomat parleys the nearest routing enemy unit this near that `char_refusal` accepts (0: never) |
 | `CH_BACK` | 15 m | how far a hero keeps behind the unit he goes with |
+| `CH_SAB_R` | 0 / 0 / 120 m | the assassin, before he has acted (once), sabotages the nearest enemy battery this near him (0: never) |
+| `CH_SAB_GUARD` | 20 m | ... one with no ready enemy foot unit this near its engines (box to point): unescorted |
 
 - **Heroes never charge alone**: no attack order is ever given to one; idle
   (`_char_post`, at each unit think) each keeps `CH_BACK` (+ half the
@@ -1805,8 +1810,12 @@ them. Knobs (`sim/ai_profile.gd`, Easy / Average / Skilled):
 - **The assassin** (Skilled only, by `CH_ATTEMPT`): an enemy general within
   60 m: `ORDER_ATTEMPT` (counter `C_CH_ATTEMPT`); otherwise he shadows the
   line 15 m behind its left of centre (an enemy general posted 30 m behind
-  his own line comes within reach once the lines meet). He never sabotages
-  (gap: the AI does not read enemy batteries or gates for him).
+  his own line comes within reach once the lines meet). Else (2026-10-13,
+  Skilled by `CH_SAB_R`, while he has not acted: so once) the nearest
+  enemy battery (an engine group `char_refusal` accepts: not a tower's,
+  not all wrecked) within 120 m with no enemy foot within 20 m of its
+  engines: `ORDER_SABOTAGE` (counter `C_CH_SABOTAGE`). Gates, rams and
+  siege towers are not his targets.
 - **The diplomat** (Average, Skilled): the nearest routing enemy unit within
   80 m that may be asked: `ORDER_PARLEY` (counter `C_CH_PARLEY`); otherwise
   he keeps 30 m behind the line's right. Routers within `PARLEY_SEE` 80 m of
@@ -1827,7 +1836,9 @@ them. Knobs (`sim/ai_profile.gd`, Easy / Average / Skilled):
   behind their foot line in 109 of 118 samples (9 more than 10 m ahead:
   the cavalry hero with the wings), no attack order, 7 of 8 heroes alive,
   2 parleys (1 surrender: 35 prisoners, 1 refused), no attempt; Skilled 2
-  attempts, 3 parleys.
-- Gaps: the AI never sabotages; it does not pull a hero out of a losing
+  attempts, 3 parleys. Sabotage (`--only=chars` J, their bolt battery 80 m
+  from him, 90 s): Skilled sent once, 2 engines wrecked; Average never;
+  Skilled with their heavy foot beside the battery: never.
+- Gaps: the AI does not pull a hero out of a losing
   fight or shield him from missile fire; no aura knob per kind (the posts
   are the knob: each hero stands where his aura counts).

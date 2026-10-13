@@ -2272,7 +2272,7 @@ func show_battle_result(events_before: int, outcome: Dictionary) -> void:
 		for t2 in texts:
 			box.add_child(Kit.label(t2, Kit.FONT, Color.WHITE, true))
 		if int(outcome.get("forfeit", 0)) != 0:
-			box.add_child(Kit.label("You left the field: the army withdrew and the battle counts as lost.", Kit.FONT_SMALL, Kit.COL_DIM, true))
+			box.add_child(Kit.label("You left the battle: your army withdrew (a defeat).", Kit.FONT_SMALL, Kit.COL_DIM, true))
 		s.show_dialog("Battle result", box, [["Continue", func(): s._next_step()]], 560)
 		return
 	s.show_dialog("Battle result", BattleScreen.result(s, snap, outcome, st, texts), [["Continue", func(): s._next_step()]], 900, true)

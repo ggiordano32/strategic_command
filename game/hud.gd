@@ -24,6 +24,7 @@ signal come_down_pressed
 signal drop_pressed
 signal kill_pressed
 signal release_pressed
+signal char_pressed(act: String)  # a character's act button: "sabotage", "attempt", "parley"
 signal withdraw_pressed
 signal withdraw_all_pressed
 signal group_pressed(kind: String)
@@ -106,6 +107,9 @@ var drop_button: Button
 var kill_button: Button
 ## "Release": handlers with dogs in the kennel selected; then a tap on an enemy.
 var release_button: Button
+## Heroes and agents: the selected character's acts ("sabotage", "attempt",
+## "parley" -> Button; battle.gd shows them and arms the next tap).
+var char_buttons := {}
 var withdraw_button: Button
 var gift_button: Button
 var withdraw_all_button: Button
@@ -351,6 +355,17 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	release_button.tooltip_text = "War dogs: let the pack loose, then tap an enemy unit within 80 m (U); they come back when no enemy is near"
 	release_button.pressed.connect(func(): release_pressed.emit())
 	release_button.visible = false
+	for a in [["sabotage", "Sabotage", "fire", "Assassin: tap an enemy battery (he wrecks its engines) or a shut gate (he unbars it from inside) (Shift+B)"],
+			["attempt", "Attempt", "dagger", "Assassin: tap an enemy hero or general: one strike, 40 % kills, 30 % wounds (T)"],
+			["parley", "Parley", "scroll", "Diplomat: tap a routing or wavering enemy unit: it may surrender (Shift+P)"]]:
+		var act: String = a[0]
+		var cb := _button(str(a[1]), Vector2(0, BTN_H), str(a[2]))
+		cb.name = "char_" + act
+		cb.toggle_mode = true
+		cb.tooltip_text = str(a[3])
+		cb.pressed.connect(func(): char_pressed.emit(act))
+		cb.visible = false
+		char_buttons[act] = cb
 	withdraw_button = _button("Withdraw", Vector2(0, BTN_H), "withdraw")
 	withdraw_button.tooltip_text = "Leave the battle by your own map edge"
 	withdraw_button.pressed.connect(func(): withdraw_pressed.emit())
@@ -360,7 +375,8 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	gift_button.pressed.connect(func(): gift_pressed.emit())
 	gift_button.visible = false
 	for b in [run_button, halt_button, fire_button, skirm_button, ammo_button, deploy_button, refill_button,
-			forage_button, man_wall_button, come_down_button, drop_button, release_button, withdraw_button, gift_button]:
+			forage_button, man_wall_button, come_down_button, drop_button, release_button,
+			char_buttons["sabotage"], char_buttons["attempt"], char_buttons["parley"], withdraw_button, gift_button]:
 		actions.add_child(b)
 	actions.visible = false
 	actions_box = actions
@@ -901,6 +917,16 @@ func _button_w(b: Button, t: String) -> float:
 		w += b.icon.get_width() + b.get_theme_constant("h_separation")
 	w += b.get_theme_stylebox("normal").get_minimum_size().x
 	return maxf(w, b.custom_minimum_size.x)
+
+
+## Heroes and agents: show the act buttons in `acts` (act names), the
+## `armed` one pressed and reading "<Act>: tap".
+func set_char_buttons(acts: Dictionary, armed: String) -> void:
+	for act in char_buttons:
+		var b: Button = char_buttons[act]
+		b.visible = acts.has(act)
+		b.set_pressed_no_signal(armed == act)
+		b.text = str(act).capitalize() + (": tap" if armed == act else "")
 
 
 ## Walls: show "Man the wall" / "Come down" (battle.gd decides when);

@@ -320,6 +320,24 @@ func _initialize() -> void:
 		_step_cr_check_enemy,
 		_step_cr_tap_ground,
 		_step_cr_check_ground,
+		# Campaign battle Leave: ignored in the first seconds, then a modal
+		# (Stay keeps the battle, Leave exits).
+		_step_lv_start,
+		_step_lv_early,
+		_step_lv_check_early,
+		_step_lv_check_ask,
+		_step_lv_check_stay,
+		_step_lv_check_ask2,
+		_step_lv_check_left,
+		# Heroes and agents: the act buttons in the order row, the keys, a
+		# refusal toast, Sabotage then a tap on the enemy battery.
+		_step_ch_start,
+		_step_ch_select,
+		_step_ch_check_buttons,
+		_step_ch_check_refused,
+		_step_ch_check_key,
+		_step_ch_check_armed,
+		_step_ch_check_order,
 		_step_done,
 	]
 
@@ -1484,6 +1502,7 @@ func _key(code: Key, mods: Dictionary = {}) -> void:
 		e.physical_keycode = code
 		e.pressed = pressed
 		e.ctrl_pressed = mods.get("ctrl", false)
+		e.shift_pressed = mods.get("shift", false)
 		Input.parse_input_event(e)
 
 
@@ -2730,3 +2749,134 @@ func _step_cr_check_ground() -> void:
 
 func _screen_w(u: int) -> Vector2:
 	return Vector2(battle.sim.u_cx[u], battle.sim.u_cy[u]) / 1024.0 * Battle.PX_PER_M
+
+
+# ------------------------------------------------- campaign battle Leave ---
+
+var _lv_exits := 0
+
+
+func _step_lv_start() -> void:
+	if is_instance_valid(battle):
+		battle.queue_free()
+	battle = Battle.new()
+	battle.custom_scenario = {"width_m": 300, "height_m": 300, "ai_sides": [], "orders": [], "units": [
+		Scenarios.unit(0, UT.HEAVY, 100, 150, 220, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.HEAVY, 100, 150, 80, Scenarios.FACE_DOWN)],
+		"terrain": {"kind": 0}}
+	battle.seed_value = 7
+	battle.campaign_mode = true
+	_lv_exits = 0
+	battle.exit_requested.connect(func(): _lv_exits += 1)
+	root.add_child(battle)
+
+
+func _step_lv_early() -> void:
+	_check(battle.leave_grace > 0.0, "the Leave grace runs (%.2f s left)" % battle.leave_grace)
+	_tap_control(battle.hud.menu_button)
+
+
+func _step_lv_check_early() -> void:
+	_check(battle.leave_dialog == null and _lv_exits == 0 and battle.is_inside_tree(),
+		"a Leave tap in the first %d s does nothing" % int(Battle.LEAVE_GRACE_SEC))
+	battle.leave_grace = 0.0  # (the seconds pass)
+	_tap_control(battle.hud.menu_button)
+
+
+func _step_lv_check_ask() -> void:
+	var d: Control = battle.leave_dialog
+	_check(d != null and d.visible and _lv_exits == 0, "then Leave asks in a modal")
+	var txt := ""
+	if d != null:
+		txt = battle._leave_text.text
+		_tap_control(d.find_child("leave_stay", true, false) as Control)
+	_check(txt.begins_with("Leave the battle? Your army withdraws"), "the modal says what leaving costs (%s)" % txt)
+
+
+func _step_lv_check_stay() -> void:
+	_check(not battle.leave_dialog.visible and _lv_exits == 0 and battle.sim.winner < 0, "Stay keeps the battle")
+	_tap_control(battle.hud.menu_button)
+
+
+func _step_lv_check_ask2() -> void:
+	_check(battle.leave_dialog.visible, "Leave asks again")
+	_tap_control(battle.leave_dialog.find_child("leave_go", true, false) as Control)
+
+
+func _step_lv_check_left() -> void:
+	_check(_lv_exits == 1, "Leave then Leave exits (%d exit requests)" % _lv_exits)
+
+
+# ---------------------------------------------------- heroes and agents ---
+
+var _ch_a := -1  # our assassin
+var _ch_b := -1  # the enemy battery
+
+
+func _step_ch_start() -> void:
+	if is_instance_valid(battle):
+		battle.queue_free()
+	battle = Battle.new()
+	battle.custom_scenario = {"width_m": 300, "height_m": 300, "ai_sides": [], "orders": [], "units": [
+		Scenarios.unit(0, UT.HEAVY, 100, 150, 220, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.BOLT, 16, 150, 120, Scenarios.FACE_DOWN),
+		Scenarios.unit(1, UT.HEAVY, 100, 60, 60, Scenarios.FACE_DOWN)],
+		"chars": [[{"key": "assassin", "name": "Assassin"}], []],
+		"terrain": {"kind": 0}}
+	battle.seed_value = 7
+	root.add_child(battle)
+
+
+func _step_ch_select() -> void:
+	if not battle.paused:
+		battle._toggle_pause()
+	var sim := battle.sim
+	_ch_a = -1
+	_ch_b = -1
+	for u in sim.n_units:
+		if sim.u_char[u] == UT.CK_ASSASSIN and sim.u_side[u] == 0:
+			_ch_a = u
+		if sim.u_side[u] == 1 and sim.u_eg[u] >= 0:
+			_ch_b = u
+	_check(_ch_a >= 0 and _ch_b >= 0, "the assassin (%d) and the enemy battery (%d)" % [_ch_a, _ch_b])
+	battle._select(_ch_a)
+	battle._refresh_actions()
+
+
+func _step_ch_check_buttons() -> void:
+	var cb: Dictionary = battle.hud.char_buttons
+	_check((cb["sabotage"] as Button).is_visible_in_tree() and (cb["attempt"] as Button).is_visible_in_tree()
+		and not (cb["parley"] as Button).visible, "the assassin selected: Sabotage and Attempt in the order row, no Parley")
+	_key(KEY_P, {"shift": true})
+
+
+func _step_ch_check_refused() -> void:
+	_check(battle.char_armed == 0 and battle.overlay._flash_text == "Cannot: only a diplomat",
+		"Shift+P (Parley) for an assassin: refused with the reason (%s)" % battle.overlay._flash_text)
+	_check(battle.paused, "(Shift+P is not Pause)")
+	_key(KEY_T)
+
+
+func _step_ch_check_key() -> void:
+	_check(battle.char_armed == BattleSim.ORDER_ATTEMPT and (battle.hud.char_buttons["attempt"] as Button).button_pressed,
+		"T arms Attempt (%d)" % battle.char_armed)
+	_tap_control(battle.hud.char_buttons["sabotage"])
+
+
+func _step_ch_check_armed() -> void:
+	var b: Button = battle.hud.char_buttons["sabotage"]
+	_check(battle.char_armed == BattleSim.ORDER_SABOTAGE and b.button_pressed and b.text == "Sabotage: tap"
+		and not (battle.hud.char_buttons["attempt"] as Button).button_pressed, "the Sabotage button arms it instead (%s)" % b.text)
+	_no_double_tap()
+	var sim := battle.sim
+	_focus(sim.u_cx[_ch_b], sim.u_cy[_ch_b] + 40 * 1024)
+	var p := _unit_screen(_ch_b)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_ch_check_order() -> void:
+	var so := _eq_orders(BattleSim.ORDER_SABOTAGE)
+	_check(so.size() == 1 and int(so[0]["unit"]) == _ch_a and int(so[0]["eg"]) == battle.sim.u_eg[_ch_b],
+		"a tap on the battery: the assassin is sent to sabotage it (%s)" % str(so))
+	_check(battle.char_armed == 0 and _eq_orders(BattleSim.ORDER_ATTACK).is_empty(), "the tap gave no attack order")

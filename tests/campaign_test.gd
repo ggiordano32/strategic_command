@@ -103,6 +103,7 @@ func _init() -> void:
 	_grid_turns()
 	_grid_contact()
 	_grid_siege()
+	_grid_two_army_attacks()
 	_grid_sally_relief()
 	_grid_siege_equipment()
 	_grid_support()
@@ -1909,6 +1910,58 @@ func _grid_siege() -> void:
 	var men1 := CState.men(CState.army(s5, int(a["id"])))
 	_check(men1 < men0 and men1 >= men0 * (100 - CData.SIEGE_BESIEGER_PCT - 1) / 100 - 4,
 		"besiegers lose about %d%% a turn once the city starves (%d -> %d)" % [CData.SIEGE_BESIEGER_PCT, men0, men1])
+
+
+## Two armies besieging assault together (and one alone); two armies next to
+## an enemy army attack it (and one alone); an assault the turn one of our
+## armies fights a field battle in the region is refused with an event, not
+## dropped in silence.
+func _grid_two_army_attacks() -> void:
+	var rome := _f("rome")
+	var ap := _r("apulia")
+	for n in [1, 2]:
+		var st := _empty6()
+		var ids: Array = []
+		for k in n:
+			var a := _put(st, rome, CState.ring_cell(ap, k), ["heavy", "heavy", "spear"])
+			ids.append(int(a["id"]))
+			if k == 0:
+				CRules.start_siege(st, ap, a, -1)
+		_check(CRules.besiegers(st, ap).size() == n, "%d besieger(s)" % n)
+		var s1 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [{"t": "assault", "r": ap}])])
+		var b := CState.battle_at(s1, ap)
+		_check(str(b.get("kind", "")) == "assault" and (b["att"] as Array).size() == n and _events(s1, "order_failed").is_empty(),
+			"%d besieging armies: the Assault order makes one assault with all of them (%s)" % [n, str(b)])
+	var row := _row(_r("gallaecia"), 8)
+	var ep := _f("epirus")
+	for n in [1, 2]:
+		var st2 := _empty6()
+		var e := _put(st2, ep, row[4], ["spear", "spear"])
+		var a1 := _put(st2, rome, row[3], ["heavy", "heavy"])
+		var orders: Array = [_move6(a1, CState.cell(e), {"tgt": int(e["id"]), "mode": CData.MODE_SIEGE})]
+		if n == 2:
+			var a2 := _put(st2, rome, row[5], ["heavy", "heavy"])
+			orders.append(_move6(a2, CState.cell(e), {"tgt": int(e["id"]), "mode": CData.MODE_SIEGE}))
+		var s2 := CTurn.resolve_turn(st2, [CTurn.submission(st2, rome, orders)])
+		var fb: Dictionary = s2["battles"][0] if not (s2["battles"] as Array).is_empty() else {}
+		_check(not fb.is_empty() and (fb["att"] as Array).has(int(a1["id"])) and (fb["def"] as Array).has(int(e["id"])),
+			"%d armies next to an enemy army: the attack makes a field battle (%s)" % [n, str(fb)])
+	# A field battle of ours in the region this turn: the assault is refused, with the reason.
+	var st3 := _empty6()
+	var bs := _put(st3, rome, CState.ring_cell(ap, 0), ["heavy", "heavy", "heavy"])
+	CRules.start_siege(st3, ap, bs, -1)
+	var far := -1
+	for c in CGrid.cells_of(ap):
+		if CGrid.cheb(c, CGrid.site(ap)) >= 4 and CGrid.passable(c) and CGrid.passable(c + 1) and CGrid.region(c + 1) == ap:
+			far = c
+			break
+	var foe := _put(st3, CState.owner(st3, ap), far, ["spear", "spear"])
+	var b2 := _put(st3, rome, far + 1, ["heavy", "heavy"])
+	var s3 := CTurn.resolve_turn(st3, [CTurn.submission(st3, rome,
+		[_move6(b2, CState.cell(foe), {"tgt": int(foe["id"]), "mode": CData.MODE_SIEGE}), {"t": "assault", "r": ap}])])
+	var of3 := _events(s3, "order_failed")
+	_check(of3.size() == 1 and str(of3[0]["order"]["t"]) == "assault",
+		"an assault the turn our field battle takes the region's battle is refused with an event, not dropped (%s)" % str(of3))
 
 
 func _grid_sally_relief() -> void:

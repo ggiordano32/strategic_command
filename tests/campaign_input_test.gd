@@ -375,12 +375,15 @@ func _s_check_battle_on() -> void:
 
 
 func _s_leave() -> void:
+	cs.battle.leave_grace = 0.0
 	cs.battle.hud.menu_pressed.emit()
 
 
 func _s_leave2() -> void:
-	_check(cs.battle != null, "first Leave only asks")
-	cs.battle.hud.menu_pressed.emit()
+	_check(cs.battle != null and cs.battle.leave_dialog != null and cs.battle.leave_dialog.visible, "first Leave only asks")
+	var go: Button = cs.battle.leave_dialog.find_child("leave_go", true, false) if cs.battle.leave_dialog != null else null
+	if go != null:
+		_tap_control(go)
 	wait = 6
 
 

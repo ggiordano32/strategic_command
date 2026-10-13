@@ -88,6 +88,9 @@ var px_per_m: float = 10.0
 var sim  # BattleSim (untyped to keep the view decoupled)
 ## Units drawn highlighted (selection).
 var selected_units: Dictionary = {}
+## The side whose view this is: the men of a unit hidden from it (the
+## enemy's assassin before he acts, BattleSim.hidden_from) are not drawn.
+var viewer_side := -1
 ## The path in use: false = texture, true = CPU-fed (see set_cpu_fed).
 var cpu_fed := false
 ## Switch to the CPU-fed path (and remember it) when the probe sees no
@@ -454,6 +457,17 @@ func upload() -> void:
 		pys = pys + sim.e_py
 		fs = fs + sim.e_face
 		sts = sts + _e_state
+	if sim.ch_on != 0 and viewer_side >= 0:
+		var copied := false
+		for u in nu:
+			if not sim.hidden_from(u, viewer_side):
+				continue
+			if not copied:
+				sts = sts.duplicate()
+				copied = true
+			var base: int = sim.u_slot_base[u]
+			for s in sim.u_alive[u]:
+				sts[sim.slot_soldier[base + s]] = 5  # (off the field: the shaders skip it)
 	var active: bool = sim.pr_count > 0
 	var missiles := active or _pr_was_active  # skip while nothing flies (and nothing flew)
 	_pr_was_active = active

@@ -90,7 +90,13 @@ var ai_skill := -1
 ## (the army withdraws and the battle counts as lost); the menu buttons
 ## read "Back to campaign".
 var campaign_mode := false
-var _leave_confirm := 0.0
+## Campaign battles: Leave / Menu taps are ignored this long after the
+## battle is shown (stray taps while it opens forfeited battles), then a
+## tap asks in a modal (Stay / Leave). Seconds left (tests may zero it).
+const LEAVE_GRACE_SEC := 3.0
+var leave_grace := LEAVE_GRACE_SEC
+var leave_dialog: Control  # the "Leave the battle?" modal (built on first use)
+var _leave_text: Label
 ## Live co-op battle (game/net/coop_session.gd, milestone 5), or null: the
 ## session runs the lockstep layer and owns the sim once the battle starts
 ## (before that `sim` is a stand-in built from the same scenario for the
@@ -139,8 +145,6 @@ var release_armed := false
 ## tap on its target (an enemy battery or a shut gate; an enemy hero or
 ## general; a routing or wavering enemy unit) gives it, any other cancels.
 var char_armed := 0
-var _char_bar: HBoxContainer
-var _char_btns := {}  # order type -> Button
 
 var _acc := 0.0
 var _sim_ms := PackedFloat64Array()
@@ -254,6 +258,7 @@ func _ready() -> void:
 	works.setup(sim, PX_PER_M)
 
 	soldiers = SoldierLayer.new()
+	soldiers.viewer_side = player_side
 	add_child(soldiers)
 	soldiers.setup(sim, PX_PER_M)
 	soldiers.probed.connect(_on_soldier_probe)
@@ -315,7 +320,7 @@ func _ready() -> void:
 	hud.drop_pressed.connect(_drop)
 	hud.kill_pressed.connect(_kill_beasts)
 	hud.release_pressed.connect(_toggle_release)
-	_build_char_bar()
+	hud.char_pressed.connect(func(act: String): _toggle_char(int(CHAR_TYPES[act])))
 	hud.withdraw_pressed.connect(_withdraw)
 	hud.withdraw_all_pressed.connect(_withdraw_all)
 	hud.group_pressed.connect(_select_group)
@@ -470,15 +475,66 @@ func _on_orders_toggled(on: bool) -> void:
 
 
 func _on_menu() -> void:
-	if campaign_mode and sim.winner < 0 and _leave_confirm <= 0.0:
-		_leave_confirm = 3.0
-		hud.banner.text = "Leave? Your army withdraws (a defeat). Tap again."
-		if coop != null and _coop_others_in():
-			hud.banner.text = "Leave? Your units go to your ally. Tap again."
-		hud.banner.visible = true
+	if campaign_mode and sim.winner < 0:
+		if leave_grace > 0.0:
+			_count("leave_grace")  # (a stray tap while the battle opened)
+			return
+		if leave_dialog == null or not leave_dialog.visible:
+			_show_leave_dialog()
 		return
+	_leave_now()
+
+
+func _leave_now() -> void:
+	if leave_dialog != null:
+		leave_dialog.visible = false
 	_end_scenario("menu")
 	exit_requested.emit()
+
+
+## The campaign battle's Leave confirm: a modal over the field (the dim
+## catches every tap; the battle runs on).
+func _show_leave_dialog() -> void:
+	_count("leave_ask")
+	if leave_dialog == null:
+		var dim := ColorRect.new()
+		dim.name = "leave_dialog"
+		dim.color = Color(0, 0, 0, 0.45)
+		dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		dim.mouse_filter = Control.MOUSE_FILTER_STOP
+		var cc := CenterContainer.new()
+		cc.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		dim.add_child(cc)
+		var pn := Hud.Kit.panel(Hud.Kit.PANEL_BG, 16.0)
+		cc.add_child(pn)
+		var vb := Hud.Kit.vbox(14)
+		pn.add_child(vb)
+		_leave_text = Hud.Kit.label("", Hud.Kit.FONT_TITLE, Color.WHITE, true)
+		_leave_text.custom_minimum_size = Vector2(minf(340.0, get_viewport_rect().size.x - 64.0), 0)
+		vb.add_child(_leave_text)
+		var row := Hud.Kit.hbox(12)
+		row.alignment = BoxContainer.ALIGNMENT_CENTER
+		var stay := Hud.Kit.button("Stay", func():
+			_count("leave_stay")
+			leave_dialog.visible = false, 120)
+		stay.name = "leave_stay"
+		var go := Hud.Kit.icon_button("Leave", "withdraw", func():
+			_count("leave_confirmed")
+			_leave_now(), 120)
+		go.name = "leave_go"
+		go.add_theme_color_override("font_color", Hud.Kit.COL_BAD)
+		row.add_child(stay)
+		row.add_child(go)
+		vb.add_child(row)
+		hud.add_child(dim)
+		hud.add_ui_control(dim)
+		leave_dialog = dim
+	var txt := "Leave the battle? Your army withdraws (a defeat)."
+	if coop != null and _coop_others_in():
+		txt = "Leave the battle? Your units go to %s." % _coop_heir_name()
+	_leave_text.text = txt
+	leave_dialog.visible = true
 
 
 ## Campaign battle over: back to the campaign, which shows the full result.
@@ -524,10 +580,10 @@ func _process(delta: float) -> void:
 			_leave_decided()
 		elif _exit_timer <= 0.0:
 			_exit_timer = 0.1  # live co-op: wait for the final frame so the result is complete
-	if _leave_confirm > 0.0:
-		_leave_confirm -= delta
-		if _leave_confirm <= 0.0 and sim.winner < 0:
-			hud.banner.visible = false
+	if leave_grace > 0.0:
+		leave_grace -= delta
+	if leave_dialog != null and leave_dialog.visible and sim.winner >= 0:
+		leave_dialog.visible = false  # (decided meanwhile: the result shows)
 	if coop != null:
 		_coop_step(delta)
 	elif not paused and not _bench_done:
@@ -1373,34 +1429,16 @@ func _drop() -> void:
 
 
 # ---------------------------------------------------- heroes and agents ---
-# docs/DESIGN.md "Heroes and agents": a bar of the selected character's acts
-# (Sabotage, Attempt for an assassin; Parley for a diplomat) over the HUD;
-# a press arms the act, the next tap on its target gives the order (the sim
-# walks him there: BattleSim.char_refusal says why not), any other tap
-# cancels. The hidden assassin of the enemy is neither drawn nor picked.
+# docs/DESIGN.md "Heroes and agents": the selected character's acts
+# (Sabotage, Attempt for an assassin; Parley for a diplomat) are buttons in
+# the HUD's order row (and keys Shift+B / T / Shift+P); a press arms the
+# act, the next tap on its target gives the order (the sim walks him there:
+# BattleSim.char_refusal says why not), any other tap cancels. A key whose
+# act no selected character can take says why (a toast). The hidden
+# assassin of the enemy is neither drawn nor picked.
 
-const CHAR_ACTS := [[BattleSim.ORDER_SABOTAGE, "Sabotage", "Assassin: tap an enemy battery (he wrecks its engines) or a shut gate (he unbars it from inside)"],
-	[BattleSim.ORDER_ATTEMPT, "Attempt", "Assassin: tap an enemy hero or general: one strike, 40 % kills, 30 % wounds"],
-	[BattleSim.ORDER_PARLEY, "Parley", "Diplomat: tap a routing or wavering enemy unit: it may surrender (prisoners)"]]
-
-
-func _build_char_bar() -> void:
-	_char_bar = HBoxContainer.new()
-	_char_bar.name = "char_bar"
-	_char_bar.add_theme_constant_override("separation", 6)
-	_char_bar.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
-	_char_bar.offset_top = 64
-	_char_bar.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_char_bar.visible = false
-	hud.add_child(_char_bar)
-	for a in CHAR_ACTS:
-		var typ: int = a[0]
-		var b := Hud.Kit.button(str(a[1]), func(): _toggle_char(typ), 0, 14)
-		b.name = "char_" + str(a[1]).to_lower()
-		b.toggle_mode = true
-		b.tooltip_text = str(a[2])
-		_char_btns[typ] = b
-		_char_bar.add_child(b)
+const CHAR_TYPES := {"sabotage": BattleSim.ORDER_SABOTAGE, "attempt": BattleSim.ORDER_ATTEMPT,
+	"parley": BattleSim.ORDER_PARLEY}
 
 
 ## The acts the selection's characters can arm (order type -> any).
@@ -1421,25 +1459,26 @@ func _char_acts() -> Dictionary:
 
 
 func _refresh_char_bar() -> void:
-	if _char_bar == null:
-		return
 	var acts := _char_acts()
 	if not acts.has(char_armed):
 		char_armed = 0
-	_char_bar.visible = not acts.is_empty() and sim.phase != BattleSim.PHASE_DEPLOY
-	for typ in _char_btns:
-		var b: Button = _char_btns[typ]
-		b.visible = acts.has(typ)
-		b.set_pressed_no_signal(char_armed == typ)
-		b.text = str(CHAR_ACTS[[BattleSim.ORDER_SABOTAGE, BattleSim.ORDER_ATTEMPT, BattleSim.ORDER_PARLEY].find(typ)][1]) \
-			+ (": tap" if char_armed == typ else "")
+	var shown := {}
+	if sim.phase != BattleSim.PHASE_DEPLOY:
+		for act in CHAR_TYPES:
+			if acts.has(CHAR_TYPES[act]):
+				shown[act] = true
+	hud.set_char_buttons(shown, str(ORDER_NAMES.get(char_armed, "")) if char_armed != 0 else "")
 
 
 ## A character's act button: arm (or disarm) the next tap.
 func _toggle_char(typ: int) -> void:
 	if not interactive:
 		return
-	char_armed = typ if char_armed != typ and _char_acts().has(typ) else 0
+	if char_armed != typ and (sim.phase == BattleSim.PHASE_DEPLOY or not _char_acts().has(typ)):
+		_char_refused(typ)
+		_refresh_actions()
+		return
+	char_armed = typ if char_armed != typ else 0
 	release_armed = false
 	_count("char_arm_" + str(ORDER_NAMES.get(typ, typ)) if char_armed != 0 else "char_disarm")
 	if char_armed != 0 and selected >= 0:
@@ -1447,6 +1486,23 @@ func _toggle_char(typ: int) -> void:
 			BattleSim.ORDER_ATTEMPT: "Tap an enemy hero or general", BattleSim.ORDER_PARLEY: "Tap a routing or wavering enemy unit"}
 		overlay.flash(str(hint[char_armed]), Vector2(sim.u_cx[selected], sim.u_cy[selected]) / M * PX_PER_M)
 	_refresh_actions()
+
+
+## Act typ cannot be armed for the selection: a toast says why (the first
+## selected unit's BattleSim.char_refusal, without a target).
+func _char_refused(typ: int) -> void:
+	_count("char_refused_" + str(ORDER_NAMES.get(typ, typ)))
+	var why := "select a hero or an agent"
+	if sim.phase == BattleSim.PHASE_DEPLOY:
+		why = "not before the battle starts"
+	for u in selection:
+		var r: String = BattleSim.char_refusal(sim, {"type": typ, "unit": u})
+		if r in ["his attempt is spent", "only an assassin", "only a diplomat", "no unit"] or r.begins_with("not yet"):
+			why = r
+			if sim.u_char[u] != 0:
+				break
+	var at := Vector2(sim.u_cx[selected], sim.u_cy[selected]) / M * PX_PER_M if selected >= 0 else camera.position
+	overlay.flash("Cannot: " + why, at)
 
 
 ## The armed act on what is under w: every selected character of the right
@@ -2218,6 +2274,8 @@ func _on_key(e: InputEventKey) -> void:
 			_drop()
 		"release":
 			_toggle_release()
+		"sabotage", "attempt", "parley":
+			_toggle_char(int(CHAR_TYPES[act]))
 		"orders_overlay":
 			hud.orders_button.button_pressed = not hud.orders_button.button_pressed
 		"ready":
@@ -2858,6 +2916,16 @@ func _coop_others_in() -> bool:
 		if p != coop.me and coop.connected(p):
 			return true
 	return false
+
+
+## Who takes our units when we leave a live co-op battle: a connected player
+## of our side (lockstep's keeper rule: the lowest), else the battle AI.
+func _coop_heir_name() -> String:
+	var side: int = coop.ls.side_of(coop.me)
+	for p in coop.ls.side_players(side):
+		if p != coop.me and coop.connected(p):
+			return coop.player_name(p)
+	return "the battle AI"
 
 
 ## Leaving a live co-op battle: what to upload from this device, if

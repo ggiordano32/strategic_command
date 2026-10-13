@@ -2930,7 +2930,13 @@ sim, the view and the AI; any unit order to him calls his act off):
   RNG): `ATTEMPT_PCT` 40 % that man is killed (a general's unit: the
   general, `_cmd_fall`: the army's command loss and his aura gone),
   `ATTEMPT_WOUND` 30 % wounded (half his row's hit points), else nothing;
-  `u_chk` keeps 1 / 2 / 3.
+  `u_chk` keeps 1 / 2 / 3. A wound (2026-10-13) marks the target
+  `CHF_WOUNDED` in his `u_chf` (hashed with the character arrays): a
+  hero's aura then reaches half as far (`_ch_reach`: half his `ch_r`, the
+  aura pass and `_ch_near`), a general's command is gone for the battle
+  (`u_cmdgone` set: no `cmd_mor`, no rally, `_cmd_near` skips him, and no
+  `cmd_loss` later; he is no longer an attempt target). Only an attempt's
+  wound counts, not hit points lost otherwise.
 - Acting reveals him for good; `CAPTURE_N` 3 enemy men formed or fighting
   within `CAPTURE_R` 1.5 m of him (once a second) take him (he dies).
 
@@ -2951,18 +2957,22 @@ unit taken: `_cmd_fall`); else it fights on.
 **View**: markers with a gold rim and the glyph (our hidden assassin
 faded, the enemy's not drawn and not tappable), a white flag while the
 diplomat goes to parley, a ring filling over a parley / sabotage /
-unbarring; a bar of Sabotage / Attempt / Parley buttons over the HUD for a
-selected assassin or diplomat (press, then tap the target; refusals
-flashed); the unit book's own page per row and a "Heroes and agents"
+unbarring; Sabotage / Attempt / Parley buttons in the HUD's order row
+(`hud.char_buttons`, with the other order toggles) for a selected assassin
+or diplomat, keys Shift+B / T / Shift+P (`game/controls.gd`): press, then
+tap the target; a key no selected character can take, or a refused
+target, is flashed with `char_refusal`'s reason; the enemy's hidden
+assassin is not drawn by the soldier layer either (`viewer_side`: men of a
+unit `hidden_from` it get the off-field state, both GPU and CPU paths); the unit book's own page per row and a "Heroes and agents"
 page; the custom battle setup a toggle per character per side (their
 price counts against the funds). Battle AI: docs/AI.md 27.
 
-- Not built / gaps: the soldier layer still draws the enemy's hidden
-  assassin's man (`game/soldier_layer.gd` needs a skip by
-  `hidden_from`; matters in head-to-head only); the HUD card buttons and key bindings
-  for the three acts (the bar is `game/battle.gd`'s); a wounded hero keeps
-  his aura; a general wounded by an attempt keeps his; the AI never
-  sabotages; prisoners only by parley (no capture of routers otherwise).
+- Done 2026-10-13: the soldier layer's hidden-assassin skip, the HUD
+  buttons and keys, a wounded hero's half aura and a wounded general's
+  lost command, the Skilled AI's sabotage (docs/AI.md 27).
+- Not built / gaps: prisoners only by parley (no capture of routers
+  otherwise); sabotage reaches batteries and gates only (not rams or
+  siege towers: the sim has no such target).
 
 ## 5. Networking
 

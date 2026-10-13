@@ -580,6 +580,7 @@ const CHO_PARLEY := 4     # ... a parley with unit u_cht
 const CHF_ACTED := 1      # u_chf: the assassin has acted (seen from then on)
 const CHF_TRIED := 2      # ... his attempt is spent (once a battle)
 const CHF_INSIDE := 4     # ... he is over the wall (gate sabotage)
+const CHF_WOUNDED := 8    # a hero or general wounded by an attempt: his aura reaches half as far (a general's command is gone)
 const AU_FOOT := 1        # u_aura bits: in a foot hero's aura this second
 const AU_MIS := 2         # ... a missile hero's
 const AU_CAV := 4         # ... a cavalry hero's
@@ -10671,7 +10672,7 @@ func _update_auras() -> void:
 			if u_side[src] == u_side[u]:
 				if t_cmd_r[sty] > 0 and t_cmd_mor[sty] > held and u_cmdgone[src] == 0 and _box_gap(src, u) <= t_cmd_r[sty]:
 					held = t_cmd_mor[sty]
-				if ch_on != 0 and t_ch_r[sty] > 0 and _box_gap(src, u) <= t_ch_r[sty]:
+				if ch_on != 0 and t_ch_r[sty] > 0 and _box_gap(src, u) <= _ch_reach(src):
 					bits |= _ch_bit(u_char[src], tu)
 				continue
 			var gap := _box_gap(src, u)
@@ -10715,6 +10716,8 @@ func _cmd_near(u: int) -> int:
 		if src == u or u_side[src] != u_side[u] or u_state[src] != U_READY or u_alive[src] <= 0:
 			continue
 		var sty := u_type[src]
+		if ch_on != 0 and (u_chf[src] & CHF_WOUNDED) != 0:
+			continue  # wounded by an attempt: his command is gone
 		if t_cmd_r[sty] > 0 and t_cmd_rally[sty] > best and _box_gap(src, u) <= t_cmd_r[sty]:
 			best = t_cmd_rally[sty]
 	return best
@@ -11429,8 +11432,9 @@ func _ch_sab_gate(u: int) -> void:
 
 ## An attempt: up to the target's nearest man, then one roll (the sim's
 ## RNG): ATTEMPT_PCT his man killed (a general's unit: the general, his
-## command falls on his army), ATTEMPT_WOUND wounded (half his hit points),
-## else it fails. He is seen either way; u_chk keeps the outcome.
+## command falls on his army), ATTEMPT_WOUND wounded (half his hit points;
+## CHF_WOUNDED: a hero's aura at half its radius, a general's command gone
+## for the battle, u_cmdgone), else it fails. He is seen either way; u_chk keeps the outcome.
 func _ch_attempt(u: int) -> void:
 	var t := u_cht[u]
 	if not attempt_target(t):
@@ -11468,6 +11472,11 @@ func _ch_attempt(u: int) -> void:
 		stat_attempt[1] += 1
 		u_chk[u] = 2
 		hp[j] = maxi(hp[j] - t_hp[u_otype[t]] / 2, 1)
+		# Wounded: a hero's aura reaches half as far, a general's command is
+		# gone for the battle (no rally, no steadying; no fall loss later).
+		u_chf[t] |= CHF_WOUNDED
+		if u_char[t] == 0:
+			u_cmdgone[t] = 1
 	else:
 		stat_attempt[2] += 1
 		u_chk[u] = 3
@@ -11594,10 +11603,17 @@ func _ch_mounted(tu: int) -> bool:
 
 
 ## A ready friendly character of kind k has unit u within his ch_r.
+## Character src's aura radius: his row's ch_r, half once an attempt has
+## wounded him (CHF_WOUNDED).
+func _ch_reach(src: int) -> int:
+	var r := t_ch_r[u_type[src]]
+	return r / 2 if (u_chf[src] & CHF_WOUNDED) != 0 else r
+
+
 func _ch_near(u: int, k: int) -> bool:
 	for src in aura_src:
 		if src != u and u_char[src] == k and u_side[src] == u_side[u] and u_state[src] == U_READY \
-				and u_alive[src] > 0 and _box_gap(src, u) <= t_ch_r[u_type[src]]:
+				and u_alive[src] > 0 and _box_gap(src, u) <= _ch_reach(src):
 			return true
 	return false
 
