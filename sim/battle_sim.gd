@@ -2857,9 +2857,16 @@ func gate_way(ru: int, ax: int, ay: int, x: int, y: int, side: int) -> Vector3i:
 ## ground goes (the last point of its piece on the line from t back to it;
 ## it shoots from range on the way); (x, y, 2) others go to the gate on
 ## their side nearest t and hold there (attacking foot hack at it while it
-## is shut); z 0: it can reach t (or the rule does not apply).
+## is shut); z 0: it can reach t (or the rule does not apply: batteries,
+## which never close on a target and shoot from where they stand, stones
+## over the walls; a bolt's wall is its line of fire, not its ground).
+## (Until 2026-10-13 a battery outside got z 2 for a unit inside: the
+## view drew "NO WAY IN: TO THE GATE" for a stone thrower's attack order on
+## the army inside, though the sim shot it; owner: "it won't let me target
+## units inside the city with the rock thrower". The sim never asks this
+## for batteries: no state changes.)
 func unreach_goal(u: int, _t: int, goal: Vector2i) -> Vector3i:
-	if city_on == 0 or n_cmp == 0 or u_wall[u] > 0:
+	if city_on == 0 or n_cmp == 0 or u_wall[u] > 0 or u_cls[u] == UT.CLS_ART:
 		return Vector3i.ZERO
 	var ru := reach_at(u_ax[u], u_ay[u])
 	if ru < 0:

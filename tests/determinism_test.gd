@@ -256,6 +256,11 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=over_walls" in OS.get_cmdline_user_args():
+		_check_over_walls()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=engines" in OS.get_cmdline_user_args():
 		_check_engines()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -277,6 +282,7 @@ func _init() -> void:
 	_check_siege_tower()
 	_check_shut_inner_gate()
 	_check_engines()
+	_check_over_walls()
 	_check_ammo()
 	_check_blast()
 	_check_wagon()
@@ -1350,6 +1356,94 @@ func _check_siege_tower() -> void:
 		ev["pushing"], int(ev["pace"]) * 10 / 1024, int(ev["pace"]) * 1000 / 1024 % 100, ev["pace"], ev["planted"],
 		a["up"], cross, a["alive0"], ev["drop1"], ev["taken"], ev["side1"], ev["drop_d"], ev["lit"], ev["burnt"],
 		", ".join(snaps.map(func(x): return str(x[1]))), ", ".join(snaps.map(func(x): return str(x[0])))])
+
+
+## Stones over the walls (owner 2026-10-13): a stone battery outside walls 2
+## shoots a unit in the plaza (attack order, no AI): accepted, the stones
+## land inside the walls among it and kill; the view's "no way in" rule
+## (unreach_goal) does not apply to a battery; a bolt battery at the same
+## spot keeps its line-of-fire rule (the wall stops it). Repeat identical.
+func _over_walls_run(ty: int) -> Dictionary:
+	var city := {"seed": 303, "level": 1, "walls": 2, "bld": [1, 2, 4]}
+	var terr := {"kind": Terrain.K_FLAT, "seed": 303 * 7 + 3, "forest": 0, "ground": 1}
+	var r := Scenarios.settlement(city, terr, [[ty, 18 if ty == UT.STONE else 16]],
+		[[UT.SPEAR, 60], [UT.CAVALRY, 40]], 1, [])
+	var sc: Dictionary = r["scenario"]
+	sc.erase("deploy_zones")
+	var units: Array = sc["units"]
+	var ti := -1
+	for i in units.size():
+		if int(units[i]["type"]) == UT.CAVALRY:
+			ti = i
+	units[0]["x_m"] = int(units[ti]["x_m"])
+	units[0]["y_m"] = int(units[ti]["y_m"]) + 200
+	units[0]["facing"] = Scenarios.FACE_UP
+	var sim := BattleSim.new()
+	sim.setup(sc, 4242)
+	var b := 0
+	var t := ti
+	var out := {"inside": 0, "unreach": -1, "accepted": 0, "landed_in": 0, "landed_out": 0, "landed_wall": 0}
+	var fxh: int = sim.fx_head
+	var cb := _ow_cmp(sim, sim.u_cx[b], sim.u_cy[b])
+	var ct := _ow_cmp(sim, sim.u_cx[t], sim.u_cy[t])
+	if cb != _ow_cmp(sim, sim.u_cx[t], sim.u_cy[t]) and sim.u_wall[t] == 0 and sim.g_state[0] == BattleSim.GATE_CLOSED:
+		out["inside"] = 1
+	sim.u_fire[b] = 0
+	for o in sim.n_units:
+		if sim.u_side[o] == 1:
+			sim.u_fire[o] = 0  # (the wall towers' engines hold: the battery stays)
+	sim.queue_order({"tick": 0, "type": BattleSim.ORDER_ATTACK, "unit": b, "target": t, "run": 0})
+	var hashes := PackedInt64Array()
+	var seen := {}
+	for i in 1200:
+		sim.step()
+		hashes.append(sim.state_hash())
+		if i == 0:
+			out["accepted"] = 1 if sim.u_order[b] == BattleSim.O_ATTACK and sim.u_target[b] == t else 0
+			out["unreach"] = sim.unreach_goal(b, t, sim._attack_goal(b, t)).z
+		# Impact marks (the view's ring of recent stone landings): where the
+		# battery's stones came down (the plaza's piece of ground, the
+		# battery's own: short, or on the wall).
+		while fxh != sim.fx_head:
+			var cl := _ow_cmp(sim, sim.fx_x[fxh], sim.fx_y[fxh])
+			if cl == ct:
+				out["landed_in"] += 1
+			elif cl == cb:
+				out["landed_out"] += 1
+			else:
+				out["landed_wall"] += 1
+			fxh = (fxh + 1) % BattleSim.FX_CAP
+	out["shots"] = sim.stat_stones + sim.stat_bolts
+	out["kills"] = sim.u_kills[b]
+	out["lost"] = int(units[ti]["count"]) - sim.u_alive[t]
+	out["d"] = sim._unit_dist(b, t) / M
+	out["hashes"] = hashes
+	return out
+
+
+func _ow_cmp(sim, x: int, y: int) -> int:
+	var i := x >> 11
+	var j := y >> 11
+	if x < 0 or y < 0 or i >= sim.ob_w or j >= sim.ob_h:
+		return -9
+	return sim.cmp[j * sim.ob_w + i]
+
+
+func _check_over_walls() -> void:
+	var a := _over_walls_run(UT.STONE)
+	var b := _over_walls_run(UT.STONE)
+	if a["hashes"] != b["hashes"]:
+		_fail("over_walls: the repeat diverged")
+		return
+	var c := _over_walls_run(UT.BOLT)
+	a.erase("hashes")
+	c.erase("hashes")
+	if int(a["inside"]) != 1 or int(a["accepted"]) != 1 or int(a["unreach"]) != 0 or int(a["shots"]) < 10 \
+			or int(a["landed_in"]) * 2 < int(a["shots"]) or int(a["kills"]) <= 0 or int(c["shots"]) != 0:
+		_fail("over_walls: stones %s, bolts %s" % [str(a), str(c)])
+		return
+	print("PASS over_walls: a stone battery outside walls 2 ordered at a unit in the plaza %d m off (the gate shut): order taken, no 'no way in' (unreach %d), %d stones, %d landed inside the walls (%d short, %d on the wall), %d kills (%d men lost); a bolt battery there does not shoot (%d bolts: the wall in its line); identical on repeat" % [
+		a["d"], a["unreach"], a["shots"], a["landed_in"], a["landed_out"], a["landed_wall"], a["kills"], a["lost"], c["shots"]])
 
 
 # ------------------------------------------------- engines as equipment ---
