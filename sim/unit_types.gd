@@ -10,6 +10,10 @@ extends RefCounted
 ## Fields:
 ##   cls          CLS_* behaviour class (infantry, pike, missile, cavalry)
 ##   sprite       view-only sprite index (see game/soldier_layer.gd)
+##   sprite_set   view-only: the Blender-built sprite set it is drawn with
+##                (assets/sprites atlas, tools/sprites: 1 Heavy Swords, 2
+##                Spearmen, 3 Pikemen, 4 Shock Cavalry; 0 = the procedural
+##                `sprite` until its own set is built)
 ##   attack/defence/armour/shield/damage/reach   melee stats; shield is the %
 ##                chance to block a frontal melee hit
 ##   mshield      % chance to block a missile arriving from the frontal arc
@@ -199,7 +203,7 @@ const STONE := 8
 
 ## Defaults for every field a row may leave out.
 const DEFAULTS := {
-	"cls": CLS_INF, "sprite": 0, "mshield": 0, "ranks_reach": 1,
+	"cls": CLS_INF, "sprite": 0, "sprite_set": 0, "mshield": 0, "ranks_reach": 1,
 	"file_sp": 1126, "rank_sp": 1331, "turn": 0, "brace": 0, "vs_cav": 0,
 	"charge": 0, "sec_attack": 0, "sec_defence": 0, "sec_damage": 0,
 	"sec_reach": 0, "m_range": 0, "m_damage": 0, "m_ap": 0, "m_ammo": 0,
@@ -239,6 +243,7 @@ const MOUNT_DOG := 4  # a dog: a man's small body (missiles, footprint), its own
 const BASE: Array[Dictionary] = [
 	{
 		"key": "heavy",
+		"sprite_set": 1,
 		"name": "Heavy Swords",
 		"short": "Heavy",
 		"icon": 0,
@@ -263,6 +268,7 @@ const BASE: Array[Dictionary] = [
 	},
 	{
 		"key": "light",
+		"sprite_set": 1,
 		"name": "Light Infantry",
 		"short": "Light",
 		"icon": 1,
@@ -288,6 +294,7 @@ const BASE: Array[Dictionary] = [
 	},
 	{
 		"key": "spear",
+		"sprite_set": 2,
 		"name": "Spearmen",
 		"short": "Spear",
 		"icon": 2,
@@ -315,6 +322,7 @@ const BASE: Array[Dictionary] = [
 	},
 	{
 		"key": "pike",
+		"sprite_set": 3,
 		"name": "Pikemen",
 		"short": "Pike",
 		"icon": 3,
@@ -435,6 +443,7 @@ const BASE: Array[Dictionary] = [
 	},
 	{
 		"key": "cav",
+		"sprite_set": 4,
 		"name": "Shock Cavalry",
 		"short": "Cav",
 		"icon": 6,
@@ -886,7 +895,7 @@ const BEASTS: Array[Dictionary] = [
 ## yardsticks), not tuned; each with its reason.
 const LIGHT_MISSILE: Array[Dictionary] = [
 	{
-		"key": "cav_jav", "line": "cav_missile", "name": "Light Horse", "short": "Lt Horse", "icon": 13, "sprite": 5,
+		"key": "cav_jav", "line": "cav_missile", "name": "Light Horse", "short": "Lt Horse", "icon": 13, "sprite": 5, "sprite_set": 4,
 		"size": 60, "files0": 15,
 		"role": "Missile cavalry",
 		"desc": "Javelin riders on small, quick horses. They ride in, throw from the saddle and ride off again: by default they keep their distance from anything that comes for them, and nothing on foot can catch them. Few javelins each, so they need targets worth them. Weak in melee and no charge to speak of; horses are big targets for archers.",
@@ -994,7 +1003,7 @@ const LIGHT_MISSILE_TIERS: Array[Dictionary] = [
 ## 60 men, 1,260), not tuned; each with its reason.
 const GENERAL: Array[Dictionary] = [
 	{
-		"key": "general", "line": "general", "name": "General's Bodyguard", "short": "General", "icon": 15, "sprite": 5,
+		"key": "general", "line": "general", "name": "General's Bodyguard", "short": "General", "icon": 15, "sprite": 5, "sprite_set": 4,
 		"size": 30, "files0": 10,  # 24-32 men: half a cavalry unit, three ranks
 		"role": "The general and his guard",
 		"desc": "The army's commander and his picked riders. Friendly units near him stand longer under fire and in melee, and routers near him rally sooner; if he flees or falls, the whole army is shaken, the units near him most. Keep him behind the line and commit him only to finish a wavering enemy or to steady a breaking unit.",

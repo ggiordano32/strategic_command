@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-"""Sprite pipeline, step 1a: pack the frames rendered by build.py into
-sheets and write the manifest. Python 3 standard library only (its own PNG
+"""Sprite pipeline: pack the frames rendered by build.py into the game's
+atlas (step 1b: assets/sprites/atlas_shade.png + atlas_mask.png, see
+pack_atlas) and write the manifest and the generated game tables
+(game/sprite_atlas.gd, game/sprite_frames.gdshaderinc); the iso test goes
+to tools/sprites/iso/. The per-sheet notes below hold for the atlas too. Python 3 standard library only (its own PNG
 reader / writer on zlib).
 
     python3 tools/sprites/pack.py [--frames tools/sprites/_frames]
@@ -232,6 +235,56 @@ def pack_rows(rows, out_dir, name):
     return entries, [W, H]
 
 
+def pack_atlas(strips, out_dir, align, gutter, oc):
+    """One shade + one mask atlas for every unit's actions (the game's).
+    A strip = one action's frames side by side; strips go on shelves,
+    tallest first. Every frame starts on a multiple of `align` px with at
+    least `gutter` px of empty border, so mip levels up to log2(align)
+    never mix two frames. -> ({(uid, act): rects, anchor, step}, [W, H])."""
+    def up(v):
+        return (v + align - 1) // align * align
+    W = 512
+    while True:
+        order = sorted(range(len(strips)), key=lambda i: (-strips[i][2][0][0].h, i))
+        pos = {}
+        x, y, shelf_h = gutter, gutter, 0
+        ok = True
+        for i in order:
+            fr = strips[i][2]
+            fw, fh = fr[0][0].w, fr[0][0].h
+            step = up(fw + gutter)
+            sw = step * len(fr)
+            if x + sw > W:
+                x, y = gutter, up(y + shelf_h + gutter)
+                shelf_h = 0
+                if sw + gutter > W:
+                    ok = False
+                    break
+            x = up(x)
+            y = up(y)
+            pos[i] = (x, y, step)
+            x += sw
+            shelf_h = max(shelf_h, fh)
+        if ok:
+            break
+        W *= 2
+    H = up(y + shelf_h + gutter)
+    sheet_s = Img(W, H, fill=oc + (0,))
+    sheet_m = Img(W, H, fill=(0, 0, 0, 255))
+    placed = {}
+    for i, (uid, act, frames, anchor) in enumerate(strips):
+        x0, y0, step = pos[i]
+        rects = []
+        for k, (sh, mk) in enumerate(frames):
+            sheet_s.blit(sh, x0 + k * step, y0)
+            sheet_m.blit(mk, x0 + k * step, y0)
+            rects.append([x0 + k * step, y0, sh.w, sh.h])
+        placed[(uid, act)] = {"rects": rects, "anchor": [round(anchor[0], 2), round(anchor[1], 2)], "step": step}
+    sheet_s.save(os.path.join(out_dir, "atlas_shade.png"))
+    sheet_m.save(os.path.join(out_dir, "atlas_mask.png"))
+    return placed, [W, H]
+
+
 def load_action(d, prefix, n, oc):
     """Load frames <prefix>_<i>_*.png, crop to their union box (+1 px),
     finish them. -> (list of (shade, mask), crop origin)."""
@@ -271,37 +324,61 @@ def main():
             contact = os.path.abspath(args[i + 1]); i += 1
         i += 1
     os.makedirs(out_dir, exist_ok=True)
-    gdignore = os.path.join(out_dir, ".gdignore")
-    if not os.path.exists(gdignore):
-        open(gdignore, "w").close()
+    old_ignore = os.path.join(out_dir, ".gdignore")
+    if os.path.exists(old_ignore):
+        os.remove(old_ignore)   # step 1b: the game imports the atlas
+    for fn in os.listdir(out_dir):
+        # step 1a's per-unit sheets and iso sheets no longer live here
+        if fn.endswith(".png") and not fn.startswith("atlas_"):
+            os.remove(os.path.join(out_dir, fn))
+            imp = os.path.join(out_dir, fn + ".import")
+            if os.path.exists(imp):
+                os.remove(imp)
+    iso_dir = os.path.join(HERE, "iso")
+    os.makedirs(iso_dir, exist_ok=True)
+    open(os.path.join(iso_dir, ".gdignore"), "w").close()
     oc = tuple(int(round(c * 255)) for c in SPEC["outline"])
     ppm = SPEC["px_per_m"]
+    atl = SPEC["atlas"]
     man = {
-        "version": 1,
+        "version": 2,
         "px_per_m": ppm,
         "m_per_px": round(1.0 / ppm, 6),
-        "doc": "Frames: [x, y, w, h] px in the sheet; anchor: px from a frame's top-left to the unit's origin (the man's feet; top view: x forward = image right, the man's left = image up). Top view sprites face +x (right); rotate by facing. Mask: R primary, G secondary, B accent, A = 255 - 128 * check pattern. Recolour: see tools/sprites/pack.py.",
+        "doc": "Frames: [x, y, w, h] px in the atlas; anchor: px from a frame's top-left to the unit's origin (the man's feet; top view: x forward = image right, the man's left = image up). Top view sprites face +x (right); rotate by facing. Mask: R primary, G secondary, B accent, A = 255 - 128 * check pattern. Recolour: see tools/sprites/pack.py. atlas.table: per sprite set (1 = sets[0]) per action (idle, walk, attack, death) two vec4: (x0, y0, w, h) of frame 0 and (anchor x, anchor y, step, frames); frame k is at x0 + k * step.",
         "outline": SPEC["outline"],
         "palettes": SPEC["palettes"],
         "units": {},
     }
-    for uid, u in SPEC["units"].items():
+    strips = []   # (uid, act, frames, anchor)
+    for uid in atl["sets"]:
+        u = SPEC["units"][uid]
         d = os.path.join(frames_dir, uid)
         if not os.path.isdir(d):
-            print("skip (not rendered):", uid)
-            continue
+            sys.exit("not rendered: " + uid + " (run build.py)")
         info = json.load(open(os.path.join(d, "info.json")))
-        rows = []
         for act, a in SPEC["actions"].items():
             frames, (x0, y0) = load_action(d, act, a["frames"], oc)
-            rows.append((act, frames, (info["anchor"][0] - x0, info["anchor"][1] - y0)))
-        entries, size = pack_rows(rows, out_dir, uid)
+            strips.append((uid, act, frames, (info["anchor"][0] - x0, info["anchor"][1] - y0)))
+    placed, size = pack_atlas(strips, out_dir, atl["align"], atl["gutter"], oc)
+    table = []
+    for uid in atl["sets"]:
+        acts = {}
         for act, a in SPEC["actions"].items():
-            entries[act].update({"fps": a["fps"], "loop": a["loop"]})
-        man["units"][uid] = {"name": u["name"], "view": "top",
-                             "shade": uid + "_shade.png", "mask": uid + "_mask.png",
-                             "sheet_size": size, "actions": entries}
-        print("packed %s: sheet %dx%d" % (uid, size[0], size[1]))
+            p = placed[(uid, act)]
+            acts[act] = {"frames": p["rects"], "anchor": p["anchor"], "fps": a["fps"], "loop": a["loop"]}
+            r0 = p["rects"][0]
+            table.append([r0[0], r0[1], r0[2], r0[3]])
+            table.append([p["anchor"][0], p["anchor"][1], p["step"], len(p["rects"])])
+        man["units"][uid] = {"name": SPEC["units"][uid]["name"], "view": "top",
+                             "set": atl["sets"].index(uid) + 1,
+                             "shade": "atlas_shade.png", "mask": "atlas_mask.png",
+                             "sheet_size": size, "actions": acts}
+    man["atlas"] = {"shade": "atlas_shade.png", "mask": "atlas_mask.png", "size": size,
+                    "sets": atl["sets"], "actions": list(SPEC["actions"].keys()),
+                    "fps": [a["fps"] for a in SPEC["actions"].values()],
+                    "palettes": list(SPEC["palettes"].keys()), "table": table}
+    print("atlas %dx%d: %d sets x %d actions" % (size[0], size[1], len(atl["sets"]), len(SPEC["actions"])))
+    write_game_tables(man["atlas"], SPEC["palettes"])
     iso = SPEC.get("iso")
     if iso:
         d = os.path.join(frames_dir, "iso_" + iso["unit"])
@@ -329,22 +406,104 @@ def main():
                     frames.append(finish_frame(sh, mk, pt, oc))
                 rows.append(("d%d" % k, frames, (info["anchor"][0] - x0, info["anchor"][1] - y0)))
             name = "iso_" + iso["unit"]
-            entries, size = pack_rows(rows, out_dir, name)
+            entries, size = pack_rows(rows, iso_dir, name)
             fps = SPEC["actions"][iso["action"]]["fps"]
             for e in entries.values():
                 e.update({"fps": fps, "loop": 1})
             man["iso"] = {"unit": iso["unit"], "view": "iso",
                           "elevation_deg": iso["elevation_deg"], "action": iso["action"],
                           "dir_doc": info["dir_doc"],
-                          "shade": name + "_shade.png", "mask": name + "_mask.png",
+                          "shade": "res://tools/sprites/iso/" + name + "_shade.png",
+                          "mask": "res://tools/sprites/iso/" + name + "_mask.png",
                           "sheet_size": size, "directions": entries}
             print("packed %s: sheet %dx%d" % (name, size[0], size[1]))
     with open(os.path.join(out_dir, "manifest.json"), "w") as f:
         json.dump(man, f, indent=1)
-    total = sum(os.path.getsize(os.path.join(out_dir, f)) for f in os.listdir(out_dir))
+    total = sum(os.path.getsize(os.path.join(out_dir, f)) for f in os.listdir(out_dir) if not f.endswith(".import"))
     print("assets/sprites total: %.1f KB" % (total / 1024.0))
     if contact:
         write_contact(man, out_dir, contact)
+
+
+# ---------------------------------------------------------------- game tables
+
+def _f(v):
+    return ("%.4f" % v).rstrip("0").rstrip(".") + ("" if "." in ("%.4f" % v).rstrip("0").rstrip(".") else ".0")
+
+
+def write_game_tables(atlas, palettes):
+    """game/sprite_atlas.gd (constants for soldier_layer.gd: the frame table
+    for the texture path's uniform array, the palettes) and
+    game/sprite_frames.gdshaderinc (the same table as constants for the
+    CPU-fed path, which may not index a uniform array in the vertex stage).
+    Generated: edit spec.json and re-run pack.py."""
+    tab = atlas["table"]
+    W, H = atlas["size"]
+    g = ["extends RefCounted",
+         "## GENERATED by tools/sprites/pack.py from tools/sprites/spec.json: do not edit.",
+         "## The soldier atlas (assets/sprites/atlas_*.png): per sprite set s (1..%d) and" % len(atlas["sets"]),
+         "## action a (0 idle, 1 walk, 2 attack, 3 death) two entries at ((s - 1) * 4 + a) * 2:",
+         "## (x0, y0, w, h) of frame 0 in px, (anchor x, anchor y, step, frames);",
+         "## frame k is at x0 + k * step. Palettes in campaign/cdata.gd FACTIONS order.",
+         "",
+         "const SIZE := Vector2i(%d, %d)" % (W, H),
+         "const SETS: Array[String] = [%s]" % ", ".join('"%s"' % k for k in atlas["sets"]),
+         "const FPS: Array[int] = [%s]" % ", ".join(str(v) for v in atlas["fps"]),
+         "const TABLE: Array[Vector4] = ["]
+    for r in tab:
+        g.append("\tVector4(%s)," % ", ".join(_f(v) for v in r))
+    g.append("]")
+    g.append("const PALETTE_KEYS: Array[String] = [%s]" % ", ".join('"%s"' % k for k in atlas["palettes"]))
+    g.append("## Per palette: primary, secondary, accent, pattern colour (sRGB), pattern_k.")
+    g.append("const PALETTES: Array = [")
+    for k in atlas["palettes"]:
+        p = palettes[k]
+        cols = ", ".join("Color(%s)" % ", ".join(_f(c) for c in p[n]) for n in ("primary", "secondary", "accent", "pattern"))
+        g.append("\t[%s, %d],  # %s" % (cols, p["pattern_k"], p["name"]))
+    g.append("]")
+    open(os.path.join(ROOT, "game", "sprite_atlas.gd"), "w").write("\n".join(g) + "\n")
+    n = len(tab)
+    h = ["// GENERATED by tools/sprites/pack.py from tools/sprites/spec.json: do not edit.",
+         "// The soldier atlas frame table (see game/sprite_atlas.gd): entry k =",
+         "// ((set - 1) * 4 + action) * 2 + j; j 0: (x0, y0, w, h), 1: (anchor x,",
+         "// anchor y, step, frames). The texture path reads it from a uniform array",
+         "// (soldier_layer.gd fills frame_tab from sprite_atlas.gd TABLE), the",
+         "// CPU-fed path from these constants: the same numbers.",
+         "const vec2 ATLAS_SIZE = vec2(%s, %s);" % (_f(W), _f(H)),
+         "const int ATLAS_ENTRIES = %d;" % n,
+         "",
+         "float action_fps(int a) {"]
+    for a, fps in enumerate(atlas["fps"][:-1]):
+        h.append("\tif (a == %d) { return %s; }" % (a, _f(fps)))
+    h.append("\treturn %s;" % _f(atlas["fps"][-1]))
+    h.append("}")
+    h.append("")
+    h.append("#ifdef CPU_FED")
+    h.append("vec4 frame_entry(int k) {")
+    # a two-level if chain (by set, then entry): at most ~12 compares
+    per = 8
+    nsets = n // per
+    for si in range(nsets):
+        h.append("\tif (k < %d) {" % ((si + 1) * per))
+        for j in range(per):
+            k = si * per + j
+            vals = ", ".join(_f(v) for v in tab[k])
+            if j < per - 1:
+                h.append("\t\tif (k == %d) { return vec4(%s); }" % (k, vals))
+            else:
+                h.append("\t\treturn vec4(%s);" % vals)
+        h.append("\t}")
+    h.append("\treturn vec4(0.0);")
+    h.append("}")
+    h.append("#else")
+    h.append("uniform vec4 frame_tab[%d];" % n)
+    h.append("")
+    h.append("vec4 frame_entry(int k) {")
+    h.append("\treturn frame_tab[k];")
+    h.append("}")
+    h.append("#endif")
+    open(os.path.join(ROOT, "game", "sprite_frames.gdshaderinc"), "w").write("\n".join(h) + "\n")
+    print("wrote game/sprite_atlas.gd, game/sprite_frames.gdshaderinc")
 
 
 # ---------------------------------------------------------------- contact
@@ -364,13 +523,17 @@ def recolor(s, m, pal):
     return out
 
 
+def _file(out_dir, f):
+    return os.path.join(ROOT, f[6:]) if f.startswith("res://") else os.path.join(out_dir, f)
+
+
 def write_contact(man, out_dir, path, scale=3):
     grass = (96, 132, 66)
     tiles = []  # (img, x, y)
     rows = []
     for uid, u in man["units"].items():
-        sh = Img.load(os.path.join(out_dir, u["shade"]))
-        mk = Img.load(os.path.join(out_dir, u["mask"]))
+        sh = Img.load(_file(out_dir, u["shade"]))
+        mk = Img.load(_file(out_dir, u["mask"]))
         row = []
         for pk, pal in man["palettes"].items():
             for act in ("idle", "walk", "attack", "death"):
@@ -380,8 +543,8 @@ def write_contact(man, out_dir, path, scale=3):
         rows.append(row)
     if "iso" in man:
         u = man["iso"]
-        sh = Img.load(os.path.join(out_dir, u["shade"]))
-        mk = Img.load(os.path.join(out_dir, u["mask"]))
+        sh = Img.load(_file(out_dir, u["shade"]))
+        mk = Img.load(_file(out_dir, u["mask"]))
         row = []
         for k in range(len(u["directions"])):
             row.append((sh, mk, u["directions"]["d%d" % k]["frames"][1], man["palettes"]["rome"]))

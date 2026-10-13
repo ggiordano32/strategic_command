@@ -2239,6 +2239,7 @@ func fight(bid: int) -> void:
 	_battle_id = bid
 	battle = Battle.new()
 	battle.custom_scenario = _battle_built["scenario"]
+	battle.unit_faction = _battle_built.get("unit_faction", [])
 	battle.seed_value = int(_battle_built["seed"])
 	battle.scenario_id = "campaign"
 	battle.campaign_mode = true
@@ -2324,6 +2325,7 @@ func fight_live(bid: int, create: bool, keep: bool = false) -> void:
 	coop.failed.connect(func(code: String, text: String): _coop_failed(code, text))
 	battle = Battle.new()
 	battle.custom_scenario = _battle_built["scenario"]
+	battle.unit_faction = _battle_built.get("unit_faction", [])
 	battle.seed_value = int(_battle_built["seed"])
 	battle.scenario_id = "campaign_live"
 	battle.campaign_mode = true

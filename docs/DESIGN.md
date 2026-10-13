@@ -3575,16 +3575,69 @@ saddle cloths. The same models render isometric: the Heavy Swords walk at
 32 degrees elevation in 8 directions (`iso_heavy_swords_*`), so a bird's-eye
 view is a camera change, not new art. Total output 184 KB; a full build
 takes about 14 s. Preview: `tools/sprites/preview/preview.tscn` (1x, about
-12 px a man, about 7 px a man, rotated blocks, iso). Not wired into the
-battle yet (`assets/sprites/.gdignore`).
+12 px a man, about 7 px a man, rotated blocks, iso). Wired into the battle
+in step 1b (below).
 
-Step 1b (next): an atlas of all units' frames for the soldier MultiMesh;
-per instance an action and frame (from the sim's state and a per-man
-phase; corpses take the last death frame), the frame rect and anchor as a
-small table (uniform array on the texture path, constants or
-INSTANCE_CUSTOM on the CPU-fed path, as `sprite_rect` is today); the mask
-as a second sampler and the palette per side (two vec3 x 3 + pattern) in
-place of the side tint; selection / under-fire marks kept as today.
+### Sprite pipeline (step 1b, 2026-10-13)
+
+The rendered sprites are in the battle. **Art fixes** first (owner's
+notes on 1a): the horse is chunkier from above (broader barrel, chest and
+rump, thicker neck and head, a larger muzzle and ears) and its legs splay
+outward as they swing, so hooves show beside the barrel; the death no
+longer rolls the horse onto its side (which read as a standing horse in
+profile) but sinks it flat on its belly, legs splayed out both sides, neck
+and head laid down on their side, the rider thrown clear. (1a built the
+right legs on the left legs' bones, so they moved as one pair; fixed: the
+gait is diagonal now.) Infantry heads and shields are a few % bigger to
+read at 7 px a man. A fourth set, **Pikemen**, is the Spearmen with a
+5.6 m sarissa and a smaller shield.
+
+**Atlas.** `pack.py` packs every set's frames into one pair,
+`assets/sprites/atlas_shade.png` and `atlas_mask.png` (1024 x 332; every
+frame starts on a 4 px step with a 4 px gutter so mip levels up to 2 never
+mix frames; imported lossless with mipmaps). It also generates
+`game/sprite_atlas.gd` (the frame table, the palettes) and
+`game/sprite_frames.gdshaderinc` (the same table as shader constants).
+The table: per set and action (idle, walk, attack, death) frame 0's rect
+(x0, y0, w, h) and (anchor x, anchor y, step, frames); frame k is at x0 + k
+x step. The manifest keeps the same numbers for tools.
+
+**Which set.** A display field on the unit rows, `sprite_set` (0 = the
+procedural sprite, `sprite`): 1 Heavy Swords for the heavy and light
+lines, 2 Spearmen for spear lines, 3 Pikemen for pike lines, 4 Shock
+Cavalry for every horse row (cavalry, missile cavalry, generals). Archers,
+javelins, slingers, camels, elephants, dogs, artillery crews and engines,
+wagons and characters keep their procedural sprites until their own sets
+are built (`tools/sprites/README.md`).
+
+**Palettes per faction**, not per side: Rome, Carthage, Macedon (saffron,
+crimson), Epirus (violet, cream), the Greek League (sky blue, white),
+Syracuse (teal, gold), the Iberians (undyed white with a crimson check),
+the Gauls. A campaign battle passes CBattle's `unit_faction` to the
+battle; a unit without one takes its side's (the most common among its
+side's units, else the faction whose roster alone has its units, else Rome
+for side 0 and Carthage for side 1: scenarios and custom battles). The
+side shows by the unit markers and the selection tint, not on the men.
+
+**Shaders** (`game/soldiers.gdshaderinc`). An atlas man's action comes
+from his state: dead, the death's last frame (the corpse layer); knocked
+down, its middle frame; fighting, or his unit shooting while he stands,
+attack; moving (more than 2 cm a tick) or routing (1.6 x faster), walk;
+else idle. The frame comes from the view clock `now` (ticks, interpolated:
+the soldier materials get it with `alpha`) plus a phase fract(index x
+0.618), so a block does not step in lockstep; nothing is written to the
+sim. The texture path reads the table from a uniform array (`frame_tab`),
+the unit's set, palette and shooting from its flags (bits 12-15, 16-19,
+3); the CPU-fed path from constants (an if chain, as `sprite_rect`), with
+INSTANCE_CUSTOM.z = set + 16 x palette and .w = the instance's index. The
+fragment stage recolours by the mask from a 4 x 8 palette texture with the
+1a formula and folds the state tints (routing, knocked down, under fire,
+selected, corpse) into one multiply-add. Still one MultiMesh draw call per
+soldier layer; the probe is unchanged. Rendering only the soldiers of one
+frame offscreen on both paths gives identical pixels (sub-pixel edge
+differences far from the origin predate the atlas). Frame time at 4,000
+men is unchanged within noise on this desktop; Graphics Low keeps the
+animation (holding it measured no cheaper).
 
 ## 9. Milestones
 

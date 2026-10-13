@@ -83,6 +83,9 @@ var terrain_kind := -1
 var ground := -1
 ## A ready-made scenario (campaign battles) used instead of scenario_id.
 var custom_scenario: Dictionary = {}
+## Campaign faction index per unit (CBattle "unit_faction"): the soldiers'
+## palettes (view only; empty: from each side's units, see SoldierLayer).
+var unit_faction: Array = []
 ## Sandbox: battle AI skill for both sides (sim/ai_profile.gd), -1 = the
 ## scenario's own (campaign battles carry theirs in the scenario).
 var ai_skill := -1
@@ -259,6 +262,7 @@ func _ready() -> void:
 
 	soldiers = SoldierLayer.new()
 	soldiers.viewer_side = player_side
+	soldiers.unit_faction = unit_faction
 	add_child(soldiers)
 	soldiers.setup(sim, PX_PER_M)
 	soldiers.probed.connect(_on_soldier_probe)

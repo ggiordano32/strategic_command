@@ -15,6 +15,11 @@ extends Node2D
 ##   WebGL draws nothing from a texture read in the vertex stage (Chrome on
 ##   an Adreno 650 tablet, 2026-10-08).
 ##
+## Units whose type has a sprite_set draw from the Blender-rendered atlas
+## (assets/sprites, tools/sprites), recoloured by their faction's palette
+## and animated in the shaders from each man's state and the view clock
+## (see soldiers.gdshaderinc); the rest keep the procedural `_make_atlas`.
+##
 ## Both draw the same pixels (see soldiers.gdshaderinc). The battle's
 ## self-check (`_probe`) switches to the CPU-fed path when the texture path
 ## draws nothing and remembers it in user://settings.cfg [video] soldiers.
@@ -24,6 +29,12 @@ const PR_SHADER := preload("res://game/projectiles.gdshader")
 const SHADER_CPU := preload("res://game/soldiers_cpu.gdshader")
 const PR_SHADER_CPU := preload("res://game/projectiles_cpu.gdshader")
 const UT := preload("res://sim/unit_types.gd")
+const SpriteAtlas := preload("res://game/sprite_atlas.gd")
+const CData := preload("res://campaign/cdata.gd")
+## The sprite atlas pair (loaded, not preloaded: tools/check_scripts.sh
+## parses scripts in a copy of the project without the imported assets).
+const ATLAS_SHADE_PATH := "res://assets/sprites/atlas_shade.png"
+const ATLAS_MASK_PATH := "res://assets/sprites/atlas_mask.png"
 const TEX_W := 1024
 const BLOCKS := 8
 const PR_BLOCKS := 9
@@ -39,6 +50,10 @@ const C_A := 1     # facing (soldiers), t0 (missiles)
 const C_B := 5     # state (soldiers), t1 (missiles)
 const C_SPRITE := 8
 const C_FLAGS := 9
+const C_LOOK := 10   # sprite set + 16 x palette (per unit run; engines 0)
+const C_IDX := 11    # the instance's index (the man's animation phase)
+## Per-unit flag bits (both paths; see soldiers.gdshaderinc).
+const F_SHOOT := 8
 const PR_STEP := 256
 
 const SETTINGS := "user://settings.cfg"
@@ -83,6 +98,12 @@ const PROBE_FRAMES := 30
 
 ## Built once per page session (procedural, ~30k pixels).
 static var _atlas_cache: ImageTexture = null
+## Faction palettes as a texture (one row each: primary, secondary, accent,
+## pattern colour with pattern_k in alpha), read in the fragment stage.
+static var _pal_cache: ImageTexture = null
+## Side palettes when nothing names a unit's faction (scenarios, custom
+## battles without faction-only units): Rome and Carthage.
+const DEFAULT_SIDE_FACTION: Array[String] = ["rome", "carthage"]
 
 var px_per_m: float = 10.0
 var sim  # BattleSim (untyped to keep the view decoupled)
@@ -91,6 +112,11 @@ var selected_units: Dictionary = {}
 ## The side whose view this is: the men of a unit hidden from it (the
 ## enemy's assassin before he acts, BattleSim.hidden_from) are not drawn.
 var viewer_side := -1
+## Campaign faction index per unit (CBattle "unit_faction", sim unit order;
+## set before setup; -1 or missing: from its side, see _palette_rows).
+var unit_faction: Array = []
+## Atlas animation (anim_on): off holds every atlas man on his first frame.
+var animate := true
 ## The path in use: false = texture, true = CPU-fed (see set_cpu_fed).
 var cpu_fed := false
 ## Switch to the CPU-fed path (and remember it) when the probe sees no
@@ -108,6 +134,7 @@ var _pr_cap := 0
 var _flags := PackedInt32Array()
 var _unit_sprite := PackedInt32Array()
 var _unit_engine := PackedInt32Array()  # engine sprite per unit (0 = none)
+var _unit_look := PackedInt32Array()    # sprite set + 16 x palette row per unit
 var _e_state := PackedInt32Array()
 var _pr_flags := PackedInt32Array()
 var _pr_was_active := true
@@ -164,10 +191,13 @@ func setup(p_sim, p_px_per_m: float) -> void:
 	_flags.resize(sim.n_units)
 	_unit_sprite.resize(sim.n_units)
 	_unit_engine.resize(sim.n_units)
+	_unit_look.resize(sim.n_units)
 	_e_state.resize(sim.n_eng)
 	_pr_flags.resize(sim.n_units)
+	var pal := _palette_rows()
 	for u in sim.n_units:
 		_unit_sprite[u] = UT.stat(sim.u_otype[u], "sprite")
+		_unit_look[u] = UT.stat(sim.u_otype[u], "sprite_set") + 16 * pal[u]
 		_unit_engine[u] = _engine_sprite_of(u)
 		_pr_flags[u] = _pr_flag_of(u)
 	_last_eu = sim.e_unit.duplicate()
@@ -192,6 +222,9 @@ func setup(p_sim, p_px_per_m: float) -> void:
 	# Testing aid: the texture path's probe reports nothing drawn, as on the
 	# devices it fails on (exercises the automatic switch).
 	_probe_fail = "--soldier-probe-fail" in _launch_args() or "--soldier-probe-fail=1" in _launch_args()
+	# Testing aid: hold the atlas men's animation (frame-time comparisons).
+	if "--soldier-anim=0" in _launch_args():
+		animate = false
 	set_cpu_fed(forced == "cpu" or (forced == "" and load_pref() == "cpu"))
 
 
@@ -221,7 +254,84 @@ func _soldier_material(shader: Shader, pass_id: int) -> ShaderMaterial:
 	mat.shader = shader
 	mat.set_shader_parameter("px_per_unit", px_per_m / 1024.0)
 	mat.set_shader_parameter("layer_pass", pass_id)
+	mat.set_shader_parameter("atlas_shade", load(ATLAS_SHADE_PATH) as Texture2D)
+	mat.set_shader_parameter("atlas_mask", load(ATLAS_MASK_PATH) as Texture2D)
+	mat.set_shader_parameter("pal_tex", palette_texture())
+	mat.set_shader_parameter("anim_on", 1.0 if animate else 0.0)
 	return mat
+
+
+## Hold (false) or run the atlas men's animation (Graphics Low may hold it).
+func set_animate(on: bool) -> void:
+	animate = on
+	for m in _gpu_mats + _cpu_mats:
+		m.set_shader_parameter("anim_on", 1.0 if on else 0.0)
+
+
+static func palette_texture() -> ImageTexture:
+	if _pal_cache != null:
+		return _pal_cache
+	var n := SpriteAtlas.PALETTES.size()
+	var img := Image.create(4, n, false, Image.FORMAT_RGBA8)
+	for r in n:
+		var p: Array = SpriteAtlas.PALETTES[r]
+		for c in 4:
+			var col: Color = p[c]
+			if c == 3:
+				col.a = 1.0 if int(p[4]) != 0 else 0.0
+			img.set_pixel(c, r, col)
+	_pal_cache = ImageTexture.create_from_image(img)
+	return _pal_cache
+
+
+## Palette row (SpriteAtlas.PALETTE_KEYS) per unit: its campaign faction's
+## (unit_faction); else its side's: the faction most of the side's known
+## units belong to, else the faction whose roster alone has the side's
+## units (custom battles: principes say Rome), else Rome / Carthage.
+func _palette_rows() -> PackedInt32Array:
+	var nu: int = sim.n_units
+	var rows := PackedInt32Array()
+	rows.resize(nu)
+	rows.fill(-1)
+	var votes := [{}, {}]
+	for u in nu:
+		var f := int(unit_faction[u]) if u < unit_faction.size() else -1
+		if f >= 0 and f < CData.FACTIONS.size():
+			rows[u] = maxi(SpriteAtlas.PALETTE_KEYS.find(str(CData.FACTIONS[f]["key"])), -1)
+			if rows[u] >= 0:
+				var sd: Dictionary = votes[sim.u_side[u] & 1]
+				sd[rows[u]] = int(sd.get(rows[u], 0)) + 2
+	# Faction-only units (a key in one roster alone) vote a little.
+	for u in nu:
+		if rows[u] >= 0:
+			continue
+		var key := UT.key_of(sim.u_otype[u])
+		var only := ""
+		for fk in CData.ROSTERS:
+			var has := false
+			for line in CData.ROSTERS[fk]:
+				if (CData.ROSTERS[fk][line] as Array).has(key):
+					has = true
+			if has:
+				only = str(fk) if only == "" else "-"
+		if only != "" and only != "-":
+			var r := SpriteAtlas.PALETTE_KEYS.find(only)
+			if r >= 0:
+				var sd: Dictionary = votes[sim.u_side[u] & 1]
+				sd[r] = int(sd.get(r, 0)) + 1
+	var side_row := PackedInt32Array([SpriteAtlas.PALETTE_KEYS.find(DEFAULT_SIDE_FACTION[0]),
+		SpriteAtlas.PALETTE_KEYS.find(DEFAULT_SIDE_FACTION[1])])
+	for sd in 2:
+		var best := -1
+		for r in SpriteAtlas.PALETTE_KEYS.size():  # (index order: ties go to the first)
+			if int(votes[sd].get(r, 0)) > int(votes[sd].get(best, 0)):
+				best = r
+		if best >= 0:
+			side_row[sd] = best
+	for u in nu:
+		if rows[u] < 0:
+			rows[u] = maxi(side_row[sim.u_side[u] & 1], 0)
+	return rows
 
 
 func _missile_material(shader: Shader) -> ShaderMaterial:
@@ -255,6 +365,7 @@ func _build_gpu() -> void:
 		mat.set_shader_parameter("rows_per_block", _rows)
 		mat.set_shader_parameter("tex_width", TEX_W)
 		mat.set_shader_parameter("spr_rect", rects)
+		mat.set_shader_parameter("frame_tab", SpriteAtlas.TABLE)
 		_gpu_mats.append(mat)
 	# Projectiles: one instance per sim projectile slot.
 	_pr_rows = maxi(1, (maxi(_pr_cap, sim.n_units) + TEX_W - 1) / TEX_W)
@@ -291,6 +402,13 @@ func _build_cpu() -> void:
 	_mm_cpu = _cpu_multimesh(_n_inst)
 	_cbuf = Image.create(STRIDE, maxi(_n_inst, 1), false, Image.FORMAT_RF)
 	_ccol = Image.create(1, maxi(_n_inst, 1), false, Image.FORMAT_RF)
+	var idx := PackedFloat32Array()
+	idx.resize(_n_inst)
+	for i in _n_inst:
+		idx[i] = float(i)
+	if _n_inst > 0:
+		_ccol.set_data(1, _n_inst, false, Image.FORMAT_RF, idx.to_byte_array())
+		_cbuf.blit_rect(_ccol, Rect2i(0, 0, 1, _n_inst), Vector2i(C_IDX, 0))
 	_build_runs()
 	for pass_id in 2:
 		_cpu_mats.append(_soldier_material(SHADER_CPU, pass_id))
@@ -320,6 +438,8 @@ func _build_runs() -> void:
 		var u := _runs[r + 2]
 		var spr := _unit_sprite[u] if _runs[r] < sim.n else _unit_engine[u]
 		_cbuf.fill_rect(Rect2i(C_SPRITE, _runs[r], 1, _runs[r + 1]), Color(float(spr), 0.0, 0.0))
+		var look := _unit_look[u] if _runs[r] < sim.n else 0
+		_cbuf.fill_rect(Rect2i(C_LOOK, _runs[r], 1, _runs[r + 1]), Color(float(look), 0.0, 0.0))
 
 
 ## Engine sprite of the engines whose e_unit is u: those it works (its
@@ -440,7 +560,8 @@ func upload() -> void:
 	var tick: int = sim.tick
 	for u in nu:
 		var under_fire := 4 if tick - sim.u_hit_t[u] < 10 else 0
-		_flags[u] = (sim.u_side[u] & 1) | (2 if selected_units.has(u) else 0) | under_fire
+		var shoot := F_SHOOT if sim.u_ftarget[u] >= 0 else 0
+		_flags[u] = (sim.u_side[u] & 1) | (2 if selected_units.has(u) else 0) | under_fire | shoot
 	# Engines follow the soldiers in every array.
 	var xs: PackedInt32Array = sim.pos_x
 	var ys: PackedInt32Array = sim.pos_y
@@ -482,7 +603,7 @@ func _upload_gpu(xs: PackedInt32Array, ys: PackedInt32Array, pxs: PackedInt32Arr
 		fs: PackedInt32Array, sts: PackedInt32Array, missiles: bool) -> void:
 	var gflags := _flags.duplicate()
 	for u in sim.n_units:
-		gflags[u] |= (_unit_sprite[u] << 4) | (_unit_engine[u] << 8)
+		gflags[u] |= (_unit_sprite[u] << 4) | (_unit_engine[u] << 8) | (_unit_look[u] << 12)
 	var block := _rows * TEX_W * 4
 	_image.set_data(TEX_W, BLOCKS * _rows, false, Image.FORMAT_RGBA8, _pack([xs, ys, pxs, pys, fs, sts,
 		sim.unit_of + sim.e_unit if sim.n_eng > 0 else sim.unit_of, gflags], block))
@@ -592,10 +713,12 @@ static func _index_data(i: int) -> Color:
 
 ## alpha: interpolation between the previous and the current tick.
 func set_alpha(a: float) -> void:
+	var now := float(sim.tick) - 1.0 + a
 	for m in _materials:
 		m.set_shader_parameter("alpha", a)
+		m.set_shader_parameter("now", now)
 	# Positions on screen are those of tick (sim.tick - 1) + alpha.
-	_pr_mat.set_shader_parameter("now", float(sim.tick) - 1.0 + a)
+	_pr_mat.set_shader_parameter("now", now)
 
 
 ## The command line's user args plus, on the web, the page URL's query

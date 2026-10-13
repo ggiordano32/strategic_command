@@ -1,7 +1,7 @@
 extends Node2D
-## Sprite pipeline step 1a preview: loads assets/sprites/manifest.json and
-## the sheets (raw PNGs, read with Image.load_from_file: the folder has a
-## .gdignore until step 1b), and shows every unit's actions animating,
+## Sprite pipeline preview: loads assets/sprites/manifest.json and the atlas
+## (raw PNGs, read with Image.load_from_file; the iso sheets live in
+## tools/sprites/iso/), and shows every unit's actions animating,
 ## recoloured per palette by recolor.gdshader, at 1x, at the game's typical
 ## zoom (about 12 px per man) and tiny (about 7 px per man), on grass; plus
 ## the iso unit's walk in 8 directions.
@@ -43,7 +43,8 @@ func _ready() -> void:
 
 func _texture(file: String) -> ImageTexture:
 	if not tex.has(file):
-		var img := Image.load_from_file(ProjectSettings.globalize_path(DIR + file))
+		var path := file if file.begins_with("res://") else DIR + file
+		var img := Image.load_from_file(ProjectSettings.globalize_path(path))
 		img.generate_mipmaps()
 		tex[file] = ImageTexture.create_from_image(img)
 	return tex[file]

@@ -315,11 +315,24 @@ def build_part_mesh(p):
     return me
 
 
+def right_of(name):
+    """The right-side twin of a left-side name: x.L -> x.R, and the horse's
+    legs leg.FL -> leg.FR, shin.BL -> shin.BR; None if not a left name."""
+    if name.endswith(".L"):
+        return name[:-2] + ".R"
+    if len(name) > 3 and name[-3] == "." and name[-2] in "FB" and name[-1] == "L":
+        return name[:-1] + "R"
+    return None
+
+
 def mirrored(p):
     q = json.loads(json.dumps(p))
-    q["n"] = p["n"].replace(".L", ".R") if ".L" in p["n"] else p["n"] + ".R"
-    if q.get("bone", "").endswith(".L"):
-        q["bone"] = q["bone"][:-2] + ".R"
+    q["n"] = right_of(p["n"]) or (p["n"].replace(".L", ".R") if ".L" in p["n"] else p["n"] + ".R")
+    rb = right_of(q.get("bone", ""))
+    if rb:
+        # (step 1a built the horse's right legs on the left legs' bones:
+        # they moved as one pair; 1b: each leg on its own bone)
+        q["bone"] = rb
     for k in ("pos", "a", "b"):
         if k in q:
             q[k][1] = -q[k][1]
@@ -472,7 +485,9 @@ def humanoid_pose(action, i, n, mounted=False):
             add("shin.R", "y", [0, 34, 0][i])
             loc = [[-0.02, 0, 0], [-0.08, 0, 0.04], [0.05, 0, 0.16]][i]
         else:
-            loc = [[0, 0, 0.05], [-0.3, -0.15, 0.1], [-0.55, -0.3, -0.3]][i]
+            # Thrown off to the right, clear of the horse lying flat (his
+            # root hangs from the horse's body, which sinks 0.86 m).
+            loc = [[0, -0.2, 0.25], [-0.2, -0.8, 0.45], [-0.3, -1.25, 0.95]][i]
     if mounted:
         if action != "death" or i == 0:
             add("thigh.L", "y", -78); add("thigh.L", "x", 16)
@@ -499,10 +514,14 @@ def horse_pose(action, i, n):
         add("tail", "x", 6)
     elif action == "walk":
         for leg, sg in (("FL", 1), ("BR", 1), ("FR", -1), ("BL", -1)):
-            add("leg." + leg, "y", -24 * s * sg)
+            add("leg." + leg, "y", -34 * s * sg)
             front = leg[0] == "F"
             bend = max(0.0, c * sg)
-            add("shin." + leg, "y", (36 if front else -24) * bend)
+            add("shin." + leg, "y", (40 if front else -28) * bend)
+            # Splay outward as the leg swings (seen from above the hooves
+            # show beside the barrel; +x lifts a left limb outward).
+            out = 10 + 14 * bend
+            add("leg." + leg, "x", out if leg[1] == "L" else -out)
         add("neck", "y", 5 * math.cos(2 * ph))
         add("tail", "x", 10 * s)
         loc[2] = 0.035 * math.cos(2 * ph)
@@ -518,13 +537,22 @@ def horse_pose(action, i, n):
         add("neck", "y", [-6, -14, -8, 0][i])
         loc[0] = [0.0, 0.12, 0.22, 0.08][i]
     elif action == "death":
-        add("root", "x", [-18, -55, -84][i])
-        add("neck", "y", [10, 25, 30][i])
-        add("neck", "x", [0, 10, 20][i])
+        # Sinks to the ground on its belly, legs splayed out to the sides,
+        # neck and head laid down on their side: from above a horse lying
+        # flat, never a profile.
+        add("root", "x", [-4, -8, -10][i])
+        add("neck", "y", [10, 22, 30][i])
+        # Neck and head follow the body down and lie on their (left) side:
+        # from above the cheek shows, not the mane and the top of the head.
+        # (the head is the neck's child: it rolls with it, no turn of its own)
+        add("neck", "x", [15, 45, 72][i])
+        add("head", "y", [0, 8, 14][i])
         for leg in ("FL", "FR", "BL", "BR"):
-            add("leg." + leg, "y", ([-20, -35, -30] if leg[0] == "F" else [15, 30, 25])[i])
-        add("tail", "x", [0, -10, -20][i])
-        loc = [[0, 0, 0], [0, 0, 0.1], [0, 0, 0.26]][i]
+            sp = [25, 55, 80][i]
+            add("leg." + leg, "x", sp if leg[1] == "L" else -sp)
+            add("leg." + leg, "y", ([-20, -30, -40] if leg[0] == "F" else [20, 30, 40])[i])
+        add("tail", "y", [10, 30, 55][i])
+        loc = [[0, 0, -0.25], [0, 0, -0.6], [0, 0, -0.86]][i]
     P["loc"] = tuple(loc)
     return P
 

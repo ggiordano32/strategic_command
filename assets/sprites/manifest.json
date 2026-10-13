@@ -1,8 +1,8 @@
 {
- "version": 1,
+ "version": 2,
  "px_per_m": 24,
  "m_per_px": 0.041667,
- "doc": "Frames: [x, y, w, h] px in the sheet; anchor: px from a frame's top-left to the unit's origin (the man's feet; top view: x forward = image right, the man's left = image up). Top view sprites face +x (right); rotate by facing. Mask: R primary, G secondary, B accent, A = 255 - 128 * check pattern. Recolour: see tools/sprites/pack.py.",
+ "doc": "Frames: [x, y, w, h] px in the atlas; anchor: px from a frame's top-left to the unit's origin (the man's feet; top view: x forward = image right, the man's left = image up). Top view sprites face +x (right); rotate by facing. Mask: R primary, G secondary, B accent, A = 255 - 128 * check pattern. Recolour: see tools/sprites/pack.py. atlas.table: per sprite set (1 = sets[0]) per action (idle, walk, attack, death) two vec4: (x0, y0, w, h) of frame 0 and (anchor x, anchor y, step, frames); frame k is at x0 + k * step.",
  "outline": [
   0.07,
   0.055,
@@ -59,6 +59,131 @@
    "pattern_k": 0,
    "note": "white linen and shields, Tyrian purple crests and rims, silvered helmets"
   },
+  "macedon": {
+   "name": "Macedon",
+   "primary": [
+    0.93,
+    0.7,
+    0.14
+   ],
+   "secondary": [
+    0.66,
+    0.1,
+    0.16
+   ],
+   "accent": [
+    0.86,
+    0.62,
+    0.28
+   ],
+   "pattern": [
+    0.7,
+    0.48,
+    0.08
+   ],
+   "pattern_k": 0,
+   "note": "saffron tunics and shields, crimson crests and rims, bronze helmets"
+  },
+  "epirus": {
+   "name": "Epirus",
+   "primary": [
+    0.52,
+    0.3,
+    0.8
+   ],
+   "secondary": [
+    0.96,
+    0.92,
+    0.78
+   ],
+   "accent": [
+    0.86,
+    0.62,
+    0.28
+   ],
+   "pattern": [
+    0.3,
+    0.14,
+    0.5
+   ],
+   "pattern_k": 0,
+   "note": "violet tunics and shields, cream crests and rims, bronze helmets"
+  },
+  "greeks": {
+   "name": "Greek League",
+   "primary": [
+    0.24,
+    0.52,
+    0.88
+   ],
+   "secondary": [
+    0.97,
+    0.97,
+    0.93
+   ],
+   "accent": [
+    0.86,
+    0.62,
+    0.28
+   ],
+   "pattern": [
+    0.12,
+    0.28,
+    0.6
+   ],
+   "pattern_k": 0,
+   "note": "sky blue tunics and shields, white crests and rims, bronze helmets"
+  },
+  "syracuse": {
+   "name": "Syracuse",
+   "primary": [
+    0.12,
+    0.64,
+    0.6
+   ],
+   "secondary": [
+    0.96,
+    0.78,
+    0.26
+   ],
+   "accent": [
+    0.8,
+    0.82,
+    0.88
+   ],
+   "pattern": [
+    0.06,
+    0.4,
+    0.38
+   ],
+   "pattern_k": 0,
+   "note": "teal tunics and shields, gold crests and rims, silvered helmets"
+  },
+  "iberians": {
+   "name": "the Iberians",
+   "primary": [
+    0.94,
+    0.92,
+    0.84
+   ],
+   "secondary": [
+    0.8,
+    0.12,
+    0.18
+   ],
+   "accent": [
+    0.62,
+    0.64,
+    0.68
+   ],
+   "pattern": [
+    0.74,
+    0.16,
+    0.18
+   ],
+   "pattern_k": 1,
+   "note": "undyed white linen with crimson bands (the check), crimson crests and rims, plain iron"
+  },
   "gauls": {
    "name": "the Gauls",
    "primary": [
@@ -89,25 +214,26 @@
   "heavy_swords": {
    "name": "Heavy Swords",
    "view": "top",
-   "shade": "heavy_swords_shade.png",
-   "mask": "heavy_swords_mask.png",
+   "set": 1,
+   "shade": "atlas_shade.png",
+   "mask": "atlas_mask.png",
    "sheet_size": [
-    260,
-    147
+    1024,
+    336
    ],
    "actions": {
     "idle": {
      "frames": [
       [
-       2,
-       2,
+       152,
+       304,
        34,
-       25
+       26
       ]
      ],
      "anchor": [
       9.0,
-      15.0
+      16.0
      ],
      "fps": 1,
      "loop": 1
@@ -115,38 +241,38 @@
     "walk": {
      "frames": [
       [
-       2,
-       29,
+       192,
+       304,
        41,
        26
       ],
       [
-       45,
-       29,
+       240,
+       304,
        41,
        26
       ],
       [
-       88,
-       29,
+       288,
+       304,
        41,
        26
       ],
       [
-       131,
-       29,
+       336,
+       304,
        41,
        26
       ],
       [
-       174,
-       29,
+       384,
+       304,
        41,
        26
       ],
       [
-       217,
-       29,
+       432,
+       304,
        41,
        26
       ]
@@ -161,26 +287,26 @@
     "attack": {
      "frames": [
       [
-       2,
-       57,
+       792,
+       144,
        49,
        38
       ],
       [
-       53,
-       57,
+       848,
+       144,
        49,
        38
       ],
       [
-       104,
-       57,
+       904,
+       144,
        49,
        38
       ],
       [
-       155,
-       57,
+       960,
+       144,
        49,
        38
       ]
@@ -195,26 +321,26 @@
     "death": {
      "frames": [
       [
-       2,
-       97,
-       59,
+       404,
+       88,
+       60,
        48
       ],
       [
-       63,
-       97,
-       59,
+       468,
+       88,
+       60,
        48
       ],
       [
-       124,
-       97,
-       59,
+       532,
+       88,
+       60,
        48
       ]
      ],
      "anchor": [
-      44.0,
+      45.0,
       31.0
      ],
      "fps": 6,
@@ -225,18 +351,19 @@
   "spearmen": {
    "name": "Spearmen",
    "view": "top",
-   "shade": "spearmen_shade.png",
-   "mask": "spearmen_mask.png",
+   "set": 2,
+   "shade": "atlas_shade.png",
+   "mask": "atlas_mask.png",
    "sheet_size": [
-    470,
-    162
+    1024,
+    336
    ],
    "actions": {
     "idle": {
      "frames": [
       [
-       2,
-       2,
+       484,
+       236,
        72,
        29
       ]
@@ -251,45 +378,45 @@
     "walk": {
      "frames": [
       [
-       2,
-       33,
-       76,
-       29
-      ],
-      [
-       80,
-       33,
-       76,
-       29
-      ],
-      [
-       158,
-       33,
-       76,
-       29
-      ],
-      [
+       4,
        236,
-       33,
        76,
-       29
+       30
       ],
       [
-       314,
-       33,
+       84,
+       236,
        76,
-       29
+       30
       ],
       [
-       392,
-       33,
+       164,
+       236,
        76,
-       29
+       30
+      ],
+      [
+       244,
+       236,
+       76,
+       30
+      ],
+      [
+       324,
+       236,
+       76,
+       30
+      ],
+      [
+       404,
+       236,
+       76,
+       30
       ]
      ],
      "anchor": [
       28.0,
-      19.0
+      20.0
      ],
      "fps": 9,
      "loop": 1
@@ -297,26 +424,26 @@
     "attack": {
      "frames": [
       [
-       2,
-       64,
+       4,
+       144,
        87,
        47
       ],
       [
-       91,
-       64,
+       96,
+       144,
        87,
        47
       ],
       [
-       180,
-       64,
+       188,
+       144,
        87,
        47
       ],
       [
-       269,
-       64,
+       280,
+       144,
        87,
        47
       ]
@@ -331,27 +458,164 @@
     "death": {
      "frames": [
       [
-       2,
-       113,
+       596,
+       88,
        83,
-       47
+       48
       ],
       [
-       87,
-       113,
+       684,
+       88,
        83,
-       47
+       48
       ],
       [
-       172,
-       113,
+       772,
+       88,
        83,
-       47
+       48
       ]
      ],
      "anchor": [
       47.0,
-      30.0
+      31.0
+     ],
+     "fps": 6,
+     "loop": 0
+    }
+   }
+  },
+  "pikemen": {
+   "name": "Pikemen",
+   "view": "top",
+   "set": 3,
+   "shade": "atlas_shade.png",
+   "mask": "atlas_mask.png",
+   "sheet_size": [
+    1024,
+    336
+   ],
+   "actions": {
+    "idle": {
+     "frames": [
+      [
+       4,
+       304,
+       141,
+       27
+      ]
+     ],
+     "anchor": [
+      40.0,
+      17.0
+     ],
+     "fps": 1,
+     "loop": 1
+    },
+    "walk": {
+     "frames": [
+      [
+       4,
+       272,
+       143,
+       28
+      ],
+      [
+       152,
+       272,
+       143,
+       28
+      ],
+      [
+       300,
+       272,
+       143,
+       28
+      ],
+      [
+       448,
+       272,
+       143,
+       28
+      ],
+      [
+       596,
+       272,
+       143,
+       28
+      ],
+      [
+       744,
+       272,
+       143,
+       28
+      ]
+     ],
+     "anchor": [
+      42.0,
+      17.0
+     ],
+     "fps": 9,
+     "loop": 1
+    },
+    "attack": {
+     "frames": [
+      [
+       316,
+       4,
+       152,
+       62
+      ],
+      [
+       472,
+       4,
+       152,
+       62
+      ],
+      [
+       628,
+       4,
+       152,
+       62
+      ],
+      [
+       784,
+       4,
+       152,
+       62
+      ]
+     ],
+     "anchor": [
+      44.0,
+      31.0
+     ],
+     "fps": 9,
+     "loop": 1
+    },
+    "death": {
+     "frames": [
+      [
+       372,
+       144,
+       133,
+       45
+      ],
+      [
+       512,
+       144,
+       133,
+       45
+      ],
+      [
+       652,
+       144,
+       133,
+       45
+      ]
+     ],
+     "anchor": [
+      47.0,
+      28.0
      ],
      "fps": 6,
      "loop": 0
@@ -361,25 +625,26 @@
   "shock_cavalry": {
    "name": "Shock Cavalry",
    "view": "top",
-   "shade": "shock_cavalry_shade.png",
-   "mask": "shock_cavalry_mask.png",
+   "set": 4,
+   "shade": "atlas_shade.png",
+   "mask": "atlas_mask.png",
    "sheet_size": [
-    548,
-    186
+    1024,
+    336
    ],
    "actions": {
     "idle": {
      "frames": [
       [
-       2,
-       2,
+       580,
+       196,
        85,
-       28
+       31
       ]
      ],
      "anchor": [
       29.0,
-      18.0
+      19.0
      ],
      "fps": 1,
      "loop": 1
@@ -387,45 +652,45 @@
     "walk": {
      "frames": [
       [
-       2,
-       32,
+       4,
+       196,
        89,
-       30
+       36
       ],
       [
-       93,
-       32,
+       100,
+       196,
        89,
-       30
+       36
       ],
       [
-       184,
-       32,
+       196,
+       196,
        89,
-       30
+       36
       ],
       [
-       275,
-       32,
+       292,
+       196,
        89,
-       30
+       36
       ],
       [
-       366,
-       32,
+       388,
+       196,
        89,
-       30
+       36
       ],
       [
-       457,
-       32,
+       484,
+       196,
        89,
-       30
+       36
       ]
      ],
      "anchor": [
       31.0,
-      18.0
+      19.0
      ],
      "fps": 9,
      "loop": 1
@@ -433,26 +698,26 @@
     "attack": {
      "frames": [
       [
-       2,
-       64,
+       4,
+       88,
        96,
        50
       ],
       [
-       100,
-       64,
+       104,
+       88,
        96,
        50
       ],
       [
-       198,
-       64,
+       204,
+       88,
        96,
        50
       ],
       [
-       296,
-       64,
+       304,
+       88,
        96,
        50
       ]
@@ -467,27 +732,27 @@
     "death": {
      "frames": [
       [
-       2,
-       116,
-       105,
-       68
+       4,
+       4,
+       98,
+       79
       ],
       [
-       109,
-       116,
-       105,
-       68
+       108,
+       4,
+       98,
+       79
       ],
       [
-       216,
-       116,
-       105,
-       68
+       212,
+       4,
+       98,
+       79
       ]
      ],
      "anchor": [
-      61.0,
-      49.0
+      55.0,
+      35.0
      ],
      "fps": 6,
      "loop": 0
@@ -495,14 +760,244 @@
    }
   }
  },
+ "atlas": {
+  "shade": "atlas_shade.png",
+  "mask": "atlas_mask.png",
+  "size": [
+   1024,
+   336
+  ],
+  "sets": [
+   "heavy_swords",
+   "spearmen",
+   "pikemen",
+   "shock_cavalry"
+  ],
+  "actions": [
+   "idle",
+   "walk",
+   "attack",
+   "death"
+  ],
+  "fps": [
+   1,
+   9,
+   9,
+   6
+  ],
+  "palettes": [
+   "rome",
+   "carthage",
+   "macedon",
+   "epirus",
+   "greeks",
+   "syracuse",
+   "iberians",
+   "gauls"
+  ],
+  "table": [
+   [
+    152,
+    304,
+    34,
+    26
+   ],
+   [
+    9.0,
+    16.0,
+    40,
+    1
+   ],
+   [
+    192,
+    304,
+    41,
+    26
+   ],
+   [
+    15.0,
+    16.0,
+    48,
+    6
+   ],
+   [
+    792,
+    144,
+    49,
+    38
+   ],
+   [
+    13.0,
+    22.0,
+    56,
+    4
+   ],
+   [
+    404,
+    88,
+    60,
+    48
+   ],
+   [
+    45.0,
+    31.0,
+    64,
+    3
+   ],
+   [
+    484,
+    236,
+    72,
+    29
+   ],
+   [
+    25.0,
+    19.0,
+    76,
+    1
+   ],
+   [
+    4,
+    236,
+    76,
+    30
+   ],
+   [
+    28.0,
+    20.0,
+    80,
+    6
+   ],
+   [
+    4,
+    144,
+    87,
+    47
+   ],
+   [
+    31.0,
+    23.0,
+    92,
+    4
+   ],
+   [
+    596,
+    88,
+    83,
+    48
+   ],
+   [
+    47.0,
+    31.0,
+    88,
+    3
+   ],
+   [
+    4,
+    304,
+    141,
+    27
+   ],
+   [
+    40.0,
+    17.0,
+    148,
+    1
+   ],
+   [
+    4,
+    272,
+    143,
+    28
+   ],
+   [
+    42.0,
+    17.0,
+    148,
+    6
+   ],
+   [
+    316,
+    4,
+    152,
+    62
+   ],
+   [
+    44.0,
+    31.0,
+    156,
+    4
+   ],
+   [
+    372,
+    144,
+    133,
+    45
+   ],
+   [
+    47.0,
+    28.0,
+    140,
+    3
+   ],
+   [
+    580,
+    196,
+    85,
+    31
+   ],
+   [
+    29.0,
+    19.0,
+    92,
+    1
+   ],
+   [
+    4,
+    196,
+    89,
+    36
+   ],
+   [
+    31.0,
+    19.0,
+    96,
+    6
+   ],
+   [
+    4,
+    88,
+    96,
+    50
+   ],
+   [
+    34.0,
+    22.0,
+    100,
+    4
+   ],
+   [
+    4,
+    4,
+    98,
+    79
+   ],
+   [
+    55.0,
+    35.0,
+    104,
+    3
+   ]
+  ]
+ },
  "iso": {
   "unit": "heavy_swords",
   "view": "iso",
   "elevation_deg": 32,
   "action": "walk",
   "dir_doc": "d0 faces east (+X, image right), then counter-clockwise in 45 degree steps (d2 faces north, away from the camera)",
-  "shade": "iso_heavy_swords_shade.png",
-  "mask": "iso_heavy_swords_mask.png",
+  "shade": "res://tools/sprites/iso/iso_heavy_swords_shade.png",
+  "mask": "res://tools/sprites/iso/iso_heavy_swords_mask.png",
   "sheet_size": [
    326,
    402

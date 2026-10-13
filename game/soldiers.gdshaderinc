@@ -12,14 +12,16 @@
 // `rows_per_block` rows of `tex_width` texels):
 //   0 pos_x, 1 pos_y, 2 prev_x, 3 prev_y, 4 facing, 5 state, 6 unit_of,
 //   7 unit flags (indexed by unit: bit0 side, bit1 selected, bit2 under
-//     fire, bits 4-7 sprite, bits 8-11 engine sprite)
+//     fire, bit3 shooting, bits 4-7 sprite, bits 8-11 engine sprite,
+//     bits 12-15 sprite set, bits 16-19 palette)
 //
 // CPU-fed variant (render_mode skip_vertex_transform): the same sim ints,
 // converted to floats natively and interleaved into the MultiMesh buffer by
 // soldier_layer.gd, read back through MODEL_MATRIX (layer node at identity):
 //   [3].xy current position, [0].xy previous position, [1].x facing,
 //   [1].y state; INSTANCE_CUSTOM.x sprite, .y side + 2 selected + 4 under
-//   fire. No texture fetch, uniform array, int uniform or bit operator in
+//   fire + 8 shooting, .z sprite set + 16 x palette, .w the instance's
+//   index. No texture fetch, uniform array, int uniform or bit operator in
 //   the vertex stage. Both variants draw the same pixels.
 //
 // Instances past the soldiers are artillery engines (state 6 working,
@@ -30,6 +32,20 @@
 // soldier covers only its sprite's rect of that box (soldier_layer.gd
 // SPR_RECT), so infantry stay small and pikes and horses get long quads,
 // all in this one draw call.
+//
+// Sprite sets (step 1b of the sprite pipeline, tools/sprites): units whose
+// type has a sprite_set > 0 are drawn from the Blender-rendered atlas
+// (atlas_shade / atlas_mask, game/sprite_frames.gdshaderinc for the frame
+// table) and recoloured in the fragment stage by their faction's palette
+// (pal_tex: one row per palette, primary, secondary, accent, pattern + k),
+// as tools/sprites/preview/recolor.gdshader. Per man an action from his
+// state (dead: the death's last frame; knocked down: its middle frame;
+// fighting, or shooting while standing: attack; moving or routing: walk;
+// else idle) and a frame from the view clock `now` (ticks, interpolated)
+// plus a phase from his index, so a block does not step in lockstep. The
+// side is not painted on the man: his unit's marker and the selection tint
+// show it. View only: nothing here feeds back to the sim.
+#include "res://game/sprite_frames.gdshaderinc"
 
 const int SPRITES = 12;
 const float CELL_X0 = -1.6;
@@ -41,8 +57,16 @@ uniform float alpha = 1.0;          // interpolation 0 = prev tick, 1 = current
 uniform float px_per_unit = 0.01;   // view pixels per sim unit
 uniform vec3 color_side0 = vec3(0.35, 0.6, 1.0);
 uniform vec3 color_side1 = vec3(1.0, 0.36, 0.28);
+uniform float now = 0.0;            // view clock in ticks (tick - 1 + alpha)
+uniform float anim_on = 1.0;        // 0: atlas men hold their first frame
+uniform sampler2D atlas_shade : filter_linear_mipmap, repeat_disable;
+uniform sampler2D atlas_mask : filter_linear_mipmap, repeat_disable;
+uniform sampler2D pal_tex : filter_nearest, repeat_disable;
 
 varying vec4 v_color;
+// Atlas men: x 1 (else procedural), y palette row, z: colour = recoloured
+// x z + v_color.rgb (the state tints folded into one multiply-add).
+varying vec4 v_look;
 
 #ifdef CPU_FED
 uniform float layer_pass = 1.0;     // 0 = corpses only, 1 = living only
@@ -99,18 +123,87 @@ int bitfield(int v, int div, int span) {
 // One visible soldier or engine: its quad corner (from UV) placed in the
 // layer's space (pos), its atlas UV and its colour (col). st: state; r: the
 // sprite's rect; side 0 / 1; sel: unit selected; fire: under missile fire.
+// A state tint folded into (add, k): colour' = colour x k + add.
+void tint(inout vec3 add, inout float k, vec3 target, float amt) {
+	add = add * (1.0 - amt) + target * amt;
+	k *= 1.0 - amt;
+}
+
+// Atlas men: the action from the state, the frame from the clock and the
+// man's phase; uv in -> atlas uv out, lp = the quad corner in metres.
+void atlas_frame(int set, int st, float moved, bool shoot, float idx, inout vec2 uv, out vec2 lp) {
+	int act = 0;
+	float pick = 0.0;  // < 0: the death's last frame; 1: its middle frame
+	if (st == 4) {
+		act = 3;
+		pick = -1.0;
+	} else if (st == 3) {
+		act = 3;
+		pick = 1.0;
+	} else if (st == 1 || (shoot && moved < 20.0)) {
+		act = 2;
+	} else if (st == 2 || moved >= 20.0) {
+		act = 1;
+	}
+	int k = ((set - 1) * 4 + act) * 2;
+	vec4 a = frame_entry(k);
+	vec4 b = frame_entry(k + 1);
+	float n = b.w;
+	float fr = 0.0;
+	if (pick < 0.0) {
+		fr = n - 1.0;
+	} else if (act == 3) {
+		fr = min(pick, n - 1.0);
+	} else if (anim_on > 0.5) {
+		float rate = st == 2 ? 1.6 : 1.0;  // routing: running
+		float phase = fract(idx * 0.6180339);
+		fr = mod(floor(now * 0.1 * action_fps(act) * rate + phase * n), n);
+	}
+	vec2 px = vec2(uv.x * a.z, uv.y * a.w);  // corner in the frame, px
+	lp = (px - b.xy) / 24.0;                 // metres (ATLAS_PX_PER_M)
+	uv = (vec2(a.x + fr * b.z, a.y) + px) / ATLAS_SIZE;
+}
+
 void place(vec2 cur, vec2 prv, float facing, int st, int spr, vec4 r, int side, bool sel, bool fire,
-		inout vec2 uv, out vec2 pos, out vec4 col) {
+		int set, int pal, bool shoot, float idx, inout vec2 uv, out vec2 pos, out vec4 col, out vec4 look) {
 	bool engine = st >= 6;
 	bool dead = st == 4 || st == 7;
 	vec2 p = mix(prv, cur, alpha) * px_per_unit;
 	float ang = facing * (6.2831853 / 1024.0);
 	vec3 base = side == 0 ? color_side0 : color_side1;
-	vec2 lp = vec2(mix(r.x, r.y, uv.x), mix(r.z, r.w, uv.y));
-	uv = vec2((float(spr) + (lp.x - CELL_X0) / CELL_W) / float(SPRITES),
-		(lp.y - CELL_Y0) / CELL_H);
+	look = vec4(0.0);
+	vec2 lp;
+	if (set > 0 && !engine) {
+		atlas_frame(set, st, length(cur - prv), shoot, idx, uv, lp);
+	} else {
+		lp = vec2(mix(r.x, r.y, uv.x), mix(r.z, r.w, uv.y));
+		uv = vec2((float(spr) + (lp.x - CELL_X0) / CELL_W) / float(SPRITES),
+			(lp.y - CELL_Y0) / CELL_H);
+	}
 	vec2 v = lp * (px_per_unit * 1024.0);
-	if (engine) {
+	if (set > 0 && !engine) {
+		vec3 add = vec3(0.0);
+		float k = 1.0;
+		float a = 1.0;
+		if (dead) {
+			tint(add, k, vec3(0.24, 0.18, 0.13), 0.35);
+			a = 0.9;
+		} else {
+			if (st == 2) {
+				tint(add, k, vec3(1.0, 0.95, 0.5), 0.3);   // routing
+			} else if (st == 3) {
+				tint(add, k, vec3(0.1), 0.3);              // knocked down
+			}
+			if (fire) {
+				tint(add, k, vec3(1.0, 0.7, 0.3), 0.15);   // under missile fire
+			}
+			if (sel) {
+				tint(add, k, vec3(1.0), 0.35);             // selected unit
+			}
+		}
+		col = vec4(add, a);
+		look = vec4(1.0, float(pal), k, 0.0);
+	} else if (engine) {
 		// Timber in a light tint of the side colour; wrecks dark.
 		vec3 c = mix(vec3(0.85, 0.72, 0.52), base, 0.3);
 		if (dead) {
@@ -161,18 +254,24 @@ void vertex() {
 	if (st == 5 || dead != want_dead) {
 		VERTEX = vec2(-100000.0);
 		v_color = vec4(0.0);
+		v_look = vec4(0.0);
 	} else {
 		vec2 pos;
 		vec4 col;
+		vec4 look;
 		vec2 uv = UV;
 #ifdef CPU_FED
 		int spr = clamp(int(INSTANCE_CUSTOM.x + 0.5), 0, SPRITES - 1);
-		float fl = floor(INSTANCE_CUSTOM.y + 0.5);  // side + 2 selected + 4 under fire
+		float fl = floor(INSTANCE_CUSTOM.y + 0.5);  // side + 2 selected + 4 under fire + 8 shooting
 		int side = int(mod(fl, 2.0));
 		bool sel = mod(floor(fl / 2.0), 2.0) > 0.5;
-		bool fire = fl >= 4.0;
+		bool fire = mod(floor(fl / 4.0), 2.0) > 0.5;
+		bool shoot = fl >= 8.0;
+		float lk = floor(INSTANCE_CUSTOM.z + 0.5);  // sprite set + 16 x palette
+		int set = int(mod(lk, 16.0));
+		int pal = int(floor(lk / 16.0));
 		place(MODEL_MATRIX[3].xy, MODEL_MATRIX[0].xy, MODEL_MATRIX[1].x, st, spr, sprite_rect(spr),
-			side, sel, fire, uv, pos, col);
+			side, sel, fire, set, pal, shoot, INSTANCE_CUSTOM.w, uv, pos, col, look);
 		// skip_vertex_transform: pos is already in the layer's (= canvas) space.
 		VERTEX = pos;
 #else
@@ -181,16 +280,33 @@ void vertex() {
 		int flags = fetch_int(7, fetch_int(6, i));
 		int spr = clamp(st >= 6 ? bitfield(flags, 256, 16) : bitfield(flags, 16, 16), 0, SPRITES - 1);
 		place(cur, prv, float(fetch_int(4, i)), st, spr, spr_rect[spr], bitfield(flags, 1, 2),
-			bitfield(flags, 2, 2) != 0, bitfield(flags, 4, 2) != 0, uv, pos, col);
+			bitfield(flags, 2, 2) != 0, bitfield(flags, 4, 2) != 0, bitfield(flags, 4096, 16),
+			bitfield(flags, 65536, 16), bitfield(flags, 8, 2) != 0, float(i), uv, pos, col, look);
 		// Instance transforms are identity; cancel whatever origin this
 		// instance has (the engine applies MODEL_MATRIX after this).
 		VERTEX = pos - MODEL_MATRIX[3].xy;
 #endif
 		UV = uv;
 		v_color = col;
+		v_look = look;
 	}
 }
 
 void fragment() {
-	COLOR = texture(TEXTURE, UV) * v_color;
+	// Every sampler is read unconditionally (implicit derivatives stay
+	// defined); the branch only picks the result.
+	vec4 proc = texture(TEXTURE, UV) * v_color;
+	vec4 s = texture(atlas_shade, UV);
+	vec4 m = texture(atlas_mask, UV);
+	if (v_look.x > 0.5) {
+		int row = int(v_look.y + 0.5);
+		vec4 c3 = texelFetch(pal_tex, ivec2(3, row), 0);  // pattern colour, a = pattern_k
+		float pat = clamp((1.0 - m.a) * 2.0, 0.0, 1.0) * c3.a;
+		vec3 team = m.r * mix(texelFetch(pal_tex, ivec2(0, row), 0).rgb, c3.rgb, pat)
+			+ m.g * texelFetch(pal_tex, ivec2(1, row), 0).rgb + m.b * texelFetch(pal_tex, ivec2(2, row), 0).rgb;
+		float rest = max(0.0, 1.0 - m.r - m.g - m.b);
+		COLOR = vec4(s.rgb * (rest + team) * v_look.z + v_color.rgb, s.a * v_color.a);
+	} else {
+		COLOR = proc;
+	}
 }
