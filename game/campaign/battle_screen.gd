@@ -48,9 +48,9 @@ const KILLS_NOTE_UNITS := "Each card shows that unit's own losses and the enemie
 ## Plain data of battle b as it stands (taken when the battle starts, so the
 ## result can be drawn after the state has moved on): per side, groups
 ## {army (-1 garrison), f, name, support, units: [{unit, ty, n, full, on}]}
-## in the order CBattle.build fields them (`on` 0: past the side's
-## BATTLE_SIDE_MAX, left out of the battle). me: the viewer's side (-1
-## neither).
+## in the order CBattle.build fields them (`on` 1: on the field, 2: a
+## reinforcement past the side's BATTLE_SIDE_MAX, arriving during the
+## battle, 0: no men). me: the viewer's side (-1 neither).
 static func snapshot(st: Dictionary, b: Dictionary, viewer: int) -> Dictionary:
 	var r := int(b["r"])
 	var kind := str(b.get("kind", ""))
@@ -58,8 +58,9 @@ static func snapshot(st: Dictionary, b: Dictionary, viewer: int) -> Dictionary:
 	var facs := CRules.battle_factions(st, b)
 	var reinf: Array = b.get("reinf", [])
 	var sides := [[], []]
+	var split := CBattle.field_split(st, b, arm)
 	for sd in 2:
-		var fielded := 0
+		var fk: Dictionary = split[sd]["field"]
 		for a in arm[sd]:
 			var f := int(a["f"])
 			var g := {"army": int(a["id"]), "f": f, "name": "%s army" % str(CData.FACTIONS[f]["adj"]),
@@ -71,10 +72,10 @@ static func snapshot(st: Dictionary, b: Dictionary, viewer: int) -> Dictionary:
 				var u: Dictionary = a["units"][k]
 				var n := int(u["n"])
 				var ty := UT.index_of(str(u["t"]))
-				var on := n > 0 and fielded < CData.BATTLE_SIDE_MAX
-				if on:
-					fielded += 1
-				g["units"].append({"unit": k, "ty": ty, "n": n, "full": maxi(UT.size_of(ty), 1), "on": 1 if on else 0,
+				var on := 0
+				if n > 0:
+					on = 1 if fk.has("%d:%d" % [int(a["id"]), k]) else 2
+				g["units"].append({"unit": k, "ty": ty, "n": n, "full": maxi(UT.size_of(ty), 1), "on": on,
 					"ak": str(u.get("ak", ""))})
 			sides[sd].append(g)
 	if kind != "field":
@@ -130,6 +131,12 @@ static func towers_line(snap: Dictionary) -> String:
 	if int(t[2]) != 0:
 		s += " (Workshop: half as many shots again.)"
 	return s
+
+
+## The pre-battle card's reinforcements line.
+static func arriving_line(n: int) -> String:
+	return "Arriving: %d unit%s (past the %d on the field; they come up as units fall, or from 2 minutes in)" % [
+		n, "" if n == 1 else "s", CData.BATTLE_SIDE_MAX]
 
 
 static func _names(list: Array) -> String:
@@ -417,17 +424,26 @@ static func _side(snap: Dictionary, sd: int, res: Dictionary) -> Control:
 	var groups: Array = snap["sides"][sd]
 	var men := 0
 	var units := 0
+	var arriving := 0
 	for g in groups:
 		for u in g["units"]:
 			if int(u["on"]) != 0:
 				men += int(u["n"])
 				units += 1
+			if int(u["on"]) == 2:
+				arriving += 1
 	var lead := int(snap["lead"][sd])
 	var you := " (you)" if int(snap["me"]) == sd else ""
 	var head := "%s%s: %s" % ["Attackers" if sd == 0 else "Defenders", you, _names(snap["facs"][sd])]
 	col.add_child(Kit.label(head, Kit.FONT, CData.faction_color(lead).lightened(0.35), true))
 	if res.is_empty():
 		col.add_child(Kit.label("%d units, %d men" % [units, men], Kit.FONT_SMALL, Kit.COL_DIM))
+		if arriving > 0:
+			# Reinforcements (docs/DESIGN.md "Reinforcements"): past the side's
+			# field slots, arriving as its units fall or after two minutes.
+			var al := Kit.label(arriving_line(arriving), Kit.FONT_SMALL, Kit.COL_GOLD, true)
+			al.name = "arriving_%d" % sd
+			col.add_child(al)
 	var tot := {"fielded": 0, "back": 0, "dead": 0, "fled": 0}
 	for g in groups:
 		var gh := Kit.hbox(6)

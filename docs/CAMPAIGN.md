@@ -589,8 +589,9 @@ test exaggerates numbers; in an army line the gap is smaller.
   earlier turn cannot be entered. An army entering a region where a battle
   started this turn (by land or sea lane) joins it: the attackers if it is on
   their side and at war with the owner, the defenders if it is on the
-  owner's side, while that side stays within 24 field units (else it is
-  bounced, "battle side full"); an army on neither side is bounced.
+  owner's side (past 24 field units a side its units are reinforcements,
+  see below; no "battle side full" since 2026-10-13); an army on neither
+  side is bounced.
 - Every owned settlement has a free garrison that only defends:
   2 / 3 / 4 units (village / town / city) + 1 per wall level, each 60% of a
   full unit (independents +2 units at 90%); tier 1, +1 in a city, +1 with
@@ -608,14 +609,23 @@ test exaggerates numbers; in an army line the gap is smaller.
   settlements" and "Settlement plans, sites and owners". In the formula the
   garrison still counts +15% per wall level.
 - Reinforcements: armies of either side in regions joined by a land route that
-  did not move this turn and are not committed elsewhere join the battle,
-  until a side has 24 field units. Neighbours across a sea lane do not
+  did not move this turn and are not committed elsewhere join the battle
+  (past 24 field units as reinforcements). Neighbours across a sea lane do not
   reinforce passively; they must move in (and so join) instead. Version 5:
   support by range instead (see "Free movement").
 - A battle in the sim: attackers and defenders (armies at their current
-  headcounts and tiers, the garrison on the defending side, reinforcements
-  simply more units in the line: they do not yet arrive from the map edge they
-  come from), at most 24 field units a side plus the garrison; the player's
+  headcounts and tiers, the garrison on the defending side), 24 field units
+  a side plus the garrison on the field (`CBattle.field_split`, join order:
+  the side's armies as they joined, each army's units in index order).
+  **Reinforcements (2026-10-13; DESIGN.md "Reinforcements"):** the units
+  past the 24 are reserves: they wait off the field at their army's map
+  edge (field battles; the attackers' edge or the plaza in a settlement
+  battle) and come up one at a time as the side's units on the field fall
+  below its slots (one every 5 s at most) or, from 2 minutes in, one every
+  10 s up to 30 on the field; the pre-battle card and the battle HUD say
+  "Arriving: n units". A reserve that never arrived comes back whole (its
+  outcome row: killed 0, n unchanged); auto-resolve counts every army at
+  full strength. The player's
   side at the bottom (sim side 0). Every battle under the current rules is
   at the region's settlement and is fought on **the settlement's own map**
   (`CBattle._build_settlement` -> `Scenarios.settlement`): generated from
@@ -705,7 +715,8 @@ battle cards), `campaign_screen.gd` (move toast), `map_overlay.gd`
   armies inside cannot leave except by a sally (`siege_role` 2, "besieged").
   A third faction cannot enter a besieged region ("besieged by ...").
 - **Each turn** the besiegers may order `assault` (a settlement battle at the
-  end of the turn: every besieger attacks, up to 24 field units, the
+  end of the turn: every besieger attacks (past 24 field units as
+  reinforcements), the
   garrison and the armies inside defend; with a player pending as usual)
   or nothing (maintain). The defender may `sally` (a field battle on the
   region's terrain: the garrison and every army of the owner's side inside
@@ -916,7 +927,7 @@ cards), `map_view.gd` (reach shading), `map_overlay.gd` (paths, the
 - **Support by range.** Replaces the land-adjacent rule: an army that did
   not move this turn, stands in the field and is not in a siege joins a new
   battle if its cheapest path over land (sea lanes never count) reaches the
-  battle's region this turn, until a side has 24 field units. The battle
+  battle's region this turn (past 24 field units a side as reinforcements). The battle
   records its `edge`: the compass sector (`CData.sector`, the map's
   projection, 8 sectors) of its region seen from the battle's. In a field
   battle (`CBattle.build`) the edge is turned relative to the lead
@@ -1081,7 +1092,7 @@ contact, sieges, sally / relief, support, stances, raiding, retreats),
   `CData.ZOC` 2 cells (dx^2 + dy^2 <= r^2 + r, 21 cells), 3 fortified, none
   on a forced march, inside walls or in a battle. One battle per region: a
   contact (or a step next to a battle's cell) where a battle started this
-  turn joins it on its side (24 field units a side, else it stops). With
+  turn joins it on its side (past 24 field units a side as reinforcements). With
   `persist` an army that did not get there keeps its destination. Head-on
   (both attacking each other): the lower id steps first in each round and
   is the attacker; they meet between their starting cells. Every step is
@@ -1104,7 +1115,7 @@ contact, sieges, sally / relief, support, stances, raiding, retreats),
 - **Support** (`CRules._support6`): any army (either side) in the field
   within `CData.SUPPORT` 4 cells of a battle's cell (6 fortified), not in a
   battle or a siege, not on a forced march, not inside walls, joins it
-  until a side has 24 field units, moving or not; its map edge is its
+  (past 24 field units a side as reinforcements), moving or not; its map edge is its
   bearing from the battle (`CGrid.sector`, 8 sectors), turned relative to
   the lead attacker's approach (`app`) by the version 5 placement.
   Settlement battles still put reinforcements in their side's line.

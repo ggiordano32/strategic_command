@@ -179,6 +179,8 @@ static func make(id: String) -> Dictionary:
 			return bench_city(MapGen.PLAN_POLIS, 1, Terrain.K_HILL)
 		"bench_4000_castrum":
 			return bench_city(MapGen.PLAN_CASTRUM, 0, Terrain.K_FLAT, 3)
+		"bench_4000_reinf":
+			return reinf_battle()
 	var sc := _make(id)
 	if id in PLAYABLE:
 		sc["terrain"] = {"kind": Terrain.K_RANDOM}
@@ -372,6 +374,37 @@ static func _battle(armies: int, ai_sides: Array, line: Array, screen: Array,
 	return {"width_m": width_m, "height_m": height_m, "ai_sides": ai_sides, "units": units}
 
 
+## Reinforcements (docs/DESIGN.md "Reinforcements"; benchmark, tests): the
+## bench armies three deep a side on a 560 x 640 field, side 0 with 24 units
+## on the field and 12 reserves (the next 12 of its armies, moved back to
+## its edge: their rearmost 25 m from it), side 1 with 24 units; both AI.
+## pct scales the unit sizes (artillery not).
+static func reinf_battle(pct: int = 100) -> Dictionary:
+	var sc := _battle(3, [0, 1], ARMY_LINE, ARMY_SCREEN, SIZE, 560, 640, 100, ARMY_REAR)
+	var s0: Array = []
+	var s1: Array = []
+	for ud in sc["units"]:
+		var d: Dictionary = ud
+		if pct != 100 and UT.cls(int(d["type"])) != UT.CLS_ART:
+			d["count"] = maxi(int(d["count"]) * pct / 100, 8)
+			d["files"] = maxi(int(d["files"]) * pct / 100, 4)
+		if int(d["side"]) == 0 and s0.size() < 36:
+			s0.append(d)
+		elif int(d["side"]) == 1 and s1.size() < 24:
+			s1.append(d)
+	var back := 0
+	for k in range(24, 36):
+		back = maxi(back, int(s0[k]["y_m"]))
+	var dy := int(sc["height_m"]) - 25 - back
+	for k in range(24, 36):
+		s0[k]["y_m"] = int(s0[k]["y_m"]) + dy
+		s0[k]["reserve"] = 1
+	var units: Array = s0.duplicate()
+	units.append_array(s1)
+	sc["units"] = units
+	return sc
+
+
 ## A river crossing battle (docs/DESIGN.md "River crossings"; tests,
 ## probes): bench_2000's two armies on a 560 x 560 field with the crossing
 ## of `seed` (kind 0 ford / 1 bridge) between them, side 1 holding the far
@@ -447,8 +480,8 @@ static func camp(units: Array, w_m: int, h_m: int, side: int, river: Dictionary 
 	var sy := 0
 	var cnt := 0
 	for ud in units:
-		if int(ud["side"]) != side:
-			continue
+		if int(ud["side"]) != side or int(ud.get("reserve", 0)) != 0:
+			continue  # (reinforcements to come are not in the camp)
 		var b := unit_box(ud)
 		x0 = mini(x0, b[0])
 		x1 = maxi(x1, b[2])
@@ -523,7 +556,7 @@ static func river_units(units: Array, w_m: int, _h_m: int, g: Dictionary, fort: 
 	var sx := 0
 	var cnt := 0
 	for ud in out:
-		if int(ud["side"]) != hs:
+		if int(ud["side"]) != hs or int(ud.get("reserve", 0)) != 0:
 			continue
 		var b := unit_box(ud)
 		x0 = mini(x0, b[0])
@@ -538,7 +571,7 @@ static func river_units(units: Array, w_m: int, _h_m: int, g: Dictionary, fort: 
 			var y0 := 1 << 30
 			var y1 := -(1 << 30)
 			for ud in out:
-				if int(ud["side"]) == hs:
+				if int(ud["side"]) == hs and int(ud.get("reserve", 0)) == 0:
 					var b := unit_box(ud)
 					y0 = mini(y0, b[1])
 					y1 = maxi(y1, b[3])
@@ -552,7 +585,7 @@ static func river_units(units: Array, w_m: int, _h_m: int, g: Dictionary, fort: 
 				dy = fy2 - CAMP_PAD - y1
 		for k in out.size():
 			var ud: Dictionary = out[k]
-			if int(ud["side"]) != hs or (dx == 0 and dy == 0):
+			if int(ud["side"]) != hs or (dx == 0 and dy == 0) or int(ud.get("reserve", 0)) != 0:
 				continue
 			var c := ud.duplicate()
 			c["x_m"] = int(ud["x_m"]) + dx
@@ -982,7 +1015,7 @@ static func field_zones(sc: Dictionary, gap: int = 30, pad: int = 40) -> Array:
 		var sy := 0
 		var cnt := 0
 		for ud in sc["units"]:
-			if int(ud["side"]) == s:
+			if int(ud["side"]) == s and int(ud.get("reserve", 0)) == 0:
 				sy += int(ud["y_m"])
 				cnt += 1
 		var bottom := cnt == 0 and s == 0 or cnt > 0 and sy / cnt > h / 2
@@ -996,8 +1029,8 @@ static func field_zones(sc: Dictionary, gap: int = 30, pad: int = 40) -> Array:
 				band[5] = mini(int(band[5]), MapGen.river_reach(rg, 0, w, 1) - RIV_ZONE)
 		zones.append(band)
 		for ud in sc["units"]:
-			if int(ud["side"]) != s:
-				continue
+			if int(ud["side"]) != s or int(ud.get("reserve", 0)) != 0:
+				continue  # (reinforcements to come are not deployed)
 			var x := int(ud["x_m"])
 			var y := int(ud["y_m"])
 			if y >= int(band[3]) and y <= int(band[5]):

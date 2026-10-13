@@ -3,8 +3,9 @@ extends RefCounted
 ##
 ## build(): a pending battle as a BattleSim scenario: both sides' armies at
 ## their current headcounts and tiers, the garrison on the defending side,
-## reinforcing armies simply as more units in the line (a simplification:
-## later they should arrive from the map edge they come from). A battle at a
+## supporting armies from the map edge they come from; past a side's
+## BATTLE_SIDE_MAX field units the rest are reserves the sim brings up
+## during the battle (field_split; docs/DESIGN.md "Reinforcements"). A battle at a
 ## settlement (every battle under the current campaign rules) is fought on
 ## the settlement's own map (sim/mapgen.gd): from its fixed city_seed, level,
 ## wall level, buildings, the region's terrain kind, ground palette and
@@ -54,6 +55,7 @@ const MapGen := preload("res://sim/mapgen.gd")
 const CP := preload("res://campaign/cai_profile.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const CChars := preload("res://campaign/cchars.gd")
+const FM := preload("res://sim/fixed_math.gd")
 
 const FRONT := 100       # m from the centre line to each side's front
 const SECOND_LINE := 45  # m behind the first
@@ -135,35 +137,28 @@ static func _build0(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct:
 	var def_on_0 := human_f >= 0 and _side_has(st, arm[1], int(b["def_f"]), human_f)
 	var sim_side := [1, 0] if def_on_0 else [0, 1]
 	var entries := [[], []]  # per campaign side: {army, unit, t, n, f}
+	# Reinforcements (docs/DESIGN.md "Reinforcements"): past a side's
+	# BATTLE_SIDE_MAX field units, the rest wait as reserves (in join order).
+	var split := field_split(st, b, arm)
+	var reserves := [[], []]
 	for s in 2:
-		var field := 0
+		var fk: Dictionary = split[s]["field"]
 		for a in arm[s]:
-			# The special kinds its missile troops carry: its wagons carry
-			# stock of them (scenario "aks").
-			var aks: Array = []
-			for u0 in a["units"]:
-				var ak0 := str(u0.get("ak", ""))
-				if ak0 != "" and not aks.has(ak0):
-					aks.append(ak0)
 			for k in CState.unit_count(a):
-				var u: Dictionary = a["units"][k]
-				if int(u["n"]) <= 0 or field >= CData.BATTLE_SIDE_MAX:
-					continue
-				field += 1
-				var ent := {"army": int(a["id"]), "unit": k, "t": str(u["t"]), "n": int(u["n"]), "f": int(a["f"])}
-				if CState.stance(a) == CData.ST_FORCED:
-					ent["morale"] = CData.FORCED_MORALE_PCT
-				if u.has("ak"):
-					ent["ak"] = str(u["ak"])  # its special ammunition kind
-				if UT.stat(UT.index_of(str(u["t"])), "wagon") >= 0 and not aks.is_empty():
-					ent["aks"] = aks
-				entries[s].append(ent)
+				if fk.has("%d:%d" % [int(a["id"]), k]):
+					entries[s].append(_entry(a, k))
+		for q in split[s]["queue"]:
+			var ra := CState.army(st, int(q[0]))
+			var re := _entry(ra, int(q[1]))
+			re["reserve"] = 1
+			re["label"] = "%s army" % str(CData.FACTIONS[int(ra["f"])]["adj"])
+			reserves[s].append(re)
 	for k in gar.size():
 		var g: Dictionary = gar[k]
 		if int(g["n"]) > 0:
 			entries[1].append({"army": -1, "unit": k, "t": str(g["t"]), "n": int(g["n"]), "f": int(b["def_f"])})
 	if int(b.get("settlement", 1)) != 0:
-		return _build_settlement(st, b, human_f, scale_pct, entries, sim_side, gar)
+		return _build_settlement(st, b, human_f, scale_pct, entries, sim_side, gar, reserves)
 	# Version 5: reinforcements arrive from the map edge facing the region
 	# they come from (b["edge"]: compass sectors), turned so the lead
 	# attacker's approach is the attackers' own edge.
@@ -182,6 +177,14 @@ static func _build0(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct:
 			side_edges = true
 		else:
 			end_edges = true
+		width = maxi(width, int(g["lay"]["width"]) + 160)
+	# Reserves wait at their army's edge (its b["edge"] sector; else their
+	# side's own end), laid out as a group per edge.
+	var rgroups := _reserve_groups(b, reserves)
+	for g in rgroups:
+		var ed2 := int(g["edge"])
+		if ed2 == 1 or ed2 == 3:
+			side_edges = true
 		width = maxi(width, int(g["lay"]["width"]) + 160)
 	if side_edges:
 		width += 2 * EDGE_BAND
@@ -206,6 +209,15 @@ static func _build0(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct:
 			placed_all.append([cs, x, y, face, p["e"]])
 	for g in edges:
 		_place_edge(g, width, height, placed_all)
+	var n_before := placed_all.size()
+	for g in rgroups:
+		_place_edge(g, width, height, placed_all)
+	if placed_all.size() > n_before:
+		# The sim brings a side's reserves up in unit order: queue order.
+		var tail := placed_all.slice(n_before)
+		tail.sort_custom(func(p, q): return int(p[4]["q"]) < int(q[4]["q"]))
+		placed_all = placed_all.slice(0, n_before)
+		placed_all.append_array(tail)
 	for pa in placed_all:
 		var cs: int = pa[0]
 		var ss: int = sim_side[cs]
@@ -223,6 +235,7 @@ static func _build0(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct:
 		if int(e.get("morale", 100)) != 100:
 			su["morale_pct"] = int(e["morale"])  # version 6: caught on a forced march
 		_unit_extras(su, e)
+		_reserve_extras(su, e)
 		units.append(su)
 		map.append({"side": cs, "army": int(e["army"]), "unit": int(e["unit"]), "n": int(e["n"]), "sim_n": cnt})
 		ufac.append(int(e["f"]))
@@ -497,47 +510,16 @@ static func _edge_groups(b: Dictionary, entries: Array) -> Array:
 	var list: Array = b.get("edge", [])
 	if list.is_empty() or int(b.get("settlement", 1)) != 0:
 		return out
-	var r := int(b["r"])
-	var approach := 4  # unknown: attackers from the south
-	if int(b.get("app", -1)) >= 0:
-		approach = int(b["app"])  # version 6: the lead attacker's bearing
-	else:
-		for pr in b.get("from", []):
-			if (b["att"] as Array).has(int(pr[0])) and int(pr[1]) >= 0:
-				var sc := CData.sector(r, int(pr[1]))
-				if sc >= 0:
-					approach = sc
-					break
+	var approach := _approach(b)
 	var groups := {}
 	var order: Array = []
 	for pr in list:
 		var sc := int(pr[1])
 		if sc < 0:
 			continue
-		var rel := posmod(sc - approach, 8)
-		var edge := 0
-		var corner := 0
-		match rel:
-			0:
-				edge = 0
-			1:
-				edge = 0
-				corner = -1
-			2:
-				edge = 1
-			3:
-				edge = 2
-				corner = -1
-			4:
-				edge = 2
-			5:
-				edge = 2
-				corner = 1
-			6:
-				edge = 3
-			7:
-				edge = 0
-				corner = 1
+		var ec := _sector_edge(posmod(sc - approach, 8))
+		var edge: int = ec[0]
+		var corner: int = ec[1]
 		var aid := int(pr[0])
 		for cs in 2:
 			var keep: Array = []
@@ -560,6 +542,142 @@ static func _edge_groups(b: Dictionary, entries: Array) -> Array:
 		g["lay"] = _layout(g["entries"])
 		out.append(g)
 	return out
+
+
+## The sector the lead attacker of battle b came from (south if unknown).
+static func _approach(b: Dictionary) -> int:
+	if int(b.get("app", -1)) >= 0:
+		return int(b["app"])  # version 6: the lead attacker's bearing
+	var r := int(b["r"])
+	for pr in b.get("from", []):
+		if (b["att"] as Array).has(int(pr[0])) and int(pr[1]) >= 0:
+			var sc := CData.sector(r, int(pr[1]))
+			if sc >= 0:
+				return sc
+	return 4  # unknown: attackers from the south
+
+
+## [edge, corner] (see _edge_groups) of a sector rel relative to the approach.
+static func _sector_edge(rel: int) -> Array:
+	match rel:
+		1:
+			return [0, -1]
+		2:
+			return [1, 0]
+		3:
+			return [2, -1]
+		4:
+			return [2, 0]
+		5:
+			return [2, 1]
+		6:
+			return [3, 0]
+		7:
+			return [0, 1]
+	return [0, 0]
+
+
+## Reinforcements (docs/DESIGN.md "Reinforcements"): which units of battle
+## b take the field. Per campaign side {field: {"army:unit": 1} for the
+## first BATTLE_SIDE_MAX units with men, queue: [[army id, unit], ...] the
+## rest (the reserves, in the order they arrive)}, both in join order: the
+## side's armies as they joined (b "att" / "def", then "reinf"; any other
+## after them in arm order), each army's units in index order. arm:
+## CRules.battle_armies (computed if empty).
+static func field_split(st: Dictionary, b: Dictionary, arm: Array = []) -> Array:
+	if arm.is_empty():
+		arm = CRules.battle_armies(st, b)
+	var out: Array = []
+	for s in 2:
+		var ids: Array = []
+		for id in (b["att"] if s == 0 else b["def"]):
+			ids.append(int(id))
+		for id in b.get("reinf", []):
+			ids.append(int(id))
+		var order: Array = []
+		for id in ids:
+			for a in arm[s]:
+				if int(a["id"]) == id and not order.has(a):
+					order.append(a)
+		for a in arm[s]:
+			if not order.has(a):
+				order.append(a)
+		var field := {}
+		var queue: Array = []
+		for a in order:
+			for k in CState.unit_count(a):
+				if int(a["units"][k]["n"]) <= 0:
+					continue
+				if field.size() < CData.BATTLE_SIDE_MAX:
+					field["%d:%d" % [int(a["id"]), k]] = 1
+				else:
+					queue.append([int(a["id"]), k])
+		out.append({"field": field, "queue": queue})
+	return out
+
+
+## A battle entry for unit k of army a: {army, unit, t, n, f} and its
+## extras (forced-march morale, special ammunition, the kinds its wagons
+## carry).
+static func _entry(a: Dictionary, k: int) -> Dictionary:
+	var u: Dictionary = a["units"][k]
+	var ent := {"army": int(a["id"]), "unit": k, "t": str(u["t"]), "n": int(u["n"]), "f": int(a["f"])}
+	if CState.stance(a) == CData.ST_FORCED:
+		ent["morale"] = CData.FORCED_MORALE_PCT
+	if u.has("ak"):
+		ent["ak"] = str(u["ak"])  # its special ammunition kind
+	if UT.stat(UT.index_of(str(u["t"])), "wagon") >= 0:
+		# The special kinds its army's missile troops carry: its wagons carry
+		# stock of them (scenario "aks").
+		var aks: Array = []
+		for u0 in a["units"]:
+			var ak0 := str(u0.get("ak", ""))
+			if ak0 != "" and not aks.has(ak0):
+				aks.append(ak0)
+		if not aks.is_empty():
+			ent["aks"] = aks
+	return ent
+
+
+## Reserve entries (per campaign side, in queue order) grouped by where they
+## wait: their army's b["edge"] sector (as _edge_groups), else their side's
+## own end (edge 0 the attackers', 2 the defenders'). Each entry gets "q",
+## its place in its side's queue.
+static func _reserve_groups(b: Dictionary, reserves: Array) -> Array:
+	var out: Array = []
+	var approach := _approach(b)
+	var sec := {}
+	for pr in b.get("edge", []):
+		if int(pr[1]) >= 0:
+			sec[int(pr[0])] = int(pr[1])
+	var groups := {}
+	var order: Array = []
+	for cs in 2:
+		var qi := 0
+		for e in reserves[cs]:
+			e["q"] = qi
+			qi += 1
+			var ec: Array = [0, 0] if cs == 0 else [2, 0]
+			if sec.has(int(e["army"])):
+				ec = _sector_edge(posmod(int(sec[int(e["army"])]) - approach, 8))
+			var key := "%d_%d_%d" % [cs, int(ec[0]), int(ec[1])]
+			if not groups.has(key):
+				groups[key] = {"side": cs, "edge": int(ec[0]), "corner": int(ec[1]), "entries": []}
+				order.append(key)
+			(groups[key]["entries"] as Array).append(e)
+	for key in order:
+		var g: Dictionary = groups[key]
+		g["lay"] = _layout(g["entries"])
+		out.append(g)
+	return out
+
+
+## A reserve entry's scenario unit: marked "reserve" (the sim keeps it off
+## the field until it arrives) with its army's name ("label", view only).
+static func _reserve_extras(su: Dictionary, e: Dictionary) -> void:
+	if int(e.get("reserve", 0)) != 0:
+		su["reserve"] = 1
+		su["label"] = str(e.get("label", ""))
 
 
 ## Place an edge group on the field (sim coordinates; the attackers' end is
@@ -614,7 +732,7 @@ static func _place_edge(g: Dictionary, width: int, height: int, placed_all: Arra
 ## Settlement battle: the city's map, attackers before its main gate, the
 ## defenders (garrison and armies) inside (Scenarios.settlement).
 static func _build_settlement(st: Dictionary, b: Dictionary, human_f: int, scale_pct: int,
-		entries: Array, sim_side: Array, gar: Array) -> Dictionary:
+		entries: Array, sim_side: Array, gar: Array, reserves: Array = [[], []]) -> Dictionary:
 	var r := int(b["r"])
 	var lists := [[], []]
 	for cs in 2:
@@ -635,6 +753,7 @@ static func _build_settlement(st: Dictionary, b: Dictionary, human_f: int, scale
 	for k in mini(sunits.size(), (res["order"] as Array).size()):
 		var o0: Array = res["order"][k]
 		_unit_extras(sunits[k], entries[int(o0[0])][int(o0[1])])
+	_settlement_reserves(res, reserves, entries, lists, scale_pct)
 	# The city's tower engines carry the owner's special kind for them (heavy
 	# bolts), as a unit of the owner recruited there would.
 	var tak := UT.ammo_index(CRules.ammo_for(st, CState.owner(st, r), r, "tower_bolt"))
@@ -657,6 +776,76 @@ static func _build_settlement(st: Dictionary, b: Dictionary, human_f: int, scale
 	return {"scenario": res["scenario"], "seed": battle_seed(st, r, 2), "map": map, "sim_side": sim_side,
 		"garrison": gar, "unit_faction": ufac, "controller": controller, "battle": int(b["id"]), "region": r,
 		"owner": int(st["regions"][r]["owner"])}
+
+
+## Reinforcements of a settlement battle (docs/DESIGN.md "Reinforcements"):
+## the attackers' reserves wait at the attackers' map edge (laid out as a
+## line behind their army, its rear EDGE_IN m from the edge), the
+## defenders' on the plaza (the agora) inside the walls, a few metres apart,
+## facing the main gate. Appended after the settlement's own units (each
+## side's in queue order), with their entries added to `entries` and `lists`
+## and to res "order" as [side, index].
+static func _settlement_reserves(res: Dictionary, reserves: Array, entries: Array, lists: Array, scale_pct: int) -> void:
+	if reserves[0].is_empty() and reserves[1].is_empty():
+		return
+	var sc: Dictionary = res["scenario"]
+	var lay: Dictionary = res["layout"]
+	var w := int(sc["width_m"])
+	var h := int(sc["height_m"])
+	var c: Dictionary = sc["terrain"]["city"]
+	var def_side := int(c["def"])
+	var att_side := 1 - def_side
+	var sgn := 1 if def_side == 1 else -1
+	var units: Array = sc["units"]
+	if not reserves[0].is_empty():
+		var al := _layout(reserves[0])
+		var hw := int(al["width"]) / 2 + 8
+		var ax := clampi(int(lay["att_x"]), hw, maxi(w - hw, hw))
+		var deep := 0
+		for p in al["placed"]:
+			deep = maxi(deep, int(p["back"]))
+		var placed: Array = (al["placed"] as Array).duplicate()
+		placed.sort_custom(func(p, q): return int(p["e"]["q"]) < int(q["e"]["q"]))
+		for p in placed:
+			var e: Dictionary = p["e"]
+			var y := (h - EDGE_IN - deep + int(p["back"])) if def_side == 1 else (EDGE_IN + deep - int(p["back"]))
+			_settlement_reserve(units, res, entries, lists, scale_pct, 0, e, att_side,
+				clampi(ax + int(p["x"]) * sgn, 12, w - 12), clampi(y, 12, h - 12),
+				Scenarios.FACE_UP if def_side == 1 else Scenarios.FACE_DOWN)
+	if not reserves[1].is_empty():
+		var pl: Array = lay.get("agora", lay["plaza"])
+		var mx := int(pl[0])
+		var my := int(pl[1])
+		var gx := mx
+		var gy := my + 40
+		for gd in lay.get("gates", []):
+			if int(gd.get("cit", 0)) == 0:
+				gx = int(gd["x"])  # (the main gate: the first outer one)
+				gy = int(gd["y"])
+				break
+		var face := FM.atan2_a(gy - my, gx - mx)
+		for k in reserves[1].size():
+			var e2: Dictionary = reserves[1][k]
+			var off: int = ((k % 3) - 1) * 14
+			_settlement_reserve(units, res, entries, lists, scale_pct, 1, e2, def_side,
+				clampi(mx + off, 12, w - 12), clampi(my + ((k / 3) % 2) * 10, 12, h - 12), face)
+
+
+static func _settlement_reserve(units: Array, res: Dictionary, entries: Array, lists: Array, scale_pct: int,
+		cs: int, e: Dictionary, side: int, x: int, y: int, face: int) -> void:
+	var ty := UT.index_of(str(e["t"]))
+	var cnt := int(e["n"])
+	if scale_pct != 100 and UT.cls(ty) != UT.CLS_ART:
+		cnt = maxi(cnt * scale_pct / 100, mini(cnt, 8))
+	var su := Scenarios.unit(side, ty, cnt, x, y, face)
+	if int(e.get("morale", 100)) != 100:
+		su["morale_pct"] = int(e["morale"])
+	_unit_extras(su, e)
+	_reserve_extras(su, e)
+	units.append(su)
+	(res["order"] as Array).append([cs, (entries[cs] as Array).size()])
+	(entries[cs] as Array).append(e)
+	(lists[cs] as Array).append([ty, cnt])
 
 
 ## Scenario unit su from campaign entry e: its special ammunition kind

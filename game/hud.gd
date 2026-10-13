@@ -73,6 +73,15 @@ var stats_panel: PanelContainer
 var stats_expanded := false
 var card_rows := 1
 var banner: Label
+## Reinforcements (docs/DESIGN.md "Reinforcements"): "Arriving: n units"
+## while a side has reserves to come, and a short "Reinforcements: <army>"
+## note when one arrives (unit_labels: sim unit -> its army's name, set by
+## the battle view from the scenario).
+var arriving_label: Label
+var arrival_note: Label
+var unit_labels := {}
+var _note_left := 0.0
+var _arr_seen := 0
 var pause_button: Button
 var orders_button: Button
 var speed_button: Button
@@ -406,7 +415,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 		b.focus_mode = Control.FOCUS_NONE
 		b.disabled = not interactive
 		b.flat = true
-		b.visible = sim.u_state[u] != BattleSim.U_KENNEL  # (a war dog pack: shown once let loose)
+		b.visible = sim.u_state[u] != BattleSim.U_KENNEL and sim.u_state[u] != BattleSim.U_RESERVE  # (a war dog pack: shown once let loose; a reinforcement once it arrives)
 		b.custom_minimum_size = Vector2(CARD_MIN_W, CARD_H)
 		b.pressed.connect(func(): card_pressed.emit(u))
 		b.gui_input.connect(_on_card_input.bind(u))
@@ -445,6 +454,31 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	banner.visible = false
 	root.add_child(banner)
+	arriving_label = Label.new()
+	arriving_label.name = "arriving"
+	arriving_label.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	arriving_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	arriving_label.position.y = BTN_H + 2 * MARGIN
+	arriving_label.add_theme_font_size_override("font_size", FONT_SMALL)
+	arriving_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	arriving_label.add_theme_constant_override("outline_size", 4)
+	arriving_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	arriving_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	arriving_label.visible = false
+	root.add_child(arriving_label)
+	arrival_note = Label.new()
+	arrival_note.name = "arrival_note"
+	arrival_note.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	arrival_note.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	arrival_note.position.y = BTN_H + 2 * MARGIN + 20
+	arrival_note.add_theme_font_size_override("font_size", FONT + 3)
+	arrival_note.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
+	arrival_note.add_theme_color_override("font_outline_color", Color.BLACK)
+	arrival_note.add_theme_constant_override("outline_size", 6)
+	arrival_note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	arrival_note.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	arrival_note.visible = false
+	root.add_child(arrival_note)
 
 	# Benchmark summary panel, centre.
 	bench_panel = PanelContainer.new()
@@ -658,6 +692,10 @@ func display_order() -> Array[int]:
 
 
 func _process(delta: float) -> void:
+	if _note_left > 0.0:
+		_note_left -= delta
+		if _note_left <= 0.0:
+			arrival_note.visible = false
 	if _confirm_left > 0.0:
 		_confirm_left -= delta
 		if _confirm_left <= 0.0:
@@ -946,6 +984,7 @@ func set_wall_buttons(man: bool, down: bool, drop: bool = false) -> void:
 
 func update_cards(sim) -> void:
 	var tick: int = sim.tick
+	_update_arriving(sim)
 	for u in _cards:
 		var ty: int = sim.u_type[u]
 		var f: CardFace = _faces[u]
@@ -963,6 +1002,8 @@ func update_cards(sim) -> void:
 			var out: bool = sim.u_state[pk] == BattleSim.U_READY
 			f.ammo_text = "out" if out else "%d" % sim.u_kept[pk]
 			summary += " dogs %s" % ("out (%d)" % sim.u_alive[pk] if out else str(sim.u_kept[pk]))
+		if sim.rsv_on != 0 and sim.u_hand[u] < 0:
+			(_cards[u] as Button).visible = sim.u_state[u] != BattleSim.U_RESERVE  # (a reinforcement: once it arrives)
 		if sim.u_hand[u] >= 0:
 			(_cards[u] as Button).visible = sim.u_state[u] != BattleSim.U_KENNEL  # (the pack: only while loose)
 			if sim.u_ret[u] != 0:
@@ -1152,8 +1193,43 @@ static func deploy_text(sim, u: int) -> String:
 	return ("Packing %d%%" if packing else "Set up %d%%") % (d * 100 / maxi(full, 1))
 
 
+## The "Arriving" line and the arrival note (reinforcements).
+func _update_arriving(sim) -> void:
+	if arriving_label == null or sim.rsv_on == 0:
+		return
+	var me := clampi(_player_side, 0, 1)
+	var txt := arriving_text(sim.reserves_left(me), sim.reserves_left(1 - me))
+	arriving_label.text = txt
+	arriving_label.visible = txt != ""
+	if sim.stat_arrived != _arr_seen:
+		_arr_seen = sim.stat_arrived
+		var last := -1
+		for u in sim.n_units:
+			if sim.u_arr[u] >= 0 and (last < 0 or sim.u_arr[u] >= sim.u_arr[last]):
+				last = u
+		if last >= 0:
+			var who := str(unit_labels.get(last, ""))
+			arrival_note.text = "Reinforcements: %s" % (who if who != "" else UT.TYPES[sim.u_otype[last]]["name"])
+			if sim.u_side[last] != me:
+				arrival_note.text = "Enemy reinforcements: %s" % (who if who != "" else UT.TYPES[sim.u_otype[last]]["name"])
+			arrival_note.visible = true
+			_note_left = 3.0
+
+
+## "Arriving: n units" (own reserves still to come) and the enemy's.
+static func arriving_text(mine: int, theirs: int) -> String:
+	var bits: Array[String] = []
+	if mine > 0:
+		bits.append("Arriving: %d unit%s" % [mine, "" if mine == 1 else "s"])
+	if theirs > 0:
+		bits.append("Enemy arriving: %d unit%s" % [theirs, "" if theirs == 1 else "s"])
+	return "   ".join(bits)
+
+
 static func morale_text(sim, u: int) -> String:
 	var s: int = sim.u_state[u]
+	if s == BattleSim.U_RESERVE:
+		return "Arriving"
 	if s == BattleSim.U_DESTROYED:
 		return "Destroyed"
 	if s == BattleSim.U_LEFT:

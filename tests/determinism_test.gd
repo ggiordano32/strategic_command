@@ -129,6 +129,18 @@ extends SceneTree
 ## through the ford at foot holding its far exit arrives with no momentum
 ## (no impact; the same charge on the plain strikes home); identical on
 ## repeat and across snapshot / restore.
+## Reinforcements (2026-10-13; "--only=reinf", also in the full run):
+## Scenarios.reinf_battle at half size, 36 units (24 on the field and 12
+## reserves at its edge) against 24, both AI; side 0's left-wing horse
+## withdraw at tick 1: the first reserve enters (formed, within 110 m of
+## side 0's edge; the lines stand 220 m from it)
+## within a second or so of their leaving the field (a slot freed, long
+## before REINF_TIME), the next by the REINF_TIME rule (from tick 1,200, one
+## every REINF_SLOW while the field is full); side 0 never has more than
+## REINF_FIELD_MAX units on the field; the arrivals get orders from the
+## battle AI; identical on repeat and across snapshot / restore before any
+## arrival, just after the first and amid the timed ones. (The four field
+## goldens have no reserves: unchanged, checked in the full run.)
 ## Exits 0 on success, 1 on failure.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -261,6 +273,11 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=reinf" in OS.get_cmdline_user_args():
+		_check_reinf()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=engines" in OS.get_cmdline_user_args():
 		_check_engines()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -297,6 +314,7 @@ func _init() -> void:
 	_check_mantlets()
 	_check_carry()
 	_check_crossing()
+	_check_reinf()
 	if "--only=equipment" in OS.get_cmdline_user_args():
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
@@ -5357,3 +5375,115 @@ func _check_chars() -> void:
 		str(ev["aisab_sk"]), str(ev["aisab_avg"]), str(ev["aisab_skg"])])
 	print("PASS chars (AI): Average %s; Skilled %s; identical on repeat and across %d snapshot / restore checks" % [
 		str(ev["avg_ai"]), str(ev["sk_ai"]), int(a["snaps"])])
+
+
+# -------------------------------------------------------- reinforcements ---
+
+const REINF_SEED := 4711
+const REINF_TICKS := 1500
+
+
+## One run of the reinforcement battle: per-tick hashes, events, and
+## snapshots at the ticks snap_at says (tick -> name). from: a snapshot blob
+## to restore before stepping (its tick: the run starts there).
+func _reinf_run(snap_at: Dictionary, from: PackedByteArray = PackedByteArray(), n: int = REINF_TICKS) -> Dictionary:
+	var sc := Scenarios.reinf_battle(50)
+	var sim := BattleSim.new()
+	sim.setup(sc, REINF_SEED)
+	if not from.is_empty() and not sim.restore(from):
+		_fail("reinf: restore refused")
+		return {}
+	var ev := {"max_field": 0, "arrivals": [], "late_before": 0}
+	var hashes := {}
+	var snaps := {}
+	var h_edge := int(sc["height_m"])
+	while sim.tick < n:
+		var tk: int = sim.tick
+		if tk >= 1 and sim.u_state[0] == BattleSim.U_READY and sim.u_order[0] != BattleSim.O_WITHDRAW:
+			# (Army 1's left-wing horse; again until it holds: the AI's line
+			# order of the same tick sorts after it.)
+			sim.queue_order({"tick": tk, "type": BattleSim.ORDER_WITHDRAW, "unit": 0, "player": 0})
+		if snap_at.has(tk):
+			snaps[snap_at[tk]] = {"tick": tk, "blob": sim.snapshot()}
+		var had: int = sim.stat_arrived
+		var f_before: int = sim.field_units(0)
+		sim.step()
+		hashes[sim.tick] = sim.state_hash()
+		ev["max_field"] = maxi(int(ev["max_field"]), sim.field_units(0))
+		if sim.stat_arrived > had:
+			for u in sim.n_units:
+				if sim.u_arr[u] == tk:
+					(ev["arrivals"] as Array).append({"u": u, "tick": tk, "y_m": sim.u_cy[u] / M,
+						"edge_m": h_edge - sim.u_cy[u] / M, "field_before": f_before, "alive": sim.u_alive[u],
+						"state": sim.u_state[u]})
+		if not ev.has("left12") and sim.u_state[0] == BattleSim.U_LEFT:
+			ev["left12"] = sim.tick
+		if tk < BattleSim.REINF_TIME and sim.stat_arr_late > 0:
+			ev["late_before"] = 1
+		if snap_at.is_empty() and from.is_empty():
+			for a in ev["arrivals"]:
+				var u: int = a["u"]
+				if not a.has("ordered") and sim.u_order[u] != BattleSim.O_NONE:
+					a["ordered"] = sim.tick - int(a["tick"])
+	ev["late"] = sim.stat_arr_late
+	ev["arrived"] = sim.stat_arrived
+	ev["left"] = sim.reserves_left(0)
+	return {"hashes": hashes, "ev": ev, "snaps": snaps, "winner": sim.winner}
+
+
+func _check_reinf() -> void:
+	var a := _reinf_run({})
+	var ev: Dictionary = a["ev"]
+	var arr: Array = ev["arrivals"]
+	var first: Dictionary = arr[0] if not arr.is_empty() else {}
+	var snap_at := {50: "before", int(first.get("tick", 300)) + 3: "after_first", 1350: "timed"}
+	var b := _reinf_run(snap_at)
+	if str(a["hashes"]) != str(b["hashes"]):
+		_fail("reinf: the repeat diverged")
+	var ok := true
+	if first.is_empty() or not ev.has("left12") or int(first["tick"]) > int(ev["left12"]) + 10 \
+			or int(first["field_before"]) >= 24 or int(first["tick"]) >= BattleSim.REINF_TIME:
+		ok = false
+		_fail("reinf: the first reserve did not come up when the horse left (%s, left %d)" % [str(first), int(ev.get("left12", -1))])
+	var timed := 0
+	for e in arr:
+		if int(e["tick"]) >= BattleSim.REINF_TIME and int(e["field_before"]) >= 24:
+			timed += 1
+		if int(e["edge_m"]) > 110 or int(e["state"]) != BattleSim.U_READY or int(e["alive"]) <= 0:
+			ok = false
+			_fail("reinf: an arrival not formed at side 0's edge (%s)" % str(e))
+		if not e.has("ordered") or int(e["ordered"]) > 100:
+			ok = false
+			_fail("reinf: the battle AI gave an arrival no order within 10 s (%s)" % str(e))
+	if timed < 2 or int(ev["late_before"]) != 0:
+		ok = false
+		_fail("reinf: the REINF_TIME rule (%d timed arrivals, before tick %d: %d)" % [timed, BattleSim.REINF_TIME, int(ev["late_before"])])
+	if int(ev["max_field"]) > BattleSim.REINF_FIELD_MAX:
+		ok = false
+		_fail("reinf: %d units of side 0 on the field (cap %d)" % [int(ev["max_field"]), BattleSim.REINF_FIELD_MAX])
+	var snaps: Dictionary = b["snaps"]
+	var ha: Dictionary = a["hashes"]
+	for k in ["before", "after_first", "timed"]:
+		if not snaps.has(k):
+			_fail("reinf: no snapshot %s" % k)
+			continue
+		var t0 := int(snaps[k]["tick"])
+		var r := _reinf_run({}, snaps[k]["blob"], mini(t0 + 400, REINF_TICKS))
+		if r.is_empty():
+			continue
+		var bad := -1
+		for t in r["hashes"]:
+			if int(r["hashes"][t]) != int(ha.get(t, -1)):
+				bad = int(t)
+				break
+		if bad >= 0:
+			_fail("reinf: restored at %s (tick %d) diverged at tick %d" % [k, t0, bad])
+		else:
+			print("  reinf: restored at %s (tick %d) runs on equal to tick %d" % [k, t0, mini(t0 + 400, REINF_TICKS)])
+	var ticks: Array = []
+	for e in arr:
+		ticks.append("%d@%d(%dm)" % [int(e["u"]), int(e["tick"]), int(e["edge_m"])])
+	if ok:
+		print("PASS reinf: the horse left at tick %d, first reserve in at %d (field %d of 24); %d arrivals [%s], %d by the REINF_TIME rule; max %d on the field; %d still to come; identical on repeat and across snapshot / restore" % [
+			int(ev["left12"]), int(first["tick"]), int(first["field_before"]), int(ev["arrived"]), " ".join(ticks),
+			int(ev["late"]), int(ev["max_field"]), int(ev["left"])])

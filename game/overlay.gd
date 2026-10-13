@@ -1440,6 +1440,8 @@ func _draw_siege_gear(lw: float) -> void:
 		var c := to_px(sim.q_x[q], sim.q_y[q])
 		var ang := 0.0
 		var u: int = sim.q_unit[q]
+		if st == BattleSim.Q_CARRIED and u >= 0 and sim.u_state[u] == BattleSim.U_RESERVE:
+			continue  # (a reinforcement's wagon: not on the field yet)
 		if st == BattleSim.Q_CARRIED and u >= 0:
 			ang = sim.u_face[u] * TAU / 1024.0
 		elif st == BattleSim.Q_GROUND or st == BattleSim.Q_WRECKED:

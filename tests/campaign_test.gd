@@ -7,7 +7,8 @@ extends SceneTree
 ## movement and sea lanes, peace blocking, economy sums, building and
 ## recruitment gating by level and tier, recruits arriving, replenishment,
 ## merge / split / disband, battle scenario and outcome mapping, armies
-## joining a battle started this turn (side cap, defenders), conquest
+## joining a battle started this turn (no side cap: past 24 field units the
+## rest are reinforcements, their outcome rows; defenders), conquest
 ## and retreat, elimination, victory. Format 2 (city seeds): a saved format 1
 ## campaign migrates on load, an unmigrated (online) one plays the same;
 ## settlement battles on the city's own map, sim side and winner mapping
@@ -449,8 +450,9 @@ func _battles() -> void:
 	_check(fo.has("winner") and (fo["units"] as Array).size() > 0, "formula outcome")
 
 
-## Armies entering a region where a battle started this turn join it (up to
-## BATTLE_SIDE_MAX field units a side); a battle from an earlier turn blocks.
+## Armies entering a region where a battle started this turn join it (all of
+## them: past BATTLE_SIDE_MAX field units a side the rest are reinforcements,
+## docs/DESIGN.md "Reinforcements"); a battle from an earlier turn blocks.
 func _joining() -> void:
 	var st := _new([_f("rome")])
 	var rome := _f("rome")
@@ -475,18 +477,20 @@ func _joining() -> void:
 	CRules._insert_army(st2, x)
 	_check(CRules.execute_move(st2, CState.army(st2, int(x["id"])), _r("apulia")) == "battle pending there",
 		"a battle from an earlier turn still blocks the move")
-	# Side cap: 12 + 12 units join, one more is bounced.
+	# No side cap (2026-10-13): three armies of 12 units join one battle; past
+	# 24 field units the third army's 12 wait as reinforcements.
 	var s3 := _new([_f("rome")])
 	var a1: Dictionary = CState.armies_of(s3, rome)[0]
 	var a2: Dictionary = CState.armies_of(s3, rome)[1]
 	a1["r"] = _r("samnium")
-	for arm in [a1, a2]:
-		while CState.unit_count(arm) < CData.ARMY_MAX:
-			(arm["units"] as Array).append({"t": "heavy", "n": 100})
 	var a3id := CRules.new_army_id(s3, rome)
 	s3["factions"][rome]["next_army"] = int(s3["factions"][rome]["next_army"]) + 1
 	CRules._insert_army(s3, {"id": a3id, "f": rome, "r": _r("samnium"), "units": [{"t": "heavy", "n": 100}],
 		"from": _r("samnium"), "moved": 0, "busy": 0})
+	for arm in [a1, a2, CState.army(s3, a3id)]:
+		(arm["units"] as Array).resize(0)
+		while CState.unit_count(arm) < 12:
+			(arm["units"] as Array).append({"t": "heavy" if CState.unit_count(arm) % 3 != 2 else "archer", "n": 80})
 	var s4 := CTurn.resolve_turn(s3, [CTurn.submission(s3, rome, [{"t": "move", "army": int(a1["id"]), "to": _r("apulia"), "mode": CData.MODE_ASSAULT},
 		{"t": "move", "army": int(a2["id"]), "to": _r("apulia"), "mode": CData.MODE_ASSAULT}, {"t": "move", "army": a3id, "to": _r("apulia"), "mode": CData.MODE_ASSAULT}])])
 	var b4 := CState.battle_at(s4, _r("apulia"))
@@ -494,9 +498,60 @@ func _joining() -> void:
 	for e in s4["events"]:
 		if str(e["k"]) == "move_failed" and int(e["army"]) == a3id:
 			why = str(e["why"])
-	_check(not b4.is_empty() and (b4["att"] as Array).size() == 2 and not (b4["att"] as Array).has(a3id)
-		and int(CState.army(s4, a3id)["r"]) == _r("samnium") and why == "battle side full",
-		"past %d units a side the extra army is bounced (%s)" % [CData.BATTLE_SIDE_MAX, why])
+	_check(not b4.is_empty() and (b4["att"] as Array).size() == 3 and (b4["att"] as Array).has(a3id)
+		and int(CState.army(s4, a3id)["r"]) == _r("apulia") and why == "",
+		"three armies of 12 units join one battle, none bounced (%s)" % why)
+	if b4.is_empty():
+		return
+	var split := CBattle.field_split(s4, b4)
+	_check((split[0]["field"] as Dictionary).size() == CData.BATTLE_SIDE_MAX and (split[0]["queue"] as Array).size() == 12
+		and int(split[0]["queue"][0][0]) == a3id, "24 units take the field, the third army's 12 are reserves in join order")
+	var built := CBattle.build(s4, b4, rome)
+	var scn_units: Array = built["scenario"]["units"]
+	var n_res := 0
+	for su in scn_units:
+		if int(su.get("reserve", 0)) != 0:
+			n_res += 1
+	_check(n_res == 12 and (built["map"] as Array).size() == scn_units.size(), "the battle scenario carries the 12 reserves (%d)" % n_res)
+	var sim := BattleSim.new()
+	sim.setup(built["scenario"], int(built["seed"]))
+	var r0 := -1
+	for u in sim.n_units:
+		if sim.u_state[u] == BattleSim.U_RESERVE:
+			r0 = u
+			break
+	_check(r0 >= 0 and sim.reserves_left(int(built["sim_side"][0])) == 12, "the sim holds the 12 reserves off the field")
+	if r0 < 0:
+		return
+	sim._arrive(r0)  # (one comes up at once; the rest never arrive)
+	for t in 30:
+		sim.step()
+	var oc := CBattle.outcome_from_result(built, sim.result(), "fought")
+	var arrived_ok := false
+	var waiting := 0
+	var waiting_ok := true
+	var m0: Dictionary = built["map"][r0]
+	for row in oc["units"]:
+		if int(row["army"]) != a3id:
+			continue
+		var n0 := int(CState.army(s4, a3id)["units"][int(row["unit"])]["n"])
+		if int(row["unit"]) == int(m0["unit"]):
+			arrived_ok = int(row["remaining"]) + int(row["killed"]) + int(row["routed"]) + int(row["withdrawn"]) == n0
+		else:
+			waiting += 1
+			if int(row["remaining"]) != n0 or int(row["killed"]) != 0 or int(row["routed"]) != 0:
+				waiting_ok = false
+	_check(arrived_ok and waiting == 11 and waiting_ok,
+		"outcome rows: the arrived reserve's fate, the 11 that never arrived whole (rows %d, ok %s)" % [waiting, str(waiting_ok)])
+	var s5x := CState.copy(s4)
+	CRules.apply_outcome(s5x, int(b4["id"]), oc)
+	var a3x := CState.army(s5x, a3id)
+	var whole := 0
+	if not a3x.is_empty():
+		for k in CState.unit_count(a3x):
+			if k != int(m0["unit"]) and int(a3x["units"][k]["n"]) == 80:
+				whole += 1
+	_check(whole == 11, "after the battle the reserves that never arrived are unhurt (%d of 11)" % whole)
 	# Defending: an army moving into its own region attacked this turn joins the defenders.
 	var s5 := _new([_f("rome")])
 	var ep := _f("epirus")
@@ -3639,7 +3694,9 @@ func _ai_skilled() -> void:
 	ge["factions"][_f("macedon")]["ai_skill"] = CP.EASY
 	for t in 20:
 		ge = CTurn.resolve_turn(ge, [])
-	_check(CState.hash_text(ge) == "be6e10a3" and int(ge["rng"]) == 3786296811,
+	# (Easy golden moved 2026-10-13 with reinforcements: an army that was
+	# bounced off a full battle side now joins it; was be6e10a3, same rng.)
+	_check(CState.hash_text(ge) == "bd76985b" and int(ge["rng"]) == 3786296811,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(ge), int(ge["rng"])])
 	CAI.no_beasts = false
 	CBattle.old_walls = false

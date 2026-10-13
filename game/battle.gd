@@ -287,6 +287,10 @@ func _ready() -> void:
 	hud = Hud.new()
 	add_child(hud)
 	hud.build(sim, player_side, interactive)
+	var su: Array = scn.get("units", [])
+	for k in mini(su.size(), sim.n_units):
+		if str((su[k] as Dictionary).get("label", "")) != "":
+			hud.unit_labels[k] = str(su[k]["label"])  # (reinforcements: their army's name)
 	if campaign_mode:
 		hud.result_menu_button.text = "Back to campaign"
 		# The menu button is a bare 50 px icon; as "Leave" it needs its width

@@ -113,6 +113,7 @@ const U_READY := 0
 const U_ROUTING := 1
 const U_DESTROYED := 2
 const U_KENNEL := 4            # (a war dog pack with its handlers)
+const U_RESERVE := 5           # (a reinforcement still to arrive)
 const O_NONE := 0
 const O_MOVE := 1
 const O_ATTACK := 2
@@ -391,13 +392,16 @@ static func _strength(sim, side: int) -> int:
 			if sim.u_cls[u] == UT.CLS_ART and sim.u_ammo[u] <= 0 and sim.u_reserve[u] <= 0:
 				cost = 2  # crews with nothing left to shoot
 			s += sim.u_alive[u] * cost
+		elif sim.u_side[u] == side and sim.u_state[u] == U_RESERVE and sim.reserve_open(side):
+			s += sim.u_count0[u] * UT.stat(sim.u_type[u], "cost")  # (reinforcements on their way)
 	return s
 
 
+## (Reinforcements count from their arrival: docs/DESIGN.md "Reinforcements".)
 static func _start_strength(sim, side: int) -> int:
 	var s := 0
 	for u in sim.n_units:
-		if sim.u_side[u] == side and not is_char(sim, u):
+		if sim.u_side[u] == side and not is_char(sim, u) and sim.u_state[u] != U_RESERVE:
 			s += sim.u_count0[u] * UT.stat(sim.u_type[u], "cost")
 	return s
 

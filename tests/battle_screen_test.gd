@@ -13,7 +13,9 @@ extends SceneTree
 ## N" (its outcome rows carry them), an auto-resolved one's do not and say
 ## kills are counted per side; a fought outcome with kills drawn on the
 ## first assault's cards. A field battle (an interception, format 5): the
-## terrain preview instead of the city, no equipment line, the cards.
+## terrain preview instead of the city, no equipment line, the cards; the
+## defenders bring 26 units and more (their support), so the card lists
+## those past the 24 field slots as "Arriving: n units" (reinforcements).
 
 const CampaignScreen := preload("res://game/campaign/campaign_screen.gd")
 const BattleScreen := preload("res://game/campaign/battle_screen.gd")
@@ -330,6 +332,14 @@ func _process(_d: float) -> bool:
 				for l in scr.find_children("*", "Label", true, false):
 					txt += (l as Label).text + " "
 				_check(txt.contains("Field battle in Samnium") and txt.contains("woods"), "the title and the ground with its woods")
+				var arr := _label(scr, "arriving_1")
+				var on2 := 0
+				for g in sn["sides"][1]:
+					for u in g["units"]:
+						if int(u["on"]) == 2:
+							on2 += 1
+				_check(on2 >= 2 and arr.begins_with("Arriving: %d units" % on2) and _label(scr, "arriving_0") == "",
+					"the defenders' reinforcements line: " + arr)
 			print("RESULT: ", "PASS" if _ok else "FAIL")
 			quit(0 if _ok else 1)
 	return false
@@ -350,6 +360,8 @@ func _field() -> void:
 	mine["r"] = CData.region_index("samnium")
 	mine["stance"] = CData.STANCE_FIELD
 	mine["units"] = [{"t": "heavy", "n": 100}, {"t": "heavy", "n": 80}, {"t": "spear", "n": 100}, {"t": "light", "n": 120}, {"t": "cav", "n": 60}]
+	for k in 21:
+		(mine["units"] as Array).append({"t": "light", "n": 50})  # (26 units: 2 past the 24 field slots)
 	CRules.execute_moves(st, [[id, CData.region_index("samnium"), ep, CData.MODE_MARCH, 0]])
 	var b := CState.battle_at(st, CData.region_index("samnium"))
 	_check(not b.is_empty() and str(b.get("kind", "")) == "field", "the interception is a pending field battle")

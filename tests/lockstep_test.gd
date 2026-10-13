@@ -77,6 +77,13 @@ extends SceneTree
 ##    two peers attacking it (each sends a ladder unit up a stretch and the
 ##    ram at the main gate) with a third joining by snapshot while a unit is
 ##    on its ladders: every frame equal.
+## 14. Reinforcements (docs/DESIGN.md "Reinforcements"; "--only=reinf"):
+##    two peers on side 0 (three units on the field, two reserves at their
+##    edge) against the AI (three and one); A withdraws a unit at once (its
+##    slot frees: a reserve comes up mid-battle), the rest come by the
+##    REINF_TIME rule; the peers order the arrivals they command; a third
+##    peer joins by snapshot after the first arrival. Every frame equal; the
+##    arrivals the same on all three.
 ## Exits 0 on success.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -118,6 +125,11 @@ func _init() -> void:
 		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 		quit(0 if _ok else 1)
 		return
+	if OS.get_cmdline_user_args().has("--only=reinf"):
+		_test_lockstep_reinf()
+		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
+		quit(0 if _ok else 1)
+		return
 	if OS.get_cmdline_user_args().has("--only=street"):
 		_test_lockstep_street()
 		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
@@ -137,6 +149,7 @@ func _init() -> void:
 	_test_lockstep_siege_deploy()
 	_test_lockstep_street()
 	_test_lockstep_chars()
+	_test_lockstep_reinf()
 	_test_easy_snapshots()
 	_test_lockstep_easy()
 	_test_skilled_snapshots()
@@ -2333,3 +2346,96 @@ func _test_lockstep_chars() -> void:
 	else:
 		print("PASS chars lockstep: %d frames A/B equal; one order of each kind through the lockstep (%s; rejected %d); snapshot mid-sabotage at tick %d ran on equal" % [
 			n_ab, acts, a.ls.rejected, snap_t])
+
+
+func _test_lockstep_reinf() -> void:
+	var units: Array = [
+		Scenarios.unit(0, UT.HEAVY, 60, 120, 250, Scenarios.FACE_UP),
+		Scenarios.unit(0, UT.CAVALRY, 40, 60, 262, Scenarios.FACE_UP),
+		Scenarios.unit(0, UT.SPEAR, 60, 200, 250, Scenarios.FACE_UP),
+		Scenarios.unit(0, UT.HEAVY, 50, 120, 345, Scenarios.FACE_UP),
+		Scenarios.unit(0, UT.ARCHER, 40, 200, 345, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.HEAVY, 60, 120, 110, Scenarios.FACE_DOWN),
+		Scenarios.unit(1, UT.HEAVY, 60, 200, 110, Scenarios.FACE_DOWN),
+		Scenarios.unit(1, UT.JAVELIN, 40, 160, 95, Scenarios.FACE_DOWN),
+		Scenarios.unit(1, UT.SPEAR, 60, 160, 15, Scenarios.FACE_DOWN)]
+	for k in [3, 4, 8]:
+		units[k]["reserve"] = 1
+	var scen := {"width_m": 300, "height_m": 360, "units": units, "ai_sides": [1], "terrain": {"kind": 0}}
+	var probe := BattleSim.new()
+	probe.setup(scen, 4242)
+	var home := _home_split(probe)
+	var relay := Relay.new()
+	var a := _new_peer(scen, home, 0, "A", [0, 1])
+	var b := _new_peer(scen, home, 1, "B", [0, 1])
+	a.latency = 1
+	b.latency = 3
+	b.d = 4
+	var peers: Array[Peer] = [a, b]
+	var total := 1600
+	var c: Peer = null
+	var c_join := -1
+	var now := 0
+	var wd_sent := false
+	while now < total * 3 and mini(a.ls.frame, b.ls.frame) < total:
+		now += 1
+		for p in peers:
+			var sim = p.ls.sim
+			if p.me == 1 and not wd_sent and sim.tick > 3 and p.ls.u_cmd[1] == 1:
+				p.issue({"type": BattleSim.ORDER_WITHDRAW, "unit": 1})  # (B's horse leave: a slot frees)
+				wd_sent = true
+			if now % 40 == 7 + p.me * 11:
+				for u in sim.n_units:
+					if p.ls.u_cmd[u] != p.me or sim.u_state[u] != BattleSim.U_READY or sim.u_order[u] != BattleSim.O_NONE:
+						continue
+					var best := -1
+					var bd := 0
+					for o in sim.n_units:
+						if sim.u_side[o] == 1 and sim.u_state[o] == BattleSim.U_READY:
+							var d: int = absi(sim.u_cx[o] - sim.u_cx[u]) + absi(sim.u_cy[o] - sim.u_cy[u])
+							if best < 0 or d < bd:
+								best = o
+								bd = d
+					if best >= 0:
+						p.issue({"type": BattleSim.ORDER_ATTACK, "unit": u, "target": best, "run": 0})
+			p.flush(relay, now)
+			p.deliver(relay, now)
+			p.run(p.rng.randi() % 3, true)
+		if c != null:
+			c.flush(relay, now)
+			c.deliver(relay, now)
+			c.run(4, true)
+		elif a.ls.sim.stat_arrived > 0 and a.ls.sim.tick > 0:
+			c_join = now
+			c = _new_peer(scen, home, 1, "C", [0, 1])
+			c.online = true
+			c.latency = 2
+			if not c.ls.restore(a.ls.snapshot()):
+				_fail("reinf lockstep: C could not restore A's snapshot")
+				return
+			c.hashes[c.ls.frame] = c.ls.state_hash()
+			c.cursor = 0
+			while c.cursor < relay.items.size() and int(relay.items[c.cursor]["s"]) <= c.ls.last_s:
+				c.cursor += 1
+			c.sent_k = 1 << 30
+	var n_ab := _compare(a, b, 0, "reinf A/B")
+	var n_ac := _compare(a, c, c_join, "reinf A/C") if c != null else 0
+	var sa = a.ls.sim
+	var sb = b.ls.sim
+	var arr_a: Array = []
+	var arr_b: Array = []
+	for u in sa.n_units:
+		if sa.u_arr[u] >= 0:
+			arr_a.append("%d@%d" % [u, sa.u_arr[u]])
+		if sb.u_arr[u] >= 0:
+			arr_b.append("%d@%d" % [u, sb.u_arr[u]])
+	var ordered := 0
+	for u in [3, 4]:
+		if sa.u_arr[u] >= 0 and (sa.u_order[u] != BattleSim.O_NONE or sa.u_killed[u] + sa.u_withdrawn[u] + sa.u_routed_off[u] > 0):
+			ordered += 1
+	if n_ab < total / 2 or n_ac < 50 or arr_a.size() < 3 or str(arr_a) != str(arr_b) or sa.u_arr[3] < 0 \
+			or sa.u_arr[3] >= BattleSim.REINF_TIME or sa.u_arr[8] < 0:
+		_fail("reinf lockstep: A/B %d, A/C %d frames; arrivals A %s B %s" % [n_ab, n_ac, str(arr_a), str(arr_b)])
+	else:
+		print("PASS reinf lockstep: %d frames A/B and %d A/C equal (C joined at frame %d, after the first arrival); arrivals (unit@tick) %s on both, %d by the REINF_TIME rule; side 0's arrivals ordered by their players %d of 2; sim tick %d" % [
+			n_ab, n_ac, c_join, " ".join(arr_a), sa.stat_arr_late, ordered, sa.tick])

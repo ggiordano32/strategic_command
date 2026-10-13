@@ -48,6 +48,7 @@ const U_ROUTING := 1
 const U_DESTROYED := 2  # every soldier killed
 const U_LEFT := 3       # no soldiers on the field, some left by the edge
 const U_KENNEL := 4     # a war dog pack with its handlers, not on the field (docs/DESIGN.md "War dogs")
+const U_RESERVE := 5    # a reinforcement not yet arrived (scenario "reserve"; docs/DESIGN.md "Reinforcements")
 
 # Unit orders (current standing order of a unit).
 const O_NONE := 0
@@ -182,6 +183,7 @@ const SKIRM_BACK := 35 * M
 const E_OK := 0
 const E_WRECKED := 1             # smashed (melee next to it, or a stone)
 const E_ABANDONED := 2           # left on the field (dropped, or its crew broke or died): any foot may pick it up
+const E_RESERVE := 3             # a reinforcement's engine, not on the field yet (U_RESERVE)
 const PICK_ENG := 1 << 16        # u_pick of a unit going to pick up engine group g: PICK_ENG + g
 const MAN_DIST := 5 * M          # crew within this of their engine work it
 const ENGINE_NEAR := 2 * M       # enemy soldiers this close wreck an engine
@@ -562,6 +564,15 @@ const MAX_ROUTS := 1                       # a unit rallies once; the next rout 
 
 # Battle end.
 const TIME_LIMIT := 9000          # 15 minutes: undecided battles are a draw
+## Reinforcements (docs/DESIGN.md "Reinforcements"): a side's reserves enter
+## one at a time, in unit order, while its units on the field are fewer than
+## its slots (rsv_cap), at most one every REINF_GAP ticks; from REINF_TIME
+## on also while the field is full, one every REINF_SLOW ticks, up to
+## REINF_FIELD_MAX units of the side on the field.
+const REINF_GAP := 50             # 5 s
+const REINF_TIME := 1200          # 120 s
+const REINF_SLOW := 100           # 10 s
+const REINF_FIELD_MAX := 30
 const END_AFTER := 600            # pursuit continues 60 s after the decision
 
 # Removal reasons.
@@ -1101,6 +1112,16 @@ var stat_calmed: int = 0              # amok beasts calmed (alone long enough)
 var stat_beast_killed: int = 0        # beasts killed by their drivers
 var stat_beast_gate: int = 0          # gate damage by beasts
 var dog_on: int = 0                   # some unit carries a war dog pack (static)
+# Reinforcements (docs/DESIGN.md "Reinforcements"; hashed only in battles
+# with reserves, rsv_on): units set up off the field (U_RESERVE) that enter
+# at their own spot as the side's field slots free up or after REINF_TIME.
+var rsv_on: int = 0                   # some unit starts in reserve (static)
+var rsv_cap := PackedInt32Array()     # per side: its field slots (units on the field at setup)
+var rsv_last := PackedInt32Array()    # per side: tick of its last arrival
+var rsv_stop := PackedInt32Array()    # per side: 1 once it withdrew (no more arrivals)
+var u_arr := PackedInt32Array()       # per unit: tick it arrived (-1: never in reserve, or not yet)
+var stat_arrived: int = 0             # reserves that entered
+var stat_arr_late: int = 0            # ... of them by the REINF_TIME rule (the field at its slots)
 var ch_on: int = 0                    # some unit is a character (hero or agent; static)
 var ch_sg := PackedInt32Array([0, 0]) # per side: a siege hero on the field this second (his effects for the whole side)
 var ch_pris := PackedInt32Array([0, 0])  # per side: enemy men it took prisoner (parley)
@@ -1786,6 +1807,7 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		for u in n_units:
 			if units[u].has("pack_of"):
 				_kennel_setup(u, int(units[u]["pack_of"]))
+	_reserve_setup(units)
 	fire_on = 0
 	for u in n_units:
 		if u_sk[u] >= 0 and t_k_fire[u_sk[u]] > 0:
@@ -1930,7 +1952,7 @@ func _char_units(sc: Dictionary, units: Array) -> Array:
 		var fcy := 0
 		var nn := 0
 		for ud in units:
-			if int(ud["side"]) != side:
+			if int(ud["side"]) != side or int(ud.get("reserve", 0)) != 0:
 				continue
 			sx += int(ud["x_m"])
 			sy += int(ud["y_m"])
@@ -1954,7 +1976,7 @@ func _char_units(sc: Dictionary, units: Array) -> Array:
 		var lmax := 0
 		var first := true
 		for ud in units:
-			if int(ud["side"]) != side:
+			if int(ud["side"]) != side or int(ud.get("reserve", 0)) != 0:
 				continue
 			var ox := int(ud["x_m"]) - cx
 			var oy := int(ud["y_m"]) - cy
@@ -4885,6 +4907,10 @@ func _apply_orders(max_player: int = 1 << 30) -> void:
 			if phase != PHASE_DEPLOY and char_refusal(self, o) == "":
 				_char_order(o)
 			continue
+		if rsv_on != 0 and int(o["type"]) == ORDER_WITHDRAW_ALL and phase != PHASE_DEPLOY:
+			var ws := int(o.get("side", -1))
+			if ws == 0 or ws == 1:
+				rsv_stop[ws] = 1  # (the reserves turn back: they stay out, unhurt)
 		for u in order_units(self, o):
 			var d := order_fields(self, u)
 			var o0 := u_order[u]  # (the order it had: an attack after an attack keeps its way)
@@ -5679,6 +5705,8 @@ func step() -> void:
 		return
 	_dist_new = 0
 	_apply_orders()
+	if rsv_on != 0:
+		_update_reserves()
 	if city_on != 0:
 		SiegeAI.think(self)
 	else:
@@ -8831,7 +8859,7 @@ func _ignite(p: int) -> void:
 				stat_ignite += 1
 			g_burn[g] = FIRE_TICKS
 	for e in n_eng:
-		if e_state[e] == E_WRECKED:
+		if e_state[e] == E_WRECKED or e_state[e] == E_RESERVE:
 			continue
 		var r := FIRE_R
 		var eu := e_unit[e]
@@ -9317,6 +9345,8 @@ func _update_artillery() -> void:
 		var ne := u_neng[u]
 		if ne == 0:
 			continue
+		if u_state[u] == U_RESERVE:
+			continue  # (a reinforcement's battery: not on the field yet)
 		var e0 := u_eng0[u]
 		var ty := u_type[u]
 		if t_fixed[ty] != 0 and u_state[u] == U_READY and u_alive[u] > 0 and e_state[e0] != E_OK:
@@ -9545,7 +9575,7 @@ func _refill_work(u: int) -> void:
 ## theirs: Drop, then a pick-up, mans them again.)
 func engines_free(g: int) -> bool:
 	var op := eg_op[g]
-	return op < 0 or u_state[op] != U_READY or u_eg[op] != g
+	return op < 0 or (u_state[op] != U_READY and u_state[op] != U_RESERVE) or u_eg[op] != g
 
 
 ## Where engine group g stands: the middle of its engines (a battery's
@@ -11115,6 +11145,169 @@ func _absorb(p: int) -> void:
 	stat_absorbed += 1
 
 
+# ------------------------------------------------------- reinforcements ---
+# docs/DESIGN.md "Reinforcements". A scenario unit marked "reserve" (the
+# campaign: an army's units past the side's BATTLE_SIDE_MAX field slots) is
+# set up where it will enter (its side's map edge, or the plaza inside the
+# walls) and kept off the field (U_RESERVE: no men alive, its men S_OFF, its
+# engines E_RESERVE) until it arrives. Once a second, per side (0 then 1),
+# while the side still fights (not withdrawn, its AI not withdrawing) and
+# the battle is not decided: the side's first reserve (unit order) arrives
+# when its units on the field (ready or routing; not characters, war dog
+# packs or tower engines) are fewer than its slots (rsv_cap: those on the
+# field at setup) and REINF_GAP has passed since its last arrival, or from
+# REINF_TIME on, with the field at its slots, every REINF_SLOW up to
+# REINF_FIELD_MAX on the field. It enters formed, in its set-up formation,
+# with the morale it was set up with; the battle AI (or its player) takes it
+# from there. A pure function of the sim state: no input needed in lockstep.
+# Reserves that never arrive count as remaining (result()); a side with
+# reserves to come still fights (_check_winner).
+
+
+## Setup: the scenario's "reserve" units go off the field; each side's
+## slots are its units on the field after that.
+func _reserve_setup(units: Array) -> void:
+	rsv_on = 0
+	rsv_cap = PackedInt32Array([0, 0])
+	rsv_last = PackedInt32Array([-100000, -100000])
+	rsv_stop = PackedInt32Array([0, 0])
+	u_arr = PackedInt32Array()
+	u_arr.resize(n_units)
+	u_arr.fill(-1)
+	stat_arrived = 0
+	stat_arr_late = 0
+	for u in n_units:
+		if int((units[u] as Dictionary).get("reserve", 0)) != 0 and u_hand[u] < 0 and u_char[u] == 0 \
+				and t_fixed[u_type[u]] == 0:
+			_to_reserve(u)
+			rsv_on = 1
+	for u in n_units:
+		if field_unit(u):
+			rsv_cap[u_side[u]] += 1
+
+
+func _to_reserve(u: int) -> void:
+	var base := u_slot_base[u]
+	for s in u_count0[u]:
+		var i := base + s
+		state[i] = S_OFF
+		slot_of[i] = -1
+		slot_soldier[base + s] = -1
+		target[i] = -1
+	u_alive[u] = 0
+	u_state[u] = U_RESERVE
+	u_order[u] = O_NONE
+	for k in u_neng[u]:
+		e_state[u_eng0[u] + k] = E_RESERVE
+
+
+## Unit u holds one of its side's field slots: on the field (ready or
+## routing), not a character, a war dog pack or a tower engine.
+func field_unit(u: int) -> bool:
+	return u_state[u] <= U_ROUTING and u_alive[u] > 0 and u_char[u] == 0 and u_hand[u] < 0 \
+			and t_fixed[u_type[u]] == 0
+
+
+## Side s's units holding field slots.
+func field_units(s: int) -> int:
+	var c := 0
+	for u in n_units:
+		if u_side[u] == s and field_unit(u):
+			c += 1
+	return c
+
+
+## Side s still brings up its reserves: it has not withdrawn (an army
+## withdrawal order, or its AI withdrawing).
+func reserve_open(s: int) -> bool:
+	return rsv_on != 0 and rsv_stop[s] == 0 and not (ai_sides[s] != 0 and ai_phase[s] == BattleAI.P_WITHDRAW)
+
+
+## Side s's units still to arrive (-1: every side).
+func reserves_left(s: int = -1) -> int:
+	if rsv_on == 0:
+		return 0
+	var c := 0
+	for u in n_units:
+		if u_state[u] == U_RESERVE and (s < 0 or u_side[u] == s):
+			c += 1
+	return c
+
+
+## The arrival rule (once a second, before the AI thinks).
+func _update_reserves() -> void:
+	if winner >= 0 or tick % TICKS_PER_SECOND != 0:
+		return
+	for s in 2:
+		if not reserve_open(s):
+			continue
+		var nxt := -1
+		for u in n_units:
+			if u_side[u] == s and u_state[u] == U_RESERVE:
+				nxt = u
+				break
+		if nxt < 0:
+			continue
+		var f := field_units(s)
+		var gap := tick - rsv_last[s]
+		if f < rsv_cap[s]:
+			if gap < REINF_GAP:
+				continue
+		elif tick >= REINF_TIME and f < REINF_FIELD_MAX and gap >= REINF_SLOW:
+			stat_arr_late += 1
+		else:
+			continue
+		_arrive(nxt)
+
+
+## Reserve u enters at its set-up spot, formed.
+func _arrive(u: int) -> void:
+	var base := u_slot_base[u]
+	var cnt := u_count0[u]
+	for s in cnt:
+		var i := base + s
+		slot_soldier[base + s] = i
+		slot_of[i] = s
+	u_alive[u] = cnt
+	u_state[u] = U_READY
+	u_order[u] = O_NONE
+	u_target[u] = -1
+	u_ftarget[u] = -1
+	u_ai[u] = 0
+	u_ai_t[u] = tick
+	u_arr[u] = tick
+	u_stair[u] = 0
+	u_pn[u] = 0
+	u_trn[u] = 0
+	u_dx[u] = u_ax[u]
+	u_dy[u] = u_ay[u]
+	u_dface[u] = u_face[u]
+	for k in u_neng[u]:
+		var e := u_eng0[u] + k
+		if e_state[e] == E_RESERVE:
+			e_state[e] = E_OK
+	if obs_on != 0:
+		_u_obs[u] = _near_obs(u)
+		u_flt[u] = -FLOW_EVERY
+	_compute_offsets(u)
+	for s in cnt:
+		var i := base + s
+		pos_x[i] = clampi(u_ax[u] + off_x[base + s], 0, field_w)
+		pos_y[i] = clampi(u_ay[u] + off_y[base + s], 0, field_h)
+		prev_x[i] = pos_x[i]
+		prev_y[i] = pos_y[i]
+		facing[i] = u_face[u]
+		state[i] = S_FORMED
+		target[i] = -1
+	u_settled[u] = 0
+	u_dirty[u] = 1
+	_bounds_of(u)
+	if ter_on != 0 or obs_on != 0 or fwh_on != 0:
+		u_h[u] = _unit_elev(u)
+	rsv_last[u_side[u]] = tick
+	stat_arrived += 1
+
+
 # ------------------------------------------------------ heroes and agents ---
 # docs/DESIGN.md "Heroes and agents". The scenario's "chars" adds one-man
 # units (u_char: their kind) that never count toward holding the field.
@@ -11184,6 +11377,8 @@ static func char_refusal(sim, o: Dictionary) -> String:
 				return "not an enemy battery"
 			if UT.stat(sim.eg_type[g], "fixed") != 0:
 				return "tower engines are out of reach"
+			if sim.eg_op[g] >= 0 and sim.u_state[sim.eg_op[g]] == U_RESERVE:
+				return "not on the field yet"
 			for kk in sim.eg_ne[g]:
 				if sim.e_state[sim.eg_e0[g] + kk] != E_WRECKED:
 					return ""
@@ -11637,6 +11832,11 @@ func _check_winner() -> void:
 		if u_state[u] == U_READY and u_order[u] != O_WITHDRAW and t_fixed[u_type[u]] == 0 and u_hand[u] < 0 \
 				and u_char[u] == 0:
 			ready[u_side[u]] += 1
+	if rsv_on != 0:
+		# Reinforcements still to come keep their side in the fight.
+		for s in 2:
+			if reserve_open(s):
+				ready[s] += reserves_left(s)
 	if ready[0] == 0 and ready[1] > 0:
 		winner = 1
 	elif ready[1] == 0 and ready[0] > 0:
@@ -11697,6 +11897,12 @@ func result() -> Dictionary:
 			# A war dog pack: its handlers' unit (its dogs with them count as remaining).
 			r["pack_of"] = u_hand[u]
 			r["remaining"] = u_alive[u] + u_kept[u]
+		if u_state[u] == U_RESERVE:
+			# A reinforcement that never arrived: all its men remain.
+			r["remaining"] = u_count0[u]
+			r["reserve"] = 1
+		elif rsv_on != 0 and u_arr[u] >= 0:
+			r["arrived"] = u_arr[u]
 		if ch_on != 0:
 			# Heroes and agents: "char" 1, "alive" 1 unless he was killed
 			# (withdrawn or still on the field: alive), "ci" his place in his
@@ -11895,6 +12101,10 @@ func state_hash() -> int:
 		# War dogs (battles without handlers hash as before).
 		for arr in _dog_arrays():
 			ctx.update((arr as PackedInt32Array).to_byte_array())
+	if rsv_on != 0:
+		# Reinforcements (battles without reserves hash as before).
+		for arr in [rsv_cap, rsv_last, rsv_stop, u_arr]:
+			ctx.update((arr as PackedInt32Array).to_byte_array())
 	if riv_on != 0:
 		# River crossings (battles without one hash as before).
 		ctx.update(u_frd.to_byte_array())
@@ -11953,7 +12163,7 @@ func _setup_deploy(sc: Dictionary) -> void:
 			var sy := 0
 			var cnt := 0
 			for u in n_units:
-				if u_side[u] == s:
+				if u_side[u] == s and u_state[u] != U_RESERVE:
 					sy += u_ay[u] / M
 					cnt += 1
 			var bottom := cnt > 0 and sy / cnt > field_h / M / 2
@@ -11964,7 +12174,7 @@ func _setup_deploy(sc: Dictionary) -> void:
 		dep_z.append_array([int(za[0]), int(za[1]), int(za[2]) * M, int(za[3]) * M, int(za[4]) * M, int(za[5]) * M])
 	if city_on != 0:
 		for u in n_units:
-			if u_side[u] != city_def:
+			if u_side[u] != city_def and u_state[u] != U_RESERVE:
 				dep_out = _piece0(u_ax[u], u_ay[u])
 				if dep_out >= 0:
 					break
@@ -12707,6 +12917,8 @@ func _update_equip() -> void:
 		var st := q_state[q]
 		if st == Q_CARRIED:
 			var u := q_unit[q]
+			if u >= 0 and u_state[u] == U_RESERVE:
+				continue  # (a reinforcement's wagon comes with it)
 			if u < 0 or u_state[u] != U_READY or u_alive[u] <= 0 or u_carry[u] != q:
 				if u >= 0 and u_carry[u] == q:
 					u_carry[u] = -1
@@ -13709,7 +13921,7 @@ func _mantlets_at_setup(sc: Dictionary, units: Array) -> Array:
 		for u in units.size():
 			var ud: Dictionary = units[u]
 			var ty := int(ud["type"])
-			if int(ud["side"]) != s or UT.stat(ty, "fixed") != 0:
+			if int(ud["side"]) != s or UT.stat(ty, "fixed") != 0 or int(ud.get("reserve", 0)) != 0:
 				continue
 			any.append(u)
 			if UT.cls(ty) == UT.CLS_MISSILE or UT.cls(ty) == UT.CLS_ART:

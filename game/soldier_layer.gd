@@ -450,7 +450,7 @@ func upload() -> void:
 	var sts: PackedInt32Array = sim.state
 	if sim.n_eng > 0:
 		for e in sim.n_eng:
-			_e_state[e] = ENGINE_OK if sim.e_state[e] == 0 else ENGINE_OUT
+			_e_state[e] = ENGINE_OK if sim.e_state[e] == 0 else (5 if sim.e_state[e] == 3 else ENGINE_OUT)  # (3: a reinforcement's, not on the field: skipped like S_OFF)
 		xs = xs + sim.e_x
 		ys = ys + sim.e_y
 		pxs = pxs + sim.e_px

@@ -2974,6 +2974,70 @@ price counts against the funds). Battle AI: docs/AI.md 27.
   otherwise); sabotage reaches batteries and gates only (not rams or
   siege towers: the sim has no such target).
 
+### Reinforcements (as built, 2026-10-13)
+
+STATUS item 7, first half (owner: "so we can get a third army into the
+mix"). Before, `CData.BATTLE_SIDE_MAX` 24 field units a side capped a
+battle: `CBattle._build0` stopped adding units at 24 and the campaign rules
+bounced an army that would push a side past it ("battle side full").
+
+- **No bounce** (`campaign/crules.gd`): every army that would join a
+  battle joins it (moving in, `_join6` / `join_battle`, support by range or
+  radius, every besieger of an assault, every army of the side at a
+  storming). `BATTLE_SIDE_MAX` is now the field slots: `CBattle.field_split`
+  takes a side's armies in join order (b "att" / "def", then "reinf"), each
+  army's units in index order; the first 24 units with men take the field,
+  the rest are **reserves**, in that order. The pre-battle card says
+  "Arriving: n units" (`battle_screen.gd`, card `on` 2).
+- **Where they wait.** Field battles: a reserve stands at its army's map
+  edge (its `b["edge"]` sector, turned as the version 5 placement), else
+  its side's own end; one `_layout` per edge group (`_reserve_groups`).
+  Settlement battles (`_settlement_reserves`): the attackers' at the
+  attackers' map edge behind their army, the defenders' on the plaza
+  (agora) inside the walls, 14 m apart, facing the main gate.
+- **In the sim** (`sim/battle_sim.gd`, section "reinforcements"): a
+  scenario unit with `"reserve": 1` is set up at its spot and put off the
+  field (`U_RESERVE` 5: no men alive, its men `S_OFF`, its engines
+  `E_RESERVE` 3, a wagon it carries stays with it), like the war dog
+  kennel: unit and soldier counts are fixed at setup, so arrays never
+  grow. Once a second, before the AI thinks, for side 0 then 1, while the
+  side still fights (no army withdrawal, its AI not withdrawing) and the
+  battle is undecided, the side's first reserve (unit order) **arrives**
+  when the side's units on the field (ready or routing; not characters,
+  dog packs or tower engines) are fewer than its slots `rsv_cap` (its
+  units on the field at setup: 24, or 24 + the garrison) and `REINF_GAP`
+  5 s have passed since its last arrival; or, from `REINF_TIME` 120 s,
+  with the field full, one every `REINF_SLOW` 10 s up to
+  `REINF_FIELD_MAX` 30 on the field (6 over the 24 slots). It enters
+  formed in its set-up formation, with the morale it was set up with
+  (a forced march's cut stays). A pure function of the sim state: no new
+  lockstep input. Hashed only when the battle has reserves (`rsv_on`):
+  `rsv_cap`, `rsv_last`, `rsv_stop`, `u_arr` (arrival tick); every field
+  battle without reserves hashes as before (the four goldens unchanged).
+  Snapshot / restore carry them (script variables).
+- **Control.** A reserve is its army's faction's unit (`CBattle.controllers`,
+  the multi-human model); the battle AI takes an AI side's arrivals with
+  its next think (`u_ai` reset to the line; `_issue_line` gives them slots,
+  in the engagement they attack). AI strength counts a side's open reserves
+  (`BattleAI._strength`: a side with reinforcements coming is not "clearly
+  lost"); the start strength counts them from their arrival.
+- **Outcome.** A side with reserves to come still fights (`_check_winner`).
+  `result()` reports a reserve that never arrived with all its men
+  remaining (`"reserve": 1`), so its campaign rows are killed 0, n
+  unchanged. Auto-resolve counts every army at full strength as before
+  (`CBattle.strengths` never capped). An army withdrawal (`ORDER_WITHDRAW_ALL`)
+  stops the side's arrivals.
+- **View.** Reserve cards are hidden until they arrive; the HUD shows
+  "Arriving: n units" (and the enemy's) and a 3 s "Reinforcements: <Adj>
+  army" note (scenario unit key `label`, view only); their engines and
+  wagons are not drawn while off the field.
+- **Cost.** `bench_4000_reinf` (`Scenarios.reinf_battle`: 36 units, 24 + 12
+  reserves, against 24): 3.58 ms a tick mean, 3.89 engaged, against
+  bench_4000's 3.13 (3.07 before the change; same battle, noise).
+- **Open:** the ambush stance (item 7's second half); a battle of many
+  armies sets up every reserve's men in the arrays (no cap on armies); no
+  choice of which units wait (join order).
+
 ## 5. Networking
 
 ### Live battles: deterministic lockstep
@@ -3475,6 +3539,52 @@ everywhere except Undo, Deselect and Menu (bare, with tooltips). The top bar
 reads faction, season icon + year, treasury, income; Deselect / Undo / End
 turn are one bottom-right row. Gallery: `tests/icon_gallery.gd` writes
 `docs/screenshots/icons.png`; before / after: `docs/screenshots/icons_*_phone_*.png`.
+
+### Sprite pipeline (step 1a, 2026-10-13)
+
+Owner's direction: all art made by us from text, consistent across frames
+and angles because it comes from 3D. `tools/sprites/` (README there):
+`spec.json` describes units as parts lists over a shared rig; `build.py`
+(Blender 5.2, headless, EEVEE on the GPU) builds each part as a chunky
+low-poly mesh (bmesh boxes with bevels, spheres, cylinders, cones, a curved
+scutum), rigidly parents it to a bone (no skinning), keyframes the actions
+from pose functions shared by every humanoid (and one set for horses: a
+rider's bones live in the horse's armature, prefix `r.`), and renders each
+frame orthographic at 24 px per metre (`ATLAS_PX_PER_M`) in three passes:
+**shade** (toon lighting in three flat bands with an ambient floor, a key
+light fixed in camera space from the top left, a mild lighter-when-higher
+term; faction parts white), **mask** (R primary, G secondary, B accent) and
+**pattern** (the cloth check). `pack.py` (stdlib Python) hardens the alpha,
+adds a 1 px dark outline, crops each action to its frames' union, packs one
+shade + one mask sheet per unit (mask A = 255 - 128 x check, never 0) and
+writes `assets/sprites/manifest.json` (frame rects, anchor = the man's
+feet, fps, loop, palettes). Recolour: `rgb = shade x ((1 - r - g - b) +
+r x mix(primary, pattern, check x pattern_k) + g x secondary + b x
+accent)`.
+
+Built: Heavy Swords (Roman: curved scutum with rim and boss, crested
+helmet with neck guard, plated shoulders, gladius), Spearmen (hoplite:
+round shield with rim and emblem, Corinthian helmet with a tall crest,
+2.9 m spear), Shock Cavalry (horse with a saddle cloth and trim, rider
+with crested helmet, round shield, 3.6 m lance). Actions: idle 1, walk 6
+(leg and arm swing, shield bob, body bob), attack 4 (wind-up, twist and
+thrust, recover), death 3 (falls on his back; the horse rolls on its
+side). Palettes: Rome red / gold / bronze; Carthage white / Tyrian purple
+/ silver; the Gauls green / ochre / iron with a blue check on cloaks and
+saddle cloths. The same models render isometric: the Heavy Swords walk at
+32 degrees elevation in 8 directions (`iso_heavy_swords_*`), so a bird's-eye
+view is a camera change, not new art. Total output 184 KB; a full build
+takes about 14 s. Preview: `tools/sprites/preview/preview.tscn` (1x, about
+12 px a man, about 7 px a man, rotated blocks, iso). Not wired into the
+battle yet (`assets/sprites/.gdignore`).
+
+Step 1b (next): an atlas of all units' frames for the soldier MultiMesh;
+per instance an action and frame (from the sim's state and a per-man
+phase; corpses take the last death frame), the frame rect and anchor as a
+small table (uniform array on the texture path, constants or
+INSTANCE_CUSTOM on the CPU-fed path, as `sprite_rect` is today); the mask
+as a second sampler and the palette per side (two vec3 x 3 + pattern) in
+place of the side tint; selection / under-fire marks kept as today.
 
 ## 9. Milestones
 

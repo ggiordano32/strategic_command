@@ -843,8 +843,9 @@ static func _arrive(a: Dictionary, to: int) -> void:
 
 ## Army a moves into the region of battle b, started this turn: it joins the
 ## attackers if it is on their side (and at war with the owner), the
-## defenders if it is on the owner's side, while that side has room for its
-## units (BATTLE_SIDE_MAX field units). Returns "" or why it was bounced.
+## defenders if it is on the owner's side (past BATTLE_SIDE_MAX field units a
+## side its units wait as reinforcements: docs/DESIGN.md "Reinforcements").
+## Returns "" or why it was refused.
 static func join_battle(st: Dictionary, a: Dictionary, b: Dictionary, marching: bool = false) -> String:
 	if a.is_empty():
 		return "no such army"
@@ -863,11 +864,6 @@ static func join_battle(st: Dictionary, a: Dictionary, b: Dictionary, marching: 
 		side = 1
 	if side < 0:
 		return "battle pending there"
-	var count := CState.unit_count(a)
-	for d in battle_armies(st, b)[side]:
-		count += CState.unit_count(d)
-	if count > CData.BATTLE_SIDE_MAX:
-		return "battle side full"
 	var left := int(a["r"])
 	_arrive(a, to)
 	a["busy"] = 1
@@ -1247,17 +1243,14 @@ static func hostile_field(st: Dictionary, r: int, f: int) -> Array:
 
 
 ## A field battle in region r (kind "field", no settlement, no garrison):
-## the armies `att` attack the armies `defs` (each side up to
-## BATTLE_SIDE_MAX field units). def_f is the first defender's faction.
+## the armies `att` attack the armies `defs` (all of them: past
+## BATTLE_SIDE_MAX field units a side the rest are reinforcements). def_f is
+## the first defender's faction.
 static func start_field_battle(st: Dictionary, r: int, att: Array, defs: Array) -> Dictionary:
 	var sides := [[], []]
 	var groups := [att, defs]
 	for s in 2:
-		var count := 0
 		for a in groups[s]:
-			if count > 0 and count + CState.unit_count(a) > CData.BATTLE_SIDE_MAX:
-				continue
-			count += CState.unit_count(a)
 			sides[s].append(int(a["id"]))
 			a["busy"] = 1
 	var from: Array = []
@@ -1316,11 +1309,9 @@ static func _act_here(st: Dictionary, a: Dictionary, mode: int) -> void:
 		start_siege(st, r, a, int(a["from"]))
 	else:
 		var b := start_battle(st, r, a)
-		var count := CState.unit_count(a)
 		for d in _side_here(st, r, a):
-			if int(d["id"]) == int(a["id"]) or count + CState.unit_count(d) > CData.BATTLE_SIDE_MAX:
+			if int(d["id"]) == int(a["id"]):
 				continue
-			count += CState.unit_count(d)
 			(b["att"] as Array).append(int(d["id"]))
 			d["busy"] = 1
 			if int(d["from"]) >= 0:
@@ -1580,18 +1571,16 @@ static func lift_siege(st: Dictionary, r: int, why: String) -> void:
 ## out) or "relief" (army `reliever` arrived to lift it; the garrison and
 ## the armies inside join it). The besiegers attack in the record ("att",
 ## att_f the siege's faction), the owner's side defends ("def", with the
-## garrison); besiegers beyond BATTLE_SIDE_MAX field units stay out.
+## garrison); besiegers past BATTLE_SIDE_MAX field units are reinforcements.
 static func start_siege_battle(st: Dictionary, r: int, kind: String, reliever: Dictionary = {}) -> Dictionary:
 	var sg := CState.siege_at(st, r)
 	if sg.is_empty():
 		return {}
 	var att: Array = []
-	var count := 0
 	var lead := -1
 	for a in besiegers(st, r):
-		if int(a["busy"]) != 0 or count + CState.unit_count(a) > CData.BATTLE_SIDE_MAX:
+		if int(a["busy"]) != 0:
 			continue
-		count += CState.unit_count(a)
 		att.append(int(a["id"]))
 		if lead < 0 or int(a["f"]) == int(sg["f"]):
 			lead = int(a["f"])
@@ -1910,8 +1899,8 @@ static func battle_side_of(st: Dictionary, b: Dictionary, f: int) -> int:
 
 
 ## Neighbouring armies join the battle (land routes only; armies that did
-## not move and are not committed elsewhere; until a side has
-## BATTLE_SIDE_MAX field units).
+## not move and are not committed elsewhere; past a side's BATTLE_SIDE_MAX
+## field units they wait as reinforcements).
 static func add_reinforcements(st: Dictionary, b: Dictionary) -> void:
 	var arm := battle_armies(st, b)
 	var counts := [0, 0]
@@ -1933,8 +1922,6 @@ static func add_reinforcements(st: Dictionary, b: Dictionary) -> void:
 		for s in 2:
 			if leads[s] < 0 or not CState.friendly(st, int(a["f"]), leads[s]):
 				continue
-			if counts[s] + CState.unit_count(a) > CData.BATTLE_SIDE_MAX:
-				continue
 			counts[s] += CState.unit_count(a)
 			(b["reinf"] as Array).append(int(a["id"]))
 			a["busy"] = 1
@@ -1942,8 +1929,8 @@ static func add_reinforcements(st: Dictionary, b: Dictionary) -> void:
 
 ## Version 5: armies that did not move this turn, stand in the field and
 ## can reach the battle's region this turn over land (cheapest path within
-## their full movement points; sea lanes never count) join it, until a side
-## has BATTLE_SIDE_MAX field units. Each records in b["edge"] the compass
+## their full movement points; sea lanes never count) join it (past a side's
+## BATTLE_SIDE_MAX field units as reinforcements). Each records in b["edge"] the compass
 ## sector it comes from (CData.sector of its region seen from the battle;
 ## -1 already there): the battle map deploys it on that edge.
 static func _support_by_range(st: Dictionary, b: Dictionary, counts: Array, leads: Array) -> void:
@@ -1959,7 +1946,7 @@ static func _support_by_range(st: Dictionary, b: Dictionary, counts: Array, lead
 		for s in 2:
 			if side < 0 and leads[s] >= 0 and CState.friendly(st, af, leads[s]):
 				side = s
-		if side < 0 or counts[side] + CState.unit_count(a) > CData.BATTLE_SIDE_MAX:
+		if side < 0:
 			continue
 		var ar := int(a["r"])
 		if ar != br and land_hops(ar, br) > CState.max_mp(a) / CData.COST_OPEN:
@@ -3728,12 +3715,10 @@ static func _assault6(st: Dictionary, r: int, a: Dictionary) -> Dictionary:
 			d["busy"] = 1
 	var att: Array = [int(a["id"])]
 	var from: Array = [[int(a["id"]), int(a["from"])]]
-	var count := CState.unit_count(a)
 	a["busy"] = 1
 	for d in on_ring(st, r, int(a["f"]), true):
-		if int(d["busy"]) != 0 or not CState.at_war(st, int(d["f"]), o) or count + CState.unit_count(d) > CData.BATTLE_SIDE_MAX:
+		if int(d["busy"]) != 0 or not CState.at_war(st, int(d["f"]), o):
 			continue
-		count += CState.unit_count(d)
 		att.append(int(d["id"]))
 		from.append([int(d["id"]), int(d["from"])])
 		d["busy"] = 1
@@ -3823,11 +3808,6 @@ static func _join6(st: Dictionary, a: Dictionary, b: Dictionary, c: int, cost: i
 		side = 1
 	if side < 0:
 		return "battle there"
-	var count := CState.unit_count(a)
-	for d in battle_armies(st, b)[side]:
-		count += CState.unit_count(d)
-	if count > CData.BATTLE_SIDE_MAX:
-		return "battle side full"
 	var left := int(a["r"])
 	if c != CState.cell(a):
 		_move_to(st, a, c, cost)
@@ -3843,8 +3823,8 @@ static func _join6(st: Dictionary, a: Dictionary, b: Dictionary, c: int, cost: i
 
 ## Version 6 support: armies of either side within CData.SUPPORT cells of
 ## the battle's cell (+2 fortified), in the field, not in a battle or a
-## siege, not on a forced march, join it until a side has BATTLE_SIDE_MAX
-## field units; each records its bearing (CGrid.sector) in b["edge"].
+## siege, not on a forced march, join it (past a side's BATTLE_SIDE_MAX field
+## units as reinforcements); each records its bearing (CGrid.sector) in b["edge"].
 static func _support6(st: Dictionary, b: Dictionary, counts: Array, leads: Array) -> void:
 	if not b.has("edge"):
 		b["edge"] = []
@@ -3857,7 +3837,7 @@ static func _support6(st: Dictionary, b: Dictionary, counts: Array, leads: Array
 		for s in 2:
 			if side < 0 and leads[s] >= 0 and CState.friendly(st, af, leads[s]):
 				side = s
-		if side < 0 or counts[side] + CState.unit_count(a) > CData.BATTLE_SIDE_MAX:
+		if side < 0:
 			continue
 		if not CGrid.within(bc, CState.cell(a), support_r(a)):
 			continue
