@@ -1394,7 +1394,6 @@ func _over_walls_run(ty: int) -> Dictionary:
 			sim.u_fire[o] = 0  # (the wall towers' engines hold: the battery stays)
 	sim.queue_order({"tick": 0, "type": BattleSim.ORDER_ATTACK, "unit": b, "target": t, "run": 0})
 	var hashes := PackedInt64Array()
-	var seen := {}
 	for i in 1200:
 		sim.step()
 		hashes.append(sim.state_hash())
