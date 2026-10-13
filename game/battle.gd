@@ -34,6 +34,21 @@ const MAX_TICKS_PER_FRAME := 4
 const SPEED_PRESETS := [2, 4, 8, 16]  # --speed=N (main.gd): N indexes these quarter-step speeds
 const DRAG_THRESHOLD := 18.0      # screen px before a touch becomes a drag
 const DOUBLE_TAP_SEC := 0.35
+# Tap rules on the field (first match wins). "Selection" = units selected.
+#   enemy unit under the tap, selection        -> attack (double tap: charge)
+#   friendly unit, selection, plain tap         -> MOVE order to the tapped point
+#   friendly unit, selection, long press (>= SELECT_LONG_PRESS_SEC) or double
+#     tap, within the unit's own marker / footprint (tight pick) -> select it
+#     (shift / ctrl click adds or removes it, as ever)
+#   anything, no selection                      -> tap on a unit selects it
+#   ground, selection                           -> move there
+# Drag with a selection (from anywhere, a crowd of our units included) draws
+# the order line; rubber-band select needs an empty selection or shift/ctrl.
+# Friendly picks use the tight radius when a selection exists, so a tap
+# between units reaches the ground; enemies keep the generous one.
+const SELECT_LONG_PRESS_SEC := 0.35
+const TIGHT_PICK_K := 1.0        # marker hit radius factor when units are selected
+const END_BANNER_SEC := 1.5      # campaign battles: the end banner before returning
 const DOUBLE_TAP_DIST := 48.0
 # Two-finger tap = deselect all. Both fingers down within TWO_TAP_DOWN_MS of
 # each other, both up within TWO_TAP_TOTAL_MS of the first touch, each moved
@@ -192,6 +207,8 @@ var _gm_start_keys: Array = []
 var _gm_mouse_start := Vector2.ZERO
 # Long press on a unit on the field opens its unit book page.
 var _field_lp_start := -1.0
+var _press_sec := 0.0          # when the primary touch went down (s)
+var _exit_timer := -1.0        # campaign battle decided: seconds until we return
 var _paused_before_controls := false
 const GM_MOVE_PX := 24.0      # three-finger movement before the ghost appears
 const GM_TURN_RAD := 0.14     # ... or this much twist (8 degrees)
@@ -464,6 +481,13 @@ func _on_menu() -> void:
 	exit_requested.emit()
 
 
+## Campaign battle over: back to the campaign, which shows the full result.
+## Same path as the old "Back to campaign" button.
+func _leave_decided() -> void:
+	_exit_timer = -1.0
+	_on_menu()
+
+
 ## True once the battle has a winner (a campaign result can be applied).
 func is_decided() -> bool:
 	return sim.winner >= 0
@@ -494,6 +518,12 @@ func _fit_camera() -> void:
 # ------------------------------------------------------------- stepping ---
 
 func _process(delta: float) -> void:
+	if _exit_timer > 0.0:
+		_exit_timer -= delta
+		if _exit_timer <= 0.0 and (coop == null or coop.final_frame >= 0 or coop.ls == null):
+			_leave_decided()
+		elif _exit_timer <= 0.0:
+			_exit_timer = 0.1  # live co-op: wait for the final frame so the result is complete
 	if _leave_confirm > 0.0:
 		_leave_confirm -= delta
 		if _leave_confirm <= 0.0 and sim.winner < 0:
@@ -615,7 +645,8 @@ func _after_tick(ms: float) -> void:
 			AudioFx.play("horn_victory" if sim.winner == player_side else ("horn_start" if sim.winner >= 2 else "horn_defeat"), 0.9, 0.0, "horn")
 		var secs: int = maxi(sim.decided_tick, 0) / 10
 		hud.banner.visible = false
-		hud.show_result(sim.result(), "%s   (decided after %d:%02d)" % [hud.banner.text, secs / 60, secs % 60], player_side)
+		if not campaign_mode:
+			hud.show_result(sim.result(), "%s   (decided after %d:%02d)" % [hud.banner.text, secs / 60, secs % 60], player_side)
 		_t("battle_result", {"scenario": scenario_id, "tick": sim.tick, "result": sim.result()})
 		if not custom_summary.is_empty():
 			var rs: Dictionary = sim.result()
@@ -665,6 +696,8 @@ func _show_result() -> void:
 		text = "Defeat" if interactive else "Red wins"
 	hud.banner.text = text
 	hud.banner.visible = true
+	if campaign_mode and not bench_mode:
+		_exit_timer = END_BANNER_SEC  # no field result panel: the campaign shows it
 
 
 func _finish_bench() -> void:
@@ -1711,8 +1744,12 @@ func _open_controls() -> void:
 	_gesture_multi = false
 
 
-func _tap(screen_pos: Vector2, double: bool) -> void:
-	_count("double_tap" if double else "tap")
+func _tap(screen_pos: Vector2, double: bool, long_press := false) -> void:
+	if _exit_timer > 0.0:
+		_count("end_banner_skipped")
+		_leave_decided()  # tap to skip the end banner
+		return
+	_count("double_tap" if double else ("long_press" if long_press else "tap"))
 	if not interactive:
 		return
 	var w := _screen_to_world(screen_pos)
@@ -1730,6 +1767,14 @@ func _tap(screen_pos: Vector2, double: bool) -> void:
 	if door >= 0 and _tap_gate(door, w):
 		return
 	var u := -1 if door >= 0 else _pick_unit(w)
+	var friend_move := false
+	if u >= 0 and sim.u_side[u] == player_side and not selection.is_empty():
+		var wants_select := double or long_press or add_mode or _shift_held()
+		if not wants_select or _pick_unit(w, true) != u:
+			# A plain tap on our own unit while units are selected is a move
+			# there (see the rules at the top); a select needs the tight pick.
+			friend_move = not wants_select
+			u = -1
 	if u >= 0 and sim.u_side[u] == player_side:
 		if sim.u_state[u] != BattleSim.U_READY:
 			_count("tap_on_broken_unit")
@@ -1740,7 +1785,7 @@ func _tap(screen_pos: Vector2, double: bool) -> void:
 		_count("tap_select")
 		if add_mode or _shift_held():
 			_toggle_in_selection(u)
-		elif selected == u and selection.size() == 1 and not double:
+		elif selected == u and selection.size() == 1 and long_press:
 			_select(-1)
 		else:
 			_select(u)
@@ -1781,6 +1826,8 @@ func _tap(screen_pos: Vector2, double: bool) -> void:
 			overlay.flash("Carrying siege equipment: put it down first (Drop) to fight", w)
 		return
 	var dest := w / PX_PER_M * M
+	if friend_move:
+		overlay.flash("Move", w)
 	if selection.size() == 1:
 		# Ground: move there keeping frontage, facing the direction of travel.
 		var ax: int = orders.value(selected, "ax")
@@ -1995,10 +2042,13 @@ func _update_matchup(sp: Vector2) -> void:
 		overlay.queue_redraw()
 
 
-func _pick_unit(w: Vector2) -> int:
+## tight: only the marker's own circle and the unit's footprint count (used
+## to select our units while a selection exists, so taps between units
+## reach the ground).
+func _pick_unit(w: Vector2, tight := false) -> int:
 	var x := int(w.x / PX_PER_M * M)
 	var y := int(w.y / PX_PER_M * M)
-	var margin := int(2.5 * M)
+	var margin := 0 if tight else int(2.5 * M)
 	var best := -1
 	var best_d := 0
 	# The symbol marker above each unit is a hit target first (generous on
@@ -2006,6 +2056,8 @@ func _pick_unit(w: Vector2) -> int:
 	# it, since markers float over neighbouring units when zoomed out.
 	var mr := maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / camera.zoom.x)
 	var marker_r := _marker_hit_r()
+	if tight:
+		marker_r = int(maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / camera.zoom.x) * TIGHT_PICK_K / PX_PER_M * M)
 	var lift := int(2.2 * mr / PX_PER_M * M)
 	for u in sim.n_units:
 		if sim.u_state[u] >= BattleSim.U_DESTROYED or sim.hidden_from(u, player_side):
@@ -2206,9 +2258,21 @@ func _keys_held(delta: float) -> void:
 		_clamp_camera()
 	# Long press on a unit on the field: its unit book page.
 	if _primary >= 0 and not _dragging and not _gesture_multi and _field_lp_start > 0.0 \
-			and Time.get_ticks_msec() / 1000.0 - _field_lp_start >= hud.LONG_PRESS_SEC:
+			and Time.get_ticks_msec() / 1000.0 - _field_lp_start >= (SELECT_LONG_PRESS_SEC if not selection.is_empty() else hud.LONG_PRESS_SEC):
+		var lw := _screen_to_world(_press_pos)
+		var u := _pick_unit(lw)
+		if not selection.is_empty() and interactive:
+			# Units selected: a long press on one of ours selects it (the
+			# unit book is still on the card and on enemy units).
+			if u >= 0 and sim.u_side[u] == player_side:
+				_field_lp_start = -1.0
+				_tap(_press_pos, false, true)
+			elif Time.get_ticks_msec() / 1000.0 - _field_lp_start >= hud.LONG_PRESS_SEC:
+				_field_lp_start = -1.0
+				if u >= 0:
+					_open_book(sim.u_otype[u], "book_open_longpress")
+			return
 		_field_lp_start = -1.0
-		var u := _pick_unit(_screen_to_world(_press_pos))
 		if u >= 0:
 			_open_book(sim.u_otype[u], "book_open_longpress")
 
@@ -2240,6 +2304,7 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 			_dragging = false
 			_gesture_multi = false
 			_field_lp_start = Time.get_ticks_msec() / 1000.0 if not is_mouse else -1.0
+			_press_sec = Time.get_ticks_msec() / 1000.0
 		elif _touches.size() >= 2:
 			# Second finger: cancel any one-finger action, start pinch/pan.
 			if not _gesture_multi:
@@ -2312,7 +2377,7 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 	if _field_lp_start < 0.0 and not is_mouse:
 		return  # the long press opened the unit book
 	_field_lp_start = -1.0
-	_tap(e.position, double)
+	_tap(e.position, double, is_mouse and now - _press_sec >= SELECT_LONG_PRESS_SEC)
 	if double:
 		_last_tap_time = -10.0
 	else:

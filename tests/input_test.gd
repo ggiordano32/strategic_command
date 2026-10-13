@@ -309,6 +309,17 @@ func _initialize() -> void:
 		_step_fw_ready,
 		_step_fw_settle,
 		_step_fw_check_ready,
+		# Ordering into crowds: a tap on our own unit with a selection moves.
+		_step_cr_start,
+		_step_cr_select,
+		_step_cr_tap_friend,
+		_step_cr_check_friend,
+		_step_cr_long,
+		_step_cr_check_long,
+		_step_cr_tap_enemy,
+		_step_cr_check_enemy,
+		_step_cr_tap_ground,
+		_step_cr_check_ground,
 		_step_done,
 	]
 
@@ -2083,11 +2094,12 @@ func _step_gd_tap_marker() -> void:
 	var rx := maxi((sim.g_hw[_gd_gate] + 1) * 1024, battle._marker_hit_r())
 	var tap := _gd_point(_gd_gate, rx + 512, 0)
 	_check(battle._gate_doorway(tap) < 0, "the marker's centre is outside the doorway")
-	_gd_tap(tap)
+	# A plain tap with a selection is a move; selecting needs a long press.
+	battle._tap(battle.get_canvas_transform() * tap, false, true)
 
 
 func _step_gd_check_marker() -> void:
-	_check(battle.selection == [_gd_wall], "a tap on the marker just outside the doorway selects the unit (%s)" % str(battle.selection))
+	_check(battle.selection == [_gd_wall], "a long press on the marker just outside the doorway selects the unit (%s)" % str(battle.selection))
 	_check(_gd_gate_orders().size() == 2, "... and asks nothing of the gate")
 
 
@@ -2608,3 +2620,113 @@ func _step_fw_check_ready() -> void:
 func _step_done() -> void:
 	print("RESULT: ", "PASS" if failures == 0 else "FAIL (%d)" % failures)
 	quit(0 if failures == 0 else 1)
+
+
+# ---------------------------------------------- ordering into crowds ---
+
+var _cr_a := -1   # selected unit
+var _cr_b := -1   # another friendly unit
+
+
+func _pending_of(kind: int, unit: int) -> int:
+	var n := 0
+	for o in battle.sim.pending_orders:
+		if int(o["type"]) == kind and int(o["unit"]) == unit:
+			n += 1
+	return n
+
+
+func _cr_tap_at(u: int) -> void:
+	_no_double_tap()
+	var p := _unit_screen(u)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_cr_start() -> void:
+	if is_instance_valid(battle):
+		battle.queue_free()
+	battle = Battle.new()
+	battle.scenario_id = "skirmish"
+	battle.seed_value = 7
+	root.add_child(battle)
+
+
+func _step_cr_select() -> void:
+	var sim := battle.sim
+	if not battle.paused:
+		battle._toggle_pause()
+	_cr_a = -1
+	_cr_b = -1
+	for u in sim.n_units:
+		if sim.u_side[u] == 0 and sim.u_state[u] == BattleSim.U_READY:
+			if _cr_a < 0:
+				_cr_a = u
+			elif _cr_b < 0:
+				_cr_b = u
+	_check(battle.selection.is_empty(), "crowd: nothing selected at the start")
+	_cr_tap_at(_cr_a)
+
+
+func _step_cr_tap_friend() -> void:
+	_check(battle.selection == [_cr_a], "crowd: with nothing selected a tap selects (%s)" % str(battle.selection))
+	_focus(sim_cx(_cr_b), sim_cy(_cr_b))
+	_cr_tap_at(_cr_b)
+
+
+func sim_cx(u: int) -> int:
+	return battle.sim.u_cx[u]
+
+
+func sim_cy(u: int) -> int:
+	return battle.sim.u_cy[u]
+
+
+func _step_cr_check_friend() -> void:
+	_check(battle.selection == [_cr_a], "crowd: a tap on another friendly unit keeps the selection (%s)" % str(battle.selection))
+	_check(_pending_of(BattleSim.ORDER_MOVE, _cr_a) == 1, "crowd: ... and gives the selected unit a move order")
+	battle.sim.pending_orders.clear()
+
+
+func _step_cr_long() -> void:
+	battle._tap(battle.get_canvas_transform() * _screen_w(_cr_b), false, true)
+
+
+func _step_cr_check_long() -> void:
+	_check(battle.selection == [_cr_b], "crowd: a long press on a friendly unit selects it (%s)" % str(battle.selection))
+	_check(_pending_of(BattleSim.ORDER_MOVE, _cr_a) == 0, "crowd: ... and orders nothing")
+
+
+func _step_cr_tap_enemy() -> void:
+	var sim := battle.sim
+	var e := -1
+	for u in sim.n_units:
+		if sim.u_side[u] == 1 and sim.u_state[u] == BattleSim.U_READY:
+			e = u
+			break
+	_focus(sim.u_cx[e], sim.u_cy[e])
+	_cr_tap_at(e)
+	_cr_a = e  # (reused below as the target)
+
+
+func _step_cr_check_enemy() -> void:
+	_check(_pending_of(BattleSim.ORDER_ATTACK, _cr_b) == 1, "crowd: a tap on an enemy attacks it")
+	battle.sim.pending_orders.clear()
+
+
+func _step_cr_tap_ground() -> void:
+	_no_double_tap()
+	var sim := battle.sim
+	var g := Vector2(sim.u_ax[_cr_b] - 40 * 1024, sim.u_ay[_cr_b] + 30 * 1024)
+	_focus(int(g.x), int(g.y))
+	var p := _world_to_screen(g / 1024.0 * Battle.PX_PER_M)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_cr_check_ground() -> void:
+	_check(_pending_of(BattleSim.ORDER_MOVE, _cr_b) == 1, "crowd: a tap on empty ground moves")
+
+
+func _screen_w(u: int) -> Vector2:
+	return Vector2(battle.sim.u_cx[u], battle.sim.u_cy[u]) / 1024.0 * Battle.PX_PER_M
