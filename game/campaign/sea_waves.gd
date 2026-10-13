@@ -3,20 +3,25 @@ extends RefCounted
 ## water.gdshader's height and normal, so a sprite on the sea (a ship) can bob,
 ## pitch and leave a wake that agree with the water drawn under it.
 ##
-## Three directional trains of one dominant wind (GeoFields.wind_dir(): from the
-## NW for the Mediterranean's mistral, from the E for a Caribbean map): the wind
-## sea (along the wind), a weaker cross swell and a short chop. Each is a Stokes-
-## like sine (sharper crest, flatter trough) with its phase bent by a slow warp
-## and its height grouped by a slow envelope, so there are no straight parallel
-## rulings. Heights are in arbitrary units, about +-1.9 at most in open sea;
-## `amp()` damps them near the coast and in sheltered water.
+## Five directional trains of one dominant wind (GeoFields.wind_dir(): from the
+## NW for the Mediterranean's mistral, from the E for a Caribbean map), headings
+## spread -40..+45 degrees around it and wavelengths 12..56 px with no integer
+## ratios, so no one train dominates. Each is a Stokes-like sine (sharper crest,
+## flatter trough) with its phase bent by a value-noise warp and its height grouped
+## by a value-noise envelope (both non-periodic). Three large slow fields shape
+## the sea: the gust (wind patches: rough and glassy stretches, x0.25..1.15 on all
+## trains), the veer (the wind direction turns by up to +-0.4 rad across the basin,
+## so crests curve) and the drifting noise itself. Heights are in arbitrary units,
+## about +-2.0 at most in open sea (typically under 1); `amp()` damps them near
+## the coast and in sheltered water.
 ##
 ## TRAINS rows: x = heading in degrees from the wind (+ clockwise on the map),
-## y = wavelength in map px, z = phase speed in map px per second, w = amplitude.
+## y = wavelength in map px, z = phase speed in map px per second (about
+## sqrt(wavelength), deep water), w = amplitude.
 ## water.gdshader gets the same rows as uniforms (map_view.gd), so this file is
-## the one place that defines the waves; the warp and envelope constants below
-## are repeated in the shader (keep them equal; the normal here ignores the
-## warp's and the envelope's own gradients, the shader too).
+## the one place that defines the waves; the noise constants below are repeated in
+## the shader (keep them equal; the normal here ignores the warp's and the
+## envelope's own gradients, the shader too). hash/vnoise are the shader's.
 ##
 ## Typical use (a ship at map point p, heading h):
 ##   var t := SeaWaves.t                       # the view's clock (map_view advances it)
@@ -30,13 +35,21 @@ extends RefCounted
 const GeoFields := preload("res://game/campaign/geo_fields.gd")
 
 const TRAINS: Array[Vector4] = [
-	Vector4(0.0, 46.0, 6.0, 1.0),
-	Vector4(55.0, 88.0, 4.5, 0.55),
-	Vector4(-30.0, 27.0, 5.0, 0.35),
+	Vector4(0.0, 56.0, 6.6, 0.52),
+	Vector4(30.0, 39.0, 5.5, 0.44),
+	Vector4(-28.0, 27.0, 4.6, 0.36),
+	Vector4(45.0, 18.0, 3.75, 0.27),
+	Vector4(-40.0, 12.0, 3.06, 0.20),
 ]
-const WARP_K := 0.045          # the phase warp's spatial frequency (rad per map px)
-const WARP_A := 1.4            # ... and its size in radians
-const ENV_K := 0.012           # the group envelope's spatial frequency
+const WARP_A := 3.0
+const WARP_S1 := 1.0 / 90.0
+const WARP_S2 := 1.0 / 28.0
+const ENV_S1 := 1.0 / 220.0
+const ENV_S2 := 1.0 / 130.0
+const GUST_S1 := 1.0 / 650.0
+const GUST_S2 := 1.0 / 300.0
+const VEER_S := 1.0 / 800.0
+const VEER_A := 0.8
 const STEEP := 0.22            # the Stokes crest term
 
 ## The view's wave clock in seconds (map_view.gd advances it and sends the same
@@ -61,27 +74,69 @@ static func amp_at(coast_km: float, expo: float) -> float:
 	return lerpf(0.2, 1.0, near) * lerpf(0.5, 1.0, open)
 
 
-static func _phase(i: int, p: Vector2, time: float, wind: Vector2) -> float:
+static func _fract(x: float) -> float:
+	return x - floorf(x)
+
+
+## The shader's hash (Dave Hoskins) and value noise, 0..1.
+static func _hash(p: Vector2) -> float:
+	var a := _fract(p.x * 0.1031)
+	var b := _fract(p.y * 0.1031)
+	var c := _fract(p.x * 0.1031)
+	var d := a * (b + 33.33) + b * (c + 33.33) + c * (a + 33.33)   # dot(p3, p3.yzx + 33.33)
+	a += d
+	b += d
+	c += d
+	return _fract((a + b) * c)
+
+
+static func vnoise(p: Vector2) -> float:
+	var i := p.floor()
+	var f := Vector2(_fract(p.x), _fract(p.y))
+	f = Vector2(f.x * f.x * f.x * (f.x * (f.x * 6.0 - 15.0) + 10.0), f.y * f.y * f.y * (f.y * (f.y * 6.0 - 15.0) + 10.0))
+	return lerpf(lerpf(_hash(i), _hash(i + Vector2(1, 0)), f.x), lerpf(_hash(i + Vector2(0, 1)), _hash(i + Vector2(1, 1)), f.x), f.y)
+
+
+## The shared slow fields at p: [gust 0.25..1.15, veer (rad), warp noise 1, warp
+## noise 2 (both -1..1), envelope noise 1, 2 (0..1)] (the shader's wave_field).
+static func field(p: Vector2, time: float, wind: Vector2) -> PackedFloat64Array:
+	var w := wind * time
+	var g := 0.65 * vnoise((p - w * 4.0) * GUST_S1 + Vector2(11.3, 5.7)) + 0.35 * vnoise((p - w * 6.0) * GUST_S2 + Vector2(3.1, 17.9))
+	return PackedFloat64Array([
+		lerpf(0.25, 1.15, smoothstep(0.34, 0.66, g)),
+		(vnoise((p - w * 2.0) * VEER_S + Vector2(23.1, 41.7)) - 0.5) * VEER_A,
+		(vnoise((p - w * 3.0) * WARP_S1 + Vector2(7.7, 1.3)) - 0.5) * 2.0,
+		(vnoise((p - w * 4.5) * WARP_S2 + Vector2(29.9, 13.1)) - 0.5) * 2.0,
+		vnoise((p - w * 2.0) * ENV_S1 + Vector2(37.3, 9.1)),
+		vnoise((p - w * 3.0) * ENV_S2 + Vector2(19.7, 31.9)),
+	])
+
+
+## Train i's phase and amplitude (gust and envelope included) from the fields.
+static func _phase(i: int, p: Vector2, time: float, d: Vector2, f: PackedFloat64Array) -> float:
 	var trn := TRAINS[i]
-	var d := dir(i, wind)
 	var k := TAU / trn.y
-	var warp := WARP_A * sin(p.dot(Vector2(d.y, -d.x)) * WARP_K + time * 0.11 + float(i) * 2.1)
+	var th := float(i) * 2.4
+	var warp := WARP_A * (56.0 / trn.y) * (cos(th) * f[2] * 0.65 + sin(th) * f[3] * 0.35 + sin(th + 1.0) * f[2] * 0.35)
 	return p.dot(d) * k - time * trn.z * k + warp
 
 
-static func _env(i: int, p: Vector2, time: float, wind: Vector2) -> float:
-	var d := dir(i, wind)
-	return 0.65 + 0.35 * sin(p.dot(d) * ENV_K * 0.6 + p.dot(Vector2(d.y, -d.x)) * ENV_K + time * 0.05 + float(i) * 4.0)
+static func _am(i: int, f: PackedFloat64Array) -> float:
+	var th := float(i) * 2.4
+	var env := 0.35 + 0.65 * smoothstep(0.2, 0.8, lerpf(f[4], f[5], 0.5 + 0.5 * cos(th + 1.0)))
+	return TRAINS[i].w * env * f[0]
 
 
 ## Unscaled height at map point p and time (sum of the trains).
 static func height(p: Vector2, time: float = t, wind: Vector2 = Vector2.ZERO) -> float:
 	if wind == Vector2.ZERO:
 		wind = GeoFields.wind_dir()
+	var f := field(p, time, wind)
+	var wv := wind.rotated(f[1])
 	var h := 0.0
 	for i in TRAINS.size():
-		var ph := _phase(i, p, time, wind)
-		h += TRAINS[i].w * _env(i, p, time, wind) * (sin(ph) - STEEP * cos(2.0 * ph))
+		var ph := _phase(i, p, time, dir(i, wv), f)
+		h += _am(i, f) * (sin(ph) - STEEP * cos(2.0 * ph))
 	return h
 
 
@@ -90,9 +145,12 @@ static func height(p: Vector2, time: float = t, wind: Vector2 = Vector2.ZERO) ->
 static func normal(p: Vector2, time: float = t, wind: Vector2 = Vector2.ZERO, slope: float = 2.2) -> Vector3:
 	if wind == Vector2.ZERO:
 		wind = GeoFields.wind_dir()
+	var f := field(p, time, wind)
+	var wv := wind.rotated(f[1])
 	var g := Vector2.ZERO
 	for i in TRAINS.size():
-		var ph := _phase(i, p, time, wind)
+		var d := dir(i, wv)
+		var ph := _phase(i, p, time, d, f)
 		var k := TAU / TRAINS[i].y
-		g += dir(i, wind) * (TRAINS[i].w * _env(i, p, time, wind) * k * (cos(ph) + 2.0 * STEEP * sin(2.0 * ph)))
+		g += d * (_am(i, f) * k * (cos(ph) + 2.0 * STEEP * sin(2.0 * ph)))
 	return Vector3(-g.x * slope, -g.y * slope, 1.0).normalized()
