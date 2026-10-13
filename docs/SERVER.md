@@ -64,7 +64,8 @@ hash matches its content. It does not validate orders or results.
 forwards plain HTTP to this machine's port 8060. From the repository root:
 
 ```sh
-tools/run_server.sh 8060                     # rebuilds if any .go file changed; Ctrl+C stops it
+SC_INVITE_KEY="$(cat data/invite_key)" tools/run_server.sh 8060   # rebuilds if any .go file changed; Ctrl+C stops it
+# (without SC_INVITE_KEY the server comes up open: anyone can create campaigns; /api/info shows invite_required)
 curl -s http://127.0.0.1:8060/healthz        # expect {"ok":true,...}
 curl -s -o /dev/null -w '%{http_code}\n' https://strategiccommand.ggior32.dev/   # expect 200
 ```
