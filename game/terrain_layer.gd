@@ -19,6 +19,7 @@ extends Node2D
 ## node over the ground, under everything else (this layer's z_index is
 ## below the others').
 
+const Quality := preload("res://game/quality.gd")
 const SHADER := preload("res://game/terrain.gdshader")
 const GroundPalette := preload("res://game/ground_palette.gd")
 const MapGen := preload("res://sim/mapgen.gd")
@@ -65,8 +66,76 @@ func setup(p_sim, p_px_per_m: float) -> void:
 		dec.k = px_per_m
 		dec.base = GroundPalette.get_palette(int(sim.ter_info.get("palette", 0)))["base"]
 		dec.pal_i = int(sim.ter_info.get("palette", 0))
+		dec.low = Quality.is_low()
 		add_child(dec)
+		_decals = dec
 	build_ms = (Time.get_ticks_usec() - t0) / 1000.0
+	apply_quality()
+	_measure_from = Time.get_ticks_msec()
+	_measure_frames = 0
+	# The auto check (first seconds of a battle) only where it can mean something.
+	_measuring = Quality.load_pref() == "auto" and not Quality.is_low() and DisplayServer.get_name() != "headless" \
+		and not ("--no-quality-check" in OS.get_cmdline_user_args())
+	set_process(_measuring)
+
+
+var _decals: Node2D
+var _measuring := false
+var _measure_from := 0
+var _measure_frames := 0
+var quality_low := false
+
+
+## Graphics Low or High on the ground (the shader flag, the settlement
+## surroundings' detail) and on the tree layer next door; cheap, applies live.
+func apply_quality() -> void:
+	quality_low = Quality.is_low()
+	material_ref.set_shader_parameter("low", quality_low)
+	if _decals != null and _decals.low != quality_low:
+		_decals.low = quality_low
+		_decals.queue_redraw()
+	var par := get_parent()
+	if par != null:
+		var tl = par.get("trees")
+		if tl != null and tl.has_method("apply_quality"):
+			tl.apply_quality()
+
+
+## First MEASURE_S of a battle: under AUTO_FPS on average turns Low on for the
+## session (the setting stays Auto) and says so.
+func _process(_delta: float) -> void:
+	_measure_frames += 1
+	var el := Time.get_ticks_msec() - _measure_from
+	if el < int(Quality.MEASURE_S * 1000.0):
+		return
+	_measuring = false
+	set_process(false)
+	var fps := _measure_frames * 1000.0 / maxf(el, 1.0)
+	print("quality: first %.1f s averaged %.1f fps" % [el / 1000.0, fps])
+	if fps < Quality.AUTO_FPS and Quality.load_pref() == "auto" and not Quality.session_low:
+		Quality.session_low = true
+		apply_quality()
+		_toast("Graphics set to Low for speed: change in Settings")
+
+
+func _toast(msg: String) -> void:
+	var cl := CanvasLayer.new()
+	cl.layer = 90
+	var lb := Label.new()
+	lb.text = msg
+	lb.add_theme_font_size_override("font_size", 16)
+	lb.add_theme_color_override("font_color", Color(1, 1, 1))
+	var sbx := StyleBoxFlat.new()
+	sbx.bg_color = Color(0.08, 0.1, 0.12, 0.85)
+	sbx.set_corner_radius_all(6)
+	sbx.set_content_margin_all(8)
+	lb.add_theme_stylebox_override("normal", sbx)
+	lb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lb.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM, Control.PRESET_MODE_MINSIZE, 24)
+	lb.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	cl.add_child(lb)
+	add_child(cl)
+	get_tree().create_timer(5.0).timeout.connect(cl.queue_free)
 
 
 func _build() -> void:
@@ -353,6 +422,7 @@ class _Decals extends Node2D:
 	var k := 10.0
 	var base := Color(0.3, 0.4, 0.2)
 	var pal_i := 0
+	var low := false
 
 	func _draw() -> void:
-		CityDraw.draw_surround(self, plan, k, Vector2.ZERO, base, pal_i)
+		CityDraw.draw_surround(self, plan, k, Vector2.ZERO, base, pal_i, low)

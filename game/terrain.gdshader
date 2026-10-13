@@ -67,6 +67,8 @@ uniform float patch_k = 1.0;
 uniform vec3 rock_col = vec3(0.5, 0.48, 0.42);
 uniform float tree_line = 2.0;        // fraction of the height range above which rock shows (> 1: none)
 uniform vec3 sand_col = vec3(0.55, 0.49, 0.36);
+// Graphics Low (game/quality.gd): no noise patches / grain / rock mottling, still water, plain ford.
+uniform bool low = false;
 
 varying highp vec2 world;
 
@@ -106,14 +108,22 @@ float vnoise(vec2 p) {
 
 void fragment() {
 	highp vec2 wm = world / ppm;  // metres
-	float n1 = vnoise(wm / 58.0 + vec2(3.1, 7.7));
-	float n2 = vnoise(wm / 21.0 + vec2(11.7, 2.3));
-	float n3 = vnoise(wm / 3.4 + vec2(5.3, 9.1));
+	float n1 = 0.5;
+	float n2 = 0.5;
+	float n3 = 0.5;
+	if (!low) {
+		n1 = vnoise(wm / 58.0 + vec2(3.1, 7.7));
+		n2 = vnoise(wm / 21.0 + vec2(11.7, 2.3));
+		n3 = vnoise(wm / 3.4 + vec2(5.3, 9.1));
+	}
 	// Patches of lusher / drier ground, then a fine grain.
 	float patchv = (n1 - 0.5) * 1.5 + (n2 - 0.5) * 0.7;
 	vec3 col = base_col + (patchv > 0.0 ? patch_a : patch_b) * abs(patchv) * 1.6 * patch_k;
 	float mpp = fwidth(wm.x);
-	float grain = (n3 - 0.5) * 0.07 + (vnoise(wm / 1.15 + vec2(1.7, 4.1)) - 0.5) * 0.05 * (1.0 - smoothstep(0.25, 0.7, mpp));
+	float grain = 0.0;
+	if (!low) {
+		grain = (n3 - 0.5) * 0.07 + (vnoise(wm / 1.15 + vec2(1.7, 4.1)) - 0.5) * 0.05 * (1.0 - smoothstep(0.25, 0.7, mpp));
+	}
 	col *= 1.0 + grain;
 	float contour_k = 1.0;
 	highp float hm_w = 0.0;
@@ -211,15 +221,18 @@ void fragment() {
 		// foam along the shore.
 		float t = TIME;
 		float depth = terrain_on && riv_on ? clamp((h_base_m - hm_w) / 2.2, 0.0, 1.0) : 0.5;
-		float r1 = vnoise(wm / 7.0 + vec2(t * 0.30, t * 0.10));
-		float r2 = vnoise(wm / 2.9 + vec2(-t * 0.21, t * 0.33) + 17.0);
-		float rip = r1 * 0.6 + r2 * 0.4;
-		vec3 water = mix(sea_col * 1.1, sea_col * 0.74, depth) * (0.9 + 0.2 * rip);
-		float glint = smoothstep(0.74, 0.9, rip) * (0.5 + 0.5 * sin(t * 1.7 + wm.x * 0.9 + wm.y * 0.6));
-		water += vec3(0.5, 0.58, 0.6) * glint * 0.2;
-		col = mix(col, water, sea);
+		vec3 water = mix(sea_col * 1.1, sea_col * 0.74, depth);
 		float foam = sea * (1.0 - sea) * 4.0;
-		foam *= 0.75 + 0.25 * sin(t * 1.3 + wm.x * 0.5 + wm.y * 0.35);
+		if (!low) {
+			float r1 = vnoise(wm / 7.0 + vec2(t * 0.30, t * 0.10));
+			float r2 = vnoise(wm / 2.9 + vec2(-t * 0.21, t * 0.33) + 17.0);
+			float rip = r1 * 0.6 + r2 * 0.4;
+			water *= 0.9 + 0.2 * rip;
+			float glint = smoothstep(0.74, 0.9, rip) * (0.5 + 0.5 * sin(t * 1.7 + wm.x * 0.9 + wm.y * 0.6));
+			water += vec3(0.5, 0.58, 0.6) * glint * 0.2;
+			foam *= 0.75 + 0.25 * sin(t * 1.3 + wm.x * 0.5 + wm.y * 0.35);
+		}
+		col = mix(col, water, sea);
 		col = mix(col, vec3(0.88, 0.92, 0.9), foam * 0.45);
 	}
 	if (riv_on && ford > 0.0) {
@@ -230,10 +243,12 @@ void fragment() {
 		vec3 bed = mix(vec3(0.46, 0.64, 0.6), sand_col * 1.05, 0.3);
 		vec3 shallow = bed * (0.94 + 0.1 * gravel);
 		col = mix(col, shallow, ford * 0.94);
-		float cur = vnoise(vec2(wm.x * 0.55 - t * 0.6, wm.y * 1.7) + 3.0);
-		float cur2 = vnoise(vec2(wm.x * 1.3 - t * 0.9, wm.y * 3.1) + 9.0);
-		float rp = smoothstep(0.62, 0.86, cur * 0.6 + cur2 * 0.4);
-		col = mix(col, vec3(0.92, 0.97, 0.96), rp * ford * 0.26);
+		if (!low) {
+			float cur = vnoise(vec2(wm.x * 0.55 - t * 0.6, wm.y * 1.7) + 3.0);
+			float cur2 = vnoise(vec2(wm.x * 1.3 - t * 0.9, wm.y * 3.1) + 9.0);
+			float rp = smoothstep(0.62, 0.86, cur * 0.6 + cur2 * 0.4);
+			col = mix(col, vec3(0.92, 0.97, 0.96), rp * ford * 0.26);
+		}
 		float lip = ford * (1.0 - ford) * 4.0;
 		col = mix(col, vec3(0.85, 0.9, 0.88), lip * 0.35);
 	}

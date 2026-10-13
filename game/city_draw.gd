@@ -781,12 +781,15 @@ static func plan_surround(sim) -> Dictionary:
 
 ## Draw plan_surround's tracks and fields (and the ground under the orchard
 ## rows) at scale k px a metre, offset o; `base` is the ground colour.
-static func draw_surround(ci: CanvasItem, plan: Dictionary, k: float, o: Vector2, base: Color, _pal_i: int) -> void:
+static func draw_surround(ci: CanvasItem, plan: Dictionary, k: float, o: Vector2, base: Color, _pal_i: int, low := false) -> void:
 	var earth := base.lerp(Color(0.50, 0.40, 0.27), 0.62)
 	for trk in plan.get("tracks", []):
 		var pts := PackedVector2Array()
 		for q in (trk as PackedVector2Array):
 			pts.append(o + q * k)
+		if low:  # Graphics Low: a flat tint
+			ci.draw_polyline(pts, Color(earth.r, earth.g, earth.b, 0.75), 4.0 * k, false)
+			continue
 		ci.draw_polyline(pts, Color(earth.r * 0.8, earth.g * 0.8, earth.b * 0.8, 0.35), 5.2 * k, true)
 		ci.draw_polyline(pts, Color(earth.r, earth.g, earth.b, 0.8), 3.6 * k, true)
 		ci.draw_polyline(pts, earth.lightened(0.14) * Color(1, 1, 1, 0.5), 1.3 * k, true)
@@ -803,6 +806,10 @@ static func draw_surround(ci: CanvasItem, plan: Dictionary, k: float, o: Vector2
 		var col: Color = plough if kind == 0 else (crop if kind == 1 else (stub if kind == 2 else fallow))
 		ci.draw_set_transform(o + Vector2(fa[0], fa[1]) * k, float(fa[4]), Vector2.ONE)
 		var r := Rect2(Vector2(-w, -h) * 0.5 * k, Vector2(w, h) * k)
+		if low:  # Graphics Low: a flat tint, no furrows
+			ci.draw_rect(r, col)
+			ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+			continue
 		ci.draw_rect(r.grow(k * 0.6), Color(col.r * 0.8, col.g * 0.85, col.b * 0.75, 0.45))  # hedge / headland
 		ci.draw_rect(r, col)
 		var line := col.darkened(0.28) if kind != 2 else col.lightened(0.12)

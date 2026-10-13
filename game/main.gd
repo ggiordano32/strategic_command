@@ -2,6 +2,7 @@ extends Control
 ## Start screen: pick a scenario, then hand over to the battle view.
 
 const AudioFx := preload("res://game/audio.gd")
+const Quality := preload("res://game/quality.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const Battle := preload("res://game/battle.gd")
@@ -90,6 +91,7 @@ var _tests_button: Button
 var _help: Label
 var _size_button: Button
 var _soldiers_button: Button
+var _quality_button: Button
 
 
 func _ready() -> void:
@@ -433,10 +435,15 @@ func _build_home(bg: Control) -> Control:
 	_soldiers_button.name = "home_soldiers"
 	_soldiers_button.tooltip_text = "How soldiers are drawn. Auto: the fast way, switching by itself to compatible if this device shows no soldiers. Compatible: always the way that works on every device (a little more work per tick)."
 	row.add_child(_soldiers_button)
+	_quality_button = _menu_button("", _cycle_quality)
+	_quality_button.name = "home_quality"
+	_quality_button.tooltip_text = "Graphics. Auto: Low on devices that need the compatible soldiers path or that run a battle slowly, else High. Low: a plainer ground (no noise patches or water animation), no grass, scrub or orchards, a still sea on the map. Takes effect at the next battle; the map on the next open."
+	row.add_child(_quality_button)
 	row.add_child(_menu_button("Fullscreen", _toggle_fullscreen))
 	vb.add_child(_build_audio_row())
 	_update_size_button()
 	_update_soldiers_button()
+	_update_quality_button()
 	var info := Kit.label("Godot %s, %s renderer" % [Engine.get_version_info()["string"],
 		ProjectSettings.get_setting("rendering/renderer/rendering_method", "?")], 12, Color(1, 1, 1, 0.5))
 	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -819,6 +826,7 @@ func show_page(p: String) -> void:
 		_fill_continue()
 	if p == "home":
 		_update_soldiers_button()  # a battle may have switched it (soldier self-check)
+		_update_quality_button()
 
 
 func _new_campaign_page(online: bool = false) -> void:
@@ -936,6 +944,20 @@ func _cycle_soldier_rendering() -> void:
 func _update_soldiers_button() -> void:
 	if _soldiers_button != null:
 		_soldiers_button.text = "Soldiers: " + ("compatible" if SoldierLayer.load_pref() == "cpu" else "auto")
+
+
+## Graphics quality (user://settings.cfg [video] quality; game/quality.gd):
+## auto -> high -> low.
+func _cycle_quality() -> void:
+	var p := Quality.load_pref()
+	Quality.save_pref("high" if p == "auto" else ("low" if p == "high" else "auto"))
+	_update_quality_button()
+
+
+func _update_quality_button() -> void:
+	if _quality_button != null:
+		var p := Quality.load_pref()
+		_quality_button.text = "Graphics: " + (p if p != "auto" else "auto (%s)" % ("low" if Quality.is_low() else "high"))
 
 
 ## Settlement battles: a seed, the level and walls, the ground kind, attack

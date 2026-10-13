@@ -11,6 +11,7 @@ extends Node2D
 ## boxes are marked in a small occupancy texture (4 m cells) that the tree
 ## shader samples. No per-frame work on the CPU.
 
+const Quality := preload("res://game/quality.gd")
 const SHADER := preload("res://game/trees.gdshader")
 const GroundPalette := preload("res://game/ground_palette.gd")
 const MapGen := preload("res://sim/mapgen.gd")
@@ -42,6 +43,7 @@ var _occ_bytes := PackedByteArray()
 var _occ_img: Image
 var _occ_tex: ImageTexture
 var _rng := 1
+var _n_inner := 0   # instances before the orchard rows (gameplay woods)
 
 
 func setup(p_sim, p_px_per_m: float) -> void:
@@ -157,6 +159,7 @@ func _build() -> void:
 				if data.size() / 16 >= MAX_TREES:
 					break
 	var n_inner := data.size() / 16
+	_n_inner = n_inner
 	for o in orchards + outer_orchards:
 		var rc: Rect2 = o
 		var yy := rc.position.y + 3.0
@@ -228,7 +231,19 @@ func _build() -> void:
 		else:
 			_mmi = inst
 			add_child(inst)
+	apply_quality()
 	update_occupancy()
+
+
+## Graphics Low (game/quality.gd) drops the non-gameplay glyphs: the cover
+## MultiMesh (tufts, scrub, bushes, reeds, willows) and the orchard rows; the
+## woods stay. Live: nothing is rebuilt.
+func apply_quality() -> void:
+	var low := Quality.is_low()
+	if _cover_mmi != null:
+		_cover_mmi.visible = not low
+	if _mmi != null:
+		_mmi.multimesh.visible_instance_count = _n_inner if low else -1
 
 
 ## Reeds along both banks and the ford's edges (into `reeds`, drawn under the

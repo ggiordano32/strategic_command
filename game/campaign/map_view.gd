@@ -15,6 +15,7 @@ extends Node2D
 ## across the river and a bridge a deck over it, both where the crossing's
 ## step meets the line, roads thin tan lines through their cells' centres.
 
+const Quality := preload("res://game/quality.gd")
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
 const Geo := preload("res://game/campaign/map_geo.gd")
@@ -142,13 +143,20 @@ func _make_water() -> void:
 	var img := Image.create_from_data(GeoFields.fine_width(), GeoFields.fine_height(), false, Image.FORMAT_L8, f)
 	m.set_shader_parameter("coast", ImageTexture.create_from_image(img))
 	m.set_shader_parameter("field_px", Vector2(GeoFields.fine_width(), GeoFields.fine_height()) * GeoFields.sample_px())
-	m.set_shader_parameter("hi", 1.0 if water_high else 0.0)
+	m.set_shader_parameter("hi", 1.0 if _water_hi() else 0.0)
 	_water.material = m
 	_water.draw.connect(func(): _water.draw_rect(Rect2(Vector2(-4000, -4000), Geo.SIZE + Vector2(8000, 8000)), SEA))
 	add_child(_water)
 
 
 ## Water quality (saved): high = current texture and shimmer, low = depth tint and contour lines.
+## Graphics Low (game/quality.gd) forces the still sea; trees and speckles are
+## skipped when zoomed out beyond LOW_TREE_ZOOM (the relief texture stays).
+const LOW_TREE_ZOOM := 0.9
+static func _water_hi() -> bool:
+	return water_high and not Quality.is_low()
+
+
 static func set_water_high(on: bool, save := true) -> void:
 	water_high = on
 	if save:
@@ -159,7 +167,7 @@ static func set_water_high(on: bool, save := true) -> void:
 	if instance != null and is_instance_valid(instance):
 		var w: Node2D = instance.get("_water")
 		if w != null:
-			(w.material as ShaderMaterial).set_shader_parameter("hi", 1.0 if on else 0.0)
+			(w.material as ShaderMaterial).set_shader_parameter("hi", 1.0 if _water_hi() else 0.0)
 
 
 static func load_view_pref() -> void:
@@ -398,7 +406,8 @@ func _draw() -> void:
 			for m in lmeshes:
 				draw_mesh(m, rtex)
 		if land_view:
-			draw_mesh(Landscape.mesh, null)
+			if zoom >= LOW_TREE_ZOOM or not Quality.is_low():
+				draw_mesh(Landscape.mesh, null)
 		else:
 			draw_hills(self, _hill_segs[0], 0, lw)
 			draw_hills(self, _hill_segs[1], 1, lw)
