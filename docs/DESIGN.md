@@ -3347,6 +3347,18 @@ selecting or ordering anything.
   1.7x with a mouse), so a marker floating over a neighbouring unit selects
   its own unit; long press (touch) or right click on a unit opens its book page.
 - "None" button with the group buttons deselects; Esc too.
+- Ordering into crowds (2026-10-13): with units selected, a plain tap on one of
+  our own units is a MOVE to that point (a "Move" flash); a long press
+  (350 ms; a held click on desktop) or a double tap on it selects it
+  (tight pick: its marker or footprint only), Shift / Ctrl-click adds as
+  before; a tap on an enemy attacks; with nothing selected a tap selects.
+  Drag with a selection always draws the order line (box select only with an
+  empty selection or Shift). With a selection the long press selects instead of
+  opening the unit book (cards and enemy units still do). Constants and rules:
+  top of `game/battle.gd`.
+- Campaign battles have no field result panel: a 1.5 s Victory / Defeat / Draw
+  banner (tap to skip), then back to the campaign's own result screen. Custom
+  battles and the sandbox keep the panel.
 - Keys: Space / P pause, + / - speed, 1-4 and Ctrl+A group selects, R run,
   H halt, F fire, K skirmish, Shift+D deploy, Y refill, O orders overlay,
   W A S D / arrows pan, Page Up / Down zoom, B book, F3 readout, F11 fullscreen.
@@ -3505,6 +3517,7 @@ siege work is what calibrates a new theme. Victory conditions for tribes
 
 ## STATUS row
 - Real geography (view data + static grid, no state change, `CState.VERSION` 6): the overworld is fitted to ETOPO 2022 elevation (NOAA, public domain) and Natural Earth 1:10m coasts and rivers (public domain). `tools/geo_fit.py` (+ `tools/geo/med.json`: window, projection, cell size, settlements, rivers; the Mediterranean is only the default config) writes `map_geo.gd` LANDS / ISLANDS / RIVERS, `campaign/data/elev_data.gd` (per cell mean / max / relief / distance to river / class plain-rolling-valley-hill-ridge) and `game/campaign/relief_data.gd` (0.025 degree fine elevation, slope, relief); `campaign_grid.gd` derives hill / ridge from the real class (434 hill, 140 ridge override cells; was 200 / 215 from hand areas, now deleted) and asserts every settlement is on its landmass and every sea-lane port is a coast cell. Terrain view renders the real relief (hillshade + subtle hypsometric tint + crest line, one cached texture; `geo_fields.gd` serves elevation / slope / class to the view). Nudged: Carthago, Hadrumetum by 0.01-0.02 degrees. Re-pinned: campaign_test goldens (3007c1ab / 4197043257, be6e10a3 / 3786296811) and the Tarentum march rows (from Venetia). campaign_sim --seeds=6 --turns=60: hash 8562cf3a (HEAD 803bf309); no collapse; Epirus is eliminated in 5 of 6 seeds (3 of 6 at HEAD), Macedon in 0 (2 of 6).
+- The overworld sea (2026-10-13, view only, `water.gdshader`): printed-map look. A thin calm shallow band (about 5 km) falls to the open-sea colour; two faint sharp 1 px offshore contour lines at 3 and 8 km from the coast field (screen-space `fwidth`, faded out when zoomed far out); the coast is a crisp 1.6 px dark outline at the land edge; the beach is a 2 km sand rim at most. No foam and no streaks: currents are a low-contrast flow-map noise (two layers crossfaded) that slides along the gyre and the ambient drift. `[map] water = low` keeps the depth tint and contour lines only.
 
 ### Audio (as built, 2026-10-10)
 

@@ -1972,6 +1972,13 @@ func show_faction() -> void:
 			s.select_army(id)
 			s.focus_region(int(a["r"])), 0, Kit.FONT_SMALL))
 	box.add_child(fl2)
+	if CState.team_members(ps, CState.team(ps, f)).size() > 1:
+		var tl := Kit.label_icon(Kit.label("Your " + _team_names(ps, f) + ".", Kit.FONT, Kit.COL_GOOD, true), "alliance")
+		tl.name = "realm_team"
+		box.add_child(tl)
+		var ln := _leaving_turns(s.st, f)
+		if ln > 0:
+			box.add_child(Kit.label("Leaving in %d turn%s." % [ln, "" if ln == 1 else "s"], Kit.FONT_SMALL, Kit.COL_GOLD, true))
 	var wars: Array[String] = []
 	for g in CState.nf():
 		if g != f and CState.alive(ps, g) and CState.dip(ps, f, g) == CState.WAR:
@@ -1999,7 +2006,11 @@ func show_diplomacy(focus: int = -1) -> void:
 			if str(o["t"]) == "answer" and int(o["id"]) == pid:
 				answered = int(o["accept"])
 		var h := Kit.hbox(6)
-		h.add_child(Kit.label("%s offers %s." % [CData.faction_name(int(p["from"])), _what(str(p["what"]))], Kit.FONT, Kit.COL_GOLD, true))
+		h.name = "proposal_%d" % pid
+		var ptxt := "%s offers %s." % [CData.faction_name(int(p["from"])), _what(str(p["what"]))]
+		if str(p["what"]) == "team":
+			ptxt = "%s asks you to join their team (%s)." % [CData.faction_name(int(p["from"])), _team_names(ps, int(p["from"]))]
+		h.add_child(Kit.label(ptxt, Kit.FONT, Kit.COL_GOLD, true))
 		if answered < 0:
 			h.add_child(Kit.icon_button("Accept", "accept", func():
 				s.add_order({"t": "answer", "id": pid, "accept": 1})
@@ -2010,6 +2021,7 @@ func show_diplomacy(focus: int = -1) -> void:
 		else:
 			h.add_child(Kit.label("accepted" if answered == 1 else "refused", Kit.FONT_SMALL, Kit.COL_DIM))
 		box.add_child(h)
+	_team_header(box, ps, f)
 	var mine := _fstrength(ps, f)
 	for g in CState.nf():
 		if g == f or not CState.alive(ps, g):
@@ -2023,12 +2035,19 @@ func show_diplomacy(focus: int = -1) -> void:
 		var them := _fstrength(ps, g)
 		var desc := "%s - %s. %d regions, %s army." % [CData.faction_name(g), CState.DIP_NAMES[d],
 			CState.regions_of(ps, g).size(), _compare(mine, them)]
+		if CState.same_team(ps, f, g):
+			desc = "%s - on your team (ally). %d regions, %s army." % [CData.faction_name(g), CState.regions_of(ps, g).size(), _compare(mine, them)]
+		elif CState.team_members(ps, CState.team(ps, g)).size() > 1:
+			desc += " " + _team_names(ps, g) + "."
 		var l := Kit.label(desc, Kit.FONT, Kit.COL_BAD if d == CState.WAR else Color.WHITE, true)
 		row.add_child(l)
 		box.add_child(row)
 		var stance := _stance(ps, f, g, d)
 		if stance != null:
 			box.add_child(stance)
+		var tstance := _team_stance(ps, f, g)
+		if tstance != null:
+			box.add_child(tstance)
 		if d == CState.ALLIED:
 			if CRules.gift_partner_check(ps, f, g) == "":
 				_ally_deals(box, g)
@@ -2040,7 +2059,7 @@ func show_diplomacy(focus: int = -1) -> void:
 			if (str(o["t"]) == "propose" or str(o["t"]) == "war") and int(o["to"]) == g:
 				planned = str(o.get("what", "war"))
 		if planned != "":
-			acts.add_child(Kit.label("Planned: " + _what(planned), Kit.FONT_SMALL, Kit.COL_GOOD))
+			acts.add_child(Kit.label("Planned: " + ("ask them to join our team" if planned == "team" else _what(planned)), Kit.FONT_SMALL, Kit.COL_GOOD))
 			acts.add_child(Kit.icon_button("Cancel", "cancel", func():
 				s.remove_orders(func(o): return (str(o["t"]) == "propose" or str(o["t"]) == "war") and int(o["to"]) == g)
 				show_diplomacy(), 80))
@@ -2051,6 +2070,10 @@ func show_diplomacy(focus: int = -1) -> void:
 				acts.add_child(_dip_button("Offer trade", "trade", {"t": "propose", "to": g, "what": "trade"}))
 			if d == CState.TRADE:
 				acts.add_child(_dip_button("End trade", "trade_end", {"t": "propose", "to": g, "what": "cancel_trade"}))
+			if CRules.check_proposal(ps, f, g, "team") == "":
+				var tb := _dip_button("Join our team", "alliance", {"t": "propose", "to": g, "what": "team"})
+				tb.name = "team_%s" % CData.FACTIONS[g]["key"]
+				acts.add_child(tb)
 			if d != CState.WAR:
 				var wb := Kit.icon_button("Declare war", "war", func(): _confirm_war(g), 0)
 				wb.add_theme_color_override("font_color", Kit.COL_BAD)
@@ -2088,6 +2111,89 @@ func _stance(ps: Dictionary, f: int, g: int, d: int) -> Control:
 	return l
 
 
+func _member_names(ps: Dictionary, g: int) -> Array[String]:
+	var names: Array[String] = []
+	for m in CState.team_members(ps, CState.team(ps, g)):
+		names.append(CData.faction_name(int(m)))
+	return names
+
+
+## "Team 2: Carthage, Syracuse" (the faction's team, its members' names).
+func _team_names(ps: Dictionary, g: int) -> String:
+	var names: Array[String] = []
+	for m in CState.team_members(ps, CState.team(ps, g)):
+		names.append(CData.faction_name(int(m)))
+	return "Team %d: %s" % [CState.team(ps, g) + 1, ", ".join(names)]
+
+
+## Turns of notice left for faction g on the state's record (0: not leaving).
+func _leaving_turns(st: Dictionary, g: int) -> int:
+	var since := CRules.leaving_since(st, g)
+	if since < 0:
+		return 0
+	return maxi(1, CRules.TEAM_NOTICE_TURNS - (int(st["turn"]) - since))
+
+
+## The top of the diplomacy dialog for a faction on a team: who is on it, who
+## is leaving and when, and the Leave team button (confirm dialog).
+func _team_header(box: VBoxContainer, ps: Dictionary, f: int) -> void:
+	var members := CState.team_members(ps, CState.team(ps, f))
+	if members.size() < 2:
+		return
+	var tb := Kit.vbox(4)
+	tb.name = "team_box"
+	tb.add_child(Kit.label("Your " + _team_names(ps, f) + ".", Kit.FONT, Kit.COL_GOOD, true))
+	for m in members:
+		var n := _leaving_turns(s.st, int(m))
+		if n > 0:
+			var who := "You are" if int(m) == f else "%s is" % CData.faction_name(int(m))
+			var l := Kit.label("%s leaving the team: leaving in %d turn%s." % [who, n, "" if n == 1 else "s"], Kit.FONT_SMALL, Kit.COL_GOLD, true)
+			l.name = "leaving_note" if int(m) == f else "leaving_note_%d" % int(m)
+			tb.add_child(l)
+	if CState.is_human(ps, f) and _leaving_turns(s.st, f) == 0:
+		var planned := CRules.leaving_since(ps, f) >= 0
+		if planned:
+			var h := Kit.hbox(6)
+			h.add_child(Kit.label("Planned: leave the team (%d turns' notice)." % CRules.TEAM_NOTICE_TURNS, Kit.FONT_SMALL, Kit.COL_GOOD))
+			h.add_child(Kit.icon_button("Cancel", "cancel", func():
+				s.remove_orders(func(o): return str(o["t"]) == "leave_team")
+				show_diplomacy(), 80))
+			tb.add_child(h)
+		else:
+			var lb := Kit.icon_button("Leave team", "decline", _confirm_leave_team, 0)
+			lb.name = "leave_team"
+			lb.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+			lb.add_theme_color_override("font_color", Kit.COL_BAD)
+			tb.add_child(lb)
+	box.add_child(tb)
+
+
+func _confirm_leave_team() -> void:
+	var l := Kit.label("Leave your team? You stay allied for %d more turns (the notice), then you are on a team of your own at peace with your old team-mates." % CRules.TEAM_NOTICE_TURNS, Kit.FONT, Color.WHITE, true)
+	s.show_dialog("Leave team", l, [["Give notice", func():
+		s.add_order({"t": "leave_team"})
+		show_diplomacy()], ["Back", func(): show_diplomacy()]], 460)
+
+
+## What g would answer to "join our team": an AI faction by the same rule as
+## CAI.accepts (the stance line), a human "answers next turn". null when the
+## proposal is not possible (same team, a battle or siege between the teams).
+func _team_stance(ps: Dictionary, f: int, g: int) -> Control:
+	if CRules.check_proposal(ps, f, g, "team") != "":
+		return null
+	var l: Control
+	if CState.is_human(ps, g):
+		l = Kit.label("Join our team: they answer next turn.", Kit.FONT_SMALL, Kit.COL_DIM, true)
+	else:
+		var why: String = CAI.why(ps, f, g, "team")
+		if why == "":
+			l = Kit.label("Join our team: would accept.", Kit.FONT_SMALL, Kit.COL_GOOD, true)
+		else:
+			l = Kit.label("Join our team: would refuse: %s." % why, Kit.FONT_SMALL, Kit.COL_DIM, true)
+	l.name = "stance_team_%s" % CData.FACTIONS[g]["key"]
+	return l
+
+
 func _dip_button(text: String, icon: String, o: Dictionary) -> Button:
 	return Kit.icon_button(text, icon, func():
 		s.add_order(o)
@@ -2102,7 +2208,8 @@ func _confirm_war(g: int) -> void:
 
 
 func _what(w: String) -> String:
-	return {"peace": "peace", "trade": "a trade agreement", "cancel_trade": "an end to trade", "war": "war"}.get(w, w)
+	return {"peace": "peace", "trade": "a trade agreement", "cancel_trade": "an end to trade", "war": "war",
+		"team": "one team"}.get(w, w)
 
 
 func _fstrength(ps: Dictionary, f: int) -> int:
@@ -2253,8 +2360,13 @@ func show_intro() -> void:
 		how = "Each turn: march your armies (tap an army, then the map), recruit into an army standing at one of your cities (its card) or raise a new army there (tap the city), build (tap the city), and End turn. Battles are resolved before the next turn: auto-resolve or fight them yourself."
 	box.add_child(Kit.label(how, Kit.FONT, Color.WHITE, true))
 	var p := CRules.victory_progress(s.st)
-	box.add_child(Kit.label("Goal: hold %d regions including %d of Roma, Carthago, Pella, Syracusae and Athenae. You lose if %s is destroyed." % [
-		int(p["need_regions"]), int(p["need_capitals"]), "either player" if (s.st["humans"] as Array).size() > 1 else "your faction"], Kit.FONT, Color.WHITE, true))
+	var lose := "You lose if %s is destroyed." % ("either player" if (s.st["humans"] as Array).size() > 1 else "your faction")
+	if not CRules._players_one_team(s.st):
+		lose = "A team wins when its members together hold that; you lose if your whole team falls."
+	box.add_child(Kit.label("Goal: hold %d regions including %d of Roma, Carthago, Pella, Syracusae and Athenae. %s" % [
+		int(p["need_regions"]), int(p["need_capitals"]), lose], Kit.FONT, Color.WHITE, true))
+	if CState.team_members(s.st, CState.team(s.st, f)).size() > 1:
+		box.add_child(Kit.label("Your " + _team_names(s.st, f) + ".", Kit.FONT, Kit.COL_GOOD, true))
 	s.show_dialog("A new campaign", box, [["Start", Callable()]], 600)
 
 
@@ -2268,6 +2380,8 @@ func _involves(e: Dictionary, f: int) -> bool:
 		return int(e["f"]) == f or int(e["from"]) == f
 	if str(e["k"]) in ["order_failed", "move_failed"]:
 		return int(e["f"]) == f
+	if str(e["k"]) in ["team_joined", "team_notice", "team_left"]:
+		return true  # the teams are world news
 	return str(e["k"]) in ["victory", "defeat"]
 
 
@@ -2280,6 +2394,10 @@ func _event_color(e: Dictionary, f: int) -> Color:
 			return Kit.COL_GOOD if int(e["f"]) == f else Kit.COL_BAD
 		"war", "destroyed", "debt", "eliminated", "defeat", "order_failed", "move_failed", "starving":
 			return Kit.COL_BAD
+		"team_notice", "team_left":
+			return Kit.COL_GOLD
+		"team_joined":
+			return Kit.COL_GOOD
 		"siege":
 			return Kit.COL_BAD if int(e["o"]) == f else Kit.COL_GOLD
 		"siege_lifted":
@@ -2439,20 +2557,56 @@ func event_text(e: Dictionary, f: int) -> String:
 				return "An army could not move: %s." % str(e["why"])
 			return "An army could not move to %s: %s." % [city.call(e["to"]), str(e["why"])]
 		"victory":
+			if e.has("team"):
+				return "Victory! %s won." % _team_of_event(int(e["team"]), int(e["f"]))
 			return "Victory!"
 		"defeat":
+			if e.has("team"):
+				return "%s won: the campaign is lost." % _team_of_event(int(e["team"]), int(e["f"]))
 			return "%s has fallen: the campaign is lost." % CData.faction_name(int(e["f"]))
+		"team_notice":
+			return "%s gave notice of leaving Team %d: in %d turns it is on its own." % [CData.faction_name(int(e["f"])), int(e["team"]) + 1, int(e["turns"])]
+		"team_left":
+			return "%s left Team %d and is at peace with %s." % [CData.faction_name(int(e["f"])), int(e["team"]) + 1, _names(e["mates"])]
+		"team_joined":
+			return "%s and %s joined their teams: %s now on Team %d." % [CData.faction_name(int(e["from"])), CData.faction_name(int(e["to"])),
+				_names(e["members"]) + (" are" if (e["members"] as Array).size() > 1 else " is"), int(e["team"]) + 1]
 	return ""
 
 
 # ----------------------------------------------------------- objectives ---
 
+## The viewing player's faction (the realm shown), -1 if none.
+func _me() -> int:
+	if s.f >= 0:
+		return s.f
+	var hs: Array = s.st["humans"]
+	return int(hs[0]) if not hs.is_empty() else -1
+
+
+## "Team 2 (Rome, Carthage)" for a winning team: its members now, or just
+## faction f when the team has since changed.
+func _team_of_event(t: int, f: int) -> String:
+	var names: Array[String] = []
+	for m in CState.team_members(s.st, t):
+		names.append(CData.faction_name(int(m)))
+	if names.is_empty():
+		names.append(CData.faction_name(f))
+	return "Team %d (%s)" % [t + 1, ", ".join(names)]
+
+
 func show_objectives() -> void:
 	var st: Dictionary = s.ps
+	var me := _me()
+	var team_names := ""
 	var p := CRules.victory_progress(st)
+	if me >= 0 and CState.team_members(st, CState.team(st, me)).size() > 1:
+		p = CRules.victory_progress(st, CState.team(st, me))
+		team_names = ", ".join(_member_names(st, me))
 	var box := Kit.vbox(8)
-	box.add_child(Kit.label("Win together: hold %d regions (you hold %d) including %d of the five great cities (you hold %d)." % [
-		int(p["need_regions"]), int(p["regions"]), int(p["need_capitals"]), int(p["capitals"])], Kit.FONT, Color.WHITE, true))
+	box.add_child(Kit.label("Win together%s: hold %d regions (%s hold %d) including %d of the five great cities (%s hold %d)." % [
+		" (" + team_names + ")" if team_names != "" else "", int(p["need_regions"]), "your team holds" if team_names != "" else "you hold", int(p["regions"]),
+		int(p["need_capitals"]), "your team holds" if team_names != "" else "you hold", int(p["capitals"])], Kit.FONT, Color.WHITE, true))
 	for key in CData.KEY_CITIES:
 		var r := CData.region_index(key)
 		var o := CState.owner(st, r)
@@ -2461,7 +2615,10 @@ func show_objectives() -> void:
 		h.add_child(Kit.label("%s - %s" % [CData.REGIONS[r]["city"], CData.faction_name(o)], Kit.FONT,
 			Kit.COL_GOOD if CState.is_human(st, o) else Color.WHITE))
 		box.add_child(h)
-	box.add_child(Kit.label("You lose if %s loses all its regions." % ("either player's faction" if (st["humans"] as Array).size() > 1 else "your faction"), Kit.FONT, Kit.COL_BAD, true))
+	var lose := "You lose if %s loses all its regions." % ("either player's faction" if (st["humans"] as Array).size() > 1 else "your faction")
+	if not CRules._players_one_team(st):
+		lose = "Another team wins when its members hold the same. You lose if every faction on your team falls."
+	box.add_child(Kit.label(lose, Kit.FONT, Kit.COL_BAD, true))
 	var t: Dictionary = st["settings"]
 	box.add_child(Kit.label("Settings: turn timeout %s (%s), battles %s, AI aggression %d%%." % [
 		"off" if int(t["turn_timeout_h"]) == 0 else "%d h" % int(t["turn_timeout_h"]),
@@ -2474,7 +2631,21 @@ func show_game_over() -> void:
 	var st: Dictionary = s.st
 	var won := int(st["winner"]) == 1
 	var box := Kit.vbox(8)
-	box.add_child(Kit.label("Victory! The Mediterranean is yours." if won else "Defeat.", 24, Kit.COL_GOOD if won else Kit.COL_BAD))
+	var head := "Victory! The Mediterranean is yours." if won else "Defeat."
+	if st.has("winner_team"):
+		var wt := int(st["winner_team"])
+		var names := ", ".join(_member_names(st, int((CState.team_members(st, wt))[0])))
+		var me: int = s.online.f if s.online != null else -1
+		if me >= 0:
+			won = CState.team(st, me) == wt
+			head = ("Your team won: %s" if won else "Defeat. Team %d won: %s") % ([names] if won else [wt + 1, names])
+		elif won:
+			head = "Victory! Team %d won: %s" % [wt + 1, names]
+		else:
+			head = "Defeat. Team %d won: %s" % [wt + 1, names]
+	var hl := Kit.label(head, 24, Kit.COL_GOOD if won else Kit.COL_BAD, true)
+	hl.name = "game_over_head"
+	box.add_child(hl)
 	box.add_child(Kit.label("%s, turn %d." % [CData.date_text(int(st["turn"])), int(st["turn"])], Kit.FONT, Color.WHITE))
 	s.show_dialog("The campaign is over", box, [["Back to menu", func(): s.request_exit()], ["Look at the map", Callable()]], 520)
 

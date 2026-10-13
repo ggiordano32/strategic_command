@@ -528,7 +528,7 @@ func _fill_online() -> void:
 		h.add_child(badge)
 		badges[cid] = badge
 		var del := Kit.button("Forget", Callable(), 80)
-		del.tooltip_text = "Remove this campaign from this device (it stays on the server; your ally keeps playing)."
+		del.tooltip_text = "Remove this campaign from this device (it stays on the server; the other players keep playing)."
 		del.pressed.connect(func():
 			if del.text == "Sure?":
 				net.accounts.remove(cid)
@@ -587,7 +587,7 @@ func _do_import() -> void:
 func _build_join(bg: Control) -> Control:
 	var vb := _page_box(bg)
 	vb.add_child(Kit.label("Join a campaign", 22, Kit.COL_GOLD))
-	vb.add_child(Kit.label("Enter the join code from your ally, or a device code to continue your own campaign here.", 14, Kit.COL_DIM))
+	vb.add_child(Kit.label("Enter the join code from the campaign's creator, or a device code to continue your own campaign here.", 14, Kit.COL_DIM))
 	var h := Kit.hbox(8)
 	_join_edit = Kit.text_field("ABC-DEF", "", 240, "Join code or device code", true)
 	_join_edit.name = "join_code"
@@ -648,7 +648,7 @@ func _join_find() -> void:
 	var r: Dictionary = await net.join_preview(code)
 	_join_info.add_theme_color_override("font_color", Kit.COL_BAD)
 	if not r["ok"]:
-		_join_info.text = _net_error(r, "No open campaign has that code. Check it with your ally (it stops working once both seats are taken).")
+		_join_info.text = _net_error(r, "No open campaign has that code. Check it with the player who sent it (it stops working once every seat is taken).")
 		return
 	_join_info.text = ""
 	var d: Dictionary = CState.normalise(r["data"])
@@ -753,7 +753,7 @@ func _show_share(cid: String, code: String) -> void:
 	_share_box.add_child(Kit.label("Online campaign created", 22, Kit.COL_GOLD))
 	if code != "":
 		var link: String = net.join_link(code) if net else code
-		_share_box.add_child(Kit.label("Send your ally this join code, or the link:", 15, Color.WHITE))
+		_share_box.add_child(Kit.label("Send the other players this join code, or the link:", 15, Color.WHITE))
 		var cl := Kit.label(NetScript.show_code(code), 40, Kit.COL_GOLD)
 		cl.name = "share_code"
 		cl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER

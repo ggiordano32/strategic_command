@@ -3,6 +3,7 @@
 and two headless Godot clients (tests/online_client.gd) playing one campaign.
 
     python3 tests/online_e2e.py [--port 8071] [--turns 9] [--keep]
+    python3 tests/online_e2e.py --teams [--port 8072]   (3 humans, one join code)
 
 Builds the server (tools/build_server.sh, into build/server-test/), starts it in test mode on a temp
 data dir, starts a fake webhook, runs client A (Rome, creates) and client B
@@ -69,12 +70,77 @@ def canon(v):
     return json.dumps(v, sort_keys=True, separators=(",", ":"))
 
 
+def run_teams(base, tmp, args):
+    """Three humans on one server: one join code, three seats. A (Rome) creates;
+    B (Carthage) and C (Macedon) join the same code, each picking a free seat;
+    every client submits turn after turn until the turns resolved."""
+    turns = 2
+    procs = {}
+    for role in ["A", "B", "C"]:
+        log = open(os.path.join(tmp, "client_%s.log" % role), "w")
+        procs[role] = subprocess.Popen(
+            ["godot", "--headless", "--path", REPO, "--script", "res://tests/online_team_client.gd", "--",
+             "--server=" + base, "--role=" + role, "--dir=" + tmp, "--turns=%d" % turns],
+            stdout=log, stderr=subprocess.STDOUT)
+        if role == "A":
+            time.sleep(1.0)
+    t0 = time.time()
+    codes = {}
+    for role, p in procs.items():
+        try:
+            codes[role] = p.wait(timeout=600 - (time.time() - t0))
+        except subprocess.TimeoutExpired:
+            p.kill()
+            codes[role] = "timeout"
+    print("clients finished in %.0f s: %s" % (time.time() - t0, codes))
+    res = {}
+    for role in ["A", "B", "C"]:
+        path = os.path.join(tmp, "result_%s.json" % role)
+        res[role] = json.load(open(path)) if os.path.exists(path) else {}
+    check(codes == {"A": 0, "B": 0, "C": 0}, "all three clients exit cleanly (%s)" % codes)
+    for role in ["A", "B", "C"]:
+        check(res[role].get("ok") is True, "client %s reports no errors %s" % (role, res[role].get("errors")))
+    cid = res["A"].get("id")
+    accs = {r: json.load(open(os.path.join(tmp, "acc_%s.json" % r))) for r in ["A", "B", "C"]}
+    toks = {r: accs[r]["campaigns"][cid]["token"] for r in accs}
+    check(len({t for t in toks.values()}) == 3, "three different seat tokens for one campaign")
+    summ = api(base, "GET", "/api/c/" + cid, toks["A"])
+    print("server: version %d, turn %d, phase %s" % (summ["version"], summ["turn"], summ["phase"]))
+    check(sorted(s["f"] for s in summ["seats"] if s["claimed"]) == sorted(summ["humans"]) and len(summ["humans"]) == 3,
+          "all three human seats claimed with the one code %s" % [(s["f"], s["claimed"]) for s in summ["seats"]])
+    check("join_code" not in summ or not summ.get("join_code"), "the join code is retired once every seat is taken")
+    check(summ["turn"] >= turns, "the turn resolved with three submitters (turn %d)" % summ["turn"])
+    for role in ["A", "B", "C"]:
+        fin = res[role].get("final", {})
+        check(fin.get("hash") == summ["hash"] and fin.get("local_hash") == summ["hash"] and fin.get("version") == summ["version"],
+              "client %s ends on the server's state (v%s)" % (role, fin.get("version")))
+        check(res[role].get("verify_bad", 1) == 0, "client %s: no determinism mismatch" % role)
+        check(len(res[role].get("submissions", {})) >= 1, "client %s submitted" % role)
+    teams = res["A"].get("final", {}).get("teams", [])
+    check(len(teams) == 8 and teams[0] == teams[1] and teams[0] != teams[2], "the state kept the teams: %s" % teams)
+    hist = api(base, "GET", "/api/c/%s/history" % cid, toks["A"])["versions"]
+    turn_versions = [v for v in hist if v["kind"] == "turn"]
+    check(len(turn_versions) >= turns, "%d turn versions in the history" % len(turn_versions))
+    d = api(base, "GET", "/api/c/%s/history/%d?state=0" % (cid, turn_versions[0]["version"]), toks["A"])
+    got = sorted(s["f"] for s in d["inputs"]["submissions"])
+    check(len(got) == 3, "the first turn resolved from three submissions %s" % got)
+    print("RESULT:", "PASS" if not FAILS else "FAIL (%d)" % len(FAILS))
+    if FAILS or args.keep:
+        print("logs kept in", tmp)
+    else:
+        shutil.rmtree(tmp, ignore_errors=True)
+    sys.exit(0 if not FAILS else 1)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8071)
     ap.add_argument("--turns", type=int, default=10)
     ap.add_argument("--keep", action="store_true", help="keep the temp dir")
+    ap.add_argument("--teams", action="store_true", help="the 3-human campaign instead (tests/online_team_client.gd)")
     args = ap.parse_args()
+    if args.teams and args.port == 8071:
+        args.port = 8072
 
     # A scratch binary: never replace the one a running server uses.
     binary = os.path.join(REPO, "build", "server-test", "scserver")
@@ -98,6 +164,8 @@ def main():
                     break
             except Exception:
                 time.sleep(0.1)
+        if args.teams:
+            run_teams(base, tmp, args)  # exits
         clients = {}
         logs = {}
         for role in ["A", "B"]:

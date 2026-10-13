@@ -721,3 +721,22 @@ func TestStateHashMatchesGodot(t *testing.T) {
 		t.Fatalf("hash of empty: %s", h)
 	}
 }
+
+// A version 7 state with the default teams hashes as its format 6 equal
+// (CState.state_hash); other teams, or a notice pending, hash as they are.
+// Expected values from the game's CState.hash_text on the same documents.
+func TestStateHashTeams(t *testing.T) {
+	def := `{"format":"strategic_command_campaign","humans":[0,1],"name":"T <&> \u00e9","teams":[0,0,1,2,3,4,5,6],"turn":3,"version":7}`
+	def = strings.Replace(def, `\u00e9`, "é", 1)
+	if h := StateHash([]byte(def)); h != "c358b717" {
+		t.Fatalf("default teams: %s", h)
+	}
+	own := `{"format":"strategic_command_campaign","humans":[0,1],"name":"T <&> é","teams":[0,0,2,3,4,5,6,7],"turn":3,"version":7}`
+	if h := StateHash([]byte(own)); h != "38d3a2a2" {
+		t.Fatalf("other teams: %s", h)
+	}
+	leaving := `{"format":"strategic_command_campaign","humans":[0,1],"leaving":[[1,2]],"name":"T","teams":[0,0,1,2,3,4,5,6],"turn":3,"version":7}`
+	if h := StateHash([]byte(leaving)); h != "021a4cd1" {
+		t.Fatalf("leaving: %s", h)
+	}
+}

@@ -53,6 +53,13 @@ extends SceneTree
 ## under the ally: Offer money, Offer to buy (city picker, price), the
 ## planned deal's Cancel, an incoming city offer's Accept (Undo takes it
 ## back).
+## Teams: the new-campaign screen with three humans (Rome, Carthage, Greeks)
+## on two teams (the dropdown, "All humans one team", then a dropdown back)
+## starts a campaign whose `teams` match; the diplomacy screen shows the team
+## rows, the "Join our team" stance line (CAI.why for an AI faction, "they
+## answer next turn" for a human), sends the proposal as an order, lists an
+## incoming team proposal with Accept, Leave team asks to confirm and plans
+## the order, and a notice on record reads "Leaving in 2 turns".
 ## Exits 0 on success, 1 on failure.
 
 const CampaignScreen := preload("res://game/campaign/campaign_screen.gd")
@@ -110,7 +117,9 @@ func _initialize() -> void:
 		_d_select, _d_tap, _d_check, _d_dip, _d_dip_tap, _d_dip_check, _d_other, _d_other_check,
 		_gf_setup, _gf_tap, _gf_check, _gf_cancel, _gf_cancel_check, _gf_undo, _gf_undo_check, _gf_undo2, _gf_undo2_check,
 		_gf_dip, _gf_money, _gf_money_check, _gf_buy, _gf_buy_check, _gf_deal_cancel, _gf_deal_cancel_check,
-		_gf_offer, _gf_accept, _gf_accept_check, _gf_accept_undo, _gf_done, _s_done,
+		_gf_offer, _gf_accept, _gf_accept_check, _gf_accept_undo, _gf_done,
+		_n_open, _n_tap_rome, _n_tap_carthage, _n_tap_greeks, _n_idle, _n_picks, _n_one_team, _n_idle, _n_one_team_check, _n_dropdown, _n_dropdown_check, _n_start, _n_idle, _n_idle, _n_idle, _n_check,
+		_t_setup, _t_dip, _t_stance, _t_propose, _n_idle, _t_incoming, _t_tap_accept, _n_idle, _t_accept, _t_leave, _n_idle, _t_leave_dialog, _n_idle, _t_leave_planned, _t_notice, _t_text, _t_done, _s_done,
 	]
 
 
@@ -1166,6 +1175,283 @@ func _gf_accept_undo() -> void:
 func _gf_done() -> void:
 	cs.close_dialog()
 	(cs.st["proposals"] as Array).clear()
+	cs.orders = []
+	cs._replan()
+
+
+# ------------------------------------------------------------------ teams ---
+
+const NewCampaign := preload("res://game/campaign/new_campaign.gd")
+const Saves := preload("res://game/campaign/saves.gd")
+const CAI := preload("res://campaign/cai.gd")
+var _nc: NewCampaign
+var _nc_data := {}
+var _nc_slot := ""
+
+
+func _nbtn(n: String) -> Button:
+	for b in _nc.find_children(n, "Button", true, false):
+		return b
+	return null
+
+
+func _n_open() -> void:
+	cs.close_dialog()
+	cs.process_mode = Node.PROCESS_MODE_DISABLED  # its map handlers must not see the taps
+	_nc = NewCampaign.new()
+	_nc.start.connect(func(d, sl, lp):
+		_nc_data = d
+		_nc_slot = sl
+		lp.close())
+	var layer := CanvasLayer.new()  # above the campaign screen's own layers
+	layer.layer = 200
+	layer.name = "nc_layer"
+	layer.add_child(_nc)
+	root.add_child(layer)
+	_nc.name_edit.text = "InputTest teams"
+	_nc.seed_edit.text = "4242"
+	await process_frame
+	await process_frame
+	_check(_nc.find_children("faction_*", "Button", true, false).size() == CData.faction_count(), "the new-campaign screen has a Human / AI toggle per faction")
+	_check(_nc.find_children("team_*", "OptionButton", true, false).size() == CData.faction_count(), "and a team dropdown per faction")
+	_check(_nbtn("all_one_team") != null and _nbtn("everyone_alone") != null, "and the two team buttons")
+
+
+func _n_idle() -> void:
+	pass
+
+
+func _n_tap_rome() -> void:
+	_tap_control(_nbtn("faction_rome"))
+
+
+func _n_tap_carthage() -> void:
+	_tap_control(_nbtn("faction_carthage"))
+
+
+func _n_tap_greeks() -> void:
+	_tap_control(_nbtn("faction_greeks"))
+
+
+func _n_picks() -> void:
+	var carthage := CData.faction_index("carthage")
+	_check(_nc.picks == [rome, carthage, greeks], "three humans switched on, in the order tapped: %s" % [_nc.picks])
+	_check(_nbtn("faction_rome").text == "You" and _nbtn("faction_carthage").text == "Human" and _nbtn("faction_macedon").text == "AI",
+		"the first is marked You, the others Human / AI")
+	_check(_nc.teams_array() == [0, 1, 2, 3, 4, 5, 6, 7], "each faction starts on a team of its own")
+
+
+func _n_one_team() -> void:
+	_tap_control(_nbtn("all_one_team"))
+
+
+func _n_one_team_check() -> void:
+	var t0: Array = _nc.teams_array()
+	_check(t0[rome] == t0[CData.faction_index("carthage")] and t0[rome] == t0[greeks], "All humans one team puts the three on one team")
+	_check(t0[CData.faction_index("gauls")] == CData.faction_index("gauls"), "and leaves the AI factions alone")
+
+
+func _n_dropdown() -> void:
+	# The Greeks back to a team of their own through the dropdown.
+	var dd: OptionButton = _nc.find_child("team_greeks", true, false)
+	dd.select(greeks)
+	dd.item_selected.emit(greeks)
+
+
+func _n_dropdown_check() -> void:
+	var t1: Array = _nc.teams_array()
+	_check(t1[rome] == t1[CData.faction_index("carthage")] and t1[greeks] != t1[rome], "three humans on two teams after the dropdown")
+	_check(_nc._info.text.contains("Team 1: Rome, Carthage"), "the info line names the team: %s" % _nc._info.text)
+
+
+func _n_start() -> void:
+	_nc_data = {}
+	var b := _nbtn("start_campaign")
+	_check(b != null and not b.disabled, "Start is on")
+	_tap_control(b)
+
+
+func _n_check() -> void:
+	_check(not _nc_data.is_empty(), "Start made a campaign")
+	if not _nc_data.is_empty():
+		var st: Dictionary = _nc_data["state"]
+		var carthage := CData.faction_index("carthage")
+		_check(st["humans"] == [rome, carthage, greeks].duplicate() or (st["humans"] as Array) == [rome, greeks, carthage].duplicate() or (st["humans"] as Array).size() == 3, "with three humans")
+		_check(CState.same_team(st, rome, carthage) and not CState.same_team(st, rome, greeks) and not CState.same_team(st, greeks, CData.faction_index("gauls")),
+			"whose teams match the screen: %s" % [st["teams"]])
+		_check(CState.dip(st, rome, carthage) == CState.ALLIED, "and team-mates are allied")
+	if _nc_slot != "":
+		Saves.delete(_nc_slot)
+	_nc.get_parent().queue_free()
+	cs.process_mode = Node.PROCESS_MODE_INHERIT
+
+
+var _t_ai := -1
+
+
+func _t_setup() -> void:
+	cs.close_dialog()
+	var carthage := CData.faction_index("carthage")
+	var st: Dictionary = cs.st
+	st["humans"] = [rome, greeks, carthage]
+	(st["humans"] as Array).sort()
+	var macedon := CData.faction_index("macedon")
+	var iberians := CData.faction_index("iberians")
+	var tm: Array = []
+	for f in CData.faction_count():
+		tm.append(f + 10)
+	tm[rome] = 1
+	tm[carthage] = 1
+	tm[macedon] = 7
+	tm[iberians] = 7
+	st["teams"] = tm
+	st.erase("leaving")
+	for a in CData.faction_count():
+		for b in CData.faction_count():
+			if a != b:
+				CState.set_dip(st, a, b, CState.ALLIED if tm[a] == tm[b] else CState.PEACE)
+	for g in CData.faction_count():
+		if g != rome:
+			st["factions"][g]["alive"] = 1
+	st["proposals"] = []
+	st["battles"] = []
+	st["sieges"] = []
+	cs.orders = []
+	cs._replan()
+	_t_ai = CData.faction_index("gauls")
+	_check(cs.f == rome and CState.same_team(cs.ps, rome, carthage), "Rome planning, on a team with Carthage")
+
+
+func _t_dip() -> void:
+	cs.panels.show_diplomacy()
+	var tb = cs.dialog_box.find_child("team_box", true, false)
+	_check(tb != null, "Diplomacy has the team box")
+	var txt := ""
+	if tb != null:
+		for l in tb.find_children("*", "Label", true, false):
+			txt += (l as Label).text + "\n"
+	_check(txt.contains("Team 2: Rome, Carthage"), "the team box names the team: %s" % txt.strip_edges())
+	var row = cs.dialog_box.find_child("dip_carthage", true, false)
+	var rt := ""
+	if row != null:
+		for l in row.find_children("*", "Label", true, false):
+			rt += (l as Label).text
+	_check(rt.contains("on your team"), "a team-mate's row is marked as an ally: %s" % rt)
+	var row2 = cs.dialog_box.find_child("dip_macedon", true, false)
+	var rt2 := ""
+	if row2 != null:
+		for l in row2.find_children("*", "Label", true, false):
+			rt2 += (l as Label).text
+	_check(rt2.contains("Team 8: %s, %s" % [CData.faction_name(CData.faction_index("macedon")), CData.faction_name(CData.faction_index("iberians"))]), "another faction's row shows its team: %s" % rt2)
+
+
+func _t_stance() -> void:
+	var texts: Array[String] = []
+	for l in cs.dialog_box.find_children("stance_team*", "Label", true, false):
+		texts.append((l as Label).text)
+	_check(texts.size() >= 4, "a team stance line under each faction that could join (%d)" % texts.size())
+	var why: String = CAI.why(cs.ps, rome, _t_ai, "team")
+	var want := "Join our team: would accept." if why == "" else "Join our team: would refuse: %s." % why
+	_check(texts.has(want), "the AI line is CAI.why's answer: %s" % want)
+	_check(texts.has("Join our team: they answer next turn."), "a human faction: they answer next turn")
+
+
+func _t_propose() -> void:
+	_tap_button("team_gauls", "Join our team on the AI faction's row")
+
+
+func _t_incoming() -> void:
+	var found := false
+	for o in cs.orders:
+		if str(o["t"]) == "propose" and int(o["to"]) == _t_ai and str(o["what"]) == "team":
+			found = true
+	_check(found, "the team proposal is an order: %s" % [cs.orders])
+	cs.orders = []
+	cs._replan()
+	# A human (Greeks) proposes to Rome's team.
+	(cs.st["proposals"] as Array).append({"id": 77, "from": greeks, "to": rome, "what": "team", "turn": int(cs.st["turn"])})
+	cs.st["next_proposal"] = 78
+	cs._replan()
+	cs.panels.show_diplomacy()
+	var h = cs.dialog_box.find_child("proposal_77", true, false)
+	_check(h != null, "an incoming team proposal is in the list")
+	var txt := ""
+	if h != null:
+		for l in h.find_children("*", "Label", true, false):
+			txt += (l as Label).text
+	_check(txt.contains("asks you to join their team"), "worded as a team request: %s" % txt)
+
+
+func _t_tap_accept() -> void:
+	var h = cs.dialog_box.find_child("proposal_77", true, false)
+	var acc: Button = null
+	if h != null:
+		for b in h.find_children("*", "Button", true, false):
+			if (b as Button).text.begins_with("Accept"):
+				acc = b
+	_check(acc != null, "with Accept")
+	if acc != null:
+		_tap_control(acc)
+
+
+func _t_accept() -> void:
+	var ok := false
+	for o in cs.orders:
+		ok = ok or (str(o["t"]) == "answer" and int(o["id"]) == 77 and int(o["accept"]) == 1)
+	_check(ok, "Accept plans the answer")
+	cs.orders = []
+	(cs.st["proposals"] as Array).clear()
+	cs._replan()
+	cs.panels.show_diplomacy()
+
+
+func _t_leave() -> void:
+	_tap_button("leave_team", "Leave team")
+
+
+func _t_leave_dialog() -> void:
+	var b := _button("Give notice")
+	_check(b != null, "Leave team asks to confirm")
+	if b != null:
+		_tap_control(b)
+
+
+func _t_leave_planned() -> void:
+	var ok := false
+	for o in cs.orders:
+		ok = ok or str(o["t"]) == "leave_team"
+	_check(ok, "the leave_team order is planned")
+	var txt := ""
+	for l in cs.dialog_box.find_children("*", "Label", true, false):
+		txt += (l as Label).text + "\n"
+	_check(txt.contains("Planned: leave the team"), "and the dialog says so")
+
+
+func _t_notice() -> void:
+	cs.orders = []
+	cs.st["leaving"] = [[rome, int(cs.st["turn"])]]
+	cs._replan()
+	cs.panels.show_diplomacy()
+	var l = cs.dialog_box.find_child("leaving_note", true, false)
+	_check(l is Label and (l as Label).text.contains("leaving in 2 turns"), "a notice on record reads Leaving in 2 turns: %s" % [(l as Label).text if l is Label else "-"])
+	_check(_button("leave_team") == null, "and the Leave button is gone")
+
+
+func _t_text() -> void:
+	var e := {"k": "team_notice", "f": rome, "team": 1, "turns": 2}
+	var t1: String = cs.panels.event_text(e, rome)
+	var t2: String = cs.panels.event_text({"k": "team_left", "f": rome, "team": 1, "mates": [CData.faction_index("carthage")]}, rome)
+	var t3: String = cs.panels.event_text({"k": "team_joined", "from": rome, "to": greeks, "team": 1, "was": 3, "members": [greeks]}, rome)
+	_check(t1.contains("Rome") and t1.contains("Team 2") and t2.contains("Carthage") and t3.contains(CData.faction_name(greeks)) and t3.contains("Team 2"), "chronicle rows for the team events: %s | %s | %s" % [t1, t2, t3])
+	cs.close_dialog()
+	cs.panels.show_faction()
+	var l = cs.dialog_box.find_child("realm_team", true, false)
+	_check(l is Label and (l as Label).text.contains("Rome, Carthage"), "the Realm screen shows the team")
+
+
+func _t_done() -> void:
+	cs.close_dialog()
+	cs.st.erase("leaving")
 	cs.orders = []
 	cs._replan()
 

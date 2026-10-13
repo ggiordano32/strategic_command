@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"crypto/md5"
 	"encoding/binary"
 	"encoding/json"
@@ -83,10 +84,69 @@ type StateMeta struct {
 }
 
 // StateHash is the game's CState.state_hash of a canonical state text: the
-// first 4 bytes of its MD5 as a little-endian uint32, in hex.
+// first 4 bytes of its MD5 as a little-endian uint32, in hex. A version 7
+// state whose teams are the default shape (and nobody is leaving) hashes as
+// the format 6 state it equals, as the game does (CState.state_hash).
 func StateHash(text []byte) string {
-	sum := md5.Sum(text)
+	sum := md5.Sum(hashView(text))
 	return fmt.Sprintf("%08x", binary.LittleEndian.Uint32(sum[:4]))
+}
+
+// hashView is the text the game hashes: for a default-shaped version 7 state
+// the same text without "teams" and with "version":6 (keys stay sorted, every
+// value is kept byte for byte); any other text as it is.
+func hashView(text []byte) []byte {
+	if !bytes.Contains(text, []byte(`"teams"`)) {
+		return text
+	}
+	var top map[string]json.RawMessage
+	if json.Unmarshal(text, &top) != nil {
+		return text
+	}
+	var version int
+	var humans, teams []int
+	if json.Unmarshal(top["version"], &version) != nil || version != 7 ||
+		json.Unmarshal(top["humans"], &humans) != nil || json.Unmarshal(top["teams"], &teams) != nil {
+		return text
+	}
+	if _, leaving := top["leaving"]; leaving {
+		return text
+	}
+	isHuman := map[int]bool{}
+	for _, h := range humans {
+		isHuman[h] = true
+	}
+	next := 1
+	for f, t := range teams {
+		want := 0
+		if !isHuman[f] {
+			want = next
+			next++
+		}
+		if t != want {
+			return text
+		}
+	}
+	delete(top, "teams")
+	top["version"] = json.RawMessage("6")
+	keys := make([]string, 0, len(top))
+	for k := range top {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var out bytes.Buffer
+	out.WriteByte('{')
+	for i, k := range keys {
+		if i > 0 {
+			out.WriteByte(',')
+		}
+		kb, _ := json.Marshal(k)
+		out.Write(kb)
+		out.WriteByte(':')
+		out.Write(top[k])
+	}
+	out.WriteByte('}')
+	return out.Bytes()
 }
 
 // ParseState reads the facts above from a state JSON text.

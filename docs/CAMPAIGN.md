@@ -1751,7 +1751,9 @@ who is a player; players on different teams may fight each other. Helpers:
   0 (an AI team won); `winner_team` is its id. Players lose (winner 0) when
   no team with a player has a member alive.
 - **Server facts** are unchanged: `humans`, `turn`, `phase`;
-  `battle_humans` returns every player on either side.
+  `battle_humans` returns every player on either side. The Go server hashes
+  a default-shaped version 7 state as its format 6 view too
+  (`statemeta.go: hashView`), so the hashes it checks match the game's.
 
 ## Victory and defeat
 
@@ -1766,9 +1768,27 @@ and its armies disband.
   campaigns with badges, then local saves) / Import; Battle
   sandbox (the battles, terrain, replay, tests); Unit book; Controls; UI size;
   Fullscreen.
-- **New campaign:** 1 or 2 players (any two factions), name, seed, win
+- **New campaign:** a row per faction with a Human / AI toggle (any number
+  of humans 1..8; the first switched on is "you", marked) and a team
+  dropdown (Team 1 .. Team 8, each faction on its own by default), the
+  buttons "All humans one team" and "Everyone on their own"; name, seed, win
   target, great cities, turn timeout (used online), battles ask / always
-  auto, AI calm / normal / aggressive. Online mode: see "Online play".
+  auto, AI calm / normal / aggressive, difficulty, deployment and battle
+  time. Start passes `humans` and `teams` to `new_campaign`. Local play with
+  several humans is hot seat: `campaign_screen._next_step` hands the device
+  to each alive human in index order who has not submitted (hand-over screen
+  each time), for any count. Online: at least two humans; see "Online play".
+- **Diplomacy** (teams): the top shows your team ("Team 2: Rome, Carthage"),
+  "Leave team" (confirm; "Planned: leave the team" with Cancel; then
+  "Leaving in N turns" from the state's `leaving`); each faction's row names
+  its team when it has mates (team-mates read "on your team (ally)"); every
+  faction that may be asked has a "Join our team" button and a stance line
+  from `CAI.why(.., "team")` ("would accept" / "would refuse: <reason>") or
+  "they answer next turn" for a player; an incoming team proposal is in the
+  proposals list ("X asks you to join their team (Team n: ...)") with Accept
+  / Refuse. The Realm and Goals screens show the team and its progress; the
+  game-over text names the winning team ("Your team won: Rome, Carthage");
+  the chronicle has rows for `team_notice`, `team_left`, `team_joined`.
 - **Map:** pan (drag, right / middle drag, W A S D / arrows), zoom (pinch,
   wheel, + / -) from the whole map to close up; territories tinted by owner;
   settlements sized by level, rings for walls, a white star for key cities;

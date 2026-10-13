@@ -248,7 +248,7 @@ static func badge_for(s: Dictionary) -> Array:
 		if not bool(seat.get("claimed", true)):
 			open_seat = true
 	if open_seat:
-		return ["Waiting for your ally to join", Color(0.85, 0.85, 0.8)]
+		return ["Waiting for players to join", Color(0.85, 0.85, 0.8)]
 	if bool(s.get("all_in", false)):
 		return ["Resolving", Color(0.75, 0.85, 1.0)]
 	if (s.get("submitted", []) as Array).has(me):

@@ -1,10 +1,15 @@
 extends Control
-## New campaign screen: one or two human factions (any two; they are
-## permanently allied), name, seed and settings. Emits `start(data, slot)`
-## with fresh save data, or `back`. Online mode (`online` = true): two
-## factions, the first one tapped is yours; plus the Discord webhook, your
-## Discord user id and (if the server wants one) an invite key; Start
-## creates the campaign on the server and emits `created_online(id, code)`.
+## New campaign screen: every faction is a row with a Human / AI toggle and
+## a team dropdown (Team 1 .. Team 8; each faction starts on a team of its
+## own), plus "All humans one team" and "Everyone on their own". Any number
+## of humans 1..8; the first one switched on is "you" (online: the seat this
+## device takes). Name, seed and settings. Emits `start(data, slot)` with
+## fresh save data, or `back`. Local play with several humans is hot seat
+## (the campaign screen cycles through every human seat). Online mode
+## (`online` = true): at least two humans, one join code lets the others each
+## claim a free seat; plus the Discord webhook, your Discord user id and (if
+## the server wants one) an invite key; Start creates the campaign on the
+## server and emits `created_online(id, code)`.
 ## Difficulty: the battle AI and the campaign AI skill (Easy / Average /
 ## Skilled, campaign/cai_profile.gd) for every AI faction, stored in the
 ## campaign's settings (only when not Average); docs/AI.md sections 10-12.
@@ -32,13 +37,16 @@ const BLURB := {
 	"gauls": "Southern Gaul and the Po valley; warbands and cavalry.",
 }
 
+## The human factions in the order they were switched on (picks[0] is "you").
 var picks: Array[int] = []
-var two := false
+## Team number 0..7 per faction (CState `teams`); default: each on its own.
+var team_of: Array[int] = []
 var name_edit: LineEdit
 var seed_edit: LineEdit
 var settings := CState.DEFAULT_SETTINGS.duplicate()
-var _fbuttons: Array[Button] = []
-var _mode_button: Button
+var _human_buttons: Array[Button] = []
+var _team_dds: Array[OptionButton] = []
+var _name_labels: Array[Label] = []
 var _info: Label
 var _start_button: Button
 var _setting_buttons := {}
@@ -72,11 +80,7 @@ func _ready() -> void:
 	var t := Kit.label("New campaign", 22, Kit.COL_GOLD)
 	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(t)
-	_mode_button = Kit.button("", _toggle_mode, 190)
-	_mode_button.visible = not online
-	head.add_child(_mode_button)
 	if online:
-		two = true
 		t.text = "New online co-op campaign"
 	head.add_child(Kit.button("Back", func(): back.emit(), 80))
 	_start_button = Kit.button("Start", _start, 120, 17)
@@ -85,30 +89,54 @@ func _ready() -> void:
 	v.add_child(head)
 	_info = Kit.label("", Kit.FONT, Color.WHITE, true)
 	v.add_child(_info)
-	var grid := GridContainer.new()
-	grid.columns = 2
-	grid.add_theme_constant_override("h_separation", 8)
-	grid.add_theme_constant_override("v_separation", 6)
-	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	v.add_child(grid)
+	for f in CData.faction_count():
+		team_of.append(f)
+	var team_row := Kit.flow(8)
+	var b_one := Kit.button("All humans one team", _all_humans_one_team, 0, 14)
+	b_one.name = "all_one_team"
+	team_row.add_child(b_one)
+	var b_own := Kit.button("Everyone on their own", _everyone_alone, 0, 14)
+	b_own.name = "everyone_alone"
+	team_row.add_child(b_own)
+	v.add_child(team_row)
+	var list := Kit.vbox(4)
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.add_child(list)
+	var topts: Array = []
+	for ti in CData.faction_count():
+		topts.append(["Team %d" % (ti + 1), ti])
 	for f in CData.faction_count():
 		var fd: Dictionary = CData.FACTIONS[f]
-		var b := Button.new()
-		b.toggle_mode = true
-		b.focus_mode = Control.FOCUS_NONE
-		b.custom_minimum_size = Vector2(200, 54)
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		b.add_theme_font_size_override("font_size", 13)
-		b.text = "%s - %s" % [fd["name"], BLURB[fd["key"]]]
-		b.name = "faction_" + str(fd["key"])
-		var img := Image.create(20, 20, false, Image.FORMAT_RGBA8)
-		img.fill(CData.faction_color(f))
-		b.icon = ImageTexture.create_from_image(img)
-		b.pressed.connect(_pick.bind(f))
-		grid.add_child(b)
-		_fbuttons.append(b)
+		var rowp := Kit.panel(Color(0.16, 0.2, 0.16, 0.9), 6)
+		rowp.name = "row_" + str(fd["key"])
+		var h := Kit.hbox(8)
+		rowp.add_child(h)
+		h.add_child(Kit.swatch(CData.faction_color(f), 20))
+		var nv := Kit.vbox(0)
+		nv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var nl := Kit.label(str(fd["name"]), 15, Color.WHITE)
+		nv.add_child(nl)
+		var bl := Kit.label(BLURB[fd["key"]], 12, Kit.COL_DIM, true)
+		bl.custom_minimum_size.x = 120
+		bl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		nv.add_child(bl)
+		h.add_child(nv)
+		_name_labels.append(nl)
+		var hb := Button.new()
+		hb.toggle_mode = true
+		hb.focus_mode = Control.FOCUS_NONE
+		hb.custom_minimum_size = Vector2(84, Kit.BTN_H)
+		hb.add_theme_font_size_override("font_size", 14)
+		hb.name = "faction_" + str(fd["key"])
+		hb.pressed.connect(_pick.bind(f))
+		h.add_child(hb)
+		_human_buttons.append(hb)
+		var dd := Kit.dropdown(topts, team_of[f], func(x): _set_team(f, int(x)), 92, 14)
+		dd.name = "team_" + str(fd["key"])
+		dd.tooltip_text = "Factions on one team are allied for good, never at war, and win together"
+		h.add_child(dd)
+		_team_dds.append(dd)
+		list.add_child(rowp)
 	var row := Kit.flow(8)
 	row.add_child(Kit.label("Name", Kit.FONT, Kit.COL_DIM))
 	name_edit = Kit.text_field("Campaign name", "Campaign", 180)
@@ -173,9 +201,11 @@ func _ready() -> void:
 		_invite_row.visible = false
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--picks="):
-			# Testing aid: --picks=rome,carthage
+			# Testing aid: --picks=rome,carthage (humans, in that order)
 			for k in a.get_slice("=", 1).split(","):
 				_pick(CData.faction_index(k))
+		elif a == "--one-team":
+			_all_humans_one_team()
 	_update()
 
 
@@ -197,52 +227,94 @@ func _cycle(k: String) -> void:
 	_update()
 
 
-func _toggle_mode() -> void:
-	two = not two
-	if not two and picks.size() > 1:
-		picks = [picks[0]]
-	_update()
-
-
 func _pick(f: int) -> void:
 	if _creating:
 		return
 	if picks.has(f):
 		picks.erase(f)
-	elif two:
-		if picks.size() >= 2:
-			if online:
-				picks[1] = f  # keep "you", change the ally
-				_update()
-				return
-			picks.remove_at(0)
-		picks.append(f)
 	else:
-		picks = [f]
+		picks.append(f)
 	_update()
 
 
+func _set_team(f: int, t: int) -> void:
+	if _creating:
+		return
+	team_of[f] = t
+	_update()
+
+
+## Every human on the team of the first one (AI factions stay as they are).
+func _all_humans_one_team() -> void:
+	if _creating or picks.is_empty():
+		return
+	for f in picks:
+		team_of[f] = team_of[picks[0]]
+	_update()
+
+
+func _everyone_alone() -> void:
+	if _creating:
+		return
+	for f in team_of.size():
+		team_of[f] = f
+	_update()
+
+
+## The `teams` array handed to CState.new_campaign.
+func teams_array() -> Array:
+	var out: Array = []
+	for t in team_of:
+		out.append(int(t))
+	return out
+
+
+func _team_text() -> String:
+	var parts: Array[String] = []
+	var seen: Array[int] = []
+	for f in team_of.size():
+		var t := team_of[f]
+		if seen.has(t):
+			continue
+		seen.append(t)
+		var names: Array[String] = []
+		for g in team_of.size():
+			if team_of[g] == t:
+				names.append(CData.faction_name(g))
+		if names.size() > 1:
+			parts.append("Team %d: %s" % [t + 1, ", ".join(names)])
+	return "; ".join(parts)
+
+
 func _update() -> void:
-	_mode_button.text = "Players: 2 (hot seat)" if two else "Players: 1 (solo)"
-	for f in _fbuttons.size():
-		_fbuttons[f].set_pressed_no_signal(picks.has(f))
-	var need := 2 if two else 1
-	if online and picks.size() < need:
-		_info.text = "Tap your faction first, then your ally's (any two: you are allied for good)." if picks.is_empty() else "You play %s. Now tap your ally's faction." % CData.faction_name(picks[0])
+	var need := 2 if online else 1
+	for f in _human_buttons.size():
+		var is_h := picks.has(f)
+		_human_buttons[f].set_pressed_no_signal(is_h)
+		_human_buttons[f].text = ("You" if picks.find(f) == 0 else "Human") if is_h else "AI"
+		_human_buttons[f].disabled = _creating
+		_team_dds[f].select(team_of[f])
+		_team_dds[f].disabled = _creating
+		_name_labels[f].text = CData.faction_name(f) + (" (you)" if picks.find(f) == 0 else "")
+	var teams_txt := _team_text()
+	if picks.is_empty():
+		_info.text = "Switch at least one faction to Human (the first one is you)."
 	elif picks.size() < need:
-		_info.text = "Choose %s faction%s." % ["your" if not two else "two", "" if need == 1 else "s (any two: the players are allied for good)"]
-	elif online:
-		_info.text = "You play %s, your ally %s. Each plans on their own device; the turn resolves when both have submitted." % [
-			CData.faction_name(picks[0]), CData.faction_name(picks[1])]
+		_info.text = "You play %s. Online co-op needs at least one more human: switch another faction to Human." % CData.faction_name(picks[0])
 	else:
 		var names: Array[String] = []
 		for f in picks:
 			names.append(CData.faction_name(f))
-		_info.text = "Playing " + " and ".join(names) + (". Both players plan on this device, one after the other." if two else ".")
+		if online:
+			_info.text = "You play %s; humans: %s. Each joins with the code and plans on their own device; the turn resolves when everyone has submitted." % [
+				CData.faction_name(picks[0]), ", ".join(names)]
+		elif picks.size() == 1:
+			_info.text = "Playing %s." % names[0]
+		else:
+			_info.text = "Humans: %s. They plan on this device one after the other (hot seat)." % ", ".join(names)
+		if teams_txt != "":
+			_info.text += " " + teams_txt + "."
 	_start_button.disabled = picks.size() < need or _creating
-	if online:
-		for i in _fbuttons.size():
-			_fbuttons[i].text = "%s%s - %s" % [CData.FACTIONS[i]["name"], " (you)" if not picks.is_empty() and picks[0] == i else (" (ally)" if picks.size() > 1 and picks[1] == i else ""), BLURB[CData.FACTIONS[i]["key"]]]
 	var vr: Dictionary = _setting_buttons
 	vr["victory_regions"].text = "Win at %d regions" % int(settings["victory_regions"])
 	vr["victory_capitals"].text = "with %d great cities" % int(settings["victory_capitals"])
@@ -271,7 +343,7 @@ func _start() -> void:
 	_update()
 	var lp := LoadingPanel.open(get_tree().root, "Preparing the campaign", 5)
 	await lp.step("Creating the campaign")
-	var st := CState.new_campaign(nm, sd, picks.duplicate(), settings)
+	var st := CState.new_campaign(nm, sd, picks.duplicate(), settings, teams_array())
 	var slot := Saves.slot_for(nm, sd)
 	var data := {"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}
 	Saves.save(slot, data)
@@ -292,7 +364,7 @@ func _start_online() -> void:
 	var nm := name_edit.text.strip_edges()
 	if nm == "":
 		nm = "Campaign"
-	var st := CState.new_campaign(nm, sd, picks.duplicate(), settings)
+	var st := CState.new_campaign(nm, sd, picks.duplicate(), settings, teams_array())
 	_creating = true
 	_update()
 	_info.text = "Creating the campaign on the server..."
@@ -316,6 +388,6 @@ func _start_online() -> void:
 		return
 	var tele := get_node_or_null("/root/Telemetry")
 	if tele != null:
-		tele.event("online_create", {"from": "new", "humans": picks, "timeout_h": int(settings["turn_timeout_h"]),
+		tele.event("online_create", {"from": "new", "humans": picks, "teams": teams_array(), "timeout_h": int(settings["turn_timeout_h"]),
 			"webhook": _hook_edit.text.strip_edges() != ""})
 	created_online.emit(str(r["data"]["id"]), str(r["data"].get("join_code", "")))

@@ -197,8 +197,8 @@ func status_text() -> Array:
 		return ["Sending", Kit.COL_GOLD]
 	# Short words: the top bar is narrow on a phone (details: tap it).
 	var t := str(b[0])
-	if t.begins_with("Waiting for your ally"):
-		t = "Ally not joined"
+	if t.begins_with("Waiting for players"):
+		t = "Players not joined"
 	elif t.begins_with("Waiting"):
 		t = "Waiting"
 	elif t.contains("pending"):
@@ -624,7 +624,7 @@ func show_online() -> void:
 		h.add_child(Kit.swatch(CData.faction_color(f), 16))
 		var t := "%s%s: " % [_name(f), " (you)" if f == oc.f else ""]
 		if not bool(seat.get("claimed", false)):
-			t += "seat open, waiting for the ally to join"
+			t += "seat open, waiting for a player to join"
 		else:
 			t += "online now" if bool(seat.get("online", false)) else _ago(int(seat.get("last_seen", 0))).trim_prefix("was ")
 			if str(sm.get("phase", "")) == "plan":
@@ -633,8 +633,8 @@ func show_online() -> void:
 		box.add_child(h)
 	if str(sm.get("join_code", "")) != "":
 		var code := str(sm["join_code"])
-		box.add_child(Kit.section("Invite your ally", "alliance"))
-		box.add_child(Kit.label("Join code %s, or send this link: %s" % [NetScript.show_code(code), net.join_link(code) if net else ""], Kit.FONT, Color.WHITE, true))
+		box.add_child(Kit.section("Invite the other players", "alliance"))
+		box.add_child(Kit.label("Join code %s, or send this link (each player picks a free seat with it): %s" % [NetScript.show_code(code), net.join_link(code) if net else ""], Kit.FONT, Color.WHITE, true))
 		var cb := Kit.icon_button("Copy link", "copy", func():
 			DisplayServer.clipboard_set(net.join_link(code) if net else code)
 			s._flash("Copied."), 0)
