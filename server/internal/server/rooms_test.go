@@ -512,3 +512,131 @@ func TestRoomGuestAsksAndJoins(t *testing.T) {
 		t.Fatalf("asks left behind: %d", n)
 	}
 }
+
+// A campaign of five humans in three teams (0, 1 and 4 together; 2 alone;
+// 3 alone): battle 1 has the armies of 0 and 1 attacking 2's city, so its
+// humans are 0, 1 and 2 (both sides) and its guest is 4 (on the attackers'
+// team, no army there); 3 may neither ask nor join.
+func TestRoomManyPeers(t *testing.T) {
+	e := newEnv(t, nil)
+	teams := []int{0, 0, 2, 3, 0, 5, 6, 7}
+	text := tstate{Humans: []int{0, 1, 2, 3, 4}, Teams: teams}.text()
+	out := e.must2(e.call("POST", "/api/campaigns", "", map[string]any{"name": "Five", "format_version": 1, "rules": "r1",
+		"seat": 0, "state_gz": gz64(text), "hash": StateHash(text)}))
+	c := camp{id: out["id"].(string), tokA: out["token"].(string), code: out["join_code"].(string)}
+	tok := map[int]string{0: c.tokA}
+	for f := 1; f <= 4; f++ {
+		j := e.must2(e.call("POST", "/api/join", "", map[string]any{"code": c.code, "f": f}))
+		tok[f] = j["token"].(string)
+	}
+	p := "/api/c/" + c.id
+	for f := 0; f <= 4; f++ {
+		e.submit(c, tok[f], 1, 0, f)
+	}
+	ri := e.must2(e.call("GET", p+"/resolve-input", tok[0], nil))
+	b1 := tbattle{ID: 1, R: 1, Armies: map[int]int{1: 0, 100001: 1}, DefF: 2}
+	st := tstate{Turn: 1, Phase: "battles", Humans: []int{0, 1, 2, 3, 4}, Teams: teams, Battles: []tbattle{b1}}
+	e.must2(e.upload(c, tok[0], 1, "turn", st, map[string]any{"subs_rev": ri["subs_rev"]}))
+	sum := e.must2(e.call("GET", p, tok[3], nil))
+	bm := sum["battles"].([]any)[0].(map[string]any)
+	if fmt.Sprint(bm["humans"]) != "[0 1 2]" || fmt.Sprint(bm["guests"]) != "[4]" {
+		t.Fatalf("battle 1 humans %v guests %v", bm["humans"], bm["guests"])
+	}
+	// Asking to join: the guest may, the outsider may not.
+	e.must2(e.call("POST", p+"/battles/1/choice", tok[4], map[string]any{"choice": "ask"}))
+	if st, out := e.call("POST", p+"/battles/1/choice", tok[3], map[string]any{"choice": "ask"}); st != 403 {
+		t.Fatalf("an outsider's ask: %d %v", st, out)
+	}
+	if st, out := e.call("POST", p+"/battles/1/choice", tok[3], map[string]any{"choice": "command"}); st != 403 {
+		t.Fatalf("an outsider taking command: %d %v", st, out)
+	}
+	// Rome opens; Carthage (same side), side 2's human (the other side) and
+	// the guest join; the outsider is refused.
+	ws := map[int]*wsc{}
+	ws[0] = e.dial(c.id, tok[0])
+	ws[0].send(map[string]any{"t": "room", "b": 1, "v": 2, "create": true, "scen": "s"})
+	ws[0].next("room")
+	for _, f := range []int{1, 2, 4} {
+		ws[f] = e.dial(c.id, tok[f])
+		ws[f].send(map[string]any{"t": "room", "b": 1, "v": 2})
+		if m := ws[f].next("room"); num64(m["host"]) != 0 || num64(m["you"]) != f {
+			t.Fatalf("seat %d joining: %v", f, m)
+		}
+	}
+	x := e.dial(c.id, tok[3])
+	x.send(map[string]any{"t": "room", "b": 1, "v": 2})
+	if m := x.next("error"); m["code"] != "not_in_battle" {
+		t.Fatalf("outsider joining: %v", m)
+	}
+	ws[0].send(map[string]any{"t": "start"})
+	for f, w := range ws {
+		s := w.next("start")
+		if fmt.Sprint(s["players"]) != "[0 1 2 4]" {
+			t.Fatalf("start seen by %d: %v", f, s)
+		}
+	}
+	// Every peer's inputs reach every peer in one order.
+	for i := 1; i <= 10; i++ {
+		for _, f := range []int{0, 1, 2, 4} {
+			ws[f].send(in(i, i+2, map[string]any{"type": 1, "unit": f, "f": i + 2}))
+		}
+	}
+	var ref []map[string]any
+	for _, f := range []int{0, 1, 2, 4} {
+		s := ws[f].waitStream(41)
+		if ref == nil {
+			ref = s
+			continue
+		}
+		for i := range s {
+			ja, _ := json.Marshal(s[i])
+			jb, _ := json.Marshal(ref[i])
+			if string(ja) != string(jb) {
+				t.Fatalf("peer %d item %d differs: %s vs %s", f, i, ja, jb)
+			}
+		}
+	}
+	// A hash goes to the three others.
+	ws[2].send(map[string]any{"t": "hash", "fr": 5, "h": "cafe"})
+	for _, f := range []int{0, 1, 4} {
+		if m := ws[f].next("hash"); num64(m["p"]) != 2 {
+			t.Fatalf("hash relay to %d: %v", f, m)
+		}
+	}
+	// Carthage leaves: dropped, its units to the host; the others go on.
+	ws[1].send(map[string]any{"t": "leave"})
+	d := ws[0].next("drop")
+	if num64(d["who"]) != 1 || num64(d["to"]) != 0 {
+		t.Fatalf("leave drop: %v", d)
+	}
+	// Every seat that took part may upload the result; the outsider not.
+	var parts int
+	for i := 0; i < 50; i++ {
+		e.srv.db.QueryRow("SELECT COUNT(*) FROM battle_live WHERE campaign_id = ? AND battle_id = 1", c.id).Scan(&parts)
+		if parts == 4 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if parts != 4 {
+		t.Fatalf("seats recorded as taking part: %d", parts)
+	}
+	// The cap: a full room refuses another seat (the limit lowered here by
+	// filling the room's member table).
+	r := e.srv.rooms.m[roomKey(c.id, 1)]
+	r.mu.Lock()
+	for f := 10; len(r.members) < roomMaxPeers; f++ {
+		r.members[f] = &member{f: f, kill: func() {}, out: make(chan []byte, 1)}
+	}
+	r.mu.Unlock()
+	ws[1] = e.dial(c.id, tok[1])
+	ws[1].send(map[string]any{"t": "room", "b": 1, "v": 2})
+	if m := ws[1].next("error"); m["code"] != "room_full" {
+		t.Fatalf("a ninth member: %v", m)
+	}
+	r.mu.Lock()
+	for f := 10; f < 20; f++ {
+		delete(r.members, f)
+	}
+	r.mu.Unlock()
+}

@@ -2316,9 +2316,11 @@ func fight_live(bid: int, create: bool, keep: bool = false) -> void:
 	var net := get_node_or_null("/root/Net")
 	var coop = CoopSession.new()
 	add_child(coop)
-	# The campaign's other alive humans may join too (army in it or not).
+	# Every human with an army in it (either side) may join, and their
+	# team-mates without one (guests, given units on their team's side).
+	var gl: Array = CoopSession.guest_list(bst, hs, b)
 	coop.setup(net.api.base_url if net != null else "", online.id, online.token, online.f, _battle_built, hs, v, create, keep,
-		CoopSession.guest_list(bst, hs))
+		gl, CoopSession.guest_sides(bst, b, _battle_built, gl))
 	coop.failed.connect(func(code: String, text: String): _coop_failed(code, text))
 	battle = Battle.new()
 	battle.custom_scenario = _battle_built["scenario"]
@@ -2326,6 +2328,7 @@ func fight_live(bid: int, create: bool, keep: bool = false) -> void:
 	battle.scenario_id = "campaign_live"
 	battle.campaign_mode = true
 	battle.coop = coop
+	battle.player_side = coop.side_of_player(online.f)
 	battle.coop_region = str(CData.REGIONS[int(b["r"])]["city"])
 	battle.exit_requested.connect(_on_battle_exit)
 	close_dialog()

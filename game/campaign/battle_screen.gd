@@ -321,6 +321,11 @@ static func pre(s, st: Dictionary, b: Dictionary) -> Control:
 	var lead: Array = snap["lead"]
 	info.add_child(Kit.odds_view(CBattle.battle_odds(st, b), 0 if human_att else 1, [_names([lead[0]]), _names([lead[1]])],
 		[CData.faction_color(int(lead[0])), CData.faction_color(int(lead[1]))], "Balance of power (estimate from the battle formula):"))
+	var jl := join_line(st, b)
+	if jl != "":
+		var jlab := Kit.label(jl, Kit.FONT_SMALL, Color.WHITE, true)
+		jlab.name = "battle_joiners"
+		info.add_child(jlab)
 	if not (b["reinf"] as Array).is_empty():
 		if b.has("edge"):
 			info.add_child(Kit.label("Reinforcements within a turn's march join%s." % (
@@ -343,6 +348,36 @@ static func pre(s, st: Dictionary, b: Dictionary) -> Control:
 	info.add_child(h)
 	v.add_child(_sides(snap, {}, wide))
 	return p
+
+
+## Several humans in the campaign: who may fight battle b live ("Players:
+## Rome, Carthage (attackers); Macedon (defenders). Without an army,
+## given units: Epirus (attackers)."); "" with one human.
+static func join_line(st: Dictionary, b: Dictionary) -> String:
+	if (st.get("humans", []) as Array).size() < 2:
+		return ""
+	var per := [[], []]
+	for f in CRules.battle_humans(st, b):
+		var cs := CRules.battle_side_of(st, b, int(f))
+		if cs >= 0:
+			per[cs].append(CData.faction_name(int(f)))
+	var gs := [[], []]
+	for f in CRules.battle_guests(st, b):
+		var cs := CRules.battle_side_of(st, b, int(f))
+		if cs >= 0:
+			gs[cs].append(CData.faction_name(int(f)))
+	var parts: Array[String] = []
+	for cs in 2:
+		if not (per[cs] as Array).is_empty():
+			parts.append("%s (%s)" % [", ".join(per[cs]), "attackers" if cs == 0 else "defenders"])
+	var t := "Players: %s." % "; ".join(parts)
+	var gp: Array[String] = []
+	for cs in 2:
+		if not (gs[cs] as Array).is_empty():
+			gp.append("%s (%s)" % [", ".join(gs[cs]), "attackers" if cs == 0 else "defenders"])
+	if not gp.is_empty():
+		t += " May join without an army, given units: %s." % "; ".join(gp)
+	return t
 
 
 ## Tap on a result card: show (or hide, tapped again) that unit's kills by

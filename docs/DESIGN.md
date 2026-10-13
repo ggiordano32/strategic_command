@@ -3012,8 +3012,9 @@ already promised) is dropped by every peer alike.
 
 **Command table.** `u_cmd` (who commands each unit), `u_away` (for whom a
 unit is held) and `u_home` (who commands it by default: the campaign faction
-of the unit if it is a human of the battle, other friendly units the lowest
-human faction) live in the lockstep layer and are hashed with the sim. A sim
+of the unit if it is a human of the battle, other units of a side with
+players that side's lowest player friendly to them; `CBattle` "controller")
+live in the lockstep layer and are hashed with the sim. A sim
 order counts only from the player commanding the unit at its frame; an army
 withdrawal withdraws only the issuer's units; a player not taking part
 orders nothing. Units of a human who is not there at the start are held for
@@ -3021,13 +3022,19 @@ them by the host; admitting that player gives them back (unless they chose
 "Join, X keeps my army").
 
 **Gifts** are inputs (`C_GIFT unit to`), valid only from the unit's
-commander to a player taking part; gifting back is the same input. The
-selected units' action row has "Gift to <ally>".
+commander to a player taking part on the unit's side; gifting back is the
+same input. The selected units' action row has "Gift to <ally>" (several
+team-mates on the side: "Gift to...", a picker of them).
 
 **Pause and speed by vote.** Requests and answers are inputs. A request
-applies at once if only one player takes part; otherwise it waits until the
-other player asks for the same thing (tapping Pause, or the same speed) or
-taps Accept on the chip under the control (the requester's colour and
+applies at once if only one player takes part; otherwise it is a vote of
+the players taking part (hashed yes / no bit masks): the requester counts
+as yes, asking for the same thing (tapping Pause, or the same speed) or
+Accept on the chip is yes, Decline is no; it carries when more than half
+of the players taking part say yes and is cleared (the state kept) when
+that can no longer happen (a tie keeps the current state); a drop
+re-counts it. With two players this is the old rule: the other player asks
+for the same thing or taps Accept on the chip under the control (the requester's colour and
 "Rome Pause?", "Rome proposes 2.5x"); Decline clears it; asking again withdraws it. Applied on the
 same frame for everyone. A speed vote is the value the player releases the
 speed slider at (any quarter step 1..16; the command rules refuse others). Solo battles keep immediate pause and speed; the
@@ -3043,6 +3050,29 @@ KB at 4,000 soldiers) comes through the relay from a player who has the
 battle, the joiner restores it, replays the stream after it, catches up by
 stepping fast, says "ready", and the host admits it (an input) - from that
 frame on the battle also waits for the joiner's input.
+
+**Several humans (N-player campaigns, 2026-10-13).** Every human with an
+army in the battle, on either side, may join, and every alive human on
+the team of a side's lead faction without an army there (a guest:
+`CRules.battle_guests`, given units by a team-mate; `guest_side` passes
+their sim side to `Lockstep.setup`, which keeps each player's side in the
+hashed `p_side`). The relay admits up to 8. Each player commands their
+own faction's units (`controller`); a side with a player is not the battle
+AI's in a live battle (`CoopSession.live_ai_sides` trims the scenario's
+`ai_sides`; the AI takes a side over only while none of its players takes
+part, as in head-to-head custom battles); units of a player who is absent
+are held by the keeper, a player of the same side taking part (the host
+if it is one, else the first by faction index). Gifts go to any team-mate
+taking part on the same side. Votes are by majority (above). The view
+fights from the player's own side (`player_side`); the HUD strip lists the
+players (colour, name, "(enemy)" for the other side), unit cards carry a
+band in their commander's colour when a side has several players, and the
+lobby lists every eligible human. Tested: `tests/lockstep_test.gd` (three
+peers, 13), `tests/live_team_e2e.py` (three headless clients through the
+relay), `campaign_test` `_team_battles`, Go `TestRoomManyPeers`. Not
+built: per-army battle AI for AI allies on a side with players (the sim's
+AI commands whole sides, so they stay with the side's lowest player);
+three or more players in custom battles (seats 0 / 1).
 
 **Disconnects.** The sim waits for a missing player's input ("Waiting for
 Carthage..." after 1 s). If that player is disconnected (or silent for 8 s)
@@ -3518,6 +3548,7 @@ siege work is what calibrates a new theme. Victory conditions for tribes
 ## STATUS row
 - Real geography (view data + static grid, no state change, `CState.VERSION` 6): the overworld is fitted to ETOPO 2022 elevation (NOAA, public domain) and Natural Earth 1:10m coasts and rivers (public domain). `tools/geo_fit.py` (+ `tools/geo/med.json`: window, projection, cell size, settlements, rivers; the Mediterranean is only the default config) writes `map_geo.gd` LANDS / ISLANDS / RIVERS, `campaign/data/elev_data.gd` (per cell mean / max / relief / distance to river / class plain-rolling-valley-hill-ridge) and `game/campaign/relief_data.gd` (0.025 degree fine elevation, slope, relief); `campaign_grid.gd` derives hill / ridge from the real class (434 hill, 140 ridge override cells; was 200 / 215 from hand areas, now deleted) and asserts every settlement is on its landmass and every sea-lane port is a coast cell. Terrain view renders the real relief (hillshade + subtle hypsometric tint + crest line, one cached texture; `geo_fields.gd` serves elevation / slope / class to the view). Nudged: Carthago, Hadrumetum by 0.01-0.02 degrees. Re-pinned: campaign_test goldens (3007c1ab / 4197043257, be6e10a3 / 3786296811) and the Tarentum march rows (from Venetia). campaign_sim --seeds=6 --turns=60: hash 8562cf3a (HEAD 803bf309); no collapse; Epirus is eliminated in 5 of 6 seeds (3 of 6 at HEAD), Macedon in 0 (2 of 6).
 - The overworld sea (2026-10-13, view only, `water.gdshader`): printed-map look. A thin calm shallow band (about 5 km) falls to the open-sea colour; two faint sharp 1 px offshore contour lines at 3 and 8 km from the coast field (screen-space `fwidth`, faded out when zoomed far out); the coast is a crisp 1.6 px dark outline at the land edge; the beach is a 2 km sand rim at most. No foam and no streaks: currents are a low-contrast flow-map noise (two layers crossfaded) that slides along the gyre and the ambient drift. `[map] water = low` keeps the depth tint and contour lines only.
+- Graphics quality (2026-10-13, view only, `game/quality.gd`): `user://settings.cfg [video] quality = auto | high | low` (home settings row; `--quality=` overrides). Auto is Low when the soldier probe chose the CPU path (Chrome on the Tab S7) or when the first 3 s of a battle average under 40 fps (session only, toast "Graphics set to Low for speed"). Low: the ground shader's `low` uniform drops the noise patches, grain and the sea / ford animation; the settlement surroundings are flat-tinted fields and one-line tracks (`CityDraw.draw_surround(..., low)`); the tree layer hides the cover MultiMesh (tufts, scrub, bushes, reeds, willows) and the orchard rows (`visible_instance_count`), gameplay woods stay; the overworld sea is the still `hi = 0` water and the landscape tree / speckle mesh is skipped below zoom 0.9 (the relief texture stays). All switch live in a battle (the auto downgrade) and apply on the next battle / map open from Settings.
 
 ### Audio (as built, 2026-10-10)
 

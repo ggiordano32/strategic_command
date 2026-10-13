@@ -62,6 +62,7 @@ const Saves := preload("res://game/campaign/saves.gd")
 const CP := preload("res://campaign/cai_profile.gd")
 const CAI := preload("res://campaign/cai.gd")
 const CChars := preload("res://campaign/cchars.gd")
+const CoopSession := preload("res://game/net/coop_session.gd")
 
 var fails := 0
 
@@ -126,6 +127,7 @@ func _init() -> void:
 	_war_dogs()
 	_light_art()
 	_teams()
+	_team_battles()
 	_ai_skilled()
 	_chars()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
@@ -3070,7 +3072,7 @@ func _grid_gift() -> void:
 	_check(CRules.exchange_check(st, rome, int(mine["id"]), int(theirs["id"]), [0, 2]) == "", "a gift of two units to the ally's army is allowed")
 	_check(CRules.exchange_check(st, rome, int(theirs["id"]), int(mine["id"]), [0]) == "no such army", "taking the ally's units is not (from must be ours)")
 	_check(CRules.exchange_check(st, rome, int(mine["id"]), int(theirs["id"]), [0], [0]) == "cannot take an ally's units", "nor in return for a gift")
-	_check(CRules.exchange_check(st, rome, int(mine["id"]), int(ai["id"]), [0]) == "not a friendly army", "no gifts to an AI faction")
+	_check(CRules.exchange_check(st, rome, int(mine["id"]), int(ai["id"]), [0]) == "not a team-mate's army", "no gifts to an AI faction")
 	var subs := [CTurn.submission(st, rome, [g]), CTurn.submission(st, cart, [])]
 	var r1 := CTurn.resolve_turn(st, subs)
 	var r2 := CTurn.resolve_turn(st, [subs[1], subs[0]])
@@ -3108,7 +3110,7 @@ func _city_gifts() -> void:
 	(st["regions"][cap]["slots"] as Array).append([CData.MARKET, 1])
 	var gar := int(st["regions"][cap]["gar"])
 	_check(CRules.gift_region_check(st, rome, cap, cart, 0) == "", "Rome may give Capua to the allied player")
-	_check(CRules.gift_region_check(st, rome, cap, epi, 0) == "only between allied players", "not to an AI faction")
+	_check(CRules.gift_region_check(st, rome, cap, epi, 0) == "only between team-mates", "not to an AI faction")
 	_check(CRules.gift_region_check(st, rome, _r("zeugitana"), cart, 0) == "not the giver's city", "nor a city not ours")
 	_check(CRules.gift_region_check(st, rome, cap, cart, 5000) != "", "nor for more than the receiver has")
 	_check(CRules.gift_money_check(st, rome, cart, 2000) == "not enough money" and CRules.gift_money_check(st, rome, epi, 10) != ""
@@ -3830,3 +3832,94 @@ func _chars() -> void:
 		easy = CTurn.resolve_turn(easy, [])
 	_check(CChars.all(avg).size() > 0, "the Average AI raised heroes in 60 turns (%d)" % CChars.all(avg).size())
 	_check(CChars.all(easy).is_empty(), "the Easy AI raises none")
+
+
+## Battles with several humans and gifts across a team (N-player): Rome,
+## Carthage and Syracuse on one team, Macedon on its own, all four human.
+## Gifts (money, a city, units) between any two team-mates; refused across
+## teams (even allied by treaty) and to the AI. Rome and Carthage attack a
+## Macedonian city with an AI ally of Rome's (Epirus): the battle's humans
+## are Rome, Carthage and Macedon (both sides), its guest Syracuse (Rome's
+## team, no army there); "controller": each human's units their own, the
+## AI ally's units Rome's, the garrison Macedon's; the live scenario keeps
+## no side for the battle AI.
+func _team_battles() -> void:
+	var rome := _f("rome")
+	var carth := _f("carthage")
+	var mace := _f("macedon")
+	var syra := _f("syracuse")
+	var epi := _f("epirus")
+	var teams: Array = []
+	for f in CState.nf():
+		teams.append(5 if f in [rome, carth, syra] else (6 if f == mace else 10 + f))
+	var st := CState.new_campaign("test", 4242, [rome, carth, mace, syra], {}, teams)
+	st["armies"] = []
+	for f in [rome, carth, mace, syra]:
+		st["factions"][f]["treasury"] = 1000
+	CState.set_dip(st, rome, mace, CState.ALLIED)
+	CState.set_dip(st, rome, epi, CState.ALLIED)
+	CState.set_dip(st, carth, mace, CState.WAR)
+	# Gifts.
+	_check(CRules.gift_money_check(st, rome, carth, 100) == "" and CRules.gift_money_check(st, carth, syra, 100) == ""
+		and CRules.gift_money_check(st, syra, rome, 100) == "", "money between any two team-mates of three")
+	_check(CRules.gift_money_check(st, rome, mace, 100) == "only between team-mates"
+		and CRules.gift_money_check(st, mace, rome, 100) == "only between team-mates",
+		"no gift across teams, even between humans allied by treaty")
+	_check(CRules.gift_money_check(st, rome, epi, 100) != "", "nor to the AI (allied or not)")
+	var rc := CState.regions_of(st, rome)
+	var city := int(rc[rc.size() - 1])
+	_check(CRules.gift_region_check(st, rome, city, syra, 0) == "" and CRules.gift_region_check(st, rome, city, mace, 0) != "",
+		"a city to a team-mate, not across teams")
+	var mr := int(CState.regions_of(st, mace)[0])
+	var site := CGrid.site(mr)
+	var c0 := site
+	var a1 := _put(st, rome, c0, ["heavy", "spear"])
+	var a2 := _put(st, carth, c0, ["cav", "heavy"])
+	var a3 := _put(st, epi, c0, ["spear"])
+	var a4 := _put(st, mace, c0, ["light"])
+	_check(CRules.exchange_check(st, rome, int(a1["id"]), int(a2["id"]), [0]) == "", "units to a team-mate's army")
+	_check(CRules.exchange_check(st, rome, int(a1["id"]), int(a4["id"]), [0]) != "", "not to another team's army")
+	_check(CRules.exchange_check(st, rome, int(a1["id"]), int(a3["id"]), [0]) != "", "nor to an AI ally's army")
+	var subs := [CTurn.submission(st, rome, [{"t": "gift_money", "to": syra, "amount": 50}, {"t": "gift_money", "to": mace, "amount": 50}]),
+		CTurn.submission(st, carth, []), CTurn.submission(st, mace, []), CTurn.submission(st, syra, [])]
+	var r1 := CTurn.resolve_turn(st, subs)
+	_check(int(r1["factions"][syra]["treasury"]) - int(st["factions"][syra]["treasury"]) >= 50
+		and _events(r1, "gift_money").size() == 1,
+		"a resolved turn: Rome's money gift to Syracuse goes through, the one to Macedon does not")
+	st["armies"].remove_at(CState.army_index(st, int(a4["id"])))
+	# The battle (Rome at war with Macedon now).
+	CState.set_dip(st, rome, mace, CState.WAR)
+	var b := CRules.start_battle(st, mr, a1)
+	for x in [a2, a3]:
+		(b["att"] as Array).append(int(x["id"]))
+		x["busy"] = 1
+	var hs := CRules.battle_humans(st, b)
+	var want_h := [rome, carth, mace]
+	want_h.sort()
+	_check(hs == want_h, "the battle's humans: both attackers and the defending city's owner (%s)" % str(hs))
+	_check(CRules.battle_guests(st, b) == [syra] and CRules.battle_side_of(st, b, syra) == 0
+		and CRules.battle_side_of(st, b, mace) == 1 and CRules.battle_side_of(st, b, carth) == 0,
+		"its guest: Syracuse, on the attackers' side (Rome's team, no army there)")
+	var built := CBattle.build(st, b, int(hs.min()))
+	var ctrl: Array = built["controller"]
+	var ufac: Array = built["unit_faction"]
+	var ok := ctrl.size() == ufac.size() and ctrl.size() > 0
+	var seen := {}
+	for u in ctrl.size():
+		var f := int(ufac[u])
+		seen[f] = true
+		var want := f if f in [rome, carth, mace] else (rome if f == epi else -1)
+		if int(ctrl[u]) != want:
+			ok = false
+	_check(ok and seen.has(rome) and seen.has(carth) and seen.has(epi) and seen.has(mace),
+		"controller per unit: each human's own, the AI ally's Rome's, the garrison Macedon's (%s / %s)" % [str(ctrl), str(ufac)])
+	var home := CoopSession.home_of(built, hs)
+	var scn: Dictionary = (built["scenario"] as Dictionary).duplicate(true)
+	CoopSession.live_ai_sides(scn, home)
+	_check((scn["ai_sides"] as Array).is_empty(), "live: no side is the battle AI's (humans on both)")
+	var gl := CoopSession.guest_list(st, hs, b)
+	var gs := CoopSession.guest_sides(st, b, built, gl)
+	_check(gl == [syra] and int(gs.get(syra, -1)) == 0 and int(built["sim_side"][0]) == 0,
+		"the guest's sim side is the attackers' (%s)" % str(gs))
+	# Solo: the same build, ai_sides as before (side 1 the AI's).
+	_check(built["scenario"]["ai_sides"] == [1], "solo play keeps the enemy side the AI's")

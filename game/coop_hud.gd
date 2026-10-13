@@ -8,7 +8,11 @@ extends CanvasLayer
 ## - the lobby panel before the start (who is in, Start / Leave, the
 ##   automatic start count);
 ## - the vote chips under Pause and the speed button (who asked; Accept /
-##   No for the other player);
+##   Decline for the others until they have voted; with three or more
+##   players "n of m agree": a majority of the players taking part carries
+##   it);
+## - the gift picker (several team-mates on this side: whom to give the
+##   selected units to);
 ## - the Continue / Wait prompt when a disconnected player holds the battle
 ##   up for 10 s.
 ## It only reads the session (game/net/coop_session.gd) and calls its
@@ -31,6 +35,8 @@ var _lobby: PanelContainer
 var _lobby_box: VBoxContainer
 var _prompt: PanelContainer
 var _prompt_box: VBoxContainer
+var _gift_panel: PanelContainer
+var _gift_box: VBoxContainer
 var _pause_chip: PanelContainer
 var _speed_chip: PanelContainer
 var _t := 0.0
@@ -70,13 +76,19 @@ func build(p_coop, p_hud) -> void:
 	_prompt.add_child(_prompt_box)
 	_prompt.visible = false
 	_root.add_child(_prompt)
+	_gift_panel = Kit.panel(Color(0.08, 0.1, 0.09, 0.95), 12)
+	_gift_box = Kit.vbox(6)
+	_gift_panel.add_child(_gift_box)
+	_gift_panel.visible = false
+	_gift_panel.name = "coop_gift_picker"
+	_root.add_child(_gift_panel)
 	_pause_chip = Kit.panel(Color(0, 0, 0, 0.75), 4)
 	_speed_chip = Kit.panel(Color(0, 0, 0, 0.75), 4)
 	_pause_chip.visible = false
 	_speed_chip.visible = false
 	_root.add_child(_pause_chip)
 	_root.add_child(_speed_chip)
-	for c in [_lobby, _prompt, _pause_chip, _speed_chip]:
+	for c in [_lobby, _prompt, _pause_chip, _speed_chip, _gift_panel]:
 		hud.add_ui_control(c)
 	coop.changed.connect(refresh)
 	refresh()
@@ -106,13 +118,15 @@ func refresh() -> void:
 	if coop == null:
 		return
 	var ls = coop.ls
-	var sig := "%s|%d|%s|%s|%d|%d|%d|%d|%s|%s|%s" % [coop.phase, coop.host, str(coop.roster), str(coop.waiting),
+	var sig := "%s|%d|%s|%s|%d|%d|%d|%d|%s|%s|%s|%d|%d" % [coop.phase, coop.host, str(coop.roster), str(coop.waiting),
 		coop.takeover_offer, ls.vote_pause_by if ls else -2, ls.vote_speed_by if ls else -2,
-		ls.paused if ls else -1, str(ls.active if ls else []), str(int(coop.start_in())), coop.room.state]
+		ls.paused if ls else -1, str(ls.active if ls else []), str(int(coop.start_in())), coop.room.state,
+		(ls.vote_pause_yes | ls.vote_pause_no << 8) if ls else 0, (ls.vote_speed_yes | ls.vote_speed_no << 8) if ls else 0]
 	_refresh_status()
 	_place_chips()
 	_center(_lobby)
 	_center(_prompt)
+	_center(_gift_panel)
 	if sig == _sig:
 		return
 	_sig = sig
@@ -171,6 +185,9 @@ func _refresh_strip() -> void:
 		elif st == "not here" or st == "joining" or st == "connecting":
 			col = Kit.COL_DIM
 		var nm := fname(fi) + (" *" if fi == coop.host else "")
+		if coop.ls != null and coop.ls.side_of(fi) >= 0 and coop.ls.side_of(coop.me) >= 0 \
+				and coop.ls.side_of(fi) != coop.ls.side_of(coop.me):
+			nm += " (enemy)"
 		var l := Kit.label("%s  %s" % [nm, st], 12, col)
 		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		h.add_child(l)
@@ -237,14 +254,16 @@ func _refresh_lobby() -> void:
 			var who := fname(int(f)) + (" (you)" if int(f) == coop.me else "")
 			var what := "here" if on else ("may join (no army here)" if guest else "waiting for them to join")
 			if on and guest:
-				what = "here (no army here: gets the units %s gives)" % fname(coop.host) if int(f) != coop.host else "here"
+				what = "here (no army here: gets the units a team-mate gives)" if int(f) != coop.host else "here"
+			if coop.side_of_player(int(f)) != coop.side_of_player(coop.me):
+				what += ", the other side"
 			h.add_child(Kit.label("%s: %s" % [who, what], Kit.FONT, Color.WHITE if on else Kit.COL_DIM, true))
 			_lobby_box.add_child(h)
 		var s: float = coop.start_in()
 		if s >= 0.0:
 			_lobby_box.add_child(Kit.label("Everyone is here: starting in %d..." % ceili(s), Kit.FONT, Kit.COL_GOOD))
 		elif coop.is_host():
-			_lobby_box.add_child(Kit.label("Your ally has been told the battle is open. Start now to fight alone; they can still join during the battle, and you can give them units (select, then Gift).",
+			_lobby_box.add_child(Kit.label("The other players have been told the battle is open. Start now to fight without them; they can still join during the battle, and you can give team-mates units (select, then Gift).",
 				Kit.FONT_SMALL, Kit.COL_DIM, true))
 		else:
 			_lobby_box.add_child(Kit.label("Waiting for %s to start the battle." % fname(coop.host), Kit.FONT_SMALL, Kit.COL_DIM, true))
@@ -295,6 +314,18 @@ func _refresh_chips() -> void:
 	_fill_chip(_speed_chip, ls.vote_speed_by if ls else -1, "proposes %s" % Lockstep.speed_text(q), 1)
 
 
+## " (2 of 3 agree)" with three or more players taking part, else "".
+func _tally_text(kind: int) -> String:
+	var ls = coop.ls
+	if ls == null or ls.active_count() < 3:
+		return ""
+	var yes := 0
+	for p in ls.active_players():
+		if ls.vote_of(kind, p) > 0:
+			yes += 1
+	return " (%d of %d agree)" % [yes, ls.active_count()]
+
+
 func _fill_chip(chip: PanelContainer, by: int, what: String, kind: int) -> void:
 	for c in chip.get_children():
 		c.queue_free()
@@ -303,11 +334,14 @@ func _fill_chip(chip: PanelContainer, by: int, what: String, kind: int) -> void:
 		return
 	var h := Kit.hbox(4)
 	h.add_child(_swatch(coop.player_color(by), 12))
+	var tally := _tally_text(kind)
 	if by == coop.me:
-		h.add_child(Kit.label(("You %s" % what.replace("proposes", "proposed")) if kind == 1 \
-			else ("%s asked" % what), 12, Color.WHITE))
+		h.add_child(Kit.label((("You %s" % what.replace("proposes", "proposed")) if kind == 1 \
+			else ("%s asked" % what)) + tally, 12, Color.WHITE))
+	elif coop.ls != null and coop.ls.vote_of(kind, coop.me) != 0:
+		h.add_child(Kit.label("%s %s%s" % [fname(by), what, tally], 12, Color.WHITE))
 	else:
-		h.add_child(Kit.label("%s %s" % [fname(by), what], 12, Color.WHITE))
+		h.add_child(Kit.label("%s %s%s" % [fname(by), what, tally], 12, Color.WHITE))
 		var yes := Kit.button("Accept", func(): coop.answer(kind, true), 0, 12)
 		yes.name = "vote_yes_%d" % kind
 		yes.custom_minimum_size.y = 30
@@ -318,6 +352,30 @@ func _fill_chip(chip: PanelContainer, by: int, what: String, kind: int) -> void:
 		h.add_child(no)
 	chip.add_child(h)
 	chip.reset_size()
+
+
+## Several team-mates on this side: whom to give the selected units to.
+## cb(to) is called with the choice.
+func pick_gift(targets: Array, cb: Callable) -> void:
+	for c in _gift_box.get_children():
+		c.queue_free()
+	_gift_box.add_child(Kit.label("Give the selected units to", Kit.FONT, Kit.COL_GOLD))
+	for t in targets:
+		var to := int(t)
+		var row := Kit.hbox(6)
+		row.add_child(_swatch(coop.player_color(to), 14))
+		var b := Kit.button(fname(to), func():
+			_gift_panel.visible = false
+			cb.call(to), 160)
+		b.name = "gift_to_%d" % to
+		row.add_child(b)
+		_gift_box.add_child(row)
+	var cancel := Kit.button("Cancel", func(): _gift_panel.visible = false, 90)
+	cancel.name = "gift_cancel"
+	_gift_box.add_child(cancel)
+	_gift_panel.visible = true
+	_gift_panel.reset_size()
+	_center.call_deferred(_gift_panel)
 
 
 func _place_chips() -> void:

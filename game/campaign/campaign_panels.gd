@@ -182,7 +182,8 @@ func _num(le: LineEdit) -> int:
 	return int(le.text) if le.text.is_valid_int() else 0
 
 
-## Alive allied human players faction f may trade gifts with.
+## The alive human team-mates faction f may trade gifts with (any of them in
+## an N-player campaign; never the AI).
 func _gift_partners(ps: Dictionary, f: int) -> Array:
 	var out: Array = []
 	for g in ps["humans"]:
@@ -229,12 +230,12 @@ func _gift_section(box: VBoxContainer, r: int) -> void:
 	var mine := CState.owner(ps, r) == f
 	if planned.is_empty() and (not mine or partners.is_empty()):
 		return
-	box.add_child(Kit.section("Gift to an ally", "gift"))
+	box.add_child(Kit.section("Gift to a team-mate", "gift"))
 	for o in planned:
 		_planned_gift_row(box, o, "gift_cancel", func(): pass)
 	if not mine or not planned.is_empty():
 		return
-	box.add_child(Kit.label("The city passes with its garrison and buildings when the turn is resolved; with a price it is an offer the ally accepts next turn, paying then.",
+	box.add_child(Kit.label("The city passes with its garrison and buildings when the turn is resolved; with a price it is an offer the team-mate accepts next turn, paying then.",
 		Kit.FONT_SMALL, Kit.COL_DIM, true))
 	for g in partners:
 		var why := CRules.gift_region_check(ps, f, r, g, 0)

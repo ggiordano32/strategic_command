@@ -41,6 +41,7 @@ type stateDoc struct {
 	Phase    string `json:"phase"`
 	Winner   num    `json:"winner"`
 	Humans   []num  `json:"humans"`
+	Teams    []num  `json:"teams"`
 	Settings struct {
 		TurnTimeoutH num `json:"turn_timeout_h"`
 	} `json:"settings"`
@@ -63,10 +64,44 @@ type stateDoc struct {
 }
 
 // Battle is a pending battle with at least one human faction in it.
+// Humans: every human with an army in it (either side, or the defending
+// city's owner). Guests: the alive humans without one there on the team of
+// either side's lead faction (att_f / def_f), who may join it live and be
+// given units (nil in rows stored before guests existed: any alive human).
 type Battle struct {
 	ID     int   `json:"id"`
 	R      int   `json:"r"`
 	Humans []int `json:"humans"`
+	Guests []int `json:"guests"`
+}
+
+// mayJoin: seat f may be in battle b's live room (a human of the battle or
+// one of its guests); alive lists the campaign's alive humans.
+func (b *Battle) mayJoin(f int, alive []int) bool {
+	if hasInt(b.Humans, f) {
+		return true
+	}
+	if b.Guests == nil {
+		return hasInt(alive, f)
+	}
+	return hasInt(b.Guests, f) && hasInt(alive, f)
+}
+
+// joiners: everyone who may be in battle b's live room but f.
+func (b *Battle) joiners(f int, alive []int) []int {
+	var out []int
+	for _, x := range alive {
+		if x != f && b.mayJoin(x, alive) {
+			out = append(out, x)
+		}
+	}
+	for _, x := range b.Humans {
+		if x != f && !hasInt(out, x) && hasInt(alive, x) {
+			out = append(out, x)
+		}
+	}
+	sort.Ints(out)
+	return out
 }
 
 // StateMeta is what the server keeps from a state.
@@ -175,6 +210,23 @@ func ParseState(text []byte) (*StateMeta, error) {
 	}
 	sort.Ints(m.Humans)
 	sort.Ints(m.Alive)
+	// Team of each faction (CState.team): the "teams" list, or the default
+	// shape (humans team 0, every other faction alone) without it.
+	team := func(f int) int {
+		if f < 0 {
+			return -1
+		}
+		if d.Teams != nil {
+			if f < len(d.Teams) {
+				return int(d.Teams[f])
+			}
+			return -1 - f
+		}
+		if isHuman[f] {
+			return 0
+		}
+		return 1000 + f
+	}
 	armyF := map[int]int{}
 	for _, a := range d.Armies {
 		armyF[int(a.ID)] = int(a.F)
@@ -200,7 +252,17 @@ func ParseState(text []byte) (*StateMeta, error) {
 			continue
 		}
 		sort.Ints(hs)
-		m.Battles = append(m.Battles, Battle{ID: int(b.ID), R: int(b.R), Humans: hs})
+		gs := []int{}
+		for _, f := range m.Alive {
+			if set[f] {
+				continue
+			}
+			t := team(f)
+			if (int(b.AttF) >= 0 && t == team(int(b.AttF))) || (int(b.DefF) >= 0 && t == team(int(b.DefF))) {
+				gs = append(gs, f)
+			}
+		}
+		m.Battles = append(m.Battles, Battle{ID: int(b.ID), R: int(b.R), Humans: hs, Guests: gs})
 	}
 	if m.Humans == nil {
 		m.Humans = []int{}

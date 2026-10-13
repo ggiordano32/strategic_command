@@ -1051,6 +1051,8 @@ func _gf_setup() -> void:
 		(cs.st["humans"] as Array).append(_ally)
 		(cs.st["humans"] as Array).sort()
 	CState.set_dip(cs.st, rome, _ally, CState.ALLIED)
+	if cs.st.has("teams"):
+		cs.st["teams"][_ally] = CState.team(cs.st, rome)  # gifts go between team-mates
 	cs.orders = []
 	cs._replan()
 	_check(cs.f == rome, "Rome is planning")
@@ -2014,6 +2016,8 @@ func _m_gift_setup() -> void:
 	(cs.st["humans"] as Array).append(_ally)
 	(cs.st["humans"] as Array).sort()
 	CState.set_dip(cs.st, rome, _ally, CState.ALLIED)
+	if cs.st.has("teams"):
+		cs.st["teams"][_ally] = CState.team(cs.st, rome)  # gifts go between team-mates
 	var c0 := CState.field_cell(CData.region_index("latium"))
 	var id := CRules.new_army_id(cs.st, _ally)
 	cs.st["factions"][_ally]["next_army"] = int(cs.st["factions"][_ally]["next_army"]) + 1

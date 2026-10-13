@@ -46,6 +46,7 @@ const (
 	roomRenewEvery  = 30 * time.Second
 	roomHashKeep    = 256
 	roomLobbyGrace  = 8 * time.Second
+	roomMaxPeers    = 8 // members of one campaign room (every human of the battle and the guests)
 )
 
 // Rooms is every open room, by "campaign/battle".
@@ -190,11 +191,13 @@ func jsonb(v any) []byte {
 // ----------------------------------------------------------------- entry ---
 
 // enterRoom handles {"t":"room", b, v, create, scen, keep}: the seat must be
-// a human whose army is in pending battle b of the campaign, at state
-// version v. create opens the room if there is none (the claim must be
-// free, or this device's own, or another live claim of this room). Any
-// other alive human seat may join a room that is open (a guest: no army of
-// its own there, it commands the units it is given) but never opens one.
+// a human whose army is in pending battle b of the campaign (either side),
+// at state version v. create opens the room if there is none (the claim
+// must be free, or this device's own, or another live claim of this room).
+// A guest (an alive human without an army there on the team of a side's
+// lead faction: Battle.Guests) may join a room that is open (it commands
+// the units it is given) but never opens one. At most roomMaxPeers seats
+// are members at once.
 func (s *Server) enterRoom(ctx context.Context, seat Seat, m *member, req roomMsg) (*Room, error) {
 	c, err := loadCamp(ctx, s.db, seat.Campaign)
 	if err != nil {
@@ -205,8 +208,8 @@ func (s *Server) enterRoom(ctx context.Context, seat Seat, m *member, req roomMs
 		return nil, errf(http.StatusConflict, "not_pending", "battle %d is not pending", req.B)
 	}
 	inBattle := hasInt(b.Humans, seat.F)
-	if !inBattle && !hasInt(c.Alive, seat.F) {
-		return nil, errf(http.StatusForbidden, "not_in_battle", "your army is not in this battle")
+	if !inBattle && !b.mayJoin(seat.F, c.Alive) {
+		return nil, errf(http.StatusForbidden, "not_in_battle", "your army is not in this battle and no team-mate of yours leads a side")
 	}
 	// Lock order: never take a room lock while holding the database (the
 	// one SQLite connection), so the claim is taken with no lock held.
@@ -263,6 +266,8 @@ func (s *Server) enterRoom(ctx context.Context, seat Seat, m *member, req roomMs
 	if old := r.members[seat.F]; old != nil {
 		// The same seat again (reconnect, or another device): the newest wins.
 		old.kill()
+	} else if len(r.members) >= roomMaxPeers {
+		return nil, errf(http.StatusConflict, "room_full", "this battle already has %d players", roomMaxPeers)
 	}
 	m.f = seat.F
 	m.tok = seat.TokenID
@@ -321,8 +326,9 @@ func (s *Server) claimLive(ctx context.Context, c *campRow, b *Battle, seat Seat
 	})
 }
 
-// roomOpened: activity, the allies' Discord ping (every other alive human:
-// anyone may join, army in the battle or not), the long-poll bump.
+// roomOpened: activity, the Discord ping to everyone who may join (every
+// other human of the battle, either side, and the guests), the long-poll
+// bump.
 func (s *Server) roomOpened(c *campRow, b *Battle, seat Seat) {
 	ctx := s.ctx
 	ob := &outbox{}
@@ -330,12 +336,7 @@ func (s *Server) roomOpened(c *campRow, b *Battle, seat Seat) {
 	s.db.Tx(ctx, func(tx *sql.Tx) error {
 		now := s.clock.Now()
 		seats, _ := loadSeats(ctx, tx, c.ID)
-		var others []int
-		for _, f := range c.Alive {
-			if f != seat.F {
-				others = append(others, f)
-			}
-		}
+		others := b.joiners(seat.F, c.Alive)
 		if len(others) > 0 {
 			key := fmt.Sprintf("ping:b%d:%d:%d", b.ID, seat.F, now.UnixMilli()/pingBucket.Milliseconds())
 			s.note(ctx, tx, ob, c, seats, key, "ping_battle",

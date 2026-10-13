@@ -290,8 +290,8 @@ so "read, check, write" is atomic.
   (the card's **Fight it for X**) for a battle with the ally's army in it
   (the ally is told). Choices (`POST .../choice`): `wait` (**Leave it to
   X**) records `wait_by` and pings the ally; `command` records
-  `command_by`; `ask` (**Ask to join**, any alive human seat, army in the
-  battle or not) adds the seat to the battle's `ask_by` (table
+  `command_by`; `ask` (**Ask to join**: a human of the battle or one of its
+  guests, `Battle.mayJoin`; anyone else `not_in_battle`) adds the seat to the battle's `ask_by` (table
   `battle_asks`, cleared when the battle leaves the pending list or on a
   rollback) and pings the battle's humans when a webhook is set ("X asks
   to join the battle at R: open it with Fight together"). The owner's
@@ -574,18 +574,25 @@ go back, sizes, rates.
   is in the battle (`create`), at the campaign's current version (`v`): the
   battle is built from that version on every device, so a later joiner
   fetches that version (`GET /state?version=V`) if the campaign has moved on.
-- Any other alive human seat may join an open room, army in the battle or
-  not (a **guest**: it commands the units it is given; clients pass the
-  campaign's other alive humans to `Lockstep.setup` as guests so they can be
-  admitted and gifted units mid-battle). A guest cannot open a room
+- **Who may be in the room (N players, 2026-10-13):** every human whose
+  army is in the battle, on either side (the state's battle `humans`), and
+  the **guests**: the alive humans without an army there who are on the
+  team of either side's lead faction (`att_f` / `def_f`; the state's
+  `teams`, or the default shape without the key). `ParseState` keeps them
+  per battle (`Battle.Guests`, also in the summary's battle rows as
+  `guests`; a row stored before this has none and any alive human counts,
+  as before). Anyone else gets `not_in_battle`. A guest commands the units
+  a team-mate gives it (clients pass `CRules.battle_guests` to
+  `Lockstep.setup` with their sides). A guest cannot open a room
   (`not_in_battle` with `create`, `no_room` without) and never becomes the
-  lobby host on entry.
+  lobby host on entry. At most **8 members** at once (`roomMaxPeers`;
+  `room_full`); a campaign has at most 8 humans anyway.
 - Opening takes the battle's claim in mode `live` (refused, `claimed`, if
   another device holds an ordinary claim; this device's own claim is turned
   into the live one). While the room has members the server renews the lease
   every 30 s (no client heartbeats); HTTP claims of the battle are refused
-  (`claimed`, mode `live`). Opening pings the campaign's other alive humans
-  on Discord ("X is asking you to join the battle at R now", deduplicated per 2
+  (`claimed`, mode `live`). Opening pings everyone else who may join (the
+  battle's other humans, either side, and its guests) on Discord ("X is asking you to join the battle at R now", deduplicated per 2
   minutes) and records `battle_live` activity.
 - Lobby until the host sends `start`; the members present then take part from
   frame 0. Seats that took part are recorded in `battle_live`: each of them
@@ -610,7 +617,7 @@ JSON text frames. After `auth` / `hello` the client sends
 (`scen`: the opener's hash of the built scenario, seed and command split,
 which every joiner compares with its own build; `keep`: let the host keep
 command of my army). Errors that end the attempt: `no_room`, `not_pending`,
-`not_in_battle`, `stale`, `claimed`, `unauthorized`.
+`not_in_battle`, `stale`, `claimed`, `room_full`, `unauthorized`.
 
 Server to client:
 

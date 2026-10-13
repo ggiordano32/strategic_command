@@ -367,7 +367,7 @@ func show_battles() -> void:
 		s.show_dialog("Battles", box, [["Close", Callable()]], 520)
 		return
 	if s._vp().y >= 600:  # a landscape phone: the battle screen needs the room
-		box.add_child(Kit.label("Battles must be resolved before the next turn. Your own: auto-resolve, fight, or fight together (your ally joins live, commanding their own army if it is there, else the units you give them). Your ally's: ask to join, leave it to them, or fight it for them when they are away.", Kit.FONT_SMALL, Kit.COL_DIM, true))
+		box.add_child(Kit.label("Battles must be resolved before the next turn. Your own: auto-resolve, fight, or fight together (every player with an army there joins live, either side, commanding their own; your team-mates without one get the units you give them). Another player's: ask to join, leave it to them, or fight it for them when they are away.", Kit.FONT_SMALL, Kit.COL_DIM, true))
 	for b in list:
 		box.add_child(_battle_card(st, b))
 	s.show_dialog("Pending battles (%d)" % list.size(), box, [["Close", Callable()]], 900, true)
@@ -394,11 +394,17 @@ func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 	var wait_by := int(info.get("wait_by", -1))
 	var live = info.get("live")
 	var mine: bool = humans.has(oc.f)
-	# Any alive human may join a fought battle, army in it or not (a guest
-	# commands the units they are given), so Fight together is offered
-	# whenever an ally is alive and the server has live rooms.
-	var allies := _alive_allies()
+	# Who may join it fought live: every human with an army in it (either
+	# side) and the team-mates of a side's lead faction without one (guests,
+	# given units); Fight together is offered when any of them is alive and
+	# the server has live rooms.
+	var allies := _joiners(st, b)
+	var guest: bool = CRules.battle_guests(st, b).has(oc.f)
 	var live_ok: bool = oc.live_ok() and not allies.is_empty()
+	var foes: bool = not others.is_empty()
+	for x in others:
+		if CRules.battle_side_of(st, b, int(x)) == CRules.battle_side_of(st, b, oc.f):
+			foes = false
 	var asks: Array = []
 	var i_asked := false
 	for x in info.get("ask_by", []):
@@ -408,7 +414,7 @@ func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 			asks.append(int(x))
 	var status := ""
 	var col := Kit.COL_DIM
-	if live is Dictionary and oc.live_ok() and not oc.pending_upload(bid) and (mine or CState.alive(st, oc.f)):
+	if live is Dictionary and oc.live_ok() and not oc.pending_upload(bid) and (mine or guest):
 		return _live_card(card, v, h, bid, live, others, mine)
 	var owner: bool = others.is_empty() or cmd == oc.f
 	# The ally wants in: asked to join, or (on a battle that is not theirs)
@@ -477,8 +483,8 @@ func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 		h.add_child(fb)
 		if tb != null and wanting.is_empty():
 			h.add_child(tb)
-	else:
-		if live_ok and not mine and CState.alive(st, oc.f):
+	elif mine or guest:
+		if live_ok and not mine and guest:
 			# (With their own army in it they open it with Fight together.)
 			# Recorded on the server: the owner sees it on the card (and a
 			# Discord ping goes out if the campaign has a webhook).
@@ -489,9 +495,10 @@ func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 		wb.name = "wait_%d" % bid
 		wb.tooltip_text = "%s fights or auto-resolves it (they are pinged)." % _names(others)
 		h.add_child(wb)
-		var cb := Kit.button("Fight it for %s" % _names(others), func(): _choose(bid, "command"), 0)
+		var cb := Kit.button(("Fight it without %s" if foes else "Fight it for %s") % _names(others), func(): _choose(bid, "command"), 0)
 		cb.name = "command_%d" % bid
-		cb.tooltip_text = "For when %s is away: you take command of their army here (they are told)." % _names(others)
+		cb.tooltip_text = ("For when %s is away: the battle AI commands their army (they are told)." if foes
+			else "For when %s is away: you take command of their army here (they are told).") % _names(others)
 		h.add_child(cb)
 		if mine and live_ok:
 			var lb := Kit.icon_button("Fight together", "alliance", func(): s.fight_live(bid, true), 0)
@@ -500,13 +507,15 @@ func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 	return card
 
 
-## The campaign's other alive humans.
-func _alive_allies() -> Array:
+## Everyone but this seat who may join battle b live (its humans, either
+## side, and its guests), alive, in index order.
+func _joiners(st: Dictionary, b: Dictionary) -> Array:
 	var out: Array = []
-	for x in oc.st.get("humans", []):
+	for x in CRules.battle_humans(st, b) + CRules.battle_guests(st, b):
 		var f := int(x)
-		if f != oc.f and CState.alive(oc.st, f) and not out.has(f):
+		if f != oc.f and CState.alive(st, f) and not out.has(f):
 			out.append(f)
+	out.sort()
 	return out
 
 

@@ -61,6 +61,16 @@ extends SceneTree
 ##    ORDER_PARLEY with their routing light infantry); every frame equal,
 ##    the acts done on both peers, copies restored from A's sim mid-act run
 ##    on equal.
+## 13. Three peers (battles with several humans, N-player campaigns): two
+##    humans on side 0 (players 0 and 1) and one on side 1 (player 2), a
+##    fourth human of side 0 (player 3) absent, whose units the keeper
+##    (player 0, the host) holds; nobody's side is the battle AI's. 1,200
+##    frames equal on all three; each commands only their own units (orders
+##    for anyone else's refused alike); a gift from A to B mid-battle (and
+##    one from A to the enemy refused); a pause vote carried 2-1 (A asks, C
+##    declines: still open, B accepts: paused on the same frame for all),
+##    the resume 2-0 of 3; an observer restored from B's snapshot
+##    mid-battle follows every later frame.
 ## 10. Siege equipment and wall towers: the equal-force walls-3 siege with
 ##    ladders, a ram, tower engines and a 20 minute limit, restored from a
 ##    snapshot taken mid-climb (and at other ticks) runs on identically;
@@ -103,6 +113,11 @@ func _init() -> void:
 		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 		quit(0 if _ok else 1)
 		return
+	if OS.get_cmdline_user_args().has("--only=three"):
+		_test_three_peers()
+		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
+		quit(0 if _ok else 1)
+		return
 	if OS.get_cmdline_user_args().has("--only=street"):
 		_test_lockstep_street()
 		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
@@ -111,6 +126,7 @@ func _init() -> void:
 	_test_snapshots()
 	_test_profiles()
 	_test_lockstep()
+	_test_three_peers()
 	_test_solo_equivalence()
 	_test_lockstep_city(1)
 	_test_lockstep_city(0)
@@ -1054,6 +1070,236 @@ func _check_guest(scen: Dictionary, home: Array) -> void:
 		_fail("guest: lockstep snapshot round trip changed the hash")
 	else:
 		print("PASS guest: admitted mid-battle, given a unit, commands it (the owner's order refused), outsiders get nothing, snapshot round trip")
+
+
+## Three peers: A (player 0) and B (player 1) on side 0, C (player 2) on
+## side 1, player 3 of side 0 absent (held by A). See 13 in the header.
+func _test_three_peers() -> void:
+	var scen: Dictionary = Scenarios.make("battle_2000")
+	scen["ai_sides"] = []
+	var probe := BattleSim.new()
+	probe.setup(scen, 4242)
+	var home: Array = []
+	var k := 0
+	for u in probe.n_units:
+		if probe.u_side[u] == 0:
+			home.append([0, 1, 3][k % 3])
+			k += 1
+		else:
+			home.append(2)
+	var relay := Relay.new()
+	var names := ["A", "B", "C"]
+	var peers: Array[Peer] = []
+	for me in 3:
+		var p := Peer.new()
+		p.ls = Lockstep.new()
+		p.ls.setup(scen, 4242, home, [0, 1, 2], 0)
+		p.me = me
+		p.name = names[me]
+		p.rng.seed = 7000 + me * 31
+		p.latency = [1, 3, 2][me]
+		p.d = [3, 4, 3][me]
+		peers.append(p)
+	var a: Peer = peers[0]
+	var b: Peer = peers[1]
+	var c: Peer = peers[2]
+	# Setup: sides, the keeper, nobody's side the AI's.
+	var held := 0
+	for u in a.ls.u_cmd.size():
+		if a.ls.u_home[u] == 3:
+			held += 1
+			if a.ls.u_cmd[u] != 0 or a.ls.u_away[u] != 3:
+				_fail("three peers: player 3's unit %d not held by the keeper (cmd %d away %d)" % [u, a.ls.u_cmd[u], a.ls.u_away[u]])
+				return
+	if a.ls.side_of(0) != 0 or a.ls.side_of(1) != 0 or a.ls.side_of(2) != 1 or a.ls.side_of(3) != 0 \
+			or a.ls.sim.ai_sides[0] != 0 or a.ls.sim.ai_sides[1] != 0 or held == 0 or a.ls.is_active(3):
+		_fail("three peers: setup sides %d %d %d %d, ai %s, held %d" % [a.ls.side_of(0), a.ls.side_of(1), a.ls.side_of(2),
+			a.ls.side_of(3), a.ls.sim.ai_sides, held])
+		return
+	var total := 1200
+	var now := 0
+	var gift_u := -1
+	var gift_sent := false
+	var bad_gift_sent := false
+	var votes := {"asked": -1, "declined": false, "open_after_no": false, "accepted": false, "paused_at": [-1, -1, -1],
+		"resume_asked": -1, "resumed_at": [-1, -1, -1]}
+	var obs: Peer = null
+	var obs_from := -1
+	var wrong_cmd := 0
+	while now < total * 4 and (a.ls.frame < total or b.ls.frame < total or c.ls.frame < total):
+		now += 1
+		for p in peers:
+			var ls = p.ls
+			var sim = ls.sim
+			# Orders: mostly for this player's units, now and then for a unit
+			# commanded by someone else (refused alike everywhere).
+			if p.rng.randi() % 100 < 8:
+				var u: int = p.rng.randi() % sim.n_units
+				if sim.u_state[u] == BattleSim.U_READY:
+					var tgt := -1
+					for t in sim.n_units:
+						if sim.u_side[t] != sim.u_side[u] and sim.u_state[t] == BattleSim.U_READY:
+							tgt = t
+							if p.rng.randi() % 3 == 0:
+								break
+					if ls.u_cmd[u] != p.me:
+						wrong_cmd += 1
+					if tgt >= 0:
+						p.issue({"type": BattleSim.ORDER_ATTACK, "unit": u, "target": tgt, "run": p.rng.randi() % 2})
+			# A gives B one of its own units at frame 200, and tries one to the
+			# enemy (refused).
+			if p == a and ls.frame >= 200 and not gift_sent:
+				for u in ls.u_cmd.size():
+					if ls.u_cmd[u] == 0 and ls.u_home[u] == 0 and sim.u_state[u] == BattleSim.U_READY:
+						gift_u = u
+						break
+				p.issue({"type": Lockstep.C_GIFT, "unit": gift_u, "to": 1})
+				gift_sent = true
+			if p == a and gift_sent and not bad_gift_sent and ls.u_cmd[gift_u] == 1:
+				for u in ls.u_cmd.size():
+					if ls.u_cmd[u] == 0 and u != gift_u:
+						p.issue({"type": Lockstep.C_GIFT, "unit": u, "to": 2})
+						break
+				bad_gift_sent = true
+			# The pause vote: A asks at 400; C declines; B accepts once C's no
+			# is in (so the decline must have left it open).
+			if p == a and ls.frame >= 400 and int(votes["asked"]) < 0:
+				votes["asked"] = ls.frame
+				p.issue({"type": Lockstep.C_PAUSE, "want": 1})
+			if p == c and ls.vote_pause_by == 0 and ls.vote_pause_want == 1 and not votes["declined"]:
+				votes["declined"] = true
+				p.issue({"type": Lockstep.C_ANSWER, "what": 0, "yes": 0})
+			if p == b and ls.vote_pause_by == 0 and ls.vote_pause_want == 1 and ls.vote_of(0, 2) == -1 and not votes["accepted"]:
+				votes["open_after_no"] = true
+				votes["accepted"] = true
+				p.issue({"type": Lockstep.C_ANSWER, "what": 0, "yes": 1})
+			if p == a and int(votes["paused_at"][0]) >= 0 and ls.frame >= int(votes["paused_at"][0]) + 30 \
+					and int(votes["resume_asked"]) < 0:
+				votes["resume_asked"] = ls.frame
+				p.issue({"type": Lockstep.C_PAUSE, "want": 0})
+			if p == b and ls.vote_pause_by == 0 and ls.vote_pause_want == 0 and ls.vote_of(0, 1) == 0:
+				p.issue({"type": Lockstep.C_ANSWER, "what": 0, "yes": 1})
+			p.flush(relay, now)
+			p.deliver(relay, now)
+			# Frame by frame, noting the frame that applied the pause and the
+			# resume (the frame number before the advance).
+			for i in p.rng.randi() % 3:
+				var fr: int = ls.frame
+				if p.run(1, true) == 0:
+					break
+				if ls.paused == 1 and int(votes["paused_at"][p.me]) < 0:
+					votes["paused_at"][p.me] = fr
+				if int(votes["paused_at"][p.me]) >= 0 and ls.paused == 0 and int(votes["resumed_at"][p.me]) < 0:
+					votes["resumed_at"][p.me] = fr
+		# An observer restored from B's snapshot at frame ~600 (mid-battle,
+		# after the gift and the vote) follows the stream.
+		if obs == null and b.ls.frame >= 600:
+			obs = Peer.new()
+			obs.ls = Lockstep.new()
+			obs.ls.setup(scen, 4242, home, [], -1)
+			obs.me = 9
+			obs.name = "D"
+			obs.latency = 2
+			if not obs.ls.restore(b.ls.snapshot()) or obs.ls.state_hash() != b.ls.state_hash():
+				_fail("three peers: the observer could not restore B's snapshot")
+				return
+			obs_from = obs.ls.frame
+			obs.hashes[obs.ls.frame] = obs.ls.state_hash()
+			while obs.cursor < relay.items.size() and int(relay.items[obs.cursor]["s"]) <= obs.ls.last_s:
+				obs.cursor += 1
+			obs.sent_k = 1 << 30
+		if obs != null:
+			obs.deliver(relay, now)
+			obs.run(4, true)
+	var n_ab := _compare(a, b, 0, "three A/B")
+	var n_ac := _compare(a, c, 0, "three A/C")
+	var n_ad := _compare(a, obs, obs_from, "three A/observer") if obs != null else 0
+	if n_ab < 0 or n_ac < 0 or n_ad < 0:
+		return
+	if n_ab < total or n_ac < total:
+		_fail("three peers: too few frames compared (A/B %d, A/C %d)" % [n_ab, n_ac])
+	if n_ad < 300:
+		_fail("three peers: too few frames compared for the observer (%d)" % n_ad)
+	if gift_u < 0 or a.ls.u_cmd[gift_u] != 1 or b.ls.u_cmd[gift_u] != 1 or c.ls.u_cmd[gift_u] != 1:
+		_fail("three peers: the gift A -> B did not apply on all (unit %d)" % gift_u)
+	# Command table at the end: own units with their players, the absent
+	# player's with the keeper, the gift with B, nothing with the enemy.
+	for u in a.ls.u_cmd.size():
+		var h: int = a.ls.u_home[u]
+		var want := h
+		if h == 3:
+			want = 0
+		if u == gift_u:
+			want = 1
+		if h >= 0 and a.ls.u_cmd[u] != want:
+			_fail("three peers: unit %d (home %d) commanded by %d, want %d" % [u, h, a.ls.u_cmd[u], want])
+			break
+	if wrong_cmd == 0 or a.ls.rejected == 0 or a.ls.rejected != b.ls.rejected or a.ls.rejected != c.ls.rejected:
+		_fail("three peers: orders for others' units %d, refused A %d B %d C %d (must be > 0 and equal)" % [wrong_cmd,
+			a.ls.rejected, b.ls.rejected, c.ls.rejected])
+	var pa: Array = votes["paused_at"]
+	var ra: Array = votes["resumed_at"]
+	if not votes["open_after_no"] or int(pa[0]) < 0 or pa[0] != pa[1] or pa[0] != pa[2] or int(ra[0]) <= int(pa[0]) \
+			or ra[0] != ra[1] or ra[0] != ra[2]:
+		_fail("three peers: pause vote (open after C's no %s) paused at %s, resumed at %s" % [votes["open_after_no"], pa, ra])
+	if a.ls.sim.tick < 600:
+		_fail("three peers: the sim hardly ran (tick %d)" % a.ls.sim.tick)
+	print("PASS three peers: %d frames equal A/B, %d A/C, %d with the observer (from frame %d); %d units held for the absent player by the keeper; gift of unit %d A -> B, one to the enemy refused; %d orders for others' units, %d refused on each; pause carried 2-1 at frame %d (asked %d), resumed 2-0 of 3 at %d; sim tick %d" % [
+		n_ab, n_ac, n_ad, obs_from, held, gift_u, wrong_cmd, a.ls.rejected, int(pa[0]), int(votes["asked"]), int(ra[0]), a.ls.sim.tick])
+	_check_votes_n(scen, home)
+
+
+## Majority votes with three and four players, by direct inputs: 1-1 of 3
+## stays open, 2-1 carries; a tie of 4 (2-2) keeps the state; a speed vote
+## carried by asking for the same speed.
+func _check_votes_n(scen: Dictionary, home: Array) -> void:
+	var h4: Array = home.duplicate()
+	var ls := Lockstep.new()
+	ls.setup(scen, 9, h4, [0, 1, 2, 3], 0)
+	var cnt := {0: 0, 1: 0, 2: 0, 3: 0}
+	var send := func(p: int, kk: int, os: Array) -> void:
+		cnt[p] = int(cnt[p]) + 1
+		for o in os:
+			o["f"] = kk
+		ls.receive({"p": p, "n": cnt[p], "k": kk, "o": os})
+	var frame := func(ins: Dictionary) -> void:
+		var f: int = ls.frame
+		for p in [0, 1, 2, 3]:
+			send.call(p, f, ins.get(p, []))
+		ls.advance()
+	# Four players: A asks, B yes (2 of 4: not a majority), C no, D no: a tie.
+	frame.call({0: [{"type": Lockstep.C_PAUSE, "want": 1}]})
+	frame.call({1: [{"type": Lockstep.C_ANSWER, "what": 0, "yes": 1}]})
+	var open2 := ls.vote_pause_by == 0 and ls.paused == 0
+	frame.call({2: [{"type": Lockstep.C_ANSWER, "what": 0, "yes": 0}]})
+	var open3 := ls.vote_pause_by == 0
+	frame.call({3: [{"type": Lockstep.C_ANSWER, "what": 0, "yes": 0}]})
+	if not open2 or not open3 or ls.paused != 0 or ls.vote_pause_by != -1:
+		_fail("votes of 4: 2 yes open %s, then 1 no open %s, the 2-2 tie: paused %d pending %d" % [open2, open3, ls.paused, ls.vote_pause_by])
+	# Speed: C proposes 2x, A and D ask for 2x too: 3 of 4.
+	frame.call({2: [{"type": Lockstep.C_SPEED, "q": 8}]})
+	frame.call({0: [{"type": Lockstep.C_SPEED, "q": 8}]})
+	var open_s := ls.vote_speed_by == 2 and ls.speed_q == 4
+	frame.call({3: [{"type": Lockstep.C_SPEED, "q": 8}]})
+	if not open_s or ls.speed_q != 8 or ls.vote_speed_by != -1:
+		_fail("votes of 4: speed 2 of 4 open %s, 3 of 4: speed %d pending %d" % [open_s, ls.speed_q, ls.vote_speed_by])
+	# Player 3 drops: three left; A asks, B yes: carried 2 of 3.
+	ls.receive_event({"s": 1, "t": "drop", "who": 3, "after": ls.frame - 1, "to": 0})
+	var f0: int = ls.frame
+	send.call(0, f0, [{"type": Lockstep.C_PAUSE, "want": 1}])
+	send.call(1, f0, [{"type": Lockstep.C_ANSWER, "what": 0, "yes": 1}])
+	send.call(2, f0, [])
+	ls.advance()
+	# (Inputs before the relay's drop event in the frame: 2 of 4 leaves it
+	# open; the drop makes it 2 of 3, carried.)
+	if ls.paused != 1:
+		_fail("votes of 3 after a drop: A asks, B accepts, D dropped in the same frame: paused %d pending %d" % [ls.paused, ls.vote_pause_by])
+	var ls2 := Lockstep.new()
+	ls2.setup(scen, 9, h4, [0, 1, 2, 3], 0)
+	if not ls2.restore(ls.snapshot()) or ls2.state_hash() != ls.state_hash():
+		_fail("votes: snapshot round trip changed the hash")
+	else:
+		print("PASS majority votes: 4 players 2-2 keeps the state, 3 of 4 carries a speed, 2 of 3 after a drop, snapshot round trip")
 
 
 ## One player alone through Lockstep (delay 0) = the plain sim with the

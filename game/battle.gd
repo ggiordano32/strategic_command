@@ -1040,10 +1040,13 @@ func _refresh_actions() -> void:
 	hud.set_selection(selection, run, fire, skirm, deploy, refill, ammo, ammo_word, forage, dogs, release_armed)
 	_refresh_wall_buttons()
 	if coop != null:
-		var to := _gift_target()
-		hud.gift_button.visible = not selection.is_empty() and to >= 0
-		if to >= 0:
-			hud.gift_button.text = "Gift to " + coop.player_name(to)
+		var tos := _gift_targets()
+		hud.gift_button.visible = not selection.is_empty() and not tos.is_empty()
+		if tos.size() == 1:
+			hud.gift_button.text = "Gift to " + coop.player_name(int(tos[0]))
+		elif tos.size() > 1:
+			hud.gift_button.text = "Gift to..."
+
 
 
 ## Group buttons: every ready player unit of a class.
@@ -2786,11 +2789,14 @@ func _coop_pending() -> Array:
 func _coop_cards() -> void:
 	if coop.ls == null:
 		return
+	# A colour band on every card of this side once another player takes
+	# part on it (whose unit is whose).
+	var band: bool = not coop.teammates_in(coop.me).is_empty()
 	for u in sim.n_units:
 		if sim.u_side[u] != player_side:
 			continue
 		var c: int = coop.ls.commander(u)
-		hud.set_card_owner(u, c != coop.me, coop.player_color(c) if c >= 0 else Color(0.5, 0.5, 0.5))
+		hud.set_card_owner(u, c != coop.me, coop.player_color(c) if c >= 0 else Color(0.5, 0.5, 0.5), band)
 	if not selection.is_empty():
 		_prune_selection()
 
@@ -2812,19 +2818,30 @@ func _coop_request_speed(q: int) -> void:
 	coop.request_speed(q)
 
 
-## The ally the selection can be gifted to (-1: none taking part).
-func _gift_target() -> int:
+## The team-mates the selection can be gifted to: the other players taking
+## part on this side, ascending.
+func _gift_targets() -> Array:
 	if coop == null or coop.ls == null:
-		return -1
-	for p in coop.others():
-		if coop.ls.is_active(int(p)) and coop.ls.side_of(int(p)) == player_side:
-			return int(p)
-	return -1
+		return []
+	var out: Array = []
+	for p in coop.teammates_in(coop.me):
+		if coop.ls.side_of(int(p)) == player_side:
+			out.append(int(p))
+	return out
 
 
 func _gift() -> void:
-	var to := _gift_target()
-	if to < 0 or selection.is_empty():
+	var tos := _gift_targets()
+	if tos.is_empty() or selection.is_empty():
+		return
+	if tos.size() == 1:
+		_gift_to(int(tos[0]))
+	elif coop_hud != null:
+		coop_hud.pick_gift(tos, _gift_to)
+
+
+func _gift_to(to: int) -> void:
+	if selection.is_empty() or coop == null or coop.ls == null or not coop.ls.is_active(to):
 		return
 	_count("gift")
 	_t("coop_gift", {"units": selection.size(), "to": to, "tick": sim.tick})

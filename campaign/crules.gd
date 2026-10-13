@@ -618,13 +618,13 @@ static func _idx_ok(a: Dictionary, idx) -> bool:
 	return idx is Array and _unit_list(a, idx).size() == (idx as Array).size()
 
 
-## A gift: army b belongs to an allied human faction (not f's own).
+## A gift: army b belongs to a human team-mate (not f's own).
 static func is_gift(_st: Dictionary, f: int, b: Dictionary) -> bool:
 	return not b.is_empty() and int(b["f"]) != f
 
 
 ## "" if faction f may trade units between its army `from` and army `to`
-## (its own, or an allied human's: a gift, nothing taken back): units
+## (its own, or a human team-mate's: a gift, nothing taken back): units
 ## [indices of from's units] go to `to`, back [indices of to's units] come
 ## to `from`; both armies together (as merge); neither above ARMY_MAX.
 static func exchange_check(st: Dictionary, f: int, from: int, to: int, units, back = []) -> String:
@@ -633,8 +633,8 @@ static func exchange_check(st: Dictionary, f: int, from: int, to: int, units, ba
 	if a.is_empty() or b.is_empty() or from == to or int(a["f"]) != f:
 		return "no such army"
 	var g := int(b["f"])
-	if g != f and not (CState.is_human(st, f) and CState.is_human(st, g) and CState.friendly(st, f, g) and CState.alive(st, g)):
-		return "not a friendly army"
+	if g != f and not (CState.is_human(st, f) and CState.is_human(st, g) and CState.same_team(st, f, g) and CState.alive(st, g)):
+		return "not a team-mate's army"
 	var why := together(st, a, b)
 	if why != "":
 		return why
@@ -1871,6 +1871,37 @@ static func battle_humans(st: Dictionary, b: Dictionary) -> Array:
 	return out
 
 
+## The alive humans who may join battle b live without an army in it: those
+## on the team of either side's lead faction (att_f / def_f), sorted. They
+## are given units by a team-mate there (a spectator-helper).
+static func battle_guests(st: Dictionary, b: Dictionary) -> Array:
+	var hs := battle_humans(st, b)
+	var out: Array = []
+	for x in st["humans"]:
+		var f := int(x)
+		if hs.has(f) or out.has(f) or not CState.alive(st, f):
+			continue
+		if battle_side_of(st, b, f) >= 0:
+			out.append(f)
+	out.sort()
+	return out
+
+
+## The campaign side (0 attackers, 1 defenders) faction f fights on in
+## battle b: the side its armies (or its garrison) are on, else the side
+## whose lead faction is on its team; -1 none.
+static func battle_side_of(st: Dictionary, b: Dictionary, f: int) -> int:
+	var facs := battle_factions(st, b)
+	for s in 2:
+		if (facs[s] as Array).has(f):
+			return s
+	if CState.same_team(st, f, int(b["att_f"])):
+		return 0
+	if CState.same_team(st, f, int(b["def_f"])):
+		return 1
+	return -1
+
+
 ## Neighbouring armies join the battle (land routes only; armies that did
 ## not move and are not committed elsewhere; until a side has
 ## BATTLE_SIDE_MAX field units).
@@ -2460,12 +2491,14 @@ static func post_proposal(st: Dictionary, f: int, g: int, what: String) -> void:
 # event saying why. Like the AI's proposals it lapses after that turn. The
 # AI never makes, sees or answers these entries.
 
-## "" if f and g are both alive human players (allied).
+## "" if f and g are both alive human players on the same team (any two
+## of them in an N-player campaign; an alliance by treaty alone is not
+## enough, and the AI is never a partner).
 static func gift_partner_check(st: Dictionary, f: int, g: int) -> String:
 	if g < 0 or g >= CState.nf() or g == f or not CState.alive(st, g) or not CState.alive(st, f):
 		return "no such faction"
-	if not (CState.is_human(st, f) and CState.is_human(st, g) and CState.friendly(st, f, g)):
-		return "only between allied players"
+	if not (CState.is_human(st, f) and CState.is_human(st, g) and CState.same_team(st, f, g)):
+		return "only between team-mates"
 	return ""
 
 

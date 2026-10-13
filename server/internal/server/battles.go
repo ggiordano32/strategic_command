@@ -196,8 +196,8 @@ func (s *Server) releaseBattle(w http.ResponseWriter, r *http.Request, seat Seat
 // POST /api/c/{id}/battles/{bid}/choice {choice: wait | command | ask}: when
 // the ally's army is in the battle, wait for the ally (they are pinged) or
 // take command of their army (they are told); or ask to join the battle
-// live (any alive human seat, army in it or not: the battle's humans see it
-// in the summary's ask_by and are pinged).
+// live (a human of the battle or a guest: Battle.mayJoin; the battle's
+// humans see it in the summary's ask_by and are pinged).
 func (s *Server) battleChoice(w http.ResponseWriter, r *http.Request, seat Seat) {
 	var req struct {
 		Choice string `json:"choice"`
@@ -226,6 +226,10 @@ func (s *Server) battleChoice(w http.ResponseWriter, r *http.Request, seat Seat)
 		}
 		if len(others) == 0 {
 			return errf(http.StatusBadRequest, "not_needed", "only your own army is in this battle")
+		}
+		if !b.mayJoin(seat.F, c.Alive) {
+			// (Several teams: a battle neither the seat's nor its team's.)
+			return errf(http.StatusForbidden, "not_in_battle", "your army is not in this battle and no team-mate of yours leads a side")
 		}
 		now := s.clock.Now()
 		tx.ExecContext(ctx, "INSERT OR IGNORE INTO battle_flags (campaign_id, battle_id) VALUES (?, ?)", c.ID, b.ID)

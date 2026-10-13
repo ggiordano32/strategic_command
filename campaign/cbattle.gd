@@ -21,9 +21,13 @@ extends RefCounted
 ## they command) Average / Balanced.
 ##
 ## Command seam: "unit_faction" lists the campaign faction of every sim
-## unit and "controller" the faction that commands it. For now the human
-## present commands every unit of the player side (allied armies included);
-## co-op battles (milestone 5) will split this per player.
+## unit and "controller" the human faction that commands it in a live
+## battle (controllers()): a human faction's units its own (so two humans
+## on one side each command their own armies), units of AI factions on a
+## side with humans the lowest human of that side friendly to them (else
+## the side's lowest human: the sim's battle AI commands whole sides
+## only), units on a side without humans -1 (the battle AI). A solo battle
+## ignores it: the player commands every unit of the player side.
 ##
 ## outcome_from_result(): BattleSim.result() mapped back onto campaign units
 ## (crules.gd apply_outcome input).
@@ -232,9 +236,7 @@ static func _build0(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct:
 	var terrain := {"kind": kind, "seed": battle_seed(st, r, 1),
 		"forest": int(CData.REGIONS[r]["forest"]), "ground": int(CData.REGIONS[r]["ground"])}
 	var ai: Array = [0, 1] if human_f < 0 else [1]
-	var controller: Array = []
-	for f in ufac:
-		controller.append(human_f if human_f >= 0 and CState.friendly(st, int(f), human_f) else -1)
+	var controller := controllers(st, b, map, ufac)
 	var prof := _ai_profiles(st, b, sim_side, ai)
 	var scn := {"width_m": width, "height_m": height, "ai_sides": ai, "ai_skill": prof[0],
 		"ai_style": prof[1], "units": units, "terrain": terrain}
@@ -250,6 +252,35 @@ static func _build0(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct:
 	return {"scenario": scn,
 		"seed": battle_seed(st, r, 2), "map": map, "sim_side": sim_side, "garrison": gar,
 		"unit_faction": ufac, "controller": controller, "battle": int(b["id"]), "region": r}
+
+
+## The human faction commanding each unit in a live battle (see "Command
+## seam" above): map[u]["side"] is the unit's campaign side, ufac[u] its
+## faction.
+static func controllers(st: Dictionary, b: Dictionary, map: Array, ufac: Array) -> Array:
+	var facs := CRules.battle_factions(st, b)
+	var hum := [[], []]
+	for s in 2:
+		for f in facs[s]:
+			if CState.is_human(st, int(f)):
+				hum[s].append(int(f))
+		(hum[s] as Array).sort()
+	var out: Array = []
+	for u in ufac.size():
+		var f := int(ufac[u])
+		var cs := int(map[u]["side"]) if u < map.size() else -1
+		if CState.is_human(st, f):
+			out.append(f)
+			continue
+		var c := -1
+		if cs >= 0 and cs <= 1 and not (hum[cs] as Array).is_empty():
+			c = int(hum[cs][0])
+			for h in hum[cs]:
+				if CState.friendly(st, f, int(h)):
+					c = int(h)
+					break
+		out.append(c)
+	return out
 
 
 ## Roads, rivers and hills (2026-10-09): the river crossing field battle b
@@ -622,9 +653,7 @@ static func _build_settlement(st: Dictionary, b: Dictionary, human_f: int, scale
 		map.append({"side": cs, "army": int(e["army"]), "unit": int(e["unit"]), "n": int(e["n"]),
 			"sim_n": int(lists[cs][int(o[1])][1])})
 		ufac.append(int(e["f"]))
-	var controller: Array = []
-	for f in ufac:
-		controller.append(human_f if human_f >= 0 and CState.friendly(st, int(f), human_f) else -1)
+	var controller := controllers(st, b, map, ufac)
 	return {"scenario": res["scenario"], "seed": battle_seed(st, r, 2), "map": map, "sim_side": sim_side,
 		"garrison": gar, "unit_faction": ufac, "controller": controller, "battle": int(b["id"]), "region": r,
 		"owner": int(st["regions"][r]["owner"])}

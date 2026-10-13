@@ -130,6 +130,7 @@ type tstate struct {
 	Battles []tbattle
 	Winner  int
 	Salt    int
+	Teams   []int // team per faction ("teams"; nil: the key is absent)
 }
 
 type tbattle struct {
@@ -170,6 +171,9 @@ func (s tstate) text() []byte {
 	st := map[string]any{"format": "strategic_command_campaign", "version": 1, "name": "Test", "turn": s.Turn,
 		"phase": phase, "winner": s.Winner, "humans": s.Humans, "settings": map[string]any{"turn_timeout_h": 0},
 		"factions": factions, "armies": armies, "battles": battles, "salt": s.Salt}
+	if s.Teams != nil {
+		st["teams"] = s.Teams
+	}
 	b, _ := json.Marshal(st)
 	return b
 }

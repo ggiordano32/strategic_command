@@ -40,6 +40,7 @@ signal setup_changed                   ## custom battle lobby: the setup (or its
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
+const CRules := preload("res://campaign/crules.gd")
 
 const Lockstep := preload("res://sim/lockstep.gd")
 const LiveRoom := preload("res://game/net/live_room.gd")
@@ -59,6 +60,7 @@ var me := -1
 var host := -1
 var humans: Array = []           ## the battle's human factions
 var guests: Array = []           ## other campaign humans who may join (no army in the battle; given units)
+var guest_side := {}             ## guest -> sim side they fight on (campaign battles; absent: co-op)
 var roster: Array = []           ## [{f, on, in, dropped, joining, keep, silent_ms}]
 var scenario: Dictionary = {}
 var seed_value := 0
@@ -131,21 +133,21 @@ var names := {}                  ## player -> display name (else the campaign fa
 var colors := {}                 ## player -> Color
 
 
-## Unit -> player who commands it by default: a human's own units (the
-## campaign faction of the unit, if that faction is a human in the battle),
-## other friendly units (AI allies, garrisons of AI factions) -> the lowest
-## human faction of the battle; enemy units -> -1.
+## Unit -> player who commands it by default: CBattle's "controller" (a
+## human's own units their own; AI factions' units on a side with humans
+## that side's lowest human friendly to them; -1 on a side without humans).
+## A controller not among the battle's humans falls back to the lowest of
+## them (older builds).
 static func home_of(built: Dictionary, p_humans: Array) -> Array:
 	var out: Array = []
 	var ctrl: Array = built["controller"]
-	var ufac: Array = built["unit_faction"]
 	var hs: Array = p_humans.duplicate()
 	hs.sort()
 	for u in ctrl.size():
 		if int(ctrl[u]) < 0:
 			out.append(-1)
-		elif hs.has(int(ufac[u])):
-			out.append(int(ufac[u]))
+		elif hs.has(int(ctrl[u])):
+			out.append(int(ctrl[u]))
 		else:
 			out.append(int(hs[0]) if not hs.is_empty() else int(ctrl[u]))
 	# Then one entry for the units the sim adds on the city's side (its
@@ -160,6 +162,38 @@ static func home_of(built: Dictionary, p_humans: Array) -> Array:
 		else:
 			out.append(_first_home(units, out, int(built["sim_side"][1])))
 	return out
+
+
+## A live battle: "ai_sides" keeps only the sides with no player's unit
+## (home list h; the lockstep hands a side to the AI while none of its
+## players takes part).
+static func live_ai_sides(scn: Dictionary, h: Array) -> void:
+	var units: Array = scn["units"]
+	var has := [false, false]
+	for u in mini(units.size(), h.size()):
+		if int(h[u]) >= 0:
+			has[clampi(int(units[u]["side"]), 0, 1)] = true
+	var ai: Array = []
+	for sd in scn.get("ai_sides", []):
+		if not has[clampi(int(sd), 0, 1)]:
+			ai.append(int(sd))
+	if ai.size() != (scn.get("ai_sides", []) as Array).size():
+		scn["ai_sides"] = ai
+
+
+## The sim side player p fights on: that of their first unit, else their
+## guest side, else that of the first player's unit (co-op); 0 if none.
+func side_of_player(p: int) -> int:
+	var units: Array = scenario.get("units", [])
+	for u in mini(units.size(), home.size()):
+		if int(home[u]) == p:
+			return int(units[u]["side"])
+	if guest_side.has(p):
+		return int(guest_side[p])
+	for u in mini(units.size(), home.size()):
+		if int(home[u]) >= 0:
+			return int(units[u]["side"])
+	return 0
 
 
 ## The first player commanding a unit of sim side `side` in home list `h`.
@@ -180,11 +214,15 @@ func _ready() -> void:
 
 
 ## built: CBattle.build() of the pending battle; create: open the room (the
-## host) or join an existing one. p_guests: the campaign's other alive
-## humans, whose armies are not in the battle (guest_list()): they may join
-## and command units they are given.
+## host) or join an existing one. p_humans: every human with an army in the
+## battle, either side (CRules.battle_humans). p_guests: the alive humans
+## without an army there who may join (guest_list(): team-mates of a side's
+## lead faction) and command units they are given; p_guest_side their sim
+## sides (guest_sides()). A side with a human is not the battle AI's in a
+## live battle (it takes a side over only while none of its players is
+## there): the scenario's "ai_sides" is trimmed to the sides without one.
 func setup(base: String, cid: String, token: String, p_me: int, built: Dictionary, p_humans: Array,
-		p_version: int, create: bool, p_keep: bool = false, p_guests: Array = []) -> void:
+		p_version: int, create: bool, p_keep: bool = false, p_guests: Array = [], p_guest_side: Dictionary = {}) -> void:
 	me = p_me
 	humans = p_humans.duplicate()
 	guests = []
@@ -192,13 +230,23 @@ func setup(base: String, cid: String, token: String, p_me: int, built: Dictionar
 		if not humans.has(int(g)) and not guests.has(int(g)):
 			guests.append(int(g))
 	guests.sort()
+	guest_side = {}
+	for g in guests:
+		if p_guest_side.has(g):
+			guest_side[g] = int(p_guest_side[g])
 	scenario = built["scenario"]
 	seed_value = int(built["seed"])
 	battle_id = int(built["battle"])
 	version = p_version
 	keep = p_keep
 	home = home_of(built, humans)
-	scen_hash = scenario_hash(scenario, seed_value, home if guests.is_empty() else home + [-2] + guests)
+	live_ai_sides(scenario, home)
+	var gpart: Array = []
+	for g in guests:
+		gpart.append(g)
+		if guest_side.has(g):
+			gpart.append(-10 - int(guest_side[g]))
+	scen_hash = scenario_hash(scenario, seed_value, home if guests.is_empty() else home + [-2] + gpart)
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--coop-delay="):
 			fixed_delay = int(a.get_slice("=", 1))
@@ -465,7 +513,7 @@ func _apply_item(it: Dictionary) -> void:
 		for p in it.get("players", []):
 			ps.append(int(p))
 		ls = Lockstep.new()
-		ls.setup(scenario, seed_value, home, ps, int(it.get("host", host)), guests)
+		ls.setup(scenario, seed_value, home, ps, int(it.get("host", host)), guests, guest_side)
 		ls.saw(s)
 		phase = "live"
 		if ps.has(me):
@@ -936,15 +984,43 @@ func shown_players() -> Array:
 	return out
 
 
-## The campaign's alive humans not in battle b (the guests of its live
-## battle), in index order.
-static func guest_list(st: Dictionary, battle_humans: Array) -> Array:
+## The guests of battle b's live battle: the alive humans without an army
+## in it on the team of a side's lead faction (CRules.battle_guests), in
+## index order. Without b: every other alive human (older callers).
+static func guest_list(st: Dictionary, battle_humans: Array, b: Dictionary = {}) -> Array:
+	if not b.is_empty():
+		return CRules.battle_guests(st, b)
 	var out: Array = []
 	for h in st.get("humans", []):
 		var f := int(h)
 		if not battle_humans.has(f) and CState.alive(st, f) and not out.has(f):
 			out.append(f)
 	out.sort()
+	return out
+
+
+## Guest -> the sim side they fight on in battle b (built: its CBattle.build).
+static func guest_sides(st: Dictionary, b: Dictionary, built: Dictionary, p_guests: Array) -> Dictionary:
+	var out := {}
+	for g in p_guests:
+		var cs := CRules.battle_side_of(st, b, int(g))
+		if cs >= 0:
+			out[int(g)] = int(built["sim_side"][cs])
+	return out
+
+
+## Players taking part on the same side as p (p excluded): who p may gift
+## units to, ascending.
+func teammates_in(p: int) -> Array:
+	var out: Array = []
+	if ls == null:
+		return out
+	var sd: int = ls.side_of(p)
+	if sd < 0:
+		return out
+	for q in ls.side_players(sd):
+		if q != p:
+			out.append(q)
 	return out
 
 

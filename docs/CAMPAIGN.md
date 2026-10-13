@@ -1670,12 +1670,15 @@ the stance toggle).
 
 ### Gifts between players
 
-The two human players can hand each other cities and money (orders in the
-table above; the rules in `crules.gd` "gifts between players"; the checks
-`gift_region_check` / `buy_region_check` / `gift_money_check` /
-`city_deal_check` are shared by the screens and the rules). Only between
-alive human players (allied); the AI never makes, receives or answers
-these. A city may change hands when the giver owns it, it is not the
+Human players on the same team can hand each other cities, money and
+units (orders in the table above; the rules in `crules.gd` "gifts between
+players"; the checks `gift_partner_check`, `gift_region_check` /
+`buy_region_check` / `gift_money_check` / `city_deal_check` and, for units,
+`exchange_check` are shared by the screens and the rules). **Any two alive
+human team-mates** (N-player campaigns, 2026-10-13: `CState.same_team`;
+before, any two allied humans, which in a two-player campaign is the
+same); never across teams, even between humans allied by treaty, and the
+AI never makes, receives or answers these. A city may change hands when the giver owns it, it is not the
 giver's last, it is not besieged, no battle is pending and no recruits
 are queued there, and **no army of the giver stands in it** (version 6:
 on its site cell; older formats: in the region): the garrison, buildings,
@@ -1710,8 +1713,8 @@ warnings, and the events in the turn report.
 **friendly** (`CState.friendly` = same faction, same team or dip ALLIED),
 **never at war** (`at_war` is false inside a team), share the co-op perks
 (movement through each other's land, replenishment there, support in
-battle, joining each other's battles; unit and city gifts stay between
-players) and **win together**. Their dip is kept ALLIED. `humans` is only
+battle, joining each other's battles; unit, city and money gifts between
+the players of a team) and **win together**. Their dip is kept ALLIED. `humans` is only
 who is a player; players on different teams may fight each other. Helpers:
 `CState.team`, `same_team`, `team_members`, `default_teams`.
 
@@ -1750,8 +1753,17 @@ who is a player; players on different teams may fight each other. Helpers:
   `victory_capitals` key cities. `winner` stays 1 (the team has a player) /
   0 (an AI team won); `winner_team` is its id. Players lose (winner 0) when
   no team with a player has a member alive.
-- **Server facts** are unchanged: `humans`, `turn`, `phase`;
-  `battle_humans` returns every player on either side. The Go server hashes
+- **Battles with several humans** (2026-10-13): `battle_humans` returns
+  every player with an army in the battle on either side (or the defending
+  city's owner); `battle_guests` the alive players without one there on
+  the team of a side's lead faction (`att_f` / `def_f`), and
+  `battle_side_of` the campaign side each fights on. All of them may join
+  the battle live (DESIGN.md section 5, "Several humans"); `CBattle`'s
+  `controller` gives each human faction's units to that player and an AI
+  faction's units on a side with players to that side's lowest player
+  friendly to it.
+- **Server facts:** `humans`, `turn`, `phase`, `teams` (only to work out
+  each battle's guests: `statemeta.go`). The Go server hashes
   a default-shaped version 7 state as its format 6 view too
   (`statemeta.go: hashView`), so the hashes it checks match the game's.
 

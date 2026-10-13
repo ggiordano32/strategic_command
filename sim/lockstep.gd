@@ -30,15 +30,20 @@ extends RefCounted
 ## commands that unit at that frame; an army withdrawal withdraws only the
 ## issuer's units; a player not taking part cannot order anything.
 ## Control inputs: pause / speed requests and answers (a vote: a request
-## needs the other player's agreement unless only one player takes part),
+## applies once a strict majority of the players taking part agree, the
+## requester counting as yes; a tie or a majority against clears it and
+## keeps the current state; alone, a request applies at once),
 ## gifting a unit to another player, admitting a (re)joining player, and the
 ## server's drop event (a disconnected or leaving player: their units go to
 ## the player named in the event, held for them until they are admitted
 ## again).
 ##
-## Sides (custom battles, head-to-head): every player belongs to the side of
-## the units they command by default (u_home). Gifts go only to a player of
-## the same side. Units of a player who is away (absent at the start,
+## Sides (custom battles, head-to-head, campaign battles with humans on
+## both sides): every player belongs to the side of the units they command
+## by default (u_home); a guest (no units of their own) to the side given
+## for them in setup (guest_sides), else to the players' side when all are
+## on one (co-op). p_side keeps it per player (hashed). Gifts go only to a
+## player of the same side. Units of a player who is away (absent at the start,
 ## dropped, left) go to a player of their own side taking part (the one the
 ## server named if that one is), else the battle AI takes that side over
 ## (sim.ai_sides, hashed here; ai_take marks sides the AI holds) and hands it
@@ -84,8 +89,13 @@ var vote_pause_by := -1
 var vote_pause_want := 0
 var vote_speed_by := -1
 var vote_speed_q := 0
+var vote_pause_yes := 0             # bit per player (id <= 30) agreeing with the pending pause vote
+var vote_pause_no := 0
+var vote_speed_yes := 0
+var vote_speed_no := 0
 var players := PackedInt32Array()   # every human player of the battle, ascending
 var active := PackedInt32Array()    # per players[i]: 1 while taking part
+var p_side := PackedInt32Array()    # per players[i]: the side they fight on (-1: none)
 var u_cmd := PackedInt32Array()     # unit -> commanding player (-1: not a human's)
 var u_away := PackedInt32Array()    # unit -> player it is held for (-1: none)
 var u_home := PackedInt32Array()    # unit -> player who commands it by default
@@ -113,7 +123,11 @@ var applied := 0
 ## guests: further players who may join (admitted like anyone) though no
 ## unit is theirs by default (a campaign ally whose army is not in the
 ## battle): they command what they are given (side_of).
-func setup(scenario: Dictionary, p_seed: int, home: Array, present: Array, host: int, guests: Array = []) -> void:
+## guest_sides: player -> side for guests (campaign battles with humans on
+## both sides: a team-mate of a side's lead faction); without an entry a
+## guest fights on the players' side when they are all on one (co-op).
+func setup(scenario: Dictionary, p_seed: int, home: Array, present: Array, host: int, guests: Array = [],
+		guest_sides: Dictionary = {}) -> void:
 	sim = BattleSim.new()
 	sim.setup(scenario, p_seed)
 	frame = 0
@@ -164,6 +178,28 @@ func setup(scenario: Dictionary, p_seed: int, home: Array, present: Array, host:
 					break
 		else:
 			u_home[u] = -1
+	# Each player's side: that of their own units, else the guest's given
+	# side, else the players' side when every player's units are on one.
+	var any := -1
+	for u in n_units:
+		if u_home[u] >= 0:
+			if any < 0:
+				any = sim.u_side[u]
+			elif any != sim.u_side[u]:
+				any = -2
+	p_side = PackedInt32Array()
+	p_side.resize(players.size())
+	for i in players.size():
+		var ps_i := -1
+		for u in n_units:
+			if u_home[u] == players[i]:
+				ps_i = sim.u_side[u]
+				break
+		if ps_i < 0 and guest_sides.has(players[i]):
+			ps_i = clampi(int(guest_sides[players[i]]), -1, 1)
+		if ps_i < 0 and any >= 0:
+			ps_i = any
+		p_side[i] = ps_i
 	for u in n_units:
 		var h := u_home[u]
 		u_away[u] = -1
@@ -214,25 +250,25 @@ func commander(u: int) -> int:
 	return u_cmd[u] if u >= 0 and u < u_cmd.size() else -1
 
 
-## The side player p fights on (that of the units they command by
-## default). A player with no units of their own (a guest) fights on the
-## players' side when every player's units are on one side (co-op), else
-## on none (-1).
+## The side player p fights on (p_side: that of the units they command by
+## default; a guest's given side, or the players' side in co-op); -1 for
+## none or a stranger.
 func side_of(p: int) -> int:
-	var any := -1
-	for u in u_home.size():
-		if u_home[u] == p:
-			return sim.u_side[u]
-		if u_home[u] >= 0:
-			if any < 0:
-				any = sim.u_side[u]
-			elif any != sim.u_side[u]:
-				any = -2
-	return any if any >= 0 and players.has(p) else -1
+	var i := players.find(p)
+	return p_side[i] if i >= 0 and i < p_side.size() else -1
+
+
+## Players of `side` taking part, ascending.
+func side_players(side: int) -> Array[int]:
+	var out: Array[int] = []
+	for i in players.size():
+		if active[i] != 0 and p_side[i] == side:
+			out.append(players[i])
+	return out
 
 
 ## A player of `side` taking part to hold units for an absent one: `pref`
-## if it is one, else the lowest; -1 if none.
+## if it is one, else the lowest (the first by faction index); -1 if none.
 func _keeper(side: int, pref: int) -> int:
 	if pref >= 0 and is_active(pref) and side_of(pref) == side:
 		return pref
@@ -497,6 +533,37 @@ func _clear_votes() -> void:
 	vote_pause_want = 0
 	vote_speed_by = -1
 	vote_speed_q = 0
+	vote_pause_yes = 0
+	vote_pause_no = 0
+	vote_speed_yes = 0
+	vote_speed_no = 0
+
+
+static func _bit(p: int) -> int:
+	return 1 << p if p >= 0 and p <= 30 else 0
+
+
+## Players taking part in mask m.
+func _count_in(m: int) -> int:
+	var c := 0
+	for i in players.size():
+		if active[i] != 0 and (m & _bit(players[i])) != 0:
+			c += 1
+	return c
+
+
+## A vote's outcome by majority of the players taking part: 1 carried
+## (more than half say yes), -1 lost (a majority can no longer be reached:
+## a tie or more against), 0 still open.
+func _tally(yes: int, no: int) -> int:
+	var n := active_count()
+	var y := _count_in(yes)
+	var nn := _count_in(no & ~yes)
+	if y * 2 > n:
+		return 1
+	if (n - nn) * 2 <= n:
+		return -1
+	return 0
 
 
 func _vote_pause(p: int, want: int) -> void:
@@ -504,15 +571,39 @@ func _vote_pause(p: int, want: int) -> void:
 		if vote_pause_by >= 0 and vote_pause_want == want:
 			vote_pause_by = -1
 		return
-	if active_count() <= 1 or (vote_pause_by >= 0 and vote_pause_by != p and vote_pause_want == want):
+	if active_count() <= 1:
 		paused = want
 		vote_pause_by = -1
 		return
 	if vote_pause_by == p and vote_pause_want == want:
 		vote_pause_by = -1  # asked again: withdrawn
 		return
-	vote_pause_by = p
-	vote_pause_want = want
+	if vote_pause_by >= 0 and vote_pause_want == want:
+		# Asking for the same thing is a yes.
+		vote_pause_yes |= _bit(p)
+		vote_pause_no &= ~_bit(p)
+	else:
+		vote_pause_by = p
+		vote_pause_want = want
+		vote_pause_yes = _bit(p)
+		vote_pause_no = 0
+	_settle_pause()
+
+
+func _settle_pause() -> void:
+	var t := _tally(vote_pause_yes, vote_pause_no)
+	if t > 0:
+		paused = vote_pause_want
+	if t != 0:
+		vote_pause_by = -1
+
+
+func _settle_speed() -> void:
+	var t := _tally(vote_speed_yes, vote_speed_no)
+	if t > 0:
+		speed_q = vote_speed_q
+	if t != 0:
+		vote_speed_by = -1
 
 
 ## "0.25x", "1.5x", "2x": a speed in quarter steps as players read it
@@ -527,26 +618,55 @@ func _vote_speed(p: int, q: int) -> void:
 		if vote_speed_by >= 0 and vote_speed_q == q:
 			vote_speed_by = -1
 		return
-	if active_count() <= 1 or (vote_speed_by >= 0 and vote_speed_by != p and vote_speed_q == q):
+	if active_count() <= 1:
 		speed_q = q
 		vote_speed_by = -1
 		return
 	if vote_speed_by == p and vote_speed_q == q:
 		vote_speed_by = -1
 		return
-	vote_speed_by = p
-	vote_speed_q = q
+	if vote_speed_by >= 0 and vote_speed_q == q:
+		vote_speed_yes |= _bit(p)
+		vote_speed_no &= ~_bit(p)
+	else:
+		vote_speed_by = p
+		vote_speed_q = q
+		vote_speed_yes = _bit(p)
+		vote_speed_no = 0
+	_settle_speed()
 
 
+## Accept / Decline on another player's pending vote (two players: one
+## answer settles it; more: a majority of those taking part).
 func _answer(p: int, what: int, yes: bool) -> void:
 	if what == 0 and vote_pause_by >= 0 and vote_pause_by != p:
 		if yes:
-			paused = vote_pause_want
-		vote_pause_by = -1
+			vote_pause_yes |= _bit(p)
+			vote_pause_no &= ~_bit(p)
+		else:
+			vote_pause_no |= _bit(p)
+			vote_pause_yes &= ~_bit(p)
+		_settle_pause()
 	elif what == 1 and vote_speed_by >= 0 and vote_speed_by != p:
 		if yes:
-			speed_q = vote_speed_q
-		vote_speed_by = -1
+			vote_speed_yes |= _bit(p)
+			vote_speed_no &= ~_bit(p)
+		else:
+			vote_speed_no |= _bit(p)
+			vote_speed_yes &= ~_bit(p)
+		_settle_speed()
+
+
+## Has player p voted on the pending pause (what 0) / speed (1) vote?
+## 1 yes, -1 no, 0 not yet (the requester counts as yes).
+func vote_of(what: int, p: int) -> int:
+	var y := vote_pause_yes if what == 0 else vote_speed_yes
+	var n := vote_pause_no if what == 0 else vote_speed_no
+	if (y & _bit(p)) != 0:
+		return 1
+	if (n & _bit(p)) != 0:
+		return -1
+	return 0
 
 
 func _drop(who: int, to: int) -> void:
@@ -571,6 +691,12 @@ func _drop(who: int, to: int) -> void:
 		vote_pause_by = -1
 	if vote_speed_by == who:
 		vote_speed_by = -1
+	# Fewer players taking part: a pending vote may now have its majority
+	# (or have lost it); alone, the one left decides.
+	if vote_pause_by >= 0:
+		_settle_pause()
+	if vote_speed_by >= 0:
+		_settle_speed()
 
 
 func _admit(who: int, keep: int) -> void:
@@ -638,10 +764,12 @@ func state_hash() -> int:
 	var ctx := HashingContext.new()
 	ctx.start(HashingContext.HASH_MD5)
 	var head := PackedInt64Array([sim.state_hash(), frame, acc, speed_q, paused, vote_pause_by,
-		vote_pause_want, vote_speed_by, vote_speed_q, players.size(), u_cmd.size()])
+		vote_pause_want, vote_speed_by, vote_speed_q, players.size(), u_cmd.size(),
+		vote_pause_yes, vote_pause_no, vote_speed_yes, vote_speed_no])
 	ctx.update(head.to_byte_array())
 	ctx.update(players.to_byte_array())
 	ctx.update(active.to_byte_array())
+	ctx.update(p_side.to_byte_array())
 	ctx.update(u_cmd.to_byte_array())
 	ctx.update(u_away.to_byte_array())
 	ctx.update(sim.ai_sides.to_byte_array())
@@ -656,6 +784,8 @@ func snapshot() -> PackedByteArray:
 	var d := {"frame": frame, "acc": acc, "speed_q": speed_q, "paused": paused,
 		"vote_pause_by": vote_pause_by, "vote_pause_want": vote_pause_want,
 		"vote_speed_by": vote_speed_by, "vote_speed_q": vote_speed_q,
+		"vote_pause_yes": vote_pause_yes, "vote_pause_no": vote_pause_no, "vote_speed_yes": vote_speed_yes,
+		"vote_speed_no": vote_speed_no, "p_side": p_side,
 		"players": players, "active": active, "u_cmd": u_cmd, "u_away": u_away, "u_home": u_home, "ai_take": ai_take,
 		"queue": queue, "marks": marks, "last_n": last_n, "drop_at": drop_at, "last_s": last_s,
 		"sim": sim.snapshot()}
@@ -694,8 +824,16 @@ func restore(blob: PackedByteArray) -> bool:
 	vote_pause_want = int(d["vote_pause_want"])
 	vote_speed_by = int(d["vote_speed_by"])
 	vote_speed_q = int(d["vote_speed_q"])
+	vote_pause_yes = int(d.get("vote_pause_yes", 0))
+	vote_pause_no = int(d.get("vote_pause_no", 0))
+	vote_speed_yes = int(d.get("vote_speed_yes", 0))
+	vote_speed_no = int(d.get("vote_speed_no", 0))
 	players = d["players"]
 	active = d["active"]
+	p_side = d["p_side"] if d.get("p_side") is PackedInt32Array else PackedInt32Array()
+	if p_side.size() != players.size():
+		p_side.resize(players.size())
+		p_side.fill(-1)
 	u_cmd = d["u_cmd"]
 	u_away = d["u_away"]
 	u_home = d["u_home"]

@@ -703,15 +703,18 @@ func add_ui_control(c: Control) -> void:
 	_ui_controls.append(c)
 
 
-## Live co-op: mark unit u's card as commanded by the ally (not orderable
-## here) in the ally's colour, or as this player's own.
-func set_card_owner(u: int, foreign: bool, col: Color) -> void:
+## Live co-op: mark unit u's card as commanded by another player (not
+## orderable here) in their colour, or as this player's own; band: a strip
+## in the commander's colour along the card's top (several players on a
+## side: whose unit is whose at a glance).
+func set_card_owner(u: int, foreign: bool, col: Color, band: bool = false) -> void:
 	if not _faces.has(u):
 		return
 	var f: CardFace = _faces[u]
-	if f.foreign != foreign or f.owner_col != col:
+	if f.foreign != foreign or f.owner_col != col or f.owner_band != band:
 		f.foreign = foreign
 		f.owner_col = col
+		f.owner_band = band
 		f.queue_redraw()
 
 
@@ -1247,6 +1250,7 @@ class CardFace extends Control:
 	## Live co-op: commanded by the ally (drawn with their colour, dimmer).
 	var foreign := false
 	var owner_col := Color.WHITE
+	var owner_band := false
 	## The general (a command aura): a gold standard in the top right corner.
 	var general := false
 	## A hero or agent (campaign characters): "crown", "dagger" or "scroll" in the same corner.
@@ -1280,6 +1284,8 @@ class CardFace extends Control:
 			# The ally's unit: a frame and a corner tab in their colour.
 			draw_rect(Rect2(Vector2(1, 1), sz - Vector2(2, 2)), Color(owner_col, 0.85), false, 1.5)
 			draw_rect(Rect2(sz.x - 9, 0, 9, 6), owner_col)
+		if owner_band:
+			draw_rect(Rect2(0, 0, sz.x, 3), owner_col)
 		if under_fire and state != ST_GONE:
 			draw_rect(Rect2(0, 0, 3, sz.y), Color(1.0, 0.55, 0.1))
 		var r := minf(sz.y * 0.3, 10.0)

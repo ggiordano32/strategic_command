@@ -669,7 +669,7 @@ func (s *Server) buildSummary(ctx context.Context, seat Seat) (map[string]any, e
 		if li := s.liveInfo(c.ID, b.ID); li != nil {
 			live = li
 		}
-		battles = append(battles, map[string]any{"id": b.ID, "r": b.R, "region": c.region(b.R), "humans": b.Humans,
+		battles = append(battles, map[string]any{"id": b.ID, "r": b.R, "region": c.region(b.R), "humans": b.Humans, "guests": b.Guests,
 			"claim": claim, "wait_by": fl[0], "command_by": fl[1], "ask_by": ask, "live": live})
 	}
 	var acts []map[string]any
