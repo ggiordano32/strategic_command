@@ -13,19 +13,23 @@
 //   0 pos_x, 1 pos_y, 2 prev_x, 3 prev_y, 4 facing, 5 state, 6 unit_of,
 //   7 unit flags (indexed by unit: bit0 side, bit1 selected, bit2 under
 //     fire, bit3 shooting, bits 4-7 sprite, bits 8-11 engine sprite,
-//     bits 12-15 sprite set, bits 16-19 palette)
+//     bits 12-15 sprite set, bits 16-19 palette, bits 20-23 engine set)
 //
 // CPU-fed variant (render_mode skip_vertex_transform): the same sim ints,
 // converted to floats natively and interleaved into the MultiMesh buffer by
 // soldier_layer.gd, read back through MODEL_MATRIX (layer node at identity):
 //   [3].xy current position, [0].xy previous position, [1].x facing,
 //   [1].y state; INSTANCE_CUSTOM.x sprite, .y side + 2 selected + 4 under
-//   fire + 8 shooting, .z sprite set + 16 x palette, .w the instance's
+//   fire + 8 shooting, .z sprite set (engines: engine set) + 16 x palette, .w the instance's
 //   index. No texture fetch, uniform array, int uniform or bit operator in
 //   the vertex stage. Both variants draw the same pixels.
 //
 // Instances past the soldiers are artillery engines (state 6 working,
-// 7 wrecked or abandoned, drawn with the corpses).
+// 9-12 working and shooting with attack frame 0-3 from the reload, 7
+// wrecked, 8 abandoned; 7 and 8 drawn with the corpses). An engine whose
+// unit has an engine set draws from the atlas (step 1d): idle, walk while
+// it moves (packed, or carried), attack frame by its state, wrecked = the
+// death's last frame, abandoned = idle darkened.
 //
 // Sprites: one atlas, SPRITES cells side by side. Each cell maps the local
 // box x (forward) -1.6..4.4 m, y (right) -1.25..1.25 m. The quad drawn per
@@ -134,7 +138,18 @@ void tint(inout vec3 add, inout float k, vec3 target, float amt) {
 void atlas_frame(int set, int st, float moved, bool shoot, float idx, inout vec2 uv, out vec2 lp) {
 	int act = 0;
 	float pick = 0.0;  // < 0: the death's last frame; 1: its middle frame
-	if (st == 4) {
+	float fix = -1.0;  // >= 0: this frame (engines shooting)
+	if (st >= 6) {
+		if (st == 7) {
+			act = 3;
+			pick = -1.0;
+		} else if (st >= 9) {
+			act = 2;
+			fix = float(st - 9);
+		} else if (st == 6 && moved >= 20.0) {
+			act = 1;
+		}
+	} else if (st == 4) {
 		act = 3;
 		pick = -1.0;
 	} else if (st == 3) {
@@ -150,7 +165,9 @@ void atlas_frame(int set, int st, float moved, bool shoot, float idx, inout vec2
 	vec4 b = frame_entry(k + 1);
 	float n = b.w;
 	float fr = 0.0;
-	if (pick < 0.0) {
+	if (fix >= 0.0) {
+		fr = min(fix, n - 1.0);
+	} else if (pick < 0.0) {
 		fr = n - 1.0;
 	} else if (act == 3) {
 		fr = min(pick, n - 1.0);
@@ -167,13 +184,13 @@ void atlas_frame(int set, int st, float moved, bool shoot, float idx, inout vec2
 void place(vec2 cur, vec2 prv, float facing, int st, int spr, vec4 r, int side, bool sel, bool fire,
 		int set, int pal, bool shoot, float idx, inout vec2 uv, out vec2 pos, out vec4 col, out vec4 look) {
 	bool engine = st >= 6;
-	bool dead = st == 4 || st == 7;
+	bool dead = st == 4 || st == 7 || st == 8;
 	vec2 p = mix(prv, cur, alpha) * px_per_unit;
 	float ang = facing * (6.2831853 / 1024.0);
 	vec3 base = side == 0 ? color_side0 : color_side1;
 	look = vec4(0.0);
 	vec2 lp;
-	if (set > 0 && !engine) {
+	if (set > 0) {
 		atlas_frame(set, st, length(cur - prv), shoot, idx, uv, lp);
 	} else {
 		lp = vec2(mix(r.x, r.y, uv.x), mix(r.z, r.w, uv.y));
@@ -181,11 +198,13 @@ void place(vec2 cur, vec2 prv, float facing, int st, int spr, vec4 r, int side, 
 			(lp.y - CELL_Y0) / CELL_H);
 	}
 	vec2 v = lp * (px_per_unit * 1024.0);
-	if (set > 0 && !engine) {
+	if (set > 0) {
 		vec3 add = vec3(0.0);
 		float k = 1.0;
 		float a = 1.0;
-		if (dead) {
+		if (st == 8) {
+			tint(add, k, vec3(0.24, 0.2, 0.16), 0.25);  // an abandoned engine
+		} else if (dead) {
 			tint(add, k, vec3(0.24, 0.18, 0.13), 0.35);
 			a = 0.9;
 		} else {
@@ -249,8 +268,8 @@ void vertex() {
 	bool want_dead = layer_pass == 0;
 #endif
 	// 0 formed, 1 fighting, 2 routing, 3 knocked down, 4 dead, 5 off field;
-	// engines: 6 working, 7 out of action
-	bool dead = st == 4 || st == 7;
+	// engines: 6 working, 7 wrecked, 8 abandoned, 9-12 shooting
+	bool dead = st == 4 || st == 7 || st == 8;
 	if (st == 5 || dead != want_dead) {
 		VERTEX = vec2(-100000.0);
 		v_color = vec4(0.0);
@@ -280,7 +299,8 @@ void vertex() {
 		int flags = fetch_int(7, fetch_int(6, i));
 		int spr = clamp(st >= 6 ? bitfield(flags, 256, 16) : bitfield(flags, 16, 16), 0, SPRITES - 1);
 		place(cur, prv, float(fetch_int(4, i)), st, spr, spr_rect[spr], bitfield(flags, 1, 2),
-			bitfield(flags, 2, 2) != 0, bitfield(flags, 4, 2) != 0, bitfield(flags, 4096, 16),
+			bitfield(flags, 2, 2) != 0, bitfield(flags, 4, 2) != 0,
+			st >= 6 ? bitfield(flags, 1048576, 16) : bitfield(flags, 4096, 16),
 			bitfield(flags, 65536, 16), bitfield(flags, 8, 2) != 0, float(i), uv, pos, col, look);
 		// Instance transforms are identity; cancel whatever origin this
 		// instance has (the engine applies MODEL_MATRIX after this).

@@ -1,4 +1,4 @@
-# Sprite pipeline (steps 1a, 1b)
+# Sprite pipeline (steps 1a-1d)
 
 Units are written as data in `spec.json`; Blender builds them from code and
 renders the frames; `pack.py` makes the sheets and the manifest the game
@@ -70,11 +70,27 @@ spearmen (spear lines), 3 pikemen (pike lines), 4 shock_cavalry (cav,
 cav_missile, general lines). Set it on the base row of a line and its tier
 and faction rows inherit it. 5 archers (archer line), 6 javelinmen, 7
 slingers, 8 gastraphetes (step 1c: unit `pose` variant archer / javelin /
-sling / belly, `cord` parts, `show` / `hide` frame lists). Everything else
-is still procedural: camels, elephants, dogs, artillery, wagons,
-characters. The palette is the unit's faction's (palette keys = the
+sling / belly, `cord` parts, `show` / `hide` frame lists). Step 1d: 9 elephant,
+10 camel, 11 camel_archer, 12 crew (every battery, tower engine and wagon
+crew row), and on artillery rows a second field `engine_set` for the
+engines (13 bolt_thrower: bolts and tower bolts, 14 stone_thrower: stones
+and tower stones, 15 scorpion). The set fields are 4 bits: 15 is the
+last id until they are widened. `atlas.props` (cart, wagon, draft_horse)
+are packed too but not in the shaders' table: `PROPS` in sprite_atlas.gd,
+drawn by game/overlay.gd (wagons). Still procedural: dogs, characters,
+siege equipment (ladders, ram, tower, mantlets). The palette is the unit's faction's (palette keys = the
 faction keys of `campaign/cdata.gd`, in its FACTIONS order); see
 `game/soldier_layer.gd` `_palette_rows`.
+
+Rigs name their animation set (`anim`: humanoid, horse (also the camel
+rig), elephant, bolt / scorpion / onager (engines), cart / wagon (props)).
+A unit may carry `riders` (a list: prefix, rig, body, seat, parent_bone,
+parts, pose, `stand` 1 = on his feet, `fall` "roll" = stays on the beast in
+its death, skip); step 1b's `rider` + `rider_parts` still works. Cords
+take `via` without `show` (always). Engines' attack frames are picked by
+the game from the reload (0 loaded, 1 released, 2 / 3 winding), not the
+clock. `pack.py --contact-units a,b --contact-palettes rome,gauls` and the
+preview's `--units=` / `--palettes=` narrow the views.
 
 Animations are code, shared: `humanoid_pose` and `horse_pose` in
 `build.py` (idle 1, walk 6, attack 4, death 3 frames; frame counts and fps

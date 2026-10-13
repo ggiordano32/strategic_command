@@ -50,7 +50,7 @@ const C_A := 1     # facing (soldiers), t0 (missiles)
 const C_B := 5     # state (soldiers), t1 (missiles)
 const C_SPRITE := 8
 const C_FLAGS := 9
-const C_LOOK := 10   # sprite set + 16 x palette (per unit run; engines 0)
+const C_LOOK := 10   # sprite set + 16 x palette (per unit run; engines: engine set + 16 x palette)
 const C_IDX := 11    # the instance's index (the man's animation phase)
 ## Per-unit flag bits (both paths; see soldiers.gdshaderinc).
 const F_SHOOT := 8
@@ -82,8 +82,15 @@ const SPR_RECT: Array[Vector4] = [
 	Vector4(-1.6, 2.55, -1.25, 1.25), # 10 war elephant (the big body: a size of its own)
 	Vector4(-0.6, 0.65, -0.3, 0.3),   # 11 war dog
 ]
+## Engine view states (both paths; soldiers.gdshaderinc): 6 working (idle /
+## on the move), 7 wrecked, 8 abandoned (left on the field: whole), 9-12
+## working and shooting, its attack frame 0-3 from its reload (0 loaded, 1
+## just shot, 2 / 3 winding): an atlas engine's firing cycle follows the
+## sim's shots, not the clock. View only (read from e_reload, never written).
 const ENGINE_OK := 6
 const ENGINE_OUT := 7
+const ENGINE_LEFT := 8
+const ENGINE_SHOOT := 9
 
 ## Self-check (probe): PROBE_FRAMES frames into a battle (and again after a
 ## switch of path), only the soldier layers are drawn into a small offscreen
@@ -135,6 +142,8 @@ var _flags := PackedInt32Array()
 var _unit_sprite := PackedInt32Array()
 var _unit_engine := PackedInt32Array()  # engine sprite per unit (0 = none)
 var _unit_look := PackedInt32Array()    # sprite set + 16 x palette row per unit
+var _unit_elook := PackedInt32Array()   # engine set + 16 x palette row per unit (its engines)
+var _pal_rows := PackedInt32Array()
 var _e_state := PackedInt32Array()
 var _pr_flags := PackedInt32Array()
 var _pr_was_active := true
@@ -192,13 +201,16 @@ func setup(p_sim, p_px_per_m: float) -> void:
 	_unit_sprite.resize(sim.n_units)
 	_unit_engine.resize(sim.n_units)
 	_unit_look.resize(sim.n_units)
+	_unit_elook.resize(sim.n_units)
 	_e_state.resize(sim.n_eng)
 	_pr_flags.resize(sim.n_units)
 	var pal := _palette_rows()
+	_pal_rows = pal
 	for u in sim.n_units:
 		_unit_sprite[u] = UT.stat(sim.u_otype[u], "sprite")
 		_unit_look[u] = UT.stat(sim.u_otype[u], "sprite_set") + 16 * pal[u]
 		_unit_engine[u] = _engine_sprite_of(u)
+		_unit_elook[u] = _engine_set_of(u) + 16 * pal[u]
 		_pr_flags[u] = _pr_flag_of(u)
 	_last_eu = sim.e_unit.duplicate()
 
@@ -438,7 +450,7 @@ func _build_runs() -> void:
 		var u := _runs[r + 2]
 		var spr := _unit_sprite[u] if _runs[r] < sim.n else _unit_engine[u]
 		_cbuf.fill_rect(Rect2i(C_SPRITE, _runs[r], 1, _runs[r + 1]), Color(float(spr), 0.0, 0.0))
-		var look := _unit_look[u] if _runs[r] < sim.n else 0
+		var look := _unit_look[u] if _runs[r] < sim.n else _unit_elook[u]
 		_cbuf.fill_rect(Rect2i(C_LOOK, _runs[r], 1, _runs[r + 1]), Color(float(look), 0.0, 0.0))
 
 
@@ -449,6 +461,13 @@ func _engine_sprite_of(u: int) -> int:
 	var ty: int = sim.u_type[u] if UT.cls(sim.u_type[u]) == UT.CLS_ART else sim.u_otype[u]
 	var kind := UT.stat(ty, "m_kind") if UT.cls(ty) == UT.CLS_ART else 0
 	return 7 if kind == 1 else (8 if kind == 2 else 0)
+
+
+## Atlas engine set of the engines whose e_unit is u (as _engine_sprite_of;
+## 0: the procedural engine sprite).
+func _engine_set_of(u: int) -> int:
+	var ty: int = sim.u_type[u] if UT.cls(sim.u_type[u]) == UT.CLS_ART else sim.u_otype[u]
+	return UT.stat(ty, "engine_set") if UT.cls(ty) == UT.CLS_ART else 0
 
 
 ## Missile look of unit u's shots: bit 0 side, bits 1-2: 0 arrow, 1
@@ -472,6 +491,10 @@ func _refresh_engines() -> void:
 		var k := _engine_sprite_of(u)
 		if k != _unit_engine[u]:
 			_unit_engine[u] = k
+			changed = true
+		var el := _engine_set_of(u) + 16 * _pal_rows[u]
+		if el != _unit_elook[u]:
+			_unit_elook[u] = el
 			changed = true
 		_pr_flags[u] = _pr_flag_of(u)
 	if sim.e_unit != _last_eu:
@@ -571,7 +594,7 @@ func upload() -> void:
 	var sts: PackedInt32Array = sim.state
 	if sim.n_eng > 0:
 		for e in sim.n_eng:
-			_e_state[e] = ENGINE_OK if sim.e_state[e] == 0 else (5 if sim.e_state[e] == 3 else ENGINE_OUT)  # (3: a reinforcement's, not on the field: skipped like S_OFF)
+			_e_state[e] = _engine_view_state(e)
 		xs = xs + sim.e_x
 		ys = ys + sim.e_y
 		pxs = pxs + sim.e_px
@@ -599,11 +622,33 @@ func upload() -> void:
 	upload_us = Time.get_ticks_usec() - t0
 
 
+## An engine's view state (see ENGINE_OK): from its sim state and, while
+## its unit shoots, how far its reload has come.
+func _engine_view_state(e: int) -> int:
+	var es: int = sim.e_state[e]
+	if es == 3:
+		return 5  # a reinforcement's, not on the field: skipped like S_OFF
+	if es == 1:
+		return ENGINE_OUT
+	if es != 0:
+		return ENGINE_LEFT
+	var u: int = sim.e_unit[e]
+	if u < 0 or (sim.u_ftarget[u] < 0 and sim.u_gtarget[u] < 0):
+		return ENGINE_OK
+	var ty: int = sim.u_type[u]
+	var need := UT.stat(ty, "m_reload") * UT.stat(ty, "crew")
+	var r: int = sim.e_reload[e]
+	if need <= 0 or r >= need:
+		return ENGINE_SHOOT
+	var pct := r * 100 / need
+	return ENGINE_SHOOT + (1 if pct < 12 else (2 if pct < 45 else 3))
+
+
 func _upload_gpu(xs: PackedInt32Array, ys: PackedInt32Array, pxs: PackedInt32Array, pys: PackedInt32Array,
 		fs: PackedInt32Array, sts: PackedInt32Array, missiles: bool) -> void:
 	var gflags := _flags.duplicate()
 	for u in sim.n_units:
-		gflags[u] |= (_unit_sprite[u] << 4) | (_unit_engine[u] << 8) | (_unit_look[u] << 12)
+		gflags[u] |= (_unit_sprite[u] << 4) | (_unit_engine[u] << 8) | (_unit_look[u] << 12) | ((_unit_elook[u] & 15) << 20)
 	var block := _rows * TEX_W * 4
 	_image.set_data(TEX_W, BLOCKS * _rows, false, Image.FORMAT_RGBA8, _pack([xs, ys, pxs, pys, fs, sts,
 		sim.unit_of + sim.e_unit if sim.n_eng > 0 else sim.unit_of, gflags], block))

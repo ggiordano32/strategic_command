@@ -19,7 +19,19 @@
     "horse": [0.78, 0.53, 0.3],
     "horse_dark": [0.28, 0.18, 0.11],
     "string": [0.95, 0.92, 0.8],
-    "fletch": [0.97, 0.97, 0.94]
+    "fletch": [0.97, 0.97, 0.94],
+    "elephant": [0.6, 0.58, 0.58],
+    "elephant_dark": [0.4, 0.38, 0.38],
+    "ear": [0.5, 0.47, 0.47],
+    "ivory": [0.97, 0.94, 0.84],
+    "camel": [0.88, 0.7, 0.44],
+    "camel_dark": [0.56, 0.4, 0.24],
+    "rope": [0.8, 0.72, 0.52],
+    "stone": [0.72, 0.7, 0.66],
+    "linen": [0.92, 0.88, 0.76],
+    "char": [0.12, 0.1, 0.09],
+    "ember": [0.95, 0.45, 0.12],
+    "arm_wood": [0.86, 0.66, 0.4]
   },
   "palettes": {
     "rome": {"name": "Rome", "primary": [0.84, 0.13, 0.11], "secondary": [0.98, 0.8, 0.22], "accent": [0.86, 0.62, 0.28], "pattern": [0.55, 0.06, 0.05], "pattern_k": 0, "note": "red tunics and shields, gold crests and rims, bronze helmets and plates"},
@@ -66,6 +78,97 @@
         ["leg.BR", "body", [-0.56, -0.17, 1.08], [-0.6, -0.17, 0.55]],
         ["shin.BR", "leg.BR", [-0.6, -0.17, 0.55], [-0.56, -0.17, 0.06]]
       ]
+    },
+    "camel": {
+      "anim": "horse",
+      "bones": [
+        ["root", "", [0, 0, 0], [0, 0, 0.25]],
+        ["body", "root", [-0.65, 0, 1.55], [0.65, 0, 1.55]],
+        ["neck", "body", [0.62, 0, 1.6], [1.12, 0, 1.98]],
+        ["head", "neck", [1.12, 0, 2.0], [1.55, 0, 1.88]],
+        ["tail", "body", [-0.75, 0, 1.68], [-0.92, 0, 1.05]],
+        ["leg.FL", "body", [0.5, 0.2, 1.3], [0.52, 0.2, 0.7]],
+        ["shin.FL", "leg.FL", [0.52, 0.2, 0.7], [0.5, 0.2, 0.06]],
+        ["leg.FR", "body", [0.5, -0.2, 1.3], [0.52, -0.2, 0.7]],
+        ["shin.FR", "leg.FR", [0.52, -0.2, 0.7], [0.5, -0.2, 0.06]],
+        ["leg.BL", "body", [-0.52, 0.2, 1.32], [-0.55, 0.2, 0.7]],
+        ["shin.BL", "leg.BL", [-0.55, 0.2, 0.7], [-0.52, 0.2, 0.06]],
+        ["leg.BR", "body", [-0.52, -0.2, 1.32], [-0.55, -0.2, 0.7]],
+        ["shin.BR", "leg.BR", [-0.55, -0.2, 0.7], [-0.52, -0.2, 0.06]]
+      ]
+    },
+    "elephant": {
+      "anim": "elephant",
+      "bones": [
+        ["root", "", [0, 0, 0], [0, 0, 0.25]],
+        ["body", "root", [-1.0, 0, 1.75], [1.0, 0, 1.75]],
+        ["head", "body", [1.1, 0, 2.3], [1.7, 0, 2.05]],
+        ["trunk1", "head", [1.85, 0, 1.98], [2.25, 0, 1.55]],
+        ["trunk2", "trunk1", [2.25, 0, 1.55], [2.55, 0, 1.1]],
+        ["trunk3", "trunk2", [2.55, 0, 1.1], [2.7, 0, 0.6]],
+        ["ear.L", "head", [1.3, 0.42, 2.4], [1.05, 0.95, 2.1]],
+        ["ear.R", "head", [1.3, -0.42, 2.4], [1.05, -0.95, 2.1]],
+        ["tail", "body", [-1.3, 0, 2.0], [-1.5, 0, 1.1]],
+        ["leg.FL", "body", [0.72, 0.42, 1.35], [0.72, 0.42, 0.72]],
+        ["shin.FL", "leg.FL", [0.72, 0.42, 0.72], [0.72, 0.42, 0.05]],
+        ["leg.FR", "body", [0.72, -0.42, 1.35], [0.72, -0.42, 0.72]],
+        ["shin.FR", "leg.FR", [0.72, -0.42, 0.72], [0.72, -0.42, 0.05]],
+        ["leg.BL", "body", [-0.75, 0.42, 1.35], [-0.75, 0.42, 0.72]],
+        ["shin.BL", "leg.BL", [-0.75, 0.42, 0.72], [-0.75, 0.42, 0.05]],
+        ["leg.BR", "body", [-0.75, -0.42, 1.35], [-0.75, -0.42, 0.72]],
+        ["shin.BR", "leg.BR", [-0.75, -0.42, 0.72], [-0.75, -0.42, 0.05]]
+      ]
+    },
+    "bolt_engine": {
+      "anim": "bolt",
+      "bones": [
+        ["root", "", [0, 0, 0], [0, 0, 0.25]],
+        ["stand", "root", [0, 0, 0], [0, 0, 0.9]],
+        ["frame", "stand", [-0.9, 0, 1.0], [1.0, 0, 1.0]],
+        ["arm.L", "frame", [0.5, 0.3, 1.0], [0.15, 0.95, 1.0]],
+        ["arm.R", "frame", [0.5, -0.3, 1.0], [0.15, -0.95, 1.0]],
+        ["slide", "frame", [-0.55, 0, 1.07], [0.9, 0, 1.07]]
+      ]
+    },
+    "scorpion_engine": {
+      "anim": "scorpion",
+      "bones": [
+        ["root", "", [0, 0, 0], [0, 0, 0.25]],
+        ["stand", "root", [0, 0, 0], [0, 0, 0.72]],
+        ["frame", "stand", [-0.54, 0, 0.82], [0.6, 0, 0.82]],
+        ["arm.L", "frame", [0.3, 0.18, 0.82], [0.09, 0.57, 0.82]],
+        ["arm.R", "frame", [0.3, -0.18, 0.82], [0.09, -0.57, 0.82]],
+        ["slide", "frame", [-0.33, 0, 0.862], [0.54, 0, 0.862]]
+      ]
+    },
+    "onager": {
+      "anim": "onager",
+      "bones": [
+        ["root", "", [0, 0, 0], [0, 0, 0.25]],
+        ["frame", "root", [-1.5, 0, 0.4], [1.5, 0, 0.4]],
+        ["arm", "frame", [0.3, 0, 0.55], [-1.2, 0, 0.78]],
+        ["winch", "frame", [-1.25, 0, 0.55], [-1.25, 0.3, 0.55]]
+      ]
+    },
+    "cart": {
+      "anim": "cart",
+      "bones": [
+        ["root", "", [0, 0, 0], [0, 0, 0.25]],
+        ["body", "root", [-0.8, 0, 0.7], [0.8, 0, 0.7]],
+        ["wheel.L", "body", [-0.1, 0.62, 0.45], [-0.1, 0.75, 0.45]],
+        ["wheel.R", "body", [-0.1, -0.62, 0.45], [-0.1, -0.75, 0.45]]
+      ]
+    },
+    "wagon": {
+      "anim": "wagon",
+      "bones": [
+        ["root", "", [0, 0, 0], [0, 0, 0.25]],
+        ["body", "root", [-1.3, 0, 0.85], [1.3, 0, 0.85]],
+        ["wheel.L", "body", [-0.85, 0.66, 0.5], [-0.85, 0.8, 0.5]],
+        ["wheel.R", "body", [-0.85, -0.66, 0.5], [-0.85, -0.8, 0.5]],
+        ["wheelF.L", "body", [0.85, 0.66, 0.5], [0.85, 0.8, 0.5]],
+        ["wheelF.R", "body", [0.85, -0.66, 0.5], [0.85, -0.8, 0.5]]
+      ]
     }
   },
   "bodies": {
@@ -103,6 +206,49 @@
       {"n": "cloth_trim", "shape": "box", "bone": "body", "mat": "secondary", "pos": [-0.04, 0, 1.54], "size": [0.9, 0.92, 0.05]},
       {"n": "cloth", "shape": "box", "bone": "body", "mat": "primary", "pattern": 1, "pos": [-0.04, 0, 1.57], "size": [0.8, 0.84, 0.05]},
       {"n": "bridle", "shape": "limb", "bone": "head", "mat": "secondary", "a": [1.12, 0, 1.9], "b": [1.2, 0, 1.74], "t": [0.05, 0.26]}
+    ],
+    "elephant": [
+      {"n": "barrel", "shape": "box", "bone": "body", "mat": "elephant", "pos": [0, 0, 1.78], "size": [2.1, 1.36, 1.25], "bevel": 0.32},
+      {"n": "rump", "shape": "sphere", "bone": "body", "mat": "elephant", "pos": [-0.85, 0, 1.85], "r": 0.68},
+      {"n": "chest", "shape": "sphere", "bone": "body", "mat": "elephant", "pos": [0.75, 0, 1.9], "r": 0.7, "scale": [1.0, 1.0, 1.05]},
+      {"n": "neck", "shape": "sphere", "bone": "body", "mat": "elephant", "pos": [1.05, 0, 2.15], "r": 0.55},
+      {"n": "head", "shape": "sphere", "bone": "head", "mat": "elephant", "pos": [1.45, 0, 2.3], "r": 0.58, "scale": [1.0, 0.95, 1.08]},
+      {"n": "dome.L", "shape": "sphere", "bone": "head", "mat": "elephant", "pos": [1.4, 0.17, 2.7], "r": 0.26, "mirror": 1},
+      {"n": "trunk1", "shape": "limb", "bone": "trunk1", "mat": "elephant", "a": [1.85, 0, 1.98], "b": [2.25, 0, 1.55], "t": [0.34, 0.36]},
+      {"n": "trunk2", "shape": "limb", "bone": "trunk2", "mat": "elephant", "a": [2.25, 0, 1.55], "b": [2.55, 0, 1.1], "t": [0.27, 0.28]},
+      {"n": "trunk3", "shape": "limb", "bone": "trunk3", "mat": "elephant", "a": [2.55, 0, 1.1], "b": [2.7, 0, 0.6], "t": [0.2, 0.2]},
+      {"n": "trunk_tip", "shape": "box", "bone": "trunk3", "mat": "elephant_dark", "pos": [2.7, 0, 0.58], "size": [0.2, 0.2, 0.1]},
+      {"n": "tusk.L", "shape": "cone", "bone": "head", "mat": "ivory", "a": [1.72, 0.26, 1.95], "b": [2.42, 0.36, 2.08], "r": 0.08, "mirror": 1},
+      {"n": "ear.L", "shape": "box", "bone": "ear.L", "mat": "ear", "pos": [1.1, 0.86, 2.15], "size": [0.78, 0.9, 0.08], "rot": [-35, 0, 10], "bevel": 0.03, "mirror": 1},
+      {"n": "leg.FL", "shape": "limb", "bone": "leg.FL", "mat": "elephant", "a": [0.72, 0.42, 1.5], "b": [0.72, 0.42, 0.72], "t": 0.42, "mirror": 1},
+      {"n": "shin.FL", "shape": "limb", "bone": "shin.FL", "mat": "elephant", "a": [0.72, 0.42, 0.72], "b": [0.72, 0.42, 0.1], "t": 0.37, "mirror": 1},
+      {"n": "foot.FL", "shape": "cyl", "bone": "shin.FL", "mat": "elephant_dark", "pos": [0.72, 0.42, 0.06], "r": 0.24, "len": 0.12, "mirror": 1},
+      {"n": "leg.BL", "shape": "limb", "bone": "leg.BL", "mat": "elephant", "a": [-0.75, 0.42, 1.5], "b": [-0.75, 0.42, 0.72], "t": 0.42, "mirror": 1},
+      {"n": "shin.BL", "shape": "limb", "bone": "shin.BL", "mat": "elephant", "a": [-0.75, 0.42, 0.72], "b": [-0.75, 0.42, 0.1], "t": 0.37, "mirror": 1},
+      {"n": "foot.BL", "shape": "cyl", "bone": "shin.BL", "mat": "elephant_dark", "pos": [-0.75, 0.42, 0.06], "r": 0.24, "len": 0.12, "mirror": 1},
+      {"n": "tail", "shape": "limb", "bone": "tail", "mat": "elephant", "a": [-1.3, 0, 2.0], "b": [-1.5, 0, 1.1], "t": 0.07},
+      {"n": "tuft", "shape": "box", "bone": "tail", "mat": "dark", "pos": [-1.52, 0, 1.05], "size": [0.1, 0.1, 0.2]}
+    ],
+    "camel": [
+      {"n": "barrel", "shape": "box", "bone": "body", "mat": "camel", "pos": [0, 0, 1.55], "size": [1.25, 0.62, 0.55], "bevel": 0.16},
+      {"n": "chest", "shape": "sphere", "bone": "body", "mat": "camel", "pos": [0.55, 0, 1.55], "r": 0.32, "scale": [1.0, 1.1, 1.05]},
+      {"n": "rump", "shape": "sphere", "bone": "body", "mat": "camel", "pos": [-0.55, 0, 1.58], "r": 0.33},
+      {"n": "hump", "shape": "sphere", "bone": "body", "mat": "camel", "pos": [-0.1, 0, 1.9], "r": 0.38, "scale": [1.3, 1.0, 0.8]},
+      {"n": "neck", "shape": "limb", "bone": "neck", "mat": "camel", "a": [0.6, 0, 1.55], "b": [1.12, 0, 1.98], "t": [0.22, 0.24]},
+      {"n": "head", "shape": "limb", "bone": "head", "mat": "camel", "a": [1.1, 0, 2.02], "b": [1.55, 0, 1.9], "t": [0.2, 0.19]},
+      {"n": "muzzle", "shape": "box", "bone": "head", "mat": "camel_dark", "pos": [1.55, 0, 1.88], "size": [0.14, 0.18, 0.15]},
+      {"n": "ear.L", "shape": "box", "bone": "head", "mat": "camel_dark", "pos": [1.12, 0.09, 2.12], "size": [0.05, 0.06, 0.09], "mirror": 1},
+      {"n": "tail", "shape": "limb", "bone": "tail", "mat": "camel_dark", "a": [-0.72, 0, 1.68], "b": [-0.92, 0, 1.05], "t": [0.07, 0.06]},
+      {"n": "leg.FL", "shape": "limb", "bone": "leg.FL", "mat": "camel", "a": [0.5, 0.2, 1.38], "b": [0.52, 0.2, 0.7], "t": 0.15, "mirror": 1},
+      {"n": "shin.FL", "shape": "limb", "bone": "shin.FL", "mat": "camel", "a": [0.52, 0.2, 0.7], "b": [0.5, 0.2, 0.06], "t": 0.1, "mirror": 1},
+      {"n": "pad.FL", "shape": "box", "bone": "shin.FL", "mat": "camel_dark", "pos": [0.51, 0.2, 0.05], "size": [0.17, 0.15, 0.08], "mirror": 1},
+      {"n": "leg.BL", "shape": "limb", "bone": "leg.BL", "mat": "camel", "a": [-0.52, 0.2, 1.4], "b": [-0.55, 0.2, 0.7], "t": 0.15, "mirror": 1},
+      {"n": "shin.BL", "shape": "limb", "bone": "shin.BL", "mat": "camel", "a": [-0.55, 0.2, 0.7], "b": [-0.52, 0.2, 0.06], "t": 0.1, "mirror": 1},
+      {"n": "pad.BL", "shape": "box", "bone": "shin.BL", "mat": "camel_dark", "pos": [-0.52, 0.2, 0.05], "size": [0.17, 0.15, 0.08], "mirror": 1},
+      {"n": "cloth_trim", "shape": "box", "bone": "body", "mat": "secondary", "pos": [-0.1, 0, 2.19], "size": [0.82, 0.92, 0.04]},
+      {"n": "cloth", "shape": "box", "bone": "body", "mat": "primary", "pattern": 1, "pos": [-0.1, 0, 2.22], "size": [0.74, 0.84, 0.05]},
+      {"n": "drape.L", "shape": "box", "bone": "body", "mat": "primary", "pattern": 1, "pos": [-0.1, 0.38, 1.95], "size": [0.7, 0.05, 0.42], "mirror": 1},
+      {"n": "bridle", "shape": "limb", "bone": "head", "mat": "secondary", "a": [1.22, 0, 2.05], "b": [1.3, 0, 1.9], "t": [0.05, 0.22]}
     ]
   },
   "units": {
@@ -323,8 +469,307 @@
         {"n": "prod_r", "shape": "limb", "bone": "spine", "mat": "wood", "a": [0.95, 0.0, 1.22], "b": [0.82, -0.5, 1.22], "t": [0.07, 0.07]},
         {"n": "prod_string", "shape": "limb", "bone": "spine", "mat": "string", "a": [0.82, 0.5, 1.22], "b": [0.82, -0.5, 1.22], "t": [0.025, 0.025]}
       ]
+    },
+    "elephant": {
+      "name": "War Elephant",
+      "look": "Forest elephant from above: barrel body, thick legs, big ears, trunk curled forward, tusks; a faction caparison and frontlet, a howdah with shields hung on its sides, a driver on the neck and two javelin men behind",
+      "rig": "elephant",
+      "body": "elephant",
+      "render_box": [
+        -2.5,
+        3.75,
+        -3.5,
+        2.0
+      ],
+      "parts": [
+        {"n": "frontlet", "shape": "box", "bone": "head", "mat": "accent", "pos": [1.66, 0, 2.48], "size": [0.08, 0.46, 0.5], "rot": [0, -32, 0], "bevel": 0.02},
+        {"n": "capar_trim", "shape": "box", "bone": "body", "mat": "secondary", "pos": [-0.15, 0, 2.4], "size": [1.36, 1.4, 0.05]},
+        {"n": "caparison", "shape": "box", "bone": "body", "mat": "primary", "pattern": 1, "pos": [-0.15, 0, 2.43], "size": [1.25, 1.3, 0.06]},
+        {"n": "drape.L", "shape": "box", "bone": "body", "mat": "primary", "pattern": 1, "pos": [-0.15, 0.74, 2.08], "size": [1.5, 0.06, 0.7], "mirror": 1},
+        {"n": "fringe.L", "shape": "box", "bone": "body", "mat": "secondary", "pos": [-0.15, 0.76, 1.74], "size": [1.54, 0.07, 0.1], "mirror": 1},
+        {"n": "floor", "shape": "box", "bone": "body", "mat": "wood", "pos": [-0.35, 0.0, 2.5], "size": [0.966, 0.966, 0.1]},
+        {"n": "wall_f", "shape": "box", "bone": "body", "mat": "wood", "pos": [0.104, 0.0, 2.78], "size": [0.08, 0.966, 0.5]},
+        {"n": "wall_b", "shape": "box", "bone": "body", "mat": "wood", "pos": [-0.804, 0.0, 2.78], "size": [0.08, 0.966, 0.5]},
+        {"n": "wall.L", "shape": "box", "bone": "body", "mat": "wood", "pos": [-0.35, 0.47, 2.78], "size": [0.966, 0.08, 0.5], "mirror": 1},
+        {"n": "rim_f", "shape": "box", "bone": "body", "mat": "secondary", "pos": [0.104, 0.0, 3.05], "size": [0.11, 1.008, 0.06]},
+        {"n": "rim_b", "shape": "box", "bone": "body", "mat": "secondary", "pos": [-0.804, 0.0, 3.05], "size": [0.11, 1.008, 0.06]},
+        {"n": "rim.L", "shape": "box", "bone": "body", "mat": "secondary", "pos": [-0.35, 0.47, 3.05], "size": [1.008, 0.11, 0.06], "mirror": 1},
+        {"n": "hshield_a.L", "shape": "cyl", "bone": "body", "mat": "primary", "pos": [-0.123, 0.529, 2.75], "r": 0.21, "len": 0.05, "verts": 10, "rot": [-55, 0, 0], "mirror": 1},
+        {"n": "hshield_b.L", "shape": "cyl", "bone": "body", "mat": "primary", "pos": [-0.577, 0.529, 2.75], "r": 0.21, "len": 0.05, "verts": 10, "rot": [-55, 0, 0], "mirror": 1},
+        {"n": "hboss_a.L", "shape": "sphere", "bone": "body", "mat": "accent", "pos": [-0.123, 0.554, 2.77], "r": 0.07, "verts": 6, "mirror": 1},
+        {"n": "hboss_b.L", "shape": "sphere", "bone": "body", "mat": "accent", "pos": [-0.577, 0.554, 2.77], "r": 0.07, "verts": 6, "mirror": 1}
+      ],
+      "riders": [
+        {"prefix": "d.", "rig": "humanoid", "body": "humanoid", "seat": [0.95, 0, 1.62], "parent_bone": "body", "fall": "roll", "skip": ["cloak_back"], "parts": [{"n": "cap", "shape": "sphere", "bone": "head", "mat": "secondary", "pos": [0.0, 0, 1.68], "r": 0.18, "scale": [1.05, 1.0, 0.85]}, {"n": "goad", "shape": "limb", "bone": "forearm.R", "mat": "wood", "a": [0.3, -0.29, 1.06], "b": [0.85, -0.29, 1.3], "t": 0.04}, {"n": "hook", "shape": "box", "bone": "forearm.R", "mat": "metal", "pos": [0.86, -0.29, 1.3], "size": [0.1, 0.05, 0.05]}]},
+        {"prefix": "j0.", "rig": "humanoid", "body": "humanoid", "seat": [-0.3, 0.27, 2.55], "parent_bone": "body", "stand": 1, "pose": "javelin", "fall": "roll", "skip": ["cloak_back"], "parts": [{"n": "helmet", "shape": "sphere", "bone": "head", "mat": "accent", "pos": [0.0, 0, 1.68], "r": 0.18, "scale": [1.05, 1.0, 0.9]}, {"n": "crest", "shape": "box", "bone": "head", "mat": "secondary", "pos": [-0.02, 0, 1.85], "size": [0.32, 0.07, 0.1], "bevel": 0.03}, {"n": "jav_r", "shape": "limb", "bone": "forearm.R", "mat": "wood", "a": [-0.5, -0.29, 1.06], "b": [1.0, -0.29, 1.12], "t": 0.05, "hide": {"attack": [2, 3]}}, {"n": "jav_r_head", "shape": "cone", "bone": "forearm.R", "mat": "metal", "a": [0.98, -0.29, 1.12], "b": [1.22, -0.29, 1.13], "r": 0.055, "hide": {"attack": [2, 3]}}]},
+        {"prefix": "j1.", "rig": "humanoid", "body": "humanoid", "seat": [-0.3, -0.27, 2.55], "parent_bone": "body", "stand": 1, "pose": "javelin", "fall": "roll", "skip": ["cloak_back"], "parts": [{"n": "helmet", "shape": "sphere", "bone": "head", "mat": "accent", "pos": [0.0, 0, 1.68], "r": 0.18, "scale": [1.05, 1.0, 0.9]}, {"n": "crest", "shape": "box", "bone": "head", "mat": "secondary", "pos": [-0.02, 0, 1.85], "size": [0.32, 0.07, 0.1], "bevel": 0.03}, {"n": "jav_r", "shape": "limb", "bone": "forearm.R", "mat": "wood", "a": [-0.5, -0.29, 1.06], "b": [1.0, -0.29, 1.12], "t": 0.05, "hide": {"attack": [2, 3]}}, {"n": "jav_r_head", "shape": "cone", "bone": "forearm.R", "mat": "metal", "a": [0.98, -0.29, 1.12], "b": [1.22, -0.29, 1.13], "r": 0.055, "hide": {"attack": [2, 3]}}]}
+      ]
+    },
+    "camel": {
+      "name": "Camel Riders",
+      "look": "Dromedary from above: long neck forward, a hump under the saddle cloth; the rider in a turban with a small round shield and a sword",
+      "rig": "camel",
+      "body": "camel",
+      "render_box": [
+        -3.0,
+        3.25,
+        -2.25,
+        2.0
+      ],
+      "parts": [
+
+      ],
+      "riders": [
+        {"rig": "humanoid", "body": "humanoid", "seat": [-0.12, 0, 1.33], "parent_bone": "body", "prefix": "r.", "parts": [{"n": "turban", "shape": "sphere", "bone": "head", "mat": "secondary", "pos": [0.0, 0, 1.7], "r": 0.19, "scale": [1.1, 1.05, 0.8]}, {"n": "turban_tail", "shape": "box", "bone": "head", "mat": "secondary", "pos": [-0.16, 0, 1.6], "size": [0.12, 0.14, 0.22], "rot": [0, 20, 0]}, {"n": "shield_rim", "shape": "cyl", "bone": "forearm.L", "mat": "secondary", "pos": [0.3, 0.36, 1.16], "r": 0.33, "len": 0.04, "verts": 12, "rot": [-20, 55, 0]}, {"n": "shield", "shape": "cyl", "bone": "forearm.L", "mat": "primary", "pos": [0.32, 0.36, 1.16], "r": 0.27, "len": 0.04, "verts": 12, "rot": [-20, 55, 0]}, {"n": "boss", "shape": "sphere", "bone": "forearm.L", "mat": "accent", "pos": [0.36, 0.36, 1.18], "r": 0.08}, {"n": "blade", "shape": "limb", "bone": "forearm.R", "mat": "metal", "a": [0.36, -0.29, 1.08], "b": [1.15, -0.29, 1.14], "t": [0.03, 0.09]}, {"n": "guard", "shape": "box", "bone": "forearm.R", "mat": "dark", "pos": [0.38, -0.29, 1.08], "size": [0.05, 0.16, 0.06]}]}
+      ]
+    },
+    "camel_archer": {
+      "name": "Camel Archers",
+      "look": "The camel with an archer in the saddle: coloured cap, quiver, bow; the attack is the archers' draw and shot from the saddle",
+      "rig": "camel",
+      "body": "camel",
+      "render_box": [
+        -3.0,
+        3.25,
+        -2.25,
+        2.0
+      ],
+      "parts": [
+
+      ],
+      "riders": [
+        {"rig": "humanoid", "body": "humanoid", "seat": [-0.12, 0, 1.33], "parent_bone": "body", "prefix": "r.", "pose": "archer", "skip": ["cloak_back"], "parts": [{"n": "cap", "shape": "sphere", "bone": "head", "mat": "secondary", "pos": [0.0, 0, 1.68], "r": 0.18, "scale": [1.05, 1.0, 0.85]}, {"n": "cap_band", "shape": "box", "bone": "head", "mat": "accent", "pos": [0.1, 0, 1.6], "size": [0.06, 0.3, 0.05]}, {"n": "quiver", "shape": "cyl", "bone": "spine", "mat": "leather", "pos": [-0.2, -0.12, 1.28], "r": 0.075, "len": 0.55, "verts": 8, "rot": [20, -18, 0]}, {"n": "quiver_band", "shape": "cyl", "bone": "spine", "mat": "secondary", "pos": [-0.2, -0.12, 1.28], "r": 0.082, "len": 0.12, "verts": 8, "rot": [20, -18, 0]}, {"n": "fletching", "shape": "box", "bone": "spine", "mat": "fletch", "pos": [-0.27, -0.18, 1.58], "size": [0.1, 0.12, 0.1], "bevel": 0.02, "rot": [20, -18, 0]}, {"n": "bow_grip", "shape": "box", "bone": "forearm.L", "mat": "leather", "pos": [0.47, 0.28, 1.12], "size": [0.07, 0.07, 0.2]}, {"n": "bow_up1", "shape": "limb", "bone": "forearm.L", "mat": "wood", "a": [0.46, 0.28, 1.2], "b": [0.42, 0.28, 1.45], "t": 0.06}, {"n": "bow_up2", "shape": "limb", "bone": "forearm.L", "mat": "wood", "a": [0.42, 0.28, 1.45], "b": [0.35, 0.28, 1.72], "t": 0.05}, {"n": "bow_dn1", "shape": "limb", "bone": "forearm.L", "mat": "wood", "a": [0.46, 0.28, 1.04], "b": [0.42, 0.28, 0.79], "t": 0.06}, {"n": "bow_dn2", "shape": "limb", "bone": "forearm.L", "mat": "wood", "a": [0.42, 0.28, 0.79], "b": [0.35, 0.28, 0.52], "t": 0.05}, {"n": "string", "shape": "cord", "bone": "forearm.L", "mat": "string", "a": [0.35, 0.28, 1.72], "b": [0.35, 0.28, 0.52], "t": 0.025, "via": {"bone": "forearm.R", "pos": [0.32, -0.29, 1.08], "show": {"attack": [0, 1]}}}, {"n": "arrow", "shape": "cord", "bone": "forearm.R", "a_bone": "forearm.R", "b_bone": "forearm.L", "mat": "wood", "a": [0.3, -0.29, 1.08], "b": [0.47, 0.28, 1.12], "t": 0.04, "frames": {"attack": [0, 1]}}, {"n": "arrowhead", "shape": "cord", "bone": "forearm.L", "mat": "metal", "a": [0.45, 0.28, 1.12], "b": [0.6, 0.28, 1.12], "t": 0.07, "frames": {"attack": [0, 1]}}, {"n": "fletch", "shape": "cord", "bone": "forearm.R", "mat": "fletch", "a": [0.3, -0.29, 1.08], "b": [0.42, -0.29, 1.08], "t": 0.09, "frames": {"attack": [0, 1]}}]}
+      ]
+    },
+    "crew": {
+      "name": "Engine Crew",
+      "look": "Javelinmen's light body without weapons: leather cap with a band, a tool pouch; the attack is the work at the winch",
+      "rig": "humanoid",
+      "body": "humanoid",
+      "pose": "crew",
+      "skip": [
+        "cloak_back"
+      ],
+      "render_box": [
+        -1.5,
+        1.75,
+        -1.5,
+        1.5
+      ],
+      "parts": [
+        {"n": "cap", "shape": "sphere", "bone": "head", "mat": "leather", "pos": [0.0, 0, 1.68], "r": 0.18, "scale": [1.05, 1.0, 0.85]},
+        {"n": "band", "shape": "box", "bone": "head", "mat": "secondary", "pos": [0.12, 0, 1.62], "size": [0.07, 0.3, 0.06]},
+        {"n": "pouch", "shape": "box", "bone": "hips", "mat": "leather", "pos": [0.05, -0.27, 0.98], "size": [0.18, 0.12, 0.2], "bevel": 0.03},
+        {"n": "apron", "shape": "box", "bone": "hips", "mat": "leather", "pos": [0.15, 0, 0.82], "size": [0.06, 0.36, 0.32]}
+      ]
+    },
+    "bolt_thrower": {
+      "name": "Bolt Thrower",
+      "look": "Torsion bolt thrower on a tripod: a stock with a slide, a frame with two twisted springs and bronze washers, two arms, the string drawn back to the claw, a bolt in the groove, a faction-painted plate between the springs, a winch at the back",
+      "rig": "bolt_engine",
+      "render_box": [
+        -1.5,
+        1.75,
+        -1.5,
+        1.5
+      ],
+      "parts": [
+        {"n": "post", "shape": "limb", "bone": "stand", "mat": "wood", "a": [0, 0, 0], "b": [0, 0, 0.94], "t": 0.13},
+        {"n": "leg.L", "shape": "limb", "bone": "stand", "mat": "wood", "a": [0, 0, 0.7], "b": [-0.55, 0.55, 0], "t": 0.1, "mirror": 1},
+        {"n": "leg_f", "shape": "limb", "bone": "stand", "mat": "wood", "a": [0, 0, 0.7], "b": [0.62, 0, 0], "t": 0.1},
+        {"n": "stock", "shape": "limb", "bone": "frame", "mat": "wood", "a": [-0.95, 0.0, 0.97], "b": [1.0, 0.0, 0.97], "t": [0.2, 0.16]},
+        {"n": "cap_top", "shape": "box", "bone": "frame", "mat": "wood", "pos": [0.5, 0.0, 1.28], "size": [0.16, 0.82, 0.08]},
+        {"n": "cap_bot", "shape": "box", "bone": "frame", "mat": "wood", "pos": [0.5, 0.0, 0.74], "size": [0.16, 0.82, 0.08]},
+        {"n": "spring.L", "shape": "cyl", "bone": "frame", "mat": "rope", "pos": [0.5, 0.3, 1.0], "r": 0.11, "len": 0.6, "mirror": 1},
+        {"n": "washer.L", "shape": "cyl", "bone": "frame", "mat": "accent", "pos": [0.5, 0.3, 1.33], "r": 0.15, "len": 0.05, "mirror": 1},
+        {"n": "plate", "shape": "box", "bone": "frame", "mat": "primary", "pos": [0.68, 0.0, 1.12], "size": [0.04, 0.36, 0.32], "rot": [0, -25, 0]},
+        {"n": "arm.L", "shape": "limb", "bone": "arm.L", "mat": "wood", "a": [0.5, 0.3, 1.0], "b": [0.15, 0.95, 1.0], "t": [0.13, 0.13]},
+        {"n": "tip.L", "shape": "box", "bone": "arm.L", "mat": "metal", "pos": [0.15, 0.95, 1.0], "size": [0.1, 0.1, 0.09]},
+        {"n": "string", "shape": "cord", "bone": "arm.L", "mat": "string", "a": [0.15, 0.95, 1.0], "b_bone": "arm.R", "b": [0.15, -0.95, 1.0], "t": 0.035, "via": {"bone": "slide", "pos": [-0.52, 0.0, 1.1], "show": {"idle": [0], "attack": [0, 2, 3]}}},
+        {"n": "slide", "shape": "limb", "bone": "slide", "mat": "dark", "a": [-0.55, 0.0, 1.07], "b": [0.9, 0.0, 1.07], "t": [0.08, 0.05]},
+        {"n": "claw", "shape": "box", "bone": "slide", "mat": "metal", "pos": [-0.52, 0.0, 1.12], "size": [0.12, 0.14, 0.06]},
+        {"n": "bolt", "shape": "limb", "bone": "slide", "mat": "wood", "a": [-0.45, 0.0, 1.16], "b": [0.95, 0.0, 1.16], "t": 0.05, "show": {"idle": [0], "attack": [0]}},
+        {"n": "bolt_head", "shape": "cone", "bone": "slide", "mat": "metal", "a": [0.93, 0.0, 1.16], "b": [1.22, 0.0, 1.16], "r": 0.06, "show": {"idle": [0], "attack": [0]}},
+        {"n": "bolt_fletch", "shape": "box", "bone": "slide", "mat": "fletch", "pos": [-0.38, 0.0, 1.16], "size": [0.16, 0.17, 0.02], "show": {"idle": [0], "attack": [0]}},
+        {"n": "winch", "shape": "cyl", "bone": "frame", "mat": "wood", "pos": [-0.82, 0.0, 1.0], "r": 0.08, "len": 0.55, "rot": [90, 0, 0]},
+        {"n": "handle.L", "shape": "limb", "bone": "frame", "mat": "dark", "a": [-0.82, 0.3, 0.85], "b": [-0.82, 0.3, 1.15], "t": 0.04, "mirror": 1},
+        {"n": "char_a", "shape": "box", "bone": "frame", "mat": "char", "pos": [0.05, 0.06, 1.06], "size": [0.6, 0.24, 0.03], "show": {"death": [1, 2]}},
+        {"n": "char_b", "shape": "box", "bone": "frame", "mat": "char", "pos": [0.5, -0.12, 1.33], "size": [0.22, 0.5, 0.03], "show": {"death": [1, 2]}},
+        {"n": "char_c", "shape": "cyl", "bone": "frame", "mat": "char", "pos": [0.5, -0.3, 1.0], "r": 0.125, "len": 0.5, "show": {"death": [2]}},
+        {"n": "ember", "shape": "box", "bone": "frame", "mat": "ember", "pos": [0.2, 0.0, 1.08], "size": [0.12, 0.1, 0.03], "show": {"death": [1]}}
+      ]
+    },
+    "scorpion": {
+      "name": "Scorpion",
+      "look": "The bolt thrower at 60 %: on its tripod set up; carried shoulder high by its two men on poles, legs folded",
+      "rig": "scorpion_engine",
+      "render_box": [
+        -1.5,
+        1.5,
+        -1.25,
+        1.25
+      ],
+      "parts": [
+        {"n": "post", "shape": "limb", "bone": "stand", "mat": "wood", "a": [0, 0, 0], "b": [0, 0, 0.76], "t": 0.078, "hide": {"walk": [0, 1, 2, 3, 4, 5]}},
+        {"n": "leg.L", "shape": "limb", "bone": "stand", "mat": "wood", "a": [0, 0, 0.574], "b": [-0.33, 0.33, 0], "t": 0.068, "mirror": 1, "hide": {"walk": [0, 1, 2, 3, 4, 5]}},
+        {"n": "leg_f", "shape": "limb", "bone": "stand", "mat": "wood", "a": [0, 0, 0.574], "b": [0.372, 0, 0], "t": 0.068, "hide": {"walk": [0, 1, 2, 3, 4, 5]}},
+        {"n": "stock", "shape": "limb", "bone": "frame", "mat": "wood", "a": [-0.57, 0.0, 0.802], "b": [0.6, 0.0, 0.802], "t": [0.096, 0.078]},
+        {"n": "cap_top", "shape": "box", "bone": "frame", "mat": "wood", "pos": [0.3, 0.0, 0.988], "size": [0.096, 0.492, 0.048]},
+        {"n": "cap_bot", "shape": "box", "bone": "frame", "mat": "wood", "pos": [0.3, 0.0, 0.664], "size": [0.096, 0.492, 0.048]},
+        {"n": "spring.L", "shape": "cyl", "bone": "frame", "mat": "rope", "pos": [0.3, 0.18, 0.82], "r": 0.066, "len": 0.36, "mirror": 1},
+        {"n": "washer.L", "shape": "cyl", "bone": "frame", "mat": "accent", "pos": [0.3, 0.18, 1.018], "r": 0.09, "len": 0.03, "mirror": 1},
+        {"n": "plate", "shape": "box", "bone": "frame", "mat": "primary", "pos": [0.408, 0.0, 0.892], "size": [0.024, 0.216, 0.192], "rot": [0, -25, 0]},
+        {"n": "arm.L", "shape": "limb", "bone": "arm.L", "mat": "wood", "a": [0.3, 0.18, 0.82], "b": [0.09, 0.57, 0.82], "t": [0.064, 0.06]},
+        {"n": "tip.L", "shape": "box", "bone": "arm.L", "mat": "metal", "pos": [0.09, 0.57, 0.82], "size": [0.064, 0.064, 0.054]},
+        {"n": "string", "shape": "cord", "bone": "arm.L", "mat": "string", "a": [0.09, 0.57, 0.82], "b_bone": "arm.R", "b": [0.09, -0.57, 0.82], "t": 0.035, "via": {"bone": "slide", "pos": [-0.312, 0.0, 0.88], "show": {"idle": [0], "attack": [0, 2, 3]}}},
+        {"n": "slide", "shape": "limb", "bone": "slide", "mat": "dark", "a": [-0.33, 0.0, 0.862], "b": [0.54, 0.0, 0.862], "t": [0.052, 0.03]},
+        {"n": "claw", "shape": "box", "bone": "slide", "mat": "metal", "pos": [-0.312, 0.0, 0.892], "size": [0.08, 0.092, 0.036]},
+        {"n": "bolt", "shape": "limb", "bone": "slide", "mat": "wood", "a": [-0.27, 0.0, 0.916], "b": [0.57, 0.0, 0.916], "t": 0.05, "show": {"idle": [0], "attack": [0]}},
+        {"n": "bolt_head", "shape": "cone", "bone": "slide", "mat": "metal", "a": [0.558, 0.0, 0.916], "b": [0.732, 0.0, 0.916], "r": 0.06, "show": {"idle": [0], "attack": [0]}},
+        {"n": "bolt_fletch", "shape": "box", "bone": "slide", "mat": "fletch", "pos": [-0.228, 0.0, 0.916], "size": [0.096, 0.11, 0.02], "show": {"idle": [0], "attack": [0]}},
+        {"n": "winch", "shape": "cyl", "bone": "frame", "mat": "wood", "pos": [-0.492, 0.0, 0.82], "r": 0.048, "len": 0.33, "rot": [90, 0, 0]},
+        {"n": "handle.L", "shape": "limb", "bone": "frame", "mat": "dark", "a": [-0.492, 0.18, 0.73], "b": [-0.492, 0.18, 0.91], "t": 0.04, "mirror": 1},
+        {"n": "char_a", "shape": "box", "bone": "frame", "mat": "char", "pos": [0.03, 0.036, 0.856], "size": [0.36, 0.144, 0.03], "show": {"death": [1, 2]}},
+        {"n": "char_b", "shape": "box", "bone": "frame", "mat": "char", "pos": [0.3, -0.072, 1.018], "size": [0.132, 0.3, 0.03], "show": {"death": [1, 2]}},
+        {"n": "char_c", "shape": "cyl", "bone": "frame", "mat": "char", "pos": [0.3, -0.18, 0.82], "r": 0.075, "len": 0.3, "show": {"death": [2]}},
+        {"n": "ember", "shape": "box", "bone": "frame", "mat": "ember", "pos": [0.12, 0.0, 0.868], "size": [0.072, 0.06, 0.03], "show": {"death": [1]}},
+        {"n": "pole.L", "shape": "limb", "bone": "frame", "mat": "wood", "a": [-1.15, 0.3, 0.77], "b": [1.1, 0.3, 0.77], "t": 0.06, "mirror": 1, "show": {"walk": [0, 1, 2, 3, 4, 5]}},
+        {"n": "fold.L", "shape": "limb", "bone": "frame", "mat": "wood", "a": [0.0, 0.08, 0.7], "b": [-0.5, 0.12, 0.68], "t": 0.06, "mirror": 1, "show": {"walk": [0, 1, 2, 3, 4, 5]}}
+      ]
+    },
+    "stone_thrower": {
+      "name": "Stone Thrower",
+      "look": "Onager: a low frame of two long beams on four small wheels, the horizontal skein with bronze washers, one arm lying back with the sling and a stone, two uprights with a padded faction-coloured buffer, a winch with spokes at the back",
+      "rig": "onager",
+      "render_box": [
+        -2.25,
+        2.25,
+        -1.75,
+        1.75
+      ],
+      "parts": [
+        {"n": "beam.L", "shape": "box", "bone": "frame", "mat": "wood", "pos": [0, 0.55, 0.35], "size": [3.0, 0.2, 0.24], "bevel": 0.03, "mirror": 1},
+        {"n": "cross_b", "shape": "box", "bone": "frame", "mat": "wood", "pos": [-1.4, 0, 0.36], "size": [0.18, 1.3, 0.16]},
+        {"n": "cross_f", "shape": "box", "bone": "frame", "mat": "wood", "pos": [1.35, 0, 0.36], "size": [0.18, 1.3, 0.16]},
+        {"n": "wheel_b.L", "shape": "cyl", "bone": "frame", "mat": "dark", "pos": [-1.1, 0.72, 0.28], "r": 0.27, "len": 0.1, "rot": [90, 0, 0], "mirror": 1},
+        {"n": "wheel_f.L", "shape": "cyl", "bone": "frame", "mat": "dark", "pos": [1.1, 0.72, 0.28], "r": 0.27, "len": 0.1, "rot": [90, 0, 0], "mirror": 1},
+        {"n": "skein", "shape": "cyl", "bone": "frame", "mat": "rope", "pos": [0.3, 0, 0.5], "r": 0.2, "len": 1.1, "rot": [90, 0, 0]},
+        {"n": "washer.L", "shape": "cyl", "bone": "frame", "mat": "accent", "pos": [0.3, 0.6, 0.5], "r": 0.26, "len": 0.08, "rot": [90, 0, 0], "mirror": 1},
+        {"n": "upright.L", "shape": "limb", "bone": "frame", "mat": "wood", "a": [0.85, 0.55, 0.4], "b": [0.85, 0.55, 1.62], "t": 0.17, "mirror": 1},
+        {"n": "brace.L", "shape": "limb", "bone": "frame", "mat": "wood", "a": [1.42, 0.55, 0.42], "b": [0.9, 0.55, 1.45], "t": 0.12, "mirror": 1},
+        {"n": "buffer", "shape": "box", "bone": "frame", "mat": "wood", "pos": [0.85, 0, 1.62], "size": [0.24, 1.34, 0.22]},
+        {"n": "cushion", "shape": "box", "bone": "frame", "mat": "primary", "pos": [0.73, 0, 1.56], "size": [0.18, 0.82, 0.34], "bevel": 0.05},
+        {"n": "arm", "shape": "limb", "bone": "arm", "mat": "arm_wood", "a": [0.3, 0, 0.55], "b": [-1.2, 0, 0.78], "t": [0.22, 0.24]},
+        {"n": "band_a", "shape": "box", "bone": "arm", "mat": "metal", "pos": [-0.4, 0, 0.67], "size": [0.08, 0.22, 0.24]},
+        {"n": "band_b", "shape": "box", "bone": "arm", "mat": "metal", "pos": [-0.9, 0, 0.74], "size": [0.08, 0.22, 0.24]},
+        {"n": "sling", "shape": "limb", "bone": "arm", "mat": "rope", "a": [-1.2, 0, 0.78], "b": [-1.5, 0, 0.64], "t": 0.05},
+        {"n": "pouch", "shape": "box", "bone": "arm", "mat": "leather", "pos": [-1.52, 0, 0.62], "size": [0.22, 0.2, 0.08]},
+        {"n": "stone", "shape": "sphere", "bone": "arm", "mat": "stone", "pos": [-1.52, 0, 0.72], "r": 0.15, "verts": 8, "show": {"idle": [0], "attack": [0, 3]}},
+        {"n": "drum", "shape": "cyl", "bone": "winch", "mat": "wood", "pos": [-1.25, 0, 0.55], "r": 0.12, "len": 0.9, "rot": [90, 0, 0]},
+        {"n": "spoke_v.L", "shape": "limb", "bone": "winch", "mat": "dark", "a": [-1.25, 0.42, 0.22], "b": [-1.25, 0.42, 0.88], "t": 0.06, "mirror": 1},
+        {"n": "spoke_h.L", "shape": "limb", "bone": "winch", "mat": "dark", "a": [-1.58, 0.42, 0.55], "b": [-0.92, 0.42, 0.55], "t": 0.06, "mirror": 1},
+        {"n": "rope", "shape": "cord", "bone": "winch", "mat": "rope", "a": [-1.25, 0, 0.67], "b_bone": "arm", "b": [-0.85, 0, 0.74], "t": 0.04, "frames": {"idle": [0], "walk": [0, 1, 2, 3, 4, 5], "attack": [0, 2, 3], "death": []}},
+        {"n": "char_a", "shape": "box", "bone": "frame", "mat": "char", "pos": [-0.3, 0.35, 0.49], "size": [1.1, 0.4, 0.03], "show": {"death": [1, 2]}},
+        {"n": "char_b", "shape": "box", "bone": "frame", "mat": "char", "pos": [0.75, -0.2, 1.75], "size": [0.3, 0.7, 0.03], "show": {"death": [1, 2]}},
+        {"n": "char_c", "shape": "box", "bone": "frame", "mat": "char", "pos": [0.2, -0.55, 0.49], "size": [0.9, 0.22, 0.03], "show": {"death": [2]}},
+        {"n": "ember", "shape": "box", "bone": "frame", "mat": "ember", "pos": [-0.1, 0.3, 0.52], "size": [0.2, 0.15, 0.03], "show": {"death": [1]}}
+      ]
+    },
+    "cart": {
+      "name": "Hand Cart",
+      "look": "Two-wheeled hand cart with shafts and a crossbar for the men: a bundle of javelins, arrow sheaves and a basket of sling stones",
+      "rig": "cart",
+      "prop": 1,
+      "render_box": [
+        -1.5,
+        2.5,
+        -2.0,
+        1.5
+      ],
+      "parts": [
+        {"n": "bed", "shape": "box", "bone": "body", "mat": "wood", "pos": [0, 0, 0.68], "size": [1.6, 1.0, 0.08]},
+        {"n": "side.L", "shape": "box", "bone": "body", "mat": "wood", "pos": [0, 0.48, 0.82], "size": [1.6, 0.06, 0.26], "mirror": 1},
+        {"n": "end_f", "shape": "box", "bone": "body", "mat": "wood", "pos": [0.78, 0, 0.82], "size": [0.06, 1.0, 0.26]},
+        {"n": "end_b", "shape": "box", "bone": "body", "mat": "wood", "pos": [-0.78, 0, 0.82], "size": [0.06, 1.0, 0.26]},
+        {"n": "axle", "shape": "limb", "bone": "body", "mat": "dark", "a": [-0.1, -0.62, 0.45], "b": [-0.1, 0.62, 0.45], "t": 0.08},
+        {"n": "wheel.L", "shape": "cyl", "bone": "wheel.L", "mat": "wood", "pos": [-0.1, 0.66, 0.45], "r": 0.45, "len": 0.09, "verts": 12, "rot": [90, 0, 0], "mirror": 1},
+        {"n": "hub.L", "shape": "cyl", "bone": "wheel.L", "mat": "dark", "pos": [-0.1, 0.68, 0.45], "r": 0.09, "len": 0.15, "rot": [90, 0, 0], "mirror": 1},
+        {"n": "shaft.L", "shape": "limb", "bone": "body", "mat": "wood", "a": [0.7, 0.38, 0.75], "b": [2.05, 0.32, 0.85], "t": 0.08, "mirror": 1},
+        {"n": "crossbar", "shape": "limb", "bone": "body", "mat": "wood", "a": [1.95, 0.36, 0.85], "b": [1.95, -0.36, 0.85], "t": 0.07},
+        {"n": "jav_bundle", "shape": "limb", "bone": "body", "mat": "wood", "a": [-0.7, 0.24, 0.92], "b": [0.74, 0.24, 0.97], "t": [0.24, 0.14]},
+        {"n": "jav_heads", "shape": "box", "bone": "body", "mat": "metal", "pos": [0.74, 0.24, 0.97], "size": [0.12, 0.24, 0.1]},
+        {"n": "bundle_band", "shape": "box", "bone": "body", "mat": "rope", "pos": [0.0, 0.24, 0.95], "size": [0.06, 0.27, 0.17]},
+        {"n": "sheaf_a", "shape": "cyl", "bone": "body", "mat": "leather", "pos": [-0.4, -0.22, 0.98], "r": 0.13, "len": 0.42, "verts": 8},
+        {"n": "fletch_a", "shape": "cyl", "bone": "body", "mat": "fletch", "pos": [-0.4, -0.22, 1.21], "r": 0.14, "len": 0.06, "verts": 8},
+        {"n": "sheaf_b", "shape": "cyl", "bone": "body", "mat": "leather", "pos": [-0.08, -0.22, 0.98], "r": 0.13, "len": 0.42, "verts": 8},
+        {"n": "fletch_b", "shape": "cyl", "bone": "body", "mat": "fletch", "pos": [-0.08, -0.22, 1.21], "r": 0.14, "len": 0.06, "verts": 8},
+        {"n": "basket", "shape": "cyl", "bone": "body", "mat": "rope", "pos": [0.42, -0.22, 0.92], "r": 0.21, "len": 0.3, "verts": 10},
+        {"n": "stones", "shape": "sphere", "bone": "body", "mat": "stone", "pos": [0.42, -0.22, 1.06], "r": 0.17, "scale": [1, 1, 0.5], "verts": 8},
+        {"n": "char_a", "shape": "box", "bone": "body", "mat": "char", "pos": [-0.2, 0.0, 1.0], "size": [0.9, 0.7, 0.3], "show": {"death": [1, 2]}},
+        {"n": "ember", "shape": "box", "bone": "body", "mat": "ember", "pos": [-0.3, 0.1, 1.16], "size": [0.25, 0.2, 0.03], "show": {"death": [1]}}
+      ]
+    },
+    "wagon": {
+      "name": "Ammunition Wagon",
+      "look": "Four-wheeled wagon with a pole, a hooped linen cover over the back, bundles of javelins and sheaves of arrows in front",
+      "rig": "wagon",
+      "prop": 1,
+      "render_box": [
+        -2.0,
+        3.25,
+        -2.25,
+        1.75
+      ],
+      "parts": [
+        {"n": "bed", "shape": "box", "bone": "body", "mat": "wood", "pos": [0, 0, 0.85], "size": [2.6, 1.3, 0.1]},
+        {"n": "side.L", "shape": "box", "bone": "body", "mat": "wood", "pos": [0, 0.62, 1.02], "size": [2.6, 0.07, 0.34], "mirror": 1},
+        {"n": "end_f", "shape": "box", "bone": "body", "mat": "wood", "pos": [1.27, 0, 1.02], "size": [0.07, 1.3, 0.34]},
+        {"n": "end_b", "shape": "box", "bone": "body", "mat": "wood", "pos": [-1.27, 0, 1.02], "size": [0.07, 1.3, 0.34]},
+        {"n": "axle_b", "shape": "limb", "bone": "body", "mat": "dark", "a": [-0.85, -0.7, 0.5], "b": [-0.85, 0.7, 0.5], "t": 0.09},
+        {"n": "axle_f", "shape": "limb", "bone": "body", "mat": "dark", "a": [0.85, -0.7, 0.5], "b": [0.85, 0.7, 0.5], "t": 0.09},
+        {"n": "wheel.L", "shape": "cyl", "bone": "wheel.L", "mat": "wood", "pos": [-0.85, 0.74, 0.5], "r": 0.5, "len": 0.1, "verts": 12, "rot": [90, 0, 0], "mirror": 1},
+        {"n": "wheelF.L", "shape": "cyl", "bone": "wheelF.L", "mat": "wood", "pos": [0.85, 0.74, 0.5], "r": 0.5, "len": 0.1, "verts": 12, "rot": [90, 0, 0], "mirror": 1},
+        {"n": "pole", "shape": "limb", "bone": "body", "mat": "wood", "a": [1.25, 0, 0.8], "b": [2.75, 0, 0.95], "t": 0.1},
+        {"n": "cover", "shape": "box", "bone": "body", "mat": "linen", "pos": [-0.45, 0, 1.38], "size": [1.6, 1.24, 0.55], "bevel": 0.22},
+        {"n": "hoop_a", "shape": "box", "bone": "body", "mat": "wood", "pos": [-0.95, 0, 1.4], "size": [0.08, 1.28, 0.58], "bevel": 0.04},
+        {"n": "hoop_b", "shape": "box", "bone": "body", "mat": "wood", "pos": [0.05, 0, 1.4], "size": [0.08, 1.28, 0.58], "bevel": 0.04},
+        {"n": "jav_bundle", "shape": "limb", "bone": "body", "mat": "wood", "a": [0.35, 0.3, 1.1], "b": [1.25, 0.3, 1.14], "t": [0.26, 0.14]},
+        {"n": "jav_heads", "shape": "box", "bone": "body", "mat": "metal", "pos": [1.25, 0.3, 1.14], "size": [0.12, 0.26, 0.1]},
+        {"n": "sheaf_a", "shape": "cyl", "bone": "body", "mat": "leather", "pos": [0.75, -0.28, 1.12], "r": 0.14, "len": 0.44, "verts": 8},
+        {"n": "fletch_a", "shape": "cyl", "bone": "body", "mat": "fletch", "pos": [0.75, -0.28, 1.35], "r": 0.15, "len": 0.06, "verts": 8},
+        {"n": "basket", "shape": "cyl", "bone": "body", "mat": "rope", "pos": [0.45, -0.3, 1.08], "r": 0.2, "len": 0.3, "verts": 10},
+        {"n": "stones", "shape": "sphere", "bone": "body", "mat": "stone", "pos": [0.45, -0.3, 1.22], "r": 0.16, "scale": [1, 1, 0.5], "verts": 8},
+        {"n": "char_a", "shape": "box", "bone": "body", "mat": "char", "pos": [-0.45, 0.1, 1.5], "size": [1.4, 1.0, 0.4], "show": {"death": [1, 2]}},
+        {"n": "char_b", "shape": "box", "bone": "body", "mat": "char", "pos": [0.7, -0.1, 1.15], "size": [0.7, 0.9, 0.12], "show": {"death": [2]}},
+        {"n": "ember", "shape": "box", "bone": "body", "mat": "ember", "pos": [-0.3, 0.2, 1.71], "size": [0.3, 0.25, 0.03], "show": {"death": [1]}}
+      ]
+    },
+    "draft_horse": {
+      "name": "Draught Horse",
+      "look": "The horse without a saddle cloth: a leather collar and harness straps, traces running back to the wagon",
+      "rig": "horse",
+      "body": "horse",
+      "prop": 1,
+      "skip": [
+        "cloth_trim",
+        "cloth",
+        "bridle"
+      ],
+      "render_box": [
+        -2.25,
+        2.25,
+        -1.75,
+        1.5
+      ],
+      "parts": [
+        {"n": "collar", "shape": "box", "bone": "neck", "mat": "leather", "pos": [0.74, 0, 1.58], "size": [0.22, 0.52, 0.4], "bevel": 0.06},
+        {"n": "strap.L", "shape": "limb", "bone": "body", "mat": "dark", "a": [0.6, 0.37, 1.38], "b": [-0.6, 0.39, 1.34], "t": 0.045, "mirror": 1},
+        {"n": "belly", "shape": "box", "bone": "body", "mat": "dark", "pos": [0.3, 0, 1.6], "size": [0.08, 0.78, 0.04]},
+        {"n": "trace.L", "shape": "limb", "bone": "body", "mat": "leather", "a": [0.62, 0.3, 1.36], "b": [-1.25, 0.34, 1.0], "t": 0.04, "mirror": 1},
+        {"n": "bridle", "shape": "limb", "bone": "head", "mat": "dark", "a": [1.12, 0, 1.9], "b": [1.2, 0, 1.74], "t": [0.05, 0.26]}
+      ]
     }
   },
   "iso": {"unit": "heavy_swords", "elevation_deg": 32, "directions": 8, "action": "walk", "box": [3.5, 3.0]},
-  "atlas": {"_doc": "Step 1b: the game's atlas. sets: sprite_set ids (unit_types.gd 'sprite_set'; 0 = procedural) in order from 1; palettes: in campaign/cdata.gd FACTIONS order (faction index = palette row).", "sets": ["heavy_swords", "spearmen", "pikemen", "shock_cavalry", "archers", "javelinmen", "slingers", "gastraphetes"], "align": 4, "gutter": 4}
+  "atlas": {"_doc": "Step 1b: the game's atlas. sets: sprite_set / engine_set ids (unit_types.gd 'sprite_set', 'engine_set'; 0 = procedural) in order from 1, at most 15 (a 4-bit field); props: frames the overlay draws (game/overlay.gd: wagons), not in the shaders' table; palettes: in campaign/cdata.gd FACTIONS order (faction index = palette row).", "sets": ["heavy_swords", "spearmen", "pikemen", "shock_cavalry", "archers", "javelinmen", "slingers", "gastraphetes", "elephant", "camel", "camel_archer", "crew", "bolt_thrower", "stone_thrower", "scorpion"], "align": 4, "gutter": 4, "props": ["cart", "wagon", "draft_horse"]}
 }

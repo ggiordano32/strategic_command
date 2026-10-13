@@ -9,6 +9,7 @@ extends Node2D
 ##   godot --path . --resolution 2400x1350 res://tools/sprites/preview/preview.tscn
 ##   ... -- --shot=/path/shot.png   (saves a screenshot after ~1.3 s and quits)
 ##   ... -- --scroll=520            (moves the page up, for the lower sections)
+##   ... -- --units=elephant,crew --palettes=rome,carthage   (only these)
 
 const DIR := "res://assets/sprites/"
 const SHADER := preload("res://tools/sprites/preview/recolor.gdshader")
@@ -23,6 +24,8 @@ var anims: Array[Dictionary] = []
 var t := 0.0
 var shot_path := ""
 var shot_done := false
+var only_units := PackedStringArray()
+var only_pals := PackedStringArray()
 
 
 func _ready() -> void:
@@ -32,12 +35,29 @@ func _ready() -> void:
 			shot_path = a.substr(7)
 		elif a.begins_with("--scroll="):
 			position.y = -float(a.substr(9))
+		elif a.begins_with("--units="):
+			only_units = a.substr(8).split(",")
+		elif a.begins_with("--palettes="):
+			only_pals = a.substr(11).split(",")
 	var txt := FileAccess.get_file_as_string(DIR + "manifest.json")
 	var parsed: Variant = JSON.parse_string(txt)
 	if not parsed is Dictionary:
 		push_error("no manifest at " + DIR)
 		return
 	man = parsed
+	if not only_units.is_empty():
+		var keep := {}
+		for k: String in man["units"]:
+			if only_units.has(k):
+				keep[k] = man["units"][k]
+		man["units"] = keep
+		man.erase("iso")
+	if not only_pals.is_empty():
+		var keep := {}
+		for k: String in man["palettes"]:
+			if only_pals.has(k):
+				keep[k] = man["palettes"][k]
+		man["palettes"] = keep
 	_layout()
 
 

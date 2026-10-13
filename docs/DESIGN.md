@@ -3668,6 +3668,48 @@ faction rows inherit); camel archers, hero rows, dogs and engines stay
 procedural. Testing aid: `--factions=syracuse,carthage` sets the two sides'
 palettes in a sandbox battle.
 
+**Beasts, engines and wagons (step 1d, 2026-10-13).** Seven more sets and
+three props. 9 **War Elephant** (a rig of its own: barrel body, thick legs,
+a three-bone trunk curled forward, flapping ears, tusks; a faction
+caparison and bronze frontlet, a howdah with shields hung on its sides, a
+driver on the neck and two javelin men standing in the howdah; build.py
+units may carry several `riders`, each with its own pose (`stand`,
+`fall: roll`); walk = a slow lateral amble with ear flap, trunk and tail
+sway; attack = trunk up and across, then the head down for the tusk gore
+with a lunge, the crew throwing; death = the whole beast, head and trunk
+included, rolls onto its side, legs out, the crew rolled off with the
+howdah; amok reuses the walk at the routing rate), 10 **Camel** and 11
+**Camel Archer** (the horse's animation on a camel rig: hump, long neck;
+turbaned rider with sword and shield, or the archers' rider with the
+archer pose), 12 **Engine Crew** (the javelin body without weapons; attack
+= cranking the winch; on every battery, tower engine and wagon crew row),
+and three **engine sets** on a new display field `engine_set`: 13 Bolt
+Thrower (tripod, stock and slide, two springs with bronze washers, arms, a
+V string to the claw, a faction plate; also the tower bolt thrower), 14
+Stone Thrower (onager: wheeled frame, skein, one arm with sling and stone,
+padded faction buffer, spoked winch; also the tower onager), 15 Scorpion
+(the bolt thrower at 60 %, carried shoulder high on two poles, legs
+folded, while it moves). Engines: walk = packed / carried; wrecked = the
+death's last frame (toppled, an arm snapped, scorched); the **firing cycle
+follows the sim**: the view gives each working engine of a shooting unit
+a state 9-12 from its `e_reload` (0 loaded, 1 just shot, 2 / 3 winding),
+so the release frame shows on the tick the bolt or stone leaves (view
+state only, read from the sim). An abandoned engine is a state of its own
+(8: idle frame, darkened, on the corpse layer) instead of drawing as a
+wreck. Texture path: flags bits 20-23 = engine set; CPU path: the engines'
+runs carry engine set + 16 x palette in INSTANCE_CUSTOM.z; the procedural
+engine sprite stays the fallback (engine_set 0). **Props** (`atlas.props`:
+hand cart, wagon, draught horse; fixed colours, no faction mask) are
+packed in the same atlas but drawn by `game/overlay.gd` from the shade
+sheet (a child node with mipmaps under the overlay's lines; `PROPS` in
+sprite_atlas.gd): the cart or the wagon (walk frames while it moves, the
+wreck), its horses ahead (a dead horse lies, the death's last frame); the
+stock bar stays. The atlas is 1024 x 1184 (15 sets + 3 props): the 4-bit
+set fields are full, so a further set needs a wider field (palette and set
+share bits 12-19). Still procedural: dogs, characters, and the siege
+equipment drawn in overlay.gd (ladders, ram, siege tower, mantlets: the
+next step, as props like the wagon).
+
 ## 9. Milestones
 
 1. **Battle sandbox.** Deterministic per-soldier sim, MultiMesh rendering,

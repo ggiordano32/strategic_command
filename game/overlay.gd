@@ -8,6 +8,13 @@ const UT := preload("res://sim/unit_types.gd")
 const Icons := preload("res://game/unit_icons.gd")
 const UIIcons := preload("res://game/ui_icons.gd")
 const WorksLayer := preload("res://game/works_layer.gd")
+const SpriteAtlas := preload("res://game/sprite_atlas.gd")
+## The sprite atlas (loaded, not preloaded: see soldier_layer.gd). Wagons
+## (carts, wagons, their horses) are drawn from its shade sheet (step 1d
+## props: fixed colours, no faction mask) by a child node under the
+## overlay's own drawing, with mipmaps; without it, the code-drawn shapes.
+const ATLAS_SHADE_PATH := "res://assets/sprites/atlas_shade.png"
+const PROP_PX_PER_M := 24.0
 ## Marker radius in screen pixels (never below MARKER_MIN_R world pixels).
 const MARKER_SCREEN_R := 11.0
 const MARKER_MIN_R := 5.5
@@ -94,12 +101,25 @@ var _tr_rec := {}                      # slot -> [kind, x, y, radius (sim units)
 var _tr_walk := 0
 var _fx_cell := {}                     # landing cell -> view clock of the last effect there
 var _tr_tick := -1
+var _props: Node2D                     # draws the wagon sprites (behind the overlay's lines)
+var _props_tex: Texture2D
+var _q_moved := {}                     # wagon -> [x, y, tick it last moved]
 
 
 func _process(delta: float) -> void:
 	if sim == null:
 		return
 	_clock += delta
+	if sim.sg_on != 0:
+		if _props == null:
+			_props = Node2D.new()
+			_props.show_behind_parent = true
+			_props.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+			_props.draw.connect(_draw_props)
+			add_child(_props)
+			if ResourceLoader.exists(ATLAS_SHADE_PATH) and SpriteAtlas.PROPS.has("wagon"):
+				_props_tex = load(ATLAS_SHADE_PATH) as Texture2D
+		_props.queue_redraw()
 	var i := 0
 	while i < _fx_kind.size():
 		_fx_age[i] += delta
@@ -1368,6 +1388,10 @@ func _draw_free_towers(r: float, lw: float) -> void:
 func _draw_wagon(q: int, c: Vector2, fwd: Vector2, side: Vector2, st: int, lw: float) -> void:
 	var dark := Color(0.2, 0.12, 0.05, 0.95)
 	var wrecked := st == BattleSim.Q_WRECKED
+	if _props_tex != null:
+		if not wrecked:
+			_draw_wagon_stock(q, c, lw)
+		return  # (the sprite: _draw_props)
 	var body := Color(0.62, 0.5, 0.32, 0.95) if not wrecked else Color(0.25, 0.2, 0.15, 0.7)
 	var pts := PackedVector2Array([c + fwd * 2.2 + side * 1.1, c + fwd * 2.2 - side * 1.1,
 		c - fwd * 2.2 - side * 1.1, c - fwd * 2.2 + side * 1.1])
@@ -1389,6 +1413,12 @@ func _draw_wagon(q: int, c: Vector2, fwd: Vector2, side: Vector2, st: int, lw: f
 		else:
 			draw_line(hp - side * 0.5 - fwd * 0.5, hp + side * 0.5 + fwd * 0.5, dark, lw)
 			draw_line(hp + side * 0.5 - fwd * 0.5, hp - side * 0.5 + fwd * 0.5, dark, lw)
+	_draw_wagon_stock(q, c, lw)
+
+
+## The wagon's stock left, a bar under it.
+func _draw_wagon_stock(q: int, c: Vector2, lw: float) -> void:
+	var tier: int = sim.q_tier[q]
 	var left := 0
 	var full := 0
 	for k in UT.AMMO.size():
@@ -1430,6 +1460,75 @@ func _draw_fires(lw: float) -> void:
 		_smoke_column(p - Vector2(0, h * 0.7), k, 4, px_per_m * 9.0, px_per_m * 1.5, 0.4, _clock * 0.25 + k * 0.31)
 
 
+## Piece q's heading on screen (radians): its carriers' facing, a little
+## askew lying on the ground; NAN while a reinforcement's (not on the field).
+func _gear_angle(q: int) -> float:
+	var st: int = sim.q_state[q]
+	var u: int = sim.q_unit[q]
+	if st == BattleSim.Q_CARRIED and u >= 0 and sim.u_state[u] == BattleSim.U_RESERVE:
+		return NAN
+	if st == BattleSim.Q_CARRIED and u >= 0:
+		return sim.u_face[u] * TAU / 1024.0
+	if st == BattleSim.Q_GROUND or st == BattleSim.Q_WRECKED:
+		return (sim.q_x[q] / 1024 % 7) * 0.4  # lying a little askew
+	return 0.0
+
+
+## Wagons as sprites (the _props node's draw): the hand cart or the wagon
+## (walk frames while it moves, the wreck = the death's last frame) and the
+## wagon's horses ahead of it (dead ones lying, the death's last frame).
+func _draw_props() -> void:
+	if sim == null or _props_tex == null:
+		return
+	var vr := _view_rect().grow(px_per_m * 8.0)
+	for q in sim.n_eq:
+		if sim.q_kind[q] != BattleSim.EQ_WAGON:
+			continue
+		var ang := _gear_angle(q)
+		if is_nan(ang):
+			continue
+		var c := to_px(sim.q_x[q], sim.q_y[q])
+		if not vr.has_point(c):
+			continue
+		var st: int = sim.q_state[q]
+		var seen: Array = _q_moved.get(q, [sim.q_x[q], sim.q_y[q], -100])
+		if seen[0] != sim.q_x[q] or seen[1] != sim.q_y[q]:
+			seen = [sim.q_x[q], sim.q_y[q], sim.tick]
+		_q_moved[q] = seen
+		var moving: bool = st == BattleSim.Q_CARRIED and sim.tick - int(seen[2]) <= 2
+		var tier: int = sim.q_tier[q]
+		var wrecked := st == BattleSim.Q_WRECKED
+		var act := 3 if wrecked else (1 if moving else 0)
+		var phase := float(q) * 0.37
+		_draw_prop("cart" if tier == 0 else "wagon", act, -1 if wrecked else int(_clock * 9.0 + phase * 6.0), c, ang)
+		if wrecked:
+			continue
+		var horses := UT.wagon_stat(tier, "horses")
+		var fwd := Vector2(cos(ang), sin(ang)) * px_per_m
+		var side := Vector2(-fwd.y, fwd.x)
+		for h in horses:
+			var hp := c + fwd * 3.9 + side * (0.0 if horses == 1 else (h - 0.5) * 1.05)
+			if h < int(sim.q_hn[q]):
+				_draw_prop("draft_horse", 1 if moving else 0, int(_clock * 9.0 + phase * 6.0 + h * 2.0), hp, ang)
+			else:
+				_draw_prop("draft_horse", 3, -1, hp, ang)
+
+
+## Prop `prop`'s action `act` (0 idle, 1 walk, 2 attack, 3 death) frame
+## `fr` (wrapped; -1 = the last) with its anchor at c, turned by ang.
+func _draw_prop(prop: String, act: int, fr: int, c: Vector2, ang: float) -> void:
+	var rows: Array = SpriteAtlas.PROPS[prop]
+	var a: Vector4 = rows[act * 2]
+	var b: Vector4 = rows[act * 2 + 1]
+	var n := int(b.w)
+	var k := n - 1 if fr < 0 else posmod(fr, n)
+	var sc := px_per_m / PROP_PX_PER_M
+	_props.draw_set_transform(c, ang, Vector2(sc, sc))
+	_props.draw_texture_rect_region(_props_tex, Rect2(-b.x, -b.y, a.z, a.w),
+		Rect2(a.x + k * b.z, a.y, a.z, a.w))
+	_props.draw_set_transform_matrix(Transform2D.IDENTITY)
+
+
 func _draw_siege_gear(lw: float) -> void:
 	var wood := Color(0.55, 0.38, 0.2, 1.0)
 	var dark := Color(0.2, 0.12, 0.05, 0.95)
@@ -1438,14 +1537,9 @@ func _draw_siege_gear(lw: float) -> void:
 			continue  # (field works: the works layer)
 		var st: int = sim.q_state[q]
 		var c := to_px(sim.q_x[q], sim.q_y[q])
-		var ang := 0.0
-		var u: int = sim.q_unit[q]
-		if st == BattleSim.Q_CARRIED and u >= 0 and sim.u_state[u] == BattleSim.U_RESERVE:
+		var ang := _gear_angle(q)
+		if is_nan(ang):
 			continue  # (a reinforcement's wagon: not on the field yet)
-		if st == BattleSim.Q_CARRIED and u >= 0:
-			ang = sim.u_face[u] * TAU / 1024.0
-		elif st == BattleSim.Q_GROUND or st == BattleSim.Q_WRECKED:
-			ang = (sim.q_x[q] / 1024 % 7) * 0.4  # lying a little askew
 		var fwd := Vector2(cos(ang), sin(ang)) * px_per_m
 		var side := Vector2(-fwd.y, fwd.x)
 		if sim.q_kind[q] == BattleSim.EQ_WAGON:

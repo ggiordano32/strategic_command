@@ -13,7 +13,11 @@ extends RefCounted
 ##   sprite_set   view-only: the Blender-built sprite set it is drawn with
 ##                (assets/sprites atlas, tools/sprites: 1 Heavy Swords, 2
 ##                Spearmen, 3 Pikemen, 4 Shock Cavalry; 0 = the procedural
-##                `sprite` until its own set is built)
+##                `sprite` until its own set is built; step 1d: 9 War
+##                Elephant, 10 Camel, 11 Camel Archer, 12 Engine Crew)
+##   engine_set   view-only: artillery, the atlas set its engines are drawn
+##                with (13 Bolt Thrower, 14 Stone Thrower, 15 Scorpion; 0 =
+##                the procedural engine sprite)
 ##   attack/defence/armour/shield/damage/reach   melee stats; shield is the %
 ##                chance to block a frontal melee hit
 ##   mshield      % chance to block a missile arriving from the frontal arc
@@ -203,7 +207,7 @@ const STONE := 8
 
 ## Defaults for every field a row may leave out.
 const DEFAULTS := {
-	"cls": CLS_INF, "sprite": 0, "sprite_set": 0, "mshield": 0, "ranks_reach": 1,
+	"cls": CLS_INF, "sprite": 0, "sprite_set": 0, "engine_set": 0, "mshield": 0, "ranks_reach": 1,
 	"file_sp": 1126, "rank_sp": 1331, "turn": 0, "brace": 0, "vs_cav": 0,
 	"charge": 0, "sec_attack": 0, "sec_defence": 0, "sec_damage": 0,
 	"sec_reach": 0, "m_range": 0, "m_damage": 0, "m_ap": 0, "m_ammo": 0,
@@ -484,6 +488,7 @@ const BASE: Array[Dictionary] = [
 		"short": "Bolts",
 		"icon": 7,
 		"role": "Light artillery (scorpions)",
+		"sprite_set": 12, "engine_set": 13,
 		"desc": "Four torsion bolt throwers with their crews. They shoot flat, far and accurately; a bolt flies on along its line and can skewer several men in a row, so deep, dense formations such as pike blocks suffer most, while big shields and armour soak up much of it. Because the bolt flies flat it needs a clear line: friends in the way stop it or are hit, and a crest between engine and target stops it. Site them on a rise. Cannot shoot while moving; packing up and setting up take time, and dragging them uphill is very slow. When the engines run low the crews can refill them from the baggage (one more full load), standing still and silent for a minute or more. Crews are poor fighters.",
 		"good_vs": "Pike blocks and other deep formations shot along their depth, units standing in range, enemy artillery crews.",
 		"weak_vs": "Cavalry and any melee troops that reach them, archers, targets behind their own line or behind a crest (blocked).",
@@ -539,6 +544,7 @@ const BASE: Array[Dictionary] = [
 		"short": "Stones",
 		"icon": 8,
 		"role": "Heavy artillery (onagers)",
+		"sprite_set": 12, "engine_set": 14,
 		"desc": "Three onagers lobbing heavy stones over friendly troops and hills at very long range. They aim at the near face of the target and land short rather than over, so a stone that misses still bounces on into the front ranks, knocking soldiers down, and the unit hit is shaken for a few seconds. They lead a steadily moving target a little, but small or loose targets are mostly missed. Slow to reload; when they run low the crews can refill them from the baggage (one more full load), standing still and silent for a minute or more. Cannot shoot at close range or while moving; packing up and setting up take time. Crews are poor fighters.",
 		"good_vs": "Large, dense units, standing or marching steadily, enemy artillery, wavering units (the fright can tip them).",
 		"weak_vs": "Cavalry and any melee troops that reach them, small, loose or fast-moving targets, anything inside the minimum range.",
@@ -711,6 +717,7 @@ const SPECIAL: Array[Dictionary] = [
 		"short": "Tower",
 		"icon": 7,
 		"role": "Wall tower artillery (walls 2-3)",
+		"sprite_set": 12, "engine_set": 13,
 		"desc": "A bolt thrower mounted on a tower of the city wall, with a crew of four. It shoots flat bolts down at anyone approaching the wall: rams, ladder parties, men at the gate, batteries. It cannot move and turns all the way round. A fixed load of bolts (half as many again with a workshop in the city). Gone when its crew is shot down or its tower is battered by enemy artillery (a few stones, many bolts).",
 		"good_vs": "Rams and men at the gate, ladder parties, batteries in range.",
 		"weak_vs": "Enemy stone throwers, archers picking off its crew.",
@@ -732,6 +739,7 @@ const SPECIAL: Array[Dictionary] = [
 		"short": "Tower St.",
 		"icon": 8,
 		"role": "Wall tower artillery (walls 3)",
+		"sprite_set": 12, "engine_set": 14,
 		"desc": "An onager mounted on one of the two biggest towers of a walls-3 city, with a crew of six. It lobs stones far out over the approach: at batteries, at the ram, at the army forming up. It cannot move and turns all the way round. A fixed load of stones (half as many again with a workshop in the city). Gone when its crew is shot down or its tower is battered by enemy artillery.",
 		"good_vs": "Batteries and big formations standing in range, the ram.",
 		"weak_vs": "Small or moving targets, anything close under the wall.",
@@ -755,7 +763,7 @@ const SPECIAL: Array[Dictionary] = [
 ## "wagon"): unarmed but for knives, they pull, drive and guard it. The
 ## wagon itself is a piece of equipment in the battle (BattleSim EQ_WAGON).
 const WAGON_CREW := {
-	"cls": CLS_INF, "sprite": 6, "icon": 9, "role": "Ammunition wagon",
+	"cls": CLS_INF, "sprite": 6, "sprite_set": 12, "icon": 9, "role": "Ammunition wagon",
 	"good_vs": "Nothing in a fight: it keeps the archers, javelinmen and engines shooting.",
 	"weak_vs": "Anything that reaches it, above all from the flank or rear; fire missiles.",
 	"attack": 8, "defence": 10, "armour": 2, "shield": 0, "mshield": 0, "damage": 14, "reach": 1024,
@@ -793,7 +801,7 @@ const WAGONS: Array[Dictionary] = [
 ## 1.6 s), not tuned; each with its reason.
 const BEASTS: Array[Dictionary] = [
 	{
-		"key": "camel", "line": "camel", "name": "Camel Riders", "short": "Camels", "icon": 10, "sprite": 9,
+		"key": "camel", "line": "camel", "name": "Camel Riders", "short": "Camels", "icon": 10, "sprite": 9, "sprite_set": 10,
 		"size": 60, "files0": 15,
 		"role": "Anti-cavalry riders",
 		"desc": "Riders on camels. Slower than horsemen and weaker in the charge, but they sit high and fight foot well, and horses will not face them: enemy horsemen within 30 m lose much of their charge and turn sluggishly, losing heart while they stay, and a horse charging camels hits them weakly and shies. Slow in woods. Spears and pikes stop them like any riders.",
@@ -821,7 +829,7 @@ const BEASTS: Array[Dictionary] = [
 	},
 	{
 		"key": "camel_archer", "line": "camel_archer", "name": "Camel Archers", "short": "Camel Arch.",
-		"icon": 12, "sprite": 9, "size": 60, "files0": 15,
+		"icon": 12, "sprite": 9, "sprite_set": 11, "size": 60, "files0": 15,
 		"role": "Mounted archers on camels",
 		"desc": "Archers on camels: they shoot from the saddle at a fair range, ride away from what comes for them, and scare horses like any camels (enemy horsemen within 30 m lose much of their charge and turn rate and lose heart). Weak in melee; slow in woods.",
 		"good_vs": "Slow foot they can shoot and outride, horse cavalry (the scare), skirmishers.",
@@ -839,7 +847,7 @@ const BEASTS: Array[Dictionary] = [
 		"woods_pct": 150, "scare_r": 30 * 1024, "scare_pct": 70, "scare_mor": 2,
 	},
 	{
-		"key": "elephant", "line": "elephant", "name": "War Elephants", "short": "Elephants", "icon": 11, "sprite": 10,
+		"key": "elephant", "line": "elephant", "name": "War Elephants", "short": "Elephants", "icon": 11, "sprite": 10, "sprite_set": 9,
 		"size": 12, "files0": 6,
 		"role": "Shock beasts",
 		"desc": "Twelve war elephants, each a driver and two javelin men on its back. Slow to get going and to turn, but a charge at full tilt bowls over whole files and breaks formations, braced spears included (the points still hurt them); horses within 25 m lose heart fast and men somewhat. Arrows and javelins only chip them; fire is their bane. They batter down the gates of towns with walls up to level 1. When they break they run amok, trampling anyone in their way, their own side included, until they find themselves alone and calm down; their drivers can be told to kill them (Kill elephant).",
@@ -1137,7 +1145,7 @@ const DOGS: Array[Dictionary] = [
 ## yardsticks), not tuned; each with its reason.
 const LIGHT_ART: Array[Dictionary] = [
 	{
-		"key": "scorpions", "line": "light_art", "name": "Scorpions", "short": "Scorpions", "icon": 18, "sprite": 6,
+		"key": "scorpions", "line": "light_art", "name": "Scorpions", "short": "Scorpions", "icon": 18, "sprite": 6, "sprite_set": 12, "engine_set": 15,
 		"size": 12, "files0": 6,
 		"role": "Light artillery (carried scorpions)",
 		"desc": "Six small bolt engines, two men to each, light enough for the crews to carry: they march at a man's walking pace and set up or pack up in a moment, so they keep up with an assault and shoot the men on the wall above the ladders and the ram. A small bolt flies flat and true but goes through at most two men; shorter range and a lighter blow than the big bolt throwers, a faster shot, fewer bolts. Crews are poor fighters and the little engines break easily.",

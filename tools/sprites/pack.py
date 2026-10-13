@@ -314,6 +314,7 @@ def main():
     frames_dir = os.path.join(HERE, "_frames")
     out_dir = os.path.join(ROOT, "assets", "sprites")
     contact = None
+    c_units = c_pals = None
     i = 0
     while i < len(args):
         if args[i] == "--frames":
@@ -322,6 +323,10 @@ def main():
             out_dir = os.path.abspath(args[i + 1]); i += 1
         elif args[i] == "--contact":
             contact = os.path.abspath(args[i + 1]); i += 1
+        elif args[i] == "--contact-units":
+            c_units = args[i + 1].split(","); i += 1
+        elif args[i] == "--contact-palettes":
+            c_pals = args[i + 1].split(","); i += 1
         i += 1
     os.makedirs(out_dir, exist_ok=True)
     old_ignore = os.path.join(out_dir, ".gdignore")
@@ -350,7 +355,8 @@ def main():
         "units": {},
     }
     strips = []   # (uid, act, frames, anchor)
-    for uid in atl["sets"]:
+    props = atl.get("props", [])
+    for uid in atl["sets"] + props:
         u = SPEC["units"][uid]
         d = os.path.join(frames_dir, uid)
         if not os.path.isdir(d):
@@ -373,11 +379,28 @@ def main():
                              "set": atl["sets"].index(uid) + 1,
                              "shade": "atlas_shade.png", "mask": "atlas_mask.png",
                              "sheet_size": size, "actions": acts}
+    # Props (step 1d): drawn by the overlay straight from the shade sheet
+    # (no team parts), not in the shaders' table.
+    prop_tab = {}
+    for uid in props:
+        acts = {}
+        rows = []
+        for act, a in SPEC["actions"].items():
+            p = placed[(uid, act)]
+            acts[act] = {"frames": p["rects"], "anchor": p["anchor"], "fps": a["fps"], "loop": a["loop"]}
+            r0 = p["rects"][0]
+            rows.append([r0[0], r0[1], r0[2], r0[3]])
+            rows.append([p["anchor"][0], p["anchor"][1], p["step"], len(p["rects"])])
+        prop_tab[uid] = rows
+        man["units"][uid] = {"name": SPEC["units"][uid]["name"], "view": "top", "set": 0, "prop": 1,
+                             "shade": "atlas_shade.png", "mask": "atlas_mask.png",
+                             "sheet_size": size, "actions": acts}
     man["atlas"] = {"shade": "atlas_shade.png", "mask": "atlas_mask.png", "size": size,
-                    "sets": atl["sets"], "actions": list(SPEC["actions"].keys()),
+                    "sets": atl["sets"], "props": props, "actions": list(SPEC["actions"].keys()),
                     "fps": [a["fps"] for a in SPEC["actions"].values()],
-                    "palettes": list(SPEC["palettes"].keys()), "table": table}
-    print("atlas %dx%d: %d sets x %d actions" % (size[0], size[1], len(atl["sets"]), len(SPEC["actions"])))
+                    "palettes": list(SPEC["palettes"].keys()), "table": table, "prop_table": prop_tab}
+    assert len(atl["sets"]) <= 15, "sprite sets are a 4-bit field (soldiers.gdshaderinc)"
+    print("atlas %dx%d: %d sets + %d props x %d actions" % (size[0], size[1], len(atl["sets"]), len(props), len(SPEC["actions"])))
     write_game_tables(man["atlas"], SPEC["palettes"])
     iso = SPEC.get("iso")
     if iso:
@@ -422,7 +445,7 @@ def main():
     total = sum(os.path.getsize(os.path.join(out_dir, f)) for f in os.listdir(out_dir) if not f.endswith(".import"))
     print("assets/sprites total: %.1f KB" % (total / 1024.0))
     if contact:
-        write_contact(man, out_dir, contact)
+        write_contact(man, out_dir, contact, only_units=c_units, only_pals=c_pals)
 
 
 # ---------------------------------------------------------------- game tables
@@ -453,6 +476,12 @@ def write_game_tables(atlas, palettes):
     for r in tab:
         g.append("\tVector4(%s)," % ", ".join(_f(v) for v in r))
     g.append("]")
+    g.append("## Props (game/overlay.gd draws them from the shade sheet): per action the same")
+    g.append("## two entries as TABLE, actions in order.")
+    g.append("const PROPS: Dictionary = {")
+    for k, rows in atlas.get("prop_table", {}).items():
+        g.append("\t\"%s\": [%s]," % (k, ", ".join("Vector4(%s)" % ", ".join(_f(v) for v in r) for r in rows)))
+    g.append("}")
     g.append("const PALETTE_KEYS: Array[String] = [%s]" % ", ".join('"%s"' % k for k in atlas["palettes"]))
     g.append("## Per palette: primary, secondary, accent, pattern colour (sRGB), pattern_k.")
     g.append("const PALETTES: Array = [")
@@ -527,21 +556,25 @@ def _file(out_dir, f):
     return os.path.join(ROOT, f[6:]) if f.startswith("res://") else os.path.join(out_dir, f)
 
 
-def write_contact(man, out_dir, path, scale=3):
+def write_contact(man, out_dir, path, scale=3, only_units=None, only_pals=None):
     grass = (96, 132, 66)
     tiles = []  # (img, x, y)
     rows = []
     for uid, u in man["units"].items():
+        if only_units and uid not in only_units:
+            continue
         sh = Img.load(_file(out_dir, u["shade"]))
         mk = Img.load(_file(out_dir, u["mask"]))
         row = []
         for pk, pal in man["palettes"].items():
+            if only_pals and pk not in only_pals:
+                continue
             for act in ("idle", "walk", "attack", "death"):
                 fr = u["actions"][act]["frames"]
                 f = fr[len(fr) // 2] if act != "death" else fr[-1]
                 row.append((sh, mk, f, pal))
         rows.append(row)
-    if "iso" in man:
+    if "iso" in man and not only_units:
         u = man["iso"]
         sh = Img.load(_file(out_dir, u["shade"]))
         mk = Img.load(_file(out_dir, u["mask"]))

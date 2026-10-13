@@ -470,7 +470,7 @@ def update_dynamic(act, i):
             continue
         via = p.get("via")
         c = None
-        if via and i in via.get("show", {}).get(act, []):
+        if via and ("show" not in via or i in via["show"].get(act, [])):
             c = bone_point(ev, d["prefix"] + via["bone"], Vector(via["pos"]) + d["off"])
         t = p.get("t", 0.02)
         o0, o1 = d["objs"]
@@ -591,13 +591,38 @@ def sling_carry(action, i, s, c, add):
     add("weapon.R", "y", 80)
 
 
+def crew_attack(i, add):
+    """Engine crew (step 1d): bent over the winch, both hands on a spoke,
+    cranking it round (arms circle forward and down)."""
+    add("spine", "y", [22, 28, 22, 16][i])
+    add("head", "y", [-14, -18, -14, -10][i])
+    for arm, sg in (("L", 1), ("R", -1)):
+        add("upper_arm." + arm, "y", [-35, -10, 15, -10][i] if sg > 0 else [15, -10, -35, -10][i])
+        add("forearm." + arm, "y", [20, 5, -10, 5][i] if sg > 0 else [-10, 5, 20, 5][i])
+        add("forearm." + arm, "z", -25 * sg)
+    add("thigh.L", "y", -18)
+    add("thigh.R", "y", 12)
+    add("shin.R", "y", 16)
+    return [0, 0, -0.04]
+
+
+def crew_carry(action, i, s, c, add):
+    add("upper_arm.L", "y", 10)
+    add("upper_arm.R", "y", 10)
+    add("forearm.L", "y", 25)
+    add("forearm.R", "y", 25)
+
+
 MISSILE_ATTACK = {"archer": archer_attack, "belly": belly_attack,
-                  "javelin": javelin_attack, "sling": sling_attack}
+                  "javelin": javelin_attack, "sling": sling_attack, "crew": crew_attack}
 MISSILE_CARRY = {"archer": archer_carry, "belly": belly_carry,
-                 "javelin": javelin_carry, "sling": sling_carry}
+                 "javelin": javelin_carry, "sling": sling_carry, "crew": crew_carry}
 
 
-def humanoid_pose(action, i, n, mounted=False, variant=""):
+def humanoid_pose(action, i, n, mounted=False, variant="", stand=False, fall="thrown"):
+    """mounted: a rider (no leg walk, no lunge); stand: a mounted man on his
+    feet (an elephant's crew in the howdah: legs straight); fall "roll":
+    in the death he stays where he is (rolls with the beast he rides)."""
     P = {}
 
     def add(b, axis, deg):
@@ -654,6 +679,8 @@ def humanoid_pose(action, i, n, mounted=False, variant=""):
             add("shin.L", "y", [0, 40, 8][i])
             add("shin.R", "y", [0, 34, 0][i])
             loc = [[-0.02, 0, 0], [-0.08, 0, 0.04], [0.05, 0, 0.16]][i]
+        elif fall == "roll":
+            loc = [0.0, 0.0, 0.0]
         else:
             # Thrown off to the right, clear of the horse lying flat (his
             # root hangs from the horse's body, which sinks 0.86 m).
@@ -663,8 +690,10 @@ def humanoid_pose(action, i, n, mounted=False, variant=""):
         loc = list(MISSILE_ATTACK[variant](i, add))
     elif variant and action in ("idle", "walk"):
         MISSILE_CARRY[variant](action, i, s, c, add)
-    if mounted:
-        if action != "death" or i == 0:
+    if mounted and stand:
+        pass
+    elif mounted:
+        if action != "death" or i == 0 or fall == "roll":
             add("thigh.L", "y", -78); add("thigh.L", "x", 16)
             add("thigh.R", "y", -78); add("thigh.R", "x", -16)
             add("shin.L", "y", 82); add("shin.R", "y", 82)
@@ -732,24 +761,205 @@ def horse_pose(action, i, n):
     return P
 
 
+def elephant_pose(action, i, n):
+    """War elephant (step 1d). Walk: a slow amble (lateral pairs, small
+    swing), body roll and bob, head nod, ears flapping, trunk and tail
+    swaying. Attack: trunk raised and swung across, head down for the tusk
+    gore with a lunge. Death: the whole beast (body, head, trunk: all
+    children of the root) rolls onto its right side and lies flat, legs out
+    toward its left (image up), the crew rolled off with the howdah."""
+    P = {}
+
+    def add(b, axis, deg):
+        P.setdefault(b, []).append((axis, deg))
+
+    ph = 2.0 * math.pi * i / max(n, 1)
+    s, c = math.sin(ph), math.cos(ph)
+    loc = [0.0, 0.0, 0.0]
+    if action == "idle":
+        add("ear.L", "z", 8)
+        add("ear.R", "z", -8)
+        add("trunk2", "y", -10)
+        add("tail", "x", 6)
+    elif action == "walk":
+        # Lateral gait: both left legs swing together, then both right.
+        for leg, sg in (("FL", 1), ("BL", 1), ("FR", -1), ("BR", -1)):
+            add("leg." + leg, "y", -18 * s * sg)
+            bend = max(0.0, c * sg)
+            add("shin." + leg, "y", (22 if leg[0] == "F" else -16) * bend)
+        add("body", "x", 3.0 * s)
+        add("body", "z", 2.5 * s)
+        add("head", "y", 4 * math.cos(2 * ph))
+        flap = 16 * s
+        add("ear.L", "z", 10 + flap)
+        add("ear.R", "z", -10 - flap)
+        add("ear.L", "x", 8 + 6 * c)
+        add("ear.R", "x", -8 - 6 * c)
+        add("trunk1", "z", 9 * s)
+        add("trunk2", "z", 10 * s)
+        add("trunk3", "y", 12 * c)
+        add("tail", "x", 12 * s)
+        loc[2] = 0.04 * math.cos(2 * ph)
+    elif action == "attack":
+        # 0 wind-up (trunk up and across to the left), 1 swing to the
+        # right, 2 head down: the tusk gore, lunging, 3 recover.
+        add("head", "y", [-12, 4, 18, 4][i])
+        add("head", "z", [10, -12, -4, 0][i])
+        add("trunk1", "y", [-55, -20, 10, -10][i])
+        add("trunk1", "z", [35, -40, -10, 5][i])
+        add("trunk2", "y", [-35, -25, 20, 0][i])
+        add("trunk3", "y", [-30, -20, 25, 5][i])
+        add("ear.L", "z", [30, 25, 15, 10][i])
+        add("ear.R", "z", [-30, -25, -15, -10][i])
+        add("ear.L", "x", [20, 20, 10, 5][i])
+        add("ear.R", "x", [-20, -20, -10, -5][i])
+        add("body", "y", [-4, 0, 4, 1][i])
+        add("leg.FL", "y", [-20, -8, 6, -4][i])
+        add("leg.FR", "y", [-6, -18, 6, -2][i])
+        add("tail", "x", [10, -10, 15, 0][i])
+        loc[0] = [-0.05, 0.15, 0.35, 0.1][i]
+    elif action == "death":
+        add("root", "x", [18, 52, 88][i])
+        for leg in ("FL", "FR", "BL", "BR"):
+            add("leg." + leg, "y", ([-10, -20, -25] if leg[0] == "F" else [10, 20, 25])[i])
+            add("leg." + leg, "x", [-4, -8, -10][i])
+        add("head", "y", [6, 12, 10][i])
+        add("trunk1", "y", [10, 25, 30][i])
+        add("trunk2", "y", [5, 10, -20][i])
+        add("trunk3", "y", [0, -10, -30][i])
+        add("ear.L", "z", [10, 20, 25][i])
+        add("ear.R", "z", [-5, -5, 0][i])
+        add("tail", "x", [10, 20, 25][i])
+        loc = [[0, 0.15, 0.1], [0, 0.55, 0.42], [0, 1.0, 0.72]][i]
+    P["loc"] = tuple(loc)
+    return P
+
+
+def engine_pose(kind, action, i, n):
+    """Engines and props (step 1d). bolt / scorpion (bones stand, frame,
+    arm.L, arm.R, slide): idle = drawn and loaded; attack = 0 loaded, 1
+    released (arms forward, string straight, bolt gone), 2 slide run
+    forward to catch the string, 3 winched half back (the game picks the
+    attack frame from the engine's reload, not the clock); walk = packed
+    (arms forward, frame tipped; the scorpion carried, raised); death =
+    smashed and toppled. onager (frame, arm, winch): idle = arm wound down,
+    stone in the sling; attack 1 the arm up against the buffer, 2 / 3
+    winched down; death = arm snapped, frame askew. cart / wagon (body and
+    wheels): a bob on the move, the wreck tipped with a wheel off."""
+    P = {}
+
+    def add(b, axis, deg):
+        P.setdefault(b, []).append((axis, deg))
+
+    locs = {}
+    ph = 2.0 * math.pi * i / max(n, 1)
+    s = math.sin(ph)
+    loc = [0.0, 0.0, 0.0]
+    if kind in ("bolt", "scorpion"):
+        sc = 0.6 if kind == "scorpion" else 1.0
+        if action == "attack":
+            fwd = [0, 1, 1, 0.5][i]
+            add("arm.L", "z", -40 * fwd)
+            add("arm.R", "z", 40 * fwd)
+            locs["slide"] = [[0, 0, 0], [0, 0, 0], [0.45 * sc, 0, 0], [0.22 * sc, 0, 0]][i]
+            loc[0] = [0, -0.04, 0, 0][i] * sc
+        elif action == "walk":
+            add("arm.L", "z", -40)
+            add("arm.R", "z", 40)
+            if kind == "scorpion":
+                # Carried shoulder high by its two men (poles front and back).
+                loc = [0.0, 0.0, 0.42 + 0.03 * math.cos(2 * ph)]
+                add("frame", "x", 3 * s)
+            else:
+                add("frame", "y", -10 + 2 * s)
+                add("stand", "z", 3 * s)
+                loc[2] = 0.02 * math.cos(2 * ph)
+        elif action == "death":
+            add("stand", "x", [12, 38, 70][i])
+            add("frame", "y", [8, 18, 22][i])
+            add("frame", "z", [6, 14, 18][i])
+            add("arm.L", "y", [-20, -45, -60][i])
+            add("arm.L", "z", [20, 55, 70][i])
+            add("arm.R", "z", [10, 30, 45][i])
+            locs["slide"] = [[0.1 * sc, 0, 0], [0.3 * sc, 0, -0.05], [0.4 * sc, 0, -0.1]][i]
+            loc = [[0, 0, -0.05], [0, 0.1, -0.25 * sc], [0, 0.25 * sc, -0.5 * sc]][i]
+    elif kind == "onager":
+        if action == "attack":
+            add("arm", "y", [0, 95, 45, 8][i])
+            add("winch", "y", [0, 0, 120, 240][i])
+        elif action == "walk":
+            add("frame", "y", 1.5 * s)
+            loc[2] = 0.02 * math.cos(2 * ph)
+        elif action == "death":
+            add("frame", "x", [5, 11, 14][i])
+            add("frame", "y", [2, 4, 5][i])
+            add("arm", "z", [15, 45, 65][i])
+            add("arm", "y", [10, 30, 12][i])
+            add("winch", "y", [20, 40, 40][i])
+            loc = [[0, 0, -0.03], [0, 0.05, -0.1], [0, 0.1, -0.14]][i]
+    elif kind in ("cart", "wagon"):
+        if action == "walk":
+            add("body", "x", 1.5 * s)
+            add("body", "y", 1.0 * math.cos(ph))
+            loc[2] = 0.015 * math.cos(2 * ph)
+        elif action == "death":
+            add("root", "x", [6, 14, 18][i])
+            add("body", "y", [3, 7, 9][i])
+            add("wheel.R", "x", [-20, -55, -82][i])
+            locs["wheel.R"] = [[0, -0.1, -0.05], [0, -0.4, -0.25], [0, -0.75, -0.35]][i]
+            loc = [[0, 0, -0.03], [0, 0.04, -0.1], [0, 0.08, -0.14]][i]
+    P["loc"] = tuple(loc)
+    if locs:
+        P["locs"] = locs
+    return P
+
+
 def prefixed(pose, prefix):
-    out = {prefix + k: v for k, v in pose.items() if k != "loc"}
+    out = {prefix + k: v for k, v in pose.items() if k not in ("loc", "locs")}
     out["_loc"] = {prefix + "root": pose.get("loc", (0, 0, 0))}
+    for b, v in pose.get("locs", {}).items():
+        out["_loc"][prefix + b] = v
     return out
 
 
-def keyframe_actions(arm, kind, rider=False, variant=""):
-    """kind "humanoid" or "horse"; rider = the armature also holds a
-    mounted humanoid's bones (prefix "r.")."""
+def riders_of(u):
+    """A unit's riders: [{prefix, rig, body, seat, parent_bone, parts,
+    pose, stand, fall, skip}]; step 1b's single `rider` + `rider_parts`
+    is the first, prefix "r."."""
+    out = []
+    if u.get("rider"):
+        r = dict(u["rider"])
+        r["prefix"] = "r."
+        r["parts"] = u.get("rider_parts", [])
+        out.append(r)
+    for k, r in enumerate(u.get("riders", [])):
+        r = dict(r)
+        r.setdefault("prefix", "r%d." % k)
+        out.append(r)
+    return out
+
+
+def keyframe_actions(arm, u):
+    """The unit's own rig by its animation set (rig "anim": humanoid,
+    horse, elephant, or an engine / prop kind), plus its riders (mounted
+    humanoids whose bones live in the same armature)."""
+    anim = SPEC["rigs"][u["rig"]].get("anim", u["rig"])
+    riders = riders_of(u)
     for act, info in SPEC["actions"].items():
         n = info["frames"]
         for i in range(n):
-            if kind == "horse":
+            if anim == "horse":
                 pose = prefixed(horse_pose(act, i, n), "")
+            elif anim == "elephant":
+                pose = prefixed(elephant_pose(act, i, n), "")
+            elif anim == "humanoid":
+                pose = prefixed(humanoid_pose(act, i, n, variant=u.get("pose", "")), "")
             else:
-                pose = prefixed(humanoid_pose(act, i, n, variant=variant), "")
-            if rider:
-                rp = prefixed(humanoid_pose(act, i, n, mounted=True), "r.")
+                pose = prefixed(engine_pose(anim, act, i, n), "")
+            for r in riders:
+                rp = prefixed(humanoid_pose(act, i, n, mounted=True, variant=r.get("pose", ""),
+                                            stand=bool(r.get("stand", 0)), fall=r.get("fall", "thrown")),
+                              r["prefix"])
                 pose["_loc"].update(rp.pop("_loc"))
                 pose.update(rp)
             apply_pose(arm, pose, ACT_START[act] + i)
@@ -766,18 +976,17 @@ def build_unit(uid):
     DYN.clear()
     VIS.clear()
     bones = rig_bones(SPEC["rigs"][u["rig"]])
-    rider = u.get("rider")
-    if rider:
-        bones += rig_bones(SPEC["rigs"][rider["rig"]], "r.", rider["seat"],
-                           rider["parent_bone"])
+    riders = riders_of(u)
+    for r in riders:
+        bones += rig_bones(SPEC["rigs"][r["rig"]], r["prefix"], r["seat"], r["parent_bone"])
     arm = build_armature(uid, bones)
     attach_parts(arm, SPEC["bodies"].get(u.get("body", ""), []) + u["parts"], uid,
                  skip=u.get("skip", ()))
-    if rider:
-        parts = SPEC["bodies"].get(rider.get("body", ""), []) + u["rider_parts"]
-        attach_parts(arm, parts, uid + "_r", "r.", rider["seat"])
-    keyframe_actions(arm, "horse" if u["rig"] == "horse" else "humanoid",
-                     rider=bool(rider), variant=u.get("pose", ""))
+    for r in riders:
+        parts = SPEC["bodies"].get(r.get("body", ""), []) + r["parts"]
+        tag = uid + "_r" if r["prefix"] == "r." else uid + "_" + r["prefix"].rstrip(".")
+        attach_parts(arm, parts, tag, r["prefix"], r["seat"], skip=r.get("skip", ()))
+    keyframe_actions(arm, u)
     return arm
 
 
