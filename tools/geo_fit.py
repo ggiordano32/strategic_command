@@ -5,6 +5,10 @@ the result into the files the game reads. The game never reads the raw data.
   python3 -I tools/geo_fit.py --config tools/geo/med.json --dem DEM --ne NEDIR
          [--repo .] [--dem-lon0 -10.7 --dem-lat0 32.8 --dem-step 0.008333333
           --dem-rows 1729 --dem-cols 4369] [--dry]
+  python3 -I tools/geo_fit.py --config tools/geo/med.json --exposure-only [--repo .]
+         (re-bakes only the wind exposure / shore steepness of the sea from
+         the COAST and SLOPE fields already in game/campaign/relief_data.gd:
+         no raw data needed; the way to change a map's wind)
   (needs numpy; run it from a venv or system python3 with numpy installed)
 
 Inputs
@@ -36,6 +40,14 @@ PARAMETERS (config keys)
   coast_island_min_deg: ... for the coasts' islands (default island_min_deg;
             0.05 since 2026-10-10).
   landmass_clip: {"index": {"lon_max": x}} extra clips of a landmass.
+  wind: {"from_deg": 315, "strength": 100}: the dominant wind of the sea
+            (compass bearing it blows FROM, 315 = north-west, the mistral;
+            strength 0..100) for the waves and the surf. Baked into
+            relief_data.gd as WIND_FROM_DEG / WIND_STRENGTH next to EXPOSURE
+            (how open the sea is at each sample: upwind fetch and openness
+            all round) and SHORE (steepness of the land beside it). The
+            Caribbean map would say {"from_deg": 90, "strength": 80}
+            (the trade winds blow from the east).
   thresholds: terrain class thresholds (below).
   rivers: [{name, into, ne_names, hand, cross, ne_from?}]: the Natural Earth
             main stem (shortest path along the NE lines from the vertex nearest
@@ -684,6 +696,120 @@ def coast_field(cfg, proj, rings, fw, fh, fpx):
     return np.clip(np.round(128 + sgn), 0, 255).astype(np.uint8)
 
 
+# ------------------------------------------------------------ sea exposure
+
+EXPO_FETCH_KM = 250.0     # fetch beyond this is not told apart
+EXPO_OPEN_KM = 80.0       # a direction counts as open at this fetch
+EXPO_STEPS = list(range(1, 9)) + list(range(10, 91, 2))   # samples marched along a ray
+
+
+def _ray_fetch(sea, bearing_deg, step_km):
+    """Fetch in km of every sample along a compass bearing (the direction the
+    ray goes): the distance to the first land sample, capped; leaving the
+    window counts as open sea. sea: bool (fh, fw), row 0 north."""
+    fh, fw = sea.shape
+    b = math.radians(bearing_deg)
+    dx, dy = math.sin(b), -math.cos(b)          # map y runs south
+    yy, xx = np.mgrid[0:fh, 0:fw]
+    fetch = np.full((fh, fw), EXPO_STEPS[-1] * step_km, np.float32)
+    alive = sea.copy()
+    for s in EXPO_STEPS:
+        px = np.rint(xx + dx * s).astype(np.int64)
+        py = np.rint(yy + dy * s).astype(np.int64)
+        inside = (px >= 0) & (px < fw) & (py >= 0) & (py < fh)
+        hit = np.zeros((fh, fw), bool)
+        hit[inside] = ~sea[py[inside], px[inside]]
+        newly = alive & hit
+        fetch[newly] = (s - 1) * step_km
+        alive &= ~hit
+        if not alive.any():
+            break
+    return fetch
+
+
+def exposure_fields(cfg, coast, slope, fpx_km):
+    """EXPOSURE (0..255: 0 sheltered, 255 open to the wind and the sea) and
+    SHORE (0..255: steepness of the land within two samples) per fine sample.
+    EXPOSURE = half the fetch along the wind (three rays, upwind +-30 degrees,
+    200 km = full) and half the openness all round (16 rays, the share with a
+    fetch of 80 km or more, 0.6 = full: a straight shore is about 0.5, a
+    headland more, the head of a bay little). Land samples within four of the
+    sea take the value of the nearest sea sample so the filtered texture does
+    not dip at the coast."""
+    wind = cfg.get("wind", {"from_deg": 315, "strength": 100})
+    up = float(wind["from_deg"])          # the ray goes up the wind
+    sea = coast >= 128
+    km = lambda f: np.minimum(f, EXPO_FETCH_KM)
+    wf = np.zeros(coast.shape, np.float32)
+    for off, w in ((-30.0, 0.25), (0.0, 0.5), (30.0, 0.25)):
+        wf += w * np.clip(_ray_fetch(sea, up + off, fpx_km) / 200.0, 0, 1)
+    op = np.zeros(coast.shape, np.float32)
+    for k in range(16):
+        op += np.clip(_ray_fetch(sea, k * 22.5, fpx_km) / EXPO_OPEN_KM, 0, 1)
+    op = np.clip(op / 16.0 / 0.6, 0, 1)
+    ex = 0.5 * wf + 0.5 * op
+    ex = np.where(sea, ex, np.nan)
+    # Land beside the sea takes the neighbouring sea values (4 passes).
+    for _ in range(4):
+        pad = np.pad(ex, 1, mode="edge")
+        nb = np.stack([pad[1 + dy:1 + dy + ex.shape[0], 1 + dx:1 + dx + ex.shape[1]]
+                       for dy in (-1, 0, 1) for dx in (-1, 0, 1)])
+        with np.errstate(all="ignore"):
+            m = np.nanmax(np.where(np.isnan(nb), -1.0, nb), axis=0)
+        ex = np.where(np.isnan(ex) & (m >= 0), m, ex)
+    ex = np.nan_to_num(ex, nan=0.0)
+    # Shore steepness: the slope (percent) of the land, spread two samples out.
+    st = np.where(~sea, slope.astype(np.float32), 0.0)
+    for _ in range(2):
+        pad = np.pad(st, 1, mode="edge")
+        nb = np.stack([pad[1 + dy:1 + dy + st.shape[0], 1 + dx:1 + dx + st.shape[1]]
+                       for dy in (-1, 0, 1) for dx in (-1, 0, 1)])
+        st = nb.max(axis=0)
+    shore = np.clip(st / 40.0, 0, 1)
+    return (np.round(ex * 31).astype(np.uint8) * 8, np.round(shore * 7).astype(np.uint8) * 36)
+
+
+def read_relief_const(text, name):
+    m = re.search(r'^const %s := "([^"]*)"' % name, text, re.M)
+    return zlib.decompress(base64.b64decode(m.group(1))) if m else None
+
+
+def bake_exposure(cfg, repo, dry=False):
+    """Add / replace EXPOSURE, SHORE, WIND_FROM_DEG and WIND_STRENGTH in
+    game/campaign/relief_data.gd from the COAST and SLOPE already in it."""
+    path = os.path.join(repo, "game/campaign/relief_data.gd")
+    text = open(path).read()
+    fw = int(re.search(r"^const FW := (\d+)", text, re.M).group(1))
+    fh = int(re.search(r"^const FH := (\d+)", text, re.M).group(1))
+    coast = np.frombuffer(read_relief_const(text, "COAST"), np.uint8).reshape(fh, fw)
+    slope = np.frombuffer(read_relief_const(text, "SLOPE"), np.uint8).reshape(fh, fw)
+    fpx_km = cfg["cell_px"] / cfg["fine_per_cell"] / cfg["px_lat"] * 111.32
+    ex, shore = exposure_fields(cfg, coast, slope, fpx_km)
+    wind = cfg.get("wind", {"from_deg": 315, "strength": 100})
+    new = {"EXPOSURE": 'const EXPOSURE := "%s"' % b64z(ex.tobytes()),
+           "SHORE": 'const SHORE := "%s"' % b64z(shore.tobytes()),
+           "WIND_FROM_DEG": "const WIND_FROM_DEG := %d" % int(wind["from_deg"]),
+           "WIND_STRENGTH": "const WIND_STRENGTH := %d" % int(wind["strength"])}
+    doc = ["## EXPOSURE / SHORE / WIND_*: the sea's wind (config \"wind\"): EXPOSURE 0..255 is how",
+           "## open the sea is at each sample (upwind fetch and openness all round; land beside",
+           "## the sea copies it), SHORE 0..255 the steepness of the land within two samples,",
+           "## WIND_FROM_DEG the compass bearing the wind blows from, WIND_STRENGTH 0..100",
+           "## (tools/geo_fit.py bake_exposure; `--exposure-only` re-bakes just these)."]
+    lines = [l for l in text.split("\n") if not re.match(r"const (EXPOSURE|SHORE|WIND_FROM_DEG|WIND_STRENGTH) ", l)
+             and l not in doc]
+    while lines and lines[-1] == "":
+        lines.pop()
+    at = next(i for i, l in enumerate(lines) if l.startswith("const FS "))
+    while at > 0 and lines[at - 1] == "":
+        at -= 1
+    lines[at:at] = doc
+    lines += [new[k] for k in ("WIND_FROM_DEG", "WIND_STRENGTH", "EXPOSURE", "SHORE")]
+    if not dry:
+        open(path, "w").write("\n".join(lines) + "\n")
+    return {"exposure_mean_sea": float(ex[coast >= 128].mean()) / 255.0,
+            "bytes": [len(zlib.compress(ex.tobytes(), 9)), len(zlib.compress(shore.tobytes(), 9))]}
+
+
 # ------------------------------------------------------------ elevation
 
 def classify(mean, mx, relief, land, th, w, h):
@@ -855,8 +981,9 @@ DUMP = os.environ.get("GEO_FIT_DUMP")   # debugging: dump the cell statistics (n
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
-    ap.add_argument("--dem", required=True)
-    ap.add_argument("--ne", required=True)
+    ap.add_argument("--dem")
+    ap.add_argument("--ne")
+    ap.add_argument("--exposure-only", action="store_true", help="re-bake only EXPOSURE / SHORE / WIND_*")
     ap.add_argument("--repo", default=".")
     ap.add_argument("--dem-lon0", type=float, default=-10.7)
     ap.add_argument("--dem-lat0", type=float, default=32.8)
@@ -868,6 +995,11 @@ def main():
     ap.add_argument("--skip-geo", action="store_true", help="only the elevation products")
     args = ap.parse_args()
     cfg = json.load(open(args.config))
+    if args.exposure_only:
+        print(bake_exposure(cfg, args.repo, args.dry))
+        return
+    if not args.dem or not args.ne:
+        ap.error("--dem and --ne are required (or --exposure-only)")
     proj = Proj(cfg)
     mg = os.path.join(args.repo, "game/campaign/map_geo.gd")
     check_projection(mg, proj)
@@ -883,6 +1015,8 @@ def main():
     z = load_dem(args.dem, args)
     dem = Dem(z, args.dem_lon0, args.dem_lat0, args.dem_step)
     print(bake_elevation(cfg, proj, dem, rivers, args.repo, args.dry, lands + islands))
+    if not args.dry:
+        print(bake_exposure(cfg, args.repo))
 
 
 if __name__ == "__main__":

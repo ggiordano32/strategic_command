@@ -19,6 +19,10 @@
    "lon_max": 11.55
   }
  },
+ "wind": {
+  "from_deg": 315,
+  "strength": 100
+ },
  "thresholds": {
   "ridge_mean": 1500,
   "ridge_max": 2200,

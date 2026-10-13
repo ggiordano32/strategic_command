@@ -14,6 +14,10 @@ extends RefCounted
 ##   GeoFields.slope_pct(p)         gradient in percent
 ##   GeoFields.relief_m(p)          highest minus lowest metres in 5 x 5 samples
 ##   GeoFields.coast_km(p)          signed km to the coast (sea side positive)
+##   GeoFields.exposure(p)         0..1 how open the sea is to the wind at a map point
+##   GeoFields.shore_steep(p)      0..1 steepness of the land beside a sea point
+##   GeoFields.wind_dir()          unit vector the wind blows TOWARDS (map axes, y south)
+##   GeoFields.wind_strength()     0..1
 ##   GeoFields.cell_class(c)        CLASS_* of grid cell c
 ##   GeoFields.river_dist(c)        cells to the nearest river (float)
 ##   GeoFields.fine() / slope() / relief_field()  the raw fields (FW x FH, row 0 north)
@@ -33,6 +37,8 @@ static var _fine := PackedFloat32Array()     # metres
 static var _slope := PackedByteArray()       # percent
 static var _relief := PackedByteArray()      # units of 8 m
 static var _coast := PackedByteArray()       # 128 + km, sea side positive
+static var _expo := PackedByteArray()        # 0..255 (steps of 8)
+static var _shore := PackedByteArray()       # 0..252 (steps of 36)
 static var _px := 2.5                        # map pixels per fine sample
 
 
@@ -55,6 +61,8 @@ static func ensure() -> void:
 	_slope = _decode(Relief.SLOPE, n)
 	_relief = _decode(Relief.RELIEF_F, n)
 	_coast = _decode(Relief.COAST, n)
+	_expo = _decode(Relief.EXPOSURE, n)
+	_shore = _decode(Relief.SHORE, n)
 	_px = 20.0 / float(Relief.FS)
 
 
@@ -111,6 +119,54 @@ static func coast_km(p: Vector2) -> float:
 	var a := lerpf(_coast[i], _coast[i + 1], tx)
 	var b := lerpf(_coast[i + Relief.FW], _coast[i + Relief.FW + 1], tx)
 	return lerpf(a, b, ty) - 128.0
+
+
+## Wind exposure of the sea at map point p, 0 (sheltered: bay, lee of land)
+## to 1 (open to the wind and the sea); bilinear. Baked by
+## tools/geo_fit.py bake_exposure (the config's "wind").
+static func exposure(p: Vector2) -> float:
+	ensure()
+	return _bilinear8(_expo, p) / 255.0
+
+
+## Steepness of the land within two samples of map point p, 0 .. 1.
+static func shore_steep(p: Vector2) -> float:
+	ensure()
+	return _bilinear8(_shore, p) / 255.0
+
+
+## The direction the wind blows towards (unit, map axes: x east, y south), from
+## the baked compass bearing it blows FROM (315 = north-west gives (0.71, 0.71)).
+static func wind_dir() -> Vector2:
+	var b := deg_to_rad(float(Relief.WIND_FROM_DEG))
+	return Vector2(-sin(b), cos(b))
+
+
+static func wind_strength() -> float:
+	return float(Relief.WIND_STRENGTH) / 100.0
+
+
+static func _bilinear8(f: PackedByteArray, p: Vector2) -> float:
+	var fx := p.x / _px - 0.5
+	var fy := p.y / _px - 0.5
+	var x0 := clampi(int(floor(fx)), 0, Relief.FW - 2)
+	var y0 := clampi(int(floor(fy)), 0, Relief.FH - 2)
+	var tx := clampf(fx - x0, 0.0, 1.0)
+	var ty := clampf(fy - y0, 0.0, 1.0)
+	var i := y0 * Relief.FW + x0
+	return lerpf(lerpf(f[i], f[i + 1], tx), lerpf(f[i + Relief.FW], f[i + Relief.FW + 1], tx), ty)
+
+
+## The exposure (R) and shore steepness (G) as an RG8 image for the water shader.
+static func shore_image() -> Image:
+	ensure()
+	var n := Relief.FW * Relief.FH
+	var d := PackedByteArray()
+	d.resize(n * 2)
+	for i in n:
+		d[2 * i] = _expo[i]
+		d[2 * i + 1] = _shore[i]
+	return Image.create_from_data(Relief.FW, Relief.FH, false, Image.FORMAT_RG8, d)
 
 
 ## Elevation in metres at map point p (bilinear between sample centres).

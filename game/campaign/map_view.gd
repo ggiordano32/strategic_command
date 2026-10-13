@@ -24,6 +24,7 @@ const CGrid := preload("res://campaign/cgrid.gd")
 const Landscape := preload("res://game/campaign/landscape.gd")
 const GeoFields := preload("res://game/campaign/geo_fields.gd")
 const WATER_SHADER := preload("res://game/campaign/water.gdshader")
+const SeaWaves := preload("res://game/campaign/sea_waves.gd")
 
 const SEA := Color(0.13, 0.25, 0.34)
 const SEA_SHALLOW := Color(0.22, 0.38, 0.47)
@@ -80,9 +81,9 @@ const COL_BANK_GREEN := Color(0.30, 0.52, 0.26, 0.30)
 const BANK_GREEN_W := 11.0
 const BANK_W := 4.8
 static var terrain_view := true
-## The sea (2026-10-13, water.gdshader): a narrow depth tint, contour lines, an advected current texture and
-## shimmer from the coast distance field; "low" keeps the depth tint and contour
-## lines only. A view preference in user://settings.cfg [map] water = low | high
+## The sea (2026-10-13, water.gdshader): a narrow depth tint, contour lines, waves lit as a normal map, surf
+## foam on wind-exposed coasts and an advected current texture; "low" keeps the depth tint and contour
+## lines only (sea_waves.gd is the waves' CPU twin). A view preference in user://settings.cfg [map] water = low | high
 ## ("--map-water=low|high" overrides it for the session).
 static var water_high := true
 static var _land_meshes: Array = []   # triangulated once: the polygons are fine now
@@ -144,12 +145,24 @@ func _make_water() -> void:
 	m.set_shader_parameter("coast", ImageTexture.create_from_image(img))
 	m.set_shader_parameter("field_px", Vector2(GeoFields.fine_width(), GeoFields.fine_height()) * GeoFields.sample_px())
 	m.set_shader_parameter("hi", 1.0 if _water_hi() else 0.0)
+	m.set_shader_parameter("shore", ImageTexture.create_from_image(GeoFields.shore_image()))
+	m.set_shader_parameter("wind_dir", GeoFields.wind_dir())
+	m.set_shader_parameter("wind_strength", GeoFields.wind_strength())
+	for i in SeaWaves.TRAINS.size():
+		m.set_shader_parameter("train%d" % i, SeaWaves.TRAINS[i])
 	_water.material = m
 	_water.draw.connect(func(): _water.draw_rect(Rect2(Vector2(-4000, -4000), Geo.SIZE + Vector2(8000, 8000)), SEA))
 	add_child(_water)
 
 
-## Water quality (saved): high = current texture and shimmer, low = depth tint and contour lines.
+## The wave clock (SeaWaves.t, also the shader's `wave_t`): the sea only moves on "high".
+func _process(delta: float) -> void:
+	if _water != null and _water_hi():
+		SeaWaves.t += delta
+		(_water.material as ShaderMaterial).set_shader_parameter("wave_t", SeaWaves.t)
+
+
+## Water quality (saved): high = waves, surf foam and currents, low = depth tint and contour lines.
 ## Graphics Low (game/quality.gd) forces the still sea; trees and speckles are
 ## skipped when zoomed out beyond LOW_TREE_ZOOM (the relief texture stays).
 const LOW_TREE_ZOOM := 0.9
