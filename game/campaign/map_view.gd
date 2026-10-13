@@ -27,7 +27,7 @@ const WATER_SHADER := preload("res://game/campaign/water.gdshader")
 const SEA := Color(0.13, 0.25, 0.34)
 const SEA_SHALLOW := Color(0.22, 0.38, 0.47)
 const LAND := Color(0.80, 0.76, 0.62)
-const COAST := Color(0.16, 0.18, 0.16, 0.75)
+const COAST := Color(0.09, 0.11, 0.10, 0.92)
 const TINT := 0.55         # owner colour over the region's ground
 const GROUND_LIFT := 0.36  # the battle palettes are darker than a map should be
 ## Lines and highlights, shared with the map key (map_key.gd draws its
@@ -79,9 +79,9 @@ const COL_BANK_GREEN := Color(0.30, 0.52, 0.26, 0.30)
 const BANK_GREEN_W := 11.0
 const BANK_W := 4.8
 static var terrain_view := true
-## The sea (2026-10-10, water.gdshader): a depth tint, waves, currents and
-## foam from the coast distance field; "low" keeps the depth tint and foam
-## only. A view preference in user://settings.cfg [map] water = low | high
+## The sea (2026-10-13, water.gdshader): a narrow depth tint, contour lines, an advected current texture and
+## shimmer from the coast distance field; "low" keeps the depth tint and contour
+## lines only. A view preference in user://settings.cfg [map] water = low | high
 ## ("--map-water=low|high" overrides it for the session).
 static var water_high := true
 static var _land_meshes: Array = []   # triangulated once: the polygons are fine now
@@ -148,7 +148,7 @@ func _make_water() -> void:
 	add_child(_water)
 
 
-## Water quality (saved): high = waves, currents and foam, low = depth tint and foam.
+## Water quality (saved): high = current texture and shimmer, low = depth tint and contour lines.
 static func set_water_high(on: bool, save := true) -> void:
 	water_high = on
 	if save:
@@ -456,7 +456,7 @@ func _draw() -> void:
 	for poly in Geo.lands() + Geo.islands():
 		var closed: PackedVector2Array = poly.duplicate()
 		closed.append(poly[0])
-		draw_polyline(closed, COAST, 1.3 * lw, true)
+		draw_polyline(closed, COAST, 1.6 * lw, true)
 	# Land routes (dashed) and sea lanes (dotted, light blue).
 	if grid:
 		# Roads, rivers and the crossings over them.

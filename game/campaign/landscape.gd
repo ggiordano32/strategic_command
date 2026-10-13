@@ -402,7 +402,7 @@ const RELIEF_CODE := 3                    # bump when relief_image changes
 ## Beaches and cliffs (2026-10-10): within BEACH_KM of the coast (the signed
 ## distance field of tools/geo_fit.py, geo_fields.gd coast()), low ground
 ## takes a band of sand, a steep rise from the coast a dark cliff line.
-const BEACH_KM := 3.0
+const BEACH_KM := 2.0
 const COL_BEACH := Color(0.90, 0.83, 0.62)
 const COL_CLIFF := Color(0.22, 0.17, 0.12)
 const UPSAMPLE := 2                       # relief image pixels per elevation sample
@@ -515,7 +515,7 @@ static func relief_image(e0: PackedFloat32Array, w0: int, h0: int, pix_m0: float
 			if has_coast:
 				var lk := 128.0 - cst[i] * 255.0   # km inland (negative: sea side)
 				if lk > 0.0 and lk < BEACH_KM:
-					sand_a = (1.0 - smoothstep(1.0, BEACH_KM, lk)) * (1.0 - smoothstep(30.0, 120.0, v)) * 0.8
+					sand_a = (1.0 - smoothstep(0.9, BEACH_KM, lk)) * (1.0 - smoothstep(30.0, 120.0, v)) * 0.8
 					var rise := sqrt(dx * dx + dy * dy) * 0.5 / pix_m
 					cliff_a = smoothstep(0.10, 0.30, rise) * (1.0 - smoothstep(1.0, 2.4, lk)) * smoothstep(20.0, 80.0, v) * 0.6
 					sand_a *= 1.0 - cliff_a
