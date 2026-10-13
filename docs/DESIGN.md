@@ -3466,9 +3466,21 @@ selecting or ordering anything.
 - Keys: Space / P pause, + / - speed, 1-4 and Ctrl+A group selects, R run,
   H halt, F fire, K skirmish, Shift+D deploy, Y refill, O orders overlay,
   W A S D / arrows pan, Page Up / Down zoom, B book, F3 readout, F11 fullscreen.
-- Mouse drag on empty ground with nothing selected (or with Shift) draws a
-  selection box; pan with right / middle drag or keys (left-drag pan with
-  nothing selected is gone on desktop; touch still pans with one finger).
+- Mouse (Total War: Rome scheme, 2026-10-13; real mouse only, touch unchanged):
+  left click a unit selects it (Shift / Ctrl adds or removes), left click on
+  empty ground deselects, left drag draws a selection box (Shift adds);
+  right click on the ground moves the whole selection there keeping its
+  shape (`_group_move`: the group's centre goes to the point, each unit keeps
+  its offset from it, turned with the group if the travel is a big turn;
+  one unit: a plain move), right click on an enemy attacks, on one of ours
+  moves to that point, double right click runs / charges; right drag lays
+  the selection out along the dragged line (the drag-to-line rule of touch:
+  left to right in current order, files fitted to the width, facing
+  perpendicular toward the side dragged from; preview as for touch); in the
+  deployment phase the same buttons place units. Middle drag pans (right
+  drag pans when nothing is selected), also keys; wheel zooms. A unit's book
+  page is on the card / B key. Gates, engines, equipment and the targeting
+  modes (Release, Sabotage...) still take a left click.
 - Two-finger tap deselects all (touch, battle only): both fingers down within
   120 ms, both up within 250 ms of the first touch, each moved under 12 px;
   pinch / pan motion cancels it (`TWO_TAP_*` in `game/battle.gd`).
@@ -3638,6 +3650,23 @@ frame offscreen on both paths gives identical pixels (sub-pixel edge
 differences far from the origin predate the atlas). Frame time at 4,000
 men is unchanged within noise on this desktop; Graphics Low keeps the
 animation (holding it measured no cheaper).
+
+**Missile sets (step 1c, 2026-10-13).** Four more sets on the shared
+humanoid rig, each with a pose variant (spec `pose`) replacing the shared
+attack: 5 **Archers** (cloth tunic, coloured cap, quiver, bow in the off
+hand; attack = draw, full draw, release, recover; the string is a V to the
+drawing hand and the arrow is aimed at the bow, both re-aimed per frame by
+build.py "cord" parts), 6 **Javelinmen** (leather cap with a band, small
+round shield, two javelins in the off hand and one in the throwing hand;
+attack = wind-up behind the head, step, release (the javelin vanishes),
+follow-through), 7 **Slingers** (the javelin body without shield or
+javelins; cord and pouch on a new `weapon.R` bone that whirls overhead for
+the shot; a stone bag), 8 **Gastraphetes** (the archer body behind a stocked
+belly-bow held in both hands; a lean and a kick). `sprite_set` 5-8 sit on
+the archer, javelin, slinger and gastraphetes base rows (tiers, Cretans and
+faction rows inherit); camel archers, hero rows, dogs and engines stay
+procedural. Testing aid: `--factions=syracuse,carthage` sets the two sides'
+palettes in a sandbox battle.
 
 ## 9. Milestones
 

@@ -276,6 +276,14 @@ func _ready() -> void:
 	soldiers = SoldierLayer.new()
 	soldiers.viewer_side = player_side
 	soldiers.unit_faction = unit_faction
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--factions=") and unit_faction.is_empty():
+			# Testing aid: --factions=syracuse,carthage (side 0, side 1) sets the palettes.
+			var fk: PackedStringArray = a.get_slice("=", 1).split(",")
+			var uf: Array = []
+			for u in sim.n_units:
+				uf.append(CData.faction_index(fk[mini(sim.u_side[u] & 1, fk.size() - 1)]))
+			soldiers.unit_faction = uf
 	add_child(soldiers)
 	soldiers.setup(sim, PX_PER_M)
 	soldiers.probed.connect(_on_soldier_probe)

@@ -369,6 +369,7 @@ const BASE: Array[Dictionary] = [
 		"weak_vs": "Cavalry that reaches them while they shoot at something else, heavy infantry from the front, any melee unit that closes.",
 		"cls": CLS_MISSILE,
 		"sprite": 3,
+		"sprite_set": 5,
 		"attack": 18,
 		"defence": 16,
 		"armour": 3,
@@ -409,6 +410,7 @@ const BASE: Array[Dictionary] = [
 		"weak_vs": "Heavy infantry, spearmen and pikes that close, cavalry that catches them.",
 		"cls": CLS_MISSILE,
 		"sprite": 4,
+		"sprite_set": 6,
 		"attack": 28,
 		"defence": 22,
 		"armour": 3,
@@ -934,7 +936,7 @@ const LIGHT_MISSILE: Array[Dictionary] = [
 		"woods_pct": 180,   # the missile class's woods slowing x1.8 = about the cavalry's
 	},
 	{
-		"key": "slinger", "line": "sling", "name": "Slingers", "short": "Slingers", "icon": 14, "sprite": 3,
+		"key": "slinger", "line": "sling", "name": "Slingers", "short": "Slingers", "icon": 14, "sprite": 3, "sprite_set": 7,
 		"size": 80, "files0": 20,
 		"role": "Missile infantry",
 		"desc": "Light troops with slings who outrange the bow and shoot faster. A sling stone hurts unarmoured men more than an arrow but does little against armour and big shields. They shoot over friendly units and hills, and by default fall back from melee troops that come for them. Weak in melee.",
@@ -1180,7 +1182,7 @@ const LIGHT_ART: Array[Dictionary] = [
 		"carried": 1,
 	},
 	{
-		"key": "gastraphetes", "line": "belly_bow", "name": "Gastraphetes", "short": "Belly-bows", "icon": 19, "sprite": 3,
+		"key": "gastraphetes", "line": "belly_bow", "name": "Gastraphetes", "short": "Belly-bows", "icon": 19, "sprite": 3, "sprite_set": 8,
 		"size": 80, "files0": 20,
 		"role": "Missile infantry (belly-bows)",
 		"desc": "Greek belly-bowmen: a composite bow on a stock, spanned by leaning on it with the belly, shot like a small bolt engine. Each shot outranges the bow and goes through armour, but loading takes a long time and the shot flies flat, so they need a clear line past friends and over the ground (no shooting over a crest). They stand their ground rather than skirmish. Weak in melee.",

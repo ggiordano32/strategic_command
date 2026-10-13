@@ -17,7 +17,9 @@
     "leather": [0.5, 0.33, 0.19],
     "dark": [0.2, 0.16, 0.14],
     "horse": [0.78, 0.53, 0.3],
-    "horse_dark": [0.28, 0.18, 0.11]
+    "horse_dark": [0.28, 0.18, 0.11],
+    "string": [0.95, 0.92, 0.8],
+    "fletch": [0.97, 0.97, 0.94]
   },
   "palettes": {
     "rome": {"name": "Rome", "primary": [0.84, 0.13, 0.11], "secondary": [0.98, 0.8, 0.22], "accent": [0.86, 0.62, 0.28], "pattern": [0.55, 0.06, 0.05], "pattern_k": 0, "note": "red tunics and shields, gold crests and rims, bronze helmets and plates"},
@@ -44,7 +46,8 @@
         ["thigh.L", "hips", [0, 0.11, 0.92], [0.02, 0.12, 0.5]],
         ["shin.L", "thigh.L", [0.02, 0.12, 0.5], [0, 0.12, 0.08]],
         ["thigh.R", "hips", [0, -0.11, 0.92], [0.02, -0.12, 0.5]],
-        ["shin.R", "thigh.R", [0.02, -0.12, 0.5], [0, -0.12, 0.08]]
+        ["shin.R", "thigh.R", [0.02, -0.12, 0.5], [0, -0.12, 0.08]],
+        ["weapon.R", "forearm.R", [0.34, -0.29, 1.08], [0.5, -0.29, 1.08]]
       ]
     },
     "horse": {
@@ -205,8 +208,123 @@
         {"n": "lancehead", "shape": "cone", "bone": "forearm.R", "mat": "metal", "a": [2.13, -0.29, 1.14], "b": [2.48, -0.29, 1.15], "r": 0.06},
         {"n": "pennant", "shape": "box", "bone": "forearm.R", "mat": "secondary", "pos": [1.92, -0.29, 1.2], "size": [0.3, 0.18, 0.02], "rot": [-30, 0, 0]}
       ]
+    },
+    "archers": {
+      "name": "Archers",
+      "look": "Light bowman: cloth tunic, coloured cap, quiver on the back, bow in the off hand; the attack is a draw and a shot",
+      "rig": "humanoid",
+      "body": "humanoid",
+      "pose": "archer",
+      "skip": [
+        "cloak_back"
+      ],
+      "render_box": [
+        -1.5,
+        1.75,
+        -1.5,
+        1.5
+      ],
+      "parts": [
+        {"n": "cap", "shape": "sphere", "bone": "head", "mat": "secondary", "pos": [0.0, 0, 1.68], "r": 0.18, "scale": [1.05, 1.0, 0.85]},
+        {"n": "cap_band", "shape": "box", "bone": "head", "mat": "accent", "pos": [0.1, 0, 1.6], "size": [0.06, 0.3, 0.05]},
+        {"n": "quiver", "shape": "cyl", "bone": "spine", "mat": "leather", "pos": [-0.2, -0.12, 1.28], "r": 0.075, "len": 0.55, "verts": 8, "rot": [20, -18, 0]},
+        {"n": "quiver_band", "shape": "cyl", "bone": "spine", "mat": "secondary", "pos": [-0.2, -0.12, 1.28], "r": 0.082, "len": 0.12, "verts": 8, "rot": [20, -18, 0]},
+        {"n": "fletching", "shape": "box", "bone": "spine", "mat": "fletch", "pos": [-0.27, -0.18, 1.58], "size": [0.1, 0.12, 0.1], "bevel": 0.02, "rot": [20, -18, 0]},
+        {"n": "bow_grip", "shape": "box", "bone": "forearm.L", "mat": "leather", "pos": [0.47, 0.28, 1.12], "size": [0.07, 0.07, 0.2]},
+        {"n": "bow_up1", "shape": "limb", "bone": "forearm.L", "mat": "wood", "a": [0.46, 0.28, 1.2], "b": [0.42, 0.28, 1.45], "t": 0.06},
+        {"n": "bow_up2", "shape": "limb", "bone": "forearm.L", "mat": "wood", "a": [0.42, 0.28, 1.45], "b": [0.35, 0.28, 1.72], "t": 0.05},
+        {"n": "bow_dn1", "shape": "limb", "bone": "forearm.L", "mat": "wood", "a": [0.46, 0.28, 1.04], "b": [0.42, 0.28, 0.79], "t": 0.06},
+        {"n": "bow_dn2", "shape": "limb", "bone": "forearm.L", "mat": "wood", "a": [0.42, 0.28, 0.79], "b": [0.35, 0.28, 0.52], "t": 0.05},
+        {"n": "string", "shape": "cord", "bone": "forearm.L", "mat": "string", "a": [0.35, 0.28, 1.72], "b": [0.35, 0.28, 0.52], "t": 0.025, "via": {"bone": "forearm.R", "pos": [0.32, -0.29, 1.08], "show": {"attack": [0, 1]}}},
+        {"n": "arrow", "shape": "cord", "bone": "forearm.R", "a_bone": "forearm.R", "b_bone": "forearm.L", "mat": "wood", "a": [0.3, -0.29, 1.08], "b": [0.47, 0.28, 1.12], "t": 0.04, "frames": {"attack": [0, 1]}},
+        {"n": "arrowhead", "shape": "cord", "bone": "forearm.L", "mat": "metal", "a": [0.45, 0.28, 1.12], "b": [0.6, 0.28, 1.12], "t": 0.07, "frames": {"attack": [0, 1]}},
+        {"n": "fletch", "shape": "cord", "bone": "forearm.R", "mat": "fletch", "a": [0.3, -0.29, 1.08], "b": [0.42, -0.29, 1.08], "t": 0.09, "frames": {"attack": [0, 1]}}
+      ]
+    },
+    "javelinmen": {
+      "name": "Javelinmen",
+      "look": "Skirmisher: tunic, leather cap with a coloured band, small round shield, javelins in the off hand and one in the throwing hand",
+      "rig": "humanoid",
+      "body": "humanoid",
+      "pose": "javelin",
+      "skip": [
+        "cloak_back"
+      ],
+      "render_box": [
+        -1.75,
+        2.0,
+        -1.5,
+        1.5
+      ],
+      "parts": [
+        {"n": "cap", "shape": "sphere", "bone": "head", "mat": "leather", "pos": [0.0, 0, 1.68], "r": 0.18, "scale": [1.05, 1.0, 0.85]},
+        {"n": "band", "shape": "box", "bone": "head", "mat": "secondary", "pos": [0.12, 0, 1.62], "size": [0.07, 0.3, 0.06]},
+        {"n": "shield_rim", "shape": "cyl", "bone": "forearm.L", "mat": "secondary", "pos": [0.4, 0.24, 1.1], "r": 0.36, "len": 0.05, "verts": 12, "rot": [0, 58, 0]},
+        {"n": "shield", "shape": "cyl", "bone": "forearm.L", "mat": "primary", "pos": [0.42, 0.24, 1.1], "r": 0.29, "len": 0.05, "verts": 12, "rot": [0, 58, 0]},
+        {"n": "emblem", "shape": "cyl", "bone": "forearm.L", "mat": "accent", "pos": [0.44, 0.24, 1.1], "r": 0.1, "len": 0.04, "verts": 8, "rot": [0, 58, 0]},
+        {"n": "jav_a", "shape": "limb", "bone": "forearm.L", "mat": "wood", "a": [-0.5, 0.56, 1.18], "b": [1.1, 0.56, 1.24], "t": 0.045},
+        {"n": "jav_a_head", "shape": "cone", "bone": "forearm.L", "mat": "metal", "a": [1.08, 0.56, 1.24], "b": [1.3, 0.56, 1.25], "r": 0.05},
+        {"n": "jav_b", "shape": "limb", "bone": "forearm.L", "mat": "wood", "a": [-0.5, 0.64, 1.14], "b": [1.1, 0.64, 1.2], "t": 0.045},
+        {"n": "jav_b_head", "shape": "cone", "bone": "forearm.L", "mat": "metal", "a": [1.08, 0.64, 1.2], "b": [1.3, 0.64, 1.21], "r": 0.05},
+        {"n": "jav_r", "shape": "limb", "bone": "forearm.R", "mat": "wood", "a": [-0.5, -0.29, 1.06], "b": [1.0, -0.29, 1.12], "t": 0.05, "hide": {"attack": [2, 3]}},
+        {"n": "jav_r_head", "shape": "cone", "bone": "forearm.R", "mat": "metal", "a": [0.98, -0.29, 1.12], "b": [1.22, -0.29, 1.13], "r": 0.055, "hide": {"attack": [2, 3]}}
+      ]
+    },
+    "slingers": {
+      "name": "Slingers",
+      "look": "Javelinmen's light body: leather cap, no shield, a sling in the right hand (whirled overhead for the shot), a stone bag at the hip",
+      "rig": "humanoid",
+      "body": "humanoid",
+      "pose": "sling",
+      "skip": [
+        "cloak_back"
+      ],
+      "render_box": [
+        -1.75,
+        2.0,
+        -1.75,
+        1.5
+      ],
+      "parts": [
+        {"n": "cap", "shape": "sphere", "bone": "head", "mat": "leather", "pos": [0.0, 0, 1.68], "r": 0.18, "scale": [1.05, 1.0, 0.85]},
+        {"n": "band", "shape": "box", "bone": "head", "mat": "secondary", "pos": [0.12, 0, 1.62], "size": [0.07, 0.3, 0.06]},
+        {"n": "bag", "shape": "box", "bone": "hips", "mat": "leather", "pos": [0.02, 0.26, 0.98], "size": [0.2, 0.14, 0.22], "bevel": 0.04},
+        {"n": "bag_flap", "shape": "box", "bone": "hips", "mat": "secondary", "pos": [0.02, 0.26, 1.08], "size": [0.22, 0.16, 0.05]},
+        {"n": "sling_cord", "shape": "limb", "bone": "weapon.R", "mat": "string", "a": [0.34, -0.29, 1.08], "b": [1.0, -0.29, 1.08], "t": 0.04},
+        {"n": "sling_pouch", "shape": "box", "bone": "weapon.R", "mat": "leather", "pos": [1.02, -0.29, 1.08], "size": [0.14, 0.1, 0.07], "bevel": 0.02},
+        {"n": "sling_stone", "shape": "sphere", "bone": "weapon.R", "mat": "fletch", "pos": [1.04, -0.29, 1.13], "r": 0.045, "verts": 6, "hide": {"attack": [3]}}
+      ]
+    },
+    "gastraphetes": {
+      "name": "Gastraphetes",
+      "look": "Archer's light body braced behind a stocked belly-bow held in both hands",
+      "rig": "humanoid",
+      "body": "humanoid",
+      "pose": "belly",
+      "skip": [
+        "cloak_back"
+      ],
+      "render_box": [
+        -1.5,
+        1.75,
+        -1.5,
+        1.5
+      ],
+      "parts": [
+        {"n": "cap", "shape": "sphere", "bone": "head", "mat": "secondary", "pos": [0.0, 0, 1.68], "r": 0.18, "scale": [1.05, 1.0, 0.85]},
+        {"n": "cap_band", "shape": "box", "bone": "head", "mat": "accent", "pos": [0.1, 0, 1.6], "size": [0.06, 0.3, 0.05]},
+        {"n": "quiver", "shape": "cyl", "bone": "spine", "mat": "leather", "pos": [-0.2, -0.12, 1.28], "r": 0.075, "len": 0.55, "verts": 8, "rot": [20, -18, 0]},
+        {"n": "quiver_band", "shape": "cyl", "bone": "spine", "mat": "secondary", "pos": [-0.2, -0.12, 1.28], "r": 0.082, "len": 0.12, "verts": 8, "rot": [20, -18, 0]},
+        {"n": "fletching", "shape": "box", "bone": "spine", "mat": "fletch", "pos": [-0.27, -0.18, 1.58], "size": [0.1, 0.12, 0.1], "bevel": 0.02, "rot": [20, -18, 0]},
+        {"n": "stock", "shape": "limb", "bone": "spine", "mat": "wood", "a": [0.0, 0, 1.18], "b": [0.95, 0, 1.2], "t": [0.08, 0.1]},
+        {"n": "slide", "shape": "limb", "bone": "spine", "mat": "dark", "a": [0.3, 0, 1.24], "b": [0.95, 0, 1.24], "t": [0.05, 0.05]},
+        {"n": "bolt", "shape": "cone", "bone": "spine", "mat": "metal", "a": [0.9, 0, 1.28], "b": [1.12, 0, 1.28], "r": 0.04},
+        {"n": "prod_l", "shape": "limb", "bone": "spine", "mat": "wood", "a": [0.95, 0.0, 1.22], "b": [0.82, 0.5, 1.22], "t": [0.07, 0.07]},
+        {"n": "prod_r", "shape": "limb", "bone": "spine", "mat": "wood", "a": [0.95, 0.0, 1.22], "b": [0.82, -0.5, 1.22], "t": [0.07, 0.07]},
+        {"n": "prod_string", "shape": "limb", "bone": "spine", "mat": "string", "a": [0.82, 0.5, 1.22], "b": [0.82, -0.5, 1.22], "t": [0.025, 0.025]}
+      ]
     }
   },
   "iso": {"unit": "heavy_swords", "elevation_deg": 32, "directions": 8, "action": "walk", "box": [3.5, 3.0]},
-  "atlas": {"_doc": "Step 1b: the game's atlas. sets: sprite_set ids (unit_types.gd 'sprite_set'; 0 = procedural) in order from 1; palettes: in campaign/cdata.gd FACTIONS order (faction index = palette row).", "sets": ["heavy_swords", "spearmen", "pikemen", "shock_cavalry"], "align": 4, "gutter": 4}
+  "atlas": {"_doc": "Step 1b: the game's atlas. sets: sprite_set ids (unit_types.gd 'sprite_set'; 0 = procedural) in order from 1; palettes: in campaign/cdata.gd FACTIONS order (faction index = palette row).", "sets": ["heavy_swords", "spearmen", "pikemen", "shock_cavalry", "archers", "javelinmen", "slingers", "gastraphetes"], "align": 4, "gutter": 4}
 }

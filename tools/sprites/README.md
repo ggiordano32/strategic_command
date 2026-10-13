@@ -68,8 +68,10 @@ procedural sprite drawn by `game/soldier_layer.gd` `_make_atlas`) and
 heavy_swords (heavy and light lines, all tiers and faction variants), 2
 spearmen (spear lines), 3 pikemen (pike lines), 4 shock_cavalry (cav,
 cav_missile, general lines). Set it on the base row of a line and its tier
-and faction rows inherit it. Everything else is still procedural:
-archers, javelins, slingers, camels, elephants, dogs, artillery, wagons,
+and faction rows inherit it. 5 archers (archer line), 6 javelinmen, 7
+slingers, 8 gastraphetes (step 1c: unit `pose` variant archer / javelin /
+sling / belly, `cord` parts, `show` / `hide` frame lists). Everything else
+is still procedural: camels, elephants, dogs, artillery, wagons,
 characters. The palette is the unit's faction's (palette keys = the
 faction keys of `campaign/cdata.gd`, in its FACTIONS order); see
 `game/soldier_layer.gd` `_palette_rows`.

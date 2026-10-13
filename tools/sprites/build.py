@@ -384,9 +384,16 @@ def build_armature(name, bones):
     return ob
 
 
-def attach_parts(arm, parts, tag, prefix="", offset=(0, 0, 0)):
+DYN = []        # cords re-aimed every frame (see update_dynamic)
+VIS = []        # (object, show, hide): per action frame lists (see set_visibility)
+
+
+def attach_parts(arm, parts, tag, prefix="", offset=(0, 0, 0), skip=()):
     bpy.context.view_layer.update()
-    for p in expand_parts(parts):
+    for p in expand_parts([q for q in parts if q["n"] not in skip]):
+        if p["shape"] == "cord":
+            add_cord(arm, p, tag, prefix, offset)
+            continue
         me = build_part_mesh(p)
         me.transform(Matrix.Translation(Vector(offset)))
         me.materials.append(material_for(p["mat"]))
@@ -398,6 +405,83 @@ def attach_parts(arm, parts, tag, prefix="", offset=(0, 0, 0)):
         ob.parent_bone = prefix + p["bone"]
         bpy.context.view_layer.update()
         ob.matrix_world = arm.matrix_world.copy()
+        if p.get("show") or p.get("hide"):
+            VIS.append((ob, p.get("show"), p.get("hide")))
+
+
+def add_cord(arm, p, tag, prefix, offset):
+    """A bow string / sling cord: two thin boxes between points that follow
+    bones (a, b on p.bone; optional `via` = a point on another bone, used
+    in the frames listed in via.show, making a V). Re-aimed by
+    update_dynamic after every frame_set."""
+    objs = []
+    for k in range(2):
+        bm = bmesh.new()
+        mesh_box(bm, 1.0, 1.0, 1.0)
+        me = bpy.data.meshes.new(p["n"] + str(k))
+        bm.to_mesh(me)
+        bm.free()
+        for poly in me.polygons:
+            poly.use_smooth = False
+        me.materials.append(material_for(p["mat"]))
+        ob = link_obj(bpy.data.objects.new("%s_%s%d" % (tag, p["n"], k), me))
+        ob["sc_mask"] = [0.0, 0.0, 0.0]
+        ob["sc_pat"] = [0.0, 0.0, 0.0]
+        objs.append(ob)
+    DYN.append({"arm": arm, "p": p, "prefix": prefix, "off": Vector(offset), "objs": objs})
+
+
+def bone_point(arm_eval, bname, pt):
+    pb = arm_eval.pose.bones[bname]
+    return arm_eval.matrix_world @ (pb.matrix @ (pb.bone.matrix_local.inverted() @ Vector(pt)))
+
+
+def place_box(ob, a, b, t):
+    d = b - a
+    L = max(d.length, 1e-4)
+    q = Vector((0, 0, 1)).rotation_difference(d.normalized())
+    ob.matrix_world = (Matrix.Translation((a + b) * 0.5) @ q.to_matrix().to_4x4()
+                       @ Matrix.Diagonal((t, t, L, 1.0)))
+
+
+def update_dynamic(act, i):
+    """After frame_set: per-frame visibility of show / hide parts and the
+    cords' end points."""
+    for ob, show, hide in VIS:
+        vis = True
+        if show is not None:
+            vis = i in show.get(act, [])
+        if hide is not None and i in hide.get(act, []):
+            vis = False
+        ob.hide_render = not vis
+    if not DYN:
+        return
+    bpy.context.view_layer.update()
+    dg = bpy.context.evaluated_depsgraph_get()
+    for d in DYN:
+        p = d["p"]
+        ev = d["arm"].evaluated_get(dg)
+        bn = d["prefix"] + p["bone"]
+        a = bone_point(ev, d["prefix"] + p.get("a_bone", p["bone"]), Vector(p["a"]) + d["off"])
+        b = bone_point(ev, d["prefix"] + p.get("b_bone", p["bone"]), Vector(p["b"]) + d["off"])
+        if "frames" in p and i not in p["frames"].get(act, []):
+            for o in d["objs"]:
+                o.hide_render = True
+            continue
+        via = p.get("via")
+        c = None
+        if via and i in via.get("show", {}).get(act, []):
+            c = bone_point(ev, d["prefix"] + via["bone"], Vector(via["pos"]) + d["off"])
+        t = p.get("t", 0.02)
+        o0, o1 = d["objs"]
+        o0.hide_render = False
+        if c is None:
+            place_box(o0, a, b, t)
+            o1.hide_render = True
+        else:
+            place_box(o0, a, c, t)
+            place_box(o1, c, b, t)
+            o1.hide_render = False
 
 
 # ---------------------------------------------------------------- poses
@@ -427,7 +511,93 @@ def apply_pose(arm, pose, frame):
         pb.keyframe_insert("location", frame=frame)
 
 
-def humanoid_pose(action, i, n, mounted=False):
+# Missile troops (step 1c): per-unit pose variants (spec unit "pose") that
+# replace the shared attack and tint the idle / walk arms. MISSILE_ATTACK
+# fills `add` for frame i and returns the root offset; MISSILE_CARRY adds
+# to the shared idle / walk.
+
+def archer_attack(i, add):
+    """Draw, full draw, release, recover: bow arm out, string hand to the face."""
+    add("spine", "z", [-18, -26, -26, -14][i])
+    add("head", "z", [18, 26, 26, 14][i])
+    add("upper_arm.L", "y", [-60, -82, -82, -55][i])
+    add("upper_arm.L", "z", [0, -6, -6, 0][i])
+    add("forearm.L", "y", [60, 82, 80, 50][i])
+    add("forearm.L", "x", [55, 60, 60, 55][i])
+    add("upper_arm.R", "y", [-60, -85, -80, -40][i])
+    add("upper_arm.R", "z", [-15, -25, -30, -10][i])
+    add("forearm.R", "y", [60, 84, 84, 40][i])
+    add("forearm.R", "x", [70, 100, 90, 40][i])
+    add("thigh.L", "y", [-8, -12, -12, -6][i])
+    add("thigh.R", "y", [8, 10, 10, 5][i])
+    return [[0, 0, 0], [-0.03, 0, 0], [0, 0, 0], [0, 0, 0]][i]
+
+
+def archer_carry(action, i, s, c, add):
+    add("forearm.L", "x", 55)
+    add("upper_arm.R", "y", 12)
+
+
+def belly_attack(i, add):
+    """Gastraphetes: stock braced forward in both hands, a lean and a kick."""
+    add("forearm.L", "z", -35)
+    add("forearm.R", "z", 35)
+    add("spine", "y", [8, 14, -4, 0][i])
+    add("upper_arm.L", "y", [-8, -12, -6, -8][i])
+    add("upper_arm.R", "y", [-10, -16, -10, -10][i])
+    add("forearm.R", "y", [4, 8, 2, 4][i])
+    add("thigh.L", "y", [-8, -10, -8, -6][i])
+    add("thigh.R", "y", [8, 8, 8, 4][i])
+    return [[0, 0, 0], [0, 0, 0], [-0.06, 0, 0], [0, 0, 0]][i]
+
+
+def belly_carry(action, i, s, c, add):
+    add("forearm.L", "z", -35)
+    add("forearm.R", "z", 35)
+
+
+def javelin_attack(i, add):
+    """Wind-up behind the head, step, release, follow-through."""
+    add("spine", "z", [-14, -6, 28, 10][i])
+    add("spine", "y", [-6, -2, 10, 4][i])
+    add("head", "z", [10, 4, -10, -4][i])
+    add("upper_arm.R", "y", [100, 75, -60, -20][i])
+    add("forearm.R", "y", [-100, -75, 10, 10][i])
+    add("upper_arm.L", "y", [-10, -20, -35, -15][i])
+    add("thigh.L", "y", [-6, -26, -30, -12][i])
+    add("thigh.R", "y", [8, 14, 18, 8][i])
+    add("shin.R", "y", [8, 14, 22, 10][i])
+    return [[-0.06, 0, 0], [0.04, 0, 0], [0.18, 0, 0], [0.08, 0, 0]][i]
+
+
+def javelin_carry(action, i, s, c, add):
+    add("upper_arm.R", "y", -10)
+    add("forearm.R", "y", 8)
+
+
+def sling_attack(i, add):
+    """Whirl overhead (the cord sweeps round `weapon.R`), release, follow."""
+    add("spine", "z", [-12, 4, 24, 10][i])
+    add("upper_arm.R", "y", [-150, -165, -120, -40][i])
+    add("forearm.R", "y", [-10, -10, -10, 20][i])
+    add("weapon.R", "z", [200, 290, 20, 0][i])
+    add("upper_arm.L", "y", [-10, -30, -50, -20][i])
+    add("thigh.L", "y", [-8, -16, -22, -10][i])
+    add("thigh.R", "y", [8, 10, 14, 6][i])
+    return [[0, 0, 0], [0.0, 0, 0], [0.1, 0, 0], [0.04, 0, 0]][i]
+
+
+def sling_carry(action, i, s, c, add):
+    add("weapon.R", "y", 80)
+
+
+MISSILE_ATTACK = {"archer": archer_attack, "belly": belly_attack,
+                  "javelin": javelin_attack, "sling": sling_attack}
+MISSILE_CARRY = {"archer": archer_carry, "belly": belly_carry,
+                 "javelin": javelin_carry, "sling": sling_carry}
+
+
+def humanoid_pose(action, i, n, mounted=False, variant=""):
     P = {}
 
     def add(b, axis, deg):
@@ -488,6 +658,11 @@ def humanoid_pose(action, i, n, mounted=False):
             # Thrown off to the right, clear of the horse lying flat (his
             # root hangs from the horse's body, which sinks 0.86 m).
             loc = [[0, -0.2, 0.25], [-0.2, -0.8, 0.45], [-0.3, -1.25, 0.95]][i]
+    if variant and action == "attack":
+        P = {}
+        loc = list(MISSILE_ATTACK[variant](i, add))
+    elif variant and action in ("idle", "walk"):
+        MISSILE_CARRY[variant](action, i, s, c, add)
     if mounted:
         if action != "death" or i == 0:
             add("thigh.L", "y", -78); add("thigh.L", "x", 16)
@@ -563,7 +738,7 @@ def prefixed(pose, prefix):
     return out
 
 
-def keyframe_actions(arm, kind, rider=False):
+def keyframe_actions(arm, kind, rider=False, variant=""):
     """kind "humanoid" or "horse"; rider = the armature also holds a
     mounted humanoid's bones (prefix "r.")."""
     for act, info in SPEC["actions"].items():
@@ -572,7 +747,7 @@ def keyframe_actions(arm, kind, rider=False):
             if kind == "horse":
                 pose = prefixed(horse_pose(act, i, n), "")
             else:
-                pose = prefixed(humanoid_pose(act, i, n), "")
+                pose = prefixed(humanoid_pose(act, i, n, variant=variant), "")
             if rider:
                 rp = prefixed(humanoid_pose(act, i, n, mounted=True), "r.")
                 pose["_loc"].update(rp.pop("_loc"))
@@ -588,18 +763,21 @@ def build_unit(uid):
     the seat), so the rider follows the horse with no object parenting."""
     u = SPEC["units"][uid]
     _mats.clear()
+    DYN.clear()
+    VIS.clear()
     bones = rig_bones(SPEC["rigs"][u["rig"]])
     rider = u.get("rider")
     if rider:
         bones += rig_bones(SPEC["rigs"][rider["rig"]], "r.", rider["seat"],
                            rider["parent_bone"])
     arm = build_armature(uid, bones)
-    attach_parts(arm, SPEC["bodies"].get(u.get("body", ""), []) + u["parts"], uid)
+    attach_parts(arm, SPEC["bodies"].get(u.get("body", ""), []) + u["parts"], uid,
+                 skip=u.get("skip", ()))
     if rider:
         parts = SPEC["bodies"].get(rider.get("body", ""), []) + u["rider_parts"]
         attach_parts(arm, parts, uid + "_r", "r.", rider["seat"])
     keyframe_actions(arm, "horse" if u["rig"] == "horse" else "humanoid",
-                     rider=bool(rider))
+                     rider=bool(rider), variant=u.get("pose", ""))
     return arm
 
 
@@ -665,6 +843,7 @@ def render_unit(uid, out):
     for act, info in SPEC["actions"].items():
         for i in range(info["frames"]):
             sc.frame_set(ACT_START[act] + i)
+            update_dynamic(act, i)
             render_passes(sc, os.path.join(d, "%s_%d" % (act, i)), mats)
             count += 1
     info = {"view": "top", "box": box, "px_per_m": PPM,
@@ -693,6 +872,7 @@ def render_iso(out):
         arm.rotation_euler = (0, 0, 2.0 * math.pi * k / iso["directions"])
         for i in range(n):
             sc.frame_set(ACT_START[act] + i)
+            update_dynamic(act, i)
             render_passes(sc, os.path.join(d, "d%d_%d" % (k, i)), mats)
     bpy.context.view_layer.update()
     p = world_to_camera_view(sc, cam, Vector((0, 0, 0)))
