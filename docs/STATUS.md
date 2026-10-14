@@ -1184,6 +1184,20 @@ a `pack` field; West rosters switch to them; pickers show the active
 pack's rows. Sprites map onto existing sets (the set field is full). Rome
 byte-identical. Slice 2b: cover and line of sight.
 
+**Slice 2c, West settlements (user, 2026-10-14): "there were no castles,
+so we will have to rework the walls into forts and cities that allow
+fighting from buildings and roof tops".** After cover / line of sight (2b),
+which it builds on. Sketch to design with the user: (a) **forts**: low
+thick bastioned walls (star trace) with guns on the bastions, a ditch and
+glacis, hard to escalade, breached by guns; the Spanish walled ports
+(Havana, Cartagena, San Juan, Veracruz, Portobelo, St Augustine) get a fort
+by the town; (b) **open towns**: no curtain wall (or a palisade), buildings
+as garrisonable blocks: a unit occupies a building, its men get cover and
+shoot from windows and rooftops with a height gain, the attacker clears it
+by melee at the doors (a street fight from house to house); (c) native
+towns: palisade and jungle cover. Rome's wall levels stay as they are;
+the West picks its battle-map settlement kind by pack.
+
 ## Next session (week of 2026-10-13; paused 2026-10-10 midday)
 
 - **Update, 2026-10-10 evening (hold here):** the user resumed; landed
