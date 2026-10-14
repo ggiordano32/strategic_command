@@ -740,3 +740,17 @@ func TestStateHashTeams(t *testing.T) {
 		t.Fatalf("leaving: %s", h)
 	}
 }
+
+// A content pack's state (West pack step 0) carries a top-level "pack" key
+// (absent for Rome). hashView keeps unknown keys, so the server's hash equals
+// the client's (tests/pack_test.gd pins the same values).
+func TestStateHashPack(t *testing.T) {
+	def := `{"format":"strategic_command_campaign","humans":[0,1],"name":"T","pack":"west","teams":[0,0,1,2,3,4,5,6],"turn":3,"version":7}`
+	if h := StateHash([]byte(def)); h != "a9a7a1e4" {
+		t.Fatalf("pack, default teams: %s", h)
+	}
+	own := `{"format":"strategic_command_campaign","humans":[0,1],"name":"T","pack":"west","teams":[0,0,2,3,4,5,6,7],"turn":3,"version":7}`
+	if h := StateHash([]byte(own)); h != "a5c588a1" {
+		t.Fatalf("pack, other teams: %s", h)
+	}
+}

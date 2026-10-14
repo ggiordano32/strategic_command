@@ -1962,6 +1962,14 @@ static func _support_by_range(st: Dictionary, b: Dictionary, counts: Array, lead
 static var _land_hops: Array = []
 
 
+## The pack changed (CData.use_pack_script): drop the tables built from it.
+static func pack_reset() -> void:
+	_t_adj = []
+	_t_sea = []
+	_t_cost = []
+	_land_hops = []
+
+
 ## Land routes between regions a and b (breadth first; 99 if none), cached.
 static func land_hops(a: int, b: int) -> int:
 	var n := CData.region_count()

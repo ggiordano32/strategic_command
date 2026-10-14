@@ -1,6 +1,7 @@
 extends RefCounted
 ## The campaign nav grid (state format 6, the continuous overworld): static
-## data generated from the map (campaign/data/grid_data.gd, written by
+## data generated from the map (the active pack's CData.GRID; Rome:
+## campaign/data/grid_data.gd, written by
 ## tools/campaign_grid.gd) plus the searches the rules, the AI and the view
 ## share. Pure data and integer maths: no state, no Nodes, deterministic
 ## (fixed neighbour order, ties by cell index).
@@ -26,7 +27,6 @@ extends RefCounted
 ## (a step that costs more than the points left waits for the next turn).
 
 const CData := preload("res://campaign/cdata.gd")
-const D := preload("res://campaign/data/grid_data.gd")
 
 const INF := 1 << 30
 ## Neighbour order (fixed): N, NE, E, SE, S, SW, W, NW.
@@ -49,13 +49,54 @@ static var _cross := {}                  # a * n + b (both orders) -> crossing i
 static var _cross_list: Array = []       # per crossing id: [a, b, kind]
 static var _fields := {}                 # memo: static distance fields
 static var last_nodes := 0
+## The active pack's grid (CData.GRID): size, cell size and the settlement,
+## port and camp cells per region, set by pack_reset() (at load and on a
+## pack switch); the derived tables above are rebuilt by ensure().
+static var _gw := 0
+static var _gh := 0
+static var _cpx := 0
+static var _site: Array[int] = []
+static var _port: Array[int] = []
+static var _camp: Array[int] = []
+
+
+static func _static_init() -> void:
+	pack_reset()
+
+
+## The pack changed (CData.use_pack_script; also at load): read the active
+## grid's sizes and drop every table built from the previous one.
+static func pack_reset() -> void:
+	var d := CData.GRID.get_script_constant_map()
+	_gw = int(d["W"])
+	_gh = int(d["H"])
+	_cpx = int(d["CELL_PX"])
+	_site = d["SITE"]
+	_port = d["PORT"]
+	_camp = d["CAMP"]
+	_n = 0
+	_reg = PackedInt32Array()
+	_mass = PackedInt32Array()
+	_cost = PackedInt32Array()
+	_nb = PackedInt32Array()
+	_nbc = PackedInt32Array()
+	_links = {}
+	_cells = []
+	_terr = PackedInt32Array()
+	_ovr = PackedByteArray()
+	_road = PackedByteArray()
+	_rmask = PackedInt32Array()
+	_cross = {}
+	_cross_list = []
+	_fields = {}
 
 
 static func ensure() -> void:
 	if _n > 0:
 		return
-	var w := D.W
-	var h := D.H
+	var gd := CData.GRID.get_script_constant_map()
+	var w := _gw
+	var h := _gh
 	var n := w * h
 	_reg.resize(n)
 	_mass.resize(n)
@@ -73,8 +114,8 @@ static func ensure() -> void:
 	for r in nreg:
 		per.append([])
 	for y in h:
-		var row: String = D.ROWS[y]
-		var trow: String = D.TERRAIN[y]
+		var row: String = gd["ROWS"][y]
+		var trow: String = gd["TERRAIN"][y]
 		for x in w:
 			var i := y * w + x
 			var ch := row.unicode_at(x)
@@ -107,23 +148,23 @@ static func ensure() -> void:
 					_cost[i] = mini(_cost[i], CData.GRID_ROAD)
 	for r in nreg:
 		_cells.append(PackedInt32Array(per[r]))
-	for k in range(0, D.OVERRIDES.size(), 2):
-		var c := int(D.OVERRIDES[k])
+	for k in range(0, gd["OVERRIDES"].size(), 2):
+		var c := int(gd["OVERRIDES"][k])
 		if _reg[c] >= 0:
-			_cost[c] = int(D.OVERRIDES[k + 1])
-	for k in range(0, D.RIVER.size(), 2):
-		_rmask[int(D.RIVER[k])] = int(D.RIVER[k + 1])
+			_cost[c] = int(gd["OVERRIDES"][k + 1])
+	for k in range(0, gd["RIVER"].size(), 2):
+		_rmask[int(gd["RIVER"][k])] = int(gd["RIVER"][k + 1])
 	_cross = {}
 	_cross_list = []
-	for k in range(0, D.CROSS.size(), 4):
-		var a := int(D.CROSS[k])
-		var b := int(D.CROSS[k + 1])
-		var id := int(D.CROSS[k + 2])
+	for k in range(0, gd["CROSS"].size(), 4):
+		var a := int(gd["CROSS"][k])
+		var b := int(gd["CROSS"][k + 1])
+		var id := int(gd["CROSS"][k + 2])
 		_cross[a * n + b] = id
 		_cross[b * n + a] = id
 		while _cross_list.size() <= id:
 			_cross_list.append([])
-		_cross_list[id] = [a, b, int(D.CROSS[k + 3])]
+		_cross_list[id] = [a, b, int(gd["CROSS"][k + 3])]
 	_nb.resize(n * 8)
 	_nbc.resize(n * 8)
 	_nb.fill(-1)
@@ -182,11 +223,11 @@ static func _link(a: int, b: int, rb: int) -> void:
 # --------------------------------------------------------------- lookups ---
 
 static func width() -> int:
-	return D.W
+	return _gw
 
 
 static func height() -> int:
-	return D.H
+	return _gh
 
 
 static func count() -> int:
@@ -195,22 +236,22 @@ static func count() -> int:
 
 
 static func cell_px() -> int:
-	return D.CELL_PX
+	return _cpx
 
 
 static func cx(c: int) -> int:
-	return c % D.W
+	return c % _gw
 
 
 static func cy(c: int) -> int:
-	return c / D.W
+	return c / _gw
 
 
 ## Cell at (x, y), -1 outside the grid.
 static func at(x: int, y: int) -> int:
-	if x < 0 or y < 0 or x >= D.W or y >= D.H:
+	if x < 0 or y < 0 or x >= _gw or y >= _gh:
 		return -1
-	return y * D.W + x
+	return y * _gw + x
 
 
 ## Region of cell c (-1 sea, -2 unclaimed land).
@@ -289,15 +330,15 @@ static func crossings_from(c: int) -> Array:
 
 
 static func site(r: int) -> int:
-	return int(D.SITE[r])
+	return _site[r]
 
 
 static func port(r: int) -> int:
-	return int(D.PORT[r])
+	return _port[r]
 
 
 static func camp(r: int) -> int:
-	return int(D.CAMP[r])
+	return _camp[r]
 
 
 ## Region r's cells (index order).
@@ -322,12 +363,12 @@ static func site_region(c: int) -> int:
 
 ## Chebyshev distance (0 the same cell, 1 next to it: "the ring").
 static func cheb(a: int, b: int) -> int:
-	return maxi(absi(a % D.W - b % D.W), absi(a / D.W - b / D.W))
+	return maxi(absi(a % _gw - b % _gw), absi(a / _gw - b / _gw))
 
 
 static func d2(a: int, b: int) -> int:
-	var dx := a % D.W - b % D.W
-	var dy := a / D.W - b / D.W
+	var dx := a % _gw - b % _gw
+	var dy := a / _gw - b / _gw
 	return dx * dx + dy * dy
 
 
@@ -340,8 +381,8 @@ static func within(a: int, b: int, rad: int) -> bool:
 ## Cells within radius rad of c (index order, passable or not, on the grid).
 static func disc(c: int, rad: int) -> PackedInt32Array:
 	var out := PackedInt32Array()
-	var x0 := c % D.W
-	var y0 := c / D.W
+	var x0 := c % _gw
+	var y0 := c / _gw
 	for dy in range(-rad, rad + 1):
 		for dx in range(-rad, rad + 1):
 			if dx * dx + dy * dy > rad * rad + rad:
@@ -355,16 +396,16 @@ static func disc(c: int, rad: int) -> PackedInt32Array:
 
 ## Octile distance in tenths of a straight step (10 straight, 14 diagonal).
 static func octile(a: int, b: int) -> int:
-	var dx := absi(a % D.W - b % D.W)
-	var dy := absi(a / D.W - b / D.W)
+	var dx := absi(a % _gw - b % _gw)
+	var dy := absi(a / _gw - b / _gw)
 	return 10 * maxi(dx, dy) + 4 * mini(dx, dy)
 
 
 ## Compass sector (0 N, 1 NE ... 7 NW) of cell `from` seen from cell `at_c`
 ## (north is up on the map), -1 for the same cell.
 static func sector(at_c: int, from: int) -> int:
-	var dx := from % D.W - at_c % D.W
-	var dy := at_c / D.W - from / D.W  # north positive
+	var dx := from % _gw - at_c % _gw
+	var dy := at_c / _gw - from / _gw  # north positive
 	if dx == 0 and dy == 0:
 		return -1
 	var ax := absi(dx)
@@ -407,7 +448,7 @@ static func find_path(start: int, goal: int, full: int, mp: int, block: PackedBy
 	if (adjacent and cheb(start, goal) <= 1) or (not adjacent and start == goal):
 		return {"path": [], "t": [], "m": []}
 	var n := _n
-	var w := D.W
+	var w := _gw
 	var nb := _nb
 	var nbc := _nbc
 	var g := PackedInt32Array()

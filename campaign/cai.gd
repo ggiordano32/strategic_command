@@ -1792,6 +1792,13 @@ static var _sf: Array = []
 static var _site_cost: Array[int] = []
 
 
+## The pack changed (CData.use_pack_script): drop the memos built from it.
+static func pack_reset() -> void:
+	_near_memo = {}
+	_sf = []
+	_site_cost = []
+
+
 ## Static distance from cell c to region r's settlement (ring: next to it,
 ## when `ring`), from the memoised fields of every settlement.
 static func site_dist(c: int, r: int, ring: bool) -> int:

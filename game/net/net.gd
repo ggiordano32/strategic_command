@@ -151,6 +151,7 @@ func labels() -> Dictionary:
 ## online). opts: {webhook_url, discord_user, invite, name}. Returns the API
 ## result; on success the seat is stored on this device.
 func create_campaign(st: Dictionary, seat: int, opts: Dictionary = {}) -> Dictionary:
+	CData.use_state(st)  # labels() names the state's pack's factions and cities
 	var text := CState.to_json(st)
 	var body := {"name": str(opts.get("name", st.get("name", ""))), "format_version": int(st.get("version", CState.VERSION)), "rules": rules,
 		"build": build, "seat": seat, "state_gz": OnlineCampaign.gz64(text), "hash": CState.hash_text(st),

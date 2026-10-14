@@ -62,6 +62,7 @@ static func submission(st: Dictionary, f: int, orders: Array) -> Dictionary:
 ## (version 6: [[army, dest cell, mode, persist, tgt, join]])}. Move,
 ## assault, sally and siege orders are only validated.
 static func preview(st: Dictionary, f: int, orders: Array) -> Dictionary:
+	CData.use_state(st)
 	var s := CState.copy(st)
 	var errors: Array = []
 	var moves: Array = []
@@ -90,6 +91,7 @@ static func preview(st: Dictionary, f: int, orders: Array) -> Dictionary:
 
 
 static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
+	CData.use_state(st_in)
 	var st := CState.copy(st_in)
 	if str(st["phase"]) != "plan":
 		push_warning("resolve_turn: phase is %s" % st["phase"])
@@ -256,6 +258,7 @@ static func _first_move(mv: Array, id: int) -> bool:
 ## Resolve pending battle `bid` with an outcome (from the sim via
 ## cbattle.outcome_from_result, or the formula). Returns the new state.
 static func apply_battle(st_in: Dictionary, bid: int, outcome: Dictionary) -> Dictionary:
+	CData.use_state(st_in)
 	var st := CState.copy(st_in)
 	CRules.apply_outcome(st, bid, outcome)
 	return st

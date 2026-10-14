@@ -1203,6 +1203,11 @@ static func garrison_men_strength(st: Dictionary, r: int) -> int:
 static var _gar_memo := {}
 
 
+## The pack changed (CData.use_pack_script): drop the memo built from it.
+static func pack_reset() -> void:
+	_gar_memo = {}
+
+
 ## The formula's prediction for attackers against defenders in region r
 ## (see strengths() for settlement and gar_side): {att, def (strengths),
 ## share (attackers' % of the total), win (attacker's chance, %), win_pm

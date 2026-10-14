@@ -28,6 +28,8 @@ extends RefCounted
 ##     team: friendly, never at war, one victory; see team(), and the
 ##     "teams" section of crules.gd), optional leaving [[faction, turn it
 ##     gave notice]] (absent when nobody is leaving),
+##   optional pack (the content pack, campaign/data/<pack>.gd; absent =
+##     "rome", so a Rome state is the bytes it always was),
 ##   factions [{alive, treasury, next_army, income, upkeep, war_turns;
 ##     optional AI profile overrides (absent = the settings / default, see
 ##     campaign/cai_profile.gd): ai_skill, ai_battle_skill, ai_style (0
@@ -98,10 +100,15 @@ const TIMEOUT_CHOICES := [0, 12, 24, 48, 72]
 ## teams: optional team id per faction (index order, nf() ints); absent or
 ## of the wrong size: the humans on team 0, each AI faction on a team of its
 ## own (default_teams), exactly the campaign of format 6.
-static func new_campaign(p_name: String, p_seed: int, humans: Array, settings: Dictionary = {}, p_teams: Array = []) -> Dictionary:
+## p_pack: the content pack (CData.use_pack; made the active one).
+static func new_campaign(p_name: String, p_seed: int, humans: Array, settings: Dictionary = {}, p_teams: Array = [],
+		p_pack: String = "rome") -> Dictionary:
+	CData.use_pack(p_pack)
 	var n_f := CData.faction_count()
 	var st := {"format": FORMAT, "version": VERSION, "name": p_name, "seed": p_seed, "turn": 0,
 		"phase": "plan", "winner": -1}
+	if p_pack != "rome":
+		st["pack"] = p_pack
 	var rng := ((p_seed & 0x7FFFFFFF) * 1103515245 + 12345) & 0xFFFFFFFF
 	st["rng"] = rng if rng != 0 else 0x5EED
 	var s := DEFAULT_SETTINGS.duplicate()
@@ -226,8 +233,9 @@ static func to_json(st: Dictionary) -> String:
 	return JSON.stringify(st, "", true)
 
 
-## Parse a saved state. Returns {} on failure (bad JSON, wrong format or a
-## newer version). Numbers come back from JSON as floats: normalise() turns
+## Parse a saved state. Returns {} on failure (bad JSON, wrong format, a
+## newer version or a content pack this build does not have); else makes
+## its pack the active one (migrate). Numbers come back from JSON as floats: normalise() turns
 ## every integral float back into an int.
 static func from_json(text: String, upto: int = VERSION) -> Dictionary:
 	var v = JSON.parse_string(text)
@@ -236,6 +244,8 @@ static func from_json(text: String, upto: int = VERSION) -> Dictionary:
 	var st: Dictionary = normalise(v)
 	if str(st.get("format", "")) != FORMAT or int(st.get("version", 0)) > VERSION \
 			or int(st.get("version", 0)) < MIN_VERSION:
+		return {}
+	if not CData.has_pack(str(st.get("pack", "rome"))):
 		return {}
 	return migrate(st, upto)
 
@@ -249,10 +259,12 @@ static func from_json(text: String, upto: int = VERSION) -> Dictionary:
 ## 2 -> 3: every settlement gets an empty builder list "built".
 ## 1 -> 2: every settlement gets its city_seed (default_city_seed, the same
 ## value a new campaign gives it, so migrating on two devices agrees).
+## Makes the state's content pack the active one first (CData.use_state).
 ## Online campaigns are not migrated (the server keeps the format a campaign
 ## was created with): rules read city_seed() which falls back to the same
 ## default, so a format 1 state plays exactly like its migrated copy.
 static func migrate(st: Dictionary, upto: int = VERSION) -> Dictionary:
+	CData.use_state(st)
 	_migrate_old(st)
 	if int(st.get("version", 0)) < 6 and upto >= 6:
 		_migrate6(st)
