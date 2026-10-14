@@ -2294,6 +2294,8 @@ func _process(delta: float) -> void:
 	world.position = offset
 	world.scale = Vector2(zoom, zoom)
 	map_view.zoom = zoom
+	map_view.view_rect = Rect2(-offset / zoom, _vp() / zoom)
+	map_view.footprint_check()
 	overlay.zoom = zoom
 	var xf := Transform2D(0.0, Vector2(zoom, zoom), 0.0, offset)
 	table_frame.update_view(xf, _vp())

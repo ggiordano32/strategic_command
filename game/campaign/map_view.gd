@@ -25,6 +25,7 @@ const Landscape := preload("res://game/campaign/landscape.gd")
 const GeoFields := preload("res://game/campaign/geo_fields.gd")
 const WATER_SHADER := preload("res://game/campaign/water.gdshader")
 const SeaWaves := preload("res://game/campaign/sea_waves.gd")
+const Footprint := preload("res://game/campaign/footprint.gd")
 
 const SEA := Color(0.13, 0.25, 0.34)
 const SEA_SHALLOW := Color(0.22, 0.38, 0.47)
@@ -132,6 +133,9 @@ static func _sync_gen() -> void:
 
 var state: Dictionary = {}
 var zoom := 1.0
+## The visible part of the map (world px, set by the screen each frame) and the area the footprints were drawn for.
+var view_rect := Rect2()
+var _fp_rect := Rect2()
 ## Regions to highlight as move destinations, and the hovered / selected region.
 var targets: Array[int] = []
 var attack_targets: Array[int] = []
@@ -225,6 +229,12 @@ static func _elevation_tex() -> ImageTexture:
 		_elev_tex = ImageTexture.create_from_image(img)
 		_elev_gen = Geo.gen
 	return _elev_tex
+
+
+## Redraw when the view left the area the settlement footprints cover (table style).
+func footprint_check() -> void:
+	if view_rect.size.x > 0.0 and zoom >= Footprint.MIN_ZOOM and _table != null and _table.visible and not _fp_rect.encloses(view_rect):
+		queue_redraw()
 
 
 ## The wave clock (SeaWaves.t, also the shader's `wave_t`): the sea only moves on "high".
@@ -580,6 +590,10 @@ func _draw() -> void:
 		else:
 			draw_hills(self, _hill_segs[0], 0, lw)
 			draw_hills(self, _hill_segs[1], 1, lw)
+		if tbl:
+			# the settlements' ground (table style): only around the view, redrawn when the view leaves it
+			_fp_rect = view_rect.grow_individual(view_rect.size.x * 0.6, view_rect.size.y * 0.6, view_rect.size.x * 0.6, view_rect.size.y * 0.6) if view_rect.size.x > 0.0 else Rect2()
+			Footprint.draw(self, state, zoom, grid, _road_lines, lw, _fp_rect)
 		_draw_reach(lw)
 	# Destinations of the selected army.
 	var a := 0.25 + 0.15 * sin(pulse * 4.0)

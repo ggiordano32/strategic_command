@@ -36,12 +36,18 @@ const SHIP_K := 1.0
 var overlay: Node2D
 var _tex := {}   # set name -> [shade, mask material]
 var _t_acc := 0.0
+var _under: Node2D       # drawn behind the sprites: ship wakes and contact shadows
+var _wakes: Array = []   # [position, scale, heading]
 static var texture_bytes := 0
 
 
 func _ready() -> void:
 	z_index = 0
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_under = Node2D.new()
+	_under.show_behind_parent = true
+	_under.draw.connect(_draw_under)
+	add_child(_under)
 
 
 func _atlas(name_set: String) -> Array:
@@ -157,6 +163,7 @@ func _draw() -> void:
 	var z: float = overlay.zoom
 	var xf: Transform2D = overlay.xform
 	var vp := get_viewport_rect().grow(120.0)
+	_wakes.clear()
 	var items: Array = []   # [screen y, kind, payload...]
 	if on_sites:
 		for r in CData.region_count():
@@ -196,6 +203,7 @@ func _draw() -> void:
 				_blit(table, shade, str(nm), it[3], pxm, col)
 		else:
 			_ship(it[2], it[3], tile / TILE_M * ship_k(z), table, shade)
+	_under.queue_redraw()
 
 
 func _blit(table: Dictionary, shade: Texture2D, nm: String, at: Vector2, pxm: float, col: Color, alpha := 1.0) -> void:
@@ -242,7 +250,38 @@ func _ship(fl: Dictionary, c: Vector2, pxm: float, table: Dictionary, shade: Tex
 	var h := _heading(fl)
 	var pos := c + Vector2(0, bob)
 	var sc := pxm
+	_wakes.append([c, pxm, h])
 	if types.size() >= 2:
 		var t2: String = types[1]
 		_blit(table, shade, "ship_%s__h%d" % [t2, h], pos + Vector2(-9.0, -5.0) * (pxm / 1.3), sc * 0.82, col)
 	_blit(table, shade, "ship_%s__h%d" % [types[0], h], pos, sc, col)
+
+
+## A soft contact shadow (south-east, the light is north-west) and a small wake behind each ship.
+func _draw_under() -> void:
+	var low := Quality.is_low()
+	for w in _wakes:
+		var c: Vector2 = w[0]
+		var k: float = w[1]
+		var a: float = float(int(w[2])) * PI / 4.0
+		var dir := Vector2(cos(a), -sin(a))
+		var back := -dir
+		for i in (1 if low else 3):
+			var f := float(3 - i) / 3.0
+			var pts := PackedVector2Array()
+			for j in 16:
+				var t := TAU * float(j) / 16.0
+				pts.append(c + Vector2(4.0, 3.0) * k + Vector2(cos(t) * 15.0, sin(t) * 7.5) * k * (0.6 + 0.4 * f))
+			_under.draw_colored_polygon(pts, Color(0.03, 0.10, 0.20, 0.13))
+		if low:
+			continue
+		var foam := Color(1, 1, 1, 0.5)
+		for side in [-1.0, 1.0]:
+			var pl := PackedVector2Array()
+			for s in 6:
+				var d := float(s) * 4.5 * k
+				var sp: float = (3.0 + float(s) * 2.2 * k) * side
+				pl.append(c + Vector2(0.0, 2.0 * k) + (back * d + Vector2(-back.y, back.x) * sp) * Vector2(1.0, 0.62))
+			foam.a = 0.5
+			_under.draw_polyline(pl, foam, maxf(1.0, 1.5 * k), true)
+		_under.draw_arc(c + dir * 4.0 * k + Vector2(0.0, 2.0 * k), 9.0 * k, 0.0, TAU, 20, Color(1, 1, 1, 0.28), maxf(1.0, 1.2 * k), true)

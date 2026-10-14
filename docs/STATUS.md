@@ -1439,6 +1439,8 @@ banded sea, posterised hillshade and ink contours, parchment frame and tilt-shif
 (desktop 1280x800, Port Royal, uncapped): relief 155 / 152 fps, table 145 (zoom 0.5) / 185 (zoom 2).
 Open: hand-checking on the Tab S7 and phones; Rome miniatures have only the generic roman look.
 
+**Settlements in the countryside (2026-10-14, view only):** miniatures re-rendered without bases (tools/structures/build.py), diorama finish in minis.gdshader, ground painted into the land by game/campaign/footprint.gd (clearing, fields, orchards, tracks, quay, contact shadow / AO; only around the view), ships get a shadow and wake. Checked: campaign_input_test, deploy_view_test, check_scripts, check_mine pass; full-map footprint draw 56 ms headless (culled to the view in play; redrawn only on zoom, view leaving the area or a selection); no frame-time bench run; to look at on a phone: field density, shadow strength.
+
 **Battle-map look (user, 2026-10-14): "looks a bit like a flash game";
 the user likes the tabletop diorama / miniatures direction for battles
 and would accept PC-only for it.** Agreed order: (1) style test (running:

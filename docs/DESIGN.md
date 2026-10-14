@@ -4309,6 +4309,19 @@ about 88 px x sqrt(zoom) wide, shown from zoom 0.55, ships from 0.35): base by c
 size, harbour (port), slipway (Shipyard level), walls (palisade / stone / star fort), ships by
 heading; the overlay keeps names, banners and hit areas.
 
+**Settlements in the countryside (2026-10-14).** The miniatures have no ground tiles any more (`build.py`
+leaves out `ground` parts and flat dirt / cobble / grass paint; `SC_BASES=1` brings them back): buildings,
+walls, harbour, slipway and trees only, same anchors. `minis.gdshader` adds the battle diorama finish (rim
+light on north-west edges, silhouette line, saturation 1.18, contrast 1.08). The settlement's ground is painted
+into the land by `game/campaign/footprint.gd`, called from `map_view.gd` after the trees and before the roads
+(table style, zoom >= 0.55, sized like the miniatures): feathered lawn / earth / sand clearing (irregular, kept on
+land through the coast field), street cross, 2 to 4 furrowed fields (crop colours, hedge edge) and 1 to 2
+orchards, tracks to the nearest road lines and to each field, a sand apron and stone quay where a harbour town
+meets the sea, soft contact shadow south-east plus AO under the town and a shadow ring under walls. Only sites
+around the view are drawn (`view_rect`, redrawn when the view leaves the covered area). Low: one feather ring,
+at most 2 fields, no furrows or orchards. Ships keep their sprites with a soft shadow and a small foam wake
+(`minis_layer.gd` `_under`). After repacking the atlas run `godot --headless --import` before headless shots.
+
 ### Audio (as built, 2026-10-10)
 
 ## DESIGN paragraph (Audio)

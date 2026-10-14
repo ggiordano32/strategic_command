@@ -507,6 +507,21 @@ def add_sun(name, to_light, energy, shadow, angle=6.0):
 
 # ---------------------------------------------------------------- structure
 
+def _is_ground_paint(p, mp):
+    """Ground tiles and flat ground paint (dirt / cobble / grass patches, streets): left out of the sprites
+    (set SC_BASES=1 to bring the bevelled base tiles back)."""
+    if os.environ.get("SC_BASES"):
+        return False
+    if p.get("ground"):
+        return True
+    mk = mp.get(p["m"], p["m"])
+    if mk not in ("dirt", "cobble", "grass_dk", "grass", "sand"):
+        return False
+    if p["s"] == "box":
+        return p["sz"][2] <= 0.4
+    return p["s"] == "poly" and p.get("z1", 0.0) <= 0.3
+
+
 def build_structure(key, style, sizepx, tilt):
     """Returns (scene, objs, outline_objs) and the projected bounds."""
     st = SPEC["structures"][key]
@@ -524,6 +539,8 @@ def build_structure(key, style, sizepx, tilt):
     d_tile = style == "D"
     zex = st.get("zex", 1.0)
     for p, M, mp in flat:
+        if d_tile and _is_ground_paint(p, mp):
+            continue   # no bases: the overworld paints the settlement's ground itself (game/campaign/footprint.gd)
         if not p.get("ground") and zex != 1.0:
             M = Matrix.Diagonal((1.0, 1.0, zex, 1.0)) @ M
         mkey = mp.get(p["m"], p["m"])
