@@ -94,6 +94,7 @@ var _help: Label
 var _size_button: Button
 var _soldiers_button: Button
 var _quality_button: Button
+var _style_button: Button
 
 
 func _ready() -> void:
@@ -445,11 +446,16 @@ func _build_home(bg: Control) -> Control:
 	_quality_button.name = "home_quality"
 	_quality_button.tooltip_text = "Graphics. Auto: Low on devices that need the compatible soldiers path or that run a battle slowly, else High. Low: a plainer ground (no noise patches or water animation), no grass, scrub or orchards, a still sea on the map. Takes effect at the next battle; the map on the next open."
 	row.add_child(_quality_button)
+	_style_button = _menu_button("", _cycle_map_style)
+	_style_button.name = "home_map_style"
+	_style_button.tooltip_text = "Campaign map style. Auto: the map table (painted miniatures, banded relief and sea) for the Caribbean, the relief map for Rome. Table / Relief force one. Takes effect at once on the next map."
+	row.add_child(_style_button)
 	row.add_child(_menu_button("Fullscreen", _toggle_fullscreen))
 	vb.add_child(_build_audio_row())
 	_update_size_button()
 	_update_soldiers_button()
 	_update_quality_button()
+	_update_style_button()
 	var info := Kit.label("Godot %s, %s renderer" % [Engine.get_version_info()["string"],
 		ProjectSettings.get_setting("rendering/renderer/rendering_method", "?")], 12, Color(1, 1, 1, 0.5))
 	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -976,6 +982,18 @@ func _cycle_quality() -> void:
 	var p := Quality.load_pref()
 	Quality.save_pref("high" if p == "auto" else ("low" if p == "high" else "auto"))
 	_update_quality_button()
+
+
+func _cycle_map_style() -> void:
+	var p := MapView.style_pref
+	MapView.set_style("table" if p == "auto" else ("relief" if p == "table" else "auto"))
+	_update_style_button()
+
+
+func _update_style_button() -> void:
+	if _style_button != null:
+		MapView.load_view_pref()
+		_style_button.text = "Map: " + MapView.style_pref
 
 
 func _update_quality_button() -> void:

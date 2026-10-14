@@ -40,6 +40,8 @@ const PackView := preload("res://game/campaign/pack_view.gd")
 const LoadingPanel := preload("res://game/campaign/loading_panel.gd")
 const MapView := preload("res://game/campaign/map_view.gd")
 const MapOverlay := preload("res://game/campaign/map_overlay.gd")
+const MinisLayer := preload("res://game/campaign/minis_layer.gd")
+const TableFrame := preload("res://game/campaign/table_frame.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const Saves := preload("res://game/campaign/saves.gd")
 const Panels := preload("res://game/campaign/campaign_panels.gd")
@@ -80,6 +82,8 @@ var offset := Vector2.ZERO     # screen = map * zoom + offset
 var world: Node2D
 var map_view: MapView
 var overlay: MapOverlay
+var minis: MinisLayer
+var table_frame: TableFrame
 var ui: Control
 var top_label: Label
 var top_box: HBoxContainer
@@ -161,8 +165,16 @@ func _ready() -> void:
 	var ol := CanvasLayer.new()
 	ol.layer = 1
 	add_child(ol)
+	minis = MinisLayer.new()
+	ol.add_child(minis)
 	overlay = MapOverlay.new()
+	minis.overlay = overlay
 	ol.add_child(overlay)
+	var frame_layer := CanvasLayer.new()   # the map-table frame: over the map and its markers, under the interface
+	frame_layer.layer = 1
+	add_child(frame_layer)
+	table_frame = TableFrame.new()
+	frame_layer.add_child(table_frame)
 	var ul := CanvasLayer.new()
 	ul.layer = 2
 	add_child(ul)
@@ -2276,6 +2288,7 @@ func _process(delta: float) -> void:
 	map_view.zoom = zoom
 	overlay.zoom = zoom
 	var xf := Transform2D(0.0, Vector2(zoom, zoom), 0.0, offset)
+	table_frame.update_view(xf, _vp())
 	if xf != overlay.xform:
 		overlay.xform = xf
 		overlay.queue_redraw()

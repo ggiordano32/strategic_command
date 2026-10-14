@@ -37,6 +37,7 @@ uniform vec3 c_deep = vec3(0.13, 0.25, 0.34);    // 25 km and more
 uniform vec3 c_line = vec3(0.62, 0.80, 0.86);    // contour lines
 uniform vec3 c_foam = vec3(0.90, 0.95, 0.96);
 uniform float wave_gain = 1.0;                   // strength of the lit waves
+uniform float table = 0.0;                       // 1: the map-table sea (clean depth bands, softer waves)
 
 const float WARP_A = 3.0;      // phase warp size in rad for the 56 px train (x 56 / wavelength for shorter ones; x the noise, +-1.2 typical)
 const float WARP_S1 = 1.0 / 90.0;
@@ -125,6 +126,21 @@ void fragment() {
 	vec3 col = mix(c_shore, c_shal, smoothstep(0.0, 5.0, d));
 	col = mix(col, c_deep, smoothstep(5.0, 25.0, d));
 	float fw = fwidth(d);
+	if (table > 0.5) {
+		// Clean depth bands: five steps with antialiased edges and a thin light line on each.
+		float aa = max(fw * 0.7, 0.002);
+		col = vec3(0.47, 0.80, 0.80);
+		col = mix(col, vec3(0.30, 0.68, 0.78), smoothstep(1.2 - aa, 1.2 + aa, d));
+		col = mix(col, vec3(0.22, 0.58, 0.75), smoothstep(4.0 - aa, 4.0 + aa, d));
+		col = mix(col, vec3(0.17, 0.48, 0.70), smoothstep(10.0 - aa, 10.0 + aa, d));
+		col = mix(col, vec3(0.13, 0.40, 0.64), smoothstep(22.0 - aa, 22.0 + aa, d));
+		float edge = 0.0;
+		for (int i = 0; i < 4; i++) {
+			float e = i == 0 ? 1.2 : (i == 1 ? 4.0 : (i == 2 ? 10.0 : 22.0));
+			edge = max(edge, (1.0 - smoothstep(0.5 * fw, 1.2 * fw, abs(d - e))) * smoothstep(2.5, 6.0, e / max(fw, 0.0001)));
+		}
+		col = mix(col, vec3(0.80, 0.95, 0.96), edge * 0.32 * step(0.0, d));
+	}
 	float foam_zone = 0.0;
 	if (hi > 0.5) {
 		vec2 sh = texture(shore, fuv).rg;
@@ -146,7 +162,7 @@ void fragment() {
 		vec3 nrm = normalize(vec3(-hg.x * damp * SLOPE, -hg.y * damp * SLOPE, 1.0));
 		vec3 ldir = normalize(vec3(-0.55, -0.55, 0.62));   // the map's light, north-west
 		float lit = dot(nrm, ldir) - ldir.z;
-		col += vec3(0.60, 0.80, 0.90) * lit * 0.17 * wave_gain;
+		col += vec3(0.60, 0.80, 0.90) * lit * 0.17 * wave_gain * mix(1.0, 0.55, table);
 		// A very small glint on the lit slopes.
 		vec3 hv = normalize(ldir + vec3(0.0, 0.0, 1.0));
 		col += vec3(0.8, 0.9, 0.95) * pow(max(dot(nrm, hv), 0.0), 120.0) * 0.10 * wave_gain;
@@ -196,6 +212,6 @@ void fragment() {
 		}
 	}
 	float ln = max(contour(d, fw, 3.0) * 0.7, contour(d, fw, 8.0) * 0.45) * step(0.5, d);
-	col = mix(col, c_line, ln * 0.22 * (1.0 - clamp(foam_zone * 1.5, 0.0, 1.0)));
+	col = mix(col, c_line, ln * 0.22 * (1.0 - clamp(foam_zone * 1.5, 0.0, 1.0)) * (1.0 - table));
 	COLOR = vec4(col, 1.0);
 }

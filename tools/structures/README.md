@@ -4,7 +4,9 @@ Structures are written as data in `spec.json` (parts lists); `build.py`
 (Blender 5.2, EEVEE, background mode) builds low-poly meshes from code and
 renders pre-baked 3/4-view sprites (the game stays 2D). `compose.py`
 recolours with faction palettes and makes style boards and map mockups.
-Nothing here is wired into the game yet.
+The style D miniatures are in the game (map-table style): `gen_spec.py` writes the
+layers into spec.json, `pack.py` packs the renders into `assets/minis/` and writes
+`game/minis_atlas.gd`; the game draws them in `game/campaign/minis_layer.gd`.
 
 ```
 spec.json    materials, toon band thresholds, light, palettes, defs (reusable
@@ -66,3 +68,18 @@ the base land slab. Shapes:
 
 `gen_spec.py` (the generator used for the first pass) is not kept: edit
 `spec.json` directly.
+
+## Layers, atlas, game (2026-10-14)
+
+Camera tilt is 52 degrees from vertical now (heights read), tiles are tight
+(R = 29 m, 2.4 m thick). `gen_spec.py` is kept: it builds every entry as
+`<group>__<layer>` with a shared `frame` ([x0 y0 x1 y1 zmax], metres) so the layers of a
+group overlay at the ground origin: bases `town_s/m/l`, `native`, `maya`, `haven`,
+`rtown_s/m/l` (Rome); add-ons `port__harbour`, `yard__slipway`; walls `walls1/2/3`
+(palisade, stone wall, star fort) and `rwalls1/2/3` (Rome), each as `__back` (drawn
+before the base) and `__front` (after); ships `ship_<kind>__h0..7` (heading k*45 deg).
+Render: bases `--sizes 256,96`, ships `--sizes 128,64` (3.6 px/m at 256), then
+`python3 tools/structures/pack.py --frames DIR`. Two atlases ("big": 2048x1024, "small":
+2048x256, ~17 MB and ~2.5 MB of video memory) each a shade and a mask image. The game's
+minis.gdshader recolours: primary = owner faction colour (draw modulate), secondary and accent
+derived from it. Graphics Low loads only the small atlas.

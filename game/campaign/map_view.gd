@@ -86,6 +86,18 @@ static var terrain_view := true
 ## lines only (sea_waves.gd is the waves' CPU twin). A view preference in user://settings.cfg [map] water = low | high
 ## ("--map-water=low|high" overrides it for the session).
 static var water_high := true
+## The map style (2026-10-14): "table" (miniature diorama: posterised hillshade bands with ink contours, a brighter
+## palette, clean banded sea, a softer owner wash with a stronger border; table_land.gdshader, table_frame.gd)
+## or "relief" (the hillshaded relief of 2026-10-10). A view preference in user://settings.cfg [map] style =
+## auto | table | relief (auto: table for the West pack, relief for Rome); "--map-style=table|relief" overrides it.
+const TABLE_LAND_SHADER := preload("res://game/campaign/table_land.gdshader")
+const TABLE_TINT := 0.15      # the owner wash over the land in the table style
+const TABLE_EDGE_W := 3.6
+const TABLE_BORDER := Color(0.12, 0.08, 0.05, 0.5)
+static var style_pref := "auto"
+static var _elev_tex: ImageTexture = null
+static var _elev_gen := -1
+var _table: Node2D = null
 static var _land_meshes: Array = []   # triangulated once: the polygons are fine now
 static var _land_sz := Vector2.ZERO
 static var _cell_meshes: Dictionary = {}   # region -> Array of ArrayMesh
@@ -166,9 +178,53 @@ func _make_water() -> void:
 	m.set_shader_parameter("wind_strength", GeoFields.wind_strength())
 	for i in SeaWaves.TRAINS.size():
 		m.set_shader_parameter("train%d" % i, SeaWaves.TRAINS[i])
+	m.set_shader_parameter("table", 1.0 if table_on() else 0.0)
+	m.set_shader_parameter("wave_gain", 0.6 if table_on() else 1.0)
 	_water.material = m
 	_water.draw.connect(func(): _water.draw_rect(Rect2(Vector2(-4000, -4000), Geo.SIZE + Vector2(8000, 8000)), SEA))
 	add_child(_water)
+	_table = Node2D.new()
+	_table.show_behind_parent = true
+	_table.visible = false
+	_table.draw.connect(_draw_table_land)
+	add_child(_table)
+
+
+## The style changed: the sea's uniforms, the land node, a redraw.
+func _sync_style() -> void:
+	var m := _water.material as ShaderMaterial
+	m.set_shader_parameter("table", 1.0 if table_on() else 0.0)
+	m.set_shader_parameter("wave_gain", 0.6 if table_on() else 1.0)
+	queue_redraw()
+
+
+## The land polygons with the table shader (behind this node's own drawing).
+func _draw_table_land() -> void:
+	if _table.material == null:
+		var m := ShaderMaterial.new()
+		m.shader = TABLE_LAND_SHADER
+		m.set_shader_parameter("ground", Landscape.ground_tex)
+		m.set_shader_parameter("elev", _elevation_tex())
+		m.set_shader_parameter("coast", (_water.material as ShaderMaterial).get_shader_parameter("coast"))
+		m.set_shader_parameter("field_px", Vector2(GeoFields.fine_width(), GeoFields.fine_height()) * GeoFields.sample_px())
+		m.set_shader_parameter("elev_texel", Vector2(1.0 / GeoFields.fine_width(), 1.0 / GeoFields.fine_height()))
+		m.set_shader_parameter("sample_m", GeoFields.sample_m())
+		_table.material = m
+	var lsz := Vector2(CGrid.width(), CGrid.height()) * float(CGrid.cell_px())
+	for mesh in land_meshes(lsz):
+		_table.draw_mesh(mesh, null)
+
+
+## The real elevation (metres) as a half-float texture, once per pack.
+static func _elevation_tex() -> ImageTexture:
+	_sync_gen()
+	if _elev_tex == null or _elev_gen != Geo.gen:
+		var img := Image.create_from_data(GeoFields.fine_width(), GeoFields.fine_height(), false, Image.FORMAT_RF,
+			GeoFields.fine().to_byte_array())
+		img.convert(Image.FORMAT_RH)
+		_elev_tex = ImageTexture.create_from_image(img)
+		_elev_gen = Geo.gen
+	return _elev_tex
 
 
 ## The wave clock (SeaWaves.t, also the shader's `wave_t`): the sea only moves on "high".
@@ -207,14 +263,38 @@ static func load_view_pref() -> void:
 	if cf.load(SETTINGS) == OK:
 		terrain_view = int(cf.get_value("map", "terrain", 1)) != 0
 		water_high = str(cf.get_value("map", "water", "high")) != "low"
+		var sp := str(cf.get_value("map", "style", "auto"))
+		style_pref = sp if sp == "table" or sp == "relief" else "auto"
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--map-view="):
 			terrain_view = a.substr(11) != "political"
 		elif a.begins_with("--map-water="):
 			water_high = a.substr(12) != "low"
+		elif a.begins_with("--map-style="):
+			var sv: String = a.substr(12)
+			style_pref = sv if sv == "table" or sv == "relief" else "auto"
 
 
 ## Switch the view (saved) and redraw the map.
+## True when the map-table style is in force (the pack's default under "auto").
+static func table_on() -> bool:
+	load_view_pref()
+	if style_pref == "auto":
+		return CData.pack == "west"
+	return style_pref == "table"
+
+
+static func set_style(v: String, save := true) -> void:
+	style_pref = v if v == "table" or v == "relief" else "auto"
+	if save:
+		var cf := ConfigFile.new()
+		cf.load(SETTINGS)
+		cf.set_value("map", "style", style_pref)
+		cf.save(SETTINGS)
+	if instance != null and is_instance_valid(instance):
+		instance.call("_sync_style")
+
+
 static func set_terrain_view(on: bool, save := true) -> void:
 	terrain_view = on
 	if save:
@@ -400,11 +480,18 @@ func _draw() -> void:
 	var land_view := terrain_view and grid and not state.is_empty()
 	if land_view:
 		_terrain_geometry()
+	var tbl := land_view and table_on()
+	if _table != null:
+		if _table.visible != tbl:
+			_table.visible = tbl
+			if tbl:
+				_table.queue_redraw()
 	# (The sea is the water node behind this one.)
 	var lsz := Vector2(CGrid.width(), CGrid.height()) * float(CGrid.cell_px())
 	var lmeshes := land_meshes(lsz)
-	for m in lmeshes:
-		draw_mesh(m, null, Transform2D.IDENTITY, LAND)
+	if not tbl:
+		for m in lmeshes:
+			draw_mesh(m, null, Transform2D.IDENTITY, LAND)
 	if state.is_empty():
 		return
 	# Territories.
@@ -413,13 +500,14 @@ func _draw() -> void:
 	if land_view:
 		# Terrain view: the ground texture over the land, the owner a
 		# translucent tint over it.
-		for m in lmeshes:
-			draw_mesh(m, Landscape.ground_tex)
+		if not tbl:
+			for m in lmeshes:
+				draw_mesh(m, Landscape.ground_tex)
 		for r in CData.region_count():
 			var o := CState.owner(state, r)
 			if o >= 0:
 				var tc := CData.faction_color(o)
-				tc.a = TERRAIN_TINT
+				tc.a = TABLE_TINT if tbl else TERRAIN_TINT
 				_fill_cell(r, tc)
 		# Rivers: a faint green and a pale bank under the blue line.
 		for ln in _river_lines:
@@ -433,7 +521,7 @@ func _draw() -> void:
 	if grid:
 		_terrain_geometry()
 		var rtex: Texture2D = Landscape.relief_tex if land_view else _shade_tex
-		if rtex != null:
+		if rtex != null and not tbl:
 			for m in lmeshes:
 				draw_mesh(m, rtex)
 		if land_view:
@@ -466,14 +554,16 @@ func _draw() -> void:
 		for piece in Geo.cell(r):
 			var closed: PackedVector2Array = piece.duplicate()
 			closed.append(piece[0])
-			draw_polyline(closed, ec, OWNER_EDGE_W * lw, true)
+			if tbl:
+				draw_polyline(closed, TABLE_BORDER, (TABLE_EDGE_W + 1.6) * lw, true)
+			draw_polyline(closed, ec, (TABLE_EDGE_W if tbl else OWNER_EDGE_W) * lw, true)
 	# Borders between territories (darker where owners differ is implied by
 	# the tint; one thin line everywhere keeps it light).
 	for r in CData.region_count():
 		for piece in Geo.cell(r):
 			var closed: PackedVector2Array = piece.duplicate()
 			closed.append(piece[0])
-			draw_polyline(closed, Color(0.1, 0.1, 0.08, 0.45), 1.2 * lw, true)
+			draw_polyline(closed, Color(0.1, 0.1, 0.08, 0.7 if tbl else 0.45), (1.8 if tbl else 1.2) * lw, true)
 	for r in targets:
 		var te := target_edge(attack_targets.has(r), int(target_turns.get(r, 0)))
 		for piece in Geo.cell(r):

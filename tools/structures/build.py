@@ -28,6 +28,8 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 from mathutils import Matrix, Vector, Euler
 
+PPM_256 = 3.6        # pixels per metre at size 256 (the group frames' scale)
+TILE_DEPTH = 2.4     # thickness of a base tile (style D)
 HERE = os.path.dirname(os.path.abspath(__file__))
 SPEC = json.load(open(os.path.join(HERE, "spec.json")))
 TEAM = {"primary": (1, 0, 0), "secondary": (0, 1, 0), "accent": (0, 0, 1)}
@@ -39,8 +41,8 @@ FILL_TO = Vector((0.25, -0.60, 0.76)).normalized()
 
 def parse_args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
-    a = {"structs": list(SPEC["structures"].keys()), "styles": ["A", "B", "C", "D"],
-         "sizes": [256, 96], "tilt": 35.0, "out": os.path.join(HERE, "_frames")}
+    a = {"structs": list(SPEC["structures"].keys()), "styles": ["D"],
+         "sizes": [256, 96], "tilt": 52.0, "out": os.path.join(HERE, "_frames")}
     i = 0
     while i < len(argv):
         k = argv[i]
@@ -528,7 +530,7 @@ def build_structure(key, style, sizepx, tilt):
         if p.get("ground") and d_tile:
             # painted base tile: thick bevelled side + the top as the ground
             side = dict(p)
-            side.update({"ol": 0, "z0": -3.6, "z1": -0.05, "sc0": 1.0, "sc1": 0.975, "m": "tile_edge", "ground": 0})
+            side.update({"ol": 0, "z0": -TILE_DEPTH, "z1": -0.05, "sc0": 1.0, "sc1": 0.975, "m": "tile_edge", "ground": 0})
             top = dict(p)
             top.update({"ol": 0, "z0": -0.06, "z1": 0.0 + p.get("z1", 0.0), "sc0": 0.975, "sc1": 0.975})
             pieces = [(side, "tile_edge"), (top, mkey)]
@@ -571,6 +573,21 @@ def build_structure(key, style, sizepx, tilt):
     else:
         rx, ry = max(8, int(round(sizepx * w / h))), sizepx
     ppm = sizepx / ortho
+    if "frame" in st:
+        # A fixed frame (ground rectangle + height): every layer of a group
+        # shares it, so the sprites overlay exactly; the scale is PPM_256
+        # pixels a metre at "256", proportionally less at the smaller sizes.
+        fx0, fy0, fx1, fy1, fz = st["frame"]
+        fz = fz * zex
+        pts = [(x, y, z) for x in (fx0, fx1) for y in (fy0, fy1) for z in (-TILE_DEPTH, fz)]
+        xs = [p[0] for p in pts]
+        ys = [p[1] * math.cos(t) + p[2] * math.sin(t) for p in pts]
+        x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+        ppm = PPM_256 * sizepx / 256.0
+        rx = int(math.ceil((x1 - x0) * ppm)) + 4
+        ry = int(math.ceil((y1 - y0) * ppm)) + 4
+        ortho = max(rx, ry) / ppm
+        w, h = rx / ppm, ry / ppm
     sc.render.resolution_x, sc.render.resolution_y = rx, ry
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
     cd = bpy.data.cameras.new("cam")
