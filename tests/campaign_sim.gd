@@ -283,6 +283,16 @@ func _run(sd: int, verbose: bool) -> String:
 				int(sx.get("plunder", 0)), ", ".join(pl), int(sx.get("blockade_turns", 0)), int(sx.get("flotas", 0)),
 				int(sx.get("flota_arrived", 0)), int(sx.get("flota_gold", 0)), int(sx.get("treasure_taken", 0)),
 				int(sx.get("sacks", 0)), int(sx.get("marques", 0)), "; ".join(pir)])
+			# N2b: hurricanes, captains, named galleons.
+			var caps: Array = []
+			for cp in st.get("captains", []):
+				caps.append("%s %d%s" % [str(cp["nm"]), int(cp["fame"]), "" if int(cp["fl"]) >= 0 else " ashore"])
+			print("N2b: hurricanes %d (ships sunk %d, ports hit %d, men lost %d) | captains born %d, killed %d, hanged %d, ransomed %d, drowned %d, escaped %d, max fame %d, bounties %d, alive [%s] | galleons named %d, taken %d, sunk %d (treasure sunk %d)" % [
+				int(sx.get("storms", 0)), int(sx.get("storm_ships", 0)), int(sx.get("storm_ports", 0)), int(sx.get("storm_men", 0)),
+				int(sx.get("captains", 0)), int(sx.get("capt_killed", 0)), int(sx.get("capt_hanged", 0)), int(sx.get("capt_ransomed", 0)),
+				int(sx.get("capt_drowned", 0)), int(sx.get("capt_escaped", 0)), int(sx.get("max_fame", 0)), int(sx.get("bounties", 0)),
+				", ".join(caps), int(sx.get("galleons_named", 0)), int(sx.get("galleons_taken", 0)), int(sx.get("galleons_lost", 0)),
+				int(sx.get("treasure_sunk", 0))])
 		_buildup(st)
 		var open_now: Array = []
 		for x in st.get("sieges", []):

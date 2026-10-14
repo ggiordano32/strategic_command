@@ -1323,6 +1323,72 @@ Order: N2 (running) -> hurricanes + notorious captains + named galleons
 integration ; magazines / fire ships with N3 sea battles ; chunky
 sprites with the West art pass.
 
+**N2b hurricanes, notorious captains and named treasure galleons, as built
+2026-10-14 (not committed; CAMPAIGN.md "Hurricanes, captains and named
+galleons (N2b)").** West only (Rome byte-identical: campaign_sim hashes
+cdc1d805 32b83031 23f9ed4f 3237d82d a42fc685 b6fe6c2e; `CState.VERSION` 7,
+every new key optional). New `campaign/cstorm.gd` (hurricanes) and
+`campaign/ccaptain.gd` (captains); named galleons, wrecks, escorts and the
+flota waiting out a storm in `csea.gd`; fear, striking colours, a beaten
+captain's fate, wrecks in `cfleet.gd`; storm avoidance in `cai_fleet.gd`;
+numbers in `west_ships.gd` (N2b block, ship rows gain `storm`).
+**Hurricanes:** the season is the summer turn; 0-2 storms form east of
+the Lesser Antilles (65 % / 15 %), named for a saint ("the San Mateo
+hurricane of 1653"), radius 4-6 cells, 30-42 cells a move WNW, 2-3 moves,
+recurving a point clockwise at 35 % (60 % in the north), swerving out of
+the forecast cone at 12 %; a move sweeps its band: ships at sea in the core
+founder at their row's % (galleon 35, canoe 45, frigate 16, sloop 8) scaled
+by damage, the rest lose hull and crew, all of it at 20 % in a friendly
+port; ports lose a turn's sea trade and a building level at 20 %; armies
+ashore lose 6 % of their men. The forecast cone (exact unless it swerves)
+is drawn on the map; the AI runs out of it or rides it out in port, starts
+no blockade from port while storms are about, and aims no voyage into a
+cone; the flota waits at Havana while a cone threatens its course home.
+**Captains:** every pirate fleet sails under a named captain (36 names:
+"Calico" Jack Rackham, Jacquotte "Back from the Dead" Delahaye, "Powder"
+Polly Pruett ...); fame from wins (+2), prizes (+3), treasure galleons
+(+10) and sacks (+10); tiers Known 20 / Feared 45 / Legend 75: haven crews
+5 % cheaper a tier, fear +5 / 10 / 20 % power in a sea battle, a Feared
+captain's foes strike sooner (+10 % lost, +20 % taken), a Legend draws a
+recruit more to the havens; his fleet destroyed: killed 40 %, captured 45 %
+(hanged at Port Royal or the captor's capital, or ransomed on a coin toss
+under fame 40 when his faction can pay), else escapes ashore to take the
+next fleet; a bounty of 12 x fame (fame 25+) to the nation that kills or
+hangs him; a new captain rises on a captainless fleet at 35 % a turn.
+**Galleons:** each flota galleon has a name (the Atocha, Santa Margarita,
+San José, the Maravillas ... and inventions like La Bruja de Plata); the
+capitana carries 1800, the rest 600 (the flota's total unchanged, 3600);
+taking one is a headline, a sunk one leaves a wreck on the map; the Crown
+adds an escort frigate to each part at the pirates' infamy 30 and 60.
+View: storm swirls with the dotted track and the orange cone ("next
+turn"), wrecks, captain names under pirate fleets ("(Feared)" in red), the
+captain and the named galleons with their treasure on the fleet card,
+Captains / bounties / hurricane season in the Realm panel, chronicle texts,
+map key rows. **Measured** (`campaign_sim --pack=west --seeds=6 --turns=60
+--twice`, deterministic): hurricanes 20-31 a seed, ships sunk by storms
+0-2 (the AI dodges the cones; most ships hit ride it out in port), ports
+battered 27-76, men lost ashore 195-581; captains born 3-7, killed 0-2,
+hanged 0-1, ransomed 0-1, drowned 0-1, max fame 10-85, bounties paid
+0-648; galleons named 30-32, taken 0-6, sunk 0-3 (up to 3600 in silver
+lost); flotas arrived 6-8 of 8; the Brethren eliminated in 2 of 6 (turns
+30, 30; N2: 1 of 6; on seeds 2000-2011: 6 of 12, HEAD 5 of 12); the Dutch
+fell in 3 of 6 of these seeds (0 of 12 on seeds 2000-2011 in both trees:
+seed noise); 39.5-44.3 ms a turn mean (HEAD 38.3-50.0, load 9-12).
+Tests: pack_test N2b blocks (Rome has none; storms form only before a
+summer turn and the same twice; a move is deterministic, westward, in its
+cone or a point out; twelve galleons at sea in the core against twelve in
+Havana; Havana pays; the flota waits at Havana; an AI fleet runs out of a
+cone; captains at the start, fame from a win, a destroyed captain's fate
+with the bounty, a new one rises, merged fleets, fear; named galleons, one
+capitana, escorts at infamy 70, the headline, a wreck; JSON round trips),
+campaign_test, online_e2e (Rome, `--pack=west`), go test, check_scripts
+(mine clean). Screenshots `scratchpad/n2b/shot_storm.png`,
+`shot_captain.png`, `shot_captain_realm.png`, `shot_flota.png`. Open:
+storms rarely sink AI ships (by design the AI dodges; a player who
+ignores the cone pays); storm port damage lands mostly on Puerto Rico and
+Hispaniola (where they form); salvage of wrecks; privateer captains for
+the nations; captains in the AI's power estimates; fame does not fade.
+
 ## Next session (week of 2026-10-13; paused 2026-10-10 midday)
 
 - **Update, 2026-10-10 evening (hold here):** the user resumed; landed

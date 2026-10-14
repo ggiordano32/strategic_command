@@ -27,7 +27,12 @@ extends RefCounted
 ##     prefer weak, rich prey; the nations hunt pirate fleets harder by
 ##     their infamy; the flota itself sails by the rules (CSea);
 ##  7. the rest go home to a port of ours when damaged or when a stronger
-##     enemy fleet is near (no suicide); voyages avoid enemy fleets' zones.
+##     enemy fleet is near (no suicide); voyages avoid enemy fleets' zones;
+##  8. (N2b) hurricanes: a fleet at sea in a storm's forecast cone runs for
+##     a safe port it reaches this turn, else for clear water out of the
+##     cone; one in port with a storm coming rides it out there; while
+##     storms are about, fleets in port start no blockade, and no voyage
+##     (prey, blockade station, landing, pick-up, home) ends in a cone.
 ## Distances for choices are straight-line estimates (octile cells at the
 ## fleet's mean pace); only the chosen voyage is searched (CFleet.plan).
 
@@ -38,6 +43,7 @@ const CGrid := preload("res://campaign/cgrid.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
 const CAI := preload("res://campaign/cai.gd")
 const CSea := preload("res://campaign/csea.gd")
+const CStorm := preload("res://campaign/cstorm.gd")
 
 const ATTACK_PCT := 140      # attack an enemy fleet with this % of its power
 const LAND_PCT := 110        # land against a region whose defence the troops beat by this %
@@ -65,6 +71,12 @@ const PIRATE_DANGER_PCT := 100  # ... and shun any navy their match
 static var _pw := {}
 static var _gd := {}
 static var _hostile_hb: Array[int] = []
+static var _stormy := false  # (N2b) storms about this act
+
+
+## (N2b) Cell c lies in a storm's forecast cone (one cell of margin).
+static func _storm_at(st: Dictionary, c: int) -> bool:
+	return _stormy and CStorm.danger(st, c, 1)
 
 
 ## Fleet e's power (memo of this act).
@@ -96,6 +108,20 @@ static func act(st: Dictionary, f: int, moves: Array, fmoves: Array, cx_in: Dict
 	var cx := cx_in if not cx_in.is_empty() else CAI._context6(st, f)
 	var used := {}
 	var reserved: Dictionary = CAI.fleet_reserved
+	# (N2b) Hurricanes first: run from a forecast cone, or ride it out in port.
+	_stormy = not CStorm.storms(st).is_empty()
+	if _stormy:
+		for fl in mine:
+			var here := CFleet.cell(fl)
+			if not _storm_at(st, here):
+				continue
+			used[int(fl["id"])] = 1
+			fl.erase("job")
+			if CFleet.port_of(st, fl, f, true) >= 0:
+				continue
+			var to := _shelter(st, f, fl)
+			if to >= 0:
+				fmoves.append([int(fl["id"]), to, f, 0, -1])
 	# The flota first (N2): every empty fleet that can catch a treasure fleet.
 	for fl in mine:
 		if not (fl["carry"] as Array).is_empty():
@@ -127,7 +153,7 @@ static func act(st: Dictionary, f: int, moves: Array, fmoves: Array, cx_in: Dict
 				fl.erase("job")
 			continue
 		var p := _coast_for(st, a)
-		if p < 0 or not _approach(st, fl, p):
+		if p < 0 or not _approach(st, fl, p) or _storm_at(st, p):
 			fl.erase("job")
 			continue
 		reserved[id] = 1
@@ -161,6 +187,8 @@ static func act(st: Dictionary, f: int, moves: Array, fmoves: Array, cx_in: Dict
 			continue
 		if _hull(fl) < BLOCKADE_HULL or _danger(st, f, fl):
 			continue
+		if _stormy and CFleet.port_of(st, fl, f, true) >= 0:
+			continue  # (N2b) the season: stay in port while storms are about
 		var bp := _blockade(st, f, fl, taken_ports)
 		if bp.is_empty():
 			continue
@@ -396,7 +424,7 @@ static func _landing(st: Dictionary, f: int, fl: Dictionary) -> int:
 				or not CState.siege_at(st, t).is_empty() or CSea.spared(st, f, t):
 			continue
 		var tt := _turns(fl, b)
-		if tt > MAX_TURNS or not _approach(st, fl, b):
+		if tt > MAX_TURNS or not _approach(st, fl, b) or _storm_at(st, b):
 			continue
 		var d := maxi(CAI.target_defence(st, f, t), 1)
 		if s * 100 < d * LAND_PCT:
@@ -418,7 +446,7 @@ static func _landing(st: Dictionary, f: int, fl: Dictionary) -> int:
 		var b := CFleet.beach(r)
 		var land := int(CData.REGIONS[r]["land"])
 		if b < 0 or not work.has(land) or land == here or not CState.friendly(st, f, CState.owner(st, r)) \
-				or not _approach(st, fl, b):
+				or not _approach(st, fl, b) or _storm_at(st, b):
 			continue
 		var d := CGrid.octile(CFleet.cell(fl), b)
 		if d < bd:
@@ -457,7 +485,7 @@ static func _prey(st: Dictionary, f: int, fl: Dictionary, treasure_only: bool = 
 			var inf := CSea.infamy(st, int(e["f"]))
 			pct = maxi(pct - inf / 2, 100)
 			horizon = 1 if inf >= 40 else 0
-		if _turns(fl, CFleet.cell(e)) > horizon or mine * 100 < ep * pct:
+		if _turns(fl, CFleet.cell(e)) > horizon or mine * 100 < ep * pct or _storm_at(st, CFleet.cell(e)):
 			continue
 		if mine * 100 < _defence_at(st, e) * pct:
 			continue  # (its friends and its port's guns beside it)
@@ -489,8 +517,8 @@ static func _intercept(st: Dictionary, fl: Dictionary, e: Dictionary) -> int:
 		if not reach and (far >= 0 or i < pace * 2):
 			continue
 		var zo := CFleet.zone_owner(st, f, c)
-		if (zo >= 0 and zo != int(e["id"])) or _near_port(c):
-			continue  # (not under another enemy's guns)
+		if (zo >= 0 and zo != int(e["id"])) or _near_port(c) or _storm_at(st, c):
+			continue  # (not under another enemy's guns, nor in a storm's path)
 		if reach:
 			return c
 		far = c
@@ -537,7 +565,7 @@ static func _blockade(st: Dictionary, f: int, fl: Dictionary, taken: Dictionary)
 	for r in CData.region_count():
 		var hb := CFleet.harbour(r)
 		var o := CState.owner(st, r)
-		if hb < 0 or o < 0 or taken.has(r) or not CState.at_war(st, f, o):
+		if hb < 0 or o < 0 or taken.has(r) or not CState.at_war(st, f, o) or _storm_at(st, hb):
 			continue
 		var trade := CSea.sea_trade(st, r)
 		if trade <= 0:
@@ -607,8 +635,14 @@ static func _danger(st: Dictionary, f: int, fl: Dictionary) -> bool:
 	return false
 
 
-## The dock of our port nearest fleet fl (straight line), -1 none.
+## The dock of our port nearest fleet fl (straight line), -1 none; (N2b)
+## one out of the storms' cones first.
 static func _home(st: Dictionary, f: int, fl: Dictionary) -> int:
+	var h := _home_any(st, f, fl, true)
+	return h if h >= 0 or not _stormy else _home_any(st, f, fl, false)
+
+
+static func _home_any(st: Dictionary, f: int, fl: Dictionary, safe: bool) -> int:
 	var best := -1
 	var bd := 1 << 30
 	for r in CData.region_count():
@@ -618,8 +652,38 @@ static func _home(st: Dictionary, f: int, fl: Dictionary) -> int:
 		var dk := CFleet.dock(r)
 		if dk < 0 or CFleet.zone_owner(st, f, dk) >= 0 or (CFleet.coastal(fl) and not CFleet.coastal_link(CFleet.cell(fl), dk)):
 			continue
+		if safe and _storm_at(st, dk):
+			continue
 		var d := CGrid.octile(CFleet.cell(fl), dk)
 		if d < bd:
 			bd = d
 			best = dk
+	return best
+
+
+## (N2b) Where fleet fl runs from a storm: a dock of ours (or a patron's)
+## out of every cone that it reaches this turn (straight line), else the
+## clear sea cell nearest it within SHELTER_CELLS out of every cone and
+## enemy zone (ties by cell index), -1 none.
+const SHELTER_CELLS := 16
+
+
+static func _shelter(st: Dictionary, f: int, fl: Dictionary) -> int:
+	var h := _home_any(st, f, fl, true)
+	if h >= 0 and _turns(fl, h) == 0:
+		return h
+	var here := CFleet.cell(fl)
+	var lim := int(CData.ship_const("COASTAL_CELLS", 2))
+	var coast := CFleet.coastal(fl)
+	var best := -1
+	var bd := 1 << 30
+	for j in CGrid.disc(here, SHELTER_CELLS):
+		if not CFleet.is_sea(j) or CFleet.zone_owner(st, f, j) >= 0 or CStorm.danger(st, j, 1):
+			continue
+		if coast and (CFleet.coast_dist(j) > lim or not CFleet.coastal_link(here, j)):
+			continue
+		var d := CGrid.octile(here, j)
+		if d < bd or (d == bd and j < best):
+			bd = d
+			best = j
 	return best

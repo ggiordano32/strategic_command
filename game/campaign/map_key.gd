@@ -367,6 +367,17 @@ func rows() -> Array:
 			ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.SEA)
 			ci.draw_dashed_line(Vector2(6, sz.y * 0.5), Vector2(sz.x - 6, sz.y * 0.5), Color(1.0, 0.82, 0.3, 0.85), 2.0, 8.0)
 			Overlay.draw_treasure(ci, sz * 0.5, 1.0)])
+		if CData.ship_const("STORM_BOX", null) != null:
+			out.append(["Hurricane (summer turns): grey swirl; orange cone: where it may sweep next turn", func(ci: Control, sz: Vector2):
+				ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.SEA)
+				var a := Vector2(sz.y * 0.5, sz.y * 0.5)
+				var rr := sz.y * 0.3
+				Overlay.draw_cone(ci, a, Vector2(sz.x - rr - 2.0, sz.y * 0.35), Vector2(sz.x - rr - 2.0, sz.y * 0.65), rr, 0.7)
+				Overlay.draw_storm(ci, a, rr, 0.0, 0.7)])
+		if not (CData.ship_const("GALLEON_NAMES", []) as Array).is_empty():
+			out.append(["Wreck: a treasure ship went down here; pirate fleets show their captain's name", func(ci: Control, sz: Vector2):
+				ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.SEA)
+				Overlay.draw_wreck(ci, sz * 0.5 + Vector2(0, 4), true, 1.0)])
 	else:
 		out.append(["Sea lane between ports", func(ci: Control, sz: Vector2):
 			ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.SEA)

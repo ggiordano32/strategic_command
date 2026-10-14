@@ -25,6 +25,8 @@ const BattleScreen := preload("res://game/campaign/battle_screen.gd")
 const PackView := preload("res://game/campaign/pack_view.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
 const CSea := preload("res://campaign/csea.gd")
+const CStorm := preload("res://campaign/cstorm.gd")
+const CCaptain := preload("res://campaign/ccaptain.gd")
 
 var s  # the campaign screen
 ## Open / closed state of the collapsible card groups this session (never in
@@ -2055,9 +2057,11 @@ func _realm_sea(box: VBoxContainer, f: int) -> void:
 		box.add_child(Kit.icon_label("Plunder taken in all: %d gold (prizes, blockades, the flota, sacks)." % pl, "coin", Kit.FONT_SMALL, Kit.COL_GOLD, true))
 	if CSea.pirate(f):
 		var inf := CSea.infamy(ps, f)
+		var ctier := CCaptain.tier(CCaptain.best_fame(ps, f))  # (N2b) a famous captain's draw
+		var extra := mini(inf / maxi(CSea.k("HAVEN_RECRUIT_INFAMY", 30), 1), 2) + (1 if ctier >= 3 else 0)
 		var il := Kit.label_icon(Kit.label("Infamy %d of %d: haven crews %d%% cheaper, %d more recruit%s a turn; the nations hunt you %s." % [
-			inf, CSea.k("INFAMY_MAX", 100), mini(CSea.k("HAVEN_PCT", 20) + inf / 5, CSea.k("HAVEN_MAX_PCT", 45)),
-			mini(inf / maxi(CSea.k("HAVEN_RECRUIT_INFAMY", 30), 1), 2), "" if mini(inf / maxi(CSea.k("HAVEN_RECRUIT_INFAMY", 30), 1), 2) == 1 else "s",
+			inf, CSea.k("INFAMY_MAX", 100), mini(CSea.k("HAVEN_PCT", 20) + inf / 5, CSea.k("HAVEN_MAX_PCT", 45)) + ctier * CSea.k("CAPT_HAVEN_PCT", 0),
+			extra, "" if extra == 1 else "s",
 			"hard" if inf >= 40 else ("harder" if inf >= 15 else "as anyone")], Kit.FONT, Kit.COL_GOLD, true), "crown", Kit.COL_GOLD)
 		il.name = "realm_infamy"
 		box.add_child(il)
@@ -2098,6 +2102,92 @@ func _realm_sea(box: VBoxContainer, f: int) -> void:
 	var fl2 := Kit.label(ft, Kit.FONT_SMALL, Kit.COL_GOLD, true)
 	fl2.name = "realm_flota"
 	box.add_child(fl2)
+	_realm_n2b(box, f)
+
+
+## (N2b) The fleet card's captain: name, fame and tier, the perks, the
+## bounty on his head.
+func _captain_rows(box: VBoxContainer, fl: Dictionary) -> void:
+	var ps: Dictionary = s.ps
+	var c := CCaptain.of_fleet(ps, int(fl["id"])) if ps.has("captains") else {}
+	if c.is_empty():
+		if CSea.pirate(int(fl["f"])) and not CSea.is_flota(fl):
+			box.add_child(Kit.label("No captain of note yet: one may rise from the crew.", Kit.FONT_SMALL, Kit.COL_DIM, true))
+		return
+	var fame := int(c["fame"])
+	var tn := CCaptain.tier_name(fame)
+	var cl := Kit.label_icon(Kit.label("Captain %s: fame %d%s; %d prize%s, %d sack%s." % [str(c["nm"]), fame, " (%s)" % tn if tn != "" else "",
+		int(c["pz"]), "" if int(c["pz"]) == 1 else "s", int(c["sk"]), "" if int(c["sk"]) == 1 else "s"],
+		Kit.FONT, Color(1.0, 0.6, 0.5) if CCaptain.tier(fame) >= 2 else Kit.COL_GOLD, true), "crown", Kit.COL_GOLD)
+	cl.name = "fleet_captain"
+	box.add_child(cl)
+	box.add_child(Kit.label(captain_perks(fame), Kit.FONT_SMALL, Kit.COL_DIM, true))
+
+
+## What a captain of this fame brings (the fleet card and the Realm panel).
+static func captain_perks(fame: int) -> String:
+	var t := CCaptain.tier(fame)
+	var tiers: Array = CData.ship_const("FAME_TIERS", [20, 45, 75])
+	var bits: Array[String] = []
+	var fp: Array = CData.ship_const("FEAR_PCT", [0, 5, 10, 20])
+	if int(fp[t]) > 0:
+		bits.append("the fleet fights %d%% harder (fear)" % int(fp[t]))
+	if t >= 1:
+		bits.append("haven crews %d%% cheaper" % (CSea.k("CAPT_HAVEN_PCT", 5) * t))
+	if t >= 2:
+		bits.append("beaten foes strike their colours sooner")
+	if t >= 3:
+		bits.append("one more recruit a turn in the havens")
+	var b := CCaptain.bounty({"fame": fame})
+	var head := "The nations' bounty: %d gold." % b if b > 0 else "No bounty yet (fame %d+)." % CSea.k("BOUNTY_FAME", 25)
+	var nxt := ""
+	if t < tiers.size():
+		nxt = " Next: %s at fame %d." % [CData.ship_const("FAME_TIER_NAMES", ["", "Known", "Feared", "Legend"])[t + 1], int(tiers[t])]
+	return "%s%s Fame grows with battles won, prizes, treasure galleons and sacks.%s" % [
+		("Perks: " + ", ".join(bits) + ". ") if not bits.is_empty() else "", head, nxt]
+
+
+## (N2b) The Realm panel: the pirates' captains, the bounties the nations
+## pay, the hurricane season.
+func _realm_n2b(box: VBoxContainer, f: int) -> void:
+	var ps: Dictionary = s.ps
+	if CSea.pirate(f) and ps.has("captains"):
+		box.add_child(Kit.section("Captains", "crown"))
+		var any := false
+		for c in CCaptain.of_faction(ps, f):
+			any = true
+			var fid := int(c["fl"])
+			var tn := CCaptain.tier_name(int(c["fame"]))
+			var t := "%s: fame %d%s, %s." % [str(c["nm"]), int(c["fame"]), " (%s)" % tn if tn != "" else "",
+				"ashore, waiting for a ship" if fid < 0 else "at sea"]
+			if fid >= 0 and not CFleet.fleet(ps, fid).is_empty():
+				var b := Kit.button(t, func():
+					s.close_dialog()
+					s.select_fleet(fid), 0, Kit.FONT_SMALL)
+				b.name = "realm_captain_%d" % int(c["id"])
+				box.add_child(b)
+			else:
+				box.add_child(Kit.label(t, Kit.FONT_SMALL, Kit.COL_DIM, true))
+		if not any:
+			box.add_child(Kit.label("None: a captain may rise on any of your fleets.", Kit.FONT_SMALL, Kit.COL_DIM, true))
+		box.add_child(Kit.label("A captain whose fleet is destroyed may be killed, hanged, ransomed (if you can pay) or escape ashore to take another ship.",
+			Kit.FONT_SMALL, Kit.COL_DIM, true))
+	elif ps.has("captains"):
+		var heads: Array[String] = []
+		for c in CCaptain.all(ps):
+			if CCaptain.bounty(c) > 0:
+				heads.append("%s %d" % [str(c["nm"]), CCaptain.bounty(c)])
+		var bl := Kit.label("Bounties (gold for a pirate captain killed or taken at sea): %s." % (", ".join(heads) if not heads.is_empty() else "none posted yet"),
+			Kit.FONT_SMALL, Kit.COL_GOLD, true)
+		bl.name = "realm_bounties"
+		box.add_child(bl)
+	if CStorm.pack_on():
+		var n := CStorm.storms(ps).size()
+		var hl := Kit.label("Hurricane season: the summer turns. %s Ships in a friendly port ride a storm out best; galleons and canoes founder first." % (
+			"%s hurricane%s at sea now (orange: next turn's cone)." % [count_word(n).capitalize(), "" if n == 1 else "s"] if n > 0 else "No hurricane at sea now."),
+			Kit.FONT_SMALL, Color(1.0, 0.72, 0.5), true)
+		hl.name = "realm_storms"
+		box.add_child(hl)
 
 
 # ------------------------------------------------------------ diplomacy ---
@@ -2514,8 +2604,17 @@ func _involves(e: Dictionary, f: int) -> bool:
 		return int(e["f"]) == f or int(e["from"]) == f
 	if str(e["k"]) in ["order_failed", "move_failed"]:
 		return int(e["f"]) == f
-	if str(e["k"]) in ["team_joined", "team_notice", "team_left", "flota", "flota_arrived"]:
-		return true  # the teams and the flota are world news
+	if str(e["k"]) in ["team_joined", "team_notice", "team_left", "flota", "flota_arrived", "storm", "storm_end", "galleon_taken",
+			"galleon_lost", "captain_fate", "captain_fame", "captain_rise", "flota_held"]:
+		return true  # the teams, the flota, hurricanes and pirate captains are world news
+	if str(e["k"]) == "storm_hit":
+		for l in e["lost"]:
+			if int(l[0]) == f:
+				return true
+		for pt in e["ports"]:
+			if CState.owner(s.ps, int(pt[0])) == f:
+				return true
+		return false
 	return str(e["k"]) in ["victory", "defeat"]
 
 
@@ -2533,8 +2632,12 @@ func _event_color(e: Dictionary, f: int) -> Color:
 			return Kit.COL_GOOD
 		"blockade", "sack":
 			return Kit.COL_GOOD if int(e["f"]) == f else (Kit.COL_BAD if int(e["from"]) == f else Kit.COL_GOLD)
-		"flota", "flota_arrived", "marque", "marque_end", "blockade_end":
+		"flota", "flota_arrived", "marque", "marque_end", "blockade_end", "galleon_taken", "galleon_lost", "flota_held", "captain_rise", "captain_fame":
 			return Kit.COL_GOLD
+		"storm", "storm_hit", "storm_end":
+			return Color(1.0, 0.72, 0.5)
+		"captain_fate":
+			return Kit.COL_BAD if int(e["f"]) == f else (Kit.COL_GOOD if int(e.get("by", -1)) == f else Kit.COL_GOLD)
 		"army_sunk", "fmove_failed":
 			return Kit.COL_BAD
 		"war", "destroyed", "debt", "eliminated", "defeat", "order_failed", "move_failed", "starving":
@@ -2757,6 +2860,135 @@ func event_text(e: Dictionary, f: int) -> String:
 		"marque_end":
 			return "The letter of marque from %s to %s %s." % [CData.faction_name(int(e["a"])), CData.faction_name(int(e["b"])),
 				"lapsed" if str(e["why"]) == "lapsed" else "is broken"]
+		"storm", "storm_hit", "storm_end", "flota_held":
+			return storm_text(e)
+		"captain_rise", "captain_fame", "captain_fate", "galleon_taken", "galleon_lost":
+			return captain_text(e)
+	return ""
+
+
+# ------------------------------------------- hurricanes, captains (N2b) ---
+
+const _WORDS: Array[String] = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"]
+
+
+static func count_word(n: int) -> String:
+	return _WORDS[n] if n >= 0 and n < _WORDS.size() else str(n)
+
+
+## "six Spanish galleons and an English sloop" from [[faction, ship key, ...]].
+static func ships_list(lost: Array) -> String:
+	var groups: Array = []  # [faction, key, n]
+	for l in lost:
+		var done := false
+		for g in groups:
+			if int(g[0]) == int(l[0]) and str(g[1]) == str(l[1]):
+				g[2] = int(g[2]) + 1
+				done = true
+		if not done:
+			groups.append([int(l[0]), str(l[1]), 1])
+	var parts: Array[String] = []
+	for g in groups:
+		var nm := str(CData.ship_row(str(g[1])).get("name", g[1])).to_lower()
+		var adj := str(CData.FACTIONS[int(g[0])]["adj"]) if int(g[0]) >= 0 else ""
+		if int(g[2]) == 1:
+			parts.append("%s %s %s" % ["an" if "aeiou".contains(adj.substr(0, 1).to_lower()) else "a", adj, nm])
+		else:
+			var pl := nm.replace("ship of the line", "ships of the line") if nm.contains("of the line") else nm + "s"
+			parts.append("%s %s %s" % [count_word(int(g[2])), adj, pl])
+	if parts.size() <= 1:
+		return "".join(parts)
+	return ", ".join(parts.slice(0, parts.size() - 1)) + " and " + parts[-1]
+
+
+## Hurricane chronicle lines (storm formed, struck, blew out; the flota held).
+func storm_text(e: Dictionary) -> String:
+	var title := "the %s hurricane of %d" % [str(e.get("nm", "")), int(e.get("yr", 0))]
+	match str(e["k"]):
+		"storm":
+			return "A hurricane is brewing east of the Windward Islands: %s. Its forecast cone is on the map; ships in port ride it out best." % title
+		"storm_hit":
+			var bits: Array[String] = []
+			if not (e["lost"] as Array).is_empty():
+				bits.append("sank %s" % ships_list(e["lost"]))
+			var pn: Array[String] = []
+			for pt in e["ports"]:
+				pn.append(str(CData.REGIONS[int(pt[0])]["city"]))
+			if not pn.is_empty():
+				bits.append("battered %s" % ", ".join(pn))
+			if int(e["men"]) > 0:
+				bits.append("cost armies ashore %d men" % int(e["men"]))
+			if bits.is_empty():
+				bits.append("passed over %d ship%s without sinking one" % [int(e["ships"]), "" if int(e["ships"]) == 1 else "s"])
+			return "%s %s: it %s." % ["The " + title.substr(4), sea_place(int(e["x1"]), int(e["y1"])), ", ".join(bits)]
+		"storm_end":
+			var lost: Array = e["lost"]
+			var where := sea_place(int(e["x"]), int(e["y"]))
+			if not lost.is_empty():
+				where = sea_place(int(lost[0][2]), int(lost[0][3]))
+			var t := "The %s %s %s" % [title.substr(4), "wrecked " + ships_list(lost) if not lost.is_empty() else "blew itself out", where]
+			var more: Array[String] = []
+			if int(e["ports"]) > 0:
+				more.append("%s port%s battered" % [count_word(int(e["ports"])), "" if int(e["ports"]) == 1 else "s"])
+			if int(e["men"]) > 0:
+				more.append("%d men lost ashore" % int(e["men"]))
+			if int(e.get("gold", 0)) > 0:
+				more.append("%d in silver on the sea floor" % int(e["gold"]))
+			return t + ("; " + ", ".join(more) if not more.is_empty() else "") + "."
+		"flota_held":
+			return "The flota waits out a hurricane at %s." % str(CData.REGIONS[maxi(int(e["r"]), 0)]["city"])
+	return ""
+
+
+## "the San José", but "La Bruja de Plata" (a name with its own article).
+static func galleon_title(nm: String) -> String:
+	return nm if nm.begins_with("La ") or nm.begins_with("El ") else "the " + nm
+
+
+## Notorious captains and named galleons in the chronicle.
+func captain_text(e: Dictionary) -> String:
+	var fname := CData.faction_name(int(e["f"])) if int(e.get("f", -1)) >= 0 else "nobody"
+	match str(e["k"]):
+		"captain_rise":
+			return "A new captain hoists the black flag for %s: %s." % [fname, str(e["nm"])]
+		"captain_fame":
+			match int(e["tier"]):
+				1:
+					return "%s is a name men know in every tavern from Tortuga to Port Royal (fame %d)." % [str(e["nm"]), int(e["fame"])]
+				2:
+					return "%s is feared across the Main: crews strike their colours at the sight of that flag (fame %d)." % [str(e["nm"]), int(e["fame"])]
+			return "%s is a legend: the havens fill with men who want to sail under that flag (fame %d)." % [str(e["nm"]), int(e["fame"])]
+		"captain_fate":
+			var by := CData.faction_name(int(e["by"])) if int(e.get("by", -1)) >= 0 else ""
+			var where := sea_place(int(e["x"]), int(e["y"]))
+			var t := ""
+			match str(e["how"]):
+				"killed":
+					t = "%s of %s was killed in a sea fight %s%s." % [str(e["nm"]), fname, where, " against " + by if by != "" else ""]
+				"hanged":
+					var at := " at %s" % CData.REGIONS[int(e["r"])]["city"] if int(e.get("r", -1)) >= 0 else ""
+					if int(e.get("r", -1)) == CData.region_index(str(CData.ship_const("HANG_PORT", ""))):
+						at = " at Gallows Point, Port Royal"
+					t = "%s of %s was taken %s by %s and hanged%s." % [str(e["nm"]), fname, where, by, at]
+				"ransomed":
+					t = "%s of %s was taken %s by %s and ransomed for %d gold." % [str(e["nm"]), fname, where, by, int(e.get("gold", 0))]
+				"drowned":
+					t = "%s of %s went down with the ship in a hurricane %s." % [str(e["nm"]), fname, where]
+				_:
+					t = "%s of %s lost the fleet %s but escaped ashore to sail again." % [str(e["nm"]), fname, where]
+			if int(e.get("bounty", 0)) > 0:
+				t += " %s collects a bounty of %d gold." % [by, int(e["bounty"])]
+			return t
+		"galleon_taken":
+			var who := "%s and %s" % [str(e["capt"]), fname] if e.has("capt") else fname
+			return "Treasure! %s took %s %s: %d in silver%s." % [who, galleon_title(str(e["nm"])),
+				sea_place(int(e["x"]), int(e["y"])) if int(e["x"]) >= 0 else "at sea", int(e["g"]),
+				", the capitana of the flota" if int(e.get("cap", 0)) != 0 else ""]
+		"galleon_lost":
+			var gt := galleon_title(str(e["nm"]))
+			var nm := gt.substr(0, 1).to_upper() + gt.substr(1) if str(e["nm"]) != "" else "A treasure ship"
+			return "%s went down %s%s with %d in silver: a wreck marks the spot." % [nm, sea_place(int(e["x"]), int(e["y"])),
+				" in a hurricane" if str(e["why"]) == "storm" else "", int(e["g"])]
 	return ""
 
 
@@ -3373,6 +3605,7 @@ func fleet_panel(box: VBoxContainer, id: int) -> void:
 			Kit.FONT, Kit.COL_GOLD, true), "coin", Kit.COL_GOLD)
 		tl.name = "flota_note"
 		box.add_child(tl)
+	_captain_rows(box, fl)
 	var info := Kit.label("%d ship%s, power %d, upkeep %d. Pace %d cells a turn on a beam reach%s." % [ships.size(),
 		"" if ships.size() == 1 else "s", CFleet.power(fl), up, CFleet.speed(fl) / 10,
 		"; rowed, the wind does not matter" if not CFleet.sails(fl) else ""], Kit.FONT_SMALL, Kit.COL_DIM, true)
@@ -3397,6 +3630,13 @@ func fleet_panel(box: VBoxContainer, id: int) -> void:
 		h.add_child(Kit.label("hull %d%%, crew %d%%, %d guns, carries %d" % [hc, cc, int(row.get("guns", 0)), int(row.get("cap", 0))],
 			Kit.FONT_SMALL, Kit.COL_GOOD if mini(hc, cc) >= 70 else (Kit.COL_GOLD if mini(hc, cc) >= 40 else Kit.COL_BAD), true))
 		box.add_child(h)
+		if sh.has("nm"):  # (N2b) a named galleon: her name and her treasure
+			var gt := ""
+			if int(sh.get("g", 0)) > 0:
+				gt = ": %d in silver%s" % [int(sh["g"]), ", the capitana" if int(sh.get("cap", 0)) != 0 else ""]
+			var gl := Kit.label("    %s%s" % [str(sh["nm"]), gt], Kit.FONT_SMALL, Kit.COL_GOLD if int(sh.get("g", 0)) > 0 else Kit.COL_DIM, true)
+			gl.name = "galleon_%d" % k
+			box.add_child(gl)
 	var port := CFleet.port_of(ps, fl, ff)
 	box.add_child(Kit.label("In port at %s: repairing." % CData.REGIONS[port]["city"] if port >= 0 else "At sea: the crews thin a little every turn (scurvy).",
 		Kit.FONT_SMALL, Kit.COL_DIM, true))

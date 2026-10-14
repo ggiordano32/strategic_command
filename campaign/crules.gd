@@ -3135,7 +3135,8 @@ static func _check_victory_teams(st: Dictionary) -> void:
 const CHRONICLE_KINDS := ["battle", "captured", "destroyed", "eliminated", "war", "peace", "trade", "trade_end",
 	"siege", "siege_lifted", "starving", "victory", "defeat", "team_joined", "team_notice", "team_left",
 	"char_captured", "char_wounded", "ransom", "sea_battle", "flota", "flota_arrived", "sack", "marque", "marque_end",
-	"blockade"]
+	"blockade", "storm", "storm_hit", "storm_end", "captain_rise", "captain_fame", "captain_fate", "galleon_taken",
+	"galleon_lost", "flota_held"]
 const CHRONICLE_TURNS := 60
 
 

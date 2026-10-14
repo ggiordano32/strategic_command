@@ -1942,6 +1942,142 @@ sails in step 5; a `marque` proposal to a player is posted). Numbers:
   sacks and letters; the map key shows the blockade ring and the flota.
 - **Measured:** STATUS "N2".
 
+## Hurricanes, captains and named galleons (N2b, the West pack; as built 2026-10-14)
+
+STATUS "Style and flavour direction" item 4 (dramatic real mechanics, the
+rule of cool on real history). West only (a pack whose ships script has the
+N2b numbers); Rome never reaches any of it (no new key in a Rome state;
+campaign_sim hashes unchanged). `CState.VERSION` stays 7 (every key
+optional). Code: `campaign/cstorm.gd` (hurricanes), `campaign/ccaptain.gd`
+(captains), `campaign/csea.gd` (named galleons, wrecks, escorts, the flota
+waiting out a storm; calls both from `after_turn`), hooks in `cfleet.gd`
+(captains at the start, fear and striking colours in `resolve`, the fate of
+a beaten captain, prizes keep a galleon's name, a sunk treasure ship's
+wreck, the more famous captain of a merged fleet), `cai_fleet.gd` (storm
+avoidance), `crules.gd` (chronicle kinds). Numbers: `campaign/data/
+west_ships.gd` (N2b block; ship rows gain `storm`).
+
+- **State** (all optional): `storms [{id, px, py (centre in centi-cells),
+  h (heading, 16 points, 0 N, 12 W), v (centi-cells a move), r (radius,
+  cells), life (moves left), born, yr, nm (a saint's name), tr [[x, y]]
+  (past centres), lost [[f, ship, x, y, name]], ports, men, gold}]`,
+  `next_storm`; `captains [{id, f, nm, fame, fl (fleet id, -1 ashore),
+  born, pz (prizes), sk (sacks)}]`, `next_capt`; flota ships `nm` (name)
+  and `cap` (1: the capitana); flota fleets `held`; `wrecks [[x, y, turn,
+  gold, name]]` (the last `WRECKS_MAX` 12); stats `storms`, `storm_ships`,
+  `storm_ports`, `storm_men`, `captains`, `capt_killed`, `capt_hanged`,
+  `capt_ransomed`, `capt_drowned`, `capt_escaped`, `max_fame`, `bounties`,
+  `galleons_named`, `galleons_taken`, `galleons_lost`, `treasure_sunk`.
+- **Hurricanes** (`CStorm`). The season is the summer turn (the calendar's
+  even turns). At the end of the turn before it (`CSea.after_turn`, after
+  the letters, before the captains and the flota), a storm forms at
+  `STORM_FORM_PCT` [65, 15] % (a first, then a second) in `STORM_BOX`
+  [174, 62, 186, 92] (cells, east of the Lesser Antilles), heading W or WNW,
+  `STORM_SPEED` 3000-4200 centi-cells a move, radius `STORM_R` 4-6 cells,
+  `STORM_LIFE` 2-3 moves, a saint's name not at sea (the Spanish named
+  them for the day they struck; event `storm`). At the end of every turn
+  each storm moves and strikes the band it sweeps: its heading turns a point
+  clockwise (recurving north) at `STORM_CURVE_PCT` 35 % (60 % north of row
+  `STORM_NORTH_Y` 50), and at `STORM_SWERVE_PCT` 12 % it swerves a point
+  beyond its cone instead (+2 or -1: forecasts fail); its centre moves
+  `v` along the heading; landfall shrinks it a cell (not below 3); out of
+  life or off the map it blows out (event `storm_end` with the totals,
+  chronicle: "The San Mateo hurricane of 1653 wrecked six Spanish galleons
+  off La Habana; three ports battered"). **The forecast cone** (the view,
+  the AI, the flota) is the disc round the centre and the two segments to
+  where headings `h` and `h + 1` lead, widened by the radius
+  (`CStorm.in_cone`, `danger`); the move sweeps inside it unless it swerves.
+- **A storm's strike** (`CStorm.strike`, the band of its radius round the
+  segment it moved along; the core is the inner `STORM_CORE_PCT` 55 %,
+  the edge hits at `STORM_EDGE_PCT` 40 % of the core): each ship of a fleet
+  in the band sinks at its row's `storm` % (sloop 8, brigantine 12,
+  frigate 16, galleon 35, ship of the line 18, war canoe 45) x (200 - hull
+  %) / 100 (at most 90), else loses 12 + 0-20 hull and half that crew (not
+  below 5); in a friendly harbour (`CFleet.port_of` friendly, within 2) all
+  of it is `STORM_PORT_PCT` 20 %. Troops beyond what the survivors carry
+  drown; a fleet without ships is gone (its captain drowns at 65 %, else
+  escapes ashore). A treasure ship sunk leaves a wreck. A port whose
+  harbour lies in the band loses `STORM_TRADE_PCT` 100 % of a turn's sea
+  trade (the edge 40 %) from its owner's treasury (not below 0) and a
+  building level at `STORM_BUILD_PCT` 20 % (a random slot; level 1 goes).
+  Armies ashore lose `STORM_MEN_PCT` 6 % of each unit's men (keeping at
+  least one). Event `storm_hit {lost, ships, sea (ships hit at sea), ports
+  [[r, gold, chain]], men, gold}` (chronicle; shown to the factions it hit).
+- **The flota waits out a storm**: while a storm's cone lies within 10
+  cells of Havana's dock or of the straight course from it to the exit
+  (`CStorm.threat_course`), the parts at Havana (leg 1 or 2 within
+  `MEET_CELLS`) stay and do not count the wait (event `flota_held`,
+  chronicle).
+- **AI** (`cai_fleet.gd`, before every other fleet plan): a fleet at sea
+  inside a cone (one cell of margin) runs for a dock of ours (or a
+  patron's) out of every cone that it reaches this turn, else the nearest
+  sea cell within 16 out of every cone and enemy zone; a fleet in port with
+  a storm coming rides it out there; while storms are about, fleets in port
+  start no blockade; no prey, interception cell, blockade port, landing
+  beach, pick-up coast or (if it can) home dock in a cone.
+- **Notorious captains** (`CCaptain`). Pirate fleets (not the nations')
+  sail under a named captain: the start fleets have theirs; at the end of
+  every turn a captainless pirate fleet with ships takes a captain of its
+  faction ashore, else a new one rises at `CAPT_RISE_PCT` 35 % (at most
+  `CAPT_MAX` 4 alive a faction; event `captain_rise`, chronicle). Names
+  from `CAPTAIN_NAMES` (36: a few real ones and rule-of-cool originals,
+  ""Calico" Jack Rackham", "Jacquotte "Back from the Dead" Delahaye",
+  ""Powder" Polly Pruett"; none twice alive). **Fame** 0-100: +
+  `FAME_WIN` 2 a sea battle won (each winning captain), + `FAME_PRIZE` 3 a
+  ship taken and + `FAME_TREASURE` 10 a treasure galleon (the captain of
+  the fleet that takes the prizes, else the most famous of the winners),
+  + `FAME_SACK` 10 a sack (the captain of the faction's fleet nearest the
+  harbour within 4, else its most famous); no decay. Tiers at
+  `FAME_TIERS` 20 / 45 / 75: Known, Feared, Legend (event `captain_fame`,
+  chronicle). **Perks**: haven crews `CAPT_HAVEN_PCT` 5 % cheaper a tier
+  (the faction's most famous captain; on top of the infamy discount); a
+  Legend brings one more recruit a turn to the havens; in a sea battle a
+  captain's fleet counts `FEAR_PCT` 0 / 5 / 10 / 20 % more (in
+  `CFleet._side_power`, not in the AI's estimates); a Feared captain among
+  the winners makes the beaten ships strike sooner (lost at
+  `STRIKE_LOSS` +10 %, taken rather than sunk at `STRIKE_TAKEN` +20 %).
+  **Fate**: a captain whose fleet is destroyed in a sea battle is killed at
+  `CAPT_KILLED_PCT` 40 %, captured at `CAPT_CAPTURED_PCT` 45 %, else
+  escapes ashore (waits for a fleet). A captive is ransomed for
+  `RANSOM_BASE` 150 + `RANSOM_FAME` 10 x fame (paid by his faction to the
+  captor) on a coin toss when his fame is under `HANG_FAME` 40 and his
+  faction can pay; else hanged at Port Royal (`HANG_PORT`, when the captor
+  or a friend holds it: "Gallows Point") or the captor's capital. A nation
+  that kills or hangs a captain of fame >= `BOUNTY_FAME` 25 collects
+  `BOUNTY_PER` 12 x fame (the nations' standing bounty; event
+  `captain_fate {how: killed | hanged | ransomed | drowned | escaped, by,
+  r, bounty, gold}`, chronicle). Merged fleets: the more famous captain
+  commands, the other goes ashore. A dead faction's captains are gone.
+- **Named treasure galleons** (`CSea.flota_spawn`): each flota galleon
+  takes a name from `GALLEON_NAMES` (26: the Atocha, Santa Margarita, San
+  José, the Maravillas ... and invented ones like La Bruja de Plata; none
+  afloat twice); the first galleon of the flota is the capitana with
+  `FLOTA_CAPITANA_GOLD` 1800, the others `FLOTA_GOLD` 600 (the flota's
+  total stays 3600). Taking a named treasure galleon is a headline (event
+  `galleon_taken {f, from, nm, g, cap, capt}`, chronicle: "Treasure!
+  "Hellfire" Hugh Harker and Brethren of the Coast took the San Pedro off
+  La Habana: 1800 in silver, the capitana of the flota."); a prize keeps
+  her name. A treasure ship sunk (battle or storm) loses her treasure and
+  leaves a wreck (event `galleon_lost`, chronicle; salvage later).
+- **Escorts** (Spain-side): for each of `ESCORT_INFAMY` 30 / 60 reached by
+  the most infamous pirate faction alive, every part of the flota sails
+  with a frigate more.
+- **View:** a hurricane is a pale disc with three turning spiral arms round
+  a dark eye (`map_overlay.draw_storm`), its past track dotted, its
+  forecast cone an orange hull with dashed edges and "next turn" between
+  the two tracks (`draw_cone`), "Hurricane San Mateo" above; a wreck is a
+  broken mast out of the water with a gold dot (`draw_wreck`; her name
+  zoomed in); pirate fleets carry their captain's name under the ship
+  ("(Feared)" / "(Legend)" in red); the fleet card shows the captain (fame,
+  tier, prizes, sacks, perks, the bounty, the next tier) and each named
+  galleon with her treasure ("the capitana"); the Realm panel lists a
+  pirate faction's captains (tap: select the fleet), the bounties posted
+  (nations), and the hurricane season with the storms at sea; the
+  chronicle reads storms forming, striking and blowing out, the flota
+  waiting, captains rising, growing famous and meeting their fate, and
+  galleons taken or sunk; the map key has the hurricane and wreck rows.
+- **Measured:** STATUS "N2b".
+
 ## Diplomacy and AI
 
 - Per pair: war, peace, trade; the players are allied for good.

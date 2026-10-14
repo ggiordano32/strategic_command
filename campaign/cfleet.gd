@@ -81,6 +81,11 @@ static func _csea() -> GDScript:
 	return load("res://campaign/csea.gd")
 
 
+## Notorious captains (N2b; it preloads this file).
+static func _capt() -> GDScript:
+	return load("res://campaign/ccaptain.gd")
+
+
 ## The pack changed (CData.use_pack_script).
 static func pack_reset() -> void:
 	_sea = PackedByteArray()
@@ -510,6 +515,7 @@ static func init(st: Dictionary) -> void:
 				ships.append({"t": str(k), "h": 100, "c": 100})
 		if not ships.is_empty():
 			_new_fleet(st, f, dock(r), ships)
+	_capt().rise(st, true)  # (N2b) the pirates' start fleets sail under their captains
 
 
 static func _new_fleet(st: Dictionary, f: int, c: int, ships: Array) -> Dictionary:
@@ -696,6 +702,7 @@ static func _fmerge(st: Dictionary, f: int, fid: int, into: int) -> String:
 	(b["ships"] as Array).append_array(a["ships"])
 	(b["carry"] as Array).append_array(a["carry"])
 	b["moved"] = maxi(int(a["moved"]), int(b["moved"]))
+	_capt().merged(st, fid, into)  # (N2b) the more famous captain commands
 	(st["fleets"] as Array).erase(a)
 	return ""
 
@@ -1192,7 +1199,7 @@ static func sea_battle(st: Dictionary, mover: Dictionary, foes: Array, c: int) -
 static func _side_power(st: Dictionary, side: Array, defending: bool) -> int:
 	var p := 0
 	for fl in side:
-		p += power(fl)
+		p += power(fl) * (100 + _capt().fear_pct(st, fl)) / 100  # (N2b) a captain's fear
 	if defending and not side.is_empty():
 		var best := 0
 		for fl in side:
@@ -1228,6 +1235,11 @@ static func resolve(st: Dictionary, att: Array, dfn: Array, c: int) -> void:
 	var gold := 0          # prize money (N2: the captor's plunder)
 	var treasure := 0      # treasure galleons taken
 	var loss_pct := clampi(LOSS_BASE + 2 * (share - 50), LOSS_BASE, LOSS_MAX)
+	# (N2b) A Feared captain among the winners: his foes strike sooner.
+	var wcap: Dictionary = _capt().top_of(st, win)
+	if not wcap.is_empty() and _capt().tier(int(wcap["fame"])) >= 2:
+		loss_pct = mini(loss_pct + int(CData.ship_const("STRIKE_LOSS", 0)), LOSS_MAX)
+		cap_pct += int(CData.ship_const("STRIKE_TAKEN", 0))
 	for fl in lose:
 		var keep: Array = []
 		var lp := loss_pct
@@ -1242,16 +1254,23 @@ static func resolve(st: Dictionary, att: Array, dfn: Array, c: int) -> void:
 				var taken := int(row.get("oars", 0)) == 0 and CState.rand(st, 100) < cp
 				lost.append([int(fl["f"]), str(s["t"]), 1 if taken else 0])
 				if taken:
-					prizes.append({"t": str(s["t"]), "h": TAKEN_PCT, "c": TAKEN_PCT})
+					var pz := {"t": str(s["t"]), "h": TAKEN_PCT, "c": TAKEN_PCT}
+					if s.has("nm"):
+						pz["nm"] = str(s["nm"])  # (N2b) a named galleon keeps her name
+					prizes.append(pz)
 					if wf >= 0:
-						var pm: Array = _csea().prize_money(st, wf, int(fl["f"]), [s])
+						var pm: Array = _csea().prize_money(st, wf, int(fl["f"]), [s], c, str(wcap.get("nm", "")))
 						gold += int(pm[0])
 						treasure += int(pm[1])
+				elif int(s.get("g", 0)) > 0:
+					_csea().wreck(st, s, c, "battle", wf)  # (N2b) her treasure goes down with her
 				continue
 			s["h"] = int(s["h"]) - 15 - CState.rand(st, 25)
 			s["c"] = maxi(int(s["c"]) - 10 - CState.rand(st, 20), 5)
 			if int(s["h"]) <= 0:
 				lost.append([int(fl["f"]), str(s["t"]), 0])
+				if int(s.get("g", 0)) > 0:
+					_csea().wreck(st, s, c, "battle", wf)
 				continue
 			keep.append(s)
 		fl["ships"] = keep
@@ -1263,6 +1282,8 @@ static func resolve(st: Dictionary, att: Array, dfn: Array, c: int) -> void:
 			s["c"] = maxi(int(s["c"]) - dmg / 2 - CState.rand(st, 8), 5)
 			if int(s["h"]) <= 0:
 				lost.append([int(fl["f"]), str(s["t"]), 0])
+				if int(s.get("g", 0)) > 0:
+					_csea().wreck(st, s, c, "battle", -1)
 				continue
 			keep2.append(s)
 		fl["ships"] = keep2
@@ -1278,6 +1299,7 @@ static func resolve(st: Dictionary, att: Array, dfn: Array, c: int) -> void:
 	for fl in lose:
 		if not gone.has(fl):
 			_fall_back(st, fl, c, win)
+	_capt().after_battle(st, win, lose, gone, prizes.size(), treasure, c)  # (N2b) fame, and the fate of the beaten
 	for fl in gone:
 		(st["fleets"] as Array).erase(fl)
 	var af: Array = []

@@ -22,6 +22,11 @@ extends Node2D
 ## blockader's colour round its harbour; the flota's ships carry a gold
 ## treasure mark and its course (to the meeting port, then off the map) is
 ## a dashed gold line to a "To Spain" arrow at the exit.
+## N2b: hurricanes are grey swirls turning on the sea (their radius) with
+## their past track dotted and the forecast cone (where next turn's move
+## sweeps) in orange; sunk treasure ships leave a wreck (a mast out of the
+## water, a gold dot, the galleon's name zoomed in); pirate fleets carry
+## their captain's name under the ship.
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -30,8 +35,11 @@ const CGrid := preload("res://campaign/cgrid.gd")
 const CRules := preload("res://campaign/crules.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
 const CSea := preload("res://campaign/csea.gd")
+const CStorm := preload("res://campaign/cstorm.gd")
+const CCaptain := preload("res://campaign/ccaptain.gd")
 const SeaWaves := preload("res://game/campaign/sea_waves.gd")
 const MapView := preload("res://game/campaign/map_view.gd")
+const Minis := preload("res://game/campaign/minis_layer.gd")  # miniatures replace the icons / hulls when Minis.on_*
 
 const ARMY_W := 30.0
 const ARMY_H := 26.0
@@ -257,7 +265,7 @@ func _army_positions6() -> Dictionary:
 			key = "p%d_%d" % [int(c.x / 6.0), int(c.y / 6.0)]
 		elif CRules.inside(state, a):
 			var r := CGrid.site_region(CState.cell(a))
-			c = to_screen(site_point(r)) + Vector2(0, (ARMY_H * 0.5 + 12.0) * m)
+			c = to_screen(site_point(r)) + Vector2(0, (ARMY_H * 0.5 + 12.0) * m + Minis.army_drop())
 			key = "s%d" % r
 		else:
 			c = to_screen(cell_point(CState.cell(a)))
@@ -315,7 +323,8 @@ func _draw() -> void:
 		var lvl := int(rs["level"])
 		var rad: float = SITE_R[lvl] * m
 		var w := CState.walls(state, r)
-		draw_site(self, p, rad, CData.faction_color(int(rs["owner"])), w, m)
+		if not Minis.on_sites:
+			draw_site(self, p, rad, CData.faction_color(int(rs["owner"])), w, m)
 		var sg := CState.siege_at(state, r)
 		if not sg.is_empty():
 			var sr := rad + (6.0 + 1.2 * w) * m
@@ -328,7 +337,7 @@ func _draw() -> void:
 			var nm := str(CData.REGIONS[r]["city"])
 			var fs := int(round(FONT * (0.85 + 0.15 * m)))
 			var tw := font.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-			var tp := p + Vector2(-tw * 0.5, -rad - 5.0)
+			var tp := p + Vector2(-tw * 0.5, -rad - 5.0 - Minis.label_lift())
 			draw_string_outline(font, tp, nm, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 4, Color(0, 0, 0, 0.75))
 			draw_string(font, tp, nm, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 1, 0.95))
 	# Pending battles.
@@ -354,6 +363,8 @@ func _draw() -> void:
 			if bk >= 0 and CFleet.harbour(r) >= 0:
 				draw_blockade(self, to_screen(cell_point(CFleet.harbour(r))),
 					(CSea.k("BLOCKADE_CELLS", 3) + 0.5) * CGrid.cell_px() * zoom, CData.faction_color(bk), m)
+		_draw_wrecks(m)
+		_draw_storms(m)
 		_flota_course(fpos)
 		for fp in fleet_paths:
 			_fleet_path(fp, fpos)
@@ -558,6 +569,106 @@ static func draw_blockade(ci: CanvasItem, p: Vector2, rad: float, col: Color, m:
 	ci.draw_line(p - d, p + d, Color(0, 0, 0, 0.8), 5.0 * m, true)
 	ci.draw_line(p - d, p + d, Color(1.0, 0.35, 0.25), 2.6 * m, true)
 	ci.draw_circle(p, 3.0 * m, col.lightened(0.3))
+
+
+## (N2b) A hurricane at p (screen) of radius rad: a pale disc with three
+## spiral arms turning with t (seconds) round a dark eye.
+static func draw_storm(ci: CanvasItem, p: Vector2, rad: float, t: float, m: float) -> void:
+	ci.draw_circle(p, rad, Color(0.82, 0.86, 0.92, 0.16))
+	ci.draw_arc(p, rad, 0, TAU, 40, Color(0.92, 0.94, 1.0, 0.35), 1.5 * m, true)
+	for arm in 3:
+		var pts := PackedVector2Array()
+		for i in 22:
+			var f := float(i) / 21.0
+			var ang := -t * 1.4 + arm * TAU / 3.0 + f * 3.4
+			pts.append(p + Vector2(cos(ang), sin(ang)) * rad * (0.12 + 0.88 * f))
+		ci.draw_polyline(pts, Color(0.1, 0.12, 0.18, 0.45), 6.0 * m, true)
+		ci.draw_polyline(pts, Color(0.95, 0.97, 1.0, 0.85), 3.0 * m, true)
+	ci.draw_circle(p, maxf(rad * 0.1, 3.0 * m), Color(0.08, 0.1, 0.16, 0.9))
+
+
+## (N2b) A storm's forecast cone: the hull of its disc now and at the ends
+## of the two tracks it may take (screen points a, b1, b2; radius rad).
+static func draw_cone(ci: CanvasItem, a: Vector2, b1: Vector2, b2: Vector2, rad: float, m: float) -> void:
+	var pts := PackedVector2Array()
+	for c in [a, b1, b2]:
+		for i in 20:
+			pts.append((c as Vector2) + Vector2(cos(TAU * i / 20.0), sin(TAU * i / 20.0)) * rad)
+	var hull := Geometry2D.convex_hull(pts)
+	if hull.size() >= 3:
+		ci.draw_colored_polygon(hull, Color(1.0, 0.5, 0.2, 0.2))
+		for k in hull.size() - 1:
+			ci.draw_dashed_line(hull[k], hull[k + 1], Color(1.0, 0.6, 0.3, 0.85), 2.0 * m, 9.0, true, true)
+	for b in [b1, b2]:
+		ci.draw_dashed_line(a, b, Color(1.0, 0.75, 0.45, 0.7), 1.6 * m, 6.0, true, true)
+
+
+## (N2b) A wreck at p: a broken mast and yard out of the water, a gold dot
+## when treasure went down with her.
+static func draw_wreck(ci: CanvasItem, p: Vector2, gold: bool, m: float) -> void:
+	var d := Vector2(3.0, -11.0) * m
+	ci.draw_arc(p + Vector2(0, 1.5 * m), 7.0 * m, 0.2, PI - 0.2, 10, Color(0.05, 0.08, 0.12, 0.6), 2.0 * m, true)
+	ci.draw_line(p, p + d, Color(0, 0, 0, 0.85), 4.0 * m, true)
+	ci.draw_line(p, p + d, Color(0.55, 0.38, 0.2), 2.2 * m, true)
+	var y0 := p + d * 0.7
+	ci.draw_line(y0 + Vector2(-5.0, 1.5) * m, y0 + Vector2(5.0, -1.5) * m, Color(0, 0, 0, 0.85), 3.4 * m, true)
+	ci.draw_line(y0 + Vector2(-5.0, 1.5) * m, y0 + Vector2(5.0, -1.5) * m, Color(0.55, 0.38, 0.2), 1.8 * m, true)
+	if gold:
+		ci.draw_circle(p + Vector2(-5.0, 1.0) * m, 3.0 * m, Color(0, 0, 0, 0.8))
+		ci.draw_circle(p + Vector2(-5.0, 1.0) * m, 2.0 * m, Color(1.0, 0.82, 0.25))
+
+
+## (N2b) Map point of a storm's centre (centi-cells).
+static func storm_point(px: int, py: int) -> Vector2:
+	var cp := float(CGrid.cell_px())
+	return Vector2(px / 100.0, py / 100.0) * cp
+
+
+func _draw_storms(m: float) -> void:
+	var font := ThemeDB.fallback_font
+	var cp := float(CGrid.cell_px())
+	var tt := SeaWaves.t if SeaWaves.t > 0.0 else pulse
+	for s in CStorm.storms(state):
+		var a := to_screen(storm_point(int(s["px"]), int(s["py"])))
+		var rad := float(s["r"]) * cp * zoom
+		var b1: Array = CStorm.next_point(s, int(s["h"]))
+		var b2: Array = CStorm.next_point(s, int(s["h"]) + 1)
+		var trk: Array = s.get("tr", [])
+		if trk.size() > 1:
+			for k in trk.size() - 1:
+				var p0 := to_screen(cell_point(CGrid.at(int(trk[k][0]), int(trk[k][1]))))
+				var p1 := to_screen(cell_point(CGrid.at(int(trk[k + 1][0]), int(trk[k + 1][1]))))
+				draw_dashed_line(p0, p1, Color(0.9, 0.92, 1.0, 0.55), 2.0 * m, 4.0, true, true)
+		draw_cone(self, a, to_screen(storm_point(int(b1[0]), int(b1[1]))), to_screen(storm_point(int(b2[0]), int(b2[1]))), rad, m)
+		draw_storm(self, a, rad, tt, m)
+		var t1 := "Hurricane %s" % str(s["nm"])
+		var fs := int(round(14 * maxf(m, 0.8)))
+		var tw := font.get_string_size(t1, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		var tp := a + Vector2(-tw * 0.5, -rad - 6.0)
+		draw_string_outline(font, tp, t1, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 4, Color(0, 0, 0, 0.8))
+		draw_string(font, tp, t1, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1.0, 0.8, 0.6))
+		var mid := (to_screen(storm_point(int(b1[0]), int(b1[1]))) + to_screen(storm_point(int(b2[0]), int(b2[1])))) * 0.5
+		var t2 := "next turn"
+		var fs2 := int(round(12 * maxf(m, 0.8)))
+		var tw2 := font.get_string_size(t2, HORIZONTAL_ALIGNMENT_LEFT, -1, fs2).x
+		draw_string_outline(font, mid + Vector2(-tw2 * 0.5, 4), t2, HORIZONTAL_ALIGNMENT_LEFT, -1, fs2, 4, Color(0, 0, 0, 0.75))
+		draw_string(font, mid + Vector2(-tw2 * 0.5, 4), t2, HORIZONTAL_ALIGNMENT_LEFT, -1, fs2, Color(1.0, 0.7, 0.45))
+
+
+func _draw_wrecks(m: float) -> void:
+	var font := ThemeDB.fallback_font
+	for w in state.get("wrecks", []):
+		var c := CGrid.at(int(w[0]), int(w[1]))
+		if c < 0:
+			continue
+		var p := to_screen(cell_point(c))
+		draw_wreck(self, p, int(w[3]) > 0, m)
+		if zoom >= 1.2 and str(w[4]) != "":
+			var t := str(w[4])
+			var fs := 11
+			var tw := font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+			draw_string_outline(font, p + Vector2(-tw * 0.5, 14.0 * m), t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 3, Color(0, 0, 0, 0.75))
+			draw_string(font, p + Vector2(-tw * 0.5, 14.0 * m), t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.95, 0.85, 0.6))
 
 
 ## The treasure mark on a flota ship (a gold coin with a dark edge).
@@ -812,38 +923,50 @@ func _fleet_marker(c: Vector2, fl: Dictionary) -> void:
 	var s := FLEET_W * 0.5 * m
 	if sel:
 		draw_circle(c, s * 1.45 + 2.0 * sin(pulse * 5.0), Color(COL_SELECTED, 0.55))
-	# Hull.
-	var hull := PackedVector2Array([Vector2(-s, 0.15 * s), Vector2(s, 0.15 * s), Vector2(0.62 * s, 0.62 * s), Vector2(-0.7 * s, 0.62 * s)])
-	var sail := PackedVector2Array([Vector2(0.05 * s, -0.95 * s), Vector2(0.7 * s, 0.05 * s), Vector2(0.05 * s, 0.05 * s)])
-	var sail2 := PackedVector2Array([Vector2(-0.08 * s, -0.7 * s), Vector2(-0.62 * s, 0.05 * s), Vector2(-0.08 * s, 0.05 * s)])
-	var shadow := Transform2D(roll, c + Vector2(1.5, 2.0 + bob))
-	draw_colored_polygon(shadow * hull, Color(0, 0, 0, 0.35))
-	for poly in [sail, sail2]:
-		var pw: PackedVector2Array = xf * poly
-		draw_colored_polygon(pw, Color(0.96, 0.94, 0.86))
-		var o := pw.duplicate()
-		o.append(pw[0])
-		draw_polyline(o, COL_OUTLINE, 1.2, true)
-	draw_line(xf * Vector2(0, -1.05 * s), xf * Vector2(0, 0.15 * s), COL_OUTLINE, 1.6, true)
-	var hw: PackedVector2Array = xf * hull
-	draw_colored_polygon(hw, col)
-	var ho := hw.duplicate()
-	ho.append(hw[0])
-	draw_polyline(ho, COL_OUTLINE, 3.0 if human else 1.8, true)
-	if human:
-		draw_polyline(ho, Color(1, 1, 1), 1.4, true)
+	if not Minis.on_ships:
+		# Hull.
+		var hull := PackedVector2Array([Vector2(-s, 0.15 * s), Vector2(s, 0.15 * s), Vector2(0.62 * s, 0.62 * s), Vector2(-0.7 * s, 0.62 * s)])
+		var sail := PackedVector2Array([Vector2(0.05 * s, -0.95 * s), Vector2(0.7 * s, 0.05 * s), Vector2(0.05 * s, 0.05 * s)])
+		var sail2 := PackedVector2Array([Vector2(-0.08 * s, -0.7 * s), Vector2(-0.62 * s, 0.05 * s), Vector2(-0.08 * s, 0.05 * s)])
+		var shadow := Transform2D(roll, c + Vector2(1.5, 2.0 + bob))
+		draw_colored_polygon(shadow * hull, Color(0, 0, 0, 0.35))
+		for poly in [sail, sail2]:
+			var pw: PackedVector2Array = xf * poly
+			draw_colored_polygon(pw, Color(0.96, 0.94, 0.86))
+			var o := pw.duplicate()
+			o.append(pw[0])
+			draw_polyline(o, COL_OUTLINE, 1.2, true)
+		draw_line(xf * Vector2(0, -1.05 * s), xf * Vector2(0, 0.15 * s), COL_OUTLINE, 1.6, true)
+		var hw: PackedVector2Array = xf * hull
+		draw_colored_polygon(hw, col)
+		var ho := hw.duplicate()
+		ho.append(hw[0])
+		draw_polyline(ho, COL_OUTLINE, 3.0 if human else 1.8, true)
+		if human:
+			draw_polyline(ho, Color(1, 1, 1), 1.4, true)
+	elif human:
+		draw_arc(c + Vector2(0, 2), s * 0.8, 0, TAU, 20, Color(1, 1, 1, 0.85), 1.6, true)
 	# Pennant with the ship count.
 	var font := ThemeDB.fallback_font
 	var txt := str((fl["ships"] as Array).size())
 	var fs := int(round(13 * maxf(m, 0.75)))
 	var tw := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-	var tp := xf * Vector2(0, -1.05 * s) + Vector2(4.0 * m, fs * 0.2)
+	var tp := xf * Vector2(0, -1.05 * s - (Minis.label_lift() * 0.5 if Minis.on_ships else 0.0)) + Vector2(4.0 * m, fs * 0.2)
 	draw_rect(Rect2(tp + Vector2(-3, -fs + 1), Vector2(tw + 6, fs + 3)), Color(0, 0, 0, 0.7))
 	draw_string(font, tp, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col.lightened(0.55))
 	if not (fl["carry"] as Array).is_empty():
 		var dp := xf * Vector2(-0.35 * s, 0.38 * s)
 		draw_circle(dp, 4.5 * m, Color(0, 0, 0, 0.85))
 		draw_circle(dp, 3.2 * m, Color(1, 0.95, 0.75))
+	var capt := CCaptain.of_fleet(state, int(fl["id"])) if state.has("captains") else {}
+	if not capt.is_empty() and zoom >= 0.45:
+		var tn := CCaptain.tier_name(int(capt["fame"]))
+		var ct := str(capt["nm"]) + (" (%s)" % tn if tn != "" else "")
+		var cfs := int(round(12 * maxf(m, 0.8)))
+		var cw := font.get_string_size(ct, HORIZONTAL_ALIGNMENT_LEFT, -1, cfs).x
+		var cpp := c + Vector2(-cw * 0.5, s * 0.62 + cfs + 4.0)
+		draw_string_outline(font, cpp, ct, HORIZONTAL_ALIGNMENT_LEFT, -1, cfs, 4, Color(0, 0, 0, 0.85))
+		draw_string(font, cpp, ct, HORIZONTAL_ALIGNMENT_LEFT, -1, cfs, Color(1.0, 0.55, 0.45) if CCaptain.tier(int(capt["fame"])) >= 2 else col.lightened(0.6))
 	if CSea.treasure(fl) > 0:
 		draw_treasure(self, xf * Vector2(-0.62 * s, -0.35 * s), m)
 		var ft := "Flota"

@@ -17,6 +17,9 @@ extends RefCounted
 ##     2 home), "wait" (turns waited); ships [{..., "g": treasure, "o":
 ##     faction it pays}];
 ##   marques [[nation, pirate, until turn], ...] (letters of marque);
+##   (N2b) flota ships "nm" (the galleon's name), "cap" (1: the capitana);
+##   fleets "held" (the flota waiting out a storm); wrecks [[x, y, turn,
+##   gold, name], ...] (treasure ships sunk, the last WRECKS_MAX);
 ##   stats: plunder, blockade_turns, flotas, flota_arrived, flota_gold,
 ##     treasure_taken, sacks, marques.
 ## Orders (crules.apply_order): sack_policy {v}; propose {to, what:
@@ -26,6 +29,8 @@ const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
+const CStorm := preload("res://campaign/cstorm.gd")
+const CCaptain := preload("res://campaign/ccaptain.gd")
 const UT := preload("res://sim/unit_types.gd")
 
 
@@ -87,14 +92,18 @@ static func haven_off(st: Dictionary, f: int, r: int, key: String) -> int:
 		return 0
 	if not (CData.ship_const("HAVEN_UNITS", []) as Array).has(key):
 		return 0
-	return mini(k("HAVEN_PCT", 20) + infamy(st, f) / 5, k("HAVEN_MAX_PCT", 45))
+	# (N2b) a famous captain draws crews cheaper still.
+	return mini(k("HAVEN_PCT", 20) + infamy(st, f) / 5, k("HAVEN_MAX_PCT", 45)) \
+		+ k("CAPT_HAVEN_PCT", 0) * CCaptain.tier(CCaptain.best_fame(st, f))
 
 
 ## More recruits a turn in region r (a haven, by its owner's infamy).
 static func extra_recruits(st: Dictionary, r: int) -> int:
 	if not haven(st, r):
 		return 0
-	return mini(infamy(st, CState.owner(st, r)) / maxi(k("HAVEN_RECRUIT_INFAMY", 30), 1), 2)
+	var o := CState.owner(st, r)
+	var legend := 1 if CCaptain.tier(CCaptain.best_fame(st, o)) >= 3 else 0  # (N2b) a Legend's name brings recruits
+	return mini(infamy(st, o) / maxi(k("HAVEN_RECRUIT_INFAMY", 30), 1), 2) + legend
 
 
 ## % of plunder pirate faction p takes from `victim` (a letter of marque
@@ -283,6 +292,17 @@ static func flota_spawn(st: Dictionary) -> void:
 	if fo < 0:
 		return
 	var made: Array = []
+	# (N2b) The Crown adds escorts when the pirates afloat are infamous.
+	var escorts := 0
+	var worst := 0
+	for g in CState.nf():
+		if pirate(g) and CState.alive(st, g):
+			worst = maxi(worst, infamy(st, g))
+	for v in CData.ship_const("ESCORT_INFAMY", []):
+		if worst >= int(v):
+			escorts += 1
+	var capitana := false
+	var taken_names: Array = []
 	for p in parts:
 		var r := CData.region_index(str(p[0]))
 		var pf := CData.faction_index(str(p[1]))
@@ -294,25 +314,80 @@ static func flota_spawn(st: Dictionary) -> void:
 		var pay := pf if pf >= 0 and CState.alive(st, pf) else fo
 		var ships: Array = []
 		var n := 0
+		var names: Array = []
 		for key in p[2]:
 			var row := CData.ship_row(str(key))
 			if row.is_empty():
 				continue
 			if str(key) == "galleon":
-				ships.append({"t": str(key), "h": 100, "c": k("FLOTA_CREW", 60), "g": k("FLOTA_GOLD", 900), "o": pay})
+				var sh := {"t": str(key), "h": 100, "c": k("FLOTA_CREW", 60), "g": k("FLOTA_GOLD", 900), "o": pay}
+				var nm := galleon_name(st, taken_names)
+				if nm != "":
+					sh["nm"] = nm  # (N2b) named; the first is the capitana with the big chest
+					names.append(nm)
+					taken_names.append(nm)
+					_stat(st, "galleons_named", 1)
+				if not capitana and CData.ship_const("FLOTA_CAPITANA_GOLD", null) != null:
+					capitana = true
+					sh["cap"] = 1
+					sh["g"] = k("FLOTA_CAPITANA_GOLD", 1800)
+				ships.append(sh)
 				n += 1
 			else:
 				ships.append({"t": str(key), "h": 100, "c": 100})
 		if ships.is_empty():
 			continue
+		for e in escorts:
+			if not CData.ship_row("frigate").is_empty():
+				ships.append({"t": "frigate", "h": 100, "c": 100})
 		var fl := CFleet._new_fleet(st, fo, CFleet.dock(r), ships)
 		fl["flota"] = 0
 		fl["wait"] = 0
-		made.append([r, n, pay])
+		made.append([r, n, pay, names, escorts])
 	if made.is_empty():
 		return
 	_stat(st, "flotas", 1)
 	_rules().event(st, {"k": "flota", "f": fo, "parts": made, "turn_due": t})
+
+
+## (N2b) A name for a new treasure galleon: one of GALLEON_NAMES not afloat
+## nor in `also` (by the state's RNG), "" when the pack has none.
+static func galleon_name(st: Dictionary, also: Array = []) -> String:
+	var names: Array = CData.ship_const("GALLEON_NAMES", [])
+	if names.is_empty():
+		return ""
+	var used := {}
+	for n in also:
+		used[str(n)] = 1
+	for fl in CFleet.fleets(st):
+		for sh in fl["ships"]:
+			if sh.has("nm"):
+				used[str(sh["nm"])] = 1
+	var free: Array = []
+	for n in names:
+		if not used.has(str(n)):
+			free.append(str(n))
+	if free.is_empty():
+		return str(names[CState.rand(st, names.size())])
+	return str(free[CState.rand(st, free.size())])
+
+
+## (N2b) A treasure ship sh went down at cell c (why "battle" or "storm";
+## by: the faction that sank her, -1 none): her treasure is lost and a
+## wreck marks the spot (the last WRECKS_MAX kept). Event "galleon_lost"
+## (chronicle).
+static func wreck(st: Dictionary, sh: Dictionary, c: int, why: String, by: int) -> void:
+	var g := int(sh.get("g", 0))
+	if not st.has("wrecks"):
+		st["wrecks"] = []
+	var wr: Array = st["wrecks"]
+	wr.append([CGrid.cx(c), CGrid.cy(c), int(st["turn"]), g, str(sh.get("nm", ""))])
+	while wr.size() > k("WRECKS_MAX", 12):
+		wr.remove_at(0)
+	_stat(st, "galleons_lost", 1)
+	_stat(st, "treasure_sunk", g)
+	_rules().event(st, {"k": "galleon_lost", "nm": str(sh.get("nm", "")), "g": g, "why": why, "by": by,
+		"f": int(sh.get("o", -1)), "x": CGrid.cx(c), "y": CGrid.cy(c)})
 
 
 ## Treasure aboard fleet fl.
@@ -358,10 +433,13 @@ static func flota_moves(st: Dictionary, out: Array) -> void:
 			fl["flota"] = 1 if meet_ok else 2
 		if int(fl["flota"]) == 1:
 			waiting.append(fl)
+	# (N2b) The flota waits out a hurricane in the meeting port.
+	var held := meet >= 0 and CStorm.threat_course(st, meet, ex)
 	if not waiting.is_empty():
-		var go := not coming or int(waiting[0]["wait"]) >= k("FLOTA_WAIT", 2)
+		var go := (not coming or int(waiting[0]["wait"]) >= k("FLOTA_WAIT", 2)) and not held
 		for fl in waiting:
-			fl["wait"] = int(fl["wait"]) + 1
+			if not held:
+				fl["wait"] = int(fl["wait"]) + 1
 		if go:
 			var lead: Dictionary = waiting[0]
 			for i in range(1, waiting.size()):
@@ -376,6 +454,12 @@ static func flota_moves(st: Dictionary, out: Array) -> void:
 		if not is_flota(fl) or int(fl["moved"]) != 0:
 			continue
 		var leg := int(fl["flota"])
+		if held and leg >= 1 and CGrid.cheb(CFleet.cell(fl), meet) <= MEET_CELLS:
+			if not fl.has("held"):
+				fl["held"] = 1
+				_rules().event(st, {"k": "flota_held", "f": int(fl["f"]), "fleet": int(fl["id"]), "r": mr})
+			continue  # (N2b) in port till the storm has passed
+		fl.erase("held")
 		var dest := meet if leg == 0 else (ex if leg == 2 else -1)
 		if dest >= 0 and CFleet.zone_owner(st, int(fl["f"]), dest) >= 0:
 			dest = _clear_near(st, int(fl["f"]), dest)  # an enemy lies there: as near as is clear
@@ -440,7 +524,7 @@ static func flota_arrivals(st: Dictionary) -> void:
 ## A sea battle's prize money: faction wf took `ships` (the ship dicts as
 ## they were, a treasure galleon with its "g") from faction `victim`.
 ## Returns [gold paid, treasure galleons among them].
-static func prize_money(st: Dictionary, wf: int, victim: int, ships: Array) -> Array:
+static func prize_money(st: Dictionary, wf: int, victim: int, ships: Array, c: int = -1, capt: String = "") -> Array:
 	var gold := 0
 	var tg := 0
 	var n := 0
@@ -451,6 +535,13 @@ static func prize_money(st: Dictionary, wf: int, victim: int, ships: Array) -> A
 		if int(s.get("g", 0)) > 0:
 			gold += int(s["g"])
 			tg += 1
+			if s.has("nm"):  # (N2b) a named treasure galleon taken: a headline
+				_stat(st, "galleons_taken", 1)
+				var ev := {"k": "galleon_taken", "f": wf, "from": victim, "nm": str(s["nm"]), "g": int(s["g"]),
+					"cap": int(s.get("cap", 0)), "x": CGrid.cx(c) if c >= 0 else -1, "y": CGrid.cy(c) if c >= 0 else -1}
+				if capt != "":
+					ev["capt"] = capt
+				_rules().event(st, ev)
 		n += 1
 	var paid := gain(st, wf, gold, victim)
 	if tg > 0:
@@ -523,6 +614,7 @@ static func sack(st: Dictionary, r: int, f: int, armies: Array) -> void:
 	rs["gar"] = maxi(int(rs["gar"]), 10)
 	rs["sacked"] = int(st["turn"])
 	add_infamy(st, f, k("INFAMY_SACK", 12))
+	CCaptain.sacked(st, f, r)  # (N2b) the captain who brought them gains fame
 	_stat(st, "sacks", 1)
 	_rules().event(st, {"k": "sack", "r": r, "f": f, "from": o, "gold": paid, "buildings": hit})
 	for a in armies:
@@ -700,8 +792,8 @@ static func before_money(st: Dictionary) -> void:
 	update_blockades(st)
 
 
-## crules.end_of_turn, last: infamy fades, letters lapse, the next flota
-## gathers.
+## crules.end_of_turn, last: infamy fades, letters lapse, the hurricanes
+## (N2b), the captains (N2b), the next flota gathers.
 static func after_turn(st: Dictionary) -> void:
 	if not on(st):
 		return
@@ -709,4 +801,6 @@ static func after_turn(st: Dictionary) -> void:
 		if pirate(f) and infamy(st, f) > 0:
 			add_infamy(st, f, -k("INFAMY_DECAY", 1))
 	marque_turn(st)
+	CStorm.turn(st)  # (N2b) the hurricanes strike, move and form
+	CCaptain.rise(st)  # (N2b) captainless pirate fleets find a captain
 	flota_spawn(st)
