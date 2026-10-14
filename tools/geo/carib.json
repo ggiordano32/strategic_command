@@ -234,6 +234,108 @@
    "lon": -61.5,
    "lat": 10.7,
    "land": 6
+  },
+  {
+   "key": "karankawa",
+   "lon": -96.9,
+   "lat": 28.7,
+   "land": 0
+  },
+  {
+   "key": "atakapa",
+   "lon": -93.4,
+   "lat": 30.4,
+   "land": 0
+  },
+  {
+   "key": "natchez",
+   "lon": -91.3,
+   "lat": 31.2,
+   "land": 0
+  },
+  {
+   "key": "choctaw",
+   "lon": -88.8,
+   "lat": 31.2,
+   "land": 0
+  },
+  {
+   "key": "apalachee",
+   "lon": -84.3,
+   "lat": 30.4,
+   "land": 0
+  },
+  {
+   "key": "calusa",
+   "lon": -81.6,
+   "lat": 26.85,
+   "land": 0
+  },
+  {
+   "key": "tamaulipas",
+   "lon": -98.0,
+   "lat": 24.4,
+   "land": 0
+  },
+  {
+   "key": "orizaba",
+   "lon": -97.1,
+   "lat": 18.85,
+   "land": 0
+  },
+  {
+   "key": "tabasco",
+   "lon": -92.9,
+   "lat": 17.9,
+   "land": 0
+  },
+  {
+   "key": "valladolid",
+   "lon": -88.2,
+   "lat": 20.7,
+   "land": 0
+  },
+  {
+   "key": "comayagua",
+   "lon": -87.6,
+   "lat": 14.45,
+   "land": 0
+  },
+  {
+   "key": "granada",
+   "lon": -85.95,
+   "lat": 11.93,
+   "land": 0
+  },
+  {
+   "key": "talamanca",
+   "lon": -82.9,
+   "lat": 9.3,
+   "land": 0
+  },
+  {
+   "key": "veraguas",
+   "lon": -81.3,
+   "lat": 8.6,
+   "land": 0
+  },
+  {
+   "key": "darien",
+   "lon": -77.9,
+   "lat": 8.6,
+   "land": 0
+  },
+  {
+   "key": "barquisimeto",
+   "lon": -69.3,
+   "lat": 10.0,
+   "land": 1
+  },
+  {
+   "key": "calabozo",
+   "lon": -67.4,
+   "lat": 8.9,
+   "land": 1
   }
  ],
  "rivers": [
@@ -256,10 +358,30 @@
      -90.07,
      29.95
     ],
-    ["Delta ferry", 0, -89.294, 29.186],
-    ["Empire ferry", 0, -89.52, 29.4],
-    ["Venice ferry", 0, -89.459, 29.344],
-    ["Pilottown ferry", 0, -89.197, 29.093]
+    [
+     "Delta ferry",
+     0,
+     -89.294,
+     29.186
+    ],
+    [
+     "Empire ferry",
+     0,
+     -89.52,
+     29.4
+    ],
+    [
+     "Venice ferry",
+     0,
+     -89.459,
+     29.344
+    ],
+    [
+     "Pilottown ferry",
+     0,
+     -89.197,
+     29.093
+    ]
    ],
    "hand": [
     [

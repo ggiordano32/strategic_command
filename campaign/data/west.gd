@@ -1,7 +1,7 @@
 extends RefCounted
 ## The West pack (1650 AD, the Caribbean and the Gulf of Mexico): the content
 ## tables campaign/cdata.gd reads through CData.use_pack("west"). Same shape as
-## campaign/data/rome.gd (see there for what each table means). The 32
+## campaign/data/rome.gd (see there for what each table means). The 49
 ## settlements are the ones tools/geo/carib.json bakes (keys, lon / lat and
 ## landmass must stay equal to it). Units are the Rome rosters reused as
 ## placeholders until the West units exist (ROSTERS / AMMO_AVAIL keep the
@@ -80,17 +80,42 @@ const REGIONS: Array[Dictionary] = [
 	{"key": "san_german", "name": "San German", "city": "San German", "area": "Puerto Rico", "terrain": HILL, "lon": -6705, "lat": 1808, "wealth": 2, "level": VILLAGE, "walls": 0, "land": 5, "ground": GREEN, "forest": 45, "culture": LATIN},
 	# Trinidad
 	{"key": "port_of_spain", "name": "Trinidad", "city": "Port of Spain", "area": "Trinidad", "terrain": FLAT, "lon": -6150, "lat": 1070, "wealth": 3, "level": VILLAGE, "walls": 1, "land": 6, "ground": GREEN, "forest": 60, "culture": LATIN},
+	# Interior and gap settlements (coastal bands; mostly independent)
+	{"key": "karankawa", "name": "Karankawa Coast", "city": "Espiritu Santo", "area": "Texas", "terrain": FLAT, "lon": -9690, "lat": 2870, "wealth": 2, "level": VILLAGE, "walls": 0, "land": 0, "ground": DRY, "forest": 35, "culture": CELTIC},
+	{"key": "atakapa", "name": "Atakapa", "city": "Atakapa Bayou", "area": "Gulf Coast", "terrain": FLAT, "lon": -9340, "lat": 3040, "wealth": 2, "level": VILLAGE, "walls": 0, "land": 0, "ground": GREEN, "forest": 60, "culture": CELTIC},
+	{"key": "natchez", "name": "Natchez", "city": "Grand Village", "area": "Gulf Coast", "terrain": ROLLING, "lon": -9130, "lat": 3120, "wealth": 3, "level": VILLAGE, "walls": 1, "land": 0, "ground": GREEN, "forest": 60, "culture": CELTIC},
+	{"key": "choctaw", "name": "Choctaw Towns", "city": "Chickasawhay", "area": "Gulf Coast", "terrain": ROLLING, "lon": -8880, "lat": 3120, "wealth": 3, "level": VILLAGE, "walls": 1, "land": 0, "ground": GREEN, "forest": 65, "culture": CELTIC},
+	{"key": "apalachee", "name": "Apalachee", "city": "San Luis de Talimali", "area": "Florida", "terrain": ROLLING, "lon": -8430, "lat": 3040, "wealth": 4, "level": TOWN, "walls": 1, "land": 0, "ground": GREEN, "forest": 55, "culture": LATIN},
+	{"key": "calusa", "name": "Calusa", "city": "Mound Key", "area": "Florida", "terrain": FLAT, "lon": -8160, "lat": 2685, "wealth": 2, "level": VILLAGE, "walls": 0, "land": 0, "ground": GREEN, "forest": 50, "culture": CELTIC},
+	{"key": "tamaulipas", "name": "Tamaulipas", "city": "Soto la Marina", "area": "Mexico", "terrain": FLAT, "lon": -9800, "lat": 2440, "wealth": 2, "level": VILLAGE, "walls": 0, "land": 0, "ground": DRY, "forest": 25, "culture": CELTIC},
+	{"key": "orizaba", "name": "Orizaba", "city": "Orizaba", "area": "Mexico", "terrain": HILL, "lon": -9710, "lat": 1885, "wealth": 4, "level": TOWN, "walls": 0, "land": 0, "ground": GREEN, "forest": 45, "culture": LATIN},
+	{"key": "tabasco", "name": "Tabasco", "city": "Villahermosa", "area": "Mexico", "terrain": FLAT, "lon": -9290, "lat": 1790, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 0, "ground": GREEN, "forest": 70, "culture": CELTIC},
+	{"key": "valladolid", "name": "Valladolid", "city": "Valladolid", "area": "Yucatan", "terrain": FLAT, "lon": -8820, "lat": 2070, "wealth": 3, "level": VILLAGE, "walls": 1, "land": 0, "ground": ARID, "forest": 35, "culture": CELTIC},
+	{"key": "comayagua", "name": "Comayagua", "city": "Comayagua", "area": "Central America", "terrain": HILL, "lon": -8760, "lat": 1445, "wealth": 4, "level": TOWN, "walls": 0, "land": 0, "ground": GREEN, "forest": 50, "culture": LATIN},
+	{"key": "granada", "name": "Granada", "city": "Granada", "area": "Central America", "terrain": FLAT, "lon": -8595, "lat": 1193, "wealth": 4, "level": TOWN, "walls": 1, "land": 0, "ground": GREEN, "forest": 50, "culture": LATIN},
+	{"key": "talamanca", "name": "Talamanca", "city": "Talamanca", "area": "Central America", "terrain": HILL, "lon": -8290, "lat": 930, "wealth": 2, "level": VILLAGE, "walls": 0, "land": 0, "ground": GREEN, "forest": 85, "culture": CELTIC},
+	{"key": "veraguas", "name": "Veraguas", "city": "Santiago de Veraguas", "area": "Central America", "terrain": ROLLING, "lon": -8130, "lat": 860, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 0, "ground": GREEN, "forest": 70, "culture": CELTIC},
+	{"key": "darien", "name": "Darien", "city": "Yaviza", "area": "Central America", "terrain": FLAT, "lon": -7790, "lat": 860, "wealth": 2, "level": VILLAGE, "walls": 1, "land": 0, "ground": GREEN, "forest": 85, "culture": CELTIC},
+	{"key": "barquisimeto", "name": "Barquisimeto", "city": "Barquisimeto", "area": "Spanish Main", "terrain": ROLLING, "lon": -6930, "lat": 1000, "wealth": 3, "level": TOWN, "walls": 0, "land": 1, "ground": DRY, "forest": 25, "culture": LATIN},
+	{"key": "calabozo", "name": "Los Llanos", "city": "Calabozo", "area": "Spanish Main", "terrain": FLAT, "lon": -6740, "lat": 890, "wealth": 2, "level": VILLAGE, "walls": 0, "land": 1, "ground": DRY, "forest": 15, "culture": LATIN},
 ]
 
 ## Land routes (one turn each way): neighbouring settlements on one landmass.
 const ROUTES: Array = [
-	["tampico", "veracruz"], ["veracruz", "campeche"], ["campeche", "merida"], ["campeche", "tayasal"],
-	["merida", "belize"], ["tayasal", "belize"], ["tayasal", "trujillo"], ["belize", "trujillo"],
-	["trujillo", "cabo_gracias"], ["cabo_gracias", "bluefields"], ["bluefields", "portobelo"],
-	["new_orleans", "pensacola"], ["pensacola", "st_augustine"],
+	["tampico", "tamaulipas"], ["tampico", "veracruz"], ["veracruz", "orizaba"], ["veracruz", "tabasco"],
+	["tabasco", "campeche"], ["tabasco", "tayasal"], ["campeche", "merida"], ["campeche", "tayasal"],
+	["merida", "valladolid"], ["valladolid", "belize"], ["tayasal", "belize"], ["tayasal", "trujillo"],
+	["belize", "trujillo"], ["trujillo", "comayagua"], ["trujillo", "cabo_gracias"], ["comayagua", "granada"],
+	["cabo_gracias", "bluefields"], ["bluefields", "granada"], ["bluefields", "talamanca"],
+	["talamanca", "veraguas"], ["veraguas", "portobelo"], ["portobelo", "darien"],
+	["tamaulipas", "karankawa"], ["karankawa", "atakapa"], ["atakapa", "new_orleans"], ["atakapa", "natchez"],
+	["natchez", "new_orleans"], ["natchez", "choctaw"], ["choctaw", "new_orleans"], ["choctaw", "pensacola"],
+	["new_orleans", "pensacola"], ["pensacola", "apalachee"], ["apalachee", "st_augustine"],
+	["apalachee", "calusa"], ["st_augustine", "calusa"],
 	["cartagena", "santa_marta"], ["cartagena", "mompox"], ["santa_marta", "mompox"],
-	["santa_marta", "maracaibo"], ["mompox", "maracaibo"], ["maracaibo", "coro"], ["coro", "la_guaira"],
-	["la_guaira", "cumana"],
+	["santa_marta", "maracaibo"], ["mompox", "maracaibo"], ["maracaibo", "coro"], ["maracaibo", "barquisimeto"],
+	["coro", "barquisimeto"], ["coro", "la_guaira"], ["barquisimeto", "la_guaira"], ["barquisimeto", "calabozo"],
+	["calabozo", "la_guaira"], ["la_guaira", "cumana"], ["calabozo", "cumana"],
 	["havana", "puerto_principe"], ["puerto_principe", "santiago_de_cuba"],
 	["santo_domingo", "santiago_caballeros"], ["santiago_caballeros", "port_de_paix"],
 	["port_de_paix", "leogane"], ["leogane", "santo_domingo"],
@@ -167,14 +192,14 @@ const FACTIONS: Array[Dictionary] = [
 		"ai_style": AI_AGGRESSIVE, "composition": {"arms": ["light", "javelin", "heavy"], "art_pct": 0, "cav_pct": 15, "upgrade": 0}},
 	{"key": "itza", "culture": CELTIC, "name": "Maya Itza", "adj": "Itza", "color": "2f9e5a", "capital": "tayasal",
 		"palette": "gauls", "blurb": "The last free Maya kingdom, behind its lake and a wall of jungle: obsidian blades, jade crowns and a patience older than Spain.",
-		"regions": ["tayasal"], "treasury": 1200,
+		"regions": ["tayasal", "valladolid"], "treasury": 1200,
 		"armies": [["tayasal", ["light", "light", "light", "light", "heavy", "heavy", "cav", "cav", "javelin", "javelin", "chieftain"]],
 			["tayasal", ["light", "light", "heavy", "javelin", "chieftain"]]],
 		"mix": {"light": 45, "heavy": 20, "cav": 20, "javelin": 10, "archer": 5, "cav_missile": 5, "general": 4, "dogs": 3},
 		"ai_style": AI_CAUTIOUS, "composition": {"arms": ["light", "heavy", "cav"], "art_pct": 0, "cav_pct": 20, "upgrade": 0}},
 	{"key": "miskito", "culture": CELTIC, "name": "Miskito", "adj": "Miskito", "color": "8a4fc4", "capital": "cabo_gracias",
 		"palette": "carthage", "blurb": "Lords of the Mosquito Coast, friends of every English pirate and the dread of every Spanish clerk: harpoon, longboat and a very long memory.",
-		"regions": ["cabo_gracias", "bluefields"], "treasury": 1200,
+		"regions": ["cabo_gracias", "bluefields", "talamanca"], "treasury": 1200,
 		"armies": [["cabo_gracias", ["light", "light", "light", "heavy", "javelin", "javelin", "cav", "chieftain"]],
 			["bluefields", ["light", "light", "javelin", "chieftain"]]],
 		"mix": {"light": 45, "heavy": 10, "cav": 20, "javelin": 20, "archer": 5, "general": 4},

@@ -122,7 +122,7 @@ func _hash_view() -> void:
 func _west() -> void:
 	var g0 := CData.gen
 	CData.use_pack("west")
-	_check(CData.pack == "west" and CData.region_count() == 32 and CData.faction_count() == 8, "use_pack(\"west\"): 32 regions, 8 factions")
+	_check(CData.pack == "west" and CData.region_count() == 49 and CData.faction_count() == 8, "use_pack(\"west\"): 49 regions, 8 factions")
 	_check(CData.ERA == "AD" and CData.START_YEAR == 1650 and CData.LON_PCT == 940, "West calendar and projection")
 	_check(CGrid.width() == 188 and CGrid.count() == 188 * 118, "West grid 188 x 118")
 	var st := CState.new_campaign("w", 99, [], {}, [], "west")
