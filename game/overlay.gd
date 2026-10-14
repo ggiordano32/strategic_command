@@ -106,21 +106,18 @@ var _tr_tick := -1
 # missile seen leaving puts a white puff (one per SMOKE_CELL_M cell per
 # volley) in front of the man or engine that fired it, with a muzzle flash
 # for its first frames; the puffs grow, drift with a fixed battle wind and
-# fade over SMOKE_LIFE s. Graphics Low: bigger cells, fewer puffs, one
+# fade over GunSmoke.LIFE s. Graphics Low: bigger cells, fewer puffs, one
 # circle each. (Smoke that blocks aim in the sim is a later item.)
-const SMOKE_LIFE := 7.0
 const SMOKE_WIND := Vector2(0.8, -0.35)   # m/s
 const SMOKE_CELL_M := [2.5, 6.0]          # high, low
 const SMOKE_CAP := [280, 70]
-const COL_GUNSMOKE := Color(0.93, 0.93, 0.9)
-var _sm_pos := PackedVector2Array()       # world px where it was made
-var _sm_dir := PackedVector2Array()       # the shot's direction (unit)
-var _sm_age := PackedFloat32Array()
-var _sm_size := PackedFloat32Array()      # 1 a musket's, more for guns
+const GunSmoke := preload("res://game/gun_smoke.gd")
+var _gs := GunSmoke.new()                # the banks, flashes and haze (game/gun_smoke.gd)
 var _sm_cell := {}                        # cell -> view clock of its last puff
 var _sm_low := false
 var _sm_low_t := -10.0
-var smoke_puffs := 0                      # puffs made (tests, benchmarks)
+var smoke_puffs: int:                     # puffs made (tests, benchmarks)
+	get: return _gs.puffs_made
 var _props: Node2D                     # draws the wagon sprites (behind the overlay's lines)
 var _props_tex: Texture2D
 var _q_moved := {}                     # wagon -> [x, y, tick it last moved]
@@ -143,10 +140,9 @@ func _process(delta: float) -> void:
 	if _clock - _sm_low_t > 2.0:
 		_sm_low_t = _clock
 		_sm_low = Quality.is_low()
-	for k in _sm_age.size():
-		_sm_age[k] += delta
-	while not _sm_age.is_empty() and _sm_age[0] >= SMOKE_LIFE:
-		_smoke_drop0()
+		_gs.haze_on = not _sm_low
+		_gs.cap = int(SMOKE_CAP[1 if _sm_low else 0])
+	_gs.tick(delta, SMOKE_WIND * px_per_m)
 	var i := 0
 	while i < _fx_kind.size():
 		_fx_age[i] += delta
@@ -252,57 +248,28 @@ func _smoke_spawn(p: int, ty: int) -> void:
 	_smoke_at(s, d, UT.stat(ty, "cls") == UT.CLS_ART)
 
 
-## A puff of smoke in front of a muzzle at s (direction d), unless this
-## volley already put one in that cell.
+## A bank puff in front of a muzzle at s (direction d), unless this volley
+## already put one in that cell; a gun engine's shot adds a ring of smoke and
+## a dust kick.
 func _smoke_at(s: Vector2, d: Vector2, big: bool) -> void:
-	var at := s + d * px_per_m * (2.0 if big else 1.2)
+	var pm := px_per_m
+	var at := s + d * pm * (2.0 if big else 1.2)
 	var lo := 1 if _sm_low else 0
-	var cell := Vector2i((at / (px_per_m * float(SMOKE_CELL_M[lo]))).floor())
+	var cell := Vector2i((at / (pm * float(SMOKE_CELL_M[lo]))).floor())
 	if not big and _sm_cell.get(cell, -10.0) > _clock - 1.0:
 		return
 	_sm_cell[cell] = _clock
 	if _sm_cell.size() > 1024:
 		_sm_cell.clear()
-	while _sm_age.size() >= int(SMOKE_CAP[lo]):
-		_smoke_drop0()
-	_sm_pos.append(at)
-	_sm_dir.append(d)
-	_sm_age.append(0.0)
-	_sm_size.append(3.0 if big else 1.0)
-	smoke_puffs += 1
-
-
-func _smoke_drop0() -> void:
-	_sm_pos.remove_at(0)
-	_sm_dir.remove_at(0)
-	_sm_age.remove_at(0)
-	_sm_size.remove_at(0)
+	if big:
+		_gs.add_big(at, d, pm * 3.6, pm * 8.0, not _sm_low, 0 if _sm_low else 6)
+	else:
+		_gs.add(at, d, pm * 2.1, pm * (3.0 if _sm_low else 4.0))
+	_gs.feed_haze(at, pm * 14.0, 0.25 if big else 0.04)
 
 
 func _draw_smoke() -> void:
-	var vr := _view_rect().grow(px_per_m * 20.0)
-	var pm := px_per_m
-	var two := not _sm_low
-	for k in _sm_age.size():
-		var a := _sm_age[k]
-		var f := a / SMOKE_LIFE
-		var sz := _sm_size[k]
-		var p := _sm_pos[k] + SMOKE_WIND * pm * a + Vector2(0, -pm * 0.6 * sz * sqrt(f))
-		if not vr.has_point(p):
-			continue
-		var r := pm * sz * (0.7 + 2.6 * sqrt(f))
-		var al := 0.5 * pow(1.0 - f, 1.4) * minf(1.0, a * 10.0)
-		draw_circle(p, r, Color(COL_GUNSMOKE, al))
-		if two:
-			var o := Vector2(((k * 7) % 5 - 2) * 0.35, ((k * 3) % 5 - 2) * 0.25) * r
-			draw_circle(p + o, r * 0.75, Color(COL_GUNSMOKE, al * 0.8))
-		if a < 0.09:
-			# The muzzle flash (a frame or two).
-			var d := _sm_dir[k]
-			var q := _sm_pos[k] - d * pm * 0.6 * sz
-			var w := Vector2(-d.y, d.x) * pm * 0.35 * sz
-			draw_colored_polygon(PackedVector2Array([q - w, q + d * pm * 1.4 * sz, q + w]), Color(1.0, 0.85, 0.35, 0.95))
-			draw_circle(q, pm * 0.4 * sz, Color(1.0, 0.95, 0.7, 0.9))
+	_gs.draw(self, SMOKE_WIND * px_per_m, _view_rect().grow(px_per_m * 20.0), px_per_m * 12.0, preload("res://game/battle_look.gd").is_diorama())
 
 
 func _fx_spawn(kind: int, at: Vector2, rad: float) -> void:
@@ -502,7 +469,7 @@ func _draw() -> void:
 		_draw_burning_units(_view_rect())
 	if not _fx_kind.is_empty():
 		_draw_fx(lw)
-	if not _sm_age.is_empty():
+	if not _gs.age.is_empty() or not _gs.hz_amt.is_empty():
 		_draw_smoke()
 	fx_us += Time.get_ticks_usec() - fx0
 	if show_all_orders:

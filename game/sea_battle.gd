@@ -39,11 +39,10 @@ const ZOOM_MAX := 3.0
 const DRAG_PX := 16.0
 const LONG_PRESS := 0.35
 const DOUBLE_TAP := 0.35
-const SMOKE_LIFE := 9.0
-const SMOKE_CAP := 420
+const GunSmoke := preload("res://game/gun_smoke.gd")
+const BattleLook := preload("res://game/battle_look.gd")
 const COL_SEA := Color(0.13, 0.36, 0.5)
 const COL_SEA_DEEP := Color(0.09, 0.27, 0.4)
-const COL_GUNSMOKE := Color(0.93, 0.93, 0.9)
 const COL_SAIL := Color(0.96, 0.94, 0.86)
 const COL_HULL := Color(0.42, 0.27, 0.16)
 const COL_DECK := Color(0.68, 0.55, 0.37)
@@ -79,9 +78,7 @@ var _decided_at := -1.0
 var _end_shown := false
 
 # effects (view only)
-var _sm_pos := PackedVector2Array()
-var _sm_age := PackedFloat32Array()
-var _sm_size := PackedFloat32Array()
+var _gs := GunSmoke.new()  # broadside banks and haze (game/gun_smoke.gd), cap 420
 var _fx: Array = []                # [kind, pos, age, a, b]: "splash", "hit", "flash", "blast", "shot", "debris"
 var _msgs: Array = []              # [text, age, color]
 
@@ -117,6 +114,7 @@ var _last_tap_ship := -1
 
 
 func _ready() -> void:
+	_gs.cap = 420
 	sim = SeaSim.new()
 	sim.setup(scenario, seed_value)
 	var n := sim.n_units
@@ -285,7 +283,7 @@ func _broadside_fx(s: int, side: int, t: int, hits: int, shot: int) -> void:
 	for i in n:
 		var f := (float(i) + 0.5) / n - 0.5
 		var at := p + fwd * f * ln * 0.75 + sd * (bm * 0.5 + 2.0)
-		_puff(at + sd * 4.0, 3.2 + guns * 0.07)
+		_puff(at + sd * 4.0, 3.2 + guns * 0.07, sd)
 		_fx.append(["flash", at + sd * 2.0, 0.0, 0, 0])
 	var tp := _pos(t)
 	var d := p.distance_to(tp)
@@ -303,27 +301,14 @@ func _broadside_fx(s: int, side: int, t: int, hits: int, shot: int) -> void:
 	AudioFx.play("cannon", vol, clampf((p.x - cam.x) / 900.0, -0.8, 0.8), "art")
 
 
-func _puff(at: Vector2, sz: float) -> void:
-	while _sm_age.size() >= SMOKE_CAP:
-		_sm_pos.remove_at(0)
-		_sm_age.remove_at(0)
-		_sm_size.remove_at(0)
-	_sm_pos.append(at)
-	_sm_age.append(0.0)
-	_sm_size.append(sz)
+func _puff(at: Vector2, sz: float, d: Vector2) -> void:
+	_gs.add(at, d, sz * 1.5, sz * 3.5)
+	_gs.feed_haze(at, 160.0, 0.05)
 
 
 func _age_fx(delta: float) -> void:
 	var dt := delta * maxf(speed_q / 4.0, 0.0) if speed_q > 0 else 0.0
-	var k := 0
-	while k < _sm_age.size():
-		_sm_age[k] += dt
-		if _sm_age[k] > SMOKE_LIFE:
-			_sm_pos.remove_at(k)
-			_sm_age.remove_at(k)
-			_sm_size.remove_at(k)
-		else:
-			k += 1
+	_gs.tick(dt, _wind_to() * (2.0 + sim.w_str * 0.03))
 	var keep: Array = []
 	for f in _fx:
 		f[2] = float(f[2]) + dt
@@ -835,19 +820,7 @@ func _draw_sky() -> void:
 	var wt := _wind_to()
 	var drift := wt * (2.0 + sim.w_str * 0.03)
 	# Smoke (the land battle's gun-smoke look, drifting with this wind).
-	var vr := _view_rect().grow(60.0)
-	for k in _sm_age.size():
-		var a := _sm_age[k]
-		var f := a / SMOKE_LIFE
-		var sz := _sm_size[k]
-		var p := _sm_pos[k] + drift * a
-		if not vr.has_point(p):
-			continue
-		var r := sz * (1.2 + 4.0 * sqrt(f))
-		var al := 0.4 * pow(1.0 - f, 1.3) * minf(1.0, a * 8.0)
-		_sky.draw_circle(p, r, Color(COL_GUNSMOKE, al))
-		var o := Vector2(((k * 7) % 5 - 2) * 0.35, ((k * 3) % 5 - 2) * 0.25) * r
-		_sky.draw_circle(p + o, r * 0.75, Color(COL_GUNSMOKE, al * 0.8))
+	_gs.draw(_sky, drift, _view_rect().grow(60.0), 120.0, BattleLook.is_diorama())
 	# Smoke columns over burning ships.
 	for s in sim.n_units:
 		if sim.s_burn[s] > 0 and sim.u_state[s] != SeaSim.S_SUNK:

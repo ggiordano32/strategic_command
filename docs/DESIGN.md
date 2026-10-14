@@ -2598,8 +2598,14 @@ only with `gun_on` (a scenario unit has a gun row). Guns (artillery) are
 bolt-path engines (`m_kind` 1: pierce, plough, per-shot fright) with
 `m_gun` 1 for the view and `m_obj` for gates. Rome byte-identity:
 `kty_n` (the width of the hashed `u_kills_ty`) is `UnitTypes.ROME_N`
-unless a West row fights. View: smoke puffs and a muzzle flash per volley
-(`game/overlay.gd`, fewer on Graphics Low; a fixed wind), the `musket` and
+unless a West row fights. View: gun smoke (`game/gun_smoke.gd`, shared with
+the sea view): soft baked cloud sprites (one generated atlas, lit from the NW,
+grey-blue shade, one texture so the canvas batches them) that roll off the
+muzzles into a continuous bank, expand, rise and drift with a fixed wind over
+10 s; a flame-tongue muzzle flash with a glow; a gun engine adds a ring of
+smoke and a ground dust kick; a capped lingering haze builds over a long
+firefight. Diorama tints it cotton-white, painterly grey. Graphics Low: fewer
+puffs, no ring, dust or haze. The `musket` and
 `cannon` clips (`stat_volleys`, `stat_cannon`). Later: smoke that blocks
 aim in the sim, cover and line of sight (slice 2b), gun ammunition kinds
 and wagon refills (an `AMMO` row would change the hashed wagon stock
