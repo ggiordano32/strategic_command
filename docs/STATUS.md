@@ -1198,6 +1198,22 @@ by melee at the doors (a street fight from house to house); (c) native
 towns: palisade and jungle cover. Rome's wall levels stay as they are;
 the West picks its battle-map settlement kind by pack.
 
+**Slice 2d, battle-map landforms (user, 2026-10-14): towns need not be
+circular, they take a shape; battle maps want more than mounds: cliffs,
+rock outcrops and forest that follow the landscape, with towns built
+around and using it.** Both packs (Rome battle goldens re-pinned once,
+on purpose). Sketch: mapgen places landforms from the campaign cell's
+real relief / class (ridge, hill, valley, coast, river): cliff lines on
+steep slope breaks (impassable, block missiles and sight later), rock
+outcrops (small impassable clusters, cover in 2b), forest in bands along
+valleys, slopes and water rather than round blobs; the settlement's
+outline follows the ground (along a shore or river bend, up a spur, a
+citadel or fort on the high point, streets following contours), walls
+or palisade tracing that outline. View: cliff faces and rock sprites,
+forest edges. Order: 2a firearms (running) -> 2d landforms -> 2b cover
+and line of sight (uses the rocks and forests) -> 2c forts and fighting
+from buildings.
+
 ## Next session (week of 2026-10-13; paused 2026-10-10 midday)
 
 - **Update, 2026-10-10 evening (hold here):** the user resumed; landed
