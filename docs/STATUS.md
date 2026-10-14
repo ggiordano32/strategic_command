@@ -1461,6 +1461,17 @@ rim light, outline and saturation). Level 1 phases: 1 kit walls / towers
 streets with culture palettes, 3 trees / rocks / cliffs, 4 the full
 shadow and AO layer, 5 splatted ground, 6 the Diorama look setting.
 
+**PAUSE 2026-10-14 (token budget at 82 %, back in a couple of days).**
+Running at the pause: N3a real-time sea battles (Opus) and battle look
+Level 1 phase 1, kit walls / towers / gates (Sonnet); they finish, are
+committed and exported, then screenshot round 1 (Caribbean town battle
+maps + sea battles, as a gallery page). Nothing new starts until the
+user is back. Next when resumed: battle look phases 2-6, screenshot
+round 2 (full painterly look + diorama option), then cover and line of
+sight (2b), forts and fighting from buildings (2c, with the West walls
+history), the 3D PC view prototype, N3b boarding as a deck melee,
+magazines and fire ships.
+
 ## Next session (week of 2026-10-13; paused 2026-10-10 midday)
 
 - **Update, 2026-10-10 evening (hold here):** the user resumed; landed
