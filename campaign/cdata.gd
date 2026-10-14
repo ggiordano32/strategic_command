@@ -27,7 +27,7 @@ const _ROME := preload("res://campaign/data/rome.gd")
 ## Scripts whose derived caches depend on the pack (pack_reset() on a
 ## switch). Loaded at switch time, not preloaded: they preload this file.
 const _DERIVED: Array[String] = ["res://campaign/cgrid.gd", "res://campaign/crules.gd",
-	"res://campaign/cai.gd", "res://campaign/cbattle.gd"]
+	"res://campaign/cai.gd", "res://campaign/cbattle.gd", "res://campaign/cfleet.gd"]
 
 const FLAT := E.FLAT
 const ROLLING := E.ROLLING
@@ -91,12 +91,17 @@ const INDEPENDENT := -1
 const INDEPENDENT_COLOR := "8c8c84"
 
 ## Display order of lines in recruitment lists.
-const LINE_ORDER: Array[String] = ["heavy", "light", "spear", "pike", "archer", "belly_bow", "sling", "javelin", "dogs",
-	"cav", "cav_missile", "camel", "camel_archer", "elephant", "general", "light_art", "bolt", "stone", "siege"]
+## (The West pack's lines: musket after the pikes, buccaneer after the
+## javelins, pistol after the cavalry, its guns before the bolt throwers.)
+const LINE_ORDER: Array[String] = ["heavy", "light", "spear", "pike", "musket", "archer", "belly_bow", "sling", "javelin",
+	"buccaneer", "dogs", "cav", "pistol", "cav_missile", "camel", "camel_archer", "elephant", "general", "light_art",
+	"light_gun", "field_gun", "bolt", "stone", "siege"]
 
 ## Buildings: key, name, max level, cost and build turns per level, and what
 ## each level does (text for the panel; the numbers are in the rules).
-const CHAINS: Array[Dictionary] = [
+## CHAINS is the active pack's list: these seven, plus the Shipyard
+## (SHIPYARD, index 7) in a pack with ships (use_pack_script).
+const BASE_CHAINS: Array[Dictionary] = [
 	{"key": "farm", "name": "Farms", "levels": 3, "cost": [400, 900, 1600], "turns": [1, 2, 3],
 		"desc": "+1 growth and +40 income per level; from level 2 granaries make a siege's supplies last a turn longer"},
 	{"key": "market", "name": "Market", "levels": 3, "cost": [500, 1000, 1800], "turns": [1, 2, 3],
@@ -112,6 +117,16 @@ const CHAINS: Array[Dictionary] = [
 	{"key": "walls", "name": "Walls", "levels": 3, "cost": [400, 900, 1600], "turns": [2, 2, 3],
 		"desc": "+1 garrison unit, better garrison and higher ground for the defenders per level"},
 ]
+## The Shipyard (packs with ships only; ports only): builds and repairs
+## ships, level = the ships' yard level (campaign/data/<pack>_ships.gd).
+const SHIPYARD_CHAIN := {"key": "shipyard", "name": "Shipyard", "levels": 3, "cost": [500, 1000, 1800], "turns": [1, 2, 3],
+	"desc": "Ships of yard level = level (sloops and brigantines 1, frigates 2, galleons and ships of the line 3); faster repairs in port"}
+const SHIPYARD := 7
+static var CHAINS: Array[Dictionary] = BASE_CHAINS
+## The active pack's ships script (campaign/data/<pack>_ships.gd: ROWS, the
+## wind, the starting fleets and yards), null without ships.
+static var SHIPS: GDScript = null
+static var _ship_idx := {}
 const FARM := E.FARM
 const MARKET := E.MARKET
 const BARRACKS := E.BARRACKS
@@ -123,7 +138,8 @@ const WALLS := E.WALLS
 const LINE_CHAIN := {"heavy": BARRACKS, "light": BARRACKS, "spear": BARRACKS, "pike": BARRACKS,
 	"archer": RANGE, "javelin": RANGE, "cav": STABLES, "bolt": WORKSHOP, "stone": WORKSHOP, "siege": WORKSHOP,
 	"camel": STABLES, "camel_archer": STABLES, "elephant": STABLES, "cav_missile": STABLES, "sling": RANGE,
-	"general": BARRACKS, "dogs": BARRACKS, "light_art": WORKSHOP, "belly_bow": RANGE}
+	"general": BARRACKS, "dogs": BARRACKS, "light_art": WORKSHOP, "belly_bow": RANGE,
+	"musket": BARRACKS, "buccaneer": RANGE, "pistol": STABLES, "light_gun": WORKSHOP, "field_gun": WORKSHOP}
 ## Buildings a unit type needs where they differ from its line's chain at
 ## its tier (the ammunition wagons: the Workshop, and Stables for the
 ## horses): key -> [[chain, level], ...], all of them.
@@ -140,7 +156,7 @@ const UNIT_NEEDS := {"wagon": [[WORKSHOP, 1]], "wagon2": [[WORKSHOP, 2], [STABLE
 	"iberian_horse": [[STABLES, 2], [RANGE, 1]], "dog_handlers": [[BARRACKS, 1], [STABLES, 1]],
 	"gastraphetes": [[RANGE, 2]]}
 ## Workshop level needed per artillery line (other lines: level = tier).
-const ART_LEVEL := {"bolt": 1, "stone": 2, "light_art": 1}
+const ART_LEVEL := {"bolt": 1, "stone": 2, "light_art": 1, "light_gun": 1, "field_gun": 2}
 ## Buildings standing at the start: capitals and the other regions per level.
 const START_CAPITAL_CITY := [[FARM, 1], [BARRACKS, 1], [RANGE, 1], [STABLES, 1], [MARKET, 1]]
 const START_CAPITAL_TOWN := [[FARM, 1], [BARRACKS, 1], [RANGE, 1], [STABLES, 1]]
@@ -328,6 +344,14 @@ static func use_pack_script(key: String, p: GDScript) -> void:
 	NAMES = c["NAMES"]
 	NAMES_BY_FACTION = c["NAMES_BY_FACTION"]
 	NAMES_DEFAULT = c["NAMES_DEFAULT"]
+	SHIPS = c.get("SHIPS", null)
+	if SHIPS != null:
+		var ch: Array[Dictionary] = BASE_CHAINS.duplicate()
+		ch.append(SHIPYARD_CHAIN)
+		CHAINS = ch
+	else:
+		CHAINS = BASE_CHAINS
+	_ship_idx = {}
 	pack = key
 	gen += 1
 	_region_idx = {}
@@ -336,6 +360,41 @@ static func use_pack_script(key: String, p: GDScript) -> void:
 	_adj = []
 	for path in _DERIVED:
 		(load(path) as GDScript).call("pack_reset")
+
+
+## The active pack has ships (fleets on the sea; no sea lanes for armies).
+static func ships_on() -> bool:
+	return SHIPS != null
+
+
+## Ship rows of the active pack (campaign/data/<pack>_ships.gd ROWS), [] without.
+static func ship_rows() -> Array[Dictionary]:
+	if SHIPS == null:
+		return []
+	var rows: Array[Dictionary] = SHIPS.get_script_constant_map()["ROWS"]
+	return rows
+
+
+## A constant of the active pack's ships script (the wind, the start).
+static func ship_const(key: String, default = null):
+	if SHIPS == null:
+		return default
+	return SHIPS.get_script_constant_map().get(key, default)
+
+
+## Index of ship row `key` (-1 unknown).
+static func ship_index(key: String) -> int:
+	if _ship_idx.is_empty():
+		var rows := ship_rows()
+		for i in rows.size():
+			_ship_idx[str(rows[i]["key"])] = i
+	return int(_ship_idx.get(key, -1))
+
+
+## Ship row `key` ({} unknown).
+static func ship_row(key: String) -> Dictionary:
+	var i := ship_index(key)
+	return ship_rows()[i] if i >= 0 else {}
 
 
 static func region_count() -> int:

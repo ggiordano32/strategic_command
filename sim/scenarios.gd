@@ -114,6 +114,8 @@ static func title(id: String) -> String:
 			return "Test: archers vs heavy infantry"
 		"test_bolt_pikes":
 			return "Test: bolt throwers vs pike block"
+		"test_pike_shot":
+			return "Test: pike and shot (the West's rows)"
 		"test_stone_line":
 			return "Test: stone throwers vs massed line"
 		"test_cav_art":
@@ -278,6 +280,18 @@ static func _make(id: String) -> Dictionary:
 			return _test([unit(0, UT.ARCHER, 80, 150, 200, FACE_UP),
 				unit(1, UT.HEAVY, 100, 150, 90, FACE_DOWN),
 				unit(1, UT.LIGHT, 100, 200, 90, FACE_DOWN)], [])
+		"test_pike_shot":
+			# The West's rows (slice 2a): two pike-and-shot lines with guns
+			# and horse, the AI fighting side 1 (screenshots: --ai-both).
+			var mus := UT.index_of("musketeers")
+			var pik := UT.index_of("w_pikemen")
+			return {"width_m": 400, "height_m": 400, "ai_sides": [1], "orders": [], "units": [
+				unit(0, mus, 100, 158, 300, FACE_UP), unit(0, pik, 120, 200, 300, FACE_UP),
+				unit(0, mus, 100, 242, 300, FACE_UP), unit(0, UT.index_of("light_gun"), 12, 200, 330, FACE_UP),
+				unit(0, UT.index_of("lancers"), 60, 120, 320, FACE_UP),
+				unit(1, mus, 100, 158, 100, FACE_DOWN), unit(1, pik, 120, 200, 100, FACE_DOWN),
+				unit(1, mus, 100, 242, 100, FACE_DOWN), unit(1, UT.index_of("field_gun"), 12, 200, 70, FACE_DOWN),
+				unit(1, UT.index_of("pistoleers"), 60, 280, 80, FACE_DOWN)]}
 		"test_bolt_pikes":
 			# The block stands in range for 40 s, then advances on the battery.
 			return _test([unit(0, UT.BOLT, 16, 150, 270, FACE_UP),

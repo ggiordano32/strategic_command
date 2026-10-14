@@ -278,6 +278,11 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=guns" in OS.get_cmdline_user_args():
+		_check_guns()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=engines" in OS.get_cmdline_user_args():
 		_check_engines()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -315,6 +320,7 @@ func _init() -> void:
 	_check_carry()
 	_check_crossing()
 	_check_reinf()
+	_check_guns()
 	if "--only=equipment" in OS.get_cmdline_user_args():
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
@@ -5487,3 +5493,192 @@ func _check_reinf() -> void:
 		print("PASS reinf: the horse left at tick %d, first reserve in at %d (field %d of 24); %d arrivals [%s], %d by the REINF_TIME rule; max %d on the field; %d still to come; identical on repeat and across snapshot / restore" % [
 			int(ev["left12"]), int(first["tick"]), int(first["field_before"]), int(ev["arrived"]), " ".join(ticks),
 			int(ev["late"]), int(ev["max_field"]), int(ev["left"])])
+
+
+## Firearms (docs/DESIGN.md "Firearms", West slice 2a; "--only=guns", also
+## in the full run): (1) musketeers against pikemen with musketeers: the
+## pikes advance, both lines fire volleys (every loaded man on one tick,
+## then a reload; fire at will holds the volley beyond m_volley_r while the
+## target stands), each volley that lands frightens its unit once; identical
+## on repeat and across snapshot / restore; (2) a volley against a charge:
+## lancers charge a musket line from 160 m (time to rout, volleys, losses);
+## (3) light and field guns against a pike block (bolt path: pierced files,
+## fright, the cannon counter; the field gun breaches more of a gate than a
+## bolt per hit: m_obj); (4) casualties per volley from 50 / 80 / 120 m
+## (attack orders, six seeds); (5) a battle without guns keeps gun_on 0
+## (Rome battles hash as before).
+func _guns_run(snap_check: bool) -> Dictionary:
+	var mus := UT.index_of("musketeers")
+	var pik := UT.index_of("w_pikemen")
+	var sc := {"width_m": 400, "height_m": 400, "ai_sides": [], "orders": [], "units": [
+		Scenarios.unit(0, mus, 100, 200, 300, Scenarios.FACE_UP),
+		Scenarios.unit(1, pik, 120, 200, 200, Scenarios.FACE_DOWN),
+		Scenarios.unit(1, mus, 100, 168, 200, Scenarios.FACE_DOWN)],
+		"terrain": {"kind": Terrain.K_FLAT}}
+	var sim := BattleSim.new()
+	sim.setup(sc, 4242)
+	var ev := {}
+	var hashes := PackedInt64Array()
+	var snap_t := -1
+	var snap_bad := -1
+	var vol0 := -1  # tick of the first volley
+	for t in 900:
+		var tk: int = sim.tick
+		if tk == 60:
+			ev["held60"] = sim.stat_volley_held
+			ev["vol60"] = sim.stat_volleys
+			sim.queue_order(BattleSim.make_attack_order(tk, 1, 0, 1))
+		if tk == 150:
+			sim.queue_order(BattleSim.make_attack_order(tk, 2, 0, 0))
+		sim.step()
+		hashes.append(sim.state_hash())
+		if vol0 < 0 and sim.stat_volleys > 0:
+			vol0 = sim.tick
+			ev["shots1"] = sim.stat_shots
+		if snap_check and snap_t < 0 and sim.tick == 300:
+			snap_t = sim.tick
+			snap_bad = _snap_diverges(sim, sc, 4242, 300)
+	ev["gun_on"] = sim.gun_on
+	ev["vol0"] = vol0
+	ev["volleys"] = sim.stat_volleys
+	ev["frights"] = sim.stat_volley_fright
+	ev["shots"] = sim.stat_shots
+	ev["lost"] = [sim.u_killed[0], sim.u_killed[1], sim.u_killed[2]]
+	return {"hashes": hashes, "ev": ev, "snap_t": snap_t, "snap_bad": snap_bad}
+
+
+## Lancers (or `cav`) charge a musket line from 160 m: [rout tick (-1 none),
+## contact tick, volleys before contact, riders lost, musketeers lost].
+func _guns_charge(cav: String, p_seed: int) -> Array:
+	var mus := UT.index_of("musketeers")
+	var cty := UT.index_of(cav)
+	var sc := {"width_m": 400, "height_m": 400, "ai_sides": [], "orders": [], "units": [
+		Scenarios.unit(0, mus, 100, 200, 250, Scenarios.FACE_UP),
+		Scenarios.unit(1, cty, UT.size_of(cty), 200, 90, Scenarios.FACE_DOWN)],
+		"terrain": {"kind": Terrain.K_FLAT}}
+	var sim := BattleSim.new()
+	sim.setup(sc, p_seed)
+	sim.queue_order(BattleSim.make_attack_order(0, 1, 0, 1))
+	var rout_t := -1
+	var contact_t := -1
+	var vols := 0
+	for t in 700:
+		sim.step()
+		if contact_t < 0 and sim.u_fighting[1] > 0:
+			contact_t = sim.tick
+			vols = sim.stat_volleys
+		if rout_t < 0 and sim.u_state[1] == BattleSim.U_ROUTING:
+			rout_t = sim.tick
+			if contact_t < 0:
+				vols = sim.stat_volleys
+			break
+		if sim.u_state[0] != BattleSim.U_READY:
+			break
+	return [rout_t, contact_t, vols, sim.u_killed[1], sim.u_killed[0]]
+
+
+## Casualties of one volley (attack order) of `shooter` at a standing pike
+## block whose front is d m away: [shots, kills, the distance at the volley (m)].
+func _guns_volley(d: int, p_seed: int) -> Array:
+	var mus := UT.index_of("musketeers")
+	var pik := UT.index_of("w_pikemen")
+	var sc := {"width_m": 400, "height_m": 400, "ai_sides": [], "orders": [], "units": [
+		Scenarios.unit(1, pik, 120, 200, 100, Scenarios.FACE_DOWN),
+		Scenarios.unit(0, mus, 100, 200, 100 + d, Scenarios.FACE_UP)],
+		"terrain": {"kind": Terrain.K_FLAT}}
+	var sim := BattleSim.new()
+	sim.setup(sc, p_seed)
+	sim.queue_order(BattleSim.make_attack_order(0, 1, 0, 0))
+	var at := -1
+	var vt := -1
+	for t in 300:
+		sim.step()
+		if vt < 0 and sim.stat_volleys > 0:
+			vt = sim.tick
+			at = FM.approx_len(sim.u_cx[1] - sim.u_cx[0], sim.u_cy[1] - sim.u_cy[0]) / M
+		if vt >= 0 and sim.tick > vt + 10:
+			break
+	return [sim.stat_shots, sim.u_killed[0], at]
+
+
+## A battery of `gun` against a pike block 200 m off: [shots, men hit, killed, fright seen].
+func _guns_battery(gun: String) -> Array:
+	var gty := UT.index_of(gun)
+	var pik := UT.index_of("w_pikemen")
+	var sc := {"width_m": 400, "height_m": 500, "ai_sides": [], "orders": [], "units": [
+		Scenarios.unit(1, pik, 120, 200, 100, Scenarios.FACE_DOWN),
+		Scenarios.unit(0, gty, UT.size_of(gty), 200, 300, Scenarios.FACE_UP)],
+		"terrain": {"kind": Terrain.K_FLAT}}
+	var sim := BattleSim.new()
+	sim.setup(sc, 77)
+	sim.queue_order(BattleSim.make_attack_order(0, 1, 0, 0))
+	var fr := 0
+	for t in 900:
+		sim.step()
+		fr = maxi(fr, sim.u_fright[0])
+	return [sim.stat_cannon, sim.stat_art_victims, sim.u_killed[0], fr]
+
+
+func _check_guns() -> void:
+	var a := _guns_run(true)
+	var b := _guns_run(false)
+	var ev: Dictionary = a["ev"]
+	print("  guns: %s" % str(ev))
+	if a["hashes"] != b["hashes"] or str(ev) != str(b["ev"]):
+		_fail("guns: the repeat diverged")
+		return
+	if int(ev["gun_on"]) != 1 or int(ev["volleys"]) < 4 or int(ev["frights"]) < 2:
+		_fail("guns: too few volleys or frights (%s)" % str(ev))
+		return
+	if int(ev["held60"]) <= 0 or int(ev["vol60"]) != 0:
+		_fail("guns: lines 100 m apart did not hold their fire (%s)" % str(ev))
+		return
+	if int(ev["shots1"]) < 60:
+		_fail("guns: the first volley was not the unit's (%d shots)" % int(ev["shots1"]))
+		return
+	if int(a["snap_t"]) < 0 or int(a["snap_bad"]) != 0:
+		_fail("guns: the restored copy diverged (%d)" % int(a["snap_bad"]))
+		return
+	# The volley table.
+	var row := ""
+	for d in [50, 80, 120]:
+		var sh := 0
+		var k := 0
+		var at := 0
+		for sd in 6:
+			var r := _guns_volley(d, 900 + sd)
+			sh += int(r[0])
+			k += int(r[1])
+			at += int(r[2])
+		row += "  %d m (volley at %d m centre to centre): %d shots, %.1f killed a volley (%.0f %%)" % [d, at / 6, sh / 6, k / 6.0, 100.0 * k / maxi(sh, 1)]
+	print("  guns volley table:" + row)
+	var ch := ""
+	var routs := 0
+	for cav in ["lancers", "cav", "pistoleers"]:
+		for sd in 4:
+			var r := _guns_charge(cav, 500 + sd)
+			if int(r[0]) >= 0:
+				routs += 1
+			ch += "  %s#%d: rout %s, contact %s, %d volleys, lost %d / line %d" % [cav, sd,
+				("%.1f s" % (int(r[0]) / 10.0)) if int(r[0]) >= 0 else "none",
+				("%.1f s" % (int(r[1]) / 10.0)) if int(r[1]) >= 0 else "none", int(r[2]), int(r[3]), int(r[4])]
+	print("  guns charge:" + ch)
+	if routs == 0:
+		_fail("guns: no cavalry charge into a musket line was broken")
+		return
+	var lg := _guns_battery("light_gun")
+	var fg := _guns_battery("field_gun")
+	print("  guns batteries: light guns %s, field guns %s [shots, men hit, killed, fright]" % [str(lg), str(fg)])
+	if int(lg[0]) <= 0 or int(fg[0]) <= 0 or int(lg[1]) <= int(lg[0]) or int(fg[2]) <= 0 or int(fg[3]) <= 0:
+		_fail("guns: the batteries did not pierce files or frighten (%s %s)" % [str(lg), str(fg)])
+		return
+	if UT.stat(UT.index_of("field_gun"), "m_obj") <= 100:
+		_fail("guns: the field gun breaches no better than a bolt")
+		return
+	var plain := BattleSim.new()
+	plain.setup(Scenarios.make("test_cav_spears"), 1)
+	if plain.gun_on != 0 or plain.kty_n != UT.ROME_N:
+		_fail("guns: a Rome battle has gun_on %d / kty_n %d" % [plain.gun_on, plain.kty_n])
+		return
+	print("PASS guns: %d volleys (first at tick %d, %d shots), %d volley frights, lines 100 m apart held their fire, lost %s; identical on repeat and across snapshot / restore (tick %d)" % [
+		int(ev["volleys"]), int(ev["vol0"]), int(ev["shots1"]), int(ev["frights"]), str(ev["lost"]), int(a["snap_t"])])

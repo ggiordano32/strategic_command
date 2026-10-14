@@ -24,6 +24,9 @@ const CState := preload("res://campaign/cstate.gd")
 const Geo := preload("res://game/campaign/map_geo.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const CRules := preload("res://campaign/crules.gd")
+const CFleet := preload("res://campaign/cfleet.gd")
+const SeaWaves := preload("res://game/campaign/sea_waves.gd")
+const MapView := preload("res://game/campaign/map_view.gd")
 
 const ARMY_W := 30.0
 const ARMY_H := 26.0
@@ -98,6 +101,30 @@ var markers: Array = []
 var merge_marks: Array = []
 var merge_tap := -1
 var _tips: Array = []  # intents to draw over the banners: [point, kind, colour, caption]
+## Fleets (a pack with ships): the selected one and the planned voyages
+## ([{fleet, path [cells], t [turn per cell], land, attack}]).
+var selected_fleet := -1
+var fleet_paths: Array = []
+const FLEET_W := 30.0
+var sea_reach: Array = []       # the selected fleet's reach this turn: outlines in map pixels
+var _sea_reach_fill: Array = []  # ... the outer ones that triangulate
+
+
+## The selected fleet's reach (CFleet.reach: 0 this turn), drawn over the
+## water (the map's own reach shading sits under the sea).
+func set_sea_reach(rt: PackedInt32Array) -> void:
+	sea_reach = []
+	_sea_reach_fill = []
+	if rt.size() != CGrid.count():
+		return
+	var now := PackedByteArray()
+	now.resize(rt.size())
+	for c in rt.size():
+		now[c] = 1 if rt[c] == 0 else 0
+	sea_reach = MapView.outline(now)
+	for lp in sea_reach:
+		if MapView._area(lp) > 0.0 and not Geometry2D.triangulate_polygon(lp).is_empty():
+			_sea_reach_fill.append(lp)
 
 
 ## Map point (map pixels) of the centre of grid cell c.
@@ -162,6 +189,42 @@ func army_at(p: Vector2) -> int:
 		if hit and d < best_d:
 			best = int(id)
 			best_d = d
+	return best
+
+
+## Screen position of each fleet marker: {id: Vector2} (fleets sharing a
+## cell side by side).
+func fleet_positions() -> Dictionary:
+	var out := {}
+	if state.is_empty() or not state.has("fleets"):
+		return out
+	var groups := {}
+	var order: Array = []
+	for fl in state["fleets"]:
+		var c := CFleet.cell(fl)
+		if not groups.has(c):
+			groups[c] = []
+			order.append(c)
+		(groups[c] as Array).append(int(fl["id"]))
+	var m := mk()
+	for c in order:
+		var ids: Array = groups[c]
+		var base := to_screen(cell_point(int(c)))
+		for k in ids.size():
+			out[int(ids[k])] = base + Vector2((k - (ids.size() - 1) * 0.5) * (FLEET_W + 4.0) * m, 0)
+	return out
+
+
+func fleet_at(p: Vector2) -> int:
+	var pos := fleet_positions()
+	var best := -1
+	var bd := 1e9
+	for id in pos:
+		var q: Vector2 = pos[id]
+		var d := q.distance_to(p)
+		if d <= FLEET_W * 0.6 * mk() + 8.0 and d < bd:
+			bd = d
+			best = int(id)
 	return best
 
 
@@ -271,6 +334,21 @@ func _draw() -> void:
 		draw_battle(self, p, 1.0)
 	for mkr in markers:
 		draw_battle(self, to_screen(mkr[0]) + Vector2(0, -16), clampf(float(mkr[1]), 0.0, 1.0))
+	# Fleets: the selected one's reach, voyages, then the ships.
+	for lp in _sea_reach_fill:
+		draw_colored_polygon(xform * (lp as PackedVector2Array), Color(1.0, 0.98, 0.85, 0.16))
+	for lp in sea_reach:
+		var cl: PackedVector2Array = xform * (lp as PackedVector2Array)
+		cl.append(cl[0])
+		draw_polyline(cl, Color(0, 0, 0, 0.35), 3.0, true)
+		draw_polyline(cl, Color(1, 0.98, 0.85, 0.6), 1.5, true)
+	if state.has("fleets"):
+		var fpos := fleet_positions()
+		for fp in fleet_paths:
+			_fleet_path(fp, fpos)
+		for fl in state["fleets"]:
+			if fpos.has(int(fl["id"])):
+				_fleet_marker(fpos[int(fl["id"])], fl)
 	# Armies.
 	for a in state["armies"]:
 		var id := int(a["id"])
@@ -597,6 +675,86 @@ func _path6(pth: Dictionary, pos: Dictionary) -> void:
 	if now > 0 and now < pts.size() - 1:
 		draw_turn_end(self, sp[now], col, m)
 	_tips.append([sp[-1], kind, col, str(pth.get("caption", ""))])
+
+
+## A planned voyage: this turn's part solid, later turns dashed, a ring
+## where this turn ends, swords for an attack, an anchor-like dot for a landing.
+func _fleet_path(fp: Dictionary, fpos: Dictionary) -> void:
+	var id := int(fp["fleet"])
+	var cells: Array = fp["path"]
+	if not fpos.has(id) or cells.is_empty():
+		return
+	var m := mk()
+	var col := COL_ATTACK if int(fp["attack"]) != 0 else Color(0.45, 0.85, 1.0)
+	var prev: Vector2 = fpos[id]
+	var end_now := Vector2.INF
+	for i in cells.size():
+		var q := to_screen(cell_point(int(cells[i])))
+		var now := int(fp["t"][i]) == 0
+		draw_path_step(self, prev, q, col, now, m)
+		if now:
+			end_now = q
+		prev = q
+	if end_now != Vector2.INF and end_now != prev:
+		draw_turn_end(self, end_now, col, m)
+	if int(fp["attack"]) != 0:
+		draw_intent(self, prev, "attack", col, m)
+	elif int(fp["land"]) != 0:
+		draw_circle(prev, 7.0 * m, Color(0, 0, 0, 0.7))
+		draw_circle(prev, 5.0 * m, Color(0.95, 0.85, 0.4))
+
+
+## A fleet: a ship in the faction's colour riding the waves (it bobs and
+## rolls with SeaWaves at its spot), the number of ships on its pennant, a
+## soldier dot when troops are aboard, a white rim for a player's.
+func _fleet_marker(c: Vector2, fl: Dictionary) -> void:
+	var f := int(fl["f"])
+	var m := mk()
+	var col := CData.faction_color(f)
+	var mp := cell_point(CFleet.cell(fl))
+	var tt := SeaWaves.t if SeaWaves.t > 0.0 else pulse
+	var a := clampf(SeaWaves.amp(mp), 0.25, 1.0)
+	var bob := SeaWaves.height(mp, tt) * a * 2.2 * m
+	var n := SeaWaves.normal(mp, tt)
+	var roll := clampf(n.x * a * 0.9, -0.22, 0.22)
+	var human := CState.is_human(state, f)
+	var sel := int(fl["id"]) == selected_fleet
+	var xf := Transform2D(roll, c + Vector2(0, bob))
+	var s := FLEET_W * 0.5 * m
+	if sel:
+		draw_circle(c, s * 1.45 + 2.0 * sin(pulse * 5.0), Color(COL_SELECTED, 0.55))
+	# Hull.
+	var hull := PackedVector2Array([Vector2(-s, 0.15 * s), Vector2(s, 0.15 * s), Vector2(0.62 * s, 0.62 * s), Vector2(-0.7 * s, 0.62 * s)])
+	var sail := PackedVector2Array([Vector2(0.05 * s, -0.95 * s), Vector2(0.7 * s, 0.05 * s), Vector2(0.05 * s, 0.05 * s)])
+	var sail2 := PackedVector2Array([Vector2(-0.08 * s, -0.7 * s), Vector2(-0.62 * s, 0.05 * s), Vector2(-0.08 * s, 0.05 * s)])
+	var shadow := Transform2D(roll, c + Vector2(1.5, 2.0 + bob))
+	draw_colored_polygon(shadow * hull, Color(0, 0, 0, 0.35))
+	for poly in [sail, sail2]:
+		var pw: PackedVector2Array = xf * poly
+		draw_colored_polygon(pw, Color(0.96, 0.94, 0.86))
+		var o := pw.duplicate()
+		o.append(pw[0])
+		draw_polyline(o, COL_OUTLINE, 1.2, true)
+	draw_line(xf * Vector2(0, -1.05 * s), xf * Vector2(0, 0.15 * s), COL_OUTLINE, 1.6, true)
+	var hw: PackedVector2Array = xf * hull
+	draw_colored_polygon(hw, col)
+	var ho := hw.duplicate()
+	ho.append(hw[0])
+	draw_polyline(ho, COL_OUTLINE, 3.0 if human else 1.8, true)
+	if human:
+		draw_polyline(ho, Color(1, 1, 1), 1.4, true)
+	# Pennant with the ship count.
+	var font := ThemeDB.fallback_font
+	var txt := str((fl["ships"] as Array).size())
+	var fs := int(round(13 * maxf(m, 0.75)))
+	var tw := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	var tp := xf * Vector2(0, -1.05 * s) + Vector2(4.0 * m, fs * 0.2)
+	draw_rect(Rect2(tp + Vector2(-3, -fs + 1), Vector2(tw + 6, fs + 3)), Color(0, 0, 0, 0.7))
+	draw_string(font, tp, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col.lightened(0.55))
+	if not (fl["carry"] as Array).is_empty():
+		var dp := xf * Vector2(-0.35 * s, 0.38 * s)
+		draw_circle(dp, 4.5 * m, Color(0, 0, 0, 0.85))
+		draw_circle(dp, 3.2 * m, Color(1, 0.95, 0.75))
 
 
 ## A path's caption ("Merge into army (5 units)") above its end.

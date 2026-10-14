@@ -20,7 +20,8 @@ extends RefCounted
 ## crossings' steps (CROSS): a ford costs the cell entered + GRID_FORD, a
 ## bridge just the cell; a diagonal across a river is never a step (the
 ## grid tool marks it). Sea lanes join the port cells of CData.SEA_LANES
-## (embark with full points, using them all).
+## (embark with full points, using them all); not in a pack with ships
+## (CData.ships_on: armies cross on fleets, campaign/cfleet.gd).
 ##
 ## Searches use g = turn * full + (full - points left), which orders
 ## positions by (turn reached, most points left): exactly the movement rule
@@ -199,7 +200,9 @@ static func ensure() -> void:
 			else:
 				_nbc[i * 8 + k] = _cost[j] + extra
 			_nb[i * 8 + k] = j
-	for pair in CData.SEA_LANES:
+	# A pack with ships (CData.ships_on) has no sea lanes for armies: they
+	# cross on fleets (campaign/cfleet.gd).
+	for pair in ([] if CData.ships_on() else CData.SEA_LANES):
 		var a := CData.region_index(pair[0])
 		var b := CData.region_index(pair[1])
 		_link(port(a), port(b), b)

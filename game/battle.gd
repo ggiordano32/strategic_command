@@ -3224,6 +3224,8 @@ func _au_nearest(kind: int) -> int:
 			4: ok = sim.u_amok[u] != 0
 			5: ok = sim.u_hand[u] >= 0
 			6: ok = sim.u_burn[u] > 0
+			7: ok = sim.t_m_gun[sim.u_type[u]] != 0 and sim.u_neng[u] == 0 and sim.u_fire_acc[u] <= 2
+			8: ok = sim.u_neng[u] > 0 and sim.t_m_gun[sim.u_type[u]] != 0 and sim.u_ftarget[u] >= 0
 		if not ok:
 			continue
 		var d := Vector2(sim.u_cx[u] - camera.position.x / PX_PER_M * M, sim.u_cy[u] - camera.position.y / PX_PER_M * M).length_squared()
@@ -3250,6 +3252,8 @@ func _audio_tick() -> void:
 		_au_prev["att"] = sim.stat_attacks
 		_au_prev["imp"] = sim.stat_impacts
 		_au_prev["shots"] = sim.stat_shots
+		_au_prev["gvol"] = sim.stat_volleys
+		_au_prev["gcan"] = sim.stat_cannon
 		_au_prev["bolts"] = sim.stat_bolts
 		_au_prev["stones"] = sim.stat_stones
 		_au_prev["crush"] = sim.stat_crush
@@ -3272,7 +3276,10 @@ func _audio_tick() -> void:
 		_au_at_unit(4, "elephant", "beast", 0.9)
 	elif crush > 0:
 		_au_at_unit(1, "elephant", "beast", 0.9)
-	if _au_delta("shots", sim.stat_shots) > 0:
+	var gv := _au_delta("gvol", sim.stat_volleys)
+	if gv > 0:
+		_au_at_unit(7, "musket", "volley", 0.9)  # (a gun volley's shots: no bow sound with it)
+	if _au_delta("shots", sim.stat_shots) > 0 and gv == 0:
 		var u := _au_nearest(2)
 		if u >= 0:
 			var m := _au_mix(sim.u_cx[u], sim.u_cy[u])
@@ -3280,6 +3287,10 @@ func _audio_tick() -> void:
 			AudioFx.play("volley" if far else "whoosh", m.x * 0.8, m.y, "volley")
 	var nb := _au_delta("bolts", sim.stat_bolts)
 	var ns := _au_delta("stones", sim.stat_stones)
+	var nc := _au_delta("gcan", sim.stat_cannon)
+	if nc > 0:
+		_au_at_unit(8, "cannon", "art")
+		nb -= nc  # (a gun's roundshot is a bolt to the sim)
 	if nb > 0:
 		_au_at_unit(3, "bolt_release", "art")
 	if ns > 0:

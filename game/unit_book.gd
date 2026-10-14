@@ -15,6 +15,7 @@ const UnitEntry := preload("res://game/unit_entry.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const CBattleL := preload("res://campaign/cbattle.gd")
+const CData := preload("res://campaign/cdata.gd")
 
 var entry: UnitEntry
 ## Page shown: a unit type, UT.count() for the Terrain page, UT.count() + 1
@@ -27,6 +28,10 @@ var _list: Array[Button] = []
 var prev_button: Button
 var next_button: Button
 var close_button: Button
+## The setting whose rows the list shows (UT.pack_of; "" = CData.pack, the
+## active campaign's, at each open). A battle sets it from its units.
+var pack := ""
+var _shown := ""
 
 
 func _init() -> void:
@@ -118,10 +123,10 @@ func _init() -> void:
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(title)
 	prev_button = _button("< Prev")
-	prev_button.pressed.connect(func(): show_type((current + _pages() - 1) % _pages()))
+	prev_button.pressed.connect(func(): show_type(_step(-1)))
 	head.add_child(prev_button)
 	next_button = _button("Next >")
-	next_button.pressed.connect(func(): show_type((current + 1) % _pages()))
+	next_button.pressed.connect(func(): show_type(_step(1)))
 	head.add_child(next_button)
 	close_button = _button("Close")
 	close_button.pressed.connect(close)
@@ -310,7 +315,27 @@ static func siege_help() -> String:
 
 func open(ty: int = -1) -> void:
 	visible = true
+	var pk := pack if pack != "" else CData.pack
+	if pk != _shown:
+		# Only the setting's rows in the list (Rome: exactly as before the West rows).
+		_shown = pk
+		for t in UT.count():
+			_list[t].visible = UT.pack_of(t) == pk
+		if current < UT.count() and UT.pack_of(current) != pk:
+			current = 0
+			while current < UT.count() and UT.pack_of(current) != pk:
+				current += 1
 	show_type(current if ty < 0 else ty)
+
+
+## The next (dir 1) or previous (-1) page shown in the list.
+func _step(dir: int) -> int:
+	var c := current
+	for k in _pages():
+		c = (c + dir + _pages()) % _pages()
+		if c >= UT.count() or _list[c].visible:
+			return c
+	return current
 
 
 func close() -> void:
@@ -342,9 +367,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_ESCAPE:
 				close()
 			KEY_LEFT, KEY_UP:
-				show_type((current + _pages() - 1) % _pages())
+				show_type(_step(-1))
 			KEY_RIGHT, KEY_DOWN:
-				show_type((current + 1) % _pages())
+				show_type(_step(1))
 		get_viewport().set_input_as_handled()
 
 

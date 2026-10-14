@@ -191,9 +191,10 @@ func _run(sd: int, verbose: bool) -> String:
 		var t_total := 0
 		var t_max := 0
 		var dead_at := {}  # faction -> turn eliminated (every faction)
-		var crossings := 0  # armies that ended a turn on another landmass (sea lanes)
+		var crossings := 0  # armies that ended a turn on another landmass (sea lanes, or landed from a fleet)
+		var last_land := _army_lands(st)  # army id -> landmass last seen on land (aboard a fleet: kept)
+		var fl_ev := {"ship_built": 0, "sea_battle": 0, "landed": 0, "embarked": 0, "army_sunk": 0, "fmove_failed": 0}
 		for t in turns:
-			var land0 := _army_lands(st)
 			var t0 := Time.get_ticks_usec()
 			st = CTurn.resolve_turn(st, [])
 			var us := Time.get_ticks_usec() - t0
@@ -206,9 +207,13 @@ func _run(sd: int, verbose: bool) -> String:
 			_count_sieges(st, t)
 			_tally(st, t)
 			var land1 := _army_lands(st)
-			for id in land0:
-				if land1.has(id) and int(land1[id]) != int(land0[id]):
+			for id in land1:
+				if last_land.has(id) and int(land1[id]) != int(last_land[id]):
 					crossings += 1
+				last_land[id] = land1[id]
+			for e in st["events"]:
+				if int(e["turn"]) == t and fl_ev.has(str(e["k"])):
+					fl_ev[str(e["k"])] = int(fl_ev[str(e["k"])]) + 1
 			for f in CState.nf():
 				if not dead_at.has(f) and not CState.alive(st, f):
 					dead_at[f] = int(st["turn"])
@@ -256,6 +261,13 @@ func _run(sd: int, verbose: bool) -> String:
 					elim_all[f] = []
 				elim_all[f].append(int(dead_at[f]))
 		print("eliminated at turn: %s | sea crossings (an army ended a turn on another landmass): %d" % [", ".join(dl), crossings])
+		if st.has("fleets"):
+			var ships := 0
+			for fl in st["fleets"]:
+				ships += (fl["ships"] as Array).size()
+			print("fleets: ships launched %d, sea battles %d, embarkations %d, landings %d, armies sunk %d, voyages refused %d; at the end %d fleets, %d ships" % [
+				int(fl_ev["ship_built"]), int(fl_ev["sea_battle"]), int(fl_ev["embarked"]), int(fl_ev["landed"]),
+				int(fl_ev["army_sunk"]), int(fl_ev["fmove_failed"]), (st["fleets"] as Array).size(), ships])
 		_buildup(st)
 		var open_now: Array = []
 		for x in st.get("sieges", []):

@@ -353,9 +353,17 @@ func rows() -> Array:
 		out.append(["Land route", func(ci: Control, sz: Vector2):
 			_land(ci, sz)
 			MapView.draw_route(ci, _l(sz), _r(sz), 1.0)])
-	out.append(["Sea lane between ports", func(ci: Control, sz: Vector2):
-		ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.SEA)
-		MapView.draw_sea_lane(ci, _l(sz), _r(sz), 1.0)])
+	if CData.ships_on():
+		out.append(["Fleet: ships in its colour, the count on its pennant; a dot: troops aboard", func(ci: Control, sz: Vector2):
+			ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.SEA)
+			var c := sz * 0.5
+			var k := sz.y * 0.4
+			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(0.05, -0.95) * k, c + Vector2(0.7, 0.05) * k, c + Vector2(0.05, 0.05) * k]), Color(0.96, 0.94, 0.86))
+			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(-1, 0.15) * k, c + Vector2(1, 0.15) * k, c + Vector2(0.62, 0.62) * k, c + Vector2(-0.7, 0.62) * k]), oc)])
+	else:
+		out.append(["Sea lane between ports", func(ci: Control, sz: Vector2):
+			ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.SEA)
+			MapView.draw_sea_lane(ci, _l(sz), _r(sz), 1.0)])
 	return out
 
 

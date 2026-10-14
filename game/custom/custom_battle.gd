@@ -36,6 +36,7 @@ var _box: VBoxContainer
 var _info: Label
 var _code_edit: LineEdit
 var _picker: PanelContainer
+var _picker_pack := ""  # the setting the picker was built for
 var _pick_target := [-1, -1]
 var _busy := false
 var _started := false
@@ -102,6 +103,10 @@ func _changed() -> void:
 func _rebuild() -> void:
 	for c in _box.get_children():
 		c.queue_free()
+	if _picker != null and _picker_pack != CS.pack_of(setup):
+		# (the setting changed, here or from the relay: the picker shows its rows)
+		_picker.queue_free()
+		_build_picker()
 	var head := Kit.flow(8)
 	head.add_child(Kit.label("Custom battle", 22, Kit.COL_GOLD))
 	if _can_edit_all():
@@ -109,6 +114,12 @@ func _rebuild() -> void:
 			func(): _load_template((_tmpl + 1) % CS.TEMPLATES.size()), 0, 14)
 		tb.name = "custom_template"
 		head.add_child(tb)
+		var pk := CS.pack_of(setup)
+		var nxt: String = CS.PACKS[(CS.PACKS.find(pk) + 1) % CS.PACKS.size()]
+		var pb := Kit.button("Setting: " + str(CS.PACK_NAMES[pk]), func(): _set_pack(nxt), 0, 14)
+		pb.name = "custom_pack"
+		pb.tooltip_text = "The units on offer: Rome's or the West's (pike and shot)"
+		head.add_child(pb)
 	head.add_child(Kit.button("Back", _back, 80))
 	if session == null:
 		var ps := Kit.icon_button("Play solo", "battles", _play_solo, 120, 17)
@@ -441,25 +452,15 @@ func _build_picker() -> void:
 	var list := Kit.vbox(4)
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sc.add_child(list)
-	# The base lines with the light missile troops' (slingers after the javelins,
-	# missile cavalry after the cavalry), war dogs after the slingers, the
-	# beasts after the riders, gastraphetes after the archers, scorpions
-	# before the bolt throwers and the generals last.
-	var lines: Array = UT.LINES.duplicate()
-	lines.insert(lines.find("javelin") + 1, "sling")
-	lines.insert(lines.find("sling") + 1, "dogs")  # War Dogs (handlers; the pack comes with them)
-	lines.insert(lines.find("cav") + 1, "cav_missile")
-	lines.insert(lines.find("cav_missile") + 1, "camel")  # Camel Riders
-	lines.insert(lines.find("camel") + 1, "camel_archer")  # Camel Archers
-	lines.insert(lines.find("camel_archer") + 1, "elephant")  # War Elephants
-	lines.insert(lines.find("archer") + 1, "belly_bow")  # Gastraphetes
-	lines.insert(lines.find("bolt"), "light_art")  # Scorpions (before the bolt throwers)
-	lines.append("general")  # the general and his faction variants
-	for line in lines:
+	# The setting's rows only (CS.picker_lines: Rome's base lines with the
+	# light missile troops, beasts, dogs, engines and generals in their places).
+	var pack := CS.pack_of(setup)
+	_picker_pack = pack
+	for line in CS.picker_lines(pack):
 		var f := Kit.flow(6)
 		f.add_child(Kit.label(str(line).capitalize(), Kit.FONT, Kit.COL_DIM))
 		for ty in UT.count():
-			if UT.line_of(ty) != line or (line == "general" and UT.stat(ty, "cmd_r") <= 0):
+			if UT.line_of(ty) != line or (line == "general" and UT.stat(ty, "cmd_r") <= 0) or UT.pack_of(ty) != pack:
 				continue  # (not the plain bodyguard: a campaign army's second general)
 			var key := UT.key_of(ty)
 			var b := Kit.button("%s  %d" % [UT.text(ty, "name"), UT.price_of(ty)], func(): _pick(key), 0, 13)
@@ -471,13 +472,20 @@ func _build_picker() -> void:
 	var wf := Kit.flow(6)
 	wf.add_child(Kit.label("Wagons", Kit.FONT, Kit.COL_DIM))
 	for ty in UT.count():
-		if CS.is_wagon(ty):
+		if CS.is_wagon(ty) and pack == "rome":
 			var key := UT.key_of(ty)
 			var b := Kit.button("%s  %d" % [UT.text(ty, "name"), UT.price_of(ty)], func(): _pick(key), 0, 13)
 			b.name = "pick_" + key
 			b.tooltip_text = UT.text(ty, "desc")
 			wf.add_child(b)
 	list.add_child(wf)
+
+
+## Switch the setting (unit pack): standard armies of the pack, its picker.
+func _set_pack(pack: String) -> void:
+	CS.set_pack(setup, pack)
+	_tmpl = -1
+	_changed()
 
 
 func _open_picker(s: int, ai: int) -> void:

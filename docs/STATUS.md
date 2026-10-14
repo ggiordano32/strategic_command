@@ -1225,6 +1225,32 @@ of marque); **battle** 2a firearms (running) -> 2d landforms -> N3 real
 time sea battles -> 2b cover and line of sight -> 2c forts and fighting
 from buildings; faction asymmetry threads through all of them.
 
+**N1 fleets, as built 2026-10-14 (not committed; CAMPAIGN.md "Fleets (N1,
+the West pack)").** West only (Rome byte-identical: campaign_sim hashes
+cdc1d805 32b83031 23f9ed4f 3237d82d a42fc685 b6fe6c2e, pack_test golden,
+no new keys). Ship rows `campaign/data/west_ships.gd` (sloop, brigantine,
+frigate, galleon, ship of the line, war canoe; the wind from 90, the reach
+table 125 / 115 / 100 / 75 / 60 %), Shipyard chain (West: `CData.CHAINS`
+gets index 7), fleets in the state on sea cells, voyages by wind, embark /
+land, armies without sea lanes, interception and auto-resolved sea battles
+(never pending), ship upkeep, repairs in port, scurvy at sea; fleet AI
+`campaign/cai_fleet.gd`; view: ship markers bobbing on the waves, the
+fleet card, voyages and reach, Shipyard in the city panel. **N1 fleets
+measured** (`campaign_sim --pack=west --seeds=6 --turns=60 --twice`,
+deterministic): ships launched 52-78 a seed, sea battles 14-32, armies
+embarked 38-53 / landed 31-44, sea crossings 29-44 (the lanes gave 53-69),
+armies sunk 0-3, voyages refused 2-43; largest faction 14-20 regions at 60;
+eliminated: Brethren 5 of 6 (turns 10-49; pirates surviving on ships is
+N2), Miskito 5 of 6 (20-46), Itza 1, Dutch 1; 41-68 ms a turn mean (two
+runs in parallel; 38-52 alone, was 19-22). Tests: pack_test fleets block
+(Rome has no fleets, the West start, no lanes, a Shipyard only in a port,
+downwind 30 cells against upwind 21, embark + voyage + landing at Belize
+by turn 2, a ship launched, JSON round trip, interception is a sea battle,
+the same twice, a sunk transport drowns its troops), campaign_test,
+online_e2e (Rome and `--pack west`), go test, check_scripts. Open: N2,
+N3, fleet split, fleet steps in the replay, march-and-board in one order,
+AI escorts; turn time doubled in the West.
+
 ## Next session (week of 2026-10-13; paused 2026-10-10 midday)
 
 - **Update, 2026-10-10 evening (hold here):** the user resumed; landed

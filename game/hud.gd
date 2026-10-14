@@ -595,6 +595,9 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	# Unit book, above everything else.
 	book = UnitBook.new()
 	book.side_color = Icons.SIDE_COLORS[player_side]
+	for u in sim.n_units:
+		if UT.pack_of(sim.u_otype[u]) != "rome":
+			book.pack = UT.pack_of(sim.u_otype[u])  # (a battle of the West's rows: their book)
 	root.add_child(book)
 	_ui_controls.append(book)
 	controls = Controls.new()

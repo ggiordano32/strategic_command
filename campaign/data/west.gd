@@ -3,9 +3,9 @@ extends RefCounted
 ## tables campaign/cdata.gd reads through CData.use_pack("west"). Same shape as
 ## campaign/data/rome.gd (see there for what each table means). The 49
 ## settlements are the ones tools/geo/carib.json bakes (keys, lon / lat and
-## landmass must stay equal to it). Units are the Rome rosters reused as
-## placeholders until the West units exist (ROSTERS / AMMO_AVAIL keep the
-## Rome faction each West faction borrows).
+## landmass must stay equal to it). Units: the West rows of
+## sim/unit_types.gd (WEST, slice 2a: pike and shot, buccaneers, natives,
+## guns); the general's bodyguard, war dogs and wagons are shared Rome rows.
 ## Landmasses: 0 North and Central America (Florida to the Darien), 1 South
 ## America, 2 Cuba, 3 Hispaniola, 4 Jamaica, 5 Puerto Rico, 6 Trinidad.
 
@@ -35,6 +35,9 @@ const WORKSHOP := E.WORKSHOP
 
 const KEY := "west"
 const GRID := preload("res://campaign/data/west_grid_data.gd")
+## Ships, the wind and the starting fleets (N1 fleets; campaign/cfleet.gd).
+## With SHIPS armies cross the sea only on fleets (SEA_LANES stay as data).
+const SHIPS := preload("res://campaign/data/west_ships.gd")
 ## Projection of tools/geo/carib.json: px_lon 94 / px_lat 100 (cos 20 deg).
 const LON_PCT := 940
 const START_YEAR := 1650
@@ -140,85 +143,97 @@ const SEA_LANES: Array = [
 	["havana", "port_royal"],
 ]
 
-## Factions (see rome.gd). Armies, mixes and compositions are those of the Rome
-## faction whose roster each one borrows. "palette" (a sprite palette key,
+## Factions (see rome.gd). Armies, mixes and compositions in the West rows
+## (slice 2a, 2026-10-14). "palette" (a sprite palette key,
 ## game/sprite_atlas.gd) and "blurb" are view-only.
 const FACTIONS: Array[Dictionary] = [
 	{"key": "new_spain", "culture": LATIN, "name": "New Spain", "adj": "Spanish", "color": "d9a31f", "capital": "havana",
 		"palette": "macedon", "blurb": "Gold-drunk viceroys and iron galleons: the Crown's heavy line holds the Indies, and God help whoever says otherwise.",
 		"regions": ["havana", "puerto_principe", "santiago_de_cuba", "veracruz", "tampico", "campeche", "merida", "st_augustine"], "treasury": 1600,
-		"armies": [["havana", ["heavy", "heavy", "spear", "javelin", "cav", "legate"]],
-			["veracruz", ["heavy", "spear", "javelin", "legate"]],
-			["santiago_de_cuba", ["spear", "javelin", "legate"]]],
-		"mix": {"heavy": 45, "spear": 15, "javelin": 20, "cav": 15, "bolt": 5, "general": 4, "dogs": 3, "light_art": 3},
-		"ai_style": AI_BALANCED, "composition": {"arms": ["heavy", "spear", "javelin"], "art_pct": 10, "cav_pct": 10, "upgrade": 2}},
+		"armies": [["havana", ["musketeers", "w_pikemen", "musketeers", "rodeleros", "lancers", "light_gun", "general"]],
+			["veracruz", ["musketeers", "w_pikemen", "rodeleros", "general"]],
+			["santiago_de_cuba", ["w_pikemen", "musketeers", "general"]]],
+		"mix": {"musket": 35, "pike": 25, "heavy": 15, "cav": 12, "light_gun": 5, "field_gun": 3, "general": 4, "dogs": 2},
+		"ai_style": AI_BALANCED, "composition": {"arms": ["musket", "pike", "heavy"], "art_pct": 10, "cav_pct": 10, "upgrade": 2}},
 	{"key": "tierra_firme", "culture": LATIN, "name": "Tierra Firme", "adj": "Tierra Firme", "color": "e0702a", "capital": "cartagena",
 		"palette": "epirus", "blurb": "The silver coast of the Spanish Main, where every mule-train is a king's ransom and every watchtower a loaded gun.",
 		"regions": ["cartagena", "santa_marta", "mompox", "portobelo", "maracaibo", "coro", "la_guaira"], "treasury": 1800,
-		"armies": [["cartagena", ["spear", "spear", "heavy", "light", "javelin", "cav", "sufet"]],
-			["portobelo", ["spear", "light", "archer", "sufet"]]],
-		"mix": {"spear": 25, "heavy": 15, "light": 15, "javelin": 15, "archer": 5, "cav": 25, "camel": 5, "elephant": 5,
-			"cav_missile": 5, "sling": 5, "general": 4, "light_art": 3},
-		"ai_style": AI_CAUTIOUS, "composition": {"arms": ["cav", "spear", "light"], "art_pct": 0, "cav_pct": 25, "upgrade": 1}},
+		"armies": [["cartagena", ["w_pikemen", "musketeers", "musketeers", "rodeleros", "lancers", "lancers", "general"]],
+			["portobelo", ["musketeers", "w_pikemen", "lancers", "general"]]],
+		"mix": {"musket": 30, "pike": 20, "heavy": 15, "cav": 25, "light_gun": 5, "general": 4},
+		"ai_style": AI_CAUTIOUS, "composition": {"arms": ["cav", "musket", "pike"], "art_pct": 5, "cav_pct": 25, "upgrade": 1}},
 	{"key": "england", "culture": GREEK, "name": "England", "adj": "English", "color": "c8402f", "capital": "port_royal",
 		"palette": "rome", "blurb": "Roundheads turned rum-runners: a few sturdy pike-blocks, a lot of cannon, and a firm belief that Jamaica is a perfectly good place to be sent for treason.",
 		"regions": ["port_royal", "sevilla_jamaica", "belize"], "treasury": 1800,
-		"armies": [["port_royal", ["pike", "pike", "pike", "cav", "cav", "archer", "light", "javelin", "hetairoi_guard"]],
-			["sevilla_jamaica", ["pike", "pike", "archer", "javelin", "hetairoi_guard"]]],
-		"mix": {"pike": 45, "cav": 20, "archer": 10, "light": 10, "javelin": 10, "stone": 5, "general": 4, "light_art": 3},
-		"ai_style": AI_BALANCED, "composition": {"arms": ["pike", "cav", "archer"], "art_pct": 5, "cav_pct": 20, "upgrade": 1}},
+		"armies": [["port_royal", ["w_pikemen", "w_pikemen", "musketeers", "musketeers", "musketeers", "pistoleers", "pistoleers", "light_gun", "general"]],
+			["sevilla_jamaica", ["w_pikemen", "musketeers", "musketeers", "general"]]],
+		"mix": {"musket": 40, "pike": 25, "pistol": 20, "light_gun": 5, "field_gun": 5, "general": 4},
+		"ai_style": AI_BALANCED, "composition": {"arms": ["musket", "pike", "pistol"], "art_pct": 10, "cav_pct": 20, "upgrade": 1}},
 	{"key": "france", "culture": GREEK, "name": "France", "adj": "French", "color": "3f7fd8", "capital": "leogane",
 		"palette": "greeks", "blurb": "Lilies, lace and lead shot: the buccaneers of Saint-Domingue fight like cavaliers and drink like musketeers.",
 		"regions": ["leogane", "new_orleans"], "treasury": 1600,
-		"armies": [["leogane", ["spear", "spear", "spear", "archer", "archer", "light", "javelin", "cav", "strategos"]],
-			["new_orleans", ["spear", "spear", "archer", "cav", "strategos"]]],
-		"mix": {"spear": 45, "archer": 20, "light": 10, "javelin": 10, "cav": 10, "bolt": 5, "cav_missile": 5, "sling": 5,
-			"general": 4, "dogs": 3, "light_art": 3, "belly_bow": 3},
-		"ai_style": AI_BALANCED, "composition": {"arms": ["spear", "archer", "light"], "art_pct": 5, "cav_pct": 10, "upgrade": 1}},
+		"armies": [["leogane", ["musketeers", "musketeers", "w_pikemen", "buccaneers", "buccaneers", "pistoleers", "general"]],
+			["new_orleans", ["musketeers", "w_pikemen", "buccaneers", "general"]]],
+		"mix": {"musket": 35, "pike": 20, "buccaneer": 25, "pistol": 15, "general": 4},
+		"ai_style": AI_BALANCED, "composition": {"arms": ["musket", "buccaneer", "pike"], "art_pct": 0, "cav_pct": 15, "upgrade": 1}},
 	{"key": "dutch", "culture": PUNIC, "name": "The Dutch", "adj": "Dutch", "color": "2fa8a0", "capital": "port_of_spain",
 		"palette": "syracuse", "blurb": "Herring, tulips and a West India Company with a very large ledger: they will sell you the rope and then the gallows.",
 		"regions": ["port_of_spain", "cumana"], "treasury": 2200,
-		"armies": [["port_of_spain", ["spear", "spear", "spear", "spear", "archer", "archer", "heavy", "heavy", "cav", "bolt", "strategos"]],
-			["cumana", ["spear", "spear", "spear", "heavy", "archer", "archer", "javelin", "light", "strategos"]]],
-		"mix": {"spear": 40, "heavy": 15, "archer": 15, "javelin": 10, "cav": 10, "bolt": 5, "stone": 5, "cav_missile": 5,
-			"general": 4, "light_art": 3, "belly_bow": 3},
-		"ai_style": AI_CAUTIOUS, "composition": {"arms": ["spear", "archer", "heavy"], "art_pct": 10, "cav_pct": 10, "upgrade": 1}},
+		"armies": [["port_of_spain", ["musketeers", "musketeers", "musketeers", "w_pikemen", "w_pikemen", "field_gun", "light_gun", "general"]],
+			["cumana", ["musketeers", "musketeers", "w_pikemen", "light_gun", "general"]]],
+		"mix": {"musket": 40, "pike": 25, "light_gun": 15, "field_gun": 10, "general": 4},
+		"ai_style": AI_CAUTIOUS, "composition": {"arms": ["musket", "pike", "light_gun"], "art_pct": 25, "cav_pct": 0, "upgrade": 1}},
 	{"key": "brethren", "culture": PUNIC, "name": "Brethren of the Coast", "adj": "Pirate", "color": "4a4a52", "capital": "port_de_paix",
 		"palette": "iberians", "blurb": "Calico, cutlasses and a black flag over every stolen town: no king, no quarter, and the rum is never, ever finished.",
 		"regions": ["port_de_paix", "trujillo"], "treasury": 1500,
-		"armies": [["port_de_paix", ["light", "light", "light", "heavy", "javelin", "javelin", "cav", "chieftain"]],
-			["trujillo", ["light", "light", "javelin", "cav", "chieftain"]]],
-		"mix": {"light": 35, "heavy": 20, "javelin": 25, "cav": 15, "spear": 5, "cav_missile": 5, "sling": 5, "general": 4},
-		"ai_style": AI_AGGRESSIVE, "composition": {"arms": ["light", "javelin", "heavy"], "art_pct": 0, "cav_pct": 15, "upgrade": 0}},
+		"armies": [["port_de_paix", ["buccaneers", "buccaneers", "cutlass", "cutlass", "musketeers", "light_gun", "general"]],
+			["trujillo", ["buccaneers", "cutlass", "cutlass", "general"]]],
+		"mix": {"buccaneer": 35, "heavy": 35, "musket": 20, "light_gun": 5, "general": 4},
+		"ai_style": AI_AGGRESSIVE, "composition": {"arms": ["buccaneer", "heavy", "musket"], "art_pct": 5, "cav_pct": 0, "upgrade": 0}},
 	{"key": "itza", "culture": CELTIC, "name": "Maya Itza", "adj": "Itza", "color": "2f9e5a", "capital": "tayasal",
 		"palette": "gauls", "blurb": "The last free Maya kingdom, behind its lake and a wall of jungle: obsidian blades, jade crowns and a patience older than Spain.",
 		"regions": ["tayasal", "valladolid"], "treasury": 1200,
-		"armies": [["tayasal", ["light", "light", "light", "light", "heavy", "heavy", "cav", "cav", "javelin", "javelin", "chieftain"]],
-			["tayasal", ["light", "light", "heavy", "javelin", "chieftain"]]],
-		"mix": {"light": 45, "heavy": 20, "cav": 20, "javelin": 10, "archer": 5, "cav_missile": 5, "general": 4, "dogs": 3},
-		"ai_style": AI_CAUTIOUS, "composition": {"arms": ["light", "heavy", "cav"], "art_pct": 0, "cav_pct": 20, "upgrade": 0}},
+		"armies": [["tayasal", ["native_warriors", "native_warriors", "native_warriors", "native_warriors", "native_warriors", "native_warriors", "native_bowmen", "native_bowmen", "native_bowmen", "chieftain"]],
+			["tayasal", ["native_warriors", "native_warriors", "native_warriors", "native_bowmen", "chieftain"]]],
+		"mix": {"light": 60, "archer": 35, "general": 4},
+		"ai_style": AI_CAUTIOUS, "composition": {"arms": ["light", "archer"], "art_pct": 0, "cav_pct": 0, "upgrade": 0}},
 	{"key": "miskito", "culture": CELTIC, "name": "Miskito", "adj": "Miskito", "color": "8a4fc4", "capital": "cabo_gracias",
 		"palette": "carthage", "blurb": "Lords of the Mosquito Coast, friends of every English pirate and the dread of every Spanish clerk: harpoon, longboat and a very long memory.",
 		"regions": ["cabo_gracias", "bluefields", "talamanca"], "treasury": 1200,
-		"armies": [["cabo_gracias", ["light", "light", "light", "heavy", "javelin", "javelin", "cav", "chieftain"]],
-			["bluefields", ["light", "light", "javelin", "chieftain"]]],
-		"mix": {"light": 45, "heavy": 10, "cav": 20, "javelin": 20, "archer": 5, "general": 4},
-		"ai_style": AI_CAUTIOUS, "composition": {"arms": ["light", "javelin", "cav"], "art_pct": 0, "cav_pct": 20, "upgrade": 0}},
+		"armies": [["cabo_gracias", ["native_warriors", "native_warriors", "native_warriors", "native_bowmen", "native_bowmen", "musketeers", "chieftain"]],
+			["bluefields", ["native_warriors", "native_warriors", "native_bowmen", "chieftain"]]],
+		"mix": {"light": 50, "archer": 30, "musket": 15, "general": 4},
+		"ai_style": AI_CAUTIOUS, "composition": {"arms": ["light", "archer", "musket"], "art_pct": 0, "cav_pct": 0, "upgrade": 0}},
 ]
 
-## Rosters: the Rome rosters, borrowed by character (heavy line for Spain,
-## the Carthage mix for Tierra Firme, the pike-and-artillery Macedon for
-## England ...), until the West units exist.
+## Rosters (slice 2a): pike and shot for the Europeans (Spain's rodeleros and
+## lancers, England's pistol horse and cuirassiers, the Dutch guns, France's
+## buccaneers and pistoleers), buccaneers and cutlass men for the Brethren,
+## warriors and bowmen for the natives (the Miskito with English trade
+## muskets). Generals, war dogs and wagons are shared Rome rows.
 const ROSTERS := {
-	"new_spain": R.ROSTERS["rome"],
-	"tierra_firme": R.ROSTERS["carthage"],
-	"england": R.ROSTERS["macedon"],
-	"france": R.ROSTERS["greeks"],
-	"dutch": R.ROSTERS["syracuse"],
-	"brethren": R.ROSTERS["iberians"],
-	"itza": R.ROSTERS["gauls"],
-	"miskito": R.ROSTERS["gauls"],
-	"independent": R.ROSTERS["independent"],
+	"new_spain": {"musket": ["musketeers", "musketeers2", ""], "pike": ["w_pikemen", "w_pikemen2", ""],
+		"heavy": ["rodeleros", "", ""], "cav": ["lancers", "", ""], "light_gun": ["light_gun"], "field_gun": ["field_gun"],
+		"siege": ["wagon", "wagon2", "wagon3"], "general": ["general"], "dogs": ["dog_handlers"]},
+	"tierra_firme": {"musket": ["musketeers", "musketeers2", ""], "pike": ["w_pikemen", "w_pikemen2", ""],
+		"heavy": ["rodeleros", "", ""], "cav": ["lancers", "", ""], "light_gun": ["light_gun"],
+		"siege": ["wagon", "wagon2", "wagon3"], "general": ["general"]},
+	"england": {"musket": ["musketeers", "musketeers2", ""], "pike": ["w_pikemen", "w_pikemen2", ""],
+		"pistol": ["pistoleers", "cuirassiers", ""], "light_gun": ["light_gun"], "field_gun": ["field_gun"],
+		"siege": ["wagon", "wagon2", "wagon3"], "general": ["general"]},
+	"france": {"musket": ["musketeers", "musketeers2", ""], "pike": ["w_pikemen", "w_pikemen2", ""],
+		"buccaneer": ["buccaneers", "", ""], "pistol": ["pistoleers", "cuirassiers", ""],
+		"siege": ["wagon", "wagon2", "wagon3"], "general": ["general"]},
+	"dutch": {"musket": ["musketeers", "musketeers2", ""], "pike": ["w_pikemen", "w_pikemen2", ""],
+		"light_gun": ["light_gun"], "field_gun": ["field_gun"], "siege": ["wagon", "wagon2", "wagon3"], "general": ["general"]},
+	"brethren": {"buccaneer": ["buccaneers", "", ""], "musket": ["musketeers", "", ""], "heavy": ["cutlass", "", ""],
+		"light_gun": ["light_gun"], "siege": ["wagon", "", ""], "general": ["general"]},
+	"itza": {"light": ["native_warriors", "", ""], "archer": ["native_bowmen", "", ""], "siege": ["wagon", "", ""],
+		"general": ["chieftain"]},
+	"miskito": {"light": ["native_warriors", "", ""], "archer": ["native_bowmen", "", ""], "musket": ["musketeers", "", ""],
+		"siege": ["wagon", "", ""], "general": ["chieftain"]},
+	"independent": {"musket": ["musketeers", "musketeers2", ""], "pike": ["w_pikemen", "w_pikemen2", ""],
+		"light": ["native_warriors", "", ""], "archer": ["native_bowmen", "", ""]},
 }
 
 const START_WARS: Array = [
@@ -226,13 +241,9 @@ const START_WARS: Array = [
 	["brethren", "dutch"],
 ]
 
+## (Guns carry no special kinds yet; the native bowmen fire arrows.)
 const AMMO_AVAIL: Array = [
-	["fire_arrows", ["france", "dutch", "tierra_firme"], RANGE, 2],
-	["fire_javelins", ["brethren", "itza", "miskito"], RANGE, 2],
-	["lead_bullets", ["tierra_firme", "france"], RANGE, 2],
-	["heavy_bolts", ["new_spain", "dutch"], WORKSHOP, 1],
-	["explosive", ["dutch"], WORKSHOP, 2],
-	["fire_pots", ["new_spain", "tierra_firme", "england", "france", "dutch"], WORKSHOP, 2],
+	["fire_arrows", ["itza", "miskito"], RANGE, 2],
 ]
 
 const KEY_CITIES: Array[String] = ["havana", "cartagena", "veracruz", "portobelo", "port_royal", "santo_domingo"]

@@ -47,6 +47,7 @@ const CBattle := preload("res://campaign/cbattle.gd")
 const CAI := preload("res://campaign/cai.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const CChars := preload("res://campaign/cchars.gd")
+const CFleet := preload("res://campaign/cfleet.gd")
 
 const KEEP_EVENTS_TURNS := 2
 
@@ -66,12 +67,21 @@ static func preview(st: Dictionary, f: int, orders: Array) -> Dictionary:
 	var s := CState.copy(st)
 	var errors: Array = []
 	var moves: Array = []
+	var fmoves: Array = []  # fleets (a pack with ships): [[fleet, dest cell, tgt, persist]]
 	for pass_i in 2:
 		for i in orders.size():
 			var o: Dictionary = orders[i]
 			var t := str(o.get("t", ""))
 			var first := t == "war" or t == "answer"
 			if (pass_i == 0) != first:
+				continue
+			if t == "fmove":
+				var whyf := CRules.apply_order(s, f, o)
+				if whyf != "":
+					errors.append([i, whyf])
+				else:
+					fmoves.append([int(o["fleet"]), CGrid.at(int(o.get("x", -1)), int(o.get("y", -1))), int(o.get("tgt", -1)),
+						int(o.get("persist", 0))])
 				continue
 			if t == "move":
 				var why := CRules.apply_order(s, f, o)
@@ -87,7 +97,10 @@ static func preview(st: Dictionary, f: int, orders: Array) -> Dictionary:
 			var why2 := CRules.apply_order(s, f, o)
 			if why2 != "":
 				errors.append([i, why2])
-	return {"state": s, "errors": errors, "moves": moves}
+	var out := {"state": s, "errors": errors, "moves": moves}
+	if s.has("fleets"):
+		out["fmoves"] = fmoves
+	return out
 
 
 static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
@@ -117,7 +130,7 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 			var f := int(s["f"])
 			for o in s["orders"]:
 				var t := str(o.get("t", ""))
-				if t == "move" or t == "propose" or t == "assault" or t == "sally" or t == "siege":
+				if t == "move" or t == "propose" or t == "assault" or t == "sally" or t == "siege" or t == "fmove":
 					continue
 				if (t == "war" or t == "answer") != (pass_i == 0):
 					continue
@@ -137,6 +150,22 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 				seen[id] = 1
 				moves.append([id, int(o.get("to", -1)), int(s["f"]), int(o.get("mode", CData.MODE_SIEGE))])
 	moves.sort_custom(func(a, b): return a[0] < b[0])
+	if CFleet.on(st):
+		# Fleets sail first (a pack with ships): the players' voyages, then
+		# their stored ones; troops landed this turn stay where they land.
+		var fm: Array = []
+		var fseen := {}
+		for s in subs:
+			for o in s["orders"]:
+				if str(o.get("t", "")) == "fmove" and not fseen.has(int(o.get("fleet", -1))):
+					fseen[int(o.get("fleet", -1))] = 1
+					fm.append([int(o.get("fleet", -1)), CGrid.at(int(o.get("x", -1)), int(o.get("y", -1))), int(s["f"]),
+						int(o.get("persist", 0)), int(o.get("tgt", -1))])
+		for fl in CFleet.fleets(st):
+			if not fseen.has(int(fl["id"])) and CState.is_human(st, int(fl["f"])) and fl.has("dest_x"):
+				var vy := CFleet.voyage(fl)
+				fm.append([int(fl["id"]), int(vy[0]), int(fl["f"]), 1, int(vy[1])])
+		CFleet.execute_moves(st, fm)
 	if CState.grid_on(st):
 		# Version 6: cells and targets; the players' armies still marching to
 		# a stored destination (or after a target) carry on.
@@ -214,8 +243,10 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 	CRules.check_sieges(st)
 	# 5. AI factions (version 5: they plan, then their moves run in rounds).
 	var ai_moves: Array = []
+	var ai_fleet: Array = []
 	for f in CState.nf():
-		CAI.act(st, f, ai_moves)
+		CAI.act(st, f, ai_moves, ai_fleet)
+	CFleet.execute_moves(st, ai_fleet)
 	if CState.grid_on(st):
 		CRules.execute_moves6(st, ai_moves)
 	elif CState.moves_on(st):

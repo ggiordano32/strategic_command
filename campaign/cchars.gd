@@ -359,8 +359,8 @@ static func sweep(st: Dictionary) -> void:
 		if not CState.alive(st, f):
 			continue
 		if int(c["army"]) >= 0:
-			if not CState.army(st, int(c["army"])).is_empty():
-				keep.append(c)
+			if not CState.army(st, int(c["army"])).is_empty() or not CState.carried_army(st, int(c["army"])).is_empty():
+				keep.append(c)  # (an army aboard a fleet keeps its characters)
 				continue
 			c["army"] = -1
 			var at := int(c["r"])

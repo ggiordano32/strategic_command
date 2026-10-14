@@ -23,6 +23,7 @@ const CGrid := preload("res://campaign/cgrid.gd")
 const DragReorder := preload("res://game/drag_reorder.gd")
 const BattleScreen := preload("res://game/campaign/battle_screen.gd")
 const PackView := preload("res://game/campaign/pack_view.gd")
+const CFleet := preload("res://campaign/cfleet.gd")
 
 var s  # the campaign screen
 ## Open / closed state of the collapsible card groups this session (never in
@@ -142,6 +143,8 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 		_buildings(box, r)
 		if grid:
 			_trains(box, r)
+		if CFleet.on(ps):
+			_shipyard(box, r)
 	_gift_section(box, r)
 	# Garrison: what the settlement provides (by level and walls).
 	var gar := CRules.garrison(ps, r)
@@ -702,6 +705,8 @@ func _buildings(box: VBoxContainer, r: int) -> void:
 	for c in CData.CHAINS.size():
 		var ch: Dictionary = CData.CHAINS[c]
 		var cur := CState.building(ps, r, c)
+		if c == CData.SHIPYARD and cur == 0 and CFleet.dock(r) < 0:
+			continue  # (not a port)
 		var h := Kit.hbox(6)
 		var name := "%s %d" % [ch["name"], cur] if cur > 0 else str(ch["name"])
 		var l := Kit.icon_label(name, str(ch["key"]), Kit.FONT, Color.WHITE if cur > 0 else Kit.COL_DIM)
@@ -1170,6 +1175,8 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 	Kit.label_icon(cnt_l, "men")
 	box.add_child(cnt_l)
 	_chars_block(box, a, mine)
+	if mine and CFleet.on(ps):
+		_board_rows(box, a)
 	if mine and CState.grid_on(ps):
 		_together_row(box, a)
 		_army_orders6(box, a)
@@ -2380,7 +2387,7 @@ func _involves(e: Dictionary, f: int) -> bool:
 	for k in ["f", "from", "to", "a", "b", "o", "by"]:
 		if e.has(k) and int(e[k]) == f and str(e["k"]) != "move_failed":
 			return true
-	if str(e["k"]) == "battle":
+	if str(e["k"]) == "battle" or str(e["k"]) == "sea_battle":
 		return (e["att"] as Array).has(f) or (e["def"] as Array).has(f)
 	if str(e["k"]) == "captured":
 		return int(e["f"]) == f or int(e["from"]) == f
@@ -2398,6 +2405,13 @@ func _event_color(e: Dictionary, f: int) -> Color:
 			return Kit.COL_GOOD if won else Kit.COL_BAD
 		"captured":
 			return Kit.COL_GOOD if int(e["f"]) == f else Kit.COL_BAD
+		"sea_battle":
+			var won2 := (int(e["won"]) == 0 and (e["att"] as Array).has(f)) or (int(e["won"]) == 1 and (e["def"] as Array).has(f))
+			return Kit.COL_GOOD if won2 else Kit.COL_BAD
+		"ship_built", "landed", "embarked":
+			return Kit.COL_GOOD
+		"army_sunk", "fmove_failed":
+			return Kit.COL_BAD
 		"war", "destroyed", "debt", "eliminated", "defeat", "order_failed", "move_failed", "starving":
 			return Kit.COL_BAD
 		"team_notice", "team_left":
@@ -2577,7 +2591,63 @@ func event_text(e: Dictionary, f: int) -> String:
 		"team_joined":
 			return "%s and %s joined their teams: %s now on Team %d." % [CData.faction_name(int(e["from"])), CData.faction_name(int(e["to"])),
 				_names(e["members"]) + (" are" if (e["members"] as Array).size() > 1 else " is"), int(e["team"]) + 1]
+		"sea_battle":
+			return sea_battle_text(e)
+		"ship_built":
+			return "A %s was launched at %s." % [str(CData.ship_row(str(e["ship"])).get("name", e["ship"])).to_lower(), city.call(e["r"])]
+		"embarked":
+			return "An army went aboard ship at %s." % city.call(e["r"])
+		"landed":
+			return "An army landed in %s." % CData.REGIONS[int(e["r"])]["name"] if int(e["r"]) >= 0 else "An army landed."
+		"army_sunk":
+			return "%s army of %d units went down with its ships." % [CData.FACTIONS[int(e["f"])]["adj"], int(e["units"])]
+		"fmove_failed":
+			return "A fleet could not sail: %s." % str(e["why"])
 	return ""
+
+
+## Where a sea cell is: "off <the nearest settlement>".
+func sea_place(x: int, y: int) -> String:
+	var c := CGrid.at(x, y)
+	var best := 0
+	var bd := 1 << 30
+	for r in CData.region_count():
+		var d := CGrid.d2(c, CGrid.site(r))
+		if d < bd:
+			bd = d
+			best = r
+	return "off %s" % CData.REGIONS[best]["city"]
+
+
+## A sea battle's report (auto-resolved: the result screen and the chronicle).
+func sea_battle_text(e: Dictionary) -> String:
+	var won := int(e["won"])
+	var lines: Array[String] = []
+	var sunk_n := 0
+	var taken_n := 0
+	for l in e["lost"]:
+		if int(l[2]) == 1:
+			taken_n += 1
+		else:
+			sunk_n += 1
+	var t := "Sea battle %s: %s attacked %s; %s won." % [sea_place(int(e["x"]), int(e["y"])), _names(e["att"]), _names(e["def"]),
+		_names(e["att"]) if won == 0 else _names(e["def"])]
+	lines.append(t)
+	if sunk_n + taken_n > 0:
+		var parts: Array[String] = []
+		for l in e["lost"]:
+			parts.append("%s %s %s" % [CData.FACTIONS[int(l[0])]["adj"], str(CData.ship_row(str(l[1])).get("name", l[1])).to_lower(),
+				"taken" if int(l[2]) == 1 else "sunk"])
+		lines.append("Ships lost: %s." % ", ".join(parts))
+	else:
+		lines.append("No ship was lost.")
+	var units := 0
+	for x in e["sunk"]:
+		units += int(x[2])
+	if units > 0:
+		lines.append("%d unit%s drowned with the transports." % [units, "" if units == 1 else "s"])
+	lines.append("(Auto-resolved; real-time sea battles come later.)")
+	return " ".join(lines)
 
 
 # ----------------------------------------------------------- objectives ---
@@ -3091,3 +3161,155 @@ func _cancel_withdraw(mine: Array, r: int) -> void:
 			ids.append(int(a["id"]))
 	if not ids.is_empty():
 		s.remove_orders(func(x): return str(x["t"]) == "move" and ids.has(int(x["army"])))
+
+
+# ---------------------------------------------------------------- fleets ---
+
+## An army of ours beside fleets of ours: Board buttons (with room aboard).
+func _board_rows(box: VBoxContainer, a: Dictionary) -> void:
+	var ps: Dictionary = s.ps
+	for fl in CFleet.fleets_of(ps, s.f):
+		if not CFleet.near_fleet(a, fl):
+			continue
+		var fid := int(fl["id"])
+		var why := CFleet.embark_check(ps, s.f, int(a["id"]), fid)
+		var b := Kit.icon_button("Board the fleet (%d of %d places taken)" % [CFleet.carried_units(fl), CFleet.capacity(fl)], "move",
+			func(): s.embark(int(a["id"]), fid), 0)
+		b.name = "board_%d" % fid
+		b.disabled = why != ""
+		if why != "":
+			b.tooltip_text = why
+		box.add_child(b)
+
+
+## The fleet card: its ships (hull and crew), the troops aboard, its pace
+## and the wind, the voyage planned; for ours Board / Land / Cancel.
+func fleet_panel(box: VBoxContainer, id: int) -> void:
+	var ps: Dictionary = s.ps
+	var fl := CFleet.fleet(ps, id)
+	if fl.is_empty():
+		return
+	var ff := int(fl["f"])
+	var mine: bool = ff == s.f
+	var ships: Array = fl["ships"]
+	_close_row(box, "%s fleet %s" % [CData.FACTIONS[ff]["adj"], sea_place(int(fl["x"]), int(fl["y"]))], _fc(ff).lightened(0.4))
+	var up := 0
+	for sh in ships:
+		up += int(CData.ship_row(str(sh["t"])).get("upkeep", 0))
+	var info := Kit.label("%d ship%s, power %d, upkeep %d. Pace %d cells a turn on a beam reach%s." % [ships.size(),
+		"" if ships.size() == 1 else "s", CFleet.power(fl), up, CFleet.speed(fl) / 10,
+		"; rowed, the wind does not matter" if not CFleet.sails(fl) else ""], Kit.FONT_SMALL, Kit.COL_DIM, true)
+	info.name = "fleet_info"
+	box.add_child(info)
+	if CFleet.sails(fl):
+		box.add_child(Kit.label("The trade wind blows from the east: westward the fleet runs at 125 %, on a beam reach 100 %, beating east 60 %.",
+			Kit.FONT_SMALL, Kit.COL_DIM, true))
+	if CFleet.coastal(fl):
+		box.add_child(Kit.label("Canoes keep within %d cells of the shore." % int(CData.ship_const("COASTAL_CELLS", 2)), Kit.FONT_SMALL, Kit.COL_DIM, true))
+	box.add_child(Kit.section("Ships", "ship"))
+	for k in ships.size():
+		var sh: Dictionary = ships[k]
+		var row := CData.ship_row(str(sh["t"]))
+		var h := Kit.hbox(6)
+		var nm := Kit.icon_label(str(row.get("name", sh["t"])), "ship", Kit.FONT, _fc(ff).lightened(0.5))
+		nm.custom_minimum_size.x = 140
+		nm.tooltip_text = str(row.get("desc", ""))
+		h.add_child(nm)
+		var hc := int(sh["h"])
+		var cc := int(sh["c"])
+		h.add_child(Kit.label("hull %d%%, crew %d%%, %d guns, carries %d" % [hc, cc, int(row.get("guns", 0)), int(row.get("cap", 0))],
+			Kit.FONT_SMALL, Kit.COL_GOOD if mini(hc, cc) >= 70 else (Kit.COL_GOLD if mini(hc, cc) >= 40 else Kit.COL_BAD), true))
+		box.add_child(h)
+	var port := CFleet.port_of(ps, fl, ff)
+	box.add_child(Kit.label("In port at %s: repairing." % CData.REGIONS[port]["city"] if port >= 0 else "At sea: the crews thin a little every turn (scurvy).",
+		Kit.FONT_SMALL, Kit.COL_DIM, true))
+	box.add_child(Kit.section("Troops aboard (%d of %d places)" % [CFleet.carried_units(fl), CFleet.capacity(fl)], "men"))
+	if (fl["carry"] as Array).is_empty():
+		box.add_child(Kit.label("None. An army beside the fleet (or in the port's city) boards it from its card, or select the army and tap the fleet.",
+			Kit.FONT_SMALL, Kit.COL_DIM, true))
+	for a in fl["carry"]:
+		box.add_child(Kit.label("%s army: %d units, %d men" % [CData.FACTIONS[int(a["f"])]["adj"], CState.unit_count(a), CState.men(a)],
+			Kit.FONT, _fc(int(a["f"])).lightened(0.5), true))
+	if not mine:
+		return
+	if int(fl.get("moved", 0)) != 0:
+		box.add_child(Kit.label("Has sailed this turn.", Kit.FONT, Kit.COL_DIM))
+		return
+	var vy: Array = s.planned_voyage(id)
+	if int(vy[0]) >= 0 or int(vy[1]) >= 0:
+		var p := CFleet.plan(ps, s.f, id, int(vy[0]), int(vy[1]))
+		var txt := "Voyage planned."
+		if not p.has("why"):
+			var last := int((p["t"] as Array)[-1]) if not (p["t"] as Array).is_empty() else 0
+			var when := "this turn" if last == 0 else ("next turn" if last == 1 else "in %d turns" % (last + 1))
+			if int(p["tgt"]) >= 0:
+				txt = "Attacks the %s fleet (%s)." % [CData.FACTIONS[int(CFleet.fleet(ps, int(p["tgt"]))["f"])]["adj"], when]
+			elif int(p["land"]) != 0:
+				txt = "Sails to land the troops in %s (%s); the landing ends their turn." % [CData.REGIONS[CGrid.region(int(p["goal"]))]["name"], when]
+			else:
+				txt = "Sails %s (arrives %s)." % [sea_place(CGrid.cx(int(p["goal"])), CGrid.cy(int(p["goal"]))), when]
+		box.add_child(Kit.label(txt, Kit.FONT, Kit.COL_GOOD, true))
+		box.add_child(Kit.icon_button("Cancel voyage", "cancel", func(): s.set_fmove(id, int(vy[0]), int(vy[1])), 0))
+	else:
+		box.add_child(Kit.label("Tap the sea to sail, a coast to land the troops aboard, an enemy fleet to attack.", Kit.FONT_SMALL, Kit.COL_DIM, true))
+	# Our armies that can board here.
+	for a in CState.armies_of(ps, s.f):
+		if CFleet.near_fleet(a, fl):
+			var aid := int(a["id"])
+			var b := Kit.icon_button("Board: army of %d units" % CState.unit_count(a), "move", func(): s.embark(aid, id), 0)
+			b.disabled = CFleet.embark_check(ps, s.f, aid, id) != ""
+			box.add_child(b)
+	# Other fleets of ours alongside: merge.
+	for o in CFleet.fleets_of(ps, s.f):
+		if int(o["id"]) != id and CGrid.cheb(CFleet.cell(o), CFleet.cell(fl)) <= 1:
+			var oid := int(o["id"])
+			box.add_child(Kit.icon_button("Join the fleet alongside (%d ships)" % (o["ships"] as Array).size(), "merge",
+				func(): if s.add_order({"t": "fmerge", "fleet": id, "into": oid}) == "": s.select_fleet(oid), 0))
+
+
+## The city's shipyard (a pack with ships, a port of ours): what is being
+## launched, the ships it can build, the fleets in its harbour.
+func _shipyard(box: VBoxContainer, r: int) -> void:
+	var ps: Dictionary = s.ps
+	var f: int = s.f
+	if CFleet.dock(r) < 0:
+		return
+	var yard := CState.building(ps, r, CData.SHIPYARD)
+	var sec := Kit.section("Ships (Shipyard %d)" % yard if yard > 0 else "Ships (no Shipyard)", "ship")
+	sec.name = "shipyard_section"
+	box.add_child(sec)
+	var sq: Array = ps["regions"][r].get("sq", [])
+	for key in sq:
+		var h := Kit.hbox(6)
+		h.add_child(Kit.label("%s: launched at the end of the turn" % CData.ship_row(str(key)).get("name", key), Kit.FONT, Kit.COL_GOOD, true))
+		h.add_child(Kit.icon_button("", "close", func(): s.remove_orders(func(o): return str(o["t"]) == "ship" and int(o["r"]) == r), 44))
+		box.add_child(h)
+	var fk := str(CData.FACTIONS[f]["key"])
+	for row in CData.ship_rows():
+		if not (row["factions"] as Array).has(fk):
+			continue
+		var key := str(row["key"])
+		var why := CFleet.ship_check(ps, f, r, key)
+		var h := Kit.hbox(6)
+		var nm := Kit.icon_label(str(row["name"]), "ship", Kit.FONT, Color.WHITE if why == "" else Kit.COL_DIM)
+		nm.custom_minimum_size.x = 130
+		nm.tooltip_text = str(row["desc"])
+		h.add_child(nm)
+		var sub := "%d guns, carries %d, pace %d%s; upkeep %d" % [int(row["guns"]), int(row["cap"]), int(row["speed"]) / 10,
+			", coastal" if int(row["coastal"]) != 0 else "", int(row["upkeep"])]
+		h.add_child(Kit.label(sub if why == "" or why == "not enough money" or why == "already launching a ship" else why,
+			Kit.FONT_SMALL, Kit.COL_DIM, true))
+		var bb := Kit.icon_button("%d" % int(row["cost"]), "plus", func(): s.add_order({"t": "ship", "r": r, "ship": key}), 70)
+		bb.name = "ship_" + key
+		bb.disabled = why != ""
+		bb.tooltip_text = str(row["desc"])
+		h.add_child(bb)
+		box.add_child(h)
+	for fl in CFleet.fleets(ps):
+		if CGrid.cheb(CFleet.cell(fl), CFleet.harbour(r)) <= CFleet.PORT_CELLS:
+			var fid := int(fl["id"])
+			var bt := Kit.button("%s fleet: %d ships, %d aboard" % [CData.FACTIONS[int(fl["f"])]["adj"], (fl["ships"] as Array).size(),
+				CFleet.carried_units(fl)], s.select_fleet.bind(fid))
+			bt.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			bt.add_theme_color_override("font_color", _fc(int(fl["f"])).lightened(0.5))
+			box.add_child(bt)

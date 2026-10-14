@@ -27,7 +27,7 @@ const LOOPS := ["bed_battle", "bed_map", "fire_loop"]
 const CLIPS := ["melee", "charge", "volley", "whoosh", "bolt_release", "bolt_impact", "stone_release",
 	"stone_impact", "burst", "fire_loop", "gate_blow", "gate_break", "creak", "unit_break", "unit_rally",
 	"horn_start", "horn_victory", "horn_defeat", "elephant", "dogs", "tap", "order_ok", "refused",
-	"end_turn", "turn_resolved", "battle_pending", "chime", "bed_battle", "bed_map"]
+	"end_turn", "turn_resolved", "battle_pending", "chime", "bed_battle", "bed_map", "musket", "cannon"]
 
 var active := false      # a device is there (not headless)
 var unlocked := false    # the first user input happened (always true off the web)

@@ -92,10 +92,17 @@ static var no_buildup := false
 # names in capitals in the comments are those knobs.
 
 
+## Armies the fleet AI (campaign/cai_fleet.gd) has planned this turn (they
+## march to meet their fleet): _move_grid leaves them alone. Reset each act.
+static var fleet_reserved := {}
+
+
 ## moves (state version 5): the faction's move orders are appended here
 ## ([army, dest, faction, mode, persist]) and run later with every AI
 ## faction's moves in rounds (cturn step 5); older states move at once.
-static func act(st: Dictionary, f: int, moves: Array = []) -> void:
+## fmoves (a pack with ships): its fleets' voyages ([fleet, dest, faction,
+## persist, tgt], campaign/cai_fleet.gd), run before the moves.
+static func act(st: Dictionary, f: int, moves: Array = [], fmoves: Array = []) -> void:
 	if not CState.alive(st, f) or CState.is_human(st, f):
 		return
 	_merge(st, f)
@@ -105,6 +112,9 @@ static func act(st: Dictionary, f: int, moves: Array = []) -> void:
 		# Version 6: the moves are planned first, so the recruits go into
 		# armies that hold this turn (the mustering rule: an army taking
 		# recruits cannot march this turn; see _recruit_order).
+		fleet_reserved = {}
+		if st.has("fleets"):
+			(load("res://campaign/cai_fleet.gd") as GDScript).call("act", st, f, moves, fmoves)
 		_move_grid(st, f, moves)
 		_recruit(st, f, moves)
 		_characters(st, f, moves)
@@ -287,7 +297,8 @@ static func _build(st: Dictionary, f: int) -> void:
 ## The mix has engines (bolt or stone throwers, or scorpions: their test
 ## switches leave them out).
 static func _wants_engines(mix: Dictionary) -> bool:
-	return mix.has("bolt") or mix.has("stone") or (mix.has("light_art") and not CData.no_light_art and not no_beasts)
+	return mix.has("bolt") or mix.has("stone") or (mix.has("light_art") and not CData.no_light_art and not no_beasts) \
+		or mix.has("light_gun") or mix.has("field_gun")
 
 
 ## The military build-up (docs/AI.md 23): the next [region, chain] to build
@@ -1832,7 +1843,7 @@ static func _move_grid(st: Dictionary, f: int, out: Array) -> void:
 	for r in nreg:
 		hostile.append(not CState.friendly(st, f, CState.owner(st, r)))
 	for a in CState.armies_of(st, f):
-		if int(a["busy"]) != 0:
+		if int(a["busy"]) != 0 or fleet_reserved.has(int(a["id"])):
 			continue
 		CRules._drop_march(a)
 		if int(a["moved"]) != 0 or CRules.siege_role(st, a) == 2:

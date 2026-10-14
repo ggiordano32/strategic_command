@@ -48,7 +48,8 @@ extends RefCounted
 ## shot energy for attack), the missile rating (damage x (100 + ap) / reload,
 ## blast and pierce ignored) over the best of all missile rows (engines are
 ## scaled among engines: their energy is another scale), run over the best run
-## of every row. A non-zero stat is at least 1 pip.
+## of every row. A non-zero stat is at least 1 pip. Each setting (UT.pack_of)
+## is measured among its own rows (the West's guns do not shrink Rome's pips).
 
 const UT := preload("res://sim/unit_types.gd")
 const CData := preload("res://campaign/cdata.gd")
@@ -265,12 +266,13 @@ static func pips(ty: int) -> Dictionary:
 	_prep()
 	var cl := UT.cls(ty)
 	var art := cl == UT.CLS_ART
+	var pk := UT.pack_of(ty)
 	var out := {}
-	out["attack"] = _pip(UT.stat(ty, "m_damage") if art else UT.stat(ty, "attack"), _max["a%d" % cl])
-	out["defence"] = _pip(UT.stat(ty, "defence"), _max["d%d" % cl])
-	out["armour"] = _pip(UT.stat(ty, "armour"), _max["r%d" % cl])
-	out["missile"] = _pip(missile_rating(ty), _max["mA" if art else "mF"])
-	out["speed"] = _pip(UT.stat(ty, "run"), _max["run"])
+	out["attack"] = _pip(UT.stat(ty, "m_damage") if art else UT.stat(ty, "attack"), _max[pk + "a%d" % cl])
+	out["defence"] = _pip(UT.stat(ty, "defence"), _max[pk + "d%d" % cl])
+	out["armour"] = _pip(UT.stat(ty, "armour"), _max[pk + "r%d" % cl])
+	out["missile"] = _pip(missile_rating(ty), _max[pk + ("mA" if art else "mF")])
+	out["speed"] = _pip(UT.stat(ty, "run"), _max[pk + "run"])
 	return out
 
 
@@ -290,23 +292,25 @@ static func _pip(v: int, mx: int) -> int:
 static func _prep() -> void:
 	if not _max.is_empty():
 		return
-	for c in 5:
-		_max["a%d" % c] = 0
-		_max["d%d" % c] = 0
-		_max["r%d" % c] = 0
-	_max["mF"] = 0
-	_max["mA"] = 0
-	_max["run"] = 0
 	for ty in UT.count():
+		var pk := UT.pack_of(ty)  # (each setting's rows are measured among themselves)
+		if not _max.has(pk + "run"):
+			for c in 5:
+				_max[pk + "a%d" % c] = 0
+				_max[pk + "d%d" % c] = 0
+				_max[pk + "r%d" % c] = 0
+			_max[pk + "mF"] = 0
+			_max[pk + "mA"] = 0
+			_max[pk + "run"] = 0
 		var cl := UT.cls(ty)
 		var art := cl == UT.CLS_ART
-		_max["a%d" % cl] = maxi(_max["a%d" % cl], UT.stat(ty, "m_damage") if art else UT.stat(ty, "attack"))
-		_max["d%d" % cl] = maxi(_max["d%d" % cl], UT.stat(ty, "defence"))
-		_max["r%d" % cl] = maxi(_max["r%d" % cl], UT.stat(ty, "armour"))
+		_max[pk + "a%d" % cl] = maxi(_max[pk + "a%d" % cl], UT.stat(ty, "m_damage") if art else UT.stat(ty, "attack"))
+		_max[pk + "d%d" % cl] = maxi(_max[pk + "d%d" % cl], UT.stat(ty, "defence"))
+		_max[pk + "r%d" % cl] = maxi(_max[pk + "r%d" % cl], UT.stat(ty, "armour"))
 		var k := "mA" if art else "mF"
-		_max[k] = maxi(_max[k], missile_rating(ty))
+		_max[pk + k] = maxi(_max[pk + k], missile_rating(ty))
 		if UT.stat(ty, "fixed") == 0:
-			_max["run"] = maxi(_max["run"], UT.stat(ty, "run"))
+			_max[pk + "run"] = maxi(_max[pk + "run"], UT.stat(ty, "run"))
 
 
 ## "Attack 3, defence 2, ..." for a hint.

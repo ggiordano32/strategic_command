@@ -1135,6 +1135,19 @@ var t_fall_gain := PackedInt32Array()
 var t_duel := PackedInt32Array()
 var t_unarmed := PackedInt32Array()
 var t_hidden := PackedInt32Array()
+# Firearms (docs/DESIGN.md "Firearms"; _gun_arrays hashed only in battles
+# with a gun unit, gun_on): volleys and their fright.
+var t_m_gun := PackedInt32Array()     # 1: a powder weapon (UT "m_gun")
+var t_m_volley := PackedInt32Array()  # fire at will: no volley beyond this (m_volley_r, else 70 % of the range)
+var t_m_obj := PackedInt32Array()     # bolts: % of a bolt's damage to gates, towers and rams
+var t_m_spread2 := PackedInt32Array() # soldier missiles: scatter growing with the square of the distance
+var gun_on: int = 0                   # some unit fires a gun (static)
+var u_vf_u := PackedInt32Array()      # the volley that last frightened this unit: its unit (-1 none) ...
+var u_vf_t := PackedInt32Array()      # ... and the tick it was fired
+var stat_volleys: int = 0             # gun volleys fired (view: the volley sound)
+var stat_cannon: int = 0              # gun engines' shots (view: the cannon sound)
+var stat_volley_fright: int = 0       # volleys that frightened a unit
+var stat_volley_held: int = 0         # unit-ticks loaded with a target held beyond the volley range
 var stat_ch_aura: int = 0             # unit-seconds in a hero's or diplomat's aura
 var stat_ch_hit: int = 0              # blows struck with a foot hero's to-hit bonus
 var stat_ch_rolls := PackedInt32Array([0, 0, 0, 0])  # battles with characters: blows, hits out of a foot hero's aura; blows, hits in it
@@ -1575,7 +1588,19 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	for arr in _unit_arrays():
 		arr.resize(n_units)
 		arr.fill(0)
-	kty_n = maxi(UT.TYPES.size(), 1)
+	# (The Rome rows only, unless a West row fights: Rome battles hash as before.)
+	kty_n = UT.ROME_N
+	for ud in units:
+		if int(ud["type"]) >= UT.ROME_N:
+			kty_n = UT.TYPES.size()
+	gun_on = 0
+	for ud in units:
+		if t_m_gun[int(ud["type"])] != 0:
+			gun_on = 1
+	for arr in _gun_arrays():
+		arr.resize(n_units)
+		arr.fill(0)
+	u_vf_u.fill(-1)
 	u_kills_ty.resize(n_units * kty_n)
 	u_kills_ty.fill(0)
 	u_walls.resize(n_units * 4)
@@ -1697,6 +1722,8 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		u_ftarget[u] = -1
 		u_shelled_t[u] = -1000
 		u_shelled_by[u] = -1
+		if t_m_gun[ty] != 0 and t_cls[ty] != UT.CLS_ART:
+			u_fire_acc[u] = t_m_reload[ty]  # guns start loaded
 		if t_char[ty] != 0:
 			u_char[u] = t_char_kind[ty]
 			u_hidden[u] = t_hidden[ty]
@@ -1924,6 +1951,11 @@ func _dog_arrays() -> Array:
 	return [u_pack, u_hand, u_kept, u_dogt, u_ret]
 
 
+## Per-unit firearm state (hashed only with gun_on).
+func _gun_arrays() -> Array:
+	return [u_vf_u, u_vf_t]
+
+
 ## The scenario's "chars" (per side a list of {"key": unit key, "name"}, as
 ## an Array of two lists or a Dictionary "0" / "1") as one-man units of
 ## their side, in side order then list order ("ci": its place in the list):
@@ -2063,7 +2095,8 @@ func _load_types() -> void:
 		t_scare_r, t_scare_pct, t_scare_mor, t_fear_r, t_fear_h, t_fear_f, t_burn_pct, t_amok, t_amok_r,
 		t_amok_calm, t_kill_delay, t_gate_w, t_gate_pct, t_cmd_r, t_cmd_mor, t_cmd_rally, t_cmd_loss, t_cmd_loss_r,
 		t_pack_n, t_pack_type, t_pack_r, t_return_r, t_return_t, t_nobreak, t_scare_am, t_as_cav, t_chase, t_m_spen,
-		t_char, t_char_kind, t_ch_r, t_fall_r, t_fall_loss, t_fall_gain, t_duel, t_unarmed, t_hidden]
+		t_char, t_char_kind, t_ch_r, t_fall_r, t_fall_loss, t_fall_gain, t_duel, t_unarmed, t_hidden,
+		t_m_gun, t_m_volley, t_m_obj, t_m_spread2]
 	var keys := ["cls", "attack", "defence", "armour", "shield", "mshield",
 		"damage", "reach", "ranks_reach", "mass", "walk", "run", "hp", "cooldown",
 		"morale", "file_sp", "rank_sp", "turn", "brace", "vs_cav", "charge",
@@ -2076,12 +2109,16 @@ func _load_types() -> void:
 		"scare_r", "scare_pct", "scare_mor", "fear_r", "fear_horse", "fear_foot", "burn_pct", "amok", "amok_r",
 		"amok_calm", "kill_delay", "gate_walls", "gate_pct", "cmd_r", "cmd_mor", "cmd_rally", "cmd_loss", "cmd_loss_r",
 		"pack_n", "pack_type", "pack_r", "return_r", "return_t", "nobreak", "scare_am", "as_cav", "chase", "m_spen",
-		"char", "char_kind", "ch_r", "fall_r", "fall_loss", "fall_gain", "duel", "unarmed", "hidden"]
+		"char", "char_kind", "ch_r", "fall_r", "fall_loss", "fall_gain", "duel", "unarmed", "hidden",
+		"m_gun", "m_volley_r", "m_obj", "m_spread2"]
 	for k in arrays.size():
 		var arr: PackedInt32Array = arrays[k]
 		arr.resize(nt)
 		for t in nt:
 			arr[t] = UT.stat(t, keys[k])
+	for t in nt:
+		if t_m_volley[t] <= 0:
+			t_m_volley[t] = t_m_range[t] * 70 / 100
 	# Riders: cavalry, and any mounted row with a charge (light horse): they
 	# build momentum at the run and charge (the cavalry code path).
 	t_rider.resize(nt)
@@ -8448,6 +8485,9 @@ func _update_bounds() -> void:
 func _update_missiles() -> void:
 	# Fire.
 	for u in n_units:
+		if gun_on != 0 and t_m_gun[u_type[u]] != 0 and u_cls[u] != UT.CLS_ART:
+			_gun_unit(u)  # volleys (engines that are guns shoot in _update_artillery)
+			continue
 		var ft := u_ftarget[u]
 		if ft < 0:
 			continue
@@ -8497,6 +8537,59 @@ func _update_missiles() -> void:
 			pr_next[p] = pr_bucket[b]
 			pr_bucket[b] = p
 		p = nxt
+
+
+## Firearms (docs/DESIGN.md "Firearms"): gun unit u reloads as a body
+## (u_fire_acc counts the ticks up to its m_reload; half speed on the move)
+## and, loaded, fires a volley at its fire target: every man in formation
+## with a charge left fires on the same tick. Foot stand to fire; riders
+## (pistols) fire on the move. Fire at will holds the volley while the
+## target is beyond m_volley_r and not coming on; an attack order on it
+## fires at any range.
+func _gun_unit(u: int) -> void:
+	var ty := u_type[u]
+	var reload := t_m_reload[ty]
+	var acc := u_fire_acc[u]
+	if u_state[u] == U_READY and acc < reload and (u_moved[u] == 0 or (tick & 1) == 0):
+		acc += 1
+		u_fire_acc[u] = acc
+	var ft := u_ftarget[u]
+	if ft < 0:
+		return
+	if u_state[u] != U_READY or u_ammo[u] <= 0 or u_state[ft] >= U_DESTROYED or u_alive[ft] <= 0:
+		u_ftarget[u] = -1
+		return
+	if acc < reload or (u_moved[u] != 0 and t_rider[ty] == 0):
+		return
+	if (u_order[u] != O_ATTACK or u_target[u] != ft) and _unit_dist(u, ft) > t_m_volley[ty] and not _closing(ft, u):
+		stat_volley_held += 1
+		return
+	var ks := u_sk[u]
+	var kstd := t_m_ak[ty]
+	var pref := ks >= 0 and u_akind[u] != 0
+	var base := u_slot_base[u]
+	var shots0 := stat_shots
+	for s in u_alive[u]:
+		var i := slot_soldier[base + s]
+		if state[i] != S_FORMED or ammo[i] <= 0:
+			continue
+		_fire(i, u, ft, ty, _shot_kind(i, ks, kstd, pref))
+		if u_alive[ft] <= 0:
+			break
+	if stat_shots != shots0:
+		u_fire_acc[u] = 0
+		stat_volleys += 1
+
+
+## Unit t is coming on toward unit u: ordered to attack it, or its men
+## moved toward u this tick.
+func _closing(t: int, u: int) -> bool:
+	if u_order[t] == O_ATTACK and u_target[t] == u:
+		return true
+	if u_moved[t] == 0 or u_alive[t] <= 0:
+		return false
+	var j := slot_soldier[u_slot_base[t]]
+	return (pos_x[j] - prev_x[j]) * (u_cx[u] - u_cx[t]) + (pos_y[j] - prev_y[j]) * (u_cy[u] - u_cy[t]) > 0
 
 
 ## The kind soldier i shoots: the one his unit means (pref: its special
@@ -8551,6 +8644,8 @@ func _fire(i: int, u: int, ft: int, ty: int, ak: int = -1) -> void:
 	facing[i] = FM.atan2_a(dy, dx)
 	# Scatter: lateral error, and a larger error along the line of flight.
 	var spread := t_m_spread0[ty] + dist * t_m_spread[ty] / 1000
+	if t_m_spread2[ty] != 0:
+		spread += dist * dist / (100 * M) * t_m_spread2[ty] / 1000  # (a smoothbore: wild beyond its aimed range)
 	if heroed:
 		spread = spread * (100 - t_chv[CV_SPR]) / 100  # a missile hero near: straighter
 		stat_ch_rng += 1
@@ -8740,6 +8835,17 @@ func _missile_hit(p: int, d: int) -> void:
 	var ty := pr_ty[p]
 	var ud := unit_of[d]
 	var td := u_otype[ud]
+	if gun_on != 0 and t_m_gun[ty] != 0 and u_state[ud] == U_READY \
+			and (u_vf_u[ud] != pr_unit[p] or u_vf_t[ud] != pr_t0[p]):
+		# A volley reaches the unit: fright once per volley (riders +50 %).
+		u_vf_u[ud] = pr_unit[p]
+		u_vf_t[ud] = pr_t0[p]
+		var fear := t_m_fear[ty]
+		var mt := t_mount[td]
+		if mt == UT.MOUNT_HORSE or mt == UT.MOUNT_CAMEL or mt == UT.MOUNT_ELEPHANT:
+			fear = fear * 3 / 2
+		u_fright[ud] = mini(u_fright[ud] + fear, FRIGHT_MAX)
+		stat_volley_fright += 1
 	if _rand() % 100 >= MISSILE_HIT:
 		return
 	var from_def := FM.atan2_a(pr_sy[p] - pr_y[p], pr_sx[p] - pr_x[p])
@@ -9888,6 +9994,8 @@ func _art_fire(e: int, u: int, ft: int, ty: int) -> bool:
 		stat_bolts += 1
 	else:
 		stat_stones += 1
+	if t_m_gun[ty] != 0:
+		stat_cannon += 1
 	var spread := t_m_spread0[ty] + dist * t_m_spread[ty] / 1000
 	if heroed:
 		spread = spread * (100 - t_chv[CV_SPR]) / 100
@@ -9940,6 +10048,8 @@ func _art_fire_gate(e: int, u: int, g: int, ty: int) -> bool:
 		stat_bolts += 1
 	else:
 		stat_stones += 1
+	if t_m_gun[ty] != 0:
+		stat_cannon += 1
 	var spread := t_m_spread0[ty] + dist * t_m_spread[ty] / 1000
 	var lat := (_rand() % (spread + 1) + _rand() % (spread + 1)) - spread
 	var lon := ((_rand() % (spread + 1) + _rand() % (spread + 1)) - spread) * 3 / 2
@@ -10097,13 +10207,14 @@ func _sw_insert(v: int, al: int, lt: int) -> void:
 func _land_bolt(p: int) -> void:
 	var k := pr_ak[p]
 	var ob := t_k_obj[k] if k >= 0 else 100
-	if pr_tu[p] <= -2 and _gate_hit(p, GATE_BOLT * ob / 100):
+	var mo := t_m_obj[pr_ty[p]]  # (a gun's roundshot: m_obj % of a bolt's)
+	if pr_tu[p] <= -2 and _gate_hit(p, GATE_BOLT * ob / 100 * mo / 100):
 		return
 	if sg_on != 0:
-		if _tower_hit(p, TOWER_BOLT_DMG * ob / 100):
+		if _tower_hit(p, TOWER_BOLT_DMG * ob / 100 * mo / 100):
 			return  # into the tower's masonry
 		if n_eq > 0:
-			_ram_hit(pr_x[p], pr_y[p], RAM_BOLT_DMG * ob / 100)
+			_ram_hit(pr_x[p], pr_y[p], RAM_BOLT_DMG * ob / 100 * mo / 100)
 	var u := pr_unit[p]
 	var ty := pr_ty[p]
 	var sx := pr_sx[p]
@@ -12114,6 +12225,10 @@ func state_hash() -> int:
 			ctx.update((arr as PackedInt32Array).to_byte_array())
 		ctx.update(ch_sg.to_byte_array())
 		ctx.update(ch_pris.to_byte_array())
+	if gun_on != 0:
+		# Firearms (battles without guns hash as before).
+		for arr in _gun_arrays():
+			ctx.update((arr as PackedInt32Array).to_byte_array())
 	var digest := ctx.finish()
 	return digest.decode_u32(0)
 

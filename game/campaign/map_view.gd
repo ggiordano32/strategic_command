@@ -509,9 +509,10 @@ func _draw() -> void:
 				draw_ford(self, cm[0], cm[1], lw)
 			else:
 				draw_bridge(self, cm[0], cm[1], lw)
-		# Version 6: armies walk the grid; sea lanes join the port cells.
+		# Version 6: armies walk the grid; sea lanes join the port cells (not
+		# in a pack with ships: armies cross on fleets, the lanes are trade data).
 		var px := float(CGrid.cell_px())
-		for pair in CData.SEA_LANES:
+		for pair in ([] if CData.ships_on() else CData.SEA_LANES):
 			var c0 := CGrid.port(CData.region_index(pair[0]))
 			var c1 := CGrid.port(CData.region_index(pair[1]))
 			var p0 := Vector2((CGrid.cx(c0) + 0.5) * px, (CGrid.cy(c0) + 0.5) * px)

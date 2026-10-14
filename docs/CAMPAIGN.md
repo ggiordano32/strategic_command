@@ -1632,6 +1632,176 @@ the stance toggle).
   the ring in version 6. The version 5 aids `--camp-raid`,
   `--camp-intercept`, `--camp-attack` were not adapted.
 
+## Fleets (N1, the West pack; as built 2026-10-14)
+
+DESIGN "The Caribbean pack: ships, pirates, cover, asymmetry", fleets
+paragraph. West only: a pack whose script has `SHIPS`
+(`campaign/data/west.gd` -> `campaign/data/west_ships.gd`) has fleets;
+Rome has none and keeps its sea lanes (no new key in a Rome state, the
+seven building chains, `campaign_sim --seeds=6 --turns=60` hashes
+unchanged: cdc1d805 32b83031 23f9ed4f 3237d82d a42fc685 b6fe6c2e).
+`CState.VERSION` stays 7 (the keys are new and only in West states).
+Code: `campaign/cfleet.gd` (rules), `campaign/cai_fleet.gd` (AI, called
+from `CAI.act`), hooks in `crules.gd` (orders, upkeep, end of turn,
+capture, elimination, `build_info`), `cturn.gd` (voyages in steps 3 and
+5, `preview` returns `fmoves`), `cstate.gd` (`new_campaign` calls
+`CFleet.init`; `carried_army`), `cchars.gd` (characters of an army aboard
+stay with it), `cgrid.gd` (no lane links with ships), `cdata.gd` (`SHIPS`,
+`ships_on`, `ship_rows`, `ship_row`, `ship_const`, `CHAINS` per pack with
+the Shipyard at `SHIPYARD` 7).
+
+- **Ships** (`west_ships.gd` ROWS: cost, upkeep, guns, hull, crew, speed
+  in points a turn on a beam reach, cap in army units, coastal, oars,
+  yard level, factions):
+
+| Ship | Cost | Upkeep | Guns | Hull | Crew | Speed | Carries | Yard | Built by |
+|---|---|---|---|---|---|---|---|---|---|
+| Sloop | 300 | 15 | 8 | 30 | 60 | 400 | 1 | 1 | all but the Itza |
+| Brigantine | 500 | 25 | 14 | 45 | 90 | 370 | 2 | 1 | England, France, Dutch, Brethren |
+| Frigate | 900 | 45 | 30 | 70 | 200 | 340 | 3 | 2 | Spain (both), England, France, Dutch |
+| Galleon | 1400 | 70 | 40 | 110 | 300 | 240 | 6 | 3 | Spain (both) |
+| Ship of the line | 2000 | 100 | 70 | 150 | 500 | 280 | 4 | 3 | England, Dutch |
+| War canoe (coastal, rowed) | 120 | 5 | 2 | 10 | 40 | 300 | 1 | 0 | Itza, Miskito |
+
+  Power of a ship = (guns x 10 + hull + crew / 5) x (hull % + crew %) /
+  200; a fleet's is the sum. Captured ships of other kinds are kept.
+- **Shipyard** chain (West only, a port: a region whose harbour exists):
+  levels 1-3, 500 / 1000 / 1800, 1 / 2 / 3 turns; takes a slot. Start
+  yards (`START_YARDS`, over the slot cap if full): Havana 3, Veracruz 2,
+  Cartagena 3, Portobelo 1, Port Royal 2, Leogane 2, Nouvelle-Orleans 1,
+  Port of Spain 2, Port-de-Paix 1, Cabo Gracias 1.
+- **Sea tables** (`CFleet.ensure`, from the grid, per pack): sea cells of
+  the open sea (the largest connected water: lakes are not), 8-connected
+  (a diagonal needs one orthogonal at sea), distance to land (Chebyshev,
+  cap 3), coastal-water components (canoes), and per region a harbour
+  (the grid's PORT, else the region's coast cell nearest the settlement,
+  at most `HARBOUR_MAX` 4 from it, else none), a dock (the sea cell beside
+  the harbour nearest the settlement: where ships are launched) and a beach
+  (the coast cell nearest the settlement, any distance, not the settlement
+  itself unless nothing else: where landings aim).
+- **State** (West only): `fleets [{id, f, x, y, ships [{t, h, c}], carry
+  [army dicts aboard], moved}]` sorted by id, optional per fleet `dest_x`,
+  `dest_y`, `tgt`, `land` (a stored voyage) and `job` (AI); `next_fleet`;
+  `regions[r].sq` (the ship ordered this turn); `stats.sea_battles`. An army
+  aboard leaves `armies` whole and lives in its fleet's `carry` (so no land
+  rule sees it; upkeep counts it; its characters stay attached). Start
+  fleets (`START_FLEETS`): New Spain galleon + frigate + sloop at Havana,
+  a galleon at Veracruz, a frigate at Santiago; Tierra Firme galleon +
+  frigate at Cartagena, a frigate at Portobelo; England 2 frigates and 2
+  sloops at Port Royal; France frigate and 3 sloops at Leogane, 2 sloops
+  at Nouvelle-Orleans; the Dutch 2 frigates and 2 sloops at Port of Spain;
+  the Brethren 2 brigantines and 3 sloops at Port-de-Paix, 2 sloops at
+  Trujillo; the Itza 2 canoes at Valladolid; the Miskito 3 canoes and a
+  sloop at Cabo Gracias. 13 fleets.
+- **Wind and reach.** `WIND_FROM_DEG` 90 (the trade winds, as
+  `relief_west` / `tools/geo/carib.json`), `WIND_STRENGTH` 80 (kept for
+  N3). A step's cost: 10 straight / 14 diagonal x 100 / `WIND_PCT` by the
+  angle between the heading and the way the wind blows: 0 deg 125 %, 45
+  115, 90 100, 135 75, 180 60 (tacking is in the 60). Integer costs:
+  west 8, NW / SW 12, N / S 10, NE / SE 18, east 16 (diagonals 14 base).
+  A rowed fleet (canoes only) pays 10 / 14 whatever the wind. Full points
+  a turn = the slowest ship's speed; every turn starts full (no carry-over).
+  A frigate from open sea reaches 30+ cells west, 21 east (pack_test).
+  Coastal fleets keep within `COASTAL_CELLS` 2 of land.
+- **Voyages** (`fmove {fleet, x, y, tgt?, persist?}`; `CFleet.plan`): A*
+  as the land search (g = turn x full + spent, octile heuristic at 150 %,
+  at most 8000 nodes, 12 turns), never into the zone (`FLEET_ZONE` 2, the
+  `CGrid.within` circle) of an enemy fleet at war except the target's; a
+  destination inside such a zone is an attack on that fleet; a land cell
+  as destination sails beside it and lands everyone aboard on arriving
+  (refused "nobody aboard to land", "not on the coast", a land at peace).
+  Players' voyages run in step 3 before the armies march, the AI's in
+  step 5 before the AI's marches: paths first, then a step a round by
+  fleet id; a step into an enemy fleet's zone is a sea battle at once and
+  every fleet in it stops. A player's unfinished voyage is stored (persist)
+  and goes on next turn; `fcancel` drops it.
+- **Embark / land.** `embark {army, fleet}`: our army not in a battle or
+  a siege, beside the fleet (Chebyshev 1) or in a settlement whose harbour
+  the fleet lies beside; room aboard (units). `land {fleet, army|-1, x,
+  y}` at once onto a land cell beside the fleet (`land_ok`: passable,
+  enterable, not a hostile settlement, no enemy army on it). A landing
+  ends the army's turn (moved, no points, march dropped, default stance).
+  Armies have no sea lanes in the West (`CGrid.links` empty); the lanes
+  stay as data (`CData.adjacent`, the AI's threat / frontier / diplomacy,
+  `is_port` for coastal battle maps) and are not drawn.
+- **Sea battles (auto-resolve, `CFleet.resolve`).** Sides: the mover and
+  its friendly fleets within the zone of the battle cell against the
+  fleets at war with it there. Power per side (defenders in their own
+  port: x (110 + 15 per walls level) %), each x (85 + rand 31) %; the
+  larger wins (ties: the defender). The winner's share s = W x 100 / (W +
+  L). Each losing ship is lost at 20 + 2 x (s - 50) % (max 95): taken
+  (not canoes) 25 %, by pirates (the Brethren) 60 %, else sunk; a
+  survivor loses 15-39 hull and 10-29 crew. Each winning ship loses (100
+  - s) x 0.6 + 0-9 hull and half that + 0-7 crew. Prizes join the winner's
+  first fleet at 35 % hull and crew. Troops beyond what a fleet's
+  survivors carry drown (last aboard first); a fleet without ships sinks
+  with everyone aboard (events `army_sunk`). The loser's fleets fall back
+  to the farthest sea cell within 5 outside the winners' zones. Event
+  `sea_battle {x, y, att, def, af, df, won, pa, pd, lost [[f, ship, 0
+  sunk / 1 taken]], taken, sunk [[f, army, units]], auto: 1}` (also in the
+  chronicle). Never pending: the server's battle bookkeeping is unchanged
+  (`statemeta.go` reads only `battles`).
+- **End of turn** (`CFleet.end_of_turn`, last in `CRules.end_of_turn`):
+  the ordered ship is launched at the dock (it joins a fleet of ours
+  there, else forms one; event `ship_built`); a fleet within 2 of an own
+  harbour repairs 15 + 10 x Shipyard level hull and crew; at sea crew
+  drops 2 a turn to 40 (scurvy); fleets of dead factions go (also at once
+  on elimination); every fleet may sail again. Upkeep: ships + the units
+  aboard. A captured region drops its ship order.
+- **Other orders:** `ship {r, ship}` (paid at once; one a turn a region;
+  "needs Shipyard n", "your people do not build these", "not a port"),
+  `fmerge {fleet, into}` (beside each other), `scuttle {fleet, ship}`.
+- **AI** (`campaign/cai_fleet.gd`, before the land plans; deterministic):
+  scuttles a ship while in debt; merges empty fleets side by side; builds
+  a Shipyard 1 at its best port when it has none, then at most one ship a
+  turn within the money above its reserve: transports (most places per
+  ship) while its fleets carry fewer than 2 + 2 per army (3-10) units,
+  else warships (most guns) while its fleets are weaker than its
+  strongest enemy's; at most 14 ships. Transport: an army with nothing
+  to do on its landmass (no region there at war with it, or idle 4 turns),
+  not needed to hold its city (`CAI._hold`), 2+ units, that fits a free
+  fleet; beside it the army boards now, else the fleet sails to the coast
+  cell nearest the army (its region's beach or its landmass's nearest
+  friendly beach) and the army marches there (`CAI.fleet_reserved` keeps
+  it out of `_move_grid`). A loaded fleet sails to land by the hostile
+  region with the best value per defence and voyage (troops >= 110 % of
+  `target_defence`, an approach free of enemy zones, at most 8 estimated
+  turns), else at the nearest friendly coast on another landmass with
+  enemies. Empty fleets attack an enemy fleet at war they reach this turn
+  (straight-line estimate) with 140 % of its power; the rest go home to a
+  port of ours when damaged (mean hull < 60 %) or when an enemy fleet of
+  120 % of theirs is within 30 cells. Choices use straight-line estimates;
+  only the chosen voyage is searched.
+- **View** (`game/campaign/`): fleets drawn on the sea by the overlay
+  (`map_overlay.gd` `_fleet_marker`: hull in the faction colour, two
+  sails, the ship count on a pennant, a dot with troops aboard, a white
+  rim for a player's; bobbing and rolling with `SeaWaves.height / normal`
+  at its spot, redrawn about 14 times a second while fleets exist), the
+  selected fleet's reach this turn (an outline over the water), the
+  enemy fleets' zones, planned voyages (this turn solid, later dashed,
+  swords for an attack, a gold dot for a landing). Tap a fleet to select
+  it (the fleet card: ships with hull / crew / guns / places, power,
+  upkeep, pace and the wind, port or scurvy, troops aboard, the voyage
+  with Cancel, Board buttons for armies beside it, Join for a fleet
+  alongside); with ours selected tap the sea to sail, a coast to land, an
+  enemy fleet to attack (the same spot again cancels). With an army of
+  ours selected, tapping our fleet boards it (the army card also has
+  Board buttons). The city panel of a port has "Ships (Shipyard n)": the
+  ship being launched (cancel), the ships it can build with guns /
+  places / pace / upkeep and "+ cost", the fleets in its harbour. The map
+  key shows the fleet marker instead of the sea lane. Sea battles read in
+  the summary and chronicle: "Sea battle off X: A attacked B; A won.
+  Ships lost: ... (Auto-resolved; real-time sea battles come later.)".
+- **Measured** (`campaign_sim --pack=west --seeds=6 --turns=60 --twice`,
+  deterministic): see STATUS "N1 fleets".
+- **Open / later:** N2 (trade by sea, blockades, the flota, pirate havens,
+  plunder, sacking, infamy, letters of marque; a pirate faction surviving
+  while it has a ship: the Brethren are eliminated in every West run, at
+  turns 19-44), N3 real-time sea battles (the formula is to be fitted to
+  them), splitting a fleet, fleet steps in the turn replay (fleets jump),
+  an army marching to board a fleet in one order, the AI escorting its
+  transports.
+
 ## Diplomacy and AI
 
 - Per pair: war, peace, trade; the players are allied for good.

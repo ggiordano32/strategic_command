@@ -52,6 +52,7 @@ const Controls := preload("res://game/controls.gd")
 const OnlineUI := preload("res://game/campaign/online_ui.gd")
 const CoopSession := preload("res://game/net/coop_session.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
+const CFleet := preload("res://campaign/cfleet.gd")
 const MapKey := preload("res://game/campaign/map_key.gd")
 const UiScale := preload("res://game/ui_scale.gd")
 
@@ -71,6 +72,8 @@ var orders: Array = []
 var moves: Array = []          # planned moves [[army, to]]
 var sel_army := -1
 var sel_region := -1
+var sel_fleet := -1            # a fleet (a pack with ships, campaign/cfleet.gd)
+var _wave_redraw := 0.0        # fleets bob on the waves: the overlay redraws a few times a second
 var zoom := 0.6
 var offset := Vector2.ZERO     # screen = map * zoom + offset
 
@@ -1379,7 +1382,7 @@ func dialog_open() -> bool:
 
 func show_side(content_builder: Callable) -> void:
 	# Rebuilt for the same selection: keep the scroll position.
-	var key := ("a%d" % sel_army) if sel_army >= 0 else ("r%d" % sel_region)
+	var key := ("a%d" % sel_army) if sel_army >= 0 else (("f%d" % sel_fleet) if sel_fleet >= 0 else ("r%d" % sel_region))
 	var keep := side_scroll.scroll_vertical if side.visible and key == _side_key else 0
 	_side_key = key
 	_side_gen += 1
@@ -1414,6 +1417,7 @@ func _restore_scroll(sc: ScrollContainer, v: int, gen: int, dlg: bool) -> void:
 func close_side() -> void:
 	side.visible = false
 	sel_army = -1
+	sel_fleet = -1
 	merge_tap = -1
 	sel_region = -1
 	_refresh_map()
@@ -1438,7 +1442,7 @@ func deselect_all() -> void:
 func _update_deselect() -> void:
 	if deselect_button == null:
 		return
-	deselect_button.visible = side.visible or sel_army >= 0 or sel_region >= 0 or merge_tap >= 0
+	deselect_button.visible = side.visible or sel_army >= 0 or sel_region >= 0 or merge_tap >= 0 or sel_fleet >= 0
 
 
 ## Unit book page as a recruitment card: the UnitEntry view with a Recruit
@@ -1462,6 +1466,8 @@ func _refresh() -> void:
 	if side.visible:
 		if sel_army >= 0 and not CState.army(ps, sel_army).is_empty():
 			show_side(func(box): panels.army_panel(box, sel_army))
+		elif sel_fleet >= 0 and not CFleet.fleet(ps, sel_fleet).is_empty():
+			show_side(func(box): panels.fleet_panel(box, sel_fleet))
 		elif sel_region >= 0:
 			show_side(func(box): panels.region_panel(box, sel_region))
 		else:
@@ -1542,6 +1548,8 @@ func _update_hint() -> void:
 		hint.text = "Turn submitted. You can look around; Unsubmit to change your orders."
 	elif not replay.is_empty():
 		hint.text = "Replaying the turn: tap to skip."
+	elif sel_fleet >= 0 and _g():
+		hint.text = "Tap the sea to sail there (shaded: this turn; the wind blows from the east, so westward is fast), a coast to land the troops aboard, an enemy fleet to attack it. Board: select an army beside the fleet and tap the fleet."
 	elif sel_army >= 0 and _g():
 		hint.text = "Tap (or drag the army to) a spot inside the shaded area to march there this turn, further on for later turns; tap an enemy army to attack it, a city to besiege it. Same spot again: cancel."
 	elif _g():
@@ -1912,6 +1920,25 @@ func _refresh_map6() -> void:
 			links.append([sel_army, int(id), 1])
 	else:
 		map_view.set_reach(PackedInt32Array())
+	overlay.selected_fleet = sel_fleet
+	overlay.fleet_paths = []
+	if CFleet.on(ps) and f >= 0:
+		for fl in CFleet.fleets_of(ps, f):
+			var vy := planned_voyage(int(fl["id"]))
+			if int(vy[0]) < 0 and int(vy[1]) < 0:
+				continue
+			var fp := CFleet.plan(ps, f, int(fl["id"]), int(vy[0]), int(vy[1]))
+			if fp.has("why"):
+				continue
+			overlay.fleet_paths.append({"fleet": int(fl["id"]), "path": fp["path"], "t": fp["t"], "land": int(fp["land"]),
+				"attack": 1 if int(fp["tgt"]) >= 0 else 0})
+		var sfl := CFleet.fleet(ps, sel_fleet) if sel_fleet >= 0 else {}
+		overlay.set_sea_reach(CFleet.reach(ps, sfl, 0) if not sfl.is_empty() and int(sfl["f"]) == f else PackedInt32Array())
+		if not sfl.is_empty():
+			var px2 := float(CGrid.cell_px())
+			for e in CFleet.fleets(ps):
+				if CState.at_war(ps, int(sfl["f"]), int(e["f"])):
+					zones.append([MapOverlay.cell_point(CFleet.cell(e)), (sqrt(float(CFleet.FLEET_ZONE * CFleet.FLEET_ZONE + CFleet.FLEET_ZONE)) + 0.5) * px2])
 	overlay.paths6 = paths
 	overlay.zones = zones
 	overlay.links = links
@@ -2104,6 +2131,7 @@ func _step_replay(delta: float) -> void:
 
 func select_army(id: int) -> void:
 	sel_army = id
+	sel_fleet = -1
 	merge_tap = -1
 	var a := CState.army(ps, id)
 	sel_region = -1
@@ -2116,9 +2144,79 @@ func select_army(id: int) -> void:
 func select_region(r: int) -> void:
 	sel_region = r
 	sel_army = -1
+	sel_fleet = -1
 	show_side(func(box): panels.region_panel(box, r))
 	_refresh_map()
 	_update_hint()
+
+
+func select_fleet(id: int) -> void:
+	sel_fleet = id
+	sel_army = -1
+	sel_region = -1
+	merge_tap = -1
+	if not CFleet.fleet(ps, id).is_empty():
+		show_side(func(box): panels.fleet_panel(box, id))
+	_refresh_map()
+	_update_hint()
+
+
+## The planned (or stored) voyage of fleet id: [dest cell, tgt] ([-1, -1] none).
+func planned_voyage(id: int) -> Array:
+	for o in orders:
+		if str(o.get("t", "")) == "fmove" and int(o.get("fleet", -1)) == id:
+			return [CGrid.at(int(o.get("x", -1)), int(o.get("y", -1))), int(o.get("tgt", -1))]
+	var fl := CFleet.fleet(ps, id)
+	if not fl.is_empty() and fl.has("dest_x"):
+		return CFleet.voyage(fl)
+	return [-1, -1]
+
+
+## Order fleet id to sail to cell c (sea, or a coast to land on) or after
+## enemy fleet tgt; the same destination again cancels the voyage.
+func set_fmove(id: int, c: int, tgt: int = -1) -> void:
+	var cur := planned_voyage(id)
+	var had := false
+	var keep: Array = []
+	for o in orders:
+		if str(o.get("t", "")) == "fmove" and int(o.get("fleet", -1)) == id:
+			had = true
+			continue
+		keep.append(o)
+	if (tgt >= 0 and int(cur[1]) == tgt) or (tgt < 0 and c >= 0 and int(cur[0]) == c):
+		if had:
+			set_orders(keep)
+		else:
+			add_order({"t": "fcancel", "fleet": id})
+		return
+	var p := CFleet.plan(ps, f, id, c, tgt)
+	if p.has("why"):
+		AudioFx.play("refused", 0.9, 0.0, "ui")
+		_flash(str(p["why"]).substr(0, 1).to_upper() + str(p["why"]).substr(1) + ".")
+		return
+	var o := {"t": "fmove", "fleet": id, "x": CGrid.cx(c), "y": CGrid.cy(c), "persist": 1}
+	if int(p["tgt"]) >= 0:
+		var tf := CFleet.fleet(ps, int(p["tgt"]))
+		o["tgt"] = int(p["tgt"])
+		o["x"] = int(tf["x"])
+		o["y"] = int(tf["y"])
+	if had:
+		set_orders(keep + [o])
+	else:
+		add_order(o)
+	_t("campaign_input", {"what": "fleet_move"})
+
+
+## Our army id boards our fleet fid (beside it, room aboard).
+func embark(id: int, fid: int) -> void:
+	var why := CFleet.embark_check(ps, f, id, fid)
+	if why != "":
+		AudioFx.play("refused", 0.9, 0.0, "ui")
+		_flash("Cannot board: %s." % why)
+		return
+	if add_order({"t": "embark", "army": id, "fleet": fid}) == "":
+		select_fleet(fid)
+		_t("campaign_input", {"what": "embark"})
 
 
 func focus_region(r: int, z: float = -1.0) -> void:
@@ -2185,6 +2283,11 @@ func _process(delta: float) -> void:
 	if sel_army >= 0 or not moves.is_empty() or not map_view.targets.is_empty():
 		map_view.queue_redraw()
 		overlay.queue_redraw()
+	elif ps.has("fleets"):
+		_wave_redraw += delta
+		if _wave_redraw >= 0.07:  # ships bob on the waves (about 14 redraws a second)
+			_wave_redraw = 0.0
+			overlay.queue_redraw()
 	if not _replay_q.is_empty() and replay.is_empty() and not _blocked():
 		_start_replay()
 	if not replay.is_empty():
@@ -2677,6 +2780,8 @@ func _tap(p: Vector2) -> void:
 ## it (siege, or inside our walls), any land a march there; otherwise a
 ## settlement or region opens its panel, the sea clears the selection.
 func _tap6(p: Vector2) -> void:
+	if CFleet.on(ps) and _tap_fleets(p):
+		return
 	var id := overlay.army_at(p)
 	var sa := CState.army(ps, sel_army) if sel_army >= 0 else {}
 	var mine_sel := not sa.is_empty() and int(sa["f"]) == f and int(sa["busy"]) == 0
@@ -2713,6 +2818,39 @@ func _tap6(p: Vector2) -> void:
 		select_region(r)
 		return
 	close_side()
+
+
+## Fleets (a pack with ships): a tap on a fleet selects it (ours selected:
+## an enemy's is an attack; an army of ours selected: our fleet is boarding
+## it); with our fleet selected a tap on the sea or a coast is a voyage.
+## Returns true when the tap was the fleets'.
+func _tap_fleets(p: Vector2) -> bool:
+	var fid := overlay.fleet_at(p)
+	var sf := CFleet.fleet(ps, sel_fleet) if sel_fleet >= 0 else {}
+	var mine_f := not sf.is_empty() and int(sf["f"]) == f
+	if fid >= 0:
+		var fl := CFleet.fleet(ps, fid)
+		if fid == sel_fleet:
+			close_side()
+			return true
+		if mine_f and CState.at_war(ps, f, int(fl["f"])):
+			set_fmove(sel_fleet, -1, fid)
+			return true
+		var sa := CState.army(ps, sel_army) if sel_army >= 0 else {}
+		if not sa.is_empty() and int(sa["f"]) == f and int(fl["f"]) == f:
+			embark(sel_army, fid)
+			return true
+		select_fleet(fid)
+		_t("campaign_input", {"what": "select_fleet"})
+		return true
+	if mine_f and overlay.army_at(p) < 0:
+		var c := MapOverlay.cell_of_point(_map_point(p))
+		if c >= 0 and (CFleet.is_sea(c) or CGrid.passable(c)):
+			set_fmove(sel_fleet, c)
+			if sel_fleet >= 0 and not CFleet.fleet(ps, sel_fleet).is_empty():
+				show_side(func(box): panels.fleet_panel(box, sel_fleet))
+			return true
+	return false
 
 
 ## What screen point p targets for the selected army: [cell, tgt] (an enemy

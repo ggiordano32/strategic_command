@@ -170,6 +170,33 @@ def explosive_burst():
     return y
 
 
+def musket_volley():
+    """A ragged volley of matchlocks: sharp cracks spread over ~0.35 s on a
+    low thump, then a rolling echo (West slice 2a)."""
+    r = rng("musket")
+    y = np.zeros(int(SR * 1.4))
+    for k in range(26):
+        at = 0.35 * (r.random() ** 1.6)
+        n = noise(r, 0.09)
+        c = band(n, 500, 6000) * env(len(n), 0.0004, 0.018, 5)
+        c += 0.5 * band(noise(r, 0.09), 60, 400) * env(len(n), 0.001, 0.04, 4)
+        place(y, c, at, 0.35 + 0.5 * r.random())
+    place(y, sweep(90, 40, 0.5, 0.002, 4), 0.0, 0.5)
+    roll = band(noise(r, 1.2), 80, 900) * env(int(SR * 1.2), 0.08, 0.9, 3)
+    place(y, roll, 0.05, 0.45)
+    return y
+
+
+def cannon():
+    """A gun's report: a deep boom with a sharp crack and a long rumble."""
+    r = rng("cannon")
+    y = np.zeros(int(SR * 1.5))
+    place(y, sweep(70, 24, 1.3, 0.001, 2.6), 0, 1.0)
+    place(y, band(noise(r, 1.4), 30, 300) * env(int(SR * 1.4), 0.002, 0.6, 2.8), 0, 1.0)
+    place(y, band(noise(r, 0.15), 800, 6000) * env(int(SR * 0.15), 0.0003, 0.03, 5), 0, 0.7)
+    return y
+
+
 def fire_loop():
     r = rng("fire")
     d = 1.5
@@ -380,6 +407,7 @@ CLIPS = {
     "tap": (tap, 0.4), "order_ok": (order_ok, 0.5), "refused": (refused, 0.6), "end_turn": (end_turn, 0.8),
     "turn_resolved": (turn_resolved, 0.6), "battle_pending": (battle_pending, 0.7), "chime": (chime, 0.6),
     "bed_battle": (battle_bed, 0.6), "bed_map": (map_bed, 0.5),
+    "musket": (musket_volley, 0.8), "cannon": (cannon, 0.9),
 }
 
 
@@ -393,9 +421,13 @@ def write(name, x):
 
 
 def main():
+    import sys
+    only = sys.argv[1:]  # clip names: write just these (default: all)
     os.makedirs(OUT, exist_ok=True)
     total = 0
     for name, (fn, peak) in CLIPS.items():
+        if only and name not in only:
+            continue
         x = fn()
         x = x[:int(1.5 * SR)] if not name.startswith("bed") else x
         if not name.startswith("bed") and name != "fire_loop":

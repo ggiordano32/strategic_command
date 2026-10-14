@@ -9,6 +9,7 @@ const Icons := preload("res://game/unit_icons.gd")
 const UIIcons := preload("res://game/ui_icons.gd")
 const WorksLayer := preload("res://game/works_layer.gd")
 const SpriteAtlas := preload("res://game/sprite_atlas.gd")
+const Quality := preload("res://game/quality.gd")
 ## The sprite atlas (loaded, not preloaded: see soldier_layer.gd). Wagons
 ## (carts, wagons, their horses) are drawn from its shade sheet (step 1d
 ## props: fixed colours, no faction mask) by a child node under the
@@ -101,6 +102,25 @@ var _tr_rec := {}                      # slot -> [kind, x, y, radius (sim units)
 var _tr_walk := 0
 var _fx_cell := {}                     # landing cell -> view clock of the last effect there
 var _tr_tick := -1
+# Gun smoke (docs/DESIGN.md "Firearms"; view only, no sim state): each gun
+# missile seen leaving puts a white puff (one per SMOKE_CELL_M cell per
+# volley) in front of the man or engine that fired it, with a muzzle flash
+# for its first frames; the puffs grow, drift with a fixed battle wind and
+# fade over SMOKE_LIFE s. Graphics Low: bigger cells, fewer puffs, one
+# circle each. (Smoke that blocks aim in the sim is a later item.)
+const SMOKE_LIFE := 7.0
+const SMOKE_WIND := Vector2(0.8, -0.35)   # m/s
+const SMOKE_CELL_M := [2.5, 6.0]          # high, low
+const SMOKE_CAP := [280, 70]
+const COL_GUNSMOKE := Color(0.93, 0.93, 0.9)
+var _sm_pos := PackedVector2Array()       # world px where it was made
+var _sm_dir := PackedVector2Array()       # the shot's direction (unit)
+var _sm_age := PackedFloat32Array()
+var _sm_size := PackedFloat32Array()      # 1 a musket's, more for guns
+var _sm_cell := {}                        # cell -> view clock of its last puff
+var _sm_low := false
+var _sm_low_t := -10.0
+var smoke_puffs := 0                      # puffs made (tests, benchmarks)
 var _props: Node2D                     # draws the wagon sprites (behind the overlay's lines)
 var _props_tex: Texture2D
 var _q_moved := {}                     # wagon -> [x, y, tick it last moved]
@@ -120,6 +140,13 @@ func _process(delta: float) -> void:
 			if ResourceLoader.exists(ATLAS_SHADE_PATH) and SpriteAtlas.PROPS.has("wagon"):
 				_props_tex = load(ATLAS_SHADE_PATH) as Texture2D
 		_props.queue_redraw()
+	if _clock - _sm_low_t > 2.0:
+		_sm_low_t = _clock
+		_sm_low = Quality.is_low()
+	for k in _sm_age.size():
+		_sm_age[k] += delta
+	while not _sm_age.is_empty() and _sm_age[0] >= SMOKE_LIFE:
+		_smoke_drop0()
 	var i := 0
 	while i < _fx_kind.size():
 		_fx_age[i] += delta
@@ -133,6 +160,8 @@ func _process(delta: float) -> void:
 	if sim.tick != _tr_tick and sim.pr_bucket.size() > 0:
 		var t0 := Time.get_ticks_usec()
 		_track_missiles()
+		if sim.gun_on != 0:
+			_gun_volleys(clampi(sim.tick - _tr_tick, 1, 30) if _tr_tick >= 0 else 1)
 		fx_trk_us += Time.get_ticks_usec() - t0
 	_tr_tick = sim.tick
 
@@ -174,6 +203,8 @@ func _track_missiles() -> void:
 func _tr_note(p: int) -> void:
 	var ak: int = sim.pr_ak[p]
 	var ty: int = sim.pr_ty[p]
+	if sim.t_m_gun[ty] != 0 and sim.t_cls[ty] == UT.CLS_ART and sim.tick - sim.pr_t0[p] <= 2:
+		_smoke_spawn(p, ty)  # (a gun engine's shot; men's volleys: _gun_volleys)
 	var kind := 0
 	var rad := 0
 	if ak >= 0 and UT.ammo_stat(ak, "fire") > 0:
@@ -193,6 +224,85 @@ func _tr_note(p: int) -> void:
 	if kind != 0:
 		_tr_rec[p] = [kind, sim.pr_x[p], sim.pr_y[p], rad, sim.pr_t0[p]]
 		_tr_live.append(p)
+
+
+## Gun units that fired a volley in the last dt ticks (their reload count
+## restarted: u_fire_acc < dt; read off the sim, so a slow frame that steps
+## several ticks still sees it): a puff in front of each man in formation.
+func _gun_volleys(dt: int) -> void:
+	for u in sim.n_units:
+		var ty: int = sim.u_type[u]
+		if sim.t_m_gun[ty] == 0 or sim.u_cls[u] == UT.CLS_ART or sim.u_alive[u] <= 0 \
+				or sim.u_fire_acc[u] >= dt or sim.u_state[u] != BattleSim.U_READY:
+			continue
+		var a: float = float(sim.u_face[u]) * TAU / 1024.0
+		var d := Vector2(cos(a), sin(a))
+		var base: int = sim.u_slot_base[u]
+		for k in sim.u_alive[u]:
+			var i: int = sim.slot_soldier[base + k]
+			if sim.state[i] == BattleSim.S_FORMED:
+				_smoke_at(to_px(sim.pos_x[i], sim.pos_y[i]), d, false)
+
+
+## A gun engine's missile p (of type ty) has just left: a big puff.
+func _smoke_spawn(p: int, ty: int) -> void:
+	var s := to_px(sim.pr_sx[p], sim.pr_sy[p])
+	var d := to_px(sim.pr_x[p], sim.pr_y[p]) - s
+	d = d.normalized() if d.length_squared() > 0.0 else Vector2.UP
+	_smoke_at(s, d, UT.stat(ty, "cls") == UT.CLS_ART)
+
+
+## A puff of smoke in front of a muzzle at s (direction d), unless this
+## volley already put one in that cell.
+func _smoke_at(s: Vector2, d: Vector2, big: bool) -> void:
+	var at := s + d * px_per_m * (2.0 if big else 1.2)
+	var lo := 1 if _sm_low else 0
+	var cell := Vector2i((at / (px_per_m * float(SMOKE_CELL_M[lo]))).floor())
+	if not big and _sm_cell.get(cell, -10.0) > _clock - 1.0:
+		return
+	_sm_cell[cell] = _clock
+	if _sm_cell.size() > 1024:
+		_sm_cell.clear()
+	while _sm_age.size() >= int(SMOKE_CAP[lo]):
+		_smoke_drop0()
+	_sm_pos.append(at)
+	_sm_dir.append(d)
+	_sm_age.append(0.0)
+	_sm_size.append(3.0 if big else 1.0)
+	smoke_puffs += 1
+
+
+func _smoke_drop0() -> void:
+	_sm_pos.remove_at(0)
+	_sm_dir.remove_at(0)
+	_sm_age.remove_at(0)
+	_sm_size.remove_at(0)
+
+
+func _draw_smoke() -> void:
+	var vr := _view_rect().grow(px_per_m * 20.0)
+	var pm := px_per_m
+	var two := not _sm_low
+	for k in _sm_age.size():
+		var a := _sm_age[k]
+		var f := a / SMOKE_LIFE
+		var sz := _sm_size[k]
+		var p := _sm_pos[k] + SMOKE_WIND * pm * a + Vector2(0, -pm * 0.6 * sz * sqrt(f))
+		if not vr.has_point(p):
+			continue
+		var r := pm * sz * (0.7 + 2.6 * sqrt(f))
+		var al := 0.5 * pow(1.0 - f, 1.4) * minf(1.0, a * 10.0)
+		draw_circle(p, r, Color(COL_GUNSMOKE, al))
+		if two:
+			var o := Vector2(((k * 7) % 5 - 2) * 0.35, ((k * 3) % 5 - 2) * 0.25) * r
+			draw_circle(p + o, r * 0.75, Color(COL_GUNSMOKE, al * 0.8))
+		if a < 0.09:
+			# The muzzle flash (a frame or two).
+			var d := _sm_dir[k]
+			var q := _sm_pos[k] - d * pm * 0.6 * sz
+			var w := Vector2(-d.y, d.x) * pm * 0.35 * sz
+			draw_colored_polygon(PackedVector2Array([q - w, q + d * pm * 1.4 * sz, q + w]), Color(1.0, 0.85, 0.35, 0.95))
+			draw_circle(q, pm * 0.4 * sz, Color(1.0, 0.95, 0.7, 0.9))
 
 
 func _fx_spawn(kind: int, at: Vector2, rad: float) -> void:
@@ -392,6 +502,8 @@ func _draw() -> void:
 		_draw_burning_units(_view_rect())
 	if not _fx_kind.is_empty():
 		_draw_fx(lw)
+	if not _sm_age.is_empty():
+		_draw_smoke()
 	fx_us += Time.get_ticks_usec() - fx0
 	if show_all_orders:
 		_draw_all_orders()

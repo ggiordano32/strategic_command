@@ -64,6 +64,51 @@ const TEMPLATES: Array[String] = ["skirmish", "battle_2000", "test_cav_archers",
 	"test_cav_art", "test_woods", "siege_town", "siege_city"]
 
 
+## Settings (unit packs, UnitTypes.pack_of): the setup's optional "pack"
+## (absent: "rome", so Rome setups are what they always were). The picker
+## shows only the pack's rows, in these lines.
+const PACKS: Array[String] = ["rome", "west"]
+const PACK_NAMES := {"rome": "Rome", "west": "The West"}
+const WEST_LINES: Array[String] = ["musket", "pike", "buccaneer", "heavy", "light", "archer", "cav", "pistol",
+	"light_gun", "field_gun"]
+const WEST_ARMY := [["lancers", 60], ["musketeers", 100], ["w_pikemen", 120], ["musketeers", 100],
+	["rodeleros", 100], ["buccaneers", 60], ["light_gun", 12], ["pistoleers", 60]]
+
+
+static func pack_of(st: Dictionary) -> String:
+	return str(st.get("pack", "rome"))
+
+
+## Switch the setup to pack `pack`: each side's armies become one army of
+## the pack's standard layout (Player 1's at the bottom, the AI's at the top).
+static func set_pack(st: Dictionary, pack: String) -> void:
+	if pack == "rome":
+		st.erase("pack")
+	else:
+		st["pack"] = pack
+	var army: Array = WEST_ARMY if pack == "west" else (default_setup(0)["sides"][0]["armies"][0]["units"] as Array)
+	for s in 2:
+		st["sides"][s]["armies"] = [{"ctrl": "p1" if s == 0 else "ai", "units": army.duplicate(true)}]
+
+
+## The picker's lines for pack `pack` (Rome: the base lines with the light
+## missile troops, beasts, dogs, engines and generals in their places).
+static func picker_lines(pack: String) -> Array:
+	if pack == "west":
+		return WEST_LINES.duplicate()
+	var lines: Array = UT.LINES.duplicate()
+	lines.insert(lines.find("javelin") + 1, "sling")
+	lines.insert(lines.find("sling") + 1, "dogs")  # War Dogs (handlers; the pack comes with them)
+	lines.insert(lines.find("cav") + 1, "cav_missile")
+	lines.insert(lines.find("cav_missile") + 1, "camel")  # Camel Riders
+	lines.insert(lines.find("camel") + 1, "camel_archer")  # Camel Archers
+	lines.insert(lines.find("camel_archer") + 1, "elephant")  # War Elephants
+	lines.insert(lines.find("archer") + 1, "belly_bow")  # Gastraphetes
+	lines.insert(lines.find("bolt"), "light_art")  # Scorpions (before the bolt throwers)
+	lines.append("general")  # the general and his faction variants
+	return lines
+
+
 ## A plain starting setup: two armies of the campaign's standard layout.
 static func default_setup(p_seed: int) -> Dictionary:
 	var army := [["cav", 60], ["heavy", 100], ["pike", 120], ["heavy", 100], ["spear", 100], ["archer", 80],

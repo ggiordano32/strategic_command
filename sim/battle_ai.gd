@@ -729,7 +729,7 @@ static func _issue_line(sim, side: int, plan: Dictionary, cx: int, cy: int, depl
 			pikes.append(u)
 		elif c == UT.CLS_CAV:
 			cav.append(u)
-		elif c == UT.CLS_MISSILE:
+		elif c == UT.CLS_MISSILE and not line_gun(sim.u_type[u]):
 			mis.append(u)
 		elif c == UT.CLS_ART:
 			if UT.stat(sim.u_type[u], "m_kind") == 1:
@@ -845,7 +845,7 @@ static func _issue_line(sim, side: int, plan: Dictionary, cx: int, cy: int, depl
 		else:
 			_move(sim, u, px, py, face, _width(sim, u), 0, seq)
 		seq += 1
-		if sim.u_cls[u] == UT.CLS_MISSILE and sim.u_skirm[u] == 0 and kn[AP.MIS_SKIRM] != 0:
+		if sim.u_cls[u] == UT.CLS_MISSILE and sim.u_skirm[u] == 0 and kn[AP.MIS_SKIRM] != 0 and not line_gun(sim.u_type[u]):
 			_order(sim, u, {"type": ORDER_SKIRMISH, "on": 1}, 20)
 		if deploy:
 			var mode := A_LINE
@@ -862,7 +862,15 @@ static func _issue_line(sim, side: int, plan: Dictionary, cx: int, cy: int, depl
 		_pick_guard(sim, side, bolts[0] if not bolts.is_empty() else stones[0])
 
 
+## Line musketeers (a gun row that does not skirmish by default): they stand
+## in the line beside the pikes, not in front of it, and never skirmish.
+static func line_gun(ty: int) -> bool:
+	return UT.stat(ty, "m_gun") != 0 and UT.stat(ty, "skirm") == 0
+
+
 static func _solidity(ty: int) -> int:
+	if line_gun(ty):
+		return 4  # (pike and shot: next to the pikes)
 	if ty == UT.HEAVY:
 		return 3
 	if ty == UT.SPEAR:
@@ -1455,7 +1463,7 @@ static func _missile_think(sim, u: int, phase: int) -> void:
 	var kn := AP.of(sim, side)
 	if sim.u_fighting[u] > 0:
 		_count(sim, side, AP.C_MISSILE_CAUGHT)
-	if sim.u_skirm[u] == 0 and kn[AP.MIS_SKIRM] != 0:
+	if sim.u_skirm[u] == 0 and kn[AP.MIS_SKIRM] != 0 and not line_gun(sim.u_type[u]):
 		_order(sim, u, {"type": ORDER_SKIRMISH, "on": 1}, 20)
 	if sim.u_forage[u] != 0:
 		return  # making missiles in the woods (the sim stops it if attacked)

@@ -215,6 +215,9 @@ static func new_campaign(p_name: String, p_seed: int, humans: Array, settings: D
 	st["next_proposal"] = 1
 	st["events"] = []
 	st["stats"] = {"battles": 0, "battles_formula": 0, "battles_auto": 0, "battles_fought": 0}
+	if CData.ships_on():
+		# Fleets (a pack with ships; campaign/cfleet.gd, loaded here: it preloads this file).
+		(load("res://campaign/cfleet.gd") as GDScript).call("init", st)
 	return st
 
 
@@ -742,6 +745,16 @@ static func army_index(st: Dictionary, id: int) -> int:
 static func army(st: Dictionary, id: int) -> Dictionary:
 	var i := army_index(st, id)
 	return st["armies"][i] if i >= 0 else {}
+
+
+## An army aboard a fleet (a pack with ships: it leaves "armies" while at
+## sea; campaign/cfleet.gd), {} none.
+static func carried_army(st: Dictionary, id: int) -> Dictionary:
+	for fl in st.get("fleets", []):
+		for a in fl["carry"]:
+			if int(a["id"]) == id:
+				return a
+	return {}
 
 
 static func armies_in(st: Dictionary, r: int) -> Array:

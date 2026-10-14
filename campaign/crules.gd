@@ -103,6 +103,7 @@ const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
 const UT := preload("res://sim/unit_types.gd")
 const CChars := preload("res://campaign/cchars.gd")
+const CFleet := preload("res://campaign/cfleet.gd")
 
 
 # --------------------------------------------------------------- orders ---
@@ -176,6 +177,8 @@ static func apply_order(st: Dictionary, f: int, o: Dictionary) -> String:
 			return _set_stance(st, f, int(o.get("a", -1)), int(o.get("s", 0)))
 		"cancel_move":
 			return _cancel_move(st, f, int(o.get("army", -1)))
+		"ship", "embark", "land", "fmove", "fmerge", "fcancel", "scuttle":
+			return CFleet.apply_order(st, f, o)  # fleets (a pack with ships)
 	return "unknown order"
 
 
@@ -188,6 +191,8 @@ static func build_info(st: Dictionary, f: int, r: int, c: int) -> Dictionary:
 	if int(rs["owner"]) != f:
 		return {"why": "not your region"}
 	var ch: Dictionary = CData.CHAINS[c]
+	if c == CData.SHIPYARD and CFleet.harbour(r) < 0:
+		return {"why": "not a port"}
 	var cur := CState.building(st, r, c)
 	var nxt := cur + 1
 	if nxt > int(ch["levels"]):
@@ -2021,7 +2026,7 @@ static func garrison(st: Dictionary, r: int) -> Array:
 
 static func _garrison_type(f: int, kind: String, tier: int) -> String:
 	var lines: Array = {"spear": ["spear", "pike", "heavy", "light"],
-		"missile": ["archer", "javelin", "light"], "melee": ["heavy", "light", "spear", "pike"]}[kind]
+		"missile": ["archer", "javelin", "musket", "buccaneer", "light"], "melee": ["heavy", "light", "spear", "pike"]}[kind]
 	for t in range(tier, 0, -1):
 		for line in lines:
 			var key := CState.roster_type(f, line, t)
@@ -2175,6 +2180,7 @@ static func _capture(st: Dictionary, r: int, f: int, how: String = "") -> void:
 	rs["queue"] = []
 	rs.erase("qa")
 	rs.erase("cq")
+	rs.erase("sq")
 	var e := {"k": "captured", "r": r, "f": f, "from": old}
 	if how != "":
 		e["how"] = how
@@ -2730,6 +2736,8 @@ static func upkeep(st: Dictionary, f: int) -> int:
 		if int(a["f"]) == f:
 			for unit in a["units"]:
 				u += CState.upkeep_of(CState.unit_type(unit))
+	if st.has("fleets"):
+		u += CFleet.upkeep(st, f)  # ships and the troops aboard
 	return u
 
 
@@ -2831,6 +2839,7 @@ static func end_of_turn(st: Dictionary) -> void:
 			a["mp"] = CState.full_mp(st, a)
 		a["moved"] = 0
 		a["from"] = -1
+	CFleet.end_of_turn(st)  # ships launched, repairs, scurvy (a pack with ships)
 	# Proposals last one turn.
 	var keep_p: Array = []
 	for p in st["proposals"]:
@@ -2962,6 +2971,7 @@ static func check_eliminations(st: Dictionary) -> void:
 			if int(a["f"]) != f:
 				keep.append(a)
 		st["armies"] = keep
+		CFleet.drop_faction(st, f)
 		var kp: Array = []
 		for p in st["proposals"]:
 			if int(p["from"]) != f and int(p["to"]) != f:
@@ -3070,7 +3080,7 @@ static func _check_victory_teams(st: Dictionary) -> void:
 ## orders ...) stay in `events` only.
 const CHRONICLE_KINDS := ["battle", "captured", "destroyed", "eliminated", "war", "peace", "trade", "trade_end",
 	"siege", "siege_lifted", "starving", "victory", "defeat", "team_joined", "team_notice", "team_left",
-	"char_captured", "char_wounded", "ransom"]
+	"char_captured", "char_wounded", "ransom", "sea_battle"]
 const CHRONICLE_TURNS := 60
 
 

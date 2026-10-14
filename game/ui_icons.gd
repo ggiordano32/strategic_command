@@ -22,7 +22,7 @@ const NAMES: Array[String] = [
 	"move", "siege", "assault", "sally", "raid", "inside", "field", "stance_default", "forced_march", "fortify",
 	"merge", "exchange", "recruit", "raise", "disband", "split", "gift", "withdraw", "view_map",
 	"war", "peace", "trade", "trade_end", "alliance", "accept", "decline", "cancel", "close", "buy",
-	"farm", "market", "barracks", "range", "stables", "workshop", "walls", "build", "upgrade",
+	"farm", "market", "barracks", "range", "stables", "workshop", "walls", "build", "upgrade", "shipyard", "ship",
 	"fire", "hold_fire", "skirmish", "run", "deploy", "wall_up", "wall_down", "pick_up", "drop",
 	"victory", "defeat", "draw", "men", "killed", "routed", "captured",
 	"ladder", "ram", "tower", "siege_tower", "mantlet", "gate", "ammo", "forage", "wagon", "kill_beast", "general", "release", "crown", "dagger", "scroll",
@@ -229,6 +229,13 @@ static func _glyph(icon: String, c: Vector2, s: float) -> void:
 	_c = c
 	_s = s
 	match icon:
+		"ship", "shipyard":  # a hull, a mast and two sails (the yard: on a slipway)
+			_pl([-0.85, 0.2, 0.85, 0.2, 0.55, 0.62, -0.55, 0.62], true)
+			_l(0, -0.85, 0, 0.2)
+			_pl([0.1, -0.75, 0.68, 0.08, 0.1, 0.08], true)
+			_pl([-0.1, -0.55, -0.6, 0.08, -0.1, 0.08], true)
+			if icon == "shipyard":
+				_l(-0.95, 0.85, 0.95, 0.85)
 		"treasury":  # a stack of three coins
 			_earc(0, -0.45, 0.75, 0.28, 0, TAU)
 			for k in 2:

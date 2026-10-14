@@ -186,6 +186,26 @@ extends RefCounted
 ##                shoots the men on the wall, and it does not count as a
 ##                battery that batters the gate down (sim/siege_ai.gd)
 
+## Firearms (docs/DESIGN.md "Firearms"; the West pack, slice 2a; generic):
+##   m_gun        1: a powder weapon. A missile unit (foot or rider) fires it
+##                in volleys: every loaded man in formation fires on the same
+##                tick, then the whole unit reloads (m_reload ticks; at half
+##                speed on the move; riders fire on the move, foot do not);
+##                a volley that reaches a unit frightens it once (m_fear,
+##                +50 % on riders; BattleSim gun_on). On artillery rows it
+##                only marks the engine as a gun for the view (smoke, flash,
+##                cannon sound); engines shoot as their m_kind says.
+##   m_volley_r   fire at will: no volley at a target further than this
+##                (0: 70 % of m_range) unless it is coming on or the unit
+##                was ordered to attack it
+##   m_obj        bolts: % of a bolt's damage to gates, towers and rams (a
+##                roundshot breaches what a bolt only chips)
+##   m_spread2    soldier missiles: more scatter, per mille of the distance
+##                per 100 m of it (grows with the square: a smoothbore ball
+##                is fair at 60 m and wild at 100 m)
+## Packs: "pack" (display and pickers only, never read by the sim): "west"
+## for the West pack's rows; absent: "rome". pack_of(ty).
+
 ## Display only (never read by the sim, not hashed): icon (marker / card
 ## symbol, see game/unit_icons.gd), role, desc, good_vs, weak_vs (unit book).
 
@@ -227,6 +247,7 @@ const DEFAULTS := {
 	"char": 0, "char_kind": 0, "char_pct": 0, "ch_r": 0, "au_hit": 0, "au_mor": 0, "au_rng": 0,
 	"au_spr": 0, "au_mom": 0, "au_rally": 0, "au_climb": 0, "au_reload": 0, "au_batter": 0,
 	"au_steady": 0, "fall_r": 0, "fall_loss": 0, "fall_gain": 0, "duel": 0, "unarmed": 0, "hidden": 0,
+	"m_gun": 0, "m_volley_r": 0, "m_obj": 100, "m_spread2": 0,
 }
 ## Character kinds (the "char_kind" field; docs/DESIGN.md "Heroes and agents").
 const CK_FOOT := 1      # Champion: foot units' to-hit and steadiness
@@ -629,7 +650,7 @@ const TIER_DELTA := {
 ## and pikes and least to missile troops, whose numbers are their fire.
 const TIER_PRICE := {"heavy": [135, 190], "light": [140, 180], "spear": [153, 262],
 	"pike": [161, 275], "archer": [122, 128], "javelin": [120, 160], "cav": [147, 210],
-	"cav_missile": [125], "sling": [120]}
+	"cav_missile": [125], "sling": [120], "musket": [125], "pistol": [140]}
 ## Attack and defence gains per line, % of TIER_DELTA: a formed pike wall
 ## multiplies small gains over four ranks of points.
 const TIER_SKILL := {"pike": 50}
@@ -1342,6 +1363,304 @@ const CHARS: Array[Dictionary] = [
 
 
 ## Field of wagon tier w (0 if out of range); "pace" with h horses alive.
+## The West pack's rows (slice 2a, 2026-10-14; "pack": "west"): pike and
+## shot of about 1650 for the Caribbean campaign. Appended after every Rome
+## row (CHARS) so each Rome index, price and battle hash is unchanged
+## (ROME_N: the Rome rows' count). Built like LIGHT_MISSILE (each row its own
+## base, "line" its own), with faction variants in WEST_TIERS. Gun numbers
+## from the brief's yardsticks (a dense block at 60 m: about 30 % of the
+## balls strike; at 100 m about 10 %); the rest copied from the Rome row
+## named in each comment. Sprites map onto existing sets (the set field is
+## full): West art is a later slice.
+const WEST: Array[Dictionary] = [
+	{
+		"key": "musketeers", "line": "musket", "pack": "west", "name": "Musketeers", "short": "Musket",
+		"icon": 4, "sprite": 3, "sprite_set": 5,
+		"size": 100, "files0": 25,
+		"role": "Line infantry with matchlocks",
+		"desc": "Matchlock men in a close line. The whole unit fires one volley, then reloads for twelve seconds: a volley at 60 m drops a dozen men of a dense block, and every volley that lands shakes the unit it strikes (horses most of all). Armour and shields are little use against a ball. By default they hold their fire until the enemy is within about 85 m or coming on. Poor in melee: keep pikes beside them against horse and foot that close.",
+		"good_vs": "Dense blocks and armoured men in the open, cavalry charging their front (volleys shake horses), anything standing in range.",
+		"weak_vs": "Cavalry or swordsmen that reach them, a flank attack, targets behind friends (they need a clear line).",
+		"cls": CLS_MISSILE,
+		"attack": 22, "defence": 18,  # archers 18 / 16: the musket butt and a short sword
+		"armour": 4, "shield": 0, "mshield": 0,  # a buff coat at most
+		"damage": 26, "reach": 1126, "mass": 70,
+		"walk": 140,        # 1.4 m/s: archers' 1.5 less the musket, rest and bandolier
+		"run": 390,         # 3.8 m/s
+		"hp": 85, "cooldown": 11,
+		"morale": 640,      # archers' 640
+		"file_sp": 1126, "rank_sp": 1434,  # a close line, four deep
+		"m_gun": 1,
+		"m_range": 120 * 1024,  # a matchlock's aimed range (the volley rule holds most fire to 84 m)
+		"m_damage": 120,    # a lead ball: a man it strikes is down (a horse about half the time)
+		"m_ap": 85,         # armour keeps out little of a ball
+		"m_spen": 60,       # nor does a shield
+		"m_ammo": 20,       # a bandolier's charges and a pouch of balls
+		"m_reload": 120,    # 12 s a volley
+		"m_spread": 10, "m_spread0": 512,
+		"m_spread2": 135,   # scatter 6 m at 60 m, 15 m at 100 m (an arrow's 4.5 % + 1 m: 5.5 / 5.5 m)
+		"m_speed": 20480,   # 200 m/s: a ball arrives at once
+		"m_arc": 0, "m_apex": 3,  # flat: a clear line past friends and over the ground
+		"m_fear": 60,       # per volley that lands (riders +50 %): stones 60 a shot
+		"m_hgain": 50,
+		"cost": 6,          # 600 a unit (archers 400)
+		"climb": 14,
+	},
+	{
+		"key": "w_pikemen", "line": "pike", "pack": "west", "name": "Pikemen", "short": "Pike",
+		"icon": 3, "sprite": 2, "sprite_set": 3, "copy": "pike",
+		"size": 120, "files0": 20,
+		"role": "Pike block",
+		"desc": "A dense block of 5 m pikes, the musketeers' shield: while formed and facing the enemy no horse or foot gets past the points. A big, slow target for guns; once disordered or flanked they fall back on short swords.",
+		"good_vs": "Cavalry and foot attacking its front, guarding musketeers beside it.",
+		"weak_vs": "Musket volleys and cannon (a deep block is the best target there is), flank and rear attacks, being made to turn.",
+		"cost": 5,
+	},
+	{
+		"key": "buccaneers", "line": "buccaneer", "pack": "west", "name": "Buccaneers", "short": "Buccaneer",
+		"icon": 14, "sprite": 4, "sprite_set": 6,
+		"size": 60, "files0": 15,
+		"role": "Skirmishing marksmen",
+		"desc": "Hunters of Hispaniola's wild cattle with long buccaneer muskets: the best shots in the Indies. They fight in loose order, fire further and truer than any line musketeer but reload slowly, and by default fall back from anything that comes for them. Poor in a stand-up melee.",
+		"good_vs": "Officers, gun crews, cavalry and any dense target at long range; skirmishers.",
+		"weak_vs": "Cavalry that catches them, any melee unit that closes, a long fight.",
+		"cls": CLS_MISSILE,
+		"attack": 28, "defence": 22,  # javelinmen 28 / 22: cutlass and knife
+		"armour": 2, "shield": 0, "mshield": 0,
+		"damage": 30, "reach": 1126, "mass": 70,
+		"walk": 160, "run": 430,  # javelinmen's 4.2 m/s
+		"hp": 85, "cooldown": 10,
+		"morale": 680,      # hard men, but no line
+		"file_sp": 1843, "rank_sp": 2048,  # javelinmen's loose order
+		"skirm": 1,
+		"m_gun": 1,
+		"m_range": 140 * 1024,  # a long hunting musket
+		"m_damage": 130,    # a heavy hunting ball
+		"m_ap": 85, "m_spen": 60,
+		"m_ammo": 24,
+		"m_reload": 180,    # 18 s: careful loading
+		"m_spread": 10, "m_spread0": 512,
+		"m_spread2": 60,    # 45 % of the musketeers': 6.5 m at 100 m, aimed shots
+		"m_speed": 20480,
+		"m_arc": 0, "m_apex": 3,
+		"m_fear": 30,
+		"m_hgain": 60,
+		"cost": 7,          # 420 a unit
+		"climb": 13,
+	},
+	{
+		"key": "rodeleros", "line": "heavy", "pack": "west", "name": "Rodeleros", "short": "Rodelero",
+		"icon": 0, "sprite": 0, "sprite_set": 1,
+		"size": 100, "files0": 25,
+		"role": "Sword and buckler shock foot",
+		"desc": "Spanish sword-and-buckler men in morion and breastplate who duck under the pikes and cut their way into the enemy line. They win most straight fights hand to hand, but their small round shields stop nothing a musket throws.",
+		"good_vs": "Musketeers and pikemen locked in melee, light foot, the flanks of a pike block.",
+		"weak_vs": "Musket volleys at range, cavalry charging their flank, formed pike fronts head on.",
+		"cls": CLS_INF,
+		"attack": 42, "defence": 34,  # heavy swords 40 / 35: quick swordsmen
+		"armour": 12, "shield": 35, "mshield": 40,  # a breastplate; a buckler (heavy swords' big shield 40 / 70)
+		"damage": 40, "reach": 1229, "mass": 85,
+		"walk": 140, "run": 400,
+		"hp": 100, "cooldown": 10,
+		"morale": 860,
+		"cost": 6,
+		"climb": 15,
+	},
+	{
+		"key": "cutlass", "line": "heavy", "pack": "west", "name": "Cutlass Men", "short": "Cutlass",
+		"icon": 1, "sprite": 0, "sprite_set": 1,
+		"size": 100, "files0": 25,
+		"role": "Boarding-party shock foot",
+		"desc": "Pirates with cutlass, axe and pistol in the belt, no armour and no drill: they rush in screaming and win or run. Fast and fierce, poor against a steady front and easy meat for volleys.",
+		"good_vs": "Musketeers and gun crews they reach, light troops, routers.",
+		"weak_vs": "Formed pikes, armoured foot in a long fight, volleys and cavalry in the open.",
+		"cls": CLS_INF,
+		"attack": 40, "defence": 26,  # light infantry 36 / 26
+		"armour": 3, "shield": 10, "mshield": 10,
+		"damage": 40, "reach": 1126, "mass": 70,
+		"walk": 165, "run": 460,
+		"hp": 90, "cooldown": 9,
+		"morale": 700,
+		"cost": 5,
+		"climb": 13,
+	},
+	{
+		"key": "lancers", "line": "cav", "pack": "west", "name": "Lancers", "short": "Lancers",
+		"icon": 6, "sprite": 5, "sprite_set": 4,
+		"size": 60, "files0": 15,
+		"role": "Light lance cavalry",
+		"desc": "Spanish and Mexican lancers on quick horses. A charge at full speed is as deadly as any heavy horse's into a flank, a rear or a battery, and they ride down routers and skirmishers. Little armour: volleys and pikes cost them dearly.",
+		"good_vs": "Musketeers and gun crews caught in the open or the flank, skirmishers, routers.",
+		"weak_vs": "Pike fronts, musket volleys from the front, a long melee.",
+		"cls": CLS_CAV, "mount": MOUNT_HORSE,
+		"attack": 36, "defence": 26,  # shock cavalry 36 / 28
+		"armour": 6, "shield": 10, "mshield": 10,
+		"damage": 34, "reach": 2048, "mass": 380,
+		"walk": 220, "run": 860,
+		"hp": 140, "cooldown": 10,
+		"morale": 740,
+		"file_sp": 2048, "rank_sp": 3072,
+		"charge": 75,       # shock cavalry 70: the lance at full gallop
+		"turn": 18,
+		"m_vuln": 120, "m_down": 9,
+		"cost": 9,
+		"climb": 24,
+	},
+	{
+		"key": "pistoleers", "line": "pistol", "pack": "west", "name": "Pistoleers", "short": "Pistols",
+		"icon": 13, "sprite": 5, "sprite_set": 4,
+		"size": 60, "files0": 15,
+		"role": "Pistol cavalry",
+		"desc": "Riders with a brace of pistols. Charging, they fire both barrels' first volley at about 25 m and crash in after it, the volley shaking the target just before the impact; then they fight with the sword. Two shots each, so a second pass needs a reload away from the fight.",
+		"good_vs": "Musketeers and crews, cavalry they shoot before contact, the flanks of engaged units.",
+		"weak_vs": "Pike fronts, musket volleys from a steady line, heavy cavalry head on.",
+		"cls": CLS_CAV, "mount": MOUNT_HORSE,
+		"attack": 32, "defence": 28,
+		"armour": 8, "shield": 0, "mshield": 0,
+		"damage": 30, "reach": 1638, "mass": 400,
+		"walk": 215, "run": 820,
+		"hp": 150, "cooldown": 10,
+		"morale": 740,
+		"file_sp": 2048, "rank_sp": 3072,
+		"charge": 55,       # shock cavalry 70: the sword, not the lance
+		"turn": 16,
+		"m_vuln": 120, "m_down": 9,
+		"m_gun": 1,
+		"m_range": 25 * 1024,  # a wheel-lock pistol: point blank
+		"m_damage": 90, "m_ap": 80, "m_spen": 50,
+		"m_ammo": 2,        # a brace of pistols
+		"m_reload": 40,     # the second pistol from the holster
+		"m_spread": 120, "m_spread0": 512,
+		"m_speed": 20480, "m_arc": 0, "m_apex": 3,
+		"m_fear": 40,
+		"cost": 10,         # 600 a unit, shock cavalry's
+		"climb": 24,
+	},
+	{
+		"key": "native_warriors", "line": "light", "pack": "west", "name": "Warriors", "short": "Warriors",
+		"icon": 1, "sprite": 0, "sprite_set": 1,
+		"size": 100, "files0": 25,
+		"role": "Fast shock foot",
+		"desc": "Maya and Miskito warriors with obsidian-edged clubs, spears and cotton armour: fast through the forest and fierce in a rush, but no match for a volley in the open or a steady pike front.",
+		"good_vs": "Musketeers and gunners caught reloading, skirmishers, flanks; any fight in the woods.",
+		"weak_vs": "Volleys and cannon in the open, formed pikes, cavalry.",
+		"cls": CLS_INF,
+		"attack": 38, "defence": 24,  # light infantry 36 / 26
+		"armour": 2, "shield": 15, "mshield": 25,
+		"damage": 36, "reach": 1229, "mass": 65,
+		"walk": 175, "run": 480,  # light infantry 4.4 m/s
+		"hp": 85, "cooldown": 9,
+		"morale": 620,
+		"cost": 4,
+		"climb": 11,
+		"woods_pct": 60,    # at home in the forest
+	},
+	{
+		"key": "native_bowmen", "line": "archer", "pack": "west", "name": "Bowmen", "short": "Bowmen",
+		"icon": 4, "sprite": 3, "sprite_set": 5, "copy": "archer",
+		"size": 80, "files0": 20,
+		"role": "Missile infantry",
+		"desc": "Native archers who shoot over friends and through the canopy. Arrows do little against breastplates but tell on unarmoured men and horses; by default they fall back from melee.",
+		"good_vs": "Light troops, buccaneers and gun crews, horses in the open.",
+		"weak_vs": "Musketeers (who outrange nothing but hit far harder), cavalry, armoured foot.",
+		"m_range": 120 * 1024,  # archers 140 m: lighter bows
+		"skirm": 1,
+		"woods_pct": 60,
+		"cost": 4,
+	},
+	{
+		"key": "light_gun", "line": "light_gun", "pack": "west", "name": "Light Guns", "short": "Falconets",
+		"icon": 18, "sprite": 6, "sprite_set": 12, "engine_set": 13,
+		"size": 12, "files0": 4,
+		"role": "Light artillery (falconets)",
+		"desc": "Four small bronze guns on light carriages, three gunners each. A roundshot flies flat and fast and bounds on through the ranks behind, killing a file of men; every shot that lands shakes the unit it strikes. They need a clear line past friends and over the ground, cannot fire on the move and take a while to limber and unlimber. Gunners are poor fighters.",
+		"good_vs": "Pike blocks and deep columns shot along their depth, cavalry standing in range, enemy gunners.",
+		"weak_vs": "Cavalry and foot that reach them, targets behind friends or a crest.",
+		"cls": CLS_ART,
+		"attack": 14, "defence": 14, "armour": 3, "shield": 0, "mshield": 0,  # Bolt Throwers' crews
+		"damage": 22, "reach": 1024, "mass": 70,
+		"walk": 100,        # 1 m/s with the guns hauled (Bolt Throwers 0.8)
+		"run": 400,
+		"hp": 75, "cooldown": 12, "morale": 450,
+		"file_sp": 6 * 1024, "rank_sp": 1229,
+		"turn": 3,
+		"crew": 3, "crew_min": 2,
+		"m_gun": 1,
+		"m_kind": 1,
+		"m_range": 300 * 1024,
+		"m_min": 10 * 1024,
+		"m_damage": 230,    # a roundshot's energy (bolt 120): kills through a file of men
+		"m_ap": 90,
+		"m_ammo": 14, "m_reserve": 14, "m_refill": 60,
+		"m_reload": 250,    # 25 s a shot at full crew
+		"m_spread": 14, "m_spread0": 400,
+		"m_speed": 25600,   # 250 m/s
+		"m_arc": 0, "m_apex": 2,
+		"m_pierce": 6,
+		"m_plough": 30 * 1024,  # the ball bounds on 30 m past the aim point
+		"m_fear": 55,       # per shot that lands (bolt 22, stone 60)
+		"m_obj": 200,       # gates and towers: twice a bolt
+		"arc": 71, "traverse": 3,
+		"deploy": 80,       # 8 s to unlimber, 4 s to limber
+		"e_hp": 200,
+		"cost": 30,         # 360 a unit (Bolt Throwers 400)
+		"climb": 35,
+		"m_hgain": 60,
+	},
+	{
+		"key": "field_gun", "line": "field_gun", "pack": "west", "name": "Culverins", "short": "Culverins",
+		"icon": 7, "sprite": 6, "sprite_set": 12, "engine_set": 13,
+		"size": 12, "files0": 3,
+		"role": "Field artillery (culverins)",
+		"desc": "Three long iron culverins, four gunners to each: the heaviest guns that take the field. A roundshot carries 450 m and ploughs on through eight men; it breaches gates and walls. Very slow to reload, to move and to set up; gunners are poor fighters.",
+		"good_vs": "Pike blocks and columns, batteries, gates and walls, anything standing in its long range.",
+		"weak_vs": "Cavalry and foot that reach it, targets behind friends or a crest, a war of movement.",
+		"cls": CLS_ART,
+		"attack": 14, "defence": 14, "armour": 3, "shield": 0, "mshield": 0,
+		"damage": 22, "reach": 1024, "mass": 70,
+		"walk": 60,         # 0.6 m/s: oxen and men on the drag ropes
+		"run": 400,
+		"hp": 75, "cooldown": 12, "morale": 450,
+		"file_sp": 9 * 1024, "rank_sp": 1229,
+		"turn": 2,
+		"crew": 4, "crew_min": 2,
+		"m_gun": 1,
+		"m_kind": 1,
+		"m_range": 450 * 1024,
+		"m_min": 15 * 1024,
+		"m_damage": 320,
+		"m_ap": 95,
+		"m_ammo": 12, "m_reserve": 12, "m_refill": 80,
+		"m_reload": 400,    # 40 s a shot at full crew
+		"m_spread": 12, "m_spread0": 500,
+		"m_speed": 30720,   # 300 m/s
+		"m_arc": 0, "m_apex": 2,
+		"m_pierce": 8,
+		"m_plough": 50 * 1024,
+		"m_fear": 80,
+		"m_obj": 450,       # a gate: 360 a hit (a stone 360, a bolt 80)
+		"arc": 57, "traverse": 2,
+		"deploy": 180,      # 18 s to set up (stone thrower 12 s)
+		"e_hp": 320,
+		"cost": 40,         # 480 a unit
+		"climb": 50,
+		"m_hgain": 80,
+	},
+]
+## Faction variants of the WEST rows ("of": the row's key), built like
+## LIGHT_MISSILE_TIERS (TIER_DELTA, TIER_PRICE of the line, "add", "price_add").
+const WEST_TIERS: Array[Dictionary] = [
+	{"key": "musketeers2", "of": "musketeers", "tier": 2, "name": "Veteran Musketeers", "short": "Vet Musket",
+		"blurb": "Old soldiers of the European wars who load faster and stand their ground.",
+		"add": {"m_reload": -20, "m_spread2": -15}},
+	{"key": "w_pikemen2", "of": "w_pikemen", "tier": 2, "name": "Veteran Pikemen", "short": "Vet Pike",
+		"blurb": "Tercio veterans who keep the hedge of points steady under fire."},
+	{"key": "cuirassiers", "of": "pistoleers", "tier": 2, "name": "Cuirassiers", "short": "Cuirassiers",
+		"blurb": "Pistol riders in three-quarter armour on heavy horses.",
+		"add": {"armour": 6, "mass": 40, "charge": 10, "run": -30}, "price_add": 10},
+]
+
+
 static func wagon_stat(w: int, field: String) -> int:
 	if w < 0 or w >= WAGONS.size():
 		return 0
@@ -1361,6 +1680,8 @@ static var _by_key := {}
 ## Indices of the siege types (after the tier rows).
 static var TOWER_BOLT: int = BASE.size() + TIERS.size()
 static var TOWER_STONE: int = BASE.size() + TIERS.size() + 1
+## The Rome rows' count: every row before the West pack's (WEST, WEST_TIERS).
+static var ROME_N: int = TYPES.size() - WEST.size() - WEST_TIERS.size()
 
 
 static func _build_types() -> Array[Dictionary]:
@@ -1455,6 +1776,28 @@ static func _build_types() -> Array[Dictionary]:
 			for t2 in range(first, out.size()):
 				if str(out[t2]["key"]) == str(out[t]["pack_key"]):
 					out[t]["pack_type"] = t2
+	# The West pack's rows (after every Rome row: ROME_N).
+	first = out.size()
+	for wr in WEST:
+		var row: Dictionary = {}
+		if wr.has("copy"):
+			var c := 0
+			while str(out[c]["key"]) != str(wr["copy"]):
+				c += 1
+			row = out[c].duplicate()
+		for k in wr:
+			if k != "copy":
+				row[k] = wr[k]
+		row["base"] = out.size()
+		row["tier"] = 1
+		row["price"] = int(row["cost"]) * int(row["size"])
+		out.append(row)
+	for t in WEST_TIERS:
+		var b := first
+		while str(out[b]["key"]) != str(t["of"]):
+			b += 1
+		var br: Dictionary = out[b]
+		out.append(_derived(br, b, str(br["line"]), int(br["size"]), t))
 	return out
 
 
@@ -1543,6 +1886,11 @@ static func text(ty: int, key: String) -> String:
 
 static func cls(ty: int) -> int:
 	return stat(ty, "cls")
+
+
+## The content pack a row belongs to ("rome" or "west"). View and pickers only.
+static func pack_of(ty: int) -> String:
+	return str(TYPES[ty].get("pack", "rome"))
 
 
 ## ------------------------------------------------------ ammunition kinds ---
