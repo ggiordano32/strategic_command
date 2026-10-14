@@ -2448,6 +2448,10 @@ func _after_battle_refresh() -> void:
 func _set_visible(on: bool) -> void:
 	world.visible = on
 	overlay.visible = on
+	# The miniatures and the table frame switch themselves on each frame;
+	# their canvas layers hide them while a battle is open.
+	(minis.get_parent() as CanvasLayer).visible = on
+	(table_frame.get_parent() as CanvasLayer).visible = on
 	ui.visible = on
 	set_process_unhandled_input(on)
 
