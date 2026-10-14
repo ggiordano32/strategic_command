@@ -1172,6 +1172,18 @@ wars are a balance question for later. Next slices: firearms (volley,
 smoke, cover / line of sight), naval movement and ships (the ocean's CPU
 wave twin), West units and sprites.
 
+**Slice 2a, firearms + first West units (started 2026-10-14, user
+approved the order firearms -> naval / ships -> West units and sprites):**
+flat gun missile (`m_gun`: high armour / shield penetration, range falloff),
+volleys (a unit fires as a body, holds fire beyond ~70 % of range), volley
+fright via `m_fear` (cavalry +50 %), smoke and muzzle flash view-only (sim
+smoke obscuring aim later), pistol cavalry, light and field guns on the
+bolt engine path, West rows (musketeers, pikemen, buccaneers, rodeleros,
+lancers, pistoleers / cuirassiers, native warriors and bowmen, guns) with
+a `pack` field; West rosters switch to them; pickers show the active
+pack's rows. Sprites map onto existing sets (the set field is full). Rome
+byte-identical. Slice 2b: cover and line of sight.
+
 ## Next session (week of 2026-10-13; paused 2026-10-10 midday)
 
 - **Update, 2026-10-10 evening (hold here):** the user resumed; landed
