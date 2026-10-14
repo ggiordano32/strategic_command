@@ -1493,7 +1493,10 @@ the battle kit) placed and rotated on the terrain from a per-town plan
 that knows slope and coast, instead of whole sprites. About 2-3 builds.
 Done when: a gallery of all 49 Caribbean towns at 3 zooms, no harbour
 away from water, no patch edges, no zoom hitch > 16 ms.
-**Also queued (user): better firearm smoke** (volley smoke today is flat
+**Queued after the towns: the pirate story campaign** (DESIGN "Story
+campaign: The Brethren's Due", agreed 2026-10-14: swashbuckling with a dark
+edge, ~45 turns, three endings, co-op optional; 4-5 builds).
+**Done 2026-10-14 (00fc498): better firearm smoke** (volley smoke today is flat
 puffs in game/overlay.gd: wanted thick billowing banks that roll and drift
 with the wind, lit from the NW, darker cores, muzzle flash with a short
 flame tongue, lingering haze over a long firefight; cheap on Low).

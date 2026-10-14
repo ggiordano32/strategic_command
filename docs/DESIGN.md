@@ -4296,6 +4296,86 @@ minutes.
   shore units, fire ships, the formula fitted to these results, sea battle
   art (the miniatures at headings), sounds of the sea.
 
+### Story campaign: "The Brethren's Due" (agreed 2026-10-14, not built)
+
+A single-player (co-op optional) story campaign on the Caribbean pack that
+teaches how the world works through events the player must answer, not
+"go here, do this" tasks. Agreed with the user: **swashbuckling with a dark
+edge**, **about 45 turns** (4-6 hours), **three endings**, **co-op as an
+option**.
+
+**Premise (c. 1665).** You are a pirate crew's quartermaster; turn 1 opens
+the morning your captain, Josiah Vane, is hanged at Port Royal. The crew
+votes you captain and you slip out on one battered sloop with a Spanish
+guardacosta on your tail. Hidden goal: Vane's dying words of "a free port
+where no flag but ours flies" -- a pirate republic the nations must
+recognise (after Nassau, 1706-18), revealed only in Act 3, foreshadowed by
+the pages of Vane's logbook.
+
+**Characters (they talk the player through the game).** Mercy Teague, the
+quartermaster: blunt, the crew's voice (plunder, shares, morale, mutiny;
+"The crew votes, Captain. Remember that."). Isaac Lindo, a Port Royal fence
+and fixer: smooth, amoral (selling plunder, the letter of marque,
+diplomacy; whose side is he on?). Josiah Vane, dead: his logbook pages
+teach sailing and the wind and reveal the goal.
+
+**Antagonists.** Don Rodrigo de Mendoza, admiral of the Armada de
+Barlovento (Spain's real anti-pirate Windward Fleet): patient, honourable,
+personal once you take his treasure; his patrols grow with infamy.
+Governor Sir Thomas Ashby of Jamaica: the patron who issues your letter of
+marque and sells you out when England makes peace with Spain (the real
+Treaty of Madrid, 1670). "Le Boucher" Jean-Baptiste Nau (after
+L'Olonnais): a cruel, charismatic rival for crews and fame whose
+atrocities bring Spanish reprisals on every pirate.
+
+**Beats.** Prologue (turns 1-4, the tutorial): the chase (run west with
+the wind or turn and fight: sailing, a first sea battle), the hungry crew
+(a prize or a fishing village: plunder and shares), Tortuga (the first
+haven: crews). Act 1 "Brethren" (5-15): the crew's purse pressure
+(grumbling, desertion, mutiny threat), hurricane season (shelter or risk an
+unguarded prize), Le Boucher's massacre brings a Spanish punitive raid on
+Tortuga (defend the haven: a land battle), then hunt him or join him.
+Act 2 "The Commission" (15-30): Lindo brokers Ashby's letter of marque
+(English ports, plunder bonuses); the flota at Havana (build a real
+fleet, ally the Miskito and other captains); Mendoza's Armada hunts you
+and blockades your havens; midpoint twist: peace between England and
+Spain, the letter revoked, Port Royal shut, a price on your head (escape
+the harbour under fire if you are there). Act 3 "The Free Port" (30-45):
+the goal revealed (hold a fortified haven for N turns, a fleet able to
+beat the Armada, enough plunder to buy recognition); the Brethren council
+(persuade, buy or beat the rival captains, Le Boucher if alive); the great
+raid on Cartagena or Panama to fund it (forts, street fighting); the
+finale: Mendoza's Armada attacks the free port, a combined sea and harbour
+battle. Endings: **the Republic** (you hold), **the Pardon** (take the
+King's pardon and betray the Brethren to Ashby: rich, safe, despised),
+**the Legend** (you go down fighting; the chronicle sings of it).
+
+**Pressures, not quests.** The screen shows running pressures instead of a
+quest log: the crew's purse (turns since plunder), the Armada's attention
+(infamy), patron favour, the hurricane season clock, haven safety. Events
+fire when they cross thresholds or when the scripted actors move. An event
+arrives as news with 2-3 responses and consequences ("A Spanish frigate
+lies careened at Isla de Pinos, helpless. Mercy wants her; Lindo says it is
+bait."). Characters speak on first sight of a mechanic, when a pressure
+rises and after big results: they react, they do not assign. Le Boucher,
+Mendoza and the flota act on their own clocks, so the player is always
+answering someone else's move.
+
+**Co-op (optional).** The partner is a second captain of the same
+Brethren: their own ships and crew, one shared story. Story choices are a
+**crew vote** between the two captains (agree: it passes; disagree: Mercy
+calls the vote by each captain's fame and crew, and the loser's crew
+grumbles). The endings can split: one captain may take the Pardon and
+betray the other, who fights on (the dark edge).
+
+**Build (later; about 4-5 steps).** A scripted West campaign: a fixed
+start state; a data-driven event system (conditions on the state, choices,
+effects) that is deterministic and in the campaign rules, so it works
+online and in co-op; a dialogue panel with portraits; the pressure
+display; the scripted actors (Le Boucher, Mendoza's Armada, Ashby's
+favour) as AI factions with story hooks. Everything else reuses the
+existing systems.
+
 ### Overworld: real geography and the landscape layer (as built, 2026-10-10)
 
 ## STATUS row
