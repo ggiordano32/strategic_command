@@ -66,6 +66,7 @@ var dg_all := {}              # the same summed over the seeds, per watched fact
 var bu_all := {}              # faction -> build-up sums over the seeds (_buildup)
 var built := []               # buildings finished per chain (this seed)
 var char_ev := {}             # heroes and agents (this seed): raised / wounded / captured / ransom gold
+var elim_all := {}            # faction -> turns it was eliminated, over the seeds
 var at40 := [0, 0, 0]         # over the seeds: factions with 4+ regions at turn 40, with a Range 2, with a Workshop 1
 const DG_KEYS: Array[String] = ["field_att_won", "field_att_lost", "field_def_won", "field_def_lost", "town_att_won",
 	"town_att_lost", "town_def_won", "town_def_lost", "siege_fights_won", "siege_fights_lost", "gained", "gained_surrender",
@@ -126,6 +127,11 @@ func _init() -> void:
 	print("\npacing (format %d): seed | largest at 15 / 30 / 60 | eliminated by 60 | first win (20 regions, 3 key cities) | battles | field | mustering refusals | ms/turn mean max" % fmt)
 	for row in pacing:
 		print("  " + str(row))
+	print("\nsurvival over the seeds: faction | eliminated in N of %d seeds | at turns (sorted)" % seeds)
+	for f in CState.nf():
+		var ts: Array = elim_all.get(f, [])
+		ts.sort()
+		print("  %s | %d | %s" % [short[f], ts.size(), str(ts)])
 	if not watch.is_empty():
 		print("\nfactions with a skill set: seed | faction skill | regions at 15 / 30 / 60 | eliminated at turn")
 		for w in watch:
@@ -184,7 +190,10 @@ func _run(sd: int, verbose: bool) -> String:
 		var tr_max := -(1 << 30)
 		var t_total := 0
 		var t_max := 0
+		var dead_at := {}  # faction -> turn eliminated (every faction)
+		var crossings := 0  # armies that ended a turn on another landmass (sea lanes)
 		for t in turns:
+			var land0 := _army_lands(st)
 			var t0 := Time.get_ticks_usec()
 			st = CTurn.resolve_turn(st, [])
 			var us := Time.get_ticks_usec() - t0
@@ -196,6 +205,13 @@ func _run(sd: int, verbose: bool) -> String:
 					tr_max = maxi(tr_max, int(st["factions"][f]["treasury"]))
 			_count_sieges(st, t)
 			_tally(st, t)
+			var land1 := _army_lands(st)
+			for id in land0:
+				if land1.has(id) and int(land1[id]) != int(land0[id]):
+					crossings += 1
+			for f in CState.nf():
+				if not dead_at.has(f) and not CState.alive(st, f):
+					dead_at[f] = int(st["turn"])
 			var big := 0
 			for f in CState.nf():
 				var n := CState.regions_of(st, f).size()
@@ -232,6 +248,14 @@ func _run(sd: int, verbose: bool) -> String:
 		print("eliminated: %s | treasury range %d..%d | battles %d | turn time mean %.1f ms max %.1f ms | hash %s" % [
 			str(elim), tr_min, tr_max, int(st["stats"]["battles"]), t_total / 1000.0 / turns, t_max / 1000.0,
 			CState.hash_text(st)])
+		var dl: Array = []
+		for f in CState.nf():
+			if dead_at.has(f):
+				dl.append("%s %d" % [short[f], int(dead_at[f])])
+				if not elim_all.has(f):
+					elim_all[f] = []
+				elim_all[f].append(int(dead_at[f]))
+		print("eliminated at turn: %s | sea crossings (an army ended a turn on another landmass): %d" % [", ".join(dl), crossings])
 		_buildup(st)
 		var open_now: Array = []
 		for x in st.get("sieges", []):
@@ -286,6 +310,14 @@ static func _faction(v: String) -> int:
 
 ## Battles and captures of the watched factions in the turn just resolved
 ## (events of turn t).
+## Army id -> landmass of its region (sea crossings in the report).
+func _army_lands(st: Dictionary) -> Dictionary:
+	var out := {}
+	for a in st["armies"]:
+		out[int(a["id"])] = int(CData.REGIONS[int(a["r"])]["land"])
+	return out
+
+
 func _tally(st: Dictionary, t: int) -> void:
 	for e in st["events"]:
 		if int(e["turn"]) != t:

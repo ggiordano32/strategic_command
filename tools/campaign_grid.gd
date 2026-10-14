@@ -38,6 +38,11 @@ extends SceneTree
 ## Geo.use_pack; reads campaign/data/<pack>_elev_data.gd, writes
 ## campaign/data/<pack>_grid_data.gd; the file must exist (a stub is enough
 ## the first time, the pack's west.gd preloads it). Default: rome.
+## A pack other than Rome may leave a landmass in several land components
+## when each one is reached by sea (the West's Gulf coast: New Orleans,
+## Pensacola and St Augustine, cut off from Mexico by unclaimed land): every
+## region's cells lie in its settlement's component and every component
+## holds a port on a sea lane (_sea_split_ok). Rome keeps the strict check.
 ## --check: build and compare with the checked-in file (exit 1 if different).
 
 const Geo := preload("res://game/campaign/map_geo.gd")
@@ -47,6 +52,7 @@ var OUT := "res://campaign/data/grid_data.gd"
 const SEA := "."
 const WILD := ","
 var cell := 20
+var pack := "rome"
 var w := 0
 var h := 0
 var reg: PackedInt32Array = []   # -1 sea, -2 wild, else region
@@ -63,7 +69,6 @@ const DY: Array[int] = [-1, -1, 0, 1, 1, 1, 0, -1]
 func _init() -> void:
 	var check := false
 	var png := ""
-	var pack := "rome"
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--pack="):
 			pack = a.get_slice("=", 1)
@@ -260,7 +265,9 @@ func build() -> String:
 		for i in n:
 			if reg[i] >= 0 and mass[i] == k:
 				seen[comp2[i]] = 1
-		if seen.size() > 1:
+		if seen.size() > 1 and _sea_split_ok(comp2, k, sites, seen.size()):
+			pass
+		elif seen.size() > 1:
 			var sizes2 := {}
 			for i in n:
 				if reg[i] >= 0 and mass[i] == k:
@@ -301,6 +308,50 @@ func build() -> String:
 	if not _terrain():
 		return ""
 	return _emit(sites, ports, camps)
+
+
+## A landmass k split into several land components (pack other than Rome):
+## fine when every region of k has all its cells in its settlement's
+## component and every component holding region cells has a port on a sea
+## lane (armies cross by sea; CGrid links the port cells).
+func _sea_split_ok(comp: PackedInt32Array, k: int, sites: Array, ncomp: int) -> bool:
+	if pack == "rome":
+		return false
+	var has_port := {}
+	for r in CData.region_count():
+		if int(CData.REGIONS[r]["land"]) != k:
+			continue
+		var sc := comp[int(sites[r])]
+		for i in _cells_of(r):
+			if comp[i] != sc:
+				printerr("landmass %d: region %s has cells outside its settlement's land component" % [k, CData.REGIONS[r]["key"]])
+				return false
+		if CData.is_port(r):
+			has_port[sc] = 1
+	for i in reg.size():
+		if reg[i] >= 0 and mass[i] == k and not has_port.has(comp[i]):
+			printerr("landmass %d: a land component (first cell %d, %d) has no port on a sea lane" % [k, i % w, i / w])
+			return false
+	print("landmass %d: %d land components, each with a port on a sea lane" % [k, ncomp])
+	return true
+
+
+## Cells of region r (in index order).
+func _cells_of(r: int) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	for i in reg.size():
+		if reg[i] == r:
+			out.append(i)
+	return out
+
+
+## Settlement cell of each region (the same rule as build()).
+func _site_cells() -> Array:
+	var out: Array = []
+	for r in CData.region_count():
+		var sp := Geo.site(r)
+		out.append(_nearest_of_region(r, clampi(int(sp.x / cell), 0, w - 1), clampi(int(sp.y / cell), 0, h - 1)))
+	return out
 
 
 func _argmax(votes: Dictionary) -> int:
@@ -715,7 +766,9 @@ func _terrain() -> bool:
 		for i in n:
 			if reg[i] >= 0 and mass[i] == k:
 				seen[comp[i]] = 1
-		if seen.size() > 1:
+		if seen.size() > 1 and _sea_split_ok(comp, k, _site_cells(), seen.size()):
+			pass
+		elif seen.size() > 1:
 			var sizes := {}
 			for i in n:
 				if reg[i] >= 0 and mass[i] == k:

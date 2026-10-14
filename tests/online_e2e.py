@@ -4,6 +4,8 @@ and two headless Godot clients (tests/online_client.gd) playing one campaign.
 
     python3 tests/online_e2e.py [--port 8071] [--turns 9] [--keep]
     python3 tests/online_e2e.py --teams [--port 8072]   (3 humans, one join code)
+    python3 tests/online_e2e.py --pack=west [--port 8073]  (the same with the West pack:
+        A New Spain, B Tierra Firme)
 
 Builds the server (tools/build_server.sh, into build/server-test/), starts it in test mode on a temp
 data dir, starts a fake webhook, runs client A (Rome, creates) and client B
@@ -138,7 +140,9 @@ def main():
     ap.add_argument("--turns", type=int, default=10)
     ap.add_argument("--keep", action="store_true", help="keep the temp dir")
     ap.add_argument("--teams", action="store_true", help="the 3-human campaign instead (tests/online_team_client.gd)")
+    ap.add_argument("--pack", default="rome", help="content pack: rome (default) or west")
     args = ap.parse_args()
+    na, nb = ("Rome", "Carthage") if args.pack == "rome" else ("New Spain", "Tierra Firme")
     if args.teams and args.port == 8071:
         args.port = 8072
 
@@ -173,7 +177,7 @@ def main():
             clients[role] = subprocess.Popen(
                 ["godot", "--headless", "--path", REPO, "--script", "res://tests/online_client.gd", "--",
                  "--server=" + base, "--role=" + role, "--dir=" + tmp, "--hook=" + hook_url,
-                 "--turns=%d" % args.turns],
+                 "--turns=%d" % args.turns, "--pack=" + args.pack],
                 stdout=logs[role], stderr=subprocess.STDOUT)
             if role == "A":
                 time.sleep(1.0)
@@ -256,21 +260,22 @@ def main():
               all(u.get("kept_in_outbox", True) for u in ups),
               "battle results kept in the outbox through network failures (and a page close) and delivered %s" % ups)
         battles = res["A"].get("battles", []) + res["B"].get("battles", [])
-        check(len(battles) >= 3, "%d battles auto-resolved by the clients (A %d, B %d; %d by command)" % (
+        # (The West opening has fewer wars between the two seats' neighbours.)
+        check(len(battles) >= (3 if args.pack == "rome" else 2), "%d battles auto-resolved by the clients (A %d, B %d; %d by command)" % (
             len(battles), len(res["A"].get("battles", [])), len(res["B"].get("battles", [])), sum(1 for b in battles if b["command"])))
-        check(any(b["command"] for b in res["B"].get("battles", [])), "Carthage took command of Rome's army in a battle %s" % (
+        check(any(b["command"] for b in res["B"].get("battles", [])), "%s took command of %s's army in a battle %s" % (nb, na,
             [b["id"] for b in res["B"].get("battles", []) if b["command"]]))
         # Discord.
         msgs = [m["content"] for m in HOOK_MSGS]
         with open(os.path.join(tmp, "webhook.txt"), "w") as f:
             f.write("\n".join(msgs))
         print("  webhook got %d messages" % len(msgs))
-        check(any("Carthage joined the campaign" in m for m in msgs) and any("has submitted turn" in m for m in msgs),
+        check(any(nb + " joined the campaign" in m for m in msgs) and any("has submitted turn" in m for m in msgs),
               "'joined' and 'has submitted, waiting for' messages")
         want = ["Turn 1 resolved", "deadline in about 2 hours", "deadline passed",
-                "Turn 6 resolved after the timeout without Rome", "Turn %d resolved" % args.turns]
-        check(any("Carthage took command of your army at" in m and "<@111111111111111111>" in m for m in msgs),
-              "'took command of your army' message to Rome")
+                "Turn 6 resolved after the timeout without " + na, "Turn %d resolved" % args.turns]
+        check(any(nb + " took command of your army at" in m and "<@111111111111111111>" in m for m in msgs),
+              "'took command of your army' message to " + na)
         i = 0
         for m in msgs:
             if i < len(want) and want[i] in m:

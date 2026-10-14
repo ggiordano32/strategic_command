@@ -1146,6 +1146,32 @@ Firme: Cartagena, Portobelo, Maracaibo) so it does not swallow the map;
 natives: Maya Itza (Peten) and Miskito (Mosquito Coast); plus England,
 France, the Dutch, the Brethren of the Coast.
 
+**As built 2026-10-13 (slice 1 landed and exported):** commits 9a51c2a
+(Caribbean bake, `tools/geo/carib.json`, `geo_west.gd`, `relief_west.gd`,
+`west_elev_data.gd`), 03671af + 660d3c8 (view geometry per pack,
+`geo_rome.gd`; geo_fit's med config writes it), d18a7a3 (CData pack
+switch, `rome.gd`, `cenums.gd`, `pack_reset()` in cgrid / crules / cai /
+cbattle, `tests/pack_test.gd`, Go `TestStateHashPack`), 07e73d0 (`west.gd`:
+32 regions, 29 routes, 38 lanes, 8 factions on borrowed Rome rosters;
+`west_grid_data.gd` 188 x 118; `campaign_grid --pack=`), 48e8e3b (Setting
+choice, `PackView`, subtitle, save meta, palettes, goal text from
+KEY_CITIES), then the start-setup pass (Spain calmer and smaller, 5
+opening wars, more garrison and walls for the small powers; the Texas
+corridor removed: for packs other than Rome a landmass may split into land
+pieces that each have a lane port, so the Gulf-coast pocket is reached by
+sea; campaign_sim reports elimination turns and sea crossings;
+`online_e2e.py --pack=west`). West 6 x 60: no faction usually dead before
+turn 25 (7 of 48 eliminations earlier), largest faction 12-18 regions at
+60, 53-69 sea crossings a seed, 19-22 ms a turn. Rome campaign_sim hashes
+unchanged (cdc1d805 32b83031 23f9ed4f 3237d82d a42fc685 b6fe6c2e).
+Dropped islands under about 4 cells (Lesser Antilles, Curacao, Tortuga,
+Barbados, New Providence) wait for naval play. Open: cai treats a whole
+landmass as land-reachable (the split pocket relies on the path search's
+lane fallback); battle maps use the Rome look; seed swings from AI-declared
+wars are a balance question for later. Next slices: firearms (volley,
+smoke, cover / line of sight), naval movement and ships (the ocean's CPU
+wave twin), West units and sprites.
+
 ## Next session (week of 2026-10-13; paused 2026-10-10 midday)
 
 - **Update, 2026-10-10 evening (hold here):** the user resumed; landed

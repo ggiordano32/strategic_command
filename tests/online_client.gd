@@ -40,6 +40,7 @@ var link_turn := 3
 var offline_turn := 5
 var fa := 0
 var fb := 1
+var pack := "rome"  # --pack=west: A plays New Spain, B Tierra Firme (CData.use_pack)
 var me := 0
 var net: NetScript
 var oc: OnlineCampaign
@@ -84,13 +85,16 @@ func _main() -> void:
 			link_turn = int(v)
 		elif a.begins_with("--offline-turn="):
 			offline_turn = int(v)
-	fa = CData.faction_index("rome")
-	fb = CData.faction_index("carthage")
+		elif a.begins_with("--pack="):
+			pack = v
+	CData.use_pack(pack)
+	fa = CData.faction_index("rome" if pack == "rome" else "new_spain")
+	fb = CData.faction_index("carthage" if pack == "rome" else "tierra_firme")
 	me = fa if role == "A" else fb
 	net = _new_net("acc_" + role)
 	await process_frame
 	if role == "A":
-		var st := CState.new_campaign("E2E", 11, [fa, fb], {"turn_timeout_h": 12})
+		var st := CState.new_campaign("E2E", 11, [fa, fb], {"turn_timeout_h": 12}, [], pack)
 		var r: Dictionary = await net.create_campaign(st, fa, {"webhook_url": hook, "discord_user": "111111111111111111"})
 		if not r["ok"]:
 			_err("create: %s" % r)
