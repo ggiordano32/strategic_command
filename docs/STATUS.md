@@ -1251,6 +1251,30 @@ online_e2e (Rome and `--pack west`), go test, check_scripts. Open: N2,
 N3, fleet split, fleet steps in the replay, march-and-board in one order,
 AI escorts; turn time doubled in the West.
 
+**Style and flavour direction (user, 2026-10-14): "fun and the rule of
+cool mixed in with reality ... slightly over-exaggerated characters of
+something based in reality".** Agreed: (1) overworld structures as
+pre-rendered Blender models in the **painted tabletop miniature** style
+(style D: painted minis on bevelled bases on a map table; style board
+running, `tools/structures/`), shown as icons zoomed out and models zoomed
+in, appearing as the campaign builds them (ports, shipyards, forts);
+(2) the **overworld restyled to match** (map-table / diorama terrain:
+stepped relief, richer palette, perhaps parchment edges) and **exaggerated
+scale** (ships and forts 20-50x real size, a galleon about a town marker);
+(3) **faction exaggeration**: one signature look and one signature rule
+each (Spain treasure galleons and morions, England redcoats and volleys,
+France plumed buccaneers, the Brethren named captains and flags of fear,
+Itza jade and feather standards, Miskito eyed war canoes); (4) **dramatic
+real mechanics**: hurricanes (a seasonal storm track sinking fleets and
+wrecking ports), powder-magazine explosions and fire ships in sea
+battles, named treasure galleons as boss prizes, notorious pirate
+captains as heroes who build fame; (5) **chunkier unit sprites** (about
+1:5, bigger heads, hats and weapons) when the West units get their art.
+Order: N2 (running) -> hurricanes + notorious captains + named galleons
+(N2b, campaign) ; structures style D -> overworld restyle + structure
+integration ; magazines / fire ships with N3 sea battles ; chunky
+sprites with the West art pass.
+
 ## Next session (week of 2026-10-13; paused 2026-10-10 midday)
 
 - **Update, 2026-10-10 evening (hold here):** the user resumed; landed
