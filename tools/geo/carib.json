@@ -1,0 +1,348 @@
+{
+ "_doc": "The Caribbean and the Gulf of Mexico (~1650). Same keys as med.json. Landmasses: 0 North and Central America (Florida, the Gulf coast, Mexico, Yucatan, Central America to the Darien), 1 South America (from the Darien), 2 Cuba, 3 Hispaniola, 4 Jamaica, 5 Puerto Rico, 6 Trinidad. Islands under ~4 grid cells (Guadeloupe, Martinique, Curacao, New Providence, Barbados, Tortuga...) are not landmasses; their settlements are omitted. Outputs go to the West files.",
+ "window": {
+  "lon0": -98.5,
+  "lat0": 31.5,
+  "lon_span": 40.0,
+  "lat_span": 23.5
+ },
+ "px_lat": 100.0,
+ "px_lon": 94.0,
+ "cell_px": 20,
+ "fine_per_cell": 6,
+ "simplify_deg": 0.05,
+ "coast_simplify_deg": 0.01,
+ "island_min_deg": 0.25,
+ "coast_island_min_deg": 0.05,
+ "landmass_clip": {
+  "0": {
+   "lon_max": -77.3
+  },
+  "1": {
+   "lon_min": -77.3
+  }
+ },
+ "wind": {
+  "from_deg": 90,
+  "strength": 80
+ },
+ "thresholds": {
+  "ridge_mean": 1500,
+  "ridge_max": 2200,
+  "ridge_relief": 1000,
+  "hill_mean": 1100,
+  "hill_relief": 700,
+  "valley_mean": 350
+ },
+ "out": {
+  "geo": "game/campaign/geo_west.gd",
+  "elev": "campaign/data/west_elev_data.gd",
+  "relief": "game/campaign/relief_west.gd"
+ },
+ "ne_river_files": [
+  "ne_10m_rivers_lake_centerlines.geojson"
+ ],
+ "regions": [
+  {
+   "key": "veracruz",
+   "lon": -96.13,
+   "lat": 19.2,
+   "land": 0
+  },
+  {
+   "key": "tampico",
+   "lon": -97.86,
+   "lat": 22.25,
+   "land": 0
+  },
+  {
+   "key": "campeche",
+   "lon": -90.53,
+   "lat": 19.85,
+   "land": 0
+  },
+  {
+   "key": "merida",
+   "lon": -89.62,
+   "lat": 20.97,
+   "land": 0
+  },
+  {
+   "key": "tayasal",
+   "lon": -89.9,
+   "lat": 16.93,
+   "land": 0
+  },
+  {
+   "key": "belize",
+   "lon": -88.2,
+   "lat": 17.5,
+   "land": 0
+  },
+  {
+   "key": "trujillo",
+   "lon": -86.0,
+   "lat": 15.92,
+   "land": 0
+  },
+  {
+   "key": "bluefields",
+   "lon": -83.77,
+   "lat": 12.01,
+   "land": 0
+  },
+  {
+   "key": "cabo_gracias",
+   "lon": -83.15,
+   "lat": 14.99,
+   "land": 0
+  },
+  {
+   "key": "portobelo",
+   "lon": -79.65,
+   "lat": 9.55,
+   "land": 0
+  },
+  {
+   "key": "st_augustine",
+   "lon": -81.31,
+   "lat": 29.89,
+   "land": 0
+  },
+  {
+   "key": "pensacola",
+   "lon": -87.2,
+   "lat": 30.42,
+   "land": 0
+  },
+  {
+   "key": "new_orleans",
+   "lon": -90.07,
+   "lat": 29.95,
+   "land": 0
+  },
+  {
+   "key": "cartagena",
+   "lon": -75.55,
+   "lat": 10.4,
+   "land": 1
+  },
+  {
+   "key": "santa_marta",
+   "lon": -74.2,
+   "lat": 11.24,
+   "land": 1
+  },
+  {
+   "key": "mompox",
+   "lon": -74.43,
+   "lat": 9.24,
+   "land": 1
+  },
+  {
+   "key": "maracaibo",
+   "lon": -71.64,
+   "lat": 10.65,
+   "land": 1
+  },
+  {
+   "key": "coro",
+   "lon": -69.68,
+   "lat": 11.4,
+   "land": 1
+  },
+  {
+   "key": "la_guaira",
+   "lon": -66.93,
+   "lat": 10.6,
+   "land": 1
+  },
+  {
+   "key": "cumana",
+   "lon": -64.17,
+   "lat": 10.45,
+   "land": 1
+  },
+  {
+   "key": "havana",
+   "lon": -82.36,
+   "lat": 23.14,
+   "land": 2
+  },
+  {
+   "key": "puerto_principe",
+   "lon": -77.9,
+   "lat": 21.38,
+   "land": 2
+  },
+  {
+   "key": "santiago_de_cuba",
+   "lon": -75.83,
+   "lat": 20.02,
+   "land": 2
+  },
+  {
+   "key": "santo_domingo",
+   "lon": -69.9,
+   "lat": 18.48,
+   "land": 3
+  },
+  {
+   "key": "santiago_caballeros",
+   "lon": -70.7,
+   "lat": 19.45,
+   "land": 3
+  },
+  {
+   "key": "port_de_paix",
+   "lon": -72.83,
+   "lat": 19.94,
+   "land": 3
+  },
+  {
+   "key": "leogane",
+   "lon": -72.63,
+   "lat": 18.51,
+   "land": 3
+  },
+  {
+   "key": "port_royal",
+   "lon": -76.84,
+   "lat": 17.94,
+   "land": 4
+  },
+  {
+   "key": "sevilla_jamaica",
+   "lon": -77.03,
+   "lat": 18.42,
+   "land": 4
+  },
+  {
+   "key": "san_juan",
+   "lon": -66.12,
+   "lat": 18.46,
+   "land": 5
+  },
+  {
+   "key": "san_german",
+   "lon": -67.05,
+   "lat": 18.08,
+   "land": 5
+  },
+  {
+   "key": "port_of_spain",
+   "lon": -61.52,
+   "lat": 10.65,
+   "land": 6
+  }
+ ],
+ "rivers": [
+  {
+   "name": "Mississippi",
+   "into": -1,
+   "ne_names": [
+    "Mississippi"
+   ],
+   "cross": [
+    [
+     "Baton Rouge",
+     0,
+     -91.19,
+     30.45
+    ],
+    [
+     "New Orleans ferry",
+     0,
+     -90.07,
+     29.95
+    ]
+   ],
+   "hand": [
+    [
+     -91.45,
+     31.45
+    ],
+    [
+     -91.4,
+     30.85
+    ],
+    [
+     -91.19,
+     30.45
+    ],
+    [
+     -90.9,
+     30.1
+    ],
+    [
+     -90.4,
+     29.95
+    ],
+    [
+     -90.07,
+     29.93
+    ],
+    [
+     -89.7,
+     29.6
+    ],
+    [
+     -89.3,
+     29.15
+    ],
+    [
+     -89.1,
+     29.0
+    ]
+   ]
+  },
+  {
+   "name": "Magdalena",
+   "into": -1,
+   "ne_names": [
+    "Magdalena"
+   ],
+   "cross": [
+    [
+     "Mompox",
+     0,
+     -74.43,
+     9.24
+    ],
+    [
+     "Honda ford",
+     0,
+     -74.7,
+     8.6
+    ]
+   ],
+   "hand": [
+    [
+     -73.8,
+     8.15
+    ],
+    [
+     -74.2,
+     8.9
+    ],
+    [
+     -74.43,
+     9.24
+    ],
+    [
+     -74.78,
+     10.0
+    ],
+    [
+     -74.95,
+     10.55
+    ],
+    [
+     -74.85,
+     11.05
+    ]
+   ]
+  }
+ ],
+ "clip_mode": "sh"
+}
