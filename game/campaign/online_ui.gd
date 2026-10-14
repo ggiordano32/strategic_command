@@ -400,7 +400,7 @@ func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 	# the server has live rooms.
 	var allies := _joiners(st, b)
 	var guest: bool = CRules.battle_guests(st, b).has(oc.f)
-	var live_ok: bool = oc.live_ok() and not allies.is_empty()
+	var live_ok: bool = oc.live_ok() and not allies.is_empty() and not b.has("sea")  # (N3a: sea battles: one player)
 	var foes: bool = not others.is_empty()
 	for x in others:
 		if CRules.battle_side_of(st, b, int(x)) == CRules.battle_side_of(st, b, oc.f):
@@ -471,7 +471,7 @@ func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 		ab.name = "auto_%d" % bid
 		h.add_child(ab)
 		var why := ("%s asked to join." % _names(asks)) if not asks.is_empty() else ("%s is waiting for you." % _names(wanting))
-		var with_ally: bool = not others.is_empty() and oc.live_ok()
+		var with_ally: bool = not others.is_empty() and oc.live_ok() and not b.has("sea")
 		var fb := Kit.icon_button("Fight", "battles", func():
 			if with_ally:
 				s.fight_live(bid, true)  # the ally's army is in it: they can join at any time

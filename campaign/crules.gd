@@ -1873,6 +1873,20 @@ static func in_battle(st: Dictionary, id: int) -> bool:
 ## Factions on each side of battle b: [attackers, defenders].
 static func battle_factions(st: Dictionary, b: Dictionary) -> Array:
 	var out := [[], []]
+	if b.has("sea"):
+		# (N3a) A sea battle: the factions of the fleets on each side.
+		for k in 2:
+			for id in b["af" if k == 0 else "df"]:
+				var fl := CFleet.fleet(st, int(id))
+				if not fl.is_empty() and not out[k].has(int(fl["f"])):
+					out[k].append(int(fl["f"]))
+		if out[0].is_empty():
+			out[0].append(int(b["att_f"]))
+		if out[1].is_empty():
+			out[1].append(int(b["def_f"]))
+		out[0].sort()
+		out[1].sort()
+		return out
 	var arm := battle_armies(st, b)
 	for s in 2:
 		for a in arm[s]:
@@ -2064,6 +2078,16 @@ static func _garrison_type(f: int, kind: String, tier: int) -> String:
 static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void:
 	var b := CState.battle(st, bid)
 	if b.is_empty():
+		return
+	if b.has("sea"):
+		# (N3a) A sea battle: the fleets (campaign/cfleet.gd apply_sea).
+		st["battles"].erase(b)
+		CFleet.apply_sea(st, b, outcome)
+		check_eliminations(st)
+		CChars.sweep(st)
+		check_victory(st)
+		if (st["battles"] as Array).is_empty() and str(st["phase"]) == "battles":
+			st["phase"] = "plan"
 		return
 	var r := int(b["r"])
 	var kind := str(b.get("kind", ""))
@@ -3035,6 +3059,19 @@ static func check_eliminations(st: Dictionary) -> void:
 	# Battles whose attackers are all gone end: the defenders hold.
 	var keepb: Array = []
 	for b in st["battles"]:
+		if b.has("sea"):
+			# (N3a) A sea battle stands while both sides have a fleet in it.
+			var fs := [false, false]
+			for k in 2:
+				for id in b["af" if k == 0 else "df"]:
+					if not CFleet.fleet(st, int(id)).is_empty():
+						fs[k] = true
+			if fs[0] and fs[1]:
+				keepb.append(b)
+			else:
+				for id in b["af"] + b["df"]:
+					CFleet.fleet(st, int(id)).erase("busy")
+			continue
 		var arm := battle_armies(st, b)
 		var att_here := false
 		for a in arm[0]:
@@ -3258,7 +3295,7 @@ static func block_mask(st: Dictionary, f: int) -> PackedByteArray:
 			for c in CGrid.disc(s, 1):
 				m[c] = 1
 	for b in st["battles"]:
-		if int(b.get("new", 0)) == 0 and b.has("x"):
+		if int(b.get("new", 0)) == 0 and b.has("x") and not b.has("sea"):
 			for c in CGrid.disc(CGrid.at(int(b["x"]), int(b["y"])), 1):
 				m[c] = 1
 	return m
@@ -3655,7 +3692,7 @@ static func _step6(st: Dictionary, a: Dictionary, c: int, p: Dictionary) -> Stri
 	var forced := CState.stance(a) == CData.ST_FORCED
 	# A battle started this turn next to the cell: join it.
 	for b in st["battles"]:
-		if not b.has("x"):
+		if not b.has("x") or b.has("sea"):
 			continue
 		var bc := CGrid.at(int(b["x"]), int(b["y"]))
 		if CGrid.cheb(bc, c) <= 1:

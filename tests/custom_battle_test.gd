@@ -33,6 +33,7 @@ const CoopSession := preload("res://game/net/coop_session.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const MapGen := preload("res://sim/mapgen.gd")
+const SeaSim := preload("res://sim/sea_sim.gd")
 
 var _ok := true
 
@@ -195,8 +196,42 @@ func _init() -> void:
 	var solo := CS.build(two, true)
 	if not (solo["scenario"]["ai_sides"] as Array).has(1):
 		_fail("solo: Player 2's side is not the AI's")
+	_check_sea()
 	print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 	quit(0 if _ok else 1)
+
+
+## (N3a) The West setting's sea battle: the default builds a sea scenario
+## (Player 1's side 0, the AI's side 1) the same twice, a coast and an
+## island reach its land, the upwind start its layout; an empty side is
+## refused; the battle runs to a decision.
+func _check_sea() -> void:
+	var st := CS.default_setup(5)
+	CS.set_pack(st, "west")
+	st["sea"] = CS.sea_default()
+	var a := CS.build_sea(st)
+	var b := CS.build_sea(JSON.parse_string(JSON.stringify(st)))
+	if a.has("error") or str(a) != str(b) or int(a["scenario"].get("sea", 0)) != 1 or a["scenario"]["ai_sides"] != [0, 1]:
+		_fail("sea: the default sea battle does not build the same twice: %s" % str(a.get("error", "")))
+		return
+	st["sea"]["water"] = 2
+	st["sea"]["start"] = "gauge0"
+	var c := CS.build_sea(st)
+	if int(c["scenario"]["land"]["kind"]) != 2 or str(c["scenario"]["layout"]) != "gauge0":
+		_fail("sea: the coast and the upwind start do not reach the scenario")
+	st["sea"]["ships"][1] = []
+	if CS.sea_check(st) == "":
+		_fail("sea: a side without ships was accepted")
+	var sim := SeaSim.new()
+	var scn: Dictionary = a["scenario"]
+	scn["ai_sides"] = [1, 1]
+	sim.setup(scn, int(a["seed"]))
+	while sim.ended == 0 and sim.tick < 9300:
+		sim.step()
+	if sim.ended == 0:
+		_fail("sea: the custom sea battle was not decided")
+	else:
+		print("PASS sea: the custom sea battle builds the same twice and is decided in %d s (side %d)" % [sim.tick / 10, sim.winner])
 
 
 ## Player 1: archers with fire arrows, javelinmen with none, a supply

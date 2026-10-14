@@ -14,7 +14,8 @@ import (
 // The server never runs game rules. It reads a few top-level facts from
 // the state blobs the clients upload (turn, phase, winner, the humans and
 // which of them are alive, and which humans have armies in each pending
-// battle) for bookkeeping, notifications and sanity checks.
+// battle: by their armies, or for a sea battle its "sf" list of factions
+// with a fleet in it) for bookkeeping, notifications and sanity checks.
 
 const stateFormat = "strategic_command_campaign"
 
@@ -60,6 +61,7 @@ type stateDoc struct {
 		Reinf []num `json:"reinf"`
 		AttF  num   `json:"att_f"`
 		DefF  num   `json:"def_f"`
+		Sf    []num `json:"sf"` // a sea battle (N3a): every faction with a fleet in it
 	} `json:"battles"`
 }
 
@@ -242,6 +244,9 @@ func ParseState(text []byte) (*StateMeta, error) {
 			}
 		}
 		set[int(b.DefF)] = true
+		for _, f := range b.Sf {
+			set[int(f)] = true
+		}
 		var hs []int
 		for f := range set {
 			if isHuman[f] {

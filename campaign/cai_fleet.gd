@@ -216,7 +216,7 @@ static func _debt(st: Dictionary, f: int) -> void:
 	var bk := -1
 	var bp := 1 << 30
 	for fl in CFleet.fleets_of(st, f):
-		if not (fl["carry"] as Array).is_empty() or CSea.is_flota(fl):
+		if not (fl["carry"] as Array).is_empty() or CSea.is_flota(fl) or fl.has("busy"):
 			continue
 		for k in (fl["ships"] as Array).size():
 			var p := CFleet.ship_power(fl["ships"][k])

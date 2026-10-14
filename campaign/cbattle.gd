@@ -56,6 +56,7 @@ const CP := preload("res://campaign/cai_profile.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const CChars := preload("res://campaign/cchars.gd")
 const FM := preload("res://sim/fixed_math.gd")
+const CSeaBattle := preload("res://campaign/cseabattle.gd")
 
 const FRONT := 100       # m from the centre line to each side's front
 const SECOND_LINE := 45  # m behind the first
@@ -101,6 +102,8 @@ static func battle_seed(st: Dictionary, r: int, salt: int = 0) -> int:
 ## Scenario for pending battle b. human_f: faction whose side is sim side 0
 ## and player-controlled (-1: both sides AI, auto-resolve).
 static func build(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct: int = 100) -> Dictionary:
+	if b.has("sea"):
+		return CSeaBattle.build(st, b, human_f)  # (N3a) a sea battle: sim/sea_sim.gd
 	var res := _build0(st, b, human_f, scale_pct)
 	# Heroes and agents: the fit characters of the armies in the battle go in
 	# as the scenario's "chars" (per sim side [{key, name}]); "char_ids" says
@@ -1111,6 +1114,9 @@ static func outcome_from_result(built: Dictionary, res: Dictionary, mode: String
 ## Strength of each side of battle b for the formula and the AI:
 ## [attackers, defenders].
 static func side_strengths(st: Dictionary, b: Dictionary) -> Array:
+	if b.has("sea"):
+		var sd := CSeaBattle.sides(st, b)
+		return [CSeaBattle.CFleet._side_power(st, sd[0], false), CSeaBattle.CFleet._side_power(st, sd[1], true)]
 	var arm := CRules.battle_armies(st, b)
 	var gs := -1 if str(b.get("kind", "")) == "field" else 1  # version 5 field battles: no garrison
 	return strengths(st, arm[0], arm[1], int(b["r"]), int(b.get("settlement", 1)) != 0, gs, kit_of(st, b))
@@ -1282,6 +1288,8 @@ static func win_chance(sa: int, sd: int) -> int:
 
 ## Formula outcome for battle b (uses and advances the state's RNG).
 static func formula(st: Dictionary, b: Dictionary) -> Dictionary:
+	if b.has("sea"):
+		return CSeaBattle.formula_outcome()  # (N3a) the fleets' formula, applied by CFleet.apply_sea
 	var s := side_strengths(st, b)
 	var p := win_chance(s[0], s[1])
 	var winner := 0 if CState.rand(st, 1000) < p else 1

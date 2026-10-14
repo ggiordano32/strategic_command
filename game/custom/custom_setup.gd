@@ -474,3 +474,61 @@ static func summary(st: Dictionary) -> Dictionary:
 		"works": int(mp.get("works", 0)), "fortified": int(mp.get("fortified", -1)),
 		"river": int(mp.get("river", -1)),
 		"mantlets": [mantlets_of(st, 0), mantlets_of(st, 1)]}
+
+
+# ------------------------------------------------------------ sea battles ---
+# (N3a) The West setting's "Sea battle": the setup's optional "sea" {"on": 1,
+# "ships": [[ship keys of side 0], [of side 1]], "wind": bearing it blows
+# from, "str": 0-100, "water": 0 open / 1 an island / 2 a coast to the north,
+# "start": "ns" | "gauge0" (your fleet upwind) | "gauge1" (downwind)}. Side 0
+# is Player 1's, side 1 the battle AI's (solo only). Built for sim/sea_sim.gd.
+
+const SEA_SHIPS: Array[String] = ["sloop", "brigantine", "frigate", "galleon", "ship_of_the_line", "war_canoe"]
+const SEA_MAX := 8
+const SEA_WATER_NAMES := ["Open sea", "An island", "A coast to the north"]
+const SEA_START_NAMES := {"ns": "Fleets meet across the wind", "gauge0": "Your fleet upwind (the weather gauge)",
+	"gauge1": "Your fleet downwind"}
+
+
+static func sea_on(st: Dictionary) -> bool:
+	return st.get("sea") is Dictionary and int(st["sea"].get("on", 0)) != 0
+
+
+static func sea_default() -> Dictionary:
+	return {"on": 1, "ships": [["frigate", "sloop"], ["frigate", "brigantine"]], "wind": 90, "str": 70, "water": 0,
+		"start": "ns"}
+
+
+static func sea_check(st: Dictionary) -> String:
+	var sea: Dictionary = st["sea"]
+	for s in 2:
+		var n := (sea["ships"][s] as Array).size()
+		if n == 0:
+			return "Each side needs a ship."
+		if n > SEA_MAX:
+			return "At most %d ships a side." % SEA_MAX
+	return ""
+
+
+static func build_sea(st: Dictionary) -> Dictionary:
+	var why := sea_check(st)
+	if why != "":
+		return {"error": why}
+	var sea: Dictionary = st["sea"]
+	var units: Array = []
+	for s in 2:
+		for k in sea["ships"][s]:
+			units.append({"side": s, "t": str(k)})
+	var land := {"kind": 0, "mseed": int(st.get("seed", 1)) % 100000}
+	match int(sea.get("water", 0)):
+		1:
+			land["kind"] = 1
+		2:
+			land["kind"] = 2
+			land["dirs"] = (1 << 6) | (1 << 5) | (1 << 7)
+	var lay := str(sea.get("start", "ns"))
+	if lay == "ns" and int(sea.get("water", 0)) == 2:
+		lay = "we"
+	var scn := {"sea": 1, "wind_deg": int(sea.get("wind", 90)), "wind_str": int(sea.get("str", 70)), "ai_sides": [0, 1],
+		"land": land, "layout": lay, "units": units, "time_limit": int(st.get("time", 900))}
+	return {"sea": 1, "scenario": scn, "seed": int(st.get("seed", 1))}

@@ -1454,23 +1454,100 @@ soldiers as billboards or instanced minis; view-only, same sim, so a PC
 3D player and a phone 2D player can share a co-op battle; needs a desktop
 export. The game itself stays web-first (phones and tablets).
 Style test done 2026-10-14 (`tools/battlekit/`, 1d878c1): the user chose
-**A "grounded painterly" as the default and B "tabletop diorama" as an
-option** (a `[video] battle_look = painterly | diorama` setting: B adds
+**B "tabletop diorama" as the default and A "grounded painterly" as an
+option** (changed on 2026-10-14 from A default; phase 1's shader keeps
+both as uniforms, B's values in its header) (a `[video] battle_look = painterly | diorama` setting: B adds
 rim light, outline and saturation). Level 1 phases: 1 kit walls / towers
 / gates + their baked shadows (running), 2 houses and props on the real
 streets with culture palettes, 3 trees / rocks / cliffs, 4 the full
-shadow and AO layer, 5 splatted ground, 6 the Diorama look setting.
+shadow and AO layer, 5 splatted ground, 6 the look setting (diorama default, painterly option).
 
 **PAUSE 2026-10-14 (token budget at 82 %, back in a couple of days).**
 Running at the pause: N3a real-time sea battles (Opus) and battle look
 Level 1 phase 1, kit walls / towers / gates (Sonnet); they finish, are
-committed and exported, then screenshot round 1 (Caribbean town battle
-maps + sea battles, as a gallery page). Nothing new starts until the
-user is back. Next when resumed: battle look phases 2-6, screenshot
-round 2 (full painterly look + diorama option), then cover and line of
+committed and exported (phase 1 landed as b9e0380). Nothing new starts until the
+user is back. Next when resumed: battle look phases 2-6 with **diorama as
+the default**, then ONE screenshot gallery (Caribbean town battle maps,
+both looks, and sea battles; the user wants it only after all the
+updates), then cover and line of
 sight (2b), forts and fighting from buildings (2c, with the West walls
 history), the 3D PC view prototype, N3b boarding as a deck melee,
 magazines and fire ships.
+
+**Level 1 phase 1 built 2026-10-14 (view only, not committed): walls, towers and gates from the battle kit,
+look A (painterly) by the user's choice, B kept as shader uniforms for a later `battle_look` setting.**
+`tools/battlekit/pack.py` + `game/battlekit.gd` / `battlekit.gdshader` / `battlekit_shadow.gd`,
+`assets/battlekit/`; MultiMesh + normal-lit shader on High, pre-lit 4 px/m atlas without shader or shadows
+on Low / the CPU path; baked shadow + AO layer, re-baked round a broken gate. Frame time on bench_4000_city
+5.7 ms vs 6.2 ms before and a siege 3.6 vs 4.1 ms (the kit draws fewer items than the polygon strokes);
+texture memory about 4.5 MB plus the shadow texture. Details: DESIGN "Battle kit walls, towers and gates".
+Open: houses, trees, ground (later phases); the roofed round tower is unused; no star-fort trace exists in
+the map generator, so the bastion piece is packed but not drawn; the Low path's light is baked for the unrotated
+piece (rotated walls keep their baked side); shots in scratchpad/battle1.
+
+**N3a real-time sea battles, as built 2026-10-14 (not committed; DESIGN "Sea
+battles (as built, N3a)", CAMPAIGN.md "Sea battles fought (N3a)").** A sea
+battle with a player's fleet in it is now a pending battle: Fight it in real
+time or Auto-resolve it (the N1 formula); AI-only ones resolve at once as
+before. **Sim:** `sim/sea_sim.gd` + `sim/sea_types.gd`, a sibling of
+BattleSim (no soldiers to share; every land battle byte-identical) with the
+same discipline and the lockstep interface (`sim/lockstep.gd` runs it for a
+scenario with `"sea"`): ships with fixed-point position, heading, speed,
+sails (stop / battle / full), hull, rig, crew, troops; the campaign's wind
+(east) shifted by a seed, shifting every 30 s; points of sail with a no-go
+zone per rig (sloop 42 deg ... galleon 70), tacking with way / wearing
+without, caught in irons; a navigator beating in two tacks and avoiding
+land, shoals (deep ships ground) and the edge; port / starboard broadsides
+(42 deg arcs, reload 10-17 s slowed by thin gun crews) with round (hull),
+chain (rig) and grape (crew), raking 1.5-2 x, fires and magazine blasts,
+sinking; grappling and boarding resolved by crew x quality + troops over a
+few seconds (N3b hook: scenario `deck`, `deck_request()`, order `O_DECK`);
+morale and striking colours, struck ships taken by the winner, fleeing off
+the edge; battle AI (weather gauge, broadside on, presents the loaded side,
+boards from astern when much stronger with friends, grape close, chain to
+cripple, flees when beaten or hopelessly outgunned). **Campaign:** pending
+sea battle records (`sea`, `af` / `df`, `sf`, x / y, the nearest region),
+busy fleets, `CSeaBattle.build` (crews by faction: England 115 gunnery,
+the Brethren 130 boarding ...; troops aboard; a captain's fear in morale;
+the water from the battle cell: coast sides / island / open sea), outcome
+per ship (afloat / sunk / taken / escaped, hull, crew) written back by
+`CFleet.apply_sea` (prizes and prize money, treasure, wrecks, troops lost
+and drowned, fall back, captains' fame and fate); server `statemeta.go`
+reads `sf` for the humans of a sea battle. **View:** `game/sea_battle.gd`
+(touch first: tap / double-tap / box select, tap the sea to sail with the
+tacking course drawn, tap an enemy to engage, Board, the orders bar, ship
+cards, wind rose, speeds, Leave; hulls with braced sails, flags, wakes,
+broadside smoke drifting with the wind, splashes, fires, blasts, sinking,
+grapples), `game/campaign/sea_screen.gd` (the pending card with the water
+preview and both fleets, the result card), custom battle "Sea battle" (West
+setting, solo: ships per side, wind, water, start). **Measured**
+(`determinism_test --only=sea`, seed 4242, AI both sides): frigate duel
+decided 3:01 (side 0, the enemy taken); 3 sloops against a galleon 3:43 (the
+galleon: one sloop boarded, all three taken); 2 pirate brigantines against
+a weak frigate 4:16 (boarded from astern and taken); frigate duels starting
+upwind 6:42 / downwind 5:19; a coast with an island 5:48 (two ships escape
+off the edge); coverage over the six: 137 broadsides, 23 rakes, 5 chain and
+2 grape broadsides, 2 boardings and captures, 6 struck, 7-9 tacks and wears,
+2 escaped. Identical on repeat and across snapshots (400 / 1200 / 2500),
+different seeds diverge. **Tests:** determinism_test `--only=sea` (and in
+the full run), lockstep_test `--only=sea` (two peers + an observer from a
+snapshot, foreign orders refused, solo through Lockstep = plain sim),
+pack_test (a player's voyage -> pending -> fought in the sea sim -> applied,
+the same twice, JSON, the formula, AI-only still at once), new
+`tests/sea_screen_test.gd` (the card, Fight -> the sea screen -> a tap sails
+-> Continue applies -> the result card; Auto-resolve), custom_battle_test
+(the sea setup), go test (`TestParseStateSeaBattle`), online_e2e Rome and
+`--pack=west` (5 sea battles fought by the clients and verified by the
+other). Rome byte-identical (goldens, campaign_sim cdc1d805 32b83031 23f9ed4f
+3237d82d a42fc685 b6fe6c2e); West AI-only campaign_sim unchanged (b137875c
+edd82dee 0393b18d 2aa8578b deb00750 1d051164). Screenshots in the session
+scratchpad `sea/`. **Open:** live co-op at sea (sim and lockstep ready; the
+room, HUD co-op parts and ship gifts are not; "Fight together" is hidden for
+sea battles), N3b deck melees, fleets joining a pending battle, smoke that
+blocks aim, shore batteries, fire ships, fitting the auto-resolve formula to
+these results, real ship art (the miniatures), balance (the AI often wins by
+striking colours and flight rather than sinking; the galleon is hard for
+small ships to take), playtesting on phones.
 
 ## Next session (week of 2026-10-13; paused 2026-10-10 midday)
 

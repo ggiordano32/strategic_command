@@ -26,6 +26,11 @@ extends RefCounted
 ## fmerge {fleet, into}, fcancel {fleet}, scuttle {fleet, ship}.
 ## Hooks for N2 (trade, blockades, the flota, pirates) are the docks and
 ## harbours per region, the pirates' capture share and the sea battle event.
+## N3a: a sea battle with a human faction in it is pending (a battle record
+## with "sea": 1, its fleets "busy" until it is resolved: they neither sail,
+## nor fight another battle, nor meet a storm), fought in real time
+## (campaign/cseabattle.gd, sim/sea_sim.gd) or auto-resolved by the formula,
+## and written back by apply_sea; AI-only sea battles resolve at once.
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -539,6 +544,8 @@ static func apply_order(st: Dictionary, f: int, o: Dictionary) -> String:
 	for key in ["fleet", "into"]:
 		if o.has(key) and fleet(st, int(o[key])).has("flota"):
 			return "the flota sails by the Crown's orders"
+		if o.has(key) and fleet(st, int(o[key])).has("busy"):
+			return "in a sea battle"  # (N3a: pending)
 	match str(o.get("t", "")):
 		"ship":
 			return _order_ship(st, f, int(o.get("r", -1)), str(o.get("ship", "")))
@@ -1129,7 +1136,7 @@ static func execute_moves(st: Dictionary, moves: Array) -> void:
 		var pf := int(fleet(st, int(p["id"]))["f"])
 		var foes0: Array = []
 		for e in fleets(st):
-			if CState.at_war(st, pf, int(e["f"])):
+			if CState.at_war(st, pf, int(e["f"])) and not e.has("busy"):
 				foes0.append(e)
 		p["foes"] = foes0
 	for i in rounds:
@@ -1145,7 +1152,7 @@ static func execute_moves(st: Dictionary, moves: Array) -> void:
 			_mlog.append([int(fl["id"]), c])
 			var foes: Array = []
 			for e in p["foes"]:
-				if not (e["ships"] as Array).is_empty() and CGrid.within(c, cell(e), FLEET_ZONE):
+				if not (e["ships"] as Array).is_empty() and not e.has("busy") and CGrid.within(c, cell(e), FLEET_ZONE):
 					foes.append(e)
 			if foes.is_empty():
 				continue
@@ -1181,6 +1188,8 @@ static func sea_battle(st: Dictionary, mover: Dictionary, foes: Array, c: int) -
 	for e in fleets(st):
 		if not CGrid.within(c, cell(e), FLEET_ZONE) and e != mover:
 			continue
+		if e.has("busy"):
+			continue  # (N3a) in a pending sea battle already
 		if CState.friendly(st, f, int(e["f"])):
 			att.append(e)
 		elif foes.has(e) or CState.at_war(st, f, int(e["f"])):
@@ -1192,8 +1201,62 @@ static func sea_battle(st: Dictionary, mover: Dictionary, foes: Array, c: int) -
 		e.erase("route")
 		e.erase("rgoal")
 		e["moved"] = 1
-	resolve(st, att, dfn, c)
+	if dfn.is_empty():
+		return ids
+	if _with_human(st, att + dfn):
+		_pending(st, att, dfn, c)  # (N3a) fought in real time or auto-resolved by the player
+	else:
+		resolve(st, att, dfn, c)
 	return ids
+
+
+static func _with_human(st: Dictionary, list: Array) -> bool:
+	for fl in list:
+		if CState.is_human(st, int(fl["f"])):
+			return true
+	return false
+
+
+## (N3a) A pending sea battle: a battle record ("sea": 1) with the fleets
+## of each side ("af", "df"), every faction with a fleet in it ("sf", for
+## the server's bookkeeping), the sea cell (x, y) and the nearest region
+## (r, for its name); the fleets stay busy until it is resolved.
+static func _pending(st: Dictionary, att: Array, dfn: Array, c: int) -> void:
+	var af: Array = []
+	var df: Array = []
+	var sf: Array = []
+	for k in 2:
+		for fl in (att if k == 0 else dfn):
+			(af if k == 0 else df).append(int(fl["id"]))
+			fl["busy"] = 1
+			if not sf.has(int(fl["f"])):
+				sf.append(int(fl["f"]))
+	sf.sort()
+	var b := {"id": int(st["next_battle"]), "sea": 1, "kind": "sea", "r": near_region(c), "turn": int(st["turn"]),
+		"att": [], "def": [], "reinf": [], "att_f": int(att[0]["f"]), "def_f": int(dfn[0]["f"]), "settlement": 0,
+		"x": CGrid.cx(c), "y": CGrid.cy(c), "af": af, "df": df, "sf": sf}
+	st["next_battle"] = int(st["next_battle"]) + 1
+	(st["battles"] as Array).append(b)
+	_rules().event(st, {"k": "sea_pending", "x": CGrid.cx(c), "y": CGrid.cy(c), "f": int(att[0]["f"]),
+		"to": int(dfn[0]["f"]), "battle": int(b["id"])})
+
+
+## The region of the land cell nearest sea cell c (ties: the lowest cell),
+## for a sea battle's name ("off Havana"); 0 when there is none near.
+static func near_region(c: int) -> int:
+	for rad in range(1, 16):
+		var best := -1
+		var bd := INF
+		for j in CGrid.disc(c, rad):
+			if is_sea(j) or CGrid.region(j) < 0:
+				continue
+			var d := CGrid.d2(j, c)
+			if d < bd or (d == bd and j < best):
+				bd = d
+				best = j
+		if best >= 0:
+			return CGrid.region(best)
+	return 0
 
 
 static func _side_power(st: Dictionary, side: Array, defending: bool) -> int:
@@ -1326,6 +1389,158 @@ static func resolve(st: Dictionary, att: Array, dfn: Array, c: int) -> void:
 	_rules().event(st, ev)
 
 
+## (N3a) Resolve pending sea battle b with an outcome: "formula" (or any
+## mode but "fought" / "forfeit": the auto-resolve formula, resolve()), or
+## the real-time battle's (campaign/cseabattle.gd outcome_from_result):
+## each ship's fate (afloat / sunk / taken / escaped) and hull and crew %,
+## the troops' share left per fleet. A taken ship joins the captor side's
+## first fleet in the battle with what hull she has and a prize crew
+## (TAKEN_PCT), and pays prize money (and her treasure); a sunk treasure
+## ship leaves a wreck; troops beyond what a fleet's survivors carry drown;
+## the beaten side's fleets fall back; captains gain fame or meet their
+## fate. The caller (CRules.apply_outcome) removes the battle record.
+static func apply_sea(st: Dictionary, b: Dictionary, outcome: Dictionary) -> void:
+	var c := CGrid.at(int(b["x"]), int(b["y"]))
+	var att: Array = []
+	var dfn: Array = []
+	for k in 2:
+		for id in b["af" if k == 0 else "df"]:
+			var fl := fleet(st, int(id))
+			if not fl.is_empty():
+				fl.erase("busy")
+				if not (fl["ships"] as Array).is_empty():
+					(att if k == 0 else dfn).append(fl)
+	if att.is_empty() or dfn.is_empty():
+		return
+	var mode := str(outcome.get("mode", "formula"))
+	if mode != "fought" and mode != "forfeit":
+		resolve(st, att, dfn, c)
+		return
+	_apply_fought(st, att, dfn, c, outcome)
+
+
+static func _apply_fought(st: Dictionary, att: Array, dfn: Array, c: int, outcome: Dictionary) -> void:
+	var att_won := int(outcome.get("winner", 1)) == 0
+	var pa := _side_power(st, att, false)
+	var pd := _side_power(st, dfn, true)
+	var win: Array = att if att_won else dfn
+	var lose: Array = dfn if att_won else att
+	var lost: Array = []    # [faction, ship key, 0 sunk / 1 taken]
+	var gold := 0
+	var treasure := 0
+	var prizes := 0
+	var prize_for := [[], []]  # per captor side: prize ship dicts
+	var victims := [[], []]    # per captor side: [victim faction, ship dict]
+	var gone_ships := {}       # fleet id -> {index: 1} ships that leave the fleet
+	for row in outcome.get("ships", []):
+		var fl := fleet(st, int(row[0]))
+		var k := int(row[1])
+		if fl.is_empty() or k < 0 or k >= (fl["ships"] as Array).size():
+			continue
+		var sh: Dictionary = fl["ships"][k]
+		var fate := int(row[2])
+		var side := 0 if att.has(fl) else 1
+		if fate == 1 or fate == 2:
+			var gs: Dictionary = gone_ships.get(int(fl["id"]), {})
+			gs[k] = 1
+			gone_ships[int(fl["id"])] = gs
+		if fate == 1:
+			lost.append([int(fl["f"]), str(sh["t"]), 0])
+			if int(sh.get("g", 0)) > 0:
+				_csea().wreck(st, sh, c, "battle", int((dfn if side == 0 else att)[0]["f"]))
+			continue
+		if fate == 2:
+			lost.append([int(fl["f"]), str(sh["t"]), 1])
+			var pz := {"t": str(sh["t"]), "h": clampi(int(row[3]), 15, 100), "c": TAKEN_PCT}
+			for key in ["nm", "g", "cap"]:
+				if sh.has(key):
+					pz[key] = sh[key]
+			prize_for[1 - side].append(pz)
+			victims[1 - side].append([int(fl["f"]), sh])
+			continue
+		sh["h"] = clampi(int(row[3]), 1, 100)
+		sh["c"] = clampi(int(row[4]), 5, 100)
+	for fl in att + dfn:
+		var gs2: Dictionary = gone_ships.get(int(fl["id"]), {})
+		if gs2.is_empty():
+			continue
+		var keep: Array = []
+		var list: Array = fl["ships"]
+		for k2 in list.size():
+			if not gs2.has(k2):
+				keep.append(list[k2])
+		fl["ships"] = keep
+	# Prizes to the captor side's first fleet still afloat (else they are burnt).
+	for side2 in 2:
+		var cap_side: Array = att if side2 == 0 else dfn
+		var into := {}
+		for fl in cap_side:
+			if not (fl["ships"] as Array).is_empty():
+				into = fl
+				break
+		if into.is_empty() or (prize_for[side2] as Array).is_empty():
+			continue
+		var cf := int(into["f"])
+		var cap: Dictionary = _capt().of_fleet(st, int(into["id"]))
+		for i in (prize_for[side2] as Array).size():
+			var pz2: Dictionary = prize_for[side2][i]
+			var vic: Array = victims[side2][i]
+			var pm: Array = _csea().prize_money(st, cf, int(vic[0]), [vic[1]], c, str(cap.get("nm", "")))
+			gold += int(pm[0])
+			treasure += int(pm[1])
+			pz2.erase("g")  # (the treasure is paid out)
+			pz2.erase("cap")
+			(into["ships"] as Array).append(pz2)
+			prizes += 1
+	# Troops aboard lost in the fighting (boardings, raking), then drowned.
+	for tl in outcome.get("troops", []):
+		var fl2 := fleet(st, int(tl[0]))
+		var pct := clampi(int(tl[1]), 0, 100)
+		if fl2.is_empty() or pct >= 100:
+			continue
+		for a in fl2["carry"]:
+			for u in a["units"]:
+				u["n"] = maxi(int(u["n"]) * pct / 100, 1)
+	var sunk: Array = []
+	for fl in att + dfn:
+		_sink_extra(st, fl, sunk)
+	var gone: Array = []
+	for fl in att + dfn:
+		if (fl["ships"] as Array).is_empty():
+			gone.append(fl)
+	for fl in lose:
+		if not gone.has(fl):
+			_fall_back(st, fl, c, win)
+	_capt().after_battle(st, win, lose, gone, prizes, treasure, c)
+	for fl in gone:
+		(st["fleets"] as Array).erase(fl)
+	var af: Array = []
+	var df: Array = []
+	var aid: Array = []
+	var did: Array = []
+	for fl in att:
+		aid.append(int(fl["id"]))
+		if not af.has(int(fl["f"])):
+			af.append(int(fl["f"]))
+	for fl in dfn:
+		did.append(int(fl["id"]))
+		if not df.has(int(fl["f"])):
+			df.append(int(fl["f"]))
+	var stats: Dictionary = st["stats"]
+	stats["sea_battles"] = int(stats.get("sea_battles", 0)) + 1
+	stats["sea_fought"] = int(stats.get("sea_fought", 0)) + 1
+	var ev := {"k": "sea_battle", "x": CGrid.cx(c), "y": CGrid.cy(c), "att": af, "def": df, "af": aid,
+		"df": did, "won": 0 if att_won else 1, "pa": pa, "pd": pd,
+		"lost": lost, "taken": prizes, "sunk": sunk, "auto": 0, "fought": 1}
+	if str(outcome.get("mode", "")) == "forfeit":
+		ev["forfeit"] = 1
+	if gold > 0:
+		ev["gold"] = gold
+	if treasure > 0:
+		ev["treasure"] = treasure
+	_rules().event(st, ev)
+
+
 ## Troops beyond what fleet fl's ships now carry drown (the last aboard
 ## first; a fleet without ships loses everyone): [faction, army id, units]
 ## appended to `sunk`.
@@ -1403,11 +1618,11 @@ static func end_of_turn(st: Dictionary) -> void:
 		ids.append(int(fl["id"]))
 	for id in ids:
 		var fl := fleet(st, id)
-		if fl.is_empty() or (fl["ships"] as Array).is_empty():
+		if fl.is_empty() or (fl["ships"] as Array).is_empty() or fl.has("busy"):
 			continue
 		var foes: Array = []
 		for e in fleets(st):
-			if not (e["ships"] as Array).is_empty() and CState.at_war(st, int(fl["f"]), int(e["f"])) \
+			if not (e["ships"] as Array).is_empty() and not e.has("busy") and CState.at_war(st, int(fl["f"]), int(e["f"])) \
 					and CGrid.within(cell(fl), cell(e), FLEET_ZONE):
 				foes.append(e)
 		if not foes.is_empty():

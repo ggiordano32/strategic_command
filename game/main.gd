@@ -25,6 +25,7 @@ const NetSelftest := preload("res://game/net/net_selftest.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const CustomBattle := preload("res://game/custom/custom_battle.gd")
 const CustomSetup := preload("res://game/custom/custom_setup.gd")
+const SeaBattle := preload("res://game/sea_battle.gd")
 ## Menu terrain choices for the playable battles: -1 = random from the seed.
 const TERRAIN_CHOICES := [-1, Terrain.K_FLAT, Terrain.K_ROLLING, Terrain.K_RIDGE,
 	Terrain.K_VALLEY, Terrain.K_HILL, Terrain.K_SLOPE]
@@ -1324,6 +1325,16 @@ func _custom_solo(built: Dictionary, st: Dictionary) -> void:
 	if _battle != null:
 		return
 	custom.visible = false
+	if built.has("sea"):
+		# (N3a) A sea battle (game/sea_battle.gd).
+		var sb := SeaBattle.new()
+		sb.scenario = built["scenario"]
+		sb.seed_value = int(built["seed"])
+		sb.title_text = "Sea battle"
+		sb.exit_requested.connect(_end_battle)
+		_battle = sb
+		get_tree().root.add_child.call_deferred(sb)
+		return
 	var b := _custom_battle(built, st, 0)
 	_battle = b
 	get_tree().root.add_child.call_deferred(b)

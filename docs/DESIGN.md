@@ -1698,6 +1698,31 @@ sit on the steepest existing ground). Cover and sight from rocks, cliffs
 and woods: slice 2b.
 
 
+### Battle kit walls, towers and gates (as built, Level 1 phase 1, 2026-10-14)
+
+Look: variant A (grounded painterly) by the user's choice; B (tabletop diorama) stays an option
+for a later `[video] battle_look` setting, so `game/battlekit.gdshader` keeps `rim`, `outline`,
+`sat`, `contrast`, `amb`, `key` as uniforms (A is the default; B's values are in the shader header).
+
+The settlement's walls, towers and gates on the battle map are Blender kit pieces
+(`tools/battlekit/build.py`: `wall_<t>_<pp>` for the sim's five (thickness, parapet) pairs, `pal_<t>`,
+`tower_round` / `tower_sq` / `tower_timber`, `gate_c|o|b`, `pgate_c|o|b`; `bastion` is packed but unused:
+the map generator has no star trace yet). `tools/battlekit/pack.py` crops and packs them into
+`assets/battlekit/atlas_albedo.png` + `atlas_nrm.png` (8 px/m; normal xy, height, mask class) and
+the 4 px/m pre-lit `atlas_low.png`, and writes `game/battlekit_atlas.gd` (anchors, rects).
+`game/battlekit.gd` (child of `CityLayer`) turns `sim.map_info["city"]` into instances: walls tiled
+along each polygon edge (x scaled to the edge, the variant picked so the walkway sits where men stand),
+a gate piece over the wall at each gate (state from `sim.g_state`, a flash while struck), towers
+from the sim's tower list (the gate towers are in it). High: one MultiMesh and `battlekit.gdshader`
+(NW key, normal turned by the instance angle, culture palette by the mask class: Latin, Greek, Punic,
+Celtic, Spanish colonial, native). Low / CPU path: the same instances through `draw_texture_rect_region`
+from the pre-lit atlas, no shader, no shadow layer. `game/battlekit_shadow.gd` bakes a cast shadow + AO
+from the pieces' heights (0.5 m grid, one multiplied sprite), re-baking only the window round a gate
+that breaks. Stairs and banners are drawn above the kit (`CityDraw.draw_over`); the campaign's city
+preview keeps the old polygon drawing (`draw_static` without `kit`). Testing aids: `--no-kit` (old
+look), `--no-kit-shadow`, `--kit-culture=N`, `--city-info`. The crenellated round tower is the
+default; the roofed round tower (read as a ball at game scale) is not used. View only.
+
 ### Deployment phase (as built, October 2026)
 
 Total War's deployment: before the fighting, each player places their
@@ -4074,6 +4099,130 @@ line, strong guns. France: buccaneers, alliances with natives,
 privateers. The Brethren: the pirate loop above. Itza: jungle, cover,
 ambush, a lake fortress, no need of ships. Miskito: canoe raids, English
 muskets by trade, friends of pirates.
+
+### Sea battles (as built, N3a, 2026-10-14)
+
+The "Sea battles (real time)" paragraph above, first playable version
+(campaign hand-off: CAMPAIGN.md "Sea battles fought (N3a)"). Rule of cool on
+real seamanship: ships sail by the wind, beat to windward in tacks, fight
+with broadsides and boarders, strike their colours; speeds are about twice
+a real ship's and ranges compressed so a frigate duel decides in a few
+minutes.
+
+- **A sibling sim, not a mode of BattleSim** (`sim/sea_sim.gd`, types
+  `sim/sea_types.gd`): a sea battle has a handful of ships and no soldiers,
+  so it shares none of BattleSim's per-man arrays, maps, engines or AI;
+  apart, every land battle stays byte-identical (Rome goldens untouched).
+  It keeps the same discipline and the interface the lockstep layer uses
+  (`sim/lockstep.gd` picks it for a scenario with `"sea": 1`): integers and
+  `FixedMath` (1 m = 1024, angles 0..1023), its own xorshift RNG, ship-index
+  order, orders queued by (tick, player, seq), `state_hash()` over every
+  state array, `snapshot()` / `restore()` of every script variable (the land
+  grid rebuilt by `setup`), `result()`; a tick is 0.1 s.
+- **Ships** (rows by the campaign keys: sloop, brigantine, frigate,
+  galleon, ship of the line, war canoe): length and beam, top speed (sloop
+  9.5 m/s ... galleon 6.0; canoes 9.8 rowed), rate of turn (sloop 9 deg/s
+  ... galleon 3.4, slower without way), the no-go angle off the wind (sloop
+  42 deg, brigantine 50, frigate 62, ship of the line 66, galleon 70; canoes
+  none), the speed % needed to tack, guns a broadside (4 / 7 / 15 / 20 / 35
+  / 1), shot weight, range (220-300 m; chain 80 %, grape 40 %), hull, crew,
+  rigging, reload (10-17 s with a full gun crew), draught (deep ships run
+  aground on shoals), boarding quality. State per ship: position, heading
+  (x16), speed, sail (stop / battle 75 % / full), hull, crew, rig, troops
+  aboard, gunnery and boarding quality, morale, mode (hold course, sail to a
+  point, engage, board, flee, hold a heading), each broadside's loaded shot
+  and reload, grapple, fire, captor.
+- **Wind** from the scenario's bearing and strength; every 30 s it shifts a
+  few degrees (seeded, within 35 deg of the start). **Points of sail**: no
+  drive in the no-go zone, 45-80 % close-hauled, best (100 %) from the beam
+  to the broad reach, 82 % dead before it; leeway pushes everything
+  downwind. **Navigator** (every ship, any mode): straight to the goal when
+  it can lie the course, else close-hauled on its tack to the layline then
+  the other tack (the view draws exactly these legs); it turns through the
+  wind when it has the way (tacking), else wears round; caught in irons
+  without way the bow falls off; probes ahead turn it from land, shoals (deep
+  ships) and the field's edge.
+- **Broadsides**: a side (port / starboard, a 42 deg arc either side of the
+  beam) fires all its working guns (fewer as the hull goes) when loaded and
+  an enemy bears in range of its shot, the ordered target first, else (fire
+  at will) the nearest, never through a friend. Each gun hits at 88 % x
+  target size x (1 - 0.7 x range / max range) x gunnery quality. Round shot:
+  hull, splinters among the crew, a little rigging, 0.5 % a hit to start a
+  fire; chain: rigging (speed); grape: crew. Raking (from within 32 deg of
+  her bow or stern) kills 2.5 x. Reload slows with too few men at the guns
+  (4 a gun, both sides). A fire burns the hull until the crew puts it out (14
+  % a second at full crew); each second 1.5 % (3 % after 30 s) the magazine
+  goes: she blows up, her neighbours within 70 m are holed, lose men and
+  catch fire. Hull 0: she sinks.
+- **Boarding**: ordered (or the AI) to board, a ship sails alongside,
+  matching speed; within (lengths x 0.4 + 8) m at under 3.5 m/s relative
+  speed she grapples, both stop and drift together; each second the
+  boarders (crew x boarding quality + troops x 1.2) and defenders (the same,
+  x 125 % on their own deck) lose 5-8 % of the other's strength; the
+  defenders are taken under 40 % of the boarders, the boarders thrown back
+  under 50 % of the defenders or after 60 s. The prize gets a prize crew
+  (an eighth of the captor's, at most 40). A struck ship laid alongside is
+  taken at once. **N3b hook**: scenario `"deck": 1` stops the sim resolving
+  a grapple; `deck_request()` lists the grappled pairs (ships, sides, crews,
+  troops, qualities: the data a deck melee in BattleSim needs) and the
+  order `O_DECK` (boarder, target, won, crews left) applies the melee's
+  result, through the lockstep like any order.
+- **Morale and the end**: hits lower morale by the share of hull and men
+  lost (raking more), a ship struck, sunk or taken nearby by 8-12; quiet time
+  restores it. A ship strikes at 0, or with under 18 % of her crew (or 12 %
+  hull and a wrecked rig) with an enemy within 400 m; struck, she stops and
+  is out of the fight. A side with no ship fighting has lost (fled ships
+  escaped); at the time limit the fighting power left decides (ties: the
+  defenders). The loser's struck ships are taken; the winner's hoist their
+  colours again.
+- **Battle AI** (each ship every second, staggered): run for the edge away
+  from the enemy (preferring a fast point of sail) when beaten (hull < 28 %,
+  crew < 32 % or morale < 22 and the enemy stronger); else the nearest
+  weakest enemy (kept unless another is much better); board when its
+  boarding strength (with friends already boarding her) is 1.6 x hers and
+  she is close or crippled (not a ship outrunning it); else engage: beyond
+  ~600 m beat up to a point 220 m to windward of her (the weather gauge),
+  then hold the broadside on at the loaded shot's range, presenting the
+  loaded side, opening when too close (raking comes from the geometry);
+  grape inside grape range on a manned ship, chain when it means to board
+  her and she is in chain range, else round; battle sail inside 320 m.
+- **Water**: a land grid of 20 m cells (sea, shoal, land) from the scenario's
+  `land`: open sea, an island (a ragged blob with a shoal ring), or a coast
+  along the sides given (the campaign cell's land neighbours), ragged by
+  integer sine noise, with shoals off it; ships start clear of it.
+- **Orders** (types inside the lockstep's sim-order range): `O_SAIL` x, y;
+  `O_TARGET` target; `O_HOLD`; `O_SAILS` 0-2; `O_FIRE` on; `O_SHOT` kind;
+  `O_FLEE` (what the lockstep's army withdrawal sends); `O_BOARD` target;
+  `O_HEAD` facing; `O_DECK` (N3b).
+- **View** (`game/sea_battle.gd`, touch first): tap a ship of yours (double
+  tap: the fleet; long-press drag: a box), tap the sea to sail (several
+  ships spread in a line abreast; the planned course drawn with its tack),
+  tap an enemy to engage, Board armed then an enemy to board; one finger
+  pans, two pinch, the wheel zooms; the bottom bar: Full sail / Battle sail
+  / Heave to, Round / Chain / Grape, Fire at will, Board, Hold course, Flee;
+  the left column your ships (hull, crew, rig bars, both broadsides'
+  reload); the wind rose; speed II / 1x / 2x / 4x; Leave (a defeat). Drawn:
+  waves running before the wind, land and shoals (the grid smoothed),
+  top-down hulls 1.5 x their size (to read on a phone) with gunports, a
+  rail in the faction colour, masts and square sails braced round with the
+  wind and bellied by the drive (a sloop's boom swings to leeward), torn
+  and shot away with the rigging, furled when hove to or struck; the
+  ensign (white when struck, the captor's when taken); wakes; broadside
+  smoke and muzzle flashes along the firing side drifting with this battle's
+  wind (the land battle's gun-smoke look), shot streaks, splashes for
+  misses and splinters for hits; fires with smoke columns; the magazine
+  blast (fireball, shock ring, pall, wreckage); sinking; grapples; the
+  selected ship's broadside arcs and reach. Messages: grapples, prizes,
+  strikes, sinkings, fires, groundings, escapes.
+- **Custom battle**: the West setting's "Sea battle" (solo): ships per side
+  (up to 8), wind direction and strength, water (open / island / a coast),
+  start (across the wind, your fleet upwind or downwind).
+- **Measured** (`determinism_test --only=sea`): STATUS "N3a".
+- **Later**: live co-op at sea (the sim and lockstep are ready; the room,
+  the HUD's co-op parts and ship gifts are not), N3b deck melees, smoke
+  blocking aim, shore batteries and forts firing on ships, ships bombarding
+  shore units, fire ships, the formula fitted to these results, sea battle
+  art (the miniatures at headings), sounds of the sea.
 
 ### Overworld: real geography and the landscape layer (as built, 2026-10-10)
 

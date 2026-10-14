@@ -34,6 +34,7 @@ const CChars := preload("res://campaign/cchars.gd")
 const Icons := preload("res://game/unit_icons.gd")
 const CityPreview := preload("res://game/campaign/city_preview.gd")
 const GroundPalette := preload("res://game/ground_palette.gd")
+const SeaScreen := preload("res://game/campaign/sea_screen.gd")
 
 const WIDE := 640.0       # logical px: sides side by side from this dialog width
 const COL_HEALTH := Color(0.45, 0.8, 0.4)
@@ -52,6 +53,8 @@ const KILLS_NOTE_UNITS := "Each card shows that unit's own losses and the enemie
 ## reinforcement past the side's BATTLE_SIDE_MAX, arriving during the
 ## battle, 0: no men). me: the viewer's side (-1 neither).
 static func snapshot(st: Dictionary, b: Dictionary, viewer: int) -> Dictionary:
+	if b.has("sea"):
+		return SeaScreen.snapshot(st, b, viewer)  # (N3a) a sea battle
 	var r := int(b["r"])
 	var kind := str(b.get("kind", ""))
 	var arm := CRules.battle_armies(st, b)
@@ -148,6 +151,8 @@ static func _names(list: Array) -> String:
 
 ## "Assault on Roma (Latium): Rome storm the walls held by Greeks".
 static func title(st: Dictionary, b: Dictionary) -> String:
+	if b.has("sea"):
+		return SeaScreen.title(st, b)
 	var r := int(b["r"])
 	var facs := CRules.battle_factions(st, b)
 	var a := _names(facs[0])
@@ -249,6 +254,8 @@ static func _crossing(st: Dictionary, b: Dictionary) -> Dictionary:
 ## status lines above it ("battle_status"; the online dialog swaps the
 ## buttons and adds who holds the battle there).
 static func pre(s, st: Dictionary, b: Dictionary) -> Control:
+	if b.has("sea"):
+		return SeaScreen.pre(s, st, b)
 	var snap := snapshot(st, b, int(s.f))
 	var w := _dialog_w(s)
 	var wide := w >= WIDE
@@ -517,6 +524,8 @@ static func _side(snap: Dictionary, sd: int, res: Dictionary) -> Control:
 ## `outcome` applied: st is the state after it, events the texts of the
 ## events it produced (newest last).
 static func result(s, snap: Dictionary, outcome: Dictionary, st: Dictionary, events: Array) -> Control:
+	if snap.has("sea"):
+		return SeaScreen.result(s, snap, outcome, st, events)
 	var w := _dialog_w(s)
 	var wide := w >= WIDE
 	var v := Kit.vbox(8)

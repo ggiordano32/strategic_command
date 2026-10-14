@@ -23,6 +23,7 @@ const Terrain := preload("res://sim/terrain.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const CoopSession := preload("res://game/net/coop_session.gd")
 const NetScript := preload("res://game/net/net.gd")
+const SeaSim := preload("res://sim/sea_sim.gd")
 
 const SKILL_NAMES := ["Easy", "Average", "Skilled"]
 const STYLE_NAMES := ["Cautious", "Balanced", "Aggressive"]
@@ -127,6 +128,7 @@ func _rebuild() -> void:
 		head.add_child(ps)
 		var po := Kit.icon_button("Play online", "online", _create_online, 130, 17)
 		po.name = "custom_play_online"
+		po.visible = not CS.sea_on(setup)  # (sea battles: solo for now)
 		head.add_child(po)
 	_box.add_child(head)
 	if session == null:
@@ -143,6 +145,22 @@ func _rebuild() -> void:
 		_box.add_child(_lobby_view())
 	_info = Kit.label("", Kit.FONT, Kit.COL_DIM, true)
 	_box.add_child(_info)
+	if CS.pack_of(setup) == "west" and session == null:
+		# (N3a) A sea battle instead of a land battle (solo).
+		var sb := Kit.button("Sea battle: " + ("on" if CS.sea_on(setup) else "off"), func():
+			if CS.sea_on(setup):
+				setup.erase("sea")
+			else:
+				setup["sea"] = CS.sea_default()
+			_changed(), 0, 14)
+		sb.name = "custom_sea"
+		sb.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		sb.tooltip_text = "Ships in real time with the wind (the West setting)"
+		_box.add_child(sb)
+	if CS.sea_on(setup):
+		_box.add_child(_sea_view())
+		_show_check()
+		return
 	_box.add_child(_map_row())
 	var sides := HBoxContainer.new()
 	sides.add_theme_constant_override("separation", 10)
@@ -155,6 +173,11 @@ func _rebuild() -> void:
 
 func _show_check() -> void:
 	if _info == null:
+		return
+	if CS.sea_on(setup):
+		var sw := CS.sea_check(setup)
+		_info.text = sw if sw != "" else "Ready to play solo: your fleet (bottom) against the battle AI's."
+		_info.add_theme_color_override("font_color", Kit.COL_BAD if sw != "" else Kit.COL_GOOD)
 		return
 	var why := CS.check(setup, session != null)
 	if why != "":
@@ -517,6 +540,13 @@ func _load_template(i: int) -> void:
 # --------------------------------------------------------------- playing ---
 
 func _play_solo() -> void:
+	if CS.sea_on(setup):
+		var sb := CS.build_sea(setup)
+		if sb.has("error"):
+			_info.text = str(sb["error"])
+			return
+		play_solo.emit(sb, setup.duplicate(true))
+		return
 	var b := CS.build(setup, true)
 	if b.has("error"):
 		_info.text = str(b["error"])
@@ -533,6 +563,75 @@ func _back() -> void:
 		_rebuild()
 		return
 	back.emit()
+
+
+## (N3a) The sea battle setup: the wind, the water, where the fleets start,
+## each side's ships (add one by its button, tap one to take it away).
+func _sea_view() -> Control:
+	var sea: Dictionary = setup["sea"]
+	var v := Kit.vbox(6)
+	var row := Kit.flow(8)
+	var dirs := ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+	var wi := int(round(int(sea["wind"]) / 45.0)) % 8
+	var wb := _opt("Wind from: " + str(dirs[wi]), func():
+		sea["wind"] = ((wi + 1) % 8) * 45
+		_changed())
+	wb.name = "custom_sea_wind"
+	row.add_child(wb)
+	var strs := [35, 55, 75, 95]
+	var si := 0
+	for i in strs.size():
+		if int(sea["str"]) >= int(strs[i]) - 10:
+			si = i
+	var sb2 := _opt("Breeze: " + ["light", "moderate", "fresh", "strong"][si], func():
+		sea["str"] = strs[(si + 1) % strs.size()]
+		_changed())
+	sb2.name = "custom_sea_str"
+	row.add_child(sb2)
+	var wat := int(sea.get("water", 0))
+	var wtb := _opt("Water: " + str(CS.SEA_WATER_NAMES[wat]), func():
+		sea["water"] = (wat + 1) % CS.SEA_WATER_NAMES.size()
+		_changed())
+	wtb.name = "custom_sea_water"
+	row.add_child(wtb)
+	var starts: Array = CS.SEA_START_NAMES.keys()
+	var stk := str(sea.get("start", "ns"))
+	var stb := _opt("Start: " + str(CS.SEA_START_NAMES[stk]), func():
+		sea["start"] = starts[(starts.find(stk) + 1) % starts.size()]
+		_changed())
+	stb.name = "custom_sea_start"
+	row.add_child(stb)
+	v.add_child(row)
+	var sides := HBoxContainer.new()
+	sides.add_theme_constant_override("separation", 10)
+	for s in 2:
+		var col := Kit.vbox(4)
+		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		col.add_child(Kit.label(["Your fleet (Player 1)", "The enemy (battle AI)"][s], Kit.FONT, PLAYER_COLORS[s]))
+		var list: Array = sea["ships"][s]
+		var have := Kit.flow(4)
+		for i in list.size():
+			var key := str(list[i])
+			var b := Kit.button(SeaSim.ST.name_of(SeaSim.ST.index_of(key)) + "  x", func():
+				list.remove_at(i)
+				_changed(), 0, 13)
+			b.name = "custom_sea_ship_%d_%d" % [s, i]
+			b.tooltip_text = "Take this ship away"
+			have.add_child(b)
+		col.add_child(have)
+		var add := Kit.flow(4)
+		for key in CS.SEA_SHIPS:
+			var k2 := str(key)
+			var ab := Kit.button("+ " + SeaSim.ST.name_of(SeaSim.ST.index_of(k2)), func():
+				if list.size() < CS.SEA_MAX:
+					list.append(k2)
+				_changed(), 0, 13)
+			ab.name = "custom_sea_add_%d_%s" % [s, k2]
+			add.add_child(ab)
+		col.add_child(add)
+		sides.add_child(col)
+	v.add_child(sides)
+	return v
 
 
 func _create_online() -> void:

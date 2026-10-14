@@ -58,6 +58,7 @@ extends RefCounted
 ## never waits for someone who has gone.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
+const SeaSim := preload("res://sim/sea_sim.gd")
 
 const FRAME_HZ := 10
 const Q_TICK := 4                 # quarter ticks per sim tick
@@ -128,7 +129,12 @@ var applied := 0
 ## guest fights on the players' side when they are all on one (co-op).
 func setup(scenario: Dictionary, p_seed: int, home: Array, present: Array, host: int, guests: Array = [],
 		guest_sides: Dictionary = {}) -> void:
-	sim = BattleSim.new()
+	# A sea battle (scenario "sea", N3a) runs on its own sim with the same
+	# interface (sim/sea_sim.gd); every land battle on BattleSim as before.
+	if int(scenario.get("sea", 0)) != 0:
+		sim = SeaSim.new()
+	else:
+		sim = BattleSim.new()
 	sim.setup(scenario, p_seed)
 	frame = 0
 	acc = 0
@@ -284,6 +290,8 @@ func _ai_take(side: int) -> void:
 		return
 	sim.ai_sides[side] = 1
 	ai_take[side] = 1
+	if sim is SeaSim:
+		return
 	if sim.city_on == 0 and sim.phase == BattleSim.PHASE_BATTLE and sim.ai_phase[side] == BattleSim.BattleAI.P_DEPLOY:
 		# Mid-battle: advance from where the army stands (not a deployment).
 		sim.ai_phase[side] = BattleSim.BattleAI.P_ADVANCE

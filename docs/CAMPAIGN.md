@@ -1745,8 +1745,9 @@ the Shipyard at `SHIPYARD` 7).
   to the farthest sea cell within 5 outside the winners' zones. Event
   `sea_battle {x, y, att, def, af, df, won, pa, pd, lost [[f, ship, 0
   sunk / 1 taken]], taken, sunk [[f, army, units]], auto: 1}` (also in the
-  chronicle). Never pending: the server's battle bookkeeping is unchanged
-  (`statemeta.go` reads only `battles`).
+  chronicle). N1: never pending. N3a: pending when a player's fleet is in
+  it (fought in real time or auto-resolved by this formula; see "Sea
+  battles fought (N3a)"); AI-only ones still resolve at once.
 - **End of turn** (`CFleet.end_of_turn`, last in `CRules.end_of_turn`):
   the ordered ship is launched at the dock (it joins a fleet of ours
   there, else forms one; event `ship_built`); N2: enemy fleets at war that
@@ -2077,6 +2078,86 @@ west_ships.gd` (N2b block; ship rows gain `storm`).
   waiting, captains rising, growing famous and meeting their fate, and
   galleons taken or sunk; the map key has the hurricane and wreck rows.
 - **Measured:** STATUS "N2b".
+
+## Sea battles fought (N3a, the West pack; as built 2026-10-14)
+
+DESIGN "Sea battles (as built, N3a)" is the battle itself (`sim/sea_sim.gd`,
+`game/sea_battle.gd`); this is the campaign hand-off. West only (a pack with
+ships); Rome never reaches any of it (campaign_sim hashes unchanged:
+cdc1d805 32b83031 23f9ed4f 3237d82d a42fc685 b6fe6c2e). `CState.VERSION`
+stays 7 (every key optional, only in West states). Code: `campaign/cfleet.gd`
+(`sea_battle` -> `_pending`, `apply_sea`, `near_region`, busy fleets),
+`campaign/cseabattle.gd` (new: `build`, `land_of`, `outcome_from_result`,
+`outcome_forfeit`, `formula_outcome`), hooks in `crules.gd`
+(`battle_factions`, `apply_outcome`, `check_eliminations`, two contact
+checks skip sea battles), `cstate.gd` (`battle_at` skips them), `cbattle.gd`
+(`build`, `formula`, `side_strengths` hand a sea battle on), `cstorm.gd` and
+`cai_fleet.gd` (busy fleets), numbers in `campaign/data/west_ships.gd` (N3a
+block). Server: `statemeta.go` reads a battle's `sf` (the factions with a
+fleet in it) for its humans (`TestParseStateSeaBattle`).
+
+- **Pending or at once.** A sea battle (an interception in a voyage, the
+  end-of-turn meeting of enemy fleets) with a human faction's fleet on
+  either side is **pending**: a record in `battles` {id, "sea": 1, "kind":
+  "sea", r (the region of the nearest land cell: its name), turn, att [],
+  def [], reinf [] (no armies), att_f, def_f, settlement 0, x, y (the sea
+  cell), af / df (the fleets of each side), sf (every faction with a fleet
+  in it, sorted)} and the event `sea_pending` (chronicle). AI-only sea
+  battles resolve at once by the formula as before (`resolve`). The phase is
+  "battles" until it is resolved, as for land battles.
+- **Busy fleets.** Its fleets carry `busy` until it is resolved: they sail
+  no voyage (refused "in a sea battle"), are no one's prey in a voyage or
+  the end-of-turn meetings, do not join another sea battle, are not struck
+  by a hurricane, are not scuttled for debt. A pending sea battle without a
+  fleet left on one side (a faction eliminated) is dropped and its fleets
+  freed (`check_eliminations`).
+- **The battle** (`CSeaBattle.build(st, b, human_f)`): sim side 0 the
+  attackers' ships, 1 the defenders', every ship of every fleet in fleet
+  order; hull and crew from the campaign's %; crews by faction `SEA_CREWS`
+  [gunnery, boarding] % (England 115 / 100, the Dutch 112 / 100, France
+  102 / 110, both Spains 95 / 115, the Brethren 92 / 130, Miskito 85 / 120,
+  Itza 80 / 115; boarding multiplies the ship row's own); troops aboard
+  (the fleet's carried men shared over its ships by their places) fight in
+  boardings; morale 100 + the fleet captain's fear (`FEAR_PCT`), - 
+  `SEA_FEAR_FOE` 15 against a Feared captain; the wind from `WIND_FROM_DEG`
+  90 +- `SEA_WIND_VAR` 30 degrees and `WIND_STRENGTH` 80 +- 15 (seeded by
+  the campaign seed, battle id and turn); the water from the battle cell
+  (`land_of`): a coast on the sides where the 8 neighbours are land
+  (shoals off it), else open sea with an island at `SEA_ISLAND_PCT` 25 %
+  (50 % within two cells of land); the fleets meet across the field (west /
+  east when the coast is north or south); `SEA_TIME_LIMIT` 900 s. The
+  player commands the side of their faction (and its friends), the battle
+  AI the other.
+- **Outcome** (`outcome_from_result`): winner (0 attackers, 1 defenders),
+  per ship [fleet, index, fate 0 afloat / 1 sunk / 2 taken / 3 escaped, hull
+  %, crew %, blown up, kills], per fleet the troops' share left. Leaving
+  before it is decided (`outcome_forfeit`): the player's side loses, its
+  struck ships are taken, the others get away. Auto-resolve is the formula
+  (`{"sea": 1, "mode": "formula"}`, `CFleet.resolve` when applied).
+- **Applied** (`CFleet.apply_sea`, from `CRules.apply_outcome`): the
+  formula, or the fought outcome: sunk ships go (a treasure galleon leaves a
+  wreck); a taken ship joins the captor side's first fleet still afloat
+  with her hull and `TAKEN_PCT` crew (a named galleon keeps her name), paying
+  prize money and her treasure (`CSea.prize_money`: pirates' infamy, the
+  galleon headline); survivors keep the hull and crew they ended with; the
+  carried armies' units lose the troops' share lost (boardings), then troops
+  beyond what a fleet's survivors carry drown (`army_sunk`); the beaten
+  side's fleets fall back; captains gain fame or meet their fate
+  (`CCaptain.after_battle`); event `sea_battle` with `fought: 1` (and
+  `forfeit`), `auto: 0`; stats `sea_battles`, `sea_fought`.
+- **View:** the pending sea battle is a battle marker at its cell; its card
+  (`game/campaign/sea_screen.gd`, from `battle_screen.gd`): "Sea battle off
+  X", a preview of the water, the wind and the fleets' start, each fleet
+  (captain, men aboard) and ship (guns, hull, crew, silver), the balance of
+  power, Auto-resolve / Fight; the result card: the banner, fought or
+  auto-resolved, each ship's fate, the reports. Online: Fight claims the
+  battle and uploads the outcome like a land battle (solo and online-solo);
+  "Fight together" is not offered for sea battles (see Open).
+- **Open:** live co-op at sea (the lockstep already runs a SeaSim and is
+  tested with two peers and a joiner; missing: `CoopSession` / the relay
+  room for a SeaBattle view, the guest / gift rules for ships, the HUD's
+  co-op bar), several humans on both sides, fleets joining a pending sea
+  battle, the formula fitted to the real-time results, shore batteries.
 
 ## Diplomacy and AI
 

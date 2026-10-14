@@ -783,7 +783,7 @@ static func regions_of(st: Dictionary, f: int) -> Array[int]:
 
 static func battle_at(st: Dictionary, r: int) -> Dictionary:
 	for b in st["battles"]:
-		if int(b["r"]) == r:
+		if int(b["r"]) == r and not b.has("sea"):  # (a sea battle off r is not in it)
 			return b
 	return {}
 

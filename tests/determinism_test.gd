@@ -129,6 +129,10 @@ extends SceneTree
 ## through the ford at foot holding its far exit arrives with no momentum
 ## (no impact; the same charge on the plain strikes home); identical on
 ## repeat and across snapshot / restore.
+## Sea battles (N3a; "--only=sea", also in the full run; tests/sea_checks.gd):
+## a frigate duel, sloops against a galleon, a boarding, upwind and downwind
+## starts, a coast with an island: identical on repeat and across snapshot /
+## restore, a different seed diverges, every sea mechanic seen.
 ## Reinforcements (2026-10-13; "--only=reinf", also in the full run):
 ## Scenarios.reinf_battle at half size, 36 units (24 on the field and 12
 ## reserves at its edge) against 24, both AI; side 0's left-wing horse
@@ -143,6 +147,7 @@ extends SceneTree
 ## goldens have no reserves: unchanged, checked in the full run.)
 ## Exits 0 on success, 1 on failure.
 
+const SeaChecks := preload("res://tests/sea_checks.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const UT := preload("res://sim/unit_types.gd")
@@ -188,6 +193,11 @@ var _ok := true
 
 
 func _init() -> void:
+	if "--only=sea" in OS.get_cmdline_user_args():
+		_check_sea()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=flow" in OS.get_cmdline_user_args():
 		_check_flow()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -321,6 +331,7 @@ func _init() -> void:
 	_check_crossing()
 	_check_reinf()
 	_check_guns()
+	_check_sea()
 	if "--only=equipment" in OS.get_cmdline_user_args():
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
@@ -371,6 +382,14 @@ func _init() -> void:
 		_check_coverage(scen, a["stats"])
 	print("RESULT: ", "PASS" if _ok else "FAIL")
 	quit(0 if _ok else 1)
+
+
+## Sea battles (N3a; tests/sea_checks.gd): the sea scenarios identical on
+## repeat and across snapshot / restore, a different seed diverges, every
+## sea mechanic exercised; prints the table of outcomes.
+func _check_sea() -> void:
+	if SeaChecks.determinism() > 0:
+		_ok = false
 
 
 func _fail(msg: String) -> void:

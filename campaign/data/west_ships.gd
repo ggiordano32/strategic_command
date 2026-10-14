@@ -297,3 +297,26 @@ const GALLEON_NAMES: Array[String] = ["Nuestra Señora de Atocha", "Santa Margar
 	"Nuestra Señora de la Plata", "San Martín del Mar", "La Golondrina Dorada"]
 const WRECKS_MAX := 12
 const ESCORT_INFAMY: Array[int] = [30, 60]
+
+# ------------------------------------------------------------------- N3a ---
+# Sea battles fought in real time (campaign/cseabattle.gd, sim/sea_sim.gd;
+# docs/CAMPAIGN.md "Sea battles fought (N3a)"). A sea battle with a player
+# in it is pending (fought or auto-resolved by the formula above); AI-only
+# ones are resolved at once as before.
+
+## Crews by faction key: [gunnery %, boarding %] (the sim's q and bq; the
+## boarding % multiplies the ship row's own). England and the Dutch shoot
+## straightest; the Spaniards (soldiers aboard), the Brethren and the
+## natives' canoes board.
+const SEA_CREWS := {"england": [115, 100], "dutch": [112, 100], "france": [102, 110], "new_spain": [95, 115],
+	"tierra_firme": [95, 115], "brethren": [92, 130], "miskito": [85, 120], "itza": [80, 115]}
+## The battle's wind: the campaign's (WIND_FROM_DEG, WIND_STRENGTH) shifted
+## by up to SEA_WIND_VAR degrees and 15 strength (seeded).
+const SEA_WIND_VAR := 30
+## Open sea: an island in the battle area at this % (twice that within two
+## cells of land).
+const SEA_ISLAND_PCT := 25
+## A Feared captain's enemies start with this much less morale.
+const SEA_FEAR_FOE := 15
+## Seconds before a sea battle is called by the fighting power left.
+const SEA_TIME_LIMIT := 900

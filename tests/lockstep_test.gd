@@ -93,6 +93,7 @@ const UT := preload("res://sim/unit_types.gd")
 const AIProfile := preload("res://sim/ai_profile.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const FM := preload("res://sim/fixed_math.gd")
+const SeaChecks := preload("res://tests/sea_checks.gd")
 
 var _ok := true
 var quick := false
@@ -130,6 +131,11 @@ func _init() -> void:
 		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 		quit(0 if _ok else 1)
 		return
+	if OS.get_cmdline_user_args().has("--only=sea"):
+		_test_sea()
+		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
+		quit(0 if _ok else 1)
+		return
 	if OS.get_cmdline_user_args().has("--only=street"):
 		_test_lockstep_street()
 		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
@@ -158,8 +164,19 @@ func _init() -> void:
 	_test_deploy("h2h")
 	_test_deploy("h2h_drop")
 	_test_deploy_unlimited()
+	_test_sea()
 	print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 	quit(0 if _ok else 1)
+
+
+## 15. Sea battles (N3a; "--only=sea"; tests/sea_checks.gd): two peers
+## sharing side 0 of a sea battle by a coast against the battle AI, random
+## orders (their own ships' and, refused alike, the other's), every frame
+## equal; a third peer restored from A's snapshot mid-battle follows; solo
+## through Lockstep equals the plain SeaSim.
+func _test_sea() -> void:
+	if SeaChecks.lockstep() > 0:
+		_ok = false
 
 
 func _fail(msg: String) -> void:

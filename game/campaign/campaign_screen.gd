@@ -48,6 +48,8 @@ const Panels := preload("res://game/campaign/campaign_panels.gd")
 const AutoResolve := preload("res://game/campaign/auto_resolve.gd")
 const BattleScreen := preload("res://game/campaign/battle_screen.gd")
 const Battle := preload("res://game/battle.gd")
+const SeaBattle := preload("res://game/sea_battle.gd")
+const CSeaBattle := preload("res://campaign/cseabattle.gd")
 const UnitBook := preload("res://game/unit_book.gd")
 const UnitEntry := preload("res://game/unit_entry.gd")
 const Controls := preload("res://game/controls.gd")
@@ -103,7 +105,7 @@ var cover: ColorRect
 var book: UnitBook
 var controls_page: Controls
 var panels: Panels
-var battle: Battle = null
+var battle = null  # Battle, or SeaBattle for a sea battle (N3a)
 var _battle_built: Dictionary = {}
 ## The battle screen's snapshot of the battle in progress (taken at its start).
 var _battle_snap: Dictionary = {}
@@ -2261,6 +2263,12 @@ func auto_resolve(bid: int) -> void:
 	if b.is_empty() or _resolver != null:
 		return
 	_battle_snap = BattleScreen.snapshot(st, b, f)
+	if b.has("sea"):
+		# (N3a) A sea battle auto-resolves by the fleets' formula at once.
+		_battle_id = bid
+		_t("campaign_battle", {"mode": "auto", "turn": int(st["turn"]), "region": int(b.get("r", -1)), "sea": 1})
+		_apply_battle(bid, CBattle.formula(st, b))
+		return
 	_resolver = AutoResolve.new()
 	add_child(_resolver)
 	_resolver.start(st, b)
@@ -2353,6 +2361,9 @@ func fight(bid: int) -> void:
 		return
 	var hs := CRules.battle_humans(st, b)
 	var hf: int = f if hs.has(f) else int(hs[0])
+	if b.has("sea"):
+		_fight_sea(b, hf)
+		return
 	_battle_built = CBattle.build(st, b, hf)
 	_battle_snap = BattleScreen.snapshot(st, b, f)
 	_battle_id = bid
@@ -2367,6 +2378,39 @@ func fight(bid: int) -> void:
 	_set_visible(false)
 	_t("campaign_battle_start", {"turn": int(st["turn"]), "region": int(b["r"]), "units": (_battle_built["map"] as Array).size()})
 	_enter_battle()
+
+
+## (N3a) A sea battle fought in real time (game/sea_battle.gd), the player
+## commanding the side of faction hf, the battle AI the other.
+func _fight_sea(b: Dictionary, hf: int) -> void:
+	var bid := int(b["id"])
+	_battle_built = CSeaBattle.build(st, b, hf)
+	_battle_snap = BattleScreen.snapshot(st, b, f)
+	_battle_id = bid
+	var sb := SeaBattle.new()
+	sb.scenario = _battle_built["scenario"]
+	sb.seed_value = int(_battle_built["seed"])
+	sb.player_side = int(_battle_built["player_side"])
+	sb.campaign_mode = true
+	sb.title_text = BattleScreen.title(st, b)
+	var facs := CRules.battle_factions(st, b)
+	var names := ["", ""]
+	var cols: Array = []
+	for k in 2:
+		names[k] = "The %s fleet" % str(CData.FACTIONS[int(facs[k][0])]["adj"])
+		cols.append(CData.faction_color(int(facs[k][0])))
+	sb.side_names = names
+	sb.side_cols = cols
+	for u in sb.scenario["units"]:
+		var fc := CData.faction_color(int(u.get("f", 0)))
+		u["col"] = [fc.r, fc.g, fc.b]
+	battle = sb
+	battle.exit_requested.connect(_on_battle_exit)
+	close_dialog()
+	_set_visible(false)
+	_t("campaign_battle_start", {"turn": int(st["turn"]), "region": int(b["r"]), "units": (_battle_built["map"] as Array).size(),
+		"sea": 1})
+	get_tree().root.add_child(battle)
 
 
 ## Add the battle node (its map bakes run in its _ready) behind a short
@@ -2413,6 +2457,9 @@ func _set_visible(on: bool) -> void:
 func fight_live(bid: int, create: bool, keep: bool = false) -> void:
 	var b := CState.battle(st, bid)
 	if b.is_empty() or battle != null or online == null:
+		return
+	if b.has("sea"):
+		fight(bid)  # (N3a) sea battles are fought by one player for now
 		return
 	var v: int = online.version
 	var bst: Dictionary = st
@@ -2488,11 +2535,26 @@ func _coop_failed(code: String, text: String) -> void:
 
 
 func _on_battle_exit() -> void:
+	if battle is SeaBattle:
+		var sres: Dictionary = battle.sim.result()
+		var sdec: bool = battle.is_decided()
+		var sout: Dictionary
+		if sdec:
+			sout = CSeaBattle.outcome_from_result(_battle_built, sres, "fought")
+		else:
+			sout = CSeaBattle.outcome_forfeit(_battle_built, sres)
+		_t("campaign_battle", {"mode": "fought" if sdec else "forfeit", "turn": int(st["turn"]), "ticks": int(sres["tick"]),
+			"winner": int(sout["winner"]), "sea": 1})
+		battle.queue_free()
+		battle = null
+		_set_visible(true)
+		_apply_battle(_battle_id, sout)
+		return
 	if battle.coop != null:
 		_on_coop_exit()
 		return
 	var res: Dictionary = battle.sim.result()
-	var decided := battle.is_decided()
+	var decided: bool = battle.is_decided()
 	var outcome: Dictionary
 	if decided:
 		outcome = CBattle.outcome_from_result(_battle_built, res, "fought")

@@ -2823,6 +2823,9 @@ func event_text(e: Dictionary, f: int) -> String:
 				_names(e["members"]) + (" are" if (e["members"] as Array).size() > 1 else " is"), int(e["team"]) + 1]
 		"sea_battle":
 			return sea_battle_text(e)
+		"sea_pending":
+			return "Sea battle %s: %s against %s, to be fought or auto-resolved." % [sea_place(int(e["x"]), int(e["y"])),
+				CData.faction_name(int(e["f"])), CData.faction_name(int(e["to"]))]
 		"ship_built":
 			return "A %s was launched at %s." % [str(CData.ship_row(str(e["ship"])).get("name", e["ship"])).to_lower(), city.call(e["r"])]
 		"embarked":
@@ -3036,7 +3039,10 @@ func sea_battle_text(e: Dictionary) -> String:
 		lines.append("%d treasure galleon%s of the flota taken!" % [int(e["treasure"]), "" if int(e["treasure"]) == 1 else "s"])
 	if int(e.get("gold", 0)) > 0:
 		lines.append("Prize money: %d gold." % int(e["gold"]))
-	lines.append("(Auto-resolved; real-time sea battles come later.)")
+	if int(e.get("fought", 0)) != 0:
+		lines.append("(Fought%s.)" % (", the captain left the fight" if int(e.get("forfeit", 0)) != 0 else ""))
+	else:
+		lines.append("(Auto-resolved.)")
 	return " ".join(lines)
 
 

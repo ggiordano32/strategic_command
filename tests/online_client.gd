@@ -30,6 +30,8 @@ const CState := preload("res://campaign/cstate.gd")
 const CTurn := preload("res://campaign/cturn.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
+const SeaSim := preload("res://sim/sea_sim.gd")
+const CSeaBattle := preload("res://campaign/cseabattle.gd")
 
 var role := "A"
 var dir := ""
@@ -270,12 +272,23 @@ func _battles() -> bool:
 			continue
 		var t0 := Time.get_ticks_msec()
 		var built := CBattle.build(oc.st, sb, -1, 50)
-		var sim := BattleSim.new()
-		sim.setup(built["scenario"], int(built["seed"]))
-		while sim.ended == 0 and sim.tick < 12000:
-			sim.step()
-		var outcome := CBattle.outcome_from_result(built, sim.result(), "auto")
-		outcome["scale"] = 50
+		var outcome := {}
+		if sb.has("sea"):
+			# (N3a) A sea battle: fought in the sea sim (both sides under the
+			# battle AI), the outcome written back by apply_sea.
+			var ssim := SeaSim.new()
+			ssim.setup(built["scenario"], int(built["seed"]))
+			while ssim.ended == 0 and ssim.tick < 9300:
+				ssim.step()
+			outcome = CSeaBattle.outcome_from_result(built, ssim.result(), "fought")
+			result["sea_fought"] = int(result.get("sea_fought", 0)) + 1
+		else:
+			var sim := BattleSim.new()
+			sim.setup(built["scenario"], int(built["seed"]))
+			while sim.ended == 0 and sim.tick < 12000:
+				sim.step()
+			outcome = CBattle.outcome_from_result(built, sim.result(), "auto")
+			outcome["scale"] = 50
 		var sim_ms := Time.get_ticks_msec() - t0
 		var fault := ""
 		if not failed_first_upload:

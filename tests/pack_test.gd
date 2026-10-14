@@ -19,6 +19,8 @@ const CSea := preload("res://campaign/csea.gd")
 const CStorm := preload("res://campaign/cstorm.gd")
 const CCaptain := preload("res://campaign/ccaptain.gd")
 const CAIFleet := preload("res://campaign/cai_fleet.gd")
+const CBattle := preload("res://campaign/cbattle.gd")
+const SeaChecks := preload("res://tests/sea_checks.gd")
 
 ## A Rome AI-only campaign (seed 4242) after 20 turns, all rules as they are.
 const ROME_20 := "575e23d5"  # = HEAD 1c04fbe before the pack switch existed
@@ -36,6 +38,7 @@ func _init() -> void:
 	_storms()
 	_captains()
 	_galleons()
+	SeaChecks.campaign(_check)  # (N3a) a sea battle pending, fought, applied
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
 	quit(0 if fails == 0 else 1)
 
@@ -252,6 +255,15 @@ func _fleets() -> void:
 	var tc := CFleet.cell(e2)
 	CFleet.execute_moves(s2, [[900, tc, eng, 0, -1]])
 	CFleet.execute_moves(s3, [[900, tc, eng, 0, -1]])
+	# (N3a) England is a player: the sea battle is pending; auto-resolved
+	# (the formula) it is the battle N1 resolved at once.
+	var pend: Array = s2["battles"]
+	_check(pend.size() == 1 and int(pend[0].get("sea", 0)) == 1 and CFleet.fleet(s2, 900).has("busy"),
+		"with a player in it the sea battle is pending (%d battles)" % pend.size())
+	for sx in [s2, s3]:
+		if not (sx["battles"] as Array).is_empty():
+			var pb: Dictionary = sx["battles"][0]
+			CRules.apply_outcome(sx, int(pb["id"]), CBattle.formula(sx, pb))
 	var sb := {}
 	for e in s2["events"]:
 		if str(e["k"]) == "sea_battle":
