@@ -101,6 +101,22 @@ static var _shade_ms := -1.0   # bake time, ms (for the record)
 static var _road_lines: Array = []
 static var _river_lines: Array = []
 static var _cross_marks: Array = []
+static var _gen := 0           # map_geo.gd's gen these caches belong to
+
+
+## A pack switch (Geo.use_pack) invalidates the geometry caches.
+static func _sync_gen() -> void:
+	if _gen == Geo.gen:
+		return
+	_gen = Geo.gen
+	_land_meshes = []
+	_land_sz = Vector2.ZERO
+	_cell_meshes = {}
+	_hill_segs = []
+	_shade_tex = null
+	_road_lines = []
+	_river_lines = []
+	_cross_marks = []
 
 var state: Dictionary = {}
 var zoom := 1.0
@@ -349,6 +365,7 @@ static func _poly_mesh(poly: PackedVector2Array, sz: Vector2) -> ArrayMesh:
 
 ## The land and island polygons as meshes, uv over the grid's size sz.
 static func land_meshes(sz: Vector2) -> Array:
+	_sync_gen()
 	if _land_meshes.is_empty() or _land_sz != sz:
 		_land_meshes = []
 		_land_sz = sz
@@ -367,6 +384,7 @@ func _fill_cell(r: int, col: Color) -> void:
 
 
 static func cell_meshes(r: int) -> Array:
+	_sync_gen()
 	if not _cell_meshes.has(r):
 		var ms: Array = []
 		for piece in Geo.cell(r):
@@ -520,6 +538,7 @@ static func prepare_steps() -> Array:
 
 ## The roads, rivers and hills geometry from the grid (once).
 static func _terrain_geometry() -> void:
+	_sync_gen()
 	if not _hill_segs.is_empty():
 		return
 	Landscape.bake()
@@ -530,6 +549,7 @@ static func _terrain_geometry() -> void:
 ## meshes, hills, the shade, roads, rivers and crossings (once). The loading
 ## panel runs it as its own step.
 static func geometry_lines() -> void:
+	_sync_gen()
 	if not _hill_segs.is_empty():
 		return
 	var gsz := Vector2(CGrid.width(), CGrid.height()) * float(CGrid.cell_px())

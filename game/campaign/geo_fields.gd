@@ -22,9 +22,17 @@ extends RefCounted
 ##   GeoFields.river_dist(c)        cells to the nearest river (float)
 ##   GeoFields.fine() / slope() / relief_field()  the raw fields (FW x FH, row 0 north)
 
-const Relief := preload("res://game/campaign/relief_data.gd")
-const Elev := preload("res://campaign/data/elev_data.gd")
-const Geo := preload("res://game/campaign/map_geo.gd")
+# The baked fields of the active pack (use_pack). Rome: relief_data.gd and
+# campaign/data/elev_data.gd (preloaded, so the export always carries them);
+# other packs load relief_<key>.gd and campaign/data/<key>_elev_data.gd on
+# demand, so a Rome session never touches the West files. (map_geo.gd preloads
+# this script, so it is reached lazily here, not preloaded: no cycle.)
+const RomeRelief := preload("res://game/campaign/relief_data.gd")
+const RomeElev := preload("res://campaign/data/elev_data.gd")
+const MAP_GEO := "res://game/campaign/map_geo.gd"
+static var Relief = RomeRelief
+static var Elev = RomeElev
+static var pack_key := "rome"
 
 const CLASS_SEA := -1
 const CLASS_PLAIN := 0
@@ -40,6 +48,36 @@ static var _coast := PackedByteArray()       # 128 + km, sea side positive
 static var _expo := PackedByteArray()        # 0..255 (steps of 8)
 static var _shore := PackedByteArray()       # 0..252 (steps of 36)
 static var _px := 2.5                        # map pixels per fine sample
+
+
+## Switch the baked fields to pack `key` and drop every cache (fails loudly if
+## a data file is missing). Usually reached through map_geo.gd's use_pack.
+static func use_pack(key: String) -> void:
+	if key == pack_key:
+		return
+	if key == "rome":
+		Relief = RomeRelief
+		Elev = RomeElev
+	else:
+		var rp := "res://game/campaign/relief_%s.gd" % key
+		var ep := "res://campaign/data/%s_elev_data.gd" % key
+		assert(ResourceLoader.exists(rp), "geo_fields.use_pack: no relief file " + rp)
+		assert(ResourceLoader.exists(ep), "geo_fields.use_pack: no elev file " + ep)
+		var r = load(rp)
+		var e = load(ep)
+		if r == null or e == null:
+			push_error("geo_fields.use_pack: cannot load the %s fields" % key)
+			return
+		Relief = r
+		Elev = e
+	pack_key = key
+	_fine = PackedFloat32Array()
+	_slope = PackedByteArray()
+	_relief = PackedByteArray()
+	_coast = PackedByteArray()
+	_expo = PackedByteArray()
+	_shore = PackedByteArray()
+	_px = 2.5
 
 
 static func _decode(text: String, n: int) -> PackedByteArray:
@@ -76,7 +114,7 @@ static func fine_height() -> int:
 
 ## Metres on the ground per fine sample (latitude: 111,320 m a degree).
 static func sample_m() -> float:
-	return sample_px() / Geo.PX_LAT * 111320.0
+	return sample_px() / float(load(MAP_GEO).PX_LAT) * 111320.0
 
 
 ## Map pixels per fine sample (the cell size / FS).
@@ -115,7 +153,7 @@ static func coast_km(p: Vector2) -> float:
 	var y0 := clampi(int(floor(fy)), 0, Relief.FH - 2)
 	var tx := clampf(fx - x0, 0.0, 1.0)
 	var ty := clampf(fy - y0, 0.0, 1.0)
-	var i := y0 * Relief.FW + x0
+	var i: int = y0 * Relief.FW + x0
 	var a := lerpf(_coast[i], _coast[i + 1], tx)
 	var b := lerpf(_coast[i + Relief.FW], _coast[i + Relief.FW + 1], tx)
 	return lerpf(a, b, ty) - 128.0
@@ -153,14 +191,14 @@ static func _bilinear8(f: PackedByteArray, p: Vector2) -> float:
 	var y0 := clampi(int(floor(fy)), 0, Relief.FH - 2)
 	var tx := clampf(fx - x0, 0.0, 1.0)
 	var ty := clampf(fy - y0, 0.0, 1.0)
-	var i := y0 * Relief.FW + x0
+	var i: int = y0 * Relief.FW + x0
 	return lerpf(lerpf(f[i], f[i + 1], tx), lerpf(f[i + Relief.FW], f[i + Relief.FW + 1], tx), ty)
 
 
 ## The exposure (R) and shore steepness (G) as an RG8 image for the water shader.
 static func shore_image() -> Image:
 	ensure()
-	var n := Relief.FW * Relief.FH
+	var n: int = Relief.FW * Relief.FH
 	var d := PackedByteArray()
 	d.resize(n * 2)
 	for i in n:
@@ -178,7 +216,7 @@ static func elev_m(p: Vector2) -> float:
 	var y0 := clampi(int(floor(fy)), 0, Relief.FH - 2)
 	var tx := clampf(fx - x0, 0.0, 1.0)
 	var ty := clampf(fy - y0, 0.0, 1.0)
-	var i := y0 * Relief.FW + x0
+	var i: int = y0 * Relief.FW + x0
 	return lerpf(lerpf(_fine[i], _fine[i + 1], tx), lerpf(_fine[i + Relief.FW], _fine[i + Relief.FW + 1], tx), ty)
 
 

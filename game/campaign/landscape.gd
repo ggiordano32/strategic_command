@@ -64,11 +64,36 @@ static var _rings: Array = []   # unit rings: broadleaf x3, pine x3, scrub x3, c
 
 
 static var _baked := false
+static var _gen := 0           # map_geo.gd's gen the bake belongs to
+
+
+## A pack switch (Geo.use_pack) invalidates the whole bake: drop it all.
+static func _sync_gen() -> void:
+	if _gen == Geo.gen:
+		return
+	_gen = Geo.gen
+	ground_tex = null
+	mesh = null
+	bake_ms = -1.0
+	tree_count = 0
+	relief_tex = null
+	_elev = PackedFloat32Array()
+	speck_count = 0
+	peak_count = 0
+	_land_polys = []
+	_land_boxes = []
+	_near = PackedInt32Array()
+	_v = PackedVector2Array()
+	_c = PackedColorArray()
+	_i = PackedInt32Array()
+	_peak_sample = null
+	_baked = false
 
 
 ## The whole bake (once). The campaign's loading panel runs its two stages
 ## separately (a frame between them): bake_relief() then bake_land().
 static func bake() -> void:
+	_sync_gen()
 	if _baked:
 		return
 	bake_relief()
@@ -77,6 +102,7 @@ static func bake() -> void:
 
 ## Stage 1: the relief shading (cached in user:// after the first run).
 static func bake_relief() -> void:
+	_sync_gen()
 	if relief_tex != null:
 		return
 	var t0 := Time.get_ticks_usec()
@@ -86,11 +112,13 @@ static func bake_relief() -> void:
 
 ## True when the relief shading is in the user:// cache (or already made).
 static func relief_cached() -> bool:
+	_sync_gen()
 	return relief_tex != null or FileAccess.file_exists(_relief_path())
 
 
 ## Stage 2: the ground texture and the glyphs (needs the relief's elevation).
 static func bake_land() -> void:
+	_sync_gen()
 	if _baked:
 		return
 	bake_relief()
