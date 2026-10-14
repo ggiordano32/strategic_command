@@ -546,8 +546,8 @@ func _kit_material(mat: ShaderMaterial) -> void:
 			pidx.append(float(idx[rows[kd][sh]]))
 	var rects := PackedVector4Array()
 	var anch := PackedVector4Array()
-	rects.resize(48)
-	anch.resize(48)
+	rects.resize(64)
+	anch.resize(64)
 	for p in Atlas.RECT.size():
 		var r: Array = Atlas.RECT[p]
 		rects[p] = Vector4(float(r[0]) / Atlas.ATLAS_W, float(r[1]) / Atlas.ATLAS_H, float(r[2]) / Atlas.ATLAS_W,

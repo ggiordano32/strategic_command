@@ -13,8 +13,8 @@ uniform sampler2D low_tex : filter_linear, repeat_disable;
 uniform sampler2D occ : filter_linear, repeat_disable;
 uniform bool is_low = false;
 uniform vec2 occ_size_px = vec2(1.0);
-uniform vec4 rects[48];
-uniform vec4 anch[48];          // piece centre offset and size (metres)
+uniform vec4 rects[64];
+uniform vec4 anch[64];          // piece centre offset and size (metres)
 uniform float pidx[32];         // piece by kind * 4 + shade
 uniform vec3 shade0 = vec3(0.15, 0.3, 0.13);
 uniform vec3 shade1 = vec3(0.19, 0.35, 0.15);

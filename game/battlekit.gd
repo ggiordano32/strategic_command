@@ -195,8 +195,6 @@ func setup_land(p_sim, p_k: float) -> void:
 	var ld: Dictionary = sim.map_info.get("land", {})
 	for r in ld.get("rocks", []):
 		_rock(r)
-	for c in ld.get("cliffs", []):
-		_cliff(c)
 	low = Quality.is_low()
 	_make_nodes()
 
@@ -347,6 +345,8 @@ func _house_piece(kind: int, style: int, shape: int, fw: float, fh: float, _h: i
 	if style == 3 or style == 5:
 		return "hut_thatch" if fw / maxf(fh, 0.1) < 1.9 else "longhouse"
 	var ratio := fw / maxf(fh, 0.1)
+	if style == 2:   # Punic: flat roofs with a parapet
+		return "house_flat_s" if fw < 9.5 and fh < 8.0 else "house_flat_m"
 	if ratio < 1.14:
 		return "house_hip_s" if fw < 9.0 else "house_hip_m"
 	if ratio < 1.45:
@@ -457,7 +457,7 @@ func _make_nodes() -> void:
 	mat.set_shader_parameter("albedo_tex", TEX_ALB)
 	mat.set_shader_parameter("nrm_tex", TEX_NRM)
 	var rects := PackedVector4Array()
-	rects.resize(48)
+	rects.resize(64)
 	for p in Atlas.RECT.size():
 		var r: Array = Atlas.RECT[p]
 		rects[p] = Vector4(float(r[0]) / Atlas.ATLAS_W, float(r[1]) / Atlas.ATLAS_H, float(r[2]) / Atlas.ATLAS_W,

@@ -1763,6 +1763,32 @@ holds the values: diorama amb 0.50, key 0.88, rim 0.22, outline 0.55, sat 1.22, 
 - Atlas now 1024 x 1024 with 47 pieces (`pack.py`; frames rendered with `build.py --ppm 8`): about 4 + 4 MB albedo /
   normal, 1 MB low, ground tiles about 2 MB with mipmaps.
 
+### Battle look: relief, cliff faces, fields, Punic roofs, board (as built, 2026-10-14, second pass)
+
+- **Ground relief** (`terrain_layer.gd`, `terrain.gdshader`): the dark ring round hills was the valley darkening
+  (ground lower than the 24 m round it, so every hill foot got a band, plus the grade darkening): it is off in the
+  diorama look (`valley_max` 0, 0.07 painterly). The hill shade is a clearer NW hillshade from the 2 m height field
+  (diorama relief exaggeration 5.5, shade 0.95; painterly 4.2 / 0.8, softer and realistic); shaded slopes darken
+  less than lit ones brighten. Diorama only (`terrace` uniform): stepped height bands on the 2 m contour lattice (a
+  band's own elevation tint, a touch lighter each step, a lit or shaded riser at each edge by the hill shade),
+  and a slope tone (steep grass turns to earth before it turns to rock). Bands fade where they crowd (zoomed out).
+- **Cliffs** (`land_layer.gd`): one continuous face along the cliff polyline, corner-cut (Chaikin x2) so curves stay
+  curved: lit brow line, rock tile (the ground `rock.png`) mapped along the length, darker toward the foot, strata
+  courses, ribs, a talus gradient with fallen stones, soft drop shadow; drawn with `draw_primitive` quads (no
+  triangulation). Rocks stay kit pieces; `battlekit.gd` `setup_land` no longer places `cliff_m`. `--land-info` prints
+  each cliff's start.
+- **Fields** (`city_draw.gd` `draw_surround`): furrows, rows and edges follow the field's long axis; plough = ridge and
+  furrow, crop = shaded green rows, stubble = pale dashes, fallow = weeds; a headland and a hedge of round bushes or a
+  post-and-rail fence round every field (drawn, not kit pieces). All of a field is batched into a few
+  `draw_multiline_colors` calls and one mesh (single draw calls cost 5 ms a frame on bench_4000_city).
+- **Punic houses**: `house_flat_s` / `house_flat_m` in `build.py` (plaster block, parapet, earth roof deck, cornice,
+  roof stair head or a smaller upper room, a water jar), packed (49 pieces, atlas still 1024 x 1024), used for culture
+  style 2 (`_house_piece`). Shader tables are 64 entries now (`rects[]`, `anch[]`), no longer 48.
+- **Board** (`board_layer.gd`): bevel 6 m in two faces with a flat lip, mitred corners, grain, a pale rim on the
+  lit sides, a soft shadow on the table (28 falloff rings, drawn as rings only), table of planks with seams and grain
+  (detail to 450 m out; the board's own span is not painted, it is under the ground).
+- Frame time bench_4000_city High GPU paused (1920x1080, mean of 8 s): 4.76 ms before, 4.8 ms after.
+
 ### Deployment phase (as built, October 2026)
 
 Total War's deployment: before the fighting, each player places their

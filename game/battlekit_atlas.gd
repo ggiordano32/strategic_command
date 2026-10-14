@@ -9,7 +9,7 @@ const PPM := 8.0
 const LOW_PPM := 4.0
 const ATLAS_W := 1024
 const ATLAS_H := 1024
-const NAMES: Array[String] = ["wall_8_2", "wall_10_2", "wall_12_2", "wall_12_4", "wall_14_4", "pal_8", "pal_10", "pal_12", "tower_round", "tower_sq", "tower_timber", "gate_c", "gate_o", "gate_b", "pgate_c", "pgate_o", "pgate_b", "bastion", "house_gable_s", "house_gable_m", "house_gable_l", "house_hip_s", "house_hip_m", "longhouse", "house_L", "hut_round", "hut_thatch", "church", "temple", "stall", "well", "cart", "barrels", "tree_broad_a", "tree_broad_b", "tree_broad_c", "tree_pine_a", "tree_pine_b", "tree_palm_a", "tree_palm_b", "bush_a", "bush_b", "rock_a", "rock_b", "rock_c", "cliff_m", "cliff_l"]
+const NAMES: Array[String] = ["wall_8_2", "wall_10_2", "wall_12_2", "wall_12_4", "wall_14_4", "pal_8", "pal_10", "pal_12", "tower_round", "tower_sq", "tower_timber", "gate_c", "gate_o", "gate_b", "pgate_c", "pgate_o", "pgate_b", "bastion", "house_gable_s", "house_gable_m", "house_gable_l", "house_hip_s", "house_hip_m", "longhouse", "house_L", "hut_round", "hut_thatch", "church", "temple", "stall", "well", "cart", "barrels", "tree_broad_a", "tree_broad_b", "tree_broad_c", "tree_pine_a", "tree_pine_b", "tree_palm_a", "tree_palm_b", "bush_a", "bush_b", "rock_a", "rock_b", "rock_c", "cliff_m", "cliff_l", "house_flat_s", "house_flat_m"]
 
 ## [x, y, w, h] px in atlas_albedo / atlas_nrm (halve for atlas_low).
 const RECT: Array = [
@@ -31,35 +31,37 @@ const RECT: Array = [
 	[4, 322, 88, 92],  # pgate_o
 	[100, 322, 92, 92],  # pgate_b
 	[4, 4, 152, 194],  # bastion
-	[272, 514, 76, 60],  # house_gable_s
-	[860, 422, 92, 68],  # house_gable_m
+	[372, 514, 76, 60],  # house_gable_s
+	[4, 514, 92, 68],  # house_gable_m
 	[736, 422, 116, 76],  # house_gable_l
-	[4, 514, 68, 68],  # house_hip_s
+	[104, 514, 68, 68],  # house_hip_s
 	[4, 422, 84, 84],  # house_hip_m
-	[356, 514, 140, 60],  # longhouse
+	[456, 514, 140, 60],  # longhouse
 	[232, 206, 120, 104],  # house_L
-	[504, 514, 60, 60],  # hut_round
-	[640, 514, 72, 56],  # hut_thatch
+	[604, 514, 60, 60],  # hut_round
+	[820, 514, 72, 56],  # hut_thatch
 	[302, 322, 254, 88],  # church
 	[304, 4, 188, 124],  # temple
-	[784, 514, 54, 52],  # stall
-	[902, 514, 30, 36],  # well
-	[238, 514, 26, 62],  # cart
-	[96, 590, 32, 20],  # barrels
-	[80, 514, 74, 68],  # tree_broad_a
+	[964, 514, 54, 52],  # stall
+	[60, 590, 30, 36],  # well
+	[338, 514, 26, 62],  # cart
+	[236, 590, 32, 20],  # barrels
+	[180, 514, 74, 68],  # tree_broad_a
 	[396, 422, 84, 80],  # tree_broad_b
 	[564, 322, 96, 88],  # tree_broad_c
-	[720, 514, 56, 56],  # tree_pine_a
-	[572, 514, 60, 60],  # tree_pine_b
+	[900, 514, 56, 56],  # tree_pine_a
+	[672, 514, 60, 60],  # tree_pine_b
 	[200, 322, 94, 90],  # tree_palm_a
 	[668, 322, 92, 86],  # tree_palm_b
-	[940, 514, 38, 36],  # bush_a
-	[50, 590, 38, 28],  # bush_b
-	[4, 590, 38, 36],  # rock_a
-	[846, 514, 48, 46],  # rock_b
-	[162, 514, 68, 66],  # rock_c
+	[98, 590, 38, 36],  # bush_a
+	[190, 590, 38, 28],  # bush_b
+	[144, 590, 38, 36],  # rock_a
+	[4, 590, 48, 46],  # rock_b
+	[262, 514, 68, 66],  # rock_c
 	[768, 322, 196, 86],  # cliff_m
 	[96, 422, 292, 84],  # cliff_l
+	[740, 514, 72, 58],  # house_flat_s
+	[860, 422, 96, 70],  # house_flat_m
 ]
 
 ## [cx, cy, w, h] metres: the crop's centre relative to the piece origin, and its size.
@@ -111,6 +113,8 @@ const ANCHOR: Array = [
 	[0.0000, 0.3750, 8.5000, 8.2500],  # rock_c
 	[0.0000, 0.1250, 24.5000, 10.7500],  # cliff_m
 	[0.0000, 0.0000, 36.5000, 10.5000],  # cliff_l
+	[0.0000, 0.1250, 9.0000, 7.2500],  # house_flat_s
+	[0.0000, 0.1250, 12.0000, 8.7500],  # house_flat_m
 ]
 
 const WALL_8_2 := 0
@@ -160,3 +164,5 @@ const ROCK_B := 43
 const ROCK_C := 44
 const CLIFF_M := 45
 const CLIFF_L := 46
+const HOUSE_FLAT_S := 47
+const HOUSE_FLAT_M := 48

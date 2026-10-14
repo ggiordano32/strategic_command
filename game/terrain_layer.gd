@@ -87,6 +87,8 @@ func setup(p_sim, p_px_per_m: float) -> void:
 
 
 var shade_mul := 1.0
+var relief_k := RELIEF_EXAGGERATE
+var valley_max := VALLEY_MAX   # valley (concave ground) darkening cap: the dark ring round hills came from this
 var _decals: Node2D
 var _land: LandLayer
 var _measuring := false
@@ -161,6 +163,10 @@ func _build() -> void:
 	m.set_shader_parameter("high_col", _v3(pal["high"]))
 	m.set_shader_parameter("line_col", Vector4(line.r, line.g, line.b, line.a))
 	m.set_shader_parameter("major_col", Vector4(line.r * 0.8, line.g * 0.8, line.b * 0.8, minf(line.a * 1.55, 0.6)))
+	# Painterly: a softer, realistic hill shade (no dark band round hills); diorama (in _splat): a sculpted board.
+	shade_mul = 0.8
+	relief_k = 4.2
+	valley_max = 0.07
 	_splat(m, int(sim.ter_info.get("palette", 0)))
 	m.set_shader_parameter("patch_k", 0.85)
 	m.set_shader_parameter("patch_a", pal["lush"])
@@ -237,9 +243,9 @@ func _build() -> void:
 			var q := int(round((h - lo) / range_m * 65535.0))
 			var gx := (heights[j * nx + mini(i + 1, nx - 1)] - heights[j * nx + maxi(i - 1, 0)]) * inv
 			var gy := (heights[jp * nx + i] - heights[jm * nx + i]) * inv
-			var n := Vector3(-gx * RELIEF_EXAGGERATE, -gy * RELIEF_EXAGGERATE, 1.0).normalized()
+			var n := Vector3(-gx * relief_k, -gy * relief_k, 1.0).normalized()
 			var s := n.dot(light) / flat_l - 1.0
-			s -= minf(maxf(valley[k], 0.0) * VALLEY_K, VALLEY_MAX)
+			s -= minf(maxf(valley[k], 0.0) * VALLEY_K, valley_max)
 			s += minf(maxf(-crest[k], 0.0) * CREST_K, CREST_MAX)
 			var o4 := k * 4
 			bytes[o4] = q >> 8
@@ -277,7 +283,12 @@ func _splat(m: ShaderMaterial, pal_i: int) -> void:
 	for n in ["dirt", "rock", "sand", "plough"]:
 		m.set_shader_parameter("tile_" + n, _tile(n))
 	m.set_shader_parameter("splat_sat", 1.12)
-	shade_mul = 0.62   # a softer hill shade: no dark band round hills
+	# Sculpted board: a clear NW hill shade from the height field, no valley darkening (that was the dark
+	# ring round every hill), stepped contour bands like layered foam and a slope tone.
+	shade_mul = 0.95
+	relief_k = 5.5
+	valley_max = 0.0
+	m.set_shader_parameter("terrace", 1.0)
 	m.set_shader_parameter("grid_alpha", 0.0)
 	var lc: Vector4 = m.get_shader_parameter("line_col")
 	m.set_shader_parameter("line_col", Vector4(lc.x, lc.y, lc.z, lc.w * 0.45))

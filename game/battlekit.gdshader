@@ -9,7 +9,7 @@ shader_type canvas_item;
 
 uniform sampler2D albedo_tex : filter_linear, repeat_disable;
 uniform sampler2D nrm_tex : filter_linear, repeat_disable;
-uniform vec4 rects[48];
+uniform vec4 rects[64];
 uniform vec3 stone_tint[8];
 uniform vec3 pal_r[8];
 uniform vec3 pal_g[8];

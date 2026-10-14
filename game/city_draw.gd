@@ -803,6 +803,26 @@ static func plan_surround(sim) -> Dictionary:
 	return out
 
 
+## A horizontal segment x0..x1 at y (metres, field frame) appended to a line set.
+static func _seg(l: PackedVector2Array, c: PackedColorArray, x0: float, x1: float, y: float, k: float, col: Color) -> void:
+	l.append(Vector2(x0, y) * k)
+	l.append(Vector2(x1, y) * k)
+	c.append(col)
+
+
+## A blob (an 8-gon of triangles, vertex colours) appended to a triangle list.
+static func _blob(v: PackedVector2Array, c: PackedColorArray, ctr: Vector2, r: float, col: Color) -> void:
+	for i in 8:
+		var a0 := TAU * i / 8.0
+		var a1 := TAU * (i + 1) / 8.0
+		v.append(ctr)
+		v.append(ctr + Vector2(cos(a0), sin(a0)) * r)
+		v.append(ctr + Vector2(cos(a1), sin(a1)) * r)
+		c.append(col)
+		c.append(col)
+		c.append(col)
+
+
 ## Draw plan_surround's tracks and fields (and the ground under the orchard
 ## rows) at scale k px a metre, offset o; `base` is the ground colour.
 static func draw_surround(ci: CanvasItem, plan: Dictionary, k: float, o: Vector2, base: Color, _pal_i: int, low := false) -> void:
@@ -821,28 +841,129 @@ static func draw_surround(ci: CanvasItem, plan: Dictionary, k: float, o: Vector2
 	var crop := base.lerp(Color(0.46, 0.64, 0.25), 0.55)
 	var stub := Color(0.72, 0.64, 0.38).lerp(base, 0.18)
 	var fallow := base.lerp(Color(0.56, 0.56, 0.32), 0.4)
-	var lw := maxf(k * 0.22, 1.0)
 	for f in plan.get("fields", []):
 		var fa: Array = f
 		var w: float = fa[2]
 		var h: float = fa[3]
 		var kind := int(fa[5])
 		var col: Color = plough if kind == 0 else (crop if kind == 1 else (stub if kind == 2 else fallow))
-		ci.draw_set_transform(o + Vector2(fa[0], fa[1]) * k, float(fa[4]), Vector2.ONE)
+		var rot := float(fa[4])
+		if h > w:   # furrows, rows and edges follow the long axis
+			rot += PI * 0.5
+			var sw := w
+			w = h
+			h = sw
+		ci.draw_set_transform(o + Vector2(fa[0], fa[1]) * k, rot, Vector2.ONE)
 		var r := Rect2(Vector2(-w, -h) * 0.5 * k, Vector2(w, h) * k)
 		if low:  # Graphics Low: a flat tint, no furrows
 			ci.draw_rect(r, col)
 			ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 			continue
-		ci.draw_rect(r.grow(k * 0.6), Color(col.r * 0.8, col.g * 0.85, col.b * 0.75, 0.45))  # hedge / headland
-		ci.draw_rect(r, col)
-		var line := col.darkened(0.28) if kind != 2 else col.lightened(0.12)
-		if kind == 1:
-			line = col.lightened(0.18)
-		var yy := -h * 0.5 + 0.9
+		var sd := int(absf(float(fa[0])) * 7.0 + absf(float(fa[1])) * 13.0)
+		var tone := 0.94 + 0.12 * _h01(sd, 3, 5, 7)
+		col = Color(col.r * tone, col.g * tone, col.b * tone)
+		ci.draw_rect(r.grow(k * 0.5), Color(col.r * 0.7, col.g * 0.78, col.b * 0.6, 0.35))  # headland
+		ci.draw_rect(r, Color(col.r, col.g, col.b, 0.9))
+		# Rows along the long axis: ridge and furrow (plough), crop rows, stubble dashes, fallow weeds.
+		# Everything of a field is batched (a few multiline calls and one mesh): hundreds of single
+		# draw calls here cost several ms a frame on the bench.
+		var l1 := PackedVector2Array()   # line sets (pairs of points), each with a colour per segment
+		var c1 := PackedColorArray()
+		var l2 := PackedVector2Array()
+		var c2 := PackedColorArray()
+		var l3 := PackedVector2Array()
+		var c3 := PackedColorArray()
+		var mv := PackedVector2Array()   # blobs, as triangles
+		var mc := PackedColorArray()
+		var sp := 1.5 if kind != 1 else 1.1
+		var yy := -h * 0.5 + 0.7
+		var ri := 0
+		var x0 := -w * 0.5
+		var x1 := w * 0.5
 		while yy < h * 0.5 - 0.3:
-			ci.draw_line(Vector2(-w * 0.5, yy) * k, Vector2(w * 0.5, yy) * k, Color(line.r, line.g, line.b, 0.7 if kind != 3 else 0.25), lw)
-			yy += 1.5
+			var jt := _h01(sd, ri, 9, 11)
+			if kind == 0:
+				_seg(l1, c1, x0, x1, yy, k, Color(0.2, 0.12, 0.06, 0.55))
+				_seg(l2, c2, x0, x1, yy + 0.55, k, Color(0.72, 0.55, 0.38, 0.3))
+			elif kind == 1:
+				_seg(l1, c1, x0, x1, yy + 0.18, k, Color(0.06, 0.12, 0.04, 0.35))
+				_seg(l2, c2, x0, x1, yy, k, Color(0.30 + 0.12 * jt, 0.52 + 0.14 * jt, 0.16, 0.95))
+				_seg(l3, c3, x0, x1, yy - 0.12, k, Color(0.7, 0.9, 0.4, 0.25))
+			elif kind == 2:
+				var xx := x0 + jt * 1.2
+				while xx < x1 - 0.8:
+					_seg(l2, c2, xx, xx + 0.7, yy, k, Color(0.86, 0.76, 0.46, 0.55))
+					xx += 1.2 + 0.6 * _h01(sd, ri, int(xx * 5.0), 13)
+				_seg(l1, c1, x0, x1, yy + 0.7, k, Color(0.4, 0.3, 0.12, 0.2))
+			else:
+				_seg(l1, c1, x0, x1, yy, k, Color(0.3, 0.38, 0.14, 0.18))
+				for wi in 3:
+					var wx := (_h01(sd, ri, wi, 17) - 0.5) * w * 0.95
+					_blob(mv, mc, Vector2(wx, yy) * k, k * (0.25 + 0.25 * _h01(sd, ri, wi, 19)), Color(0.62, 0.6, 0.3, 0.35))
+			yy += sp
+			ri += 1
+		var w1 := maxf(k * 0.4, 1.0) if kind == 0 else (maxf(k * 0.5, 1.0) if kind == 1 else maxf(k * 0.25, 1.0))
+		var w2 := maxf(k * 0.28, 1.0) if kind == 0 else (maxf(k * 0.5, 1.0) if kind == 1 else maxf(k * 0.2, 1.0))
+		if l1.size() > 0:
+			ci.draw_multiline_colors(l1, c1, w1)
+		if l2.size() > 0:
+			ci.draw_multiline_colors(l2, c2, w2)
+		if l3.size() > 0:
+			ci.draw_multiline_colors(l3, c3, maxf(k * 0.18, 1.0))
+		# Edges: a hedge of round bushes, or a post and rail fence, on every side (a gap or two).
+		var hedge := _h01(sd, 1, 2, 3) < 0.6
+		var hx := w * 0.5 + 0.35
+		var hy := h * 0.5 + 0.35
+		var per := PackedVector2Array()
+		var xs := -hx
+		while xs <= hx:
+			per.append(Vector2(xs, -hy))
+			per.append(Vector2(xs, hy))
+			xs += 1.3
+		var ys := -hy + 1.3
+		while ys < hy - 0.6:
+			per.append(Vector2(-hx, ys))
+			per.append(Vector2(hx, ys))
+			ys += 1.3
+		if hedge:
+			for pi in per.size():
+				if _h01(sd, pi, 23, 29) < 0.045:
+					continue   # a gap
+				var q := per[pi] + Vector2(_h01(sd, pi, 31, 3) - 0.5, _h01(sd, pi, 37, 5) - 0.5) * 0.4
+				var rr := (0.5 + 0.35 * _h01(sd, pi, 41, 7)) * k
+				var gcol := Color(0.17 + 0.08 * _h01(sd, pi, 43, 9), 0.34 + 0.1 * _h01(sd, pi, 47, 11), 0.12, 1.0)
+				_blob(mv, mc, q * k + Vector2(0.25, 0.35) * k, rr, Color(0, 0, 0, 0.28))
+				_blob(mv, mc, q * k, rr, gcol)
+				_blob(mv, mc, q * k + Vector2(-0.18, -0.2) * rr, rr * 0.55, gcol.lightened(0.22))
+		else:
+			var wood := Color(0.44, 0.32, 0.2)
+			var corners := [Vector2(-hx, -hy), Vector2(hx, -hy), Vector2(hx, hy), Vector2(-hx, hy)]
+			var fl := PackedVector2Array()
+			var fc := PackedColorArray()
+			for ci2 in 4:
+				var a0: Vector2 = corners[ci2]
+				var b0: Vector2 = corners[(ci2 + 1) % 4]
+				fl.append((a0 + Vector2(0.15, 0.2)) * k)
+				fl.append((b0 + Vector2(0.15, 0.2)) * k)
+				fc.append(Color(0, 0, 0, 0.25))
+				fl.append(a0 * k)
+				fl.append(b0 * k)
+				fc.append(wood)
+				var pn := int(a0.distance_to(b0) / 2.4)
+				for pj in pn + 1:
+					_blob(mv, mc, a0.lerp(b0, float(pj) / maxf(pn, 1)) * k, k * 0.22, wood.darkened(0.25))
+			ci.draw_multiline_colors(fl, fc, maxf(k * 0.22, 1.0))
+		if mv.size() > 0:
+			var arr := []
+			arr.resize(Mesh.ARRAY_MAX)
+			arr[Mesh.ARRAY_VERTEX] = mv
+			arr[Mesh.ARRAY_COLOR] = mc
+			var mesh := ArrayMesh.new()
+			mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+			var keep: Array = ci.get_meta("field_meshes", [])
+			keep.append(mesh)   # the canvas holds only the RID
+			ci.set_meta("field_meshes", keep)
+			ci.draw_mesh(mesh, null)
 		ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	for oc in plan.get("orchards", []):
 		var rr: Rect2 = oc

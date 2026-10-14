@@ -35,7 +35,7 @@ PIECES = ["wall_8_2", "wall_10_2", "wall_12_2", "wall_12_4", "wall_14_4", "pal_8
           "house_gable_s", "house_gable_m", "house_gable_l", "house_hip_s", "house_hip_m", "longhouse", "house_L",
           "hut_round", "hut_thatch", "church", "temple", "stall", "well", "cart", "barrels",
           "tree_broad_a", "tree_broad_b", "tree_broad_c", "tree_pine_a", "tree_pine_b", "tree_palm_a",
-          "tree_palm_b", "bush_a", "bush_b", "rock_a", "rock_b", "rock_c", "cliff_m", "cliff_l"]
+          "tree_palm_b", "bush_a", "bush_b", "rock_a", "rock_b", "rock_c", "cliff_m", "cliff_l", "house_flat_s", "house_flat_m"]
 GUTTER = 4
 LIGHT = np.array([-0.55, 0.50, 0.67], np.float32)
 AMB, KEY = 0.66, 0.55          # style A (tools/battlekit/mockup.py)

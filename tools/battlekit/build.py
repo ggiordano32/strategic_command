@@ -576,6 +576,28 @@ def b_house(P, kind):
         house(P, 7, 5, 2.6, 2.6, 0.0, thatch=True, over=0.7, chim=False)
 
 
+def flat_house(P, sx, sy, wh, upper=False):
+    """Flat-roofed house (Punic / Carthaginian, Caribbean adobe could use it): plaster block, a parapet round the
+    roof, an earth roof deck, a stair block and (optionally) a smaller upper room."""
+    P.box("plaster", 0, 0, 0, sx, sy, wh)
+    pb = 0.55
+    ph = 0.7
+    P.box("plaster", 0, -sy / 2 + pb / 2, wh, sx, pb, ph)
+    P.box("plaster", 0, sy / 2 - pb / 2, wh, sx, pb, ph)
+    P.box("plaster", -sx / 2 + pb / 2, 0, wh, pb, sy - 2 * pb, ph)
+    P.box("plaster", sx / 2 - pb / 2, 0, wh, pb, sy - 2 * pb, ph)
+    P.box("earth", 0, 0, wh, sx - 2 * pb, sy - 2 * pb, 0.18)
+    P.box("trim", 0, -sy / 2 - 0.1, wh - 0.3, sx + 0.3, 0.3, 0.3)       # cornice
+    if upper:
+        P.box("plaster", -sx * 0.18, sy * 0.1, wh + 0.18, sx * 0.42, sy * 0.5, 2.6)
+        P.box("trim", -sx * 0.18, sy * 0.1 - sy * 0.25 - 0.1, wh + 2.45, sx * 0.42 + 0.3, 0.3, 0.3)
+        P.box("earth", -sx * 0.18, sy * 0.1, wh + 2.78, sx * 0.42 - 0.3, sy * 0.5 - 0.3, 0.14)
+    else:
+        P.box("stone_l", sx * 0.28, sy * 0.18, wh + 0.18, 1.6, 1.4, 1.5)   # roof stair head
+        P.box("timber_d", sx * 0.28, sy * 0.18 - 0.72, wh + 0.2, 0.7, 0.1, 1.0)
+    P.cyl("earth", -sx * 0.3, -sy * 0.15, wh + 0.18, 0.35, 0.7, 10)         # water jar
+
+
 def b_church(P):
     P.box("plaster", 0, 0, 0, 20, 8.5, 5.0)
     P.gable("roof", 0, 0, 5.0, 20, 8.5, 4.4, over=0.6)
@@ -917,6 +939,8 @@ PIECES = {
     "house_hip_m": (18, lambda P: b_house(P, "house_hip_m")), "longhouse": (26, lambda P: b_house(P, "longhouse")),
     "house_L": (22, lambda P: b_house(P, "house_L")), "hut_round": (12, lambda P: b_house(P, "hut_round")),
     "hut_thatch": (16, lambda P: b_house(P, "hut_thatch")),
+    "house_flat_s": (16, lambda P: flat_house(P, 8, 6.5, 3.2)),
+    "house_flat_m": (20, lambda P: flat_house(P, 11, 8, 3.5, upper=True)),
     "church": (40, b_church), "temple": (30, b_temple), "stall": (10, b_stall), "well": (8, b_well),
     "cart": (14, b_cart), "fence": (14, b_fence), "barrels": (7, b_barrels),
     "tree_broad_a": (16, lambda P: b_broadleaf(P, 0)), "tree_broad_b": (18, lambda P: b_broadleaf(P, 1)),

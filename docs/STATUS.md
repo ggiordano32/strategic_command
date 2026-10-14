@@ -1492,8 +1492,12 @@ rocks and cliffs, baked shadow + AO for houses / rocks / cliffs (trees cast thei
 tiles (grass / dry, dirt streets, plough, rock, sand; High only), a bevelled board edge on a wooden table, light depth of
 field at the screen edges (High only). Details and switches (`--no-kit`, `--no-splat`, `--no-board`, `--no-dof`,
 `--tropic`, `--kit-culture=N`): DESIGN "Battle look: diorama default". Streets inside the city (paving / dirt by culture) and the house fit fixed (see DESIGN). Open: the cliff pieces are straight
-tiles on curved cliffs; the Punic flat roofs are hip houses with a white roof; fields beyond the walls keep their drawn
-patches (plough tile only on the settlement's own fields); not yet seen on the Tab S7.
+**Second pass 2026-10-14 (not committed; DESIGN "Battle look: relief, cliff faces, fields, Punic roofs, board")**: hill shade
+rebuilt (the dark ring was the valley darkening), stepped contour bands and slope tone (diorama), cliffs as one continuous
+textured face along the polyline, fields with furrows / rows / stubble along the long axis and hedge or fence edges,
+flat-roof Punic houses (`house_flat_s/m`), a better board edge and table; bench_4000_city 4.76 -> 4.8 ms. A real West-pack
+battle (Portobelo) checked: palms and colonial houses show. Left: Caribbean adobe flat roofs (only Punic uses them),
+hedges / fences are drawn not kit pieces, the cliff texture shows the rock tile's crack grid; not yet seen on the Tab S7.
 
 **N3a real-time sea battles, as built 2026-10-14 (not committed; DESIGN "Sea
 battles (as built, N3a)", CAMPAIGN.md "Sea battles fought (N3a)").** A sea

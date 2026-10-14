@@ -38,6 +38,7 @@ uniform vec3 low_col = vec3(0.2, 0.33, 0.21);
 uniform vec3 high_col = vec3(0.37, 0.42, 0.23);
 uniform float tint_span_m = 22.0;     // full tint this far above / below h_mid
 uniform float shade_k = 0.38;
+uniform float terrace = 0.0;          // diorama: stepped height bands (sculpted foam), lit / shaded risers, slope tone
 uniform float minor_m = 2.0;          // contour interval
 uniform float major_every = 5.0;      // every 5th line (10 m) a little stronger
 uniform vec4 line_col = vec4(0.09, 0.12, 0.05, 0.34);
@@ -207,15 +208,22 @@ void fragment() {
 		float grade = v.z * (255.0 / 255.0) * 0.8;
 		// Elevation tint (low ground darker and cooler, high ground paler and
 		// warmer), then hill shading from the upper left.
-		float e = clamp((hm - h_mid_m) / tint_span_m, -1.0, 1.0);
+		highp float lv0 = (hm - h_base_m) / minor_m;
+		highp float hq = h_base_m + floor(lv0 + 0.5) * minor_m;   // the band's own height
+		float e = clamp((mix(hm, hq, terrace * 0.8) - h_mid_m) / tint_span_m, -1.0, 1.0);
 		vec3 tint = e < 0.0 ? mix(base_col, low_col, -e) : mix(base_col, high_col, e);
 		col = col + (tint - base_col);
 		// Lit slopes brighten less than shaded ones darken (no washed-out crests).
-		col *= 1.0 + shade_k * (shade > 0.0 ? shade * 0.7 : shade) * (1.0 - sea);
+		col *= 1.0 + shade_k * (shade > 0.0 ? shade * 0.7 : shade * (terrace > 0.0 ? 0.62 : 1.0)) * (1.0 - sea);
 		// Slopes darken a little; steep ground and, on hill maps, ground
 		// above the tree line turns to bare rock (less in the woods).
 		float wood = veg_on ? texture(vegmap, world / veg_size_px).r : 0.0;
 		col *= 1.0 - 0.2 * smoothstep(0.08, 0.45, grade) * (1.0 - sea);
+		if (terrace > 0.0) {
+			// Slope tone: steep grass turns to bare earth before it turns to rock.
+			vec3 earth = mix(rock_col, base_col, 0.45) * 0.95;
+			col = mix(col, earth * (1.0 + 0.5 * shade), terrace * 0.42 * smoothstep(0.12, 0.34, grade) * (1.0 - sea));
+		}
 		float hf = hm / h_range_m;
 		float above = smoothstep(tree_line, tree_line + 0.12, hf + (n2 - 0.5) * 0.18);
 		float rock = max(smoothstep(0.2, 0.5, grade + (n2 - 0.5) * 0.12), above * 0.7);
@@ -231,6 +239,14 @@ void fragment() {
 		highp float fw = fwidth(lv);
 		highp float dist = abs(fract(lv) - 0.5);
 		float k = floor(lv);
+		if (terrace > 0.0) {
+			// Layered-foam steps: each band a touch lighter than the one below, and a lit or shaded
+			// riser (by the NW hill shade) just above each step edge; fades out where bands crowd.
+			float tf = 1.0 - smoothstep(0.1, 0.2, fw);
+			float u = fract(lv + 0.5);
+			float riser = (1.0 - smoothstep(0.0, 0.16 + fw * 1.5, u)) * smoothstep(0.02, 0.2, grade);
+			col *= 1.0 + terrace * tf * (0.045 * (u - 0.5) + riser * clamp(shade * 0.9, -0.2, 0.16) * 0.9);
+		}
 		bool major = abs(mod(k, major_every) - floor(major_every * 0.5)) < 0.5;
 		// Fade where lines would be packed tighter than ~6 px (minor) or
 		// ~8 px apart (major), so a zoomed-out hill is shaded, not hatched.
