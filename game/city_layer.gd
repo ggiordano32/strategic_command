@@ -10,12 +10,16 @@ extends Node2D
 ## are in game/overlay.gd (drawn above the soldiers).
 
 const CityDraw := preload("res://game/city_draw.gd")
+const BattleKit := preload("res://game/battlekit.gd")
 
 var sim
 var px_per_m := 10.0
 var lay: Dictionary = {}
 var build_ms := 0.0
 var gates_node: Node2D
+var kit: Node2D                # walls, towers, gates from the battle kit (null: the old drawing)
+var over_node: Node2D          # stairs and banners above the kit
+var use_kit := true
 var bridge: Dictionary = {}   # a river crossing's bridge (sim.map_info["river"], kind 1)
 
 
@@ -28,7 +32,18 @@ func setup(p_sim, p_px_per_m: float) -> void:
 	if sim.city_on == 0 or not sim.map_info.has("city"):
 		return
 	lay = sim.map_info["city"]
+	if "--city-info" in OS.get_cmdline_user_args():
+		print("CITY cx=%s cy=%s t=%s pp=%s inner=%s walls=%s plan=%s pal=%s ntow=%d ngate=%d nseg=%d nv=%d cit=%s tow0=%s gate0=%s" % [lay["cx"], lay["cy"], lay["t"], lay["pp"], lay["inner"], lay["walls"], lay.get("plan"), lay["palisade"], lay["towers"].size(), lay["gates"].size(), lay["segs"].size(), lay["poly"].size() / 2, not lay["cit"].is_empty(), lay["towers"][0] if lay["towers"].size() > 0 else 0, lay["gates"][0] if lay["gates"].size() > 0 else 0])
 	var t0 := Time.get_ticks_usec()
+	use_kit = not ("--no-kit" in OS.get_cmdline_user_args())
+	if use_kit:
+		kit = BattleKit.new()
+		add_child(kit)
+		kit.setup(sim, lay, px_per_m)
+		over_node = _Over.new()
+		over_node.layer = self
+		add_child(over_node)
+		over_node.queue_redraw()
 	gates_node = _Gates.new()
 	gates_node.layer = self
 	add_child(gates_node)
@@ -38,6 +53,8 @@ func setup(p_sim, p_px_per_m: float) -> void:
 
 ## Redraw the gates (after a tick).
 func refresh() -> void:
+	if kit != null:
+		kit.refresh()
 	if gates_node != null:
 		gates_node.queue_redraw()
 
@@ -51,7 +68,7 @@ func _draw() -> void:
 		draw_bridge(self, bridge, px_per_m, Vector2.ZERO)
 	if lay.is_empty():
 		return
-	CityDraw.draw_static(self, lay, px_per_m, Vector2.ZERO, true, false)
+	CityDraw.draw_static(self, lay, px_per_m, Vector2.ZERO, true, false, use_kit)
 
 
 ## A river crossing's stone bridge (layout `r`: x0, x1, the two mouths, m):
@@ -99,4 +116,12 @@ class _Gates extends Node2D:
 		var sim = layer.sim
 		for g in sim.n_gates:
 			CityDraw.draw_gate(self, layer.lay, g, sim.g_state[g], sim.tick - sim.g_hit_t[g] < 4, sim.tick,
-				layer.px_per_m, Vector2.ZERO)
+				layer.px_per_m, Vector2.ZERO, layer.use_kit)
+
+
+## Stairs and banners, above the kit's walls and towers.
+class _Over extends Node2D:
+	var layer
+
+	func _draw() -> void:
+		CityDraw.draw_over(self, layer.lay, layer.px_per_m, Vector2.ZERO)

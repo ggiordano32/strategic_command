@@ -791,7 +791,118 @@ def b_cliff(P, L):
         P.lump("rock_d", x, y0 + r.uniform(1.5, 3.2), 0.3, r.uniform(0.4, 0.9), r.uniform(0.4, 0.9), 0.4, 0.4, i, 2, 1.2)
 
 
+# ---- walls / towers / gates sized to the game's sim geometry (battle view, phase 1) ----
+WALL_VARIANTS = [(8, 2), (10, 2), (12, 2), (12, 4), (14, 4)]   # (thickness, outer parapet) the sim makes
+WALK = 4.0                                                    # walkway width (MapGen.WALK_W)
+
+
+def b_wall_sim(P, t, pp, L=16, h=5.0):
+    """Stone curtain wall of thickness t metres (the sim's wall band), outer face +y: parapet pp
+    with merlons on the outside, a 4 m walkway inside it, a lower earth-backed rampart behind."""
+    wy1 = t / 2 - pp
+    wy0 = wy1 - WALK
+    P.box("stone_d", 0, 0, -0.01, L, t + 0.9, 0.9)                         # plinth / batter
+    P.box("stone", 0, (wy0 + t / 2) / 2, 0, L, t / 2 - wy0, h)              # outer body (walkway + parapet)
+    P.box("stone_d", 0, (wy0 - t / 2) / 2, 0, L, wy0 + t / 2, h - 1.1)      # inner rampart, lower
+    P.box("stone_l", 0, (wy0 + wy1) / 2, h, L, WALK, 0.25)                 # walkway
+    merlons(P, "stone", (-L / 2, 0), (L / 2, 0), h, 1.2, pp * 0.85, 1.9, 1.1, t / 2 - pp / 2)
+    P.box("stone", 0, wy0 + 0.3, h, L, 0.6, 0.5)                            # inner low parapet
+
+
+def b_pal_sim(P, t, L=12):
+    """Timber palisade: stakes along the outer edge, a plank fighting walk on an earth bank."""
+    r = rng(5 + int(t))
+    P.box("earth", 0, 0, -0.01, L, t + 0.8, 0.5)
+    P.box("earth", 0, 0, 0, L, t, 2.5)
+    P.box("timber", 0, -0.3, 2.5, L, t - 0.6, 0.2)
+    for i in range(int(L / 0.9) + 1):
+        x = -L / 2 + 0.45 + i * 0.9
+        if abs(x) > L / 2:
+            continue
+        for row, y in enumerate((t / 2 - 0.55, t / 2 - 1.3)):
+            xx = x + (0.45 if row else 0.0)
+            if abs(xx) > L / 2 - 0.1:
+                continue
+            h = 3.6 + r.uniform(-0.3, 0.3)
+            P.cyl("timber", xx, y, 2.5, 0.42, h, 8, r2=0.32)
+            P.cyl("timber", xx, y, 2.5 + h, 0.32, 0.8, 8, r2=0.04)
+    P.box("timber_d", 0, t / 2 - 2.0, 2.7, L, 0.25, 0.3)                    # rail behind the stakes
+    for i in range(3):
+        P.box("timber_d", -L / 2 + (i + 0.5) * L / 3, -t / 2 + 0.3, 2.5, 0.35, 0.35, 0.9)  # inner posts
+
+
+def b_tower_timber(P, r=6.0):
+    """Round log tower: earth and plank platform ringed by pointed logs."""
+    rr = rng(11)
+    P.cyl("earth", 0, 0, -0.01, r + 0.5, 0.5, 18)
+    P.cyl("timber_d", 0, 0, 0, r, 2.8, 18)
+    P.cyl("timber", 0, 0, 2.8, r - 0.3, 0.2, 18)
+    n = 22
+    for i in range(n):
+        a = 2 * math.pi * (i + 0.5) / n
+        h = 4.4 + rr.uniform(-0.3, 0.3)
+        P.cyl("timber", (r - 0.6) * math.cos(a), (r - 0.6) * math.sin(a), 2.8, 0.55, h, 8, r2=0.4)
+        P.cyl("timber", (r - 0.6) * math.cos(a), (r - 0.6) * math.sin(a), 2.8 + h, 0.4, 0.9, 8, r2=0.05)
+    P.cyl("timber_d", 0, 0, 3.0, 1.6, 0.4, 10)
+
+
+def b_gate_arch(P, state, timber=False, D=11.0, hw=4.0):
+    """The passage of a gate (the towers are separate pieces): jambs, an inner deck and an outer
+    lintel over the road; state 'c' closed leaves, 'o' leaves swung in, 'b' broken. Outer side +y."""
+    stone = "timber_d" if timber else "stone"
+    wood = "timber" if timber else "stone_l"
+    r = rng(3)
+    P.box("cobble" if not timber else "earth", 0, 0, 0.02, 2 * hw + 0.4, D, 0.1)
+    if state == "b":
+        for sx in (-1, 1):
+            for k in range(3):
+                P.box(stone, sx * (hw + 0.7), -D / 2 + 1.7 + k * 3.5, 0, 1.4, 3.2, r.uniform(1.2, 3.4))
+        for k in range(14):
+            P.box(r.choice(["stone", "stone_d", "timber", "timber_d", "stone_l"]), r.uniform(-hw, hw), r.uniform(-D / 2, D / 2),
+                  0.05, r.uniform(0.4, 1.3), r.uniform(0.3, 0.9), r.uniform(0.15, 0.5), r.uniform(0, 3))
+        P.seg("timber_d", (-3.0, 3.5), (2.5, 1.4), 0.5, 0.4, 0.45)
+        return
+    jh = 6.0 if timber else 7.0
+    for sx in (-1, 1):
+        if timber:
+            for yy in (-D / 2 + 0.7, D / 2 - 0.7):
+                P.cyl("timber_d", sx * (hw + 0.6), yy, 0, 0.65, jh, 10, r2=0.55)
+                P.cyl("timber_d", sx * (hw + 0.6), yy, jh, 0.55, 0.7, 10, r2=0.05)
+        else:
+            P.box("stone", sx * (hw + 0.7), 0, 0, 1.4, D, jh)
+            P.box("stone_l", sx * (hw + 0.7), 0, jh, 1.4, D, 0.3)
+    P.box(stone, 0, -D / 2 + 1.5, 0, 2 * hw + 0.2, 3.0, jh - 0.5 if not timber else 0.01)
+    if timber:
+        P.box("timber", 0, -D / 2 + 1.5, jh - 0.7, 2 * hw + 0.2, 3.0, 0.3)
+        P.box("timber_d", 0, D / 2 - 0.7, jh - 0.5, 2 * hw + 1.6, 0.6, 0.55)
+    else:
+        P.box("stone_l", 0, -D / 2 + 1.5, jh - 0.5, 2 * hw + 0.2, 3.0, 0.3)
+        P.box("stone", 0, D / 2 - 0.7, 0, 2 * hw + 0.2, 1.4, jh + 0.3)
+        merlons(P, "stone", (-hw, D / 2 - 0.7), (hw, D / 2 - 0.7), jh + 0.3, 1.0, 0.9, 1.7, 1.0, 0)
+    if state == "c":
+        for sx in (-1, 1):
+            P.box("timber", sx * hw / 2, D / 2 - 1.6, 0, hw - 0.1, 0.5, 4.6)
+            P.box("metal", sx * hw / 2, D / 2 - 1.6, 1.0, hw - 0.1, 0.6, 0.25)
+            P.box("metal", sx * hw / 2, D / 2 - 1.6, 3.2, hw - 0.1, 0.6, 0.25)
+        P.box("metal", 0, D / 2 - 1.6, 0, 0.12, 0.65, 4.6)
+    else:
+        for sx in (-1, 1):
+            P.seg("timber", (sx * (hw - 0.3), D / 2 - 1.8), (sx * (hw - 0.3), -D / 2 + 3.0), 0.35, 0.0, 3.4)
+
+
 PIECES = {
+    "tower_timber": (14, b_tower_timber), "gate_c": (14, lambda P: b_gate_arch(P, "c")),
+    "gate_o": (14, lambda P: b_gate_arch(P, "o")), "gate_b": (14, lambda P: b_gate_arch(P, "b")),
+    "pgate_c": (14, lambda P: b_gate_arch(P, "c", True)), "pgate_o": (14, lambda P: b_gate_arch(P, "o", True)),
+    "pgate_b": (14, lambda P: b_gate_arch(P, "b", True)),
+    "wall_8_2": (24, lambda P: b_wall_sim(P, 8, 2)),
+    "wall_10_2": (24, lambda P: b_wall_sim(P, 10, 2)),
+    "wall_12_2": (24, lambda P: b_wall_sim(P, 12, 2)),
+    "wall_12_4": (24, lambda P: b_wall_sim(P, 12, 4)),
+    "wall_14_4": (24, lambda P: b_wall_sim(P, 14, 4)),
+    "pal_8": (20, lambda P: b_pal_sim(P, 8)),
+    "pal_10": (20, lambda P: b_pal_sim(P, 10)),
+    "pal_12": (20, lambda P: b_pal_sim(P, 12)),
     # name: (canvas metres, builder)
     "wall_s": (16, lambda P: b_wall(P, 8)), "wall_m": (24, lambda P: b_wall(P, 16)),
     "wall_l": (32, lambda P: b_wall(P, 24)), "wall_corner": (16, b_corner),

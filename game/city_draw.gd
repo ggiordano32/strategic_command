@@ -54,8 +54,11 @@ static func banner_color(lay: Dictionary) -> Color:
 
 ## Everything static. `fine`: details for close views (merlons, stairs,
 ## roof ridges); `gates`: draw the gates too, closed (the preview; the
-## battle draws them per tick with draw_gate).
-static func draw_static(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2, fine: bool, gates: bool) -> void:
+## battle draws them per tick with draw_gate). `kit`: the battle view, whose walls, towers and
+## gates are battle kit pieces (game/battlekit.gd): they, the stairs, the sea gate's towers and
+## the banners are left out here (the banners and stairs come from draw_over, above the kit).
+static func draw_static(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2, fine: bool, gates: bool,
+		kit := false) -> void:
 	var banner := banner_color(lay)
 	_draw_squares(ci, lay, k, o)
 	var sea: Dictionary = lay.get("sea", {})
@@ -69,6 +72,10 @@ static func draw_static(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2, f
 			pts.append(pts[0])
 			ci.draw_polyline(pts, STONE_DARK, maxf(k * 0.4, 1.0))
 	_draw_buildings(ci, lay, k, o, fine)
+	if kit:
+		if int(lay["walls"]) > 0 and not sea.is_empty() and not (sea["gate"] as Array).is_empty():
+			_draw_sea_gate(ci, lay, sea["gate"], k, o, false)
+		return
 	if int(lay["walls"]) > 0:
 		var pal := int(lay.get("palisade", 0)) != 0
 		_draw_ring(ci, lay, lay["poly"], k, o, fine, pal)
@@ -85,6 +92,14 @@ static func draw_static(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2, f
 			for g in (lay["gates"] as Array).size():
 				draw_gate(ci, lay, g, BattleSim.GATE_CLOSED, false, 0, k, o)
 	_draw_banners(ci, lay, k, o, banner)
+
+
+## What stands above the kit pieces on the battle map: the stairs at the ends of the walkways and
+## the banners.
+static func draw_over(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2) -> void:
+	if int(lay["walls"]) > 0:
+		_draw_stairs(ci, lay, k, o)
+	_draw_banners(ci, lay, k, o, banner_color(lay))
 
 
 static func _p(o: Vector2, k: float, x: float, y: float) -> Vector2:
@@ -442,7 +457,7 @@ static func _draw_stairs(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2) 
 
 
 ## The sea gate (scenery): an arch across the sea wall, two small towers.
-static func _draw_sea_gate(ci: CanvasItem, lay: Dictionary, g: Array, k: float, o: Vector2) -> void:
+static func _draw_sea_gate(ci: CanvasItem, lay: Dictionary, g: Array, k: float, o: Vector2, towers := true) -> void:
 	var t: float = lay["t"]
 	var ang := float(int(g[2])) * TAU / 1024.0
 	var n := Vector2(cos(ang), sin(ang))
@@ -456,6 +471,8 @@ static func _draw_sea_gate(ci: CanvasItem, lay: Dictionary, g: Array, k: float, 
 		var a := c + e * (q * hw / 2.5)
 		ci.draw_line(o + (a - n * t * 0.3) * k, o + (a + n * t * 0.3) * k, Color(0.12, 0.12, 0.12), maxf(k * 0.2, 1.0))
 	for s in [-1.0, 1.0]:
+		if not towers:
+			break
 		var tc: Vector2 = c + e * (hw + t * 0.5) * s
 		ci.draw_circle(o + tc * k, t * 0.5 * k, STONE_DARK)
 		ci.draw_circle(o + tc * k, t * 0.4 * k, STONE.lightened(0.05))
@@ -492,7 +509,7 @@ static func _draw_banners(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2,
 ## in) or broken (splinters and rubble); an outline flash when struck. A
 ## postern is narrower; the citadel's gate has no towers of its own.
 static func draw_gate(ci: CanvasItem, lay: Dictionary, g: int, st: int, hit: bool, _tick: int, k: float,
-		o: Vector2) -> void:
+		o: Vector2, kit := false) -> void:
 	var gd: Dictionary = lay["gates"][g]
 	var t: float = lay["t"]
 	var hw := float(int(gd.get("hw", MapGen.GATE_HW)))
@@ -502,6 +519,12 @@ static func draw_gate(ci: CanvasItem, lay: Dictionary, g: int, st: int, hit: boo
 	var c := Vector2(gd["x"], gd["y"])
 	var pts := PackedVector2Array([o + (c - e * hw - n * t * 0.5) * k, o + (c + e * hw - n * t * 0.5) * k,
 		o + (c + e * hw + n * t * 0.5) * k, o + (c - e * hw + n * t * 0.5) * k])
+	if kit:
+		# The kit piece is the gate; only the struck outline is drawn here.
+		if hit:
+			ci.draw_polyline(PackedVector2Array([pts[0], pts[1], pts[2], pts[3], pts[0]]),
+				Color(1.0, 0.65, 0.2, 0.9), maxf(k * 0.4, 1.5))
+		return
 	ci.draw_colored_polygon(pts, Color(0.52, 0.48, 0.42))  # passage floor
 	# Wheel ruts worn along the passage.
 	for rs in [-0.45, 0.45]:
