@@ -1196,7 +1196,18 @@ as garrisonable blocks: a unit occupies a building, its men get cover and
 shoot from windows and rooftops with a height gain, the attacker clears it
 by melee at the doors (a street fight from house to house); (c) native
 towns: palisade and jungle cover. Rome's wall levels stay as they are;
-the West picks its battle-map settlement kind by pack.
+the West picks its battle-map settlement kind by pack. **History check (2026-10-14):** around 1650 most Caribbean
+towns were open towns guarded by harbour forts (Havana: El Morro, La
+Punta, La Fuerza, town walls only from 1674; Portobelo, Maracaibo, Port
+Royal, Tortuga: forts only; Veracruz: San Juan de Ulua on its island,
+town walls after the 1683 raid; Campeche: walls 1686-1704 after repeated
+raids; St Augustine: wooden forts, the stone Castillo 1672-95). Only a
+few had real circuits then (Santo Domingo; Cartagena and San Juan
+partly). The buccaneer raids of the 1660s-80s are what got the walls
+built. So in the West the Walls chain becomes: 1 a harbour battery /
+fort beside an open town, 2 a fort plus a partial landward wall or
+palisade, 3 a full curtain with bastions; a raid on an unwalled port
+makes walling it cheaper (rule of cool with a real anchor).
 
 **Slice 2d, battle-map landforms (user, 2026-10-14): towns need not be
 circular, they take a shape; battle maps want more than mounds: cliffs,
