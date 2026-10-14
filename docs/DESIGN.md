@@ -2294,6 +2294,34 @@ damage, +10 m range, +10 %), Iberian Slingers (+2 missile damage, +2 att). Campa
   of riders on horses or camels (light horse, camel archers) march at horse
   pace (`CState.max_mp`).
 
+### Firearms (as built, West slice 2a, 2026-10-14)
+
+Row fields (`sim/unit_types.gd`, generic, defaults keep every Rome row as it
+was): `m_gun` 1 a powder weapon; `m_volley_r` fire at will holds the volley
+beyond it (0: 70 % of `m_range`); `m_spread2` scatter growing with the
+square of the distance (a smoothbore: fair at 60 m, wild at 100 m);
+`m_obj` a bolt's damage to gates, towers and rams in % (roundshot breaches).
+Sim (`BattleSim._gun_unit`): a gun missile unit (foot or rider) reloads as
+a body (`u_fire_acc` counts to `m_reload`, half speed on the move; it starts
+loaded) and fires a volley: every man in formation with a charge fires on
+one tick (flat, `m_arc` 0: a clear line past friends). Foot stand to fire,
+riders fire on the move (pistols at ~25 m in the charge). Fire at will
+holds the volley at a target beyond `m_volley_r` unless it is coming on
+(ordered to attack this unit, or its men moved toward it this tick) or the
+unit was ordered to attack it. The first ball of a volley that reaches a
+unit frightens it once (`m_fear` into `u_fright`, +50 % on horse, camel,
+elephant): hashed `u_vf_u` / `u_vf_t` (the volley's unit and fire tick),
+only with `gun_on` (a scenario unit has a gun row). Guns (artillery) are
+bolt-path engines (`m_kind` 1: pierce, plough, per-shot fright) with
+`m_gun` 1 for the view and `m_obj` for gates. Rome byte-identity:
+`kty_n` (the width of the hashed `u_kills_ty`) is `UnitTypes.ROME_N`
+unless a West row fights. View: smoke puffs and a muzzle flash per volley
+(`game/overlay.gd`, fewer on Graphics Low; a fixed wind), the `musket` and
+`cannon` clips (`stat_volleys`, `stat_cannon`). Later: smoke that blocks
+aim in the sim, cover and line of sight (slice 2b), gun ammunition kinds
+and wagon refills (an `AMMO` row would change the hashed wagon stock
+width: needs the same gating).
+
 ### The general (as built, 2026-10-09)
 
 The command aura is the fear aura inverted: generic fields of any row
@@ -3786,6 +3814,74 @@ theme is a data folder plus its art. Smaller units (companies of 30 to 80)
 mean every balance number is re-fitted; the fit-the-formula tooling from the
 siege work is what calibrates a new theme. Victory conditions for tribes
 (land and buffalo, not cities) are the open design problem.
+
+### The Caribbean pack: ships, pirates, cover, asymmetry (agreed 2026-10-14)
+
+The West pack's first setting is the Caribbean and Gulf, 1650 (slice 1 as
+built: STATUS "The West pack, slice 1"). The user's decisions on
+2026-10-14: sea battles are **real time with the wind**; pirates are
+**raiders with havens**; armies cross the sea by **embarking on fleets**.
+Battle balance waits until ships, cover and asymmetry are in.
+
+**Fleets (campaign, West pack only; Rome keeps its sea lanes).** Ship
+rows are data (pack "west"): sloop (fast, few guns, carries 1 unit),
+brigantine, frigate (carries 3), galleon (slow, heavy, a treasure hold,
+carries 6), ship of the line (England / Dutch top tier), and piraguas /
+war canoes (Miskito, Itza: coastal water only, fast, carry 1). A fleet is
+a campaign piece on sea cells with the overworld's continuous movement.
+Its reach per turn depends on the heading against the map's baked wind
+(`relief_west` WIND: the trade winds from the east), so running west is
+quick and beating east is slow; integers only, from the grid's sea cells.
+An army boards a fleet in port or on a coast cell beside it, up to the
+fleet's capacity, moves at the fleet's pace and lands on any coast cell
+(a landing takes the rest of the turn). Enemy fleets in reach intercept;
+transports in a lost sea battle are sunk or captured with the men on
+board. Ports build and repair ships (a shipyard chain); a long time at sea
+costs a little crew (scurvy).
+
+**Trade and the treasure fleet.** Each port's trade income travels by
+sea: an enemy fleet blockading a port (on its approach cells) cuts it and
+takes a share as plunder. Every few turns Spain's flota gathers galleons
+at Veracruz and Portobelo, meets at Havana and sails off the map east;
+whatever arrives pays a large sum, and whatever is intercepted is the
+richest prize on the map.
+
+**Pirates (the Brethren of the Coast).** Income is mostly plunder:
+intercepted trade, blockade shares, the flota, and **sacking** coastal
+towns (a landing and a battle; a won sack takes gold and wrecks buildings
+without occupying). They hold a few **havens** (Port-de-Paix for Tortuga)
+where crews recruit cheaply. A pirate faction is not eliminated while it
+has a ship. **Infamy** rises with every sack and prize: more recruits
+flock in, and the nations hunt them harder. **Letters of marque**: a
+nation can hire them by treaty (privateering), so they leave that nation
+alone and plunder its enemies at a bonus. AI pirates prefer weak, rich
+targets.
+
+**Sea battles (real time).** Ships are sim pieces with fixed-point
+positions and headings that sail by the battle's wind (from the campaign
+wind at the spot), with points of sail, tacking and stays. They fire
+broadsides from their sides at range (round shot for the hull, chain for
+the rigging, grape for the crew), take hull / rig / crew damage, and
+grapple to board; a boarding becomes a deck melee in the existing soldier
+sim. Forts and shore batteries fire on ships; ships can bombard shore
+units in coastal land battles. Auto-resolve stays available and is fitted
+to the real-time results.
+
+**Cover (battle, slice 2b).** A unit trait `cover` (natives, buccaneers,
+frontier militia, skirmishers): in woods, rocks, walls, fields and
+buildings those men go to ground behind what is there and take far fewer
+hits (missiles and guns), and they fire from cover. Line infantry (Spain's
+tercios, English and Dutch foot) do not take cover: they stand in
+formation, and their strengths are volley discipline, morale and pike
+protection. Line of sight: woods, rocks and buildings block sight and
+shots, so ambush works.
+
+**Asymmetry (to design per faction).** Spain: rich, forts, tercios, the
+flota, slow galleons. England and the Dutch: navies, trade, ships of the
+line, strong guns. France: buccaneers, alliances with natives,
+privateers. The Brethren: the pirate loop above. Itza: jungle, cover,
+ambush, a lake fortress, no need of ships. Miskito: canoe raids, English
+muskets by trade, friends of pirates.
 
 ### Overworld: real geography and the landscape layer (as built, 2026-10-10)
 

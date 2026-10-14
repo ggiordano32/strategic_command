@@ -1214,6 +1214,17 @@ forest edges. Order: 2a firearms (running) -> 2d landforms -> 2b cover
 and line of sight (uses the rocks and forests) -> 2c forts and fighting
 from buildings.
 
+**Caribbean plan agreed 2026-10-14 (DESIGN "The Caribbean pack: ships,
+pirates, cover, asymmetry"):** sea battles real time with the wind;
+pirates as raiders with havens; armies embark on fleets (West only). Do
+not tune battle balance yet. Two tracks: **campaign** N1 fleets (ship
+rows, fleet pieces on sea cells, wind-dependent reach, embark / land,
+interception, sea battles auto-resolved until N3), N2 trade, blockade,
+the flota and the pirate loop (havens, plunder, sacking, infamy, letters
+of marque); **battle** 2a firearms (running) -> 2d landforms -> N3 real
+time sea battles -> 2b cover and line of sight -> 2c forts and fighting
+from buildings; faction asymmetry threads through all of them.
+
 ## Next session (week of 2026-10-13; paused 2026-10-10 midday)
 
 - **Update, 2026-10-10 evening (hold here):** the user resumed; landed
