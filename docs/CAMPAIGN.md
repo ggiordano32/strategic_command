@@ -1420,7 +1420,7 @@ comment). No state change, `CState.VERSION` stays 6; the rules hash changes
 - **Parameters** (nothing Mediterranean is in the tool): a JSON config,
   `tools/geo/med.json` (the default), holds the window (`lon0`, `lat0`,
   `lon_span`, `lat_span`), the projection (`px_lat`, `px_lon`; they must
-  equal the constants of `map_geo.gd`, which the tool checks), `cell_px`,
+  equal the constants of `geo_rome.gd`, which the tool checks), `cell_px`,
   `fine_per_cell` (8), `simplify_deg` (0.05), `island_min_deg` (0.25),
   `landmass_clip`, the class `thresholds`, the `regions` list (key, lon,
   lat, landmass index: the settlement list, a data file, not CData) and the

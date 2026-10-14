@@ -6,6 +6,11 @@
   "lon_span": 36.0,
   "lat_span": 14.0
  },
+ "out": {
+  "geo": "game/campaign/geo_rome.gd",
+  "elev": "campaign/data/elev_data.gd",
+  "relief": "game/campaign/relief_data.gd"
+ },
  "px_lat": 100.0,
  "px_lon": 76.6,
  "cell_px": 20,
