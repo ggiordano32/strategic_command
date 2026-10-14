@@ -1106,6 +1106,46 @@ Where 2026-10-09 ended (build 20261009T124650Z live; everything up to
   phone checked. `tests/campaign_input_test.gd`'s 7 failures were stale
   expectations, fixed 2026-10-10 (it passes, also headless).
 
+## The West pack, slice 1 (started 2026-10-13)
+
+User's choices: first slice = **map + pack plumbing**; window =
+**Caribbean + Gulf of Mexico** (about lon -98.5..-58.5, lat 31.5..8);
+pack chosen **in game** (one build, new-campaign screen Rome / West; the
+state records it). Not in this slice: firearms, naval movement / sea
+battles, West unit art, railroad. Placeholder factions reuse Rome unit
+rows.
+
+Architecture (survey 2026-10-13): rules reach content only through
+`CData.<TABLE>` and `CGrid`'s grid script, the view through `map_geo.gd`
+/ `geo_fields.gd`. Those become static vars set by `CData.use_pack()` /
+`use_state(st)` (Rome tables move verbatim to `campaign/data/rome.gd`,
+shared enums to `campaign/data/cenums.gd`); derived caches in CGrid,
+crules, cai, cbattle rebuild when `CData.gen` changes; `resolve_turn`,
+`apply_battle`, `new_campaign`, `migrate` switch the pack from the state
+first. The state key `"pack"` is written only when not "rome", so Rome
+states, hashes, goldens and the server's format-6 view stay byte-identical;
+`CState.VERSION` stays 7; one rules hash covers both packs (pack files
+flat in `campaign/data/`, since the hash does not recurse). No server
+change.
+
+Steps: 0 plumbing, Rome only, no behaviour change (Opus) | 1 geo_fit
+output paths + `tools/geo/carib.json`, wind from 90 (Sonnet) | 4a view
+geometry split `geo_rome.gd` / per-pack relief by `load()` (Sonnet) |
+2 West content `campaign/data/west.gd` + `geo_west.gd` phantoms / roads
+(Sonnet) | 3 `campaign_grid --pack=west` (Sonnet) | 4b screens: pack
+choice, blurbs, subtitle, era "AD", save meta, palettes (Sonnet) | 6 West
+validation: campaign_sim --pack=west 6 x 60, tests, online e2e (Opus).
+Custom-battle pack key deferred (same unit rows).
+
+Defaults taken (user may override): same 22 km cells as Rome (grid about
+2.4x Rome), West relief at `fine_per_cell` 6 to keep the texture near
+Rome's size for the Tab S7; settlements on islands under about 4 cells
+(Tortuga, Barbados, St Eustatius) move to bigger land or wait for naval
+play; Spain split in two (New Spain: Havana, Veracruz, Campeche; Tierra
+Firme: Cartagena, Portobelo, Maracaibo) so it does not swallow the map;
+natives: Maya Itza (Peten) and Miskito (Mosquito Coast); plus England,
+France, the Dutch, the Brethren of the Coast.
+
 ## Next session (week of 2026-10-13; paused 2026-10-10 midday)
 
 - **Update, 2026-10-10 evening (hold here):** the user resumed; landed
