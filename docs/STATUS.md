@@ -1439,6 +1439,21 @@ banded sea, posterised hillshade and ink contours, parchment frame and tilt-shif
 (desktop 1280x800, Port Royal, uncapped): relief 155 / 152 fps, table 145 (zoom 0.5) / 185 (zoom 2).
 Open: hand-checking on the Tab S7 and phones; Rome miniatures have only the generic roman look.
 
+**Battle-map look (user, 2026-10-14): "looks a bit like a flash game";
+the user likes the tabletop diorama / miniatures direction for battles
+and would accept PC-only for it.** Agreed order: (1) style test (running:
+Blender battle kit + ground textures composited on battle shots, variants
+grounded painterly vs tabletop diorama); (2) **Level 1, all platforms**:
+Blender kit walls / towers / gates / houses / trees / rocks with baked
+light and cast shadows, painterly splatted ground, a sculpted-board look
+with a bevelled board edge, units re-rendered as painted minis on bases,
+light depth of field (off on Low); (3) **Level 2 prototype, PC "Ultra"
+view only**: a 3D battle view (heightmap terrain mesh, the kit as glTF,
+real light and shadows, a tiltable / rotatable camera = the iso view),
+soldiers as billboards or instanced minis; view-only, same sim, so a PC
+3D player and a phone 2D player can share a co-op battle; needs a desktop
+export. The game itself stays web-first (phones and tablets).
+
 ## Next session (week of 2026-10-13; paused 2026-10-10 midday)
 
 - **Update, 2026-10-10 evening (hold here):** the user resumed; landed
