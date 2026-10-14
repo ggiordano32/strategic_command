@@ -453,6 +453,17 @@ static func land_meshes(sz: Vector2) -> Array:
 			var m := _poly_mesh(poly, sz)
 			if m != null:
 				_land_meshes.append(m)
+				continue
+			if CData.pack != "west":
+				continue   # (Rome's one tiny failing islet stays as it was: that look is frozen)
+			# A coastline that crosses itself does not triangulate (the West
+			# mainland): clean it first and mesh each outer piece (lakes stay land).
+			for part in Geometry2D.merge_polygons(poly, PackedVector2Array()):
+				if Geometry2D.is_polygon_clockwise(part):
+					continue
+				var pm := _poly_mesh(part, sz)
+				if pm != null:
+					_land_meshes.append(pm)
 	return _land_meshes
 
 
@@ -461,6 +472,45 @@ static func land_meshes(sz: Vector2) -> Array:
 func _fill_cell(r: int, col: Color) -> void:
 	for m in cell_meshes(r):
 		draw_mesh(m, null, Transform2D.IDENTITY, col)
+
+
+const INDEP_EDGE := Color(0.62, 0.62, 0.58, 0.95)
+static var _indep_cache := {}
+static var _indep_gen := -1
+
+
+## Dash segments (point pairs, world units) along the outline of region r.
+static func _indep_dashes(r: int) -> Array:
+	_sync_gen()
+	if _indep_gen != Geo.gen:
+		_indep_cache = {}
+		_indep_gen = Geo.gen
+	if _indep_cache.has(r):
+		return _indep_cache[r]
+	var out: Array = []
+	for piece in Geo.cell(r):
+		var segs := PackedVector2Array()
+		var on := true
+		var left := 9.0
+		var n: int = piece.size()
+		for i in n:
+			var a: Vector2 = piece[i]
+			var b: Vector2 = piece[(i + 1) % n]
+			var seg_len := a.distance_to(b)
+			var t := 0.0
+			while t < seg_len:
+				var step := minf(left, seg_len - t)
+				if on:
+					segs.append(a.lerp(b, t / seg_len))
+					segs.append(a.lerp(b, (t + step) / seg_len))
+				t += step
+				left -= step
+				if left <= 0.0001:
+					on = not on
+					left = 9.0 if on else 6.0
+		out.append(segs)
+	_indep_cache[r] = out
+	return out
 
 
 static func cell_meshes(r: int) -> Array:
@@ -548,6 +598,11 @@ func _draw() -> void:
 	for r in CData.region_count():
 		var o := CState.owner(state, r)
 		if o < 0:
+			if tbl:
+				# Independent land: no wash, a neutral grey dashed border.
+				for dsh in _indep_dashes(r):
+					draw_multiline(dsh, Color(0.12, 0.08, 0.05, 0.5), (TABLE_EDGE_W + 1.0) * lw, true)
+					draw_multiline(dsh, INDEP_EDGE, TABLE_EDGE_W * 0.8 * lw, true)
 			continue
 		var ec := CData.faction_color(o)
 		ec.a = OWNER_EDGE_A

@@ -220,12 +220,54 @@ func fleet_positions() -> Dictionary:
 			order.append(c)
 		(groups[c] as Array).append(int(fl["id"]))
 	var m := mk()
+	var port_of := {}   # harbour / dock cell -> region (miniatures: fleets in port stand beside the town)
+	if Minis.on_sites:
+		for r in CData.region_count():
+			for pc in [CFleet.harbour(r), CFleet.dock(r)]:
+				if int(pc) >= 0 and not port_of.has(int(pc)):
+					port_of[int(pc)] = r
 	for c in order:
 		var ids: Array = groups[c]
 		var base := to_screen(cell_point(int(c)))
+		if port_of.has(int(c)):
+			var pr: int = port_of[int(c)]
+			var side := port_side(pr)
+			var spot := Minis.fleet_spot(to_screen(site_point(pr)), side, zoom, int(state["regions"][pr]["level"]))
+			var stp := (FLEET_W + 4.0) * m * 0.8
+			for k in ids.size():
+				out[int(ids[k])] = spot + Vector2(side * k * stp, 0)
+			continue
 		for k in ids.size():
 			out[int(ids[k])] = base + Vector2((k - (ids.size() - 1) * 0.5) * (FLEET_W + 4.0) * m, 0)
 	return out
+
+
+## Where the army banners of settlement r stand: beside its model, away from the harbour.
+func _side_spot(r: int, m: float) -> Vector2:
+	var hs := -port_side(r) if CFleet.harbour(r) >= 0 else 1.0
+	var lvl := int(state["regions"][r]["level"])
+	return to_screen(site_point(r)) + Vector2(hs * (Minis.half_w(zoom, lvl) + ARMY_W * 0.5 * m + 4.0), -ARMY_H * 0.2 * m)
+
+
+## The settlement whose miniature covers screen point p (-1 none).
+func _model_at(p: Vector2) -> int:
+	for r in CData.region_count():
+		var q := to_screen(site_point(r))
+		var hw := Minis.half_w(zoom, int(state["regions"][r]["level"])) + ARMY_W * 0.4
+		if absf(p.x - q.x) <= hw and p.y - q.y >= -Minis.tile_px(zoom) * 0.9 and p.y - q.y <= Minis.tile_px(zoom) * 0.5:
+			return r
+	return -1
+
+
+## -1 / +1: the side (left / right) of its town where region r's harbour lies.
+func port_side(r: int) -> float:
+	var h := CFleet.harbour(r)
+	if h < 0:
+		h = CFleet.dock(r)
+	if h < 0:
+		return 1.0
+	var dx := cell_point(h).x - site_point(r).x
+	return -1.0 if dx < -1.0 else 1.0
 
 
 func fleet_at(p: Vector2) -> int:
@@ -266,10 +308,16 @@ func _army_positions6() -> Dictionary:
 		elif CRules.inside(state, a):
 			var r := CGrid.site_region(CState.cell(a))
 			c = to_screen(site_point(r)) + Vector2(0, (ARMY_H * 0.5 + 12.0) * m + Minis.army_drop())
+			if Minis.on_sites:
+				c = _side_spot(r, m)
 			key = "s%d" % r
 		else:
 			c = to_screen(cell_point(CState.cell(a)))
 			key = "c%d" % CState.cell(a)
+			var nr := _model_at(c) if Minis.on_sites else -1
+			if nr >= 0:
+				c = _side_spot(nr, m)   # at a miniature town: beside it, not over its name
+				key = "s%d" % nr
 		if not groups.has(key):
 			groups[key] = [c, []]
 			order.append(key)
@@ -280,7 +328,10 @@ func _army_positions6() -> Dictionary:
 		var ids: Array = g[1]
 		var n := ids.size()
 		for k in n:
-			out[int(ids[k])] = (g[0] as Vector2) + Vector2((k - (n - 1) * 0.5) * step, 0)
+			if Minis.on_sites and str(key).begins_with("s"):
+				out[int(ids[k])] = (g[0] as Vector2) + Vector2(0, k * (ARMY_H * m * 0.9 + 3.0))
+			else:
+				out[int(ids[k])] = (g[0] as Vector2) + Vector2((k - (n - 1) * 0.5) * step, 0)
 	return out
 
 

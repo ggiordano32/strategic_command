@@ -18,14 +18,14 @@ void fragment() {
 	vec3 col = textureLod(screen, SCREEN_UV, 0.0).rgb;
 	if (tilt > 0.5) {
 		float y = abs(SCREEN_UV.y - 0.5) * 2.0;
-		float b = smoothstep(0.62, 1.0, y) * 2.6;
+		float b = smoothstep(0.7, 1.0, y) * 1.7;
 		if (b > 0.05) {
 			col = textureLod(screen, SCREEN_UV, b).rgb;
 		}
 	}
 	// vignette
 	float v = smoothstep(0.55, 1.25, length((SCREEN_UV - 0.5) * vec2(1.25, 1.0) * 1.6));
-	col *= 1.0 - v * 0.22;
+	col *= 1.0 - v * 0.27;
 	// inside / outside of the map's edge
 	vec2 lo = px - map_rect.xy;
 	vec2 hi = map_rect.zw - px;

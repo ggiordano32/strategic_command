@@ -64,6 +64,22 @@ static func army_drop() -> float:
 	return _label_lift * 0.5 if on_sites else 0.0
 
 
+## Half the width of settlement r's model on screen (walls included).
+static func half_w(zoom: float, level: int) -> float:
+	return tile_px(zoom) * 0.55 * float(LEVEL_K[clampi(level, 0, 2)])
+
+
+## Where fleets in port wait: beside the model on the harbour side (side -1 /
+## +1), a little below its anchor, so they never cover the town or its name.
+static func fleet_spot(site: Vector2, side: float, zoom: float, level: int) -> Vector2:
+	return site + Vector2(side * (half_w(zoom, level) + 24.0), tile_px(zoom) * 0.3)
+
+
+## Ship scale factor: smaller at mid zoom so a fleet is no taller than a town.
+static func ship_k(zoom: float) -> float:
+	return clampf(0.62 + (zoom - 1.0) * 0.25, 0.55, 1.0)
+
+
 static func label_lift() -> float:
 	return _label_lift if on_sites else 0.0
 
@@ -179,7 +195,7 @@ func _draw() -> void:
 			for nm in ls[3]:
 				_blit(table, shade, str(nm), it[3], pxm, col)
 		else:
-			_ship(it[2], it[3], tile / TILE_M * SHIP_K, table, shade)
+			_ship(it[2], it[3], tile / TILE_M * ship_k(z), table, shade)
 
 
 func _blit(table: Dictionary, shade: Texture2D, nm: String, at: Vector2, pxm: float, col: Color, alpha := 1.0) -> void:
