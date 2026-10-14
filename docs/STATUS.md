@@ -1453,6 +1453,13 @@ real light and shadows, a tiltable / rotatable camera = the iso view),
 soldiers as billboards or instanced minis; view-only, same sim, so a PC
 3D player and a phone 2D player can share a co-op battle; needs a desktop
 export. The game itself stays web-first (phones and tablets).
+Style test done 2026-10-14 (`tools/battlekit/`, 1d878c1): the user chose
+**A "grounded painterly" as the default and B "tabletop diorama" as an
+option** (a `[video] battle_look = painterly | diorama` setting: B adds
+rim light, outline and saturation). Level 1 phases: 1 kit walls / towers
+/ gates + their baked shadows (running), 2 houses and props on the real
+streets with culture palettes, 3 trees / rocks / cliffs, 4 the full
+shadow and AO layer, 5 splatted ground, 6 the Diorama look setting.
 
 ## Next session (week of 2026-10-13; paused 2026-10-10 midday)
 
