@@ -25,6 +25,7 @@ func _init() -> void:
 	_rome_round_trip()
 	_refusals()
 	_hash_view()
+	_west()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
 	quit(0 if fails == 0 else 1)
 
@@ -113,3 +114,30 @@ func _hash_view() -> void:
 	print("     pack default teams %s, own teams %s" % [CState.hash_text(def), CState.hash_text(own)])
 	_check(CState.hash_text(def) == "a9a7a1e4" and CState.hash_text(own) == "a5c588a1",
 		"a \"pack\" state hashes as the server's view (%s, %s)" % [CState.hash_text(def), CState.hash_text(own)])
+
+
+## The West pack (campaign/data/west.gd): it loads, a new West campaign names
+## its pack, round-trips JSON with the same hash, plays 5 turns the same
+## twice, and switching back restores the Rome golden.
+func _west() -> void:
+	var g0 := CData.gen
+	CData.use_pack("west")
+	_check(CData.pack == "west" and CData.region_count() == 32 and CData.faction_count() == 8, "use_pack(\"west\"): 32 regions, 8 factions")
+	_check(CData.ERA == "AD" and CData.START_YEAR == 1650 and CData.LON_PCT == 940, "West calendar and projection")
+	_check(CGrid.width() == 188 and CGrid.count() == 188 * 118, "West grid 188 x 118")
+	var st := CState.new_campaign("w", 99, [], {}, [], "west")
+	_check(st.get("pack", "") == "west", "a West campaign has pack \"west\"")
+	var h0 := CState.hash_text(st)
+	var back := CState.from_json(CState.to_json(st))
+	_check(not back.is_empty() and CState.hash_text(back) == h0 and CData.pack == "west", "a West save round trip keeps its hash (%s)" % h0)
+	var a := st
+	var b := CState.new_campaign("w", 99, [], {}, [], "west")
+	for t in 5:
+		a = CTurn.resolve_turn(a, [])
+		b = CTurn.resolve_turn(b, [])
+	_check(CState.hash_text(a) == CState.hash_text(b) and int(a["turn"]) == 5 and a.get("pack", "") == "west",
+		"West: 5 turns, deterministic twice (%s)" % CState.hash_text(a))
+	CData.use_pack("rome")
+	_check(CData.pack == "rome" and CData.gen > g0, "back to Rome after West")
+	var r := _rome20()
+	_check(CState.hash_text(r) == ROME_20, "Rome golden after a West campaign (%s)" % CState.hash_text(r))

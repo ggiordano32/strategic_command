@@ -34,13 +34,16 @@ extends SceneTree
 ## passable cells, every road cell on land, a road crossing a river only at
 ## a crossing, each landmass still one component and every land route
 ## joined with the rivers in place.
+## --pack=west: the same for another content pack (CData.use_pack /
+## Geo.use_pack; reads campaign/data/<pack>_elev_data.gd, writes
+## campaign/data/<pack>_grid_data.gd; the file must exist (a stub is enough
+## the first time, the pack's west.gd preloads it). Default: rome.
 ## --check: build and compare with the checked-in file (exit 1 if different).
 
 const Geo := preload("res://game/campaign/map_geo.gd")
 const CData := preload("res://campaign/cdata.gd")
-const Elev := preload("res://campaign/data/elev_data.gd")
-
-const OUT := "res://campaign/data/grid_data.gd"
+var Elev: GDScript
+var OUT := "res://campaign/data/grid_data.gd"
 const SEA := "."
 const WILD := ","
 var cell := 20
@@ -60,13 +63,21 @@ const DY: Array[int] = [-1, -1, 0, 1, 1, 1, 0, -1]
 func _init() -> void:
 	var check := false
 	var png := ""
+	var pack := "rome"
 	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--pack="):
+			pack = a.get_slice("=", 1)
 		if a.begins_with("--cell="):
 			cell = int(a.get_slice("=", 1))
 		elif a == "--check":
 			check = true
 		elif a.begins_with("--png="):
 			png = a.get_slice("=", 1)
+	if pack != "rome":
+		OUT = "res://campaign/data/%s_grid_data.gd" % pack
+	CData.use_pack(pack)
+	Geo.use_pack(pack)
+	Elev = load("res://campaign/data/elev_data.gd" if pack == "rome" else "res://campaign/data/%s_elev_data.gd" % pack)
 	var text := build()
 	if text == "":
 		if png != "" and rmask.size() == w * h:
@@ -244,12 +255,12 @@ func build() -> String:
 			break
 	var comp2 := _components()
 	var ok := true
-	for k in 5:
+	for k in 8:
 		var seen := {}
 		for i in n:
 			if reg[i] >= 0 and mass[i] == k:
 				seen[comp2[i]] = 1
-		if seen.size() != 1:
+		if seen.size() > 1:
 			var sizes2 := {}
 			for i in n:
 				if reg[i] >= 0 and mass[i] == k:
@@ -540,7 +551,7 @@ func _terrain() -> bool:
 	for i in n:
 		if reg[i] < 0:
 			continue
-		var cl := Elev.CLASS[i / w].unicode_at(i % w) - 48
+		var cl: int = Elev.CLASS[i / w].unicode_at(i % w) - 48
 		var best := 2 if cl == 4 else (1 if cl == 3 else 0)
 		if best == 0:
 			continue
@@ -699,12 +710,12 @@ func _terrain() -> bool:
 					Geo.RIVERS[_orth(a4, b4, e_east, e_south)]["name"], a4 % w, a4 / w, b4 % w, b4 / w])
 				ok = false
 	var comp := _components_rivers()
-	for k in 5:
+	for k in 8:
 		var seen := {}
 		for i in n:
 			if reg[i] >= 0 and mass[i] == k:
 				seen[comp[i]] = 1
-		if seen.size() != 1:
+		if seen.size() > 1:
 			var sizes := {}
 			for i in n:
 				if reg[i] >= 0 and mass[i] == k:

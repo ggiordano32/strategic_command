@@ -1,0 +1,236 @@
+extends RefCounted
+## The West pack (1650 AD, the Caribbean and the Gulf of Mexico): the content
+## tables campaign/cdata.gd reads through CData.use_pack("west"). Same shape as
+## campaign/data/rome.gd (see there for what each table means). The 32
+## settlements are the ones tools/geo/carib.json bakes (keys, lon / lat and
+## landmass must stay equal to it). Units are the Rome rosters reused as
+## placeholders until the West units exist (ROSTERS / AMMO_AVAIL keep the
+## Rome faction each West faction borrows).
+## Landmasses: 0 North and Central America (Florida to the Darien), 1 South
+## America, 2 Cuba, 3 Hispaniola, 4 Jamaica, 5 Puerto Rico, 6 Trinidad.
+
+const E := preload("res://campaign/data/cenums.gd")
+const R := preload("res://campaign/data/rome.gd")
+const FLAT := E.FLAT
+const ROLLING := E.ROLLING
+const RIDGE := E.RIDGE
+const VALLEY := E.VALLEY
+const HILL := E.HILL
+const ARID := E.ARID
+const DRY := E.DRY
+const GREEN := E.GREEN
+const ROCKY := E.ROCKY
+const LATIN := E.LATIN
+const GREEK := E.GREEK
+const PUNIC := E.PUNIC
+const CELTIC := E.CELTIC
+const VILLAGE := E.VILLAGE
+const TOWN := E.TOWN
+const CITY := E.CITY
+const AI_CAUTIOUS := E.AI_CAUTIOUS
+const AI_BALANCED := E.AI_BALANCED
+const AI_AGGRESSIVE := E.AI_AGGRESSIVE
+const RANGE := E.RANGE
+const WORKSHOP := E.WORKSHOP
+
+const KEY := "west"
+const GRID := preload("res://campaign/data/west_grid_data.gd")
+## Projection of tools/geo/carib.json: px_lon 94 / px_lat 100 (cos 20 deg).
+const LON_PCT := 940
+const START_YEAR := 1650
+const ERA := "AD"
+
+const REGIONS: Array[Dictionary] = [
+	# Mexico and the Gulf
+	{"key": "veracruz", "name": "Nueva Veracruz", "city": "Veracruz", "area": "Mexico", "terrain": FLAT, "lon": -9613, "lat": 1920, "wealth": 6, "level": CITY, "walls": 1, "land": 0, "ground": DRY, "forest": 30, "culture": LATIN},
+	{"key": "tampico", "name": "Panuco", "city": "Tampico", "area": "Mexico", "terrain": FLAT, "lon": -9786, "lat": 2225, "wealth": 3, "level": TOWN, "walls": 0, "land": 0, "ground": DRY, "forest": 25, "culture": LATIN},
+	{"key": "campeche", "name": "Campeche", "city": "San Francisco de Campeche", "area": "Yucatan", "terrain": FLAT, "lon": -9053, "lat": 1985, "wealth": 4, "level": TOWN, "walls": 1, "land": 0, "ground": DRY, "forest": 45, "culture": LATIN},
+	{"key": "merida", "name": "Yucatan", "city": "Merida", "area": "Yucatan", "terrain": FLAT, "lon": -8962, "lat": 2097, "wealth": 4, "level": TOWN, "walls": 0, "land": 0, "ground": ARID, "forest": 30, "culture": LATIN},
+	{"key": "tayasal", "name": "Peten Itza", "city": "Tayasal", "area": "Yucatan", "terrain": ROLLING, "lon": -8990, "lat": 1693, "wealth": 3, "level": VILLAGE, "walls": 1, "land": 0, "ground": GREEN, "forest": 85, "culture": CELTIC},
+	{"key": "belize", "name": "Belize", "city": "Belize", "area": "Central America", "terrain": FLAT, "lon": -8820, "lat": 1750, "wealth": 2, "level": VILLAGE, "walls": 0, "land": 0, "ground": GREEN, "forest": 75, "culture": LATIN},
+	{"key": "trujillo", "name": "Honduras", "city": "Trujillo", "area": "Central America", "terrain": ROLLING, "lon": -8600, "lat": 1585, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 0, "ground": GREEN, "forest": 70, "culture": LATIN},
+	{"key": "bluefields", "name": "Bluefields Lagoon", "city": "Bluefields", "area": "Central America", "terrain": FLAT, "lon": -8377, "lat": 1201, "wealth": 2, "level": VILLAGE, "walls": 0, "land": 0, "ground": GREEN, "forest": 85, "culture": CELTIC},
+	{"key": "cabo_gracias", "name": "Mosquito Coast", "city": "Cabo Gracias a Dios", "area": "Central America", "terrain": FLAT, "lon": -8315, "lat": 1499, "wealth": 2, "level": VILLAGE, "walls": 0, "land": 0, "ground": GREEN, "forest": 80, "culture": CELTIC},
+	{"key": "portobelo", "name": "Terra Firma", "city": "Portobelo", "area": "Central America", "terrain": HILL, "lon": -7965, "lat": 955, "wealth": 7, "level": CITY, "walls": 2, "land": 0, "ground": GREEN, "forest": 75, "culture": LATIN},
+	{"key": "st_augustine", "name": "La Florida", "city": "San Agustin", "area": "Florida", "terrain": FLAT, "lon": -8131, "lat": 2989, "wealth": 3, "level": CITY, "walls": 1, "land": 0, "ground": GREEN, "forest": 55, "culture": LATIN},
+	{"key": "pensacola", "name": "Pensacola", "city": "Pensacola", "area": "Gulf Coast", "terrain": FLAT, "lon": -8724, "lat": 3047, "wealth": 2, "level": VILLAGE, "walls": 0, "land": 0, "ground": GREEN, "forest": 60, "culture": LATIN},
+	{"key": "new_orleans", "name": "Louisiana", "city": "Nouvelle-Orleans", "area": "Gulf Coast", "terrain": VALLEY, "lon": -9007, "lat": 2995, "wealth": 4, "level": TOWN, "walls": 0, "land": 0, "ground": GREEN, "forest": 55, "culture": LATIN},
+	# Tierra Firme (the Spanish Main)
+	{"key": "cartagena", "name": "Cartagena", "city": "Cartagena de Indias", "area": "Spanish Main", "terrain": FLAT, "lon": -7546, "lat": 1039, "wealth": 7, "level": CITY, "walls": 2, "land": 1, "ground": DRY, "forest": 30, "culture": LATIN},
+	{"key": "santa_marta", "name": "Santa Marta", "city": "Santa Marta", "area": "Spanish Main", "terrain": HILL, "lon": -7420, "lat": 1124, "wealth": 4, "level": TOWN, "walls": 0, "land": 1, "ground": DRY, "forest": 35, "culture": LATIN},
+	{"key": "mompox", "name": "Magdalena", "city": "Santa Cruz de Mompox", "area": "Spanish Main", "terrain": FLAT, "lon": -7443, "lat": 924, "wealth": 4, "level": TOWN, "walls": 0, "land": 1, "ground": GREEN, "forest": 60, "culture": LATIN},
+	{"key": "maracaibo", "name": "Maracaibo", "city": "Maracaibo", "area": "Spanish Main", "terrain": FLAT, "lon": -7164, "lat": 1065, "wealth": 4, "level": TOWN, "walls": 0, "land": 1, "ground": DRY, "forest": 35, "culture": LATIN},
+	{"key": "coro", "name": "Coro", "city": "Santa Ana de Coro", "area": "Spanish Main", "terrain": ROLLING, "lon": -6968, "lat": 1140, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 1, "ground": ARID, "forest": 12, "culture": LATIN},
+	{"key": "la_guaira", "name": "Caracas", "city": "La Guaira", "area": "Spanish Main", "terrain": HILL, "lon": -6693, "lat": 1060, "wealth": 4, "level": TOWN, "walls": 0, "land": 1, "ground": DRY, "forest": 30, "culture": LATIN},
+	{"key": "cumana", "name": "Cumana", "city": "Cumana", "area": "Spanish Main", "terrain": FLAT, "lon": -6417, "lat": 1045, "wealth": 3, "level": TOWN, "walls": 0, "land": 1, "ground": ARID, "forest": 15, "culture": LATIN},
+	# Cuba
+	{"key": "havana", "name": "La Habana", "city": "La Habana", "area": "Cuba", "terrain": FLAT, "lon": -8236, "lat": 2314, "wealth": 7, "level": CITY, "walls": 2, "land": 2, "ground": GREEN, "forest": 25, "culture": LATIN},
+	{"key": "puerto_principe", "name": "Camaguey", "city": "Puerto Principe", "area": "Cuba", "terrain": ROLLING, "lon": -7790, "lat": 2138, "wealth": 4, "level": TOWN, "walls": 0, "land": 2, "ground": GREEN, "forest": 20, "culture": LATIN},
+	{"key": "santiago_de_cuba", "name": "Oriente", "city": "Santiago de Cuba", "area": "Cuba", "terrain": HILL, "lon": -7583, "lat": 2002, "wealth": 4, "level": TOWN, "walls": 1, "land": 2, "ground": GREEN, "forest": 50, "culture": LATIN},
+	# Hispaniola
+	{"key": "santo_domingo", "name": "Santo Domingo", "city": "Santo Domingo", "area": "Hispaniola", "terrain": FLAT, "lon": -6990, "lat": 1848, "wealth": 5, "level": CITY, "walls": 1, "land": 3, "ground": GREEN, "forest": 35, "culture": LATIN},
+	{"key": "santiago_caballeros", "name": "Cibao", "city": "Santiago de los Caballeros", "area": "Hispaniola", "terrain": VALLEY, "lon": -7070, "lat": 1945, "wealth": 3, "level": TOWN, "walls": 0, "land": 3, "ground": GREEN, "forest": 45, "culture": LATIN},
+	{"key": "port_de_paix", "name": "Tortuga Coast", "city": "Port-de-Paix", "area": "Hispaniola", "terrain": HILL, "lon": -7283, "lat": 1994, "wealth": 2, "level": VILLAGE, "walls": 0, "land": 3, "ground": ROCKY, "forest": 50, "culture": LATIN},
+	{"key": "leogane", "name": "Saint-Domingue", "city": "Leogane", "area": "Hispaniola", "terrain": FLAT, "lon": -7263, "lat": 1851, "wealth": 3, "level": TOWN, "walls": 0, "land": 3, "ground": GREEN, "forest": 40, "culture": LATIN},
+	# Jamaica
+	{"key": "port_royal", "name": "Port Royal", "city": "Port Royal", "area": "Jamaica", "terrain": FLAT, "lon": -7691, "lat": 1800, "wealth": 5, "level": TOWN, "walls": 1, "land": 4, "ground": GREEN, "forest": 40, "culture": LATIN},
+	{"key": "sevilla_jamaica", "name": "Santiago de la Vega", "city": "Sevilla la Nueva", "area": "Jamaica", "terrain": HILL, "lon": -7705, "lat": 1836, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 4, "ground": GREEN, "forest": 55, "culture": LATIN},
+	# Puerto Rico
+	{"key": "san_juan", "name": "San Juan Bautista", "city": "San Juan", "area": "Puerto Rico", "terrain": ROLLING, "lon": -6616, "lat": 1840, "wealth": 4, "level": TOWN, "walls": 1, "land": 5, "ground": GREEN, "forest": 35, "culture": LATIN},
+	{"key": "san_german", "name": "San German", "city": "San German", "area": "Puerto Rico", "terrain": HILL, "lon": -6705, "lat": 1808, "wealth": 2, "level": VILLAGE, "walls": 0, "land": 5, "ground": GREEN, "forest": 45, "culture": LATIN},
+	# Trinidad
+	{"key": "port_of_spain", "name": "Trinidad", "city": "Port of Spain", "area": "Trinidad", "terrain": FLAT, "lon": -6150, "lat": 1070, "wealth": 3, "level": VILLAGE, "walls": 0, "land": 6, "ground": GREEN, "forest": 60, "culture": LATIN},
+]
+
+## Land routes (one turn each way): neighbouring settlements on one landmass.
+const ROUTES: Array = [
+	["tampico", "veracruz"], ["veracruz", "campeche"], ["campeche", "merida"], ["campeche", "tayasal"],
+	["merida", "belize"], ["tayasal", "belize"], ["tayasal", "trujillo"], ["belize", "trujillo"],
+	["trujillo", "cabo_gracias"], ["cabo_gracias", "bluefields"], ["bluefields", "portobelo"],
+	["new_orleans", "pensacola"], ["pensacola", "st_augustine"], ["tampico", "new_orleans"],
+	["cartagena", "santa_marta"], ["cartagena", "mompox"], ["santa_marta", "mompox"],
+	["santa_marta", "maracaibo"], ["mompox", "maracaibo"], ["maracaibo", "coro"], ["coro", "la_guaira"],
+	["la_guaira", "cumana"],
+	["havana", "puerto_principe"], ["puerto_principe", "santiago_de_cuba"],
+	["santo_domingo", "santiago_caballeros"], ["santiago_caballeros", "port_de_paix"],
+	["port_de_paix", "leogane"], ["leogane", "santo_domingo"],
+	["port_royal", "sevilla_jamaica"], ["san_juan", "san_german"],
+]
+
+## Sea lanes between ports (one turn). Every port is on at least one; an
+## island's ports reach the mainland and the neighbouring islands.
+const SEA_LANES: Array = [
+	["havana", "st_augustine"], ["havana", "pensacola"], ["havana", "new_orleans"], ["havana", "veracruz"],
+	["havana", "campeche"], ["havana", "santiago_de_cuba"],
+	["new_orleans", "pensacola"], ["pensacola", "st_augustine"], ["new_orleans", "veracruz"],
+	["tampico", "veracruz"], ["veracruz", "campeche"],
+	["campeche", "belize"], ["belize", "trujillo"], ["belize", "port_royal"], ["trujillo", "cabo_gracias"],
+	["cabo_gracias", "bluefields"], ["cabo_gracias", "port_royal"], ["bluefields", "portobelo"],
+	["portobelo", "cartagena"], ["portobelo", "port_royal"], ["cartagena", "port_royal"],
+	["cartagena", "santa_marta"], ["santa_marta", "maracaibo"], ["maracaibo", "coro"], ["coro", "la_guaira"],
+	["la_guaira", "cumana"], ["cumana", "port_of_spain"], ["la_guaira", "san_juan"],
+	["santiago_de_cuba", "port_royal"], ["santiago_de_cuba", "port_de_paix"], ["port_royal", "leogane"],
+	["leogane", "santo_domingo"], ["port_de_paix", "leogane"], ["santo_domingo", "san_german"],
+	["santo_domingo", "san_juan"], ["san_juan", "san_german"], ["san_juan", "port_of_spain"],
+	["havana", "port_royal"],
+]
+
+## Factions (see rome.gd). Armies, mixes and compositions are those of the Rome
+## faction whose roster each one borrows. "palette" (a sprite palette key,
+## game/sprite_atlas.gd) and "blurb" are view-only.
+const FACTIONS: Array[Dictionary] = [
+	{"key": "new_spain", "culture": LATIN, "name": "New Spain", "adj": "Spanish", "color": "d9a31f", "capital": "havana",
+		"palette": "macedon", "blurb": "Gold-drunk viceroys and iron galleons: the Crown's heavy line holds the Indies, and God help whoever says otherwise.",
+		"regions": ["havana", "puerto_principe", "santiago_de_cuba", "veracruz", "tampico", "campeche", "merida", "st_augustine"], "treasury": 2000,
+		"armies": [["havana", ["heavy", "heavy", "heavy", "spear", "javelin", "javelin", "cav", "legate"]],
+			["veracruz", ["heavy", "heavy", "spear", "javelin", "cav", "legate"]]],
+		"mix": {"heavy": 45, "spear": 15, "javelin": 20, "cav": 15, "bolt": 5, "general": 4, "dogs": 3, "light_art": 3},
+		"ai_style": AI_AGGRESSIVE, "composition": {"arms": ["heavy", "spear", "javelin"], "art_pct": 10, "cav_pct": 10, "upgrade": 2}},
+	{"key": "tierra_firme", "culture": LATIN, "name": "Tierra Firme", "adj": "Tierra Firme", "color": "e0702a", "capital": "cartagena",
+		"palette": "epirus", "blurb": "The silver coast of the Spanish Main, where every mule-train is a king's ransom and every watchtower a loaded gun.",
+		"regions": ["cartagena", "santa_marta", "mompox", "portobelo", "maracaibo", "coro", "la_guaira"], "treasury": 2200,
+		"armies": [["cartagena", ["spear", "spear", "heavy", "light", "light", "javelin", "cav", "cav", "sufet"]],
+			["portobelo", ["spear", "light", "light", "archer", "cav", "sufet"]],
+			["maracaibo", ["light", "light", "javelin", "javelin", "cav", "sufet"]]],
+		"mix": {"spear": 25, "heavy": 15, "light": 15, "javelin": 15, "archer": 5, "cav": 25, "camel": 5, "elephant": 5,
+			"cav_missile": 5, "sling": 5, "general": 4, "light_art": 3},
+		"ai_style": AI_BALANCED, "composition": {"arms": ["cav", "spear", "light"], "art_pct": 0, "cav_pct": 25, "upgrade": 1}},
+	{"key": "england", "culture": GREEK, "name": "England", "adj": "English", "color": "c8402f", "capital": "port_royal",
+		"palette": "rome", "blurb": "Roundheads turned rum-runners: a few sturdy pike-blocks, a lot of cannon, and a firm belief that Jamaica is a perfectly good place to be sent for treason.",
+		"regions": ["port_royal", "sevilla_jamaica", "belize"], "treasury": 1600,
+		"armies": [["port_royal", ["pike", "pike", "pike", "cav", "cav", "archer", "light", "javelin", "hetairoi_guard"]]],
+		"mix": {"pike": 45, "cav": 20, "archer": 10, "light": 10, "javelin": 10, "stone": 5, "general": 4, "light_art": 3},
+		"ai_style": AI_BALANCED, "composition": {"arms": ["pike", "cav", "archer"], "art_pct": 5, "cav_pct": 20, "upgrade": 1}},
+	{"key": "france", "culture": GREEK, "name": "France", "adj": "French", "color": "3f7fd8", "capital": "leogane",
+		"palette": "greeks", "blurb": "Lilies, lace and lead shot: the buccaneers of Saint-Domingue fight like cavaliers and drink like musketeers.",
+		"regions": ["leogane", "new_orleans"], "treasury": 1600,
+		"armies": [["leogane", ["spear", "spear", "archer", "light", "javelin", "strategos"]],
+			["new_orleans", ["spear", "spear", "archer", "cav", "strategos"]]],
+		"mix": {"spear": 45, "archer": 20, "light": 10, "javelin": 10, "cav": 10, "bolt": 5, "cav_missile": 5, "sling": 5,
+			"general": 4, "dogs": 3, "light_art": 3, "belly_bow": 3},
+		"ai_style": AI_BALANCED, "composition": {"arms": ["spear", "archer", "light"], "art_pct": 5, "cav_pct": 10, "upgrade": 1}},
+	{"key": "dutch", "culture": PUNIC, "name": "The Dutch", "adj": "Dutch", "color": "2fa8a0", "capital": "port_of_spain",
+		"palette": "syracuse", "blurb": "Herring, tulips and a West India Company with a very large ledger: they will sell you the rope and then the gallows.",
+		"regions": ["port_of_spain", "cumana"], "treasury": 2200,
+		"armies": [["port_of_spain", ["spear", "spear", "spear", "spear", "archer", "archer", "heavy", "heavy", "cav", "bolt", "strategos"]],
+			["cumana", ["spear", "javelin", "light", "strategos"]]],
+		"mix": {"spear": 40, "heavy": 15, "archer": 15, "javelin": 10, "cav": 10, "bolt": 5, "stone": 5, "cav_missile": 5,
+			"general": 4, "light_art": 3, "belly_bow": 3},
+		"ai_style": AI_CAUTIOUS, "composition": {"arms": ["spear", "archer", "heavy"], "art_pct": 10, "cav_pct": 10, "upgrade": 1}},
+	{"key": "brethren", "culture": PUNIC, "name": "Brethren of the Coast", "adj": "Pirate", "color": "4a4a52", "capital": "port_de_paix",
+		"palette": "iberians", "blurb": "Calico, cutlasses and a black flag over every stolen town: no king, no quarter, and the rum is never, ever finished.",
+		"regions": ["port_de_paix", "trujillo"], "treasury": 1200,
+		"armies": [["port_de_paix", ["light", "light", "light", "heavy", "javelin", "javelin", "cav", "chieftain"]],
+			["trujillo", ["light", "light", "javelin", "cav", "chieftain"]]],
+		"mix": {"light": 35, "heavy": 20, "javelin": 25, "cav": 15, "spear": 5, "cav_missile": 5, "sling": 5, "general": 4},
+		"ai_style": AI_AGGRESSIVE, "composition": {"arms": ["light", "javelin", "heavy"], "art_pct": 0, "cav_pct": 15, "upgrade": 0}},
+	{"key": "itza", "culture": CELTIC, "name": "Maya Itza", "adj": "Itza", "color": "2f9e5a", "capital": "tayasal",
+		"palette": "gauls", "blurb": "The last free Maya kingdom, behind its lake and a wall of jungle: obsidian blades, jade crowns and a patience older than Spain.",
+		"regions": ["tayasal"], "treasury": 1200,
+		"armies": [["tayasal", ["light", "light", "light", "heavy", "cav", "cav", "javelin", "chieftain"]]],
+		"mix": {"light": 45, "heavy": 20, "cav": 20, "javelin": 10, "archer": 5, "cav_missile": 5, "general": 4, "dogs": 3},
+		"ai_style": AI_CAUTIOUS, "composition": {"arms": ["light", "heavy", "cav"], "art_pct": 0, "cav_pct": 20, "upgrade": 0}},
+	{"key": "miskito", "culture": CELTIC, "name": "Miskito", "adj": "Miskito", "color": "8a4fc4", "capital": "cabo_gracias",
+		"palette": "carthage", "blurb": "Lords of the Mosquito Coast, friends of every English pirate and the dread of every Spanish clerk: harpoon, longboat and a very long memory.",
+		"regions": ["cabo_gracias", "bluefields"], "treasury": 1200,
+		"armies": [["cabo_gracias", ["light", "light", "light", "javelin", "cav", "chieftain"]],
+			["bluefields", ["light", "light", "javelin", "chieftain"]]],
+		"mix": {"light": 45, "heavy": 10, "cav": 20, "javelin": 20, "archer": 5, "general": 4},
+		"ai_style": AI_CAUTIOUS, "composition": {"arms": ["light", "javelin", "cav"], "art_pct": 0, "cav_pct": 20, "upgrade": 0}},
+]
+
+## Rosters: the Rome rosters, borrowed by character (heavy line for Spain,
+## the Carthage mix for Tierra Firme, the pike-and-artillery Macedon for
+## England ...), until the West units exist.
+const ROSTERS := {
+	"new_spain": R.ROSTERS["rome"],
+	"tierra_firme": R.ROSTERS["carthage"],
+	"england": R.ROSTERS["macedon"],
+	"france": R.ROSTERS["greeks"],
+	"dutch": R.ROSTERS["syracuse"],
+	"brethren": R.ROSTERS["iberians"],
+	"itza": R.ROSTERS["gauls"],
+	"miskito": R.ROSTERS["gauls"],
+	"independent": R.ROSTERS["independent"],
+}
+
+const START_WARS: Array = [
+	["new_spain", "england"], ["new_spain", "france"], ["new_spain", "dutch"], ["new_spain", "brethren"],
+	["tierra_firme", "england"], ["tierra_firme", "france"], ["tierra_firme", "dutch"], ["tierra_firme", "brethren"],
+	["brethren", "england"], ["brethren", "dutch"], ["brethren", "itza"], ["brethren", "miskito"],
+	["itza", "new_spain"],
+]
+
+const AMMO_AVAIL: Array = [
+	["fire_arrows", ["france", "dutch", "tierra_firme"], RANGE, 2],
+	["fire_javelins", ["brethren", "itza", "miskito"], RANGE, 2],
+	["lead_bullets", ["tierra_firme", "france"], RANGE, 2],
+	["heavy_bolts", ["new_spain", "dutch"], WORKSHOP, 1],
+	["explosive", ["dutch"], WORKSHOP, 2],
+	["fire_pots", ["new_spain", "tierra_firme", "england", "france", "dutch"], WORKSHOP, 2],
+]
+
+const KEY_CITIES: Array[String] = ["havana", "cartagena", "veracruz", "portobelo", "port_royal", "santo_domingo"]
+
+const NAMES_SPANISH: Array[String] = ["Don Alonso de Mendoza", "Don Diego de Leon", "Don Fernando Ortiz", "Don Rodrigo de Silva",
+	"Don Juan de Valdes", "Don Gaspar de Cordoba", "Don Pedro de Alvarado", "Don Luis de Guzman", "Don Hernan de Soto",
+	"Don Garcia de Toledo", "Don Esteban Navarro", "Don Alvaro de Bazan"]
+const NAMES_ENGLISH: Array[String] = ["Sir Henry Morgan", "Captain William Penn", "Sir Thomas Modyford", "Colonel Edward Doyley",
+	"Admiral Robert Venables", "Sir Christopher Myngs", "Captain John Davis", "Lord Francis Willoughby", "Major Thomas Whetstone",
+	"Sir William Stapleton", "Captain Edward Mansvelt", "Colonel Thomas Lynch"]
+const NAMES_FRENCH: Array[String] = ["Le Chevalier de Fontenay", "Bertrand d'Ogeron", "Le Marquis de Poincy", "Jean-Baptiste du Casse",
+	"Monsieur Laurent de Graaf", "Le Comte de Cussy", "Francois Le Clerc", "Pierre le Grand", "Le Vicomte de Rochefort",
+	"Michel de Grammont", "Jacques de Pouancay", "Le Baron de Pointis"]
+const NAMES_DUTCH: Array[String] = ["Admiral Piet Heyn", "Willem Blauvelt", "Jan van Riebeeck", "Admiral Michiel de Ruyter",
+	"Kapitein Adriaen Pater", "Johan Maurits", "Cornelis Jol", "Pieter Stuyvesant", "Abraham Blauvelt", "Hendrik Lonck",
+	"Jacob Binckes", "Laurens Prins"]
+const NAMES_PIRATE: Array[String] = ["Calico Jack", "Black Bart", "Mad Mary Redtooth", "One-Eyed Ned", "Captain Scarlet",
+	"Bloody Ben", "Sawtooth Sal", "Rum-Barrel Roberts", "Hook-Hand Harry", "Blackheart Bess", "Cutlass Kate", "Dead-Man Dick"]
+const NAMES_MAYA: Array[String] = ["Kan Ek", "Ahau Chan", "Pakal Balam", "Yax Mut", "Ix Chel", "Kukulcan", "Itzamna Ahau",
+	"Balam Ku", "Chac Xib", "Yaxha Tun", "Ahkin Pop", "Zac Nicte"]
+const NAMES_MISKITO: Array[String] = ["Oldman", "Jeremy", "Admiral Dawkins", "Captain Bluefield", "Tuktuk Sirpi",
+	"Wawa Kiamp", "Yapti Tara", "Sula Kaka", "Tininiska", "Prince Peter", "Kiaki Mairin", "Dilpa Bila"]
+const NAMES: Dictionary = {LATIN: NAMES_SPANISH, GREEK: NAMES_ENGLISH, PUNIC: NAMES_DUTCH, CELTIC: NAMES_MAYA}
+const NAMES_BY_FACTION: Dictionary = {"france": NAMES_FRENCH, "england": NAMES_ENGLISH, "dutch": NAMES_DUTCH,
+	"brethren": NAMES_PIRATE, "itza": NAMES_MAYA, "miskito": NAMES_MISKITO}
+const NAMES_DEFAULT: Array[String] = NAMES_SPANISH

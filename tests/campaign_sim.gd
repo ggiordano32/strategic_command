@@ -1,6 +1,6 @@
 extends SceneTree
 ## AI-only campaign simulation (pacing and economy check).
-##   godot --headless --script res://tests/campaign_sim.gd [-- --seeds=4 --turns=60 --every=5 --format=5 --no-sieges --twice]
+##   godot --headless --script res://tests/campaign_sim.gd [-- --seeds=4 --turns=60 --every=5 --format=5 --no-sieges --twice --pack=west]
 ## Every faction is AI. Reports per seed: regions per faction every N turns,
 ## eliminations, treasury ranges, army counts, battles and time per turn,
 ## the sieges (started, assaulted, sallies, reliefs, lifted, surrendered,
@@ -53,6 +53,7 @@ var every := 5
 var no_sieges := false
 var fmt := 6
 var twice := false
+var pack := "rome"             # --pack=west: the content pack played (CData.use_pack)
 var pacing: Array = []
 var sg := {}
 var short: Array = []
@@ -85,6 +86,8 @@ func _init() -> void:
 		elif a.begins_with("--format="):
 			fmt = int(a.get_slice("=", 1))
 			no_sieges = fmt <= 3
+		elif a.begins_with("--pack="):
+			pack = a.get_slice("=", 1)
 		elif a == "--twice":
 			twice = true
 		elif a == "--no-beasts":
@@ -109,6 +112,7 @@ func _init() -> void:
 			var v := a.substr(7)
 			var lk := v.get_slice("=", 0)
 			knobs.append([_level(lk.get_slice(":", 0)), int(lk.get_slice(":", 1)), int(v.get_slice("=", 1))])
+	CData.use_pack(pack)
 	for f in CData.FACTIONS:
 		short.append(str(f["key"]).substr(0, 4))
 	for kv in knobs:
@@ -159,7 +163,7 @@ func _run(sd: int, verbose: bool) -> String:
 		var settings := {}
 		if skill_all >= 0:
 			settings["ai_campaign_skill"] = skill_all
-		var st := CState.new_campaign("sim", 1000 + sd * 77, [], settings)
+		var st := CState.new_campaign("sim", 1000 + sd * 77, [], settings, [], pack)
 		var keys: Array = skill_f.keys()
 		keys.sort()
 		for f in keys:
