@@ -1464,6 +1464,40 @@ rim light, outline and saturation). Level 1 phases: 1 kit walls / towers
 streets with culture palettes, 3 trees / rocks / cliffs, 4 the full
 shadow and AO layer, 5 splatted ground, 6 the look setting (diorama default, painterly option).
 
+**FIRST WHEN RESUMED (user, 2026-10-14): overworld towns modelled into
+the landscape.** Today each town is one pre-rendered sprite with painted
+ground round it, so it reads as placed on the map. Requirements:
+1. Site-shaped: the layout follows its ground (a hill town steps up the
+   slope, citadel on top; a coastal town's harbour faces the real water,
+   quays on the real shoreline; Tayasal on its lake island; no lighthouse
+   or quay inland).
+2. One light and finish: the terrain's light and shadow direction, the
+   same colour grade, outlines no heavier than the coast ink.
+3. Consistent scale: exaggerated but one ratio per kind; the town's trees
+   match the map's trees; a town never outgrows its land (Port Royal).
+4. No edges: no disc or patch outline; the terrain shader paints the town
+   ground (grass -> dirt -> streets -> plaza).
+5. The land reacts: forest cleared round the town, fields on the contours
+   and off woods and steep slopes, roads run into the streets, quays and
+   beached boats on the shore.
+6. Depth: shadows onto the terrain, correct sorting with trees.
+7. Variety: towns assembled from kit pieces by culture, size and seed;
+   landmarks for famous cities (El Morro at Havana, Cartagena's walls,
+   Tayasal's temple).
+8. Growth changes the layout (size, walls, shipyard, harbour).
+9. Labels and banners beside the town, never on it.
+10. Costs: no zoom hitch over 16 ms (the current footprint redraw costs up
+    to 56 ms), a cheap Graphics Low path, fine on the Tab S7.
+Approach: assemble overworld towns at runtime from kit pieces (shared with
+the battle kit) placed and rotated on the terrain from a per-town plan
+that knows slope and coast, instead of whole sprites. About 2-3 builds.
+Done when: a gallery of all 49 Caribbean towns at 3 zooms, no harbour
+away from water, no patch edges, no zoom hitch > 16 ms.
+**Also queued (user): better firearm smoke** (volley smoke today is flat
+puffs in game/overlay.gd: wanted thick billowing banks that roll and drift
+with the wind, lit from the NW, darker cores, muzzle flash with a short
+flame tongue, lingering haze over a long firefight; cheap on Low).
+
 **PAUSE 2026-10-14 (token budget at 82 %, back in a couple of days).**
 Running at the pause: N3a real-time sea battles (Opus) and battle look
 Level 1 phase 1, kit walls / towers / gates (Sonnet); they finish, are
