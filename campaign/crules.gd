@@ -51,7 +51,10 @@ extends RefCounted
 ##        (army key "dest_army") until it merges or the army is gone.
 ##   {"t": "propose", "to": faction, "what": "peace" | "trade" | "cancel_trade" | "team"}
 ##        ("team": join my team; an AI answers by CAI.why at once, a human
-##        gets a proposal to answer next turn; see "teams" below)
+##        gets a proposal to answer next turn; see "teams" below; a pack
+##        with ships also "marque", a letter of marque between a nation and
+##        a pirate faction: campaign/csea.gd)
+##   {"t": "sack_policy", "v": 0 auto | 1 sack | 2 hold}  (pirates, csea.gd)
 ##   {"t": "leave_team"}                                (a player; notice turns)
 ##   {"t": "war", "to": faction}                        (declare war)
 ##   {"t": "answer", "id": proposal id, "accept": 0 | 1}
@@ -104,6 +107,7 @@ const CState := preload("res://campaign/cstate.gd")
 const UT := preload("res://sim/unit_types.gd")
 const CChars := preload("res://campaign/cchars.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
+const CSea := preload("res://campaign/csea.gd")
 
 
 # --------------------------------------------------------------- orders ---
@@ -179,6 +183,8 @@ static func apply_order(st: Dictionary, f: int, o: Dictionary) -> String:
 			return _cancel_move(st, f, int(o.get("army", -1)))
 		"ship", "embark", "land", "fmove", "fmerge", "fcancel", "scuttle":
 			return CFleet.apply_order(st, f, o)  # fleets (a pack with ships)
+		"sack_policy":
+			return CSea.set_policy(st, f, int(o.get("v", 0)))  # pirates (N2)
 	return "unknown order"
 
 
@@ -234,9 +240,8 @@ static func recruit_options(st: Dictionary, f: int, r: int) -> Array:
 			var key := str(tiers[k])
 			if key == "":
 				continue
-			var ty := UT.index_of(key)
 			var why := recruit_check(st, f, r, key)
-			out.append({"t": key, "line": line, "tier": k + 1, "price": UT.price_of(ty),
+			out.append({"t": key, "line": line, "tier": k + 1, "price": unit_price(st, f, r, key),
 				"ok": why == "", "why": why, "ak": ammo_for(st, f, r, key)})
 	return out
 
@@ -302,7 +307,7 @@ static func recruit_check(st: Dictionary, f: int, r: int, key: String) -> String
 	for nd2 in CData.UNIT_NEEDS.get(key, []):
 		if CState.building(st, r, int(nd2[0])) < int(nd2[1]):
 			return "needs %s %d" % [CData.CHAINS[int(nd2[0])]["name"], int(nd2[1])]
-	if (rs["queue"] as Array).size() >= int(CData.RECRUITS_PER_TURN[int(rs["level"])]):
+	if (rs["queue"] as Array).size() >= recruits_per_turn(st, r):
 		return "recruitment full this turn"
 	if CState.is_general(key):
 		for k in rs["queue"]:
@@ -310,9 +315,27 @@ static func recruit_check(st: Dictionary, f: int, r: int, key: String) -> String
 				return "a general is already raised here this turn"
 	if not CState.battle_at(st, r).is_empty():
 		return "battle pending here"
-	if UT.price_of(ty) > int(st["factions"][f]["treasury"]):
+	if unit_price(st, f, r, key) > int(st["factions"][f]["treasury"]):
 		return "not enough money"
 	return ""
+
+
+## Price of unit `key` for faction f recruiting in region r (N2: a pirate
+## haven's crews are cheaper; else the unit's price).
+static func unit_price(st: Dictionary, f: int, r: int, key: String) -> int:
+	var p := UT.price_of(UT.index_of(key))
+	if st.has("fleets"):
+		p -= p * CSea.haven_off(st, f, r, key) / 100
+	return p
+
+
+## Recruits region r may queue a turn (by its level; N2: more in a pirate
+## haven with infamy).
+static func recruits_per_turn(st: Dictionary, r: int) -> int:
+	var n := int(CData.RECRUITS_PER_TURN[int(st["regions"][r]["level"])])
+	if st.has("fleets"):
+		n += CSea.extra_recruits(st, r)
+	return n
 
 
 ## A recruit order: {r, unit} (the old form: the recruit joins the army
@@ -338,7 +361,7 @@ static func _recruit(st: Dictionary, f: int, o: Dictionary) -> String:
 	var into := -1
 	if CState.grid_on(st):
 		into = army if army >= 0 else (QA_RAISE if raise else recruit_target(st, f, r, key))
-	st["factions"][f]["treasury"] = int(st["factions"][f]["treasury"]) - UT.price_of(UT.index_of(key))
+	st["factions"][f]["treasury"] = int(st["factions"][f]["treasury"]) - unit_price(st, f, r, key)
 	var rs: Dictionary = st["regions"][r]
 	(rs["queue"] as Array).append(key)
 	if CState.grid_on(st):
@@ -2131,6 +2154,7 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 	for a in arm[winner]:
 		a["busy"] = 0
 	var new_owner := -1
+	var sacked := -1
 	if open_field:
 		st["battles"].erase(b)
 		if winner == 0 and not CState.grid_on(st):
@@ -2147,12 +2171,20 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 					break
 				if present < 0:
 					present = int(a["f"])
-		if present >= 0:
+		if present >= 0 and CSea.sacks(st, r, present):
+			sacked = present  # (N2) pirates sack the port and keep to their ships
+		elif present >= 0:
 			new_owner = present
 			_capture(st, r, present)
 		else:
 			rs["gar"] = maxi(int(rs["gar"]), 10)
 	st["battles"].erase(b)
+	if sacked >= 0:
+		var raiders: Array = []
+		for a in arm[0]:
+			if int(a["f"]) == sacked:
+				raiders.append(a)
+		CSea.sack(st, r, sacked, raiders)
 	var stats: Dictionary = st["stats"]
 	var mode := str(outcome.get("mode", "formula"))
 	stats["battles"] = int(stats.get("battles", 0)) + 1
@@ -2162,6 +2194,8 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 		"captured": 1 if new_owner >= 0 else 0, "battle": bid}
 	if kind != "":
 		ev["kind"] = kind
+	if sacked >= 0:
+		ev["sacked"] = 1
 	event(st, ev)
 	check_eliminations(st)
 	CChars.sweep(st)
@@ -2295,6 +2329,8 @@ static func check_proposal(st: Dictionary, f: int, g: int, what: String) -> Stri
 			return "" if d == CState.PEACE else ("already trading" if d == CState.TRADE else "make peace first")
 		"cancel_trade":
 			return "" if d == CState.TRADE else "no trade agreement"
+		"marque":
+			return CSea.marque_check(st, f, g)  # (N2) a letter of marque
 	return "unknown proposal"
 
 
@@ -2345,6 +2381,8 @@ static func apply_agreement(st: Dictionary, f: int, g: int, what: String) -> voi
 			event(st, {"k": "trade_end", "a": f, "b": g})
 		"team":
 			merge_teams(st, f, g)
+		"marque":
+			CSea.grant(st, f, g)
 
 
 # ------------------------------------------------------------- teams ---
@@ -2668,6 +2706,14 @@ static func income(st: Dictionary, f: int) -> Dictionary:
 	for r in owned:
 		reg += region_income(st, r, rmap)
 		markets += CState.building(st, r, CData.MARKET)
+	var sea: Array = []
+	if st.has("fleets"):
+		# N2: pirates live off plunder, not land; blockaded ports lose their
+		# sea trade, the blockaders take a share.
+		if CSea.pirate(f):
+			reg = reg * int(CData.ship_const("PIRATE_LAND_PCT", 100)) / 100
+		sea = CSea.income_parts(st, f)
+		reg -= int(sea[0])
 	var raid := 0
 	if CState.grid_on(st):
 		# Version 6: what our raiders take from enemy regions.
@@ -2692,6 +2738,10 @@ static func income(st: Dictionary, f: int) -> Dictionary:
 	if CState.grid_on(st):
 		out["raid"] = raid
 		out["total"] = gross - cut + raid
+	if not sea.is_empty():
+		out["blockaded"] = int(sea[0])
+		out["plunder"] = int(sea[1])
+		out["total"] = int(out["total"]) + int(sea[1])
 	return out
 
 
@@ -2738,6 +2788,8 @@ static func upkeep(st: Dictionary, f: int) -> int:
 				u += CState.upkeep_of(CState.unit_type(unit))
 	if st.has("fleets"):
 		u += CFleet.upkeep(st, f)  # ships and the troops aboard
+		if CSea.pirate(f):
+			u = u * int(CData.ship_const("PIRATE_UPKEEP_PCT", 100)) / 100  # (N2) crews on shares
 	return u
 
 
@@ -2775,6 +2827,7 @@ static func end_of_turn(st: Dictionary) -> void:
 		rs.erase("qa")
 	CChars.appear(st)
 	CChars.pay_ransom(st)
+	CSea.before_money(st)  # (N2) the flota home, the blockades
 	# Money.
 	for f in CState.nf():
 		var fs: Dictionary = st["factions"][f]
@@ -2840,6 +2893,7 @@ static func end_of_turn(st: Dictionary) -> void:
 		a["moved"] = 0
 		a["from"] = -1
 	CFleet.end_of_turn(st)  # ships launched, repairs, scurvy (a pack with ships)
+	CSea.after_turn(st)  # (N2) infamy, letters of marque, the next flota
 	# Proposals last one turn.
 	var keep_p: Array = []
 	for p in st["proposals"]:
@@ -2963,8 +3017,8 @@ static func check_eliminations(st: Dictionary) -> void:
 		var fs: Dictionary = st["factions"][f]
 		if int(fs["alive"]) == 0:
 			continue
-		if not CState.regions_of(st, f).is_empty():
-			continue
+		if not CState.regions_of(st, f).is_empty() or CSea.afloat(st, f):
+			continue  # (N2: pirates live on while they have a ship)
 		fs["alive"] = 0
 		var keep: Array = []
 		for a in st["armies"]:
@@ -3080,7 +3134,8 @@ static func _check_victory_teams(st: Dictionary) -> void:
 ## orders ...) stay in `events` only.
 const CHRONICLE_KINDS := ["battle", "captured", "destroyed", "eliminated", "war", "peace", "trade", "trade_end",
 	"siege", "siege_lifted", "starving", "victory", "defeat", "team_joined", "team_notice", "team_left",
-	"char_captured", "char_wounded", "ransom", "sea_battle"]
+	"char_captured", "char_wounded", "ransom", "sea_battle", "flota", "flota_arrived", "sack", "marque", "marque_end",
+	"blockade"]
 const CHRONICLE_TURNS := 60
 
 

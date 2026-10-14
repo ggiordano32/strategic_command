@@ -1251,6 +1251,54 @@ online_e2e (Rome and `--pack west`), go test, check_scripts. Open: N2,
 N3, fleet split, fleet steps in the replay, march-and-board in one order,
 AI escorts; turn time doubled in the West.
 
+**N2 trade, blockades, the flota and the pirate loop, as built 2026-10-14
+(not committed; CAMPAIGN.md "Trade, blockades, the flota and pirates
+(N2)").** West only (Rome byte-identical: campaign_sim hashes cdc1d805
+32b83031 23f9ed4f 3237d82d a42fc685 b6fe6c2e; `CState.VERSION` 7, every
+new key optional). `campaign/csea.gd` (new): ports' sea trade and
+blockades (an enemy fleet within 3 of the harbour, stronger than the
+owner's side there: -75 % of the port's trade, 40 % of it to the
+blockader, 80 % to pirates), prize money (25 % of a taken ship's cost,
+pirates 50 %, plus treasure), the flota (every 8 turns from turn 4: 2
+galleons at Veracruz for New Spain and 2 at Portobelo for Tierra Firme,
+900 gold each, sail by the rules to Havana and off the north edge; taken
+galleons pay the captor), pirates (the Brethren, `"pirate": 1`: land
+income 75 %, upkeep 50 %, beaten ships scatter, alive while afloat;
+sacking a stormed port by policy Auto / Sack / Hold: 3 turns' income + 15 %
+of the owner's treasury, buildings down a level, the owner keeps it;
+havens: cheaper buccaneers and cutlass men, more recruits by infamy,
+repairs; infamy 0-100; letters of marque, a `marque` proposal, 12 turns of
+peace and +50 % plunder from the patron's enemies, none from the Spains).
+AI: fleets hunt the flota across its course, blockade rich weak ports,
+pirates pick weak rich prey, shun navies, wage war on the richest nation
+at sea, refuse peace (a letter buys it); nations hunt pirates by infamy and
+offer letters. View: blockade ring, flota coin / course / "to Spain" arrow,
+flota card, region notes (blockade, sea trade, haven, sack), Realm (plunder,
+infamy, sack policy, letters, next flota), Diplomacy "Marque", chronicle
+texts, map key rows. **Performance:** fleet A* with a wind-aware estimate,
+bucket queue, fast fail and the route kept between turns; enemy fleets
+penned in each other's zones fight at the end of the turn (most of N1's
+"no way" refusals: they were real, not the node limit); one AI context
+pass shared by fleet and land plans; memos in the fleet AI; ship rows read
+once a pack. Fleet voyages 20.5 -> 7.8 ms a turn, a West turn 53 -> 43 ms
+(3 seeds x 60, same machine, load about 9; HEAD and N2 back to back:
+40-66 -> 38-49 ms a turn mean, 6 x 60). **N2 measured**
+(`campaign_sim --pack=west --seeds=6 --turns=60 --twice`, deterministic):
+plunder 1600-9800 a seed (the Brethren 900-7300), blockade turns 101-144,
+flotas 8 sailed / 7-8 arrived (17100-25200 gold), treasure galleons taken
+0-4, sacks 0-5, letters of marque 2-5, voyages refused 4-19; the Brethren
+eliminated in 1 of 6 (turn 21; N1: 5 of 6), alive mostly afloat (0-1
+regions, 6-19 ships, infamy 0-79); Miskito 4 of 6, Itza 2. Tests:
+pack_test N2 block (Rome off; blockade cuts and pays; the flota schedule,
+gathering twice the same, no orders, arrival pays; prize money for a
+treasure galleon; a sack takes gold and keeps the owner; hold policy; a
+pirate afloat lives, dies with its last ship; a letter round-trips JSON,
+lapses and breaks), campaign_test, online_e2e (Rome, `--pack west`), go
+test, check_scripts. Open: the AI sacks rarely (its pirate armies are few
+and the fleets hunt first); pirates seldom hold a haven late; flota
+interceptions are rare (0-4 galleons a seed); West turn still above the
+pre-N1 20 ms (the land AI and the fleet plans).
+
 **Style and flavour direction (user, 2026-10-14): "fun and the rule of
 cool mixed in with reality ... slightly over-exaggerated characters of
 something based in reality".** Agreed: (1) overworld structures as

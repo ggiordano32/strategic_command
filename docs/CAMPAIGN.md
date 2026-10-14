@@ -1704,8 +1704,14 @@ the Shipyard at `SHIPYARD` 7).
   A frigate from open sea reaches 30+ cells west, 21 east (pack_test).
   Coastal fleets keep within `COASTAL_CELLS` 2 of land.
 - **Voyages** (`fmove {fleet, x, y, tgt?, persist?}`; `CFleet.plan`): A*
-  as the land search (g = turn x full + spent, octile heuristic at 150 %,
-  at most 8000 nodes, 12 turns), never into the zone (`FLEET_ZONE` 2, the
+  as the land search (g = turn x full + spent, at most 8000 nodes, 12
+  turns; N2: the estimate is the wind's own step costs, the diagonal part
+  on the goal's diagonal and the rest on its axis, x 125 %, open cells in
+  integer buckets instead of a heap; a goal with no free water beside it
+  fails at once; a voyage not finished this turn keeps the rest of its
+  path as `route` / `rgoal` on the fleet, and the next turn's voyage to the
+  same goal reuses it while it still starts beside the fleet and nothing
+  blocks it, so a long voyage is searched once), never into the zone (`FLEET_ZONE` 2, the
   `CGrid.within` circle) of an enemy fleet at war except the target's; a
   destination inside such a zone is an attack on that fleet; a land cell
   as destination sails beside it and lands everyone aboard on arriving
@@ -1743,7 +1749,10 @@ the Shipyard at `SHIPYARD` 7).
   (`statemeta.go` reads only `battles`).
 - **End of turn** (`CFleet.end_of_turn`, last in `CRules.end_of_turn`):
   the ordered ship is launched at the dock (it joins a fleet of ours
-  there, else forms one; event `ship_built`); a fleet within 2 of an own
+  there, else forms one; event `ship_built`); N2: enemy fleets at war that
+  lie within each other's zone (a war declared, a ship launched beside an
+  enemy) fight, the lowest id attacking, so no fleet stays penned in an
+  enemy's zone (these were most of N1's refused voyages); a fleet within 2 of an own
   harbour repairs 15 + 10 x Shipyard level hull and crew; at sea crew
   drops 2 a turn to 40 (scurvy); fleets of dead factions go (also at once
   on elimination); every fleet may sail again. Upkeep: ships + the units
@@ -1794,13 +1803,144 @@ the Shipyard at `SHIPYARD` 7).
   Ships lost: ... (Auto-resolved; real-time sea battles come later.)".
 - **Measured** (`campaign_sim --pack=west --seeds=6 --turns=60 --twice`,
   deterministic): see STATUS "N1 fleets".
-- **Open / later:** N2 (trade by sea, blockades, the flota, pirate havens,
-  plunder, sacking, infamy, letters of marque; a pirate faction surviving
-  while it has a ship: the Brethren are eliminated in every West run, at
-  turns 19-44), N3 real-time sea battles (the formula is to be fitted to
+- **Open / later:** N3 real-time sea battles (the formula is to be fitted to
   them), splitting a fleet, fleet steps in the turn replay (fleets jump),
   an army marching to board a fleet in one order, the AI escorting its
   transports.
+
+## Trade, blockades, the flota and pirates (N2, the West pack; as built 2026-10-14)
+
+DESIGN "The Caribbean pack", the "Trade and the treasure fleet" and
+"Pirates" paragraphs. West only (a pack with ships: `CFleet.on(st)`); Rome
+never reaches any of it (no new key in a Rome state; campaign_sim hashes
+unchanged). `CState.VERSION` stays 7 (every key is optional and read with
+a default). Code: `campaign/csea.gd` (rules), `campaign/cai_fleet.gd` (the
+fleet AI's blockades, flota hunting, pirate choices), `campaign/cai.gd`
+(pirate diplomacy, letters of marque, infamy in the war chance, sacked
+ports skipped), hooks in `crules.gd` (income, upkeep, unit price and
+recruits a turn, the sack in `apply_outcome`, `check_eliminations`, the
+`marque` proposal, `sack_policy`, end of turn), `cfleet.gd` (prize money
+and treasure in `resolve`, pirates scatter, the flota takes no orders and
+pays no upkeep, havens and patrons' ports repair), `cturn.gd` (the flota
+sails in step 5; a `marque` proposal to a player is posted). Numbers:
+`campaign/data/west_ships.gd` (N2 block); the pirate flag `"pirate": 1`
+(the Brethren) and `"no_marque": 1` (both Spains) in `west.gd`.
+
+- **State** (all optional): `regions[r].bk` (the faction blockading its
+  port, set at the end of a turn), `regions[r].sacked` (turn);
+  `factions[f].plunder` (gold taken in all), `.infamy` (pirates),
+  `.sack_pol` (pirates: 0 auto, 1 sack, 2 hold); fleets `flota` (leg: 0 to
+  Havana, 1 waiting, 2 home) and `wait`, flota ships `g` (treasure) and `o`
+  (the faction it pays); `marques [[nation, pirate, until turn]]`; stats
+  `plunder`, `blockade_turns`, `flotas`, `flota_arrived`, `flota_gold`,
+  `treasure_taken`, `sacks`, `marques`.
+- **Trade at sea and blockades.** A port's (a region with a harbour) sea
+  trade = `SEA_TRADE_PCT` 100 % of its wealth income + its markets' income.
+  At the end of each turn, before the money (`CSea.update_blockades`): the
+  faction at war with the owner with the most fleet power within
+  `BLOCKADE_CELLS` 3 (Chebyshev) of the harbour blockades it if that power
+  exceeds the owner's side's there (the flota neither blockades nor
+  guards). The owner loses `BLOCKADE_CUT_PCT` 75 % of the sea trade that
+  turn; the blockader takes `BLOCKADE_TAKE_PCT` 40 % of the loss (a pirate
+  `PIRATE_TAKE_PCT` 80 %). `CRules.income` gains `blockaded` and `plunder`
+  (in the total). Events `blockade` (a new one; chronicle), `blockade_end`.
+  Pirate blockaders gain 1 infamy a port a turn.
+- **Prizes.** A ship taken in a sea battle pays its captor `PRIZE_PCT` 25 %
+  of its cost (pirates `PIRATE_PRIZE_PCT` 50 %) and its treasure; a lost
+  treasure ship is taken at least `TREASURE_TAKEN_PCT` 70 %. The sea battle
+  event carries `gold` and `treasure` (galleons taken). Beaten pirate
+  ships scatter: each is lost at `PIRATE_ESCAPE_PCT` 50 % of the usual
+  chance.
+- **The flota.** From turn `FLOTA_FIRST` 4, every `FLOTA_EVERY` 8 turns
+  (`CSea.next_flota`: a function of the turn), at the end of the turn
+  before: 2 galleons at Veracruz's dock (New Spain's treasure) and 2 at
+  Portobelo's (Tierra Firme's), each with `FLOTA_GOLD` 900 aboard and
+  crews at `FLOTA_CREW` 50 %, all owned by New Spain (else the first part's
+  faction alive); a part sails while its origin is held by its faction or
+  the owner. Event `flota` (chronicle). They sail by the rules (step 5,
+  `CSea.flota_moves`, never by their owner's orders: `fmove`, `fmerge`,
+  `embark`, `scuttle` ... are refused) to Havana's dock (or the nearest
+  clear water when an enemy lies there), wait up to `FLOTA_WAIT` 2 turns
+  for the other part (those within 2 cells join), then sail for
+  `FLOTA_EXIT` [96, 0] (the north edge, home by the Florida Straits); at
+  the end of a turn within a cell of it they leave the map and each
+  galleon pays its faction (`flota_arrived`, chronicle). No upkeep. A
+  treasure galleon taken pays its treasure to the captor; one sunk loses
+  it.
+- **Pirates** (`CSea.pirate`: the pack's flag). Land income x
+  `PIRATE_LAND_PCT` 75 %; upkeep (ships and men) x `PIRATE_UPKEEP_PCT` 50 %
+  (crews on shares). Not eliminated while it has a ship
+  (`CSea.afloat`; `check_eliminations`).
+  - **Sacking.** A pirate army winning an assault on a port (a settlement
+    battle, `apply_outcome`) sacks it by the faction's policy (`sack_policy
+    {v}`: 0 auto = hold while it has fewer than `PIRATE_HOLD` 2 regions,
+    else sack; 1 sack; 2 hold): gold = `SACK_TURNS` 3 turns of the region's
+    base income + `SACK_TREASURY_PCT` 15 % of the owner's treasury (at most
+    `SACK_TREASURY_MAX` 1000, taken from it), a quarter if it was sacked in
+    the last `SACK_COOLDOWN` 8 turns; every building a level down (level 1
+    gone), construction lost, growth halved, garrison at least 10 %; the
+    owner keeps it; the pirate armies beside a fleet of theirs with room
+    re-embark. Event `sack` (chronicle); the battle event has `sacked: 1`.
+    Infamy + `INFAMY_SACK` 12.
+  - **Havens** (pirate-held ports): `HAVEN_UNITS` (buccaneers, cutlass men)
+    `HAVEN_PCT` 20 % cheaper + 1 % per 5 infamy (at most `HAVEN_MAX_PCT`
+    45 %; `CRules.unit_price`), one more recruit a turn per
+    `HAVEN_RECRUIT_INFAMY` 30 infamy (at most 2; `CRules.recruits_per_turn`);
+    pirate ships there repair `HAVEN_REPAIR` 10 more; privateers also refit
+    in their patron's ports.
+  - **Infamy** (0..100): + 12 a sack, + 3 a prize (+ 8 a treasure galleon),
+    + 1 a port blockaded a turn, - 1 a turn. The nations' AI: war on a
+    pirate faction at (100 + 2 x infamy) % of its usual chance; their
+    fleets attack pirate fleets at `ATTACK_PCT` - infamy / 2 % (at least
+    100) and a turn's sail further from infamy 40.
+  - **Letters of marque** (proposal `marque`, between a nation and a pirate
+    faction, either way; not from or to a `no_marque` nation): accepted, the
+    two make peace and the letter runs `MARQUE_TURNS` 12 turns (lapses at
+    its turn, broken by war or a fall: `marque_end`); the pirates' plunder
+    from the nation's enemies at war (prizes, blockade shares, sacks) is +
+    `MARQUE_BONUS_PCT` 50 %. AI: an AI pirate accepts while the nation is at
+    war with another nation and it holds no other letter; an AI nation
+    grants one asked for while at war with another nation and the pirates'
+    infamy is under `MARQUE_INFAMY_MAX` 60, and offers one
+    (`MARQUE_ASK_CHANCE` 15 % a turn, one RNG draw a candidate) on the same
+    terms. A player's proposal to a player is posted to answer next turn.
+- **AI** (deterministic, `cai_fleet.gd` and `cai.gd`):
+  - every empty fleet first hunts a treasure fleet it can catch (pirates
+    at `PIRATE_FLOTA_PCT` 90 % of its defence within `FLOTA_TURNS` 3
+    estimated turns, nations at `FLOTA_PCT` 110 % within 2; the defence is
+    the fleets of its side within 3 of it, times its port's guns in port);
+    it lies across the flota's course (the first cell of the flota's
+    stored route beyond a turn's sail that it reaches this turn, clear of
+    other enemies and their ports) rather than chasing it;
+  - free fleets in good repair (mean hull 70 %+, no stronger enemy near)
+    blockade the enemy port with the most sea trade per estimated turn
+    (at most 3), whose side's fleets within 30 cells they outgun by 130 %,
+    from a station on its approach outside enemy zones (kept while valid);
+  - pirates attack other fleets at 130 %, go home at 75 % hull or when any
+    enemy fleet their match is within 30 cells, home to a haven or a
+    patron's port; pirate armies leave ports they sacked lately (not a
+    target, not work on their landmass: the fleets fetch them);
+  - pirate diplomacy: never sue for peace or trade; at fewer than 2 wars,
+    war (25 % a turn) on the nation with the most sea trade and treasure
+    afloat per fleet power, at peace 4+ turns and holding no letter; an AI
+    pirate refuses peace unless it lost a region in the last 5 turns ("a
+    letter of marque buys their peace");
+  - one context pass (`CAI._context6`) shared by the fleet and land plans.
+- **View:** a blockaded port has a dashed ring in the blockader's colour
+  round its harbour and a red bar across it (`map_overlay.draw_blockade`);
+  the region panel says who blockades it, what is lost and taken, its sea
+  trade, a pirate haven's terms, a recent sack, and (for a pirate player)
+  what storming it would do; flota ships carry a gold coin and "Flota", its
+  course is a dashed gold line (its stored route, then Havana to the exit
+  by sea) to a "Flota: to Spain" arrow; the flota's card shows its treasure
+  and leg and takes no orders; the Realm panel shows plunder, blockade
+  losses and takings, the pirates' infamy and its effects, the sack policy
+  (Auto / Sack it / Hold it), letters of marque and the next flota; the
+  Diplomacy screen has "Marque" (a letter of marque) with the AI's answer,
+  pirates' infamy and a letter's turns left; the chronicle and summary
+  read blockades, the flota (gathered, home, galleons taken, prize money),
+  sacks and letters; the map key shows the blockade ring and the flota.
+- **Measured:** STATUS "N2".
 
 ## Diplomacy and AI
 

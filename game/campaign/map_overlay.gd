@@ -18,6 +18,10 @@ extends Node2D
 ## for the selected army the enemies' zones of control (red circles) and
 ## its support (yellow) and attack (red) lines; during a turn replay armies
 ## slide along their step log (replay_pos) and battles pop up (markers).
+## A pack with ships (N2): a blockaded port has a dashed ring in the
+## blockader's colour round its harbour; the flota's ships carry a gold
+## treasure mark and its course (to the meeting port, then off the map) is
+## a dashed gold line to a "To Spain" arrow at the exit.
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -25,6 +29,7 @@ const Geo := preload("res://game/campaign/map_geo.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const CRules := preload("res://campaign/crules.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
+const CSea := preload("res://campaign/csea.gd")
 const SeaWaves := preload("res://game/campaign/sea_waves.gd")
 const MapView := preload("res://game/campaign/map_view.gd")
 
@@ -344,6 +349,12 @@ func _draw() -> void:
 		draw_polyline(cl, Color(1, 0.98, 0.85, 0.6), 1.5, true)
 	if state.has("fleets"):
 		var fpos := fleet_positions()
+		for r in CData.region_count():
+			var bk := CSea.blockader(state, r)
+			if bk >= 0 and CFleet.harbour(r) >= 0:
+				draw_blockade(self, to_screen(cell_point(CFleet.harbour(r))),
+					(CSea.k("BLOCKADE_CELLS", 3) + 0.5) * CGrid.cell_px() * zoom, CData.faction_color(bk), m)
+		_flota_course(fpos)
 		for fp in fleet_paths:
 			_fleet_path(fp, fpos)
 		for fl in state["fleets"]:
@@ -533,6 +544,84 @@ static func draw_siege_ring(ci: CanvasItem, p: Vector2, rad: float, col: Color, 
 		var o := tri.duplicate()
 		o.append(tri[0])
 		ci.draw_polyline(o, Color(1, 1, 1, 0.9), 1.2, true)
+
+
+## A blockaded port: a dashed ring of radius rad round its harbour at p in
+## the blockader's colour, a bar across the harbour mouth.
+static func draw_blockade(ci: CanvasItem, p: Vector2, rad: float, col: Color, m: float) -> void:
+	var n := 16
+	for k in n:
+		var a0 := TAU * k / n
+		ci.draw_arc(p, rad, a0, a0 + TAU / n * 0.55, 5, Color(0, 0, 0, 0.6), 4.0 * m, true)
+		ci.draw_arc(p, rad, a0, a0 + TAU / n * 0.55, 5, col.lightened(0.3), 2.2 * m, true)
+	var d := Vector2(7.0, -7.0) * m
+	ci.draw_line(p - d, p + d, Color(0, 0, 0, 0.8), 5.0 * m, true)
+	ci.draw_line(p - d, p + d, Color(1.0, 0.35, 0.25), 2.6 * m, true)
+	ci.draw_circle(p, 3.0 * m, col.lightened(0.3))
+
+
+## The treasure mark on a flota ship (a gold coin with a dark edge).
+static func draw_treasure(ci: CanvasItem, p: Vector2, m: float) -> void:
+	ci.draw_circle(p, 6.5 * m, Color(0, 0, 0, 0.85))
+	ci.draw_circle(p, 5.0 * m, Color(1.0, 0.82, 0.25))
+	ci.draw_circle(p, 2.2 * m, Color(0.75, 0.55, 0.1))
+
+
+## The flota's course: from each flota fleet along its voyage (the route
+## the rules keep for it) to the meeting port, then by sea to the exit
+## (searched once for a galleon, kept for the session), dashed gold; a gold
+## arrow at the exit.
+static var _home_leg: Array = []  # map points from the meeting port to the exit
+
+
+func _flota_course(fpos: Dictionary) -> void:
+	var ex := CSea.exit_cell()
+	if ex < 0:
+		return
+	var any := false
+	var m := mk()
+	var gold := Color(1.0, 0.82, 0.3, 0.85)
+	var meet := CSea.meet_cell()
+	if _home_leg.is_empty() and meet >= 0:
+		var probe := {"id": -1, "f": 0, "x": CGrid.cx(meet), "y": CGrid.cy(meet), "ships": [{"t": "galleon", "h": 100, "c": 100}],
+			"carry": [], "moved": 0}
+		var p := CFleet.find_path(probe, ex, PackedByteArray(), false, 30, 40000)
+		_home_leg = [cell_point(meet)]
+		for c in p.get("path", []):
+			_home_leg.append(cell_point(int(c)))
+	for fl in state["fleets"]:
+		if not CSea.is_flota(fl) or not fpos.has(int(fl["id"])):
+			continue
+		any = true
+		var pts := PackedVector2Array([fpos[int(fl["id"])]])
+		for c in fl.get("route", []):
+			pts.append(to_screen(cell_point(int(c))))
+		if int(fl["flota"]) <= 1:
+			for q in _home_leg:
+				pts.append(to_screen(q))
+		else:
+			pts.append(to_screen(cell_point(ex)))
+		# Thin the cell steps to every third point (a smoother dash).
+		var thin := PackedVector2Array()
+		for k in pts.size():
+			if k % 3 == 0 or k == pts.size() - 1:
+				thin.append(pts[k])
+		for k in thin.size() - 1:
+			draw_dashed_line(thin[k], thin[k + 1], Color(0, 0, 0, 0.45), 4.0 * m, 10.0, true, true)
+		for k in thin.size() - 1:
+			draw_dashed_line(thin[k], thin[k + 1], gold, 2.2 * m, 10.0, true, true)
+	if not any:
+		return
+	var e := to_screen(cell_point(ex))
+	var tip := e + Vector2(0, -16.0 * m)
+	draw_line(e, tip, Color(0, 0, 0, 0.8), 5.0 * m, true)
+	draw_line(e, tip, gold, 3.0 * m, true)
+	draw_colored_polygon(PackedVector2Array([tip + Vector2(0, -8.0 * m), tip + Vector2(6.0 * m, 0), tip + Vector2(-6.0 * m, 0)]), gold)
+	var font := ThemeDB.fallback_font
+	var fs := 13
+	var tp := e + Vector2(10.0 * m, 4.0)
+	draw_string_outline(font, tp, "Flota: to Spain", HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 4, Color(0, 0, 0, 0.8))
+	draw_string(font, tp, "Flota: to Spain", HORIZONTAL_ALIGNMENT_LEFT, -1, fs, gold)
 
 
 ## An army banner at c (size ARMY_W x ARMY_H times m): a shield in the
@@ -755,6 +844,13 @@ func _fleet_marker(c: Vector2, fl: Dictionary) -> void:
 		var dp := xf * Vector2(-0.35 * s, 0.38 * s)
 		draw_circle(dp, 4.5 * m, Color(0, 0, 0, 0.85))
 		draw_circle(dp, 3.2 * m, Color(1, 0.95, 0.75))
+	if CSea.treasure(fl) > 0:
+		draw_treasure(self, xf * Vector2(-0.62 * s, -0.35 * s), m)
+		var ft := "Flota"
+		var fw := font.get_string_size(ft, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		var fp := c + Vector2(-fw * 0.5, s * 0.62 + fs + 4.0)
+		draw_string_outline(font, fp, ft, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 4, Color(0, 0, 0, 0.8))
+		draw_string(font, fp, ft, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1.0, 0.85, 0.35))
 
 
 ## A path's caption ("Merge into army (5 units)") above its end.

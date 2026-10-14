@@ -24,6 +24,7 @@ const DragReorder := preload("res://game/drag_reorder.gd")
 const BattleScreen := preload("res://game/campaign/battle_screen.gd")
 const PackView := preload("res://game/campaign/pack_view.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
+const CSea := preload("res://campaign/csea.gd")
 
 var s  # the campaign screen
 ## Open / closed state of the collapsible card groups this session (never in
@@ -98,6 +99,8 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 		rl.name = "raided_note"
 		Kit.label_icon(rl, "raid")
 		box.add_child(rl)
+	if CFleet.on(ps):
+		_sea_notes(box, r)
 	if not CState.siege_at(ps, r).is_empty():
 		if CState.grid_on(ps):
 			_siege_section6(box, r)
@@ -161,6 +164,47 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 		if grid:
 			row.pressed.connect(func(): s.open_unit_page(gty, Callable(), ""))
 		box.add_child(row)
+
+
+## (N2) A port's sea trade, its blockade, a pirate haven, a recent sack.
+func _sea_notes(box: VBoxContainer, r: int) -> void:
+	var ps: Dictionary = s.ps
+	var f: int = s.f
+	var o := CState.owner(ps, r)
+	var bk := CSea.blockader(ps, r)
+	if bk >= 0:
+		var t := "Blockaded by %s: %d of its %d sea trade a turn is lost; %s %d." % [CData.faction_name(bk),
+			CSea.blockade_loss(ps, r), CSea.sea_trade(ps, r), "you take" if bk == f else "the blockaders take", CSea.blockade_take(ps, r)]
+		var bl := Kit.label(t, Kit.FONT, Kit.COL_BAD if o == f else (Kit.COL_GOOD if bk == f else Kit.COL_GOLD), true)
+		bl.name = "blockade_note"
+		Kit.label_icon(bl, "ship")
+		box.add_child(bl)
+	elif CFleet.harbour(r) >= 0 and o >= 0:
+		var tl := Kit.label("A port: sea trade %d a turn (an enemy fleet within %d cells of its harbour, stronger than its own there, blockades it)." % [
+			CSea.sea_trade(ps, r), CSea.k("BLOCKADE_CELLS", 3)], Kit.FONT_SMALL, Kit.COL_DIM, true)
+		tl.name = "sea_trade_note"
+		box.add_child(tl)
+	if CSea.haven(ps, r):
+		var hp := CSea.haven_off(ps, o, r, "buccaneers")
+		var ht := "Pirate haven: buccaneers and cutlass men %d%% cheaper, %d more recruit%s a turn; pirate ships refit here (+%d)." % [
+			hp, CSea.extra_recruits(ps, r), "" if CSea.extra_recruits(ps, r) == 1 else "s", CSea.k("HAVEN_REPAIR", 10)]
+		var hl := Kit.label(ht, Kit.FONT_SMALL, Kit.COL_GOLD, true)
+		hl.name = "haven_note"
+		Kit.label_icon(hl, "crown")
+		box.add_child(hl)
+	if CSea.sacked_lately(ps, r):
+		var ago := int(ps["turn"]) - int(ps["regions"][r]["sacked"])
+		var sl := Kit.label("Sacked by pirates %s: little is left to take." % ("this turn" if ago <= 0 else ("last turn" if ago == 1 else "%d turns ago" % ago)),
+			Kit.FONT_SMALL, Kit.COL_BAD, true)
+		sl.name = "sacked_note"
+		box.add_child(sl)
+	elif f >= 0 and CSea.pirate(f) and o != f and CState.at_war(ps, f, o) and CFleet.harbour(r) >= 0:
+		var sg := CSea.sack_gold(ps, r)
+		var how := "you would sack it" if CSea.sacks(ps, r, f) else "you would take and hold it"
+		var pl := Kit.label("Storm it and %s (a sack: about %d gold, its buildings down a level; set in the Realm panel)." % [
+			how, int(sg[0]) + int(sg[1])], Kit.FONT_SMALL, Kit.COL_GOLD, true)
+		pl.name = "sack_note"
+		box.add_child(pl)
 
 
 # ------------------------------------------------- gifts between players ---
@@ -1956,8 +2000,13 @@ func show_faction() -> void:
 	var up := CRules.upkeep(ps, f)
 	box.add_child(Kit.label_icon(Kit.label("Treasury %s after this turn's spending." % Kit.money(int(ps["factions"][f]["treasury"])), Kit.FONT, Color.WHITE, true),
 		"treasury", Kit.COL_GOLD))
-	box.add_child(Kit.icon_label("Income %d (regions %d, trade %d, cost of a large realm -%d), upkeep %d: %+d a turn." % [
-		int(inc["total"]), int(inc["regions"]), int(inc["trade"]), int(inc.get("corruption", 0)), up, int(inc["total"]) - up], "income", Kit.FONT, Kit.COL_GOLD, true))
+	var sea_inc := ""
+	if inc.has("plunder"):
+		sea_inc = ", plunder %d, lost to blockades -%d" % [int(inc["plunder"]), int(inc["blockaded"])]
+	box.add_child(Kit.icon_label("Income %d (regions %d, trade %d%s, cost of a large realm -%d), upkeep %d: %+d a turn." % [
+		int(inc["total"]), int(inc["regions"]), int(inc["trade"]), sea_inc, int(inc.get("corruption", 0)), up, int(inc["total"]) - up], "income", Kit.FONT, Kit.COL_GOLD, true))
+	if CFleet.on(ps):
+		_realm_sea(box, f)
 	box.add_child(Kit.label("A turn ending with less than nothing costs every unit a tenth of its men.", Kit.FONT_SMALL, Kit.COL_DIM, true))
 	box.add_child(Kit.section("Regions", "realm"))
 	var fl := Kit.flow(6)
@@ -1994,6 +2043,61 @@ func show_faction() -> void:
 			wars.append(CData.faction_name(g))
 	box.add_child(Kit.icon_label("At war with: " + (", ".join(wars) if not wars.is_empty() else "nobody"), "war", Kit.FONT, Kit.COL_BAD, true))
 	s.show_dialog(CData.faction_name(f), box, [["Chronicle", func(): show_chronicle()], ["Close", Callable()]])
+
+
+## (N2) The Realm panel's sea lines: plunder, infamy and the sack policy
+## (pirates), letters of marque, the next flota.
+func _realm_sea(box: VBoxContainer, f: int) -> void:
+	var ps: Dictionary = s.ps
+	var fs: Dictionary = ps["factions"][f]
+	var pl := int(fs.get("plunder", 0))
+	if pl > 0 or CSea.pirate(f):
+		box.add_child(Kit.icon_label("Plunder taken in all: %d gold (prizes, blockades, the flota, sacks)." % pl, "coin", Kit.FONT_SMALL, Kit.COL_GOLD, true))
+	if CSea.pirate(f):
+		var inf := CSea.infamy(ps, f)
+		var il := Kit.label_icon(Kit.label("Infamy %d of %d: haven crews %d%% cheaper, %d more recruit%s a turn; the nations hunt you %s." % [
+			inf, CSea.k("INFAMY_MAX", 100), mini(CSea.k("HAVEN_PCT", 20) + inf / 5, CSea.k("HAVEN_MAX_PCT", 45)),
+			mini(inf / maxi(CSea.k("HAVEN_RECRUIT_INFAMY", 30), 1), 2), "" if mini(inf / maxi(CSea.k("HAVEN_RECRUIT_INFAMY", 30), 1), 2) == 1 else "s",
+			"hard" if inf >= 40 else ("harder" if inf >= 15 else "as anyone")], Kit.FONT, Kit.COL_GOLD, true), "crown", Kit.COL_GOLD)
+		il.name = "realm_infamy"
+		box.add_child(il)
+		box.add_child(Kit.label("Infamy rises with every sack (+%d) and prize (+%d, a treasure galleon +%d) and fades %d a turn. A pirate realm lives while it has a ship." % [
+			CSea.k("INFAMY_SACK", 12), CSea.k("INFAMY_PRIZE", 3), CSea.k("INFAMY_TREASURE", 8), CSea.k("INFAMY_DECAY", 1)], Kit.FONT_SMALL, Kit.COL_DIM, true))
+		var pol := int(fs.get("sack_pol", 0))
+		for o in s.orders:
+			if str(o["t"]) == "sack_policy":
+				pol = int(o["v"])
+		var h := Kit.hbox(6)
+		h.name = "sack_policy"
+		h.add_child(Kit.label("A port we storm:", Kit.FONT_SMALL, Color.WHITE))
+		var names := ["Auto (hold while under %d ports)" % CSea.k("PIRATE_HOLD", 2), "Sack it", "Hold it"]
+		for v in 3:
+			var b := Kit.button(names[v], func():
+				s.remove_orders(func(o): return str(o["t"]) == "sack_policy")
+				if v != int(fs.get("sack_pol", 0)):
+					s.add_order({"t": "sack_policy", "v": v})
+				s.close_dialog()
+				show_faction(), 0, Kit.FONT_SMALL)
+			b.disabled = v == pol
+			h.add_child(b)
+		box.add_child(h)
+	for m in CSea.marques(ps):
+		if int(m[0]) == f or int(m[1]) == f:
+			var other := int(m[1]) if int(m[0]) == f else int(m[0])
+			var ml := Kit.label("Letter of marque %s %s: %d turns left." % ["granted to" if int(m[0]) == f else "from",
+				CData.faction_name(other), int(m[2]) - int(ps["turn"])], Kit.FONT_SMALL, Kit.COL_GOOD, true)
+			ml.name = "realm_marque"
+			box.add_child(ml)
+	var at_sea := false
+	for fl in CFleet.fleets(ps):
+		if CSea.is_flota(fl):
+			at_sea = true
+	var nf := CSea.next_flota(ps)
+	var ft := "The flota is at sea (gold marks on the map): whatever reaches the north edge pays Spain; whatever is taken pays the captor." if at_sea \
+		else "The next flota gathers at Veracruz and Portobelo in %d turn%s." % [nf - int(ps["turn"]), "" if nf - int(ps["turn"]) == 1 else "s"]
+	var fl2 := Kit.label(ft, Kit.FONT_SMALL, Kit.COL_GOLD, true)
+	fl2.name = "realm_flota"
+	box.add_child(fl2)
 
 
 # ------------------------------------------------------------ diplomacy ---
@@ -2048,6 +2152,12 @@ func show_diplomacy(focus: int = -1) -> void:
 			desc = "%s - on your team (ally). %d regions, %s army." % [CData.faction_name(g), CState.regions_of(ps, g).size(), _compare(mine, them)]
 		elif CState.team_members(ps, CState.team(ps, g)).size() > 1:
 			desc += " " + _team_names(ps, g) + "."
+		if CFleet.on(ps):
+			if CSea.pirate(g):
+				desc += " Pirates, infamy %d." % CSea.infamy(ps, g)
+			var mq := CSea.marque_of(ps, f, g)
+			if not mq.is_empty():
+				desc += " Letter of marque: %d turns left." % (int(mq[2]) - int(ps["turn"]))
 		var l := Kit.label(desc, Kit.FONT, Kit.COL_BAD if d == CState.WAR else Color.WHITE, true)
 		row.add_child(l)
 		box.add_child(row)
@@ -2057,6 +2167,13 @@ func show_diplomacy(focus: int = -1) -> void:
 		var tstance := _team_stance(ps, f, g)
 		if tstance != null:
 			box.add_child(tstance)
+		if CFleet.on(ps) and not CState.is_human(ps, g) and CRules.check_proposal(ps, f, g, "marque") == "":
+			var why_m: String = CAI.why(ps, f, g, "marque")
+			var ml := Kit.label("Would accept a letter of marque (%d turns of peace; the pirates plunder %s's enemies at +%d%%)." % [
+				CSea.k("MARQUE_TURNS", 12), CData.faction_name(g if not CSea.pirate(g) else f), CSea.k("MARQUE_BONUS_PCT", 50)]
+				if why_m == "" else "Would refuse a letter of marque: %s." % why_m, Kit.FONT_SMALL, Kit.COL_GOOD if why_m == "" else Kit.COL_DIM, true)
+			ml.name = "marque_stance"
+			box.add_child(ml)
 		if d == CState.ALLIED:
 			if CRules.gift_partner_check(ps, f, g) == "":
 				_ally_deals(box, g)
@@ -2079,6 +2196,10 @@ func show_diplomacy(focus: int = -1) -> void:
 				acts.add_child(_dip_button("Offer trade", "trade", {"t": "propose", "to": g, "what": "trade"}))
 			if d == CState.TRADE:
 				acts.add_child(_dip_button("End trade", "trade_end", {"t": "propose", "to": g, "what": "cancel_trade"}))
+			if CFleet.on(ps) and CRules.check_proposal(ps, f, g, "marque") == "":
+				var mb := _dip_button("Marque", "scroll", {"t": "propose", "to": g, "what": "marque"})
+				mb.name = "marque_%s" % CData.FACTIONS[g]["key"]
+				acts.add_child(mb)
 			if CRules.check_proposal(ps, f, g, "team") == "":
 				var tb := _dip_button("Join our team", "alliance", {"t": "propose", "to": g, "what": "team"})
 				tb.name = "team_%s" % CData.FACTIONS[g]["key"]
@@ -2218,7 +2339,7 @@ func _confirm_war(g: int) -> void:
 
 func _what(w: String) -> String:
 	return {"peace": "peace", "trade": "a trade agreement", "cancel_trade": "an end to trade", "war": "war",
-		"team": "one team"}.get(w, w)
+		"team": "one team", "marque": "a letter of marque"}.get(w, w)
 
 
 func _fstrength(ps: Dictionary, f: int) -> int:
@@ -2393,8 +2514,8 @@ func _involves(e: Dictionary, f: int) -> bool:
 		return int(e["f"]) == f or int(e["from"]) == f
 	if str(e["k"]) in ["order_failed", "move_failed"]:
 		return int(e["f"]) == f
-	if str(e["k"]) in ["team_joined", "team_notice", "team_left"]:
-		return true  # the teams are world news
+	if str(e["k"]) in ["team_joined", "team_notice", "team_left", "flota", "flota_arrived"]:
+		return true  # the teams and the flota are world news
 	return str(e["k"]) in ["victory", "defeat"]
 
 
@@ -2410,6 +2531,10 @@ func _event_color(e: Dictionary, f: int) -> Color:
 			return Kit.COL_GOOD if won2 else Kit.COL_BAD
 		"ship_built", "landed", "embarked":
 			return Kit.COL_GOOD
+		"blockade", "sack":
+			return Kit.COL_GOOD if int(e["f"]) == f else (Kit.COL_BAD if int(e["from"]) == f else Kit.COL_GOLD)
+		"flota", "flota_arrived", "marque", "marque_end", "blockade_end":
+			return Kit.COL_GOLD
 		"army_sunk", "fmove_failed":
 			return Kit.COL_BAD
 		"war", "destroyed", "debt", "eliminated", "defeat", "order_failed", "move_failed", "starving":
@@ -2467,7 +2592,7 @@ func event_text(e: Dictionary, f: int) -> String:
 			match str(e.get("kind", "")):
 				"assault":
 					return "Assault on %s: %s stormed the walls of %s; %s (%s). %s" % [city.call(e["r"]), _names(e["att"]), _names(e["def"]),
-						"the city fell" if int(e["winner"]) == 0 else "the walls held", how, loss]
+						("the city was sacked" if int(e.get("sacked", 0)) != 0 else "the city fell") if int(e["winner"]) == 0 else "the walls held", how, loss]
 				"sally", "relief":
 					return "%s %s: %s against the besiegers, %s; %s (%s). %s" % ["Sally from" if str(e["kind"]) == "sally" else "Relief of",
 						city.call(e["r"]), _names(e["def"]), _names(e["att"]),
@@ -2475,6 +2600,8 @@ func event_text(e: Dictionary, f: int) -> String:
 				"field":
 					return "Field battle in %s: %s attacked %s in the open; %s (%s). %s" % [CData.REGIONS[int(e["r"])]["name"],
 						_names(e["att"]), _names(e["def"]), "the defenders fell back" if int(e["winner"]) == 0 else "the attackers fell back", how, loss]
+			if int(e.get("sacked", 0)) != 0:
+				w = "the attackers won and sacked the town"
 			return "Battle of %s: %s attacked %s; %s (%s). %s" % [city.call(e["r"]),
 				_names(e["att"]), _names(e["def"]), w, how, loss]
 		"captured":
@@ -2603,6 +2730,33 @@ func event_text(e: Dictionary, f: int) -> String:
 			return "%s army of %d units went down with its ships." % [CData.FACTIONS[int(e["f"])]["adj"], int(e["units"])]
 		"fmove_failed":
 			return "A fleet could not sail: %s." % str(e["why"])
+		"blockade":
+			return "%s blockades %s (%s): its sea trade is cut." % [CData.faction_name(int(e["f"])), city.call(e["r"]), CData.faction_name(int(e["from"]))]
+		"blockade_end":
+			if f >= 0 and int(e["f"]) != f and int(e["from"]) != f:
+				return ""
+			return "The blockade of %s by %s is over." % [city.call(e["r"]), CData.faction_name(int(e["f"]))]
+		"flota":
+			var parts: Array[String] = []
+			for pt in e["parts"]:
+				parts.append("%d galleon%s at %s" % [int(pt[1]), "" if int(pt[1]) == 1 else "s", city.call(pt[0])])
+			return "The flota gathers: %s, with the silver of the Indies, to meet at %s and sail for Spain." % [", ".join(parts),
+				str(CData.REGIONS[CData.region_index(str(CData.ship_const("FLOTA_MEET", "havana")))]["city"])]
+		"flota_arrived":
+			var pays: Array[String] = []
+			for pg in e["gold"]:
+				pays.append("%s %d" % [CData.faction_name(int(pg[0])), int(pg[1])])
+			return "The flota reached the open Atlantic: gold for %s." % (", ".join(pays) if not pays.is_empty() else "nobody")
+		"sack":
+			return "%s sacked %s%s: %d gold taken, %d building%s wrecked; the town stays %s." % [CData.faction_name(int(e["f"])), city.call(e["r"]),
+				" (%s)" % CData.faction_name(int(e["from"])) if int(e["from"]) >= 0 else "", int(e["gold"]), int(e["buildings"]),
+				"" if int(e["buildings"]) == 1 else "s", "independent" if int(e["from"]) < 0 else CData.FACTIONS[int(e["from"])]["adj"]]
+		"marque":
+			return "%s granted %s a letter of marque for %d turns: they keep the peace and plunder its enemies." % [
+				CData.faction_name(int(e["a"])), CData.faction_name(int(e["b"])), int(e["until"]) - int(e["turn"])]
+		"marque_end":
+			return "The letter of marque from %s to %s %s." % [CData.faction_name(int(e["a"])), CData.faction_name(int(e["b"])),
+				"lapsed" if str(e["why"]) == "lapsed" else "is broken"]
 	return ""
 
 
@@ -2646,6 +2800,10 @@ func sea_battle_text(e: Dictionary) -> String:
 		units += int(x[2])
 	if units > 0:
 		lines.append("%d unit%s drowned with the transports." % [units, "" if units == 1 else "s"])
+	if int(e.get("treasure", 0)) > 0:
+		lines.append("%d treasure galleon%s of the flota taken!" % [int(e["treasure"]), "" if int(e["treasure"]) == 1 else "s"])
+	if int(e.get("gold", 0)) > 0:
+		lines.append("Prize money: %d gold." % int(e["gold"]))
 	lines.append("(Auto-resolved; real-time sea battles come later.)")
 	return " ".join(lines)
 
@@ -3192,10 +3350,29 @@ func fleet_panel(box: VBoxContainer, id: int) -> void:
 	var ff := int(fl["f"])
 	var mine: bool = ff == s.f
 	var ships: Array = fl["ships"]
-	_close_row(box, "%s fleet %s" % [CData.FACTIONS[ff]["adj"], sea_place(int(fl["x"]), int(fl["y"]))], _fc(ff).lightened(0.4))
+	var flota := CSea.is_flota(fl)
+	_close_row(box, "%s %s" % ["The flota" if flota else CData.FACTIONS[ff]["adj"] + " fleet", sea_place(int(fl["x"]), int(fl["y"]))], _fc(ff).lightened(0.4))
 	var up := 0
 	for sh in ships:
 		up += int(CData.ship_row(str(sh["t"])).get("upkeep", 0))
+	if flota:
+		up = 0
+		var pays: Dictionary = {}
+		for sh in ships:
+			if int(sh.get("g", 0)) > 0:
+				var o := int(sh.get("o", ff))
+				pays[o] = int(pays.get(o, 0)) + int(sh["g"])
+		var parts: Array[String] = []
+		for o in CState.nf():
+			if pays.has(o):
+				parts.append("%d for %s" % [int(pays[o]), CData.faction_name(o)])
+		var leg := int(fl["flota"])
+		var tl := Kit.label_icon(Kit.label("Treasure aboard: %s. %s; it sails by the Crown's orders, not its owner's. Whatever is taken pays the captor." % [
+			", ".join(parts) if not parts.is_empty() else "none left",
+			["Bound for Havana to meet the other galleons", "Waiting at Havana for the other galleons", "Bound for Spain by the Florida Straits"][clampi(leg, 0, 2)]],
+			Kit.FONT, Kit.COL_GOLD, true), "coin", Kit.COL_GOLD)
+		tl.name = "flota_note"
+		box.add_child(tl)
 	var info := Kit.label("%d ship%s, power %d, upkeep %d. Pace %d cells a turn on a beam reach%s." % [ships.size(),
 		"" if ships.size() == 1 else "s", CFleet.power(fl), up, CFleet.speed(fl) / 10,
 		"; rowed, the wind does not matter" if not CFleet.sails(fl) else ""], Kit.FONT_SMALL, Kit.COL_DIM, true)
@@ -3224,13 +3401,13 @@ func fleet_panel(box: VBoxContainer, id: int) -> void:
 	box.add_child(Kit.label("In port at %s: repairing." % CData.REGIONS[port]["city"] if port >= 0 else "At sea: the crews thin a little every turn (scurvy).",
 		Kit.FONT_SMALL, Kit.COL_DIM, true))
 	box.add_child(Kit.section("Troops aboard (%d of %d places)" % [CFleet.carried_units(fl), CFleet.capacity(fl)], "men"))
-	if (fl["carry"] as Array).is_empty():
+	if (fl["carry"] as Array).is_empty() and not flota:
 		box.add_child(Kit.label("None. An army beside the fleet (or in the port's city) boards it from its card, or select the army and tap the fleet.",
 			Kit.FONT_SMALL, Kit.COL_DIM, true))
 	for a in fl["carry"]:
 		box.add_child(Kit.label("%s army: %d units, %d men" % [CData.FACTIONS[int(a["f"])]["adj"], CState.unit_count(a), CState.men(a)],
 			Kit.FONT, _fc(int(a["f"])).lightened(0.5), true))
-	if not mine:
+	if not mine or flota:
 		return
 	if int(fl.get("moved", 0)) != 0:
 		box.add_child(Kit.label("Has sailed this turn.", Kit.FONT, Kit.COL_DIM))

@@ -69,6 +69,8 @@ const UT := preload("res://sim/unit_types.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const CP := preload("res://campaign/cai_profile.gd")
 const CChars := preload("res://campaign/cchars.gd")
+const CSea := preload("res://campaign/csea.gd")
+const CFleet := preload("res://campaign/cfleet.gd")
 
 ## The lines added since the step-4 goldens, recruited only through a
 ## faction's mix (never as _any_type's fallback): camels, elephants (both
@@ -113,9 +115,11 @@ static func act(st: Dictionary, f: int, moves: Array = [], fmoves: Array = []) -
 		# armies that hold this turn (the mustering rule: an army taking
 		# recruits cannot march this turn; see _recruit_order).
 		fleet_reserved = {}
+		var cx := {}
 		if st.has("fleets"):
-			(load("res://campaign/cai_fleet.gd") as GDScript).call("act", st, f, moves, fmoves)
-		_move_grid(st, f, moves)
+			cx = _context6(st, f)  # (shared with the fleet AI: one pass over the enemies)
+			(load("res://campaign/cai_fleet.gd") as GDScript).call("act", st, f, moves, fmoves, cx)
+		_move_grid(st, f, moves, cx)
 		_recruit(st, f, moves)
 		_characters(st, f, moves)
 		return
@@ -499,7 +503,7 @@ static func _recruit(st: Dictionary, f: int, moves: Array = []) -> void:
 			var ty := UT.index_of(key)
 			if up + CState.upkeep_of(ty) > cap:
 				return
-			if int(fs["treasury"]) - UT.price_of(ty) < _reserve(st, f) / kn[CP.RECRUIT_RESERVE_DIV]:
+			if int(fs["treasury"]) - CRules.unit_price(st, f, rr, key) < _reserve(st, f) / kn[CP.RECRUIT_RESERVE_DIV]:
 				return
 			if CRules.apply_order(st, f, _recruit_order(st, f, rr, key, marching, moves, kn)) != "":
 				break
@@ -1076,6 +1080,8 @@ static func _move_free(st: Dictionary, f: int, out: Array) -> void:
 		var o := CState.owner(st, t)
 		if not CState.at_war(st, f, o) or not CState.battle_at(st, t).is_empty() or not CState.siege_at(st, t).is_empty():
 			continue
+		if CSea.spared(st, f, t):
+			continue  # (N2) pirates leave a port they sacked lately
 		var now: Array = []
 		var soon: Array = []
 		for a in free:
@@ -1542,6 +1548,8 @@ static func why(st: Dictionary, from: int, to: int, what: String) -> String:
 	var kn := CP.of(st, to)
 	match what:
 		"peace":
+			if CSea.pirate(to) and st.has("fleets") and not _losing_war(st, to):
+				return "pirates give no quarter (a letter of marque buys their peace)"
 			var since := CState.dip_since(st, from, to)
 			if since < kn[CP.PEACE_MIN_TURNS]:
 				return "at war only %d of %d turns" % [since, kn[CP.PEACE_MIN_TURNS]]
@@ -1562,6 +1570,8 @@ static func why(st: Dictionary, from: int, to: int, what: String) -> String:
 			return ""
 		"team":
 			return _why_team(st, from, to, kn)
+		"marque":
+			return CSea.why_marque(st, from, to)
 	return "unknown proposal"
 
 
@@ -1602,6 +1612,9 @@ static func _losing_war(st: Dictionary, f: int) -> bool:
 static func diplomacy(st: Dictionary, f: int) -> void:
 	if not CState.alive(st, f) or CState.is_human(st, f):
 		return
+	if CSea.pirate(f) and st.has("fleets"):
+		_pirate_diplomacy(st, f)
+		return
 	var turn := int(st["turn"])
 	var mine := faction_strength(st, f)
 	var my_wars := wars(st, f)
@@ -1634,6 +1647,11 @@ static func diplomacy(st: Dictionary, f: int) -> void:
 		if CState.dip_since(st, f, g) >= kn[CP.TRADE_ASK_TURNS] and _neighbours(st, f, g) \
 				and CState.rand(st, 100) < kn[CP.TRADE_ASK_CHANCE]:
 			_propose(st, f, g, "trade")
+	if st.has("fleets"):
+		# N2: a nation at war offers pirates a letter of marque.
+		var mq := CSea.marque_offer(st, f)
+		if mq >= 0:
+			_propose(st, f, mq, "marque")
 	# Opportunistic war.
 	if turn < kn[CP.FIRST_WAR_TURN] or my_wars.size() >= kn[CP.MAX_WARS]:
 		return
@@ -1645,6 +1663,8 @@ static func diplomacy(st: Dictionary, f: int) -> void:
 			continue
 		if CState.friendly(st, f, g) or not _neighbours(st, f, g) or CState.dip_since(st, f, g) < kn[CP.WAR_CALM_TURNS]:
 			continue
+		if CSea.has_marque(st, f, g):
+			continue  # (N2) privateers and their patron keep the peace
 		var theirs := faction_strength(st, g)
 		# Weaker neighbours, or ones already fighting someone else.
 		var busy := not wars(st, g).is_empty()
@@ -1658,6 +1678,8 @@ static func diplomacy(st: Dictionary, f: int) -> void:
 			chance = kn[CP.WAR_CHANCE_PLAYERS] * aggr / 100
 		if CState.dip(st, f, g) == CState.TRADE:
 			chance /= kn[CP.TRADE_WAR_DIV]
+		if CSea.pirate(g) and st.has("fleets"):
+			chance = chance * (100 + 2 * CSea.infamy(st, g)) / 100  # (N2) the nations hunt the infamous
 		# Big realms start fewer wars.
 		var owned := CState.regions_of(st, f).size()
 		var big := kn[CP.BIG_REALM]
@@ -1672,6 +1694,49 @@ static func diplomacy(st: Dictionary, f: int) -> void:
 			if CState.is_human(st, g):
 				st["stats"]["last_war_on_players"] = turn
 			return
+
+
+## (N2) Pirates: never sue for peace or trade (a letter of marque is their
+## peace: CSea); at fewer than PIRATE_WARS wars, war (PIRATE_WAR_CHANCE % a
+## turn) on the richest, weakest nation at sea they hold no letter from, at
+## peace PIRATE_WAR_CALM turns or more: the most sea trade (and treasure
+## afloat) per fleet power.
+const PIRATE_WARS := 2
+const PIRATE_WAR_CALM := 4
+const PIRATE_WAR_CHANCE := 25
+
+
+static func _pirate_diplomacy(st: Dictionary, f: int) -> void:
+	if wars(st, f).size() >= PIRATE_WARS:
+		return
+	var best := -1
+	var bv := -1
+	for g in CState.nf():
+		if g == f or not CState.alive(st, g) or CSea.pirate(g) or CState.friendly(st, f, g):
+			continue
+		if CState.dip(st, f, g) == CState.WAR or CSea.has_marque(st, f, g) or CState.dip_since(st, f, g) < PIRATE_WAR_CALM:
+			continue
+		if CState.is_human(st, g):
+			var last := int(st["stats"].get("last_war_on_players", -100))
+			var kn := CP.of(st, f)
+			if int(st["turn"]) < kn[CP.FIRST_WAR_ON_PLAYERS] or int(st["turn"]) - last < kn[CP.PLAYER_WAR_GAP]:
+				continue
+		var rich := 0
+		for r in CState.regions_of(st, g):
+			rich += CSea.sea_trade(st, r)
+		var pw := 0
+		for fl in st["fleets"]:
+			if int(fl["f"]) == g:
+				pw += CFleet.power(fl)
+				rich += CSea.treasure(fl)
+		var v := rich * 100 / (100 + pw)
+		if v > bv:
+			bv = v
+			best = g
+	if best >= 0 and CState.rand(st, 100) < PIRATE_WAR_CHANCE:
+		CRules.declare_war(st, f, best)
+		if CState.is_human(st, best):
+			st["stats"]["last_war_on_players"] = int(st["turn"])
 
 
 ## Skilled (4.8): g's field armies that can reach one of our settlements
@@ -1731,6 +1796,8 @@ static func _unwise_war(st: Dictionary, f: int, kn: PackedInt32Array, mine: int)
 		if g == f or not CState.alive(st, g) or CState.dip(st, f, g) == CState.WAR:
 			continue
 		if CState.friendly(st, f, g) or not _neighbours(st, f, g) or CState.dip_since(st, f, g) < kn[CP.WAR_CALM_TURNS]:
+			continue
+		if CSea.has_marque(st, f, g):
 			continue
 		if CState.is_human(st, g):
 			var last := int(st["stats"].get("last_war_on_players", -100))
@@ -1832,7 +1899,7 @@ static func site_dist(c: int, r: int, ring: bool) -> int:
 ## the odds favour it; forced march to a screen or a gathering point a turn
 ## sooner; armies staying in a threatened region fortify, or go inside the
 ## walls when far outmatched; the rest default.
-static func _move_grid(st: Dictionary, f: int, out: Array) -> void:
+static func _move_grid(st: Dictionary, f: int, out: Array, cx_in: Dictionary = {}) -> void:
 	var kn := CP.of(st, f)
 	var ratio := kn[CP.ATTACK_RATIO6] * 100 / _aggr(st)
 	var nreg := CData.region_count()
@@ -1864,7 +1931,7 @@ static func _move_grid(st: Dictionary, f: int, out: Array) -> void:
 		etas[int(a["id"])] = {"t": t}
 		free.append(a)
 		want[int(a["id"])] = CData.ST_DEFAULT
-	var cx := _context6(st, f)
+	var cx := cx_in if not cx_in.is_empty() else _context6(st, f)
 	var used := {}
 	_sieges_grid(st, f, ratio, free, etas, used, out, cx)
 	_hunt(st, f, free, used, out, cx)

@@ -15,6 +15,7 @@ const CGrid := preload("res://campaign/cgrid.gd")
 const CRules := preload("res://campaign/crules.gd")
 const Dummy := preload("res://tests/data/dummy_pack.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
+const CSea := preload("res://campaign/csea.gd")
 
 ## A Rome AI-only campaign (seed 4242) after 20 turns, all rules as they are.
 const ROME_20 := "575e23d5"  # = HEAD 1c04fbe before the pack switch existed
@@ -28,6 +29,7 @@ func _init() -> void:
 	_hash_view()
 	_west()
 	_fleets()
+	_sea()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
 	quit(0 if fails == 0 else 1)
 
@@ -266,4 +268,157 @@ func _fleets() -> void:
 			sunk += 1
 	_check(CFleet.fleet(s4, 910).is_empty() == (sunk == 1) and (CFleet.fleet(s4, 910).is_empty() or CFleet.carried_units(CFleet.fleet(s4, 910)) <= CFleet.capacity(CFleet.fleet(s4, 910))),
 		"a sunk transport drowns its troops (fleet gone %s, armies sunk %d)" % [CFleet.fleet(s4, 910).is_empty(), sunk])
+	CData.use_pack("rome")
+
+
+## N2 (West only): a blockade cuts the port's income and pays the
+## blockader; the flota's schedule is a function of the turn, it gathers the
+## same twice and pays on arrival; a pirate assault sacks (gold taken, the
+## owner keeps the town); a pirate faction with a ship and no region lives;
+## a letter of marque is proposed, accepted, survives JSON and lapses.
+func _sea() -> void:
+	CData.use_pack("rome")
+	var rs := CState.new_campaign("r", 3, [])
+	CSea.update_blockades(rs)
+	_check(not CSea.on(rs) and not rs.has("marques") and CSea.marque_check(rs, 0, 1) != "" and not CSea.afloat(rs, 0),
+		"Rome: no blockades, flota or letters (N2 off)")
+	CData.use_pack("west")
+	var eng := CData.faction_index("england")
+	var ns := CData.faction_index("new_spain")
+	var tf := CData.faction_index("tierra_firme")
+	var bret := CData.faction_index("brethren")
+	var st := CState.new_campaign("w", 11, [eng], {}, [], "west")
+	_check(CSea.pirate(bret) and not CSea.pirate(eng) and CSea.haven(st, CData.region_index("port_de_paix")),
+		"the Brethren are pirates; Port-de-Paix is a haven")
+	# Blockade: an English squadron off Campeche (New Spain's).
+	var cp := CData.region_index("campeche")
+	var hb := CFleet.harbour(cp)
+	var sta := -1
+	for c in CGrid.disc(hb, 3):
+		if CFleet.is_sea(c) and CGrid.cheb(c, hb) == 3:
+			sta = c
+			break
+	var sb := st.duplicate(true)
+	sb["fleets"] = [{"id": 950, "f": eng, "x": CGrid.cx(sta), "y": CGrid.cy(sta), "ships": [{"t": "frigate", "h": 100, "c": 100}],
+		"carry": [], "moved": 0}]
+	var ns0 := int(CRules.income(sb, ns)["total"])
+	var en0 := int(CRules.income(sb, eng)["total"])
+	CSea.update_blockades(sb)
+	var ns1 := CRules.income(sb, ns)
+	var en1 := CRules.income(sb, eng)
+	_check(CSea.blockader(sb, cp) == eng and int(ns1["blockaded"]) > 0 and int(ns1["total"]) < ns0
+		and int(en1["plunder"]) > 0 and int(en1["total"]) == en0 + int(en1["plunder"]),
+		"a blockade of Campeche: New Spain -%d a turn, England +%d" % [int(ns1.get("blockaded", 0)), int(en1.get("plunder", 0))])
+	var ev := false
+	for e in sb["events"]:
+		if str(e["k"]) == "blockade" and int(e["r"]) == cp:
+			ev = true
+	(sb["fleets"][0] as Dictionary)["x"] = CGrid.cx(sta) + 30
+	CSea.update_blockades(sb)
+	_check(ev and CSea.blockader(sb, cp) < 0, "the blockade is announced, and lifted when the fleet sails off")
+	# The flota.
+	var first := CSea.k("FLOTA_FIRST", 4)
+	_check(CSea.next_flota(st) == first, "the first flota is due on turn %d" % first)
+	var sf := st.duplicate(true)
+	sf["turn"] = first - 1
+	var sf2 := sf.duplicate(true)
+	CSea.flota_spawn(sf)
+	CSea.flota_spawn(sf2)
+	var parts: Array = []
+	for fl in sf["fleets"]:
+		if CSea.is_flota(fl):
+			parts.append(fl)
+	_check(parts.size() == 2 and CSea.treasure(parts[0]) > 0 and CState.hash_text(sf) == CState.hash_text(sf2)
+		and CSea.next_flota(sf) == first and CSea.next_flota({"turn": first}) == first + CSea.k("FLOTA_EVERY", 8),
+		"the flota gathers at Veracruz and Portobelo (%d parts, %d gold), the same twice" % [parts.size(),
+			CSea.treasure(parts[0]) + (CSea.treasure(parts[1]) if parts.size() > 1 else 0)])
+	var mv: Array = []
+	CSea.flota_moves(sf, mv)
+	_check(mv.size() == 2 and int(mv[0][1]) == CSea.meet_cell(), "the flota sails for Havana")
+	var gold := CSea.treasure(parts[0])
+	var tre0 := int(sf["factions"][ns]["treasury"])
+	CFleet.place(parts[0], CSea.exit_cell())
+	parts[0]["flota"] = 2
+	_check(CFleet.apply_order(sf, ns, {"t": "fcancel", "fleet": int(parts[0]["id"])}) != "", "the flota takes no orders")
+	CSea.flota_arrivals(sf)
+	_check(int(sf["factions"][ns]["treasury"]) == tre0 + gold and CFleet.fleet(sf, int(parts[0]["id"])).is_empty(),
+		"the flota arrives off the map: New Spain +%d" % gold)
+	# A treasure galleon taken pays its captor.
+	var sp := st.duplicate(true)
+	var open := CFleet.dock(CData.region_index("havana")) + 4
+	var tg := {"id": 960, "f": ns, "x": CGrid.cx(open), "y": CGrid.cy(open) - 6, "flota": 0, "wait": 0,
+		"ships": [{"t": "galleon", "h": 20, "c": 20, "g": 900, "o": tf}], "carry": [], "moved": 0}
+	var hunter := {"id": 961, "f": bret, "x": CGrid.cx(open), "y": CGrid.cy(open) - 7, "ships": [{"t": "brigantine", "h": 100, "c": 100},
+		{"t": "brigantine", "h": 100, "c": 100}, {"t": "brigantine", "h": 100, "c": 100}], "carry": [], "moved": 0}
+	sp["fleets"] = [tg, hunter]
+	var b0 := int(sp["factions"][bret]["treasury"])
+	CFleet.resolve(sp, [hunter], [tg], CFleet.cell(tg))
+	var sbt := {}
+	for e in sp["events"]:
+		if str(e["k"]) == "sea_battle":
+			sbt = e
+	_check(int(sbt.get("won", 1)) == 1 or int(sp["factions"][bret]["treasury"]) == b0 + int(sbt.get("gold", 0)),
+		"a sea battle with a treasure galleon: prize money %d, galleons taken %d" % [int(sbt.get("gold", 0)), int(sbt.get("treasure", 0))])
+	# A sack: the Brethren storm Campeche.
+	var sk := st.duplicate(true)
+	var pa: Dictionary = CState.armies_of(sk, bret)[0]
+	pa["r"] = cp
+	CState.place(pa, CState.ring_cell(cp, 0))
+	var b := CRules.start_battle(sk, cp, pa)
+	var nst0 := int(sk["factions"][ns]["treasury"])
+	var bst0 := int(sk["factions"][bret]["treasury"])
+	var lv0 := 0
+	for sl in sk["regions"][cp]["slots"]:
+		lv0 += int(sl[1])
+	_check(CSea.sacks(sk, cp, bret), "the pirates' policy sacks a port they storm (%d regions)" % CState.regions_of(sk, bret).size())
+	CRules.apply_outcome(sk, int(b["id"]), {"winner": 0, "mode": "formula", "units": [], "garrison_pct": 0})
+	var lv1 := 0
+	for sl in sk["regions"][cp]["slots"]:
+		lv1 += int(sl[1])
+	var sev := {}
+	for e in sk["events"]:
+		if str(e["k"]) == "sack":
+			sev = e
+	_check(CState.owner(sk, cp) == ns and not sev.is_empty() and int(sk["factions"][bret]["treasury"]) == bst0 + int(sev["gold"])
+		and int(sev["gold"]) > 0 and int(sk["factions"][ns]["treasury"]) < nst0 and lv1 < lv0 and CSea.infamy(sk, bret) > 0
+		and CSea.spared(sk, bret, cp),
+		"a sack of Campeche: %d gold, buildings %d -> %d levels, New Spain keeps it, infamy %d" % [int(sev.get("gold", 0)), lv0, lv1, CSea.infamy(sk, bret)])
+	sk["factions"][bret]["sack_pol"] = 2
+	_check(not CSea.sacks(sk, cp, bret) and CRules.apply_order(sk, eng, {"t": "sack_policy", "v": 1}) != "",
+		"the hold policy takes the port; only pirates set a policy")
+	# Afloat: no region, a ship -> alive; no ship -> gone.
+	var sa := st.duplicate(true)
+	for r in CState.regions_of(sa, bret):
+		sa["regions"][r]["owner"] = ns
+	CRules.check_eliminations(sa)
+	_check(CState.alive(sa, bret) and CSea.afloat(sa, bret), "a pirate faction without a region but with ships lives")
+	var keep: Array = []
+	for fl in sa["fleets"]:
+		if int(fl["f"]) != bret:
+			keep.append(fl)
+	sa["fleets"] = keep
+	CRules.check_eliminations(sa)
+	_check(not CState.alive(sa, bret), "... and is gone with its last ship")
+	# A letter of marque: England (a player at war with New Spain) to the
+	# Brethren (AI).
+	_check(CSea.marque_check(st, ns, bret) != "" and CSea.marque_check(st, eng, bret) == "" and CSea.marque_check(st, eng, ns) != "",
+		"letters only between a nation and pirates; the Crown grants none")
+	var orders: Array = [{"t": "propose", "to": bret, "what": "marque"}]
+	var pv := CTurn.preview(st, eng, orders)
+	_check((pv["errors"] as Array).is_empty(), "preview: a letter of marque proposal is valid")
+	var sm := CTurn.resolve_turn(st, [CTurn.submission(st, eng, orders)])
+	var mq := CSea.marque_of(sm, eng, bret)
+	_check(not mq.is_empty() and CState.dip(sm, eng, bret) != CState.WAR and CSea.plunder_pct(sm, bret, ns) > 100,
+		"the Brethren accept England's letter (until turn %d), at peace; plunder from New Spain at %d%%" % [int(mq[2]) if not mq.is_empty() else -1,
+			CSea.plunder_pct(sm, bret, ns)])
+	var js := CState.from_json(CState.to_json(sm))
+	_check(not js.is_empty() and CState.hash_text(js) == CState.hash_text(sm) and CSea.has_marque(js, bret, eng),
+		"a West state with a letter round-trips JSON (%s)" % CState.hash_text(sm))
+	var sl2 := sm.duplicate(true)
+	sl2["turn"] = int(mq[2]) if not mq.is_empty() else 0
+	CSea.marque_turn(sl2)
+	var sw := sm.duplicate(true)
+	CRules.declare_war(sw, eng, bret)
+	CSea.marque_turn(sw)
+	_check(not CSea.has_marque(sl2, eng, bret) and not CSea.has_marque(sw, eng, bret), "the letter lapses at its turn, and war breaks it")
 	CData.use_pack("rome")

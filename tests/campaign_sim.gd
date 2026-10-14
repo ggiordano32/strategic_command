@@ -268,6 +268,21 @@ func _run(sd: int, verbose: bool) -> String:
 			print("fleets: ships launched %d, sea battles %d, embarkations %d, landings %d, armies sunk %d, voyages refused %d; at the end %d fleets, %d ships" % [
 				int(fl_ev["ship_built"]), int(fl_ev["sea_battle"]), int(fl_ev["embarked"]), int(fl_ev["landed"]),
 				int(fl_ev["army_sunk"]), int(fl_ev["fmove_failed"]), (st["fleets"] as Array).size(), ships])
+			# N2: trade, blockades, the flota, pirates.
+			var sx: Dictionary = st["stats"]
+			var pl: Array = []
+			for f in CState.nf():
+				if int(st["factions"][f].get("plunder", 0)) > 0:
+					pl.append("%s %d" % [short[f], int(st["factions"][f]["plunder"])])
+			var pir: Array = []
+			for f in CState.nf():
+				if int(CData.FACTIONS[f].get("pirate", 0)) != 0:
+					pir.append("%s %s, %d regions, %d ships, infamy %d" % [short[f], "alive" if CState.alive(st, f) else "dead",
+						CState.regions_of(st, f).size(), _ships_of(st, f), int(st["factions"][f].get("infamy", 0))])
+			print("sea (N2): plunder %d [%s] | blockade turns %d | flotas %d, arrived %d (%d gold), treasure galleons taken %d | sacks %d | letters of marque %d | pirates: %s" % [
+				int(sx.get("plunder", 0)), ", ".join(pl), int(sx.get("blockade_turns", 0)), int(sx.get("flotas", 0)),
+				int(sx.get("flota_arrived", 0)), int(sx.get("flota_gold", 0)), int(sx.get("treasure_taken", 0)),
+				int(sx.get("sacks", 0)), int(sx.get("marques", 0)), "; ".join(pir)])
 		_buildup(st)
 		var open_now: Array = []
 		for x in st.get("sieges", []):
@@ -299,6 +314,15 @@ func _run(sd: int, verbose: bool) -> String:
 			int(sg["mustering"]), t_total / 1000.0 / turns, t_max / 1000.0])
 		return CState.hash_text(st)
 	return ""
+
+
+## Ships of faction f's fleets.
+static func _ships_of(st: Dictionary, f: int) -> int:
+	var n := 0
+	for fl in st.get("fleets", []):
+		if int(fl["f"]) == f:
+			n += (fl["ships"] as Array).size()
+	return n
 
 
 ## "easy" / "average" / "skilled" (or 0 / 1 / 2) to a skill level.

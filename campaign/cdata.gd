@@ -127,6 +127,7 @@ static var CHAINS: Array[Dictionary] = BASE_CHAINS
 ## wind, the starting fleets and yards), null without ships.
 static var SHIPS: GDScript = null
 static var _ship_idx := {}
+static var _ship_c := {}  # the SHIPS script's constants (read once a pack)
 const FARM := E.FARM
 const MARKET := E.MARKET
 const BARRACKS := E.BARRACKS
@@ -345,6 +346,7 @@ static func use_pack_script(key: String, p: GDScript) -> void:
 	NAMES_BY_FACTION = c["NAMES_BY_FACTION"]
 	NAMES_DEFAULT = c["NAMES_DEFAULT"]
 	SHIPS = c.get("SHIPS", null)
+	_ship_c = SHIPS.get_script_constant_map() if SHIPS != null else {}
 	if SHIPS != null:
 		var ch: Array[Dictionary] = BASE_CHAINS.duplicate()
 		ch.append(SHIPYARD_CHAIN)
@@ -371,7 +373,7 @@ static func ships_on() -> bool:
 static func ship_rows() -> Array[Dictionary]:
 	if SHIPS == null:
 		return []
-	var rows: Array[Dictionary] = SHIPS.get_script_constant_map()["ROWS"]
+	var rows: Array[Dictionary] = _ship_c["ROWS"]
 	return rows
 
 
@@ -379,7 +381,7 @@ static func ship_rows() -> Array[Dictionary]:
 static func ship_const(key: String, default = null):
 	if SHIPS == null:
 		return default
-	return SHIPS.get_script_constant_map().get(key, default)
+	return _ship_c.get(key, default)
 
 
 ## Index of ship row `key` (-1 unknown).

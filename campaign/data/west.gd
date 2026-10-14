@@ -144,10 +144,13 @@ const SEA_LANES: Array = [
 ]
 
 ## Factions (see rome.gd). Armies, mixes and compositions in the West rows
-## (slice 2a, 2026-10-14). "palette" (a sprite palette key,
-## game/sprite_atlas.gd) and "blurb" are view-only.
+## (slice 2a, 2026-10-14). "pirate": 1 (N2, campaign/csea.gd): raiders with
+## havens, plunder, sacks, infamy and letters of marque; alive while afloat.
+## "no_marque": 1 (N2): grants pirates no letter of marque (the Crown).
+## "palette" (a sprite palette key, game/sprite_atlas.gd) and "blurb" are
+## view-only.
 const FACTIONS: Array[Dictionary] = [
-	{"key": "new_spain", "culture": LATIN, "name": "New Spain", "adj": "Spanish", "color": "d9a31f", "capital": "havana",
+	{"key": "new_spain", "culture": LATIN, "name": "New Spain", "adj": "Spanish", "color": "d9a31f", "capital": "havana", "no_marque": 1,
 		"palette": "macedon", "blurb": "Gold-drunk viceroys and iron galleons: the Crown's heavy line holds the Indies, and God help whoever says otherwise.",
 		"regions": ["havana", "puerto_principe", "santiago_de_cuba", "veracruz", "tampico", "campeche", "merida", "st_augustine"], "treasury": 1600,
 		"armies": [["havana", ["musketeers", "w_pikemen", "musketeers", "rodeleros", "lancers", "light_gun", "general"]],
@@ -155,7 +158,7 @@ const FACTIONS: Array[Dictionary] = [
 			["santiago_de_cuba", ["w_pikemen", "musketeers", "general"]]],
 		"mix": {"musket": 35, "pike": 25, "heavy": 15, "cav": 12, "light_gun": 5, "field_gun": 3, "general": 4, "dogs": 2},
 		"ai_style": AI_BALANCED, "composition": {"arms": ["musket", "pike", "heavy"], "art_pct": 10, "cav_pct": 10, "upgrade": 2}},
-	{"key": "tierra_firme", "culture": LATIN, "name": "Tierra Firme", "adj": "Tierra Firme", "color": "e0702a", "capital": "cartagena",
+	{"key": "tierra_firme", "culture": LATIN, "name": "Tierra Firme", "adj": "Tierra Firme", "color": "e0702a", "capital": "cartagena", "no_marque": 1,
 		"palette": "epirus", "blurb": "The silver coast of the Spanish Main, where every mule-train is a king's ransom and every watchtower a loaded gun.",
 		"regions": ["cartagena", "santa_marta", "mompox", "portobelo", "maracaibo", "coro", "la_guaira"], "treasury": 1800,
 		"armies": [["cartagena", ["w_pikemen", "musketeers", "musketeers", "rodeleros", "lancers", "lancers", "general"]],
@@ -183,7 +186,7 @@ const FACTIONS: Array[Dictionary] = [
 			["cumana", ["musketeers", "musketeers", "w_pikemen", "light_gun", "general"]]],
 		"mix": {"musket": 40, "pike": 25, "light_gun": 15, "field_gun": 10, "general": 4},
 		"ai_style": AI_CAUTIOUS, "composition": {"arms": ["musket", "pike", "light_gun"], "art_pct": 25, "cav_pct": 0, "upgrade": 1}},
-	{"key": "brethren", "culture": PUNIC, "name": "Brethren of the Coast", "adj": "Pirate", "color": "4a4a52", "capital": "port_de_paix",
+	{"key": "brethren", "culture": PUNIC, "name": "Brethren of the Coast", "adj": "Pirate", "color": "4a4a52", "capital": "port_de_paix", "pirate": 1,
 		"palette": "iberians", "blurb": "Calico, cutlasses and a black flag over every stolen town: no king, no quarter, and the rum is never, ever finished.",
 		"regions": ["port_de_paix", "trujillo"], "treasury": 1500,
 		"armies": [["port_de_paix", ["buccaneers", "buccaneers", "cutlass", "cutlass", "musketeers", "light_gun", "general"]],

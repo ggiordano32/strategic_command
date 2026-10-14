@@ -29,7 +29,8 @@ extends RefCounted
 ##      sally and (version 5) siege orders, faction by faction;
 ##   4. players' proposals, answered by the AI at once;
 ##   5. AI factions act in faction order (build, recruit, move; version 5:
-##      they plan in faction order, then all AI moves run in rounds);
+##      they plan in faction order, then all AI moves run in rounds; a pack
+##      with ships: the fleets' voyages and the flota's first);
 ##   6. neighbouring armies reinforce the new battles (version 5: armies in
 ##      the field within a turn's march over land, crules._support_by_range;
 ##      version 6: within CData.SUPPORT cells, crules._support6);
@@ -48,6 +49,7 @@ const CAI := preload("res://campaign/cai.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const CChars := preload("res://campaign/cchars.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
+const CSea := preload("res://campaign/csea.gd")
 
 const KEEP_EVENTS_TURNS := 2
 
@@ -233,7 +235,7 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 			if CRules.check_proposal(st, f, g, what) != "":
 				continue
 			if CState.is_human(st, g):
-				if what == "team":  # a player answers it next turn
+				if what == "team" or what == "marque":  # a player answers it next turn
 					CRules.post_proposal(st, f, g, what)
 				continue
 			if CAI.accepts(st, f, g, what):
@@ -246,6 +248,7 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 	var ai_fleet: Array = []
 	for f in CState.nf():
 		CAI.act(st, f, ai_moves, ai_fleet)
+	CSea.flota_moves(st, ai_fleet)  # (N2) the treasure fleet sails by the rules
 	CFleet.execute_moves(st, ai_fleet)
 	if CState.grid_on(st):
 		CRules.execute_moves6(st, ai_moves)

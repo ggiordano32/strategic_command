@@ -360,6 +360,13 @@ func rows() -> Array:
 			var k := sz.y * 0.4
 			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(0.05, -0.95) * k, c + Vector2(0.7, 0.05) * k, c + Vector2(0.05, 0.05) * k]), Color(0.96, 0.94, 0.86))
 			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(-1, 0.15) * k, c + Vector2(1, 0.15) * k, c + Vector2(0.62, 0.62) * k, c + Vector2(-0.7, 0.62) * k]), oc)])
+		out.append(["Blockaded port: an enemy fleet on its approach takes its sea trade", func(ci: Control, sz: Vector2):
+			ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.SEA)
+			Overlay.draw_blockade(ci, sz * 0.5, sz.y * 0.4, Color(0.78, 0.25, 0.18), 0.8)])
+		out.append(["The flota: treasure galleons bound for Spain (gold mark, dashed course)", func(ci: Control, sz: Vector2):
+			ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.SEA)
+			ci.draw_dashed_line(Vector2(6, sz.y * 0.5), Vector2(sz.x - 6, sz.y * 0.5), Color(1.0, 0.82, 0.3, 0.85), 2.0, 8.0)
+			Overlay.draw_treasure(ci, sz * 0.5, 1.0)])
 	else:
 		out.append(["Sea lane between ports", func(ci: Control, sz: Vector2):
 			ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.SEA)

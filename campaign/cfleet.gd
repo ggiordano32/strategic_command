@@ -55,8 +55,7 @@ const ROLL_SPAN := 31
 const LOSS_BASE := 20           # a losing ship is lost: LOSS_BASE + 2 x (winner's share - 50) %
 const LOSS_MAX := 95
 const CAPTURE_PCT := 25         # a lost ship is taken (not sunk) this often ...
-const PIRATE_CAPTURE_PCT := 60  # ... by pirates (PIRATES) this often
-const PIRATES: Array[String] = ["brethren"]
+const PIRATE_CAPTURE_PCT := 60  # ... by pirates (a faction with the "pirate" flag) this often
 const TAKEN_PCT := 35           # a prize joins its captor at this hull and crew
 const PORT_DEF_PCT := 110       # defenders in their own port: x this % ...
 const PORT_WALL_PCT := 15       # ... + this % per walls level (shore batteries)
@@ -75,6 +74,11 @@ static var _mlog: Array = []
 
 static func _rules() -> GDScript:
 	return load("res://campaign/crules.gd")
+
+
+## Trade, the flota and pirates (N2; it preloads this file).
+static func _csea() -> GDScript:
+	return load("res://campaign/csea.gd")
 
 
 ## The pack changed (CData.use_pack_script).
@@ -404,8 +408,9 @@ static func upkeep(st: Dictionary, f: int) -> int:
 	for fl in fleets(st):
 		if int(fl["f"]) != f:
 			continue
-		for s in fl["ships"]:
-			u += int(CData.ship_row(str(s["t"])).get("upkeep", 0))
+		if not fl.has("flota"):  # (the flota is the Crown's: no upkeep)
+			for s in fl["ships"]:
+				u += int(CData.ship_row(str(s["t"])).get("upkeep", 0))
 		for a in fl["carry"]:
 			for unit in a["units"]:
 				u += CState.upkeep_of(CState.unit_type(unit))
@@ -525,6 +530,9 @@ static func _new_fleet(st: Dictionary, f: int, c: int, ships: Array) -> Dictiona
 static func apply_order(st: Dictionary, f: int, o: Dictionary) -> String:
 	if not on(st):
 		return "no ships here"
+	for key in ["fleet", "into"]:
+		if o.has(key) and fleet(st, int(o[key])).has("flota"):
+			return "the flota sails by the Crown's orders"
 	match str(o.get("t", "")):
 		"ship":
 			return _order_ship(st, f, int(o.get("r", -1)), str(o.get("ship", "")))
@@ -742,35 +750,55 @@ static func find_path(fl: Dictionary, goal: int, block: PackedByteArray, adjacen
 	var lim := int(CData.ship_const("COASTAL_CELLS", 2))
 	var n := CGrid.count()
 	var w := CGrid.width()
+	var has_block := block.size() == n
+	# No free water at the goal (an enemy's zone, the open sea for canoes):
+	# no way, without flooding the sea to find out.
+	var open := false
+	for dy in range(-1, 2) if adjacent else [0]:
+		for dx in range(-1, 2) if adjacent else [0]:
+			var j := CGrid.at(goal % w + dx, goal / w + dy)
+			if j >= 0 and _sea[j] != 0 and not (has_block and block[j] != 0) and not (coast and _cd[j] > lim):
+				open = true
+	if not open:
+		return {}
 	var g := PackedInt32Array()
 	g.resize(n)
 	g.fill(INF)
 	var prev := PackedInt32Array()
 	prev.resize(n)
 	prev.fill(-1)
-	var has_block := block.size() == n
+	var hh := PackedInt32Array()  # the estimate per cell, set when first reached
+	hh.resize(n)
 	var gx := goal % w
 	var gy := goal / w
 	var m0 := full if int(fl.get("moved", 0)) == 0 else 0
 	g[start] = full - m0
-	var cmin := 10
-	if wind:
-		for k in 8:
-			if k % 2 == 0:
-				cmin = mini(cmin, _cost_w[k])
-	var heap: Array[int] = []
-	heap.append((g[start] + _hs(start, gx, gy, w, cmin)) * 65536 + start)
+	var cs := _hcost(wind)  # step costs by direction (the estimate's too)
+	var dxs := PackedInt32Array(CGrid.DX)
+	var dys := PackedInt32Array(CGrid.DY)
+	# Open cells in buckets by estimated total (integers, small): pushing and
+	# taking the cheapest are a few steps, not a heap's (LIFO in a bucket).
+	var bk: Array = []
+	var cur := g[start] + _hs(start, gx, gy, w, cs)
+	hh[start] = cur - g[start]
+	bk.resize(cur + 1)
+	bk[cur] = [start]
 	var found := -1
 	var nodes := 0
 	var cap := max_turns * full + full
-	while not heap.is_empty():
-		var top: int = CGrid._pop(heap)
-		var u := top & 65535
+	while true:
+		while cur < bk.size() and (bk[cur] == null or (bk[cur] as Array).is_empty()):
+			cur += 1
+		if cur >= bk.size():
+			break
+		var u: int = (bk[cur] as Array).pop_back()
 		var gu := g[u]
-		if top >> 16 != gu + _hs(u, gx, gy, w, cmin):
+		if cur != gu + hh[u]:
 			continue
+		var ux := u % w
+		var uy := u / w
 		if adjacent:
-			if absi(u % w - gx) <= 1 and absi(u / w - gy) <= 1:
+			if absi(ux - gx) <= 1 and absi(uy - gy) <= 1:
 				found = u
 				break
 		elif u == goal:
@@ -788,12 +816,32 @@ static func find_path(fl: Dictionary, goal: int, block: PackedByteArray, adjacen
 			var v := _snb[u * 8 + k]
 			if v < 0 or (has_block and block[v] != 0) or (coast and _cd[v] > lim):
 				continue
-			var c := _cost_w[k] if wind else (10 if k % 2 == 0 else 14)
+			var c := cs[k]
 			var ng := gu + c if left >= c else (t + 1) * full + c
-			if ng < g[v]:
+			var gv := g[v]
+			if ng < gv:
+				if gv == INF:
+					# The estimate (as _hs, inline): the diagonal part on the
+					# goal's diagonal, the rest on its axis.
+					var dx := gx - ux - dxs[k]
+					var dy := gy - uy - dys[k]
+					var ax := absi(dx)
+					var ay := absi(dy)
+					var dg := mini(ax, ay)
+					var dd := (1 if dy < 0 else 3) if dx >= 0 else (7 if dy < 0 else 5)
+					var sd := (2 if dx > 0 else 6) if ax >= ay else (4 if dy > 0 else 0)
+					hh[v] = (dg * cs[dd] + (maxi(ax, ay) - dg) * cs[sd]) * 5 / 4
 				g[v] = ng
 				prev[v] = u
-				CGrid._push(heap, (ng + _hs(v, gx, gy, w, cmin)) * 65536 + v)
+				var fv := ng + hh[v]
+				if fv >= bk.size():
+					bk.resize(fv + 64)
+				if bk[fv] == null:
+					bk[fv] = [v]
+				else:
+					(bk[fv] as Array).append(v)
+				if fv < cur:
+					cur = fv
 	if found < 0:
 		return {}
 	var path: Array = []
@@ -815,10 +863,26 @@ static func find_path(fl: Dictionary, goal: int, block: PackedByteArray, adjacen
 	return {"path": path, "t": ts, "m": ms}
 
 
-static func _hs(c: int, gx: int, gy: int, w: int, cmin: int) -> int:
-	var dx := absi(c % w - gx)
-	var dy := absi(c / w - gy)
-	return (cmin * maxi(dx, dy) + cmin * 4 / 10 * mini(dx, dy)) * 3 / 2
+## The search's estimate from cell c to the goal (gx, gy): the cheapest
+## straight-line way in free water with the step costs `cs` (by direction),
+## the diagonal part on the goal's diagonal and the rest on its axis.
+static func _hs(c: int, gx: int, gy: int, w: int, cs: PackedInt32Array) -> int:
+	var dx := gx - c % w
+	var dy := gy - c / w
+	var ax := absi(dx)
+	var ay := absi(dy)
+	var dg := mini(ax, ay)
+	var d := (1 if dy < 0 else 3) if dx >= 0 else (7 if dy < 0 else 5)
+	var s := (2 if dx > 0 else 6) if ax >= ay else (4 if dy > 0 else 0)
+	return (dg * cs[d] + (maxi(ax, ay) - dg) * cs[s]) * 5 / 4
+
+
+## Step costs by direction for the search's estimate (with the wind or rowed).
+static func _hcost(wind: bool) -> PackedInt32Array:
+	var cs := PackedInt32Array()
+	for k in 8:
+		cs.append(_cost_w[k] if wind else (10 if k % 2 == 0 else 14))
+	return cs
 
 
 ## Sea cells fleet fl reaches: per cell the turn (0 this turn ... max_t), -1
@@ -920,13 +984,66 @@ static func plan(st: Dictionary, f: int, fid: int, dest: int, tgt: int = -1, max
 			return {"why": _rules().can_enter(st, f, r)}
 	if coastal(fl) and not coastal_link(cell(fl), dest):
 		return {"why": "too far from the coast for canoes"}
-	var p := find_path(fl, dest, block_mask(st, f, tgt), landing or tgt >= 0, max_turns)
+	var block := block_mask(st, f, tgt)
+	var p := _cached_route(fl, dest, block, max_turns) if tgt < 0 else {}
+	if p.is_empty():
+		p = find_path(fl, dest, block, landing or tgt >= 0, max_turns)
 	if p.is_empty():
 		return {"why": "no way there by sea"}
 	p["goal"] = dest
 	p["land"] = 1 if landing else 0
 	p["tgt"] = tgt
 	return p
+
+
+## The rest of the route fleet fl was found last turn to `goal` (state
+## "route", "rgoal": the cells not yet sailed), as find_path returns it,
+## when it still starts beside the fleet, keeps clear of `block` (and the
+## open sea for canoes) and ends within max_turns; else {} (search again).
+## A route the search found stays the cheapest while nothing blocks it, so
+## a long voyage is searched once, not every turn.
+static func _cached_route(fl: Dictionary, goal: int, block: PackedByteArray, max_turns: int) -> Dictionary:
+	if not fl.has("route") or int(fl.get("rgoal", -1)) != goal:
+		return {}
+	var route: Array = fl["route"]
+	var full := speed(fl)
+	if route.is_empty() or full <= 0:
+		return {}
+	var wind := sails(fl)
+	var coast := coastal(fl)
+	var lim := int(CData.ship_const("COASTAL_CELLS", 2))
+	var has_block := block.size() == CGrid.count()
+	var u := cell(fl)
+	var gu := 0
+	var ts: Array = []
+	var ms: Array = []
+	for c in route:
+		var v := int(c)
+		var k := -1
+		for d in 8:
+			if _snb[u * 8 + d] == v:
+				k = d
+				break
+		if k < 0 or (has_block and block[v] != 0) or (coast and _cd[v] > lim):
+			return {}
+		var t := gu / full
+		var left := full - (gu - t * full)
+		if gu > 0 and gu % full == 0:
+			t = gu / full - 1
+			left = 0
+		var cost := _cost_w[k] if wind else (10 if k % 2 == 0 else 14)
+		gu = gu + cost if left >= cost else (t + 1) * full + cost
+		var tt := gu / full
+		var lf := full - (gu - tt * full)
+		if gu > 0 and gu % full == 0:
+			tt -= 1
+			lf = 0
+		if tt > max_turns:
+			return {}
+		ts.append(tt)
+		ms.append(lf)
+		u = v
+	return {"path": route.duplicate(), "t": ts, "m": ms}
 
 
 static func move_check(st: Dictionary, f: int, fid: int, dest: int, tgt: int = -1) -> String:
@@ -979,6 +1096,11 @@ static func execute_moves(st: Dictionary, moves: Array) -> void:
 			if int(p["t"][i]) == 0:
 				steps.append(int(path[i]))
 		var done := steps.size() == path.size()
+		fl.erase("route")
+		fl.erase("rgoal")
+		if not done and int(p["tgt"]) < 0:
+			fl["route"] = path.slice(steps.size())
+			fl["rgoal"] = int(p["goal"])
 		if done or int(m[3]) == 0:
 			_drop_voyage(fl)
 		else:
@@ -996,6 +1118,13 @@ static func execute_moves(st: Dictionary, moves: Array) -> void:
 	var rounds := 0
 	for p in plans:
 		rounds = maxi(rounds, (p["steps"] as Array).size())
+		# The fleets at war with it (the wars do not change while they sail).
+		var pf := int(fleet(st, int(p["id"]))["f"])
+		var foes0: Array = []
+		for e in fleets(st):
+			if CState.at_war(st, pf, int(e["f"])):
+				foes0.append(e)
+		p["foes"] = foes0
 	for i in rounds:
 		for p in plans:
 			if bool(p["stop"]) or i >= (p["steps"] as Array).size():
@@ -1008,8 +1137,8 @@ static func execute_moves(st: Dictionary, moves: Array) -> void:
 			place(fl, c)
 			_mlog.append([int(fl["id"]), c])
 			var foes: Array = []
-			for e in fleets(st):
-				if CState.at_war(st, int(fl["f"]), int(e["f"])) and CGrid.within(c, cell(e), FLEET_ZONE):
+			for e in p["foes"]:
+				if not (e["ships"] as Array).is_empty() and CGrid.within(c, cell(e), FLEET_ZONE):
 					foes.append(e)
 			if foes.is_empty():
 				continue
@@ -1053,6 +1182,8 @@ static func sea_battle(st: Dictionary, mover: Dictionary, foes: Array, c: int) -
 	for e in att + dfn:
 		ids[int(e["id"])] = 1
 		_drop_voyage(e)
+		e.erase("route")
+		e.erase("rgoal")
 		e["moved"] = 1
 	resolve(st, att, dfn, c)
 	return ids
@@ -1090,20 +1221,32 @@ static func resolve(st: Dictionary, att: Array, dfn: Array, c: int) -> void:
 	var lv := vd if att_won else va
 	var share := wv * 100 / maxi(wv + lv, 1)
 	var wf := int(win[0]["f"]) if not win.is_empty() else -1
-	var pirate := wf >= 0 and PIRATES.has(str(CData.FACTIONS[wf]["key"]))
+	var pirate: bool = _csea().pirate(wf)
 	var cap_pct := PIRATE_CAPTURE_PCT if pirate else CAPTURE_PCT
 	var lost: Array = []   # [faction, ship key, 0 sunk / 1 taken]
 	var prizes: Array = []
+	var gold := 0          # prize money (N2: the captor's plunder)
+	var treasure := 0      # treasure galleons taken
 	var loss_pct := clampi(LOSS_BASE + 2 * (share - 50), LOSS_BASE, LOSS_MAX)
 	for fl in lose:
 		var keep: Array = []
+		var lp := loss_pct
+		if _csea().pirate(int(fl["f"])):
+			lp = lp * int(CData.ship_const("PIRATE_ESCAPE_PCT", 100)) / 100  # (N2) pirates scatter
 		for s in fl["ships"]:
 			var row := CData.ship_row(str(s["t"]))
-			if CState.rand(st, 100) < loss_pct:
-				var taken := int(row.get("oars", 0)) == 0 and CState.rand(st, 100) < cap_pct
+			if CState.rand(st, 100) < lp:
+				var cp := cap_pct
+				if int(s.get("g", 0)) > 0:
+					cp = maxi(cp, int(CData.ship_const("TREASURE_TAKEN_PCT", cap_pct)))
+				var taken := int(row.get("oars", 0)) == 0 and CState.rand(st, 100) < cp
 				lost.append([int(fl["f"]), str(s["t"]), 1 if taken else 0])
 				if taken:
 					prizes.append({"t": str(s["t"]), "h": TAKEN_PCT, "c": TAKEN_PCT})
+					if wf >= 0:
+						var pm: Array = _csea().prize_money(st, wf, int(fl["f"]), [s])
+						gold += int(pm[0])
+						treasure += int(pm[1])
 				continue
 			s["h"] = int(s["h"]) - 15 - CState.rand(st, 25)
 			s["c"] = maxi(int(s["c"]) - 10 - CState.rand(st, 20), 5)
@@ -1151,9 +1294,14 @@ static func resolve(st: Dictionary, att: Array, dfn: Array, c: int) -> void:
 			df.append(int(fl["f"]))
 	var stats: Dictionary = st["stats"]
 	stats["sea_battles"] = int(stats.get("sea_battles", 0)) + 1
-	_rules().event(st, {"k": "sea_battle", "x": CGrid.cx(c), "y": CGrid.cy(c), "att": af, "def": df, "af": aid,
+	var ev := {"k": "sea_battle", "x": CGrid.cx(c), "y": CGrid.cy(c), "att": af, "def": df, "af": aid,
 		"df": did, "won": 0 if att_won else 1, "pa": pa, "pd": pd, "lost": lost, "taken": prizes.size(),
-		"sunk": sunk, "auto": 1})
+		"sunk": sunk, "auto": 1}
+	if gold > 0:
+		ev["gold"] = gold
+	if treasure > 0:
+		ev["treasure"] = treasure
+	_rules().event(st, ev)
 
 
 ## Troops beyond what fleet fl's ships now carry drown (the last aboard
@@ -1197,7 +1345,8 @@ static func _fall_back(_st: Dictionary, fl: Dictionary, c: int, win: Array) -> v
 # ------------------------------------------------------------ end of turn ---
 
 ## End of turn: ships ordered this turn are launched (they join a fleet of
-## ours at the dock, else form one), fleets in an own port are repaired,
+## ours at the dock, else form one), enemy fleets within each other's zone
+## fight (N2), fleets in an own port are repaired (more in a pirate haven),
 ## fleets at sea lose crew (scurvy), the fleets of dead factions go;
 ## every fleet may sail again.
 static func end_of_turn(st: Dictionary) -> void:
@@ -1224,15 +1373,37 @@ static func end_of_turn(st: Dictionary) -> void:
 			else:
 				(into["ships"] as Array).append(ship)
 			_rules().event(st, {"k": "ship_built", "f": o, "r": r, "ship": str(key), "fleet": int(into["id"])})
+	# Enemy fleets lying within each other's zone (a war declared, a ship
+	# launched beside an enemy) fight now, the lowest id attacking; so no
+	# fleet stays penned inside an enemy's zone.
+	var ids: Array[int] = []
+	for fl in fleets(st):
+		ids.append(int(fl["id"]))
+	for id in ids:
+		var fl := fleet(st, id)
+		if fl.is_empty() or (fl["ships"] as Array).is_empty():
+			continue
+		var foes: Array = []
+		for e in fleets(st):
+			if not (e["ships"] as Array).is_empty() and CState.at_war(st, int(fl["f"]), int(e["f"])) \
+					and CGrid.within(cell(fl), cell(e), FLEET_ZONE):
+				foes.append(e)
+		if not foes.is_empty():
+			sea_battle(st, fl, foes, cell(fl))
 	var keep: Array = []
 	for fl in fleets(st):
 		var f := int(fl["f"])
 		if not CState.alive(st, f) or (fl["ships"] as Array).is_empty():
 			continue
 		var r := port_of(st, fl, f)
+		if r < 0 and _csea().pirate(f):
+			r = _csea().patron_port(st, fl)  # (N2) privateers refit in their patron's ports
+		var haven := 0
+		if r >= 0 and _csea().pirate(f):
+			haven = int(CData.ship_const("HAVEN_REPAIR", 0))  # (N2: a pirate haven)
 		for s in fl["ships"]:
 			if r >= 0:
-				var add := REPAIR + REPAIR_YARD * CState.building(st, r, CData.SHIPYARD)
+				var add := REPAIR + REPAIR_YARD * CState.building(st, r, CData.SHIPYARD) + haven
 				s["h"] = mini(int(s["h"]) + add, 100)
 				s["c"] = mini(int(s["c"]) + add, 100)
 			elif int(s["c"]) > SCURVY_FLOOR:

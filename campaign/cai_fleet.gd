@@ -20,7 +20,13 @@ extends RefCounted
 ##     free fleet: beside it, it boards and sails (3.); else the fleet sails
 ##     to the coast cell nearest the army and the army marches there (it is
 ##     kept out of the land plans: CAI.fleet_reserved);
-##  6. the rest go home to a port of ours when damaged or when a stronger
+##  6. (N2) free fleets in good repair blockade the richest enemy port
+##     within BLOCKADE_TURNS whose defenders they outgun by SAFE_PCT (a
+##     station on its approach, outside enemy zones), or keep the one they
+##     hold; pirates hunt the flota (FLOTA_PCT, within FLOTA_TURNS) and
+##     prefer weak, rich prey; the nations hunt pirate fleets harder by
+##     their infamy; the flota itself sails by the rules (CSea);
+##  7. the rest go home to a port of ours when damaged or when a stronger
 ##     enemy fleet is near (no suicide); voyages avoid enemy fleets' zones.
 ## Distances for choices are straight-line estimates (octile cells at the
 ## fleet's mean pace); only the chosen voyage is searched (CFleet.plan).
@@ -31,6 +37,7 @@ const CRules := preload("res://campaign/crules.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
 const CAI := preload("res://campaign/cai.gd")
+const CSea := preload("res://campaign/csea.gd")
 
 const ATTACK_PCT := 140      # attack an enemy fleet with this % of its power
 const LAND_PCT := 110        # land against a region whose defence the troops beat by this %
@@ -41,28 +48,72 @@ const DANGER_CELLS := 30
 const DAMAGED_PCT := 60      # mean hull below this: home for repairs
 const MAX_SHIPS := 14
 const MAX_TURNS := 8         # landings further than this (estimated turns) are not considered
+const BLOCKADE_TURNS := 3    # (N2) blockade ports at most this far (estimated turns)
+const SAFE_PCT := 130        # ... whose defenders near the harbour we outgun by this %
+const BLOCKADE_HULL := 70    # ... with a mean hull of at least this
+const GUARD_CELLS := 30      # defenders counted within this of the harbour (a turn's sail)
+const FLOTA_PCT := 110       # attack the flota with this % of its power (pirates PIRATE_FLOTA_PCT)
+const PIRATE_FLOTA_PCT := 90
+const FLOTA_TURNS := 3       # ... within this many estimated turns (pirates; nations 2)
+const PIRATE_ATTACK_PCT := 130
+const PIRATE_DAMAGED_PCT := 75  # pirates make for a haven sooner ...
+const PIRATE_DANGER_PCT := 100  # ... and shun any navy their match
 
 
-static func act(st: Dictionary, f: int, moves: Array, fmoves: Array) -> void:
+## Memos of one act (the fleets do not change while it plans): fleet id ->
+## power, region -> its side's guard, the hostile harbours.
+static var _pw := {}
+static var _gd := {}
+static var _hostile_hb: Array[int] = []
+
+
+## Fleet e's power (memo of this act).
+static func _power(e: Dictionary) -> int:
+	var id := int(e["id"])
+	if not _pw.has(id):
+		_pw[id] = CFleet.power(e)
+	return int(_pw[id])
+
+
+static func act(st: Dictionary, f: int, moves: Array, fmoves: Array, cx_in: Dictionary = {}) -> void:
 	if not CFleet.on(st) or not CState.alive(st, f):
 		return
 	_debt(st, f)
 	_merge(st, f)
 	_build(st, f)
+	_pw = {}
+	_gd = {}
+	_hostile_hb = []
+	for r in CData.region_count():
+		if CFleet.harbour(r) >= 0 and CState.at_war(st, f, CState.owner(st, r)):
+			_hostile_hb.append(CFleet.harbour(r))
 	var mine: Array = []
 	for fl in CFleet.fleets_of(st, f):
-		if int(fl["moved"]) == 0 and not (fl["ships"] as Array).is_empty():
+		if int(fl["moved"]) == 0 and not (fl["ships"] as Array).is_empty() and not CSea.is_flota(fl):
 			mine.append(fl)
 	if mine.is_empty():
 		return
-	var cx := CAI._context6(st, f)
+	var cx := cx_in if not cx_in.is_empty() else CAI._context6(st, f)
 	var used := {}
 	var reserved: Dictionary = CAI.fleet_reserved
-	# Transport first: boarding now changes what is loaded.
+	# The flota first (N2): every empty fleet that can catch a treasure fleet.
+	for fl in mine:
+		if not (fl["carry"] as Array).is_empty():
+			continue
+		var tt := _prey(st, f, fl, true)
+		if tt >= 0:
+			used[int(fl["id"])] = 1
+			fl.erase("job")
+			var ic := _intercept(st, fl, CFleet.fleet(st, tt))
+			if ic >= 0:
+				fmoves.append([int(fl["id"]), ic, f, 0, -1])  # lie across its course
+			else:
+				fmoves.append([int(fl["id"]), -1, f, 0, tt])
+	# Transport: boarding now changes what is loaded.
 	var cands := _stranded(st, f, cx)
 	var taken := {}
 	for fl in mine:
-		if not (fl["carry"] as Array).is_empty():
+		if not (fl["carry"] as Array).is_empty() or used.has(int(fl["id"])):
 			continue
 		var a := _pick_army(st, fl, cands, taken)
 		if a.is_empty():
@@ -103,11 +154,25 @@ static func act(st: Dictionary, f: int, moves: Array, fmoves: Array) -> void:
 		if tgt >= 0:
 			used[int(fl["id"])] = 1
 			fmoves.append([int(fl["id"]), -1, f, 0, tgt])
+	# Blockades (N2): the richest enemy port in reach whose guard we outgun.
+	var taken_ports := {}
+	for fl in mine:
+		if used.has(int(fl["id"])) or not (fl["carry"] as Array).is_empty():
+			continue
+		if _hull(fl) < BLOCKADE_HULL or _danger(st, f, fl):
+			continue
+		var bp := _blockade(st, f, fl, taken_ports)
+		if bp.is_empty():
+			continue
+		used[int(fl["id"])] = 1
+		taken_ports[int(bp[0])] = 1
+		if int(bp[1]) != CFleet.cell(fl):
+			fmoves.append([int(fl["id"]), int(bp[1]), f, 0, -1])
 	# Home: damaged, or a stronger enemy near.
 	for fl in mine:
 		if used.has(int(fl["id"])) or CFleet.port_of(st, fl, f) >= 0:
 			continue
-		if _hull(fl) >= DAMAGED_PCT and not _danger(st, f, fl):
+		if _hull(fl) >= (PIRATE_DAMAGED_PCT if CSea.pirate(f) else DAMAGED_PCT) and not _danger(st, f, fl):
 			continue
 		var home := _home(st, f, fl)
 		if home >= 0:
@@ -123,7 +188,7 @@ static func _debt(st: Dictionary, f: int) -> void:
 	var bk := -1
 	var bp := 1 << 30
 	for fl in CFleet.fleets_of(st, f):
-		if not (fl["carry"] as Array).is_empty():
+		if not (fl["carry"] as Array).is_empty() or CSea.is_flota(fl):
 			continue
 		for k in (fl["ships"] as Array).size():
 			var p := CFleet.ship_power(fl["ships"][k])
@@ -139,10 +204,13 @@ static func _merge(st: Dictionary, f: int) -> void:
 	var list := CFleet.fleets_of(st, f)
 	for i in list.size():
 		var a: Dictionary = list[i]
+		if CSea.is_flota(a):
+			continue
 		if not CFleet.fleet(st, int(a["id"])).is_empty() and int(a["moved"]) == 0 and (a["carry"] as Array).is_empty():
 			for j in range(i + 1, list.size()):
 				var b: Dictionary = list[j]
-				if CFleet.fleet(st, int(b["id"])).is_empty() or int(b["moved"]) != 0 or not (b["carry"] as Array).is_empty():
+				if CFleet.fleet(st, int(b["id"])).is_empty() or int(b["moved"]) != 0 or not (b["carry"] as Array).is_empty() \
+						or CSea.is_flota(b):
 					continue
 				if CGrid.cheb(CFleet.cell(a), CFleet.cell(b)) <= 1 and CFleet.coastal(a) == CFleet.coastal(b):
 					CRules.apply_order(st, f, {"t": "fmerge", "fleet": int(b["id"]), "into": int(a["id"])})
@@ -158,10 +226,11 @@ static func _build(st: Dictionary, f: int) -> void:
 			ports.append(r)
 	if ports.is_empty():
 		return
+	var pv := {}
+	for r in ports:
+		pv[r] = CState.building(st, r, CData.SHIPYARD) * 100 + (50 if CData.is_capital(r) else 0) + CAI.region_value(st, r, f)
 	ports.sort_custom(func(a, b):
-		var va := CState.building(st, a, CData.SHIPYARD) * 100 + (50 if CData.is_capital(a) else 0) + CAI.region_value(st, a, f)
-		var vb := CState.building(st, b, CData.SHIPYARD) * 100 + (50 if CData.is_capital(b) else 0) + CAI.region_value(st, b, f)
-		return va > vb or (va == vb and a < b))
+		return int(pv[a]) > int(pv[b]) or (int(pv[a]) == int(pv[b]) and a < b))
 	# A shipyard at the best port when there is none (and the people sail).
 	var fk := str(CData.FACTIONS[f]["key"])
 	var yard_ships := false
@@ -181,6 +250,8 @@ static func _build(st: Dictionary, f: int) -> void:
 	var pw := 0
 	var ships := 0
 	for fl in CFleet.fleets_of(st, f):
+		if CSea.is_flota(fl):
+			continue
 		cap += CFleet.capacity(fl)
 		pw += CFleet.power(fl)
 		ships += (fl["ships"] as Array).size()
@@ -221,7 +292,7 @@ static func _build(st: Dictionary, f: int) -> void:
 static func _stranded(st: Dictionary, f: int, cx: Dictionary) -> Array:
 	var work := {}
 	for r in CData.region_count():
-		if CState.at_war(st, f, CState.owner(st, r)):
+		if CState.at_war(st, f, CState.owner(st, r)) and not CSea.spared(st, f, r):
 			work[int(CData.REGIONS[r]["land"])] = 1
 	var out: Array = []
 	for a in CState.armies_of(st, f):
@@ -322,13 +393,13 @@ static func _landing(st: Dictionary, f: int, fl: Dictionary) -> int:
 		var o := CState.owner(st, t)
 		var b := CFleet.beach(t)
 		if b < 0 or not CState.at_war(st, f, o) or not CState.battle_at(st, t).is_empty() \
-				or not CState.siege_at(st, t).is_empty():
-			continue
-		var d := maxi(CAI.target_defence(st, f, t), 1)
-		if s * 100 < d * LAND_PCT or not _approach(st, fl, b):
+				or not CState.siege_at(st, t).is_empty() or CSea.spared(st, f, t):
 			continue
 		var tt := _turns(fl, b)
-		if tt > MAX_TURNS:
+		if tt > MAX_TURNS or not _approach(st, fl, b):
+			continue
+		var d := maxi(CAI.target_defence(st, f, t), 1)
+		if s * 100 < d * LAND_PCT:
 			continue
 		var v := CAI.region_value(st, t, f) * 1000 / d / (1 + tt)
 		if v > bv:
@@ -359,23 +430,162 @@ static func _landing(st: Dictionary, f: int, fl: Dictionary) -> int:
 # ---------------------------------------------------------------- fights ---
 
 ## An enemy fleet at war fl reaches this turn and beats by ATTACK_PCT (the
-## weakest such, ties by id), -1 none.
-static func _prey(st: Dictionary, f: int, fl: Dictionary) -> int:
-	var mine := CFleet.power(fl)
+## weakest such, ties by id), -1 none. N2: the flota (treasure first) within
+## FLOTA_TURNS for pirates (2 for nations) at FLOTA_PCT / PIRATE_FLOTA_PCT;
+## pirate fleets at ATTACK_PCT less half their infamy (at least 100), within
+## a turn more from infamy 40; pirates attack at PIRATE_ATTACK_PCT.
+## treasure_only: the flota alone (before the transports take the fleets).
+static func _prey(st: Dictionary, f: int, fl: Dictionary, treasure_only: bool = false) -> int:
+	var mine := _power(fl)
+	var pir := CSea.pirate(f)
 	var best := -1
 	var bp := 1 << 30
+	var bg := 0
 	for e in CFleet.fleets(st):
 		if not CState.at_war(st, f, int(e["f"])):
 			continue
-		var ep := CFleet.power(e)
-		if mine * 100 < ep * ATTACK_PCT or _turns(fl, CFleet.cell(e)) > 0:
+		var ep := _power(e)
+		var pct := PIRATE_ATTACK_PCT if pir else ATTACK_PCT
+		var horizon := 0
+		var g := CSea.treasure(e)
+		if treasure_only and g <= 0:
 			continue
+		if g > 0:
+			pct = PIRATE_FLOTA_PCT if pir else FLOTA_PCT
+			horizon = FLOTA_TURNS if pir else 2
+		elif CSea.pirate(int(e["f"])):
+			var inf := CSea.infamy(st, int(e["f"]))
+			pct = maxi(pct - inf / 2, 100)
+			horizon = 1 if inf >= 40 else 0
+		if _turns(fl, CFleet.cell(e)) > horizon or mine * 100 < ep * pct:
+			continue
+		if mine * 100 < _defence_at(st, e) * pct:
+			continue  # (its friends and its port's guns beside it)
 		if CFleet.coastal(fl) and not CFleet.coastal_link(CFleet.cell(fl), CFleet.cell(e)):
 			continue
-		if ep < bp:
+		if g > bg or (g == bg and ep < bp):
+			bg = g
 			bp = ep
 			best = int(e["id"])
 	return best
+
+
+## (N2) Where fleet fl lies in wait for fleet e on its course (e's route,
+## the cells it has yet to sail): the first cell of it beyond what e sails
+## in a turn that fl reaches this turn, else the cell two turns of e's sail
+## ahead; -1 when e has no route (then fl chases it).
+static func _intercept(st: Dictionary, fl: Dictionary, e: Dictionary) -> int:
+	var route: Array = e.get("route", [])
+	if route.is_empty():
+		return -1
+	var f := int(fl["f"])
+	var pace := maxi(CFleet.speed(e) / 12, 1)  # (cells a turn, about)
+	var far := -1
+	for i in route.size():
+		var c := int(route[i])
+		if i + 1 < pace:
+			continue
+		var reach := _turns(fl, c) == 0
+		if not reach and (far >= 0 or i < pace * 2):
+			continue
+		var zo := CFleet.zone_owner(st, f, c)
+		if (zo >= 0 and zo != int(e["id"])) or _near_port(c):
+			continue  # (not under another enemy's guns)
+		if reach:
+			return c
+		far = c
+	return far
+
+
+## Cell c is within PORT_CELLS + 2 of the harbour of a port at war with
+## the acting faction (_hostile_hb, this act's).
+static func _near_port(c: int) -> bool:
+	for hb in _hostile_hb:
+		if CGrid.cheb(hb, c) <= CFleet.PORT_CELLS + 2:
+			return true
+	return false
+
+
+## Power that would meet an attack on fleet e: the fleets of its side
+## within FLEET_ZONE + 1 of it, times its port's guns (CFleet's defender
+## bonus) when it lies in its own port.
+static func _defence_at(st: Dictionary, e: Dictionary) -> int:
+	var p := 0
+	var c := CFleet.cell(e)
+	for x in CFleet.fleets(st):
+		if CGrid.cheb(CFleet.cell(x), c) <= CFleet.FLEET_ZONE + 1 and CState.friendly(st, int(x["f"]), int(e["f"])):
+			p += _power(x)
+	var r := CFleet.port_of(st, e, int(e["f"]))
+	if r >= 0:
+		p = p * (CFleet.PORT_DEF_PCT + CFleet.PORT_WALL_PCT * CState.walls(st, r)) / 100
+	return p
+
+
+## (N2) A port for fleet fl of faction f to blockade: [region, station
+## cell] or []. Keeps the station it holds (within BLOCKADE_CELLS of an
+## enemy harbour, its guard outgunned); else the enemy port at war with the
+## most sea trade per estimated turn (at most BLOCKADE_TURNS), not taken by
+## another fleet of ours this turn, whose guard (fleets of its side within
+## GUARD_CELLS) we outgun by SAFE_PCT; the station is the free sea cell on
+## its approach nearest us (outside enemy zones; ties by cell index).
+static func _blockade(st: Dictionary, f: int, fl: Dictionary, taken: Dictionary) -> Array:
+	var mine := _power(fl)
+	var rad := CSea.k("BLOCKADE_CELLS", 3)
+	var here := CFleet.cell(fl)
+	var best := -1
+	var bv := -1
+	for r in CData.region_count():
+		var hb := CFleet.harbour(r)
+		var o := CState.owner(st, r)
+		if hb < 0 or o < 0 or taken.has(r) or not CState.at_war(st, f, o):
+			continue
+		var trade := CSea.sea_trade(st, r)
+		if trade <= 0:
+			continue
+		if not _gd.has(r):
+			_gd[r] = _guard(st, o, hb)
+		if int(_gd[r]) * SAFE_PCT > mine * 100:
+			continue
+		if CGrid.cheb(here, hb) <= rad and CFleet.zone_owner(st, f, here) < 0:
+			return [r, here]  # we hold it
+		var tt := _turns(fl, hb)
+		if tt > BLOCKADE_TURNS:
+			continue
+		var v := trade * 100 / (1 + tt)
+		if v > bv:
+			bv = v
+			best = r
+	if best < 0:
+		return []
+	var hb2 := CFleet.harbour(best)
+	var lim := int(CData.ship_const("COASTAL_CELLS", 2))
+	var rg := int(fl.get("rgoal", -1))
+	if rg >= 0 and CFleet.is_sea(rg) and CGrid.cheb(rg, hb2) <= rad and CFleet.zone_owner(st, f, rg) < 0 \
+			and not (CFleet.coastal(fl) and (CFleet.coast_dist(rg) > lim or not CFleet.coastal_link(here, rg))):
+		return [best, rg]  # (the station it was sailing for: its route is kept)
+	var sc := -1
+	var sd := 1 << 30
+	for dy in range(-rad, rad + 1):
+		for dx in range(-rad, rad + 1):
+			var j := CGrid.at(CGrid.cx(hb2) + dx, CGrid.cy(hb2) + dy)
+			if j < 0 or not CFleet.is_sea(j) or CFleet.zone_owner(st, f, j) >= 0:
+				continue
+			if CFleet.coastal(fl) and (CFleet.coast_dist(j) > lim or not CFleet.coastal_link(here, j)):
+				continue
+			var d := CGrid.octile(here, j)
+			if d < sd or (d == sd and j < sc):
+				sd = d
+				sc = j
+	return [best, sc] if sc >= 0 else []
+
+
+## Power of the fleets on faction o's side within GUARD_CELLS of cell hb.
+static func _guard(st: Dictionary, o: int, hb: int) -> int:
+	var p := 0
+	for e in CFleet.fleets(st):
+		if CGrid.cheb(CFleet.cell(e), hb) <= GUARD_CELLS and CState.friendly(st, o, int(e["f"])):
+			p += _power(e)
+	return p
 
 
 static func _hull(fl: Dictionary) -> int:
@@ -388,9 +598,10 @@ static func _hull(fl: Dictionary) -> int:
 
 
 static func _danger(st: Dictionary, f: int, fl: Dictionary) -> bool:
-	var mine := CFleet.power(fl)
+	var mine := _power(fl)
+	var pct := PIRATE_DANGER_PCT if CSea.pirate(f) else DANGER_PCT
 	for e in CFleet.fleets(st):
-		if CState.at_war(st, f, int(e["f"])) and CFleet.power(e) * 100 > mine * DANGER_PCT \
+		if CState.at_war(st, f, int(e["f"])) and _power(e) * 100 > mine * pct \
 				and CGrid.cheb(CFleet.cell(e), CFleet.cell(fl)) <= DANGER_CELLS:
 			return true
 	return false
@@ -400,7 +611,10 @@ static func _danger(st: Dictionary, f: int, fl: Dictionary) -> bool:
 static func _home(st: Dictionary, f: int, fl: Dictionary) -> int:
 	var best := -1
 	var bd := 1 << 30
-	for r in CState.regions_of(st, f):
+	for r in CData.region_count():
+		var o := CState.owner(st, r)
+		if o != f and not (CSea.pirate(f) and o >= 0 and CSea.has_marque(st, f, o)):
+			continue  # (N2: privateers put in at their patron's ports)
 		var dk := CFleet.dock(r)
 		if dk < 0 or CFleet.zone_owner(st, f, dk) >= 0 or (CFleet.coastal(fl) and not CFleet.coastal_link(CFleet.cell(fl), dk)):
 			continue

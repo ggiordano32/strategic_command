@@ -78,3 +78,105 @@ const START_FLEETS: Array = [
 	["itza", "valladolid", ["war_canoe", "war_canoe"]],
 	["miskito", "cabo_gracias", ["war_canoe", "war_canoe", "war_canoe", "sloop"]],
 ]
+
+# ------------------------------------------------------------------- N2 ---
+# Trade at sea, blockades, the flota and the pirate loop (campaign/csea.gd;
+# docs/CAMPAIGN.md "Trade, blockades, the flota and pirates (N2)").
+
+## A port's trade travels by sea: SEA_TRADE_PCT % of its wealth income plus
+## its markets' income. An enemy fleet at war within BLOCKADE_CELLS
+## (Chebyshev) of its harbour, stronger than the owner's side there,
+## blockades it: the owner loses BLOCKADE_CUT_PCT % of that trade a turn and
+## the blockader takes BLOCKADE_TAKE_PCT % of what is lost (a pirate
+## PIRATE_TAKE_PCT %).
+const SEA_TRADE_PCT := 100
+const BLOCKADE_CELLS := 3
+const BLOCKADE_CUT_PCT := 75
+const BLOCKADE_TAKE_PCT := 40
+const PIRATE_TAKE_PCT := 80
+
+## A ship taken in a sea battle pays its captor PRIZE_PCT % of its cost
+## (a pirate PIRATE_PRIZE_PCT %); a treasure galleon its treasure besides.
+## A lost treasure ship is taken (not sunk) at least TREASURE_TAKEN_PCT %.
+const PRIZE_PCT := 25
+const PIRATE_PRIZE_PCT := 50
+const TREASURE_TAKEN_PCT := 70
+
+## The flota: from turn FLOTA_FIRST, every FLOTA_EVERY turns, the treasure
+## galleons gather (at the end of the turn before) in the docks of
+## FLOTA_PARTS [origin region, faction it pays, [ship keys]] (a part sails
+## while its origin is held by that faction or the flota's owner), sail to
+## FLOTA_MEET's dock (Havana; parts that arrive wait up to FLOTA_WAIT turns
+## for the others and join), then to FLOTA_EXIT [x, y] (a cell of the open
+## sea on the map's north edge: home to Spain by the Gulf Stream), where it
+## leaves the map. Each galleon carries FLOTA_GOLD (paid to its faction on
+## arrival, or to whoever takes it); crews thin at FLOTA_CREW %. Owned by
+## FLOTA_OWNER (else the first part's faction alive); sailed by the rules,
+## not by its owner's orders.
+const FLOTA_FIRST := 4
+const FLOTA_EVERY := 8
+const FLOTA_OWNER := "new_spain"
+const FLOTA_PARTS: Array = [
+	["veracruz", "new_spain", ["galleon", "galleon"]],
+	["portobelo", "tierra_firme", ["galleon", "galleon"]],
+]
+const FLOTA_MEET := "havana"
+const FLOTA_WAIT := 2
+const FLOTA_EXIT: Array[int] = [96, 0]
+const FLOTA_GOLD := 900
+const FLOTA_CREW := 50
+
+## Pirates (factions with "pirate": 1, the Brethren). Their regions yield
+## PIRATE_LAND_PCT % of the usual income; their crews sail for shares, so
+## their upkeep (ships and men) is PIRATE_UPKEEP_PCT %. A pirate faction is
+## not eliminated while it has a ship.
+const PIRATE_LAND_PCT := 75
+const PIRATE_UPKEEP_PCT := 50
+## Beaten pirate ships scatter: each is lost at this % of the usual chance
+## (fast hulls, no colours to defend).
+const PIRATE_ESCAPE_PCT := 50
+
+## Sacking: a pirate army that wins an assault on a port (a region with a
+## harbour) may sack it instead of taking it (policy: the faction's
+## "sack_pol" 0 auto (the AI's rule: hold while it has fewer than
+## PIRATE_HOLD regions, else sack), 1 sack, 2 hold). The sack takes
+## SACK_TURNS turns of the region's income and SACK_TREASURY_PCT % of its
+## owner's treasury (at most SACK_TREASURY_MAX); every building loses a
+## level, the growth is halved; the owner keeps it. A region sacked in the
+## last SACK_COOLDOWN turns yields a quarter (and the AI leaves it alone).
+const PIRATE_HOLD := 2
+const SACK_TURNS := 3
+const SACK_TREASURY_PCT := 15
+const SACK_TREASURY_MAX := 1000
+const SACK_COOLDOWN := 8
+
+## Havens (pirate-held ports): HAVEN_UNITS are HAVEN_PCT % cheaper (+ 1 %
+## per 5 infamy, at most HAVEN_MAX_PCT %); one more recruit a turn per
+## HAVEN_RECRUIT_INFAMY infamy (at most 2); pirate ships there repair
+## HAVEN_REPAIR more.
+const HAVEN_UNITS: Array[String] = ["buccaneers", "cutlass"]
+const HAVEN_PCT := 20
+const HAVEN_MAX_PCT := 45
+const HAVEN_RECRUIT_INFAMY := 30
+const HAVEN_REPAIR := 10
+
+## Infamy (pirates, 0..INFAMY_MAX): + INFAMY_SACK a sack, + INFAMY_PRIZE a
+## ship taken (+ INFAMY_TREASURE a treasure galleon), + 1 a port blockaded a
+## turn; - INFAMY_DECAY a turn. The nations' AI hunts pirates harder by it.
+const INFAMY_MAX := 100
+const INFAMY_SACK := 12
+const INFAMY_PRIZE := 3
+const INFAMY_TREASURE := 8
+const INFAMY_DECAY := 1
+
+## Letters of marque (a treaty between a nation and a pirate faction): at
+## peace with each other for MARQUE_TURNS turns (then it lapses; war breaks
+## it); the pirates' plunder from the nation's enemies at war is
+## MARQUE_BONUS_PCT % more. The AI nation offers one (MARQUE_ASK_CHANCE % a
+## turn) while at war with another nation; an AI pirate accepts while the
+## nation has such an enemy and it holds no other letter; an AI nation
+## grants one asked for while its infamy is under MARQUE_INFAMY_MAX.
+const MARQUE_TURNS := 12
+const MARQUE_BONUS_PCT := 50
+const MARQUE_ASK_CHANCE := 15
+const MARQUE_INFAMY_MAX := 60
