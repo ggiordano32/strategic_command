@@ -1505,6 +1505,198 @@ landed, second after the balance pass:
 - Generation: 15-110 ms a map (punic cities with walls 3 and a ditch the
   most), terrain 5-40 ms.
 
+### Battle-map landforms and shaped settlements (as built, slice 2d, 2026-10-14)
+
+Why (user, 2026-10-14): "The towns also don't need to be perfectly
+circular. They can have some shape to them. ... Cliffs, rock outcroppings
+and forest formed with the landscape that the towns were built around or
+actually look like they utilize would really add to the visuals."
+
+Code: `sim/landforms.gd` (new: cliffs, outcrops, sea cliffs, the pocket
+check, the woods' terrain terms), `sim/mapgen.gd` (`build`: landforms on
+field, crossing and settlement maps, the field graph `_field_nav` /
+`_graph`, `_river_cells`, `_blob_long`, `shape_of` / `shape_pm`, the
+shaped outlines in `plan_outline`, `_flip_land`), `sim/terrain.gd`
+(`_rise` / `_spur` follow the town's shape), `sim/battle_sim.gd` (cell
+kinds `C_ROCK` / `C_CLIFF`, `obs_hi`, `land_only`, `obs_sat`, the field
+graph, squeeze, placement), `game/land_layer.gd` (new: drawing),
+`game/terrain_layer.gd`, `game/tree_layer.gd`.
+
+**Scenario key.** `terrain.landforms`: 1 (default) or 0 (the maps exactly
+as before this slice: no landforms, the old woods, round outlines; for
+tests and set pieces). Landforms need generated hilly ground: kinds
+rolling, ridge, valley, hill, slope (a campaign battle's kind is its
+region's terrain or its cell's hill / ridge override, so the campaign's
+real relief drives them); never on flat, custom or `sym` maps. The ring
+plan (`PLAN_RING`, the sandbox default) and the castrum keep their
+outlines; no rules or keys change for the campaign (`CState.VERSION`
+unchanged; `campaign/` untouched).
+
+**Generation** (integers only, `sim/landforms.gd`'s own xorshift, fixed
+order; built once at setup with the rest of the map, canonical frame, so
+both lockstep peers build the same and nothing is sent):
+- *Cliffs*: seeds among the steepest 6 % of the height nodes (and at
+  least 10 % grade), best of 14 draws; traced both ways along the contour
+  (2 m steps, turning at most 13 degrees a step and 105 in all, so a cliff
+  never curls round) while the ground stays two thirds that steep, 26-64
+  m drawn, kept if 16 m or more; cells within 2.2 m of the line become
+  `C_CLIFF` (a band about 4 m wide). Most per kind (flat, rolling,
+  ridge, valley, hill, slope): 0 / 1 / 3 / 2 / 2 / 2 (half to all of
+  that drawn), one more on rocky ground. Each point carries its downhill
+  angle and a face height (1.4-4.5 m from the grade; view, and the field
+  slice 2b will read for sight).
+- *Sea cliffs* (coastal settlements on a hill or spur, or rocky ground):
+  runs of 30-70 m along the shore just inland of the water, gaps 18-40 m,
+  never by the city (its width + 40 m each side) or its approach.
+- *Outcrops*: 0 / 5 / 12 / 6 / 10 / 8 by kind, x 1.0 / 1.25 / 1.1 / 0.7 /
+  1.5 by palette (plain, arid, dry, green, rocky), 75-125 % of that drawn;
+  each the best of 8 draws by grade, height above the ground round it
+  (crests) and a random term; a boulder of radius 1-3 m and up to two of
+  1 m against it (`C_ROCK`, 2-8 m across); 4 in 10 get a second outcrop
+  10-16 m away (they come in groups).
+- *Clearances*: 18 m from the field's edges; a cliff 12 m, an outcrop 7 m
+  (plus its size) from every other landform, the deployment areas (the
+  centre 70 % of both deployment bands on a field map; the approach
+  corridor and the attackers' ground on a settlement map), a settlement's
+  fields and orchards, its walls (half the wall + a tower + 18 m outside
+  the outline; past the ditch at walls 3; 1.4 x the radius round an open
+  town), the sea and a river (its half width + 8 m, the crossing's 60 m
+  approaches). Landforms therefore never close off ground between
+  themselves, the edges, walls or water; a flood fill from the attackers'
+  ground (4 m blocks, gates open) drops any cliff that would anyway.
+- *Woods that follow the land* (every map with landforms and woods): the
+  big blobs of the old generator lie along the contour where they grow
+  (1.7 x long, 0.6 x wide, amplitude 800), then terrain terms instead of
+  the old "woods favour rises" one: +70 a metre a 4 m cell lies below the
+  mean of the 52 m round it (valley floors and hollows, up to 450), +12 a
+  metre below the map's mean (200), +140 on the lower slopes (5-18 %
+  grade), -260 on steep faces (over 22 %), the lee of the ridges (a wind
+  drawn from the seed: up to +220 on ground falling away with it), a band
+  along a river's banks (4-45 m from the water, up to +320), a fine hash
+  noise (+-120) for ragged edges; no trees on rock, nor within 4 m of a
+  cliff. The histogram thresholds are as before, so a map's woods cover
+  the same share (forest x 0.55 %). The settlement's cleared ground,
+  fields, orchards and approach stay as they were.
+- *Graph*: on a field map with landforms, a lattice of nodes 48 m apart
+  on open ground plus nodes round each landform (beyond a cliff's ends,
+  8 m either side of it, 5 m round an outcrop), edges as the street
+  graph's (clear 3 m lines up to 48 m, pieces joined); on a crossing the
+  landforms' nodes join the river's graph; on a settlement map the street
+  graph's `extra` nodes. Generation (desktop): field maps 70-85 ms (8 ms
+  before); settlements 132 ms mean, 450 ms worst over 1,728 plan x site x
+  coast x walls x level x seed maps (66 / 136 ms before); `_join_components`
+  now picks its candidate pairs one at a time instead of sorting them all
+  (the same pairs in the same order: maps without landforms are byte for
+  byte as before, graphs included).
+
+**Rules.** Rock and cliff cells are impassable to everyone (`_nav_of` 0);
+units path round them over the graph (the settlement maps' path code:
+straight where a 3 m line is clear), their men flow round them (`_flow_slots`,
+`_slide`), a move or a deployment placement on one goes to the nearest
+open ground (`open_snap`). Missiles pass over them (`_obs_top` 0) until
+slice 2b gives them cover and sight; `obs_hi` (static) is 0 on maps whose
+obstacles are only water, rock and cliff, so lines of fire there keep the
+tight ground-only loop. A rock or cliff on one side of a unit is not a
+street: `_squeeze` closes files only for a gap with something on both
+sides. On a field map whose only obstacles are landforms (`land_only`,
+static): routers flee as in the open (the settlement maps' path to the
+edge is not used), a unit is "near an obstacle" (`_u_obs`: its men
+checked against the cells, flows, squeeze, lag) only with a landform
+within 4 m of its box and anchor (4 m cells, `land_sat`; elsewhere 16 m
+cells and 8 m as before), the stuck counter runs only for units near a
+landform (so the stuck release never regroups a unit in the open), the
+anchor's obstacle check is skipped away from them, and men search for
+targets and keep them as in the open (no reach test over a boulder or a
+cliff's foot, no 16 m block counts; a man in the fight blocked by one
+moves along it on one axis or stays, without `_slide`'s trail walk).
+`_near_obs` reads a summed-area
+table of the 16 m obstacle cells (`obs_sat`, static, the same answer as
+the old scan). The cells are in `obs`
+and so in `map_hash` (state hash from tick 0); the view data
+(`map_info["land"]`) is not hashed (derived); new statics are rebuilt by
+setup and left out of snapshots.
+
+**Shaped settlements.** `shape_of(city, kind)` (its own draws from the
+city seed, so every other draw of the plan is as it was): a radius per
+mille by angle = 1000 - elongation x cos 2a + three harmonics (10-70, 40-100,
+20-65 per mille), less its mean. A spur town runs long down the spur
+(elongation 140-210: narrow across, long toward the neck), a hill town
+and a town on the shore along the contours or the shore (-70..-140,
+-90..-150), others +-60. Applied to the polis (vertex radius 90-106 % x
+shape), punic (94-106 % x shape) and oppidum (the oval x shape, its
+funnel included) outlines, at most the old 112 % of the radius (field
+sizes unchanged). The ground follows: the hill's rise and the spur's
+edge use the same shape (the brow 32 m behind the walls instead of 45 on
+a hill), so the walls trace the brow; the acropolis / Byrsa goes to the
+high point (on a hill or spur: within 25-70 of straight back, the hill's
+top at 40 % of the radius), the main street grid of a hill polis / punic
+town runs along the contours (a third of its angle). Gates, towers,
+stairs, wall stretches, posterns, the coast cut, the citadel fitting and
+the street graph are the existing polygon code, unchanged.
+
+**View** (`game/land_layer.gd`, a child of the terrain layer after its
+decals: over the ground, under the cover, trees, works and soldiers;
+drawn once): a cliff is a soft drop shadow down the slope, a face band
+(1.6 m + 0.7 x its height wide, lighter at the brow and darker at the
+foot, shaded by how it turns to the light from the upper left, tapered
+at its ends), hachures (rock ribs and gullies, about every metre), scree
+at the foot, a dark lip and a lit brow line; an outcrop is a shadow and
+irregular boulders (nine-sided, radius jittered) with a lit facet, a top
+highlight, a crack and an outline. Rock colour: the palette's rock a
+fifth toward its ground. Graphics Low draws faces, boulders, shadows and
+the brow only (live). The ground cover glyphs (tufts, scrub) skip rock
+cells. Both soldier render paths are unaffected (canvas drawing).
+Also fixed here: the sea and the ditch had not been drawn since the
+2026-10-10 visual upgrade (the shader's `sea_on` was never set); coastal
+towns show their sea again.
+
+**Measured** (desktop, another agent's runs alongside; scratch harness
+`landforms/harness.gd`: AI vs AI, 5 min field / 10 min settlement
+battles, before -> after on the same scenario):
+- No golden changed: `determinism_test`, `custom_battle_test`,
+  `battle_screen_test`, `lockstep_test`, `campaign_test`, `pack_test` pass
+  unchanged (their pinned trajectories are flat or settlement-free maps);
+  `campaign_sim` hashes unchanged (cdc1d805 32b83031 23f9ed4f 3237d82d
+  a42fc685 b6fe6c2e: the campaign auto-resolves without the battle sim).
+  Maps with `landforms: 0`, flat maps and `sym` maps are byte for byte as
+  before (heights, woods, cells, graphs, outlines; 54 maps checked).
+- Sanity, 17 scenarios + 30 campaign-like maps a pack (regions drawn
+  from each pack, half settlements on their own ground, plan and coast
+  with ladders, a ram and a tower; a third of the field battles at a
+  crossing): Rome 14 cliffs and 97 outcrops on 15 field maps, 29 / 97
+  round 15 settlements; West (mostly flat) 2 / 20 and 20 / 48; no unit
+  unreachable at the start (flood from side 0, gates open) on any map;
+  units stuck over 30 s 3 -> 3 (scenarios; the crossings' as before),
+  Rome fields 1 -> 2, settlements 7 -> 3, West 1 -> 2 / 0 -> 1; sieges
+  decided in 10 minutes 12 -> 12 (Rome), 14 -> 14 (West), mean minutes
+  unchanged. Long sieges (20 min, 6 city seeds each): polis on a hill
+  3/1/2 (attacker / defender / draw) -> 4/2/0, oppidum on a spur 6/0/0 ->
+  5/1/0, punic coastal hill 4/2/0 -> 4/1/1; every scenario siege decided.
+  Ladder probe (`tests/ladder_probe.gd --quick --plans=1,2,3`): 853 of
+  853 points the rule allows climbed (835 of 835 before).
+- Settlement survey (1,728 maps): outer gates identical on every map,
+  citadels 548 -> 544.
+- Time per tick: the harness means, field / settlement, Rome +6.2 % /
+  +2.3 %, West +4.8 % / +13.3 % (one jammed oppidum gate fight; a West map
+  with no landforms read +40 % from load alone), scenarios +2.5 % / +3.4
+  %. Same armies, 12 maps (4 terrain seeds x ridge, hill, rolling),
+  landforms on vs off: +7.9 % ridge, +8.5 % hill, +1.6 % rolling (+6.0 %
+  all); the battles differ, the cost is men meeting rocks (`_slide`:
+  0.12 ms a tick on a ridge map before the cheaper fight slide, which
+  took the ridge / hill figures from +11.5 % to +8 %), paths and flowed
+  places near them (~0.05 ms). Over the slice's +5 % aim on ridge and
+  hill maps: fewer outcrops in the battle band, or a cheaper slide for
+  marching men, would bring it down. `bench_4000_hills` (3 outcrops): phases
+  within 1 %.
+
+**Open.** No settlement stands on a river (city maps have no river;
+river crossings are field maps): "a town on a river bend" needs a city
++ river map. The campaign's "View battle map" preview
+(`game/campaign/city_preview.gd`) shows the new outlines but not the
+rocks and cliffs. Cliffs do not change the height grid (no step: they
+sit on the steepest existing ground). Cover and sight from rocks, cliffs
+and woods: slice 2b.
+
 
 ### Deployment phase (as built, October 2026)
 
@@ -3889,6 +4081,18 @@ muskets by trade, friends of pirates.
 - Real geography (view data + static grid, no state change, `CState.VERSION` 6): the overworld is fitted to ETOPO 2022 elevation (NOAA, public domain) and Natural Earth 1:10m coasts and rivers (public domain). `tools/geo_fit.py` (+ `tools/geo/med.json`: window, projection, cell size, settlements, rivers; the Mediterranean is only the default config) writes `geo_rome.gd` (was `map_geo.gd`) LANDS / ISLANDS / RIVERS, `campaign/data/elev_data.gd` (per cell mean / max / relief / distance to river / class plain-rolling-valley-hill-ridge) and `game/campaign/relief_data.gd` (0.025 degree fine elevation, slope, relief); `campaign_grid.gd` derives hill / ridge from the real class (434 hill, 140 ridge override cells; was 200 / 215 from hand areas, now deleted) and asserts every settlement is on its landmass and every sea-lane port is a coast cell. Terrain view renders the real relief (hillshade + subtle hypsometric tint + crest line, one cached texture; `geo_fields.gd` serves elevation / slope / class to the view). Nudged: Carthago, Hadrumetum by 0.01-0.02 degrees. Re-pinned: campaign_test goldens (3007c1ab / 4197043257, be6e10a3 / 3786296811) and the Tarentum march rows (from Venetia). campaign_sim --seeds=6 --turns=60: hash 8562cf3a (HEAD 803bf309); no collapse; Epirus is eliminated in 5 of 6 seeds (3 of 6 at HEAD), Macedon in 0 (2 of 6).
 - The overworld sea (2026-10-13, view only, third pass, `water.gdshader` + `sea_waves.gd`): printed-map look kept (thin calm shallow band, sharp 1 px contour lines at 3 / 8 km, crisp 1.6 px coast outline) with **waves** and **surf**. Waves (pass 4, 2026-10-13, after the user found pass 3 uniform and too large): five directional trains (56 / 39 / 27 / 18 / 12 map px at 0 / +30 / -28 / +45 / -40 degrees from the wind, speed about 6 sqrt(L/46), none dominant), Stokes-like sines whose phase warp and group envelope are value noise (not periodic), times a drifting gust field (noise at 650 / 300 px, 0.25..1.15: rough and glassy patches) on a wind that veers up to 0.4 rad (noise at 800 px); 7 noise samples a fragment shared by the trains; `tests/sea_waves_test.gd`; lit as a normal map from the NW (soft crests and troughs, a very small glint), damped near the coast and in sheltered water, each train fading out when under about 6 screen px; motion slow (phase speed 4.5-6 map px/s). Surf: breaker lines (3 km apart) advancing and fading in a 2.5-7 km zone, broken by noise gaps, plus a ragged swash at the waterline, only where the baked **exposure** says the sea reaches the coast (half the fetch along the wind, three rays, half the openness all round, 16 rays; heads of bays, lees of islands and the Tyrrhenian side under a NW wind get almost none), stronger on steep shores (baked `SHORE`); zoomed out the lines become a dim ragged edge; sparse whitecaps on high crests only in strongly exposed open sea; the 3 km contour fades where there is foam. `[map] water = low` (and Graphics Low): depth tint and contours, static. **Reuse for ships and other maps:** `GeoFields.wind_dir()` / `wind_strength()` / `exposure(p)` / `shore_steep(p)` come from `relief_data.gd` (`WIND_FROM_DEG`, `WIND_STRENGTH`, `EXPOSURE`, `SHORE`), baked by `tools/geo_fit.py` from the config key `"wind": {"from_deg", "strength"}` (`med.json` 315 / 100, the mistral; a Caribbean config says 90, the trade winds from the east; `python3 -I tools/geo_fit.py --config X --exposure-only` re-bakes only these from the COAST and SLOPE already in the file). `SeaWaves.height(p, t)`, `normal(p, t)` and `amp(p)` are the CPU twin of the shader (same trains; `SeaWaves.t` is the clock `map_view` also sends the shader). A ship sprite sits on it: its lift is `height * amp * k`, pitch and roll are the normal's components on its hull axes (times `amp`), its heading is its own; its wake is a `Line2D` of stern positions kept in world space that widen and fade over a few seconds (no drift with the sea: the waves are a phase pattern, not moving water), and the hull is drawn above the water node, below labels and armies. Nothing of this is in any hashed state.
 - Graphics quality (2026-10-13, view only, `game/quality.gd`): `user://settings.cfg [video] quality = auto | high | low` (home settings row; `--quality=` overrides). Auto is Low when the soldier probe chose the CPU path (Chrome on the Tab S7) or when the first 3 s of a battle average under 40 fps (session only, toast "Graphics set to Low for speed"). Low: the ground shader's `low` uniform drops the noise patches, grain and the sea / ford animation; the settlement surroundings are flat-tinted fields and one-line tracks (`CityDraw.draw_surround(..., low)`); the tree layer hides the cover MultiMesh (tufts, scrub, bushes, reeds, willows) and the orchard rows (`visible_instance_count`), gameplay woods stay; the overworld sea is the still `hi = 0` water and the landscape tree / speckle mesh is skipped below zoom 0.9 (the relief texture stays). All switch live in a battle (the auto downgrade) and apply on the next battle / map open from Settings.
+
+**Map table style (as built, 2026-10-14).** `[map] style = auto | table | relief` (Settings
+button "Map", `--map-style=`): auto is the table for the West pack and the relief for Rome
+(Rome in relief is pixel-identical to before). Table: `table_land.gdshader` draws the land
+(brighter palette, 4-level posterised hillshade from the real elevation, ink contours,
+sand coast band); the sea (`water.gdshader` `table = 1`) has five clean depth bands with softer
+waves; the owner wash is 15 % with a stronger inked border; `table_frame.gd` adds the parchment
+frame, vignette and an optional tilt-shift (`--map-tilt=0|1`, off on Low). Settlements and
+fleets are painted miniatures (`minis_layer.gd`, tools/structures; exaggerated scale, tile
+about 88 px x sqrt(zoom) wide, shown from zoom 0.55, ships from 0.35): base by culture and
+size, harbour (port), slipway (Shipyard level), walls (palisade / stone / star fort), ships by
+heading; the overlay keeps names, banners and hit areas.
 
 ### Audio (as built, 2026-10-10)
 

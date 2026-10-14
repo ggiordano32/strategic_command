@@ -20,13 +20,20 @@ extends RefCounted
 ##            as a settlement's streets (V_URBAN) within `urban` rectangles
 ##   city     settlement: see city_params() (seed, level 0 village / 1 town /
 ##            2 city, walls 0-3, bld, def, plan, coast and view-only style)
+##   landforms 1 (default) / 0: cliffs, rock outcrops and woods that follow
+##            the land (sim/landforms.gd) on generated hilly ground (rolling,
+##            ridge, valley, hill, slope; never on sym maps), and settlements
+##            shaped by their ground (shape_of); 0 gives the maps as they
+##            were before slice 2d (tests, set pieces)
 ##
 ## Grids (final frame, row-major, index = row * width + col):
 ##   veg  4 m cells: bits 0-1 tree density 0-3, V_URBAN inside a settlement,
 ##        V_FIELD farm field, V_ROAD street, V_PLAZA, V_WATER sea, V_DITCH
 ##        (the last five are view only: the rules read obs)
 ##   obs  2 m cells: C_* kind (building, wall body, walkway, tower, ditch,
-##        water, stair, gate g)
+##        water, stair, gate g, rock, cliff)
+##   land view data of the landforms (cliff lines, outcrops; final frame),
+##        copied to BattleSim.map_info["land"] for game/land_layer.gd
 ##
 ## A city is generated in a canonical frame (defenders at the top, the main
 ## gate facing the attackers at the bottom, the sea, if any, behind the
@@ -54,6 +61,7 @@ extends RefCounted
 ## a sea gate and a mole that are scenery only).
 
 const FM := preload("res://sim/fixed_math.gd")
+const Land := preload("res://sim/landforms.gd")
 
 const M := 1024
 
@@ -66,7 +74,9 @@ const C_TOWER := 4
 const C_DITCH := 5     # ditch: foot cross it slowly; horses and engines cannot
 const C_WATER := 6     # the sea: nobody
 const C_STAIR := 7     # stair in the wall's inner face by a tower: walkway <-> street
-const C_GATE := 8      # + gate index (8..12)
+const C_GATE := 8      # + gate index (8..12; is_gate())
+const C_ROCK := 30     # rock outcrop (landforms, sim/landforms.gd): nobody; missiles pass over (cover in 2b)
+const C_CLIFF := 31    # cliff face: nobody; missiles pass over (sight in 2b)
 
 # Passability bits (BattleSim.nav).
 const NAV_GROUND := 1
@@ -110,6 +120,7 @@ const BUILD_H: Array[int] = [4, 5, 6]              # building height (line of fi
 const GATE_HP: Array[int] = [0, 1800, 2700, 3800]  # gate hit points by wall level
 const EXT := 170                        # block grid extent from the centre
 const EDGE_MAX := 48                    # nav graph edges at most this long
+const FIELD_STEP := 48                  # field maps with landforms: graph lattice step (m)
 const NODE_STEP := 30                   # ring nodes every this many metres
 const STAIR_IN := 3                     # a stair this far in from each end of a walkway stretch
 const STAIR_HW := 2                     # ... this wide either side
@@ -200,6 +211,16 @@ static var _cache: Dictionary = {}
 
 
 # ------------------------------------------------------------------- rng ---
+
+## Cell kind k is a gate's (C_GATE + its index).
+static func is_gate(k: int) -> bool:
+	return k >= C_GATE and k < C_ROCK
+
+
+## Cell kind k is a landform's (rock or cliff).
+static func is_land(k: int) -> bool:
+	return k == C_ROCK or k == C_CLIFF
+
 
 static func _rng(seed_v: int) -> PackedInt32Array:
 	var s := PackedInt32Array([((seed_v & 0x7FFFFFFF) * 69069 + 0x1F2E3D4C) & 0x7FFFFFFF])
@@ -364,7 +385,13 @@ static func build(terr: Dictionary, battle_seed: int, w_m: int, h_m: int, hgt: D
 	var rg := {}
 	if not has_city and terr.get("river") is Dictionary:
 		rg = river_geom(terr["river"], w_m, h_m)
-	if dens <= 0 and woods.is_empty() and not has_city and blocks.is_empty() and rg.is_empty():
+	# Landforms (slice 2d): cliffs, outcrops and woods that follow the land,
+	# on generated hilly ground (not on symmetric test maps; "landforms": 0
+	# turns them off and gives the maps as they were before).
+	var lkind := int(hgt.get("kind", terr.get("kind", K_FLAT)))
+	var land_ok := int(terr.get("landforms", 1)) != 0 and int(hgt.get("on", 0)) != 0 \
+		and int(terr.get("sym", 0)) == 0 and lkind >= K_ROLLING and lkind <= 5
+	if dens <= 0 and woods.is_empty() and not has_city and blocks.is_empty() and rg.is_empty() and not land_ok:
 		return out
 	var tseed := int(terr.get("seed", -1))
 	if tseed < 0:
@@ -383,12 +410,30 @@ static func build(terr: Dictionary, battle_seed: int, w_m: int, h_m: int, hgt: D
 		return hit
 	var excl: Array = []  # rectangles [x0, y0, x1, y1] (m) kept free of woods
 	var city := {}
+	var land := {}
+	var pal := int(terr.get("ground", PAL_PLAIN))
 	if has_city:
-		city = _city(city_params(terr["city"]), int(terr.get("kind", K_FLAT)), w_m, h_m, out, excl)
+		city = _city(city_params(terr["city"]), int(terr.get("kind", K_FLAT)), w_m, h_m, out, excl,
+			hgt if land_ok else {}, pal)
+		land = out.get("land_raw", {})
+		out.erase("land_raw")
 	else:
 		# Field battle: the centre of both deployment zones stays clear.
 		excl.append([w_m * 15 / 100, h_m / 2 + 72, w_m * 85 / 100, h_m / 2 + 190])
 		excl.append([w_m * 15 / 100, h_m / 2 - 190, w_m * 85 / 100, h_m / 2 - 72])
+	var rcells: Array = []
+	if not rg.is_empty():
+		rcells = _river_cells(rg, w_m, h_m)
+	if land_ok and not has_city:
+		var lctx := {"w_m": w_m, "h_m": h_m, "kind": lkind, "pal": pal, "seed": tseed * 13 + 7, "hgt": hgt,
+			"excl": excl, "ref": Vector2i(w_m / 2, h_m / 2 + 130)}
+		if not rg.is_empty():
+			lctx["river"] = rg
+			lctx["obs"] = rcells[0]
+		land = Land.place(lctx)
+	var lcells: PackedByteArray = land.get("cells", PackedByteArray())
+	if has_city and not land.is_empty():
+		lcells = out["obs"]  # (the landforms are in the settlement's grid already)
 	if dens > 0:
 		var ox := 0
 		var oy := 0
@@ -407,13 +452,30 @@ static func build(terr: Dictionary, battle_seed: int, w_m: int, h_m: int, hgt: D
 			oy = h_m / 2 - 300
 			bw = 640
 			bh = 600
-		_forest(veg, vw, vh, dens, tseed * 31 + 7, hgt, ox, oy, bw, bh, excl, int(terr.get("sym", 0)))
+		_forest(veg, vw, vh, dens, tseed * 31 + 7, hgt, ox, oy, bw, bh, excl, int(terr.get("sym", 0)),
+			land_ok, lcells, w_m / 2, h_m / 2, rg)
 	for wd in woods:
 		var a: Array = wd
 		_veg_rect(veg, vw, vh, int(a[0]) - int(a[2]), int(a[1]) - int(a[3]), int(a[0]) + int(a[2]),
 			int(a[1]) + int(a[3]), clampi(int(a[4]), 0, 3))
 	if has_city:
 		_city_post(city, veg, vw, vh)
+	if lcells.size() == (w_m / 2) * (h_m / 2) and int(land.get("n", 0)) > 0:
+		# No trees on the rocks, nor on a cliff's face (4 m round it).
+		var low := w_m / 2
+		for c in lcells.size():
+			var kc := lcells[c]
+			if not is_land(kc):
+				continue
+			var vi := (c % low) / 2
+			var vj := (c / low) / 2
+			var rr := 1 if kc == C_CLIFF else 0
+			for dj in range(-rr, rr + 1):
+				for di in range(-rr, rr + 1):
+					var ii := vi + di
+					var jj := vj + dj
+					if ii >= 0 and jj >= 0 and ii < vw and jj < vh:
+						veg[jj * vw + ii] &= ~V_DENS
 	if not has_city and not blocks.is_empty():
 		var ow := w_m / 2
 		var oh := h_m / 2
@@ -432,8 +494,30 @@ static func build(terr: Dictionary, battle_seed: int, w_m: int, h_m: int, hgt: D
 		out["ow"] = ow
 		out["oh"] = oh
 		out["obs_on"] = 1
+	var lnodes: PackedInt32Array = land.get("nodes", PackedInt32Array())
 	if not rg.is_empty():
-		_river(out, rg, veg, vw, vh, hgt, w_m, h_m)
+		_river(out, rg, veg, vw, vh, hgt, w_m, h_m, rcells, lcells if not has_city else PackedByteArray(), lnodes)
+	elif not has_city and int(land.get("n", 0)) > 0:
+		# Landforms on a field map: the obstacle grid and a graph round them.
+		var ow2 := w_m / 2
+		var oh2 := h_m / 2
+		var obs2: PackedByteArray = out["obs"]
+		if obs2.size() != ow2 * oh2:
+			obs2 = PackedByteArray()
+			obs2.resize(ow2 * oh2)
+			obs2.fill(C_OPEN)
+		for c in lcells.size():
+			if lcells[c] != 0 and obs2[c] == C_OPEN:
+				obs2[c] = lcells[c]
+		out["obs"] = obs2
+		out["ow"] = ow2
+		out["oh"] = oh2
+		out["obs_on"] = 1
+		out["nav"] = _field_nav(obs2, ow2, oh2, w_m, h_m, lnodes)
+	if not land.is_empty():
+		out["land"] = {"cliffs": land.get("cliffs", []), "rocks": land.get("rocks", [])}
+		if not rg.is_empty() and int(rg["flip"]) != 0:
+			_flip_land(out["land"], w_m, h_m)
 	for k in veg.size():
 		if (veg[k] & V_DENS) != 0:
 			out["veg_on"] = 1
@@ -450,6 +534,97 @@ static func build(terr: Dictionary, battle_seed: int, w_m: int, h_m: int, hgt: D
 	if flipped:
 		_cache["h_flipped"] = (hgt["h"] as PackedInt32Array).duplicate()
 	return out
+
+
+## Turn the landforms' view data 180 degrees (x -> w - x, y -> h - y).
+static func _flip_land(ld: Dictionary, w_m: int, h_m: int) -> void:
+	for c in ld["cliffs"]:
+		var cl: Dictionary = c
+		var pts: PackedInt32Array = cl["p"]
+		for q in pts.size() / 2:
+			pts[q * 2] = w_m * 100 - pts[q * 2]
+			pts[q * 2 + 1] = h_m * 100 - pts[q * 2 + 1]
+		cl["p"] = pts
+		var dn: PackedInt32Array = cl["dn"]
+		for q in dn.size():
+			dn[q] = (dn[q] + 512) & 1023
+		cl["dn"] = dn
+	for r in ld["rocks"]:
+		var a: Array = r
+		for q in (a.size() - 2) / 3:
+			a[2 + q * 3] = w_m - int(a[2 + q * 3])
+			a[3 + q * 3] = h_m - int(a[3 + q * 3])
+
+
+## Street graph on a field map with landforms (final frame): a lattice of
+## nodes FIELD_STEP apart on open ground and the nodes round each landform,
+## joined by clear 3 m lines up to EDGE_MAX long (pieces joined).
+static func _field_nav(obs: PackedByteArray, ow: int, oh: int, w_m: int, h_m: int,
+		extra: PackedInt32Array) -> Dictionary:
+	var nxs := PackedInt32Array()
+	var nys := PackedInt32Array()
+	var y := FIELD_STEP / 2
+	while y < h_m - 4:
+		var x := FIELD_STEP / 2
+		while x < w_m - 4:
+			_add_node(obs, ow, oh, w_m, h_m, nxs, nys, x, y)
+			x += FIELD_STEP
+		y += FIELD_STEP
+	for q in extra.size() / 2:
+		_add_node(obs, ow, oh, w_m, h_m, nxs, nys, extra[q * 2], extra[q * 2 + 1])
+	var ng := PackedInt32Array()
+	ng.resize(nxs.size())
+	ng.fill(-1)
+	return _graph(obs, ow, oh, nxs, nys, ng)
+
+
+## A graph node at (x, y) (m) if that is open ground inside the field and
+## no node is within 4 m (else nothing).
+static func _add_node(obs: PackedByteArray, ow: int, oh: int, w_m: int, h_m: int, nxs: PackedInt32Array,
+		nys: PackedInt32Array, x: int, y: int) -> void:
+	if x < 4 or y < 4 or x > w_m - 4 or y > h_m - 4:
+		return
+	if obs[mini(y / 2, oh - 1) * ow + mini(x / 2, ow - 1)] != C_OPEN:
+		return
+	for q in nxs.size():
+		if absi(nxs[q] - x) < 4 and absi(nys[q] - y) < 4:
+			return
+	nxs.append(x)
+	nys.append(y)
+
+
+## Edges between the nodes (clear 3 m lines up to EDGE_MAX), pieces joined;
+## the graph as the sim loads it.
+static func _graph(obs: PackedByteArray, ow: int, oh: int, nxs: PackedInt32Array, nys: PackedInt32Array,
+		ng: PackedInt32Array) -> Dictionary:
+	var n := nxs.size()
+	var adj: Array = []
+	for a in n:
+		adj.append([])
+	for a in n:
+		for b in range(a + 1, n):
+			var dx := nxs[b] - nxs[a]
+			var dy := nys[b] - nys[a]
+			if absi(dx) > EDGE_MAX or absi(dy) > EDGE_MAX:
+				continue
+			var l2 := dx * dx + dy * dy
+			if l2 > EDGE_MAX * EDGE_MAX or not _clear_fat(obs, ow, oh, nxs[a], nys[a], nxs[b], nys[b], -1):
+				continue
+			var wgt := FM.isqrt(l2 * 64)
+			(adj[a] as Array).append([b, wgt])
+			(adj[b] as Array).append([a, wgt])
+	if n > 0:
+		_join_components(obs, ow, oh, nxs, nys, ng, adj)
+	var e0 := PackedInt32Array()
+	var to := PackedInt32Array()
+	var ww := PackedInt32Array()
+	for a in n:
+		e0.append(to.size())
+		for e in adj[a]:
+			to.append(int(e[0]))
+			ww.append(int(e[1]))
+	e0.append(to.size())
+	return {"x": nxs, "y": nys, "gate": ng, "e0": e0, "to": to, "w": ww}
 
 
 ## Set every 4 m cell whose centre lies in [x0, x1) x [y0, y1) (m) to tree
@@ -485,7 +660,8 @@ static func _city_post(lay: Dictionary, veg: PackedByteArray, vw: int, vh: int) 
 ## that dense, half medium or denser). Blob positions are drawn in the box
 ## (ox, oy, bw, bh) metres.
 static func _forest(veg: PackedByteArray, vw: int, vh: int, dens: int, seed_v: int, hgt: Dictionary,
-		ox: int, oy: int, bw: int, bh: int, excl: Array, sym: int) -> void:
+		ox: int, oy: int, bw: int, bh: int, excl: Array, sym: int, land: bool = false,
+		lcells: PackedByteArray = PackedByteArray(), ow: int = 0, oh: int = 0, rg: Dictionary = {}) -> void:
 	var rng := _rng(seed_v)
 	var f := PackedInt32Array()
 	f.resize(vw * vh)
@@ -495,14 +671,25 @@ static func _forest(veg: PackedByteArray, vw: int, vh: int, dens: int, seed_v: i
 		var bx := ox + _r(rng, bw)
 		var by := oy + _r(rng, bh)
 		var rad := (28 + _r(rng, 50)) * (70 + dens) / 100
-		_blob(f, vw, vh, bx, by, rad, 1000)
+		if land:
+			# Long woods lying along the contour where they grow (landforms):
+			# 1.7 x as long, 0.6 x as wide.
+			var cd := Land.contour_at(hgt, bx, by)
+			if cd >= 0:
+				_blob_long(f, vw, vh, bx, by, rad * 17 / 10, rad * 6 / 10, cd, 800)
+				continue
+		_blob(f, vw, vh, bx, by, rad, 1000 if not land else 800)
 	var ns := 14 + dens / 3
 	for b in ns:
 		var bx := ox + _r(rng, bw)
 		var by := oy + _r(rng, bh)
 		var amp := 420 if _r(rng, 2) == 0 else -420
 		_blob(f, vw, vh, bx, by, 8 + _r(rng, 14), amp)
-	if int(hgt.get("on", 0)) != 0:
+	if land:
+		# The land's own terms: valley floors, lower slopes, river banks, the
+		# lee of the ridges; no woods on crests, steep faces or rock.
+		Land.forest_terms(f, vw, vh, hgt, rg, lcells, ow, oh, seed_v)
+	elif int(hgt.get("on", 0)) != 0:
 		var h: PackedInt32Array = hgt["h"]
 		var nx := int(hgt["nx"])
 		var mean := 0
@@ -560,6 +747,28 @@ static func _quantile(hist: PackedInt32Array, want: int) -> int:
 	return 0
 
 
+## Add amp x (1 - t^2)^2 to the 4 m cells within an ellipse round (x, y):
+## half length ra along angle dir, half width rc across (metres); t^2 =
+## (along / ra)^2 + (across / rc)^2.
+static func _blob_long(f: PackedInt32Array, vw: int, vh: int, x: int, y: int, ra: int, rc: int, dir: int,
+		amp: int) -> void:
+	ra = maxi(ra, 2)
+	rc = maxi(rc, 2)
+	var c := FM.cos_a(dir)
+	var s := FM.sin_a(dir)
+	for j in range(maxi((y - ra) / 4, 0), mini((y + ra) / 4 + 1, vh)):
+		var dy := (j * 4 + 2 - y) * 4
+		for i in range(maxi((x - ra) / 4, 0), mini((x + ra) / 4 + 1, vw)):
+			var dx := (i * 4 + 2 - x) * 4
+			var al := (dx * c + dy * s) / FM.TRIG_ONE   # quarter metres
+			var ac := (dy * c - dx * s) / FM.TRIG_ONE
+			var t2 := al * al * 1024 / (ra * ra * 16) + ac * ac * 1024 / (rc * rc * 16)
+			if t2 >= 1024:
+				continue
+			var u := 1024 - t2
+			f[j * vw + i] += amp * (u * u >> 10) / 1024
+
+
 ## Add amp x (1 - d^2/r^2)^2 to the 4 m cells within r metres of (x, y).
 static func _blob(f: PackedInt32Array, vw: int, vh: int, x: int, y: int, r: int, amp: int) -> void:
 	var r2 := r * r * 16  # quarter-metre units: cell centres are at 4i + 2
@@ -578,10 +787,11 @@ static func _blob(f: PackedInt32Array, vw: int, vh: int, x: int, y: int, r: int,
 
 # -------------------------------------------------------------- city ------
 
-static func _city(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictionary, excl: Array) -> Dictionary:
+static func _city(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictionary, excl: Array,
+		hgt: Dictionary = {}, pal: int = PAL_PLAIN) -> Dictionary:
 	if int(p["plan"]) == PLAN_RING:
 		return _city_ring(p, w_m, h_m, out, excl)
-	return _city_plan(p, kind, w_m, h_m, out, excl)
+	return _city_plan(p, kind, w_m, h_m, out, excl, hgt, pal)
 
 
 ## The original ring (PLAN_RING): generate the city (canonical frame) into
@@ -909,7 +1119,7 @@ static func _house_style(p: Dictionary, inside: PackedByteArray, ow: int, oh: in
 ## the agora, the citadel (fitted inside), lattice and block parameters.
 ## Shared with sim/terrain.gd (the citadel's knoll). Returns a Dictionary;
 ## its "rng" continues the draws for the houses.
-static func plan_outline(p: Dictionary, kind: int, w_m: int) -> Dictionary:
+static func plan_outline(p: Dictionary, kind: int, w_m: int, land: int = 1) -> Dictionary:
 	var level: int = p["level"]
 	var walls: int = p["walls"]
 	var plan: int = p["plan"]
@@ -922,6 +1132,11 @@ static func plan_outline(p: Dictionary, kind: int, w_m: int) -> Dictionary:
 	var r0 := fr.z
 	var rmax := r0 * 112 / 100
 	var site := site_of(kind, seed_v)
+	# The town's shape on its ground (landforms, slice 2d): long down a spur,
+	# along a hill's contours or the shore, lobed by a few harmonics; the
+	# castrum keeps its rectangle and the ring its circle.
+	var sh := shape_of(p, kind) if land != 0 and plan != PLAN_CASTRUM and plan != PLAN_RING else PackedInt32Array()
+	var high := not sh.is_empty() and (site == SITE_HILL or site == SITE_SPUR)
 	var t := 0
 	if walls > 0:
 		t = WALL_T[walls] + (2 if plan == PLAN_PUNIC else 0)
@@ -974,7 +1189,10 @@ static func plan_outline(p: Dictionary, kind: int, w_m: int) -> Dictionary:
 			var nv := 8 + _r(rng, 4)
 			for k in nv:
 				var ang := (k * 1024 / nv + _rr(rng, -30, 30)) & 1023
-				var rad := mini(r0 * _rr(rng, 82, 114) / 100, rmax)
+				var rj := _rr(rng, 82, 114)
+				var rad := mini(r0 * rj / 100, rmax)
+				if not sh.is_empty():
+					rad = mini(r0 * (98 + (rj - 98) / 2) / 100 * shape_pm(sh, ang) / 1000, rmax)
 				vx.append(cx + FM.cos_a(ang) * rad / FM.TRIG_ONE)
 				vy.append(cy + FM.sin_a(ang) * rad / FM.TRIG_ONE)
 			var ag_a := (256 + _rr(rng, -200, 200)) & 1023
@@ -982,13 +1200,21 @@ static func plan_outline(p: Dictionary, kind: int, w_m: int) -> Dictionary:
 			px = cx + FM.cos_a(ag_a) * ag_d / FM.TRIG_ONE
 			py = cy + FM.sin_a(ag_a) * ag_d / FM.TRIG_ONE
 			cit_ang = (768 + _rr(rng, 90, 210) * (1 if _r(rng, 2) == 0 else -1)) & 1023
+			if high:
+				# The acropolis on the high point: the hill's top behind the
+				# town, the far end of the spur.
+				cit_ang = (768 + FM.angle_diff(cit_ang, 768) / 3) & 1023
 			if coast != 0:
 				cit_ang = (cit_ang + (256 if cit_ang > 768 else -256)) & 1023  # a front corner, off the sea
 			cit_dist = r0 * 50 / 100
+			if high and site == SITE_HILL:
+				cit_dist = r0 * 40 / 100
 			cit_r = _rr(rng, 20, 24)
 			n_gates = _rr(rng, 2, 4)
 			lat_a = _rr(rng, -70, 70)
 			lat_b = lat_a + _rr(rng, 70, 130) * (1 if _r(rng, 2) == 0 else -1)
+			if high:
+				lat_a /= 3  # the main grid's streets along the contours
 			seam = _r(rng, 1024)
 			blk_w = 2 * _rr(rng, 8, 10)
 			blk_l = 2 * _rr(rng, 15, 19)
@@ -998,12 +1224,14 @@ static func plan_outline(p: Dictionary, kind: int, w_m: int) -> Dictionary:
 			for k in nv2:
 				var ang2 := (k * 1024 / nv2 + _rr(rng, -15, 15)) & 1023
 				var rad2 := r0 * _rr(rng, 94, 106) / 100
+				if not sh.is_empty():
+					rad2 = mini(rad2 * shape_pm(sh, ang2) / 1000, rmax)
 				vx.append(cx + FM.cos_a(ang2) * rad2 / FM.TRIG_ONE)
 				vy.append(cy + FM.sin_a(ang2) * rad2 / FM.TRIG_ONE)
 			var side_c := _r(rng, 2)
 			var jc := _rr(rng, -60, 60)
 			var jb := _rr(rng, -120, 120)
-			cit_ang = ((512 * side_c + jc) if coast != 0 else (768 + jb)) & 1023
+			cit_ang = ((512 * side_c + jc) if coast != 0 else (768 + (jb / 3 if high else jb))) & 1023
 			cit_dist = r0 * 55 / 100
 			cit_r = _rr(rng, 21, 25)
 			var away := (cit_ang + 512) & 1023
@@ -1013,6 +1241,8 @@ static func plan_outline(p: Dictionary, kind: int, w_m: int) -> Dictionary:
 			n_gates = 2
 			g_want = [256, 512 if _r(rng, 2) == 0 else 0]
 			lat_a = _rr(rng, -24, 24)
+			if high:
+				lat_a /= 3
 			lat_b = lat_a
 			blk_w = 2 * _rr(rng, 7, 10)
 			blk_l = 2 * _rr(rng, 10, 14)
@@ -1030,7 +1260,7 @@ static func plan_outline(p: Dictionary, kind: int, w_m: int) -> Dictionary:
 			px = cx + _rr(rng, -8, 8)
 			py = cy + _rr(rng, -8, 8)
 			var mouth := 26
-			var dlt := mouth * 163 / maxi(_ell_r(ea, eb, phi, ki, kd), 1)
+			var dlt := mouth * 163 / maxi(_opp_r(ea, eb, phi, ki, kd, sh, rmax), 1)
 			var gw := 2 * (GATE_HW + 2 * trg) + 16
 			var done := walls == 0
 			for k in 16:
@@ -1039,13 +1269,13 @@ static func plan_outline(p: Dictionary, kind: int, w_m: int) -> Dictionary:
 					continue
 				if not done and a > phi:
 					done = true
-					funnel = _funnel(vx, vy, vt, cx, cy, ea, eb, ki, kd, phi, dlt, depth, skew, gw, tow_r + 2)
-				var r := _ell_r(ea, eb, a, ki, kd)
+					funnel = _funnel(vx, vy, vt, cx, cy, ea, eb, ki, kd, phi, dlt, depth, skew, gw, tow_r + 2, sh, rmax)
+				var r := _opp_r(ea, eb, a, ki, kd, sh, rmax)
 				vx.append(cx + FM.cos_a(a) * r / FM.TRIG_ONE)
 				vy.append(cy + FM.sin_a(a) * r / FM.TRIG_ONE)
 				vt.append(0)
 			if not done:
-				funnel = _funnel(vx, vy, vt, cx, cy, ea, eb, ki, kd, phi, dlt, depth, skew, gw, tow_r + 2)
+				funnel = _funnel(vx, vy, vt, cx, cy, ea, eb, ki, kd, phi, dlt, depth, skew, gw, tow_r + 2, sh, rmax)
 	# Draws shared by every plan (fixed order).
 	var gate_jit: Array = []
 	for k in 4:
@@ -1139,7 +1369,7 @@ static func plan_outline(p: Dictionary, kind: int, w_m: int) -> Dictionary:
 		"funnel": funnel, "cit": cit, "cit_jit": cit_jit, "lat_a": lat_a, "lat_b": lat_b, "seam": seam,
 		"blk_w": blk_w, "blk_l": blk_l, "blk_s": blk_s, "built_extra": built_extra, "gate_jit": gate_jit,
 		"field_depth": field_depth, "sea_jit": sea_jit, "mole_l": mole_l, "mole_e": mole_e, "cp": cp,
-		"site": site, "t": t, "tow_r": tow_r, "trg": trg, "rng": rng, "cx": cx, "cy": cy, "r0": r0}
+		"site": site, "t": t, "tow_r": tow_r, "trg": trg, "rng": rng, "cx": cx, "cy": cy, "r0": r0, "shape": sh}
 
 
 ## Radius (m) of an oppidum's oval at angle a, with the kidney's dent.
@@ -1155,16 +1385,62 @@ static func _ell_r(ea: int, eb: int, a: int, ki: int, kd: int) -> int:
 	return r
 
 
+## An oppidum's radius at angle a on its shaped ground (the oval as it
+## always was without a shape).
+static func _opp_r(ea: int, eb: int, a: int, ki: int, kd: int, sh: PackedInt32Array, rmax: int) -> int:
+	var r := _ell_r(ea, eb, a, ki, kd)
+	if sh.is_empty():
+		return r
+	return mini(r * shape_pm(sh, a) / 1000, rmax)
+
+
+## A settlement's shape on its ground (landforms, slice 2d; its own draws,
+## so the plan's draws are as they were): [elongation, three harmonics
+## (amplitude, phase), mean offset], all per mille of the radius. A spur
+## town runs long down the spur (canonical y) and narrow across it; a hill
+## town along the hill's contours (x), as does a town along the shore; the
+## harmonics lobe the outline so no two towns are the same oval.
+static func shape_of(p: Dictionary, kind: int) -> PackedInt32Array:
+	var sd := int(p["seed"])
+	var rng := _rng(sd * 31 + 17)
+	var site := site_of(kind, sd)
+	var e := _rr(rng, -60, 60)
+	if site == SITE_SPUR:
+		e = _rr(rng, 140, 210)
+	elif site == SITE_HILL:
+		e = -_rr(rng, 70, 140)
+	elif int(p.get("coast", 0)) != 0:
+		e = -_rr(rng, 90, 150)
+	var sh := PackedInt32Array([e, _rr(rng, 10, 70), _r(rng, 1024), _rr(rng, 40, 100), _r(rng, 1024),
+		_rr(rng, 20, 65), _r(rng, 1024), 0])
+	var mean := 0
+	for k in 32:
+		mean += shape_pm(sh, k * 32)
+	sh[7] = mean / 32 - 1000
+	return sh
+
+
+## Radius per mille at angle a of shape sh (1000 with no shape).
+static func shape_pm(sh: PackedInt32Array, a: int) -> int:
+	if sh.is_empty():
+		return 1000
+	var v := 1000 - sh[0] * FM.cos_a((2 * a) & 1023) / FM.TRIG_ONE
+	v += sh[1] * FM.cos_a((a - sh[2]) & 1023) / FM.TRIG_ONE
+	v += sh[3] * FM.cos_a((2 * a - sh[4]) & 1023) / FM.TRIG_ONE
+	v += sh[5] * FM.cos_a((3 * a - sh[6]) & 1023) / FM.TRIG_ONE
+	return clampi(v - sh[7], 700, 1200)
+
+
 ## Append an oppidum's gate funnel to the outline at angle phi: the mouth
 ## corners (with towers) on the oval and the inner corners, offset to one
 ## side by `skew` and one arm longer than the other; the gate goes in the
 ## inner edge. Returns the index of the inner left corner.
 static func _funnel(vx: PackedInt32Array, vy: PackedInt32Array, vt: PackedInt32Array, cx: int, cy: int,
 		ea: int, eb: int, ki: int, kd: int, phi: int, dlt: int, depth: int, skew: int, gw: int,
-		mouth_r: int) -> int:
-	var ra := _ell_r(ea, eb, (phi - dlt) & 1023, ki, kd)
-	var rb := _ell_r(ea, eb, (phi + dlt) & 1023, ki, kd)
-	var rm := _ell_r(ea, eb, phi, ki, kd)
+		mouth_r: int, sh: PackedInt32Array = PackedInt32Array(), rmax: int = 1 << 20) -> int:
+	var ra := _opp_r(ea, eb, (phi - dlt) & 1023, ki, kd, sh, rmax)
+	var rb := _opp_r(ea, eb, (phi + dlt) & 1023, ki, kd, sh, rmax)
+	var rm := _opp_r(ea, eb, phi, ki, kd, sh, rmax)
 	var mx := cx + FM.cos_a(phi) * rm / FM.TRIG_ONE
 	var my := cy + FM.sin_a(phi) * rm / FM.TRIG_ONE
 	var ux := -FM.cos_a(phi)
@@ -1244,12 +1520,13 @@ static func _clip(vx: PackedInt32Array, vy: PackedInt32Array, vt: PackedInt32Arr
 
 
 ## A settlement of one of the cultures' plans (see the header).
-static func _city_plan(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictionary, excl: Array) -> Dictionary:
+static func _city_plan(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictionary, excl: Array,
+		hgt: Dictionary = {}, pal: int = PAL_PLAIN) -> Dictionary:
 	var level: int = p["level"]
 	var walls: int = p["walls"]
 	var plan: int = p["plan"]
 	var coast: int = p["coast"]
-	var o := plan_outline(p, kind, w_m)
+	var o := plan_outline(p, kind, w_m, 0 if hgt.is_empty() else 1)
 	var rng: PackedInt32Array = o["rng"]
 	var cx: int = o["cx"]
 	var cy: int = o["cy"]
@@ -1643,6 +1920,37 @@ static func _city_plan(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 				var oc2 := mini(j * 2 + 1, oh - 1) * ow + mini(i * 2 + 1, ow - 1)
 				if obs[oc2] == C_DITCH:
 					veg[j * vw + i] |= V_DITCH
+	# ---- landforms round the settlement (slice 2d): cliffs on its hill's
+	# or spur's steep flanks, outcrops, sea cliffs along a rocky shore; clear
+	# of the walls' reach, the ditch, the approach, the attackers' ground,
+	# the fields and orchards.
+	if not hgt.is_empty():
+		var reach := t / 2 + tow_r + 18 if walls > 0 else 16
+		if ditch != 0:
+			reach = t / 2 + tow_r + DITCH_GAP + DITCH_W + 14
+		var avoid: Array = []
+		for f in fields:
+			avoid.append(f)
+		for r in post:
+			avoid.append(r)
+		var lctx := {"w_m": w_m, "h_m": h_m, "kind": kind, "pal": pal, "seed": int(p["seed"]) * 7 + 5,
+			"hgt": hgt, "obs": obs, "avoid": avoid, "ref": Vector2i(att_x, mini(att_y + 30, h_m - 8)),
+			"excl": [[att_x - 45, cy, att_x + 45, att_y + 120], [w_m * 10 / 100, att_y - 20, w_m * 90 / 100, h_m]],
+			"poly_x": vx, "poly_y": vy, "poly_clr": reach}
+		if walls == 0:
+			lctx["open_c"] = Vector2i(cx, cy)
+			lctx["open_r"] = r0 * 140 / 100
+		if coast != 0:
+			lctx["shore"] = cp
+			lctx["sea_cliffs"] = 1 if site != SITE_PLAIN or pal == PAL_ROCKY else 0
+			lctx["sea_skip"] = [cx - rmax - 40, cx + rmax + 40]
+		var ld := Land.place(lctx)
+		var lc: PackedByteArray = ld["cells"]
+		for c in lc.size():
+			if lc[c] != 0 and obs[c] == C_OPEN:
+				obs[c] = lc[c]
+		extra.append_array(ld["nodes"])
+		out["land_raw"] = ld
 	excl.append([cx - rmax - 25, cy - rmax - 25, cx + rmax + 25, cy + rmax + 25])
 	if walls >= 2:
 		excl.append([cx - rmax - 60, cy - rmax - 60, cx + rmax + 60, cy + rmax + 60])
@@ -2580,8 +2888,13 @@ static func _join_components(obs: PackedByteArray, ow: int, oh: int, nx: PackedI
 					stack.append(b)
 		if reached >= n:
 			return
-		# Candidate pairs (in, out) by distance.
-		var pairs: Array = []
+		# Candidate pairs (in, out) by distance (then a, then b), the 24
+		# shortest tried in that order. (They are picked one at a time from
+		# the list rather than by sorting it all: the same order, far
+		# cheaper, as the first or second usually joins.)
+		var pd := PackedInt64Array()
+		var pa := PackedInt32Array()
+		var pb := PackedInt32Array()
 		for a in n:
 			if comp[a] != 0:
 				continue
@@ -2590,15 +2903,26 @@ static func _join_components(obs: PackedByteArray, ow: int, oh: int, nx: PackedI
 					continue
 				var dx := nx[b] - nx[a]
 				var dy := ny[b] - ny[a]
-				pairs.append([dx * dx + dy * dy, a, b])
-		pairs.sort_custom(func(p, q): return p[0] < q[0] or (p[0] == q[0] and (p[1] < q[1] or (p[1] == q[1] and p[2] < q[2]))))
+				pd.append(dx * dx + dy * dy)
+				pa.append(a)
+				pb.append(b)
 		var joined := false
-		for k in mini(pairs.size(), 24):
-			var a: int = pairs[k][1]
-			var b: int = pairs[k][2]
+		var np := pd.size()
+		var used := PackedByteArray()
+		used.resize(np)
+		for k in mini(np, 24):
+			var bi := -1
+			for q in np:
+				if used[q] != 0:
+					continue
+				if bi < 0 or pd[q] < pd[bi] or (pd[q] == pd[bi] and (pa[q] < pa[bi] or (pa[q] == pa[bi] and pb[q] < pb[bi]))):
+					bi = q
+			used[bi] = 1
+			var a: int = pa[bi]
+			var b: int = pb[bi]
 			var allow := ng[a] if ng[a] >= 0 else ng[b]
 			if _clear_fat(obs, ow, oh, nx[a], ny[a], nx[b], ny[b], allow):
-				var w := FM.isqrt(int(pairs[k][0]) * 64)
+				var w := FM.isqrt(int(pd[bi]) * 64)
 				(adj[a] as Array).append([b, w])
 				(adj[b] as Array).append([a, w])
 				joined = true
@@ -2760,32 +3084,22 @@ static func river_carve(h: PackedInt32Array, nx: int, ny: int, g: Dictionary) ->
 ## and no trees near it; then turn everything round if side 0 holds the far
 ## bank, and build the way across (nav graph, final frame) and the layout.
 static func _river(out: Dictionary, g: Dictionary, veg: PackedByteArray, vw: int, vh: int, hgt: Dictionary,
-		w_m: int, h_m: int) -> void:
+		w_m: int, h_m: int, rc: Array = [], lcells: PackedByteArray = PackedByteArray(),
+		lnodes: PackedInt32Array = PackedInt32Array()) -> void:
 	var ow := w_m / 2
 	var oh := h_m / 2
-	var obs := PackedByteArray()
-	obs.resize(ow * oh)
-	obs.fill(C_OPEN)
-	var rvg := PackedByteArray()
-	rvg.resize(ow * oh)
-	rvg.fill(R_LAND)
+	if rc.is_empty():
+		rc = _river_cells(g, w_m, h_m)
+	var obs: PackedByteArray = rc[0]
+	var rvg: PackedByteArray = rc[1]
 	var hw := int(g["hw"]) * 100
 	var xa := int(g["xa"])
 	var xb := int(g["xb"])
-	var cross := R_BRIDGE if int(g["kind"]) == 1 else R_FORD
-	for i in ow:
-		var x := i * 2 + 1
-		var yc := river_y(g, x)
-		var in_x := x >= xa and x < xb
-		for j in range(maxi((yc - hw) / 200 - 1, 0), mini((yc + hw) / 200 + 2, oh)):
-			if absi((j * 2 + 1) * 100 - yc) >= hw:
-				continue
-			var c := j * ow + i
-			if in_x:
-				rvg[c] = cross
-			else:
-				rvg[c] = R_WATER
-				obs[c] = C_WATER
+	# Landforms on its banks (canonical frame, clear of the water).
+	if lcells.size() == ow * oh:
+		for c in lcells.size():
+			if lcells[c] != 0 and obs[c] == C_OPEN:
+				obs[c] = lcells[c]
 	# The view's water (4 m cells whose centre is water or under the bridge)
 	# and no trees on or near it.
 	var clear := hw + RIV_CLEAR * 100
@@ -2826,7 +3140,8 @@ static func _river(out: Dictionary, g: Dictionary, veg: PackedByteArray, vw: int
 				hh[k] = hh[n2 - 1 - k]
 				hh[n2 - 1 - k] = a2
 	# The way across (final frame): a row of nodes along each bank, the
-	# crossing's two mouths and its middle.
+	# crossing's two mouths and its middle (and the nodes round the
+	# landforms, last).
 	var nxs := PackedInt32Array()
 	var nys := PackedInt32Array()
 	var add := func(x: int, y: int) -> void:
@@ -2853,40 +3168,49 @@ static func _river(out: Dictionary, g: Dictionary, veg: PackedByteArray, vw: int
 				continue
 			var e := river_reach(g, maxi(x - 16, 0), mini(x + 16, w_m), s)
 			add.call(x, e + RIV_ROW if s == 0 else e - RIV_ROW)
-	var n := nxs.size()
-	var adj: Array = []
+	var fl := int(g["flip"]) != 0
+	for q in lnodes.size() / 2:
+		add.call(w_m - lnodes[q * 2] if fl else lnodes[q * 2], h_m - lnodes[q * 2 + 1] if fl else lnodes[q * 2 + 1])
 	var ng := PackedInt32Array()
-	ng.resize(n)
+	ng.resize(nxs.size())
 	ng.fill(-1)
-	for a in n:
-		adj.append([])
-	for a in n:
-		for b in range(a + 1, n):
-			var dx := nxs[b] - nxs[a]
-			var dy := nys[b] - nys[a]
-			if absi(dx) > EDGE_MAX or absi(dy) > EDGE_MAX:
-				continue
-			var l2 := dx * dx + dy * dy
-			if l2 > EDGE_MAX * EDGE_MAX or not _clear_fat(obs, ow, oh, nxs[a], nys[a], nxs[b], nys[b], -1):
-				continue
-			var wgt := FM.isqrt(l2 * 64)
-			(adj[a] as Array).append([b, wgt])
-			(adj[b] as Array).append([a, wgt])
-	_join_components(obs, ow, oh, nxs, nys, ng, adj)
-	var e0 := PackedInt32Array()
-	var to := PackedInt32Array()
-	var ww := PackedInt32Array()
-	for a in n:
-		e0.append(to.size())
-		for e in adj[a]:
-			to.append(int(e[0]))
-			ww.append(int(e[1]))
-	e0.append(to.size())
+	var nav := _graph(obs, ow, oh, nxs, nys, ng)
 	var xm := m0.x
 	var half := (xb - xa) / 2
 	out["river"] = {"kind": int(g["kind"]), "id": int(g["id"]), "seed": int(g["seed"]), "hw": int(g["hw"]),
 		"bank": int(g["bank"]), "x0": xm - half, "x1": xm + half, "mouth": [[m0.x, m0.y], [m1.x, m1.y]],
-		"geom": g, "nav": {"x": nxs, "y": nys, "gate": ng, "e0": e0, "to": to, "w": ww}}
+		"geom": g, "nav": nav}
+
+
+## A crossing's cells (canonical frame): [obs (C_WATER where nobody goes;
+## ford and bridge open ground), rv (R_*)].
+static func _river_cells(g: Dictionary, w_m: int, h_m: int) -> Array:
+	var ow := w_m / 2
+	var oh := h_m / 2
+	var obs := PackedByteArray()
+	obs.resize(ow * oh)
+	obs.fill(C_OPEN)
+	var rvg := PackedByteArray()
+	rvg.resize(ow * oh)
+	rvg.fill(R_LAND)
+	var hw := int(g["hw"]) * 100
+	var xa := int(g["xa"])
+	var xb := int(g["xb"])
+	var cross := R_BRIDGE if int(g["kind"]) == 1 else R_FORD
+	for i in ow:
+		var x := i * 2 + 1
+		var yc := river_y(g, x)
+		var in_x := x >= xa and x < xb
+		for j in range(maxi((yc - hw) / 200 - 1, 0), mini((yc + hw) / 200 + 2, oh)):
+			if absi((j * 2 + 1) * 100 - yc) >= hw:
+				continue
+			var c := j * ow + i
+			if in_x:
+				rvg[c] = cross
+			else:
+				rvg[c] = R_WATER
+				obs[c] = C_WATER
+	return [obs, rvg]
 
 
 # --------------------------------------------------------------- flip -----
@@ -2908,6 +3232,8 @@ static func _flip_all(out: Dictionary, hgt: Dictionary, w_m: int, h_m: int) -> v
 			var a2 := h[k]
 			h[k] = h[n2 - 1 - k]
 			h[n2 - 1 - k] = a2
+	if out.has("land"):
+		_flip_land(out["land"], w_m, h_m)
 	var lay: Dictionary = out["city"]
 	var fx := func(x: int) -> int: return w_m - x
 	var fy := func(y: int) -> int: return h_m - y

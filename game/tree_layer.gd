@@ -289,6 +289,16 @@ func _river_edge(reeds: PackedFloat32Array, top: PackedFloat32Array, k: float) -
 		wx += 18.0 + _randf() * 20.0
 
 
+## A 4 m cell (i, j) touches a rock or a cliff (any of its four 2 m cells).
+func _on_land(i: int, j: int) -> bool:
+	for q in 4:
+		var x: int = (i * 4 + 1 + (q & 1) * 2) * 1024
+		var y: int = (j * 4 + 1 + (q >> 1) * 2) * 1024
+		if MapGen.is_land(sim.obs_kind(x, y)):
+			return true
+	return false
+
+
 ## Tufts, scrub and bushes on clear ground into `out`: clumped by a hash of
 ## 16 m blocks, more on slopes (scrub on dry ground), thinned at random to
 ## `budget` instances. Never on woods, streets, fields, water, the ditch or
@@ -305,6 +315,7 @@ func _ground_cover(out: PackedFloat32Array, veg: PackedByteArray, mask: PackedBy
 	var riv_hw := 0.0
 	if sim.riv_on != 0:
 		riv_hw = float(int(sim.riv["hw"])) + 2.5
+	var land: bool = sim.map_info.has("land")
 	for j in vh:
 		for i in vw:
 			if riv_hw > 0.0 and absf(j * 4.0 + 2.0 - MapGen.river_cy(sim.riv, i * 4 + 2) / 100.0) < riv_hw:
@@ -312,6 +323,8 @@ func _ground_cover(out: PackedFloat32Array, veg: PackedByteArray, mask: PackedBy
 			var b := veg[j * vw + i]
 			if (b & blockers) != 0 or (mask.size() > 0 and mask[j * vw + i] != 0):
 				continue
+			if land and _on_land(i, j):
+				continue  # (rocks and cliffs: game/land_layer.gd draws them)
 			var gr := 0.0
 			if sim.ter_on != 0 and i > 0 and j > 0 and i < tn_x - 1 and j < tn_y - 1:
 				var gx := float(sim.ter_h[j * tn_x + i + 1] - sim.ter_h[j * tn_x + i - 1]) / (8.0 * 1024.0)

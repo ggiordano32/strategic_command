@@ -1214,6 +1214,37 @@ forest edges. Order: 2a firearms (running) -> 2d landforms -> 2b cover
 and line of sight (uses the rocks and forests) -> 2c forts and fighting
 from buildings.
 
+**Slice 2d, as built 2026-10-14 (not committed; DESIGN "Battle-map
+landforms and shaped settlements").** `sim/landforms.gd` (new) places, on
+generated hilly ground (rolling, ridge, valley, hill, slope: the region's
+terrain or the cell's hill / ridge override), cliffs along the contour on
+the steepest 6 % of the ground (0-3 a map, 26-64 m), outcrops on crests
+and rough ground (up to ~18, 2-8 m, in groups), sea cliffs along a rocky
+shore beyond a coastal town; new impassable cells `C_ROCK` / `C_CLIFF`
+(missiles pass over until 2b; each carries a height for it), kept 12 / 7
+m from each other, the deployment areas, walls, the approach, fields,
+water and the edges, a flood fill drops any cliff that closes ground
+off; a path graph round them on field maps. Woods follow the land: long
+blobs along the contour, valley floors, lower slopes, the lee of ridges,
+river banks, ragged edges, none on rock or a cliff face (same coverage).
+Settlements: `MapGen.shape_of` lobes and stretches the polis, punic and
+oppidum outlines (long down a spur, along a hill's contours or the
+shore), the hill's brow and the spur's edge follow the wall, the
+citadel sits on the high point, hill grids run along the contours; the
+gate, tower, stair, ladder and citadel code is the existing polygon code
+(gates identical on 1,728 surveyed maps; ladder probe 853 / 853). View:
+`game/land_layer.gd` (cliff faces with brow, hachures, scree and drop
+shadow; shaded boulders; Low: faces and boulders only); the sea and
+ditch are drawn again (a lost shader flag). `terrain.landforms: 0` gives
+the old maps byte for byte. No golden needed re-pinning (all pinned
+trajectories are on flat or settlement-free maps); campaign_sim hashes
+unchanged; verify suite green. Harness (17 scenarios + 30 maps a pack):
+no unreachable unit, sieges decide as before, time per tick +2-6 % on
+the packs' field maps, +8 % on ridge / hill maps with many outcrops (over
+the +5 % aim; the lever is fewer outcrops in the battle band). Open: no
+town on a river (needs a city + river map); the campaign preview does not
+draw the rocks; cliffs sit on existing slopes (no height step).
+
 **Caribbean plan agreed 2026-10-14 (DESIGN "The Caribbean pack: ships,
 pirates, cover, asymmetry"):** sea battles real time with the wind;
 pirates as raiders with havens; armies embark on fleets (West only). Do
@@ -1388,6 +1419,14 @@ storms rarely sink AI ships (by design the AI dodges; a player who
 ignores the cone pays); storm port damage lands mostly on Puerto Rico and
 Hispaniola (where they form); salvage of wrecks; privateer captains for
 the nations; captains in the AI's power estimates; fame does not fade.
+
+**Map table and miniatures (2026-10-14, view only):** style D miniatures redone (tight bases,
+52 deg camera, tall towers, chunky ships, proper lighthouse) as layers + 8-heading ships, packed
+to `assets/minis/` (atlas big 2048x1024 + small 2048x256, ~20 MB video memory, small only on
+Low); overworld table style (West default, Rome selectable, Rome relief pixel-identical) with
+banded sea, posterised hillshade and ink contours, parchment frame and tilt-shift. Frame time
+(desktop 1280x800, Port Royal, uncapped): relief 155 / 152 fps, table 145 (zoom 0.5) / 185 (zoom 2).
+Open: hand-checking on the Tab S7 and phones; Rome miniatures have only the generic roman look.
 
 ## Next session (week of 2026-10-13; paused 2026-10-10 midday)
 

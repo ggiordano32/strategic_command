@@ -118,7 +118,7 @@ static func build(terrain: Dictionary, battle_seed: int, field_w: int, field_h: 
 		else:
 			# A culture's plan on its site (plain, hill, spur; MapGen.site_of).
 			site = MapGen.site_of(kind, int(cp["seed"]))
-			outl = MapGen.plan_outline(cp, kind, field_w / M)
+			outl = MapGen.plan_outline(cp, kind, field_w / M, int(terrain.get("landforms", 1)))
 			# Plains keep their country's own relief round the city; hills and
 			# spurs get theirs below, on top of gentle undulations.
 			var base_kind := kind if site == MapGen.SITE_PLAIN and kind != K_CUSTOM else K_FLAT
@@ -387,14 +387,19 @@ static func _city_ground(h: PackedInt32Array, nx: int, ny: int, fr: Vector3i, cp
 	var rmax := fr.z * 112 / 100
 	var plan: int = cp["plan"]
 	var amp := 0
+	# The town's shape (MapGen.shape_of; none: round as before): the hill's
+	# brow and the spur's edge follow the wall.
+	var sh: PackedInt32Array = outl.get("shape", PackedInt32Array())
 	if site == MapGen.SITE_HILL:
 		amp = _rr(rng, 10, 15) if kind == K_HILL else _rr(rng, 6, 8)
 		if plan != MapGen.PLAN_OPPIDUM:
-			_rise(h, nx, ny, fr.x * M, (fr.y - fr.z * 35 / 100) * M, (rmax * 2 + 60) * M, (rmax + 45) * M, amp * M)
+			# (Shaped: the brow closer behind the walls, the town on its top.)
+			_rise(h, nx, ny, fr.x * M, (fr.y - fr.z * 35 / 100) * M, (rmax * 2 + 60) * M,
+				(rmax + (45 if sh.is_empty() else 32)) * M, amp * M, sh)
 	elif site == MapGen.SITE_SPUR:
 		amp = _rr(rng, 12, 16)
 		_spur(h, nx, ny, fr.x * M, fr.y * M, (rmax + 10) * M, (rmax * 45 / 100) * M,
-			(fr.y + rmax + 50) * M, amp * M, 45 * M)
+			(fr.y + rmax + 50) * M, amp * M, 45 * M, sh)
 	var keep_pm := 250
 	if site == MapGen.SITE_HILL and plan != MapGen.PLAN_OPPIDUM:
 		keep_pm = 550
@@ -428,22 +433,26 @@ static func _city_ground(h: PackedInt32Array, nx: int, ny: int, fr: Vector3i, cp
 ## the attackers (+y, the main gate's side) and r_back elsewhere (bell
 ## profile; all sim units).
 static func _rise(h: PackedInt32Array, nx: int, ny: int, cx: int, cy: int, r_front: int, r_back: int,
-		amp: int) -> void:
-	var sx := _span(cx - r_front, cx + r_front, nx)
-	var sy := _span(cy - r_front, cy + r_front, ny)
+		amp: int, sh: PackedInt32Array = PackedInt32Array()) -> void:
+	var rf := r_front if sh.is_empty() else r_front * 12 / 10  # (a shape reaches 1.2x at most)
+	var sx := _span(cx - rf, cx + rf, nx)
+	var sy := _span(cy - rf, cy + rf, ny)
 	for j in range(sy.x, sy.y + 1):
 		var dy := j * CELL - cy
 		for i in range(sx.x, sx.y + 1):
 			var dx := i * CELL - cx
 			var d2 := dx * dx + dy * dy
-			if d2 >= r_front * r_front:
+			if d2 >= rf * rf:
 				continue
 			var w := 0
+			var spm := 1000
 			if d2 > 0:
-				var c := FM.cos_a((FM.atan2_a(dy, dx) - 256) & 1023)
+				var ang := FM.atan2_a(dy, dx)
+				var c := FM.cos_a((ang - 256) & 1023)
 				if c > 0:
 					w = c * c / FM.TRIG_ONE
-			var r := r_back + (r_front - r_back) * w / FM.TRIG_ONE
+				spm = MapGen.shape_pm(sh, ang)
+			var r := (r_back + (r_front - r_back) * w / FM.TRIG_ONE) * spm / 1000
 			if d2 >= r * r:
 				continue
 			h[j * nx + i] += amp * _bell(d2, r * r) / 1024
@@ -454,14 +463,19 @@ static func _rise(h: PackedInt32Array, nx: int, ny: int, cx: int, cy: int, r_fro
 ## attackers' side, +y), falling off over `band` on every other side
 ## (smoothstep; all sim units).
 static func _spur(h: PackedInt32Array, nx: int, ny: int, cx: int, cy: int, rad: int, neck_hw: int,
-		y_plat: int, amp: int, band: int) -> void:
+		y_plat: int, amp: int, band: int, sh: PackedInt32Array = PackedInt32Array()) -> void:
 	for j in ny:
 		var y := j * CELL
 		for i in nx:
 			var x := i * CELL
 			var dx := x - cx
 			var dy := y - cy
-			var d_disc := maxi(FM.isqrt(dx * dx + dy * dy) - rad, 0)
+			var dd := FM.isqrt(dx * dx + dy * dy)
+			var rs := rad
+			if not sh.is_empty() and dd > rad * 7 / 10 and dd < rad * 12 / 10 + band:
+				# (Only near the edge: the shape is 0.7-1.2 x the radius.)
+				rs = rad * MapGen.shape_pm(sh, FM.atan2_a(dy, dx)) / 1000
+			var d_disc := maxi(dd - rs, 0)
 			var d_neck := 1 << 40
 			if y >= cy:
 				d_neck = maxi(absi(dx) - neck_hw, 0)

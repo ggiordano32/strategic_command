@@ -866,6 +866,12 @@ var veg := PackedByteArray()      # 4 m cells: MapGen.V_* bits, density in bits 
 var veg_w: int = 0
 var veg_h: int = 0
 var obs_on: int = 0               # buildings / walls
+var obs_sat := PackedInt32Array() # summed-area table of obs_c ((oc_w + 1) x (oc_h + 1); static)
+var obs_hi: int = 0               # ... some of them rise (buildings, walls, towers, gates; not water, rock, cliff): lines of fire look at them (static)
+var land_sat := PackedInt32Array() # land_only maps: summed-area table of the obstacles in 4 m cells ((ls_w + 1) x (ls_h + 1); static)
+var ls_w: int = 0
+var ls_h: int = 0
+var land_only: int = 0            # ... and they are only rocks and cliffs (a field map with landforms; static): routers flee as in the open, stuck counts only by them
 var obs := PackedByteArray()      # 2 m cells: MapGen.C_* kind (static)
 var nav := PackedByteArray()      # 2 m cells: MapGen.NAV_* bits (gates change it)
 var ob_w: int = 0
@@ -2333,8 +2339,9 @@ func lof_block(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int, apex: int, 
 	# Woods and settlements: trees in the way add up (TREE_W per sample);
 	# buildings, walls and closed gates stand up from the ground. A shooter
 	# on a wall looks over his own battlements.
-	if map_on == 0:
-		# Plain hilly map: the ground alone (the original tight loop).
+	if veg_on == 0 and obs_hi == 0:
+		# Plain hilly map (or only water, rocks and cliffs, which shots pass
+		# over): the ground alone (the original tight loop).
 		while a <= end:
 			var qx := x0 + dx * a / d
 			var qy := y0 + dy * a / d
@@ -2361,7 +2368,7 @@ func lof_block(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int, apex: int, 
 		if a < d:
 			z += apex * 4 * a / d * (d - a) / d
 		var gz := height_at(px, py)
-		if obs_on != 0 and a >= oskip:
+		if obs_hi != 0 and a >= oskip:
 			var ot := _obs_top(px, py)
 			if ot > 0 and gz + ot > z:
 				stat_obs_lof += 1
@@ -2437,10 +2444,16 @@ func _setup_map(f: Dictionary) -> void:
 			ws_e, ws_fl, sea_flee, ws_nb, ws_jx, ws_jy]:
 		(arr as PackedInt32Array).resize(0)
 	map_info = {"palette": int(f["palette"]), "forest": int(f["forest"])}
+	obs_hi = 0
 	if obs_on != 0:
 		obs = f["obs"]
 		ob_w = int(f["ow"])
 		ob_h = int(f["oh"])
+		for c in obs.size():
+			var k0 := obs[c]
+			if k0 != MapGen.C_OPEN and k0 != MapGen.C_DITCH and k0 != MapGen.C_WATER and not MapGen.is_land(k0):
+				obs_hi = 1
+				break
 		oc_w = (ob_w + 7) >> 3
 		oc_h = (ob_h + 7) >> 3
 		obs_c.resize(oc_w * oc_h)
@@ -2451,6 +2464,13 @@ func _setup_map(f: Dictionary) -> void:
 			for i in ob_w:
 				if obs[row + i] != MapGen.C_OPEN:
 					obs_c[crow + (i >> 3)] = 1
+		obs_sat.resize((oc_w + 1) * (oc_h + 1))
+		obs_sat.fill(0)
+		for j in oc_h:
+			var acc := 0
+			for i in oc_w:
+				acc += obs_c[j * oc_w + i]
+				obs_sat[(j + 1) * (oc_w + 1) + i + 1] = obs_sat[j * (oc_w + 1) + i + 1] + acc
 		obs_cd.resize(oc_w * oc_h)
 		obs_cd.fill(0)
 		for j in oc_h:
@@ -2463,6 +2483,26 @@ func _setup_map(f: Dictionary) -> void:
 						var ii := i + di
 						if jj >= 0 and ii >= 0 and jj < oc_h and ii < oc_w:
 							obs_cd[jj * oc_w + ii] = 1
+	land_only = 1 if obs_on != 0 and obs_hi == 0 and city_on == 0 and riv_on == 0 else 0
+	land_sat = PackedInt32Array()
+	ls_w = 0
+	ls_h = 0
+	if land_only != 0:
+		ls_w = (ob_w + 1) >> 1
+		ls_h = (ob_h + 1) >> 1
+		var cnt := PackedInt32Array()
+		cnt.resize(ls_w * ls_h)
+		for j in ob_h:
+			for i in ob_w:
+				if obs[j * ob_w + i] != MapGen.C_OPEN:
+					cnt[(j >> 1) * ls_w + (i >> 1)] = 1
+		land_sat.resize((ls_w + 1) * (ls_h + 1))
+		land_sat.fill(0)
+		for j in ls_h:
+			var acc := 0
+			for i in ls_w:
+				acc += cnt[j * ls_w + i]
+				land_sat[(j + 1) * (ls_w + 1) + i + 1] = land_sat[j * (ls_w + 1) + i + 1] + acc
 	if city_on != 0:
 		var lay: Dictionary = f["city"]
 		map_info["city"] = lay
@@ -2531,6 +2571,18 @@ func _setup_map(f: Dictionary) -> void:
 		ng_e0 = (gr["e0"] as PackedInt32Array).duplicate()
 		ng_to = (gr["to"] as PackedInt32Array).duplicate()
 		ng_w = (gr["w"] as PackedInt32Array).duplicate()
+	if f.has("land"):
+		map_info["land"] = f["land"]  # (view data: cliffs and outcrops; the cells are in obs)
+	if city_on == 0 and riv_on == 0 and f.has("nav"):
+		# A field map with landforms: the graph round them.
+		var lgr: Dictionary = f["nav"]
+		for k in (lgr["x"] as PackedInt32Array).size():
+			ng_x.append(int(lgr["x"][k]) * M)
+			ng_y.append(int(lgr["y"][k]) * M)
+		ng_gate = (lgr["gate"] as PackedInt32Array).duplicate()
+		ng_e0 = (lgr["e0"] as PackedInt32Array).duplicate()
+		ng_to = (lgr["to"] as PackedInt32Array).duplicate()
+		ng_w = (lgr["w"] as PackedInt32Array).duplicate()
 	if riv_on != 0:
 		var rl: Dictionary = f["river"]
 		map_info["river"] = rl
@@ -2715,7 +2767,7 @@ func _build_cmp() -> void:
 	free.resize(nc)
 	for c in nc:
 		var k := obs[c]
-		if k >= MapGen.C_GATE:
+		if MapGen.is_gate(k):
 			cmp[c] = -2 - (k - MapGen.C_GATE)
 		else:
 			free[c] = kind_open[k]
@@ -2963,9 +3015,9 @@ func _nav_of(k: int) -> int:
 		return MapGen.NAV_WALL | MapGen.NAV_GROUND
 	if k == MapGen.C_DITCH:
 		return MapGen.NAV_DITCH
-	if k >= MapGen.C_GATE:
+	if MapGen.is_gate(k):
 		return MapGen.NAV_GROUND if g_state[k - MapGen.C_GATE] != GATE_CLOSED else 0
-	return 0
+	return 0  # (and rock, cliff: nobody)
 
 
 ## A gate changed: its cells' passability, and every path is replanned.
@@ -3047,13 +3099,15 @@ func _obs_top(x: int, y: int) -> int:
 	var k := obs_kind(x, y)
 	if k == MapGen.C_OPEN or k == MapGen.C_DITCH or k == MapGen.C_WATER:
 		return 0
+	if MapGen.is_land(k):
+		return 0  # rocks and cliffs: shots pass over (cover and sight: slice 2b, map_info "land" heights)
 	if k == MapGen.C_BUILDING:
 		return build_h
 	if k == MapGen.C_WALK or k == MapGen.C_STAIR:
 		return wall_h
 	if k == MapGen.C_TOWER:
 		return wall_h + 4 * M
-	if k >= MapGen.C_GATE:
+	if MapGen.is_gate(k):
 		return wall_h + M if g_state[k - MapGen.C_GATE] == GATE_CLOSED else 0
 	return wall_h + WALL_PARAPET
 
@@ -3080,16 +3134,28 @@ func _base_files(u: int) -> int:
 func _near_obs(u: int) -> int:
 	if u_wall[u] > 0 or u_stair[u] != 0:
 		return 1
-	var x0 := (mini(u_minx[u], u_ax[u]) - 8 * M) >> 14
-	var x1 := (maxi(u_maxx[u], u_ax[u]) + 8 * M) >> 14
-	var y0 := (mini(u_miny[u], u_ay[u]) - 8 * M) >> 14
-	var y1 := (maxi(u_maxy[u], u_ay[u]) + 8 * M) >> 14
-	for j in range(maxi(y0, 0), mini(y1, oc_h - 1) + 1):
-		var row := j * oc_w
-		for i in range(maxi(x0, 0), mini(x1, oc_w - 1) + 1):
-			if obs_c[row + i] != 0:
-				return 1
-	return 0
+	if land_only != 0:
+		# Landforms only (small, few): 4 m cells and 4 m round the box.
+		var lx0 := maxi((mini(u_minx[u], u_ax[u]) - 4 * M) >> 12, 0)
+		var lx1 := mini((maxi(u_maxx[u], u_ax[u]) + 4 * M) >> 12, ls_w - 1)
+		var ly0 := maxi((mini(u_miny[u], u_ay[u]) - 4 * M) >> 12, 0)
+		var ly1 := mini((maxi(u_maxy[u], u_ay[u]) + 4 * M) >> 12, ls_h - 1)
+		if lx1 < lx0 or ly1 < ly0:
+			return 0
+		var lw1 := ls_w + 1
+		return 1 if land_sat[(ly1 + 1) * lw1 + lx1 + 1] - land_sat[ly0 * lw1 + lx1 + 1] \
+			- land_sat[(ly1 + 1) * lw1 + lx0] + land_sat[ly0 * lw1 + lx0] > 0 else 0
+	var x0 := maxi((mini(u_minx[u], u_ax[u]) - 8 * M) >> 14, 0)
+	var x1 := mini((maxi(u_maxx[u], u_ax[u]) + 8 * M) >> 14, oc_w - 1)
+	var y0 := maxi((mini(u_miny[u], u_ay[u]) - 8 * M) >> 14, 0)
+	var y1 := mini((maxi(u_maxy[u], u_ay[u]) + 8 * M) >> 14, oc_h - 1)
+	if x1 < x0 or y1 < y0:
+		return 0
+	# (Summed-area table of obs_c: the count of obstacle cells in the box.)
+	var w1 := oc_w + 1
+	var cnt_n := obs_sat[(y1 + 1) * w1 + x1 + 1] - obs_sat[y0 * w1 + x1 + 1] - obs_sat[(y1 + 1) * w1 + x0] \
+		+ obs_sat[y0 * w1 + x0]
+	return 1 if cnt_n > 0 else 0
 
 
 ## A man of unit u moving from (ox, oy) to (nx, ny) into a cell he may not
@@ -3790,6 +3856,12 @@ func _squeeze(u: int) -> void:
 		fl += stp
 	while fr < half and (nav_at(ax - s * (fr + stp) / FM.TRIG_ONE, ay + c * (fr + stp) / FM.TRIG_ONE) & MapGen.NAV_GROUND) != 0:
 		fr += stp
+	# A rock or a cliff on one side only is not a street: the men flow round
+	# it (landforms, slice 2d); a gap between two of them is.
+	if fl < half and fr >= half and MapGen.is_land(obs_kind(ax + s * (fl + stp) / FM.TRIG_ONE, ay - c * (fl + stp) / FM.TRIG_ONE)):
+		fl = half
+	elif fr < half and fl >= half and MapGen.is_land(obs_kind(ax - s * (fr + stp) / FM.TRIG_ONE, ay + c * (fr + stp) / FM.TRIG_ONE)):
+		fr = half
 	var width := fl + fr + M
 	var sq := 0
 	if width < want * fsp:
@@ -5987,8 +6059,8 @@ func _occ_probe(u: int, ox: int, oy: int, x: int, y: int, rx: int, ry: int, t: i
 ## it goes at half speed. Sets u_blk / u_dodge. Returns where it gets to.
 func _anchor_step(u: int, ox: int, oy: int, nx: int, ny: int, t: int, spd: int) -> Vector2i:
 	var p := _anchor_step0(u, ox, oy, nx, ny, t, spd)
-	if obs_on == 0 or (p.x == ox and p.y == oy):
-		return p
+	if obs_on == 0 or (p.x == ox and p.y == oy) or (land_only != 0 and u < _u_obs.size() and _u_obs[u] == 0):
+		return p  # (landforms only, none within 4 m of the unit's box and anchor: open ground)
 	# Maps with buildings or walls: the anchor keeps to ground its men can
 	# stand on (from open ground it does not step into a wall or a house:
 	# along one axis, else it stays). A path's shortcut past a wall's corner
@@ -6127,7 +6199,7 @@ func _update_units() -> void:
 				stat_refill_broken += 1  # routed: the refill is abandoned
 				u_rprog[u] = 0
 				u_refill[u] = 0
-			if oon and u_state[u] == U_ROUTING and u_alive[u] > 0 and (ch_on == 0 or u_hold[u] <= tick):
+			if oon and land_only == 0 and u_state[u] == U_ROUTING and u_alive[u] > 0 and (ch_on == 0 or u_hold[u] <= tick):
 				_flee_step(u)
 			continue
 		var ty := u_type[u]
@@ -6458,7 +6530,12 @@ func _update_units() -> void:
 		var moved := FM.approx_len(mdx, mdy)
 		u_moved[u] = moved
 		if oon:
-			if want or u_stair[u] != 0 or u_stuck[u] != 0:
+			if land_only != 0 and _u_obs[u] == 0:
+				# (Landforms only: a unit away from them is not stuck on anything.)
+				u_stuck[u] = 0
+				u_srx[u] = u_cx[u]
+				u_sry[u] = u_cy[u]
+			elif want or u_stair[u] != 0 or u_stuck[u] != 0:
 				_stuck_tick(u, want)
 			else:
 				u_srx[u] = u_cx[u]  # (nothing to get on with: the counter rests)
@@ -6920,7 +6997,7 @@ func _build_grid() -> void:
 	var gw := grid_w
 	var gmax := grid_w * grid_h - 1
 	var cnt := 0
-	var blk := obs_on != 0
+	var blk := obs_on != 0 and land_only == 0  # (landforms only: no obstacle searches, no counts)
 	if blk:
 		blk_n0.fill(0)
 		blk_n1.fill(0)
@@ -6997,6 +7074,10 @@ func _update_soldiers() -> void:
 		# blocked cells (walls, buildings, closed gates; the walkway is only
 		# for wall units and they never leave it).
 		var ob := obs_on != 0 and _u_obs[u] != 0
+		# (Searches and reach: through walls, gates and houses never; over a
+		# rock or a cliff's foot as in the open, landforms being small: a
+		# field map with only landforms searches as an open one.)
+		var obr := ob and land_only == 0
 		var navg := nav
 		var obw := ob_w
 		var obw1 := ob_w - 1
@@ -7361,7 +7442,7 @@ func _update_soldiers() -> void:
 				if t >= 0 and st[t] >= S_DEAD:
 					t = -1
 				if t < 0 and ((tk + i) & 1) == 0:
-					t = _find_target_cone_obs(x, y, SEARCH_FRONT, fcos, fsin, enemy_head) if ob \
+					t = _find_target_cone_obs(x, y, SEARCH_FRONT, fcos, fsin, enemy_head) if obr \
 						else _find_target_cone(x, y, SEARCH_FRONT, fcos, fsin, enemy_head)
 			elif pike_formed:
 				if slot < pike_ranks:
@@ -7374,7 +7455,7 @@ func _update_soldiers() -> void:
 							if kx * kx + ky * ky > (reach + M) * (reach + M):
 								t = -1
 					if t < 0 and (tk + i) % 3 == 0:
-						t = _find_target_cone_obs(x, y, reach, fcos, fsin, enemy_head) if ob \
+						t = _find_target_cone_obs(x, y, reach, fcos, fsin, enemy_head) if obr \
 							else _find_target_cone(x, y, reach, fcos, fsin, enemy_head)
 				else:
 					t = -1
@@ -7390,7 +7471,7 @@ func _update_soldiers() -> void:
 						if ddx * ddx + ddy * ddy > (keep_front if front and not shy else keep_rear):
 							t = -1
 							lost = true
-						elif ob and (((tk + i) & 1) == 0 or ddx * ddx + ddy * ddy <= reach_in * reach_in) \
+						elif obr and (((tk + i) & 1) == 0 or ddx * ddx + ddy * ddy <= reach_in * reach_in) \
 								and not _reach_ok(x, y, px[t], py[t]):
 							# Out of reach behind a wall (or a gate, a corner): look
 							# again (every other tick: nobody stands fighting a wall;
@@ -7409,12 +7490,12 @@ func _update_soldiers() -> void:
 					# (Among buildings, half the men who just lost their man look
 					# again at once and the rest at their next turn: a unit
 					# breaking off or dying set off a burst of searches.)
-					if (lost and (not ob or ((tk + i) & 1) == 0)) or (tk + i) % (3 if wide else 7) == 0:
+					if (lost and (not obr or ((tk + i) & 1) == 0)) or (tk + i) % (3 if wide else 7) == 0:
 						if wide and not shy:
-							t = _find_target_obs(x, y, SEARCH_FRONT, 2, enemy_head) if ob \
+							t = _find_target_obs(x, y, SEARCH_FRONT, 2, enemy_head) if obr \
 								else _find_target(x, y, SEARCH_FRONT, 2, enemy_head)
 						else:
-							t = _find_target_obs(x, y, rear_r, 2, enemy_head) if ob \
+							t = _find_target_obs(x, y, rear_r, 2, enemy_head) if obr \
 								else _find_target(x, y, rear_r, 2, enemy_head)
 			tg[i] = t
 
@@ -7644,9 +7725,22 @@ func _update_soldiers() -> void:
 			ny = clampi(ny, 0, fh)
 			var mm3 := mask if stair_mv == 0 else _stair_mask(u, x, y, mask, stair_mv)
 			if ob and (navg[mini(ny >> 11, obh1) * obw + mini(nx >> 11, obw1)] & mm3) == 0:
-				var sl3 := _slide(u, x, y, nx, ny, mm3)
-				nx = sl3.x
-				ny = sl3.y
+				if land_only != 0 and (navg[mini(y >> 11, obh1) * obw + mini(x >> 11, obw1)] & mm3) != 0:
+					# Landforms only, a man in the fight against a rock or a
+					# cliff: along it on one axis, else he stays (no trail to
+					# walk round a boulder; _slide's last resort, cheaper).
+					stat_clamp += 1
+					if nx != x and (navg[mini(y >> 11, obh1) * obw + mini(nx >> 11, obw1)] & mm3) != 0:
+						ny = y
+					elif ny != y and (navg[mini(ny >> 11, obh1) * obw + mini(x >> 11, obw1)] & mm3) != 0:
+						nx = x
+					else:
+						nx = x
+						ny = y
+				else:
+					var sl3 := _slide(u, x, y, nx, ny, mm3)
+					nx = sl3.x
+					ny = sl3.y
 			px[i] = nx
 			py[i] = ny
 			counted += 1
@@ -12047,7 +12141,7 @@ func result() -> Dictionary:
 ## scenario and seed (the unit type tables t_*, the terrain grid) or
 ## view-only diagnostics that are large.
 const _SNAP_SKIP := {"ter_h": true, "ter_gx": true, "ter_gy": true, "ter_info": true,
-	"dbg_impacted": true, "veg": true, "obs": true, "obs_c": true, "obs_cd": true, "map_info": true,
+	"dbg_impacted": true, "veg": true, "obs": true, "obs_c": true, "obs_cd": true, "obs_sat": true, "land_sat": true, "map_info": true,
 	"ws_x0": true, "ws_y0": true, "ws_x1": true, "ws_y1": true, "ws_dir": true, "ng_x": true,
 	"ng_y": true, "ng_gate": true, "ng_e0": true, "ng_to": true, "ng_w": true, "_dist_cache": true,
 	"g_hw": true, "g_cit": true, "ws_e": true, "ws_fl": true, "sea_flee": true, "ws_nb": true,
@@ -12398,6 +12492,13 @@ static func place_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 		return
 	if sim.city_on != 0 and sim.n_cmp > 0 and sim._piece0(p.x, p.y) < 0:
 		return  # a house, a wall, a gateway
+	if sim.city_on == 0 and sim.obs_on != 0 and (sim.nav_at(p.x, p.y) & MapGen.NAV_GROUND) == 0:
+		# On a rock or a cliff (landforms): beside it, if that is still in the zone.
+		var op := open_snap(sim, p.x, p.y, MapGen.NAV_GROUND)
+		var p2 := deploy_clamp(sim, side, op.x, op.y)
+		if p2.x != op.x or p2.y != op.y or (sim.nav_at(op.x, op.y) & MapGen.NAV_GROUND) == 0:
+			return
+		p = p2
 	var nf: int = d["files"]
 	if UT.cls(ty) != UT.CLS_ART:
 		var f := int(o.get("files", d["files"]))

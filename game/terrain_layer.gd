@@ -24,6 +24,7 @@ const SHADER := preload("res://game/terrain.gdshader")
 const GroundPalette := preload("res://game/ground_palette.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const CityDraw := preload("res://game/city_draw.gd")
+const LandLayer := preload("res://game/land_layer.gd")
 const NODE_M := 2.0                       # texture node spacing (metres)
 const LIGHT := Vector3(-0.55, -0.7, 0.85) # from the upper left, fairly high
 const RELIEF_EXAGGERATE := 3.4            # shading reads on gentle slopes too
@@ -69,6 +70,11 @@ func setup(p_sim, p_px_per_m: float) -> void:
 		dec.low = Quality.is_low()
 		add_child(dec)
 		_decals = dec
+	if sim.map_info.has("land"):
+		# Cliffs and outcrops (landforms), over the ground and its decals.
+		_land = LandLayer.new()
+		_land.setup(sim, px_per_m, Quality.is_low())
+		add_child(_land)
 	build_ms = (Time.get_ticks_usec() - t0) / 1000.0
 	apply_quality()
 	_measure_from = Time.get_ticks_msec()
@@ -80,6 +86,7 @@ func setup(p_sim, p_px_per_m: float) -> void:
 
 
 var _decals: Node2D
+var _land: LandLayer
 var _measuring := false
 var _measure_from := 0
 var _measure_frames := 0
@@ -94,6 +101,8 @@ func apply_quality() -> void:
 	if _decals != null and _decals.low != quality_low:
 		_decals.low = quality_low
 		_decals.queue_redraw()
+	if _land != null:
+		_land.set_low(quality_low)
 	var par := get_parent()
 	if par != null:
 		var tl = par.get("trees")
@@ -352,6 +361,9 @@ func _build_veg() -> void:
 	var base: Color = GroundPalette.get_palette(int(sim.ter_info.get("palette", 0)))["base"]
 	if any or sim.riv_on != 0:
 		m.set_shader_parameter("sea_col", Vector3(0.16 + base.r * 0.1, 0.33 + base.g * 0.1, 0.46 + base.b * 0.05))
+	# (Lost in the 2026-10-10 visual upgrade, so the sea and the ditch were
+	# drawn as plain ground: restored with the landforms.)
+	m.set_shader_parameter("sea_on", any)
 	if any:
 		var simg := Image.create_from_data(vw, vh, false, Image.FORMAT_RGB8, sb)
 		m.set_shader_parameter("seamap", ImageTexture.create_from_image(simg))
