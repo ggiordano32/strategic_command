@@ -19,6 +19,7 @@ const Saves := preload("res://game/campaign/saves.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const CState := preload("res://campaign/cstate.gd")
 const CData := preload("res://campaign/cdata.gd")
+const PackView := preload("res://game/campaign/pack_view.gd")
 const NetScript := preload("res://game/net/net.gd")
 const NetSelftest := preload("res://game/net/net_selftest.gd")
 const MapGen := preload("res://sim/mapgen.gd")
@@ -68,6 +69,7 @@ var controls: Controls
 var campaign: CampaignScreen = null
 var _preparing := false  # a campaign is opening behind the loading panel
 var _new_campaign: NewCampaign = null
+var _subtitle: Label = null
 ## Menu pages: "home", "sandbox", "continue", "import", "join", "share".
 var _pages := {}
 var page := "home"
@@ -218,11 +220,14 @@ func _ready() -> void:
 		elif a.begins_with("--campaign="):
 			# Testing aid: --campaign=rome[,greeks][:seed] starts a new campaign.
 			var spec: String = a.get_slice("=", 1)
+			for a2 in OS.get_cmdline_user_args():
+				if a2.begins_with("--pack="):
+					PackView.use_pack(a2.get_slice("=", 1))  # --pack=west with --campaign=new_spain
 			var picks: Array = []
 			for k in spec.get_slice(":", 0).split(","):
 				picks.append(CData.faction_index(k))
 			var sd := int(spec.get_slice(":", 1)) if spec.contains(":") else 7
-			var st := CState.new_campaign("Test", sd, picks)
+			var st := CState.new_campaign("Test", sd, picks, {}, [], CData.pack)
 			var data := {"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}
 			var sl := Saves.slot_for("test", sd)
 			Saves.save(sl, data)
@@ -393,7 +398,8 @@ func _build_home(bg: Control) -> Control:
 	var title := Kit.label("Strategic Command", 30, Color(1, 0.92, 0.7))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vb.add_child(title)
-	var sub := Kit.label("The western Mediterranean, 280 BC", 15, Kit.COL_DIM)
+	var sub := Kit.label(PackView.subtitle("rome"), 15, Kit.COL_DIM)
+	_subtitle = sub
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vb.add_child(sub)
 	var camp := HFlowContainer.new()
@@ -507,6 +513,15 @@ func _fill_continue() -> void:
 		_continue_box.add_child(h)
 
 
+## The faction name of an online seat (its campaign's pack, restored after).
+func _seat_name(e: Dictionary) -> String:
+	var keep := CData.pack
+	PackView.use_pack(str(e.get("pack", "rome")))
+	var n := CData.faction_name(int(e["f"]))
+	PackView.use_pack(keep)
+	return n
+
+
 ## Online campaigns this device has a seat in, with live status badges.
 func _fill_online() -> void:
 	for c in _online_box.get_children():
@@ -522,7 +537,7 @@ func _fill_online() -> void:
 	for e in list:
 		var cid := str(e["id"])
 		var h := Kit.hbox(6)
-		var b := _menu_button("%s - %s" % [e.get("name", cid), CData.faction_name(int(e["f"]))], _open_online.bind(cid))
+		var b := _menu_button("%s - %s" % [e.get("name", cid), _seat_name(e)], _open_online.bind(cid))
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		b.clip_text = true
@@ -809,6 +824,11 @@ func _open_online(cid: String) -> void:
 	_menu.visible = false
 	await lp.step("Contacting the server")
 	await oc.prefetch()
+	PackView.use_state(oc.st)  # the geometry before the map's bakes
+	var ent: Dictionary = _net().accounts.get_entry(oc.id) if _net() != null else {}
+	if not ent.is_empty() and str(ent.get("pack", "rome")) != CData.pack:
+		ent["pack"] = CData.pack  # (so the menu names the seat's faction right)
+		_net().accounts.save()
 	await _prepare_map(lp)
 	await lp.step("Building the screen")
 	campaign = CampaignScreen.new()
@@ -825,6 +845,7 @@ func show_page(p: String) -> void:
 	if p == "continue":
 		_fill_continue()
 	if p == "home":
+		_subtitle.text = PackView.subtitle(PackView.load_pref())
 		_update_soldiers_button()  # a battle may have switched it (soldier self-check)
 		_update_quality_button()
 
@@ -844,6 +865,7 @@ func _new_campaign_page(online: bool = false) -> void:
 	_new_campaign.back.connect(func():
 		_new_campaign.queue_free()
 		_new_campaign = null
+		PackView.use_pack("rome")  # the menu's own screens (custom battle) use Rome
 		_menu.visible = true)
 	add_child(_new_campaign)
 	move_child(_new_campaign, _menu.get_index() + 1)
@@ -862,6 +884,7 @@ func _open_campaign(d: Dictionary, sl: String, lp = null) -> void:
 	if lp == null:
 		lp = LoadingPanel.open(get_tree().root, "Preparing the campaign", 4)
 	_menu.visible = false
+	PackView.use_state(d["state"])  # the geometry before the map's bakes
 	await _prepare_map(lp)
 	await lp.step("Building the screen")
 	campaign = CampaignScreen.new()
@@ -898,6 +921,7 @@ func _close_campaign() -> void:
 				net.close_campaign()
 		campaign.queue_free()
 		campaign = null
+	PackView.use_pack("rome")
 	_menu.visible = true
 	show_page("home")
 	if went_online != "":

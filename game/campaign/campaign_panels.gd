@@ -22,6 +22,7 @@ const MapGen := preload("res://sim/mapgen.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const DragReorder := preload("res://game/drag_reorder.gd")
 const BattleScreen := preload("res://game/campaign/battle_screen.gd")
+const PackView := preload("res://game/campaign/pack_view.gd")
 
 var s  # the campaign screen
 ## Open / closed state of the collapsible card groups this session (never in
@@ -2364,8 +2365,12 @@ func show_intro() -> void:
 	var lose := "You lose if %s is destroyed." % ("either player" if (s.st["humans"] as Array).size() > 1 else "your faction")
 	if not CRules._players_one_team(s.st):
 		lose = "A team wins when its members together hold that; you lose if your whole team falls."
-	box.add_child(Kit.label("Goal: hold %d regions including %d of Roma, Carthago, Pella, Syracusae and Athenae. %s" % [
-		int(p["need_regions"]), int(p["need_capitals"]), lose], Kit.FONT, Color.WHITE, true))
+	var kc: Array[String] = []
+	for kr in CData.KEY_CITIES:
+		kc.append(str(CData.REGIONS[CData.region_index(str(kr))]["city"]))
+	var kc_text := kc[0] if kc.size() == 1 else ", ".join(kc.slice(0, kc.size() - 1)) + " and " + kc[kc.size() - 1]
+	box.add_child(Kit.label("Goal: hold %d regions including %d of %s. %s" % [
+		int(p["need_regions"]), int(p["need_capitals"]), kc_text, lose], Kit.FONT, Color.WHITE, true))
 	if CState.team_members(s.st, CState.team(s.st, f)).size() > 1:
 		box.add_child(Kit.label("Your " + _team_names(s.st, f) + ".", Kit.FONT, Kit.COL_GOOD, true))
 	s.show_dialog("A new campaign", box, [["Start", Callable()]], 600)
@@ -2632,7 +2637,7 @@ func show_game_over() -> void:
 	var st: Dictionary = s.st
 	var won := int(st["winner"]) == 1
 	var box := Kit.vbox(8)
-	var head := "Victory! The Mediterranean is yours." if won else "Defeat."
+	var head := "Victory! %s is yours." % PackView.sea_name(CData.pack) if won else "Defeat."
 	if st.has("winner_team"):
 		var wt := int(st["winner_team"])
 		var names := ", ".join(_member_names(st, int((CState.team_members(st, wt))[0])))

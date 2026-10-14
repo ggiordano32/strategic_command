@@ -296,6 +296,19 @@ static func palette_texture() -> ImageTexture:
 	return _pal_cache
 
 
+## Palette row (SpriteAtlas.PALETTE_KEYS) of campaign faction f: its own key
+## if it has a palette; else the FACTIONS row's view-only "palette" key; else
+## a fixed fallback by faction index (other packs' factions).
+static func palette_row_of(f: int) -> int:
+	var fd: Dictionary = CData.FACTIONS[f]
+	var r := SpriteAtlas.PALETTE_KEYS.find(str(fd["key"]))
+	if r < 0 and fd.has("palette"):
+		r = SpriteAtlas.PALETTE_KEYS.find(str(fd["palette"]))
+	if r < 0:
+		r = f % SpriteAtlas.PALETTE_KEYS.size()
+	return r
+
+
 ## Palette row (SpriteAtlas.PALETTE_KEYS) per unit: its campaign faction's
 ## (unit_faction); else its side's: the faction most of the side's known
 ## units belong to, else the faction whose roster alone has the side's
@@ -309,7 +322,7 @@ func _palette_rows() -> PackedInt32Array:
 	for u in nu:
 		var f := int(unit_faction[u]) if u < unit_faction.size() else -1
 		if f >= 0 and f < CData.FACTIONS.size():
-			rows[u] = maxi(SpriteAtlas.PALETTE_KEYS.find(str(CData.FACTIONS[f]["key"])), -1)
+			rows[u] = palette_row_of(f)
 			if rows[u] >= 0:
 				var sd: Dictionary = votes[sim.u_side[u] & 1]
 				sd[rows[u]] = int(sd.get(rows[u], 0)) + 2

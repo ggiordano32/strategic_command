@@ -163,7 +163,7 @@ func create_campaign(st: Dictionary, seat: int, opts: Dictionary = {}) -> Dictio
 	var r: Dictionary = await api.call_api("POST", "/api/campaigns", body, "", {"timeout": 30})
 	if r["ok"]:
 		var d: Dictionary = r["data"]
-		accounts.add(str(d["id"]), seat, str(d["token"]), str(body["name"]))
+		accounts.add(str(d["id"]), seat, str(d["token"]), str(body["name"]), str(st.get("pack", "rome")))
 		_seed_cache(str(d["id"]), st, int(d["version"]))
 		if str(opts.get("invite", "")) != "":
 			accounts.set_value("invite", str(opts["invite"]))

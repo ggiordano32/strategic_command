@@ -25,7 +25,9 @@ const CState := preload("res://campaign/cstate.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const LoadingPanel := preload("res://game/campaign/loading_panel.gd")
 const Saves := preload("res://game/campaign/saves.gd")
+const PackView := preload("res://game/campaign/pack_view.gd")
 
+## Fallback blurbs by faction key (a FACTIONS row's own "blurb" wins).
 const BLURB := {
 	"rome": "Four Italian regions; heavy swordsmen. At war with Epirus.",
 	"carthage": "Rich, spread over Africa, Sicily, Sardinia and Spain; strong cavalry. At war with Syracuse.",
@@ -48,6 +50,8 @@ var _human_buttons: Array[Button] = []
 var _team_dds: Array[OptionButton] = []
 var _name_labels: Array[Label] = []
 var _info: Label
+var _list: VBoxContainer
+var _pack_buttons := {}  # pack key -> its Setting button
 var _start_button: Button
 var _setting_buttons := {}
 var online := false
@@ -89,8 +93,29 @@ func _ready() -> void:
 	v.add_child(head)
 	_info = Kit.label("", Kit.FONT, Color.WHITE, true)
 	v.add_child(_info)
-	for f in CData.faction_count():
-		team_of.append(f)
+	var pk := PackView.load_pref()
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--pack="):
+			pk = a.get_slice("=", 1)  # testing aid
+	if not CData.has_pack(pk):
+		pk = "rome"
+	PackView.use_pack(pk)
+	var avail := PackView.available()
+	if avail.size() > 1:
+		var sr0 := Kit.flow(8)
+		sr0.add_child(Kit.label("Setting", Kit.FONT, Kit.COL_DIM))
+		for c in avail:
+			var sb := Button.new()
+			sb.toggle_mode = true
+			sb.focus_mode = Control.FOCUS_NONE
+			sb.text = str(c[1])
+			sb.name = "pack_" + str(c[0])
+			sb.custom_minimum_size = Vector2(0, Kit.BTN_H)
+			sb.add_theme_font_size_override("font_size", 14)
+			sb.pressed.connect(_set_pack.bind(str(c[0])))
+			sr0.add_child(sb)
+			_pack_buttons[str(c[0])] = sb
+		v.add_child(sr0)
 	var team_row := Kit.flow(8)
 	var b_one := Kit.button("All humans one team", _all_humans_one_team, 0, 14)
 	b_one.name = "all_one_team"
@@ -99,44 +124,10 @@ func _ready() -> void:
 	b_own.name = "everyone_alone"
 	team_row.add_child(b_own)
 	v.add_child(team_row)
-	var list := Kit.vbox(4)
-	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	v.add_child(list)
-	var topts: Array = []
-	for ti in CData.faction_count():
-		topts.append(["Team %d" % (ti + 1), ti])
-	for f in CData.faction_count():
-		var fd: Dictionary = CData.FACTIONS[f]
-		var rowp := Kit.panel(Color(0.16, 0.2, 0.16, 0.9), 6)
-		rowp.name = "row_" + str(fd["key"])
-		var h := Kit.hbox(8)
-		rowp.add_child(h)
-		h.add_child(Kit.swatch(CData.faction_color(f), 20))
-		var nv := Kit.vbox(0)
-		nv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		var nl := Kit.label(str(fd["name"]), 15, Color.WHITE)
-		nv.add_child(nl)
-		var bl := Kit.label(BLURB[fd["key"]], 12, Kit.COL_DIM, true)
-		bl.custom_minimum_size.x = 120
-		bl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		nv.add_child(bl)
-		h.add_child(nv)
-		_name_labels.append(nl)
-		var hb := Button.new()
-		hb.toggle_mode = true
-		hb.focus_mode = Control.FOCUS_NONE
-		hb.custom_minimum_size = Vector2(84, Kit.BTN_H)
-		hb.add_theme_font_size_override("font_size", 14)
-		hb.name = "faction_" + str(fd["key"])
-		hb.pressed.connect(_pick.bind(f))
-		h.add_child(hb)
-		_human_buttons.append(hb)
-		var dd := Kit.dropdown(topts, team_of[f], func(x): _set_team(f, int(x)), 92, 14)
-		dd.name = "team_" + str(fd["key"])
-		dd.tooltip_text = "Factions on one team are allied for good, never at war, and win together"
-		h.add_child(dd)
-		_team_dds.append(dd)
-		list.add_child(rowp)
+	_list = Kit.vbox(4)
+	_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.add_child(_list)
+	_build_rows()
 	var row := Kit.flow(8)
 	row.add_child(Kit.label("Name", Kit.FONT, Kit.COL_DIM))
 	name_edit = Kit.text_field("Campaign name", "Campaign", 180)
@@ -206,6 +197,66 @@ func _ready() -> void:
 				_pick(CData.faction_index(k))
 		elif a == "--one-team":
 			_all_humans_one_team()
+	_update()
+
+
+## The active pack's factions as rows (picks and teams start afresh).
+func _build_rows() -> void:
+	for c in _list.get_children():
+		_list.remove_child(c)
+		c.queue_free()
+	picks.clear()
+	team_of.clear()
+	_human_buttons.clear()
+	_team_dds.clear()
+	_name_labels.clear()
+	for f in CData.faction_count():
+		team_of.append(f)
+	var topts: Array = []
+	for ti in CData.faction_count():
+		topts.append(["Team %d" % (ti + 1), ti])
+	for f in CData.faction_count():
+		var fd: Dictionary = CData.FACTIONS[f]
+		var rowp := Kit.panel(Color(0.16, 0.2, 0.16, 0.9), 6)
+		rowp.name = "row_" + str(fd["key"])
+		var h := Kit.hbox(8)
+		rowp.add_child(h)
+		h.add_child(Kit.swatch(CData.faction_color(f), 20))
+		var nv := Kit.vbox(0)
+		nv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var nl := Kit.label(str(fd["name"]), 15, Color.WHITE)
+		nv.add_child(nl)
+		var bl := Kit.label(str(fd.get("blurb", BLURB.get(fd["key"], ""))), 12, Kit.COL_DIM, true)
+		bl.custom_minimum_size.x = 120
+		bl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		nv.add_child(bl)
+		h.add_child(nv)
+		_name_labels.append(nl)
+		var hb := Button.new()
+		hb.toggle_mode = true
+		hb.focus_mode = Control.FOCUS_NONE
+		hb.custom_minimum_size = Vector2(84, Kit.BTN_H)
+		hb.add_theme_font_size_override("font_size", 14)
+		hb.name = "faction_" + str(fd["key"])
+		hb.pressed.connect(_pick.bind(f))
+		h.add_child(hb)
+		_human_buttons.append(hb)
+		var dd := Kit.dropdown(topts, team_of[f], func(x): _set_team(f, int(x)), 92, 14)
+		dd.name = "team_" + str(fd["key"])
+		dd.tooltip_text = "Factions on one team are allied for good, never at war, and win together"
+		h.add_child(dd)
+		_team_dds.append(dd)
+		_list.add_child(rowp)
+
+
+## Switch the setting: CData and the map geometry, then the faction list.
+func _set_pack(key: String) -> void:
+	if _creating or not CData.has_pack(key):
+		return
+	if key != CData.pack:
+		PackView.use_pack(key)
+		_build_rows()
+	PackView.save_pref(key)
 	_update()
 
 
@@ -287,6 +338,9 @@ func _team_text() -> String:
 
 
 func _update() -> void:
+	for k in _pack_buttons:
+		(_pack_buttons[k] as Button).set_pressed_no_signal(str(k) == CData.pack)
+		(_pack_buttons[k] as Button).disabled = _creating
 	var need := 2 if online else 1
 	for f in _human_buttons.size():
 		var is_h := picks.has(f)
@@ -343,7 +397,7 @@ func _start() -> void:
 	_update()
 	var lp := LoadingPanel.open(get_tree().root, "Preparing the campaign", 5)
 	await lp.step("Creating the campaign")
-	var st := CState.new_campaign(nm, sd, picks.duplicate(), settings, teams_array())
+	var st := CState.new_campaign(nm, sd, picks.duplicate(), settings, teams_array(), CData.pack)
 	var slot := Saves.slot_for(nm, sd)
 	var data := {"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}
 	Saves.save(slot, data)
@@ -364,7 +418,7 @@ func _start_online() -> void:
 	var nm := name_edit.text.strip_edges()
 	if nm == "":
 		nm = "Campaign"
-	var st := CState.new_campaign(nm, sd, picks.duplicate(), settings, teams_array())
+	var st := CState.new_campaign(nm, sd, picks.duplicate(), settings, teams_array(), CData.pack)
 	_creating = true
 	_update()
 	_info.text = "Creating the campaign on the server..."

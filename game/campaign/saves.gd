@@ -28,12 +28,16 @@ static func slot_for(name: String, p_seed: int) -> String:
 static func save(slot: String, data: Dictionary) -> bool:
 	DirAccess.make_dir_recursive_absolute(DIR)
 	var st: Dictionary = data["state"]
+	var keep := CData.pack
+	CData.use_state(st)  # names and dates are the state's pack's (formatted now, stored in the meta)
 	var factions: Array = []
 	for h in st["humans"]:
 		factions.append(CData.faction_name(int(h)))
 	data["meta"] = {"slot": slot, "name": str(st["name"]), "turn": int(st["turn"]),
 		"date": CData.date_text(int(st["turn"])), "factions": factions,
+		"pack": str(st.get("pack", "rome")),
 		"saved_at": int(Time.get_unix_time_from_system()), "phase": str(st["phase"])}
+	CData.use_pack(keep)
 	var f := FileAccess.open(DIR + slot + ".json", FileAccess.WRITE)
 	if f == null:
 		return false

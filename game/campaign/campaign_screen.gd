@@ -36,6 +36,7 @@ const CTurn := preload("res://campaign/cturn.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Geo := preload("res://game/campaign/map_geo.gd")
+const PackView := preload("res://game/campaign/pack_view.gd")
 const LoadingPanel := preload("res://game/campaign/loading_panel.gd")
 const MapView := preload("res://game/campaign/map_view.gd")
 const MapOverlay := preload("res://game/campaign/map_overlay.gd")
@@ -179,7 +180,7 @@ func _ready() -> void:
 
 ## Open a campaign (data from saves.gd or a new one).
 func open(p_data: Dictionary, p_slot: String) -> void:
-	CData.use_state(p_data.get("state", {}))
+	PackView.use_state(p_data.get("state", {}))
 	data = p_data
 	slot = p_slot
 	if is_inside_tree():
@@ -189,7 +190,7 @@ func open(p_data: Dictionary, p_slot: String) -> void:
 ## Open an online campaign (its controller has been created by Net; this
 ## screen opens it).
 func open_online(oc) -> void:
-	CData.use_state(oc.st)
+	PackView.use_state(oc.st)
 	online = oc
 	slot = ""
 	data = {"state": oc.st, "session": {"subs": [], "plans": {}, "seen": {}}}

@@ -46,7 +46,7 @@ static var tree_count := 0
 static var relief_tex: ImageTexture = null
 static var _elev := PackedFloat32Array()   # metres, GeoFields.fine()
 const GeoFields := preload("res://game/campaign/geo_fields.gd")
-const RS := 8                 # relief field samples per grid cell side
+# (the relief field has GeoFields.Relief.FS samples per grid cell side: 8 for Rome, 6 for the West)
 const TREELINE := 1800.0      # no trees above (m)
 const SCRUB_LINE := 2600.0    # no rocks and scrub speckles above (m)
 static var speck_count := 0
@@ -361,10 +361,10 @@ static func _star(seg: int, rot: float) -> PackedVector2Array:
 
 
 static func _elev_at(x: float, y: float) -> float:
-	var w := CGrid.width() * RS
-	var k := float(CGrid.cell_px()) / RS
+	var w := GeoFields.fine_width()
+	var k := float(CGrid.cell_px()) / float(GeoFields.Relief.FS)
 	var ix := clampi(int(x / k), 0, w - 1)
-	var iy := clampi(int(y / k), 0, CGrid.height() * RS - 1)
+	var iy := clampi(int(y / k), 0, GeoFields.fine_height() - 1)
 	return _elev[iy * w + ix]
 
 
@@ -406,8 +406,8 @@ static func _relief_path() -> String:
 
 static func _bake_relief() -> void:
 	_elev = GeoFields.fine()
-	var w := CGrid.width() * RS
-	var h := CGrid.height() * RS
+	var w := GeoFields.fine_width()
+	var h := GeoFields.fine_height()
 	# The shading is the slow part of the bake (about 1.5 s, several times
 	# that in the web build): cached as a PNG in user://.
 	var path := _relief_path()
@@ -795,8 +795,8 @@ static var peak_count := 0
 
 static func _bake_peaks() -> void:
 	peak_count = 0
-	var w := CGrid.width() * RS
-	var h := CGrid.height() * RS
+	var w := GeoFields.fine_width()
+	var h := GeoFields.fine_height()
 	var pk: Array = []
 	for y in range(PEAK_R, h - PEAK_R):
 		for x in range(PEAK_R, w - PEAK_R):
@@ -905,8 +905,8 @@ static func _tree(p: Vector2, kind: int, shade: int, rad: float, rot: float, pi:
 
 
 static func _speck(p: Vector2, rock: bool, r: float) -> void:
+	_init_rings()
 	if rock:
-		_init_rings()
 		_fan(p + Vector2(0.9, 0.9), _rings[10], r, r * 0.8, COL_ROCK_SHADE)
 		_fan(p, _rings[10], r, r * 0.8, COL_ROCK if int(p.x) % 2 == 0 else COL_ROCK.lightened(0.12))
 	else:

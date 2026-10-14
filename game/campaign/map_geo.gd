@@ -30,8 +30,8 @@ static var _lands: Array = []
 static var _islands: Array = []
 
 
-## TODO (West slice, step 4b): campaign_screen.gd must call Geo.use_pack(<pack of
-## the state>) before building MapView / Landscape (via CData.use_state(st)).
+## (The view calls it through pack_view.gd, with CData.use_pack, before any
+## MapView / Landscape is prepared.)
 ## Switch the active geometry (and the relief fields) to pack `key`
 ## ("rome", "west", ...): loads res://game/campaign/geo_<key>.gd. Fails loudly
 ## if that file is missing. Clears every cache here and bumps `gen`.

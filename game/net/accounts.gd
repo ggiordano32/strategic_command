@@ -46,9 +46,11 @@ func device() -> String:
 	return str(data["device"])
 
 
-func add(id: String, f: int, token: String, name: String) -> void:
+func add(id: String, f: int, token: String, name: String, pack: String = "rome") -> void:
 	data["campaigns"][id] = {"id": id, "f": f, "token": token, "name": name,
 		"added_at": int(Time.get_unix_time_from_system())}
+	if pack != "rome":
+		data["campaigns"][id]["pack"] = pack
 	save()
 
 
