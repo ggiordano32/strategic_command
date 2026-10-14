@@ -1485,6 +1485,16 @@ Open: houses, trees, ground (later phases); the roofed round tower is unused; no
 the map generator, so the bastion piece is packed but not drawn; the Low path's light is baked for the unrotated
 piece (rotated walls keep their baked side); shots in scratchpad/battle1.
 
+**Battle look Level 1 phases 2-6 built 2026-10-14 (view only, not committed): diorama is the default look, painterly
+the option** (`[video] battle_look`, `--battle-look=`, "Battle look" button on the settings row). Kit houses (tile
+roofs by culture, huts, church / temple, stalls, well) on the sim's footprints, kit trees (palms for the West pack),
+rocks and cliffs, baked shadow + AO for houses / rocks / cliffs (trees cast their own in the shader), splatted ground
+tiles (grass / dry, dirt streets, plough, rock, sand; High only), a bevelled board edge on a wooden table, light depth of
+field at the screen edges (High only). Details and switches (`--no-kit`, `--no-splat`, `--no-board`, `--no-dof`,
+`--tropic`, `--kit-culture=N`): DESIGN "Battle look: diorama default". Streets inside the city (paving / dirt by culture) and the house fit fixed (see DESIGN). Open: the cliff pieces are straight
+tiles on curved cliffs; the Punic flat roofs are hip houses with a white roof; fields beyond the walls keep their drawn
+patches (plough tile only on the settlement's own fields); not yet seen on the Tab S7.
+
 **N3a real-time sea battles, as built 2026-10-14 (not committed; DESIGN "Sea
 battles (as built, N3a)", CAMPAIGN.md "Sea battles fought (N3a)").** A sea
 battle with a player's fleet in it is now a pending battle: Fight it in real

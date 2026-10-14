@@ -16,6 +16,10 @@ const SHADER := preload("res://game/trees.gdshader")
 const GroundPalette := preload("res://game/ground_palette.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const CityDraw := preload("res://game/city_draw.gd")
+const KIT_SHADER := preload("res://game/trees_kit.gdshader")
+const Atlas := preload("res://game/battlekit_atlas.gd")
+const BattleLook := preload("res://game/battle_look.gd")
+const CData := preload("res://campaign/cdata.gd")
 
 const KINDS := 8               # atlas cells: 0 broadleaf, 1 pine, 2 olive / scrub, 3 cypress,
 							   # 4 grass tuft, 5 reeds, 6 willow, 7 bush
@@ -43,6 +47,8 @@ var _occ_bytes := PackedByteArray()
 var _occ_img: Image
 var _occ_tex: ImageTexture
 var _rng := 1
+var use_kit := true      # battle kit trees (--no-kit: the drawn canopies)
+var _kit_mat: ShaderMaterial
 var _n_inner := 0   # instances before the orchard rows (gameplay woods)
 
 
@@ -52,6 +58,7 @@ func setup(p_sim, p_px_per_m: float) -> void:
 	if sim.veg_on == 0:
 		return
 	var t0 := Time.get_ticks_usec()
+	use_kit = not ("--no-kit" in OS.get_cmdline_user_args())
 	_build()
 	build_ms = (Time.get_ticks_usec() - t0) / 1000.0
 
@@ -205,6 +212,9 @@ func _build() -> void:
 		mm.custom_aabb = AABB(Vector3(-20, -20, -1), Vector3(fw + 40, fh + 40, 2))
 		var mat := ShaderMaterial.new()
 		mat.shader = SHADER
+		if layer == 0 and use_kit:
+			mat.shader = KIT_SHADER
+			_kit_material(mat)
 		mat.set_shader_parameter("atlas", _atlas())
 		mat.set_shader_parameter("kinds", float(KINDS))
 		for s in 3:
@@ -240,6 +250,8 @@ func _build() -> void:
 ## woods stay. Live: nothing is rebuilt.
 func apply_quality() -> void:
 	var low := Quality.is_low()
+	if _kit_mat != null:
+		_kit_textures(_kit_mat, low)
 	if _cover_mmi != null:
 		_cover_mmi.visible = not low
 	if _mmi != null:
@@ -506,3 +518,59 @@ static func _lum(kind: int, p: Vector2) -> float:
 				var d3 := p.distance_to(c)
 				l += 0.25 * clampf(1.0 - d3 / 0.35, 0.0, 1.0)
 	return clampf(l, 0.0, 1.0)
+
+
+## Kit tree pieces by kind x shade (palms for the West pack's maps), the atlas rects and anchors, the look.
+func _kit_material(mat: ShaderMaterial) -> void:
+	_kit_mat = mat
+	var idx := {}
+	for q in Atlas.NAMES.size():
+		idx[Atlas.NAMES[q]] = q
+	var tropic: bool = CData.pack == "west" or "--tropic" in OS.get_cmdline_user_args()
+	var rows: Array = [
+		["tree_broad_a", "tree_broad_b", "tree_broad_c", "tree_broad_a"],
+		["tree_pine_a", "tree_pine_b", "tree_pine_a", "tree_pine_b"],
+		["tree_broad_a", "bush_a", "tree_broad_a", "bush_b"],
+		["tree_pine_a", "tree_pine_a", "tree_pine_b", "tree_pine_b"],
+		["bush_a", "bush_b", "bush_a", "bush_b"], ["bush_a", "bush_b", "bush_a", "bush_b"],
+		["tree_broad_c", "tree_broad_c", "tree_broad_c", "tree_broad_c"],
+		["bush_a", "bush_b", "bush_a", "bush_b"]]
+	if tropic:
+		rows[0] = ["tree_palm_a", "tree_palm_b", "tree_broad_a", "tree_palm_a"]
+		rows[1] = ["tree_broad_b", "tree_palm_a", "tree_palm_b", "tree_broad_c"]
+		rows[2] = ["tree_palm_a", "tree_palm_b", "bush_a", "tree_palm_b"]
+		rows[3] = ["tree_palm_b", "tree_palm_a", "tree_palm_b", "tree_palm_a"]
+	var pidx := PackedFloat32Array()
+	for kd in 8:
+		for sh in 4:
+			pidx.append(float(idx[rows[kd][sh]]))
+	var rects := PackedVector4Array()
+	var anch := PackedVector4Array()
+	rects.resize(48)
+	anch.resize(48)
+	for p in Atlas.RECT.size():
+		var r: Array = Atlas.RECT[p]
+		rects[p] = Vector4(float(r[0]) / Atlas.ATLAS_W, float(r[1]) / Atlas.ATLAS_H, float(r[2]) / Atlas.ATLAS_W,
+			float(r[3]) / Atlas.ATLAS_H)
+		var an: Array = Atlas.ANCHOR[p]
+		anch[p] = Vector4(an[0], an[1], an[2], an[3])
+	mat.set_shader_parameter("pidx", pidx)
+	mat.set_shader_parameter("rects", rects)
+	mat.set_shader_parameter("anch", anch)
+	mat.set_shader_parameter("palm_lo", float(idx["tree_palm_a"]))
+	mat.set_shader_parameter("palm_hi", float(idx["tree_palm_b"]))
+	mat.set_shader_parameter("tint_k", 0.6 if not tropic else 0.45)
+	BattleLook.apply(mat)
+	_kit_textures(mat, Quality.is_low())
+
+
+static func _kit_textures(mat: ShaderMaterial, low: bool) -> void:
+	mat.set_shader_parameter("is_low", low)
+	if low:
+		mat.set_shader_parameter("low_tex", load("res://assets/battlekit/atlas_low.png"))
+		mat.set_shader_parameter("albedo_tex", null)
+		mat.set_shader_parameter("nrm_tex", null)
+	else:
+		mat.set_shader_parameter("albedo_tex", load("res://assets/battlekit/atlas_albedo.png"))
+		mat.set_shader_parameter("nrm_tex", load("res://assets/battlekit/atlas_nrm.png"))
+		mat.set_shader_parameter("low_tex", null)

@@ -12,6 +12,7 @@ extends Node2D
 ## the same rocks.
 
 const GroundPalette := preload("res://game/ground_palette.gd")
+const BattleKit := preload("res://game/battlekit.gd")
 
 const LIGHT := Vector2(-0.62, -0.78)   # toward the light (upper left)
 
@@ -20,6 +21,7 @@ var rocks: Array = []
 var k := 10.0
 var rock_col := Color(0.5, 0.48, 0.42)
 var low := false
+var kit: Node2D                 # rocks and cliffs from the battle kit (null: the drawn ones)
 
 
 func setup(sim, px_per_m: float, p_low: bool) -> void:
@@ -32,15 +34,23 @@ func setup(sim, px_per_m: float, p_low: bool) -> void:
 	var base: Color = pal["base"]
 	# Rock a little toward the ground's own colour, so it sits in the land.
 	rock_col = (pal["rock"] as Color).lerp(base, 0.18)
+	if not ("--no-kit" in OS.get_cmdline_user_args()) and (not cliffs.is_empty() or not rocks.is_empty()):
+		kit = BattleKit.new()
+		add_child(kit)
+		kit.setup_land(sim, px_per_m)
 
 
 func set_low(v: bool) -> void:
 	if v != low:
 		low = v
+		if kit != null:
+			kit.refresh()
 		queue_redraw()
 
 
 func _draw() -> void:
+	if kit != null:
+		return
 	for c in cliffs:
 		_cliff(c)
 	for r in rocks:

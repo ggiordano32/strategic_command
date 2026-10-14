@@ -1723,6 +1723,46 @@ preview keeps the old polygon drawing (`draw_static` without `kit`). Testing aid
 look), `--no-kit-shadow`, `--kit-culture=N`, `--city-info`. The crenellated round tower is the
 default; the roofed round tower (read as a ball at game scale) is not used. View only.
 
+### Battle look: diorama default, kit houses / trees / rocks, splatted ground (as built, Level 1 phases 2-6, 2026-10-14)
+
+`[video] battle_look = diorama | painterly` in user://settings.cfg (default **diorama**; `--battle-look=` for
+a session; a "Battle look" button on the settings row in `game/main.gd`; read at battle start; `game/battle_look.gd`
+holds the values: diorama amb 0.50, key 0.88, rim 0.22, outline 0.55, sat 1.22, contrast 1.12; painterly 0.66 /
+0.55 / 0.05 / 0.24 / 0.86 / 1.04). All view only.
+
+- **Houses and props** (`battlekit.gd` `_build_houses`): every `lay["buildings"]` footprint (rect, quad or round) gets a
+  kit piece scaled and turned to it (long axis along the footprint's long side, a hash flips it 180 degrees): gable /
+  hip / L / long houses by aspect and size, `hut_round` / `hut_thatch` for round shapes and Celtic / native styles,
+  `temple` (Latin, Greek, Punic) / `church` (Spanish colonial) / `longhouse` for the shrine, `longhouse` for
+  barracks, stables, range, a gable_l workshop, a grid of `stall` over a market; a `well` over the agora's fountain and
+  four stalls at its corners. Culture palettes through the mask classes (`i_cul` per instance; `--kit-culture=N`
+  forces one). The old polygon houses are no longer drawn on the battle map (`draw_static` with `kit`).
+- **Streets** (`city_streets.gd`, under the kit): one 0.5 m texture painted from the sim's own `lay["streets"]` segments (gate to plaza, main streets, lanes; width from the segment) and the agora square, plus the lanes between blocks (free ground within 3 m of any footprint); cobbles with a curb for Latin / Greek / Punic / colonial towns, packed dirt for Celtic / native. Houses are chosen by footprint aspect (hip, gable s / m / l, longhouse) so nothing is squashed; markets are filled with scaled stalls. build.py's `house()` bug (ridge along y swapped the roof against the walls) avoided by making the long side x. Hill shade is softer in the diorama look (no dark band).
+- **Rocks and cliffs**: a second `BattleKit` (`setup_land`) under `land_layer.gd`: one rock piece per boulder
+  (a / b / c by radius), cliff pieces laid along each cliff's brow every 6.5 m, the piece's lower side to the downhill
+  normal. `--no-kit` keeps the drawn ones.
+- **Trees** (`tree_layer.gd`, `trees_kit.gdshader`): the woods and orchards keep their positions, clustering, fading over
+  men and occupancy texture; each instance is now a kit tree (broadleaf a / b / c, pine a / b, bush, palm a / b)
+  by kind and shade, lit by the normal atlas, tinted toward the palette's tree colours, its cast shadow sampled from
+  its own silhouette shifted south-east; palms replace broadleaf / pine / olive when `CData.pack == "west"` (or
+  `--tropic`). The ground cover under the men (tufts, reeds) keeps the old glyph shader.
+- **Shadow and AO**: houses, towers, walls, gates, rocks and cliffs are instances of the same `BattleKit`, so
+  `battlekit_shadow.gd` bakes them all (0.5 m cells in a settlement, 1 m for the land kit via `shadow_cell`).
+  Trees do not enter the bake (40,000 would be too slow): the tree shader draws its own shadow.
+- **Splatted ground** (`terrain.gdshader`, `terrain_layer.gd` `_splat`, `tools/battlekit/pack_ground.py`): six 256 px
+  tiles in `assets/battlekit/ground/` (grass, dry, dirt, rock, sand, plough; 64 m a tile, mipmaps made at load): grass
+  or dry grass modulates the palette colour; dirt for settlement ground, streets and plazas; plough on fields; rock where
+  the existing slope / height rule says; sand on wet ground; contours and the 50 m grid fade back. At most 2-4 tiles per
+  pixel. Graphics Low: no tiles (the flat ground as before).
+- **Board** (`board_layer.gd`, diorama only): a wooden table 900 m beyond the field and a 4 m bevelled board edge
+  lit from the north-west with a soft shadow; **light depth of field** (`battle_dof.gd`, High only, diorama only): the
+  outer part of the screen blurred a little, under the HUD. `--no-board`, `--no-dof`, `--no-splat`, `--no-kit` test
+  switches.
+- **Low / CPU path**: houses, rocks and cliffs draw from the pre-lit `atlas_low.png` (roof palette tint by modulate), the
+  trees from the same low atlas in `trees_kit.gdshader` (no normals, own shadow), no baked shadow, no splat, no DoF.
+- Atlas now 1024 x 1024 with 47 pieces (`pack.py`; frames rendered with `build.py --ppm 8`): about 4 + 4 MB albedo /
+  normal, 1 MB low, ground tiles about 2 MB with mipmaps.
+
 ### Deployment phase (as built, October 2026)
 
 Total War's deployment: before the fighting, each player places their

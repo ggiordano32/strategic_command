@@ -11,6 +11,7 @@ extends Node2D
 
 const CityDraw := preload("res://game/city_draw.gd")
 const BattleKit := preload("res://game/battlekit.gd")
+const CityStreets := preload("res://game/city_streets.gd")
 
 var sim
 var px_per_m := 10.0
@@ -37,6 +38,14 @@ func setup(p_sim, p_px_per_m: float) -> void:
 	var t0 := Time.get_ticks_usec()
 	use_kit = not ("--no-kit" in OS.get_cmdline_user_args())
 	if use_kit:
+		var st := Sprite2D.new()
+		st.set_script(CityStreets)
+		add_child(st)
+		var sty := clampi(int(lay.get("founder", lay.get("plan", 0))), 0, 7)
+		for a in OS.get_cmdline_user_args():
+			if str(a).begins_with("--kit-culture="):
+				sty = clampi(int(str(a).get_slice("=", 1)), 0, 7)
+		st.build(lay, px_per_m, sty)
 		kit = BattleKit.new()
 		add_child(kit)
 		kit.setup(sim, lay, px_per_m)

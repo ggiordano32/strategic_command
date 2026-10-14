@@ -9,7 +9,7 @@ shader_type canvas_item;
 
 uniform sampler2D albedo_tex : filter_linear, repeat_disable;
 uniform sampler2D nrm_tex : filter_linear, repeat_disable;
-uniform vec4 rects[24];
+uniform vec4 rects[48];
 uniform vec3 stone_tint[8];
 uniform vec3 pal_r[8];
 uniform vec3 pal_g[8];
@@ -17,8 +17,8 @@ uniform vec3 pal_b[8];
 uniform vec3 light_dir = vec3(-0.55, -0.50, 0.67);   // screen space (north is -y), towards the light
 uniform float amb = 0.66;
 uniform float key = 0.55;
-// Look parameters: style A (grounded painterly) is the default; style B (tabletop diorama) is
-// amb 0.50, key 0.88, rim 0.22, outline 0.55, sat 1.22, contrast 1.12 (tools/battlekit/mockup.py STYLE).
+// Look parameters, set from game/battle_look.gd: diorama (default) amb 0.50, key 0.88, rim 0.22,
+// outline 0.55, sat 1.22, contrast 1.12; painterly the values below (tools/battlekit/mockup.py STYLE).
 uniform float rim = 0.05;        // light on convex edges (dry brush)
 uniform float outline = 0.24;    // dark line where a piece ends against the ground
 uniform float sat = 0.86;

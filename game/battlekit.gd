@@ -19,6 +19,9 @@ extends Node2D
 const Atlas := preload("res://game/battlekit_atlas.gd")
 const Shadow := preload("res://game/battlekit_shadow.gd")
 const Quality := preload("res://game/quality.gd")
+const BattleLook := preload("res://game/battle_look.gd")
+const MapGen := preload("res://sim/mapgen.gd")
+const CData := preload("res://campaign/cdata.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const SHADER := preload("res://game/battlekit.gdshader")
 ## Loaded when needed (the script checkers' scratch project has no assets/).
@@ -48,6 +51,7 @@ var k := 10.0                       # px per metre
 var low := false
 var shadows_on := true
 var culture := 0
+var cul_override := -1              # --kit-culture=N: every building in that culture (testing)
 var build_ms := 0.0
 var shadow_ms := 0.0
 
@@ -59,6 +63,9 @@ var i_sx := PackedFloat32Array()
 var i_sy := PackedFloat32Array()
 var i_hs := PackedFloat32Array()    # height scale (shadows)
 var i_gate := PackedInt32Array()    # gate index, or -1
+var i_cul := PackedInt32Array()     # culture of the instance (palette)
+var shadow_cell := 0.5              # metres per cell of the baked shadow
+var tropic := false                 # palms and the Caribbean palette (pack "west")
 var i_flash := PackedFloat32Array()
 var _gate_inst := PackedInt32Array()
 var _gate_state := PackedInt32Array()
@@ -69,6 +76,7 @@ var _mmi: MultiMeshInstance2D
 var _low_node: Node2D
 var _shadow: Node2D
 var _name_idx := {}
+var roofy := PackedByteArray()      # per atlas piece: 1 = a building (roof palette on Low)
 
 
 func setup(p_sim, p_lay: Dictionary, p_k: float) -> void:
@@ -76,13 +84,14 @@ func setup(p_sim, p_lay: Dictionary, p_k: float) -> void:
 	lay = p_lay
 	k = p_k
 	var t0 := Time.get_ticks_usec()
-	for q in Atlas.NAMES.size():
-		_name_idx[Atlas.NAMES[q]] = q
+	_index_names()
 	culture = clampi(int(lay.get("founder", lay.get("plan", 0))), 0, 7)
 	for a in OS.get_cmdline_user_args():
 		if str(a).begins_with("--kit-culture="):
 			culture = clampi(int(str(a).get_slice("=", 1)), 0, 7)
+			cul_override = culture
 	_timber = int(lay.get("palisade", 0)) != 0
+	_build_houses()
 	_build_instances()
 	low = Quality.is_low()
 	_make_nodes()
@@ -91,7 +100,7 @@ func setup(p_sim, p_lay: Dictionary, p_k: float) -> void:
 
 # ------------------------------------------------------------ instances ----
 
-func _add(piece: String, pos: Vector2, e: Vector2, sx: float, sy: float, hs: float, gate := -1) -> int:
+func _add(piece: String, pos: Vector2, e: Vector2, sx: float, sy: float, hs: float, gate := -1, cul := -1) -> int:
 	i_piece.append(_name_idx[piece])
 	i_pos.append(pos)
 	i_e.append(e)
@@ -99,11 +108,14 @@ func _add(piece: String, pos: Vector2, e: Vector2, sx: float, sy: float, hs: flo
 	i_sy.append(sy)
 	i_hs.append(hs)
 	i_gate.append(gate)
+	i_cul.append(culture if cul < 0 else cul)
 	i_flash.append(0.0)
 	return i_piece.size() - 1
 
 
 func _build_instances() -> void:
+	if not lay.has("t"):
+		return
 	var t: float = lay["t"]
 	var pp: int = int(lay["pp"])
 	var walls := clampi(int(lay["walls"]), 0, 3)
@@ -163,6 +175,185 @@ func _build_instances() -> void:
 		for s in [-1.0, 1.0]:
 			var tc: Vector2 = Vector2(g2[0], g2[1]) + e2 * (3.0 + t * 0.5) * s
 			_tower([tc.x, tc.y, t * 0.5, 0, 0], q + 7, hs)
+
+
+func _index_names() -> void:
+	roofy.resize(Atlas.NAMES.size())
+	for q in Atlas.NAMES.size():
+		var n: String = Atlas.NAMES[q]
+		_name_idx[n] = q
+		roofy[q] = 1 if (n.begins_with("house_") or n.begins_with("hut_") or n in ["church", "temple", "stall", "longhouse"]) else 0
+	tropic = CData.pack == "west" or "--tropic" in OS.get_cmdline_user_args()
+
+
+## A land-only kit (rocks and cliffs outside any settlement), a child of the land layer.
+func setup_land(p_sim, p_k: float) -> void:
+	sim = p_sim
+	k = p_k
+	shadow_cell = 1.0
+	_index_names()
+	var ld: Dictionary = sim.map_info.get("land", {})
+	for r in ld.get("rocks", []):
+		_rock(r)
+	for c in ld.get("cliffs", []):
+		_cliff(c)
+	low = Quality.is_low()
+	_make_nodes()
+
+
+static func _hf(a: int, b: int) -> float:
+	var x := (a * 73856093) ^ (b * 19349663) ^ 0x5bd1e995
+	x = (x ^ (x >> 13)) * 0x5bd1e995
+	return float(((x ^ (x >> 15)) & 0x7FFFFFFF) % 10000) / 10000.0
+
+
+## One outcrop [seed, height dm, x, y, r, ...]: a rock piece per boulder.
+func _rock(r: Array) -> void:
+	var sd := int(r[0])
+	var hgt := float(int(r[1])) / 10.0
+	for d in (r.size() - 2) / 3:
+		var rad := float(int(r[4 + d * 3]))
+		var pname := "rock_a" if rad < 2.6 else ("rock_b" if rad < 3.6 else "rock_c")
+		var a := _hf(sd, d * 31) * TAU
+		var p: int = _name_idx[pname]
+		var s := rad * 2.3 / float((Atlas.ANCHOR[p] as Array)[2])
+		_add(pname, Vector2(float(int(r[2 + d * 3])), float(int(r[3 + d * 3]))), Vector2(cos(a), sin(a)), s, s,
+			clampf(hgt / 2.2, 0.5, 1.6))
+
+
+## One cliff: pieces along its brow, each turned so its lower side faces downhill.
+func _cliff(c: Dictionary) -> void:
+	var pts: PackedInt32Array = c["p"]
+	var dn: PackedInt32Array = c["dn"]
+	var hh: PackedInt32Array = c["h"]
+	var n := pts.size() / 2
+	if n < 2:
+		return
+	var carry := 0.0
+	for q in n - 1:
+		var a := Vector2(pts[q * 2], pts[q * 2 + 1]) / 100.0
+		var b := Vector2(pts[q * 2 + 2], pts[q * 2 + 3]) / 100.0
+		var l := a.distance_to(b)
+		var t := carry
+		while t < l:
+			var pos := a.lerp(b, t / maxf(l, 0.01))
+			var ang := float(dn[q]) / 1024.0 * TAU
+			var nrm := Vector2(cos(ang), sin(ang))
+			var e := Vector2(nrm.y, -nrm.x)
+			var face := float(hh[q]) / 10.0
+			var sy := clampf(face / 4.4, 0.7, 1.5)
+			var jv := _hf(int(pos.x * 3.0), int(pos.y * 3.0))
+			_add("cliff_m", pos + nrm * (0.3 + jv * 0.8), e if jv > 0.5 else -e, 0.58 + jv * 0.12, sy * (0.92 + jv * 0.2), sy)
+			t += 6.5
+		carry = t - l
+
+
+func _build_houses() -> void:
+	if not lay.has("buildings"):
+		return
+	for b in lay["buildings"]:
+		var a: Array = b
+		var kind: int = a[4]
+		var style := clampi(int(a[5]) if a.size() > 5 else 0, 0, 5)
+		if cul_override >= 0:
+			style = cul_override
+		var shape := int(a[6]) if a.size() > 6 else MapGen.SH_RECT
+		var h := (int(a[0]) * 73 + int(a[1]) * 151) % 100
+		var pos := Vector2.ZERO
+		var e := Vector2(1, 0)
+		var fw := 0.0
+		var fh := 0.0
+		if shape == MapGen.SH_ROUND:
+			pos = Vector2(float(int(a[7])), float(int(a[8])))
+			fw = float(int(a[9])) * 2.0
+			fh = fw
+			var ar := float(h) * 0.0628
+			e = Vector2(cos(ar), sin(ar))
+		elif shape == MapGen.SH_QUAD:
+			var q0 := Vector2(float(int(a[7])), float(int(a[8])))
+			var q1 := Vector2(float(int(a[9])), float(int(a[10])))
+			var q2 := Vector2(float(int(a[11])), float(int(a[12])))
+			var q3 := Vector2(float(int(a[13])), float(int(a[14])))
+			pos = (q0 + q1 + q2 + q3) * 0.25
+			fw = q0.distance_to(q1)
+			fh = q1.distance_to(q2)
+			e = (q1 - q0).normalized()
+			if fh > fw:
+				var tmp := fw
+				fw = fh
+				fh = tmp
+				e = Vector2(-e.y, e.x)
+		else:
+			pos = Vector2(float(int(a[0]) + int(a[2])), float(int(a[1]) + int(a[3]))) * 0.5
+			fw = float(int(a[2]) - int(a[0]))
+			fh = float(int(a[3]) - int(a[1]))
+			if fh > fw:
+				var tmp2 := fw
+				fw = fh
+				fh = tmp2
+				e = Vector2(0, 1)
+		if h % 2 == 0:
+			e = -e
+		if kind == MapGen.B_MARKET:
+			_stalls(pos, e, fw, fh, style)
+			continue
+		var pname := _house_piece(kind, style, shape, fw, fh, h)
+		var an: Array = Atlas.ANCHOR[_name_idx[pname]]
+		var sx := (fw + 0.8) / float(an[2])
+		var sy := (fh + 0.8) / float(an[3])
+		if shape == MapGen.SH_ROUND:
+			sx = (fw + 0.6) / float(an[2])
+			sy = sx
+		_add(pname, pos, e, sx, sy, 1.0, -1, style)
+	# The agora: a well for the fountain, a few stalls at its corners.
+	var ag: Array = lay.get("agora", lay.get("plaza", []))
+	if ag.size() >= 3:
+		var ac := Vector2(float(int(ag[0])), float(int(ag[1])))
+		var hs2 := float(int(ag[2]))
+		_add("well", ac, Vector2(1, 0), 0.75, 0.75, 1.0, -1, culture)
+		if hs2 >= 9.0:
+			for q in 4:
+				var sg := Vector2(1.0 if q % 2 == 0 else -1.0, 1.0 if q < 2 else -1.0)
+				_add("stall", ac + sg * hs2 * 0.72, Vector2(1, 0) if q % 2 == 0 else Vector2(-1, 0), 0.9, 0.9, 1.0, -1, culture)
+
+
+func _stalls(pos: Vector2, e: Vector2, fw: float, fh: float, style: int) -> void:
+	var an: Array = Atlas.ANCHOR[_name_idx["stall"]]
+	var nx := maxi(roundi(fw / 6.5), 1)
+	var ny := maxi(roundi(fh / 6.5), 1)
+	var dn := Vector2(-e.y, e.x)
+	var cw := fw / nx
+	var ch := fh / ny
+	for j in ny:
+		for i in nx:
+			var u := (float(i) + 0.5 - float(nx) * 0.5) * cw
+			var v := (float(j) + 0.5 - float(ny) * 0.5) * ch
+			_add("stall", pos + e * u + dn * v, e, (cw + 0.3) / float(an[2]), (ch + 0.3) / float(an[3]), 1.0, -1, style)
+
+
+func _house_piece(kind: int, style: int, shape: int, fw: float, fh: float, _h: int) -> String:
+	if kind == MapGen.B_TEMPLE:
+		if style == 4:
+			return "church"
+		if style == 3 or style == 5:
+			return "longhouse"
+		return "temple"
+	if kind == MapGen.B_BARRACKS or kind == MapGen.B_STABLES or kind == MapGen.B_RANGE:
+		return "longhouse"
+	if kind == MapGen.B_WORKSHOP:
+		return "house_gable_l"
+	if shape == MapGen.SH_ROUND:
+		return "hut_round"
+	if style == 3 or style == 5:
+		return "hut_thatch" if fw / maxf(fh, 0.1) < 1.9 else "longhouse"
+	var ratio := fw / maxf(fh, 0.1)
+	if ratio < 1.14:
+		return "house_hip_s" if fw < 9.0 else "house_hip_m"
+	if ratio < 1.45:
+		return "house_gable_s" if fw < 9.5 else "house_gable_m"
+	if ratio < 1.95:
+		return "house_gable_l"
+	return "longhouse"
 
 
 func _gate_name(st: int) -> String:
@@ -266,7 +457,7 @@ func _make_nodes() -> void:
 	mat.set_shader_parameter("albedo_tex", TEX_ALB)
 	mat.set_shader_parameter("nrm_tex", TEX_NRM)
 	var rects := PackedVector4Array()
-	rects.resize(24)
+	rects.resize(48)
 	for p in Atlas.RECT.size():
 		var r: Array = Atlas.RECT[p]
 		rects[p] = Vector4(float(r[0]) / Atlas.ATLAS_W, float(r[1]) / Atlas.ATLAS_H, float(r[2]) / Atlas.ATLAS_W,
@@ -276,6 +467,7 @@ func _make_nodes() -> void:
 	mat.set_shader_parameter("pal_r", PackedVector3Array(PAL_R))
 	mat.set_shader_parameter("pal_g", PackedVector3Array(PAL_G))
 	mat.set_shader_parameter("pal_b", PackedVector3Array(PAL_B))
+	BattleLook.apply(mat)
 	_mmi = MultiMeshInstance2D.new()
 	_mmi.multimesh = _mm
 	_mmi.material = mat
@@ -297,7 +489,7 @@ func _write(buf: PackedFloat32Array, i: int, o := -1) -> void:
 	buf[o + 7] = xf.origin.y
 	buf[o + 8] = float(p)
 	buf[o + 9] = i_e[i].angle()
-	buf[o + 10] = float(culture)
+	buf[o + 10] = float(i_cul[i])
 	buf[o + 11] = i_flash[i]
 
 
@@ -326,7 +518,7 @@ func refresh() -> void:
 		_make_nodes()
 		return
 	var changed := false
-	var gates: Array = lay["gates"]
+	var gates: Array = lay.get("gates", [])
 	for g in mini(gates.size(), sim.n_gates):
 		var st: int = sim.g_state[g]
 		var hit := 1 if sim.tick - sim.g_hit_t[g] < 4 else 0
@@ -356,8 +548,6 @@ class _LowDraw extends Node2D:
 	var kit
 
 	func _draw() -> void:
-		var tint: Vector3 = kit.STONE_TINT[kit.culture]
-		var col := Color(tint.x, tint.y, tint.z)
 		var lowk: float = float(kit.Atlas.LOW_PPM) / float(kit.Atlas.PPM)
 		for i in kit.i_piece.size():
 			var p: int = kit.i_piece[i]
@@ -371,7 +561,13 @@ class _LowDraw extends Node2D:
 			var h: float = float(an[3]) * sy * float(kit.k)
 			var o: Vector2 = (kit.i_pos[i] + e * (float(an[0]) * sx) + dn * (float(an[1]) * sy)) * float(kit.k)
 			draw_set_transform_matrix(Transform2D(e, dn, o))
-			var c := col
+			var cu: int = kit.i_cul[i]
+			var tint: Vector3 = kit.STONE_TINT[cu]
+			var c := Color(tint.x, tint.y, tint.z)
+			if kit.roofy[p] != 0:
+				var rr: Vector3 = kit.PAL_R[cu] / kit.PAL_R[0]
+				c = Color(1, 1, 1).lerp(Color(rr.x, rr.y, rr.z), 0.7)
+			var col := c
 			if kit.i_flash[i] > 0.0:
 				c = col.lerp(Color(1.0, 0.62, 0.25), 0.45)
 			draw_texture_rect_region(kit.TEX_LOW, Rect2(-w * 0.5, -h * 0.5, w, h),

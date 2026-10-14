@@ -9,7 +9,7 @@ extends Node2D
 
 const Atlas := preload("res://game/battlekit_atlas.gd")
 
-const CELL := 0.5                  # metres
+var cell := 0.5                    # metres (the kit's shadow_cell)
 const TAN_ELEV := 1.0              # tan(45 degrees)
 const MAX_LEN := 12.0              # metres of shadow at most
 const SH_DIR := Vector2(0.74, 0.67)
@@ -37,6 +37,7 @@ var _dir := SH_DIR.normalized()
 
 func build(p_kit) -> void:
 	kit = p_kit
+	cell = kit.shadow_cell
 	_nrm = _raw(kit.TEX_NRM)
 	_alb = _raw(kit.TEX_ALB)
 	_aw = int(Atlas.ATLAS_W)
@@ -49,8 +50,8 @@ func build(p_kit) -> void:
 		hi = hi.max(fp.end)
 	_org = (lo - Vector2(4, 4)).floor()
 	var end := (hi + Vector2(MAX_LEN * 0.5, MAX_LEN * 0.5)).ceil()
-	_w = int((end.x - _org.x) / CELL)
-	_h = int((end.y - _org.y) / CELL)
+	_w = int((end.x - _org.x) / cell)
+	_h = int((end.y - _org.y) / cell)
 	_ht.resize(_w * _h)
 	_sh.resize(_w * _h)
 	_ao.resize(_w * _h)
@@ -69,7 +70,7 @@ func build(p_kit) -> void:
 	_spr.texture = _tex
 	_spr.centered = false
 	_spr.position = _org * kit.k
-	_spr.scale = Vector2.ONE * CELL * kit.k
+	_spr.scale = Vector2.ONE * cell * kit.k
 	_spr.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 	var mat := CanvasItemMaterial.new()
 	mat.blend_mode = CanvasItemMaterial.BLEND_MODE_MUL
@@ -116,19 +117,19 @@ func _raster(i: int, x0: int, y0: int, x1: int, y1: int) -> void:
 	var hs: float = kit.i_hs[i]
 	var c: Vector2 = kit.i_pos[i] + e * (float(an[0]) * sx) + dn * (float(an[1]) * sy)
 	var fp := _footprint(i)
-	var cx0 := maxi(int(floor((fp.position.x - _org.x) / CELL)), x0)
-	var cy0 := maxi(int(floor((fp.position.y - _org.y) / CELL)), y0)
-	var cx1 := mini(int(ceil((fp.end.x - _org.x) / CELL)), x1)
-	var cy1 := mini(int(ceil((fp.end.y - _org.y) / CELL)), y1)
+	var cx0 := maxi(int(floor((fp.position.x - _org.x) / cell)), x0)
+	var cy0 := maxi(int(floor((fp.position.y - _org.y) / cell)), y0)
+	var cx1 := mini(int(ceil((fp.end.x - _org.x) / cell)), x1)
+	var cy1 := mini(int(ceil((fp.end.y - _org.y) / cell)), y1)
 	var ppm: float = Atlas.PPM
 	var rx := float(rc[0]) + float(rc[2]) * 0.5
 	var ry := float(rc[1]) + float(rc[3]) * 0.5
 	var rw := int(rc[0]) + int(rc[2])
 	var rh := int(rc[1]) + int(rc[3])
 	for cy in range(cy0, cy1):
-		var qy := _org.y + (cy + 0.5) * CELL
+		var qy := _org.y + (cy + 0.5) * cell
 		for cx in range(cx0, cx1):
-			var d := Vector2(_org.x + (cx + 0.5) * CELL, qy) - c
+			var d := Vector2(_org.x + (cx + 0.5) * cell, qy) - c
 			var u := d.dot(e) / sx
 			var v := d.dot(dn) / sy
 			var ax := int(rx + u * ppm)
@@ -154,7 +155,7 @@ func _cast(sx0: int, sy0: int, sx1: int, sy1: int, tx0: int, ty0: int, tx1: int,
 			var nx := x + step2.x
 			var ny := y + step2.y
 			if nx >= 0 and ny >= 0 and nx < w and ny < _h and _ht[ny * w + nx] < h - 0.05:
-				var reach := minf(h / TAN_ELEV, MAX_LEN) / CELL
+				var reach := minf(h / TAN_ELEV, MAX_LEN) / cell
 				var d := 1.0
 				while d <= reach:
 					var tx := x + int(round(_dir.x * d))
@@ -162,7 +163,7 @@ func _cast(sx0: int, sy0: int, sx1: int, sy1: int, tx0: int, ty0: int, tx1: int,
 					d += 1.0
 					if tx < tx0 or ty < ty0 or tx >= tx1 or ty >= ty1:
 						continue
-					var ray := h - d * CELL * TAN_ELEV
+					var ray := h - d * cell * TAN_ELEV
 					var ti := ty * w + tx
 					var gap := ray - _ht[ti]
 					if gap <= 0.0:
@@ -211,10 +212,10 @@ func rebake_instance(i: int) -> void:
 	if _spr == null:
 		return
 	var fp := _footprint(i)
-	var x0 := maxi(int(floor((fp.position.x - 4.0 - _org.x) / CELL)), 0)
-	var y0 := maxi(int(floor((fp.position.y - 4.0 - _org.y) / CELL)), 0)
-	var x1 := mini(int(ceil((fp.end.x + 20.0 - _org.x) / CELL)), _w)
-	var y1 := mini(int(ceil((fp.end.y + 20.0 - _org.y) / CELL)), _h)
+	var x0 := maxi(int(floor((fp.position.x - 4.0 - _org.x) / cell)), 0)
+	var y0 := maxi(int(floor((fp.position.y - 4.0 - _org.y) / cell)), 0)
+	var x1 := mini(int(ceil((fp.end.x + 20.0 - _org.x) / cell)), _w)
+	var y1 := mini(int(ceil((fp.end.y + 20.0 - _org.y) / cell)), _h)
 	_nrm = _raw(kit.TEX_NRM)
 	for y in range(y0, y1):
 		for x in range(x0, x1):
@@ -224,11 +225,11 @@ func rebake_instance(i: int) -> void:
 			_ao[c] = 0
 	for j in kit.i_piece.size():
 		var f2 := _footprint(j)
-		if f2.end.x < _org.x + x0 * CELL or f2.position.x > _org.x + x1 * CELL \
-				or f2.end.y < _org.y + y0 * CELL or f2.position.y > _org.y + y1 * CELL:
+		if f2.end.x < _org.x + x0 * cell or f2.position.x > _org.x + x1 * cell \
+				or f2.end.y < _org.y + y0 * cell or f2.position.y > _org.y + y1 * cell:
 			continue
 		_raster(j, x0, y0, x1, y1)
-	var m := int(MAX_LEN / CELL)
+	var m := int(MAX_LEN / cell)
 	_cast(maxi(x0 - m, 0), maxi(y0 - m, 0), x1, y1, x0, y0, x1, y1)
 	_nrm = PackedByteArray()
 	for y in range(y0, y1):

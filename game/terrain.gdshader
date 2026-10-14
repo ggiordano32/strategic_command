@@ -67,6 +67,18 @@ uniform float patch_k = 1.0;
 uniform vec3 rock_col = vec3(0.5, 0.48, 0.42);
 uniform float tree_line = 2.0;        // fraction of the height range above which rock shows (> 1: none)
 uniform vec3 sand_col = vec3(0.55, 0.49, 0.36);
+// Splatted ground (battle look, game/battle_look.gd; tools/battlekit/pack_ground.py tiles, 64 m a tile):
+// a tile (grass, or dry grass on arid palettes) modulates the palette colour, dirt for settlement ground,
+// streets and plazas, plough for fields, rock on slopes and above the tree line, sand along water. At most
+// four tiles are read per pixel in practice (ground + one or two of the others). Off on Graphics Low.
+uniform bool splat_on = false;
+uniform sampler2D tile_grass : filter_linear_mipmap, repeat_enable;
+uniform sampler2D tile_dirt : filter_linear_mipmap, repeat_enable;
+uniform sampler2D tile_rock : filter_linear_mipmap, repeat_enable;
+uniform sampler2D tile_sand : filter_linear_mipmap, repeat_enable;
+uniform sampler2D tile_plough : filter_linear_mipmap, repeat_enable;
+uniform vec3 grass_mean = vec3(0.39, 0.49, 0.235);
+uniform float splat_sat = 1.0;
 // Graphics Low (game/quality.gd): no noise patches / grain / rock mottling, still water, plain ford.
 uniform bool low = false;
 
@@ -125,6 +137,11 @@ void fragment() {
 		grain = (n3 - 0.5) * 0.07 + (vnoise(wm / 1.15 + vec2(1.7, 4.1)) - 0.5) * 0.05 * (1.0 - smoothstep(0.25, 0.7, mpp));
 	}
 	col *= 1.0 + grain;
+	bool splat = splat_on && !low;
+	if (splat) {
+		vec3 gt = texture(tile_grass, wm / 64.0).rgb;
+		col *= mix(vec3(1.0), clamp(gt / grass_mean, vec3(0.55), vec3(1.55)), 0.85);
+	}
 	float contour_k = 1.0;
 	highp float hm_w = 0.0;
 	float sea = 0.0;
@@ -152,11 +169,23 @@ void fragment() {
 		// Settlement ground, main streets and the plaza: paving.
 		// worn: packed earth mottled, the plaza lighter and scuffed
 		float worn = 0.88 + 0.24 * n2 + (n3 - 0.5) * 0.12;
-		col = mix(col, pave_col * worn, v.g * 0.45);
-		col = mix(col, pave_col * 1.12 * (0.92 + 0.16 * n3), clamp(v.a, 0.0, 1.0) * 0.55);
-		// Fields: straw-coloured strips.
+		vec3 pv = pave_col * worn;
+		vec3 pl = pave_col * 1.12 * (0.92 + 0.16 * n3);
+		if (splat && (v.g > 0.02 || v.a > 0.02)) {
+			vec3 dt = texture(tile_dirt, wm / 24.0).rgb * 2.0;
+			pv = dt * pave_col * 0.95 * worn;
+			pl = dt * pave_col * 1.0 * (0.92 + 0.16 * n3);
+		}
+		col = mix(col, pv, v.g * (splat ? 0.7 : 0.45));
+		col = mix(col, pl, clamp(v.a, 0.0, 1.0) * (splat ? 0.75 : 0.55));
+		// Fields: straw-coloured strips (ploughed earth with the splatted ground).
 		float strip = 0.85 + 0.15 * step(0.5, fract(world.y / 30.0));
-		col = mix(col, field_col * strip * (0.92 + 0.16 * n2), v.b * 0.55);
+		if (splat && v.b > 0.02) {
+			vec3 pt = texture(tile_plough, wm / 32.0).rgb * 1.25;
+			col = mix(col, pt * strip, v.b * 0.8);
+		} else {
+			col = mix(col, field_col * strip * (0.92 + 0.16 * n2), v.b * 0.55);
+		}
 		contour_k = 1.0 - v.g * 0.5;
 	}
 	// A ditch: dark earth, its floor in shadow.
@@ -191,7 +220,11 @@ void fragment() {
 		float above = smoothstep(tree_line, tree_line + 0.12, hf + (n2 - 0.5) * 0.18);
 		float rock = max(smoothstep(0.2, 0.5, grade + (n2 - 0.5) * 0.12), above * 0.7);
 		rock *= (1.0 - wood * 0.7) * (1.0 - sea) * (1.0 - ford);
-		col = mix(col, rock_col * (0.88 + 0.24 * n3) * (1.0 + shade_k * shade * 0.8), rock * 0.78);
+		vec3 rc = rock_col * (0.88 + 0.24 * n3);
+		if (splat && rock > 0.02) {
+			rc = texture(tile_rock, wm / 24.0).rgb * (rock_col / vec3(0.5)) * 0.95;
+		}
+		col = mix(col, rc * (1.0 + shade_k * shade * 0.8), rock * 0.78);
 		// Contours at h_base + (k + 0.5) * minor_m: the plain (the commonest
 		// height) lies midway between two lines, never on one.
 		highp float lv = (hm - h_base_m) / minor_m;
@@ -212,7 +245,11 @@ void fragment() {
 	// Wet sand along the banks and the shore: darker, sandy, ragged edge.
 	if (wet > 0.0) {
 		float w2 = clamp(wet * (0.75 + 0.6 * n3), 0.0, 1.0) * (1.0 - sea) * (1.0 - ford);
-		col = mix(col, sand_col * (0.9 + 0.2 * n2), w2 * 0.8);
+		vec3 sc = sand_col * (0.9 + 0.2 * n2);
+		if (splat) {
+			sc = texture(tile_sand, wm / 20.0).rgb * (sand_col / vec3(0.76, 0.685, 0.49));
+		}
+		col = mix(col, sc, w2 * 0.8);
 		col *= 1.0 - 0.18 * w2;
 	}
 	if ((sea_on || riv_on) && sea > 0.0) {
@@ -258,5 +295,9 @@ void fragment() {
 	highp vec2 gw = fwidth(g);
 	float ga = max(line_a(gd.x, gw.x, 0.5), line_a(gd.y, gw.y, 0.5));
 	col = mix(col, vec3(1.0), grid_alpha * ga);
+	if (splat) {
+		float lm = dot(col, vec3(0.3, 0.59, 0.11));
+		col = clamp(mix(vec3(lm), col, splat_sat), 0.0, 1.0);
+	}
 	COLOR = vec4(col, 1.0);
 }

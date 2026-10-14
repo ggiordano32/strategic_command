@@ -25,6 +25,7 @@ const GroundPalette := preload("res://game/ground_palette.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const CityDraw := preload("res://game/city_draw.gd")
 const LandLayer := preload("res://game/land_layer.gd")
+const BattleLook := preload("res://game/battle_look.gd")
 const NODE_M := 2.0                       # texture node spacing (metres)
 const LIGHT := Vector3(-0.55, -0.7, 0.85) # from the upper left, fairly high
 const RELIEF_EXAGGERATE := 3.4            # shading reads on gentle slopes too
@@ -85,6 +86,7 @@ func setup(p_sim, p_px_per_m: float) -> void:
 	set_process(_measuring)
 
 
+var shade_mul := 1.0
 var _decals: Node2D
 var _land: LandLayer
 var _measuring := false
@@ -159,6 +161,7 @@ func _build() -> void:
 	m.set_shader_parameter("high_col", _v3(pal["high"]))
 	m.set_shader_parameter("line_col", Vector4(line.r, line.g, line.b, line.a))
 	m.set_shader_parameter("major_col", Vector4(line.r * 0.8, line.g * 0.8, line.b * 0.8, minf(line.a * 1.55, 0.6)))
+	_splat(m, int(sim.ter_info.get("palette", 0)))
 	m.set_shader_parameter("patch_k", 0.85)
 	m.set_shader_parameter("patch_a", pal["lush"])
 	m.set_shader_parameter("patch_b", pal["dry"])
@@ -248,7 +251,7 @@ func _build() -> void:
 	m.set_shader_parameter("hmap_size", Vector2i(nx, ny))
 	m.set_shader_parameter("texel_px", NODE_M * px_per_m)
 	m.set_shader_parameter("h_range_m", range_m)
-	m.set_shader_parameter("shade_k", SHADE_K)
+	m.set_shader_parameter("shade_k", SHADE_K * shade_mul)
 	# Rock above a notional tree line, on hill maps only (a relief of 14 m
 	# or more): the top fifth of the range.
 	m.set_shader_parameter("tree_line", 0.8 if range_m >= 14.0 else 2.0)
@@ -259,6 +262,35 @@ func _build() -> void:
 	m.set_shader_parameter("h_mid_m", sum / heights.size() - lo)
 	m.set_shader_parameter("h_base_m", _commonest(lo) - lo)
 	m.set_shader_parameter("terrain_on", true)
+
+
+## Splatted ground (diorama look): the tiling tiles, with mipmaps made here (the imports have none);
+## the contour lines and the 50 m grid fade back (a board, not a survey map).
+func _splat(m: ShaderMaterial, pal_i: int) -> void:
+	var diorama := BattleLook.is_diorama() and not ("--no-splat" in OS.get_cmdline_user_args())
+	m.set_shader_parameter("splat_on", diorama)
+	if not diorama:
+		return
+	var dry := pal_i == MapGen.PAL_ARID or pal_i == MapGen.PAL_DRY
+	m.set_shader_parameter("tile_grass", _tile("dry" if dry else "grass"))
+	m.set_shader_parameter("grass_mean", Vector3(0.62, 0.565, 0.335) if dry else Vector3(0.39, 0.49, 0.235))
+	for n in ["dirt", "rock", "sand", "plough"]:
+		m.set_shader_parameter("tile_" + n, _tile(n))
+	m.set_shader_parameter("splat_sat", 1.12)
+	shade_mul = 0.62   # a softer hill shade: no dark band round hills
+	m.set_shader_parameter("grid_alpha", 0.0)
+	var lc: Vector4 = m.get_shader_parameter("line_col")
+	m.set_shader_parameter("line_col", Vector4(lc.x, lc.y, lc.z, lc.w * 0.45))
+	var mc: Vector4 = m.get_shader_parameter("major_col")
+	m.set_shader_parameter("major_col", Vector4(mc.x, mc.y, mc.z, mc.w * 0.55))
+
+
+static func _tile(n: String) -> Texture2D:
+	var img := (load("res://assets/battlekit/ground/%s.png" % n) as Texture2D).get_image()
+	if img.is_compressed():
+		img.decompress()
+	img.generate_mipmaps()
+	return ImageTexture.create_from_image(img)
 
 
 static func _v3(c: Color) -> Vector3:

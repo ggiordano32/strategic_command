@@ -556,9 +556,9 @@ def house(P, sx, sy, wh=3.2, rh=3.0, hip=0.0, thatch=False, over=0.5, chim=True,
 
 def b_house(P, kind):
     spec = {
-        "house_gable_s": (6, 8, 3.0, 2.8, 0.0), "house_gable_m": (7, 10, 3.3, 3.2, 0.0),
-        "house_gable_l": (8, 13, 3.6, 3.6, 0.0), "house_hip_s": (7, 7, 3.0, 3.2, 1.0),
-        "house_hip_m": (9, 9, 3.4, 3.8, 1.0), "longhouse": (6, 16, 3.0, 2.8, 0.45),
+        "house_gable_s": (8, 6, 3.0, 2.8, 0.0), "house_gable_m": (10, 7, 3.3, 3.2, 0.0),
+        "house_gable_l": (13, 8, 3.6, 3.6, 0.0), "house_hip_s": (7, 7, 3.0, 3.2, 1.0),
+        "house_hip_m": (9, 9, 3.4, 3.8, 1.0), "longhouse": (16, 6, 3.0, 2.8, 0.45),
     }
     if kind in spec:
         sx, sy, wh, rh, hip = spec[kind]
@@ -573,7 +573,7 @@ def b_house(P, kind):
         P.cyl("plaster", 0, 0, 0, 2.8, 2.2, 14)
         P.cyl("thatch", 0, 0, 2.2, 3.5, 3.4, 14, r2=0.1)
     elif kind == "hut_thatch":
-        house(P, 5, 7, 2.6, 2.6, 0.0, thatch=True, over=0.7, chim=False)
+        house(P, 7, 5, 2.6, 2.6, 0.0, thatch=True, over=0.7, chim=False)
 
 
 def b_church(P):

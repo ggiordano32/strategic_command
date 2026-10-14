@@ -12,7 +12,11 @@ const SoldierLayer := preload("res://game/soldier_layer.gd")
 const Overlay := preload("res://game/overlay.gd")
 const Hud := preload("res://game/hud.gd")
 const OrderPreview := preload("res://game/order_preview.gd")
+const Quality := preload("res://game/quality.gd")
 const TerrainLayer := preload("res://game/terrain_layer.gd")
+const BattleLook := preload("res://game/battle_look.gd")
+const BoardLayer := preload("res://game/board_layer.gd")
+const BattleDof := preload("res://game/battle_dof.gd")
 const TreeLayer := preload("res://game/tree_layer.gd")
 const CityLayer := preload("res://game/city_layer.gd")
 const WorksLayer := preload("res://game/works_layer.gd")
@@ -258,6 +262,11 @@ func _ready() -> void:
 	interactive = not sim.is_ai_side(player_side)
 
 	# Ground: height shading, contours and the faint 50 m grid in one shader.
+	var look_dio := BattleLook.is_diorama()
+	if look_dio and not ("--no-board" in OS.get_cmdline_user_args()):
+		var board := BoardLayer.new()
+		add_child(board)
+		board.setup(sim, PX_PER_M)
 	terrain = TerrainLayer.new()
 	add_child(terrain)
 	terrain.setup(sim, PX_PER_M)
@@ -309,6 +318,9 @@ func _ready() -> void:
 	add_child(camera)
 	camera.make_current()
 
+	if look_dio and not Quality.is_low() and DisplayServer.get_name() != "headless" \
+			and not ("--no-dof" in OS.get_cmdline_user_args()):
+		add_child(BattleDof.new())
 	hud = Hud.new()
 	add_child(hud)
 	hud.build(sim, player_side, interactive)

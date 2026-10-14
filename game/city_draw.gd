@@ -71,7 +71,8 @@ static func draw_static(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2, f
 			ci.draw_colored_polygon(pts, STONE.lightened(0.1))
 			pts.append(pts[0])
 			ci.draw_polyline(pts, STONE_DARK, maxf(k * 0.4, 1.0))
-	_draw_buildings(ci, lay, k, o, fine)
+	if not kit:
+		_draw_buildings(ci, lay, k, o, fine)
 	if kit:
 		if int(lay["walls"]) > 0 and not sea.is_empty() and not (sea["gate"] as Array).is_empty():
 			_draw_sea_gate(ci, lay, sea["gate"], k, o, false)
