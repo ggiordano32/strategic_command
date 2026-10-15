@@ -1148,9 +1148,18 @@ piece("greek_temple", [box([0, 0, 0], [16, 11, 1.2], "stone_lt"), box([0, 0, 1.2
 piece("burnt", [box([0, 0, 0], [5.0, 4.0, 2.4], "black"), box([-1.2, 0.6, 2.4], [2.2, 0.3, 1.8], "dark_wood", ol=0), box([1.6, -0.8, 2.4], [0.3, 1.8, 1.2], "black", ol=0),
                 box([-0.4, 0, 0.4], [3.6, 2.8, 0.5], "rock_dk", ol=0), cyl([1.8, 1.4, 0], 0.18, 3.2, "dark_wood", n=4, r=[14, 6, 0], ol=0),
                 sph([0.6, 0.4, 4.0], [1.6, 1.5, 1.2], "smoke", n=5, ol=0), sph([1.0, 0.7, 6.0], [1.9, 1.7, 1.5], "smoke", n=5, ol=0), sph([1.5, 1.2, 8.3], [2.2, 2.0, 1.7], "smoke", n=5, ol=0)], Y4)
-piece("camp_tent", [roof([0, 0, 0], [5.4, 4.4, 3.8], "primary", ridge=1.0), box([0, 0, 0], [5.0, 4.0, 1.0], "sail", ol=0), box([0, -2.22, 0], [1.2, 0.1, 1.9], "dark_wood", ol=0),
-                    cyl([2.9, 0, 3.6], 0.1, 1.6, "dark_wood", n=4, ol=0)], Y4)
-piece("camp_flag", [cyl([0, 0, 0], 0.28, 11, "dark_wood", n=6), box([-2.4, 0, 7.6], [4.8, 0.16, 2.8], "primary"), box([-2.4, 0, 8.4], [4.82, 0.18, 0.9], "secondary", ol=0)], 1)
+piece("camp_tent", [roof([0, 0, 0], [5.6, 4.4, 3.4], "sail", ridge=1.0), box([0, -2.25, 0], [1.3, 0.12, 2.0], "dark_wood", ol=0),
+                    box([0, -2.2, 2.3], [1.5, 0.1, 0.5], "primary", ol=0), cyl([3.0, 0, 0], 0.1, 5.2, "dark_wood", n=4, ol=0),
+                    box([3.0, 0, 4.0], [0.1, 1.3, 0.8], "primary", ol=0), box([3.0, 0.9, 4.0], [0.1, 0.9, 0.5], "secondary", ol=0)], Y4)
+MAT.update({"flame": [1.0, 0.62, 0.15], "earth": [0.46, 0.34, 0.2], "ash": [0.18, 0.16, 0.15]})
+piece("camp_fire", [cyl([0, 0, 0], 1.3, 0.4, "rock_dk", n=7), cyl([0, 0, 0.3], 0.9, 0.2, "ash", n=7, ol=0),
+                    box([0, 0, 0.5], [1.8, 0.35, 0.35], "dark_wood", ol=0, r=[0, 0, 40]), box([0, 0, 0.7], [1.8, 0.35, 0.35], "dark_wood", ol=0, r=[0, 0, -40]),
+                    cone([0, 0, 0.6], 0.8, 2.4, "flame", n=5, ol=0)], 1)
+piece("camp_stakes", [cyl([x * 1.1, 0.2 * ((x % 2) * 2 - 1), 0], 0.28, 3.2, "palisade", n=4, r=[0, 0, 0]) for x in range(-3, 4)] +
+      [box([0, 0, 0.5], [7.6, 0.25, 0.25], "dark_wood", ol=0)], Y4)
+piece("camp_earth", [box([0, 0, 0], [7.0, 2.4, 1.2], "earth"), box([0, 0.4, 1.2], [7.0, 1.2, 0.5], "earth", ol=0),
+                     cyl([-2.6, -1.5, 0], 0.7, 1.9, "palisade", n=6), cyl([0, -1.5, 0], 0.7, 1.9, "palisade", n=6), cyl([2.6, -1.5, 0], 0.7, 1.9, "palisade", n=6)], Y4)
+piece("camp_flag", [cyl([0, 0, 0], 0.28, 11, "dark_wood", n=6), box([-3.0, 0, 6.8], [6.0, 0.16, 3.8], "primary"), box([-3.0, 0, 8.6], [6.02, 0.18, 1.2], "secondary", ol=0)], 1)
 
 for _nm, _yaws in PIECES:
     for _k in (range(_yaws) if isinstance(_yaws, int) else _yaws):

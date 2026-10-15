@@ -50,6 +50,7 @@ const PD := {
 	"rock_fort": [6.0, 6.5, 6.0, 40.0], "careened": [6.5, 6.5, 3.5, 8.0], "baluarte": [0.0, 4.6, 4.8, 12.0], "twin_cathedral": [8.0, 6.0, 8.5, 56.0],
 	"capitol": [13.0, 10.5, 9.5, 40.0], "byrsa": [16.0, 15.0, 14.0, 36.0], "cothon": [14.5, 14.5, 14.5, 12.0], "euryalus": [15.0, 14.5, 9.0, 30.0],
 	"acropolis": [16.0, 16.0, 14.0, 40.0], "greek_temple": [8.5, 8.0, 5.5, 26.0], "burnt": [3.0, 2.7, 2.3, 14.0], "camp_tent": [3.0, 2.8, 2.4, 8.0], "camp_flag": [0.6, 0.5, 0.5, 20.0],
+	"camp_fire": [1.3, 1.3, 1.3, 4.0], "camp_stakes": [3.8, 1.0, 1.0, 4.0], "camp_earth": [3.6, 1.4, 1.4, 3.0],
 	"longhouse": [6.2, 6.2, 3.0, 9.0], "rack": [2.3, 2.1, 0.9, 4.0], "stilt_house": [3.0, 2.8, 2.4, 10.0], "maya_platform": [6.4, 6.0, 6.0, 8.0],
 }
 
@@ -248,6 +249,13 @@ static func _make_site(r: int, grid: bool) -> Dictionary:
 	for q in range(neigh.size()):
 		if q != r and p0.distance_to(neigh[q] as Vector2) < rfull * 3.2:
 			near_pts.append(neigh[q])
+	# a neighbour within about two town radii: both footprints shrink (they would overlap) and the centre never
+	# drifts towards it
+	var dn := 1e9
+	for q in near_pts:
+		dn = minf(dn, p0.distance_to(q as Vector2))
+	if dn < rfull * 2.2:
+		rfull *= clampf(dn / (rfull * 2.2), 0.42, 1.0)
 	var best_c := p0
 	var best_score := -1e9
 	var best_rad := PackedFloat32Array()
@@ -259,6 +267,12 @@ static func _make_site(r: int, grid: bool) -> Dictionary:
 	for off in offs:
 		var oc: Vector2 = p0 + (off as Vector2)
 		if depth(oc) < 2.5 and off != Vector2.ZERO:
+			continue
+		var toward := false
+		for q in near_pts:
+			if p0.distance_to(q as Vector2) < R_FULL_M * K * 2.2 and oc.distance_to(q as Vector2) < p0.distance_to(q as Vector2) - 1.0:
+				toward = true
+		if toward:
 			continue
 		var orad := _radii(oc, rfull, near_pts)
 		var tot := 0.0
@@ -362,8 +376,8 @@ static func _radii(c: Vector2, rfull: float, near_pts: Array) -> PackedFloat32Ar
 			var dq: Vector2 = (q as Vector2) - c
 			var along := dq.dot(u)
 			if along > 0.5:
-				cap = minf(cap, 0.47 * dq.length_squared() / along)
-		cap = maxf(cap, 11.0)
+				cap = minf(cap, 0.45 * dq.length_squared() / along)
+		cap = maxf(cap, 8.0)
 		rad[i] = maxf(_reach(c, u, cap, 1.8, 62.0) - 1.0, 5.0)
 	return rad
 
@@ -964,7 +978,7 @@ static func _build(s: Dictionary, r: int, f: Dictionary) -> Dictionary:
 			if i % 1 == 0:
 				_item(items, qp, "quay", yaw_facing(nv))
 		var nsel := (shore[mid] as Array)
-		water = (nsel[0] as Vector2) + (nsel[1] as Vector2) * 17.0 * K
+		water = _find_water(nsel[0] as Vector2, nsel[1] as Vector2)
 		if style == "town" or style == "roman":
 			var pi1 := clampi(mid + 4, 0, n - 1)
 			var psp: Vector2 = (shore[pi1] as Array)[0]
@@ -1074,13 +1088,13 @@ static func _build(s: Dictionary, r: int, f: Dictionary) -> Dictionary:
 					_item(items, pp - pn * 1.2 * K, "pier", yaw_facing(pn))
 	if water == Vector2.ZERO and (port or style == "haven") and bool(s["near_sea"]) and (s["shore"] as Array).size() > 0:
 		var sh0: Array = (s["shore"] as Array)[(s["shore"] as Array).size() / 2]
-		water = (sh0[0] as Vector2) + (sh0[1] as Vector2) * 17.0 * K
+		water = _find_water(sh0[0] as Vector2, sh0[1] as Vector2)
 	# the walls
 	if walls > 0:
 		_walls(s, sc, walls, style, port and harbour, items, wall_items, rkey)
 	var moored: Array = []
 	if harbour and port:
-		moored = _moored(s, f, lvl)
+		moored = _moored(s, f, lvl, water)
 	if int(f["siege"]) >= 0:
 		_siege_camp(s, f, items)
 	# palms along the shore, orchard trees on the fields, a few broadleaf trees on the edge
@@ -1369,78 +1383,157 @@ static func _sea_wall(s: Dictionary, items: Array, out: Array) -> void:
 			out.append(bit)
 
 
-## Moored ships in the roads: more with the town's level and market. [[pos, "ship_<kind>", heading], ...]
-static func _moored(s: Dictionary, f: Dictionary, lvl: int) -> Array:
+## True when a disc of radius rad round p is all sea, with a margin (px of depth) off the coast.
+static func _wet(p: Vector2, rad: float, margin: float) -> bool:
+	if depth(p) > -margin:
+		return false
+	for k in 8:
+		var a := TAU * float(k) / 8.0
+		if depth(p + Vector2(cos(a), sin(a)) * rad) > -margin:
+			return false
+	return true
+
+
+## The spot in the water off a shore point (nv points to the sea) where fleets in port wait: the nearest open
+## water along the harbour side, Vector2.ZERO when there is none.
+static func _find_water(sp: Vector2, nv: Vector2) -> Vector2:
+	var tg := Vector2(-nv.y, nv.x)
+	for d in [17.0, 22.0, 28.0, 36.0, 46.0, 58.0, 72.0]:
+		for t in [0.0, -8.0, 8.0, -16.0, 16.0]:
+			var q: Vector2 = sp + nv * float(d) * K + tg * float(t) * K
+			if _wet(q, 7.0 * K, 2.0):
+				return q
+	return Vector2.ZERO
+
+
+## True when a hull of this length lying at yaw hd centred on q is wholly on water (every footprint point).
+static func _hull_wet(q: Vector2, hd: int, length: float, margin: float) -> bool:
+	var ax := _dir8(hd)
+	var pe := Vector2(-ax.y, ax.x)
+	var half := length * 0.5 * K
+	var beam := length * 0.2 * K
+	for e in [-1.0, -0.5, 0.0, 0.5, 1.0]:
+		for b in [-1.0, 0.0, 1.0]:
+			if depth(q + ax * half * float(e) * 1.1 + pe * beam * float(b)) > -margin:
+				return false
+	return true
+
+
+## Moored ships lying along the quay, at most two, on open water only (the whole hull tested against the coast
+## field with a margin, searching seawards), kept apart from each other and from the fleet spot `water` (so a
+## fleet marker never sits on a hull). Ships heading due north / south read as slivers (bow-on), so they lie on
+## the nearest diagonal instead. [[pos, "ship_<kind>", heading], ...]
+static func _moored(s: Dictionary, f: Dictionary, lvl: int, water: Vector2) -> Array:
 	var shore: Array = s["shore"]
 	var n := shore.size()
-	if n < 3:
+	if n < 3 or water == Vector2.ZERO:
 		return []
 	var mid := n / 2
 	var want := (1 if lvl >= 1 else 0) + int(f["market"]) + (1 if lvl >= 2 else 0)
 	if str(f["style"]) == "haven":
 		want = 1 + lvl
-	want = mini(want, 3)
+	want = mini(want, 2)
 	var sp: Vector2 = (shore[mid] as Array)[0]
 	var nv: Vector2 = (shore[mid] as Array)[1]
 	var tg := Vector2(-nv.y, nv.x)
-	var kinds := ["brigantine", "sloop", "frigate", "galleon"]
+	var kinds := ["brigantine", "frigate"]
 	if str(f["style"]) == "haven":
-		kinds = ["sloop", "brigantine", "sloop", "brigantine"]
+		kinds = ["sloop", "brigantine"]
 	var lens := {"sloop": 17.0, "brigantine": 22.0, "frigate": 30.0, "galleon": 36.0}
-	var spots := [[-17.0, 30.0], [18.0, 36.0], [-28.0, 44.0], [29.0, 50.0]]
-	var hd := _snap8(tg)
+	# which way the fleet row of a port runs (away from the town): ships go the other way along the quay
+	var c: Vector2 = s["c"]
+	var row := -1.0 if water.x < c.x else 1.0
+	var sgn := -1.0 if tg.x * row > 0.0 else 1.0
+	# a hull lies along the quay: the closest yaw to the tangent among those that read as ships (not 2 / 6)
+	var hd := 0
+	var best := -2.0
+	for k in [0, 1, 3, 4, 5, 7]:
+		var dd := absf(_dir8(k).dot(tg))
+		if dd > best:
+			best = dd
+			hd = k
 	var out: Array = []
-	for i in 4:
-		if out.size() >= want:
-			break
+	for i in want:
 		var kd: String = kinds[i]
-		var q: Vector2 = sp + tg * float((spots[i] as Array)[0]) * K + nv * float((spots[i] as Array)[1]) * K
-		var half := float(lens[kd]) * 0.5 * K * 0.9
-		var ok := true
-		for e in [-1.0, 0.0, 1.0]:
-			var qq := q + _dir8(hd) * half * float(e)
-			if depth(qq) > -2.0:
-				ok = false
-		if depth(q + nv * half * 0.6) > -1.5:
-			ok = false
-		if ok:
-			out.append([q, "ship_" + kd, hd])
+		var ln := float(lens[kd])
+		var found := false
+		for t in [30.0, 58.0, -30.0, -58.0]:
+			for d in [20.0, 28.0, 38.0, 50.0]:
+				var q: Vector2 = sp + tg * sgn * float(t) * K + nv * float(d) * K
+				if not _hull_wet(q, hd, ln, 3.0):
+					continue
+				if q.distance_to(water) < (ln * 0.5 + 32.0) * K:
+					continue
+				var clash := false
+				for o in out:
+					var oo: Array = o
+					var ol := float(lens[str(oo[1]).substr(5)])
+					if q.distance_to(oo[0] as Vector2) < (ln * 0.5 + ol * 0.5 + 16.0) * K:
+						clash = true
+				if clash:
+					continue
+				out.append([q, "ship_" + kd, hd])
+				found = true
+				break
+			if found:
+				break
 	return out
 
 
-## A besieger's camp just outside the town: tents ringed round it with guns facing the walls and flags.
+## A besieger's camp just outside the town, on land only: a palisade of stakes and earthworks with guns facing
+## the walls, canvas tents in rows behind it (denser where the coast cuts the ring), campfires, the besieger's flags.
 static func _siege_camp(s: Dictionary, f: Dictionary, items: Array) -> void:
 	var c: Vector2 = s["c"]
 	var rad: PackedFloat32Array = s["rad"]
 	var fac: int = f["siege"]
 	var a0 := float(posmod(int(c.x) * 7 + int(c.y) * 3, 360)) * PI / 180.0
 	var rm := _max_rad(rad)
-	for k in 16:
-		var a := a0 + TAU * float(k) / 16.0
+	var n := 30
+	var ok: Array = []
+	var nvalid := 0
+	for k in n:
+		var a := a0 + TAU * float(k) / float(n)
 		var u := Vector2(cos(a), sin(a))
 		var rr := maxf(rad_at(rad, a), rm * 0.72) * 1.12 + 4.0 * K
 		var q := c + u * rr
-		if depth(q) < 2.5 or _slope(q) > 35.0:
+		var good := depth(q) >= 2.5 and _slope(q) <= 35.0 and depth(c + u * (rr + 8.0 * K)) >= 2.5
+		ok.append(good)
+		if good:
+			nvalid += 1
+	var dense := nvalid < int(n * 0.8)
+	for k in n:
+		if not bool(ok[k]):
 			continue
-		var nm := "camp_tent"
-		var yaw := yaw_facing(-u)
-		if k % 4 == 2:
-			nm = "cannon"
-			yaw = yaw_facing(-u)
-		elif k % 7 == 3:
-			nm = "camp_flag"
-			yaw = 0
-		if not _free(items, q, 3.0 * K):
-			continue
-		items.append([q, nm, yaw, fac])
-	# a second, inner row of tents between the guns
-	for k in 7:
-		var a2 := a0 + TAU * (float(k) + 0.5) / 7.0
-		var u2 := Vector2(cos(a2), sin(a2))
-		var q2 := c + u2 * (maxf(rad_at(rad, a2), rm * 0.72) * 1.12 + 9.0 * K)
-		if depth(q2) < 2.5 or _slope(q2) > 35.0 or not _free(items, q2, 3.0 * K):
-			continue
-		items.append([q2, "camp_tent", yaw_facing(-u2), fac])
+		var a := a0 + TAU * float(k) / float(n)
+		var u := Vector2(cos(a), sin(a))
+		var rr := maxf(rad_at(rad, a), rm * 0.72) * 1.12 + 4.0 * K
+		var q := c + u * rr
+		var tang := Vector2(-u.y, u.x)
+		var yw := yaw_along(tang)
+		# the line facing the walls: guns on earthworks, stakes between, a flag now and then
+		if k % 6 == 0:
+			if _free(items, q, 2.5 * K):
+				items.append([q + u * 1.5 * K, "camp_earth", yw, fac])
+				items.append([q - u * 0.5 * K, "cannon", yaw_facing(-u), fac])
+		elif k % 10 == 3:
+			if _free(items, q, 1.0 * K):
+				items.append([q + u * 2.0 * K, "camp_flag", 0, fac])
+		elif _free(items, q, 2.5 * K):
+			items.append([q, "camp_stakes", yw, fac])
+		# tents in rows behind, a campfire between
+		for row in (3 if dense else 2):
+			var off := (8.0 + 6.5 * float(row)) * K
+			var kk := float(k) + (0.5 if row % 2 == 1 else 0.0)
+			var a2 := a0 + TAU * kk / float(n)
+			var u2 := Vector2(cos(a2), sin(a2))
+			var q2 := c + u2 * (maxf(rad_at(rad, a2), rm * 0.72) * 1.12 + 4.0 * K + off)
+			if depth(q2) < 2.5 or _slope(q2) > 35.0 or not _free(items, q2, 3.0 * K):
+				continue
+			items.append([q2, "camp_tent", yaw_along(Vector2(-u2.y, u2.x)), fac])
+		if k % 3 == 1:
+			var q3 := c + u * (rr + 14.0 * K) + tang * 4.5 * K
+			if depth(q3) >= 2.5 and _free(items, q3, 2.0 * K):
+				items.append([q3, "camp_fire", 0, fac])
 
 static func _house_name(style: String, idx: int, lvl: int, _rng: RandomNumberGenerator, pos: Vector2, s: Dictionary) -> String:
 	var h := absi(int(pos.x * 7.0 + pos.y * 13.0) + idx * 31)

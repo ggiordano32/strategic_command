@@ -4603,6 +4603,16 @@ a sprite but kit pieces placed on the real terrain.
   `TownPlan.sig`; the ground and shadows repaint only when a plan changes. Gallery and strips in the session scratchpad
   `towns3/`.
 
+- **Step 2b: ships, camps, neighbours (2026-10-15).** Fleet spot (`water`) is found by `_find_water` (open water searched
+  seawards along the harbour side, disc tested against the coast field). Moored ships (`_moored`): at most 2, whole hull
+  footprint wet with a margin (`_hull_wet`), searched seawards, spaced from each other and from the fleet spot, on the
+  side opposite the fleet row; yaws 2 / 6 (bow-on slivers) are never used, a hull takes the nearest of the other six to
+  the quay. A port with no open water has no ships. New pieces `camp_tent` (off-white canvas ridge tent, faction pennant),
+  `camp_fire`, `camp_stakes`, `camp_earth` (gun mound), bigger `camp_flag`; `_siege_camp` uses 30 slots on land only,
+  stakes / earthworks with guns and flags facing the walls, tent rows behind (a third row where the coast cuts the ring),
+  campfires. Neighbours within 2.2 town radii shrink both footprints (down to 0.42) and the centre never drifts toward
+  them. `tests/town_plan_test.gd` checks every West and Rome port.
+
 ### Audio (as built, 2026-10-10)
 
 ## DESIGN paragraph (Audio)
