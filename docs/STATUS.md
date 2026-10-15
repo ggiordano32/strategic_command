@@ -1256,6 +1256,44 @@ the +5 % aim; the lever is fewer outcrops in the battle band). Open: no
 town on a river (needs a city + river map); the campaign preview does not
 draw the rocks; cliffs sit on existing slopes (no height step).
 
+**Slice 2b, cover and line of sight, as built 2026-10-15 (not committed;
+DESIGN "Cover and line of sight", AI.md 28).** Unit field `cover` (West:
+buccaneers, cutlass men, native warriors and bowmen; Rome: the javelin and
+sling lines, the skirmishers; line rows 0). Cover men take `COVER_STOP`
+45 % (woods) / 60 % (rock, cliff 2-4 m toward the shooter) / 50 % (house,
+wall) / 25 % (hedges) fewer soldiers' missiles and balls, go to ground
+when still in cover (35 % more stopped, 1.5 s to get up, concealed beyond
+40 m) and shoot out of their own woods' edge; line troops get nothing new.
+Line of sight on every map with blockers, both packs (decided: woods
+hiding men is right for Rome too; scenario `los` 0 turns it off): woods,
+outcrops, cliffs and field-map buildings block sight (settlement houses
+and walls do not: slice 2c); a unit no enemy sees is hidden (not drawn,
+not targeted by the sim or the AI; flat weapons hold on a hidden target,
+arrows are lobbed blind); in woods seen only within 40 m or for 5 s after
+shooting; a unit seen after 5 s hidden ambushes for 10 s (its first volley
+or contact: -200 morale, +40 disorder). Rocks and cliffs now stop flat
+shots beyond 5 m of either man. AI: plans from what it sees, cover troops
+take cover by their slots (ambush on defence), foot probe the woods. View:
+hidden enemies and their thinned canopy not drawn, a leaf (in cover /
+gone to ground) and a closed eye (unseen) on own markers, a reveal ring,
+"TARGET OUT OF SIGHT". New: terrain key `rocks` (hand-placed outcrops),
+scenarios `test_ambush`, `test_cover`, `determinism --only=cover`.
+Numbers (6 seeds, 90 s, a musket line 90 m off): buccaneers lose 25.3 /
+60 in the open, 15.3 behind rocks standing, 1.3 gone to ground (hidden;
+duelling 22.5 / 13.7 / 9.3); line musketeers there 35.0 = 35.0. No pinned
+golden moved (flat maps have no blockers); campaign_sim 6x60 hashes
+unchanged (cdc1d805 32b83031 23f9ed4f 3237d82d a42fc685 b6fe6c2e,
+HEAD-tree copy with these files); unpinned woods / landform / settlement
+runs changed (punic siege seed 12345: the assault now fails, coverage
+`stair_down` dropped there; seeds 1-6 attacker wins 1 / 6 against 3 / 6
+without line of sight, more defenders left). Cost: bench_4000_hills
+4.42 -> 4.45 ms a tick, with 45 % forest 4.50 -> 4.61, bench_4000_city
+4.23 -> 4.34, bench_2000 1.48 = 1.48. Open: smoke does not block sight;
+the AI does not remember last-seen positions or hold fire for an ambush;
+artillery shot ignores cover; cover by the unit's centroid for sight
+(a unit half in a wood counts as in it); balance not tuned (sieges lean
+to the defender; the campaign formula was fitted without line of sight).
+
 **Caribbean plan agreed 2026-10-14 (DESIGN "The Caribbean pack: ships,
 pirates, cover, asymmetry"):** sea battles real time with the wind;
 pirates as raiders with havens; armies embark on fleets (West only). Do

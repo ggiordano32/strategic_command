@@ -16,7 +16,9 @@ const FACE_UP := 768    # -y
 const FACE_DOWN := 256  # +y
 const FACE_RIGHT := 0
 const FACE_LEFT := 512
+const ORDER_MOVE := 1
 const ORDER_ATTACK := 2
+const ORDER_SKIRMISH := 6
 const EQ_LADDERS := 1   # BattleSim's siege equipment kinds (scenario "equip")
 const EQ_RAM := 2
 const EQ_TOWER := 4
@@ -318,6 +320,35 @@ static func _make(id: String) -> Dictionary:
 			sw["terrain"] = {"kind": Terrain.K_FLAT, "woods": [[80, 140, 60, 50, 2], [80, 140, 40, 30, 3],
 				[200, 165, 45, 25, 2], [140, 140, 30, 14, 3]]}
 			return sw
+		"test_ambush":
+			# Line of sight (West slice 2b): your musket line walks up to a
+			# wood; native warriors hidden in it charge out at 60 m, native
+			# bowmen shoot from its edge. Side 1 acts only by these orders.
+			var sa := _test([unit(0, UT.index_of("musketeers"), 100, 120, 260, FACE_UP),
+				unit(0, UT.index_of("w_pikemen"), 120, 175, 262, FACE_UP),
+				unit(1, UT.index_of("native_warriors"), 100, 150, 120, FACE_DOWN),
+				unit(1, UT.index_of("native_bowmen"), 80, 210, 112, FACE_DOWN)],
+				[{"tick": 0, "type": ORDER_MOVE, "unit": 0, "x": 150 * 1024, "y": 172 * 1024, "facing": 768,
+					"width": 45 * 1024, "run": 0},
+				{"tick": 0, "type": ORDER_MOVE, "unit": 1, "x": 205 * 1024, "y": 174 * 1024, "facing": 768,
+					"width": 24 * 1024, "run": 0},
+				attack(600, 2, 0, 1)])
+			sa["terrain"] = {"kind": Terrain.K_FLAT, "woods": [[160, 105, 75, 32, 2], [150, 95, 40, 18, 3]]}
+			return sa
+		"test_cover":
+			# Cover (West slice 2b): your buccaneers behind a row of boulders
+			# duel a Spanish musket line 90 m off.
+			var rk: Array = []
+			var rx := 116
+			while rx <= 184:
+				rk.append([rx, 198, 1, 16])
+				rx += 2
+			var bu := unit(0, UT.index_of("buccaneers"), 60, 150, 200, FACE_UP)
+			bu["files"] = 30
+			var sr := _test([bu, unit(1, UT.index_of("musketeers"), 100, 150, 110, FACE_DOWN)], [])
+			sr["terrain"] = {"kind": Terrain.K_FLAT, "rocks": rk}
+			sr["orders"] = [{"tick": 0, "type": ORDER_SKIRMISH, "unit": 0, "on": 0}, attack(0, 1, 0, 0)]
+			return sr
 		"test_cav_art":
 			# Enemy batteries guarded by spearmen; your cavalry raids them
 			# (light infantry can slog in too).

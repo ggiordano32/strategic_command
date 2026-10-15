@@ -614,7 +614,7 @@ func upload() -> void:
 		pys = pys + sim.e_py
 		fs = fs + sim.e_face
 		sts = sts + _e_state
-	if sim.ch_on != 0 and viewer_side >= 0:
+	if (sim.ch_on != 0 or sim.vis_on != 0) and viewer_side >= 0:
 		var copied := false
 		for u in nu:
 			if not sim.hidden_from(u, viewer_side):

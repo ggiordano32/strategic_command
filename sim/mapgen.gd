@@ -20,6 +20,10 @@ extends RefCounted
 ##            as a settlement's streets (V_URBAN) within `urban` rectangles
 ##   city     settlement: see city_params() (seed, level 0 village / 1 town /
 ##            2 city, walls 0-3, bld, def, plan, coast and view-only style)
+##   rocks    [[x, y, r, h_dm], ...] (m; field maps without a river): rock
+##            outcrops placed by hand (tests, set pieces: C_ROCK cells, the
+##            view's outcrop records and the graph round them, as the
+##            generated ones; h_dm their height in decimetres, 0: 10 + 6 r)
 ##   landforms 1 (default) / 0: cliffs, rock outcrops and woods that follow
 ##            the land (sim/landforms.gd) on generated hilly ground (rolling,
 ##            ridge, valley, hill, slope; never on sym maps), and settlements
@@ -391,7 +395,9 @@ static func build(terr: Dictionary, battle_seed: int, w_m: int, h_m: int, hgt: D
 	var lkind := int(hgt.get("kind", terr.get("kind", K_FLAT)))
 	var land_ok := int(terr.get("landforms", 1)) != 0 and int(hgt.get("on", 0)) != 0 \
 		and int(terr.get("sym", 0)) == 0 and lkind >= K_ROLLING and lkind <= 5
-	if dens <= 0 and woods.is_empty() and not has_city and blocks.is_empty() and rg.is_empty() and not land_ok:
+	var trocks: Array = terr.get("rocks", [])
+	if dens <= 0 and woods.is_empty() and not has_city and blocks.is_empty() and rg.is_empty() and not land_ok \
+			and trocks.is_empty():
 		return out
 	var tseed := int(terr.get("seed", -1))
 	if tseed < 0:
@@ -431,6 +437,8 @@ static func build(terr: Dictionary, battle_seed: int, w_m: int, h_m: int, hgt: D
 			lctx["river"] = rg
 			lctx["obs"] = rcells[0]
 		land = Land.place(lctx)
+	if not has_city and rg.is_empty() and not trocks.is_empty():
+		land = _hand_rocks(land, trocks, w_m, h_m)
 	var lcells: PackedByteArray = land.get("cells", PackedByteArray())
 	if has_city and not land.is_empty():
 		lcells = out["obs"]  # (the landforms are in the settlement's grid already)
@@ -537,6 +545,52 @@ static func build(terr: Dictionary, battle_seed: int, w_m: int, h_m: int, hgt: D
 
 
 ## Turn the landforms' view data 180 degrees (x -> w - x, y -> h - y).
+## Terrain key "rocks" (tests, set pieces): outcrops by hand, [x, y, r, h_dm]
+## in metres (h_dm 0: 10 + 6 r), added to the landforms `land` (or a new
+## one): C_ROCK cells (2 m grid), the view's outcrop records and graph
+## nodes 5 m round each (as sim/landforms.gd makes them).
+static func _hand_rocks(land: Dictionary, rocks: Array, w_m: int, h_m: int) -> Dictionary:
+	var ow := w_m / 2
+	var oh := h_m / 2
+	var out := land.duplicate()
+	var cells: PackedByteArray = out.get("cells", PackedByteArray())
+	if cells.size() != ow * oh:
+		cells = PackedByteArray()
+		cells.resize(ow * oh)
+		cells.fill(0)
+	var recs: Array = (out.get("rocks", []) as Array).duplicate()
+	var nodes: PackedInt32Array = (out.get("nodes", PackedInt32Array()) as PackedInt32Array).duplicate()
+	var n := int(out.get("n", 0))
+	for rk in rocks:
+		var a: Array = rk
+		var x := int(a[0])
+		var y := int(a[1])
+		var r := maxi(int(a[2]), 1)
+		var hd := int(a[3]) if a.size() > 3 and int(a[3]) > 0 else 10 + 6 * r
+		var cx := x * 100
+		var cy := y * 100
+		var rr := r * 100 + 50  # (a 1 m rock on whole metres still takes the cells round it)
+		for j in range(maxi((cy - rr) / 200, 0), mini((cy + rr) / 200, oh - 1) + 1):
+			for i in range(maxi((cx - rr) / 200, 0), mini((cx + rr) / 200, ow - 1) + 1):
+				var dx := i * 200 + 100 - cx
+				var dy := j * 200 + 100 - cy
+				if dx * dx + dy * dy <= rr * rr and cells[j * ow + i] == 0:
+					cells[j * ow + i] = C_ROCK
+					n += 1
+		recs.append([(x * 7919 + y * 104729) & 0x7FFF, hd, x, y, r])
+		for k in 8:
+			var ang := k * 128
+			nodes.append(clampi(x + FM.cos_a(ang) * (r + 5) / FM.TRIG_ONE, 2, w_m - 2))
+			nodes.append(clampi(y + FM.sin_a(ang) * (r + 5) / FM.TRIG_ONE, 2, h_m - 2))
+	out["cells"] = cells
+	out["rocks"] = recs
+	out["nodes"] = nodes
+	out["n"] = n
+	if not out.has("cliffs"):
+		out["cliffs"] = []
+	return out
+
+
 static func _flip_land(ld: Dictionary, w_m: int, h_m: int) -> void:
 	for c in ld["cliffs"]:
 		var cl: Dictionary = c

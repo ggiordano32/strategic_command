@@ -2672,7 +2672,8 @@ else). On a map with cover (`cov_on`: sight blockers and a cover unit):
   4 m toward the shooter `COV_ROCK` 60 %, a building `COV_HOUSE` 50 %, a
   wall / tower / gate `COV_WALL` 50 % (a man on a walkway: the
   battlements' `WALL_COVER` as everyone, nothing more), a field's hedges
-  `COV_FIELD` 25 %: that share of soldiers' missiles and balls about to
+  `COV_FIELD` 25 % (on a settlement map only woods and rocks: houses,
+  walls and hedges there wait for 2c): that share of soldiers' missiles and balls about to
   strike him is stopped (`COVER_STOP`; after the trees' and the
   battlements' share everyone gets). Artillery shot (bolts, stones,
   roundshot) is not covered.
@@ -2697,11 +2698,13 @@ else). On a map with cover (`cov_on`: sight blockers and a cover unit):
 `u_ambt`, `u_revt`; `u_seer` snapshotted only):
 - *Blockers* (static grids built at setup from the map, so both lockstep
   peers hold the same; left out of snapshots): the veg grid's 4 m cells
-  carry the trees' weight (`TREE_W`) and how far a building (the city's
-  `build_h`, else 5 m), an outcrop (its height, 1.6-2.8 m) or a cliff (half
-  its face) rises; a summed-area table answers "anything in this box".
-  Walls and gates do not block sight (both sides know what stands behind a
-  town wall; they still stop shots). The bare ground does not block sight
+  carry the trees' weight (`TREE_W`) and how far a field map's building
+  (5 m), an outcrop (its height, 1.6-2.8 m) or a cliff (half its face)
+  rises; a summed-area table answers "anything in this box". Walls, gates
+  and a settlement's houses do not block sight (both sides know what stands
+  behind a town wall and in its streets; they still stop shots; houses and
+  rooftops are slice 2c's: measured, letting them hide units turned the
+  fitted sieges over). The bare ground does not block sight
   (crests block fire, as before).
 - *A sight line* (`sight_line`): from the observer's eye (1.7 m above its
   centroid's ground) to the target's body (1 m), 4 m samples: the trees
@@ -2757,6 +2760,12 @@ from 60 buccaneers in two ranks, a boulder line 3 m in front of them):
 Ambush (`test_ambush`-like set piece): 100 native warriors hidden in a
 wood 990 ticks, never aimed at; charging at 60 m they are seen as they
 leave the trees; on contact the musket line takes -200 morale and wavers.
+
+Cost (time per tick, HEAD -> 2b, same machine, one run each):
+bench_4000_hills 4.42 -> 4.45 ms, the same with 45 % forest 4.50 -> 4.61,
+bench_4000_city 4.23 -> 4.34, bench_2000 (flat, no blockers) 1.48 = 1.48.
+Settlements: Punic siege, both AI, seeds 1-6: the attacker won 1 (5 draws)
+with line of sight against 3 (3 draws) without; more defenders left.
 
 ### The general (as built, 2026-10-09)
 

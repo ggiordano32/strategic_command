@@ -61,6 +61,14 @@ extends RefCounted
 ##   missiles  archers and javelins threatened by cavalry within 70 m step
 ##             into woods (medium or dense) within 40 m if any.
 ##   (Flat shots through dense woods are refused by the sim's line of fire.)
+## Line of sight (maps with sight blockers; docs/DESIGN.md "Cover and line
+## of sight"): every target choice skips enemies its side does not see
+## (BattleSim.hidden_from); the army plan reckons the enemy centre and the
+## gap between the lines from the enemies it sees (all of them only if it
+## sees none); cover troops take the nearest cover within 30 m of their
+## slot (woods, rocks, houses: deployed there they lie in ambush); foot
+## with nothing in sight while enemies hide probe the nearest woods toward
+## the enemy (PROBE_PCT a think).
 ## Profiles: every threshold, interval, distance and score above is a knob
 ## of the side's skill / personality profile (sim/ai_profile.gd, read as
 ## `kn[AP.X]` with kn = AP.of(sim, side)); the names in capitals above are
@@ -143,6 +151,7 @@ const WAGON_TAKE_R := 60 * M   # a wagon crew without its wagon takes up one on 
 const PICK_ENG := 1 << 16      # (BattleSim.PICK_ENG: u_pick of a unit going to take up engines)
 const ENGINE_TAKE_R := 60 * M  # missile units out of ammunition take up their side's abandoned engines this near
 const FRONT_ARC := 170
+const PROBE_PCT := 25      # line of sight: % a think that foot with no enemy in sight probe the woods (_probe)
 const LOF_EYE := 1536
 const LOF_BODY := 1024
 const LOF_STEP := 4 * 1024
@@ -465,7 +474,11 @@ static func _plan(sim, side: int) -> Dictionary:
 	var ex := 0
 	var ey := 0
 	var en := 0
+	var hx := 0  # (enemies nobody of ours sees: only if none is seen)
+	var hy := 0
+	var hn := 0
 	var chs: bool = sim.ch_on != 0
+	var vis: bool = sim.vis_on != 0
 	for u in nu:
 		if st[u] != U_READY:
 			continue
@@ -481,10 +494,22 @@ static func _plan(sim, side: int) -> Dictionary:
 			ox += uax[u] * w
 			oy += uay[u] * w
 			on += w
+		elif vis and sim.u_seen[u] == 0:
+			hx += ucx[u] * w
+			hy += ucy[u] * w
+			hn += w
 		else:
 			ex += ucx[u] * w
 			ey += ucy[u] * w
 			en += w
+	var blind := en == 0
+	if blind:
+		# Every enemy hidden (line of sight): where they stood when last
+		# reckoned (their own positions: the army knows roughly where the
+		# enemy is, not which unit stands where).
+		ex = hx
+		ey = hy
+		en = hn
 	if on == 0 or en == 0:
 		return {}
 	ox /= on
@@ -518,6 +543,8 @@ static func _plan(sim, side: int) -> Dictionary:
 		for o in nu:
 			if sd[o] == side or st[o] != U_READY or cl[o] == UT.CLS_CAV:
 				continue
+			if vis and not blind and sim.u_seen[o] == 0:
+				continue  # (a hidden enemy does not decide when the lines engage)
 			var gx := maxi(maxi(mnx[o] - ax1, ax0 - mxx[o]), 0)
 			var gy := maxi(maxi(mny[o] - ay1, ay0 - mxy[o]), 0)
 			gap = mini(gap, maxi(gx, gy))
@@ -830,7 +857,16 @@ static func _issue_line(sim, side: int, plan: Dictionary, cx: int, cy: int, depl
 		# A battery that has targets and friends close by stays put.
 		var stay: bool = art and not deploy and (sim.u_refill[u] != 0 or sim.u_rprog[u] > 0 \
 			or (_protected(sim, u, side) and _art_has_target(sim, u)))
-		if sim.ter_on != 0 and (sim.u_cls[u] == UT.CLS_MISSILE or art) and not stay:
+		if sim.cov_on != 0 and not art and sim.t_cover[sim.u_otype[u]] != 0:
+			# Cover troops (docs/DESIGN.md "Cover and line of sight"): the
+			# nearest cover to their slot (woods, rocks, houses), if any
+			# within 30 m; they hold there, out of sight until they shoot.
+			var cs := _cover_spot(sim, u, px, py, rx, ry, fx, fy)
+			if cs.x != px or cs.y != py:
+				sim.stat_ai[16] += 1
+				px = cs.x
+				py = cs.y
+		elif sim.ter_on != 0 and (sim.u_cls[u] == UT.CLS_MISSILE or art) and not stay:
 			var rp := _rise(sim, u, px, py, rx, ry, fx, fy, plan)
 			if rp.x != px or rp.y != py:
 				sim.stat_ai[13] += 1
@@ -1115,6 +1151,8 @@ static func _melee_think(sim, u: int) -> void:
 	if best < 0:
 		best = _nearest_enemy(sim, u, false)
 	if best < 0:
+		if sim.ai_phase[side] == P_ENGAGE:
+			_probe(sim, u)  # nothing in sight: look in the woods
 		return
 	# Formed enemy pikes: do not walk into the points if it can be helped
 	# (unless the mistake is to walk into them).
@@ -2066,6 +2104,56 @@ static func _clear_spot(sim, px: int, py: int, rx: int, ry: int, fx: int, fy: in
 		if sim.veg_d(x, y) == 0:
 			return Vector2i(x, y)
 	return Vector2i(px, py)
+
+
+## Cover troops: the spot nearest their slot (px, py) where a man has cover
+## (BattleSim._cover_at: woods, a rock, house or wall within 2 m, a hedge):
+## the slot itself, else up to 30 m aside or 10-20 m forward or back (fixed
+## order), else the slot.
+static func _cover_spot(sim, u: int, px: int, py: int, rx: int, ry: int, fx: int, fy: int) -> Vector2i:
+	if sim._cover_at(px, py, u) != 0:
+		return Vector2i(px, py)
+	for c in [Vector2i(-10, 0), Vector2i(10, 0), Vector2i(0, -10), Vector2i(0, 10), Vector2i(-20, 0),
+			Vector2i(20, 0), Vector2i(-10, -10), Vector2i(10, -10), Vector2i(0, -20), Vector2i(-30, 0),
+			Vector2i(30, 0), Vector2i(-20, 10), Vector2i(20, 10), Vector2i(0, 20)]:
+		var x := clampi(px + (rx * c.x - fx * c.y) * M / FM.TRIG_ONE, 4 * M, sim.field_w - 4 * M)
+		var y := clampi(py + (ry * c.x - fy * c.y) * M / FM.TRIG_ONE, 4 * M, sim.field_h - 4 * M)
+		if sim._cover_at(x, y, u) != 0 and sim.nav_at(x, y) != 0:
+			return Vector2i(x, y)
+	return Vector2i(px, py)
+
+
+## Line of sight: foot with no enemy in sight while some are hidden (and the
+## lines have met) now and then probe the nearest woods toward the enemy
+## (PROBE_PCT a think): the woods' patch within 120 m of a line 40-160 m
+## toward the enemy centre (fixed order), at a walk. Returns true if sent.
+static func _probe(sim, u: int) -> bool:
+	if sim.vis_on == 0 or sim.veg_on == 0 or sim.u_order[u] != O_NONE:
+		return false
+	var side: int = sim.u_side[u]
+	var hid := false
+	for o in sim.n_units:
+		if sim.u_side[o] != side and sim.u_state[o] == U_READY and sim.u_seen[o] == 0:
+			hid = true
+			break
+	if not hid or not _chance(sim, PROBE_PCT):
+		return false
+	var plan := _plan(sim, side)
+	if plan.is_empty():
+		return false
+	var fx: int = plan["fx"]
+	var fy: int = plan["fy"]
+	var rx := -fy
+	var ry := fx
+	for fwd in [40, 80, 120, 160]:
+		for lat in [0, -40, 40, -80, 80, -120, 120]:
+			var x := clampi(sim.u_ax[u] + (fx * fwd + rx * lat) * M / FM.TRIG_ONE, 4 * M, sim.field_w - 4 * M)
+			var y := clampi(sim.u_ay[u] + (fy * fwd + ry * lat) * M / FM.TRIG_ONE, 4 * M, sim.field_h - 4 * M)
+			if sim.veg_d(x, y) > 0 and sim.nav_at(x, y) != 0:
+				_move(sim, u, x, y, plan["face"], _width(sim, u), 0, 6)
+				sim.stat_ai[17] += 1
+				return true
+	return false
 
 
 ## Missile unit u with enemy cavalry within 70 m and no woods of its own:

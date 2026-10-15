@@ -58,6 +58,8 @@ const COL_DOWNHILL := Color(0.6, 1.0, 0.6)
 const HINT_GRADE := 164   # slopes under 4% get no uphill / downhill hint
 const RANGE_STEPS := 72   # height-adjusted range ring: points round the circle
 const COL_WOODS := Color(0.85, 1.0, 0.35)
+const COL_COVER := Color(0.55, 0.9, 0.45)  # own cover troops in cover (a leaf; filled: gone to ground)
+const REVEAL_FX := 15     # ticks a "seen after hiding" ring spreads from a marker
 const COL_BLOCK_CELL := Color(1.0, 0.35, 0.3, 0.7)
 const FLASH_MS := 2500
 const COL_WALL := Color(1.0, 0.92, 0.45)
@@ -621,11 +623,12 @@ static func draw_char_glyph(ci: CanvasItem, kind: int, c: Vector2, s: float, col
 func _draw_markers(r: float, lw: float) -> void:
 	var tick: int = sim.tick
 	var chs: bool = sim.ch_on != 0
+	var vis: bool = sim.vis_on != 0
 	for u in sim.n_units:
 		if sim.u_state[u] >= BattleSim.U_DESTROYED:
 			continue
-		if chs and sim.hidden_from(u, player_side):
-			continue  # (the enemy's hidden assassin: not seen)
+		if (chs or vis) and sim.hidden_from(u, player_side):
+			continue  # (the enemy's hidden assassin, a unit we do not see: not drawn)
 		var c := to_px(sim.u_cx[u], sim.u_cy[u]) + Vector2(0, -r * 2.2)
 		var col: Color = COL_SIDE[sim.u_side[u]]
 		if sim.u_state[u] == BattleSim.U_ROUTING:
@@ -648,8 +651,15 @@ func _draw_markers(r: float, lw: float) -> void:
 			draw_polyline(pts + PackedVector2Array([pts[0]]), Color(0, 0, 0, 0.8), lw)
 		if selected_units.has(u):
 			draw_arc(c, r * 1.6, 0, TAU, 20, Color.WHITE, lw)
+		if vis and tick - sim.u_revt[u] < REVEAL_FX:
+			# Seen after hiding (it shot or broke cover): a ring that
+			# spreads and fades from the marker.
+			var f := float(tick - sim.u_revt[u]) / REVEAL_FX
+			draw_arc(c, r * (1.3 + 2.2 * f), 0, TAU, 24, Color(1.0, 0.95, 0.6, 0.9 * (1.0 - f)), lw * (2.0 - f))
 		if sim.u_state[u] != BattleSim.U_READY:
 			continue
+		if vis and sim.u_side[u] == player_side:
+			_draw_cover_mark(u, c, r, lw)
 		# Under missile fire: orange ring for a second after each wound.
 		if tick - sim.u_hit_t[u] < 10:
 			draw_arc(c, r * 1.25, 0, TAU, 16, Color(1.0, 0.6, 0.1, 0.9), lw)
@@ -689,6 +699,28 @@ func _draw_markers(r: float, lw: float) -> void:
 			draw_line(c + Vector2(0, down * r), b, COL_WITHDRAW, lw)
 			draw_line(b, b + Vector2(-r * 0.5, -down * r * 0.5), COL_WITHDRAW, lw)
 			draw_line(b, b + Vector2(r * 0.5, -down * r * 0.5), COL_WITHDRAW, lw)
+
+
+## Own units (line of sight, docs/DESIGN.md "Cover and line of sight"): a
+## leaf at the marker's lower left for a cover unit in cover (filled once it
+## has gone to ground), and a closed eye at its lower right while the enemy
+## does not see it.
+func _draw_cover_mark(u: int, c: Vector2, r: float, lw: float) -> void:
+	var cs: int = sim.cover_state(u)
+	if cs > 0:
+		var lc := c + Vector2(-r * 1.15, r * 0.95)
+		var a := 0.95 if cs == 2 else 0.75
+		var pts := PackedVector2Array([lc + Vector2(0, -r * 0.55), lc + Vector2(r * 0.32, 0), lc + Vector2(0, r * 0.55),
+			lc + Vector2(-r * 0.32, 0)])
+		if cs == 2:
+			draw_colored_polygon(pts, Color(COL_COVER, a))
+		draw_polyline(pts + PackedVector2Array([pts[0]]), Color(0, 0, 0, 0.7), lw * 1.6)
+		draw_polyline(pts + PackedVector2Array([pts[0]]), Color(COL_COVER, a), lw)
+		draw_line(lc + Vector2(0, -r * 0.45), lc + Vector2(0, r * 0.45), Color(0, 0, 0, 0.6), lw * 0.7)
+	if sim.hidden_from(u, 1 - player_side) and player_side >= 0:
+		var ec := c + Vector2(r * 1.15, r * 0.95)
+		draw_arc(ec + Vector2(0, -r * 0.2), r * 0.42, PI * 0.15, PI * 0.85, 8, Color(0, 0, 0, 0.7), lw * 1.8)
+		draw_arc(ec + Vector2(0, -r * 0.2), r * 0.42, PI * 0.15, PI * 0.85, 8, Color(0.85, 0.95, 1.0, 0.9), lw)
 
 
 func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
@@ -785,6 +817,14 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 				draw_string(ThemeDB.fallback_font, gp + Vector2(r, -r * 1.5),
 					"NO WAY IN: TO THE GATE" if ug.z == 2 else "MOVING INTO RANGE",
 					HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), Color(1.0, 0.8, 0.45))
+		elif shooter and sim.vis_on != 0 and sim.hidden_from(t, sim.u_side[u]):
+			# Line of sight: the target is out of sight (flat weapons hold,
+			# arrows are lobbed blind at where it was).
+			# (No line to it: where it is now is not known.)
+			var arc_w: bool = UT.stat(ty, "m_arc") != 0
+			if primary:
+				draw_string(ThemeDB.fallback_font, a + Vector2(r, r * 2.5), "TARGET OUT OF SIGHT: SHOOTING BLIND" if arc_w \
+					else "TARGET OUT OF SIGHT: HOLDING FIRE", HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(12.0), COL_BLOCKED)
 		elif not (shooter and _draw_blocked(u, t, lw)):
 			_dash_outlined(a, tp, tcol, lw, 8.0 / zoom)
 		if primary and not shooter:

@@ -310,6 +310,42 @@ const VEG_PLOUGH: Array[int] = [1000, 800, 600, 400]  # stone plough per mille i
 const TREE_W: Array[int] = [0, 1, 2, 4]            # line of fire: tree depth per 4 m sample ...
 const TREE_BLOCK := 8                   # ... a flat shot is blocked past this (8 m of dense woods)
 
+# Cover and line of sight (docs/DESIGN.md "Cover and line of sight", West
+# slice 2b). Sight: woods (the trees along the line, as a flat shot's),
+# buildings, rock outcrops and cliffs (by their height against the line
+# from the observer's eye) block it; walls do not (both sides know what
+# stands behind a town wall). A unit no enemy sees is hidden (vis_on).
+# Cover: the men of a row with "cover" in or right behind woods, rocks,
+# cliffs, houses, walls or hedges take fewer missiles (cov_on).
+const COV_NONE := 0
+const COV_WOODS := 1
+const COV_ROCK := 2       # an outcrop or a cliff
+const COV_HOUSE := 3      # a building's corner
+const COV_WALL := 4       # a wall, tower or gate (on its walk: the battlements, as everyone)
+const COV_FIELD := 5      # a field's hedges and ditches
+const COVER_STOP: Array[int] = [0, 45, 60, 50, 50, 25]  # % of soldiers' missiles and balls stopped, by kind (walk men: WALL_COVER as everyone)
+const COVER_LOOK := 4 * M  # a rock, house or wall this near toward the shooter covers a man (sampled at 2 and 4 m)
+const COVER_RING: Array[int] = [2048, 0, -2048, 0, 0, 2048, 0, -2048, 2048, 2048, -2048, 2048, 2048, -2048, -2048, -2048,
+	4096, 0, -4096, 0, 0, 4096, 0, -4096]  # (x, y) 2 m round a man and 4 m four ways: in cover (the unit's count)
+const GROUND_STOP := 35   # gone to ground: % of what still gets through stopped as well
+const GROUND_STILL := 2   # ... once still in cover at this many visibility checks running (1 s apart)
+const RISE_T := 15        # ... and getting up to move off: the anchor waits this long (1.5 s)
+const COVER_PEEK := 12 * M  # cover men shoot out through this much of their own woods ...
+const COVER_PEEK_OBS := 5 * M  # ... and past a house corner this near them
+const LAND_NEAR := 5 * M  # a rock or cliff this near the shooter or the target does not stop a flat shot (cover, not a wall between)
+const VIS_T := 10         # sight: each unit re-checked every this many ticks (staggered by index)
+const VIS_NEAR := 20 * M  # an enemy unit this near (box to box) always sees it ...
+const VIS_WOODS := 40 * M # ... a unit in woods only enemies this near see ...
+const REVEAL_T := 50      # ... unless it shot within this long (5 s)
+const VIS_PEEK := 12 * M  # an observer sees out through this much of the woods round him
+const VIS_EYE := 1741     # the observer's eye, 1.7 m up (aimed at a man's body, LOF_BODY)
+const VIS_BUILD_H := 5 * M  # a building's height on maps that give none (field maps' blocks)
+const AMBUSH_HID := 50    # a unit hidden at least this long (5 s) and then seen ...
+const AMBUSH_T := 100     # ... ambushes for this long (10 s): the first volley or charge it lands on a unit ...
+const AMBUSH_MOR := 200   # ... shocks that unit: this much morale at once ...
+const AMBUSH_DIS := 40    # ... and this much disorder (once a unit in AMBUSH_T)
+const BLIND_SPREAD := 200 # % scatter of arrows lobbed at a target nobody of their side sees
+
 # Settlements (city maps). Buildings, wall bodies and towers are impassable
 # 2 m cells; the walkway is only for units placed on the wall; gates are
 # passable unless closed. Units follow paths over a street graph.
@@ -1170,6 +1206,34 @@ var stat_parley_fail: int = 0         # ... that did not
 var stat_released: int = 0            # packs released
 var stat_absorbed: int = 0            # packs back with their handlers
 var stat_dog_hunt: int = 0            # packs that went for the nearest enemy on their own
+# Cover and line of sight (docs/DESIGN.md "Cover and line of sight"; _vis_arrays
+# hashed only with vis_on, _cov_arrays only with cov_on).
+var vis_on: int = 0                   # some sight blockers on the map, scenario "los" not 0 (static)
+var cov_on: int = 0                   # ... and a unit with the cover trait (static)
+var t_cover := PackedInt32Array()
+var vs_tw := PackedByteArray()        # 4 m cells (the veg grid): tree weight along a sight line (static)
+var vs_top := PackedInt32Array()      # ... how far a sight blocker rises above the ground (buildings; negative: rocks, cliffs; static)
+var vs_sat := PackedInt32Array()      # ... summed-area table of the cells with either ((veg_w + 1) x (veg_h + 1); static)
+var land_hd := PackedByteArray()      # 2 m cells: a rock's or cliff's height (dm; static; 0 elsewhere)
+var u_seen := PackedInt32Array()      # 1: some enemy unit sees it (0: hidden from the enemy)
+var u_rev := PackedInt32Array()       # seen until this tick: it shot (REVEAL_T)
+var u_hid0 := PackedInt32Array()      # tick it was last hidden from (while hidden)
+var u_amb := PackedInt32Array()       # it ambushes until this tick (seen after AMBUSH_HID hidden)
+var u_ambt := PackedInt32Array()      # tick it was last struck by an ambush
+var u_revt := PackedInt32Array()      # tick it was last seen after hiding (view: the reveal flash)
+var u_seer := PackedInt32Array()      # the enemy unit that saw it last (tried first; no effect on the outcome, not hashed)
+var u_cov := PackedInt32Array()       # cover units: its men in cover at the last check
+var u_gnd := PackedInt32Array()       # cover units: checks still in cover running (GROUND_STILL: gone to ground)
+var u_rise := PackedInt32Array()      # cover units: getting up until this tick (the anchor waits)
+var stat_cover_stop: int = 0          # missiles stopped by a cover man's cover
+var stat_ground_stop: int = 0         # ... and by his going to ground
+var stat_cover_kind := PackedInt32Array([0, 0, 0, 0, 0, 0])  # hits on cover men by the cover they were in (COV_*)
+var stat_hidden: int = 0              # unit-checks that found a unit hidden
+var stat_reveals: int = 0             # units seen after hiding
+var stat_ambush: int = 0              # ambush shocks struck
+var stat_blind: int = 0               # arrows lobbed at a target nobody sees
+var stat_vis_rays: int = 0            # sight lines traced (cost)
+var _vis_dep: int = 0                 # deployment steps (line of sight looks again every VIS_T of them)
 # Ammunition kinds (UnitTypes.AMMO, UnitTypes.AMMO_FIELDS order).
 var t_k_base := PackedInt32Array()
 var t_k_share := PackedInt32Array()
@@ -1607,6 +1671,17 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		arr.resize(n_units)
 		arr.fill(0)
 	u_vf_u.fill(-1)
+	for arr in _vis_arrays():
+		arr.resize(n_units)
+		arr.fill(0)
+	for arr in _cov_arrays():
+		arr.resize(n_units)
+		arr.fill(0)
+	u_seen.fill(1)
+	u_ambt.fill(-1000)
+	u_revt.fill(-1000)
+	u_seer.resize(n_units)
+	u_seer.fill(-1)
 	u_kills_ty.resize(n_units * kty_n)
 	u_kills_ty.fill(0)
 	u_walls.resize(n_units * 4)
@@ -1906,6 +1981,9 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		for s in 2:
 			if ai_sides[s] != 0:
 				BattleAI.place_works(self, s)
+	# Line of sight: the grids and the first look (after the AI's deployment).
+	_vis_dep = 0
+	_setup_vis(scenario, units)
 
 
 func _soldier_arrays() -> Array:
@@ -1960,6 +2038,18 @@ func _dog_arrays() -> Array:
 ## Per-unit firearm state (hashed only with gun_on).
 func _gun_arrays() -> Array:
 	return [u_vf_u, u_vf_t]
+
+
+## Per-unit sight state (docs/DESIGN.md "Cover and line of sight"; hashed
+## only with vis_on). (u_seer: snapshotted, not hashed: it only picks which
+## enemy is asked first.)
+func _vis_arrays() -> Array:
+	return [u_seen, u_rev, u_hid0, u_amb, u_ambt, u_revt]
+
+
+## Per-unit cover state (hashed only with cov_on).
+func _cov_arrays() -> Array:
+	return [u_cov, u_gnd, u_rise]
 
 
 ## The scenario's "chars" (per side a list of {"key": unit key, "name"}, as
@@ -2102,7 +2192,7 @@ func _load_types() -> void:
 		t_amok_calm, t_kill_delay, t_gate_w, t_gate_pct, t_cmd_r, t_cmd_mor, t_cmd_rally, t_cmd_loss, t_cmd_loss_r,
 		t_pack_n, t_pack_type, t_pack_r, t_return_r, t_return_t, t_nobreak, t_scare_am, t_as_cav, t_chase, t_m_spen,
 		t_char, t_char_kind, t_ch_r, t_fall_r, t_fall_loss, t_fall_gain, t_duel, t_unarmed, t_hidden,
-		t_m_gun, t_m_volley, t_m_obj, t_m_spread2]
+		t_m_gun, t_m_volley, t_m_obj, t_m_spread2, t_cover]
 	var keys := ["cls", "attack", "defence", "armour", "shield", "mshield",
 		"damage", "reach", "ranks_reach", "mass", "walk", "run", "hp", "cooldown",
 		"morale", "file_sp", "rank_sp", "turn", "brace", "vs_cav", "charge",
@@ -2116,7 +2206,7 @@ func _load_types() -> void:
 		"amok_calm", "kill_delay", "gate_walls", "gate_pct", "cmd_r", "cmd_mor", "cmd_rally", "cmd_loss", "cmd_loss_r",
 		"pack_n", "pack_type", "pack_r", "return_r", "return_t", "nobreak", "scare_am", "as_cav", "chase", "m_spen",
 		"char", "char_kind", "ch_r", "fall_r", "fall_loss", "fall_gain", "duel", "unarmed", "hidden",
-		"m_gun", "m_volley_r", "m_obj", "m_spread2"]
+		"m_gun", "m_volley_r", "m_obj", "m_spread2", "cover"]
 	for k in arrays.size():
 		var arr: PackedInt32Array = arrays[k]
 		arr.resize(nt)
@@ -2323,7 +2413,7 @@ func _wall_rb(u: int, t: int) -> int:
 ## the flight, or -1 if it is clear. Ground within LOF_SKIP of either end of
 ## the aimed segment is ignored (the shooter's and target's own footing).
 func lof_block(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int, apex: int, ext: int,
-		stride: int = LOF_STEP, skip0: int = 0, skip1: int = LOF_SKIP) -> int:
+		stride: int = LOF_STEP, skip0: int = 0, skip1: int = LOF_SKIP, tskip: int = 0) -> int:
 	if ter_on == 0 and map_on == 0:
 		return -1
 	var dx := x1 - x0
@@ -2370,12 +2460,15 @@ func lof_block(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int, apex: int, 
 		var gz := height_at(px, py)
 		if obs_hi != 0 and a >= oskip:
 			var ot := _obs_top(px, py)
-			if ot > 0 and gz + ot > z:
+			if ot > 0 and gz + ot > z and (a >= LAND_NEAR and a <= d - LAND_NEAR or not MapGen.is_land(obs_kind(px, py))):
+				# (A rock or cliff within LAND_NEAR of either man is his
+				# cover, not a wall between them: he shoots over it and can
+				# be shot; cover troops take far fewer hits there.)
 				stat_obs_lof += 1
 				return a
 		if gz > z:
 			return a
-		if veg_on != 0:
+		if veg_on != 0 and a >= tskip:  # (tskip: a cover man shoots out of his own woods' edge)
 			tw += TREE_W[veg_d(px, py)]
 			if tw > TREE_BLOCK:
 				stat_tree_lof += 1
@@ -2397,8 +2490,9 @@ func lof_units(u: int, t: int) -> bool:
 	var x1 := u_cx[t]
 	var y1 := u_cy[t]
 	var d := FM.approx_len(x1 - x0, y1 - y0)
+	var pk := _peek(u)
 	var blk := lof_block(x0, y0, u_h[u] + LOF_EYE, x1, y1, u_h[t] + LOF_BODY,
-		d * t_m_apex[ty] / 100, 0, 2 * LOF_STEP, _skip0(u), _skip1(t))
+		d * t_m_apex[ty] / 100, 0, 2 * LOF_STEP, maxi(_skip0(u), pk.y), _skip1(t), pk.x)
 	return blk < 0
 
 
@@ -3100,7 +3194,11 @@ func _obs_top(x: int, y: int) -> int:
 	if k == MapGen.C_OPEN or k == MapGen.C_DITCH or k == MapGen.C_WATER:
 		return 0
 	if MapGen.is_land(k):
-		return 0  # rocks and cliffs: shots pass over (cover and sight: slice 2b, map_info "land" heights)
+		# Rocks and cliffs (slice 2b): an outcrop's height, half a cliff's
+		# face (0 without line of sight: shots pass over, as before).
+		if land_hd.is_empty():
+			return 0
+		return _land_top((y >> 11) * ob_w + (x >> 11), k)
 	if k == MapGen.C_BUILDING:
 		return build_h
 	if k == MapGen.C_WALK or k == MapGen.C_STAIR:
@@ -5935,6 +6033,8 @@ func step() -> void:
 	_apply_orders()  # AI orders are queued for this tick
 	if ch_on != 0:
 		_update_chars()
+	if vis_on != 0:
+		_update_vis()
 	prev_x = pos_x.duplicate()
 	prev_y = pos_y.duplicate()
 	if n_eng > 0:
@@ -6359,6 +6459,14 @@ func _update_units() -> void:
 			aspeed = 0
 		if ch_on != 0 and u_hold[u] > tick:
 			aspeed = 0  # held by a parley: it stands
+		if cov_on != 0 and t_cover[ty] != 0:
+			# Gone to ground: getting up to move off takes RISE_T.
+			var uo := u_order[u]
+			if u_gnd[u] >= GROUND_STILL and (uo == O_MOVE or uo == O_WITHDRAW or (uo == O_ATTACK and cls != UT.CLS_MISSILE)):
+				u_gnd[u] = 0
+				u_rise[u] = tick + RISE_T
+			if u_rise[u] > tick:
+				aspeed = 0
 		if city_ditch != 0 and obs_kind(u_ax[u], u_ay[u]) == MapGen.C_DITCH:
 			# Crossing the ditch (foot only): slowly.
 			aspeed = aspeed * DITCH_SPEED / 1000
@@ -6972,15 +7080,16 @@ func _missile_think(u: int) -> void:
 		var rng := mrange(u)
 		if order == O_ATTACK:
 			var t := u_target[u]
-			if t >= 0 and u_state[t] < U_DESTROYED and _in_range(u, t, rng):
-				ft = t
+			if t >= 0 and u_state[t] < U_DESTROYED and _in_range(u, t, rng) \
+					and (vis_on == 0 or u_seen[t] != 0 or t_m_arc[ty] != 0):
+				ft = t  # (a target nobody sees: arrows lobbed blind, flat weapons hold)
 		elif u_fire[u] != 0:
 			# Fire at will: keep shooting the current target while it stays in
 			# range (busy archers do not swing round to every new threat),
 			# otherwise the nearest enemy in range, preferring units that are
 			# not locked in melee with our own side.
 			var cur := u_ftarget[u]
-			if cur >= 0 and u_state[cur] < U_DESTROYED and u_side[cur] != u_side[u] and (ch_on == 0 or u_hidden[cur] == 0) \
+			if cur >= 0 and u_state[cur] < U_DESTROYED and u_side[cur] != u_side[u] and not _unseen(cur) \
 					and _in_range(u, cur, rng) and (u_fighting[cur] == 0 or not _any_clean_target(u, rng)):
 				u_ftarget[u] = cur if t_m_arc[ty] != 0 or (_clear_line(u, cur) and lof_units(u, cur)) else -1
 				return
@@ -6991,8 +7100,8 @@ func _missile_think(u: int) -> void:
 			for o in n_units:
 				if u_side[o] == u_side[u] or u_state[o] >= U_DESTROYED:
 					continue
-				if ch_on != 0 and u_hidden[o] != 0:
-					continue  # (a hidden man is not seen)
+				if _unseen(o):
+					continue  # (a hidden man, a unit nobody sees)
 				var d := _unit_dist(u, o)
 				if d > rng and (not hgt or d > range_vs(u, o)):
 					continue
@@ -7084,6 +7193,12 @@ func _update_contacts() -> void:
 				continue
 			u_contact[a] = 1
 			u_contact[b] = 1
+			if vis_on != 0:
+				# A charge out of hiding (docs/DESIGN.md "Cover and line of sight").
+				if u_amb[a] > tick:
+					_ambush(b, a)
+				if u_amb[b] > tick:
+					_ambush(a, b)
 			# Pike walls hold back enemies close to them.
 			if u_formed[b] != 0 and u_nwalls[a] < 4:
 				u_walls[a * 4 + u_nwalls[a]] = b
@@ -8835,9 +8950,12 @@ func _fire(i: int, u: int, ft: int, ty: int, ak: int = -1) -> void:
 		if dist > t_m_range[ty] * rp / 100 or dist <= 0 or pr_free < 0:
 			return
 	else:
-		if dist <= 0 or pr_free < 0 or not _shot_ok(sx, sy, ax, ay, dist, ty, 0, _skip1(ft),
-				_wall_rb(u, ft) + _works_rb(u, ft), rp):
+		var pk := _peek(u)
+		if dist <= 0 or pr_free < 0 or not _shot_ok(sx, sy, ax, ay, dist, ty, pk.y, _skip1(ft),
+				_wall_rb(u, ft) + _works_rb(u, ft), rp, pk.x):
 			return
+	if vis_on != 0:
+		_shot_seen(u)  # (a shot gives the shooter away)
 	var p := pr_free
 	pr_free = pr_next[p]
 	pr_count += 1
@@ -8855,6 +8973,9 @@ func _fire(i: int, u: int, ft: int, ty: int, ak: int = -1) -> void:
 	if heroed:
 		spread = spread * (100 - t_chv[CV_SPR]) / 100  # a missile hero near: straighter
 		stat_ch_rng += 1
+	if vis_on != 0 and u_seen[ft] == 0:
+		spread = spread * BLIND_SPREAD / 100  # lobbed at where it was last seen
+		stat_blind += 1
 	var lat := (_rand() % (spread + 1) + _rand() % (spread + 1)) - spread
 	var lon := ((_rand() % (spread + 1) + _rand() % (spread + 1)) - spread) * 3 / 2
 	var ux := dx * FM.TRIG_ONE / dist
@@ -8880,7 +9001,7 @@ func _fire(i: int, u: int, ft: int, ty: int, ak: int = -1) -> void:
 ## Hilly maps: a shot from (sx, sy) at (ax, ay), dist apart, is within the
 ## height-adjusted range and, for a flat weapon, has a line of fire.
 func _shot_ok(sx: int, sy: int, ax: int, ay: int, dist: int, ty: int, skip0: int = 0,
-		skip1: int = LOF_SKIP, wb: int = 0, rp: int = 100) -> bool:
+		skip1: int = LOF_SKIP, wb: int = 0, rp: int = 100, tskip: int = 0) -> bool:
 	var hs := elev_at(sx, sy) if obs_on != 0 else gh_at(sx, sy)
 	var ha := elev_at(ax, ay) if obs_on != 0 else gh_at(ax, ay)
 	if dist > range_h(ty, hs, ha, rp) + wb:
@@ -8888,7 +9009,7 @@ func _shot_ok(sx: int, sy: int, ax: int, ay: int, dist: int, ty: int, skip0: int
 	if dist > t_m_range[ty] * rp / 100:
 		stat_range_up += 1
 	if t_m_arc[ty] == 0 and lof_block(sx, sy, hs + LOF_EYE, ax, ay, ha + LOF_BODY,
-			dist * t_m_apex[ty] / 100, 0, LOF_STEP, skip0, skip1) >= 0:
+			dist * t_m_apex[ty] / 100, 0, LOF_STEP, skip0, skip1, tskip) >= 0:
 		stat_lof_blocked += 1
 		return false
 	return true
@@ -8964,6 +9085,8 @@ func _land(p: int) -> void:
 				and _rand() % 100 < WALL_COVER[city_walls]:
 			stat_wall_cover += 1
 			return
+		if cov_on != 0 and t_cover[u_otype[ub]] != 0 and _cover_stops(p, best):
+			return  # behind his rock, in his woods, gone to ground
 	if best >= 0 and (map_on != 0 or mt_on != 0) and sg_on != 0:
 		# (Roofs count on plain maps only in battles with mantlets: the others play as before.)
 		var uc := u_carry[unit_of[best]]
@@ -9041,6 +9164,8 @@ func _missile_hit(p: int, d: int) -> void:
 	var ty := pr_ty[p]
 	var ud := unit_of[d]
 	var td := u_otype[ud]
+	if vis_on != 0 and u_amb[pr_unit[p]] > tick:
+		_ambush(ud, pr_unit[p])  # out of nowhere: the first volley from hiding
 	if gun_on != 0 and t_m_gun[ty] != 0 and u_state[ud] == U_READY \
 			and (u_vf_u[ud] != pr_unit[p] or u_vf_t[ud] != pr_t0[p]):
 		# A volley reaches the unit: fright once per volley (riders +50 %).
@@ -9588,14 +9713,15 @@ func _art_think(u: int) -> void:
 			pass  # shooting at a gate (_update_artillery)
 		elif order == O_ATTACK:
 			var t := u_target[u]
-			if t >= 0 and u_state[t] < U_DESTROYED and _art_in_range(u, t, mn, rng):
+			if t >= 0 and u_state[t] < U_DESTROYED and _art_in_range(u, t, mn, rng) \
+					and (vis_on == 0 or u_seen[t] != 0 or t_m_arc[ty] != 0):
 				ft = t
 				if not lof_units(u, t):
 					stat_lof_blocked += 1
 					ft = -1  # a crest in the way: the bolts would bury themselves
 		elif u_fire[u] != 0:
 			var cur := u_ftarget[u]
-			if cur >= 0 and u_state[cur] < U_DESTROYED and u_side[cur] != u_side[u] and (ch_on == 0 or u_hidden[cur] == 0) \
+			if cur >= 0 and u_state[cur] < U_DESTROYED and u_side[cur] != u_side[u] and not _unseen(cur) \
 					and _art_in_range(u, cur, mn, rng) and art_safe(u, cur):
 				ft = cur
 			else:
@@ -9603,8 +9729,8 @@ func _art_think(u: int) -> void:
 				for o in n_units:
 					if u_side[o] == u_side[u] or u_state[o] >= U_DESTROYED or u_alive[o] <= 0:
 						continue
-					if ch_on != 0 and u_hidden[o] != 0:
-						continue  # (a hidden man is not seen)
+					if _unseen(o):
+						continue  # (a hidden man, a unit nobody sees)
 					if not _art_in_range(u, o, mn, rng):
 						continue
 					var score := 1000 + u_alive[o] * 4 - _unit_dist(u, o) / M
@@ -10196,6 +10322,8 @@ func _art_fire(e: int, u: int, ft: int, ty: int) -> bool:
 	pr_free = pr_next[p]
 	pr_count += 1
 	_eng_spend(e, u, k)
+	if vis_on != 0:
+		_shot_seen(u)
 	if t_m_kind[ty] == 1:
 		stat_bolts += 1
 	else:
@@ -11642,9 +11770,19 @@ func _arrive(u: int) -> void:
 # then surrenders (GONE_SURR, ch_pris) or fights on. All acts run each tick
 # in unit index order (_update_chars).
 
-## Unit u is hidden from side `side` (the view and the AI do not see it).
+## Unit u is hidden from side `side` (the view and the AI do not see it):
+## an assassin who has not acted, or (line of sight) a unit no unit of that
+## side sees.
 func hidden_from(u: int, side: int) -> bool:
-	return ch_on != 0 and u >= 0 and u < n_units and u_hidden[u] != 0 and u_side[u] != side
+	if u < 0 or u >= n_units or u_side[u] == side:
+		return false
+	return (ch_on != 0 and u_hidden[u] != 0) or (vis_on != 0 and u_seen[u] == 0)
+
+
+## Enemy unit o is not seen by the side fighting it (hidden_from for the
+## sim's own target choices: 2 sides).
+func _unseen(o: int) -> bool:
+	return (ch_on != 0 and u_hidden[o] != 0) or (vis_on != 0 and u_seen[o] == 0)
 
 
 ## Unit t is a target for an attempt: an enemy character, or a general whose
@@ -12247,6 +12385,405 @@ func result() -> Dictionary:
 		"tick": tick, "units": units, "sides": sides}
 
 
+# ------------------------------------------------- cover and line of sight ---
+# docs/DESIGN.md "Cover and line of sight" (West slice 2b). Static: the sight
+# grids (vs_*, the veg grid's 4 m cells; land_hd, the obs grid's 2 m cells)
+# built once by setup from the map, so both lockstep peers hold the same.
+# State: u_seen (who is hidden), the reveal / ambush clocks, the cover men
+# count and going to ground; each unit re-checked once a second (VIS_T,
+# staggered by index, fixed order), revealed at once when it shoots.
+
+## Sight grids and the first look (setup, after the units are placed):
+## vis_on when the map has sight blockers (woods, buildings, rocks, cliffs)
+## and the scenario's "los" is not 0; cov_on when a unit has the cover trait
+## as well.
+func _setup_vis(sc: Dictionary, units: Array) -> void:
+	vis_on = 0
+	cov_on = 0
+	vs_tw = PackedByteArray()
+	vs_top = PackedInt32Array()
+	vs_sat = PackedInt32Array()
+	land_hd = PackedByteArray()
+	if map_on == 0 or int(sc.get("los", 1)) == 0 or veg_w <= 0 or veg_h <= 0:
+		return
+	_land_heights()
+	var vw := veg_w
+	var vh := veg_h
+	vs_tw.resize(vw * vh)
+	vs_top.resize(vw * vh)
+	var bh := build_h if build_h > 0 else VIS_BUILD_H
+	var any := 0
+	for j in vh:
+		for i in vw:
+			var c := j * vw + i
+			var tw: int = TREE_W[veg[c] & MapGen.V_DENS] if veg_on != 0 and c < veg.size() else 0
+			var top := 0
+			var lt := 0
+			if obs_on != 0:
+				for dj in 2:
+					var oj := j * 2 + dj
+					if oj >= ob_h:
+						continue
+					for di in 2:
+						var oi := i * 2 + di
+						if oi >= ob_w:
+							continue
+						var oc := oj * ob_w + oi
+						var k := obs[oc]
+						if k == MapGen.C_BUILDING and city_on == 0:
+							top = maxi(top, bh)  # (a settlement's houses: slice 2c, fighting from buildings)
+						elif MapGen.is_land(k):
+							lt = maxi(lt, _land_top(oc, k))
+			vs_tw[c] = tw
+			vs_top[c] = top if top > 0 else -lt  # (negative: a rock or cliff)
+			top = absi(vs_top[c])
+			if tw > 0 or top != 0:
+				any += 1
+	if any == 0:
+		vs_tw = PackedByteArray()
+		vs_top = PackedInt32Array()
+		land_hd = PackedByteArray()
+		return
+	vs_sat.resize((vw + 1) * (vh + 1))
+	vs_sat.fill(0)
+	for j in vh:
+		var acc := 0
+		for i in vw:
+			var c := j * vw + i
+			if vs_tw[c] > 0 or vs_top[c] != 0:
+				acc += 1
+			vs_sat[(j + 1) * (vw + 1) + i + 1] = vs_sat[j * (vw + 1) + i + 1] + acc
+	vis_on = 1
+	if not land_hd.is_empty():
+		obs_hi = 1  # (rocks and cliffs now stop flat shots: the full line-of-fire loop)
+	for ud in units:
+		if t_cover[int(ud["type"])] != 0:
+			cov_on = 1
+	for t in n_units:
+		_vis_unit(t)
+
+
+## The rocks' and cliffs' heights (dm) in the 2 m grid, from the landforms'
+## records (map_info "land": an outcrop's height over its discs, a cliff
+## point's face height within 3 m of it); a cell the records miss: 2 m
+## (rock) or 3 m (cliff). Empty on a map without them.
+func _land_heights() -> void:
+	land_hd = PackedByteArray()
+	if obs_on == 0:
+		return
+	var has := false
+	for c in obs.size():
+		if MapGen.is_land(obs[c]):
+			has = true
+			break
+	if not has:
+		return
+	land_hd.resize(ob_w * ob_h)
+	land_hd.fill(0)
+	var ld: Dictionary = map_info.get("land", {})
+	for rk in ld.get("rocks", []):
+		var a: Array = rk
+		var hd := clampi(int(a[1]), 5, 80)
+		for q in (a.size() - 2) / 3:
+			var cx := int(a[2 + q * 3])
+			var cy := int(a[3 + q * 3])
+			var r := int(a[4 + q * 3]) + 1
+			for j in range(maxi((cy - r) / 2, 0), mini((cy + r) / 2, ob_h - 1) + 1):
+				for i in range(maxi((cx - r) / 2, 0), mini((cx + r) / 2, ob_w - 1) + 1):
+					var c := j * ob_w + i
+					if obs[c] == MapGen.C_ROCK and land_hd[c] < hd:
+						land_hd[c] = hd
+	for cl in ld.get("cliffs", []):
+		var d: Dictionary = cl
+		var pts: PackedInt32Array = d["p"]
+		var hh: PackedInt32Array = d["h"]
+		for q in mini(pts.size() / 2, hh.size()):
+			var hd := clampi(hh[q], 5, 80)
+			var px := pts[q * 2] / 100
+			var py := pts[q * 2 + 1] / 100
+			for j in range(maxi((py - 3) / 2, 0), mini((py + 3) / 2, ob_h - 1) + 1):
+				for i in range(maxi((px - 3) / 2, 0), mini((px + 3) / 2, ob_w - 1) + 1):
+					var c := j * ob_w + i
+					if obs[c] == MapGen.C_CLIFF and land_hd[c] < hd:
+						land_hd[c] = hd
+	for c in obs.size():
+		if land_hd[c] == 0 and MapGen.is_land(obs[c]):
+			land_hd[c] = 20 if obs[c] == MapGen.C_ROCK else 30
+
+
+## How far the rock or cliff in 2 m cell oc (kind k) rises above the ground
+## for sight and flat shots: an outcrop its height, a cliff half its face
+## (the face stands on a steep slope: from the top one looks over it).
+func _land_top(oc: int, k: int) -> int:
+	if land_hd.is_empty():
+		return 0
+	var hd := land_hd[oc]
+	return hd * M / 10 if k == MapGen.C_ROCK else hd * M / 20
+
+
+## Sight blockers (4 m cells) in the box spanned by two points.
+func _vs_box(x0: int, y0: int, x1: int, y1: int) -> int:
+	var w1 := veg_w + 1
+	var i0 := clampi(mini(x0, x1) >> 12, 0, veg_w - 1)
+	var i1 := clampi(maxi(x0, x1) >> 12, 0, veg_w - 1)
+	var j0 := clampi(mini(y0, y1) >> 12, 0, veg_h - 1)
+	var j1 := clampi(maxi(y0, y1) >> 12, 0, veg_h - 1)
+	return vs_sat[(j1 + 1) * w1 + i1 + 1] - vs_sat[j0 * w1 + i1 + 1] - vs_sat[(j1 + 1) * w1 + i0] + vs_sat[j0 * w1 + i0]
+
+
+## A line of sight from an eye at (x0, y0, z0) to (x1, y1, z1) (absolute
+## heights): the woods along it (TREE_W per 4 m sample, the first VIS_PEEK
+## round the eye left out) under TREE_BLOCK, and no building, outcrop or
+## cliff rising above it (LOF_SKIP from either end ignored). The bare
+## ground does not block sight.
+func sight_line(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int) -> bool:
+	if vis_on == 0:
+		return true
+	if _vs_box(x0, y0, x1, y1) == 0:
+		return true
+	var dx := x1 - x0
+	var dy := y1 - y0
+	var d := FM.approx_len(dx, dy)
+	if d <= 2 * LOF_SKIP:
+		return true
+	var dz := z1 - z0
+	var vw := veg_w
+	var vw1 := veg_w - 1
+	var vh1 := veg_h - 1
+	var ter := ter_on != 0
+	var a := LOF_SKIP
+	var end := d - LOF_SKIP
+	var tw := 0
+	while a <= end:
+		var px := x0 + dx * a / d
+		var py := y0 + dy * a / d
+		var c := clampi(py >> 12, 0, vh1) * vw + clampi(px >> 12, 0, vw1)
+		if a > VIS_PEEK:
+			tw += vs_tw[c]
+			if tw > TREE_BLOCK:
+				return false
+		var top := vs_top[c]
+		if top < 0:
+			top = -top if a >= LAND_NEAR and a <= d - LAND_NEAR else 0  # (a rock at either man: cover, not a screen)
+		if top > 0 and (height_at(px, py) if ter else 0) + top > z0 + dz * a / d:
+			return false
+		a += LOF_STEP
+	return true
+
+
+## Each tick: the units whose turn it is (one in VIS_T, by index) are
+## looked for again; a cover unit's men in cover counted and its going to
+## ground with them.
+func _update_vis() -> void:
+	for t in n_units:
+		if (t + tick) % VIS_T != 0:
+			continue
+		_vis_unit(t)
+		if cov_on != 0 and t_cover[u_otype[t]] != 0:
+			_cover_unit(t)
+
+
+## Unit t: seen by the enemy or hidden; seen after hiding long enough, it
+## ambushes for AMBUSH_T.
+func _vis_unit(t: int) -> void:
+	if u_state[t] >= U_DESTROYED or u_alive[t] <= 0:
+		u_seen[t] = 1
+		return
+	if _seen(t):
+		if u_seen[t] == 0:
+			_revealed(t)
+		u_seen[t] = 1
+	else:
+		stat_hidden += 1
+		if u_seen[t] != 0:
+			u_hid0[t] = tick
+		u_seen[t] = 0
+
+
+## Unit t is seen again after hiding (a reveal: the view's flash).
+func _revealed(t: int) -> void:
+	stat_reveals += 1
+	u_revt[t] = tick
+	if tick - u_hid0[t] >= AMBUSH_HID:
+		u_amb[t] = tick + AMBUSH_T
+
+
+## Unit t shot (a missile, a volley, an engine): seen for REVEAL_T, at once.
+func _shot_seen(t: int) -> void:
+	if vis_on == 0:
+		return
+	u_rev[t] = tick + REVEAL_T
+	if u_seen[t] == 0:
+		_revealed(t)
+		u_seen[t] = 1
+
+
+## Some enemy unit sees unit t: it shot lately or is in contact; an enemy
+## within VIS_NEAR (box to box; in woods, or a cover unit gone to ground in
+## its cover, VIS_WOODS, and no further); else a clear sight line from an
+## enemy's centroid (the last one that saw it first, then index order).
+func _seen(t: int) -> bool:
+	if tick < u_rev[t] or u_contact[t] != 0 or u_fighting[t] > 0:
+		return true
+	var side := u_side[t]
+	var wood := (veg_on != 0 and veg_d(u_cx[t], u_cy[t]) > 0) or cover_state(t) == 2
+	var near := VIS_WOODS if wood else VIS_NEAR
+	for o in n_units:
+		if u_side[o] != side and u_state[o] < U_DESTROYED and u_alive[o] > 0 and _box_gap(o, t) <= near:
+			return true
+	if wood:
+		return false
+	var c := u_seer[t]
+	if c >= 0 and u_side[c] != side and u_state[c] < U_DESTROYED and u_alive[c] > 0 and _sight(c, t):
+		return true
+	for o in n_units:
+		if o == c or u_side[o] == side or u_state[o] >= U_DESTROYED or u_alive[o] <= 0:
+			continue
+		if _sight(o, t):
+			u_seer[t] = o
+			return true
+	return false
+
+
+## Unit o's men see unit t (centroid to centroid, o's eye to t's body).
+func _sight(o: int, t: int) -> bool:
+	stat_vis_rays += 1
+	return sight_line(u_cx[o], u_cy[o], u_h[o] + VIS_EYE, u_cx[t], u_cy[t], u_h[t] + LOF_BODY)
+
+
+## An ambush strikes unit t (by unit `by`'s first volley or charge after
+## hiding): AMBUSH_MOR morale and AMBUSH_DIS disorder at once, once in
+## AMBUSH_T.
+func _ambush(t: int, by: int) -> void:
+	if u_state[t] != U_READY or tick - u_ambt[t] <= AMBUSH_T or u_side[t] == u_side[by]:
+		return
+	u_ambt[t] = tick
+	u_morale[t] -= AMBUSH_MOR
+	_add_disorder(t, AMBUSH_DIS)
+	stat_ambush += 1
+
+
+## The cover kind (COV_*) a 2 m cell's obstacle gives a man beside it. (On a
+## settlement map only rocks and cliffs: houses, walls and hedges there wait
+## for slice 2c, fighting from buildings; the sieges play as fitted.)
+func _cover_cell(k: int) -> int:
+	if k == MapGen.C_OPEN:
+		return COV_NONE
+	if MapGen.is_land(k):
+		return COV_ROCK
+	if city_on != 0:
+		return COV_NONE
+	if k == MapGen.C_BUILDING:
+		return COV_HOUSE
+	if k == MapGen.C_WALL or k == MapGen.C_TOWER or k == MapGen.C_WALK or MapGen.is_gate(k):
+		return COV_WALL
+	return COV_NONE
+
+
+## The cover a man of unit u at (x, y) has whichever way he faces: woods
+## under him, his wall's walk, a rock, house or wall 2 m off (eight ways)
+## or 4 m off (four ways), a field's hedges.
+func _cover_at(x: int, y: int, u: int) -> int:
+	var vb := veg_bits(x, y)
+	if (vb & MapGen.V_DENS) != 0:
+		return COV_WOODS
+	if obs_on != 0:
+		if u_wall[u] > 0:
+			return COV_WALL if city_on == 0 else COV_NONE
+		for k in 12:
+			var ck := _cover_cell(obs_kind(x + COVER_RING[k * 2], y + COVER_RING[k * 2 + 1]))
+			if ck != COV_NONE:
+				return ck
+	if (vb & MapGen.V_FIELD) != 0 and city_on == 0:
+		return COV_FIELD
+	return COV_NONE
+
+
+## The cover soldier i has against a missile from (sx, sy): woods under
+## him, his wall's walk, a rock, house or wall 2 or 4 m toward the shooter,
+## a field's hedges.
+func _cover_from(i: int, sx: int, sy: int) -> int:
+	var x := pos_x[i]
+	var y := pos_y[i]
+	var vb := veg_bits(x, y)
+	if (vb & MapGen.V_DENS) != 0:
+		return COV_WOODS
+	if obs_on != 0:
+		if u_wall[unit_of[i]] > 0:
+			return COV_WALL if city_on == 0 else COV_NONE
+		var dx := sx - x
+		var dy := sy - y
+		var d := FM.approx_len(dx, dy)
+		if d > 0:
+			var k := COVER_LOOK / 2
+			while k <= COVER_LOOK:
+				var ck := _cover_cell(obs_kind(x + dx * k / d, y + dy * k / d))
+				if ck != COV_NONE:
+					return ck
+				k += COVER_LOOK / 2
+	if (vb & MapGen.V_FIELD) != 0 and city_on == 0:
+		return COV_FIELD
+	return COV_NONE
+
+
+## Cover unit u (once a second): its men in cover; still there (formed, not
+## moving, not fighting, half its men or more in cover) GROUND_STILL checks
+## running, it has gone to ground.
+func _cover_unit(u: int) -> void:
+	if u_state[u] != U_READY or u_alive[u] <= 0:
+		u_cov[u] = 0
+		u_gnd[u] = 0
+		return
+	var n0 := 0
+	var base := u_slot_base[u]
+	for s in u_alive[u]:
+		var i := slot_soldier[base + s]
+		if _cover_at(pos_x[i], pos_y[i], u) != COV_NONE:
+			n0 += 1
+	u_cov[u] = n0
+	if u_moved[u] == 0 and u_fighting[u] == 0 and u_contact[u] == 0 and u_rise[u] <= tick and n0 * 2 >= u_alive[u]:
+		u_gnd[u] = mini(u_gnd[u] + 1, GROUND_STILL)
+	else:
+		u_gnd[u] = 0
+
+
+## A missile from projectile p is about to strike soldier `best` of a cover
+## unit: true if his cover stops it (COVER_STOP by kind; walk men have the
+## battlements as everyone) or, gone to ground, GROUND_STOP more.
+func _cover_stops(p: int, best: int) -> bool:
+	var ub := unit_of[best]
+	var ck := _cover_from(best, pr_sx[p], pr_sy[p])
+	if ck == COV_NONE:
+		return false
+	stat_cover_kind[ck] += 1
+	var stp: int = COVER_STOP[ck] if u_wall[ub] == 0 else 0
+	if stp > 0 and _rand() % 100 < stp:
+		stat_cover_stop += 1
+		return true
+	if u_gnd[ub] >= GROUND_STILL and _rand() % 100 < GROUND_STOP:
+		stat_ground_stop += 1
+		return true
+	return false
+
+
+## Cover men shoot out of their own woods' edge and past the rock or house
+## corner beside them: (tree skip, obstacle skip) for unit u's line of fire.
+func _peek(u: int) -> Vector2i:
+	if cov_on != 0 and t_cover[u_otype[u]] != 0:
+		return Vector2i(COVER_PEEK, COVER_PEEK_OBS)
+	return Vector2i.ZERO
+
+
+## The view and the order panel: unit u is a cover unit gone to ground (2),
+## in cover (1: half its men or more at the last check) or neither (0).
+func cover_state(u: int) -> int:
+	if cov_on == 0 or u < 0 or u >= n_units or t_cover[u_otype[u]] == 0 or u_state[u] != U_READY:
+		return 0
+	if u_gnd[u] >= GROUND_STILL:
+		return 2
+	return 1 if u_cov[u] * 2 >= u_alive[u] and u_alive[u] > 0 else 0
+
+
 # ------------------------------------------------------------- snapshot ---
 
 ## Left out of snapshots: rebuilt identically by setup() from the same
@@ -12254,6 +12791,7 @@ func result() -> Dictionary:
 ## view-only diagnostics that are large.
 const _SNAP_SKIP := {"ter_h": true, "ter_gx": true, "ter_gy": true, "ter_info": true,
 	"dbg_impacted": true, "veg": true, "obs": true, "obs_c": true, "obs_cd": true, "obs_sat": true, "land_sat": true, "map_info": true,
+	"vs_tw": true, "vs_top": true, "vs_sat": true, "land_hd": true,
 	"ws_x0": true, "ws_y0": true, "ws_x1": true, "ws_y1": true, "ws_dir": true, "ng_x": true,
 	"ng_y": true, "ng_gate": true, "ng_e0": true, "ng_to": true, "ng_w": true, "_dist_cache": true,
 	"g_hw": true, "g_cit": true, "ws_e": true, "ws_fl": true, "sea_flee": true, "ws_nb": true,
@@ -12435,6 +12973,13 @@ func state_hash() -> int:
 		# Firearms (battles without guns hash as before).
 		for arr in _gun_arrays():
 			ctx.update((arr as PackedInt32Array).to_byte_array())
+	if vis_on != 0:
+		# Line of sight (maps without sight blockers hash as before).
+		for arr in _vis_arrays():
+			ctx.update((arr as PackedInt32Array).to_byte_array())
+		if cov_on != 0:
+			for arr in _cov_arrays():
+				ctx.update((arr as PackedInt32Array).to_byte_array())
 	var digest := ctx.finish()
 	return digest.decode_u32(0)
 
@@ -12523,6 +13068,13 @@ func _setup_deploy(sc: Dictionary) -> void:
 func _deploy_step() -> void:
 	_dist_new = 0
 	_apply_orders(50)
+	if vis_on != 0:
+		# Line of sight while the armies deploy: everyone looked for again
+		# every VIS_T steps (a unit placed in a wood is hidden at once).
+		_vis_dep += 1
+		if _vis_dep % VIS_T == 0:
+			for t in n_units:
+				_vis_unit(t)
 	if dep_left > 0:
 		dep_left -= 1
 	if (dep_ticks >= 0 and dep_left <= 0) or dep_need == 0 or (dep_ready & dep_need) == dep_need:

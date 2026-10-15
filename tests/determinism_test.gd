@@ -293,6 +293,11 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=cover" in OS.get_cmdline_user_args():
+		_check_cover()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=guns" in OS.get_cmdline_user_args():
 		_check_guns()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -336,6 +341,7 @@ func _init() -> void:
 	_check_crossing()
 	_check_reinf()
 	_check_guns()
+	_check_cover()
 	_check_sea()
 	if "--only=equipment" in OS.get_cmdline_user_args():
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -469,7 +475,10 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 			# (No gate_close since 2026-10-09, ranks holding together: the
 			# defenders are not yet back in the citadel within the run; the
 			# shut gate is gate_ops', cit_ops' and the shut inner gate's.)
-			need = ["paths", "gate_broken", "stair_down", "gate_art"]
+			# (No stair_down since 2026-10-15, line of sight: at this seed the
+			# assault fails before the wall units come down; over seeds 1-6
+			# they do in every run. Stair moves: cit_ops, stairs.)
+			need = ["paths", "gate_broken", "gate_art"]
 		"siege_oppidum@ai":
 			# (Part 2c: no wall unit routs off its stretch within the run.)
 			need = ["paths", "gate_broken", "gate_art", "layout"]
@@ -5941,3 +5950,151 @@ func _check_guns() -> void:
 		return
 	print("PASS guns: %d volleys (first at tick %d, %d shots), %d volley frights, lines 100 m apart held their fire, lost %s; identical on repeat and across snapshot / restore (tick %d)" % [
 		int(ev["volleys"]), int(ev["vol0"]), int(ev["shots1"]), int(ev["frights"]), str(ev["lost"]), int(a["snap_t"])])
+
+
+## Cover and line of sight (docs/DESIGN.md "Cover and line of sight";
+## "--only=cover", also in the full run). Three set pieces on a flat 400 m
+## field: "ambush": native warriors hidden in a wood, a musket line walks up
+## toward its edge; at 60 m the warriors charge out of it (hidden until they
+## break cover, never shot at while hidden, the ambush shock on contact;
+## with "los" 0 no one hides and nothing shocks); "rocks": buccaneers
+## behind a row of boulders duel a musket line 90 m off (cover stops, gone
+## to ground, fewer lost than in the open); "line": musketeers in the same
+## place take exactly what they take in the open (no cover trait).
+## Identical on repeat and across snapshot / restore.
+static func _cover_sc(kind: String, rocks: bool, los: int = 1) -> Dictionary:
+	var rk: Array = []
+	var x := 170
+	while x <= 230:
+		rk.append([x, 163 if rocks else 40, 1, 16])
+		x += 2
+	if kind == "ambush":
+		return {"width_m": 400, "height_m": 400, "ai_sides": [], "orders": [], "los": los, "units": [
+			Scenarios.unit(1, UT.index_of("native_warriors"), 100, 200, 165, Scenarios.FACE_DOWN),
+			Scenarios.unit(0, UT.index_of("musketeers"), 100, 140, 330, Scenarios.FACE_UP)],
+			"terrain": {"kind": Terrain.K_FLAT, "woods": [[200, 150, 50, 30, 2]]}}
+	var t := Scenarios.unit(1, UT.index_of("buccaneers" if kind == "rocks" else "musketeers"), 60, 200, 160, Scenarios.FACE_DOWN)
+	t["files"] = 30
+	return {"width_m": 400, "height_m": 400, "ai_sides": [], "orders": [], "los": los, "units": [
+		t, Scenarios.unit(0, UT.index_of("musketeers"), 100, 200, 250, Scenarios.FACE_UP)],
+		"terrain": {"kind": Terrain.K_FLAT, "rocks": rk}}
+
+
+## One set piece: hashes every tick and what happened; snap_at >= 0: a
+## restored copy from that tick runs beside it (its hashes must match).
+func _cover_run(kind: String, rocks: bool, p_seed: int, snap_at: int, los: int = 1) -> Dictionary:
+	var sc := _cover_sc(kind, rocks, los)
+	var sim := BattleSim.new()
+	sim.setup(sc, p_seed)
+	var twin = null
+	var twin_bad := 0
+	var hashes := PackedInt64Array()
+	var ev := {"hid0": 1 if sim.hidden_from(0, 0) else 0, "seen_t": -1, "charge_t": -1, "amb_t": -1, "mor_drop": 0,
+		"shot_hidden": 0, "hid_ticks": 0, "gnd_t": -1}
+	var first: Array = []
+	if kind == "ambush":
+		first.append(BattleSim.make_move_order(0, 1, 200 * M, 215 * M, 768, 25 * M, 0))
+	else:
+		first.append({"tick": 0, "type": BattleSim.ORDER_SKIRMISH, "unit": 0, "on": 0, "player": 50})
+		first.append(BattleSim.make_attack_order(0, 1, 0, 0))
+	for o in first:
+		sim.queue_order(o)
+	var max_t := 1400 if kind == "ambush" else 900
+	for k in max_t:
+		var extra: Array = []
+		if kind == "ambush" and int(ev["charge_t"]) < 0 and sim._box_gap(0, 1) < 60 * M:
+			ev["charge_t"] = sim.tick
+			extra.append(BattleSim.make_attack_order(sim.tick, 0, 1, 1))
+		for o in extra:
+			sim.queue_order(o)
+			if twin != null:
+				twin.queue_order((o as Dictionary).duplicate())
+		var a0: int = sim.stat_ambush
+		var m0: int = sim.u_morale[1]
+		sim.step()
+		hashes.append(sim.state_hash())
+		if twin != null:
+			twin.step()
+			if twin.state_hash() != sim.state_hash():
+				twin_bad += 1
+		if k == snap_at:
+			twin = BattleSim.new()
+			twin.setup(sc, p_seed)
+			if not twin.restore(sim.snapshot()) or twin.state_hash() != sim.state_hash():
+				twin_bad += 1000
+		if sim.hidden_from(0, 0):
+			ev["hid_ticks"] += 1
+			if sim.u_ftarget[1] == 0:
+				ev["shot_hidden"] += 1
+		elif int(ev["seen_t"]) < 0:
+			ev["seen_t"] = sim.tick
+		if sim.stat_ambush > a0 and int(ev["amb_t"]) < 0:
+			ev["amb_t"] = sim.tick
+			ev["mor_drop"] = m0 - sim.u_morale[1]
+		if int(ev["gnd_t"]) < 0 and sim.cover_state(0) == 2:
+			ev["gnd_t"] = sim.tick
+	ev["hashes"] = hashes
+	ev["twin_bad"] = twin_bad if snap_at >= 0 and twin != null else (0 if snap_at < 0 else -1)
+	ev["lost0"] = sim.u_count0[0] - sim.u_alive[0]
+	ev["lost1"] = sim.u_count0[1] - sim.u_alive[1]
+	ev["cover_stop"] = sim.stat_cover_stop
+	ev["ground_stop"] = sim.stat_ground_stop
+	ev["vis_on"] = sim.vis_on
+	ev["cov_on"] = sim.cov_on
+	ev["reveals"] = sim.stat_reveals
+	ev["ambush"] = sim.stat_ambush
+	return ev
+
+
+func _check_cover() -> void:
+	var bad: Array = []
+	# Ambush from the woods.
+	var a := _cover_run("ambush", false, 7, 940)
+	var b := _cover_run("ambush", false, 7, -1)
+	if a["hashes"] != b["hashes"]:
+		bad.append("cover: the ambush repeat diverged")
+	if int(a["twin_bad"]) != 0:
+		bad.append("cover: the ambush's restored copy diverged (%d)" % int(a["twin_bad"]))
+	if int(a["vis_on"]) != 1 or int(a["hid0"]) != 1:
+		bad.append("cover: the warriors in the wood were not hidden at the start (%s)" % str([a["vis_on"], a["hid0"]]))
+	if int(a["seen_t"]) < 0 or int(a["seen_t"]) <= int(a["charge_t"]):
+		bad.append("cover: the warriors were seen before they charged (seen %d, charge %d)" % [int(a["seen_t"]), int(a["charge_t"])])
+	if int(a["shot_hidden"]) != 0:
+		bad.append("cover: the musketeers aimed at the hidden warriors (%d ticks)" % int(a["shot_hidden"]))
+	if int(a["amb_t"]) < int(a["seen_t"]) or int(a["mor_drop"]) < BattleSim.AMBUSH_MOR:
+		bad.append("cover: no ambush shock on contact (ambush at %d, morale %d)" % [int(a["amb_t"]), int(a["mor_drop"])])
+	var c := _cover_run("ambush", false, 7, -1, 0)
+	if int(c["vis_on"]) != 0 or int(c["ambush"]) != 0 or int(c["hid_ticks"]) != 0:
+		bad.append("cover: with los 0 someone hid or an ambush struck (%s)" % str([c["vis_on"], c["ambush"], c["hid_ticks"]]))
+	# Buccaneers in the rocks against a musket line, against the open.
+	var r := _cover_run("rocks", true, 11, 300)
+	var r2 := _cover_run("rocks", true, 11, -1)
+	if r["hashes"] != r2["hashes"]:
+		bad.append("cover: the rocks repeat diverged")
+	if int(r["twin_bad"]) != 0:
+		bad.append("cover: the rocks' restored copy diverged (%d)" % int(r["twin_bad"]))
+	if int(r["cov_on"]) != 1 or int(r["cover_stop"]) <= 0 or int(r["gnd_t"]) < 0:
+		bad.append("cover: buccaneers in the rocks: no cover stops or never went to ground (%s)" % str([r["cov_on"], r["cover_stop"], r["gnd_t"]]))
+	var lost_rocks := 0
+	var lost_open := 0
+	var lost_line := [0, 0]
+	for sd in [11, 22, 33, 44]:
+		lost_rocks += int(_cover_run("rocks", true, sd, -1)["lost0"])
+		lost_open += int(_cover_run("rocks", false, sd, -1)["lost0"])
+	if lost_rocks * 10 > lost_open * 8:
+		bad.append("cover: buccaneers in the rocks lost %d, in the open %d (not 20 %% fewer)" % [lost_rocks, lost_open])
+	# Line infantry: no cover trait, the same losses in the rocks as in the open.
+	for k in 2:
+		var l := _cover_run("line", k == 0, 11, -1)
+		lost_line[k] = int(l["lost0"])
+		if int(l["cover_stop"]) != 0 or int(l["ground_stop"]) != 0:
+			bad.append("cover: line musketeers were covered (%s)" % str([l["cover_stop"], l["ground_stop"]]))
+	if lost_line[0] != lost_line[1]:
+		bad.append("cover: line musketeers lost %d in the rocks, %d in the open" % [lost_line[0], lost_line[1]])
+	if bad.is_empty():
+		print("PASS cover: warriors hidden in the wood %d ticks, charged at %d, seen at %d, ambush at %d (morale -%d), never aimed at while hidden, %d / %d lost (musketeers / warriors); buccaneers in rocks gone to ground at %d, %d cover and %d ground stops, lost %d vs %d in the open (4 seeds); line musketeers %d in rocks = %d in the open; identical on repeat and across snapshot / restore" % [
+			int(a["hid_ticks"]), int(a["charge_t"]), int(a["seen_t"]), int(a["amb_t"]), int(a["mor_drop"]), int(a["lost1"]), int(a["lost0"]),
+			int(r["gnd_t"]), int(r["cover_stop"]), int(r["ground_stop"]), lost_rocks, lost_open, lost_line[0], lost_line[1]])
+	else:
+		for x in bad:
+			_fail(str(x))

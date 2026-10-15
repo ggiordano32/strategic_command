@@ -48,6 +48,7 @@ var _occ_img: Image
 var _occ_tex: ImageTexture
 var _rng := 1
 var use_kit := true      # battle kit trees (--no-kit: the drawn canopies)
+var viewer_side := -1    # line of sight: the enemy's hidden units do not thin the canopy (they would show)
 var _kit_mat: ShaderMaterial
 var _n_inner := 0   # instances before the orchard rows (gameplay woods)
 
@@ -407,6 +408,8 @@ func update_occupancy() -> void:
 	var vh: int = sim.veg_h
 	for u in sim.n_units:
 		if sim.u_alive[u] <= 0 or sim.u_state[u] >= 2:
+			continue
+		if viewer_side >= 0 and sim.hidden_from(u, viewer_side):
 			continue
 		var i0: int = maxi((sim.u_minx[u] >> 12) - 1, 0)
 		var i1: int = mini((sim.u_maxx[u] >> 12) + 1, vw - 1)

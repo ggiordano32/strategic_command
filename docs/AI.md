@@ -1842,3 +1842,23 @@ them. Knobs (`sim/ai_profile.gd`, Easy / Average / Skilled):
 - Gaps: the AI does not pull a hero out of a losing
   fight or shield him from missile fire; no aura knob per kind (the posts
   are the knob: each hero stands where his aura counts).
+
+## 28. Cover and line of sight (West slice 2b, 2026-10-15)
+
+docs/DESIGN.md "Cover and line of sight". The battle AI plays by what its
+side sees (`BattleSim.hidden_from`, now also a unit no unit of that side
+sees): every target choice (fire at will, cavalry, foot, batteries, the
+missile units' "hold fire unless a clean target") skips hidden enemies, as
+it did the hidden assassin. `_plan` reckons the enemy centre and the gap
+between the lines from the enemies it sees, all of them only when it sees
+none (it knows roughly where the enemy army is, not which unit stands
+where). Cover troops (`cover` rows) take the nearest cover within 30 m of
+their line slot (`_cover_spot`: woods, a rock, house or wall within 2 m, a
+hedge; fixed order of offsets), so on defence they deploy into it and lie
+hidden until they shoot (the ambush placement); line troops ignore cover.
+Foot in the engagement with no enemy in sight while some hide probe the
+nearest wood toward the enemy (`_probe`: 40-160 m ahead, up to 120 m
+aside, `PROBE_PCT` 25 % a think, at a walk). Counters `stat_ai[16]` (cover
+spots taken), `stat_ai[17]` (probes). Not built: the AI remembering where
+it last saw a unit; deliberate ambush orders (hold fire until the enemy is
+close) beyond going to ground; probing with cavalry.

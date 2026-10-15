@@ -299,6 +299,7 @@ func _ready() -> void:
 
 	# Trees above the soldiers; their canopies fade over men under them.
 	trees = TreeLayer.new()
+	trees.viewer_side = player_side
 	add_child(trees)
 	trees.setup(sim, PX_PER_M)
 	if "--no-trees" in OS.get_cmdline_user_args():

@@ -203,6 +203,14 @@ extends RefCounted
 ##   m_spread2    soldier missiles: more scatter, per mille of the distance
 ##                per 100 m of it (grows with the square: a smoothbore ball
 ##                is fair at 60 m and wild at 100 m)
+## Cover (docs/DESIGN.md "Cover and line of sight"; West slice 2b; generic):
+##   cover        1: its men use what the ground gives (woods, rocks and
+##                cliffs, house corners, walls, hedges): in or right behind
+##                it they take far fewer missiles and balls (by the kind of
+##                cover), go to ground when they stand still there (fewer
+##                still, slower to get going) and shoot out of their own
+##                woods' edge or round their rock. 0 (line troops): only
+##                what everyone gets (the trees' and the battlements' share).
 ## Packs: "pack" (display and pickers only, never read by the sim): "west"
 ## for the West pack's rows; absent: "rome". pack_of(ty).
 
@@ -247,7 +255,7 @@ const DEFAULTS := {
 	"char": 0, "char_kind": 0, "char_pct": 0, "ch_r": 0, "au_hit": 0, "au_mor": 0, "au_rng": 0,
 	"au_spr": 0, "au_mom": 0, "au_rally": 0, "au_climb": 0, "au_reload": 0, "au_batter": 0,
 	"au_steady": 0, "fall_r": 0, "fall_loss": 0, "fall_gain": 0, "duel": 0, "unarmed": 0, "hidden": 0,
-	"m_gun": 0, "m_volley_r": 0, "m_obj": 100, "m_spread2": 0,
+	"m_gun": 0, "m_volley_r": 0, "m_obj": 100, "m_spread2": 0, "cover": 0,
 }
 ## Character kinds (the "char_kind" field; docs/DESIGN.md "Heroes and agents").
 const CK_FOOT := 1      # Champion: foot units' to-hit and steadiness
@@ -462,6 +470,7 @@ const BASE: Array[Dictionary] = [
 		"m_speed": 2253,      # 22 m/s
 		"m_arc": 0,           # thrown flat: needs a clear line past friends
 		"skirm": 1,
+		"cover": 1,           # skirmishers use the ground (slice 2b)
 		"cost": 4,
 		"climb": 13,
 		"m_hgain": 100,
@@ -992,6 +1001,7 @@ const LIGHT_MISSILE: Array[Dictionary] = [
 		"m_speed": 4096,    # 40 m/s (arrows 45)
 		"m_arc": 1,         # lobbed over friends and hills, as arrows
 		"skirm": 1,         # light troops: fall back by default (as javelinmen)
+		"cover": 1,         # skirmishers use the ground (slice 2b)
 		"m_hgain": 150,     # as arrows
 		"m_ak": 9,          # sling stones
 		"cost": 4,          # 320 a unit: archers 400 less the weak shot against armour
@@ -1433,6 +1443,7 @@ const WEST: Array[Dictionary] = [
 		"morale": 680,      # hard men, but no line
 		"file_sp": 1843, "rank_sp": 2048,  # javelinmen's loose order
 		"skirm": 1,
+		"cover": 1,         # hunters: every rock and tree (slice 2b)
 		"m_gun": 1,
 		"m_range": 140 * 1024,  # a long hunting musket
 		"m_damage": 130,    # a heavy hunting ball
@@ -1481,6 +1492,7 @@ const WEST: Array[Dictionary] = [
 		"walk": 165, "run": 460,
 		"hp": 90, "cooldown": 9,
 		"morale": 700,
+		"cover": 1,         # no drill: they rush from cover (slice 2b)
 		"cost": 5,
 		"climb": 13,
 	},
@@ -1554,6 +1566,7 @@ const WEST: Array[Dictionary] = [
 		"cost": 4,
 		"climb": 11,
 		"woods_pct": 60,    # at home in the forest
+		"cover": 1,         # ... and fight from it (slice 2b)
 	},
 	{
 		"key": "native_bowmen", "line": "archer", "pack": "west", "name": "Bowmen", "short": "Bowmen",
@@ -1566,6 +1579,7 @@ const WEST: Array[Dictionary] = [
 		"m_range": 120 * 1024,  # archers 140 m: lighter bows
 		"skirm": 1,
 		"woods_pct": 60,
+		"cover": 1,
 		"cost": 4,
 	},
 	{
