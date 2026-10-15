@@ -3310,7 +3310,22 @@ func _stair_goal(u: int, x: int, y: int) -> Vector2i:
 	var cnt := u_trn[u]
 	if u_stair[u] == 3 and cnt == 3 and obs_kind(x, y) == MapGen.C_STAIR \
 			and FM.approx_len(tr_x[base + 1] - x, tr_y[base + 1] - y) <= 4 * M:
-		return Vector2i(tr_x[base + 2], tr_y[base + 2])  # on its stair: up onto the walkway
+		# On its stair: up onto the walkway. A walkway point that falls in
+		# the stair's own cells (the stretch meets its stair end on: men
+		# stood there until STAIR_MAX, 2026-10-15): 2 m on past it, the
+		# way from the stair, if that is walkway.
+		var ex := tr_x[base + 2]
+		var ey := tr_y[base + 2]
+		if obs_kind(ex, ey) == MapGen.C_STAIR:
+			var sdx := ex - tr_x[base + 1]
+			var sdy := ey - tr_y[base + 1]
+			var sd := FM.approx_len(sdx, sdy)
+			if sd > 0:
+				var qx := ex + sdx * 2 * M / sd
+				var qy := ey + sdy * 2 * M / sd
+				if (nav_at(qx, qy) & NAV_WALK) != 0:
+					return Vector2i(qx, qy)
+		return Vector2i(ex, ey)
 	var best := 0
 	var best_d := 1 << 40
 	for k in cnt:
@@ -3918,10 +3933,67 @@ static func seg_pt(sim, sg: int, t: int) -> Vector2i:
 ## map with walkways (attackers never: no ladders yet; no horses, pikes or
 ## engines).
 static func can_man_walls(sim, u: int) -> bool:
-	if sim.city_on == 0 or sim.ws_x0.size() == 0 or sim.u_side[u] != sim.city_def or carrying(sim, u) != 0:
+	if sim.city_on == 0 or sim.ws_x0.size() == 0 or carrying(sim, u) != 0:
 		return false
 	var c: int = sim.u_cls[u]
-	return c == UT.CLS_INF or c == UT.CLS_MISSILE
+	if c != UT.CLS_INF and c != UT.CLS_MISSILE:
+		return false
+	if sim.u_side[u] == sim.city_def:
+		return true
+	return att_stairs(sim, u, -1)
+
+
+## Attacking unit u may go up stretch sg (-1: any stretch) by its inner
+## stairs (the 2026-10-15 stairs fix): in the battle, on the ground, its
+## anchor's ground (with the gates as they are: broken in, or come over by
+## ladders) reaching the foot of one of the stretch's stairs. Order rule
+## (preview, sim and lockstep peers agree); integer, segment order.
+static func att_stairs(sim, u: int, sg: int) -> bool:
+	if sim.phase != PHASE_BATTLE or sim.u_wall[u] > 0 or sim.u_side[u] == sim.city_def:
+		return false
+	var ra: int = sim.reach_at(sim.u_ax[u], sim.u_ay[u])
+	if ra < 0:
+		return false
+	for s in sim.ws_x0.size():
+		if sg >= 0 and s != sg:
+			continue
+		for e in 2:
+			var dp: Vector2i = sim.stair_pt(s, e, 2)
+			if sim.reach_at(dp.x, dp.y) == ra:
+				return true
+	return false
+
+
+## Attacking unit u stands inside the walls: its anchor's piece of ground
+## with every gate shut (static) holds the foot of a stair. It goes up by
+## the stairs then, not out to ladders.
+static func att_inside(sim, u: int) -> bool:
+	if sim.u_side[u] == sim.city_def or sim.n_cmp == 0 or sim.u_wall[u] > 0:
+		return false
+	var k: int = sim.cmp_at(sim.u_ax[u], sim.u_ay[u])
+	if k < 0:
+		return false
+	for s in sim.ws_x0.size():
+		for e in 2:
+			var dp: Vector2i = sim.stair_pt(s, e, 2)
+			if sim.cmp_at(dp.x, dp.y) == k:
+				return true
+	return false
+
+
+## The static piece of open ground (every gate shut) of (x, y): cmp, -1
+## outside the map.
+func cmp_at(x: int, y: int) -> int:
+	if n_cmp == 0 or x < 0 or y < 0 or (x >> 11) >= ob_w or (y >> 11) >= ob_h:
+		return -1
+	return cmp[(y >> 11) * ob_w + (x >> 11)]
+
+
+## Attacking wall unit u is on the stretch its ladders stand against (it
+## came up them: it goes back down them withdrawing or routing; one that
+## came up a stair goes down a stair).
+func by_ladders(u: int) -> bool:
+	return u_lq[u] >= 0 and q_seg[u_lq[u]] == u_wall[u] - 1
 
 
 ## A move to (x, y) on the wall: if (x, y) is on a wall's body, walkway,
@@ -4347,19 +4419,22 @@ func sea_exit(x: int) -> Vector2i:
 ## unit ordered onto a wall (the order rule has put its destination on the
 ## walkway: see wall_snap) goes up one (via the street to its foot); any
 ## other order ends a march to a stair.
-func _wall_order(u: int, typ: int) -> void:
+func _wall_order(u: int, typ: int, gnd: bool = false) -> void:
 	if u_stair[u] == ST_LADDER and typ == ORDER_MOVE and u_order[u] == O_MOVE:
 		_ladder_move(u)  # climbing: a move (along its stretch the order rule kept it climbing)
 		return
 	if u_stair[u] == ST_LADDER and u_order[u] != O_WITHDRAW:
 		return  # climbing: other orders wait (fire and run apply)
 	if u_wall[u] > 0 and u_order[u] == O_WITHDRAW and u_side[u] != city_def:
-		_ladder_down(u)  # back down the ladders and away
+		if by_ladders(u):
+			_ladder_down(u)  # back down the ladders and away
+		else:
+			_start_descent(u)  # came up a stair: down it and away
 		return
 	if u_wall[u] > 0 and u_order[u] == O_MOVE:
 		_start_descent(u)
 		return
-	if typ == ORDER_MOVE and u_wall[u] == 0 and u_order[u] == O_MOVE and may_ladder(self, u):
+	if typ == ORDER_MOVE and u_wall[u] == 0 and u_order[u] == O_MOVE and may_ladder(self, u) and not att_inside(self, u):
 		var wl := wall_snap(self, u_dx[u], u_dy[u])
 		if wl.z >= 0:
 			var lq := ladder_set_for(self, u, wl.z, wl.x, wl.y)
@@ -4368,10 +4443,17 @@ func _wall_order(u: int, typ: int) -> void:
 				return
 	if u_stair[u] == 1:
 		return  # still coming down: the new order waits until it is down
-	if typ == ORDER_MOVE and u_wall[u] == 0 and u_order[u] == O_MOVE and can_man_walls(self, u):
+	if (typ == ORDER_MOVE or (typ == ORDER_ATTACK and u_target[u] >= 0)) and u_wall[u] == 0 \
+			and u_order[u] == O_MOVE and can_man_walls(self, u):
 		var ws := wall_snap(self, u_dx[u], u_dy[u])
-		if ws.z >= 0:
+		if ws.z >= 0 and (u_side[u] == city_def or (not gnd and att_stairs(self, u, ws.z))):
 			_start_ascent(u, ws.z, ws.x, ws.y)
+			if typ == ORDER_ATTACK:
+				# Up at a unit on the wall: its line at the stair's head (the
+				# enemy's men stand at its point), then along the walk at him.
+				var ep := stair_pt(ws.z, u_send[u], 0)
+				u_wx[u] = ep.x
+				u_wy[u] = ep.y
 			return
 	if (u_stair[u] == 2 or u_stair[u] == ST_LADDER_GO) and typ != ORDER_RUN and typ != ORDER_FIRE \
 			and typ != ORDER_SKIRMISH:
@@ -4520,6 +4602,7 @@ func _climb(u: int) -> void:
 	u_ay[u] = wa.y
 	u_face[u] = wa.z
 	u_dface[u] = wa.z
+	var at := u_target[u]
 	u_order[u] = O_NONE
 	u_target[u] = -1
 	u_gtarget[u] = -1
@@ -4528,6 +4611,11 @@ func _climb(u: int) -> void:
 	u_sq[u] = 0
 	u_dirty[u] = 1
 	u_settled[u] = 0
+	if at >= 0 and u_side[u] != city_def and u_state[at] == U_READY and u_wall[at] > 0 and u_alive[at] > 0:
+		# Attackers sent up at a wall unit (the order rule: an attack on it
+		# from the ground inside): on at it along the walk once up.
+		u_order[u] = O_ATTACK
+		u_target[u] = at
 
 
 ## A stair move is over once every man is off the walkway (going down) or
@@ -4563,7 +4651,7 @@ func _stair_check(u: int) -> void:
 	if down and u_state[u] == U_READY and u_order[u] == O_MOVE and can_man_walls(self, u):
 		# Down from one stretch, bound for another: up again.
 		var ws := wall_snap(self, u_dx[u], u_dy[u])
-		if ws.z >= 0:
+		if ws.z >= 0 and (u_side[u] == city_def or att_stairs(self, u, ws.z)):
 			_start_ascent(u, ws.z, ws.x, ws.y)
 
 
@@ -5073,7 +5161,7 @@ func _apply_orders(max_player: int = 1 << 30) -> void:
 				# had a unit at a corner plan from scratch, turn back to the
 				# street graph's entry node behind it, and never get on.)
 			if city_on != 0 and ws_e.size() > 0:
-				_wall_order(u, int(o["type"]))
+				_wall_order(u, int(o["type"]), int(o.get("ground", 0)) != 0)
 	_placing = PackedInt32Array()
 
 
@@ -5207,10 +5295,19 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 	# does not withdraw or skirmish.
 	var wallu: int = sim.u_wall[u] if u < sim.u_wall.size() else 0
 	var ws := Vector3i(0, 0, -1)
-	var lad := wallu == 0 and may_ladder(sim, u)
-	if typ == ORDER_MOVE and (wallu > 0 or can_man_walls(sim, u) or lad):
+	# Attackers inside the walls (broken in, or come over by ladders) go up
+	# by the inner stairs as defenders do, not out to ladders (att_inside);
+	# elsewhere by ladders if there are some there, else by a stair their
+	# ground reaches (att_stairs: a broken gate), else an ordinary move.
+	# (An order marked "ground" - the AI's - never sends attackers up a
+	# stair: its storming foot fight in the town.)
+	var gnd: bool = int(o.get("ground", 0)) != 0 and sim.u_side[u] != sim.city_def
+	var lad := wallu == 0 and may_ladder(sim, u) and not att_inside(sim, u)
+	var stp: bool = wallu == 0 and can_man_walls(sim, u) and not gnd
+	if typ == ORDER_MOVE and (wallu > 0 or stp or lad):
 		ws = wall_snap(sim, int(o["x"]), int(o["y"]))
-		if lad and ws.z >= 0 and ladder_set_for(sim, u, ws.z, ws.x, ws.y) < 0:
+		if ws.z >= 0 and wallu == 0 and not (lad and ladder_set_for(sim, u, ws.z, ws.x, ws.y) >= 0) \
+				and not (stp and (sim.u_side[u] == sim.city_def or att_stairs(sim, u, ws.z))):
 			ws = Vector3i(0, 0, -1)  # no way up there: an ordinary move
 	# Attackers up the ladders withdraw back down them (the wall rule below
 	# keeps defenders on their wall).
@@ -5343,6 +5440,21 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 			return
 		var t := int(o["target"])
 		if t < 0 or t >= sim.n_units or sim.u_side[t] == sim.u_side[u] or sim.u_state[t] >= U_DESTROYED:
+			return
+		if wallu == 0 and sim.u_wall[t] > 0 and UT.cls(ty) == UT.CLS_INF and sim.u_side[u] != sim.city_def \
+				and carry < 0 and int(o.get("ground", 0)) == 0 and att_stairs(sim, u, sim.u_wall[t] - 1):
+			# Attacking foot inside the walls at a unit on the wall: up the
+			# stair to its point of the walk (a march, _wall_order), then
+			# on at it along the walk (_climb keeps the target).
+			var tsg: int = sim.u_wall[t] - 1
+			var tp := seg_pt(sim, tsg, seg_t(sim, tsg, sim.u_cx[t], sim.u_cy[t]))
+			d["order"] = O_MOVE
+			d["dx"] = tp.x
+			d["dy"] = tp.y
+			d["dface"] = sim.ws_dir[tsg]
+			d["target"] = t
+			d["gtarget"] = -1
+			d["run"] = 1 if int(o.get("run", 0)) != 0 else 0
 			return
 		d["order"] = O_ATTACK
 		d["target"] = t
@@ -10797,7 +10909,7 @@ func _start_rout(u: int) -> void:
 	u_order[u] = O_NONE
 	if sg_on != 0 and u_carry[u] >= 0:
 		_drop(u)  # routing: whatever it carries is left where it is
-	if u_wall[u] > 0 and u_side[u] != city_def and u_lq[u] >= 0:
+	if u_wall[u] > 0 and u_side[u] != city_def and by_ladders(u):
 		_ladder_down(u)  # up the ladders: back down them
 	elif u_wall[u] > 0:
 		_start_descent(u)  # off the wall by the nearest stair

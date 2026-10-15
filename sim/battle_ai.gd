@@ -3070,7 +3070,8 @@ static func _order(sim, u: int, o: Dictionary, k: int) -> void:
 
 
 static func _attack(sim, u: int, t: int, run: int) -> void:
-	_order(sim, u, {"type": ORDER_ATTACK, "target": t, "run": run}, 0)
+	# ("ground": attackers are not sent up a town's inner stairs by the AI.)
+	_order(sim, u, {"type": ORDER_ATTACK, "target": t, "run": run, "ground": 1}, 0)
 
 
 ## Move, skipped when the unit is already headed there.
@@ -3082,7 +3083,7 @@ static func _move(sim, u: int, x: int, y: int, face: int, width: int, run: int, 
 			and sim.u_order[u] != O_ATTACK:
 		return
 	_order(sim, u, {"type": ORDER_MOVE, "x": x, "y": y, "facing": face, "width": width,
-		"run": run}, 1 + k % 8)
+		"run": run, "ground": 1}, 1 + k % 8)
 
 
 static func _d(dx: int, dy: int) -> int:

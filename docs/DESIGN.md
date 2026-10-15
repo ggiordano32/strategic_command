@@ -1039,8 +1039,9 @@ per soldier on open ground.
 - *Walls*: units placed on a wall (garrison missile troops, by the scenario
   builder) stand on the walkway: their height is the ground + 5 / 7 / 9 m
   (missile range from height, line of fire), they never withdraw or
-  skirmish, and only wall units may enter the walkway (attackers only by
-  ladders: see "Siege equipment and wall towers"). Since the October 2026 wall-orders fix: a move order onto a
+  skirmish, and only wall units may enter the walkway (attackers by
+  ladders, see "Siege equipment and wall towers", or, once inside, by the
+  inner stairs: see "Stairs"). Since the October 2026 wall-orders fix: a move order onto a
   wall's body, walkway, stair, tower or gate tower goes to the nearest
   walkway point of that stretch (`wall_snap`: the nearest stretch within 14
   m, in the order rule, so preview, sim and both lockstep peers agree; only
@@ -1338,8 +1339,28 @@ two stretches puts the junction in the tower first going down); men on the
 walkway keep to walkway and towers; a stair counts as down, not up. "Man
 the wall" (view) sends a unit to the stretch within 60 m nearest the
 nearest enemy (`man_wall_target`); "Come down" to the foot of its nearer
-stair (`wall_inside`). Attackers climb only by ladders ("Siege equipment
-and wall towers"). State
+stair (`wall_inside`). Attackers climb by ladders from outside ("Siege
+equipment and wall towers") and, since the 2026-10-15 stairs fix (it was
+"Attackers cannot use the stairs once inside"), by the inner stairs once
+inside: an attacking foot or missile unit on the ground whose ground
+(gates as they are) reaches a foot of the stretch's stairs (`att_stairs`)
+takes a move onto the wall as defenders do (order rule, so preview and
+peers agree; "Man the wall" too). Inside the walls (its anchor's piece
+with every gate shut holds a stair foot: `att_inside`) it always uses the
+stairs, never out to ladders; outside, ladders on that stretch first, else
+a stair its ground reaches (a broken gate), else an ordinary move. An
+attack by attacking infantry inside on a unit on the wall is a march up
+the stair the enemy's stretch reaches by (its line at the stair's head),
+then an attack along the walk (`_climb` keeps the target: the column on
+the walk). An attacker on the wall withdraws or routs back down its ladders
+only on the stretch they stand against (`by_ladders`), else down a stair;
+ladder climbers come down into the town by a stair as before. A walkway
+point that lies in its stair's own cells (some stretch ends) is passed 2 m
+on toward the walk going up (men had stood there until `STAIR_MAX`).
+`--only=stairs` in tests/determinism_test.gd. The AI does not send
+attackers up the stairs: its move and attack orders carry `"ground": 1`,
+which keeps an attacker on the ground (a storming unit's move onto a wall
+cell had sent it to a stair); its storming units fight in the town. State
 `u_stair` / `u_sseg` / `u_send` / `u_st0` / `u_wx` / `u_wy` is hashed on
 walled settlement maps and survives snapshots.
 
@@ -4296,7 +4317,7 @@ minutes.
   shore units, fire ships, the formula fitted to these results, sea battle
   art (the miniatures at headings), sounds of the sea.
 
-### Story campaign: "The Brethren's Due" (agreed 2026-10-14, not built)
+### Story campaign: "The Brethren's Due" (agreed 2026-10-14; step 1 built 2026-10-15, see "as built" below)
 
 A single-player (co-op optional) story campaign on the Caribbean pack that
 teaches how the world works through events the player must answer, not
@@ -4375,6 +4396,102 @@ online and in co-op; a dialogue panel with portraits; the pressure
 display; the scripted actors (Le Boucher, Mendoza's Armada, Ashby's
 favour) as AI factions with story hooks. Everything else reuses the
 existing systems.
+
+**As built, step 1 (2026-10-15): the story engine, the Prologue and Act 1, solo.**
+- **Engine** (`campaign/cstory.gd`, campaign rules: integers, the state's
+  RNG, arrays in index order). The script is data
+  (`campaign/data/story_brethren.gd`): characters (name, role, badge
+  colour), the start, the pressures' numbers and the events. An event has
+  `when` (all must hold: turn range, flags set / not set, a pressure at or
+  below a threshold, the attention, a captain's fleet near a region, a
+  region owned / lost, the hurricane season, a storm on the map, a siege by
+  or of the player, any plunder, plunder within N turns, an actor alive or
+  gone, gold, a timer, ships), or is fired only when scheduled (`if`
+  re-checked when due); `once` (default) or `every N` turns; lines
+  `[speaker, text]`; effects on firing; 0-3 choices, each with a hint, a
+  `need` (greyed with a reason when not met), a reply and effects; a
+  chronicle line; a map focus. Effects: gold, plunder (counts as plunder),
+  a pressure, infamy, fame, flags, schedule an event N turns on (0: at
+  once), timers, the act, crew / hull %, companies joining at a region,
+  losing the weakest ship, gambles (also by fame), spawn / place / goal /
+  home / hold / chase / release / remove / join a scripted actor, a sea
+  battle with an actor now, a raid (an army lands and storms a settlement
+  now: a land battle), a story sack, the flagship's stored voyage, a
+  hurricane east of the flagship, war / peace.
+- **State**: one optional key `story` (key, y0 years added to the
+  calendar, act, `cap` the captains = human factions, pressures, flags,
+  fired, sched, timers, pending, log, actors, battles opened, plunder seen,
+  mercy). Normal campaigns never get it (and no fleet gets `sto`), so Rome
+  and West are byte-identical. `CData.year_shift` (set by `use_state`)
+  moves the calendar: the story starts in summer 1665.
+- **Flow**: events fire at the end of a turn (after the turn number moves
+  on), after a choice and after a battle. A choice waits like a pending
+  battle: `resolve_turn` refuses while any is pending; `CStory.answer(st,
+  f, id, k)` is a pure function like `apply_battle` (each pending entry
+  names the captain who answers: two captains fit, the co-op crew vote is a
+  later step). A choice that opens a battle sets phase "battles". Battles
+  the story opened, or with an actor's fleet in them, set `won_<tag>` /
+  `lost_<tag>` (read from the battle's event); AI-only losses set
+  `gone_<tag>`. A captain left with no ship and no land is spared by
+  `check_eliminations` while rescues are left (2): a battered sloop at the
+  haven and "Cast ashore".
+- **Scripted actors**: fleets tagged `sto` that the AI's fleet plans skip
+  (`cai_fleet.gd`: plans, merges, debt scuttling); the story moves them in
+  step 5 of the turn: `chase` (the nearest captain's fleet, until a turn,
+  then home), `hunt` (the Armada: a captain's fleet within 25 + attention
+  cells while the attention is 35+, else its home port), `goal`, `home`
+  (then back to the AI), `hold`; a `ttl` removes one. The guardacosta San
+  Telmo (a New Spain sloop) chases the player for three turns; Mendoza's
+  Armada de Barlovento (two frigates and a sloop at Havana) hunts by
+  attention; Le Boucher is a French fleet (L'Olonnais sailed under a French
+  commission from Tortuga) the story moves; Ashby is England with the
+  favour pressure.
+- **Pressures** (end of turn): the crew's purse +6 a turn without plunder
+  (+2 while 300+ shares are owed), - plunder / 6 (max 60); shares owed +
+  half of plunder; Spain's grudge (heat) -1 a turn; attention = infamy +
+  heat; the haven drifts 5 a turn toward 40 + 15 a walls level + 15 with
+  an army of ours there - attention / 4 (0 when lost); favour moves only by
+  events; the hurricane clock is read from the season and the storms (no
+  state). Lindo's fence (a timer): plunder pays 25 % more.
+- **Start**: the West pack, the Brethren played; the player holds only
+  Tortuga (Port-de-Paix; Trujillo goes independent), 200 gold, infamy 5,
+  peace with the Dutch, England and France; one sloop (hull and crew 70)
+  off Port Royal with a company of cutlass men aboard, under "The Captain";
+  victory at 30 regions / 5 great cities.
+- **Script** (state turns 0-14): Gallows Point; the chase (run west with
+  the wind: the flagship's voyage, the San Telmo gives up; fight: a sea
+  battle now; bluff: a 55 % gamble, else a battle with the first broadside
+  hers); Vane's logbook on the trades; the hungry crew (the Santa Catalina
+  becalmed off Cabo Cruz for three turns with 250 in silver, or the fishing
+  village: 120 plunder and infamy, or tighten belts); Tortuga on arrival
+  (crews: buy a round, promise shares, volunteers); Lindo's letter (his
+  fence, pay Vane's debt, burn it); Act One; the purse's grumbling (40),
+  desertion (65) and the crew's vote (85; a speech is a gamble by fame);
+  Le Boucher arrives (turn 5); the hurricane (season, turns 6-10: shelter,
+  the treasure nao in the storm's path, or ride it out); Maracaibo
+  sacked (turn 8); the warning (turn 9) and the Spanish reprisal on
+  Tortuga a turn later (four companies land and storm it: a land battle);
+  Mendoza's letter (attention 30) and the Armada sailing (35); strangers
+  in Tortuga (haven below 30); Le Boucher's bargain (turn 12: hunt him at
+  the Ile-a-Vache, join him, or let him go); End of Act One (turn 14).
+  First-sight logbook pages: the wind, shares, havens, hurricanes, walls.
+- **Balance probes** (formula): the San Telmo fight is won about 70 %; the
+  reprisal holds 13 % with only the garrison, 30 % / 53 % / 73 % with one /
+  two / three companies of ours in Tortuga; Le Boucher careened at the
+  Ile-a-Vache (hull 50 %, crew 60 %) beats a lone sloop every time and loses
+  to two of ours about 63 %.
+- **View** (`game/campaign/story_view.gd`): the dialogue panel (a
+  coloured initial badge per character, name, role, the lines; the
+  narrator in parchment colour; choices with their hints; on a short screen
+  the scene and the choices are two pages), the reply, "Look at the map"
+  (the strip's Decide button reopens it; End turn does too); the pressures
+  strip under the top bar (five gauges, colour by danger; a tap opens the
+  story log with each pressure explained); the story log (also Realm >
+  Story log); captions over the story's fleets, the haven's safety ring and
+  the lair while it is hunted; the map centres on what an event is about.
+  New campaign screen: "Story: The Brethren's Due" (offline). Chronicle
+  lines for the story's big moments. Testing aids: `--story=seed[:turns]`,
+  `--story-seen=N`, `--story-choices`, `--story-log`.
 
 ### Overworld: real geography and the landscape layer (as built, 2026-10-10)
 
@@ -4457,6 +4574,34 @@ a sprite but kit pieces placed on the real terrain.
   in `_make_site`), overlapping labels stack upwards. (5) Native kit: `longhouse`, `rack`, `stilt_house`,
   `maya_platform` pieces (gen_spec.py, atlas repacked), native villages 11 / 17 / 22 huts, council longhouse from
   level 1, drying racks, more garden fields, stilt houses on the shore; Maya temple platforms by the plaza.
+
+- **Step 2: landmarks and visible growth (2026-10-15, view only).** Rule of cool mixed with reality: slightly exaggerated,
+  instantly readable silhouettes. (1) **Landmark pieces** (gen_spec.py "landmarks and growth", diorama finish, asymmetric
+  ones at 4 yaws, the rest at 1; the big atlas is now 2048 x 1152, `pack.py` rounds the height to 64): `morro` (El Morro of
+  Havana, triangular on its rock with the lighthouse), `fuerza`, `san_felipe` (terraced hill fort), `morro_sj` (San Juan, tiers
+  + sentry boxes), `harbour_fort` (square, four towers, sea battery: Portobelo's two forts and every West port's first fort),
+  `san_marcos` (star fort in its moat), `alcazar` (Santo Domingo), `ulua` (fortress on its rock island in the roads),
+  `itza_temple` (Tayasal, the tallest silhouette), `fort_charles`, `tavern`, `gallows`, `rock_fort` + `careened` (Port-de-Paix),
+  `baluarte` (Campeche's walls), `twin_cathedral` (Merida), Rome: `capitol`, `byrsa`, `cothon` (circular naval harbour),
+  `euryalus`, `acropolis`, `greek_temple` (Massalia; Alexandria is not a region). `town_plan.LM` maps a region key to its
+  landmarks (where: harbour mouth headland / other end / highest ground / offshore rock / between plaza and sea / a row
+  along the shore / by the water; least walls `wl`, least level `lv`); `_landmarks` places them before the houses (which
+  keep clear: collision radii in `PD`), the lighthouse step is skipped when the Morro has one. They show whatever the owner
+  (tinted to it, so a captured Spanish fort stays) and need walls >= 1 (San Marcos 2, Cartagena's long sea walls 2 with a
+  baluarte every fourth piece). Cartagena's walls, Campeche's walls (bastioned with baluartes from walls 1, harbour
+  open), Merida's cathedral, Santo Domingo's cathedral from level 1 and Rome's Capitol from level 1 replace the generic
+  piece. (2) **Growth** (all read-only from the state, `TownPlan.facts` / `sig`; deterministic per region so a town keeps
+  its layout and gains houses): level (houses 8 / 16 / 28 in towns, a second street ring `s["ring_road"]` with houses
+  along it from level 1, the church / cathedral as before), **walls in the West** follow the walls history: 1 a harbour
+  fort beside an open port (inland towns a palisade), 2 the fort plus a stone curtain on the landward side, 3 the full
+  curtain with bastions (Rome: palisade / stone / bastions; natives get more watch posts from 2), shipyard level (1 a
+  slipway + shed + crane, 2 a second slipway across the quay, 3 a second crane and a second shed), market level and town
+  level (a warehouse more from market 2; moored ships in the roads: `_moored`, up to 3, drawn from the ship atlas with a soft
+  shadow, none counted in the label extents), a **sack** (`regions[r].sacked`, up to 8 turns: 55 / 30 / 12 % of the houses
+  burnt, smoke column, fading by age), a **siege** (`CState.siege_at`: a ring of tents, guns and flags outside the
+  footprint in the besieger's colour, items may carry a faction as a 4th element). The layer's signature is
+  `TownPlan.sig`; the ground and shadows repaint only when a plan changes. Gallery and strips in the session scratchpad
+  `towns3/`.
 
 ### Audio (as built, 2026-10-10)
 

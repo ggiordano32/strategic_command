@@ -283,6 +283,11 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=stairs" in OS.get_cmdline_user_args():
+		_check_stairs()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=reinf" in OS.get_cmdline_user_args():
 		_check_reinf()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -345,6 +350,7 @@ func _init() -> void:
 	_check_wall_orders()
 	_check_line_clamp()
 	_check_reach()
+	_check_stairs()
 	_check_plans()
 	_check_city_maps()
 	_check_snapshots()
@@ -3799,6 +3805,240 @@ func _check_reach() -> void:
 		bad.append("reach: repeat runs differ")
 	if bad.is_empty():
 		print("PASS reachability: %s; repeatable" % "; ".join(a["notes"]))
+	else:
+		for x in bad:
+			_fail(str(x))
+
+
+# ---------------------------------------------------------------- stairs ---
+
+## Attackers on the inner stairs (2026-10-15; "--only=stairs", also in the
+## full run): a walls-2 town, no houses, a ladder set. Attackers (the
+## scenario's order): heavy foot 0 (40) and 1 (60) already inside the walls
+## (at the plaza: broken in), archers 2 outside with the ladder set at their
+## feet; defenders: javelinmen 3 on stretch "jav". Unit 0 is ordered to
+## attack the javelinmen (up the inner stair, then along the walk at them),
+## unit 1 onto stretch "arc" (up by a stair, its wall line), later back down
+## into the town; unit 2 picks the set up, climbs stretch "lad" and, once
+## up, is ordered to the plaza (down a stair into the town); unit 0, the
+## walk cleared, withdraws (down its stair, not by ladders). Returns {sc,
+## jav, arc, lad, lx, ly, ax, ay}.
+static func _stairs_sc() -> Dictionary:
+	var city := {"seed": 4242, "level": 2, "walls": 2, "bld": [], "towers": 0}
+	var terr := {"kind": Terrain.K_FLAT, "seed": 11, "forest": 0, "ground": 2}
+	var r := Scenarios.settlement(city, terr, [[UT.HEAVY, 40], [UT.ARCHER, 30], [UT.HEAVY, 60]],
+		[[UT.JAVELIN, 30]], 1, [], {"ladders": 1})
+	var sc: Dictionary = r["scenario"]
+	var probe := BattleSim.new()
+	probe.setup(sc, 77)
+	# The ladder stretch: the one nearest unit 2 a set can stand against.
+	var lad := -1
+	var bd := 0
+	var bap := Vector2i.ZERO
+	var bmp := Vector2i.ZERO
+	for sg in probe.ws_x0.size():
+		if (probe.ws_fl[sg] & (MapGen.SEG_SEA | MapGen.SEG_CIT)) != 0:
+			continue
+		var mp: Vector2i = BattleSim.seg_pt(probe, sg, BattleSim.seg_len(probe, sg) / 2)
+		var lf: Vector3i = BattleSim.ladder_foot(probe, sg, mp.x, mp.y)
+		if lf.z == 0 or not BattleSim.ladder_ok(probe, 2, sg, mp.x, mp.y):
+			continue
+		var d := absi(mp.x - probe.u_cx[2]) + absi(mp.y - probe.u_cy[2])
+		if lad < 0 or d < bd:
+			lad = sg
+			bd = d
+			bap = BattleSim.ladder_approach(probe, sg, lf.x, lf.y)
+			bmp = mp
+	# The javelinmen's and the archers' stretches: the two other outer
+	# stretches nearest the plaza (ties: lower index).
+	var px: int = probe.plaza[0]
+	var py: int = probe.plaza[1]
+	var jav := -1
+	var arc := -1
+	var jd := 0
+	var ad := 0
+	for sg in probe.ws_x0.size():
+		if sg == lad or (probe.ws_fl[sg] & (MapGen.SEG_SEA | MapGen.SEG_CIT)) != 0 or BattleSim.seg_len(probe, sg) < 24 * M:
+			continue
+		var d: int = probe._seg_off(sg, px, py)
+		if jav < 0 or d < jd:
+			arc = jav
+			ad = jd
+			jav = sg
+			jd = d
+		elif arc < 0 or d < ad:
+			arc = sg
+			ad = d
+	var jm: Vector2i = BattleSim.seg_pt(probe, jav, BattleSim.seg_len(probe, jav) / 2)
+	var c := FM.cos_a(probe.ws_dir[lad])
+	var s := FM.sin_a(probe.ws_dir[lad])
+	var ux: int = (bap.x + c * 12 * M / FM.TRIG_ONE) / M
+	var uy: int = (bap.y + s * 12 * M / FM.TRIG_ONE) / M
+	var k := 0
+	for ud in sc["units"]:
+		if int(ud["side"]) == 0:
+			if k == 2:
+				ud["x_m"] = ux
+				ud["y_m"] = uy
+				ud["facing"] = (probe.ws_dir[lad] + 512) & 1023
+				ud["files"] = 15
+			else:
+				ud["x_m"] = px / M + (k * 24 - 12)
+				ud["y_m"] = py / M
+				ud["files"] = 10
+			k += 1
+		else:
+			ud["x_m"] = jm.x / M
+			ud["y_m"] = jm.y / M
+			ud["wall"] = jav + 1
+	sc["equip"] = [[BattleSim.EQ_LADDERS, ux, uy]]
+	var am: Vector2i = BattleSim.seg_pt(probe, arc, BattleSim.seg_len(probe, arc) / 2)
+	return {"sc": sc, "jav": jav, "arc": arc, "lad": lad, "lx": bmp.x, "ly": bmp.y, "ax": am.x, "ay": am.y}
+
+
+## Men of unit u on the walk (walkway or tower).
+static func _men_up(sim, u: int) -> int:
+	var n := 0
+	var base: int = sim.u_slot_base[u]
+	for q in sim.u_alive[u]:
+		var i: int = sim.slot_soldier[base + q]
+		var k: int = sim.obs_kind(sim.pos_x[i], sim.pos_y[i])
+		if k == MapGen.C_WALK or k == MapGen.C_TOWER:
+			n += 1
+	return n
+
+
+## The stairs run: hashes every tick and what happened; `snap_at` >= 0:
+## at that tick a snapshot is restored into a fresh sim that runs on beside
+## this one (its hashes must stay equal).
+func _stairs_run(snap_at: int) -> Dictionary:
+	var st := _stairs_sc()
+	var sc: Dictionary = st["sc"]
+	var sim := BattleSim.new()
+	sim.setup(sc, 77)
+	var hashes := PackedInt64Array()
+	var bad: Array = []
+	var jav: int = st["jav"]
+	var arc: int = st["arc"]
+	var lad: int = st["lad"]
+	var px: int = sim.plaza[0]
+	var py: int = sim.plaza[1]
+	if not BattleSim.can_man_walls(sim, 0) or not BattleSim.att_inside(sim, 0) or BattleSim.att_inside(sim, 2):
+		bad.append("stairs: unit 0 inside may not climb (%s, inside %s) or unit 2 outside counts as inside" % [
+			str(BattleSim.can_man_walls(sim, 0)), str(BattleSim.att_inside(sim, 0))])
+	sim.queue_order({"tick": 0, "type": BattleSim.ORDER_FIRE, "unit": 3, "on": 0, "player": 51})
+	sim.queue_order({"tick": 0, "type": BattleSim.ORDER_FIRE, "unit": 1, "on": 0, "player": 50})
+	sim.queue_order(BattleSim.make_attack_order(1, 0, 3, 0))
+	sim.queue_order(BattleSim.make_move_order(1, 1, int(st["ax"]), int(st["ay"]), 768, 20 * M, 0))
+	sim.queue_order({"tick": 1, "type": BattleSim.ORDER_PICKUP, "unit": 2, "equip": 0, "run": 0, "player": 50})
+	var twin = null
+	var twin_bad := 0
+	var ordered := false
+	var up0 := -1      # unit 0 on the wall (stair climb), attacking
+	var hit0 := -1     # javelinmen first lost a man to it on the walk
+	var up1 := -1      # heavy foot 1 in their wall line on "arc"
+	var down1_t := -1  # ... ordered back down
+	var down1 := -1    # ... on the ground in the town
+	var up2 := -1      # unit 2 all up its ladders
+	var mv2 := -1      # ... ordered to the plaza
+	var stair2 := false
+	var down2 := -1    # ... down a stair in the town
+	var wd0_t := -1    # unit 0 ordered to withdraw once the walk is clear
+	var stair0 := false
+	var down0 := -1    # ... down its stair (not a ladder: it came up a stair)
+	var jav0: int = sim.u_alive[3]
+	var max_t := 4000
+	for t in max_t:
+		if not ordered and sim.u_carry[2] == 0:
+			ordered = true
+			var o_up2 := BattleSim.make_move_order(sim.tick, 2, int(st["lx"]), int(st["ly"]), 768, 20 * M, 0)
+			sim.queue_order(o_up2)
+			if twin != null:
+				twin.queue_order(o_up2.duplicate())
+		sim.step()
+		hashes.append(sim.state_hash())
+		if twin != null:
+			twin.step()
+			if twin.state_hash() != sim.state_hash():
+				twin_bad += 1
+		if t == snap_at:
+			twin = BattleSim.new()
+			twin.setup(sc, 77)
+			if not twin.restore(sim.snapshot()) or twin.state_hash() != sim.state_hash():
+				twin_bad += 1000
+		if up0 < 0 and sim.u_wall[0] == jav + 1 and sim.u_stair[0] == 0 and sim.u_order[0] == BattleSim.O_ATTACK \
+				and sim.u_target[0] == 3:
+			up0 = sim.tick
+		if up0 >= 0 and hit0 < 0 and sim.u_alive[3] < jav0:
+			hit0 = sim.tick
+		if hit0 >= 0 and wd0_t < 0 and (sim.u_alive[3] == 0 or sim.u_state[3] != BattleSim.U_READY):
+			wd0_t = sim.tick
+			var o_wd0 := BattleSim.make_withdraw_order(sim.tick, 0)
+			sim.queue_order(o_wd0)
+			if twin != null:
+				twin.queue_order(o_wd0.duplicate())
+		if wd0_t >= 0 and sim.u_stair[0] == 1:
+			stair0 = true
+		if stair0 and down0 < 0 and sim.u_wall[0] == 0 and sim.u_stair[0] == 0 and _men_up(sim, 0) == 0:
+			down0 = sim.tick
+		if up1 < 0 and sim.u_wall[1] == arc + 1 and sim.u_stair[1] == 0 and _men_up(sim, 1) == sim.u_alive[1] \
+				and _off_line(sim, 1) <= sim.u_alive[1] / 10:
+			up1 = sim.tick
+		if up1 >= 0 and down1_t < 0 and sim.tick >= up1 + 50:
+			down1_t = sim.tick
+			var o_dn1 := BattleSim.make_move_order(sim.tick, 1, px, py + 20 * M, 768, 20 * M, 0)
+			sim.queue_order(o_dn1)
+			if twin != null:
+				twin.queue_order(o_dn1.duplicate())
+		if down1_t >= 0 and down1 < 0 and sim.u_wall[1] == 0 and sim.u_stair[1] == 0 and _men_up(sim, 1) == 0 \
+				and sim.u_order[1] == BattleSim.O_NONE:
+			down1 = sim.tick
+		if up2 < 0 and sim.u_wall[2] == lad + 1 and sim.u_stair[2] == 0 and _men_up(sim, 2) == sim.u_alive[2]:
+			up2 = sim.tick
+		if up2 >= 0 and mv2 < 0 and sim.tick >= up2 + 20:
+			mv2 = sim.tick
+			var o_dn2 := BattleSim.make_move_order(sim.tick, 2, px - 20 * M, py - 20 * M, 768, 20 * M, 0)
+			sim.queue_order(o_dn2)
+			if twin != null:
+				twin.queue_order(o_dn2.duplicate())
+		if mv2 >= 0 and sim.u_stair[2] == 1:
+			stair2 = true
+		if stair2 and down2 < 0 and sim.u_wall[2] == 0 and sim.u_stair[2] == 0 and _men_up(sim, 2) == 0 \
+				and sim.reach_at(sim.u_ax[2], sim.u_ay[2]) == sim.reach_at(px, py):
+			down2 = sim.tick
+		if down0 >= 0 and down1 >= 0 and down2 >= 0 and sim.tick >= maxi(maxi(down2, down1), down0) + 100:
+			break
+	if up0 < 0:
+		bad.append("stairs: the heavy foot inside never got up the inner stair at the javelinmen (wall %d, stair %d, order %d)" % [
+			sim.u_wall[0], sim.u_stair[0], sim.u_order[0]])
+	elif hit0 < 0:
+		bad.append("stairs: up on the wall, the heavy foot never killed a javelinman")
+	elif wd0_t >= 0 and (not stair0 or down0 < 0):
+		bad.append("stairs: withdrawing, the heavy foot up by a stair never came down it (stair seen %s)" % str(stair0))
+	if up1 < 0:
+		bad.append("stairs: heavy foot 1 inside never took its wall line on stretch %d (wall %d, stair %d, up %d)" % [
+			arc, sim.u_wall[1], sim.u_stair[1], _men_up(sim, 1)])
+	elif down1 < 0:
+		bad.append("stairs: heavy foot 1 never came back down into the town")
+	if up2 < 0:
+		bad.append("stairs: the archers never got up their ladders (wall %d, stair %d)" % [sim.u_wall[2], sim.u_stair[2]])
+	elif not stair2 or down2 < 0:
+		bad.append("stairs: the archers up the ladders never came down a stair into the town (stair seen %s)" % str(stair2))
+	if snap_at >= 0 and (twin == null or twin_bad != 0):
+		bad.append("stairs: the restored copy diverged (%d ticks)" % twin_bad)
+	return {"hashes": hashes, "bad": bad, "up0": up0, "hit0": hit0, "jav_left": sim.u_alive[3], "down0": down0, "up1": up1,
+		"down1": down1, "up2": up2, "down2": down2, "ups": sim.stat_stair_up, "downs": sim.stat_stair_down}
+
+
+func _check_stairs() -> void:
+	var a := _stairs_run(600)
+	var b := _stairs_run(-1)
+	var bad: Array = a["bad"]
+	if a["hashes"] != b["hashes"]:
+		bad.append("stairs: the repeat diverged")
+	if bad.is_empty():
+		print("PASS stairs: attackers inside up the inner stair at the javelinmen by tick %d, first kill on the walk %d (%d left), withdrawn down its stair %d; heavy foot 1 up a stair into its wall line %d, back down in the town %d; archers up their ladders %d, down a stair into the town %d; stair climbs %d, descents %d; identical on repeat and across snapshot / restore" % [
+			a["up0"], a["hit0"], a["jav_left"], a["down0"], a["up1"], a["down1"], a["up2"], a["down2"], a["ups"], a["downs"]])
 	else:
 		for x in bad:
 			_fail(str(x))

@@ -137,7 +137,8 @@ func plan_from(u: int, d: Dictionary, pending: bool) -> Dictionary:
 		out["tower"] = sim.u_lq[u] >= 0 and BattleSim.EQ_EXPOSED[sim.q_kind[sim.u_lq[u]]] != 0
 		return out
 	var lad_go := stair == BattleSim.ST_LADDER_GO and not pending
-	if wall == 0 and int(d["order"]) == BattleSim.O_MOVE and (lad_go or BattleSim.may_ladder(sim, u)):
+	if wall == 0 and int(d["order"]) == BattleSim.O_MOVE and (lad_go \
+			or (BattleSim.may_ladder(sim, u) and not BattleSim.att_inside(sim, u))):
 		# Up the ladders: to the foot of the wall (planting the set it carries
 		# there, or to a set already planted on that stretch), up onto the
 		# walkway.
@@ -244,6 +245,11 @@ func plan_from(u: int, d: Dictionary, pending: bool) -> Dictionary:
 			gx = ws2.x
 			gy = ws2.y
 			e3 = BattleSim.ascent_end(sim, sg2, int(d["ax"]), int(d["ay"]), gx, gy)
+			if int(d["target"]) >= 0:
+				# (Up at a unit on the wall: its line at the stair's head.)
+				var hp: Vector2i = sim.stair_pt(sg2, e3, 0)
+				gx = hp.x
+				gy = hp.y
 		var foot2: Vector2i = sim.stair_pt(sg2, e3, 2)
 		out["mode"] = "up"
 		out["seg"] = sg2
@@ -283,7 +289,12 @@ func wall_refusal(u: int, x: int, y: int) -> String:
 	if ws.z < 0 or (sim.u_wall[u] > 0 and ws.z == sim.u_wall[u] - 1):
 		return ""
 	var kc := BattleSim.carrying(sim, u)
-	if sim.u_wall[u] == 0 and BattleSim.may_ladder(sim, u):
+	# Attackers inside the walls go up by the inner stairs (as the order
+	# rule: BattleSim.att_inside / att_stairs); outside by ladders, else by
+	# a stair their ground reaches (a broken gate).
+	var att_stp: bool = sim.u_wall[u] == 0 and BattleSim.can_man_walls(sim, u) and sim.u_side[u] != sim.city_def \
+		and BattleSim.att_stairs(sim, u, ws.z)
+	if sim.u_wall[u] == 0 and BattleSim.may_ladder(sim, u) and not BattleSim.att_inside(sim, u) and not att_stp:
 		if BattleSim.ladder_set_for(sim, u, ws.z, ws.x, ws.y) < 0:
 			if kc == BattleSim.EQ_LADDERS:
 				return "No ladders there: a tower, a gate, the sea, the citadel or out of reach"
@@ -291,7 +302,12 @@ func wall_refusal(u: int, x: int, y: int) -> String:
 				return "The siege tower cannot stand there: a tower, a gate, the sea, the citadel or out of reach"
 			return "No ladders or siege tower planted on that wall: a unit carrying one plants it"
 		return ""
-	if not BattleSim.can_man_walls(sim, u):
+	var c1: int = sim.u_cls[u]
+	var att_wall: bool = sim.u_wall[u] > 0 and sim.u_side[u] != sim.city_def and kc == 0 \
+		and (c1 == UT.CLS_INF or c1 == UT.CLS_MISSILE)
+	if sim.u_wall[u] == 0 and sim.u_side[u] != sim.city_def and BattleSim.can_man_walls(sim, u) and not att_stp:
+		return "No way to a stair of that wall from here"
+	if not BattleSim.can_man_walls(sim, u) and not att_wall:
 		if sim.u_side[u] != sim.city_def:
 			if kc == BattleSim.EQ_RAM:
 				return "Not with the ram: tap a gate to batter it (or Drop it)"
