@@ -450,3 +450,20 @@ buildings, rooftops) builds on C's points and W's blocks.
    keep the % only for woods and for "gone to ground".
 Order: Phase A (rout jitter) -> B (clearance) -> **C0: physical flat
 shots + per-man cover seeking (field and town)** -> C1+ street fighting.
+
+**Addendum 2 (user, 2026-10-15): West towns are irregular.** Caribbean
+buildings still front the roads but are not symmetrical or grid-perfect:
+varied footprints (long and narrow, L-shapes, lean-tos, back yards,
+courtyards behind walls), small rotations off the street line, uneven
+setbacks and gaps, lots that bend with the road and step with the
+terrain (along a slope's contour, around rocks and big trees, crowding
+toward the waterfront), denser and taller at the quay and plaza,
+thinning to scattered shacks and plots at the edge. Building kinds by
+place: taverns and punch houses, chandlers and shops, food stores and
+warehouses on the quay, the church and the governor's house on the
+plaza, the fort apart on high ground or the harbour mouth. Each kind has
+a recognisable kit piece (signs, awnings, barrels, porches) and its own
+cover value (stone vs timber, porches, yard walls). Generation stays
+deterministic from the map seed (sim/mapgen), and the cover points of
+the street-fighting phases come from these real footprints. This goes in
+phase W (West map generation).
