@@ -18,8 +18,10 @@ const AO_STR := 0.55
 const H_SHADOW := 1.4              # the kit's heights read low at game scale: shadows are cast from 1.4 x
 const H_CAP := 15.0                # ... capped (a shadow at most about 24 m long)
 const PAINT_K := 0.82
-const BLUR := 2                    # cells of box blur (twice) on the cast: a soft edge
-const AO_CELLS := 5
+const AO_M := 2.5                  # metres of contact band
+const AO_DX := [1, -1, 0, 0]
+const AO_DY := [0, 0, 1, -1]
+const MIN_CELL := 1.0              # the bake grid is never finer than this (the linear filter softens it)
 const TINT := Vector3(0.58, 0.54, 0.42)    # 1 - (0.42, 0.46, 0.58): the shadow's cool cast
 
 var kit
@@ -37,12 +39,14 @@ var _nrm := PackedByteArray()      # atlas_nrm raw RGBA8 (B = height / 20 m)
 var _alb := PackedByteArray()      # atlas_albedo raw RGBA8 (A = coverage)
 var _aw := 0
 var _touch := PackedInt32Array()
+var _ao_n := 3
 var _k := 1.0                      # look strength (diorama 1, painterly PAINT_K)
 
 
 func build(p_kit) -> void:
 	kit = p_kit
-	cell = kit.shadow_cell
+	cell = maxf(kit.shadow_cell, MIN_CELL)
+	_ao_n = ceili(AO_M / cell)
 	_k = 1.0 if BattleLook.is_diorama() else PAINT_K
 	_nrm = _raw(kit.TEX_NRM)
 	_alb = _raw(kit.TEX_ALB)
@@ -180,41 +184,44 @@ func _cast(sx0: int, sy0: int, sx1: int, sy1: int, tx0: int, ty0: int, tx1: int,
 			# Occlusion: a short rim on the ground beside a wall's foot.
 			if h < 0.9:
 				continue
-			for dv in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-				var ax: int = x + dv.x
-				var ay: int = y + dv.y
+			for dd in 4:
+				var ddx: int = AO_DX[dd]
+				var ddy: int = AO_DY[dd]
+				var ax: int = x + ddx
+				var ay: int = y + ddy
 				if ax < 0 or ay < 0 or ax >= w or ay >= _h or _ht[ay * w + ax] > h - 0.3:
 					continue
-				for s2 in AO_CELLS:
-					var ox: int = ax + dv.x * s2
-					var oy: int = ay + dv.y * s2
+				for s2 in _ao_n:
+					var ox: int = ax + ddx * s2
+					var oy: int = ay + ddy * s2
 					if ox < tx0 or oy < ty0 or ox >= tx1 or oy >= ty1 or ox >= w or oy >= _h or ox < 0 or oy < 0:
 						break
 					if _ht[oy * w + ox] > h - 0.3:
 						break
-					var t := float(s2) / float(AO_CELLS)
+					var t := float(s2) / float(_ao_n)
 					var ab := int((1.0 - t) * (1.0 - t) * 255.0)
 					if ab > _ao[oy * w + ox]:
 						_ao[oy * w + ox] = ab
 
 
-## Soft edge: a box blur (two passes) of the cast shadow inside the window.
+## Soft edge: two 3-tap box blurs (separable) of the cast shadow inside the window.
 func _blur(x0: int, y0: int, x1: int, y1: int) -> void:
+	var w := _w
+	var xa := maxi(x0, 1)
+	var xb := mini(x1, w - 1)
+	var ya := maxi(y0, 1)
+	var yb := mini(y1, _h - 1)
 	var tmp := PackedByteArray()
-	tmp.resize(_w * _h)
+	tmp.resize(w * _h)
 	for pass_i in 2:
 		for y in range(y0, y1):
-			for x in range(x0, x1):
-				var acc := 0
-				for k in range(-BLUR, BLUR + 1):
-					acc += _sh[y * _w + clampi(x + k, 0, _w - 1)]
-				tmp[y * _w + x] = acc / (2 * BLUR + 1)
-		for y in range(y0, y1):
-			for x in range(x0, x1):
-				var acc2 := 0
-				for k in range(-BLUR, BLUR + 1):
-					acc2 += tmp[clampi(y + k, 0, _h - 1) * _w + x]
-				_sh[y * _w + x] = acc2 / (2 * BLUR + 1)
+			var o := y * w
+			for x in range(xa, xb):
+				tmp[o + x] = (_sh[o + x - 1] + _sh[o + x] + _sh[o + x + 1]) / 3
+		for y in range(ya, yb):
+			var o2 := y * w
+			for x in range(xa, xb):
+				_sh[o2 + x] = (tmp[o2 + x - w] + tmp[o2 + x] + tmp[o2 + x + w]) / 3
 
 
 func _collect_touched() -> void:
