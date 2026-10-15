@@ -4445,6 +4445,18 @@ a sprite but kit pieces placed on the real terrain.
   The frames still over 16 ms are the map's own few redraws. After repacking the atlas run `godot --headless
   --import`. Not yet seen on the Tab S7. Step 2: landmarks (El Morro, Cartagena's walls, Tayasal's temple), growth
   polish, ships' baked contact shadow (they keep the per-frame one).
+- **Follow-up (2026-10-15, view only).** (1) A tap anywhere on a town's model (an ellipse over `Minis.model_rect`,
+  `MapOverlay._town_at`, nearest centre when two overlap) is a tap on its node for every map action
+  (`settlement_at`); banners and fleets still win; a fleet tapped onto a town sails to its harbour cell.
+  `tests/town_tap_test.gd`. (2) Army banners at a modelled town stand on land: `_side_spot` tries the side away from
+  the harbour, the other side, below, above (each nearer in steps) and takes the first whose banner corners are on land
+  (`Geo.region_at`, cached per zoom); the armies' cells were on land (Syracusae's site cell is the town's), it was the
+  side offset pushing banners onto the water. (3) Too much sand: `table_land.gdshader` had the coast band inverted
+  (`1 - smoothstep` made all low flat land sand); now a band along the coast, warm tint of the shader and LUT eased,
+  wooded ARID / DRY regions less sandy in `landscape.gd`. (4) Close towns push their centres apart (scoring term
+  in `_make_site`), overlapping labels stack upwards. (5) Native kit: `longhouse`, `rack`, `stilt_house`,
+  `maya_platform` pieces (gen_spec.py, atlas repacked), native villages 11 / 17 / 22 huts, council longhouse from
+  level 1, drying racks, more garden fields, stilt houses on the shore; Maya temple platforms by the plaza.
 
 ### Audio (as built, 2026-10-10)
 

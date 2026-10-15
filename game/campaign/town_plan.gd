@@ -44,6 +44,7 @@ const PD := {
 	"shed": [5.0, 6.0, 3.6, 14.0], "slipway": [0.0, 9.0, 4.2, 4.0], "lighthouse": [3.2, 3.5, 3.5, 44.0], "canoe": [2.4, 2.4, 0.9, 1.5],
 	"tree_b1": [1.8, 2.6, 2.3, 10.0], "tree_b2": [2.0, 3.0, 2.6, 10.0], "palm_a": [1.0, 1.6, 1.4, 13.0], "palm_b": [1.0, 1.6, 1.4, 14.0],
 	"orange": [1.2, 1.9, 1.7, 7.0],
+	"longhouse": [6.2, 6.2, 3.0, 9.0], "rack": [2.3, 2.1, 0.9, 4.0], "stilt_house": [3.0, 2.8, 2.4, 10.0], "maya_platform": [6.4, 6.0, 6.0, 8.0],
 }
 
 const WALL_COLS := ["wh", "oc", "bl", "co", "wh", "bl", "oc", "co"]
@@ -235,6 +236,10 @@ static func _make_site(r: int, grid: bool) -> Dictionary:
 		for v in orad:
 			tot += v
 		var score := tot - 0.9 * (off as Vector2).length() - 0.12 * _slope(oc)
+		for q in near_pts:   # crowded neighbours: stand apart (the plaza and main buildings move off the shared line)
+			var dq0 := p0.distance_to(q as Vector2)
+			if dq0 < rfull * 1.3:
+				score += 1.6 * minf((oc.distance_to(q as Vector2) - dq0), 8.0)
 		if score > best_score:
 			best_score = score
 			best_c = oc
@@ -755,14 +760,34 @@ static func _build(s: Dictionary, r: int, lvl: int, walls: int, style: String, p
 					_item(items, fp2, "tower_rome", 0)
 		"maya":
 			_item(items, c, "maya_pyramid", 0)
+			# stone temple platforms on the plaza's sides
+			var px_n := 0
+			for k in 6:
+				if px_n >= (lvl + 1) / 2 + (1 if lvl == 2 else 0):
+					break
+				var pa := (s["axis"] as Vector2).angle() + PI * (0.5 if k % 2 == 0 else -0.5) + float(k / 2) * 0.9 * (1.0 if k % 2 == 0 else -1.0)
+				var pq := c + Vector2(cos(pa), sin(pa)) * 20.0 * K
+				if inside(s, pq, 1.0) and depth(pq) > 4.0 and _free(items, pq, 8.0 * K):
+					_item(items, pq, "maya_platform", _yaw4(yaw_facing((c - pq).normalized())))
+					px_n += 1
 			for k in 3:
 				var a := TAU * float(k) / 3.0 + 0.6
 				var q := c + Vector2(cos(a), sin(a)) * 17.0 * K
 				if inside(s, q, 1.0) and depth(q) > 4.0:
 					_item(items, q, "stela", 0)
 		"native":
-			_item(items, c, "hut_big", 0)
-			_item(items, c + Vector2(5.5, 4.0) * K, "totem", 0)
+			# the council house (longhouse, lvl 0 a big hut), the totem, drying racks round the fire
+			if lvl >= 1:
+				_item(items, c, "longhouse", yaw_along(s["axis"]))
+				_item(items, c + Vector2(0.0, 8.0) * K, "totem", 0)
+			else:
+				_item(items, c, "hut_big", 0)
+				_item(items, c + Vector2(5.5, 4.0) * K, "totem", 0)
+			for k in (1 if lvl == 0 else 3):
+				var ra := (s["axis"] as Vector2).angle() + 2.4 + float(k) * 1.7
+				var rq := c + Vector2(cos(ra), sin(ra)) * (10.0 + float(k) * 2.0) * K
+				if inside(s, rq, 1.0) and depth(rq) > 3.0 and _free(items, rq, 3.0 * K):
+					_item(items, rq, "rack", yaw_along(Vector2(cos(ra + 1.57), sin(ra + 1.57))))
 		"haven":
 			var fl := c + Vector2(4.0, 2.0) * K
 			_item(items, fl, "flagpole", 0)
@@ -774,8 +799,8 @@ static func _build(s: Dictionary, r: int, lvl: int, walls: int, style: String, p
 	match style:
 		"town": n_houses = [8, 15, 24][lvl]
 		"roman": n_houses = [9, 15, 22][lvl]
-		"native": n_houses = [8, 12, 16][lvl]
-		"maya": n_houses = [6, 9, 11][lvl]
+		"native": n_houses = [11, 17, 22][lvl]
+		"maya": n_houses = [7, 11, 14][lvl]
 		"haven": n_houses = [7, 11, 15][lvl]
 	var placed := 0
 	var slots: Array = (s["ring"] if ring_style else s["slots"]) as Array
@@ -889,7 +914,15 @@ static func _build(s: Dictionary, r: int, lvl: int, walls: int, style: String, p
 		if bool(s["near_sea"]) and (s["shore"] as Array).size() >= 3:
 			var shore2: Array = s["shore"]
 			var n2 := shore2.size()
-			for k in 2:
+			if style == "native":   # stilt houses over the shallows at the water's edge (Miskito)
+				for k in (2 if lvl == 0 else 4):
+					var si := clampi(n2 / 2 + (k - 2) * 2 + (1 if k >= 2 else 0), 0, n2 - 1)
+					var ssp2: Vector2 = (shore2[si] as Array)[0]
+					var snv2: Vector2 = (shore2[si] as Array)[1]
+					var stp := ssp2 - snv2 * 3.4 * K
+					if depth(stp) > 0.6 and inside(s, stp, 1.05) and _free(items, stp, 4.0 * K):
+						_item(items, stp, "stilt_house", yaw_facing(snv2))
+			for k in (2 if style != "native" else 3):
 				var bi3 := clampi(n2 / 2 + (-2 if k == 0 else 3), 0, n2 - 1)
 				var bsp2: Vector2 = (shore2[bi3] as Array)[0]
 				var bnv2: Vector2 = (shore2[bi3] as Array)[1]
@@ -920,7 +953,7 @@ static func _build(s: Dictionary, r: int, lvl: int, walls: int, style: String, p
 	if style == "haven":
 		n_f = 0
 	if style == "native" or style == "maya":
-		n_f = 1 + lvl / 2
+		n_f = 2 + lvl
 	var fields_out: Array = []
 	for i in mini(n_f, fields.size()):
 		fields_out.append(fields[i])

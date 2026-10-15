@@ -242,10 +242,50 @@ func fleet_positions() -> Dictionary:
 	return out
 
 
-## Where the army banners of settlement r stand: beside its model, away from the harbour.
+## Where the army banners of settlement r stand: on land beside its model, away from the harbour. The spots
+## are tried in turn (the side away from the harbour, the other side, below, above; each nearer in steps) and
+## the first whose banner is wholly on land wins; the town's own anchor when none is. Cached per zoom.
+var _spot_cache := {}
+var _spot_zoom := -1.0
+
+
 func _side_spot(r: int, m: float) -> Vector2:
+	if not is_equal_approx(_spot_zoom, zoom * 1000.0 + m):
+		_spot_cache.clear()
+		_spot_zoom = zoom * 1000.0 + m
+	var base := to_screen(site_point(r))
+	var key := "%d_%d_%d" % [r, int(base.x) - int(base.x) % 2, int(base.y) - int(base.y) % 2]
+	if _spot_cache.has(key):
+		return _spot_cache[key]
 	var hs := -port_side(r) if CFleet.harbour(r) >= 0 else 1.0
-	return to_screen(site_point(r)) + Vector2(hs * (Minis.half_w(zoom, r) + ARMY_W * 0.5 * m + 4.0), -ARMY_H * 0.2 * m)
+	var hw := Minis.half_w(zoom, r) + ARMY_W * 0.5 * m + 4.0
+	var mr := Minis.model_rect(zoom, r)
+	var below := mr.end.y + ARMY_H * 0.5 * m
+	var cands: Array = []
+	for f in [1.0, 0.7, 0.4]:
+		cands.append(Vector2(hs * hw * f, -ARMY_H * 0.2 * m))
+		cands.append(Vector2(-hs * hw * f, -ARMY_H * 0.2 * m))
+	for f in [1.0, 0.6]:
+		cands.append(Vector2(0, below * f))
+		cands.append(Vector2(0, -(ARMY_H * 0.6 * m + 6.0) * f - mr.size.y * 0.3))
+	var out := base
+	for o in cands:
+		if _banner_on_land(base + o, m):
+			out = base + o
+			break
+	_spot_cache[key] = out
+	return out
+
+
+## True when a banner centred at screen point c (marker scale m) stands wholly on land.
+func _banner_on_land(c: Vector2, m: float) -> bool:
+	var inv := xform.affine_inverse()
+	var hx := ARMY_W * 0.5 * m
+	var hy := ARMY_H * 0.5 * m
+	for d in [Vector2.ZERO, Vector2(-hx, -hy), Vector2(hx, -hy), Vector2(-hx, hy), Vector2(hx, hy)]:
+		if Geo.region_at(inv * (c + d)) < 0:
+			return false
+	return true
 
 
 ## The settlement whose miniature covers screen point p (-1 none).
@@ -290,7 +330,31 @@ func settlement_at(p: Vector2) -> int:
 	for r in CData.region_count():
 		if to_screen(site_point(r)).distance_to(p) <= 16.0:
 			return r
-	return -1
+	return _town_at(p)
+
+
+## The modelled town whose footprint (an ellipse over the model's width, from the roof tops to the ground
+## below the anchor) holds screen point p; the nearest centre when two overlap (-1 none).
+func _town_at(p: Vector2) -> int:
+	if not Minis.on_sites:
+		return -1
+	var best := -1
+	var bd := 1e9
+	for r in CData.region_count():
+		var q := to_screen(site_point(r))
+		if absf(p.x - q.x) > 400.0 or absf(p.y - q.y) > 400.0:
+			continue
+		var mr := Minis.model_rect(zoom, r)
+		var cx := q.x + mr.position.x + mr.size.x * 0.5
+		var hy := mr.size.y * 0.5
+		var cy := q.y + mr.position.y + hy
+		var dx := (p.x - cx) / maxf(mr.size.x * 0.5, 1.0)
+		var dy := (p.y - cy) / maxf(hy, 1.0)
+		var d := dx * dx + dy * dy
+		if d <= 1.0 and d < bd:
+			bd = d
+			best = r
+	return best
 
 
 ## Version 6: armies at their cells; armies sharing a cell side by side;
@@ -371,6 +435,7 @@ func _draw() -> void:
 	# Settlements and names.
 	var show_names := zoom >= 0.5
 	var m := mk()
+	var placed: Array = []   # label rects already drawn this frame (neighbouring towns do not print over each other)
 	for r in CData.region_count():
 		var p := to_screen(site_point(r))
 		var rs: Dictionary = state["regions"][r]
@@ -392,6 +457,17 @@ func _draw() -> void:
 			var fs := int(round(FONT * (0.85 + 0.15 * m)))
 			var tw := font.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 			var tp := p + Vector2(-tw * 0.5, -rad - 5.0 - Minis.label_lift_of(zoom, r))
+			for _k in 4:
+				var lr := Rect2(tp.x - 2.0, tp.y - fs, tw + 4.0, fs + 3.0)
+				var hit := false
+				for o in placed:
+					if lr.intersects(o):
+						hit = true
+						break
+				if not hit:
+					placed.append(lr)
+					break
+				tp.y -= fs + 3.0
 			draw_string_outline(font, tp, nm, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 4, Color(0, 0, 0, 0.75))
 			draw_string(font, tp, nm, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 1, 0.95))
 	# Pending battles.

@@ -1464,6 +1464,8 @@ rim light, outline and saturation). Level 1 phases: 1 kit walls / towers
 streets with culture palettes, 3 trees / rocks / cliffs, 4 the full
 shadow and AO layer, 5 splatted ground, 6 the look setting (diorama default, painterly option).
 
+**Towns follow-up (2026-10-15, view only, not committed):** whole town footprint is a tap target (test `tests/town_tap_test.gd`); army banners at towns stand on land (Rome too); coast sand band bug fixed and land greener; crowded towns pushed apart and labels stacked; richer native / Maya villages (4 new kit pieces, atlas repacked). DESIGN "Follow-up". Not yet seen on the Tab S7.
+
 **Overworld towns modelled into the landscape: step 1 built 2026-10-15 (view only, not committed).** Towns are
 assembled from kit pieces on the real terrain (`town_plan.gd`, `town_layer.gd`, `town_paint.gd`; DESIGN "Overworld
 towns modelled into the landscape (as built)"): pieces at 8 yaws, per-town plan from elevation / slope / coast (hill

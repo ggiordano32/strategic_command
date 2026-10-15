@@ -209,10 +209,11 @@ static func _region_tones(r: int) -> Array:
 	var pal := GroundPalette.get_palette(pi)
 	var base: Color = (pal["base"] as Color).lightened(LIFT)
 	var lat := _lat(r)
+	var wet := clampf((float(CData.REGIONS[r]["forest"]) - 25.0) / 50.0, 0.0, 1.0)   # wooded land is less sandy
 	if pi == MapGen.PAL_ARID:
-		base = base.lerp(SAND, 0.25 + 0.55 * clampf((38.5 - lat) / 3.0, 0.0, 1.0))
+		base = base.lerp(SAND, (0.25 + 0.55 * clampf((38.5 - lat) / 3.0, 0.0, 1.0)) * (1.0 - 0.7 * wet))
 	elif pi == MapGen.PAL_DRY and lat < 37.5:
-		base = base.lerp(SAND, 0.2)
+		base = base.lerp(SAND, 0.2 * (1.0 - 0.7 * wet))
 	var low: Color = (GroundPalette.get_palette(MapGen.PAL_GREEN)["low"] as Color).lightened(LIFT)
 	var valley := base.lerp(low, 0.55)
 	return [base,

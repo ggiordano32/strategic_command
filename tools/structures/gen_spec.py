@@ -913,6 +913,25 @@ piece("palm_b", [use("pc_palm", [0, 0, 0], 140, sc=1.15)], 1)
 piece("orange", [cyl([0, 0, 0], 0.3, 1.6, "wood", n=6), sph([0, 0, 2.7], [1.9, 1.9, 1.7], "orange", n=7),
                  sph([0.7, -0.9, 3.0], [0.28, 0.28, 0.28], "fruit", n=4, ol=0), sph([-0.8, -0.4, 2.4], [0.28, 0.28, 0.28], "fruit", n=4, ol=0)], 1)
 
+# native village kit (2026-10-15): council longhouse, drying rack, stilt house, Maya temple platform
+piece("longhouse", [box([0, 0, 0], [11.0, 4.6, 2.2], "mud"), roof([0, 0, 2.2], [12.4, 6.0, 3.6], "thatch", ridge=0.85),
+                    box([-3.0, -2.32, 0], [1.0, 0.1, 1.5], "dark_wood", ol=0), box([3.0, -2.32, 0], [1.0, 0.1, 1.5], "dark_wood", ol=0),
+                    box([5.7, 0, 0.5], [0.3, 1.6, 1.6], "dark_wood", ol=0)])
+piece("rack", [cyl([sx, sy, 0], 0.22, 3.4, "dark_wood", n=5) for sx in (-1.9, 1.9) for sy in (-0.7, 0.7)] +
+      [box([0, 0.7, 2.6], [4.2, 0.2, 0.2], "dark_wood", ol=0), box([0, -0.7, 2.6], [4.2, 0.2, 0.2], "dark_wood", ol=0),
+       box([0, 0, 1.2], [4.0, 1.2, 0.15], "plank", ol=0)] +
+      [box([x, 0, 1.4], [0.45, 0.9, 0.3], "fruit", ol=0) for x in (-1.4, -0.4, 0.6, 1.5)] +
+      [box([x, 0.75, 1.9], [0.25, 0.1, 0.9], "wall_ochre", ol=0) for x in (-1.5, -0.5, 0.5, 1.5)])
+piece("stilt_house", [cyl([sx, sy, 0], 0.28, 2.4, "dark_wood", n=5) for sx in (-1.8, 1.8) for sy in (-1.5, 1.5)] +
+      [box([0, 0, 2.3], [4.6, 3.8, 0.3], "plank"), box([0, 0, 2.6], [3.8, 3.0, 1.7], "plank"),
+       roof([0, 0, 4.3], [5.8, 4.8, 3.0], "thatch", ridge=0.85), box([0, -1.52, 2.6], [1.0, 0.1, 1.3], "dark_wood", ol=0),
+       box([0, -2.6, 0.6], [0.9, 0.12, 2.2], "dark_wood", ol=0, r=[-25, 0, 0])])
+piece("maya_platform", [box([0, 0, 0], [12.0, 12.0, 1.4], "stone_lt"), box([0, 0, 1.4], [9.6, 9.6, 1.4], "stone"),
+                        box([0, -6.8, 0], [3.4, 1.6, 0.7], "stone"), box([0, -5.9, 0.7], [3.0, 1.4, 0.7], "stone_lt"),
+                        box([0, -5.2, 1.4], [2.6, 1.2, 0.7], "stone"),
+                        box([0, 0.6, 2.8], [5.0, 4.2, 2.6], "stone_lt"), box([0, -1.52, 2.8], [1.6, 0.1, 1.8], "black", ol=0),
+                        roof([0, 0.6, 5.4], [6.0, 5.2, 2.4], "thatch", ridge=0.8), box([-3.6, -3.4, 2.8], [0.9, 0.6, 3.0], "primary"),
+                        box([3.6, -3.4, 2.8], [0.9, 0.6, 3.0], "primary")], Y4)
 # landscape trees and rocks (game/campaign/landtrees.gd): crowns and rock bodies are the primary colour (tinted per tree by the map palette), highlights the secondary, shadow sides the accent
 MAT.update({"primary": [0.55, 0.64, 0.50], "secondary": [0.70, 0.78, 0.60], "primary": [0.46, 0.58, 0.48], "secondary": [0.56, 0.68, 0.54],
             "primary": [0.62, 0.64, 0.46], "primary": [0.55, 0.68, 0.45], "primary": [0.74, 0.72, 0.68], "accent": [0.58, 0.56, 0.52]})

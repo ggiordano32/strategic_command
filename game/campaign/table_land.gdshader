@@ -33,7 +33,7 @@ void fragment() {
 	vec3 g = texture(ground, UV).rgb;
 	// brighter, warmer, a little more saturated
 	float l = dot(g, vec3(0.30, 0.59, 0.11));
-	g = mix(vec3(l), g, 1.22) * vec3(1.12, 1.07, 0.93) + vec3(0.05, 0.04, 0.0);
+	g = mix(vec3(l), g, 1.22) * vec3(1.04, 1.06, 0.96) + vec3(0.025, 0.03, 0.0);
 	// the towns' ground: clearing, packed earth, streets, fields, quays (before the light, so it is shaded like the land)
 	vec4 tp = texture(towns, wp / towns_px) * towns_on;
 	g = g * (1.0 - tp.a) + tp.rgb;
@@ -47,10 +47,10 @@ void fragment() {
 	g *= 1.0 + q * 0.26;
 	// higher ground: a drier, tanner tone in steps
 	float lvl = floor(h / (interval * 3.0));
-	g = mix(g, vec3(0.80, 0.68, 0.46), clamp(lvl * 0.09, 0.0, 0.5));
+	g = mix(g, vec3(0.80, 0.68, 0.46), clamp(lvl * 0.07, 0.0, 0.4));
 	// the coast: a sand band
 	float d = texture(coast, fuv).r * 255.0 - 128.0;
-	float sand = 1.0 - smoothstep(-1.6, -0.5, d);
+	float sand = smoothstep(-2.2, -0.6, d);
 	sand *= 1.0 - smoothstep(30.0, 90.0, h);
 	g = mix(g, vec3(0.93, 0.85, 0.62), sand * 0.75);
 	// ink contours: fade out when they crowd

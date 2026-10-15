@@ -13,7 +13,7 @@ static var _grain: ImageTexture = null
 static func lut() -> ImageTexture:
 	if _lut == null:
 		var img := Image.create(64, 1, false, Image.FORMAT_RGB8)
-		var stops := [[0.0, Color(0.86, 0.80, 0.86)], [0.35, Color(0.97, 0.92, 0.88)], [0.6, Color(1.04, 1.0, 0.90)], [1.0, Color(1.10, 1.06, 0.92)]]
+		var stops := [[0.0, Color(0.86, 0.80, 0.86)], [0.35, Color(0.97, 0.92, 0.88)], [0.6, Color(1.01, 1.01, 0.94)], [1.0, Color(1.07, 1.05, 0.94)]]
 		for i in 64:
 			var t := float(i) / 63.0
 			var c: Color = stops[0][1]

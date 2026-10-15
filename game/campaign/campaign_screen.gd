@@ -2949,6 +2949,9 @@ func _tap_fleets(p: Vector2) -> bool:
 		return true
 	if mine_f and overlay.army_at(p) < 0:
 		var c := MapOverlay.cell_of_point(_map_point(p))
+		var tsr := overlay.settlement_at(p)
+		if tsr >= 0:
+			c = CGrid.site(tsr)   # anywhere on a town: its harbour
 		if c >= 0 and (CFleet.is_sea(c) or CGrid.passable(c)):
 			set_fmove(sel_fleet, c)
 			if sel_fleet >= 0 and not CFleet.fleet(ps, sel_fleet).is_empty():
