@@ -83,3 +83,11 @@ Render: bases `--sizes 256,96`, ships `--sizes 128,64` (3.6 px/m at 256), then
 2048x256, ~17 MB and ~2.5 MB of video memory) each a shade and a mask image. The game's
 minis.gdshader recolours: primary = owner faction colour (draw modulate), secondary and accent
 derived from it. Graphics Low loads only the small atlas.
+
+## Kit pieces (2026-10-15)
+
+`gen_spec.py` "pieces" adds `p_<piece>__y<k>` entries (houses by wall colour, churches, fort, walls, quay,
+pier, lighthouse, trees, landscape trees and rocks `lt_*`, ...): frame `"auto"` (tight bounds, fixed scale),
+yaw k = k * 45 degrees (front towards the south at 0). Render with `--sizes 300,140` (4.2 and 1.97 px a
+metre), then `pack.py` (a white primary-masked block named "white" is packed too) and `godot --headless
+--import`. The overworld assembles them (`game/campaign/town_plan.gd`).

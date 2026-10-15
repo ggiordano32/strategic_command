@@ -25,7 +25,6 @@ const Landscape := preload("res://game/campaign/landscape.gd")
 const GeoFields := preload("res://game/campaign/geo_fields.gd")
 const WATER_SHADER := preload("res://game/campaign/water.gdshader")
 const SeaWaves := preload("res://game/campaign/sea_waves.gd")
-const Footprint := preload("res://game/campaign/footprint.gd")
 
 const SEA := Color(0.13, 0.25, 0.34)
 const SEA_SHALLOW := Color(0.22, 0.38, 0.47)
@@ -92,6 +91,7 @@ static var water_high := true
 ## or "relief" (the hillshaded relief of 2026-10-10). A view preference in user://settings.cfg [map] style =
 ## auto | table | relief (auto: table for the West pack, relief for Rome); "--map-style=table|relief" overrides it.
 const TABLE_LAND_SHADER := preload("res://game/campaign/table_land.gdshader")
+const MapLook := preload("res://game/campaign/map_look.gd")
 const TABLE_TINT := 0.15      # the owner wash over the land in the table style
 const TABLE_EDGE_W := 3.6
 const TABLE_BORDER := Color(0.12, 0.08, 0.05, 0.5)
@@ -133,9 +133,8 @@ static func _sync_gen() -> void:
 
 var state: Dictionary = {}
 var zoom := 1.0
-## The visible part of the map (world px, set by the screen each frame) and the area the footprints were drawn for.
+## The visible part of the map (world px, set by the screen each frame).
 var view_rect := Rect2()
-var _fp_rect := Rect2()
 ## Regions to highlight as move destinations, and the hovered / selected region.
 var targets: Array[int] = []
 var attack_targets: Array[int] = []
@@ -199,7 +198,36 @@ func _sync_style() -> void:
 	var m := _water.material as ShaderMaterial
 	m.set_shader_parameter("table", 1.0 if table_on() else 0.0)
 	m.set_shader_parameter("wave_gain", 0.6 if table_on() else 1.0)
+	if (Landscape.clear_towns != table_on() or Landscape.models != (table_on() and not Quality.is_low())) and Landscape.tree_count > 0:
+		Landscape.clear_towns = table_on()
+		Landscape.models = table_on() and not Quality.is_low()
+		Landscape.rebake_glyphs()
 	queue_redraw()
+
+
+## The painted ground of the towns (town_paint.gd, baked once and again when a town changes): the land
+## shader mixes it in. `size` is the world size (px) the texture covers.
+static var _town_tex: Texture2D = null
+static var _town_size := Vector2.ONE
+
+
+func set_town_paint(tex: Texture2D, size: Vector2) -> void:
+	_town_tex = tex
+	_town_size = size
+	if _table != null and _table.material != null:
+		_apply_town_paint(_table.material as ShaderMaterial)
+
+
+static func _apply_town_paint(m: ShaderMaterial) -> void:
+	m.set_shader_parameter("towns", _town_tex)
+	m.set_shader_parameter("towns_px", _town_size)
+	m.set_shader_parameter("towns_on", 1.0 if _town_tex != null else 0.0)
+
+
+## The road polylines (world px) the towns' tracks join.
+static func road_lines() -> Array:
+	_terrain_geometry()
+	return _road_lines
 
 
 ## The land polygons with the table shader (behind this node's own drawing).
@@ -213,6 +241,8 @@ func _draw_table_land() -> void:
 		m.set_shader_parameter("field_px", Vector2(GeoFields.fine_width(), GeoFields.fine_height()) * GeoFields.sample_px())
 		m.set_shader_parameter("elev_texel", Vector2(1.0 / GeoFields.fine_width(), 1.0 / GeoFields.fine_height()))
 		m.set_shader_parameter("sample_m", GeoFields.sample_m())
+		_apply_town_paint(m)
+		MapLook.apply(m)
 		_table.material = m
 	var lsz := Vector2(CGrid.width(), CGrid.height()) * float(CGrid.cell_px())
 	for mesh in land_meshes(lsz):
@@ -229,12 +259,6 @@ static func _elevation_tex() -> ImageTexture:
 		_elev_tex = ImageTexture.create_from_image(img)
 		_elev_gen = Geo.gen
 	return _elev_tex
-
-
-## Redraw when the view left the area the settlement footprints cover (table style).
-func footprint_check() -> void:
-	if view_rect.size.x > 0.0 and zoom >= Footprint.MIN_ZOOM and _table != null and _table.visible and not _fp_rect.encloses(view_rect):
-		queue_redraw()
 
 
 ## The wave clock (SeaWaves.t, also the shader's `wave_t`): the sea only moves on "high".
@@ -535,7 +559,16 @@ static func cell_meshes(r: int) -> Array:
 	return _cell_meshes[r]
 
 
+static var last_draw_ms := 0.0   # the last _draw's cost (ms), for the frame benches
+
+
 func _draw() -> void:
+	var t_draw := Time.get_ticks_usec()
+	_draw_all()
+	last_draw_ms = float(Time.get_ticks_usec() - t_draw) / 1000.0
+
+
+func _draw_all() -> void:
 	var lw := 1.0 / maxf(zoom, 0.05)
 	var land_view := terrain_view and grid and not state.is_empty()
 	if land_view:
@@ -590,10 +623,6 @@ func _draw() -> void:
 		else:
 			draw_hills(self, _hill_segs[0], 0, lw)
 			draw_hills(self, _hill_segs[1], 1, lw)
-		if tbl:
-			# the settlements' ground (table style): only around the view, redrawn when the view leaves it
-			_fp_rect = view_rect.grow_individual(view_rect.size.x * 0.6, view_rect.size.y * 0.6, view_rect.size.x * 0.6, view_rect.size.y * 0.6) if view_rect.size.x > 0.0 else Rect2()
-			Footprint.draw(self, state, zoom, grid, _road_lines, lw, _fp_rect)
 		_draw_reach(lw)
 	# Destinations of the selected army.
 	var a := 0.25 + 0.15 * sin(pulse * 4.0)
@@ -693,7 +722,14 @@ func _draw() -> void:
 static func prepare_steps() -> Array:
 	return [["Building the map", geometry_lines],
 		["Shading the relief (first time only)" if not Landscape.relief_cached() else "Loading the relief", Landscape.bake_relief],
-		["Painting the landscape", Landscape.bake_land]]
+		["Painting the landscape", _bake_land]]
+
+
+## The landscape's glyphs (the forest is cleared round the towns in the table style).
+static func _bake_land() -> void:
+	Landscape.clear_towns = table_on()
+	Landscape.models = table_on() and not Quality.is_low()
+	Landscape.bake_land()
 
 
 ## The roads, rivers and hills geometry from the grid (once).
@@ -701,6 +737,8 @@ static func _terrain_geometry() -> void:
 	_sync_gen()
 	if not _hill_segs.is_empty():
 		return
+	Landscape.clear_towns = table_on()
+	Landscape.models = table_on() and not Quality.is_low()
 	Landscape.bake()
 	geometry_lines()
 

@@ -1,14 +1,11 @@
 extends Node2D
-## Painted miniatures on the overworld (view only; tools/structures builds the
-## sprites, game/minis_atlas.gd lists them). Sits under map_overlay.gd (same
-## canvas layer, added before it) so the names, army banners and fleet pennants
-## draw over the models. Settlements are a base by culture and size plus the
-## layers the state shows (harbour, shipyard slipway, walls: a back half before
-## the base and a front half after it); fleets are ships at 8 headings bobbing
-## on SeaWaves. The size is exaggerated and roughly constant on screen
-## (`tile_px`); zoomed out the overlay's own icons and markers stay. Quality
-## Low: the small atlas only, no bobbing redraws. The overlay asks `on_sites`
-## / `on_ships` (set here each frame) whether to skip its icon or ship hull.
+## Painted miniatures of the fleets on the overworld (view only; tools/structures builds the sprites,
+## game/minis_atlas.gd lists them): ships at 8 headings bobbing on SeaWaves, a contact shadow and a wake. Sits
+## under map_overlay.gd (same canvas layer, added before it) so the names, army banners and fleet pennants draw
+## over the models. The towns are not drawn here any more: town_layer.gd assembles them from kit pieces on the
+## map itself; this layer only answers the overlay's questions about them (`on_sites`, half width, label lift,
+## where fleets in port stand) from the town plans. Quality Low: the small atlas only, no bobbing redraws.
+## The overlay asks `on_sites` / `on_ships` (set here each frame) whether to skip its icon or ship hull.
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -20,16 +17,17 @@ const MapView := preload("res://game/campaign/map_view.gd")
 const SeaWaves := preload("res://game/campaign/sea_waves.gd")
 const Atlas := preload("res://game/minis_atlas.gd")
 const SHADER := preload("res://game/campaign/minis.gdshader")
+const MapLook := preload("res://game/campaign/map_look.gd")
 
 static var on_sites := false
 static var on_ships := false
+static var towns: Node = null   # the town layer (town_layer.gd), set by the campaign screen
 static var _label_lift := 0.0
 static var _headings := {}   # fleet id -> last heading 0..7
 
 const SITE_MIN_ZOOM := 0.55
 const SHIP_MIN_ZOOM := 0.35
 const TILE_M := 58.0           # a base tile's width in metres (the sprites' scale)
-const LEVEL_K := [0.9, 1.0, 1.14]
 const SHIP_RANK := ["ship_of_the_line", "galleon", "frigate", "brigantine", "sloop", "war_canoe"]
 const SHIP_K := 1.0
 
@@ -58,6 +56,7 @@ func _atlas(name_set: String) -> Array:
 	var m := ShaderMaterial.new()
 	m.shader = SHADER
 	m.set_shader_parameter("mask", mk)
+	MapLook.apply(m)
 	_tex[name_set] = [sh, m]
 	if sh != null:
 		texture_bytes += sh.get_width() * sh.get_height() * 4 + mk.get_width() * mk.get_height() * 3
@@ -71,14 +70,55 @@ static func army_drop() -> float:
 
 
 ## Half the width of settlement r's model on screen (walls included).
-static func half_w(zoom: float, level: int) -> float:
-	return tile_px(zoom) * 0.55 * float(LEVEL_K[clampi(level, 0, 2)])
+static func half_w(zoom: float, r: int) -> float:
+	var i := _info(r)
+	if i.is_empty():
+		return tile_px(zoom) * 0.55
+	return float(i["half_w"]) * zoom
 
 
-## Where fleets in port wait: beside the model on the harbour side (side -1 /
-## +1), a little below its anchor, so they never cover the town or its name.
-static func fleet_spot(site: Vector2, side: float, zoom: float, level: int) -> Vector2:
-	return site + Vector2(side * (half_w(zoom, level) + 24.0), tile_px(zoom) * 0.3)
+## Where fleets in port wait: in the water off the harbour (the town plan's water spot, on the real sea),
+## else beside the model on the harbour side (side -1 / +1), a little below its anchor.
+static func fleet_spot(r: int, site: Vector2, side: float, zoom: float, to_screen: Callable) -> Vector2:
+	var i := _info(r)
+	if not i.is_empty() and (i["water"] as Vector2) != Vector2.ZERO:
+		return to_screen.call(i["water"])
+	return site + Vector2(side * (half_w(zoom, r) + 24.0), tile_px(zoom) * 0.3)
+
+
+## -1 / +1 the side the harbour of r lies on (from the plan), 0 when the plan has none.
+static func harbour_side(r: int) -> float:
+	var i := _info(r)
+	return 0.0 if i.is_empty() else float(i["side"])
+
+
+## The screen rectangle of the model of r relative to its site point (the model sits on the point).
+static func model_rect(zoom: float, r: int) -> Rect2:
+	var i := _info(r)
+	if i.is_empty():
+		var tp := tile_px(zoom)
+		return Rect2(-tp * 0.55, -tp * 0.9, tp * 1.1, tp * 1.4)
+	var off: Vector2 = ((i["c"] as Vector2) - (i["p0"] as Vector2)) * zoom
+	var hw := float(i["half_w"]) * zoom
+	var t := float(i["top"]) * zoom
+	var b := float(i["bottom"]) * zoom
+	return Rect2(off.x - hw, off.y - t, hw * 2.0, t + b)
+
+
+## Pixels the label of r is lifted above its anchor (0: icons).
+static func label_lift_of(zoom: float, r: int) -> float:
+	if not on_sites:
+		return 0.0
+	var i := _info(r)
+	if i.is_empty():
+		return _label_lift
+	return minf(float(i["top"]) * zoom * 0.8, 60.0 + 80.0 * zoom)
+
+
+static func _info(r: int) -> Dictionary:
+	if towns == null or not is_instance_valid(towns) or not on_sites:
+		return {}
+	return towns.call("info", r)
 
 
 ## Ship scale factor: smaller at mid zoom so a fleet is no taller than a town.
@@ -101,7 +141,7 @@ func _process(delta: float) -> void:
 	var z: float = overlay.zoom
 	var st: Dictionary = overlay.state
 	var tbl := MapView.table_on() and MapView.terrain_view   # the miniatures are the map-table style's
-	var s_on := tbl and not st.is_empty() and z >= SITE_MIN_ZOOM
+	var s_on := tbl and not st.is_empty() and z >= SITE_MIN_ZOOM and towns != null and bool(towns.get("on")) and bool(towns.call("planned"))
 	var sh_on := tbl and not st.is_empty() and z >= SHIP_MIN_ZOOM and CData.ships_on()
 	on_sites = s_on
 	on_ships = sh_on
@@ -118,42 +158,6 @@ func _process(delta: float) -> void:
 	queue_redraw()
 
 
-func _kind_of(st: Dictionary, r: int) -> String:
-	var lvl := int(st["regions"][r]["level"])
-	var cul := CState.owner_culture(st, r)
-	if CData.pack == "west":
-		if CSea.haven(st, r):
-			return "haven"
-		if cul == MapGen.CUL_CELTIC:
-			return "maya" if str(CData.REGIONS[r]["key"]) == "tayasal" else "native"
-		return "town_" + "sml"[clampi(lvl, 0, 2)]
-	return "rtown_" + "sml"[clampi(lvl, 0, 2)]
-
-
-func _layers(st: Dictionary, r: int) -> Array:
-	## [back layers, base, front-side layers (drawn after the base)] as names.
-	var kind := _kind_of(st, r)
-	var back: Array = []
-	var after: Array = []
-	var w := CState.walls(st, r)
-	var west := CData.pack == "west"
-	if w > 0:
-		var wn: String
-		if west:
-			wn = "walls1" if (kind == "native" or kind == "maya" or kind == "haven") else "walls%d" % clampi(w, 1, 3)
-		else:
-			wn = "rwalls%d" % clampi(w, 1, 3)
-		back.append(wn + "__back")
-		after.append(wn + "__front")
-	var mid: Array = []
-	if west and CData.ships_on():
-		if CFleet.harbour(r) >= 0:
-			mid.append("port__harbour")
-		if CState.building(st, r, CData.SHIPYARD) > 0:
-			mid.append("yard__slipway")
-	return [back, kind + "__base", mid, after]
-
-
 func _draw() -> void:
 	if overlay == null:
 		return
@@ -161,15 +165,9 @@ func _draw() -> void:
 	if st.is_empty():
 		return
 	var z: float = overlay.zoom
-	var xf: Transform2D = overlay.xform
 	var vp := get_viewport_rect().grow(120.0)
 	_wakes.clear()
 	var items: Array = []   # [screen y, kind, payload...]
-	if on_sites:
-		for r in CData.region_count():
-			var p: Vector2 = xf * overlay.site_point(r)
-			if vp.has_point(p):
-				items.append([p.y, 0, r, p])
 	if on_ships and st.has("fleets"):
 		var fpos: Dictionary = overlay.fleet_positions()
 		for fl in st["fleets"]:
@@ -189,20 +187,7 @@ func _draw() -> void:
 		return
 	material = sd[1]
 	for it in items:
-		if int(it[1]) == 0:
-			var r: int = it[2]
-			var pxm := tile / TILE_M * float(LEVEL_K[clampi(int(st["regions"][r]["level"]), 0, 2)])
-			var col := CData.faction_color(int(st["regions"][r]["owner"]))
-			var ls := _layers(st, r)
-			for nm in ls[0]:
-				_blit(table, shade, str(nm), it[3], pxm, col)
-			_blit(table, shade, str(ls[1]), it[3], pxm, col)
-			for nm in ls[2]:
-				_blit(table, shade, str(nm), it[3], pxm, col)
-			for nm in ls[3]:
-				_blit(table, shade, str(nm), it[3], pxm, col)
-		else:
-			_ship(it[2], it[3], tile / TILE_M * ship_k(z), table, shade)
+		_ship(it[2], it[3], tile / TILE_M * ship_k(z), table, shade)
 	_under.queue_redraw()
 
 

@@ -590,7 +590,16 @@ def build_structure(key, style, sizepx, tilt):
     else:
         rx, ry = max(8, int(round(sizepx * w / h))), sizepx
     ppm = sizepx / ortho
-    if "frame" in st:
+    if st.get("frame") == "auto":
+        # A single piece (tools/structures/gen_spec.py pieces): the scale is fixed like a frame's, the box is its own bounds.
+        pad = 0.8
+        ppm = PPM_256 * sizepx / 256.0
+        rx = int(math.ceil((x1 - x0 + 2 * pad) * ppm)) + 4
+        ry = int(math.ceil((y1 - y0 + 2 * pad) * ppm)) + 4
+        x0, x1, y0, y1 = x0 - pad, x1 + pad, y0 - pad, y1 + pad
+        ortho = max(rx, ry) / ppm
+        w, h = rx / ppm, ry / ppm
+    elif "frame" in st:
         # A fixed frame (ground rectangle + height): every layer of a group
         # shares it, so the sprites overlay exactly; the scale is PPM_256
         # pixels a metre at "256", proportionally less at the smaller sizes.

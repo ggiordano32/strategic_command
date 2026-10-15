@@ -232,7 +232,7 @@ func fleet_positions() -> Dictionary:
 		if port_of.has(int(c)):
 			var pr: int = port_of[int(c)]
 			var side := port_side(pr)
-			var spot := Minis.fleet_spot(to_screen(site_point(pr)), side, zoom, int(state["regions"][pr]["level"]))
+			var spot := Minis.fleet_spot(pr, to_screen(site_point(pr)), side, zoom, to_screen)
 			var stp := (FLEET_W + 4.0) * m * 0.8
 			for k in ids.size():
 				out[int(ids[k])] = spot + Vector2(side * k * stp, 0)
@@ -245,22 +245,25 @@ func fleet_positions() -> Dictionary:
 ## Where the army banners of settlement r stand: beside its model, away from the harbour.
 func _side_spot(r: int, m: float) -> Vector2:
 	var hs := -port_side(r) if CFleet.harbour(r) >= 0 else 1.0
-	var lvl := int(state["regions"][r]["level"])
-	return to_screen(site_point(r)) + Vector2(hs * (Minis.half_w(zoom, lvl) + ARMY_W * 0.5 * m + 4.0), -ARMY_H * 0.2 * m)
+	return to_screen(site_point(r)) + Vector2(hs * (Minis.half_w(zoom, r) + ARMY_W * 0.5 * m + 4.0), -ARMY_H * 0.2 * m)
 
 
 ## The settlement whose miniature covers screen point p (-1 none).
 func _model_at(p: Vector2) -> int:
 	for r in CData.region_count():
 		var q := to_screen(site_point(r))
-		var hw := Minis.half_w(zoom, int(state["regions"][r]["level"])) + ARMY_W * 0.4
-		if absf(p.x - q.x) <= hw and p.y - q.y >= -Minis.tile_px(zoom) * 0.9 and p.y - q.y <= Minis.tile_px(zoom) * 0.5:
+		var mr := Minis.model_rect(zoom, r)
+		if absf(p.x - q.x - (mr.position.x + mr.size.x * 0.5)) <= mr.size.x * 0.5 + ARMY_W * 0.4 and p.y - q.y >= mr.position.y and p.y - q.y <= mr.end.y:
 			return r
 	return -1
 
 
 ## -1 / +1: the side (left / right) of its town where region r's harbour lies.
 func port_side(r: int) -> float:
+	if Minis.on_sites:
+		var ps := Minis.harbour_side(r)
+		if ps != 0.0:
+			return ps
 	var h := CFleet.harbour(r)
 	if h < 0:
 		h = CFleet.dock(r)
@@ -388,7 +391,7 @@ func _draw() -> void:
 			var nm := str(CData.REGIONS[r]["city"])
 			var fs := int(round(FONT * (0.85 + 0.15 * m)))
 			var tw := font.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-			var tp := p + Vector2(-tw * 0.5, -rad - 5.0 - Minis.label_lift())
+			var tp := p + Vector2(-tw * 0.5, -rad - 5.0 - Minis.label_lift_of(zoom, r))
 			draw_string_outline(font, tp, nm, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 4, Color(0, 0, 0, 0.75))
 			draw_string(font, tp, nm, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 1, 0.95))
 	# Pending battles.

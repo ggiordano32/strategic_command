@@ -786,6 +786,164 @@ for kind in SHIPS:
             [-hw * 1.2, -hw * 1.2, hw * 1.2, hw * 1.2, zmax], zex=1.45, nm="%s h%d" % (kind, hd))
     DEFS["ship_%s_def" % kind] = parts
 
+
+# ---------------------------------------------------------------- pieces (the overworld kit, 2026-10-15)
+# Single pieces for game/campaign/town_plan.gd / town_layer.gd: houses, churches, walls, quays ... each at
+# 8 yaws (k * 45 deg anticlockwise from "front towards south (-y)"; pieces symmetric under a half turn have 4,
+# round ones 1). Names p_<piece>__y<k>; the frame is "auto" (tight bounds, a fixed scale).
+MAT.update({
+    "tree_g1": [0.07, 0.17, 0.06], "tree_g2": [0.10, 0.22, 0.08], "tree_dry": [0.25, 0.28, 0.12], "palm_leaf": [0.10, 0.25, 0.08],
+    "orange": [0.16, 0.32, 0.10], "fruit": [0.95, 0.55, 0.15], "wall_ochre": [0.86, 0.72, 0.45],
+})
+PIECES = []     # (name, yaws, def name)
+
+
+def piece(name, parts, yaws=8):
+    DEFS["pc_" + name] = parts
+    PIECES.append((name, yaws))
+
+
+def house_colour(base, colour, tall=False):
+    return [dict(q, m=colour) if q.get("m") == "whitewash" else q for q in DEFS[base]]
+
+
+for cname, col in (("wh", "whitewash"), ("oc", "ochre"), ("bl", "pastel_blue"), ("co", "coquina")):
+    piece("house_s_" + cname, house_colour("house", col))
+    piece("house_m_" + cname, house_colour("house_tall", col))
+for cname, col in (("sa", "wall_ochre"), ("wh", "whitewash")):
+    piece("adobe_" + cname, [
+        box([0, 0, 0], [5.4, 4.6, 3.2], col),
+        box([0, 0, 3.2], [5.8, 5.0, 0.5], "secondary"),
+        box([0, 0.2, 3.7], [4.2, 3.6, 0.3], "stone"),
+        box([0, -2.32, 0], [1.1, 0.1, 1.9], "dark_wood", ol=0),
+        box([-1.7, -2.32, 1.1], [0.9, 0.1, 0.9], "dark_wood", ol=0),
+        box([1.7, -2.32, 1.1], [0.9, 0.1, 0.9], "dark_wood", ol=0),
+    ])
+Y4 = [0, 2, 4, 6]
+for nm, k in (("chapel", 0.9), ("church", 0.78), ("cathedral", 0.66), ("mansion", 0.85)):
+    piece(nm, [use(nm, [0, 0, 0], 0, sc=k)], Y4)
+DEFS["pc_fort_raw"] = ([
+    box([0, 0, 0], [22, 22, 4.2], "coquina"),
+    box([0, 0, 4.2], [22.6, 22.6, 0.7], "stone_lt"),
+    box([0, 0, 4.9], [11, 11, 4.0], "stone_lt"),
+    box([0, 0, 8.9], [11.8, 11.8, 0.8], "stone"),
+    box([0, -11.02, 0], [4.4, 0.1, 3.0], "black", ol=0),
+] + [cyl([sx * 11, sy * 11, 0], 3.6, 8.0, "coquina", n=8, rad2=3.3) for sx in (-1, 1) for sy in (-1, 1)] + [
+    cyl([sx * 11, sy * 11, 8.0], 4.1, 0.8, "stone", n=8) for sx in (-1, 1) for sy in (-1, 1)] + [
+    cone([sx * 11, sy * 11, 8.8], 4.0, 3.4, "primary", n=8) for sx in (-1, 1) for sy in (-1, 1)] + [
+    cyl([0, 0, 9.7], 0.22, 7.0, "dark_wood", n=6, ol=0), box([1.3, 0, 14.6], [2.6, 0.12, 1.6], "primary", ol=0),
+])
+piece("fort", [use("pc_fort_raw", [0, 0, 0], 0, sc=0.72)], [0])
+piece("fountain", DEFS["fountain"], 1)
+piece("well", DEFS["well"], 1)
+piece("hut", DEFS["hut"])
+piece("hut_big", [use("hut", [0, 0, 0], 0, sc=1.6, map={"thatch": "primary"})])
+piece("palapa", DEFS["palapa"])
+piece("totem", DEFS["totem"], 1)
+piece("maya_house", DEFS["maya_house"])
+_pyr = []
+_z = 0.0
+for _w, _h, _m in [(27, 4.4, "stone_lt"), (22.6, 4.4, "stone"), (18, 4.4, "stone_lt"), (13.6, 4.4, "stone"), (9.4, 4.4, "stone_lt")]:
+    _pyr.append(box([0, 0, _z], [_w, _w, _h], _m))
+    _z += _h
+_pyr += [box([0, 0, _z], [6.4, 6.4, 5.2], "stone_lt"), box([0, -3.22, _z + 0.2], [2.0, 0.1, 3.2], "black", ol=0),
+         box([0, 0, _z + 5.2], [7.4, 7.4, 0.9], "secondary"), box([0, 0, _z + 6.1], [3.2, 1.2, 7.6], "stone_lt"),
+         box([0, 0, _z + 13.7], [4.2, 1.4, 1.0], "primary"),
+         part("wedge", [0, -10.05, 0.0], "primary", sz=[12.5, 5.0, 22.0], r=-90)]
+DEFS["pc_pyr_raw"] = _pyr
+piece("maya_pyramid", [use("pc_pyr_raw", [0, 0, 0], 0, sc=0.72)], [0])
+piece("stela", DEFS["stela"], 1)
+piece("shack_a", DEFS["shack"])
+piece("shack_b", [dict(q, m="dark_wood") if q.get("m") == "primary" else q for q in DEFS["shack"]])
+piece("tent", DEFS["tent"])
+piece("cannon", DEFS["cannon"])
+piece("barrels", [use("barrel", [0, 0, 0], 0, sc=1.4), use("barrel", [1.6, -0.8, 0], 0, sc=1.4), use("barrel", [-0.8, -1.6, 0], 0, sc=1.4)], 1)
+piece("hullframe", [use("hullframe", [0, 0, 1.2], 0, sc=1.1)])
+piece("rowboat", DEFS["rowboat"])
+piece("skull_rock", [use("skull_rock", [0, 0, 0], 0, sc=1.3)], 1)
+piece("flagpole", DEFS["pole_flag_black"], 1)
+piece("roman_house", DEFS["roman_house"])
+piece("hovel", DEFS["hovel"])
+piece("shrine", DEFS["shrine"], 1)
+piece("temple", [use("temple_front", [0, 0, 0], 0, sc=0.62)], Y4)
+piece("basilica", [use("basilica", [0, 0, 0], 0, sc=0.8)], Y4)
+piece("tower_rome", DEFS["tower_rome"], 1)
+# walls: along local x, 6 m long, a half turn symmetric
+piece("pal_wall", [cyl([x, 0, 0], 0.7, 4.8, "palisade", n=6, rad2=0.62) for x in (-2.5, -1.5, -0.5, 0.5, 1.5, 2.5)] +
+      [cone([x, 0, 4.8], 0.7, 1.4, "palisade", n=6) for x in (-2.5, -1.5, -0.5, 0.5, 1.5, 2.5)] +
+      [box([0, 0.55, 2.2], [6, 0.35, 0.4], "dark_wood", ol=0), box([0, 0.55, 3.6], [6, 0.35, 0.4], "dark_wood", ol=0)], 4)
+piece("pal_post", [cyl([0, 0, 0], 1.0, 7.0, "dark_wood", n=6, rad2=0.85), cone([0, 0, 7.0], 1.0, 2.4, "dark_wood", n=6),
+                   box([0, 0, 5.4], [0.2, 0.2, 0.2], "secondary", ol=0)], 1)
+piece("pal_gate", [cyl([sx, 0, 0], 1.05, 7.4, "dark_wood", n=6) for sx in (-3.4, 3.4)] +
+      [box([0, 0, 6.0], [8.6, 1.3, 1.1], "secondary"), box([0, 0, 0], [5.0, 0.4, 5.2], "plank", ol=0),
+       box([0, 0, 6.2], [0.2, 0.2, 0.2], "primary", ol=0)], 4)
+piece("stone_wall", [box([0, 0, 0], [6.1, 3.0, 4.4], "stone_lt"), box([0, 0, 4.4], [6.1, 3.4, 0.7], "stone")] +
+      [box([x, 0, 5.1], [1.1, 3.4, 0.6], "stone") for x in (-2.4, 0, 2.4)], 4)
+piece("stone_tower", [cyl([0, 0, 0], 2.9, 7.4, "stone_lt", n=8, rad2=2.6), cyl([0, 0, 7.0], 3.4, 1.0, "stone", n=8),
+                      cone([0, 0, 8.0], 3.5, 3.6, "primary", n=8)], 1)
+piece("stone_gate", [box([0, 0, 0], [9.0, 4.4, 7.6], "stone_lt"), box([0, -2.22, 0], [3.6, 0.1, 5.0], "black", ol=0),
+                     box([0, 0, 7.6], [10, 5.2, 0.9], "stone"), box([0, -2.4, 8.5], [3.2, 0.7, 4.4], "primary")], 4)
+piece("bast_wall", [box([0, 0, 0], [6.1, 4.4, 3.6], "coquina"), box([0, 0, 3.6], [6.1, 4.8, 0.6], "stone_lt")], 4)
+piece("bast_point", [part("poly", None, "coquina", pts=[[-4.5, -4.2], [3.5, -4.2], [7.4, 0], [3.5, 4.2], [-4.5, 4.2]], z0=0, z1=4.0, sc0=1.0, sc1=0.96),
+                     part("poly", None, "stone_lt", pts=[[-4.5, -4.2], [3.5, -4.2], [7.4, 0], [3.5, 4.2], [-4.5, 4.2]], z0=4.0, z1=4.6, sc0=1.0, sc1=1.0, ol=0),
+                     use("cannon", [3.2, 0, 4.6], 0, sc=0.8)])
+piece("bast_gate", [box([0, 0, 0], [9.0, 5.2, 6.2], "coquina"), box([0, -2.62, 0], [3.8, 0.1, 4.6], "black", ol=0),
+                    box([0, 0, 6.2], [9.6, 5.8, 0.8], "stone_lt"), box([0, -2.8, 7.0], [3.0, 0.6, 3.6], "primary", ol=0)], 4)
+# harbour
+piece("quay", [box([0, 0, 0], [6.1, 3.6, 0.9], "stone_lt"), box([0, -1.75, 0], [6.1, 0.2, 0.9], "stone", ol=0),
+               cyl([-2.2, -1.2, 0.9], 0.3, 0.7, "dark_wood", n=6, ol=0), cyl([2.2, -1.2, 0.9], 0.3, 0.7, "dark_wood", n=6, ol=0)])
+piece("pier", [box([0, -6.0, 0.35], [3.8, 13.0, 0.5], "plank")] +
+      [cyl([sx * 2.0, y, -1.5], 0.35, 2.5, "dark_wood", n=6, ol=0) for sx in (-1, 1) for y in (-1.5, -4.5, -7.5, -10.5)] +
+      [use("crate", [1.0, -8.5, 0.6], 20, sc=0.9), use("barrel", [-1.0, -9.5, 0.6], 0, sc=1.2)])
+piece("crane", DEFS["crane"])
+piece("warehouse", DEFS["warehouse"])
+piece("shed", [dict(q, m="secondary") if q.get("m") == "primary" else q for q in DEFS["warehouse"]])
+piece("slipway", [part("wedge", [0, -8.0, 0.1], "plank", sz=[18, 8.4, 2.2], r=-90),
+                  use("hullframe", [0, -7.0, 1.6], 90, sc=0.9)])
+piece("lighthouse", [use("lighthouse_l", [0, 0, 0], 0, sc=0.8)], 1)
+piece("canoe", [part("poly", None, "canoe", pts=[[-4.5, -0.9], [-1.8, -1.3], [2.2, -1.3], [4.5, -0.1], [4.5, 0.1], [2.2, 1.3], [-1.8, 1.3], [-4.5, 0.9]], z0=-0.2, z1=0.8, sc0=0.6, sc1=1.0)])
+# trees (the map's palette)
+piece("tree_b1", [cyl([0, 0, 0], 0.4, 3.0, "wood", n=6, rad2=0.3), sph([0, 0, 4.2], [2.7, 2.7, 2.3], "tree_g1", n=7),
+                  sph([-0.6, -0.5, 5.0], [1.4, 1.4, 1.2], "tree_g2", n=6, ol=0)], 1)
+piece("tree_b2", [cyl([0, 0, 0], 0.4, 2.6, "wood", n=6, rad2=0.3), sph([0, 0, 3.8], [3.2, 3.2, 2.7], "tree_g2", n=7),
+                  sph([-0.7, -0.6, 4.8], [1.6, 1.6, 1.3], "tree_g1", n=6, ol=0)], 1)
+DEFS["pc_palm"] = [dict(q, m="palm_leaf") if q.get("m") == "leaf" else q for q in DEFS["palm"]]
+piece("palm_a", DEFS["pc_palm"], 1)
+piece("palm_b", [use("pc_palm", [0, 0, 0], 140, sc=1.15)], 1)
+piece("orange", [cyl([0, 0, 0], 0.3, 1.6, "wood", n=6), sph([0, 0, 2.7], [1.9, 1.9, 1.7], "orange", n=7),
+                 sph([0.7, -0.9, 3.0], [0.28, 0.28, 0.28], "fruit", n=4, ol=0), sph([-0.8, -0.4, 2.4], [0.28, 0.28, 0.28], "fruit", n=4, ol=0)], 1)
+
+# landscape trees and rocks (game/campaign/landtrees.gd): crowns and rock bodies are the primary colour (tinted per tree by the map palette), highlights the secondary, shadow sides the accent
+MAT.update({"primary": [0.55, 0.64, 0.50], "secondary": [0.70, 0.78, 0.60], "primary": [0.46, 0.58, 0.48], "secondary": [0.56, 0.68, 0.54],
+            "primary": [0.62, 0.64, 0.46], "primary": [0.55, 0.68, 0.45], "primary": [0.74, 0.72, 0.68], "accent": [0.58, 0.56, 0.52]})
+piece("lt_b1", [cyl([0, 0, 0], 0.4, 2.6, "wood", n=6, rad2=0.3), sph([0, 0, 3.8], [3.0, 3.0, 2.6], "primary", n=7),
+                sph([-0.8, -0.7, 4.9], [1.6, 1.6, 1.3], "secondary", n=6, ol=0)], 1)
+piece("lt_b2", [cyl([0, 0, 0], 0.4, 2.4, "wood", n=6, rad2=0.3), sph([-0.4, 0, 3.4], [2.7, 2.6, 2.3], "primary", n=7),
+                sph([1.2, 0.8, 4.0], [2.0, 2.0, 1.8], "primary", n=6), sph([-1.0, -0.9, 4.6], [1.4, 1.4, 1.2], "secondary", n=6, ol=0)], 1)
+piece("lt_b3", [cyl([0, 0, 0], 0.45, 2.0, "wood", n=6, rad2=0.35), sph([0, 0, 3.1], [3.4, 3.2, 2.0], "primary", n=7),
+                sph([-1.0, -0.8, 4.0], [1.7, 1.7, 1.1], "secondary", n=6, ol=0)], 1)
+for _i, (_h, _r) in enumerate([(1.0, 1.0), (1.25, 0.88), (0.85, 1.12)]):
+    piece("lt_pine%d" % (_i + 1), [cyl([0, 0, 0], 0.35, 1.6 * _h, "wood", n=6),
+                                   cone([0, 0, 1.2 * _h], 2.7 * _r, 3.4 * _h, "primary", n=7), cone([0, 0, 3.2 * _h], 2.2 * _r, 3.1 * _h, "secondary", n=7),
+                                   cone([0, 0, 5.0 * _h], 1.5 * _r, 3.0 * _h, "primary", n=7)], 1)
+piece("lt_scrub1", [sph([0, 0, 1.1], [2.3, 2.1, 1.7], "primary", n=6), sph([-0.5, -0.5, 1.8], [1.2, 1.1, 0.9], "secondary", n=5, ol=0)], 1)
+piece("lt_scrub2", [sph([-0.8, 0, 1.0], [1.7, 1.6, 1.4], "primary", n=6), sph([1.0, 0.5, 0.9], [1.5, 1.4, 1.2], "primary", n=6)], 1)
+piece("lt_cypress", [cyl([0, 0, 0], 0.3, 1.0, "wood", n=6), cone([0, 0, 0.8], 1.5, 9.0, "primary", n=7)], 1)
+piece("lt_palm1", [cyl([0, 0, 0], 0.38, 6.5, "wood", n=6, rad2=0.22, r=[0, 6, 0]), sph([0.6, 0, 6.4], [3.2, 3.2, 1.0], "primary", n=6), sph([0.6, 0, 7.1], [1.8, 1.8, 0.8], "primary", n=6)], 1)
+piece("lt_palm2", [use("pc_palm_lt", [0, 0, 0], 140, sc=1.1)], 1) if False else None
+DEFS["pc_palm_lt"] = [cyl([0, 0, 0], 0.38, 6.5, "wood", n=6, rad2=0.22, r=[0, -8, 0]), sph([-0.7, 0, 6.3], [3.0, 3.0, 1.0], "primary", n=6), sph([-0.7, 0, 7.0], [1.7, 1.7, 0.8], "primary", n=6)]
+piece("lt_palm2", DEFS["pc_palm_lt"], 1)
+piece("lt_rock1", [sph([0, 0, 0.2], [1.6, 1.4, 1.2], "primary", n=6), sph([1.0, 0.6, 0], [0.8, 0.7, 0.6], "accent", n=5)], 1)
+piece("accent", [sph([0, 0, 0.1], [1.3, 1.5, 1.0], "primary", n=6), sph([-0.9, -0.5, 0], [0.7, 0.7, 0.5], "accent", n=5)], 1)
+piece("lt_rock3", [sph([0, 0, 0.2], [1.9, 1.3, 0.9], "primary", n=6)], 1)
+piece("lt_crag", [box([0, 0, 0], [2.4, 2.0, 3.0], "accent", r=18), box([0.8, 0.6, 0], [1.6, 1.4, 2.2], "primary", r=-25), box([-0.9, -0.6, 0], [1.2, 1.2, 1.6], "primary", r=40)], 1)
+
+for _nm, _yaws in PIECES:
+    for _k in (range(_yaws) if isinstance(_yaws, int) else _yaws):
+        S["p_%s__y%d" % (_nm, _k)] = {"name": "p_%s y%d" % (_nm, _k), "zex": ZEX, "frame": "auto",
+                                      "parts": [{"use": "pc_" + _nm, "p": [0, 0, 0], "r": 45.0 * _k}]}
+json.dump({"pieces": PIECES}, open(os.path.join(HERE, "pieces.json"), "w"))
+
 OLD["defs"] = DEFS
 OLD["structures"] = S
 json.dump(OLD, open(SPEC_PATH, "w"), separators=(",", ":"))

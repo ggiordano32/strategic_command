@@ -3,7 +3,7 @@
 
     python3 tools/structures/pack.py [--frames DIR] [--out assets/minis]
 
-Two sets, "big" (bases rendered at 256, ships at 128) and "small" (bases 96,
+Two sets, "big" (kit pieces rendered at 300, ships at 128) and "small" (pieces 140,
 ships 64); each is a shade atlas (RGBA, lit colours, faction parts white) and
 a mask atlas (R primary, G secondary, B accent; A always 255). Sprites are
 cropped to their alpha box; the anchor is where the ground origin (0,0,0) of
@@ -17,7 +17,7 @@ import compose as C
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
-SETS = {"big": (256, 128), "small": (96, 64)}   # sizes: (bases, ships)
+SETS = {"big": (300, 128), "small": (140, 64)}   # sizes: (kit pieces "p_*", ships)
 GUT = 2
 W = 2048
 
@@ -36,6 +36,8 @@ def main():
     for sname, (bs, ss) in SETS.items():
         sprites = []
         for key in names:
+            if not (key.startswith("p_") or key.startswith("ship_")):
+                continue   # the older whole-town sprites are not packed any more
             size = ss if key.startswith("ship_") else bs
             base = os.path.join(frames, "%s_%d" % (key, size))
             if not os.path.exists(base + "_shade.png"):
@@ -52,6 +54,12 @@ def main():
             sh_c[..., :3] *= (sh_c[..., 3:4] > 0.0)
             ox, oy = info["origin_px"]
             sprites.append((key, sh_c, mk_c, ox - x0, oy - y0, info["ppm"]))
+        # a white, primary-masked block: untextured shapes (the map trees round a town) draw through the same shader
+        wsh = np.ones((8, 8, 4), np.float32)
+        wmk = np.zeros((8, 8, 4), np.float32)
+        wmk[..., 0] = 1.0
+        wmk[..., 3] = 1.0
+        sprites.append(("white", wsh, wmk, 4.0, 4.0, 1.0))
         # shelf packing, tallest first
         order = sorted(sprites, key=lambda s: -s[1].shape[0])
         x = y = rowh = 0

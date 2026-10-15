@@ -41,6 +41,8 @@ const LoadingPanel := preload("res://game/campaign/loading_panel.gd")
 const MapView := preload("res://game/campaign/map_view.gd")
 const MapOverlay := preload("res://game/campaign/map_overlay.gd")
 const MinisLayer := preload("res://game/campaign/minis_layer.gd")
+const TownLayer := preload("res://game/campaign/town_layer.gd")
+const LandTrees := preload("res://game/campaign/landtrees.gd")
 const TableFrame := preload("res://game/campaign/table_frame.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const Saves := preload("res://game/campaign/saves.gd")
@@ -85,6 +87,10 @@ var world: Node2D
 var map_view: MapView
 var overlay: MapOverlay
 var minis: MinisLayer
+var town_layer: TownLayer
+var land_trees: LandTrees
+var _mv_zoom := -1.0   # the zoom the map view was last drawn at
+var _mv_settle := 0.0
 var table_frame: TableFrame
 var ui: Control
 var top_label: Label
@@ -171,6 +177,13 @@ func _ready() -> void:
 	ol.add_child(minis)
 	overlay = MapOverlay.new()
 	minis.overlay = overlay
+	land_trees = LandTrees.new()   # the landscape's trees and rocks as models: under the towns, over the map
+	world.add_child(land_trees)
+	land_trees.overlay = overlay
+	town_layer = TownLayer.new()   # the towns assembled from kit pieces, on the map itself (under the overlay)
+	world.add_child(town_layer)
+	town_layer.overlay = overlay
+	MinisLayer.towns = town_layer
 	ol.add_child(overlay)
 	var frame_layer := CanvasLayer.new()   # the map-table frame: over the map and its markers, under the interface
 	frame_layer.layer = 1
@@ -2295,14 +2308,24 @@ func _process(delta: float) -> void:
 	world.scale = Vector2(zoom, zoom)
 	map_view.zoom = zoom
 	map_view.view_rect = Rect2(-offset / zoom, _vp() / zoom)
-	map_view.footprint_check()
 	overlay.zoom = zoom
 	var xf := Transform2D(0.0, Vector2(zoom, zoom), 0.0, offset)
 	table_frame.update_view(xf, _vp())
 	if xf != overlay.xform:
 		overlay.xform = xf
 		overlay.queue_redraw()
-		map_view.queue_redraw()  # line widths follow the zoom
+		# line widths follow the zoom: the map's own drawing is redone when the zoom moved 3 %, not on every pan or frame
+		# (while the zoom is moving only a 35 % change redraws; the rest waits until it settles)
+		var dz := absf(zoom - _mv_zoom) / maxf(_mv_zoom, 0.01)
+		_mv_settle = 0.12
+		if dz > 0.35 or _mv_zoom < 0.0:
+			_mv_zoom = zoom
+			map_view.queue_redraw()
+	if _mv_settle > 0.0:
+		_mv_settle -= delta
+		if _mv_settle <= 0.0 and absf(zoom - _mv_zoom) > _mv_zoom * 0.02:
+			_mv_zoom = zoom
+			map_view.queue_redraw()
 	if sel_army >= 0 or not moves.is_empty() or not map_view.targets.is_empty():
 		map_view.queue_redraw()
 		overlay.queue_redraw()

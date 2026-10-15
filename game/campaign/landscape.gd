@@ -24,6 +24,7 @@ const CGrid := preload("res://campaign/cgrid.gd")
 const Geo := preload("res://game/campaign/map_geo.gd")
 const GroundPalette := preload("res://game/ground_palette.gd")
 const MapGen := preload("res://sim/mapgen.gd")
+const TownPlan := preload("res://game/campaign/town_plan.gd")
 
 const LIFT := 0.30             # the battle palettes are darker than a map should be
 const BLUR := 2                # cells, box blur applied twice (land only)
@@ -43,6 +44,17 @@ static var ground_tex: ImageTexture = null
 static var mesh: ArrayMesh = null
 static var bake_ms := -1.0
 static var tree_count := 0
+## Map-table style (town_plan.gd): the forest is cleared round each town and its fields; the trees in the ring
+## just outside are not in the mesh but listed here (region -> [[x, y, kind, shade, radius, rot, palette]]) for
+## the town layer to draw with the town's pieces in one y order. Set `clear_towns` before the bake.
+static var clear_towns := false
+static var town_trees := {}
+## Map-table style, not Graphics Low: the trees and rocks are models (landtrees.gd draws them from these lists:
+## trees [x, y, kind, shade, radius, rot, palette], specks [x, y, rock, radius]) instead of mesh dots.
+static var models := false
+static var glyph_gen := 0   # bumped by each glyph bake (landtrees.gd rebuilds its instances)
+static var tree_list: Array = []
+static var speck_list: Array = []
 static var relief_tex: ImageTexture = null
 static var _elev := PackedFloat32Array()   # metres, GeoFields.fine()
 const GeoFields := preload("res://game/campaign/geo_fields.gd")
@@ -76,6 +88,7 @@ static func _sync_gen() -> void:
 	mesh = null
 	bake_ms = -1.0
 	tree_count = 0
+	town_trees = {}
 	relief_tex = null
 	_elev = PackedFloat32Array()
 	speck_count = 0
@@ -98,6 +111,13 @@ static func bake() -> void:
 		return
 	bake_relief()
 	bake_land()
+
+
+## Draw the glyphs again (the town clearing changed with the map style).
+static func rebake_glyphs() -> void:
+	_sync_gen()
+	if _baked:
+		_bake_glyphs()
 
 
 ## Stage 1: the relief shading (cached in user:// after the first run).
@@ -660,7 +680,7 @@ static func _bake_glyphs() -> void:
 	for ri in Geo.RIVERS.size():
 		for c in Geo.line_cells(Geo.river_line(ri), px, w, h):
 			clear[c] = 1
-	for r in CData.region_count():
+	for r in (0 if clear_towns else CData.region_count()):   # (map-table style: the town plan clears its own ground)
 		for c0 in [CGrid.site(r), CGrid.port(r), CGrid.camp(r)]:
 			if c0 < 0:
 				continue
@@ -672,6 +692,23 @@ static func _bake_glyphs() -> void:
 						clear[yy * w + xx] = 1
 	var trees_at: Array = []   # [x, y, kind, shade, radius, rot] collected, drawn by y
 	var specks: Array = []
+	# the towns' cleared ground (table style): per grid cell the sites that may reach it
+	town_trees = {}
+	var tsites: Array = []
+	var tcells := {}
+	if clear_towns:
+		for r in CData.region_count():
+			var sd := TownPlan.site(r, true)
+			tsites.append(sd)
+			town_trees[r] = []
+			var cc: Vector2 = sd["c"]
+			var rr: float = float(sd["clear_r"]) + 44.0
+			for yy in range(maxi(int((cc.y - rr) / px), 0), mini(int((cc.y + rr) / px) + 1, h)):
+				for xx in range(maxi(int((cc.x - rr) / px), 0), mini(int((cc.x + rr) / px) + 1, w)):
+					var ck := yy * w + xx
+					if not tcells.has(ck):
+						tcells[ck] = []
+					(tcells[ck] as Array).append(r)
 	for c in w * h:
 		var r := _near[c]
 		if r < 0:
@@ -735,6 +772,22 @@ static func _bake_glyphs() -> void:
 				var p := Vector2(tx, ty)
 				if not (_in_land(p + Vector2(rad, rad)) and _in_land(p - Vector2(rad, rad))):
 					continue
+			if tcells.has(c):
+				var tp := Vector2(tx, ty)
+				var gone := false
+				var ringed := -1
+				for ri in (tcells[c] as Array):
+					var tsd: Dictionary = tsites[int(ri)]
+					if TownPlan.clears(tsd, tp):
+						gone = true
+						break
+					if TownPlan.in_ring(tsd, tp):
+						ringed = int(ri)
+				if gone:
+					continue
+				if ringed >= 0:
+					(town_trees[ringed] as Array).append([tx, ty, kd, int(_h(x + q, y + q, 38) * 3.0), rad, _h(x, y + q, 39) * TAU, pi])
+					continue
 			trees_at.append([tx, ty, kd, int(_h(x + q, y + q, 38) * 3.0), rad, _h(x, y + q, 39) * TAU, pi])
 		# Speckles: rock on steep and rocky ground, scrub and small rocks on
 		# dry ground; the plains stay quiet.
@@ -757,22 +810,39 @@ static func _bake_glyphs() -> void:
 			var rock := rocky or steep or _h(x + q, y, 45) < 0.45
 			if coastal and not _in_land(Vector2(sx, sy)):
 				continue
+			if tcells.has(c):
+				var cleared := false
+				for ri2 in (tcells[c] as Array):
+					if TownPlan.clears(tsites[int(ri2)], Vector2(sx, sy)):
+						cleared = true
+						break
+				if cleared:
+					continue
 			specks.append([sx, sy, rock, 1.1 + 1.1 * _h(x + q, y, 46)])
 	# Specks first (under), then trees by y.
 	var ns2 := 0
+	speck_list = []
+	tree_list = []
 	for s in specks:
 		if ns2 >= MAX_SPECKS:
 			break
 		ns2 += 1
-		_speck(Vector2(s[0], s[1]), bool(s[2]), float(s[3]))
+		if models:
+			speck_list.append(s)
+		else:
+			_speck(Vector2(s[0], s[1]), bool(s[2]), float(s[3]))
 	speck_count = ns2
 	trees_at.sort_custom(func(a, b): return a[1] < b[1])
 	for t in trees_at:
 		if tree_count >= MAX_TREES:
 			break
-		_tree(Vector2(t[0], t[1]), int(t[2]), int(t[3]), float(t[4]), float(t[5]), int(t[6]))
+		if models:
+			tree_list.append(t)
+		else:
+			_tree(Vector2(t[0], t[1]), int(t[2]), int(t[3]), float(t[4]), float(t[5]), int(t[6]))
 		tree_count += 1
 	_bake_peaks()
+	glyph_gen += 1
 	mesh = ArrayMesh.new()
 	var arr := []
 	arr.resize(Mesh.ARRAY_MAX)
@@ -902,6 +972,49 @@ static func _tree(p: Vector2, kind: int, shade: int, rad: float, rot: float, pi:
 		_fan(p + Vector2(-rad * 0.3, -rad * 0.3), _rings[10], rad * 0.42, rad * 0.42, col.lightened(0.28))
 	else:
 		_fan(p, _rings[10], rad * 0.3, rad * 0.3, col.lightened(0.2))
+
+
+## A map tree as the canvas item `ci` draws it (the town layer's ring trees; same look as the mesh trees).
+static func draw_tree(ci: CanvasItem, t: Array, tex: Texture2D = null, uv: Vector2 = Vector2.ZERO) -> void:
+	_init_rings()
+	var p := Vector2(float(t[0]), float(t[1]))
+	var kind := int(t[2])
+	var rad := float(t[4])
+	var rot := float(t[5])
+	var col := tree_color(int(t[6]), int(t[3]))
+	var v := int(rot * 10.0) % 3
+	var ring: PackedVector2Array
+	var sx := rad
+	match kind:
+		1:
+			ring = _rings[3 + v]
+		2:
+			ring = _rings[6 + v]
+		3:
+			ring = _rings[9]
+			sx = rad * 0.85
+		_:
+			ring = _rings[v]
+	_ci_fan(ci, p + Vector2(rad * 0.3, rad * 0.35), ring, sx, rad, Color(0.05, 0.08, 0.03, 0.34), tex, uv)
+	_ci_fan(ci, p, ring, sx, rad, col, tex, uv)
+	if kind != 1:
+		_ci_fan(ci, p + Vector2(-rad * 0.3, -rad * 0.3), _rings[10], rad * 0.42, rad * 0.42, col.lightened(0.28), tex, uv)
+	else:
+		_ci_fan(ci, p, _rings[10], rad * 0.3, rad * 0.3, col.lightened(0.2), tex, uv)
+
+
+## (A texture and a uv: the polygon samples that texel, for canvas items with a texture-driven shader.)
+static func _ci_fan(ci: CanvasItem, ctr: Vector2, pts: PackedVector2Array, sx: float, sy: float, col: Color, tex: Texture2D, uv: Vector2) -> void:
+	var o := PackedVector2Array()
+	for q in pts:
+		o.append(Vector2(ctr.x + q.x * sx, ctr.y + q.y * sy))
+	if tex != null:
+		var uvs := PackedVector2Array()
+		uvs.resize(o.size())
+		uvs.fill(uv)
+		ci.draw_colored_polygon(o, col, uvs, tex)
+	else:
+		ci.draw_colored_polygon(o, col)
 
 
 static func _speck(p: Vector2, rock: bool, r: float) -> void:

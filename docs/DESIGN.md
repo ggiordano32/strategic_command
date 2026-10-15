@@ -4395,18 +4395,56 @@ about 88 px x sqrt(zoom) wide, shown from zoom 0.55, ships from 0.35): base by c
 size, harbour (port), slipway (Shipyard level), walls (palisade / stone / star fort), ships by
 heading; the overlay keeps names, banners and hit areas.
 
-**Settlements in the countryside (2026-10-14).** The miniatures have no ground tiles any more (`build.py`
-leaves out `ground` parts and flat dirt / cobble / grass paint; `SC_BASES=1` brings them back): buildings,
-walls, harbour, slipway and trees only, same anchors. `minis.gdshader` adds the battle diorama finish (rim
-light on north-west edges, silhouette line, saturation 1.18, contrast 1.08). The settlement's ground is painted
-into the land by `game/campaign/footprint.gd`, called from `map_view.gd` after the trees and before the roads
-(table style, zoom >= 0.55, sized like the miniatures): feathered lawn / earth / sand clearing (irregular, kept on
-land through the coast field), street cross, 2 to 4 furrowed fields (crop colours, hedge edge) and 1 to 2
-orchards, tracks to the nearest road lines and to each field, a sand apron and stone quay where a harbour town
-meets the sea, soft contact shadow south-east plus AO under the town and a shadow ring under walls. Only sites
-around the view are drawn (`view_rect`, redrawn when the view leaves the covered area). Low: one feather ring,
-at most 2 fields, no furrows or orchards. Ships keep their sprites with a soft shadow and a small foam wake
-(`minis_layer.gd` `_under`). After repacking the atlas run `godot --headless --import` before headless shots.
+**Overworld towns modelled into the landscape (as built, 2026-10-15, step 1; view only).** A town is no longer
+a sprite but kit pieces placed on the real terrain.
+- **Kit pieces** (`tools/structures/gen_spec.py` "pieces", `build.py` frame "auto", `pack.py`): `p_<piece>__y<k>`
+  at 8 yaws (k * 45 degrees, front towards the south at k = 0; half-turn symmetric pieces 4, round ones 1, big
+  landmarks 1 to 4): houses by culture and wall colour (colonial tile roof S / M, adobe flat roof, native hut /
+  palapa / chief hut, Maya house and pyramid, haven shack / tent, Roman house / hovel / temple / basilica),
+  chapel, church, cathedral, mansion, fort, fountain, well, walls (palisade, stone, bastion: straight 6 m, post /
+  tower / bastion point, gate), quay, pier, crane, warehouse, shed, slipway, lighthouse, beached boats, trees and
+  palms. Camera and light as before (52 degrees, NW, no bases, diorama finish). Atlases: big 2048 x 1024 (pieces
+  at 4.2 px a metre, ships at 128) about 14.7 MB of video memory with its mask, small 2048 x 256 (pieces 1.97 px a
+  metre) about 3.1 MB; Graphics Low loads the small one only.
+- **Plan** (`town_plan.gd`, pure view, deterministic from the region index): `site(r)` is the static layout: the
+  footprint (24 radii, cut by the coast field, steep ground and the half way line to the neighbours; the centre is
+  shifted up to 8 px for the best fit), the way up the slope, the sea direction and shore points, street axis
+  (along the contour on a hill, along the shore at a harbour, else seeded), 3 to 7 street polylines that follow
+  the contour, house slots along the streets (growth order: nearest the plaza first) plus infill, ring slots for
+  huts, the church spot (inland / uphill), the citadel on the highest ground, field and orchard sites on gentle
+  ground. `plan(st, r)` is what the state shows: size by level (0.62 / 0.8 / 1.0 of the footprint), houses chosen by
+  culture, the harbour only for a port and only when the shore is within reach (quays on the real shoreline, piers,
+  warehouses, the lighthouse on the most seaward point, boats, the slipway and shed when the shipyard is built),
+  walls walked round the footprint as a lattice path in 8 directions with towers and a gate where the main street
+  leaves (the harbour side left open). One metre is 1.2 px at every zoom, so the town scales with the map and
+  never outgrows its land. 49 plans cost about 350 ms once.
+- **Draw** (`town_layer.gd`): a child of the screen's `world` (map transform: pan and zoom are free), one canvas
+  item per town, drawn again only when its plan changes or the atlas size flips at a zoom threshold (only the
+  towns on screen, 8 a frame), pieces sorted by y together with the map trees in the ring just outside the cleared
+  ground. Overlay questions (label lift, banner side, fleet spot in the harbour's water, hit rectangle) come from
+  `minis_layer.gd` statics fed by the plan. `minis_layer.gd` now only draws ships.
+- **Ground** (`town_paint.gd`, `table_land.gdshader` uniform `towns`): the whole town ground (feathered clearing,
+  packed earth, streets and plaza, ploughed fields and orchards, fallow meadow, tracks to the road lines, quays)
+  and the cast shadows of every piece are painted once into a transparent SubViewport texture (2 world px a texel,
+  3 on Low) when the map loads and again when a town changes; the land shader mixes it in before the hillshade, so
+  it is lit like the land and has no patch edge. `footprint.gd` is gone: no redraw on zoom or pan.
+  `landscape.gd` clears the forest inside each footprint and field and hands the ring trees to the town.
+- **Landscape trees and rocks as models** (`landtrees.gd`, `landtrees.gdshader`, not Graphics Low): the map's
+  tree kinds (broadleaf x3, pine x3, scrub x2, cypress, palm x2 in the tropics) and rocks (x3, crag) from the
+  atlas, one MultiMesh at the old dots' positions and sizes, tinted by the palette, sorted by y; both atlas sizes
+  are prepared as instance buffers at bake, a zoom threshold swaps one buffer. Their cast shadows are baked into
+  the same ground texture. Low keeps the mesh dots.
+- **One map look** (`map_look.gdshaderinc`, `map_look.gd`): the terrain, pieces, ships and trees include the same
+  constants (north-west light, ink colour, four light bands) and share one gradient-map LUT and one tiling grain
+  texture sampled in screen space; the pieces' light is snapped to the terrain's bands, saturation 1.16 after
+  the LUT, the coast ink on silhouettes. Graphics Low: LUT and saturation only (no bands, no grain).
+- Costs (desktop, `cbench.gd`: steady frame at zoom 1.2 and a sweep 0.6 - 2.4 - 0.6, vsync off): the map is redrawn
+  on zoom only after a 35 % change or when the zoom settles (the old path redrew it on every pan or zoom frame);
+  High: steady 7.8 ms (HEAD 10.1), sweep worst frame 28 ms (HEAD 54), 7 of 400 frames over 16 ms (HEAD 399, the
+  rest of the sweep averages 11 ms against 35); Low: steady 8.4 ms (HEAD 8.0, +4.7 %), sweep worst 33 ms, 8 over.
+  The frames still over 16 ms are the map's own few redraws. After repacking the atlas run `godot --headless
+  --import`. Not yet seen on the Tab S7. Step 2: landmarks (El Morro, Cartagena's walls, Tayasal's temple), growth
+  polish, ships' baked contact shadow (they keep the per-frame one).
 
 ### Audio (as built, 2026-10-10)
 

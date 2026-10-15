@@ -1464,35 +1464,20 @@ rim light, outline and saturation). Level 1 phases: 1 kit walls / towers
 streets with culture palettes, 3 trees / rocks / cliffs, 4 the full
 shadow and AO layer, 5 splatted ground, 6 the look setting (diorama default, painterly option).
 
-**FIRST WHEN RESUMED (user, 2026-10-14): overworld towns modelled into
-the landscape.** Today each town is one pre-rendered sprite with painted
-ground round it, so it reads as placed on the map. Requirements:
-1. Site-shaped: the layout follows its ground (a hill town steps up the
-   slope, citadel on top; a coastal town's harbour faces the real water,
-   quays on the real shoreline; Tayasal on its lake island; no lighthouse
-   or quay inland).
-2. One light and finish: the terrain's light and shadow direction, the
-   same colour grade, outlines no heavier than the coast ink.
-3. Consistent scale: exaggerated but one ratio per kind; the town's trees
-   match the map's trees; a town never outgrows its land (Port Royal).
-4. No edges: no disc or patch outline; the terrain shader paints the town
-   ground (grass -> dirt -> streets -> plaza).
-5. The land reacts: forest cleared round the town, fields on the contours
-   and off woods and steep slopes, roads run into the streets, quays and
-   beached boats on the shore.
-6. Depth: shadows onto the terrain, correct sorting with trees.
-7. Variety: towns assembled from kit pieces by culture, size and seed;
-   landmarks for famous cities (El Morro at Havana, Cartagena's walls,
-   Tayasal's temple).
-8. Growth changes the layout (size, walls, shipyard, harbour).
-9. Labels and banners beside the town, never on it.
-10. Costs: no zoom hitch over 16 ms (the current footprint redraw costs up
-    to 56 ms), a cheap Graphics Low path, fine on the Tab S7.
-Approach: assemble overworld towns at runtime from kit pieces (shared with
-the battle kit) placed and rotated on the terrain from a per-town plan
-that knows slope and coast, instead of whole sprites. About 2-3 builds.
-Done when: a gallery of all 49 Caribbean towns at 3 zooms, no harbour
-away from water, no patch edges, no zoom hitch > 16 ms.
+**Overworld towns modelled into the landscape: step 1 built 2026-10-15 (view only, not committed).** Towns are
+assembled from kit pieces on the real terrain (`town_plan.gd`, `town_layer.gd`, `town_paint.gd`; DESIGN "Overworld
+towns modelled into the landscape (as built)"): pieces at 8 yaws, per-town plan from elevation / slope / coast (hill
+streets along the contour, harbour only for ports on the real shoreline, Tayasal on its lake without a harbour,
+Port Royal fits its spit), ground and cast shadows painted once into a texture the land shader mixes in (no patch
+edges, no redraw on zoom), forest cleared, ring trees y-sorted with the pieces, Low = small atlas, fewer pieces.
+Also (user additions): the landscape's trees and rocks are models in one MultiMesh (`landtrees.gd`, not Low), and
+one shared "map look" (`map_look.gdshaderinc`: NW light bands, gradient-map LUT, ink, grain) for terrain, pieces,
+ships and trees. Checked: check_scripts clean, deploy_view_test and windowed campaign_input_test PASS, Rome relief
+untouched and Rome table style draws; gallery of all 49 towns at zoom 0.6 / 1.2 / 2.4 in the session scratchpad
+`towns1/`; zoom sweep worst frame 28 ms (HEAD 54), frames over 16 ms 7 of 400 (HEAD 399), steady frame 7.8 ms High (HEAD 10.1) /
+8.4 ms Low (HEAD 8.0). Open (step 2): landmarks (El Morro, Cartagena's walls, Tayasal's temple), growth polish, ships' baked
+shadow (ships keep their per-frame contact shadow), a look on the Tab S7 and phones (field density, saturation,
+grain), the atlas must be re-imported (`godot --headless --import`) after repacking.
 **Queued after the towns: the pirate story campaign** (DESIGN "Story
 campaign: The Brethren's Due", agreed 2026-10-14: swashbuckling with a dark
 edge, ~45 turns, three endings, co-op optional; 4-5 builds).
