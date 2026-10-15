@@ -71,9 +71,7 @@ def main():
             place.append((s, x, y))
             x += w + GUT
             rowh = max(rowh, h)
-        H = 1
-        while H < y + rowh + GUT:
-            H *= 2
+        H = 64 * ((y + rowh + GUT + 63) // 64)   # multiples of 64 (not a power of two): the atlas only grows as needed
         shade = np.zeros((H, W, 4), np.float32)
         mask = np.zeros((H, W, 4), np.float32)
         mask[..., 3] = 1.0

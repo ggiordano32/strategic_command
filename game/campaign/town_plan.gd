@@ -44,10 +44,39 @@ const PD := {
 	"shed": [5.0, 6.0, 3.6, 14.0], "slipway": [0.0, 9.0, 4.2, 4.0], "lighthouse": [3.2, 3.5, 3.5, 44.0], "canoe": [2.4, 2.4, 0.9, 1.5],
 	"tree_b1": [1.8, 2.6, 2.3, 10.0], "tree_b2": [2.0, 3.0, 2.6, 10.0], "palm_a": [1.0, 1.6, 1.4, 13.0], "palm_b": [1.0, 1.6, 1.4, 14.0],
 	"orange": [1.2, 1.9, 1.7, 7.0],
+	"morro": [14.0, 13.0, 11.0, 46.0], "fuerza": [9.0, 9.5, 8.5, 24.0], "san_felipe": [13.0, 14.0, 12.0, 48.0], "morro_sj": [14.0, 14.5, 9.0, 42.0],
+	"harbour_fort": [8.0, 8.0, 6.5, 24.0], "san_marcos": [15.0, 16.0, 16.0, 30.0], "alcazar": [11.0, 12.5, 6.0, 28.0], "ulua": [14.0, 13.0, 10.0, 32.0],
+	"itza_temple": [11.5, 11.0, 11.0, 58.0], "fort_charles": [10.0, 10.0, 7.0, 24.0], "tavern": [5.0, 4.8, 3.6, 16.0], "gallows": [2.6, 2.6, 2.0, 15.0],
+	"rock_fort": [6.0, 6.5, 6.0, 40.0], "careened": [6.5, 6.5, 3.5, 8.0], "baluarte": [0.0, 4.6, 4.8, 12.0], "twin_cathedral": [8.0, 6.0, 8.5, 56.0],
+	"capitol": [13.0, 10.5, 9.5, 40.0], "byrsa": [16.0, 15.0, 14.0, 36.0], "cothon": [14.5, 14.5, 14.5, 12.0], "euryalus": [15.0, 14.5, 9.0, 30.0],
+	"acropolis": [16.0, 16.0, 14.0, 40.0], "greek_temple": [8.5, 8.0, 5.5, 26.0], "burnt": [3.0, 2.7, 2.3, 14.0], "camp_tent": [3.0, 2.8, 2.4, 8.0], "camp_flag": [0.6, 0.5, 0.5, 20.0],
 	"longhouse": [6.2, 6.2, 3.0, 9.0], "rack": [2.3, 2.1, 0.9, 4.0], "stilt_house": [3.0, 2.8, 2.4, 10.0], "maya_platform": [6.4, 6.0, 6.0, 8.0],
 }
 
 const WALL_COLS := ["wh", "oc", "bl", "co", "wh", "bl", "oc", "co"]
+
+## Landmarks by region key (step 2): piece, where (mouth0 = the harbour mouth's seaward headland, mouth1 = its other
+## end, high = the highest ground, offshore = on a rock in the roads, plaza_sea = between the plaza and the sea,
+## waterfront / beach = a row along the shore, cothon = by the water), inset in metres, face "land" = the front
+## towards the town, wl / lv = least walls / level that show it, fort = it is the town's harbour fort (the
+## generic one stays away), n = count, haven = only while a pirate haven. Spanish forts stay when the town is
+## taken (they are tinted to the owner). The pieces that replace a civic one (the Itza temple, the twin cathedral,
+## the Capitoline temple, Santo Domingo's cathedral) are in _build.
+const LM := {
+	"havana": [{"p": "morro", "at": "mouth0", "in": 5.0, "face": "land", "wl": 1, "fort": true}, {"p": "fuerza", "at": "mouth1", "in": 4.0, "wl": 1, "fort": true}],
+	"cartagena": [{"p": "seawall", "wl": 2, "fort": true}, {"p": "san_felipe", "at": "high", "wl": 1}],
+	"san_juan": [{"p": "morro_sj", "at": "mouth0", "in": 5.0, "face": "land", "wl": 1, "fort": true}],
+	"portobelo": [{"p": "harbour_fort", "at": "mouth0", "in": 3.0, "wl": 1, "fort": true}, {"p": "harbour_fort", "at": "mouth1", "in": 3.0, "wl": 1, "fort": true}],
+	"st_augustine": [{"p": "san_marcos", "at": "mouth1", "in": 12.0, "wl": 2, "fort": true}],
+	"santo_domingo": [{"p": "alcazar", "at": "plaza_sea", "lv": 1}],
+	"veracruz": [{"p": "ulua", "at": "offshore", "wl": 1, "fort": true}],
+	"port_royal": [{"p": "fort_charles", "at": "mouth0", "in": 4.0, "wl": 1, "fort": true}, {"p": "gallows", "at": "mouth1", "in": 2.0}, {"p": "tavern", "at": "waterfront", "n": 3}],
+	"port_de_paix": [{"p": "rock_fort", "at": "high", "wl": 1, "fort": true}, {"p": "careened", "at": "beach", "n": 2, "haven": true}],
+	"zeugitana": [{"p": "byrsa", "at": "high", "lv": 1}, {"p": "cothon", "at": "cothon", "lv": 1}],
+	"sicilia_or": [{"p": "euryalus", "at": "high", "lv": 1}],
+	"attica": [{"p": "acropolis", "at": "high"}],
+	"massalia": [{"p": "greek_temple", "at": "high"}],
+}
 
 static var _gen := -1
 static var _sites := {}
@@ -374,6 +403,45 @@ static func _streets(s: Dictionary, rng: RandomNumberGenerator) -> void:
 				lines.append(seg)
 	s["streets"] = lines
 	s["plaza"] = c
+	s["ring_road"] = _ring_road(s)
+
+
+## The second street ring (shown from level 1 in towns and Roman cities): runs of a loop at 0.55 of the footprint
+## that stay on usable ground; a closed loop repeats its first point.
+static func _ring_road(s: Dictionary) -> Array:
+	var c: Vector2 = s["c"]
+	var rad: PackedFloat32Array = s["rad"]
+	var n := 56
+	var ok: Array = []
+	var pts: Array = []
+	for i in n:
+		var a := TAU * float(i) / float(n)
+		var q := c + Vector2(cos(a), sin(a)) * rad_at(rad, a) * 0.56
+		pts.append(q)
+		ok.append(inside(s, q, 1.0) and depth(q) >= 3.5 and _slope(q) <= 40.0)
+	var out: Array = []
+	var start := 0
+	while start < n and bool(ok[start]):
+		start += 1
+	if start >= n:
+		var cl := PackedVector2Array()
+		for q in pts:
+			cl.append(q)
+		cl.append(pts[0])
+		out.append(cl)
+		return out
+	var cur := PackedVector2Array()
+	for k in n:
+		var i := (start + k) % n
+		if bool(ok[i]):
+			cur.append(pts[i])
+		else:
+			if cur.size() >= 4:
+				out.append(cur)
+			cur = PackedVector2Array()
+	if cur.size() >= 4:
+		out.append(cur)
+	return out
 
 
 static func _along(line: PackedVector2Array, dist: float) -> Vector2:
@@ -547,7 +615,9 @@ static func _slots(s: Dictionary, rng: RandomNumberGenerator) -> void:
 	# street slots
 	var gstep := 6.4 * K
 	var cand: Array = []
-	for line in s["streets"]:
+	var all_lines: Array = (s["streets"] as Array).duplicate()
+	all_lines.append_array(s["ring_road"] as Array)
+	for line in all_lines:
 		var pl: PackedVector2Array = line
 		var plen := 0.0
 		for i in range(pl.size() - 1):
@@ -580,7 +650,7 @@ static func _slots(s: Dictionary, rng: RandomNumberGenerator) -> void:
 		if not ok:
 			continue
 		# keep the streets clear
-		for line in s["streets"]:
+		for line in all_lines:
 			if _near_line(line, pos, 2.6 * K):
 				ok = false
 				break
@@ -588,7 +658,7 @@ static func _slots(s: Dictionary, rng: RandomNumberGenerator) -> void:
 			continue
 		occ.append([pos, 3.0 * K])
 		slots.append([pos, cd[1], slots.size()])
-		if slots.size() >= 34:
+		if slots.size() >= 40:
 			break
 	# infill: when the streets leave room, houses on the free ground facing the nearest street (or the plaza)
 	var want := 30
@@ -609,7 +679,7 @@ static func _slots(s: Dictionary, rng: RandomNumberGenerator) -> void:
 			continue
 		var face := c - pos
 		var nd := 1e9
-		for line in s["streets"]:
+		for line in all_lines:
 			var pl: PackedVector2Array = line
 			for i in range(pl.size() - 1):
 				var cp := Geometry2D.get_closest_point_to_segment(pos, pl[i], pl[i + 1])
@@ -683,22 +753,38 @@ static func in_ring(s: Dictionary, p: Vector2) -> bool:
 
 # ------------------------------------------------------------------ the plan the state shows
 
-static func plan(st: Dictionary, r: int, grid: bool) -> Dictionary:
-	var lvl := clampi(int(st["regions"][r]["level"]), 0, 2)
-	var walls := CState.walls(st, r)
-	var style := style_of(st, r)
+## What of the state a town shows: level, walls, harbour, shipyard and market levels, a recent sack (1 fresh, 2, 3
+## fading, 0 none), the besieging faction (-1 none), the style. The plan cache key and the layer's signature.
+static func facts(st: Dictionary, r: int) -> Dictionary:
 	var west := CData.pack == "west"
 	var port := false
-	var yard := false
+	var yard := 0
 	if west and CData.ships_on():
-		port = style == "haven" or CFleet.harbour(r) >= 0
-		yard = CState.building(st, r, CData.SHIPYARD) > 0
-	var key := "%d_%d_%d_%d_%d_%s_%d" % [r, lvl, walls, 1 if port else 0, 1 if yard else 0, style, 1 if grid else 0]
+		port = style_of(st, r) == "haven" or CFleet.harbour(r) >= 0
+		yard = CState.building(st, r, CData.SHIPYARD)
+	var rs: Dictionary = st["regions"][r]
+	var sack := 0
+	if rs.has("sacked"):
+		var age := int(st["turn"]) - int(rs["sacked"])
+		sack = 1 if age < 3 else (2 if age < 6 else (3 if age < 8 else 0))
+	var sg := CState.siege_at(st, r)
+	return {"lvl": clampi(int(rs["level"]), 0, 2), "walls": CState.walls(st, r), "style": style_of(st, r), "port": port, "yard": yard,
+		"market": CState.building(st, r, CData.MARKET), "sack": sack, "siege": int(sg["f"]) if not sg.is_empty() else -1}
+
+
+static func sig(st: Dictionary, r: int) -> String:
+	var f := facts(st, r)
+	return "%d_%d_%s_%d_%d_%d_%d_%d" % [f["lvl"], f["walls"], f["style"], 1 if f["port"] else 0, f["yard"], f["market"], f["sack"], f["siege"]]
+
+
+static func plan(st: Dictionary, r: int, grid: bool) -> Dictionary:
+	var f := facts(st, r)
+	var key := "%d_%s_%d" % [r, sig(st, r), 1 if grid else 0]
 	_sync()
 	if _plans.has(key):
 		return _plans[key]
 	var s := site(r, grid)
-	var p := _build(s, r, lvl, walls, style, port, yard)
+	var p := _build(s, r, f)
 	_plans[key] = p
 	return p
 
@@ -707,7 +793,15 @@ static func _item(items: Array, pos: Vector2, name: String, yaw: int) -> void:
 	items.append([pos, name, yaw])
 
 
-static func _build(s: Dictionary, r: int, lvl: int, walls: int, style: String, port: bool, yard: bool) -> Dictionary:
+static func _build(s: Dictionary, r: int, f: Dictionary) -> Dictionary:
+	var lvl: int = f["lvl"]
+	var walls: int = f["walls"]
+	var style: String = f["style"]
+	var port: bool = f["port"]
+	var yard_lvl: int = f["yard"]
+	var yard := yard_lvl > 0
+	var rkey := str(CData.REGIONS[r]["key"])
+	var lms: Array = LM.get(rkey, []) as Array
 	var rng := _seed_rng(r, 7)
 	var c: Vector2 = s["c"]
 	var sc: float = float(LVL_S[lvl])
@@ -730,6 +824,18 @@ static func _build(s: Dictionary, r: int, lvl: int, walls: int, style: String, p
 				break
 		if cut.size() >= 2:
 			streets_out.append(cut)
+	if lvl >= 1 and (style == "town" or style == "roman"):
+		for line in s["ring_road"]:
+			var pl2: PackedVector2Array = line
+			var cut2 := PackedVector2Array()
+			for q in pl2:
+				if inside(s, q, sc * 1.02):
+					cut2.append(q)
+				elif cut2.size() >= 2:
+					streets_out.append(cut2)
+					cut2 = PackedVector2Array()
+			if cut2.size() >= 2:
+				streets_out.append(cut2)
 	var ring_style := style == "native" or style == "maya" or style == "haven"
 	# the centre and civic pieces
 	var church_pos: Vector2 = s["church"]
@@ -737,6 +843,10 @@ static func _build(s: Dictionary, r: int, lvl: int, walls: int, style: String, p
 	match style:
 		"town":
 			var cname := "chapel" if lvl == 0 else ("church" if lvl == 1 else "cathedral")
+			if rkey == "santo_domingo" and lvl >= 1:
+				cname = "cathedral"
+			elif rkey == "merida" and lvl >= 1:
+				cname = "twin_cathedral"
 			if inside(s, church_pos, maxf(sc, 0.75)) or lvl == 0:
 				_item(items, church_pos, cname, _yaw4(yaw_facing(cdirv)))
 			_item(items, c, "well" if lvl == 0 else "fountain", 0)
@@ -745,10 +855,12 @@ static func _build(s: Dictionary, r: int, lvl: int, walls: int, style: String, p
 				if inside(s, mp, 1.0) and depth(mp) > 4.0 and mp.distance_to(church_pos) > 9.0 * K:
 					_item(items, mp, "mansion", yaw_facing(-Vector2(-cdirv.y, cdirv.x) + cdirv * 0.5))
 			var fp: Vector2 = s["fort"]
-			if lvl == 2 and fp != Vector2.ZERO and fp.distance_to(church_pos) > 14.0 * K:
+			if lvl == 2 and fp != Vector2.ZERO and fp.distance_to(church_pos) > 14.0 * K and not _lm_on(lms, "high", f):
 				_item(items, fp, "fort", 0)
 		"roman":
-			var tn := "shrine" if lvl == 0 else ("temple" if lvl == 1 else "temple")
+			var tn := "shrine" if lvl == 0 else "temple"
+			if rkey == "latium" and lvl >= 1:
+				tn = "capitol"
 			_item(items, church_pos, tn, _yaw4(yaw_facing(cdirv)) if tn != "shrine" else 0)
 			_item(items, c, "fountain" if lvl > 0 else "well", 0)
 			if lvl == 2:
@@ -756,10 +868,10 @@ static func _build(s: Dictionary, r: int, lvl: int, walls: int, style: String, p
 				if inside(s, bp, 1.0) and depth(bp) > 4.0:
 					_item(items, bp, "basilica", _yaw4(yaw_facing(Vector2(cdirv.y, -cdirv.x))))
 				var fp2: Vector2 = s["fort"]
-				if fp2 != Vector2.ZERO and fp2.distance_to(church_pos) > 14.0 * K:
+				if fp2 != Vector2.ZERO and fp2.distance_to(church_pos) > 14.0 * K and not _lm_on(lms, "high", f):
 					_item(items, fp2, "tower_rome", 0)
 		"maya":
-			_item(items, c, "maya_pyramid", 0)
+			_item(items, c, "itza_temple" if rkey == "tayasal" else "maya_pyramid", 0)
 			# stone temple platforms on the plaza's sides
 			var px_n := 0
 			for k in 6:
@@ -792,13 +904,16 @@ static func _build(s: Dictionary, r: int, lvl: int, walls: int, style: String, p
 			var fl := c + Vector2(4.0, 2.0) * K
 			_item(items, fl, "flagpole", 0)
 			var fp3: Vector2 = s["fort"]
-			if lvl >= 1 and fp3 != Vector2.ZERO:
+			if lvl >= 1 and fp3 != Vector2.ZERO and not _lm_on(lms, "high", f):
 				_item(items, fp3, "skull_rock", 0)
+	# landmarks (before the houses: they keep clear of them) and the harbour's first fort
+	var wall_items: Array = []
+	_landmarks(s, f, lms, items, wall_items)
 	# houses
 	var n_houses := 0
 	match style:
-		"town": n_houses = [8, 15, 24][lvl]
-		"roman": n_houses = [9, 15, 22][lvl]
+		"town": n_houses = [8, 16, 28][lvl]
+		"roman": n_houses = [9, 16, 26][lvl]
 		"native": n_houses = [11, 17, 22][lvl]
 		"maya": n_houses = [7, 11, 14][lvl]
 		"haven": n_houses = [7, 11, 15][lvl]
@@ -823,6 +938,8 @@ static func _build(s: Dictionary, r: int, lvl: int, walls: int, style: String, p
 			continue
 		var idx: int = int(sl[2])
 		var nm := _house_name(style, idx, lvl, rng, pos, s)
+		if int(f["sack"]) > 0 and _burnable(nm) and _burns(pos, int(f["sack"])):
+			nm = "burnt"
 		_item(items, pos, nm, yaw_facing(sl[1] as Vector2))
 		placed += 1
 	# the harbour
@@ -861,16 +978,16 @@ static func _build(s: Dictionary, r: int, lvl: int, walls: int, style: String, p
 				if pi2 != mid and depth(ssp - snv * 1.2 * K) > 0.5 and lvl >= 1:
 					_item(items, ssp - snv * 1.2 * K, "pier", yaw_facing(snv))
 			# warehouses behind the quay
-			var wn := 1 if lvl == 0 else (2 if lvl == 1 else 3)
+			var wn := (1 if lvl == 0 else (2 if lvl == 1 else 3)) + (1 if int(f["market"]) >= 2 else 0)
 			for k in wn:
-				var wi := clampi(mid + (k - wn / 2) * 3 - (1 if wn == 2 else 0), 0, n - 1)
+				var wi := clampi(mid + (k - wn / 2) * 3 - (1 if wn % 2 == 0 else 0), 0, n - 1)
 				var wsp: Vector2 = (shore[wi] as Array)[0]
 				var wnv: Vector2 = (shore[wi] as Array)[1]
 				var wp := wsp - wnv * 9.5 * K
 				if depth(wp) > 3.0 and inside(s, wp, 1.15) and _free(items, wp, 6.5 * K):
 					_item(items, wp, "warehouse", yaw_facing(wnv))
 			# the lighthouse on the point: the most seaward shore sample
-			if lvl >= 1:
+			if lvl >= 1 and not _lm_lighthouse(lms, f):
 				var bi := -1
 				var bs := -1e9
 				for i in n:
@@ -900,6 +1017,21 @@ static func _build(s: Dictionary, r: int, lvl: int, walls: int, style: String, p
 			var cp3 := yp + Vector2(-ynv.y, ynv.x) * -7.0 * K - ynv * 2.0 * K
 			if depth(cp3) > 2.0 and _free(items, cp3, 3.0 * K):
 				_item(items, cp3, "crane", 0)
+			if yard_lvl >= 2:   # a second slipway on the other side of the quay, a hull on the stocks
+				var yi2 := clampi(mid + 6, 0, n - 1)
+				var ysp2: Vector2 = (shore[yi2] as Array)[0]
+				var ynv2: Vector2 = (shore[yi2] as Array)[1]
+				var yp2 := ysp2 - ynv2 * 5.5 * K
+				if depth(yp2) > 2.0 and yp2.distance_to(yp) > 10.0 * K and _free(items, yp2, 7.0 * K):
+					_item(items, yp2, "slipway", yaw_facing(ynv2))
+					if yard_lvl >= 3:
+						var cp4 := yp2 + Vector2(-ynv2.y, ynv2.x) * 7.0 * K - ynv2 * 2.0 * K
+						if depth(cp4) > 2.0 and _free(items, cp4, 3.0 * K):
+							_item(items, cp4, "crane", 0)
+			if yard_lvl >= 3:   # a second shed behind the first
+				var sp5 := yp - ynv * 17.0 * K + Vector2(-ynv.y, ynv.x) * 1.0 * K
+				if depth(sp5) > 2.0 and inside(s, sp5, 1.3) and _free(items, sp5, 6.0 * K):
+					_item(items, sp5, "shed", yaw_facing(ynv))
 		# beached boats on the shore beside the quay
 		for k in (1 if lvl == 0 else 2):
 			var bi2 := clampi(mid + (-6 if k == 0 else 6), 0, n - 1)
@@ -944,9 +1076,13 @@ static func _build(s: Dictionary, r: int, lvl: int, walls: int, style: String, p
 		var sh0: Array = (s["shore"] as Array)[(s["shore"] as Array).size() / 2]
 		water = (sh0[0] as Vector2) + (sh0[1] as Vector2) * 17.0 * K
 	# the walls
-	var wall_items: Array = []
 	if walls > 0:
-		_walls(s, sc, walls, style, port and harbour, items, wall_items)
+		_walls(s, sc, walls, style, port and harbour, items, wall_items, rkey)
+	var moored: Array = []
+	if harbour and port:
+		moored = _moored(s, f, lvl)
+	if int(f["siege"]) >= 0:
+		_siege_camp(s, f, items)
 	# palms along the shore, orchard trees on the fields, a few broadleaf trees on the edge
 	var fields: Array = s["fields"]
 	var n_f := 1 + lvl + (1 if lvl == 2 else 0)
@@ -995,6 +1131,8 @@ static func _build(s: Dictionary, r: int, lvl: int, walls: int, style: String, p
 	var tab: Dictionary = Atlas.SETS["small"]
 	for it in items:
 		var ii: Array = it
+		if str(ii[1]) == "ulua" or str(ii[1]).begins_with("camp_"):
+			continue
 		var d2 := (ii[0] as Vector2) - c
 		half_w = maxf(half_w, absf(d2.x) + 5.0 * K)
 		var sk := sprite(tab, str(ii[1]), int(ii[2]))
@@ -1005,12 +1143,16 @@ static func _build(s: Dictionary, r: int, lvl: int, walls: int, style: String, p
 			half_w = maxf(half_w, absf(d2.x) + float(te[2]) * 0.5 / float(te[6]) * K)
 		top = maxf(top, -d2.y + hpx)
 		bottom = maxf(bottom, d2.y + 3.0 * K)
+	for m in moored:
+		items.append(m)
 	items.sort_custom(func(a, b): return (a[0] as Vector2).y < (b[0] as Vector2).y)
 	for it in items:
 		var ii2: Array = it
 		var nm3: String = ii2[1]
 		var pd3: Array = pd_of(nm3)
 		if pd3.is_empty():
+			continue
+		if nm3 == "ulua" or nm3.begins_with("ship_"):
 			continue
 		if float(pd3[3]) >= 5.0 and not nm3.begins_with("quay") and not nm3.begins_with("pier") and not nm3.begins_with("slipway"):
 			paint_shadows.append([ii2[0], nm3, ii2[2]])
@@ -1031,6 +1173,274 @@ static func _free(items: Array, p: Vector2, rad: float) -> bool:
 			return false
 	return true
 
+
+
+# ------------------------------------------------------------------ landmarks, a sack, a siege, moored ships
+
+static func _lm_ok(lm: Dictionary, f: Dictionary) -> bool:
+	if int(lm.get("wl", 0)) > int(f["walls"]) or int(lm.get("lv", 0)) > int(f["lvl"]):
+		return false
+	return not (bool(lm.get("haven", false)) and str(f["style"]) != "haven")
+
+
+static func _lm_on(lms: Array, at: String, f: Dictionary) -> bool:
+	for lm in lms:
+		if str((lm as Dictionary).get("at", "")) == at and _lm_ok(lm, f):
+			return true
+	return false
+
+
+## A landmark is this town's harbour fort (the generic harbour fort stays away).
+static func _lm_fort(lms: Array, f: Dictionary) -> bool:
+	for lm in lms:
+		if bool((lm as Dictionary).get("fort", false)) and _lm_ok(lm, f):
+			return true
+	return false
+
+
+static func _lm_lighthouse(lms: Array, f: Dictionary) -> bool:
+	for lm in lms:
+		var pn := str((lm as Dictionary)["p"])
+		if (pn == "morro" or pn == "morro_sj") and _lm_ok(lm, f):
+			return true
+	return false
+
+
+static func _burnable(nm: String) -> bool:
+	return nm.begins_with("house") or nm.begins_with("adobe") or nm == "roman_house" or nm == "hovel" or nm == "hut" or nm == "palapa" or nm == "maya_house" or nm.begins_with("shack")
+
+
+## Which houses a sack burnt (deterministic from the position; a fresher sack burns more).
+static func _burns(pos: Vector2, sack: int) -> bool:
+	var frac: int = [0, 55, 30, 12][clampi(sack, 0, 3)]
+	return absi(int(pos.x * 13.0 + pos.y * 7.0)) % 100 < frac
+
+
+## The harbour mouth: the shore sample at the more seaward end of the shore (which 0) or the other end (1), the
+## point `inset` metres inland of it (moved inland until on land) and the unit normal to the sea; [] without a shore.
+static func _mouth(s: Dictionary, which: int, inset: float) -> Array:
+	var shore: Array = s["shore"]
+	var n := shore.size()
+	if n < 3 or not bool(s["near_sea"]):
+		return []
+	var c: Vector2 = s["c"]
+	var cd: Vector2 = s["cdir"]
+	var sa := (((shore[0] as Array)[0] as Vector2) - c).dot(cd)
+	var sb := (((shore[n - 1] as Array)[0] as Vector2) - c).dot(cd)
+	var far_end := 0 if sa > sb else n - 1
+	var i := far_end if which == 0 else (n - 1 - far_end)
+	var e: Array = shore[i]
+	var nv: Vector2 = e[1]
+	var pos: Vector2 = (e[0] as Vector2) - nv * inset * K
+	var guard := 0
+	while depth(pos) < 3.0 and guard < 8:
+		pos -= nv * K
+		guard += 1
+	return [pos, nv]
+
+
+## Put a piece at pos when it fits (kept off the items already there); tries a few nudges away from the town's
+## centre. Returns whether it stands.
+static func _put(s: Dictionary, items: Array, pos: Vector2, name: String, yaw: int, sea: bool = false) -> bool:
+	var pd: Array = pd_of(name)
+	var rad := float(pd[0]) * K * 0.55
+	var c: Vector2 = s["c"]
+	var away := (pos - c).normalized() if pos.distance_to(c) > 1.0 else Vector2.RIGHT
+	for k in 6:
+		var q := pos + away * float(k) * 2.5 * K * (1.0 if k % 2 == 0 else -0.5)
+		if not sea and depth(q) < 1.5:
+			continue
+		if _free(items, q, rad):
+			_item(items, q, name, yaw)
+			return true
+	return false
+
+
+static func _landmarks(s: Dictionary, f: Dictionary, lms: Array, items: Array, wall_out: Array) -> void:
+	var c: Vector2 = s["c"]
+	var shore: Array = s["shore"]
+	var have_shore := bool(s["near_sea"]) and shore.size() >= 3
+	var cd: Vector2 = s["cdir"]
+	var mid := shore.size() / 2
+	var placed_fort := false
+	for lm in lms:
+		var d: Dictionary = lm
+		if not _lm_ok(d, f):
+			continue
+		var pn := str(d["p"])
+		var at := str(d.get("at", ""))
+		if pn == "seawall":
+			if have_shore:
+				_sea_wall(s, items, wall_out)
+				placed_fort = true
+			continue
+		match at:
+			"mouth0", "mouth1":
+				var m := _mouth(s, 0 if at == "mouth0" else 1, float(d.get("in", 4.0)))
+				if not m.is_empty():
+					var nv: Vector2 = m[1]
+					if _put(s, items, m[0], pn, yaw_facing(-nv) if str(d.get("face", "")) == "land" else 0):
+						placed_fort = placed_fort or bool(d.get("fort", false))
+			"high":
+				var hp: Vector2 = s["fort"]
+				if hp != Vector2.ZERO:
+					_put(s, items, hp, pn, 0)
+			"offshore":
+				if have_shore:
+					var ei := clampi(shore.size() - 2, 0, shore.size() - 1)
+					var sp: Vector2 = (shore[ei] as Array)[0]
+					var nv2: Vector2 = (shore[ei] as Array)[1]
+					for dist: float in [24.0, 30.0, 19.0, 36.0]:
+						var q := sp + nv2 * dist * K
+						if depth(q) < -1.5 and depth(q + nv2 * 8.0 * K) < -1.0 and depth(q + Vector2(-nv2.y, nv2.x) * 8.0 * K) < -1.0:
+							_item(items, q, pn, 0)
+							placed_fort = true
+							break
+			"plaza_sea":
+				if have_shore:
+					var dd := minf(13.0 * K, float(s["cdist"]) * 0.45)
+					var q2 := c + cd * dd
+					if depth(q2) > 2.5:
+						_put(s, items, q2, pn, yaw_facing(c - q2))
+			"waterfront":
+				if have_shore:
+					var want := int(d.get("n", 3)) + 2 * int(f["lvl"])
+					var cnt := 0
+					for off in [0, -2, 2, -4, 4, -6, 6, -1, 1, -3, 3]:
+						if cnt >= want:
+							break
+						var wi := clampi(mid + int(off), 0, shore.size() - 1)
+						var wsp: Vector2 = (shore[wi] as Array)[0]
+						var wnv: Vector2 = (shore[wi] as Array)[1]
+						if _put(s, items, wsp - wnv * 12.5 * K, pn, yaw_facing(wnv)):
+							cnt += 1
+			"beach":
+				if have_shore:
+					var want2 := int(d.get("n", 2))
+					var cnt2 := 0
+					for off2 in [-5, 5, -3, 3]:
+						if cnt2 >= want2:
+							break
+						var bi := clampi(mid + int(off2), 0, shore.size() - 1)
+						var bsp: Vector2 = (shore[bi] as Array)[0]
+						var bnv: Vector2 = (shore[bi] as Array)[1]
+						if _put(s, items, bsp - bnv * 3.6 * K, pn, yaw_facing(Vector2(-bnv.y, bnv.x))):
+							cnt2 += 1
+			"cothon":
+				var cp: Vector2 = c + Vector2(0.0, 6.0 * K)
+				if have_shore:
+					var csp: Vector2 = (shore[mid] as Array)[0]
+					var cnv: Vector2 = (shore[mid] as Array)[1]
+					cp = csp - cnv * 16.0 * K
+				if depth(cp) > 3.0:
+					_put(s, items, cp, pn, 0)
+	# every West port's first fort: a harbour fort on the headland, unless a landmark is the fort
+	if str(f["style"]) == "town" and CData.pack == "west" and bool(f["port"]) and int(f["walls"]) >= 1 and not placed_fort and have_shore:
+		var m2 := _mouth(s, 0, 3.0)
+		if not m2.is_empty():
+			_put(s, items, m2[0], "harbour_fort", 0)
+
+
+## Cartagena's long sea walls: wall pieces along the shore with a baluarte every fourth, a gap at the quay.
+static func _sea_wall(s: Dictionary, items: Array, out: Array) -> void:
+	var shore: Array = s["shore"]
+	var n := shore.size()
+	var mid := n / 2
+	for i in n:
+		if absi(i - mid) <= 3:
+			continue
+		var sp: Vector2 = (shore[i] as Array)[0]
+		var nv: Vector2 = (shore[i] as Array)[1]
+		var a: Vector2 = (shore[maxi(i - 1, 0)] as Array)[0]
+		var b: Vector2 = (shore[mini(i + 1, n - 1)] as Array)[0]
+		var tv := b - a
+		if tv.length() < 0.5:
+			continue
+		var pos := sp - nv * 2.0 * K
+		if depth(pos) < 0.8:
+			continue
+		var it: Array = [pos, "bast_wall", yaw_along(tv)]
+		items.append(it)
+		out.append(it)
+		if i % 4 == 1:
+			var bp := sp - nv * 2.6 * K
+			var bit: Array = [bp, "baluarte", yaw_facing(nv)]
+			items.append(bit)
+			out.append(bit)
+
+
+## Moored ships in the roads: more with the town's level and market. [[pos, "ship_<kind>", heading], ...]
+static func _moored(s: Dictionary, f: Dictionary, lvl: int) -> Array:
+	var shore: Array = s["shore"]
+	var n := shore.size()
+	if n < 3:
+		return []
+	var mid := n / 2
+	var want := (1 if lvl >= 1 else 0) + int(f["market"]) + (1 if lvl >= 2 else 0)
+	if str(f["style"]) == "haven":
+		want = 1 + lvl
+	want = mini(want, 3)
+	var sp: Vector2 = (shore[mid] as Array)[0]
+	var nv: Vector2 = (shore[mid] as Array)[1]
+	var tg := Vector2(-nv.y, nv.x)
+	var kinds := ["brigantine", "sloop", "frigate", "galleon"]
+	if str(f["style"]) == "haven":
+		kinds = ["sloop", "brigantine", "sloop", "brigantine"]
+	var lens := {"sloop": 17.0, "brigantine": 22.0, "frigate": 30.0, "galleon": 36.0}
+	var spots := [[-17.0, 30.0], [18.0, 36.0], [-28.0, 44.0], [29.0, 50.0]]
+	var hd := _snap8(tg)
+	var out: Array = []
+	for i in 4:
+		if out.size() >= want:
+			break
+		var kd: String = kinds[i]
+		var q: Vector2 = sp + tg * float((spots[i] as Array)[0]) * K + nv * float((spots[i] as Array)[1]) * K
+		var half := float(lens[kd]) * 0.5 * K * 0.9
+		var ok := true
+		for e in [-1.0, 0.0, 1.0]:
+			var qq := q + _dir8(hd) * half * float(e)
+			if depth(qq) > -2.0:
+				ok = false
+		if depth(q + nv * half * 0.6) > -1.5:
+			ok = false
+		if ok:
+			out.append([q, "ship_" + kd, hd])
+	return out
+
+
+## A besieger's camp just outside the town: tents ringed round it with guns facing the walls and flags.
+static func _siege_camp(s: Dictionary, f: Dictionary, items: Array) -> void:
+	var c: Vector2 = s["c"]
+	var rad: PackedFloat32Array = s["rad"]
+	var fac: int = f["siege"]
+	var a0 := float(posmod(int(c.x) * 7 + int(c.y) * 3, 360)) * PI / 180.0
+	var rm := _max_rad(rad)
+	for k in 16:
+		var a := a0 + TAU * float(k) / 16.0
+		var u := Vector2(cos(a), sin(a))
+		var rr := maxf(rad_at(rad, a), rm * 0.72) * 1.12 + 4.0 * K
+		var q := c + u * rr
+		if depth(q) < 2.5 or _slope(q) > 35.0:
+			continue
+		var nm := "camp_tent"
+		var yaw := yaw_facing(-u)
+		if k % 4 == 2:
+			nm = "cannon"
+			yaw = yaw_facing(-u)
+		elif k % 7 == 3:
+			nm = "camp_flag"
+			yaw = 0
+		if not _free(items, q, 3.0 * K):
+			continue
+		items.append([q, nm, yaw, fac])
+	# a second, inner row of tents between the guns
+	for k in 7:
+		var a2 := a0 + TAU * (float(k) + 0.5) / 7.0
+		var u2 := Vector2(cos(a2), sin(a2))
+		var q2 := c + u2 * (maxf(rad_at(rad, a2), rm * 0.72) * 1.12 + 9.0 * K)
+		if depth(q2) < 2.5 or _slope(q2) > 35.0 or not _free(items, q2, 3.0 * K):
+			continue
+		items.append([q2, "camp_tent", yaw_facing(-u2), fac])
 
 static func _house_name(style: String, idx: int, lvl: int, _rng: RandomNumberGenerator, pos: Vector2, s: Dictionary) -> String:
 	var h := absi(int(pos.x * 7.0 + pos.y * 13.0) + idx * 31)
@@ -1057,12 +1467,18 @@ static func _house_name(style: String, idx: int, lvl: int, _rng: RandomNumberGen
 
 ## The wall loop round the town: pieces in 8 directions walked along the footprint (a lattice path), towers,
 ## a gate where the main street leaves it, the harbour side left open.
-static func _walls(s: Dictionary, sc: float, walls: int, style: String, harbour: bool, items: Array, out: Array) -> void:
+static func _walls(s: Dictionary, sc: float, walls: int, style: String, harbour: bool, items: Array, out: Array, rkey: String = "") -> void:
 	var c: Vector2 = s["c"]
 	var rad: PackedFloat32Array = s["rad"]
 	var kind := "pal"
 	if style == "town" or style == "roman":
 		kind = "pal" if walls == 1 else ("stone" if walls == 2 else "bast")
+	if rkey == "campeche":
+		kind = "bast"      # the 1686 walls with their baluartes
+	var west_port := CData.pack == "west" and style == "town" and harbour and rkey != "campeche"
+	if west_port and walls == 1:
+		return             # a harbour fort beside an open town (the West walls history), no circuit yet
+	var sea_thr := 0.3 if (west_port and walls == 2) else 0.78   # level 2: a landward wall only, level 3: the full curtain
 	var L := 6.0 * K
 	var cd: Vector2 = s["cdir"]
 	var wsc := 0.93
@@ -1115,7 +1531,7 @@ static func _walls(s: Dictionary, sc: float, walls: int, style: String, harbour:
 		var skip := false
 		if harbour:
 			var md := (mid - c)
-			if md.length() > 0.1 and md.normalized().dot(cd) > 0.78:
+			if md.length() > 0.1 and md.normalized().dot(cd) > sea_thr:
 				skip = true
 		if depth(mid) < 1.5:
 			skip = true
@@ -1123,7 +1539,7 @@ static func _walls(s: Dictionary, sc: float, walls: int, style: String, harbour:
 		pos += dvec * L
 	var np := pieces.size()
 	var gate_i := 0
-	var tower_every := 5 if kind != "pal" else 4
+	var tower_every := 5 if kind != "pal" else (3 if (style == "native" and walls >= 2) else 4)
 	for i in np:
 		var pc: Array = pieces[i]
 		var mid2: Vector2 = pc[0]
@@ -1146,7 +1562,7 @@ static func _walls(s: Dictionary, sc: float, walls: int, style: String, harbour:
 			var vtx := mid2 + _dir8(hd) * L * 0.5
 			var tname := "pal_post" if kind == "pal" else ("stone_tower" if kind == "stone" else "bast_point")
 			if kind == "bast":
-				out.append([vtx, tname, yaw_facing(vtx - c)])
+				out.append([vtx, "baluarte" if rkey == "campeche" else tname, yaw_facing(vtx - c)])
 			else:
 				out.append([vtx, tname, 0])
 	# the wall pieces and the town share one y order
@@ -1161,6 +1577,9 @@ static func _snap8(d: Vector2) -> int:
 
 ## Atlas sprite name of a piece at a yaw, falling back to the nearest yaw that was rendered.
 static func sprite(table: Dictionary, name: String, yaw: int) -> String:
+	if name.begins_with("ship_"):
+		var sk := "%s__h%d" % [name, posmod(yaw, 8)]
+		return sk if table.has(sk) else ""
 	for off in [0, 1, -1, 2, -2, 3, -3, 4]:
 		var k := posmod(yaw + off, 8)
 		var key := "p_%s__y%d" % [name, k]

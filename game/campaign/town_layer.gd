@@ -121,7 +121,7 @@ func refresh(st: Dictionary, grid: bool) -> void:
 	var t0 := Time.get_ticks_usec()
 	for r in CData.region_count():
 		var rg: Dictionary = st["regions"][r]
-		var sig := "%d_%d_%d_%d_%s" % [int(rg["level"]), CState.walls(st, r), int(rg["owner"]), CState.building(st, r, CData.SHIPYARD), TownPlan.style_of(st, r)]
+		var sig := "%d_%s" % [int(rg["owner"]), TownPlan.sig(st, r)]
 		if _sigs.get(r, "") == sig:
 			continue
 		_sigs[r] = sig
@@ -244,7 +244,15 @@ func _draw_town(kid: Node2D, r: int) -> void:
 		var e: Array = table[key]
 		var k := TownPlan.K / float(e[6])
 		var dst := Rect2(pos - Vector2(float(e[4]), float(e[5])) * k, Vector2(float(e[2]), float(e[3])) * k)
-		kid.draw_texture_rect_region(shade, dst, Rect2(float(e[0]), float(e[1]), float(e[2]), float(e[3])), col)
+		var icol := col
+		if ii.size() > 3:   # a besieger's camp is in its own colour
+			icol = CData.faction_color(int(ii[3]))
+		if pn.begins_with("ship_"):   # a moored ship: a soft shadow on the water first
+			var hl := float(e[2]) / float(e[6]) * TownPlan.K * 0.5
+			kid.draw_set_transform(pos + Vector2(2.5, 3.0), 0.0, Vector2(1.0, 0.42))
+			kid.draw_circle(Vector2.ZERO, hl * 0.8, Color(0.04, 0.10, 0.18, 0.28))
+			kid.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		kid.draw_texture_rect_region(shade, dst, Rect2(float(e[0]), float(e[1]), float(e[2]), float(e[3])), icol)
 	while ti < nt:
 		_ring_tree(kid, trees[ti], table, shade, wuv)
 		ti += 1

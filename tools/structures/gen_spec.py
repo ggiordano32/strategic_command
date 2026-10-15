@@ -957,6 +957,201 @@ piece("accent", [sph([0, 0, 0.1], [1.3, 1.5, 1.0], "primary", n=6), sph([-0.9, -
 piece("lt_rock3", [sph([0, 0, 0.2], [1.9, 1.3, 0.9], "primary", n=6)], 1)
 piece("lt_crag", [box([0, 0, 0], [2.4, 2.0, 3.0], "accent", r=18), box([0.8, 0.6, 0], [1.6, 1.4, 2.2], "primary", r=-25), box([-0.9, -0.6, 0], [1.2, 1.2, 1.6], "primary", r=40)], 1)
 
+# ---------------------------------------------------------------- landmarks and growth (step 2, 2026-10-15)
+# Rule of cool mixed with reality: slightly exaggerated, recognisable silhouettes. Heights are stretched by ZEX.
+def rock_slab(r, h=1.2, z0=-1.0, seed=3, m="rock", n=12, jit=0.12):
+    return part("poly", None, m, pts=circle(n, r, jit, seed), z0=z0, z1=h, sc0=1.08, sc1=0.94)
+
+
+def poly_up(pts, z0, z1, m, sc0=1.0, sc1=1.0, **k):
+    return part("poly", None, m, pts=pts, z0=z0, z1=z1, sc0=sc0, sc1=sc1, **k)
+
+
+def tri(cx, cy, r, a0=-90.0):
+    return [[cx + r * math.cos(math.radians(a0 + 120 * i)), cy + r * math.sin(math.radians(a0 + 120 * i))] for i in range(3)]
+
+
+def diamond(cx, cy, r):
+    return [[cx - r, cy], [cx, cy + r], [cx + r, cy], [cx, cy - r]]
+
+
+# 1 El Morro (Havana): a triangular fortress on the headland with its lighthouse, the town side to the south
+_morro = [rock_slab(17.5, 1.4, -1.2, 5, n=14, jit=0.16)]
+_tr = [[-12.5, -8.0], [12.5, -8.0], [0.0, 13.5]]
+_morro += [poly_up(_tr, 0.8, 6.2, "coquina", 1.0, 0.94), poly_up([[-11.0, -6.6], [11.0, -6.6], [0.0, 11.0]], 6.2, 6.9, "stone_lt", 1.0, 1.0, ol=0)]
+for _x, _y in ((-12.5, -8.0), (12.5, -8.0), (0.0, 13.5)):
+    _morro += [cyl([_x, _y, 0.8], 3.1, 7.2, "coquina", n=8, rad2=2.9), cyl([_x, _y, 8.0], 3.5, 0.7, "stone", n=8), cone([_x, _y, 8.7], 3.4, 3.0, "primary", n=8)]
+_morro += [box([0, -8.02, 0.8], [4.2, 0.1, 3.4], "black", ol=0), box([0, 0.5, 6.9], [9.0, 7.0, 4.0], "stone_lt"), box([0, 0.5, 10.9], [9.8, 7.8, 0.8], "stone"),
+           box([-2.5, -3.02, 7.6], [1.2, 0.1, 1.4], "dark_wood", ol=0), box([2.5, -3.02, 7.6], [1.2, 0.1, 1.4], "dark_wood", ol=0)]
+_morro += [cyl([0, 6.2, 10.9], 2.1, 12.5, "stone_lt", n=8, rad2=1.5), cyl([0, 6.2, 23.2], 2.6, 0.8, "stone", n=8), cyl([0, 6.2, 24.0], 1.3, 2.6, "glass", n=8, ol=0),
+           cone([0, 6.2, 26.6], 1.9, 2.4, "primary", n=8), cyl([-5.5, 1.0, 10.9], 0.18, 6.5, "dark_wood", n=4, ol=0), box([-4.4, 1.0, 15.2], [2.2, 0.12, 1.4], "primary", ol=0)]
+_morro += [use("cannon", [-2.4, 9.8, 6.9], 0, sc=0.85), use("cannon", [2.4, 9.8, 6.9], 0, sc=0.85), use("cannon", [-8.5, -4.6, 6.9], 0, sc=0.85), use("cannon", [8.5, -4.6, 6.9], 0, sc=0.85)]
+piece("morro", _morro, Y4)
+
+# 2 La Fuerza (Havana): the old square castle with its corner bastions and the bell tower
+piece("fuerza", [box([0, 0, 0], [16, 16, 5.2], "coquina"), box([0, 0, 5.2], [16.6, 16.6, 0.7], "stone_lt"), box([0, 0, 5.9], [9, 9, 3.4], "stone_lt"), box([0, 0, 9.3], [9.8, 9.8, 0.7], "stone"),
+                 box([0, -8.02, 0], [3.6, 0.1, 3.0], "black", ol=0)] +
+      [poly_up(diamond(sx * 8.0, sy * 8.0, 4.2), 0, 5.0, "coquina", 1.0, 0.94) for sx in (-1, 1) for sy in (-1, 1)] +
+      [box([-3.0, 3.0, 10.0], [3.0, 3.0, 5.0], "stone_lt"), cone([-3.0, 3.0, 15.0], 2.5, 3.4, "primary", n=4), cyl([-3.0, 3.0, 18.2], 0.16, 3.0, "gold", n=4, ol=0),
+       cyl([3.0, 0, 10.0], 0.18, 7.0, "dark_wood", n=4, ol=0), box([4.1, 0, 15.4], [2.2, 0.12, 1.4], "primary", ol=0)], [0])
+
+# 3 Castillo San Felipe de Barajas (Cartagena): terraced bastions climbing its hill
+_sf = [rock_slab(16.5, 3.2, -1.0, 7, n=12, jit=0.14, m="rock_dk"), poly_up(tri(0, 1, 14.0, 90), 2.0, 7.0, "coquina", 1.0, 0.9), poly_up(tri(0, 1, 11.5, 90), 7.0, 11.8, "stone_lt", 1.0, 0.92),
+       poly_up(tri(0, 1.5, 8.5, 90), 11.8, 16.0, "coquina", 1.0, 0.92), poly_up(tri(0, 1.5, 7.2, 90), 16.0, 16.7, "stone", 1.0, 1.0, ol=0)]
+_sf += [box([0, 2.0, 16.7], [5.0, 4.4, 4.0], "stone_lt"), box([0, 2.0, 20.7], [5.8, 5.2, 0.7], "stone"), box([0, -0.22, 17.4], [1.4, 0.1, 1.8], "black", ol=0),
+        cyl([0, 2.0, 21.4], 0.2, 8.0, "dark_wood", n=4, ol=0), box([1.5, 2.0, 27.0], [3.0, 0.14, 1.8], "primary", ol=0)]
+_sf += [use("cannon", [x, y, 7.0], 0, sc=0.8) for x, y in ((-6.0, -6.0), (6.0, -6.0), (0, -9.0))]
+_sf += [part("wedge", [0, -13.5, 0.0], "stone", sz=[7.0, 3.2, 3.2], r=-90)]
+piece("san_felipe", _sf, [0])
+
+# 4 El Morro of San Juan: six tiers on the point, sentry boxes, the flag
+_mj = [rock_slab(17.5, 1.4, -1.2, 9, n=14, jit=0.12)]
+_mj += [box([0, 0, 0.6], [26, 14, 6.4], "coquina"), box([0, 0, 7.0], [26.8, 14.8, 0.8], "stone_lt"), box([-1.5, 1.0, 7.8], [19, 9.6, 5.0], "coquina"), box([-1.5, 1.0, 12.8], [19.8, 10.4, 0.8], "stone_lt"),
+        box([-2.5, 2.0, 13.6], [11.5, 6.0, 4.6], "stone_lt"), box([-2.5, 2.0, 18.2], [12.3, 6.8, 0.8], "stone"), box([0, -7.02, 0.6], [4.4, 0.1, 3.6], "black", ol=0)]
+_mj += [box([x, -7.02, 3.2], [1.0, 0.1, 1.6], "black", ol=0) for x in (-8, -4.5, 4.5, 8)] + [box([x, -5.02, 9.4], [1.0, 0.1, 1.5], "black", ol=0) for x in (-8, -4, 0, 4)]
+_mj += [cyl([x, y, 7.8], 0.9, 3.0, "stone_lt", n=6) for x, y in ((-12.0, -6.4), (12.0, -6.4), (-9.5, -4.4), (9.5, -4.4))] + [cone([x, y, 10.8], 1.1, 1.2, "primary", n=6) for x, y in ((-12.0, -6.4), (12.0, -6.4), (-9.5, -4.4), (9.5, -4.4))]
+_mj += [cyl([9.0, 4.4, 13.6], 1.9, 8.5, "coquina", n=8, rad2=1.6), cyl([9.0, 4.4, 22.0], 2.3, 0.7, "stone", n=8), cyl([9.0, 4.4, 22.7], 1.1, 2.0, "glass", n=8, ol=0), cone([9.0, 4.4, 24.7], 1.6, 1.8, "primary", n=8),
+        cyl([-7.5, 3.0, 18.2], 0.2, 8.0, "dark_wood", n=4, ol=0), box([-6.2, 3.0, 24.0], [2.6, 0.12, 1.6], "primary", ol=0)]
+_mj += [use("cannon", [x, -5.5, 7.8], 0, sc=0.85) for x in (-6.0, -2.0, 2.0, 6.0)]
+piece("morro_sj", _mj, Y4)
+
+# 5 Harbour fort (Portobelo's San Jeronimo / Santiago; every West port's first fort): square, four towers, a sea battery
+piece("harbour_fort", [rock_slab(11.5, 0.9, -0.8, 11, n=12, jit=0.1, m="rock_dk"), box([0, 0, 0.5], [13, 11, 4.4], "coquina"), box([0, 0, 4.9], [13.6, 11.6, 0.7], "stone_lt"), box([0, 0.5, 5.6], [6.4, 5.4, 3.0], "stone_lt"),
+                       box([0, 0.5, 8.6], [7.0, 6.0, 0.6], "stone"), box([0, -5.52, 0.5], [3.0, 0.1, 2.8], "black", ol=0)] +
+      [cyl([sx * 6.5, sy * 5.5, 0.5], 2.3, 7.4, "coquina", n=8, rad2=2.1) for sx in (-1, 1) for sy in (-1, 1)] +
+      [cyl([sx * 6.5, sy * 5.5, 7.9], 2.7, 0.6, "stone", n=8) for sx in (-1, 1) for sy in (-1, 1)] +
+      [cone([sx * 6.5, sy * 5.5, 8.5], 2.6, 2.4, "primary", n=8) for sx in (-1, 1) for sy in (-1, 1)] +
+      [cyl([0, 1.0, 9.2], 0.18, 6.0, "dark_wood", n=4, ol=0), box([1.2, 1.0, 13.4], [2.4, 0.12, 1.4], "primary", ol=0)] +
+      [use("cannon", [x, -3.2, 5.6], 0, sc=0.8) for x in (-3.0, 0.0, 3.0)], [0])
+
+# 6 Castillo de San Marcos (St Augustine): the square star fort of coquina in its moat
+_sm = [box([0, 0, -0.1], [34, 34, 0.5], "water_dk", ol=0), box([0, 0, 0.3], [21, 21, 5.4], "coquina"), box([0, 0, 5.7], [21.8, 21.8, 0.8], "stone_lt"), box([0, 0, 6.5], [13.0, 13.0, 3.6], "stone_lt"), box([0, 0, 10.1], [13.8, 13.8, 0.8], "stone")]
+for _sx in (-1, 1):
+    for _sy in (-1, 1):
+        _cx, _cy = _sx * 12.2, _sy * 12.2
+        _sm += [poly_up(diamond(_cx, _cy, 6.6), 0.3, 5.2, "coquina", 1.0, 0.95), poly_up(diamond(_cx, _cy, 5.8), 5.2, 5.9, "stone_lt", 1.0, 1.0, ol=0),
+                cyl([_cx, _cy, 5.9], 0.9, 2.6, "stone_lt", n=6), cone([_cx, _cy, 8.5], 1.1, 1.2, "primary", n=6)]
+_sm += [box([0, -10.52, 0.3], [4.4, 0.1, 3.4], "black", ol=0), box([0, -14.0, 0.1], [3.6, 6.0, 0.4], "plank", ol=0), cyl([0, 0, 10.9], 0.22, 8.0, "dark_wood", n=4, ol=0), box([1.5, 0, 17.0], [3.0, 0.14, 1.8], "primary", ol=0)]
+piece("san_marcos", _sm, [0])
+
+# 7 Alcazar de Colon (Santo Domingo): the admiral's palace, a long arcaded block with loggias and corner towers
+_ac = [box([0, 0, 0], [22, 10, 7.0], "coquina"), box([0, 0, 7.0], [22.8, 10.8, 0.7], "stone_lt"), box([0, -0.5, 7.7], [16, 8.6, 4.4], "coquina"), box([0, -0.5, 12.1], [16.8, 9.4, 0.7], "stone_lt")]
+_ac += [box([x, -5.02, 0.0], [1.7, 0.1, 3.2], "black", ol=0) for x in (-8.5, -5.1, -1.7, 1.7, 5.1, 8.5)] + [box([x, -5.02, 3.4], [1.2, 0.1, 0.5], "stone", ol=0) for x in (-8.5, -5.1, -1.7, 1.7, 5.1, 8.5)]
+_ac += [box([x, -4.82, 8.7], [1.0, 0.1, 1.6], "dark_wood", ol=0) for x in (-6.0, -3.0, 0, 3.0, 6.0)]
+_ac += [box([sx * 11.0, 0, 0], [3.8, 7.0, 11.0], "coquina") for sx in (-1, 1)] + [box([sx * 11.0, 0, 11.0], [4.4, 7.6, 0.8], "stone_lt") for sx in (-1, 1)] + [roof([sx * 11.0, 0, 11.8], [4.6, 7.8, 2.6], "primary", ridge=0.4) for sx in (-1, 1)]
+_ac += [box([0, 0.5, 12.8], [8.0, 5.0, 2.0], "stone_lt"), roof([0, 0.5, 14.8], [8.8, 5.8, 2.6], "primary", ridge=0.6)]
+piece("alcazar", _ac, Y4)
+
+# 8 San Juan de Ulua (Veracruz): the fortress on its rock island
+_ul = [rock_slab(17.5, 1.2, -1.6, 13, n=14, jit=0.14), box([0, 0, 0.4], [21, 15, 4.2], "coquina"), box([0, 0, 4.6], [21.8, 15.8, 0.7], "stone_lt")]
+_ul += [poly_up([[-8.0, -4.5], [4.0, -4.5], [6.0, 0], [4.0, 4.5], [-8.0, 4.5]], 5.3, 8.3, "stone_lt", 1.0, 0.96), box([-1.5, 0.8, 8.3], [9.0, 7.0, 3.8], "coquina"), box([-1.5, 0.8, 12.1], [9.8, 7.8, 0.7], "stone"), box([0, -7.52, 0.4], [3.6, 0.1, 3.0], "black", ol=0)]
+_ul += [poly_up(diamond(sx * 10.5, sy * 7.5, 3.8), 0.4, 4.9, "coquina", 1.0, 0.95) for sx in (-1, 1) for sy in (-1, 1)]
+_ul += [cyl([sx * 10.5, sy * 7.5, 4.9], 1.2, 3.2, "stone_lt", n=6) for sx in (-1, 1) for sy in (-1, 1)] + [cone([sx * 10.5, sy * 7.5, 8.1], 1.4, 1.4, "primary", n=6) for sx in (-1, 1) for sy in (-1, 1)]
+_ul += [cyl([6.0, -0.5, 8.3], 1.7, 8.0, "stone_lt", n=8, rad2=1.4), cyl([6.0, -0.5, 16.3], 2.1, 0.7, "stone", n=8), cone([6.0, -0.5, 17.0], 1.9, 2.2, "primary", n=8),
+        cyl([-5.0, 0.8, 12.8], 0.2, 7.0, "dark_wood", n=4, ol=0), box([-3.8, 0.8, 18.0], [2.6, 0.12, 1.6], "primary", ol=0),
+        box([-14.0, -11.0, -0.2], [3.0, 8.0, 0.4], "plank", r=-35, ol=0)]
+piece("ulua", _ul, [0])
+
+# 9 The great Itza temple (Tayasal): a tall stepped pyramid with the roof-comb temple and its stair
+_it = []
+_z = 0.0
+for _w, _h, _m in [(26, 4.6, "stone_lt"), (22, 4.6, "stone"), (18.4, 4.6, "stone_lt"), (15, 4.6, "stone"), (11.8, 4.6, "stone_lt"), (9.0, 4.6, "stone")]:
+    _it.append(box([0, 0, _z], [_w, _w, _h], _m))
+    _z += _h
+_it += [box([0, 0, _z], [7.4, 6.0, 5.6], "stone_lt"), box([0, -3.02, _z + 0.1], [2.2, 0.1, 3.4], "black", ol=0), box([0, 0, _z + 5.6], [8.4, 7.0, 0.9], "primary"),
+        box([0, 0.5, _z + 6.5], [4.0, 1.0, 7.0], "stone_lt"), box([0, 0.5, _z + 13.5], [5.0, 1.2, 0.9], "secondary"), box([0, -1.0, _z + 6.5], [1.2, 0.5, 1.2], "jade", ol=0),
+        part("wedge", [0, -12.0, 0.0], "stone", sz=[14.0, 5.6, _z], r=-90)]
+_it += [box([sx * 3.4, -4.4, _z + 0.0], [0.8, 0.8, 1.6], "jade", ol=0) for sx in (-1, 1)]
+DEFS["pc_itza_raw"] = _it
+piece("itza_temple", [use("pc_itza_raw", [0, 0, 0], 0, sc=0.82)], [0])
+
+# 10 Port Royal: Fort Charles (low brick fort with a gun deck), a tavern, a gallows
+piece("fort_charles", [rock_slab(12.5, 0.7, -0.8, 15, n=12, jit=0.1, m="sand"), box([0, 0, 0.2], [18, 12, 4.4], "brick"), box([0, 0, 4.6], [18.6, 12.6, 0.6], "stone_lt"), box([-3.5, 1.5, 5.2], [7.0, 6.0, 3.8], "brick"),
+                      box([-3.5, 1.5, 9.0], [7.8, 6.8, 0.6], "stone_lt"), roof([-3.5, 1.5, 9.6], [8.0, 7.0, 2.8], "primary", ridge=0.5), box([0, -6.02, 0.2], [3.0, 0.1, 2.8], "black", ol=0),
+                      cyl([7.2, -3.6, 0.2], 2.0, 6.4, "brick", n=8, rad2=1.9), cone([7.2, -3.6, 6.6], 2.2, 2.2, "primary", n=8), cyl([-7.0, 4.0, 4.6], 0.2, 8.0, "dark_wood", n=4, ol=0), box([-5.8, 4.0, 11.0], [2.4, 0.12, 1.5], "primary", ol=0)] +
+      [use("cannon", [x, -4.4, 5.2], 0, sc=0.85) for x in (-6.5, -3.5, 0.5, 3.5)], [0])
+piece("tavern", [box([0, 0, 0], [8.0, 5.6, 5.2], "wood"), box([0, 0, 5.2], [8.4, 6.0, 0.4], "dark_wood"), roof([0, 0, 5.6], [9.2, 6.8, 3.6], "primary", ridge=0.9),
+                 box([0, -2.82, 0], [1.2, 0.1, 2.0], "dark_wood", ol=0), box([-2.4, -2.82, 1.2], [1.2, 0.1, 1.0], "glass", ol=0), box([2.4, -2.82, 1.2], [1.2, 0.1, 1.0], "glass", ol=0),
+                 box([-2.4, -2.82, 3.4], [1.0, 0.1, 1.0], "glass", ol=0), box([2.4, -2.82, 3.4], [1.0, 0.1, 1.0], "glass", ol=0), box([0, -2.82, 3.4], [1.0, 0.1, 1.0], "glass", ol=0),
+                 box([3.0, 2.0, 5.6], [1.0, 1.0, 3.6], "stone"), cyl([-4.6, -3.2, 0], 0.16, 4.8, "dark_wood", n=4, ol=0), box([-4.6, -3.2, 3.4], [0.2, 1.4, 0.9], "secondary", ol=0)] +
+      [cyl([x, -3.6, 0], 0.5, 0.9, "wood", n=6) for x in (2.8, 3.8)], Y4)
+piece("gallows", [box([0, 0, 0], [5.0, 4.0, 0.9], "stone"), box([0, 0, 0.9], [4.0, 3.0, 0.4], "plank"), cyl([-1.2, 0, 1.3], 0.28, 7.0, "dark_wood", n=5), box([0.2, 0, 8.0], [3.2, 0.3, 0.3], "dark_wood"),
+                   box([-0.8, 0, 7.0], [0.2, 0.2, 1.5], "dark_wood", ol=0, r=[0, 30, 0]), cyl([1.4, 0, 6.2], 0.07, 1.8, "rope", n=4, ol=0), sph([1.4, 0, 5.9], [0.3, 0.3, 0.5], "black", n=5, ol=0),
+                   box([1.2, 0.2, 1.3], [0.8, 0.8, 0.5], "dark_wood", ol=0)], 1)
+
+# 11 Port-de-Paix: the rock fort on its crag; a careened ship on the beach
+_rf = [poly_up(circle(9, 6.5, 0.18, 21), -0.8, 9.0, "rock_dk", 1.2, 0.78), poly_up(circle(9, 5.2, 0.15, 23), 9.0, 12.0, "rock", 1.0, 0.9),
+       poly_up(circle(8, 8.4, 0.22, 25), -0.8, 2.6, "rock", 1.05, 0.9)]
+_rf += [box([0, 0, 12.0], [8.0, 7.0, 2.8], "stone_lt"), box([0, 0, 14.8], [8.8, 7.8, 0.6], "stone"), box([0, -3.52, 12.0], [2.0, 0.1, 2.0], "black", ol=0), cyl([-2.8, 2.5, 14.8], 1.6, 5.0, "stone_lt", n=8, rad2=1.4),
+        cone([-2.8, 2.5, 19.8], 1.9, 2.4, "primary", n=8), cyl([2.5, 1.0, 14.8], 0.16, 9.0, "dark_wood", n=4, ol=0), box([3.6, 1.0, 22.0], [2.4, 0.12, 1.6], "black", ol=0)]
+_rf += [use("cannon", [x, -3.3, 14.8], 0, sc=0.7) for x in (-2.5, 0.5, 3.0)]
+piece("rock_fort", _rf, [0])
+_hp = hull_poly(15.0, 5.2)
+piece("careened", [part("poly", None, "hull_lt", pts=_hp, z0=-1.0, z1=3.2, sc0=0.45, sc1=1.0, r=[32, 0, 0]), part("wall", None, "secondary", pts=_hp, closed=True, t=0.5, h=0.6, z0=3.2, r=[32, 0, 0]),
+                   cyl([-1.0, 3.0, 2.6], 0.22, 9.0, "dark_wood", n=5, r=[-72, 0, 0]), cyl([-5.5, -2.8, 0], 0.2, 4.0, "dark_wood", n=4, r=[28, 0, 12], ol=0), cyl([4.0, -3.0, 0], 0.2, 4.0, "dark_wood", n=4, r=[28, 0, -12], ol=0),
+                   box([-2.0, -3.2, 0.1], [3.0, 1.6, 0.5], "plank", ol=0), use("barrel", [3.0, -4.6, 0], 0, sc=1.2), use("crate", [5.0, -4.4, 0], 20, sc=0.9)], Y4)
+
+# 12 Campeche's baluarte and Merida's twin-towered cathedral
+_bp = [[-5.0, -4.8], [4.0, -4.8], [8.4, 0], [4.0, 4.8], [-5.0, 4.8]]
+piece("baluarte", [poly_up(_bp, 0, 4.6, "coquina", 1.0, 0.96), poly_up(_bp, 4.6, 5.3, "stone_lt", 1.0, 1.0, ol=0),
+                   cyl([7.0, 0, 5.3], 0.95, 2.6, "stone_lt", n=6), cone([7.0, 0, 7.9], 1.2, 1.3, "primary", n=6), use("cannon", [2.6, 0, 5.3], 0, sc=0.8), cyl([-2.0, 0, 5.3], 0.1, 5.5, "dark_wood", n=4, ol=0)], Y4)
+_tc = [box([0, 0, 0], [15, 23, 11.5], "whitewash"), roof([0, 0, 11.5], [25, 16.4, 6], "primary", r=90)]
+for _sx in (-1, 1):
+    _tc += [box([_sx * 5.4, -14.5, 0], [6, 7, 26], "whitewash"), box([_sx * 5.4, -14.5, 26], [7, 8, 1.2], "secondary"), cone([_sx * 5.4, -14.5, 27.2], 5.2, 9.0, "primary", n=4),
+            box([_sx * 5.4, -14.5, 36.0], [0.6, 0.6, 3.4], "gold"), box([_sx * 5.4, -14.5, 37.7], [2.2, 0.6, 0.6], "gold"), box([_sx * 5.4, -18.02, 14.0], [1.2, 0.1, 2.8], "dark_wood", ol=0)]
+_tc += [box([0, -14.5, 0], [4.6, 7.0, 15], "whitewash"), box([0, -18.02, 0], [3.2, 0.1, 5.6], "dark_wood", ol=0), box([0, -18.0, 8.0], [3.0, 0.5, 5.0], "stone_lt", ol=0)]
+DEFS["pc_tc_raw"] = _tc
+piece("twin_cathedral", [use("pc_tc_raw", [0, 0, 0], 0, sc=0.78)], Y4)
+
+# 13 Rome: Capitoline temple, Byrsa, the Cothon, Euryalus, the Acropolis, a Greek temple
+_cp = [box([0, 0, 0], [26, 20, 3.2], "marble"), part("wedge", [0, -12.5, 0.0], "marble", sz=[6.0, 11.0, 3.2], r=-90), box([0, 0, 3.2], [22, 15, 1.0], "marble")]
+_cp += [cyl([-9.0 + 3.6 * i, -5.6, 4.2], 0.85, 10.4, "marble", n=8, ol=0) for i in range(6)] + [cyl([-9.0 + 3.6 * i, 5.6, 4.2], 0.85, 10.4, "marble", n=8, ol=0) for i in range(6)]
+_cp += [box([0, 0, 14.6], [21.5, 14, 1.3], "marble"), roof([0, 0, 15.9], [22.2, 14.8, 6.4], "marble", ridge=1.0), box([0, -5.75, 16.2], [10, 0.3, 3.6], "primary", ol=0), box([0, 0, 4.2], [14.5, 8.4, 10.4], "stone_lt", ol=0)]
+_cp += [box([0, -6.0, 22.0], [3.2, 0.5, 1.4], "gold", ol=0), cyl([0, -6.0, 23.3], 0.3, 1.2, "gold", n=4, ol=0)]
+DEFS["pc_cp_raw"] = _cp
+piece("capitol", [use("pc_cp_raw", [0, 0, 0], 0, sc=0.72)], Y4)
+
+_by = [poly_up(circle(16, 17.0, 0.04, 31), -0.6, 0.6, "sand", 1.04, 1.0, ol=0)]
+for _i, (_r, _h, _m) in enumerate([(14.5, 4.4, "stone_lt"), (11.2, 4.4, "sand"), (8.0, 4.4, "stone_lt")]):
+    _z0 = _i * 4.4
+    _by += [cyl([0, 0, _z0], _r, _h, _m, n=14, rad2=_r * 0.96), cyl([0, 0, _z0 + _h - 0.1], _r + 0.5, 0.7, "stone", n=14)]
+_by += [cyl([14.5 * math.cos(math.radians(a)), 14.5 * math.sin(math.radians(a)), 0], 1.5, 7.4, "stone_lt", n=8) for a in (35, 145, 215, 325)]
+_by += [cone([14.5 * math.cos(math.radians(a)), 14.5 * math.sin(math.radians(a)), 7.4], 1.8, 2.4, "primary", n=8) for a in (35, 145, 215, 325)]
+_by += [box([0, 0, 13.2], [8, 7, 4.2], "marble"), box([0, -3.52, 13.2], [3.0, 0.1, 3.0], "black", ol=0), roof([0, 0, 17.4], [9, 8, 3.4], "primary", ridge=0.7), part("wedge", [0, -16.0, 0.0], "stone", sz=[8.0, 4.4, 9.0], r=-90)]
+piece("byrsa", _by, [0])
+
+_ct = [cyl([0, 0, 0], 14.5, 1.0, "stone_lt", n=20), cyl([0, 0, 1.0], 11.4, 0.25, "water_dk", n=20, ol=0), cyl([0, 0, 1.0], 3.6, 1.0, "stone_lt", n=12), box([0, 0, 2.0], [3.6, 3.6, 2.8], "marble"), roof([0, 0, 4.8], [4.4, 4.4, 2.2], "primary", ridge=0.0)]
+for _k in range(10):
+    _a = math.radians(_k * 36 + 8)
+    _ct += [box([13.4 * math.cos(_a), 13.4 * math.sin(_a), 0.2], [4.6, 3.0, 3.0], "marble", r=math.degrees(_a)), roof([13.4 * math.cos(_a), 13.4 * math.sin(_a), 3.2], [5.0, 3.6, 1.8], "primary", ridge=0.9, r=math.degrees(_a))]
+for _a0 in (20, 140, 260):
+    _a = math.radians(_a0)
+    _ct += [part("poly", [7.4 * math.cos(_a), 7.4 * math.sin(_a), 0.0], "hull_dk", pts=hull_poly(8.0, 2.2), z0=1.0, z1=1.9, sc0=0.6, sc1=1.0, r=_a0 + 90)]
+_ct += [cyl([-3.0, -14.0, 0], 1.0, 8.0, "stone_lt", n=8), cone([-3.0, -14.0, 8.0], 1.3, 1.6, "primary", n=8), cyl([3.0, -14.0, 0], 1.0, 8.0, "stone_lt", n=8), cone([3.0, -14.0, 8.0], 1.3, 1.6, "primary", n=8)]
+piece("cothon", _ct, [0])
+
+_eu = [rock_slab(17.0, 1.2, -1.0, 41, n=12, jit=0.14, m="rock"), poly_up([[-14.0, -7.0], [14.0, -7.0], [0.0, 12.0]], 1.0, 5.0, "stone_lt", 1.0, 0.96), poly_up([[-14.0, -7.0], [14.0, -7.0], [0.0, 12.0]], 5.0, 5.8, "stone", 1.04, 1.0, ol=0)]
+_eu += [box([x, y, 0.4], [5.4, 5.4, 12.0], "stone_lt") for x, y in ((-14.0, -7.0), (14.0, -7.0), (0.0, 12.0))] + [box([x, y, 12.4], [6.2, 6.2, 1.0], "stone") for x, y in ((-14.0, -7.0), (14.0, -7.0), (0.0, 12.0))]
+_eu += [box([x + dx, y + dy, 13.4], [1.4, 1.4, 1.2], "stone") for x, y in ((-14.0, -7.0), (14.0, -7.0), (0.0, 12.0)) for dx, dy in ((-2.0, -2.0), (2.0, -2.0), (-2.0, 2.0), (2.0, 2.0))]
+_eu += [box([0, -7.02, 1.0], [4.4, 0.1, 3.6], "black", ol=0), box([0, -1.5, 5.8], [6, 5, 5.0], "stone_lt"), roof([0, -1.5, 10.8], [6.8, 5.8, 2.4], "primary", ridge=0.6), cyl([-6, 0, 5.8], 0.18, 7.0, "dark_wood", n=4, ol=0), box([-4.8, 0, 11.4], [2.4, 0.12, 1.5], "primary", ol=0)]
+piece("euryalus", _eu, [0])
+
+_ap = [poly_up(circle(14, 16.0, 0.12, 51), -1.0, 9.0, "rock", 1.1, 0.8), poly_up(circle(14, 12.6, 0.06, 52), 9.0, 9.8, "stone_lt", 1.0, 1.0, ol=0)]
+_ap += [use("temple_front", [-1.0, 1.0, 9.8], 0, sc=0.62), box([8.0, -8.5, 9.8], [5.6, 3.6, 5.0], "marble"), roof([8.0, -8.5, 14.8], [6.2, 4.2, 2.2], "primary", ridge=0.9),
+        part("wedge", [-3.0, -14.5, 0.0], "stone_lt", sz=[11.0, 4.0, 9.8], r=-90)]
+_ap += [cyl([-11.0 * math.cos(math.radians(a)), 11.0 * math.sin(math.radians(a)), 9.8], 0.9, 3.0, "stone_lt", n=6) for a in (20, 80, 140, 200)]
+piece("acropolis", _ap, [0])
+piece("greek_temple", [box([0, 0, 0], [16, 11, 1.2], "stone_lt"), box([0, 0, 1.2], [14, 9, 0.8], "marble"), box([0, 0.4, 2.0], [10, 6, 7.4], "stone_lt", ol=0)] +
+      [cyl([-5.4 + 2.16 * i, -3.6, 2.0], 0.55, 7.4, "marble", n=8, ol=0) for i in range(6)] + [box([0, 0, 9.4], [14, 9, 0.9], "marble"), roof([0, 0, 10.3], [14.6, 9.8, 4.0], "marble", ridge=1.0), box([0, -4.0, 10.6], [6.0, 0.3, 2.2], "primary", ol=0)], [0])
+
+# 14 growth: burnt houses (a sack), a besieger's camp
+piece("burnt", [box([0, 0, 0], [5.0, 4.0, 2.4], "black"), box([-1.2, 0.6, 2.4], [2.2, 0.3, 1.8], "dark_wood", ol=0), box([1.6, -0.8, 2.4], [0.3, 1.8, 1.2], "black", ol=0),
+                box([-0.4, 0, 0.4], [3.6, 2.8, 0.5], "rock_dk", ol=0), cyl([1.8, 1.4, 0], 0.18, 3.2, "dark_wood", n=4, r=[14, 6, 0], ol=0),
+                sph([0.6, 0.4, 4.0], [1.6, 1.5, 1.2], "smoke", n=5, ol=0), sph([1.0, 0.7, 6.0], [1.9, 1.7, 1.5], "smoke", n=5, ol=0), sph([1.5, 1.2, 8.3], [2.2, 2.0, 1.7], "smoke", n=5, ol=0)], Y4)
+piece("camp_tent", [roof([0, 0, 0], [5.4, 4.4, 3.8], "primary", ridge=1.0), box([0, 0, 0], [5.0, 4.0, 1.0], "sail", ol=0), box([0, -2.22, 0], [1.2, 0.1, 1.9], "dark_wood", ol=0),
+                    cyl([2.9, 0, 3.6], 0.1, 1.6, "dark_wood", n=4, ol=0)], Y4)
+piece("camp_flag", [cyl([0, 0, 0], 0.28, 11, "dark_wood", n=6), box([-2.4, 0, 7.6], [4.8, 0.16, 2.8], "primary"), box([-2.4, 0, 8.4], [4.82, 0.18, 0.9], "secondary", ol=0)], 1)
+
 for _nm, _yaws in PIECES:
     for _k in (range(_yaws) if isinstance(_yaws, int) else _yaws):
         S["p_%s__y%d" % (_nm, _k)] = {"name": "p_%s y%d" % (_nm, _k), "zex": ZEX, "frame": "auto",
