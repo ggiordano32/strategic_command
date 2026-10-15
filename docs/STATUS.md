@@ -1490,49 +1490,50 @@ smoke, fading over 8 turns), siege (camp in the besieger's colour). Checked: che
 campaign_input_test, deploy_view_test, town_tap_test PASS; galleries `towns3/` (49 West towns at zoom 1.2 / 2.4, Rome
 landmark towns, growth strips level x walls, shipyard / market, sack, siege); big atlas 2048 x 1152 (16.5 MB, was 14.7),
 small 2048 x 320 (about 3.9 MB, was 3.1); plans for all 49 towns at max state 417 ms once (no per-frame cost, ground repaints
-only when a plan changes). `tools/check_scripts.sh` currently fails only on the story agent's `campaign/cstory.gd:381`
-(local `tr`). Open: a look on phones (landmark scale, tower heights), Rome's Alexandria is not a region, ships'
+only when a plan changes). `tools/check_scripts.sh` is clean again (2026-10-15). Open: a look on phones (landmark scale, tower heights), Rome's Alexandria is not a region, ships'
 baked contact shadow, atlas must be re-imported after repacking.
 **The pirate story campaign** (DESIGN "Story campaign: The Brethren's Due",
 agreed 2026-10-14: swashbuckling with a dark edge, ~45 turns, three endings,
-co-op optional; about 4 builds). **Step 1 built 2026-10-15 (not committed):
-the story engine, the Prologue and Act 1, playable solo** (DESIGN "As built,
-step 1"). `campaign/cstory.gd` (a data-driven event system in the campaign
-rules: triggers on the state, choices with effects, pressures, scripted
-actor fleets the AI skips, choices waiting like pending battles and
-answered by the pure `CStory.answer`), `campaign/data/story_brethren.gd`
-(the script: Gallows Point, the chase, the hungry crew, Tortuga, Lindo,
-Act One, the purse's grumbling / desertion / vote, Le Boucher, the
-hurricane, Maracaibo, the Spanish reprisal on Tortuga as a land battle,
-Mendoza's letter and the Armada's hunt, Le Boucher's bargain, End of Act
-One; five first-sight logbook pages), hooks in `cturn.gd` (the turn waits
-for a choice; the actors sail in step 5; `end_turn` after the turn number;
-`apply_battle` reads story battles), `crules.gd` (a story captain left
-with nothing is spared for a rescue; chronicle kind "story"),
-`cai_fleet.gd` (fleets tagged `sto` are left out), `cdata.gd` /
-`cstorm.gd` (`year_shift`: the story's calendar starts in 1665). View:
-`game/campaign/story_view.gd` (dialogue panel, pressures strip, story log,
-map captions), "The Brethren's Due" on the new-campaign screen (offline),
-Realm > Story log; edits in `campaign_screen.gd` are 9 lines (preload, var,
-setup in `_ready`, `story.step()` in `_next_step` after the battles,
-`story.guard_end()` in `end_turn`, `story.refresh()` in `_refresh`).
-Checked: `tests/story_test.gd` PASS (start, the prologue the same twice and
-through JSON, thresholds, effects, answer() pure, a story sea battle and a
-land battle read back, the turn held, 4 seeds x 15 turns of random choices
-reach the End of Act One), campaign_test, pack_test, campaign_sim hashes
-unchanged (Rome cdc1d805 32b83031 23f9ed4f 3237d82d a42fc685 b6fe6c2e,
-West b137875c edd82dee 0393b18d 2aa8578b deb00750 1d051164), online_e2e
-(Rome, `--pack west`) and go test (the server reads nothing new),
-check_scripts. Screenshots in the session scratchpad `story1/`. Open:
-Acts 2-3 and the endings; co-op (the crew vote; the state already lists
-captains and who answers each choice; a story online is untested: the
-new-campaign button is offline only and the story view stays off online);
-portraits; the story's battles' odds are by the formula only (probed:
-the San Telmo fight ~70 %, the reprisal 53 % with two companies of ours,
-Le Boucher careened ~63 % against two ships of ours, never against one);
-the Armada rarely hunts in Act 1 (attention reaches 30+ mostly when you
-join Le Boucher or raid a lot); a sloop of the story's fleets shows the
-generic ship art.
+co-op optional; about 4 builds). **Step 1 (4808ccc): the story engine, the
+Prologue and Act 1** (DESIGN "As built, step 1"). **Step 2 built 2026-10-15
+(not committed): Act 2 "The Commission", Act 3 "The Free Port" and the three
+endings, solo** (DESIGN "As built, step 2"): `campaign/data/story_brethren.gd`
+(about 60 new events: Ashby's letter of marque, the flota at Havana and three
+ways to a fleet (Lindo's brigantine, the Isla de Pinos frigate that may be
+bait, King Jeremy's canoes, Hesketh's Ranger), the Armada's blockade of
+Tortuga, the Treaty of Madrid at turn 22 (the letter revoked, war with
+England, the gauntlet out of Port Royal, HMS Oxford's chase, Lindo's
+loyalty), Le Boucher as ally (his cruelty, his betrayal) or rival; Vane's
+last pages reveal the free port (walls 2 held 5 turns, a fleet at 80 % of the
+Armada's power, 1500 gold in the chest), the Brethren council (speech, votes
+or a sea duel with Le Boucher), the great raid on Cartagena or Portobelo (a
+land battle; surprise or a bribed gate), the King's pardon, recognition, the
+finale at turn 41 (the Armada attacks the fleet in Tortuga road, then lands);
+the Republic, the Pardon, the Legend, each with an epilogue of seven fates);
+`campaign/cstory.gd` (new conditions and effects, `bt_` flags, a raid waits for
+a pending battle, actors rest after a battle, the goal's parts, endings that
+release the story's fleets and leave the sandbox); `cturn.gd` (the story's
+end_turn also when the game is over: the Legend), `cfleet.gd` (no launched
+ship joins a story fleet); `game/campaign/story_view.gd` (Free port gauge, the
+ending screen with "Continue in the sandbox", captions, raid target ring),
+`campaign_screen.gd` (news before pending battles, the ending before game
+over: 4 lines), `game/campaign/story_autoplay.gd` (headless player: paths
+first / random / republic / pardon / legend; `--story-path=`,
+`--story-show=ID|ending`). Checked: story_test PASS (step 2's effects; the
+three scripted 45-turn paths reach their endings, twice the same and through
+JSON each turn; 8 seeds x 45 turns of random choices each end in one of the
+three), campaign_test, pack_test, campaign_sim hashes unchanged (Rome
+cdc1d805 32b83031 23f9ed4f 3237d82d a42fc685 b6fe6c2e, West b137875c edd82dee
+0393b18d 2aa8578b deb00750 1d051164), online_e2e (Rome 8072, West 8073), go
+test, check_scripts clean. Balance (formula) in DESIGN step 2: the finale
+holds 83 % with 4 companies of ours behind walls 2, the finale Armada needs
+the fleet goal or recognition, the great raid wants the bribe (Portobelo
+37-74 %, Cartagena 23-60 %). Screenshots: session scratchpad `story2/`
+(the treaty, the goal reveal, the goal in the log, each ending). Open: co-op
+(the crew vote); the story online; portraits; a real-time playtest of the
+finale and the raid; random-choice bots on the formula mostly lose an
+ungarrisoned Tortuga to the sandbox's nations by Act 2-3 (the Legend); a
+sloop of the story's fleets shows the generic ship art.
 **Done 2026-10-14 (00fc498): better firearm smoke** (volley smoke today is flat
 puffs in game/overlay.gd: wanted thick billowing banks that roll and drift
 with the wind, lit from the NW, darker cores, muzzle flash with a short
@@ -2271,8 +2272,9 @@ godot --headless --script res://tests/campaign_sim.gd -- --seeds=6 --turns=60   
 #   campaign_sim: --skill=easy|average|skilled, --skill-f=rome:s (one faction), --knob=s:ID=VALUE (ablation), --twice
 godot --headless --script res://tools/campaign_grid.gd [-- --check --png=/tmp/grid.png]  # regenerate / check the nav grid
 godot --headless --script res://tests/campaign_solo.gd      # 20 turns of a player policy
-godot --headless --script res://tests/story_test.gd         # the story campaign (-- --turns=15 --seeds=4)
-# Story testing aids: -- --story=seed[:turns] (turns autoplayed) --story-seen=N --story-choices --story-log
+godot --headless --script res://tests/story_test.gd         # the story campaign (-- --turns=45 --seeds=8 --quick)
+# Story testing aids: -- --story=seed[:turns] (turns autoplayed) --story-path=first|random|republic|pardon|legend
+#   --story-show=EVENT|ending --story-seen=N --story-choices --story-log
 godot --headless --script res://tests/campaign_battles.gd   # auto-resolve timing, formula calibration
 godot --script res://tests/campaign_input_test.gd           # needs a window
 godot --headless --script res://tests/battle_screen_test.gd  # battle screen: pre-battle, auto / fought result, field battle

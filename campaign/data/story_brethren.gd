@@ -1,8 +1,10 @@
 extends RefCounted
 ## The story campaign "The Brethren's Due" (DESIGN "Story campaign: The
-## Brethren's Due"): the script as data, read by campaign/cstory.gd. Built so
-## far: the Prologue (turns 0-3) and Act 1 "Brethren" (turns 4-14). Turn
-## numbers here are the state's (0 = the first turn, summer 1665).
+## Brethren's Due"): the script as data, read by campaign/cstory.gd: the
+## Prologue (turns 0-3), Act 1 "Brethren" (turns 4-14), Act 2 "The
+## Commission" (15-29), Act 3 "The Free Port" (30-44) and the three
+## endings (the Republic, the Pardon, the Legend). Turn numbers here are the
+## state's (0 = the first turn, summer 1665).
 ##
 ## Nothing here is stored in a state: a state keeps event ids, choice
 ## indices and its pressures (cstory.gd), so the text can be edited freely;
@@ -27,7 +29,12 @@ extends RefCounted
 ##   lost region, season 1 (the hurricane season), storm 1 (a storm on the
 ##   map), siege 1 (a siege by or of a captain), plunder 1 (any plunder yet),
 ##   plundered_in / not_plundered_in N (turns), actor [key, "alive" | "gone"],
-##   gold_ge v, timer name, ships_ge n.
+##   gold_ge v, timer name, ships_ge n; step 2: flota / noflota 1 (the
+##   treasure fleet on the map), blockaded 1 (a port of ours), capt / nocapt
+##   k (a captain of ours the story made from actor k, afloat), fp part
+##   ("fort" | "fleet" | "chest": the free port's goal met) / fp_ge n (parts
+##   met), walls_ge [region, n], fame_ge n, sea_pending 1 (a sea battle of
+##   ours waiting), any [conditions, ...] (one of them holds).
 ## Effects (cstory.gd _fx): see the list there.
 
 ## Who speaks: name, role, badge colour (portrait placeholder: a coloured
@@ -40,6 +47,8 @@ const CHARS := {
 	"ashby": {"name": "Sir Thomas Ashby", "role": "Governor of Jamaica", "col": "c8402f"},
 	"boucher": {"name": "Jean-Baptiste Nau", "role": "\"Le Boucher\"", "col": "5a1a1a"},
 	"crew": {"name": "The crew", "role": "", "col": "5a6b5a"},
+	"jeremy": {"name": "Jeremy", "role": "King of the Mosquito Coast", "col": "8a4fc4"},
+	"hesketh": {"name": "Tom Hesketh", "role": "Captain of the Brethren", "col": "3f6f8f"},
 	"": {"name": "", "role": "", "col": "3a3a3a"},
 }
 
@@ -52,7 +61,7 @@ const PLAYER := "brethren"
 const HAVEN := "port_de_paix"
 const CAPTAIN := "The Captain"
 ## Times the Brethren fish a shipless, landless captain out of the surf.
-const MERCY := 2
+const MERCY := 3
 
 ## The pressures (cstory.gd): start values. purse: how hungry the crew is
 ## (0-100); owed: shares promised (gold); heat: the Armada's grudge on top
@@ -81,12 +90,42 @@ const HAVEN_STEP := 5
 ## ARMADA_RANGE + attention cells; else it lies at its home port.
 const ARMADA_HUNT_ATT := 35
 const ARMADA_RANGE := 25
+## A hunting actor goes home to refit for this many turns after a battle.
+const ACTOR_REST := 3
 ## Map marks (view only): captions over the story's fleets and places.
 const MARKS := {"guarda": "Guardacosta San Telmo", "armada": "Armada de Barlovento", "boucher": "Le Boucher",
-	"prize": "Spanish trader (prize)", "nao": "Treasure nao", "haven": "Tortuga: your haven", "lair": "Ile-a-Vache: Le Boucher's lair"}
+	"prize": "Spanish trader (prize)", "nao": "Treasure nao", "haven": "Tortuga: your haven", "lair": "Ile-a-Vache: Le Boucher's lair",
+	"pinos": "Careened frigate (prize?)", "straggler": "Straggling galleon (prize)", "royal": "Port Royal squadron",
+	"hunters": "Ashby's pirate hunters", "flota": "The flota", "free_port": "Tortuga: the free port"}
+## Prizes (map captions in gold, not red).
+const PRIZES: Array[String] = ["prize", "nao", "pinos", "straggler"]
+## Places the story points at (view: a dashed ring and a caption while the
+## flags hold): [flag set, flag not set, region key, caption].
+const TARGETS: Array = [
+	["raid_cartagena", "raided", "cartagena", "Cartagena: the great raid"],
+	["raid_portobelo", "raided", "portobelo", "Portobelo: the great raid"],
+]
 ## Le Boucher's lair (Ile-a-Vache, south of Hispaniola), the hunt's reach.
 const LAIR := [-7362, 1807]
 const HUNT_CELLS := 3
+## The free port (Act 3, cstory.gd fp_parts): the haven held FP_HOLD turns
+## with walls FP_WALLS+; the captains' fleets' power FP_FLEET_PCT % of the
+## Armada's (FP_ARMADA while it is not at sea: in Tortuga road with stone
+## walls the batteries make that an even fight or better); FP_GOLD in the
+## chest.
+const FP_HOLD := 5
+const FP_WALLS := 2
+const FP_FLEET_PCT := 80
+const FP_ARMADA := 1200
+const FP_GOLD := 1500
+## A captain's fleet within this of a harbour lands its troops in a story assault.
+const ASSAULT_CELLS := 5
+## The game ends with no ending (every captain gone / a victory): these events end the story.
+const END_OVER := "end_fallen"
+const END_WON := "end_conquest"
+## Isla de Pinos (south of Cuba) and the Florida straits off Havana.
+const PINOS := [-8290, 2150]
+const STRAITS := [-8180, 2345]
 
 ## The start (cstory.gd _setup): the player's sloop off Port Royal, with a
 ## company aboard; the scripted actors' fleets.
@@ -396,18 +435,18 @@ const EVENTS: Array[Dictionary] = [
 				"say": ["boucher", "Magnifique! You will learn a great deal from me. Some of it you will even wish you hadn't."],
 				"fx": [["join", "boucher", "Jean-Baptiste \"Le Boucher\" Nau", 40], ["infamy", 15], ["p", "heat", 10], ["p", "purse", -15],
 					["p", "favour", -15], ["flag", "joined_boucher"]]},
-			{"t": "Let him go his own way", "hint": "He sails for Saint-Domingue. You have not seen the last of him.",
-				"say": ["boucher", "Pity. You will regret it. People usually do."],
-				"fx": [["goal", "boucher", "leogane"], ["flag", "spurned_boucher"]]},
+			{"t": "Let him go his own way", "hint": "He sails for his lair on the Ile-a-Vache. You have not seen the last of him.",
+				"say": ["boucher", "Pity. You will regret it. People usually do. I shall be at the Ile-a-Vache, if you change your mind."],
+				"fx": [["goal", "boucher", "lair"], ["flag", "spurned_boucher"]]},
 		]},
-	{"id": "boucher_beaten", "act": 1, "title": "The Butcher's end?", "when": {"flag": "won_boucher"},
+	{"id": "boucher_beaten", "act": 1, "title": "The Butcher's end?", "when": {"flag": "won_boucher", "turn": [0, 22]},
 		"lines": [
 			["mercy", "We caught him with his hull on the beach. He fought like the devil, then went over the side in his shirt with a knife in his teeth, and nobody's seen him since."],
 			["ashby", "Three hundred pieces of eight, as promised, for ridding His Majesty's seas of a Frenchman nobody will miss. Do not mistake this for friendship, Captain. I pay rat-catchers too."],
 		],
 		"chron": "Le Boucher's ships were taken at the Ile-a-Vache; the man himself vanished.",
 		"fx": [["gold", 300], ["p", "favour", 15], ["fame", 8], ["flag", "boucher_beaten"]]},
-	{"id": "boucher_escaped", "act": 1, "title": "Next time, bring more ships", "when": {"flag": "lost_boucher"},
+	{"id": "boucher_escaped", "act": 1, "title": "Next time, bring more ships", "when": {"flag": "lost_boucher", "turn": [0, 22]},
 		"lines": [["boucher", "Vane's boy came all the way to the Ile-a-Vache to kill me. How touching! Next time, bring more ships."]],
 		"fx": [["p", "purse", 10], ["unflag", "hunt_boucher"]]},
 	{"id": "mendoza", "focus": "armada", "act": 1, "title": "A letter under a flag of truce", "when": {"att_ge": 30},
@@ -452,7 +491,720 @@ const EVENTS: Array[Dictionary] = [
 	{"id": "act1_end", "act": 1, "title": "End of Act One", "when": {"turn": [14, -1], "flag": "act1"},
 		"lines": [
 			["lindo", "The Governor of Jamaica would like a word, Captain. Privately. He finds himself in need of a man who sinks Spanish ships and asks no questions. Shall I tell him you are that man? Think about it. You have until spring."],
-			["", "Act Two, \"The Commission\", is still being written. The sea is yours: play on."],
+			["mercy", "A year ago they hanged our captain for a pirate. Now the man who watched it wants to hire us. Vane would have laughed. Then he'd have asked how much."],
 		],
 		"fx": [["act", 2], ["flag", "act1_done"]]},
+	# ---------------------------------------------------------------- act 2 ---
+	{"id": "act2", "act": 2, "title": "Act Two: The Commission", "when": {"turn": [15, -1], "flag": "act1_done"},
+		"lines": [
+			["", "Port Royal, the wickedest city in Christendom: forty taverns, a church nobody goes to, and a Governor who would like to make a respectable man of you, for a percentage."],
+			["mercy", "Respectable. The crew won't know what to do with themselves. Mind, Captain: the more noise we make, the farther Mendoza looks. He's been to Havana for more ships."],
+		],
+		"fx": [["act", 2], ["actor_att", "armada", 30], ["spawn", "armada", "new_spain", "havana",
+			[{"t": "frigate", "nm": "Nuestra Senora de la Soledad"}, {"t": "frigate", "nm": "San Felipe"}, {"t": "sloop"}], 0, "hunt", "havana"]]},
+	{"id": "commission", "focus": "port_royal", "act": 2, "title": "A commission from the King", "when": {"turn": [15, 17], "flag": "act2"},
+		"lines": [
+			["", "King's House, Port Royal. A cool room, a hot Governor, and Isaac Lindo smiling at the window as if he owned the view. He probably does."],
+			["ashby", "Captain. You will forgive me if I do not offer you a chair. I am told you sink Spanish ships. His Majesty's government has no opinion on that, officially. Unofficially, here is a commission to take, sink, burn or otherwise destroy the ships and goods of the King of Spain, his subjects and adherents."],
+			["ashby", "You will bring your prizes to Port Royal. You will pay His Majesty's tenth, and mine. And you will not, under any circumstances whatsoever, embarrass me."],
+			["lindo", "A letter of marque, Captain. With it you are a privateer: the same ship, the same crew, the same throats. Only now the hangman is on your side. Sir Thomas signs for men he trusts. Or for men who pay."],
+		],
+		"choices": [
+			{"t": "Accept the commission", "need": {"p_ge": ["favour", 30]}, "why": "Ashby will not sign for a man he does not trust (patron favour 30)",
+				"hint": "A letter of marque from England: peace with England, Port Royal's harbour open to you, and half as much again for Spanish plunder while England fights Spain.",
+				"say": ["ashby", "Splendid. Do try not to hang, Captain. It would reflect so poorly on my judgement."],
+				"fx": [["dip2", "england", "new_spain", "war"], ["dip2", "england", "tierra_firme", "war"], ["marque", "england"], ["flag", "marque"],
+					["p", "favour", 10], ["sched", "tip_marque", 0]]},
+			{"t": "Buy his signature (400 gold)", "need": {"gold_ge": 400}, "why": "Not enough gold in the chest",
+				"hint": "The same letter of marque, for 400 gold in the right pockets.",
+				"say": ["lindo", "Four hundred, of which Sir Thomas sees three. My commission. You understand."],
+				"fx": [["gold", -400], ["dip2", "england", "new_spain", "war"], ["dip2", "england", "tierra_firme", "war"], ["marque", "england"],
+					["flag", "marque"], ["flag", "bought_marque"], ["p", "favour", 5], ["sched", "tip_marque", 0]]},
+			{"t": "No flag but ours", "hint": "No letter, no master. The crew cheers; Ashby does not forget an insult.",
+				"say": ["mercy", "Vane said the same to the last Governor. The crew will drink to that tonight. Ashby will remember it longer than they will."],
+				"fx": [["flag", "no_marque"], ["fame", 4], ["p", "purse", -5], ["p", "favour", -10]]},
+		]},
+	{"id": "tip_marque", "act": 2, "title": "Vane's logbook: letters of marque", "tip": 1,
+		"lines": [
+			["vane", "A letter of marque is a pirate's licence with a seal on it. It makes you a lawful enemy of the King's enemies, which is a fine thing until the kings make friends. Kings always make friends in the end. Then the paper is a rope."],
+			["", "While you hold England's letter you are at peace with England, your ships refit in Port Royal, and plunder from nations England is at war with pays 50 % more. It lapses after 12 turns, or the day England makes peace with Spain."],
+		]},
+	{"id": "flota_news", "focus": "havana", "act": 2, "title": "The flota", "when": {"turn": [16, 18], "flag": "act2"},
+		"lines": [
+			["lindo", "A little bird in Havana, Captain. This summer the flota gathers there: the silver of Peru and Mexico in great galleons, with the King's warships around them like hens round a chick. It sails for Seville through the Florida straits."],
+			["lindo", "One galleon would buy Tortuga. All of them would buy Jamaica, and its Governor. But you cannot take a flota with a sloop and good intentions."],
+			["mercy", "He's right, damn him. We need ships. Real ones, and men who know how to sail them."],
+		],
+		"choices": [
+			{"t": "Buy a brigantine from Lindo (450 gold)", "need": {"gold_ge": 450}, "why": "Not enough gold in the chest",
+				"hint": "A brigantine joins your flagship's fleet now.",
+				"say": ["lindo", "She was a Dutch slaver once. I had her scrubbed. Twice. One gets used to the smell below."],
+				"fx": [["gold", -450], ["ship", "brigantine", "Lindo's Folly"], ["flag", "bought_ship"]]},
+			{"t": "Send word to the Miskito", "hint": "The Mosquito Coast hates Spain worse than you do. Their king will come to talk next turn.",
+				"say": ["mercy", "Jeremy's people have fought the Spanish for a hundred years. They'll fight beside anyone who'll fight beside them."],
+				"fx": [["flag", "asked_miskito"], ["sched", "miskito", 1]]},
+			{"t": "Look for a ship to steal", "hint": "Every harbour has a ship whose owner is asleep. Mercy will find one.",
+				"say": ["mercy", "Now you're talking like a pirate. Give me a turn."],
+				"fx": [["sched", "pinos", 1], ["flag", "look_ship"]]},
+		]},
+	{"id": "pinos", "focus": "pinos", "act": 2, "title": "A frigate on the beach", "when": {"turn": [17, 19], "flag": "act2"},
+		"lines": [
+			["mercy", "A Spanish frigate lies careened at Isla de Pinos with her guns ashore and her bottom in the air, helpless as a turtle on its back. Thirty guns, Captain, for the taking."],
+			["lindo", "Or thirty guns for the taking that the Armada happens to have left lying exactly where a greedy pirate would find them. I have sold a great many things in my life, Captain. Bait is one of them."],
+		],
+		"choices": [
+			{"t": "Cut her out", "hint": "She lies off Isla de Pinos for three turns: sail at her and she is a sea battle. Half her crew is ashore. If it is a trap, you will know soon.",
+				"say": ["mercy", "Boats away at midnight, muffled oars, knives in teeth. Like the old days."],
+				"fx": [["spawn", "pinos", "new_spain", "pinos", [{"t": "frigate", "nm": "Santa Rosa", "h": 45, "c": 35}], 3, "hold"], ["flag", "hunt_pinos"],
+					["gamble", 50, "pinos_clear", "pinos_bait"]]},
+			{"t": "Sell the tip to someone else (100 gold)", "hint": "Lindo knows a buyer. 100 gold, and if it is bait, somebody else is caught in it.",
+				"say": ["lindo", "A Dutchman with more guns than sense. I shall light a candle for him."],
+				"fx": [["gold", 100]]},
+			{"t": "Leave her", "hint": "Nothing. The crew calls it caution, then cowardice.",
+				"say": ["mercy", "Aye. There'll be other ships. That's what they said about the last one too."],
+				"fx": [["p", "purse", 6]]},
+		]},
+	{"id": "pinos_clear", "act": 2, "title": "No trap", "fx": [],
+		"lines": [["mercy", "Lookouts on every headland and not a Spanish sail in sight. Lindo's getting old. She's ours if we're quick."]]},
+	{"id": "pinos_bait", "act": 2, "title": "The bait", "fx": [["place", "armada", "pinos"], ["hunt", "armada"], ["actor_att", "armada", 0],
+		["sched", "bait_over", 3]],
+		"lines": [
+			["mercy", "Topsails over Cape San Antonio. Two frigates and a sloop, under Mendoza's own pennant. Lindo was right, curse him: she was bait, and the Armada was waiting behind the island."],
+			["mendoza", "My compliments, Captain. I did not think you would be so easily led. Neither did my officers. I have won a great deal of money from them."],
+		]},
+	{"id": "bait_over", "act": 2, "title": "The trap is sprung", "fx": [["actor_att", "armada", 30]],
+		"lines": [["mercy", "The Armada's given up waiting at Pinos and gone back to its old ways. Lindo's laughing at us. Quietly, mind. He knows I carry a knife."]]},
+	{"id": "pinos_taken", "act": 2, "title": "The Santa Rosa", "when": {"flag": "won_pinos"},
+		"lines": [["mercy", "She's ours, keel to truck, if she's still afloat. Thirty guns, Captain. Now we're somebody."]],
+		"chron": "Pirates cut out a Spanish frigate careened at Isla de Pinos.",
+		"fx": [["fame", 5], ["infamy", 4], ["p", "purse", -10]]},
+	{"id": "miskito", "focus": "cabo_gracias", "act": 2, "title": "The King of the Mosquito Coast", "when": {"turn": [19, 21], "flag": "act2"},
+		"lines": [
+			["", "A long canoe comes alongside, paddled by twenty men in red paint and English hats. In the stern sits an old man with a crown of silver wire and a Bible he cannot read."],
+			["jeremy", "The Spaniard burns our towns and sells our sons in Cartagena. The English give us muskets and call me king. I like the muskets better."],
+			["jeremy", "My canoes go where your ships cannot: up the rivers, over the reefs, into the lagoons. My warriors can strike a fish under the water with a harpoon. A Spaniard is easier. What will you give?"],
+		],
+		"choices": [
+			{"t": "Muskets, powder and a red coat (200 gold)", "need": {"gold_ge": 200}, "why": "Not enough gold in the chest",
+				"hint": "Two war canoes sail with you under the king's son; two companies of Miskito warriors come to Tortuga.",
+				"say": ["jeremy", "A red coat! Now I am a proper king. My son goes with you. Bring him back, or bring back the Spaniards who killed him."],
+				"fx": [["gold", -200], ["spawn", "miskito", "miskito", "cabo_gracias", [{"t": "war_canoe"}, {"t": "war_canoe"}], 0, "hold"],
+					["join", "miskito", "Prince Oldman", 10], ["unit", "native_warriors", 2, "port_de_paix"], ["flag", "miskito_allies"]]},
+			{"t": "Promise him Spanish heads", "hint": "The canoes come for nothing; the Miskito will remember what you promised, and Spain will remember who brought them.",
+				"say": ["jeremy", "Heads I understand. Heads are better than gold: they do not get spent."],
+				"fx": [["spawn", "miskito", "miskito", "cabo_gracias", [{"t": "war_canoe"}, {"t": "war_canoe"}], 0, "hold"],
+					["join", "miskito", "Prince Oldman", 10], ["p", "heat", 6], ["flag", "miskito_allies"], ["flag", "promised_heads"]]},
+			{"t": "Thank him, and send him home", "hint": "Nothing.",
+				"say": ["mercy", "He'll go to the next pirate who asks. There's always a next pirate."],
+				"fx": []},
+		]},
+	{"id": "captains_offer", "focus": "port_de_paix", "act": 2, "title": "Captains for hire", "when": {"turn": [19, 22], "flag": "act2"},
+		"lines": [
+			["hesketh", "Tom Hesketh, of the Ranger, brigantine, fourteen guns. I hear you're going after the flota. I hear it in every tavern on Tortuga, which you might want to think about."],
+			["hesketh", "My lads will sail with you for a share of what we take. Equal shares, ship for ship, the way Vane did it. Or for gold now, if you'd rather. I'd rather."],
+			["mercy", "Hesketh's honest, for a pirate. He's never left a man behind that I know of, and he only cheats at cards."],
+		],
+		"choices": [
+			{"t": "Shares from the next prize (400 owed)", "hint": "The Ranger joins you under her own captain; 400 gold in shares owed.",
+				"say": ["hesketh", "Done. Don't make me regret it. I'm a bad loser and a worse creditor."],
+				"fx": [["spawn", "hesketh", "brethren", "port_de_paix", [{"t": "brigantine", "nm": "Ranger"}], 0, "hold"],
+					["join", "hesketh", "Tom Hesketh", 15], ["p", "owed", 400], ["flag", "hesketh"]]},
+			{"t": "Pay him now (300 gold)", "need": {"gold_ge": 300}, "why": "Not enough gold in the chest",
+				"hint": "The Ranger joins you; nothing owed.",
+				"say": ["hesketh", "Gold in the hand. You're a captain after my own heart, and my own purse."],
+				"fx": [["gold", -300], ["spawn", "hesketh", "brethren", "port_de_paix", [{"t": "brigantine", "nm": "Ranger"}], 0, "hold"],
+					["join", "hesketh", "Tom Hesketh", 15], ["flag", "hesketh"]]},
+			{"t": "Sail alone", "hint": "Nothing shared, nothing gained.",
+				"say": ["hesketh", "Suit yourself. I'll drink to your memory."],
+				"fx": []},
+		]},
+	{"id": "flota_gathers", "focus": "havana", "act": 2, "title": "The flota at Havana", "when": {"turn": [18, 27], "flota": 1, "flag": "act2"},
+		"lines": [
+			["", "Havana. The galleons come in one by one from Veracruz and Cartagena and Portobelo, low in the water, and lie under the guns of El Morro while the escorts water and the priests bless everything that floats."],
+			["mercy", "There she is, Captain. The flota. Every man in the crew has dreamed of this since he was a boy. Most of them also dreamed of being eaten by sea monsters, so mind how much you listen."],
+			["vane", "Never take on the flota whole. Pick off the one that falls behind. If you must fight the escorts, fight them to windward, and fight them once."],
+		],
+		"fx": [["flag", "flota_seen"]],
+		"choices": [
+			{"t": "Hunt the flota", "hint": "Sail at the treasure fleet (marked on the map): close with it and it is a sea battle. You will need every ship you have.",
+				"say": ["mercy", "All hands! Tell the crew there's silver in it. Don't tell them how much iron."],
+				"fx": [["flag", "hunt_flota"]]},
+			{"t": "Shadow it for a straggler", "hint": "A gamble: one galleon may fall behind in the straits. If she does, she is alone for three turns.",
+				"say": ["mercy", "Patience. The pirate's least favourite virtue."],
+				"fx": [["gamble", 55, "straggler_found", "straggler_none"]]},
+			{"t": "Let it go: too strong", "hint": "Nothing gained. The crew remembers what you didn't try.",
+				"say": ["mercy", "Maybe next year. Every year it's maybe next year."],
+				"fx": [["p", "purse", 12]]},
+		]},
+	{"id": "tip_flota", "act": 2, "title": "Vane's logbook: the flota", "tip": 1, "when": {"flota": 1, "flag": "act2"},
+		"lines": [
+			["vane", "Twice a year the King of Spain's silver comes up from the Main and down from Mexico, gathers at Havana, and goes home through the Florida straits. It is the richest prize in the world, and the best defended."],
+			["", "The flota's galleons gather at Havana, wait for the others, then sail north for the straits and off the map. Each carries treasure; the capitana carries the most. More infamous pirates mean more escorts."],
+		]},
+	{"id": "straggler_found", "focus": "straggler", "act": 2, "title": "A straggler", "fx": [["spawn", "straggler", "new_spain", "straits",
+		[{"t": "galleon", "nm": "Santisima Trinidad", "h": 55, "c": 40, "g": 600}], 3, "hold"], ["flag", "hunt_straggler"]],
+		"lines": [["mercy", "One of them's sprung her foremast and fallen behind in the straits, and the escort never even looked back. A galleon, Captain, alone. Three days, maybe four, before they come back for her."]]},
+	{"id": "straggler_none", "act": 2, "title": "No straggler",
+		"lines": [["mercy", "They kept station like soldiers on parade. Mendoza's had a word with their captains, I'll wager. Nothing for us."]],
+		"fx": [["p", "purse", 6]]},
+	{"id": "straggler_taken", "act": 2, "title": "The Santisima Trinidad", "when": {"flag": "won_straggler"},
+		"lines": [["mercy", "Six hundred in silver, a hold full of cochineal and a bishop's nephew who weeps when he's spoken to. Best day's work since the hanging."]],
+		"chron": "Pirates took a straggling galleon of the flota in the Florida straits.",
+		"fx": [["p", "purse", -20], ["fame", 6], ["infamy", 6], ["p", "heat", 6]]},
+	{"id": "flota_taken", "focus": "flagship", "act": 2, "title": "The flota is ours", "when": {"flag": "won_flota"},
+		"lines": [
+			["mercy", "Silver, Captain. Silver in bars like firewood, in chests that four men can't lift, in the captain's cabin and the bilges and the hollow of the mainmast. The crew are dancing on it."],
+			["mercy", "Mendoza will never forgive this. Not the silver. The shame. Spain will want somebody's head on a pike for it, and every man here knows whose."],
+		],
+		"chron": "Pirates fell on the Spanish treasure fleet and took its silver.",
+		"fx": [["fame", 10], ["infamy", 8], ["p", "heat", 15], ["p", "purse", -25], ["p", "favour", 5], ["flag", "flota_taken"],
+			["actor_add", "armada", [{"t": "frigate", "nm": "San Jose"}]], ["sched", "mendoza_vow", 1]]},
+	{"id": "flota_beaten", "act": 2, "title": "The escorts", "when": {"flag": "lost_flota"},
+		"lines": [["mercy", "The escorts were waiting for us, and they knew their business. We got out with our lives and not much else. Vane said fight them once. He didn't say we had to lose."]],
+		"fx": [["p", "purse", 10], ["unflag", "hunt_flota"]]},
+	{"id": "flota_gone", "act": 2, "title": "The flota sails", "when": {"flag": "flota_seen", "noflag": ["won_flota", "lost_flota"], "noflota": 1},
+		"lines": [["mercy", "The flota's through the straits and gone for Seville, every galleon of it. That silver will be cannon in Flanders by Christmas. The crew don't say anything. They don't have to."]],
+		"fx": [["p", "purse", 8], ["unflag", "hunt_flota"]]},
+	{"id": "mendoza_vow", "focus": "armada", "act": 2, "title": "A second letter", "fx": [["actor_att", "armada", 20]],
+		"lines": [
+			["mendoza", "Captain. You have robbed my King, and that I could forgive: kings are robbed every day. But you did it under my eyes, in my waters, and men I have known twenty years are dead of it."],
+			["mendoza", "I will find you. Not today, perhaps, nor this year. But I have nothing else to do now, and I am a very patient man. R. de M."],
+		]},
+	{"id": "armada_blockade", "focus": "port_de_paix", "act": 2, "title": "The Armada off Tortuga",
+		"when": {"turn": [18, 40], "flag": "act2", "att_ge": 40, "owns": "port_de_paix", "actor": ["armada", "alive"]}, "every": 8,
+		"fx": [["blockade", "armada", "port_de_paix", 3], ["p", "haven", -10]],
+		"lines": [
+			["", "The Armada de Barlovento stands in for Tortuga road and anchors there, out of range of the fort, as if it had all the time in the world. Nothing goes in. Nothing comes out."],
+			["mercy", "A blockade. They'll starve the town of trade and wait for us to come out. Or for the town to hand us over. I don't know which they'd prefer."],
+		],
+		"choices": [
+			{"t": "Break it: attack them now", "hint": "Your flagship's fleet fights the Armada now, whatever the odds.",
+				"say": ["mercy", "Every man to his gun. If we're going to die, let's do it in front of Tortuga where they can see it."],
+				"fx": [["sea_battle", "armada", "blockade"]]},
+			{"t": "Wait behind the fort's guns", "hint": "The Armada stays three turns, cutting Tortuga's trade. The town grumbles.",
+				"say": ["mercy", "We wait. The town won't like it. Towns never like it."],
+				"fx": [["p", "haven", -5]]},
+			{"t": "Bribe a Spanish captain to look away (200 gold)", "need": {"gold_ge": 200}, "why": "Not enough gold in the chest",
+				"hint": "The blockade has a gap in it, and Spain's grudge cools a little.",
+				"say": ["lindo", "Every Armada has one captain who has not been paid since Lent. I know his name. It is a very expensive name."],
+				"fx": [["gold", -200], ["p", "heat", -5], ["p", "haven", 5], ["hunt", "armada"]]},
+		]},
+	{"id": "tip_blockade", "act": 2, "title": "Vane's logbook: blockades", "tip": 1, "when": {"blockaded": 1, "flag": "act1"},
+		"lines": [
+			["vane", "A port is only as rich as the ships that come into it. Lie off a harbour with more guns than it can answer and you starve it of trade without firing a shot. That works both ways, mind."],
+			["", "A port is blockaded when an enemy fleet stronger than its defenders' lies within 3 cells of its harbour at the end of a turn: its owner loses most of its sea trade and the blockader takes a share. Beat the fleet, or outnumber it, to lift it."],
+		]},
+	{"id": "won_blockade", "act": 2, "title": "The blockade broken", "when": {"flag": "won_blockade"}, "every": 1,
+		"lines": [["mercy", "They're running for Havana with their tails between their legs! Tortuga saw it all from the walls. You'll never pay for a drink in this town again."]],
+		"chron": "The pirates of Tortuga broke a Spanish blockade.",
+		"fx": [["fame", 8], ["p", "haven", 20], ["p", "purse", -10], ["home", "armada"], ["unflag", "won_blockade"]]},
+	{"id": "lost_blockade", "act": 2, "title": "Beaten back", "when": {"flag": "lost_blockade"}, "every": 1,
+		"lines": [["mercy", "They beat us back into the harbour. The town saw that too."]],
+		"fx": [["p", "haven", -10], ["p", "purse", 8], ["unflag", "lost_blockade"]]},
+	{"id": "tip_seafight", "act": 2, "title": "Vane's logbook: a fight at sea", "tip": 1, "when": {"sea_pending": 1, "flag": "act2"},
+		"lines": [
+			["vane", "A sea fight is decided before the first gun: by who has the wind, who has the guns, and whose crew wants it more. Get the weather gauge, rake her stern, and board when she is sick of it."],
+			["", "A sea battle can be fought in real time (you sail and fire your own ships, with the wind) or resolved at once. Fought, a smaller fleet with the wind and a good captain can beat a bigger one."],
+		]},
+	{"id": "treaty", "focus": "port_royal", "act": 2, "title": "The Treaty of Madrid", "when": {"turn": [22, 23], "flag": "act2"},
+		"lines": [
+			["", "News from Europe, three months old and already too late: at Madrid the ambassadors of England and Spain have signed a treaty of peace and friendship in the Indies. Every commission against Spain is revoked."],
+			["ashby", "BY THE GOVERNOR. A PROCLAMATION. Whereas peace is concluded between His Majesty and the Catholic King, all persons whatsoever who shall henceforth commit any act of hostility against the subjects of Spain shall be deemed pirates and enemies of mankind."],
+			["ashby", "And whereas a certain captain, late of the sloop of Josiah Vane, has done such acts, a reward of two thousand pieces of eight is offered for his body, quick or dead. God save the King."],
+			["mercy", "The ink wasn't dry on our letter. Port Royal's shut to us, Captain, and every Englishman with a boat just became a bounty hunter. Kings make friends. Vane said it. I didn't believe him."],
+		],
+		"chron": "England and Spain made peace at Madrid. Every commission against Spain was revoked, and Port Royal turned on its pirates.",
+		"fx": [["dip2", "england", "new_spain", "peace"], ["dip2", "england", "tierra_firme", "peace"], ["unmarque", "england"],
+			["dip", "england", "war"], ["p", "favour", -100], ["flag", "treaty"], ["actor_att", "armada", 20],
+			["actor_add", "armada", [{"t": "sloop", "nm": "Santo Cristo"}]], ["sched", "price", 1], ["sched", "lindo_test", 1]]},
+	{"id": "escape", "focus": "port_royal", "act": 2, "title": "Run the gauntlet", "when": {"flag": "treaty", "turn": [22, 24], "near": ["port_royal", 6]},
+		"lines": [
+			["", "Port Royal. The chain is up across the harbour mouth, the fort's guns are run out, and His Majesty's frigate Assurance, half her crew still ashore, is warping across the channel to close it."],
+			["mercy", "They mean to take us at anchor, Captain! We have the land breeze for another hour. After that we're dead men or prisoners, which is the same thing slower."],
+		],
+		"fx": [["spawn", "royal", "england", "port_royal", [{"t": "frigate", "nm": "HMS Assurance", "h": 70, "c": 45}], 4, "hold", "port_royal"]],
+		"choices": [
+			{"t": "Run the gauntlet past the fort", "hint": "The fort's guns rake you as you pass, then the frigates: a sea battle now, hull battered before it starts.",
+				"say": ["mercy", "Cut the cables! All sail! Lie flat on the deck when we pass the fort, and pray they aim like Englishmen."],
+				"fx": [["hull", -15], ["sea_battle", "royal", "escape"]]},
+			{"t": "Cut the cables and slip out in the dark", "hint": "A gamble: in the dark, past the chain, with no lights. If they see you, they fight you at the harbour mouth.",
+				"say": ["mercy", "Not a word, not a light, not a lit pipe. Any man who sneezes goes over the side."],
+				"fx": [["gamble_fame", 40, "escape_clean", "escape_caught"]]},
+		]},
+	{"id": "escape_clean", "act": 2, "title": "Out in the dark",
+		"lines": [["mercy", "We were past the chain before the watch on the fort woke up. They fired at shadows for an hour. One day the crew will tell that story and the chain will be a mile long."]],
+		"fx": [["fame", 5], ["voyage", ["player", 12, 0]], ["remove", "royal"]]},
+	{"id": "escape_caught", "act": 2, "title": "Seen",
+		"lines": [["mercy", "A sentry with good eyes and a lantern. Here they come!"]],
+		"fx": [["hull", -10], ["sea_battle", "royal", "escape"]]},
+	{"id": "escaped", "act": 2, "title": "Clear of Port Royal", "when": {"flag": "won_escape"},
+		"lines": [["mercy", "We're through! The Assurance is aground on the Rackham Cay with her foremast over the side. Ashby will be eating his wig."]],
+		"chron": "A pirate captain fought his way out of Port Royal under the guns of the fort.",
+		"fx": [["fame", 8], ["p", "purse", -10], ["remove", "royal"]]},
+	{"id": "not_escaped", "act": 2, "title": "Beaten in the channel", "when": {"flag": "lost_escape"},
+		"lines": [["mercy", "They mauled us in the channel and we only got out because the tide turned. Count the dead later, Captain. Sail now."]],
+		"fx": [["p", "purse", 10], ["remove", "royal"]]},
+	{"id": "price", "focus": "hunters", "act": 2, "title": "A price on your head",
+		"fx": [["spawn", "hunters", "england", "port_royal", [{"t": "frigate", "nm": "HMS Oxford", "h": 80, "c": 70}], 6, "chase", "port_royal"], ["until", "hunters", 4]],
+		"lines": [
+			["ashby", "To Captain Thomas Whetstone of His Majesty's frigate Oxford. Sir: you will take, sink or destroy the pirate described in the enclosed proclamation, and bring me his head in a cask of rum. Keep the rum."],
+			["mercy", "Ashby's sent the Oxford after us. A King's frigate, with a crew of Port Royal men who drank with us at the Sign of the Mermaid. They know all our anchorages, Captain."],
+		]},
+	{"id": "lindo_test", "act": 2, "title": "Lindo's loyalty",
+		"lines": [
+			["lindo", "My dear Captain. Sir Thomas asked me this morning, over a very good Madeira, where you careen and where you water and which of your men drink too much. I told him nothing. Yet."],
+			["lindo", "I am a businessman. Ashby can make me rich, or hang me; you can only make me rich. I find myself torn. Do help me decide."],
+			["mercy", "He's selling us, Captain, and asking us to bid. That's Lindo all over. I'd cut his throat, but he's the only man in the Caribbean who can sell what we take."],
+		],
+		"choices": [
+			{"t": "Outbid the Governor (250 gold)", "need": {"gold_ge": 250}, "why": "Not enough gold in the chest",
+				"hint": "Lindo stays yours: his fence and his tongue.",
+				"say": ["lindo", "There, you see? Nobody had to be hanged. I do so prefer it when nobody has to be hanged."],
+				"fx": [["gold", -250], ["flag", "lindo_loyal"], ["timer", "lindo", 10]]},
+			{"t": "Trust him: he never lied to Vane", "hint": "A gamble on a fence's heart. Better if you once paid Vane's debt to him, worse if you burned his letter.",
+				"say": ["mercy", "Vane trusted him. Vane's dead. I'm only saying."],
+				"fx": [["gamble", 55, "lindo_true", "lindo_false"]]},
+			{"t": "Cut him off: he is Ashby's man", "hint": "No more fence. Lindo will tell Ashby what he knows, and he knows Tortuga.",
+				"say": ["mercy", "Good. I'll sleep better. Tortuga won't."],
+				"fx": [["flag", "lindo_gone"], ["p", "haven", -10], ["p", "heat", 5]]},
+		]},
+	{"id": "lindo_true", "act": 2, "title": "A fence's word",
+		"lines": [["lindo", "You trusted me! How very unwise of you, and how very touching. I find I cannot sell a man who trusts me. It is a weakness. Please do not tell anyone."]],
+		"fx": [["flag", "lindo_loyal"], ["timer", "lindo", 10]]},
+	{"id": "lindo_false", "act": 2, "title": "Sold",
+		"lines": [
+			["mercy", "Lindo sold us. Ashby's men were waiting at our watering place on the Ile-a-Vache, and the Navy knows every rock of Tortuga road now. I should have cut his throat when I had the chance."],
+		],
+		"fx": [["flag", "lindo_gone"], ["flag", "lindo_sold"], ["p", "haven", -20], ["crew", -10]]},
+	{"id": "boucher_cruelty", "act": 2, "title": "What Le Boucher did", "when": {"turn": [24, 27], "capt": "boucher"},
+		"lines": [
+			["", "Le Boucher's crews took a little Spanish town on the coast of Cuba while you were watering. When you came up, the church was burning with the townsfolk inside it."],
+			["boucher", "They would not say where the silver was. Now they will never say anything. Do not look at me like that, mon ami: the Spanish do worse to us, and nobody calls them butchers."],
+			["mercy", "This is the man whose flag flies next to ours, Captain. The crew sees it. Spain sees it. God sees it, if He's looking."],
+		],
+		"choices": [
+			{"t": "Look away", "hint": "He stays. Infamy, Spain's grudge, and a crew that knows what you will put up with.",
+				"say": ["boucher", "Bon. You are learning."],
+				"fx": [["infamy", 6], ["p", "heat", 8], ["flag", "boucher_kept"]]},
+			{"t": "Rebuke him before the crews", "hint": "A gamble, better the more famous you are: he backs down, or he sulks and remembers.",
+				"say": ["mercy", "In front of everyone? You've got stones, Captain. Let's hope they're bigger than his."],
+				"fx": [["gamble_fame", 35, "boucher_cowed", "boucher_sulks"]]},
+			{"t": "Cast him out of the Brethren", "hint": "His ships and his men leave you, and he goes over to whoever pays. You have made an enemy who knows all your secrets.",
+				"say": ["boucher", "You cast me out? Me? You will see me again, Vane's boy. I promise you that."],
+				"fx": [["desert", "boucher", "new_spain"], ["goal", "boucher", "lair"], ["flag", "boucher_cast"], ["p", "favour", 5], ["infamy", -4]]},
+		]},
+	{"id": "boucher_cowed", "act": 2, "title": "Le Boucher backs down",
+		"lines": [["boucher", "...As you wish, Captain. Prisoners will be ransomed, churches will be robbed in the proper way. You have made your point. I will remember who made it."]],
+		"fx": [["fame", 5], ["flag", "boucher_cowed"]]},
+	{"id": "boucher_sulks", "act": 2, "title": "Le Boucher laughs",
+		"lines": [["boucher", "Ha! Did you hear that, mes enfants? The little captain has a conscience. Let us see how long it keeps him warm."]],
+		"fx": [["p", "purse", 8], ["flag", "boucher_kept"]]},
+	{"id": "boucher_rival", "focus": "boucher", "act": 2, "title": "Le Boucher's way", "when": {"turn": [24, 27], "actor": ["boucher", "alive"], "noflag": "joined_boucher"},
+		"lines": [
+			["", "Le Boucher has been busy: a Spanish town on the coast of Cuba burned with its people in the church, and a prize you were stalking off Cabo Cruz taken from under your bowsprit."],
+			["boucher", "Vane's boy! You were too slow. You are always too slow. That is why your captain hangs and I drink."],
+			["mercy", "Every Spaniard he burns, they'll hang one of ours for. We could tell Mendoza where he careens. It would be a filthy thing to do. It might also be the smartest thing we ever did."],
+		],
+		"choices": [
+			{"t": "Hunt him down", "hint": "Close with his fleet and it is a sea battle.",
+				"say": ["mercy", "Good. Some men need killing. He's most of them."],
+				"fx": [["flag", "hunt_boucher"], ["flag", "hunt_boucher2"], ["unflag", "won_boucher"], ["unflag", "lost_boucher"]]},
+			{"t": "Sell his careening place to Mendoza", "hint": "The Armada mauls Le Boucher and Spain's grudge against you cools. A Brother sold to Spain: the Brethren will hear of it.",
+				"say": ["mendoza", "I accept your information, Captain, with thanks and without respect. Do not imagine this changes anything between us."],
+				"fx": [["actor_hull", "boucher", 50, 50], ["p", "heat", -12], ["flag", "sold_boucher"], ["p", "haven", -5]]},
+			{"t": "Let him be", "hint": "Nothing.",
+				"say": ["mercy", "He won't let us be, Captain. Men like him never do."],
+				"fx": []},
+		]},
+	{"id": "boucher_hunted", "act": 2, "title": "Le Boucher's ships taken", "when": {"flag": ["won_boucher", "hunt_boucher2"], "turn": [23, 29]},
+		"lines": [["mercy", "We took his ships, Captain! He went over the side again with a knife in his teeth. That man's harder to kill than a cockroach in a biscuit."]],
+		"chron": "Le Boucher's ships were taken by a rival pirate.",
+		"fx": [["fame", 8], ["p", "purse", -10], ["unflag", "hunt_boucher"]]},
+	{"id": "boucher_slipped", "act": 2, "title": "He got away again", "when": {"flag": ["lost_boucher", "hunt_boucher2"], "turn": [23, 29]},
+		"lines": [["boucher", "Again, Vane's boy? You never learn. I like that in an enemy."]],
+		"fx": [["p", "purse", 8], ["unflag", "hunt_boucher"]]},
+	{"id": "armada_grows", "focus": "armada", "act": 2, "title": "Mendoza's ships", "when": {"turn": [25, 27], "flag": "act2", "actor": ["armada", "alive"]},
+		"lines": [
+			["", "Word from Havana: Mendoza has had the Armada's officers flogged for their failures. He flogged himself as well, they say, in his cabin, every night for a week. Then he put to sea again."],
+			["mercy", "He's serious now, Captain. He hunts at the faintest rumour of us."],
+		],
+		"fx": [["actor_att", "armada", 20]]},
+	{"id": "act2_end", "act": 2, "title": "End of Act Two", "when": {"turn": [29, -1], "flag": "act2"},
+		"lines": [
+			["mercy", "A price on your head in Port Royal, the Armada in Havana, half the Brethren drunk on what we took and the other half waiting to see if you'll hang. That's where we are, Captain."],
+			["mercy", "And there's something you should read. Vane's logbook. The last pages, the ones he wrote the night before they hanged him. I've had them sewn into my coat for three years. It's time."],
+		],
+		"fx": [["act", 3], ["flag", "act2_done"]]},
+	# ---------------------------------------------------------------- act 3 ---
+	{"id": "act3", "act": 3, "title": "Act Three: The Free Port", "when": {"turn": [30, -1], "flag": "act2_done"},
+		"lines": [["", "Tortuga, the year the Brethren decided what they were."]],
+		"fx": [["act", 3], ["unflag", "hunt_boucher"]]},
+	{"id": "vane_pages", "focus": "port_de_paix", "act": 3, "title": "The last pages", "when": {"turn": [30, 32], "flag": "act3"},
+		"lines": [
+			["vane", "They will hang me in the morning. I find I mind less than I thought. What I mind is that all of it, every prize, every town, every man I ever buried at sea, was for rum and nothing."],
+			["vane", "There is a better thing. A free port, where no flag but ours flies. Fortified, so the kings cannot take it. With a fleet, so the kings dare not try. With gold enough that the Dutch and the French will trade with it, and a thing that trades is a thing that is recognised. A republic of the Brethren. They did it at Sale. We could do it at Tortuga."],
+			["vane", "Tell whoever comes after me: hold it, arm it, pay for it. Then let Mendoza come."],
+			["mercy", "That's it, Captain. That's what he died wanting. The question is whether you want it too."],
+		],
+		"chron": "Pirates at Tortuga spoke of a free port: a republic of the Brethren of the Coast.",
+		"fx": [["free_port"], ["flag", "goal"], ["sched", "tip_goal", 0], ["sched", "lindo_plan", 1], ["sched", "mercy_plan", 1]],
+		"choices": [
+			{"t": "Raise the walls with gold (600 gold)", "need": {"gold_ge": 600, "owns": "port_de_paix"}, "why": "Not enough gold in the chest, or Tortuga is not ours",
+				"hint": "Masons from Saint-Domingue: Tortuga's walls rise to stone bastions now.",
+				"say": ["mercy", "Stone, by God. Vane would weep."],
+				"fx": [["gold", -600], ["build", "port_de_paix", "walls", 2], ["p", "haven", 10]]},
+			{"t": "Every hand to the walls", "need": {"owns": "port_de_paix"}, "why": "Tortuga is not ours",
+				"hint": "The crew builds them themselves: the walls stand in two turns. They will grumble the whole time.",
+				"say": ["mercy", "Pirates hauling stone. I never thought I'd see it. Neither did they."],
+				"fx": [["p", "purse", 15], ["sched", "walls_done", 2]]},
+			{"t": "Rum and nothing suits us fine", "hint": "The goal stands; nothing more for now. Mercy says nothing. Loudly.",
+				"say": ["mercy", "...Aye, Captain."],
+				"fx": [["p", "purse", -5]]},
+		]},
+	{"id": "walls_done", "act": 3, "title": "The walls stand", "if": {"owns": "port_de_paix"},
+		"lines": [["mercy", "Stone walls and a bastion on the point, built by the worst masons in Christendom. They'll hold. Probably."]],
+		"fx": [["build", "port_de_paix", "walls", 2], ["p", "haven", 10]]},
+	{"id": "tip_goal", "act": 3, "title": "Vane's logbook: the free port", "tip": 1,
+		"lines": [
+			["", "The free port has three parts (the Port gauge, top left; tap it for the details): hold Tortuga with stone walls (walls 2) for 5 turns, unblockaded and unbesieged; a fleet with at least 60 % of the Armada's power; and 1500 gold in the chest (plunder taken from now on counts). Mendoza will come for it before the end. Each part you have then makes the last fight easier."],
+		]},
+	{"id": "lindo_plan", "act": 3, "title": "Lindo's arithmetic", "if": {"flag": "lindo_loyal"},
+		"lines": [
+			["lindo", "A republic! How wonderfully impractical. Let me tell you how it is done. The Dutch at Curacao and the French at Petit-Goave will recognise anyone who pays his bills in silver and can keep his harbour open. Fifteen hundred pieces of eight would be a respectable bill."],
+			["lindo", "And a good wall, and enough ships that Mendoza must think twice. Recognition is a matter of looking like a country, Captain. Countries are only pirates who stayed."],
+		]},
+	{"id": "mercy_plan", "act": 3, "title": "Mercy's arithmetic", "if": {"noflag": "lindo_loyal"},
+		"lines": [["mercy", "I've no head for figures, Captain, but I asked around. A wall that'll stand a siege, enough ships to make the Armada think twice, and silver enough that the Dutch will sell to us. Fifteen hundred pieces of eight, the Dutch factor at Curacao says, and he's honest, for a Dutchman."]]},
+	{"id": "haven_retake", "focus": "port_de_paix", "act": 2, "title": "Tortuga in other hands", "when": {"flag": "act1_done", "lost": "port_de_paix", "near": ["port_de_paix", 5]}, "every": 4,
+		"lines": [["mercy", "There's Tortuga, and there's somebody else's flag over the fort. A pirate without a haven is a wolf without a den, Captain. We take it back."]],
+		"choices": [
+			{"t": "Storm it", "hint": "A landing party of the crews and everyone aboard goes over the wall now: a land battle.",
+				"say": ["mercy", "Grapnels and ladders. Same as Vane did it in fifty-eight."],
+				"fx": [["assault", "port_de_paix", ["cutlass", "cutlass", "buccaneers"], "retake"]]},
+			{"t": "Not yet", "hint": "Nothing.", "say": ["mercy", "We'll come back with more."], "fx": []},
+		]},
+	{"id": "retaken", "act": 2, "title": "Tortuga is ours again", "when": {"flag": "won_retake"},
+		"lines": [["mercy", "The black flag's back over the fort. Now let's keep it there."]],
+		"fx": [["fame", 5], ["unflag", "won_retake"]]},
+	{"id": "boucher_back", "focus": "boucher", "act": 3, "title": "Le Boucher returns", "when": {"turn": [31, 33], "flag": "act3", "actor": ["boucher", "gone"], "noflag": ["joined_boucher", "boucher_dead"]},
+		"fx": [["spawn", "boucher", "france", [-7290, 2018], [{"t": "frigate", "nm": "La Revanche"}, {"t": "brigantine"}], 0, "hold"], ["unflag", "won_boucher"],
+			["unflag", "lost_boucher"]],
+		"lines": [
+			["", "A black frigate comes into Tortuga road, a brigantine in her wake, with a familiar figure on the quarterdeck: thinner, burned brown, with a new scar from ear to chin."],
+			["boucher", "Vane's boy! Did you think the sea would keep me? The sea spat me out. Even the sea has taste. I hear you want to be a king now. Kings need executioners. I am available."],
+		]},
+	{"id": "boucher_betrays", "focus": "boucher", "act": 3, "title": "Le Boucher turns his coat", "when": {"turn": [31, 33], "flag": "act3", "capt": "boucher", "noflag": "boucher_cowed"},
+		"fx": [["desert", "boucher", "new_spain"], ["p", "heat", 12], ["flag", "boucher_traitor"]],
+		"lines": [
+			["", "In the night Le Boucher's ships cut their cables and slip out of Tortuga road. In the morning a letter is found nailed to the church door."],
+			["boucher", "Mon ami: the Spanish pay better than you, and they do not lecture. Don Rodrigo was most interested in your walls, your guns and your fine republic. I told him everything. Until we meet. N."],
+			["mercy", "We should have hanged him at the Ile-a-Vache. I said so. I'll say it at your funeral too."],
+		]},
+	{"id": "council", "focus": "port_de_paix", "act": 3, "title": "The Brethren in council", "when": {"turn": [33, 35], "flag": "goal"},
+		"lines": [
+			["", "The great room of the Sign of the Pig and Whistle, Tortuga. Forty captains, a hundred quartermasters, three barrels of rum and one table, which has been fought over twice since noon."],
+			["hesketh", "A republic? Laws, and courts, and taxes? I went on the account to get away from all that."],
+			["mercy", "The captains have to agree, Captain. A free port's only free if the Brethren hold it. Talk them round, buy them, or show them who's strongest. They respect all three. The third one most."],
+		],
+		"choices": [
+			{"t": "Make them a speech", "hint": "A gamble, better the more famous you are: they follow you, or the council splits and half of them sail away.",
+				"say": ["mercy", "Stand on the table. They like it when you stand on the table."],
+				"fx": [["gamble_fame", 30, "council_won", "council_split"]]},
+			{"t": "Buy their votes (600 gold)", "need": {"gold_ge": 600}, "why": "Not enough gold in the chest",
+				"hint": "Rum, shares and a little silver in the right hands. They follow you.",
+				"say": ["mercy", "A republic bought and paid for. Like every other one, I suppose."],
+				"fx": [["gold", -600], ["sched", "council_won", 0]]},
+			{"t": "Call out Le Boucher before them all", "need": {"actor": ["boucher", "alive"]}, "why": "Le Boucher is not here to beat",
+				"hint": "Your flagship fights Le Boucher's ships now, in Tortuga road, with the Brethren watching. Win and they are yours.",
+				"say": ["boucher", "At last! In front of everyone. You do me too much honour, Vane's boy. I shall return it with interest."],
+				"fx": [["sea_battle", "boucher", "duel"], ["flag", "duel"]]},
+		]},
+	{"id": "council_won", "act": 3, "title": "The Brethren follow you",
+		"lines": [
+			["hesketh", "Well. I came for the rum and I'm leaving with a country. My Ranger's yours, and my lads, and God help us all."],
+			["mercy", "They're cheering you in the street, Captain. Tomorrow they'll be complaining about the taxes. That's how you know it's a real country."],
+		],
+		"chron": "The Brethren of the Coast in council at Tortuga chose one captain to lead them.",
+		"fx": [["spawn", "council", "brethren", "port_de_paix", [{"t": "brigantine", "nm": "Revenge"}, {"t": "sloop", "nm": "Swift"}], 0, "hold"],
+			["join", "council", "Black Ned Corbin", 20], ["unit", "cutlass", 2, "port_de_paix"], ["unit", "buccaneers", 2, "port_de_paix"],
+			["fame", 6], ["flag", "council_won"]]},
+	{"id": "council_split", "act": 3, "title": "The council splits",
+		"lines": [
+			["mercy", "They walked out, Captain. Half of them. Took their ships and their men and their rum, and some of them are saying Le Boucher's way is better. The rest are here, for now."],
+		],
+		"fx": [["p", "haven", -15], ["unit", "cutlass", 1, "port_de_paix"], ["actor_add", "boucher", [{"t": "sloop"}]], ["flag", "council_split"]]},
+	{"id": "duel_won", "act": 3, "title": "The Butcher's last fight", "when": {"flag": "won_duel"},
+		"lines": [
+			["", "Le Boucher's flagship strikes in Tortuga road in front of the whole Brethren. They bring him to you in chains, laughing."],
+			["boucher", "Well fought, Vane's boy. Hang me high, so they can all see. I always wanted an audience."],
+			["mercy", "We hanged him at low tide, at Gallows Point, Tortuga. So the crabs could have him. Vane would have liked that."],
+		],
+		"chron": "Le Boucher was beaten in Tortuga road before the assembled Brethren and hanged.",
+		"fx": [["fame", 10], ["flag", "boucher_dead"], ["remove", "boucher"], ["sched", "council_won", 0], ["p", "heat", -5]]},
+	{"id": "duel_lost", "act": 3, "title": "Beaten before them all", "when": {"flag": "lost_duel"},
+		"lines": [["boucher", "Ha! Look at your little republic, mes amis. It cannot even win a fight in its own harbour. Who sails with me?"]],
+		"fx": [["sched", "council_split", 0], ["p", "purse", 10]]},
+	{"id": "great_raid", "act": 3, "title": "The great raid", "when": {"turn": [34, 36], "flag": "goal"},
+		"lines": [
+			["mercy", "The chest's not filling itself, Captain, and the Dutch won't recognise a republic of beggars. We need one great raid. Morgan-sized. Bigger."],
+			["lindo", "Cartagena: the richest city on the Main, behind walls a mile round and forts on every point. Or Portobelo: a pestilent little town where the silver of Peru waits for the galleons, with three castles and a garrison of fever. Cartagena would fill the chest to the brim; Portobelo most of the way. Either might fill a graveyard."],
+			["vane", "A town is taken in the first hour or not at all. Go in at dawn, through the side they think is safe, and do not stop to loot until the fort is yours."],
+		],
+		"choices": [
+			{"t": "Cartagena", "hint": "Sail for Cartagena (marked on the map). Off its harbour, choose how to go in: a land battle against its walls and forts.",
+				"say": ["mercy", "The Queen of the Indies. If we're going to hang, let's hang for something worth it."],
+				"fx": [["flag", "raid_cartagena"], ["voyage_r", "cartagena"], ["sched", "tip_forts", 0]]},
+			{"t": "Portobelo", "hint": "Sail for Portobelo (marked on the map). Off its harbour, choose how to go in: a land battle against its castles.",
+				"say": ["mercy", "Morgan took it with four hundred men and a bad attitude. We've got both."],
+				"fx": [["flag", "raid_portobelo"], ["voyage_r", "portobelo"], ["sched", "tip_forts", 0]]},
+			{"t": "No: small prizes, many of them", "hint": "No great raid. The chest fills only as fast as you take prizes.",
+				"say": ["mercy", "Slow and steady. Never knew a pirate get rich that way. Never knew one get hanged that way either."],
+				"fx": [["flag", "no_raid"]]},
+		]},
+	{"id": "tip_forts", "act": 3, "title": "Vane's logbook: walls and forts", "tip": 1,
+		"lines": [
+			["vane", "A walled town fights twice: once at the wall and again in the streets. The forts sweep the beaches and the harbour; the streets are narrow and every window is a loophole. Land where the guns cannot reach, take the wall by surprise, and keep your men together in the streets or they will be killed one house at a time."],
+			["", "Storming a settlement is a land battle: the attackers come over the walls (ladders) or through a breach while the defenders hold the walls, gates and towers; inside, it is street fighting. Higher walls give the defenders more height and more men."],
+		]},
+	{"id": "raid_cartagena_at", "focus": "cartagena", "act": 3, "title": "Off Cartagena", "when": {"flag": "raid_cartagena", "noflag": "raided", "near": ["cartagena", 5]},
+		"lines": [
+			["", "Cartagena de Indias at dawn: the forts of Bocachica on the channel, the walls of the city gold in the sunrise, the bells ringing for matins. Nobody on the walls looks out to sea."],
+			["mercy", "There she is. We go in now, or we go home and tell lies about it for the rest of our lives."],
+		],
+		"choices": [
+			{"t": "Storm the city",
+				"hint": "At dawn, by surprise (a quarter of the defenders are caught asleep): everyone aboard your ships off the harbour and six companies of the Brethren go over the wall now. A land battle.",
+				"say": ["mercy", "Ladders! Grapnels! Follow the Captain and don't stop for anything shiny!"],
+				"fx": [["flag", "raided"], ["weaken", "cartagena", 25], ["assault", "cartagena", ["cutlass", "cutlass", "buccaneers", "buccaneers", "buccaneers", "musketeers"], "cartagena"]]},
+			{"t": "Bribe a gate open first (300 gold)", "need": {"gold_ge": 300}, "why": "Not enough gold in the chest",
+				"hint": "A sergeant of the garrison opens a postern at night: half the defenders are caught asleep and the walls count a level lower. Then the same assault.",
+				"say": ["lindo", "Every city has a sergeant who has not been paid. Cartagena has several hundred. I need only one."],
+				"fx": [["gold", -300], ["flag", "raided"], ["weaken", "cartagena", 50], ["slight", "cartagena", 1], ["assault", "cartagena", ["cutlass", "cutlass", "buccaneers", "buccaneers", "buccaneers", "musketeers"], "cartagena"]]},
+			{"t": "Turn back", "hint": "No raid. The crew will not forget the sight of those walls.",
+				"say": ["mercy", "...Aye. Bring her about."],
+				"fx": [["flag", "raided"], ["p", "purse", 10]]},
+		]},
+	{"id": "raid_portobelo_at", "focus": "portobelo", "act": 3, "title": "Off Portobelo", "when": {"flag": "raid_portobelo", "noflag": "raided", "near": ["portobelo", 5]},
+		"lines": [
+			["", "Portobelo: a wet green bay, three castles, a customs house with the King's silver in it, and a town of fever and sweat that empties into the hills when it sees a pirate sail."],
+			["mercy", "Morgan went over the walls of the Santiago castle with the nuns and the friars carrying his ladders in front of him. We needn't go that far. Unless we must."],
+		],
+		"choices": [
+			{"t": "Storm the town", "hint": "Everyone aboard your ships off the harbour and a landing party of the crews go over the wall now: a land battle.",
+				"say": ["mercy", "Ladders! And somebody find me a friar."],
+				"fx": [["flag", "raided"], ["weaken", "portobelo", 25], ["assault", "portobelo", ["cutlass", "cutlass", "buccaneers", "buccaneers", "buccaneers", "musketeers"], "portobelo"]]},
+			{"t": "Bribe a gate open first (300 gold)", "need": {"gold_ge": 300}, "why": "Not enough gold in the chest",
+				"hint": "Half the garrison is down with fever and the other half can be bought: half the defenders are out of it and a gate stands open (the walls count a level lower). Then the same assault.",
+				"say": ["lindo", "In Portobelo the dead outnumber the living two to one. The living are very reasonable."],
+				"fx": [["gold", -300], ["flag", "raided"], ["weaken", "portobelo", 50], ["slight", "portobelo", 1], ["assault", "portobelo", ["cutlass", "cutlass", "buccaneers", "buccaneers", "buccaneers", "musketeers"], "portobelo"]]},
+			{"t": "Turn back", "hint": "No raid.",
+				"say": ["mercy", "...Aye. Bring her about."],
+				"fx": [["flag", "raided"], ["p", "purse", 10]]},
+		]},
+	{"id": "raid_won", "focus": "flagship", "act": 3, "title": "The sack of Cartagena", "when": {"flag": "won_cartagena"},
+		"lines": [
+			["", "The town is yours. For three days the Brethren go through it like a fever: the churches, the counting houses, the Governor's cellar. The bells stop ringing on the second day."],
+			["mercy", "Chests of silver, Captain. Plate, pearls, cochineal, a bishop's mitre with stones in it the size of quail's eggs. The chest is full. Fuller than full. Every pirate in the Caribbean will know your name by Sunday."],
+			["mendoza", "You have sacked a city of the King of Spain. Now I am coming for yours."],
+		],
+		"chron": "Pirates stormed a great city of the Spanish Main and sacked it for three days.",
+		"fx": [["plunder", 1500], ["fame", 12], ["infamy", 10], ["p", "heat", 15], ["p", "purse", -30], ["flag", "raid_done"]]},
+	{"id": "raid_won_pb", "focus": "flagship", "act": 3, "title": "The sack of Portobelo", "when": {"flag": "won_portobelo"},
+		"lines": [
+			["", "Portobelo is yours: the three castles, the customs house, the King's silver waiting for the galleons. The townsfolk flee into the hills and the fever stays behind to keep you company."],
+			["mercy", "Silver bars stacked in the customs house like cordwood, Captain, waiting for a flota that'll never take them now. Not Cartagena, but it'll fill the chest. Now let's get out before the fever fills the graveyard."],
+			["mendoza", "You have sacked a city of the King of Spain. Now I am coming for yours."],
+		],
+		"chron": "Pirates stormed Portobelo and carried off the King's silver.",
+		"fx": [["plunder", 1000], ["fame", 10], ["infamy", 8], ["p", "heat", 12], ["p", "purse", -25], ["flag", "raid_done"]]},
+	{"id": "raid_lost", "act": 3, "title": "Thrown back", "when": {"any": [{"flag": "lost_cartagena"}, {"flag": "lost_portobelo"}]},
+		"lines": [["mercy", "They were waiting on the walls. We left a lot of good men in the ditch, Captain. The ones who got back aren't talking to anybody."]],
+		"fx": [["p", "purse", 15], ["flag", "raid_done"]]},
+	{"id": "raid_late", "act": 3, "title": "Too late for the Main", "when": {"turn": [39, 40], "any": [{"flag": "raid_cartagena"}, {"flag": "raid_portobelo"}], "noflag": "raided"},
+		"lines": [["mercy", "We'll never make the Main and back before Mendoza comes, Captain. The raid's off. The crew are almost relieved."]],
+		"fx": [["flag", "raided"]]},
+	{"id": "pardon", "act": 3, "title": "The King's pardon", "when": {"turn": [36, 41], "flag": "goal", "noflag": "pardon_refused"}, "every": 3,
+		"lines": [
+			["ashby", "BY THE GOVERNOR. His Majesty, of his abundant mercy, offers a free pardon to any pirate who shall surrender himself before the first day of next year, and shall give such information as will bring the rest of that wicked fraternity to justice. Such a person shall keep whatever goods he has, and want for nothing."],
+			["lindo", "A private word, Captain. Sir Thomas wants Tortuga. Its anchorage, its guns, its captains' names. Give him that, and you walk into Port Royal a gentleman with a fortune, and never look over your shoulder again. Only at the Brethren, from a very great distance."],
+			["mercy", "You know what that is, Captain. That's every man in this town on a rope, so you can sleep in a bed. I won't stop you. I'll just never speak to you again."],
+		],
+		"choices": [
+			{"t": "Take the pardon and name the anchorage", "hint": "THE STORY ENDS: the Pardon. Rich, safe, despised.",
+				"say": ["ashby", "A wise choice, sir. Possibly the first you have ever made. Do come to dinner."],
+				"fx": [["flag", "pardon"], ["sched", "end_pardon", 0]]},
+			{"t": "Keep the letter, for now", "hint": "Nothing yet. The offer stays open until Mendoza comes.",
+				"say": ["mercy", "You kept it. I saw you. I won't forget that either."],
+				"fx": [["flag", "pardon_kept"]]},
+			{"t": "Burn it before the crew", "hint": "No pardon, ever. The crew will follow you anywhere after this.",
+				"say": ["mercy", "That's my captain. Burn it slowly, so they can all see."],
+				"fx": [["flag", "pardon_refused"], ["unflag", "pardon_kept"], ["fame", 4], ["p", "purse", -15]]},
+		]},
+	{"id": "recognition", "act": 3, "title": "Recognised", "when": {"turn": [36, 41], "fp": "chest"},
+		"lines": [
+			["", "A Dutch merchantman comes into Tortuga road and salutes the fort with seven guns. Then a Frenchman. Then another Dutchman, with a factor from the West India Company who wants to talk about tobacco."],
+			["lindo", "There, you see? Silver talks, and what it says is: here is a country. The Dutch have sent a squadron to anchor in your road, purely to protect their trade, you understand. Mendoza will have to sail round it."],
+		],
+		"chron": "Dutch and French merchants traded openly at the pirate free port of Tortuga.",
+		"fx": [["actor_lose", "armada", 1], ["unit", "musketeers", 2, "port_de_paix"], ["flag", "recognised"], ["p", "haven", 15]]},
+	{"id": "armada_gathers", "focus": "armada", "act": 3, "title": "Mendoza comes", "when": {"turn": [38, 40], "flag": "goal"},
+		"fx": [["spawn", "armada", "new_spain", "havana", [{"t": "frigate", "nm": "San Felipe"}, {"t": "frigate", "nm": "San Antonio"}, {"t": "sloop"}],
+				0, "hold", "havana"],
+			["actor_add", "armada", [{"t": "galleon", "nm": "Nuestra Senora de Atocha"}]], ["hold", "armada"], ["p", "heat", 10], ["sched", "eve", 2],
+			["sched", "eve_homeless", 2]],
+		"lines": [
+			["mendoza", "To the captain who calls himself the master of Tortuga. Sir: in two seasons I will come to your free port with every ship of the Armada de Barlovento and every soldier the Viceroy can spare me. I tell you so that you cannot say you were not told."],
+			["mendoza", "You may leave before I come. I will not follow, this time. I would rather not kill brave men for a rock. But if you are there, I will take it, and I will hang everyone I find. I remain, as ever, your servant, and your end. R. de M."],
+			["mercy", "Two seasons. That's what we have. Whatever we haven't done by then, we won't do."],
+		]},
+	{"id": "eve", "focus": "port_de_paix", "act": 3, "title": "The night before", "if": {"owns": "port_de_paix"},
+		"lines": [
+			["", "Tortuga, the last night. Fires on the beach, the fort's guns loaded with grape, the Brethren drinking quietly for once. Out in the dark, beyond the point, the lanterns of the Armada."],
+			["mercy", "Whatever happens tomorrow, Captain, they'll sing about it. I'd rather they sang about us winning, mind."],
+			["lindo", "I have a boat ready, of course. I always have a boat ready. I find I do not want to get into it. How very strange."],
+		],
+		"fx": [["sched", "finale_sea", 1], ["sched", "finale_walls", 1]],
+		"choices": [
+			{"t": "Meet them at sea", "hint": "Tomorrow your fleet fights the Armada in Tortuga road, under the fort's guns if it lies there: a sea battle. Win it and only a remnant lands; lose it and they land in force.",
+				"say": ["mercy", "To sea, then. Better to die with a deck under you than a roof."],
+				"fx": [["flag", "meet_sea"]]},
+			{"t": "Fight from the walls", "hint": "Every man ashore: three companies of your sailors join the garrison, and the Armada lands in force under your guns: a land battle.",
+				"say": ["mercy", "Behind stone, then. Let them come to us and pay for every step."],
+				"fx": [["flag", "walls_stand"], ["unit", "musketeers", 2, "port_de_paix"], ["unit", "cutlass", 1, "port_de_paix"], ["p", "haven", 10]]},
+			{"t": "Take the King's pardon after all", "need": {"flag": "pardon_kept"}, "why": "You have no pardon to take",
+				"hint": "THE STORY ENDS: the Pardon. In the night, a boat to Port Royal and a letter to Ashby.",
+				"say": ["mercy", "...I'll tell them you died bravely. It's the last lie I'll ever tell for you."],
+				"fx": [["flag", "pardon"], ["flag", "pardon_late"], ["sched", "end_pardon", 0]]},
+		]},
+	{"id": "eve_homeless", "focus": "flagship", "act": 3, "title": "Nowhere to stand", "if": {"lost": "port_de_paix"},
+		"lines": [
+			["mercy", "The Armada's out, Captain, and we've no port to fight from. Mendoza says he'll hunt us across every sea God made. I believe him."],
+		],
+		"choices": [
+			{"t": "Turn and fight", "hint": "A last sea battle against the Armada, wherever you are.",
+				"say": ["mercy", "Then let's make it a good one."],
+				"fx": [["sea_battle", "armada", "last"]]},
+			{"t": "Take the King's pardon after all", "need": {"flag": "pardon_kept"}, "why": "You have no pardon to take",
+				"hint": "THE STORY ENDS: the Pardon.",
+				"say": ["mercy", "...Go, then. Don't look back. We won't."],
+				"fx": [["flag", "pardon"], ["sched", "end_pardon", 0]]},
+		]},
+	{"id": "finale_sea", "focus": "port_de_paix", "act": 3, "title": "The battle of Tortuga road", "if": {"flag": "meet_sea", "owns": "port_de_paix"},
+		"lines": [
+			["", "Dawn. The Armada de Barlovento comes round the point in line ahead, Mendoza's galleon in the van, the red cross of Burgundy at every masthead. Your ships beat out to meet it with the whole of Tortuga on the walls."],
+			["mendoza", "Give them a broadside for the King, and one for every man they hanged. Then give them one for me."],
+		],
+		"chron": "The Armada de Barlovento attacked the pirate free port of Tortuga.",
+		"fx": [["dip", "new_spain", "war"], ["spawn", "armada", "new_spain", "port_de_paix", [{"t": "galleon"}, {"t": "frigate"}, {"t": "frigate"}], 0, "hold", "havana"],
+			["place", "armada", "port_de_paix"], ["sea_battle", "armada", "fsea", 1]]},
+	{"id": "finale_walls", "focus": "port_de_paix", "act": 3, "title": "The Armada lands", "if": {"noflag": "meet_sea", "owns": "port_de_paix"},
+		"lines": [
+			["", "Dawn. The Armada anchors off the beach below the fort and the boats go in, row after row of them, pikes upright like a moving wood."],
+			["mendoza", "No quarter for the officers. Quarter for any man who throws down his arms. Forward, for God and the King!"],
+		],
+		"chron": "The Armada de Barlovento landed its soldiers to storm the pirate free port of Tortuga.",
+		"fx": [["dip", "new_spain", "war"], ["place", "armada", "port_de_paix"],
+			["raid", "new_spain", "port_de_paix", ["musketeers", "musketeers", "w_pikemen", "w_pikemen", "rodeleros", "musketeers"], "finale"]]},
+	{"id": "landing_after_win", "act": 3, "title": "A remnant lands", "when": {"flag": "won_fsea", "noflag": "bt_finale"},
+		"lines": [
+			["mercy", "We broke their line, Captain! Mendoza's galleon is burning and half his frigates have struck. But he's put his soldiers in the boats anyway. Stubborn old devil. Everyone to the walls!"],
+		],
+		"fx": [["raid", "new_spain", "port_de_paix", ["musketeers", "w_pikemen", "rodeleros"], "finale"]]},
+	{"id": "landing_after_loss", "act": 3, "title": "They land in force", "when": {"flag": "lost_fsea", "noflag": "bt_finale"},
+		"lines": [
+			["mercy", "They beat us at sea. Now they're landing, all of them, and every man who came back alive is on the walls. This is it, Captain."],
+		],
+		"fx": [["raid", "new_spain", "port_de_paix", ["musketeers", "musketeers", "w_pikemen", "w_pikemen", "rodeleros", "musketeers", "lancers"], "finale"]]},
+	{"id": "landing_late", "act": 3, "title": "They land at last", "when": {"turn": [42, 43], "flag": "act3", "noflag": "bt_finale", "owns": "port_de_paix",
+		"any": [{"flag": "meet_sea"}, {"flag": "walls_stand"}]}, "every": 1,
+		"lines": [["mercy", "Here they come at last, Captain: Mendoza's boats, every one he has, making for the beach below the fort. Everyone to the walls!"]],
+		"fx": [["dip", "new_spain", "war"],
+			["raid", "new_spain", "port_de_paix", ["musketeers", "musketeers", "w_pikemen", "w_pikemen", "rodeleros", "musketeers"], "finale"]]},
+	# ------------------------------------------------------------- endings ---
+	{"id": "end_republic", "focus": "port_de_paix", "act": 3, "title": "The Republic", "when": {"flag": "won_finale"},
+		"lines": [
+			["", "By noon it is over. The Spanish columns break at the breach and run for the boats, and the Brethren run after them into the surf, and then stop, because there is no one left to fight."],
+			["mendoza", "Captain. I have lost. I did not expect to say those words in this life. I will tell the King that Tortuga cannot be taken. He will not believe me, and I will be disgraced, and I find that I do not mind. You fought like Christians. R. de M."],
+			["mercy", "We did it, Captain. We actually did it. A free port. No flag but ours. Vane would have... no. Vane would have got drunk. Let's do that."],
+		],
+		"chron": "The Armada was beaten at Tortuga. The pirates declared a free republic of the Brethren of the Coast.",
+		"fx": [["ending", "republic"]]},
+	{"id": "end_legend", "focus": "port_de_paix", "act": 3, "title": "The Legend", "when": {"any": [{"flag": "lost_finale"}, {"flag": "won_last"}, {"flag": "lost_last"}]},
+		"lines": [
+			["", "They fight in the breach until there is no breach, only men. They fight in the streets, and in the church, and on the beach with their backs to the sea. The black flag comes down over the fort at sunset. Nobody who was there ever agrees on how."],
+			["mendoza", "I have taken Tortuga. I promised to hang everyone I found. I find I cannot bring myself to do it. Let it be said that they died as free men, which is more than most of us will."],
+			["", "And in every tavern from Nassau to Maracaibo, they still sing of the captain who held Tortuga against the Armada, and of the free port where no flag but theirs flew. The song does not say how it ended. Songs never do."],
+		],
+		"chron": "The Armada stormed Tortuga. The pirates' free port fell, and passed into legend.",
+		"fx": [["ending", "legend"]]},
+	{"id": "end_pardon", "focus": "port_royal", "act": 3, "title": "The Pardon",
+		"lines": [
+			["", "The Royal Navy sails into Tortuga road on a fine morning with your chart of the anchorage on its quarterdeck. They hang the captains on Gallows Point at low tide, so the crabs can have them, as is the custom."],
+			["ashby", "His Majesty's thanks, sir, and mine. A house in Spanish Town, a seat on the Council, and nobody will ever ask where the money came from. Do try the Madeira."],
+			["mercy", "..."],
+		],
+		"chron": "A pirate captain took the King's pardon and sold the Brethren of the Coast to the Royal Navy.",
+		"fx": [["gold", 1500], ["dip", "england", "peace"], ["dip", "new_spain", "peace"], ["infamy", -100], ["p", "favour", 100], ["ending", "pardon"]]},
+	{"id": "end_late_republic", "act": 3, "title": "The Republic", "when": {"turn": [44, -1], "owns": "port_de_paix", "fp_ge": 2},
+		"lines": [
+			["", "Mendoza never comes. The Viceroy keeps his soldiers for Mexico; the King has other wars. The free port of Tortuga simply goes on being, until one day it has always been."],
+			["mercy", "No battle, no glory, no song. Just a town that's ours. I'll take it, Captain."],
+		],
+		"chron": "The pirate free port of Tortuga stood, and the nations learned to trade with it.",
+		"fx": [["ending", "republic"]]},
+	{"id": "end_late_legend", "act": 3, "title": "The Legend", "when": {"turn": [44, -1]},
+		"lines": [
+			["", "The free port never quite comes to be. The Brethren scatter, the captains go their ways, and the Captain sails on into the stories they tell about him: that he still sails, that he died at Tortuga, that he sits in a tavern in Nassau waiting for the free port to need him again."],
+		],
+		"chron": "The pirate captain who dreamed of a free port passed into legend.",
+		"fx": [["ending", "legend"]]},
+	{"id": "end_fallen", "act": 3, "title": "The Legend",
+		"lines": [
+			["", "The last ship goes down, the last company is cut down, and the Captain with them, somewhere between the sea and the sand. They never find the body. That is how legends start."],
+		],
+		"chron": "The last of Vane's crew went down fighting, and passed into legend.",
+		"fx": [["ending", "legend"]]},
+	{"id": "end_conquest", "act": 3, "title": "The Republic",
+		"lines": [["", "The black flag flies over half the Caribbean. Nobody calls it a free port any more. They call it a kingdom, and you its king."]],
+		"chron": "The Brethren of the Coast became a power the nations had to treat with.",
+		"fx": [["ending", "republic"]]},
+]
+
+## The endings (the view's ending screen): title, a line under it, a
+## paragraph.
+const ENDINGS := {
+	"republic": {"title": "The Republic", "sub": "You hold the free port. No flag but ours.",
+		"text": "For a generation Tortuga was a free port of the Brethren of the Coast: a republic of thieves with a council of forty captains, Dutch factors, French priests, a court that hanged pirates who robbed its friends, and a harbour that no king's ship entered without permission. Then, like every republic, it began to argue about taxes."},
+	"pardon": {"title": "The Pardon", "sub": "Rich, safe, despised.",
+		"text": "You lived to be old, in a big house in Spanish Town with a view of the sea you never looked at. You sat on the Council, you dined with Governors, and you were never once invited back. In the taverns of Tortuga they still spit when they say your name. They say it often."},
+	"legend": {"title": "The Legend", "sub": "You went down fighting. The chronicle sings of it.",
+		"text": "Nobody knows for certain what became of the Captain. The Spanish said they hanged him; the English said he drowned; the Brethren said he got away, and drank to him for fifty years in every free port from Nassau to Madagascar, where, as you may have heard, there was later a pirate republic called Libertalia. Some say he founded it."},
+}
+
+## The epilogue's fates (cstory.gd fates): the first entry for each speaker
+## whose "end" lists the ending (absent: any) and whose "if" holds.
+const FATES: Array[Dictionary] = [
+	{"who": "mercy", "end": ["republic"], "text": "Mercy Teague was elected the first Speaker of the Brethren's council and spent the rest of her life telling forty captains to sit down. She was very good at it."},
+	{"who": "mercy", "end": ["pardon"], "text": "Mercy Teague led what was left of the Brethren out of Tortuga the night the Navy came, and never spoke your name again. A quartermaster named Teague signed the articles at Nassau forty years later. She kept a pistol for you until she died."},
+	{"who": "mercy", "end": ["legend"], "text": "Mercy Teague was not among the dead. Some say she got out on the last boat; some say she went back for the logbook. A crew at Nassau voted an old woman named Teague their captain in the year ninety-eight."},
+	{"who": "lindo", "if": {"flag": "lindo_gone"}, "text": "Isaac Lindo died rich in Port Royal when the town slid into the sea in the great earthquake, clutching his ledgers. Nobody mourned him. He would have found that very sensible."},
+	{"who": "lindo", "end": ["pardon"], "text": "Isaac Lindo brokered your pardon, took his commission, and sold your house in Spanish Town twice before you had moved in."},
+	{"who": "lindo", "end": ["republic"], "text": "Isaac Lindo became the Republic's first Treasurer, and its last honest one, which is to say he stole only from foreigners."},
+	{"who": "lindo", "end": ["legend"], "text": "Isaac Lindo did not get into his boat. He paid the widows of Tortuga their shares out of his own ledger, every piece of eight, and never told anyone why."},
+	{"who": "vane", "end": ["republic"], "text": "Josiah Vane's logbook lies in the council house at Tortuga, open at the last page, under glass. The captains swear on it, and then argue."},
+	{"who": "vane", "end": ["pardon"], "text": "You burned Josiah Vane's logbook the night before you sailed for Port Royal. You still dream about the last page."},
+	{"who": "vane", "end": ["legend"], "text": "Vane's logbook went down with the fort. The Spanish never found it. The song remembers what was in it anyway."},
+	{"who": "mendoza", "end": ["republic"], "text": "Don Rodrigo de Mendoza was recalled to Spain in disgrace and died in a monastery at Burgos, praying, they say, every night, for the soul of a pirate."},
+	{"who": "mendoza", "end": ["legend"], "text": "Don Rodrigo de Mendoza was offered a marquisate for Tortuga. He refused it, and asked to be buried at sea off the island."},
+	{"who": "mendoza", "end": ["pardon"], "text": "Don Rodrigo de Mendoza read of your pardon in a Jamaica gazette and laughed, for the only time anyone could remember. \"So he was a merchant after all.\""},
+	{"who": "ashby", "end": ["pardon"], "text": "Sir Thomas Ashby was made a baronet for the destruction of the Brethren, and a fool of by the next Governor, who brought the pirates back."},
+	{"who": "ashby", "end": ["republic"], "text": "Sir Thomas Ashby was recalled to London for losing a war nobody had told him about, and spent his retirement writing furious letters to the Gazette about pirates."},
+	{"who": "ashby", "end": ["legend"], "text": "Sir Thomas Ashby claimed the fall of Tortuga as his own doing in every dispatch, and died believing it."},
+	{"who": "boucher", "if": {"flag": "boucher_dead"}, "text": "Le Boucher hangs in chains at Gallows Point, Tortuga, where the crabs had him at last."},
+	{"who": "boucher", "if": {"flag": "boucher_traitor"}, "text": "Le Boucher sailed for Spain with Mendoza's gold and was knifed in a tavern in Cadiz by a man who had been at Maracaibo. Nobody was ever charged."},
+	{"who": "boucher", "if": {"capt": "boucher"}, "text": "Le Boucher sailed under your flag to the end, and was hanged at Port Royal the year after, still laughing."},
+	{"who": "boucher", "text": "Le Boucher was never caught. Mothers on the Main still frighten their children with his name."},
+	{"who": "crew", "end": ["republic"], "text": "The crew of the Gallows Bird got their shares, every man, and most of them drank them. The rest bought land on Tortuga and became the dullest men in the Caribbean."},
+	{"who": "crew", "end": ["pardon"], "text": "Forty-one men voted you captain at Gallows Point. Nineteen of them were hanged on the same beach, on your information."},
+	{"who": "crew", "end": ["legend"], "text": "The crew of the Gallows Bird went down with their captain, or swam ashore and lied about it for the rest of their lives. The ones who lied were the better singers."},
 ]

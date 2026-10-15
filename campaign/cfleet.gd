@@ -1602,8 +1602,8 @@ static func end_of_turn(st: Dictionary) -> void:
 			var ship := {"t": str(key), "h": 100, "c": 100}
 			var into := {}
 			for fl in fleets(st):
-				if int(fl["f"]) == o and CGrid.cheb(cell(fl), dock(r)) <= 1:
-					into = fl
+				if int(fl["f"]) == o and CGrid.cheb(cell(fl), dock(r)) <= 1 and not fl.has("sto"):
+					into = fl  # (a story campaign's own fleets, "sto", take no new ships)
 					break
 			if into.is_empty():
 				into = _new_fleet(st, o, dock(r), [ship])

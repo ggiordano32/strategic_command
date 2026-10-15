@@ -283,8 +283,8 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 	CChars.sweep(st)
 	CRules.check_victory(st)
 	st["turn"] = turn + 1
-	if CStory.on(st) and str(st["phase"]) != "over":
-		CStory.end_turn(st)  # (a story campaign) pressures, actors, events
+	if CStory.on(st):
+		CStory.end_turn(st)  # (a story campaign) pressures, actors, events; its ending when the game is over
 	if str(st["phase"]) != "over":
 		st["phase"] = "battles" if not (st["battles"] as Array).is_empty() else "plan"
 	return st

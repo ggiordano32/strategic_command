@@ -2,12 +2,15 @@ extends RefCounted
 ## The story campaign's view (campaign/cstory.gd; DESIGN "Story campaign: The
 ## Brethren's Due"): the dialogue panel (a coloured initial badge per
 ## character until there are portraits, the speaker, the lines, the choices),
-## the pressures strip under the top bar (five gauges; a tap opens the story
-## log), the story log (also from the Realm panel) and captions over the
-## story's fleets and places on the map. View only: it reads the state and
-## answers choices through CStory.answer (a pure function, like a battle's
-## result). What the player has already read is kept in the save's session
-## ("story_seen", the last log entry shown), not in the state.
+## the pressures strip under the top bar (five gauges, and the free port's
+## once Act 3 reveals it; a tap opens the story log), the story log (also
+## from the Realm panel), the ending screen (the epilogue, the fates, the
+## stats, "Continue in the sandbox") and captions over the story's fleets
+## and places on the map. View only: it reads the state and answers choices
+## through CStory.answer (a pure function, like a battle's result). What the
+## player has already read is kept in the save's session ("story_seen", the
+## last log entry shown; "story_end_seen", the ending screen), not in the
+## state.
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -16,9 +19,10 @@ const CStorm := preload("res://campaign/cstorm.gd")
 const CSea := preload("res://campaign/csea.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
+const CCaptainV := preload("res://campaign/ccaptain.gd")
 
-const GAUGES: Array[String] = ["purse", "attention", "favour", "storm", "haven"]
-const GAUGE_NAMES := {"purse": "Purse", "attention": "Armada", "favour": "Patron", "storm": "Storms", "haven": "Haven"}
+const GAUGES: Array[String] = ["purse", "attention", "favour", "storm", "haven", "port"]
+const GAUGE_NAMES := {"purse": "Purse", "attention": "Armada", "favour": "Patron", "storm": "Storms", "haven": "Haven", "port": "Free port"}
 const COL_OK := Color(0.45, 0.8, 0.45)
 const COL_WARN := Color(0.95, 0.75, 0.3)
 const COL_HOT := Color(0.95, 0.4, 0.3)
@@ -29,6 +33,7 @@ var strip: PanelContainer
 var decide: Button
 var _bars := {}    # gauge -> ProgressBar
 var _vals := {}    # gauge -> Label
+var _boxes := {}   # gauge -> its VBox (the free port's shows once revealed)
 var marks: Node2D
 
 
@@ -71,6 +76,7 @@ func setup() -> void:
 		h.add_child(v)
 		_bars[g] = bar
 		_vals[g] = l
+		_boxes[g] = v
 	decide = Kit.button("Decide", func(): s._next_step(), 0, 13)
 	decide.name = "story_decide"
 	decide.custom_minimum_size = Vector2(64, 30)
@@ -88,13 +94,14 @@ func setup() -> void:
 func refresh() -> void:
 	if strip == null:
 		return
-	strip.visible = on() and str(s.st.get("phase", "")) != "over"
+	strip.visible = on() and str(s.st.get("phase", "")) != "over" and CStory.ending(s.st) == ""
 	if marks != null:
-		marks.visible = on()
+		marks.visible = on() and CStory.ending(s.st) == ""
 		marks.queue_redraw()
 	if not strip.visible:
 		return
 	var st: Dictionary = s.st
+	(_boxes["port"] as Control).visible = not CStory.fp(st).is_empty()
 	for g in GAUGES:
 		var gv := gauge(st, g)
 		var bar: ProgressBar = _bars[g]
@@ -122,8 +129,11 @@ static func gauge(st: Dictionary, g: String) -> Array:
 				a, inf, CStory.p(st, "heat")]]
 		"favour":
 			var fv := CStory.p(st, "favour")
+			if CStory.flag(st, "treaty"):
+				return [fv, COL_HOT if fv < 20 else (COL_WARN if fv < 45 else COL_OK),
+					"Patron favour: %d. Since the Treaty of Madrid, Sir Thomas Ashby has put a price on your head and Port Royal is shut to you." % fv]
 			return [fv, COL_HOT if fv < 20 else (COL_WARN if fv < 45 else COL_OK),
-				"Patron favour: %d. What the Governor of Jamaica, Sir Thomas Ashby, thinks of you. His letters of marque and his ports will one day depend on it." % fv]
+				"Patron favour: %d. What the Governor of Jamaica, Sir Thomas Ashby, thinks of you: his letter of marque needs 30 (or gold), and his ports depend on it." % fv]
 		"storm":
 			var t := int(st["turn"])
 			var n := CStorm.storms(st).size()
@@ -137,6 +147,18 @@ static func gauge(st: Dictionary, g: String) -> Array:
 			var hv := CStory.p(st, "haven")
 			return [hv, COL_HOT if hv < 30 else (COL_WARN if hv < 55 else COL_OK),
 				"Haven safety: %d. Tortuga's walls and a garrison of yours raise it; Spain's attention wears it down. Below 30 the haven is in danger." % hv]
+		"port":
+			if CStory.fp(st).is_empty():
+				return [0, COL_HOT, ""]
+			var parts := CStory.fp_parts(st)
+			var sum := 0
+			var lines: Array = []
+			for pt in parts:
+				sum += mini(int(pt[2]) * 100 / maxi(int(pt[3]), 1), 100)
+				lines.append(("[done] " if int(pt[1]) == 1 else "[ ] ") + str(pt[4]))
+			var n := CStory.fp_count(st)
+			return [sum / maxi(parts.size(), 1), COL_OK if n >= 3 else (COL_WARN if n >= 1 else COL_HOT),
+				"The free port, %d of 3: %s. Mendoza will come for it before the end; each part done makes that fight easier." % [n, "; ".join(lines)]]
 	return [0, COL_OK, ""]
 
 
@@ -152,9 +174,12 @@ func _set_seen(n: int) -> void:
 
 
 ## The next thing the story has to say: unread news first, then a choice
-## waiting. Shows it and returns true (the screen's flow carries on through
-## _next_step when it is done); false when there is nothing.
-func step() -> bool:
+## waiting, then the ending screen (once). Shows it and returns true (the
+## screen's flow carries on through _next_step when it is done); false when
+## there is nothing. `news_only`: no choices (before pending battles: the
+## news that opened one is read first, and the ending before the sandbox's
+## battles).
+func step(news_only: bool = false) -> bool:
 	if not on() or s.online != null:
 		return false
 	var st: Dictionary = s.st
@@ -163,13 +188,17 @@ func step() -> bool:
 		if int(e["n"]) > _seen() and int(e["c"]) < 0:
 			news = e
 			break
-	var pe := CStory.pending_for(st, CStory.player(st))
-	if news.is_empty() and pe.is_empty():
+	var pe := CStory.pending_for(st, CStory.player(st)) if not news_only else []
+	var end_due := CStory.ending(st) != "" and not int((s.data.get("session", {}) as Dictionary).get("story_end_seen", 0)) != 0
+	if news.is_empty() and pe.is_empty() and not end_due:
 		return false
 	# Plan as the captain (like a pending battle does), the map on the scene.
 	var pf := CStory.player(st)
-	if s.f != pf:
+	if s.f != pf and str(st["phase"]) != "over" and CState.alive(st, pf):
 		s._set_planner(pf, false)
+	if news.is_empty() and pe.is_empty():
+		show_ending()
+		return true
 	if "--story-log" in OS.get_cmdline_user_args() and not _log_shown:
 		_log_shown = true  # testing aid: the story log first
 		show_log()
@@ -312,6 +341,51 @@ func _choose(pid: int, k: int) -> void:
 	refresh()
 
 
+# ---------------------------------------------------------------- the ending ---
+
+## The ending screen: the ending's title and paragraph, what became of each
+## character, the captain's stats, then "Continue in the sandbox" (the
+## campaign plays on without the story) or the story log.
+func show_ending() -> void:
+	var st: Dictionary = s.st
+	var e := CStory.ending(st)
+	var m := CStory.script_of(st).get_script_constant_map()
+	var ed: Dictionary = (m.get("ENDINGS", {}) as Dictionary).get(e, {"title": e, "sub": "", "text": ""})
+	var box := Kit.vbox(10)
+	box.name = "story_ending"
+	var tl := Kit.label(str(ed["title"]), 30, Kit.COL_GOLD)
+	tl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(tl)
+	var sl := Kit.label(str(ed["sub"]), Kit.FONT, COL_NARRATOR, true)
+	sl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(sl)
+	box.add_child(Kit.label("%s. %s" % [str(m.get("TITLE", "")), CData.date_text(int(CStory.S(st).get("end_t", st["turn"])))],
+		Kit.FONT_SMALL, Kit.COL_DIM, true))
+	box.add_child(Kit.label(str(ed["text"]), Kit.FONT, COL_NARRATOR, true))
+	box.add_child(Kit.section("What became of them"))
+	for fd in CStory.fates(st):
+		box.add_child(_line(str(fd[0]), str(fd[1])))
+	box.add_child(Kit.section("The Captain's account"))
+	var sx := CStory.end_stats(st)
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 18)
+	var rows := [["Plunder taken", "%d gold" % int(sx["plunder"])], ["Ships taken", str(int(sx["taken"]))],
+		["Towns sacked", str(int(sx["sacked"]))], ["Fame", "%d (%s)" % [int(sx["fame"]), CCaptainV.tier_name(int(sx["fame"]))]],
+		["Battles won / lost", "%d / %d" % [int(sx["won"]), int(sx["lost"])]], ["Infamy", str(int(sx["infamy"]))]]
+	for rw in rows:
+		grid.add_child(Kit.label(str(rw[0]), Kit.FONT, Kit.COL_DIM))
+		grid.add_child(Kit.label(str(rw[1]), Kit.FONT, Color.WHITE))
+	box.add_child(grid)
+	var over := str(st["phase"]) == "over"
+	var go := ["Continue" if over else "Continue in the sandbox", func():
+		(s.data["session"] as Dictionary)["story_end_seen"] = 1
+		s.save()
+		s._next_step()]
+	s.show_dialog("", box, [["The story so far", func(): show_log()], go], 680, true)
+	refresh()
+
+
 # --------------------------------------------------------------- building ---
 
 func _chars(st: Dictionary) -> Dictionary:
@@ -387,6 +461,8 @@ func show_log() -> void:
 		str(acts[mini(act, acts.size() - 1)])], Kit.FONT, Kit.COL_GOLD, true))
 	for g in GAUGES:
 		var gv := gauge(st, g)
+		if str(gv[2]) == "":
+			continue  # (the free port before Act 3 reveals it)
 		var row := Kit.hbox(8)
 		row.add_child(Kit.swatch(gv[1], 12))
 		row.add_child(Kit.label(str(gv[2]), Kit.FONT_SMALL, Color.WHITE, true))
@@ -415,47 +491,39 @@ func show_log() -> void:
 	var buttons: Array = [["Close", Callable()]]
 	if CStory.blocked(st):
 		buttons.push_front(["Decide", func(): s._next_step()])
+	if CStory.ending(st) != "":
+		buttons.push_front(["The ending", func(): show_ending()])
 	s.show_dialog("The story so far", box, buttons, 700, true)
 
 
 ## Testing aid (main.gd --story=seed[:turns]): save data for a new story
-## campaign after `turns` turns played with the first allowed choice, every
-## battle by the formula and the flagship sailing for the haven; with turns,
-## everything up to then is marked read.
+## campaign after `turns` turns played by game/campaign/story_autoplay.gd
+## (--story-path=first | random | republic | pardon | legend; the choices of
+## the last turn are left waiting); with turns, everything up to then is
+## marked read (--story-show=ID: from the last entry of event ID on is
+## unread; "ending": the ending screen is due).
 static func autoplay(sd: int, turns: int) -> Dictionary:
-	var CTurnA = load("res://campaign/cturn.gd")
-	var CBattleA = load("res://campaign/cbattle.gd")
-	var CFleetA = load("res://campaign/cfleet.gd")
-	var CGridA = load("res://campaign/cgrid.gd")
 	(load("res://game/campaign/pack_view.gd") as GDScript).call("use_pack", "west")
-	var st := CStory.new_story("Story test", sd)
+	var path := "first"
+	var show := ""
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--story-path="):
+			path = a.get_slice("=", 1)
+		elif a.begins_with("--story-show="):
+			show = a.get_slice("=", 1)
+	var SA: GDScript = load("res://game/campaign/story_autoplay.gd")
+	var st: Dictionary = SA.call("play", sd, turns, path, sd, false, false)
 	var pf := CStory.player(st)
-	for t in turns:
-		for guard in 30:
-			var pb: Array = CTurnA.pending_for(st)
-			if not pb.is_empty():
-				st = CTurnA.apply_battle(st, int(pb[0]["id"]), CBattleA.formula(st, pb[0]))
-				continue
-			if not CStory.blocked(st):
-				break
-			var pe: Dictionary = CStory.pending_for(st)[0]
-			var k := 0
-			while k < 3 and CStory.answer_check(st, pf, int(pe["id"]), k) != "":
-				k += 1
-			st = CStory.answer(st, pf, int(pe["id"]), k)
-		var orders: Array = []
-		var fl := CStory.flagship(st, pf)
-		if not fl.is_empty() and not fl.has("busy") and not fl.has("dest_x"):
-			var dk: int = CFleetA.dock(CData.region_index("port_de_paix"))
-			orders.append({"t": "fmove", "fleet": int(fl["id"]), "x": CGridA.cx(dk), "y": CGridA.cy(dk), "persist": 1})
-		st = CTurnA.resolve_turn(st, [CTurnA.submission(st, pf, orders)])
 	var ses := {"subs": [], "plans": {}, "seen": {}}
 	if turns > 0:
 		ses["seen"] = {str(pf): int(st["turn"])}
 		var last := 0
 		for e in CStory.S(st)["log"]:
 			last = int(e["n"])
-		ses["story_seen"] = last
+			if show != "" and str(e["e"]) == show:
+				ses["story_seen"] = int(e["n"]) - 1
+		if not ses.has("story_seen"):
+			ses["story_seen"] = last
 	return {"state": st, "session": ses}
 
 
@@ -493,15 +561,35 @@ class Marks extends Node2D:
 			if fl.is_empty():
 				continue
 			var p: Vector2 = ov.to_screen(MapOverlayM.cell_point(CFleetM.cell(fl)))
-			var col := Color(0.95, 0.35, 0.3) if str(a["k"]) != "prize" and str(a["k"]) != "nao" else Color(1.0, 0.82, 0.35)
+			var prize: bool = (sc.get_script_constant_map().get("PRIZES", []) as Array).has(str(a["k"]))
+			var col := Color(0.95, 0.35, 0.3) if not prize else Color(1.0, 0.82, 0.35)
 			_pin(font, p + Vector2(0, -26), str(mk.get(str(a["k"]), a["k"])), col)
+		# The flota, once the story has pointed at it.
+		if CStoryM.flag(st, "flota_seen"):
+			for fl in CStoryM._flotas(st):
+				var fp: Vector2 = ov.to_screen(MapOverlayM.cell_point(CFleetM.cell(fl)))
+				_pin(font, fp + Vector2(0, -26), str(mk.get("flota", "The flota")), Color(1.0, 0.82, 0.35))
+		# Places the story points at (the great raid's target).
+		for tg in (sc.get_script_constant_map().get("TARGETS", []) if sc != null else []):
+			if not CStoryM.flag(st, str(tg[0])) or CStoryM.flag(st, str(tg[1])):
+				continue
+			var tgr := CDataM.region_index(str(tg[2]))
+			if tgr < 0:
+				continue
+			var tp: Vector2 = ov.to_screen(MapOverlayM.cell_point(CGridM.site(tgr)))
+			var rr := maxf(float(CGridM.cell_px()) * 2.5 * float(ov.zoom), 16.0)
+			for i in 16:
+				var a1 := TAU * i / 16.0
+				draw_arc(tp, rr, a1, a1 + TAU / 32.0, 4, Color(1.0, 0.82, 0.35), 2.0, true)
+			_pin(font, tp + Vector2(0, rr + 14), str(tg[3]), Color(1.0, 0.82, 0.35))
 		var hr := CDataM.region_index(str(sc.get_script_constant_map().get("HAVEN", ""))) if sc != null else -1
 		if hr >= 0 and CStoryM.captains(st).has(int(st["regions"][hr]["owner"])):
 			var hp: Vector2 = ov.to_screen(MapOverlayM.cell_point(CGridM.site(hr)))
 			var hv := CStoryM.p(st, "haven")
 			var hc := Color(0.5, 0.9, 0.5) if hv >= 55 else (Color(1.0, 0.8, 0.35) if hv >= 30 else Color(1.0, 0.45, 0.35))
 			draw_arc(hp, 22.0, 0, TAU, 40, hc, 2.0, true)
-			_pin(font, hp + Vector2(0, 34), "%s (%d)" % [str(mk.get("haven", "Haven")), hv], hc)
+			var hname := str(mk.get("free_port" if not CStoryM.fp(st).is_empty() else "haven", "Haven"))
+			_pin(font, hp + Vector2(0, 34), "%s (%d)" % [hname, hv], hc)
 		if CStoryM.flag(st, "hunt_boucher") and not CStoryM.flag(st, "won_boucher") and not CStoryM.flag(st, "lost_boucher"):
 			var lc := CStoryM._sea_near(CStoryM._pos_cell(st, "lair"))
 			if lc >= 0:

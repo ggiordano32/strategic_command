@@ -559,11 +559,15 @@ func _next_step() -> void:
 		return
 	close_dialog()
 	if str(st["phase"]) == "over":
+		if story.step():
+			return  # (a story campaign) its last news and its ending first
 		f = -1
 		_refresh()
 		panels.show_game_over()
 		return
 	var pending := CTurn.pending_for(st)
+	if not pending.is_empty() and story.step(true):
+		return  # (a story campaign) the news that set off the battle first
 	if not pending.is_empty():
 		AudioFx.play("battle_pending", 0.9, 0.0, "horn")
 		f = int(CRules.battle_humans(st, pending[0])[0])

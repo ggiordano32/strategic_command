@@ -21,12 +21,20 @@ extends RefCounted
 ##   log [{n, t, e, c (choice, -1 news)}] (the story so far, last LOG_MAX),
 ##     ln (log entries ever, for the view's "seen" marker),
 ##   actors [{k, fl (fleet id), mode ("chase" | "hunt" | "hold" | "goal" |
-##     "home"), until (chase: turn), home (region key), x, y (goal cell), ttl
-##     (turns left, 0 none)}] (the story's fleets: tagged "sto" = k, left out
-##     of the AI's fleet plans),
+##     "home" | "blockade"), until (chase, blockade: turn), home (region
+##     key), x, y (goal cell), ttl (turns left, 0 none), (step 2) att (hunt:
+##     the attention it hunts from), rest (hunt, chase: the turn it hunts
+##     again after a battle), at (blockade: the region)}] (the story's fleets:
+##     tagged "sto" = k, left out of the AI's fleet plans),
 ##   bt [[battle id, tag]] (battles the story opened), plunder0 (the
 ##     captains' plunder seen), plunder_t (turn of the last plunder), mercy
-##     (rescues left for a captain with no ship and no land)}.
+##     (rescues left for a captain with no ship and no land),
+##   (step 2, lazy: absent until first written) fp {held (turns the
+##     fortified haven was held), gold (the free port's chest)} (the Act 3
+##     goal, once revealed), sx {tk (ships taken), sk (towns sacked), bw /
+##     bl (battles won / lost)} (the ending's stats), end (the ending's key:
+##     "republic" | "pardon" | "legend"), end_t (its turn)}.
+## Captains the story made (join) carry "sto" = the actor key they came from.
 ## Orders: none. Choices are answered by answer(st, f, pending id, choice),
 ## a pure function like CTurn.apply_battle (the client runs it and, online,
 ## would upload the result).
@@ -311,12 +319,16 @@ static func spared(st: Dictionary, f: int) -> bool:
 
 ## The cell of [lon, lat] (1/100 degree; the pack's window), or a region key
 ## (its settlement), or ["player", dx, dy] (cells from the first captain's
-## flagship), or "lair" (the script's LAIR).
+## flagship), or "lair" (the script's LAIR), or a name whose upper case is
+## a script constant [lon, lat] ("pinos": PINOS).
 static func _pos_cell(st: Dictionary, pos) -> int:
 	if pos is String:
 		if str(pos) == "lair":
 			return _pos_cell(st, _c(st, "LAIR", [0, 0]))
 		var r := CData.region_index(str(pos))
+		if r < 0:
+			var named = _c(st, str(pos).to_upper(), null)  # (a place the script names: PINOS, STRAITS...)
+			return _pos_cell(st, named) if named is Array else -1
 		return CFleet.dock(r) if r >= 0 and CFleet.dock(r) >= 0 else (CGrid.site(r) if r >= 0 else -1)
 	var arr: Array = pos
 	if arr.size() == 3 and str(arr[0]) == "player":
@@ -429,7 +441,211 @@ static func _cond(st: Dictionary, w: Dictionary) -> bool:
 			n += (fl["ships"] as Array).size()
 		if n < int(w["ships_ge"]):
 			return false
+	if w.has("flota") and _flotas(st).is_empty():
+		return false
+	if w.has("noflota") and not _flotas(st).is_empty():
+		return false
+	if w.has("blockaded") and not _blockaded(st):
+		return false
+	if w.has("capt") and story_captain(st, str(w["capt"])).is_empty():
+		return false
+	if w.has("nocapt") and not story_captain(st, str(w["nocapt"])).is_empty():
+		return false
+	if w.has("fp") and not fp_met(st, str(w["fp"])):
+		return false
+	if w.has("fp_ge") and fp_count(st) < int(w["fp_ge"]):
+		return false
+	if w.has("walls_ge") and CState.walls(st, CData.region_index(str(w["walls_ge"][0]))) < int(w["walls_ge"][1]):
+		return false
+	if w.has("fame_ge") and CCaptain.best_fame(st, pf) < int(w["fame_ge"]):
+		return false
+	if w.has("sea_pending") and not _sea_pending(st):
+		return false
+	if w.has("any"):
+		var one := false
+		for sub in w["any"]:
+			if _cond(st, sub):
+				one = true
+				break
+		if not one:
+			return false
 	return true
+
+
+## The treasure fleet's fleets on the map (CSea's flota), by id.
+static func _flotas(st: Dictionary) -> Array:
+	var out: Array = []
+	for fl in CFleet.fleets(st):
+		if fl.has("flota") and not (fl["ships"] as Array).is_empty():
+			out.append(fl)
+	return out
+
+
+## A port of a captain is blockaded by a foe (as of the last turn's end).
+static func _blockaded(st: Dictionary) -> bool:
+	for r in CData.region_count():
+		var b := int(st["regions"][r].get("bk", -1))
+		if b >= 0 and captains(st).has(CState.owner(st, r)):
+			return true
+	return false
+
+
+## A sea battle with a captain in it is waiting to be fought.
+static func _sea_pending(st: Dictionary) -> bool:
+	for b in st["battles"]:
+		if not b.has("sea"):
+			continue
+		for id in b["af"] + b["df"]:
+			var fl := CFleet.fleet(st, int(id))
+			if not fl.is_empty() and captains(st).has(int(fl["f"])):
+				return true
+	return false
+
+
+## The captain of ours the story made from actor k ("sto"), with ships ({} none).
+static func story_captain(st: Dictionary, k: String) -> Dictionary:
+	for c in st.get("captains", []):
+		if str(c.get("sto", "")) == k and captains(st).has(int(c["f"])):
+			var fl := CFleet.fleet(st, int(c["fl"]))
+			if not fl.is_empty() and not (fl["ships"] as Array).is_empty():
+				return c
+	return {}
+
+
+# -------------------------------------------------------------- free port ---
+
+## The Act 3 goal (revealed by the effect "free_port"): {} until then.
+static func fp(st: Dictionary) -> Dictionary:
+	return S(st).get("fp", {})
+
+
+## The goal's parts: [[key, met 0/1, value, need, text], ...]: "fort" (the
+## haven held fortified FP_HOLD turns: walls FP_WALLS+, ours, not
+## blockaded nor besieged), "fleet" (the captains' fleets' power against the
+## Armada's), "chest" (gold for recognition: plunder since the reveal and
+## what is paid in).
+static func fp_parts(st: Dictionary) -> Array:
+	var g := fp(st)
+	var out: Array = []
+	var hr := CData.region_index(str(_c(st, "HAVEN", "")))
+	var held := int(g.get("held", 0))
+	var need_h := int(_c(st, "FP_HOLD", 5))
+	var wl := CState.walls(st, hr) if hr >= 0 else 0
+	var need_w := int(_c(st, "FP_WALLS", 2))
+	var ours := hr >= 0 and captains(st).has(CState.owner(st, hr))
+	var htxt := "Hold a fortified haven: %d of %d turns held (walls %d of %d%s)" % [mini(held, need_h), need_h, wl, need_w,
+		"" if ours else "; the haven is lost"]
+	out.append(["fort", 1 if held >= need_h else 0, mini(held, need_h), need_h, htxt])
+	var mine := 0
+	for fl in player_fleets(st):
+		mine += CFleet.power(fl)
+	var arm := armada_power(st)
+	var pct := int(_c(st, "FP_FLEET_PCT", 100))
+	var need_p := arm * pct / 100
+	out.append(["fleet", 1 if mine >= need_p else 0, mine, need_p,
+		"A fleet able to beat the Armada: your power %d against %d" % [mine, need_p]])
+	var gold := int(g.get("gold", 0))
+	var need_g := int(_c(st, "FP_GOLD", 1500))
+	out.append(["chest", 1 if gold >= need_g else 0, mini(gold, need_g), need_g,
+		"Enough plunder to buy recognition: %d of %d gold in the chest" % [mini(gold, need_g), need_g]])
+	return out
+
+
+## The Armada's power (its fleet, or the script's FP_ARMADA while it is not at sea).
+static func armada_power(st: Dictionary) -> int:
+	var afl := actor_fleet(st, "armada")
+	return CFleet.power(afl) if not afl.is_empty() else int(_c(st, "FP_ARMADA", 300))
+
+
+static func fp_met(st: Dictionary, part: String) -> bool:
+	if fp(st).is_empty():
+		return false
+	for pt in fp_parts(st):
+		if str(pt[0]) == part:
+			return int(pt[1]) == 1
+	return false
+
+
+static func fp_count(st: Dictionary) -> int:
+	if fp(st).is_empty():
+		return 0
+	var n := 0
+	for pt in fp_parts(st):
+		n += int(pt[1])
+	return n
+
+
+# ---------------------------------------------------------------- endings ---
+
+## The ending reached ("" none yet): "republic", "pardon" or "legend".
+static func ending(st: Dictionary) -> String:
+	return str(S(st).get("end", "")) if on(st) else ""
+
+
+## The ending's stats: [plunder, ships taken, towns sacked, fame, battles won, battles lost].
+static func end_stats(st: Dictionary) -> Dictionary:
+	var sx: Dictionary = S(st).get("sx", {})
+	var pf := player(st)
+	return {"plunder": _plunder(st), "taken": int(sx.get("tk", 0)), "sacked": int(sx.get("sk", 0)),
+		"fame": CCaptain.best_fame(st, pf), "won": int(sx.get("bw", 0)), "lost": int(sx.get("bl", 0)),
+		"infamy": CSea.infamy(st, pf)}
+
+
+## The epilogue's fates: [[speaker, text], ...], one per character (the
+## script's FATES: the first entry for a speaker whose "end" lists the
+## ending (absent: any) and whose "if" holds).
+static func fates(st: Dictionary) -> Array:
+	var out: Array = []
+	var done := {}
+	var e := ending(st)
+	for fd in _c(st, "FATES", []):
+		var who := str(fd["who"])
+		if done.has(who):
+			continue
+		if fd.has("end") and not (fd["end"] as Array).has(e):
+			continue
+		if fd.has("if") and not _cond(st, fd["if"]):
+			continue
+		done[who] = 1
+		out.append([who, str(fd["text"])])
+	return out
+
+
+## The story's battles and sacks of the turn `t` (from st.events): the
+## ending's stats.
+static func _tally(st: Dictionary, t: int) -> void:
+	var sx: Dictionary = S(st).get("sx", {})
+	for e in st["events"]:
+		if int(e.get("turn", -1)) != t:
+			continue
+		match str(e.get("k", "")):
+			"sea_battle":
+				var side := -1
+				for k in 2:
+					for g in e["att" if k == 0 else "def"]:
+						if captains(st).has(int(g)):
+							side = k
+				if side < 0:
+					continue
+				var won := int(e["won"]) == side
+				sx["bw" if won else "bl"] = int(sx.get("bw" if won else "bl", 0)) + 1
+				if won:
+					sx["tk"] = int(sx.get("tk", 0)) + int(e.get("taken", 0))
+			"battle":
+				var side2 := -1
+				for k in 2:
+					for g in e["att" if k == 0 else "def"]:
+						if captains(st).has(int(g)):
+							side2 = k
+				if side2 < 0:
+					continue
+				var won2 := int(e["winner"]) == side2
+				sx["bw" if won2 else "bl"] = int(sx.get("bw" if won2 else "bl", 0)) + 1
+			"sack":
+				if captains(st).has(int(e["f"])):
+					sx["sk"] = int(sx.get("sk", 0)) + 1
+	if not sx.is_empty():
+		S(st)["sx"] = sx
 
 
 ## A captain's fleet (or army) within `cells` of region r's harbour (or its
@@ -499,6 +715,8 @@ static func check(st: Dictionary) -> void:
 		return
 	var t := int(st["turn"])
 	for pass_i in 4:
+		if S(st).has("end"):
+			return  # (the story is over: the sandbox plays on)
 		var any := false
 		var due: Array = []
 		var later: Array = []
@@ -515,10 +733,14 @@ static func check(st: Dictionary) -> void:
 			var ev: Dictionary = events_of(st)[i]
 			if ev.has("if") and not _cond(st, ev["if"]):
 				continue
+			if S(st).has("end"):
+				return
 			_fire(st, i)
 			any = true
 		var list := events_of(st)
 		for i in list.size():
+			if S(st).has("end"):
+				return
 			var ev: Dictionary = list[i]
 			if not ev.has("when") or not _eligible(st, ev):
 				continue
@@ -627,6 +849,20 @@ static func _after_fx(st: Dictionary) -> void:
 ##   faction region [units] tag (lands and storms it now) | sack region |
 ##   voyage pos / voyage_r region (the flagship's stored voyage) | storm (one
 ##   east of the flagship if none is at sea) | dip faction "war" | "peace".
+##   Step 2: dip2 a b "war" | "peace" (between two other factions) | marque
+##   nation (its letter for the captain) | unmarque nation (revoked) | ship
+##   key [name] (joins the flagship's fleet) | actor_add actor [ships] |
+##   actor_lose actor n (its strongest ships, one always left) | actor_att
+##   actor n (the attention it hunts from) | until actor n (its chase ends n
+##   turns on) | blockade actor region turns | build region chain level |
+##   assault region [units] tag (the captain storms it now) | weaken region
+##   pct | slight region n (its walls n levels lower: a gate opened, a
+##   bastion blown) | desert actor faction (a story captain of ours turns his coat) |
+##   free_port (the Act 3 goal revealed) | fp_gold n (into its chest) |
+##   ending key. sea_battle actor [tag] [1: the actor attacks] (tag: the
+##   flags' name, else the actor's).
+##   A battle opened by sea_battle, raid or assault sets flag "bt_<tag>"
+##   (it may not open: someone else's battle is pending there, ...).
 static func _fx(st: Dictionary, f: int, fx: Array) -> void:
 	for e in fx:
 		var a: Array = e
@@ -724,7 +960,7 @@ static func _fx(st: Dictionary, f: int, fx: Array) -> void:
 			"join":
 				_join(st, f, a)
 			"sea_battle":
-				_sea_battle(st, f, str(a[1]))
+				_sea_battle(st, f, str(a[1]), str(a[2]) if a.size() > 2 else "", a.size() > 3 and int(a[3]) != 0)
 			"raid":
 				_raid(st, a)
 			"sack":
@@ -750,6 +986,81 @@ static func _fx(st: Dictionary, f: int, fx: Array) -> void:
 						_rules().declare_war(st, f, g)
 					elif str(a[2]) == "peace" and CState.at_war(st, f, g):
 						_rules().make_peace(st, f, g)
+			"dip2":
+				var g1 := CData.faction_index(str(a[1]))
+				var g2 := CData.faction_index(str(a[2]))
+				if g1 >= 0 and g2 >= 0 and g1 != g2 and CState.alive(st, g1) and CState.alive(st, g2):
+					if str(a[3]) == "war" and not CState.at_war(st, g1, g2):
+						_rules().declare_war(st, g1, g2)
+					elif str(a[3]) == "peace" and CState.at_war(st, g1, g2):
+						_rules().make_peace(st, g1, g2)
+			"marque":
+				var mn := CData.faction_index(str(a[1]))
+				if mn >= 0 and f >= 0 and CState.alive(st, mn) and not CSea.has_marque(st, mn, f):
+					CSea.grant(st, mn, f)
+			"unmarque":
+				var un := CData.faction_index(str(a[1]))
+				if un >= 0 and f >= 0 and CSea.has_marque(st, un, f):
+					(st["marques"] as Array).erase(CSea.marque_of(st, un, f))
+					_rules().event(st, {"k": "marque_end", "a": un, "b": f, "why": "broken"})
+			"ship":
+				var sfl := flagship(st, f)
+				if not sfl.is_empty() and not CData.ship_row(str(a[1])).is_empty():
+					var sd := {"t": str(a[1])}
+					if a.size() > 2:
+						sd["nm"] = str(a[2])
+					(sfl["ships"] as Array).append(_ship(sd))
+			"actor_add":
+				var xfl := actor_fleet(st, str(a[1]))
+				if not xfl.is_empty() and not xfl.has("busy"):
+					for sd2 in a[2]:
+						(xfl["ships"] as Array).append(_ship(sd2))
+			"actor_lose":
+				var lfl := actor_fleet(st, str(a[1]))
+				if not lfl.is_empty() and not lfl.has("busy"):
+					for i in int(a[2]):
+						if (lfl["ships"] as Array).size() > 1:
+							(lfl["ships"] as Array).remove_at(_strongest(lfl))
+			"actor_att":
+				var aa := actor(st, str(a[1]))
+				if not aa.is_empty():
+					aa["att"] = int(a[2])
+			"until":
+				var au := actor(st, str(a[1]))
+				if not au.is_empty():
+					au["until"] = int(st["turn"]) + int(a[2])
+			"blockade":
+				var ab := actor(st, str(a[1]))
+				if not ab.is_empty() and CData.region_index(str(a[2])) >= 0:
+					ab["mode"] = "blockade"
+					ab["at"] = str(a[2])
+					ab["until"] = int(st["turn"]) + int(a[3])
+			"build":
+				_build(st, CData.region_index(str(a[1])), str(a[2]), int(a[3]))
+			"assault":
+				_assault(st, f, a)
+			"weaken":
+				_weaken(st, CData.region_index(str(a[1])), int(a[2]))
+			"slight":
+				var sr := CData.region_index(str(a[1]))
+				if sr >= 0:
+					var keep: Array = []
+					for sl in st["regions"][sr]["slots"]:
+						var lv := int(sl[1]) - (int(a[2]) if int(sl[0]) == CData.WALLS else 0)
+						if lv > 0:
+							keep.append([int(sl[0]), lv])
+					st["regions"][sr]["slots"] = keep
+			"desert":
+				_desert(st, f, a)
+			"free_port":
+				if not S(st).has("fp"):
+					S(st)["fp"] = {"held": 0, "gold": 0}
+			"fp_gold":
+				if S(st).has("fp"):
+					var fpd: Dictionary = S(st)["fp"]
+					fpd["gold"] = maxi(int(fpd["gold"]) + int(a[1]), 0)
+			"ending":
+				_ending(st, str(a[1]))
 			_:
 				push_warning("story: unknown effect %s" % str(a[0]))
 
@@ -823,7 +1134,7 @@ static func _lose_ship(st: Dictionary, f: int) -> void:
 			(st["fleets"] as Array).erase(best)
 
 
-## ["spawn", actor, faction, pos, [ships], ttl, mode]: a fleet the story moves.
+## ["spawn", actor, faction, pos, [ships], ttl, mode, home]: a fleet the story moves.
 static func _spawn(st: Dictionary, a: Array) -> void:
 	var k := str(a[1])
 	if not actor_fleet(st, k).is_empty():
@@ -839,6 +1150,8 @@ static func _spawn(st: Dictionary, a: Array) -> void:
 	fl["sto"] = k
 	_drop_actor(st, k)
 	var en := {"k": k, "fl": int(fl["id"]), "mode": str(a[6]) if a.size() > 6 else "hold", "ttl": int(a[5]) if a.size() > 5 else 0}
+	if a.size() > 7:
+		en["home"] = str(a[7])
 	(S(st)["actors"] as Array).append(en)
 	(S(st)["flags"] as Array).erase("gone_" + k)
 
@@ -875,12 +1188,14 @@ static func _join(st: Dictionary, f: int, a: Array) -> void:
 	var c := CCaptain._new(st, f, int(fl["id"]))
 	c["nm"] = str(a[2])
 	c["fame"] = int(a[3])
+	c["sto"] = str(a[1])
 	_rules().event(st, {"k": "story", "e": "join_" + str(a[1]), "f": f})
 
 
 ## A sea battle now between captain f's flagship and the actor's fleet (it
-## comes alongside if it is not already near).
-static func _sea_battle(st: Dictionary, f: int, k: String) -> void:
+## comes alongside if it is not already near); `they`: the actor attacks
+## (the captain's side defends: in a port of ours, its guns help).
+static func _sea_battle(st: Dictionary, f: int, k: String, tag: String = "", they: bool = false) -> void:
 	var fl := flagship(st, f)
 	var en := actor_fleet(st, k)
 	if fl.is_empty() or en.is_empty() or fl.has("busy") or en.has("busy"):
@@ -899,19 +1214,29 @@ static func _sea_battle(st: Dictionary, f: int, k: String) -> void:
 			return
 		CFleet.place(en, best)
 	var before := int(st["next_battle"])
-	CFleet.sea_battle(st, fl, [en], c)
+	if they:
+		CFleet.sea_battle(st, en, [fl], c)
+	else:
+		CFleet.sea_battle(st, fl, [en], c)
 	if int(st["next_battle"]) > before:
-		(S(st)["bt"] as Array).append([before, k])
+		(S(st)["bt"] as Array).append([before, tag if tag != "" else k])
+		set_flag(st, "bt_" + (tag if tag != "" else k))
 
 
 ## ["raid", faction, region, [units], tag]: an army of faction lands beside
-## the settlement and storms it now (a battle, tagged).
+## the settlement and storms it now (a battle, tagged); with a battle
+## already pending there, as soon as that one is over (story "rq", this
+## turn only).
 static func _raid(st: Dictionary, a: Array) -> void:
 	var f := CData.faction_index(str(a[1]))
 	var r := CData.region_index(str(a[2]))
 	if f < 0 or r < 0 or not CState.alive(st, f) or not CState.at_war(st, f, CState.owner(st, r)):
 		return
 	if not CState.battle_at(st, r).is_empty():
+		# Someone else's battle is pending there: they land when it is over (battle_done), this turn.
+		if not S(st).has("rq"):
+			S(st)["rq"] = []
+		(S(st)["rq"] as Array).append(a.duplicate())
 		return
 	var cell := -1
 	for k in 8:
@@ -934,6 +1259,7 @@ static func _raid(st: Dictionary, a: Array) -> void:
 	_rules().add_reinforcements(st, b)
 	b.erase("new")
 	(S(st)["bt"] as Array).append([int(b["id"]), str(a[4])])
+	set_flag(st, "bt_" + str(a[4]))
 	_rules().event(st, {"k": "story", "e": "raid", "f": f, "r": r})
 
 
@@ -976,13 +1302,182 @@ static func _storm(st: Dictionary, f: int) -> void:
 	_rules().event(st, {"k": "storm", "id": int(s["id"]), "nm": str(s["nm"]), "yr": int(s["yr"]), "x": x, "y": y})
 
 
+## The index of fleet fl's strongest ship (the first on a tie).
+static func _strongest(fl: Dictionary) -> int:
+	var best := 0
+	var bp := -1
+	for k in (fl["ships"] as Array).size():
+		var pw := CFleet.ship_power(fl["ships"][k])
+		if pw > bp:
+			bp = pw
+			best = k
+	return best
+
+
+## ["build", region, chain key, level]: building chain `key` of region r
+## is at least `level` (a story's work, over the slot cap if it must).
+static func _build(st: Dictionary, r: int, key: String, level: int) -> void:
+	if r < 0:
+		return
+	var ci := -1
+	for i in CData.CHAINS.size():
+		if str(CData.CHAINS[i]["key"]) == key:
+			ci = i
+	if ci < 0:
+		return
+	level = mini(level, int(CData.CHAINS[ci]["levels"]))
+	for sl in st["regions"][r]["slots"]:
+		if int(sl[0]) == ci:
+			sl[1] = maxi(int(sl[1]), level)
+			return
+	(st["regions"][r]["slots"] as Array).append([ci, level])
+
+
+## Free field cells beside settlement r (no army on them), in ring order.
+static func _free_ring(st: Dictionary, r: int) -> Array:
+	var out: Array = []
+	var site := CGrid.site(r)
+	for k in 8:
+		var c := CState.ring_cell(r, k)
+		if c == site or out.has(c) or CFleet.is_sea(c):
+			continue
+		var free := true
+		for x in st["armies"]:
+			if CState.cell(x) == c:
+				free = false
+		if free:
+			out.append(c)
+	return out
+
+
+## ["assault", region, [units], tag]: captain f storms region r now (a land
+## battle, tagged): the companies `units` (the story's landing party) and
+## everyone aboard the captain's fleets within ASSAULT_CELLS of its harbour
+## land beside the settlement and go over the wall.
+static func _assault(st: Dictionary, f: int, a: Array) -> void:
+	var r := CData.region_index(str(a[1]))
+	if f < 0 or r < 0:
+		return
+	var o := CState.owner(st, r)
+	if o == f or not CState.battle_at(st, r).is_empty():
+		return
+	if not CState.at_war(st, f, o):
+		_rules().declare_war(st, f, o)  # (a story's assault is an act of war)
+	var free := _free_ring(st, r)
+	if free.is_empty():
+		return
+	var lead := {}
+	if not (a[2] as Array).is_empty():
+		lead = _new_army(st, f, r, a[2])
+		CState.place(lead, int(free[0]))
+		_rules()._insert_army(st, lead)
+		free.remove_at(0)
+	var hb := CFleet.harbour(r)
+	if hb < 0:
+		hb = CGrid.site(r)
+	for fl in CFleet.fleets_of(st, f):
+		if fl.has("busy") or CGrid.cheb(CFleet.cell(fl), hb) > int(_c(st, "ASSAULT_CELLS", 5)):
+			continue
+		while not (fl["carry"] as Array).is_empty() and not free.is_empty():
+			var ca: Dictionary = fl["carry"][0]
+			CFleet.land(st, fl, int(free[0]), int(ca["id"]))
+			if lead.is_empty():
+				lead = ca
+			free.remove_at(0)
+	if lead.is_empty():
+		return
+	var b: Dictionary = _rules()._assault6(st, r, lead)
+	if b.is_empty():
+		return
+	_rules().add_reinforcements(st, b)
+	b.erase("new")
+	(S(st)["bt"] as Array).append([int(b["id"]), str(a[3])])
+	set_flag(st, "bt_" + str(a[3]))
+	_rules().event(st, {"k": "story", "e": "assault", "f": f, "r": r})
+
+
+## ["weaken", region, pct]: the defenders of region r (its owner's armies
+## by the settlement and its garrison) lose pct % of their men (a bribed
+## gate, a fever, a mutiny in the fort).
+static func _weaken(st: Dictionary, r: int, pct: int) -> void:
+	if r < 0:
+		return
+	var o := CState.owner(st, r)
+	for x in st["armies"]:
+		if int(x["f"]) != o or o < 0 or CGrid.cheb(CState.cell(x), CGrid.site(r)) > 1:
+			continue
+		for u in x["units"]:
+			u["n"] = maxi(1, int(u["n"]) * (100 - pct) / 100)
+	var rs: Dictionary = st["regions"][r]
+	rs["gar"] = int(rs["gar"]) * (100 - pct) / 100
+
+
+## ["desert", actor, faction]: the captain of ours the story made from
+## actor k ("sto") turns his coat: his fleet (and whoever is aboard) sails
+## for `faction` as the story's actor k again, holding where it is.
+static func _desert(st: Dictionary, f: int, a: Array) -> void:
+	var k := str(a[1])
+	var c := story_captain(st, k)
+	var g := CData.faction_index(str(a[2]))
+	if c.is_empty() or g < 0 or not CState.alive(st, g):
+		return
+	var fl := CFleet.fleet(st, int(c["fl"]))
+	if fl.has("busy"):
+		return
+	fl["f"] = g
+	fl["sto"] = k
+	fl["carry"] = []
+	CFleet._drop_voyage(fl)
+	(st["captains"] as Array).erase(c)
+	_drop_actor(st, k)
+	(S(st)["actors"] as Array).append({"k": k, "fl": int(fl["id"]), "mode": "hold", "ttl": 0})
+	(S(st)["flags"] as Array).erase("gone_" + k)
+	_rules().event(st, {"k": "story", "e": "desert_" + k, "f": f})
+
+
+## ["ending", key]: the story ends ("republic", "pardon" or "legend"): its
+## stats are counted, the story's fleets go back to their factions' AI and
+## no more events fire; the campaign plays on as a sandbox.
+static func _ending(st: Dictionary, k: String) -> void:
+	if S(st).has("end"):
+		return
+	S(st)["end"] = k
+	S(st)["end_t"] = int(st["turn"])
+	set_flag(st, "ended")
+	set_flag(st, "end_" + k)
+	_tally(st, int(st["turn"]))
+	for ac in (S(st)["actors"] as Array).duplicate():
+		_release(st, str(ac["k"]))
+	S(st)["pending"] = []
+	S(st)["sched"] = []
+	_rules().event(st, {"k": "story", "e": "end_" + k, "f": player(st)})
+
+
+## The campaign is over (every captain gone, or a victory): the story's
+## ending, if it had none (the script's END_OVER event, else "legend").
+static func _over(st: Dictionary) -> void:
+	if S(st).has("end"):
+		return
+	var won := false
+	for f in captains(st):
+		if int(st.get("winner", -1)) == int(f):
+			won = true
+	var id := str(_c(st, "END_WON" if won else "END_OVER", ""))
+	var i := _event_index(st, id)
+	if i >= 0:
+		_fire(st, i)
+	if not S(st).has("end"):
+		_ending(st, "republic" if won else "legend")
+
+
 # ---------------------------------------------------------- the turn hooks ---
 
 ## Step 5 of the turn (CTurn.resolve_turn, with the AI's voyages): the
 ## story's fleets sail by their modes. chase: the nearest captain's fleet
 ## (until a turn, then home); hunt (the Armada): a captain's fleet in reach
 ## while the attention is high, else home; goal: a cell, then hold; home:
-## its home port, then back to its faction's AI.
+## its home port, then back to its faction's AI; blockade: lie off a port of
+## ours until a turn, then hunt.
 static func actor_moves(st: Dictionary, fmoves: Array) -> void:
 	if not on(st):
 		return
@@ -998,13 +1493,13 @@ static func actor_moves(st: Dictionary, fmoves: Array) -> void:
 			a["mode"] = "home"
 		match md:
 			"chase":
-				var tg := _nearest_foe(st, fl, 1 << 20)
+				var tg := _nearest_foe(st, fl, 1 << 20) if t >= int(a.get("rest", 0)) else {}
 				if not tg.is_empty():
 					fmoves.append([int(fl["id"]), -1, f, 0, int(tg["id"])])
 			"hunt":
 				var att := attention(st)
 				var tg2 := {}
-				if att >= int(_c(st, "ARMADA_HUNT_ATT", 35)):
+				if att >= int(a.get("att", _c(st, "ARMADA_HUNT_ATT", 35))) and t >= int(a.get("rest", 0)):
 					tg2 = _nearest_foe(st, fl, int(_c(st, "ARMADA_RANGE", 25)) + att)
 				if not tg2.is_empty():
 					fmoves.append([int(fl["id"]), -1, f, 0, int(tg2["id"])])
@@ -1018,6 +1513,13 @@ static func actor_moves(st: Dictionary, fmoves: Array) -> void:
 					fmoves.append([int(fl["id"]), gc, f, 0, -1])
 				else:
 					a["mode"] = "hold"
+			"blockade":
+				var br := CData.region_index(str(a.get("at", "")))
+				var bc := CFleet.harbour(br) if br >= 0 else -1
+				if bc < 0 or t > int(a.get("until", 0)) or not CState.at_war(st, f, CState.owner(st, br)):
+					a["mode"] = "hunt"
+				elif CGrid.cheb(CFleet.cell(fl), bc) > 1:
+					fmoves.append([int(fl["id"]), _sea_near(bc), f, 0, -1])
 			"home":
 				var hd2 := CFleet.dock(CData.region_index(str(a.get("home", ""))))
 				if hd2 < 0 or CGrid.cheb(CFleet.cell(fl), hd2) <= 2:
@@ -1047,8 +1549,17 @@ static func _nearest_foe(st: Dictionary, fl: Dictionary, cells: int) -> Dictiona
 static func end_turn(st: Dictionary) -> void:
 	if not on(st):
 		return
+	if str(st["phase"]) == "over":
+		if not S(st).has("end"):
+			_tally(st, int(st["turn"]) - 1)
+		_over(st)
+		return
+	if S(st).has("end"):
+		return  # (the story has ended: the sandbox plays on)
 	var t := int(st["turn"])
 	var pf := player(st)
+	_tally(st, t - 1)
+	S(st).erase("rq")  # (raids that never found the beach clear)
 	# Plunder: the purse, shares owed, Lindo's cut.
 	var pl := _plunder(st)
 	var delta := pl - int(S(st)["plunder0"])
@@ -1060,6 +1571,9 @@ static func end_turn(st: Dictionary) -> void:
 			var bonus := delta * int(_c(st, "LINDO_PCT", 25)) / 100
 			var fs: Dictionary = st["factions"][pf]
 			fs["treasury"] = int(fs["treasury"]) + bonus
+		if S(st).has("fp"):
+			var fpd: Dictionary = S(st)["fp"]
+			fpd["gold"] = int(fpd["gold"]) + delta  # (the free port's chest: plunder since the goal was revealed)
 		S(st)["plunder0"] = _plunder(st)
 	else:
 		add_p(st, "purse", int(_c(st, "PURSE_TURN", 6)) + (int(_c(st, "PURSE_OWED", 2)) if p(st, "owed") >= int(_c(st, "OWED_HIGH", 300)) else 0))
@@ -1077,6 +1591,14 @@ static func end_turn(st: Dictionary) -> void:
 		add_p(st, "haven", clampi(clampi(target, 0, P_MAX) - p(st, "haven"), -step, step))
 	elif hr >= 0:
 		add_p(st, "haven", -P_MAX)
+	# The free port: the turns the fortified haven was held (lost: from nothing again).
+	if S(st).has("fp") and hr >= 0:
+		var fpd2: Dictionary = S(st)["fp"]
+		if not captains(st).has(CState.owner(st, hr)):
+			fpd2["held"] = 0
+		elif CState.walls(st, hr) >= int(_c(st, "FP_WALLS", 2)) and int(st["regions"][hr].get("bk", -1)) < 0 \
+				and CState.siege_at(st, hr).is_empty():
+			fpd2["held"] = int(fpd2["held"]) + 1
 	# Timers run out.
 	var tl: Array = []
 	for tm in S(st)["timers"]:
@@ -1130,7 +1652,7 @@ static func _rescue(st: Dictionary) -> void:
 
 
 ## The hunt for an actor (flag "hunt_<k>"): a captain's fleet within the
-## script's HUNT_CELLS of it brings it to battle.
+## script's HUNT_CELLS of it brings it to battle (the flota: "hunt_flota").
 static func _hunt(st: Dictionary) -> void:
 	for a in (S(st)["actors"] as Array).duplicate():
 		var k := str(a["k"])
@@ -1147,6 +1669,24 @@ static func _hunt(st: Dictionary) -> void:
 			if int(st["next_battle"]) > before:
 				(S(st)["bt"] as Array).append([before, k])
 			break
+	# (step 2) The flota hunted (flag "hunt_flota"): the same, tagged "flota".
+	if flag(st, "hunt_flota") and not flag(st, "won_flota") and not flag(st, "lost_flota"):
+		for en in _flotas(st):
+			if en.has("busy"):
+				continue
+			var hit := false
+			for fl in player_fleets(st):
+				if fl.has("busy") or CGrid.cheb(CFleet.cell(fl), CFleet.cell(en)) > int(_c(st, "HUNT_CELLS", 3)) \
+						or not CState.at_war(st, int(fl["f"]), int(en["f"])):
+					continue
+				var before2 := int(st["next_battle"])
+				CFleet.sea_battle(st, fl, [en], CFleet.cell(fl))
+				if int(st["next_battle"]) > before2:
+					(S(st)["bt"] as Array).append([before2, "flota"])
+				hit = true
+				break
+			if hit:
+				break
 
 
 # -------------------------------------------------------------- battles ---
@@ -1172,6 +1712,8 @@ static func before_battle(st: Dictionary, bid: int) -> Dictionary:
 					continue
 				if fl.has("sto") and not tags.has(str(fl["sto"])):
 					tags.append(str(fl["sto"]))
+				if fl.has("flota") and not tags.has("flota"):
+					tags.append("flota")
 				if captains(st).has(int(fl["f"])):
 					side = k
 	else:
@@ -1204,8 +1746,20 @@ static func battle_done(st: Dictionary, info: Dictionary) -> void:
 	if won >= 0 and int(info["side"]) >= 0:
 		for tg in info["tags"]:
 			set_flag(st, ("won_" if won == 1 else "lost_") + str(tg))
+			var ac := actor(st, str(tg))
+			if not ac.is_empty() and (str(ac["mode"]) == "hunt" or str(ac["mode"]) == "chase"):
+				ac["rest"] = int(st["turn"]) + int(_c(st, "ACTOR_REST", 3))  # (it refits: hunt goes home, chase lies to)
+	if str(st["phase"]) == "over":
+		_over(st)
+		return
+	if S(st).has("rq"):
+		var rq: Array = S(st)["rq"]
+		S(st).erase("rq")
+		for ra in rq:
+			_raid(st, ra)
 	_rescue(st)
 	check(st)
+	_after_fx(st)
 
 
 # ------------------------------------------------------------------ view ---

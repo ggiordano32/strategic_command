@@ -1614,10 +1614,12 @@ both lockstep peers build the same and nothing is sent):
 units path round them over the graph (the settlement maps' path code:
 straight where a 3 m line is clear), their men flow round them (`_flow_slots`,
 `_slide`), a move or a deployment placement on one goes to the nearest
-open ground (`open_snap`). Missiles pass over them (`_obs_top` 0) until
-slice 2b gives them cover and sight; `obs_hi` (static) is 0 on maps whose
-obstacles are only water, rock and cliff, so lines of fire there keep the
-tight ground-only loop. A rock or cliff on one side of a unit is not a
+open ground (`open_snap`). Missiles passed over them (`_obs_top` 0) until
+slice 2b gave them cover and sight ("Cover and line of sight": an outcrop
+or half a cliff's face now stops flat shots and sight beyond 5 m of
+either man); `obs_hi` (static) is 0 on maps whose
+obstacles are only water, rock and cliff with line of sight off (`los`
+0), so lines of fire there keep the tight ground-only loop. A rock or cliff on one side of a unit is not a
 street: `_squeeze` closes files only for a gap with something on both
 sides. On a field map whose only obstacles are landforms (`land_only`,
 static): routers flee as in the open (the settlement maps' path to the
@@ -2628,9 +2630,133 @@ smoke and a ground dust kick; a capped lingering haze builds over a long
 firefight. Diorama tints it cotton-white, painterly grey. Graphics Low: fewer
 puffs, no ring, dust or haze. The `musket` and
 `cannon` clips (`stat_volleys`, `stat_cannon`). Later: smoke that blocks
-aim in the sim, cover and line of sight (slice 2b), gun ammunition kinds
+aim in the sim (cover and line of sight: built, "Cover and line of sight"), gun ammunition kinds
 and wagon refills (an `AMMO` row would change the hashed wagon stock
 width: needs the same gating).
+
+### Cover and line of sight (as built, West slice 2b, 2026-10-15)
+
+The "Cover (battle, slice 2b)" paragraph of "The Caribbean pack" made
+playable. Rule of cool with a real anchor: the irregulars of the Indies
+(buccaneers, Miskito and Maya warriors, frontier skirmishers) fought from
+behind trees and rocks and ambushed from the forest; the tercio and the
+English and Dutch foot stood in formation and won by volley discipline.
+Code: `sim/battle_sim.gd` (section "cover and line of sight": `_setup_vis`,
+`sight_line`, `_update_vis`, `_seen`, `_cover_from`, `_cover_stops`,
+`_ambush`, `cover_state`; hooks in `_land`, `_missile_hit`, `_fire`,
+`_art_fire`, `_update_contacts`, `_update_units`, `_missile_think`,
+`_art_think`, `lof_block`, `_obs_top`, `hidden_from`), `sim/unit_types.gd`
+(`cover`), `sim/battle_ai.gd` (`_plan`, `_cover_spot`, `_probe`),
+`sim/mapgen.gd` (terrain key `rocks`), `sim/scenarios.gd` (`test_ambush`,
+`test_cover`), `game/overlay.gd`, `game/soldier_layer.gd`,
+`game/tree_layer.gd`.
+
+**Both packs (decided 2026-10-15).** Line of sight applies to every battle
+whose map has sight blockers (woods, buildings, rocks, cliffs): woods
+hiding men is right for Rome too, and the AI's and the player's rules stay
+one. Scenario key `los` 0 turns it off (tests; the maps' fire rules then
+are exactly as before 2b). No pinned golden moved: the four flat-map
+trajectory digests have no blockers (`vis_on` 0, nothing new hashed or
+drawn), the campaign auto-resolves (campaign_sim hashes unchanged). What
+changed without a pin: every woods, landform and settlement battle (the
+determinism runs' final hashes, e.g. test_woods, ai_woods, siege_*,
+bench_4000_hills). Rome rows with `cover`: javelinmen and slingers (and
+their tiers and variants: the skirmishers); archers, the line and the
+horse have none.
+
+**The cover trait** (`cover` 1; West: buccaneers, cutlass men, native
+warriors, native bowmen; Rome: javelin and sling lines; 0 everywhere
+else). On a map with cover (`cov_on`: sight blockers and a cover unit):
+- *Cover by kind* (`_cover_from`, per man, against the shooter's
+  position): woods under him `COV_WOODS` 45 %, a rock or cliff cell 2 or
+  4 m toward the shooter `COV_ROCK` 60 %, a building `COV_HOUSE` 50 %, a
+  wall / tower / gate `COV_WALL` 50 % (a man on a walkway: the
+  battlements' `WALL_COVER` as everyone, nothing more), a field's hedges
+  `COV_FIELD` 25 %: that share of soldiers' missiles and balls about to
+  strike him is stopped (`COVER_STOP`; after the trees' and the
+  battlements' share everyone gets). Artillery shot (bolts, stones,
+  roundshot) is not covered.
+- *Going to ground* (`_cover_unit`, once a second): a cover unit with half
+  its men or more in cover (`_cover_at`: woods or hedges under him, or an
+  obstacle 2 m off eight ways or 4 m four ways), formed, not moving, not
+  fighting, two checks running (`GROUND_STILL`) has gone to ground
+  (`u_gnd`): `GROUND_STOP` 35 % of what still gets through is stopped as
+  well, and an order that moves it (move, withdraw, a melee attack, the
+  skirmish fall-back) first costs `RISE_T` 1.5 s getting up (the anchor
+  waits). Gone to ground in cover it is concealed as in woods (below).
+- *Firing from cover*: a cover unit's own trees within `COVER_PEEK` 12 m
+  and a house corner within `COVER_PEEK_OBS` 5 m do not block its flat
+  shots (line troops in a wood shoot through 8 m of dense trees at most,
+  as before). For everyone, a rock or cliff within `LAND_NEAR` 5 m of the
+  shooter or the target is cover, not a screen: the shot goes over it
+  (and a cover man there takes the 60 %).
+- Line troops get nothing new: in the same rocks a musket line loses
+  exactly what it loses in the open (`--only=cover`).
+
+**Line of sight** (`vis_on`; hashed `u_seen`, `u_rev`, `u_hid0`, `u_amb`,
+`u_ambt`, `u_revt`; `u_seer` snapshotted only):
+- *Blockers* (static grids built at setup from the map, so both lockstep
+  peers hold the same; left out of snapshots): the veg grid's 4 m cells
+  carry the trees' weight (`TREE_W`) and how far a building (the city's
+  `build_h`, else 5 m), an outcrop (its height, 1.6-2.8 m) or a cliff (half
+  its face) rises; a summed-area table answers "anything in this box".
+  Walls and gates do not block sight (both sides know what stands behind a
+  town wall; they still stop shots). The bare ground does not block sight
+  (crests block fire, as before).
+- *A sight line* (`sight_line`): from the observer's eye (1.7 m above its
+  centroid's ground) to the target's body (1 m), 4 m samples: the trees
+  along it add up past `TREE_BLOCK` (the first `VIS_PEEK` 12 m round the
+  eye left out: a unit at a wood's edge looks out), or a building, rock or
+  cliff rises above it (a rock within `LAND_NEAR` of either end does not).
+- *Seen* (`_seen`, each unit once a second, staggered by index, fixed
+  order): it shot within `REVEAL_T` 5 s, it is in contact; an enemy unit
+  within `VIS_NEAR` 20 m (box to box) sees it; a unit in woods (its
+  centroid) or a cover unit gone to ground in cover is seen only by enemies
+  within `VIS_WOODS` 40 m; else any enemy unit with a sight line to it (the
+  last one that saw it is asked first: cost only). A shot (a man's missile,
+  a volley, an engine) reveals the shooter at once.
+- *Hidden* (`hidden_from(u, side)`, the assassin's rule generalised): the
+  view does not draw it for that side; the sim's fire at will and the
+  batteries skip it; an attack order on it holds flat weapons (they cannot
+  aim) while arrows and stones are lobbed blind at `BLIND_SPREAD` 200 %
+  scatter; a melee attack order goes on.
+- *Ambush*: a unit hidden at least `AMBUSH_HID` 5 s and then seen (it broke
+  cover, an enemy came near, it shot) ambushes for `AMBUSH_T` 10 s: the
+  first volley that reaches an enemy unit (`_missile_hit`) or the first
+  contact with one (`_update_contacts`) strikes it with `AMBUSH_MOR` 200
+  morale and `AMBUSH_DIS` 40 disorder at once (each unit at most once in
+  10 s).
+
+**Battle AI** (docs/AI.md): every target choice already went through
+`hidden_from`; the army plan reckons the enemy centre and the gap between
+the lines from the enemies it sees (all of them only when it sees none);
+cover troops take the nearest cover within 30 m of their line slot
+(`_cover_spot`: deployed there they lie in ambush on defence); line troops
+ignore cover; foot with no enemy in sight while some hide probe the
+nearest wood toward the enemy (`_probe`, `PROBE_PCT` 25 % a think).
+
+**View.** Hidden enemies are not drawn (soldiers, markers; their canopy is
+not thinned over them: `tree_layer` skips them); own cover units carry a
+leaf at the marker's lower left (outline: in cover; filled: gone to
+ground) and a closed eye while the enemy does not see them; a unit seen
+after hiding gets a spreading ring (1.5 s); an attack order on a target
+gone out of sight says "TARGET OUT OF SIGHT: HOLDING FIRE" (flat) or
+"SHOOTING BLIND" (arcs) and draws no line to it; a blocked line of fire
+shows "NO LINE OF FIRE" as before (now also for rocks and cliffs).
+
+**Numbers** (`--only=cover` set pieces, 6 seeds, 90 s, a musket line 90 m
+from 60 buccaneers in two ranks, a boulder line 3 m in front of them):
+
+| buccaneers | killed by the line, holding fire | killed, duelling (line lost) |
+|---|---|---|
+| in the open | 25.3 / 60 | 22.5 (41.7 / 100) |
+| behind rocks, standing | 15.3 | 13.7 (44.8) |
+| behind rocks, gone to ground | 1.3 (hidden after 2 s) | 9.3 (46.0) |
+| line musketeers there instead | 35.0 open = 35.0 rocks | 32.2 = 32.2 |
+
+Ambush (`test_ambush`-like set piece): 100 native warriors hidden in a
+wood 990 ticks, never aimed at; charging at 60 m they are seen as they
+leave the trees; on contact the musket line takes -200 morale and wavers.
 
 ### The general (as built, 2026-10-09)
 
@@ -4317,7 +4443,7 @@ minutes.
   shore units, fire ships, the formula fitted to these results, sea battle
   art (the miniatures at headings), sounds of the sea.
 
-### Story campaign: "The Brethren's Due" (agreed 2026-10-14; step 1 built 2026-10-15, see "as built" below)
+### Story campaign: "The Brethren's Due" (agreed 2026-10-14; steps 1-2 built 2026-10-15, see "as built" below)
 
 A single-player (co-op optional) story campaign on the Caribbean pack that
 teaches how the world works through events the player must answer, not
@@ -4492,6 +4618,128 @@ existing systems.
   New campaign screen: "Story: The Brethren's Due" (offline). Chronicle
   lines for the story's big moments. Testing aids: `--story=seed[:turns]`,
   `--story-seen=N`, `--story-choices`, `--story-log`.
+
+**As built, step 2 (2026-10-15): Act 2, Act 3 and the three endings, solo.**
+- **Script** (`campaign/data/story_brethren.gd`, state turns; about 60 new
+  events). Act 2 "The Commission" (15-29): the Armada refitted (it hunts
+  from attention 30, respawned if Act 1 sank it); Ashby's commission
+  through Lindo (needs patron favour 30, or 400 gold to buy his signature,
+  or "No flag but ours": England's real letter of marque, `CSea.grant`,
+  with England at war with both Spains so Spanish plunder pays +50 %);
+  the flota (Lindo's news at 16-18 with three ways to a fleet: buy a
+  brigantine, the Miskito, steal a ship; the careened frigate at Isla de
+  Pinos, 50 % bait with the Armada behind the island; King Jeremy's war
+  canoes and warriors; Tom Hesketh's Ranger for shares or gold); the real
+  flota at Havana (hunt it: a sea battle when within 3 cells of any of its
+  fleets, or shadow it for a straggling galleon, or let it go; taken,
+  silver, Mendoza's vow and a frigate more); the Armada blockading
+  Tortuga at attention 40 (break it, wait, or bribe a captain); the
+  Treaty of Madrid (turn 22): peace England-Spain, the letter revoked,
+  war with England, favour 0, the Armada hunts from 20; at Port Royal,
+  run the gauntlet (a sea battle) or slip out (a gamble by fame); Ashby's
+  price on your head (HMS Oxford chases you 4 turns); Lindo's loyalty
+  (outbid Ashby, trust him: a 55 % gamble, or cut him off); Le Boucher
+  as your ally (his church-burning: look away, rebuke him, cast him out
+  to Spain) or as a rival (hunt him, sell his careening place to
+  Mendoza); End of Act Two. Act 3 "The Free Port" (30-44): Vane's last
+  pages reveal the goal (raise the walls with gold or with the crew);
+  Lindo's or Mercy's arithmetic; Tortuga retaken if lost (from Act 2);
+  Le Boucher returns (frigate and brigantine) or, if he sailed with you,
+  turns his coat and sells your walls to Mendoza; the Brethren council
+  (a speech: gamble by fame; buy the votes, 600; or beat Le Boucher in
+  Tortuga road before them all: a sea battle, then he hangs at low
+  tide); won, Hesketh, Black Ned Corbin's two ships and four companies;
+  split, half the captains go to Le Boucher; the great raid (Cartagena
+  1500 plunder or Portobelo 1000; off the harbour storm it at dawn: a
+  land battle with a quarter of the defenders caught asleep, or bribe a
+  gate for 300: half of them and the walls a level lower; six companies
+  of the Brethren land with whoever is aboard); the King's pardon (36-41,
+  every 3 turns: take it, keep the letter, burn it); recognition when the
+  chest is full (the Dutch squadron in the road: the Armada loses its
+  strongest ship, two companies); Mendoza's last letter (38: the Armada
+  gathers with a galleon); the night before (40: meet them at sea, fight
+  from the walls with three companies more, or a kept pardon); the
+  finale (41): the Armada attacks the fleet in Tortuga road (a sea
+  battle, the fort's batteries with us), then lands 3 companies after a
+  win, 7 after a loss, 6 against the walls; at sea with no port left, a
+  last sea battle. Endings: **the Republic** (the finale's land battle
+  held), **the Legend** (lost; or the last sea battle; or every captain
+  gone: `END_OVER`), **the Pardon** (1500 gold, peace with England and
+  Spain, infamy gone, favour 100); turn 44 without one: the Republic if
+  Tortuga is ours with 2 parts of the goal, else the Legend.
+  Tips (first sight): letters of marque, the flota, blockades, a sea fight
+  (real time or at once), walls and forts, the free port. Characters
+  added: Jeremy (King of the Mosquito Coast), Tom Hesketh. `MERCY` 3.
+- **The free port** (`CStory.fp_parts`): fort (Tortuga held with walls 2+,
+  unblockaded, unbesieged, 5 turns; lost resets it), fleet (the captains'
+  power at least 80 % of the Armada's: in Tortuga road with walls 2 the
+  batteries make that about 85 % to win), chest (1500 gold: plunder
+  since the reveal and what events pay in). State `story.fp {held, gold}`.
+- **Engine** (`campaign/cstory.gd`). Conditions: flota / noflota, blockaded,
+  capt / nocapt (a captain the story made, `captains[].sto`), fp / fp_ge,
+  walls_ge, fame_ge, sea_pending, any [...]. Effects: dip2 (two other
+  factions), marque / unmarque, ship (joins the flagship), actor_add /
+  actor_lose / actor_att / until / blockade (a new actor mode: lie off a
+  port until a turn, then hunt), build (a chain level), slight (walls
+  down), assault (the captain storms a settlement now: a story landing
+  party plus everyone aboard within 5 cells), weaken, desert (a story
+  captain of ours becomes an actor of another faction), free_port,
+  fp_gold, ending; spawn takes a home; sea_battle takes a tag and "they
+  attack" (the captain defends: port batteries count). A battle opened by
+  sea_battle / raid / assault sets `bt_<tag>`; a raid on a settlement with
+  someone else's battle pending waits for it (`story.rq`, this turn); a
+  hunting or chasing actor rests 3 turns after a battle (`rest`); the
+  flota's fleets are tagged "flota" in story battles (`hunt_flota`).
+  `_ending`: `story.end`, `end_t`, flags `ended` / `end_<k>`, the stats
+  counted, every actor released, nothing pending or scheduled, no event
+  after it: the campaign plays on as a sandbox. `story.sx` (ships taken,
+  towns sacked, battles won / lost) is counted from each turn's events.
+  Outside cstory: `cturn.resolve_turn` calls `CStory.end_turn` also when
+  the game is over (the story's Legend), `cfleet.end_of_turn` launches no
+  ship into a story fleet (`sto`). All new state is lazy and story-only:
+  Rome and West are byte-identical (`CState.VERSION` unchanged).
+- **View** (`story_view.gd`): the Free port gauge (shown once revealed; its
+  tooltip and the story log list the three parts and their progress), the
+  favour text after the treaty, captions for the new actors, prizes in
+  gold, the flota once seen, a dashed ring on the great raid's target, the
+  haven captioned "the free port"; the ending screen (title, a line, the
+  epilogue paragraph, "What became of them": a fate for each of the seven
+  characters by ending and flags, "The Captain's account": plunder, ships
+  taken, towns sacked, fame, battles won / lost, infamy; "Continue in the
+  sandbox" or "The story so far"; the log has "The ending" after it);
+  `campaign_screen._next_step` shows the story's news before pending
+  battles and the ending before the game-over panel.
+- **Testing aids**: `game/campaign/story_autoplay.gd` plays a story headless
+  (choices by path: first, random, or scripted for the Republic, the
+  Pardon, the Legend; the scripted captain wins his battles except the
+  Legend's finale; fleets sail for the raid, a weaker prize, else home; a
+  sloop when shipless and buccaneers at the haven). `--story=seed:turns
+  --story-path=... --story-show=ID|ending`.
+- **Balance** (formula; `scratchpad` probes). Sea (power x 85-115 % roll,
+  defenders in their port x (110 + 15 x walls) %): the Pinos frigate and
+  the straggler are sure for an Act 2 fleet (sloop, brigantine, two
+  canoes, about 400), a lone sloop never; a flota part (galleon and
+  frigate, about 840) needs an Act 3 fleet (about 1070: 97 %), the whole
+  flota (about 2100) is out of reach; HMS Oxford falls to the Act 2 fleet
+  (98 %); Le Boucher at the council (about 610) 45 % with Hesketh, sure
+  with the council's ships; the finale Armada (about 1630) against an Act
+  3 fleet in Tortuga road 26 %, against a strong one (about 1690) 100 %,
+  recognised (no galleon, about 1060) 100 %. Land: the finale with walls
+  2 against 6 companies holds 22 / 59 / 83 / 92 % with 0 / 2 / 4 / 6
+  companies of ours (3 after a sea win: 69-99 %; 7 after a loss: 16-88
+  %); the great raid on turn-0 garrisons by surprise 2-18 %, with the
+  bribe Cartagena 23 / 41 / 60 % and Portobelo 37 / 57 / 74 % with 0 / 2 /
+  4 companies of ours aboard (the AI's armies there by then vary a lot:
+  the preview shows the odds). Random-choice bots on the formula end in
+  the Legend most often (the sandbox's nations take an ungarrisoned
+  Tortuga), sometimes the Pardon.
+- **Checked**: `tests/story_test.gd` PASS (step 1's checks; step 2's
+  effects one by one; the three scripted paths reach their endings,
+  twice the same and through JSON every turn, seven fates each; 8 seeds
+  x 45 turns of random choices end in one of the three), campaign_test,
+  pack_test, campaign_sim hashes unchanged, online_e2e (Rome, West), go
+  test, check_scripts. Open: co-op (the crew vote), portraits, the story
+  online, a real-time playtest of the finale.
 
 ### Overworld: real geography and the landscape layer (as built, 2026-10-10)
 
