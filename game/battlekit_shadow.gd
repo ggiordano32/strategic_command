@@ -8,14 +8,19 @@ extends Node2D
 ## that breaks re-bakes only the window round it. Nothing here touches the sim.
 
 const Atlas := preload("res://game/battlekit_atlas.gd")
+const BattleLook := preload("res://game/battle_look.gd")
 
 var cell := 0.5                    # metres (the kit's shadow_cell)
-const TAN_ELEV := 1.0              # tan(45 degrees)
-const MAX_LEN := 12.0              # metres of shadow at most
-const SH_DIR := Vector2(0.74, 0.67)
-const SH_STR := 0.34
-const AO_STR := 0.30
-const TINT := Vector3(0.38, 0.34, 0.24)    # 1 - (0.62, 0.66, 0.76): the shadow's cool cast
+const TAN_ELEV := 0.62             # tan(32 degrees): a shadow is 1.6 x its piece's height long
+const MAX_LEN := 36.0              # metres of shadow at most (a church or a tall tower)
+const SH_STR := 0.72               # darkness under a wall's foot (diorama; painterly x PAINT_K)
+const AO_STR := 0.55
+const H_SHADOW := 1.4              # the kit's heights read low at game scale: shadows are cast from 1.4 x
+const H_CAP := 15.0                # ... capped (a shadow at most about 24 m long)
+const PAINT_K := 0.82
+const BLUR := 2                    # cells of box blur (twice) on the cast: a soft edge
+const AO_CELLS := 5
+const TINT := Vector3(0.58, 0.54, 0.42)    # 1 - (0.42, 0.46, 0.58): the shadow's cool cast
 
 var kit
 var _w := 0
@@ -32,12 +37,13 @@ var _nrm := PackedByteArray()      # atlas_nrm raw RGBA8 (B = height / 20 m)
 var _alb := PackedByteArray()      # atlas_albedo raw RGBA8 (A = coverage)
 var _aw := 0
 var _touch := PackedInt32Array()
-var _dir := SH_DIR.normalized()
+var _k := 1.0                      # look strength (diorama 1, painterly PAINT_K)
 
 
 func build(p_kit) -> void:
 	kit = p_kit
 	cell = kit.shadow_cell
+	_k = 1.0 if BattleLook.is_diorama() else PAINT_K
 	_nrm = _raw(kit.TEX_NRM)
 	_alb = _raw(kit.TEX_ALB)
 	_aw = int(Atlas.ATLAS_W)
@@ -49,7 +55,7 @@ func build(p_kit) -> void:
 		lo = lo.min(fp.position)
 		hi = hi.max(fp.end)
 	_org = (lo - Vector2(4, 4)).floor()
-	var end := (hi + Vector2(MAX_LEN * 0.5, MAX_LEN * 0.5)).ceil()
+	var end := (hi + Vector2(MAX_LEN * 0.75, MAX_LEN * 0.75)).ceil()
 	_w = int((end.x - _org.x) / cell)
 	_h = int((end.y - _org.y) / cell)
 	_ht.resize(_w * _h)
@@ -60,6 +66,7 @@ func build(p_kit) -> void:
 	for i in kit.i_piece.size():
 		_raster(i, 0, 0, _w, _h)
 	_cast(0, 0, _w, _h, 0, 0, _w, _h)
+	_blur(0, 0, _w, _h)
 	_touch.resize(0)
 	_collect_touched()
 	for c in _touch:
@@ -143,35 +150,33 @@ func _raster(i: int, x0: int, y0: int, x1: int, y1: int) -> void:
 
 
 ## Shadow and AO from the sources in [sx0, sx1) x [sy0, sy1) into the targets in [tx0, tx1) x [ty0, ty1).
+## The shadow is a height-field sweep along the light's diagonal (north-west to south-east): each cell's
+## "ray" height is the higher of its own height and the ray before it minus the drop over one diagonal
+## step; a cell below its ray is in shadow by the gap. Every roof ridge and wall top casts, not only edges.
 func _cast(sx0: int, sy0: int, sx1: int, sy1: int, tx0: int, ty0: int, tx1: int, ty1: int) -> void:
-	var step2 := Vector2i(roundi(_dir.x * 2.0), roundi(_dir.y * 2.0))
 	var w := _w
+	var drop := cell * 1.4142 * TAN_ELEV
+	var ray := PackedFloat32Array()
+	ray.resize(w * _h)
+	for y in range(sy0, sy1):
+		for x in range(sx0, sx1):
+			var i := y * w + x
+			var hh := minf(_ht[i] * H_SHADOW, H_CAP)
+			var r := hh
+			if x > sx0 and y > sy0:
+				r = maxf(hh, ray[i - w - 1] - drop)
+			ray[i] = r
+			var gap := r - hh
+			if gap > 0.05 and x >= tx0 and x < tx1 and y >= ty0 and y < ty1:
+				var sv := minf(gap / 1.4, 1.0) * (0.6 + 0.4 * minf(gap / 6.0, 1.0))
+				var bv := int(sv * 255.0)
+				if bv > _sh[i]:
+					_sh[i] = bv
 	for y in range(sy0, sy1):
 		for x in range(sx0, sx1):
 			var h := _ht[y * w + x]
 			if h < 0.5:
 				continue
-			# Shadow: only from cells whose south-east neighbour is lower (the lit-side edge).
-			var nx := x + step2.x
-			var ny := y + step2.y
-			if nx >= 0 and ny >= 0 and nx < w and ny < _h and _ht[ny * w + nx] < h - 0.05:
-				var reach := minf(h / TAN_ELEV, MAX_LEN) / cell
-				var d := 1.0
-				while d <= reach:
-					var tx := x + int(round(_dir.x * d))
-					var ty := y + int(round(_dir.y * d))
-					d += 1.0
-					if tx < tx0 or ty < ty0 or tx >= tx1 or ty >= ty1:
-						continue
-					var ray := h - d * cell * TAN_ELEV
-					var ti := ty * w + tx
-					var gap := ray - _ht[ti]
-					if gap <= 0.0:
-						continue
-					var s := (1.0 - 0.55 * d / reach) * minf(gap / 0.7, 1.0)
-					var b := int(s * 255.0)
-					if b > _sh[ti]:
-						_sh[ti] = b
 			# Occlusion: a short rim on the ground beside a wall's foot.
 			if h < 0.9:
 				continue
@@ -180,16 +185,36 @@ func _cast(sx0: int, sy0: int, sx1: int, sy1: int, tx0: int, ty0: int, tx1: int,
 				var ay: int = y + dv.y
 				if ax < 0 or ay < 0 or ax >= w or ay >= _h or _ht[ay * w + ax] > h - 0.3:
 					continue
-				for s2 in 3:
+				for s2 in AO_CELLS:
 					var ox: int = ax + dv.x * s2
 					var oy: int = ay + dv.y * s2
 					if ox < tx0 or oy < ty0 or ox >= tx1 or oy >= ty1 or ox >= w or oy >= _h or ox < 0 or oy < 0:
 						break
 					if _ht[oy * w + ox] > h - 0.3:
 						break
-					var ab := int((0.6 - 0.22 * s2) * 255.0)
+					var t := float(s2) / float(AO_CELLS)
+					var ab := int((1.0 - t) * (1.0 - t) * 255.0)
 					if ab > _ao[oy * w + ox]:
 						_ao[oy * w + ox] = ab
+
+
+## Soft edge: a box blur (two passes) of the cast shadow inside the window.
+func _blur(x0: int, y0: int, x1: int, y1: int) -> void:
+	var tmp := PackedByteArray()
+	tmp.resize(_w * _h)
+	for pass_i in 2:
+		for y in range(y0, y1):
+			for x in range(x0, x1):
+				var acc := 0
+				for k in range(-BLUR, BLUR + 1):
+					acc += _sh[y * _w + clampi(x + k, 0, _w - 1)]
+				tmp[y * _w + x] = acc / (2 * BLUR + 1)
+		for y in range(y0, y1):
+			for x in range(x0, x1):
+				var acc2 := 0
+				for k in range(-BLUR, BLUR + 1):
+					acc2 += tmp[clampi(y + k, 0, _h - 1) * _w + x]
+				_sh[y * _w + x] = acc2 / (2 * BLUR + 1)
 
 
 func _collect_touched() -> void:
@@ -199,7 +224,7 @@ func _collect_touched() -> void:
 
 
 func _set_px(i: int) -> void:
-	var dark := minf(float(_sh[i]) / 255.0 * SH_STR + float(_ao[i]) / 255.0 * AO_STR, 0.62)
+	var dark := minf(float(_sh[i]) / 255.0 * SH_STR + float(_ao[i]) / 255.0 * AO_STR, 0.8) * _k
 	var o := i * 4
 	_px[o] = int((1.0 - dark * TINT.x) * 255.0)
 	_px[o + 1] = int((1.0 - dark * TINT.y) * 255.0)
@@ -214,8 +239,8 @@ func rebake_instance(i: int) -> void:
 	var fp := _footprint(i)
 	var x0 := maxi(int(floor((fp.position.x - 4.0 - _org.x) / cell)), 0)
 	var y0 := maxi(int(floor((fp.position.y - 4.0 - _org.y) / cell)), 0)
-	var x1 := mini(int(ceil((fp.end.x + 20.0 - _org.x) / cell)), _w)
-	var y1 := mini(int(ceil((fp.end.y + 20.0 - _org.y) / cell)), _h)
+	var x1 := mini(int(ceil((fp.end.x + MAX_LEN * 0.75 + 2.0 - _org.x) / cell)), _w)
+	var y1 := mini(int(ceil((fp.end.y + MAX_LEN * 0.75 + 2.0 - _org.y) / cell)), _h)
 	_nrm = _raw(kit.TEX_NRM)
 	for y in range(y0, y1):
 		for x in range(x0, x1):
@@ -232,6 +257,7 @@ func rebake_instance(i: int) -> void:
 	var m := int(MAX_LEN / cell)
 	_cast(maxi(x0 - m, 0), maxi(y0 - m, 0), x1, y1, x0, y0, x1, y1)
 	_nrm = PackedByteArray()
+	_blur(x0, y0, x1, y1)
 	for y in range(y0, y1):
 		for x in range(x0, x1):
 			_set_px(y * _w + x)
