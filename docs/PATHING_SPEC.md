@@ -421,3 +421,32 @@ fields).**
 Phase A alone fixes the user's report (rout on the walls and at the gates). B fixes
 the scraping. C and W are the street-fighting design. Slice 2c (garrisoned
 buildings, rooftops) builds on C's points and W's blocks.
+
+## Addendum (user, 2026-10-15): men take real cover; balls stop at walls
+
+1. **Per-man cover seeking.** When a unit with the cover trait (or any unit
+   ordered to "Take cover") is near cover, each man moves a short way
+   (within ~6-8 m of his formation slot, never breaking the unit apart) to
+   the best nearby cover spot against the enemy he is engaging: behind a
+   rock, a tree trunk, a wall or hedge segment, a house corner, a cart.
+   Spots come from the static cover grid / cover points (built at map
+   setup); men claim them nearest-first so two men don't share one; a
+   man re-evaluates only when the threat bearing changes a lot (no
+   jitter). Line units keep their ranks unless ordered to take cover.
+2. **Physical blocking for flat shots.** Musket balls, javelins, sling
+   stones and bolts on flat trajectories are traced along the grid from
+   muzzle to target: if the line crosses a blocking cell (wall, house,
+   rock, cliff, palisade, a gate) whose height is above the shot line at
+   that point, the shot stops there (a puff of dust or splinters in the
+   view) instead of a percentage roll. Cover then works physically: a man
+   crouched behind a rock is hit only if the rock does not cover the
+   line. Woods stay partial (trunks: a per-cell chance). Arced arrows
+   and artillery keep their current rules (arrows can drop behind cover
+   with a penalty). Hits land on an actual soldier on the line (the
+   first man the ball reaches, by the existing per-man hit code), never
+   through a wall. Integer grid traversal (DDA), fixed order, hashed,
+   cost budgeted (shots per tick are few; precompute nothing per tick).
+   This replaces the cover % stops for flat shots where geometry exists;
+   keep the % only for woods and for "gone to ground".
+Order: Phase A (rout jitter) -> B (clearance) -> **C0: physical flat
+shots + per-man cover seeking (field and town)** -> C1+ street fighting.
