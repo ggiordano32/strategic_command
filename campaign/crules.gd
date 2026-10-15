@@ -3043,6 +3043,8 @@ static func check_eliminations(st: Dictionary) -> void:
 			continue
 		if not CState.regions_of(st, f).is_empty() or CSea.afloat(st, f):
 			continue  # (N2: pirates live on while they have a ship)
+		if st.has("story") and (load("res://campaign/cstory.gd") as GDScript).call("spared", st, f):
+			continue  # (a story campaign: the captain is fished out of the surf at the end of the turn)
 		fs["alive"] = 0
 		var keep: Array = []
 		for a in st["armies"]:
@@ -3173,7 +3175,7 @@ const CHRONICLE_KINDS := ["battle", "captured", "destroyed", "eliminated", "war"
 	"siege", "siege_lifted", "starving", "victory", "defeat", "team_joined", "team_notice", "team_left",
 	"char_captured", "char_wounded", "ransom", "sea_battle", "flota", "flota_arrived", "sack", "marque", "marque_end",
 	"blockade", "storm", "storm_hit", "storm_end", "captain_rise", "captain_fame", "captain_fate", "galleon_taken",
-	"galleon_lost", "flota_held"]
+	"galleon_lost", "flota_held", "story"]
 const CHRONICLE_TURNS := 60
 
 

@@ -101,8 +101,8 @@ static func act(st: Dictionary, f: int, moves: Array, fmoves: Array, cx_in: Dict
 			_hostile_hb.append(CFleet.harbour(r))
 	var mine: Array = []
 	for fl in CFleet.fleets_of(st, f):
-		if int(fl["moved"]) == 0 and not (fl["ships"] as Array).is_empty() and not CSea.is_flota(fl):
-			mine.append(fl)
+		if int(fl["moved"]) == 0 and not (fl["ships"] as Array).is_empty() and not CSea.is_flota(fl) and not fl.has("sto"):
+			mine.append(fl)  # ("sto": a story campaign's fleet, campaign/cstory.gd, sails by the story)
 	if mine.is_empty():
 		return
 	var cx := cx_in if not cx_in.is_empty() else CAI._context6(st, f)
@@ -216,7 +216,7 @@ static func _debt(st: Dictionary, f: int) -> void:
 	var bk := -1
 	var bp := 1 << 30
 	for fl in CFleet.fleets_of(st, f):
-		if not (fl["carry"] as Array).is_empty() or CSea.is_flota(fl) or fl.has("busy"):
+		if not (fl["carry"] as Array).is_empty() or CSea.is_flota(fl) or fl.has("busy") or fl.has("sto"):
 			continue
 		for k in (fl["ships"] as Array).size():
 			var p := CFleet.ship_power(fl["ships"][k])
@@ -232,13 +232,13 @@ static func _merge(st: Dictionary, f: int) -> void:
 	var list := CFleet.fleets_of(st, f)
 	for i in list.size():
 		var a: Dictionary = list[i]
-		if CSea.is_flota(a):
+		if CSea.is_flota(a) or a.has("sto"):
 			continue
 		if not CFleet.fleet(st, int(a["id"])).is_empty() and int(a["moved"]) == 0 and (a["carry"] as Array).is_empty():
 			for j in range(i + 1, list.size()):
 				var b: Dictionary = list[j]
 				if CFleet.fleet(st, int(b["id"])).is_empty() or int(b["moved"]) != 0 or not (b["carry"] as Array).is_empty() \
-						or CSea.is_flota(b):
+						or CSea.is_flota(b) or b.has("sto"):
 					continue
 				if CGrid.cheb(CFleet.cell(a), CFleet.cell(b)) <= 1 and CFleet.coastal(a) == CFleet.coastal(b):
 					CRules.apply_order(st, f, {"t": "fmerge", "fleet": int(b["id"]), "into": int(a["id"])})

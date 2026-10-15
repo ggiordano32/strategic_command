@@ -61,6 +61,7 @@ const CGrid := preload("res://campaign/cgrid.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
 const MapKey := preload("res://game/campaign/map_key.gd")
 const UiScale := preload("res://game/ui_scale.gd")
+const StoryView := preload("res://game/campaign/story_view.gd")
 
 const ZOOM_MIN := 0.2
 const ZOOM_MAX := 2.5
@@ -111,6 +112,7 @@ var cover: ColorRect
 var book: UnitBook
 var controls_page: Controls
 var panels: Panels
+var story: StoryView  # a story campaign's dialogue, pressures and log (game/campaign/story_view.gd)
 var battle = null  # Battle, or SeaBattle for a sea battle (N3a)
 var _battle_built: Dictionary = {}
 ## The battle screen's snapshot of the battle in progress (taken at its start).
@@ -198,6 +200,8 @@ func _ready() -> void:
 	ui.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ul.add_child(ui)
 	_build_ui()
+	story = StoryView.new(self)
+	story.setup()
 	book = UnitBook.new()
 	ui.add_child(book)
 	controls_page = Controls.new()
@@ -577,6 +581,8 @@ func _next_step() -> void:
 		else:
 			then.call()
 		return
+	if story.step():
+		return  # (a story campaign) news to read or a choice to make first
 	var subs: Array = data["session"]["subs"]
 	var next := -1
 	for h in st["humans"]:
@@ -644,6 +650,8 @@ func _show_handover() -> void:
 
 func end_turn(skip_warnings: bool = false) -> void:
 	if f < 0 or not CTurn.pending_for(st).is_empty():
+		return
+	if story.guard_end():
 		return
 	if online != null and online.i_submitted():
 		return
@@ -1488,6 +1496,7 @@ func open_unit_page(ty: int, recruit_cb: Callable, recruit_text: String) -> void
 
 func _refresh() -> void:
 	_refresh_top()
+	story.refresh()
 	_refresh_map()
 	_update_hint()
 	if side.visible:

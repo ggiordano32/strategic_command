@@ -22,6 +22,7 @@ static func use_pack(key: String) -> void:
 
 static func use_state(st: Dictionary) -> void:
 	use_pack(str(st.get("pack", "rome")))
+	CData.use_state(st)  # (a story campaign's calendar)
 
 
 ## The packs this build has, in CHOICES order.

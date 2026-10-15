@@ -26,6 +26,7 @@ const Kit := preload("res://game/campaign/ui_kit.gd")
 const LoadingPanel := preload("res://game/campaign/loading_panel.gd")
 const Saves := preload("res://game/campaign/saves.gd")
 const PackView := preload("res://game/campaign/pack_view.gd")
+const CStory := preload("res://campaign/cstory.gd")
 
 ## Fallback blurbs by faction key (a FACTIONS row's own "blurb" wins).
 const BLURB := {
@@ -116,6 +117,16 @@ func _ready() -> void:
 			sr0.add_child(sb)
 			_pack_buttons[str(c[0])] = sb
 		v.add_child(sr0)
+	if not online and CData.has_pack("west"):
+		# The story campaign (campaign/cstory.gd): one player, a fixed start.
+		var sr1 := Kit.flow(8)
+		sr1.add_child(Kit.label("Story", Kit.FONT, Kit.COL_DIM))
+		var stb := Kit.button("The Brethren's Due", _start_story, 0, 14)
+		stb.name = "story_brethren"
+		stb.tooltip_text = "A pirate story in the Caribbean, 1665: your captain hanged, one leaky sloop, and the whole Spanish Main against you. One player; uses the name, seed and difficulty below."
+		sr1.add_child(stb)
+		sr1.add_child(Kit.label("Caribbean, 1665: a pirate story for one player", Kit.FONT_SMALL, Kit.COL_DIM, true))
+		v.add_child(sr1)
 	var team_row := Kit.flow(8)
 	var b_one := Kit.button("All humans one team", _all_humans_one_team, 0, 14)
 	b_one.name = "all_one_team"
@@ -398,6 +409,31 @@ func _start() -> void:
 	var lp := LoadingPanel.open(get_tree().root, "Preparing the campaign", 5)
 	await lp.step("Creating the campaign")
 	var st := CState.new_campaign(nm, sd, picks.duplicate(), settings, teams_array(), CData.pack)
+	var slot := Saves.slot_for(nm, sd)
+	var data := {"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}
+	Saves.save(slot, data)
+	start.emit(data, slot, lp)
+
+
+## Start the story campaign "The Brethren's Due" (the West pack, the
+## Brethren, its own start; the name, seed and difficulty from this screen).
+func _start_story() -> void:
+	if _creating:
+		return
+	var sd := int(seed_edit.text) if seed_edit.text.is_valid_int() else 1
+	var nm := name_edit.text.strip_edges()
+	if nm == "" or nm == "Campaign":
+		nm = "The Brethren's Due"
+	_creating = true
+	_update()
+	var lp := LoadingPanel.open(get_tree().root, "Preparing the story", 5)
+	await lp.step("Hanging Captain Vane")
+	PackView.use_pack("west")
+	var stt := {}
+	for k in ["ai_battle_skill", "ai_campaign_skill", "deploy_time", "time_limit", "autoresolve"]:
+		if settings.has(k):
+			stt[k] = settings[k]
+	var st := CStory.new_story(nm, sd, stt)
 	var slot := Saves.slot_for(nm, sd)
 	var data := {"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}
 	Saves.save(slot, data)

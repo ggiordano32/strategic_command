@@ -236,6 +236,18 @@ func _ready() -> void:
 			var sl := Saves.slot_for("test", sd)
 			Saves.save(sl, data)
 			_open_campaign.call_deferred(data, sl)
+		elif a.begins_with("--story="):
+			# Testing aid: --story=seed[:turns] starts the story campaign (game/campaign/story_view.gd
+			# autoplay: turns played with the first allowed choice); --story-seen=N: the first N log entries read.
+			var sspec: String = a.get_slice("=", 1)
+			var sdata: Dictionary = (load("res://game/campaign/story_view.gd") as GDScript).call("autoplay",
+				int(sspec.get_slice(":", 0)), int(sspec.get_slice(":", 1)) if sspec.contains(":") else 0)
+			for a3 in OS.get_cmdline_user_args():
+				if a3.begins_with("--story-seen="):
+					sdata["session"]["story_seen"] = int(a3.get_slice("=", 1))
+			var ssl := Saves.slot_for("story test", int(sspec.get_slice(":", 0)))
+			Saves.save(ssl, sdata)
+			_open_campaign.call_deferred(sdata, ssl)
 		elif a.begins_with("--campaign-slot="):
 			var sl2: String = a.get_slice("=", 1)
 			var d2 := Saves.load_slot(sl2)

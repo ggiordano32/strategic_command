@@ -50,6 +50,7 @@ const CGrid := preload("res://campaign/cgrid.gd")
 const CChars := preload("res://campaign/cchars.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
 const CSea := preload("res://campaign/csea.gd")
+const CStory := preload("res://campaign/cstory.gd")
 
 const KEEP_EVENTS_TURNS := 2
 
@@ -110,6 +111,9 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 	var st := CState.copy(st_in)
 	if str(st["phase"]) != "plan":
 		push_warning("resolve_turn: phase is %s" % st["phase"])
+		return st
+	if CStory.blocked(st):
+		push_warning("resolve_turn: story choices are waiting")
 		return st
 	var turn := int(st["turn"])
 	# Events: keep the last turns' for the summaries.
@@ -248,6 +252,8 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 	var ai_fleet: Array = []
 	for f in CState.nf():
 		CAI.act(st, f, ai_moves, ai_fleet)
+	if CStory.on(st):
+		CStory.actor_moves(st, ai_fleet)  # (a story campaign) the story's own fleets
 	CSea.flota_moves(st, ai_fleet)  # (N2) the treasure fleet sails by the rules
 	CFleet.execute_moves(st, ai_fleet)
 	if CState.grid_on(st):
@@ -277,6 +283,8 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 	CChars.sweep(st)
 	CRules.check_victory(st)
 	st["turn"] = turn + 1
+	if CStory.on(st) and str(st["phase"]) != "over":
+		CStory.end_turn(st)  # (a story campaign) pressures, actors, events
 	if str(st["phase"]) != "over":
 		st["phase"] = "battles" if not (st["battles"] as Array).is_empty() else "plan"
 	return st
@@ -294,7 +302,9 @@ static func _first_move(mv: Array, id: int) -> bool:
 static func apply_battle(st_in: Dictionary, bid: int, outcome: Dictionary) -> Dictionary:
 	CData.use_state(st_in)
 	var st := CState.copy(st_in)
+	var sto := CStory.before_battle(st, bid)  # ({} unless a story campaign)
 	CRules.apply_outcome(st, bid, outcome)
+	CStory.battle_done(st, sto)
 	return st
 
 

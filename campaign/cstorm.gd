@@ -71,7 +71,7 @@ static func season(t: int) -> bool:
 
 ## The year of turn t (as CData.date_text).
 static func year(t: int) -> int:
-	return CData.START_YEAR - t / 2 if CData.ERA == "BC" else CData.START_YEAR + t / 2
+	return CData.START_YEAR - t / 2 if CData.ERA == "BC" else CData.START_YEAR + CData.year_shift + t / 2
 
 
 static func _stat(st: Dictionary, key: String, n: int) -> void:

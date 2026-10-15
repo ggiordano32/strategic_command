@@ -62,6 +62,9 @@ const AI_AGGRESSIVE := E.AI_AGGRESSIVE
 ## on every switch (view caches compare it).
 static var pack := "rome"
 static var gen := 0
+## Years added to the calendar (a story campaign's "y0", campaign/cstory.gd;
+## set by use_state, 0 for every other campaign).
+static var year_shift := 0
 
 ## Pack content (see campaign/data/rome.gd for each table's meaning).
 ## REGIONS: key, name, city, area, terrain, lon, lat, wealth, level, walls,
@@ -324,6 +327,8 @@ static func use_pack(key: String) -> void:
 ## Switch to the pack of state st ("pack", absent = "rome").
 static func use_state(st: Dictionary) -> void:
 	use_pack(str(st.get("pack", "rome")))
+	var sto = st.get("story", null)
+	year_shift = int((sto as Dictionary).get("y0", 0)) if sto is Dictionary else 0
 
 
 ## Install pack script p under key (use_pack's work; tests may hand it a
@@ -527,7 +532,7 @@ static func is_capital(r: int) -> bool:
 
 ## "280 BC, summer" for turn t (an "AD" pack counts the years up).
 static func date_text(turn: int) -> String:
-	var y := START_YEAR - turn / 2 if ERA == "BC" else START_YEAR + turn / 2
+	var y := START_YEAR - turn / 2 if ERA == "BC" else START_YEAR + year_shift + turn / 2
 	return "%d %s, %s" % [y, ERA, "summer" if turn % 2 == 0 else "winter"]
 
 

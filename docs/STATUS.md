@@ -1480,9 +1480,59 @@ untouched and Rome table style draws; gallery of all 49 towns at zoom 0.6 / 1.2 
 8.4 ms Low (HEAD 8.0). Open (step 2): landmarks (El Morro, Cartagena's walls, Tayasal's temple), growth polish, ships' baked
 shadow (ships keep their per-frame contact shadow), a look on the Tab S7 and phones (field density, saturation,
 grain), the atlas must be re-imported (`godot --headless --import`) after repacking.
-**Queued after the towns: the pirate story campaign** (DESIGN "Story
-campaign: The Brethren's Due", agreed 2026-10-14: swashbuckling with a dark
-edge, ~45 turns, three endings, co-op optional; 4-5 builds).
+**Overworld towns step 2 built 2026-10-15 (view only, not committed): landmarks and visible growth.** 25 new kit pieces (El Morro,
+La Fuerza, San Felipe, San Juan's Morro, harbour fort, San Marcos, Alcazar, Ulua on its rock, Itza temple, Fort Charles, taverns,
+gallows, rock fort, careened hull, baluarte, twin cathedral; Rome: Capitol, Byrsa, Cothon, Euryalus, Acropolis, Greek temple;
+burnt house, camp tent / flag), placed by `town_plan.LM` / `_landmarks` (DESIGN "Step 2"); growth from the state: houses and a
+second street ring by level, West walls history (harbour fort, then landward stone curtain, then bastions; Campeche bastioned
+with baluartes), shipyard levels (second slipway, cranes, shed), moored ships by level / market, sack (burnt houses with
+smoke, fading over 8 turns), siege (camp in the besieger's colour). Checked: check_mine clean on town_plan / town_layer,
+campaign_input_test, deploy_view_test, town_tap_test PASS; galleries `towns3/` (49 West towns at zoom 1.2 / 2.4, Rome
+landmark towns, growth strips level x walls, shipyard / market, sack, siege); big atlas 2048 x 1152 (16.5 MB, was 14.7),
+small 2048 x 320 (about 3.9 MB, was 3.1); plans for all 49 towns at max state 417 ms once (no per-frame cost, ground repaints
+only when a plan changes). `tools/check_scripts.sh` currently fails only on the story agent's `campaign/cstory.gd:381`
+(local `tr`). Open: a look on phones (landmark scale, tower heights), Rome's Alexandria is not a region, ships'
+baked contact shadow, atlas must be re-imported after repacking.
+**The pirate story campaign** (DESIGN "Story campaign: The Brethren's Due",
+agreed 2026-10-14: swashbuckling with a dark edge, ~45 turns, three endings,
+co-op optional; about 4 builds). **Step 1 built 2026-10-15 (not committed):
+the story engine, the Prologue and Act 1, playable solo** (DESIGN "As built,
+step 1"). `campaign/cstory.gd` (a data-driven event system in the campaign
+rules: triggers on the state, choices with effects, pressures, scripted
+actor fleets the AI skips, choices waiting like pending battles and
+answered by the pure `CStory.answer`), `campaign/data/story_brethren.gd`
+(the script: Gallows Point, the chase, the hungry crew, Tortuga, Lindo,
+Act One, the purse's grumbling / desertion / vote, Le Boucher, the
+hurricane, Maracaibo, the Spanish reprisal on Tortuga as a land battle,
+Mendoza's letter and the Armada's hunt, Le Boucher's bargain, End of Act
+One; five first-sight logbook pages), hooks in `cturn.gd` (the turn waits
+for a choice; the actors sail in step 5; `end_turn` after the turn number;
+`apply_battle` reads story battles), `crules.gd` (a story captain left
+with nothing is spared for a rescue; chronicle kind "story"),
+`cai_fleet.gd` (fleets tagged `sto` are left out), `cdata.gd` /
+`cstorm.gd` (`year_shift`: the story's calendar starts in 1665). View:
+`game/campaign/story_view.gd` (dialogue panel, pressures strip, story log,
+map captions), "The Brethren's Due" on the new-campaign screen (offline),
+Realm > Story log; edits in `campaign_screen.gd` are 9 lines (preload, var,
+setup in `_ready`, `story.step()` in `_next_step` after the battles,
+`story.guard_end()` in `end_turn`, `story.refresh()` in `_refresh`).
+Checked: `tests/story_test.gd` PASS (start, the prologue the same twice and
+through JSON, thresholds, effects, answer() pure, a story sea battle and a
+land battle read back, the turn held, 4 seeds x 15 turns of random choices
+reach the End of Act One), campaign_test, pack_test, campaign_sim hashes
+unchanged (Rome cdc1d805 32b83031 23f9ed4f 3237d82d a42fc685 b6fe6c2e,
+West b137875c edd82dee 0393b18d 2aa8578b deb00750 1d051164), online_e2e
+(Rome, `--pack west`) and go test (the server reads nothing new),
+check_scripts. Screenshots in the session scratchpad `story1/`. Open:
+Acts 2-3 and the endings; co-op (the crew vote; the state already lists
+captains and who answers each choice; a story online is untested: the
+new-campaign button is offline only and the story view stays off online);
+portraits; the story's battles' odds are by the formula only (probed:
+the San Telmo fight ~70 %, the reprisal 53 % with two companies of ours,
+Le Boucher careened ~63 % against two ships of ours, never against one);
+the Armada rarely hunts in Act 1 (attention reaches 30+ mostly when you
+join Le Boucher or raid a lot); a sloop of the story's fleets shows the
+generic ship art.
 **Done 2026-10-14 (00fc498): better firearm smoke** (volley smoke today is flat
 puffs in game/overlay.gd: wanted thick billowing banks that roll and drift
 with the wind, lit from the NW, darker cores, muzzle flash with a short
@@ -2221,6 +2271,8 @@ godot --headless --script res://tests/campaign_sim.gd -- --seeds=6 --turns=60   
 #   campaign_sim: --skill=easy|average|skilled, --skill-f=rome:s (one faction), --knob=s:ID=VALUE (ablation), --twice
 godot --headless --script res://tools/campaign_grid.gd [-- --check --png=/tmp/grid.png]  # regenerate / check the nav grid
 godot --headless --script res://tests/campaign_solo.gd      # 20 turns of a player policy
+godot --headless --script res://tests/story_test.gd         # the story campaign (-- --turns=15 --seeds=4)
+# Story testing aids: -- --story=seed[:turns] (turns autoplayed) --story-seen=N --story-choices --story-log
 godot --headless --script res://tests/campaign_battles.gd   # auto-resolve timing, formula calibration
 godot --script res://tests/campaign_input_test.gd           # needs a window
 godot --headless --script res://tests/battle_screen_test.gd  # battle screen: pre-battle, auto / fought result, field battle

@@ -27,6 +27,7 @@ const CFleet := preload("res://campaign/cfleet.gd")
 const CSea := preload("res://campaign/csea.gd")
 const CStorm := preload("res://campaign/cstorm.gd")
 const CCaptain := preload("res://campaign/ccaptain.gd")
+const CStory := preload("res://campaign/cstory.gd")
 
 var s  # the campaign screen
 ## Open / closed state of the collapsible card groups this session (never in
@@ -2044,7 +2045,10 @@ func show_faction() -> void:
 		if g != f and CState.alive(ps, g) and CState.dip(ps, f, g) == CState.WAR:
 			wars.append(CData.faction_name(g))
 	box.add_child(Kit.icon_label("At war with: " + (", ".join(wars) if not wars.is_empty() else "nobody"), "war", Kit.FONT, Kit.COL_BAD, true))
-	s.show_dialog(CData.faction_name(f), box, [["Chronicle", func(): show_chronicle()], ["Close", Callable()]])
+	var rb: Array = [["Chronicle", func(): show_chronicle()], ["Close", Callable()]]
+	if CStory.on(ps):
+		rb.push_front(["Story log", func(): s.story.show_log()])
+	s.show_dialog(CData.faction_name(f), box, rb)
 
 
 ## (N2) The Realm panel's sea lines: plunder, infamy and the sack policy
@@ -2572,6 +2576,8 @@ func show_summary(seen: int, then: Callable = Callable()) -> void:
 
 
 func show_intro() -> void:
+	if CStory.on(s.st):
+		return  # (a story campaign: the story opens itself)
 	var f: int = s.f
 	var box := Kit.vbox(8)
 	box.add_child(Kit.label("%s. You lead %s." % [CData.date_text(int(s.st["turn"])), CData.faction_name(f)], Kit.FONT, Kit.COL_GOLD, true))
@@ -2867,7 +2873,22 @@ func event_text(e: Dictionary, f: int) -> String:
 			return storm_text(e)
 		"captain_rise", "captain_fame", "captain_fate", "galleon_taken", "galleon_lost":
 			return captain_text(e)
+		"story":
+			return story_text(e)
 	return ""
+
+
+## (A story campaign, campaign/cstory.gd) a story event in the chronicle.
+func story_text(e: Dictionary) -> String:
+	var st: Dictionary = s.st
+	if not CStory.on(st):
+		return ""
+	var id := str(e.get("e", ""))
+	if id == "raid":
+		return "%s landed troops to storm %s." % [CData.faction_name(int(e["f"])), CData.REGIONS[int(e["r"])]["city"]]
+	if id.begins_with("join_"):
+		return "Le Boucher's ships now sail with %s." % CData.faction_name(int(e["f"]))
+	return str(CStory.event_def(st, id).get("chron", ""))
 
 
 # ------------------------------------------- hurricanes, captains (N2b) ---
