@@ -132,6 +132,7 @@ func _init() -> void:
 	_team_battles()
 	_ai_skilled()
 	_chars()
+	_west_raid_defence()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
 	quit(0 if fails == 0 else 1)
 
@@ -4033,3 +4034,76 @@ func _team_battles() -> void:
 		"the guest's sim side is the attackers' (%s)" % str(gs))
 	# Solo: the same build, ai_sides as before (side 1 the AI's).
 	_check(built["scenario"]["ai_sides"] == [1], "solo play keeps the enemy side the AI's")
+
+
+## A passable land cell (not a settlement) at Chebyshev distance d from
+## cell c, not in avoid (-1 none).
+func _cell_at_d(c: int, d: int, avoid: Array) -> int:
+	for dy in range(-d, d + 1):
+		for dx in range(-d, d + 1):
+			var k := CGrid.at(CGrid.cx(c) + dx, CGrid.cy(c) + dy)
+			if k >= 0 and CGrid.passable(k) and CGrid.cheb(k, c) == d and not avoid.has(k) and CGrid.site_region(k) < 0:
+				return k
+	return -1
+
+
+## Owner's report (2026-10-16, West, New Spain): "the buccaneers raided one
+## of my cities; my 7-stack next to it did not help". A pirate assault on a
+## player's port: the player's army within CData.SUPPORT cells fights in it
+## (on the ring: a defender; 2-4 cells: support, even after marching that
+## turn; 5: not), and a garrison-only defence is still the player's battle
+## (battle_humans has the owner: never auto-resolved). A raid (the raiding
+## stance on the camp cell) starts no battle: the player's army inside the
+## city can attack the raiders that same turn.
+func _west_raid_defence() -> void:
+	CData.use_pack("west")
+	var ns := CData.faction_index("new_spain")
+	var br := CData.faction_index("brethren")
+	var hv := CData.region_index("havana")
+	var site := CGrid.site(hv)
+	var stack := ["musketeers", "musketeers", "pikemen", "pikemen", "lancers", "cutlass", "general"]
+	var crew := ["buccaneers", "buccaneers", "cutlass", "cutlass", "musketeers"]
+	for d in [1, 2, 3, 4, 5]:
+		var st := CState.new_campaign("t", 77, [ns], {}, [], "west")
+		st["armies"] = []
+		var hc := _cell_at_d(site, d, [])
+		var h := _put(st, ns, hc, stack)
+		h["moved"] = 1 if d == 3 else 0  # it marched there this turn
+		var p := _put(st, br, _cell_at_d(site, 2, [hc]), crew)
+		CRules.execute_moves6(st, [[int(p["id"]), site, br, CData.MODE_ASSAULT, 0, -1]])
+		_check((st["battles"] as Array).size() == 1, "West d=%d: the pirates' assault on Havana starts a battle" % d)
+		if (st["battles"] as Array).size() != 1:
+			continue
+		var b: Dictionary = st["battles"][0]
+		CRules.add_reinforcements(st, b)
+		var fights := (b["def"] as Array).has(int(h["id"])) or (b["reinf"] as Array).has(int(h["id"]))
+		_check(fights == (d <= CData.SUPPORT), "West d=%d: the New Spain army %s (%s)" % [d,
+			"fights in it" if d <= CData.SUPPORT else "is out of support range", "moved this turn" if d == 3 else "kind %s" % str(b.get("kind", "assault"))])
+		_check(CRules.battle_humans(st, b) == [ns], "West d=%d: the player's battle (not auto-resolved)" % d)
+	# Garrison only.
+	var sg := CState.new_campaign("t", 77, [ns], {}, [], "west")
+	sg["armies"] = []
+	var pg := _put(sg, br, _cell_at_d(site, 2, []), crew)
+	CRules.execute_moves6(sg, [[int(pg["id"]), site, br, CData.MODE_ASSAULT, 0, -1]])
+	var bg: Dictionary = sg["battles"][0] if not (sg["battles"] as Array).is_empty() else {}
+	_check(not bg.is_empty() and int(bg.get("settlement", 0)) == 1 and (bg["def"] as Array).is_empty() and CRules.battle_humans(sg, bg) == [ns],
+		"West: a garrison-only defence of the player's port is the player's battle")
+	# A raid beside the city, the player's army inside it.
+	var sr := CState.new_campaign("t", 77, [ns], {}, [], "west")
+	var a1: Dictionary = {}
+	for a in CState.armies_of(sr, ns):
+		if int(a["r"]) == hv:
+			a1 = a
+	CState.place(a1, site)
+	var rd := _put(sr, br, CGrid.camp(hv), crew)
+	rd["stance"] = CData.ST_RAID
+	_check(CRules.raider(sr, hv) == br and (sr["battles"] as Array).is_empty(), "West: raiders on Havana's camp take its income, no battle")
+	_check((CRules.links_of(sr, a1, CRules.reach6(sr, a1))["attack"] as Array).has(int(rd["id"])), "the army inside Havana can attack them this turn")
+	var o := {"t": "move", "army": int(a1["id"]), "x": int(rd["x"]), "y": int(rd["y"]), "mode": CData.MODE_SIEGE, "persist": 1, "tgt": int(rd["id"])}
+	var sr2 := CTurn.resolve_turn(sr, [CTurn.submission(sr, ns, [o])])
+	var hit := false
+	for b in sr2["battles"]:
+		if not b.has("sea") and (b["att"] as Array).has(int(a1["id"])) and (b["def"] as Array).has(int(rd["id"])):
+			hit = true
+	_check(hit, "tapping them attacks: a field battle with the raiders")
+	CData.use_pack("rome")

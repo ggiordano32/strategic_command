@@ -36,6 +36,7 @@ const CFleet := preload("res://campaign/cfleet.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const CSea := preload("res://campaign/csea.gd")
 const Panels := preload("res://game/campaign/campaign_panels.gd")
+const DragReorder := preload("res://game/drag_reorder.gd")
 
 const DESK_H := 132.0          # bar height, desktop / tablet
 const PHONE_H := 96.0          # bar height under PHONE_W
@@ -461,8 +462,8 @@ func _build_army(id: int) -> void:
 			acts.append(_action("exchange", "Exchange", "Trade units with the army beside it", func(): s.panels.show_exchange(id, -1), "", "exchange"))
 		var rr := CRules.recruit_region(ps, a)
 		if rr >= 0 and role == 0:
-			acts.append(_action("recruit", "Recruit", "Recruit into this army at %s (the list is in the full panel)" % CData.REGIONS[rr]["city"],
-				func(): s.open_details("Recruit at"), "This army is marching: cancel its move to recruit" if not p6.is_empty() else "", "recruit"))
+			acts.append(_action("recruit", "Recruit", "Recruit into this army at %s" % CData.REGIONS[rr]["city"],
+				func(): s.panels.show_army_recruit(id), "This army is marching: cancel its move to recruit" if not p6.is_empty() else "", "recruit"))
 		if role == 0:
 			acts.append(_action("disband", "Disband", "Disband the picked units (their men go home)", func(): s.panels._disband(id),
 				"Tap unit cards to pick the units to disband" if nsel == 0 else "", "disband"))
@@ -474,10 +475,24 @@ func _build_army(id: int) -> void:
 					acts.append(_action("embark", "Board", "Board the fleet beside it (%d of %d places taken)" % [CFleet.carried_units(fl), CFleet.capacity(fl)],
 						func(): s.embark(id, fid), why, "board"))
 					break
+	if not mine and not busy and s.f >= 0 and CState.grid_on(ps) and CState.at_war(ps, s.f, af):
+		var ch: Array = s.panels.attacker_for(id)
+		var by := int(ch[0])
+		acts.append(_action("war", "Attack", "Attack them with your strongest army that reaches them this turn", func(): s.panels.attack_with(by, id),
+			str(ch[1]), "attack"))
 	acts.append(_details_action())
 	# Cards.
 	var cw := _card_w(units.size() + arriving.size(), acts.size())
 	var cards: Array = []
+	# Drag a card (mouse: press and move; touch: hold until it lifts) to change
+	# the order the army takes the field in: an "arrange" order, as in Details.
+	var reorder: DragReorder = null
+	if mine and not busy and units.size() > 1:
+		reorder = DragReorder.new()
+		reorder.name = "unit_reorder"
+		reorder.vertical = false
+		reorder.moved.connect(func(from: int, to: int): s.panels._arrange(id, from, to))
+		reorder.held.connect(func(i: int): s.open_unit_page(CState.unit_type(units[i]), Callable(), ""))
 	for k in units.size():
 		var u: Dictionary = units[k]
 		var ty := CState.unit_type(u)
@@ -497,7 +512,11 @@ func _build_army(id: int) -> void:
 				cur_sel.append(kk)
 			s.panels._split_sel[id] = cur_sel
 			s.select_army(id))
-		c.long_pressed.connect(func(): s.open_unit_page(ty, Callable(), ""))
+		if reorder != null:
+			reorder.items.append(c)
+			c.gui_input.connect(func(e: InputEvent): reorder.feed(e, kk))
+		else:
+			c.long_pressed.connect(func(): s.open_unit_page(ty, Callable(), ""))
 		cards.append(c)
 	for k in arriving.size():
 		var rty := UT.index_of(str(arriving[k]["unit"]))
@@ -507,10 +526,17 @@ func _build_army(id: int) -> void:
 		ac.dim = true
 		ac.sub = "joins"
 		ac.tooltip_text = "%s: joins at the end of the turn" % str(UT.TYPES[rty]["name"])
-		ac.pressed.connect(func(): s.open_unit_page(rty, Callable(), ""))
+		var ro: Dictionary = arriving[k]
+		ac.tooltip_text += " (tap to cancel the recruit)"
+		ac.pressed.connect(func(): s.remove_orders(func(o): return is_same(o, ro)))
 		ac.long_pressed.connect(func(): s.open_unit_page(rty, Callable(), ""))
 		cards.append(ac)
-	_assemble(leader, cards, [], acts)
+	var extra: Array = []
+	if reorder != null:
+		extra.append(reorder)
+	_assemble(leader, cards, extra, acts)
+	if reorder != null and _strip != null:
+		reorder.scroll = _strip
 
 
 # -------------------------------------------------------------- city ---
@@ -564,8 +590,12 @@ func _build_region(r: int) -> void:
 	var grid := CState.grid_on(ps)
 	if mine and grid:
 		var why := Panels.raise_why(ps, f, r)
-		acts.append(_action("raise", "Recruit", "Raise a new army here (to add to an army, select it)", func(): s.panels.show_raise(r), why, "recruit"))
-		acts.append(_action("build", "Build", "Buildings of this city (the list is in the full panel)", func(): s.open_details("Buildings"), "", "build"))
+		var yt: Array = s.panels.ship_tab(r)
+		if why != "" and bool(yt[0]) and str(yt[1]) == "":
+			why = ""  # nothing to raise, but ships to build
+		acts.append(_action("raise", "Recruit", "Raise a new army here%s (to add to an army, select it)" % (" or build ships" if bool(yt[0]) else ""),
+			func(): s.panels.show_raise(r, s.panels.raise_tab_for(r)), why, "recruit"))
+		acts.append(_action("build", "Build", "Buildings of this city: queue one", func(): s.panels.show_build(r), "", "build"))
 	acts.append(_action("view_map", "City map", "The battle map of this settlement", func(): s.panels.show_city_map(r), "", "city_map"))
 	if not sg.is_empty():
 		var bs := CRules.besiegers(ps, r)
@@ -580,16 +610,16 @@ func _build_region(r: int) -> void:
 			acts.append(_action("assault", "Assault", "Storm the walls at the end of the turn", func():
 				s.panels._cancel_withdraw(mine_b, r)
 				s.add_order({"t": "assault", "r": r})
-				s.select_region(r), "Already ordered" if ordered else no_assault, "assault", ordered))
+				s.select_region(r), "Already ordered" if ordered else no_assault, "siege_assault", ordered))
 			if ordered or leaving:
 				acts.append(_action("siege", "Continue", "Keep up the siege instead", func():
 					s.remove_orders(func(x): return str(x["t"]) == "assault" and int(x.get("r", -1)) == r)
 					s.panels._cancel_withdraw(mine_b, r)
-					s.select_region(r), "", "continue"))
+					s.select_region(r), "", "siege_continue"))
 			acts.append(_action("withdraw", "Withdraw", "Lift the siege: the besiegers withdraw", func():
 				s.remove_orders(func(x): return str(x["t"]) == "assault" and int(x.get("r", -1)) == r)
 				s.panels._withdraw(mine_b, sg)
-				s.select_region(r), "Already withdrawing" if leaving else "", "withdraw", leaving))
+				s.select_region(r), "Already withdrawing" if leaving else "", "siege_withdraw", leaving))
 		elif mine and not CRules.besieged_armies(ps, r).is_empty():
 			acts.append(_action("sally", "Sally", "Sally out: select an army inside and tap a besieger on the map", func():
 				s.show_toast("To sally: select an army inside (its banner under the city) and tap a besieger."), "", "sally"))
@@ -713,6 +743,12 @@ func _build_fleet(id: int) -> void:
 					if s.add_order({"t": "fmerge", "fleet": id, "into": oid}) == "":
 						s.select_fleet(oid), "", "join"))
 				break
+	if mine and not flota:
+		var port := CFleet.port_of(ps, fl, ff)
+		var yt: Array = s.panels.ship_tab(port) if port >= 0 else [false, ""]
+		if bool(yt[0]):
+			acts.append(_action("shipyard", "Shipyard", "Build ships at %s" % CData.REGIONS[port]["city"],
+				func(): s.panels.show_raise(port, "ship"), str(yt[1]), "shipyard"))
 	acts.append(_details_action())
 	var cw := _card_w(ships.size(), acts.size())
 	var cards: Array = []
@@ -798,6 +834,12 @@ class UnitCard extends Control:
 				set_process(false)
 				queue_redraw()
 
+	## The drag helper took the press (a lifted card presses nothing).
+	func cancel_press() -> void:
+		_press_t = -1.0
+		set_process(false)
+		queue_redraw()
+
 	func _hit_at(pos: Vector2) -> String:
 		for h in _hits:
 			if (h[0] as Rect2).grow(2).has_point(pos):
@@ -850,7 +892,7 @@ class UnitCard extends Control:
 			for k in n:
 				var rc := Rect2(gx + k * (gs + 3.0), gy, gs, gs)
 				UiIcons.draw_icon(self, str(Traits.TRAIT_ICONS[tl[k]]), rc, Color(1, 0.9, 0.6, a))
-				_hits.append([rc, Traits.trait_text(tl[k])])
+				# (no tap hint on a glyph: the middle of a card is where a finger lands; the hover row has the traits)
 		# Strength bar and numbers.
 		var bw := sz.x - 12.0
 		var by := sz.y - (22.0 if compact else 26.0)

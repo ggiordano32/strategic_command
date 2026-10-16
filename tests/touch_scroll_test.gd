@@ -124,8 +124,7 @@ func _campaign_lists() -> void:
 	var st := CState.new_campaign("Touch", 5, [rome])
 	st["factions"][rome]["treasury"] = 100000
 	var cs := CampaignScreen.new()
-	cs.details_on_select = true  # these checks scroll the side panel's card
-	cs.no_bar = true
+	cs.no_bar = true  # the army part switches the bar on
 	cs.open({"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}, "touch_test")
 	root.add_child(cs)
 	await _frames(5)
@@ -137,10 +136,13 @@ func _campaign_lists() -> void:
 	cs._replan()
 	cs.select_army(int(a0["id"]))
 	await _frames(4)
-	var sc = cs.side_scroll
-	_check(sc.get_v_scroll_bar().max_value > sc.get_v_scroll_bar().page, "the army card with its recruit list overflows the phone screen (scrollable)")
+	# The recruit list is the army's Recruit popup (the bar's Recruit action).
+	cs.panels.show_army_recruit(int(a0["id"]))
+	await _frames(4)
+	var sc = cs.dialog_scroll
+	_check(sc.get_v_scroll_bar().max_value > sc.get_v_scroll_bar().page, "the army's recruit popup with its list overflows the phone screen (scrollable)")
 	# (a) drag starting on a recruit + button.
-	var plus: Button = cs.side_box.find_child("recruit_heavy", true, false)
+	var plus: Button = cs.dialog_box.find_child("recruit_heavy", true, false)
 	await _settle(plus)  # the button sits below the fold of the compact card
 	var y0: int = sc.scroll_vertical
 	var start := _centre(plus)
@@ -151,7 +153,7 @@ func _campaign_lists() -> void:
 	# (c) fling: a fast drag keeps going after release.
 	sc.scroll_vertical = 0
 	await _frames(2)
-	plus = cs.side_box.find_child("recruit_heavy", true, false)
+	plus = cs.dialog_box.find_child("recruit_heavy", true, false)
 	await _settle(plus)
 	start = _centre(plus)
 	await _drag(start, start + Vector2(0, -90), 3)
@@ -163,92 +165,99 @@ func _campaign_lists() -> void:
 	# (b) a tap presses exactly that button.
 	sc.scroll_vertical = 0
 	await _frames(3)
-	plus = cs.side_box.find_child("recruit_heavy", true, false)
+	plus = cs.dialog_box.find_child("recruit_heavy", true, false)
 	await _settle(plus)
 	await _tap(_centre(plus))
 	_check(cs.orders.size() == 1 and str(cs.orders[0]["unit"]) == "heavy", "recruit list: a tap recruits exactly one heavy (%s)" % str(cs.orders))
 	# (d) long press on a recruit row opens the unit page; a drag cancels it.
-	var row: Control = cs.side_box.find_child("recruit_row_spear", true, false)
+	var row: Control = cs.dialog_box.find_child("recruit_row_spear", true, false)
 	await _settle(row)
-	_touch(_centre(row), true)
+	row = cs.dialog_box.find_child("recruit_row_spear", true, false)
+	var rc := _centre(row)  # (the popup is replaced by the unit page: the row goes)
+	_touch(rc, true)
 	await create_timer(0.7).timeout
-	_touch(_centre(row), false)
+	_touch(rc, false)
 	await _frames(3)
 	_check(cs.dialog.visible and cs.dialog_title.text == "Spearmen", "recruit list: a long press opens the unit page (%s)" % cs.dialog_title.text)
 	cs.close_dialog()
+	cs.panels.show_army_recruit(int(a0["id"]))
 	await _frames(2)
-	row = cs.side_box.find_child("recruit_row_spear", true, false)
+	row = cs.dialog_box.find_child("recruit_row_spear", true, false)
 	await _settle(row)
+	row = cs.dialog_box.find_child("recruit_row_spear", true, false)
 	start = _centre(row)
 	await _drag(start, start + Vector2(0, -60), 4, false)
 	await create_timer(0.7).timeout
 	_touch(start + Vector2(0, -60), false)
 	await _frames(3)
-	_check(not cs.dialog.visible, "recruit list: a drag cancels the long press")
+	_check(cs.dialog.visible and cs.dialog_title.text != "Spearmen", "recruit list: a drag cancels the long press")
 	_check(cs.orders.size() == 1, "recruit list: still one order")
-	# Army unit list (Carthage's first army has 8 units).
+	# The army's unit cards on the command bar (a phone-sized window: one
+	# scrolling row; 13 cards overflow it).
+	cs.close_dialog()
 	cs.close_side()
+	cs.no_bar = false
 	var a: Dictionary = CState.armies_of(cs.ps, rome)[0]
+	var arm0 := CState.army(cs.st, int(a["id"]))
 	for k in 5:
-		(a["units"] as Array).append({"t": "spear", "n": 100})
+		(arm0["units"] as Array).append({"t": "spear", "n": 100})
+	cs.orders = []
+	cs._replan()
+	a = CState.army(cs.ps, int(a["id"]))
 	cs.select_army(int(a["id"]))
 	await _frames(4)
-	# Armies of more than 6 units start with the unit rows folded behind the
-	# composition strip: open it, as a player does (state is kept per army).
-	var strip: Button = cs.side_box.find_child("army_strip", true, false)
-	if strip != null and not cs.side_box.find_child("unit_2", true, false).is_visible_in_tree():
-		strip.pressed.emit()
-		await _frames(4)
-	sc.scroll_vertical = 0
-	await _frames(2)
-	var urow: Control = cs.side_box.find_child("unit_2", true, false)
-	await _settle(urow)
-	start = _centre(urow)
-	await _drag(start, start + Vector2(0, -100))
-	_check(sc.scroll_vertical > 40, "army list: a drag from a unit row scrolls (%d)" % sc.scroll_vertical)
-	urow = cs.side_box.find_child("unit_2", true, false)
-	_check(not urow.selected, "army list: the drag selected nothing")
+	var bs = cs.cmd_bar._strip
+	_check(cs.cmd_bar.shown and bs.get_h_scroll_bar().max_value > bs.get_h_scroll_bar().page, "army cards: the bar's row overflows (scrollable)")
+	var ucard: Control = cs.cmd_bar.find_child("unit_card_2", true, false)
+	await _settle(ucard)
+	ucard = cs.cmd_bar.find_child("unit_card_2", true, false)
+	start = _centre(ucard)
+	var x0: int = bs.scroll_horizontal
+	await _drag(start, start + Vector2(-120, 0))
+	_check(bs.scroll_horizontal > x0 + 40, "army cards: a drag from a unit card scrolls the row (%d -> %d)" % [x0, bs.scroll_horizontal])
+	ucard = cs.cmd_bar.find_child("unit_card_2", true, false)
+	_check(not ucard.selected, "army cards: the drag selected nothing")
 	await _frames(30)
-	urow = cs.side_box.find_child("unit_3", true, false)
-	await _settle(urow)
-	await _tap(_centre(urow))
-	urow = cs.side_box.find_child("unit_3", true, false)
-	_check(urow.selected, "army list: a tap selects that unit")
-	# Panel drags never pan the map.
+	ucard = cs.cmd_bar.find_child("unit_card_3", true, false)
+	await _settle(ucard)
+	ucard = cs.cmd_bar.find_child("unit_card_3", true, false)
+	await _tap(_centre(ucard))
+	ucard = cs.cmd_bar.find_child("unit_card_3", true, false)
+	_check(ucard.selected, "army cards: a tap selects that unit (%s, %s)" % [str(cs.panels._split_sel), str(_centre(ucard))])
+	# Bar drags never pan the map.
 	var off: Vector2 = cs.offset
-	urow = cs.side_box.find_child("unit_1", true, false)
-	await _settle(urow)
-	await _drag(_centre(urow), _centre(urow) + Vector2(-150, -40))
-	_check(cs.offset == off, "a drag in the panel does not pan the map")
-	# (e) a long press on an army row lifts it (drag_reorder.gd): released
-	# without moving it opens the unit page; dragged, the row moves (an
-	# arrange order) and the panel does not scroll.
-	var arm := CState.army(cs.st, int(a["id"]))
-	arm["units"] = (a["units"] as Array).duplicate(true)
+	ucard = cs.cmd_bar.find_child("unit_card_1", true, false)
+	await _settle(ucard)
+	ucard = cs.cmd_bar.find_child("unit_card_1", true, false)
+	await _drag(_centre(ucard), _centre(ucard) + Vector2(-150, -40))
+	_check(cs.offset == off, "a drag on the bar does not pan the map")
+	# (e) a long press on a unit card lifts it (drag_reorder.gd): released
+	# without moving it opens the unit page; dragged, the card moves (an
+	# arrange order) and the row does not scroll.
 	cs.orders = []
 	cs._replan()
 	cs.select_army(int(a["id"]))
 	await _frames(4)
-	urow = cs.side_box.find_child("unit_1", true, false)
-	await _settle(urow)
-	_touch(_centre(urow), true)
+	ucard = cs.cmd_bar.find_child("unit_card_1", true, false)
+	await _settle(ucard)
+	ucard = cs.cmd_bar.find_child("unit_card_1", true, false)
+	_touch(_centre(ucard), true)
 	await create_timer(0.6).timeout
-	_touch(_centre(urow), false)
+	_touch(_centre(ucard), false)
 	await _frames(3)
-	var nm := str(UT.TYPES[urow.ty]["name"])
-	_check(cs.dialog.visible and cs.dialog_title.text == nm, "army list: a long press released in place opens the unit page (%s)" % cs.dialog_title.text)
-	_check(cs.orders.is_empty(), "army list: and plans nothing")
+	var nm := str(UT.TYPES[ucard.ty]["name"])
+	_check(cs.dialog.visible and cs.dialog_title.text == nm, "army cards: a long press released in place opens the unit page (%s)" % cs.dialog_title.text)
+	_check(cs.orders.is_empty(), "army cards: and plans nothing")
 	cs.close_dialog()
 	await _frames(2)
-	urow = cs.side_box.find_child("unit_1", true, false)
-	await _settle(urow)
-	# Clear of the panel's auto-scroll edges.
-	sc.scroll_vertical += int(urow.get_global_rect().position.y - sc.get_global_rect().position.y - 50.0)
-	await _frames(3)
-	var sv0: int = sc.scroll_vertical
-	start = _centre(urow)
-	var r2: Rect2 = (cs.side_box.find_child("unit_2", true, false) as Control).get_global_rect()
-	var to := r2.get_center() + Vector2(0, r2.size.y * 0.3)
+	ucard = cs.cmd_bar.find_child("unit_card_1", true, false)
+	await _settle(ucard)
+	ucard = cs.cmd_bar.find_child("unit_card_1", true, false)
+	bs = cs.cmd_bar._strip
+	var sv0: int = bs.scroll_horizontal
+	start = _centre(ucard)
+	var r2: Rect2 = (cs.cmd_bar.find_child("unit_card_2", true, false) as Control).get_global_rect()
+	var to := r2.get_center() + Vector2(r2.size.x * 0.3, 0)
 	_touch(start, true)
 	await create_timer(0.5).timeout
 	var prev := start
@@ -268,9 +277,9 @@ func _campaign_lists() -> void:
 		if str(o["t"]) == "arrange":
 			arr.append(o)
 	_check(arr.size() == 1 and int(arr[0]["order"][1]) == 2 and int(arr[0]["order"][2]) == 1,
-		"army list: long press and drag moves the row (%s)" % str(arr))
-	_check(absi(sc.scroll_vertical - sv0) <= 2, "army list: the lifted row does not scroll the panel (%d -> %d)" % [sv0, sc.scroll_vertical])
-	_check(not cs.dialog.visible, "army list: the drag opens no page")
+		"army cards: long press and drag moves the card (%s)" % str(arr))
+	_check(absi(cs.cmd_bar._strip.scroll_horizontal - sv0) <= 2, "army cards: the lifted card does not scroll the row (%d -> %d)" % [sv0, cs.cmd_bar._strip.scroll_horizontal])
+	_check(not cs.dialog.visible, "army cards: the drag opens no page")
 	cs.queue_free()
 	await _frames(3)
 

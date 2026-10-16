@@ -120,9 +120,10 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 	if not b.is_empty():
 		box.add_child(Kit.label("A battle is pending here.", Kit.FONT, Kit.COL_BAD))
 	box.add_child(Kit.label(CBattle.city_caption(ps, r) + ".", Kit.FONT_SMALL, Kit.COL_DIM, true))
-	var vb := Kit.icon_button("View battle map", "view_map", show_city_map.bind(r))
-	vb.name = "view_battle_map"
-	box.add_child(vb)
+	if not CState.grid_on(ps):
+		var vb := Kit.icon_button("View battle map", "view_map", show_city_map.bind(r))
+		vb.name = "view_battle_map"
+		box.add_child(vb)
 	# Armies here.
 	var here := CState.armies_in(ps, r)
 	if CState.grid_on(ps):
@@ -142,14 +143,13 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 	var grid := CState.grid_on(ps)
 	if mine:
 		if grid:
-			_raise_section(box, r)  # version 6: recruiting is in the army card
-			_city_chars(box, r)
+			_city_chars(box, r)  # recruits, buildings and ships: the Recruit and Build popups (the bar)
 		else:
 			_recruit(box, r)
-		_buildings(box, r)
+			_buildings(box, r)
 		if grid:
 			_trains(box, r)
-		if CFleet.on(ps):
+		if CFleet.on(ps) and not grid:
 			_shipyard(box, r)
 	_gift_section(box, r)
 	# Garrison: what the settlement provides (by level and walls).
@@ -160,12 +160,12 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 	if grid:
 		box.add_child(Kit.label("Provided by the %s and its walls; it defends the city and recovers %d%% a turn." % [
 			CData.LEVEL_NAMES[lvl].to_lower(), CData.GARRISON_REGEN], Kit.FONT_SMALL, Kit.COL_DIM, true))
+	if grid:
+		return  # the garrison's unit cards are on the command bar
 	for g in gar:
 		var gty := UT.index_of(str(g["t"]))
 		var row := Kit.UnitRow.new(gty, int(g["n"]), _fc(o))
 		row.full = int(g["full"])
-		if grid:
-			row.pressed.connect(func(): s.open_unit_page(gty, Callable(), ""))
 		box.add_child(row)
 
 
@@ -1089,11 +1089,13 @@ var _raise: Dictionary = {}
 ## Pick the units of a new army raised in region r this turn (up to the
 ## free slots and the treasury); Confirm adds one recruit order with
 ## "new": 1 per unit (one Undo step).
-func show_raise(r: int) -> void:
+func show_raise(r: int, tab: String = "") -> void:
 	var ps: Dictionary = s.ps
 	var f: int = s.f
 	if int(_raise.get("r", -1)) != r:
-		_raise = {"r": r, "picks": {}}
+		_raise = {"r": r, "picks": {}, "tab": raise_tab_for(r)}
+	if tab != "":
+		_raise["tab"] = tab
 	var picks: Dictionary = _raise["picks"]
 	var rs: Dictionary = ps["regions"][r]
 	var cap := int(CData.RECRUITS_PER_TURN[int(rs["level"])])
@@ -1109,6 +1111,26 @@ func show_raise(r: int) -> void:
 		o["force"] = int(picks.get(key, 0)) > 0
 	var v := Kit.vbox(6)
 	v.name = "raise_panel"
+	_raise_tabs(v, r)
+	if str(_raise.get("tab", "army")) == "ship":
+		_ship_tab(v, r)
+		return
+	var raising := _raise_orders(r)
+	if not raising.is_empty():
+		var names: Array[String] = []
+		for o in raising:
+			names.append(str(UT.TYPES[UT.index_of(str(o["unit"]))]["name"]))
+		var rh := Kit.hbox(6)
+		var rl := Kit.label("Raising a new army: %d unit%s (%s), inside the walls at the end of the turn." % [raising.size(),
+			"" if raising.size() == 1 else "s", ", ".join(names)], Kit.FONT, Kit.COL_GOOD, true)
+		rl.name = "raise_planned"
+		rh.add_child(rl)
+		var rx := Kit.icon_button("", "close", func():
+			s.remove_orders(func(o): return _is_raise(o, r))
+			show_raise(r), 44)
+		rx.name = "raise_cancel"
+		rh.add_child(rx)
+		v.add_child(rh)
 	v.add_child(Kit.label("Choose the units of a new army: up to %d this turn (%d of %d recruit slots used at %s). It forms inside the walls at the end of the turn." % [
 		free, cap - free, cap, CData.REGIONS[r]["city"]], Kit.FONT_SMALL, Kit.COL_DIM, true))
 	var make_rz := func(o: Dictionary) -> Control:
@@ -1222,11 +1244,10 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 	Kit.label_icon(cnt_l, "men")
 	box.add_child(cnt_l)
 	_chars_block(box, a, mine)
-	if mine and CFleet.on(ps):
+	if mine and CFleet.on(ps) and not CState.grid_on(ps):
 		_board_rows(box, a)
 	if mine and CState.grid_on(ps):
-		_together_row(box, a)
-		_army_orders6(box, a)
+		_army_orders6(box, a)  # the buttons (Board, Merge, Exchange, Cancel, Siege / Assault) are on the command bar
 	elif mine:
 		var mv: int = s.planned_move(id)
 		var role := CRules.siege_role(ps, a)
@@ -1295,6 +1316,15 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 			box.add_child(Kit.label("Tap a highlighted region on the map to move.", Kit.FONT_SMALL, Color.WHITE, true))
 		if CState.moves_on(ps):
 			_movement_rows(box, a)
+	if CState.grid_on(ps):
+		# The units, their order, Split / Disband, recruits and the stance are on
+		# the command bar (command_bar.gd) and its popups.
+		if mine and int(a["busy"]) == 0:
+			_army_char_recruit(box, a)
+		var tl := Kit.label("Units, their order, Split, Disband, Exchange, Recruit and the stance: on the bar below.", Kit.FONT_SMALL, Kit.COL_DIM, true)
+		tl.name = "bar_note"
+		box.add_child(tl)
+		return
 	var sel: Array = _split_sel.get(id, [])
 	var units: Array = a["units"]
 	# Drag a row to reorder the army (an "arrange" order; mouse: drag; touch:
@@ -2570,9 +2600,97 @@ func show_summary(seen: int, then: Callable = Callable()) -> void:
 		ch.add_child(Kit.label("A quiet season for you.", Kit.FONT, Color.WHITE))
 	box.add_child(ch)
 	var nb := CTurn.pending_for(st, f).size()
+	var rl := raids_on(st, f)
+	for rd in rl:
+		box.add_child(Kit.label(raid_text(st, rd), Kit.FONT, Kit.COL_BAD, true))
 	if nb > 0:
 		box.add_child(Kit.label("%d battle%s to resolve before planning." % [nb, "" if nb == 1 else "s"], Kit.FONT, Kit.COL_BAD))
-	s.show_dialog("Since you last played: %s" % CData.faction_name(f), box, [["Continue", then]], 640)
+	var cont := then
+	if not rl.is_empty() and nb == 0:
+		cont = func():
+			if then.is_valid():
+				then.call()
+			raid_toast(rl)
+	s.show_dialog("Since you last played: %s" % CData.faction_name(f), box, [["Continue", cont]], 640)
+
+
+## Enemy armies raiding faction f's regions (version 6: an army at war with
+## it in the raiding stance on its land, CRules.raider): [[region, army
+## id], ...] in region order. Nothing engages them by itself: the player
+## attacks them (select an army, tap the raiders; or the raiders' Attack).
+func raids_on(st: Dictionary, f: int) -> Array:
+	var out: Array = []
+	if f < 0 or not CState.grid_on(st):
+		return out
+	for r in CState.regions_of(st, f):
+		if CRules.raider(st, r) < 0:
+			continue
+		for a in st["armies"]:
+			if int(a["r"]) == r and CState.stance(a) == CData.ST_RAID and int(a["busy"]) == 0 and CState.at_war(st, int(a["f"]), f):
+				out.append([r, int(a["id"])])
+				break
+	return out
+
+
+func raid_text(st: Dictionary, rd: Array) -> String:
+	var a := CState.army(st, int(rd[1]))
+	return "Raiders beside %s: %s takes %d%% of its income until you drive them off. Tap them to attack." % [
+		CData.REGIONS[int(rd[0])]["city"], CData.faction_name(int(a["f"])) if not a.is_empty() else "the enemy", CData.RAID_PCT]
+
+
+## A toast for the first raid of rl (raids_on): Show selects the raiders
+## (their bar has Attack) and brings them into view.
+func raid_toast(rl: Array) -> void:
+	if rl.is_empty():
+		return
+	var r := int(rl[0][0])
+	var id := int(rl[0][1])
+	var more := "" if rl.size() == 1 else " (and %d more raid%s)" % [rl.size() - 1, "" if rl.size() == 2 else "s"]
+	s.show_toast("Raiders beside %s%s: tap them to attack." % [CData.REGIONS[r]["city"], more], ["Show", func():
+		s.focus_region(r)
+		s.select_army(id)])
+
+
+## Version 6: which army of the player can attack enemy army `id` this turn
+## (it reaches a cell next to it, CRules.links_of; the one already ordered
+## to attack it first, else the strongest): [army id, why not ("" when one
+## can)].
+func attacker_for(id: int) -> Array:
+	var st: Dictionary = s.st
+	var f: int = s.f
+	var e := CState.army(st, id)
+	if f < 0 or e.is_empty() or not CState.grid_on(st):
+		return [-1, "Not now"]
+	if not CState.at_war(st, f, int(e["f"])):
+		return [-1, "You are not at war with %s" % CData.faction_name(int(e["f"]))]
+	if CRules.inside(st, e):
+		return [-1, "They are inside their walls: besiege the city"]
+	var best := -1
+	var best_s := -1
+	for a in CState.armies_of(st, f):
+		var aid := int(a["id"])
+		var p6: Dictionary = s.plan6(aid)
+		if not p6.is_empty() and int(p6["tgt"]) == id:
+			return [aid, ""]
+		if not (CRules.links_of(st, a, CRules.reach6(st, a))["attack"] as Array).has(id):
+			continue
+		var sv := CState.strength(a)
+		if sv > best_s:
+			best_s = sv
+			best = aid
+	return [best, "" if best >= 0 else "None of your armies reaches them this turn"]
+
+
+## Order army `by` of the player to attack enemy army `id` (as tapping it
+## with `by` selected) and select `by`.
+func attack_with(by: int, id: int) -> void:
+	var e := CState.army(s.st, id)
+	if by < 0 or e.is_empty():
+		return
+	var p6: Dictionary = s.plan6(by)
+	if p6.is_empty() or int(p6["tgt"]) != id:
+		s.set_move6(by, CState.cell(e), id)
+	s.select_army(by)
 
 
 func show_intro() -> void:
@@ -3163,6 +3281,13 @@ func warnings() -> Array:
 				idle += 1
 	if idle > 0:
 		out.append("%d arm%s next to an enemy without orders." % [idle, "y" if idle == 1 else "ies"])
+	for rd in raids_on(s.st, f):
+		var hit := false
+		for o in s.orders:
+			if str(o["t"]) == "move" and int(o.get("tgt", -1)) == int(rd[1]):
+				hit = true
+		if not hit:
+			out.append("Raiders beside %s take %d%% of its income: select an army and tap them to attack." % [CData.REGIONS[int(rd[0])]["city"], CData.RAID_PCT])
 	var can_build := 0
 	var cheapest := 1 << 30
 	for r in CState.regions_of(ps, f):
@@ -3311,17 +3436,11 @@ func _army_orders6(box: VBoxContainer, a: Dictionary) -> void:
 		var sg := CState.siege_at(ps, sr)
 		h2.add_child(Kit.label("Besieging %s (turn %d)." % [CData.REGIONS[sr]["city"], int(ps["turn"]) - int(sg.get("turn", ps["turn"]))],
 			Kit.FONT, Kit.COL_GOLD, true))
-		var sp := Kit.icon_button("Siege", "siege", func(): s.select_region(sr), 80)
-		sp.name = "army_siege"
-		h2.add_child(sp)
 		box.add_child(h2)
 	elif role == 2:
 		var h3 := Kit.hbox(6)
 		h3.add_child(Kit.label("Inside the besieged walls of %s: tap a besieger to sally against it." % CData.REGIONS[int(a["r"])]["city"],
 			Kit.FONT, Kit.COL_BAD, true))
-		var sp2 := Kit.icon_button("Siege", "siege", func(): s.select_region(int(a["r"])), 80)
-		sp2.name = "army_siege"
-		h3.add_child(sp2)
 		box.add_child(h3)
 	elif CRules.inside(ps, a):
 		box.add_child(Kit.label("Inside the walls of %s: it defends the city with the garrison; it stops no enemy and supports no battle outside." % CData.REGIONS[int(a["r"])]["city"],
@@ -3363,24 +3482,6 @@ func _army_orders6(box: VBoxContainer, a: Dictionary) -> void:
 		var ml := Kit.label(verb + when + ".", Kit.FONT, Kit.COL_GOOD if kind in ["move", "inside", "merge"] else Kit.COL_BAD, true)
 		ml.name = "army_march"
 		box.add_child(ml)
-		var h := Kit.flow(6)
-		if kind in ["siege", "join", "assault"]:
-			h.add_child(Kit.label("On arrival:", Kit.FONT_SMALL, Kit.COL_DIM))
-			var assault := int(p6["mode"]) == CData.MODE_ASSAULT
-			var b1 := Kit.icon_button("Lay siege" + (" (now)" if not assault else ""), "siege", func(): s.set_move_mode(id, CData.MODE_SIEGE), 0)
-			b1.name = "arrive_siege"
-			b1.disabled = not assault
-			h.add_child(b1)
-			var b2 := Kit.icon_button("Assault" + (" (now)" if assault else ""), "assault", func(): s.set_move_mode(id, CData.MODE_ASSAULT), 0)
-			b2.name = "arrive_assault"
-			b2.disabled = assault
-			h.add_child(b2)
-		var cb := Kit.icon_button("Cancel move", "cancel", func():
-			s.set_move6(id, int(p6["cell"]), int(p6["tgt"]))
-			s.select_army(id), 110)
-		cb.name = "cancel_move"
-		h.add_child(cb)
-		box.add_child(h)
 	elif role != 2:
 		box.add_child(Kit.label("Tap the map (or drag the army) to march: the shaded area is this turn's reach; tap an enemy army to attack it, a city to besiege it.",
 			Kit.FONT_SMALL, Color.WHITE, true))
@@ -3389,7 +3490,6 @@ func _army_orders6(box: VBoxContainer, a: Dictionary) -> void:
 
 func _movement_rows6(box: VBoxContainer, a: Dictionary) -> void:
 	var ps: Dictionary = s.ps
-	var id := int(a["id"])
 	var full := CState.full_mp(ps, a)
 	var left := CState.mp(a)
 	var base := CState.max_mp(a)
@@ -3401,17 +3501,7 @@ func _movement_rows6(box: VBoxContainer, a: Dictionary) -> void:
 	box.add_child(ml)
 	if CRules.siege_role(ps, a) == 2:
 		return
-	var cur := CState.stance(a)
-	box.add_child(Kit.label("Stance", Kit.FONT_SMALL, Kit.COL_GOLD))
-	var fl := Kit.flow(6)
-	for sv in STANCE_ORDER:
-		var b := Kit.icon_button(str(CData.STANCE_NAMES[sv]), str(STANCE_ICONS[sv]), func(): _set_stance6(id, sv), 0)
-		b.name = "stance_%d" % sv
-		b.toggle_mode = true
-		b.button_pressed = sv == cur
-		b.disabled = sv == cur
-		fl.add_child(b)
-	box.add_child(fl)
+	var cur := CState.stance(a)  # (the Stance action is on the command bar)
 	var sl := Kit.label(str(STANCE_HELP.get(cur, "")), Kit.FONT_SMALL, Kit.COL_DIM, true)
 	sl.name = "stance_help"
 	box.add_child(sl)
@@ -3486,29 +3576,6 @@ func _siege_section6(box: VBoxContainer, r: int) -> void:
 		var ol := Kit.label(txt, Kit.FONT, Kit.COL_BAD if ordered or leaving else Color.WHITE, true)
 		ol.name = "siege_orders"
 		v.add_child(ol)
-		var h := Kit.flow(8)
-		var ab := Kit.icon_button("Assault", "assault", func():
-			_cancel_withdraw(mine, r)
-			s.add_order({"t": "assault", "r": r})
-			s.select_region(r), 100)
-		ab.name = "siege_assault"
-		ab.disabled = ordered or CRules.can_assault(ps, f, r) != ""
-		h.add_child(ab)
-		var cb := Kit.icon_button("Continue siege", "siege", func():
-			s.remove_orders(func(x): return str(x["t"]) == "assault" and int(x.get("r", -1)) == r)
-			_cancel_withdraw(mine, r)
-			s.select_region(r), 130)
-		cb.name = "siege_continue"
-		cb.disabled = not ordered and not leaving
-		h.add_child(cb)
-		var wb := Kit.icon_button("Withdraw", "withdraw", func():
-			s.remove_orders(func(x): return str(x["t"]) == "assault" and int(x.get("r", -1)) == r)
-			_withdraw(mine, sg)
-			s.select_region(r), 100)
-		wb.name = "siege_withdraw"
-		wb.disabled = leaving
-		h.add_child(wb)
-		v.add_child(h)
 		v.add_child(note)
 	elif CState.friendly(ps, f, o):
 		var inside := CRules.besieged_armies(ps, r)
@@ -3693,22 +3760,9 @@ func fleet_panel(box: VBoxContainer, id: int) -> void:
 			else:
 				txt = "Sails %s (arrives %s)." % [sea_place(CGrid.cx(int(p["goal"])), CGrid.cy(int(p["goal"]))), when]
 		box.add_child(Kit.label(txt, Kit.FONT, Kit.COL_GOOD, true))
-		box.add_child(Kit.icon_button("Cancel voyage", "cancel", func(): s.set_fmove(id, int(vy[0]), int(vy[1])), 0))
 	else:
 		box.add_child(Kit.label("Tap the sea to sail, a coast to land the troops aboard, an enemy fleet to attack.", Kit.FONT_SMALL, Kit.COL_DIM, true))
-	# Our armies that can board here.
-	for a in CState.armies_of(ps, s.f):
-		if CFleet.near_fleet(a, fl):
-			var aid := int(a["id"])
-			var b := Kit.icon_button("Board: army of %d units" % CState.unit_count(a), "move", func(): s.embark(aid, id), 0)
-			b.disabled = CFleet.embark_check(ps, s.f, aid, id) != ""
-			box.add_child(b)
-	# Other fleets of ours alongside: merge.
-	for o in CFleet.fleets_of(ps, s.f):
-		if int(o["id"]) != id and CGrid.cheb(CFleet.cell(o), CFleet.cell(fl)) <= 1:
-			var oid := int(o["id"])
-			box.add_child(Kit.icon_button("Join the fleet alongside (%d ships)" % (o["ships"] as Array).size(), "merge",
-				func(): if s.add_order({"t": "fmerge", "fleet": id, "into": oid}) == "": s.select_fleet(oid), 0))
+	# (Cancel voyage, Board and Join are on the command bar.)
 
 
 ## The city's shipyard (a pack with ships, a port of ours): what is being
@@ -3757,3 +3811,243 @@ func _shipyard(box: VBoxContainer, r: int) -> void:
 			bt.alignment = HORIZONTAL_ALIGNMENT_LEFT
 			bt.add_theme_color_override("font_color", _fc(int(fl["f"])).lightened(0.5))
 			box.add_child(bt)
+
+
+# ----------------------------------------------- the command bar's popups ---
+
+## The Army / Shipyard tabs of the Recruit popup. The Shipyard tab exists in a
+## pack with ships at a port of ours; it is greyed without a Shipyard.
+func ship_tab(r: int) -> Array:
+	var ps: Dictionary = s.ps
+	if not CFleet.on(ps) or CFleet.dock(r) < 0 or CState.owner(ps, r) != s.f:
+		return [false, ""]
+	return [true, "" if CState.building(ps, r, CData.SHIPYARD) > 0 else "needs a Shipyard"]
+
+
+## The tab a city's Recruit opens: Army, but Shipyard when there is nothing to
+## raise and a yard to build in.
+func raise_tab_for(r: int) -> String:
+	var st: Array = ship_tab(r)
+	if raise_why(s.ps, s.f, r) != "" and bool(st[0]) and str(st[1]) == "":
+		return "ship"
+	return "army"
+
+
+func _raise_tabs(v: VBoxContainer, r: int) -> void:
+	var st: Array = ship_tab(r)
+	if not bool(st[0]):
+		return
+	var cur := str(_raise.get("tab", "army"))
+	var h := Kit.hbox(6)
+	h.name = "raise_tabs"
+	for t in [["army", "Army", "raise"], ["ship", "Shipyard", "shipyard"]]:
+		var key: String = t[0]
+		var off: bool = key == "ship" and str(st[1]) != ""
+		var b := Kit.icon_button(str(t[1]), str(t[2]), func():
+			if off:
+				s.show_toast("Ships: %s at %s." % [str(st[1]), CData.REGIONS[r]["city"]])
+			else:
+				show_raise(r, key), 130)
+		b.name = "raise_tab_" + key
+		b.toggle_mode = true
+		b.button_pressed = cur == key
+		if off:
+			b.modulate = Color(1, 1, 1, 0.5)
+			b.tooltip_text = str(st[1])
+		h.add_child(b)
+	v.add_child(h)
+
+
+## The Shipyard tab: the ship rows to pick (one a turn), the queue, the fleets
+## in the harbour; the dialog's button orders the ship.
+func _ship_tab(v: VBoxContainer, r: int) -> void:
+	var ps: Dictionary = s.ps
+	var f: int = s.f
+	var rs: Dictionary = ps["regions"][r]
+	var yard := CState.building(ps, r, CData.SHIPYARD)
+	var money := int(ps["factions"][f]["treasury"])
+	var picked := str(_raise.get("ship", ""))
+	v.add_child(Kit.label("Choose a ship: it is built at the Shipyard (%s) and launched into the harbour at the end of the turn; one ship a turn." % (
+		"level %d" % yard if yard > 0 else "none yet"), Kit.FONT_SMALL, Kit.COL_DIM, true))
+	for key in rs.get("sq", []):
+		var h := Kit.hbox(6)
+		var l := Kit.icon_label("%s: launched at the end of the turn" % CData.ship_row(str(key)).get("name", key), "ship", Kit.FONT, Kit.COL_GOOD, true)
+		l.name = "ship_queued"
+		h.add_child(l)
+		var x := Kit.icon_button("", "close", func(): s.remove_orders(func(o): return str(o["t"]) == "ship" and int(o["r"]) == r), 44)
+		x.name = "ship_cancel"
+		x.pressed.connect(func(): show_raise(r))
+		h.add_child(x)
+		v.add_child(h)
+	var fk := str(CData.FACTIONS[f]["key"])
+	var cost := 0
+	var picked_name := ""
+	for row in CData.ship_rows():
+		if not (row["factions"] as Array).has(fk):
+			continue
+		var key := str(row["key"])
+		var why := CFleet.ship_check(ps, f, r, key)
+		var on := picked == key
+		if on:
+			cost = int(row["cost"])
+			picked_name = str(row["name"])
+		var col := VBoxContainer.new()
+		col.add_theme_constant_override("separation", 0)
+		var b := Kit.icon_button("%s    %d" % [str(row["name"]), int(row["cost"])], "ship", func():
+			_raise["ship"] = "" if on else key
+			show_raise(r), 0)
+		b.name = "ship_" + key
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.toggle_mode = true
+		b.button_pressed = on
+		b.disabled = why != "" and not on
+		b.tooltip_text = str(row["desc"])
+		col.add_child(b)
+		var sub := "%d guns, hull %d, crew %d, carries %d, pace %d%s, upkeep %d, needs Shipyard %d" % [int(row["guns"]), int(row["hull"]), int(row["crew"]),
+			int(row["cap"]), int(row["speed"]) / 10, ", coastal" if int(row["coastal"]) != 0 else "", int(row["upkeep"]), int(row["yard"])]
+		col.add_child(Kit.label(sub if why == "" else "%s  -  %s" % [why, sub], Kit.FONT_SMALL, Kit.COL_DIM if why == "" or why == "not enough money" else Kit.COL_BAD, true))
+		v.add_child(col)
+	var fl_here: Array = []
+	for fl in CFleet.fleets(ps):
+		if CGrid.cheb(CFleet.cell(fl), CFleet.harbour(r)) <= CFleet.PORT_CELLS:
+			fl_here.append(fl)
+	if not fl_here.is_empty():
+		v.add_child(Kit.section("In the harbour", "ship"))
+		for fl in fl_here:
+			var fid := int(fl["id"])
+			var bt := Kit.button("%s fleet: %d ships, %d aboard" % [CData.FACTIONS[int(fl["f"])]["adj"], (fl["ships"] as Array).size(),
+				CFleet.carried_units(fl)], func():
+				_raise = {}
+				s.close_dialog()
+				s.select_fleet(fid))
+			bt.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			bt.add_theme_color_override("font_color", _fc(int(fl["f"])).lightened(0.5))
+			v.add_child(bt)
+	var tl := Kit.label("%s (treasury %s)." % ["%s: %s" % [picked_name, Kit.money(cost)] if picked != "" else "No ship chosen", Kit.money(money)],
+		Kit.FONT, Kit.COL_GOLD if picked != "" else Kit.COL_DIM, true)
+	tl.name = "ship_total"
+	v.add_child(tl)
+	s.show_dialog("Shipyard at %s" % CData.REGIONS[r]["city"], v,
+		[["Cancel", func():
+			_raise = {}
+			s.close_dialog()], ["Build ship", func():
+			var key2 := str(_raise.get("ship", ""))
+			_raise = {}
+			s.close_dialog()
+			if key2 != "" and s.add_order({"t": "ship", "r": r, "ship": key2}) == "":
+				s._t("campaign_input", {"what": "build_ship"})
+			s.select_region(r)]], 640)
+	var btns: Array = s.dialog_buttons.get_children()
+	if btns.size() >= 2:
+		(btns[0] as Button).name = "raise_cancel_dialog"
+		var okb := btns[btns.size() - 1] as Button
+		okb.name = "ship_confirm"
+		okb.disabled = picked == "" or CFleet.ship_check(ps, f, r, picked) != ""
+
+
+var _popup: Dictionary = {}  # the open popup: {kind, id, title}
+
+
+## After an order changed the plan: a Build / army Recruit popup still open is
+## drawn again (the Recruit popup's own buttons re-render it).
+func refresh_popup() -> void:
+	if _popup.is_empty() or not s.dialog.visible or s.dialog_title.text != str(_popup["title"]):
+		return
+	if str(_popup["kind"]) == "build":
+		show_build(int(_popup["id"]))
+	elif str(_popup["kind"]) == "army":
+		show_army_recruit(int(_popup["id"]))
+
+
+## The Build popup: the queue on top (Cancel), then a row per building chain.
+func show_build(r: int) -> void:
+	var ps: Dictionary = s.ps
+	var f: int = s.f
+	var rs: Dictionary = ps["regions"][r]
+	var bld: Array = rs["build"]
+	var planned := -1
+	for o in s.orders:
+		if str(o["t"]) == "build" and int(o["r"]) == r:
+			planned = int(o["chain"])
+	var v := Kit.vbox(6)
+	v.name = "build_panel"
+	v.add_child(Kit.label("Buildings %d of %d slots, treasury %s. Tap a row to queue it; one building at a time." % [
+		(rs["slots"] as Array).size(), CState.slot_count(r, int(rs["level"])), Kit.money(int(ps["factions"][f]["treasury"]))], Kit.FONT_SMALL, Kit.COL_DIM, true))
+	if not bld.is_empty():
+		var ch: Dictionary = CData.CHAINS[int(bld[0])]
+		var h := Kit.hbox(6)
+		var ql := Kit.icon_label("Building: %s %d, %d turn%s left" % [str(ch["name"]), int(bld[1]), int(bld[2]), "" if int(bld[2]) == 1 else "s"],
+			str(ch["key"]), Kit.FONT, Kit.COL_GOOD, true)
+		ql.name = "build_queue"
+		h.add_child(ql)
+		if planned == int(bld[0]):
+			var cb := Kit.icon_button("Cancel", "cancel", func(): s.remove_orders(func(o): return str(o["t"]) == "build" and int(o["r"]) == r), 90)
+			cb.name = "build_cancel"
+			h.add_child(cb)
+		v.add_child(h)
+	for c in CData.CHAINS.size():
+		var ch: Dictionary = CData.CHAINS[c]
+		var cur := CState.building(ps, r, c)
+		if c == CData.SHIPYARD and cur == 0 and CFleet.dock(r) < 0:
+			continue  # (not a port)
+		var info := CRules.build_info(ps, f, r, c)
+		var why := str(info.get("why", ""))
+		if cur == 0 and why == "no free slot":
+			continue
+		var building: bool = not bld.is_empty() and int(bld[0]) == c
+		var nxt := cur + 1
+		var head := "%s  %d -> %d" % [str(ch["name"]), cur, nxt] if cur < int(ch["levels"]) else "%s  %d (full)" % [str(ch["name"]), cur]
+		if building:
+			why = "being built"
+		var col := VBoxContainer.new()
+		col.add_theme_constant_override("separation", 0)
+		var txt := head
+		if why == "" or why == "being built":
+			if info.has("cost"):
+				txt += "    %d gold, %d turn%s" % [int(info["cost"]), int(info["turns"]), "" if int(info["turns"]) == 1 else "s"]
+		var b := Kit.icon_button(txt, str(ch["key"]), func(): s.add_order({"t": "build", "r": r, "chain": c}), 0)
+		b.name = "build_%s" % ch["key"]
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.disabled = why != ""
+		b.tooltip_text = str(ch["desc"])
+		col.add_child(b)
+		var desc := str(ch["desc"]).get_slice(";", 0)  # the first clause; the whole text is the tooltip
+		if why != "" and not building:
+			desc = "%s  -  %s" % [why, desc]
+		var dl := Kit.label(desc, Kit.FONT_SMALL, Kit.COL_BAD if why != "" and not building and cur < int(ch["levels"]) else Kit.COL_DIM, true)
+		col.add_child(dl)
+		v.add_child(col)
+	var title := "Build at %s" % CData.REGIONS[r]["city"]
+	_popup = {"kind": "build", "id": r, "title": title}
+	s.show_dialog(title, v, [["Close", Callable()]], 640)
+
+
+## The army's Recruit popup (the list that was in its card): recruit rows with
+## +, the units arriving at the end of the turn with X.
+func show_army_recruit(id: int) -> void:
+	var ps: Dictionary = s.ps
+	var a := CState.army(ps, id)
+	if a.is_empty():
+		return
+	var v := Kit.vbox(6)
+	v.name = "army_recruit_panel"
+	var arriving: Array = _army_recruits(id)
+	for k in arriving.size():
+		var ro: Dictionary = arriving[k]
+		var rty := UT.index_of(str(ro["unit"]))
+		var arow := Kit.UnitRow.new(rty, -1, _fc(int(a["f"])).darkened(0.35), "arriving")
+		arow.sub_text = "joins at the end of the turn"
+		arow.modulate = Color(1, 1, 1, 0.65)
+		arow.name = "arriving_%d" % k
+		arow.pressed.connect(func(): s.open_unit_page(rty, Callable(), ""))
+		var ah := Kit.hbox(4)
+		ah.add_child(arow)
+		var xb := Kit.icon_button("", "close", func(): s.remove_orders(func(o): return is_same(o, ro)), 44)
+		xb.name = "recruit_cancel_%d" % k
+		ah.add_child(xb)
+		v.add_child(ah)
+	_army_recruit(v, a)
+	var r := CRules.recruit_region(ps, a)
+	var title := "Recruit into the army at %s" % (CData.REGIONS[r]["city"] if r >= 0 else "?")
+	_popup = {"kind": "army", "id": id, "title": title}
+	s.show_dialog(title, v, [["Close", Callable()]], 640)

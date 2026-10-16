@@ -307,6 +307,25 @@ func _apply_debug_args() -> void:
 		elif a == "--no-bar":
 			no_bar = true
 			details_on_select = true
+		elif a.begins_with("--popup="):
+			# testing aid --popup=build:key | raise:key | ship:key | recruit:N (the command bar's popups; recruit: the player's Nth army)
+			var kind: String = v.get_slice(":", 0)
+			var arg: String = v.get_slice(":", 1)
+			if kind == "recruit":
+				var mine_p := CState.armies_of(ps, f)
+				if int(arg) < mine_p.size():
+					select_army(int(mine_p[int(arg)]["id"]))
+					panels.show_army_recruit(int(mine_p[int(arg)]["id"]))
+			else:
+				var rp := CData.region_index(arg)
+				select_region(rp)
+				match kind:
+					"build":
+						panels.show_build(rp)
+					"ship":
+						panels.show_raise(rp, "ship")
+					_:
+						panels.show_raise(rp)
 		elif a == "--details":
 			details_on_select = true  # testing aid: selections open the full side panel as before
 			open_details()
@@ -1604,6 +1623,7 @@ func _refresh() -> void:
 		else:
 			side.visible = false
 			_update_deselect()
+	panels.refresh_popup()
 
 
 ## The map key's rows follow the campaign's format; its samples use the
@@ -2601,9 +2621,6 @@ func fight_live(bid: int, create: bool, keep: bool = false) -> void:
 	var b := CState.battle(st, bid)
 	if b.is_empty() or battle != null or online == null:
 		return
-	if b.has("sea"):
-		fight(bid)  # (N3a) sea battles are fought by one player for now
-		return
 	var v: int = online.version
 	var bst: Dictionary = st
 	var live = online.battle_info(bid).get("live")
@@ -2620,6 +2637,9 @@ func fight_live(bid: int, create: bool, keep: bool = false) -> void:
 		return
 	var hs: Array = CRules.battle_humans(bst, b)
 	var hmin := int(hs.min()) if not hs.is_empty() else f
+	if b.has("sea"):
+		_fight_sea_live(bst, b, hs, hmin, v, create, keep)
+		return
 	_battle_built = CBattle.build(bst, b, hmin)
 	_battle_snap = BattleScreen.snapshot(bst, b, f)
 	_battle_id = bid
@@ -2647,6 +2667,49 @@ func fight_live(bid: int, create: bool, keep: bool = false) -> void:
 	_t("campaign_battle_start", {"turn": int(st["turn"]), "region": int(b["r"]), "units": (_battle_built["map"] as Array).size(),
 		"live": true, "create": create})
 	_enter_battle()
+
+
+## A live sea battle (milestone 5 at sea): the room and the lockstep as for
+## a land battle (CoopSession with CSeaBattle.build's controllers), fought
+## in game/sea_battle.gd.
+func _fight_sea_live(bst: Dictionary, b: Dictionary, hs: Array, hmin: int, v: int, create: bool, keep: bool) -> void:
+	var bid := int(b["id"])
+	_battle_built = CSeaBattle.build(bst, b, hmin)
+	_battle_snap = BattleScreen.snapshot(bst, b, f)
+	_battle_id = bid
+	var net := get_node_or_null("/root/Net")
+	var coop = CoopSession.new()
+	add_child(coop)
+	var gl: Array = CoopSession.guest_list(bst, hs, b)
+	coop.setup(net.api.base_url if net != null else "", online.id, online.token, online.f, _battle_built, hs, v, create, keep,
+		gl, CoopSession.guest_sides(bst, b, _battle_built, gl))
+	coop.failed.connect(func(code: String, text: String): _coop_failed(code, text))
+	var sb := SeaBattle.new()
+	sb.scenario = _battle_built["scenario"]
+	sb.seed_value = int(_battle_built["seed"])
+	sb.player_side = coop.side_of_player(online.f)
+	sb.campaign_mode = true
+	sb.title_text = BattleScreen.title(bst, b)
+	sb.coop = coop
+	sb.coop_region = sb.title_text
+	var facs := CRules.battle_factions(bst, b)
+	var names := ["", ""]
+	var cols: Array = []
+	for k in 2:
+		names[k] = "The %s fleet" % str(CData.FACTIONS[int(facs[k][0])]["adj"])
+		cols.append(CData.faction_color(int(facs[k][0])))
+	sb.side_names = names
+	sb.side_cols = cols
+	for u in sb.scenario["units"]:
+		var fc := CData.faction_color(int(u.get("f", 0)))
+		u["col"] = [fc.r, fc.g, fc.b]
+	battle = sb
+	battle.exit_requested.connect(_on_battle_exit)
+	close_dialog()
+	_set_visible(false)
+	_t("campaign_battle_start", {"turn": int(st["turn"]), "region": int(b["r"]), "units": (_battle_built["map"] as Array).size(),
+		"live": true, "create": create, "sea": 1})
+	get_tree().root.add_child(battle)
 
 
 func _coop_failed(code: String, text: String) -> void:
@@ -2678,6 +2741,9 @@ func _coop_failed(code: String, text: String) -> void:
 
 
 func _on_battle_exit() -> void:
+	if battle is SeaBattle and battle.coop != null:
+		_on_coop_exit()
+		return
 	if battle is SeaBattle:
 		var sres: Dictionary = battle.sim.result()
 		var sdec: bool = battle.is_decided()
@@ -2727,7 +2793,13 @@ func _on_coop_exit() -> void:
 			online.sync()
 		return
 	var outcome: Dictionary
-	if bool(r["decided"]):
+	if _battle_built.has("sea"):
+		# (Live co-op at sea) The last player leaving forfeits their side.
+		if bool(r["decided"]):
+			outcome = CSeaBattle.outcome_from_result(_battle_built, r["res"], "fought")
+		else:
+			outcome = CSeaBattle.outcome_from_result(_battle_built, r["res"], "forfeit", c.side_of_player(c.me))
+	elif bool(r["decided"]):
 		outcome = CBattle.outcome_from_result(_battle_built, r["res"], "fought")
 	else:
 		outcome = CBattle.outcome_forfeit(_battle_built, r["res"])

@@ -190,6 +190,40 @@ func _tap_button(name_part: String, what: String) -> bool:
 	return b != null
 
 
+## The command bar's buttons (the bar is off in these steps, its place is the
+## map taps': it is switched on only to look at a button or press it).
+func _bar_btn(name_part: String) -> Button:
+	cs.no_bar = false
+	cs._refresh_bar()
+	for b in cs.cmd_bar.find_children("*", "Button", true, false):
+		if str(b.name).contains(name_part):
+			return b
+	return null
+
+
+func _bar_done() -> void:
+	cs.no_bar = true
+	cs._refresh_bar()
+
+
+## The button exists and is not greyed.
+func _bar_has(name_part: String) -> bool:
+	var b := _bar_btn(name_part)
+	var ok := b != null and b.modulate.a >= 1.0
+	_bar_done()
+	return ok
+
+
+func _bar_press(name_part: String, what: String) -> bool:
+	var b := _bar_btn(name_part)
+	var ok := b != null and b.modulate.a >= 1.0
+	_check(ok, what + " (bar action %s)" % name_part)
+	if ok:
+		b.pressed.emit()
+	_bar_done()
+	return ok
+
+
 func _site(key: String) -> Vector2:
 	return cs.overlay.to_screen(Geo.site(CData.region_index(key)))
 
@@ -802,7 +836,7 @@ func _a_unit_keys(st: Dictionary) -> Array:
 
 
 func _a_row(k: int) -> Control:
-	return cs.side_box.find_child("unit_%d" % k, true, false)
+	return cs.cmd_bar.find_child("unit_card_%d" % k, true, false)
 
 
 func _a_mouse_btn(p: Vector2, pressed: bool) -> void:
@@ -834,27 +868,27 @@ func _a_setup() -> void:
 	a["units"] = [{"t": "heavy", "n": 100}, {"t": "spear", "n": 100}, {"t": "cav", "n": 50}, {"t": "light", "n": 100}]
 	cs._replan()
 	cs.close_side()
+	cs.no_bar = false  # the unit cards of the bar are dragged (switched off again after _a_resolve)
 	cs.select_army(g1)
 	_a_keys = _a_unit_keys(cs.ps)
 
 
 ## The unit rows in view, clear of the panel's auto-scroll edges.
 func _a_scroll() -> void:
-	var top := cs.side_scroll.get_global_rect().position.y
-	cs.side_scroll.scroll_vertical += int(_a_row(0).get_global_rect().position.y - top - 60.0)
+	pass
 
 
 var _a_sv := 0
 
 
 func _a_press() -> void:
-	_a_sv = cs.side_scroll.scroll_vertical
+	_a_sv = cs.cmd_bar._strip.scroll_horizontal
 	var r0 := _a_row(0)
 	var r3 := _a_row(3)
-	var vis := cs.side_scroll.get_global_rect()
+	var vis: Rect2 = cs.cmd_bar._strip.get_global_rect()
 	_check(r0 != null and r3 != null and vis.encloses(r0.get_global_rect()) and vis.encloses(r3.get_global_rect()),
-		"the army card shows its four unit rows")
-	_check(cs.side_box.find_child("unit_reorder", true, false) != null, "they can be dragged")
+		"the bar shows the army's four unit cards")
+	_check(cs.cmd_bar.find_child("unit_reorder", true, false) != null, "they can be dragged")
 	_a_p = r0.get_global_rect().get_center()
 	_a_t0 = Time.get_ticks_msec()
 	var e := InputEventScreenTouch.new()
@@ -870,10 +904,10 @@ func _a_wait() -> void:
 
 
 func _a_drag() -> void:
-	var rd = cs.side_box.find_child("unit_reorder", true, false)
-	_check(rd != null and rd.is_active(), "a long press lifts the unit row")
+	var rd = cs.cmd_bar.find_child("unit_reorder", true, false)
+	_check(rd != null and rd.is_active(), "a long press lifts the unit card")
 	var r2 := _a_row(2).get_global_rect()
-	var to := r2.get_center() + Vector2(0, r2.size.y * 0.3)
+	var to := r2.get_center() + Vector2(r2.size.x * 0.3, 0)
 	for k in range(1, 7):
 		var d := InputEventScreenDrag.new()
 		d.index = 0
@@ -894,15 +928,15 @@ func _a_up() -> void:
 func _a_check1() -> void:
 	var ar := _arrange_orders()
 	_check(ar.size() == 1 and int(ar[0]["army"]) == g1 and str(ar[0]["order"]) == str([1, 2, 0, 3]),
-		"long press and drag below the third row plans an arrange order: %s" % str(ar))
+		"long press and drag past the third card plans an arrange order: %s" % str(ar))
 	var want: Array = [_a_keys[1], _a_keys[2], _a_keys[0], _a_keys[3]]
 	_check(_a_unit_keys(cs.ps) == want, "the plan preview has the new order (%s)" % str(_a_unit_keys(cs.ps)))
 	var r0 = _a_row(0)
-	_check(r0 != null and r0.ty == UT.index_of(str(want[0])) and not cs.dialog.visible, "the card shows the rows in the new order, no page opened")
-	_check(cs.side_scroll.scroll_vertical == _a_sv, "the panel did not scroll (%d, was %d)" % [cs.side_scroll.scroll_vertical, _a_sv])
+	_check(r0 != null and r0.ty == UT.index_of(str(want[0])) and not cs.dialog.visible, "the bar shows the cards in the new order, no page opened")
+	_check(cs.cmd_bar._strip.scroll_horizontal == _a_sv, "the strip did not scroll (%d, was %d)" % [cs.cmd_bar._strip.scroll_horizontal, _a_sv])
 	# Desktop: drag the first row below the last.
 	var r3 := _a_row(3).get_global_rect()
-	_a_p = r3.get_center() + Vector2(0, r3.size.y * 0.3)
+	_a_p = r3.get_center() + Vector2(r3.size.x * 0.3, 0)
 	_a_mouse_drag(_a_row(0).get_global_rect().get_center(), _a_p)
 
 
@@ -935,7 +969,7 @@ func _a_undo2() -> void:
 
 func _a_mouse_top() -> void:
 	var r0 := _a_row(0).get_global_rect()
-	_a_p = r0.get_center() - Vector2(0, r0.size.y * 0.3)
+	_a_p = r0.get_center() - Vector2(r0.size.x * 0.3, 0)
 	_a_mouse_drag(_a_row(3).get_global_rect().get_center(), _a_p)
 
 
@@ -948,6 +982,7 @@ func _a_resolve() -> void:
 	_check(ar.size() == 1 and str(ar[0]["order"]) == str([3, 0, 1, 2]), "a mouse drag of the last row to the top: %s" % str(ar))
 	var res := CTurn.resolve_turn(cs.st, [CTurn.submission(cs.st, rome, cs.orders)])
 	_check(_a_unit_keys(res) == [_a_keys[3], _a_keys[0], _a_keys[1], _a_keys[2]], "the turn resolves with the units in the planned order (%s)" % str(_a_unit_keys(res)))
+	_bar_done()
 
 
 # ------------------------------------------- Deselect, dialog scroll ---
@@ -1707,9 +1742,9 @@ func _g_city_check() -> void:
 	var s := CGrid.site(CData.region_index("apulia"))
 	_check(int(o.get("x", -1)) == CGrid.cx(s) and int(o.get("y", -1)) == CGrid.cy(s) and int(o.get("tgt", -1)) < 0
 		and cs.move_kind(g1) == "siege", "a tap on Tarentum plans a siege on arrival: %s (%s)" % [str(o), cs.move_kind(g1)])
-	_check(_button("arrive_assault") != null and _button("cancel_move") != null, "the army card offers Assault on arrival and Cancel move")
+	_check(_bar_has("arrive_assault") and _bar_has("cancel_move"), "the bar offers Assault on arrival and Cancel move")
 	_check(cs.find_child("toast", true, false) == null, "no move-mode toast")
-	_tap_button("arrive_assault", "Assault on arrival")
+	_bar_press("arrive_assault", "Assault on arrival")
 
 
 func _g_arrive_assault() -> void:
@@ -1735,10 +1770,10 @@ func _g_inside_check() -> void:
 
 
 func _g_stance() -> void:
-	_check(_button("stance_0") != null and _button("stance_2") != null and _button("stance_3") != null and _button("stance_4") != null,
-		"the army card has the stance selector")
-	_check(_button("stance_inside") == null and _button("stance_field") == null, "no inside / field toggle")
-	_tap_button("stance_2", "Forced march")
+	_check(_bar_has("act_stance"), "the bar has the stance action")
+	_check(_bar_btn("stance_inside") == null and _bar_btn("stance_field") == null, "no inside / field toggle")
+	_bar_done()
+	_bar_press("act_stance", "Stance: March -> Forced march")
 
 
 func _g_stance_check() -> void:
@@ -1748,14 +1783,15 @@ func _g_stance_check() -> void:
 			n += 1
 	var a := CState.army(cs.ps, g0)
 	_check(n == 1 and CState.stance(a) == CData.ST_FORCED and CState.mp(a) > CData.MP6_FOOT, "forced march: the order, more points (%d)" % CState.mp(a))
-	_tap_button("stance_0", "back to Default")
+	for k in 3:  # Fortify, Raid, back to March
+		_bar_press("act_stance", "Stance again")
 	await process_frame
 	await process_frame
 	var n2 := 0
 	for o in cs.orders:
 		if str(o["t"]) == "stance":
 			n2 += 1
-	_check(n2 == 0, "back to Default drops the stance order")
+	_check(n2 == 0 and CState.stance(CState.army(cs.ps, g0)) == CData.ST_DEFAULT, "round to March drops the stance order")
 
 
 func _drag(from: Vector2, to: Vector2) -> void:
@@ -1817,9 +1853,11 @@ func _g_siege() -> void:
 	await process_frame
 	_check(cs.side_box.find_child("siege_panel", true, false) != null and cs.side_box.find_child("odds_bar", true, false) != null,
 		"the besieged city's panel shows the siege with the odds")
-	_check(_button("siege_assault") != null and _button("siege_continue") != null and _button("siege_withdraw") != null
-		and _button("siege_maintain") == null and _button("siege_sally") == null, "Assault / Continue siege / Withdraw (no Maintain, no Sally)")
-	_tap_button("siege_assault", "Assault")
+	_check(_bar_has("siege_assault") and _bar_has("siege_withdraw") and _bar_btn("siege_continue") == null
+		and _bar_btn("siege_maintain") == null and _bar_btn("siege_sally") == null, "Assault / Withdraw on the bar (Continue only once ordered; no Maintain, no Sally)")
+	_bar_done()
+	_check(cs.side_box.find_child("siege_assault", true, false) == null, "the siege panel has no order buttons")
+	_bar_press("siege_assault", "Assault")
 
 
 func _g_siege_assault() -> void:
@@ -1827,8 +1865,8 @@ func _g_siege_assault() -> void:
 	for o in cs.orders:
 		if str(o["t"]) == "assault" and int(o["r"]) == _corsica:
 			n += 1
-	_check(n == 1 and not _button("siege_continue").disabled, "the assault is ordered; Continue siege is offered")
-	_tap_button("siege_continue", "Continue siege")
+	_check(n == 1 and _bar_has("siege_continue"), "the assault is ordered; Continue siege is offered")
+	_bar_press("siege_continue", "Continue siege")
 
 
 func _g_siege_continue() -> void:
@@ -1837,7 +1875,7 @@ func _g_siege_continue() -> void:
 		if str(o["t"]) == "assault":
 			n += 1
 	_check(n == 0, "Continue siege drops the assault")
-	_tap_button("siege_withdraw", "Withdraw")
+	_bar_press("siege_withdraw", "Withdraw")
 
 
 func _g_siege_withdraw() -> void:
@@ -1920,12 +1958,9 @@ func _m_setup() -> void:
 
 
 func _m_card() -> void:
-	var mb := _button("merge_into_%d" % g1)
-	_check(mb != null and not mb.disabled and mb.text.begins_with("Merge into army"), "the army card offers Merge into the army next to it")
-	var row = cs.side_box.find_child("together_row", true, false)
-	var orders_lbl = cs.side_box.find_child("army_points", true, false)
-	_check(row != null and (orders_lbl == null or (row as Control).get_index() < 3), "near the top of the card")
-	_tap_button("exchange_units", "Exchange units")
+	_check(_bar_has("act_merge"), "the bar offers Merge into the army next to it")
+	_check(cs.side_box.find_child("exchange_units", true, false) == null and cs.side_box.find_child("together_row", true, false) == null, "the army panel no longer has the buttons")
+	_bar_press("act_exchange", "Exchange units")
 
 
 func _m_xc_open() -> void:
@@ -2185,12 +2220,14 @@ func _r_setup() -> void:
 
 
 func _r_card() -> void:
-	var sec = cs.side_box.find_child("recruit_section", true, false)
-	var sl = cs.side_box.find_child("recruit_slots", true, false)
+	_bar_press("act_recruit", "Recruit (into the army)")
+	var sec = cs.dialog_box.find_child("recruit_section", true, false)
+	var sl = cs.dialog_box.find_child("recruit_slots", true, false)
 	_check(sec != null and sl != null and (sl as Label).text.begins_with("0 of 3 recruits here this turn"),
-		"the card of an army at Roma has the recruit list (%s)" % ((sl as Label).text if sl else "none"))
+		"the army's Recruit popup has the recruit list (%s)" % ((sl as Label).text if sl else "none"))
+	_check(cs.side_box.find_child("recruit_section", true, false) == null, "the army panel has no recruit list")
 	var plus: Button = null
-	for b in cs.side_box.find_children("recruit_*", "Button", true, false):
+	for b in cs.dialog_box.find_children("recruit_*", "Button", true, false):
 		if not (b as Button).disabled and not str(b.name).begins_with("recruit_cancel"):
 			plus = b
 			break
@@ -2204,12 +2241,16 @@ func _r_check() -> void:
 	_check(rec.size() == 1 and int(rec[0].get("army", -1)) == g0 and int(rec[0]["r"]) == _lat, "+ plans a recruit into this army: %s" % str(rec))
 	var cnt = cs.side_box.find_child("army_count", true, false)
 	_check(cnt != null and (cnt as Label).text.contains("(+1 arriving)"), "the card counts it as arriving (%s)" % ((cnt as Label).text if cnt else ""))
-	_check(cs.side_box.find_child("arriving_0", true, false) != null and cs.side_box.find_child("recruit_cancel_0", true, false) != null,
-		"the planned recruit shows greyed in the unit list with an X")
-	var sl = cs.side_box.find_child("recruit_slots", true, false)
+	_check(cs.dialog_box.find_child("arriving_0", true, false) != null and cs.dialog_box.find_child("recruit_cancel_0", true, false) != null,
+		"the planned recruit shows greyed in the popup with an X")
+	_bar_btn("x")
+	_check(cs.cmd_bar.find_child("arriving_card_0", true, false) != null, "and as a dimmed card on the bar")
+	_bar_done()
+	var sl = cs.dialog_box.find_child("recruit_slots", true, false)
 	_check(sl != null and (sl as Label).text.begins_with("1 of 3"), "the slot counter: %s" % ((sl as Label).text if sl else ""))
 	_check(int(cs.ps["factions"][rome]["treasury"]) < int(cs.st["factions"][rome]["treasury"]), "the price comes off the previewed treasury")
 	# Plan a march for it: a toast asks first.
+	cs.close_dialog()
 	_tap(_cell_screen(CState.field_cell(_lat)))
 
 
@@ -2243,17 +2284,22 @@ func _r_cancel_march() -> void:
 func _r_marching() -> void:
 	cs.select_army(g0)
 	await process_frame
-	var ml = cs.side_box.find_child("recruit_marching", true, false)
-	_check(ml != null and cs.side_box.find_child("recruit_heavy", true, false) == null and cs.side_box.find_child("recruit_row_heavy", true, false) == null,
+	_check(_bar_btn("act_recruit") != null and _bar_btn("act_recruit").modulate.a < 1.0, "with a march planned the bar's Recruit is greyed")
+	_bar_done()
+	cs.panels.show_army_recruit(g0)
+	var ml = cs.dialog_box.find_child("recruit_marching", true, false)
+	_check(ml != null and cs.dialog_box.find_child("recruit_heavy", true, false) == null and cs.dialog_box.find_child("recruit_row_heavy", true, false) == null,
 		"with a march planned the recruit list is off: This army is marching this turn")
+	cs.close_dialog()
 	cs.orders = []
 	cs._replan()
 	cs.select_army(g0)
 
 
 func _r_again() -> void:
+	cs.panels.show_army_recruit(g0)
 	var plus: Button = null
-	for b in cs.side_box.find_children("recruit_*", "Button", true, false):
+	for b in cs.dialog_box.find_children("recruit_*", "Button", true, false):
 		if not (b as Button).disabled and not str(b.name).begins_with("recruit_cancel"):
 			plus = b
 			break
@@ -2263,13 +2309,14 @@ func _r_again() -> void:
 
 func _r_x() -> void:
 	_check(_recruit_orders().size() == 1, "recruit planned again")
-	var x = cs.side_box.find_child("recruit_cancel_0", true, false)
+	var x = cs.dialog_box.find_child("recruit_cancel_0", true, false)
 	if x != null:
 		_tap_control(x)
 
 
 func _r_x_check() -> void:
-	_check(_recruit_orders().is_empty() and cs.side_box.find_child("arriving_0", true, false) == null, "its X takes the planned recruit back")
+	_check(_recruit_orders().is_empty() and cs.dialog_box.find_child("arriving_0", true, false) == null, "its X takes the planned recruit back")
+	cs.close_dialog()
 
 
 func _r_region() -> void:
@@ -2279,12 +2326,10 @@ func _r_region() -> void:
 	await process_frame
 	_check(cs.side_box.find_child("recruit_heavy", true, false) == null and cs.side_box.find_child("recruit_row_heavy", true, false) == null,
 		"the region panel has no recruit list")
-	_check(cs.side_box.find_child("garrison_section", true, false) != null and cs.side_box.find_child("trains_section", true, false) != null,
-		"it shows the garrison and what the city trains")
-	var rb := _button("raise_army")
-	_check(rb != null and not rb.disabled, "Raise new army")
-	if rb != null:
-		_tap_control(rb)
+	_check(cs.side_box.find_child("garrison_section", true, false) != null and cs.side_box.find_child("trains_section", true, false) != null
+		and cs.side_box.find_child("raise_army", true, false) == null and cs.side_box.find_child("build_farm", true, false) == null,
+		"it shows what the city trains, not the garrison rows, recruit or build lists")
+	_bar_press("act_recruit", "Recruit (a new army)")
 
 
 var _raise_key := ""
@@ -2321,12 +2366,14 @@ func _r_raise_check() -> void:
 	var rec := _recruit_orders()
 	_check(rec.size() == 2 and int(rec[0].get("new", 0)) == 1 and int(rec[1].get("new", 0)) == 1 and not cs.dialog.visible,
 		"Raise army adds two new-army recruit orders: %s" % str(rec))
-	var pl = cs.side_box.find_child("raise_planned", true, false)
-	_check(pl != null and (pl as Label).text.begins_with("Raising a new army: 2 units"), "the region panel shows it: %s" % ((pl as Label).text if pl else ""))
-	var x = cs.side_box.find_child("raise_cancel", true, false)
+	cs.panels.show_raise(_lat)
+	var pl = cs.dialog_box.find_child("raise_planned", true, false)
+	_check(pl != null and (pl as Label).text.begins_with("Raising a new army: 2 units"), "the picker shows it: %s" % ((pl as Label).text if pl else ""))
+	var x = cs.dialog_box.find_child("raise_cancel", true, false)
 	if x != null:
 		_tap_control(x)
 
 
 func _r_raise_x() -> void:
-	_check(_recruit_orders().is_empty() and cs.side_box.find_child("raise_planned", true, false) == null, "its X cancels the new army")
+	_check(_recruit_orders().is_empty() and cs.dialog_box.find_child("raise_planned", true, false) == null, "its X cancels the new army")
+	cs.close_dialog()
