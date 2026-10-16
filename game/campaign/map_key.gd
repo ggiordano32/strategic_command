@@ -99,6 +99,15 @@ func _init() -> void:
 	scroll.add_child(list)
 
 
+## Raise the two bottom-left buttons by px (the overworld's command bar sits
+## under them while something is selected).
+func set_lift(px: float) -> void:
+	button.offset_bottom = -MARGIN - px
+	button.offset_top = -MARGIN - BUTTON_H - px
+	view_button.offset_bottom = -MARGIN - BUTTON_H - 4.0 - px
+	view_button.offset_top = -MARGIN - BUTTON_H - 4.0 - 40.0 - px
+
+
 func _toggle_view() -> void:
 	MapView.set_terrain_view(not MapView.terrain_view)
 	_refresh_view_buttons()

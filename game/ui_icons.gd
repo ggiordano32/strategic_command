@@ -30,6 +30,7 @@ const NAMES: Array[String] = [
 	"copy", "export", "plus", "minus",
 	"tr_siege", "tr_shock", "tr_anti_cav", "tr_fearsome", "tr_ap", "tr_long_range", "tr_skirmish", "tr_fire", "tr_beast", "tr_fast",
 	"cl_foot", "cl_spear", "cl_horse", "cl_missile", "cl_beast", "cl_engine",
+	"details", "embark", "more",
 ]
 const STROKE := 0.16  # line weight, in half-sizes (unit_icons: 0.17 of its glyph radius)
 const FILL := 0.9     # glyph extent in the cell (5% padding each side)
@@ -763,5 +764,16 @@ static func _glyph(icon: String, c: Vector2, s: float) -> void:
 				var a := TAU * k / 8.0
 				_l(cos(a) * 0.62, sin(a) * 0.62, cos(a) * 0.9, sin(a) * 0.9, 1.5)
 			_dot(0.0, 0.0, 0.12)
+		"details":  # a card with text lines (the full panel)
+			_pl([-0.8, -0.85, 0.8, -0.85, 0.8, 0.85, -0.8, 0.85], true)
+			_l(-0.45, -0.4, 0.45, -0.4, 0.8)
+			_l(-0.45, 0.0, 0.45, 0.0, 0.8)
+			_l(-0.45, 0.4, 0.1, 0.4, 0.8)
+		"embark":  # a hull with an arrow dropping in
+			_pl([-0.85, 0.3, 0.85, 0.3, 0.55, 0.78, -0.55, 0.78], true)
+			_arrow(0.0, -0.9, 0.0, 0.05, 0.45)
+		"more":  # three dots
+			for x in [-0.6, 0.0, 0.6]:
+				_dot(x, 0.0, 0.2)
 		_:
 			_ring(0.0, 0.0, 0.5)

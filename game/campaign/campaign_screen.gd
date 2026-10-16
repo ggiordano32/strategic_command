@@ -62,6 +62,7 @@ const CFleet := preload("res://campaign/cfleet.gd")
 const MapKey := preload("res://game/campaign/map_key.gd")
 const UiScale := preload("res://game/ui_scale.gd")
 const StoryView := preload("res://game/campaign/story_view.gd")
+const CommandBar := preload("res://game/campaign/command_bar.gd")
 
 const ZOOM_MIN := 0.2
 const ZOOM_MAX := 2.5
@@ -99,6 +100,12 @@ var top_box: HBoxContainer
 var side: PanelContainer
 var side_box: VBoxContainer
 var side_scroll: ScrollContainer
+var cmd_bar: CommandBar        # the selection as cards along the bottom (command_bar.gd)
+## Testing aid (--details; the input tests): a selection opens the full side
+## panel as it did before the command bar.
+var details_on_select := false
+var no_bar := false            # testing aid --no-bar: the old layout (side panel only)
+var _force_side := false       # open_details is building the side panel
 var end_button: Button
 var battles_button: Button
 var hint: Label
@@ -296,8 +303,16 @@ func _apply_debug_args() -> void:
 		elif a.begins_with("--dialog-scroll="):
 			await get_tree().create_timer(1.5).timeout
 			dialog_scroll.scroll_vertical = int(v)  # testing aid
+		elif a == "--no-bar":
+			no_bar = true
+			details_on_select = true
+		elif a == "--details":
+			details_on_select = true  # testing aid: selections open the full side panel as before
+			open_details()
 		elif a.begins_with("--side-scroll="):
 			await get_tree().create_timer(1.0).timeout
+			if not side.visible:
+				open_details()
 			side_scroll.scroll_vertical = int(v)  # testing aid
 		elif a == "--debug-xform":
 			print("world ", world.get_global_transform_with_canvas(), " overlay ", overlay.get_global_transform_with_canvas(), " vp ", _vp(), " zoom ", zoom, " off ", offset, " roma ", Geo.site(0), " -> ", overlay.to_screen(Geo.site(0)))
@@ -643,7 +658,7 @@ func _show_handover() -> void:
 	box.alignment = BoxContainer.ALIGNMENT_CENTER
 	var sw := Kit.hbox(10)
 	sw.alignment = BoxContainer.ALIGNMENT_CENTER
-	sw.add_child(Kit.swatch(CData.faction_color(f), 26))
+	sw.add_child(Kit.faction_mark(f, 30))
 	sw.add_child(Kit.label("%s's turn" % CData.faction_name(f), 26))
 	box.add_child(sw)
 	box.add_child(Kit.label("Pass the device to the %s player. %s." % [CData.FACTIONS[f]["adj"], CData.date_text(int(st["turn"]))], 16, Kit.COL_DIM))
@@ -1162,7 +1177,10 @@ func _place_toast() -> void:
 	if _toast == null or not is_instance_valid(_toast):
 		return
 	_toast.reset_size()
-	_toast.position = Vector2(8, _vp().y - _toast.size.y - 64)
+	var base := _vp().y - 64.0
+	if cmd_bar != null and cmd_bar.shown:
+		base -= cmd_bar.height() + 4.0
+	_toast.position = Vector2(8, base - _toast.size.y)
 
 
 func _flash(text: String) -> void:
@@ -1255,6 +1273,9 @@ func _build_ui() -> void:
 	side_box = Kit.vbox(6)
 	side_box.size_flags_horizontal = Control.SIZE_FILL
 	side_scroll.add_child(side_box)
+	cmd_bar = CommandBar.new(self)
+	ui.add_child(cmd_bar)
+	get_viewport().size_changed.connect(_refresh_bar)
 	# Bottom: hint (left), End turn (right).
 	hint = Kit.label("", Kit.FONT_SMALL, Color(1, 1, 1), true)
 	hint.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
@@ -1420,6 +1441,11 @@ func dialog_open() -> bool:
 
 
 func show_side(content_builder: Callable) -> void:
+	# The command bar shows the selection; the side panel opens on demand
+	# (Details) and then follows the selection.
+	if _bar_on() and not side.visible and not _force_side and not details_on_select:
+		_refresh_bar()
+		return
 	# Rebuilt for the same selection: keep the scroll position.
 	var key := ("a%d" % sel_army) if sel_army >= 0 else (("f%d" % sel_fleet) if sel_fleet >= 0 else ("r%d" % sel_region))
 	var keep := side_scroll.scroll_vertical if side.visible and key == _side_key else 0
@@ -1439,6 +1465,7 @@ func show_side(content_builder: Callable) -> void:
 	side.visible = true
 	_restore_scroll(side_scroll, keep, _side_gen, false)
 	_update_deselect()
+	_refresh_bar()
 
 
 ## A scroll position back once the rebuilt content is laid out (clamped by
@@ -1453,6 +1480,68 @@ func _restore_scroll(sc: ScrollContainer, v: int, gen: int, dlg: bool) -> void:
 	sc.scroll_vertical = v
 
 
+## The command bar is the selection's view (a version 6 campaign).
+func _bar_on() -> bool:
+	return cmd_bar != null and _g() and not no_bar
+
+
+## Rebuild the command bar for the selection and lay the bottom out round it.
+func _refresh_bar() -> void:
+	if cmd_bar == null or map_key == null or hint == null:
+		return
+	if ps.is_empty() or not _bar_on():
+		cmd_bar.shown = false
+		cmd_bar.visible = false
+	else:
+		cmd_bar.refresh()
+	_layout_bottom()
+
+
+## The bar is full width at the bottom: the hint line, the map key's buttons,
+## the End turn row and the side panel's foot rise above it.
+func _layout_bottom() -> void:
+	var lift := cmd_bar.height() + 4.0 if cmd_bar.shown else 0.0   # the bottom corners rise above the bar
+	hint.offset_bottom = -12.0 - lift
+	bottom_bar.offset_bottom = -8.0 - lift
+	side.offset_bottom = -62.0 - lift
+	map_key.set_lift(lift)
+	_place_key()
+	_place_toast()
+
+
+## Open the full panel for the selection (the old card), optionally scrolled
+## to the section whose heading starts with `focus`.
+func open_details(focus: String = "") -> void:
+	_force_side = true
+	if sel_army >= 0 and not CState.army(ps, sel_army).is_empty():
+		show_side(func(box): panels.army_panel(box, sel_army))
+	elif sel_fleet >= 0 and not CFleet.fleet(ps, sel_fleet).is_empty():
+		show_side(func(box): panels.fleet_panel(box, sel_fleet))
+	elif sel_region >= 0:
+		show_side(func(box): panels.region_panel(box, sel_region))
+	_force_side = false
+	if focus != "":
+		_scroll_side_to.call_deferred(focus)
+
+
+func _scroll_side_to(focus: String) -> void:
+	await get_tree().process_frame
+	for l in side_box.find_children("*", "Label", true, false):
+		if (l as Label).text.begins_with(focus):
+			side_scroll.ensure_control_visible(l)
+			return
+
+
+## Hide the full panel, keep the selection (its Close button).
+func close_details() -> void:
+	if _bar_on() and cmd_bar.shown and not details_on_select:
+		side.visible = false
+		_update_deselect()
+		_refresh_bar()
+	else:
+		close_side()
+
+
 func close_side() -> void:
 	side.visible = false
 	sel_army = -1
@@ -1461,6 +1550,7 @@ func close_side() -> void:
 	sel_region = -1
 	_refresh_map()
 	_update_deselect()
+	_refresh_bar()
 
 
 ## Deselect button: clears the selected army (ours or an enemy's), region
@@ -1541,6 +1631,8 @@ func _place_key() -> void:
 		return
 	var vp := _vp()
 	var bottom := vp.y - MapKey.MARGIN - MapKey.BUTTON_H
+	if cmd_bar != null and cmd_bar.shown:
+		bottom -= cmd_bar.height() + 4.0
 	if hint.text != "" and hint.visible:
 		bottom = minf(bottom, hint.get_global_rect().position.y)
 	map_key.place(TOP_H + 6.0, bottom - 6.0, vp.x)
@@ -1603,6 +1695,7 @@ func _update_hint() -> void:
 
 
 func _refresh_map() -> void:
+	_refresh_bar()
 	map_view.state = ps
 	overlay.state = ps
 	_refresh_key()

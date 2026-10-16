@@ -53,7 +53,7 @@ func _close_row(box: Container, title: String, col: Color) -> void:
 	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	h.add_child(t)
-	var b := Kit.icon_button("Close", "close", func(): s.close_side(), 70)
+	var b := Kit.icon_button("Close", "close", func(): s.close_details(), 70)
 	b.name = "side_close"
 	h.add_child(b)
 	box.add_child(h)
@@ -2238,7 +2238,7 @@ func show_diplomacy(focus: int = -1) -> void:
 		row.name = "dip_%s" % CData.FACTIONS[g]["key"]
 		if g == focus:
 			focus_row = row
-		row.add_child(Kit.swatch(_fc(g), 18))
+		row.add_child(Kit.faction_mark(g, 20))
 		var them := _fstrength(ps, g)
 		var desc := "%s - %s. %d regions, %s army." % [CData.faction_name(g), CState.DIP_NAMES[d],
 			CState.regions_of(ps, g).size(), _compare(mine, them)]
@@ -3104,7 +3104,7 @@ func show_objectives() -> void:
 		var r := CData.region_index(key)
 		var o := CState.owner(st, r)
 		var h := Kit.hbox(6)
-		h.add_child(Kit.swatch(_fc(o), 16))
+		h.add_child(Kit.faction_mark(o, 18))
 		h.add_child(Kit.label("%s - %s" % [CData.REGIONS[r]["city"], CData.faction_name(o)], Kit.FONT,
 			Kit.COL_GOOD if CState.is_human(st, o) else Color.WHITE))
 		box.add_child(h)

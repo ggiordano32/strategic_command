@@ -124,6 +124,8 @@ func _campaign_lists() -> void:
 	var st := CState.new_campaign("Touch", 5, [rome])
 	st["factions"][rome]["treasury"] = 100000
 	var cs := CampaignScreen.new()
+	cs.details_on_select = true  # these checks scroll the side panel's card
+	cs.no_bar = true
 	cs.open({"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}, "touch_test")
 	root.add_child(cs)
 	await _frames(5)

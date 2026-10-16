@@ -76,6 +76,7 @@ const UT := preload("res://sim/unit_types.gd")
 var cs: CampaignScreen
 var frame := 0
 var wait := 0
+var hold := false
 var failures := 0
 var steps: Array[Callable] = []
 var rome := CData.faction_index("rome")
@@ -104,7 +105,7 @@ func _initialize() -> void:
 		_s_march_tap, _s_march_check, _s_stance_inside, _s_stance_check, _s_stance_field, _s_cancel_tap, _s_cancel_check,
 		_s_stored_setup, _s_stored_stop, _s_stored_check, _s_raid_setup, _s_raid_siege, _s_raid_check, _s_field_battle, _s_field_check,
 		_s_controls, _s_controls_check, _k5_check, _s_done5,
-		_g_setup, _g_intro, _k_open, _k_check, _k_tap_map, _k_reopen, _k_closed, _g_select, _g_tap_land, _g_check_land, _g_cancel, _g_undo, _g_attack, _g_attack_check,
+		_g_setup, _g_intro, _k_open, _k_check, _k_tap_map, _k_reopen, _k_closed, _g_select, _g_bar, _g_tap_land, _g_check_land, _g_cancel, _g_undo, _g_attack, _g_attack_check,
 		_g_city, _g_city_check, _g_arrive_assault, _g_inside, _g_inside_check, _g_stance, _g_stance_check,
 		_g_drag_army, _g_drag_check, _g_pan, _g_pan_check, _g_siege, _g_siege_assault, _g_siege_continue, _g_siege_withdraw,
 		_g_siege_done, _g_end_turn, _g_summary, _g_replay, _g_replay_check,
@@ -130,6 +131,8 @@ func _process(_d: float) -> bool:
 	if wait > 0:
 		wait -= 1
 		return false
+	if hold:
+		return false  # a step that awaits (the command bar's) is still running
 	if steps.is_empty():
 		return false
 	var s: Callable = steps.pop_front()
@@ -1542,6 +1545,8 @@ func _g_setup() -> void:
 	var st := CState.new_campaign("Overworld", 3, [rome])
 	_check(CState.grid_on(st), "a new campaign is on the overworld grid (format %d)" % int(st["version"]))
 	cs = CampaignScreen.new()
+	cs.details_on_select = true  # these steps read the side panel and tap the map under where the bar would be;
+	cs.no_bar = true             # the command bar has its own checks (_g_bar)
 	cs.open({"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}, "input_test6")
 	root.add_child(cs)
 	_key_off()
@@ -1566,6 +1571,78 @@ func _g_select() -> void:
 	_check(cs.sel_army == g0 and cs.side.visible, "tapping the banner selects the army")
 	_check(not cs.map_view.reach_loops.is_empty(), "its reach this turn is drawn (%d outline(s))" % cs.map_view.reach_loops.size())
 	_check(not cs.overlay.zones.is_empty(), "the zones of the enemy armies are drawn (%d)" % cs.overlay.zones.size())
+
+
+## The command bar (view only): shown for a selection with the side panel
+## closed, a card per unit, the actions go through the order list, Details
+## opens the old panel. Leaves the selection and the plan as it found them.
+func _g_bar() -> void:
+	hold = true
+	cs.no_bar = false
+	cs.details_on_select = false
+	cs.close_side()
+	await process_frame
+	_check(not cs.cmd_bar.shown and not cs.side.visible, "nothing selected: no command bar")
+	cs.select_army(g0)
+	await process_frame
+	await process_frame
+	var n_units := CState.unit_count(CState.army(cs.ps, g0))
+	_check(cs.cmd_bar.shown and cs.cmd_bar.visible and not cs.side.visible, "an army selected: the command bar shows, the side panel stays closed")
+	_check(cs.cmd_bar.find_children("unit_card_*", "Control", true, false).size() == n_units, "one unit card per unit (%d)" % n_units)
+	_check(cs.cmd_bar.find_child("leader_card", true, false) != null and cs.cmd_bar.find_child("act_details", true, false) != null, "the leader card and Details")
+	var sp: Button = cs.cmd_bar.find_child("act_split", true, false)
+	_check(sp != null and sp.modulate.a < 1.0, "Split is greyed until units are picked")
+	var n0 := cs.orders.size()
+	var st_b: Button = cs.cmd_bar.find_child("act_stance", true, false)
+	st_b.pressed.emit()
+	await process_frame
+	await process_frame
+	var forced := false
+	for o in cs.orders:
+		if str(o["t"]) == "stance" and int(o["a"]) == g0 and int(o["s"]) == CData.ST_FORCED:
+			forced = true
+	_check(forced and cs.orders.size() == n0 + 1, "the Stance action cycles to Forced march through an order")
+	cs.undo()
+	await process_frame
+	var cards := cs.cmd_bar.find_children("unit_card_*", "Control", true, false)
+	cards[0].pressed.emit()
+	await process_frame
+	await process_frame
+	cards = cs.cmd_bar.find_children("unit_card_*", "Control", true, false)
+	_check(cards[0].selected and not cs.side.visible, "a tap on a unit card picks it (the side panel stays closed)")
+	sp = cs.cmd_bar.find_child("act_split", true, false)
+	_check(sp != null and sp.modulate.a >= 1.0, "Split is on once a unit is picked")
+	sp.pressed.emit()
+	await process_frame
+	await process_frame
+	var split_o := false
+	for o in cs.orders:
+		if str(o["t"]) == "split" and int(o["army"]) == g0 and (o["units"] as Array) == [0]:
+			split_o = true
+	_check(split_o, "Split adds the split order for the picked unit")
+	cs.undo()
+	cs.select_army(g0)
+	await process_frame
+	cs.cmd_bar.find_child("act_details", true, false).pressed.emit()
+	await process_frame
+	await process_frame
+	_check(cs.side.visible and cs.side_box.find_child("army_count", true, false) != null, "Details opens the full army panel in the side panel")
+	cs.select_region(CData.region_index("latium"))
+	await process_frame
+	await process_frame
+	_check(cs.cmd_bar.shown and cs.cmd_bar.find_child("act_city_map", true, false) != null and cs.cmd_bar.find_child("garrison_card_0", true, false) != null,
+		"a city selected: its card, garrison cards and City map")
+	cs.cmd_bar.find_child("act_city_map", true, false).pressed.emit()
+	await process_frame
+	_check(cs.dialog.visible, "City map opens the battle map dialog")
+	cs.close_dialog()
+	cs.details_on_select = true
+	cs.no_bar = true
+	cs._refresh_bar()
+	cs.select_army(g0)
+	await process_frame
+	await process_frame
+	hold = false
 
 
 func _g_tap_land() -> void:
