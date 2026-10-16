@@ -1354,11 +1354,53 @@ cut of the separation, four neighbours every other tick, cost +8 %, up to
 +19 %). Setup unchanged (the fields build in play); `restore()` +50-80 ms
 a generation (two at most); snapshots one byte a man bigger (`s_wf`).
 Open: phase B (clearance: men stand
-inside the drawn houses 3.4 %), phase C (fights at obstacles 4-5 %, town
+inside the drawn houses 3.4 %; done, next paragraph), phase C (fights at obstacles 4-5 %, town
 3 %); landform-only maps keep the unit flee vector (no fields); huddled
 routers are drawn as routing (no own icon); a scaled-down campaign
 battle counts men who gave up as remaining (`CBattle.outcome_from_result`
 scales killed / routed / withdrawn only; unscaled battles lose them).
+
+**Pathing pass 2, phase B (building clearance), as built 2026-10-15 (not
+committed; DESIGN "Clearance off the houses").** A static 1 m clearance
+field from the drawn house outlines (exact integer distance to the nearest
+one or two buildings per cell, their rectangles / turned quads / round
+houses measured exactly at a man's position; built at setup in 6-45 ms,
+not in snapshots, nothing new hashed). Men in all four movement paths are
+put out to 0.5 m off a drawn face after the nav test (exactly onto that
+line: no bounce; a standing unit's man pushed back square on takes the
+slide memory); places nearer than 0.5 m are cut and flowed, flow and
+huddle spots nearer than 0.8 m stay empty, the rest are put out to 0.8 m;
+units re-lay their places after the first tick on such maps and an anchor
+dropped in a house moves to open ground; `_squeeze` measures streets to
+0.5 m off the faces; street graph edges cost 4 m more per metre they pass
+nearer than 3 m to a house. Walls, towers and rocks are not in the field.
+Probe (`tests/pathing_probe.gd -- --phase=A`, seed 7, same 10 maps),
+before -> after:
+
+| metric | before (phase A) | after (phase B) | threshold |
+|---|---|---|---|
+| inside drawn footprint / < 0.3 m | 3.35 / 1.66 % | 0.00 / 0.07 % (punic 0.01 / 0.42 %) | <= 0.2 % / < 0.5 % |
+| rout jitter, worst category | 0.3 % (town) | 0.3 % (town) | <= 5 % |
+| routing time stationary | 0.0 % | 0.0 % | <= 5 % |
+| stuck > 30 s (longest ready / router) | 0 (26 / 0 s) | 0 (25 / 0 s) | 0 |
+| fight near obstacles / in town jitter | 4.8 / 2.8 % | 4.7 / 3.1 % | <= 3 % (phase C) |
+| idle in town / on walls rev/step | 4.6 / 8.6 % | 4.8 / 6.8 % | |
+| move in town jitter | 1.9 % | 2.1 % | |
+
+Cost (desktop): setup +6-45 ms (bench_4000_city 205 -> 232 ms); the 8
+sieges' tick means summed 11.09 -> 12.23 ms at seed 7 (+10 %; polis 1.65 ->
+1.97, punic 1.67 -> 2.10) and +6 % over seeds 1-4 (3,000 ticks; village
++14 %, city -8 %): the battles differ (units settle and fight in other
+places); the pushes themselves cost 0.03-0.09 ms a tick, `_squeeze`
+0.01 ms. bench_4000_city 4.07 -> 3.89 ms a tick (march 2.91 -> 3.25,
+engaged 5.09 -> 4.32; another battle); bench_4000_hills / battle_2000
+unchanged (no buildings). Goldens: the four flat digests, the campaign_sim
+hashes (cdc1d805 32b83031 23f9ed4f 3237d82d a42fc685 b6fe6c2e) and every
+determinism pin unchanged (no re-pins). Open: walls, towers and rocks are
+not in the field (men still touch a wall's foot); fights near obstacles
+4.7 % and in town 3.1 % (phase C); punic 0.42 % of men within 0.3 m (a
+push refused where the open ground ends); the tick cost of settlement
+battles sits at the +10 % budget.
 
 **Caribbean plan agreed 2026-10-14 (DESIGN "The Caribbean pack: ships,
 pirates, cover, asymmetry"):** sea battles real time with the wind;

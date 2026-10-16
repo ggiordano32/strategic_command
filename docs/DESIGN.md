@@ -2491,6 +2491,78 @@ set pieces `tests/determinism_test.gd --only=rout`.
   each identical on repeat and across a snapshot taken while a generation
   builds (in rout-gate after a gate broke).
 
+### Clearance off the houses (as built, pathing phase B, 2026-10-15)
+
+Why: men stood inside the drawn houses (docs/PATHING_SPEC.md R6: houses
+are rasterised to the 2 m nav grid by cell centre, so a drawn outline
+overhangs its blocked cells by up to about 1 m, more on turned quads; the
+men's only test was "cell passable"): 3.35 % of the probe's men near a
+house stood inside its footprint (polis 7.6 % in the spec's survey), 1.66 %
+more within 0.3 m of a face. The nav grid, the street graph's nodes and
+every golden stay as they were (spec B3: no conservative 2 m blocking).
+Code: `sim/battle_sim.gd` (section "clearance off the houses": `_clr_build`,
+`_clr_exact`, `_clr_near`, `_clr_push`, `_clr_places`, `_clr_ok`,
+`_near_cl`, `_clr_graph`, `clr_at`; hooks in the four movement paths of
+`_update_soldiers`, `_compute_offsets`, `_flow_slots`, `_huddle_slots`,
+`_squeeze`, `setup`).
+
+- **The field (B1).** At setup, on maps with drawn buildings (a
+  settlement's `map_info.city.buildings`: rectangles, turned quads, round
+  houses; or a field map's terrain `blocks`), a 1 m grid: per cell within
+  3 m of a building, the exact integer distance from its centre to the
+  nearest one (a byte, 3 cm steps, negative inside, capped at 3 m) and
+  which building (and a second one where another is within 1.5 m as near:
+  in a lane between two houses a man may be nearer either). A man's
+  clearance is then measured against those buildings' exact outlines (a
+  rectangle's sides and corners, a quad's edges, a round house as its
+  circle), with the outward normal; the byte is only the cheap test
+  (a cell whose centre is 1.22 m or more off any face needs nothing).
+  Built in 6-45 ms (polis / punic, turned quads, the most), skipped in
+  snapshots (a function of the map; nothing new is hashed). The face of a
+  wall, a tower or a rock is not in it (walls keep their ladder and stair
+  rules; landform maps are unchanged).
+- **Men off the faces (B2a).** In all four movement paths (routers, the
+  slot-following fast path, the lean path and the contact path), after
+  his step and the nav test, a man nearer a drawn face than `CLR_MIN`
+  0.5 m is put out along its normal to exactly 0.5 m, if he may stand
+  there (else he stays). A man pulled in by his place therefore stands
+  still on that line (no bounce), and one walking along a face slides
+  along it. Not on walls, stairs and ladders (their own rules), and only
+  for units whose box comes within 3 m of a house (`_near_cl`, a
+  summed-area table of 4 m cells). A standing unit's man pushed back to
+  where he stood (a face square across his way to a place behind the
+  house) counts as stalled against an obstacle and takes the slide
+  memory's wall-follow (phase A5).
+- **Places off the faces (B2b).** A formation's place nearer a face than
+  0.5 m counts as cut and is laid out again by the flow (`_flow_slots`);
+  the flow's and the huddle's spots (`_huddle_slots`) nearer than
+  `CLR_PLACE` 0.8 m stay empty; the places left between 0.5 and 0.8 m are
+  put out to 0.8 m (else as far as open ground allows, at least 0.53 m),
+  so men reach their places without being pushed and their units settle.
+  At setup every unit (not on a wall, not a battery) on such a map lays
+  its places out again at the end of the first tick, when it knows what is
+  near it, and a unit dropped with its anchor inside a house has the
+  anchor moved to the nearest open ground (rings of 2 m, up to 16 m): the
+  castrum's defenders stood in their barracks, a polis file in a
+  house, all battle.
+- **Squeeze (B2c).** Among drawn houses `_squeeze` measures the street's
+  width a metre at a time to where a man would stand 0.5 m off a face
+  (before: 2 m nav cells), so a column closes files to the street a man
+  can actually use.
+- **Street graph (B2d).** At setup each edge of a settlement's street graph
+  costs `CLR_EDGE` 4 m more per metre its line passes nearer than 3 m to a
+  drawn face (the nearest of the 1 m cells along it), so planned routes
+  keep to the wide streets; lanes stay usable. Symmetric, static (the graph
+  weights are rebuilt by setup, not in snapshots).
+- **Measured** (`tests/pathing_probe.gd`, seed 7, 8 sieges + battle_2000 +
+  bench_4000_hills; see docs/STATUS.md for the table): inside the drawn
+  footprints 3.35 -> 0.00 % (within 0.3 m 1.66 -> 0.07 %); phase A's
+  metrics hold (rout jitter <= 0.3 %, stationary routers 0 %, stuck over
+  30 s 0); fights near obstacles 4.8 -> 4.7 %, in town 2.8 -> 3.1 %. Cost:
+  setup +6-45 ms; the 8 sieges' tick means summed +10 % at seed 7, +6 %
+  over seeds 1-4 (3,000 ticks; the battles differ, the pushes themselves
+  are 0.03-0.09 ms a tick).
+
 ### Compact unit cards (as built, 2026-10-09)
 
 View only: `game/unit_traits.gd` derives everything from the unit rows, so a

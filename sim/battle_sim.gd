@@ -1579,6 +1579,32 @@ var stat_huddle: int = 0          # units that huddled
 var stat_hud_surr: int = 0        # men who gave up huddled
 var stat_wf: int = 0              # wall-follow holds started (slide memory)
 
+# Building clearance (docs/DESIGN.md "Clearance off the houses"; docs/PATHING_SPEC.md
+# phase B): a static 1 m grid over the map of the distance from each cell's
+# centre to the nearest drawn building (the outlines the view draws:
+# map_info.city.buildings, or the terrain's blocks) and which building that
+# is; a man near one is measured against its exact outline (_clr_exact), so a
+# push out to CLR_MIN lands exactly on the line CLR_MIN off it and a man
+# pulled in by his place stands still there (no bounce). Built by setup
+# (skipped in snapshots; nothing hashed: it is a function of the map).
+const CLR_MIN := M / 2             # a man ending a step nearer a drawn house face than this is pushed out to it
+const CLR_PLACE := 819             # places (formation, flowed, huddle) are put this far (0.8 m) off the faces
+const CLR_MARGIN := 3              # metres round a building the field is computed (beyond: CLR_FAR)
+const CLR_ZERO := 64               # clr_g byte = CLR_ZERO + distance / 32 (sim units; inside a house negative)
+const CLR_FAR := 160               # ... capped at 3 m
+const CLR_EDGE := 32               # street graph: an edge costs this many eighths of a metre more per metre its line passes nearer than 3 m to a house
+var cl_on: int = 0                # 1: the map has drawn buildings (the field exists)
+var cl_w: int = 0                 # 1 m cells across (2 * ob_w) ...
+var cl_h: int = 0                 # ... and down
+var clr_g := PackedByteArray()    # static: per 1 m cell, CLR_ZERO + signed distance / 32 to the nearest face (CLR_FAR far)
+var clr_b := PackedInt32Array()   # static: ... and which building that is (-1 none near; | (second + 1) << 16 a second as near)
+var cb_k := PackedInt32Array()    # static: per building, its shape (MapGen.SH_*) ...
+var cb_g := PackedInt32Array()    # ... and 8 numbers (sim units): rect x0 y0 x1 y1, quad corners clockwise, round cx cy r
+var cb_l := PackedInt32Array()    # ... a quad's 4 edge lengths
+var cl_sat := PackedInt32Array()  # static: summed-area table over 4 m cells of the 1 m cells a man may be pushed in ((cl_w / 4 + 1) x (cl_h / 4 + 1))
+var cl_sw: int = 0                # ... its cells across (+ 1)
+var stat_clr: int = 0             # diagnostics (not hashed): men pushed off a house face
+
 
 # ---------------------------------------------------------------- setup ---
 
@@ -2014,6 +2040,30 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	if ter_on != 0 or obs_on != 0 or fwh_on != 0:
 		for u in n_units:
 			u_h[u] = _unit_elev(u)
+	if cl_on != 0:
+		# Among drawn houses the places are laid out again at the end of the
+		# first tick, when the units know what is near them (_u_obs): no man
+		# stands where his block was dropped, in a house, all battle long.
+		for u in n_units:
+			if u_wall[u] == 0 and u_neng[u] == 0:
+				u_dirty[u] = 1
+				if (nav_at(u_ax[u], u_ay[u]) & MapGen.NAV_GROUND) == 0:
+					# (Dropped with its anchor in a house: the anchor to the
+					# nearest open ground, rings of 2 m in index order.)
+					var a0 := Vector2i(-1, -1)
+					for r in range(1, 9):
+						for dj in range(-r, r + 1):
+							for di in range(-r, r + 1):
+								if a0.x < 0 and maxi(absi(di), absi(dj)) == r \
+										and (nav_at(u_ax[u] + di * 2048, u_ay[u] + dj * 2048) & MapGen.NAV_GROUND) != 0:
+									a0 = Vector2i(u_ax[u] + di * 2048, u_ay[u] + dj * 2048)
+						if a0.x >= 0:
+							break
+					if a0.x >= 0:
+						u_ax[u] = a0.x
+						u_ay[u] = a0.y
+						u_dx[u] = a0.x
+						u_dy[u] = a0.y
 
 	for o in scenario.get("orders", []):
 		var od: Dictionary = (o as Dictionary).duplicate()
@@ -2322,6 +2372,7 @@ func _setup_terrain(terr: Dictionary, p_seed: int) -> void:
 		"scale_m": int(t["scale_m"]), "sym": int(t["sym"]), "palette": int(mf["palette"]),
 		"forest": int(mf["forest"])}
 	_setup_map(mf)
+	_clr_build(terr.get("blocks", []))
 	var ctx := HashingContext.new()
 	ctx.start(HashingContext.HASH_MD5)
 	ctx.update(PackedInt64Array([ter_on, ter_nx, ter_ny, int(t["kind"]), int(t["seed"]),
@@ -4031,10 +4082,30 @@ func _squeeze(u: int) -> void:
 	var fl := 0
 	var fr := 0
 	var stp := 2 * M
-	while fl < half and (nav_at(ax + s * (fl + stp) / FM.TRIG_ONE, ay - c * (fl + stp) / FM.TRIG_ONE) & MapGen.NAV_GROUND) != 0:
-		fl += stp
-	while fr < half and (nav_at(ax - s * (fr + stp) / FM.TRIG_ONE, ay + c * (fr + stp) / FM.TRIG_ONE) & MapGen.NAV_GROUND) != 0:
-		fr += stp
+	if cl_on != 0:
+		# Among drawn houses: a metre at a time, to where a man would stand
+		# CLR_MIN off a face (B2c; the 1 m cells' centres).
+		stp = M
+		var lim := CLR_ZERO + CLR_MIN / 32
+		while fl < half:
+			var qx := ax + s * (fl + stp) / FM.TRIG_ONE
+			var qy := ay - c * (fl + stp) / FM.TRIG_ONE
+			if (nav_at(qx, qy) & MapGen.NAV_GROUND) == 0 \
+					or clr_g[clampi(qy >> 10, 0, cl_h - 1) * cl_w + clampi(qx >> 10, 0, cl_w - 1)] < lim:
+				break
+			fl += stp
+		while fr < half:
+			var qx := ax - s * (fr + stp) / FM.TRIG_ONE
+			var qy := ay + c * (fr + stp) / FM.TRIG_ONE
+			if (nav_at(qx, qy) & MapGen.NAV_GROUND) == 0 \
+					or clr_g[clampi(qy >> 10, 0, cl_h - 1) * cl_w + clampi(qx >> 10, 0, cl_w - 1)] < lim:
+				break
+			fr += stp
+	else:
+		while fl < half and (nav_at(ax + s * (fl + stp) / FM.TRIG_ONE, ay - c * (fl + stp) / FM.TRIG_ONE) & MapGen.NAV_GROUND) != 0:
+			fl += stp
+		while fr < half and (nav_at(ax - s * (fr + stp) / FM.TRIG_ONE, ay + c * (fr + stp) / FM.TRIG_ONE) & MapGen.NAV_GROUND) != 0:
+			fr += stp
 	# A rock or a cliff on one side only is not a street: the men flow round
 	# it (landforms, slice 2d); a gap between two of them is.
 	if fl < half and fr >= half and MapGen.is_land(obs_kind(ax + s * (fl + stp) / FM.TRIG_ONE, ay - c * (fl + stp) / FM.TRIG_ONE)):
@@ -5517,9 +5588,11 @@ func _huddle_slots(u: int) -> void:
 		var used := 0
 		while used < cap and s < alive:
 			var sp: Vector2i = spots[used]
+			used += 1
+			if cl_on != 0 and not _clr_ok(cx + sp.x, cy + sp.y, CLR_PLACE):
+				continue  # (a spot too near a drawn house face stays empty)
 			off_x[base + s] = cx + sp.x - ax
 			off_y[base + s] = cy + sp.y - ay
-			used += 1
 			s += 1
 		for nb in 4:
 			if qn >= most:
@@ -5706,6 +5779,368 @@ static func _dir_step(dc: int, st: int, x_axis: bool) -> int:
 	if (dc & 1) != 0:
 		return k * st * 724 / 1024
 	return k * st
+
+
+# ------------------------------------------------- clearance off the houses ---
+
+## Build the clearance field from the drawn buildings: the settlement's
+## (map_info.city.buildings: rectangles, turned quads, round houses) or a
+## field map's blocks. Per 1 m cell within CLR_MARGIN of a building, the
+## exact integer distance from its centre to the nearest one (clr_g) and
+## which (clr_b; the first in list order on a tie); a man's clearance is then
+## his exact distance to that building (_clr_exact). The street graph's edges
+## cost more where their line passes near a house (_clr_graph). Static.
+func _clr_build(blocks: Array) -> void:
+	cl_on = 0
+	cl_w = 0
+	cl_h = 0
+	clr_g = PackedByteArray()
+	clr_b = PackedInt32Array()
+	cb_k = PackedInt32Array()
+	cb_g = PackedInt32Array()
+	cb_l = PackedInt32Array()
+	if obs_on == 0:
+		return
+	var shapes: Array = []
+	if city_on != 0:
+		var lay: Dictionary = map_info.get("city", {})
+		shapes = lay.get("buildings", [])
+	else:
+		for b in blocks:
+			var a: Array = b
+			shapes.append([int(a[0]), int(a[1]), int(a[2]), int(a[3]), 0, 0, MapGen.SH_RECT])
+	if shapes.is_empty():
+		return
+	cl_on = 1
+	cl_w = ob_w * 2
+	cl_h = ob_h * 2
+	clr_g.resize(cl_w * cl_h)
+	clr_g.fill(CLR_FAR)
+	clr_b.resize(cl_w * cl_h)
+	clr_b.fill(-1)
+	cb_k.resize(shapes.size())
+	cb_g.resize(shapes.size() * 8)
+	cb_l.resize(shapes.size() * 4)
+	var d2nd := PackedInt32Array()  # (the second building's distance while building)
+	d2nd.resize(cl_w * cl_h)
+	d2nd.fill(1 << 30)
+	for k in shapes.size():
+		var b: Array = shapes[k]
+		var sh: int = int(b[6]) if b.size() > 6 else MapGen.SH_RECT
+		cb_k[k] = sh
+		if sh == MapGen.SH_QUAD:
+			# (Corners clockwise on screen, y down, whatever the list's winding.)
+			var area := 0
+			for q in 4:
+				var q2 := (q + 1) & 3
+				area += int(b[7 + 2 * q]) * int(b[8 + 2 * q2]) - int(b[7 + 2 * q2]) * int(b[8 + 2 * q])
+			for q in 4:
+				var qq := q if area > 0 else 3 - q
+				cb_g[k * 8 + 2 * q] = int(b[7 + 2 * qq]) * M
+				cb_g[k * 8 + 2 * q + 1] = int(b[8 + 2 * qq]) * M
+			for q in 4:
+				var ex := cb_g[k * 8 + 2 * ((q + 1) & 3)] - cb_g[k * 8 + 2 * q]
+				var ey := cb_g[k * 8 + 2 * ((q + 1) & 3) + 1] - cb_g[k * 8 + 2 * q + 1]
+				cb_l[k * 4 + q] = maxi(_isq(ex * ex + ey * ey, FM.approx_len(ex, ey)), 1)
+		elif sh == MapGen.SH_ROUND:
+			cb_g[k * 8] = int(b[7]) * M
+			cb_g[k * 8 + 1] = int(b[8]) * M
+			cb_g[k * 8 + 2] = int(b[9]) * M
+		else:
+			for q in 4:
+				cb_g[k * 8 + q] = int(b[q]) * M
+		var i0 := maxi(int(b[0]) - CLR_MARGIN - 1, 0)
+		var j0 := maxi(int(b[1]) - CLR_MARGIN - 1, 0)
+		var i1 := mini(int(b[2]) + CLR_MARGIN + 1, cl_w - 1)
+		var j1 := mini(int(b[3]) + CLR_MARGIN + 1, cl_h - 1)
+		for j in range(j0, j1 + 1):
+			var py := j * M + M / 2
+			var row := j * cl_w
+			for i in range(i0, i1 + 1):
+				var d := _clr_exact(k, i * M + M / 2, py).x
+				var v := clampi(CLR_ZERO + (d >> 5), 0, CLR_FAR)
+				var c := row + i
+				var d1 := (clr_g[c] - CLR_ZERO) << 5
+				if v < clr_g[c]:
+					# (The one it displaces is kept second if within 1.5 m of
+					# it: in a lane between two houses a man anywhere in the
+					# cell, 0.71 m from its centre, may be nearer that one.)
+					if clr_b[c] >= 0 and d1 - d <= 3 * M / 2:
+						d2nd[c] = d1
+						clr_b[c] = k | ((clr_b[c] & 0xFFFF) + 1) << 16
+					else:
+						d2nd[c] = 1 << 30
+						clr_b[c] = k
+					clr_g[c] = v
+				elif clr_b[c] >= 0 and d < d2nd[c] and d - d1 <= 3 * M / 2:
+					d2nd[c] = d
+					clr_b[c] = (clr_b[c] & 0xFFFF) | (k + 1) << 16
+	# Where a man may be pushed (4 m cells, summed): units far from any
+	# house skip the per-man test (_near_cl).
+	var lim := _clr_lim(CLR_MIN)
+	var sw := (cl_w >> 2) + 1
+	var sh2 := (cl_h >> 2) + 1
+	var cnt := PackedInt32Array()
+	cnt.resize(sw * sh2)
+	for c in clr_g.size():
+		if clr_g[c] < lim:
+			cnt[((c / cl_w) >> 2) * sw + ((c % cl_w) >> 2)] = 1
+	cl_sw = sw + 1
+	cl_sat.resize((sw + 1) * (sh2 + 1))
+	cl_sat.fill(0)
+	for j in sh2:
+		var acc := 0
+		for i in sw:
+			acc += cnt[j * sw + i]
+			cl_sat[(j + 1) * (sw + 1) + i + 1] = cl_sat[j * (sw + 1) + i + 1] + acc
+	_clr_graph()
+
+
+## The nearer of a cell's one or two buildings (clr_b: k | (second + 1) << 16).
+func _clr_near(kb: int, x: int, y: int) -> Vector3i:
+	var e := _clr_exact(kb & 0xFFFF, x, y)
+	if kb >= 0x10000:
+		var e2 := _clr_exact((kb >> 16) - 1, x, y)
+		if e2.x < e.x:
+			return e2
+	return e
+
+
+## Integer square root from a close guess (Newton; exact floor for n >= 0).
+static func _isq(v: int, g: int) -> int:
+	if v <= 0:
+		return 0
+	var x := maxi(g, 1)
+	for q in 3:
+		x = (x + v / x) >> 1
+	while x * x > v:
+		x -= 1
+	while (x + 1) * (x + 1) <= v:
+		x += 1
+	return x
+
+
+## Building k's drawn outline against (x, y): (signed distance, negative
+## inside; outward unit normal x, y in FM.TRIG_ONE) - from its nearest face,
+## or radially from a corner or a round house's centre.
+func _clr_exact(k: int, x: int, y: int) -> Vector3i:
+	var g := k * 8
+	var sh := cb_k[k]
+	if sh == MapGen.SH_ROUND:
+		var rx := x - cb_g[g]
+		var ry := y - cb_g[g + 1]
+		var rl := _isq(rx * rx + ry * ry, FM.approx_len(rx, ry))
+		if rl == 0:
+			return Vector3i(-cb_g[g + 2], FM.TRIG_ONE, 0)
+		return Vector3i(rl - cb_g[g + 2], rx * FM.TRIG_ONE / rl, ry * FM.TRIG_ONE / rl)
+	if sh != MapGen.SH_QUAD:
+		var x0 := cb_g[g]
+		var y0 := cb_g[g + 1]
+		var x1 := cb_g[g + 2]
+		var y1 := cb_g[g + 3]
+		var sx := x - x1 if x > x1 else (x - x0 if x < x0 else 0)
+		var sy := y - y1 if y > y1 else (y - y0 if y < y0 else 0)
+		if sx == 0 and sy == 0:
+			# Inside: out by the nearest side.
+			var best := x - x0
+			var nx := -FM.TRIG_ONE
+			var ny := 0
+			if x1 - x < best:
+				best = x1 - x
+				nx = FM.TRIG_ONE
+			if y - y0 < best:
+				best = y - y0
+				nx = 0
+				ny = -FM.TRIG_ONE
+			if y1 - y < best:
+				best = y1 - y
+				nx = 0
+				ny = FM.TRIG_ONE
+			return Vector3i(-best, nx, ny)
+		if sy == 0:
+			return Vector3i(absi(sx), FM.TRIG_ONE if sx > 0 else -FM.TRIG_ONE, 0)
+		if sx == 0:
+			return Vector3i(absi(sy), 0, FM.TRIG_ONE if sy > 0 else -FM.TRIG_ONE)
+		var dl := _isq(sx * sx + sy * sy, FM.approx_len(sx, sy))
+		return Vector3i(dl, sx * FM.TRIG_ONE / dl, sy * FM.TRIG_ONE / dl)
+	# A turned quad (convex, clockwise on screen): inside, out by the nearest
+	# edge; outside, to the nearest point of an edge he is beyond (at most two).
+	var crs := [0, 0, 0, 0]
+	var out := false
+	for q in 4:
+		var ax := cb_g[g + 2 * q]
+		var ay := cb_g[g + 2 * q + 1]
+		var q2 := (q + 1) & 3
+		var cr := (cb_g[g + 2 * q2] - ax) * (y - ay) - (cb_g[g + 2 * q2 + 1] - ay) * (x - ax)  # > 0: inner side
+		crs[q] = cr
+		if cr <= 0:
+			out = true
+	if not out:
+		var perp := 1 << 40
+		var pq := 0
+		for q in 4:
+			var pd: int = crs[q] / cb_l[k * 4 + q]
+			if pd < perp:
+				perp = pd
+				pq = q
+		var q3 := (pq + 1) & 3
+		var ln := cb_l[k * 4 + pq]
+		return Vector3i(-perp, (cb_g[g + 2 * q3 + 1] - cb_g[g + 2 * pq + 1]) * FM.TRIG_ONE / ln,
+			-(cb_g[g + 2 * q3] - cb_g[g + 2 * pq]) * FM.TRIG_ONE / ln)
+	var best2 := 1 << 62
+	var bqx := 0
+	var bqy := 0
+	for q in 4:
+		if crs[q] > 0:
+			continue
+		var ax := cb_g[g + 2 * q]
+		var ay := cb_g[g + 2 * q + 1]
+		var q2 := (q + 1) & 3
+		var ex := cb_g[g + 2 * q2] - ax
+		var ey := cb_g[g + 2 * q2 + 1] - ay
+		var l2 := maxi(ex * ex + ey * ey, 1)
+		var t := clampi((x - ax) * ex + (y - ay) * ey, 0, l2)
+		var qx := ax + ex * t / l2
+		var qy := ay + ey * t / l2
+		var d2 := (x - qx) * (x - qx) + (y - qy) * (y - qy)
+		if d2 < best2:
+			best2 = d2
+			bqx = qx
+			bqy = qy
+	var ddx := x - bqx
+	var ddy := y - bqy
+	var dq := _isq(best2, FM.approx_len(ddx, ddy))
+	if dq == 0:
+		# On an edge: out along its normal.
+		for q in 4:
+			if crs[q] <= 0:
+				var q4 := (q + 1) & 3
+				var ln4 := cb_l[k * 4 + q]
+				return Vector3i(0, (cb_g[g + 2 * q4 + 1] - cb_g[g + 2 * q + 1]) * FM.TRIG_ONE / ln4,
+					-(cb_g[g + 2 * q4] - cb_g[g + 2 * q]) * FM.TRIG_ONE / ln4)
+		return Vector3i(0, 0, 0)
+	return Vector3i(dq, ddx * FM.TRIG_ONE / dq, ddy * FM.TRIG_ONE / dq)
+
+
+## The street graph's edges cost more along lanes near houses: + CLR_EDGE
+## eighths of a metre per metre their line passes nearer than 3 m to a drawn
+## face (the nearest of the 1 m cells it crosses, sampled every metre), so
+## columns keep to the wide streets. Symmetric (each pair once, from its
+## lower node).
+func _clr_graph() -> void:
+	var nn := ng_x.size()
+	if nn == 0 or city_on == 0:
+		return
+	for a in nn:
+		for e in range(ng_e0[a], ng_e0[a + 1]):
+			var b := ng_to[e]
+			if b < a:
+				continue
+			var add := _clr_line(ng_x[a], ng_y[a], ng_x[b], ng_y[b])
+			if add <= 0:
+				continue
+			ng_w[e] += add
+			for e2 in range(ng_e0[b], ng_e0[b + 1]):
+				if ng_to[e2] == a:
+					ng_w[e2] += add
+
+
+func _clr_line(x0: int, y0: int, x1: int, y1: int) -> int:
+	var dx := x1 - x0
+	var dy := y1 - y0
+	var steps := maxi(FM.approx_len(dx, dy) / M, 1)
+	var lo := CLR_FAR
+	for q in range(0, steps + 1):
+		var x := x0 + dx * q / steps
+		var y := y0 + dy * q / steps
+		var c := clampi(y >> 10, 0, cl_h - 1) * cl_w + clampi(x >> 10, 0, cl_w - 1)
+		lo = mini(lo, clr_g[c])
+	# ((cl - CLR_ZERO) * 32 sim units: metres short of 3 m, times CLR_EDGE.)
+	return maxi(CLR_FAR - maxi(lo, CLR_ZERO), 0) * 32 * CLR_EDGE / M
+
+
+## Clearance of (x, y) off the nearest drawn house face (sim units, negative
+## inside; 3 m where none is that near).
+func clr_at(x: int, y: int) -> int:
+	if cl_on == 0:
+		return 3 * M
+	var c := clampi(y >> 10, 0, cl_h - 1) * cl_w + clampi(x >> 10, 0, cl_w - 1)
+	var k := clr_b[c]
+	if k < 0:
+		return 3 * M
+	return mini(_clr_near(k, x, y).x, 3 * M)
+
+
+## A man at (x, y) nearer a drawn house face than `want`: out along the
+## face's normal to it, if he may stand there (mask); else where he is.
+## (Callers test the cell's byte against _clr_lim(want) first: one read
+## when he is clear.)
+func _clr_push(x: int, y: int, mask: int, want: int) -> Vector2i:
+	var k := clr_b[clampi(y >> 10, 0, cl_h - 1) * cl_w + clampi(x >> 10, 0, cl_w - 1)]
+	if k < 0:
+		return Vector2i(x, y)
+	var e := _clr_near(k, x, y)
+	if e.x >= want or (e.y == 0 and e.z == 0):
+		return Vector2i(x, y)
+	var p := want - e.x
+	var x2 := clampi(x + e.y * p / FM.TRIG_ONE, 0, field_w)
+	var y2 := clampi(y + e.z * p / FM.TRIG_ONE, 0, field_h)
+	if (nav_at(x2, y2) & mask) == 0:
+		return Vector2i(x, y)
+	stat_clr += 1
+	return Vector2i(x2, y2)
+
+
+## Unit u's men (its box last tick, 3 m round) may come near a drawn house
+## face this tick.
+func _near_cl(u: int) -> bool:
+	var sw := cl_sw - 1
+	var sh2 := (cl_h >> 2) + 1
+	var x0 := clampi((mini(u_minx[u], u_ax[u]) - 3 * M) >> 12, 0, sw - 1)
+	var x1 := clampi((maxi(u_maxx[u], u_ax[u]) + 3 * M) >> 12, 0, sw - 1)
+	var y0 := clampi((mini(u_miny[u], u_ay[u]) - 3 * M) >> 12, 0, sh2 - 1)
+	var y1 := clampi((maxi(u_maxy[u], u_ay[u]) + 3 * M) >> 12, 0, sh2 - 1)
+	var w1 := cl_sw
+	return cl_sat[(y1 + 1) * w1 + x1 + 1] - cl_sat[y0 * w1 + x1 + 1] - cl_sat[(y1 + 1) * w1 + x0] + cl_sat[y0 * w1 + x0] > 0
+
+
+## (x, y) is at least `want` off every drawn house face.
+func _clr_ok(x: int, y: int, want: int) -> bool:
+	var c := clampi(y >> 10, 0, cl_h - 1) * cl_w + clampi(x >> 10, 0, cl_w - 1)
+	if clr_g[c] >= _clr_lim(want):
+		return true
+	var k := clr_b[c]
+	return k < 0 or _clr_near(k, x, y).x >= want
+
+
+## The cell byte below which a man in that cell may be nearer than `want`
+## to its building (the cell's centre to a corner is 0.71 m).
+static func _clr_lim(want: int) -> int:
+	return CLR_ZERO + (want + 725 + 31) / 32
+
+
+## Unit u's places (anchor + offsets) nearer than CLR_PLACE to a drawn
+## house face are put out to it (where open ground of the unit's).
+func _clr_places(u: int) -> void:
+	var base := u_slot_base[u]
+	var ax := u_ax[u]
+	var ay := u_ay[u]
+	var gm := _ground_mask(u)
+	var lim := _clr_lim(CLR_PLACE)
+	for s in u_alive[u]:
+		var x := ax + off_x[base + s]
+		var y := ay + off_y[base + s]
+		if clr_g[clampi(y >> 10, 0, cl_h - 1) * cl_w + clampi(x >> 10, 0, cl_w - 1)] >= lim:
+			continue
+		# (Out to CLR_PLACE, else as far as open ground allows: at least
+		# CLR_MIN, where a man's own push leaves him, so he can stand there.)
+		var p := _clr_push(x, y, gm, CLR_PLACE)
+		if p.x == x and p.y == y:
+			p = _clr_push(x, y, gm, (CLR_MIN + CLR_PLACE) / 2)
+			if p.x == x and p.y == y:
+				p = _clr_push(x, y, gm, CLR_MIN + 32)
+		off_x[base + s] = p.x - ax
+		off_y[base + s] = p.y - ay
 
 
 ## Tree depth along a flat shot from (x0, y0) to (x1, y1): the distance at
@@ -6382,6 +6817,8 @@ func _compute_offsets(u: int) -> void:
 		u_flow[u] = 0
 	if not flow and city_on != 0 and n_cmp > 0 and u_stair[u] == 0 and u < _u_obs.size() and _u_obs[u] != 0:
 		_project_slots(u)
+	if cl_on != 0 and u_stair[u] == 0 and u < _u_obs.size() and _u_obs[u] != 0:
+		_clr_places(u)  # (off the drawn house faces, B2b)
 	if u_contact[u] != 0 and occ0.size() > 0:
 		_slots_off_enemy(u)
 	u_dirty[u] = 0
@@ -6469,8 +6906,9 @@ func _flow_slots(u: int) -> void:
 		for s in alive:
 			var x := ax + off_x[base + s]
 			var y := ay + off_y[base + s]
-			if (reach_at(x, y) != ra) if city else (nav_at(x, y) & gm) == 0:
-				cut.append(s)
+			if ((reach_at(x, y) != ra) if city else (nav_at(x, y) & gm) == 0) \
+					or (cl_on != 0 and not _clr_ok(x, y, CLR_MIN)):
+				cut.append(s)  # (or too near a drawn house face: B2b)
 	if cut.is_empty():
 		u_flow[u] = 0
 		return
@@ -6524,11 +6962,13 @@ func _flow_slots(u: int) -> void:
 			var cx := ki * 2048 + 1024
 			var cy := kj * 2048 + 1024
 			while used < cap and ci < need:
-				var s := cut[ci]
 				var sp: Vector2i = spots[used]
+				used += 1
+				if cl_on != 0 and not _clr_ok(cx + sp.x, cy + sp.y, CLR_PLACE):
+					continue  # (a spot too near a drawn house face stays empty)
+				var s := cut[ci]
 				off_x[base + s] = cx + sp.x - ax
 				off_y[base + s] = cy + sp.y - ay
-				used += 1
 				ci += 1
 			mk[k] = stp | 16 | used
 		# On to its neighbours.
@@ -7971,6 +8411,13 @@ func _update_soldiers() -> void:
 	var rct := _rc_tk
 	var rcn := _rc_n
 	var rco := _rc_ok
+	# Clearance off the drawn houses (docs/PATHING_SPEC.md B2a): after his
+	# step and the nav test, a man nearer a face than CLR_MIN goes out to it.
+	var cla := clr_g
+	var clw := cl_w
+	var clw1 := cl_w - 1
+	var clh1 := cl_h - 1
+	var clim := _clr_lim(CLR_MIN)
 	for k_u in nu:
 		var u := nu - 1 - k_u if flip else k_u
 		var alive := u_alive[u]
@@ -7995,6 +8442,7 @@ func _update_soldiers() -> void:
 		var obw1 := ob_w - 1
 		var obh1 := ob_h - 1
 		var mask := _mask_of(u) if obs_on != 0 else MapGen.NAV_GROUND
+		var clo := ob and cl_on != 0 and u_wall[u] == 0 and _near_cl(u)
 		if u_state[u] == U_ROUTING:
 			var rs := (run * 7) >> 3
 			var flx := u_flee_x[u]
@@ -8095,6 +8543,10 @@ func _update_soldiers() -> void:
 					var sl := _slide(u, px[i], py[i], x, y, mm, i)
 					x = sl.x
 					y = sl.y
+				if clo and rmode != 2 and rmode != 4 and cla[mini(y >> 10, clh1) * clw + mini(x >> 10, clw1)] < clim:
+					var cp := _clr_push(x, y, mm, CLR_MIN)
+					x = cp.x
+					y = cp.y
 				px[i] = x
 				py[i] = y
 				fc[i] = face if rmode == 4 or rmode == 3 else FM.atan2_a(fy, fx)
@@ -8222,6 +8674,17 @@ func _update_soldiers() -> void:
 					var fm2 := _free_mem(i, px[i], py[i], x, y, mm)
 					x = fm2.x
 					y = fm2.y
+				if clo and stair_mv == 0 and cla[mini(y >> 10, clh1) * clw + mini(x >> 10, clw1)] < clim:
+					var cp2 := _clr_push(x, y, mm, CLR_MIN)
+					if wf_on and (cp2.x != x or cp2.y != y):
+						var wl := FM.approx_len(x - px[i], y - py[i])
+						if wl >= M / 8 and FM.approx_len(cp2.x - px[i], cp2.y - py[i]) * 4 < wl:
+							# Pushed back to where he stood (a face square across his
+							# way): a stall, as against a blocked cell (slide memory).
+							var sm := _slide_mem(i, px[i], py[i], x, y, mm, Vector2i(px[i], py[i]))
+							cp2 = _clr_push(sm.x, sm.y, mm, CLR_MIN) if sm.x != px[i] or sm.y != py[i] else sm
+					x = cp2.x
+					y = cp2.y
 				px[i] = x
 				py[i] = y
 				sumx += x
@@ -8424,6 +8887,10 @@ func _update_soldiers() -> void:
 					var sll := _slide(u, x, y, nx, ny, mml)
 					nx = sll.x
 					ny = sll.y
+				if clo and stair_mv == 0 and cla[mini(ny >> 10, clh1) * clw + mini(nx >> 10, clw1)] < clim:
+					var cp3 := _clr_push(nx, ny, mml, CLR_MIN)
+					nx = cp3.x
+					ny = cp3.y
 				px[i] = nx
 				py[i] = ny
 				counted += 1
@@ -8780,6 +9247,10 @@ func _update_soldiers() -> void:
 					var sl3 := _slide(u, x, y, nx, ny, mm3)
 					nx = sl3.x
 					ny = sl3.y
+			if clo and stair_mv == 0 and cla[mini(ny >> 10, clh1) * clw + mini(nx >> 10, clw1)] < clim:
+				var cp4 := _clr_push(nx, ny, mm3, CLR_MIN)
+				nx = cp4.x
+				ny = cp4.y
 			px[i] = nx
 			py[i] = ny
 			counted += 1
@@ -13623,7 +14094,8 @@ const _SNAP_SKIP := {"ter_h": true, "ter_gx": true, "ter_gy": true, "ter_info": 
 	"rv": true, "riv": true,
 	"ws_jx": true, "ws_jy": true, "_lw_x": true, "_lw_y": true, "_fl_mark": true, "_rc_tk": true, "_rc_n": true, "_rc_ok": true, "cmp": true, "n_cmp": true, "g_cmp": true, "_croot": true, "_croot_ep": true,
 	"_xf_live": true, "_xf_pend": true, "_xb_pass": true, "_xb_q": true, "_xb_f": true,
-	"_xb_i": true, "_xb_n": true, "_xb_cmp": true, "_xb_done": true, "_xb_gm": true}
+	"_xb_i": true, "_xb_n": true, "_xb_cmp": true, "_xb_done": true, "_xb_gm": true,
+	"clr_g": true, "clr_b": true, "cb_k": true, "cb_g": true, "cb_l": true, "cl_sat": true, "cl_sw": true, "cl_on": true, "cl_w": true, "cl_h": true}
 const _SNAP_MAGIC := 0x31534353  # "SCS1"
 
 
