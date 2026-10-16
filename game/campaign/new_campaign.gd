@@ -117,15 +117,27 @@ func _ready() -> void:
 			sr0.add_child(sb)
 			_pack_buttons[str(c[0])] = sb
 		v.add_child(sr0)
-	if not online and CData.has_pack("west"):
-		# The story campaign (campaign/cstory.gd): one player, a fixed start.
+	if CData.has_pack("west"):
+		# The story campaign (campaign/cstory.gd): a fixed start; one captain, or two
+		# (hot seat here, online from the online screen) who vote on every choice.
 		var sr1 := Kit.flow(8)
 		sr1.add_child(Kit.label("Story", Kit.FONT, Kit.COL_DIM))
-		var stb := Kit.button("The Brethren's Due", _start_story, 0, 14)
-		stb.name = "story_brethren"
-		stb.tooltip_text = "A pirate story in the Caribbean, 1665: your captain hanged, one leaky sloop, and the whole Spanish Main against you. One player; uses the name, seed and difficulty below."
-		sr1.add_child(stb)
-		sr1.add_child(Kit.label("Caribbean, 1665: a pirate story for one player", Kit.FONT_SMALL, Kit.COL_DIM, true))
+		if not online:
+			var stb := Kit.button("The Brethren's Due", func(): _start_story(false), 0, 14)
+			stb.name = "story_brethren"
+			stb.tooltip_text = "A pirate story in the Caribbean, 1665: your captain hanged, one leaky sloop, and the whole Spanish Main against you. One player; uses the name, seed and difficulty below."
+			sr1.add_child(stb)
+			var stc := Kit.button("Two captains (hot seat)", func(): _start_story(true), 0, 14)
+			stc.name = "story_brethren_coop"
+			stc.tooltip_text = "The same story for two captains on one device: every choice is the crew's vote between them; when they disagree, Mercy calls it by fame and crew."
+			sr1.add_child(stc)
+			sr1.add_child(Kit.label("Caribbean, 1665: a pirate story for one player, or two", Kit.FONT_SMALL, Kit.COL_DIM, true))
+		else:
+			var stk := Kit.button("The Brethren's Due: two captains", func(): _start_online(true), 0, 14)
+			stk.name = "story_brethren_online"
+			stk.tooltip_text = "The pirate story of 1665 for two captains online: each answers every choice from their own device; when you disagree, Mercy calls it by fame and crew. Uses the name, seed and difficulty below."
+			sr1.add_child(stk)
+			sr1.add_child(Kit.label("Caribbean, 1665: a pirate story for two", Kit.FONT_SMALL, Kit.COL_DIM, true))
 		v.add_child(sr1)
 	var team_row := Kit.flow(8)
 	var b_one := Kit.button("All humans one team", _all_humans_one_team, 0, 14)
@@ -417,7 +429,7 @@ func _start() -> void:
 
 ## Start the story campaign "The Brethren's Due" (the West pack, the
 ## Brethren, its own start; the name, seed and difficulty from this screen).
-func _start_story() -> void:
+func _start_story(coop: bool = false) -> void:
 	if _creating:
 		return
 	var sd := int(seed_edit.text) if seed_edit.text.is_valid_int() else 1
@@ -433,14 +445,14 @@ func _start_story() -> void:
 	for k in ["ai_battle_skill", "ai_campaign_skill", "deploy_time", "time_limit", "autoresolve"]:
 		if settings.has(k):
 			stt[k] = settings[k]
-	var st := CStory.new_story(nm, sd, stt)
+	var st := CStory.new_story(nm, sd, stt, "brethren", coop)
 	var slot := Saves.slot_for(nm, sd)
 	var data := {"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}
 	Saves.save(slot, data)
 	start.emit(data, slot, lp)
 
 
-func _start_online() -> void:
+func _start_online(story: bool = false) -> void:
 	var net := get_node_or_null("/root/Net")
 	if net == null or not net.has_server():
 		_info.text = "Online play needs the game server: open the game from its web address."
@@ -454,7 +466,20 @@ func _start_online() -> void:
 	var nm := name_edit.text.strip_edges()
 	if nm == "":
 		nm = "Campaign"
-	var st := CState.new_campaign(nm, sd, picks.duplicate(), settings, teams_array(), CData.pack)
+	var seat_f: int = picks[0] if not picks.is_empty() else 0
+	var st: Dictionary
+	if story:
+		PackView.use_pack("west")
+		var stt := {}
+		for k in ["ai_battle_skill", "ai_campaign_skill", "deploy_time", "time_limit", "autoresolve", "turn_timeout_h"]:
+			if settings.has(k):
+				stt[k] = settings[k]
+		if nm == "Campaign":
+			nm = "The Brethren's Due"
+		st = CStory.new_story(nm, sd, stt, "brethren", true)
+		seat_f = CStory.player(st)
+	else:
+		st = CState.new_campaign(nm, sd, picks.duplicate(), settings, teams_array(), CData.pack)
 	_creating = true
 	_update()
 	_info.text = "Creating the campaign on the server..."
@@ -462,7 +487,7 @@ func _start_online() -> void:
 	var user := _user_edit.text.strip_edges()
 	if user != "":
 		net.accounts.set_value("discord_user", user)
-	var r: Dictionary = await net.create_campaign(st, picks[0], {"webhook_url": _hook_edit.text.strip_edges(),
+	var r: Dictionary = await net.create_campaign(st, seat_f, {"webhook_url": _hook_edit.text.strip_edges(),
 		"discord_user": user, "invite": _invite_edit.text.strip_edges(), "name": nm})
 	_creating = false
 	_update()
@@ -478,6 +503,6 @@ func _start_online() -> void:
 		return
 	var tele := get_node_or_null("/root/Telemetry")
 	if tele != null:
-		tele.event("online_create", {"from": "new", "humans": picks, "teams": teams_array(), "timeout_h": int(settings["turn_timeout_h"]),
+		tele.event("online_create", {"from": "new", "story": story, "humans": st["humans"], "teams": teams_array(), "timeout_h": int(settings["turn_timeout_h"]),
 			"webhook": _hook_edit.text.strip_edges() != ""})
 	created_online.emit(str(r["data"]["id"]), str(r["data"].get("join_code", "")))

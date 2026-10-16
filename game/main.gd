@@ -241,7 +241,7 @@ func _ready() -> void:
 			# autoplay: turns played with the first allowed choice); --story-seen=N: the first N log entries read.
 			var sspec: String = a.get_slice("=", 1)
 			var sdata: Dictionary = (load("res://game/campaign/story_view.gd") as GDScript).call("autoplay",
-				int(sspec.get_slice(":", 0)), int(sspec.get_slice(":", 1)) if sspec.contains(":") else 0)
+				int(sspec.get_slice(":", 0)), int(sspec.get_slice(":", 1)) if sspec.contains(":") else 0)  # (--story-coop: two captains)
 			for a3 in OS.get_cmdline_user_args():
 				if a3.begins_with("--story-seen="):
 					sdata["session"]["story_seen"] = int(a3.get_slice("=", 1))

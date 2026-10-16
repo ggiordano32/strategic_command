@@ -40,7 +40,11 @@ static func _cb() -> GDScript:
 
 ## The choice for pending entry pe on `path` (an allowed one; -1 none allowed).
 static func choose(st: Dictionary, pe: Dictionary, path: String, rng: RandomNumberGenerator) -> int:
-	var f := int(pe["f"])
+	return choose_for(st, pe, int(pe["f"]), path, rng)
+
+
+## The same for captain f (co-op: each captain's vote).
+static func choose_for(st: Dictionary, pe: Dictionary, f: int, path: String, rng: RandomNumberGenerator) -> int:
 	var n := (CStory.event_def(st, str(pe["e"])).get("choices", []) as Array).size()
 	var allowed: Array = []
 	for i in n:
@@ -163,7 +167,7 @@ static func orders(st: Dictionary, f: int) -> Array:
 
 
 ## Battles and choices until the turn can resolve (or the game is over).
-static func settle(st: Dictionary, path: String, rng: RandomNumberGenerator) -> Dictionary:
+static func settle(st: Dictionary, path: String, rng: RandomNumberGenerator, split: int = 0) -> Dictionary:
 	var pf := CStory.player(st)
 	for guard in 40:
 		var pb: Array = _rt().pending_for(st)
@@ -173,6 +177,24 @@ static func settle(st: Dictionary, path: String, rng: RandomNumberGenerator) -> 
 		if not CStory.blocked(st):
 			break
 		var pe: Dictionary = CStory.pending_for(st)[0]
+		if CStory.is_vote(pe):
+			# (co-op) each captain who has not voted answers; `split`: the other
+			# captains vote the next allowed choice along every `split`th time (a disagreement).
+			var asked := false
+			for vf in CStory.vote_waiting(st, pe):
+				var vk := choose_for(st, pe, int(vf), path, rng)
+				if vk < 0:
+					continue
+				if split > 0 and int(vf) != pf and rng.randi() % split == 0:
+					var alt := choose_for(st, pe, int(vf), "random", rng)
+					vk = alt if alt >= 0 else vk
+				st = CStory.answer(st, int(vf), int(pe["id"]), vk)
+				asked = true
+				break
+			if not asked:
+				push_warning("story autoplay: no vote allowed for %s" % str(pe["e"]))
+				break
+			continue
 		var k := choose(st, pe, path, rng)
 		if k < 0:
 			push_warning("story autoplay: no choice allowed for %s" % str(pe["e"]))
@@ -186,16 +208,19 @@ static func settle(st: Dictionary, path: String, rng: RandomNumberGenerator) -> 
 ## the last turn's battles and choices are dealt with too (else left waiting,
 ## for the screen).
 static func play(sd: int, turns: int, path: String = "first", rng_seed: int = 1, round_trip: bool = false,
-		settle_end: bool = true) -> Dictionary:
+		settle_end: bool = true, coop: bool = false, split: int = 0) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = rng_seed
-	var st := CStory.new_story("Story test", sd)
-	var pf := CStory.player(st)
+	var st := CStory.new_story("Story test", sd, {}, "brethren", coop)
 	for t in turns:
 		if round_trip:
 			st = CState.from_json(CState.to_json(st))
-		st = settle(st, path, rng)
+		st = settle(st, path, rng, split)
 		if str(st["phase"]) == "over" or CStory.blocked(st):
 			break
-		st = _rt().resolve_turn(st, [_rt().submission(st, pf, orders(st, pf))])
-	return settle(st, path, rng) if settle_end else st
+		var subs: Array = []
+		for h in st["humans"]:
+			if CState.alive(st, int(h)):
+				subs.append(_rt().submission(st, int(h), orders(st, int(h))))
+		st = _rt().resolve_turn(st, subs)
+	return settle(st, path, rng, split) if settle_end else st

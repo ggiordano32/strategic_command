@@ -53,6 +53,12 @@ type stateDoc struct {
 		ID num `json:"id"`
 		F  num `json:"f"`
 	} `json:"armies"`
+	Story *struct { // a story campaign (campaign/cstory.gd): the choices waiting for an answer
+		Pending []struct {
+			F num      `json:"f"`
+			V *[][]num `json:"v"` // a crew vote (co-op): [captain, choice] given so far; absent: F answers alone
+		} `json:"pending"`
+	} `json:"story"`
 	Battles []struct {
 		ID    num   `json:"id"`
 		R     num   `json:"r"`
@@ -118,6 +124,8 @@ type StateMeta struct {
 	TimeoutH      int
 	Battles       []Battle // pending, with a human
 	AllBattleIDs  []int
+	StoryOpen     bool  // a story choice is waiting (the turn cannot resolve)
+	StoryWaiting  []int // the alive humans who still owe an answer to a waiting story choice
 }
 
 // StateHash is the game's CState.state_hash of a canonical state text: the
@@ -268,6 +276,32 @@ func ParseState(text []byte) (*StateMeta, error) {
 			}
 		}
 		m.Battles = append(m.Battles, Battle{ID: int(b.ID), R: int(b.R), Humans: hs, Guests: gs})
+	}
+	if d.Story != nil {
+		seen := map[int]bool{}
+		for _, pe := range d.Story.Pending {
+			m.StoryOpen = true
+			if pe.V == nil {
+				seen[int(pe.F)] = true
+				continue
+			}
+			given := map[int]bool{}
+			for _, v := range *pe.V {
+				if len(v) > 0 {
+					given[int(v[0])] = true
+				}
+			}
+			for _, f := range m.Alive {
+				if !given[f] {
+					seen[f] = true
+				}
+			}
+		}
+		for _, f := range m.Alive {
+			if seen[f] {
+				m.StoryWaiting = append(m.StoryWaiting, f)
+			}
+		}
 	}
 	if m.Humans == nil {
 		m.Humans = []int{}

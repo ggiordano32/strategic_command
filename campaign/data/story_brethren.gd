@@ -37,18 +37,20 @@ extends RefCounted
 ##   ours waiting), any [conditions, ...] (one of them holds).
 ## Effects (cstory.gd _fx): see the list there.
 
-## Who speaks: name, role, badge colour (portrait placeholder: a coloured
+## Who speaks: name, role, badge colour, mark (the faction whose mark stands in until a portrait is drawn, game/story_portrait.gd; a coloured
 ## initial until there is art).
 const CHARS := {
-	"mercy": {"name": "Mercy Teague", "role": "Quartermaster", "col": "b8432f"},
-	"lindo": {"name": "Isaac Lindo", "role": "Fence of Port Royal", "col": "7b5ea7"},
-	"vane": {"name": "Josiah Vane", "role": "From his logbook", "col": "8a6a3a"},
-	"mendoza": {"name": "Don Rodrigo de Mendoza", "role": "Admiral of the Armada de Barlovento", "col": "d9a31f"},
-	"ashby": {"name": "Sir Thomas Ashby", "role": "Governor of Jamaica", "col": "c8402f"},
-	"boucher": {"name": "Jean-Baptiste Nau", "role": "\"Le Boucher\"", "col": "5a1a1a"},
-	"crew": {"name": "The crew", "role": "", "col": "5a6b5a"},
-	"jeremy": {"name": "Jeremy", "role": "King of the Mosquito Coast", "col": "8a4fc4"},
-	"hesketh": {"name": "Tom Hesketh", "role": "Captain of the Brethren", "col": "3f6f8f"},
+	"mercy": {"name": "Mercy Teague", "role": "Quartermaster", "col": "b8432f", "mark": "brethren"},
+	"lindo": {"name": "Isaac Lindo", "role": "Fence of Port Royal", "col": "7b5ea7", "mark": "england"},
+	"vane": {"name": "Josiah Vane", "role": "From his logbook", "col": "8a6a3a", "mark": "brethren"},
+	"mendoza": {"name": "Don Rodrigo de Mendoza", "role": "Admiral of the Armada de Barlovento", "col": "d9a31f", "mark": "new_spain"},
+	"ashby": {"name": "Sir Thomas Ashby", "role": "Governor of Jamaica", "col": "c8402f", "mark": "england"},
+	"boucher": {"name": "Jean-Baptiste Nau", "role": "\"Le Boucher\"", "col": "5a1a1a", "mark": "brethren"},
+	"crew": {"name": "The crew", "role": "", "col": "5a6b5a", "mark": "brethren"},
+	"jeremy": {"name": "Jeremy", "role": "King of the Mosquito Coast", "col": "8a4fc4", "mark": "miskito"},
+	"hesketh": {"name": "Tom Hesketh", "role": "Captain of the Brethren", "col": "3f6f8f", "mark": "brethren"},
+	"captain": {"name": "The Captain", "role": "Quartermaster turned captain", "col": "4a4a52", "mark": "brethren"},
+	"partner": {"name": "Captain Rook", "role": "Captain of the Mosquito Queen", "col": "2f7f6f", "mark": "miskito"},
 	"": {"name": "", "role": "", "col": "3a3a3a"},
 }
 
@@ -60,6 +62,20 @@ const START_YEAR := 1665
 const PLAYER := "brethren"
 const HAVEN := "port_de_paix"
 const CAPTAIN := "The Captain"
+## Co-op (a second human captain, cstory.gd _setup): the partner plays the
+## Miskito faction (friends of the English pirates), a captain of the same
+## Brethren with a sloop of his own off Port Royal and the haven at the Cabo
+## Gracias a Dios; the crew votes every choice between the two captains.
+const PARTNER := "miskito"
+const PARTNER_CAPTAIN := "Captain Rook"
+const PARTNER_START := {
+	"treasury": 150, "infamy": 3,
+	"ship": {"t": "sloop", "h": 70, "c": 70, "nm": "Mosquito Queen"}, "at": [-7650, 1790],
+	"aboard": [["native_warriors", 70]],
+	"keep_regions": ["cabo_gracias"],
+	"army": ["native_warriors", "native_bowmen"],
+	"peace": ["dutch", "england", "france"],
+}
 ## Times the Brethren fish a shipless, landless captain out of the surf.
 const MERCY := 3
 
@@ -389,18 +405,17 @@ const EVENTS: Array[Dictionary] = [
 			["mercy", "A fisherman in from the Windward Passage, Captain. He says Santiago de Cuba is full of soldiers and there are boats gathering in the harbour. The Spanish want somebody to hang for Maracaibo, and Tortuga is the nearest pirate nest."],
 			["mercy", "They'll land next season. We have one turn."],
 		],
-		"fx": [["sched", "reprisal", 1]],
 		"choices": [
-			{"t": "Every man home to Tortuga", "hint": "Your flagship sails for Tortuga; the haven takes heart.",
+			{"t": "Every man home to Tortuga", "hint": "Your flagship sails for Tortuga; the haven takes heart, and the fort's guns cost the Spanish a boat: fewer of them land.",
 				"say": ["mercy", "Aye. I'll have the fort's guns scraped and loaded by the time you're there."],
-				"fx": [["voyage_r", "port_de_paix"], ["p", "haven", 10], ["flag", "rushed_home"]]},
+				"fx": [["voyage_r", "port_de_paix"], ["p", "haven", 10], ["flag", "rushed_home"], ["sched", "reprisal_met", 1]]},
 			{"t": "Hire the boucaniers of the hills (150 gold)", "need": {"gold_ge": 150}, "why": "Not enough gold in the chest",
-				"hint": "Two companies of buccaneers at Tortuga.",
+				"hint": "Two companies of buccaneers at Tortuga, and the fort is ready: fewer Spanish land.",
 				"say": ["mercy", "Hunters off the hills. They hate the Spanish worse than we do. The Spanish shot their cattle."],
-				"fx": [["gold", -150], ["unit", "buccaneers", 2, "port_de_paix"], ["p", "haven", 10]]},
-			{"t": "Let Tortuga look after itself", "hint": "The crew is spared a fight; Tortuga remembers.",
+				"fx": [["gold", -150], ["unit", "buccaneers", 2, "port_de_paix"], ["p", "haven", 10], ["sched", "reprisal_met", 1]]},
+			{"t": "Let Tortuga look after itself", "hint": "The crew is spared a fight; Tortuga remembers. The Spanish land in full strength.",
 				"say": ["mercy", "Tortuga took us in when nobody else would. I'll remember that you didn't, Captain."],
-				"fx": [["p", "haven", -15], ["p", "purse", 5]]},
+				"fx": [["p", "haven", -15], ["p", "purse", 5], ["sched", "reprisal", 1]]},
 		]},
 	{"id": "reprisal", "focus": "port_de_paix", "act": 1, "title": "The Spanish land", "if": {"owns": "port_de_paix"},
 		"lines": [
@@ -409,6 +424,14 @@ const EVENTS: Array[Dictionary] = [
 		],
 		"chron": "Spain landed at Tortuga to punish the pirates for Maracaibo.",
 		"fx": [["raid", "new_spain", "port_de_paix", ["musketeers", "musketeers", "w_pikemen", "rodeleros"], "reprisal"]]},
+	# The reprisal when the captain heeded the warning: the fort was ready and one boat is sunk on the way in (three companies).
+	{"id": "reprisal_met", "focus": "port_de_paix", "act": 1, "title": "The Spanish land", "if": {"owns": "port_de_paix"},
+		"lines": [
+			["", "Dawn. The fort's guns sink the first boat in the surf; the rest ground on the beach below it, and a column of pikes and muskets comes up the path under the red saltire of Burgundy."],
+			["mercy", "Fewer than they meant to bring. Every man who can hold a musket, to the walls!"],
+		],
+		"chron": "Spain landed at Tortuga to punish the pirates for Maracaibo.",
+		"fx": [["raid", "new_spain", "port_de_paix", ["musketeers", "w_pikemen", "rodeleros"], "reprisal"]]},
 	{"id": "tip_siege", "act": 1, "title": "Vane's logbook: walls", "tip": 1, "when": {"siege": 1},
 		"lines": [
 			["vane", "A siege is a matter of time and bread. Surround a town and it eats its stores; it starves, it surrenders, or it comes out at you. Storm the walls yourself and you pay in men for every turn you saved. We Brethren don't besiege, as a rule. We come over the wall at night or not at all."],
@@ -880,7 +903,7 @@ const EVENTS: Array[Dictionary] = [
 		"choices": [
 			{"t": "Storm it", "hint": "A landing party of the crews and everyone aboard goes over the wall now: a land battle.",
 				"say": ["mercy", "Grapnels and ladders. Same as Vane did it in fifty-eight."],
-				"fx": [["assault", "port_de_paix", ["cutlass", "cutlass", "buccaneers"], "retake"]]},
+				"fx": [["assault", "port_de_paix", ["cutlass", "cutlass", "buccaneers", "buccaneers", "buccaneers", "musketeers"], "retake"]]},
 			{"t": "Not yet", "hint": "Nothing.", "say": ["mercy", "We'll come back with more."], "fx": []},
 		]},
 	{"id": "retaken", "act": 2, "title": "Tortuga is ours again", "when": {"flag": "won_retake"},

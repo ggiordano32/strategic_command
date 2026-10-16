@@ -48,6 +48,7 @@ func _init() -> void:
 	_effects()
 	_battles()
 	_blocked()
+	_coop()
 	_step2()
 	_paths()
 	_random_runs()
@@ -286,6 +287,94 @@ func _blocked() -> void:
 	var t0 := CState.hash_text(st)
 	var st2 := CTurn.resolve_turn(st, [])
 	_check(int(st2["turn"]) == 0 and CState.hash_text(st2) == t0, "the turn does not resolve while a story choice waits")
+
+
+## Co-op: two captains, the crew votes every choice (cstory.gd answer).
+func _coop() -> void:
+	var st := CStory.new_story("Co", 5, {}, "brethren", true)
+	var caps := CStory.captains(st)
+	_check(caps.size() == 2 and (st["humans"] as Array).size() == 2 and CStory.voters(st).size() == 2, "co-op: two human captains")
+	var a := int(caps[0])
+	var b := int(caps[1])
+	_check(not CStory.flagship(st, b).is_empty() and CState.alive(st, b) and not CState.regions_of(st, b).is_empty(),
+		"co-op: the partner has a sloop and a haven of his own")
+	var pe: Dictionary = CStory.pending_for(st)[0]
+	var pid := int(pe["id"])
+	_check(CStory.is_vote(pe) and CStory.pending_for(st, a).size() == 1 and CStory.pending_for(st, b).size() == 1,
+		"co-op: the first choice is a vote both captains answer")
+	_check(CStory.answer_check(st, b + 1, pid, 0) != "", "co-op: a third faction cannot vote")
+	var h0 := CState.hash_text(st)
+	var s1 := CStory.answer(st, a, pid, 0)
+	_check(CState.hash_text(st) == h0, "co-op: answer() is pure")
+	_check(CStory.blocked(s1) and CStory.pending_for(s1, a).is_empty() and CStory.pending_for(s1, b).size() == 1 and CStory.vote_of(s1_pe(s1), a) == 0,
+		"co-op: after one vote the choice still waits for the other captain")
+	_check(CStory.answer_check(s1, a, pid, 1) != "", "co-op: a captain votes once")
+	var t1 := CTurn.resolve_turn(s1, [])
+	_check(int(t1["turn"]) == int(s1["turn"]), "co-op: the turn does not resolve while a vote is open")
+	var rt := CState.from_json(CState.to_json(s1))
+	var agree := CStory.answer(rt, b, pid, 0)
+	_check(CStory.pending_for(agree).filter(func(x): return int(x["id"]) == pid).is_empty(), "co-op: agreement passes the choice")
+	var last: Dictionary = (CStory.S(agree)["log"] as Array).filter(func(x): return str(x["e"]) == str(pe["e"])).back()
+	_check(int(last["c"]) == 0 and int(last["w"]) == -1 and (last["v"] as Array).size() == 2, "co-op: the log keeps both votes")
+	var solo := CStory.answer(CStory.new_story("Co", 5, {}, "brethren", true), a, pid, 0)
+	solo = CStory.answer(solo, b, pid, 0)
+	_check(CState.hash_text(solo) == CState.hash_text(agree), "co-op: the same votes through JSON give the same state")
+	# A disagreement: the heavier side (fame, crew, men) wins; its loser's crew grumbles.
+	var d1 := CStory.answer(st, a, pid, 0)
+	var d2 := CStory.answer(d1, b, pid, 1)
+	var d3 := CStory.answer(CStory.answer(st, b, pid, 1), a, pid, 0)
+	_check(CState.hash_text(d2) == CState.hash_text(d3), "co-op: the order of the votes does not matter")
+	var wa := CStory.vote_weight(st, a)
+	var wb := CStory.vote_weight(st, b)
+	var want := 0 if wa >= wb else 1
+	var dl: Dictionary = (CStory.S(d2)["log"] as Array).filter(func(x): return str(x["e"]) == str(pe["e"])).back()
+	_check(int(dl["c"]) == want and int(dl["w"]) == (a if wa >= wb else b) and CStory.flag(d2, "crew_split"),
+		"co-op: a split vote goes to the heavier side (%d against %d)" % [wa, wb])
+	var loser := b if wa >= wb else a
+	var crew0 := 0
+	var crew1 := 0
+	for fl in CFleet.fleets_of(st, loser):
+		crew0 += int(fl["ships"][0]["c"])
+	for fl in CFleet.fleets_of(d2, loser):
+		crew1 += int(fl["ships"][0]["c"])
+	_check(crew1 < crew0 or crew0 <= 5, "co-op: the loser's crew grumbles (%d -> %d)" % [crew0, crew1])
+	# Famous partner outvotes the lead.
+	var sf := CStory.new_story("Co", 5, {}, "brethren", true)
+	for c in CCaptain.of_faction(sf, b):
+		c["fame"] = 40
+	var d4 := CStory.answer(CStory.answer(sf, a, pid, 0), b, pid, 1)
+	var d4l: Dictionary = (CStory.S(d4)["log"] as Array).filter(func(x): return str(x["e"]) == str(pe["e"])).back()
+	_check(int(d4l["c"]) == 1 and int(d4l["w"]) == b, "co-op: the more famous captain carries a split vote")
+	# A tie goes to the lead.
+	var stie := CStory.new_story("Co", 5, {}, "brethren", true)
+	for c in CCaptain.of_faction(stie, b):
+		c["fame"] = 5
+	for c in CCaptain.of_faction(stie, a):
+		c["fame"] = 5
+	for fl in CFleet.fleets_of(stie, a):
+		fl["ships"][0]["c"] = CFleet.fleets_of(stie, b)[0]["ships"][0]["c"]
+		fl["carry"] = CFleet.fleets_of(stie, b)[0]["carry"].duplicate(true)
+	for ar in stie["armies"]:
+		if int(ar["f"]) == a or int(ar["f"]) == b:
+			ar["units"] = []
+	var dt := CStory.answer(CStory.answer(stie, a, pid, 0), b, pid, 1)
+	var dtl: Dictionary = (CStory.S(dt)["log"] as Array).filter(func(x): return str(x["e"]) == str(pe["e"])).back()
+	_check(CStory.vote_weight(stie, a) == CStory.vote_weight(stie, b) and int(dtl["w"]) == a and int(dtl["c"]) == 0, "co-op: a tie goes to the lead captain")
+	# The whole story with two captains voting (a quarter of the second captain's votes differ).
+	for sd in 2:
+		var cp := SA.play(300 + sd, turns, "random", 2000 + sd, false, true, true, 4)
+		var cp2 := SA.play(300 + sd, turns, "random", 2000 + sd, false, true, true, 4)
+		_check(CState.hash_text(cp) == CState.hash_text(cp2) and not CStory.blocked(cp) and (int(cp["turn"]) >= turns or str(cp["phase"]) == "over"),
+			"co-op seed %d: %d turns of votes, the same twice (turn %d, %s)" % [sd, turns, int(cp["turn"]), CStory.ending(cp)])
+		var j := CState.to_json(cp)
+		_check(CState.hash_text(CState.from_json(j)) == CState.hash_text(cp), "co-op seed %d: the state round-trips through JSON" % sd)
+	var cj := SA.play(300, mini(turns, 20), "random", 2000, true, true, true, 4)
+	var cn := SA.play(300, mini(turns, 20), "random", 2000, false, true, true, 4)
+	_check(CState.hash_text(cj) == CState.hash_text(cn), "co-op: the same through a JSON round trip every turn")
+
+
+func s1_pe(st: Dictionary) -> Dictionary:
+	return CStory.pending_for(st)[0]
 
 
 ## The whole story with random choices and the autoplay captain (every

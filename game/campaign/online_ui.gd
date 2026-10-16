@@ -125,6 +125,9 @@ func step() -> void:
 	if str(st["phase"]) == "over":
 		s.f = -1
 		s._refresh()
+		if s.story.step():
+			refresh_status()
+			return  # (a story campaign) its last news and its ending first
 		s.panels.show_game_over()
 		refresh_status()
 		return
@@ -136,6 +139,9 @@ func step() -> void:
 	var first_look: bool = oc.seen_turn() < turn and turn > 0
 	s._set_planner(oc.f, false)
 	if str(st["phase"]) == "battles":
+		if s.story.step(true):
+			refresh_status()
+			return  # (a story campaign) the news that set off the battle first
 		var then := func(): show_battles()
 		var auto_bid := _auto_battle()
 		if auto_bid >= 0:
@@ -147,6 +153,9 @@ func step() -> void:
 		elif s.dialog_kind != "busy":
 			then.call()
 	else:
+		if s.story.step():
+			refresh_status()
+			return  # (a story campaign) news to read, or a choice (a crew vote) to answer
 		if oc.seen_turn() < turn:
 			var seen2: int = oc.seen_turn()
 			oc.set_seen(turn)
@@ -400,7 +409,7 @@ func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 	# the server has live rooms.
 	var allies := _joiners(st, b)
 	var guest: bool = CRules.battle_guests(st, b).has(oc.f)
-	var live_ok: bool = oc.live_ok() and not allies.is_empty() and not b.has("sea")  # (N3a: sea battles: one player)
+	var live_ok: bool = oc.live_ok() and not allies.is_empty()  # (N3b: sea battles fought together too)
 	var foes: bool = not others.is_empty()
 	for x in others:
 		if CRules.battle_side_of(st, b, int(x)) == CRules.battle_side_of(st, b, oc.f):
@@ -471,7 +480,7 @@ func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 		ab.name = "auto_%d" % bid
 		h.add_child(ab)
 		var why := ("%s asked to join." % _names(asks)) if not asks.is_empty() else ("%s is waiting for you." % _names(wanting))
-		var with_ally: bool = not others.is_empty() and oc.live_ok() and not b.has("sea")
+		var with_ally: bool = not others.is_empty() and oc.live_ok()
 		var fb := Kit.icon_button("Fight", "battles", func():
 			if with_ally:
 				s.fight_live(bid, true)  # the ally's army is in it: they can join at any time

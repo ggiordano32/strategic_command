@@ -102,7 +102,7 @@ static func _event_index(st: Dictionary, id: String) -> int:
 
 ## A new story campaign: the pack's campaign with the script's start (the
 ## player is its PLAYER faction), its first events fired.
-static func new_story(p_name: String, p_seed: int, settings: Dictionary = {}, key: String = "brethren") -> Dictionary:
+static func new_story(p_name: String, p_seed: int, settings: Dictionary = {}, key: String = "brethren", coop: bool = false) -> Dictionary:
 	var sc: GDScript = SCRIPTS[key]
 	var m := sc.get_script_constant_map()
 	var stt: Dictionary = (m["START"] as Dictionary).get("settings", {}).duplicate()
@@ -110,12 +110,18 @@ static func new_story(p_name: String, p_seed: int, settings: Dictionary = {}, ke
 		stt[k] = settings[k]
 	CData.use_pack("west")
 	var pf := CData.faction_index(str(m["PLAYER"]))
-	var st := CState.new_campaign(p_name, p_seed, [pf], stt, [], "west")
-	_setup(st, key, pf)
+	var humans: Array = [pf]
+	var pf2 := -1
+	if coop and m.has("PARTNER"):
+		pf2 = CData.faction_index(str(m["PARTNER"]))
+		if pf2 >= 0:
+			humans.append(pf2)
+	var st := CState.new_campaign(p_name, p_seed, humans, stt, [], "west")
+	_setup(st, key, pf, pf2)
 	return st
 
 
-static func _setup(st: Dictionary, key: String, pf: int) -> void:
+static func _setup(st: Dictionary, key: String, pf: int, pf2: int = -1) -> void:
 	var sc: GDScript = SCRIPTS[key]
 	var m := sc.get_script_constant_map()
 	var start: Dictionary = m["START"]
@@ -158,6 +164,8 @@ static func _setup(st: Dictionary, key: String, pf: int) -> void:
 	var cap := CCaptain._new(st, pf, int(fl["id"]))
 	cap["nm"] = str(m.get("CAPTAIN", "The Captain"))
 	cap["fame"] = 5
+	if pf2 >= 0:
+		_setup_partner(st, m, pf2)
 	# The scripted actors.
 	for ad in start.get("actors", []):
 		var f := CData.faction_index(str(ad["f"]))
@@ -179,6 +187,50 @@ static func _setup(st: Dictionary, key: String, pf: int) -> void:
 			en["home"] = str(ad["home"])
 		(S(st)["actors"] as Array).append(en)
 	check(st)
+
+
+## (Co-op) The second captain: his faction keeps only the script's lands, a
+## sloop with a company aboard off Port Royal, a small garrison at home.
+static func _setup_partner(st: Dictionary, m: Dictionary, pf2: int) -> void:
+	var ps: Dictionary = m["PARTNER_START"]
+	(S(st)["cap"] as Array).append(pf2)
+	var fs: Dictionary = st["factions"][pf2]
+	fs["treasury"] = int(ps.get("treasury", 0))
+	fs["infamy"] = int(ps.get("infamy", 0))
+	var keep: Array = ps.get("keep_regions", [])
+	for r in CData.region_count():
+		if CState.owner(st, r) == pf2 and not keep.has(str(CData.REGIONS[r]["key"])):
+			st["regions"][r]["owner"] = -1
+	var arm: Array = []
+	for a in st["armies"]:
+		if int(a["f"]) != pf2:
+			arm.append(a)
+	st["armies"] = arm
+	CFleet.drop_faction(st, pf2)
+	if st.has("captains"):
+		var cs: Array = []
+		for c in st["captains"]:
+			if int(c["f"]) != pf2:
+				cs.append(c)
+		st["captains"] = cs
+	for k in ps.get("peace", []):
+		var g := CData.faction_index(str(k))
+		if g >= 0 and CState.dip(st, pf2, g) == CState.WAR:
+			CState.set_dip(st, pf2, g, CState.PEACE)
+	for r in CData.region_count():
+		if CState.owner(st, r) == pf2 and not (ps.get("army", []) as Array).is_empty():
+			var na := _new_army(st, pf2, r, ps["army"])
+			CState.place(na, CGrid.site(r))
+			_rules()._insert_army(st, na)
+			break
+	var c0 := _sea_near(_pos_cell(st, ps["at"]))
+	var fl := CFleet._new_fleet(st, pf2, c0, [_ship((ps["ship"] as Dictionary).duplicate())])
+	for u in ps.get("aboard", []):
+		var a2 := _new_army(st, pf2, CGrid.region(_land_near(c0)), [str(u[0])], int(u[1]))
+		(fl["carry"] as Array).append(a2)
+	var cap := CCaptain._new(st, pf2, int(fl["id"]))
+	cap["nm"] = str(m.get("PARTNER_CAPTAIN", "The Partner"))
+	cap["fame"] = 5
 
 
 static func _ship(d: Dictionary) -> Dictionary:
@@ -212,10 +264,24 @@ static func captains(st: Dictionary) -> Array:
 	return S(st).get("cap", [])
 
 
-## The captain the story speaks to first (-1 none).
+## The captain the story speaks to first (-1 none): the lead captain, the
+## haven's owner. With two captains (co-op) the first one still alive.
 static func player(st: Dictionary) -> int:
 	var c := captains(st)
+	if c.size() > 1:
+		for f in c:
+			if CState.alive(st, int(f)):
+				return int(f)
 	return int(c[0]) if not c.is_empty() else -1
+
+
+## Co-op (two captains): the captains still alive, in order.
+static func voters(st: Dictionary) -> Array:
+	var out: Array = []
+	for f in captains(st):
+		if CState.alive(st, int(f)):
+			out.append(int(f))
+	return out
 
 
 static func p(st: Dictionary, k: String) -> int:
@@ -265,14 +331,67 @@ static func blocked(st: Dictionary) -> bool:
 
 
 ## The choices waiting for faction f (any captain with f < 0), oldest first.
+## A crew vote (an entry with "v") waits for each captain who has not voted
+## yet; with f < 0 it is listed while it is open at all.
 static func pending_for(st: Dictionary, f: int = -1) -> Array:
 	if not on(st):
 		return []
 	var out: Array = []
 	for pe in S(st)["pending"]:
-		if f < 0 or int(pe["f"]) == f:
+		if f < 0:
+			out.append(pe)
+		elif pe.has("v"):
+			if captains(st).has(f) and vote_of(pe, f) < 0:
+				out.append(pe)
+		elif int(pe["f"]) == f:
 			out.append(pe)
 	return out
+
+
+static func _men(a: Dictionary) -> int:
+	var n := 0
+	for u in a["units"]:
+		n += int(u["n"])
+	return n
+
+
+## A crew vote (co-op): the choice is answered by both captains.
+static func is_vote(pe: Dictionary) -> bool:
+	return pe.has("v")
+
+
+## Captain f's answer in vote pe (-1: not voted yet).
+static func vote_of(pe: Dictionary, f: int) -> int:
+	for v in pe.get("v", []):
+		if int(v[0]) == f:
+			return int(v[1])
+	return -1
+
+
+## The captains a vote is still waiting for.
+static func vote_waiting(st: Dictionary, pe: Dictionary) -> Array:
+	var out: Array = []
+	for f in voters(st):
+		if vote_of(pe, int(f)) < 0:
+			out.append(int(f))
+	return out
+
+
+## Mercy's weight of captain f's side in a split vote: 10 a point of fame
+## (the most famous captain), 1 for 10 % of a ship's crew, 1 for 10 men
+## (aboard or ashore).
+static func vote_weight(st: Dictionary, f: int) -> int:
+	var w := 10 * CCaptain.best_fame(st, f)
+	var men := 0
+	for fl in CFleet.fleets_of(st, f):
+		for sh in fl["ships"]:
+			w += int(sh["c"]) / 10
+		for a in fl["carry"]:
+			men += _men(a)
+	for a in st["armies"]:
+		if int(a["f"]) == f:
+			men += _men(a)
+	return w + men / 10
 
 
 static func actor(st: Dictionary, k: String) -> Dictionary:
@@ -686,7 +805,12 @@ static func answer_check(st: Dictionary, f: int, pid: int, k: int) -> String:
 	var pe := _pending(st, pid)
 	if pe.is_empty():
 		return "no such choice"
-	if int(pe["f"]) != f:
+	if pe.has("v"):
+		if not voters(st).has(f):
+			return "not yours to answer"
+		if vote_of(pe, f) >= 0:
+			return "you have voted"
+	elif int(pe["f"]) != f:
 		return "not yours to answer"
 	var ev := event_def(st, str(pe["e"]))
 	var ch: Array = ev.get("choices", [])
@@ -713,6 +837,7 @@ static func _pending(st: Dictionary, pid: int) -> Dictionary:
 static func check(st: Dictionary) -> void:
 	if not on(st):
 		return
+	settle_ready(st)  # (co-op) a vote whose last captain fell
 	var t := int(st["turn"])
 	for pass_i in 4:
 		if S(st).has("end"):
@@ -793,14 +918,21 @@ static func _fire(st: Dictionary, i: int) -> void:
 		return
 	var n := int(S(st)["next"])
 	S(st)["next"] = n + 1
-	(S(st)["pending"] as Array).append({"id": n, "e": id, "t": t, "f": pf})
+	var pend := {"id": n, "e": id, "t": t, "f": pf}
+	if voters(st).size() > 1:
+		pend["v"] = []  # (co-op) the crew votes: each living captain answers
+	(S(st)["pending"] as Array).append(pend)
 
 
-static func _log(st: Dictionary, id: String, c: int) -> void:
+static func _log(st: Dictionary, id: String, c: int, extra: Dictionary = {}) -> void:
 	var n := int(S(st)["ln"]) + 1
 	S(st)["ln"] = n
 	var lg: Array = S(st)["log"]
-	lg.append({"n": n, "t": int(st["turn"]), "e": id, "c": c})
+	var le := {"n": n, "t": int(st["turn"]), "e": id, "c": c}
+	for k in ["v", "w"]:  # (a crew vote: the votes [[captain, choice]] and whose choice carried)
+		if extra.has(k):
+			le[k] = extra[k]
+	lg.append(le)
 	if lg.size() > LOG_MAX:
 		S(st)["log"] = lg.slice(lg.size() - LOG_MAX)
 
@@ -815,6 +947,13 @@ static func answer(st_in: Dictionary, f: int, pid: int, k: int) -> Dictionary:
 	if answer_check(st, f, pid, k) != "":
 		return st
 	var pe := _pending(st, pid)
+	if pe.has("v"):
+		# The crew votes (co-op): the answer waits until every living captain has given theirs.
+		(pe["v"] as Array).append([f, k])
+		if not vote_waiting(st, pe).is_empty():
+			return st
+		_settle_vote(st, pe)
+		return st
 	(S(st)["pending"] as Array).erase(pe)
 	var ev := event_def(st, str(pe["e"]))
 	var ch: Dictionary = ev["choices"][k]
@@ -823,6 +962,64 @@ static func answer(st_in: Dictionary, f: int, pid: int, k: int) -> Dictionary:
 	check(st)
 	_after_fx(st)
 	return st
+
+
+## Every living captain has voted on pe: agree, it passes; disagree, Mercy
+## calls the vote by weight (vote_weight: fame, crew and men; a tie goes to
+## the lead captain) and the loser's crew grumbles (-6 % crew and men). The
+## lead captain (the haven's owner, whom the script is written for) takes
+## the effects; the other captains share crew, hull, fame and infamy.
+static func _settle_vote(st: Dictionary, pe: Dictionary) -> void:
+	var vs: Array = []  # [captain, choice] in the captains' order
+	for f in captains(st):
+		var kk := vote_of(pe, int(f))
+		if kk >= 0:
+			vs.append([int(f), kk])
+	var lead := player(st)
+	var k := int((vs[0] as Array)[1])
+	var win := int((vs[0] as Array)[0])
+	var split := false
+	for v in vs:
+		if int(v[1]) != k:
+			split = true
+	if split:
+		var best := -1
+		for v in vs:
+			var w := vote_weight(st, int(v[0]))
+			if w > best:
+				best = w
+				k = int(v[1])
+				win = int(v[0])
+		set_flag(st, "crew_split")
+		for v in vs:
+			if int(v[0]) != win:
+				_crew(st, int(v[0]), -6)
+	elif vs.size() > 1:
+		win = lead
+	(S(st)["pending"] as Array).erase(pe)
+	var ev := event_def(st, str(pe["e"]))
+	var ch: Dictionary = ev["choices"][k]
+	_log(st, str(pe["e"]), k, {"v": vs, "w": win if split else -1})
+	var fx: Array = ch.get("fx", [])
+	_fx(st, lead, fx)
+	var shared: Array = []
+	for e in fx:
+		if ["crew", "hull", "fame", "infamy"].has(str((e as Array)[0])):
+			shared.append(e)
+	for o in voters(st):
+		if int(o) != lead and not shared.is_empty():
+			_fx(st, int(o), shared)
+	check(st)
+	_after_fx(st)
+
+
+## Votes whose captains have all answered (one died meanwhile) are settled.
+static func settle_ready(st: Dictionary) -> void:
+	if not on(st):
+		return
+	for pe in (S(st)["pending"] as Array).duplicate():
+		if pe.has("v") and not (pe["v"] as Array).is_empty() and vote_waiting(st, pe).is_empty():
+			_settle_vote(st, pe)
 
 
 ## A battle opened by an effect: the turn waits for it.

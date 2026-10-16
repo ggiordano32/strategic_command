@@ -32,6 +32,7 @@ const AudioFx := preload("res://game/audio.gd")
 const CState := preload("res://campaign/cstate.gd")
 const CTurn := preload("res://campaign/cturn.gd")
 const CRules := preload("res://campaign/crules.gd")
+const CStory := preload("res://campaign/cstory.gd")
 
 const PLAN_DEBOUNCE := 1.5
 const HEARTBEAT := 30.0
@@ -230,7 +231,7 @@ func _sync_once(fetch_session: bool) -> bool:
 		state_hash = h
 		_save_cache()
 		changed.emit("state")
-		if verify_enabled and prev > 0 and not mine.has(str(version)) and str(d.get("kind", "")) in ["turn", "battle"]:
+		if verify_enabled and prev > 0 and not mine.has(str(version)) and str(d.get("kind", "")) in ["turn", "battle", "story"]:
 			verify(version)
 	if fetch_session:
 		await _fetch_session()
@@ -279,6 +280,13 @@ func set_plan(orders: Array) -> void:
 	session["turn"] = int(st.get("turn", 0))
 	session["orders"] = orders.duplicate(true)
 	_touch_session()
+
+
+## A small per-seat note kept in the session (a story campaign's read marker).
+func set_session_value(key: String, value) -> void:
+	if session.get(key) != value:
+		session[key] = value
+		_touch_session()
 
 
 func seen_turn() -> int:
@@ -359,7 +367,7 @@ func ping(bid: int = -1) -> Dictionary:
 
 
 func _maybe_auto_resolve() -> void:
-	if str(summary.get("phase", "")) != "plan" or not bool(summary.get("all_in", false)) or _resolving:
+	if str(summary.get("phase", "")) != "plan" or not bool(summary.get("all_in", false)) or _resolving or CStory.blocked(st):
 		return
 	if _auto_resolve_for == version:
 		return
@@ -396,6 +404,8 @@ func _resolve(forced: bool) -> String:
 			return "stale"
 	if not bool(d.get("can_resolve", false)) or (not bool(d.get("all_in", false)) and not forced):
 		return "not_ready"
+	if CStory.blocked(st):
+		return "story"  # (a story choice, or a crew vote, is open: the turn waits for it)
 	var subs: Array = CState.normalise(d.get("submissions", []))
 	var t0 := Time.get_ticks_msec()
 	var base := st
@@ -446,6 +456,40 @@ func _adopt(nst: Dictionary, v: int, h: String) -> void:
 
 static func gz64(text: String) -> String:
 	return Marshalls.raw_to_base64(text.to_utf8_buffer().compress(FileAccess.COMPRESSION_GZIP))
+
+
+# ---------------------------------------------------------------- story ---
+
+## Answer story choice `pid` with choice `k` as this seat (a story campaign:
+## campaign/cstory.gd; in co-op the answer is this captain's vote on the
+## crew's choice). Runs CStory.answer here and uploads the new state like a
+## battle result: kind "story", compare-and-swap on the version; when another
+## seat's upload won first, the answer is re-applied on the newer state while
+## it still applies. Returns the server's reply (ok, or error / message;
+## "refused" when the choice is no longer ours to answer).
+func answer_story(pid: int, k: int) -> Dictionary:
+	for attempt in 5:
+		var why := CStory.answer_check(st, f, pid, k)
+		if why != "":
+			return {"ok": false, "network": false, "status": 0, "error": "refused", "message": why}
+		var nst := CStory.answer(st, f, pid, k)
+		var h := CState.hash_text(nst)
+		var base := version
+		var r := await _api("POST", "/state", {"base_version": base, "kind": "story", "story_pid": pid, "story_k": k,
+			"hash": h, "state_gz": gz64(CState.to_json(nst)), "rules": rules, "build": build}, {"retries": 2})
+		if r["ok"]:
+			_t("online_story_answer", {"pid": pid, "k": k, "turn": int(st["turn"])})
+			if version == base:
+				_adopt(nst, int(r["data"]["version"]), h)
+			else:
+				sync()
+			return r
+		if int(r["status"]) == 409:
+			if not await sync():
+				return r
+			continue
+		return r
+	return {"ok": false, "network": false, "status": 409, "error": "conflict", "message": "the campaign keeps moving; try again"}
 
 
 # -------------------------------------------------------------- battles ---
@@ -631,6 +675,8 @@ func verify(v: int) -> bool:
 		out = CTurn.resolve_turn(parent, inputs.get("submissions", []))
 	elif kind == "battle":
 		out = CTurn.apply_battle(parent, int(inputs.get("battle_id", -1)), inputs.get("outcome", {}))
+	elif kind == "story":
+		out = CStory.answer(parent, int(inputs.get("f", -1)), int(inputs.get("pid", -1)), int(inputs.get("k", -1)))
 	else:
 		return true
 	var h := CState.hash_text(out)

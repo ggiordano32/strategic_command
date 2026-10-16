@@ -118,13 +118,16 @@ type putReq struct {
 	Forced      bool            `json:"forced"`
 	BattleID    int             `json:"battle_id"`
 	Outcome     json.RawMessage `json:"outcome"`
+	StoryPid    int             `json:"story_pid"`
+	StoryK      int             `json:"story_k"`
 	Rules       string          `json:"rules"`
 	Build       string          `json:"build"`
 }
 
 // POST /api/c/{id}/state: a client uploads the state it computed from the
 // current version (base_version) by resolving the turn or applying one
-// battle's outcome. Exactly one upload per base version wins (checked and
+// battle's outcome, or answering a story choice (kind "story": this seat's
+// vote or choice, story_pid / story_k). Exactly one upload per base version wins (checked and
 // written in one transaction); the rest get 409 and refetch. Replaying an
 // upload that already won (same base, same hash) answers 200 again, so a
 // client whose connection dropped after the server committed can retry.
@@ -135,8 +138,8 @@ func (s *Server) putState(w http.ResponseWriter, r *http.Request, seat Seat) {
 		return
 	}
 	req.Hash = strings.ToLower(req.Hash)
-	if req.Kind != "turn" && req.Kind != "battle" {
-		fail(w, http.StatusBadRequest, "bad_request", "kind must be turn or battle")
+	if req.Kind != "turn" && req.Kind != "battle" && req.Kind != "story" {
+		fail(w, http.StatusBadRequest, "bad_request", "kind must be turn, battle or story")
 		return
 	}
 	text, meta, err := decodeState(req.StateGz, req.Hash)
@@ -235,6 +238,27 @@ func (s *Server) putState(w http.ResponseWriter, r *http.Request, seat Seat) {
 				return e
 			}
 			inputs = map[string]any{"battle_id": b.ID, "outcome": req.Outcome}
+		case "story":
+			// A seat answers a story choice (a crew vote, in co-op): the client ran
+			// CStory.answer; the server checks only that the step is plausible.
+			if c.Phase != "plan" && c.Phase != "battles" {
+				return conflict(c, "no story choice can be answered in phase %s", c.Phase)
+			}
+			if meta.Turn != c.Turn {
+				return errf(http.StatusBadRequest, "bad_state", "a story answer cannot change the turn")
+			}
+			if !hasInt(c.Alive, seat.F) {
+				return errf(http.StatusForbidden, "forbidden", "only a living captain answers")
+			}
+			for _, b := range c.Battles {
+				if !hasInt(meta.AllBattleIDs, b.ID) {
+					return errf(http.StatusBadRequest, "bad_state", "a story answer cannot resolve battle %d", b.ID)
+				}
+			}
+			if req.Hash == c.Hash {
+				return errf(http.StatusBadRequest, "bad_state", "the story answer changed nothing")
+			}
+			inputs = map[string]any{"f": seat.F, "pid": req.StoryPid, "k": req.StoryK}
 		}
 		inb, _ := json.Marshal(inputs)
 		newV = c.Version + 1
@@ -336,6 +360,26 @@ func (s *Server) afterNewState(ctx context.Context, tx queryer, ob *outbox, c *c
 	if m, ok := inputs.(map[string]any); ok && m["forced"] == true {
 		forced = fmt.Sprintf(" after the timeout without %s", s.names(c, m["missing"].([]int)))
 	}
+	if kind == "story" {
+		// A story choice was answered (a crew vote, in co-op): an ally is waited for, or a battle it set off.
+		if len(meta.Battles) > 0 {
+			var parts []string
+			var who []int
+			for _, b := range meta.Battles {
+				parts = append(parts, fmt.Sprintf("%s (%s)", c.region(b.R), s.names(c, b.Humans)))
+				who = append(who, b.Humans...)
+			}
+			s.note(ctx, tx, ob, &cc, seats, fmt.Sprintf("storybattle:%d", v), "turn_resolved",
+				fmt.Sprintf("A story choice set off a battle: %s.", strings.Join(parts, ", ")), who)
+		} else if len(meta.StoryWaiting) > 0 {
+			s.note(ctx, tx, ob, &cc, seats, fmt.Sprintf("story:%d", v), "your_turn",
+				"The crew is voting: your captain's answer is waited for.", meta.StoryWaiting)
+		} else if meta.Phase == "plan" {
+			s.note(ctx, tx, ob, &cc, seats, fmt.Sprintf("storydone:%d", v), "your_turn",
+				fmt.Sprintf("The crew has chosen. Turn %d is ready to plan.", meta.Turn+1), meta.Alive)
+		}
+		return
+	}
 	if kind == "turn" && len(meta.Battles) > 0 {
 		var parts []string
 		involved := map[int]bool{}
@@ -364,6 +408,9 @@ func (s *Server) afterNewState(ctx context.Context, tx queryer, ob *outbox, c *c
 		text := fmt.Sprintf("Turn %d is ready to plan.", meta.Turn+1)
 		if kind == "turn" {
 			text = fmt.Sprintf("Turn %d resolved%s. Turn %d is ready to plan.", c.Turn+1, forced, meta.Turn+1)
+			if len(meta.StoryWaiting) > 0 {
+				text += " A story choice waits for the crew's vote."
+			}
 		} else {
 			text = fmt.Sprintf("All battles are resolved. Turn %d is ready to plan.", meta.Turn+1)
 		}
