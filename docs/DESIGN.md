@@ -2990,6 +2990,175 @@ walls' heights in `_land_heights`, `CLR_MARGIN_W`), `sim/scenarios.gd`
 - **Measured.** See docs/STATUS.md (the pathing probe, the cover probe,
   set-up and tick cost).
 
+### Fight jitter and stuck units (as built, pathing phase J, 2026-10-16)
+
+Why: phase C's target (fight jitter near obstacles and in town at most
+3 %) was not met (4.7-5.1 % near obstacles, 3.1-6.1 % in town), and seeds
+8-10 showed 2-5 stuck runs over 30 s (docs/STATUS.md, phases C1-C7 and
+W). Attribution (scratchpad `pathJ/jat3.gd`: each jittering man-window of
+a unit in contact split by what moved the man: his place by slot change,
+unit turn, anchor move or re-lay, a target, or neither) and per-tick
+traces found these causes, all on maps with obstacles:
+
+- **2-cycles against a face** (the largest share; battle_2000's men cut
+  off behind a cliff 10 %): a man's step toward his place is slid or
+  pushed back by the nav test, the slide, the unit's trail or the
+  clearance push, and the next step undoes it (the lean and the full
+  contact paths slid by different rules; a field man pinned at a drawn
+  corner). Every tick, 0.3-0.5 m each way.
+- **Units turning in a fight**: most foot turn at once (`turn` 0), so any
+  wobble of the bearing to the target threw every place round the
+  anchor; a one-tick facing flip at a move's first step swung the outer
+  files 15 m.
+- **Re-lays of flowed places**: a flowed unit in contact was laid out
+  again every second (or on any death or turn), and the flood from the
+  same cell gave its men other cells as the footprints round it moved.
+- **The street middle shift against the path**: a squeezed unit on the
+  go with an enemy near shifted its anchor up to 1 m to the street's
+  middle every 3 ticks while its path pulled it back at a corner; its
+  facing swung 86 degrees every 3 ticks for half a minute.
+- **The lag regroup cycle**: a unit whose men came on slowly through a
+  crowded lane regrouped every 10 s (`REGROUP`): its anchor jumped back
+  among them, its places were laid out afresh and the front men turned
+  about.
+- **An anchor sliding along a house** toward a waypoint across it
+  swung 0.3 m a tick, either side of the waypoint's line.
+- **The skirmish dance**: a skirmishing missile unit the sim fell back
+  from a threat (its march facing away, then about to face it) was sent
+  back to its post by the AI the next second, and so on; storming units
+  at the plaza's hunt radius turned between a defender and the plaza
+  every second think.
+
+Stuck runs over 30 s had their own causes: West skirmishers with an attack
+order on a defender in range but behind houses closed straight into a
+house (no line of fire: they did not go by the streets); an attacker kept
+closing on a target 54 m off while its men fought another unit at a gate;
+stragglers 40-90 m from their places in a pocket the straight step, the
+slide and the trail did not lead out of; a unit's men split by a shut gate
+counted as stuck for ever; lone routers pinned at a house's drawn corner
+the exit field ran past (its 2 m cell open, the clearance push sending
+them back each tick); 36 of 38 routers shut in a court pressing a wall
+while two ran.
+
+Code: `sim/battle_sim.gd` (`_step_guard`, `_face_held`, `_flow_due`,
+`_gather`, `_via_goal`, `_via_on`, `_via_dst`, `_asl_step`,
+`_xf_tight_build`; hooks
+in `_turn`, `_update_units`, `_update_soldiers`, `_compute_offsets`,
+`_flow_slots`, `_squeeze`, `_anchor_step`, `_stuck_tick`,
+`_stuck_release`, `_xf_begin`, `_xf_unit`), `sim/siege_ai.gd`
+(`_at_hand`, `_watchdog`, `_skirm_back`, `_bound_storm`, `_storm`,
+`think`), `tests/lockstep_test.gd` (three peers: refusals compared at a
+common frame), `tests/pathing_probe.gd` (comment). Field and
+open maps are untouched: every rule is gated on obstacles (`obs_on`, a
+unit near obstacles `_u_obs`), so the four flat golden digests hold.
+
+- **Step guard.** Per man in a unit near obstacles (the fast path and
+  the contact lean and full paths; not on a stair move) the last step is
+  kept (`s_ls`: the step, 12 bits a
+  component, and a stall count; written inline for an open step, the
+  guard called only for a changed one). A step that was changed by the nav test, the slide or the
+  clearance push and that would undo the last one (more than 120 degrees
+  from it) is not taken: he stands, at most `GUARD_T` 20 ticks running;
+  then the step is taken (a dead end the trail leads back out of). An
+  open step (straight at his place or his man) is always taken. Standing
+  at his place clears it. This is the per-man step floor: nobody swings
+  between a face and his place.
+- **Facing deadband.** A unit among obstacles in a fight or shooting
+  (contact, a fire target; not on a wall, not a battery, not on a stair)
+  holds its facing while the wanted one is within `FACE_DB` 34 (12
+  degrees). An attack holds only from rest (`u_face == u_dface`): a turn
+  once begun is finished, to the bearing as it moves, so the facing
+  reverses only after the bearing swings 2 x FACE_DB (the C1-C7 agent's
+  20-degree hard hold left units stuck facing away; this does not). A
+  move in contact keeps its march facing within the band. Foot that turn
+  at once (`turn` 0) turn at most `OBS_TURN` 16 a tick there (90 degrees
+  in 1.6 s, the cavalry's rate): a facing that swings for a tick no
+  longer throws the places round.
+- **Falling back facing the enemy.** A move in contact among obstacles
+  whose way runs more than 90 degrees off its ordered facing (a
+  skirmisher falling back, a unit backing off) keeps the ordered facing
+  instead of the march facing: no about-face at the start and the end of
+  each fall-back, its places swinging round with it.
+- **Re-lay only on a change.** A flowed unit stores the anchor's 2 m cell
+  and its facing and squeeze when flowed (`u_flx`, `u_flf`). On the go it
+  is laid out again each `FLOW_EVERY` only if one changed (the cell, two
+  cells off in a fight; the facing past FACE_DB / 2; the squeeze; on the
+  move with no enemy near: as before). In a fight a death or a few degrees of turn no longer lays
+  out its places afresh (`_compute_offsets`); an order or the stuck
+  release (`u_flt` < 0) does as before. The squeeze keeps its files when
+  the count would change by one in contact (hysteresis), and the street
+  middle shift is not made with an enemy near (Hold street lines standing
+  still shift as before).
+- **The lag regroup waits for slow men.** The regroup after `REGROUP` 100
+  ticks cut off happens only once the men's middle has stopped
+  (`u_stuck` >= `REGROUP_GO` 30): men still coming through a crowded lane
+  are waited for (a quarter pace past `LAG_HOLD`).
+- **Anchor along an obstacle.** The anchor's step along a wall or a house
+  (`_anchor_step`, one axis) that undoes its last such step (`u_asl`) is
+  not taken; it stands and its way is planned again (every 5 ticks).
+- **Missile troops go round.** A missile unit with an attack order in
+  range of its target in a town but with no line of fire (houses between)
+  goes by the street graph as melee does (`mlof`: one line-of-fire trace
+  a tick serves both checks); with a line of fire it stands and shoots as
+  before.
+- **Stragglers.** (1) At the stuck release's `STUCK_ROUTE` step, men more
+  than `LAG_CUT` from their places on the anchor's ground get a trail: the
+  street route (`route_to`) from the farthest of them to the anchor
+  becomes the unit's `TRAIL` (`_gather`); a standing unit whose only men
+  short of their places are on ground it cannot reach (a shut gate
+  between) is not counted as stuck. (2) A man of a unit whose anchor
+  stands, more than `VIA_FAR` 12 m from his place with no clear line to
+  it (the 2 m cells along it,
+  `_way_clear`) who has not got a metre nearer in the last second walks
+  the street graph node by node (`s_via`: his next node, or below 0 his
+  distance at the last look; the target node `u_gnode`, nearest the
+  anchor): from the node near him down that node's distance table, until
+  he has a clear line or is within VIA_FAR; checked once a second a man
+  (a node he no longer sees is chosen again; the unit's node is found
+  again once the anchor is VIA_FAR off it). A man going round a house's
+  corner to his cover spot is not a straggler (the first cut, on any man
+  with no line, sent buccaneers in the street-cover set piece the long
+  way round: 34 -> 38 lost, now 32).
+- **Routers.** The exit fields leave out open cells whose middle is
+  nearer a drawn house face than `CLR_MIN` (`_xf_tight`, static, built
+  once at set-up: 8-10 ms), so no field way runs where the clearance push
+  sends a man back; a router whose field step is still pushed back tries
+  the directions 45 then 90 degrees off the field's, then the slide
+  memory. A routing unit down its side's field huddles where most of its
+  men are when fewer than a quarter of them have a way out (was: none).
+- **AI (`sim/siege_ai.gd`).** `_at_hand`: an attacking unit fighting with
+  its men while its order's target is over `AT_HAND_FAR` 20 m off (box to
+  box) attacks the enemy within `AT_HAND_NEAR` 4 m of it instead. West
+  skirmishers by bounds (`_bound_storm`) pick a defender they have a line
+  of fire at first, and keep an attack whose target just went out of
+  sight `UNSEEN_T` 6 s before picking again (a visible target, else on by
+  bounds). A skirmishing missile unit (`u_skirm`) with a foot or horse
+  enemy within the sim's skirmish distance + `SKIRM_HYST` 10 m gets no
+  order (`_skirm_back`): the sim's fall-back runs (the AI sent it back to
+  its post every second and the sim fell it back again). The stuck
+  watchdog (`_watchdog`, every AI unit on maps with
+  obstacles): a unit whose middle has not got on for `WD_T` 20 s
+  (`u_stuck`) while not fighting, not shooting, not on a wall, stair or
+  carrying, has its order planned again once each 20 s: an attack goes
+  for the nearest other enemy unit its side sees on its own ground (none:
+  it halts, and its mode's rule gives it a fresh order from where it
+  stands), a move halts likewise. Storming units at the contested plaza
+  hunt a defender anywhere from within its radius + S_PLAZA_HUNT as
+  before, and keep after one out to 2 x S_PLAZA_HUNT further (a unit
+  turned back to the plaza at the edge and for the defender again every
+  second think, its anchor swinging 0.1 m a tick).
+- **Statistics.** `stat_stuck_u` (the probes' stuck runs) counts a unit's
+  no-progress time only while none of its men is fighting
+  (`stat_stuck_r`); the release itself runs on `u_stuck` as before. A
+  unit at a gate whose men fight in turn is in the fight, not stuck.
+- **State.** Hashed on maps with obstacles: `s_ls`, `s_via` (per man),
+  `u_flx`, `u_flf`, `u_asl`, `u_gnode` (in `_flow_arrays`); all in
+  snapshots. `_xf_tight` is static (skipped in snapshots, rebuilt on
+  first use). Diagnostics (not hashed): `stat_guard`, `stat_gather`,
+  `stat_via`, `stat_asl`, `stat_ai_wd`, `stat_stuck_r`.
+- **Measured.** See docs/STATUS.md (the pathing probe at seeds 7-10, the
+  cover probe, cost).
+
 ### Compact unit cards (as built, 2026-10-09)
 
 View only: `game/unit_traits.gd` derives everything from the unit rows, so a

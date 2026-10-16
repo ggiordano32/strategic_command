@@ -1,6 +1,6 @@
 # Strategic Command — Status and Handover
 
-Last updated: 2026-10-16 (pathing phase W, West open towns, built, not committed; 2026-10-15 pathing phases C1-C7, street fighting, built, not committed; earlier 2026-10-09: siege towers built, not committed; the general and his bodyguard built, not committed; camels and elephants built, not committed; ammunition kinds and fire, foraging and the ammunition wagon built, not committed; earlier 2026-10-08: a CPU-fed soldier rendering fallback, picked by the battle's self-check, for Chrome on an Adreno 650 tablet that drew no soldiers; earlier 2026-10-07: any ally can join a fought co-op battle and be given units; the battle screen on the overworld; cities worth defending, part 2b: siege equipment as objects, the ladder shuffle and wall-punching bugs; part 2a: units do not pass through each other, street fights; part 1: tower engines, ladders, a ram, hard gates, the battle time limit; earlier 2026-10-06: deployment phase and custom battles built; the continuous campaign overworld built, state format 6; free campaign movement built; sieges and battle odds built on the campaign map; settlement variety built 2026-10-05). Read this first, then `docs/DESIGN.md` for the full
+Last updated: 2026-10-16 (pathing phase J, fight jitter and stuck units, built, not committed; pathing phase W, West open towns, built, not committed; 2026-10-15 pathing phases C1-C7, street fighting, built, not committed; earlier 2026-10-09: siege towers built, not committed; the general and his bodyguard built, not committed; camels and elephants built, not committed; ammunition kinds and fire, foraging and the ammunition wagon built, not committed; earlier 2026-10-08: a CPU-fed soldier rendering fallback, picked by the battle's self-check, for Chrome on an Adreno 650 tablet that drew no soldiers; earlier 2026-10-07: any ally can join a fought co-op battle and be given units; the battle screen on the overworld; cities worth defending, part 2b: siege equipment as objects, the ladder shuffle and wall-punching bugs; part 2a: units do not pass through each other, street fights; part 1: tower engines, ladders, a ram, hard gates, the battle time limit; earlier 2026-10-06: deployment phase and custom battles built; the continuous campaign overworld built, state format 6; free campaign movement built; sieges and battle odds built on the campaign map; settlement variety built 2026-10-05). Read this first, then `docs/DESIGN.md` for the full
 design and `CLAUDE.md` for working rules. Update this file whenever a
 milestone lands or the plan changes.
 
@@ -1551,7 +1551,7 @@ in a battle 600 s long instead of 545 with 43 % more blows: the city's
 battle runs another way: not C5's, with it off the cost is the same; most
 likely C3, the city's skirmishers going to ground among the houses; no
 cover layout ran in it).
-Open: fight jitter (above); phase W (built 2026-10-16, below); the AI's field
+Open: fight jitter (above; met by phase J, below); phase W (built 2026-10-16, below); the AI's field
 battles do not bound; balance phase T (street disorder, West morale).
 
 **Pathing pass 2, phase W (West open towns), as built 2026-10-16 (not
@@ -1665,8 +1665,122 @@ walled plans; West towns' tick cost is about 1.5 x a Rome city's per
 man (per-man movement among obstacles and the many cover units' cover
 checks); the hill port city's set-up (491 ms) is over the 450 ms mark; cover in the sparser West streets is weaker than in the
 Punic town (balance phase T); fight jitter near obstacles and in town is
-still over the phase C target; villages cover about a third of the map
+still over the phase C target (met by phase J, next paragraph); villages cover about a third of the map
 (the approach and the attackers' ground take the rest).
+
+**Pathing pass 2, fight jitter and stuck units (phase J), as built
+2026-10-16 (not committed; DESIGN "Fight jitter and stuck units").** Goal:
+the phase C target (fight jitter near obstacles and in town <= 3 %) and 0
+stuck runs over 30 s at seeds 7-10; both met. Causes found by attribution
+(scratchpad `pathJ/jat3.gd`: each jittering man-window of a fighting unit
+split by what moved the man) and per-tick traces: men swinging between a
+face and their place every tick (a slid or pushed step undone by the
+next: battle_2000's men behind a cliff 10 %, men 50 m from their places
+in town); units turning in a fight (most foot turn at once, so every
+wobble of the bearing threw the places round; a facing flipped for one
+tick at a move's first step); flowed places re-laid every second or at
+each death and shuffled; the street middle shift against the path at a
+corner (facing swinging 86 degrees every 3 ticks); the lag regroup every
+10 s for men slowly coming through a lane; an anchor sliding to and fro
+under a house below its waypoint; and in the AI, skirmishers fallen back
+by the sim sent back to their post the next second (an about-face each
+way), storming units turning between a defender and the plaza at the
+plaza's hunt radius. Stuck runs:
+West skirmishers in range with no line of fire closing straight into a
+house; an attacker closing on a target 54 m off while its men fought
+another at a gate; stragglers 40-130 m off in pockets; men split by a
+shut gate; lone routers pinned at a drawn corner the exit field ran
+past; 36 of 38 routers shut in a court. Fixes (all on maps with
+obstacles only): a per-man step guard (`s_ls`: a slid step that undoes
+the last stands, at most 2 s), a 12-degree facing deadband in a fight
+with turns finished once begun, at most 16 a tick for foot that turn at
+once, a fall-back in contact keeps its ordered facing (no about-face),
+flowed places re-laid only when the anchor's cell (two cells in a fight),
+the facing or the squeeze changes, a squeeze hysteresis of one file and no middle
+shift with an enemy near, the lag regroup only once the men stop, the
+anchor's along-a-wall step not undoing the last, missile troops with no
+line of fire going round by the streets, a stragglers' trail at the
+stuck release and per-man routing on the street graph for men of a
+standing unit 12 m+ off who stopped getting nearer (`s_via`), exit fields off cells under a
+drawn house's clearance and a sidestep for pinned routers, a huddle when
+fewer than a quarter of a router's men can get out; AI: take on the
+enemy at hand, West skirmishers pick a target they can shoot and keep an
+unseen one 6 s, no order over the sim's skirmish fall-back (10 m
+hysteresis), a 20 s stuck watchdog that plans the order again, the plaza
+hunt with a 30 m hysteresis. The stuck statistic counts a unit
+only while none of its men is fighting (a unit whose men fight in turn
+at a gate is in the fight). Pathing probe (all 16 maps, 6,000 ticks),
+HEAD -> now:
+
+| seed | fight near obstacles | fight in town | stuck > 30 s (longest ready / router) |
+|---|---|---|---|
+| 7 | 5.1 -> 1.7 % | 4.0 -> 1.6 % | 0 (25 / 0 s) -> 0 (24 / 0 s) |
+| 8 | 4.8 -> 1.9 % | 3.7 -> 1.6 % | 5 (46 / 22 s) -> 0 (24 / 18 s) |
+| 9 | 3.8 -> 1.9 % | 4.1 -> 2.0 % | 3 (41 / 42 s) -> 0 (24 / 0 s) |
+| 10 | 4.4 -> 2.2 % | 3.8 -> 1.9 % | 3 (54 / 52 s) -> 0 (24 / 0 s) |
+
+rev/step in fights 7.0-8.4 -> 4.3-5.9 %, walk / net 1.30-1.35 ->
+1.20-1.24. Per map at seed 7: battle_2000 near obstacles 10.3 -> 0.9 %,
+siege_oppidum 5.2 -> 2.5 %, siege_town 4.6 / 4.5 -> 1.9 / 1.7 %, West
+towns in town 5.0-8.2 -> 1.5-4.3 % (port 4.3, village 3.0); fights on
+walls 1.1 -> 0.0 % (the stranded wall missile men on the Punic walk:
+2-cycles against the walk's edge, caught by the step guard; what is left
+on walls is men walking to a new slot after a death). The West towns'
+near-obstacle rows (8-12 % at the port and the hill village) are a few
+hundred man-windows each (men at the town's edge). Phase A / B metrics
+hold (HEAD -> now, seeds 7 / 8 / 9 / 10): rout jitter worst 0.2 / 0.3 /
+0.3 / 1.9 -> 0.3 / 0.4 / 0.4 / 0.3 %, routing time stationary 0.0 / 0.2 /
+0.3 / 0.8 -> 0.0 / 0.1 / 0.0 / 0.0 %, inside the drawn footprints 0.03-0.04
+-> 0.04 % (within 0.3 m 0.00-0.12 -> 0.00 %); seed 7 move in town 2.3 ->
+1.6 % (seed 9 2.1 -> 2.9 %, most likely the missile troops now going
+round by the streets, laid out again as they go), move near obstacles 3.3 -> 1.0 %, idle in town 0.4 -> 0.1 %
+(rev/step 9.4 -> 3.6 %), idle near obstacles 0.6 -> 0.3 % (rev/step 2.3
+-> 2.9 %). Cover probe (4 seeds, defenders lost / attackers lost, HEAD ->
+now): buccaneers open 0.51 = 0.51, rocks 0.16 -> 0.13, hamlet 0.00 =
+0.00, Punic town 0.51 -> 0.50, West town 0.58 -> 0.53; musketeers 1.02 /
+0.67 / 0.25 / 1.41 / 1.56 unchanged. `--only=street` street-cover:
+buccaneers lose 34 -> 32 at the mouth against 63 in the open (an early
+cut of the straggler routing sent them the long way round to their
+cover: 38, over the 60 % check; fixed by routing only men who stopped
+getting nearer). Cost (desktop, `tests/benchmark.gd` and the 8 sieges of
+`tests/probe_maps.gd` at 3,000 ticks, two rounds each, HEAD -> now, mean
+ms a tick): bench_4000_city 4.39 / 4.30 -> 4.36 / 4.32, bench_4000_hills
+3.47 / 3.45 -> 3.54 / 3.61 (its march, the same trajectory for the first
+440 ticks: 3.80 / 3.88 -> 4.25 / 4.26, the per-man bookkeeping of the step
+guard and the stragglers' check, +0.15 ms of the soldier update;
+engaged 3.44 / 3.40 -> 3.44 / 3.51), battle_2000 1.48 / 1.45 -> 1.48 /
+1.50 (march 1.20 -> 1.35, engaged 1.63 -> 1.56), bench_4000_west 8.25 /
+8.27 -> 8.03 / 8.10, the 8 sieges summed 11.01 / 11.02 -> 11.79 / 11.94
+(+7-8 %; town 1.45 -> 1.64, punic 1.47 -> 1.63, oppidum 1.30 -> 1.59: other
+battles; polis 1.77 -> 1.67). Set-up +8-10 ms on settlement maps (the
+exit fields' clearance cells, built once). Screenshots (scratchpad
+`pathJ/shots/`, the pathB harness at seed 7: the Punic gate fight at
+ticks 3600 / 3800 and a West town fight at 2600, before / after; the
+battles differ by then).
+
+Goldens and pins: the four flat digests unchanged; every determinism pin
+unchanged (no re-pins); campaign_sim 6 x 60 Rome cdc1d805 32b83031
+23f9ed4f 3237d82d a42fc685 b6fe6c2e, West b137875c edd82dee 0393b18d
+2aa8578b deb00750 1d051164 unchanged. New hashed state on maps with
+obstacles (`s_ls`, `s_via`, `u_flx`, `u_flf`, `u_asl`, `u_gnode`), so
+settlement and landform battles hash differently from HEAD (lockstep
+peers agree; snapshot / restore checked). One test changed:
+`tests/lockstep_test.gd` three peers compared the refused-order counts
+at each peer's last frame, and the peers stop a frame apart: with the new
+trajectory an order refused in frame 1201 counted on A and C only (230
+vs 231; the states were equal every frame); the counts are now compared
+at the last frame all three applied. Verify suite: check_scripts clean,
+determinism, custom battle, campaign, pack, battle screen (its
+exit-time heap abort after PASS as before) and lockstep PASS.
+
+Open: men in a lane still walk to a new slot after each death (slot
+filling, not touched); West towns' fights in town are 1.6-4.8 % per map
+at seed 7 (the aggregate is under 3 %); the stragglers' routing takes the street
+graph's 3 m lines, so a man in a yard no line reaches still stands; the
+watchdog halts a stuck move and its mode may give the same move again
+(it plans it from where it stands); a view log: `game/unit_icons.gd`
+draws a degenerate pike glyph polygon at some marker sizes ("Invalid
+polygon data" in the after screenshot's log; view only, untouched).
 
 **Caribbean plan agreed 2026-10-14 (DESIGN "The Caribbean pack: ships,
 pirates, cover, asymmetry"):** sea battles real time with the wind;
@@ -2194,6 +2308,30 @@ server rebuilt with the battle "ask" / guest room changes):
   touch_scroll_test passes again (2026-10-10).
 
 ## Where we are headed
+
+**The goal (agreed 2026-10-16).** The real game is the Caribbean and the
+Americas. Rome was the framework for getting the control system right and
+stays in as a nod to Rome 2 and familiar content to play with friends;
+Creative Assembly already did Rome well, so depth goes into the Caribbean
+campaign first, and Rome gets its own polish / detail pass only after the
+Caribbean details are worked out. Engine fixes (pathing, jitter, city map
+generation, cover) flow back to the Mediterranean campaign for free.
+
+1. **The Caribbean pack, playable:** the 45-turn Brethren story to its
+   three-way ending, co-op optional, sea battles with live co-op, forts
+   with an inside. Done when the owner finishes the story once as the
+   Brethren.
+2. **Rome, finished, as the control check:** a full co-op campaign on
+   phones to a decisive end without a bug that needs the developer; the
+   device pass and the balance numbers serve this.
+3. **Someone outside plays it:** a named public build, guided first turns,
+   a settings pass. Done when a stranger reaches turn 10 unaided.
+
+Immediate order (2026-10-16): shaking / stuck pass -> balance pass T ->
+forts with an inside (2c) -> story step 3 (crew vote, portraits, online
+story, Tortuga) and sea follow-ons (deck melee, fire ships, live co-op at
+sea) -> Hunyuan captain miniature (turnarounds from the user) -> device
+checks.
 
 **Agreed order on 2026-10-08 (evening):** engines as pick-up-able equipment
 with crews as men + per-unit kills (running); then 4d ammunition types and
@@ -2786,3 +2924,4 @@ python3 tools/playtest_report.py                 # summarise playtest_logs/
 - The loop: build, re-export, the user playtests on their phone against the
   dev server, telemetry plus their impressions drive the next change.
 - Commit only when the user says so.
+- **Overworld zoom / pan hitch (2026-10-16, view only, built, not committed).** `tests/zoom_sweep.gd` (windowed, vsync off, `-- --pack=west|rome --style=table|relief [--select] [--off=layer,..] [--dump=step] [--shots=dir]`) scripts wheel / pinch / pan / refocus phases and prints the worst frames with per-layer ms (`game/campaign/zprof.gd`, off unless a test sets it). Found at HEAD: the overlay redrew everything on every pan or zoom frame (army-banner spots recomputed per pixel, emblems and labels reshaped each time), 8 towns redrawn per frame resolved ~300 sprite keys each (50 ms), the map's polylines redrew in one 7 ms frame, and a selected army redrew map + overlay every frame (31 ms mean). Fixes: overlay = six child canvas items that **slide** (pan = translation, small zoom step = scale, markers a few % off for a frame) and redraw one per frame, state changes still redraw all at once; `_side_spot` cached per town per 5 % zoom band as an offset; `TextLine` cache for labels; town draw lists cached per atlas variant; `Geo.region_at` bbox pre-test; map edges / coast staged on later frames (never in an overlay redraw frame); target tints and the army halo are their own cheap nodes. Worst frame west table (1600x900, ms, HEAD -> now): wheel 70 -> 19, pinch 70 -> 19, pan 20 -> 17, a refocus jump 78 -> 30; with an army selected steady 31 -> 14 mean; Rome table wheel 46 -> 11. Screenshots at three zooms differ by under 0.05 % of pixels (sea animation, text). **Open:** with an army selected a few % of frames are still 17-20 ms (AA polylines of the map cost ~7 ms a frame to render: edges 4.6, coast 2.5; LOD-simplify or cull them next), a jump of zoom (focus a region) is one 30 ms frame, `tests/zoom_sweep.gd --off=` shows the rest; not measured on the Tab S7 or a phone. Exit of the windowed tests aborts with a double free (pre-existing, also at HEAD).

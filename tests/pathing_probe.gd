@@ -13,8 +13,9 @@ extends SceneTree
 ## - Routers that stay put: share of routing unit-seconds whose centroid
 ##   moved < 3 m in the last 10 s (huddled routers, u_hud, not counted).
 ## - Stuck time, routers included: the longest no-progress run of a ready
-##   unit (stat_stuck_u) and of a router (centroid < 3 m in 10 s, counted on
-##   from there, not huddled); runs over 30 s.
+##   unit (stat_stuck_u: while none of its men is fighting, since the fight
+##   jitter pass 2026-10-16) and of a router (centroid < 3 m in 10 s, counted
+##   on from there, not huddled); runs over 30 s.
 ## - Men inside the drawn footprint of a building (the view's polygons,
 ##   map_info.city.buildings; ready ground units every 5 ticks, men within
 ##   6 m of a building) and within 0.3 m of a face.

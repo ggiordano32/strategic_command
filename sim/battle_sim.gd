@@ -429,6 +429,7 @@ const CIT_SIEGE_LOSS := 6        # ... lose this much morale a second
 const LAG_HOLD := 20 * M         # settlement maps: the anchor slows to a quarter while its men lag this far (+ half its depth)
 const LAG_CUT := 8 * M           # ... and counts as cut off past this (+ half its depth) when not fighting
 const REGROUP := 100             # ... for this long: the unit regroups where its men are
+const REGROUP_GO := 30           # ... unless their middle got on in the last this many ticks (u_stuck below it: still coming)
                                  # (crowds in a breach pile up in a few grid cells)
 # Siege equipment and wall towers (docs/DESIGN.md "Siege equipment and wall
 # towers"). Walls 2-3 gates shrug off swords; rams and artillery break them.
@@ -1053,6 +1054,10 @@ var u_sry := PackedInt32Array()
 var u_sprog := PackedInt32Array()    # ... on a stair move, its men already on the level it goes to (more: it gets on)
 var u_flow := PackedInt32Array()     # its places are flowed into the free space (1), else its formation's rectangle (0)
 var u_flt := PackedInt32Array()      # ... the tick they were last laid out (an order: long ago)
+var u_flx := PackedInt32Array()      # ... the anchor's 2 m cell (y * 4096 + x) and the facing they were last flowed for (_flow_slots;
+var u_flf := PackedInt32Array()      # ... a flowed unit on the go is laid out again only once one has changed: _flow_due)
+var u_gnode := PackedInt32Array()    # the street-graph node + 1 its stragglers make for (_via_dst; 0 none)
+var u_asl := PackedInt32Array()      # its anchor's last step along an obstacle (_anchor_step: +-1 x, +-2 y; 0 none)
 var tr_x := PackedInt32Array()       # u * TRAIL + k, oldest first
 var tr_y := PackedInt32Array()
 var pth_x := PackedInt32Array()      # u * PATH_MAX + k
@@ -1543,6 +1548,7 @@ var stat_unstick := PackedInt32Array([0, 0, 0, 0])  # stuck releases: places lai
 var stat_ladder_cut: int = 0        # climbs ended with men below (a move outward, the set gone, nobody coming to a free ladder): all came down
 var stat_stuck_max: int = 0         # longest u_stuck any unit reached (ticks)
 var stat_stuck_u := PackedInt32Array()  # ... per unit (its longest)
+var stat_stuck_r := PackedInt32Array()  # diagnostics: the current stuck run while none of its men fight (stat_stuck_u is its longest)
 var stat_stuck_t := PackedInt32Array()  # ... per unit, ticks stuck in all
 var stat_ak_shots: int = 0          # missiles and shots of a special ammunition kind
 var stat_ignite: int = 0            # things set alight (gates, engines, equipment)
@@ -1624,6 +1630,11 @@ const GIVEUP_T := 8 * TICKS_PER_SECOND          # a West town (phase W): a route
 const GIVEUP_CAUGHT := 10                       # ... as does one with a ready enemy within SURR_R for this many seconds on end
 const TIMBER_PASS := 35                         # a West town: % of flat balls a timber wall (plank houses, shacks, stakes) lets through
 const SLIDE_HOLD := 5             # a man stalled against an obstacle follows it this many ticks (s_wf)
+const OBS_TURN := 16              # foot that turn at once (turn 0) turn at most this a tick among obstacles in a fight (90 degrees in 1.6 s: _turn)
+const FACE_DB := 34               # facing deadband among obstacles in a fight (12 degrees: _face_held)
+const VIA_FAR := 12 * M            # a man this far from his place with no clear line to it walks the street graph (_via_goal) ...
+const VIA_REACH := 3 * M           # ... a node counts as reached this close
+const GUARD_T := 20               # the step guard (_step_guard): a man whose slid step would undo his last one stands, at most this many ticks
 const SEP_SLOT := M / 2           # men following their places near obstacles keep this far apart (a quarter push)
 const _DX8 := [1, 1, 0, -1, -1, -1, 0, 1]   # 8 directions: E SE S SW W NW N NE (y down)
 const _DY8 := [0, 1, 1, 1, 0, -1, -1, -1]
@@ -1640,10 +1651,14 @@ var _xb_n: int = 0                # ... and length
 var _xb_cmp: int = -1             # ... a refuge field keeps to this piece (all gates shut)
 var _xb_done: int = 1
 var _xb_gm: int = 0               # ... the generation's gates open
+var _xf_tight := PackedInt32Array()  # derived, static (skipped in snapshots): open cells whose middle is within CLR_MIN of a drawn house face, left out of the fields
+var _xf_tdone: int = 0            # ... built (1) once, on first use
 var _u_xf := PackedInt32Array()   # scratch (per unit, set before use each tick): the field offset its routers walk down (-1 none)
 var u_xg := PackedInt32Array()    # a defending router's refuge with the exit fields: 0 not chosen, 1 none, 2 + g gate g's
 var u_hud := PackedInt32Array()   # routers huddled: 1 with no way out (where they are), 2 + g at shut gate g's refuge; 0 not
 var s_wf := PackedByteArray()     # per man, a slide's memory: dir 0-7 | 8 has dir | hold << 4 | 128 stalled last time
+var s_via := PackedInt32Array()   # per man: a straggler's next street-graph node + 1 (_via_goal); below 0, -(metres to his place + 1) at the last look; 0 none
+var s_ls := PackedInt32Array()    # per man near obstacles, his last step (the step guard, _step_guard): (dx & 4095) << 12 | (dy & 4095), stalls << 24; 0 none
 var stat_rs_x := PackedInt32Array()  # diagnostics (not hashed): a router's centroid when it last got on (STUCK_DIST)
 var stat_rs_y := PackedInt32Array()
 var stat_rs_k := PackedInt32Array()  # ... ticks since (not huddled)
@@ -1652,6 +1667,11 @@ var stat_rout_still: int = 0      # router-ticks still 10 s and more (not huddle
 var stat_huddle: int = 0          # units that huddled
 var stat_hud_surr: int = 0        # men who gave up huddled
 var stat_wf: int = 0              # wall-follow holds started (slide memory)
+var stat_guard: int = 0           # diagnostics: steps the step guard held (_step_guard)
+var stat_gather: int = 0          # diagnostics: stragglers' trails laid by the stuck release (_gather)
+var stat_via: int = 0             # diagnostics: stragglers sent along the street graph (_via_goal)
+var stat_asl: int = 0             # diagnostics: anchor steps along an obstacle refused as undoing the last (_asl_step)
+var stat_ai_wd: int = 0           # diagnostics: orders planned again by the settlement AI's stuck watchdog (SiegeAI._watchdog)
 
 # Building clearance (docs/DESIGN.md "Clearance off the houses"; docs/PATHING_SPEC.md
 # phase B): a static 1 m grid over the map of the distance from each cell's
@@ -1853,11 +1873,17 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	stat_stuck_u.fill(0)
 	stat_stuck_t.resize(n_units)
 	stat_stuck_t.fill(0)
+	stat_stuck_r.resize(n_units)
+	stat_stuck_r.fill(0)
 	for arr in [stat_rs_x, stat_rs_y, stat_rs_k, _u_xf, u_gu]:
 		arr.resize(n_units)
 		arr.fill(0)
 	s_wf.resize(n)
 	s_wf.fill(0)
+	s_ls.resize(n)
+	s_ls.fill(0)
+	s_via.resize(n)
+	s_via.fill(0)
 	s_shot.resize(n)
 	s_shot.fill(-1000)
 	bk_x.resize(BK_N)
@@ -2223,7 +2249,7 @@ func _stair_arrays() -> Array:
 ## Per-unit flow state (docs/DESIGN.md "Units flow into the space"; maps
 ## with buildings or walls; hashed only there).
 func _flow_arrays() -> Array:
-	return [u_stuck, u_srx, u_sry, u_sprog, u_flow, u_flt, u_hud, u_xg]
+	return [u_stuck, u_srx, u_sry, u_sprog, u_flow, u_flt, u_hud, u_xg, u_flx, u_flf, u_asl, u_gnode]
 
 
 ## Per-unit war dog arrays (hashed only in battles with handlers, so the
@@ -4260,6 +4286,8 @@ func _squeeze(u: int) -> void:
 			sq = 0
 	elif u_sq[u] > 0 and width < want * fsp + 2 * M:
 		sq = u_sq[u]  # not quite room yet
+	if sq > 0 and u_sq[u] > 0 and absi(sq - u_sq[u]) == 1 and u_contact[u] != 0 and hf == 0:
+		sq = u_sq[u]  # (in a fight: a file more or less is not worth laying its places out again; fight jitter pass)
 	if sq != u_sq[u]:
 		if sq > 0 and u_sq[u] == 0:
 			stat_squeeze += 1
@@ -4267,9 +4295,14 @@ func _squeeze(u: int) -> void:
 		u_dirty[u] = 1
 		u_settled[u] = 0
 	if sq > 0 and (u_order[u] != O_NONE or hf > 0) and absi(fl - fr) > 2 * M and u_stair[u] != 2 \
+			and (u_contact[u] == 0 or (hf > 0 and u_order[u] == O_NONE)) \
 			and not (u_order[u] == O_MOVE and FM.approx_len(u_dx[u] - ax, u_dy[u] - ay) <= REFORM_IN_PLACE_DIST):
 		# Keep to the middle of the street (a metre at a time: at a corner
 		# the free width either side can flip from one check to the next).
+		# Not with an enemy near while on the go (fight jitter pass,
+		# 2026-10-16: at a corner the shift and the way on to the next
+		# waypoint undid each other every 3 ticks, its anchor and facing
+		# swinging 86 degrees, its places with them, for half a minute).
 		# Not on the last stretch of a move (it faces its final way there,
 		# so the shift went back along its way and it never arrived: units
 		# 2-3 m short of their places for minutes, 2026-10-09).
@@ -5017,6 +5050,7 @@ func _stair_check(u: int) -> void:
 		if across > u_sprog[u]:
 			u_sprog[u] = across
 			u_stuck[u] = 0  # (men across: the stair move gets on)
+			stat_stuck_r[u] = 0
 	if not done:
 		return
 	u_stair[u] = 0
@@ -5411,6 +5445,16 @@ func _xf_begin(mask: int) -> void:
 				var c := j * ob_w + i
 				if obs[c] == MapGen.C_GATE + g:
 					_xb_pass[c] = v
+	if cl_on != 0:
+		# A cell whose middle is nearer a drawn house face than CLR_MIN is
+		# not in the fields: the clearance push keeps a man off that line,
+		# so a way through it (an open 2 m cell under a house's drawn
+		# corner) pinned him there, pushed back each tick (fight jitter
+		# pass, 2026-10-16: lone routers stood minutes at such corners).
+		if _xf_tdone == 0:
+			_xf_tight_build()
+		for c in _xf_tight:
+			_xb_pass[c] = 0
 	_xf_pend.resize((2 + n_gates) * nc)
 	_xf_pend.fill(XF_INF)
 	_xb_q.resize(nc)
@@ -5420,6 +5464,28 @@ func _xf_begin(mask: int) -> void:
 	_xb_cmp = -1
 	_xb_done = 0
 	_xb_gm = mask
+
+
+## The open 2 m cells whose middle is nearer a drawn house face than
+## CLR_MIN (_xf_tight; static, built once, left out of snapshots: a pure
+## function of the map).
+func _xf_tight_build() -> void:
+	_xf_tight = PackedInt32Array()
+	_xf_tdone = 1
+	var lim := _clr_lim(CLR_MIN)
+	var clw := cl_w
+	var clh1 := cl_h - 1
+	var clw1 := cl_w - 1
+	for j in ob_h:
+		var cy := j * 2048 + 1024
+		var row := mini(cy >> 10, clh1) * clw
+		for i in ob_w:
+			var c := j * ob_w + i
+			if (nav[c] & MapGen.NAV_GROUND) == 0:
+				continue
+			var cx := i * 2048 + 1024
+			if clr_g[row + mini(cx >> 10, clw1)] < lim and not _clr_ok(cx, cy, CLR_MIN):
+				_xf_tight.append(c)
 
 
 ## Seed the next field of the generation (its exit or refuge cells at 0);
@@ -5639,8 +5705,12 @@ func _xf_unit(u: int, rg: int) -> void:
 	if refuge and n_near * 2 >= n_g:
 		_hud_start(u, 2 + rg, g_ix[rg], g_iy[rg])
 		return
-	if n_fin > 0:
+	if n_fin > 0 and (refuge or n_fin * 4 >= n_g):
 		return
+	# (Down its side's field: fewer than a quarter of its men have a way out
+	# (the rest shut in a court or behind a gate: fight jitter pass,
+	# 2026-10-16, 36 of 38 men pressed into a wall for a minute while two
+	# ran): it huddles where most of them are.)
 	if refuge:
 		# (No way to the refuge from where they are: out by the exits.)
 		var so := u_side[u] * nc
@@ -5936,6 +6006,45 @@ func _free_mem(i: int, ox: int, oy: int, nx: int, ny: int, mask: int) -> Vector2
 			return Vector2i(hx, hy)
 	s_wf[i] = 0
 	return Vector2i(nx, ny)
+
+
+## The step guard (fight jitter pass, 2026-10-16): man i of a unit in a
+## fight near obstacles, at (x, y), meant to step to (sx, sy) and the nav
+## test, the slide or the clearance push put him at (nx, ny) instead. If
+## that step undoes his last one (more than 120 degrees from it) he stands
+## (the 2-cycle a face makes: a step at his place, slid or pushed back,
+## then the same step again), at most GUARD_T ticks running; then the step
+## is taken (a dead end the trail leads back out of). An open step is
+## always taken. s_ls keeps his last step (hashed, in snapshots).
+func _step_guard(i: int, x: int, y: int, sx: int, sy: int, nx: int, ny: int) -> Vector2i:
+	var w := s_ls[i]
+	var dx := nx - x
+	var dy := ny - y
+	if w != 0 and (nx != sx or ny != sy) and (dx != 0 or dy != 0):
+		var qx := (w >> 12) & 4095
+		var qy := w & 4095
+		if qx >= 2048:
+			qx -= 4096
+		if qy >= 2048:
+			qy -= 4096
+		var dot := qx * dx + qy * dy
+		if dot < 0 and 4 * dot * dot > (qx * qx + qy * qy) * (dx * dx + dy * dy):
+			var k := (w >> 24) & 127
+			if k < GUARD_T:
+				s_ls[i] = (w & 0xFFFFFF) | ((k + 1) << 24)
+				stat_guard += 1
+				return Vector2i(x, y)
+	s_ls[i] = _ls_code(dx, dy)
+	return Vector2i(nx, ny)
+
+
+## A man's step (dx, dy) as the step guard keeps it (s_ls: 12 bits a
+## component, two's complement; a step is under 2 m; 0 for none). The
+## callers write it inline for an open step (this is the slow path's).
+static func _ls_code(dx: int, dy: int) -> int:
+	if dx == 0 and dy == 0:
+		return 0
+	return ((dx & 4095) << 12) | (dy & 4095)
 
 
 ## The nearest of the 8 directions (_DX8 / _DY8) to (dx, dy) (0: E for the zero vector).
@@ -7016,6 +7125,14 @@ func _compute_offsets(u: int) -> void:
 	if flow and u_flow[u] == 1 and tick - u_flt[u] < FLOW_EVERY:
 		u_dirty[u] = 0  # (flowed a moment ago: the places stand; the dead's drop off the end)
 		return
+	if flow and u_flow[u] == 1 and u_flt[u] >= 0 and u_contact[u] != 0 and u_cvb[u] < 0 and not _flow_due(u):
+		# In a fight, its anchor in the same 2 m cell, its facing and
+		# squeeze as when it was flowed: the places stand (a death, a
+		# turn of a few degrees laid them out afresh, shuffling its men
+		# between the cells: fight jitter pass, 2026-10-16). An order or
+		# the stuck release (u_flt < 0) lays them out as before.
+		u_dirty[u] = 0
+		return
 	_fill_offsets(off_x, u_slot_base[u], alive, files, u_face[u], false, off_y,
 		t_fsp[ty], t_rsp[ty])
 	if flow:
@@ -7123,6 +7240,8 @@ func _flow_slots(u: int) -> void:
 		return
 	u_flow[u] = 1
 	u_flt[u] = tick
+	u_flx[u] = ((ay >> 11) << 12) | (ax >> 11)
+	u_flf[u] = u_face[u] | (u_sq[u] << 10)
 	var ty := u_type[u]
 	var cap := clampi(4194304 * FLOW_PACK / 100 / maxi(t_fsp[ty] * t_rsp[ty], 1), 1, 6)
 	_fl_stamp += 1
@@ -7409,7 +7528,16 @@ func _turn(u: int, want: int) -> void:
 		rate = maxi(rate * u_scare[u] / 100, 1)  # horses balking at camels near
 	if rate == 0:
 		if absi(diff) > 3:
-			u_face[u] = want
+			if absi(diff) > OBS_TURN and obs_on != 0 and _u_obs[u] != 0 and u_wall[u] == 0 \
+					and (u_contact[u] != 0 or u_ftarget[u] >= 0):
+				# (Foot that turn at once, among obstacles in a fight or
+				# shooting: at most OBS_TURN a tick, so a facing that swings
+				# for a tick, an order's first step, a bearing past a corner,
+				# does not throw every place round the anchor at once: fight
+				# jitter pass, 2026-10-16. Field maps: at once, as always.)
+				u_face[u] = (u_face[u] + (OBS_TURN if diff > 0 else -OBS_TURN)) & FM.ANGLE_MASK
+			else:
+				u_face[u] = want
 			u_dirty[u] = 1
 		return
 	if diff == 0:
@@ -7608,6 +7736,7 @@ func _anchor_step(u: int, ox: int, oy: int, nx: int, ny: int, t: int, spd: int) 
 	# had an anchor cut through it, its men left on the other side.
 	var gm := _ground_mask(u)
 	if (nav_at(p.x, p.y) & gm) != 0 or (nav_at(ox, oy) & gm) == 0:
+		u_asl[u] = 0
 		return p
 	stat_anchor_kept += 1
 	# Along the obstacle: the whole step on the axis it goes most along,
@@ -7619,18 +7748,38 @@ func _anchor_step(u: int, ox: int, oy: int, nx: int, ny: int, t: int, spd: int) 
 	var ay1 := Vector2i(ox, oy + (l if sy > 0 else -l))
 	var first := ax1 if absi(sx) >= absi(sy) else ay1
 	var second := ay1 if absi(sx) >= absi(sy) else ax1
+	# (Which way along it, as a code: +-1 x, +-2 y. A step along it that
+	# undoes the last one (its waypoint across the obstacle between the two:
+	# the anchor swung 0.3 m a tick under a house's face for minutes, fight
+	# jitter pass 2026-10-16) is not taken: it stands and plans its way
+	# again from here.)
+	var cf := (1 if sx > 0 else -1) if absi(sx) >= absi(sy) else (2 if sy > 0 else -2)
+	var cs := (2 if sy > 0 else -2) if absi(sx) >= absi(sy) else (1 if sx > 0 else -1)
 	if (absi(sx) >= absi(sy) and sx != 0) or (absi(sy) > absi(sx) and sy != 0):
 		if (nav_at(first.x, first.y) & gm) != 0:
-			return first
+			return _asl_step(u, cf, first, ox, oy)
 	if (absi(sx) >= absi(sy) and sy != 0) or (absi(sy) > absi(sx) and sx != 0):
 		if (nav_at(second.x, second.y) & gm) != 0:
-			return second
+			return _asl_step(u, cs, second, ox, oy)
 	# Square against it: no way along it from here. Its way is planned again
 	# (now and then): the path's straight stretch to its next waypoint was
 	# found clear from where it was, not from here.
 	if (tick + u) % 10 == 0:
 		u_pn[u] = 0
 	return Vector2i(ox, oy)
+
+
+## The anchor's step along an obstacle (code c: +-1 x, +-2 y) to q, unless
+## it undoes its last such step (u_asl): then it stands and its way is
+## planned again (the planner from here, not from where the path was laid).
+func _asl_step(u: int, c: int, q: Vector2i, ox: int, oy: int) -> Vector2i:
+	if c == -u_asl[u]:
+		if (tick + u) % 5 == 0:
+			u_pn[u] = 0
+		stat_asl += 1
+		return Vector2i(ox, oy)
+	u_asl[u] = c
+	return q
 
 
 func _anchor_step0(u: int, ox: int, oy: int, nx: int, ny: int, t: int, spd: int) -> Vector2i:
@@ -7825,7 +7974,14 @@ func _update_units() -> void:
 			if lag > LAG_HOLD:
 				aspeed /= 4
 			u_lagt[u] += 1
-			if u_lagt[u] >= REGROUP:
+			if u_lagt[u] >= REGROUP and u_stuck[u] < REGROUP_GO and u_blk[u] != BLK_QUEUE:
+				# (Its men still coming on, slowly, through a crowded lane: no
+				# regroup, which threw the anchor back among them, laid its
+				# places out afresh and turned the front men about every 10 s
+				# (fight jitter pass, 2026-10-16); it waits for them, a quarter
+				# pace past LAG_HOLD, and regroups once they stop.)
+				u_lagt[u] = REGROUP
+			elif u_lagt[u] >= REGROUP:
 				_regroup(u)
 		elif u_lagt[u] != 0:
 			u_lagt[u] = 0
@@ -7925,6 +8081,13 @@ func _update_units() -> void:
 				# facing for the last stretch.
 				if via or d > REFORM_IN_PLACE_DIST:
 					want_face = FM.atan2_a(dy, dx)
+					if oon and u_contact[u] != 0 and _u_obs[u] != 0 \
+							and absi(FM.angle_diff(want_face, u_dface[u])) > FM.ANGLE_HALF / 2:
+						# (Falling back with an enemy near, among obstacles: it
+						# keeps facing the way it is ordered to face, not about
+						# and about again, its places swinging round with it:
+						# fight jitter pass, 2026-10-16.)
+						want_face = u_dface[u]
 				if u_stair[u] == ST_LADDER_GO and order == O_MOVE and _ladder_reached(u):
 					# Near enough the foot (its men cannot all fit between the
 					# anchor and the wall): up the ladders from here.
@@ -7946,10 +8109,19 @@ func _update_units() -> void:
 				# cannot be reached straight.
 				var via := false
 				var held := false
+				# Missile troops: their line of fire at it (one trace serves
+				# the tick). In range of a target in a town with no line of
+				# fire (houses between), they go round by the streets too
+				# (fight jitter pass, 2026-10-16: they closed straight into
+				# a house and stood there for minutes).
+				var mis := cls == UT.CLS_MISSILE and u_ammo[u] > 0
+				var mlof := true
+				if mis and (ton or mon):
+					mlof = lof_units(u, t)
 				# (u_inreach, not u_fighting: men holding to their places
 				# leave the closing to the anchor, which goes by the streets.)
 				if oon and u_wall[u] == 0 and u_charge[u] == 0 and u_inreach[u] == 0 \
-						and not (cls == UT.CLS_MISSILE and u_ammo[u] > 0 and d <= range_vs(u, t)):
+						and not (mis and d <= range_vs(u, t) and (mlof or city_on == 0 or land_only != 0)):
 					var goal := _attack_goal(u, t)
 					if city_on != 0:
 						# Out of reach (another piece of ground: a shut gate
@@ -8021,7 +8193,7 @@ func _update_units() -> void:
 					var stop := mrange(u) * 17 / 20
 					if ton or mon:
 						stop = range_vs(u, t) * 17 / 20
-						if not lof_units(u, t):
+						if not mlof:
 							stop = mrange(u) / 4
 						if d > stop and ton:
 							aspeed = aspeed * _fac_dir(u, g0, dx, dy, d) / 1000
@@ -8068,9 +8240,14 @@ func _update_units() -> void:
 							t, aspeed)
 						u_ax[u] = ms2.x
 						u_ay[u] = ms2.y
+				if oon and want_face != u_face[u] and u_face[u] == u_dface[u] and _face_held(u, want_face):
+					want_face = u_face[u]  # (in a fight among obstacles: within FACE_DB it holds; a turn once begun goes on)
 				u_dface[u] = want_face
+		if oon and order == O_MOVE and want_face != u_face[u] and _face_held(u, want_face):
+			want_face = u_face[u]
 		_turn(u, want_face)
-		if oon and u_flow[u] != 0 and tick - u_flt[u] >= FLOW_EVERY and (order != O_NONE or u_contact[u] != 0 or u_face[u] != u_dface[u]):
+		if oon and u_flow[u] != 0 and tick - u_flt[u] >= FLOW_EVERY and (order != O_NONE or u_contact[u] != 0 or u_face[u] != u_dface[u]) \
+				and _flow_due(u):
 			u_dirty[u] = 1  # flowed and on the go: laid out again (the cut may have changed)
 		elif oon and u_flow[u] == 0 and _u_obs[u] != 0 and (tick + u) % FLOW_EVERY == 0 \
 				and (u_blk[u] == BLK_QUEUE or (u_sq[u] > 0 and u_fighting[u] > 0)):
@@ -8095,6 +8272,7 @@ func _update_units() -> void:
 			if land_only != 0 and _u_obs[u] == 0:
 				# (Landforms only: a unit away from them is not stuck on anything.)
 				u_stuck[u] = 0
+				stat_stuck_r[u] = 0
 				u_srx[u] = u_cx[u]
 				u_sry[u] = u_cy[u]
 			elif want or u_stair[u] != 0 or u_stuck[u] != 0:
@@ -8188,6 +8366,46 @@ func _update_units() -> void:
 		_unit_stats(u)
 
 
+## Facing deadband (fight jitter pass, 2026-10-16): unit u, among
+## obstacles and in a fight or shooting (contact, a fire target), not on a
+## wall and not a battery, holds its facing while `want` is within FACE_DB
+## of it. Its places then stand instead of swinging round its anchor each
+## time the bearing to its target wobbles (the outer files' places of a
+## turning unit moved most of the fight jitter near obstacles). An attack
+## holds only from rest (u_face == u_dface: a turn once begun is finished,
+## to the bearing as it moves), so the facing reverses only after the
+## bearing swings 2 x FACE_DB. Field and open maps: never (oon only).
+func _face_held(u: int, want: int) -> bool:
+	if _u_obs[u] == 0 or u_wall[u] != 0 or u_cls[u] == UT.CLS_ART or u_stair[u] != 0:
+		return false
+	if u_contact[u] == 0 and u_ftarget[u] < 0:
+		return false
+	return absi(FM.angle_diff(u_face[u], want)) <= FACE_DB
+
+
+## A flowed unit on the go is laid out again (each FLOW_EVERY) only when its
+## anchor's 2 m cell or its facing (past FACE_DB / 2) changed since it was
+## last flowed: the flood from an anchor standing in the same cell gives
+## its men the same room, only shuffled as the enemy's and friends'
+## footprints move, and its rear ranks walked between the shuffles (fight
+## jitter pass, 2026-10-16). Deaths, an order, a stance, a squeeze or the
+## stuck release lay it out as before.
+func _flow_due(u: int) -> bool:
+	var fc := (u_ay[u] >> 11) << 12 | (u_ax[u] >> 11)
+	if fc != u_flx[u]:
+		if u_contact[u] == 0:
+			return true
+		# (In a fight: once the anchor is two cells off, not at each crossing
+		# of a cell's edge as it edges along.)
+		if maxi(absi((fc & 4095) - (u_flx[u] & 4095)), absi((fc >> 12) - (u_flx[u] >> 12))) >= 2:
+			return true
+	if u_contact[u] == 0 and u_order[u] != O_NONE:
+		return true  # (on the move, no enemy near: as before)
+	if (u_flf[u] >> 10) != u_sq[u]:
+		return true
+	return absi(FM.angle_diff(u_face[u], u_flf[u] & FM.ANGLE_MASK)) * 2 > FACE_DB
+
+
 ## Unit u's no-progress counter (maps with buildings or walls): while it
 ## wants to get on (a move or an attack still closing, a stair or ladder
 ## move, its men short of their places) and is not fighting at its full
@@ -8204,16 +8422,24 @@ func _stuck_tick(u: int, want: bool) -> void:
 		want = false
 	if not want or FM.approx_len(u_cx[u] - u_srx[u], u_cy[u] - u_sry[u]) > STUCK_DIST:
 		u_stuck[u] = 0
+		stat_stuck_r[u] = 0
 		u_srx[u] = u_cx[u]
 		u_sry[u] = u_cy[u]
 		return
 	var k := u_stuck[u] + 1
 	u_stuck[u] = k
-	stat_stuck_t[u] += 1
-	if k > stat_stuck_u[u]:
-		stat_stuck_u[u] = k
-		if k > stat_stuck_max:
-			stat_stuck_max = k
+	if u_fighting[u] > 0:
+		# (Its men fighting, waiting their turn at a gate or in a lane: in the
+		# fight, not stuck, for the statistics; the release goes on by k.)
+		stat_stuck_r[u] = 0
+	else:
+		var r := stat_stuck_r[u] + 1
+		stat_stuck_r[u] = r
+		stat_stuck_t[u] += 1
+		if r > stat_stuck_u[u]:
+			stat_stuck_u[u] = r
+			if r > stat_stuck_max:
+				stat_stuck_max = r
 	_stuck_release(u, k)
 
 
@@ -8241,6 +8467,15 @@ func _stuck_release(u: int, k: int) -> void:
 		u_settled[u] = 0
 		stat_unstick[0] += 1
 	elif c == STUCK_ROUTE:
+		var gt := _gather(u) if st == 0 else 0
+		if gt == 2 and u_order[u] == O_NONE:
+			# (Standing, and its only men short of their places are on ground
+			# it cannot reach, a shut gate between: nothing to get on with.)
+			u_stuck[u] = 0
+			stat_stuck_r[u] = 0
+			u_srx[u] = u_cx[u]
+			u_sry[u] = u_cy[u]
+			return
 		if u_order[u] == O_MOVE and st == 0 and (FM.approx_len(u_dx[u] - u_ax[u], u_dy[u] - u_ay[u]) <= STUCK_NEAR \
 				or (city_on != 0 and reach_at(u_dx[u], u_dy[u]) != reach_at(u_ax[u], u_ay[u]))):
 			# (Or it cannot get there any more: a gate shut since, its goal on
@@ -8268,6 +8503,149 @@ func _stuck_release(u: int, k: int) -> void:
 		_regroup(u, FM.approx_len(u_cx[u] - u_ax[u], u_cy[u] - u_ay[u]) - unit_depth(u) / 2 > LAG_HOLD)
 		u_flt[u] = -FLOW_EVERY
 		stat_unstick[3] += 1
+
+
+## A straggler's way back (fight jitter pass, 2026-10-16): man i of unit u
+## at (x, y), his place (gx, gy) more than VIA_FAR off with no clear line
+## to it (a pocket the straight step, the slide and the unit's trail do not
+## lead out of: men stood 40-90 m from their places for minutes), walks
+## the street graph (no clear line: the 2 m cells along it, _way_clear):
+## from the node near him (_near_nodes) down the
+## distance table of the node nearest his unit's anchor (u_gnode), node by
+## node (s_via: the node he makes for), until he has a clear line to his
+## place or comes within VIA_FAR of it. Checked once a second a man (i
+## staggered); hashed per man and unit. Returns where he walks to now.
+func _via_goal(u: int, i: int, x: int, y: int, gx: int, gy: int) -> Vector2i:
+	if ng_x.is_empty():
+		return Vector2i(gx, gy)
+	var v := s_via[i]
+	if (tick + i) % 10 != 0:
+		if v <= 0:
+			return Vector2i(gx, gy)
+		return _via_on(u, i, x, y, v - 1, gx, gy)
+	# (Once a second: still a straggler? his node still in sight?)
+	var gd := FM.approx_len(gx - x, gy - y)
+	if gd <= VIA_FAR:
+		s_via[i] = 0
+		return Vector2i(gx, gy)
+	var gm := _ground_mask(u)
+	if _way_clear(x, y, gx, gy, gm):
+		s_via[i] = 0
+		return Vector2i(gx, gy)
+	if v > 0 and _way_clear(x, y, ng_x[v - 1], ng_y[v - 1], gm):
+		return _via_on(u, i, x, y, v - 1, gx, gy)
+	if v == 0 or (v < 0 and gd < (-v - 1) * M):
+		# (Not yet known to be stuck: his distance now, -(metres + 1); he
+		# goes by the graph only after a second without getting a metre
+		# nearer: a man going round a house corner to his cover is no
+		# straggler.)
+		s_via[i] = -(gd / M + 1)
+		return Vector2i(gx, gy)
+	var dst := _via_dst(u, gm)
+	if dst < 0:
+		s_via[i] = 0
+		return Vector2i(gx, gy)
+	var dt := _dist_table(dst)
+	if dt.is_empty():
+		return Vector2i(gx, gy) if v <= 0 else Vector2i(ng_x[v - 1], ng_y[v - 1])
+	var best := -1
+	var bc := PATH_INF
+	for a in _near_nodes(x, y, 3, gm):
+		if dt[a] >= PATH_INF:
+			continue
+		var c := FM.approx_len(ng_x[a] - x, ng_y[a] - y) / 128 + dt[a]
+		if c < bc:
+			bc = c
+			best = a
+	if best < 0:
+		s_via[i] = 0
+		return Vector2i(gx, gy)
+	s_via[i] = best + 1
+	stat_via += 1
+	return Vector2i(ng_x[best], ng_y[best])
+
+
+## Man i (a straggler, _via_goal) making for node k: on to it, or once
+## there to the next node down the distance table of his unit's node.
+func _via_on(u: int, i: int, x: int, y: int, k: int, gx: int, gy: int) -> Vector2i:
+	if FM.approx_len(ng_x[k] - x, ng_y[k] - y) > VIA_REACH:
+		return Vector2i(ng_x[k], ng_y[k])
+	var dst := _via_dst(u, _ground_mask(u))
+	if dst < 0 or dst == k:
+		s_via[i] = 0  # (at his unit's node: his place again)
+		return Vector2i(gx, gy)
+	var dt := _dist_table(dst)
+	if dt.is_empty():
+		return Vector2i(ng_x[k], ng_y[k])  # (over this tick's table budget: wait at the node)
+	var nxt := -1
+	var nv := PATH_INF
+	for e in range(ng_e0[k], ng_e0[k + 1]):
+		var to := ng_to[e]
+		if not _node_open(to):
+			continue
+		var c2 := ng_w[e] + dt[to]
+		if c2 < nv or (c2 == nv and to < nxt):
+			nv = c2
+			nxt = to
+	if nxt < 0 or dt[nxt] >= dt[k]:
+		s_via[i] = 0  # (no way on from here: his place again)
+		return Vector2i(gx, gy)
+	s_via[i] = nxt + 1
+	return Vector2i(ng_x[nxt], ng_y[nxt])
+
+
+## The street graph node unit u's stragglers make for (u_gnode): the node
+## nearest its anchor with a clear line to it, found again once the anchor
+## is VIA_FAR off it (or every 5 s). -1 none.
+func _via_dst(u: int, gm: int) -> int:
+	var g := u_gnode[u] - 1
+	if g >= 0 and (tick + u) % 50 != 0 and FM.approx_len(ng_x[g] - u_ax[u], ng_y[g] - u_ay[u]) <= VIA_FAR:
+		return g
+	var nn := _near_nodes(u_ax[u], u_ay[u], 1, gm)
+	g = nn[0] if not nn.is_empty() else -1
+	u_gnode[u] = g + 1
+	return g
+
+
+## Stragglers (fight jitter pass, 2026-10-16): unit u stuck, some of its
+## men more than LAG_CUT from their places in a pocket the straight step,
+## the slide and the anchor's trail do not lead out of (men piled in a
+## corner 50-90 m from their places for minutes). The way from the
+## farthest of them on the anchor's ground to the anchor, planned through
+## the streets (route_to), becomes the unit's trail (TRAIL points from his
+## end): blocked men walk it (_slide0). 1 if laid; 2 if the only men short
+## of their places are on ground the anchor's cannot reach (a shut gate
+## between); else 0.
+func _gather(u: int) -> int:
+	var ra := reach_at(u_ax[u], u_ay[u])
+	var base := u_slot_base[u]
+	var best := -1
+	var bd := LAG_CUT
+	var cut := false
+	for s in u_alive[u]:
+		var i := slot_soldier[base + s]
+		if state[i] >= S_DEAD or (nav_at(pos_x[i], pos_y[i]) & MapGen.NAV_GROUND) == 0:
+			continue
+		var d := FM.approx_len(u_ax[u] + off_x[base + s] - pos_x[i], u_ay[u] + off_y[base + s] - pos_y[i])
+		if d <= LAG_CUT:
+			continue
+		if ra >= 0 and reach_at(pos_x[i], pos_y[i]) != ra:
+			cut = true
+			continue
+		if d > bd:
+			bd = d
+			best = i
+	if best < 0:
+		return 2 if cut else 0
+	var r := route_to(pos_x[best], pos_y[best], u_ax[u], u_ay[u], _ground_mask(u))
+	if r.size() < 4:
+		return 0  # (a clear line to the anchor, or no way at all: nothing to show them)
+	u_trn[u] = 0
+	_trail_push(u, pos_x[best], pos_y[best])
+	for k in mini(r.size() / 2 - 1, TRAIL - 1):
+		_trail_push(u, r[2 * k], r[2 * k + 1])
+	stat_gather += 1
+	return 1
 
 
 ## Cavalry charge state. A running cavalry unit with momentum that comes
@@ -8664,6 +9042,9 @@ func _update_soldiers() -> void:
 		# rock or a cliff's foot as in the open, landforms being small: a
 		# field map with only landforms searches as an open one.)
 		var obr := ob and land_only == 0
+		var sls := s_ls      # (the step guard's and the stragglers' per-man state, hoisted)
+		var svia := s_via
+		var vgo := ob and u_wall[u] == 0 and u_moved[u] == 0  # (stragglers: a unit whose anchor stands)
 		var navg := nav
 		var obw := ob_w
 		var obw1 := ob_w - 1
@@ -8776,6 +9157,34 @@ func _update_soldiers() -> void:
 					y = sl.y
 				if clo and rmode != 2 and rmode != 4 and cla[mini(y >> 10, clh1) * clw + mini(x >> 10, clw1)] < clim:
 					var cp := _clr_push(x, y, mm, CLR_MIN)
+					if rmode == 1 and (cp.x != x or cp.y != y):
+						var rwl := FM.approx_len(x - px[i], y - py[i])
+						if rwl >= M / 8 and FM.approx_len(cp.x - px[i], cp.y - py[i]) * 4 < rwl:
+							# Pushed back to where he stood: the field's way (2 m
+							# cells, open) runs past a house's drawn corner nearer
+							# than the clearance allows. The directions beside the
+							# field's, 45 then 90 degrees either way (his side
+							# first by i & 1), the first that gets him on; else a
+							# stall along the face (slide memory). (Fight jitter
+							# pass, 2026-10-16: lone routers stood minutes at a
+							# corner.)
+							var d0 := _dir8(x - px[i], y - py[i])
+							var got := false
+							for q in 4:
+								var kq := (1 if q < 2 else 2) * (1 if ((q & 1) == 0) == ((i & 1) == 0) else -1)
+								var dq := (d0 + kq) & 7
+								var qx := clampi(px[i] + _dir_step(dq, rwl, true), 0, fw)
+								var qy := clampi(py[i] + _dir_step(dq, rwl, false), 0, fh)
+								if (navg[mini(qy >> 11, obh1) * obw + mini(qx >> 11, obw1)] & mm) == 0:
+									continue
+								var cq := _clr_push(qx, qy, mm, CLR_MIN)
+								if FM.approx_len(cq.x - px[i], cq.y - py[i]) * 2 >= rwl:
+									cp = cq
+									got = true
+									break
+							if not got:
+								var rsm := _slide_mem(i, px[i], py[i], x, y, mm, Vector2i(px[i], py[i]))
+								cp = _clr_push(rsm.x, rsm.y, mm, CLR_MIN) if rsm.x != px[i] or rsm.y != py[i] else rsm
 					x = cp.x
 					y = cp.y
 				px[i] = x
@@ -8847,6 +9256,10 @@ func _update_soldiers() -> void:
 					if sgo.z != 0:
 						dx = sgo.x - x
 						dy = sgo.y - y
+				elif vgo and (svia[i] > 0 or absi(dx) + absi(dy) > VIA_FAR):
+					var vg0 := _via_goal(u, i, x, y, x + dx, y + dy)
+					dx = vg0.x - x
+					dy = vg0.y - y
 				if still >= 0 and (i & 1) == still:
 					dx = 0
 					dy = 0
@@ -8856,6 +9269,8 @@ func _update_soldiers() -> void:
 				if dx == 0 and dy == 0:
 					if st[i] != S_FORMED:
 						st[i] = S_FORMED
+					if ob:
+						sls[i] = 0  # (at his place: no last step for the guard)
 					sumx += x
 					sumy += y
 					if x < minx: minx = x
@@ -8902,6 +9317,8 @@ func _update_soldiers() -> void:
 								x = clampi(x + sx6 * push6 / sd6, 0, fw)
 								y = clampi(y + sy6 * push6 / sd6, 0, fh)
 				var mm := mask if stair_mv == 0 else _stair_mask(u, px[i], py[i], mask, stair_mv)
+				var gsx0 := x
+				var gsy0 := y
 				if ob and (navg[mini(y >> 11, obh1) * obw + mini(x >> 11, obw1)] & mm) == 0:
 					var sl2 := _slide(u, px[i], py[i], x, y, mm, i if wf_on else -1)
 					x = sl2.x
@@ -8921,6 +9338,13 @@ func _update_soldiers() -> void:
 							cp2 = _clr_push(sm.x, sm.y, mm, CLR_MIN) if sm.x != px[i] or sm.y != py[i] else sm
 					x = cp2.x
 					y = cp2.y
+				if ob and stair_mv == 0:
+					if x != gsx0 or y != gsy0:
+						var gd0 := _step_guard(i, px[i], py[i], gsx0, gsy0, x, y)
+						x = gd0.x
+						y = gd0.y
+					else:
+						sls[i] = ((((x - px[i]) & 4095) << 12) | ((y - py[i]) & 4095)) if x != px[i] or y != py[i] else 0
 				px[i] = x
 				py[i] = y
 				sumx += x
@@ -9095,6 +9519,10 @@ func _update_soldiers() -> void:
 					if sgl.z != 0:
 						ldx = sgl.x - x
 						ldy = sgl.y - y
+				elif vgo and (svia[i] > 0 or absi(ldx) + absi(ldy) > VIA_FAR):
+					var vg1 := _via_goal(u, i, x, y, x + ldx, y + ldy)
+					ldx = vg1.x - x
+					ldy = vg1.y - y
 				if ldx != 0 or ldy != 0:
 					var ld := FM.approx_len(ldx, ldy)
 					var lspd := spd_formed if ld <= CATCH_UP_DIST else run
@@ -9126,6 +9554,8 @@ func _update_soldiers() -> void:
 					ny += (lps * lpush) / tone
 				nx = clampi(nx, 0, fw)
 				ny = clampi(ny, 0, fh)
+				var gsx := nx
+				var gsy := ny
 				var mml := mask if stair_mv == 0 else _stair_mask(u, x, y, mask, stair_mv)
 				if ob and (navg[mini(ny >> 11, obh1) * obw + mini(nx >> 11, obw1)] & mml) == 0:
 					var sll := _slide(u, x, y, nx, ny, mml)
@@ -9135,6 +9565,13 @@ func _update_soldiers() -> void:
 					var cp3 := _clr_push(nx, ny, mml, CLR_MIN)
 					nx = cp3.x
 					ny = cp3.y
+				if ob and stair_mv == 0:
+					if nx != gsx or ny != gsy:
+						var gd3 := _step_guard(i, x, y, gsx, gsy, nx, ny)
+						nx = gd3.x
+						ny = gd3.y
+					else:
+						sls[i] = ((((nx - x) & 4095) << 12) | ((ny - y) & 4095)) if nx != x or ny != y else 0
 				px[i] = nx
 				py[i] = ny
 				counted += 1
@@ -9384,6 +9821,10 @@ func _update_soldiers() -> void:
 					if sgs.z != 0:
 						dx = sgs.x - x
 						dy = sgs.y - y
+				elif vgo and (svia[i] > 0 or absi(dx) + absi(dy) > VIA_FAR):
+					var vg2 := _via_goal(u, i, x, y, x + dx, y + dy)
+					dx = vg2.x - x
+					dy = vg2.y - y
 				var wrapping := wrap_t >= 0 and front and t < 0
 				if wrapping:
 					dx = u_cx[wrap_t] - x
@@ -9479,6 +9920,8 @@ func _update_soldiers() -> void:
 					ny += (ps * push2) / tone
 			nx = clampi(nx, 0, fw)
 			ny = clampi(ny, 0, fh)
+			var gsx4 := nx
+			var gsy4 := ny
 			var mm3 := mask if stair_mv == 0 else _stair_mask(u, x, y, mask, stair_mv)
 			if ob and (navg[mini(ny >> 11, obh1) * obw + mini(nx >> 11, obw1)] & mm3) == 0:
 				if land_only != 0 and (navg[mini(y >> 11, obh1) * obw + mini(x >> 11, obw1)] & mm3) != 0:
@@ -9501,6 +9944,13 @@ func _update_soldiers() -> void:
 				var cp4 := _clr_push(nx, ny, mm3, CLR_MIN)
 				nx = cp4.x
 				ny = cp4.y
+			if ob and stair_mv == 0:
+				if nx != gsx4 or ny != gsy4:
+					var gd4 := _step_guard(i, x, y, gsx4, gsy4, nx, ny)
+					nx = gd4.x
+					ny = gd4.y
+				else:
+					sls[i] = ((((nx - x) & 4095) << 12) | ((ny - y) & 4095)) if nx != x or ny != y else 0
 			px[i] = nx
 			py[i] = ny
 			counted += 1
@@ -15019,7 +15469,7 @@ func _press_n(u: int, o: int) -> int:
 ## Left out of snapshots: rebuilt identically by setup() from the same
 ## scenario and seed (the unit type tables t_*, the terrain grid) or
 ## view-only diagnostics that are large.
-const _SNAP_SKIP := {"ter_h": true, "ter_gx": true, "ter_gy": true, "ter_info": true,
+const _SNAP_SKIP := {"ter_h": true, "ter_gx": true, "ter_gy": true, "ter_info": true, "_xf_tight": true, "_xf_tdone": true,
 	"dbg_impacted": true, "veg": true, "obs": true, "obs_c": true, "obs_cd": true, "obs_sat": true, "land_sat": true, "map_info": true,
 	"vs_tw": true, "vs_top": true, "vs_sat": true, "land_hd": true,
 	"ws_x0": true, "ws_y0": true, "ws_x1": true, "ws_y1": true, "ws_dir": true, "ng_x": true,
@@ -15156,6 +15606,8 @@ func state_hash() -> int:
 			for arr in _flow_arrays():
 				ctx.update((arr as PackedInt32Array).to_byte_array())
 			ctx.update(s_wf)
+			ctx.update(s_ls.to_byte_array())
+			ctx.update(s_via.to_byte_array())
 			ctx.update(PackedInt64Array([xf_t0, xf_gp, xf_gl]).to_byte_array())
 			if wt_on != 0:
 				# (A West town: the routers' stillness decides who gives up.)
@@ -16521,6 +16973,7 @@ func _ladder_step(u: int) -> void:
 		u_settled[u] = 0
 		u_st0[u] = tick
 		u_stuck[u] = 0  # (men up: the climb gets on)
+		stat_stuck_r[u] = 0
 		return
 	if not free:
 		# Every ladder busy (a man just went up it): the men below

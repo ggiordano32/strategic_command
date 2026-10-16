@@ -154,6 +154,14 @@ const SP_LINE_PCT := 60
 const SP_STEP := 15
 const SP_WAIT_R := 70 * M
 const SP_WORN := 60
+const AT_HAND_FAR := 20 * 1024    # an attacking unit fighting while its target is this far off (box to box) ...
+const AT_HAND_NEAR := 4 * 1024    # ... takes on the enemy this near its box instead (_at_hand)
+const WD_T := 200                 # the stuck watchdog: ticks stuck (u_stuck) before an order is planned again (_watchdog)
+const ORDER_HALT := 3
+const SKIRM_INF_R := 30 * 1024    # (BattleSim.SKIRM_INF: skirmishers fall back from foot this close ...)
+const SKIRM_CAV_R := 55 * 1024    # (... and from horse: BattleSim.SKIRM_CAV)
+const SKIRM_HYST := 10 * 1024     # the AI leaves a skirmisher to the sim's fall-back while a threat is within those + this (_skirm_back)
+const UNSEEN_T := 60              # a West skirmisher whose attack target went out of sight keeps at it this long (ticks), then picks again (_bound_storm)
 
 # Army phases (ai_phase) on settlement maps.
 const SP_APPROACH := 10
@@ -230,6 +238,10 @@ static func think(sim) -> void:
 		if sim.u_cls[u] == UT.CLS_MISSILE and sim.u_ammo[u] <= 0 and sim.n_eg > 0 and sim.u_wall[u] == 0 \
 				and BattleAI._take_engines(sim, u):
 			continue
+		if sim.obs_on != 0 and _watchdog(sim, u, unit_period[side]):
+			continue
+		if _skirm_back(sim, u):
+			continue  # (falling back from a threat by the sim's skirmish rule: no order over it)
 		if side == sim.city_def:
 			_defender(sim, u)
 		else:
@@ -581,19 +593,30 @@ static func _sp_group(sim, u: int) -> int:
 ## mouth (shared out) and then the plaza, ahead of the line units.
 static func _bound_storm(sim, u: int) -> void:
 	BattleAI._set_mode(sim, u, A_STORM)
-	if _engaged(sim, u):
+	if _at_hand(sim, u) or _engaged(sim, u):
 		return
 	var side: int = sim.u_side[u]
+	var cur: int = sim.u_target[u] if sim.u_order[u] == O_ATTACK else -1
+	if cur >= 0 and sim.u_state[cur] == U_READY and sim.hidden_from(cur, side) and sim.tick - sim.u_hid0[cur] < UNSEEN_T:
+		return  # (its target just went out of sight: it keeps at it UNSEEN_T, then looks again)
 	var rng: int = sim.mrange(u) * 17 / 20
 	var t := -1
 	var bd := rng
+	var tl := false
 	for o in sim.n_units:
 		if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.u_wall[o] > 0 or sim.hidden_from(o, side):
 			continue
 		var d := BattleAI._d(sim.u_cx[o] - sim.u_cx[u], sim.u_cy[o] - sim.u_cy[u])
-		if d < bd:
+		if d >= rng:
+			continue
+		# (A defender it has a line of fire at first, nearest first; else the
+		# nearest, gone round to by the streets: fight jitter pass,
+		# 2026-10-16, skirmishers stood for minutes at a house between.)
+		var l: bool = sim.lof_units(u, o)
+		if (l and not tl) or (l == tl and d < bd):
 			bd = d
 			t = o
+			tl = l
 	if t >= 0:
 		if sim.u_order[u] != O_ATTACK or sim.u_target[u] != t:
 			BattleAI._attack(sim, u, t, 0)
@@ -1463,6 +1486,91 @@ static func _plaza_unit(sim, u: int) -> void:
 		1 if BattleAI._d(sim.u_ax[u] - px, sim.u_ay[u] - py) > 40 * M and sim.u_cls[u] != UT.CLS_PIKE else 0)
 
 
+## An attacking unit u fighting with its men while the unit its attack
+## order names is AT_HAND_FAR off (another enemy came at it on the way, in
+## the streets): it takes on the nearest enemy unit within AT_HAND_NEAR of
+## its box (fight jitter pass, 2026-10-16: a unit kept closing on a target
+## 54 m off for a minute while its men fought another). True if so.
+static func _at_hand(sim, u: int) -> bool:
+	if sim.obs_on == 0 or sim.u_order[u] != O_ATTACK or sim.u_fighting[u] == 0:
+		return false
+	var t: int = sim.u_target[u]
+	if t < 0 or sim.u_state[t] != U_READY or sim._box_gap(u, t) <= AT_HAND_FAR:
+		return false
+	var best := -1
+	var bd := AT_HAND_NEAR
+	for o in sim.n_units:
+		if sim.u_side[o] == sim.u_side[u] or sim.u_state[o] != U_READY or sim.u_wall[o] > 0:
+			continue
+		var g: int = sim._box_gap(u, o)
+		if g < bd:
+			bd = g
+			best = o
+	if best < 0 or best == t:
+		return false
+	BattleAI._attack(sim, u, best, 0)
+	return true
+
+
+## The stuck watchdog (fight jitter pass, 2026-10-16): unit u (AI, a map
+## with buildings or walls) has wanted to get on for WD_T ticks and its
+## men's middle has not moved (the sim's u_stuck), while not fighting nor
+## shooting nor on a wall or a stair. Once each WD_T of it (`period`: the
+## unit thinks once in that many ticks) its order is planned again: an
+## attack goes for the nearest other enemy unit its side sees on its own
+## ground (none: it halts, and its mode's rule gives it a fresh order from
+## where it stands); a move halts so. True if it acted.
+static func _watchdog(sim, u: int, period: int) -> bool:
+	var k: int = sim.u_stuck[u]
+	if k < WD_T or (k - WD_T) % WD_T >= period:
+		return false
+	var o: int = sim.u_order[u]
+	if (o != O_ATTACK and o != O_MOVE) or sim.u_fighting[u] > 0 or sim.u_ftarget[u] >= 0 \
+			or sim.u_wall[u] > 0 or sim.u_stair[u] != 0 or sim.u_carry[u] >= 0:
+		return false
+	sim.stat_ai_wd += 1
+	if o == O_ATTACK:
+		var t: int = sim.u_target[u]
+		var side: int = sim.u_side[u]
+		var ru: int = sim.reach_at(sim.u_ax[u], sim.u_ay[u])
+		var best := -1
+		var bd := 1 << 40
+		for e in sim.n_units:
+			if e == t or sim.u_side[e] == side or sim.u_state[e] != U_READY or sim.u_wall[e] > 0 \
+					or sim.hidden_from(e, side):
+				continue
+			if ru >= 0 and sim.reach_at(sim.u_cx[e], sim.u_cy[e]) != ru:
+				continue
+			var d := BattleAI._d(sim.u_cx[e] - sim.u_cx[u], sim.u_cy[e] - sim.u_cy[u])
+			if d < bd:
+				bd = d
+				best = e
+		if best >= 0:
+			BattleAI._attack(sim, u, best, 0)
+			return true
+	BattleAI._order(sim, u, {"type": ORDER_HALT}, 5)
+	return true
+
+
+## Missile unit u skirmishing (u_skirm) with a foot or horse enemy within
+## the sim's skirmish distance (BattleSim SKIRM_INF / SKIRM_CAV, centroid to
+## centroid, as _missile_think measures) + SKIRM_HYST: the sim falls it
+## back; the AI gives it no order meanwhile (it sent it back to its post every second
+## and the sim fell it back again, its anchor and facing swinging: fight
+## jitter pass, 2026-10-16).
+static func _skirm_back(sim, u: int) -> bool:
+	if sim.u_skirm[u] == 0 or sim.u_cls[u] != UT.CLS_MISSILE or sim.u_order[u] == O_WITHDRAW \
+			or sim.u_fighting[u] * 4 >= sim.u_alive[u] or (sim.sg_on != 0 and sim.u_carry[u] >= 0):
+		return false
+	for o in sim.n_units:
+		if sim.u_side[o] == sim.u_side[u] or sim.u_state[o] != U_READY or sim.u_cls[o] == UT.CLS_MISSILE:
+			continue
+		var lim: int = (SKIRM_CAV_R if sim.u_cls[o] == UT.CLS_CAV else SKIRM_INF_R) + SKIRM_HYST
+		if FM.approx_len(sim.u_cx[o] - sim.u_cx[u], sim.u_cy[o] - sim.u_cy[u]) < lim:
+			return true
+	return false
+
+
 ## Unit u is fighting a ready enemy it was ordered at.
 static func _engaged(sim, u: int) -> bool:
 	if sim.u_order[u] != O_ATTACK or sim.u_fighting[u] == 0:
@@ -1828,7 +1936,7 @@ static func _storm(sim, u: int) -> void:
 	if sim.n_eq > 0 and sim.u_carry[u] >= 0:
 		BattleAI._order(sim, u, {"type": ORDER_DROP}, 24)  # put it down to fight
 		return
-	if _engaged(sim, u):
+	if _at_hand(sim, u) or _engaged(sim, u):
 		return
 	if _street_ai(sim, sim.u_side[u]) and _street_row(sim, u) and sim.t_cover[sim.u_otype[u]] == 0 \
 			and sim.u_cls[u] != UT.CLS_CAV and _sp_wait(sim, u):
@@ -1849,7 +1957,14 @@ static func _storm(sim, u: int) -> void:
 	# the walls wherever he is (no stand-off at the plaza).
 	# (All out, the units still go for the plaza when no defender is near:
 	# hunting the last defenders all over the town let them hold out.)
-	if BattleAI._d(sim.u_cx[u] - sim.plaza[0], sim.u_cy[u] - sim.plaza[1]) < sim.plaza[3] + kn[AP.S_PLAZA_HUNT] \
+	var hunt_r: int = sim.plaza[3] + kn[AP.S_PLAZA_HUNT]
+	if sim.u_order[u] == O_ATTACK and sim.u_target[u] >= 0 and sim.u_state[sim.u_target[u]] == U_READY:
+		# (Hunting already: on 2 x S_PLAZA_HUNT further out, so a unit
+		# going after a defender does not turn back to the plaza at its edge
+		# and then for the defender again every second think, its anchor
+		# swinging 0.1 m a tick: fight jitter pass, 2026-10-16.)
+		hunt_r += 2 * kn[AP.S_PLAZA_HUNT]
+	if BattleAI._d(sim.u_cx[u] - sim.plaza[0], sim.u_cy[u] - sim.plaza[1]) < hunt_r \
 			and sim.cap_t == 0:
 		best_d = 1 << 30
 	var cg: int = sim.cit_gate

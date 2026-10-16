@@ -525,6 +525,7 @@ class Peer:
 	var latency := 2
 	var rng := RandomNumberGenerator.new()
 	var hashes := {}           # frame -> hash
+	var rejs := {}             # frame -> ls.rejected after it (peers stop at different frames)
 	var online := true
 	var admitted_at := -1      # frame of our admission seen in the stream
 
@@ -589,6 +590,7 @@ class Peer:
 			done += 1
 			if hash_all:
 				hashes[ls.frame] = ls.state_hash()
+				rejs[ls.frame] = ls.rejected
 		return done
 
 
@@ -1266,9 +1268,17 @@ func _test_three_peers() -> void:
 		if h >= 0 and a.ls.u_cmd[u] != want:
 			_fail("three peers: unit %d (home %d) commanded by %d, want %d" % [u, h, a.ls.u_cmd[u], want])
 			break
-	if wrong_cmd == 0 or a.ls.rejected == 0 or a.ls.rejected != b.ls.rejected or a.ls.rejected != c.ls.rejected:
-		_fail("three peers: orders for others' units %d, refused A %d B %d C %d (must be > 0 and equal)" % [wrong_cmd,
-			a.ls.rejected, b.ls.rejected, c.ls.rejected])
+	# (Refusals compared at the last frame all three applied: the peers stop
+	# a frame or two apart, and an order refused in the last of them counted
+	# on some only; fight jitter pass, 2026-10-16, when the trajectory put
+	# one there.)
+	var fr_end := mini(a.ls.frame, mini(b.ls.frame, c.ls.frame))
+	var ra0: int = a.rejs.get(fr_end, a.ls.rejected)
+	var rb0: int = b.rejs.get(fr_end, b.ls.rejected)
+	var rc0: int = c.rejs.get(fr_end, c.ls.rejected)
+	if wrong_cmd == 0 or ra0 == 0 or ra0 != rb0 or ra0 != rc0:
+		_fail("three peers: orders for others' units %d, refused A %d B %d C %d by frame %d (must be > 0 and equal)" % [wrong_cmd,
+			ra0, rb0, rc0, fr_end])
 	var pa: Array = votes["paused_at"]
 	var ra: Array = votes["resumed_at"]
 	if not votes["open_after_no"] or int(pa[0]) < 0 or pa[0] != pa[1] or pa[0] != pa[2] or int(ra[0]) <= int(pa[0]) \
