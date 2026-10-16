@@ -1402,6 +1402,69 @@ not in the field (men still touch a wall's foot); fights near obstacles
 push refused where the open ground ends); the tick cost of settlement
 battles sits at the +10 % budget.
 
+**Pathing pass 2, phase C0 (real cover: flat shots stop at walls, men take
+cover), as built 2026-10-15 (not committed; DESIGN "Real cover: flat shots
+stop at walls"; spec addendum 1).** On maps with an obstacle grid where
+something stands up (`ft_on`: houses, walls, gates, rocks, cliffs; `los`
+not 0) a flat soldier's missile (balls, javelins, sling stones; arrows and
+artillery as before) about to strike a man is traced along the 2 m grid
+(integer DDA, in order; a 16 m summed-area look first): a cell whose
+obstacle stands above the line stops it (a dust puff in the view at that
+point, `game/overlay.gd`). The line ends at a cover man's body (1 m,
+crouched) or a line man's head (1.7 m, upright), so a 1.6 m boulder covers
+a skirmisher and not a musketeer; the rock / house / wall `COVER_STOP`
+rolls are gone for flat shots (woods and going to ground keep theirs). A
+man who shot within 1 s is up over or round his cover (skipped near him
+as near a shooter). Field maps' hand-placed `blocks` now stand 5 m for fire
+(shots used to pass through them). Per-man cover: a cover unit standing
+with a threat (its fire target, else the nearest enemy seen within 250 m;
+bearing `u_cvb`, laid out again only past 40 degrees) puts its men on
+spots in the lee of cover within 8 m of their places, 1.5 m behind a
+covering 2 m cell: the cover's edges first (where a man leans out 1.2 m to
+shoot, `_lean`), then the middles of faces (safe, no shot); nearest men
+first, one a spot; line units never. Hashed with `ft_on`: `s_shot` (per
+man, his last shot's tick), `u_cvb`. Scenarios `test_cover_town` (an open
+Punic town, buccaneers at a street's mouth) and `test_cover_rocks`;
+probe `tests/cover_probe.gd`. Balance (probe, 4 seeds, 100 musketeers 90 m
+off a 60-man unit, 90 s; defenders lost / attackers lost, HEAD -> C0):
+
+| defender, ground | buccaneers | line musketeers |
+|---|---|---|
+| open | 0.51 = 0.51 | 1.02 = 1.02 |
+| scattered rocks 1.6-2.4 m | 0.26 -> 0.27 | 0.77 -> 0.67 |
+| hamlet (field-map blocks) | 0.18 -> 0.09 | 0.82 -> 0.25 |
+| Punic town, a street's mouth | 1.16 -> 0.96 | 1.48 -> 1.41 |
+
+`--only=cover`: buccaneers behind the 1.6 m boulder line lose 16 over 4
+seeds (2b: 34; open 87), 7 balls stopped by the rocks; the line there 32 =
+32 in the open (no spots, none off its places); in the town 92 men to
+spots, 8 shots leaning out, 12 of 36 behind cover at the end (a line in
+their place 0 of 19), lost 24 / killed 32 (the line 41 / 23); identical on
+repeat and across snapshot / restore. Re-pinned checks in `--only=cover`
+(no golden hash moved): "cover stops > 0" became "balls stopped by the
+rocks > 0" (the rock roll is gone for flat shots); "line musketeers lose
+the same in rocks as in the open" became "no more in the rocks, no cover
+taken, at most 5 % of them over 3 m off their places" (holds 32 = 32);
+new: the town pieces. Rome battles: the sieges' and benches'
+trajectories did not move (their javelins and slingers land no flat shot
+on a man near obstacles in these runs, and stand under orders), so the
+pathing probe's numbers are identical. Goldens: the four flat digests,
+campaign_sim hashes (cdc1d805 32b83031 23f9ed4f 3237d82d a42fc685
+b6fe6c2e) and every determinism pin unchanged. Cost (desktop, two rounds
+each, HEAD -> C0): bench_4000_city 3.88 / 3.86 -> 3.86 / 3.82 ms a tick,
+bench_4000_hills 3.44 / 3.43 -> 3.38 / 3.35, battle_2000 1.48 / 1.45 ->
+1.45 / 1.43, the 8 sieges (3,000 ticks, `probe_maps.gd`) summed 10.91 /
+10.94 -> 10.90 / 10.90: noise (nothing new runs in them); a trace is 7-16
+microseconds a 100 m line (town, rocky field), only for balls that reach a
+man; the town duel 0.27 -> 0.31 ms a tick (160 men). Open: the dust puff
+is small and brief (FX_DUST); palisades, mantlets and field works keep
+their own % rules; cover spots are claimed within a unit only (two units
+may share a rock); cover units take spots only with no order (an attack
+order's shooters do not); a man in a face's middle has no shot (no rule
+yet lets him move to an edge as men there fall, beyond the layout after a
+death); Rome's sieges barely use it (C1-C3: cover points, `COV_HOUSE` in
+towns, stances).
+
 **Caribbean plan agreed 2026-10-14 (DESIGN "The Caribbean pack: ships,
 pirates, cover, asymmetry"):** sea battles real time with the wind;
 pirates as raiders with havens; armies embark on fleets (West only). Do

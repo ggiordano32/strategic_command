@@ -333,6 +333,24 @@ const RISE_T := 15        # ... and getting up to move off: the anchor waits thi
 const COVER_PEEK := 12 * M  # cover men shoot out through this much of their own woods ...
 const COVER_PEEK_OBS := 5 * M  # ... and past a house corner this near them
 const LAND_NEAR := 5 * M  # a rock or cliff this near the shooter or the target does not stop a flat shot (cover, not a wall between)
+# Flat shots stopped by what stands in their way, and men taking real cover
+# (docs/DESIGN.md "Real cover: flat shots stop at walls", pathing phase C0;
+# ft_on). A flat missile is traced along the 2 m obstacle grid from the
+# shooter to the man it strikes; a house, wall, gate, rock or cliff above
+# its line stops it there. A man who shot lately is up over or round his
+# cover: what stands as near him as a shooter shoots past does not cover him.
+const EXPOSE_T := 10         # ... for this long after his shot (1 s: fire, then down again)
+const CS_R := 8 * M          # per-man cover: a cover unit's man takes a spot this near his formation place ...
+const CS_BACK := 1536        # ... 1.5 m behind the middle of a covering 2 m cell, away from the threat (0.5 m off its face)
+const CS_LAT := 460          # ... at the cover's edge, this far toward its open side (he leans out there to shoot) ...
+const CS_LEE := 6 * M        # ... and in the middle of a face's lee (no shot from there) as if this much farther
+const CS_H := 1229           # ... a cell rising this far (1.2 m) above the ground covers a man
+const CS_TURN := 114         # ... spots are chosen again when the threat's bearing turns more than this (40 degrees)
+const CS_THREAT := 250 * M   # ... the threat: its fire target, else the nearest enemy unit it sees within this
+const BK_N := 32             # view: the last blocked shots (where they stopped), a ring
+const LOF_HEAD := 1741       # a man of a unit without the cover trait stands upright: a flat ball is traced to his head (cover men: LOF_BODY)
+const LEAN := 1229           # a man at a cover spot leans this far (1.2 m) out round it to shoot (and is shot there while exposed) ...
+const LEAN_LOOK := 8 * M     # ... to the side where nothing stands this far toward his target
 const VIS_T := 10         # sight: each unit re-checked every this many ticks (staggered by index)
 const VIS_NEAR := 20 * M  # an enemy unit this near (box to box) always sees it ...
 const VIS_WOODS := 40 * M # ... a unit in woods only enemies this near see ...
@@ -1225,6 +1243,17 @@ var u_seer := PackedInt32Array()      # the enemy unit that saw it last (tried f
 var u_cov := PackedInt32Array()       # cover units: its men in cover at the last check
 var u_gnd := PackedInt32Array()       # cover units: checks still in cover running (GROUND_STILL: gone to ground)
 var u_rise := PackedInt32Array()      # cover units: getting up until this tick (the anchor waits)
+var u_cvb := PackedInt32Array()       # cover units: the threat's bearing its men's cover spots face (-1: formation places)
+var ft_on: int = 0                    # flat shots traced on the obstacle grid (static: a map with walls, houses, rocks or cliffs, "los" not 0)
+var cs_on: int = 0                    # ... and a unit with the cover trait: its men take cover spots (static)
+var s_shot := PackedInt32Array()      # per man: the tick of his last shot (ft_on: hashed then)
+var stat_flat_traced: int = 0         # flat missiles traced to the man they strike
+var stat_flat_block: int = 0          # ... stopped by a wall, house, gate, rock or cliff on the way
+var stat_cs_men: int = 0              # men given a cover spot (layouts summed)
+var stat_lean: int = 0                # shots fired leaning out round a cover spot
+var bk_x := PackedInt32Array()        # view: where the last BK_N blocked shots stopped (ring; diagnostics, not hashed)
+var bk_y := PackedInt32Array()
+var bk_n: int = 0                     # ... blocked shots so far (the ring's write count)
 var stat_cover_stop: int = 0          # missiles stopped by a cover man's cover
 var stat_ground_stop: int = 0         # ... and by his going to ground
 var stat_cover_kind := PackedInt32Array([0, 0, 0, 0, 0, 0])  # hits on cover men by the cover they were in (COV_*)
@@ -1744,6 +1773,8 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	for arr in _cov_arrays():
 		arr.resize(n_units)
 		arr.fill(0)
+	u_cvb.resize(n_units)
+	u_cvb.fill(-1)
 	u_seen.fill(1)
 	u_ambt.fill(-1000)
 	u_revt.fill(-1000)
@@ -1777,6 +1808,13 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		arr.fill(0)
 	s_wf.resize(n)
 	s_wf.fill(0)
+	s_shot.resize(n)
+	s_shot.fill(-1000)
+	bk_x.resize(BK_N)
+	bk_x.fill(0)
+	bk_y.resize(BK_N)
+	bk_y.fill(0)
+	bk_n = 0
 	for arr in _siege_unit_arrays():
 		arr.resize(n_units)
 		arr.fill(0)
@@ -3308,7 +3346,25 @@ func _obs_top(x: int, y: int) -> int:
 			return 0
 		return _land_top((y >> 11) * ob_w + (x >> 11), k)
 	if k == MapGen.C_BUILDING:
-		return build_h
+		return build_h if build_h > 0 or ft_on == 0 else VIS_BUILD_H  # (a field map's blocks: phase C0)
+	if k == MapGen.C_WALK or k == MapGen.C_STAIR:
+		return wall_h
+	if k == MapGen.C_TOWER:
+		return wall_h + 4 * M
+	if MapGen.is_gate(k):
+		return wall_h + M if g_state[k - MapGen.C_GATE] == GATE_CLOSED else 0
+	return wall_h + WALL_PARAPET
+
+
+## How far the obstacle of 2 m cell c (kind k) rises above the ground: as
+## _obs_top, by cell.
+func _cell_top(c: int, k: int) -> int:
+	if k == MapGen.C_OPEN or k == MapGen.C_DITCH or k == MapGen.C_WATER:
+		return 0
+	if MapGen.is_land(k):
+		return _land_top(c, k)
+	if k == MapGen.C_BUILDING:
+		return build_h if build_h > 0 else VIS_BUILD_H
 	if k == MapGen.C_WALK or k == MapGen.C_STAIR:
 		return wall_h
 	if k == MapGen.C_TOWER:
@@ -6821,6 +6877,8 @@ func _compute_offsets(u: int) -> void:
 		_clr_places(u)  # (off the drawn house faces, B2b)
 	if u_contact[u] != 0 and occ0.size() > 0:
 		_slots_off_enemy(u)
+	if cs_on != 0 and u_cvb[u] >= 0 and _cs_ok(u):
+		_cover_places(u)  # (men into cover: phase C0)
 	u_dirty[u] = 0
 
 
@@ -7148,6 +7206,10 @@ func step() -> void:
 		_update_chars()
 	if vis_on != 0:
 		_update_vis()
+	if cs_on != 0:
+		for u in n_units:
+			if (u + tick) % VIS_T == 0 and t_cover[u_otype[u]] != 0:
+				_cover_seek(u)  # (men into cover: phase C0)
 	prev_x = pos_x.duplicate()
 	prev_y = pos_y.duplicate()
 	if n_eng > 0:
@@ -10234,11 +10296,30 @@ func _fire(i: int, u: int, ft: int, ty: int, ak: int = -1) -> void:
 			return
 	else:
 		var pk := _peek(u)
-		if dist <= 0 or pr_free < 0 or not _shot_ok(sx, sy, ax, ay, dist, ty, pk.y, _skip1(ft),
-				_wall_rb(u, ft) + _works_rb(u, ft), rp, pk.x):
+		if dist <= 0 or pr_free < 0:
 			return
+		var wb := _wall_rb(u, ft) + _works_rb(u, ft)
+		var sk1 := _skip1(ft)
+		if not _shot_ok(sx, sy, ax, ay, dist, ty, pk.y, sk1, wb, rp, pk.x):
+			# A man at a cover spot leans out round his cover to shoot (phase C0).
+			if ft_on == 0 or u_cvb[u] < 0:
+				return
+			var lp := _lean(sx, sy, ax, ay, _ground_mask(u))
+			if lp.x < 0:
+				return
+			var ld := FM.approx_len(ax - lp.x, ay - lp.y)
+			if ld <= 0 or not _shot_ok(lp.x, lp.y, ax, ay, ld, ty, pk.y, sk1, wb, rp, pk.x):
+				return
+			sx = lp.x
+			sy = lp.y
+			dx = ax - sx
+			dy = ay - sy
+			dist = ld
+			stat_lean += 1
 	if vis_on != 0:
 		_shot_seen(u)  # (a shot gives the shooter away)
+	if ft_on != 0:
+		s_shot[i] = tick  # (up over his cover: EXPOSE_T)
 	var p := pr_free
 	pr_free = pr_next[p]
 	pr_count += 1
@@ -10344,7 +10425,7 @@ func _land(p: int) -> void:
 	var tu := pr_tu[p]
 	if best < 0 and tu >= 0 and u_contact[tu] == 0 and u_alive[tu] > 0:
 		var j := -1
-		if u_state[tu] == U_READY and u_neng[tu] == 0 and u_wall[tu] == 0:
+		if u_state[tu] == U_READY and u_neng[tu] == 0 and u_wall[tu] == 0 and u_cvb[tu] < 0:
 			j = _slot_at(tu, x, y)
 		else:
 			j = _nearest_in_unit(tu, x, y)
@@ -10354,6 +10435,8 @@ func _land(p: int) -> void:
 			var hr := t_hit_r[u_type[tu]]
 			if dx * dx + dy * dy <= hr * hr:
 				best = j
+	if best >= 0 and ft_on != 0 and t_m_arc[pr_ty[p]] == 0 and _flat_block(p, best):
+		return  # (it struck the wall, the house, the rock between: phase C0)
 	if best >= 0 and map_on != 0:
 		# Trees take some of what falls into woods; battlements shelter men
 		# on a wall from shots from below.
@@ -13696,6 +13779,8 @@ func result() -> Dictionary:
 func _setup_vis(sc: Dictionary, units: Array) -> void:
 	vis_on = 0
 	cov_on = 0
+	ft_on = 0
+	cs_on = 0
 	vs_tw = PackedByteArray()
 	vs_top = PackedInt32Array()
 	vs_sat = PackedInt32Array()
@@ -13703,6 +13788,11 @@ func _setup_vis(sc: Dictionary, units: Array) -> void:
 	if map_on == 0 or int(sc.get("los", 1)) == 0 or veg_w <= 0 or veg_h <= 0:
 		return
 	_land_heights()
+	if obs_on != 0 and (obs_hi != 0 or not land_hd.is_empty()):
+		ft_on = 1  # (flat shots traced: something on the map stands up from the ground)
+		for ud in units:
+			if t_cover[int(ud["type"])] != 0:
+				cs_on = 1
 	var vw := veg_w
 	var vh := veg_h
 	vs_tw.resize(vw * vh)
@@ -14053,6 +14143,8 @@ func _cover_stops(p: int, best: int) -> bool:
 		return false
 	stat_cover_kind[ck] += 1
 	var stp: int = COVER_STOP[ck] if u_wall[ub] == 0 else 0
+	if ft_on != 0 and t_m_arc[pr_ty[p]] == 0 and (ck == COV_ROCK or ck == COV_HOUSE or ck == COV_WALL):
+		stp = 0  # (a flat shot: the rock, house or wall stopped it on the way or it came past: _flat_block)
 	if stp > 0 and _rand() % 100 < stp:
 		stat_cover_stop += 1
 		return true
@@ -14060,6 +14152,337 @@ func _cover_stops(p: int, best: int) -> bool:
 		stat_ground_stop += 1
 		return true
 	return false
+
+
+# ---------------------------------------------- real cover (phase C0) ---
+# docs/DESIGN.md "Real cover: flat shots stop at walls" (pathing phase C0).
+
+## Flat missile p is about to strike soldier j: traced along the 2 m
+## obstacle grid from the shooter's hand to j's body (a cover man, crouched)
+## or head (a man of the line, upright in his ranks), a house, wall, gate,
+## rock or cliff rising above its line stops it there (true; the view's
+## dust at that point). What stands near the shooter is skipped as his line
+## of fire skips it (lof_block: his battlements, LOF_SKIP, a cover man's
+## corner COVER_PEEK_OBS, a rock within LAND_NEAR); near j only when j is on
+## a wall (the battlements' WALL_COVER as before) or shot within EXPOSE_T
+## (up over or round his cover: the same distances as his own shot's).
+func _flat_block(p: int, j: int) -> bool:
+	var sx := pr_sx[p]
+	var sy := pr_sy[p]
+	var tx := pos_x[j]
+	var ty := pos_y[j]
+	stat_flat_traced += 1
+	var su := pr_unit[p]
+	var s_obs := LOF_SKIP
+	if obs_kind(sx, sy) == MapGen.C_WALK:
+		s_obs = wall_t + 2 * M
+	if su >= 0 and su < n_units:
+		s_obs = maxi(s_obs, _peek(su).y)
+	var ub := unit_of[j]
+	var t_obs := 0
+	var t_land := 0
+	if u_wall[ub] > 0:
+		t_obs = wall_t + 2 * M
+	if tick - s_shot[j] < EXPOSE_T:
+		t_obs = maxi(t_obs, maxi(LOF_SKIP, _peek(ub).y))
+		t_land = LAND_NEAR
+	var dx := tx - sx
+	var dy := ty - sy
+	var d := FM.approx_len(dx, dy)
+	if d <= 0:
+		return false
+	var z0 := elev_at(sx, sy) + LOF_EYE
+	# (A cover man crouches behind his cover: traced to his body; a man of the
+	# line stands upright in his ranks, reloading too: to his head.)
+	var zt := LOF_BODY if t_cover[u_otype[ub]] != 0 else LOF_HEAD
+	var a := _trace(sx, sy, z0, tx, ty, elev_at(tx, ty) + zt,
+		d * t_m_apex[pr_ty[p]] / 100, s_obs, LAND_NEAR, t_obs, t_land)
+	if a >= 0 and t_land > 0 and u_cvb[ub] >= 0:
+		# Up and leaning out round his cover spot's corner to shoot: the ball
+		# is traced to where he leans (_lean, as his own shot).
+		var lp := _lean(tx, ty, sx, sy, _ground_mask(ub))
+		if lp.x >= 0:
+			var ld := FM.approx_len(lp.x - sx, lp.y - sy)
+			var a2 := _trace(sx, sy, z0, lp.x, lp.y, elev_at(lp.x, lp.y) + zt,
+				ld * t_m_apex[pr_ty[p]] / 100, s_obs, LAND_NEAR, t_obs, t_land)
+			if a2 < 0:
+				return false
+	if a < 0:
+		return false
+	stat_flat_block += 1
+	var r := bk_n % BK_N
+	bk_x[r] = sx + dx * a / d
+	bk_y[r] = sy + dy * a / d
+	bk_n += 1
+	return true
+
+
+## Where a man at (x, y) behind cover leans out to shoot at (ox, oy) (or be
+## shot from there): LEAN to the side of the line (its left first, then
+## right) on open ground of his mask (gm) with nothing standing in the first
+## LEAN_LOOK toward (ox, oy); (-1, -1) if neither side is open.
+func _lean(x: int, y: int, ox: int, oy: int, gm: int) -> Vector2i:
+	var dx := ox - x
+	var dy := oy - y
+	var d := FM.approx_len(dx, dy)
+	if d <= 0:
+		return Vector2i(-1, -1)
+	var px := -dy * LEAN / d
+	var py := dx * LEAN / d
+	var z := elev_at(x, y) + LOF_EYE
+	for sd in 2:
+		var lx := x + (px if sd == 0 else -px)
+		var ly := y + (py if sd == 0 else -py)
+		if (nav_at(lx, ly) & gm) == 0:
+			continue
+		if _trace(lx, ly, z, lx + dx * LEAN_LOOK / d, ly + dy * LEAN_LOOK / d, z, 0, 0, 0, 0, 0) >= 0:
+			continue
+		return Vector2i(lx, ly)
+	return Vector2i(-1, -1)
+
+
+## Integer grid traversal (DDA, the 2 m obstacle cells the segment crosses,
+## in order) from (x0, y0) at height z0 to (x1, y1) at z1, the line rising
+## `apex` at mid-flight (parabolic, as lof_block). Returns the distance
+## along it to the first cell whose obstacle stands above the line there,
+## or -1. A cell is skipped when its middle is within s_obs (a rock or
+## cliff: s_land) of the start or t_obs (t_land) of the end. A box with no
+## obstacle cell at all (16 m cells, obs_sat) costs one look.
+func _trace(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int, apex: int,
+		s_obs: int, s_land: int, t_obs: int, t_land: int) -> int:
+	var dx := x1 - x0
+	var dy := y1 - y0
+	var d := FM.approx_len(dx, dy)
+	if d <= 0 or obs_on == 0:
+		return -1
+	var w1 := oc_w + 1
+	var bx0 := clampi(mini(x0, x1) >> 14, 0, oc_w - 1)
+	var bx1 := clampi(maxi(x0, x1) >> 14, 0, oc_w - 1)
+	var by0 := clampi(mini(y0, y1) >> 14, 0, oc_h - 1)
+	var by1 := clampi(maxi(y0, y1) >> 14, 0, oc_h - 1)
+	if obs_sat[(by1 + 1) * w1 + bx1 + 1] - obs_sat[by0 * w1 + bx1 + 1] - obs_sat[(by1 + 1) * w1 + bx0] \
+			+ obs_sat[by0 * w1 + bx0] == 0:
+		return -1
+	var ix := x0 >> 11
+	var iy := y0 >> 11
+	var nc := absi((x1 >> 11) - ix) + absi((y1 >> 11) - iy) + 1
+	var stx := 1 if dx > 0 else -1
+	var sty := 1 if dy > 0 else -1
+	var adx := absi(dx)
+	var ady := absi(dy)
+	var bx := ((ix + 1) << 11) if dx > 0 else (ix << 11)
+	var by := ((iy + 1) << 11) if dy > 0 else (iy << 11)
+	var dz := z1 - z0
+	var ter := ter_on != 0
+	var obw := ob_w
+	var obh := ob_h
+	const FAR := 1 << 62
+	while true:
+		if ix >= 0 and iy >= 0 and ix < obw and iy < obh:
+			var c := iy * obw + ix
+			var k := obs[c]
+			if k != MapGen.C_OPEN and k != MapGen.C_DITCH and k != MapGen.C_WATER:
+				var top := _cell_top(c, k)
+				if top > 0:
+					var cx := (ix << 11) + 1024
+					var cy := (iy << 11) + 1024
+					var a := clampi(((cx - x0) * dx + (cy - y0) * dy) / d, 0, d)
+					var land := MapGen.is_land(k)
+					if a >= (s_land if land else s_obs) and d - a >= (t_land if land else t_obs):
+						var z := z0 + dz * a / d + apex * 4 * a / d * (d - a) / d
+						if (height_at(cx, cy) if ter else 0) + top > z:
+							return a
+		nc -= 1
+		if nc <= 0:
+			break
+		var tnx := absi(bx - x0) * ady if dx != 0 else FAR
+		var tny := absi(by - y0) * adx if dy != 0 else FAR
+		if tnx <= tny:
+			ix += stx
+			bx += stx << 11
+		else:
+			iy += sty
+			by += sty << 11
+	return -1
+
+
+## Per-man cover (each cover unit once a second, cs_on): cover unit u standing
+## with a threat gets cover spots for its men facing that threat's bearing
+## (u_cvb); its places are laid out again when the bearing turns more than
+## CS_TURN, and back to its formation when it moves off or fights (a threat
+## gone out of sight leaves the spots as they are).
+func _cover_seek(u: int) -> void:
+	if not _cs_ok(u):
+		if u_cvb[u] >= 0:
+			u_cvb[u] = -1
+			u_dirty[u] = 1
+		return
+	var nb := _cs_threat(u)
+	if nb < 0:
+		return  # (the threat out of sight a moment: the spots stand)
+	if u_cvb[u] < 0 or absi(FM.angle_diff(nb, u_cvb[u])) > CS_TURN:
+		u_cvb[u] = nb
+		u_dirty[u] = 1
+
+
+## Unit u may take cover man by man: a cover unit standing (no order), not
+## fighting, on the ground (not on a wall, a stair, working engines or
+## carrying), near obstacles.
+func _cs_ok(u: int) -> bool:
+	return cs_on != 0 and phase == PHASE_BATTLE and t_cover[u_otype[u]] != 0 \
+		and u_state[u] == U_READY and u_alive[u] > 0 and u_order[u] == O_NONE \
+		and u_contact[u] == 0 and u_fighting[u] == 0 and u_wall[u] == 0 and u_stair[u] == 0 \
+		and u_neng[u] == 0 and u_carry[u] < 0 and u < _u_obs.size() and _u_obs[u] != 0
+
+
+## The bearing (from unit u's anchor) of the threat it takes cover from: its
+## fire target, else the nearest enemy unit it sees within CS_THREAT
+## (centroids; index order on ties); -1 none.
+func _cs_threat(u: int) -> int:
+	var t := u_ftarget[u]
+	if t < 0 or u_state[t] >= U_DESTROYED or u_alive[t] <= 0:
+		t = -1
+		var bd := CS_THREAT
+		var side := u_side[u]
+		for e in n_units:
+			if u_side[e] == side or u_state[e] != U_READY or u_alive[e] <= 0:
+				continue
+			var dd := FM.approx_len(u_cx[e] - u_ax[u], u_cy[e] - u_ay[u])
+			if dd < bd and not hidden_from(e, side):
+				bd = dd
+				t = e
+	if t < 0:
+		return -1
+	return FM.atan2_a(u_cy[t] - u_ay[u], u_cx[t] - u_ax[u]) & FM.ANGLE_MASK
+
+
+## Unit u's places (just laid out) become cover spots where they can: in the
+## lee of each 2 m cell within reach rising CS_H or more, CS_BACK behind its
+## middle away from the threat (bearing u_cvb): at the cover's edge (the
+## cell beside it across the line to the threat open: he leans out round it
+## to shoot) CS_LAT toward that open side (two for a lone cell); else one
+## in the middle of the face's lee, taken after the edges (CS_LEE); on open
+## ground of its own (its piece in a town; off the drawn house faces). Each man may take a spot within CS_R of his
+## place; men nearest a spot first (then slot, then spot order), one man a
+## spot. The others keep their places.
+func _cover_places(u: int) -> void:
+	var b := u_cvb[u]
+	var fc := FM.cos_a(b)
+	var fs := FM.sin_a(b)
+	var base := u_slot_base[u]
+	var alive := u_alive[u]
+	if alive <= 0 or alive > 4095:
+		return
+	var ax := u_ax[u]
+	var ay := u_ay[u]
+	var gm := _ground_mask(u)
+	var minx := ax
+	var maxx := ax
+	var miny := ay
+	var maxy := ay
+	for s in alive:
+		var x := ax + off_x[base + s]
+		var y := ay + off_y[base + s]
+		minx = mini(minx, x)
+		maxx = maxi(maxx, x)
+		miny = mini(miny, y)
+		maxy = maxi(maxy, y)
+	var i0 := maxi((minx - CS_R - CS_BACK) >> 11, 0)
+	var i1 := mini((maxx + CS_R + CS_BACK) >> 11, ob_w - 1)
+	var j0 := maxi((miny - CS_R - CS_BACK) >> 11, 0)
+	var j1 := mini((maxy + CS_R + CS_BACK) >> 11, ob_h - 1)
+	var city := city_on != 0 and n_cmp > 0
+	var ra := reach_at(ax, ay) if city else 0
+	var bkx := -fc * CS_BACK / FM.TRIG_ONE
+	var bky := -fs * CS_BACK / FM.TRIG_ONE
+	var lx := -fs * CS_LAT / FM.TRIG_ONE
+	var ly := fc * CS_LAT / FM.TRIG_ONE
+	var stx := -fc * 256 / FM.TRIG_ONE
+	var sty := -fs * 256 / FM.TRIG_ONE
+	# The neighbour cell across the line to the threat (8 ways, nearest the
+	# perpendicular (-fs, fc)).
+	var pdi := 0 if absi(fs) * 1000 < FM.TRIG_ONE * 383 else (-1 if fs > 0 else 1)
+	var pdj := 0 if absi(fc) * 1000 < FM.TRIG_ONE * 383 else (1 if fc > 0 else -1)
+	var sp := PackedInt32Array()
+	var sp_t := PackedInt32Array()
+	for j in range(j0, j1 + 1):
+		var row := j * ob_w
+		for i in range(i0, i1 + 1):
+			var k := obs[row + i]
+			if k == MapGen.C_OPEN or _cell_top(row + i, k) < CS_H:
+				continue
+			var cx := (i << 11) + 1024 + bkx
+			var cy := (j << 11) + 1024 + bky
+			var edge := 0
+			for sd in 3:
+				var lt := 0
+				if sd < 2:
+					# At the cover's edge (the cell beside it on this side, across
+					# the line to the threat, open): he leans out round it to shoot
+					# (a house's corner, a rock's side, a wall's end).
+					var ni := i + (pdi if sd == 0 else -pdi)
+					var nj := j + (pdj if sd == 0 else -pdj)
+					if ni >= 0 and nj >= 0 and ni < ob_w and nj < ob_h and _cell_top(nj * ob_w + ni, obs[nj * ob_w + ni]) >= CS_H:
+						continue
+					lt = 1 if sd == 0 else -1
+					edge += 1
+				elif edge > 0:
+					continue
+				var px := cx + lx * lt
+				var py := cy + ly * lt
+				if (nav_at(px, py) & gm) == 0 or (city and reach_at(px, py) != ra):
+					continue
+				if cl_on != 0:
+					var q := 0
+					while q < 4 and not _clr_ok(px, py, CLR_MIN):
+						px += stx
+						py += sty
+						q += 1
+					if q == 4 or (nav_at(px, py) & gm) == 0:
+						continue
+				sp.append(px)
+				sp.append(py)
+				sp_t.append(0 if sd < 2 else CS_LEE)  # (in a face's lee he cannot shoot: after the edges)
+		if sp.size() >= 8000:
+			break
+	var nsp := sp.size() / 2
+	if nsp == 0:
+		return
+	var pairs := PackedInt64Array()
+	for s in alive:
+		var plx := ax + off_x[base + s]
+		var ply := ay + off_y[base + s]
+		var im := slot_soldier[base + s]
+		for q in nsp:
+			var qx := sp[q * 2]
+			var qy := sp[q * 2 + 1]
+			if absi(qx - plx) > CS_R or absi(qy - ply) > CS_R or FM.approx_len(qx - plx, qy - ply) > CS_R:
+				continue
+			var dm := mini((FM.approx_len(qx - pos_x[im], qy - pos_y[im]) + sp_t[q]) >> 6, 1048575)
+			pairs.append((dm << 24) | (s << 12) | q)
+	if pairs.is_empty():
+		return
+	pairs.sort()
+	var used_s := PackedByteArray()
+	used_s.resize(alive)
+	used_s.fill(0)
+	var used_q := PackedByteArray()
+	used_q.resize(nsp)
+	used_q.fill(0)
+	var got := 0
+	for key in pairs:
+		var s := (key >> 12) & 4095
+		var q := key & 4095
+		if used_s[s] != 0 or used_q[q] != 0:
+			continue
+		used_s[s] = 1
+		used_q[q] = 1
+		off_x[base + s] = sp[q * 2] - ax
+		off_y[base + s] = sp[q * 2 + 1] - ay
+		got += 1
+		if got >= alive or got >= nsp:
+			break
+	stat_cs_men += got
 
 
 ## Cover men shoot out of their own woods' edge and past the rock or house
@@ -14223,6 +14646,9 @@ func state_hash() -> int:
 				ctx.update((arr as PackedInt32Array).to_byte_array())
 			ctx.update(s_wf)
 			ctx.update(PackedInt64Array([xf_t0, xf_gp, xf_gl]).to_byte_array())
+			if ft_on != 0:
+				ctx.update(s_shot.to_byte_array())
+				ctx.update(u_cvb.to_byte_array())
 		if n_gates > 0:
 			ctx.update(g_hp.to_byte_array())
 			ctx.update(g_state.to_byte_array())

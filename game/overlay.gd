@@ -104,6 +104,7 @@ var _tr_rec := {}                      # slot -> [kind, x, y, radius (sim units)
 var _tr_walk := 0
 var _fx_cell := {}                     # landing cell -> view clock of the last effect there
 var _tr_tick := -1
+var _bk_seen := -1                     # blocked shots seen so far (sim.bk_n; -1: not looked yet)
 # Gun smoke (docs/DESIGN.md "Firearms"; view only, no sim state): each gun
 # missile seen leaving puts a white puff (one per SMOKE_CELL_M cell per
 # volley) in front of the man or engine that fired it, with a muzzle flash
@@ -160,6 +161,8 @@ func _process(delta: float) -> void:
 		_track_missiles()
 		if sim.gun_on != 0:
 			_gun_volleys(clampi(sim.tick - _tr_tick, 1, 30) if _tr_tick >= 0 else 1)
+		if sim.ft_on != 0:
+			_blocked_shots()
 		fx_trk_us += Time.get_ticks_usec() - t0
 	_tr_tick = sim.tick
 
@@ -222,6 +225,20 @@ func _tr_note(p: int) -> void:
 	if kind != 0:
 		_tr_rec[p] = [kind, sim.pr_x[p], sim.pr_y[p], rad, sim.pr_t0[p]]
 		_tr_live.append(p)
+
+
+## Flat shots stopped by a wall, house or rock since the last look (the
+## sim's ring of where they stopped, BattleSim.bk_x / bk_y): a puff of dust
+## there (pathing phase C0).
+func _blocked_shots() -> void:
+	var n: int = sim.bk_n
+	if _bk_seen < 0 or n < _bk_seen:
+		_bk_seen = n  # (a fresh view or a restored sim: nothing to replay)
+		return
+	for k in range(maxi(_bk_seen, n - BattleSim.BK_N), n):
+		var r := k % BattleSim.BK_N
+		_fx_spawn(FX_DUST, to_px(sim.bk_x[r], sim.bk_y[r]), 0.0)
+	_bk_seen = n
 
 
 ## Gun units that fired a volley in the last dt ticks (their reload count

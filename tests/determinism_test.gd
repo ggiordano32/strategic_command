@@ -6238,6 +6238,11 @@ static func _cover_sc(kind: String, rocks: bool, los: int = 1) -> Dictionary:
 			Scenarios.unit(1, UT.index_of("native_warriors"), 100, 200, 165, Scenarios.FACE_DOWN),
 			Scenarios.unit(0, UT.index_of("musketeers"), 100, 140, 330, Scenarios.FACE_UP)],
 			"terrain": {"kind": Terrain.K_FLAT, "woods": [[200, 150, 50, 30, 2]]}}
+	if kind == "town" or kind == "town_line":
+		var tc := Scenarios.cover_town(UT.index_of("buccaneers" if kind == "town" else "musketeers"), UT.index_of("musketeers"))
+		tc["orders"] = []  # (_cover_run gives them)
+		tc["los"] = los
+		return tc
 	var t := Scenarios.unit(1, UT.index_of("buccaneers" if kind == "rocks" else "musketeers"), 60, 200, 160, Scenarios.FACE_DOWN)
 	t["files"] = 30
 	return {"width_m": 400, "height_m": 400, "ai_sides": [], "orders": [], "los": los, "units": [
@@ -6257,11 +6262,16 @@ func _cover_run(kind: String, rocks: bool, p_seed: int, snap_at: int, los: int =
 	var ev := {"hid0": 1 if sim.hidden_from(0, 0) else 0, "seen_t": -1, "charge_t": -1, "amb_t": -1, "mor_drop": 0,
 		"shot_hidden": 0, "hid_ticks": 0, "gnd_t": -1}
 	var first: Array = []
+	var dv := 0  # (the unit shot at: unit 0 in every piece)
 	if kind == "ambush":
 		first.append(BattleSim.make_move_order(0, 1, 200 * M, 215 * M, 768, 25 * M, 0))
+	elif kind == "town" or kind == "town_line":
+		first.append({"tick": 0, "type": BattleSim.ORDER_SKIRMISH, "unit": 0, "on": 0, "player": 50})
+		first.append(BattleSim.make_attack_order(0, 1, 0, 0))
 	else:
 		first.append({"tick": 0, "type": BattleSim.ORDER_SKIRMISH, "unit": 0, "on": 0, "player": 50})
 		first.append(BattleSim.make_attack_order(0, 1, 0, 0))
+	ev["cvb_on"] = 0
 	for o in first:
 		sim.queue_order(o)
 	var max_t := 1400 if kind == "ambush" else 900
@@ -6298,7 +6308,43 @@ func _cover_run(kind: String, rocks: bool, p_seed: int, snap_at: int, los: int =
 			ev["mor_drop"] = m0 - sim.u_morale[1]
 		if int(ev["gnd_t"]) < 0 and sim.cover_state(0) == 2:
 			ev["gnd_t"] = sim.tick
+		if sim.u_cvb[dv] >= 0:
+			ev["cvb_on"] += 1
 	ev["hashes"] = hashes
+	ev["flat_block"] = sim.stat_flat_block
+	ev["flat_traced"] = sim.stat_flat_traced
+	ev["cs_men"] = sim.stat_cs_men
+	ev["lean"] = sim.stat_lean
+	# The defenders' men behind cover (an obstacle 1.2 m tall or more within
+	# 3 m toward the shooters' middle) and how far they stand from their
+	# formation places (line men must not scatter).
+	var behind := 0
+	var disp := 0
+	var far := 0
+	var base: int = sim.u_slot_base[dv]
+	for q in sim.u_alive[dv]:
+		var i: int = sim.slot_soldier[base + q]
+		var dx: int = sim.u_cx[1 - dv] - sim.pos_x[i]
+		var dy: int = sim.u_cy[1 - dv] - sim.pos_y[i]
+		var dd := maxi(FM.approx_len(dx, dy), 1)
+		var a := 512
+		while a <= 3 * M:
+			var px: int = sim.pos_x[i] + dx * a / dd
+			var py: int = sim.pos_y[i] + dy * a / dd
+			var k: int = sim.obs_kind(px, py)
+			if sim.obs_on != 0 and k != MapGen.C_OPEN and sim._cell_top((py >> 11) * sim.ob_w + (px >> 11), k) >= BattleSim.CS_H:
+				behind += 1
+				break
+			a += 512
+		var pdx: int = sim.pos_x[i] - sim.u_ax[dv] - sim.off_x[base + q]
+		var pdy: int = sim.pos_y[i] - sim.u_ay[dv] - sim.off_y[base + q]
+		disp += FM.approx_len(pdx, pdy)
+		if sim.u_cvb[dv] < 0 and FM.approx_len(pdx, pdy) > 3 * M:
+			far += 1
+	ev["behind"] = behind
+	ev["alive_d"] = sim.u_alive[dv]
+	ev["far"] = far
+	ev["disp"] = disp / maxi(sim.u_alive[dv], 1)
 	ev["twin_bad"] = twin_bad if snap_at >= 0 and twin != null else (0 if snap_at < 0 else -1)
 	ev["lost0"] = sim.u_count0[0] - sim.u_alive[0]
 	ev["lost1"] = sim.u_count0[1] - sim.u_alive[1]
@@ -6338,8 +6384,10 @@ func _check_cover() -> void:
 		bad.append("cover: the rocks repeat diverged")
 	if int(r["twin_bad"]) != 0:
 		bad.append("cover: the rocks' restored copy diverged (%d)" % int(r["twin_bad"]))
-	if int(r["cov_on"]) != 1 or int(r["cover_stop"]) <= 0 or int(r["gnd_t"]) < 0:
-		bad.append("cover: buccaneers in the rocks: no cover stops or never went to ground (%s)" % str([r["cov_on"], r["cover_stop"], r["gnd_t"]]))
+	# (Phase C0: a flat ball is stopped by the rock in its way, no longer by a
+	# cover roll; the ground roll stays.)
+	if int(r["cov_on"]) != 1 or int(r["flat_block"]) <= 0 or int(r["gnd_t"]) < 0:
+		bad.append("cover: buccaneers in the rocks: no shots stopped by the rocks or never went to ground (%s)" % str([r["cov_on"], r["flat_block"], r["gnd_t"]]))
 	var lost_rocks := 0
 	var lost_open := 0
 	var lost_line := [0, 0]
@@ -6348,18 +6396,45 @@ func _check_cover() -> void:
 		lost_open += int(_cover_run("rocks", false, sd, -1)["lost0"])
 	if lost_rocks * 10 > lost_open * 8:
 		bad.append("cover: buccaneers in the rocks lost %d, in the open %d (not 20 %% fewer)" % [lost_rocks, lost_open])
-	# Line infantry: no cover trait, the same losses in the rocks as in the open.
+	# Line infantry: no cover trait: no cover or ground rolls, no cover spots,
+	# its men keep their places (the rocks still stop the balls that strike
+	# them: phase C0, so no more lost than in the open).
+	var lr: Array = []
 	for k in 2:
 		var l := _cover_run("line", k == 0, 11, -1)
+		lr.append(l)
 		lost_line[k] = int(l["lost0"])
-		if int(l["cover_stop"]) != 0 or int(l["ground_stop"]) != 0:
-			bad.append("cover: line musketeers were covered (%s)" % str([l["cover_stop"], l["ground_stop"]]))
-	if lost_line[0] != lost_line[1]:
+		if int(l["cover_stop"]) != 0 or int(l["ground_stop"]) != 0 or int(l["cvb_on"]) != 0 or int(l["cs_men"]) != 0:
+			bad.append("cover: line musketeers were covered or took cover (%s)" % str([l["cover_stop"], l["ground_stop"], l["cvb_on"], l["cs_men"]]))
+		if int(l["far"]) * 20 > int(l["alive_d"]):
+			bad.append("cover: %d line musketeers stood over 3 m off their places (over 5 %%)" % int(l["far"]))
+	if lost_line[0] > lost_line[1]:
 		bad.append("cover: line musketeers lost %d in the rocks, %d in the open" % [lost_line[0], lost_line[1]])
+	# Real cover in a town (phase C0): buccaneers at a street's mouth take the
+	# house corners away from the musket line and lean out to shoot; balls
+	# stop at the houses; a musket line in their place keeps its places.
+	var tw := _cover_run("town", false, 7, 400)
+	var tw2 := _cover_run("town", false, 7, -1)
+	if tw["hashes"] != tw2["hashes"]:
+		bad.append("cover: the town repeat diverged")
+	if int(tw["twin_bad"]) != 0:
+		bad.append("cover: the town's restored copy diverged (%d)" % int(tw["twin_bad"]))
+	if int(tw["flat_block"]) <= 0 or int(tw["cs_men"]) <= 0 or int(tw["cvb_on"]) <= 0 or int(tw["lean"]) <= 0:
+		bad.append("cover: town: blocked %d, men to cover spots %d, ticks with spots %d, leaning shots %d" % [
+			int(tw["flat_block"]), int(tw["cs_men"]), int(tw["cvb_on"]), int(tw["lean"])])
+	var tl := _cover_run("town_line", false, 7, -1)
+	if int(tl["cvb_on"]) != 0 or int(tl["cs_men"]) != 0 or int(tl["far"]) * 20 > int(tl["alive_d"]):
+		bad.append("cover: town: the line took cover spots or scattered (%s)" % str([tl["cvb_on"], tl["cs_men"], tl["far"]]))
+	if int(tw["behind"]) * 100 < int(tw["alive_d"]) * 20 or int(tw["behind"]) * int(tl["alive_d"]) <= int(tl["behind"]) * int(tw["alive_d"]):
+		bad.append("cover: town: buccaneers behind cover %d / %d, the line %d / %d" % [int(tw["behind"]), int(tw["alive_d"]),
+			int(tl["behind"]), int(tl["alive_d"])])
 	if bad.is_empty():
-		print("PASS cover: warriors hidden in the wood %d ticks, charged at %d, seen at %d, ambush at %d (morale -%d), never aimed at while hidden, %d / %d lost (musketeers / warriors); buccaneers in rocks gone to ground at %d, %d cover and %d ground stops, lost %d vs %d in the open (4 seeds); line musketeers %d in rocks = %d in the open; identical on repeat and across snapshot / restore" % [
+		print("PASS cover: warriors hidden in the wood %d ticks, charged at %d, seen at %d, ambush at %d (morale -%d), never aimed at while hidden, %d / %d lost (musketeers / warriors); buccaneers in rocks gone to ground at %d, %d balls stopped by the rocks (%d traced), %d ground stops, lost %d vs %d in the open (4 seeds); line musketeers %d in rocks, %d in the open, no cover taken, none off their places" % [
 			int(a["hid_ticks"]), int(a["charge_t"]), int(a["seen_t"]), int(a["amb_t"]), int(a["mor_drop"]), int(a["lost1"]), int(a["lost0"]),
-			int(r["gnd_t"]), int(r["cover_stop"]), int(r["ground_stop"]), lost_rocks, lost_open, lost_line[0], lost_line[1]])
+			int(r["gnd_t"]), int(r["flat_block"]), int(r["flat_traced"]), int(r["ground_stop"]), lost_rocks, lost_open, lost_line[0], lost_line[1]])
+		print("PASS cover (town, phase C0): buccaneers at a street's mouth: %d balls stopped by the houses (%d traced), %d men to cover spots, %d leaning shots, %d / %d behind cover at the end (a line there: %d / %d, no spots, none off its places), lost %d / %d (the line %d / %d); identical on repeat and across snapshot / restore" % [
+			int(tw["flat_block"]), int(tw["flat_traced"]), int(tw["cs_men"]), int(tw["lean"]), int(tw["behind"]), int(tw["alive_d"]),
+			int(tl["behind"]), int(tl["alive_d"]), int(tw["lost0"]), int(tw["lost1"]), int(tl["lost0"]), int(tl["lost1"])])
 	else:
 		for x in bad:
 			_fail(str(x))

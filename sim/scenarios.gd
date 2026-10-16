@@ -349,6 +349,27 @@ static func _make(id: String) -> Dictionary:
 			sr["terrain"] = {"kind": Terrain.K_FLAT, "rocks": rk}
 			sr["orders"] = [{"tick": 0, "type": ORDER_SKIRMISH, "unit": 0, "on": 0}, attack(0, 1, 0, 0)]
 			return sr
+		"test_cover_town":
+			# Real cover (pathing phase C0): your buccaneers hold the main
+			# street's mouth of an open village against a Spanish musket line
+			# 90 m out; their men take the house corners and lean out to shoot.
+			return cover_town(UT.index_of("buccaneers"), UT.index_of("musketeers"))
+		"test_cover_rocks":
+			# ... and a field of scattered boulders: the men take the rocks' lee.
+			var rk: Array = []
+			var k := 0
+			for y in [245, 237]:
+				var x := 170 + k * 4
+				while x <= 232:
+					rk.append([x, y - (x * 7 % 3) + 1, 1 + (x % 2), 16 + (x * 3 % 9)])
+					x += 6 + (x * 5 % 4)
+				k += 1
+			var bu := unit(0, UT.index_of("buccaneers"), 60, 200, 240, FACE_UP)
+			bu["files"] = 30
+			return {"width_m": 400, "height_m": 400, "ai_sides": [], "units": [bu,
+				unit(1, UT.index_of("musketeers"), 100, 200, 150, FACE_DOWN)],
+				"terrain": {"kind": Terrain.K_FLAT, "rocks": rk},
+				"orders": [{"tick": 0, "type": ORDER_SKIRMISH, "unit": 0, "on": 0}, attack(0, 1, 0, 0)]}
 		"test_cav_art":
 			# Enemy batteries guarded by spearmen; your cavalry raids them
 			# (light infantry can slog in too).
@@ -378,6 +399,55 @@ static func unit(side: int, ty: int, count: int, x_m: int, y_m: int, face: int,
 
 static func attack(tick: int, u: int, target: int, run: int) -> Dictionary:
 	return {"tick": tick, "type": ORDER_ATTACK, "unit": u, "target": target, "run": run}
+
+
+## Real cover in a town (test_cover_town, tests/cover_probe.gd): an open
+## Punic town (seed 707, level 2, no walls; dense blocks) on flat ground;
+## side 0's unit of `def_ty` (60 men, 12 files) stands across a main street
+## where houses flank it (from the first mouth, in index order, that has
+## one: the first point in from the mouth with two houses within 6 m),
+## facing out; side 1's 100 of `att_ty` 90 m out facing it, attacking it;
+## side 0 does not fall back (skirmish off).
+static func cover_town(def_ty: int, att_ty: int) -> Dictionary:
+	var city := {"seed": 707, "level": 2, "walls": 0, "bld": [1, 2, 4], "plan": MapGen.PLAN_PUNIC, "coast": 0}
+	var terr := {"kind": Terrain.K_FLAT, "seed": 710, "forest": 0, "ground": MapGen.PAL_GREEN}
+	var r := settlement(city, terr, [[att_ty, 100]], [[def_ty, 60]], 0, [])
+	var sc: Dictionary = r["scenario"]
+	var lay: Dictionary = r["layout"]
+	var pl: Array = lay.get("agora", lay["plaza"])
+	var spot: Array = []
+	for mo in lay["mouths"]:
+		var dx := int(mo[0]) - int(pl[0])
+		var dy := int(mo[1]) - int(pl[1])
+		var l := maxi(FM.isqrt(dx * dx + dy * dy), 1)
+		var t := 0
+		while t < l and spot.is_empty():
+			var px := int(mo[0]) - dx * t / l
+			var py := int(mo[1]) - dy * t / l
+			var near := 0
+			for b in lay["buildings"]:
+				var bb: Array = b
+				var ex := maxi(maxi(mini(int(bb[0]), int(bb[2])) - px, px - maxi(int(bb[0]), int(bb[2]))), 0)
+				var ey := maxi(maxi(mini(int(bb[1]), int(bb[3])) - py, py - maxi(int(bb[1]), int(bb[3]))), 0)
+				if ex * ex + ey * ey <= 36:
+					near += 1
+			if near >= 2:
+				spot = [px, py, dx, dy, l]
+			t += 2
+		if not spot.is_empty():
+			break
+	if spot.is_empty():
+		var mo: Array = lay["mouths"][0]
+		spot = [int(pl[0]), int(pl[1]), int(mo[0]) - int(pl[0]), int(mo[1]) - int(pl[1]), 1]
+		spot[4] = maxi(FM.isqrt(spot[2] * spot[2] + spot[3] * spot[3]), 1)
+	var face := FM.atan2_a(spot[3], spot[2])
+	var d := unit(0, def_ty, 60, spot[0], spot[1], face, 12)
+	var a := unit(1, att_ty, 100, spot[0] + spot[2] * 90 / spot[4], spot[1] + spot[3] * 90 / spot[4], (face + 512) & 1023)
+	sc["units"] = [d, a]
+	sc["ai_sides"] = []
+	sc["orders"] = [{"tick": 0, "type": ORDER_SKIRMISH, "unit": 0, "on": 0}, attack(0, 1, 0, 0)]
+	sc.erase("deploy_zones")
+	return sc
 
 
 ## Small 300 x 300 m test field; the enemy acts only through scripted orders.

@@ -2563,6 +2563,109 @@ Code: `sim/battle_sim.gd` (section "clearance off the houses": `_clr_build`,
   over seeds 1-4 (3,000 ticks; the battles differ, the pushes themselves
   are 0.03-0.09 ms a tick).
 
+### Real cover: flat shots stop at walls (as built, pathing phase C0, 2026-10-15)
+
+Why (docs/PATHING_SPEC.md addendum 1, the user): "once a unit is close to
+cover the individual soldiers move to better their cover and actually get
+behind cover. And the bullets can't pass through walls, they must actually
+hit the soldiers." Open ground favours the line, cover and towns the
+skirmishers. Code: `sim/battle_sim.gd` (section "real cover (phase C0)":
+`_flat_block`, `_lean`, `_trace`, `_cover_seek`, `_cs_ok`, `_cs_threat`,
+`_cover_places`, `_cell_top`; hooks in `_land`, `_fire`, `_cover_stops`,
+`_compute_offsets`, `_obs_top`, `_setup_vis`, `step`), `sim/scenarios.gd`
+(`test_cover_town`, `test_cover_rocks`, `cover_town`), `game/overlay.gd`
+(`_blocked_shots`), probe `tests/cover_probe.gd`, set pieces
+`tests/determinism_test.gd --only=cover`.
+
+- **Where.** `ft_on` (static): a map with an obstacle grid on which
+  something stands up from the ground (houses, walls, towers, gates, rocks,
+  cliffs) and scenario key `los` not 0. Flat maps, woods-only maps and
+  `los` 0 play exactly as before (the four flat golden digests and the
+  campaign auto-resolve do not move).
+- **Flat shots traced (`_flat_block`, `_trace`).** A flat soldier's missile
+  (`m_arc` 0: balls, javelins, sling stones; arrows and artillery keep their
+  rules) about to strike a man is traced from the shooter's hand (1.5 m up)
+  to the man along the 2 m obstacle grid: an integer DDA visits each cell
+  the segment crosses, in order (one look at a 16 m summed-area table first:
+  a box with no obstacle costs nothing more). The first cell whose obstacle
+  (`_cell_top`: a house's height, 5 m on a field map's blocks; a wall,
+  tower, shut gate; a rock's or a cliff's height) stands above the line
+  there (with the shot's parabolic apex, as the line of fire) stops the
+  ball: no hit, a puff of dust there in the view (`bk_x` / `bk_y`, a ring of
+  the last 32, not hashed). The line ends at a cover man's body (1 m: he
+  crouches behind his cover) or at a line man's head (`LOF_HEAD` 1.7 m: he
+  stands upright in his ranks, reloading too), so a 1.6 m boulder line
+  covers a skirmisher and not a musketeer, a 2.4 m rock or a house both.
+  Skipped near the shooter as his line of fire skips it (his own
+  battlements, 3 m, a cover man's corner `COVER_PEEK_OBS` 5 m, a rock
+  within `LAND_NEAR` 5 m); near the man struck only when he stands on a
+  wall (the battlements' `WALL_COVER` roll as before) or shot within
+  `EXPOSE_T` 1 s (up over or round his cover: the same distances as his own
+  shot's). The cover kinds rock, house and wall no longer roll their
+  `COVER_STOP` for a flat shot (the trace replaced them); woods and going to
+  ground keep their rolls, and so do arrows against every kind. Cost:
+  only balls that reach a man are traced; 7-16 microseconds a 100 m trace
+  in a town or a rocky field (desktop).
+- **Field maps' houses.** On a field map with hand-placed `blocks` the
+  houses had no height for fire (`build_h` 0: shots passed through them);
+  with `ft_on` they stand `VIS_BUILD_H` 5 m (`_obs_top`) for the line of
+  fire too.
+- **Per-man cover (`_cover_seek`, `_cover_places`; `cs_on`: `ft_on` and a
+  unit with the cover trait).** Once a second (staggered) a cover unit
+  standing (no order, not in contact, not fighting, on the ground, near
+  obstacles) looks for its threat (its fire target, else the nearest enemy
+  unit it sees within 250 m) and keeps its bearing (`u_cvb`, hashed); its
+  places are laid out again only when that bearing turns more than
+  `CS_TURN` 40 degrees (no jitter), and back to its formation on an order,
+  contact or a fight (a threat gone out of sight leaves the spots standing).
+  The layout (`_compute_offsets`, after the flow and the clearance): every
+  2 m cell within reach rising `CS_H` 1.2 m or more gives spots on its far
+  side from the threat, `CS_BACK` 1.5 m behind its middle (0.5 m off its
+  face, put further out off a drawn house face): at the cover's edge (the
+  cell beside it across the line to the threat open) one spot `CS_LAT`
+  0.45 m toward that open side, where the man leans out to shoot (two for
+  a lone boulder); otherwise one in the middle of the face's lee, taken
+  after the edges (`CS_LEE`: as if 6 m farther; he is safe there but has
+  no shot). Only open ground of the unit's own piece. Each man may take a
+  spot within `CS_R` 8 m of his formation place; men nearest a spot first
+  (then slot, then spot order), one man a spot; the others keep their
+  places. The places are the unit's flowed places (`off_x` / `off_y`), so
+  following, caps, separation and the clearance push work unchanged; a
+  death lays them out again round the men already in cover. A unit with
+  spots is hit through `_nearest_in_unit` (its men are not on the
+  formation's grid). Line units (no cover trait) never take spots and keep
+  their ranks.
+- **Leaning out (`_lean`).** A man of a unit with spots whose shot is
+  blocked from where he stands tries a point `LEAN` 1.2 m to either side
+  of the line (left first) on open ground with nothing standing in the
+  first 8 m toward his target, and shoots from there; for `EXPOSE_T` after
+  his shot a ball at him that his cover would stop is traced to where he
+  leans instead.
+- **Hashed:** `s_shot` (per man, the tick of his last shot) and `u_cvb`,
+  only with `ft_on`; nothing else new is hashed (`bk_*`, `stat_flat_*`,
+  `stat_cs_men`, `stat_lean` are diagnostics). Snapshots carry them as
+  script variables.
+- **Measured** (`tests/cover_probe.gd`, 100 musketeers 90 m off a 60-man
+  unit, 90 s, 4 seeds; ratio = defenders lost / attackers lost; HEAD ->
+  C0):
+
+| defender, ground | buccaneers (cover) | line musketeers |
+|---|---|---|
+| open | 0.51 = 0.51 | 1.02 = 1.02 |
+| scattered rocks 1.6-2.4 m | 0.26 -> 0.27 (rolls -> physics) | 0.77 -> 0.67 (tall rocks now stop balls) |
+| hamlet (field-map blocks) | 0.18 -> 0.09 (houses were transparent) | 0.82 -> 0.25 |
+| Punic town, a main street's mouth | 1.16 -> 0.96 | 1.48 -> 1.41 |
+
+  `--only=cover` set pieces: buccaneers behind a continuous 1.6 m boulder
+  line lose 16 over 4 seeds against 87 in the open (2b's rolls: 34), 7
+  balls stopped by the rocks; a line musketeer unit there loses 32
+  = 32 in the open (their heads show over the rocks), takes no spots,
+  none off its places; in the Punic town the buccaneers put 92 men to
+  spots over the battle, lean out for 8 shots, 12 of 36 stand behind cover
+  at the end (a line there: 0 of 19) and lose 24 to the line's 32 (a line
+  in their place: 41 lost, 23 killed). Identical on repeat and across
+  snapshot / restore.
+
 ### Compact unit cards (as built, 2026-10-09)
 
 View only: `game/unit_traits.gd` derives everything from the unit rows, so a
@@ -2868,7 +2971,9 @@ else). On a map with cover (`cov_on`: sight blockers and a cover unit):
   walls and hedges there wait for 2c): that share of soldiers' missiles and balls about to
   strike him is stopped (`COVER_STOP`; after the trees' and the
   battlements' share everyone gets). Artillery shot (bolts, stones,
-  roundshot) is not covered.
+  roundshot) is not covered. (Pathing phase C0: on maps with obstacles a
+  flat shot is stopped by the rock, house or wall itself, traced along the
+  grid, and those kinds no longer roll for it: "Real cover" below.)
 - *Going to ground* (`_cover_unit`, once a second): a cover unit with half
   its men or more in cover (`_cover_at`: woods or hedges under him, or an
   obstacle 2 m off eight ways or 4 m four ways), formed, not moving, not
