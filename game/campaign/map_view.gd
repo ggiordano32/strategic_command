@@ -15,6 +15,7 @@ extends Node2D
 ## across the river and a bridge a deck over it, both where the crossing's
 ## step meets the line, roads thin tan lines through their cells' centres.
 
+const ZProf := preload("res://game/campaign/zprof.gd")
 const Quality := preload("res://game/quality.gd")
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -99,6 +100,12 @@ static var style_pref := "auto"
 static var _elev_tex: ImageTexture = null
 static var _elev_gen := -1
 var _table: Node2D = null
+var _pulse_node: Node2D = null
+var _edges: Node2D = null     # children drawn after the map's own drawing, redrawn a frame apart (see _process)
+var _coast_node: Node2D = null
+var _tbl := false
+var _stage := 0
+var _heavy_frame := -1
 static var _land_meshes: Array = []   # triangulated once: the polygons are fine now
 static var _land_sz := Vector2.ZERO
 static var _cell_meshes: Dictionary = {}   # region -> Array of ArrayMesh
@@ -191,6 +198,15 @@ func _make_water() -> void:
 	_table.visible = false
 	_table.draw.connect(_draw_table_land)
 	add_child(_table)
+	_pulse_node = Node2D.new()
+	_pulse_node.draw.connect(_draw_pulse)
+	add_child(_pulse_node)
+	_edges = Node2D.new()
+	_edges.draw.connect(_draw_edges)
+	add_child(_edges)
+	_coast_node = Node2D.new()
+	_coast_node.draw.connect(_draw_coast)
+	add_child(_coast_node)
 
 
 ## The style changed: the sea's uniforms, the land node, a redraw.
@@ -263,6 +279,16 @@ static func _elevation_tex() -> ImageTexture:
 
 ## The wave clock (SeaWaves.t, also the shader's `wave_t`): the sea only moves on "high".
 func _process(delta: float) -> void:
+	if _stage == 1:
+		_stage = 2
+		_heavy_frame = Engine.get_process_frames()
+		if _edges != null:
+			_edges.queue_redraw()
+	elif _stage == 2:
+		_stage = 0
+		_heavy_frame = Engine.get_process_frames()
+		if _coast_node != null:
+			_coast_node.queue_redraw()
 	if _water != null and _water_hi():
 		SeaWaves.t += delta
 		(_water.material as ShaderMaterial).set_shader_parameter("wave_t", SeaWaves.t)
@@ -565,6 +591,7 @@ static var last_draw_ms := 0.0   # the last _draw's cost (ms), for the frame ben
 func _draw() -> void:
 	var t_draw := Time.get_ticks_usec()
 	_draw_all()
+	ZProf.add("map_view_draw", t_draw)
 	last_draw_ms = float(Time.get_ticks_usec() - t_draw) / 1000.0
 
 
@@ -624,18 +651,49 @@ func _draw_all() -> void:
 			draw_hills(self, _hill_segs[0], 0, lw)
 			draw_hills(self, _hill_segs[1], 1, lw)
 		_draw_reach(lw)
-	# Destinations of the selected army.
+	# (the owner edges, borders and target outlines, then the coast, roads and rivers are children drawn after this one:
+	# their redraws are staged over the next frames, see _process)
+	_tbl = tbl
+	_stage = 1
+	if _pulse_node != null:
+		_pulse_node.queue_redraw()
+
+
+## The destinations of the selected army, blocked cells and the selected region: tints that pulse, so a child node
+## redrawn every frame while there are any (the rest of the map is not).
+func _draw_pulse() -> void:
 	var a := 0.25 + 0.15 * sin(pulse * 4.0)
 	for r in targets:
 		var tt := int(target_turns.get(r, 0))
 		if tt >= 2:
 			continue
 		var hc := target_fill(attack_targets.has(r), tt, a)
-		_fill_cell(r, hc)
+		for m in cell_meshes(r):
+			_pulse_node.draw_mesh(m, null, Transform2D.IDENTITY, hc)
 	for r in blocked_targets:
-		_fill_cell(r, COL_BLOCKED)
+		for m in cell_meshes(r):
+			_pulse_node.draw_mesh(m, null, Transform2D.IDENTITY, COL_BLOCKED)
 	if selected_region >= 0:
-		_fill_cell(selected_region, Color(1, 1, 0.8, 0.22))
+		for m in cell_meshes(selected_region):
+			_pulse_node.draw_mesh(m, null, Transform2D.IDENTITY, Color(1, 1, 0.8, 0.22))
+
+
+## True while the staged redraw of the edges and coast is still to come (the screen then lets the overlay slide).
+func heavy_pending() -> bool:
+	return _stage != 0 or _heavy_frame == Engine.get_process_frames()
+
+
+## Redraw only the pulsing tints (the screen calls it every frame while a destination is shown).
+func redraw_pulse() -> void:
+	if _pulse_node != null:
+		_pulse_node.queue_redraw()
+
+
+## The territory edges and outlines (child node `_edges`): the owner's band, the borders, the targets' outlines.
+func _draw_edges() -> void:
+	var t0 := ZProf.begin()
+	var lw := 1.0 / maxf(zoom, 0.05)
+	var tbl := _tbl
 	# Owner edge: a band of the owner's colour inside each territory, so the
 	# owner reads at once whatever the ground.
 	for r in CData.region_count():
@@ -644,8 +702,8 @@ func _draw_all() -> void:
 			if tbl:
 				# Independent land: no wash, a neutral grey dashed border.
 				for dsh in _indep_dashes(r):
-					draw_multiline(dsh, Color(0.12, 0.08, 0.05, 0.5), (TABLE_EDGE_W + 1.0) * lw, true)
-					draw_multiline(dsh, INDEP_EDGE, TABLE_EDGE_W * 0.8 * lw, true)
+					_edges.draw_multiline(dsh, Color(0.12, 0.08, 0.05, 0.5), (TABLE_EDGE_W + 1.0) * lw, true)
+					_edges.draw_multiline(dsh, INDEP_EDGE, TABLE_EDGE_W * 0.8 * lw, true)
 			continue
 		var ec := CData.faction_color(o)
 		ec.a = OWNER_EDGE_A
@@ -653,50 +711,62 @@ func _draw_all() -> void:
 			var closed: PackedVector2Array = piece.duplicate()
 			closed.append(piece[0])
 			if tbl:
-				draw_polyline(closed, TABLE_BORDER, (TABLE_EDGE_W + 1.6) * lw, true)
-			draw_polyline(closed, ec, (TABLE_EDGE_W if tbl else OWNER_EDGE_W) * lw, true)
+				_edges.draw_polyline(closed, TABLE_BORDER, (TABLE_EDGE_W + 1.6) * lw, true)
+			_edges.draw_polyline(closed, ec, (TABLE_EDGE_W if tbl else OWNER_EDGE_W) * lw, true)
 	# Borders between territories (darker where owners differ is implied by
 	# the tint; one thin line everywhere keeps it light).
 	for r in CData.region_count():
 		for piece in Geo.cell(r):
 			var closed: PackedVector2Array = piece.duplicate()
 			closed.append(piece[0])
-			draw_polyline(closed, Color(0.1, 0.1, 0.08, 0.7 if tbl else 0.45), (1.8 if tbl else 1.2) * lw, true)
+			_edges.draw_polyline(closed, Color(0.1, 0.1, 0.08, 0.7 if tbl else 0.45), (1.8 if tbl else 1.2) * lw, true)
 	for r in targets:
 		var te := target_edge(attack_targets.has(r), int(target_turns.get(r, 0)))
 		for piece in Geo.cell(r):
 			var closed: PackedVector2Array = piece.duplicate()
 			closed.append(piece[0])
-			draw_polyline(closed, te[0], float(te[1]) * lw, true)
+			_edges.draw_polyline(closed, te[0], float(te[1]) * lw, true)
 	for r in blocked_targets:
 		for piece in Geo.cell(r):
 			var closed: PackedVector2Array = piece.duplicate()
 			closed.append(piece[0])
-			draw_polyline(closed, COL_BLOCKED_EDGE, 2.0 * lw, true)
+			_edges.draw_polyline(closed, COL_BLOCKED_EDGE, 2.0 * lw, true)
 		# A small cross on the settlement: "not this turn".
-		draw_blocked_cross(self, Geo.site(r), lw)
+		draw_blocked_cross(_edges, Geo.site(r), lw)
 	if selected_region >= 0:
 		for piece in Geo.cell(selected_region):
 			var closed: PackedVector2Array = piece.duplicate()
 			closed.append(piece[0])
-			draw_polyline(closed, Color(1, 1, 0.75, 1.0), 3.0 * lw, true)
+			_edges.draw_polyline(closed, Color(1, 1, 0.75, 1.0), 3.0 * lw, true)
+	ZProf.add("mv_edges", t0)
+
+
+## The coastline, roads, rivers, crossings and sea lanes (child node `_coast_node`).
+func _draw_coast() -> void:
+	var t0 := ZProf.begin()
+	_draw_coast_body()
+	ZProf.add("mv_coast", t0)
+
+
+func _draw_coast_body() -> void:
+	var lw := 1.0 / maxf(zoom, 0.05)
 	# Coastline.
 	for poly in Geo.lands() + Geo.islands():
 		var closed: PackedVector2Array = poly.duplicate()
 		closed.append(poly[0])
-		draw_polyline(closed, COAST, 1.6 * lw, true)
+		_coast_node.draw_polyline(closed, COAST, 1.6 * lw, true)
 	# Land routes (dashed) and sea lanes (dotted, light blue).
 	if grid:
 		# Roads, rivers and the crossings over them.
 		for ln in _road_lines:
-			draw_road(self, ln, lw)
+			draw_road(_coast_node, ln, lw)
 		for ln in _river_lines:
-			draw_river(self, ln, lw)
+			draw_river(_coast_node, ln, lw)
 		for cm in _cross_marks:
 			if int(cm[2]) == 0:
-				draw_ford(self, cm[0], cm[1], lw)
+				draw_ford(_coast_node, cm[0], cm[1], lw)
 			else:
-				draw_bridge(self, cm[0], cm[1], lw)
+				draw_bridge(_coast_node, cm[0], cm[1], lw)
 		# Version 6: armies walk the grid; sea lanes join the port cells (not
 		# in a pack with ships: armies cross on fleets, the lanes are trade data).
 		var px := float(CGrid.cell_px())
@@ -705,16 +775,16 @@ func _draw_all() -> void:
 			var c1 := CGrid.port(CData.region_index(pair[1]))
 			var p0 := Vector2((CGrid.cx(c0) + 0.5) * px, (CGrid.cy(c0) + 0.5) * px)
 			var p1 := Vector2((CGrid.cx(c1) + 0.5) * px, (CGrid.cy(c1) + 0.5) * px)
-			draw_sea_lane(self, p0, p1, lw)
+			draw_sea_lane(_coast_node, p0, p1, lw)
 		return
 	for pair in CData.ROUTES:
 		var p0 := Geo.site(CData.region_index(pair[0]))
 		var p1 := Geo.site(CData.region_index(pair[1]))
-		draw_route(self, p0, p1, lw)
+		draw_route(_coast_node, p0, p1, lw)
 	for pair in CData.SEA_LANES:
 		var p0 := Geo.site(CData.region_index(pair[0]))
 		var p1 := Geo.site(CData.region_index(pair[1]))
-		draw_sea_lane(self, p0, p1, lw)
+		draw_sea_lane(_coast_node, p0, p1, lw)
 
 
 ## The steps of preparing the campaign map for the loading panel:

@@ -7,6 +7,7 @@ extends Node2D
 ## where fleets in port stand) from the town plans. Quality Low: the small atlas only, no bobbing redraws.
 ## The overlay asks `on_sites` / `on_ships` (set here each frame) whether to skip its icon or ship hull.
 
+const ZProf := preload("res://game/campaign/zprof.gd")
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
@@ -159,6 +160,12 @@ func _process(delta: float) -> void:
 
 
 func _draw() -> void:
+	var t0 := ZProf.begin()
+	_draw_body()
+	ZProf.add("minis_draw", t0)
+
+
+func _draw_body() -> void:
 	if overlay == null:
 		return
 	var st: Dictionary = overlay.state

@@ -27,6 +27,7 @@ extends Node
 
 signal exit_requested
 
+const ZProf := preload("res://game/campaign/zprof.gd")
 const AudioFx := preload("res://game/audio.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const CData := preload("res://campaign/cdata.gd")
@@ -2406,6 +2407,12 @@ func auto_resolve(bid: int) -> void:
 
 
 func _process(delta: float) -> void:
+	var t0 := ZProf.begin()
+	_tick(delta)
+	ZProf.add("screen_process", t0)
+
+
+func _tick(delta: float) -> void:
 	map_view.pulse += delta
 	overlay.pulse += delta
 	if _resolver != null and _progress != null:
@@ -2418,8 +2425,7 @@ func _process(delta: float) -> void:
 	var xf := Transform2D(0.0, Vector2(zoom, zoom), 0.0, offset)
 	table_frame.update_view(xf, _vp())
 	if xf != overlay.xform:
-		overlay.xform = xf
-		overlay.queue_redraw()
+		overlay.set_view(xf, map_view.heavy_pending())
 		# line widths follow the zoom: the map's own drawing is redone when the zoom moved 3 %, not on every pan or frame
 		# (while the zoom is moving only a 35 % change redraws; the rest waits until it settles)
 		var dz := absf(zoom - _mv_zoom) / maxf(_mv_zoom, 0.01)
@@ -2433,13 +2439,15 @@ func _process(delta: float) -> void:
 			_mv_zoom = zoom
 			map_view.queue_redraw()
 	if sel_army >= 0 or not moves.is_empty() or not map_view.targets.is_empty():
-		map_view.queue_redraw()
-		overlay.queue_redraw()
-	elif ps.has("fleets"):
+		# the pulsing tints and the selected army's glow only: the rest of the map and the overlay are not redrawn every frame
+		if not map_view.targets.is_empty() or not map_view.blocked_targets.is_empty() or map_view.selected_region >= 0:
+			map_view.redraw_pulse()
+		overlay.redraw_armies()
+	if ps.has("fleets"):
 		_wave_redraw += delta
 		if _wave_redraw >= 0.07:  # ships bob on the waves (about 14 redraws a second)
 			_wave_redraw = 0.0
-			overlay.queue_redraw()
+			overlay.redraw_fleets()
 	if not _replay_q.is_empty() and replay.is_empty() and not _blocked():
 		_start_replay()
 	if not replay.is_empty():

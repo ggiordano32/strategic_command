@@ -25,6 +25,8 @@ static var RIVERS: Array = RomeGeo.RIVERS
 static var ROADS: Array = RomeGeo.ROADS
 
 static var _cells: Array = []
+static var _boxes: Array = []   # bounding Rect2 of each cell piece (region_at skips the polygon test outside it)
+static var _boxes_gen := -1
 static var _anchors: Array = []
 static var _lands: Array = []
 static var _islands: Array = []
@@ -190,9 +192,26 @@ static func _centroid(poly: PackedVector2Array) -> Vector2:
 
 ## Region whose territory contains map point p (-1 for the sea).
 static func region_at(p: Vector2) -> int:
-	for r in CData.region_count():
-		for piece in cell(r):
-			if Geometry2D.is_point_in_polygon(p, piece):
+	var n := CData.region_count()
+	if _cells.is_empty():
+		_build_cells()
+	if _boxes.size() != n or _boxes_gen != gen:
+		_boxes = []
+		for r in n:
+			var bs: Array = []
+			for piece in _cells[r]:
+				var pp: PackedVector2Array = piece
+				var rc := Rect2(pp[0], Vector2.ZERO) if pp.size() > 0 else Rect2()
+				for q in pp:
+					rc = rc.expand(q)
+				bs.append(rc)
+			_boxes.append(bs)
+		_boxes_gen = gen
+	for r in n:
+		var bs: Array = _boxes[r]
+		var pcs: Array = _cells[r]
+		for i in pcs.size():
+			if (bs[i] as Rect2).has_point(p) and Geometry2D.is_point_in_polygon(p, pcs[i]):
 				return r
 	return -1
 

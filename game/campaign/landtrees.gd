@@ -7,6 +7,7 @@ extends Node2D
 ## pieces (one y order); their cast shadows, and these, are baked into the ground texture (town_paint.gd).
 ## Graphics Low keeps the mesh dots.
 
+const ZProf := preload("res://game/campaign/zprof.gd")
 const CData := preload("res://campaign/cdata.gd")
 const Landscape := preload("res://game/campaign/landscape.gd")
 const MapGen := preload("res://sim/mapgen.gd")
@@ -155,6 +156,12 @@ func _build() -> void:
 
 
 func _process(_d: float) -> void:
+	var t0 := ZProf.begin()
+	_tick()
+	ZProf.add("trees_process", t0)
+
+
+func _tick() -> void:
 	if overlay == null:
 		return
 	var on := MapView.table_on() and MapView.terrain_view and Landscape.models and not (overlay.state as Dictionary).is_empty() and Landscape.tree_count > 0

@@ -7,6 +7,7 @@ extends Node2D
 ## y order per town. The ground under them is painted into the land by town_paint.gd.
 ## Graphics Low: the small atlas and a coarser ground texture.
 
+const ZProf := preload("res://game/campaign/zprof.gd")
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
 const TownPlan := preload("res://game/campaign/town_plan.gd")
@@ -64,6 +65,12 @@ func _mat(name_set: String) -> ShaderMaterial:
 
 
 func _process(delta: float) -> void:
+	var t0 := ZProf.begin()
+	_tick(delta)
+	ZProf.add("towns_process", t0)
+
+
+func _tick(delta: float) -> void:
 	if overlay == null:
 		return
 	var st: Dictionary = overlay.state
@@ -117,6 +124,8 @@ func refresh(st: Dictionary, grid: bool) -> void:
 		_grid = grid
 		_sigs = {}
 		_plans = {}
+		_cmds.clear()
+		_info.clear()
 	var changed := false
 	var t0 := Time.get_ticks_usec()
 	for r in CData.region_count():
@@ -128,6 +137,8 @@ func refresh(st: Dictionary, grid: bool) -> void:
 		var prev: Dictionary = _plans.get(r, {})
 		var pl := TownPlan.plan(st, r, grid)
 		_plans[r] = pl
+		_cmds.erase(r)
+		_info.erase(r)
 		var kid: Node2D = _kids.get(r)
 		if kid == null:
 			kid = Node2D.new()
@@ -146,6 +157,7 @@ func refresh(st: Dictionary, grid: bool) -> void:
 	if _land_gen != Landscape.glyph_gen:
 		_land_gen = Landscape.glyph_gen
 		_tsorted = {}
+		_cmds.clear()
 		changed = true
 		for r in _kids:
 			_dirty[r] = true
@@ -167,11 +179,14 @@ func refresh(st: Dictionary, grid: bool) -> void:
 func info(r: int) -> Dictionary:
 	if not _plans.has(r):
 		return {}
+	if _info.has(r):
+		return _info[r]
 	var pl: Dictionary = _plans[r]
 	var w: Vector2 = pl["water"]
 	var c: Vector2 = pl["c"]
-	return {"c": c, "p0": (TownPlan.site(r, _grid))["p0"], "half_w": pl["half_w"], "top": pl["top"], "bottom": pl["bottom"], "water": w,
+	_info[r] = {"c": c, "p0": (TownPlan.site(r, _grid))["p0"], "half_w": pl["half_w"], "top": pl["top"], "bottom": pl["bottom"], "water": w,
 		"side": 0.0 if w == Vector2.ZERO else (-1.0 if w.x < c.x else 1.0)}
+	return _info[r]
 
 
 func planned() -> bool:
@@ -201,7 +216,83 @@ func _ring_tree(kid: Node2D, t: Array, table: Dictionary, shade: Texture2D, wuv:
 	kid.draw_texture_rect_region(shade, dst, Rect2(float(e[0]), float(e[1]), float(e[2]), float(e[3])), pk[2])
 
 
+## The draw list of town r for atlas aname (every piece's rect resolved once, in the y-sorted order with the ring trees):
+## a redraw after a zoom threshold replays it instead of resolving 300 sprite keys again. Entries: [0, dst, src, colour or
+## null for the owner's] a sprite, [1, centre, radius] a moored ship's shadow.
+var _cmds := {}
+var _info := {}   # info(r), built once per plan
+static var _DBG: bool = OS.get_cmdline_user_args().has("townsdbg")
+
+
+func _draw_cmds(kid: Node2D, r: int, aname: String, table: Dictionary, shade: Texture2D, col: Color) -> void:
+	var per: Dictionary = _cmds.get(r, {})
+	if not per.has(aname):
+		per[aname] = _build_cmds(r, aname, table)
+		_cmds[r] = per
+	for c in per[aname]:
+		if int(c[0]) == 0:
+			kid.draw_texture_rect_region(shade, c[1], c[2], col if c[3] == null else c[3])
+		else:
+			kid.draw_set_transform((c[1] as Vector2) + Vector2(2.5, 3.0), 0.0, Vector2(1.0, 0.42))
+			kid.draw_circle(Vector2.ZERO, float(c[2]), Color(0.04, 0.10, 0.18, 0.28))
+			kid.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+func _build_cmds(r: int, aname: String, table: Dictionary) -> Array:
+	var out: Array = []
+	var items: Array = (_plans[r] as Dictionary)["items"]
+	var trees := _trees(r)
+	var ti := 0
+	var nt := trees.size()
+	for it in items:
+		var ii: Array = it
+		var pos: Vector2 = ii[0]
+		while ti < nt and float((trees[ti] as Array)[1]) <= pos.y:
+			_tree_cmd(out, trees[ti], table)
+			ti += 1
+		var pn := str(ii[1])
+		var ck := "%s|%d|%s" % [pn, int(ii[2]), aname]
+		var key: String
+		if _keycache.has(ck):
+			key = _keycache[ck]
+		else:
+			key = TownPlan.sprite(table, pn, int(ii[2]))
+			_keycache[ck] = key
+		if key == "":
+			continue
+		var e: Array = table[key]
+		var k := TownPlan.K / float(e[6])
+		var dst := Rect2(pos - Vector2(float(e[4]), float(e[5])) * k, Vector2(float(e[2]), float(e[3])) * k)
+		if pn.begins_with("ship_"):
+			out.append([1, pos, float(e[2]) / float(e[6]) * TownPlan.K * 0.5 * 0.8])
+		var own = null   # (null: the town owner's colour at draw time)
+		if ii.size() > 3:
+			own = CData.faction_color(int(ii[3]))
+		out.append([0, dst, Rect2(float(e[0]), float(e[1]), float(e[2]), float(e[3])), own])
+	while ti < nt:
+		_tree_cmd(out, trees[ti], table)
+		ti += 1
+	return out
+
+
+func _tree_cmd(out: Array, t: Array, table: Dictionary) -> void:
+	var pk := LandTrees.pick_tree(t)
+	var key := "p_%s__y0" % str(pk[0])
+	if not table.has(key):
+		return
+	var e: Array = table[key]
+	var k := TownPlan.K / float(e[6]) * float(pk[1])
+	out.append([0, Rect2(Vector2(float(t[0]), float(t[1])) - Vector2(float(e[4]), float(e[5])) * k, Vector2(float(e[2]), float(e[3])) * k),
+		Rect2(float(e[0]), float(e[1]), float(e[2]), float(e[3])), pk[2]])
+
+
 func _draw_town(kid: Node2D, r: int) -> void:
+	var t0 := ZProf.begin()
+	_draw_town_body(kid, r)
+	ZProf.add("town_draw", t0)
+
+
+func _draw_town_body(kid: Node2D, r: int) -> void:
 	if not _plans.has(r) or overlay == null:
 		return
 	var st: Dictionary = overlay.state
@@ -217,6 +308,9 @@ func _draw_town(kid: Node2D, r: int) -> void:
 	table = Atlas.SETS[aname]
 	kid.material = _mat(aname)
 	var col := CData.faction_color(int(st["regions"][r]["owner"]))
+	if not _DBG and not Quality.is_low() and Landscape.models:
+		_draw_cmds(kid, r, aname, table, shade, col)
+		return
 	var trees := _trees(r)
 	var wh: Array = table["white"]
 	var wuv := Vector2((float(wh[0]) + 4.0) / float(shade.get_width()), (float(wh[1]) + 4.0) / float(shade.get_height()))
@@ -256,7 +350,7 @@ func _draw_town(kid: Node2D, r: int) -> void:
 	while ti < nt:
 		_ring_tree(kid, trees[ti], table, shade, wuv)
 		ti += 1
-	if OS.get_cmdline_user_args().has("townsdbg"):
+	if _DBG:
 		var sd := TownPlan.site(r, _grid)
 		var rad: PackedFloat32Array = sd["rad"]
 		var c: Vector2 = sd["c"]
