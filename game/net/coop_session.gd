@@ -173,6 +173,14 @@ static func live_ai_sides(scn: Dictionary, h: Array) -> void:
 	for u in mini(units.size(), h.size()):
 		if int(h[u]) >= 0:
 			has[clampi(int(units[u]["side"]), 0, 1)] = true
+	if int(scn.get("sea", 0)) != 0:
+		# A sea battle (sim/sea_sim.gd): "ai_sides" is a flag per side.
+		var fl: Array = (scn.get("ai_sides", [0, 1]) as Array).duplicate()
+		for k in 2:
+			if has[k]:
+				fl[k] = 0
+		scn["ai_sides"] = fl
+		return
 	var ai: Array = []
 	for sd in scn.get("ai_sides", []):
 		if not has[clampi(int(sd), 0, 1)]:
@@ -573,7 +581,7 @@ func _send_snapshot(to: int) -> void:
 	stats["snap_sent"] = int(stats["snap_sent"]) + 1
 	stats["snap_bytes"] = blob.size()
 	if to >= 0:
-		_t("coop_snapshot", {"dir": "sent", "to": to, "bytes": blob.size(), "chunks": cnt, "ms": ms, "soldiers": ls.sim.n})
+		_t("coop_snapshot", {"dir": "sent", "to": to, "bytes": blob.size(), "chunks": cnt, "ms": ms, "soldiers": _men()})
 
 
 func _on_snap_chunk(m: Dictionary) -> void:
@@ -618,7 +626,7 @@ func _on_snap_chunk(m: Dictionary) -> void:
 		if int(fr) <= ls.frame:
 			their_hashes.erase(fr)
 	_t("coop_snapshot", {"dir": "restored", "bytes": blob.size(), "ms": ms, "snap_frame": ls.frame, "was_at": behind,
-		"soldiers": ls.sim.n})
+		"soldiers": _men()})
 	# What the relay sent after the snapshot: from our buffer, the rest by replay.
 	_drain()
 	room.send({"t": "replay", "from": next_s})
@@ -626,6 +634,16 @@ func _on_snap_chunk(m: Dictionary) -> void:
 	if not ls.is_active(me):
 		_say_ready()
 	changed.emit()
+
+
+## Soldiers in the sim for telemetry (a sea battle has ships, no soldiers: 0).
+func _men() -> int:
+	return int(ls.sim.get("n")) if ls != null and ls.sim.get("n") != null else 0
+
+
+## A sea battle (scenario "sea", sim/sea_sim.gd) rather than a land one.
+func is_sea() -> bool:
+	return int(scenario.get("sea", 0)) != 0
 
 
 func _say_ready() -> void:

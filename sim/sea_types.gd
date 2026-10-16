@@ -25,6 +25,8 @@ extends RefCounted
 ##   draft       0 shallow (crosses shoals), 1 deep (runs aground on them)
 ##   oars        1 rowed: the wind does not drive it
 ##   board       boarding quality %
+##   fire        1: a fire ship (no guns; sailed at the enemy, lit, abandoned
+##               by her skeleton crew; she sets alight whatever she touches)
 
 const ROWS: Array[Dictionary] = [
 	{"key": "sloop", "name": "Sloop", "len": 20, "beam": 6, "vmax": 95, "turn": 90, "irons": 42, "tack": 25,
@@ -45,6 +47,11 @@ const ROWS: Array[Dictionary] = [
 	{"key": "war_canoe", "name": "War canoe", "len": 13, "beam": 3, "vmax": 98, "turn": 120, "irons": 0, "tack": 0,
 		"guns": 1, "gun": 3, "range": 120, "hull": 100, "crew": 40, "rig": 0, "reload": 8, "draft": 0, "oars": 1,
 		"board": 120},
+	# (N3c) An old hull filled with tar, brimstone and brushwood, crewed by a
+	# dozen volunteers who light her and take to the boat.
+	{"key": "fire_ship", "name": "Fire ship", "len": 22, "beam": 6, "vmax": 95, "turn": 70, "irons": 50, "tack": 30,
+		"guns": 0, "gun": 0, "range": 0, "hull": 420, "crew": 14, "rig": 180, "reload": 10, "draft": 0, "oars": 0,
+		"board": 60, "fire": 1},
 ]
 
 const CHAIN_RANGE_PCT := 80
@@ -55,6 +62,42 @@ const SHOT_ROUND := 0         # the hull (and splinters among the crew)
 const SHOT_CHAIN := 1         # the rigging: speed
 const SHOT_GRAPE := 2         # the crew, at short range
 const SHOT_NAMES := ["Round shot", "Chain shot", "Grape"]
+
+# ---- deck melee (N3b; sim/sea_sim.gd "deck melee") ----
+## The sailors' arms by crew kit (a scenario ship's "ck": the faction key;
+## anything else "navy"): atk / def (melee, armour and buckler counted in
+## def), shot (% of the men hitting with a pistol / musket / bow volley),
+## rng (cells of DECK_CELL_M), shots (volleys before it is cold steel only;
+## 0: none), rl (ticks to reload between them).
+const DECK_CREWS := {
+	"navy": {"atk": 26, "def": 22, "shot": 18, "rng": 3, "shots": 1, "rl": 0, "arms": "cutlass and pistol"},
+	"england": {"atk": 27, "def": 24, "shot": 22, "rng": 3, "shots": 1, "rl": 0, "arms": "cutlass, pistol and pike"},
+	"dutch": {"atk": 27, "def": 24, "shot": 22, "rng": 3, "shots": 1, "rl": 0, "arms": "cutlass, pistol and pike"},
+	"france": {"atk": 30, "def": 22, "shot": 20, "rng": 3, "shots": 1, "rl": 0, "arms": "boarding axe and pistol"},
+	"new_spain": {"atk": 28, "def": 28, "shot": 14, "rng": 3, "shots": 1, "rl": 0, "arms": "sword and buckler"},
+	"tierra_firme": {"atk": 28, "def": 28, "shot": 14, "rng": 3, "shots": 1, "rl": 0, "arms": "sword and buckler"},
+	"brethren": {"atk": 34, "def": 22, "shot": 28, "rng": 3, "shots": 2, "rl": 0, "arms": "cutlass, axe and a brace of pistols"},
+	"miskito": {"atk": 30, "def": 20, "shot": 14, "rng": 6, "shots": 3, "rl": 25, "arms": "club, spear and bow"},
+	"itza": {"atk": 30, "def": 22, "shot": 12, "rng": 6, "shots": 3, "rl": 25, "arms": "obsidian club and bow"},
+}
+## Soldiers aboard (troops without a kit): musket and bayonet.
+const DECK_TROOPS := {"atk": 26, "def": 24, "shot": 24, "rng": 6, "shots": 2, "rl": 120}
+## Troops by their unit line (sim/unit_types.gd "line"): their volley at deck
+## range [shot %, cells, volleys, reload ticks]; atk / def from the row
+## (attack; defence + armour + shield / 2).
+const DECK_LINE_SHOT := {"musket": [26, 7, 2, 120], "buccaneer": [34, 8, 2, 140], "pistol": [30, 3, 2, 0],
+	"archer": [12, 6, 3, 25], "javelin": [16, 3, 1, 0], "sling": [10, 5, 2, 20]}
+const DECK_CAPTAIN_ATK := 250  # % of his crew's atk (the captain and his mates: CAPTAIN_MEN men)
+const DECK_CAPTAIN_DEF := 200
+const DECK_CAPTAIN_MEN := 3
+
+
+static func deck_crew(ck: String) -> Dictionary:
+	return DECK_CREWS.get(ck, DECK_CREWS["navy"])
+
+
+static func is_fire(i: int) -> bool:
+	return stat(i, "fire") != 0
 
 
 static func index_of(key: String) -> int:

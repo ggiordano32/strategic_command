@@ -402,6 +402,8 @@ static func ship_power(s: Dictionary) -> int:
 	if row.is_empty():
 		return 0
 	var base := int(row["guns"]) * 10 + int(row["hull"]) + int(row["crew"]) / 5
+	if row.has("power"):
+		base = int(row["power"])  # (N3c) a fire ship's worth in a fight
 	return base * (int(s["h"]) + int(s["c"])) / 200
 
 

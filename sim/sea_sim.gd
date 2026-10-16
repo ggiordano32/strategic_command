@@ -43,13 +43,44 @@ extends RefCounted
 ## neighbours). Hull 0: she sinks.
 ##
 ## Boarding: a ship ordered to board sails alongside; close and at a low
-## relative speed she grapples, both stop, and the crews (with the troops
-## aboard, the boarders' row quality, the defenders' deck bonus) fight it
-## out over a few seconds: the defenders are taken, or the boarders are
-## thrown back (BOARD_MAX_TICKS at most). N3b hook: with the scenario's
-## "deck" 1 the sim does not resolve a boarding; deck_request() lists the
-## grappled pairs and their crews (the data for a deck melee in the
-## soldier sim) and O_DECK applies its result.
+## relative speed she grapples, both stop, and the crews fight it out on the
+## decks (N3b, "deck melee" below): the defenders strike when the deck is
+## lost, or the boarders are thrown back, or both crews are spent and the
+## ships drift apart. With the scenario's "deck" 1 the sim does not resolve
+## a boarding itself: deck_request() lists the grappled pairs and their
+## crews and O_DECK applies an outside melee's result (the N3b hook, kept).
+##
+## Deck melee (N3b): the two decks side by side as a small grid of
+## DECK_CELL_M cells (each ship's length by her beam, masts in the way), the
+## boarding party (DECK_BOARD_PCT % of the crew and every soldier aboard)
+## against the defenders, as figures of a few men each (at most DECK_FIG a
+## side: one is the captain and his mates). Every DECK_EVERY ticks each
+## figure, in index order (reversed every other step), strikes the nearest
+## enemy figure next to it (men x DECK_KILL_PM x atk / (atk + def), a
+## figure on its own deck defending at DECK_BONUS_PCT), else fires its
+## pistols / muskets / bows when loaded and in reach (shot % of its men
+## hit), else steps a cell toward it. Arms come from the crew kit (the
+## faction: ST.DECK_CREWS, the boarding quality bq on top) and the troops'
+## unit rows (ST.DECK_LINE_SHOT by line); the captain fights at
+## DECK_CAPTAIN_ATK %. Each side's morale falls with its losses (less while
+## its captain stands; DECK_CAPT_LOSS when he falls). The defenders strike
+## (taken: the existing capture) when their morale is gone or they are
+## under DECK_BREAK_DEF % of the boarders; the boarders are thrown back
+## when theirs is gone or they are under DECK_BREAK_ATT %; both at once or
+## after DECK_MAX_TICKS: both crews are spent and the ships part.
+##
+## Fire (N3c): a fire has an intensity (s_burn 1..FIRE_MAX) that grows a
+## little every second and is fought down by the crew (FIRE_FIGHT x the
+## crew's share); it eats the hull by its intensity. Past MAG_LV each
+## second rolls (sim RNG) for the magazine: she blows up, holing, killing
+## and setting alight her neighbours within BLAST_M. Fire ships (rows with
+## "fire"): sailed at a mark (M_FIRE), lit when she can lie the course
+## within FS_LIGHT_M, her crew lash the helm and take to the boat at
+## FS_ABANDON_M; whatever she touches she grapples (FS_STICK_TICKS) and sets
+## alight at FS_FIRE, feeding the blaze while alongside; she burns down
+## and sinks. The battle AI sends her at the biggest enemy when the wind
+## serves (the mark lies at least FS_SERVES off the wind), else keeps her
+## up to windward of it.
 ##
 ## Morale: hits, losses and raking lower it, quiet time restores it; a ship
 ## strikes her colours at 0, or when her crew or hull is nearly gone with an
@@ -71,6 +102,7 @@ extends RefCounted
 
 const FM := preload("res://sim/fixed_math.gd")
 const ST := preload("res://sim/sea_types.gd")
+const UT := preload("res://sim/unit_types.gd")
 
 const U := 1024                  # units per metre
 const TIME_LIMIT := 9000         # ticks (15 minutes)
@@ -94,6 +126,7 @@ const M_ENGAGE := 2
 const M_BOARD := 3
 const M_FLEE := 4
 const M_HEAD := 5
+const M_FIRE := 6       # a fire ship sailing at her mark (s_tgt)
 
 # Orders (types inside the lockstep's sim-order range, avoiding its special
 # 8 withdraw-all, 13 ready and 20 works; 7 is what withdraw-all queues).
@@ -106,17 +139,53 @@ const O_SHOT := 6       # unit, on: ST.SHOT_* loaded at the next reload
 const O_FLEE := 7       # unit: run for the map edge away from the enemy
 const O_BOARD := 9      # unit, target: lay her alongside and board
 const O_HEAD := 10      # unit, facing (angle 0..1023): hold that heading
-const O_DECK := 11      # unit (boarder), target, on (1 boarders won), a, b (crews left): N3b deck result
-const O_LAST := 11
+const O_DECK := 11      # unit (boarder), target, on (1 boarders won), a, b (crews left): N3b deck result (outside melee, "deck" 1)
+const O_LIGHT := 12     # unit (a fire ship): light her now (her crew take to the boat)
+const O_LAST := 12
 
 const ARC := 120                 # half-width of a broadside's arc (angle units, ~42 deg)
 const SAIL_PCT := [0, 75, 100]
 const BOARD_MAX_TICKS := 600
 const DECK_BONUS_PCT := 125      # defenders on their own deck
 const FIRE_PM := 5               # per mille per round-shot hit: a fire starts
-const MAGAZINE_PM := 15          # per mille a second while burning: she blows up
-const EXTINGUISH_PCT := 14       # % a second at full crew: the fire is out
+const FIRE_START := 60           # a fire's intensity when it starts (FIRE_MAX at most)
+const FIRE_GROW := 25            # intensity a second (+ a roll of up to FIRE_GROW_ROLL)
+const FIRE_GROW_ROLL := 20
+const FIRE_FIGHT := 45           # intensity a second the crew beats down (at full crew)
+const FIRE_MAX := 1000
+const FIRE_HULL := 120000        # hull lost a second: hull0 x intensity / FIRE_HULL (at least 1)
+const MAG_LV := 500              # past this intensity the magazine may go ...
+const MAG_DIV := 4               # ... at (intensity - MAG_LV) / MAG_DIV per mille a second
+const BLAST_FIRE := 250          # intensity of the fires a blast starts in its neighbours
 const BLAST_M := 70
+# Fire ships (N3c).
+const FS_LIGHT_M := 200          # lit this close to her mark (when she can lie the course to it)
+const FS_ABANDON_M := 80         # her crew lash the helm and take to the boat this close ...
+const FS_ABANDON_TICKS := 300    # ... or this long after she is lit
+const FS_STICK_TICKS := 250      # her grapnels hold her alongside what she touched
+const FS_FIRE := 400             # the intensity she gives what she touches (+ FS_FEED a second alongside)
+const FS_FEED := 80
+const FS_SPREAD_M := 25          # sparks: ships this close to a burning fire ship catch (FS_SPREAD_PCT % a second)
+const FS_SPREAD_PCT := 25
+const FS_BURN_PCT := 2           # % of her hull a burning fire ship loses a second
+const FS_SERVES := 300           # angle units off the wind the bearing to her mark must be (the wind serves)
+# Deck melee (N3b).
+const DECK_CELL_M := 2           # metres a deck cell
+const DECK_FIG := 24             # figures a side at most (one is the captain)
+const FIG := DECK_FIG * 2        # figure slots per boarding (per boarder ship)
+const DECK_EVERY := 2            # ticks between deck steps
+const DECK_MOVE := 3             # a figure steps a cell every this many deck steps
+const DECK_KILL_PM := 14         # per mille of a figure's men killing a man a deck step (even atk / def: half)
+const DECK_SHOT_PM := 5          # per mille of a volley's men hitting, per shot % (crowded rails, smoke)
+const DECK_MAX_TICKS := 450      # both crews spent: the ships part
+const DECK_BOARD_PCT := 75       # % of the boarder's crew that go across (the rest work the ship)
+const DECK_BREAK_DEF := 30       # defenders under this % of the boarders: the deck is lost, she strikes
+const DECK_BREAK_ATT := 45       # boarders under this % of the defenders: thrown back
+const DECK_MOR_LOSS := 100        # morale a side loses for losing all its men (by the share lost)
+const DECK_CAPT_LOSS := 30       # morale a side loses when its captain falls
+const DECK_RUSH := 10            # boarders' morale on top of their ship's (the rush across)
+const TK_MAX := 3                # troop kits a ship (by unit type)
+const TKP := 7                   # per kit: pct of the troops, atk, def, shot %, range, volleys, reload
 const WIND_EVERY := 300
 const WIND_SPAN := 100           # angle units either side of the start wind (~35 deg)
 const EDGE_M := 90               # ships keep this far from the edge unless fleeing
@@ -192,6 +261,46 @@ var s_kills := PackedInt32Array()
 var s_blown := PackedInt32Array()
 var s_flee_x := PackedInt32Array()
 var s_flee_y := PackedInt32Array()
+var s_lit := PackedInt32Array()      # fire ship: tick she was lit (-1 not)
+var s_aband := PackedInt32Array()    # fire ship: 1 once her crew took to the boat
+var s_fsg := PackedInt32Array()      # fire ship: the ship she is grappled to (-1)
+var s_fs_t := PackedInt32Array()     # ... since this tick
+var s_ck_atk := PackedInt32Array()   # crew kit (deck melee): atk, def, shot %, range, volleys, reload
+var s_ck_def := PackedInt32Array()
+var s_ck_shot := PackedInt32Array()
+var s_ck_rng := PackedInt32Array()
+var s_ck_sh := PackedInt32Array()
+var s_ck_rl := PackedInt32Array()
+var s_cq := PackedInt32Array()       # captain's fighting % (a notorious captain more)
+var s_tkp := PackedInt32Array()      # troop kits: TK_MAX x TKP per ship
+# Deck melee slots, one per boarder ship s (k_*: n_units; k2_*: 2 per ship,
+# side 0 the boarders, 1 the defenders; f_*: FIG figures per ship).
+var k_on := PackedInt32Array()
+var k_t0 := PackedInt32Array()
+var k_w := PackedInt32Array()
+var k_hb := PackedInt32Array()       # rows of the boarder's deck (rows 0..hb-1, the rail at hb)
+var k_ht := PackedInt32Array()       # rows of the defender's deck (rows hb..hb+ht-1)
+var k_ax0 := PackedInt32Array()      # first column and length of the boarder's deck
+var k_la := PackedInt32Array()
+var k_bx0 := PackedInt32Array()      # ... and the defender's
+var k_lb := PackedInt32Array()
+var k_step := PackedInt32Array()
+var k2_mor := PackedInt32Array()
+var k2_men0 := PackedInt32Array()
+var k2_cap := PackedInt32Array()
+var f_n := PackedInt32Array()        # men in the figure (0: none)
+var f_side := PackedInt32Array()
+var f_x := PackedInt32Array()
+var f_y := PackedInt32Array()
+var f_kind := PackedInt32Array()     # 0 crew, 1 soldiers, 2 the captain
+var f_atk := PackedInt32Array()
+var f_def := PackedInt32Array()
+var f_shot := PackedInt32Array()
+var f_rng := PackedInt32Array()
+var f_sh := PackedInt32Array()       # volleys left
+var f_rl := PackedInt32Array()
+var f_ld := PackedInt32Array()       # ticks to reload (0: ready)
+var f_hit := PackedInt32Array()      # view: tick it last struck or fired (not hashed)
 
 # ---- rebuilt by setup() (not in snapshots) ----
 var g_w := 0
@@ -210,6 +319,12 @@ const EV_REPELLED := 6    # a: boarder, c: target
 const EV_FIRE := 7        # a: ship
 const EV_GROUND := 8      # a: ship
 const EV_FLED := 9        # a: ship
+const EV_DECK_SHOT := 10  # a: boarder (the melee), b: figure, c: target figure
+const EV_CAPTAIN := 11    # a: boarder (the melee), b: side whose captain fell
+const EV_LIT := 12        # a: fire ship
+const EV_ABANDON := 13    # a: fire ship (her crew take to the boat)
+const EV_FS_CONTACT := 14 # a: fire ship, c: the ship she grapples and sets alight
+const EV_DECK_END := 15   # a: boarder, c: target, d: 1 taken / 2 thrown back / 3 both spent
 var ev_n := 0
 var ev_t := PackedInt32Array()
 var ev_k := PackedInt32Array()
@@ -219,7 +334,9 @@ var ev_c := PackedInt32Array()
 var ev_d := PackedInt32Array()
 var ev_e := PackedInt32Array()
 var stats := {"broadsides": 0, "hits": 0, "rakes": 0, "boardings": 0, "captured": 0, "repelled": 0, "struck": 0,
-	"sunk": 0, "fires": 0, "blown": 0, "tacks": 0, "wears": 0, "grounded": 0, "fled": 0, "chain": 0, "grape": 0}
+	"sunk": 0, "fires": 0, "blown": 0, "tacks": 0, "wears": 0, "grounded": 0, "fled": 0, "chain": 0, "grape": 0,
+	"deck_fights": 0, "deck_taken": 0, "deck_repelled": 0, "deck_spent": 0, "deck_shots": 0, "deck_ticks": 0,
+	"captains_fallen": 0, "fireships": 0, "fire_contacts": 0, "fs_spread": 0}
 
 
 # ------------------------------------------------------------------ setup ---
@@ -236,13 +353,16 @@ static func angle_to_bearing(a: int) -> int:
 
 ## Scenario: {"sea": 1, "width_m", "height_m", "wind_deg" (bearing the wind
 ## blows from), "wind_str" 0-100, "ai_sides" [0|1, 0|1], "time_limit" (s),
-## "deck" 0|1, "land": {"kind": 0 open / 1 island / 2 coast, "dirs" (coast:
+## "deck" 0|1 (1: boardings wait for an outside melee, O_DECK), "land": {"kind": 0 open / 1 island / 2 coast, "dirs" (coast:
 ## bit i for land toward angle i * 128, 0 east, 2 south, 4 west, 6 north),
 ## "mseed", optional island "ix", "iy", "ir" metres}, "layout": "ns" | "we" |
 ## "gauge0" | "gauge1" (where the fleets start when ships have no x / y),
 ## "units": [{"side", "t" (ship key), optional "x", "y" (m), "head"
 ## (bearing), "hull", "crew", "rig" (% of the row), "q" (gunnery %), "bq"
-## (boarding %), "troops" (men), "mor"}]}.
+## (boarding %), "troops" (men), "mor", "ck" (crew kit: a key of
+## ST.DECK_CREWS, the faction), "tk" (the troops by unit type: [[unit key,
+## % of the troops], ...], at most TK_MAX), "cq" (the captain's fighting
+## %)}]}.
 func setup(scn: Dictionary, p_seed: int) -> void:
 	seed_value = p_seed
 	rng_state = (p_seed * 2654435761 + 12345) & 0x7FFFFFFF
@@ -270,6 +390,20 @@ func setup(scn: Dictionary, p_seed: int) -> void:
 	s_ld.fill(0)
 	s_rl.resize(n_units * 2)
 	s_rl.fill(0)
+	for nm in DECK2_ARRAYS:
+		var a2 := PackedInt32Array()
+		a2.resize(n_units * 2)
+		a2.fill(0)
+		set(nm, a2)
+	for nm in FIG_ARRAYS:
+		var a3 := PackedInt32Array()
+		a3.resize(n_units * FIG)
+		a3.fill(0)
+		set(nm, a3)
+	f_hit.resize(n_units * FIG)
+	f_hit.fill(-100)
+	s_tkp.resize(n_units * TK_MAX * TKP)
+	s_tkp.fill(0)
 	u_hand.resize(n_units)
 	u_hand.fill(-1)
 	u_pack.resize(n_units)
@@ -302,6 +436,9 @@ func setup(scn: Dictionary, p_seed: int) -> void:
 		s_hit_t[s] = -1000
 		s_flee_x[s] = -1
 		s_flee_y[s] = -1
+		s_lit[s] = -1
+		s_fsg[s] = -1
+		_setup_kits(s, d)
 		if d.has("x") and d.has("y"):
 			s_x[s] = int(d["x"]) * U
 			s_y[s] = int(d["y"]) * U
@@ -325,7 +462,51 @@ func setup(scn: Dictionary, p_seed: int) -> void:
 const SHIP_ARRAYS: Array[String] = ["u_side", "u_state", "s_type", "s_x", "s_y", "s_h16", "s_want", "s_tdir", "s_spd",
 	"s_sail", "s_hull", "s_hull0", "s_crew", "s_crew0", "s_rig", "s_rig0", "s_troops", "s_q", "s_bq", "s_mor", "s_mode",
 	"s_tx", "s_ty", "s_tgt", "s_fire", "s_shot", "s_tack", "s_grap", "s_boarder", "s_bd_t", "s_bd_wait", "s_by", "s_burn",
-	"s_ground", "s_hit_t", "s_end_t", "s_kills", "s_blown", "s_flee_x", "s_flee_y"]
+	"s_ground", "s_hit_t", "s_end_t", "s_kills", "s_blown", "s_flee_x", "s_flee_y",
+	"s_lit", "s_aband", "s_fsg", "s_fs_t", "s_ck_atk", "s_ck_def", "s_ck_shot", "s_ck_rng", "s_ck_sh", "s_ck_rl", "s_cq",
+	"k_on", "k_t0", "k_w", "k_hb", "k_ht", "k_ax0", "k_la", "k_bx0", "k_lb", "k_step"]
+const DECK2_ARRAYS: Array[String] = ["k2_mor", "k2_men0", "k2_cap"]
+const FIG_ARRAYS: Array[String] = ["f_n", "f_side", "f_x", "f_y", "f_kind", "f_atk", "f_def", "f_shot", "f_rng", "f_sh",
+	"f_rl", "f_ld"]
+
+
+## The crew kit and the troops' kits of ship s from its scenario entry d.
+func _setup_kits(s: int, d: Dictionary) -> void:
+	var ck := ST.deck_crew(str(d.get("ck", "navy")))
+	s_ck_atk[s] = int(ck["atk"])
+	s_ck_def[s] = int(ck["def"])
+	s_ck_shot[s] = int(ck["shot"])
+	s_ck_rng[s] = int(ck["rng"])
+	s_ck_sh[s] = int(ck["shots"])
+	s_ck_rl[s] = int(ck["rl"])
+	s_cq[s] = clampi(int(d.get("cq", 100)), 50, 250)
+	var tk: Array = d.get("tk", []) if d.get("tk") is Array else []
+	var k := 0
+	for e in tk:
+		if k >= TK_MAX or not (e is Array) or (e as Array).size() < 2:
+			continue
+		var ty := UT.index_of(str(e[0]))
+		var pct := clampi(int(e[1]), 0, 100)
+		if pct <= 0:
+			continue
+		var b := (s * TK_MAX + k) * TKP
+		s_tkp[b] = pct
+		if ty < 0:
+			s_tkp[b + 1] = int(ST.DECK_TROOPS["atk"])
+			s_tkp[b + 2] = int(ST.DECK_TROOPS["def"])
+			s_tkp[b + 3] = int(ST.DECK_TROOPS["shot"])
+			s_tkp[b + 4] = int(ST.DECK_TROOPS["rng"])
+			s_tkp[b + 5] = int(ST.DECK_TROOPS["shots"])
+			s_tkp[b + 6] = int(ST.DECK_TROOPS["rl"])
+		else:
+			s_tkp[b + 1] = maxi(UT.stat(ty, "attack"), 5)
+			s_tkp[b + 2] = maxi(UT.stat(ty, "defence") + UT.stat(ty, "armour") + UT.stat(ty, "shield") / 2, 5)
+			var sh: Array = ST.DECK_LINE_SHOT.get(UT.line_of(ty), [0, 0, 0, 0])
+			s_tkp[b + 3] = int(sh[0])
+			s_tkp[b + 4] = int(sh[1])
+			s_tkp[b + 5] = int(sh[2])
+			s_tkp[b + 6] = int(sh[3])
+		k += 1
 
 
 func is_tower(_u: int) -> bool:
@@ -553,9 +734,22 @@ func _order(o: Dictionary) -> void:
 	if typ == O_DECK:
 		_deck_result(s, int(o.get("target", -1)), int(o.get("on", 0)), int(o.get("a", 0)), int(o.get("b", 0)))
 		return
-	if u_state[s] != S_SAIL:
+	if u_state[s] != S_SAIL or s_lit[s] >= 0:
+		return  # (a lit fire ship goes where her helm is lashed)
+	if ST.is_fire(s_type[s]) and (typ == O_TARGET or typ == O_BOARD):
+		# A fire ship sent at an enemy: she sails at her and is lit close.
+		var tf := int(o.get("target", -1))
+		if tf >= 0 and tf < n_units and u_side[tf] != u_side[s] and u_state[tf] == S_SAIL and s_lit[tf] < 0:
+			s_mode[s] = M_FIRE
+			s_tgt[s] = tf
+			s_sail[s] = 2
+			s_tack[s] = 0
+			s_tdir[s] = 0
 		return
 	match typ:
+		O_LIGHT:
+			if ST.is_fire(s_type[s]):
+				_light(s)
 		O_SAIL:
 			s_mode[s] = M_GOTO
 			s_tx[s] = clampi(int(o.get("x", 0)), 0, field_w) * U
@@ -586,7 +780,8 @@ func _order(o: Dictionary) -> void:
 			s_tdir[s] = 0
 		O_BOARD:
 			var t2 := int(o.get("target", -1))
-			if t2 >= 0 and t2 < n_units and u_side[t2] != u_side[s] and (u_state[t2] == S_SAIL or u_state[t2] == S_STRUCK):
+			if t2 >= 0 and t2 < n_units and u_side[t2] != u_side[s] and (u_state[t2] == S_SAIL or u_state[t2] == S_STRUCK) \
+					and s_lit[t2] < 0:
 				s_mode[s] = M_BOARD
 				s_tgt[s] = t2
 				s_tack[s] = 0
@@ -611,8 +806,8 @@ func step() -> void:
 	for s in n_units:
 		_move(s)
 	_contacts()
-	if tick % 10 == 0:
-		_boardings()
+	if tick % DECK_EVERY == 0:
+		_decks()
 	_gunnery()
 	if tick % 10 == 0:
 		_fires()
@@ -685,8 +880,8 @@ func target_speed(s: int) -> int:
 		v = v * (250 + 750 * s_rig[s] / s_rig0[s]) / 1000
 		v = v * mini(450 + w_str * 7, 1100) / 1000
 	var hp := s_hull[s] * 100 / s_hull0[s]
-	if hp < 50:
-		v = v * (50 + hp) / 100
+	if hp < 50 and s_lit[s] < 0:
+		v = v * (50 + hp) / 100  # (a blazing fire ship runs on till she goes)
 	return v
 
 
@@ -785,7 +980,7 @@ func _steer(s: int) -> void:
 				want = _engage_heading(s, t)
 		M_BOARD:
 			var t2 := s_tgt[s]
-			if t2 < 0 or not (u_state[t2] == S_SAIL or u_state[t2] == S_STRUCK) or s_grap[t2] >= 0:
+			if t2 < 0 or not (u_state[t2] == S_SAIL or u_state[t2] == S_STRUCK) or s_grap[t2] >= 0 or s_lit[t2] >= 0:
 				s_mode[s] = M_FREE
 				s_tgt[s] = -1
 			else:
@@ -795,6 +990,8 @@ func _steer(s: int) -> void:
 			if s_flee_x[s] < 0 or tick % 50 == 0:
 				_flee_goal(s)
 			want = _course(s, s_flee_x[s], s_flee_y[s])
+		M_FIRE:
+			want = _fire_heading(s)
 	want = _avoid(s, want, edge_ok)
 	if absi(FM.angle_diff(want, s_want[s])) > 28:
 		s_tdir[s] = 0
@@ -871,6 +1068,72 @@ func _board_heading(s: int, t: int) -> int:
 	return _sailable(s, th)
 
 
+## A fire ship at her mark: at the mark's place a little ahead (when she can
+## lie the course to it, else the tacks); lit inside FS_LIGHT_M when the
+## course serves, abandoned (the helm lashed on that heading) inside
+## FS_ABANDON_M or FS_ABANDON_TICKS after.
+func _fire_heading(s: int) -> int:
+	var t := s_tgt[s]
+	if t < 0 or u_state[t] != S_SAIL or s_lit[t] >= 0:
+		if s_lit[s] < 0:
+			s_mode[s] = M_FREE
+			s_tgt[s] = -1
+		return heading(s)
+	var d := FM.approx_len(s_x[t] - s_x[s], s_y[t] - s_y[s]) / U
+	var lead := clampi(d * 10 / maxi(s_spd[s] * 10 / U, 2), 0, 80)
+	var th := heading(t)
+	var tx := s_x[t] + ((FM.cos_a(th) * s_spd[t]) >> 12) * lead
+	var ty := s_y[t] + ((FM.sin_a(th) * s_spd[t]) >> 12) * lead
+	var b := FM.atan2_a(ty - s_y[s], tx - s_x[s])
+	var lies := absi(FM.angle_diff(w_from, b)) >= _irons(s) + 24
+	s_sail[s] = 2
+	if s_lit[s] < 0 and d < FS_LIGHT_M and lies:
+		_light(s)
+	if s_lit[s] >= 0 and s_aband[s] == 0 and (d < FS_ABANDON_M or tick - s_lit[s] >= FS_ABANDON_TICKS):
+		_abandon(s, _sailable(s, b))
+		return heading(s) if s_mode[s] != M_HEAD else s_tx[s]
+	return _course(s, tx, ty)
+
+
+## Fire ship s is set alight (by her crew, or by a shot into her
+## combustibles): she burns until she sinks; away from her mark her crew
+## leave her at once.
+func _light(s: int) -> void:
+	if s_lit[s] >= 0:
+		return
+	s_lit[s] = tick
+	s_burn[s] = FIRE_MAX
+	s_sail[s] = 2
+	stats["fireships"] = int(stats["fireships"]) + 1
+	_event(EV_LIT, s, 0, s_tgt[s], 0, 0)
+	if s_mode[s] != M_FIRE:
+		_abandon(s, heading(s))
+
+
+## Her crew lash the helm on heading h and take to the boat.
+func _abandon(s: int, h: int) -> void:
+	if s_aband[s] != 0:
+		return
+	s_aband[s] = 1
+	s_crew[s] = 0
+	s_mode[s] = M_HEAD
+	s_tx[s] = h & FM.ANGLE_MASK
+	s_tdir[s] = 0
+	_event(EV_ABANDON, s, 0, s_tgt[s], 0, 0)
+
+
+## Set ship o alight at intensity lv at least (a new fire: the event).
+func _ignite(o: int, lv: int) -> void:
+	if u_state[o] == S_SUNK or u_state[o] == S_FLED:
+		return
+	if s_burn[o] == 0:
+		stats["fires"] = int(stats["fires"]) + 1
+		_event(EV_FIRE, o, 0, -1, 0, 0)
+	s_burn[o] = clampi(maxi(s_burn[o], lv), 1, FIRE_MAX)
+	if ST.is_fire(s_type[o]) and s_lit[o] < 0:
+		_light(o)
+
+
 func _flee_goal(s: int) -> void:
 	# The edge point (of the four nearest) farthest from the enemy.
 	var cands := [[s_x[s], -60 * U], [s_x[s], (field_h + 60) * U], [-60 * U, s_y[s]], [(field_w + 60) * U, s_y[s]]]
@@ -912,6 +1175,9 @@ func _move(s: int) -> void:
 	var ty := s_type[s]
 	if s_grap[s] >= 0:
 		_hold_alongside(s)
+		return
+	if s_fsg[s] >= 0:
+		_fs_alongside(s)
 		return
 	# Turning.
 	var h := heading(s)
@@ -1037,7 +1303,24 @@ func _hold_alongside(s: int) -> void:
 	s_h16[s] = (s_h16[s] + clampi(dh * 16, -40, 40)) & 16383
 
 
-## Ships too close push apart; boarders grapple their target.
+## A fire ship grappled to ship o: she lies along o's side and goes with her.
+func _fs_alongside(s: int) -> void:
+	var o := s_fsg[s]
+	var oh := heading(o)
+	var side := 1 if FM.angle_diff(oh, FM.atan2_a(s_y[s] - s_y[o], s_x[s] - s_x[o])) >= 0 else -1
+	var gap := (ST.stat(s_type[s], "beam") + ST.stat(s_type[o], "beam")) / 2 + 2
+	var pa := (oh + side * 256) & FM.ANGLE_MASK
+	var gx := s_x[o] + ((FM.cos_a(pa) * gap) >> 12) * U
+	var gy := s_y[o] + ((FM.sin_a(pa) * gap) >> 12) * U
+	s_x[s] += (gx - s_x[s]) / 4
+	s_y[s] += (gy - s_y[s]) / 4
+	s_spd[s] = s_spd[o]
+	var dh := FM.angle_diff(heading(s), oh)
+	s_h16[s] = (s_h16[s] + clampi(dh * 16, -48, 48)) & 16383
+
+
+## Ships too close push apart; boarders grapple their target; a lit fire
+## ship grapples whatever she touches and sets it alight.
 func _contacts() -> void:
 	for a in n_units:
 		if u_state[a] == S_SUNK or u_state[a] == S_FLED:
@@ -1045,7 +1328,7 @@ func _contacts() -> void:
 		for b in range(a + 1, n_units):
 			if u_state[b] == S_SUNK or u_state[b] == S_FLED:
 				continue
-			if s_grap[a] == b:
+			if s_grap[a] == b or s_fsg[a] == b or s_fsg[b] == a:
 				continue
 			var dx := s_x[b] - s_x[a]
 			var dy := s_y[b] - s_y[a]
@@ -1070,7 +1353,7 @@ func _contacts() -> void:
 		if u_state[s] != S_SAIL or s_mode[s] != M_BOARD or s_grap[s] >= 0:
 			continue
 		var t := s_tgt[s]
-		if t < 0 or s_grap[t] >= 0 or not (u_state[t] == S_SAIL or u_state[t] == S_STRUCK):
+		if t < 0 or s_grap[t] >= 0 or not (u_state[t] == S_SAIL or u_state[t] == S_STRUCK) or s_lit[t] >= 0:
 			continue
 		var d2 := FM.approx_len(s_x[t] - s_x[s], s_y[t] - s_y[s])
 		var reach := ((ST.stat(s_type[s], "len") + ST.stat(s_type[t], "len")) * 40 / 100 + 8) * U
@@ -1081,6 +1364,23 @@ func _contacts() -> void:
 		if FM.approx_len(vx, vy) > 360 and s_spd[t] > 150:
 			continue
 		_grapple(s, t)
+	for s in n_units:
+		if s_lit[s] < 0 or s_fsg[s] >= 0 or u_state[s] != S_SAIL:
+			continue
+		for o in n_units:
+			if o == s or u_state[o] == S_SUNK or u_state[o] == S_FLED or s_lit[o] >= 0:
+				continue
+			var lim2 := ((ST.stat(s_type[s], "len") + ST.stat(s_type[o], "len")) * 45 / 100 + 4) * U
+			var ddx := s_x[o] - s_x[s]
+			var ddy := s_y[o] - s_y[s]
+			if absi(ddx) > lim2 or absi(ddy) > lim2 or FM.approx_len(ddx, ddy) > lim2:
+				continue
+			s_fsg[s] = o
+			s_fs_t[s] = tick
+			stats["fire_contacts"] = int(stats["fire_contacts"]) + 1
+			_event(EV_FS_CONTACT, s, 0, o, 0, 0)
+			_ignite(o, FS_FIRE)
+			break
 
 
 func _grapple(s: int, t: int) -> void:
@@ -1097,37 +1397,342 @@ func _grapple(s: int, t: int) -> void:
 		return
 	if deck_on != 0:
 		s_bd_wait[s] = 1
+	else:
+		_deck_open(s, t)
 
 
-## Boarding fights (a second at a time): Lanchester-like losses by the
-## boarders' strength (crew x quality + troops) against the defenders' (on
-## their own deck, DECK_BONUS_PCT); the defenders are taken when they fall
-## under 40 % of the boarders, the boarders thrown back under 50 % of the
-## defenders or after BOARD_MAX_TICKS.
-func _boardings() -> void:
+# ------------------------------------------------------------- deck melee ---
+
+## Every DECK_EVERY ticks: each boarding under way fights a deck step.
+func _decks() -> void:
 	for s in n_units:
-		if s_grap[s] < 0 or s_boarder[s] == 0 or s_bd_wait[s] != 0:
+		if k_on[s] != 0:
+			if s_grap[s] < 0 or s_boarder[s] == 0:
+				_deck_close(s)
+			else:
+				_deck_step(s)
+
+
+## The deck melee between boarder s and target t begins: the two decks side
+## by side (the boarder's rows on top, the rail between), each side's men as
+## figures (the boarding party / every defender), the captain at the stern.
+func _deck_open(s: int, t: int) -> void:
+	var la := clampi(ST.stat(s_type[s], "len") / DECK_CELL_M, 5, 28)
+	var lb := clampi(ST.stat(s_type[t], "len") / DECK_CELL_M, 5, 28)
+	var w := maxi(la, lb)
+	k_on[s] = 1
+	k_t0[s] = tick
+	k_w[s] = w
+	k_hb[s] = clampi(ST.stat(s_type[s], "beam") / DECK_CELL_M, 2, 7)
+	k_ht[s] = clampi(ST.stat(s_type[t], "beam") / DECK_CELL_M, 2, 7)
+	k_ax0[s] = (w - la) / 2
+	k_la[s] = la
+	k_bx0[s] = (w - lb) / 2
+	k_lb[s] = lb
+	k_step[s] = 0
+	var base := s * FIG
+	for i in FIG:
+		f_n[base + i] = 0
+	_deck_side(s, 0, s, s_crew[s] * DECK_BOARD_PCT / 100, s_troops[s])
+	_deck_side(s, 1, t, s_crew[t], s_troops[t])
+	k2_mor[s * 2] = clampi(s_mor[s] + DECK_RUSH, 20, 170)
+	k2_mor[s * 2 + 1] = clampi(s_mor[t], 20, 170)
+	stats["deck_fights"] = int(stats["deck_fights"]) + 1
+
+
+## Deck cell (x, y) of melee slot m can be stood on (its ship's deck, not a mast).
+func _deck_walk(m: int, x: int, y: int) -> bool:
+	var hb := k_hb[m]
+	if y < 0 or y >= hb + k_ht[m] or x < 0 or x >= k_w[m]:
+		return false
+	var mine := y < hb
+	var x0 := k_ax0[m] if mine else k_bx0[m]
+	var ln := k_la[m] if mine else k_lb[m]
+	if x < x0 or x >= x0 + ln:
+		return false
+	var mid := hb / 2 if mine else hb + k_ht[m] / 2
+	if y == mid:
+		var ty := s_type[m] if mine else s_type[s_grap[m]]
+		for f in _masts(ty):
+			if x == x0 + ln / 2 + int(f) * ln / 100:
+				return false
+	return true
+
+
+## Mast places of ship type ty: % of the length from amidships toward the bow.
+static func _masts(ty: int) -> Array:
+	var key := str(ST.row(ty)["key"])
+	if ST.stat(ty, "oars") != 0:
+		return []
+	if key == "sloop":
+		return [12]
+	if key == "brigantine" or key == "fire_ship":
+		return [22, -12]
+	return [30, 2, -25]
+
+
+## Side `side` (0 boarders, 1 defenders) of melee m: ship `ship`'s crew and
+## troops as figures, the soldiers at the rail, the crew behind, the captain
+## at the stern.
+func _deck_side(m: int, side: int, ship: int, crew: int, troops: int) -> void:
+	var hb := k_hb[m]
+	var rows: Array[int] = []
+	if side == 0:
+		for y in range(hb - 1, -1, -1):
+			rows.append(y)
+	else:
+		for y in range(hb, hb + k_ht[m]):
+			rows.append(y)
+	var x0 := k_ax0[m] if side == 0 else k_bx0[m]
+	var ln := k_la[m] if side == 0 else k_lb[m]
+	# Cells from the rail back, amidships out.
+	var cells: Array[int] = []
+	for y in rows:
+		for k in ln:
+			var off := (k + 1) / 2 * (1 if k % 2 == 1 else -1)
+			var x := x0 + ln / 2 + off
+			if x >= x0 and x < x0 + ln and _deck_walk(m, x, y):
+				cells.append(y * 256 + x)
+	var base := m * FIG + side * DECK_FIG
+	var men := crew + troops
+	var cap_n := mini(ST.DECK_CAPTAIN_MEN, crew)
+	var nf := mini(DECK_FIG, cells.size())
+	k2_men0[m * 2 + side] = men
+	k2_cap[m * 2 + side] = 0
+	if men <= 0 or nf <= 0:
+		return
+	# The captain and his mates at the stern (the last row's first cell
+	# from the stern end).
+	var slot := 0
+	if cap_n > 0 and nf >= 2:
+		var cy: int = rows[rows.size() - 1]
+		var cx := x0 + 1
+		if not _deck_walk(m, cx, cy):
+			cx = x0 + 2
+		cells.erase(cy * 256 + cx)
+		_fig(base, cx, cy, side, 2, cap_n, s_ck_atk[ship] * s_bq[ship] / 100 * ST.DECK_CAPTAIN_ATK / 100 * s_cq[ship] / 100,
+			s_ck_def[ship] * ST.DECK_CAPTAIN_DEF / 100 * s_cq[ship] / 100, s_ck_shot[ship], s_ck_rng[ship], 2, 10)
+		slot = 1
+		crew -= cap_n
+		nf -= 1
+		k2_cap[m * 2 + side] = 1
+	var nt := 0
+	if troops > 0:
+		nt = clampi((nf * troops + men / 2) / maxi(men, 1), 1, nf if crew <= 0 else maxi(nf - 1, 1))
+	var nc := nf - nt if crew > 0 else 0
+	var ci := 0
+	# Soldiers by kit (their % of the troops), then the crew.
+	var kits: Array = []
+	var pct_sum := 0
+	for k in TK_MAX:
+		var pct := s_tkp[(ship * TK_MAX + k) * TKP]
+		if pct > 0:
+			kits.append(k)
+			pct_sum += pct
+	var left_t := troops
+	var left_f := nt
+	if kits.is_empty():
+		kits = [-1]
+		pct_sum = 100
+	for ki in kits.size():
+		var k: int = kits[ki]
+		var b := (ship * TK_MAX + k) * TKP if k >= 0 else -1
+		var pct := s_tkp[b] if b >= 0 else 100
+		if left_f <= 0 or left_t <= 0:
+			break
+		var gm := left_t if ki == kits.size() - 1 else mini(troops * pct / maxi(pct_sum, 1), left_t)
+		var gf := left_f if ki == kits.size() - 1 else clampi(nt * pct / maxi(pct_sum, 1), 1, left_f)
+		left_t -= gm
+		left_f -= gf
+		gf = mini(gf, gm)
+		for i in gf:
+			if ci >= cells.size():
+				break
+			var c := cells[ci]
+			ci += 1
+			var n := gm / gf + (1 if i < gm % gf else 0)
+			if b >= 0:
+				_fig(base + slot, c % 256, c / 256, side, 1, n, s_tkp[b + 1], s_tkp[b + 2], s_tkp[b + 3], s_tkp[b + 4],
+					s_tkp[b + 5], s_tkp[b + 6])
+			else:
+				_fig(base + slot, c % 256, c / 256, side, 1, n, int(ST.DECK_TROOPS["atk"]), int(ST.DECK_TROOPS["def"]),
+					int(ST.DECK_TROOPS["shot"]), int(ST.DECK_TROOPS["rng"]), int(ST.DECK_TROOPS["shots"]),
+					int(ST.DECK_TROOPS["rl"]))
+			slot += 1
+	nc = mini(nc + maxi(left_f, 0), crew)
+	for i in nc:
+		if ci >= cells.size():
+			break
+		var c2 := cells[ci]
+		ci += 1
+		var n2 := crew / nc + (1 if i < crew % nc else 0)
+		_fig(base + slot, c2 % 256, c2 / 256, side, 0, n2, s_ck_atk[ship] * s_bq[ship] / 100, s_ck_def[ship] * s_bq[ship] / 100,
+			s_ck_shot[ship], s_ck_rng[ship], s_ck_sh[ship], s_ck_rl[ship])
+		slot += 1
+
+
+func _fig(i: int, x: int, y: int, side: int, kind: int, n: int, atk: int, df: int, shot: int, rng: int, shots: int,
+		rl: int) -> void:
+	f_n[i] = maxi(n, 0)
+	f_x[i] = x
+	f_y[i] = y
+	f_side[i] = side
+	f_kind[i] = kind
+	f_atk[i] = maxi(atk, 1)
+	f_def[i] = maxi(df, 1)
+	f_shot[i] = shot
+	f_rng[i] = rng
+	f_sh[i] = shots if rng > 0 and shot > 0 else 0
+	f_rl[i] = maxi(rl, 10)
+	f_ld[i] = 0
+
+
+## One deck step of the melee of boarder s (see the header).
+func _deck_step(s: int) -> void:
+	var t := s_grap[s]
+	var base := s * FIG
+	var w := k_w[s]
+	var h := k_hb[s] + k_ht[s]
+	var occ := PackedInt32Array()
+	occ.resize(w * h)
+	occ.fill(-1)
+	for i in FIG:
+		if f_n[base + i] > 0:
+			occ[f_y[base + i] * w + f_x[base + i]] = i
+	var stepn := k_step[s]
+	k_step[s] = stepn + 1
+	var lost := [0, 0]
+	var ships := [s, t]
+	for kk in FIG:
+		var i := kk if stepn % 2 == 0 else FIG - 1 - kk
+		var fi := base + i
+		if f_n[fi] <= 0:
 			continue
-		var t := s_grap[s]
-		var a := s_crew[s] * s_bq[s] / 100 + s_troops[s] * 12 / 10
-		var d := (s_crew[t] * s_bq[t] / 100 + s_troops[t] * 12 / 10) * DECK_BONUS_PCT / 100
-		var k := 5 + _roll(4)
-		var la := maxi(d * k / 100, 1)
-		var ld := maxi(a * k / 100, 1)
-		_lose_men(s, la * 100 / maxi(s_bq[s], 1))
-		_lose_men(t, ld * 100 / maxi(s_bq[t], 1))
-		s_kills[s] += ld
-		s_kills[t] += la
-		var a2 := s_crew[s] * s_bq[s] / 100 + s_troops[s] * 12 / 10
-		var d2 := (s_crew[t] * s_bq[t] / 100 + s_troops[t] * 12 / 10) * DECK_BONUS_PCT / 100
-		if d2 * 100 < a2 * 40 or s_crew[t] <= 2:
-			_capture(t, s)
-		elif a2 * 100 < d2 * 50 or s_crew[s] <= 2 or tick - s_bd_t[s] >= BOARD_MAX_TICKS:
-			_ungrapple(s)
-			s_mor[s] -= 25
-			s_mode[s] = M_FREE
-			stats["repelled"] = int(stats["repelled"]) + 1
-			_event(EV_REPELLED, s, 0, t, 0, 0)
+		if f_ld[fi] > 0:
+			f_ld[fi] = maxi(f_ld[fi] - DECK_EVERY, 0)
+		var sd := f_side[fi]
+		var best := -1
+		var bd := 1 << 20
+		for j in FIG:
+			var fj := base + j
+			if f_n[fj] <= 0 or f_side[fj] == sd:
+				continue
+			var d := maxi(absi(f_x[fj] - f_x[fi]), absi(f_y[fj] - f_y[fi]))
+			if d < bd:
+				bd = d
+				best = j
+		if best < 0:
+			continue
+		var fb := base + best
+		var k := 0
+		if bd <= 1:
+			# Cold steel: shaken men strike weaker; a man on his own deck defends better.
+			var atk := f_atk[fi] * (60 + clampi(k2_mor[s * 2 + sd], 0, 100) * 40 / 100) / 100
+			var df := f_def[fb]
+			if (f_y[fb] < k_hb[s]) == (f_side[fb] == 0):
+				df = df * DECK_BONUS_PCT / 100
+			var p := DECK_KILL_PM * 2 * atk / maxi(atk + df, 1)
+			k = mini((f_n[fi] * p + _roll(1000)) / 1000, f_n[fb])
+			f_hit[fi] = tick
+		elif f_sh[fi] > 0 and f_ld[fi] == 0 and bd <= f_rng[fi]:
+			# A volley: pistols over the rail, muskets, bows.
+			k = mini((f_n[fi] * f_shot[fi] * DECK_SHOT_PM + _roll(1000)) / 1000, f_n[fb])
+			f_sh[fi] -= 1
+			f_ld[fi] = f_rl[fi]
+			f_hit[fi] = tick
+			stats["deck_shots"] = int(stats["deck_shots"]) + 1
+			_event(EV_DECK_SHOT, s, i, best, 0, 0)
+		elif (stepn + i) % DECK_MOVE == 0:
+			var dx := signi(f_x[fb] - f_x[fi])
+			var dy := signi(f_y[fb] - f_y[fi])
+			var tries: Array = [[dx, dy], [dx, 0], [0, dy]]
+			if dx == 0:
+				tries.append([1, dy])
+				tries.append([-1, dy])
+			elif dy == 0:
+				tries.append([dx, 1])
+				tries.append([dx, -1])
+			for st2 in tries:
+				var nx := f_x[fi] + int(st2[0])
+				var ny := f_y[fi] + int(st2[1])
+				if (int(st2[0]) == 0 and int(st2[1]) == 0) or not _deck_walk(s, nx, ny) or occ[ny * w + nx] >= 0:
+					continue
+				occ[f_y[fi] * w + f_x[fi]] = -1
+				occ[ny * w + nx] = i
+				f_x[fi] = nx
+				f_y[fi] = ny
+				break
+		if k <= 0:
+			continue
+		f_n[fb] -= k
+		var vs := 1 - sd
+		var sh: int = ships[vs]
+		if f_kind[fb] == 1:
+			s_troops[sh] = maxi(s_troops[sh] - k, 0)
+		else:
+			s_crew[sh] = maxi(s_crew[sh] - k, 0)
+		s_kills[ships[sd]] += k
+		lost[vs] += k
+		if f_n[fb] <= 0:
+			f_n[fb] = 0
+			occ[f_y[fb] * w + f_x[fb]] = -1
+			if f_kind[fb] == 2:
+				k2_cap[s * 2 + vs] = 0
+				k2_mor[s * 2 + vs] -= DECK_CAPT_LOSS
+				stats["captains_fallen"] = int(stats["captains_fallen"]) + 1
+				_event(EV_CAPTAIN, s, vs, t, 0, 0)
+	# Morale: the share of the men lost (less with the captain standing),
+	# a little more when outnumbered.
+	var men := [0, 0]
+	for i in FIG:
+		if f_n[base + i] > 0:
+			men[f_side[base + i]] += f_n[base + i]
+	for sd in 2:
+		var l: int = lost[sd]
+		if l > 0:
+			var dm := l * DECK_MOR_LOSS / maxi(k2_men0[s * 2 + sd], 1)
+			if k2_cap[s * 2 + sd] != 0:
+				dm = dm * 3 / 4
+			k2_mor[s * 2 + sd] -= maxi(dm, 1)
+		if int(men[sd]) * 100 < int(men[1 - sd]) * 60:
+			k2_mor[s * 2 + sd] -= 1
+	var ma: int = men[0]
+	var md: int = men[1]
+	var age := tick - k_t0[s]
+	var def_breaks := md == 0 or k2_mor[s * 2 + 1] <= 0 or md * 100 < ma * DECK_BREAK_DEF
+	var att_breaks := ma == 0 or k2_mor[s * 2] <= 0 or (age >= 20 and ma * 100 < md * DECK_BREAK_ATT)
+	stats["deck_ticks"] = int(stats["deck_ticks"]) + DECK_EVERY
+	if def_breaks and not att_breaks:
+		# The deck is lost: she strikes, and is taken.
+		_event(EV_DECK_END, s, 0, t, 1, 0)
+		stats["deck_taken"] = int(stats["deck_taken"]) + 1
+		_capture(t, s)
+	elif att_breaks and not def_breaks:
+		_event(EV_DECK_END, s, 0, t, 2, 0)
+		stats["deck_repelled"] = int(stats["deck_repelled"]) + 1
+		_repelled(s, t, 0)
+	elif (att_breaks and def_breaks) or age >= DECK_MAX_TICKS:
+		# Both crews spent: the grapples are cut and the ships part.
+		_event(EV_DECK_END, s, 0, t, 3, 0)
+		stats["deck_spent"] = int(stats["deck_spent"]) + 1
+		_repelled(s, t, 1)
+		s_mor[t] -= 15
+
+
+## Boarder s's men are back aboard (thrown back, or spent: both = 1).
+func _repelled(s: int, t: int, both: int) -> void:
+	_ungrapple(s)
+	s_mor[s] -= 15 if both != 0 else 25
+	s_mode[s] = M_FREE
+	stats["repelled"] = int(stats["repelled"]) + 1
+	_event(EV_REPELLED, s, both, t, 0, 0)
+
+
+func _deck_close(m: int) -> void:
+	k_on[m] = 0
+	var base := m * FIG
+	for i in FIG:
+		f_n[base + i] = 0
 
 
 ## Men lost from ship s: troops and crew in proportion.
@@ -1142,6 +1747,10 @@ func _lose_men(s: int, n: int) -> void:
 
 func _ungrapple(s: int) -> void:
 	var t := s_grap[s]
+	if k_on[s] != 0:
+		_deck_close(s)
+	if t >= 0 and k_on[t] != 0:
+		_deck_close(t)
 	s_grap[s] = -1
 	s_boarder[s] = 0
 	s_bd_wait[s] = 0
@@ -1172,8 +1781,8 @@ func _capture(p: int, c: int) -> void:
 
 ## N3b: the deck melee between boarder s and target t is decided.
 func _deck_result(s: int, t: int, won: int, crew_a: int, crew_b: int) -> void:
-	if t < 0 or t >= n_units or s_grap[s] != t or s_boarder[s] == 0:
-		return
+	if t < 0 or t >= n_units or s_grap[s] != t or s_boarder[s] == 0 or s_bd_wait[s] == 0:
+		return  # (only a boarding waiting for an outside melee, scenario "deck" 1)
 	s_crew[s] = clampi(crew_a, 0, s_crew[s])
 	s_crew[t] = clampi(crew_b, 0, s_crew[t])
 	s_bd_wait[s] = 0
@@ -1222,7 +1831,7 @@ func guns_working(s: int) -> int:
 
 func _gunnery() -> void:
 	for s in n_units:
-		if u_state[s] != S_SAIL:
+		if u_state[s] != S_SAIL or ST.stat(s_type[s], "guns") == 0:
 			continue
 		var rate := _crew_rate(s)
 		for k in 2:
@@ -1263,6 +1872,8 @@ func _pick_target(s: int, k: int) -> int:
 		var score := d
 		if t == s_tgt[s]:
 			score -= 1 << 30
+		elif s_lit[t] >= 0 and d < 300 * U:
+			score -= 1 << 29  # a fire ship bearing down: everything at her
 		if score < bd and not _masked(s, t, d):
 			bd = score
 			best = t
@@ -1316,10 +1927,8 @@ func _broadside(s: int, k: int, t: int) -> void:
 			s_hull[t] -= hits * w
 			men = hits * (w + 2) / 5
 			for n in hits:
-				if s_burn[t] == 0 and _roll(1000) < FIRE_PM:
-					s_burn[t] = 1
-					stats["fires"] = int(stats["fires"]) + 1
-					_event(EV_FIRE, t, 0, s, 0, 0)
+				if s_burn[t] == 0 and _roll(1000) < FIRE_PM * (4 if ST.is_fire(tt) else 1):
+					_ignite(t, FIRE_START)
 			s_rig[t] -= hits * w / 4
 		ST.SHOT_CHAIN:
 			s_rig[t] -= hits * w * 2
@@ -1364,6 +1973,7 @@ func _sink(s: int) -> void:
 	s_end_t[s] = tick
 	s_spd[s] = 0
 	s_burn[s] = 0
+	s_fsg[s] = -1
 	stats["sunk"] = int(stats["sunk"]) + 1
 	_event(EV_SINK, s, 0, -1, 0, 0)
 	_shock(s, 12)
@@ -1386,19 +1996,50 @@ func _fires() -> void:
 		if u_state[s] == S_SUNK or u_state[s] == S_FLED:
 			s_burn[s] = 0
 			continue
-		s_burn[s] += 10
-		s_hull[s] = maxi(s_hull[s] - maxi(s_hull0[s] / 150, 1), 0)
+		if ST.is_fire(s_type[s]):
+			_fireship_burn(s)
+			continue
+		# The fire grows; the crew fight it (by their share of a full crew).
+		s_burn[s] += FIRE_GROW + _roll(FIRE_GROW_ROLL + 1)
+		s_burn[s] -= FIRE_FIGHT * mini(s_crew[s], s_crew0[s]) / maxi(s_crew0[s], 1)
+		if s_burn[s] <= 0:
+			s_burn[s] = 0
+			continue
+		s_burn[s] = mini(s_burn[s], FIRE_MAX)
+		s_hull[s] = maxi(s_hull[s] - maxi(s_hull0[s] * s_burn[s] / FIRE_HULL, 1), 0)
 		if s_hull[s] == 0:
 			_sink(s)
 			continue
-		if _roll(1000) < MAGAZINE_PM + (MAGAZINE_PM if s_burn[s] > 300 else 0):
+		if s_burn[s] > MAG_LV and _roll(1000) < (s_burn[s] - MAG_LV) / MAG_DIV:
 			_blast(s)
+
+
+## A burning fire ship (a second): she burns down; the ship she is grappled
+## to burns the harder for it; sparks catch ships close by.
+func _fireship_burn(s: int) -> void:
+	if s_lit[s] < 0:
+		_light(s)  # (a shot into her combustibles)
+	s_burn[s] = FIRE_MAX
+	s_hull[s] = maxi(s_hull[s] - maxi(s_hull0[s] * FS_BURN_PCT / 100, 1), 0)
+	var o := s_fsg[s]
+	if o >= 0:
+		if u_state[o] == S_SUNK or u_state[o] == S_FLED or tick - s_fs_t[s] >= FS_STICK_TICKS:
+			s_fsg[s] = -1
+		else:
+			_ignite(o, mini(maxi(s_burn[o], 1) + FS_FEED, FIRE_MAX))
+	for o2 in n_units:
+		if o2 == s or o2 == o or u_state[o2] == S_SUNK or u_state[o2] == S_FLED or s_lit[o2] >= 0:
 			continue
-		var put_out := EXTINGUISH_PCT * s_crew[s] / maxi(s_crew0[s], 1)
-		if u_state[s] == S_TAKEN:
-			put_out = 30
-		if _roll(100) < put_out:
-			s_burn[s] = 0
+		var r := (FS_SPREAD_M + (ST.stat(s_type[s], "len") + ST.stat(s_type[o2], "len")) / 2) * U
+		var dx := s_x[o2] - s_x[s]
+		var dy := s_y[o2] - s_y[s]
+		if absi(dx) > r or absi(dy) > r or FM.approx_len(dx, dy) > r:
+			continue
+		if _roll(100) < FS_SPREAD_PCT:
+			stats["fs_spread"] = int(stats["fs_spread"]) + 1
+			_ignite(o2, 150)
+	if s_hull[s] == 0:
+		_sink(s)
 
 
 ## The magazine goes up: she is gone, her neighbours scorched (and fired).
@@ -1419,9 +2060,8 @@ func _blast(s: int) -> void:
 		s_hull[f] = maxi(s_hull[f] - 140 * (BLAST_M - d) / BLAST_M, 0)
 		_lose_men(f, s_crew[f] * (BLAST_M - d) / BLAST_M / 6)
 		s_mor[f] -= 20
-		if s_burn[f] == 0 and _roll(100) < 50:
-			s_burn[f] = 1
-			stats["fires"] = int(stats["fires"]) + 1
+		if _roll(100) < 50:
+			_ignite(f, BLAST_FIRE)
 		if s_hull[f] == 0:
 			_sink(f)
 
@@ -1434,18 +2074,21 @@ func _morale() -> void:
 			continue
 		if tick - s_hit_t[s] > 80 and s_mor[s] < 100:
 			s_mor[s] += 1
-		if s_grap[s] >= 0 and s_boarder[s] != 0:
-			continue
+		if s_grap[s] >= 0 or s_lit[s] >= 0:
+			continue  # (a deck fight decides itself; a lit fire ship has nobody aboard)
 		var crew_pct := s_crew[s] * 100 / maxi(s_crew0[s], 1)
 		var hull_pct := s_hull[s] * 100 / s_hull0[s]
 		var near := _enemy_within(s, 400)
 		if s_mor[s] <= 0 or (near and (crew_pct < 18 or (hull_pct < 12 and s_rig[s] * 100 / s_rig0[s] < 25))):
-			_strike(s)
+			if ST.is_fire(s_type[s]):
+				_light(s)  # (a fire ship's volunteers never strike: they fire her)
+			else:
+				_strike(s)
 
 
 func _enemy_within(s: int, m: int) -> bool:
 	for e in n_units:
-		if u_side[e] != u_side[s] and u_state[e] == S_SAIL:
+		if u_side[e] != u_side[s] and u_state[e] == S_SAIL and s_lit[e] < 0:
 			if FM.approx_len(s_x[e] - s_x[s], s_y[e] - s_y[s]) < m * U:
 				return true
 	return false
@@ -1468,7 +2111,7 @@ func _strike(s: int) -> void:
 func fighting(side: int) -> int:
 	var n := 0
 	for s in n_units:
-		if u_side[s] == side and u_state[s] == S_SAIL:
+		if u_side[s] == side and u_state[s] == S_SAIL and s_lit[s] < 0:
 			n += 1
 	return n
 
@@ -1478,7 +2121,7 @@ func fighting(side: int) -> int:
 func power(side: int) -> int:
 	var p := 0
 	for s in n_units:
-		if u_side[s] == side and u_state[s] == S_SAIL:
+		if u_side[s] == side and u_state[s] == S_SAIL and s_lit[s] < 0:
 			p += (ST.stat(s_type[s], "guns") * 10 + s_hull[s] / 10) * (s_hull[s] * 100 / s_hull0[s] + s_crew[s] * 100 /
 				maxi(s_crew0[s], 1)) / 200
 	return p
@@ -1517,7 +2160,10 @@ func _decide() -> void:
 
 ## The battle AI's decision for ship s (see the header).
 func _think(s: int) -> void:
-	if s_grap[s] >= 0:
+	if s_grap[s] >= 0 or s_lit[s] >= 0:
+		return
+	if ST.is_fire(s_type[s]):
+		_think_fire(s)
 		return
 	var crew_pct := s_crew[s] * 100 / maxi(s_crew0[s], 1)
 	var hull_pct := s_hull[s] * 100 / s_hull0[s]
@@ -1536,7 +2182,7 @@ func _think(s: int) -> void:
 	var bs := 1 << 40
 	var cur_score := 1 << 40
 	for t in n_units:
-		if u_side[t] == u_side[s] or u_state[t] != S_SAIL:
+		if u_side[t] == u_side[s] or u_state[t] != S_SAIL or s_lit[t] >= 0:
 			continue
 		var d := FM.approx_len(s_x[t] - s_x[s], s_y[t] - s_y[s]) / U
 		var sc := d + s_hull[t] * 300 / s_hull0[t]
@@ -1586,6 +2232,49 @@ func _think(s: int) -> void:
 		s_shot[s] = ST.SHOT_ROUND
 
 
+## The battle AI's fire ship: at the biggest enemy when the wind serves (her
+## mark lies FS_SERVES or more off the wind, within reach), else up to
+## windward of it, waiting.
+func _think_fire(s: int) -> void:
+	var best := -1
+	var bv := -1
+	for t in n_units:
+		if u_side[t] == u_side[s] or u_state[t] != S_SAIL or s_lit[t] >= 0 or ST.is_fire(s_type[t]):
+			continue
+		var v := ST.stat(s_type[t], "guns") * 10 + s_hull[t] / 10
+		if v > bv:
+			bv = v
+			best = t
+	if best < 0:
+		s_mode[s] = M_FREE
+		s_tgt[s] = -1
+		return
+	var dx := s_x[best] - s_x[s]
+	var dy := s_y[best] - s_y[s]
+	var d := FM.approx_len(dx, dy) / U
+	var serves := off_wind(FM.atan2_a(dy, dx)) >= FS_SERVES
+	if s_mode[s] == M_FIRE and s_tgt[s] == best and (serves or d < FS_LIGHT_M * 2):
+		return
+	if serves and d < 1200:
+		s_mode[s] = M_FIRE
+		s_tgt[s] = best
+		s_sail[s] = 2
+		s_tack[s] = 0
+		s_tdir[s] = 0
+		return
+	# Wait up to windward of her for the wind to serve.
+	var gx := clampi(s_x[best] + ((FM.cos_a(w_from) * 420) >> 12) * U, (EDGE_M + 40) * U, (field_w - EDGE_M - 40) * U)
+	var gy := clampi(s_y[best] + ((FM.sin_a(w_from) * 420) >> 12) * U, (EDGE_M + 40) * U, (field_h - EDGE_M - 40) * U)
+	if s_mode[s] != M_GOTO:
+		s_tack[s] = 0
+		s_tdir[s] = 0
+	s_mode[s] = M_GOTO
+	s_tgt[s] = best
+	s_tx[s] = gx
+	s_ty[s] = gy
+	s_sail[s] = 1 if d < 700 else 2
+
+
 # ----------------------------------------------------------------- events ---
 
 func _event(k: int, a: int, b: int, c: int, d: int, e: int) -> void:
@@ -1615,7 +2304,8 @@ func result() -> Dictionary:
 	for s in n_units:
 		var r := {"unit": s, "side": u_side[s], "ship": str(ST.row(s_type[s])["key"]), "hull": s_hull[s],
 			"hull0": s_hull0[s], "crew": s_crew[s], "crew0": s_crew0[s], "rig": s_rig[s], "rig0": s_rig0[s],
-			"troops": s_troops[s], "state": u_state[s], "by": s_by[s], "kills": s_kills[s], "blown": s_blown[s]}
+			"troops": s_troops[s], "state": u_state[s], "by": s_by[s], "kills": s_kills[s], "blown": s_blown[s],
+			"lit": 1 if s_lit[s] >= 0 else 0}
 		units.append(r)
 		var t: Dictionary = sides[u_side[s]]
 		t["ships"] = int(t["ships"]) + 1
@@ -1699,6 +2389,11 @@ func state_hash() -> int:
 	ctx.update(head.to_byte_array())
 	for nm in SHIP_ARRAYS:
 		ctx.update((get(nm) as PackedInt32Array).to_byte_array())
+	for nm in DECK2_ARRAYS:
+		ctx.update((get(nm) as PackedInt32Array).to_byte_array())
+	for nm in FIG_ARRAYS:
+		ctx.update((get(nm) as PackedInt32Array).to_byte_array())
+	ctx.update(s_tkp.to_byte_array())
 	ctx.update(s_ld.to_byte_array())
 	ctx.update(s_rl.to_byte_array())
 	ctx.update(ai_sides.to_byte_array())

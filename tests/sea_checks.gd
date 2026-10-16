@@ -25,7 +25,8 @@ const SeaSim := preload("res://sim/sea_sim.gd")
 const ST := preload("res://sim/sea_types.gd")
 const Lockstep := preload("res://sim/lockstep.gd")
 
-const SCENARIOS: Array[String] = ["frigates", "sloops_galleon", "boarding", "upwind", "downwind", "coast"]
+const SCENARIOS: Array[String] = ["frigates", "sloops_galleon", "boarding", "upwind", "downwind", "coast", "melee",
+	"fireship"]
 
 
 static func scenario(key: String) -> Dictionary:
@@ -61,6 +62,20 @@ static func scenario(key: String) -> Dictionary:
 			scn["land"] = {"kind": 2, "dirs": (1 << 6) | (1 << 5), "mseed": 77, "ix": 1500, "iy": 900, "ir": 110}
 			scn["layout"] = "ns"
 			scn["wind_deg"] = 110
+		"melee":
+			# (N3b) Pirate sloops close aboard a Spanish brigantine: a deck melee.
+			u.append({"side": 0, "t": "brigantine", "x": 1080, "y": 980, "head": 0, "q": 92, "bq": 140,
+				"ck": "brethren", "troops": 40, "tk": [["cutlass", 70], ["buccaneers", 30]], "cq": 130})
+			u.append({"side": 0, "t": "sloop", "x": 1320, "y": 980, "head": 0, "q": 92, "bq": 130, "ck": "brethren"})
+			u.append({"side": 1, "t": "brigantine", "x": 1200, "y": 760, "head": 270, "q": 95, "bq": 115, "crew": 60,
+				"ck": "new_spain", "troops": 12, "tk": [["musketeers", 100]]})
+		"fireship":
+			# (N3c) A fire ship with a frigate, upwind of a galleon and a frigate.
+			u.append({"side": 0, "t": "frigate", "q": 105})
+			u.append({"side": 0, "t": "fire_ship"})
+			u.append({"side": 1, "t": "galleon", "q": 95})
+			u.append({"side": 1, "t": "frigate", "q": 95})
+			scn["layout"] = "gauge0"
 	return scn
 
 
@@ -149,10 +164,27 @@ static func determinism() -> int:
 		if dt < 0:
 			fails += 1
 			printerr("FAIL sea %s: not decided in 15 minutes" % key)
-	for k in ["broadsides", "rakes", "chain", "grape", "boardings", "captured", "struck"]:
+	for k in ["broadsides", "rakes", "chain", "grape", "boardings", "captured", "struck", "deck_fights", "deck_taken",
+			"deck_shots", "fireships"]:
 		if int(cover.get(k, 0)) <= 0:
 			fails += 1
 			printerr("FAIL sea coverage: no %s in any battle" % k)
+	# (N3c) Fire ships over several seeds: some reach their mark and set it
+	# alight (and a magazine goes up somewhere).
+	var reach := 0
+	var blasts := 0
+	var lit := 0
+	for sd in range(1, 9):
+		var fr := run("fireship", sd, 9200)
+		var fst: Dictionary = fr["stats"]
+		lit += int(fst["fireships"])
+		reach += 1 if int(fst["fire_contacts"]) > 0 else 0
+		blasts += int(fst["blown"])
+	if lit < 8 or reach <= 0 or blasts <= 0:
+		fails += 1
+		printerr("FAIL sea fire ships: lit %d of 8, reached the mark %d, magazines %d" % [lit, reach, blasts])
+	else:
+		print("PASS sea fire ships over 8 seeds: lit %d, reached and fired the mark in %d, magazines blown %d" % [lit, reach, blasts])
 	if int(cover.get("tacks", 0)) + int(cover.get("wears", 0)) <= 0:
 		fails += 1
 		printerr("FAIL sea coverage: nobody tacked or wore")
@@ -348,6 +380,204 @@ static func lockstep() -> int:
 		printerr("FAIL sea: solo through lockstep differs from the plain sim at tick %d" % bad)
 	else:
 		print("PASS sea: solo through lockstep equals the plain sim (900 ticks)")
+	return fails
+
+
+## Live co-op at sea (milestone 5 at sea): two players on side 0 (player 0
+## a pirate brigantine, player 1 a sloop and a fire ship) against the battle
+## AI, through the lockstep with a relay of random delays; scripted: player
+## 0 boards (a deck melee), player 1 sends the fire ship in, player 1 gives
+## the sloop to player 0 (player 0 then orders it; player 1's order for it
+## is refused on every peer), a pause vote (asked, accepted; resumed), a
+## speed vote (4x), player 1 dropped by the relay (their ships to player 0)
+## and admitted again by the host (their ships back); a joiner restores
+## from player 0's snapshot mid-battle and follows. Every frame's hash equal
+## on all three. Returns failures.
+static func lockstep_coop() -> int:
+	var fails := 0
+	var scn := {"sea": 1, "wind_deg": 90, "wind_str": 80, "ai_sides": [0, 1], "layout": "ns", "units": [
+		{"side": 0, "t": "brigantine", "x": 1000, "y": 1000, "head": 0, "q": 92, "bq": 140, "troops": 40, "ck": "brethren",
+			"tk": [["cutlass", 70], ["buccaneers", 30]], "cq": 120},
+		{"side": 0, "t": "sloop", "x": 1300, "y": 1060, "head": 0, "ck": "brethren", "bq": 130},
+		{"side": 0, "t": "fire_ship", "x": 1450, "y": 900, "head": 270, "ck": "brethren"},
+		{"side": 1, "t": "brigantine", "x": 1040, "y": 860, "head": 90, "crew": 60, "troops": 10, "ck": "new_spain",
+			"tk": [["musketeers", 100]]},
+		{"side": 1, "t": "frigate", "x": 900, "y": 560, "head": 180, "ck": "new_spain"},
+		{"side": 1, "t": "galleon", "x": 700, "y": 400, "head": 180, "ck": "new_spain"}]}
+	var home := [0, 1, 1, -1, -1, -1]
+	const LEAD := 3
+	var peers: Array = []
+	for i in 2:
+		var p := Peer.new()
+		p.ls = Lockstep.new()
+		p.ls.setup(scn, 4243, home, [0, 1], 0)
+		p.me = i
+		p.rng = 7 + i * 13
+		peers.append(p)
+	var a: Peer = peers[0]
+	var b: Peer = peers[1]
+	var sent: Array = []          # every stream item in relay order: ["in", msg] / ["drop", ev]
+	var inbox: Array = []
+	var relay := 777
+	var fifo := [0, 0, 0]
+	var joiner: Peer = null
+	var join_from := -1
+	var seen := {"gift_at": -1, "sloop_ordered": -1, "pause_on": -1, "resume_on": -1, "speed_on": -1, "drop_at": -1,
+		"took": -1, "admit_at": -1, "back": -1}
+	var asked := {}
+	var drop_s := 0
+	for step in 2600:
+		for p: Peer in peers:
+			var fr: int = p.ls.frame + LEAD
+			p.n += 1
+			var os: Array = []
+			var ls = p.ls
+			var f0: int = ls.frame
+			if p.me == 0:
+				if f0 >= 2 and not asked.has("board"):
+					asked["board"] = f0
+					os.append({"f": fr, "type": SeaSim.O_BOARD, "unit": 0, "target": 3})
+				if ls.u_cmd[1] == 0 and seen["sloop_ordered"] < 0:
+					seen["sloop_ordered"] = f0
+					os.append({"f": fr, "type": SeaSim.O_SAIL, "unit": 1, "x": 700, "y": 900})
+				if f0 >= 150 and not asked.has("pause"):
+					asked["pause"] = f0
+					os.append({"f": fr, "type": Lockstep.C_PAUSE, "want": 1})
+				if int(seen["pause_on"]) >= 0 and f0 >= int(seen["pause_on"]) + 20 and not asked.has("resume"):
+					asked["resume"] = f0
+					os.append({"f": fr, "type": Lockstep.C_PAUSE, "want": 0})
+				if ls.vote_speed_by == 1 and not asked.has("speed_yes"):
+					asked["speed_yes"] = f0
+					os.append({"f": fr, "type": Lockstep.C_ANSWER, "what": 1, "yes": 1})
+				if int(seen["took"]) >= 0 and f0 >= int(seen["took"]) + 40 and not asked.has("admit"):
+					asked["admit"] = f0
+					os.append({"f": maxi(fr, int(ls.drop_at.get(1, 0))), "type": Lockstep.C_ADMIT, "who": 1, "keep": 0})
+			else:
+				if f0 >= 2 and not asked.has("fire"):
+					asked["fire"] = f0
+					os.append({"f": fr, "type": SeaSim.O_TARGET, "unit": 2, "target": 4})
+				if f0 >= 40 and not asked.has("gift"):
+					asked["gift"] = f0
+					os.append({"f": fr, "type": Lockstep.C_GIFT, "unit": 1, "to": 0})
+				if f0 >= 60 and not asked.has("foreign"):
+					asked["foreign"] = f0
+					os.append({"f": fr, "type": SeaSim.O_SAILS, "unit": 1, "on": 0})  # (no longer theirs: refused)
+				if ls.vote_pause_by == 0 and ls.vote_of(0, 1) == 0 and not asked.has("pause_yes_%d" % ls.vote_pause_want):
+					asked["pause_yes_%d" % ls.vote_pause_want] = f0
+					os.append({"f": fr, "type": Lockstep.C_ANSWER, "what": 0, "yes": 1})
+				if f0 >= 250 and int(seen["resume_on"]) >= 0 and not asked.has("speed"):
+					asked["speed"] = f0
+					os.append({"f": fr, "type": Lockstep.C_SPEED, "q": 16})
+			var msg := {"p": p.me, "n": p.n, "k": fr, "o": os}
+			p.ls.receive(msg)
+			sent.append(["in", msg])
+			relay = (relay * 1103515245 + 12345) & 0x7FFFFFFF
+			fifo[1 - p.me] = maxi(int(fifo[1 - p.me]), step + 1 + (relay >> 8) % 3)
+			inbox.append([int(fifo[1 - p.me]), 1 - p.me, ["in", msg]])
+			if joiner != null:
+				fifo[2] = maxi(int(fifo[2]), step + 1 + (relay >> 9) % 2)
+				inbox.append([int(fifo[2]), 2, ["in", msg]])
+		# The relay drops player 1 once frame 300 is passed (after B's last mark).
+		if drop_s == 0 and a.ls.frame >= 300:
+			drop_s = 1
+			var ev := {"s": 1, "t": "drop", "who": 1, "after": int(b.ls.marks.get(1, 0)), "to": 0}
+			sent.append(["drop", ev])
+			for q in [0, 1, 2]:
+				fifo[q] = maxi(int(fifo[q]), step + 1)
+				if q < 2 or joiner != null:
+					inbox.append([int(fifo[q]), q, ["drop", ev]])
+		var rest: Array = []
+		for it in inbox:
+			if int(it[0]) > step:
+				rest.append(it)
+				continue
+			var to := int(it[1])
+			var q: Peer = joiner if to == 2 else peers[to]
+			if q == null:
+				continue
+			var item: Array = it[2]
+			if str(item[0]) == "in":
+				q.ls.receive(item[1])
+			else:
+				q.ls.receive_event(item[1])
+				q.ls.saw(1)
+		inbox = rest
+		for p in peers + ([joiner] if joiner != null else []):
+			var pp := p as Peer
+			while pp.ls.can_advance():
+				pp.ls.advance()
+				pp.hashes[pp.ls.frame] = pp.ls.state_hash()
+		# Note what happened (player 0's view; the others are compared by hash).
+		var la = a.ls
+		if la.u_cmd[1] == 0 and int(seen["gift_at"]) < 0:
+			seen["gift_at"] = la.frame
+		if la.paused == 1 and int(seen["pause_on"]) < 0:
+			seen["pause_on"] = la.frame
+		if int(seen["pause_on"]) >= 0 and la.paused == 0 and int(seen["resume_on"]) < 0:
+			seen["resume_on"] = la.frame
+		if la.speed_q == 16 and int(seen["speed_on"]) < 0:
+			seen["speed_on"] = la.frame
+		if not la.is_active(1) and int(seen["took"]) < 0 and la.u_cmd[2] == 0:
+			seen["took"] = la.frame
+		if int(seen["took"]) >= 0 and la.is_active(1) and la.u_cmd[2] == 1 and int(seen["back"]) < 0:
+			seen["back"] = la.frame
+		if step == 240:
+			# A joiner: player 0's snapshot plus everything the relay has passed on.
+			joiner = Peer.new()
+			joiner.me = 2
+			joiner.ls = Lockstep.new()
+			joiner.ls.setup(scn, 4243, home, [0, 1], 0)
+			if not joiner.ls.restore(a.ls.snapshot()):
+				fails += 1
+				printerr("FAIL sea co-op: the joiner could not restore player 0's snapshot")
+			join_from = joiner.ls.frame
+			for item in sent:
+				if str(item[0]) == "in":
+					joiner.ls.receive(item[1])
+				else:
+					joiner.ls.receive_event(item[1])
+					joiner.ls.saw(1)
+		if a.ls.sim.ended != 0 and b.ls.sim.ended != 0 and (joiner == null or joiner.ls.sim.ended != 0):
+			break
+	var n_cmp := 0
+	var bad := -1
+	for f in a.hashes:
+		if b.hashes.has(f):
+			n_cmp += 1
+			if int(a.hashes[f]) != int(b.hashes[f]) and bad < 0:
+				bad = int(f)
+	var n_j := 0
+	var bad_j := -1
+	for f in joiner.hashes:
+		if a.hashes.has(f) and int(f) > join_from:
+			n_j += 1
+			if int(a.hashes[f]) != int(joiner.hashes[f]) and bad_j < 0:
+				bad_j = int(f)
+	var st: Dictionary = a.ls.sim.stats
+	if bad >= 0 or bad_j >= 0:
+		fails += 1
+		printerr("FAIL sea co-op: hashes differ (players at frame %d, joiner at %d)" % [bad, bad_j])
+	elif n_cmp < 400 or n_j < 200:
+		fails += 1
+		printerr("FAIL sea co-op: too few frames compared (%d, joiner %d)" % [n_cmp, n_j])
+	else:
+		print("PASS sea co-op: two players equal on %d frames, a joiner from frame %d on %d (end tick %d, winner %d)" % [
+			n_cmp, join_from, n_j, int(a.ls.sim.tick), int(a.ls.sim.winner)])
+	var want := {"gift (sloop to player 0)": int(seen["gift_at"]) >= 0, "player 0 ordered the given sloop": int(seen["sloop_ordered"]) >= 0,
+		"player 1's order for it refused alike": a.ls.rejected >= 1 and a.ls.rejected == b.ls.rejected,
+		"paused by vote": int(seen["pause_on"]) >= 0, "resumed by vote": int(seen["resume_on"]) >= 0,
+		"4x by vote": int(seen["speed_on"]) >= 0, "player 1 dropped, ships to player 0": int(seen["took"]) >= 0,
+		"admitted again, ships back": int(seen["back"]) >= 0, "a deck melee": int(st["deck_fights"]) > 0,
+		"the fire ship lit": int(st["fireships"]) > 0, "the end on all three": a.ls.sim.ended != 0 and joiner.ls.sim.ended != 0}
+	for k in want:
+		if not bool(want[k]):
+			fails += 1
+			printerr("FAIL sea co-op: %s %s" % [k, seen])
+	if fails == 0:
+		print("PASS sea co-op: gift at frame %d (refused foreign orders %d / %d), pause %d-%d, 4x at %d, drop -> player 0 at %d, back at %d; deck fights %d (taken %d), fire ships %d, contacts %d" % [
+			int(seen["gift_at"]), a.ls.rejected, b.ls.rejected, int(seen["pause_on"]), int(seen["resume_on"]), int(seen["speed_on"]),
+			int(seen["took"]), int(seen["back"]), int(st["deck_fights"]), int(st["deck_taken"]), int(st["fireships"]),
+			int(st["fire_contacts"])])
 	return fails
 
 

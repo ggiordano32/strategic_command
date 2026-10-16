@@ -486,7 +486,7 @@ static func summary(st: Dictionary) -> Dictionary:
 # "start": "ns" | "gauge0" (your fleet upwind) | "gauge1" (downwind)}. Side 0
 # is Player 1's, side 1 the battle AI's (solo only). Built for sim/sea_sim.gd.
 
-const SEA_SHIPS: Array[String] = ["sloop", "brigantine", "frigate", "galleon", "ship_of_the_line", "war_canoe"]
+const SEA_SHIPS: Array[String] = ["sloop", "brigantine", "frigate", "galleon", "ship_of_the_line", "war_canoe", "fire_ship"]
 const SEA_MAX := 8
 const SEA_WATER_NAMES := ["Open sea", "An island", "A coast to the north"]
 const SEA_START_NAMES := {"ns": "Fleets meet across the wind", "gauge0": "Your fleet upwind (the weather gauge)",

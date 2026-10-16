@@ -18,6 +18,17 @@ extends RefCounted
 ## WIND_STRENGTH) with a seeded shift of up to SEA_WIND_VAR degrees; the
 ## water is the battle cell's: a coast on the sides where its neighbours
 ## are land, else open sea with an island at SEA_ISLAND_PCT %.
+##
+## N3b / N3c: each ship also carries its crew kit for the deck melee ("ck":
+## the faction key, SeaSim.ST.DECK_CREWS), the troops aboard by unit type
+## ("tk": the fleet's carried units, the three most numerous, as % of the
+## men) and the captain's fighting % ("cq": 100 + CAPT_CQ x his fame tier).
+## Live co-op (milestone 5 at sea): "controller" per ship (the human
+## faction commanding it: a human's ships their own; an AI ally's ships on a
+## side with humans that side's lowest human friendly to it, else its
+## lowest; -1 on a side without humans), "battle" and "sim_side" (campaign
+## side -> sim side: always [0, 1]) as CBattle.build gives them, for
+## game/net/coop_session.gd.
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -30,6 +41,7 @@ const FATE_AFLOAT := 0
 const FATE_SUNK := 1
 const FATE_TAKEN := 2
 const FATE_FLED := 3
+const CAPT_CQ := 20       # a captain's fighting % a fame tier (N3b deck melee)
 
 
 static func is_sea(b: Dictionary) -> bool:
@@ -63,6 +75,7 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1) -> Dictionar
 	var sdz := sides(st, b)
 	var units: Array = []
 	var ships: Array = []   # per sim ship: [fleet id, ship index]
+	var ufac: Array = []
 	var feared := [false, false]
 	for k in 2:
 		for fl in sdz[k]:
@@ -76,6 +89,9 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1) -> Dictionar
 			var cq: Array = crews.get(str(CData.FACTIONS[f]["key"]), [100, 100])
 			var fear := CCaptain.fear_pct(st, fl)
 			var men := _carried_men(fl)
+			var tk := troop_kits(fl)
+			var cpt := CCaptain.of_fleet(st, int(fl["id"]))
+			var capq := 100 + (CAPT_CQ * CCaptain.tier(int(cpt["fame"])) if not cpt.is_empty() else 0)
 			var cap := maxi(CFleet.capacity(fl), 1)
 			var list: Array = fl["ships"]
 			for i in list.size():
@@ -88,13 +104,17 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1) -> Dictionar
 				if srow >= 0:
 					bq0 = SeaSim.ST.stat(srow, "board")
 				var u := {"side": k, "t": str(s["t"]), "hull": clampi(int(s["h"]), 1, 100), "crew": clampi(int(s["c"]), 1, 100),
-					"q": int(cq[0]), "bq": bq0 * int(cq[1]) / 100, "troops": share, "mor": mor, "f": f}
+					"q": int(cq[0]), "bq": bq0 * int(cq[1]) / 100, "troops": share, "mor": mor, "f": f,
+					"ck": str(CData.FACTIONS[f]["key"]), "cq": capq}
+				if share > 0 and not tk.is_empty():
+					u["tk"] = tk.duplicate(true)
 				if s.has("nm"):
 					u["nm"] = str(s["nm"])
 				if int(s.get("g", 0)) > 0:
 					u["g"] = int(s["g"])
 				units.append(u)
 				ships.append([int(fl["id"]), i])
+				ufac.append(f)
 	rs = (rs * 1103515245 + 12345) & 0x7FFFFFFF
 	var var_deg := int(CData.ship_const("SEA_WIND_VAR", 30))
 	var wind := int(CData.ship_const("WIND_FROM_DEG", 90)) + (rs % (2 * var_deg + 1)) - var_deg
@@ -118,7 +138,72 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1) -> Dictionar
 		"time_limit": int(CData.ship_const("SEA_TIME_LIMIT", 900))}
 	var player_side := 0 if ai[0] == 0 else (1 if ai[1] == 0 else 0)
 	return {"sea": 1, "scenario": scn, "seed": sd, "ships": ships, "map": ships, "player_side": player_side,
-		"bid": int(b["id"]), "x": int(b["x"]), "y": int(b["y"])}
+		"bid": int(b["id"]), "battle": int(b["id"]), "x": int(b["x"]), "y": int(b["y"]), "sim_side": [0, 1],
+		"unit_faction": ufac, "controller": controllers(st, units, ufac)}
+
+
+## The human faction commanding each ship in a live sea battle (CBattle's
+## rule): a human's ships their own; another's on a side with humans that
+## side's lowest human friendly to it, else its lowest; -1 on a side with no
+## human.
+static func controllers(st: Dictionary, units: Array, ufac: Array) -> Array:
+	var hum := [[], []]
+	for u in ufac.size():
+		var f := int(ufac[u])
+		var k := clampi(int((units[u] as Dictionary)["side"]), 0, 1)
+		if CState.is_human(st, f) and not (hum[k] as Array).has(f):
+			hum[k].append(f)
+	for k in 2:
+		(hum[k] as Array).sort()
+	var out: Array = []
+	for u in ufac.size():
+		var f := int(ufac[u])
+		var k := clampi(int((units[u] as Dictionary)["side"]), 0, 1)
+		if CState.is_human(st, f):
+			out.append(f)
+			continue
+		var c := -1
+		if not (hum[k] as Array).is_empty():
+			c = int(hum[k][0])
+			for h in hum[k]:
+				if CState.friendly(st, f, int(h)):
+					c = int(h)
+					break
+		out.append(c)
+	return out
+
+
+## The troops a fleet carries by unit type for the deck melee: the three most
+## numerous types (ties: the first carried) as [[unit key, % of the men]].
+static func troop_kits(fl: Dictionary) -> Array:
+	var keys: Array = []
+	var men: Array = []
+	var tot := 0
+	for a in fl["carry"]:
+		for u in a["units"]:
+			var t := str(u["t"])
+			var n := int(u["n"])
+			var i := keys.find(t)
+			if i < 0:
+				keys.append(t)
+				men.append(n)
+			else:
+				men[i] = int(men[i]) + n
+			tot += n
+	var out: Array = []
+	if tot <= 0:
+		return out
+	var used := {}
+	for k in mini(3, keys.size()):
+		var best := -1
+		for i in keys.size():
+			if used.has(i):
+				continue
+			if best < 0 or int(men[i]) > int(men[best]):
+				best = i
+		used[best] = true
+		out.append([str(keys[best]), maxi(int(men[best]) * 100 / tot, 1)])
+	return out
 
 
 ## The water of a battle at sea cell c: a coast on the sides where the

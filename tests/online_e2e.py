@@ -141,13 +141,14 @@ def main():
     ap.add_argument("--keep", action="store_true", help="keep the temp dir")
     ap.add_argument("--teams", action="store_true", help="the 3-human campaign instead (tests/online_team_client.gd)")
     ap.add_argument("--pack", default="rome", help="content pack: rome (default) or west")
+    ap.add_argument("--bin", default="", help="build the server binary to this path (default build/server-test/scserver)")
     args = ap.parse_args()
     na, nb = ("Rome", "Carthage") if args.pack == "rome" else ("New Spain", "Tierra Firme")
     if args.teams and args.port == 8071:
         args.port = 8072
 
     # A scratch binary: never replace the one a running server uses.
-    binary = os.path.join(REPO, "build", "server-test", "scserver")
+    binary = args.bin or os.path.join(REPO, "build", "server-test", "scserver")
     subprocess.run([os.path.join(REPO, "tools", "build_server.sh")], check=True,
                    env=dict(os.environ, SC_BUILD_OUT=binary))
     tmp = tempfile.mkdtemp(prefix="sc_e2e_")

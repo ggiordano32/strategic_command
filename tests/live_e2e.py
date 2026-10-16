@@ -28,6 +28,13 @@ room by setup, join by code, Player 2 edits its army in the lobby, both
 ready, a deployment phase (placements, the other's units refused, ready at
 different frames), the fight to the end; hashes equal on every frame.
 `--only-custom` skips the campaign battles.
+Then live sea battles (tests/live_sea_client.gd, milestone 5 at sea): a West
+campaign, England (A) and the Dutch (B) each with a fleet in two pending
+sea battles against the Spanish (the battle AI): battle 1 joined in the
+lobby with a ship gift both ways and the pause and speed votes, battle 2
+joined mid-battle by snapshot; hashes equal on every frame, the host
+uploads each result once, both end on the server's state. `--only-sea`
+runs just these (`--no-sea` skips them).
 Prints waits, round trips, snapshot sizes and catch-up times. Exit 0 on PASS.
 """
 import argparse
@@ -64,8 +71,11 @@ def main():
     ap.add_argument("--frame-ms", type=int, default=20, help="lockstep frame length (100 = real time)")
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--only-custom", action="store_true")
+    ap.add_argument("--only-sea", action="store_true")
+    ap.add_argument("--no-sea", action="store_true")
+    ap.add_argument("--bin", default="", help="build the server binary to this path (default build/server-test/scserver)")
     args = ap.parse_args()
-    binary = os.path.join(REPO, "build", "server-test", "scserver")
+    binary = args.bin or os.path.join(REPO, "build", "server-test", "scserver")
     subprocess.run([os.path.join(REPO, "tools", "build_server.sh")], check=True, env=dict(os.environ, SC_BUILD_OUT=binary))
     tmp = tempfile.mkdtemp(prefix="sc_live_")
     print("temp dir", tmp)
@@ -81,8 +91,16 @@ def main():
                     break
             except Exception:
                 time.sleep(0.1)
+        if args.only_sea:
+            sea_battles(tmp, base, args.frame_ms)
+            print("RESULT:", "PASS" if not FAILS else "FAIL (%d)" % len(FAILS))
+            if FAILS or args.keep:
+                print("logs kept in", tmp)
+            sys.exit(0 if not FAILS else 1)
         for mode in ["h2h", "coop"]:
             custom_battle(tmp, base, mode, args.frame_ms)
+        if not args.no_sea and not args.only_custom:
+            sea_battles(tmp, base, args.frame_ms)
         if args.only_custom:
             print("RESULT:", "PASS" if not FAILS else "FAIL (%d)" % len(FAILS))
             sys.exit(0 if not FAILS else 1)
@@ -191,6 +209,78 @@ def main():
     else:
         shutil.rmtree(tmp, ignore_errors=True)
     sys.exit(0 if not FAILS else 1)
+
+
+def sea_battles(tmp, base, frame_ms):
+    print("live sea battles")
+    procs, logs = {}, {}
+    for role in ["A", "B"]:
+        logs[role] = open(os.path.join(tmp, "sea_client_%s.log" % role), "w")
+        procs[role] = subprocess.Popen(
+            ["godot", "--headless", "--path", REPO, "--script", "res://tests/live_sea_client.gd", "--",
+             "--server=" + base, "--role=" + role, "--dir=" + tmp, "--coop-frame-ms=%d" % frame_ms,
+             "--coop-hash-every=1", "--coop-grace=2"],
+            stdout=logs[role], stderr=subprocess.STDOUT)
+    t0 = time.time()
+    codes = {}
+    for role, p in procs.items():
+        try:
+            codes[role] = p.wait(timeout=900 - (time.time() - t0))
+        except subprocess.TimeoutExpired:
+            p.kill()
+            codes[role] = "timeout"
+    print("  clients finished in %.0f s: %s" % (time.time() - t0, codes))
+    res = {}
+    for role in ["A", "B"]:
+        path = os.path.join(tmp, "sea_%s.json" % role)
+        res[role] = json.load(open(path)) if os.path.exists(path) else {}
+    check(codes == {"A": 0, "B": 0} and res["A"].get("ok") is True and res["B"].get("ok") is True,
+          "sea: both clients ran cleanly (%s; errors %s %s)" % (codes, res["A"].get("errors"), res["B"].get("errors")))
+    ba = {b["battle"]: b for b in res["A"].get("battles", [])}
+    bb = {b["battle"]: b for b in res["B"].get("battles", [])}
+    check(len(ba) == 2 and len(bb) == 2, "sea: two battles fought on both clients")
+    for bid in sorted(ba):
+        a, b = ba[bid], bb.get(bid, {})
+        kind = a["kind"]
+        pa = os.path.join(tmp, "sea_hashes_A_%d.json" % bid)
+        pb = os.path.join(tmp, "sea_hashes_B_%d.json" % bid)
+        ha = json.load(open(pa)) if os.path.exists(pa) else {}
+        hb = json.load(open(pb)) if os.path.exists(pb) else {}
+        common = [f for f in ha if f in hb]
+        bad = [f for f in common if ha[f] != hb[f]]
+        check(len(common) > 200 and not bad, "sea battle %d (%s): %d frames with both hashes, %d different" % (bid, kind, len(common), len(bad)))
+        check(a.get("ended") and b.get("ended") and a.get("result_hash") and a.get("result_hash") == b.get("result_hash"),
+              "sea battle %d: ran to its end on both, the same result (A frame %s tick %s winner %s; %s / %s)" % (
+                  bid, a.get("frames"), a.get("tick"), a.get("winner"), a.get("result_hash"), b.get("result_hash")))
+        sa, sb = a.get("stats", {}), b.get("stats", {})
+        check(sa.get("desyncs", 1) == 0 and sb.get("desyncs", 1) == 0 and sa.get("hash_checks", 0) > 100,
+              "sea battle %d: hash checks over the relay A %s / B %s, desyncs %s / %s" % (
+                  bid, sa.get("hash_checks"), sb.get("hash_checks"), sa.get("desyncs"), sb.get("desyncs")))
+        check(a.get("upload") == "ok" and not b.get("upload"), "sea battle %d: the host uploaded the result once (%s)" % (bid, a.get("upload")))
+        ss = a.get("sim_stats", {})
+        print("    sea numbers: broadsides %s, deck fights %s, fire ships lit %s, wall %.1f s" % (
+            ss.get("broadsides"), ss.get("deck_fights"), ss.get("fireships"), a.get("wall_s", 0)))
+        if kind == "prestart":
+            g, gb = a.get("gifts", {}), b.get("gifts", {})
+            check("given" in g and "back_at" in g and "got" in gb and "back" in gb,
+                  "sea battle %d: A gave ship %s at frame %s, B got it at %s and gave it back at %s, A had it back at %s" % (
+                      bid, g.get("given"), g.get("given_at"), gb.get("got_at"), gb.get("back"), g.get("back_at")))
+            va, vb = a.get("votes", {}), b.get("votes", {})
+            check(va.get("pause_on", -1) > va.get("pause_asked", 0) and va.get("resume_on", -1) > va.get("resume_asked", 0)
+                  and va.get("pause_on") == vb.get("pause_on") and va.get("resume_on") == vb.get("resume_on"),
+                  "sea battle %d: paused at frame %s, resumed at %s on both" % (bid, va.get("pause_on"), va.get("resume_on")))
+            check(vb.get("speed_on", -1) > 0 and vb.get("speed_on") == va.get("speed_on"),
+                  "sea battle %d: speed vote (4x) applied at frame %s on both" % (bid, vb.get("speed_on")))
+        if kind == "midjoin":
+            check(sb.get("snap_restored", 0) >= 1 and b.get("admitted_frame") is not None and b.get("commands", 0) > 0,
+                  "sea battle %d: B joined mid-battle from a snapshot, admitted at frame %s commanding %s ships" % (
+                      bid, b.get("admitted_frame"), b.get("commands")))
+    fa, fb = res["A"].get("final", {}), res["B"].get("final", {})
+    check(fa.get("hash") and fa.get("hash") == fb.get("hash") and fa.get("local_hash") == fa.get("hash") == fb.get("local_hash")
+          and fa.get("phase") != "battles" and fa.get("outbox") == 0 and fb.get("outbox") == 0,
+          "sea: both clients end on the server's campaign state (%s, phase %s)" % (fa.get("hash"), fa.get("phase")))
+    bad_verify = [k for k, v in list(fa.get("verified", {}).items()) + list(fb.get("verified", {}).items()) if v != 1]
+    check(not bad_verify, "sea: every version made by the other device re-checked equal %s" % bad_verify)
 
 
 def custom_battle(tmp, base, mode, frame_ms):

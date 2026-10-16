@@ -2,8 +2,19 @@ extends Node2D
 ## The real-time sea battle screen (N3a; docs/DESIGN.md "Sea battles (as
 ## built, N3a)"). View only: it runs sim/sea_sim.gd at 10 ticks a second
 ## (pause, 1x, 2x, 4x), draws it interpolated between ticks and turns taps
-## into sim orders (queued with the sim's own tick; a later live co-op
-## would route them through sim/lockstep.gd, which already runs a SeaSim).
+## into sim orders (solo: queued with the sim's own tick).
+##
+## Live co-op at sea (`coop`, game/net/coop_session.gd, as the land battle
+## view does it): the session's lockstep runs the SeaSim (this view rebinds
+## to it when it starts or restores a snapshot); orders go through
+## coop.issue() for the ships this player commands only (a tap on a
+## team-mate's ship says whose it is); II and the speeds are votes; Gift
+## hands the selected ships to a team-mate (the picker when there are
+## several); the card column marks whose each ship is; the co-op HUD
+## (game/coop_hud.gd: the roster strip, the lobby, waiting / resync status,
+## vote chips, Continue without a disconnected player) sits over it;
+## Continue at the end waits for the final frame; coop_exit_result() is what
+## the campaign screen uploads (the host once; the last player's forfeit).
 ##
 ## Touch first (phones and tablets; the mouse emulates touch): tap a ship
 ## of yours to select it (tap it again: only it; double-tap: the whole
@@ -21,8 +32,19 @@ extends Node2D
 ## the sim's grid (smoothed), top-down hulls with gunports, sails that
 ## brace round with the wind and tear with the rigging, flags (white when
 ## struck), wakes, broadside smoke and muzzle flashes drifting downwind
-## (the land battle's gun-smoke look), shot splashes and splinters, fires,
-## the magazine blast, sinking and wreckage, grapples.
+## (the land battle's gun-smoke look), shot splashes and splinters, fires
+## by their intensity, the magazine blast, sinking and wreckage, grapples.
+##
+## N3b deck melee: while ships are grappled an inset (top right; a tap
+## centres the pair) shows the two decks side by side in the diorama look:
+## planking, rails, masts, grapnel lines, the crews as little groups of men
+## in their ship's colour (the captain gilded), cold-steel sparks, pistol and
+## musket smoke, each side's men and heart; the clash and volleys play
+## through the audio hooks; the outcome (taken / thrown back / both spent)
+## stays a moment. N3c fire ships: a tarred hull with brushwood on deck;
+## lit, she blazes from end to end under a black column, her crew pull away
+## in the boat, and what she grapples catches; "Light her" in the bar, and
+## a tap on an enemy sends her in.
 
 signal exit_requested
 
@@ -31,6 +53,8 @@ const ST := preload("res://sim/sea_types.gd")
 const FM := preload("res://sim/fixed_math.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const AudioFx := preload("res://game/audio.gd")
+const CoopHud := preload("res://game/coop_hud.gd")
+const Lockstep := preload("res://sim/lockstep.gd")
 
 const TICK_SEC := 0.1
 const MAX_STEPS := 4
@@ -59,7 +83,9 @@ var campaign_mode := false
 var title_text := "Sea battle"
 var side_names := ["Your fleet", "The enemy"]
 var side_cols: Array = SIDE_COLS.duplicate()
-var coop = null              # (no live co-op at sea yet: the campaign screen checks it)
+var coop = null              # live co-op: game/net/coop_session.gd (null: solo)
+var coop_hud = null
+var coop_region := ""
 var interactive := true
 
 var sim: SeaSim
@@ -99,6 +125,14 @@ var _speed_btns: Array = []
 var _end_panel: PanelContainer
 var _leave_dlg: PanelContainer
 var _card_nodes := {}
+var _inset: Control                # the deck melee inset (N3b)
+var _inset_m := -1                 # the boarder (melee slot) shown
+var _inset_end := ""               # the outcome shown after it ends
+var _inset_end_t := -10.0
+var _inset_t := -1                 # the target of the melee shown
+var _dk_pos := {}                  # figure -> Vector2 drawn (cells, eased toward the sim's)
+var _dk_smoke: Array = []          # [cell pos, age, size]
+var _clash_t := 0.0
 
 # input
 var _touch := {}
@@ -111,6 +145,25 @@ var _box_b := Vector2.ZERO
 var _pinch_d := 0.0
 var _last_tap_t := -10.0
 var _last_tap_ship := -1
+var _calpha := 1.0                 # co-op: interpolation between the last two ticks
+var _hud_shim = null
+var _sc: ScrollContainer = null
+var _cont_btn: Button = null
+
+
+## What game/coop_hud.gd needs of a HUD (the land Hud's names).
+class HudShim:
+	extends RefCounted
+	var pause_button: Control
+	var speed_button: Control
+	var speed_panel: Control
+	var bottom_px := 96.0
+
+	func add_ui_control(_c: Control) -> void:
+		pass  # (its panels stop touches themselves)
+
+	func bottom_height() -> float:
+		return bottom_px
 
 
 func _ready() -> void:
@@ -146,9 +199,11 @@ func _ready() -> void:
 	_build_hud()
 	AudioFx.enter_battle()
 	for s in n:
-		if sim.u_side[s] == player_side:
+		if sim.u_side[s] == player_side and _mine(s):
 			selection.append(s)
 			break
+	if coop != null:
+		_coop_ready()
 	_refresh_bar()
 
 
@@ -171,16 +226,19 @@ func _snap_prev() -> void:
 
 func _process(delta: float) -> void:
 	_clock += delta
-	if sim.ended == 0 or _clock - _decided_at < 6.0:
-		_acc += delta * speed_q / 4.0
-	var steps := 0
-	while _acc >= TICK_SEC and steps < MAX_STEPS:
-		_snap_prev()
-		sim.step()
-		_acc -= TICK_SEC
-		steps += 1
-	if steps >= MAX_STEPS:
-		_acc = 0.0
+	if coop != null:
+		_coop_step(delta)
+	else:
+		if sim.ended == 0 or _clock - _decided_at < 6.0:
+			_acc += delta * speed_q / 4.0
+		var steps := 0
+		while _acc >= TICK_SEC and steps < MAX_STEPS:
+			_snap_prev()
+			sim.step()
+			_acc -= TICK_SEC
+			steps += 1
+		if steps >= MAX_STEPS:
+			_acc = 0.0
 	_events()
 	_wake_t += delta
 	if _wake_t >= 0.4:
@@ -196,6 +254,7 @@ func _process(delta: float) -> void:
 					w.remove_at(0)
 			_wake[s] = w
 	_age_fx(delta)
+	_inset_tick(delta)
 	if sim.decided_tick >= 0 and _decided_at < 0.0:
 		_decided_at = _clock
 	if _decided_at >= 0.0 and not _end_shown and _clock - _decided_at > 3.5:
@@ -208,6 +267,8 @@ func _process(delta: float) -> void:
 
 
 func _alpha() -> float:
+	if coop != null:
+		return _calpha
 	return clampf(_acc / TICK_SEC, 0.0, 1.0)
 
 
@@ -268,6 +329,30 @@ func _events() -> void:
 				_msg("%s runs aground!" % _name(a), Color(0.95, 0.85, 0.6))
 			SeaSim.EV_FLED:
 				_msg("%s escapes." % _name(a), Color(0.85, 0.85, 0.85))
+			SeaSim.EV_DECK_SHOT:
+				if a == _inset_m:
+					var fi := a * SeaSim.FIG + sim.ev_b[i]
+					_dk_smoke.append([Vector2(sim.f_x[fi], sim.f_y[fi]), 0.0, 0.5 + 0.12 * mini(sim.f_n[fi], 6)])
+				AudioFx.play("musket", 0.45, 0.0, "volley")
+			SeaSim.EV_CAPTAIN:
+				var who := a if sim.ev_b[i] == 0 else c
+				_msg("The captain of %s falls!" % _name(who), Color(1, 0.8, 0.5))
+			SeaSim.EV_DECK_END:
+				var res: String = ["", "The deck of %s is taken!" % _name(c), "%s's boarders are thrown back." % _name(a),
+					"Both crews are spent: %s and %s cut loose." % [_name(a), _name(c)]][clampi(sim.ev_d[i], 0, 3)]
+				if a == _inset_m:
+					_inset_end = res.substr(0, 1).to_upper() + res.substr(1)
+					_inset_end_t = _clock
+				AudioFx.play("unit_break" if sim.ev_d[i] != 1 else "horn_victory", 0.5, 0.0, "state")
+			SeaSim.EV_LIT:
+				_msg("%s is fired and sent in!" % _name(a), Color(1, 0.5, 0.2))
+				AudioFx.play("burst", 0.6, 0.0, "art")
+			SeaSim.EV_ABANDON:
+				_msg("Her crew take to the boat.", Color(0.9, 0.85, 0.75))
+				_fx.append(["boat", _pos(a), 0.0, a, int(sim.heading(a))])
+			SeaSim.EV_FS_CONTACT:
+				_msg("The fire ship grapples %s: she is ablaze!" % _name(c), Color(1, 0.45, 0.2))
+				AudioFx.play("burst", 0.8, 0.0, "art")
 
 
 func _broadside_fx(s: int, side: int, t: int, hits: int, shot: int) -> void:
@@ -318,6 +403,8 @@ func _age_fx(delta: float) -> void:
 				life = 3.0
 			"debris":
 				life = 14.0
+			"boat":
+				life = 24.0
 			"shot":
 				life = 0.45
 			"flash":
@@ -338,6 +425,8 @@ func _age_fx(delta: float) -> void:
 
 
 func _msg(text: String, col: Color) -> void:
+	if col.get_luminance() < 0.35:
+		col = col.lightened(0.55)  # (a dark faction colour reads on the sea)
 	_msgs.append([text.substr(0, 1).to_upper() + text.substr(1), 0.0, col])
 	if _msgs.size() > 4:
 		_msgs.remove_at(0)
@@ -501,6 +590,19 @@ func _draw_ships() -> void:
 				_ships.draw_circle(f[1], r, Color(0.95, 0.98, 1.0, 0.55 * (1.0 - age / 1.4)))
 				if age < 0.35:
 					_ships.draw_circle(f[1], 2.5, Color(1, 1, 1, 0.9))
+			"boat":
+				# The fire ship's crew pulling away from their blazing ship.
+				var bh := float(int(f[4])) * TAU / 1024.0 + PI * 0.75
+				var bf := Vector2(cos(bh), sin(bh))
+				var bp: Vector2 = Vector2(f[1]) + bf * (10.0 + age * 3.2)
+				var bsd := Vector2(-bf.y, bf.x)
+				var ba := clampf(1.0 - age / 24.0, 0.0, 1.0)
+				var boat := PackedVector2Array([bp + bf * 4.5, bp + bsd * 1.6, bp - bf * 3.5 + bsd * 1.3, bp - bf * 3.5 - bsd * 1.3,
+					bp - bsd * 1.6])
+				_ships.draw_colored_polygon(boat, Color(0.4, 0.27, 0.16, ba))
+				var stroke := sin(_clock * 5.0) * 1.5
+				for sg in [-1.0, 1.0]:
+					_ships.draw_line(bp + bsd * 1.4 * sg, bp + bsd * 4.0 * sg + bf * stroke, Color(0.3, 0.2, 0.1, 0.8 * ba), 0.6)
 			"debris":
 				var s2 := int(f[3])
 				var j := int(f[4])
@@ -570,11 +672,21 @@ func _draw_ship(s: int, lw: float) -> void:
 	for v in hull:
 		sh.append(xf * (v * 1.12 * shrink))
 	_ships.draw_colored_polygon(sh, Color(0.9, 0.97, 1.0, 0.18 * fade))
-	_ships.draw_colored_polygon(world, Color(COL_HULL, fade))
+	var fire := ST.is_fire(ty)
+	var lit := fire and sim.s_lit[s] >= 0
+	_ships.draw_colored_polygon(world, Color(COL_HULL.darkened(0.55 if fire else 0.0), fade))
 	var deck := PackedVector2Array()
 	for v in hull:
 		deck.append(xf * (v * 0.78 * shrink))
-	_ships.draw_colored_polygon(deck, Color(COL_DECK.darkened(0.15 if st != SeaSim.S_SAIL else 0.0), fade))
+	var dc := COL_DECK.darkened(0.15 if st != SeaSim.S_SAIL else 0.0)
+	if fire:
+		dc = Color(0.22, 0.17, 0.12) if lit else Color(0.36, 0.3, 0.22)  # tarred, then charred
+	_ships.draw_colored_polygon(deck, Color(dc, fade))
+	if fire and not lit and sink == 0.0:
+		# Brushwood, tar barrels and brimstone stacked on deck.
+		for k in 6:
+			var bpos: Vector2 = xf * Vector2((float(k) / 5.0 - 0.5) * ln * 0.6, (0.18 if k % 2 == 0 else -0.18) * bm)
+			_ships.draw_circle(bpos, bm * 0.13, Color(0.55, 0.42, 0.2) if k % 3 != 0 else Color(0.25, 0.2, 0.15))
 	var col := _ship_col(s)
 	var rail := world.duplicate()
 	rail.append(world[0])
@@ -620,12 +732,27 @@ func _draw_ship(s: int, lw: float) -> void:
 		fp + Vector2(-wt.y, wt.x) * fl * 0.55])
 	_ships.draw_colored_polygon(flag, fc)
 	_ships.draw_polyline(flag, Color(0, 0, 0, 0.5), 0.6 * lw, true)
-	# Fire aboard.
+	# Fire aboard, by its intensity (a lit fire ship from end to end).
 	if sim.s_burn[s] > 0:
-		for k in 5:
-			var fpos: Vector2 = xf * Vector2((sin(k * 1.7 + s) * 0.3) * ln, cos(k * 2.3) * bm * 0.25)
-			var fl2 := 2.0 + 2.5 * absf(sin(_clock * 11.0 + k))
-			_ships.draw_circle(fpos, fl2 + bm * 0.1, Color(1.0, 0.45 + 0.3 * absf(sin(_clock * 7.0 + k)), 0.1, 0.85))
+		var lv := clampf(float(sim.s_burn[s]) / SeaSim.FIRE_MAX, 0.05, 1.0)
+		var nfl := 3 + int(lv * 9.0)
+		var wt2 := _wind_to()
+		var wp := Vector2(-wt2.y, wt2.x)
+		for k in nfl:
+			var fpos: Vector2 = xf * Vector2((sin(k * 1.7 + s) * (0.15 + 0.3 * lv)) * ln, cos(k * 2.3) * bm * 0.3)
+			var fl2 := (2.0 + 2.5 * absf(sin(_clock * 11.0 + k))) * (0.7 + lv * 0.9)
+			# A tongue of flame leaning downwind, flickering; a hot core.
+			var lean := wt2 * fl2 * (1.6 + 0.6 * sin(_clock * 13.0 + k * 2.0)) + wp * fl2 * 0.35 * sin(_clock * 9.0 + k)
+			var tongue := PackedVector2Array([fpos - wp * fl2 * 0.8, fpos - wt2 * fl2 * 0.5, fpos + wp * fl2 * 0.8, fpos + lean])
+			_ships.draw_colored_polygon(tongue, Color(1.0, 0.35 + 0.25 * absf(sin(_clock * 7.0 + k)), 0.08, 0.85))
+			var core := PackedVector2Array([fpos - wp * fl2 * 0.4, fpos - wt2 * fl2 * 0.25, fpos + wp * fl2 * 0.4, fpos + lean * 0.55])
+			_ships.draw_colored_polygon(core, Color(1.0, 0.85, 0.4, 0.9))
+		if lv > 0.3:
+			# Embers blowing off downwind.
+			for k2 in int(lv * 8.0):
+				var ph := fposmod(_clock * 0.9 + k2 * 0.37 + s * 0.13, 1.0)
+				var ep: Vector2 = p + wt2 * (ph * ln * 1.4) + wp * sin(k2 * 2.1 + _clock) * bm * 0.8
+				_ships.draw_circle(ep, 0.6 + (1.0 - ph) * 0.8, Color(1.0, 0.7, 0.3, 0.9 * (1.0 - ph)))
 	# Selection ring and a small health bar for every ship.
 	if selection.has(s):
 		_ships.draw_arc(p, ln * 0.62 + 4.0, 0, TAU, 32, Color(1, 1, 1, 0.9), 2.0 * lw, true)
@@ -745,6 +872,15 @@ func _draw_orders(lw: float) -> void:
 					_dashed(p, tp, c, 1.6 * lw, 8.0 * lw)
 					var tl := float(ST.stat(sim.s_type[t], "len")) * VIS
 					_ships.draw_arc(tp, tl * 0.62 + 6.0, 0, TAU, 28, c, 2.0 * lw, true)
+			SeaSim.M_FIRE:
+				var tf := sim.s_tgt[s]
+				if tf >= 0:
+					var tpf := _pos(tf)
+					var cf := Color(1, 0.55, 0.15, al)
+					_dashed(p, tpf, cf, 2.0 * lw, 6.0 * lw)
+					_ships.draw_arc(tpf, float(ST.stat(sim.s_type[tf], "len")) * VIS * 0.62 + 8.0, 0, TAU, 28, cf, 2.4 * lw, true)
+					if sim.s_lit[s] < 0:
+						_ships.draw_arc(p, float(SeaSim.FS_LIGHT_M), 0, TAU, 48, Color(1, 0.55, 0.15, al * 0.25), 1.2 * lw)
 			SeaSim.M_FLEE:
 				var fpts := course_points(s)
 				for i in range(1, fpts.size()):
@@ -825,10 +961,12 @@ func _draw_sky() -> void:
 	for s in sim.n_units:
 		if sim.s_burn[s] > 0 and sim.u_state[s] != SeaSim.S_SUNK:
 			var p2 := _pos(s)
-			for k in 6:
-				var t := fposmod(_clock * 0.35 + k / 6.0, 1.0)
-				var c := p2 + drift * t * 14.0 + Vector2(sin(k * 1.3 + _clock), 0) * 3.0
-				_sky.draw_circle(c, 4.0 + t * 16.0, Color(0.22, 0.2, 0.2, 0.5 * sin(PI * t)))
+			var lv := clampf(float(sim.s_burn[s]) / SeaSim.FIRE_MAX, 0.1, 1.0)
+			var np := 4 + int(lv * 8.0)
+			for k in np:
+				var t := fposmod(_clock * 0.35 + float(k) / np, 1.0)
+				var c := p2 + drift * t * (10.0 + 18.0 * lv) + Vector2(sin(k * 1.3 + _clock), 0) * 3.0
+				_sky.draw_circle(c, (4.0 + t * 16.0) * (0.7 + lv * 0.9), Color(0.16, 0.14, 0.13, (0.35 + 0.3 * lv) * sin(PI * t)))
 	for f2 in _fx:
 		var age := float(f2[2])
 		if age < 0.0:
@@ -908,7 +1046,7 @@ func _build_hud() -> void:
 	top.add_child(sp)
 	for i in SPEEDS.size():
 		var q: int = SPEEDS[i]
-		var b := Kit.button(["II", "1x", "2x", "4x"][i], func(): _set_speed(q), 40, Kit.FONT_SMALL)
+		var b := Kit.button(["II", "1x", "2x", "4x"][i], func(): _on_speed(q), 40, Kit.FONT_SMALL)
 		b.name = "sea_speed_%d" % i
 		b.custom_minimum_size.y = 34
 		sp.add_child(b)
@@ -928,10 +1066,20 @@ func _build_hud() -> void:
 	_msg_lbl.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
 	_msg_lbl.add_theme_constant_override("outline_size", 5)
 	root.add_child(_msg_lbl)
+	# (N3b) The deck melee inset, top right.
+	_inset = Control.new()
+	_inset.name = "sea_deck_inset"
+	_inset.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_inset.mouse_filter = Control.MOUSE_FILTER_STOP
+	_inset.visible = false
+	_inset.draw.connect(_draw_inset)
+	_inset.gui_input.connect(_inset_input)
+	root.add_child(_inset)
 	# Left: your ships.
 	var sc := ScrollContainer.new()
+	_sc = sc
 	sc.set_anchors_preset(Control.PRESET_LEFT_WIDE)
-	sc.offset_top = 64
+	sc.offset_top = 64 if coop == null else 92  # (co-op: the roster strip above)
 	sc.offset_bottom = -92
 	sc.offset_left = 4
 	sc.offset_right = 140
@@ -1009,8 +1157,8 @@ func _draw_card_bars(c: Control, s: int) -> void:
 		var y := 1.0 + i * 6.5
 		c.draw_rect(Rect2(0, y, w, 5), Color(0, 0, 0, 0.6))
 		c.draw_rect(Rect2(0, y, w * clampf(vals[i], 0.0, 1.0), 5), cols[i])
-	# Broadsides: port and starboard, full when loaded.
-	for k in 2:
+	# Broadsides: port and starboard, full when loaded (none on a fire ship).
+	for k in (0 if ST.is_fire(sim.s_type[s]) else 2):
 		var x := w + 6.0 + k * 11.0
 		var rl := sim.s_rl[s * 2 + k]
 		var full := ST.stat(sim.s_type[s], "reload") * 10 * 1000
@@ -1020,6 +1168,11 @@ func _draw_card_bars(c: Control, s: int) -> void:
 	var st := sim.u_state[s]
 	if st != SeaSim.S_SAIL:
 		c.draw_rect(Rect2(Vector2.ZERO, c.size), Color(0, 0, 0, 0.45))
+	# Live co-op: whose ship this is (a band in the commander's colour once
+	# another player takes part on this side).
+	if coop != null and coop.ls != null and not coop.teammates_in(coop.me).is_empty():
+		var cmd: int = coop.ls.commander(s)
+		c.draw_rect(Rect2(c.size.x - 4.0, 0, 4.0, c.size.y), coop.player_color(cmd) if cmd >= 0 else Color(0.5, 0.5, 0.5))
 
 
 func _card_input(e: InputEvent, s: int) -> void:
@@ -1027,6 +1180,9 @@ func _card_input(e: InputEvent, s: int) -> void:
 	var tapped := e is InputEventMouseButton and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT \
 		and not (e as InputEventMouseButton).pressed
 	if not tapped or sim.u_state[s] != SeaSim.S_SAIL:
+		return
+	if not _mine(s):
+		_not_mine_hint(s)
 		return
 	if selection == [s] and _clock - _last_tap_t < DOUBLE_TAP * 2.0:
 		camera.position = _pos(s)
@@ -1050,7 +1206,11 @@ func _refresh_hud() -> void:
 		var card: Control = _card_nodes[s]
 		(card.find_child("bars", true, false) as Control).queue_redraw()
 		card.modulate = Color(1, 1, 1, 1) if selection.has(int(s)) else Color(0.82, 0.82, 0.82, 0.9)
+		if not _mine(int(s)):
+			card.modulate = Color(0.7, 0.7, 0.7, 0.75)
 	_info.text = _info_text()
+	if coop != null:
+		_coop_hud_tick()
 
 
 func _info_text() -> String:
@@ -1060,11 +1220,16 @@ func _info_text() -> String:
 			mine.append(s)
 	if mine.is_empty():
 		var f := [sim.fighting(0), sim.fighting(1)]
+		if coop != null and coop.ls == null:
+			return "Waiting for the battle to start."
 		return "Tap a ship of yours to command it. %s: %d fighting; the enemy: %d." % [side_names[player_side], f[player_side], f[1 - player_side]]
 	if mine.size() > 1:
 		return "%d ships selected. Tap the sea to sail, an enemy to engage%s." % [mine.size(), " (Board armed: tap an enemy)" if arm == "board" else ""]
 	var s := mine[0]
-	var mode: String = ["holding her course", "sailing to the mark", "engaging", "closing to board", "running for it", "holding a heading"][sim.s_mode[s]]
+	var mode: String = ["holding her course", "sailing to the mark", "engaging", "closing to board", "running for it", "holding a heading",
+		"sent in: lit within %d m" % SeaSim.FS_LIGHT_M][sim.s_mode[s]]
+	if ST.is_fire(sim.s_type[s]) and sim.s_lit[s] >= 0:
+		mode = "ablaze, her helm lashed" if sim.s_aband[s] != 0 else "ablaze, steering for her mark"
 	if sim.s_grap[s] >= 0:
 		mode = "grappled: boarding" if sim.s_boarder[s] != 0 else "grappled: repelling boarders"
 	var sails: String = ["hove to", "battle sail", "full sail"][sim.s_sail[s]]
@@ -1086,7 +1251,7 @@ func _refresh_bar() -> void:
 		c.queue_free()
 	var mine: Array[int] = []
 	for s in selection:
-		if sim.u_state[s] == SeaSim.S_SAIL and sim.u_side[s] == player_side:
+		if sim.u_state[s] == SeaSim.S_SAIL and sim.u_side[s] == player_side and _mine(s):
 			mine.append(s)
 	if mine.is_empty() or not interactive:
 		return
@@ -1111,11 +1276,22 @@ func _refresh_bar() -> void:
 		_refresh_bar())
 	add.call("Hold course", "sea_hold", sim.s_mode[s0] == SeaSim.M_FREE, func(): _orders_all(SeaSim.O_HOLD, {}))
 	add.call("Flee", "sea_flee", sim.s_mode[s0] == SeaSim.M_FLEE, func(): _orders_all(SeaSim.O_FLEE, {}))
+	var fires := false
+	for s in mine:
+		if ST.is_fire(sim.s_type[s]) and sim.s_lit[s] < 0:
+			fires = true
+	if fires:
+		# (N3c) A fire ship: tap an enemy to send her in (lit close, when she
+		# can lie the course), or light her now.
+		add.call("Light her", "sea_light", false, func(): _orders_all(SeaSim.O_LIGHT, {}))
+	var tos := _gift_targets()
+	if not tos.is_empty():
+		add.call("Gift to " + coop.player_name(int(tos[0])) if tos.size() == 1 else "Gift to...", "sea_gift", false, _gift)
 
 
 func _orders_all(typ: int, extra: Dictionary) -> void:
 	for s in selection:
-		if sim.u_side[s] != player_side or sim.u_state[s] != SeaSim.S_SAIL:
+		if sim.u_side[s] != player_side or sim.u_state[s] != SeaSim.S_SAIL or not _mine(s):
 			continue
 		var o := {"tick": sim.tick, "type": typ, "unit": s}
 		o.merge(extra)
@@ -1125,9 +1301,19 @@ func _orders_all(typ: int, extra: Dictionary) -> void:
 	get_tree().create_timer(0.15).timeout.connect(_refresh_bar)
 
 
-## Issue a sim order (solo: straight into the sim at its current tick).
+## Issue a sim order (solo: straight into the sim at its current tick; live
+## co-op: through the lockstep, for this player's own ships only).
 func order(o: Dictionary) -> void:
 	if not interactive or sim.decided_tick >= 0:
+		return
+	if coop != null:
+		if not coop.can_issue():
+			return
+		var u := int(o.get("unit", -1))
+		if u >= 0 and not coop.can_order(u):
+			_not_mine_hint(u)
+			return
+		coop.issue(o)
 		return
 	sim.queue_order(o)
 
@@ -1135,6 +1321,31 @@ func order(o: Dictionary) -> void:
 func _set_speed(q: int) -> void:
 	speed_q = q
 	AudioFx.click()
+
+
+## A speed button: solo it applies; live co-op II asks to pause / resume and
+## a speed is a vote (Lockstep), applied at its frame when agreed.
+func _on_speed(q: int) -> void:
+	if coop == null:
+		_set_speed(q)
+		return
+	AudioFx.click()
+	var ls = coop.ls
+	if ls == null:
+		return
+	if q == 0:
+		coop.request_pause()
+		return
+	if ls.paused != 0:
+		coop.request_pause()  # (a speed while paused: resume first)
+	var mine: bool = ls.vote_speed_by == coop.me
+	if mine and q == ls.vote_speed_q:
+		return
+	if q == ls.speed_q:
+		if mine:
+			coop.request_speed(ls.vote_speed_q)  # (choosing the speed in force withdraws the proposal)
+		return
+	coop.request_speed(q)
 
 
 func _draw_rose() -> void:
@@ -1181,6 +1392,10 @@ func _show_end() -> void:
 	var b := Kit.button("Continue", func(): exit_requested.emit(), 140)
 	b.name = "sea_continue"
 	v.add_child(b)
+	_cont_btn = b
+	if coop != null and coop.ls != null and coop.final_frame < 0:
+		b.disabled = true  # (live co-op: the result is complete at the final frame)
+		b.text = "Finishing..."
 	p.custom_minimum_size = Vector2(minf(520.0, get_viewport_rect().size.x - 40.0), 0)
 	_hud.add_child(p)
 	_end_panel = p
@@ -1199,8 +1414,10 @@ func _ask_leave() -> void:
 	p.grow_vertical = Control.GROW_DIRECTION_BOTH
 	var v := Kit.vbox(8)
 	p.add_child(v)
-	v.add_child(Kit.label("Leave the battle? It counts as lost: your ships still fighting make their escape, the struck are taken.",
-		Kit.FONT, Color.WHITE, true))
+	var txt := "Leave the battle? It counts as lost: your ships still fighting make their escape, the struck are taken."
+	if coop != null and _coop_others_in():
+		txt = "Leave the battle? Your ships go to %s." % _coop_heir_name()
+	v.add_child(Kit.label(txt, Kit.FONT, Color.WHITE, true))
 	var h := Kit.hbox(8)
 	h.add_child(Kit.button("Leave", func(): exit_requested.emit(), 100))
 	h.add_child(Kit.button("Stay", func():
@@ -1256,13 +1473,13 @@ func _unhandled_input(e: InputEvent) -> void:
 	if e is InputEventKey and (e as InputEventKey).pressed:
 		match (e as InputEventKey).keycode:
 			KEY_SPACE:
-				_set_speed(0 if speed_q != 0 else 4)
+				_on_speed(0 if speed_q != 0 or coop != null else 4)
 			KEY_1:
-				_set_speed(4)
+				_on_speed(4)
 			KEY_2:
-				_set_speed(8)
+				_on_speed(8)
 			KEY_3:
-				_set_speed(16)
+				_on_speed(16)
 			KEY_ESCAPE:
 				selection.clear()
 				arm = ""
@@ -1346,10 +1563,13 @@ func _tap(screen: Vector2) -> void:
 	if s >= 0 and sim.u_side[s] == player_side:
 		if sim.u_state[s] != SeaSim.S_SAIL:
 			return
+		if not _mine(s):
+			_not_mine_hint(s)
+			return
 		if double:
 			selection.clear()
 			for k in sim.n_units:
-				if sim.u_side[k] == player_side and sim.u_state[k] == SeaSim.S_SAIL:
+				if sim.u_side[k] == player_side and sim.u_state[k] == SeaSim.S_SAIL and _mine(k):
 					selection.append(k)
 		else:
 			selection = [s]
@@ -1359,7 +1579,7 @@ func _tap(screen: Vector2) -> void:
 		return
 	var mine: Array[int] = []
 	for k in selection:
-		if sim.u_side[k] == player_side and sim.u_state[k] == SeaSim.S_SAIL:
+		if sim.u_side[k] == player_side and sim.u_state[k] == SeaSim.S_SAIL and _mine(k):
 			mine.append(k)
 	if mine.is_empty():
 		return
@@ -1396,9 +1616,412 @@ func _box_select() -> void:
 	var r := Rect2(_box_a, _box_b - _box_a).abs()
 	var got: Array[int] = []
 	for s in sim.n_units:
-		if sim.u_side[s] == player_side and sim.u_state[s] == SeaSim.S_SAIL and r.has_point(_pos(s)):
+		if sim.u_side[s] == player_side and sim.u_state[s] == SeaSim.S_SAIL and r.has_point(_pos(s)) and _mine(s):
 			got.append(s)
 	if not got.is_empty():
 		selection = got
 		arm = ""
 		_refresh_bar()
+
+
+# ------------------------------------------------------------------ co-op ---
+
+func _mine(s: int) -> bool:
+	return coop == null or coop.can_order(s)
+
+
+func _not_mine_hint(s: int) -> void:
+	if coop == null or coop_hud == null:
+		return
+	var c: int = coop.ls.commander(s) if coop.ls != null else -1
+	coop_hud.flash("%s commands this ship." % (coop.player_name(c) if c >= 0 else "Nobody"), 2.0)
+
+
+func _coop_ready() -> void:
+	coop.auto_update = false
+	_hud_shim = HudShim.new()
+	_hud_shim.pause_button = _speed_btns[0]
+	_hud_shim.speed_button = _speed_btns[1]
+	var sp := Control.new()
+	sp.visible = false
+	sp.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hud.add_child(sp)
+	_hud_shim.speed_panel = sp
+	coop_hud = CoopHud.new()
+	coop_hud.region_name = coop_region
+	add_child(coop_hud)
+	coop_hud.build(coop, _hud_shim)
+	coop_hud.leave_pressed.connect(func(): exit_requested.emit())
+	coop.changed.connect(_prune_selection)
+	coop.resolved.connect(func():
+		coop_hud.flash("The result is in on the server. Back to the campaign when you like.", 8.0))
+	coop.note.connect(func(text: String, _kind: String): coop_hud.flash(text, 4.0))
+
+
+## The session runs the lockstep frames due (wall time) and the sim steps
+## with them; the view follows its sim (a snapshot restore swaps it).
+func _coop_step(delta: float) -> void:
+	if coop.ls != null and coop.ls.sim != sim:
+		_rebind(coop.ls.sim)
+	var n := sim.n_units
+	var bx := PackedFloat32Array()
+	var by := PackedFloat32Array()
+	var bh := PackedFloat32Array()
+	bx.resize(n)
+	by.resize(n)
+	bh.resize(n)
+	for s in n:
+		bx[s] = sim.s_x[s] / 1024.0
+		by[s] = sim.s_y[s] / 1024.0
+		bh[s] = sim.heading(s) * TAU / 1024.0
+	var steps: int = coop.update(delta)
+	_coop_test_aids()
+	var ls = coop.ls
+	if ls == null:
+		_calpha = 1.0
+		speed_q = 0
+		return
+	if ls.sim != sim:
+		_rebind(ls.sim)
+	elif steps > 0:
+		_px = bx
+		_py = by
+		_ph = bh
+	speed_q = 0 if ls.paused != 0 else int(ls.speed_q)
+	var a := 1.0
+	if ls.paused == 0:
+		var fr: float = clampf(coop.wall_acc / TICK_SEC, 0.0, 1.0)
+		a = fr if ls.speed_q >= 4 else clampf((ls.acc + fr * ls.speed_q) / 4.0, 0.0, 1.0)
+	_calpha = a
+
+
+## The session started or restored a snapshot: follow its sim.
+func _rebind(s) -> void:
+	sim = s
+	_snap_prev()
+	_ev_seen = sim.ev_n  # (a restored sim's past events are not replayed)
+	_decided_at = -1.0 if sim.decided_tick < 0 else _clock
+	_prune_selection()
+	if selection.is_empty():
+		for k in sim.n_units:
+			if sim.u_side[k] == player_side and sim.u_state[k] == SeaSim.S_SAIL and _mine(k):
+				selection.append(k)
+				break
+	_refresh_bar()
+
+
+func _prune_selection() -> void:
+	var keep: Array[int] = []
+	for s in selection:
+		if _mine(s) and sim.u_state[s] == SeaSim.S_SAIL:
+			keep.append(s)
+	if keep != selection:
+		selection = keep
+		_refresh_bar()
+
+
+## Four times a second: the speed buttons follow the lockstep's pause and
+## speed (and this player's open proposal); Continue at the end opens once
+## the final frame is there.
+func _coop_hud_tick() -> void:
+	var ls = coop.ls
+	if ls != null:
+		var mine_q: int = ls.vote_speed_q if ls.vote_speed_by == coop.me else -1
+		for i in _speed_btns.size():
+			var q: int = SPEEDS[i]
+			var b: Button = _speed_btns[i]
+			if q == 0:
+				b.modulate = Color(1, 0.85, 0.4) if ls.paused != 0 else Color.WHITE
+			elif q == mine_q:
+				b.modulate = Color(0.7, 0.9, 1.0)
+			else:
+				b.modulate = Color(1, 0.85, 0.4) if q == ls.speed_q and ls.paused == 0 else Color.WHITE
+	if _cont_btn != null and _cont_btn.disabled and (ls == null or coop.final_frame >= 0):
+		_cont_btn.disabled = false
+		_cont_btn.text = "Continue"
+
+
+## The team-mates the selection can be given to: the other players taking
+## part on this side, ascending.
+func _gift_targets() -> Array:
+	if coop == null or coop.ls == null:
+		return []
+	var out: Array = []
+	for p in coop.teammates_in(coop.me):
+		if coop.ls.side_of(int(p)) == player_side:
+			out.append(int(p))
+	return out
+
+
+func _gift() -> void:
+	var tos := _gift_targets()
+	if tos.is_empty() or selection.is_empty():
+		return
+	if tos.size() == 1:
+		_gift_to(int(tos[0]))
+	elif coop_hud != null:
+		coop_hud.pick_gift(tos, _gift_to)
+
+
+func _gift_to(to: int) -> void:
+	if selection.is_empty() or coop == null or coop.ls == null or not coop.ls.is_active(to):
+		return
+	coop.gift(selection, to)
+	coop_hud.flash("%d ship%s given to %s." % [selection.size(), "" if selection.size() == 1 else "s", coop.player_name(to)], 2.5)
+	selection.clear()
+	_refresh_bar()
+
+
+## Another player takes part and is connected (leaving hands them our ships).
+func _coop_others_in() -> bool:
+	if coop == null or coop.ls == null:
+		return false
+	for p in coop.ls.active_players():
+		if p != coop.me and coop.connected(p):
+			return true
+	return false
+
+
+## Who takes our ships when we leave: a connected player of our side, else
+## the battle AI.
+func _coop_heir_name() -> String:
+	var side: int = coop.ls.side_of(coop.me)
+	for p in coop.ls.side_players(side):
+		if p != coop.me and coop.connected(p):
+			return coop.player_name(p)
+	return "the battle AI"
+
+
+## Leaving a live sea battle: what to upload from this device ({res,
+## decided}; {}: nothing - another player carries on or the host uploads).
+## Leaves the room either way.
+func coop_exit_result() -> Dictionary:
+	if coop.ls == null:
+		coop.leave()
+		return {}
+	var res: Dictionary = coop.final_result if not coop.final_result.is_empty() else sim.result()
+	var out := {}
+	if sim.winner >= 0:
+		if coop.should_upload():
+			coop.announce_upload()
+			out = {"res": res, "decided": true}
+	elif not _coop_others_in():
+		# The last one here: a forfeit, as in a solo battle.
+		out = {"res": res, "decided": false}
+	coop.leave()
+	return out
+
+
+## Testing aids (as the land view's): --coop-start-alone (the host starts
+## without waiting), --coop-select=mine (select own ships once it runs),
+## --coop-auto-exit (back to the campaign once the battle is over).
+func _coop_test_aids() -> void:
+	for a in OS.get_cmdline_user_args():
+		if a == "--coop-start-alone" and coop.phase == "lobby" and coop.is_host() and coop.room.is_open():
+			coop.start_battle()
+		elif a == "--coop-auto-exit" and coop.final_frame >= 0 and not has_meta("test_exit") and coop.ls != null \
+				and coop.ls.frame >= coop.final_frame + 10:
+			set_meta("test_exit", true)
+			exit_requested.emit()
+
+
+# ------------------------------------------------------------- deck inset ---
+# (N3b) The deck melee of a grappled pair, drawn from the sim's figures
+# (sim/sea_sim.gd "deck melee"): the boarder's deck on top, the rail, the
+# defender's below, bows to the right.
+
+## Which melee to show: one with a ship of the player's side (the latest),
+## else the latest; the outcome stays 2.5 s after it ends.
+func _inset_tick(delta: float) -> void:
+	var best := -1
+	var bt := -1
+	for m in sim.n_units:
+		if sim.k_on[m] == 0:
+			continue
+		var t := sim.s_grap[m]
+		var ours := sim.u_side[m] == player_side or (t >= 0 and sim.u_side[t] == player_side)
+		var key := sim.k_t0[m] + (1 << 20 if ours else 0)
+		if key > bt:
+			bt = key
+			best = m
+	if best != _inset_m and best >= 0:
+		_inset_m = best
+		_inset_t = sim.s_grap[best]
+		_inset_end = ""
+		_dk_pos.clear()
+		_dk_smoke.clear()
+	var showing := best >= 0 or (_inset_m >= 0 and _clock - _inset_end_t < 2.5 and _inset_end != "")
+	if not showing:
+		_inset_m = -1
+	_inset.visible = showing and _inset_m >= 0
+	if not _inset.visible:
+		return
+	var vp := get_viewport_rect().size
+	var w := clampf(vp.x * 0.42, 220.0, 380.0)
+	var h := w * 0.66
+	_inset.size = Vector2(w, h)
+	_inset.position = Vector2(vp.x - w - 6.0, 64.0)
+	# Figures ease toward their cells; smoke drifts and fades.
+	var base := _inset_m * SeaSim.FIG
+	var k := clampf(delta * 9.0 * maxf(speed_q / 4.0, 0.25), 0.0, 1.0)
+	for i in SeaSim.FIG:
+		var fi := base + i
+		if sim.f_n[fi] <= 0:
+			_dk_pos.erase(i)
+			continue
+		var want := Vector2(sim.f_x[fi], sim.f_y[fi])
+		_dk_pos[i] = want if not _dk_pos.has(i) else (_dk_pos[i] as Vector2).lerp(want, k)
+	var keep: Array = []
+	var dt := delta * maxf(speed_q / 4.0, 0.0)
+	for sm in _dk_smoke:
+		sm[1] = float(sm[1]) + dt
+		if float(sm[1]) < 2.2:
+			keep.append(sm)
+	_dk_smoke = keep
+	if sim.k_on[_inset_m] != 0 and speed_q > 0:
+		_clash_t -= delta
+		if _clash_t <= 0.0:
+			_clash_t = 0.45
+			AudioFx.play("melee", 0.55, 0.0, "melee")
+	_inset.queue_redraw()
+
+
+func _inset_input(e: InputEvent) -> void:
+	var tapped := e is InputEventMouseButton and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT \
+		and not (e as InputEventMouseButton).pressed
+	if tapped and _inset_m >= 0 and _inset_m < sim.n_units:
+		camera.position = _pos(_inset_m)
+		_clamp_cam()
+
+
+func _draw_inset() -> void:
+	var m := _inset_m
+	if m < 0:
+		return
+	var c := _inset
+	var sz := c.size
+	var t := _inset_t
+	# The board: a dark wooden frame, the sea in it.
+	c.draw_rect(Rect2(Vector2.ZERO, sz), Color(0.16, 0.11, 0.07, 0.94))
+	c.draw_rect(Rect2(Vector2(3, 3), sz - Vector2(6, 6)), Color(0.12, 0.3, 0.4))
+	var title := "Boarding"
+	if t >= 0:
+		title = "%s boards %s" % [_short(m), _short(t)]
+	c.draw_string(ThemeDB.fallback_font, Vector2(8, 16), title, HORIZONTAL_ALIGNMENT_LEFT, sz.x - 16.0, 12, Color(1, 0.9, 0.6))
+	var gw := sim.k_w[m]
+	var hb := sim.k_hb[m]
+	var gh := hb + sim.k_ht[m]
+	if gw <= 0 or gh <= 0:
+		return
+	var top := 22.0
+	var bottom := 30.0
+	var cell := minf((sz.x - 16.0) / gw, (sz.y - top - bottom) / (gh + 0.6))
+	var org := Vector2((sz.x - cell * gw) * 0.5, top + 2.0)
+	var gap := cell * 0.6  # the water between the hulls
+	var to_px := func(p: Vector2) -> Vector2:
+		var y := p.y * cell + (gap if p.y >= hb else 0.0)
+		return org + Vector2(p.x * cell + cell * 0.5, y + cell * 0.5)
+	var cols := [_ship_col(m), _ship_col(t) if t >= 0 else _ship_col(m)]
+	# The two hulls: planking, rail, masts.
+	for side in 2:
+		var x0 := sim.k_ax0[m] if side == 0 else sim.k_bx0[m]
+		var ln := sim.k_la[m] if side == 0 else sim.k_lb[m]
+		var y0 := 0 if side == 0 else hb
+		var rows := hb if side == 0 else gh - hb
+		var r := Rect2(org + Vector2(x0 * cell, y0 * cell + (gap if side == 1 else 0.0)), Vector2(ln * cell, rows * cell))
+		var bow := r.position.x + r.size.x
+		var hull := PackedVector2Array([r.position + Vector2(-cell * 0.2, -cell * 0.15), Vector2(bow - cell * 0.6, r.position.y - cell * 0.15),
+			Vector2(bow + cell * 0.9, r.get_center().y), Vector2(bow - cell * 0.6, r.end.y + cell * 0.15),
+			Vector2(r.position.x - cell * 0.2, r.end.y + cell * 0.15)])
+		c.draw_colored_polygon(hull, COL_HULL)
+		var dk := PackedVector2Array()
+		var ctr := r.get_center()
+		for v in hull:
+			dk.append(ctr + (v - ctr) * Vector2(0.94, 0.8))
+		c.draw_colored_polygon(dk, COL_DECK)
+		# Planks along her length, the seams darker; a grating amidships.
+		var nplank := int(rows * 2)
+		for k2 in range(1, nplank):
+			var py := r.position.y + r.size.y * k2 / nplank
+			c.draw_line(Vector2(r.position.x, py), Vector2(bow - cell * 0.4, py), Color(0.45, 0.33, 0.2, 0.55), 1.0)
+		c.draw_rect(Rect2(ctr - Vector2(cell * 0.7, cell * 0.35), Vector2(cell * 1.4, cell * 0.7)), Color(0.32, 0.22, 0.13, 0.8))
+		var rail := hull.duplicate()
+		rail.append(hull[0])
+		c.draw_polyline(rail, (cols[side] as Color).darkened(0.25), maxf(cell * 0.14, 1.5), true)
+		var ty := sim.s_type[m] if side == 0 else (sim.s_type[t] if t >= 0 else 0)
+		for f in SeaSim._masts(ty):
+			var mx := x0 + ln / 2 + int(f) * ln / 100
+			var mp: Vector2 = to_px.call(Vector2(mx, y0 + rows / 2))
+			c.draw_circle(mp + Vector2(1.5, 1.5), cell * 0.36, Color(0, 0, 0, 0.3))
+			c.draw_circle(mp, cell * 0.33, Color(0.35, 0.24, 0.14))
+	# Grapnel lines across the gap.
+	var gy0 := org.y + hb * cell
+	for k3 in 5:
+		var gx := org.x + (gw * cell) * (0.15 + 0.17 * k3)
+		c.draw_line(Vector2(gx, gy0 - cell * 0.2), Vector2(gx + cell * 0.3, gy0 + gap + cell * 0.2), Color(0.1, 0.07, 0.04), 1.2)
+	# The men: shadows first, then each group as a little crowd.
+	var base := m * SeaSim.FIG
+	for i in _dk_pos:
+		var p: Vector2 = to_px.call(_dk_pos[i])
+		c.draw_circle(p + Vector2(cell * 0.12, cell * 0.16), cell * 0.4, Color(0, 0, 0, 0.25))
+	for i in _dk_pos:
+		var fi := base + int(i)
+		var n := sim.f_n[fi]
+		if n <= 0:
+			continue
+		var p2: Vector2 = to_px.call(_dk_pos[i])
+		var col: Color = cols[sim.f_side[fi]]
+		var kind := sim.f_kind[fi]
+		var men := clampi(n, 1, 5)
+		var r2 := cell * 0.17
+		for j in men:
+			var off := Vector2(cos(j * 2.4 + i), sin(j * 2.4 + i)) * (cell * 0.22 if men > 1 else 0.0)
+			var body := col.darkened(0.15) if kind != 1 else col.darkened(0.35)
+			c.draw_circle(p2 + off, r2, body)
+			c.draw_circle(p2 + off + Vector2(0, -r2 * 0.4), r2 * 0.55, Color(0.86, 0.7, 0.55) if kind != 2 else Color(0.12, 0.1, 0.08))
+		if kind == 2:
+			c.draw_arc(p2, cell * 0.42, 0, TAU, 16, Color(1, 0.85, 0.3), 1.6, true)
+		elif kind == 1:
+			c.draw_line(p2 + Vector2(-r2, -r2), p2 + Vector2(r2, r2), Color(0.95, 0.95, 0.9, 0.8), 1.0)
+		# Cold steel: sparks where it struck this moment.
+		if sim.tick - sim.f_hit[fi] <= 1 and (int(i) + int(_clock * 8.0)) % 3 == 0:
+			var fl := absf(sin(_clock * 23.0 + i))
+			var sp := p2 + Vector2(cell * 0.2 * sin(i * 1.7), cell * 0.5 if sim.f_side[fi] == 0 else -cell * 0.5)
+			for q in 4:
+				var a := q * PI / 2.0 + PI / 4.0 + _clock * 9.0
+				c.draw_line(sp, sp + Vector2(cos(a), sin(a)) * cell * (0.1 + 0.12 * fl), Color(1, 0.95, 0.7, 0.85), 1.0)
+	# Powder smoke (pistols, muskets) drifting off.
+	for sm in _dk_smoke:
+		var age := float(sm[1])
+		var sp2: Vector2 = to_px.call(sm[0]) + Vector2(age * cell * 0.7, -age * cell * 0.25)
+		c.draw_circle(sp2, cell * (0.22 + age * 0.3) * float(sm[2]), Color(0.9, 0.9, 0.86, 0.38 * (1.0 - age / 2.2)))
+	# Each side's men and heart.
+	var men_n := [0, 0]
+	for i2 in SeaSim.FIG:
+		if sim.f_n[base + i2] > 0:
+			men_n[sim.f_side[base + i2]] += sim.f_n[base + i2]
+	var by := sz.y - bottom + 4.0
+	for side in 2:
+		var x := 8.0 + side * (sz.x * 0.5)
+		var bw := sz.x * 0.5 - 16.0
+		var mor := clampf(sim.k2_mor[m * 2 + side] / 100.0, 0.0, 1.0)
+		c.draw_rect(Rect2(x, by, bw, 6), Color(0, 0, 0, 0.6))
+		var bc: Color = cols[side]
+		if bc.get_luminance() < 0.35:
+			bc = bc.lightened(0.5)
+		c.draw_rect(Rect2(x, by, bw * mor, 6), bc)
+		var lbl := "%s %d men%s" % ["Boarders" if side == 0 else "Defenders", int(men_n[side]),
+			"" if sim.k2_cap[m * 2 + side] != 0 else ", captain down"]
+		c.draw_string(ThemeDB.fallback_font, Vector2(x, by + 19), lbl, HORIZONTAL_ALIGNMENT_LEFT, bw, 11, Color(0.95, 0.92, 0.85))
+	if _inset_end != "" and sim.k_on[m] == 0:
+		c.draw_rect(Rect2(Vector2(6, sz.y * 0.38), Vector2(sz.x - 12, 26)), Color(0, 0, 0, 0.7))
+		c.draw_string(ThemeDB.fallback_font, Vector2(12, sz.y * 0.38 + 18), _inset_end, HORIZONTAL_ALIGNMENT_CENTER, sz.x - 24, 13,
+			Color(1, 0.9, 0.6))
+
+
+## A ship's short name for the inset title.
+func _short(s: int) -> String:
+	var d: Dictionary = (scenario.get("units", []) as Array)[s]
+	if d.has("nm"):
+		return str(d["nm"])
+	return ("our " if sim.u_side[s] == player_side else "the enemy ") + ST.name_of(sim.s_type[s]).to_lower()

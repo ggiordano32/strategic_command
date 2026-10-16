@@ -13,7 +13,8 @@ extends RefCounted
 ## not change its pace), yard (Shipyard level needed; 0: any port of ours,
 ## no shipyard), storm (N2b: % chance a hurricane's core sinks it at sea),
 ## factions (faction keys that build it; captured ships of other kinds are
-## kept).
+## kept); fire (1: a fire ship, N3c), power (the formula's worth of a ship
+## without guns).
 
 const ROWS: Array[Dictionary] = [
 	{"key": "sloop", "name": "Sloop", "cost": 300, "upkeep": 15, "guns": 8, "hull": 30, "crew": 60, "speed": 400,
@@ -40,6 +41,15 @@ const ROWS: Array[Dictionary] = [
 		"cap": 1, "coastal": 1, "oars": 1, "yard": 0, "storm": 45,
 		"factions": ["itza", "miskito"],
 		"desc": "Piraguas and dugouts: rowed, fast along the shore whatever the wind, never out of sight of land."},
+	# (N3c) A fire ship: no guns, a skeleton crew; in a sea battle she is sailed
+	# at an enemy, lit and abandoned, and burns what she touches (spent when
+	# lit). "power": her worth to the auto-resolve formula (CFleet.ship_power)
+	# in place of guns and hull. The battle AI uses her; the campaign AI does
+	# not build her ("fire": cai_fleet skips the row).
+	{"key": "fire_ship", "name": "Fire ship", "cost": 160, "upkeep": 8, "guns": 0, "hull": 25, "crew": 14, "speed": 380,
+		"cap": 0, "coastal": 0, "oars": 0, "yard": 1, "storm": 20, "fire": 1, "power": 120,
+		"factions": ["england", "france", "dutch", "brethren"],
+		"desc": "An old hull packed with tar, brimstone and brushwood. In a sea battle her dozen volunteers sail her at the enemy, light her and take to the boat; whatever she grapples burns. Spent once lit."},
 ]
 
 ## Coastal ships keep to sea cells within this many cells (Chebyshev) of land.

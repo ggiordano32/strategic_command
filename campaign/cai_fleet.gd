@@ -301,6 +301,8 @@ static func _build(st: Dictionary, f: int) -> void:
 	for r in ports:
 		for key in CFleet.buildable(st, f, r):
 			var row := CData.ship_row(str(key))
+			if int(row.get("fire", 0)) != 0:
+				continue  # (N3c: fire ships are a player's choice; the battle AI sails them)
 			if int(row["cost"]) > budget or CFleet.ship_check(st, f, r, str(key)) != "":
 				continue
 			var v := int(row["cap"]) * 1000 + int(row["guns"]) if transport else int(row["guns"]) * 1000 + int(row["cap"])
