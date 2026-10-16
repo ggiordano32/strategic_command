@@ -24,6 +24,7 @@ const CSea := preload("res://campaign/csea.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const CStory := preload("res://campaign/cstory.gd")
 const CCaptain := preload("res://campaign/ccaptain.gd")
+const CAI := preload("res://campaign/cai.gd")
 const SA := preload("res://game/campaign/story_autoplay.gd")
 
 var fails := 0
@@ -49,6 +50,7 @@ func _init() -> void:
 	_battles()
 	_blocked()
 	_coop()
+	_shield()
 	_step2()
 	_paths()
 	_random_runs()
@@ -287,6 +289,33 @@ func _blocked() -> void:
 	var t0 := CState.hash_text(st)
 	var st2 := CTurn.resolve_turn(st, [])
 	_check(int(st2["turn"]) == 0 and CState.hash_text(st2) == t0, "the turn does not resolve while a story choice waits")
+
+
+## The haven shield: the sandbox AI leaves a captain's haven alone unless provoked.
+func _shield() -> void:
+	var st := _new(5)
+	var hr := CData.region_index("port_de_paix")
+	var fr := CData.faction_index("france")
+	var sp := CData.faction_index("new_spain")
+	var en := CData.faction_index("england")
+	var ca := CStory.player(st)
+	_check(CStory.shielded(st, fr, hr) and CStory.shielded(st, sp, hr) and CStory.shielded(st, en, hr), "shield: unprovoked nations leave the haven alone")
+	_check(not CStory.shielded(st, ca, hr) and not CStory.shielded(st, fr, CData.region_index("havana")), "shield: not for the captain's own side, nor for other regions")
+	CStory.S(st)["p"]["heat"] = 40
+	_check(not CStory.shielded(st, sp, hr) and CStory.shielded(st, fr, hr), "shield: the Armada's attention provokes Spain only")
+	CStory.S(st)["p"]["heat"] = 0
+	CStory._provoke(st, fr, int(st["turn"]))
+	_check(not CStory.shielded(st, fr, hr) and CStory.shielded(st, en, hr), "shield: a sacked port provokes that nation")
+	st["turn"] = int(st["turn"]) + 8
+	_check(CStory.shielded(st, fr, hr), "shield: eight turns on it is forgiven")
+	CStory.set_flag(st, "treaty")
+	_check(not CStory.shielded(st, en, hr) and CStory.shielded(st, fr, hr), "shield: England is released at the Treaty")
+	var w := CState.new_campaign("w", 3, [], {}, [], "west")
+	_check(not CStory.shielded(w, fr, hr) and not CAI._shield(w, fr, hr), "shield: a sandbox campaign has none")
+	# The AI plays on: France at war with the captain and a French stack beside the haven does not take it by turn 20.
+	var run := SA.play(101, 20, "first", 1)
+	_check(CState.owner(run, hr) == CStory.player(run) or CStory.flag(run, "lost_reprisal") or CStory.attention(run) >= 35,
+		"shield: the haven stands at turn 20 unless the reprisal or the attention took it")
 
 
 ## Co-op: two captains, the crew votes every choice (cstory.gd answer).

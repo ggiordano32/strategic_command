@@ -732,6 +732,51 @@ static func fates(st: Dictionary) -> Array:
 
 ## The story's battles and sacks of the turn `t` (from st.events): the
 ## ending's stats.
+## (Tortuga rule) The regions a story captain's haven shield covers: the
+## script's HAVEN and the partner's kept regions (co-op).
+static func _havens(st: Dictionary) -> Array:
+	var out: Array = [str(_c(st, "HAVEN", ""))]
+	for k in (_c(st, "PARTNER_START", {}) as Dictionary).get("keep_regions", []):
+		out.append(str(k))
+	return out
+
+
+## The sandbox AI of faction f may not march on, besiege, assault, land
+## against or blockade region r: a captain's haven, while f is not provoked
+## (see provoked()). The story's own attacks (the reprisal, the Treaty's hunters,
+## the finale) are effects and never ask. Off after the Legend ending and for
+## England after the Treaty. Read by campaign/cai.gd and cai_fleet.gd (only in a
+## story campaign: they check st.has("story") first).
+static func shielded(st: Dictionary, f: int, r: int) -> bool:
+	if not on(st) or r < 0 or (S(st).has("end") and str(S(st)["end"]) == "legend"):
+		return false  # (the Republic and the Pardon leave the haven recognised: the shield stays; the Legend's does not)
+	var o := CState.owner(st, r)
+	if o < 0 or not captains(st).has(o) or captains(st).has(f):
+		return false
+	if not _havens(st).has(str(CData.REGIONS[r]["key"])):
+		return false
+	if flag(st, "treaty") and str(CData.FACTIONS[f]["key"]) == "england":
+		return false
+	return not provoked(st, f)
+
+
+## Faction f has been provoked: for the Spanish nations, the captains' attention is
+## at the Armada's hunt threshold or more; for any, or a captain sacked or blockaded one of f's ports in
+## the last PROVOKE_TURNS (8) turns (recorded by _tally; a blockade still on counts).
+static func provoked(st: Dictionary, f: int) -> bool:
+	# The captains' attention is Spain's: it provokes the Spanish nations only.
+	if (_c(st, "SPANISH", []) as Array).has(str(CData.FACTIONS[f]["key"])) and attention(st) >= int(_c(st, "ARMADA_HUNT_ATT", 35)):
+		return true
+	var t := int(st["turn"])
+	for pv in S(st).get("prov", []):
+		if int(pv[0]) == f and t - int(pv[1]) < int(_c(st, "PROVOKE_TURNS", 8)):
+			return true
+	for r in CData.region_count():
+		if CState.owner(st, r) == f and captains(st).has(int(st["regions"][r].get("bk", -1))):
+			return true
+	return false
+
+
 static func _tally(st: Dictionary, t: int) -> void:
 	var sx: Dictionary = S(st).get("sx", {})
 	for e in st["events"]:
@@ -763,8 +808,26 @@ static func _tally(st: Dictionary, t: int) -> void:
 			"sack":
 				if captains(st).has(int(e["f"])):
 					sx["sk"] = int(sx.get("sk", 0)) + 1
+					_provoke(st, int(e.get("from", -1)), t)
+			"blockade":
+				if captains(st).has(int(e["f"])):
+					_provoke(st, int(e.get("from", -1)), t)
 	if not sx.is_empty():
 		S(st)["sx"] = sx
+
+
+## Faction f was provoked on turn t (a port sacked or blockaded).
+static func _provoke(st: Dictionary, f: int, t: int) -> void:
+	if f < 0:
+		return
+	if not S(st).has("prov"):
+		S(st)["prov"] = []
+	var pl: Array = S(st)["prov"]
+	for pv in pl:
+		if int(pv[0]) == f:
+			pv[1] = t
+			return
+	pl.append([f, t])
 
 
 ## A captain's fleet (or army) within `cells` of region r's harbour (or its

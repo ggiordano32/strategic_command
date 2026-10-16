@@ -105,6 +105,9 @@ const HAVEN_STEP := 5
 ## The Armada hunts at this attention or more, a captain's fleet within
 ## ARMADA_RANGE + attention cells; else it lies at its home port.
 const ARMADA_HUNT_ATT := 35
+## The Spanish nations (the haven shield, cstory.gd shielded): the attention provokes only them;
+## the others are provoked by a sacked or blockaded port of theirs (PROVOKE_TURNS = 8, default).
+const SPANISH: Array[String] = ["new_spain", "tierra_firme"]
 const ARMADA_RANGE := 25
 ## A hunting actor goes home to refit for this many turns after a battle.
 const ACTOR_REST := 3
@@ -406,14 +409,14 @@ const EVENTS: Array[Dictionary] = [
 			["mercy", "They'll land next season. We have one turn."],
 		],
 		"choices": [
-			{"t": "Every man home to Tortuga", "hint": "Your flagship sails for Tortuga; the haven takes heart, and the fort's guns cost the Spanish a boat: fewer of them land.",
+			{"t": "Every man home to Tortuga", "hint": "Your flagship sails for Tortuga; the haven takes heart, and the fort's guns cost the Spanish a boat: only two companies land.",
 				"say": ["mercy", "Aye. I'll have the fort's guns scraped and loaded by the time you're there."],
 				"fx": [["voyage_r", "port_de_paix"], ["p", "haven", 10], ["flag", "rushed_home"], ["sched", "reprisal_met", 1]]},
 			{"t": "Hire the boucaniers of the hills (150 gold)", "need": {"gold_ge": 150}, "why": "Not enough gold in the chest",
-				"hint": "Two companies of buccaneers at Tortuga, and the fort is ready: fewer Spanish land.",
+				"hint": "Two companies of buccaneers at Tortuga, and the fort is ready: only two companies land.",
 				"say": ["mercy", "Hunters off the hills. They hate the Spanish worse than we do. The Spanish shot their cattle."],
 				"fx": [["gold", -150], ["unit", "buccaneers", 2, "port_de_paix"], ["p", "haven", 10], ["sched", "reprisal_met", 1]]},
-			{"t": "Let Tortuga look after itself", "hint": "The crew is spared a fight; Tortuga remembers. The Spanish land in full strength.",
+			{"t": "Let Tortuga look after itself", "hint": "The crew is spared a fight; Tortuga remembers. Three Spanish companies land.",
 				"say": ["mercy", "Tortuga took us in when nobody else would. I'll remember that you didn't, Captain."],
 				"fx": [["p", "haven", -15], ["p", "purse", 5], ["sched", "reprisal", 1]]},
 		]},
@@ -423,15 +426,15 @@ const EVENTS: Array[Dictionary] = [
 			["mercy", "Here they come. Every man who can hold a musket, to the walls!"],
 		],
 		"chron": "Spain landed at Tortuga to punish the pirates for Maracaibo.",
-		"fx": [["raid", "new_spain", "port_de_paix", ["musketeers", "musketeers", "w_pikemen", "rodeleros"], "reprisal"]]},
-	# The reprisal when the captain heeded the warning: the fort was ready and one boat is sunk on the way in (three companies).
+		"fx": [["raid", "new_spain", "port_de_paix", ["musketeers", "w_pikemen", "rodeleros"], "reprisal"]]},
+	# The reprisal when the captain heeded the warning: the fort was ready and one boat is sunk on the way in (two companies).
 	{"id": "reprisal_met", "focus": "port_de_paix", "act": 1, "title": "The Spanish land", "if": {"owns": "port_de_paix"},
 		"lines": [
 			["", "Dawn. The fort's guns sink the first boat in the surf; the rest ground on the beach below it, and a column of pikes and muskets comes up the path under the red saltire of Burgundy."],
 			["mercy", "Fewer than they meant to bring. Every man who can hold a musket, to the walls!"],
 		],
 		"chron": "Spain landed at Tortuga to punish the pirates for Maracaibo.",
-		"fx": [["raid", "new_spain", "port_de_paix", ["musketeers", "w_pikemen", "rodeleros"], "reprisal"]]},
+		"fx": [["raid", "new_spain", "port_de_paix", ["musketeers", "w_pikemen"], "reprisal"]]},
 	{"id": "tip_siege", "act": 1, "title": "Vane's logbook: walls", "tip": 1, "when": {"siege": 1},
 		"lines": [
 			["vane", "A siege is a matter of time and bread. Surround a town and it eats its stores; it starves, it surrenders, or it comes out at you. Storm the walls yourself and you pay in men for every turn you saved. We Brethren don't besiege, as a rule. We come over the wall at night or not at all."],

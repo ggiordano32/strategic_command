@@ -423,7 +423,7 @@ static func _landing(st: Dictionary, f: int, fl: Dictionary) -> int:
 		var o := CState.owner(st, t)
 		var b := CFleet.beach(t)
 		if b < 0 or not CState.at_war(st, f, o) or not CState.battle_at(st, t).is_empty() \
-				or not CState.siege_at(st, t).is_empty() or CSea.spared(st, f, t):
+				or not CState.siege_at(st, t).is_empty() or CSea.spared(st, f, t) or CAI._shield(st, f, t):
 			continue
 		var tt := _turns(fl, b)
 		if tt > MAX_TURNS or not _approach(st, fl, b) or _storm_at(st, b):
@@ -567,7 +567,7 @@ static func _blockade(st: Dictionary, f: int, fl: Dictionary, taken: Dictionary)
 	for r in CData.region_count():
 		var hb := CFleet.harbour(r)
 		var o := CState.owner(st, r)
-		if hb < 0 or o < 0 or taken.has(r) or not CState.at_war(st, f, o) or _storm_at(st, hb):
+		if hb < 0 or o < 0 or taken.has(r) or not CState.at_war(st, f, o) or _storm_at(st, hb) or CAI._shield(st, f, r):
 			continue
 		var trade := CSea.sea_trade(st, r)
 		if trade <= 0:

@@ -1441,7 +1441,7 @@ static func _raid(st: Dictionary, f: int, free: Array, rcs: Dictionary, used: Di
 			var o := CState.owner(st, t)
 			if o < 0 or not CState.at_war(st, f, o) or int(CData.REGIONS[t]["wealth"]) < raid_w:
 				continue
-			if not CState.siege_at(st, t).is_empty() or not CState.battle_at(st, t).is_empty() or CRules.raider(st, t) >= 0:
+			if not CState.siege_at(st, t).is_empty() or not CState.battle_at(st, t).is_empty() or CRules.raider(st, t) >= 0 or _shield(st, f, t):
 				continue
 			if int(cx["foe"][t]) != 0 or int(cx["thr"][t]) > _str(cx, a):
 				continue
@@ -1899,6 +1899,12 @@ static func site_dist(c: int, r: int, ring: bool) -> int:
 ## the odds favour it; forced march to a screen or a gathering point a turn
 ## sooner; armies staying in a threatened region fortify, or go inside the
 ## walls when far outmatched; the rest default.
+## (A story campaign, campaign/cstory.gd) region r is a captain's haven and f
+## has no quarrel with the captains yet: the AI leaves it alone.
+static func _shield(st: Dictionary, f: int, r: int) -> bool:
+	return st.has("story") and (load("res://campaign/cstory.gd") as GDScript).call("shielded", st, f, r)
+
+
 static func _move_grid(st: Dictionary, f: int, out: Array, cx_in: Dictionary = {}) -> void:
 	var kn := CP.of(st, f)
 	var ratio := kn[CP.ATTACK_RATIO6] * 100 / _aggr(st)
@@ -1940,6 +1946,8 @@ static func _move_grid(st: Dictionary, f: int, out: Array, cx_in: Dictionary = {
 	for t in nreg:
 		var o := CState.owner(st, t)
 		if not CState.at_war(st, f, o) or not CState.battle_at(st, t).is_empty() or not CState.siege_at(st, t).is_empty():
+			continue
+		if _shield(st, f, t):
 			continue
 		var now: Array = []
 		var soon: Array = []
@@ -2353,7 +2361,8 @@ static func _hunt(st: Dictionary, f: int, free: Array, used: Dictionary, out: Ar
 	var hunt_cost := kn[CP.HUNT_COST]
 	var hunt_slack := kn[CP.HUNT_SLACK]
 	for e in st["armies"]:
-		if int(e["busy"]) != 0 or not CState.at_war(st, f, int(e["f"])) or CRules.inside(st, e) or CRules.siege_role(st, e) == 2:
+		if int(e["busy"]) != 0 or not CState.at_war(st, f, int(e["f"])) or CRules.inside(st, e) or CRules.siege_role(st, e) == 2 \
+				or _shield(st, f, int(e["r"])):
 			continue
 		var ec := CState.cell(e)
 		var go: Array = []
