@@ -1,0 +1,21 @@
+# Keep LF everywhere, whatever core.autocrlf a Windows checkout uses. The
+# web export's rules hash (tools/export_web.sh, game/net/net.gd) is a hash
+# of the campaign/ and sim/ sources, so a CRLF checkout would export a build
+# that refuses to join online campaigns made by an LF build; and the sh
+# scripts break under Git Bash with CRLF.
+* text=auto eol=lf
+*.sh text eol=lf
+*.gd text eol=lf
+*.gdshader text eol=lf
+*.gdshaderinc text eol=lf
+*.cfg text eol=lf
+*.godot text eol=lf
+*.import text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.go text eol=lf
+*.py text eol=lf
+*.png binary
+*.wav binary
+*.ttf binary
+*.otf binary
