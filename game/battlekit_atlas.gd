@@ -9,59 +9,71 @@ const PPM := 8.0
 const LOW_PPM := 4.0
 const ATLAS_W := 1024
 const ATLAS_H := 1024
-const NAMES: Array[String] = ["wall_8_2", "wall_10_2", "wall_12_2", "wall_12_4", "wall_14_4", "pal_8", "pal_10", "pal_12", "tower_round", "tower_sq", "tower_timber", "gate_c", "gate_o", "gate_b", "pgate_c", "pgate_o", "pgate_b", "bastion", "house_gable_s", "house_gable_m", "house_gable_l", "house_hip_s", "house_hip_m", "longhouse", "house_L", "hut_round", "hut_thatch", "church", "temple", "stall", "well", "cart", "barrels", "tree_broad_a", "tree_broad_b", "tree_broad_c", "tree_pine_a", "tree_pine_b", "tree_palm_a", "tree_palm_b", "bush_a", "bush_b", "rock_a", "rock_b", "rock_c", "cliff_m", "cliff_l", "house_flat_s", "house_flat_m"]
+const NAMES: Array[String] = ["wall_8_2", "wall_10_2", "wall_12_2", "wall_12_4", "wall_14_4", "pal_8", "pal_10", "pal_12", "tower_round", "tower_sq", "tower_timber", "gate_c", "gate_o", "gate_b", "pgate_c", "pgate_o", "pgate_b", "bastion", "house_gable_s", "house_gable_m", "house_gable_l", "house_hip_s", "house_hip_m", "longhouse", "house_L", "hut_round", "hut_thatch", "church", "temple", "stall", "well", "cart", "barrels", "tree_broad_a", "tree_broad_b", "tree_broad_c", "tree_pine_a", "tree_pine_b", "tree_palm_a", "tree_palm_b", "bush_a", "bush_b", "rock_a", "rock_b", "rock_c", "cliff_m", "cliff_l", "house_flat_s", "house_flat_m", "tavern", "shop", "store", "warehouse", "chandler", "shack", "leanto", "governor", "lowwall", "stakes", "crates", "pier"]
 
 ## [x, y, w, h] px in atlas_albedo / atlas_nrm (halve for atlas_low).
 const RECT: Array = [
-	[488, 422, 132, 76],  # wall_8_2
-	[360, 206, 132, 92],  # wall_10_2
-	[500, 4, 132, 108],  # wall_12_2
-	[640, 4, 132, 108],  # wall_12_4
-	[164, 4, 132, 124],  # wall_14_4
-	[628, 422, 100, 76],  # pal_8
-	[500, 206, 100, 92],  # pal_10
-	[780, 4, 100, 108],  # pal_12
-	[888, 4, 108, 108],  # tower_round
-	[120, 206, 104, 104],  # tower_sq
-	[4, 206, 108, 108],  # tower_timber
-	[608, 206, 92, 92],  # gate_c
-	[708, 206, 92, 92],  # gate_o
-	[808, 206, 92, 92],  # gate_b
-	[908, 206, 88, 92],  # pgate_c
-	[4, 322, 88, 92],  # pgate_o
-	[100, 322, 92, 92],  # pgate_b
+	[496, 518, 132, 76],  # wall_8_2
+	[848, 206, 132, 92],  # wall_10_2
+	[682, 4, 132, 108],  # wall_12_2
+	[822, 4, 132, 108],  # wall_12_4
+	[346, 4, 132, 124],  # wall_14_4
+	[636, 518, 100, 76],  # pal_8
+	[4, 322, 100, 92],  # pal_10
+	[4, 206, 100, 108],  # pal_12
+	[112, 206, 108, 108],  # tower_round
+	[344, 206, 104, 104],  # tower_sq
+	[228, 206, 108, 108],  # tower_timber
+	[112, 322, 92, 92],  # gate_c
+	[212, 322, 92, 92],  # gate_o
+	[312, 322, 92, 92],  # gate_b
+	[412, 322, 88, 92],  # pgate_c
+	[508, 322, 88, 92],  # pgate_o
+	[604, 322, 92, 92],  # pgate_b
 	[4, 4, 152, 194],  # bastion
-	[372, 514, 76, 60],  # house_gable_s
-	[4, 514, 92, 68],  # house_gable_m
-	[736, 422, 116, 76],  # house_gable_l
-	[104, 514, 68, 68],  # house_hip_s
-	[4, 422, 84, 84],  # house_hip_m
-	[456, 514, 140, 60],  # longhouse
-	[232, 206, 120, 104],  # house_L
-	[604, 514, 60, 60],  # hut_round
-	[820, 514, 72, 56],  # hut_thatch
-	[302, 322, 254, 88],  # church
-	[304, 4, 188, 124],  # temple
-	[964, 514, 54, 52],  # stall
-	[60, 590, 30, 36],  # well
-	[338, 514, 26, 62],  # cart
-	[236, 590, 32, 20],  # barrels
-	[180, 514, 74, 68],  # tree_broad_a
-	[396, 422, 84, 80],  # tree_broad_b
-	[564, 322, 96, 88],  # tree_broad_c
-	[900, 514, 56, 56],  # tree_pine_a
-	[672, 514, 60, 60],  # tree_pine_b
-	[200, 322, 94, 90],  # tree_palm_a
-	[668, 322, 92, 86],  # tree_palm_b
-	[98, 590, 38, 36],  # bush_a
-	[190, 590, 38, 28],  # bush_b
-	[144, 590, 38, 36],  # rock_a
-	[4, 590, 48, 46],  # rock_b
-	[262, 514, 68, 66],  # rock_c
-	[768, 322, 196, 86],  # cliff_m
-	[96, 422, 292, 84],  # cliff_l
-	[740, 514, 72, 58],  # house_flat_s
-	[860, 422, 96, 70],  # house_flat_m
+	[448, 610, 76, 60],  # house_gable_s
+	[4, 610, 92, 68],  # house_gable_m
+	[744, 518, 116, 76],  # house_gable_l
+	[104, 610, 68, 68],  # house_hip_s
+	[790, 422, 84, 84],  # house_hip_m
+	[532, 610, 140, 60],  # longhouse
+	[456, 206, 120, 104],  # house_L
+	[680, 610, 60, 60],  # hut_round
+	[896, 610, 72, 56],  # hut_thatch
+	[4, 422, 254, 88],  # church
+	[486, 4, 188, 124],  # temple
+	[184, 686, 54, 52],  # stall
+	[414, 686, 30, 36],  # well
+	[414, 610, 26, 62],  # cart
+	[622, 686, 32, 20],  # barrels
+	[180, 610, 74, 68],  # tree_broad_a
+	[304, 518, 84, 80],  # tree_broad_b
+	[266, 422, 96, 88],  # tree_broad_c
+	[4, 686, 56, 56],  # tree_pine_a
+	[748, 610, 60, 60],  # tree_pine_b
+	[704, 322, 94, 90],  # tree_palm_a
+	[486, 422, 92, 86],  # tree_palm_b
+	[452, 686, 38, 36],  # bush_a
+	[544, 686, 38, 28],  # bush_b
+	[498, 686, 38, 36],  # rock_a
+	[246, 686, 48, 46],  # rock_b
+	[262, 610, 68, 66],  # rock_c
+	[586, 422, 196, 86],  # cliff_m
+	[4, 518, 292, 84],  # cliff_l
+	[816, 610, 72, 58],  # house_flat_s
+	[868, 518, 96, 70],  # house_flat_m
+	[370, 422, 108, 88],  # tavern
+	[338, 610, 68, 66],  # shop
+	[396, 518, 92, 78],  # store
+	[584, 206, 156, 104],  # warehouse
+	[748, 206, 92, 100],  # chandler
+	[116, 686, 60, 54],  # shack
+	[68, 686, 40, 56],  # leanto
+	[164, 4, 174, 138],  # governor
+	[770, 686, 68, 12],  # lowwall
+	[662, 686, 100, 18],  # stakes
+	[590, 686, 24, 22],  # crates
+	[302, 686, 104, 40],  # pier
 ]
 
 ## [cx, cy, w, h] metres: the crop's centre relative to the piece origin, and its size.
@@ -115,6 +127,18 @@ const ANCHOR: Array = [
 	[0.0000, 0.0000, 36.5000, 10.5000],  # cliff_l
 	[0.0000, 0.1250, 9.0000, 7.2500],  # house_flat_s
 	[0.0000, 0.1250, 12.0000, 8.7500],  # house_flat_m
+	[0.0000, -0.5000, 13.5000, 11.0000],  # tavern
+	[0.0000, -0.1250, 8.5000, 8.2500],  # shop
+	[0.0000, 0.1250, 11.5000, 9.7500],  # store
+	[0.0000, -0.2500, 19.5000, 13.0000],  # warehouse
+	[0.0000, 0.5000, 11.5000, 12.5000],  # chandler
+	[0.0000, -0.1250, 7.5000, 6.7500],  # shack
+	[0.0000, 0.0000, 5.0000, 7.0000],  # leanto
+	[0.1250, -0.6250, 21.7500, 17.2500],  # governor
+	[0.0000, 0.0000, 8.5000, 1.5000],  # lowwall
+	[0.0000, 0.3750, 12.5000, 2.2500],  # stakes
+	[0.0000, -0.1250, 3.0000, 2.7500],  # crates
+	[0.0000, 0.0000, 13.0000, 5.0000],  # pier
 ]
 
 const WALL_8_2 := 0
@@ -166,3 +190,15 @@ const CLIFF_M := 45
 const CLIFF_L := 46
 const HOUSE_FLAT_S := 47
 const HOUSE_FLAT_M := 48
+const TAVERN := 49
+const SHOP := 50
+const STORE := 51
+const WAREHOUSE := 52
+const CHANDLER := 53
+const SHACK := 54
+const LEANTO := 55
+const GOVERNOR := 56
+const LOWWALL := 57
+const STAKES := 58
+const CRATES := 59
+const PIER := 60

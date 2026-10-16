@@ -953,9 +953,203 @@ PIECES = {
 }
 
 
+
+# ---------------------------------------------- West town pieces (phase W)
+# Caribbean colonial buildings for the West open towns (sim/mapgen.gd
+# _city_west): the street front is +y (the piece's outer side, image up),
+# so porches, awnings, signs and goods face the street. Scaled by the game
+# to the building's footprint.
+def slab(P, key, quad, th=0.12):
+    """A thin sloping slab over four (x, y, z) corners (a lean roof, an awning)."""
+    v = [(x, y, z) for x, y, z in quad] + [(x, y, z - th) for x, y, z in quad]
+    P.mesh(key, v, [[0, 1, 2, 3], [7, 6, 5, 4], [0, 4, 5, 1], [1, 5, 6, 2], [2, 6, 7, 3], [3, 7, 4, 0]])
+
+
+def barrel(P, x, y, r=0.45, h=0.9):
+    P.cyl("timber", x, y, 0, r, h, 10, r2=r * 0.85)
+    P.cyl("metal", x, y, h * 0.25, r * 1.03, 0.08, 10)
+    P.cyl("metal", x, y, h * 0.7, r * 1.0, 0.08, 10)
+
+
+def crate(P, x, y, z=0.0, s=1.0, rot=0.0):
+    P.box("timber", x, y, z, s, s, s * 0.9, rot)
+    P.box("timber_d", x, y, z + s * 0.9, s * 1.02, s * 0.2, 0.06, rot)
+
+
+def b_tavern(P):
+    sx, sy = 12.0, 8.6
+    by = -0.7
+    P.box("plaster", 0, by, 0, sx, sy - 1.4, 5.4)
+    P.gable("roof", 0, by, 5.4, sx, sy - 1.4, 3.0, over=0.45, ridge_axis="x")
+    P.box("stone_d", -sx * 0.32, by - 1.2, 6.4, 0.9, 0.9, 2.6)                 # chimney
+    # The gallery along the street: posts, a balcony floor, a lean roof.
+    for i in range(5):
+        P.cyl("timber_d", -sx / 2 + 0.35 + i * (sx - 0.7) / 4, sy / 2 - 0.2, 0, 0.13, 4.9, 6)
+    P.box("timber", 0, sy / 2 - 0.75, 2.7, sx, 1.5, 0.18)
+    P.box("timber_d", 0, sy / 2 - 0.08, 2.88, sx, 0.12, 0.9)                    # balcony rail
+    slab(P, "roof", [(-sx / 2 - 0.2, sy / 2 - 1.5, 5.1), (sx / 2 + 0.2, sy / 2 - 1.5, 5.1),
+                     (sx / 2 + 0.2, sy / 2 + 0.25, 4.5), (-sx / 2 - 0.2, sy / 2 + 0.25, 4.5)], 0.14)
+    # The sign on its bracket at the corner, barrels and a bench by the door.
+    P.box("timber_d", sx / 2 - 0.4, sy / 2 + 0.55, 3.4, 0.14, 1.3, 0.14)
+    P.box("trim", sx / 2 - 0.4, sy / 2 + 0.95, 2.6, 0.12, 0.9, 0.7)
+    barrel(P, -sx / 2 + 1.0, sy / 2 + 0.5)
+    barrel(P, -sx / 2 + 1.9, sy / 2 + 0.6)
+    P.box("timber", 1.0, sy / 2 + 0.45, 0, 2.2, 0.45, 0.45)
+
+
+def b_shop(P):
+    sx, sy = 8.0, 7.6
+    by = -0.9
+    P.box("plaster", 0, by, 0, sx, sy - 1.8, 3.8)
+    pb, ph = 0.45, 0.6                                                          # flat roof, parapet
+    for x0, y0, w0, h0 in ((0, by - (sy - 1.8) / 2 + pb / 2, sx, pb), (0, by + (sy - 1.8) / 2 - pb / 2, sx, pb),
+                           (-sx / 2 + pb / 2, by, pb, sy - 1.8), (sx / 2 - pb / 2, by, pb, sy - 1.8)):
+        P.box("plaster", x0, y0, 3.8, w0, h0, ph)
+    P.box("earth", 0, by, 3.8, sx - 2 * pb, sy - 1.8 - 2 * pb, 0.16)
+    P.box("trim", 0, by + (sy - 1.8) / 2 + 0.08, 3.55, sx + 0.2, 0.25, 0.25)     # cornice
+    # A striped awning over the counter, goods under it.
+    slab(P, "cloth", [(-sx / 2 + 0.3, sy / 2 - 1.85, 3.0), (sx / 2 - 0.3, sy / 2 - 1.85, 3.0),
+                      (sx / 2 - 0.3, sy / 2 + 0.25, 2.3), (-sx / 2 + 0.3, sy / 2 + 0.25, 2.3)], 0.08)
+    for sxx in (-1, 1):
+        P.cyl("timber_d", sxx * (sx / 2 - 0.45), sy / 2 + 0.1, 0, 0.09, 2.35, 6)
+    P.box("timber", 0, sy / 2 - 0.9, 0, sx - 2.0, 0.6, 0.9)                      # counter
+    P.lump("hay", -1.6, sy / 2 - 0.9, 1.0, 0.45, 0.3, 0.25, 0.1, 3, 2)
+    P.lump("leaf_c", 0.4, sy / 2 - 0.9, 1.0, 0.5, 0.3, 0.25, 0.2, 5, 2)
+    crate(P, sx / 2 - 1.1, sy / 2 - 0.3, 0, 0.7, 0.2)
+
+
+def b_store(P):
+    sx, sy = 10.0, 8.4
+    by = -0.6
+    P.box("plaster", 0, by, 0, sx, sy - 1.2, 4.0)
+    P.gable("roof", 0, by, 4.0, sx, sy - 1.2, 2.8, over=0.45, hip=0.6, ridge_axis="x")
+    slab(P, "timber", [(-sx / 2 + 1.0, sy / 2 - 1.25, 3.0), (sx / 2 - 1.0, sy / 2 - 1.25, 3.0),
+                       (sx / 2 - 1.0, sy / 2 + 0.3, 2.5), (-sx / 2 + 1.0, sy / 2 + 0.3, 2.5)], 0.1)
+    for i in range(4):
+        P.lump("hay", -3.0 + i * 1.0, sy / 2 - 0.3 + (i % 2) * 0.15, 0.35, 0.45, 0.35, 0.35, 0.1, 9 + i, 2)
+    barrel(P, 2.4, sy / 2 - 0.2)
+    barrel(P, 3.3, sy / 2 - 0.1, 0.4, 0.8)
+
+
+def b_warehouse(P):
+    sx, sy = 18.0, 11.0
+    by = -0.4
+    P.box("stone", 0, by, 0, sx, sy - 0.8, 5.2)
+    P.gable("roof", 0, by, 5.2, sx, sy - 0.8, 2.6, over=0.4, hip=0.35, ridge_axis="x")
+    for i in range(3):
+        x = -sx / 3 + i * sx / 3
+        P.box("timber_d", x, sy / 2 - 0.25, 0, 3.0, 0.3, 3.6)                    # loading doors
+        P.box("timber", x, sy / 2 - 0.05, 4.4, 0.25, 1.4, 0.25)                  # hoist beam
+    for i in range(5):
+        crate(P, -sx / 2 + 1.2 + i * 1.3, sy / 2 + 0.25, 0, 1.0, 0.1 * i)
+    crate(P, -sx / 2 + 1.8, sy / 2 + 0.2, 0.9, 0.9, 0.3)
+    barrel(P, sx / 2 - 1.2, sy / 2 + 0.3, 0.5, 1.0)
+    barrel(P, sx / 2 - 2.3, sy / 2 + 0.25, 0.5, 1.0)
+
+
+def b_chandler(P):
+    sx, sy = 11.0, 8.4
+    by = -0.6
+    P.box("timber", 0, by, 0, sx, sy - 1.2, 3.8)
+    P.gable("roof", 0, by, 3.8, sx, sy - 1.2, 3.0, over=0.5, ridge_axis="y")
+    for i in range(4):
+        P.box("timber_d", -sx / 2 + 0.1 + i * (sx - 0.2) / 3, by, 0, 0.25, sy - 1.15, 3.85)   # framing
+    for k, (x, y) in enumerate(((-3.4, sy / 2 - 0.1), (-2.2, sy / 2 + 0.1), (-1.0, sy / 2 - 0.05))):
+        P.cyl("hay", x, y, 0, 0.55, 0.35, 12, r2=0.5)                            # rope coils
+        P.cyl("hay", x, y, 0.35, 0.42, 0.25, 12, r2=0.35)
+    P.seg("metal", (1.6, sy / 2 + 0.2), (3.4, sy / 2 + 0.2), 0.25, 0.0, 0.25)   # an anchor
+    P.seg("metal", (1.6, sy / 2 - 0.4), (1.6, sy / 2 + 0.6), 0.25, 0.0, 0.25)
+    barrel(P, 4.4, sy / 2 + 0.2)
+
+
+def b_shack(P):
+    sx, sy = 6.0, 4.8
+    P.box("timber", 0, 0, 0, sx, sy, 2.4)
+    P.gable("thatch", 0, 0, 2.4, sx, sy, 1.7, over=0.6, ridge_axis="x")
+    P.cyl("timber_d", sx / 2 - 0.3, sy / 2 + 0.6, 0, 0.1, 2.2, 6)
+    P.lump("earth", -1.6, sy / 2 + 0.6, 0.2, 0.5, 0.35, 0.25, 0.2, 2, 2)
+
+
+def b_leanto(P):
+    sx, sy = 4.0, 6.0
+    slab(P, "thatch", [(-sx / 2 - 0.2, -sy / 2 - 0.2, 2.8), (sx / 2 + 0.2, -sy / 2 - 0.2, 2.0),
+                       (sx / 2 + 0.2, sy / 2 + 0.2, 2.0), (-sx / 2 - 0.2, sy / 2 + 0.2, 2.8)], 0.16)
+    for x, y, h in ((-sx / 2, -sy / 2, 2.7), (sx / 2, -sy / 2, 1.9), (sx / 2, sy / 2, 1.9), (-sx / 2, sy / 2, 2.7)):
+        P.cyl("timber_d", x, y, 0, 0.12, h, 6)
+    P.lump("hay", 0.2, 0.6, 0.4, 0.8, 0.6, 0.45, 0.12, 21, 2)
+    crate(P, -0.6, -1.4, 0, 0.8)
+
+
+def b_governor(P):
+    sx, sy, w = 20.0, 15.0, 5.0
+    h = 7.0
+    # Four wings round a patio, tiled roofs, an arcade along the front.
+    P.box("plaster", 0, sy / 2 - w / 2, 0, sx, w, h)
+    P.box("plaster", 0, -sy / 2 + w / 2, 0, sx, w, h)
+    P.box("plaster", -sx / 2 + w / 2, 0, 0, w, sy - 2 * w, h)
+    P.box("plaster", sx / 2 - w / 2, 0, 0, w, sy - 2 * w, h)
+    P.gable("roof", 0, sy / 2 - w / 2, h, sx, w, 2.2, over=0.35, hip=1.0, ridge_axis="x")
+    P.gable("roof", 0, -sy / 2 + w / 2, h, sx, w, 2.2, over=0.35, hip=1.0, ridge_axis="x")
+    P.gable("roof", -sx / 2 + w / 2, 0, h, w, sy - 2 * w + 0.4, 2.2, over=0.2, ridge_axis="y")
+    P.gable("roof", sx / 2 - w / 2, 0, h, w, sy - 2 * w + 0.4, 2.2, over=0.2, ridge_axis="y")
+    P.box("cobble", 0, 0, 0, sx - 2 * w, sy - 2 * w, 0.08)                      # the patio
+    P.cyl("stone_l", 0, 0, 0, 1.0, 0.7, 12)
+    P.cyl("water", 0, 0, 0.5, 0.75, 0.25, 12)
+    P.lump("leaf_a", 3.2, 0.6, 3.2, 1.6, 1.6, 1.3, 0.25, 31, 3)
+    for i in range(7):                                                           # the arcade
+        P.cyl("stone_l", -sx / 2 + 1.5 + i * (sx - 3.0) / 6, sy / 2 + 0.9, 0, 0.3, 3.6, 8)
+    P.box("stone_l", 0, sy / 2 + 0.9, 3.6, sx - 2.0, 1.0, 0.35)
+    P.cyl("timber_d", sx / 2 - 1.2, sy / 2 - 1.2, h, 0.12, 5.5, 6)              # flagstaff
+    P.box("trim", sx / 2 - 1.2 + 1.0, sy / 2 - 1.2, h + 4.2, 2.0, 0.08, 1.3)
+
+
+def b_lowwall(P):
+    P.box("stone_d", 0, 0, 0, 8.0, 0.7, 1.15)
+    P.box("stone_l", 0, 0, 1.15, 8.1, 0.85, 0.16)
+
+
+def b_stakes(P):
+    r = rng(77)
+    P.box("earth", 0, -0.3, -0.01, 12.0, 1.8, 0.35)
+    for i in range(int(12.0 / 0.42)):
+        x = -6.0 + 0.21 + i * 0.42
+        y = 0.25 + r.uniform(-0.12, 0.12)
+        h = 2.3 + r.uniform(-0.25, 0.25)
+        P.cyl("timber", x, y, 0.2, 0.2, h, 7, r2=0.16)
+        P.cyl("timber", x, y, 0.2 + h, 0.16, 0.45, 7, r2=0.02)
+    P.box("timber_d", 0, -0.05, 1.5, 12.0, 0.14, 0.2)                           # binding rail
+
+
+def b_crates(P):
+    crate(P, -0.6, -0.4, 0, 1.1, 0.1)
+    crate(P, 0.6, -0.3, 0, 1.0, -0.15)
+    crate(P, 0.0, 0.7, 0, 1.0, 0.4)
+    crate(P, -0.4, -0.3, 1.0, 0.9, 0.25)
+
+
+def b_pier(P):
+    L, W = 12.0, 4.4
+    for i in range(int(L / 2.0) + 1):
+        x = -L / 2 + i * 2.0
+        for sy in (-1, 1):
+            P.cyl("timber_d", x, sy * (W / 2 - 0.2), -0.6, 0.22, 1.4, 8)
+    n = int(L / 0.55)
+    for i in range(n):
+        x = -L / 2 + 0.275 + i * L / n
+        P.box("timber" if i % 3 else "timber_d", x, 0, 0.6, 0.5, W, 0.16)
+    P.box("timber_d", 0, W / 2 - 0.12, 0.76, L, 0.2, 0.2)
+    P.box("timber_d", 0, -W / 2 + 0.12, 0.76, L, 0.2, 0.2)
+
+
+PIECES_W = {
+    "tavern": (16, b_tavern), "shop": (12, b_shop), "store": (14, b_store), "warehouse": (24, b_warehouse),
+    "chandler": (14, b_chandler), "shack": (10, b_shack), "leanto": (10, b_leanto), "governor": (26, b_governor),
+    "lowwall": (10, b_lowwall), "stakes": (14, b_stakes), "crates": (6, b_crates), "pier": (14, b_pier),
+}
+
 # ------------------------------------------------------------------ render
 def render(name, ppm, tilt, out):
-    S, fn = PIECES[name]
+    S, fn = PIECES[name] if name in PIECES else PIECES_W[name]
     sc = reset()
     P = Piece()
     fn(P)
@@ -993,7 +1187,7 @@ def render(name, ppm, tilt, out):
 
 def main():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
-    a = {"pieces": list(PIECES), "ppm": 8.0, "tilt": 0.0, "out": os.path.join(HERE, "_frames")}
+    a = {"pieces": list(PIECES) + list(PIECES_W), "ppm": 8.0, "tilt": 0.0, "out": os.path.join(HERE, "_frames")}
     i = 0
     while i < len(argv):
         k = argv[i]

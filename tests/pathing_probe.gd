@@ -2,7 +2,7 @@ extends SceneTree
 ## Pathing probe (docs/PATHING_SPEC.md, phase 0): AI vs AI battles on the
 ## settlement and landform maps, measuring how men move.
 ##   godot --headless --script res://tests/pathing_probe.gd [-- --ids=siege_town,siege_city]
-##       [--ticks=6000] [--seed=7] [--phase=A] [--quick]
+##       [--ticks=6000] [--seed=7] [--phase=A] [--quick] [--west (the West towns only)]
 ## Metrics:
 ## - Jitter: for each man, in each 2 s window, path = the sum of his steps
 ##   and net = his displacement; a man-window jitters when path >= 3 m and
@@ -28,7 +28,9 @@ const MapGen := preload("res://sim/mapgen.gd")
 const M := 1024
 const W := 20  # jitter window (ticks)
 const SCENS := ["siege_village", "siege_town", "siege_city", "siege_hill", "siege_castrum", "siege_polis",
-	"siege_punic", "siege_oppidum", "battle_2000", "bench_4000_hills"]
+	"siege_punic", "siege_oppidum", "battle_2000", "bench_4000_hills",
+	# West open towns (phase W): villages, towns and cities, coasts and inland, flat to ridge country.
+	"west_village", "west_town", "west_city", "west_inland", "west_port", "west_hill_village"]
 
 var cats := {}      # category -> [man_windows, jitter, path_m, net_m, reversals, steps] (all runs)
 var rout_s := 0     # routing unit-seconds (all runs)
@@ -60,6 +62,8 @@ func _init() -> void:
 			phase = a.get_slice("=", 1)
 		elif a == "--quick":
 			ids = ["siege_town", "siege_city", "siege_castrum"]
+		elif a == "--west":
+			ids = ["west_village", "west_town", "west_city", "west_inland", "west_port", "west_hill_village"]
 	for id in ids:
 		_run(id, ticks, sd)
 	var ok := _summary(phase)

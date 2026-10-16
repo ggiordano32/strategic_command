@@ -320,6 +320,11 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=west" in OS.get_cmdline_user_args():
+		_check_west()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=guns" in OS.get_cmdline_user_args():
 		_check_guns()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -365,6 +370,7 @@ func _init() -> void:
 	_check_guns()
 	_check_cover()
 	_check_street()
+	_check_west()
 	_check_sea()
 	if "--only=equipment" in OS.get_cmdline_user_args():
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -418,6 +424,139 @@ func _init() -> void:
 		_check_coverage(scen, a["stats"])
 	print("RESULT: ", "PASS" if _ok else "FAIL")
 	quit(0 if _ok else 1)
+
+
+## West open towns (pathing phase W; "--only=west", also in the full run;
+## docs/DESIGN.md "West open towns"): each of west_village, west_port,
+## west_inland, west_city built twice is the same map (terrain and state
+## hash, every cell); the town covers its share of the field (V_URBAN), has
+## its street mouths, buildings of several kinds with heights and
+## materials, props and yard walls, and a street graph that joins the plaza
+## to every mouth; west_town defended from the bottom is the same town
+## turned round; west_town AI against AI is identical on repeat (1,500
+## ticks) and across snapshot / restore at 300 and 900 (and the caught
+## routers' clock, u_gu, is hashed there).
+func _check_west() -> void:
+	var want_cov := {"west_village": 30, "west_port": 40, "west_inland": 36, "west_city": 40}
+	var want_n := {"west_village": 70, "west_port": 200, "west_inland": 150, "west_city": 280}
+	for id in ["west_village", "west_port", "west_inland", "west_city"]:
+		var s1 := BattleSim.new()
+		s1.setup(Scenarios.make(id), 77)
+		MapGen._cache_key = ""
+		var s2 := BattleSim.new()
+		s2.setup(Scenarios.make(id), 77)
+		if s1.ter_hash != s2.ter_hash or s1.state_hash() != s2.state_hash() or s1.obs != s2.obs or s1.veg != s2.veg:
+			_fail("%s: same parameters built different maps" % id)
+			continue
+		var lay: Dictionary = s1.map_info["city"]
+		var urb := 0
+		for v in s1.veg:
+			if (v & MapGen.V_URBAN) != 0:
+				urb += 1
+		var cov := 100 * urb / maxi(s1.veg.size(), 1)
+		var kinds := {}
+		var bad_rec := 0
+		for b in lay["buildings"]:
+			var a: Array = b
+			kinds[int(a[4])] = 1
+			if a.size() < 17 or int(a[15]) <= 0:
+				bad_rec += 1
+		var mouths: Array = lay["mouths"]
+		# The street graph: the plaza's node reaches every mouth's nearest node.
+		var nav: Dictionary = lay["nav"]
+		var nx: PackedInt32Array = nav["x"]
+		var ny: PackedInt32Array = nav["y"]
+		var e0: PackedInt32Array = nav["e0"]
+		var to: PackedInt32Array = nav["to"]
+		var seen := PackedByteArray()
+		seen.resize(nx.size())
+		seen.fill(0)
+		seen[0] = 1
+		var stack: Array[int] = [0]
+		while not stack.is_empty():
+			var v: int = stack.pop_back()
+			for e in range(e0[v], e0[v + 1]):
+				if seen[to[e]] == 0:
+					seen[to[e]] = 1
+					stack.append(to[e])
+		var lost := 0
+		for mo in mouths:
+			var best := -1
+			var bd := 1 << 30
+			for k in nx.size():
+				var d := absi(nx[k] - int(mo[0])) + absi(ny[k] - int(mo[1]))
+				if d < bd:
+					bd = d
+					best = k
+			if best < 0 or seen[best] == 0:
+				lost += 1
+		var nb := (lay["buildings"] as Array).size()
+		if cov < int(want_cov[id]) or mouths.size() < 4 or kinds.size() < 6 or bad_rec > 0 or lost > 0 \
+				or (lay["props"] as Array).is_empty() or nb < int(want_n[id]):
+			_fail("%s: covers %d %% (want %d), %d mouths, %d buildings of %d kinds (%d records short), %d props, %d mouths off the graph" % [
+				id, cov, int(want_cov[id]), mouths.size(), nb, kinds.size(), bad_rec, (lay["props"] as Array).size(), lost])
+		else:
+			print("PASS %s: same map twice; covers %d %% of the field, %d buildings of %d kinds, %d props, %d yard walls, %d mouths joined to the plaza" % [
+				id, cov, nb, kinds.size(), (lay["props"] as Array).size(), (lay["lowwalls"] as Array).size(), mouths.size()])
+	# Defended from the bottom: the same town turned round.
+	var att := [[UT.index_of("musketeers"), 100]]
+	var dfn := [[UT.index_of("musketeers"), 80]]
+	var city := {"seed": 12, "level": 1, "walls": 1, "bld": [1, 2, 4], "plan": MapGen.CUL_LATIN, "coast": 1,
+		"founder": MapGen.CUL_LATIN, "west": 1}
+	var terr := {"kind": Terrain.K_ROLLING, "seed": 87, "forest": 40, "ground": MapGen.PAL_GREEN}
+	var ta := BattleSim.new()
+	ta.setup(Scenarios.settlement(city, terr, att, dfn, 1, [])["scenario"], 77)
+	var tb := BattleSim.new()
+	tb.setup(Scenarios.settlement(city, terr, att, dfn, 0, [])["scenario"], 77)
+	var flip_bad := 0
+	if ta.ob_w != tb.ob_w or ta.ob_h != tb.ob_h:
+		flip_bad = 1
+	else:
+		var n: int = ta.obs.size()
+		for k in n:
+			if ta.obs[k] != tb.obs[n - 1 - k]:
+				flip_bad += 1
+	if flip_bad > 0:
+		_fail("west town defended from the bottom is not the same town turned round (%d cells)" % flip_bad)
+	else:
+		print("PASS west town: defended from the bottom, the same town turned round")
+	# AI against AI: identical on repeat, and across snapshot / restore.
+	var hs: Array = []
+	for rep in 2:
+		var sim := BattleSim.new()
+		sim.setup(Scenarios.make("west_town"), 4242)
+		var h := PackedInt64Array()
+		while sim.tick < 1500 and sim.ended == 0:
+			sim.step()
+			if sim.tick % 50 == 0:
+				h.append(sim.state_hash())
+		hs.append(h)
+	if hs[0] != hs[1]:
+		_fail("west_town: same seed diverged")
+	else:
+		print("PASS west_town: 1500 ticks identical on repeat, final hash %08x" % (hs[0] as PackedInt64Array)[(hs[0] as PackedInt64Array).size() - 1])
+	var sim2 := BattleSim.new()
+	sim2.setup(Scenarios.make("west_town"), 4242)
+	var bad := 0
+	var checks := 0
+	for stop in [300, 900]:
+		while sim2.tick < stop:
+			sim2.step()
+		var copy := BattleSim.new()
+		copy.setup(Scenarios.make("west_town"), 4242)
+		if not copy.restore(sim2.snapshot()):
+			_fail("west_town: restore refused at tick %d" % stop)
+			return
+		for t in 120:
+			sim2.step()
+			copy.step()
+			checks += 1
+			if sim2.state_hash() != copy.state_hash():
+				bad += 1
+	if bad > 0:
+		_fail("west_town: restored copies diverged (%d of %d ticks)" % [bad, checks])
+	else:
+		print("PASS west_town: snapshot / restore at 300 and 900 runs on identically (%d ticks checked); wt_on %d" % [checks, sim2.wt_on])
 
 
 ## Sea battles (N3a; tests/sea_checks.gd): the sea scenarios identical on

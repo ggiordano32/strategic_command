@@ -343,6 +343,9 @@ static func build(st: Dictionary, solo: bool = false) -> Dictionary:
 		if int(mp.get("plan", MapGen.PLAN_RING)) != MapGen.PLAN_RING:
 			city["plan"] = int(mp["plan"])
 			city["coast"] = int(mp.get("coast", 0))
+		if pack_of(st) == "west":
+			city["west"] = 1  # (an open Caribbean town: MapGen.is_west, phase W)
+			city["coast"] = int(mp.get("coast", 0))
 		var ground := int(mp.get("ground", MapGen.PAL_DRY))
 		var terr := {"kind": int(mp.get("terrain", Terrain.K_ROLLING)), "seed": int(mp.get("mseed", 1)) * 7 + 3,
 			"forest": clampi(int(mp.get("woods", 15)), 0, 100), "ground": ground}

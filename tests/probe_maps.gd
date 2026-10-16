@@ -86,7 +86,9 @@ func _png(sim, path: String) -> void:
 				c = Color(0.3, 0.3, 0.3)
 			elif k == 3:
 				c = Color(0.5, 0.5, 0.5)
-			elif k >= 8:
+			elif k == 30 or k == 31:
+				c = Color(0.2, 0.2, 0.2)  # (rock, cliff)
+			elif k >= 8 and k - 8 < sim.n_gates:
 				var st: int = sim.g_state[k - 8]
 				c = Color(0.9, 0.1, 0.1) if st == 1 else (Color(0.9, 0.9, 0.1) if st == 2 else Color(0.2, 0.9, 0.2))
 			img.set_pixel(x, y, c)

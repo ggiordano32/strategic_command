@@ -105,7 +105,22 @@ static func build(terrain: Dictionary, battle_seed: int, field_w: int, field_h: 
 		fr = MapGen.city_frame(city, field_w / M, field_h / M)
 		cp = MapGen.city_params(city)
 		var rmax := fr.z * 112 / 100
-		if int(cp["plan"]) == MapGen.PLAN_RING:
+		if MapGen.is_west(cp):
+			# A West open town (phase W): the country's own relief round it
+			# (hills and ridges rolling here; the rise comes below), gentled
+			# over the town so it follows the land.
+			outl = MapGen.west_outline(cp, kind, field_w / M)
+			var wk := kind
+			if wk == K_HILL or wk == K_RIDGE:
+				wk = K_ROLLING
+			elif wk == K_CUSTOM:
+				wk = K_FLAT
+			for f in _features(wk, rng, 600, 600, relief, scale):
+				var aw: Array = (f as Array).duplicate()
+				aw[1] = int(aw[1]) + fr.x - 300
+				aw[2] = int(aw[2]) + fr.y - 300
+				feats.append(aw)
+		elif int(cp["plan"]) == MapGen.PLAN_RING:
 			# The original ring: cities on hill or ridge country sit on a plateau.
 			if kind != K_FLAT and kind != K_CUSTOM:
 				for f in _features(kind, rng, 600, 600, relief, scale):
@@ -170,7 +185,9 @@ static func build(terrain: Dictionary, battle_seed: int, field_w: int, field_h: 
 			F_MESA:
 				_mesa(h, nx, ny, x, y, r, amp, ln)
 	if not city.is_empty():
-		if outl.is_empty():
+		if MapGen.is_west(cp):
+			_west_ground(h, nx, ny, cp, kind, outl, rng)
+		elif outl.is_empty():
 			_level_city(h, nx, ny, fr, 250)
 		else:
 			_city_ground(h, nx, ny, fr, cp, site, kind, outl, rng)
@@ -412,6 +429,70 @@ static func _city_ground(h: PackedInt32Array, nx: int, ny: int, fr: Vector3i, cp
 		_bump(h, nx, ny, cit.x * M, cit.y * M, cit.z * 26 / 10 * M, kh * M)
 	if int(cp["coast"]) != 0:
 		var shore: PackedInt32Array = outl["cp"]
+		var lo := 1 << 40
+		var sea := PackedByteArray()
+		sea.resize(nx * ny)
+		sea.fill(0)
+		for i in nx:
+			var sy := MapGen.shore_y(shore, i * 4)
+			for j in ny:
+				if j * 4 < sy - 2:
+					sea[j * nx + i] = 1
+				else:
+					lo = mini(lo, h[j * nx + i])
+		if lo < (1 << 40):
+			for k in nx * ny:
+				if sea[k] != 0:
+					h[k] = lo - 3 * M / 2
+
+
+## A West open town's ground (phase W): the relief over the town's band
+## kept at 60 % round the plaza's height (so streets and lots follow it,
+## gently), the plaza level, on hill or ridge country a rise from the shore
+## up to the landward edge (the town climbs from the harbour; the attackers
+## come down to it), the fort on its knoll, the sea below the shore.
+static func _west_ground(h: PackedInt32Array, nx: int, ny: int, cp: Dictionary, kind: int, o: Dictionary,
+		rng: PackedInt32Array) -> void:
+	var cx: int = int(o["cx"]) * M
+	var hw: int = int(o["hw"]) * M
+	var top: int = int(o["top"]) * M
+	var bot: int = int(o["bot"]) * M
+	var px: int = int(o["px"]) * M
+	var py: int = int(o["py"]) * M
+	var hs: int = int(o["hs"]) * M
+	var href := h[clampi((py + CELL / 2) / CELL, 0, ny - 1) * nx + clampi((px + CELL / 2) / CELL, 0, nx - 1)]
+	var band := 30 * M
+	for j in ny:
+		var y := j * CELL
+		var dy := maxi(maxi(top - 20 * M - y, y - bot - 20 * M), 0)
+		for i in nx:
+			var x := i * CELL
+			var dx := maxi(absi(x - cx) - hw - 20 * M, 0)
+			var d := maxi(dx, dy)
+			if d >= band:
+				continue
+			var k := j * nx + i
+			var damped := href + (h[k] - href) * 600 / 1000
+			var t := d * 1024 / band
+			h[k] = (damped * (1024 - t) + h[k] * t) / 1024
+			# The plaza level (blending out over 12 m).
+			var pd := maxi(absi(x - px), absi(y - py)) - hs - 4 * M
+			if pd < 12 * M:
+				var u := clampi(pd * 1024 / (12 * M), 0, 1024)
+				h[k] = (href * (1024 - u) + h[k] * u) / 1024
+	var amp := 0
+	if kind == K_HILL:
+		amp = _rr(rng, 8, 12)
+	elif kind == K_RIDGE:
+		amp = _rr(rng, 11, 16)
+	if amp > 0:
+		var mid := (top + bot) / 2
+		_ramp(h, nx, ny, cx, mid, (bot - top) * 6 / 10, amp * M, 256)
+	var fort: Dictionary = o["fort"]
+	if not fort.is_empty():
+		_bump(h, nx, ny, int(fort["x"]) * M, int(fort["y"]) * M, (int(fort["h"]) * 3) * M, _rr(rng, 3, 6) * M)
+	if int(cp["coast"]) != 0:
+		var shore: PackedInt32Array = o["cp"]
 		var lo := 1 << 40
 		var sea := PackedByteArray()
 		sea.resize(nx * ny)

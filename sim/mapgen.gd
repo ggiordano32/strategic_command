@@ -282,6 +282,8 @@ static func city_params(c: Dictionary) -> Dictionary:
 		"bstyle": bstyle, "hstyle": hstyle}
 	if c.has("towers"):
 		out["towers"] = int(c["towers"])  # (read by the sim: 0 = no tower engines; not the map's)
+	if int(c.get("west", 0)) != 0:
+		out["west"] = 1  # (the West pack: an open town, phase W; is_west)
 	return out
 
 
@@ -317,6 +319,10 @@ static func describe(plan: int, level: int, kind: int, seed_v: int, coast: int) 
 ## Canonical centre and radius of a city on a field w_m x h_m metres.
 static func city_frame(c: Dictionary, w_m: int, _h_m: int) -> Vector3i:
 	var p := city_params(c)
+	if is_west(p):
+		# (A West open town: the band's middle and half its depth.)
+		var lv: int = p["level"]
+		return Vector3i((w_m / 2) & ~1, W_TOP + W_D[lv] / 2, W_D[lv] / 2)
 	var r0: int = R_LEVEL[int(p["level"])]
 	var cx := (w_m / 2) & ~1
 	var cy := (CITY_TOP + r0 * 112 / 100) & ~1
@@ -327,6 +333,13 @@ static func city_frame(c: Dictionary, w_m: int, _h_m: int) -> Vector3i:
 ## attackers' deployment depth and frontage (metres).
 static func city_field(c: Dictionary, att_width_m: int, att_depth_m: int) -> Vector2i:
 	var p := city_params(c)
+	if is_west(p):
+		# A West open town: the band the field's width across (the town is
+		# the same whatever the armies), the approach and the attackers below.
+		var lv: int = p["level"]
+		var ww := (maxi(W_FW[lv], att_width_m + 80) + 3) / 4 * 4
+		var hh := (W_TOP + W_D[lv] + W_APPROACH + att_depth_m + 40 + 3) / 4 * 4
+		return Vector2i(ww, hh)
 	var r0: int = R_LEVEL[int(p["level"])]
 	var rmax := r0 * 112 / 100
 	var w := maxi(2 * rmax + 2 * 150, att_width_m + 160)
@@ -419,8 +432,12 @@ static func build(terr: Dictionary, battle_seed: int, w_m: int, h_m: int, hgt: D
 	var land := {}
 	var pal := int(terr.get("ground", PAL_PLAIN))
 	if has_city:
-		city = _city(city_params(terr["city"]), int(terr.get("kind", K_FLAT)), w_m, h_m, out, excl,
-			hgt if land_ok else {}, pal)
+		var cpar := city_params(terr["city"])
+		if is_west(cpar):
+			city = _city_west(cpar, int(terr.get("kind", K_FLAT)), w_m, h_m, out, excl, hgt, land_ok, pal)
+		else:
+			city = _city(cpar, int(terr.get("kind", K_FLAT)), w_m, h_m, out, excl,
+				hgt if land_ok else {}, pal)
 		land = out.get("land_raw", {})
 		out.erase("land_raw")
 	else:
@@ -3364,6 +3381,8 @@ static func _flip_all(out: Dictionary, hgt: Dictionary, w_m: int, h_m: int) -> v
 			fpts.call(fl, 0, 1)
 	lay["att_x"] = fx.call(int(lay["att_x"]))
 	lay["att_y"] = fy.call(int(lay["att_y"]))
+	if int(lay.get("west", 0)) != 0:
+		_w_flip(lay, w_m, h_m)
 	var nav: Dictionary = lay["nav"]
 	var nxs: PackedInt32Array = nav["x"]
 	var nys: PackedInt32Array = nav["y"]
@@ -3372,3 +3391,1427 @@ static func _flip_all(out: Dictionary, hgt: Dictionary, w_m: int, h_m: int) -> v
 		nys[k] = fy.call(nys[k])
 	nav["x"] = nxs
 	nav["y"] = nys
+
+
+# ------------------------------------------------ West open towns (phase W) --
+# docs/DESIGN.md "West open towns (as built, pathing phase W)";
+# docs/PATHING_SPEC.md section 7 and addendum 2. A West (Caribbean) European
+# settlement with walls 0-2 (city key "west": 1; natives keep the oppidum,
+# walls 3 the walled plans) is an open town over 30-55 % of the battle map: a
+# band along the shore (or the top of the field inland) the field's width
+# across, a waterfront quay, a winding high street through a plaza with the
+# church and the governor's house, cross streets down to the landward edge
+# (their ends are the street mouths), lanes between them; buildings by kind
+# front the roads on irregular lots (uneven setbacks and gaps, small turns,
+# wings, lean-tos, yard walls), denser at the quay and the plaza, thinning to
+# shacks and plots at the edge; roads bend round rocks, cliffs, big trees and
+# the fort, and along the contours; lots step with the slope. Walls 1: a
+# harbour fort (a solid bastioned work beside the town on the shore, or on
+# the high back corner inland); walls 2: the fort and a stake palisade along
+# the landward edge (gaps at the roads). Cover by material: each building
+# record carries its height (dm) and material (stone stops balls, timber
+# lets some through: sim/battle_sim.gd), props (barrels, crates, carts) and
+# low yard walls are small rock cells with their height. Everything from the
+# seed with integer maths in a fixed order (the map is sim input).
+
+const B_TAVERN := 7
+const B_SHOP := 8
+const B_STORE := 9       # food store, bodega
+const B_WAREHOUSE := 10
+const B_CHANDLER := 11
+const B_GOVERNOR := 12
+const B_SHACK := 13
+const B_LEANTO := 14
+const B_FORT := 15       # the harbour fort's core and bastions (solid)
+const B_STAKES := 16     # a run of the stake palisade
+const MAT_STONE := 0
+const MAT_TIMBER := 1
+const P_BARRELS := 0     # props (lay "props": [kind, x, y, angle, height dm])
+const P_CRATES := 1
+const P_CART := 2
+const P_WELL := 3
+const W_HW: Array[int] = [190, 245, 300]     # town half width by level (m)
+const W_D: Array[int] = [150, 205, 255]      # band depth: top (shore) to the landward edge
+const W_FW: Array[int] = [440, 560, 680]     # field width at least
+const W_TOP := 48                            # canonical y of the town's top (about the shore)
+const W_APPROACH := 95                       # landward edge to the attackers' front
+const W_MAIN: Array[int] = [8, 10, 12]       # high street width
+const W_QUAY: Array[int] = [12, 14, 16]      # quay width
+const W_BACK := 7                            # an inland town's back street
+const W_LANE := 6
+const W_PLAZA: Array[int] = [18, 23, 28]     # plaza half size (a 36-56 m square)
+const W_STEP := 10                           # road trace step (m)
+const W_EDGE := 34                           # street graph: edges up to this long (the nodes are dense)
+const W_PAD := 3                             # m kept between buildings (sides and back): no slivers
+const W_SLOPE := 3                           # m of height across a lot at most
+const W_STYLE := 4                           # the view's colonial style
+
+
+## A West European open town (phase W) rather than a walled plan.
+static func is_west(p: Dictionary) -> bool:
+	return int(p.get("west", 0)) != 0 and int(p.get("walls", 0)) < 3 and int(p.get("founder", 0)) != CUL_CELTIC
+
+
+## A West town's shore (MapGen.coast_params' layout, read by shore_y): along
+## the town's top, gently sloping, bending beyond it.
+static func west_coast(p: Dictionary, w_m: int) -> PackedInt32Array:
+	var lv: int = p["level"]
+	var rng := _rng(int(p["seed"]) * 13 + 211)
+	var cx := (w_m / 2) & ~1
+	return PackedInt32Array([W_TOP - 2, _rr(rng, -25, 25), cx, W_HW[lv] + 30, _rr(rng, -300, 300),
+		_rr(rng, 3, 7), _r(rng, 1024), _rr(rng, 2, 4), _r(rng, 1024), W_TOP + W_D[lv] / 2])
+
+
+## A West town's outline and fixed parameters (canonical frame), from the
+## seed alone in a fixed order (shared with sim/terrain.gd: the plaza's and
+## the fort's ground). Returns {cx, cy, r0, hw, dep, top, bot, cp (shore,
+## coast only), the landward edge's waves, plaza px py hs, the high street's
+## rail, fort {x, y, h, b, dir} (walls >= 1), vx vy (the outline), site}.
+static func west_outline(p: Dictionary, kind: int, w_m: int) -> Dictionary:
+	var level: int = p["level"]
+	var walls: int = p["walls"]
+	var coast: int = p["coast"]
+	var sd: int = p["seed"]
+	var rng := _rng(sd * 17 + 9)
+	var cx := (w_m / 2) & ~1
+	var hw: int = W_HW[level]
+	var dep: int = W_D[level]
+	var top := W_TOP
+	var bot := top + dep
+	var cp := west_coast(p, w_m) if coast != 0 else PackedInt32Array()
+	var o := {"cx": cx, "cy": top + dep / 2, "r0": dep / 2, "hw": hw, "dep": dep, "top": top, "bot": bot,
+		"cp": cp, "coast": coast, "site": site_of(kind, sd), "level": level}
+	o["ba1"] = _rr(rng, 6, 14)
+	o["bl1"] = _rr(rng, 140, 260)
+	o["bp1"] = _r(rng, 1024)
+	o["ba2"] = _rr(rng, 3, 7)
+	o["bl2"] = _rr(rng, 50, 90)
+	o["bp2"] = _r(rng, 1024)
+	o["lean"] = _rr(rng, -40, 40)
+	var hs: int = W_PLAZA[level]
+	o["hs"] = hs
+	o["px"] = cx + _rr(rng, -hw / 5, hw / 5)
+	o["py"] = top + dep * (36 if coast != 0 else 44) / 100 + _rr(rng, -8, 8)
+	o["ra1"] = _rr(rng, 9, 18)
+	o["rl1"] = _rr(rng, 200, 320)
+	o["rp1"] = _r(rng, 1024)
+	o["ra2"] = _rr(rng, 3, 7)
+	o["rl2"] = _rr(rng, 70, 120)
+	o["rp2"] = _r(rng, 1024)
+	var fside := 1 if _r(rng, 2) == 0 else -1
+	var fh: int = [11, 14, 17][level]
+	var fjit := _rr(rng, -6, 6)
+	o["fort"] = {}
+	if walls >= 1:
+		var fx := cx + fside * (hw - fh - 22) + fjit
+		var fy := top + fh + 12
+		var fdir := 0
+		if coast != 0:
+			fdir = FM.atan2_a(shore_y(cp, fx + 20) - shore_y(cp, fx - 20), 40)
+			fy = shore_y(cp, fx) + fh - 3  # (its sea face just in the water)
+		o["fort"] = {"x": fx, "y": fy, "h": fh, "b": fh * 60 / 100, "dir": fdir, "side": fside}
+	# The outline: the top (the shore, or the top), the sides, the landward edge.
+	var vx := PackedInt32Array()
+	var vy := PackedInt32Array()
+	var x := cx - hw
+	while x < cx + hw:
+		vx.append(x)
+		vy.append(_w_top(o, x))
+		x += 30
+	vx.append(cx + hw)
+	vy.append(_w_top(o, cx + hw))
+	x = cx + hw
+	while x > cx - hw:
+		vx.append(x)
+		vy.append(_w_bot(o, x))
+		x -= 24
+	vx.append(cx - hw)
+	vy.append(_w_bot(o, cx - hw))
+	o["vx"] = vx
+	o["vy"] = vy
+	return o
+
+
+## The town's top edge at x (the shore, or W_TOP inland).
+static func _w_top(o: Dictionary, x: int) -> int:
+	if int(o["coast"]) != 0:
+		return shore_y(o["cp"], x)
+	return int(o["top"])
+
+
+## The landward edge at x: two waves and a lean, rounded at the ends.
+static func _w_bot(o: Dictionary, x: int) -> int:
+	var cx: int = o["cx"]
+	var d := x - cx
+	var y: int = int(o["bot"]) + int(o["ba1"]) * FM.sin_a((d * 1024 / int(o["bl1"]) + int(o["bp1"])) & 1023) / FM.TRIG_ONE \
+		+ int(o["ba2"]) * FM.sin_a((d * 1024 / int(o["bl2"]) + int(o["bp2"])) & 1023) / FM.TRIG_ONE \
+		+ int(o["lean"]) * d / 1000
+	var ex := absi(d) - (int(o["hw"]) - 44)
+	if ex > 0:
+		y -= ex * ex / 36
+	return maxi(y, _w_top(o, x) + 30)
+
+
+## The high street's line (y at x): through the plaza's middle, winding.
+static func _w_rail(o: Dictionary, x: int) -> int:
+	var px: int = o["px"]
+	var f := func(xx: int) -> int:
+		return int(o["ra1"]) * FM.sin_a((xx * 1024 / int(o["rl1"]) + int(o["rp1"])) & 1023) / FM.TRIG_ONE \
+			+ int(o["ra2"]) * FM.sin_a((xx * 1024 / int(o["rl2"]) + int(o["rp2"])) & 1023) / FM.TRIG_ONE
+	return int(o["py"]) + f.call(x) - f.call(px)
+
+
+## Ground height (sim units) at (x, y) m: the nearest 4 m node (0 without).
+static func _w_h(hgt: Dictionary, x: int, y: int) -> int:
+	if hgt.is_empty() or int(hgt.get("on", 0)) == 0:
+		return 0
+	var nx := int(hgt["nx"])
+	var ny := int(hgt["ny"])
+	var h: PackedInt32Array = hgt["h"]
+	return h[clampi((y + 2) / 4, 0, ny - 1) * nx + clampi((x + 2) / 4, 0, nx - 1)]
+
+
+## No blocked cell (blk) within r m of (x, y), and well inside the field
+## (`sat`: blk summed, (ow + 1) x (oh + 1); a box with none is free at once).
+static func _w_free(blk: PackedByteArray, ow: int, oh: int, x: int, y: int, r: int,
+		sat: PackedInt32Array = PackedInt32Array()) -> bool:
+	if x < 4 or y < 4 or x > ow * 2 - 4 or y > oh * 2 - 4:
+		return false
+	if not sat.is_empty():
+		var i0 := maxi((x - r) / 2, 0)
+		var j0 := maxi((y - r) / 2, 0)
+		var i1 := mini((x + r) / 2 + 1, ow)
+		var j1 := mini((y + r) / 2 + 1, oh)
+		var w1 := ow + 1
+		if sat[j1 * w1 + i1] - sat[j0 * w1 + i1] - sat[j1 * w1 + i0] + sat[j0 * w1 + i0] == 0:
+			return true
+	var r2 := r * r * 10000
+	for j in range(maxi((y - r) / 2, 0), mini((y + r) / 2 + 1, oh)):
+		for i in range(maxi((x - r) / 2, 0), mini((x + r) / 2 + 1, ow)):
+			var dx := i * 200 + 100 - x * 100
+			var dy := j * 200 + 100 - y * 100
+			if dx * dx + dy * dy <= r2 and blk[j * ow + i] != 0:
+				return false
+	return true
+
+
+## A road from the last point of `pts` (x, y pairs, m) toward (gx, gy),
+## W_STEP a step, bending round what `blk` marks (a free disc of hw + 1 m
+## ahead), at most 96 angle units off the goal's bearing in one go and `wig`
+## of random bend a step; with heights (`lvl` 1) a step costs its rise too,
+## so the road keeps along the contours. Stops when nothing ahead is free.
+static func _w_trace(wc: Dictionary, pts: PackedInt32Array, gx: int, gy: int, hw: int, lvl: int, wig: int) -> void:
+	var blk: PackedByteArray = wc["blk"]
+	var ow: int = wc["ow"]
+	var oh: int = wc["oh"]
+	var hgt: Dictionary = wc["hgt"]
+	var rng: PackedInt32Array = wc["rng"]
+	var sat: PackedInt32Array = wc.get("bsat", PackedInt32Array())
+	var n := pts.size()
+	var px := pts[n - 2]
+	var py := pts[n - 1]
+	var head := FM.atan2_a(gy - py, gx - px)
+	if n >= 4:
+		head = FM.atan2_a(py - pts[n - 3], px - pts[n - 4])
+	var steps := FM.approx_len(gx - px, gy - py) * 2 / W_STEP + 4
+	for it in steps:
+		var dx := gx - px
+		var dy := gy - py
+		if FM.approx_len(dx, dy) <= W_STEP + 2:
+			if _w_free(blk, ow, oh, gx, gy, hw + 1, sat):
+				pts.append(gx)
+				pts.append(gy)
+			return
+		var want := FM.atan2_a(dy, dx)
+		if wig > 0:
+			want = (want + _rr(rng, -wig, wig)) & 1023
+		want = (head + clampi(FM.angle_diff(head, want), -96, 96)) & 1023
+		var best := -1
+		var best_s := 1 << 30
+		var h0 := _w_h(hgt, px, py) if lvl != 0 else 0
+		for q in 7:
+			var off: int = [0, 40, -40, 90, -90, 150, -150][q]
+			var a := (want + off) & 1023
+			var qx := px + FM.cos_a(a) * W_STEP / FM.TRIG_ONE
+			var qy := py + FM.sin_a(a) * W_STEP / FM.TRIG_ONE
+			if not _w_free(blk, ow, oh, qx, qy, hw + 1, sat):
+				continue
+			var s := absi(off) * 4
+			if lvl != 0:
+				s += absi(_w_h(hgt, qx, qy) - h0) * 160 / M
+			if s < best_s:
+				best_s = s
+				best = a
+		if best < 0:
+			return
+		head = best
+		px += FM.cos_a(best) * W_STEP / FM.TRIG_ONE
+		py += FM.sin_a(best) * W_STEP / FM.TRIG_ONE
+		pts.append(px)
+		pts.append(py)
+
+
+## A road through waypoints (x, y pairs): traced leg by leg.
+static func _w_road(wc: Dictionary, way: PackedInt32Array, hw: int, lvl: int, wig: int) -> PackedInt32Array:
+	var pts := PackedInt32Array([way[0], way[1]])
+	for q in range(1, way.size() / 2):
+		_w_trace(wc, pts, way[q * 2], way[q * 2 + 1], hw, lvl, wig)
+	return pts
+
+
+## Point at arc length s along polyline pts (cumulative lengths cum):
+## [x, y, ex, ey] (m; the direction there, Q12).
+static func _w_at(pts: PackedInt32Array, cum: PackedInt32Array, s: int) -> PackedInt32Array:
+	var n := pts.size() / 2
+	var k := 0
+	while k < n - 2 and cum[k + 1] < s:
+		k += 1
+	var ax := pts[k * 2]
+	var ay := pts[k * 2 + 1]
+	var dx := pts[k * 2 + 2] - ax
+	var dy := pts[k * 2 + 3] - ay
+	var l := maxi(cum[k + 1] - cum[k], 1)
+	var t := clampi(s - cum[k], 0, l)
+	var ll := maxi(FM.isqrt(dx * dx + dy * dy), 1)
+	return PackedInt32Array([ax + dx * t / l, ay + dy * t / l, dx * FM.TRIG_ONE / ll, dy * FM.TRIG_ONE / ll])
+
+
+## Density 8-96 at (x, y): high at the top (the quay) and round the plaza,
+## low at the landward edge and the town's ends.
+static func _w_dens(wc: Dictionary, x: int, y: int) -> int:
+	var o: Dictionary = wc["o"]
+	var dep: int = o["dep"]
+	var hw: int = o["hw"]
+	var bv: PackedInt32Array = wc["botv"]
+	var de := clampi((bv[clampi(x, 0, bv.size() - 1)] - y) * 100 / dep, 0, 100)
+	var dp := FM.approx_len(x - int(o["px"]), y - int(o["py"]))
+	var core := maxi(0, 100 - dp * 100 / maxi(hw * 6 / 10, 1))
+	var side := clampi((hw - absi(x - int(o["cx"]))) * 100 / 60, 0, 100)
+	var d := 30 + de * 42 / 100 + core * 34 / 100
+	d = d * (50 + side * 50 / 100) / 100
+	return clampi(d + [-6, 2, 8][int(o["level"])], 8, 96)
+
+
+## A building kind for a lot on road kind rk (0 quay / back street, 1 high
+## street, 2 cross street, 3 lane) at density dens.
+static func _w_kind(rng: PackedInt32Array, rk: int, dens: int, coast: int) -> int:
+	var r := _r(rng, 100)
+	if dens < 34:
+		return B_SHACK if r < 55 else B_HOUSE
+	if rk == 0 and coast != 0:
+		if r < 30:
+			return B_WAREHOUSE
+		if r < 48:
+			return B_CHANDLER
+		if r < 70:
+			return B_TAVERN
+		if r < 86:
+			return B_STORE
+		return B_HOUSE
+	if rk == 1:
+		if r < 26:
+			return B_SHOP
+		if r < 44:
+			return B_TAVERN
+		if r < 60:
+			return B_STORE
+		return B_HOUSE
+	if rk == 3:
+		return B_SHACK if r < 30 else B_HOUSE
+	if r < 9:
+		return B_SHOP
+	if r < 18:
+		return B_TAVERN
+	if r < 26:
+		return B_STORE
+	if r < 30 and rk == 0:
+		return B_WAREHOUSE
+	if dens < 50 and r > 84:
+		return B_SHACK
+	return B_HOUSE
+
+
+## Frontage, depth (m) and height (dm) of a building of kind kd.
+static func _w_size(rng: PackedInt32Array, kd: int) -> Vector3i:
+	match kd:
+		B_SHACK:
+			return Vector3i(_rr(rng, 5, 7), _rr(rng, 4, 6), _rr(rng, 27, 32))
+		B_TAVERN:
+			return Vector3i(_rr(rng, 10, 14), _rr(rng, 8, 11), _rr(rng, 55, 65))
+		B_SHOP:
+			return Vector3i(_rr(rng, 7, 10), _rr(rng, 7, 9), _rr(rng, 42, 50))
+		B_STORE:
+			return Vector3i(_rr(rng, 8, 12), _rr(rng, 7, 10), _rr(rng, 42, 50))
+		B_WAREHOUSE:
+			return Vector3i(_rr(rng, 14, 22), _rr(rng, 9, 13), _rr(rng, 60, 70))
+		B_CHANDLER:
+			return Vector3i(_rr(rng, 9, 13), _rr(rng, 7, 10), _rr(rng, 48, 55))
+		B_GOVERNOR:
+			return Vector3i(_rr(rng, 18, 22), _rr(rng, 13, 16), _rr(rng, 70, 80))
+	return Vector3i(_rr(rng, 7, 11), _rr(rng, 6, 9), _rr(rng, 42, 52))
+
+
+## Stone or timber for a building of kind kd (Spanish towns build more in
+## masonry, the English, French and Dutch more in timber).
+static func _w_mat(rng: PackedInt32Array, kd: int, founder: int) -> int:
+	var pct := 45
+	match kd:
+		B_SHACK, B_LEANTO, B_STAKES:
+			return MAT_TIMBER
+		B_GOVERNOR, B_TEMPLE, B_FORT, B_BARRACKS:
+			return MAT_STONE
+		B_WAREHOUSE:
+			pct = 70
+		B_TAVERN:
+			pct = 40
+		B_CHANDLER:
+			pct = 30
+		B_HOUSE:
+			pct = 60 if founder == CUL_LATIN else 35
+	return MAT_STONE if _r(rng, 100) < pct else MAT_TIMBER
+
+
+## Cells of a quad (corners in cm, 8 ints) as integer-metre corners and
+## its cells: [xs (m), ys (m), cells].
+static func _w_cells(q: PackedInt32Array, ow: int, oh: int) -> Array:
+	var xs := PackedInt32Array()
+	var ys := PackedInt32Array()
+	for k in 4:
+		xs.append((q[k * 2] + 50) / 100)
+		ys.append((q[k * 2 + 1] + 50) / 100)
+	return [xs, ys, _poly_cells(xs, ys, ow, oh)]
+
+
+## A quad (cm) from front-left corner (ax, ay) cm: `fw` m along u, `fd` m
+## along n (Q12 unit vectors), grown by `gs` m at the sides, `gb` m at the
+## back and `gf` at the front.
+static func _w_quad(ax: int, ay: int, ux: int, uy: int, nx: int, ny: int, fw: int, fd: int, gs: int, gb: int,
+		gf: int = 0) -> PackedInt32Array:
+	var x0 := ax - ux * gs * 100 / FM.TRIG_ONE - nx * gf * 100 / FM.TRIG_ONE
+	var y0 := ay - uy * gs * 100 / FM.TRIG_ONE - ny * gf * 100 / FM.TRIG_ONE
+	var lx := ux * (fw + 2 * gs) * 100 / FM.TRIG_ONE
+	var ly := uy * (fw + 2 * gs) * 100 / FM.TRIG_ONE
+	var dx := nx * (fd + gb + gf) * 100 / FM.TRIG_ONE
+	var dy := ny * (fd + gb + gf) * 100 / FM.TRIG_ONE
+	return PackedInt32Array([x0, y0, x0 + lx, y0 + ly, x0 + lx + dx, y0 + ly + dy, x0 + dx, y0 + dy])
+
+
+## Quad q (cm; corners front-left, front-right, back-right, back-left
+## along axes u, n) grown by g cm all round.
+static func _w_grow(q: PackedInt32Array, ux: int, uy: int, nx: int, ny: int, g: int) -> PackedInt32Array:
+	var out := q.duplicate()
+	var su: Array[int] = [-1, 1, 1, -1]
+	var sn: Array[int] = [-1, -1, 1, 1]
+	for k in 4:
+		out[k * 2] += (ux * su[k] + nx * sn[k]) * g / FM.TRIG_ONE
+		out[k * 2 + 1] += (uy * su[k] + ny * sn[k]) * g / FM.TRIG_ONE
+	return out
+
+
+## Try to put a building (quad from front-left corner a, cm; axes u, n)
+## where nothing else is: its cells inside the town, off the roads, the
+## blocked ground and other buildings (`par`: one it may touch, its own
+## parent), W_PAD m clear of other buildings at its sides and back, on
+## ground that rises at most W_SLOPE across it. Returns the record (and
+## marks it) or [].
+static func _w_put(wc: Dictionary, ax: int, ay: int, ux: int, uy: int, nx: int, ny: int, fw: int, fd: int,
+		kd: int, hd: int, mat: int, par: int) -> Array:
+	var ow: int = wc["ow"]
+	var oh: int = wc["oh"]
+	var inside: PackedByteArray = wc["inside"]
+	var keep: PackedByteArray = wc["keep"]
+	var blk: PackedByteArray = wc["blk"]
+	var own: PackedInt32Array = wc["own"]
+	var obs: PackedByteArray = wc["obs"]
+	var body := _w_quad(ax, ay, ux, uy, nx, ny, fw, fd, 0, 0)
+	# (A quick look first: its middle and corners.)
+	for k in 5:
+		var qx := (body[0] + body[2] + body[4] + body[6]) / 400 if k == 4 else body[k * 2] / 100
+		var qy := (body[1] + body[3] + body[5] + body[7]) / 400 if k == 4 else body[k * 2 + 1] / 100
+		if qx < 0 or qy < 0 or qx >= ow * 2 or qy >= oh * 2:
+			return []
+		var qc := (qy / 2) * ow + qx / 2
+		if inside[qc] == 0 or keep[qc] != 0 or blk[qc] != 0 or (own[qc] != 0 and own[qc] != par + 1):
+			return []
+	# (Its cells: those within 0.6 m of the drawn outline, so the drawing
+	# never overhangs open ground a man can stand on.)
+	var cells: PackedInt32Array = (_w_cells(_w_grow(body, ux, uy, nx, ny, 60), ow, oh) as Array)[2]
+	if cells.size() < 4:
+		return []
+	for c in cells:
+		if inside[c] == 0 or keep[c] != 0 or blk[c] != 0 or obs[c] != C_OPEN or (own[c] != 0 and own[c] != par + 1):
+			return []
+	var pad := _w_quad(ax, ay, ux, uy, nx, ny, fw, fd, W_PAD, W_PAD, W_PAD)
+	var pc: Array = _w_cells(pad, ow, oh)
+	for c in pc[2] as PackedInt32Array:
+		if blk[c] != 0 or (own[c] != 0 and own[c] != par + 1):
+			return []
+	var xs := PackedInt32Array()
+	var ys := PackedInt32Array()
+	for k in 4:
+		xs.append((body[k * 2] + 50) / 100)
+		ys.append((body[k * 2 + 1] + 50) / 100)
+	var hgt: Dictionary = wc["hgt"]
+	if not hgt.is_empty():
+		var lo := 1 << 40
+		var hi := -(1 << 40)
+		for k in 4:
+			var hv := _w_h(hgt, xs[k], ys[k])
+			lo = mini(lo, hv)
+			hi = maxi(hi, hv)
+		if hi - lo > W_SLOPE * M:
+			return []
+	var blds: Array = wc["buildings"]
+	var idx := blds.size()
+	for c in cells:
+		own[c] = idx + 1
+		obs[c] = C_BUILDING
+	var rec: Array = [mini(mini(xs[0], xs[1]), mini(xs[2], xs[3])), mini(mini(ys[0], ys[1]), mini(ys[2], ys[3])),
+		maxi(maxi(xs[0], xs[1]), maxi(xs[2], xs[3])), maxi(maxi(ys[0], ys[1]), maxi(ys[2], ys[3])),
+		kd, W_STYLE, SH_QUAD, xs[0], ys[0], xs[1], ys[1], xs[2], ys[2], xs[3], ys[3], hd, mat]
+	blds.append(rec)
+	return rec
+
+
+## A low wall (yard, garden) from (ax, ay) to (bx, by) cm: the 2 m cells
+## within 0.8 m of it become rock-like cover 1.2-1.4 m high, where free.
+## Returns true if any was laid.
+static func _w_lowwall(wc: Dictionary, ax: int, ay: int, bx: int, by: int, par: int) -> bool:
+	var ow: int = wc["ow"]
+	var oh: int = wc["oh"]
+	var inside: PackedByteArray = wc["inside"]
+	var keep: PackedByteArray = wc["keep"]
+	var blk: PackedByteArray = wc["blk"]
+	var own: PackedInt32Array = wc["own"]
+	var obs: PackedByteArray = wc["obs"]
+	var cells := PackedInt32Array()
+	for j in range(maxi((mini(ay, by) - 100) / 200, 0), mini((maxi(ay, by) + 100) / 200 + 1, oh)):
+		for i in range(maxi((mini(ax, bx) - 100) / 200, 0), mini((maxi(ax, bx) + 100) / 200 + 1, ow)):
+			if _seg_dist_cm(i * 200 + 100, j * 200 + 100, ax, ay, bx, by) <= 80:
+				var c := j * ow + i
+				if own[c] == par + 1 and obs[c] == C_BUILDING:
+					continue  # (its own house: the wall runs on from it)
+				if inside[c] == 0 or keep[c] != 0 or blk[c] != 0 or obs[c] != C_OPEN or (own[c] != 0 and own[c] != par + 1):
+					return false
+				# (Not within two cells of another building: no sliver beside it.)
+				for dj in range(-2, 3):
+					for di in range(-2, 3):
+						var i2 := i + di
+						var j2 := j + dj
+						if i2 >= 0 and j2 >= 0 and i2 < ow and j2 < oh:
+							var o2 := own[j2 * ow + i2]
+							if o2 != 0 and o2 != par + 1:
+								return false
+				cells.append(c)
+	if cells.size() < 2:
+		return false
+	for c in cells:
+		obs[c] = C_ROCK
+		own[c] = par + 1
+	(wc["lowwalls"] as Array).append([(ax + 50) / 100, (ay + 50) / 100, (bx + 50) / 100, (by + 50) / 100, 13])
+	return true
+
+
+## A prop (barrels, crates, a cart) at (x, y) m turned to `ang`: its cell (a
+## cart two, along ang) becomes rock-like cover of its height where open.
+static func _w_prop(wc: Dictionary, kind: int, x: int, y: int, ang: int) -> void:
+	var ow: int = wc["ow"]
+	var oh: int = wc["oh"]
+	var obs: PackedByteArray = wc["obs"]
+	var blk: PackedByteArray = wc["blk"]
+	var cells := PackedInt32Array()
+	var n := 2 if kind == P_CART else 1
+	for q in n:
+		var qx := x + FM.cos_a(ang) * (q * 2 - (n - 1)) / FM.TRIG_ONE
+		var qy := y + FM.sin_a(ang) * (q * 2 - (n - 1)) / FM.TRIG_ONE
+		if qx < 2 or qy < 2 or qx >= ow * 2 - 2 or qy >= oh * 2 - 2:
+			return
+		var c := (qy / 2) * ow + qx / 2
+		if obs[c] != C_OPEN or blk[c] != 0:
+			return
+		cells.append(c)
+	for c in cells:
+		obs[c] = C_ROCK
+		blk[c] = 1
+	var hd: int = [11, 12, 14, 10][kind]
+	(wc["props"] as Array).append([kind, x, y, ang, hd])
+
+
+## Lots along one road (both sides, a fixed order): buildings by kind and
+## density, uneven gaps and setbacks, turned a little off the road and
+## toward the contour on a slope; now and then a wing, a lean-to, a yard
+## wall, barrels or a cart at the door.
+static func _w_lots(wc: Dictionary, pts: PackedInt32Array, rw: int, rk: int) -> void:
+	var rng: PackedInt32Array = wc["rng"]
+	var hgt: Dictionary = wc["hgt"]
+	var n := pts.size() / 2
+	if n < 2:
+		return
+	var cum := PackedInt32Array([0])
+	for k in range(1, n):
+		cum.append(cum[k - 1] + FM.approx_len(pts[k * 2] - pts[k * 2 - 2], pts[k * 2 + 1] - pts[k * 2 - 1]))
+	var total := cum[n - 1]
+	var coast: int = (wc["o"] as Dictionary)["coast"]
+	var founder: int = wc["founder"]
+	for si in 2:
+		var side := 1 if si == 0 else -1
+		var s := _rr(rng, 1, 6)
+		while s < total - 6:
+			var pm := _w_at(pts, cum, s + 4)
+			var dens := _w_dens(wc, pm[0], pm[1])
+			if _r(rng, 100) >= dens + 26:
+				s += _rr(rng, 4, 9)
+				continue
+			var kd := _w_kind(rng, rk, dens, coast)
+			var sz := _w_size(rng, kd)
+			var mat := _w_mat(rng, kd, founder)
+			var sb := _r(rng, 2) + (100 - dens) / 35 + _r(rng, 1 + (100 - dens) / 25)
+			var rot := _rr(rng, -14, 14) + (_rr(rng, -16, 16) if dens < 40 else 0)
+			var gap := _rr(rng, 0, 2) + (100 - dens) / 15 + _r(rng, 1 + (100 - dens) / 12)
+			var extra := _r(rng, 100)
+			var placed: Array = []
+			for tries in 2:
+				var fw := sz.x if tries == 0 else sz.x * 3 / 4
+				var fd := sz.y if tries == 0 else sz.y * 3 / 4
+				if fw < 4 or fd < 4:
+					break
+				var p := _w_at(pts, cum, s + fw / 2)
+				var ex := p[2]
+				var ey := p[3]
+				var a := FM.atan2_a(ey, ex)
+				var r2 := rot
+				var cd := Land.contour_at(hgt, p[0], p[1]) if not hgt.is_empty() else -1
+				if cd >= 0:
+					# Step with the slope: the nearer of the contour's axes.
+					var best_d := 1 << 20
+					for q in 4:
+						var dd := FM.angle_diff(a, (cd + q * 256) & 1023)
+						if absi(dd) < absi(best_d):
+							best_d = dd
+					r2 += clampi(best_d, -24, 24)
+				var ua := (a + r2) & 1023
+				var ux := FM.cos_a(ua)
+				var uy := FM.sin_a(ua)
+				var nx := -uy * side
+				var ny := ux * side
+				var snx := -ey * side
+				var sny := ex * side
+				# Front edge clear of the road whatever the turn.
+				var off := rw * 50 + sb * 100 + 60 + fw * 50 * absi(FM.sin_a(r2 & 1023)) / FM.TRIG_ONE
+				var fx := p[0] * 100 + snx * off / FM.TRIG_ONE - ux * fw * 50 / FM.TRIG_ONE
+				var fy := p[1] * 100 + sny * off / FM.TRIG_ONE - uy * fw * 50 / FM.TRIG_ONE
+				placed = _w_put(wc, fx, fy, ux, uy, nx, ny, fw, fd, kd, sz.z, mat, -1)
+				if not placed.is_empty():
+					var idx: int = (wc["buildings"] as Array).size() - 1
+					_w_extras(wc, placed, idx, fx, fy, ux, uy, nx, ny, fw, fd, kd, extra, rw, sb, side, ex, ey)
+					s += fw + gap
+					break
+			if placed.is_empty():
+				s += 3
+
+
+## The extras of a building just placed (record b, index idx, front-left
+## corner f cm, axes u n, size fw x fd): a back wing (taverns, warehouses,
+## big houses), a lean-to at a side, a yard wall behind, goods at the door.
+static func _w_extras(wc: Dictionary, b: Array, idx: int, fx: int, fy: int, ux: int, uy: int, nx: int, ny: int,
+		fw: int, fd: int, kd: int, roll: int, rw: int, sb: int, side: int, ex: int, ey: int) -> void:
+	var rng: PackedInt32Array = wc["rng"]
+	var founder: int = wc["founder"]
+	var hd: int = b[15]
+	var mat: int = b[16]
+	if (kd == B_TAVERN or kd == B_WAREHOUSE or kd == B_GOVERNOR or (kd == B_HOUSE and fw >= 9)) and roll < 35:
+		# An L: a wing at one back corner running back.
+		var ww := maxi(fw * 45 / 100, 4)
+		var wd := maxi(fd * 7 / 10, 4)
+		var right := roll % 2 == 0
+		# (A metre into the house: the two share their cells, no sliver.)
+		var bx := fx + nx * (fd - 1) * 100 / FM.TRIG_ONE + (ux * (fw - ww) * 100 / FM.TRIG_ONE if right else 0)
+		var by := fy + ny * (fd - 1) * 100 / FM.TRIG_ONE + (uy * (fw - ww) * 100 / FM.TRIG_ONE if right else 0)
+		_w_put(wc, bx, by, ux, uy, nx, ny, ww, wd + 1, kd, hd - 6, mat, idx)
+	elif kd != B_SHACK and roll >= 35 and roll < 55:
+		# A lean-to against a side, toward the back.
+		var right2 := roll % 2 == 0
+		var ld := maxi(fd * 6 / 10, 3)
+		var lx := fx + nx * (fd - ld) * 100 / FM.TRIG_ONE + (ux * (fw - 1) * 100 / FM.TRIG_ONE if right2 else -ux * 300 / FM.TRIG_ONE)
+		var ly := fy + ny * (fd - ld) * 100 / FM.TRIG_ONE + (uy * (fw - 1) * 100 / FM.TRIG_ONE if right2 else -uy * 300 / FM.TRIG_ONE)
+		_w_put(wc, lx, ly, ux, uy, nx, ny, 4, ld, B_LEANTO, 28, MAT_TIMBER, idx)
+	if (kd == B_HOUSE or kd == B_GOVERNOR or kd == B_TAVERN) and _r(rng, 100) < (40 if founder == CUL_LATIN else 25):
+		# A yard behind: its back wall and one side (the other side open).
+		var yd := _rr(rng, 5, 8)
+		var b0x := fx + nx * fd * 100 / FM.TRIG_ONE
+		var b0y := fy + ny * fd * 100 / FM.TRIG_ONE
+		var b1x := b0x + ux * fw * 100 / FM.TRIG_ONE
+		var b1y := b0y + uy * fw * 100 / FM.TRIG_ONE
+		var dxy := nx * yd * 100 / FM.TRIG_ONE
+		var dyy := ny * yd * 100 / FM.TRIG_ONE
+		if _w_lowwall(wc, b0x + dxy, b0y + dyy, b1x + dxy, b1y + dyy, idx):
+			if _r(rng, 2) == 0:
+				_w_lowwall(wc, b1x, b1y, b1x + dxy, b1y + dyy, idx)
+			else:
+				_w_lowwall(wc, b0x, b0y, b0x + dxy, b0y + dyy, idx)
+	if (kd == B_TAVERN or kd == B_WAREHOUSE or kd == B_CHANDLER or kd == B_STORE) and rw >= 10 and _r(rng, 100) < 45:
+		# Goods at the street's edge by the door.
+		var snx := -ey * side
+		var sny := ex * side
+		var mx := fx + ux * fw * 50 / FM.TRIG_ONE
+		var my := fy + uy * fw * 50 / FM.TRIG_ONE
+		var back := sb * 100 + 60 + rw * 50 - 150
+		var gx := (mx - snx * back / FM.TRIG_ONE + ux * _rr(rng, -250, 250) / FM.TRIG_ONE) / 100
+		var gy := (my - sny * back / FM.TRIG_ONE + uy * _rr(rng, -250, 250) / FM.TRIG_ONE) / 100
+		var pk := P_BARRELS if kd == B_TAVERN else (P_CRATES if _r(rng, 2) == 0 else P_CART)
+		_w_prop(wc, pk, gx, gy, FM.atan2_a(ey, ex))
+
+
+## The West open town (canonical frame) into `out`; appends the woods'
+## exclusions to `excl`. Returns the layout (metres).
+static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictionary, excl: Array,
+		hgt: Dictionary, land_ok: bool, pal: int) -> Dictionary:
+	var level: int = p["level"]
+	var walls: int = p["walls"]
+	var coast: int = p["coast"]
+	var o := west_outline(p, kind, w_m)
+	var rng := _rng(int(p["seed"]) * 29 + 11)
+	var cx: int = o["cx"]
+	var hw: int = o["hw"]
+	var dep: int = o["dep"]
+	var top: int = o["top"]
+	var px: int = o["px"]
+	var py: int = o["py"]
+	var hs: int = o["hs"]
+	var cp: PackedInt32Array = o["cp"]
+	var ow := w_m / 2
+	var oh := h_m / 2
+	var nc := ow * oh
+	var obs := PackedByteArray()
+	obs.resize(nc)
+	obs.fill(C_OPEN)
+	var inside := PackedByteArray()
+	inside.resize(nc)
+	inside.fill(0)
+	var keep := PackedByteArray()
+	keep.resize(nc)
+	keep.fill(0)
+	var blk := PackedByteArray()
+	blk.resize(nc)
+	blk.fill(0)
+	var own := PackedInt32Array()
+	own.resize(nc)
+	own.fill(0)
+	var vx: PackedInt32Array = o["vx"]
+	var vy: PackedInt32Array = o["vy"]
+	_fill_poly(inside, ow, oh, vx, vy)
+	var att_x := cx
+	var att_y := int(o["bot"]) + W_APPROACH
+	var hg: Dictionary = hgt if int(hgt.get("on", 0)) != 0 else {}
+	var botv := PackedInt32Array()  # the landward edge's y at each metre
+	for x in w_m + 1:
+		botv.append(_w_bot(o, x))
+	var wc := {"o": o, "rng": rng, "ow": ow, "oh": oh, "obs": obs, "inside": inside, "keep": keep, "blk": blk,
+		"own": own, "hgt": hg, "buildings": [], "props": [], "lowwalls": [], "founder": int(p["founder"]), "botv": botv}
+	var blds: Array = wc["buildings"]
+	# ---- the sea.
+	if coast != 0:
+		for i in ow:
+			var sy := shore_y(cp, i * 2 + 1)
+			for j in range(0, mini((sy - 1 + 1) / 2, oh)):
+				obs[j * ow + i] = C_WATER
+				blk[j * ow + i] = 1
+	# ---- the fort: a bastioned square (four quads at the corners and the core).
+	var fort: Dictionary = o["fort"]
+	if not fort.is_empty():
+		var fx: int = fort["x"]
+		var fy: int = fort["y"]
+		var fh: int = fort["h"]
+		var fb: int = fort["b"]
+		var fd: int = fort["dir"]
+		var cs := FM.cos_a(fd)
+		var sn := FM.sin_a(fd)
+		var corner := func(sx: int, sy2: int) -> Vector2i:
+			return Vector2i(fx * 100 + (cs * sx - sn * sy2) / FM.TRIG_ONE, fy * 100 + (sn * sx + cs * sy2) / FM.TRIG_ONE)
+		var parts: Array = []
+		parts.append([corner.call(-fh * 100, -fh * 100), corner.call(fh * 100, -fh * 100), corner.call(fh * 100, fh * 100),
+			corner.call(-fh * 100, fh * 100)])
+		for q in 4:
+			var qx := (fh if q == 1 or q == 2 else -fh) * 100
+			var qy := (fh if q >= 2 else -fh) * 100
+			parts.append([corner.call(qx - fb * 100, qy), corner.call(qx, qy - fb * 100), corner.call(qx + fb * 100, qy),
+				corner.call(qx, qy + fb * 100)])
+		for pt in parts:
+			var q4: Array = pt
+			var xs := PackedInt32Array()
+			var ys := PackedInt32Array()
+			for v in q4:
+				xs.append(((v as Vector2i).x + 50) / 100)
+				ys.append(((v as Vector2i).y + 50) / 100)
+			for c in _poly_cells(xs, ys, ow, oh):
+				obs[c] = C_BUILDING
+				own[c] = blds.size() + 1
+			blds.append([mini(mini(xs[0], xs[1]), mini(xs[2], xs[3])), mini(mini(ys[0], ys[1]), mini(ys[2], ys[3])),
+				maxi(maxi(xs[0], xs[1]), maxi(xs[2], xs[3])), maxi(maxi(ys[0], ys[1]), maxi(ys[2], ys[3])),
+				B_FORT, W_STYLE, SH_QUAD, xs[0], ys[0], xs[1], ys[1], xs[2], ys[2], xs[3], ys[3], 70, MAT_STONE])
+		_disc(blk, ow, oh, fx, fy, fh + fb + 8, 1)
+	# ---- landforms (rolling or rougher ground): the roads bend round them.
+	var land := {}
+	if land_ok and not hg.is_empty():
+		var avoid: Array = [[px - hs - 10, py - hs - 10, px + hs + 10, py + hs + 10]]
+		if not fort.is_empty():
+			avoid.append([int(fort["x"]) - 40, int(fort["y"]) - 40, int(fort["x"]) + 40, int(fort["y"]) + 40])
+		var lctx := {"w_m": w_m, "h_m": h_m, "kind": kind, "pal": pal, "seed": int(p["seed"]) * 7 + 5,
+			"hgt": hg, "obs": obs, "avoid": avoid, "ref": Vector2i(att_x, mini(att_y + 30, h_m - 8)),
+			"excl": [[cx - hw - 20, 0, cx + hw + 20, top + W_QUAY[level] + 8], [att_x - 45, int(o["bot"]), att_x + 45, att_y + 120],
+				[w_m * 10 / 100, att_y - 20, w_m * 90 / 100, h_m]]}
+		if coast != 0:
+			lctx["shore"] = cp
+			lctx["sea_cliffs"] = 1 if int(o["site"]) != SITE_PLAIN or pal == PAL_ROCKY else 0
+			lctx["sea_skip"] = [cx - hw - 30, cx + hw + 30]
+		land = Land.place(lctx)
+		var lc: PackedByteArray = land["cells"]
+		for c in lc.size():
+			if lc[c] != 0 and obs[c] == C_OPEN:
+				obs[c] = lc[c]
+				blk[c] = 1
+		out["land_raw"] = land
+	# ---- big trees in the town (ceibas, palm clumps): roads and lots go round.
+	var post: Array = []
+	var n_tr: int = [5, 8, 12][level]
+	for k in n_tr * 3:
+		if post.size() >= n_tr:
+			break
+		var tx := cx + _rr(rng, -hw + 20, hw - 20)
+		var ty := _rr(rng, top + 24, int(o["bot"]) - 10)
+		var c := (ty / 2) * ow + tx / 2
+		if inside[c] == 0 or (absi(tx - px) < hs + 14 and absi(ty - py) < hs + 14) or not _w_free(blk, ow, oh, tx, ty, 6):
+			continue
+		if absi(ty - _w_rail(o, tx)) < 12:
+			continue
+		post.append([tx - 3, ty - 3, tx + 3, ty + 3, 2])
+		_disc(blk, ow, oh, tx, ty, 3, 1)
+	# (blk summed, for the roads' quick look: it does not change while they are traced.)
+	var bsat := PackedInt32Array()
+	bsat.resize((ow + 1) * (oh + 1))
+	bsat.fill(0)
+	for j in oh:
+		var acc := 0
+		for i in ow:
+			acc += blk[j * ow + i]
+			bsat[(j + 1) * (ow + 1) + i + 1] = bsat[j * (ow + 1) + i + 1] + acc
+	wc["bsat"] = bsat
+	# ---- roads: the quay (or an inland town's back street), the high street
+	# through the plaza, cross streets down to the landward edge, lanes.
+	var roads: Array = []   # [points, width, kind]
+	var qw: int = W_QUAY[level] if coast != 0 else W_BACK
+	var x0 := cx - hw - 14
+	var x1 := cx + hw + 14
+	if not fort.is_empty():
+		if int(fort["side"]) < 0:
+			x0 = int(fort["x"]) + int(fort["h"]) + int(fort["b"]) + 10
+		else:
+			x1 = int(fort["x"]) - int(fort["h"]) - int(fort["b"]) - 10
+	var qway := PackedInt32Array()
+	var xq := x0
+	while true:
+		qway.append(xq)
+		qway.append(_w_top(o, xq) + qw / 2 + (2 if coast != 0 else 6))
+		if xq >= x1:
+			break
+		xq = mini(xq + 40, x1)
+	var quay := _w_road(wc, qway, qw / 2, 0, 0)
+	roads.append([quay, qw, 0])
+	var mw: int = W_MAIN[level]
+	var mway := PackedInt32Array()
+	var xm := cx - hw - 12
+	var plaza_done := false
+	while xm <= cx + hw + 12:
+		if not plaza_done and xm > px - 30:
+			mway.append(px)
+			mway.append(py)
+			plaza_done = true
+			xm = px + 30
+			continue
+		mway.append(xm)
+		mway.append(_w_rail(o, xm))
+		xm += 46
+	mway.append(cx + hw + 12)
+	mway.append(_w_rail(o, cx + hw + 12))
+	var mpts := _w_road(wc, mway, mw / 2, 1, 0)
+	roads.append([mpts, mw, 1])
+	# ---- landmarks on the plaza (before the other roads, which bend round
+	# them): the church on its seaward side (else the other), the governor's
+	# house opposite, a guardhouse at a corner (each facing the plaza).
+	for r in roads:
+		var rp0: PackedInt32Array = r[0]
+		for q in range(rp0.size() / 2 - 1):
+			_keep_seg(keep, ow, oh, rp0[q * 2], rp0[q * 2 + 1], rp0[q * 2 + 2], rp0[q * 2 + 3], int(r[1]) / 2)
+	_keep_rect(keep, ow, oh, px - hs, py - hs, px + hs, py + hs)
+	var cw2: int = [16, 24, 30][level]
+	var cd2: int = [8, 10, 12][level]
+	var chd := 90 if level > 0 else 65
+	var ch_n := _w_landmark(wc, px + cw2 / 2, py - hs - 2, -1, 0, 0, -1, cw2, cd2, B_TEMPLE, chd, MAT_STONE)
+	if not ch_n and not _w_landmark(wc, px - cw2 / 2, py + hs + 2, 1, 0, 0, 1, cw2, cd2, B_TEMPLE, chd, MAT_STONE):
+		_w_landmark(wc, px - hs / 2 + cw2 / 2, py - hs - 2, -1, 0, 0, -1, cw2, cd2, B_TEMPLE, chd, MAT_STONE)
+	if level >= 1:
+		var gs := _w_size(rng, B_GOVERNOR)
+		var gy0 := py + hs + 2 if ch_n else py - hs - 2
+		var gny := 1 if ch_n else -1
+		var placed_g := false
+		for off in [0, hs / 2, -hs / 2]:
+			if placed_g:
+				break
+			var gx0: int = px - gs.x / 2 + int(off) if gny > 0 else px + gs.x / 2 + int(off)
+			placed_g = _w_landmark(wc, gx0, gy0, gny, 0, 0, gny, gs.x, gs.y, B_GOVERNOR, gs.z, MAT_STONE)
+	var bld: Array = p["bld"]
+	if bld.has(2):
+		for cn in 4:
+			var sxn := 1 if cn % 2 == 0 else -1
+			var syn := 1 if cn < 2 else -1
+			if _w_landmark(wc, px + sxn * (hs + 4) - (14 if sxn < 0 else 0), py + syn * (hs + 4) - (10 if syn < 0 else 0),
+					1, 0, 0, 1, 14, 10, B_BARRACKS, 55, MAT_STONE):
+				break
+	# (Their ground blocked, a cell round, for the roads still to come; the
+	# summed table again from the first row that changed.)
+	var jmin := oh
+	for b in blds:
+		var a0: Array = b
+		if int(a0[4]) == B_FORT:
+			continue
+		for cj in range(maxi(int(a0[1]) / 2 - 3, 0), mini(int(a0[3]) / 2 + 4, oh)):
+			for ci in range(maxi(int(a0[0]) / 2 - 3, 0), mini(int(a0[2]) / 2 + 4, ow)):
+				var hit := false
+				for dj in range(-1, 2):
+					for di in range(-1, 2):
+						var ii := ci + di
+						var jj := cj + dj
+						if ii >= 0 and jj >= 0 and ii < ow and jj < oh and own[jj * ow + ii] != 0:
+							hit = true
+				if hit and blk[cj * ow + ci] == 0:
+					blk[cj * ow + ci] = 1
+					jmin = mini(jmin, cj)
+	for j in range(jmin, oh):
+		var acc2 := 0
+		for i in ow:
+			acc2 += blk[j * ow + i]
+			bsat[(j + 1) * (ow + 1) + i + 1] = bsat[j * (ow + 1) + i + 1] + acc2
+	# A second street along the town's lower half (towns and cities).
+	if level >= 1:
+		var lway := PackedInt32Array()
+		var xl := cx - hw + _rr(rng, 30, 60)
+		var xe := cx + hw - _rr(rng, 30, 60)
+		var lf := _rr(rng, 58, 70)
+		while xl < xe:
+			lway.append(xl)
+			lway.append(_w_rail(o, xl) + (_w_bot(o, xl) - _w_rail(o, xl)) * lf / 100 + _rr(rng, -10, 10))
+			xl += _rr(rng, 40, 64)
+		if lway.size() >= 4:
+			var bpts := _w_road(wc, lway, 4, 1, 22)
+			if bpts.size() >= 6:
+				roads.append([bpts, 8, 1])
+	# Cross streets.
+	var cxs: Array = []
+	var xc := cx - hw + _rr(rng, 14, 30)
+	while xc < cx + hw - 14:
+		cxs.append(xc)
+		xc += _rr(rng, 50, 82) if level > 0 else _rr(rng, 58, 92)
+	var crosses: Array = []
+	var mouths: Array = []
+	for k in cxs.size():
+		var xk: int = cxs[k]
+		if not fort.is_empty() and absi(xk - int(fort["x"])) < int(fort["h"]) + int(fort["b"]) + 12:
+			continue
+		var cw := 10 if absi(xk - px) < hs + 40 else (8 if k % 2 == 0 else 7)
+		var ys := _w_top(o, xk) + qw / 2 + 2
+		var yb := _w_bot(o, xk) + 22
+		var ym := _w_rail(o, xk)
+		# Upper part (quay to the high street) and lower part (on to the edge),
+		# often a dog-leg apart where they meet the high street.
+		var jog := 0 if _r(rng, 100) < 35 else _rr(rng, 8, 22) * (1 if _r(rng, 2) == 0 else -1)
+		var xu := xk + _rr(rng, -14, 14)
+		var cpts := PackedInt32Array()
+		if _r(rng, 100) >= 22 or level == 0:
+			var up := _w_road(wc, PackedInt32Array([xk, ys, xu, (ys + ym) / 2, xk, ym]), cw / 2, 1, 34)
+			if up.size() >= 6:
+				roads.append([up, cw, 2])
+		var low := _w_road(wc, PackedInt32Array([xk + jog, ym, xk + jog + _rr(rng, -18, 18), (ym + yb) / 2,
+			xk + jog + _rr(rng, -24, 24), yb]), cw / 2, 1, 34)
+		cpts = low
+		if cpts.size() < 6:
+			continue
+		roads.append([cpts, cw, 2])
+		crosses.append(cpts)
+		var n2 := cpts.size()
+		if cpts[n2 - 1] >= _w_bot(o, cpts[n2 - 2]) + 6:
+			mouths.append([cpts[n2 - 2], cpts[n2 - 1], FM.atan2_a(cpts[n2 - 1] - cpts[n2 - 3], cpts[n2 - 2] - cpts[n2 - 4])])
+	# Lanes between neighbouring cross streets.
+	for k in range(crosses.size() - 1):
+		var ca: PackedInt32Array = crosses[k]
+		var cb: PackedInt32Array = crosses[k + 1]
+		var nl := 1 + (1 if absi(cb[0] - ca[0]) > 64 else 0) + (1 if level == 2 else 0)
+		for q in nl:
+			if _r(rng, 100) < 28:
+				continue
+			var yl := top + dep * _rr(rng, 22, 88) / 100
+			if absi(yl - py) < hs + 6:
+				continue
+			var a := _w_near_y(ca, yl)
+			var b := _w_near_y(cb, yl + _rr(rng, -12, 12))
+			if a.x < 0 or b.x < 0:
+				continue
+			var lpts := _w_road(wc, PackedInt32Array([a.x, a.y, (a.x + b.x) / 2, (a.y + b.y) / 2 + _rr(rng, -6, 6), b.x, b.y]),
+				W_LANE / 2, 1, 30)
+			if lpts.size() >= 6:
+				roads.append([lpts, W_LANE, 3])
+	# The high street's ends are mouths too (the town's sides).
+	var mn := mpts.size()
+	if mn >= 4:
+		mouths.append([mpts[mn - 2], mpts[mn - 1], 0])
+		mouths.append([mpts[0], mpts[1], 512])
+	# Nearest the attackers' line first.
+	mouths.sort_custom(func(a, b):
+		var da := absi(int(a[0]) - att_x) + (400 if int(a[2]) == 0 or int(a[2]) == 512 else 0)
+		var db := absi(int(b[0]) - att_x) + (400 if int(b[2]) == 0 or int(b[2]) == 512 else 0)
+		return da < db or (da == db and int(a[0]) < int(b[0])))
+	var streets: Array = []
+	for r in roads:
+		var rp: PackedInt32Array = r[0]
+		var rw: int = r[1]
+		for q in range(rp.size() / 2 - 1):
+			streets.append([rp[q * 2], rp[q * 2 + 1], rp[q * 2 + 2], rp[q * 2 + 3], rw])
+			_keep_seg(keep, ow, oh, rp[q * 2], rp[q * 2 + 1], rp[q * 2 + 2], rp[q * 2 + 3], rw / 2)
+	_keep_rect(keep, ow, oh, px - hs, py - hs, px + hs, py + hs)
+	wc.erase("bsat")
+	# ---- buildings on lots along the roads (quay, high street, cross streets, lanes).
+	for r in roads:
+		_w_lots(wc, r[0], int(r[1]), int(r[2]))
+	# ---- goods on the quay's sea side, a few carts on the wide streets.
+	if coast != 0:
+		var qn := quay.size() / 2
+		var qcum := PackedInt32Array([0])
+		for k in range(1, qn):
+			qcum.append(qcum[k - 1] + FM.approx_len(quay[k * 2] - quay[k * 2 - 2], quay[k * 2 + 1] - quay[k * 2 - 1]))
+		var sq := _rr(rng, 6, 16)
+		while qn >= 2 and sq < qcum[qn - 1] - 6:
+			var at := _w_at(quay, qcum, sq)
+			var kx := P_BARRELS if _r(rng, 3) == 0 else (P_CRATES if _r(rng, 2) == 0 else P_CART)
+			# (The sea side: toward smaller y.)
+			var sgn := -1 if at[2] >= 0 else 1
+			var ex2 := at[0] + (-at[3]) * sgn * (qw / 2 - 2) / FM.TRIG_ONE
+			var ey2 := at[1] + at[2] * sgn * (qw / 2 - 2) / FM.TRIG_ONE
+			_w_prop(wc, kx, ex2, ey2, FM.atan2_a(at[3], at[2]))
+			sq += _rr(rng, 14, 30)
+	# ---- the stake palisade along the landward edge (walls 2), gaps at the roads.
+	if walls >= 2:
+		var run: Array = []   # [cell column, cell row] of the run so far
+		var prow := -1
+		var i0 := (cx - hw + 30) / 2
+		var i1 := (cx + hw - 30) / 2
+		for ic in range(i0, i1 + 1):
+			var row := (_w_bot(o, ic * 2 + 1) + 9) / 2
+			if prow >= 0:
+				row = clampi(row, prow - 1, prow + 1)  # (no diagonal leak between columns)
+			prow = row
+			var ok := row >= 0 and row + 1 < oh
+			if ok:
+				for dj in 2:
+					var c2 := (row + dj) * ow + ic
+					if keep[c2] != 0 or blk[c2] != 0 or obs[c2] != C_OPEN:
+						ok = false
+			if ok:
+				run.append(Vector2i(ic, row))
+			if (not ok or ic == i1) and run.size() >= 2:
+				_w_stakes(wc, run)
+			if not ok or ic == i1:
+				run = []
+	# ---- each building cell's height (dm, bits 0-6) and material (bit 7:
+	# timber) for the sim's line of fire (cover by material).
+	var bmat := PackedByteArray()
+	bmat.resize(nc)
+	bmat.fill(0)
+	for c in nc:
+		var k := own[c]
+		if k > 0 and obs[c] == C_BUILDING and k <= blds.size():
+			var rec: Array = blds[k - 1]
+			bmat[c] = clampi(int(rec[15]), 1, 127) | (128 if int(rec[16]) == MAT_TIMBER else 0)
+	# ---- the ground: town, roads, plaza, the sea, gardens at the edge.
+	var veg: PackedByteArray = out["veg"]
+	var vw: int = out["vw"]
+	var vh: int = out["vh"]
+	var fseed := int(p["seed"]) * 2654435761
+	for j in vh:
+		for i in vw:
+			var oc := mini(j * 2 + 1, oh - 1) * ow + mini(i * 2 + 1, ow - 1)
+			if inside[oc] == 0:
+				continue
+			veg[j * vw + i] |= V_URBAN
+			if keep[oc] == 0 and own[oc] == 0 and obs[oc] == C_OPEN and blk[oc] == 0:
+				var xm2 := i * 4 + 2
+				var ym2 := j * 4 + 2
+				if _w_dens(wc, xm2, ym2) < 46:
+					var pid := ((xm2 / 12) * 7919 + (ym2 / 10) * 104729 + fseed) & 0x7FFFFFFF
+					pid = ((pid ^ (pid >> 13)) * 0x5bd1e995) & 0x7FFFFFFF
+					if (pid >> 7) % 10 < 4:
+						veg[j * vw + i] |= V_FIELD
+	for s in streets:
+		_veg_seg(veg, vw, vh, s[0], s[1], s[2], s[3], s[4] / 2, V_ROAD)
+	for j in range(maxi((py - hs) / 4, 0), mini((py + hs) / 4 + 1, vh)):
+		for i in range(maxi((px - hs) / 4, 0), mini((px + hs) / 4 + 1, vw)):
+			veg[j * vw + i] |= V_PLAZA
+	var sea := {}
+	if coast != 0:
+		for i in vw:
+			var sy2 := shore_y(cp, i * 4 + 2)
+			for j in range(0, mini((sy2 - 2 + 3) / 4, vh)):
+				veg[j * vw + i] |= V_WATER
+		# Piers: timber jetties off the quay (scenery: the rules see the sea).
+		var piers: Array = []
+		var npi: int = [1, 2, 3][level]
+		for k in npi * 3:
+			if piers.size() >= npi:
+				break
+			var pxk := cx + _rr(rng, -hw + 30, hw - 30)
+			if not fort.is_empty() and absi(pxk - int(fort["x"])) < int(fort["h"]) + int(fort["b"]) + 16:
+				continue
+			var clash := false
+			for pr in piers:
+				if absi(int((pr as PackedInt32Array)[0]) - pxk) < 40:
+					clash = true
+			if clash:
+				continue
+			var sy3 := shore_y(cp, pxk)
+			var pl := _rr(rng, 16, 30)
+			piers.append(PackedInt32Array([pxk - 2, sy3 - pl, pxk + 2, sy3 - pl, pxk + 2, sy3 + 1, pxk - 2, sy3 + 1]))
+		var yl := mini(shore_y(cp, 6) + 30, h_m - 8)
+		var yr := mini(shore_y(cp, w_m - 6) + 30, h_m - 8)
+		sea = {"gate": [], "moles": [], "flee": [[6, yl], [w_m - 6, yr]], "piers": piers}
+	# ---- woods kept off the town, its approach and the attackers' ground.
+	excl.append([cx - hw - 18, 0 if coast == 0 else top - 10, cx + hw + 18, int(o["bot"]) + 28])
+	excl.append([att_x - 40, int(o["bot"]), att_x + 40, att_y + 120])
+	excl.append([w_m * 10 / 100, att_y - 20, w_m * 90 / 100, h_m])
+	# ---- the street graph.
+	var lnodes: PackedInt32Array = land.get("nodes", PackedInt32Array())
+	var nav := _w_graph(wc, roads, w_m, h_m, lnodes)
+	out["obs"] = obs
+	out["ow"] = ow
+	out["oh"] = oh
+	out["obs_on"] = 1
+	out["city_on"] = 1
+	var poly := PackedInt32Array()
+	for k in vx.size():
+		poly.append(vx[k])
+		poly.append(vy[k])
+	var lay := {"cx": cx, "cy": int(o["cy"]), "r0": int(o["r0"]), "level": level, "walls": 0, "def": int(p["def"]),
+		"seed": int(p["seed"]), "t": 0, "pp": 0, "inner": 0, "wall_h_m": 0,
+		"build_h_m": BUILD_H[level], "poly": poly, "gates": [], "towers": [],
+		"plaza": [px, py, hs, hs + CAPTURE_EXTRA], "agora": [px, py, hs], "cit": {},
+		"streets": streets, "mouths": mouths, "buildings": blds,
+		"fields": [], "segs": [], "att_x": att_x, "att_y": att_y, "nav": nav,
+		"gate_hp": 0, "plan": int(p["plan"]), "site": int(o["site"]), "coast": coast, "ditch": 0,
+		"sea": sea, "palisade": 0, "enclosed": 0,
+		"founder": int(p["founder"]), "owner": int(p["owner"]), "banner": int(p["banner"]),
+		"post_veg": post, "west": 1, "wwalls": walls, "props": wc["props"], "lowwalls": wc["lowwalls"],
+		"fort": fort, "top": top, "bot": int(o["bot"]), "hw": hw, "bmat": bmat}
+	out["city"] = lay
+	return lay
+
+
+## The point of polyline pts nearest height y (its y within 12 m), or (-1, -1).
+static func _w_near_y(pts: PackedInt32Array, y: int) -> Vector2i:
+	var best := Vector2i(-1, -1)
+	var bd := 13
+	for q in pts.size() / 2:
+		var d := absi(pts[q * 2 + 1] - y)
+		if d < bd:
+			bd = d
+			best = Vector2i(pts[q * 2], pts[q * 2 + 1])
+	return best
+
+
+## A landmark: a building square to the plaza, its front-left corner at
+## (x0, y0) m, w along (ux, uy) and d back along (nx, ny) (unit axes), where free.
+static func _w_landmark(wc: Dictionary, x0: int, y0: int, ux: int, uy: int, nx: int, ny: int, w: int, d: int,
+		kd: int, hd: int, mat: int) -> bool:
+	return not _w_put(wc, x0 * 100, y0 * 100, ux * FM.TRIG_ONE, uy * FM.TRIG_ONE, nx * FM.TRIG_ONE, ny * FM.TRIG_ONE,
+		w, d, kd, hd, mat, -1).is_empty()
+
+
+## A run of the stake palisade ([cell column, cell row] each, 2 m cells):
+## two cells deep in each column; a building record (2 m thick, inside its
+## cells) for each stretch on one row, so the drawn stakes and the blocked
+## cells agree (the gaps are the roads).
+static func _w_stakes(wc: Dictionary, run: Array) -> void:
+	var ow: int = wc["ow"]
+	var obs: PackedByteArray = wc["obs"]
+	var own: PackedInt32Array = wc["own"]
+	var blds: Array = wc["buildings"]
+	var q := 0
+	while q < run.size():
+		var a: Vector2i = run[q]
+		var e := q
+		while e + 1 < run.size() and (run[e + 1] as Vector2i).y == a.y and e - q < 7:
+			e += 1
+		var b: Vector2i = run[e]
+		var idx := blds.size()
+		for k in range(q, e + 1):
+			var pt: Vector2i = run[k]
+			for dj in 2:
+				var c := (pt.y + dj) * ow + pt.x
+				obs[c] = C_BUILDING
+				own[c] = idx + 1
+		var x0 := a.x * 2
+		var x1 := b.x * 2 + 2
+		var y0 := a.y * 2 + 1
+		var y1 := a.y * 2 + 3
+		blds.append([x0, y0, x1, y1, B_STAKES, W_STYLE, SH_QUAD, x0, y0, x1, y0, x1, y1, x0, y1, 26, MAT_TIMBER])
+		q = e + 1
+
+
+## The West town's street graph: nodes along every road (about 20 m apart),
+## the plaza and its corners, a line outside the landward edge, a 48 m
+## lattice over the open ground round the town, round the fort and the
+## landforms; edges between nodes up to EDGE_MAX apart with a clear line
+## 3 m wide (candidates from 48 m buckets, in index order), then the pieces
+## joined. Returns {"x", "y", "gate", "e0", "to", "w"} as _nav_graph.
+static func _w_graph(wc: Dictionary, roads: Array, w_m: int, h_m: int, lnodes: PackedInt32Array) -> Dictionary:
+	var obs: PackedByteArray = wc["obs"]
+	var inside: PackedByteArray = wc["inside"]
+	var ow: int = wc["ow"]
+	var oh: int = wc["oh"]
+	var o: Dictionary = wc["o"]
+	var nx := PackedInt32Array()
+	var ny := PackedInt32Array()
+	var ng := PackedInt32Array()
+	var gb := {}   # 8 m buckets of the nodes (merge test)
+	var add := func(x: int, y: int) -> int:
+		if x < 4 or y < 4 or x > w_m - 4 or y > h_m - 4:
+			return -1
+		if obs[mini(y / 2, oh - 1) * ow + mini(x / 2, ow - 1)] != C_OPEN:
+			return -1
+		for bj in range(y / 8 - 1, y / 8 + 2):
+			for bi in range(x / 8 - 1, x / 8 + 2):
+				for q in gb.get(bj * 4096 + bi, []):
+					if absi(nx[q] - x) < 4 and absi(ny[q] - y) < 4:
+						return q
+		nx.append(x)
+		ny.append(y)
+		ng.append(-1)
+		var key := (y / 8) * 4096 + x / 8
+		if not gb.has(key):
+			gb[key] = []
+		(gb[key] as Array).append(nx.size() - 1)
+		return nx.size() - 1
+	var px: int = o["px"]
+	var py: int = o["py"]
+	var hs: int = o["hs"]
+	add.call(px, py)
+	for c in [Vector2i(-1, -1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(1, 1)]:
+		add.call(px + c.x * (hs - 3), py + c.y * (hs - 3))
+	for r in roads:
+		var rp: PackedInt32Array = r[0]
+		var n := rp.size() / 2
+		for q in n:
+			if q % 2 == 0 or q == n - 1:
+				add.call(rp[q * 2], rp[q * 2 + 1])
+	var hw: int = o["hw"]
+	var cx: int = o["cx"]
+	var xo := cx - hw - 20
+	while xo <= cx + hw + 20:
+		add.call(xo, _w_bot(o, clampi(xo, cx - hw, cx + hw)) + 16)
+		xo += 26
+	var fort: Dictionary = o["fort"]
+	if not fort.is_empty():
+		var rr := int(fort["h"]) + int(fort["b"]) + 6
+		for k in 8:
+			add.call(int(fort["x"]) + FM.cos_a(k * 128) * rr / FM.TRIG_ONE, int(fort["y"]) + FM.sin_a(k * 128) * rr / FM.TRIG_ONE)
+	for q in lnodes.size() / 2:
+		add.call(lnodes[q * 2], lnodes[q * 2 + 1])
+	# Inside the town: the open ground between the lots (yards, gardens, the
+	# backs of the blocks) every 16 m where a man stands 2 m clear, so a unit
+	# anywhere in the town sees a node.
+	var keep: PackedByteArray = wc["keep"]
+	var iy := int(o["top"]) + 8
+	while iy < int(o["bot"]) + 8:
+		var ix := cx - hw + 8
+		while ix < cx + hw:
+			var c0 := mini(iy / 2, oh - 1) * ow + mini(ix / 2, ow - 1)
+			if inside[c0] != 0 and keep[c0] == 0:
+				var clear := true
+				for dj in range(-1, 2):
+					for di in range(-1, 2):
+						var ii := ix / 2 + di
+						var jj := iy / 2 + dj
+						if ii < 0 or jj < 0 or ii >= ow or jj >= oh or obs[jj * ow + ii] != C_OPEN:
+							clear = false
+				if clear:
+					add.call(ix, iy)
+			ix += 16
+		iy += 16
+	var gy := FIELD_STEP / 2
+	while gy < h_m:
+		var gx := FIELD_STEP / 2
+		while gx < w_m:
+			if inside[mini(gy / 2, oh - 1) * ow + mini(gx / 2, ow - 1)] == 0:
+				add.call(gx, gy)
+			gx += FIELD_STEP
+		gy += FIELD_STEP
+	# Edges.
+	var n2 := nx.size()
+	var bk := {}
+	for a in n2:
+		var key := (ny[a] / W_EDGE) * 4096 + nx[a] / W_EDGE
+		if not bk.has(key):
+			bk[key] = []
+		(bk[key] as Array).append(a)
+	var adj: Array = []
+	for a in n2:
+		adj.append([])
+	for a in n2:
+		var cand: Array[int] = []
+		var bi := nx[a] / W_EDGE
+		var bj := ny[a] / W_EDGE
+		for dj in range(-1, 2):
+			for di in range(-1, 2):
+				for b in bk.get((bj + dj) * 4096 + bi + di, []):
+					if int(b) > a:
+						cand.append(int(b))
+		cand.sort()
+		for b in cand:
+			var dx := nx[b] - nx[a]
+			var dy := ny[b] - ny[a]
+			var l2 := dx * dx + dy * dy
+			if l2 > W_EDGE * W_EDGE:
+				continue
+			if not _clear_fat(obs, ow, oh, nx[a], ny[a], nx[b], ny[b], -1):
+				continue
+			var w := FM.isqrt(l2 * 64)
+			(adj[a] as Array).append([b, w])
+			(adj[b] as Array).append([a, w])
+	_w_join(obs, ow, oh, nx, ny, adj)
+	var e0 := PackedInt32Array()
+	var to := PackedInt32Array()
+	var ww := PackedInt32Array()
+	for a in n2:
+		e0.append(to.size())
+		for e in adj[a]:
+			to.append(int(e[0]))
+			ww.append(int(e[1]))
+	e0.append(to.size())
+	return {"x": nx, "y": ny, "gate": ng, "e0": e0, "to": to, "w": ww}
+
+
+## Join the pieces of a West town's graph to the piece of node 0 (the
+## plaza): each other piece, in order of its first node, by the shortest
+## clear line (of its 12 shortest pairs within 64 m) to a node already
+## joined; a piece that finds none stays apart (a yard no line reaches).
+## Up to three rounds (a piece may reach the main one through another).
+static func _w_join(obs: PackedByteArray, ow: int, oh: int, nx: PackedInt32Array, ny: PackedInt32Array, adj: Array) -> void:
+	var n := nx.size()
+	if n == 0:
+		return
+	var comp := PackedInt32Array()
+	comp.resize(n)
+	comp.fill(-1)
+	var nc := 0
+	for s0 in n:
+		if comp[s0] >= 0:
+			continue
+		comp[s0] = nc
+		var stack: Array[int] = [s0]
+		while not stack.is_empty():
+			var v: int = stack.pop_back()
+			for e in adj[v]:
+				var b: int = e[0]
+				if comp[b] < 0:
+					comp[b] = nc
+					stack.append(b)
+		nc += 1
+	if nc <= 1:
+		return
+	var joined := PackedByteArray()
+	joined.resize(nc)
+	joined.fill(0)
+	joined[comp[0]] = 1
+	var bk := {}
+	for a in n:
+		var key := (ny[a] / 64) * 4096 + nx[a] / 64
+		if not bk.has(key):
+			bk[key] = []
+		(bk[key] as Array).append(a)
+	for rnd in 3:
+		var progress := false
+		for c in nc:
+			if joined[c] != 0:
+				continue
+			var pd := PackedInt64Array()
+			var pa := PackedInt32Array()
+			var pb := PackedInt32Array()
+			for a in n:
+				if comp[a] != c:
+					continue
+				var bi := nx[a] / 64
+				var bj := ny[a] / 64
+				for dj in range(-1, 2):
+					for di in range(-1, 2):
+						for b in bk.get((bj + dj) * 4096 + bi + di, []):
+							if joined[comp[int(b)]] == 0:
+								continue
+							var dx := nx[int(b)] - nx[a]
+							var dy := ny[int(b)] - ny[a]
+							var d2 := dx * dx + dy * dy
+							if d2 <= 64 * 64:
+								pd.append(d2)
+								pa.append(a)
+								pb.append(int(b))
+			var used := PackedByteArray()
+			used.resize(pd.size())
+			used.fill(0)
+			for k in mini(pd.size(), 12):
+				var bi2 := -1
+				for q in pd.size():
+					if used[q] != 0:
+						continue
+					if bi2 < 0 or pd[q] < pd[bi2] or (pd[q] == pd[bi2] and (pa[q] < pa[bi2] or (pa[q] == pa[bi2] and pb[q] < pb[bi2]))):
+						bi2 = q
+				used[bi2] = 1
+				var a2: int = pa[bi2]
+				var b2: int = pb[bi2]
+				if _clear_fat(obs, ow, oh, nx[a2], ny[a2], nx[b2], ny[b2], -1):
+					var w := FM.isqrt(int(pd[bi2]) * 64)
+					(adj[a2] as Array).append([b2, w])
+					(adj[b2] as Array).append([a2, w])
+					joined[c] = 1
+					progress = true
+					break
+		if not progress:
+			break
+
+
+## Turn a West town's own layout keys 180 degrees (_flip_all does the rest).
+static func _w_flip(lay: Dictionary, w_m: int, h_m: int) -> void:
+	for pr in lay.get("props", []):
+		pr[1] = w_m - int(pr[1])
+		pr[2] = h_m - int(pr[2])
+		pr[3] = (int(pr[3]) + 512) & 1023
+	for lw in lay.get("lowwalls", []):
+		for q in 2:
+			lw[q * 2] = w_m - int(lw[q * 2])
+			lw[q * 2 + 1] = h_m - int(lw[q * 2 + 1])
+	var fort: Dictionary = lay.get("fort", {})
+	if not fort.is_empty():
+		fort["x"] = w_m - int(fort["x"])
+		fort["y"] = h_m - int(fort["y"])
+		fort["dir"] = (int(fort["dir"]) + 512) & 1023
+	var sea: Dictionary = lay.get("sea", {})
+	var piers: Array = sea.get("piers", [])
+	for k in piers.size():
+		var pq: PackedInt32Array = piers[k]
+		for q in 4:
+			pq[q * 2] = w_m - pq[q * 2]
+			pq[q * 2 + 1] = h_m - pq[q * 2 + 1]
+		piers[k] = pq
+	lay["top"] = h_m - int(lay["top"])
+	lay["bot"] = h_m - int(lay["bot"])
+	var bm: PackedByteArray = lay.get("bmat", PackedByteArray())
+	var nb := bm.size()
+	for k in nb / 2:
+		var t := bm[k]
+		bm[k] = bm[nb - 1 - k]
+		bm[nb - 1 - k] = t
+	lay["bmat"] = bm

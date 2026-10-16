@@ -530,6 +530,8 @@ func _kit_material(mat: ShaderMaterial) -> void:
 	for q in Atlas.NAMES.size():
 		idx[Atlas.NAMES[q]] = q
 	var tropic: bool = CData.pack == "west" or "--tropic" in OS.get_cmdline_user_args()
+	if sim != null and sim.map_info is Dictionary and int((sim.map_info.get("city", {}) as Dictionary).get("west", 0)) != 0:
+		tropic = true  # (a West town on the battle map, phase W: palms whatever the pack)
 	var rows: Array = [
 		["tree_broad_a", "tree_broad_b", "tree_broad_c", "tree_broad_a"],
 		["tree_pine_a", "tree_pine_b", "tree_pine_a", "tree_pine_b"],

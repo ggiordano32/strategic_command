@@ -60,7 +60,8 @@ const IDS: Array[String] = ["skirmish", "battle_2000", "battle_4000",
 	"test_cav_art", "test_ridge_defend", "test_attack_uphill", "test_archers_hill",
 	"test_bolts_crest", "test_woods", "siege_village", "siege_town", "siege_city", "siege_hill",
 	"bench_4000_city", "siege_castrum", "siege_polis", "siege_punic", "siege_oppidum",
-	"bench_4000_polis", "bench_4000_castrum"]
+	"bench_4000_polis", "bench_4000_castrum", "west_village", "west_town", "west_city", "west_inland",
+	"west_port", "west_hill_village", "bench_west_town", "bench_4000_west"]
 
 ## Playable battles get generated terrain (random kind from the seed unless
 ## the menu picks one). The benchmarks stay flat so their timings compare
@@ -157,6 +158,22 @@ static func title(id: String) -> String:
 			return "AI vs AI benchmark: 4,000, coastal polis"
 		"bench_4000_castrum":
 			return "AI vs AI benchmark: 4,000, castrum"
+		"west_village":
+			return "West: open fishing village by the sea"
+		"west_town":
+			return "West: port town, harbour fort"
+		"west_city":
+			return "West: hill port city, fort and palisade"
+		"west_inland":
+			return "West: inland English town"
+		"west_port":
+			return "West: Dutch port city, harbour fort"
+		"west_hill_village":
+			return "West: ridge village, fort on the hill"
+		"bench_west_town":
+			return "AI vs AI benchmark: 1,500 in a West town"
+		"bench_4000_west":
+			return "AI vs AI benchmark: 4,000 in a West city"
 	return id
 
 
@@ -186,6 +203,22 @@ static func make(id: String) -> Dictionary:
 			return bench_city(MapGen.PLAN_CASTRUM, 0, Terrain.K_FLAT, 3)
 		"bench_4000_reinf":
 			return reinf_battle()
+		"west_village":
+			return west_town(11, 0, 0, 1, Terrain.K_FLAT, MapGen.PAL_DRY, MapGen.CUL_LATIN)
+		"west_town":
+			return west_town(12, 1, 1, 1, Terrain.K_ROLLING, MapGen.PAL_GREEN, MapGen.CUL_LATIN)
+		"west_city":
+			return west_town(13, 2, 2, 1, Terrain.K_HILL, MapGen.PAL_DRY, MapGen.CUL_LATIN)
+		"west_inland":
+			return west_town(14, 1, 0, 0, Terrain.K_ROLLING, MapGen.PAL_GREEN, MapGen.CUL_GREEK)
+		"west_port":
+			return west_town(15, 2, 1, 1, Terrain.K_FLAT, MapGen.PAL_ARID, MapGen.CUL_PUNIC)
+		"west_hill_village":
+			return west_town(16, 0, 1, 0, Terrain.K_RIDGE, MapGen.PAL_ROCKY, MapGen.CUL_LATIN)
+		"bench_west_town":
+			return west_town(4244, 1, 1, 1, Terrain.K_ROLLING, MapGen.PAL_GREEN, MapGen.CUL_LATIN, 2)
+		"bench_4000_west":
+			return west_town(4242, 2, 1, 1, Terrain.K_FLAT, MapGen.PAL_DRY, MapGen.CUL_LATIN, 3)
 	var sc := _make(id)
 	if id in PLAYABLE:
 		sc["terrain"] = {"kind": Terrain.K_RANDOM}
@@ -1046,6 +1079,12 @@ static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Arra
 			var dir: int = gd["dir"]
 			holds.append([int(gd["ix"]) - FM.cos_a(dir) * 5 / FM.TRIG_ONE,
 				int(gd["iy"]) - FM.sin_a(dir) * 5 / FM.TRIG_ONE, dir])
+	elif int(lay.get("west", 0)) != 0:
+		# A West open town (phase W): each street mouth held 18 m inside it.
+		for mo in mouths:
+			var a: Array = mo
+			var ma: int = a[2]
+			holds.append([int(a[0]) - FM.cos_a(ma) * 18 / FM.TRIG_ONE, int(a[1]) - FM.sin_a(ma) * 18 / FM.TRIG_ONE, ma])
 	else:
 		var r0: int = lay["r0"]
 		for mo in mouths:
@@ -1116,6 +1155,19 @@ static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Arra
 			x1 = maxi(x1, maxi(int(sg[0]), int(sg[2])))
 			y1 = maxi(y1, maxi(int(sg[1]), int(sg[3])))
 		zones.append([def_side, 1, maxi(x0 - 4, 0), maxi(y0 - 4, 0), mini(x1 + 4, w), mini(y1 + 4, h)])
+	elif int(lay.get("west", 0)) != 0:
+		# A West open town: its outline's box.
+		var wp: PackedInt32Array = lay["poly"]
+		var x0 := w
+		var y0 := h
+		var x1 := 0
+		var y1 := 0
+		for q in wp.size() / 2:
+			x0 = mini(x0, wp[q * 2])
+			y0 = mini(y0, wp[q * 2 + 1])
+			x1 = maxi(x1, wp[q * 2])
+			y1 = maxi(y1, wp[q * 2 + 1])
+		zones.append([def_side, 0, maxi(x0 - 4, 0), maxi(y0 - 4, 0), mini(x1 + 4, w), mini(y1 + 4, h)])
 	else:
 		var r0: int = int(lay.get("r0", 80)) + 10
 		var tcx: int = lay["cx"]
@@ -1292,6 +1344,45 @@ static func fair_siege(city_seed: int, walls: int, plan: int, equip: Dictionary)
 		"ground": MapGen.PAL_DRY}
 	var city := {"seed": city_seed, "level": level, "walls": walls, "bld": [1, 2, 4], "plan": plan, "coast": 0}
 	var r := settlement(city, terr, att, dfn, 1, [0, 1], equip)
+	return r["scenario"]
+
+
+## A West open town battle (phase W: tests/pathing_probe.gd, the benches,
+## the gallery): West companies storm a town (MapGen.is_west: city key
+## "west") held by a garrison; both sides AI. size 1: about 900 against 560;
+## 2 (bench_west_town): 1,500 men in 40 units of 30-80; 3
+## (bench_4000_west): about 4,000.
+const WEST_ATT := [["lancers", 60], ["musketeers", 100], ["w_pikemen", 120], ["musketeers", 100],
+	["rodeleros", 100], ["buccaneers", 60], ["buccaneers", 60], ["light_gun", 12], ["pistoleers", 60], ["cutlass", 60]]
+const WEST_DEF := [["musketeers", 80], ["buccaneers", 60], ["w_pikemen", 100], ["musketeers", 80],
+	["buccaneers", 40], ["cutlass", 60], ["light_gun", 12], ["musketeers", 60], ["buccaneers", 40]]
+static func west_town(city_seed: int, level: int, walls: int, coast: int, kind: int, ground: int, founder: int,
+		size: int = 1) -> Dictionary:
+	var att: Array = []
+	var dfn: Array = []
+	if size == 2:
+		# 40 units of 30-80 men: 22 attacking (about 1,000), 18 defending.
+		var a2 := [["musketeers", 60], ["buccaneers", 40], ["w_pikemen", 80], ["cutlass", 40], ["rodeleros", 60],
+			["buccaneers", 30], ["musketeers", 50], ["lancers", 40], ["pistoleers", 30], ["musketeers", 60], ["buccaneers", 40]]
+		var d2 := [["musketeers", 40], ["buccaneers", 30], ["w_pikemen", 50], ["cutlass", 30], ["buccaneers", 30],
+			["musketeers", 40], ["rodeleros", 30], ["buccaneers", 30], ["musketeers", 30]]
+		for k in 2:
+			for e in a2:
+				att.append([UT.index_of(str(e[0])), int(e[1])])
+			for e in d2:
+				dfn.append([UT.index_of(str(e[0])), int(e[1])])
+	else:
+		var reps := 1 if size <= 1 else 4
+		for k in reps:
+			for e in WEST_ATT:
+				att.append([UT.index_of(str(e[0])), int(e[1])])
+		for k in (1 if size <= 1 else 3):
+			for e in WEST_DEF:
+				dfn.append([UT.index_of(str(e[0])), int(e[1]) + (20 if size > 1 and k == 0 else 0)])
+	var terr := {"kind": kind, "seed": city_seed * 7 + 3, "forest": MapGen.PALETTE_FOREST[ground] + 20, "ground": ground}
+	var city := {"seed": city_seed, "level": level, "walls": walls, "bld": [1, 2, 4], "plan": founder, "coast": coast,
+		"founder": founder, "west": 1}
+	var r := settlement(city, terr, att, dfn, 1, [0, 1])
 	return r["scenario"]
 
 

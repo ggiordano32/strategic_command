@@ -872,7 +872,8 @@ static func _unit_extras(su: Dictionary, e: Dictionary) -> void:
 ## a port) and view-only dressing (founder, owner = the current owner's
 ## culture, banner = owner faction, bstyle = culture that built each entry
 ## of bld at its current level, hstyle = culture of the houses that came
-## with each settlement level). def (the defending sim side) is set by
+## with each settlement level; west = 1 in the West pack: an open town of
+## the Caribbean, MapGen.is_west). def (the defending sim side) is set by
 ## Scenarios.settlement unless given (>= 0).
 static func city_dict(st: Dictionary, r: int, def_side: int = -1) -> Dictionary:
 	var bld := city_buildings(st, r)
@@ -887,6 +888,8 @@ static func city_dict(st: Dictionary, r: int, def_side: int = -1) -> Dictionary:
 		"coast": 1 if CData.is_port(r) else 0, "founder": CData.region_culture(r),
 		"owner": CState.owner_culture(st, r), "banner": CState.owner(st, r), "bstyle": bstyle,
 		"hstyle": hstyle}
+	if CData.pack == "west":
+		d["west"] = 1  # (a West open town on the battle map: MapGen.is_west, phase W)
 	if def_side >= 0:
 		d["def"] = def_side
 	return d

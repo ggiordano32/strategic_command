@@ -608,7 +608,10 @@ static func _bound_storm(sim, u: int) -> void:
 		var st: Array = mouths[rk.x % mouths.size()]
 		tx = int(st[0]) * M
 		ty = int(st[1]) * M
-		if BattleAI._d(sim.u_ax[u] - tx, sim.u_ay[u] - ty) <= 15 * M:
+		# (At its mouth, or in the town already nearer the plaza than the
+		# mouth is: on to the plaza, not back out through the streets.)
+		if BattleAI._d(sim.u_ax[u] - tx, sim.u_ay[u] - ty) <= 15 * M \
+				or BattleAI._d(sim.u_ax[u] - px, sim.u_ay[u] - py) < BattleAI._d(tx - px, ty - py):
 			sim.u_ai_x[u] = 1
 			tx = px
 			ty = py
@@ -1905,7 +1908,8 @@ static func _storm(sim, u: int) -> void:
 			var st: Array = mouths[rk.x % mouths.size()]
 			var mx: int = int(st[0]) * M
 			var my: int = int(st[1]) * M
-			if BattleAI._d(sim.u_ax[u] - mx, sim.u_ay[u] - my) > 15 * M:
+			var inner: bool = sim.wt_on != 0 and BattleAI._d(sim.u_ax[u] - px, sim.u_ay[u] - py) < BattleAI._d(mx - px, my - py)
+			if BattleAI._d(sim.u_ax[u] - mx, sim.u_ay[u] - my) > 15 * M and not inner:
 				var f := FM.atan2_a(py - my, px - mx)
 				if sim.u_order[u] != O_MOVE or BattleAI._d(sim.u_dx[u] - mx, sim.u_dy[u] - my) > 6 * M:
 					BattleAI._move(sim, u, mx, my, f, BattleAI._width(sim, u), 0, 3)
@@ -1956,6 +1960,16 @@ static func _att_missile(sim, u: int, phase: int) -> void:
 			var oy: int = sim.u_ay[u]
 			var dd := maxi(BattleAI._d(ox - cx, oy - cy), 1)
 			var want := int(lay["r0"]) * M * kn[AP.S_OPEN_PCT] / 100 + kn[AP.S_OPEN_OUT]
+			if sim.wt_on != 0:
+				# A West open town (phase W): a band the field's width across, so
+				# off its landward edge, in front of where the unit stands.
+				var sgn := 1 if int(lay["top"]) < int(lay["bot"]) else -1
+				var edge := int(lay["bot"]) * M
+				var ty2 := clampi(edge + sgn * (want - int(lay["r0"]) * M), 8 * M, sim.field_h - 8 * M)
+				var tx2 := clampi(ox + _spread(rk0.x, rk0.y, 20 * M), 8 * M, sim.field_w - 8 * M)
+				if absi(oy - ty2) > 10 * M or sgn * (oy - edge) < 0:
+					_go_home(sim, u, tx2, ty2, 256 if sgn < 0 else 768, 10)
+				return
 			var tx := clampi(cx + (ox - cx) * want / dd + _spread(rk0.x, rk0.y, 20 * M), 8 * M, sim.field_w - 8 * M)
 			var ty := clampi(cy + (oy - cy) * want / dd, 8 * M, sim.field_h - 8 * M)
 			if dd > want + 10 * M:

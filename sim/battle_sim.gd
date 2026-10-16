@@ -1026,6 +1026,8 @@ var cit_r: int = 0
 var cit_gate: int = -1
 var sea_on: int = 0               # the sea behind the city (static)
 var sea_flee := PackedInt32Array()  # coast: where the defenders leave the field: x, y left, x, y right (static)
+var sea_boats: int = 0             # a West port (phase W): the defenders' routers also leave by the boats at the shore (static)
+var wt_on: int = 0                 # a West open town (phase W; static): routers caught in its streets give up (GIVEUP_T)
 var city_ditch: int = 0           # a ditch round the walls (static)
 var cit_siege: int = 0            # ticks the attackers have held the town 3:1 (the defenders lose heart)
 # Per unit (on such maps; resized always, hashed only there).
@@ -1257,6 +1259,10 @@ var vs_tw := PackedByteArray()        # 4 m cells (the veg grid): tree weight al
 var vs_top := PackedInt32Array()      # ... how far a sight blocker rises above the ground (buildings; negative: rocks, cliffs; static)
 var vs_sat := PackedInt32Array()      # ... summed-area table of the cells with either ((veg_w + 1) x (veg_h + 1); static)
 var land_hd := PackedByteArray()      # 2 m cells: a rock's or cliff's height (dm; static; 0 elsewhere)
+var bld_g := PackedByteArray()       # a West town (phase W; static): each building cell's height (dm, bits 0-6) and timber (bit 7); empty elsewhere
+var _tr_c: int = -1                  # scratch: the cell that stopped the last _trace
+var _tr_wood: int = 0                # scratch: _trace looks through timber walls (a ball that went through)
+var stat_wood_pass: int = 0          # diagnostics: flat shots through a timber wall (West towns)
 var u_seen := PackedInt32Array()      # 1: some enemy unit sees it (0: hidden from the enemy)
 var u_rev := PackedInt32Array()       # seen until this tick: it shot (REVEAL_T)
 var u_hid0 := PackedInt32Array()      # tick it was last hidden from (while hidden)
@@ -1614,6 +1620,9 @@ const XF_TICKS := 250             # ... it takes over this long after it started
 const XF_INF := 1 << 30           # (a cell no exit is reached from)
 const HUDDLE_R := 30              # routers this near their refuge (field units: 6 m) huddle there
 const SURR_R := 15 * M            # a final router huddled with a ready enemy this near (box to box) gives up
+const GIVEUP_T := 8 * TICKS_PER_SECOND          # a West town (phase W): a router stuck this long (ticks) in the streets with a ready enemy within SURR_R gives up ...
+const GIVEUP_CAUGHT := 10                       # ... as does one with a ready enemy within SURR_R for this many seconds on end
+const TIMBER_PASS := 35                         # a West town: % of flat balls a timber wall (plank houses, shacks, stakes) lets through
 const SLIDE_HOLD := 5             # a man stalled against an obstacle follows it this many ticks (s_wf)
 const SEP_SLOT := M / 2           # men following their places near obstacles keep this far apart (a quarter push)
 const _DX8 := [1, 1, 0, -1, -1, -1, 0, 1]   # 8 directions: E SE S SW W NW N NE (y down)
@@ -1638,6 +1647,7 @@ var s_wf := PackedByteArray()     # per man, a slide's memory: dir 0-7 | 8 has d
 var stat_rs_x := PackedInt32Array()  # diagnostics (not hashed): a router's centroid when it last got on (STUCK_DIST)
 var stat_rs_y := PackedInt32Array()
 var stat_rs_k := PackedInt32Array()  # ... ticks since (not huddled)
+var u_gu := PackedInt32Array()       # a West town's router: seconds caught (a ready enemy within SURR_R; phase W, hashed there)
 var stat_rout_still: int = 0      # router-ticks still 10 s and more (not huddled)
 var stat_huddle: int = 0          # units that huddled
 var stat_hud_surr: int = 0        # men who gave up huddled
@@ -1654,6 +1664,7 @@ var stat_wf: int = 0              # wall-follow holds started (slide memory)
 const CLR_MIN := M / 2             # a man ending a step nearer a drawn house face than this is pushed out to it
 const CLR_PLACE := 819             # places (formation, flowed, huddle) are put this far (0.8 m) off the faces
 const CLR_MARGIN := 3              # metres round a building the field is computed (beyond: CLR_FAR)
+const CLR_MARGIN_W := 2            # ... in a West town (phase W: 300-600 houses; set-up time)
 const CLR_ZERO := 64               # clr_g byte = CLR_ZERO + distance / 32 (sim units; inside a house negative)
 const CLR_FAR := 160               # ... capped at 3 m
 const CLR_EDGE := 32               # street graph: an edge costs this many eighths of a metre more per metre its line passes nearer than 3 m to a house
@@ -1842,7 +1853,7 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	stat_stuck_u.fill(0)
 	stat_stuck_t.resize(n_units)
 	stat_stuck_t.fill(0)
-	for arr in [stat_rs_x, stat_rs_y, stat_rs_k, _u_xf]:
+	for arr in [stat_rs_x, stat_rs_y, stat_rs_k, _u_xf, u_gu]:
 		arr.resize(n_units)
 		arr.fill(0)
 	s_wf.resize(n)
@@ -2724,6 +2735,9 @@ func _setup_map(f: Dictionary) -> void:
 	cit_r = 0
 	cit_gate = -1
 	sea_on = 0
+	sea_boats = 0
+	wt_on = 0
+	bld_g = PackedByteArray()
 	city_ditch = 0
 	cit_siege = 0
 	agora = PackedInt32Array([0, 0, 0])
@@ -2847,10 +2861,16 @@ func _setup_map(f: Dictionary) -> void:
 		var sd: Dictionary = lay.get("sea", {})
 		if not sd.is_empty():
 			sea_on = 1
+			if int(lay.get("west", 0)) != 0:
+				sea_boats = 1  # (a West port: routers take to the boats at the shore)
 			for fl in sd["flee"]:
 				sea_flee.append(int(fl[0]) * M)
 				sea_flee.append(int(fl[1]) * M)
 		city_ditch = int(lay.get("ditch", 0))
+		wt_on = 1 if int(lay.get("west", 0)) != 0 else 0
+		var bm: PackedByteArray = lay.get("bmat", PackedByteArray())
+		if wt_on != 0 and bm.size() == ob_w * ob_h:
+			bld_g = bm  # (cover by material: the houses' own heights, timber or stone)
 		var gr: Dictionary = lay["nav"]
 		for k in (gr["x"] as PackedInt32Array).size():
 			ng_x.append(int(gr["x"][k]) * M)
@@ -3395,6 +3415,10 @@ func _obs_top(x: int, y: int) -> int:
 			return 0
 		return _land_top((y >> 11) * ob_w + (x >> 11), k)
 	if k == MapGen.C_BUILDING:
+		if not bld_g.is_empty():
+			var bv := bld_g[(y >> 11) * ob_w + (x >> 11)]
+			if bv != 0:
+				return (bv & 127) * M / 10  # (a West town: its own height)
 		return build_h if build_h > 0 or ft_on == 0 else VIS_BUILD_H  # (a field map's blocks: phase C0)
 	if k == MapGen.C_WALK or k == MapGen.C_STAIR:
 		return wall_h
@@ -3413,6 +3437,8 @@ func _cell_top(c: int, k: int) -> int:
 	if MapGen.is_land(k):
 		return _land_top(c, k)
 	if k == MapGen.C_BUILDING:
+		if not bld_g.is_empty() and bld_g[c] != 0:
+			return (bld_g[c] & 127) * M / 10  # (a West town: its own height)
 		return build_h if build_h > 0 else VIS_BUILD_H
 	if k == MapGen.C_WALK or k == MapGen.C_STAIR:
 		return wall_h
@@ -5421,6 +5447,13 @@ func _xf_next() -> void:
 							_xf_pend[off + c] = 0
 							_xb_q[_xb_n] = c
 							_xb_n += 1
+				if sea_boats != 0:
+					# (A West port: the shore too, where the boats are.)
+					for c in ob_w * ob_h:
+						if (_xb_pass[c] & gnd) != 0 and _xf_pend[off + c] != 0 and _by_water(c):
+							_xf_pend[off + c] = 0
+							_xb_q[_xb_n] = c
+							_xb_n += 1
 			else:
 				var j := ob_h - 1 if _xb_f == 0 else 0
 				for i in ob_w:
@@ -5457,6 +5490,14 @@ func _xf_next() -> void:
 			_xb_n = 1
 		if _xb_n > 0:
 			return
+
+
+## 2 m cell c is open ground with the sea beside it (4 neighbours).
+func _by_water(c: int) -> bool:
+	var i := c % ob_w
+	var j := c / ob_w
+	return (i > 0 and obs[c - 1] == MapGen.C_WATER) or (i < ob_w - 1 and obs[c + 1] == MapGen.C_WATER) \
+		or (j > 0 and obs[c - ob_w] == MapGen.C_WATER) or (j < ob_h - 1 and obs[c + ob_w] == MapGen.C_WATER)
 
 
 ## Settle up to `budget` cells of the generation building (a breadth-first
@@ -5796,6 +5837,29 @@ func _rout_stats(u: int) -> void:
 			stat_stuck_max = k
 
 
+## A West open town (phase W): router u, not huddled, caught in the streets
+## (no gate to huddle at; the enemy across its way or at its heels) gives
+## up: once a second, with a ready enemy within SURR_R of it (box to box),
+## when its men's middle has stayed within STUCK_DIST for GIVEUP_T or the
+## enemy has been that near for GIVEUP_CAUGHT seconds on end (u_gu): its
+## men are taken.
+func _street_giveup(u: int) -> void:
+	if (u + tick) % TICKS_PER_SECOND != 0 or u_hud[u] != 0:
+		return
+	var e := _nearest_enemy_unit(u, true)
+	if e < 0 or _box_gap(u, e) > SURR_R:
+		u_gu[u] = 0
+		return
+	u_gu[u] += 1
+	if stat_rs_k[u] < GIVEUP_T and u_gu[u] < GIVEUP_CAUGHT:
+		return
+	var men := u_alive[u]
+	var base := u_slot_base[u]
+	while u_alive[u] > 0:
+		_remove(slot_soldier[base + u_alive[u] - 1], GONE_SURR)
+	stat_hud_surr += men
+
+
 ## Slide with memory (docs/PATHING_SPEC.md A5): man i stepping from
 ## (ox, oy) toward (nx, ny), `r` where the slide put him. Stalled twice
 ## running, or sliding back the way his last slide went (a 2-cycle in a
@@ -5963,14 +6027,18 @@ func _clr_build(blocks: Array) -> void:
 		else:
 			for q in 4:
 				cb_g[k * 8 + q] = int(b[q]) * M
-		var i0 := maxi(int(b[0]) - CLR_MARGIN - 1, 0)
-		var j0 := maxi(int(b[1]) - CLR_MARGIN - 1, 0)
-		var i1 := mini(int(b[2]) + CLR_MARGIN + 1, cl_w - 1)
-		var j1 := mini(int(b[3]) + CLR_MARGIN + 1, cl_h - 1)
+		var mg := CLR_MARGIN if wt_on == 0 else CLR_MARGIN_W
+		var i0 := maxi(int(b[0]) - mg - 1, 0)
+		var j0 := maxi(int(b[1]) - mg - 1, 0)
+		var i1 := mini(int(b[2]) + mg + 1, cl_w - 1)
+		var j1 := mini(int(b[3]) + mg + 1, cl_h - 1)
 		for j in range(j0, j1 + 1):
 			var py := j * M + M / 2
 			var row := j * cl_w
+			var orow := (j >> 1) * ob_w
 			for i in range(i0, i1 + 1):
+				if wt_on != 0 and obs[orow + (i >> 1)] == MapGen.C_BUILDING:
+					continue  # (a West town: its houses' cells cover their drawn outlines; no man stands there)
 				var d := _clr_exact(k, i * M + M / 2, py).x
 				var v := clampi(CLR_ZERO + (d >> 5), 0, CLR_FAR)
 				var c := row + i
@@ -6079,21 +6147,25 @@ func _clr_exact(k: int, x: int, y: int) -> Vector3i:
 		return Vector3i(dl, sx * FM.TRIG_ONE / dl, sy * FM.TRIG_ONE / dl)
 	# A turned quad (convex, clockwise on screen): inside, out by the nearest
 	# edge; outside, to the nearest point of an edge he is beyond (at most two).
-	var crs := [0, 0, 0, 0]
-	var out := false
-	for q in 4:
-		var ax := cb_g[g + 2 * q]
-		var ay := cb_g[g + 2 * q + 1]
-		var q2 := (q + 1) & 3
-		var cr := (cb_g[g + 2 * q2] - ax) * (y - ay) - (cb_g[g + 2 * q2 + 1] - ay) * (x - ax)  # > 0: inner side
-		crs[q] = cr
-		if cr <= 0:
-			out = true
+	# (Unrolled, no array: this runs for every cell round every house at setup.)
+	var g0x := cb_g[g]
+	var g0y := cb_g[g + 1]
+	var g1x := cb_g[g + 2]
+	var g1y := cb_g[g + 3]
+	var g2x := cb_g[g + 4]
+	var g2y := cb_g[g + 5]
+	var g3x := cb_g[g + 6]
+	var g3y := cb_g[g + 7]
+	var c0 := (g1x - g0x) * (y - g0y) - (g1y - g0y) * (x - g0x)  # > 0: inner side
+	var c1 := (g2x - g1x) * (y - g1y) - (g2y - g1y) * (x - g1x)
+	var c2 := (g3x - g2x) * (y - g2y) - (g3y - g2y) * (x - g2x)
+	var c3 := (g0x - g3x) * (y - g3y) - (g0y - g3y) * (x - g3x)
+	var out := c0 <= 0 or c1 <= 0 or c2 <= 0 or c3 <= 0
 	if not out:
 		var perp := 1 << 40
 		var pq := 0
 		for q in 4:
-			var pd: int = crs[q] / cb_l[k * 4 + q]
+			var pd: int = (c0 if q == 0 else (c1 if q == 1 else (c2 if q == 2 else c3))) / cb_l[k * 4 + q]
 			if pd < perp:
 				perp = pd
 				pq = q
@@ -6105,7 +6177,7 @@ func _clr_exact(k: int, x: int, y: int) -> Vector3i:
 	var bqx := 0
 	var bqy := 0
 	for q in 4:
-		if crs[q] > 0:
+		if (c0 if q == 0 else (c1 if q == 1 else (c2 if q == 2 else c3))) > 0:
 			continue
 		var ax := cb_g[g + 2 * q]
 		var ay := cb_g[g + 2 * q + 1]
@@ -6127,7 +6199,7 @@ func _clr_exact(k: int, x: int, y: int) -> Vector3i:
 	if dq == 0:
 		# On an edge: out along its normal.
 		for q in 4:
-			if crs[q] <= 0:
+			if (c0 if q == 0 else (c1 if q == 1 else (c2 if q == 2 else c3))) <= 0:
 				var q4 := (q + 1) & 3
 				var ln4 := cb_l[k * 4 + q]
 				return Vector3i(0, (cb_g[g + 2 * q4 + 1] - cb_g[g + 2 * q + 1]) * FM.TRIG_ONE / ln4,
@@ -7673,6 +7745,8 @@ func _update_units() -> void:
 				_flee_step(u)
 			if oon and u_state[u] == U_ROUTING and u_alive[u] > 0:
 				_rout_stats(u)
+				if wt_on != 0:
+					_street_giveup(u)
 			continue
 		var ty := u_type[u]
 		var cls := u_cls[u]
@@ -8628,6 +8702,7 @@ func _update_soldiers() -> void:
 				var fx := flx - fly * jitter / 24
 				var fy := fly + flx * jitter / 24
 				var rmode := 0  # 0 the unit's flee vector, 1 a direction (fx, fy), 2 / 3 to (tx, ty2) at rs / hs, 4 he stays
+				var boat := false
 				var mm := mask
 				var tx := 0
 				var ty2 := 0
@@ -8658,6 +8733,9 @@ func _update_soldiers() -> void:
 						elif dc == 8:
 							if xside >= 2:
 								rmode = 4  # at the refuge: he stays
+							elif sea_boats != 0 and xside == city_def and _by_water(mini(oy >> 11, obh1) * obw + mini(ox >> 11, obw1)):
+								boat = true  # (a West port: into a boat at the shore, off the field)
+								rmode = 4
 							else:
 								# At an exit: on out over the edge.
 								fx = 0
@@ -8711,7 +8789,7 @@ func _update_soldiers() -> void:
 				rmaxx = maxi(rmaxx, x)
 				rminy = mini(rminy, y)
 				rmaxy = maxi(rmaxy, y)
-				if x < EDGE_EXIT or y < EDGE_EXIT or x > fw - EDGE_EXIT or y > fh - EDGE_EXIT:
+				if x < EDGE_EXIT or y < EDGE_EXIT or x > fw - EDGE_EXIT or y > fh - EDGE_EXIT or boat:
 					_rm[n_rm] = i
 					_rm_why[n_rm] = GONE_ROUTED
 					n_rm += 1
@@ -14006,6 +14084,30 @@ func _land_heights() -> void:
 					var c := j * ob_w + i
 					if obs[c] == MapGen.C_CLIFF and land_hd[c] < hd:
 						land_hd[c] = hd
+	# A West town (phase W): goods in the streets and yard walls are rock cells
+	# of their own heights (1.0-1.4 m: a crouching man's cover, not a standing one's).
+	var cl: Dictionary = map_info.get("city", {})
+	for pr in cl.get("props", []):
+		var pa: Array = pr
+		var ang := int(pa[3])
+		for q in (2 if int(pa[0]) == MapGen.P_CART else 1):
+			var qx := int(pa[1]) + (FM.cos_a(ang) * (q * 2 - 1) / FM.TRIG_ONE if int(pa[0]) == MapGen.P_CART else 0)
+			var qy := int(pa[2]) + (FM.sin_a(ang) * (q * 2 - 1) / FM.TRIG_ONE if int(pa[0]) == MapGen.P_CART else 0)
+			var c2 := clampi(qy / 2, 0, ob_h - 1) * ob_w + clampi(qx / 2, 0, ob_w - 1)
+			if obs[c2] == MapGen.C_ROCK and land_hd[c2] == 0:
+				land_hd[c2] = clampi(int(pa[4]), 5, 80)
+	for lw in cl.get("lowwalls", []):
+		var la: Array = lw
+		var ax := int(la[0]) * 100
+		var ay := int(la[1]) * 100
+		var bx := int(la[2]) * 100
+		var by := int(la[3]) * 100
+		for j in range(maxi((mini(ay, by) - 300) / 200, 0), mini((maxi(ay, by) + 300) / 200 + 1, ob_h)):
+			for i in range(maxi((mini(ax, bx) - 300) / 200, 0), mini((maxi(ax, bx) + 300) / 200 + 1, ob_w)):
+				var c3 := j * ob_w + i
+				if obs[c3] == MapGen.C_ROCK and land_hd[c3] == 0 \
+						and MapGen._seg_dist_cm(i * 200 + 100, j * 200 + 100, ax, ay, bx, by) <= 150:
+					land_hd[c3] = clampi(int(la[4]), 5, 80)
 	for c in obs.size():
 		if land_hd[c] == 0 and MapGen.is_land(obs[c]):
 			land_hd[c] = 20 if obs[c] == MapGen.C_ROCK else 30
@@ -14311,6 +14413,13 @@ func _flat_block(p: int, j: int) -> bool:
 	var zt := LOF_BODY if t_cover[u_otype[ub]] != 0 else LOF_HEAD
 	var a := _trace(sx, sy, z0, tx, ty, elev_at(tx, ty) + zt,
 		d * t_m_apex[pr_ty[p]] / 100, s_obs, LAND_NEAR, t_obs, t_land)
+	if a >= 0 and not bld_g.is_empty() and _tr_c >= 0 and obs[_tr_c] == MapGen.C_BUILDING \
+			and (bld_g[_tr_c] & 128) != 0 and _rand() % 100 < TIMBER_PASS:
+		# (A West town: through a timber wall. Stone stops it.)
+		_tr_wood = 1
+		a = _trace(sx, sy, z0, tx, ty, elev_at(tx, ty) + zt, d * t_m_apex[pr_ty[p]] / 100, s_obs, LAND_NEAR, t_obs, t_land)
+		_tr_wood = 0
+		stat_wood_pass += 1
 	if a >= 0 and t_land > 0 and (u_cvb[ub] >= 0 or _bnd_still(ub) >= 0):
 		# Up and leaning out round his cover spot's corner to shoot: the ball
 		# is traced to where he leans (_lean, as his own shot).
@@ -14395,7 +14504,8 @@ func _trace(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int, apex: int,
 		if ix >= 0 and iy >= 0 and ix < obw and iy < obh:
 			var c := iy * obw + ix
 			var k := obs[c]
-			if k != MapGen.C_OPEN and k != MapGen.C_DITCH and k != MapGen.C_WATER:
+			if k != MapGen.C_OPEN and k != MapGen.C_DITCH and k != MapGen.C_WATER \
+					and not (_tr_wood != 0 and k == MapGen.C_BUILDING and (bld_g[c] & 128) != 0):
 				var top := _cell_top(c, k)
 				if top > 0:
 					var cx := (ix << 11) + 1024
@@ -14405,6 +14515,7 @@ func _trace(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int, apex: int,
 					if a >= (s_land if land else s_obs) and d - a >= (t_land if land else t_obs):
 						var z := z0 + dz * a / d + apex * 4 * a / d * (d - a) / d
 						if (height_at(cx, cy) if ter else 0) + top > z:
+							_tr_c = c
 							return a
 		nc -= 1
 		if nc <= 0:
@@ -14918,7 +15029,7 @@ const _SNAP_SKIP := {"ter_h": true, "ter_gx": true, "ter_gy": true, "ter_info": 
 	"ws_jx": true, "ws_jy": true, "_lw_x": true, "_lw_y": true, "_fl_mark": true, "_rc_tk": true, "_rc_n": true, "_rc_ok": true, "cmp": true, "n_cmp": true, "g_cmp": true, "_croot": true, "_croot_ep": true,
 	"_xf_live": true, "_xf_pend": true, "_xb_pass": true, "_xb_q": true, "_xb_f": true,
 	"_xb_i": true, "_xb_n": true, "_xb_cmp": true, "_xb_done": true, "_xb_gm": true,
-	"clr_g": true, "clr_b": true, "cb_k": true, "cb_g": true, "cb_l": true, "cl_sat": true, "cl_sw": true, "cl_on": true, "cl_w": true, "cl_h": true}
+	"bld_g": true, "_tr_c": true, "_tr_wood": true, "clr_g": true, "clr_b": true, "cb_k": true, "cb_g": true, "cb_l": true, "cl_sat": true, "cl_sw": true, "cl_on": true, "cl_w": true, "cl_h": true}
 const _SNAP_MAGIC := 0x31534353  # "SCS1"
 
 
@@ -15046,6 +15157,12 @@ func state_hash() -> int:
 				ctx.update((arr as PackedInt32Array).to_byte_array())
 			ctx.update(s_wf)
 			ctx.update(PackedInt64Array([xf_t0, xf_gp, xf_gl]).to_byte_array())
+			if wt_on != 0:
+				# (A West town: the routers' stillness decides who gives up.)
+				ctx.update(stat_rs_x.to_byte_array())
+				ctx.update(stat_rs_y.to_byte_array())
+				ctx.update(stat_rs_k.to_byte_array())
+				ctx.update(u_gu.to_byte_array())
 			if ft_on != 0:
 				ctx.update(s_shot.to_byte_array())
 				ctx.update(u_cvb.to_byte_array())

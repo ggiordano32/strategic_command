@@ -2804,6 +2804,192 @@ cover. docs/PATHING_SPEC.md section 5. Code: `sim/battle_sim.gd` (section
 - **Measured.** See docs/STATUS.md (the balance table, the pathing probe,
   cost).
 
+### West open towns (as built, pathing phase W, 2026-10-16)
+
+Why (the user, docs/PATHING_SPEC.md section 7 and addendum 2): "it would
+make more sense that the city covers a larger section of the map", mostly
+unwalled (real walls only where the history check says); "the buildings
+may not be so symmetrical and perfectly placed. They still follow the road,
+but saloons and taverns and shops and food stores would be not perfectly
+shaped and follow the land a bit more." Code: `sim/mapgen.gd` (section
+"West open towns (phase W)": `is_west`, `west_coast`, `west_outline`,
+`_city_west`, `_w_trace` / `_w_road`, `_w_lots`, `_w_put`, `_w_extras`,
+`_w_lowwall`, `_w_prop`, `_w_stakes`, `_w_graph`, `_w_join`, `_w_flip`),
+`sim/terrain.gd` (`_west_ground`), `sim/battle_sim.gd` (`sea_boats`,
+`wt_on`, `_street_giveup`, `bld_g` and `TIMBER_PASS`, the props' and yard
+walls' heights in `_land_heights`, `CLR_MARGIN_W`), `sim/scenarios.gd`
+(`west_town`, the West holds and deployment zone in `settlement`),
+`campaign/cbattle.gd` (`city_dict`: "west"), `game/custom/custom_setup.gd`,
+`game/battlekit.gd` (`_build_west`, `_west_fort`, palettes 6 and 7),
+`game/city_streets.gd`, `game/terrain_layer.gd` (`_west_built`),
+`game/tree_layer.gd`, `tools/battlekit/build.py` (`PIECES_W`).
+
+- **Which towns.** A settlement whose city dictionary has "west": 1 (the
+  West pack's `CBattle.city_dict`, a West custom battle, the `west_*`
+  scenarios), walls 0-2 and a European founder (`MapGen.is_west`). Native
+  towns (founder Celtic: Itza, Miskito) keep the oppidum (round huts, a
+  palisade at walls 1+, in jungle); walls 3 (only by building in the
+  campaign; no West region starts with it) keeps the walled plans (the
+  history check's full curtain). Rome, Greek and Punic maps never take this
+  path: their dictionaries have no "west" key (`city_params` adds it only
+  when given), so their maps, pins and goldens are as they were.
+- **Frame and size.** The town is a band along the top of the canonical
+  frame (the shore, or the top of the field inland), `W_HW` 190 / 245 / 300 m
+  half wide and `W_D` 150 / 205 / 255 m deep by level, on a field at least
+  `W_FW` 440 / 560 / 680 m wide (wider only for a very wide attacking
+  army; the town does not change with the armies), with `W_APPROACH` 95 m
+  from its landward edge to the attackers' front. It covers 32 % of the map
+  (village) to 39-46 % (towns and cities; V_URBAN share). The outline: the
+  shore (or the top), the sides, a landward edge with two waves and a lean,
+  its ends rounded.
+- **Ground (`_west_ground`).** The country's own relief round the town
+  (hills and ridges as rolling country), kept at 60 % over the band so the
+  town follows the land; the plaza level; on hill and ridge country a rise
+  of 8-16 m from the shore to the landward edge (the town climbs from the
+  harbour, the attackers come down to it); the fort on a 3-6 m knoll; the
+  sea lowered below the shore.
+- **The fort (walls 1-2).** A bastioned square (`fh` 11 / 14 / 17 m, four
+  diamond bastions) at one end of the quay with its sea face in the water,
+  or inland on the high back corner; solid in the sim (stone, 7 m: not
+  garrisoned yet, slice 2c), roads and lots keep 8 m off it. Walls 2 adds
+  a stake palisade 9 m beyond the landward edge, two cells deep, with a gap
+  at every road (`_w_stakes`; records that match their cells exactly).
+- **Landforms and big trees.** On rolling or rougher ground the landforms
+  (`Land.place`: cliffs, outcrops) are placed first, kept off the quay, the
+  plaza, the fort and the attackers' ground but free to fall in the town's
+  outer parts; 5-12 big trees (palm clumps, ceibas) stand in yards. The
+  roads bend round all of them.
+- **Roads (`_w_trace`).** Traced `W_STEP` 10 m a step toward each
+  waypoint, at most 96 angle units off the goal's bearing in one go: of
+  seven headings (0, +-40, +-90, +-150) the first whose disc of half the
+  road's width + 1 m is free (a summed-area look first), cheapest by its
+  turn plus (on the high street, the lower street and the lanes) its rise:
+  along the contours. The quay (`W_QUAY` 12-16 m) along the shore (inland:
+  a 7 m back street); the high street (`W_MAIN` 8-12 m) through the plaza
+  on a winding rail; on towns and cities a lower street at 58-70 % of the
+  depth; cross streets every 50-90 m from the quay to 22 m past the
+  landward edge (7-10 m wide; their upper and lower halves often a dog-leg
+  apart at the high street; some start at the high street; 34 units of
+  bend a step); lanes (`W_LANE` 6 m) between neighbouring cross streets,
+  one to three per gap, some left out. The cross streets' outer ends and
+  the high street's two ends are the street mouths, nearest the attackers'
+  line first (Scenarios' holders, the C7 strongpoints).
+- **The plaza and its landmarks.** A square of 36 / 46 / 56 m (`W_PLAZA`)
+  on the high street. Right after the quay and the high street (before
+  the other roads, which then bend round them, their ground blocked 2 m
+  round): the church on the plaza's seaward side (else the other), the
+  governor's house (towns and cities) on the opposite side, a guardhouse
+  at a corner (Barracks), each facing the plaza; its well and stalls are
+  scenery.
+- **Lots (`_w_lots`, `_w_put`).** Along each road, both sides, in a fixed
+  order: a density 8-96 (`_w_dens`: high at the quay and round the plaza,
+  low at the landward edge and the ends) decides whether a lot is built,
+  its kind and its setback (0-1 m in the core, up to 6 m at the edge) and
+  gap (0-2 m plus up to 14 m at the edge). Kinds by road and density:
+  warehouses, chandlers, taverns, food stores on the quay; shops, taverns,
+  stores on the high street; houses (stores, shops, taverns among them) on
+  the cross streets; houses and shacks on the lanes; shacks where it thins
+  out. Each kind has its frontage, depth and height (`_w_size`: shack 5-7
+  x 4-6 m, 3 m; house 7-11 x 6-9, 4-5 m; tavern 10-14 x 8-11, 6 m;
+  warehouse 14-22 x 9-13, 6-7 m; governor 18-22 x 13-16, 7-8 m) and its
+  material (`_w_mat`: Spanish towns 60 % masonry houses, English, French
+  and Dutch 35 %; warehouses 70 % stone; shacks, lean-tos and stakes
+  timber; church, governor and fort stone). A building is turned with the
+  road at that point plus -5 to +5 degrees (more at the edge) and, on a
+  slope, up to 9 degrees toward the nearer of the contour's axes (lots
+  step with the slope); its front edge is set back clear of the road
+  whatever the turn. It is placed only where its cells are inside the
+  town, off the roads, the blocked ground and other buildings, `W_PAD` 3 m
+  clear of other buildings all round (no slivers a man could jam in), on
+  ground rising at most `W_SLOPE` 3 m across it; else tried at 3/4 size,
+  else the lot is skipped. Its blocked cells are those within 0.6 m of its
+  drawn outline (so no man stands inside a drawn house: the footprint
+  metric). Extras: a back wing (an L) on taverns, warehouses, the
+  governor's house and big houses, overlapping the house by a metre; a
+  lean-to against a side; a yard behind (a low wall along its back and
+  one side, the other open; 2 cells clear of other buildings); barrels,
+  crates or a cart at a tavern's, store's, chandler's or warehouse's door
+  on a wide street; goods along the quay's sea side. The hill city 343
+  buildings, towns and port cities 170-260, villages about 90.
+- **Cover by material.** Each building record carries its height (dm) and
+  material (`MAT_STONE` / `MAT_TIMBER`, record entries 15 and 16); the
+  layout's `bmat` grid gives every building cell both (static, `bld_g` in
+  the sim, not in snapshots). The line of fire and sight read a West
+  house's own height (`_cell_top`, `_obs_top`); a flat ball stopped by a
+  timber cell goes through it `TIMBER_PASS` 35 % of the time (one roll of
+  the sim's RNG, then traced on past the timber; stone stops it), counted
+  in `stat_wood_pass`. Props (barrels 1.1 m, crates 1.2, carts 1.4, wells
+  1.0) and yard walls (1.3 m) are rock cells (`C_ROCK`) of their own
+  heights (`_land_heights`), so a crouching skirmisher takes cover behind
+  a cart or a yard wall (C0's spot finder: 1.2 m and up) and a standing
+  musketeer is not covered by them.
+- **The street graph (`_w_graph`).** Nodes every other road point (about
+  20 m), the plaza and its corners, a line 16 m outside the landward edge,
+  round the fort, round the landforms, a 16 m lattice over the open
+  ground between the lots where a man stands 2 m clear (so a unit in a
+  back yard sees a node: before it, the planner fell back on a node behind
+  a house), and a 48 m lattice over the open ground round the town; edges
+  up to `W_EDGE` 34 m with a clear 3 m line (candidates from buckets, in
+  index order); pieces joined to the plaza's by the shortest clear line
+  within 64 m (`_w_join`, bucketed; a yard no line reaches stays apart).
+  400-600 nodes, 800-1,700 edges.
+- **Routers.** Defenders routing in a coastal West town also leave by the
+  boats: open ground beside the sea is an exit of their side's exit field
+  (`sea_boats`), and a man who reaches it is off the field (before: a
+  300 m run along the shore through the enemy to a side edge). In any West
+  town a router not huddled, with a ready enemy within `SURR_R` 15 m, gives
+  up when its men's middle has stood within 2 m for `GIVEUP_T` 8 s or the
+  enemy has been that near `GIVEUP_CAUGHT` 10 s on end (`_street_giveup`,
+  `u_gu`; its men are taken as the A3 huddle's are): caught in the
+  streets with no gate to huddle at. Hashed on West maps only (`wt_on`:
+  `stat_rs_*`, `u_gu`).
+- **Clearance (phase B) on West maps.** Computed 2 m round each house
+  (`CLR_MARGIN_W`; 3 m elsewhere) and not inside its blocked cells (no man
+  stands there): 260 -> 113 ms for the city. `_clr_exact` no longer builds
+  an array per call (identical results; every map).
+- **AI (`sim/siege_ai.gd`, West towns only).** Attacking missile units
+  waiting off an open West town stand off its landward edge in front of
+  where they are (the open-town rule's ring round the town's centre would
+  put the band's flanks inside it); attacking skirmishers going by bounds
+  (C7's `_bound_storm`) and line foot storming by the streets head for the
+  plaza once they are nearer it than their street's mouth is (they went
+  back out through the streets to reach their mouth first, into the
+  friends coming in: a jam).
+- **Scenarios.** Holders at each mouth stand 18 m inside it, facing out;
+  the defenders deploy in the town's box. `west_village` (Spanish fishing
+  village, flat, coast), `west_town` (Spanish port town, rolling, fort),
+  `west_city` (Spanish hill port, fort and palisade), `west_inland`
+  (English inland town, rolling), `west_port` (Dutch port city, flat,
+  fort), `west_hill_village` (Spanish ridge village, fort on the hill),
+  `bench_west_town` (1,680 men in 40 units), `bench_4000_west`.
+- **View.** `game/battlekit.gd` `_build_west`: each kind its piece, turned
+  so its street front (porch, gallery, awning, goods) faces the road:
+  `tavern` (a gallery with a lean roof, the sign on its bracket, barrels),
+  `shop` (flat roof, striped awning, counter), `store` (hipped, a canopy,
+  sacks and barrels), `warehouse` (stone, loading doors, hoist beams,
+  crates), `chandler` (framed timber, rope coils, an anchor), `shack`
+  (palm thatch), `leanto`, `governor` (four tiled wings round a patio with
+  a fountain and a tree, an arcade, the flag), `lowwall`, `stakes`,
+  `crates`, `pier` (new Blender pieces, `tools/battlekit/build.py`
+  `PIECES_W`, packed after the others: the atlas stays 1024 x 1024, 61 of
+  the shader's 64 rects); houses in the founder's manner (Spanish flat
+  roofs and hips, English, French and Dutch gables), painted by a hash of
+  their place in three palettes (colonial, ochre under dark red tiles,
+  pale blue under terracotta; culture slots 6 and 7, unused before); the
+  fort as curtain pieces and four bastions round a keep; the jetties as
+  pier pieces. Shadows come from `battlekit_shadow.gd` as for every kit
+  piece. Streets are sandy earth with the plaza paved
+  (`city_streets.gd`), the town's ground trodden only within about 8 m of
+  houses and roads (`terrain_layer.gd` `_west_built`, view only; the sim's
+  V_URBAN covers the whole band), palms on any West map.
+- **Not built (open).** The fort is solid: no garrison, batteries or gate
+  (slice 2c's garrisoned buildings); the palisade does not burn or get
+  hacked; houses stay cover only (no entry); piers are scenery (the rules
+  see the sea); moored ships are not drawn on the battle map; native
+  towns keep the oppidum; walls 3 keeps the walled plans.
+- **Measured.** See docs/STATUS.md (the pathing probe, the cover probe,
+  set-up and tick cost).
+
 ### Compact unit cards (as built, 2026-10-09)
 
 View only: `game/unit_traits.gd` derives everything from the unit rows, so a
@@ -2822,6 +3008,35 @@ under collapsible class headers with the best tier of each line and a
 strip (class glyphs with unit counts) that folds the unit rows (armies of up
 to six units start open). Fold state is per session, never in the campaign
 state.
+
+### The command bar (overworld selection, as built 2026-10-15)
+
+View only (`game/campaign/command_bar.gd`; no rules path, no `campaign/`
+change): what is selected shows as cards along the bottom of the screen
+instead of the side panel's long list (user: "just a big list on the right ...
+like Rome"). **Army:** a leader card (faction emblem, the hero's name or
+"X army", men, units of the cap, movement left, stance, upkeep, supply in a
+siege, a status line: holding / marching and when it arrives / besieging),
+a strip of **unit cards** (symbol, tier pips, up to three trait glyphs, a
+strength bar with men / full; a tap picks it for Split / Disband, a long
+press opens its page, hovering shows the full compact row; planned recruits
+as dimmed "joins" cards) and a grid of **icon actions** with a label under
+each (Stance cycles March / Forced / Fortify / Raid, Siege / Assault on
+arrival, Cancel, Split, Merge, Exchange, Recruit, Disband, Board, Sally,
+Details). **City:** city card, garrison cards, building chips (icon and
+level; a tap says what it does), Recruit (the raise picker), Build, City map,
+Assault / Continue / Withdraw for a besieger, Besiege and Raid at an enemy
+city, Sally for the besieged. **Fleet:** a card per ship (hull and crew),
+Cancel voyage, Board, Join. An action that cannot be done is greyed and says
+why on hover and on a tap. Every button calls what the side panel's buttons
+call (`add_order`, `set_move_mode`, `_set_stance6`, ...). **Details** opens
+the old full panel in the side panel, which now opens only on demand (and
+for Build / Recruit into an army, which scroll to their section there); its
+Close hides it and keeps the selection. Layout: full width at the bottom,
+132 px (96 on a phone: narrower than 700 or lower than 560 logical px, one
+horizontally scrolling row); the map key buttons, the End turn row, the hint
+and the toasts rise above it while it shows. Versions before 6 keep the side
+panel only. Testing aids: `--details` / `--no-bar` (the old behaviour).
 
 ### Ammunition kinds and fire (as built, 2026-10-09)
 

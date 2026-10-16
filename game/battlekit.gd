@@ -36,14 +36,21 @@ const WALL_VARIANTS := [[8, 2, "wall_8_2"], [10, 2, "wall_10_2"], [12, 2, "wall_
 	[14, 4, "wall_14_4"]]
 const PAL_VARIANTS := [[8, "pal_8"], [10, "pal_10"], [12, "pal_12"]]
 ## Stone tint by culture: Latin, Greek, Punic, Celtic, Spanish colonial, native, spare, spare.
+## (6 and 7: the West towns' painted houses, phase W: ochre walls under dark red tiles, pale blue walls
+## under terracotta.)
 const STONE_TINT: Array[Vector3] = [Vector3(1.0, 0.98, 0.95), Vector3(1.06, 1.0, 0.9), Vector3(1.12, 1.05, 0.92),
-	Vector3(0.92, 0.95, 0.9), Vector3(1.1, 0.98, 0.84), Vector3(0.98, 0.86, 0.7), Vector3(1, 1, 1), Vector3(1, 1, 1)]
+	Vector3(0.92, 0.95, 0.9), Vector3(1.1, 0.98, 0.84), Vector3(0.98, 0.86, 0.7), Vector3(1.08, 1.0, 0.88), Vector3(1.02, 1.0, 0.96)]
 const PAL_R: Array[Vector3] = [Vector3(0.78, 0.34, 0.22), Vector3(0.86, 0.70, 0.54), Vector3(0.90, 0.88, 0.82),
-	Vector3(0.70, 0.58, 0.36), Vector3(0.84, 0.48, 0.28), Vector3(0.62, 0.48, 0.36), Vector3(0.7, 0.4, 0.3), Vector3(0.7, 0.4, 0.3)]
+	Vector3(0.70, 0.58, 0.36), Vector3(0.84, 0.48, 0.28), Vector3(0.62, 0.48, 0.36), Vector3(0.64, 0.28, 0.20), Vector3(0.82, 0.46, 0.30)]
 const PAL_G: Array[Vector3] = [Vector3(0.90, 0.83, 0.68), Vector3(0.92, 0.9, 0.82), Vector3(0.95, 0.93, 0.86),
-	Vector3(0.80, 0.72, 0.58), Vector3(0.95, 0.92, 0.82), Vector3(0.78, 0.60, 0.42), Vector3(0.9, 0.85, 0.7), Vector3(0.9, 0.85, 0.7)]
+	Vector3(0.80, 0.72, 0.58), Vector3(0.95, 0.92, 0.82), Vector3(0.78, 0.60, 0.42), Vector3(0.96, 0.82, 0.52), Vector3(0.78, 0.87, 0.92)]
 const PAL_B: Array[Vector3] = [Vector3(0.70, 0.18, 0.16), Vector3(0.25, 0.35, 0.65), Vector3(0.45, 0.30, 0.55),
-	Vector3(0.25, 0.35, 0.65), Vector3(0.88, 0.68, 0.20), Vector3(0.20, 0.55, 0.55), Vector3(0.7, 0.2, 0.2), Vector3(0.7, 0.2, 0.2)]
+	Vector3(0.25, 0.35, 0.65), Vector3(0.88, 0.68, 0.20), Vector3(0.20, 0.55, 0.55), Vector3(0.18, 0.52, 0.52), Vector3(0.74, 0.22, 0.18)]
+## West town pieces by building kind (MapGen.B_*; phase W), their street front up.
+const WEST_PIECE := {MapGen.B_TAVERN: "tavern", MapGen.B_SHOP: "shop", MapGen.B_STORE: "store",
+	MapGen.B_WAREHOUSE: "warehouse", MapGen.B_CHANDLER: "chandler", MapGen.B_GOVERNOR: "governor",
+	MapGen.B_SHACK: "shack", MapGen.B_LEANTO: "leanto"}
+const PROP_PIECE := ["barrels", "crates", "cart", "well"]
 
 var sim
 var lay: Dictionary = {}
@@ -91,7 +98,11 @@ func setup(p_sim, p_lay: Dictionary, p_k: float) -> void:
 			culture = clampi(int(str(a).get_slice("=", 1)), 0, 7)
 			cul_override = culture
 	_timber = int(lay.get("palisade", 0)) != 0
-	_build_houses()
+	if int(lay.get("west", 0)) != 0:
+		tropic = true
+		_build_west()
+	else:
+		_build_houses()
 	_build_instances()
 	low = Quality.is_low()
 	_make_nodes()
@@ -182,7 +193,8 @@ func _index_names() -> void:
 	for q in Atlas.NAMES.size():
 		var n: String = Atlas.NAMES[q]
 		_name_idx[n] = q
-		roofy[q] = 1 if (n.begins_with("house_") or n.begins_with("hut_") or n in ["church", "temple", "stall", "longhouse"]) else 0
+		roofy[q] = 1 if (n.begins_with("house_") or n.begins_with("hut_") or n in ["church", "temple", "stall", "longhouse",
+			"tavern", "shop", "store", "warehouse", "chandler", "shack", "leanto", "governor"]) else 0
 	tropic = CData.pack == "west" or "--tropic" in OS.get_cmdline_user_args()
 
 
@@ -313,6 +325,188 @@ func _build_houses() -> void:
 			for q in 4:
 				var sg := Vector2(1.0 if q % 2 == 0 else -1.0, 1.0 if q < 2 else -1.0)
 				_add("stall", ac + sg * hs2 * 0.72, Vector2(1, 0) if q % 2 == 0 else Vector2(-1, 0), 0.9, 0.9, 1.0, -1, culture)
+
+
+## A West open town (phase W): every building by its kind, turned so its street front is the piece's
+## outer side (records from sim/mapgen.gd _w_put: corners front-left, front-right, back-right,
+## back-left); houses in the founder's manner (Spanish flat roofs and hips, English, French and Dutch
+## gables) and painted by a hash of their place; the harbour fort, the stake palisade, yard walls,
+## goods in the streets, the jetties.
+func _build_west() -> void:
+	var founder := clampi(int(lay.get("founder", 0)), 0, 7)
+	for b in lay.get("buildings", []):
+		var a: Array = b
+		var kind: int = a[4]
+		if kind == MapGen.B_FORT:
+			continue
+		var h := absi(int(a[0]) * 73 + int(a[1]) * 151) % 100
+		var q0 := Vector2(float(int(a[7])), float(int(a[8])))
+		var q1 := Vector2(float(int(a[9])), float(int(a[10])))
+		var q3 := Vector2(float(int(a[13])), float(int(a[14])))
+		var q2 := Vector2(float(int(a[11])), float(int(a[12])))
+		var pos := (q0 + q1 + q2 + q3) * 0.25
+		var fw := q0.distance_to(q1)
+		var fh := q0.distance_to(q3)
+		var n := (q3 - q0).normalized()
+		var e := Vector2(n.y, -n.x)    # (image down into the lot: the front, image up, on the street)
+		if kind == MapGen.B_STAKES:
+			continue  # (_west_stakes: the palisade as smooth runs)
+		if kind == MapGen.B_MARKET:
+			_stalls(pos, e, fw, fh, W_CUL)
+			continue
+		var cul := W_CUL if h < 40 else (6 if h < 72 else 7)
+		var pname := ""
+		if WEST_PIECE.has(kind):
+			pname = WEST_PIECE[kind]
+		elif kind == MapGen.B_TEMPLE:
+			pname = "church"
+			cul = W_CUL
+		elif kind == MapGen.B_BARRACKS:
+			pname = "house_flat_m"
+		else:
+			var ratio := maxf(fw, fh) / maxf(minf(fw, fh), 0.1)
+			if founder == MapGen.CUL_LATIN and h % 2 == 0:
+				pname = "house_flat_s" if fw < 9.5 and fh < 8.0 else "house_flat_m"
+			elif ratio < 1.14:
+				pname = "house_hip_s" if fw < 9.0 else "house_hip_m"
+			elif ratio < 1.5:
+				pname = "house_gable_s" if fw < 9.5 else "house_gable_m"
+			else:
+				pname = "house_gable_l"
+		var an: Array = Atlas.ANCHOR[_name_idx[pname]]
+		var sx := (fw + 0.6) / float(an[2])
+		var sy := (fh + 0.6) / float(an[3])
+		if pname == "church" or pname.begins_with("house_"):
+			# (Pieces without a street front: laid along their long side.)
+			if fh > fw:
+				e = n
+				sx = (fh + 0.6) / float(an[2])
+				sy = (fw + 0.6) / float(an[3])
+			if h % 2 == 0:
+				e = -e
+		_add(pname, pos, e, sx, sy, 1.0, -1, cul)
+	_west_fort()
+	_west_stakes()
+	for pr in lay.get("props", []):
+		var p2: Array = pr
+		var kd := clampi(int(p2[0]), 0, PROP_PIECE.size() - 1)
+		var ang := float(int(p2[3])) * TAU / 1024.0
+		var sc := 0.9 if kd != MapGen.P_CART else 0.95
+		# (A cart's shafts run along the street: its long side is the image's vertical.)
+		var pe := Vector2(sin(ang), -cos(ang)) if kd == MapGen.P_CART else Vector2(cos(ang), sin(ang))
+		_add(PROP_PIECE[kd], Vector2(float(int(p2[1])), float(int(p2[2]))), pe, sc, sc, 1.0, -1, W_CUL)
+	for lw in lay.get("lowwalls", []):
+		var w2: Array = lw
+		var la := Vector2(float(int(w2[0])), float(int(w2[1])))
+		var lb := Vector2(float(int(w2[2])), float(int(w2[3])))
+		var ll := la.distance_to(lb)
+		if ll < 0.5:
+			continue
+		var cnt2 := maxi(roundi(ll / 8.0), 1)
+		for q in cnt2:
+			_add("lowwall", la.lerp(lb, (q + 0.5) / cnt2), (lb - la) / ll, (ll / cnt2 + 0.6) / 8.0, 1.0, 1.0, -1, W_CUL)
+	var sea: Dictionary = lay.get("sea", {})
+	for pq in sea.get("piers", []):
+		var pp: PackedInt32Array = pq
+		var p0 := Vector2(float(pp[0] + pp[2]) * 0.5, float(pp[1] + pp[3]) * 0.5)
+		var p1 := Vector2(float(pp[4] + pp[6]) * 0.5, float(pp[5] + pp[7]) * 0.5)
+		var pl := p0.distance_to(p1)
+		var pw := Vector2(float(pp[0]), float(pp[1])).distance_to(Vector2(float(pp[2]), float(pp[3])))
+		var cnt3 := maxi(roundi(pl / 12.0), 1)
+		for q in cnt3:
+			_add("pier", p0.lerp(p1, (q + 0.5) / cnt3), (p1 - p0) / maxf(pl, 0.1), pl / cnt3 / 12.0, pw / 4.4, 1.0, -1, W_CUL)
+	# The plaza: its well and a few stalls (as the agora's).
+	var ag: Array = lay.get("agora", lay.get("plaza", []))
+	if ag.size() >= 3:
+		var ac := Vector2(float(int(ag[0])), float(int(ag[1])))
+		var hs2 := float(int(ag[2]))
+		_add("well", ac, Vector2(1, 0), 0.85, 0.85, 1.0, -1, W_CUL)
+		for q in 4:
+			var sg := Vector2(1.0 if q % 2 == 0 else -1.0, 1.0 if q < 2 else -1.0)
+			_add("stall", ac + sg * hs2 * 0.6, Vector2(1, 0) if q % 2 == 0 else Vector2(-1, 0), 0.9, 0.9, 1.0, -1, 6 + q % 2)
+
+
+const W_CUL := 4   # the West towns' colonial palette (STONE_TINT / PAL_*)
+
+
+## The stake palisade (walls 2): its records are stretches of one 2 m cell row each, stepping with
+## the landward edge; drawn as a smooth line through their middles, run by run (a road's gap ends a
+## run), the stakes' points outward (away from the town).
+func _west_stakes() -> void:
+	var recs: Array = []
+	for b in lay.get("buildings", []):
+		var a: Array = b
+		if int(a[4]) == MapGen.B_STAKES:
+			recs.append(a)
+	if recs.is_empty():
+		return
+	recs.sort_custom(func(p, q): return int(p[0]) < int(q[0]))
+	var cy := float(int(lay.get("cy", 0)))
+	var runs: Array = []
+	var cur: Array = []
+	for r in recs:
+		var a2: Array = r
+		if not cur.is_empty() and int((cur[cur.size() - 1] as Array)[2]) < int(a2[0]):
+			runs.append(cur)
+			cur = []
+		cur.append(a2)
+	runs.append(cur)
+	for run in runs:
+		var pts := PackedVector2Array()
+		var first: Array = run[0]
+		var last: Array = run[run.size() - 1]
+		pts.append(Vector2(float(int(first[0])), (float(int(first[1])) + float(int(first[3]))) * 0.5))
+		for r2 in run:
+			var a3: Array = r2
+			pts.append(Vector2((float(int(a3[0])) + float(int(a3[2]))) * 0.5, (float(int(a3[1])) + float(int(a3[3]))) * 0.5))
+		pts.append(Vector2(float(int(last[2])), (float(int(last[1])) + float(int(last[3]))) * 0.5))
+		var o := Vector2(0, 1) if pts[0].y > cy else Vector2(0, -1)
+		for q in pts.size() - 1:
+			var a4 := pts[q]
+			var b4 := pts[q + 1]
+			var l := a4.distance_to(b4)
+			if l < 0.3:
+				continue
+			var d := (b4 - a4) / l
+			if d.dot(Vector2(-o.y, o.x)) < 0.0:
+				d = -d   # (the piece's outer side, image up, away from the town)
+			_add("stakes", (a4 + b4) * 0.5, d, (l + 0.5) / 12.0, 1.0, 1.0, -1, W_CUL)
+
+
+## The harbour fort (lay "fort": centre, half side h, bastion half diagonal b, turn dir): a curtain
+## along each side of its square between the bastions, a bastion at each corner pointing out along
+## the diagonal, a keep and a flag in the middle. The sim's fort is solid (not garrisoned).
+func _west_fort() -> void:
+	var f: Dictionary = lay.get("fort", {})
+	if f.is_empty():
+		return
+	var c := Vector2(float(int(f["x"])), float(int(f["y"])))
+	var fh := float(int(f["h"]))
+	var fb := float(int(f["b"]))
+	var ang := float(int(f["dir"])) * TAU / 1024.0
+	var ux := Vector2(cos(ang), sin(ang))
+	var uy := Vector2(-ux.y, ux.x)
+	var corners := [c - ux * fh - uy * fh, c + ux * fh - uy * fh, c + ux * fh + uy * fh, c - ux * fh + uy * fh]
+	for q in 4:
+		var a: Vector2 = corners[q]
+		var b: Vector2 = corners[(q + 1) % 4]
+		var mid := (a + b) * 0.5
+		var o := (mid - c).normalized()
+		var d := Vector2(-o.y, o.x)
+		var run := a.distance_to(b) - fb * 1.4
+		var cnt := maxi(roundi(run / WALL_LEN), 1)
+		for q2 in cnt:
+			var t := (q2 + 0.5) / cnt
+			var p := a.lerp(b, 0.5) + (b - a).normalized() * (t - 0.5) * run
+			_add("wall_10_2", p - o * 3.0, d, run / cnt / WALL_LEN, 1.0, 1.1, -1, W_CUL)
+	for q in 4:
+		var cp: Vector2 = corners[q]
+		var o2 := (cp - c).normalized()
+		# (The piece is 18 m wide, its tip 13 m out from its origin: scaled to the sim's diamond,
+		# fb out from the corner, its base in the core.)
+		var s2 := fb * 1.4 / 18.0
+		_add("bastion", cp + o2 * (fb - 13.0 * s2), Vector2(-o2.y, o2.x), s2, s2, 1.0, -1, W_CUL)
+	_add("house_flat_m", c, ux, fh * 0.9 / 11.0, fh * 0.7 / 8.0, 1.0, -1, W_CUL)
 
 
 func _stalls(pos: Vector2, e: Vector2, fw: float, fh: float, style: int) -> void:

@@ -40,3 +40,17 @@ Gate pieces have the passage (hw 4) and depth 11 m and are scaled to the gate. T
 0.4 plaster / 0.1 accent; never 0) and `atlas_low` (pre-lit, 4 px/m, Graphics Low). Texture memory:
 about 4.5 MB (2 + 2 + 0.5) plus the baked shadow (one RGBA8 texture at 2 cells/m over the city).
 Design note: docs/DESIGN.md "Battle kit walls, towers and gates".
+
+## West town pieces (phase W, 2026-10-16)
+
+```
+blender -b --factory-startup -P tools/battlekit/build.py -- --ppm 8 --out tools/battlekit/_frames \
+    --pieces tavern,shop,store,warehouse,chandler,shack,leanto,governor,lowwall,stakes,crates,pier
+python3 tools/battlekit/pack.py && godot --headless --path . --import
+```
+
+`PIECES_W` in `build.py`: the West open towns' buildings (street front at +y, the piece's outer side,
+so `game/battlekit.gd` `_build_west` turns porches, awnings and goods to the road), yard walls, the
+stake palisade, crates and jetties. `pack.py` appends them after the older pieces (the older crops are
+pixel-identical after a repack; only their places in the atlas move). The kit shader holds 64 rects
+(`game/battlekit.gdshader`): 61 are used.

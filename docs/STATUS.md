@@ -1,6 +1,6 @@
 # Strategic Command — Status and Handover
 
-Last updated: 2026-10-15 (pathing phases C1-C7, street fighting, built, not committed; earlier 2026-10-09: siege towers built, not committed; the general and his bodyguard built, not committed; camels and elephants built, not committed; ammunition kinds and fire, foraging and the ammunition wagon built, not committed; earlier 2026-10-08: a CPU-fed soldier rendering fallback, picked by the battle's self-check, for Chrome on an Adreno 650 tablet that drew no soldiers; earlier 2026-10-07: any ally can join a fought co-op battle and be given units; the battle screen on the overworld; cities worth defending, part 2b: siege equipment as objects, the ladder shuffle and wall-punching bugs; part 2a: units do not pass through each other, street fights; part 1: tower engines, ladders, a ram, hard gates, the battle time limit; earlier 2026-10-06: deployment phase and custom battles built; the continuous campaign overworld built, state format 6; free campaign movement built; sieges and battle odds built on the campaign map; settlement variety built 2026-10-05). Read this first, then `docs/DESIGN.md` for the full
+Last updated: 2026-10-16 (pathing phase W, West open towns, built, not committed; 2026-10-15 pathing phases C1-C7, street fighting, built, not committed; earlier 2026-10-09: siege towers built, not committed; the general and his bodyguard built, not committed; camels and elephants built, not committed; ammunition kinds and fire, foraging and the ammunition wagon built, not committed; earlier 2026-10-08: a CPU-fed soldier rendering fallback, picked by the battle's self-check, for Chrome on an Adreno 650 tablet that drew no soldiers; earlier 2026-10-07: any ally can join a fought co-op battle and be given units; the battle screen on the overworld; cities worth defending, part 2b: siege equipment as objects, the ladder shuffle and wall-punching bugs; part 2a: units do not pass through each other, street fights; part 1: tower engines, ladders, a ram, hard gates, the battle time limit; earlier 2026-10-06: deployment phase and custom battles built; the continuous campaign overworld built, state format 6; free campaign movement built; sieges and battle odds built on the campaign map; settlement variety built 2026-10-05). Read this first, then `docs/DESIGN.md` for the full
 design and `CLAUDE.md` for working rules. Update this file whenever a
 milestone lands or the plan changes.
 
@@ -37,6 +37,7 @@ anti-cheat and original art only if it proves fun.
 | Cities worth defending, part 2b (siege equipment as objects; ladder and wall-punching fixes) | Built 2026-10-07, committed; tested headless, windowed input test, live_e2e; not yet played on phones |
 | Battle screen on the overworld (pre-battle and result, item 4b) | Built 2026-10-07, committed; tested headless (`tests/battle_screen_test.gd`), the windowed input test and online_e2e; not yet played on phones |
 | Overworld UI fixes: Deselect button; dialogs and the side panel keep their scroll position when re-rendered | Built 2026-10-07, committed; windowed campaign_input_test; not yet played on phones |
+| Overworld command bar (user, 2026-10-15: "just a big list on the right ... move the army display to the bottom like Rome ... icons for actions"; BUILT, view only): `game/campaign/command_bar.gd`; a selection (army / city / fleet) shows as cards along the bottom (leader card, unit or garrison cards with strength bar, tier pips and trait glyphs, building chips, a grid of icon actions with labels); the side panel opens only on **Details** (and Build / Recruit into an army scroll to their section in it), its Close keeps the selection; the map key, End turn row, hint and toasts rise above the bar; phones (under 700 wide or 560 high logical) get one scrolling row; icons `details`, `embark`, `more`. Testing aids `--details`, `--no-bar`; `--side-scroll` opens the panel itself; the input tests set `cs.details_on_select` (new `_g_bar` checks). See DESIGN.md "The command bar". **Open:** the army has no morale / supply in the campaign (supply shown only in a siege), no "..." fold on phones (the row scrolls), Recruit into an army and Build open the full panel at their section instead of a picker, "armies here" list of a city is only in Details, no sprite-atlas frames on the cards (the symbol disc), not played on a phone or tablet | Built 2026-10-15, not committed; campaign_test, campaign_input_test (+`_g_bar`), touch_scroll_test, webcheck; screenshots in the session scratchpad |
 | Text entry on the web (no keyboard on tablets, bad desktop paste): every field is `Kit.text_field`; a finger tap on the web opens the browser's `prompt()` (Godot's web export has no usable on-screen keyboard: `html/experimental_virtual_keyboard` is off, and even on it cannot raise the keyboard on iOS); Ctrl+V and a Paste button beside the online fields read the clipboard through the browser (Godot's web paste returned the previous clipboard); invite key / codes trimmed | Built 2026-10-07, committed; check_scripts, windowed campaign_input_test, touch_scroll_test as on HEAD, custom_battle_test, a scratch web export driven in headless Chromium (stubbed prompt / clipboard: tap, Paste, Ctrl+V); not yet tried on a real tablet / iPhone |
 | Join any co-op battle (playtest fix): the owner's card offers Fight together whenever an ally is alive; an ally whose army is not in the battle can **Ask to join** (server choice `ask`, summary `ask_by`, no Discord needed; the owner's card shows "X asks to join", puts Fight together first and confirms a solo Fight) and joins the lobby as a guest (`Lockstep.setup` guests: admitted like anyone, side of the players' units, commands what the host gifts); "Wait for ally" / "Take command" renamed "Leave it to X" / "Fight it for X" | Built 2026-10-07, committed; go test (new `TestRoomGuestAsksAndJoins`), lockstep_test (guest case), live_e2e (new battle 4: ask, seen, Fight together, guest joins, two units gifted and ordered, equal hashes to the end), online_e2e, check_scripts, custom_battle_test, battle_screen_test; **server change: the 8060 server needs a rebuild and restart** (new `battle_asks` table is created on start); not yet played on phones |
 | Soldier rendering fallback (2026-10-08). Known issue: Chrome on a Samsung Galaxy Tab S7 (Adreno 650, ANGLE on GLES) draws nothing from the per-man data texture read in the vertex shader (`soldier_probe drawn=0`; Firefox on the same tablet, desktop GPUs and SwiftShader draw fine; removing uint / bit ops / INSTANCE_ID in be147c8 did not help). New CPU-fed path (`game/soldier_layer.gd`, `soldiers_cpu.gdshader` / `projectiles_cpu.gdshader` over shared `.gdshaderinc` bodies): the sim arrays go into the MultiMesh buffers in one bulk upload per tick, no texture fetch in the vertex stage; same pixels as the texture path (native screenshots: soldiers and engines bit-identical, missiles within one edge pixel). The self-check switches to it when the texture path draws 0 pixels, probes again (telemetry `soldier_probe` now has `path`) and remembers `user://settings.cfg [video] soldiers=cpu`; home menu "Soldiers: auto / compatible"; `--soldiers=cpu|gpu` / `?soldiers=` force a path, `--soldier-probe-fail` fakes the failure. Cost at 4,000 men: upload 0.48 ms a tick natively (texture 0.23), ~0.7 ms in headless Chromium (texture ~0.4) | Built 2026-10-08, committed; check_scripts, input_test, `webcheck -soldiers` (both paths, the automatic switch, the remembered choice) on a scratch export; **not yet confirmed on the Tab S7** (look for `soldier_probe` path=cpu drawn>0 in its telemetry) |
@@ -1108,6 +1109,21 @@ Where 2026-10-09 ended (build 20261009T124650Z live; everything up to
 
 ## The West pack, slice 1 (started 2026-10-13)
 
+**West faction emblems (2026-10-15, view only).** `game/faction_emblem.gd`:
+eight code-drawn multi-colour emblems keyed by the FACTIONS row's "key"
+(new_spain Burgundy saltire, tierra_firme saltire + gold castle on silver,
+england St George, france three gold lilies, dutch orange-white-blue, brethren
+skull in a tricorne over crossed cutlasses, itza gold sun-jaguar disc on jade,
+miskito sea turtle with feathers); nothing in campaign/ or sim/ changed (no
+"emblem" field). Used by `Kit.faction_mark(f, px)` (replaces the colour
+swatch in the new-campaign picker, hot-seat cover, diplomacy rows, key-cities
+list, online seats, pre-battle groups; a faction colour frame from 18 px) and
+as a flag on the army banner's top edge (`draw_banner(..., emblem)`).
+Factions without an emblem (all of Rome's) keep the plain swatch / banner.
+Contact sheet: `tests/emblem_gallery.gd`. West traits all already have
+glyphs (traits derive from stats; none missing). Open: story panel swatches
+are gauges, not factions (left alone); battle HUD has no faction mark.
+
 User's choices: first slice = **map + pack plumbing**; window =
 **Caribbean + Gulf of Mexico** (about lon -98.5..-58.5, lat 31.5..8);
 pack chosen **in game** (one build, new-campaign screen Rome / West; the
@@ -1535,8 +1551,122 @@ in a battle 600 s long instead of 545 with 43 % more blows: the city's
 battle runs another way: not C5's, with it off the cost is the same; most
 likely C3, the city's skirmishers going to ground among the houses; no
 cover layout ran in it).
-Open: fight jitter (above); phase W (West towns, props); the AI's field
+Open: fight jitter (above); phase W (built 2026-10-16, below); the AI's field
 battles do not bound; balance phase T (street disorder, West morale).
+
+**Pathing pass 2, phase W (West open towns), as built 2026-10-16 (not
+committed; DESIGN "West open towns"; spec section 7 and addendum 2).** The
+user: the town should cover a larger part of the map, mostly unwalled, its
+buildings not symmetrical or perfectly placed, following the road and the
+land. A West settlement (city key "west": the West pack's
+`CBattle.city_dict`, a West custom battle, the `west_*` scenarios) with
+walls 0-2 and a European founder is now an open town (`MapGen._city_west`):
+a band along the shore (or the top of the field inland) 380-600 m wide and
+150-255 m deep, covering 32 % of the map (villages) to 39-46 % (towns,
+cities); a quay (or back street), a winding high street through a 36-56 m
+plaza (church, governor's house, market), a lower street, cross streets
+every 50-90 m (dog-legs at the high street) out past the landward edge
+(the street mouths), lanes between them; roads traced 10 m a step round
+rocks, cliffs, big trees and the fort, and along the contours. Buildings
+on irregular lots along every road by kind and density (warehouses,
+chandlers, taverns and stores on the quay; shops, taverns, stores on the
+high street; houses; shacks thinning out at the edge): uneven setbacks
+and gaps, turned with the road +-5 degrees (more at the edge) and toward
+the contour on a slope, at most 3 m of slope across a lot, wings (L),
+lean-tos, yard walls, goods at the doors and on the quay; 90 (village) to
+340 (city) buildings; a height and stone / timber material each. Walls 1:
+a bastioned harbour fort on the shore (inland: the high back corner),
+solid; walls 2: plus a stake palisade along the landward edge with a gap
+at every road. Natives keep the oppidum, walls 3 the walled plans. Sim
+(West maps only, so Rome, Greek and Punic battles are untouched): flat
+balls go through a timber wall 35 % of the time (stone stops them; one
+roll of the sim's RNG), houses stand their own heights for the line of
+fire, goods (1.0-1.4 m) and yard walls (1.3 m) are crouching cover;
+defenders routing in a port take to the boats at the shore (exits of their
+field); a router caught in the streets (a ready enemy within 15 m for
+10 s, or still 8 s with one there) gives up (hashed there: `stat_rs_*`,
+`u_gu`); the clearance field is built 2 m round each house and not inside
+its cells (houses block every cell within 0.6 m of their drawing). View:
+12 new Blender kit pieces (tavern, shop, store, warehouse, chandler,
+shack, lean-to, governor's house, low wall, stakes, crates, pier; the
+atlas stays 1024 x 1024, 61 of 64 rects; the 49 old pieces pixel-identical),
+street fronts to the road, Spanish flat roofs or northern gables by
+founder, three painted palettes, the fort's curtain and bastions, sandy
+streets and a paved plaza, town ground only where built up, palms on West
+maps in any pack. Scenarios `west_village`, `west_town`, `west_city`,
+`west_inland`, `west_port`, `west_hill_village`, `bench_west_town` (1,680
+men in 40 units), `bench_4000_west`; `tests/determinism_test.gd
+--only=west` (each town built twice the same, coverage, kinds, props,
+mouths joined to the plaza; turned round for the other side; AI vs AI
+identical on repeat and across snapshot / restore); West towns in
+`tests/pathing_probe.gd` (`--west` for them alone) and a West town case
+in `tests/cover_probe.gd`.
+
+Pathing probe (`--phase=A`, seed 7, all 16 maps: the 10 before and 6 West
+towns): PASS. West towns: rout jitter <= 1.2 %, stationary routers 0 %,
+stuck > 30 s 0 (longest ready 20 s), inside the drawn footprints 0.01-0.12 %
+(within 0.3 m 0.01 %), tick means 1.45-1.86 ms (1,264 men); the Rome rows
+are those of C1-C7 (their trajectories did not move). Seeds 8 and 9 (West
+towns): rout and footprint thresholds pass; one ready unit each stuck 46 /
+37 s (an attacking skirmisher keeping an attack order on a target it no
+longer sees: C7's AI with line of sight; Rome's sieges show 2-4 such runs
+at seeds 8-10). Fight jitter near obstacles / in town 5.1 % / 6.1 % (the
+phase C target of 3 % is still not met). Fixes found by the probe on the way
+(each in DESIGN): the defenders' routers of a port take to the boats; a
+router caught in the streets gives up; 3 m between buildings and wings
+overlapping their house (2 m slivers jammed routers between the clearance
+pushes off both faces); houses block the cells within 0.6 m of their
+drawing (men pinned at turned houses' corners); graph nodes in the open
+ground between the lots (a unit in a back yard saw no node and walked into
+a house); 36-56 m plazas (ten attacking units jammed on a 30 m one); the
+church and the governor's house before the other roads (the high street
+crossed the plaza's sides: no governor's house); attackers inside the town
+no longer go back out to their street's mouth.
+
+Cover probe (`tests/cover_probe.gd`, 4 seeds, defenders lost / attackers
+lost; the new West case 40 m up a street from the mouth nearest the
+attackers, houses of stone and timber, goods, yard walls): buccaneers 0.58
+(39.8 % of the men behind cover, 26 balls stopped of 273 traced, 2 through
+timber walls), line musketeers 1.56 (0 % behind cover: in a lane they stand
+upright); the Punic town 0.51 / 1.41, the open 0.51 / 1.02 and the other
+rows unchanged.
+
+Cost (desktop). Set-up, cold (terrain + map + sim, map cache cleared):
+village 170 ms, towns 313-322, the Dutch port city 371, bench_4000_west
+402, the hill port city with palisade 491 (Rome: polis 322, bench_4000_city
+223, siege_city 169). Of the hill city's: the map 269 (lots 55, roads 45,
+graph 45 with the bucketed join, landforms 37), the clearance field 113 (was
+260: 2 m round each house, not inside it), the vis grids 35. Ticks:
+`bench_west_town` 1,680 men in 40 units 2.89 ms a tick (engaged 2.90; the
+spec's budget 3 ms for 1,500); `bench_4000_west` 4,704 men in 67 units 8.25
+ms (Rome's bench_4000_city 4.40 for 3,894 in 53: the West battle is engaged
+from tick 114 to the end, its men move among obstacles all the way and its
+many cover units check their cover per man each second). Rome benches
+unchanged against HEAD (same trajectories): bench_2000 1.47 = 1.47,
+bench_4000 3.16 -> 3.17, hills 3.51 -> 3.47, city 4.39 -> 4.40, polis 4.99
+-> 5.00, castrum 4.59 -> 4.63 ms a tick (noise).
+
+Goldens and pins: the four flat digests, every determinism pin and the
+campaign_sim hashes unchanged: Rome cdc1d805 32b83031 23f9ed4f 3237d82d
+a42fc685 b6fe6c2e, West b137875c edd82dee 0393b18d 2aa8578b deb00750
+1d051164 (the campaign auto-resolves; battle maps are not in its state; the
+city dictionary's "west" key is built for the battle only). No re-pins: no
+West settlement pin existed (the new `--only=west` checks build each town
+twice and compare). Rome, Greek and Punic maps are byte for byte as
+before (their city dictionaries have no "west"; `_clr_exact` was unrolled
+with identical results). Verify suite: check_scripts clean, determinism,
+custom battle, campaign, pack, battle screen (its exit-time heap abort
+after PASS predates this, seen since phase A) and lockstep tests PASS.
+
+Open: the fort is solid (no garrison, batteries or gate: slice 2c); the
+palisade does not burn or get hacked; piers are scenery and no ships are
+moored on the battle map; native towns keep the oppidum and walls 3 the
+walled plans; West towns' tick cost is about 1.5 x a Rome city's per
+man (per-man movement among obstacles and the many cover units' cover
+checks); the hill port city's set-up (491 ms) is over the 450 ms mark; cover in the sparser West streets is weaker than in the
+Punic town (balance phase T); fight jitter near obstacles and in town is
+still over the phase C target; villages cover about a third of the map
+(the approach and the attackers' ground take the rest).
 
 **Caribbean plan agreed 2026-10-14 (DESIGN "The Caribbean pack: ships,
 pirates, cover, asymmetry"):** sea battles real time with the wind;
@@ -1921,6 +2051,22 @@ blocks aim, shore batteries, fire ships, fitting the auto-resolve formula to
 these results, real ship art (the miniatures), balance (the AI often wins by
 striking colours and flight rather than sinking; the galleon is hard for
 small ships to take), playtesting on phones.
+
+## West sprites (2026-10-15)
+
+Sprite sets 16-26 (`tools/sprites/spec.json`, atlas `sets` order): musketeers,
+w_pikemen, buccaneers, rodeleros, cutlass, lancers, pistoleers,
+native_warriors, native_bowmen, w_crew (gun crews), cannon (engine set); new
+poses `musket`, `pistol`, engine kind `cannon` in `build.py`; palettes
+new_spain, tierra_firme, england, france, dutch, brethren, itza, miskito
+(rows 9-16; the West FACTIONS rows' view-only "palette" strings now name
+their own). Atlas about 910 KB (shade 612 KB + mask 301 KB, was 613 KB).
+Wired (2026-10-16): the look is widened to 5-bit sets (set + 32 x palette in
+the CPU-fed instance data; texture path: flags bits 12-16 set, 17-20 palette,
+the engine set in its own block 8, so nothing past bit 23), and the 11 West
+rows carry sprite_set 16-24 (guns 25, engine_set 26). Rome frames are
+pixel-identical before / after (battle_2000 and a siege with engines, GPU and
+CPU paths).
 
 ## Next session (week of 2026-10-13; paused 2026-10-10 midday)
 

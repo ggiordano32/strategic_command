@@ -348,6 +348,42 @@ func _mean_diff(r: int) -> PackedFloat32Array:
 	return out
 
 
+## A West open town (phase W; view only): its 4 m cells within about 8 m of a house, a road or the
+## plaza (1), the rest of the town's band left green between (0); empty for any other map.
+func _west_built(vw: int, vh: int) -> PackedByteArray:
+	var out := PackedByteArray()
+	if sim.city_on == 0 or not (sim.map_info is Dictionary) or int((sim.map_info.get("city", {}) as Dictionary).get("west", 0)) == 0:
+		return out
+	out.resize(vw * vh)
+	var veg: PackedByteArray = sim.veg
+	var obs: PackedByteArray = sim.obs
+	var ow: int = sim.ob_w
+	var oh: int = sim.ob_h
+	for j in vh:
+		for i in vw:
+			var k := j * vw + i
+			var hit := (veg[k] & (MapGen.V_ROAD | MapGen.V_PLAZA)) != 0
+			if not hit and obs.size() == ow * oh:
+				for dj in 2:
+					for di in 2:
+						var ii := i * 2 + di
+						var jj := j * 2 + dj
+						if ii < ow and jj < oh and obs[jj * ow + ii] == MapGen.C_BUILDING:
+							hit = true
+			out[k] = 1 if hit else 0
+	for it in 2:
+		var nxt := out.duplicate()
+		for j in vh:
+			for i in vw:
+				if out[j * vw + i] != 0:
+					continue
+				if (i > 0 and out[j * vw + i - 1] != 0) or (i < vw - 1 and out[j * vw + i + 1] != 0) \
+						or (j > 0 and out[(j - 1) * vw + i] != 0) or (j < vh - 1 and out[(j + 1) * vw + i] != 0):
+					nxt[j * vw + i] = 1
+		out = nxt
+	return out
+
+
 ## Ground features texture from the sim's 4 m vegetation grid.
 func _build_veg() -> void:
 	var m := material_ref
@@ -359,11 +395,14 @@ func _build_veg() -> void:
 	var bytes := PackedByteArray()
 	bytes.resize(vw * vh * 4)
 	var veg: PackedByteArray = sim.veg
+	var built := _west_built(vw, vh)
 	for k in vw * vh:
 		var b := veg[k]
 		var o := k * 4
 		bytes[o] = (b & MapGen.V_DENS) * 85
 		bytes[o + 1] = 255 if (b & MapGen.V_URBAN) != 0 else 0
+		if not built.is_empty() and bytes[o + 1] != 0 and built[k] == 0:
+			bytes[o + 1] = 70  # (a West town: only the built-up ground is trodden; yards and gardens between)
 		bytes[o + 2] = 255 if (b & MapGen.V_FIELD) != 0 else 0
 		bytes[o + 3] = 255 if (b & MapGen.V_PLAZA) != 0 else (130 if (b & MapGen.V_ROAD) != 0 else 0)
 	var img := Image.create_from_data(vw, vh, false, Image.FORMAT_RGBA8, bytes)

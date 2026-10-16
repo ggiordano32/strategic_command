@@ -78,9 +78,11 @@ func build(lay: Dictionary, k: float, style: int) -> void:
 					if zone[i] == 0:
 						marked.append(i)
 					zone[i] = 2
-	_fill(zone, marked, w, h, org, Rect2(float(int(ag[0])) - ahs, float(int(ag[1])) - ahs, ahs * 2.0, ahs * 2.0), 2)
+	# (A West town, phase W: sandy earth streets, the plaza paved, zone 3.)
+	var west := int(lay.get("west", 0)) != 0
+	_fill(zone, marked, w, h, org, Rect2(float(int(ag[0])) - ahs, float(int(ag[1])) - ahs, ahs * 2.0, ahs * 2.0), 3 if west else 2)
 	# Paint.
-	var paved := style != 3 and style != 5
+	var paved := style != 3 and style != 5 and not west
 	var px := PackedByteArray()
 	px.resize(w * h * 4)
 	for i in marked:
@@ -95,7 +97,16 @@ func build(lay: Dictionary, k: float, style: int) -> void:
 		var hv := 0.0
 		var n := float((((cx * 374761393) ^ (cy * 668265263)) * 1274126177 >> 8) & 255) / 255.0
 		var col: Vector3
-		if paved:
+		if z == 3:
+			col = Vector3(0.70, 0.66, 0.58)
+			var cob2 := (cx / 2 + (cy / 2 % 2)) % 3
+			col *= 0.9 + 0.12 * n - (0.06 if (cx % 2 == 0 or cy % 2 == 0) else 0.0) - 0.02 * float(cob2)
+			if edge:
+				col *= 0.75
+		elif west:
+			col = Vector3(0.66, 0.57, 0.42) if z == 2 else Vector3(0.60, 0.52, 0.39)
+			col *= 0.9 + 0.16 * n
+		elif paved:
 			col = Vector3(0.66, 0.62, 0.55) if z == 2 else Vector3(0.60, 0.56, 0.49)
 			var cob := (cx / 2 + (cy / 2 % 2) * 1) % 3   # cobbles 1 m, offset rows
 			col *= 0.9 + 0.14 * n - (0.07 if (cx % 2 == 0 or cy % 2 == 0) else 0.0) + hv
@@ -107,8 +118,8 @@ func build(lay: Dictionary, k: float, style: int) -> void:
 			col *= 0.88 + 0.2 * n
 			if edge:
 				col *= 0.9
-		var al := 1.0 if z == 2 else 0.9
-		if edge and not paved:
+		var al := 1.0 if z >= 2 else 0.9
+		if edge and not paved and z != 3:
 			al *= 0.6
 		var o := i * 4
 		px[o] = clampi(int(col.x * 255.0), 0, 255)

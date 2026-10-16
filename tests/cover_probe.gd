@@ -4,7 +4,8 @@ extends SceneTree
 ## cover trait; or line musketeers) standing in the open, in a rocky field
 ## (scattered boulders round it), in a hamlet (a field map's grid of house
 ## blocks round it: not drawn by the view) or across a street's mouth in an
-## open Punic town (test_cover_town's ground), 90 s, several seeds. Prints per case the men each side lost, the
+## open Punic town (test_cover_town's ground) or a West open town (wtown, phase W:
+## stone and timber houses, goods, yard walls), 90 s, several seeds. Prints per case the men each side lost, the
 ## casualty ratio (defender lost / attacker lost), the flat shots stopped on
 ## the way (stat_flat_block where the sim has it), the share of the
 ## defenders' men with an obstacle at least 1.2 m tall within 3 m toward
@@ -52,6 +53,8 @@ static func _terrain(place: String) -> Dictionary:
 static func _sc(def_key: String, place: String) -> Dictionary:
 	if place == "town":
 		return _town(UT.index_of(def_key), UT.index_of("musketeers"))
+	if place == "wtown":
+		return _town(UT.index_of(def_key), UT.index_of("musketeers"), true)
 	# (In the hamlet: in the street behind the front row of houses, 150-155.)
 	var t := Scenarios.unit(1, UT.index_of(def_key), 60, 200, 153 if place == "hamlet" else 160, Scenarios.FACE_DOWN)
 	t["files"] = 30
@@ -65,12 +68,30 @@ static func _sc(def_key: String, place: String) -> Dictionary:
 ## Scenarios.settlement so the probe runs on builds without it: an open
 ## Punic town, the defenders (unit 0, 12 files) across a main street where
 ## houses flank it, facing out; 100 musketeers 90 m out.
-static func _town(def_ty: int, att_ty: int) -> Dictionary:
+static func _town(def_ty: int, att_ty: int, west: bool = false) -> Dictionary:
 	var city := {"seed": 707, "level": 2, "walls": 0, "bld": [1, 2, 4], "plan": MapGen.PLAN_PUNIC, "coast": 0}
+	if west:
+		# (A West open town, phase W: houses of stone and of timber, goods, yard walls.)
+		city = {"seed": 12, "level": 1, "walls": 0, "bld": [1, 2, 4], "plan": MapGen.CUL_LATIN, "coast": 1,
+			"founder": MapGen.CUL_LATIN, "west": 1}
 	var terr := {"kind": Terrain.K_FLAT, "seed": 710, "forest": 0, "ground": MapGen.PAL_GREEN}
 	var r := Scenarios.settlement(city, terr, [[att_ty, 100]], [[def_ty, 60]], 0, [])
 	var sc: Dictionary = r["scenario"]
 	var lay: Dictionary = r["layout"]
+	if west:
+		# Up the street from the mouth nearest the attackers' line, where the houses close in: the
+		# defenders 40 m inside it facing out, the musketeers 50 m beyond it.
+		var mo: Array = lay["mouths"][0]
+		var ma: int = mo[2]
+		var cx := FM.cos_a(ma)
+		var cy := FM.sin_a(ma)
+		var dd := Scenarios.unit(0, def_ty, 60, int(mo[0]) - cx * 40 / FM.TRIG_ONE, int(mo[1]) - cy * 40 / FM.TRIG_ONE, ma, 12)
+		var aa := Scenarios.unit(1, att_ty, 100, int(mo[0]) + cx * 50 / FM.TRIG_ONE, int(mo[1]) + cy * 50 / FM.TRIG_ONE, (ma + 512) & 1023)
+		sc["units"] = [dd, aa]
+		sc["ai_sides"] = []
+		sc["orders"] = []
+		sc.erase("deploy_zones")
+		return sc
 	var pl: Array = lay.get("agora", lay["plaza"])
 	var spot: Array = []
 	for mo in lay["mouths"]:
@@ -153,7 +174,7 @@ func _run(def_key: String, place: String, sd: int, ticks: int) -> Dictionary:
 		"block": _num(sim, "stat_flat_block"), "traced": _num(sim, "stat_flat_traced"),
 		"cstop": _num(sim, "stat_cover_stop"), "gstop": _num(sim, "stat_ground_stop"),
 		"behind": behind, "alive": alive, "disp": disp, "ms": us / 1000.0 / ticks,
-		"spots": _num(sim, "stat_cs_men")}
+		"spots": _num(sim, "stat_cs_men"), "wood": _num(sim, "stat_wood_pass")}
 
 
 func _init() -> void:
@@ -166,9 +187,9 @@ func _init() -> void:
 			ticks = int(a.get_slice("=", 1))
 	print("case                 lost def / att   ratio   blocked/traced  cover/ground stops  behind cover  disp m  ms/tick")
 	for def_key in ["buccaneers", "musketeers"]:
-		for place in ["open", "rocks", "hamlet", "town"]:
+		for place in ["open", "rocks", "hamlet", "town", "wtown"]:
 			var tot := {"lost_d": 0, "lost_a": 0, "block": 0, "traced": 0, "cstop": 0, "gstop": 0, "behind": 0,
-				"alive": 0, "disp": 0, "ms": 0.0, "spots": 0}
+				"alive": 0, "disp": 0, "ms": 0.0, "spots": 0, "wood": 0}
 			for k in seeds:
 				var r := _run(def_key, place, 11 * (k + 1), ticks)
 				for key in tot:
@@ -178,4 +199,6 @@ func _init() -> void:
 				tot["lost_d"] / maxf(tot["lost_a"], 1.0), tot["block"], tot["traced"], tot["cstop"], tot["gstop"],
 				100.0 * tot["behind"] / maxf(tot["alive"], 1.0), tot["disp"] / 1024.0 / maxf(tot["alive"], 1.0),
 				tot["ms"] / seeds])
+			if place == "wtown":
+				print("           (wtown: %d balls through timber walls)" % tot["wood"])
 	quit(0)
