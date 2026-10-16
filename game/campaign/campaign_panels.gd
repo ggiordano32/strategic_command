@@ -187,6 +187,11 @@ func _sea_notes(box: VBoxContainer, r: int) -> void:
 			CSea.sea_trade(ps, r), CSea.k("BLOCKADE_CELLS", 3)], Kit.FONT_SMALL, Kit.COL_DIM, true)
 		tl.name = "sea_trade_note"
 		box.add_child(tl)
+	var gh := CStory.haven_hint(ps, r)  # (a story campaign) is the haven shielded?
+	if gh != "":
+		var gl := Kit.label(gh, Kit.FONT_SMALL, Color(0.45, 0.8, 0.45) if gh.begins_with("Shielded") else Color(0.95, 0.6, 0.3), true)
+		gl.name = "grudge_hint"
+		box.add_child(gl)
 	if CSea.haven(ps, r):
 		var hp := CSea.haven_off(ps, o, r, "buccaneers")
 		var ht := "Pirate haven: buccaneers and cutlass men %d%% cheaper, %d more recruit%s a turn; pirate ships refit here (+%d)." % [
@@ -208,6 +213,13 @@ func _sea_notes(box: VBoxContainer, r: int) -> void:
 			how, int(sg[0]) + int(sg[1])], Kit.FONT_SMALL, Kit.COL_GOLD, true)
 		pl.name = "sack_note"
 		box.add_child(pl)
+		if CStory.on(ps) and CSea.sacks(ps, r, f):
+			# (A story campaign) Mercy on what a sack costs.
+			var tip := str(CStory._c(ps, "SACK_TIP", "")).replace("{nation}", CData.faction_name(o))
+			if tip != "":
+				var ml := Kit.label("Mercy: " + tip, Kit.FONT_SMALL, Color(0.95, 0.75, 0.5), true)
+				ml.name = "sack_tip"
+				box.add_child(ml)
 
 
 # ------------------------------------------------- gifts between players ---

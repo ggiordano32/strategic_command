@@ -51,6 +51,7 @@ func _init() -> void:
 	_blocked()
 	_coop()
 	_shield()
+	_grudge()
 	_step2()
 	_paths()
 	_random_runs()
@@ -316,6 +317,72 @@ func _shield() -> void:
 	var run := SA.play(101, 20, "first", 1)
 	_check(CState.owner(run, hr) == CStory.player(run) or CStory.flag(run, "lost_reprisal") or CStory.attention(run) >= 35,
 		"shield: the haven stands at turn 20 unless the reprisal or the attention took it")
+
+
+func _log_count(st: Dictionary, id: String) -> int:
+	var n := 0
+	for e in CStory.S(st)["log"]:
+		if str(e["e"]) == id:
+			n += 1
+	return n
+
+
+func _sched_turns(st: Dictionary, id: String, f: int) -> Array:
+	var out: Array = []
+	for sc in CStory.S(st)["sched"]:
+		if str(sc[1]) == id and (sc as Array).size() > 2 and int(sc[2]) == f:
+			out.append(int(sc[0]))
+	return out
+
+
+## Mercy's lessons, the grudges and the punitive landing.
+func _grudge() -> void:
+	var st := _new(5)
+	var hr := CData.region_index("port_de_paix")
+	var fr := CData.faction_index("france")
+	var ca := CStory.player(st)
+	CStory.S(st)["p"]["heat"] = 25
+	CStory.check(st)
+	CStory.check(st)
+	_check(_log_count(st, "att20") == 1 and _log_count(st, "att35") == 0, "lessons: the attention line at 20, once")
+	CStory.S(st)["p"]["heat"] = 40
+	CStory.check(st)
+	CStory.check(st)
+	_check(_log_count(st, "att35") == 1, "lessons: the Armada sails at 35, once")
+	var g := _new(5)
+	CState.set_dip(g, ca, fr, CState.WAR)
+	_check(CStory.haven_hint(g, hr).begins_with("Shielded") and CStory.grudges(g).is_empty(), "grudges: none at first, the haven card says shielded")
+	CStory._provoke(g, fr, int(g["turn"]), "sack", CData.region_index("leogane"))
+	_check(not _sched_turns(g, "grudge_sack", fr).is_empty() and CStory.grudges(g).size() == 1 and CStory.haven_hint(g, hr).begins_with("At risk: France"),
+		"grudges: a sack is a grudge, Mercy's line is due, the card says at risk")
+	var pw := _sched_turns(g, "punitive_warn", fr)
+	var pl := _sched_turns(g, "punitive", fr)
+	_check(pl.size() == 1 and pw.size() == 1 and int(pl[0]) >= int(g["turn"]) + 3 and int(pl[0]) <= int(g["turn"]) + 5 and int(pw[0]) == int(pl[0]) - 1,
+		"punitive: the landing in 3-5 turns, the warning a turn before")
+	CStory._provoke(g, fr, int(g["turn"]), "sack", CData.region_index("leogane"))
+	_check(_sched_turns(g, "punitive", fr).size() == 1 and _sched_turns(g, "grudge_sack", fr).size() == 1, "punitive and the lesson: once per nation")
+	CStory.check(g)
+	_check(_log_count(g, "grudge_sack") == 1 and int(CStory.S(g)["log"][-1].get("x", -1)) == fr, "lessons: the sack line is told about the nation")
+	# The landing.
+	g["turn"] = int(pl[0])
+	CStory.check(g)
+	var pb := CTurn.pending_for(g)
+	_check(CStory.flag(g, "bt_punitive") and pb.size() == 1 and int(pb[0]["r"]) == hr, "punitive: two companies land at the haven")
+	# The grudge cools after 8 turns, Mercy says so once.
+	var c := _new(5)
+	CStory._provoke(c, fr, int(c["turn"]), "blockade", CData.region_index("leogane"))
+	c["turn"] = int(c["turn"]) + 8
+	CStory._cool(c)
+	CStory.check(c)
+	CStory._cool(c)
+	CStory.check(c)
+	_check(_log_count(c, "grudge_cool") == 1 and CStory.grudges(c).is_empty(), "grudges: eight turns on it has cooled, said once")
+	# The reprisal clash: a landing too near the turn-10 reprisal is moved clear of it.
+	var k := _new(5)
+	CStory._sched(k, "reprisal", int(k["turn"]) + 4)
+	CStory._provoke(k, fr, int(k["turn"]), "sack", CData.region_index("leogane"))
+	var kl := _sched_turns(k, "punitive", fr)
+	_check(kl.size() == 1 and abs(int(kl[0]) - (int(k["turn"]) + 4)) >= 3, "punitive: kept clear of the reprisal (%s)" % str(kl))
 
 
 ## Co-op: two captains, the crew votes every choice (cstory.gd answer).

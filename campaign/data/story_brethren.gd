@@ -108,6 +108,13 @@ const ARMADA_HUNT_ATT := 35
 ## The Spanish nations (the haven shield, cstory.gd shielded): the attention provokes only them;
 ## the others are provoked by a sacked or blockaded port of theirs (PROVOKE_TURNS = 8, default).
 const SPANISH: Array[String] = ["new_spain", "tierra_firme"]
+## The punitive landing a nation sends after the first sack of one of its ports (cstory.gd _punitive):
+## two companies of its line troops, 3-5 turns on, a turn's warning before.
+const PUNITIVE := {"new_spain": ["musketeers", "w_pikemen"], "tierra_firme": ["musketeers", "rodeleros"],
+	"england": ["musketeers", "musketeers"], "france": ["musketeers", "buccaneers"], "dutch": ["musketeers", "musketeers"],
+	"itza": ["native_warriors", "native_bowmen"], "miskito": ["native_warriors", "native_bowmen"]}
+## Shown on a port's card before it is stormed (view; "{nation}" is its owner).
+const SACK_TIP := "Sack her and {nation} will send soldiers to Tortuga before the season's out. Hold her and they'll only send letters."
 const ARMADA_RANGE := 25
 ## A hunting actor goes home to refit for this many turns after a battle.
 const ACTOR_REST := 3
@@ -732,12 +739,34 @@ const EVENTS: Array[Dictionary] = [
 			["vane", "A sea fight is decided before the first gun: by who has the wind, who has the guns, and whose crew wants it more. Get the weather gauge, rake her stern, and board when she is sick of it."],
 			["", "A sea battle can be fought in real time (you sail and fire your own ships, with the wind) or resolved at once. Fought, a smaller fleet with the wind and a good captain can beat a bigger one."],
 		]},
+	# Mercy on what provocation costs (cstory.gd: attention, grudges, the shield). "act": -1 = the story's current act.
+	{"id": "att20", "focus": "port_de_paix", "act": -1, "title": "The ledger", "when": {"att_ge": 20},
+		"lines": [["mercy", "Word is Mendoza keeps a ledger in Havana: every sloop, every captain, every church we've lightened. We're on page one. Keep sailing like this and we'll be on page two."]],
+		"chron": "The Armada de Barlovento opened a page for the captain."},
+	{"id": "att35", "focus": "port_de_paix", "act": -1, "title": "The Armada sails", "when": {"att_ge": 35},
+		"lines": [["mercy", "The Armada de Barlovento has weighed anchor. They are coming for the haven, not for us. Spain's long memory, Captain, and a very short fuse."],
+			["mercy", "While your name is this loud, Spain's soldiers will go for Tortuga. Quiet it down, and they'll go back to their ledgers."]],
+		"chron": "The Armada de Barlovento sailed to hunt the pirates."},
+	{"id": "grudge_sack", "focus": "port_de_paix", "act": -1, "title": "A port in ashes",
+		"lines": [["mercy", "{nation} will remember that for a season, Captain. Nobody sacks a man's port and goes unanswered. Watch the horizon; they won't send a letter."]]},
+	{"id": "grudge_blockade", "focus": "port_de_paix", "act": -1, "title": "A port starved",
+		"lines": [["mercy", "{nation} will remember that blockade for a season. A starved port has a long memory, and a longer list."]]},
+	{"id": "grudge_cool", "focus": "port_de_paix", "act": -1, "title": "The temper cools",
+		"lines": [["mercy", "{nation}'s temper has cooled. The haven can breathe. Mind you, a grudge is only a bruise: press it again and it comes back."]]},
+	{"id": "punitive_warn", "focus": "port_de_paix", "act": -1, "title": "Sails off the cape",
+		"lines": [["mercy", "Sails off the cape. {nation} wants its silver back, and they've sent men to collect it. Every musket to the wall, Captain."]]},
+	{"id": "punitive", "focus": "port_de_paix", "act": -1, "title": "{adj} soldiers land",
+		"lines": [["", "A small {adj} column wades ashore below the fort: two companies, a flag, and the grim patience of men told to make an example."],
+			["mercy", "Only two companies. That's their answer to your sack. Hold the walls and it ends here. Next time they'll send the rest."]],
+		"chron": "Soldiers landed at the haven to punish the sack.",
+		"fx": [["punish"]]},
 	{"id": "treaty", "focus": "port_royal", "act": 2, "title": "The Treaty of Madrid", "when": {"turn": [22, 23], "flag": "act2"},
 		"lines": [
 			["", "News from Europe, three months old and already too late: at Madrid the ambassadors of England and Spain have signed a treaty of peace and friendship in the Indies. Every commission against Spain is revoked."],
 			["ashby", "BY THE GOVERNOR. A PROCLAMATION. Whereas peace is concluded between His Majesty and the Catholic King, all persons whatsoever who shall henceforth commit any act of hostility against the subjects of Spain shall be deemed pirates and enemies of mankind."],
 			["ashby", "And whereas a certain captain, late of the sloop of Josiah Vane, has done such acts, a reward of two thousand pieces of eight is offered for his body, quick or dead. God save the King."],
 			["mercy", "The ink wasn't dry on our letter. Port Royal's shut to us, Captain, and every Englishman with a boat just became a bounty hunter. Kings make friends. Vane said it. I didn't believe him."],
+			["mercy", "And hear me plain: England has leave to come for Tortuga now. Nothing holds Ashby's ships off the haven any more but our guns."],
 		],
 		"chron": "England and Spain made peace at Madrid. Every commission against Spain was revoked, and Port Royal turned on its pirates.",
 		"fx": [["dip2", "england", "new_spain", "peace"], ["dip2", "england", "tierra_firme", "peace"], ["unmarque", "england"],

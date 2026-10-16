@@ -769,7 +769,7 @@ static func provoked(st: Dictionary, f: int) -> bool:
 		return true
 	var t := int(st["turn"])
 	for pv in S(st).get("prov", []):
-		if int(pv[0]) == f and t - int(pv[1]) < int(_c(st, "PROVOKE_TURNS", 8)):
+		if int(pv["f"]) == f and t - int(pv["t"]) < int(_c(st, "PROVOKE_TURNS", 8)):
 			return true
 	for r in CData.region_count():
 		if CState.owner(st, r) == f and captains(st).has(int(st["regions"][r].get("bk", -1))):
@@ -808,26 +808,118 @@ static func _tally(st: Dictionary, t: int) -> void:
 			"sack":
 				if captains(st).has(int(e["f"])):
 					sx["sk"] = int(sx.get("sk", 0)) + 1
-					_provoke(st, int(e.get("from", -1)), t)
+					_provoke(st, int(e.get("from", -1)), t, "sack", int(e.get("r", -1)))
 			"blockade":
 				if captains(st).has(int(e["f"])):
-					_provoke(st, int(e.get("from", -1)), t)
+					_provoke(st, int(e.get("from", -1)), t, "blockade", int(e.get("r", -1)))
 	if not sx.is_empty():
 		S(st)["sx"] = sx
 
 
 ## Faction f was provoked on turn t (a port sacked or blockaded).
-static func _provoke(st: Dictionary, f: int, t: int) -> void:
+static func _provoke(st: Dictionary, f: int, t: int, why: String = "sack", r: int = -1) -> void:
 	if f < 0:
 		return
 	if not S(st).has("prov"):
 		S(st)["prov"] = []
 	var pl: Array = S(st)["prov"]
+	var first := true
 	for pv in pl:
-		if int(pv[0]) == f:
-			pv[1] = t
-			return
-	pl.append([f, t])
+		if int(pv["f"]) == f:
+			first = false
+			pv["t"] = t
+			pv["w"] = why
+			pv["r"] = r
+			break
+	var now := int(st["turn"])
+	if first:
+		# {f, t (turn), w ("sack" | "blockade"), r (the port), n (1: the cooling-off line is still due)}
+		pl.append({"f": f, "t": t, "w": why, "r": r, "n": 1})
+		_sched(st, "grudge_" + why, now, f)  # Mercy tells it once per nation
+	if why == "sack":
+		_punitive(st, f)
+
+
+## The first sack of a nation's port brings a small punitive landing at the haven
+## in 3-5 turns (Mercy warns a turn before): cause and effect, once per nation.
+## It keeps clear of the turn-10 reprisal.
+static func _punitive(st: Dictionary, f: int) -> void:
+	if not S(st).has("pun"):
+		S(st)["pun"] = []
+	var done: Array = S(st)["pun"]
+	if done.has(f) or CState.owner(st, _haven_region(st)) < 0 or not captains(st).has(CState.owner(st, _haven_region(st))):
+		return
+	done.append(f)
+	var now := int(st["turn"])
+	var land := now + 3 + CState.rand(st, 3)
+	var rts: Array = []
+	for sc in S(st)["sched"]:
+		if str(sc[1]).begins_with("reprisal"):
+			rts.append(int(sc[0]))
+	for fr in S(st)["fired"]:
+		if str(fr[0]).begins_with("reprisal") and now - int(fr[1]) < 4:
+			rts.append(int(fr[1]))
+	for rt in rts:
+		if abs(land - rt) < 3:
+			land = rt + 3
+	_sched(st, "punitive_warn", maxi(land - 1, now), f)
+	_sched(st, "punitive", land, f)
+
+
+## The haven region of the story (the script's HAVEN), -1 none.
+static func _haven_region(st: Dictionary) -> int:
+	return CData.region_index(str(_c(st, "HAVEN", "")))
+
+
+## The grudges the captains carry: [{f, w ("sack" | "blockade" | "attention"), r (the port, -1), left (turns left, -1 while it lasts)}].
+static func grudges(st: Dictionary) -> Array:
+	var out: Array = []
+	if not on(st):
+		return out
+	var t := int(st["turn"])
+	var lim := int(_c(st, "PROVOKE_TURNS", 8))
+	var seen := {}
+	for pv in S(st).get("prov", []):
+		var left := lim - (t - int(pv["t"]))
+		if left > 0:
+			out.append({"f": int(pv["f"]), "w": str(pv["w"]), "r": int(pv["r"]), "left": left})
+			seen[int(pv["f"])] = true
+	for r in CData.region_count():
+		var b := int(st["regions"][r].get("bk", -1))
+		var o := CState.owner(st, r)
+		if o >= 0 and captains(st).has(b) and not seen.has(o):
+			out.append({"f": o, "w": "blockade", "r": r, "left": -1})
+			seen[o] = true
+	if attention(st) >= int(_c(st, "ARMADA_HUNT_ATT", 35)):
+		for k in _c(st, "SPANISH", []):
+			var sf := CData.faction_index(str(k))
+			if sf >= 0 and not seen.has(sf):
+				out.append({"f": sf, "w": "attention", "r": -1, "left": -1})
+	return out
+
+
+## The line on a haven's city card ("" for any other region).
+static func haven_hint(st: Dictionary, r: int) -> String:
+	if not on(st) or not captains(st).has(CState.owner(st, r)) or not _havens(st).has(str(CData.REGIONS[r]["key"])):
+		return ""
+	var names: Array[String] = []
+	for g in grudges(st):
+		var nm := CData.faction_name(int(g["f"]))
+		if not names.has(nm):
+			names.append(nm)
+	if names.is_empty():
+		return "Shielded: no nation holds a grudge."
+	return "At risk: %s." % ", ".join(names)
+
+
+## The grudges that have cooled: Mercy says so once for the first of each.
+static func _cool(st: Dictionary) -> void:
+	var t := int(st["turn"])
+	var lim := int(_c(st, "PROVOKE_TURNS", 8))
+	for pv in S(st).get("prov", []):
+		if int(pv["n"]) == 1 and t - int(pv["t"]) >= lim and not provoked(st, int(pv["f"])):
+			pv["n"] = 2
+			_sched(st, "grudge_cool", t, int(pv["f"]))
 
 
 ## A captain's fleet (or army) within `cells` of region r's harbour (or its
@@ -923,7 +1015,10 @@ static func check(st: Dictionary) -> void:
 				continue
 			if S(st).has("end"):
 				return
+			if (sc as Array).size() > 2:
+				S(st)["ctx"] = int(sc[2])
 			_fire(st, i)
+			S(st).erase("ctx")
 			any = true
 		var list := events_of(st)
 		for i in list.size():
@@ -976,12 +1071,15 @@ static func _fire(st: Dictionary, i: int) -> void:
 	if ev.has("chron"):
 		_rules().event(st, {"k": "story", "e": id, "f": pf})
 	_fx(st, pf, ev.get("fx", []))
+	var cxf := int(S(st).get("ctx", -1))
 	if (ev.get("choices", []) as Array).is_empty():
-		_log(st, id, -1)
+		_log(st, id, -1, {"x": cxf} if cxf >= 0 else {})
 		return
 	var n := int(S(st)["next"])
 	S(st)["next"] = n + 1
 	var pend := {"id": n, "e": id, "t": t, "f": pf}
+	if cxf >= 0:
+		pend["x"] = cxf
 	if voters(st).size() > 1:
 		pend["v"] = []  # (co-op) the crew votes: each living captain answers
 	(S(st)["pending"] as Array).append(pend)
@@ -992,7 +1090,7 @@ static func _log(st: Dictionary, id: String, c: int, extra: Dictionary = {}) -> 
 	S(st)["ln"] = n
 	var lg: Array = S(st)["log"]
 	var le := {"n": n, "t": int(st["turn"]), "e": id, "c": c}
-	for k in ["v", "w"]:  # (a crew vote: the votes [[captain, choice]] and whose choice carried)
+	for k in ["v", "w", "x"]:  # (x: the nation the event is about; a crew vote: the votes [[captain, choice]] and whose choice carried)
 		if extra.has(k):
 			le[k] = extra[k]
 	lg.append(le)
@@ -1085,6 +1183,22 @@ static func settle_ready(st: Dictionary) -> void:
 			_settle_vote(st, pe)
 
 
+## The punitive landing of the nation in ctx at the first haven a captain still holds
+## (its two line companies from the script's PUNITIVE).
+static func _fx_punish(st: Dictionary) -> void:
+	var f := int(S(st).get("ctx", -1))
+	if f < 0:
+		return
+	var key := str(CData.FACTIONS[f]["key"])
+	var table: Dictionary = _c(st, "PUNITIVE", {})
+	var units: Array = table.get(key, ["musketeers", "musketeers"])
+	for hk in _havens(st):
+		var r := CData.region_index(str(hk))
+		if r >= 0 and captains(st).has(CState.owner(st, r)):
+			_raid(st, ["raid", key, str(hk), units, "punitive"])
+			return
+
+
 ## A battle opened by an effect: the turn waits for it.
 static func _after_fx(st: Dictionary) -> void:
 	if str(st["phase"]) == "plan" and not (st["battles"] as Array).is_empty():
@@ -1169,6 +1283,8 @@ static func _fx(st: Dictionary, f: int, fx: Array) -> void:
 				_units(st, f, str(a[1]), int(a[2]), CData.region_index(str(a[3])))
 			"lose_ship":
 				_lose_ship(st, f)
+			"punish":
+				_fx_punish(st)
 			"gamble", "gamble_fame":
 				var pct := int(a[1])
 				if str(a[0]) == "gamble_fame":
@@ -1325,12 +1441,12 @@ static func _fx(st: Dictionary, f: int, fx: Array) -> void:
 				push_warning("story: unknown effect %s" % str(a[0]))
 
 
-static func _sched(st: Dictionary, id: String, t: int) -> void:
+static func _sched(st: Dictionary, id: String, t: int, f: int = -1) -> void:
 	var sl: Array = S(st)["sched"]
 	var i := 0
 	while i < sl.size() and int(sl[i][0]) <= t:
 		i += 1
-	sl.insert(i, [t, id])
+	sl.insert(i, [t, id] if f < 0 else [t, id, f])  # (a third item: the nation it is about, "{nation}" in its lines)
 
 
 static func _crew(st: Dictionary, f: int, pct: int) -> void:
@@ -1820,6 +1936,7 @@ static func end_turn(st: Dictionary) -> void:
 	var pf := player(st)
 	_tally(st, t - 1)
 	S(st).erase("rq")  # (raids that never found the beach clear)
+	_cool(st)
 	# Plunder: the purse, shares owed, Lindo's cut.
 	var pl := _plunder(st)
 	var delta := pl - int(S(st)["plunder0"])

@@ -346,6 +346,7 @@ func guard_end() -> bool:
 
 
 func _show_news(e: Dictionary) -> void:
+	_x = int(e.get("x", -1))
 	var st: Dictionary = s.st
 	var ev := CStory.event_def(st, str(e["e"]))
 	var box := _event_box(st, ev, int(e["t"]))
@@ -353,7 +354,7 @@ func _show_news(e: Dictionary) -> void:
 	if e.has("v"):
 		_show_vote_result(e)
 		return
-	s.show_dialog(str(ev.get("title", "")), box, [["Continue", func():
+	s.show_dialog(_fill(str(ev.get("title", ""))), box, [["Continue", func():
 		_set_seen(n)
 		s.save()
 		s._next_step()]], 640)
@@ -363,6 +364,7 @@ func _show_news(e: Dictionary) -> void:
 ## A choice: the scene, then the choices with what each does. On a short
 ## screen (a phone) the scene is a page of its own and the choices the next.
 func _show_choice(pe: Dictionary, page: int = 0, who: int = -1) -> void:
+	_x = int(pe.get("x", -1))
 	var st: Dictionary = s.st
 	if who < 0:
 		who = CStory.player(st)
@@ -374,7 +376,7 @@ func _show_choice(pe: Dictionary, page: int = 0, who: int = -1) -> void:
 		s.close_dialog()
 		refresh()]
 	if compact and page == 0:
-		s.show_dialog(str(ev.get("title", "")), _event_box(st, ev, int(pe["t"])), [look, ["Your vote" if vote else "Your call", func(): _show_choice(pe, 1, who)]], 660, true)
+		s.show_dialog(_fill(str(ev.get("title", ""))), _event_box(st, ev, int(pe["t"])), [look, ["Your vote" if vote else "Your call", func(): _show_choice(pe, 1, who)]], 660, true)
 		refresh()
 		return
 	var box := Kit.vbox(10) if compact else _event_box(st, ev, int(pe["t"]))
@@ -421,12 +423,13 @@ func _show_choice(pe: Dictionary, page: int = 0, who: int = -1) -> void:
 	var buttons: Array = [look]
 	if compact:
 		buttons.push_front(["Back", func(): _show_choice(pe, 0, who)])
-	s.show_dialog(str(ev.get("title", "")), box, buttons, 660, true)
+	s.show_dialog(_fill(str(ev.get("title", ""))), box, buttons, 660, true)
 	refresh()
 
 
 ## (Online, two captains) This seat has voted; the crew waits for the other.
 func _show_wait(pe: Dictionary) -> void:
+	_x = int(pe.get("x", -1))
 	var st: Dictionary = s.st
 	var ev := CStory.event_def(st, str(pe["e"]))
 	var box := _event_box(st, ev, int(pe["t"]))
@@ -440,13 +443,21 @@ func _show_wait(pe: Dictionary) -> void:
 	for w in CStory.vote_waiting(st, pe):
 		names.append(captain_name(st, int(w)))
 	box.add_child(Kit.label("Waiting for %s." % " and ".join(names), Kit.FONT, COL_WARN, true))
-	s.show_dialog(str(ev.get("title", "")), box, [["Look at the map", func():
+	s.show_dialog(_fill(str(ev.get("title", ""))), box, [["Look at the map", func():
 		s.close_dialog()
 		refresh()]], 660, true)
 	refresh()
 
 
 var _asking := -1  # the captain whose choice is on screen
+var _x := -1       # the nation the event on screen is about ("{nation}" / "{adj}" in its lines)
+
+
+## Fill "{nation}" and "{adj}" of a line with the nation the event is about.
+func _fill(text: String) -> String:
+	if _x < 0 or _x >= CData.FACTIONS.size():
+		return text
+	return text.replace("{nation}", CData.faction_name(_x)).replace("{adj}", str(CData.FACTIONS[_x]["adj"]))
 
 
 func _choose(pid: int, k: int) -> void:
@@ -493,7 +504,7 @@ func _after_answer(nst: Dictionary, eid: String, f: int) -> void:
 		var box := Kit.vbox(10)
 		box.add_child(Kit.label("You: " + str(c["t"]), Kit.FONT_SMALL, Kit.COL_GOLD, true))
 		box.add_child(_line(str(say[0]), str(say[1])))
-		s.show_dialog(str(ev.get("title", "")), box, [["Continue", func(): s._next_step()]], 600)
+		s.show_dialog(_fill(str(ev.get("title", ""))), box, [["Continue", func(): s._next_step()]], 600)
 	else:
 		s._next_step()
 	refresh()
@@ -523,6 +534,7 @@ func _choose_online(pid: int, k: int) -> void:
 
 ## A crew vote settled: each captain's vote, then Mercy's word, then the winner's reply.
 func _show_vote_result(e: Dictionary) -> void:
+	_x = int(e.get("x", -1))
 	var st: Dictionary = s.st
 	var ev := CStory.event_def(st, str(e["e"]))
 	var ch: Array = ev.get("choices", [])
@@ -549,7 +561,7 @@ func _show_vote_result(e: Dictionary) -> void:
 	if say.size() >= 2:
 		box.add_child(_line(str(say[0]), str(say[1])))
 	var n := int(e["n"])
-	s.show_dialog(str(ev.get("title", "")), box, [["Continue", func():
+	s.show_dialog(_fill(str(ev.get("title", ""))), box, [["Continue", func():
 		_set_seen(n)
 		s.save()
 		s._next_step()]], 640, true)
@@ -612,6 +624,8 @@ func _event_box(st: Dictionary, ev: Dictionary, t: int) -> VBoxContainer:
 	var box := Kit.vbox(10)
 	var acts: Array = CStory.script_of(st).get_script_constant_map().get("ACTS", [])
 	var act := int(ev.get("act", 0))
+	if act < 0:
+		act = int(CStory.S(st)["act"])
 	var sub := "%s. %s" % [str(acts[act]) if act < acts.size() else "", CData.date_text(t)]
 	if int(ev.get("tip", 0)) != 0:
 		sub = "From Vane's logbook. " + CData.date_text(t)
@@ -624,6 +638,7 @@ func _event_box(st: Dictionary, ev: Dictionary, t: int) -> VBoxContainer:
 ## One line: a badge, the speaker's name and role, the words (the narrator:
 ## the words alone, in parchment colour).
 func _line(who: String, text: String) -> Control:
+	text = _fill(text)
 	if who == "":
 		return Kit.label(text, Kit.FONT, COL_NARRATOR, true)
 	var ch: Dictionary = _chars(s.st).get(who, {"name": who, "role": "", "col": "666666"})
@@ -680,6 +695,63 @@ static func badge(ch: Dictionary, sz: float) -> Control:
 	return p
 
 
+## The Grudges block: the attention toward Spain with the Armada's mark, and each
+## provoked nation with its emblem, why and the turns left.
+func grudges_box(st: Dictionary) -> VBoxContainer:
+	var box := Kit.vbox(4)
+	box.name = "story_grudges"
+	box.add_child(Kit.section("Grudges"))
+	var att := CStory.attention(st)
+	var hunt := int(CStory._c(st, "ARMADA_HUNT_ATT", 35))
+	var bar := GrudgeBar.new()
+	bar.value = att
+	bar.mark = hunt
+	bar.custom_minimum_size = Vector2(0, 34)
+	bar.tooltip_text = "The captains' attention toward Spain: %d. At %d the Armada sails." % [att, hunt]
+	box.add_child(bar)
+	var gl := CStory.grudges(st)
+	if gl.is_empty():
+		box.add_child(Kit.label("No nation holds a grudge: the haven is shielded.", Kit.FONT_SMALL, COL_OK, true))
+	for g in gl:
+		var row := Kit.hbox(8)
+		row.name = "grudge_row"
+		row.add_child(Kit.faction_mark(int(g["f"]), 22))
+		var why := ""
+		match str(g["w"]):
+			"sack":
+				why = "you sacked %s" % _port_name(int(g["r"]))
+			"blockade":
+				why = "you blockaded %s" % _port_name(int(g["r"]))
+			_:
+				why = "the Armada's attention (%d)" % att
+		var left := "" if int(g["left"]) < 0 else ", %d turn%s left" % [int(g["left"]), "" if int(g["left"]) == 1 else "s"]
+		row.add_child(Kit.label("%s: %s%s" % [CData.faction_name(int(g["f"])), why, left], Kit.FONT_SMALL, COL_WARN, true))
+		box.add_child(row)
+	return box
+
+
+static func _port_name(r: int) -> String:
+	return str(CData.REGIONS[r]["city"]) if r >= 0 else "a port"
+
+
+## The attention bar with its mark ("the Armada sails" at the hunt threshold).
+class GrudgeBar extends Control:
+	var value := 0
+	var mark := 35
+
+	func _draw() -> void:
+		var w := size.x
+		var y := size.y - 14.0
+		draw_rect(Rect2(0, y, w, 8), Color(0.22, 0.22, 0.2))
+		var col := Color(0.45, 0.8, 0.45) if value < mark - 10 else (Color(0.95, 0.75, 0.3) if value < mark else Color(0.95, 0.4, 0.3))
+		draw_rect(Rect2(0, y, w * clampf(value / 100.0, 0.0, 1.0), 8), col)
+		var mx := w * clampf(mark / 100.0, 0.0, 1.0)
+		draw_line(Vector2(mx, y - 6), Vector2(mx, y + 12), Color(1, 1, 1), 2.0)
+		var font := ThemeDB.fallback_font
+		draw_string(font, Vector2(0, 11), "Attention toward Spain: %d" % value, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.85, 0.85, 0.8))
+		draw_string(font, Vector2(mx + 4, 11), "%d: the Armada sails" % mark, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(1, 0.85, 0.5))
+
+
 ## The story so far (the strip's tap, the Realm panel's "Story log"): the
 ## pressures explained, then every entry, newest first.
 func show_log() -> void:
@@ -699,11 +771,13 @@ func show_log() -> void:
 		row.add_child(Kit.swatch(gv[1], 12))
 		row.add_child(Kit.label(str(gv[2]), Kit.FONT_SMALL, Color.WHITE, true))
 		box.add_child(row)
+	box.add_child(grudges_box(st))
 	var lg: Array = CStory.S(st)["log"]
 	var last_t := -1
 	for i in range(lg.size() - 1, -1, -1):
 		var e: Dictionary = lg[i]
 		var ev := CStory.event_def(st, str(e["e"]))
+		_x = int(e.get("x", -1))
 		if int(e["t"]) != last_t:
 			last_t = int(e["t"])
 			box.add_child(Kit.section(CData.date_text(last_t)))
@@ -711,7 +785,7 @@ func show_log() -> void:
 		for ln in ev.get("lines", []):
 			var who := str(ln[0])
 			var nm := str(_chars(st).get(who, {}).get("name", ""))
-			box.add_child(Kit.label((nm + ": " if nm != "" else "") + str(ln[1]), Kit.FONT_SMALL,
+			box.add_child(Kit.label((nm + ": " if nm != "" else "") + _fill(str(ln[1])), Kit.FONT_SMALL,
 				Color.WHITE if nm != "" else COL_NARRATOR, true))
 		if int(e["c"]) >= 0:
 			var ch: Dictionary = ev["choices"][int(e["c"])]
@@ -751,6 +825,11 @@ static func autoplay(sd: int, turns: int) -> Dictionary:
 		var pe0 := CStory.pending_for(st, pf)  # (testing aid: the lead has voted for the first choice)
 		if not pe0.is_empty():
 			st = CStory.answer(st, pf, int(pe0[0]["id"]), 0)
+	if "--story-grudge" in OS.get_cmdline_user_args():
+		# (testing aid: Spain's port sacked and the attention up, Mercy's lines due)
+		CStory.S(st)["p"]["heat"] = 25
+		CStory._provoke(st, CData.faction_index("tierra_firme"), int(st["turn"]), "sack", CData.region_index("cartagena"))
+		CStory.check(st)
 	var ses := {"subs": [], "plans": {}, "seen": {}}
 	if turns > 0:
 		ses["seen"] = {str(pf): int(st["turn"])}
