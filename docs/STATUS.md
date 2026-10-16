@@ -1,6 +1,6 @@
 # Strategic Command — Status and Handover
 
-Last updated: 2026-10-16 (pathing phase J, fight jitter and stuck units, built, not committed; pathing phase W, West open towns, built, not committed; 2026-10-15 pathing phases C1-C7, street fighting, built, not committed; earlier 2026-10-09: siege towers built, not committed; the general and his bodyguard built, not committed; camels and elephants built, not committed; ammunition kinds and fire, foraging and the ammunition wagon built, not committed; earlier 2026-10-08: a CPU-fed soldier rendering fallback, picked by the battle's self-check, for Chrome on an Adreno 650 tablet that drew no soldiers; earlier 2026-10-07: any ally can join a fought co-op battle and be given units; the battle screen on the overworld; cities worth defending, part 2b: siege equipment as objects, the ladder shuffle and wall-punching bugs; part 2a: units do not pass through each other, street fights; part 1: tower engines, ladders, a ram, hard gates, the battle time limit; earlier 2026-10-06: deployment phase and custom battles built; the continuous campaign overworld built, state format 6; free campaign movement built; sieges and battle odds built on the campaign map; settlement variety built 2026-10-05). Read this first, then `docs/DESIGN.md` for the full
+Last updated: 2026-10-16 (balance pass T: firearm AI, per-man fire in cover, street posts, siege rally rule, built, not committed; pathing phase J, fight jitter and stuck units, built, not committed; pathing phase W, West open towns, built, not committed; 2026-10-15 pathing phases C1-C7, street fighting, built, not committed; earlier 2026-10-09: siege towers built, not committed; the general and his bodyguard built, not committed; camels and elephants built, not committed; ammunition kinds and fire, foraging and the ammunition wagon built, not committed; earlier 2026-10-08: a CPU-fed soldier rendering fallback, picked by the battle's self-check, for Chrome on an Adreno 650 tablet that drew no soldiers; earlier 2026-10-07: any ally can join a fought co-op battle and be given units; the battle screen on the overworld; cities worth defending, part 2b: siege equipment as objects, the ladder shuffle and wall-punching bugs; part 2a: units do not pass through each other, street fights; part 1: tower engines, ladders, a ram, hard gates, the battle time limit; earlier 2026-10-06: deployment phase and custom battles built; the continuous campaign overworld built, state format 6; free campaign movement built; sieges and battle odds built on the campaign map; settlement variety built 2026-10-05). Read this first, then `docs/DESIGN.md` for the full
 design and `CLAUDE.md` for working rules. Update this file whenever a
 milestone lands or the plan changes.
 
@@ -38,6 +38,7 @@ anti-cheat and original art only if it proves fun.
 | Battle screen on the overworld (pre-battle and result, item 4b) | Built 2026-10-07, committed; tested headless (`tests/battle_screen_test.gd`), the windowed input test and online_e2e; not yet played on phones |
 | Overworld UI fixes: Deselect button; dialogs and the side panel keep their scroll position when re-rendered | Built 2026-10-07, committed; windowed campaign_input_test; not yet played on phones |
 | Overworld command bar (user, 2026-10-15: "just a big list on the right ... move the army display to the bottom like Rome ... icons for actions"; BUILT, view only): `game/campaign/command_bar.gd`; a selection (army / city / fleet) shows as cards along the bottom (leader card, unit or garrison cards with strength bar, tier pips and trait glyphs, building chips, a grid of icon actions with labels); the side panel opens only on **Details** (and Build / Recruit into an army scroll to their section in it), its Close keeps the selection; the map key, End turn row, hint and toasts rise above the bar; phones (under 700 wide or 560 high logical) get one scrolling row; icons `details`, `embark`, `more`. Testing aids `--details`, `--no-bar`; `--side-scroll` opens the panel itself; the input tests set `cs.details_on_select` (new `_g_bar` checks). See DESIGN.md "The command bar". **Open:** the army has no morale / supply in the campaign (supply shown only in a siege), no "..." fold on phones (the row scrolls), Recruit into an army and Build open the full panel at their section instead of a picker, "armies here" list of a city is only in Details, no sprite-atlas frames on the cards (the symbol disc), not played on a phone or tablet | Built 2026-10-15, not committed; campaign_test, campaign_input_test (+`_g_bar`), touch_scroll_test, webcheck; screenshots in the session scratchpad |
+| Command bar round 2 (owner's tablet playtest 2026-10-16; BUILT, view only): Recruit popup tabs Army / Shipyard (`show_raise(r, tab)`, `ship_tab`, `raise_tab_for`; fleet in port: Shipyard action), drag-reorder of the unit cards on the bar (`DragReorder`, `_arrange`), Build popup (`show_build`), army Recruit popup (`show_army_recruit`), Details thinned (army: units, stance, split, disband, exchange, merge, recruits, board gone; city: garrison, buildings, raise, shipyard gone; siege / voyage buttons gone), `--popup=` aid. Tests: input test steps use `_bar_press` / `_bar_has` (bar switched on only for the step) and the popups; `_a_*` drags the bar's cards; touch_scroll_test's army section is the bar's row. **Open:** drag onto another army / Exchange is not built; cards have no tap hint on a trait glyph (hover row only); not played on the tablet | Built 2026-10-16, not committed; check_scripts, campaign_test, campaign_input_test, touch_scroll_test, town_tap_test, webcheck; screenshots in scratchpad/campaign_ui2 |
 | Text entry on the web (no keyboard on tablets, bad desktop paste): every field is `Kit.text_field`; a finger tap on the web opens the browser's `prompt()` (Godot's web export has no usable on-screen keyboard: `html/experimental_virtual_keyboard` is off, and even on it cannot raise the keyboard on iOS); Ctrl+V and a Paste button beside the online fields read the clipboard through the browser (Godot's web paste returned the previous clipboard); invite key / codes trimmed | Built 2026-10-07, committed; check_scripts, windowed campaign_input_test, touch_scroll_test as on HEAD, custom_battle_test, a scratch web export driven in headless Chromium (stubbed prompt / clipboard: tap, Paste, Ctrl+V); not yet tried on a real tablet / iPhone |
 | Join any co-op battle (playtest fix): the owner's card offers Fight together whenever an ally is alive; an ally whose army is not in the battle can **Ask to join** (server choice `ask`, summary `ask_by`, no Discord needed; the owner's card shows "X asks to join", puts Fight together first and confirms a solo Fight) and joins the lobby as a guest (`Lockstep.setup` guests: admitted like anyone, side of the players' units, commands what the host gifts); "Wait for ally" / "Take command" renamed "Leave it to X" / "Fight it for X" | Built 2026-10-07, committed; go test (new `TestRoomGuestAsksAndJoins`), lockstep_test (guest case), live_e2e (new battle 4: ask, seen, Fight together, guest joins, two units gifted and ordered, equal hashes to the end), online_e2e, check_scripts, custom_battle_test, battle_screen_test; **server change: the 8060 server needs a rebuild and restart** (new `battle_asks` table is created on start); not yet played on phones |
 | Soldier rendering fallback (2026-10-08). Known issue: Chrome on a Samsung Galaxy Tab S7 (Adreno 650, ANGLE on GLES) draws nothing from the per-man data texture read in the vertex shader (`soldier_probe drawn=0`; Firefox on the same tablet, desktop GPUs and SwiftShader draw fine; removing uint / bit ops / INSTANCE_ID in be147c8 did not help). New CPU-fed path (`game/soldier_layer.gd`, `soldiers_cpu.gdshader` / `projectiles_cpu.gdshader` over shared `.gdshaderinc` bodies): the sim arrays go into the MultiMesh buffers in one bulk upload per tick, no texture fetch in the vertex stage; same pixels as the texture path (native screenshots: soldiers and engines bit-identical, missiles within one edge pixel). The self-check switches to it when the texture path draws 0 pixels, probes again (telemetry `soldier_probe` now has `path`) and remembers `user://settings.cfg [video] soldiers=cpu`; home menu "Soldiers: auto / compatible"; `--soldiers=cpu|gpu` / `?soldiers=` force a path, `--soldier-probe-fail` fakes the failure. Cost at 4,000 men: upload 0.48 ms a tick natively (texture 0.23), ~0.7 ms in headless Chromium (texture ~0.4) | Built 2026-10-08, committed; check_scripts, input_test, `webcheck -soldiers` (both paths, the automatic switch, the remembered choice) on a scratch export; **not yet confirmed on the Tab S7** (look for `soldier_probe` path=cpu drawn>0 in its telemetry) |
@@ -1210,7 +1211,13 @@ glacis, hard to escalade, breached by guns; the Spanish walled ports
 by the town; (b) **open towns**: no curtain wall (or a palisade), buildings
 as garrisonable blocks: a unit occupies a building, its men get cover and
 shoot from windows and rooftops with a height gain, the attacker clears it
-by melee at the doors (a street fight from house to house); (c) native
+by melee at the doors (a street fight from house to house) — **note
+(user, 2026-10-16):** rooftops and balconies must build on the per-man
+fire-at-will model (Cover stance: each man picks his own target by his
+own line of sight; volleys only in Line), so a man on a roof or balcony is
+just a man with a higher eye and shot line; design 2c's garrisoning around
+per-man sight lines from windows / balconies / parapets, not unit-level
+cover percentages; (c) native
 towns: palisade and jungle cover. Rome's wall levels stay as they are;
 the West picks its battle-map settlement kind by pack. **History check (2026-10-14):** around 1650 most Caribbean
 towns were open towns guarded by harbour forts (Havana: El Morro, La
@@ -1782,6 +1789,78 @@ watchdog halts a stuck move and its mode may give the same move again
 draws a degenerate pike glyph polygon at some marker sizes ("Invalid
 polygon data" in the after screenshot's log; view only, untouched).
 
+**Balance pass T, as built 2026-10-16 (not committed; DESIGN "Balance
+pass T").** The change pass after the measurement pass (scratchpad
+`balT/MEASURE.md`, harnesses in `balT/` and `balT/t/`). Rows changed: one
+West field (buccaneers `m_spread2` 60 -> 100); no Rome row. Rules: the
+battle AI's plan anchors on a musket line, or on the missile foot of an
+army with no line, and once engaged musket lines (and all-missile armies)
+close to their range on the nearest free enemy; per-man fire at will for
+guns and bows in Take cover on maps with obstacles (owner's request, no
+volleys there); cover troops start in their spots, gone to ground, on the
+battle's first step; `CS_R` 8 -> 10 m; a unit at cover spots has a line of
+fire if one of 4 of its men has; skirmishers fall back from a gun unit
+closing on them; West street posts chosen by the cover round them, reached
+at the run, lines at 40 % (open towns) or in depth at 80 % (fort,
+palisade); defenders routing inside the walls do not rally while the
+attackers stand in the streets (`RALLY_TRAPPED`); battlements walls 2-3
+15 / 25 % (was 25 / 40); a battery standing by its engines no longer
+counts as stuck.
+Before / after (4 seeds unless noted; 8-seed figures in brackets):
+
+| measure | target | before (HEAD 5422cd6) | after |
+|---|---|---|---|
+| open field, musketeers 100 vs buccaneers 86, both AI | musketeers >= 3 of 4 | 0 / 4 (30-min draws, 0 lost) | 3 / 4 (seeds 5-8: 4 / 4) |
+| West open town (west_town's town, seed 12), buccaneers holding | buccaneers >= 3 of 4 | 0 / 4 (towns 11-14: 0 / 16) | 4 / 4 (towns 11-14: 16 / 16) |
+| street mouth: buccaneers' losses / open ground's | < 50 % | 50 % (32 / 63) | 29 % (21 / 72; killed 79 / 83) |
+| equal-force full kit, ring walls 1 / 2 / 3 | 45 / 35 / 25 % | 0 / 25 / 0 % | 50 / 25 / 0 % (75 / 38 / 0) |
+| equal-force full kit, polis walls 1 / 2 / 3 | 45 / 35 / 25 % | 50 / 25 / 0 % | 50 / 50 / 25 % (38 / 38 / 25) |
+| both plans together walls 1 / 2 / 3 (8 seeds) | 45 / 35 / 25 % | 6 / 6 / 6 % (with the AI and cover changes, none of the siege ones) | 56 / 38 / 12 % |
+| West equal force, west_town + west_city, walls 0 / 1 / 2 | 55 / 45 / 35 % | 75 / 75 / 75 % (4 seeds each); 31 / 62 / 44 % (8 seeds, after the AI and cover changes, posts at 60 %) | 69 / 44 / 38 % (8 seeds each) |
+
+The street-mouth check (`tests/determinism_test.gd --only=street`,
+`STREET_PCT`) is tightened from 60 to 50 %. Cover probe (4 seeds, 900
+ticks), buccaneers lost / attackers lost: open 0.51 -> 0.76 (the scatter),
+rocks 0.13 -> 0.27, hamlet 0.00 -> 0.00, Punic town 0.50 -> 0.41, West town
+0.53 -> 0.78 (they lose less, 17.8 -> 14.8, and kill less at 90 m, 33.5 ->
+19.0); musketeers' rows unchanged. Other rows of the equal-force table
+(4 seeds): ladders + ram ring 75 / 0 / 0 %, polis 50 / 25 / 0 %;
+artillery only ring 50 / 0 / 0 %, polis 50 / 25 / 0 % (draws 0 / 0 /
+50 %). The Rome ids at their own (unequal) force: village 4/4, town 4/4,
+city 4/4 (was 3/4), hill 0/4, castrum 2/4 (0/4), polis 4/4, punic 3/4
+(3/4), oppidum 3/4 (1/4). West ids at ratio 1.46: village, town, port 4/4;
+city 2/4 (2 draws), inland 1/4, hill village 1/4 (all 4/4 before).
+
+The AI with a West army (owner's playtest note; `balT/t/aib.gd`, a West
+field battle WEST_ATT vs WEST_DEF at equal cost and west_town, AI vs AI and
+AI vs a scripted player, 4 seeds): cover troops sit in Take cover by default
+(their row's stance) and the town's defending lines take Hold street (C7);
+the field AI sets no stances (Line in the open, as wanted); bounds only in
+towns (attackers, 17-58 a battle before, 20-42 after); guns fire in every
+battle the gun row lives (attacker's battery 27 -> 42 shots in the field;
+the defenders' battery in the field AI vs AI is ridden down before it
+fires, before and after: no guard picked for it, a known gap);
+skirmishers fall back (unit-seconds 347 -> 466 field, 776 -> 1118 town for
+the defenders) and stand in a melee little (5 -> 21 / 14 -> 4
+unit-seconds). Against the scripted player (stand 60 s, then everything
+charges) the field AI drew all four at 30 min before (its last missile
+units stood off) and now loses all four in 8-11 min, at closer losses.
+Perf (benchmark, alone, before -> after): bench_4000_city 4.68 -> 4.29 ms
+(another trajectory), hills 3.57 -> 3.58, battle_2000 1.50 -> 1.50,
+bench_4000_west 7.75 -> 8.01 ms (+3 %; the per-man fire is 0.65 ms of it);
+the 160-man town duel 0.30 -> 0.33 ms; the 8 Rome sieges' tick means
+(pathing probe) within 0.1 ms either way. Phase A probe: PASS (rout jitter
+0.3 %, stationary routers 0 %, stuck > 30 s 0); fight jitter near
+obstacles 1.7 -> 2.1 %, in town 1.6 -> 1.9 % (target 3 %).
+Left: equal-force walls 3 at 12 % (25 wanted: the ring holds 0 of 8) and
+walls 1 a little high (56 %); the West open towns at 69 % (55 wanted), the result swings with the
+line posts (40 / 50 / 60 %: 69 / 12 / 31 %) and the two towns differ more
+than the walls do; the field AI against a charging player; the
+defenders' guns unguarded in the field; the fort's inside (phase 2c).
+For the auto-resolve refit (campaign/, another agent): see the outcomes
+listed in the balance pass T report (equal-force rows above, the Rome and
+West ids at their force ratios 1.33-2.35 and 1.46).
+
 **Caribbean plan agreed 2026-10-14 (DESIGN "The Caribbean pack: ships,
 pirates, cover, asymmetry"):** sea battles real time with the wind;
 pirates as raiders with havens; armies embark on fleets (West only). Do
@@ -2055,11 +2134,48 @@ test, check_scripts clean. Balance (formula) in DESIGN step 2: the finale
 holds 83 % with 4 companies of ours behind walls 2, the finale Armada needs
 the fleet goal or recognition, the great raid wants the bribe (Portobelo
 37-74 %, Cartagena 23-60 %). Screenshots: session scratchpad `story2/`
-(the treaty, the goal reveal, the goal in the log, each ending). Open: co-op
-(the crew vote); the story online; portraits; a real-time playtest of the
-finale and the raid; random-choice bots on the formula mostly lose an
-ungarrisoned Tortuga to the sandbox's nations by Act 2-3 (the Legend); a
-sloop of the story's fleets shows the generic ship art.
+(the treaty, the goal reveal, the goal in the log, each ending). Open: a
+real-time playtest of the finale and the raid; a sloop of the story's fleets
+shows the generic ship art.
+**Story step 3 built 2026-10-16 (not committed): co-op crew vote, the story
+online, portraits** (DESIGN "As built, step 3"). Two captains (the Brethren
+and a Miskito partner, "Captain Rook"): every choice is a vote
+(`CStory.answer` records each captain's vote, still pure; agree passes,
+disagree: Mercy calls it by weight = 10 x fame + crew / 10 + men / 10, tie to
+the lead, the loser's crew -6 %; effects go to the lead, crew / hull / fame /
+infamy to both; `v` / `w` in the log). Online: server kind `"story"` (CAS, the
+seat's `{f, pid, k}` stored, `story.pending` read for the "crew is voting"
+notification), `OnlineCampaign.answer_story`, `verify` re-runs votes; new
+campaign screen buttons (hot seat, online); story view works online (read
+markers in the session, "Waiting for ..."). Portraits for the whole cast and
+both captains (`game/story_portrait.gd`, `tests/portrait_gallery.gd`).
+`CState.VERSION` not bumped (new keys only in co-op stories). Checked:
+story_test PASS (vote cases, 45-turn co-op runs), `tests/story_online_e2e.py`
+PASS (scratch server port 8074: 14 votes, one CAS conflict re-applied, split
+vote settled, 23 steps re-run with no mismatch), `go test ./...`, campaign_test,
+pack_test, campaign_sim hashes unchanged (West b137875c edd82dee 0393b18d
+2aa8578b deb00750 1d051164, Rome cdc1d805 32b83031 23f9ed4f 3237d82d a42fc685
+b6fe6c2e); `tools/check_scripts.sh` could not be judged: another agent's
+`sim/battle_sim.gd` (line 2739, shadowed `n`) fails it and cascades. Screenshots
+`scratchpad/story3/` (vote in progress, portraits). **Tortuga on random paths** fixed by the **haven shield** (2026-10-16,
+DESIGN step 3): unprovoked nations' AI leaves a captain's haven alone
+(`CStory.shielded`; Spain provoked by attention 35+, any nation by a sacked or
+blockaded port for 8 turns, England by the Treaty, lifted by the Legend);
+reprisal data 3 companies ignored / 2 heeded. 30 random seeds: lost by turn 20
+21 -> 4, by turn 45 27 -> 9 (losses are ignored warnings, the finale, the
+Treaty); story_test shield cases, campaign_test, pack_test, campaign_sim
+hashes unchanged (both packs), check_scripts clean for the files touched.
+**Provocation taught (2026-10-16, not committed)**: Mercy's lines (attention 20 / 35,
+sack tip on a port card, first sack or blockade per nation, cooling, the Treaty),
+the Grudges block in the story log and the haven card's shield line, and a
+once-per-nation punitive landing (2 companies, 3-5 turns after the first sack, a turn's
+warning, clear of the turn-10 reprisal). story_test (lessons, grudges, expiry,
+landing, reprisal clash), campaign_test, pack_test, campaign_sim hashes unchanged.
+Screenshots `scratchpad/story4/`. Open: the landing sends no ship; random bots never sack, so
+the landing is measured with a forced sack (DESIGN).
+Open: effects other than crew / hull / fame / infamy go to the lead only; a
+split ending; the partner is the Miskito (no story faction in the pack); the
+vote dialogs on a phone; the shield lets a story haven sit untouchable until provoked (a sandbox look after an ending).
 **Done 2026-10-14 (00fc498): better firearm smoke** (volley smoke today is flat
 puffs in game/overlay.gd: wanted thick billowing banks that roll and drift
 with the wind, lit from the NW, darker cores, muzzle flash with a short
@@ -2165,6 +2281,74 @@ blocks aim, shore batteries, fire ships, fitting the auto-resolve formula to
 these results, real ship art (the miniatures), balance (the AI often wins by
 striking colours and flight rather than sinking; the galleon is hard for
 small ships to take), playtesting on phones.
+
+**Raids on a player's city (2026-10-16, owner's report, West as New Spain:
+"buccaneers raided my city, my 7-stack next to it did not help").**
+Diagnosed in the harness: it was the raiding stance, not an assault. A
+Brethren army marches onto the camp cell of a city whose army stands
+inside the walls (the AI's `_raid6` only avoids regions with an enemy
+field army, `foe`, and a larger threat) and takes 50 % of the income with
+no battle; nothing told the player (no event, no warning). Assault path
+checked and sound: `_support6` brings the player's army in from 2-4 cells
+(also after it marched that turn; ring armies defend; forced march and
+inside other walls are the documented exclusions), the owner is always a
+battle human (garrison-only defences are offered). Fix, view only (no
+rules or hash change): summary line + toast "Raiders beside <city>: tap
+them to attack", End turn warning, **Attack** on an enemy army's command
+bar (`campaign_panels.raids_on / attacker_for / attack_with`). Test:
+`campaign_test` `_west_raid_defence`. Open: the AI raiding beside a
+garrisoned stack is legal but maybe too bold (an AI odds question); a
+forced-march army does not support (by design, worth a hint).
+
+**Sea follow-ons built 2026-10-16 (Opus, not committed; DESIGN "Sea
+battles: live co-op, deck melee, fire ships (as built, N3b / N3c)",
+CAMPAIGN.md "Sea battles fought").** (1) **Live co-op at sea**:
+`CSeaBattle.build` gives `controller` / `battle` / `sim_side` like
+`CBattle.build`; `CoopSession` takes a sea battle (sea AI flags in
+`live_ai_sides`, no soldier count read from a SeaSim);
+`CampaignScreen.fight_live` -> `_fight_sea_live` (room, guests, the host's
+single upload, the last player's forfeit of their own side);
+`game/sea_battle.gd` co-op mode (follows the lockstep's sim and rebinds on a
+snapshot, orders through `coop.issue()` for own ships only, whose-ship hints,
+II / speeds as votes, Gift in the bar with the picker, commander bands on the
+cards, the co-op HUD through a shim, Leave / Continue as on land, test aids).
+**Still hidden**: `game/campaign/online_ui.gd` gates "Fight together" off for
+sea battles (`and not b.has("sea")` in `live_ok` and `with_ally`); another
+agent was editing that file, so the two conditions are left to drop. (2)
+**N3b deck melee**, an integer crew-against-crew melee inside the sea sim (2
+m deck grid, up to 24 figures a side, crew kits by faction, troops by their
+unit rows, captains, volleys, morale, strike / thrown back / both spent into
+the existing capture rules; the `deck` hook kept for an outside melee),
+with the deck inset view and clash / volley sounds. (3) **N3c fire**: fire
+intensity fought by the crew, magazines only past `MAG_LV`; **fire ships**
+(sea row and campaign row `fire_ship`: lit, abandoned, grapple and burn what
+they touch; battle AI sends them at the biggest enemy when the wind serves;
+the campaign AI does not build them; formula worth `power` 120; custom
+battle ship list). **Tests**: determinism `--only=sea` (new set pieces
+`melee`, `fireship`; coverage adds deck fights / taken / volleys / fire
+ships; fire ships over 8 seeds: lit 8, reached 6, magazines 5), lockstep
+`--only=sea` (+ `SeaChecks.lockstep_coop`: two players and a joiner, deck
+melee, fire ship, a ship gift, pause / speed votes, drop and re-admission,
+every frame equal), `tests/live_e2e.py --only-sea` (new
+`tests/live_sea_client.gd`: two real clients over the Go server, a battle
+joined in the lobby with gifts both ways and both votes, one joined
+mid-battle by snapshot, hashes equal on every frame, one upload, both end
+on the server's state; `--bin` / `--no-sea` added, `online_e2e.py --bin`),
+pack_test, sea_screen_test, custom_battle_test, campaign_test, go test.
+Rome byte-identical (campaign_sim cdc1d805 32b83031 23f9ed4f 3237d82d
+a42fc685 b6fe6c2e) and West AI-only unchanged (b137875c edd82dee 0393b18d
+2aa8578b deb00750 1d051164): sea battles with no human resolve by the
+formula and the AI builds no fire ships. `CState.VERSION` stays 7. Sea sim
+cost (desktop): 60-70 us a tick, 160 us in a deck melee (worst 300 us),
+state_hash 26-30 us, snapshot 1.6-1.9 KB. Screenshots in the session
+scratchpad `sea3/` (deck melee, fire ships into a line, a magazine, a
+two-peer room). **Open**: drop the two `online_ui.gd` gates; head-to-head
+humans at sea (lockstep ready, untested), smoke blocking aim, shore
+batteries, the formula fitted to fought results (deck melees and fire ships
+included), balance of the melee (fights run 2-30 s; the AI boards only
+when 1.6 x stronger, so most end in a few seconds), phones. Known, not from
+this work: `tests/sea_screen_test.gd` passes but Godot aborts at exit
+("double free or corruption"), also with every file of this work reverted.
 
 ## West sprites (2026-10-15)
 
@@ -2327,7 +2511,7 @@ generation, cover) flow back to the Mediterranean campaign for free.
 3. **Someone outside plays it:** a named public build, guided first turns,
    a settings pass. Done when a stranger reaches turn 10 unaided.
 
-Immediate order (2026-10-16): shaking / stuck pass -> balance pass T ->
+Immediate order (2026-10-16): shaking / stuck pass -> balance pass T (built 2026-10-16, not committed) ->
 forts with an inside (2c) -> story step 3 (crew vote, portraits, online
 story, Tortuga) and sea follow-ons (deck melee, fire ships, live co-op at
 sea) -> Hunyuan captain miniature (turnarounds from the user) -> device
@@ -2345,6 +2529,11 @@ evenings (no sim changes).
 
 **Tuning backlog for the rebalance block** (numbers chosen once, never
 tuned; collected 2026-10-09):
+- **Moved by balance pass T (2026-10-16, see "Balance pass T, as built" above):** the walls 1-3 rows,
+  the open-field firearm AI, the street mouth and the West sieges; the
+  levers archers' pull-back and escalade lanes tried (neither kept;
+  see there); what is left: equal-force
+  walls 3 at 12 % (target 25) and the AI follow-ups listed there.
 - Walls 2-3 equal-force sieges after the 2026-10-10 siege pass: full kit
   ring / polis walls 2 20 / 10 %, walls 3 0 / 50 % (targets 35 / 25):
   the attackers lose 290-350 men outside the walls (their archers die to

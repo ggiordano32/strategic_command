@@ -25,6 +25,10 @@ extends RefCounted
 ##   missiles  skirmish mode on; fire at will only while an unengaged enemy is
 ##             in range (no shooting into our own melee); move behind the line
 ##             once it engages; with no ammunition, keep out of the way.
+##   guns     (balance T) a musket line (line_gun) is part of the line the
+##             plan anchors on; an army with no line anchors on its missile
+##             foot; once engaged, a musket line and the missile units of an
+##             army with no line attack the nearest free enemy (_mis_close).
 ##   artillery deploy where the field of fire is clear (bolts at the end of
 ##             the line, stones behind the centre); stay put while anything is
 ##             in range, pick dense, valuable, standing targets and never one
@@ -477,8 +481,14 @@ static func _plan(sim, side: int) -> Dictionary:
 	var hx := 0  # (enemies nobody of ours sees: only if none is seen)
 	var hy := 0
 	var hn := 0
+	var mx := 0  # (our skirmishing foot: the anchor of an army with no line, balance T)
+	var my := 0
+	var mn := 0
 	var chs: bool = sim.ch_on != 0
 	var vis: bool = sim.vis_on != 0
+	var tgun: PackedInt32Array = sim.t_m_gun
+	var tsk: PackedInt32Array = sim.t_skirm
+	var uty: PackedInt32Array = sim.u_type
 	for u in nu:
 		if st[u] != U_READY:
 			continue
@@ -487,9 +497,16 @@ static func _plan(sim, side: int) -> Dictionary:
 		var w := al[u]
 		if sd[u] == side:
 			# The plan is anchored on the main line (missile screens and
-			# cavalry out on the wings would pull it about).
+			# cavalry out on the wings would pull it about). A musket line
+			# (line_gun) is the line in the West (balance T); an army with
+			# no line at all anchors on its other missile foot.
 			var c := cl[u]
-			if c == UT.CLS_MISSILE or c == UT.CLS_CAV or c == UT.CLS_ART:
+			if c == UT.CLS_CAV or c == UT.CLS_ART:
+				continue
+			if c == UT.CLS_MISSILE and (tgun[uty[u]] == 0 or tsk[uty[u]] != 0):
+				mx += uax[u] * w
+				my += uay[u] * w
+				mn += w
 				continue
 			ox += uax[u] * w
 			oy += uay[u] * w
@@ -510,6 +527,11 @@ static func _plan(sim, side: int) -> Dictionary:
 		ex = hx
 		ey = hy
 		en = hn
+	var skirm_line := on == 0
+	if skirm_line:
+		ox = mx
+		oy = my
+		on = mn
 	if on == 0 or en == 0:
 		return {}
 	ox /= on
@@ -534,7 +556,10 @@ static func _plan(sim, side: int) -> Dictionary:
 		if sd[u] != side or st[u] != U_READY:
 			continue
 		var cu := cl[u]
-		if cu != UT.CLS_INF and cu != UT.CLS_PIKE:
+		if cu == UT.CLS_MISSILE:
+			if not skirm_line and (tgun[uty[u]] == 0 or tsk[uty[u]] != 0):
+				continue
+		elif cu != UT.CLS_INF and cu != UT.CLS_PIKE:
 			continue
 		var ax0 := mnx[u]
 		var ax1 := mxx[u]
@@ -548,7 +573,8 @@ static func _plan(sim, side: int) -> Dictionary:
 			var gx := maxi(maxi(mnx[o] - ax1, ax0 - mxx[o]), 0)
 			var gy := maxi(maxi(mny[o] - ay1, ay0 - mxy[o]), 0)
 			gap = mini(gap, maxi(gx, gy))
-	return {"cx": ox, "cy": oy, "face": face, "fx": fx, "fy": fy, "gap": gap, "ex": ex, "ey": ey}
+	return {"cx": ox, "cy": oy, "face": face, "fx": fx, "fy": fy, "gap": gap, "ex": ex, "ey": ey,
+		"skirm_line": skirm_line}
 
 
 ## The general: his row has a command aura (docs/AI.md 20).
@@ -1559,9 +1585,54 @@ static func _missile_think(sim, u: int, phase: int) -> void:
 		_set_mode(sim, u, A_ATTACK)
 	elif phase == P_ENGAGE and sim.u_ai[u] == A_LINE:
 		_set_mode(sim, u, A_ATTACK)
+	if phase == P_ENGAGE and (line_gun(sim.u_type[u]) or _no_line(sim, side)) and _mis_close(sim, u):
+		return
 	if kn[AP.SK_FOCUS] != 0:
 		_sk_focus(sim, u, kn)
 	ammo_pick(sim, u, kn)
+
+
+## The side has no ready line unit (foot, pikes or a musket line): its
+## missile troops are the line (balance T).
+static func _no_line(sim, side: int) -> bool:
+	for o in sim.n_units:
+		if sim.u_side[o] != side or sim.u_state[o] != U_READY or is_wagon(sim, o) or is_char(sim, o):
+			continue
+		var c: int = sim.u_cls[o]
+		if c == UT.CLS_INF or c == UT.CLS_PIKE or (c == UT.CLS_MISSILE and line_gun(sim.u_type[o])):
+			return false
+	return true
+
+
+## Balance T (firearm armies): once the lines engage, a musket line, and
+## every missile unit of an army with no line, goes for the nearest enemy
+## it sees that is not locked in a melee: the attack order closes it to 85 %
+## of its range and it stands there shooting (the sim's rule), so lines of
+## guns meet instead of standing out of range for the whole battle. It
+## keeps a target while that one stands and is not fighting; nobody free in
+## sight: it carries on as before (fire at will where it stands). True if it
+## has an attack order on such a target.
+static func _mis_close(sim, u: int) -> bool:
+	var side: int = sim.u_side[u]
+	if sim.u_order[u] == O_ATTACK:
+		var cur: int = sim.u_target[u]
+		if cur >= 0 and sim.u_state[cur] == U_READY and sim.u_fighting[cur] == 0 and not sim.hidden_from(cur, side):
+			return true
+	var best := -1
+	var best_d := 0
+	for o in sim.n_units:
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.u_fighting[o] != 0 or sim.hidden_from(o, side):
+			continue
+		if is_wagon(sim, o) or is_char(sim, o):
+			continue
+		var d := _dist2(sim, u, o)
+		if best < 0 or d < best_d:
+			best = o
+			best_d = d
+	if best < 0:
+		return false
+	_attack(sim, u, best, 0)
+	return true
 
 
 # ------------------------------------------------------------ artillery ---

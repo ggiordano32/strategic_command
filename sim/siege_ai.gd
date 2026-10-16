@@ -150,10 +150,17 @@ const STANCE_HOLD := 2
 ## attacking line units wait SP_WAIT_R off a strongpoint until it is worn
 ## down (SP_WORN % of its men left, or disordered).
 const SP_COVER_PCT := 30
-const SP_LINE_PCT := 60
+const SP_LINE_PCT := 40       # (balance T: 60; 40 / 50 / 60 gave 69 / 12 / 31 % attacker wins in the equal-force open towns)
 const SP_STEP := 15
 const SP_WAIT_R := 70 * M
 const SP_WORN := 60
+const SP_LAT_STEP := 6 * M      # a skirmisher's strongpoint: candidates this far apart across the street line ...
+const SP_LAT_N := 3              # ... this many each side (_sp_cover)
+const SP_COVER_R := 10 * M       # ... scored by the cover cells this near
+const SP_COVER_FAR := 2          # ... less this per SP_LAT_STEP from the plain point
+const SP_PAL_COVER_PCT := 30    # ... in a town with works (West walls 1-2: the fort, the palisade) skirmishers this far in ...
+const SP_PAL_LINE_PCT := 80     # ... and line units this far (defence in depth; balance T, measured: 44 / 38 % attacker wins)
+const SP_RUN_R := 30 * M   # a West defender further than this from its street post goes there at the run (balance T)
 const AT_HAND_FAR := 20 * 1024    # an attacking unit fighting while its target is this far off (box to box) ...
 const AT_HAND_NEAR := 4 * 1024    # ... takes on the enemy this near its box instead (_at_hand)
 const WD_T := 200                 # the stuck watchdog: ticks stuck (u_stuck) before an order is planned again (_watchdog)
@@ -570,13 +577,78 @@ static func _strongpoint(sim, u: int) -> void:
 	var ms := _mouths_from(sim, ac.x, ac.y)
 	var mo: Vector2i = ms[k % ms.size()]
 	var pct := (SP_COVER_PCT if cover else SP_LINE_PCT) + (k / ms.size()) * SP_STEP
+	if int(sim.map_info["city"].get("wwalls", 0)) >= 1:
+		# (A town with works, the fort or the fort and the stake palisade,
+		# balance T: defence in depth; the skirmishers cover the street
+		# mouths (the palisade's gaps) from the corners as before, the line
+		# troops hold the inner streets toward the plaza, where the attackers
+		# come out of the lanes spent.)
+		pct = mini((SP_PAL_COVER_PCT if cover else SP_PAL_LINE_PCT) + (k / ms.size()) * SP_STEP, 95)
 	var px: int = sim.plaza[0]
 	var py: int = sim.plaza[1]
 	var p: Vector2i = sim.open_snap(sim, mo.x + (px - mo.x) * pct / 100, mo.y + (py - mo.y) * pct / 100, sim._ground_mask(u))
+	if cover:
+		p = _sp_cover(sim, u, mo, Vector2i(px, py), pct, p)
 	sim.u_ai_x[u] = p.x
 	sim.u_ai_y[u] = p.y
 	if not cover and sim.u_stance[u] == STANCE_LINE:
 		BattleAI._order(sim, u, {"type": ORDER_STANCE, "stance": STANCE_HOLD}, 28)
+
+
+## Balance T: a skirmisher's strongpoint is where the cover is. Points on
+## the mouth-to-plaza line from SP_COVER_PCT - 10 to + 20 % (5 % steps)
+## and SP_LAT_STEP to either side (SP_LAT_N steps), each scored by the 2 m
+## cells within SP_COVER_R rising CS_H or more (houses, walls, goods) that
+## have open ground beside them (the corners and faces a man can shoot
+## round) less SP_COVER_FAR per SP_LAT_STEP away from the plain point `p0`;
+## the best (first in that order on ties) on the unit's own ground. A West
+## town's lots are scattered: the plain point stood in an open yard and the
+## buccaneers held it in the open (the town of west_town lost 4 of 4).
+static func _sp_cover(sim, u: int, mo: Vector2i, pl: Vector2i, pct: int, p0: Vector2i) -> Vector2i:
+	var dx := pl.x - mo.x
+	var dy := pl.y - mo.y
+	var l := maxi(BattleAI._d(dx, dy), 1)
+	var rx := -dy * SP_LAT_STEP / l
+	var ry := dx * SP_LAT_STEP / l
+	var gm: int = sim._ground_mask(u)
+	var ra: int = sim.reach_at(p0.x, p0.y)
+	var best := p0
+	var bs := _cover_score(sim, p0.x, p0.y)
+	for q in range(-2, 5):
+		var pq := clampi(pct + q * 5, 5, 95)
+		var bx := mo.x + dx * pq / 100
+		var by := mo.y + dy * pq / 100
+		for k in range(-SP_LAT_N, SP_LAT_N + 1):
+			var x := bx + rx * k
+			var y := by + ry * k
+			if (sim.nav_at(x, y) & gm) == 0 or sim.reach_at(x, y) != ra:
+				continue
+			var sc := _cover_score(sim, x, y) - SP_COVER_FAR * BattleAI._d(x - p0.x, y - p0.y) / SP_LAT_STEP
+			if sc > bs:
+				bs = sc
+				best = Vector2i(x, y)
+	return best
+
+
+## Cover cells round (x, y) (_sp_cover): 2 m cells within SP_COVER_R rising
+## CS_H or more with an open 4-neighbour.
+static func _cover_score(sim, x: int, y: int) -> int:
+	var w: int = sim.ob_w
+	var h: int = sim.ob_h
+	var r := SP_COVER_R >> 11
+	var ci := x >> 11
+	var cj := y >> 11
+	var n := 0
+	for j in range(maxi(cj - r, 1), mini(cj + r, h - 2) + 1):
+		for i in range(maxi(ci - r, 1), mini(ci + r, w - 2) + 1):
+			var c := j * w + i
+			var k: int = sim.obs[c]
+			if k == MapGen.C_OPEN or sim._cell_top(c, k) < sim.CS_H:
+				continue
+			if sim.obs[c - 1] == MapGen.C_OPEN or sim.obs[c + 1] == MapGen.C_OPEN \
+					or sim.obs[c - w] == MapGen.C_OPEN or sim.obs[c + w] == MapGen.C_OPEN:
+				n += 1
+	return n
 
 
 ## Strongpoint group of unit u: 0 cover troops with missiles, 1 other cover
@@ -939,6 +1011,12 @@ static func _reserve(sim, u: int) -> void:
 		BattleAI._attack(sim, u, t, 1 if BattleAI._dist2(sim, u, t) < run_r * run_r else 0)
 		return
 	var face: int = FM.atan2_a(sim.g_y[0] - hy, sim.g_x[0] - hx) if sim.n_gates > 0 else sim.u_dface[u]
+	if sim.n_gates == 0 and _street_row(sim, u) and BattleAI._d(sim.u_ax[u] - hx, sim.u_ay[u] - hy) > SP_RUN_R:
+		# (A West unit far from its street post: there at the run, before the
+		# attackers reach the mouth; it walked 120 m and was caught on the way
+		# by the first volley: balance T.)
+		_go_run(sim, u, hx, hy, face, 10, 1)
+		return
 	_go_home(sim, u, hx, hy, face, 10)
 
 
@@ -1563,7 +1641,9 @@ static func _skirm_back(sim, u: int) -> bool:
 			or sim.u_fighting[u] * 4 >= sim.u_alive[u] or (sim.sg_on != 0 and sim.u_carry[u] >= 0):
 		return false
 	for o in sim.n_units:
-		if sim.u_side[o] == sim.u_side[u] or sim.u_state[o] != U_READY or sim.u_cls[o] == UT.CLS_MISSILE:
+		if sim.u_side[o] == sim.u_side[u] or sim.u_state[o] != U_READY:
+			continue
+		if sim.u_cls[o] == UT.CLS_MISSILE and not (sim.t_m_gun[sim.u_type[o]] != 0 and sim.u_order[o] == O_ATTACK and sim.u_target[o] == u):
 			continue
 		var lim: int = (SKIRM_CAV_R if sim.u_cls[o] == UT.CLS_CAV else SKIRM_INF_R) + SKIRM_HYST
 		if FM.approx_len(sim.u_cx[o] - sim.u_cx[u], sim.u_cy[o] - sim.u_cy[u]) < lim:

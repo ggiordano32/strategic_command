@@ -6534,14 +6534,20 @@ func _check_cover() -> void:
 		bad.append("cover: the rocks' restored copy diverged (%d)" % int(r["twin_bad"]))
 	# (Phase C0: a flat ball is stopped by the rock in its way, no longer by a
 	# cover roll; the ground roll stays.)
-	if int(r["cov_on"]) != 1 or int(r["flat_block"]) <= 0 or int(r["gnd_t"]) < 0:
-		bad.append("cover: buccaneers in the rocks: no shots stopped by the rocks or never went to ground (%s)" % str([r["cov_on"], r["flat_block"], r["gnd_t"]]))
 	var lost_rocks := 0
 	var lost_open := 0
 	var lost_line := [0, 0]
+	var blocks := 0
 	for sd in [11, 22, 33, 44]:
-		lost_rocks += int(_cover_run("rocks", true, sd, -1)["lost0"])
+		var rr := _cover_run("rocks", true, sd, -1)
+		lost_rocks += int(rr["lost0"])
+		blocks += int(rr["flat_block"])
 		lost_open += int(_cover_run("rocks", false, sd, -1)["lost0"])
+	# (Over the four seeds: since balance T the buccaneers start in their
+	# spots, gone to ground, so at a seed the musket line may never see a
+	# man to shoot at.)
+	if int(r["cov_on"]) != 1 or blocks <= 0 or int(r["gnd_t"]) < 0:
+		bad.append("cover: buccaneers in the rocks: no shots stopped by the rocks or never went to ground (%s)" % str([r["cov_on"], blocks, r["gnd_t"]]))
 	if lost_rocks * 10 > lost_open * 8:
 		bad.append("cover: buccaneers in the rocks lost %d, in the open %d (not 20 %% fewer)" % [lost_rocks, lost_open])
 	# Line infantry: no cover trait: no cover or ground rolls, no cover spots,
@@ -6601,7 +6607,7 @@ func _check_cover() -> void:
 ## musket line ordered to Hold street at the street's mouth fills it
 ## (squeezed to its width, three ranks at least) and a stance order is in
 ## the hash from then on.
-const STREET_PCT := 60
+const STREET_PCT := 50  # (balance T: was 60; buccaneers at a mouth lose under half what they lose in the open)
 const STREET_SEEDS := [11, 22, 33, 44]
 
 

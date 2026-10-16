@@ -3159,6 +3159,97 @@ unit near obstacles `_u_obs`), so the four flat golden digests hold.
 - **Measured.** See docs/STATUS.md (the pathing probe at seeds 7-10, the
   cover probe, cost).
 
+### Balance pass T (as built, 2026-10-16)
+
+The change pass after the measurement report (scratchpad `balT/MEASURE.md`;
+the harnesses `balT/t/t1.gd`, `f.gd`, `aib.gd` and `balT/siege_run.gd`).
+Stance kept: no stat bonus for standing inside walls; numbers chosen once
+from measurements; the results are in docs/STATUS.md (balance pass T).
+
+- **Firearm armies in the field** (`sim/battle_ai.gd` `_plan`,
+  `_missile_think`, `_no_line`, `_mis_close`). The plan anchors on the
+  line: foot, pikes and now a musket line (`line_gun`: a gun row that does
+  not skirmish), so the West line is musketeers and pikes; an army with no
+  line at all anchors on its other missile foot (plan key `skirm_line`) and
+  its gap counts them. Once the lines engage, a musket line, and every
+  missile unit of an army with no line, attacks the nearest enemy unit it
+  sees that is not locked in a melee (the sim closes it to 85 % of its range
+  and it stands shooting); nobody free in sight, it fires at will where it
+  stands. Before: two all-missile armies never planned and stood 100 m apart
+  for 30 minutes. Rome armies with foot are unchanged (the flat goldens
+  hold).
+- **Buccaneers' scatter** (`sim/unit_types.gd`, one West field):
+  `m_spread2` 60 -> 100 (11.5 m at 100 m, 4.7 m at 60 m; the musketeers'
+  135: 15 / 6 m). Aimed fire stays deadly at street range; in the open at
+  70-100 m the volume of a musket line wins the firefight.
+- **Per-man fire at will in cover** (`sim/battle_sim.gd` `_pm_on`,
+  `_pm_unit`, `_pm_keep`, `_pm_cand`, `_pm_find`, `_pm_sight`; owner,
+  2026-10-16). On a map with the obstacle grid (`ft_on`) a missile unit of
+  guns or bows in Take cover (cover troops also in Hold street) fires man by
+  man, never in volleys: each man reloads on his own clock (`s_rl`: the tick
+  of his last shot; loaded `m_reload` later) and fires at his own target
+  man (`s_tgt`, sticky while he lives, his unit is seen and in range). A man
+  with no target looks only every `PM_K` 10 ticks (offset by his index; a
+  look that found nobody waits `PM_K_FAIL` 30): the enemy units in reach of
+  his unit's box (`_pm_cand`, once a tick for the unit), `PM_SAMPLE` 6 men of
+  each, nearest first (units in a melee last), and traces the C0 line of
+  fire from where he stands or leans out to at most `PM_TRY` 3 of them. A
+  man in a face's lee has no line and holds his fire. The shots carry no
+  volley fright and ignore the volley range (`m_volley_r` is the line's
+  rule); an attack order limits the men to its target's men. Line troops,
+  and every unit on a map without obstacles, keep the volleys. `s_tgt`,
+  `s_rl` are hashed with `s_shot` (ft_on) and go through snapshot / restore.
+  Cost: 0.65 ms a tick in bench_4000_west (the search and its traces; per
+  man a target search costs about 30-60 us; the per-cell visibility cache is
+  the next step if it grows).
+- **Cover from the first volley** (`_cover_snap`; `CS_R` 8 -> 10 m). On the
+  battle's first step a cover unit with a threat in sight lays out its
+  cover spots and its men stand in them, gone to ground if half are in
+  cover (they used to walk there under the first volley). Men take spots
+  within 10 m of their places (more men off the open street).
+- **Line of fire from the men in cover** (`lof_units`). A unit at cover
+  spots whose middle has no line of fire to a target has one if any of
+  `LOF_MEN` 4 of its men, spread through its slots, has: a strongpoint whose
+  middle stood behind a house never chose a target.
+- **Skirmishers fall back from guns closing on them** (`_missile_think`
+  in the sim, `_skirm_back` in the settlement AI): a gun unit with an
+  attack order on a skirmisher counts as a threat within `SKIRM_INF` as foot
+  does (musketeers walked up to 15 m of buccaneers in a town).
+- **West street posts** (`sim/siege_ai.gd` `_sp_cover`, `_cover_score`,
+  `_reserve`, `_strongpoint`). A skirmisher's strongpoint is chosen where
+  the cover is: points on the mouth-to-plaza line (its percentage -10 to +20
+  in 5 % steps) and `SP_LAT_STEP` 6 m either side (3 steps), scored by the
+  2 m cells within 10 m rising 1.2 m or more with open ground beside them,
+  less 2 per step from the plain point (west_town's plain post stood in an
+  open yard). A West defender further than `SP_RUN_R` 30 m from its post
+  goes there at the run (it walked 120 m and met the first volley on the
+  way). Line troops hold the open town's streets at `SP_LINE_PCT` 40 % of
+  the way to the plaza (was 60); with works (walls 1 the fort, 2 the fort
+  and the palisade, whose gaps are the street mouths) the defence is in
+  depth: skirmishers cover the mouths from the corners (30 %), the line
+  holds the inner streets at `SP_PAL_LINE_PCT` 80 %. Measured choices: lines
+  at the gaps (15 %) lost 16 of 16, at 40 / 50 / 60 % in the open towns the
+  attackers won 69 / 12 / 31 %.
+- **Sieges: trapped routers do not rally** (`RALLY_TRAPPED`,
+  `_update_morale`). Defenders routing inside the walls (`ROUT_INWARD`) do
+  not rally while an attacking unit stands in the town's streets; the
+  attackers' routers run off the field, so an even fight at the breach
+  went to the side whose routers came back. (`ROUT_INWARD` 0 measured the
+  same and was not taken: phase A's huddle stays.)
+- **Battlements** (`WALL_COVER`): walls 2-3 stop 15 / 25 % of missiles from
+  below (was 25 / 40; walls 1 25).
+- **A battery standing by its engines is not stuck** (`_update_units`):
+  its spare men's rows behind its last working engine may be blocked; the
+  probe counted it 40 s stuck.
+- **Tried, not kept:** ladder parties going on with the escalade once the
+  gate is down (they climbed stretches 100 m off and died on the walls:
+  walls 2-3 0 of 16); attacking archers pulling back out of the walls'
+  reach after a lost duel (20 % down and 2 to 1 against: no gain in the
+  wins, the duel with the walls was over in a minute and the battlements'
+  cover never came into play); the all-out four minutes sooner; two fewer
+  towers; `ROUT_INWARD` 0; line of sight off (the same results: sight is
+  not what tilted the sieges).
+
 ### Compact unit cards (as built, 2026-10-09)
 
 View only: `game/unit_traits.gd` derives everything from the unit rows, so a
@@ -3206,6 +3297,29 @@ Close hides it and keeps the selection. Layout: full width at the bottom,
 horizontally scrolling row); the map key buttons, the End turn row, the hint
 and the toasts rise above it while it shows. Versions before 6 keep the side
 panel only. Testing aids: `--details` / `--no-bar` (the old behaviour).
+
+**Round 2 (2026-10-16, owner's tablet playtest).** *Recruit popup tabs:* the
+city's Recruit opens `show_raise` on **Army** or, with nothing to raise and a
+yard to build in, **Shipyard** (tabs only in a pack with ships at a port of
+ours; greyed "needs a Shipyard"); the Shipyard tab lists the ship rows (cost,
+guns, hull, crew, carries, pace, upkeep, yard level, the reason when not
+buildable), the queued ship with X and the fleets in the harbour; "Build ship"
+adds the same `ship` order; a fleet in port gets a **Shipyard** action. *Drag
+on the bar:* `DragReorder` over the unit cards (mouse: press and move; touch:
+hold until it lifts; ghost and gold slot mark), drop = `_arrange(id, from,
+to)`; a hold without a move opens the unit page; a short tap still picks the
+card for Split. Dragging onto another army or the Exchange action is not
+built (reorder only). *Build popup:* queue on top with Cancel, a row per
+chain (icon, "Farms 1 -> 2", cost and turns, first clause of the description,
+the reason greyed), a tap queues the `build` order. *Details thinned:* the
+army panel keeps the count, characters, the march line and the movement
+points; the city panel keeps income / growth, sea notes, armies here,
+characters, what it trains, the siege section (odds and orders text) and
+gifts; units, order, Split, Disband, Exchange, Merge, stance, recruits,
+Board, Cancel, siege orders, the garrison, buildings, raise and the
+shipyard are on the bar or in a popup, each order in one place. A planned new
+army's X is in the Recruit popup; a planned recruit into an army is a dimmed
+card (tap cancels). Testing aid `--popup=build:key|raise:key|ship:key|recruit:N`.
 
 ### Ammunition kinds and fire (as built, 2026-10-09)
 
@@ -5265,11 +5379,139 @@ minutes.
   (up to 8), wind direction and strength, water (open / island / a coast),
   start (across the wind, your fleet upwind or downwind).
 - **Measured** (`determinism_test --only=sea`): STATUS "N3a".
-- **Later**: live co-op at sea (the sim and lockstep are ready; the room,
-  the HUD's co-op parts and ship gifts are not), N3b deck melees, smoke
-  blocking aim, shore batteries and forts firing on ships, ships bombarding
-  shore units, fire ships, the formula fitted to these results, sea battle
-  art (the miniatures at headings), sounds of the sea.
+- **Later**: smoke blocking aim, shore batteries and forts firing on
+  ships, ships bombarding shore units, the formula fitted to these results,
+  sea battle art (the miniatures at headings), sounds of the sea. (Live
+  co-op at sea, N3b deck melees and N3c fire ships: built, below.)
+
+### Sea battles: live co-op, deck melee, fire ships (as built, N3b / N3c, 2026-10-16)
+
+The three follow-ons to N3a (campaign hand-off: CAMPAIGN.md "Sea battles
+fought", the co-op, deck melee and fire ship bullets).
+
+- **Live co-op at sea** (milestone 5 rules unchanged: everything shared
+  lives in the sim or the lockstep, changes only by lockstep inputs): the
+  lockstep already ran a SeaSim; what was missing is the room and the view.
+  `CSeaBattle.build` gives `controller` / `battle` / `sim_side` as
+  `CBattle.build` does, so `CoopSession` takes a sea battle unchanged
+  (`live_ai_sides` keeps a sea scenario's per-side AI flags, its telemetry
+  no longer reads a soldier count from a SeaSim). `CampaignScreen.fight_live`
+  opens a sea battle's room like a land battle's (`_fight_sea_live`), and
+  `game/sea_battle.gd` runs in co-op the way `game/battle.gd` does: it
+  follows the lockstep's sim (rebinding on start and on a snapshot restore,
+  events not replayed), interpolates by the session's frame clock, sends
+  orders through `coop.issue()` for the ships this player commands only (a
+  tap or a card of a team-mate's ship says whose it is; double tap and box
+  take only your own), II and the speeds are votes (II asks to pause or
+  resume; a speed while paused also asks to resume; choosing the speed in
+  force withdraws your proposal), Gift in the orders bar hands the selected
+  ships to a team-mate (the picker with several), the card column carries
+  each ship's commander colour once a team-mate takes part, the co-op HUD
+  (`game/coop_hud.gd`: roster strip, lobby, waiting / catching up / resync,
+  vote chips with Accept / Decline, Continue without a disconnected player)
+  sits over it through a small shim of the land HUD's names, Leave says who
+  gets your ships, Continue at the end waits for the final frame, and
+  `coop_exit_result()` is what the campaign screen uploads (the host once;
+  the last player's forfeit of their own side). Testing aids:
+  `--coop-start-alone`, `--coop-auto-exit`. Not reachable from the Online
+  battles list until `online_ui.gd` stops gating "Fight together" off for
+  sea battles (CAMPAIGN.md).
+- **Deck melee (N3b): an integer crew-against-crew melee inside the sea
+  sim**, not the land sim. Reusing BattleSim for a deck would have meant a
+  second simulation nested in every sea battle (its own map, snapshot and
+  hash, its result fed back by an O_DECK input that some peer would have to
+  issue), for a fight of a few dozen groups on a 2 m grid; inside the sea
+  sim it is a few hundred integer operations a deck step, hashed, in
+  snapshots and in lockstep by construction. The N3b hook stays: scenario
+  `"deck": 1` still parks a grapple for an outside melee (`deck_request()`,
+  `O_DECK`, now refused unless a boarding is waiting for one).
+  - **The deck**: both ships side by side as a grid of `DECK_CELL_M` 2 m
+    cells, each ship her length by her beam (5-28 by 2-7 cells), the
+    boarder's rows above the rail, the defender's below, masts in the way.
+  - **The men** as figures of a few men each, at most `DECK_FIG` 24 a side:
+    the boarding party (`DECK_BOARD_PCT` 75 % of the crew and every soldier
+    aboard) against every defender; the soldiers at the rail, the crew
+    behind, the captain and two mates at the stern. Arms: the crew kit by
+    faction (`ST.DECK_CREWS`: the Brethren cutlass, axe and a brace of
+    pistols 34 / 22 and two volleys; Spain sword and buckler 28 / 28;
+    France boarding axes 30 / 22; England and the Dutch cutlass, pistol and
+    pike 27 / 24; Miskito and Itza clubs and bows with three volleys) times
+    the ship's boarding quality; soldiers by their unit rows (attack;
+    defence + armour + shield / 2) and their line's volley
+    (`ST.DECK_LINE_SHOT`: muskets 26 % at 7 cells, buccaneers 34 % at 8,
+    pistols, bows); soldiers without a kit musket and bayonet; the captain
+    at `DECK_CAPTAIN_ATK` 250 % (x the campaign captain's `cq`).
+  - **A deck step** every `DECK_EVERY` 2 ticks, figures in index order
+    (reversed every other step): strike the nearest enemy figure next to
+    it (each man kills at `DECK_KILL_PM` 14 per mille x 2 atk / (atk +
+    def); a figure on its own deck defends at `DECK_BONUS_PCT` 125 %;
+    shaken men strike weaker), else fire a loaded volley in reach (shot %
+    x `DECK_SHOT_PM` 5 per mille a man), else step a cell toward it (every
+    `DECK_MOVE` 3 steps). Losses come off the ship's crew or troops at once.
+  - **Heart**: each side's morale starts from its ship's (boarders +10),
+    falls by the share of its men lost (`DECK_MOR_LOSS` 100 for all of
+    them; a quarter less while its captain stands), `DECK_CAPT_LOSS` 30
+    when he falls, a little each step when outnumbered. **The end**: the
+    defenders strike (the deck is lost: the existing capture, a prize crew
+    across) when their heart is gone or they are under `DECK_BREAK_DEF` 30
+    % of the boarders; the boarders are thrown back (their ship's morale
+    -25) when theirs is gone or they are under `DECK_BREAK_ATT` 45 % (after
+    2 s); both at once, or `DECK_MAX_TICKS` 45 s: both crews are spent, the
+    grapnels are cut and the ships part (-15 each). Ships in a deck fight
+    do not strike by the ordinary rule (the deck decides).
+  - Measured (probe runs, two ships laid alongside at the start): strong pirates take a
+    weakened brigantine in 4-6 s, an even pair fights 15-28 s before the
+    boarders are thrown back, a sloop boarding a frigate is thrown back in
+    2 s, an English frigate with musketeers boarding a galleon with
+    rodeleros is thrown back in 6-9 s.
+  - **View**: an inset at the top right (a tap centres the pair) draws both
+    decks in the diorama look (planking with seams, a grating, rails in the
+    ships' colours, masts, grapnel lines across the gap), each figure as a
+    little crowd of up to five men in its ship's colour (soldiers with a
+    crossbelt, the captain ringed in gold), easing from cell to cell, cold
+    steel sparks where it struck, powder smoke from volleys, each side's
+    men and heart and "captain down"; the outcome stays 2.5 s. Sounds:
+    `melee` while it lasts, `musket` per volley, `unit_break` / a horn at
+    the end. Events `EV_DECK_SHOT`, `EV_CAPTAIN`, `EV_DECK_END`.
+- **Fire (N3c)**: a fire has an intensity (`s_burn` 1..`FIRE_MAX` 1000):
+  a hit's fire starts at 60, grows 25-45 a second and the crew beat it down
+  by `FIRE_FIGHT` 45 x their share of a full crew (a full crew puts a small
+  fire out in a few seconds, a thin one cannot); it eats the hull by its
+  intensity (`FIRE_HULL`). **Magazines**: past `MAG_LV` 500 each second
+  rolls (the sim RNG) (intensity - 500) / 4 per mille: she blows up, holes,
+  kills and fires (at 250, half the time) her neighbours within `BLAST_M`
+  70 m (N3a rolled 1.5-3 % a second from the first spark).
+- **Fire ships (N3c)**: a ship row (`fire_ship`: 22 m, 9.5 m/s, no guns,
+  hull 420, a crew of 14, `fire` 1). Ordered at an enemy (a tap with her
+  selected; `O_TARGET` / `O_BOARD` become `M_FIRE`) she sails at the mark's
+  place a little ahead, is lit inside `FS_LIGHT_M` 200 m when she can lie
+  the course, her crew lash the helm and take to the boat inside
+  `FS_ABANDON_M` 80 m (or `FS_ABANDON_TICKS` 30 s after); "Light her"
+  (`O_LIGHT`) fires her at once; a fire ship that would strike, or that a
+  shot sets alight (4 x a ship's chance), fires instead. Lit, she burns at
+  `FIRE_MAX` (2 % of her hull a second, no hull penalty to her speed),
+  takes no orders, does not count as fighting, is everyone's first target
+  within 300 m; whatever she touches (either side) she grapples for
+  `FS_STICK_TICKS` 25 s and sets alight at `FS_FIRE` 400, feeding its fire
+  `FS_FEED` 80 a second; sparks catch ships within `FS_SPREAD_M` 25 m at 25
+  % a second. **Battle AI**: a fire ship goes for the biggest enemy (guns
+  and hull) when the wind serves (the mark lies at least `FS_SERVES` ~105
+  deg off the wind, within 1.2 km), else waits 420 m up to windward of it.
+  Measured (`determinism_test --only=sea`, the fireship set piece over 8
+  seeds): lit in 8, reached and fired her mark in 6, magazines blown in 5;
+  a Spanish line ahead to leeward: 2 contacts in 6 seeds (the line's
+  broadsides sink the rest first). **View**: a tarred hull with brushwood
+  and barrels; lit, flame tongues lean downwind along her length (by the
+  fire's intensity on any burning ship), embers blow off, a black column;
+  her crew's boat pulls away; orders drawn in orange with her lighting
+  ring; messages; `burst` on lighting and contact. Custom battle: the fire
+  ship is in the ship list.
+- **Determinism and cost**: all the new state (fire ship, crew kit, troop
+  kit, melee slot and figure arrays) is in `state_hash()` (so in
+  `Lockstep.state_hash()`) and in snapshots (script variables); `f_hit`
+  (when a figure last struck, for the sparks) is view data, not hashed.
+  Desktop: 60-70 us a tick, 160 us during a deck melee (worst 300 us);
+  `state_hash` 26-30 us; a snapshot 1.6-1.9 KB.
 
 ### Story campaign: "The Brethren's Due" (agreed 2026-10-14; steps 1-2 built 2026-10-15, see "as built" below)
 
@@ -5568,6 +5810,115 @@ existing systems.
   pack_test, campaign_sim hashes unchanged, online_e2e (Rome, West), go
   test, check_scripts. Open: co-op (the crew vote), portraits, the story
   online, a real-time playtest of the finale.
+
+**As built, step 3 (2026-10-16): co-op crew vote, the story online, portraits.**
+- **Two captains** (`CStory.new_story(name, seed, settings, key, coop)`): the
+  lead is the Brethren (Tortuga's owner), the partner plays the **Miskito**
+  faction (script `PARTNER`, `PARTNER_START`: "Captain Rook", a sloop
+  "Mosquito Queen" with a company of warriors off Port Royal, the Cabo
+  Gracias a Dios as his haven and a small garrison; peace with England,
+  France and the Dutch, war with Spain; the West pack gets no new faction, so
+  solo and sandbox hashes are untouched). Humans are allies (one team).
+- **The vote** (pure, in `campaign/cstory.gd`): with two living captains a
+  fired choice's pending entry carries `v: []` (votes `[captain, choice]`,
+  in arrival order); solo entries have no `v` and are byte-identical to
+  before. `answer(st, f, pid, k)` records f's vote (a captain votes once;
+  `need` conditions apply per voter) and returns the state with the choice
+  still open; the turn does not resolve (`blocked`). When every living
+  captain has voted: **agree: it passes**; **disagree: Mercy calls it by
+  weight** (`vote_weight`: 10 per point of the captain's best fame, 1 per
+  10 % of each ship's crew, 1 per 10 men aboard or in his armies; **a tie goes
+  to the lead**), the heavier side's choice carries, the flag `crew_split` is
+  set and the **loser's crew grumbles** (-6 % crew and men). Effects apply to
+  the lead captain (the script is written for one "you": Tortuga, gold,
+  units); crew, hull, fame and infamy effects apply to the partner too. The log
+  entry keeps `v` (both votes) and `w` (the winner's faction, -1 when they
+  agreed); the story log, the vote result dialog and the epilogue read it. A
+  vote whose last captain falls is settled by the other's (`settle_ready`,
+  run by `check`). The order of the votes does not change the result.
+- **View** (`story_view.gd`): the choice shows "Your vote, <captain>" and the
+  other captain's vote once it is in; hot seat hands the device to whoever
+  has not voted (`--story-nohand` skips it for screenshots); after the last
+  vote a result dialog shows both votes with their portraits, Mercy's word
+  (one mind / split, who carried it) and the winner's reply. Online, a voted
+  captain sees "Waiting for <captain>"; the read markers live in the seat's
+  session.
+- **Online** (`game/net/online_campaign.gd` `answer_story`; server kind
+  `"story"`): the client runs `CStory.answer` and uploads the state with the
+  version it came from (compare-and-swap; on a conflict the answer is
+  re-applied to the newer state while it still applies); the server checks
+  only that the turn did not change, no pending battle vanished, the hash
+  changed and the seat is alive, stores `{f, pid, k}` as the inputs, and
+  reads `story.pending` for notifications ("the crew is voting" mentions the
+  captain still owed an answer, `StateMeta.StoryWaiting`). Other clients
+  re-run each vote from its parent (`verify`); `resolve_now` and the
+  auto-resolve refuse while a choice is open. New campaign screen: "Two
+  captains (hot seat)" and, online, "The Brethren's Due: two captains".
+  `statemeta` needed only the `story` block (no faction change: battles are
+  read from armies and fleets as before).
+- **Portraits** (`game/story_portrait.gd`, vector like the faction emblems):
+  Mercy, Lindo, Vane, Mendoza, Ashby, Le Boucher, Jeremy, Hesketh, the crew,
+  the Captain and Captain Rook; `tests/portrait_gallery.gd` renders the contact
+  sheet at 96 and 48 px. Shown next to every spoken line, in the vote
+  dialogs and on the choice cards (the portrait of whoever answers in the
+  choice's `say`). A character without a portrait shows its faction's mark
+  (`CHARS` `mark`), else the coloured initial.
+- **Format**: `CState.VERSION` is **not** bumped: the new keys (`v` on a
+  pending entry, `v` / `w` on log entries, a second captain in `cap`) only
+  appear in a co-op story, which did not exist; every earlier state means
+  what it did. The rules hash changes (online clients must reload).
+- **Tests**: `story_test.gd` (the vote: one vote leaves it open and the turn
+  held, agree, split by weight, tie to the lead, order independence, JSON,
+  45 turns of votes twice the same and through JSON every turn),
+  `tests/story_online_e2e.py` (two captains through a scratch server: 14 votes
+  through compare-and-swap, one simultaneous conflict re-applied, the split
+  vote settled by weight, B re-ran all 23 steps with no mismatch, a refused
+  empty answer, the Discord mention), Go `TestParseStateStoryWaiting`.
+- **Tortuga on random paths, and the haven shield (2026-10-16)**: random-choice
+  bots (30 seeds, 45 turns) lost Tortuga by turn 20 in 21 of 30 runs (27 by
+  turn 45): the sandbox's Spain, France and Tierra Firme besieged a 3-company
+  haven. Rule (`CStory.shielded`, gated on `st.has("story")`, read by
+  `cai.gd` `_shield` and `cai_fleet.gd`): the AI of a nation does not march
+  on, siege, assault, raid, hunt in, land against or blockade a captain's
+  haven (the script's HAVEN, and the partner's `PARTNER_START` regions) unless
+  provoked: the Spanish nations (`SPANISH`) when the captains' attention is
+  at the Armada's hunt threshold (35) or more; any nation for 8 turns after
+  a captain sacked or blockaded one of its ports (`prov`, recorded by
+  `_tally`; a blockade still on counts). England is released by the Treaty;
+  the Legend ending lifts the shield, the Republic and the Pardon keep it.
+  The story's own attacks (reprisal, hunters, finale, blockade) are effects
+  and ignore it; fleets at sea still fight. Reprisal data: ignored warning
+  three Spanish companies, heeded warning two (the fort sinks boats).
+  Result, 30 seeds: lost by turn 20 21 -> 4, by turn 45 27 -> 9; while the
+  story runs 9 (five ignored the warning, two lost the finale, one sold out
+  at the Treaty, one provoked Spain). Sandbox hashes unchanged.
+- **Provocation taught (2026-10-16)**: Mercy explains the shield in her own voice
+  (data `story_brethren.gd`): at attention 20 ("Mendoza keeps a ledger ... page one"),
+  at 35 ("The Armada ... weighed anchor"), before a sack (the `SACK_TIP` line on a
+  port's card in the overworld), once per nation after the first sack or blockade
+  ("{nation} will remember that for a season") and when it cools after 8 turns,
+  and the Treaty ("England has leave to come for Tortuga"). Events can be about a
+  nation: scheduled entries carry a third item (the faction), the log entry and
+  pending entry an `x`, and the view fills `{nation}` / `{adj}`; `act: -1` means the
+  current act. `prov` entries are `{f, t, w, r, n}`. **Grudges**: `CStory.grudges`
+  lists provoked nations (why, port, turns left) and the attention toward Spain;
+  the story log has a Grudges block (attention bar with the 35 mark "the Armada
+  sails", one row per nation with its emblem) and a haven's city card says
+  "Shielded: no nation holds a grudge" or "At risk: <nations>". **Punitive
+  landing**: the first sack of a nation's port schedules a warning line ("Sails off
+  the cape") and, 3-5 turns later (moved clear of the turn-10 reprisal by 3 turns),
+  two companies of that nation's line troops (`PUNITIVE`) storm the haven (an
+  effect, so the shield does not stop it); once per nation, later provocations
+  lift the shield as before. No ship is sent (the landing is a raid effect).
+  Measured with the 30-seed probe (a sack of a Spanish port forced at turn 14 in
+  every seed, since random bots never sack): the landing came in 24 seeds, won
+  by the garrison in all but 4 (2 of them where other Spanish troops had joined
+  it); with the sack by France 7 landings, 1 lost. Without a forced sack the
+  rates are the shield's (4 by turn 20, 9 by 45).
+- **Open**: the partner is the Miskito (a story-specific faction would need a
+  pack change); effects other than crew, hull, fame and infamy go to the lead
+  only; a divided ending (one captain takes the Pardon, the other fights on)
+  is not built; no phone look at the vote dialogs.
 
 ### Overworld: real geography and the landscape layer (as built, 2026-10-10)
 

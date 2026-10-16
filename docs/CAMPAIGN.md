@@ -1119,6 +1119,19 @@ contact, sieges, sally / relief, support, stances, raiding, retreats),
   bearing from the battle (`CGrid.sector`, 8 sectors), turned relative to
   the lead attacker's approach (`app`) by the version 5 placement.
   Settlement battles still put reinforcements in their side's line.
+  The owner of an assaulted settlement is always one of its battle's
+  humans (`battle_factions` adds `def_f`), so a player's garrison-only
+  defence is offered, never auto-resolved (checked 2026-10-16 in a West
+  pirate assault on Havana: the player's army 2-4 cells away supports,
+  also after marching that turn; on the ring it defends; 5 cells: not;
+  `campaign_test` `_west_raid_defence`). Raiders (the raiding stance on a
+  region's camp cell) start no battle: nothing engages them by itself.
+  Since 2026-10-16 the player is told (view only): the turn summary lists
+  "Raiders beside <city>: <faction> takes 50 % of its income ... Tap them
+  to attack." with a toast (Show selects the raiders), the End turn
+  warnings repeat it while no army is ordered against them, and an enemy
+  army's command bar has **Attack** (the player's strongest army that
+  reaches it this turn, `links_of`; greyed with the reason otherwise).
 - **Stances** (`stance` order, step 2, no points spent; `CData.ST_*`):
   default; forced march (+50 % points; cannot attack or lay siege; no
   zone; caught by an enemy it counts 75 % in the formula and odds, and its
@@ -2152,12 +2165,44 @@ fleet in it) for its humans (`TestParseStateSeaBattle`).
   power, Auto-resolve / Fight; the result card: the banner, fought or
   auto-resolved, each ship's fate, the reports. Online: Fight claims the
   battle and uploads the outcome like a land battle (solo and online-solo);
-  "Fight together" is not offered for sea battles (see Open).
-- **Open:** live co-op at sea (the lockstep already runs a SeaSim and is
-  tested with two peers and a joiner; missing: `CoopSession` / the relay
-  room for a SeaBattle view, the guest / gift rules for ships, the HUD's
-  co-op bar), several humans on both sides, fleets joining a pending sea
-  battle, the formula fitted to the real-time results, shore batteries.
+  live co-op see below.
+- **Live co-op at sea (as built 2026-10-16).** `CSeaBattle.build` also
+  gives what `CoopSession` needs, as `CBattle.build` does: `controller` per
+  ship (`CSeaBattle.controllers`: a human's ships their own; an AI faction's
+  ships on a side with humans that side's lowest human friendly to it, else
+  its lowest; -1 on a side without humans), `battle`, `sim_side` [0, 1],
+  `unit_faction`. `CampaignScreen.fight_live` opens the room for a sea
+  battle like a land one (`_fight_sea_live`: the same `CoopSession` setup,
+  guests and guest sides from `CRules`, the view `game/sea_battle.gd` with
+  `coop`); the host uploads the outcome once (`CSeaBattle.outcome_from_result`,
+  "live": 1); the last player leaving undecided forfeits their own side
+  (`outcome_from_result(..., "forfeit", their side)`). The server needed
+  nothing new (a sea battle's humans and guests come from `sf`, `att_f`,
+  `def_f`). **Not yet reachable from the Online battles list:** the "Fight
+  together" button there is still gated off for sea battles in
+  `game/campaign/online_ui.gd` (`live_ok` and `with_ally`: `and not
+  b.has("sea")`, two places), which was being edited by another agent; drop
+  those two conditions to offer it.
+- **Deck melee and fire ships (N3b / N3c, as built 2026-10-16).** The
+  capture rules are unchanged: a boarding the boarders win is a ship taken
+  (fate 2), thrown back or both crews spent leave both ships afloat with the
+  crews they have left. `build` gives each ship its crew kit for the deck
+  melee (`ck`: the faction key), the troops aboard by unit type (`tk`, from
+  the fleet's carried units, `troop_kits`: the three most numerous as % of
+  the men) and the captain's fighting % (`cq` 100 + `CAPT_CQ` 20 x his fame
+  tier). **Fire ship** (`campaign/data/west_ships.gd`): cost 160, upkeep 8,
+  no guns, hull 25, crew 14, pace 380, carries nothing, Shipyard 1, storm 20
+  %, built by England, France, the Dutch and the Brethren; `"fire": 1`; in
+  the auto-resolve formula she is worth `"power"` 120 (`CFleet.ship_power`:
+  about a sloop) instead of guns and hull. The campaign AI never builds one
+  (`cai_fleet._build` skips `fire` rows: AI-only campaigns unchanged); the
+  battle AI sails them. In a fought battle a lit fire ship is sunk (spent);
+  one taken unlit is a prize like any ship. `CState.VERSION` stays 7 (a new
+  ship key in data; no state key changed meaning).
+- **Open:** several humans on both sides of a sea battle (the lockstep
+  handles it; untested at sea), fleets joining a pending sea battle, the
+  formula fitted to the real-time results (fire ships and deck melees
+  included), shore batteries.
 
 ## Diplomacy and AI
 

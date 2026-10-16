@@ -342,7 +342,7 @@ const LAND_NEAR := 5 * M  # a rock or cliff this near the shooter or the target 
 # its line stops it there. A man who shot lately is up over or round his
 # cover: what stands as near him as a shooter shoots past does not cover him.
 const EXPOSE_T := 10         # ... for this long after his shot (1 s: fire, then down again)
-const CS_R := 8 * M          # per-man cover: a cover unit's man takes a spot this near his formation place ...
+const CS_R := 10 * M          # per-man cover: a cover unit's man takes a spot this near his formation place ...
 const CS_BACK := 1536        # ... 1.5 m behind the middle of a covering 2 m cell, away from the threat (0.5 m off its face)
 const CS_LAT := 460          # ... at the cover's edge, this far toward its open side (he leans out there to shoot) ...
 const CS_LEE := 6 * M        # ... and in the middle of a face's lee (no shot from there) as if this much farther
@@ -402,7 +402,7 @@ const GATE_BOLT := 80            # gate hp per bolt that hits it ...
 const GATE_STONE := 360          # ... per stone
 ## Siege levers (docs/DESIGN.md "Siege equipment and wall towers"): static
 ## so tests/matchups.gd --tune can try values; the game never changes them.
-static var WALL_COVER: Array[int] = [0, 25, 25, 40]  # % of missiles from below stopped by the battlements, by wall level (tuned 2026-10-09; was 25 / 45 / 70)
+static var WALL_COVER: Array[int] = [0, 25, 15, 25]  # % of missiles from below stopped by the battlements, by wall level (balance T 2026-10-16: walls 2-3 25 / 40 -> 15 / 25, equal-force sieges; 2026-10-09 was 25 / 45 / 70)
 static var WALL_RANGE_PCT: Array[int] = [0, 0, 15, 15]  # missile troops on a wall reach this % further at men below
 const WALL_PARAPET := 614        # parapet top above the walkway (line of fire)
 const CAPTURE_TICKS := 600       # attackers hold the plaza this long: the defenders break
@@ -438,6 +438,7 @@ static var GATE_HP_PCT: Array[int] = [100, 100, 100, 100]   # gate hit points (%
 const RAM_REACH := 6 * M         # a ram's crew this close outside a closed gate's face works it ...
 const RAM_MEN := 6               # ... at least this many of them ...
 const RAM_WORK := 480            # ... man-ticks per blow (20 men: a blow every 2.4 s) ...
+static var RALLY_TRAPPED := 1   # defenders routing inside the walls (ROUT_INWARD) do not rally while an attacking unit stands in the town's streets (balance T)
 static var ROUT_INWARD := 1     # defenders routing inside the walls run to the inside of the shut gate farthest from the enemy (1), or toward their map edge, out by any way (0)
 static var RAM_DMG := 160        # ... hit points per blow
 static var TOWERS_MAX: Array[int] = [0, 0, 3, 4]          # bolt-thrower towers by wall level (tuned 2026-10-09; was 6 / 8) ...
@@ -1282,6 +1283,8 @@ var u_cvb := PackedInt32Array()       # cover units: the threat's bearing its me
 var ft_on: int = 0                    # flat shots traced on the obstacle grid (static: a map with walls, houses, rocks or cliffs, "los" not 0)
 var cs_on: int = 0                    # ... and a unit with the cover trait: its men take cover spots (static)
 var s_shot := PackedInt32Array()      # per man: the tick of his last shot (ft_on: hashed then)
+var s_tgt := PackedInt32Array()       # per man firing at will in cover (_pm_unit): the enemy man he aims at, -1 none (ft_on: hashed)
+var s_rl := PackedInt32Array()        # ... the tick of his last shot by that rule (he is loaded m_reload after it; -PM_LOADED at the start; ft_on: hashed)
 # Street fighting (phases C1-C7; _stn_arrays hashed with stn_on).
 var stn_on: int = 0                   # stances and bounds hashed: a map with an obstacle grid, or a stance / bound order given
 var u_stance := PackedInt32Array()    # STANCE_*: line, take cover, hold street (ORDER_STANCE)
@@ -1886,6 +1889,10 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	s_via.fill(0)
 	s_shot.resize(n)
 	s_shot.fill(-1000)
+	s_tgt.resize(n)
+	s_tgt.fill(-1)
+	s_rl.resize(n)
+	s_rl.fill(-PM_LOADED)
 	bk_x.resize(BK_N)
 	bk_x.fill(0)
 	bk_y.resize(BK_N)
@@ -2710,6 +2717,8 @@ func lof_block(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int, apex: int, 
 
 ## Unit-level line of fire for a flat weapon of unit u at unit t (centroid
 ## to centroid), or true for weapons that arc over everything.
+const LOF_MEN := 4  # lof_units: men of a unit at cover spots tried when its middle has no line of fire
+
 func lof_units(u: int, t: int) -> bool:
 	if ter_on == 0 and map_on == 0:
 		return true
@@ -2724,7 +2733,26 @@ func lof_units(u: int, t: int) -> bool:
 	var pk := _peek(u)
 	var blk := lof_block(x0, y0, u_h[u] + LOF_EYE, x1, y1, u_h[t] + LOF_BODY,
 		d * t_m_apex[ty] / 100, 0, 2 * LOF_STEP, maxi(_skip0(u), pk.y), _skip1(t), pk.x)
-	return blk < 0
+	if blk < 0:
+		return true
+	if u_cvb[u] < 0 or u_alive[u] <= 0:
+		return false
+	# Men at cover spots (phase C0) stand round the corners, not at their
+	# middle: the unit has a line of fire if one of LOF_MEN of them, spread
+	# through its slots, has (balance T: a strongpoint whose middle was
+	# behind a house never chose a target, its men leaning out at the
+	# corners never shot).
+	var base := u_slot_base[u]
+	var nal := u_alive[u]
+	for k in LOF_MEN:
+		var i := slot_soldier[base + (nal - 1) * k / maxi(LOF_MEN - 1, 1)]
+		var sx := pos_x[i]
+		var sy := pos_y[i]
+		var dm := FM.approx_len(x1 - sx, y1 - sy)
+		if lof_block(sx, sy, u_h[u] + LOF_EYE, x1, y1, u_h[t] + LOF_BODY,
+				dm * t_m_apex[ty] / 100, 0, 2 * LOF_STEP, maxi(_skip0(u), pk.y), _skip1(t), pk.x) < 0:
+			return true
+	return false
 
 
 # ----------------------------------------------- woods and settlements ---
@@ -7479,7 +7507,16 @@ func step() -> void:
 		_update_vis()
 	if cs_on != 0:
 		for u in n_units:
-			if (u + tick) % VIS_T == 0 and (u_stance[u] != STANCE_LINE or u_cvb[u] >= 0 or u_bnd[u] >= 2):
+			if tick == 0 and u_stance[u] != STANCE_LINE:
+				# The battle's first step: cover troops with a threat in sight
+				# start in their cover spots, as deployed (balance T: they
+				# walked to them under the first volley).
+				if obs_on != 0 and u_alive[u] > 0 and u < _u_obs.size():
+					_u_obs[u] = _near_obs(u)
+				_cover_seek(u)
+				if u_cvb[u] >= 0:
+					_cover_snap(u)
+			elif (u + tick) % VIS_T == 0 and (u_stance[u] != STANCE_LINE or u_cvb[u] >= 0 or u_bnd[u] >= 2):
 				_cover_seek(u)  # (men into cover: phases C0, C2)
 	prev_x = pos_x.duplicate()
 	prev_y = pos_y.duplicate()
@@ -7990,9 +8027,13 @@ func _update_units() -> void:
 		var order := u_order[u]
 		if u_stair[u] == 1 or u_stair[u] == ST_LADDER:
 			order = O_NONE  # waiting at the stair's foot for its men to come down; climbing (a move waits)
-		var want := lag > LAG_CUT  # (u_stuck: it wants to get on; its men short of their places)
-		var want_face := u_dface[u]
 		var art := cls == UT.CLS_ART
+		# (u_stuck: it wants to get on; its men short of their places. A
+		# battery standing by its engines does not: its spare men's rows
+		# behind a last engine may be blocked, which counted as 40 s stuck,
+		# balance T.)
+		var want := lag > LAG_CUT and not (art and order == O_NONE and u_neng[u] > 0)
+		var want_face := u_dface[u]
 		# Ground under the anchor (hilly maps; one lookup serves the whole
 		# tick: movement, formation and charge momentum).
 		var g0 := slope_at(u_ax[u], u_ay[u]) if ton else Vector2i.ZERO
@@ -8763,8 +8804,10 @@ func _missile_think(u: int) -> void:
 		var threat := -1
 		var best := 0
 		for o in n_units:
-			if u_side[o] == u_side[u] or u_state[o] != U_READY or u_cls[o] == UT.CLS_MISSILE:
+			if u_side[o] == u_side[u] or u_state[o] != U_READY:
 				continue
+			if u_cls[o] == UT.CLS_MISSILE and not (t_m_gun[u_type[o]] != 0 and u_order[o] == O_ATTACK and u_target[o] == u):
+				continue  # (a gun unit coming for it to close range is a threat too: balance T)
 			var dx := u_cx[o] - u_cx[u]
 			var dy := u_cy[o] - u_cy[u]
 			var lim := SKIRM_CAV if u_cls[o] == UT.CLS_CAV else SKIRM_INF
@@ -10789,6 +10832,9 @@ func _update_bounds() -> void:
 func _update_missiles() -> void:
 	# Fire.
 	for u in n_units:
+		if ft_on != 0 and _pm_on(u):
+			_pm_unit(u)  # (in cover: every man at his own target, balance T)
+			continue
 		if gun_on != 0 and t_m_gun[u_type[u]] != 0 and u_cls[u] != UT.CLS_ART:
 			_gun_unit(u)  # volleys (engines that are guns shoot in _update_artillery)
 			continue
@@ -10844,6 +10890,189 @@ func _update_missiles() -> void:
 			pr_next[p] = pr_bucket[b]
 			pr_bucket[b] = p
 		p = nxt
+
+
+## Per-man fire at will (balance T; owner 2026-10-16): on a map with the
+## obstacle grid (ft_on), a missile unit of guns or bows in the Take cover
+## stance (cover troops also in Hold street) fires man by man, not in
+## volleys: each man with a charge reloads on his own clock (m_reload ticks
+## from his last shot, s_rl) and, loaded and allowed to shoot
+## (fire at will, or an attack order: then only at its target's men; not
+## on the move unless his bound team holds), fires at his own target man
+## (s_tgt): kept while he lives, his unit is seen and he is in range; lost,
+## or no shot from here, the man looks again only every PM_K ticks (offset
+## by his index; PM_K_FAIL after a look that found nobody): the nearest man (PM_SAMPLE of each enemy unit in reach,
+## units locked in a melee last) he has a line of fire to from where he
+## stands or leans out (_pm_sight, the C0 trace; at most PM_TRY looked at).
+## A man in a face's lee has none and holds his fire. No volley fright from
+## these shots; the volley range (m_volley_r) is the line's rule. Line troops,
+## and any unit on an open map, keep the volleys and the unit's target.
+const PM_LOADED := 1 << 20
+const PM_K := 10        # a man without a target looks for one this often (ticks)
+const PM_SAMPLE := 6    # ... at this many men of each enemy unit in reach
+const PM_TRY := 3       # ... and traces the line of fire to at most this many (nearest first)
+const PM_K_FAIL := 30   # a man who found nobody to shoot at looks again after this long (ticks)
+
+
+func _pm_on(u: int) -> bool:
+	if u_cls[u] != UT.CLS_MISSILE or u_wall[u] != 0:
+		return false
+	var ty := u_type[u]
+	if t_crew_sh[ty] > 1 or (t_m_gun[ty] == 0 and t_m_arc[ty] == 0):
+		return false
+	var sn := u_stance[u]
+	return sn == STANCE_COVER or (sn == STANCE_HOLD and t_cover[u_otype[u]] != 0)
+
+
+func _pm_unit(u: int) -> void:
+	if u_state[u] != U_READY or u_ammo[u] <= 0 or u_alive[u] <= 0:
+		return
+	var ty := u_type[u]
+	var ks := u_sk[u]
+	var kstd := t_m_ak[ty]
+	var pref := ks >= 0 and u_akind[u] != 0
+	var reload := t_m_reload[ty] * t_k_rate[ks if pref else kstd] / 100 if kstd >= 0 else t_m_reload[ty]
+	var order := u_order[u]
+	var still := _bnd_still(u) if u_bnd[u] != 0 else -1
+	var moving := u_moved[u] != 0 and still < 0
+	var busy := u_refill[u] != 0 or u_rprog[u] > 0 or u_forage[u] != 0 or (sg_on != 0 and u_carry[u] >= 0)
+	var may := not busy and order != O_WITHDRAW and not moving and (u_fire[u] != 0 or order == O_ATTACK)
+	var tu := u_target[u] if order == O_ATTACK else -1
+	var rng := mrange(u)
+	var base := u_slot_base[u]
+	var cand := PackedInt32Array()
+	var cand_done := false
+	for s in u_alive[u]:
+		var i := slot_soldier[base + s]
+		if state[i] != S_FORMED or ammo[i] <= 0:
+			continue
+		if tick - s_rl[i] < reload:
+			continue  # (reloading)
+		if not may or (still >= 0 and (i & 1) != still):
+			continue
+		var j := s_tgt[i]
+		if j >= 0 and not _pm_keep(i, u, j, rng, tu):
+			j = -1
+			s_tgt[i] = -1
+		if j < 0:
+			if j < -1 and tick < -j - 2:
+				continue  # (found nobody a moment ago: PM_K_FAIL)
+			if j == -1 and (tick + i) % PM_K != 0:
+				continue
+			if not cand_done:
+				cand = _pm_cand(u, rng, tu)
+				cand_done = true
+			j = _pm_find(i, u, rng, cand)
+			s_tgt[i] = j if j >= 0 else -(tick + PM_K_FAIL) - 2
+			if j < 0:
+				continue
+		var sh := stat_shots
+		_fire(i, u, unit_of[j], ty, _shot_kind(i, ks, kstd, pref), j)
+		if stat_shots != sh:
+			s_rl[i] = tick
+		else:
+			s_tgt[i] = -1  # (no shot from here at him after all)
+
+
+## Man i of unit u keeps aiming at man j: alive, his unit seen and of the
+## enemy (the attack order's target, tu >= 0), within the range.
+func _pm_keep(i: int, u: int, j: int, rng: int, tu: int) -> bool:
+	if state[j] >= S_DEAD:
+		return false
+	var o := unit_of[j]
+	if u_side[o] == u_side[u] or u_state[o] >= U_DESTROYED or _unseen(o) or (tu >= 0 and o != tu):
+		return false
+	return FM.approx_len(pos_x[j] - pos_x[i], pos_y[j] - pos_y[i]) <= rng
+
+
+## Enemy units unit u's men may aim at this tick (_pm_unit, once a tick
+## for the unit): of the enemy, standing, seen, their box within the range
+## of u's box (the attack order's target only, tu >= 0); index order.
+func _pm_cand(u: int, rng: int, tu: int) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	var side := u_side[u]
+	for o in n_units:
+		if u_side[o] == side or u_state[o] >= U_DESTROYED or u_alive[o] <= 0 or (tu >= 0 and o != tu):
+			continue
+		var gx := maxi(maxi(u_minx[o] - u_maxx[u], u_minx[u] - u_maxx[o]), 0)
+		var gy := maxi(maxi(u_miny[o] - u_maxy[u], u_miny[u] - u_maxy[o]), 0)
+		if gx > rng or gy > rng or _unseen(o):
+			continue
+		out.append(o)
+	return out
+
+
+## The man man i of unit u aims at next (_pm_unit), -1 none; `cand` its
+## unit's candidates (_pm_cand).
+func _pm_find(i: int, u: int, rng: int, cand: PackedInt32Array) -> int:
+	var px := pos_x[i]
+	var py := pos_y[i]
+	var cj := PackedInt32Array()
+	var cd := PackedInt32Array()
+	for o in cand:
+		var gx := maxi(maxi(u_minx[o] - px, px - u_maxx[o]), 0)
+		var gy := maxi(maxi(u_miny[o] - py, py - u_maxy[o]), 0)
+		if gx > rng or gy > rng:
+			continue
+		var al := u_alive[o]
+		var st := maxi(al / PM_SAMPLE, 1)
+		var ob := u_slot_base[o]
+		var bj := -1
+		var bd := 0
+		var k := (i + tick / PM_K) % st  # (a different sample each look)
+		while k < al:
+			var j := slot_soldier[ob + k]
+			k += st
+			if state[j] >= S_DEAD:
+				continue
+			var d := FM.approx_len(pos_x[j] - px, pos_y[j] - py)
+			if d <= rng and (bj < 0 or d < bd):
+				bj = j
+				bd = d
+		if bj < 0:
+			continue
+		if u_fighting[o] > 0:
+			bd += 1 << 24  # (locked in a melee: last)
+		cj.append(bj)
+		cd.append(bd)
+	for t in mini(PM_TRY, cj.size()):
+		var b := -1
+		for k in cj.size():
+			if cj[k] >= 0 and (b < 0 or cd[k] < cd[b] or (cd[k] == cd[b] and cj[k] < cj[b])):
+				b = k
+		if b < 0:
+			break
+		var j := cj[b]
+		cj[b] = -1
+		if _pm_sight(i, u, j):
+			return j
+	return -1
+
+
+## Man i of unit u has a line of fire at man j from where he stands or
+## leans out round his cover (as _fire traces it).
+func _pm_sight(i: int, u: int, j: int) -> bool:
+	var sx := pos_x[i]
+	var sy := pos_y[i]
+	var ax := pos_x[j]
+	var ay := pos_y[j]
+	var d := FM.approx_len(ax - sx, ay - sy)
+	if d <= 0:
+		return false
+	var ft := unit_of[j]
+	var ty := u_type[u]
+	var pk := _peek(u)
+	var wb := _wall_rb(u, ft) + _works_rb(u, ft)
+	var sk1 := _skip1(ft)
+	if _shot_ok(sx, sy, ax, ay, d, ty, pk.y, sk1, wb, 100, pk.x):
+		return true
+	if u_cvb[u] < 0 and _bnd_still(u) < 0:
+		return false
+	var lp := _lean(sx, sy, ax, ay, _ground_mask(u))
+	if lp.x < 0:
+		return false
+	var ld := FM.approx_len(ax - lp.x, ay - lp.y)
+	return ld > 0 and _shot_ok(lp.x, lp.y, ax, ay, ld, ty, pk.y, sk1, wb, 100, pk.x)
 
 
 ## Firearms (docs/DESIGN.md "Firearms"): gun unit u reloads as a body
@@ -10910,9 +11139,9 @@ func _shot_kind(i: int, ks: int, kstd: int, pref: bool) -> int:
 	return ks if sp and (pref or not st) else kstd
 
 
-func _fire(i: int, u: int, ft: int, ty: int, ak: int = -1) -> void:
+func _fire(i: int, u: int, ft: int, ty: int, ak: int = -1, aim: int = -1) -> void:
 	var talive := u_alive[ft]
-	var j := slot_soldier[u_slot_base[ft] + _rand() % talive]
+	var j := aim if aim >= 0 else slot_soldier[u_slot_base[ft] + _rand() % talive]
 	var sx := pos_x[i]
 	var sy := pos_y[i]
 	# Lead the target: aim where it will be after the flight, from its
@@ -11175,7 +11404,7 @@ func _missile_hit(p: int, d: int) -> void:
 	if vis_on != 0 and u_amb[pr_unit[p]] > tick:
 		_ambush(ud, pr_unit[p])  # out of nowhere: the first volley from hiding
 	if gun_on != 0 and t_m_gun[ty] != 0 and u_state[ud] == U_READY \
-			and (u_vf_u[ud] != pr_unit[p] or u_vf_t[ud] != pr_t0[p]):
+			and (u_vf_u[ud] != pr_unit[p] or u_vf_t[ud] != pr_t0[p]) and not (ft_on != 0 and _pm_on(pr_unit[p])):
 		# A volley reaches the unit: fright once per volley (riders +50 %).
 		u_vf_u[ud] = pr_unit[p]
 		u_vf_t[ud] = pr_t0[p]
@@ -12907,6 +13136,15 @@ func _art_fright(ty: int, ak: int = -1) -> void:
 # ---------------------------------------------------------------- morale ---
 
 func _update_morale() -> void:
+	# (Balance T: is the town being taken? An attacking unit standing in
+	# its streets: the defenders' routers shut in it do not rally.)
+	var taken := false
+	if city_on != 0 and city_def >= 0 and n_gates > 0 and ROUT_INWARD != 0 and RALLY_TRAPPED != 0:
+		for o in n_units:
+			if u_side[o] != city_def and u_state[o] == U_READY and u_wall[o] == 0 \
+					and (veg_bits(u_cx[o], u_cy[o]) & MapGen.V_URBAN) != 0:
+				taken = true
+				break
 	if aura_src.size() > 0 and tick % TICKS_PER_SECOND == 0:
 		_update_auras()
 	if dog_on != 0 and tick % TICKS_PER_SECOND == 0:
@@ -12987,7 +13225,8 @@ func _update_morale() -> void:
 			u_morale[u] = clampi(m, -MORALE_MAX, MORALE_MAX)
 			# u_routs counts this rout too: a unit may rally from its first
 			# MAX_ROUTS routs; after that the rout is final.
-			if m >= RALLY_THRESHOLD and u_routs[u] <= MAX_ROUTS and u_alive[u] * 5 >= u_count0[u]:
+			if m >= RALLY_THRESHOLD and u_routs[u] <= MAX_ROUTS and u_alive[u] * 5 >= u_count0[u] \
+					and not (taken and u_side[u] == city_def):
 				_rally(u)
 
 
@@ -14981,6 +15220,23 @@ func _trace(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int, apex: int,
 	return -1
 
 
+## Unit u's men stand at their places (cover spots just laid out) at once:
+## the battle's first step only (as deployed there).
+func _cover_snap(u: int) -> void:
+	_compute_offsets(u)
+	u_dirty[u] = 0
+	var base := u_slot_base[u]
+	for s in u_alive[u]:
+		var i := slot_soldier[base + s]
+		pos_x[i] = u_ax[u] + off_x[base + s]
+		pos_y[i] = u_ay[u] + off_y[base + s]
+		prev_x[i] = pos_x[i]
+		prev_y[i] = pos_y[i]
+	_cover_unit(u)
+	if u_gnd[u] > 0:
+		u_gnd[u] = GROUND_STILL  # (half or more of them in cover: down already)
+
+
 ## Per-man cover (each cover unit once a second, cs_on): cover unit u standing
 ## with a threat gets cover spots for its men facing that threat's bearing
 ## (u_cvb); its places are laid out again when the bearing turns more than
@@ -15618,6 +15874,8 @@ func state_hash() -> int:
 			if ft_on != 0:
 				ctx.update(s_shot.to_byte_array())
 				ctx.update(u_cvb.to_byte_array())
+				ctx.update(s_tgt.to_byte_array())
+				ctx.update(s_rl.to_byte_array())
 		if n_gates > 0:
 			ctx.update(g_hp.to_byte_array())
 			ctx.update(g_state.to_byte_array())

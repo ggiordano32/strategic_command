@@ -1451,7 +1451,7 @@ const WEST: Array[Dictionary] = [
 		"m_ammo": 24,
 		"m_reload": 180,    # 18 s: careful loading
 		"m_spread": 10, "m_spread0": 512,
-		"m_spread2": 60,    # 45 % of the musketeers': 6.5 m at 100 m, aimed shots
+		"m_spread2": 100,   # 74 % of the musketeers': 11.5 m at 100 m, 4.7 m at 60 m (balance T: 60, 7.5 m at 100 m, won the open-field firefight against equal-cost line musketeers)
 		"m_speed": 20480,
 		"m_arc": 0, "m_apex": 3,
 		"m_fear": 30,
