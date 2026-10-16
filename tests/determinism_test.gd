@@ -145,6 +145,9 @@ extends SceneTree
 ## battle AI; identical on repeat and across snapshot / restore before any
 ## arrival, just after the first and amid the timed ones. (The four field
 ## goldens have no reserves: unchanged, checked in the full run.)
+## Routs among walls and houses (2026-10-15, docs/PATHING_SPEC.md phase A;
+## "--only=rout", also in the full run): rout-wall, rout-gate, trapped
+## (see _rout_sc). "--only=walls": the wall-order set pieces alone.
 ## Exits 0 on success, 1 on failure.
 
 const SeaChecks := preload("res://tests/sea_checks.gd")
@@ -170,7 +173,7 @@ const RUNS := {"skirmish@0": 1500, "battle_2000@0": 1800, "bench_2000": 2500, "t
 	"siege_castrum@ai": 3600, "siege_polis@ai": 4500, "siege_punic@ai": 6500, "siege_oppidum@ai": 3600,
 	"cit_ops": 3200, "bench_2000~ee": 2500, "bench_2000@4~ea": 3000, "siege_city@ai~ea": 5000,
 	"siege_city@ai~ae": 4200, "bench_2000~ss": 2500, "bench_2000@4~sa": 3000, "ai_woods~as": 2500,
-	"siege_city@ai~sa": 4200, "siege_city@ai~as": 4200, "siege_eq_ring3": 4500, "siege_eq_polis2~sa": 4500}
+	"siege_city@ai~sa": 4200, "siege_city@ai~as": 4200, "siege_eq_ring3": 5600, "siege_eq_polis2~sa": 4500}
 
 ## Trajectory digests of flat battles (soldier and unit arrays every 50
 ## ticks over 2,500 ticks, seed 4242): flat maps must keep playing exactly
@@ -293,6 +296,17 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=walls" in OS.get_cmdline_user_args():
+		_check_wall_orders()
+		_check_line_clamp()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
+	if "--only=rout" in OS.get_cmdline_user_args():
+		_check_rout()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=cover" in OS.get_cmdline_user_args():
 		_check_cover()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -357,6 +371,7 @@ func _init() -> void:
 	_check_line_clamp()
 	_check_reach()
 	_check_stairs()
+	_check_rout()
 	_check_plans()
 	_check_city_maps()
 	_check_snapshots()
@@ -494,7 +509,12 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 			need = ["skilled"]
 		"siege_eq_ring3":
 			# (The AI's ladders come late at the carry pace: the scripted
-			# "equipment" case covers planting and climbing.)
+			# "equipment" case covers planting and climbing.) Run 5,600 ticks
+			# since 2026-10-15 (was 4,500): with the routers' exit fields
+			# (docs/PATHING_SPEC.md phase A; without them it plays as before)
+			# the ram is burnt at tick 1772 at seed 12345 and the gate falls
+			# to the battery at 5446 (the ram broke it at 2503 before). Battle
+			# seeds 1-4: the gate falls at 2499-3493, was 2440-2753.)
 			need = ["pickups", "tower_hits", "bolts", "stones", "wall_cover", "gate_broken"]
 		"siege_eq_polis2~sa":
 			need = ["pickups", "tower_hits", "bolts", "skilled", "gate_broken"]
@@ -4053,6 +4073,244 @@ func _check_stairs() -> void:
 			_fail(str(x))
 
 
+## Routs among walls and houses (docs/DESIGN.md "Routs among walls and
+## houses", docs/PATHING_SPEC.md phase A; "--only=rout", also in the full
+## run), a walls-2 town, no AI, each run twice and across snapshot /
+## restore (taken at tick 150, while the first generation of exit fields
+## builds; in rout-gate a gate is broken at tick 120 so it is the second):
+## - rout-wall: javelinmen on the wall stretch nearest the plaza break at
+##   tick 300: every man is off the walk within 15 s (down the stair's
+##   trail man by man), rout jitter < 5 %.
+## - rout-gate: spearmen at the plaza break for good at tick 300 (the
+##   plaza fallen: no rally): they reach a shut gate's refuge and huddle
+##   within 30 s, rev/step < 3 %; heavy foot then march at them and they
+##   give up once within 15 m.
+## - trapped: heavy foot (attackers) inside the shut town, no ladders,
+##   break at tick 300: no way out, they huddle where they are (within
+##   3 s), then stand (no man pushing at a wall: under 0.5 m walked each in
+##   the last 10 s, none in a blocked cell).
+const ROUT_T := 300
+
+static func _rout_sc(kind: String) -> Dictionary:
+	var city := {"seed": 4242, "level": 2, "walls": 2, "towers": 0}
+	var terr := {"kind": Terrain.K_FLAT, "seed": 11, "forest": 0, "ground": 2}
+	var att: Array = [[UT.HEAVY, 60]]
+	var dfn: Array = [[UT.JAVELIN, 30]] if kind == "rout-wall" else [[UT.SPEAR, 60]]
+	if kind == "trapped":
+		att = [[UT.HEAVY, 40]]
+		dfn = [[UT.JAVELIN, 30]]
+	var r := Scenarios.settlement(city, terr, att, dfn, 1, [], {})
+	var sc: Dictionary = r["scenario"]
+	var probe := BattleSim.new()
+	probe.setup(sc, 77)
+	var px: int = probe.plaza[0]
+	var py: int = probe.plaza[1]
+	# The outer stretch nearest the plaza (ties: lower index), and the
+	# farthest one (the trapped run's javelinmen, out of their throw).
+	var near := -1
+	var far := -1
+	var nd := 0
+	var fd := 0
+	for sg in probe.ws_x0.size():
+		if (probe.ws_fl[sg] & (MapGen.SEG_SEA | MapGen.SEG_CIT)) != 0 or BattleSim.seg_len(probe, sg) < 24 * M:
+			continue
+		var d: int = probe._seg_off(sg, px, py)
+		if near < 0 or d < nd:
+			near = sg
+			nd = d
+		if far < 0 or d > fd:
+			far = sg
+			fd = d
+	for ud in sc["units"]:
+		if int(ud["side"]) == 0:
+			# The attackers inside, 40 m off the plaza (rout-gate: 60 m), files 10.
+			ud["x_m"] = px / M
+			ud["y_m"] = py / M + (60 if kind == "rout-gate" else 0)
+			ud["files"] = 10
+			if kind == "rout-wall":
+				ud["y_m"] = py / M
+		elif kind == "rout-gate":
+			# A third of the way from the plaza to the nearest outer gate
+			# that stays shut (the last one is broken at tick 120).
+			var bg := -1
+			var bgd := 0
+			for g in probe.n_gates - 1:
+				var gd := absi(probe.g_ix[g] - px) + absi(probe.g_iy[g] - py)
+				if probe.g_cit[g] == 0 and (bg < 0 or gd < bgd):
+					bg = g
+					bgd = gd
+			var sp := BattleSim.open_snap(probe, px + (probe.g_ix[bg] - px) / 3, py + (probe.g_iy[bg] - py) / 3, MapGen.NAV_GROUND)
+			ud["x_m"] = sp.x / M
+			ud["y_m"] = sp.y / M
+			ud["files"] = 12
+		else:
+			var sg := near if kind == "rout-wall" else far
+			var m: Vector2i = BattleSim.seg_pt(probe, sg, BattleSim.seg_len(probe, sg) / 2)
+			ud["x_m"] = m.x / M
+			ud["y_m"] = m.y / M
+			ud["wall"] = sg + 1
+	return sc
+
+
+## One rout run: hashes every tick and what happened; snap_at >= 0: a
+## snapshot then is restored into a fresh sim stepped beside this one.
+func _rout_run(kind: String, snap_at: int) -> Dictionary:
+	var sc := _rout_sc(kind)
+	var sim := BattleSim.new()
+	sim.setup(sc, 77)
+	var ru := 1 if kind != "trapped" else 0  # the unit that breaks
+	var foe := 1 - ru
+	var hashes := PackedInt64Array()
+	var bad: Array = []
+	var twin = null
+	var twin_bad := 0
+	var n: int = sim.pos_x.size()
+	var lx := PackedInt32Array()
+	lx.resize(n)
+	var ly := PackedInt32Array()
+	ly.resize(n)
+	var sx := PackedInt32Array()
+	sx.resize(n)
+	var sy := PackedInt32Array()
+	sy.resize(n)
+	var path := PackedInt32Array()
+	path.resize(n)
+	var ldx := PackedInt32Array()
+	ldx.resize(n)
+	var ldy := PackedInt32Array()
+	ldy.resize(n)
+	var wins := 0
+	var jit := 0
+	var steps := 0
+	var revs := 0
+	var off_walk := -1   # rout-wall: every man off the walk
+	var hud_t := -1      # huddled
+	var march := -1      # rout-gate: the heavy foot sent at them
+	var gone_t := -1     # rout-gate: they gave up
+	var still_path := 0  # trapped: metres walked in the last 10 s (x 1024)
+	var in_block := 0
+	var max_t := 1800
+	for t in max_t:
+		var poke := sim.tick == ROUT_T
+		if kind == "rout-gate" and sim.tick == 120:
+			for s2 in [sim, twin]:
+				if s2 != null:
+					s2._break_gate(sim.n_gates - 1)  # (a gate changes: a new generation of exit fields)
+		if poke:
+			for s2 in [sim, twin]:
+				if s2 == null:
+					continue
+				s2._start_rout(ru)
+				if kind == "rout-gate":
+					s2.u_routs[ru] = BattleSim.MAX_ROUTS + 1  # (the plaza fallen: no rally)
+		if kind == "rout-gate" and hud_t >= 0 and march < 0 and sim.tick >= hud_t + 20:
+			march = sim.tick
+			var mo := BattleSim.make_move_order(sim.tick, foe, sim.u_ax[ru], sim.u_ay[ru], 0, 20 * M, 0)
+			sim.queue_order(mo)
+			if twin != null:
+				twin.queue_order(mo.duplicate())
+		sim.step()
+		hashes.append(sim.state_hash())
+		if twin != null:
+			twin.step()
+			if twin.state_hash() != sim.state_hash():
+				twin_bad += 1
+		if t == snap_at:
+			twin = BattleSim.new()
+			twin.setup(sc, 77)
+			if not twin.restore(sim.snapshot()) or twin.state_hash() != sim.state_hash():
+				twin_bad += 1000
+		if sim.tick <= ROUT_T:
+			continue
+		var routing: bool = sim.u_state[ru] == BattleSim.U_ROUTING and sim.u_alive[ru] > 0
+		var base: int = sim.u_slot_base[ru]
+		if routing:
+			for s in sim.u_alive[ru]:
+				var i: int = sim.slot_soldier[base + s]
+				if sim.tick == ROUT_T + 1:
+					lx[i] = sim.pos_x[i]
+					ly[i] = sim.pos_y[i]
+					sx[i] = lx[i]
+					sy[i] = ly[i]
+				var dx: int = sim.pos_x[i] - lx[i]
+				var dy: int = sim.pos_y[i] - ly[i]
+				var d := FM.approx_len(dx, dy)
+				path[i] += d
+				if d > M / 20:
+					steps += 1
+					if ldx[i] * dx + ldy[i] * dy < 0 and absi(ldx[i]) + absi(ldy[i]) > M / 20:
+						revs += 1
+					ldx[i] = dx
+					ldy[i] = dy
+				lx[i] = sim.pos_x[i]
+				ly[i] = sim.pos_y[i]
+			if (sim.tick - ROUT_T - 1) % 20 == 19:
+				for s in sim.u_alive[ru]:
+					var i: int = sim.slot_soldier[base + s]
+					var net := FM.approx_len(sim.pos_x[i] - sx[i], sim.pos_y[i] - sy[i])
+					wins += 1
+					if path[i] >= 3 * M and net * 3 < path[i]:
+						jit += 1
+					if hud_t >= 0 and sim.tick >= hud_t + 50 and sim.tick > max_t - 100:
+						still_path = maxi(still_path, path[i])
+					path[i] = 0
+					sx[i] = sim.pos_x[i]
+					sy[i] = sim.pos_y[i]
+		if kind == "rout-wall" and off_walk < 0 and sim.u_stair[ru] != 1 and _men_up(sim, ru) == 0:
+			off_walk = sim.tick
+		if hud_t < 0 and routing and sim.u_hud[ru] != 0:
+			hud_t = sim.tick
+		if kind == "rout-gate" and gone_t < 0 and sim.u_alive[ru] == 0:
+			gone_t = sim.tick
+		if kind == "trapped" and hud_t >= 0 and t == max_t - 1:
+			for s in sim.u_alive[ru]:
+				var i: int = sim.slot_soldier[base + s]
+				if (sim.nav_at(sim.pos_x[i], sim.pos_y[i]) & MapGen.NAV_GROUND) == 0:
+					in_block += 1
+		if kind == "rout-wall" and off_walk >= 0 and sim.tick >= off_walk + 100:
+			break
+		if kind == "rout-gate" and gone_t >= 0:
+			break
+	var jp := 100.0 * jit / maxi(wins, 1)
+	var rp := 100.0 * revs / maxi(steps, 1)
+	if kind == "rout-wall":
+		if off_walk < 0 or off_walk - ROUT_T > 150:
+			bad.append("rout-wall: the javelinmen were not all off the walk within 15 s (at %d, %d up)" % [off_walk, _men_up(sim, ru)])
+		if jp >= 5.0:
+			bad.append("rout-wall: rout jitter %.1f %% (want < 5 %%)" % jp)
+	elif kind == "rout-gate":
+		if hud_t < 0 or hud_t - ROUT_T > 300 or sim.u_hud.size() == 0:
+			bad.append("rout-gate: the final routers did not huddle at a refuge within 30 s (at %d)" % hud_t)
+		if rp >= 3.0:
+			bad.append("rout-gate: rev/step %.1f %% (want < 3 %%)" % rp)
+		if gone_t < 0 or sim.u_surr[ru] == 0:
+			bad.append("rout-gate: the huddled routers never gave up to the heavy foot (alive %d, surrendered %d)" % [sim.u_alive[ru], sim.u_surr[ru]])
+	else:
+		if hud_t < 0 or hud_t - ROUT_T > 30:
+			bad.append("trapped: the attackers with no way out did not huddle within 3 s (at %d)" % hud_t)
+		if still_path > M / 2 or in_block > 0:
+			bad.append("trapped: huddled, they still push about (%d mm walked by one man in 2 s, %d in blocked cells)" % [still_path * 1000 / M, in_block])
+	if snap_at >= 0 and (twin == null or twin_bad != 0):
+		bad.append("%s: the restored copy diverged (%d ticks)" % [kind, twin_bad])
+	return {"hashes": hashes, "bad": bad, "off_walk": off_walk - ROUT_T, "hud": hud_t - ROUT_T if hud_t >= 0 else -1,
+		"gone": gone_t - ROUT_T if gone_t >= 0 else -1, "jit": jp, "rev": rp, "surr": sim.u_surr[ru]}
+
+
+func _check_rout() -> void:
+	for kind in ["rout-wall", "rout-gate", "trapped"]:
+		var a := _rout_run(kind, 150)
+		var b := _rout_run(kind, -1)
+		var bad: Array = a["bad"]
+		if a["hashes"] != b["hashes"]:
+			bad.append("%s: the repeat diverged" % kind)
+		if bad.is_empty():
+			print("PASS %s: off the walk %d ticks after breaking, huddled %d, gave up %d (%d men), rout jitter %.1f %%, rev/step %.1f %%; identical on repeat and across snapshot / restore" % [
+				kind, a["off_walk"], a["hud"], a["gone"], a["surr"], a["jit"], a["rev"]])
+		else:
+			for x in bad:
+				_fail(str(x))
+
+
 ## Unlimited deployment (scenario "deploy_time" -1; "--only=deploy"): no
 ## countdown, so 2,000 ticks pass without the battle starting; the battle
 ## starts on the Ready of the player in dep_need (and at once when nobody
@@ -4940,6 +5198,12 @@ func _check_mantlets() -> void:
 const CROSS_SEED := 7
 const CROSS_TICKS := 3000
 const CROSS_BY := 2400
+## The ford battle's seed: 4242 until 2026-10-15; then 5 (routs among walls
+## and houses, docs/PATHING_SPEC.md phase A: at 4242 the AI attacker no
+## longer got 50 men across by 3000, a chaotic flip: over battle seeds 1-7
+## and 4242 it crosses in 7 of 8 before and after; at 5 by tick 927 before,
+## 931 after).
+const CROSS_FORD_SEED := 5
 
 
 ## An AI battle over the crossing CROSS_SEED (kind 0 ford / 1 bridge, side 1
@@ -4949,13 +5213,14 @@ const CROSS_BY := 2400
 func _cross_run(kind: int, fort: bool, snaps: Array) -> Dictionary:
 	var sc := Scenarios.crossing(kind, CROSS_SEED, fort)
 	var sim := BattleSim.new()
-	sim.setup(sc, 4242)
+	var bs := CROSS_FORD_SEED if kind == 0 and not fort else 4242
+	sim.setup(sc, bs)
 	var g: Dictionary = sim.riv
 	var hashes := PackedInt64Array()
 	var ev := {"far_at": -1, "wet": 0, "wet_rout": 0, "snaps": [], "map": sim.map_hash, "ter": sim.ter_hash}
 	for t in CROSS_TICKS:
 		if t in snaps:
-			ev["snaps"].append([t, _snap_follow(sim, sc, 4242, 60)])
+			ev["snaps"].append([t, _snap_follow(sim, sc, bs, 60)])
 		sim.step()
 		hashes.append(sim.state_hash())
 		var far := 0

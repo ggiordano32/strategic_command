@@ -1294,6 +1294,72 @@ artillery shot ignores cover; cover by the unit's centroid for sight
 (a unit half in a wood counts as in it); balance not tuned (sieges lean
 to the defender; the campaign formula was fitted without line of sight).
 
+**Pathing pass 2 (docs/PATHING_SPEC.md), phases 0 and A, as built
+2026-10-15 (not committed; DESIGN "Routs among walls and houses").** Phase
+0: `tests/pathing_probe.gd` (`-- --phase=A` gates the exit code on phase
+A's thresholds; `--ids=`, `--seed=`, `--quick`): per-man jitter (2 s
+windows, path >= 3 m and net < path / 3; rev/step; walk / net) by unit
+state and place, routers' stationary share (centroid < 3 m in 10 s, not
+huddled), stuck runs over 30 s with routers counted, men inside the drawn
+house footprints, tick mean. Phase A: per-man flight down integer exit
+fields (per side, per shut gate's refuge; a 4-neighbour flood built 1,000
+cells a tick, taking over 25 s after a gate change), routers off the wall
+man by man along the stair's trail, refuge kept till its gate opens,
+huddle at the refuge or where they are with no way out and surrender of
+final routers within 15 m of a ready enemy, rally / regroup / charge
+re-form anchored on a reachable man, slide memory (routers and standing
+units), separation of slot-followers near obstacles, routers in the stuck
+statistics. Probe, seed 7, sieges village / town / city / hill / castrum /
+polis / punic / oppidum + battle_2000 + bench_4000_hills, before -> after:
+
+| metric | before | after | threshold |
+|---|---|---|---|
+| rout jitter, stair / town / near obstacle / field | 78.8 / 6.0 / 1.1 / 0.4 % | 0.0 / 0.3 / 0.3 / 0.2 % | <= 5 % |
+| rout rev/step, stair / town | 80.1 / 8.4 % | 1.5 / 0.2 % | (rout-gate < 3 %) |
+| routing time stationary (not huddled) | 9.3 % (town 30, city 20, polis 15) | 0.0 % | <= 5 % |
+| stuck > 30 s (ready + routers) | 18 (router 149 s, ready 189 s) | 0 (router 0 s, ready 26 s) | 0 |
+| idle near obstacles jitter / rev | 2.3 / 22.0 % | 1.3 / 2.6 % | |
+| fight near obstacles / in town jitter | 4.2 / 2.6 % | 4.8 / 2.8 % | <= 3 % (phase C) |
+| inside drawn footprint / < 0.3 m | 3.53 / 2.38 % | 3.35 / 1.66 % | <= 0.2 % (phase B) |
+
+Seeds 8-10 (six of the maps): rout jitter 75-86 % (stair) / 3-7 % (town)
+-> <= 0.5 %, stationary 14-22 % -> 0 %, stuck > 30 s 11-32 -> 0; fights
+near obstacles 3.8-4.9 -> 3.9-4.9 % (noise between diverging battles;
+slide memory in contact made it 6-7 % and was left out). New determinism
+set pieces `--only=rout` (also in the full run; `--only=walls` runs the
+wall-order pieces alone): rout-wall (off the walk 9.4 s after breaking,
+rout jitter 0 %), rout-gate (a gate broken first; huddled at the refuge
+19 s after the break, rev/step 0.1 %, the 60 final routers give up to
+heavy foot within 15 m), trapped (huddled in 0.1 s, standing still, none
+in a blocked cell), each identical on repeat and across snapshot /
+restore taken while exit fields build. Goldens: the four flat digests
+unchanged; no settlement / landform trajectory was pinned. One AI
+outcome check re-pinned: determinism "crossing ford" (a river map, so it
+has exit fields) used battle seed 4242, where the AI attacker no longer
+got 50 men across by tick 3000 (a chaotic flip: over battle seeds 1-7 and
+4242 it crosses in 7 of 8 both before and after); now seed 5 (tick 927
+before, 931 after); and the coverage run `siege_eq_ring3` 4,500 -> 5,600
+ticks (it must see a gate broken: with the exit fields the AI's ram is
+burnt at 1772 and the battery breaks the gate at 5446, the ram broke it at
+2503 before; seeds 1-4 the gate falls at 2499-3493, was 2440-2753, a
+balance side effect to watch; without the fields it plays as before);
+campaign_sim 6x60 hashes unchanged (cdc1d805 32b83031 23f9ed4f 3237d82d
+a42fc685 b6fe6c2e). Cost (`tests/benchmark.gd`, desktop, mean ms a tick, before -> after;
+the battles' trajectories differ): bench_4000_city 4.02 -> 4.10 (march
+2.67 -> 2.93: the first generation builds then, about 0.4 ms a tick for
+its first 18 s; engaged 5.05 -> 5.12; max 8.4 -> 10.6), bench_4000_hills
+(landforms: no fields) 3.36 -> 3.41. The 8 sieges of the probe run alone,
+seed 7: 10.83 -> 11.05 ms summed (+2 %; per siege -13 to +10 %; the first
+cut of the separation, four neighbours every other tick, cost +8 %, up to
++19 %). Setup unchanged (the fields build in play); `restore()` +50-80 ms
+a generation (two at most); snapshots one byte a man bigger (`s_wf`).
+Open: phase B (clearance: men stand
+inside the drawn houses 3.4 %), phase C (fights at obstacles 4-5 %, town
+3 %); landform-only maps keep the unit flee vector (no fields); huddled
+routers are drawn as routing (no own icon); a scaled-down campaign
+battle counts men who gave up as remaining (`CBattle.outcome_from_result`
+scales killed / routed / withdrawn only; unscaled battles lose them).
+
 **Caribbean plan agreed 2026-10-14 (DESIGN "The Caribbean pack: ships,
 pirates, cover, asymmetry"):** sea battles real time with the wind;
 pirates as raiders with havens; armies embark on fleets (West only). Do

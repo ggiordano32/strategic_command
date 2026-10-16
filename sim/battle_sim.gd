@@ -1537,6 +1537,47 @@ var stat_blocked: int = 0         # unit-ticks an anchor stopped at an enemy
 var stat_queued: int = 0          # unit-ticks waiting behind fighting friends
 var stat_pass: int = 0            # unit-ticks passing through friends
 var stat_dodge: int = 0           # unit-ticks steering round a unit
+# Routers on settlement maps (docs/DESIGN.md "Routs among walls and houses";
+# docs/PATHING_SPEC.md phase A): each man flees down an exit field, integer
+# distances along the 2 m nav grid (10 a step to one of the 4 neighbours) to his
+# side's exit cells (field 0 / 1) or to a shut outer gate's inner mouth
+# (field 2 + g, the refuge of ROUT_INWARD). The fields of a generation are
+# pure functions of the static map and the gates' states (xf_gl / xf_gp,
+# bit g: gate g open): built XF_CELLS cells a tick from xf_t0 on, taking
+# over at xf_t0 + XF_TICKS (a gate changing starts a new generation).
+const XF_CELLS := 1000            # exit field cells settled a tick while a generation builds (about 0.4 ms desktop)
+const XF_TICKS := 250             # ... it takes over this long after it started (finished at once then if need be)
+const XF_INF := 1 << 30           # (a cell no exit is reached from)
+const HUDDLE_R := 30              # routers this near their refuge (field units: 6 m) huddle there
+const SURR_R := 15 * M            # a final router huddled with a ready enemy this near (box to box) gives up
+const SLIDE_HOLD := 5             # a man stalled against an obstacle follows it this many ticks (s_wf)
+const SEP_SLOT := M / 2           # men following their places near obstacles keep this far apart (a quarter push)
+const _DX8 := [1, 1, 0, -1, -1, -1, 0, 1]   # 8 directions: E SE S SW W NW N NE (y down)
+const _DY8 := [0, 1, 1, 1, 0, -1, -1, -1]
+var xf_t0: int = -1               # tick the pending generation of exit fields started (-1 none)
+var xf_gp: int = 0                # ... the gates open in it (bit g)
+var xf_gl: int = -1               # the gates open in the live generation (-1: none live yet)
+var _xf_live := PackedInt32Array()  # derived (skipped in snapshots, rebuilt by restore()): (2 + n_gates) fields of ob_w * ob_h
+var _xf_pend := PackedInt32Array()  # ... the generation building
+var _xb_pass := PackedByteArray()   # builder scratch: nav with the generation's gates
+var _xb_q := PackedInt32Array()     # ... the flood's queue of cells
+var _xb_f: int = 0                # ... the field building
+var _xb_i: int = 0                # ... its read index
+var _xb_n: int = 0                # ... and length
+var _xb_cmp: int = -1             # ... a refuge field keeps to this piece (all gates shut)
+var _xb_done: int = 1
+var _xb_gm: int = 0               # ... the generation's gates open
+var _u_xf := PackedInt32Array()   # scratch (per unit, set before use each tick): the field offset its routers walk down (-1 none)
+var u_xg := PackedInt32Array()    # a defending router's refuge with the exit fields: 0 not chosen, 1 none, 2 + g gate g's
+var u_hud := PackedInt32Array()   # routers huddled: 1 with no way out (where they are), 2 + g at shut gate g's refuge; 0 not
+var s_wf := PackedByteArray()     # per man, a slide's memory: dir 0-7 | 8 has dir | hold << 4 | 128 stalled last time
+var stat_rs_x := PackedInt32Array()  # diagnostics (not hashed): a router's centroid when it last got on (STUCK_DIST)
+var stat_rs_y := PackedInt32Array()
+var stat_rs_k := PackedInt32Array()  # ... ticks since (not huddled)
+var stat_rout_still: int = 0      # router-ticks still 10 s and more (not huddled)
+var stat_huddle: int = 0          # units that huddled
+var stat_hud_surr: int = 0        # men who gave up huddled
+var stat_wf: int = 0              # wall-follow holds started (slide memory)
 
 
 # ---------------------------------------------------------------- setup ---
@@ -1705,6 +1746,11 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	stat_stuck_u.fill(0)
 	stat_stuck_t.resize(n_units)
 	stat_stuck_t.fill(0)
+	for arr in [stat_rs_x, stat_rs_y, stat_rs_k, _u_xf]:
+		arr.resize(n_units)
+		arr.fill(0)
+	s_wf.resize(n)
+	s_wf.fill(0)
 	for arr in _siege_unit_arrays():
 		arr.resize(n_units)
 		arr.fill(0)
@@ -1984,6 +2030,16 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	# Line of sight: the grids and the first look (after the AI's deployment).
 	_vis_dep = 0
 	_setup_vis(scenario, units)
+	# Exit fields for routers (settlement maps): the first generation builds
+	# over the first XF_TICKS of the battle.
+	xf_t0 = -1
+	xf_gl = -1
+	xf_gp = 0
+	_xf_live = PackedInt32Array()
+	_xf_pend = PackedInt32Array()
+	_xb_done = 1
+	if obs_on != 0 and land_only == 0:
+		_xf_restart()
 
 
 func _soldier_arrays() -> Array:
@@ -2026,7 +2082,7 @@ func _stair_arrays() -> Array:
 ## Per-unit flow state (docs/DESIGN.md "Units flow into the space"; maps
 ## with buildings or walls; hashed only there).
 func _flow_arrays() -> Array:
-	return [u_stuck, u_srx, u_sry, u_sprog, u_flow, u_flt]
+	return [u_stuck, u_srx, u_sry, u_sprog, u_flow, u_flt, u_hud, u_xg]
 
 
 ## Per-unit war dog arrays (hashed only in battles with handlers, so the
@@ -3123,6 +3179,7 @@ func _gate_cells(g: int) -> void:
 			if obs[c] == MapGen.C_GATE + g:
 				nav[c] = _nav_of(obs[c])
 	nav_epoch += 1
+	_xf_restart()  # (the routers' exit fields: a new generation)
 
 
 ## Tree density 0-3 at (x, y).
@@ -3261,7 +3318,14 @@ func _near_obs(u: int) -> int:
 ## it (toward the trail point after the one nearest him, or the anchor
 ## after the newest); else he slides along one axis; else he stays. A man
 ## already inside a blocked cell may move anywhere (to get out).
-func _slide(u: int, ox: int, oy: int, nx: int, ny: int, mask: int) -> Vector2i:
+func _slide(u: int, ox: int, oy: int, nx: int, ny: int, mask: int, i: int = -1) -> Vector2i:
+	var r := _slide0(u, ox, oy, nx, ny, mask)
+	if i < 0 or u_wall[u] > 0 or u_stair[u] != 0:
+		return r  # (walls, stairs and ladders keep their own rules)
+	return _slide_mem(i, ox, oy, nx, ny, mask, r)
+
+
+func _slide0(u: int, ox: int, oy: int, nx: int, ny: int, mask: int) -> Vector2i:
 	var on_walk := false
 	if u_stair[u] == 1 or u_stair[u] == 3:
 		var here := nav_at(ox, oy)
@@ -3897,7 +3961,9 @@ func _regroup(u: int, back: bool = false) -> void:
 	var best_d := 1 << 40
 	var base := u_slot_base[u]
 	var ra := reach_at(u_ax[u], u_ay[u])
-	for s in u_alive[u]:
+	if not back:
+		best = _anchor_man(u)  # (the man nearest the middle on the piece most of them are on)
+	for s in (u_alive[u] if back else 0):
 		var i := slot_soldier[base + s]
 		if state[i] >= S_DEAD or (nav_at(pos_x[i], pos_y[i]) & MapGen.NAV_GROUND) == 0:
 			continue
@@ -4971,8 +5037,13 @@ func _town_lost() -> void:
 ## Routing unit u on a settlement map: run along a path to its own edge
 ## (round the walls and out through a gate), else straight away.
 func _flee_step(u: int) -> void:
-	if u_stair[u] == 1:
-		# Off the wall first: to the foot of the nearest stair.
+	if u_hud[u] != 0:
+		_hud_step(u)  # huddled: it stays (docs/DESIGN.md "Routs among walls and houses")
+		return
+	var stair := u_stair[u] == 1
+	if stair:
+		# Off the wall first: to the foot of the nearest stair (its men on
+		# the walkway walk the stair's trail; those down, the exit field).
 		var dp := stair_pt(u_sseg[u], u_send[u], 2)
 		var ddx := dp.x - u_cx[u]
 		var ddy := dp.y - u_cy[u]
@@ -4980,7 +5051,9 @@ func _flee_step(u: int) -> void:
 		if dd > 0:
 			u_flee_x[u] = ddx * FM.TRIG_ONE / dd
 			u_flee_y[u] = ddy * FM.TRIG_ONE / dd
-		return
+		if xf_gl < 0:
+			return
+	var rg := -1
 	var gx := u_cx[u]
 	var gy := field_h if u_side[u] == 0 else 0
 	if sea_on != 0 and u_side[u] == city_def:
@@ -4988,9 +5061,33 @@ func _flee_step(u: int) -> void:
 		var fp := sea_exit(u_cx[u])
 		gx = fp.x
 		gy = fp.y
-	if ROUT_INWARD != 0 and u_side[u] == city_def and n_gates > 0 \
+	if xf_gl >= 0 and ROUT_INWARD != 0 and u_side[u] == city_def and n_gates > 0:
+		# Exit fields: a refuge once chosen is kept (u_xg) till its gate
+		# opens, so its men do not turn about as the enemy moves (they
+		# huddle there, and give up if the enemy comes); with none, one is
+		# looked for every 5 s.
+		var xg := u_xg[u]
+		if xg >= 2 and g_state[xg - 2] != GATE_CLOSED:
+			xg = 0
+		if xg == 0 or (xg == 1 and (u + tick) % (5 * TICKS_PER_SECOND) == 0):
+			xg = 1
+			var wx := u_cx[u]
+			var wy := u_cy[u]
+			if stair:
+				var sf := stair_pt(u_sseg[u], u_send[u], 2)  # (from the wall: where its stair comes down)
+				wx = sf.x
+				wy = sf.y
+			if (veg_bits(wx, wy) & MapGen.V_URBAN) != 0:
+				xg = _rout_gate(u, wx, wy) + 2
+				if xg < 2:
+					xg = 1
+		u_xg[u] = xg
+		rg = xg - 2 if xg >= 2 else -1
+		if rg >= 0:
+			gx = g_ix[rg]
+			gy = g_iy[rg]
+	elif ROUT_INWARD != 0 and u_side[u] == city_def and n_gates > 0 \
 			and (veg_bits(u_cx[u], u_cy[u]) & MapGen.V_URBAN) != 0:
-		var rg := -1
 		if u_pn[u] > 0 and (u + tick) % TICKS_PER_SECOND != 0:
 			# (The gate is chosen again once a second; meanwhile the one the
 			# path goes to, while it is still shut.)
@@ -5003,23 +5100,26 @@ func _flee_step(u: int) -> void:
 		if rg >= 0:
 			gx = g_ix[rg]
 			gy = g_iy[rg]
-	u_ax[u] = u_cx[u]
-	u_ay[u] = u_cy[u]
-	var p := _path_point(u, gx, gy, true)
-	var dx := p.x - u_cx[u]
-	var dy := p.y - u_cy[u]
-	var d := FM.approx_len(dx, dy)
-	if d > 0:
-		u_flee_x[u] = dx * FM.TRIG_ONE / d
-		u_flee_y[u] = dy * FM.TRIG_ONE / d
+	if not stair:
+		u_ax[u] = u_cx[u]
+		u_ay[u] = u_cy[u]
+		var p := _path_point(u, gx, gy, true)
+		var dx := p.x - u_cx[u]
+		var dy := p.y - u_cy[u]
+		var d := FM.approx_len(dx, dy)
+		if d > 0:
+			u_flee_x[u] = dx * FM.TRIG_ONE / d
+			u_flee_y[u] = dy * FM.TRIG_ONE / d
+	if xf_gl >= 0:
+		_xf_unit(u, rg)
 
 
 ## A defending router inside the walls: the inside of the shut outer gate
 ## on its own ground farthest from any enemy (not out through the breach
 ## into the attackers); -1 none (no shut gate, or enemies within 30 m of
 ## every one).
-func _rout_gate(u: int) -> int:
-	var piece := reach_at(u_cx[u], u_cy[u])
+func _rout_gate(u: int, wx: int = -1, wy: int = -1) -> int:
+	var piece := reach_at(u_cx[u], u_cy[u]) if wx < 0 else reach_at(wx, wy)
 	var best := -1
 	var bd := 30 * M
 	for g in n_gates:
@@ -5033,6 +5133,579 @@ func _rout_gate(u: int) -> int:
 			best = g
 			bd = near
 	return best
+
+
+# ------------------------------------------- routers: exit fields, huddle ---
+# docs/DESIGN.md "Routs among walls and houses" (docs/PATHING_SPEC.md A1-A3).
+
+## The gates open now (bit g).
+func _gates_open() -> int:
+	var m := 0
+	for g in n_gates:
+		if g_state[g] != GATE_CLOSED:
+			m |= 1 << g
+	return m
+
+
+## A gate changed (or setup): a new generation of exit fields starts
+## building, for the gates as they are now.
+func _xf_restart() -> void:
+	if obs_on == 0 or land_only != 0 or ob_w <= 0:
+		return
+	xf_t0 = tick
+	xf_gp = _gates_open()
+	_xf_begin(xf_gp)
+
+
+## Once a tick while a generation builds: XF_CELLS more cells; at
+## xf_t0 + XF_TICKS it is finished (at once if need be) and takes over.
+func _xf_tick() -> void:
+	if tick >= xf_t0 + XF_TICKS:
+		_xf_build(1 << 30)
+		_xf_live = _xf_pend
+		_xf_pend = PackedInt32Array()
+		xf_gl = xf_gp
+		xf_t0 = -1
+	elif _xb_done == 0:
+		_xf_build(XF_CELLS)
+
+
+## restore(): the live generation and the one building, in full (pure
+## functions of the map and xf_gl / xf_gp).
+func _xf_restore() -> void:
+	_xf_live = PackedInt32Array()
+	_xf_pend = PackedInt32Array()
+	_xb_done = 1
+	if obs_on == 0 or land_only != 0 or ob_w <= 0:
+		return
+	if xf_gl >= 0:
+		_xf_begin(xf_gl)
+		_xf_build(1 << 30)
+		_xf_live = _xf_pend
+		_xf_pend = PackedInt32Array()
+	if xf_t0 >= 0:
+		_xf_begin(xf_gp)
+		_xf_build(1 << 30)
+
+
+## Start building the fields of a generation with the gates `mask` open.
+func _xf_begin(mask: int) -> void:
+	var nc := ob_w * ob_h
+	_xb_pass = nav.duplicate()
+	for g in n_gates:
+		var b := g * 4
+		var v := MapGen.NAV_GROUND if ((mask >> g) & 1) != 0 else 0
+		for j in range(g_bb[b + 1], g_bb[b + 3] + 1):
+			for i in range(g_bb[b], g_bb[b + 2] + 1):
+				var c := j * ob_w + i
+				if obs[c] == MapGen.C_GATE + g:
+					_xb_pass[c] = v
+	_xf_pend.resize((2 + n_gates) * nc)
+	_xf_pend.fill(XF_INF)
+	_xb_q.resize(nc)
+	_xb_f = -1
+	_xb_n = 0
+	_xb_i = 0
+	_xb_cmp = -1
+	_xb_done = 0
+	_xb_gm = mask
+
+
+## Seed the next field of the generation (its exit or refuge cells at 0);
+## done after the last.
+func _xf_next() -> void:
+	var nc := ob_w * ob_h
+	while true:
+		_xb_f += 1
+		if _xb_f >= 2 + n_gates:
+			_xb_done = 1
+			return
+		_xb_i = 0
+		_xb_n = 0
+		_xb_cmp = -1
+		var off := _xb_f * nc
+		var gnd := MapGen.NAV_GROUND
+		if _xb_f < 2:
+			# A side's exits: its own edge row (a coast's defenders: the land
+			# at either side edge).
+			if sea_on != 0 and _xb_f == city_def:
+				for j in ob_h:
+					for i in [0, ob_w - 1]:
+						var c: int = j * ob_w + i
+						if (_xb_pass[c] & gnd) != 0 and _xf_pend[off + c] != 0:
+							_xf_pend[off + c] = 0
+							_xb_q[_xb_n] = c
+							_xb_n += 1
+			else:
+				var j := ob_h - 1 if _xb_f == 0 else 0
+				for i in ob_w:
+					var c := j * ob_w + i
+					if (_xb_pass[c] & gnd) != 0:
+						_xf_pend[off + c] = 0
+						_xb_q[_xb_n] = c
+						_xb_n += 1
+		else:
+			# A refuge: the inner mouth of an outer gate shut in this
+			# generation, over the ground inside (its piece with every gate shut).
+			var g := _xb_f - 2
+			if g_cit[g] != 0 or ((_xb_gm >> g) & 1) != 0:
+				continue
+			var ci := g_ix[g] >> 11
+			var cj := g_iy[g] >> 11
+			var sc0 := -1
+			for r in 3:
+				for dj in range(-r, r + 1):
+					for di in range(-r, r + 1):
+						var i := ci + di
+						var j := cj + dj
+						if sc0 >= 0 or maxi(absi(di), absi(dj)) != r or i < 0 or j < 0 or i >= ob_w or j >= ob_h:
+							continue
+						var c := j * ob_w + i
+						if (_xb_pass[c] & gnd) != 0 and (n_cmp == 0 or cmp[c] >= 0):
+							sc0 = c
+			if sc0 < 0:
+				continue
+			if n_cmp > 0:
+				_xb_cmp = cmp[sc0]
+			_xf_pend[off + sc0] = 0
+			_xb_q[0] = sc0
+			_xb_n = 1
+		if _xb_n > 0:
+			return
+
+
+## Settle up to `budget` cells of the generation building (a breadth-first
+## flood over the 4 neighbours, 10 a 2 m step: distances along the grid).
+func _xf_build(budget: int) -> void:
+	var w := ob_w
+	var h := ob_h
+	var nc := w * h
+	var gnd := MapGen.NAV_GROUND
+	var pa := _xb_pass
+	var cm := cmp
+	while _xb_done == 0 and budget > 0:
+		if _xb_i >= _xb_n:
+			_xf_next()
+			continue
+		var off := _xb_f * nc
+		var rc := _xb_cmp
+		var stop := mini(_xb_n, _xb_i + budget)
+		budget -= stop - _xb_i
+		while _xb_i < stop:
+			var c := _xb_q[_xb_i]
+			_xb_i += 1
+			var d10 := _xf_pend[off + c] + 10
+			var x := c % w
+			var k := c + 1
+			if x < w - 1 and _xf_pend[off + k] == XF_INF and (pa[k] & gnd) != 0 and (rc < 0 or cm[k] == rc):
+				_xf_pend[off + k] = d10
+				_xb_q[_xb_n] = k
+				_xb_n += 1
+			k = c + w
+			if k < nc and _xf_pend[off + k] == XF_INF and (pa[k] & gnd) != 0 and (rc < 0 or cm[k] == rc):
+				_xf_pend[off + k] = d10
+				_xb_q[_xb_n] = k
+				_xb_n += 1
+			k = c - 1
+			if x > 0 and _xf_pend[off + k] == XF_INF and (pa[k] & gnd) != 0 and (rc < 0 or cm[k] == rc):
+				_xf_pend[off + k] = d10
+				_xb_q[_xb_n] = k
+				_xb_n += 1
+			k = c - w
+			if k >= 0 and _xf_pend[off + k] == XF_INF and (pa[k] & gnd) != 0 and (rc < 0 or cm[k] == rc):
+				_xf_pend[off + k] = d10
+				_xb_q[_xb_n] = k
+				_xb_n += 1
+
+
+## The live field at offset `off` under (x, y) (XF_INF: none there).
+func _xf_val(off: int, x: int, y: int) -> int:
+	if off < 0 or x < 0 or y < 0:
+		return XF_INF
+	var i := x >> 11
+	var j := y >> 11
+	if i >= ob_w or j >= ob_h:
+		return XF_INF
+	return _xf_live[off + j * ob_w + i]
+
+
+## Which way a man at (x, y) goes down the live field at `off`: the
+## direction (0-7: _DX8 / _DY8) of the lowest of his cell's 8 neighbours
+## below it (a diagonal only where both cells beside the corner are in
+## the field; ties: the lower direction); 8 at an exit (0); -1 none (no
+## neighbour lower: off the field and none of it next to him).
+func _xf_dir(off: int, x: int, y: int) -> int:
+	if x < 0 or y < 0:
+		return -1
+	var w := ob_w
+	var i := x >> 11
+	var j := y >> 11
+	if i >= w or j >= ob_h:
+		return -1
+	var f := _xf_live
+	var c := off + j * w + i
+	var v := f[c]
+	if v == 0:
+		return 8
+	var ve := f[c + 1] if i + 1 < w else XF_INF
+	var vs := f[c + w] if j + 1 < ob_h else XF_INF
+	var vw := f[c - 1] if i > 0 else XF_INF
+	var vn := f[c - w] if j > 0 else XF_INF
+	var best := -1
+	var bv := v
+	if ve < bv:
+		bv = ve
+		best = 0
+	if ve < XF_INF and vs < XF_INF and f[c + w + 1] < bv:
+		bv = f[c + w + 1]
+		best = 1
+	if vs < bv:
+		bv = vs
+		best = 2
+	if vs < XF_INF and vw < XF_INF and f[c + w - 1] < bv:
+		bv = f[c + w - 1]
+		best = 3
+	if vw < bv:
+		bv = vw
+		best = 4
+	if vw < XF_INF and vn < XF_INF and f[c - w - 1] < bv:
+		bv = f[c - w - 1]
+		best = 5
+	if vn < bv:
+		bv = vn
+		best = 6
+	if vn < XF_INF and ve < XF_INF and f[c - w + 1] < bv:
+		best = 7
+	return best
+
+
+## Routing unit u (not huddled) with the live fields: the field its men walk
+## down this tick (_u_xf: the refuge of gate rg if it was shut in that
+## generation, else its side's exits); once a second, whether it huddles:
+## at the refuge once half its men on the ground are within HUDDLE_R of
+## it; where it is when none of them has a way out (no exit, no refuge).
+func _xf_unit(u: int, rg: int) -> void:
+	var nc := ob_w * ob_h
+	var off := u_side[u] * nc
+	var refuge := rg >= 0 and g_cit[rg] == 0 and ((xf_gl >> rg) & 1) == 0
+	if refuge:
+		off = (2 + rg) * nc
+	_u_xf[u] = off
+	if (u + tick) % TICKS_PER_SECOND != 0 or u_amok[u] != 0:
+		return  # (a beast running amok never huddles)
+	var n_g := 0
+	var n_fin := 0
+	var n_near := 0
+	var base := u_slot_base[u]
+	for s in u_alive[u]:
+		var i := slot_soldier[base + s]
+		if (nav_at(pos_x[i], pos_y[i]) & MapGen.NAV_GROUND) == 0 \
+				or (u_stair[u] == 1 and obs_kind(pos_x[i], pos_y[i]) == MapGen.C_STAIR):
+			continue  # (on the walkway or the stair, still coming down)
+		n_g += 1
+		var v := _xf_val(off, pos_x[i], pos_y[i])
+		if v < XF_INF:
+			n_fin += 1
+			if v <= HUDDLE_R:
+				n_near += 1
+	if n_g == 0:
+		return
+	if refuge and n_near * 2 >= n_g:
+		_hud_start(u, 2 + rg, g_ix[rg], g_iy[rg])
+		return
+	if n_fin > 0:
+		return
+	if refuge:
+		# (No way to the refuge from where they are: out by the exits.)
+		var so := u_side[u] * nc
+		for s in u_alive[u]:
+			var i := slot_soldier[base + s]
+			if _xf_val(so, pos_x[i], pos_y[i]) < XF_INF:
+				_u_xf[u] = so
+				return
+	var a := _anchor_man(u)
+	if a >= 0:
+		_hud_start(u, 1, pos_x[a], pos_y[a])
+
+
+## Routing unit u huddles (kind: 1 nowhere to go, 2 + g at gate g's refuge)
+## round (x, y): its places packed round it, facing the nearest enemy.
+func _hud_start(u: int, kind: int, x: int, y: int) -> void:
+	u_hud[u] = kind
+	var p := open_snap(self, x, y, _ground_mask(u))
+	u_ax[u] = p.x
+	u_ay[u] = p.y
+	var e := _nearest_enemy_unit(u, false)
+	if e >= 0:
+		u_face[u] = FM.atan2_a(u_cy[e] - p.y, u_cx[e] - p.x)
+	_huddle_slots(u)
+	stat_huddle += 1
+
+
+## A huddled unit, every tick: the field its stragglers walk down (its
+## refuge's); once a second: out again when the way opens (its gate open
+## or broken, an exit in the live fields), else a final rout (no rally
+## left) with a ready enemy within SURR_R gives up: its men are taken.
+func _hud_step(u: int) -> void:
+	var nc := ob_w * ob_h
+	var hk := u_hud[u]
+	_u_xf[u] = hk * nc if hk >= 2 and xf_gl >= 0 else -1
+	if (u + tick) % TICKS_PER_SECOND != 0:
+		return
+	var leave := false
+	if hk >= 2:
+		leave = g_state[hk - 2] != GATE_CLOSED
+	elif xf_gl >= 0:
+		var so := u_side[u] * nc
+		var base := u_slot_base[u]
+		for s in u_alive[u]:
+			var i := slot_soldier[base + s]
+			if _xf_val(so, pos_x[i], pos_y[i]) < XF_INF:
+				leave = true
+				break
+	if leave:
+		u_hud[u] = 0
+		u_ax[u] = u_cx[u]
+		u_ay[u] = u_cy[u]
+		return
+	if u_routs[u] > MAX_ROUTS:
+		var e := _nearest_enemy_unit(u, true)
+		if e >= 0 and _box_gap(u, e) <= SURR_R:
+			var men := u_alive[u]
+			var base2 := u_slot_base[u]
+			while u_alive[u] > 0:
+				_remove(slot_soldier[base2 + u_alive[u] - 1], GONE_SURR)
+			stat_hud_surr += men
+
+
+## A huddle's places: the open 2 m cells round the anchor (a flood, +x -x
+## +y -y, at most max(FLOW_CELLS, men) cells), each taking its share of
+## men at FLOW_PACK % of the formation's density, in slot order.
+func _huddle_slots(u: int) -> void:
+	var base := u_slot_base[u]
+	var alive := u_alive[u]
+	if alive <= 0:
+		return
+	var ax := u_ax[u]
+	var ay := u_ay[u]
+	var gm := _ground_mask(u)
+	var ty := u_type[u]
+	var cap := clampi(4194304 * FLOW_PACK / 100 / maxi(t_fsp[ty] * t_rsp[ty], 1), 1, 6)
+	_fl_stamp += 1
+	if _fl_stamp >= 1 << 22:
+		_fl_stamp = 1
+		_fl_mark.fill(0)
+	var stp := _fl_stamp << 8
+	var most := maxi(FLOW_CELLS, alive)
+	if _fl_q.size() < most:
+		_fl_q.resize(most)
+	var spots := [Vector2i(-512, -512), Vector2i(512, 512), Vector2i(512, -512), Vector2i(-512, 512),
+		Vector2i(0, 0), Vector2i(0, -768)]
+	var k0 := clampi(ay >> 11, 0, ob_h - 1) * ob_w + clampi(ax >> 11, 0, ob_w - 1)
+	_fl_q[0] = k0
+	_fl_mark[k0] = stp | 16
+	var qn := 1
+	var qh := 0
+	var s := 0
+	while qh < qn and s < alive:
+		var k := _fl_q[qh]
+		qh += 1
+		var ki := k % ob_w
+		var kj := k / ob_w
+		var cx := ki * 2048 + 1024
+		var cy := kj * 2048 + 1024
+		var used := 0
+		while used < cap and s < alive:
+			var sp: Vector2i = spots[used]
+			off_x[base + s] = cx + sp.x - ax
+			off_y[base + s] = cy + sp.y - ay
+			used += 1
+			s += 1
+		for nb in 4:
+			if qn >= most:
+				break
+			var ni := ki + (1 if nb == 0 else (-1 if nb == 1 else 0))
+			var nj := kj + (1 if nb == 2 else (-1 if nb == 3 else 0))
+			if ni < 0 or nj < 0 or ni >= ob_w or nj >= ob_h:
+				continue
+			var kk := nj * ob_w + ni
+			if (_fl_mark[kk] & ~255) == stp or (nav[kk] & gm) == 0:
+				continue
+			_fl_mark[kk] = stp | 16
+			_fl_q[qn] = kk
+			qn += 1
+	while s < alive:
+		# (No more room: the rest stand at the anchor.)
+		off_x[base + s] = 0
+		off_y[base + s] = 0
+		s += 1
+
+
+## The man of unit u its anchor goes to when it gathers again (rally,
+## regroup, a charge's re-form on maps with obstacles): the one nearest
+## its men's middle on open ground of the piece most of them stand on;
+## -1 none on open ground.
+func _anchor_man(u: int) -> int:
+	var base := u_slot_base[u]
+	var alive := u_alive[u]
+	var pc := PackedInt32Array()
+	pc.resize(alive)
+	for s in alive:
+		var i := slot_soldier[base + s]
+		if state[i] >= S_DEAD or (nav_at(pos_x[i], pos_y[i]) & MapGen.NAV_GROUND) == 0:
+			pc[s] = -3
+		else:
+			pc[s] = reach_at(pos_x[i], pos_y[i])
+	# Men per piece (pieces in the order first met; few of them).
+	var pid := PackedInt32Array()
+	var pn := PackedInt32Array()
+	for s in alive:
+		var p := pc[s]
+		if p == -3:
+			continue
+		var k := pid.find(p)
+		if k < 0:
+			pid.append(p)
+			pn.append(1)
+		else:
+			pn[k] += 1
+	var bp := -3
+	var bn := 0
+	for k in pid.size():
+		if pn[k] > bn:
+			bn = pn[k]
+			bp = pid[k]
+	if bn == 0:
+		return -1
+	var best := -1
+	var best_d := 1 << 40
+	for s in alive:
+		if pc[s] != bp:
+			continue
+		var i := slot_soldier[base + s]
+		var d := FM.approx_len(pos_x[i] - u_cx[u], pos_y[i] - u_cy[u])
+		if d < best_d:
+			best_d = d
+			best = i
+	return best
+
+
+## Diagnostics (not hashed): a router not huddled whose men's middle has
+## stayed within STUCK_DIST counts in the stuck statistics as a ready unit
+## does (stat_stuck_u, stat_stuck_max) and, from 10 s on, in stat_rout_still.
+func _rout_stats(u: int) -> void:
+	if u_hud[u] != 0 or FM.approx_len(u_cx[u] - stat_rs_x[u], u_cy[u] - stat_rs_y[u]) > STUCK_DIST:
+		stat_rs_x[u] = u_cx[u]
+		stat_rs_y[u] = u_cy[u]
+		stat_rs_k[u] = 0
+		return
+	var k := stat_rs_k[u] + 1
+	stat_rs_k[u] = k
+	if k >= 10 * TICKS_PER_SECOND:
+		stat_rout_still += 1
+	if k > stat_stuck_u[u]:
+		stat_stuck_u[u] = k
+		if k > stat_stuck_max:
+			stat_stuck_max = k
+
+
+## Slide with memory (docs/PATHING_SPEC.md A5): man i stepping from
+## (ox, oy) toward (nx, ny), `r` where the slide put him. Stalled twice
+## running, or sliding back the way his last slide went (a 2-cycle in a
+## corner), he follows the obstacle for SLIDE_HOLD ticks while that way is
+## open: 90 degrees off his wanted step (the side he went along it last,
+## else by i & 1), else 135, then the other side.
+func _slide_mem(i: int, ox: int, oy: int, nx: int, ny: int, mask: int, r: Vector2i) -> Vector2i:
+	var w := s_wf[i]
+	var w0 := w
+	if (w & 112) != 0:
+		var st0 := maxi(FM.approx_len(nx - ox, ny - oy), M / 4)
+		var hd := w & 7
+		var hx := ox + _dir_step(hd, st0, true)
+		var hy := oy + _dir_step(hd, st0, false)
+		if (nav_at(hx, hy) & mask) != 0:
+			s_wf[i] = (w & 15) | ((((w >> 4) & 7) - 1) << 4)
+			return Vector2i(hx, hy)
+		w &= 15  # (the way along it ends: the hold is over)
+	var trig := false
+	if r.x == ox and r.y == oy:
+		if (w & 128) == 0:
+			s_wf[i] = (w & 15) | 128
+			return r
+		trig = true
+	else:
+		var rd := _dir8(r.x - ox, r.y - oy)
+		if (w & 8) != 0:
+			var df := (rd - (w & 7)) & 7
+			trig = df >= 3 and df <= 5
+		if not trig:
+			s_wf[i] = rd | 8
+			return r
+	var want := _dir8(nx - ox, ny - oy)
+	var side := 2 if (i & 1) == 0 else 6
+	if (w0 & 8) != 0 and (((w0 & 7) - want) & 7) == 8 - side:
+		side = 8 - side  # (the way he went along it last: on that way, round its end)
+	var st := maxi(FM.approx_len(nx - ox, ny - oy), M / 4)
+	for q in 4:
+		# Along it either way, square to the step; then a little back
+		# from that (a diagonal face is a staircase of cells).
+		var sd := side if q < 2 else 8 - side
+		var dc := (want + sd + (0 if (q & 1) == 0 else (1 if sd == 2 else -1))) & 7
+		var qx := ox + _dir_step(dc, st, true)
+		var qy := oy + _dir_step(dc, st, false)
+		if (nav_at(qx, qy) & mask) != 0:
+			s_wf[i] = dc | 8 | ((SLIDE_HOLD - 1) << 4)
+			stat_wf += 1
+			return Vector2i(qx, qy)
+	s_wf[i] = (w & 15) | 128
+	return r
+
+
+## Man i's step from (ox, oy) to (nx, ny) is open, but he slid along an
+## obstacle a moment ago (s_wf): holding along it, he keeps on that way
+## while it is open; a step straight back against the way the slide took
+## him (he would bounce between the obstacle and his place: the 2-cycle a
+## corner makes) becomes a hold that way instead. Otherwise the memory
+## is cleared.
+func _free_mem(i: int, ox: int, oy: int, nx: int, ny: int, mask: int) -> Vector2i:
+	var w := s_wf[i]
+	var hd := w & 7
+	var hold := (w >> 4) & 7
+	if hold == 0 and (w & 8) != 0:
+		var df := (_dir8(nx - ox, ny - oy) - hd) & 7
+		if df >= 3 and df <= 5:
+			hold = SLIDE_HOLD
+			stat_wf += 1
+	if hold > 0:
+		var st := FM.approx_len(nx - ox, ny - oy)
+		var hx := ox + _dir_step(hd, st, true)
+		var hy := oy + _dir_step(hd, st, false)
+		if (nav_at(hx, hy) & mask) != 0:
+			s_wf[i] = hd | 8 | ((hold - 1) << 4)
+			return Vector2i(hx, hy)
+	s_wf[i] = 0
+	return Vector2i(nx, ny)
+
+
+## The nearest of the 8 directions (_DX8 / _DY8) to (dx, dy) (0: E for the zero vector).
+static func _dir8(dx: int, dy: int) -> int:
+	var ax := absi(dx)
+	var ay := absi(dy)
+	if ax * 5 >= ay * 12:
+		return 0 if dx >= 0 else 4
+	if ay * 5 >= ax * 12:
+		return 2 if dy >= 0 else 6
+	if dx >= 0:
+		return 1 if dy >= 0 else 7
+	return 3 if dy >= 0 else 5
+
+
+## Component of a step of length `st` in direction dc (0-7).
+static func _dir_step(dc: int, st: int, x_axis: bool) -> int:
+	var k: int = _DX8[dc] if x_axis else _DY8[dc]
+	if (dc & 1) != 0:
+		return k * st * 724 / 1024
+	return k * st
 
 
 ## Tree depth along a flat shot from (x0, y0) to (x1, y1): the distance at
@@ -6040,6 +6713,8 @@ func step() -> void:
 	if n_eng > 0:
 		e_px = e_x.duplicate()
 		e_py = e_y.duplicate()
+	if xf_t0 >= 0:
+		_xf_tick()
 	_update_units()
 	_update_contacts()
 	_build_grid()
@@ -6411,8 +7086,11 @@ func _update_units() -> void:
 				stat_refill_broken += 1  # routed: the refill is abandoned
 				u_rprog[u] = 0
 				u_refill[u] = 0
+			_u_xf[u] = -1
 			if oon and land_only == 0 and u_state[u] == U_ROUTING and u_alive[u] > 0 and (ch_on == 0 or u_hold[u] <= tick):
 				_flee_step(u)
+			if oon and u_state[u] == U_ROUTING and u_alive[u] > 0:
+				_rout_stats(u)
 			continue
 		var ty := u_type[u]
 		var cls := u_cls[u]
@@ -6943,6 +7621,12 @@ func _charge_state(u: int) -> void:
 			var depth := unit_depth(u)
 			u_ax[u] = clampi(u_cx[u] + (FM.cos_a(u_face[u]) * depth / 2 / FM.TRIG_ONE), 0, field_w)
 			u_ay[u] = clampi(u_cy[u] + (FM.sin_a(u_face[u]) * depth / 2 / FM.TRIG_ONE), 0, field_h)
+			if obs_on != 0 and (nav_at(u_ax[u], u_ay[u]) & _ground_mask(u)) == 0:
+				# (That point in a rock or a house: round a man its riders can reach.)
+				var am := _anchor_man(u)
+				if am >= 0:
+					u_ax[u] = pos_x[am]
+					u_ay[u] = pos_y[am]
 			u_dface[u] = u_face[u]
 			u_dirty[u] = 1
 			_compute_offsets(u)
@@ -7272,6 +7956,7 @@ func _update_soldiers() -> void:
 	var oys := off_y
 	var fw := field_w
 	var fh := field_h
+	var swf := s_wf  # (read only here: _slide_mem / _free_mem write the member)
 	var tone := FM.TRIG_ONE  # fixed-point divisor: truncation is symmetric under mirroring (>> floors)
 	# Forward or reverse unit order, chosen by the sim's RNG each tick, so
 	# neither side gains from acting first. (Alternating by tick parity was
@@ -7326,20 +8011,93 @@ func _update_soldiers() -> void:
 			var rmaxy := 0
 			var rsx := 0
 			var rsy := 0
+			# Settlement maps (docs/DESIGN.md "Routs among walls and houses"):
+			# each man down his unit's exit field (_u_xf); off the wall by
+			# the stair's trail; huddled, to his place round the refuge.
+			var xfo := _u_xf[u] if obs_on != 0 else -1
+			var hud := u_hud[u] if obs_on != 0 else 0
+			var smv := ob and u_stair[u] == 1
+			var rax := u_ax[u]
+			var ray := u_ay[u]
+			var hs := 0 if rs == 0 else walk
+			var xside := (xfo / (obw * ob_h)) if xfo >= 0 else -1
 			for s in alive:
 				var i := ss[base + s]
 				var jitter := ((i * 37) & 15) - 7  # per-soldier spread
 				var fx := flx - fly * jitter / 24
 				var fy := fly + flx * jitter / 24
-				var x := clampi(px[i] + ((fx * rs) / tone), 0, fw)
-				var y := clampi(py[i] + ((fy * rs) / tone), 0, fh)
-				if ob and (navg[mini(y >> 11, obh1) * obw + mini(x >> 11, obw1)] & mask) == 0:
-					var sl := _slide(u, px[i], py[i], x, y, mask)
+				var rmode := 0  # 0 the unit's flee vector, 1 a direction (fx, fy), 2 / 3 to (tx, ty2) at rs / hs, 4 he stays
+				var mm := mask
+				var tx := 0
+				var ty2 := 0
+				if smv or hud != 0 or xfo >= 0:
+					var ox := px[i]
+					var oy := py[i]
+					if smv and ((navg[mini(oy >> 11, obh1) * obw + mini(ox >> 11, obw1)] & (NAV_WALK | NAV_TOWER)) != 0 \
+							or obs_kind(ox, oy) == MapGen.C_STAIR):
+						# Off the wall man by man: the stair's trail.
+						var sgo := _stair_goal(u, ox, oy)
+						tx = sgo.x
+						ty2 = sgo.y
+						mm = _stair_mask(u, ox, oy, mask, 1)
+						rmode = 2
+					elif hud != 0 and (hud == 1 or xfo < 0 or _xf_val(xfo, ox, oy) <= 2 * HUDDLE_R):
+						tx = rax + oxs[base + s]
+						ty2 = ray + oys[base + s]
+						rmode = 3
+					elif xfo >= 0:
+						var dc := _xf_dir(xfo, ox, oy)
+						if dc >= 0 and dc < 8:
+							fx = _DX8[dc] * (tone if (dc & 1) == 0 else 2896)
+							fy = _DY8[dc] * (tone if (dc & 1) == 0 else 2896)
+							var fx0 := fx
+							fx -= fy * jitter / 96
+							fy += fx0 * jitter / 96
+							rmode = 1
+						elif dc == 8:
+							if xside >= 2:
+								rmode = 4  # at the refuge: he stays
+							else:
+								# At an exit: on out over the edge.
+								fx = 0
+								fy = tone if xside == 0 else -tone
+								if sea_on != 0 and xside == city_def:
+									fy = 0
+									fx = -tone if ox < fw / 2 else tone
+								rmode = 1
+				var x: int
+				var y: int
+				if rmode == 2 or rmode == 3:
+					var tdx := tx - px[i]
+					var tdy := ty2 - py[i]
+					var td := FM.approx_len(tdx, tdy)
+					var sp := rs if rmode == 2 else hs
+					if td == 0 or sp == 0:
+						rmode = 4
+						x = px[i]
+						y = py[i]
+					else:
+						fx = tdx * tone / td
+						fy = tdy * tone / td
+						if td <= sp:
+							x = clampi(tx, 0, fw)
+							y = clampi(ty2, 0, fh)
+						else:
+							x = clampi(px[i] + tdx * sp / td, 0, fw)
+							y = clampi(py[i] + tdy * sp / td, 0, fh)
+				elif rmode == 4:
+					x = px[i]
+					y = py[i]
+				else:
+					x = clampi(px[i] + ((fx * rs) / tone), 0, fw)
+					y = clampi(py[i] + ((fy * rs) / tone), 0, fh)
+				if ob and rmode != 4 and (navg[mini(y >> 11, obh1) * obw + mini(x >> 11, obw1)] & mm) == 0:
+					var sl := _slide(u, px[i], py[i], x, y, mm, i)
 					x = sl.x
 					y = sl.y
 				px[i] = x
 				py[i] = y
-				fc[i] = FM.atan2_a(fy, fx)
+				fc[i] = face if rmode == 4 or rmode == 3 else FM.atan2_a(fy, fx)
 				if st[i] == S_DOWN:
 					st[i] = S_ROUTING
 				rsx += x
@@ -7384,7 +8142,14 @@ func _update_soldiers() -> void:
 		if ob:
 			stair_mv = u_stair[u] if u_stair[u] == 1 or u_stair[u] == 3 or u_stair[u] == ST_LADDER else 0
 		if u_contact[u] == 0 and u_down[u] == 0 and u_charge[u] == 0:
-			# Fast path: slot following only (no separation, no search).
+			# Fast path: slot following only (no search; separation only near
+			# obstacles, from the men beside and behind in the formation).
+			var sep_f := 0
+			# (Slide memory, A5: men of a unit standing, its places cut off by
+			# an obstacle; not a unit on the move, which has its trail.)
+			var wf_on := ob and u_order[u] == O_NONE and u_wall[u] == 0 and u_stair[u] == 0
+			if ob and u_wall[u] == 0 and stair_mv == 0:
+				sep_f = maxi(mini(files_of(u), alive), 1)
 			for s in alive:
 				var k := base + s
 				var i := ss[k]
@@ -7427,11 +8192,36 @@ func _update_soldiers() -> void:
 				else:
 					x = clampi(x + dx * spd / d, 0, fw)
 					y = clampi(y + dy * spd / d, 0, fh)
+				if sep_f > 0 and ((tick + i) & 3) == 0:
+					# Near obstacles men making for their places do not stack on
+					# the man beside or ahead of them (SEP_SLOT, a quarter push,
+					# every fourth tick; A6).
+					for q in 2:
+						var s2 := s - 1 if q == 0 else s - sep_f
+						if s2 < 0:
+							continue
+						var j6 := ss[base + s2]
+						var sx6 := x - px[j6]
+						var sy6 := y - py[j6]
+						if absi(sx6) < SEP_SLOT and absi(sy6) < SEP_SLOT:
+							var sd6 := FM.approx_len(sx6, sy6)
+							if sd6 < SEP_SLOT:
+								if sd6 == 0:
+									sx6 = (i & 1) * 2 - 1
+									sy6 = 0
+									sd6 = 1
+								var push6 := (SEP_SLOT - sd6) >> 2
+								x = clampi(x + sx6 * push6 / sd6, 0, fw)
+								y = clampi(y + sy6 * push6 / sd6, 0, fh)
 				var mm := mask if stair_mv == 0 else _stair_mask(u, px[i], py[i], mask, stair_mv)
 				if ob and (navg[mini(y >> 11, obh1) * obw + mini(x >> 11, obw1)] & mm) == 0:
-					var sl2 := _slide(u, px[i], py[i], x, y, mm)
+					var sl2 := _slide(u, px[i], py[i], x, y, mm, i if wf_on else -1)
 					x = sl2.x
 					y = sl2.y
+				elif wf_on and swf[i] != 0:
+					var fm2 := _free_mem(i, px[i], py[i], x, y, mm)
+					x = fm2.x
+					y = fm2.y
 				px[i] = x
 				py[i] = y
 				sumx += x
@@ -7897,6 +8687,28 @@ func _update_soldiers() -> void:
 						var capw := _cap_lead(x, y, nx, ny, plw.x, plw.y, fcos, fsin, 1 << 30, lead)
 						nx = capw.x
 						ny = capw.y
+					elif ob and u_wall[u] == 0 and stair_mv == 0 and ((tk + i) & 1) == 0:
+						# Near obstacles the men making for their places do not
+						# stack either (SEP_SLOT, a quarter push; docs/PATHING_SPEC.md A6).
+						var c5 := clampi((ny >> gs) * gw + (nx >> gs), 0, gmax)
+						var j5 := own_head[c5]
+						var checked5 := 0
+						while j5 >= 0 and checked5 < 10:
+							if j5 != i and st[j5] < S_DEAD:
+								var sx5 := nx - px[j5]
+								var sy5 := ny - py[j5]
+								if absi(sx5) < SEP_SLOT and absi(sy5) < SEP_SLOT:
+									var sd5 := FM.approx_len(sx5, sy5)
+									if sd5 < SEP_SLOT:
+										if sd5 == 0:
+											sx5 = (i & 1) * 2 - 1
+											sy5 = 0
+											sd5 = 1
+										var push5 := (SEP_SLOT - sd5) >> 2
+										nx += sx5 * push5 / sd5
+										ny += sy5 * push5 / sd5
+							j5 = gnext[j5]
+							checked5 += 1
 				fc[i] = face
 				if is_cav:
 					# Riders keep their own momentum a moment after the unit
@@ -11024,6 +11836,8 @@ func _start_rout(u: int) -> void:
 		stat_aic[u_side[u] * AIProfile.N_COUNTERS + AIProfile.C_MISSILE_ROUTS] += 1
 	u_state[u] = U_ROUTING
 	u_routs[u] += 1
+	u_hud[u] = 0
+	u_xg[u] = 0
 	if t_cmd_loss[u_type[u]] > 0 or t_cmd_loss_r[u_type[u]] > 0:
 		_cmd_fall(u)  # the general flees: the army is shaken
 	if t_amok[u_otype[u]] != 0:
@@ -11078,10 +11892,19 @@ func _rally(u: int) -> void:
 	u_dface[u] = face
 	u_ax[u] = u_cx[u]
 	u_ay[u] = u_cy[u]
+	u_hud[u] = 0
 	if u_stair[u] == 1:
 		var dp := stair_pt(u_sseg[u], u_send[u], 2)
 		u_ax[u] = dp.x  # still coming down: gather at the stair's foot
 		u_ay[u] = dp.y
+	elif obs_on != 0:
+		# Round a man its men can reach (their middle can lie behind a house
+		# or a cliff from half of them), its places flowing round what cuts them.
+		var am := _anchor_man(u)
+		if am >= 0:
+			u_ax[u] = pos_x[am]
+			u_ay[u] = pos_y[am]
+		u_flt[u] = -FLOW_EVERY
 	u_order[u] = O_NONE
 	u_run[u] = 0
 	u_dirty[u] = 1
@@ -12358,6 +13181,8 @@ func result() -> Dictionary:
 			r["reserve"] = 1
 		elif rsv_on != 0 and u_arr[u] >= 0:
 			r["arrived"] = u_arr[u]
+		if ch_on == 0 and u_surr[u] > 0:
+			r["surrendered"] = u_surr[u]  # routers huddled with no way out who gave up
 		if ch_on != 0:
 			# Heroes and agents: "char" 1, "alive" 1 unless he was killed
 			# (withdrawn or still on the field: alive), "ci" his place in his
@@ -12376,7 +13201,7 @@ func result() -> Dictionary:
 		var t: Dictionary = sides[u_side[u]]
 		for k in ["started", "killed", "routed_off", "withdrawn", "remaining"]:
 			t[k] = int(t[k]) + int(r[k])
-		if ch_on != 0:
+		if ch_on != 0 or u_surr[u] > 0:
 			t["surrendered"] = int(t.get("surrendered", 0)) + u_surr[u]
 	if ch_on != 0:
 		for s in 2:
@@ -12796,7 +13621,9 @@ const _SNAP_SKIP := {"ter_h": true, "ter_gx": true, "ter_gy": true, "ter_info": 
 	"ng_y": true, "ng_gate": true, "ng_e0": true, "ng_to": true, "ng_w": true, "_dist_cache": true,
 	"g_hw": true, "g_cit": true, "ws_e": true, "ws_fl": true, "sea_flee": true, "ws_nb": true,
 	"rv": true, "riv": true,
-	"ws_jx": true, "ws_jy": true, "_lw_x": true, "_lw_y": true, "_fl_mark": true, "_rc_tk": true, "_rc_n": true, "_rc_ok": true, "cmp": true, "n_cmp": true, "g_cmp": true, "_croot": true, "_croot_ep": true}
+	"ws_jx": true, "ws_jy": true, "_lw_x": true, "_lw_y": true, "_fl_mark": true, "_rc_tk": true, "_rc_n": true, "_rc_ok": true, "cmp": true, "n_cmp": true, "g_cmp": true, "_croot": true, "_croot_ep": true,
+	"_xf_live": true, "_xf_pend": true, "_xb_pass": true, "_xb_q": true, "_xb_f": true,
+	"_xb_i": true, "_xb_n": true, "_xb_cmp": true, "_xb_done": true, "_xb_gm": true}
 const _SNAP_MAGIC := 0x31534353  # "SCS1"
 
 
@@ -12860,6 +13687,7 @@ func restore(blob: PackedByteArray) -> bool:
 	if _dist_epoch == nav_epoch:
 		for dst in _dist_have:
 			_dist_cache[dst] = _dijkstra(dst)
+	_xf_restore()
 	return true
 
 
@@ -12921,6 +13749,8 @@ func state_hash() -> int:
 				ctx.update((arr as PackedInt32Array).to_byte_array())
 			for arr in _flow_arrays():
 				ctx.update((arr as PackedInt32Array).to_byte_array())
+			ctx.update(s_wf)
+			ctx.update(PackedInt64Array([xf_t0, xf_gp, xf_gl]).to_byte_array())
 		if n_gates > 0:
 			ctx.update(g_hp.to_byte_array())
 			ctx.update(g_state.to_byte_array())

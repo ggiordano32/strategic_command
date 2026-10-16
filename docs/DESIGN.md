@@ -2371,6 +2371,126 @@ probe `tests/determinism_test.gd --only=flow`, `tests/matchups.gd
   stragglers far behind, defenders moving through their own stack, a
   battery). Tick cost: see docs/STATUS.md.
 
+### Routs among walls and houses (as built, pathing phase A, 2026-10-15)
+
+Why: playtests showed routers shaking on the walls and at the gates
+(docs/PATHING_SPEC.md sections 1-2: rout jitter 78-80 % of men coming off
+a wall, 22 % in a town; routing units stationary 20-38 % of their time in
+the polis / punic / town / city sieges; a router never counted as stuck).
+Root causes R1-R5 of the spec: one flee vector for the whole unit aimed
+from its centroid (it flipped sign every tick at a stair foot or a shut
+gate), routers on a stair move ignoring the stair's trail, slides without
+memory (a face met square on, a concave corner), no end state for routers
+with no way out, rally anchored on the centroid. Code: `sim/battle_sim.gd`
+(section "routers: exit fields, huddle": `_xf_restart`, `_xf_tick`,
+`_xf_begin`, `_xf_next`, `_xf_build`, `_xf_restore`, `_xf_dir`, `_xf_unit`,
+`_hud_start`, `_hud_step`, `_huddle_slots`, `_anchor_man`, `_rout_stats`,
+`_slide_mem`, `_free_mem`; hooks in `_flee_step`, the routing loop of
+`_update_soldiers`, `_slide`, `_rally`, `_regroup`, `_charge_state`,
+`_gate_cells`, `restore`, `result`). Probe `tests/pathing_probe.gd`;
+set pieces `tests/determinism_test.gd --only=rout`.
+
+- **Exit fields (A1).** On settlement maps (`obs_on`, not landform-only
+  maps) the sim keeps integer distance fields over the 2 m nav grid: per
+  side to its exit cells (its own edge row; a coast's defenders: the land
+  at either side edge) and per outer gate shut to its inner mouth (the
+  refuge of `ROUT_INWARD`, kept to the ground inside: its piece with every
+  gate shut). A flood over the 4 neighbours, 10 a step (so distances along
+  the grid; a man steps toward the lowest of his cell's 8 neighbours, a
+  diagonal only where both cells beside the corner are open, ties to the
+  lower direction). Each man of a routing unit walks down its field at
+  the unit's run (the old per-man skew at a quarter); at an exit cell he
+  runs on over the edge, at the refuge he stops. Down a field there is no
+  flip and no square-on stall. A man off the field (a blocked cell, a gate
+  shut since) steps onto its lowest neighbour, else takes the unit's flee
+  vector, which stays for the view's facing and on maps without fields
+  (field and landform-only maps play their routs exactly as before).
+- **Generations.** The fields of a generation are pure functions of the
+  static map and the gates' states (`xf_gl` live, `xf_gp` building, bit g
+  gate g open). A gate opening, closing or breaking (`_gate_cells`) starts
+  a new generation at `xf_t0 = tick`; it builds `XF_CELLS` 1,000 cells a
+  tick (about 0.4 ms desktop; 45-80 ms of work a generation on the siege
+  maps) and takes over at `xf_t0 + XF_TICKS` 250, finished then at once if
+  need be, so peers agree whatever their speed; meanwhile routers walk the
+  last generation (none in the first 25 s: the old flee vector). Hashed:
+  `xf_t0`, `xf_gl`, `xf_gp`; the fields themselves are derived (skipped in
+  snapshots; `restore()` rebuilds the live and the building generation in
+  full, 50-80 ms each).
+- **Refuge (defenders inside, `ROUT_INWARD`).** The shut gate is chosen by
+  `_rout_gate` as before (on its own ground, farthest from any enemy, none
+  within 30 m), from the stair's foot for a unit still coming down, and
+  then kept (`u_xg`, hashed) until its gate opens (before, the choice was
+  made again every second and flipped as the enemy moved: men turned about
+  every 5 s); with none, one is looked for every 5 s.
+- **Off the wall man by man (A2).** A routing unit on a stair move sends
+  each man still on the walkway, a tower or the stair along the stair's
+  trail (`_stair_goal`, the call the ready path uses) with the stair's
+  cell mask; once on the ground he takes the exit field. `_stair_check` is
+  unchanged. (Before: the unit's vector to the stair foot flipped about
+  the centroid and men bobbed on the walk until `STAIR_MAX`, 40 s.)
+- **Huddle and surrender (A3).** Once a second a routing unit with fields:
+  when half its men on the ground are within `HUDDLE_R` (6 m along the
+  grid) of its refuge it huddles there (`u_hud` 2 + g, hashed); when none
+  of them has a way out (no exit, no refuge reachable: attackers in a shut
+  town, ladders gone) it huddles where it is (`u_hud` 1), round its man
+  nearest its men's middle on the piece most of them stand on. Huddle
+  places: the open cells round the point (a flood, `FLOW_PACK` 125 %
+  density, in slot order), the men walking to them at the walk (a
+  straggler farther than 12 m from the refuge walks down its field first)
+  and then standing, facing the nearest enemy; still `S_ROUTING` (no
+  fighting). Out again when its gate opens or the live fields show an exit.
+  A final router (`u_routs > MAX_ROUTS`: the plaza fallen) huddled with a
+  ready enemy within `SURR_R` 15 m (box to box) gives up: its men leave the
+  field as prisoners (`GONE_SURR`, `u_surr`; `result()` reports
+  "surrendered" for such a unit). A router that may still rally does so by
+  the existing rule. Beasts running amok never huddle.
+- **Rally and regroup anchor on a reachable man (A4).** `_rally` (not on a
+  stair move), `_regroup` and a charge's re-form whose point falls in a rock
+  or a house put the anchor on the man nearest the men's middle on the
+  piece most of them stand on (`_anchor_man`), the places flowing round
+  what cuts them.
+- **Slide with memory (A5).** Per man `s_wf` (a byte, hashed with the
+  other obstacle-map state): his last slide's direction, a hold count and
+  "stalled last time". Stalled twice running, or sliding back the way his
+  last slide went (the 2-cycle of a concave corner), he follows the
+  obstacle for `SLIDE_HOLD` 5 ticks: 90 degrees off his wanted step (the
+  side he went along it last, else by i & 1), else 135, then the other
+  side; a later open step straight back against the way the slide took him
+  (the bounce between a corner and a place behind it) becomes such a hold
+  too (`_free_mem`). For routers and for the men of standing units (no
+  order) away from the enemy; not for men in contact (it made the fights
+  at rocks jitter more: 4-5 -> 6-7 % over three seeds), nor on walls,
+  stairs or ladders (their own rules).
+- **Separation near obstacles (A6).** Men following their places in units
+  near obstacles push apart from friends closer than `SEP_SLOT` 0.5 m (a
+  quarter push; below the flowed places' 0.57 m and any formation's
+  spacing): in contact units every other tick against the contact grid
+  (`checked < 10`); otherwise every fourth tick against the man beside and
+  the one ahead in the formation (no grid: checking four neighbours every
+  other tick cost 10-20 % of a siege tick). Field and open-ground units
+  keep the fast path untouched (the golden digests did not move).
+- **Routers in the stuck metrics (A7).** A router not huddled whose men's
+  middle stays within `STUCK_DIST` counts in `stat_stuck_u` /
+  `stat_stuck_max` as a ready unit does, and from 10 s on in
+  `stat_rout_still` (diagnostics, not hashed).
+- **Measured** (`tests/pathing_probe.gd`, AI vs AI, seed 7, 8 sieges plus
+  battle_2000 and bench_4000_hills; see docs/STATUS.md for the table):
+  rout jitter 78.8 % (stair) / 6.0 % (town) -> 0.0 / 0.3 %; routing time
+  stationary 9.3 -> 0.0 %; stuck over 30 s 18 -> 0 (longest router 149 ->
+  0 s, ready 189 -> 26 s); idle near obstacles rev/step 22 -> 2.6 %;
+  fights near obstacles 4.2 -> 4.8 % (seeds 8-10: 3.8-4.9 -> 3.9-4.9 %;
+  phase C's target is 3 %); inside the drawn footprints 3.5 -> 3.4 %
+  (phase B). A balance side effect: in the walls-3 ring siege with a ram
+  ("siege_eq_ring3") the gate falls later (battle seeds 1-4: 2499-3493
+  ticks, was 2440-2753; at seed 12345 the ram is burnt and the battery
+  breaks the gate at 5446, was the ram at 2503); without the exit fields
+  it plays as before. Determinism: `--only=rout`
+  (rout-wall: off the walk in 9.4 s, rout jitter 0 %; rout-gate: huddled at
+  the refuge 19 s after the break, rev/step 0.1 %, all 60 gave up once the
+  heavy foot came within 15 m; trapped: huddled in 0.1 s and standing),
+  each identical on repeat and across a snapshot taken while a generation
+  builds (in rout-gate after a gate broke).
+
 ### Compact unit cards (as built, 2026-10-09)
 
 View only: `game/unit_traits.gd` derives everything from the unit rows, so a
