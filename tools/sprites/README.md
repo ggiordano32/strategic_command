@@ -74,13 +74,28 @@ sling / belly, `cord` parts, `show` / `hide` frame lists). Step 1d: 9 elephant,
 10 camel, 11 camel_archer, 12 crew (every battery, tower engine and wagon
 crew row), and on artillery rows a second field `engine_set` for the
 engines (13 bolt_thrower: bolts and tower bolts, 14 stone_thrower: stones
-and tower stones, 15 scorpion). The set fields are 4 bits: 15 is the
-last id until they are widened. `atlas.props` (cart, wagon, draft_horse)
+and tower stones, 15 scorpion). The set fields are 5 bits (31 sets). `atlas.props` (cart, wagon, draft_horse)
 are packed too but not in the shaders' table: `PROPS` in sprite_atlas.gd,
 drawn by game/overlay.gd (wagons). Still procedural: dogs, characters,
 siege equipment (ladders, ram, tower, mantlets). The palette is the unit's faction's (palette keys = the
 faction keys of `campaign/cdata.gd`, in its FACTIONS order); see
 `game/soldier_layer.gd` `_palette_rows`.
+
+West pack sets (2026-10-15, ids 16-26, wired 2026-10-16: see docs/STATUS.md
+"West sprites"): 16 musketeers (tricorne, coat, sash, bandolier, musket; pose
+`musket`: gun on the spine, forearms turned in, flash on attack frame 1), 17
+w_pikemen (morion, buff coat, 5 m pike), 18 buccaneers (bandana, hide vest,
+machete, 2 m fusil; pose `musket`), 19 rodeleros (morion, cuirass, rodela,
+rapier), 20 cutlass (headscarf, sash pistols, cutlass + boarding axe), 21
+lancers (horse, slouch hat, cuirass, lance), 22 pistoleers (horse, long
+coat, pose `pistol`: both arms out, flash on frame 1), 23 native_warriors
+(feather ring, paint, shield, macuahuitl), 24 native_bowmen (archer pose), 25
+w_crew (gun crew, `crew` pose), 26 cannon (engine set, rig `cannon_engine`,
+anim `cannon`: attack 0 loaded, 1 fired and recoiled, 2 / 3 run out; carriage
+in the primary colour). The shader look is 5-bit sets (set + 32 x palette; the engine set
+in texture block 8); pack.py allows 31 sets and 16 palettes. Palettes 9-16: new_spain,
+tierra_firme, england, france, dutch, brethren, itza, miskito. Render about
+2 s a unit, the 11 sets 25 s; atlas now 1024x1804, 913 KB of PNG.
 
 Rigs name their animation set (`anim`: humanoid, horse (also the camel
 rig), elephant, bolt / scorpion / onager (engines), cart / wagon (props)).

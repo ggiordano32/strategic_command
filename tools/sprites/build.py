@@ -591,6 +591,41 @@ def sling_carry(action, i, s, c, add):
     add("weapon.R", "y", 80)
 
 
+def musket_attack(i, add):
+    """West musketeers (step 2): the long gun held across the body in both
+    hands (it hangs on the spine, the forearms are turned in to it), levelled,
+    fired with a kick, brought down. Frame 1 is the shot (muzzle flash)."""
+    add("forearm.L", "z", -40)
+    add("forearm.R", "z", 40)
+    add("spine", "z", [-8, -10, -8, -4][i])
+    add("spine", "y", [4, 6, -3, 0][i])
+    add("upper_arm.L", "y", [-8, -12, -6, -8][i])
+    add("upper_arm.R", "y", [-10, -14, -8, -10][i])
+    add("thigh.L", "y", [-8, -10, -8, -6][i])
+    add("thigh.R", "y", [8, 8, 8, 4][i])
+    return [[0, 0, 0], [-0.08, 0, 0], [-0.03, 0, 0], [0, 0, 0]][i]
+
+
+def musket_carry(action, i, s, c, add):
+    add("forearm.L", "z", -40)
+    add("forearm.R", "z", 40)
+
+
+def pistol_attack(i, add):
+    """Mounted pistoleer: both arms thrown out level, a pistol in each hand,
+    shot at frame 1 with a kick, then lowered."""
+    for arm, sg in (("L", 1), ("R", -1)):
+        add("upper_arm." + arm, "y", [-55, -88, -80, -35][i])
+        add("forearm." + arm, "y", [55, 88, 90, 40][i])
+        add("upper_arm." + arm, "z", sg * [-8, -14, -14, -6][i] * -1)
+    add("spine", "y", [0, -4, 4, 0][i])
+    return [[0, 0, 0], [-0.03, 0, 0], [-0.01, 0, 0], [0, 0, 0]][i]
+
+
+def pistol_carry(action, i, s, c, add):
+    pass
+
+
 def crew_attack(i, add):
     """Engine crew (step 1d): bent over the winch, both hands on a spoke,
     cranking it round (arms circle forward and down)."""
@@ -613,9 +648,9 @@ def crew_carry(action, i, s, c, add):
     add("forearm.R", "y", 25)
 
 
-MISSILE_ATTACK = {"archer": archer_attack, "belly": belly_attack,
+MISSILE_ATTACK = {"musket": musket_attack, "pistol": pistol_attack, "archer": archer_attack, "belly": belly_attack,
                   "javelin": javelin_attack, "sling": sling_attack, "crew": crew_attack}
-MISSILE_CARRY = {"archer": archer_carry, "belly": belly_carry,
+MISSILE_CARRY = {"musket": musket_carry, "pistol": pistol_carry, "archer": archer_carry, "belly": belly_carry,
                  "javelin": javelin_carry, "sling": sling_carry, "crew": crew_carry}
 
 
@@ -897,6 +932,27 @@ def engine_pose(kind, action, i, n):
             add("arm", "y", [10, 30, 12][i])
             add("winch", "y", [20, 40, 40][i])
             loc = [[0, 0, -0.03], [0, 0.05, -0.1], [0, 0.1, -0.14]][i]
+    elif kind == "cannon":
+        # frame (carriage + wheels), barrel (slides in the carriage). attack
+        # 0 loaded, 1 fired (gun and carriage thrown back, barrel kicked up),
+        # 2 / 3 run out again (the game picks the frame from the reload);
+        # walk = hauled (a bob); death = barrel thrown off, wheel broken.
+        if action == "attack":
+            loc[0] = [0, -0.3, -0.14, -0.04][i]
+            locs["barrel"] = [[0, 0, 0], [-0.1, 0, 0.02], [-0.05, 0, 0], [0, 0, 0]][i]
+            add("barrel", "y", [0, -5, -2, 0][i])
+        elif action == "walk":
+            add("frame", "z", 1.5 * s)
+            add("frame", "y", 1.0 * math.cos(ph))
+            loc[2] = 0.015 * math.cos(2 * ph)
+        elif action == "death":
+            add("frame", "x", [4, 9, 12][i])
+            add("barrel", "z", [12, 38, 62][i])
+            add("barrel", "y", [4, 14, 8][i])
+            locs["barrel"] = [[0, 0, -0.02], [-0.15, 0.4, -0.22], [-0.3, 0.8, -0.42]][i]
+            add("wheel.R", "x", [-20, -60, -88][i])
+            locs["wheel.R"] = [[0, -0.08, -0.04], [0, -0.5, -0.2], [0, -0.95, -0.32]][i]
+            loc = [[0, 0, -0.02], [0, 0.04, -0.08], [0, 0.08, -0.13]][i]
     elif kind in ("cart", "wagon"):
         if action == "walk":
             add("body", "x", 1.5 * s)

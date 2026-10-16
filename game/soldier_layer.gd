@@ -36,7 +36,7 @@ const CData := preload("res://campaign/cdata.gd")
 const ATLAS_SHADE_PATH := "res://assets/sprites/atlas_shade.png"
 const ATLAS_MASK_PATH := "res://assets/sprites/atlas_mask.png"
 const TEX_W := 1024
-const BLOCKS := 8
+const BLOCKS := 9
 const PR_BLOCKS := 9
 ## CPU-fed MultiMesh buffer: floats per instance (2D transform 8, custom 4)
 ## and where each field goes (the shaders read them through MODEL_MATRIX:
@@ -50,7 +50,7 @@ const C_A := 1     # facing (soldiers), t0 (missiles)
 const C_B := 5     # state (soldiers), t1 (missiles)
 const C_SPRITE := 8
 const C_FLAGS := 9
-const C_LOOK := 10   # sprite set + 16 x palette (per unit run; engines: engine set + 16 x palette)
+const C_LOOK := 10   # sprite set + 32 x palette (per unit run; engines: engine set + 32 x palette)
 const C_IDX := 11    # the instance's index (the man's animation phase)
 ## Per-unit flag bits (both paths; see soldiers.gdshaderinc).
 const F_SHOOT := 8
@@ -141,8 +141,8 @@ var _pr_cap := 0
 var _flags := PackedInt32Array()
 var _unit_sprite := PackedInt32Array()
 var _unit_engine := PackedInt32Array()  # engine sprite per unit (0 = none)
-var _unit_look := PackedInt32Array()    # sprite set + 16 x palette row per unit
-var _unit_elook := PackedInt32Array()   # engine set + 16 x palette row per unit (its engines)
+var _unit_look := PackedInt32Array()    # sprite set + 32 x palette row per unit
+var _unit_elook := PackedInt32Array()   # engine set + 32 x palette row per unit (its engines)
 var _pal_rows := PackedInt32Array()
 var _e_state := PackedInt32Array()
 var _pr_flags := PackedInt32Array()
@@ -208,9 +208,9 @@ func setup(p_sim, p_px_per_m: float) -> void:
 	_pal_rows = pal
 	for u in sim.n_units:
 		_unit_sprite[u] = UT.stat(sim.u_otype[u], "sprite")
-		_unit_look[u] = UT.stat(sim.u_otype[u], "sprite_set") + 16 * pal[u]
+		_unit_look[u] = UT.stat(sim.u_otype[u], "sprite_set") + 32 * pal[u]
 		_unit_engine[u] = _engine_sprite_of(u)
-		_unit_elook[u] = _engine_set_of(u) + 16 * pal[u]
+		_unit_elook[u] = _engine_set_of(u) + 32 * pal[u]
 		_pr_flags[u] = _pr_flag_of(u)
 	_last_eu = sim.e_unit.duplicate()
 
@@ -505,7 +505,7 @@ func _refresh_engines() -> void:
 		if k != _unit_engine[u]:
 			_unit_engine[u] = k
 			changed = true
-		var el := _engine_set_of(u) + 16 * _pal_rows[u]
+		var el := _engine_set_of(u) + 32 * _pal_rows[u]
 		if el != _unit_elook[u]:
 			_unit_elook[u] = el
 			changed = true
@@ -660,11 +660,14 @@ func _engine_view_state(e: int) -> int:
 func _upload_gpu(xs: PackedInt32Array, ys: PackedInt32Array, pxs: PackedInt32Array, pys: PackedInt32Array,
 		fs: PackedInt32Array, sts: PackedInt32Array, missiles: bool) -> void:
 	var gflags := _flags.duplicate()
+	var gelook := PackedInt32Array()
+	gelook.resize(sim.n_units)
 	for u in sim.n_units:
-		gflags[u] |= (_unit_sprite[u] << 4) | (_unit_engine[u] << 8) | (_unit_look[u] << 12) | ((_unit_elook[u] & 15) << 20)
+		gflags[u] |= (_unit_sprite[u] << 4) | (_unit_engine[u] << 8) | (_unit_look[u] << 12)
+		gelook[u] = _unit_elook[u] & 31
 	var block := _rows * TEX_W * 4
 	_image.set_data(TEX_W, BLOCKS * _rows, false, Image.FORMAT_RGBA8, _pack([xs, ys, pxs, pys, fs, sts,
-		sim.unit_of + sim.e_unit if sim.n_eng > 0 else sim.unit_of, gflags], block))
+		sim.unit_of + sim.e_unit if sim.n_eng > 0 else sim.unit_of, gflags, gelook], block))
 	_tex.update(_image)
 	if missiles:
 		var pblock := _pr_rows * TEX_W * 4
