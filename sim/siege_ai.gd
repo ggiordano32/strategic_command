@@ -140,6 +140,20 @@ const Q_PLANTED := 2
 const Q_WRECKED := 3
 const ORDER_PICKUP := 14
 const ORDER_DROP := 15
+const ORDER_STANCE := 24
+const STANCE_LINE := 0
+const STANCE_HOLD := 2
+## Street fighting (C7; West rows in an open town, not Easy): skirmishers
+## hold strongpoints this far in from the street mouth nearest the
+## attackers (% of the way to the plaza; the next one at the same mouth
+## SP_STEP further in), line units Hold street behind them at SP_LINE_PCT;
+## attacking line units wait SP_WAIT_R off a strongpoint until it is worn
+## down (SP_WORN % of its men left, or disordered).
+const SP_COVER_PCT := 30
+const SP_LINE_PCT := 60
+const SP_STEP := 15
+const SP_WAIT_R := 70 * M
+const SP_WORN := 60
 
 # Army phases (ai_phase) on settlement maps.
 const SP_APPROACH := 10
@@ -488,6 +502,142 @@ static func _classify_defender(sim, u: int) -> void:
 	BattleAI._set_mode(sim, u, A_RESERVE)
 	sim.u_ai_x[u] = sim.u_ax[u]
 	sim.u_ai_y[u] = sim.u_ay[u]
+	if _street_ai(sim, sim.u_side[u]) and _street_row(sim, u):
+		_strongpoint(sim, u)
+
+
+# --------------------------------------- street fighting (C7, West rows) ---
+# docs/DESIGN.md "Street fighting: stances, bounds, the press in a lane".
+
+## The street AI plays for side `side`: an open town (no gates), not Easy.
+static func _street_ai(sim, side: int) -> bool:
+	return sim.n_gates == 0 and sim.ai_skill[side] != AP.EASY and not sim.map_info.get("city", {}).get("mouths", []).is_empty()
+
+
+## Unit u is a West row that takes stances (Rome's armies keep their
+## fitted siege play).
+static func _street_row(sim, u: int) -> bool:
+	return sim.u_type[u] >= UT.ROME_N and sim.stance_ok(sim.u_type[u])
+
+
+## The street mouths of the town, nearest the point (x, y) first (metres
+## to sim units; index order on ties).
+static func _mouths_from(sim, x: int, y: int) -> Array:
+	var mouths: Array = sim.map_info["city"]["mouths"]
+	var ix: Array = []
+	for k in mouths.size():
+		ix.append(k)
+	ix.sort_custom(func(a, b):
+		var da := BattleAI._d(int(mouths[a][0]) * M - x, int(mouths[a][1]) * M - y)
+		var db := BattleAI._d(int(mouths[b][0]) * M - x, int(mouths[b][1]) * M - y)
+		return da < db or (da == db and a < b))
+	var out: Array = []
+	for k in ix:
+		out.append(Vector2i(int(mouths[k][0]) * M, int(mouths[k][1]) * M))
+	return out
+
+
+## A defending West unit's post in an open town (C7): skirmishers (the
+## cover trait) hold a strongpoint in the street from the mouth nearest the
+## attackers (shared out, nearest mouths first), line units hold the street
+## behind them in the Hold street stance.
+static func _strongpoint(sim, u: int) -> void:
+	var side: int = sim.u_side[u]
+	var cover: bool = sim.t_cover[sim.u_otype[u]] != 0
+	# (Rank among its kind: the shooting skirmishers take the nearest mouths
+	# first, then the cover troops who fight hand to hand; lines apart.)
+	var grp := _sp_group(sim, u)
+	var k := 0
+	for o in sim.n_units:
+		if o == u or sim.u_side[o] != side or sim.u_state[o] != U_READY or not _street_row(sim, o):
+			continue
+		var go := _sp_group(sim, o)
+		if (go < 2) == cover and (go < grp or (go == grp and o < u)):
+			k += 1
+	var ac := _army_centre(sim, 1 - side)
+	var ms := _mouths_from(sim, ac.x, ac.y)
+	var mo: Vector2i = ms[k % ms.size()]
+	var pct := (SP_COVER_PCT if cover else SP_LINE_PCT) + (k / ms.size()) * SP_STEP
+	var px: int = sim.plaza[0]
+	var py: int = sim.plaza[1]
+	var p: Vector2i = sim.open_snap(sim, mo.x + (px - mo.x) * pct / 100, mo.y + (py - mo.y) * pct / 100, sim._ground_mask(u))
+	sim.u_ai_x[u] = p.x
+	sim.u_ai_y[u] = p.y
+	if not cover and sim.u_stance[u] == STANCE_LINE:
+		BattleAI._order(sim, u, {"type": ORDER_STANCE, "stance": STANCE_HOLD}, 28)
+
+
+## Strongpoint group of unit u: 0 cover troops with missiles, 1 other cover
+## troops, 2 line troops.
+static func _sp_group(sim, u: int) -> int:
+	if sim.t_cover[sim.u_otype[u]] == 0:
+		return 2
+	return 0 if sim.u_cls[u] == UT.CLS_MISSILE else 1
+
+
+## An attacking West skirmisher in an open town's assault (C7): it shoots a
+## defender in range from cover (an attack order: it closes to range and
+## stands, its men at the corners), else goes on by bounds to its street's
+## mouth (shared out) and then the plaza, ahead of the line units.
+static func _bound_storm(sim, u: int) -> void:
+	BattleAI._set_mode(sim, u, A_STORM)
+	if _engaged(sim, u):
+		return
+	var side: int = sim.u_side[u]
+	var rng: int = sim.mrange(u) * 17 / 20
+	var t := -1
+	var bd := rng
+	for o in sim.n_units:
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.u_wall[o] > 0 or sim.hidden_from(o, side):
+			continue
+		var d := BattleAI._d(sim.u_cx[o] - sim.u_cx[u], sim.u_cy[o] - sim.u_cy[u])
+		if d < bd:
+			bd = d
+			t = o
+	if t >= 0:
+		if sim.u_order[u] != O_ATTACK or sim.u_target[u] != t:
+			BattleAI._attack(sim, u, t, 0)
+		return
+	var px: int = sim.plaza[0]
+	var py: int = sim.plaza[1]
+	var tx := px
+	var ty := py
+	if sim.u_ai_x[u] == 0:
+		var rk := _rank(sim, u, func(o): return _street_row(sim, o) and sim.t_cover[sim.u_otype[o]] != 0)
+		var mouths: Array = sim.map_info["city"]["mouths"]
+		var st: Array = mouths[rk.x % mouths.size()]
+		tx = int(st[0]) * M
+		ty = int(st[1]) * M
+		if BattleAI._d(sim.u_ax[u] - tx, sim.u_ay[u] - ty) <= 15 * M:
+			sim.u_ai_x[u] = 1
+			tx = px
+			ty = py
+	if sim.u_order[u] == O_MOVE and sim.u_bound[u] != 0 and BattleAI._d(sim.u_dx[u] - tx, sim.u_dy[u] - ty) < 6 * M:
+		return
+	if BattleAI._d(sim.u_ax[u] - tx, sim.u_ay[u] - ty) < 8 * M:
+		return
+	BattleAI._order(sim, u, {"type": 1, "x": tx, "y": ty, "facing": FM.atan2_a(py - ty, px - tx) if tx != px or ty != py \
+		else sim.u_face[u], "width": BattleAI._width(sim, u), "run": 0, "ground": 1, "bound": 1}, 3)
+
+
+## An attacking West line unit storming an open town (C7): a strongpoint
+## within SP_WAIT_R (a defending skirmisher unit holding cover spots) still
+## whole (SP_WORN % of its men, not disordered) is left to the skirmishers:
+## true if u waits (halted) for it to be worn down.
+static func _sp_wait(sim, u: int) -> bool:
+	if sim.ai_prog[2] != 0:
+		return false  # all out: everyone goes in
+	var side: int = sim.u_side[u]
+	for o in sim.n_units:
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.u_cvb[o] < 0:
+			continue
+		if sim.u_alive[o] * 100 < sim.u_count0[o] * SP_WORN or sim.u_disorder[o] >= 25:
+			continue
+		if BattleAI._d(sim.u_cx[o] - sim.u_cx[u], sim.u_cy[o] - sim.u_cy[u]) < SP_WAIT_R:
+			if sim.u_order[u] == 1:
+				BattleAI._order(sim, u, {"type": 3}, 5)
+			return true
+	return false
 
 
 static func _defender(sim, u: int) -> void:
@@ -1677,6 +1827,9 @@ static func _storm(sim, u: int) -> void:
 		return
 	if _engaged(sim, u):
 		return
+	if _street_ai(sim, sim.u_side[u]) and _street_row(sim, u) and sim.t_cover[sim.u_otype[u]] == 0 \
+			and sim.u_cls[u] != UT.CLS_CAV and _sp_wait(sim, u):
+		return  # (a strongpoint ahead: the skirmishers wear it down first, C7)
 	var kn := AP.of(sim, sim.u_side[u])
 	if kn[AP.MK_BASE + AP.M_CHASE] > 0 and (sim.u_order[u] != O_ATTACK or sim.u_target[u] < 0 \
 			or sim.u_state[sim.u_target[u]] != U_ROUTING):
@@ -1783,6 +1936,10 @@ static func _att_missile(sim, u: int, phase: int) -> void:
 		if r >= 0 and sim.u_ammo[u] <= 0:
 			if sim.u_order[u] != O_ATTACK or sim.u_target[u] != r:
 				BattleAI._attack(sim, u, r, 1)
+		return
+	if phase == SP_ASSAULT and sim.u_ammo[u] > 0 and _street_ai(sim, side) and _street_row(sim, u) \
+			and sim.t_cover[sim.u_otype[u]] != 0:
+		_bound_storm(sim, u)  # (West skirmishers: into the streets by bounds, C7)
 		return
 	if phase == SP_ASSAULT and (sim.ai_prog[2] != 0 or _no_foot(sim, side) or sim.u_ammo[u] <= 0):
 		_storm(sim, u)

@@ -2666,6 +2666,144 @@ skirmishers. Code: `sim/battle_sim.gd` (section "real cover (phase C0)":
   in their place: 41 lost, 23 killed). Identical on repeat and across
   snapshot / restore.
 
+### Street fighting: stances, bounds, the press in a lane (as built, pathing phases C1-C7, 2026-10-15)
+
+Why (the user): "Open fields favor the lines of soldiers where cover and
+cities can favor the skirmishing units"; street-to-street fighting from
+cover. docs/PATHING_SPEC.md section 5. Code: `sim/battle_sim.gd` (section
+"street fighting (phases C1-C7)": `stance_ok`, `_bnd_still`,
+`_bound_tick`, `_bound_set`, `_bound_cover`, `_bound_in`, `_hold_files`,
+`_cs_taken`, `_shove`, `_press_n`; hooks in `_cs_ok`, `_cs_threat`,
+`_cover_seek`, `_cover_places`, `_cover_cell`, `_squeeze`,
+`_update_units`, `_update_soldiers`, `_missile_think`,
+`_update_missiles`, `_gun_unit`, `_fire`, `_flat_block`, the order rule),
+`sim/siege_ai.gd` (`_street_ai`, `_strongpoint`, `_bound_storm`,
+`_sp_wait`), `sim/scenarios.gd` (`street_bounds`, `test_street_bounds`,
+`test_street_ai`, `cover_town` sizes), `game/hud.gd` / `game/battle.gd` /
+`game/controls.gd` / `game/ui_icons.gd` (the Stance and Bounds buttons),
+`game/overlay.gd` (`FX_CHIP`), set pieces `tests/determinism_test.gd
+--only=street`, lockstep `tests/lockstep_test.gd --only=street`.
+
+- **Stances (C6).** `u_stance` per unit: `STANCE_LINE` (keep the
+  formation; line troops' default), `STANCE_COVER` (Take cover: cover
+  troops' default), `STANCE_HOLD` (Hold street). ORDER_STANCE {unit,
+  stance} through the lockstep like any order (an ORDER_KEY, so the order
+  preview predicts it); foot only (`stance_ok`: infantry, pikes, foot
+  missile troops; not horse, engines, heroes). A scenario unit may carry
+  "stance". Hashed (`_stn_arrays`: `u_stance`, `u_bound`, `u_bnd`, `u_bt`,
+  `u_bx`, `u_by`) once an order changed a stance or a bound (`stn_on`), so
+  a battle without such an order hashes as before (the flat goldens).
+- **Take cover (C2, the C0 leftovers).** The cover spots are phase C0's
+  (`_cover_places`: spots in the lee of the 2 m cells that stand up,
+  against the threat's bearing; at the edges a man leans out to shoot).
+  Now any foot unit in Take cover uses them (cover troops in Hold street
+  too) when standing (no order, a halt), when shooting its attack order's
+  target from where it stands (missile troops in range, not moving), or
+  halted in a bound. The threat: its attack target, else its fire target,
+  else the nearest enemy it sees within 250 m; with none, a bound faces
+  the way on and Hold street its front. Line troops in Take cover stand
+  upright (the trace goes to their head, C0): only cover `CS_H_LINE` 2 m
+  tall or more gives them spots (houses, walls, big rocks), and they have
+  no peek past a corner (`COVER_PEEK_OBS` is the cover trait's).
+  - *Rows behind (C2's "men with no point fill in behind").* Each spot
+    has `CS_DEEP` 2 more spots `CS_ROW` 1.2 m further back in the same
+    lee, taken after the faces (cost `CS_LEE` + 1-2 m): the men with no
+    edge or face of their own stand behind the men who have one instead
+    of in the open street. Measured: 40 buccaneers at the town's street
+    mouth against 80 musketeers lost 62 without the rows, 34 with them
+    (4 seeds; 63 in the open).
+  - *Claims across units.* A spot within `CS_CLAIM` 0.8 m of another
+    unit's man, or of another unit's cover place, is taken (`_cs_taken`,
+    from the hashed positions and places: no new state). No two units on
+    one rock; a unit laying out takes what is free, units keep what they
+    hold.
+  - *Face men to the edges.* A unit holding spots lays them out again
+    every `CS_RELAY` 5 s (men at their spots keep them: nearest first), so
+    a man in a face's middle (no shot) takes an edge the fallen left free,
+    and spots another unit took since are given up.
+- **Cover in town (C3).** A town's houses are cover (`_cover_cell`
+  `COV_HOUSE` for buildings in settlements too; walls keep their rule):
+  cover troops among houses count as in cover, can go to ground there
+  (`GROUND_STOP`, concealment as in woods) and arrows (arced) roll the
+  house's `COVER_STOP`; flat shots are traced as in C0. Per-point kinds
+  (`COV_CORNER` 55 %, `COV_DOOR` 50 %, half value for line troops) were
+  not built: with C0 the flat shots meet the real faces, and the rolls
+  stay for arrows only.
+- **Cover points (C1): not built as a table.** The spec's static points
+  (`cp_*`: building corners, doors, wall points, props, with arcs and
+  hashed claims) would duplicate C0's spot finder, which already gives
+  the corners (edges) and faces of every house, wall, rock and field
+  block from the real 2 m cells, laid out against the actual threat, with
+  the clearance push off the drawn faces; claims are done on the places
+  (above). Props (carts, barrels, wells) come with phase W's West towns.
+- **Bounding advance (C4).** A move order with "bound": 1 (the Bounds
+  toggle; foot on the ground). Cover troops split by soldier index: the
+  even men go with the anchor (`u_bnd` 1) at most `BOUND_LEN` 25 m,
+  stopping once past `BOUND_MIN` 10 m where something stands up within
+  6 m of the anchor (`_bound_cover`), or after `BOUND_T` 12 s; then they
+  settle into the cover spots round it (2), and the odd men, who stood and
+  shot meanwhile, come up to theirs (3) until they are within
+  `BOUND_NEAR` 2 m of their places on average (or `BOUND_T`); and on. The
+  team holding does not move (`_update_soldiers` fast path) and is the
+  only one to shoot (`_update_missiles`, `_gun_unit`: a bounding unit
+  shoots while its anchor moves; fire at will picks targets on such a
+  move, `_missile_think`); it leans out round its cover as at a spot.
+  Line troops hop as a whole (1) and halt `BOUND_PAUSE` 4 s to fire (4).
+  Contact (an enemy within 12 m), a wall, a stair or carrying ends the
+  bound (it marches on as usual); arrival, any new order (not run, fire,
+  ammunition) or the skirmish fall-back too. A bounding unit is not slowed
+  for its men strung out (`lag`) and hits on it are found man by man.
+- **Street melee (C5).** A unit squeezed in a town's street (`u_sq` > 0,
+  `V_URBAN` under its anchor; not on walls or stairs) fights with its
+  first `STREET_RANKS` 2 ranks: the men behind keep their places and take
+  on only a man within their reach; it does not lap round (no wrap). The
+  `WALK_REACH_MAX` cap of squeezed units stood already. The shove: once a
+  second (`SHOVE_T`) a unit standing in a lane (no order) and fighting
+  counts its men and its nearest fighting enemy's within `SHOVE_R` 4 m of
+  the other's box; outnumbered 3 : 2 it gives `SHOVE_STEP` 0.3 m of
+  ground (its anchor back from the enemy, onto open ground), so its rear
+  ranks step back and its front follows. Units with an order (attackers
+  closing) are not pushed: their anchors close again.
+- **Hold street (C6).** Line troops standing (not on a move) measure the
+  street across their front out to `HOLD_SPAN` 20 m either side
+  (`_squeeze`); bounded on both sides, they take its width in files, at
+  least three ranks deep (`_hold_files`: width / file spacing, between
+  `MIN_FILES` and men / 3), and move to its middle; in the open nothing
+  changes. They count as squeezed (C5's ranks, the reach cap). Cover
+  troops in Hold street take spots as in Take cover within `CS_R_HOLD`
+  12 m of their places, facing their front with no threat in sight.
+- **AI (C7; `sim/siege_ai.gd`; West rows only, an open town, not Easy;
+  Rome's sieges keep their fitted play).** Defenders: at the first
+  classification a West unit's reserve post becomes a strongpoint
+  (`_strongpoint`): the mouths sorted by distance from the attackers'
+  centre; skirmishers with missiles, then other cover troops, then line
+  troops each take the next mouth in turn; cover troops stand
+  `SP_COVER_PCT` 30 % of the way in from the mouth to the plaza (the next
+  one at a mouth `SP_STEP` 15 % further in), line troops at `SP_LINE_PCT`
+  60 % in the Hold street stance; their reserve rules then apply
+  (shooters shoot from the post). Attackers in the assault: West cover
+  troops with missiles (`_bound_storm`) shoot a defender within 85 % of
+  their range (an attack order: they stand, Take cover puts the men at the
+  corners), else go by bounds to their street's mouth and on to the
+  plaza; West line foot storming (`_sp_wait`) halt while a strongpoint (a
+  defending unit holding cover spots, with `SP_WORN` 60 % of its men or
+  more and not disordered) is within `SP_WAIT_R` 70 m, until the
+  skirmishers have worn it down or the army goes all out. Field battles:
+  `battle_ai.gd`'s `_cover_spot` as before (cover troops' default Take
+  cover now also covers them when they shoot an attack target).
+- **View.** The order panel has Stance (Line / Cover / Hold, key C) and
+  Bounds (on / off, key B: while on, the player's move orders for foot go
+  by bounds) with their icons. A ball stopped by a wall, house or rock
+  shows a pale flash, chips and a 1.6 s dust cloud at least a few pixels
+  across (`FX_CHIP`, was the stone's 0.8 s puff).
+- **Section 6 (asymmetry mechanics) not built:** street disorder for
+  line units (`STREET_DIS`), volleys by ranks 1-2 in a lane and the
+  flank-support morale bonus in the open would move Rome's fitted sieges
+  and field battles (section 7 keeps Rome to C3 and C5); left for the
+  balance phase T.
+- **Measured.** See docs/STATUS.md (the balance table, the pathing probe,
+  cost).
+
 ### Compact unit cards (as built, 2026-10-09)
 
 View only: `game/unit_traits.gd` derives everything from the unit rows, so a
@@ -2967,8 +3105,8 @@ else). On a map with cover (`cov_on`: sight blockers and a cover unit):
   4 m toward the shooter `COV_ROCK` 60 %, a building `COV_HOUSE` 50 %, a
   wall / tower / gate `COV_WALL` 50 % (a man on a walkway: the
   battlements' `WALL_COVER` as everyone, nothing more), a field's hedges
-  `COV_FIELD` 25 % (on a settlement map only woods and rocks: houses,
-  walls and hedges there wait for 2c): that share of soldiers' missiles and balls about to
+  `COV_FIELD` 25 % (on a settlement map woods, rocks and, since pathing
+  phase C3, houses; walls and hedges there wait for 2c): that share of soldiers' missiles and balls about to
   strike him is stopped (`COVER_STOP`; after the trees' and the
   battlements' share everyone gets). Artillery shot (bolts, stones,
   roundshot) is not covered. (Pathing phase C0: on maps with obstacles a

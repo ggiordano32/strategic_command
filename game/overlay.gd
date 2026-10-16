@@ -88,7 +88,8 @@ const FX_CAP := 64
 const FX_FIRE := 1     # a fire missile: sparks, then smoke
 const FX_BLAST := 2    # an explosive stone: flash, ring, lingering smoke
 const FX_DUST := 3     # an ordinary stone: a puff
-const FX_LIFE := [0.0, 2.0, 3.0, 0.8]
+const FX_CHIP := 4     # a ball stopped by a wall, house or rock (phase C0): a pale flash, chips and a lingering dust cloud
+const FX_LIFE := [0.0, 2.0, 3.0, 0.8, 1.6]
 const COL_SMOKE := Color(0.22, 0.2, 0.19)
 var _clock := 0.0
 var fx_trk_us := 0
@@ -237,7 +238,7 @@ func _blocked_shots() -> void:
 		return
 	for k in range(maxi(_bk_seen, n - BattleSim.BK_N), n):
 		var r := k % BattleSim.BK_N
-		_fx_spawn(FX_DUST, to_px(sim.bk_x[r], sim.bk_y[r]), 0.0)
+		_fx_spawn(FX_CHIP, to_px(sim.bk_x[r], sim.bk_y[r]), 0.0)
 	_bk_seen = n
 
 
@@ -372,6 +373,19 @@ func _draw_fx(lw: float) -> void:
 			FX_DUST:
 				var f := a / 0.8
 				draw_circle(p, pm * (0.35 + 0.9 * f), Color(0.55, 0.45, 0.32, 0.4 * (1.0 - f)))
+			FX_CHIP:
+				# (Seen at any zoom: at least a few pixels across.)
+				var f := a / 1.6
+				var r0 := maxf(pm, 3.0 / zoom)
+				if a < 0.12:
+					draw_circle(p, r0 * 0.9, Color(1.0, 0.95, 0.8, 0.85 * (1.0 - a / 0.12)))
+				for k in 3:
+					var ang := float((sd + k * 7) % 11) * 0.57
+					var c := p + Vector2(cos(ang), sin(ang)) * r0 * (0.4 + 2.2 * minf(a * 3.0, 1.0))
+					if a < 0.5:
+						draw_circle(c, r0 * 0.18, Color(0.35, 0.3, 0.24, 0.9 * (1.0 - a / 0.5)))
+				draw_circle(p + Vector2(0, -r0 * 0.6 * f), r0 * (0.6 + 1.2 * f), Color(0.72, 0.64, 0.5, 0.6 * (1.0 - f)))
+				draw_circle(p + Vector2(r0 * 0.5 * f, -r0 * 1.1 * f), r0 * (0.4 + 0.9 * f), Color(0.6, 0.53, 0.42, 0.45 * (1.0 - f)))
 
 
 ## Burning units: a few of the men (every 7th, at most 12) carry a flame and

@@ -15,6 +15,8 @@ signal run_pressed
 signal halt_pressed
 signal fire_pressed
 signal skirmish_pressed
+signal stance_pressed
+signal bounds_pressed
 signal deploy_pressed
 signal refill_pressed
 signal ammo_pressed
@@ -105,6 +107,8 @@ var run_button: Button
 var halt_button: Button
 var fire_button: Button
 var skirm_button: Button
+var stance_button: Button
+var bounds_button: Button
 var deploy_button: Button
 var refill_button: Button
 var ammo_button: Button
@@ -332,6 +336,14 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	skirm_button = _button("Skirmish: on", Vector2(0, BTN_H), "skirmish")
 	skirm_button.tooltip_text = "Missile troops fall back from approaching melee troops"
 	skirm_button.pressed.connect(func(): skirmish_pressed.emit())
+	stance_button = _button("Stance: Line", Vector2(0, BTN_H), "stance_line")
+	stance_button.tooltip_text = "Line: keep the formation. Take cover: men go to cover spots when standing or shooting. Hold street: lines fill the street across their front, skirmishers hold its corners."
+	stance_button.pressed.connect(func(): stance_pressed.emit())
+	stance_button.visible = false
+	bounds_button = _button("Bounds: off", Vector2(0, BTN_H), "bound")
+	bounds_button.tooltip_text = "Advance by bounds: half the men run to the next cover while the others shoot, then they swap (lines advance in hops)."
+	bounds_button.pressed.connect(func(): bounds_pressed.emit())
+	bounds_button.visible = false
 	deploy_button = _button("Deploy: on", Vector2(0, BTN_H), "deploy")
 	deploy_button.tooltip_text = "Artillery: set up to shoot, or pack up to move (takes time either way)"
 	deploy_button.pressed.connect(func(): deploy_pressed.emit())
@@ -383,7 +395,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	gift_button.tooltip_text = "Give the selected units to your ally (they can give them back)"
 	gift_button.pressed.connect(func(): gift_pressed.emit())
 	gift_button.visible = false
-	for b in [run_button, halt_button, fire_button, skirm_button, ammo_button, deploy_button, refill_button,
+	for b in [run_button, halt_button, fire_button, skirm_button, stance_button, bounds_button, ammo_button, deploy_button, refill_button,
 			forage_button, man_wall_button, come_down_button, drop_button, release_button,
 			char_buttons["sabotage"], char_buttons["attempt"], char_buttons["parley"], withdraw_button, gift_button]:
 		actions.add_child(b)
@@ -898,7 +910,7 @@ func is_over_ui(screen_pos: Vector2) -> bool:
 ## artillery-only) button. run -1 hides Run (only artillery selected).
 func set_selection(units: Array[int], run: int, fire: int, skirm: int, deploy: int = -1,
 		refill: int = -1, ammo: int = -1, ammo_word: String = "", forage: int = -1, dogs: int = -1,
-		release_armed: bool = false) -> void:
+		release_armed: bool = false, stance: int = -1, bounds: int = -1) -> void:
 	for k in _cards:
 		var on := units.has(k)
 		if _tgroups.has(k):
@@ -914,6 +926,10 @@ func set_selection(units: Array[int], run: int, fire: int, skirm: int, deploy: i
 	run_button.visible = run >= 0
 	fire_button.visible = fire >= 0
 	skirm_button.visible = skirm >= 0
+	stance_button.visible = stance >= 0
+	bounds_button.visible = bounds >= 0
+	var stance_word: String = ["Line", "Cover", "Hold"][clampi(stance, 0, 2)]
+	Kit.set_icon(stance_button, ["stance_line", "stance_cover", "stance_hold"][clampi(stance, 0, 2)])
 	deploy_button.visible = deploy >= 0
 	refill_button.visible = refill >= 0
 	ammo_button.visible = ammo >= 0
@@ -922,7 +938,8 @@ func set_selection(units: Array[int], run: int, fire: int, skirm: int, deploy: i
 	release_button.set_pressed_no_signal(release_armed)
 	Kit.set_icon(fire_button, "fire" if fire > 0 else "hold_fire")
 	_toggles = {run_button: ["Run", "on" if run > 0 else "off"], fire_button: ["Fire", "at will" if fire > 0 else "hold"],
-		skirm_button: ["Skirmish", "on" if skirm > 0 else "off"], deploy_button: ["Deploy", "on" if deploy > 0 else "off"],
+		skirm_button: ["Skirmish", "on" if skirm > 0 else "off"], stance_button: ["Stance", stance_word],
+		bounds_button: ["Bounds", "on" if bounds > 0 else "off"], deploy_button: ["Deploy", "on" if deploy > 0 else "off"],
 		refill_button: ["Refill", "on" if refill > 0 else "off"], ammo_button: ["Ammo", ammo_word],
 		forage_button: ["Forage", "on" if forage > 0 else "off"],
 		release_button: ["Release", "tap an enemy" if release_armed else "%d dogs" % maxi(dogs, 0)]}

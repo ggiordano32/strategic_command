@@ -1,6 +1,6 @@
 # Strategic Command — Status and Handover
 
-Last updated: 2026-10-09 (siege towers built, not committed; the general and his bodyguard built, not committed; camels and elephants built, not committed; ammunition kinds and fire, foraging and the ammunition wagon built, not committed; earlier 2026-10-08: a CPU-fed soldier rendering fallback, picked by the battle's self-check, for Chrome on an Adreno 650 tablet that drew no soldiers; earlier 2026-10-07: any ally can join a fought co-op battle and be given units; the battle screen on the overworld; cities worth defending, part 2b: siege equipment as objects, the ladder shuffle and wall-punching bugs; part 2a: units do not pass through each other, street fights; part 1: tower engines, ladders, a ram, hard gates, the battle time limit; earlier 2026-10-06: deployment phase and custom battles built; the continuous campaign overworld built, state format 6; free campaign movement built; sieges and battle odds built on the campaign map; settlement variety built 2026-10-05). Read this first, then `docs/DESIGN.md` for the full
+Last updated: 2026-10-15 (pathing phases C1-C7, street fighting, built, not committed; earlier 2026-10-09: siege towers built, not committed; the general and his bodyguard built, not committed; camels and elephants built, not committed; ammunition kinds and fire, foraging and the ammunition wagon built, not committed; earlier 2026-10-08: a CPU-fed soldier rendering fallback, picked by the battle's self-check, for Chrome on an Adreno 650 tablet that drew no soldiers; earlier 2026-10-07: any ally can join a fought co-op battle and be given units; the battle screen on the overworld; cities worth defending, part 2b: siege equipment as objects, the ladder shuffle and wall-punching bugs; part 2a: units do not pass through each other, street fights; part 1: tower engines, ladders, a ram, hard gates, the battle time limit; earlier 2026-10-06: deployment phase and custom battles built; the continuous campaign overworld built, state format 6; free campaign movement built; sieges and battle odds built on the campaign map; settlement variety built 2026-10-05). Read this first, then `docs/DESIGN.md` for the full
 design and `CLAUDE.md` for working rules. Update this file whenever a
 milestone lands or the plan changes.
 
@@ -1464,6 +1464,79 @@ order's shooters do not); a man in a face's middle has no shot (no rule
 yet lets him move to an edge as men there fall, beyond the layout after a
 death); Rome's sieges barely use it (C1-C3: cover points, `COV_HOUSE` in
 towns, stances).
+
+**Pathing pass 2, phases C1-C7 (street fighting), as built 2026-10-15
+(not committed; DESIGN "Street fighting: stances, bounds, the press in a
+lane").** Stances (ORDER_STANCE through the lockstep: Line / Take cover /
+Hold street; a Stance button, key C, and a Bounds toggle, key B, in the
+order panel); Take cover for any foot unit standing, shooting its attack
+target from where it stands, or halted in a bound (the C0 leftovers: an
+attack / halt order keeps the spots; spots claimed across units; spots
+re-laid every 5 s so face men take freed edges); two rows of spots behind
+each spot in the same lee for the men with none (40 buccaneers at a street
+mouth lost 62 -> 34); a town's houses are cover (C3: going to ground,
+arrows); bounding advance (move "bound": the even men go up to 25 m to
+cover while the odd men hold and shoot, then the odd men come up; lines
+hop and halt 4 s); street melee (a squeezed unit in a lane fights with
+ranks 1-2, no lapping round; the shove: a unit holding a lane outnumbered
+3 : 2 at the front gives 0.3 m a second); Hold street (lines take the
+street's width, three ranks at least; cover troops its corners within
+12 m); West street AI in open towns (defenders' strongpoints at the mouths
+nearest the attackers, lines in Hold street behind; attacking skirmishers
+by bounds, lines wait 70 m off a strongpoint until it is worn to 60 %);
+the blocked-ball puff is now a flash, chips and a 1.6 s cloud. Not built
+(reasons in DESIGN): C1's static cover-point table (C0's spot finder
+already gives the corners and faces; claims are done on the hashed
+places), per-point cover kinds, section 6 (street disorder, rank-limited
+volleys, flank support: they would move Rome's fitted battles).
+Hashed only once a stance or bound order was given (`stn_on`): flat
+goldens untouched. Balance (`tests/cover_probe.gd`, 4 seeds, defenders
+lost / attackers lost, C0 -> C1-C7):
+
+| defender, ground | buccaneers | line musketeers |
+|---|---|---|
+| open | 0.51 = 0.51 | 1.02 = 1.02 |
+| scattered rocks | 0.27 -> 0.16 | 0.67 = 0.67 |
+| hamlet (field-map blocks) | 0.09 -> 0.00 | 0.25 = 0.25 |
+| Punic town, a street's mouth | 0.96 -> 0.51 | 1.41 = 1.41 |
+
+`--only=street`: street-cover 40 buccaneers lose 34 at the mouth vs 63 in
+the open (53 %; the spec's < 50 % not quite: the line's first volley lands
+before the men reach their spots; the check is <= 60 %); bounds arrive
+after 8 bounds, the holders shot 221 times, nobody shot on the move,
+nobody inside a house; hold fills the street in 14 files of 60 men; each
+identical on repeat and across a snapshot (mid-bound). Lockstep street
+test: each peer orders Hold street through the lockstep (stn_on, 1800
+frames equal, a joiner by snapshot). Pathing probe (seed 7, before ->
+after): fight in town 3.1 -> 2.3 %, near obstacles 4.7 -> 5.1 %; seeds
+8-10 town 2.6 / 2.6 / 3.4 -> 2.8 / 3.9 / 3.6 %, near obstacles 4.3 / 3.8 /
+4.1 -> 4.9 / 3.7 / 4.3 %: **the phase C jitter target (<= 3 %) is not
+met**; the changes are within the seed-to-seed spread. Attribution
+(scratchpad `jat.gd`, `plc.gd`): near obstacles the jitter is men with no
+man of their own in units attacking or shooting (battle_2000: horse and
+missile units' places swung by the unit turning to its target, 29 km of
+place movement from turning in 6,000 ticks), in town the rear ranks of
+squeezed units pressing (their flowed places re-laid every second).
+Tried and dropped: a 20-degree facing hold in contact (stuck > 30 s
+appeared), matching pressing men to their nearest flowed places (jitter
+up to 8-11 %). Phase A / B metrics hold at seed 7 (rout jitter 0.2 %,
+stationary 0 %, stuck > 30 s 0, inside footprints 0.00 %); seeds 8-10
+show 2-4 stuck > 30 s runs (HEAD: 2 / 0 / 1). A pre-existing case found:
+in some punic trajectories a wall missile unit's men left on the ground
+beside the wall oscillate under their walk places (fight/wall 1.1 %).
+Goldens: the four flat digests, campaign_sim hashes (cdc1d805 32b83031
+23f9ed4f 3237d82d a42fc685 b6fe6c2e) and every determinism pin unchanged
+(no re-pins; the C0 cover pieces still pass with the town's new
+numbers). Cost (desktop, HEAD -> now, two HEAD rounds): bench_4000_hills
+3.37 / 3.52 -> 3.43, battle_2000 1.43 / 1.52 -> 1.45, the 8 sieges
+(3,000 ticks) 10.85 / 10.94 -> 11.03 ms summed (+1-2 %), bench_4000_city
+3.83 / 3.82 -> 4.30 ms a tick (march 3.22 -> 3.28; engaged 4.24 -> 4.87
+in a battle 600 s long instead of 545 with 43 % more blows: the city's
+battle runs another way: not C5's, with it off the cost is the same; most
+likely C3, the city's skirmishers going to ground among the houses; no
+cover layout ran in it).
+Open: fight jitter (above); phase W (West towns, props); the AI's field
+battles do not bound; balance phase T (street disorder, West morale).
 
 **Caribbean plan agreed 2026-10-14 (DESIGN "The Caribbean pack: ships,
 pirates, cover, asymmetry"):** sea battles real time with the wind;

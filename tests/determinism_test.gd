@@ -148,6 +148,9 @@ extends SceneTree
 ## Routs among walls and houses (2026-10-15, docs/PATHING_SPEC.md phase A;
 ## "--only=rout", also in the full run): rout-wall, rout-gate, trapped
 ## (see _rout_sc). "--only=walls": the wall-order set pieces alone.
+## Street fighting (2026-10-15, docs/PATHING_SPEC.md phases C1-C7;
+## "--only=street", also in the full run): street-cover, bounds, hold (see
+## _check_street).
 ## Exits 0 on success, 1 on failure.
 
 const SeaChecks := preload("res://tests/sea_checks.gd")
@@ -312,6 +315,11 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=street" in OS.get_cmdline_user_args():
+		_check_street()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=guns" in OS.get_cmdline_user_args():
 		_check_guns()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -356,6 +364,7 @@ func _init() -> void:
 	_check_reinf()
 	_check_guns()
 	_check_cover()
+	_check_street()
 	_check_sea()
 	if "--only=equipment" in OS.get_cmdline_user_args():
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -6435,6 +6444,148 @@ func _check_cover() -> void:
 		print("PASS cover (town, phase C0): buccaneers at a street's mouth: %d balls stopped by the houses (%d traced), %d men to cover spots, %d leaning shots, %d / %d behind cover at the end (a line there: %d / %d, no spots, none off its places), lost %d / %d (the line %d / %d); identical on repeat and across snapshot / restore" % [
 			int(tw["flat_block"]), int(tw["flat_traced"]), int(tw["cs_men"]), int(tw["lean"]), int(tw["behind"]), int(tw["alive_d"]),
 			int(tl["behind"]), int(tl["alive_d"]), int(tw["lost0"]), int(tw["lost1"]), int(tl["lost0"]), int(tl["lost1"])])
+	else:
+		for x in bad:
+			_fail(str(x))
+
+
+# ------------------------------------------------- street fighting (C) ---
+## docs/DESIGN.md "Street fighting: stances, bounds, the press in a lane".
+## street-cover: 40 buccaneers (Take cover, their default) at a street's
+## mouth of the open Punic town against an 80-man musket line 90 m out,
+## against the same in the open, 4 seeds: they lose at most STREET_PCT % of
+## the open ground's losses; identical on repeat and across a snapshot.
+## bounds: 40 buccaneers go by bounds 100 m up a street toward a musket
+## line at the plaza: they arrive, bound at least twice, the holding team
+## shoots while the others move, nobody stands inside a drawn house;
+## identical on repeat and across a snapshot taken mid-bound. hold: a
+## musket line ordered to Hold street at the street's mouth fills it
+## (squeezed to its width, three ranks at least) and a stance order is in
+## the hash from then on.
+const STREET_PCT := 60
+const STREET_SEEDS := [11, 22, 33, 44]
+
+
+func _street_sc(kind: String) -> Dictionary:
+	var bu := UT.index_of("buccaneers")
+	var mu := UT.index_of("musketeers")
+	if kind == "town":
+		return Scenarios.cover_town(bu, mu, 40, 80)
+	if kind == "bounds":
+		return Scenarios.street_bounds(bu, mu, 40, 40, 0)
+	if kind == "hold":
+		var h := Scenarios.cover_town(mu, mu, 60, 60)
+		h["orders"] = []
+		return h
+	var t := Scenarios.unit(1, bu, 40, 200, 160, Scenarios.FACE_DOWN)
+	t["files"] = 20
+	return {"width_m": 400, "height_m": 400, "ai_sides": [], "units": [t,
+		Scenarios.unit(0, mu, 80, 200, 250, Scenarios.FACE_UP)], "terrain": {"kind": Terrain.K_FLAT},
+		"orders": [{"tick": 0, "type": BattleSim.ORDER_SKIRMISH, "unit": 0, "on": 0}, Scenarios.attack(0, 1, 0, 0)]}
+
+
+func _street_run(kind: String, p_seed: int, snap_at: int, ticks: int) -> Dictionary:
+	var sc := _street_sc(kind)
+	var sim := BattleSim.new()
+	sim.setup(sc, p_seed)
+	if kind == "hold":
+		sim.queue_order({"tick": 5, "type": BattleSim.ORDER_STANCE, "unit": 0, "stance": BattleSim.STANCE_HOLD})
+	var twin = null
+	var twin_bad := 0
+	var hashes := PackedInt64Array()
+	var ev := {"held_shots": 0, "mover_shots": 0, "inside": 0, "arrive_t": -1, "max_bnd": 0, "h5": 0, "h6": 0}
+	for k in ticks:
+		var sh0: int = sim.stat_shots
+		var still: int = sim._bnd_still(0) if sim.u_bnd[0] != 0 else -1
+		var moving: int = sim.u_moved[0]
+		sim.step()
+		hashes.append(sim.state_hash())
+		if twin != null:
+			twin.step()
+			if twin.state_hash() != sim.state_hash():
+				twin_bad += 1
+		if k == snap_at:
+			twin = BattleSim.new()
+			twin.setup(sc, p_seed)
+			if not twin.restore(sim.snapshot()) or twin.state_hash() != sim.state_hash():
+				twin_bad += 1000
+		if kind == "hold" and k == 4:
+			ev["h5"] = sim.state_hash()
+		if kind == "bounds":
+			ev["max_bnd"] = maxi(int(ev["max_bnd"]), sim.u_bnd[0])
+			if sim.stat_shots > sh0 and still >= 0:
+				ev["held_shots"] += sim.stat_shots - sh0
+			if sim.stat_shots > sh0 and still < 0 and moving != 0:
+				ev["mover_shots"] += sim.stat_shots - sh0
+			if k % 10 == 0:
+				var base: int = sim.u_slot_base[0]
+				for q in sim.u_alive[0]:
+					var i: int = sim.slot_soldier[base + q]
+					if sim.clr_at(sim.pos_x[i], sim.pos_y[i]) < 0:
+						ev["inside"] += 1
+			if int(ev["arrive_t"]) < 0 and sim.u_order[0] == BattleSim.O_NONE and k > 10:
+				ev["arrive_t"] = sim.tick
+	ev["hashes"] = hashes
+	ev["twin_bad"] = twin_bad if snap_at >= 0 and twin != null else (0 if snap_at < 0 else -1)
+	ev["lost0"] = sim.u_count0[0] - sim.u_alive[0]
+	ev["lost1"] = sim.u_count0[1] - sim.u_alive[1]
+	ev["bounds"] = sim.stat_bounds
+	ev["cs_men"] = sim.stat_cs_men
+	ev["stn_on"] = sim.stn_on
+	ev["sq"] = sim.u_sq[0]
+	ev["files"] = sim.files_of(0)
+	ev["alive"] = sim.u_alive[0]
+	ev["dist"] = FM.approx_len(sim.u_ax[0] - int(sc["orders"][4]["x"]), sim.u_ay[0] - int(sc["orders"][4]["y"])) if kind == "bounds" else 0
+	return ev
+
+
+func _check_street() -> void:
+	var bad: Array = []
+	# street-cover.
+	var a := _street_run("town", 11, 300, 900)
+	var b := _street_run("town", 11, -1, 900)
+	if a["hashes"] != b["hashes"]:
+		bad.append("street-cover: the repeat diverged")
+	if int(a["twin_bad"]) != 0:
+		bad.append("street-cover: the restored copy diverged (%d)" % int(a["twin_bad"]))
+	var lt := 0
+	var lo := 0
+	var kt := 0
+	var ko := 0
+	for sd in STREET_SEEDS:
+		var t := _street_run("town", sd, -1, 900)
+		var o := _street_run("open", sd, -1, 900)
+		lt += int(t["lost0"])
+		lo += int(o["lost0"])
+		kt += int(t["lost1"])
+		ko += int(o["lost1"])
+	if lt * 100 > lo * STREET_PCT:
+		bad.append("street-cover: buccaneers lost %d in the town, %d in the open (over %d %%)" % [lt, lo, STREET_PCT])
+	# bounds.
+	var c := _street_run("bounds", 7, 300, 2500)
+	var d := _street_run("bounds", 7, -1, 2500)
+	if c["hashes"] != d["hashes"]:
+		bad.append("bounds: the repeat diverged")
+	if int(c["twin_bad"]) != 0:
+		bad.append("bounds: the restored copy diverged (%d)" % int(c["twin_bad"]))
+	if int(c["arrive_t"]) < 0 or int(c["dist"]) > 4 * M or int(c["bounds"]) < 2 or int(c["max_bnd"]) < 3:
+		bad.append("bounds: arrived at %d (%d m off), %d bounds, furthest state %d" % [int(c["arrive_t"]), int(c["dist"]) / M,
+			int(c["bounds"]), int(c["max_bnd"])])
+	if int(c["held_shots"]) <= 0 or int(c["mover_shots"]) != 0:
+		bad.append("bounds: shots by the holding team %d, on the move otherwise %d" % [int(c["held_shots"]), int(c["mover_shots"])])
+	if int(c["inside"]) != 0:
+		bad.append("bounds: %d man-samples inside a drawn house" % int(c["inside"]))
+	# hold.
+	var h := _street_run("hold", 7, 100, 200)
+	var h0 := _street_run("hold", 7, -1, 200)
+	if h["hashes"] != h0["hashes"] or int(h["twin_bad"]) != 0:
+		bad.append("hold: diverged on repeat or across the snapshot (%d)" % int(h["twin_bad"]))
+	if int(h["stn_on"]) != 1 or int(h["sq"]) <= 0 or int(h["files"]) * 3 > int(h["alive"]) + 2:
+		bad.append("hold: stn_on %d, squeezed to %d files of %d men" % [int(h["stn_on"]), int(h["files"]), int(h["alive"])])
+	if bad.is_empty():
+		print("PASS street (C): street-cover: 40 buccaneers lost %d at a street's mouth, %d in the open (%d %%; killed %d / %d), 4 seeds; bounds: arrived at tick %d after %d bounds, the holders shot %d times, nobody shot on the move, nobody inside a house, %d lost / %d killed; hold: a line filled the street in %d files of %d men; identical on repeat and across snapshot / restore" % [
+			lt, lo, lt * 100 / maxi(lo, 1), kt, ko, int(c["arrive_t"]), int(c["bounds"]), int(c["held_shots"]), int(c["lost0"]), int(c["lost1"]),
+			int(h["files"]), int(h["alive"])])
 	else:
 		for x in bad:
 			_fail(str(x))

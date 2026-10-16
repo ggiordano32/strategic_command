@@ -18,6 +18,7 @@ const FACE_RIGHT := 0
 const FACE_LEFT := 512
 const ORDER_MOVE := 1
 const ORDER_ATTACK := 2
+const ORDER_FIRE := 5
 const ORDER_SKIRMISH := 6
 const EQ_LADDERS := 1   # BattleSim's siege equipment kinds (scenario "equip")
 const EQ_RAM := 2
@@ -354,6 +355,22 @@ static func _make(id: String) -> Dictionary:
 			# street's mouth of an open village against a Spanish musket line
 			# 90 m out; their men take the house corners and lean out to shoot.
 			return cover_town(UT.index_of("buccaneers"), UT.index_of("musketeers"))
+		"test_street_bounds":
+			# Street fighting (pathing phase C4): your buccaneers go by bounds
+			# up a street of an open village, half of them shooting from cover
+			# while the others run to the next corners; a Spanish musket line
+			# holds the plaza.
+			return street_bounds(UT.index_of("buccaneers"), UT.index_of("musketeers"), 40, 40, 0)
+		"test_street_ai":
+			# Street fighting AI (pathing phase C7): a West company storms an
+			# open village held by another; both sides played by the AI.
+			var city := {"seed": 707, "level": 2, "walls": 0, "bld": [1, 2, 4], "plan": MapGen.PLAN_PUNIC, "coast": 0}
+			var terr := {"kind": Terrain.K_FLAT, "seed": 710, "forest": 0, "ground": MapGen.PAL_GREEN}
+			var bu := UT.index_of("buccaneers")
+			var mu := UT.index_of("musketeers")
+			var cu := UT.index_of("cutlass")
+			var r := settlement(city, terr, [[bu, 40], [bu, 40], [mu, 80], [cu, 60]], [[bu, 40], [mu, 80], [cu, 60]], 1, [0, 1])
+			return r["scenario"]
 		"test_cover_rocks":
 			# ... and a field of scattered boulders: the men take the rocks' lee.
 			var rk: Array = []
@@ -408,10 +425,10 @@ static func attack(tick: int, u: int, target: int, run: int) -> Dictionary:
 ## one: the first point in from the mouth with two houses within 6 m),
 ## facing out; side 1's 100 of `att_ty` 90 m out facing it, attacking it;
 ## side 0 does not fall back (skirmish off).
-static func cover_town(def_ty: int, att_ty: int) -> Dictionary:
+static func cover_town(def_ty: int, att_ty: int, n_def: int = 60, n_att: int = 100) -> Dictionary:
 	var city := {"seed": 707, "level": 2, "walls": 0, "bld": [1, 2, 4], "plan": MapGen.PLAN_PUNIC, "coast": 0}
 	var terr := {"kind": Terrain.K_FLAT, "seed": 710, "forest": 0, "ground": MapGen.PAL_GREEN}
-	var r := settlement(city, terr, [[att_ty, 100]], [[def_ty, 60]], 0, [])
+	var r := settlement(city, terr, [[att_ty, n_att]], [[def_ty, n_def]], 0, [])
 	var sc: Dictionary = r["scenario"]
 	var lay: Dictionary = r["layout"]
 	var pl: Array = lay.get("agora", lay["plaza"])
@@ -441,11 +458,47 @@ static func cover_town(def_ty: int, att_ty: int) -> Dictionary:
 		spot = [int(pl[0]), int(pl[1]), int(mo[0]) - int(pl[0]), int(mo[1]) - int(pl[1]), 1]
 		spot[4] = maxi(FM.isqrt(spot[2] * spot[2] + spot[3] * spot[3]), 1)
 	var face := FM.atan2_a(spot[3], spot[2])
-	var d := unit(0, def_ty, 60, spot[0], spot[1], face, 12)
-	var a := unit(1, att_ty, 100, spot[0] + spot[2] * 90 / spot[4], spot[1] + spot[3] * 90 / spot[4], (face + 512) & 1023)
+	var d := unit(0, def_ty, n_def, spot[0], spot[1], face, maxi(n_def / 5, 4))
+	var a := unit(1, att_ty, n_att, spot[0] + spot[2] * 90 / spot[4], spot[1] + spot[3] * 90 / spot[4], (face + 512) & 1023)
 	sc["units"] = [d, a]
 	sc["ai_sides"] = []
 	sc["orders"] = [{"tick": 0, "type": ORDER_SKIRMISH, "unit": 0, "on": 0}, attack(0, 1, 0, 0)]
+	sc.erase("deploy_zones")
+	return sc
+
+
+## A bounding advance up a street (docs/DESIGN.md "Street fighting";
+## test_street_bounds, tests/determinism_test.gd --only=street): cover_town's
+## open Punic town; side 0's `n_att` of `att_ty` stand 20 m out from the
+## first mouth and go by bounds (a move with "bound") up its street to
+## STREET_STOP short of the plaza; side 1's `n_def` of `def_ty` stand at the
+## plaza facing them, firing at will, in the given stance. Scripted (no AI);
+## neither side falls back.
+const STREET_STOP := 60
+static func street_bounds(att_ty: int, def_ty: int, n_att: int, n_def: int, def_stance: int) -> Dictionary:
+	var city := {"seed": 707, "level": 2, "walls": 0, "bld": [1, 2, 4], "plan": MapGen.PLAN_PUNIC, "coast": 0}
+	var terr := {"kind": Terrain.K_FLAT, "seed": 710, "forest": 0, "ground": MapGen.PAL_GREEN}
+	var r := settlement(city, terr, [[att_ty, n_att]], [[def_ty, n_def]], 1, [])
+	var sc: Dictionary = r["scenario"]
+	var lay: Dictionary = r["layout"]
+	var pl: Array = lay.get("agora", lay["plaza"])
+	var mo: Array = lay["mouths"][0]
+	var dx := int(mo[0]) - int(pl[0])
+	var dy := int(mo[1]) - int(pl[1])
+	var l := maxi(FM.isqrt(dx * dx + dy * dy), 1)
+	var out := FM.atan2_a(dy, dx)
+	var a := unit(0, att_ty, n_att, int(mo[0]) + dx * 20 / l, int(mo[1]) + dy * 20 / l, (out + 512) & 1023, maxi(n_att / 5, 4))
+	var d := unit(1, def_ty, n_def, int(pl[0]) + dx * 8 / l, int(pl[1]) + dy * 8 / l, out, maxi(n_def / 4, 4))
+	d["stance"] = def_stance
+	sc["units"] = [a, d]
+	sc["ai_sides"] = []
+	var gx := int(pl[0]) + dx * STREET_STOP / l
+	var gy := int(pl[1]) + dy * STREET_STOP / l
+	sc["orders"] = [{"tick": 0, "type": ORDER_SKIRMISH, "unit": 0, "on": 0},
+		{"tick": 0, "type": ORDER_SKIRMISH, "unit": 1, "on": 0},
+		{"tick": 0, "type": ORDER_FIRE, "unit": 0, "on": 1}, {"tick": 0, "type": ORDER_FIRE, "unit": 1, "on": 1},
+		{"tick": 0, "type": ORDER_MOVE, "unit": 0, "x": gx * 1024, "y": gy * 1024, "facing": (out + 512) & 1023,
+			"width": 10 * 1024, "run": 0, "bound": 1}]
 	sc.erase("deploy_zones")
 	return sc
 

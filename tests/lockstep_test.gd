@@ -51,6 +51,8 @@ extends SceneTree
 ##    return (handed back); a drop during the deployment starts the battle
 ##    without waiting. Every frame equal.
 ## 11. Units do not pass through each other: two peers fighting a street
+##    (each peer orders its first unit to Hold street through the lockstep,
+##    pathing phase C6)
 ##    fight (two columns meeting in a 10 m street, the enemy AI), a third
 ##    joining by snapshot while units wait behind the fighting ones: every
 ##    frame equal.
@@ -1958,6 +1960,13 @@ func _test_lockstep_street() -> void:
 		now += 1
 		for p in peers:
 			var sim = p.ls.sim
+			if now == 20 + p.me * 7:
+				# A stance order through the lockstep (pathing phase C6): each
+				# peer's first unit holds the street; hashed from then on.
+				for u in sim.n_units:
+					if p.ls.u_cmd[u] == p.me:
+						p.issue({"type": BattleSim.ORDER_STANCE, "unit": u, "stance": BattleSim.STANCE_HOLD})
+						break
 			if now % 40 == 5 + p.me * 13:
 				for u in sim.n_units:
 					if p.ls.u_cmd[u] != p.me or sim.u_state[u] != BattleSim.U_READY or sim.u_order[u] == BattleSim.O_ATTACK:
@@ -2009,6 +2018,12 @@ func _test_lockstep_street() -> void:
 			sim_a.u_killed[0] + sim_a.u_killed[1] + sim_a.u_killed[2], sim_a.u_killed[3] + sim_a.u_killed[4] + sim_a.u_killed[5], sim_a.tick])
 	if sim_a.stat_queued == 0:
 		_fail("street lockstep: nobody waited behind a fighting friend")
+	var holds := 0
+	for u in sim_a.n_units:
+		if sim_a.u_stance[u] == BattleSim.STANCE_HOLD:
+			holds += 1
+	if sim_a.stn_on != 1 or holds != 2:
+		_fail("street lockstep: the stance orders did not apply (stn_on %d, %d units holding the street)" % [sim_a.stn_on, holds])
 
 
 ## Unlimited deployment ("deploy_time" -1): two peers on side 0 against the

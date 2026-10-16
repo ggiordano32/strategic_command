@@ -80,7 +80,8 @@ const ORDER_WORKS := 20         # side, equip (a field work; -1: the first unpla
 const ORDER_SABOTAGE := 21      # unit (an assassin), eg (an enemy engine group) or gate (a shut gate): wreck the engines / unbar it from inside
 const ORDER_ATTEMPT := 22       # unit (an assassin), target (an enemy character or general's unit): strike once
 const ORDER_PARLEY := 23        # unit (a diplomat), target (a routing or wavering enemy unit): ask it to surrender
-const ORDER_LAST := 23
+const ORDER_STANCE := 24        # unit, stance (STANCE_LINE / STANCE_COVER / STANCE_HOLD)
+const ORDER_LAST := 24
 
 # Battle phase (scenario "deploy_time" > 0 starts in PHASE_DEPLOY, see the
 # "deployment phase" section at the end of this file).
@@ -91,7 +92,8 @@ const DZ_INSIDE := 1   # settlement defenders: open ground inside the walls with
 
 ## Unit fields an order can change; OrderPreview predicts exactly these.
 const ORDER_KEYS: Array[String] = ["order", "ax", "ay", "face", "files", "dx", "dy",
-	"dface", "target", "run", "fire", "skirm", "deploy", "refill", "gtarget", "pick", "akind", "forage"]
+	"dface", "target", "run", "fire", "skirm", "deploy", "refill", "gtarget", "pick", "akind", "forage",
+	"stance", "bound"]
 
 # Formation geometry (spacing is per unit type, see unit_types.gd).
 const FILE_SPACING := 1126  # default, kept for callers that do not pass a type
@@ -351,6 +353,28 @@ const BK_N := 32             # view: the last blocked shots (where they stopped)
 const LOF_HEAD := 1741       # a man of a unit without the cover trait stands upright: a flat ball is traced to his head (cover men: LOF_BODY)
 const LEAN := 1229           # a man at a cover spot leans this far (1.2 m) out round it to shoot (and is shot there while exposed) ...
 const LEAN_LOOK := 8 * M     # ... to the side where nothing stands this far toward his target
+# Street fighting (docs/DESIGN.md "Street fighting: stances, bounds, the
+# press in a lane", pathing phases C1-C7; docs/PATHING_SPEC.md section 5).
+const STANCE_LINE := 0       # u_stance: keep the formation (line troops' default)
+const STANCE_COVER := 1      # ... "Take cover": men to cover spots when standing or shooting (cover troops' default)
+const STANCE_HOLD := 2       # ... "Hold street": line troops fill the street across their front; cover troops hold the corners round it
+const STANCE_N := 3
+const CS_CLAIM := 819        # a cover spot within 0.8 m of another unit's man or cover place is taken (no two units on one rock)
+const CS_R_HOLD := 12 * M    # Hold street: a cover unit's men take spots this near their places (facing its front with no threat)
+const HOLD_SPAN := 20 * M    # Hold street: a line measures the street this far either side of its anchor (wider: open ground, no hold)
+const CS_H_LINE := 2 * M     # line troops in Take cover stand upright: only cover this tall covers them (houses, walls, big rocks)
+const CS_DEEP := 2           # cover spots: rows behind each spot in the same lee for the men with none (C2) ...
+const CS_ROW := 1229         # ... this far apart (1.2 m)
+const CS_RELAY := 50         # a unit holding cover spots lays them out again this often (5 s): face men to the edges the fallen left
+const BOUND_LEN := 25 * M    # bounding advance: a bound's anchor goes at most this far ...
+const BOUND_MIN := 10 * M    # ... and stops at cover once past this far ...
+const BOUND_T := 120         # ... or after this long (12 s); the other team comes up as long at most
+const BOUND_PAUSE := 40      # line troops bound as a whole unit: hop, then stand and fire this long (4 s)
+const BOUND_NEAR := 2 * M    # the team coming up is in once its men are this near their places on average
+const STREET_RANKS := 2      # a unit squeezed in a street fights with its first this many ranks; the rest keep their places
+const SHOVE_T := 10          # the press in a lane: checked this often (1 s) ...
+const SHOVE_R := 4 * M       # ... counting each side's men within this of the other's box (its front and the men right behind) ...
+const SHOVE_STEP := 307      # ... the side outnumbered 3 : 2 there gives this much ground (0.3 m) a check
 const VIS_T := 10         # sight: each unit re-checked every this many ticks (staggered by index)
 const VIS_NEAR := 20 * M  # an enemy unit this near (box to box) always sees it ...
 const VIS_WOODS := 40 * M # ... a unit in woods only enemies this near see ...
@@ -1247,6 +1271,17 @@ var u_cvb := PackedInt32Array()       # cover units: the threat's bearing its me
 var ft_on: int = 0                    # flat shots traced on the obstacle grid (static: a map with walls, houses, rocks or cliffs, "los" not 0)
 var cs_on: int = 0                    # ... and a unit with the cover trait: its men take cover spots (static)
 var s_shot := PackedInt32Array()      # per man: the tick of his last shot (ft_on: hashed then)
+# Street fighting (phases C1-C7; _stn_arrays hashed with stn_on).
+var stn_on: int = 0                   # stances and bounds hashed: a map with an obstacle grid, or a stance / bound order given
+var u_stance := PackedInt32Array()    # STANCE_*: line, take cover, hold street (ORDER_STANCE)
+var u_bound := PackedInt32Array()     # 1: its move goes by bounds (ORDER_MOVE "bound")
+var u_bnd := PackedInt32Array()       # bounding: 0 not, 1 the even men go with the anchor, 2 the odd men come up, 3 a line's halt
+var u_bt := PackedInt32Array()        # ... tick the current bound began
+var u_bx := PackedInt32Array()        # ... anchor where it began
+var u_by := PackedInt32Array()
+var stat_bounds: int = 0              # bounds begun
+var stat_shove: int = 0               # ground given in the press of a lane (checks)
+var stat_street_hold: int = 0         # rear-rank searches skipped in a lane (men-ticks)
 var stat_flat_traced: int = 0         # flat missiles traced to the man they strike
 var stat_flat_block: int = 0          # ... stopped by a wall, house, gate, rock or cliff on the way
 var stat_cs_men: int = 0              # men given a cover spot (layouts summed)
@@ -1775,6 +1810,10 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		arr.fill(0)
 	u_cvb.resize(n_units)
 	u_cvb.fill(-1)
+	stn_on = 0
+	for arr in _stn_arrays():
+		arr.resize(n_units)
+		arr.fill(0)
 	u_seen.fill(1)
 	u_ambt.fill(-1000)
 	u_revt.fill(-1000)
@@ -1883,6 +1922,9 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		u_side[u] = int(ud["side"])
 		u_type[u] = ty
 		u_otype[u] = ty
+		u_stance[u] = STANCE_COVER if t_cover[ty] != 0 and stance_ok(ty) else STANCE_LINE
+		if ud.has("stance") and stance_ok(ty):
+			u_stance[u] = clampi(int(ud["stance"]), 0, STANCE_N - 1)  # (a scenario's unit key)
 		u_eg[u] = -1
 		u_cls[u] = t_cls[ty]
 		u_count0[u] = cnt
@@ -2194,6 +2236,13 @@ func _vis_arrays() -> Array:
 ## Per-unit cover state (hashed only with cov_on).
 func _cov_arrays() -> Array:
 	return [u_cov, u_gnd, u_rise]
+
+
+## Per-unit stances and bounds (docs/DESIGN.md "Street fighting"; hashed
+## only with stn_on: once an order changed one, so a battle without such an
+## order hashes as before).
+func _stn_arrays() -> Array:
+	return [u_stance, u_bound, u_bnd, u_bt, u_bx, u_by]
 
 
 ## The scenario's "chars" (per side a list of {"key": unit key, "name"}, as
@@ -4129,6 +4178,12 @@ func _squeeze(u: int) -> void:
 	var fsp := t_fsp[ty]
 	var want := mini(_base_files(u), u_alive[u])
 	var half := want * fsp / 2 + M
+	# Hold street (C6): line troops standing fill the street across their
+	# front (measured out to HOLD_SPAN either side), three ranks deep at least.
+	var hold := u_stance[u] == STANCE_HOLD and t_cover[u_otype[u]] == 0 and u_order[u] != O_MOVE \
+		and u_order[u] != O_WITHDRAW and u_carry[u] < 0
+	if hold:
+		half = HOLD_SPAN
 	var c := FM.cos_a(u_face[u])
 	var s := FM.sin_a(u_face[u])
 	var ax := u_ax[u]
@@ -4170,7 +4225,10 @@ func _squeeze(u: int) -> void:
 		fr = half
 	var width := fl + fr + M
 	var sq := 0
-	if width < want * fsp:
+	var hf := _hold_files(u, width, fl < half and fr < half) if hold else 0
+	if hf > 0:
+		sq = hf
+	elif width < want * fsp:
 		sq = clampi(width / fsp, mini(MIN_FILES, want), want)
 		if sq >= want:
 			sq = 0
@@ -4182,7 +4240,7 @@ func _squeeze(u: int) -> void:
 		u_sq[u] = sq
 		u_dirty[u] = 1
 		u_settled[u] = 0
-	if sq > 0 and u_order[u] != O_NONE and absi(fl - fr) > 2 * M and u_stair[u] != 2 \
+	if sq > 0 and (u_order[u] != O_NONE or hf > 0) and absi(fl - fr) > 2 * M and u_stair[u] != 2 \
 			and not (u_order[u] == O_MOVE and FM.approx_len(u_dx[u] - ax, u_dy[u] - ay) <= REFORM_IN_PLACE_DIST):
 		# Keep to the middle of the street (a metre at a time: at a corner
 		# the free width either side can flip from one check to the next).
@@ -6392,6 +6450,13 @@ func _apply_orders(max_player: int = 1 << 30) -> void:
 			u_pick[u] = int(d["pick"])
 			u_akind[u] = int(d["akind"])
 			u_forage[u] = int(d["forage"])
+			if int(d["stance"]) != u_stance[u] or int(d["bound"]) != u_bound[u] or int(o["type"]) == ORDER_STANCE \
+					or (u_bnd[u] != 0 and int(o["type"]) != ORDER_RUN and int(o["type"]) != ORDER_FIRE \
+					and int(o["type"]) != ORDER_AMMO):
+				stn_on = 1  # (stances and bounds hashed from here on)
+				u_stance[u] = int(d["stance"])
+				u_bound[u] = int(d["bound"])
+				u_bnd[u] = 0  # (a new order: any bound under way ends; the teams follow their places)
 			u_dirty[u] = 1
 			u_settled[u] = 0
 			if obs_on != 0:
@@ -6434,7 +6499,8 @@ static func order_fields(sim, u: int) -> Dictionary:
 		"dy": sim.u_dy[u], "dface": sim.u_dface[u], "target": sim.u_target[u],
 		"run": sim.u_run[u], "fire": sim.u_fire[u], "skirm": sim.u_skirm[u],
 		"deploy": sim.u_deploy[u], "refill": sim.u_refill[u], "gtarget": sim.u_gtarget[u],
-		"pick": sim.u_pick[u], "akind": sim.u_akind[u], "forage": sim.u_forage[u]}
+		"pick": sim.u_pick[u], "akind": sim.u_akind[u], "forage": sim.u_forage[u],
+		"stance": sim.u_stance[u], "bound": sim.u_bound[u]}
 
 
 ## Units an order applies to (in index order): its unit, or every ready unit
@@ -6442,7 +6508,7 @@ static func order_fields(sim, u: int) -> Dictionary:
 static func order_units(sim, o: Dictionary) -> Array[int]:
 	var out: Array[int] = []
 	if int(o["type"]) == ORDER_GATE or int(o["type"]) == ORDER_KILL or int(o["type"]) == ORDER_RELEASE \
-			or int(o["type"]) == ORDER_WORKS or int(o["type"]) >= ORDER_SABOTAGE:
+			or int(o["type"]) == ORDER_WORKS or (int(o["type"]) >= ORDER_SABOTAGE and int(o["type"]) <= ORDER_PARLEY):
 		return out  # not a unit order (applied by the sim to the gate; the drivers of an amok beast; a pack)
 	if int(o["type"]) == ORDER_WITHDRAW_ALL:
 		var side := int(o.get("side", -1))
@@ -6482,6 +6548,19 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 		if sim.spec_kind(u) >= 0:
 			d["akind"] = 1 if int(o.get("on", 0)) != 0 else 0
 		return
+	if typ == ORDER_STANCE:
+		# Line, Take cover or Hold street (foot only; docs/DESIGN.md "Street
+		# fighting"). It changes nothing else: the unit goes on as it was.
+		var sn := int(o.get("stance", -1))
+		if sn >= 0 and sn < STANCE_N and stance_ok(ty):
+			d["stance"] = sn
+		return
+	if typ == ORDER_MOVE or typ == ORDER_ATTACK or typ == ORDER_HALT or typ == ORDER_WITHDRAW \
+			or typ == ORDER_WITHDRAW_ALL or typ == ORDER_PICKUP:
+		# A move by bounds (two teams leapfrog from cover; line troops in hops),
+		# foot only, on the ground; any other order of these ends it.
+		d["bound"] = 1 if typ == ORDER_MOVE and int(o.get("bound", 0)) != 0 and stance_ok(ty) \
+			and (sim.u_wall[u] if u < sim.u_wall.size() else 0) == 0 else 0
 	# Siege: a tower's engine only shoots (at a unit, at will) or holds; a
 	# unit climbing ladders goes on climbing (or withdraws back down them).
 	if UT.stat(ty, "fixed") != 0 and typ != ORDER_ATTACK and typ != ORDER_HALT and typ != ORDER_FIRE \
@@ -7068,6 +7147,7 @@ func _flow_slots(u: int) -> void:
 	stat_flow += 1
 
 
+
 ## Settlement maps: a man's place that falls across a wall, in a house or on
 ## ground of another piece than the anchor's comes in toward the anchor to
 ## the first open ground of its piece (his side of the anchor), so no man
@@ -7208,8 +7288,8 @@ func step() -> void:
 		_update_vis()
 	if cs_on != 0:
 		for u in n_units:
-			if (u + tick) % VIS_T == 0 and t_cover[u_otype[u]] != 0:
-				_cover_seek(u)  # (men into cover: phase C0)
+			if (u + tick) % VIS_T == 0 and (u_stance[u] != STANCE_LINE or u_cvb[u] >= 0 or u_bnd[u] >= 2):
+				_cover_seek(u)  # (men into cover: phases C0, C2)
 	prev_x = pos_x.duplicate()
 	prev_y = pos_y.duplicate()
 	if n_eng > 0:
@@ -7660,7 +7740,8 @@ func _update_units() -> void:
 			stat_ford += 1
 		var lag := 0
 		if oon and _u_obs[u] != 0 and u_fighting[u] == 0 and u_charge[u] == 0 and u_wall[u] == 0 \
-				and u_stair[u] == 0:
+				and u_stair[u] == 0 and u_bnd[u] == 0:
+			# (Not in a bound: half its men stand back on purpose.)
 			lag = FM.approx_len(u_cx[u] - u_ax[u], u_cy[u] - u_ay[u]) - unit_depth(u) / 2
 		if lag > LAG_CUT:
 			# Among walls and houses: slow down for the men strung out
@@ -7721,6 +7802,8 @@ func _update_units() -> void:
 					want_face = bear
 					u_dface[u] = bear
 		elif order == O_MOVE or order == O_WITHDRAW:
+			if order == O_MOVE and u_bound[u] != 0 and _bound_tick(u):
+				aspeed = 0  # (a bound's halt: the other team comes up; a line fires)
 			# On a settlement map the anchor follows a path through the
 			# streets and gates (waypoints before the destination).
 			var wx := u_dx[u]
@@ -7753,6 +7836,8 @@ func _update_units() -> void:
 				u_ay[u] = wy
 				if order == O_MOVE and not via:
 					u_order[u] = O_NONE
+					if u_bnd[u] != 0:
+						_bound_set(u, 0)  # (there: both teams to their places)
 					if city_on != 0:
 						u_dirty[u] = 1  # there: its places again (kept to its own ground)
 					if u_stair[u] == 2:
@@ -7920,6 +8005,9 @@ func _update_units() -> void:
 			u_dirty[u] = 1  # on a wall in contact: its line packs behind an enemy's front ahead of it (_wall_offsets)
 		if oon and _u_obs[u] != 0 and u_wall[u] == 0 and not art and (u + tick) % 3 == 0:
 			_squeeze(u)
+		if oon and u_sq[u] > 0 and u_fighting[u] > 0 and u_order[u] == O_NONE and u_wall[u] == 0 \
+				and (u + tick) % SHOVE_T == 0 and (veg_bits(u_ax[u], u_ay[u]) & MapGen.V_URBAN) != 0:
+			_shove(u)  # (the press in a lane: C5)
 		elif u_sq[u] != 0 and (not oon or _u_obs[u] == 0):
 			u_sq[u] = 0  # out of the streets: open out again
 			u_dirty[u] = 1
@@ -8241,6 +8329,9 @@ func _missile_think(u: int) -> void:
 			if FM.approx_len(tx - u_ax[u], ty2 - u_ay[u]) > 4 * M:
 				u_order[u] = O_MOVE
 				u_target[u] = -1
+				if u_bound[u] != 0:
+					u_bound[u] = 0  # (falling back: no bounds)
+					u_bnd[u] = 0
 				u_dx[u] = tx
 				u_dy[u] = ty2
 				u_dface[u] = FM.atan2_a(-ey, -ex)
@@ -8262,7 +8353,7 @@ func _missile_think(u: int) -> void:
 		elif _gate_shot_ok(u, gt):
 			u_ftarget[u] = -1
 			return
-	if u_ammo[u] > 0 and order != O_MOVE and order != O_WITHDRAW:
+	if u_ammo[u] > 0 and (order != O_MOVE or u_bnd[u] != 0) and order != O_WITHDRAW:
 		var rng := mrange(u)
 		if order == O_ATTACK:
 			var t := u_target[u]
@@ -8664,6 +8755,8 @@ func _update_soldiers() -> void:
 			var wf_on := ob and u_order[u] == O_NONE and u_wall[u] == 0 and u_stair[u] == 0
 			if ob and u_wall[u] == 0 and stair_mv == 0:
 				sep_f = maxi(mini(files_of(u), alive), 1)
+			# (A bound: the team holding stands where it is and shoots; C4.)
+			var still := _bnd_still(u) if u_bnd[u] != 0 else -1
 			for s in alive:
 				var k := base + s
 				var i := ss[k]
@@ -8676,6 +8769,9 @@ func _update_soldiers() -> void:
 					if sgo.z != 0:
 						dx = sgo.x - x
 						dy = sgo.y - y
+				if still >= 0 and (i & 1) == still:
+					dx = 0
+					dy = 0
 				fc[i] = face
 				if is_cav:
 					cg[i] = umom
@@ -8827,7 +8923,15 @@ func _update_soldiers() -> void:
 		# front ahead, u_flow 2 / 3): its men on the walk keep to PLACE_SIDE
 		# (along the walk) of their places, and do not wrap.
 		var wcap := ob and u_wall[u] != 0 and u_flow[u] >= 2
-		if u_order[u] == O_ATTACK and u_fighting[u] > 0 and not pike_formed and not shy and not charging and not wcap:
+		# Street melee (C5): a unit squeezed in a town's street fights with its
+		# first STREET_RANKS ranks; the men behind keep their places (they
+		# take on only a man who reaches them) and nobody laps round.
+		var street_rk := 1 << 30
+		if ob and u_sq[u] > 0 and u_wall[u] == 0 and stair_mv == 0 and not charging \
+				and (veg_bits(ax, ay) & MapGen.V_URBAN) != 0:
+			street_rk = files * STREET_RANKS
+		if u_order[u] == O_ATTACK and u_fighting[u] > 0 and not pike_formed and not shy and not charging and not wcap \
+				and street_rk == 1 << 30:
 			wrap_t = u_target[u]
 		# Wrap at the anchor level (2026-10-09): when the target is narrower
 		# than this unit, the places of its front-rank files out beyond the
@@ -9007,6 +9111,7 @@ func _update_soldiers() -> void:
 					t = -1
 			else:
 				var lost := false
+				var rk := slot >= street_rk  # (a rear rank in a lane: only a man at him)
 				if t >= 0:
 					if st[t] >= S_DEAD:
 						t = -1
@@ -9014,7 +9119,7 @@ func _update_soldiers() -> void:
 					else:
 						var ddx := px[t] - x
 						var ddy := py[t] - y
-						if ddx * ddx + ddy * ddy > (keep_front if front and not shy else keep_rear):
+						if ddx * ddx + ddy * ddy > (keep_front if front and not shy else (reach_in * reach_in if rk else keep_rear)):
 							t = -1
 							lost = true
 						elif obr and (((tk + i) & 1) == 0 or ddx * ddx + ddy * ddy <= reach_in * reach_in) \
@@ -9036,7 +9141,12 @@ func _update_soldiers() -> void:
 					# (Among buildings, half the men who just lost their man look
 					# again at once and the rest at their next turn: a unit
 					# breaking off or dying set off a burst of searches.)
-					if (lost and (not obr or ((tk + i) & 1) == 0)) or (tk + i) % (3 if wide else 7) == 0:
+					if rk:
+						if (tk + i) % 7 == 0:
+							t = _find_target_obs(x, y, reach_in, 1, enemy_head) if obr \
+								else _find_target(x, y, reach_in, 1, enemy_head)
+						stat_street_hold += 1
+					elif (lost and (not obr or ((tk + i) & 1) == 0)) or (tk + i) % (3 if wide else 7) == 0:
 						if wide and not shy:
 							t = _find_target_obs(x, y, SEARCH_FRONT, 2, enemy_head) if obr \
 								else _find_target(x, y, SEARCH_FRONT, 2, enemy_head)
@@ -10160,8 +10270,9 @@ func _update_missiles() -> void:
 		if u_state[u] != U_READY or u_ammo[u] <= 0 or u_state[ft] >= U_DESTROYED or u_alive[ft] <= 0:
 			u_ftarget[u] = -1
 			continue
-		if u_moved[u] != 0:
-			continue  # no shooting on the move
+		var still := _bnd_still(u) if u_bnd[u] != 0 else -1
+		if u_moved[u] != 0 and still < 0:
+			continue  # no shooting on the move (a bound's holding team does)
 		if u_cls[u] == UT.CLS_ART:
 			continue  # engines shoot in _update_artillery (men working them keep their own arrows)
 		var ty := u_type[u]
@@ -10182,6 +10293,8 @@ func _update_missiles() -> void:
 			var i := slot_soldier[u_slot_base[u] + ptr]
 			if (state[i] != S_FORMED and not (high and state[i] == S_FIGHTING)) or ammo[i] <= 0:
 				continue
+			if still >= 0 and (i & 1) != still:
+				continue  # (on his way in a bound)
 			_fire(i, u, ft, ty, _shot_kind(i, ks, kstd, pref))
 		u_fire_acc[u] = mini(acc, reload)
 	if city_on != 0:
@@ -10225,7 +10338,8 @@ func _gun_unit(u: int) -> void:
 	if u_state[u] != U_READY or u_ammo[u] <= 0 or u_state[ft] >= U_DESTROYED or u_alive[ft] <= 0:
 		u_ftarget[u] = -1
 		return
-	if acc < reload or (u_moved[u] != 0 and t_rider[ty] == 0):
+	var still := _bnd_still(u) if u_bnd[u] != 0 else -1
+	if acc < reload or (u_moved[u] != 0 and t_rider[ty] == 0 and still < 0):
 		return
 	if (u_order[u] != O_ATTACK or u_target[u] != ft) and _unit_dist(u, ft) > t_m_volley[ty] and not _closing(ft, u):
 		stat_volley_held += 1
@@ -10237,7 +10351,7 @@ func _gun_unit(u: int) -> void:
 	var shots0 := stat_shots
 	for s in u_alive[u]:
 		var i := slot_soldier[base + s]
-		if state[i] != S_FORMED or ammo[i] <= 0:
+		if state[i] != S_FORMED or ammo[i] <= 0 or (still >= 0 and (i & 1) != still):
 			continue
 		_fire(i, u, ft, ty, _shot_kind(i, ks, kstd, pref))
 		if u_alive[ft] <= 0:
@@ -10302,7 +10416,7 @@ func _fire(i: int, u: int, ft: int, ty: int, ak: int = -1) -> void:
 		var sk1 := _skip1(ft)
 		if not _shot_ok(sx, sy, ax, ay, dist, ty, pk.y, sk1, wb, rp, pk.x):
 			# A man at a cover spot leans out round his cover to shoot (phase C0).
-			if ft_on == 0 or u_cvb[u] < 0:
+			if ft_on == 0 or (u_cvb[u] < 0 and _bnd_still(u) < 0):
 				return
 			var lp := _lean(sx, sy, ax, ay, _ground_mask(u))
 			if lp.x < 0:
@@ -10425,7 +10539,7 @@ func _land(p: int) -> void:
 	var tu := pr_tu[p]
 	if best < 0 and tu >= 0 and u_contact[tu] == 0 and u_alive[tu] > 0:
 		var j := -1
-		if u_state[tu] == U_READY and u_neng[tu] == 0 and u_wall[tu] == 0 and u_cvb[tu] < 0:
+		if u_state[tu] == U_READY and u_neng[tu] == 0 and u_wall[tu] == 0 and u_cvb[tu] < 0 and u_bnd[tu] == 0:
 			j = _slot_at(tu, x, y)
 		else:
 			j = _nearest_in_unit(tu, x, y)
@@ -13791,8 +13905,8 @@ func _setup_vis(sc: Dictionary, units: Array) -> void:
 	if obs_on != 0 and (obs_hi != 0 or not land_hd.is_empty()):
 		ft_on = 1  # (flat shots traced: something on the map stands up from the ground)
 		for ud in units:
-			if t_cover[int(ud["type"])] != 0:
-				cs_on = 1
+			if stance_ok(int(ud["type"])):
+				cs_on = 1  # (any foot may be ordered to take cover: phase C2)
 	var vw := veg_w
 	var vh := veg_h
 	vs_tw.resize(vw * vh)
@@ -14057,10 +14171,10 @@ func _cover_cell(k: int) -> int:
 		return COV_NONE
 	if MapGen.is_land(k):
 		return COV_ROCK
+	if k == MapGen.C_BUILDING:
+		return COV_HOUSE  # (a town's houses too since phase C3: street fighting from cover)
 	if city_on != 0:
 		return COV_NONE
-	if k == MapGen.C_BUILDING:
-		return COV_HOUSE
 	if k == MapGen.C_WALL or k == MapGen.C_TOWER or k == MapGen.C_WALK or MapGen.is_gate(k):
 		return COV_WALL
 	return COV_NONE
@@ -14197,7 +14311,7 @@ func _flat_block(p: int, j: int) -> bool:
 	var zt := LOF_BODY if t_cover[u_otype[ub]] != 0 else LOF_HEAD
 	var a := _trace(sx, sy, z0, tx, ty, elev_at(tx, ty) + zt,
 		d * t_m_apex[pr_ty[p]] / 100, s_obs, LAND_NEAR, t_obs, t_land)
-	if a >= 0 and t_land > 0 and u_cvb[ub] >= 0:
+	if a >= 0 and t_land > 0 and (u_cvb[ub] >= 0 or _bnd_still(ub) >= 0):
 		# Up and leaning out round his cover spot's corner to shoot: the ball
 		# is traced to where he leans (_lean, as his own shot).
 		var lp := _lean(tx, ty, sx, sy, _ground_mask(ub))
@@ -14323,16 +14437,33 @@ func _cover_seek(u: int) -> void:
 	if u_cvb[u] < 0 or absi(FM.angle_diff(nb, u_cvb[u])) > CS_TURN:
 		u_cvb[u] = nb
 		u_dirty[u] = 1
+	elif (tick / VIS_T) % (CS_RELAY / VIS_T) == 0:
+		# Now and then laid out again: a man in a face's middle (no shot) takes
+		# an edge the fallen left free (men at their spots keep them: nearest
+		# first), and spots another unit took since are given up.
+		u_dirty[u] = 1
 
 
-## Unit u may take cover man by man: a cover unit standing (no order), not
-## fighting, on the ground (not on a wall, a stair, working engines or
-## carrying), near obstacles.
+## Unit u may take cover man by man: in the Take cover stance (cover troops'
+## default; Hold street: cover troops), not fighting, on the ground (not on
+## a wall, a stair, working engines or carrying), near obstacles, and
+## standing (no order, a halt), shooting at its attack order's target from
+## where it stands (missile troops in range), or halted in a bound.
 func _cs_ok(u: int) -> bool:
-	return cs_on != 0 and phase == PHASE_BATTLE and t_cover[u_otype[u]] != 0 \
-		and u_state[u] == U_READY and u_alive[u] > 0 and u_order[u] == O_NONE \
-		and u_contact[u] == 0 and u_fighting[u] == 0 and u_wall[u] == 0 and u_stair[u] == 0 \
-		and u_neng[u] == 0 and u_carry[u] < 0 and u < _u_obs.size() and _u_obs[u] != 0
+	if cs_on == 0 or phase != PHASE_BATTLE or u_state[u] != U_READY or u_alive[u] <= 0 \
+			or u_contact[u] != 0 or u_fighting[u] != 0 or u_wall[u] != 0 or u_stair[u] != 0 \
+			or u_neng[u] != 0 or u_carry[u] >= 0 or u >= _u_obs.size() or _u_obs[u] == 0:
+		return false
+	var cover := t_cover[u_otype[u]] != 0
+	var o := u_order[u]
+	if o == O_MOVE:
+		return u_bnd[u] >= 2 and (cover or u_stance[u] == STANCE_COVER)
+	var sn := u_stance[u]
+	if sn != STANCE_COVER and not (sn == STANCE_HOLD and cover):
+		return false
+	if o == O_NONE:
+		return true
+	return o == O_ATTACK and u_cls[u] == UT.CLS_MISSILE and u_ammo[u] > 0 and u_moved[u] == 0
 
 
 ## The bearing (from unit u's anchor) of the threat it takes cover from: its
@@ -14340,6 +14471,8 @@ func _cs_ok(u: int) -> bool:
 ## (centroids; index order on ties); -1 none.
 func _cs_threat(u: int) -> int:
 	var t := u_ftarget[u]
+	if u_order[u] == O_ATTACK:
+		t = u_target[u]
 	if t < 0 or u_state[t] >= U_DESTROYED or u_alive[t] <= 0:
 		t = -1
 		var bd := CS_THREAT
@@ -14352,6 +14485,11 @@ func _cs_threat(u: int) -> int:
 				bd = dd
 				t = e
 	if t < 0:
+		# None in sight: a bound faces the way on, Hold street its front.
+		if u_bnd[u] != 0 and (u_dx[u] != u_ax[u] or u_dy[u] != u_ay[u]):
+			return FM.atan2_a(u_dy[u] - u_ay[u], u_dx[u] - u_ax[u]) & FM.ANGLE_MASK
+		if u_stance[u] == STANCE_HOLD:
+			return u_face[u]
 		return -1
 	return FM.atan2_a(u_cy[t] - u_ay[u], u_cx[t] - u_ax[u]) & FM.ANGLE_MASK
 
@@ -14376,6 +14514,10 @@ func _cover_places(u: int) -> void:
 	var ax := u_ax[u]
 	var ay := u_ay[u]
 	var gm := _ground_mask(u)
+	# (Hold street: the corners and doors round the street, farther; line
+	# troops in Take cover stand upright: only tall cover hides them.)
+	var csr := CS_R_HOLD if u_stance[u] == STANCE_HOLD and u_order[u] == O_NONE else CS_R
+	var csh := CS_H if t_cover[u_otype[u]] != 0 else CS_H_LINE
 	var minx := ax
 	var maxx := ax
 	var miny := ay
@@ -14387,10 +14529,10 @@ func _cover_places(u: int) -> void:
 		maxx = maxi(maxx, x)
 		miny = mini(miny, y)
 		maxy = maxi(maxy, y)
-	var i0 := maxi((minx - CS_R - CS_BACK) >> 11, 0)
-	var i1 := mini((maxx + CS_R + CS_BACK) >> 11, ob_w - 1)
-	var j0 := maxi((miny - CS_R - CS_BACK) >> 11, 0)
-	var j1 := mini((maxy + CS_R + CS_BACK) >> 11, ob_h - 1)
+	var i0 := maxi((minx - csr - CS_BACK) >> 11, 0)
+	var i1 := mini((maxx + csr + CS_BACK) >> 11, ob_w - 1)
+	var j0 := maxi((miny - csr - CS_BACK) >> 11, 0)
+	var j1 := mini((maxy + csr + CS_BACK) >> 11, ob_h - 1)
 	var city := city_on != 0 and n_cmp > 0
 	var ra := reach_at(ax, ay) if city else 0
 	var bkx := -fc * CS_BACK / FM.TRIG_ONE
@@ -14409,7 +14551,7 @@ func _cover_places(u: int) -> void:
 		var row := j * ob_w
 		for i in range(i0, i1 + 1):
 			var k := obs[row + i]
-			if k == MapGen.C_OPEN or _cell_top(row + i, k) < CS_H:
+			if k == MapGen.C_OPEN or _cell_top(row + i, k) < csh:
 				continue
 			var cx := (i << 11) + 1024 + bkx
 			var cy := (j << 11) + 1024 + bky
@@ -14422,7 +14564,7 @@ func _cover_places(u: int) -> void:
 					# (a house's corner, a rock's side, a wall's end).
 					var ni := i + (pdi if sd == 0 else -pdi)
 					var nj := j + (pdj if sd == 0 else -pdj)
-					if ni >= 0 and nj >= 0 and ni < ob_w and nj < ob_h and _cell_top(nj * ob_w + ni, obs[nj * ob_w + ni]) >= CS_H:
+					if ni >= 0 and nj >= 0 and ni < ob_w and nj < ob_h and _cell_top(nj * ob_w + ni, obs[nj * ob_w + ni]) >= csh:
 						continue
 					lt = 1 if sd == 0 else -1
 					edge += 1
@@ -14443,20 +14585,39 @@ func _cover_places(u: int) -> void:
 				sp.append(px)
 				sp.append(py)
 				sp_t.append(0 if sd < 2 else CS_LEE)  # (in a face's lee he cannot shoot: after the edges)
+				# Men with no spot of their own fill in behind (C2): CS_DEEP
+				# rows further back in the same lee, taken after the faces (he
+				# steps up when the man ahead falls; re-laid every CS_RELAY).
+				for dr in range(1, CS_DEEP + 1):
+					var qx := px + bkx * dr * CS_ROW / CS_BACK
+					var qy := py + bky * dr * CS_ROW / CS_BACK
+					if (nav_at(qx, qy) & gm) == 0 or (city and reach_at(qx, qy) != ra) \
+							or (cl_on != 0 and not _clr_ok(qx, qy, CLR_MIN)):
+						break
+					sp.append(qx)
+					sp.append(qy)
+					sp_t.append(CS_LEE + dr * M)
 		if sp.size() >= 8000:
 			break
-	var nsp := sp.size() / 2
+	var nsp := mini(sp.size() / 2, 4095)  # (12 bits in the sort key)
 	if nsp == 0:
 		return
+	sp.resize(nsp * 2)
+	# Spots another unit's man stands on or is laid out for are taken (C2:
+	# no two units on one rock; the lower index does not win: each unit
+	# keeps what it holds, a unit laying out now takes what is free).
+	var taken := _cs_taken(u, sp, (i0 << 11) - M, (j0 << 11) - M, ((i1 + 1) << 11) + M, ((j1 + 1) << 11) + M)
 	var pairs := PackedInt64Array()
 	for s in alive:
 		var plx := ax + off_x[base + s]
 		var ply := ay + off_y[base + s]
 		var im := slot_soldier[base + s]
 		for q in nsp:
+			if taken[q] != 0:
+				continue
 			var qx := sp[q * 2]
 			var qy := sp[q * 2 + 1]
-			if absi(qx - plx) > CS_R or absi(qy - ply) > CS_R or FM.approx_len(qx - plx, qy - ply) > CS_R:
+			if absi(qx - plx) > csr or absi(qy - ply) > csr or FM.approx_len(qx - plx, qy - ply) > csr:
 				continue
 			var dm := mini((FM.approx_len(qx - pos_x[im], qy - pos_y[im]) + sp_t[q]) >> 6, 1048575)
 			pairs.append((dm << 24) | (s << 12) | q)
@@ -14501,6 +14662,245 @@ func cover_state(u: int) -> int:
 	if u_gnd[u] >= GROUND_STILL:
 		return 2
 	return 1 if u_cov[u] * 2 >= u_alive[u] and u_alive[u] > 0 else 0
+
+
+# ----------------------------------- street fighting (phases C1-C7) ---
+# docs/DESIGN.md "Street fighting: stances, bounds, the press in a lane"
+# (docs/PATHING_SPEC.md section 5). The cover spots themselves are phase
+# C0's (_cover_places): spots in the lee of the 2 m cells that stand up,
+# laid out against the threat's bearing, at the drawn faces in a town.
+
+## A row may take a stance or move by bounds: foot (not horse, engines, a
+## tower's engine, a hero or an agent).
+static func stance_ok(ty: int) -> bool:
+	var c := UT.cls(ty)
+	return (c == UT.CLS_INF or c == UT.CLS_PIKE or c == UT.CLS_MISSILE) and UT.stat(ty, "mount") == UT.MOUNT_FOOT \
+		and UT.stat(ty, "fixed") == 0 and UT.stat(ty, "char") == 0
+
+
+## The bound's team of unit u that holds (stands where it is and shoots):
+## the odd men while the even ones go (1) and settle into cover (2), the
+## even men while the odd ones come up (3); -1 none (not bounding, a line's
+## whole-unit hop or halt).
+func _bnd_still(u: int) -> int:
+	var b := u_bnd[u]
+	if b == 1 or b == 2:
+		return 1 if t_cover[u_otype[u]] != 0 else -1
+	if b == 3:
+		return 0
+	return -1
+
+
+## Bounding advance (C4), unit u on a move ordered by bounds, each tick:
+## true while its anchor waits. Cover troops: the even men go with the
+## anchor (1) at most BOUND_LEN, stopping at cover past BOUND_MIN, or for
+## BOUND_T; they settle into the cover spots round it (2); then the odd
+## men, who held and shot meanwhile, come up to theirs (3), and on.
+## Line troops hop as a whole unit (1) and halt to fire for BOUND_PAUSE
+## (4). In contact (or on a wall, a stair, carrying) it marches as usual.
+func _bound_tick(u: int) -> bool:
+	if u_contact[u] != 0 or u_fighting[u] != 0 or u_stair[u] != 0 or u_wall[u] != 0 or u_carry[u] >= 0:
+		if u_bnd[u] != 0:
+			_bound_set(u, 0)
+		return false
+	var b := u_bnd[u]
+	if b == 0:
+		_bound_set(u, 1)
+		return false
+	var el := tick - u_bt[u]
+	var cover := t_cover[u_otype[u]] != 0
+	if b == 1:
+		var gone := FM.approx_len(u_ax[u] - u_bx[u], u_ay[u] - u_by[u])
+		if gone >= BOUND_LEN or el >= BOUND_T or (gone >= BOUND_MIN and (tick + u) % 5 == 0 and _bound_cover(u)):
+			_bound_set(u, 2 if cover else 4)
+			return true
+		return false
+	if b == 2 or b == 3:
+		if el >= BOUND_T or ((tick + u) % 5 == 0 and _bound_in(u, 0 if b == 2 else 1)):
+			_bound_set(u, 3 if b == 2 else 1)
+			return b == 2
+		return true
+	if el >= BOUND_PAUSE:
+		_bound_set(u, 1)
+		return false
+	return true
+
+
+## Unit u's bound state becomes b (the tick and the anchor noted; its men
+## laid out again: cover spots at a halt, the formation on the go).
+func _bound_set(u: int, b: int) -> void:
+	u_bnd[u] = b
+	if b == 1:
+		stat_bounds += 1
+	u_bt[u] = tick
+	u_bx[u] = u_ax[u]
+	u_by[u] = u_ay[u]
+	u_dirty[u] = 1
+	if b >= 2 and _cs_ok(u):
+		var nb := _cs_threat(u)
+		if nb >= 0 and (u_cvb[u] < 0 or absi(FM.angle_diff(nb, u_cvb[u])) > CS_TURN):
+			u_cvb[u] = nb
+	elif u_cvb[u] >= 0 and not _cs_ok(u):
+		u_cvb[u] = -1
+
+
+## Something stands up (CS_H) within 6 m of unit u's anchor: a bound may
+## stop there.
+func _bound_cover(u: int) -> bool:
+	if obs_on == 0:
+		return false
+	var ci := u_ax[u] >> 11
+	var cj := u_ay[u] >> 11
+	for j in range(maxi(cj - 3, 0), mini(cj + 3, ob_h - 1) + 1):
+		for i in range(maxi(ci - 3, 0), mini(ci + 3, ob_w - 1) + 1):
+			var k := obs[j * ob_w + i]
+			if k != MapGen.C_OPEN and _cell_top(j * ob_w + i, k) >= CS_H:
+				return true
+	return false
+
+
+## The men of unit u whose index has parity `par` stand on average within
+## BOUND_NEAR of their places (none: true).
+func _bound_in(u: int, par: int) -> bool:
+	var base := u_slot_base[u]
+	var ax := u_ax[u]
+	var ay := u_ay[u]
+	var n0 := 0
+	var dsum := 0
+	for s in u_alive[u]:
+		var i := slot_soldier[base + s]
+		if (i & 1) != par:
+			continue
+		n0 += 1
+		dsum += FM.approx_len(ax + off_x[base + s] - pos_x[i], ay + off_y[base + s] - pos_y[i])
+	return n0 == 0 or dsum <= BOUND_NEAR * n0
+
+
+## Hold street for line troops (C6; `_squeeze`): the files that fill the
+## street across unit u's front, in three ranks at least; 0 when it does
+## not stand in a street (open within HOLD_SPAN on either side).
+func _hold_files(u: int, width: int, closed: bool) -> int:
+	if not closed:
+		return 0
+	var alive := u_alive[u]
+	var lo := mini(MIN_FILES, alive)
+	return clampi(width / maxi(t_fsp[u_type[u]], 1), lo, maxi(alive / 3, lo))
+
+
+## Cover spots of unit u that another unit's man stands on or is laid out
+## for (within CS_CLAIM): no two units on one rock. `sp` holds the spots
+## (x, y pairs); returns a byte per spot, 1: taken. Only men of other units
+## whose box comes near the spots' box, in index order.
+func _cs_taken(u: int, sp: PackedInt32Array, x0: int, y0: int, x1: int, y1: int) -> PackedByteArray:
+	var nsp := sp.size() / 2
+	var out := PackedByteArray()
+	out.resize(nsp)
+	out.fill(0)
+	var cells := {}
+	for o in n_units:
+		if o == u or u_state[o] != U_READY or u_alive[o] <= 0:
+			continue
+		if u_maxx[o] + CS_R < x0 or u_minx[o] - CS_R > x1 or u_maxy[o] + CS_R < y0 or u_miny[o] - CS_R > y1:
+			continue
+		var base := u_slot_base[o]
+		var spot := u_cvb[o] >= 0
+		for s in u_alive[o]:
+			for q in 2:
+				var px: int
+				var py: int
+				if q == 0:
+					var i := slot_soldier[base + s]
+					px = pos_x[i]
+					py = pos_y[i]
+				elif spot:
+					px = u_ax[o] + off_x[base + s]
+					py = u_ay[o] + off_y[base + s]
+				else:
+					break
+				if px < x0 or px > x1 or py < y0 or py > y1:
+					continue
+				var key := (py >> 10) * 65536 + (px >> 10)
+				if cells.has(key):
+					(cells[key] as PackedInt32Array).append_array(PackedInt32Array([px, py]))
+				else:
+					cells[key] = PackedInt32Array([px, py])
+	if cells.is_empty():
+		return out
+	for q in nsp:
+		var qx := sp[q * 2]
+		var qy := sp[q * 2 + 1]
+		var hit := false
+		for dj in 3:
+			for di in 3:
+				var key := ((qy >> 10) + dj - 1) * 65536 + ((qx >> 10) + di - 1)
+				if not cells.has(key):
+					continue
+				var pts: PackedInt32Array = cells[key]
+				for r in pts.size() / 2:
+					if absi(pts[r * 2] - qx) < CS_CLAIM and absi(pts[r * 2 + 1] - qy) < CS_CLAIM \
+							and FM.approx_len(pts[r * 2] - qx, pts[r * 2 + 1] - qy) < CS_CLAIM:
+						hit = true
+						break
+				if hit:
+					break
+			if hit:
+				break
+		if hit:
+			out[q] = 1
+	return out
+
+
+## The press in a lane (C5), unit u squeezed in a street and fighting, once
+## every SHOVE_T: its men and its opponent's (the enemy unit whose box is
+## nearest, fighting too) within SHOVE_R of the other's box are counted;
+## outnumbered 3 : 2 there, a unit standing (no order: it holds the lane)
+## gives SHOVE_STEP of ground, its anchor back from the enemy, so its rear
+## ranks step back and its front follows.
+func _shove(u: int) -> void:
+	var o := -1
+	var bd := CONTACT_MARGIN + 1
+	var side := u_side[u]
+	for e in n_units:
+		if u_side[e] == side or u_state[e] != U_READY or u_alive[e] <= 0 or u_fighting[e] == 0:
+			continue
+		var g := _box_gap(u, e)
+		if g < bd:
+			bd = g
+			o = e
+	if o < 0:
+		return
+	var pu := _press_n(u, o)
+	var po := _press_n(o, u)
+	if po * 2 < pu * 3 or po < 3:
+		return
+	var dx := u_cx[u] - u_cx[o]
+	var dy := u_cy[u] - u_cy[o]
+	var d := FM.approx_len(dx, dy)
+	if d <= 0:
+		return
+	var nx := u_ax[u] + dx * SHOVE_STEP / d
+	var ny := u_ay[u] + dy * SHOVE_STEP / d
+	if (nav_at(nx, ny) & _ground_mask(u)) == 0 or (cl_on != 0 and not _clr_ok(nx, ny, CLR_MIN)):
+		return
+	u_ax[u] = clampi(nx, 0, field_w)
+	u_ay[u] = clampi(ny, 0, field_h)
+	u_settled[u] = 0
+	stat_shove += 1
+
+
+## Men of unit u within SHOVE_R of unit o's box.
+func _press_n(u: int, o: int) -> int:
+	var x0 := u_minx[o] - SHOVE_R
+	var x1 := u_maxx[o] + SHOVE_R
+	var y0 := u_miny[o] - SHOVE_R
+	var y1 := u_maxy[o] + SHOVE_R
+	var base := u_slot_base[u]
+	var n0 := 0
+	for s in u_alive[u]:
+		var i := slot_soldier[base + s]
+		if pos_x[i] >= x0 and pos_x[i] <= x1 and pos_y[i] >= y0 and pos_y[i] <= y1:
+			n0 += 1
+	return n0
 
 
 # ------------------------------------------------------------- snapshot ---
@@ -14708,6 +15108,10 @@ func state_hash() -> int:
 		if cov_on != 0:
 			for arr in _cov_arrays():
 				ctx.update((arr as PackedInt32Array).to_byte_array())
+	if stn_on != 0:
+		# Stances and bounds (battles where no order changed them hash as before).
+		for arr in _stn_arrays():
+			ctx.update((arr as PackedInt32Array).to_byte_array())
 	var digest := ctx.finish()
 	return digest.decode_u32(0)
 

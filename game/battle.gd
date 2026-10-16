@@ -83,6 +83,7 @@ const MAX_ORDER_EVENTS := 300
 static var show_all_orders := false
 
 var scenario_id := "skirmish"
+var bounds_mode := false  # view-side: move orders go by bounds
 var seed_value := 1
 ## Terrain kind for scenarios with generated terrain (Terrain.K_*), or -1
 ## for the scenario's own (random from the seed for the playable battles).
@@ -353,6 +354,8 @@ func _ready() -> void:
 	hud.halt_pressed.connect(_halt)
 	hud.fire_pressed.connect(_toggle_fire)
 	hud.skirmish_pressed.connect(_toggle_skirmish)
+	hud.stance_pressed.connect(_cycle_stance)
+	hud.bounds_pressed.connect(_toggle_bounds)
 	hud.deploy_pressed.connect(_toggle_deploy)
 	hud.refill_pressed.connect(_toggle_refill)
 	hud.ammo_pressed.connect(_toggle_ammo)
@@ -927,6 +930,9 @@ func _exit_tree() -> void:
 # --------------------------------------------------------------- orders ---
 
 func _queue(order: Dictionary) -> void:
+	if bounds_mode and int(order["type"]) == BattleSim.ORDER_MOVE and BattleSim.stance_ok(sim.u_type[int(order["unit"])]):
+		order = order.duplicate()
+		order["bound"] = 1
 	if sim.phase == BattleSim.PHASE_DEPLOY:
 		# Deployment: moves become placements (the same gestures: tap, line,
 		# group), everything else that would set the army going waits.
@@ -1027,7 +1033,7 @@ func _refresh_deploy() -> void:
 
 const ORDER_NAMES := {BattleSim.ORDER_MOVE: "move", BattleSim.ORDER_ATTACK: "attack",
 	BattleSim.ORDER_HALT: "halt", BattleSim.ORDER_RUN: "run", BattleSim.ORDER_FIRE: "fire",
-	BattleSim.ORDER_SKIRMISH: "skirmish", BattleSim.ORDER_WITHDRAW: "withdraw",
+	BattleSim.ORDER_SKIRMISH: "skirmish", BattleSim.ORDER_STANCE: "stance", BattleSim.ORDER_WITHDRAW: "withdraw",
 	BattleSim.ORDER_WITHDRAW_ALL: "withdraw_all", BattleSim.ORDER_DEPLOY: "deploy",
 	BattleSim.ORDER_REFILL: "refill", BattleSim.ORDER_GATE: "gate", BattleSim.ORDER_PLACE: "place",
 	BattleSim.ORDER_READY: "ready", BattleSim.ORDER_AMMO: "ammo", BattleSim.ORDER_FORAGE: "forage",
@@ -1096,7 +1102,13 @@ func _refresh_actions() -> void:
 	var ammo := -1
 	var ammo_word := ""
 	var forage := -1
+	var stance := -1
+	var bounds := -1
 	for u in selection:
+		if BattleSim.stance_ok(sim.u_type[u]):
+			if stance < 0:
+				stance = orders.value(u, "stance")
+			bounds = maxi(bounds, 1 if bounds_mode or orders.value(u, "bound") != 0 else 0)
 		if UT.cls(sim.u_type[u]) == UT.CLS_MISSILE and sim.u_state[u] == BattleSim.U_READY:
 			# Refill at a wagon (near one, or doing it); forage (in woods).
 			if sim.n_eq > 0 and (sim.wagon_for(u) >= 0 or orders.value(u, "refill") != 0):
@@ -1135,7 +1147,7 @@ func _refresh_actions() -> void:
 		if UT.stat(sim.u_type[u], "fixed") == 0:
 			only_fixed = false
 	hud.engine_only = only_fixed
-	hud.set_selection(selection, run, fire, skirm, deploy, refill, ammo, ammo_word, forage, dogs, release_armed)
+	hud.set_selection(selection, run, fire, skirm, deploy, refill, ammo, ammo_word, forage, dogs, release_armed, stance, bounds)
 	_refresh_wall_buttons()
 	if coop != null:
 		var tos := _gift_targets()
@@ -1343,6 +1355,33 @@ func _toggle_skirmish() -> void:
 	for u in selection:
 		if _skirmisher(u):
 			_queue(BattleSim.make_skirmish_order(0, u, 0 if any_on else 1))
+	_refresh_actions()
+
+
+## Stance button: Line -> Take cover -> Hold street -> Line, from the first
+## eligible selected unit's predicted stance, for every eligible unit.
+func _cycle_stance() -> void:
+	var nxt := -1
+	for u in selection:
+		if BattleSim.stance_ok(sim.u_type[u]):
+			nxt = (orders.value(u, "stance") + 1) % 3
+			break
+	if nxt < 0:
+		return
+	for u in selection:
+		if BattleSim.stance_ok(sim.u_type[u]):
+			_queue({"type": BattleSim.ORDER_STANCE, "unit": u, "stance": nxt})
+	_refresh_actions()
+
+
+## Bounds: a view-side mode that adds "bound" to the player's move orders.
+func _toggle_bounds() -> void:
+	var on := bounds_mode
+	if not on:
+		for u in selection:
+			if BattleSim.stance_ok(sim.u_type[u]) and orders.value(u, "bound") != 0:
+				on = true
+	bounds_mode = not on
 	_refresh_actions()
 
 
@@ -2389,6 +2428,10 @@ func _on_key(e: InputEventKey) -> void:
 			_toggle_fire()
 		"skirmish":
 			_toggle_skirmish()
+		"stance":
+			_cycle_stance()
+		"bounds":
+			_toggle_bounds()
 		"deploy":
 			_toggle_deploy()
 		"refill":
@@ -2977,7 +3020,7 @@ func _coop_pending() -> Array:
 	for o in coop.outbox:
 		var t := int(o.get("type", 0))
 		if (t >= BattleSim.ORDER_MOVE and t <= BattleSim.ORDER_REFILL or t == BattleSim.ORDER_PLACE \
-				or t == BattleSim.ORDER_AMMO or t == BattleSim.ORDER_FORAGE) and t != BattleSim.ORDER_WITHDRAW_ALL:
+				or t == BattleSim.ORDER_AMMO or t == BattleSim.ORDER_FORAGE or t == BattleSim.ORDER_STANCE) and t != BattleSim.ORDER_WITHDRAW_ALL:
 			var d: Dictionary = o.duplicate()
 			d["tick"] = sim.tick
 			out.append(d)

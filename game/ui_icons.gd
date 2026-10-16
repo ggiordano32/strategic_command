@@ -23,7 +23,7 @@ const NAMES: Array[String] = [
 	"merge", "exchange", "recruit", "raise", "disband", "split", "gift", "withdraw", "view_map",
 	"war", "peace", "trade", "trade_end", "alliance", "accept", "decline", "cancel", "close", "buy",
 	"farm", "market", "barracks", "range", "stables", "workshop", "walls", "build", "upgrade", "shipyard", "ship",
-	"fire", "hold_fire", "skirmish", "run", "deploy", "wall_up", "wall_down", "pick_up", "drop",
+	"fire", "hold_fire", "skirmish", "stance_line", "stance_cover", "stance_hold", "bound", "run", "deploy", "wall_up", "wall_down", "pick_up", "drop",
 	"victory", "defeat", "draw", "men", "killed", "routed", "captured",
 	"ladder", "ram", "tower", "siege_tower", "mantlet", "gate", "ammo", "forage", "wagon", "kill_beast", "general", "release", "crown", "dagger", "scroll",
 	"stakes", "caltrops", "palisade", "rotate",
@@ -515,6 +515,21 @@ static func _glyph(icon: String, c: Vector2, s: float) -> void:
 			_l(0.0, -0.7, 0.0, 0.7, 0.85)
 			_arrow(-0.22, 0.0, -0.9, 0.0, 0.45)
 			_arrow(0.22, 0.0, 0.9, 0.0, 0.45)
+		"stance_line":  # three short bars
+			_l(-0.6, -0.6, 0.6, -0.6, 1.0)
+			_l(-0.6, 0.0, 0.6, 0.0, 1.0)
+			_l(-0.6, 0.6, 0.6, 0.6, 1.0)
+		"stance_cover":  # a man behind a wall block
+			_dot(-0.3, -0.35, 0.28)
+			_l(-0.3, -0.1, -0.3, 0.3, 0.9)
+			_fill([-0.9, 0.3, 0.9, 0.3, 0.9, 0.9, -0.9, 0.9])
+		"stance_hold":  # two buildings, a bar across the gap
+			_fill([-0.95, -0.8, -0.35, -0.8, -0.35, 0.8, -0.95, 0.8])
+			_fill([0.35, -0.8, 0.95, -0.8, 0.95, 0.8, 0.35, 0.8])
+			_l(-0.35, 0.0, 0.35, 0.0, 1.0)
+		"bound":  # two offset arrows, one ahead of the other
+			_arrow(-0.8, 0.5, 0.1, 0.5, 0.45)
+			_arrow(-0.2, -0.45, 0.8, -0.45, 0.45)
 		"deploy":  # map pin
 			_arc(0.0, -0.3, 0.5, PI * 0.82, PI * 2.18)
 			_pl([-0.47, -0.08, 0.0, 0.62, 0.47, -0.08])
