@@ -29,6 +29,7 @@ extends Node2D
 ## their captain's name under the ship.
 
 const CData := preload("res://campaign/cdata.gd")
+const FactionEmblem := preload("res://game/faction_emblem.gd")
 const CState := preload("res://campaign/cstate.gd")
 const Geo := preload("res://game/campaign/map_geo.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
@@ -873,7 +874,7 @@ func _flota_course(fpos: Dictionary) -> void:
 ## grey "moved" dot (version 6 shows marches as paths and has the stance
 ## badge there). Returns the banner's rect.
 static func draw_banner(ci: CanvasItem, c: Vector2, col: Color, m: float, human: bool, count: int, frac: float,
-		glow: float = 0.0, moved: bool = false) -> Rect2:
+		glow: float = 0.0, moved: bool = false, emblem: String = "") -> Rect2:
 	var rect := Rect2(c - Vector2(ARMY_W, ARMY_H) * 0.5 * m, Vector2(ARMY_W, ARMY_H) * m)
 	if glow > 0.0:
 		ci.draw_rect(rect.grow(glow), COL_SELECTED)
@@ -887,6 +888,10 @@ static func draw_banner(ci: CanvasItem, c: Vector2, col: Color, m: float, human:
 	ci.draw_polyline(outline, COL_OUTLINE, 3.5 if human else 1.8, true)
 	if human:
 		ci.draw_polyline(outline, Color(1, 1, 1), 1.8, true)
+	if emblem != "" and FactionEmblem.has(emblem):
+		# the faction's emblem as a little flag on the banner's top edge
+		var es := 15.0 * maxf(m, 0.8)
+		FactionEmblem.draw(ci, emblem, Rect2(Vector2(c.x - es * 0.5, rect.position.y - es * 0.62), Vector2(es, es)))
 	var font := ThemeDB.fallback_font
 	var n := str(count)
 	var afs := int(round(15 * maxf(m, 0.75)))
@@ -1128,7 +1133,7 @@ func _army_marker(c: Vector2, a: Dictionary) -> void:
 	var frac := clampf(float(men) / maxf(full, 1), 0.0, 1.0)
 	var glow := 3.0 + 1.5 * sin(pulse * 5.0) if int(a["id"]) == selected_army else 0.0
 	var rect := draw_banner(self, c, CData.faction_color(f), m, human, CState.unit_count(a), frac, glow,
-		int(a["moved"]) != 0 and human and not grid)
+		int(a["moved"]) != 0 and human and not grid, CData.FACTIONS[f]["key"] if f >= 0 else "")
 	if grid:
 		draw_stance(self, rect, CState.stance(a))
 	if (not grid and int(a.get("stance", 0)) == CData.STANCE_GARRISON) or (grid and CRules.inside(state, a)):

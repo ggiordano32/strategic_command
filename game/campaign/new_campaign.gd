@@ -232,7 +232,7 @@ func _build_rows() -> void:
 		rowp.name = "row_" + str(fd["key"])
 		var h := Kit.hbox(8)
 		rowp.add_child(h)
-		h.add_child(Kit.swatch(CData.faction_color(f), 20))
+		h.add_child(Kit.faction_mark(f, 28))
 		var nv := Kit.vbox(0)
 		nv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var nl := Kit.label(str(fd["name"]), 15, Color.WHITE)

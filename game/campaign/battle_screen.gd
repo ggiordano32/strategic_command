@@ -454,7 +454,7 @@ static func _side(snap: Dictionary, sd: int, res: Dictionary) -> Control:
 	var tot := {"fielded": 0, "back": 0, "dead": 0, "fled": 0}
 	for g in groups:
 		var gh := Kit.hbox(6)
-		gh.add_child(Kit.swatch(CData.faction_color(int(g["f"])), 12))
+		gh.add_child(Kit.faction_mark(int(g["f"]), 16))
 		var gmen := 0
 		for u in g["units"]:
 			gmen += int(u["n"])

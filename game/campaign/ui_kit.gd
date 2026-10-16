@@ -11,6 +11,8 @@ const UiScale := preload("res://game/ui_scale.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const UiIcons := preload("res://game/ui_icons.gd")
 const Traits := preload("res://game/unit_traits.gd")
+const CData := preload("res://campaign/cdata.gd")
+const FactionEmblem := preload("res://game/faction_emblem.gd")
 
 const BTN_H := 40.0
 const FONT := 15
@@ -240,6 +242,16 @@ static func swatch(col: Color, size: float = 16.0) -> ColorRect:
 	c.custom_minimum_size = Vector2(size, size)
 	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return c
+
+
+## A faction's mark: its emblem (game/faction_emblem.gd) when it has one,
+## else the plain colour swatch. f is a faction index.
+static func faction_mark(f: int, size: float = 16.0) -> Control:
+	if f >= 0 and f < CData.FACTIONS.size():
+		var key := str(CData.FACTIONS[f]["key"])
+		if FactionEmblem.has(key):
+			return FactionEmblem.mark(key, size, CData.faction_color(f))
+	return swatch(CData.faction_color(f), size)
 
 
 ## Money as text: "1,250".

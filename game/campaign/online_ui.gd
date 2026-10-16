@@ -630,7 +630,7 @@ func show_online() -> void:
 	for seat in sm.get("seats", []):
 		var f := int(seat["f"])
 		var h := Kit.hbox(6)
-		h.add_child(Kit.swatch(CData.faction_color(f), 16))
+		h.add_child(Kit.faction_mark(f, 20))
 		var t := "%s%s: " % [_name(f), " (you)" if f == oc.f else ""]
 		if not bool(seat.get("claimed", false)):
 			t += "seat open, waiting for a player to join"
