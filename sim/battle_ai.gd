@@ -193,6 +193,7 @@ const CC_CLOSE := 60 * 1024
 const CC_WORN := 60     # a musket line down to this % of its men (or wavering, CC_SHAKEN morale) is fair game ...
 const CC_SHAKEN := 500
 const CC_HOLD_T := 1800  # ... and every line, CC_HOLD_T after the lines engage (the reserve goes in)
+const GUN_COVER_PAD := 30 * 1024  # West horse leave alone a target within a free musket line's range + this (_gun_covered)
 const Q_FIXED := 4             # (BattleSim field works states)
 const Q_STOWED := 5
 # (stat_ai[12] holds of high ground, [13] slots moved onto a rise,
@@ -1055,7 +1056,11 @@ static func _unit_think(sim, u: int) -> void:
 			# lives on in the campaign) instead of keeping a beaten side on
 			# the field from behind its own lines (field rebalance,
 			# 2026-10-09: such units kept battles undecided to the limit).
-			if not (resupply(sim, u, kn) or forage(sim, u, kn) or _take_engines(sim, u)):
+			# A West army's shooters stay (forts leftovers, docs/AI.md 29: a
+			# player's empty musket lines stand behind the line, still a
+			# threat; the AI's leaving lost it battles it was winning).
+			if not (resupply(sim, u, kn) or forage(sim, u, kn) or _take_engines(sim, u)) \
+					and not _west_field(sim, u):
 				_order(sim, u, {"type": ORDER_WITHDRAW}, 24)
 			return
 		if sim.u_routs[u] == 0 and sim.u_alive[u] * 100 < sim.u_count0[u] * kn[AP.RETIRE_ALIVE_PCT]:
@@ -1259,6 +1264,18 @@ static func _hold_reserve(sim, side: int) -> bool:
 	return sim.ai_phase[side] != P_ENGAGE or sim.tick - sim.ai_t[side] < CC_HOLD_T
 
 
+## Unit t stands within the reach (its range + GUN_COVER_PAD) of a free
+## musket line of its own side (_gun_line_free): West horse do not ride at
+## it (forts leftovers; docs/AI.md 29).
+static func _gun_covered(sim, t: int) -> bool:
+	for o in sim.n_units:
+		if sim.u_side[o] != sim.u_side[t] or o == t or not _gun_line_free(sim, o):
+			continue
+		if sim._in_range(o, t, sim.mrange(o) + GUN_COVER_PAD):
+			return true
+	return false
+
+
 ## Ready enemy melee units (foot, pikes, horse) of the side facing `side`.
 static func _melee_left(sim, side: int) -> int:
 	var n := 0
@@ -1416,6 +1433,8 @@ static func _cav_think(sim, u: int, phase: int) -> void:
 			pick = cc2
 		elif pick >= 0 and _gun_line_free(sim, pick) and _melee_left(sim, side) > 0 and _hold_reserve(sim, side):
 			return
+		elif pick >= 0 and _gun_covered(sim, pick):
+			return  # (forts leftovers: no riding at a target a free musket line covers)
 	if pick < 0:
 		return
 	if kn[AP.SK_CAV_RESERVE] > 0 and _mem(sim, u, AP.MU_X) == 3 and not _sk_reserve_cav_may(sim, u, pick, kn):

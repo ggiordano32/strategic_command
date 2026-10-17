@@ -437,6 +437,7 @@ const WALL_PARAPET := 614        # parapet top above the walkway (line of fire)
 const CAPTURE_TICKS := 600       # attackers hold the plaza this long: the defenders break
 const CAPTURE_CLEAR := 12 * M    # ... with no defender unit this far beyond the plaza
 const CAPTURE_MEN := 10          # an attacking unit needs this many men to hold it
+const FORT_STAIR_OFF := 1 << 30  # a West fort's stair whose foot the way does not reach (a bastion's pocket) is taken last (descent_end, ascent_end)
 const FORT_CAP_TICKS := 300      # a West fort (slice 2c): attackers hold its parade this long, none of its garrison on it: the fort falls
 const FORT_GUN_SECTOR := 171     # ... its guns shoot within this of their platform's outward way (60 degrees either side)
 const PATH_MAX := 24             # waypoints per unit path
@@ -473,7 +474,7 @@ static var RALLY_TRAPPED := 1   # defenders routing inside the walls (ROUT_INWAR
 static var ROUT_INWARD := 1     # defenders routing inside the walls run to the inside of the shut gate farthest from the enemy (1), or toward their map edge, out by any way (0)
 static var RAM_DMG := 160        # ... hit points per blow
 static var TOWERS_MAX: Array[int] = [0, 0, 3, 4]          # bolt-thrower towers by wall level (tuned 2026-10-09; was 6 / 8) ...
-static var TOWERS_STONE: Array[int] = [0, 0, 0, 2]        # ... and stone-thrower towers
+static var TOWERS_STONE: Array[int] = [0, 0, 0, 1]        # ... and stone-thrower towers (forts leftovers 2026-10-16: walls 3 2 -> 1; their stones on the battery, the ram and the crowd at the gate made walls 3 12 %, 1 or 0: 25 % in the equal-force sieges)
 const TOWER_SPACING := 40        # m between towers given engines (a gate's pair excepted)
 const TOWER_AMMO_BLD := 5        # a city with this building (cdata "workshop", MapGen.B_WORKSHOP) ...
 const TOWER_AMMO_PCT := 150      # ... loads its towers with this % of the shots
@@ -1453,7 +1454,7 @@ var stat_impact_blocked: int = 0   # charge impacts taken on a formed front's sh
 ## [12] holds of high ground, [13] missile / artillery slots moved onto a
 ## rise, [14] deployments shifted to higher ground.
 var stat_ai := PackedInt32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
 ## Per-competency AI counters, side * AIProfile.N_COUNTERS + AIProfile.C_*
 ## (docs/AI.md 6: flank hits, pull-outs, units saved, spear responses,
 ## missiles caught, ammunition left at rout ...). Not hashed, never read by
@@ -3999,6 +4000,8 @@ func _near_nodes(x: int, y: int, most: int = 3, mask: int = MapGen.NAV_GROUND) -
 	for k in cnt_n:
 		if not _node_open(k):
 			continue
+		if fort_on != 0 and ng_e0[k + 1] == ng_e0[k]:
+			continue  # (a West fort: a node with no way out, by a bastion's stair, is no way in or out: forts leftovers)
 		var dx := ng_x[k] - x
 		var dy := ng_y[k] - y
 		var d := FM.approx_len(dx, dy)
@@ -5011,12 +5014,15 @@ func _wall_order(u: int, typ: int, gnd: bool = false) -> void:
 static func descent_end(sim, sg: int, cx: int, cy: int, moving: bool, dx: int, dy: int) -> int:
 	var best_e := 0
 	var best_c := 1 << 40
+	var ra: int = sim.reach_at(dx, dy) if moving and sim.fort_on != 0 else -1
 	for e in 2:
 		var ep: Vector2i = sim.stair_pt(sg, e, 0)
 		var dp: Vector2i = sim.stair_pt(sg, e, 2)
 		var c := FM.approx_len(ep.x - cx, ep.y - cy)
 		if moving:
 			c += FM.approx_len(dx - dp.x, dy - dp.y)
+		if ra >= 0 and sim.reach_at(dp.x, dp.y) != ra:
+			c += FORT_STAIR_OFF  # (a West fort: a bastion's stair foot in a pocket the way does not reach)
 		if c < best_c:
 			best_c = c
 			best_e = e
@@ -5029,10 +5035,13 @@ static func descent_end(sim, sg: int, cx: int, cy: int, moving: bool, dx: int, d
 static func ascent_end(sim, sg: int, ax: int, ay: int, x: int, y: int) -> int:
 	var best_e := 0
 	var best_c := 1 << 40
+	var ra: int = sim.reach_at(ax, ay) if sim.fort_on != 0 else -1
 	for e in 2:
 		var ep: Vector2i = sim.stair_pt(sg, e, 0)
 		var dp: Vector2i = sim.stair_pt(sg, e, 2)
 		var c := FM.approx_len(dp.x - ax, dp.y - ay) + FM.approx_len(x - ep.x, y - ep.y)
+		if ra >= 0 and sim.reach_at(dp.x, dp.y) != ra:
+			c += FORT_STAIR_OFF  # (as descent_end)
 		if c < best_c:
 			best_c = c
 			best_e = e

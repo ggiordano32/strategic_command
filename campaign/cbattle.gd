@@ -772,8 +772,11 @@ static func _build_settlement(st: Dictionary, b: Dictionary, human_f: int, scale
 	for o in res["order"]:
 		var cs: int = o[0]
 		var e: Dictionary = entries[cs][int(o[1])]
-		map.append({"side": cs, "army": int(e["army"]), "unit": int(e["unit"]), "n": int(e["n"]),
-			"sim_n": int(lists[cs][int(o[1])][1])})
+		var row := {"side": cs, "army": int(e["army"]), "unit": int(e["unit"]), "n": int(e["n"]),
+			"sim_n": int(lists[cs][int(o[1])][1])}
+		if (o as Array).size() > 2:
+			row["part_of"] = map.size() - 1  # (a West fort's guard: part of the entry's sally company before it)
+		map.append(row)
 		ufac.append(int(e["f"]))
 	var controller := controllers(st, b, map, ufac)
 	return {"scenario": res["scenario"], "seed": battle_seed(st, r, 2), "map": map, "sim_side": sim_side,
@@ -1038,6 +1041,26 @@ static func _merge_kills_by(a: Array, b: Array) -> Array:
 	return out
 
 
+## Result row r with the rows of its parts (a West fort's guard) added:
+## killed, routed_off, withdrawn, remaining, kills and kills_by summed.
+static func _merged_row(r: Dictionary, prs: Array) -> Dictionary:
+	var out := r.duplicate(true)
+	for p in prs:
+		for f in ["killed", "routed_off", "withdrawn", "remaining", "kills"]:
+			out[f] = int(out.get(f, 0)) + int(p.get(f, 0))
+		var kb: Array = out.get("kills_by", [])
+		for e in p.get("kills_by", []):
+			var hit := false
+			for o in kb:
+				if int(o[0]) == int(e[0]):
+					o[1] = int(o[1]) + int(e[1])
+					hit = true
+			if not hit:
+				kb.append([int(e[0]), int(e[1])])
+		out["kills_by"] = kb
+	return out
+
+
 ## BattleSim.result() -> campaign outcome for crules.apply_outcome(). Each
 ## unit row: army, unit, killed, routed, withdrawn, remaining; a fought
 ## battle's rows (mode other than "auto") also carry "kills" (enemies its
@@ -1055,7 +1078,24 @@ static func outcome_from_result(built: Dictionary, res: Dictionary, mode: String
 	var by_k := {}  # sim unit -> its outcome row (a war dog pack's kills go to its handlers)
 	var chars: Array = []
 	var char_seen := [0, 0]
+	# A West fort's guard (map "part_of"): one entry with its sally company,
+	# its men's fates added to that row's.
+	var parts := {}
 	for r in res["units"]:
+		var kp := int(r.get("unit", -1))
+		if int(r.get("char", 0)) == 0 and kp >= 0 and kp < map.size() and int(map[kp].get("part_of", -1)) >= 0:
+			var km := int(map[kp]["part_of"])
+			if not parts.has(km):
+				parts[km] = []
+			(parts[km] as Array).append(r)
+	for r0 in res["units"]:
+		var r: Dictionary = r0
+		var kr := int(r.get("unit", -1))
+		if int(r.get("char", 0)) == 0 and kr >= 0 and kr < map.size():
+			if int(map[kr].get("part_of", -1)) >= 0:
+				continue
+			if parts.has(kr):
+				r = _merged_row(r, parts[kr])
 		if int(r.get("char", 0)) != 0:
 			# A hero or agent (a one-man unit past the army units): the side's
 			# n-th row is the side's n-th entry of the scenario's "chars".

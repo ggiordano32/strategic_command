@@ -172,6 +172,8 @@ const FORT_STORM_PCT := 35
 const FORT_STORM_ODDS := 250
 const FORT_SHUT_R := 45 * M
 const FORT_FOLLOW_R := 90 * M   # storming the fort: storming foot this near a planted ladder set climb it too
+const FORT_SALLY_APP := 30 * M  # the fort's sally (forts leftovers): attackers this far beyond the plaza's capture box hold its approach
+const FORT_BACK_R := 60 * M     # ... the sally goes back up when attackers bring a ram or ladders this near the fort's gate
 ## Fighting from buildings (slice 2c; docs/AI.md 29): a West musket line's
 ## street post becomes the building nearest it (its door step within
 ## SP_OCC_R) with SP_OCC_MIN firing places or more: it holds that building.
@@ -215,6 +217,7 @@ const A_ESC := 33       # defender sent up against ladder men (u_ai_y = the atta
 const A_MOUTH := 34     # defender in the stack at the attacked gate's inner mouth (u_ai_x = gate, u_ai_y = place, 0 the front)
 const A_PLAZA := 35     # defender holding the plaza (the plaza reserve)
 const A_MANTLET := 36   # attacker carrying a mantlet to the screen line (u_ai_x = the mantlet + 1)
+const A_FSALLY := 37    # a West fort's sally company (u_ai_x: 0 on the parapets, 1 out, 2 going back up, 3 back for good; u_ai_y = its stretch + 1)
 const MANTLET_BEFORE := 2 * 1024  # mantlets stand this far before the front of the unit they screen ...
 const MANTLET_OUT := 60 * 1024    # ... or, with none, this far out from the attacked gate
 const MANTLET_GAP := 7 * 1024     # ... side by side this far apart
@@ -533,6 +536,10 @@ static func _ours_at_gate(sim, side: int, g: int) -> bool:
 
 static func _classify_defender(sim, u: int) -> void:
 	if sim.u_wall[u] > 0:
+		if sim.fort_on != 0 and _fort_sally_unit(sim, u):
+			BattleAI._set_mode(sim, u, A_FSALLY)
+			sim.u_ai_y[u] = sim.u_wall[u]
+			return
 		BattleAI._set_mode(sim, u, A_WALLU)
 		return
 	if sim.fort_on != 0 and sim.in_fort(u):
@@ -820,6 +827,9 @@ static func _defender(sim, u: int) -> void:
 	if mode == A_CIT:
 		_cit_guard(sim, u)
 		return
+	if mode == A_FSALLY:
+		_fort_sally(sim, u, kn)
+		return
 	if mode == A_GATE:
 		_gate_guard(sim, u)
 		return
@@ -998,7 +1008,7 @@ static func _citadel(sim, side: int) -> void:
 ## stays shut); the sally port is never opened.
 static func _fort_gates(sim, side: int) -> void:
 	var g: int = sim.cit_gate
-	if g < 0 or sim.g_state[g] != GATE_OPEN:
+	if g < 0 or sim.g_state[g] == GATE_BROKEN:
 		return
 	var any := -1
 	for u in sim.n_units:
@@ -1007,14 +1017,173 @@ static func _fort_gates(sim, side: int) -> void:
 			break
 	if any < 0:
 		return
+	# The sally company (forts leftovers): the gate is opened for it going
+	# out or coming back, and not shut against the ram or ladders far off
+	# while it is out.
+	var s := _fort_sally_of(sim, side)
+	var st: int = sim.u_ai_x[s] if s >= 0 else 0
+	var out: bool = s >= 0 and not sim.in_fort(s)
+	if sim.g_state[g] == GATE_CLOSED:
+		if s >= 0 and ((st == 1 and not out) or (st == 2 and out)) and not _fort_threat(sim, side) \
+				and _attackers_near(sim, side, sim.g_x[g], sim.g_y[g], FORT_SHUT_R) == 0:
+			sim.queue_order({"tick": sim.tick, "type": ORDER_GATE, "unit": any, "gate": g, "on": 0,
+				"player": BattleAI.AI_PLAYER_BASE + side, "seq": 8000 + g})
+		return
+	var away: bool = s >= 0 and (st == 1 or (st == 2 and out))
 	for o in sim.n_units:
 		if sim.u_side[o] == side or sim.u_state[o] != U_READY:
 			continue
 		var cq: int = sim.u_carry[o] if sim.sg_on != 0 else -1
-		if BattleAI._d(sim.u_cx[o] - sim.g_x[g], sim.u_cy[o] - sim.g_y[g]) < FORT_SHUT_R \
-				or (cq >= 0 and (sim.q_kind[cq] == EQ_RAM or sim.q_kind[cq] == EQ_LADDERS)):
+		var d := BattleAI._d(sim.u_cx[o] - sim.g_x[g], sim.u_cy[o] - sim.g_y[g])
+		if d < FORT_SHUT_R or (cq >= 0 and (sim.q_kind[cq] == EQ_RAM or sim.q_kind[cq] == EQ_LADDERS) \
+				and (not away or d < FORT_BACK_R)):
 			_shut(sim, side, any, g)  # (attackers near, or bringing a ram or ladders)
 			return
+
+
+## The fort's sally company (forts leftovers, docs/AI.md 29): the biggest
+## unit (lowest index on ties) on the fort's walls that is not a fixed gun,
+## when another (its guard) stands on them too.
+static func _fort_sally_unit(sim, u: int) -> bool:
+	if sim.u_wall[u] == 0 or sim.t_fixed[sim.u_type[u]] != 0 or not sim.can_man_walls(sim, u):
+		return false
+	var other := false
+	for o in sim.n_units:
+		if o == u or sim.u_side[o] != sim.u_side[u] or sim.u_wall[o] == 0 or sim.t_fixed[sim.u_type[o]] != 0 \
+				or sim.u_state[o] != U_READY:
+			continue
+		if sim.u_alive[o] > sim.u_alive[u] or (sim.u_alive[o] == sim.u_alive[u] and o < u):
+			return false
+		other = true
+	return other
+
+
+## Side's ready sally company (A_FSALLY), -1 none.
+static func _fort_sally_of(sim, side: int) -> int:
+	for u in sim.n_units:
+		if sim.u_side[u] == side and sim.u_state[u] == U_READY and sim.u_ai[u] == A_FSALLY:
+			return u
+	return -1
+
+
+## The sally is due: the attackers hold the plaza (the capture running) or
+## its approach (a ready unit of CAPTURE_MEN or more within the plaza's
+## capture box widened by CAPTURE_CLEAR + FORT_SALLY_APP), or the street
+## line is broken (half or more of the defenders' West line units holding
+## the streets routing or gone).
+static func _fort_sally_due(sim, side: int) -> bool:
+	if sim.cap_t > 0:
+		return true
+	var px: int = sim.plaza[0]
+	var py: int = sim.plaza[1]
+	var r: int = sim.plaza[3] + sim.CAPTURE_CLEAR + FORT_SALLY_APP
+	var n_line := 0
+	var n_gone := 0
+	for o in sim.n_units:
+		if sim.u_side[o] != side:
+			if sim.u_state[o] == U_READY and sim.u_alive[o] >= sim.CAPTURE_MEN and sim.u_wall[o] == 0 \
+					and not BattleAI.is_char(sim, o) and absi(sim.u_cx[o] - px) <= r and absi(sim.u_cy[o] - py) <= r:
+				return true
+			continue
+		var m: int = sim.u_ai[o]
+		if m == A_FSALLY or m == A_WALLU or m == A_CIT or not _street_row(sim, o) or sim.t_cover[sim.u_otype[o]] != 0 \
+				or sim.u_cls[o] == UT.CLS_ART:
+			continue
+		n_line += 1
+		if sim.u_state[o] != U_READY:
+			n_gone += 1
+	return n_line > 0 and n_gone * 2 >= n_line
+
+
+## Attackers bring a ram or ladders within FORT_BACK_R of the fort's gate.
+static func _fort_threat(sim, side: int) -> bool:
+	if sim.sg_on == 0:
+		return false
+	var g: int = sim.cit_gate
+	for o in sim.n_units:
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY:
+			continue
+		var cq: int = sim.u_carry[o]
+		if cq >= 0 and (sim.q_kind[cq] == EQ_RAM or sim.q_kind[cq] == EQ_LADDERS) \
+				and BattleAI._d(sim.u_cx[o] - sim.g_x[g], sim.u_cy[o] - sim.g_y[g]) < FORT_BACK_R:
+			return true
+	return false
+
+
+## The sally's post: the street post nearest the fort's gate (outside) of a
+## ready defending unit holding the streets (not one in the fort); none: the
+## plaza.
+static func _fort_sally_post(sim, u: int) -> Vector2i:
+	var g: int = sim.cit_gate
+	var best := Vector2i(sim.plaza[0], sim.plaza[1])
+	var bd := -1
+	for o in sim.n_units:
+		if o == u or sim.u_side[o] != sim.u_side[u] or sim.u_state[o] != U_READY or sim.u_ai[o] != A_RESERVE \
+				or not _street_row(sim, o) or sim.in_fort(o):
+			continue
+		var d := BattleAI._d(sim.u_ai_x[o] - sim.g_ox[g], sim.u_ai_y[o] - sim.g_oy[g])
+		if bd < 0 or d < bd:
+			bd = d
+			best = Vector2i(sim.u_ai_x[o], sim.u_ai_y[o])
+	return best
+
+
+## The fort's sally company (forts leftovers; docs/DESIGN.md "Forts and
+## fighting from buildings"): on the parapets it shoots like any wall unit;
+## once the sally is due (_fort_sally_due) it goes down and out by the main
+## gate in Line stance to the street post nearest it (_fort_sally_post) and
+## holds it as a reserve, shooting; when attackers bring a ram or ladders
+## within FORT_BACK_R of the gate it goes back up onto its stretch, for good.
+static func _fort_sally(sim, u: int, kn: PackedInt32Array) -> void:
+	var side: int = sim.u_side[u]
+	var st: int = sim.u_ai_x[u]
+	var sg: int = sim.u_ai_y[u] - 1
+	var shoot: bool = sim.u_cls[u] == UT.CLS_MISSILE and sim.u_ammo[u] > 0
+	if shoot and sim.u_fire[u] == 0:
+		BattleAI._order(sim, u, {"type": ORDER_FIRE, "on": 1}, 21)
+	if sim.u_stair[u] != 0:
+		return  # on a stair
+	if st == 0 or st == 3:
+		if sim.u_wall[u] > 0:
+			if st == 0 and _fort_sally_due(sim, side) and not _fort_threat(sim, side):
+				sim.u_ai_x[u] = 1
+				BattleAI._count(sim, side, AP.C_SIEGE)
+				if sim.stance_ok(sim.u_type[u]) and sim.u_stance[u] != STANCE_LINE:
+					BattleAI._order(sim, u, {"type": ORDER_STANCE, "stance": STANCE_LINE}, 28)
+				_fort_sally_go(sim, u)
+			return
+		st = 2
+		sim.u_ai_x[u] = 2  # (off its stretch: back up)
+	if st == 1:
+		if _fort_threat(sim, side):
+			sim.u_ai_x[u] = 2
+			st = 2
+		else:
+			if _engaged(sim, u):
+				return
+			if not shoot:
+				var t := _nearest_attacker(sim, u, sim.u_cx[u], sim.u_cy[u], kn[AP.S_RESERVE_R], true)
+				if t >= 0:
+					BattleAI._attack(sim, u, t, 0)
+					return
+			_fort_sally_go(sim, u)
+			return
+	# Going back up (st 2).
+	if sim.u_wall[u] > 0:
+		sim.u_ai_x[u] = 3
+		return
+	if sg < 0 or _engaged(sim, u):
+		return
+	var p: Vector2i = sim.seg_pt(sim, sg, sim.seg_len(sim, sg) / 2)
+	_go_run(sim, u, p.x, p.y, sim.ws_dir[sg], 4, 1)
+
+
+## The sally company to its post (at the run while far from it).
+static func _fort_sally_go(sim, u: int) -> void:
+	var p := _fort_sally_post(sim, u)
+	var face: int = FM.atan2_a(p.y - sim.g_oy[sim.cit_gate], p.x - sim.g_ox[sim.cit_gate])
+	var far: bool = BattleAI._d(sim.u_ax[u] - p.x, sim.u_ay[u] - p.y) > SP_RUN_R
+	_go_run(sim, u, p.x, p.y, face, 10, 1 if far else 0)
 
 
 ## Storming the West harbour fort (slice 2c): unit u is one of the party
@@ -1968,11 +2137,49 @@ static func _att_art(sim, u: int, phase: int) -> void:
 		if sim.u_order[u] != O_MOVE or BattleAI._d(sim.u_dx[u] - spot.x, sim.u_dy[u] - spot.y) > 8 * M:
 			BattleAI._move(sim, u, spot.x, spot.y, FM.atan2_a(f.y - spot.y, f.x - spot.x), BattleAI._width(sim, u), 0, 6)
 		return
+	if sim.fort_on != 0 and sim.ai_fort[side] == 1 and not left and sim.u_gtarget[u] < 0 and _town_gun(sim, u):
+		return
 	# No gate to shoot: fire at will from where it stands.
 	if sim.u_order[u] == O_ATTACK and sim.u_gtarget[u] >= 0:
 		BattleAI._order(sim, u, {"type": 3}, 22)  # halt
 	if sim.u_fire[u] == 0:
 		BattleAI._order(sim, u, {"type": ORDER_FIRE, "on": 1}, 21)
+
+
+## Taking the town round a West fort (ai_fort 1; forts leftovers): attacking
+## battery u shoots the town's defenders, not the fort's (docs/AI.md 29):
+## the nearest ready defending unit off the fort it reaches and may shoot
+## safely (fire at will off); none such: it holds its fire. Always true.
+static func _town_gun(sim, u: int) -> bool:
+	var side: int = sim.u_side[u]
+	var mn := UT.stat(sim.u_type[u], "m_min")
+	var rng: int = sim.mrange(u)
+	var best := -1
+	var bd := 0
+	for o in sim.n_units:
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.u_alive[o] <= 0 or sim.hidden_from(o, side) \
+				or sim.in_fort(o) or sim.is_tower(o):
+			continue
+		if not sim._art_in_range(u, o, mn, rng):
+			continue
+		var d: int = sim._unit_dist(u, o)
+		if best >= 0 and d >= bd:
+			continue
+		if not sim.art_safe(u, o):
+			continue
+		best = o
+		bd = d
+	if best >= 0:
+		if sim.u_order[u] != O_ATTACK or sim.u_target[u] != best:
+			BattleAI._attack(sim, u, best, 0)
+		if sim.u_fire[u] != 0:
+			BattleAI._order(sim, u, {"type": ORDER_FIRE, "on": 0}, 21)
+		return true
+	if sim.u_order[u] == O_ATTACK:
+		BattleAI._order(sim, u, {"type": 3}, 22)  # (its target gone: halt)
+	if sim.u_fire[u] != 0:
+		BattleAI._order(sim, u, {"type": ORDER_FIRE, "on": 0}, 21)
+	return true
 
 
 ## A carried battery (scorpions) at the attacked gate g: it shoots the

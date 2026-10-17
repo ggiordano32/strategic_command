@@ -52,6 +52,13 @@ const WORKS_BY_WORKSHOP: Array = [[0, 0], [2, 0], [4, 2]]
 ## ... plus a fortified army's own (cut on the spot, whatever its workshop):
 ## two lines in front of its gaps and a caltrop field.
 const WORKS_FORTIFIED: Array[int] = [2, 1]
+## A West harbour fort's garrison company (settlement()) stands as two
+## units: the guard, a quarter of it rounded up and this many men or more,
+## stays on the land faces ...
+const FORT_GUARD_MIN := 10
+## ... when the rest (the sally company) is this many men or more (else the
+## company stands as one unit).
+const FORT_SALLY_MIN := 20
 
 const IDS: Array[String] = ["skirmish", "battle_2000", "battle_4000",
 	"bench_2000", "bench_4000", "bench_4000_hills",
@@ -964,7 +971,8 @@ static func _lay_row(units: Array, row: Array, back: int, gap: int, placed: Arra
 ## inside each gate, the rest round the plaza and down the main street;
 ## an open town (walls 0) is held at its street mouths. Returns
 ## {"scenario", "order": [[0 attacker / 1 defender, index], ...] in sim unit
-## order, "layout": the generator's layout (metres, final frame)}.
+## order ([1, index, 1]: a part of the entry listed before it, a West fort's
+## guard), "layout": the generator's layout (metres, final frame)}.
 ## equip: the attackers' siege equipment (docs/DESIGN.md "Siege equipment
 ## and wall towers"): {"ladders": sets of ladders, "ram": rams, "towers":
 ## siege towers}, objects on the ground behind the middle of the attackers'
@@ -1092,11 +1100,29 @@ static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Arra
 			var ty: int = dfn[i][0]
 			var cnt: int = dfn[i][1]
 			var dir: int = sg[4]
-			var ud := unit(def_side, ty, cnt, (int(sg[0]) + int(sg[2])) / 2, (int(sg[1]) + int(sg[3])) / 2, dir,
-				clampi(maxi((cnt + 2) / 3, 4), 1, cnt))
+			# (Forts leftovers: the company stands as two units: its sally
+			# company on the stretch nearest the attackers and its guard, a
+			# quarter rounded up, FORT_GUARD_MIN or more, on the land stretch
+			# farthest from them, so the fort stays held when the sally is out
+			# (docs/AI.md 29). Both are the same army entry: "order" lists
+			# the guard as [1, i, 1], a part of the entry before it.)
+			var guard := maxi((cnt + 3) / 4, FORT_GUARD_MIN)
+			if cnt - guard < FORT_SALLY_MIN or fseg.size() < 2:
+				guard = 0
+			var sn := cnt - guard
+			var ud := unit(def_side, ty, sn, (int(sg[0]) + int(sg[2])) / 2, (int(sg[1]) + int(sg[3])) / 2, dir,
+				clampi(maxi((sn + 2) / 3, 4), 1, sn))
 			ud["wall"] = k + 1
 			units.append(ud)
 			order.append([1, i])
+			if guard > 0:
+				var k2: int = fseg[fseg.size() - 1 - q][1]
+				var sg2: Array = segs[k2]
+				var gd := unit(def_side, ty, guard, (int(sg2[0]) + int(sg2[2])) / 2, (int(sg2[1]) + int(sg2[3])) / 2,
+					int(sg2[4]), clampi(maxi((guard + 2) / 3, 4), 1, guard))
+				gd["wall"] = k2 + 1
+				units.append(gd)
+				order.append([1, i, 1])
 			placed_def[i] = true
 			missiles.erase(i)
 	var seg_used := 0

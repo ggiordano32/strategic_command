@@ -1908,3 +1908,28 @@ could give (ORDER_OCCUPY, ORDER_GATE, attack and move orders).
   engagement: foot halt behind their line, horse pull out of its fire. The
   battery guard (`_pick_guard`) counts a West army's musket lines toward
   `GUARD_MIN_MELEE` and takes pikes first (they stop horse).
+- **Forts leftovers (2026-10-16).** *The sally* (`_fort_sally`, `A_FSALLY`):
+  the garrison company stands as two units (the guard, a quarter of it and 10
+  men or more, on the land stretch farthest from the attackers); the bigger
+  (`_fort_sally_unit`) is the sally company. On the parapets it shoots as any
+  wall unit; when the sally is due (`_fort_sally_due`: the plaza's capture
+  running, a ready attacking unit of `CAPTURE_MEN` within the plaza's box +
+  `CAPTURE_CLEAR` + `FORT_SALLY_APP` 30 m, or half the West line units holding
+  the streets routing or gone) and no ram or ladders are within `FORT_BACK_R`
+  60 m of the main gate, it takes Line stance and goes down and out to the
+  street post nearest the gate (`_fort_sally_post`: a ready street unit's
+  post off the fort; none, the plaza), at the run while farther than
+  `SP_RUN_R`; there it holds and shoots (melee only out of shots). A ram or
+  ladders within `FORT_BACK_R` of the gate send it back up its stretch for
+  good (u_ai_x 0 up, 1 out, 2 going back, 3 back). `_fort_gates` opens the
+  gate for it going out (still in the fort) or coming back (outside), when
+  nobody is within `FORT_SHUT_R` and no ram or ladders within `FORT_BACK_R`;
+  while it is out the gate is not shut against a ram or ladders far off.
+  *The attackers' guns* (`_town_gun`, taking the town round the fort): the
+  nearest ready town defender (not in the fort, not a tower) they reach and
+  may shoot safely, fire at will off; none, they hold their fire (they had
+  shot the garrison on its parapet from out of its reach). *Field (West
+  rows):* a unit out of ammunition that has fallen back and cannot refill,
+  forage or take up engines stays on the field (Rome's leave it, the
+  2026-10-09 rule); horse do not pick a target within a free musket line's
+  range + `GUN_COVER_PAD` 30 m (`_gun_covered`), counter-charges excepted.

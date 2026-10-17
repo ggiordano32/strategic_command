@@ -1915,7 +1915,7 @@ the view (`game/battle.gd`, `game/order_preview.gd`, `game/overlay.gd`,
   main gate at least 40 m apart, 6 in all at walls 2 and 8 at walls 3
   (tuned 2026-10-10: 3 and 4, `TOWERS_MAX`); at
   walls 3 first two stone throwers on the biggest towers not by a gate
-  (`_siege_towers`). None on a citadel's towers or on the sea wall. Each is
+  (one since 2026-10-16, `TOWERS_STONE`: forts leftovers) (`_siege_towers`). None on a citadel's towers or on the sea wall. Each is
   one engine (bolt: crew 4, 20 bolts, 180 m, reload 6 s; stone: crew 6, 12
   stones, 280 m) with a fixed load, 150 % with a Workshop in the city's
   `bld` (cdata chain `workshop`, MapGen.B_WORKSHOP: the campaign's own
@@ -3317,7 +3317,22 @@ parade), `game/hud.gd` / `game/battle.gd` / `game/controls.gd` (Occupy),
   depth with works). The garrison fires man by man from the parapet: on West
   maps wall units of guns or bows fire at will each with his own target and
   line of fire from the walkway's height (`_pm_on`), their range the
-  height-gained one. Units on the parade hold it.
+  height-gained one. Units on the parade hold it. **The sally (forts
+  leftovers, 2026-10-16):** each garrison company stands as two units, its
+  guard (a quarter rounded up, `Scenarios.FORT_GUARD_MIN` 10 men or more, on
+  the land stretch farthest from the attackers) and its sally company (when
+  that is `FORT_SALLY_MIN` 20 or more; one army entry: `order` lists the
+  guard as [1, i, 1] and `CBattle.outcome_from_result` adds its fates to the
+  company's row). While the streets hold the company shoots from the
+  parapets; when the street line breaks or the attackers hold the plaza's
+  approach it goes down and out by the main gate, in Line, onto the street
+  post nearest it; a ram or ladders near the gate bring it back up. The
+  guard keeps the fort held (the result's `fort`, the campaign's
+  `fort_holds`). A player does the same with the two units and the gate
+  order (AI.md 29). The fort's stairs and street graph (fixed with it):
+  a bastion's stair whose foot lies in a pocket the way does not reach is
+  taken last going down or up (`FORT_STAIR_OFF`), and a fort's graph nodes
+  without edges (feet of such stairs) are no way in or out (`_near_nodes`).
 - **Taking the town, the fort holding.** The town's plaza is still the
   capture zone: held CAPTURE_TICKS, the town's defenders rout as before, but
   the fort's (on its walls or its parade, `in_fort`: the parade is its own
@@ -3390,7 +3405,12 @@ parade), `game/hud.gd` / `game/battle.gd` / `game/controls.gd` (Occupy),
   off the field), and the ring and polis results were identical with and
   without it. The attackers lose by attrition at the walls (490-585 killed
   against 210-450) and withdraw beaten (`S_BEATEN_PCT`); the lever is the
-  approach and the walls' fire, not the routing (docs/STATUS.md).
+  approach and the walls' fire, not the routing (docs/STATUS.md). **Then
+  (forts leftovers, 2026-10-16):** the attrition is at the gate, not the
+  ladders (hardly used): the walls-3 stone towers shoot the batteries, the
+  ram's crew and the crowd before the gate, the gate falls later and the
+  attackers storm the mouth stack 2 to 3; `TOWERS_STONE` at walls 3 2 -> 1
+  gives the equal-force full-kit sieges 25 % (12 before).
 - **View.** The fort is drawn as walls along its trace (the kit's
   `wall_10_2`, its gates and stairs as any wall's), its interior buildings
   as kit pieces (the new `magazine`; the barracks a flat-roofed block), its
@@ -3479,6 +3499,51 @@ Board, Cancel, siege orders, the garrison, buildings, raise and the
 shipyard are on the bar or in a popup, each order in one place. A planned new
 army's X is in the Recruit popup; a planned recruit into an army is a dimmed
 card (tap cancels). Testing aid `--popup=build:key|raise:key|ship:key|recruit:N`.
+
+**Tap latency (2026-10-16, owner's Tab S7: "almost any selection has a visible
+delay").** A tap is answered in the frame it lands in, and that frame only does
+what the tap changed; the rest follows in later frames. Rules of the view
+(`game/campaign/`, nothing in `campaign/` or `sim/`):
+- *The map is not drawn again for a selection.* The selected army's reach is
+  its own child node of the map (`map_view._reach_node`, under the pulse
+  tints) and the selected region's outline another (`_sel_node`, over the
+  edges, under the coast); `set_reach` / `set_selected_region` redraw only
+  those, and `set_reach` keeps the outlines when the reach is the same.
+  `map_view.refresh_state()` redraws the territories and edges only when an
+  owner changed (the only part of the state the map shows).
+- *The overlay redraws only the parts a selection changed:* on the same state
+  (`_refresh_map6` keeps the state, campaign and planner it last drew, plus a
+  few counts) `overlay.redraw_parts(paths, fleets, armies)` redraws the paths
+  (with zones, links, badges) when they differ, the fleets when the selected
+  fleet, voyages or sea reach differ, the armies when the merge glyphs differ,
+  the halo always; settlements never. A new state (an order, a resolved turn)
+  still redraws all six parts. The drag preview redraws only the paths.
+- *An army's reach comes one frame later:* `select_army` shows the bar, the
+  halo and the hint in the tap's frame; its reach (the rules' `reach6` and
+  the outlines), zones, links and merge glyphs are computed in the first
+  frame after the tap's frame (a process-frame count, deterministic and
+  headless-safe; on the web the page has shown the bar before the work
+  starts).
+- *The command bar is built once per frame* for the same selection, state,
+  plan, panel and window (`_refresh_bar` signature; a tap used to build it
+  twice: `show_side`, then `_refresh_map`).
+- *Icons are textures:* `game/campaign/icon_raster.gd` draws each vector icon
+  (`game/ui_icons.gd`) once, in white, into an atlas (a SubViewport rendered
+  only when an icon is added; premultiplied blend so the atlas is straight
+  alpha) at the screen's physical pixel size, and the bar's actions, unit
+  card trait glyphs, `Kit.set_icon` buttons and `Kit.label_icon` labels draw
+  one tinted quad (the first frame an icon size is asked for it is drawn as
+  vectors). The bar's icons are asked for when the screen opens. Greyed icons
+  no longer show darker overlaps where strokes cross.
+- *A plan edit is saved 1.5 s later* (`save_plan`: one save for a burst of
+  taps; flushed by `save()`, End turn, leaving the screen, the window losing
+  focus or closing, a hot-seat hand-over); `add_order` hands its preview to
+  `_replan` instead of computing it twice.
+- *End turn answers at once:* the turn resolves two frames after the tap,
+  under a "Resolving the turn" dialog drawn first.
+Measure with `--prof-tap[=N]` (also `?prof-tap=N` in the web build's URL,
+e.g. `?campaign=rome&prof-tap=3`; `game/campaign/tap_prof.gd`) or
+`tests/tap_latency.gd` on a desktop; numbers in STATUS "Overworld tap latency".
 
 ### Ammunition kinds and fire (as built, 2026-10-09)
 
@@ -4859,7 +4924,7 @@ Details in `docs/SERVER.md`. In short:
 
 ### Distribution (agreed and built 2026-10-17)
 
-The game ships on itch.io as a web build (HTTPS, any origin) and as desktop builds (Windows, Linux, macOS) that carry the game server (`scserver`) beside the game. The game server is also a standalone Docker image anyone can run (API and live relay, no web build); the official server is the default. Online campaigns and live battles always go through a game server: the official one by default, a friend's by address, or one the player hosts from the desktop build ("Host a server"). The server holds no rules (see SERVER.md); the client refuses a server built for another `CState.VERSION`, and a seat token goes only to the server it was issued by. Browsers can only call HTTPS servers (mixed content), so an itch.io player needs the official server or a self-hosted one behind a domain; desktop players can use plain HTTP on a LAN, a forwarded port or a tunnel such as Tailscale. A server serves other sites only when its owner lists their origins (`SC_ALLOWED_ORIGINS`); by default it answers its own origin.
+The game ships on itch.io as a web build (HTTPS, any origin) and as desktop builds (Windows, Linux, macOS) that carry the game server (`scserver`) beside the game. The game server is also a standalone Docker image anyone can run (API and live relay, no web build); There is no public relay: the default server (built into the client so a fresh install works) is one self-host among many. Online campaigns and live battles always go through a game server: the default one, a friend's by address, or one the player hosts from the desktop build ("Host a server"). The server holds no rules (see SERVER.md); the client refuses a server built for another `CState.VERSION`, and a seat token goes only to the server it was issued by. Browsers can only call HTTPS servers (mixed content), so an itch.io player needs the default server or a self-hosted one behind a domain; desktop players can use plain HTTP on a LAN, a forwarded port or a tunnel such as Tailscale. A server serves other sites only when its owner lists their origins (`SC_ALLOWED_ORIGINS`); by default it answers its own origin.
 
 ## 6. Platforms and tooling
 
@@ -5669,6 +5734,11 @@ fought", the co-op, deck melee and fire ship bullets).
   her crew's boat pulls away; orders drawn in orange with her lighting
   ring; messages; `burst` on lighting and contact. Custom battle: the fire
   ship is in the ship list.
+- **Help on the sea screen**: every order has a one-line tooltip and a
+  long-press card, sail and shot changes show a hint, and the Ship book
+  (top bar) explains points of sail, sails (speed only), shot kinds,
+  boarding, striking, fire and every ship row, all from the sim's own
+  numbers (view only, `game/sea_book.gd`).
 - **Determinism and cost**: all the new state (fire ship, crew kit, troop
   kit, melee slot and figure arrays) is in `state_hash()` (so in
   `Lockstep.state_hash()`) and in snapshots (script variables); `f_hit`
@@ -6086,7 +6156,7 @@ existing systems.
 ### Overworld: real geography and the landscape layer (as built, 2026-10-10)
 
 ## STATUS row
-- Real geography (view data + static grid, no state change, `CState.VERSION` 6): the overworld is fitted to ETOPO 2022 elevation (NOAA, public domain) and Natural Earth 1:10m coasts and rivers (public domain). `tools/geo_fit.py` (+ `tools/geo/med.json`: window, projection, cell size, settlements, rivers; the Mediterranean is only the default config) writes `geo_rome.gd` (was `map_geo.gd`) LANDS / ISLANDS / RIVERS, `campaign/data/elev_data.gd` (per cell mean / max / relief / distance to river / class plain-rolling-valley-hill-ridge) and `game/campaign/relief_data.gd` (0.025 degree fine elevation, slope, relief); `campaign_grid.gd` derives hill / ridge from the real class (434 hill, 140 ridge override cells; was 200 / 215 from hand areas, now deleted) and asserts every settlement is on its landmass and every sea-lane port is a coast cell. Terrain view renders the real relief (hillshade + subtle hypsometric tint + crest line, one cached texture; `geo_fields.gd` serves elevation / slope / class to the view). Nudged: Carthago, Hadrumetum by 0.01-0.02 degrees. Re-pinned: campaign_test goldens (3007c1ab / 4197043257, be6e10a3 / 3786296811) and the Tarentum march rows (from Venetia). campaign_sim --seeds=6 --turns=60: hash 8562cf3a (HEAD 803bf309); no collapse; Epirus is eliminated in 5 of 6 seeds (3 of 6 at HEAD), Macedon in 0 (2 of 6).
+- Real geography (view data + static grid, no state change, `CState.VERSION` 6): the overworld is fitted to ETOPO 2022 elevation (NOAA, public domain) and Natural Earth 1:10m coasts and rivers (public domain). `tools/geo_fit.py` (+ `tools/geo/med.json`: window, projection, cell size, settlements, rivers; the Mediterranean is only the default config) writes `geo_rome.gd` (was `map_geo.gd`) LANDS / ISLANDS / RIVERS, `campaign/data/elev_data.gd` (per cell mean / max / relief / distance to river / class plain-rolling-valley-hill-ridge) and `game/campaign/relief_data.gd` (0.025 degree fine elevation, slope, relief); `campaign_grid.gd` derives hill / ridge from the real class (434 hill, 140 ridge override cells; was 200 / 215 from hand areas, now deleted) and asserts every settlement is on its landmass and every sea-lane port is a coast cell. Terrain view renders the real relief (hillshade + subtle hypsometric tint + crest line, one cached texture; `geo_fields.gd` serves elevation / slope / class to the view). Nudged: Carthago, Hadrumetum by 0.01-0.02 degrees. Re-pinned: campaign_test goldens (3007c1ab / 4197043257, be6e10a3 / 3786296811) and the Tarentum march rows (from Venetia). campaign_sim --seeds=6 --turns=60: hash 8562cf3a (HEAD 803bf309); no collapse; Epirus is eliminated in 5 of 6 seeds (3 of 6 at HEAD), Macedon in 0 (2 of 6). Sea depth (2026-10-17): the same ETOPO download gives `DEPTH` (one byte per fine sample, mean depth of the DEM's sea samples: 1 m steps to 30 m, then logarithmic to about 3000 m; decode in the `tools/geo_fit.py` header, `GeoFields.depth_at(p)`), baked for both packs (`--depth-only --dem`); `water.gdshader` colours the sea by it (sandy turquoise under 8 m, the shelf the earlier blue to 200 m, darker and more saturated to the deep, a faint shelf-break line where steep; the 3 / 8 km contour lines are gone), so the Bahama and Campeche banks, the Mosquito coast, the Gulf of Batabano and the Adriatic / Aegean shelves read as pale shallows.
 - The overworld sea (2026-10-13, view only, third pass, `water.gdshader` + `sea_waves.gd`): printed-map look kept (thin calm shallow band, sharp 1 px contour lines at 3 / 8 km, crisp 1.6 px coast outline) with **waves** and **surf**. Waves (pass 4, 2026-10-13, after the user found pass 3 uniform and too large): five directional trains (56 / 39 / 27 / 18 / 12 map px at 0 / +30 / -28 / +45 / -40 degrees from the wind, speed about 6 sqrt(L/46), none dominant), Stokes-like sines whose phase warp and group envelope are value noise (not periodic), times a drifting gust field (noise at 650 / 300 px, 0.25..1.15: rough and glassy patches) on a wind that veers up to 0.4 rad (noise at 800 px); 7 noise samples a fragment shared by the trains; `tests/sea_waves_test.gd`; lit as a normal map from the NW (soft crests and troughs, a very small glint), damped near the coast and in sheltered water, each train fading out when under about 6 screen px; motion slow (phase speed 4.5-6 map px/s). Surf: breaker lines (3 km apart) advancing and fading in a 2.5-7 km zone, broken by noise gaps, plus a ragged swash at the waterline, only where the baked **exposure** says the sea reaches the coast (half the fetch along the wind, three rays, half the openness all round, 16 rays; heads of bays, lees of islands and the Tyrrhenian side under a NW wind get almost none), stronger on steep shores (baked `SHORE`); zoomed out the lines become a dim ragged edge; sparse whitecaps on high crests only in strongly exposed open sea; the 3 km contour fades where there is foam. `[map] water = low` (and Graphics Low): depth tint and contours, static. **Reuse for ships and other maps:** `GeoFields.wind_dir()` / `wind_strength()` / `exposure(p)` / `shore_steep(p)` come from `relief_data.gd` (`WIND_FROM_DEG`, `WIND_STRENGTH`, `EXPOSURE`, `SHORE`), baked by `tools/geo_fit.py` from the config key `"wind": {"from_deg", "strength"}` (`med.json` 315 / 100, the mistral; a Caribbean config says 90, the trade winds from the east; `python3 -I tools/geo_fit.py --config X --exposure-only` re-bakes only these from the COAST and SLOPE already in the file). `SeaWaves.height(p, t)`, `normal(p, t)` and `amp(p)` are the CPU twin of the shader (same trains; `SeaWaves.t` is the clock `map_view` also sends the shader). A ship sprite sits on it: its lift is `height * amp * k`, pitch and roll are the normal's components on its hull axes (times `amp`), its heading is its own; its wake is a `Line2D` of stern positions kept in world space that widen and fade over a few seconds (no drift with the sea: the waves are a phase pattern, not moving water), and the hull is drawn above the water node, below labels and armies. Nothing of this is in any hashed state.
 - Graphics quality (2026-10-13, view only, `game/quality.gd`): `user://settings.cfg [video] quality = auto | high | low` (home settings row; `--quality=` overrides). Auto is Low when the soldier probe chose the CPU path (Chrome on the Tab S7) or when the first 3 s of a battle average under 40 fps (session only, toast "Graphics set to Low for speed"). Low: the ground shader's `low` uniform drops the noise patches, grain and the sea / ford animation; the settlement surroundings are flat-tinted fields and one-line tracks (`CityDraw.draw_surround(..., low)`); the tree layer hides the cover MultiMesh (tufts, scrub, bushes, reeds, willows) and the orchard rows (`visible_instance_count`), gameplay woods stay; the overworld sea is the still `hi = 0` water and the landscape tree / speckle mesh is skipped below zoom 0.9 (the relief texture stays). All switch live in a battle (the auto downgrade) and apply on the next battle / map open from Settings.
 
