@@ -67,6 +67,8 @@ static var BINDINGS: Array = [
 		"touch": "Stance button", "mouse": "Stance button", "keys": [KEY_C]},
 	{"id": "bounds", "s": "battle", "label": "Advance by bounds",
 		"touch": "Bounds button", "mouse": "Bounds button", "keys": [KEY_B]},
+	{"id": "occupy", "s": "battle", "label": "West towns: hold the nearest building (men at its windows, on its roof, at its door) / leave it",
+		"touch": "Occupy button", "mouse": "Occupy button", "keys": [KEY_I]},
 	{"id": "deploy", "s": "battle", "label": "Artillery: pack up / set up",
 		"touch": "Deploy button", "mouse": "Deploy button", "keys": [KEY_D | KEY_MASK_SHIFT]},
 	{"id": "refill", "s": "battle", "label": "Artillery: refill from the baggage; missile troops: refill at the ammunition wagon",

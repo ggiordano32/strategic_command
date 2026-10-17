@@ -79,7 +79,8 @@ static func draw_static(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2, f
 		return
 	if int(lay["walls"]) > 0:
 		var pal := int(lay.get("palisade", 0)) != 0
-		_draw_ring(ci, lay, lay["poly"], k, o, fine, pal)
+		if int(lay.get("west", 0)) == 0:
+			_draw_ring(ci, lay, lay["poly"], k, o, fine, pal)  # (a West town's outline is no wall: its fort's is, below)
 		var cit: Dictionary = lay.get("cit", {})
 		if not cit.is_empty():
 			_draw_ring(ci, lay, cit["poly"], k, o, fine, false)

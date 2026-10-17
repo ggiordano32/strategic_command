@@ -61,7 +61,7 @@ const IDS: Array[String] = ["skirmish", "battle_2000", "battle_4000",
 	"test_bolts_crest", "test_woods", "siege_village", "siege_town", "siege_city", "siege_hill",
 	"bench_4000_city", "siege_castrum", "siege_polis", "siege_punic", "siege_oppidum",
 	"bench_4000_polis", "bench_4000_castrum", "west_village", "west_town", "west_city", "west_inland",
-	"west_port", "west_hill_village", "bench_west_town", "bench_4000_west"]
+	"west_port", "west_hill_village", "bench_west_town", "bench_4000_west", "west_fort_storm"]
 
 ## Playable battles get generated terrain (random kind from the seed unless
 ## the menu picks one). The benchmarks stay flat so their timings compare
@@ -174,6 +174,8 @@ static func title(id: String) -> String:
 			return "AI vs AI benchmark: 1,500 in a West town"
 		"bench_4000_west":
 			return "AI vs AI benchmark: 4,000 in a West city"
+		"west_fort_storm":
+			return "West: storming a harbour fort (ram, ladders)"
 	return id
 
 
@@ -219,6 +221,8 @@ static func make(id: String) -> Dictionary:
 			return west_town(4244, 1, 1, 1, Terrain.K_ROLLING, MapGen.PAL_GREEN, MapGen.CUL_LATIN, 2)
 		"bench_4000_west":
 			return west_town(4242, 2, 1, 1, Terrain.K_FLAT, MapGen.PAL_DRY, MapGen.CUL_LATIN, 3)
+		"west_fort_storm":
+			return fort_storm()
 	var sc := _make(id)
 	if id in PLAYABLE:
 		sc["terrain"] = {"kind": Terrain.K_RANDOM}
@@ -1039,6 +1043,8 @@ static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Arra
 		var sg: Array = segs[k]
 		if sg.size() > 17 and (int(sg[17]) & (MapGen.SEG_SEA | MapGen.SEG_CIT)) != 0:
 			continue  # the land side of the outer wall only
+		if int(lay.get("west", 0)) != 0:
+			continue  # (a West fort's walls: its garrison only, below)
 		var smx := (int(sg[0]) + int(sg[2])) / 2
 		var smy := (int(sg[1]) + int(sg[3])) / 2
 		var best := 1 << 30
@@ -1047,6 +1053,52 @@ static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Arra
 			best = mini(best, d)
 		seg_order.append([best, k])
 	seg_order.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
+	# A West harbour fort (slice 2c; docs/DESIGN.md "Forts and fighting from
+	# buildings"): its garrison, the best line musketeers (missile foot with
+	# guns and without the cover trait: by tier, then men, then index; one
+	# unit, and only when another is left for the streets), stands on its
+	# land stretches nearest the attackers; the rest hold the town.
+	var fort_l: Dictionary = lay.get("fort", {})
+	if int(lay.get("west", 0)) != 0 and not (fort_l.get("guns", []) as Array).is_empty():
+		var cand: Array = []
+		for i in missiles:
+			var cty: int = dfn[i][0]
+			if UT.stat(cty, "cover") == 0 and UT.stat(cty, "m_gun") != 0 and UT.stat(cty, "crew_shoot") <= 1:
+				cand.append(i)
+		cand.sort_custom(func(a, b):
+			var ta := UT.tier_of(int(dfn[a][0]))
+			var tb := UT.tier_of(int(dfn[b][0]))
+			if ta != tb:
+				return ta > tb
+			if int(dfn[a][1]) != int(dfn[b][1]):
+				return int(dfn[a][1]) > int(dfn[b][1])
+			return a < b)
+		var n_g := mini(1, cand.size() - 1 if cand.size() > 1 else cand.size())
+		var fseg: Array = []
+		for k in segs.size():
+			var sg: Array = segs[k]
+			if (int(sg[17]) & MapGen.SEG_SEA) != 0:
+				continue
+			var smx := (int(sg[0]) + int(sg[2])) / 2
+			var smy := (int(sg[1]) + int(sg[3])) / 2
+			fseg.append([FM.approx_len(smx - int(lay["att_x"]), smy - int(lay["att_y"])), k])
+		fseg.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
+		for q in n_g:
+			if fseg.is_empty():
+				break
+			var i: int = cand[q]
+			var k: int = fseg[(q * 2) % fseg.size()][1]
+			var sg: Array = segs[k]
+			var ty: int = dfn[i][0]
+			var cnt: int = dfn[i][1]
+			var dir: int = sg[4]
+			var ud := unit(def_side, ty, cnt, (int(sg[0]) + int(sg[2])) / 2, (int(sg[1]) + int(sg[3])) / 2, dir,
+				clampi(maxi((cnt + 2) / 3, 4), 1, cnt))
+			ud["wall"] = k + 1
+			units.append(ud)
+			order.append([1, i])
+			placed_def[i] = true
+			missiles.erase(i)
 	var seg_used := 0
 	for i in missiles:
 		if seg_used >= seg_order.size():
@@ -1357,7 +1409,7 @@ const WEST_ATT := [["lancers", 60], ["musketeers", 100], ["w_pikemen", 120], ["m
 const WEST_DEF := [["musketeers", 80], ["buccaneers", 60], ["w_pikemen", 100], ["musketeers", 80],
 	["buccaneers", 40], ["cutlass", 60], ["light_gun", 12], ["musketeers", 60], ["buccaneers", 40]]
 static func west_town(city_seed: int, level: int, walls: int, coast: int, kind: int, ground: int, founder: int,
-		size: int = 1) -> Dictionary:
+		size: int = 1, equip: Dictionary = {}) -> Dictionary:
 	var att: Array = []
 	var dfn: Array = []
 	if size == 2:
@@ -1382,8 +1434,43 @@ static func west_town(city_seed: int, level: int, walls: int, coast: int, kind: 
 	var terr := {"kind": kind, "seed": city_seed * 7 + 3, "forest": MapGen.PALETTE_FOREST[ground] + 20, "ground": ground}
 	var city := {"seed": city_seed, "level": level, "walls": walls, "bld": [1, 2, 4], "plan": founder, "coast": coast,
 		"founder": founder, "west": 1}
-	var r := settlement(city, terr, att, dfn, 1, [0, 1])
+	var r := settlement(city, terr, att, dfn, 1, [0, 1], equip)
 	return r["scenario"]
+
+
+## The West harbour fort's set pieces (slice 2c; tests/determinism_test.gd
+## --only=fort): a Spanish port town (walls 1: the fort) on flat ground whose
+## defenders are few enough that the fort holds a third of their strength
+## (so the attacking AI storms it), the attackers with two ladder sets, a
+## ram and falconets; both sides AI.
+static func fort_storm(city_seed: int = 21) -> Dictionary:
+	var att: Array = []
+	for e in [["rodeleros", 100], ["cutlass", 80], ["w_pikemen", 100], ["musketeers", 100], ["buccaneers", 60],
+			["light_gun", 12]]:
+		att.append([UT.index_of(str(e[0])), int(e[1])])
+	var dfn: Array = []
+	for e in [["musketeers", 80], ["musketeers", 60], ["buccaneers", 40]]:
+		dfn.append([UT.index_of(str(e[0])), int(e[1])])
+	var terr := {"kind": Terrain.K_FLAT, "seed": city_seed * 7 + 3, "forest": MapGen.PALETTE_FOREST[MapGen.PAL_DRY],
+		"ground": MapGen.PAL_DRY}
+	var city := {"seed": city_seed, "level": 1, "walls": 1, "bld": [1, 2, 4], "plan": MapGen.CUL_LATIN, "coast": 1,
+		"founder": MapGen.CUL_LATIN, "west": 1}
+	var r := settlement(city, terr, att, dfn, 1, [0, 1], {"ladders": 2, "ram": 1})
+	var sc: Dictionary = r["scenario"]
+	# The attackers (and their kit) before the fort's landward face, not the
+	# town's middle.
+	var lay: Dictionary = r["layout"]
+	var f: Dictionary = lay["fort"]
+	var dx := int(f["x"]) - int(lay["att_x"])
+	var dy := int(f["y"]) + int(f["h"]) + int(f["b"]) + 75 - int(lay["att_y"])
+	for ud in sc["units"]:
+		if int(ud["side"]) == 0:
+			ud["x_m"] = clampi(int(ud["x_m"]) + dx, 20, int(sc["width_m"]) - 20)
+			ud["y_m"] = clampi(int(ud["y_m"]) + dy, 20, int(sc["height_m"]) - 20)
+	for e in sc.get("equip", []):
+		e[1] = clampi(int(e[1]) + dx, 10, int(sc["width_m"]) - 10)
+		e[2] = clampi(int(e[2]) + dy, 10, int(sc["height_m"]) - 10)
+	return sc
 
 
 ## bench_4000_city: two armies storm a walled city (walls 2) held by a large

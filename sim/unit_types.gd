@@ -1661,6 +1661,37 @@ const WEST: Array[Dictionary] = [
 		"m_hgain": 80,
 	},
 ]
+## The West harbour fort's own guns (slice 2c; docs/DESIGN.md "Forts and
+## fighting from buildings"): fixed pieces the sim mounts on the fort's gun
+## platforms (its bastions and seaward curtain) for the defending side, as
+## Rome's tower engines (SPECIAL). After every other row (the West pack's
+## included), so every earlier index is unchanged; not recruited (line
+## "siege", cost 0), not in the pickers.
+const FORT_ROWS: Array[Dictionary] = [
+	{
+		"key": "fort_gun", "line": "siege", "pack": "west", "name": "Fort Gun", "short": "Fort Gun",
+		"icon": 7, "sprite": 6, "sprite_set": 25, "engine_set": 26,
+		"role": "Fort artillery (the bastions' guns)",
+		"desc": "A long iron gun on a garrison carriage behind the fort's parapet, with a crew of four. It sweeps the glacis, the ditch and the town's streets in its line with roundshot that bounds on through the ranks, and batters siege works and guns in reach. It cannot move and turns all the way round. Gone when its crew is shot down or its platform is battered by enemy guns.",
+		"good_vs": "Columns crossing the glacis, batteries, rams and ladder parties in its line.",
+		"weak_vs": "Men under the walls out of its line, skirmishers picking off its crew.",
+		"cls": CLS_ART,
+		"fixed": 1,
+		"attack": 14, "defence": 16, "armour": 4, "shield": 0, "mshield": 0, "damage": 22,
+		"reach": 1024, "mass": 70, "walk": 60, "run": 200, "hp": 80, "cooldown": 12, "morale": 1000,
+		"file_sp": 8 * 1024, "rank_sp": 1229, "turn": 0,
+		"crew": 4, "crew_min": 2,
+		"m_gun": 1, "m_kind": 1,
+		"m_range": 260 * 1024, "m_min": 12 * 1024,
+		"m_damage": 260, "m_ap": 95,
+		"m_ammo": 16, "m_reload": 400,
+		"m_spread": 12, "m_spread0": 500,
+		"m_speed": 28672, "m_arc": 0, "m_apex": 2,
+		"m_pierce": 7, "m_plough": 40 * 1024, "m_fear": 70, "m_obj": 300,
+		"arc": 512, "traverse": 3, "deploy": 1, "e_hp": 1500, "cost": 0, "size": 4,
+		"m_hgain": 80,
+	},
+]
 ## Faction variants of the WEST rows ("of": the row's key), built like
 ## LIGHT_MISSILE_TIERS (TIER_DELTA, TIER_PRICE of the line, "add", "price_add").
 const WEST_TIERS: Array[Dictionary] = [
@@ -1694,8 +1725,10 @@ static var _by_key := {}
 ## Indices of the siege types (after the tier rows).
 static var TOWER_BOLT: int = BASE.size() + TIERS.size()
 static var TOWER_STONE: int = BASE.size() + TIERS.size() + 1
-## The Rome rows' count: every row before the West pack's (WEST, WEST_TIERS).
-static var ROME_N: int = TYPES.size() - WEST.size() - WEST_TIERS.size()
+## The Rome rows' count: every row before the West pack's (WEST, WEST_TIERS, FORT_ROWS).
+static var ROME_N: int = TYPES.size() - WEST.size() - WEST_TIERS.size() - FORT_ROWS.size()
+## The West fort's gun (slice 2c): the last row.
+static var FORT_GUN: int = TYPES.size() - FORT_ROWS.size()
 
 
 static func _build_types() -> Array[Dictionary]:
@@ -1812,6 +1845,12 @@ static func _build_types() -> Array[Dictionary]:
 			b += 1
 		var br: Dictionary = out[b]
 		out.append(_derived(br, b, str(br["line"]), int(br["size"]), t))
+	for fr in FORT_ROWS:
+		var row: Dictionary = fr.duplicate()
+		row["base"] = out.size()
+		row["tier"] = 1
+		row["price"] = 0
+		out.append(row)
 	return out
 
 

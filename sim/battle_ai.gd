@@ -182,6 +182,17 @@ const A_DETOUR := 11   # infantry going round a steep slope to a gentler approac
 const A_IDLE := 30     # line unit left idle by a mistake (M_IDLE) until IDLE_TICKS or attacked
 const A_RESV := 31     # Skilled: foot held in reserve behind the centre (SK_RESERVE)
 const A_WORKS := 32    # missile troops manning their camp's rampart (FW_CAMP)
+## A West army in the field (slice 2c; docs/AI.md 29): its melee foot and
+## horse are the musket line's reserve. They do not charge a musket line
+## that is free and shooting while the enemy still has melee of its own to
+## throw (they stand behind their line; horse pull out of its fire); they
+## counter-charge enemy foot or horse that close on, or fight, any unit of
+## theirs within CC_REACH (CC_CLOSE of its target: a charge going in).
+const CC_REACH := 140 * 1024
+const CC_CLOSE := 60 * 1024
+const CC_WORN := 60     # a musket line down to this % of its men (or wavering, CC_SHAKEN morale) is fair game ...
+const CC_SHAKEN := 500
+const CC_HOLD_T := 1800  # ... and every line, CC_HOLD_T after the lines engage (the reserve goes in)
 const Q_FIXED := 4             # (BattleSim field works states)
 const Q_STOWED := 5
 # (stat_ai[12] holds of high ground, [13] slots moved onto a rise,
@@ -1135,6 +1146,20 @@ static func _melee_think(sim, u: int) -> void:
 			return
 		_set_mode(sim, u, A_ATTACK)
 		mode = A_ATTACK
+	if _west_field(sim, u) and mode != A_FLANK and mode != A_DETOUR:
+		# (Slice 2c: the musket line's reserve.)
+		var cc := _counter_target(sim, u, CC_REACH)
+		if cc >= 0:
+			if cc != cur:
+				var crr := kn[AP.CHARGE_RANGE]
+				_attack(sim, u, cc, 1 if _dist2(sim, u, cc) < crr * crr else 0)
+			_set_mode(sim, u, A_ATTACK)
+			return
+		var nb := _nearest_enemy(sim, u, true)
+		if nb >= 0 and _gun_line_free(sim, nb) and _melee_left(sim, side) > 0 and _hold_reserve(sim, side):
+			if sim.u_order[u] == O_ATTACK and cur >= 0 and _gun_line_free(sim, cur):
+				_order(sim, u, {"type": ORDER_HALT}, 6)  # (no charging into its fire: hold behind the line)
+			return
 	if mode == A_FLANK:
 		var t: int = sim.u_target[u] if sim.u_order[u] == O_ATTACK else sim.u_ai_y[u]
 		if t >= 0 and sim.u_state[t] == U_READY:
@@ -1214,6 +1239,62 @@ static func _melee_think(sim, u: int) -> void:
 	_set_mode(sim, u, A_ATTACK)
 	if chase:
 		sim.u_ai_y[u] = -(best + 2)
+
+
+## A West army's unit in a field battle (slice 2c's reserve and counter-charge rules).
+static func _west_field(sim, u: int) -> bool:
+	return sim.city_on == 0 and sim.u_type[u] >= UT.ROME_N
+
+
+## Enemy unit t is a musket line free to shoot: missile foot with guns,
+## shots left, not in a melee, not worn below CC_WORN % of its men.
+static func _gun_line_free(sim, t: int) -> bool:
+	return t >= 0 and sim.u_state[t] == U_READY and sim.u_cls[t] == UT.CLS_MISSILE and UT.stat(sim.u_type[t], "m_gun") != 0 \
+		and sim.u_ammo[t] > 0 and sim.u_fighting[t] == 0 and sim.u_alive[t] * 100 >= sim.u_count0[t] * CC_WORN \
+		and sim.u_morale[t] >= CC_SHAKEN
+
+
+## Side `side` still holds its melee back (CC_HOLD_T since the lines engaged).
+static func _hold_reserve(sim, side: int) -> bool:
+	return sim.ai_phase[side] != P_ENGAGE or sim.tick - sim.ai_t[side] < CC_HOLD_T
+
+
+## Ready enemy melee units (foot, pikes, horse) of the side facing `side`.
+static func _melee_left(sim, side: int) -> int:
+	var n := 0
+	for o in sim.n_units:
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY or is_wagon(sim, o) or is_char(sim, o):
+			continue
+		var c: int = sim.u_cls[o]
+		if c == UT.CLS_INF or c == UT.CLS_PIKE or c == UT.CLS_CAV:
+			n += 1
+	return n
+
+
+## The enemy foot or horse unit nearest u (within r) that is charging one of
+## u's side's units (an attack order on it, within CC_CLOSE of it) or
+## fighting one: the target of a counter-charge; -1 none.
+static func _counter_target(sim, u: int, r: int) -> int:
+	var side: int = sim.u_side[u]
+	var best := -1
+	var bd := r * r + 1
+	for o in sim.n_units:
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY or is_wagon(sim, o) or is_char(sim, o):
+			continue
+		var c: int = sim.u_cls[o]
+		if c != UT.CLS_INF and c != UT.CLS_PIKE and c != UT.CLS_CAV:
+			continue
+		var going: bool = sim.u_fighting[o] > 0
+		if not going and sim.u_order[o] == O_ATTACK:
+			var t: int = sim.u_target[o]
+			going = t >= 0 and sim.u_side[t] == side and _dist2(sim, o, t) < CC_CLOSE * CC_CLOSE
+		if not going or sim.hidden_from(o, side):
+			continue
+		var d := _dist2(sim, u, o)
+		if d < bd:
+			bd = d
+			best = o
+	return best
 
 
 ## Send u round to the flank of enemy unit t, then attack.
@@ -1306,7 +1387,9 @@ static func _cav_think(sim, u: int, phase: int) -> void:
 	if tick - sim.u_hit_t[u] < kn[AP.CAV_ARROW_REACT]:
 		var shooter := _shooting_at(sim, u)
 		if shooter >= 0:
-			if not _protected(sim, shooter, side):
+			if _west_field(sim, u) and _gun_line_free(sim, shooter) and _melee_left(sim, side) > 0 and _hold_reserve(sim, side):
+				_pull_out(sim, u, shooter)  # (slice 2c: out of a free musket line's fire, not into it)
+			elif not _protected(sim, shooter, side):
 				_attack(sim, u, shooter, 1)
 				_set_mode(sim, u, A_CHARGE)
 			else:
@@ -1325,6 +1408,14 @@ static func _cav_think(sim, u: int, phase: int) -> void:
 			return
 	# Hold: look for a target.
 	var pick := _cav_pick(sim, u, phase)
+	if _west_field(sim, u):
+		# (Slice 2c: West horse counter-charge what charges; a free musket
+		# line shooting is left alone while the enemy has melee to throw.)
+		var cc2 := _counter_target(sim, u, CC_REACH)
+		if cc2 >= 0:
+			pick = cc2
+		elif pick >= 0 and _gun_line_free(sim, pick) and _melee_left(sim, side) > 0 and _hold_reserve(sim, side):
+			return
 	if pick < 0:
 		return
 	if kn[AP.SK_CAV_RESERVE] > 0 and _mem(sim, u, AP.MU_X) == 3 and not _sk_reserve_cav_may(sim, u, pick, kn):
@@ -1791,14 +1882,18 @@ static func _pick_guard(sim, side: int, b: int) -> void:
 		if sim.u_side[u] != side or sim.u_state[u] != U_READY:
 			continue
 		var c: int = sim.u_cls[u]
-		if c != UT.CLS_INF or is_wagon(sim, u):
+		var west: bool = sim.u_type[u] >= UT.ROME_N
+		if west and c == UT.CLS_MISSILE and line_gun(sim.u_type[u]):
+			melee += 1  # (a West army: its musket lines are its line, slice 2c)
+			continue
+		if (c != UT.CLS_INF and not (west and c == UT.CLS_PIKE)) or is_wagon(sim, u):
 			if c == UT.CLS_PIKE:
 				melee += 1
 			continue
 		melee += 1
 		var k := 1
-		if UT.stat(sim.u_type[u], "vs_cav") > 0:
-			k = 3
+		if UT.stat(sim.u_type[u], "vs_cav") > 0 or (west and c == UT.CLS_PIKE):
+			k = 3  # (a West army's pikes: the guns' guard against horse)
 		elif sim.u_type[u] == UT.LIGHT:
 			k = 2
 		if best < 0 or k > best_k or (k == best_k and _dist2(sim, u, b) < _dist2(sim, best, b)):

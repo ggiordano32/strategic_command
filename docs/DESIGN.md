@@ -2850,8 +2850,9 @@ walls' heights in `_land_heights`, `CLR_MARGIN_W`), `sim/scenarios.gd`
   sea lowered below the shore.
 - **The fort (walls 1-2).** A bastioned square (`fh` 11 / 14 / 17 m, four
   diamond bastions) at one end of the quay with its sea face in the water,
-  or inland on the high back corner; solid in the sim (stone, 7 m: not
-  garrisoned yet, slice 2c), roads and lots keep 8 m off it. Walls 2 adds
+  or inland on the high back corner; roads and lots keep 8 m off it. (Slice
+  2c: a fort with an inside, its guns and garrison: "Forts and fighting
+  from buildings".) Walls 2 adds
   a stake palisade 9 m beyond the landward edge, two cells deep, with a gap
   at every road (`_w_stakes`; records that match their cells exactly).
 - **Landforms and big trees.** On rolling or rougher ground the landforms
@@ -2982,9 +2983,9 @@ walls' heights in `_land_heights`, `CLR_MARGIN_W`), `sim/scenarios.gd`
   (`city_streets.gd`), the town's ground trodden only within about 8 m of
   houses and roads (`terrain_layer.gd` `_west_built`, view only; the sim's
   V_URBAN covers the whole band), palms on any West map.
-- **Not built (open).** The fort is solid: no garrison, batteries or gate
-  (slice 2c's garrisoned buildings); the palisade does not burn or get
-  hacked; houses stay cover only (no entry); piers are scenery (the rules
+- **Not built (open).** (The fort's inside, its garrison and guns and units
+  holding houses came with slice 2c.) The palisade does not burn or get
+  hacked; piers are scenery (the rules
   see the sea); moored ships are not drawn on the battle map; native
   towns keep the oppidum; walls 3 keeps the walled plans.
 - **Measured.** See docs/STATUS.md (the pathing probe, the cover probe,
@@ -3249,6 +3250,164 @@ from measurements; the results are in docs/STATUS.md (balance pass T).
   cover never came into play); the all-out four minutes sooner; two fewer
   towers; `ROUT_INWARD` 0; line of sight off (the same results: sight is
   not what tilted the sieges).
+
+### Forts and fighting from buildings (as built, West slice 2c, 2026-10-16)
+
+Why (the owner, 2026-10-14 and 2026-10-16): "there were no castles": the
+West's walls become forts and towns where men fight from buildings and
+rooftops, the rooftops and balconies built on the per-man fire at will (a
+man on a roof is a man with a higher eye and shot line). Code:
+`sim/mapgen.gd` (section "the harbour fort (slice 2c)": `fort_trace`,
+`_f_w`, `_w_fort`, `_w_fort_bld`; `west_outline`'s fort, `_w_graph`'s fort
+nodes, `F_*`, `B_MAGAZINE`), `sim/terrain.gd` (the knoll and its levelled
+parade), `sim/battle_sim.gd` (`fort_on`, `n_outer`, `fort_cmp`, `in_fort`,
+`_fort_capture`, `_fort_guns`, `FORT_GUN_SECTOR` in `_art_in_range`, the
+capture rule in `_update_capture`, the result's "fort"; section "fighting
+from buildings (slice 2c)": `_setup_occ`, `occupy_refusal`, `occupy_near`,
+`_occ_enter`, `_occ_leave`, `_occ_offsets`, `_occ_soldiers`, `_occ_door`,
+`_occ_stop`, `_occ_aim`, `_occ_win`, ORDER_OCCUPY in the order rule, hooks
+in `elev_at`, `_unit_elev`, `_pm_on`, `_pm_unit`, `_pm_find`, `_fire`,
+`_land`, `_flat_block`, `_cs_ok`, `_compute_offsets`, `_base_files`,
+`_update_units`, `_update_soldiers`, the attack goal at a door), `sim/unit_types.gd`
+(`FORT_ROWS`: the fort gun, the last row), `sim/siege_ai.gd` (`_fort_gates`,
+`_fort_choice`, `_fort_party`, the building posts; docs/AI.md 29),
+`sim/battle_ai.gd` (the musket line's reserve), `sim/scenarios.gd` (the
+garrison, `fort_storm`, id `west_fort_storm`), `campaign/cbattle.gd` /
+`campaign/crules.gd` ("fort_holds"), `game/battlekit.gd` (the trace drawn as
+walls, the magazine piece), `game/overlay.gd` (held buildings, the fort's
+parade), `game/hud.gd` / `game/battle.gd` / `game/controls.gd` (Occupy),
+`tools/battlekit/build.py` (`b_magazine`), set pieces `tests/determinism_test.gd
+--only=fort` / `--only=occupy`, `tests/lockstep_test.gd --only=occupy`.
+
+- **The harbour fort (walls 1-2 West towns).** A square trace with a flanked
+  bastion at each corner (curtain, flank `F_F` 6 m, face, salient `F_B`
+  13-15 m out, face, flank, gorge `F_G` 9 m from the corner), the square's
+  half side `F_H` 24 / 27 / 30 m by level: 20 vertices, low thick walls
+  (`F_T` 10 m: a 2 m parapet, a 4 m walkway `F_WALL_H` 6 m up, an earth
+  rampart behind), on a 3-6 m knoll whose top is levelled for the parade and
+  whose sides are the glacis. Its seaward curtain stands on the shore (the
+  sea bastions in the water). The sim's wall machinery as for any wall (a
+  citadel ring: `cit_*`, `g_cit`; `fort_on`): walkway stretches cut 7 m from
+  the salients, 4 m from the flanks' corners, 2 m from the gorges (12 m and
+  longer only: the bastions' faces always, the curtains at towns and
+  cities), joined round the corners; a stair at both ends of every stretch
+  down to the parade; the main gate in the curtain toward the town (open at
+  the start: the garrison comes and goes), a sally port (a postern, shut) in
+  the far one, both with the walls-2 gate's hit points (swords barely hurt
+  them: the ram or guns); the ditch (`F_DITCH` 6 m, 2 m beyond the wall's
+  outer face) round the land faces with a causeway at each gate (men cross
+  it slowly, horses and engines not at all). Its wall level for the rules is
+  `F_WALLS` 2 (ladders 3 s a man, battlements stop 15 %, +15 % range from
+  the walk). On the parade: the barracks along the far curtain and the
+  powder magazine in its seaward corner (a new kit piece). The street graph
+  gets each gate's three nodes, the parade every 8 m and every stair's foot.
+  The town's roads and lots keep clear of the fort and its ditch.
+- **Its guns.** A fort gun (UT.FORT_GUN: a fixed long gun, crew 4, 260 m,
+  roundshot that bounds 40 m, a shot in 40 s, 16 a gun; the tower engines'
+  rules: it turns, is shot at, its crew on the walk) on each landward
+  bastion's salient and on the seaward curtain (inland forts: all four
+  salients). It fires through its embrasure only: within `FORT_GUN_SECTOR`
+  60 degrees of the way its platform faces out from the fort's middle (the
+  bastions sweep the glacis, the approaches and the town's streets in their
+  arc; the sea gun waits for ships: a later sea battle on the same map).
+- **The garrison.** The best musket companies (missile foot with guns and
+  without the cover trait, by tier, then men; one, two in a city, always one
+  left for the streets) stand on the fort's land stretches nearest the
+  attackers; the rest of the army holds the town (C7's posts, defence in
+  depth with works). The garrison fires man by man from the parapet: on West
+  maps wall units of guns or bows fire at will each with his own target and
+  line of fire from the walkway's height (`_pm_on`), their range the
+  height-gained one. Units on the parade hold it.
+- **Taking the town, the fort holding.** The town's plaza is still the
+  capture zone: held CAPTURE_TICKS, the town's defenders rout as before, but
+  the fort's (on its walls or its parade, `in_fort`: the parade is its own
+  piece of ground with the gates shut, `fort_cmp`) do not; the battle is
+  then the attackers' (`winner`, `decided_tick`) and the result carries
+  `fort` {held 1, men (the garrison's then, gun crews left out), gate,
+  taken}. The fort itself falls when an attacking unit of `CAPTURE_MEN` holds
+  its parade with none of the garrison on it for `FORT_CAP_TICKS` 30 s: its
+  garrison routs and does not rally (walls do not hold a fort whose inside
+  is lost). **Campaign:** `CBattle.outcome_from_result` puts `fort_holds` 1
+  in the outcome when the town fell with the fort holding; `CRules.apply_outcome`
+  then does not hand the settlement over (no capture, no sack): the fort's
+  men are its garrison (at least 10 %), the beaten field armies retreat as
+  usual and the siege goes on (assault again, or starve it out); the event
+  carries `fort_holds`. No state format change (no new key in the state;
+  the auto-resolve never sets it, so campaign_sim is unchanged).
+- **Fighting from buildings.** `ORDER_OCCUPY` {unit, building} (a lockstep
+  input; refused for horse, engines, units on a wall or carrying, a building
+  another unit holds): foot go to the building's door step and, there 3 s
+  with no enemy on them, go in. A building that can be held: a West town's
+  house, tavern, store, warehouse, chandler, shop, the church, the governor's
+  house, the guardhouse, 3.5 m tall or more, with a door step on open ground
+  and 4 firing places or more (the fort's own buildings not). Its firing
+  places: every 1.5 m round its faces from 1.2 m in from each corner, 0.4 m
+  inside the face (none at the door): at the windows (a pitched roof:
+  `OCC_WIN_DROP` 2.2 m below the top) or behind the parapet of a flat roof (on
+  it: a Spanish town's flat-roofed houses, as the view draws them, shops, the
+  governor's house), on a tavern's front gallery. A held building's cells
+  stand its men at that level (`elev_at`, `_unit_elev`), so every rule of
+  height reads it: their range, their line of fire over the street, the
+  sight lines. Inside, slot by slot: the door's two men (just inside its
+  frame), the firing places in order, the rest waiting inside; a fallen
+  man's place is taken by the last man (one rank: `_base_files`), so the men
+  at the windows step up from inside. Every unit of missile foot holding a
+  building fires man by man (`_pm_on`) from its firing places only, each
+  with his own sight line from his window or roof edge; a ball at a man
+  there is traced as any (other houses between still stop it; his own
+  building's walls near him are `_occ_stop`'s) and then stopped by the wall
+  or parapet he keeps behind `OCC_STOP` 70 % of the time, `OCC_STOP_EXP` 25 %
+  within EXPOSE_T of his own shot (up at the window, over the parapet; a
+  gallery 45 / 20 %), arrows and stones 25 % on a flat roof or a gallery, 75
+  % at a window; a man inside is not hit; artillery's roundshot hits as
+  anywhere. Volleys at the unit pick a man at a window (`_occ_aim`). **The
+  door**: enemy men on the door step (`OCC_DOOR_R` 2.5 m) are paired with the
+  door's men, one each, nearest first, and fight on their own clocks
+  (`_melee` both ways): a two-man front; nobody else reaches the men inside
+  (their cells are no ground: the melee search does not reach through
+  walls). An attack on a unit in a building goes at its door step (the
+  attack goal; men with missiles shoot at the windows instead). The unit
+  comes out by the door (its men onto the step, three abreast) on a move,
+  a withdrawal, a rout, an attack by men without missiles to shoot, or
+  another building's order; a building is free again when its unit leaves
+  or dies. Hashed with `occ_on` (a West town with buildings that can be
+  held): `u_occ`, `u_ocg`, `u_oct`, `ob_u`; the buildings' geometry is
+  static (setup, skipped in snapshots).
+- **The AI.** docs/AI.md 29: the garrison and its gate, the attackers'
+  choice (storm the fort as well, or take the town round it), the musket
+  lines' street posts in buildings (at most `SP_OCC_MAX` 1 a side), the
+  attackers clearing a held house first at its door (`OCC_STORM_PULL`) and
+  shooting men in the open before men at windows (`OCC_SHOOT_PUSH`), and in
+  field battles the musket line's reserve and counter-charge. A held house
+  beset at its door (`OCC_PRESS_MEN` 8 enemy men within `OCC_PRESS_R` 7 m of
+  its step) loses `OCC_PRESS` 12 morale a second without recovering; men in
+  a house do not contest the square (`_update_capture`).
+- **Walls 3 (balance T's leftover), measured, no rule kept.** The suggested
+  rule (the attackers' routers stop at their camp, 50 m behind their start
+  line, and rally there as the defenders' do inside) never triggered: in the
+  equal-force walls-3 sieges the attackers' routers already rally on the
+  approach (5-9 rallies a battle against the defenders' 1-3; 0-84 men routed
+  off the field), and the ring and polis results were identical with and
+  without it. The attackers lose by attrition at the walls (490-585 killed
+  against 210-450) and withdraw beaten (`S_BEATEN_PCT`); the lever is the
+  approach and the walls' fire, not the routing (docs/STATUS.md).
+- **View.** The fort is drawn as walls along its trace (the kit's
+  `wall_10_2`, its gates and stairs as any wall's), its interior buildings
+  as kit pieces (the new `magazine`; the barracks a flat-roofed block), its
+  guns as engines; a held building's outline in its side's colour and its
+  door step marked, the fort's parade being taken as an arc with its time
+  (`game/overlay.gd`); men in a building stand along its roof edge and
+  windows (the diorama look: men on the parapet, muskets out). The order
+  panel's **Occupy** button (key I): every selected foot unit into the
+  nearest free building within 60 m; **Leave** once one holds a building.
+- **Not built.** Ships offshore for the sea guns; a sally from the fort
+  (the defenders never open the sally port); the garrison does not come
+  down to help the town; men inside a building do not fight room to room
+  (the door's pairing is the whole melee); timber buildings do not burn
+  with men in them; galleries on the governor's house (only the tavern's
+  front counts as a gallery); the AI's own buildings for skirmishers (only
+  the musket lines go in).
+- **Measured.** See docs/STATUS.md (slice 2c).
 
 ### Compact unit cards (as built, 2026-10-09)
 

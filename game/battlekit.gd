@@ -49,7 +49,7 @@ const PAL_B: Array[Vector3] = [Vector3(0.70, 0.18, 0.16), Vector3(0.25, 0.35, 0.
 ## West town pieces by building kind (MapGen.B_*; phase W), their street front up.
 const WEST_PIECE := {MapGen.B_TAVERN: "tavern", MapGen.B_SHOP: "shop", MapGen.B_STORE: "store",
 	MapGen.B_WAREHOUSE: "warehouse", MapGen.B_CHANDLER: "chandler", MapGen.B_GOVERNOR: "governor",
-	MapGen.B_SHACK: "shack", MapGen.B_LEANTO: "leanto"}
+	MapGen.B_SHACK: "shack", MapGen.B_LEANTO: "leanto", MapGen.B_MAGAZINE: "magazine"}
 const PROP_PIECE := ["barrels", "crates", "cart", "well"]
 
 var sim
@@ -133,6 +133,9 @@ func _build_instances() -> void:
 	var hs := 1.0 if _timber else float(WALL_H[walls]) / 5.0
 	if walls <= 0:
 		return
+	var west_fort := int(lay.get("west", 0)) != 0
+	if west_fort:
+		hs = float(int(lay.get("wall_h_m", 6))) / 5.0  # (slice 2c: the harbour fort's low walls)
 	# Wall variant: the sim's (thickness, parapet), else the nearest.
 	var wname := ""
 	var wt := 10.0
@@ -151,7 +154,8 @@ func _build_instances() -> void:
 				best2 = d
 				wname = v[2]
 				wt = float(v[0])
-	var rings: Array = [lay["poly"]]
+	# (A West town's outline is not a wall: only its fort's trace is, slice 2c.)
+	var rings: Array = [] if west_fort else [lay["poly"]]
 	var cit: Dictionary = lay.get("cit", {})
 	if not cit.is_empty():
 		rings.append(cit["poly"])
@@ -194,7 +198,7 @@ func _index_names() -> void:
 		var n: String = Atlas.NAMES[q]
 		_name_idx[n] = q
 		roofy[q] = 1 if (n.begins_with("house_") or n.begins_with("hut_") or n in ["church", "temple", "stall", "longhouse",
-			"tavern", "shop", "store", "warehouse", "chandler", "shack", "leanto", "governor"]) else 0
+			"tavern", "shop", "store", "warehouse", "chandler", "shack", "leanto", "governor", "magazine"]) else 0
 	tropic = CData.pack == "west" or "--tropic" in OS.get_cmdline_user_args()
 
 
@@ -362,7 +366,7 @@ func _build_west() -> void:
 			pname = "church"
 			cul = W_CUL
 		elif kind == MapGen.B_BARRACKS:
-			pname = "house_flat_m"
+			pname = "warehouse"  # (a stone block under a tiled roof: the guardhouse, the fort's barracks)
 		else:
 			var ratio := maxf(fw, fh) / maxf(minf(fw, fh), 0.1)
 			if founder == MapGen.CUL_LATIN and h % 2 == 0:
@@ -478,8 +482,8 @@ func _west_stakes() -> void:
 ## the diagonal, a keep and a flag in the middle. The sim's fort is solid (not garrisoned).
 func _west_fort() -> void:
 	var f: Dictionary = lay.get("fort", {})
-	if f.is_empty():
-		return
+	if f.is_empty() or not (lay.get("cit", {}) as Dictionary).is_empty():
+		return  # (slice 2c: a fort with an inside is drawn as walls, _build_instances)
 	var c := Vector2(float(int(f["x"])), float(int(f["y"])))
 	var fh := float(int(f["h"]))
 	var fb := float(int(f["b"]))

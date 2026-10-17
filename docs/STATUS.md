@@ -1,6 +1,6 @@
 # Strategic Command — Status and Handover
 
-Last updated: 2026-10-16 (balance pass T: firearm AI, per-man fire in cover, street posts, siege rally rule, built, not committed; pathing phase J, fight jitter and stuck units, built, not committed; pathing phase W, West open towns, built, not committed; 2026-10-15 pathing phases C1-C7, street fighting, built, not committed; earlier 2026-10-09: siege towers built, not committed; the general and his bodyguard built, not committed; camels and elephants built, not committed; ammunition kinds and fire, foraging and the ammunition wagon built, not committed; earlier 2026-10-08: a CPU-fed soldier rendering fallback, picked by the battle's self-check, for Chrome on an Adreno 650 tablet that drew no soldiers; earlier 2026-10-07: any ally can join a fought co-op battle and be given units; the battle screen on the overworld; cities worth defending, part 2b: siege equipment as objects, the ladder shuffle and wall-punching bugs; part 2a: units do not pass through each other, street fights; part 1: tower engines, ladders, a ram, hard gates, the battle time limit; earlier 2026-10-06: deployment phase and custom battles built; the continuous campaign overworld built, state format 6; free campaign movement built; sieges and battle odds built on the campaign map; settlement variety built 2026-10-05). Read this first, then `docs/DESIGN.md` for the full
+Last updated: 2026-10-16 (slice 2c: harbour forts with an inside, fighting from buildings, the musket line's reserve, built, not committed; balance pass T: firearm AI, per-man fire in cover, street posts, siege rally rule, built, not committed; pathing phase J, fight jitter and stuck units, built, not committed; pathing phase W, West open towns, built, not committed; 2026-10-15 pathing phases C1-C7, street fighting, built, not committed; earlier 2026-10-09: siege towers built, not committed; the general and his bodyguard built, not committed; camels and elephants built, not committed; ammunition kinds and fire, foraging and the ammunition wagon built, not committed; earlier 2026-10-08: a CPU-fed soldier rendering fallback, picked by the battle's self-check, for Chrome on an Adreno 650 tablet that drew no soldiers; earlier 2026-10-07: any ally can join a fought co-op battle and be given units; the battle screen on the overworld; cities worth defending, part 2b: siege equipment as objects, the ladder shuffle and wall-punching bugs; part 2a: units do not pass through each other, street fights; part 1: tower engines, ladders, a ram, hard gates, the battle time limit; earlier 2026-10-06: deployment phase and custom battles built; the continuous campaign overworld built, state format 6; free campaign movement built; sieges and battle odds built on the campaign map; settlement variety built 2026-10-05). Read this first, then `docs/DESIGN.md` for the full
 design and `CLAUDE.md` for working rules. Update this file whenever a
 milestone lands or the plan changes.
 
@@ -1861,6 +1861,131 @@ For the auto-resolve refit (campaign/, another agent): see the outcomes
 listed in the balance pass T report (equal-force rows above, the Rome and
 West ids at their force ratios 1.33-2.35 and 1.46).
 
+**Slice 2c, forts and fighting from buildings, as built 2026-10-16 (not
+committed; DESIGN "Forts and fighting from buildings", AI.md 29).** The
+owner: "there were no castles": forts, and towns where men fight from
+buildings and rooftops, built on the per-man fire at will. (1) **The
+harbour fort with an inside** (West walls 1-2): a square trace with four
+flanked bastions (20 vertices), low thick walls (10 m, walk 6 m up), a ditch
+round the land faces with causeways, the knoll levelled for the parade
+(the glacis round it), the main gate toward the town (open till attackers
+come near or bring a ram or ladders), a sally port, stairs at every
+stretch's ends, the barracks and a powder magazine (new kit piece) on the
+parade; the sim's wall machinery as a citadel ring (`fort_on`, `n_outer`:
+the open town's rules key on the outer gates now, Rome equivalent). Its
+guns: a fixed fort gun (new last unit row, 260 m, a shot in 40 s) on each
+landward bastion and on the seaward curtain, firing only within 60 degrees
+of their embrasure's way out. Its garrison: the best musket company (one,
+only when another is left for the streets) on its land stretches, firing
+man by man from the parapet with the walk's height (wall units on West
+maps use the per-man fire). **Result rule:** the town's plaza is still the
+prize: taking it wins the battle; the fort's men do not rout with the town
+and the result carries `fort` {held, men, gate, taken}; the fort falls when
+the attackers hold its parade with none of its garrison on it for 30 s
+(its men rout). **Campaign:** a town taken with its fort holding
+(`fort_holds` in the outcome) does not change hands: the fort's men are the
+garrison and the siege goes on (no sack, no capture); no state change (the
+auto-resolve never sets it: campaign_sim unchanged). The attackers' AI
+storms the fort as well only with a ram, ladders or guns and when the fort
+holds 35 % of the defenders' strength (else it takes the town round it);
+storming: the ram at the shut gate, ladders at its land faces, followers up
+the planted sets, the party holds its parade. (2) **Fighting from
+buildings:** ORDER_OCCUPY (lockstep input; Occupy / Leave button, key I):
+foot go into a West town's house, tavern, store, warehouse, shop, church,
+governor's house: two men hold the door (a two-man front: attackers at the
+step are paired one to one), the next at firing places round every face
+(windows; flat roofs behind the parapet; a tavern's gallery), the rest
+wait inside and step up; per-man fire from the firing level (2.2 m below a
+pitched roof's top, or on a flat roof), balls at them stopped 70 % (25 %
+just after their own shot), men inside never hit; out by the door on a
+move, withdrawal, rout or melee attack. A house beset at its door (8 enemy
+men within 7 m of the step) loses 12 morale a second; men in a house do
+not hold the square. AI: one musket line a side holds the building nearest
+its street post; attacking foot clear a held house first (at its door),
+shooters prefer men in the open. View: men drawn along the roof edge and
+windows, the held building outlined in its side's colour with its door
+marked, the fort's parade-capture arc. (3) **Walls 3 routing: measured, no
+rule kept.** The suggested camp rule (attackers' routers stop and rally 50 m
+behind their start) never triggered: the attackers' routers already rally
+on the approach (5-9 rallies a battle, 0-84 men routed off); the ring and
+polis results were identical with and without it (walls 3 stays 12 %:
+ring 0 / 8, polis 2 / 8); they lose by attrition at the walls (490-585
+killed against 210-450) and withdraw beaten. (4) **Field AI leftovers
+(West rows, field maps):** a gun guard (a West army's musket lines count
+toward GUARD_MIN_MELEE, pikes guard first); the musket line's reserve
+(melee foot and horse do not charge a free, unshaken musket line for the
+first 3 minutes of the engagement while the enemy has melee left) and a
+counter-charge rule (on enemy foot or horse charging or fighting a unit of
+theirs within 140 m).
+
+Measured (before = HEAD 8ab0506, after = this; AI vs AI, both Average):
+
+| measure | target | before | after |
+|---|---|---|---|
+| West equal force, west_town + west_city, 16 seeds each, walls 0 | 55 % | 66 % (21 / 32) | 47 % (15 / 32) |
+| ... walls 1 (the fort) | 45 % | 41 % (13 / 32) | 59 % (19 / 32) |
+| ... walls 2 (the fort and the palisade) | 35 % | 34 % (11 / 32) | 38 % (12 / 32) |
+| walls 3 fair sieges, full kit, ring + polis, 8 seeds each | 25 % | 12 % | 12 % (no rule kept) |
+| field AI against the scripted charger (4 seeds) | wins | lost 4 / 4 | lost 2, drew 2 (30 min), losses closer (454 / 477, 492 / 457) |
+| field AI vs AI, WEST_ATT vs WEST_DEF at equal cost (4 seeds) | - | WEST_ATT 4 / 4 in 3.5-4.3 min, WEST_DEF's guns 0 shots | WEST_DEF 4 / 4 in 6.8-11 min, its guns 164 shots (guarded) |
+
+West towns by kind (first tries, each measured on 16 seeds a wall level;
+scratchpad `f2c/eq*`): all five fort guns at 380 m and all musket lines in
+buildings gave walls 0 / 1 / 2 25 / 22 / 16 %; the guns cut to three, 260
+m, their embrasure arc, and 70 % stops (from 80) left walls 0 at 25 %; no
+buildings held gave walls 0 66 % (the HEAD figure: the buildings are what
+moved it); one building a side and the attackers clearing it first gave 47
+%. The fort guns killed 50-90 attackers a battle before the arc rule;
+the garrison almost none (it sits out the street fight: the fort draws a
+musket company out of the town, so walls 1 is now easier than walls 0).
+Fort storm set piece (`west_fort_storm`, seed 53197): the attackers choose
+to storm, the gate is shut at 24 s, 12 ram blows, 167 men up the ladders,
+the garrison 909 shots, the guns 6.
+
+Perf (desktop, alone, HEAD -> after): bench_4000_west 7.70 / 7.77 -> 8.83 /
+8.94 ms a tick (+15 %), bench_west_town 3.26 / 3.30 -> 3.66 / 3.73 (+12 %;
+profile: the battle has three times the men in contact, target searches 25k
+-> 70k in its first 3,000 ticks; units 1.03 -> 1.32, soldiers 1.00 -> 1.33
+ms); the West towns, first 3,000 ticks AI vs AI: village 1.65 -> 1.74, town
+(fort) 1.79 -> 2.30, city (fort, palisade) 2.11 -> 2.62, inland 2.01 ->
+2.03, port (fort) 2.34 -> 2.33, hill village (fort) 1.77 -> 2.11 ms.
+Set-up, cold, best of 3: village 184 -> 186, town 341 -> 340, city 537 ->
+500, inland 347 -> 353, port 406 -> 467, hill village 234 -> 255,
+bench_west_town 344 -> 381, bench_4000_west 430 -> 486 ms.
+
+Tests: determinism full PASS (new `--only=fort`: the fort's layout, the
+storm identical on repeat and across snapshot / restore at 1,000 and 2,600,
+west_city's result; `--only=occupy`: a musket company on a flat roof 5.5 m
+up, its shots, the door fight, cleared, identical on repeat and across
+snapshot / restore inside and at the door); one threshold moved: west_city
+"at least 280 buildings" -> 260 (the fort and its esplanade take some lots;
+274 now). Lockstep full PASS (new `--only=occupy`: ORDER_OCCUPY through the
+lockstep, a third peer joining by snapshot while the house is held, every
+frame equal). Custom battle, campaign, pack, battle screen PASS;
+check_scripts clean. campaign_sim 6 x 60 unchanged: Rome cdc1d805 32b83031
+23f9ed4f 3237d82d a42fc685 b6fe6c2e, West b137875c edd82dee 0393b18d 2aa8578b
+deb00750 1d051164. Rome / Greek / Punic maps byte for byte as before (the 8
+siege ids, the 3 city benches, battle_2000, bench_4000_hills: map hash,
+cells and the state hash at tick 600 equal to HEAD's); the four flat golden
+digests unchanged; no pin re-pinned. Pathing probe phase A PASS (all 16
+maps, seed 7: rout jitter 0.3 %, stationary routers 0 %, stuck > 30 s 0
+(longest 24 s), inside the drawn footprints 0.02 %, men in held houses left
+out of it on purpose; fight jitter near obstacles 2.1 %, in town 1.9 %, as
+balance T; West towns' tick means 1.66-2.64 ms); cover probe unchanged (buccaneers open
+0.76, rocks 0.27, hamlet 0.00, Punic town 0.41, West town 0.78; musketeers
+1.02 / 0.67 / 0.25 / 1.41 / 1.56). Screenshots in scratchpad `forts/`:
+`overview_fort_town.png`, `fort_close.png`, `men_on_roof.png`,
+`storm_ladders.png`, `storm_gate.png`.
+
+Left: walls 1 is too easy (59 %, 45 wanted: the garrison takes a musket
+company out of the street fight; a sally, or the garrison coming down to
+the inner streets, would put it back); the field AI against the charger
+draws or loses narrowly (no win yet); walls 3 at 12 % (the attrition at
+the walls, not the routing); no ships for the sea guns; no sally from the
+fort; men in a house do not fight room to room; timber houses do not burn
+with men inside; galleries only on taverns' fronts; the West benches cost
+12-15 % more.
+
 **Caribbean plan agreed 2026-10-14 (DESIGN "The Caribbean pack: ships,
 pirates, cover, asymmetry"):** sea battles real time with the wind;
 pirates as raiders with havens; armies embark on fleets (West only). Do
@@ -2512,7 +2637,7 @@ generation, cover) flow back to the Mediterranean campaign for free.
    a settings pass. Done when a stranger reaches turn 10 unaided.
 
 Immediate order (2026-10-16): shaking / stuck pass -> balance pass T (built 2026-10-16, not committed) ->
-forts with an inside (2c) -> story step 3 (crew vote, portraits, online
+forts with an inside (2c; built 2026-10-16, not committed) -> story step 3 (crew vote, portraits, online
 story, Tortuga) and sea follow-ons (deck melee, fire ships, live co-op at
 sea) -> Hunyuan captain miniature (turnarounds from the user) -> device
 checks.

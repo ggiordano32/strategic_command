@@ -38,7 +38,9 @@ PIECES = ["wall_8_2", "wall_10_2", "wall_12_2", "wall_12_4", "wall_14_4", "pal_8
           "tree_palm_b", "bush_a", "bush_b", "rock_a", "rock_b", "rock_c", "cliff_m", "cliff_l", "house_flat_s", "house_flat_m",
           # West town pieces (phase W)
           "tavern", "shop", "store", "warehouse", "chandler", "shack", "leanto", "governor", "lowwall", "stakes",
-          "crates", "pier"]
+          "crates", "pier",
+          # Slice 2c (the harbour fort)
+          "magazine"]
 GUTTER = 4
 LIGHT = np.array([-0.55, 0.50, 0.67], np.float32)
 AMB, KEY = 0.66, 0.55          # style A (tools/battlekit/mockup.py)

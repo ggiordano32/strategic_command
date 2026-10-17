@@ -325,6 +325,16 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=fort" in OS.get_cmdline_user_args():
+		_check_fort()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
+	if "--only=occupy" in OS.get_cmdline_user_args():
+		_check_occupy()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=guns" in OS.get_cmdline_user_args():
 		_check_guns()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -371,6 +381,8 @@ func _init() -> void:
 	_check_cover()
 	_check_street()
 	_check_west()
+	_check_fort()
+	_check_occupy()
 	_check_sea()
 	if "--only=equipment" in OS.get_cmdline_user_args():
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -438,7 +450,7 @@ func _init() -> void:
 ## routers' clock, u_gu, is hashed there).
 func _check_west() -> void:
 	var want_cov := {"west_village": 30, "west_port": 40, "west_inland": 36, "west_city": 40}
-	var want_n := {"west_village": 70, "west_port": 200, "west_inland": 150, "west_city": 280}
+	var want_n := {"west_village": 70, "west_port": 200, "west_inland": 150, "west_city": 260}  # (slice 2c: the fort and its esplanade take some lots)
 	for id in ["west_village", "west_port", "west_inland", "west_city"]:
 		var s1 := BattleSim.new()
 		s1.setup(Scenarios.make(id), 77)
@@ -6734,3 +6746,263 @@ func _check_street() -> void:
 	else:
 		for x in bad:
 			_fail(str(x))
+
+
+# ---------------------------------------- slice 2c: forts, buildings ---
+## The West harbour fort (docs/DESIGN.md "Forts and fighting from
+## buildings"; "--only=fort", also in the full run). (1) west_town's fort:
+## two gates (the main one open, the sally port shut), its walkway stretches
+## and stairs, the ditch, the magazine and barracks, a fort gun on each gun
+## platform, the garrison on its walls, its parade a piece of ground of its
+## own with the gates shut. (2) Scenarios.fort_storm, AI against AI: the
+## attackers choose to storm (ai_fort 2), the defenders shut the gate, the
+## ram batters it and ladder men go up, the fort's guns and the garrison
+## (per-man fire from the parapet) shoot; identical on repeat (every 50
+## ticks) and across snapshot / restore (at 1,000 and 2,600, 120 ticks
+## each). (3) west_city AI against AI to the end: when the town falls with
+## the fort holding, the battle is the attackers' and the result says so.
+func _check_fort() -> void:
+	var bad: Array = []
+	var sim := BattleSim.new()
+	sim.setup(Scenarios.make("west_town"), 4242)
+	var lay: Dictionary = sim.map_info["city"]
+	var f: Dictionary = lay.get("fort", {})
+	var cnt := {}
+	for c in sim.obs.size():
+		cnt[sim.obs[c]] = int(cnt.get(sim.obs[c], 0)) + 1
+	var kinds := {}
+	for b in lay["buildings"]:
+		kinds[int((b as Array)[4])] = 1
+	var guns := 0
+	var garr := 0
+	for u in sim.n_units:
+		if sim.u_type[u] == UT.FORT_GUN:
+			guns += 1
+		elif sim.u_side[u] == sim.city_def and sim.u_wall[u] > 0:
+			garr += 1
+	var plaza_c: int = sim.cmp[(sim.plaza[1] >> 11) * sim.ob_w + (sim.plaza[0] >> 11)]
+	if sim.fort_on != 1 or sim.n_gates != 2 or sim.n_outer != 0 or sim.g_state[0] != BattleSim.GATE_OPEN \
+			or sim.g_state[1] != BattleSim.GATE_CLOSED or sim.ws_x0.size() < 8 or int(cnt.get(MapGen.C_STAIR, 0)) == 0 \
+			or int(cnt.get(MapGen.C_DITCH, 0)) == 0 or not kinds.has(MapGen.B_MAGAZINE) or guns != (f.get("guns", []) as Array).size() \
+			or guns < 3 or garr < 1 or sim.fort_cmp < 0 or sim.fort_cmp == plaza_c:
+		bad.append("fort layout: fort_on %d, gates %d (outer %d, states %d / %d), %d stretches, %d stair cells, %d ditch cells, magazine %s, %d guns of %d platforms, %d garrison units on its walls, parade piece %d (plaza %d)" % [
+			sim.fort_on, sim.n_gates, sim.n_outer, sim.g_state[0] if sim.n_gates > 0 else -1, sim.g_state[1] if sim.n_gates > 1 else -1,
+			sim.ws_x0.size(), int(cnt.get(MapGen.C_STAIR, 0)), int(cnt.get(MapGen.C_DITCH, 0)), str(kinds.has(MapGen.B_MAGAZINE)),
+			guns, (f.get("guns", []) as Array).size(), garr, sim.fort_cmp, plaza_c])
+	# The storm.
+	var runs: Array = []
+	for rep in 2:
+		runs.append(_hfort_run(53197, [1000, 2600] if rep == 0 else []))
+	var a: Dictionary = runs[0]
+	if a["hashes"] != runs[1]["hashes"]:
+		bad.append("fort storm: the repeat diverged")
+	if int(a["twin_bad"]) != 0:
+		bad.append("fort storm: the restored copies diverged (%d)" % int(a["twin_bad"]))
+	if int(a["choice"]) != 2 or int(a["shut_t"]) < 0 or (int(a["ram"]) == 0 and int(a["broken_t"]) < 0) or int(a["lad_up"]) == 0 \
+			or int(a["gun_shots"]) == 0 or int(a["garr_shots"]) == 0:
+		bad.append("fort storm: choice %d, gate shut at %d, ram blows %d (broken at %d), ladder men up %d, fort guns' shots %d, the garrison's shots %d" % [
+			int(a["choice"]), int(a["shut_t"]), int(a["ram"]), int(a["broken_t"]), int(a["lad_up"]), int(a["gun_shots"]), int(a["garr_shots"])])
+	# The town falls, the fort holds.
+	var w := BattleSim.new()
+	w.setup(Scenarios.make("west_city"), 53000 + 197)
+	while w.winner < 0 and w.tick < w.time_limit + 10:
+		w.step()
+	var wr := w.result()
+	var fr: Dictionary = wr.get("fort", {})
+	var garr_left := 0
+	for u in w.n_units:
+		if w.u_side[u] == w.city_def and w.u_state[u] == BattleSim.U_READY and w.in_fort(u) and w.u_type[u] != UT.FORT_GUN:
+			garr_left += w.u_alive[u]
+	if w.stat_capture > 0 and garr_left > 0 and (w.winner != 1 - w.city_def or int(fr.get("held", 0)) != 1 or int(fr.get("men", 0)) != garr_left):
+		bad.append("fort holds: captured %d with %d men in the fort, winner %d, result %s" % [w.stat_capture, garr_left, w.winner, str(fr)])
+	if fr.is_empty():
+		bad.append("fort result: no fort in the result of west_city")
+	if bad.is_empty():
+		print("PASS fort (2c): west_town's fort: %d stretches, %d stair cells, %d ditch cells, %d guns, the garrison on its walls, its parade its own ground; storm: choice %d, gate shut at %d, ram %d blows (broken at %d), %d ladder men up, fort guns %d shots, garrison %d shots, fort taken %s; identical on repeat and across snapshot / restore; west_city: winner %d at %d, fort %s" % [
+			sim.ws_x0.size(), int(cnt.get(MapGen.C_STAIR, 0)), int(cnt.get(MapGen.C_DITCH, 0)), guns, int(a["choice"]), int(a["shut_t"]),
+			int(a["ram"]), int(a["broken_t"]), int(a["lad_up"]), int(a["gun_shots"]), int(a["garr_shots"]), str(a["taken"]), w.winner, w.decided_tick, str(fr)])
+	else:
+		for x in bad:
+			_fail(str(x))
+
+
+func _hfort_run(p_seed: int, snaps: Array) -> Dictionary:
+	var sc := Scenarios.fort_storm()
+	var sim := BattleSim.new()
+	sim.setup(sc, p_seed)
+	var ev := {"shut_t": -1, "broken_t": -1, "gun_shots": 0, "garr_shots": 0}
+	var hashes := PackedInt64Array()
+	var twin_bad := 0
+	var gun0 := 0
+	for u in sim.n_units:
+		if sim.u_type[u] == UT.FORT_GUN:
+			gun0 += sim.u_ammo[u]
+	var gshots := 0
+	while sim.tick < 3200 and sim.winner < 0:
+		sim.step()
+		if sim.tick % 50 == 0:
+			hashes.append(sim.state_hash())
+		for u in sim.n_units:
+			if sim.u_side[u] == sim.city_def and sim.u_wall[u] > 0 and sim.u_type[u] != UT.FORT_GUN:
+				var gb: int = sim.u_slot_base[u]
+				for q in sim.u_alive[u]:
+					if sim.s_rl[sim.slot_soldier[gb + q]] == sim.tick - 1:  # (shot in the step just run)
+						gshots += 1
+		if int(ev["shut_t"]) < 0 and sim.g_state[sim.cit_gate] != BattleSim.GATE_OPEN:
+			ev["shut_t"] = sim.tick
+		if int(ev["broken_t"]) < 0 and sim.g_state[sim.cit_gate] == BattleSim.GATE_BROKEN:
+			ev["broken_t"] = sim.tick
+		if snaps.has(sim.tick):
+			var copy := BattleSim.new()
+			copy.setup(sc, p_seed)
+			if not copy.restore(sim.snapshot()):
+				twin_bad += 1000
+			else:
+				var probe := BattleSim.new()
+				probe.setup(sc, p_seed)
+				probe.restore(sim.snapshot())
+				for t in 120:
+					probe.step()
+					copy.step()
+					if probe.state_hash() != copy.state_hash():
+						twin_bad += 1
+	var gun1 := 0
+	for u in sim.n_units:
+		if sim.u_type[u] == UT.FORT_GUN:
+			gun1 += sim.u_ammo[u]
+	ev["gun_shots"] = gun0 - gun1
+	ev["garr_shots"] = gshots
+	ev["choice"] = sim.ai_fort[0]
+	ev["ram"] = sim.stat_ram_blows
+	ev["lad_up"] = sim.stat_ladder_up
+	ev["taken"] = sim.fort_taken
+	ev["hashes"] = hashes
+	ev["twin_bad"] = twin_bad
+	return ev
+
+
+## Fighting from buildings (docs/DESIGN.md "Forts and fighting from
+## buildings"; "--only=occupy", also in the full run): in west_village a
+## defending musket company holds the flat-roofed house nearest it
+## (ORDER_OCCUPY), an attacking musket company shoots at it from the street
+## and a company of rodeleros clears it at the door (an attack order at tick
+## 900). The company goes in (u_occ, every man at the door, a firing place
+## or inside, none on open ground), its men on the roof stand at the
+## roof's height and shoot from there, balls at them are stopped by the
+## parapet, the door is fought man to man, and the building is cleared
+## (free again at the end). Identical on repeat and across snapshot /
+## restore (inside at 400, at the door fight at 1,200).
+func _check_occupy() -> void:
+	var bad: Array = []
+	var a := _occ_run(7, [400, 1200])
+	var b := _occ_run(7, [])
+	if a["hashes"] != b["hashes"]:
+		bad.append("occupy: the repeat diverged")
+	if int(a["twin_bad"]) != 0:
+		bad.append("occupy: the restored copies diverged (%d)" % int(a["twin_bad"]))
+	if int(a["b"]) < 0 or int(a["in_t"]) < 0 or int(a["in_t"]) > 300 or int(a["open_men"]) != 0 or int(a["roof_men"]) == 0 \
+			or int(a["roof_z"]) <= 0 or int(a["shots"]) == 0 or int(a["door"]) == 0 or int(a["cleared"]) != 1:
+		bad.append("occupy: building %d (flat %d), in at %d, men on open ground inside %d, men on the roof %d (%d dm up), shots from it %d, door blows %d, cleared %d" % [
+			int(a["b"]), int(a["flat"]), int(a["in_t"]), int(a["open_men"]), int(a["roof_men"]), int(a["roof_z"]), int(a["shots"]),
+			int(a["door"]), int(a["cleared"])])
+	if bad.is_empty():
+		print("PASS occupy (2c): a musket company in a flat-roofed house at tick %d, %d men on the roof %d dm up, %d shots from it, %d balls stopped by its walls and parapet, %d blows at the door, cleared (%d lost inside, %d attackers lost at the door); identical on repeat and across snapshot / restore" % [
+			int(a["in_t"]), int(a["roof_men"]), int(a["roof_z"]), int(a["shots"]), int(a["stops"]), int(a["door"]), int(a["lost_in"]), int(a["lost_door"])])
+	else:
+		for x in bad:
+			_fail(str(x))
+
+
+func _occ_sc() -> Dictionary:
+	var sc := Scenarios.west_town(11, 0, 0, 1, Terrain.K_FLAT, MapGen.PAL_DRY, MapGen.CUL_LATIN)
+	var keep: Array = []
+	var got := {}
+	for ud in sc["units"]:
+		var key := "%d:%s" % [int(ud["side"]), UT.key_of(int(ud["type"]))]
+		if (key == "1:musketeers" or key == "0:musketeers" or key == "0:rodeleros") and not got.has(key):
+			got[key] = true
+			keep.append(ud)
+	sc["units"] = keep
+	sc["deploy_zones"] = []
+	sc["ai_sides"] = []
+	return sc
+
+
+func _occ_run(p_seed: int, snaps: Array) -> Dictionary:
+	var sc := _occ_sc()
+	var sim := BattleSim.new()
+	sim.setup(sc, p_seed)
+	# The defenders' company (unit 0 of side 1) and the flat-roofed building nearest it.
+	var d := -1
+	var mus := -1
+	var rod := -1
+	for u in sim.n_units:
+		var k := UT.key_of(sim.u_type[u])
+		if sim.u_side[u] == 1 and d < 0:
+			d = u
+		elif sim.u_side[u] == 0 and k == "musketeers":
+			mus = u
+		elif sim.u_side[u] == 0 and k == "rodeleros":
+			rod = u
+	var bb := -1
+	var bd := 1 << 40
+	for k in sim.ob_ok.size():
+		if sim.ob_ok[k] == 0 or sim.ob_flat[k] == 0:
+			continue
+		var dd := FM.approx_len(sim.ob_dx[k] - sim.u_ax[d], sim.ob_dy[k] - sim.u_ay[d])
+		if dd < bd:
+			bd = dd
+			bb = k
+	var ev := {"b": bb, "flat": sim.ob_flat[bb] if bb >= 0 else -1, "in_t": -1, "open_men": 0, "roof_men": 0, "roof_z": 0, "shots": 0}
+	sc["orders"] = [{"tick": 0, "type": BattleSim.ORDER_OCCUPY, "unit": d, "building": bb, "run": 1},
+		{"tick": 300, "type": BattleSim.ORDER_ATTACK, "unit": mus, "target": d},
+		{"tick": 900, "type": BattleSim.ORDER_ATTACK, "unit": rod, "target": d, "run": 1}]
+	sim = BattleSim.new()
+	sim.setup(sc, p_seed)
+	var hashes := PackedInt64Array()
+	var twin_bad := 0
+	var alive0: int = sim.u_alive[d]
+	var rod0: int = sim.u_alive[rod]
+	var shots := 0
+	while sim.tick < 2400:
+		sim.step()
+		if sim.tick % 25 == 0:
+			hashes.append(sim.state_hash())
+		if sim.u_occ[d] > 0:
+			var sb: int = sim.u_slot_base[d]
+			for q in sim.u_alive[d]:
+				if sim.s_rl[sim.slot_soldier[sb + q]] == sim.tick - 1:  # (shot in the step just run)
+					shots += 1
+		if int(ev["in_t"]) < 0 and sim.u_occ[d] > 0:
+			ev["in_t"] = sim.tick
+		if sim.tick == 500 and sim.u_occ[d] > 0:
+			var base: int = sim.u_slot_base[d]
+			for q in sim.u_alive[d]:
+				var i: int = sim.slot_soldier[base + q]
+				if (sim.nav_at(sim.pos_x[i], sim.pos_y[i]) & MapGen.NAV_GROUND) != 0:
+					ev["open_men"] += 1
+				elif sim._occ_win(i):
+					ev["roof_men"] += 1
+					ev["roof_z"] = (sim.elev_at(sim.pos_x[i], sim.pos_y[i]) - sim.gh_at(sim.pos_x[i], sim.pos_y[i])) * 10 / 1024
+		if snaps.has(sim.tick):
+			var copy := BattleSim.new()
+			copy.setup(sc, p_seed)
+			var probe := BattleSim.new()
+			probe.setup(sc, p_seed)
+			if not copy.restore(sim.snapshot()) or not probe.restore(sim.snapshot()):
+				twin_bad += 1000
+			else:
+				for t in 120:
+					probe.step()
+					copy.step()
+					if probe.state_hash() != copy.state_hash():
+						twin_bad += 1
+	ev["shots"] = shots
+	ev["stops"] = sim.stat_occ_stop
+	ev["door"] = sim.stat_occ_door
+	ev["cleared"] = 1 if bb >= 0 and sim.ob_u[bb] == 0 and sim.u_occ[d] == 0 and int(ev["in_t"]) >= 0 else 0
+	ev["lost_in"] = alive0 - sim.u_alive[d]
+	ev["lost_door"] = rod0 - sim.u_alive[rod]
+	ev["hashes"] = hashes
+	ev["twin_bad"] = twin_bad
+	return ev

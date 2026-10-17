@@ -2195,7 +2195,12 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 					break
 				if present < 0:
 					present = int(a["f"])
-		if present >= 0 and CSea.sacks(st, r, present):
+		if present >= 0 and int(outcome.get("fort_holds", 0)) != 0:
+			# (West slice 2c) The town is taken but its harbour fort holds: the
+			# settlement does not change hands, the fort's men are its garrison
+			# and the siege goes on (assault it again, or starve it out).
+			rs["gar"] = maxi(int(rs["gar"]), 10)
+		elif present >= 0 and CSea.sacks(st, r, present):
 			sacked = present  # (N2) pirates sack the port and keep to their ships
 		elif present >= 0:
 			new_owner = present
@@ -2220,6 +2225,8 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 		ev["kind"] = kind
 	if sacked >= 0:
 		ev["sacked"] = 1
+	if int(outcome.get("fort_holds", 0)) != 0 and winner == 0 and new_owner < 0 and sacked < 0:
+		ev["fort_holds"] = 1
 	event(st, ev)
 	check_eliminations(st)
 	CChars.sweep(st)

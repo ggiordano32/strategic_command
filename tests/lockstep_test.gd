@@ -143,6 +143,11 @@ func _init() -> void:
 		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 		quit(0 if _ok else 1)
 		return
+	if OS.get_cmdline_user_args().has("--only=occupy"):
+		_test_lockstep_occupy()
+		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
+		quit(0 if _ok else 1)
+		return
 	_test_snapshots()
 	_test_profiles()
 	_test_lockstep()
@@ -156,6 +161,7 @@ func _init() -> void:
 	_test_lockstep_siege()
 	_test_lockstep_siege_deploy()
 	_test_lockstep_street()
+	_test_lockstep_occupy()
 	_test_lockstep_chars()
 	_test_lockstep_reinf()
 	_test_easy_snapshots()
@@ -2487,3 +2493,109 @@ func _test_lockstep_reinf() -> void:
 	else:
 		print("PASS reinf lockstep: %d frames A/B and %d A/C equal (C joined at frame %d, after the first arrival); arrivals (unit@tick) %s on both, %d by the REINF_TIME rule; side 0's arrivals ordered by their players %d of 2; sim tick %d" % [
 			n_ab, n_ac, c_join, " ".join(arr_a), sa.stat_arr_late, ordered, sa.tick])
+
+
+# ------------------------------------------- fighting from buildings (2c) ---
+
+## Slice 2c (docs/DESIGN.md "Forts and fighting from buildings"): two peers
+## on side 1 in a West village: peer A's musket company goes into the
+## flat-roofed building nearest it by ORDER_OCCUPY through the lockstep,
+## peer B's foot stand in the street by it; the AI's attackers (side 0)
+## shoot at the building and storm its door. A third peer joins by snapshot while the building is held. Every
+## frame's hash agrees on all three.
+func _test_lockstep_occupy() -> void:
+	var sc := Scenarios.west_town(11, 0, 0, 1, 0, MapGen.PAL_DRY, MapGen.CUL_LATIN)  # (Terrain.K_FLAT)
+	var keep: Array = []
+	var got := {}
+	for ud in sc["units"]:
+		var key := "%d:%s" % [int(ud["side"]), UT.key_of(int(ud["type"]))]
+		if (key == "1:musketeers" or key == "1:rodeleros" or key == "0:musketeers" or key == "0:rodeleros" or key == "0:cutlass") \
+				and not got.has(key):
+			got[key] = true
+			keep.append(ud)
+	if not got.has("1:rodeleros"):
+		var extra: Dictionary = (keep[0] as Dictionary).duplicate()
+		for ud in keep:
+			if int(ud["side"]) == 1:
+				extra = (ud as Dictionary).duplicate()
+		extra["type"] = UT.index_of("cutlass")
+		extra["x_m"] = int(extra["x_m"]) + 12
+		keep.append(extra)
+	sc["units"] = keep
+	sc["deploy_zones"] = []
+	sc["ai_sides"] = [0]
+	var probe := BattleSim.new()
+	probe.setup(sc, 4242)
+	var home: Array = []
+	var k := 0
+	for u in probe.n_units:
+		if probe.u_side[u] == 1:
+			home.append(k % 2)
+			k += 1
+		else:
+			home.append(-1)
+	var occ_u := -1
+	for u in probe.n_units:
+		if home[u] == 0 and UT.cls(probe.u_type[u]) == UT.CLS_MISSILE:
+			occ_u = u
+	if occ_u < 0:
+		for u in probe.n_units:
+			if home[u] == 0:
+				occ_u = u
+	var bb := -1
+	var bd := 1 << 40
+	for b in probe.ob_ok.size():
+		if probe.ob_ok[b] == 0 or probe.ob_flat[b] == 0:
+			continue
+		var d: int = absi(probe.ob_dx[b] - probe.u_ax[occ_u]) + absi(probe.ob_dy[b] - probe.u_ay[occ_u])
+		if d < bd:
+			bd = d
+			bb = b
+	var relay := Relay.new()
+	var a := _new_peer(sc, home, 0, "A", [0, 1])
+	var b := _new_peer(sc, home, 1, "B", [0, 1])
+	a.latency = 1
+	b.latency = 3
+	b.d = 4
+	var peers: Array[Peer] = [a, b]
+	var total := 1500
+	var c: Peer = null
+	var c_join := -1
+	var now := 0
+	var sent := false
+	while now < total * 3 and mini(a.ls.frame, b.ls.frame) < total:
+		now += 1
+		for p in peers:
+			if p.me == 0 and now == 15 and not sent:
+				sent = true
+				p.issue({"type": BattleSim.ORDER_OCCUPY, "unit": occ_u, "building": bb, "run": 1})
+			p.flush(relay, now)
+			p.deliver(relay, now)
+			p.run(p.rng.randi() % 3, true)
+		if c != null:
+			c.flush(relay, now)
+			c.deliver(relay, now)
+			c.run(4, true)
+		elif now > 30 and (a.ls.sim.u_occ[occ_u] > 0 and a.ls.frame > 400 or now == total * 3 / 2):
+			c_join = now
+			c = _new_peer(sc, home, 1, "C", [0, 1])
+			c.online = true
+			c.latency = 2
+			if not c.ls.restore(a.ls.snapshot()):
+				_fail("occupy lockstep: C could not restore A's snapshot")
+				return
+			c.hashes[c.ls.frame] = c.ls.state_hash()
+			c.cursor = 0
+			while c.cursor < relay.items.size() and int(relay.items[c.cursor]["s"]) <= c.ls.last_s:
+				c.cursor += 1
+			c.sent_k = 1 << 30
+	var n_ab := _compare(a, b, 0, "occupy A/B")
+	var n_ac := _compare(a, c, c_join, "occupy A/C") if c != null else 0
+	var sa = a.ls.sim
+	if n_ab < total / 2 or n_ac < 50:
+		_fail("occupy lockstep: too few frames compared (A/B %d, A/C %d)" % [n_ab, n_ac])
+	elif sa.stat_occ_in < 1:
+		_fail("occupy lockstep: nobody went into a building (building %d)" % bb)
+	elif n_ab > 0 and n_ac > 0:
+		print("PASS occupy lockstep: %d frames A/B and %d A/C equal (C joined at frame %d with the building held); in %d, out %d, door blows %d, stopped %d; sim tick %d" % [
+			n_ab, n_ac, c_join, sa.stat_occ_in, sa.stat_occ_out, sa.stat_occ_door, sa.stat_occ_stop, sa.tick])

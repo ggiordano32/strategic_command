@@ -133,6 +133,8 @@ func _footprints(sim) -> Vector3i:
 	for u in sim.n_units:
 		if sim.u_state[u] != BattleSim.U_READY or sim.u_alive[u] <= 0 or sim.u_wall[u] > 0 or sim.u_stair[u] != 0:
 			continue
+		if sim.occ_on != 0 and sim.u_occ[u] > 0:
+			continue  # (slice 2c: a unit holding a building stands in it on purpose)
 		var b: int = sim.u_slot_base[u]
 		for s in sim.u_alive[u]:
 			var i: int = sim.slot_soldier[b + s]

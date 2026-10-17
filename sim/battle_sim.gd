@@ -81,7 +81,8 @@ const ORDER_SABOTAGE := 21      # unit (an assassin), eg (an enemy engine group)
 const ORDER_ATTEMPT := 22       # unit (an assassin), target (an enemy character or general's unit): strike once
 const ORDER_PARLEY := 23        # unit (a diplomat), target (a routing or wavering enemy unit): ask it to surrender
 const ORDER_STANCE := 24        # unit, stance (STANCE_LINE / STANCE_COVER / STANCE_HOLD)
-const ORDER_LAST := 24
+const ORDER_OCCUPY := 25        # unit, building (a West town's house, tavern, store...: its men go in to the windows, the roof and the door)
+const ORDER_LAST := 25
 
 # Battle phase (scenario "deploy_time" > 0 starts in PHASE_DEPLOY, see the
 # "deployment phase" section at the end of this file).
@@ -93,7 +94,7 @@ const DZ_INSIDE := 1   # settlement defenders: open ground inside the walls with
 ## Unit fields an order can change; OrderPreview predicts exactly these.
 const ORDER_KEYS: Array[String] = ["order", "ax", "ay", "face", "files", "dx", "dy",
 	"dface", "target", "run", "fire", "skirm", "deploy", "refill", "gtarget", "pick", "akind", "forage",
-	"stance", "bound"]
+	"stance", "bound", "occ"]
 
 # Formation geometry (spacing is per unit type, see unit_types.gd).
 const FILE_SPACING := 1126  # default, kept for callers that do not pass a type
@@ -359,6 +360,34 @@ const STANCE_LINE := 0       # u_stance: keep the formation (line troops' defaul
 const STANCE_COVER := 1      # ... "Take cover": men to cover spots when standing or shooting (cover troops' default)
 const STANCE_HOLD := 2       # ... "Hold street": line troops fill the street across their front; cover troops hold the corners round it
 const STANCE_N := 3
+# Fighting from buildings (West slice 2c; docs/DESIGN.md "Forts and fighting
+# from buildings"): a foot unit occupies a building of a West town (a house,
+# tavern, store, warehouse, shop, the church, the governor's house): its men
+# take places at the windows along every face (on the roof behind the
+# parapet when the roof is flat; on a tavern's gallery at its front), each
+# with his own sight line and shot from that height (per-man fire), two
+# hold the door, the rest wait inside and step up as the men before them
+# fall. The attacker clears it at the door, a two-man front.
+const OCC_GAP := 1536            # firing places along each face this far apart (1.5 m) ...
+const OCC_IN := 410              # ... this far inside the drawn face (0.4 m) ...
+const OCC_END := 1229            # ... from 1.2 m in from each corner, none within OCC_DOOR_W of the door
+const OCC_DOOR_W := 1536
+const OCC_DOOR_N := 2            # men holding the door
+const OCC_DOOR_R := 2560         # attacking men this near the door step fight at the door (one each to a door man)
+const OCC_NEAR := 6 * M          # a unit sent in whose anchor is this near the door step and not fighting ...
+const OCC_IN_T := 30             # ... goes in after this long (3 s through the door)
+const OCC_MIN_H := 35            # a building this tall (dm) or more can be held
+const OCC_WIN_DROP := 22         # a pitched roof's upper windows this far (dm) below its top (a flat roof: on it)
+const OCC_STOP := 70             # % of balls at a man at a window or behind a roof's parapet stopped (he keeps down) ...
+const OCC_STOP_EXP := 25         # ... within EXPOSE_T of his own shot (up at the window, over the parapet)
+const OCC_STOP_BALC := 45        # a man on a tavern's gallery: less ...
+const OCC_STOP_BALC_EXP := 20
+const OCC_ARC_ROOF := 25         # % of arced missiles (arrows, stones) stopped at men on a flat roof (the parapet) ...
+const OCC_ARC_WIN := 75          # ... at a window (only through the opening)
+const OCC_PARK := 2 * M          # the men inside stand this far in from the door
+const OCC_PRESS_R := 7 * M       # a held building with enemy men round its door step (this near) ...
+const OCC_PRESS_MEN := 8         # ... at least this many ...
+const OCC_PRESS := 12            # ... loses this much morale a second and does not recover (surrounded: they give up)
 const CS_CLAIM := 819        # a cover spot within 0.8 m of another unit's man or cover place is taken (no two units on one rock)
 const CS_R_HOLD := 12 * M    # Hold street: a cover unit's men take spots this near their places (facing its front with no threat)
 const HOLD_SPAN := 20 * M    # Hold street: a line measures the street this far either side of its anchor (wider: open ground, no hold)
@@ -408,6 +437,8 @@ const WALL_PARAPET := 614        # parapet top above the walkway (line of fire)
 const CAPTURE_TICKS := 600       # attackers hold the plaza this long: the defenders break
 const CAPTURE_CLEAR := 12 * M    # ... with no defender unit this far beyond the plaza
 const CAPTURE_MEN := 10          # an attacking unit needs this many men to hold it
+const FORT_CAP_TICKS := 300      # a West fort (slice 2c): attackers hold its parade this long, none of its garrison on it: the fort falls
+const FORT_GUN_SECTOR := 171     # ... its guns shoot within this of their platform's outward way (60 degrees either side)
 const PATH_MAX := 24             # waypoints per unit path
 const TRAIL := 4                 # waypoints a unit's anchor passed, kept for its stragglers
 const WP_REACH := 4 * M          # a waypoint counts as reached this close
@@ -1031,6 +1062,48 @@ var sea_flee := PackedInt32Array()  # coast: where the defenders leave the field
 var sea_boats: int = 0             # a West port (phase W): the defenders' routers also leave by the boats at the shore (static)
 var wt_on: int = 0                 # a West open town (phase W; static): routers caught in its streets give up (GIVEUP_T)
 var city_ditch: int = 0           # a ditch round the walls (static)
+var fort_on: int = 0              # a West harbour fort with an inside (slice 2c; static): its ring is the citadel's (cit_*), its gates g_cit
+var n_outer: int = 0              # the gates of the outer wall (g_cit 0; static): 0 in an open town, a West fort's included
+var fort_cmp: int = -1            # the fort's parade: its piece of open ground with every gate shut (cmp; static)
+var fort_held: int = 0            # the town fell with the fort holding: its garrison's men then (0 not; hashed with fort_on)
+var fort_t: int = 0               # ticks attackers have held the fort's parade with no defender on it (hashed with fort_on)
+var fort_taken: int = 0           # the fort fell (its parade held FORT_CAP_TICKS): the tick + 1 (0 not; hashed with fort_on)
+var ai_fort := PackedInt32Array([0, 0])  # the attacking AI's choice per side: 0 not yet, 1 take the town round the fort, 2 storm the fort too (hashed with fort_on)
+# Fighting from buildings (slice 2c). Static (setup, from the town's records;
+# skipped in snapshots): occ_on (a West town with buildings that can be
+# held), per building ob_ok (1 can be held), ob_z (the firing level, dm above
+# the ground), ob_flat (1 a flat roof: on it), the door's step outside
+# (ob_dx, ob_dy) and its inside (ob_ix, ob_iy), the front's outward facing
+# ob_face, its firing places ob_s0 / ob_sn in sp_x / sp_y / sp_f (outward
+# facing) / sp_k (1 a gallery); per 2 m cell the building that can be held
+# (occ_bg, + 1). State (hashed with occ_on): per building the unit holding
+# it (ob_u, + 1); per unit u_occ (the building it holds, + 1), u_ocg (the
+# building it is sent to, + 1), u_oct (ticks standing at its door to go in).
+var occ_on: int = 0
+var ob_ok := PackedInt32Array()
+var ob_z := PackedInt32Array()
+var ob_flat := PackedInt32Array()
+var ob_dx := PackedInt32Array()
+var ob_dy := PackedInt32Array()
+var ob_ix := PackedInt32Array()
+var ob_iy := PackedInt32Array()
+var ob_face := PackedInt32Array()
+var ob_s0 := PackedInt32Array()
+var ob_sn := PackedInt32Array()
+var sp_x := PackedInt32Array()
+var sp_y := PackedInt32Array()
+var sp_f := PackedInt32Array()
+var sp_k := PackedInt32Array()
+var occ_bg := PackedInt32Array()
+var ob_u := PackedInt32Array()
+var u_occ := PackedInt32Array()
+var u_ocg := PackedInt32Array()
+var u_oct := PackedInt32Array()
+var stat_occ_in: int = 0          # units gone into a building
+var stat_occ_out: int = 0         # ... come out (an order, a rout)
+var stat_occ_door: int = 0        # blows struck at a door (both ways)
+var stat_occ_stop: int = 0        # missiles stopped by a held building's walls and parapets
+var stat_occ_press: int = 0       # unit-seconds a held building's door was beset (OCC_PRESS)
 var cit_siege: int = 0            # ticks the attackers have held the town 3:1 (the defenders lose heart)
 # Per unit (on such maps; resized always, hashed only there).
 var u_wall := PackedInt32Array()     # on the wall: walkway segment + 1 (0 = on the ground)
@@ -1759,6 +1832,7 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		terr0 = terr0.duplicate()
 		terr0["river"] = scenario["river"]
 	_setup_terrain(terr0, p_seed)
+	_setup_occ()
 
 	_load_types()
 
@@ -1778,6 +1852,7 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	ch_sg = PackedInt32Array([0, 0])
 	ch_pris = PackedInt32Array([0, 0])
 	var towers := _siege_towers(scenario)
+	towers.append_array(_fort_guns(scenario))
 	if not towers.is_empty():
 		# The city's tower engines come after the scenario's own units.
 		units = units.duplicate()
@@ -1848,6 +1923,11 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	for arr in _stn_arrays():
 		arr.resize(n_units)
 		arr.fill(0)
+	for arr in _occ_arrays():
+		arr.resize(n_units)
+		arr.fill(0)
+	ob_u.resize(ob_ok.size())
+	ob_u.fill(0)
 	u_seen.fill(1)
 	u_ambt.fill(-1000)
 	u_revt.fill(-1000)
@@ -2287,6 +2367,10 @@ func _cov_arrays() -> Array:
 ## order hashes as before).
 func _stn_arrays() -> Array:
 	return [u_stance, u_bound, u_bnd, u_bt, u_bx, u_by]
+
+
+func _occ_arrays() -> Array:
+	return [u_occ, u_ocg, u_oct]
 
 
 ## The scenario's "chars" (per side a list of {"key": unit key, "name"}, as
@@ -2793,6 +2877,13 @@ func _setup_map(f: Dictionary) -> void:
 	wt_on = 0
 	bld_g = PackedByteArray()
 	city_ditch = 0
+	fort_on = 0
+	n_outer = 0
+	fort_cmp = -1
+	fort_held = 0
+	fort_t = 0
+	fort_taken = 0
+	ai_fort = PackedInt32Array([0, 0])
 	cit_siege = 0
 	agora = PackedInt32Array([0, 0, 0])
 	for arr in [g_x, g_y, g_dir, g_ox, g_oy, g_ix, g_iy, g_hp, g_hp0, g_state, g_hit_t, g_bb,
@@ -2879,15 +2970,19 @@ func _setup_map(f: Dictionary) -> void:
 			g_ix.append(int(gd["ix"]) * M)
 			g_iy.append(int(gd["iy"]) * M)
 			var gcit := int(gd.get("cit", 0))
-			# A citadel's gate is an inner wall's: 60 % of the outer gates' hit points.
-			var ghp: int = int(lay["gate_hp"]) * (CIT_GATE_PCT if gcit != 0 else 100)
+			# A citadel's gate is an inner wall's: 60 % of the outer gates' hit
+			# points (a West fort's is its main gate: all of them).
+			var ghp: int = int(lay["gate_hp"]) * (CIT_GATE_PCT if gcit != 0 and int(gd.get("fort", 0)) == 0 else 100)
 			ghp = ghp * GATE_HP_PCT[city_walls] / 100  # walls 2-3: tougher gates
 			g_hp0.append(ghp)
 			g_hp.append(ghp)
 			g_cit.append(gcit)
 			g_hw.append(int(gd.get("hw", MapGen.GATE_HW)))
-			# The citadel's gate starts open (its men come and go).
-			g_state.append(GATE_OPEN if gcit != 0 else GATE_CLOSED)
+			if gcit == 0:
+				n_outer += 1
+			# The citadel's gate starts open (its men come and go); a fort's
+			# sally port shut.
+			g_state.append(GATE_OPEN if gcit != 0 and int(gd.get("postern", 0)) == 0 else GATE_CLOSED)
 			g_hit_t.append(-1000)
 			var ext: int = int(lay["t"]) + g_hw[g_hw.size() - 1] + 2
 			g_bb.append(maxi((int(gd["x"]) - ext) / 2, 0))
@@ -2912,6 +3007,7 @@ func _setup_map(f: Dictionary) -> void:
 			cit_y = int(cd["y"]) * M
 			cit_r = int(cd["rc"]) * M
 			cit_gate = int(cd["gate"])
+			fort_on = 1 if int(cd.get("fort", 0)) != 0 else 0
 		var sd: Dictionary = lay.get("sea", {})
 		if not sd.is_empty():
 			sea_on = 1
@@ -2975,6 +3071,8 @@ func _setup_map(f: Dictionary) -> void:
 		_rebuild_nav()
 		_wall_joins()
 		_build_cmp()
+		if fort_on != 0 and n_cmp > 0:
+			fort_cmp = cmp[clampi(cit_y >> 11, 0, ob_h - 1) * ob_w + clampi(cit_x >> 11, 0, ob_w - 1)]
 	map_hash = 0
 	if map_on != 0:
 		var ctx := HashingContext.new()
@@ -3449,11 +3547,18 @@ func elev_at(x: int, y: int) -> int:
 			h += wall_h  # (a man in a tower is a wall unit's, passing through)
 		elif k == MapGen.C_STAIR:
 			h += wall_h / 2
+		elif k == MapGen.C_BUILDING and occ_on != 0:
+			# (A building held: its firing level, slice 2c.)
+			var ob := occ_bg[(y >> 11) * ob_w + (x >> 11)] - 1
+			if ob >= 0 and ob_u[ob] != 0:
+				h += ob_z[ob] * M / 10
 	return h
 
 
 ## Unit u's height: its ground (or its walkway).
 func _unit_elev(u: int) -> int:
+	if occ_on != 0 and u_occ[u] > 0:
+		return gh_at(u_cx[u], u_cy[u]) + ob_z[u_occ[u] - 1] * M / 10  # (at its building's firing level)
 	return gh_at(u_cx[u], u_cy[u]) + (wall_h if u_wall[u] > 0 else 0)
 
 
@@ -3512,6 +3617,8 @@ func files_of(u: int) -> int:
 ## Files of unit u's formation unsqueezed: its carry pattern's while it
 ## carries a piece (EQ_CARRY_F), else as ordered (u_files).
 func _base_files(u: int) -> int:
+	if occ_on != 0 and u < u_occ.size() and u_occ[u] > 0:
+		return maxi(u_alive[u], 1)  # (in a building: one rank, so the last man fills a fallen man's place)
 	var q := u_carry[u]
 	if q >= 0:
 		var cf := carry_files(self, u, q)
@@ -5250,6 +5357,8 @@ func _update_capture() -> void:
 	if city_on == 0 or winner >= 0 or tick % TICKS_PER_SECOND != 0:
 		return
 	_town_lost()
+	if fort_on != 0 and fort_taken == 0:
+		_fort_capture()
 	var px := plaza[0]
 	var py := plaza[1]
 	var r := plaza[3]
@@ -5262,8 +5371,8 @@ func _update_capture() -> void:
 		var dx := u_cx[u] - px
 		var dy := u_cy[u] - py
 		if u_side[u] == city_def:
-			if u_wall[u] == 0 and absi(dx) <= rc and absi(dy) <= rc:
-				contested = true
+			if u_wall[u] == 0 and absi(dx) <= rc and absi(dy) <= rc and (occ_on == 0 or u_occ[u] == 0):
+				contested = true  # (men in a house by the square do not hold the square: slice 2c)
 		elif u_alive[u] >= CAPTURE_MEN and absi(dx) <= r and absi(dy) <= r:
 			held = true
 	if held and not contested:
@@ -5272,10 +5381,68 @@ func _update_capture() -> void:
 		cap_t = 0
 	if cap_t >= CAPTURE_TICKS:
 		stat_capture += 1
+		var f_men := 0
 		for u in n_units:
 			if u_side[u] == city_def and u_state[u] == U_READY:
+				if fort_on != 0 and in_fort(u):
+					# (Slice 2c: the fort's garrison holds out; the town is
+					# taken all the same.)
+					if t_fixed[u_type[u]] == 0:
+						f_men += u_alive[u]
+					continue
 				_start_rout(u)
 				u_routs[u] = MAX_ROUTS + 1  # the city has fallen: no rally
+		if f_men > 0 and winner < 0:
+			# The town is taken: the battle is the attackers'; the fort still
+			# holding is the result's "fort" (docs/DESIGN.md "Forts and
+			# fighting from buildings").
+			fort_held = f_men
+			winner = 1 - city_def
+			decided_tick = tick
+
+
+## The West harbour fort falls (slice 2c; once a second): an attacking unit
+## of CAPTURE_MEN or more on its parade and no unit of its garrison on the
+## parade (its walls do not hold it) for FORT_CAP_TICKS: every defending unit
+## in the fort routs and does not rally (the plaza's rule, for the fort).
+func _fort_capture() -> void:
+	var att := false
+	var dfn := false
+	for u in n_units:
+		if u_state[u] != U_READY or not in_fort(u) or u_wall[u] > 0:
+			continue
+		if u_side[u] == city_def:
+			if t_fixed[u_type[u]] == 0:
+				dfn = true
+		elif u_alive[u] >= CAPTURE_MEN:
+			att = true
+	if att and not dfn:
+		fort_t += TICKS_PER_SECOND
+	else:
+		fort_t = 0
+	if fort_t < FORT_CAP_TICKS:
+		return
+	fort_taken = tick + 1
+	for u in n_units:
+		if u_side[u] == city_def and u_state[u] == U_READY and in_fort(u):
+			_start_rout(u)
+			u_routs[u] = MAX_ROUTS + 1
+
+
+## Unit u is in the West harbour fort (slice 2c): on its walls (the only
+## walls of a West town) or its anchor on the fort's parade.
+func in_fort(u: int) -> bool:
+	if fort_on == 0:
+		return false
+	if u_wall[u] > 0:
+		return true
+	if fort_cmp < 0:
+		return false
+	var i := u_ax[u] >> 11
+	var j := u_ay[u] >> 11
+	if i < 0 or j < 0 or i >= ob_w or j >= ob_h:
+		return false
+	return cmp[j * ob_w + i] == fort_cmp
 
 
 ## The town is lost: while the attackers' men inside the walls outnumber
@@ -5334,7 +5501,7 @@ func _flee_step(u: int) -> void:
 		var fp := sea_exit(u_cx[u])
 		gx = fp.x
 		gy = fp.y
-	if xf_gl >= 0 and ROUT_INWARD != 0 and u_side[u] == city_def and n_gates > 0:
+	if xf_gl >= 0 and ROUT_INWARD != 0 and u_side[u] == city_def and n_outer > 0:
 		# Exit fields: a refuge once chosen is kept (u_xg) till its gate
 		# opens, so its men do not turn about as the enemy moves (they
 		# huddle there, and give up if the enemy comes); with none, one is
@@ -5359,7 +5526,7 @@ func _flee_step(u: int) -> void:
 		if rg >= 0:
 			gx = g_ix[rg]
 			gy = g_iy[rg]
-	elif ROUT_INWARD != 0 and u_side[u] == city_def and n_gates > 0 \
+	elif ROUT_INWARD != 0 and u_side[u] == city_def and n_outer > 0 \
 			and (veg_bits(u_cx[u], u_cy[u]) & MapGen.V_URBAN) != 0:
 		if u_pn[u] > 0 and (u + tick) % TICKS_PER_SECOND != 0:
 			# (The gate is chosen again once a second; meanwhile the one the
@@ -6659,6 +6826,16 @@ func _apply_orders(max_player: int = 1 << 30) -> void:
 			u_pick[u] = int(d["pick"])
 			u_akind[u] = int(d["akind"])
 			u_forage[u] = int(d["forage"])
+			if int(d["occ"]) != u_ocg[u]:
+				u_ocg[u] = int(d["occ"])
+				u_oct[u] = 0
+			if occ_on != 0 and u_occ[u] > 0:
+				# Holding a building: a move, a withdrawal, an attack by men
+				# without missiles to shoot (or into another building) takes it
+				# out by the door (slice 2c).
+				var uo := u_order[u]
+				if uo == O_MOVE or uo == O_WITHDRAW or (uo == O_ATTACK and (u_cls[u] != UT.CLS_MISSILE or u_ammo[u] <= 0)):
+					_occ_leave(u)
 			if int(d["stance"]) != u_stance[u] or int(d["bound"]) != u_bound[u] or int(o["type"]) == ORDER_STANCE \
 					or (u_bnd[u] != 0 and int(o["type"]) != ORDER_RUN and int(o["type"]) != ORDER_FIRE \
 					and int(o["type"]) != ORDER_AMMO):
@@ -6709,7 +6886,8 @@ static func order_fields(sim, u: int) -> Dictionary:
 		"run": sim.u_run[u], "fire": sim.u_fire[u], "skirm": sim.u_skirm[u],
 		"deploy": sim.u_deploy[u], "refill": sim.u_refill[u], "gtarget": sim.u_gtarget[u],
 		"pick": sim.u_pick[u], "akind": sim.u_akind[u], "forage": sim.u_forage[u],
-		"stance": sim.u_stance[u], "bound": sim.u_bound[u]}
+		"stance": sim.u_stance[u], "bound": sim.u_bound[u],
+		"occ": sim.u_ocg[u] if u < sim.u_ocg.size() else 0}
 
 
 ## Units an order applies to (in index order): its unit, or every ready unit
@@ -6764,8 +6942,26 @@ static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 		if sn >= 0 and sn < STANCE_N and stance_ok(ty):
 			d["stance"] = sn
 		return
+	if typ == ORDER_OCCUPY:
+		# Into a building (West towns, slice 2c): to its door step; the sim
+		# takes it in once it stands there (_occ_enter). Into the one it holds
+		# already: nothing changes.
+		var bo := int(o.get("building", -1))
+		if occupy_refusal(sim, u, bo) != "" or (sim.u_occ[u] if u < sim.u_occ.size() else 0) == bo + 1:
+			return
+		d["order"] = O_MOVE
+		d["dx"] = sim.ob_dx[bo]
+		d["dy"] = sim.ob_dy[bo]
+		d["dface"] = (sim.ob_face[bo] + 512) & FM.ANGLE_MASK
+		d["target"] = -1
+		d["gtarget"] = -1
+		d["run"] = 1 if int(o.get("run", 0)) != 0 else 0
+		d["bound"] = 0
+		d["occ"] = bo + 1
+		return
 	if typ == ORDER_MOVE or typ == ORDER_ATTACK or typ == ORDER_HALT or typ == ORDER_WITHDRAW \
 			or typ == ORDER_WITHDRAW_ALL or typ == ORDER_PICKUP:
+		d["occ"] = 0  # (sent into a building: called off)
 		# A move by bounds (two teams leapfrog from cover; line troops in hops),
 		# foot only, on the ground; any other order of these ends it.
 		d["bound"] = 1 if typ == ORDER_MOVE and int(o.get("bound", 0)) != 0 and stance_ok(ty) \
@@ -7135,6 +7331,10 @@ static func _fill_offsets(out: PackedInt32Array, base: int, count: int, files: i
 func _compute_offsets(u: int) -> void:
 	var alive := u_alive[u]
 	if alive <= 0:
+		return
+	if occ_on != 0 and u_occ[u] > 0:
+		_occ_offsets(u)  # (in a building: the door, the firing places, inside)
+		u_dirty[u] = 0
 		return
 	if u_neng[u] > 0:
 		_art_offsets(u)
@@ -7918,6 +8118,8 @@ func _update_units() -> void:
 				_stair_check(u)
 			elif u_stair[u] == ST_LADDER and u_state[u] == U_READY:
 				_ladder_step(u)
+		if occ_on != 0 and u_occ[u] > 0 and u_state[u] != U_READY:
+			_occ_leave(u)  # (out by the door to run, or wiped out: the building is free)
 		if u_state[u] != U_READY:
 			u_formed[u] = 0
 			u_braced[u] = 0
@@ -7934,6 +8136,28 @@ func _update_units() -> void:
 				if wt_on != 0:
 					_street_giveup(u)
 			continue
+		if occ_on != 0:
+			if u_occ[u] > 0:
+				# (In a building: its men stand at their places, _occ_soldiers;
+				# no formation, a pike's hedge gone in the doorway.)
+				u_formed[u] = 0
+				u_braced[u] = 0
+				_unit_stats(u)
+				continue
+			if u_ocg[u] > 0:
+				# Sent into a building: at its door step, no enemy on it, a
+				# moment: in.
+				var gb := u_ocg[u] - 1
+				if ob_u[gb] != 0 and ob_u[gb] != u + 1:
+					u_ocg[u] = 0
+				elif u_contact[u] == 0 and u_fighting[u] == 0 \
+						and FM.approx_len(u_ax[u] - ob_dx[gb], u_ay[u] - ob_dy[gb]) <= OCC_NEAR:
+					u_oct[u] += 1
+					if u_oct[u] >= OCC_IN_T:
+						_occ_enter(u)
+						continue
+				else:
+					u_oct[u] = 0
 		var ty := u_type[u]
 		var cls := u_cls[u]
 		var speed := t_run[ty] if u_run[u] != 0 else t_walk[ty]
@@ -8144,6 +8368,12 @@ func _update_units() -> void:
 			else:
 				var dx := u_cx[t] - u_ax[u]
 				var dy := u_cy[t] - u_ay[u]
+				# (A unit holding a building is fought at its door: the men
+				# without missiles close on the door step, slice 2c.)
+				var occ_t := occ_on != 0 and u_occ[t] > 0 and not (cls == UT.CLS_MISSILE and u_ammo[u] > 0)
+				if occ_t:
+					dx = ob_dx[u_occ[t] - 1] - u_ax[u]
+					dy = ob_dy[u_occ[t] - 1] - u_ay[u]
 				var d := FM.isqrt(dx * dx + dy * dy)
 				want_face = u_face[u]  # engaged: hold the facing
 				# Settlement map: go round by the streets while the target
@@ -8267,6 +8497,8 @@ func _update_units() -> void:
 					var stop := ext + M
 					if t_chase[ty] != 0:
 						stop = M  # a pack: into the middle of its quarry (scattered routers too)
+					if occ_t:
+						stop = M / 2  # (onto the door step)
 					if oon:
 						# Among buildings a unit stopping short of a deep column
 						# may have a corner between its men and the enemy's:
@@ -9249,6 +9481,9 @@ func _update_soldiers() -> void:
 			_flush_removals(n_rm)
 			if u_amok[u] != 0 and u_alive[u] > 0:
 				_amok_trample(u)
+			continue
+		if occ_on != 0 and u_occ[u] > 0:
+			_occ_soldiers(u)  # (in a building, slice 2c)
 			continue
 
 		var ax := u_ax[u]
@@ -10915,8 +11150,15 @@ const PM_K_FAIL := 30   # a man who found nobody to shoot at looks again after t
 
 
 func _pm_on(u: int) -> bool:
-	if u_cls[u] != UT.CLS_MISSILE or u_wall[u] != 0:
+	if u_cls[u] != UT.CLS_MISSILE:
 		return false
+	if occ_on != 0 and u_occ[u] > 0:
+		return t_crew_sh[u_type[u]] <= 1  # (in a building: every man at his window, slice 2c)
+	if u_wall[u] != 0:
+		# (Slice 2c: a West fort's parapet: every man his own target and line
+		# of fire from the walkway, the height his.)
+		return wt_on != 0 and u_stair[u] == 0 and t_crew_sh[u_type[u]] <= 1 \
+			and (t_m_gun[u_type[u]] != 0 or t_m_arc[u_type[u]] != 0)
 	var ty := u_type[u]
 	if t_crew_sh[ty] > 1 or (t_m_gun[ty] == 0 and t_m_arc[ty] == 0):
 		return false
@@ -10950,6 +11192,8 @@ func _pm_unit(u: int) -> void:
 			continue  # (reloading)
 		if not may or (still >= 0 and (i & 1) != still):
 			continue
+		if occ_on != 0 and u_occ[u] > 0 and not _occ_win(i):
+			continue  # (at the door, or inside: no window)
 		var j := s_tgt[i]
 		if j >= 0 and not _pm_keep(i, u, j, rng, tu):
 			j = -1
@@ -11020,10 +11264,11 @@ func _pm_find(i: int, u: int, rng: int, cand: PackedInt32Array) -> int:
 		var bj := -1
 		var bd := 0
 		var k := (i + tick / PM_K) % st  # (a different sample each look)
+		var oin := occ_on != 0 and u_occ[o] > 0
 		while k < al:
 			var j := slot_soldier[ob + k]
 			k += st
-			if state[j] >= S_DEAD:
+			if state[j] >= S_DEAD or (oin and not _occ_win(j)):
 				continue
 			var d := FM.approx_len(pos_x[j] - px, pos_y[j] - py)
 			if d <= rng and (bj < 0 or d < bd):
@@ -11142,6 +11387,8 @@ func _shot_kind(i: int, ks: int, kstd: int, pref: bool) -> int:
 func _fire(i: int, u: int, ft: int, ty: int, ak: int = -1, aim: int = -1) -> void:
 	var talive := u_alive[ft]
 	var j := aim if aim >= 0 else slot_soldier[u_slot_base[ft] + _rand() % talive]
+	if aim < 0 and occ_on != 0 and u_occ[ft] > 0:
+		j = _occ_aim(ft, j)  # (a unit in a building: at a man at a window)
 	var sx := pos_x[i]
 	var sy := pos_y[i]
 	# Lead the target: aim where it will be after the flight, from its
@@ -11294,7 +11541,7 @@ func _land(p: int) -> void:
 	# The unit aimed at, if it is not in the grid: find the slot under the
 	# landing point from the formation geometry.
 	var tu := pr_tu[p]
-	if best < 0 and tu >= 0 and u_contact[tu] == 0 and u_alive[tu] > 0:
+	if best < 0 and tu >= 0 and (u_contact[tu] == 0 or (occ_on != 0 and u_occ[tu] > 0)) and u_alive[tu] > 0:
 		var j := -1
 		if u_state[tu] == U_READY and u_neng[tu] == 0 and u_wall[tu] == 0 and u_cvb[tu] < 0 and u_bnd[tu] == 0:
 			j = _slot_at(tu, x, y)
@@ -11308,6 +11555,8 @@ func _land(p: int) -> void:
 				best = j
 	if best >= 0 and ft_on != 0 and t_m_arc[pr_ty[p]] == 0 and _flat_block(p, best):
 		return  # (it struck the wall, the house, the rock between: phase C0)
+	if best >= 0 and occ_on != 0 and u_occ[unit_of[best]] > 0 and _occ_stop(p, best):
+		return  # (the walls and parapet of the building he holds: slice 2c)
 	if best >= 0 and map_on != 0:
 		# Trees take some of what falls into woods; battlements shelter men
 		# on a wall from shots from below.
@@ -11990,6 +12239,13 @@ func _art_in_range(u: int, t: int, mn: int, rng: int) -> bool:
 	var d := FM.approx_len(u_cx[t] - u_cx[u], u_cy[t] - u_cy[u])
 	if ter_on != 0 or obs_on != 0:
 		rng = range_vs(u, t)
+	if fort_on != 0 and u_type[u] == UT.FORT_GUN:
+		# (Slice 2c: a fort gun shoots through its embrasure: only within
+		# FORT_GUN_SECTOR of the way its platform faces, out from the fort.)
+		var out := FM.atan2_a(u_cy[u] - cit_y, u_cx[u] - cit_x)
+		var bear := FM.atan2_a(u_cy[t] - u_cy[u], u_cx[t] - u_cx[u])
+		if absi(FM.angle_diff(bear, out)) > FORT_GUN_SECTOR:
+			return false
 	return d >= mn and _unit_dist(u, t) <= rng
 
 
@@ -13139,7 +13395,7 @@ func _update_morale() -> void:
 	# (Balance T: is the town being taken? An attacking unit standing in
 	# its streets: the defenders' routers shut in it do not rally.)
 	var taken := false
-	if city_on != 0 and city_def >= 0 and n_gates > 0 and ROUT_INWARD != 0 and RALLY_TRAPPED != 0:
+	if city_on != 0 and city_def >= 0 and n_outer > 0 and ROUT_INWARD != 0 and RALLY_TRAPPED != 0:
 		for o in n_units:
 			if u_side[o] != city_def and u_state[o] == U_READY and u_wall[o] == 0 \
 					and (veg_bits(u_cx[o], u_cy[o]) & MapGen.V_URBAN) != 0:
@@ -14641,8 +14897,18 @@ func result() -> Dictionary:
 	if ch_on != 0:
 		for s in 2:
 			sides[s]["prisoners"] = ch_pris[s]  # enemy men this side took prisoner by parley
-	return {"winner": winner, "decided_tick": decided_tick, "ended": ended,
+	var out := {"winner": winner, "decided_tick": decided_tick, "ended": ended,
 		"tick": tick, "units": units, "sides": sides}
+	if fort_on != 0:
+		# (Slice 2c.) The harbour fort: still the defenders' at the end (its
+		# garrison's men, the gun crews left out), and held when the town fell.
+		var men := 0
+		for u in n_units:
+			if u_side[u] == city_def and u_state[u] == U_READY and t_fixed[u_type[u]] == 0 and in_fort(u):
+				men += u_alive[u]
+		out["fort"] = {"held": 1 if fort_held > 0 else 0, "men": men, "gate": g_state[cit_gate] if cit_gate >= 0 else 0,
+			"taken": 1 if fort_taken > 0 else 0}
+	return out
 
 
 # ------------------------------------------------- cover and line of sight ---
@@ -15088,6 +15354,8 @@ func _flat_block(p: int, j: int) -> bool:
 	var t_land := 0
 	if u_wall[ub] > 0:
 		t_obs = wall_t + 2 * M
+	elif occ_on != 0 and u_occ[ub] > 0:
+		t_obs = LOF_SKIP  # (in the building he holds: its own walls are _occ_stop's)
 	if tick - s_shot[j] < EXPOSE_T:
 		t_obs = maxi(t_obs, maxi(LOF_SKIP, _peek(ub).y))
 		t_land = LAND_NEAR
@@ -15269,6 +15537,7 @@ func _cover_seek(u: int) -> void:
 func _cs_ok(u: int) -> bool:
 	if cs_on == 0 or phase != PHASE_BATTLE or u_state[u] != U_READY or u_alive[u] <= 0 \
 			or u_contact[u] != 0 or u_fighting[u] != 0 or u_wall[u] != 0 or u_stair[u] != 0 \
+			or (occ_on != 0 and u_occ[u] > 0) \
 			or u_neng[u] != 0 or u_carry[u] >= 0 or u >= _u_obs.size() or _u_obs[u] == 0:
 		return false
 	var cover := t_cover[u_otype[u]] != 0
@@ -15726,6 +15995,8 @@ func _press_n(u: int, o: int) -> int:
 ## scenario and seed (the unit type tables t_*, the terrain grid) or
 ## view-only diagnostics that are large.
 const _SNAP_SKIP := {"ter_h": true, "ter_gx": true, "ter_gy": true, "ter_info": true, "_xf_tight": true, "_xf_tdone": true,
+	"ob_ok": true, "ob_z": true, "ob_flat": true, "ob_dx": true, "ob_dy": true, "ob_ix": true, "ob_iy": true, "ob_face": true,
+	"ob_s0": true, "ob_sn": true, "sp_x": true, "sp_y": true, "sp_f": true, "sp_k": true, "occ_bg": true,
 	"dbg_impacted": true, "veg": true, "obs": true, "obs_c": true, "obs_cd": true, "obs_sat": true, "land_sat": true, "map_info": true,
 	"vs_tw": true, "vs_top": true, "vs_sat": true, "land_hd": true,
 	"ws_x0": true, "ws_y0": true, "ws_x1": true, "ws_y1": true, "ws_dir": true, "ng_x": true,
@@ -15745,6 +16016,476 @@ const _SNAP_MAGIC := 0x31534353  # "SCS1"
 ## and seed continues exactly as this one would (same hash, same future):
 ## used by live co-op battles for joining mid-battle, reconnects and desync
 ## recovery. Taken between steps.
+# ------------------------------------ fighting from buildings (slice 2c) ---
+# docs/DESIGN.md "Forts and fighting from buildings". A foot unit sent to a
+# West town's building (ORDER_OCCUPY) walks to its door step and, there a
+# moment with no enemy on it, goes in: two men hold the door (inside its
+# frame: only men at the step reach them, one attacker to a door man), the
+# next man to each firing place round the faces (at the windows, on a flat
+# roof behind the parapet, on a tavern's gallery), the rest wait inside and
+# step up as the men before them fall (the slot of a fallen man is taken by
+# the last). Each man at a place has his own sight line and shot from its
+# height (ob_z: per-man fire, _pm_on); balls at him are stopped by the wall
+# or parapet he keeps behind (OCC_STOP) except just after his own shot. It
+# comes out (at the door step) on a move, a withdrawal, an attack by men
+# without missiles, or a rout; the building is free again when it leaves or
+# is wiped out.
+
+## Building kinds a unit can hold (MapGen.B_*).
+static func _occ_kind(kind: int) -> bool:
+	return kind == MapGen.B_HOUSE or kind == MapGen.B_TEMPLE or kind == MapGen.B_BARRACKS or kind == MapGen.B_TAVERN \
+		or kind == MapGen.B_SHOP or kind == MapGen.B_STORE or kind == MapGen.B_WAREHOUSE or kind == MapGen.B_CHANDLER \
+		or kind == MapGen.B_GOVERNOR
+
+
+## The buildings that can be held, their doors and firing places (static:
+## setup, from the layout's records; a West town only).
+func _setup_occ() -> void:
+	occ_on = 0
+	for arr in [ob_ok, ob_z, ob_flat, ob_dx, ob_dy, ob_ix, ob_iy, ob_face, ob_s0, ob_sn, sp_x, sp_y, sp_f, sp_k, occ_bg]:
+		arr.resize(0)
+	if city_on == 0 or wt_on == 0 or obs_on == 0 or not map_info.has("city"):
+		return
+	var lay: Dictionary = map_info["city"]
+	var blds: Array = lay.get("buildings", [])
+	var founder := int(lay.get("founder", 0))
+	var nb := blds.size()
+	for arr in [ob_ok, ob_z, ob_flat, ob_dx, ob_dy, ob_ix, ob_iy, ob_face, ob_s0, ob_sn]:
+		arr.resize(nb)
+		arr.fill(0)
+	occ_bg.resize(ob_w * ob_h)
+	occ_bg.fill(0)
+	for b in nb:
+		var a: Array = blds[b]
+		if a.size() < 17 or int(a[6]) != MapGen.SH_QUAD or int(a[15]) < OCC_MIN_H or not _occ_kind(int(a[4])):
+			continue
+		var kind := int(a[4])
+		var qx := PackedInt32Array([int(a[7]) * M, int(a[9]) * M, int(a[11]) * M, int(a[13]) * M])
+		var qy := PackedInt32Array([int(a[8]) * M, int(a[10]) * M, int(a[12]) * M, int(a[14]) * M])
+		var mx := (qx[0] + qx[1] + qx[2] + qx[3]) / 4
+		var my := (qy[0] + qy[1] + qy[2] + qy[3]) / 4
+		if fort_on != 0 and FM.approx_len(mx - cit_x, my - cit_y) < cit_r:
+			continue  # (the fort's own barracks: the fort is held from its walls)
+		# The front (q0 q1) faces the street; the lot runs back toward q3.
+		var fx0 := (qx[0] + qx[1]) / 2
+		var fy0 := (qy[0] + qy[1]) / 2
+		var nx := qx[3] - qx[0]
+		var ny := qy[3] - qy[0]
+		var nl := FM.approx_len(nx, ny)
+		if nl <= 0:
+			continue
+		# The door step: out from the front's middle onto open ground.
+		var stp := Vector2i(-1, -1)
+		var k := M
+		while k <= 6 * M:
+			var px := fx0 - nx * k / nl
+			var py := fy0 - ny * k / nl
+			if (nav_at(px, py) & MapGen.NAV_GROUND) != 0 and obs_kind(px, py) == MapGen.C_OPEN:
+				stp = Vector2i(px, py)
+				break
+			k += M / 2
+		if stp.x < 0:
+			continue
+		var flat := 0
+		if kind == MapGen.B_SHOP or kind == MapGen.B_GOVERNOR or kind == MapGen.B_BARRACKS:
+			flat = 1
+		elif kind == MapGen.B_HOUSE and founder == MapGen.CUL_LATIN and (absi(int(a[0]) * 73 + int(a[1]) * 151) % 100) % 2 == 0:
+			flat = 1  # (a Spanish town's flat-roofed houses, as the view draws them)
+		var s0 := sp_x.size()
+		for e in 4:
+			var ax := qx[e]
+			var ay := qy[e]
+			var bx := qx[(e + 1) % 4]
+			var by := qy[(e + 1) % 4]
+			var dx := bx - ax
+			var dy := by - ay
+			var l := FM.approx_len(dx, dy)
+			if l < 2 * OCC_END:
+				continue
+			var inx := -dy * M / l
+			var iny := dx * M / l
+			if (mx - ax) * inx + (my - ay) * iny < 0:
+				inx = -inx
+				iny = -iny
+			var face := FM.atan2_a(-iny, -inx) & FM.ANGLE_MASK
+			var t := OCC_END
+			while t <= l - OCC_END:
+				var px := ax + dx * t / l + inx * OCC_IN / M
+				var py := ay + dy * t / l + iny * OCC_IN / M
+				t += OCC_GAP
+				if e == 0 and FM.approx_len(px - fx0, py - fy0) < OCC_DOOR_W:
+					continue  # (the door)
+				if obs_kind(px, py) != MapGen.C_BUILDING:
+					continue
+				sp_x.append(px)
+				sp_y.append(py)
+				sp_f.append(face)
+				sp_k.append(1 if kind == MapGen.B_TAVERN and e == 0 else 0)
+		var sn := sp_x.size() - s0
+		if sn < 4:
+			for arr in [sp_x, sp_y, sp_f, sp_k]:
+				arr.resize(s0)
+			continue
+		ob_ok[b] = 1
+		ob_z[b] = int(a[15]) if flat != 0 else maxi(int(a[15]) - OCC_WIN_DROP, 12)
+		ob_flat[b] = flat
+		ob_dx[b] = stp.x
+		ob_dy[b] = stp.y
+		ob_ix[b] = fx0 + nx * OCC_IN / nl
+		ob_iy[b] = fy0 + ny * OCC_IN / nl
+		ob_face[b] = FM.atan2_a(-ny, -nx) & FM.ANGLE_MASK
+		ob_s0[b] = s0
+		ob_sn[b] = sn
+		occ_on = 1
+		# Its own cells: the building cells inside its outline grown 0.6 m.
+		for j in range(maxi(int(a[1]) / 2 - 1, 0), mini(int(a[3]) / 2 + 2, ob_h)):
+			for i in range(maxi(int(a[0]) / 2 - 1, 0), mini(int(a[2]) / 2 + 2, ob_w)):
+				var c := j * ob_w + i
+				if obs[c] == MapGen.C_BUILDING and occ_bg[c] == 0 and _in_quad(qx, qy, mx, my, (i << 11) + 1024, (j << 11) + 1024, 614):
+					occ_bg[c] = b + 1
+
+
+## (x, y) is inside the convex quad (qx, qy; middle mx, my) grown by g.
+static func _in_quad(qx: PackedInt32Array, qy: PackedInt32Array, mx: int, my: int, x: int, y: int, g: int) -> bool:
+	for e in 4:
+		var ax := qx[e]
+		var ay := qy[e]
+		var dx := qx[(e + 1) % 4] - ax
+		var dy := qy[(e + 1) % 4] - ay
+		var l := FM.approx_len(dx, dy)
+		if l <= 0:
+			continue
+		var onx := dy
+		var ony := -dx
+		if (mx - ax) * onx + (my - ay) * ony > 0:
+			onx = -onx
+			ony = -ony
+		if ((x - ax) * onx + (y - ay) * ony) / l > g:
+			return false
+	return true
+
+
+## Why unit u may not be sent into building b ("" if it may). Shared with
+## the view (the Occupy button) and the order rule.
+static func occupy_refusal(sim, u: int, b: int) -> String:
+	if sim.occ_on == 0:
+		return "no building here can be held"
+	if u < 0 or u >= sim.n_units or sim.u_state[u] != U_READY:
+		return "the unit is not ready"
+	if not stance_ok(sim.u_type[u]):
+		return "only foot can hold a building"
+	if b < 0 or b >= sim.ob_ok.size() or sim.ob_ok[b] == 0:
+		return "this building cannot be held"
+	if sim.ob_u[b] != 0 and sim.ob_u[b] != u + 1:
+		return "another unit holds it"
+	if (sim.u_wall[u] if u < sim.u_wall.size() else 0) > 0 or (sim.u_stair[u] if u < sim.u_stair.size() else 0) != 0:
+		return "come down off the wall first"
+	if (sim.u_carry[u] if u < sim.u_carry.size() else -1) >= 0:
+		return "put down what it carries first"
+	return ""
+
+
+## The building nearest (x, y) (its door step) that unit u may be sent
+## into, within r; -1 none. For the view's Occupy button and the AI.
+func occupy_near(u: int, x: int, y: int, r: int) -> int:
+	if occ_on == 0:
+		return -1
+	var best := -1
+	var bd := r + 1
+	for b in ob_ok.size():
+		if ob_ok[b] == 0 or (ob_u[b] != 0 and ob_u[b] != u + 1):
+			continue
+		var d := FM.approx_len(ob_dx[b] - x, ob_dy[b] - y)
+		if d < bd:
+			bd = d
+			best = b
+	return best
+
+
+## Unit u goes into the building it was sent to (u_ocg): its men to their
+## places at once (the door, the firing places, inside).
+func _occ_enter(u: int) -> void:
+	var b := u_ocg[u] - 1
+	u_ocg[u] = 0
+	u_oct[u] = 0
+	if b < 0 or b >= ob_ok.size() or ob_ok[b] == 0 or (ob_u[b] != 0 and ob_u[b] != u + 1):
+		return
+	ob_u[b] = u + 1
+	u_occ[u] = b + 1
+	u_order[u] = O_NONE
+	u_target[u] = -1
+	u_ax[u] = ob_dx[b]
+	u_ay[u] = ob_dy[b]
+	u_dx[u] = ob_dx[b]
+	u_dy[u] = ob_dy[b]
+	u_face[u] = ob_face[b]
+	u_dface[u] = ob_face[b]
+	u_sq[u] = 0
+	u_pn[u] = 0
+	u_cvb[u] = -1
+	u_bnd[u] = 0
+	u_settled[u] = 0
+	_occ_offsets(u)
+	u_dirty[u] = 0
+	var base := u_slot_base[u]
+	for s in u_alive[u]:
+		var i := slot_soldier[base + s]
+		pos_x[i] = u_ax[u] + off_x[base + s]
+		pos_y[i] = u_ay[u] + off_y[base + s]
+		prev_x[i] = pos_x[i]
+		prev_y[i] = pos_y[i]
+		if state[i] == S_FIGHTING:
+			state[i] = S_FORMED
+		target[i] = -1
+	stat_occ_in += 1
+
+
+## Unit u comes out of the building it holds: its men onto the door step
+## (they form up round their anchor there as any unit does).
+func _occ_leave(u: int) -> void:
+	var b := u_occ[u] - 1
+	u_occ[u] = 0
+	u_oct[u] = 0
+	if b < 0 or b >= ob_ok.size():
+		return
+	if ob_u[b] == u + 1:
+		ob_u[b] = 0
+	stat_occ_out += 1
+	u_ax[u] = ob_dx[b]
+	u_ay[u] = ob_dy[b]
+	u_dirty[u] = 1
+	u_settled[u] = 0
+	u_pn[u] = 0
+	if obs_on != 0:
+		u_flt[u] = -FLOW_EVERY
+	var fc := FM.cos_a(ob_face[b])
+	var fs := FM.sin_a(ob_face[b])
+	var base := u_slot_base[u]
+	for s in u_alive[u]:
+		var i := slot_soldier[base + s]
+		# (Out by the door, a file of three abreast, the first at the step.)
+		var row := s / 3
+		var lat := (s % 3 - 1) * 700
+		var x := ob_dx[b] + (fc * row * 700 - fs * lat) / FM.TRIG_ONE
+		var y := ob_dy[b] + (fs * row * 700 + fc * lat) / FM.TRIG_ONE
+		if (nav_at(x, y) & MapGen.NAV_GROUND) == 0:
+			x = ob_dx[b]
+			y = ob_dy[b]
+		pos_x[i] = x
+		pos_y[i] = y
+		prev_x[i] = x
+		prev_y[i] = y
+		if state[i] == S_FIGHTING:
+			state[i] = S_FORMED
+		target[i] = -1
+
+
+## The places of the men of unit u in its building: the door (OCC_DOOR_N,
+## side by side across it, just inside), the firing places in order, then
+## inside behind the door.
+func _occ_offsets(u: int) -> void:
+	var b := u_occ[u] - 1
+	var base := u_slot_base[u]
+	var ax := u_ax[u]
+	var ay := u_ay[u]
+	var alive := u_alive[u]
+	var dn := mini(OCC_DOOR_N, alive)
+	var s0 := ob_s0[b]
+	var sn := ob_sn[b]
+	var fx := FM.cos_a(ob_face[b])
+	var fy := FM.sin_a(ob_face[b])
+	for s in alive:
+		var x: int
+		var y: int
+		if s < dn:
+			var lat := (s * 2 - (dn - 1)) * 600
+			x = ob_ix[b] - fy * lat / FM.TRIG_ONE
+			y = ob_iy[b] + fx * lat / FM.TRIG_ONE
+		elif s - dn < sn:
+			x = sp_x[s0 + s - dn]
+			y = sp_y[s0 + s - dn]
+		else:
+			x = ob_ix[b] - fx * OCC_PARK / FM.TRIG_ONE
+			y = ob_iy[b] - fy * OCC_PARK / FM.TRIG_ONE
+		off_x[base + s] = x - ax
+		off_y[base + s] = y - ay
+
+
+## Man i is at a firing place of the building his unit holds (or his unit
+## holds none): he shoots and is shot at; the door's men and those inside
+## are not.
+func _occ_win(i: int) -> bool:
+	var u := unit_of[i]
+	if u_occ[u] == 0:
+		return true
+	var s := slot_of[i]
+	var dn := mini(OCC_DOOR_N, u_alive[u])
+	return s >= dn and s - dn < ob_sn[u_occ[u] - 1]
+
+
+## Unit u holds a building: its men stand at their places (_update_soldiers),
+## and the door is fought (_occ_door).
+func _occ_soldiers(u: int) -> void:
+	var b := u_occ[u] - 1
+	var base := u_slot_base[u]
+	var alive := u_alive[u]
+	var ax := u_ax[u]
+	var ay := u_ay[u]
+	var dn := mini(OCC_DOOR_N, alive)
+	var s0 := ob_s0[b]
+	var sn := ob_sn[b]
+	var minx := field_w
+	var maxx := 0
+	var miny := field_h
+	var maxy := 0
+	var sx := 0
+	var sy := 0
+	for s in alive:
+		var i := slot_soldier[base + s]
+		var x := ax + off_x[base + s]
+		var y := ay + off_y[base + s]
+		pos_x[i] = x
+		pos_y[i] = y
+		if s >= dn and state[i] == S_FIGHTING:
+			state[i] = S_FORMED
+		elif state[i] == S_DOWN:
+			state[i] = S_FORMED  # (inside: no room to be knocked over)
+		facing[i] = sp_f[s0 + s - dn] if s >= dn and s - dn < sn else ob_face[b]
+		sx += x
+		sy += y
+		minx = mini(minx, x)
+		maxx = maxi(maxx, x)
+		miny = mini(miny, y)
+		maxy = maxi(maxy, y)
+	if alive > 0:
+		_set_bounds(u, sx / alive, sy / alive, minx, miny, maxx, maxy)
+	_occ_door(u)
+
+
+## The door of the building unit u holds (each tick): the enemy men within
+## OCC_DOOR_R of its step, nearest first (then by index), one to each of
+## the door's men; each pair fights on its own clocks (_melee both ways).
+## The door's men not paired stand.
+func _occ_door(u: int) -> void:
+	var b := u_occ[u] - 1
+	var alive := u_alive[u]
+	var dn := mini(OCC_DOOR_N, alive)
+	if dn <= 0 or stat_grid_soldiers == 0:
+		for s in dn:
+			var i0 := slot_soldier[u_slot_base[u] + s]
+			if state[i0] == S_FIGHTING:
+				state[i0] = S_FORMED
+		return
+	var px := ob_dx[b]
+	var py := ob_dy[b]
+	var head: PackedInt32Array = grid_head1 if u_side[u] == 0 else grid_head0
+	var gs := GRID_SHIFT
+	var ci := PackedInt32Array()
+	var cd := PackedInt32Array()
+	for gy in range(maxi((py - OCC_DOOR_R) >> gs, 0), mini((py + OCC_DOOR_R) >> gs, grid_h - 1) + 1):
+		for gx in range(maxi((px - OCC_DOOR_R) >> gs, 0), mini((px + OCC_DOOR_R) >> gs, grid_w - 1) + 1):
+			var j := head[gy * grid_w + gx]
+			while j >= 0:
+				if state[j] < S_DEAD and state[j] != S_ROUTING and state[j] != S_DOWN:
+					var d := FM.approx_len(pos_x[j] - px, pos_y[j] - py)
+					if d <= OCC_DOOR_R:
+						ci.append(j)
+						cd.append(d)
+				j = grid_next[j]
+	var nc := ci.size()
+	if (tick + u) % TICKS_PER_SECOND == 0:
+		# Surrounded at the door: enemies massing on the step wear its
+		# men's heart down (they give up, or break out and are caught).
+		var ne := 0
+		for gy in range(maxi((py - OCC_PRESS_R) >> gs, 0), mini((py + OCC_PRESS_R) >> gs, grid_h - 1) + 1):
+			for gx in range(maxi((px - OCC_PRESS_R) >> gs, 0), mini((px + OCC_PRESS_R) >> gs, grid_w - 1) + 1):
+				var j2 := head[gy * grid_w + gx]
+				while j2 >= 0:
+					if state[j2] < S_DEAD and state[j2] != S_ROUTING \
+							and FM.approx_len(pos_x[j2] - px, pos_y[j2] - py) <= OCC_PRESS_R:
+						ne += 1
+					j2 = grid_next[j2]
+		if ne >= OCC_PRESS_MEN:
+			u_morale[u] -= OCC_PRESS
+			u_hit_t[u] = tick
+			stat_occ_press += 1
+	var paired := 0
+	for k in dn:
+		var best := -1
+		for q in nc:
+			if ci[q] >= 0 and (best < 0 or cd[q] < cd[best] or (cd[q] == cd[best] and ci[q] < ci[best])):
+				best = q
+		var dm := slot_soldier[u_slot_base[u] + k] if k < u_alive[u] else -1
+		if dm < 0:
+			break
+		if best < 0:
+			if state[dm] == S_FIGHTING:
+				state[dm] = S_FORMED
+			continue
+		var a := ci[best]
+		ci[best] = -1
+		paired += 1
+		state[dm] = S_FIGHTING
+		facing[dm] = FM.atan2_a(pos_y[a] - pos_y[dm], pos_x[a] - pos_x[dm])
+		facing[a] = FM.atan2_a(pos_y[dm] - pos_y[a], pos_x[dm] - pos_x[a])
+		var c1 := cooldown[dm] - 1
+		if c1 <= 0:
+			_melee(dm, a, 0)
+			c1 = t_cooldown[u_type[u]] + _rand() % 4
+			stat_occ_door += 1
+		cooldown[dm] = c1
+		if state[a] < S_DEAD and state[dm] < S_DEAD:
+			var c2 := cooldown[a] - 1
+			if c2 <= 0:
+				_melee(a, dm, 0)
+				c2 = t_cooldown[u_type[unit_of[a]]] + _rand() % 4
+				stat_occ_door += 1
+			cooldown[a] = c2
+		if u_alive[u] <= 0:
+			break
+	if paired > 0:
+		u_fighting[u] = maxi(u_fighting[u], paired)
+
+
+## A missile p about to strike man j of a unit holding a building: true if
+## the walls stop it (those inside: always; the door's men as men exposed;
+## at a firing place OCC_STOP, or OCC_STOP_EXP just after his own shot; a
+## tavern's gallery less; arced missiles OCC_ARC_ROOF on a flat roof or a
+## gallery, OCC_ARC_WIN at a window).
+func _occ_stop(p: int, j: int) -> bool:
+	var u := unit_of[j]
+	var b := u_occ[u] - 1
+	var s := slot_of[j]
+	var dn := mini(OCC_DOOR_N, u_alive[u])
+	var pct := 100
+	if s < dn:
+		pct = OCC_STOP_EXP
+	elif s - dn < ob_sn[b]:
+		var balc := sp_k[ob_s0[b] + s - dn] != 0
+		var expd := tick - s_shot[j] < EXPOSE_T
+		if t_m_arc[pr_ty[p]] != 0:
+			pct = OCC_ARC_ROOF if ob_flat[b] != 0 or balc else OCC_ARC_WIN
+		elif balc:
+			pct = OCC_STOP_BALC_EXP if expd else OCC_STOP_BALC
+		else:
+			pct = OCC_STOP_EXP if expd else OCC_STOP
+	if pct >= 100 or _rand() % 100 < pct:
+		stat_occ_stop += 1
+		return true
+	return false
+
+
+## A man of unit t at a firing place, for a shot with no man chosen (a
+## volley at the unit): the slot under k among the firing places held.
+func _occ_aim(t: int, k: int) -> int:
+	var alive := u_alive[t]
+	var dn := mini(OCC_DOOR_N, alive)
+	var nw := mini(ob_sn[u_occ[t] - 1], alive - dn)
+	if nw <= 0:
+		return slot_soldier[u_slot_base[t] + k % maxi(alive, 1)]
+	return slot_soldier[u_slot_base[t] + dn + k % nw]
+
+
 func snapshot() -> PackedByteArray:
 	var d := {}
 	for p in get_property_list():
@@ -15853,6 +16594,9 @@ func state_hash() -> int:
 		ctx.update(PackedInt64Array([cap_t, nav_epoch, n_gates, ai_gate[0], ai_gate[1]]).to_byte_array())
 		if cit_r > 0:
 			ctx.update(ai_cit.to_byte_array())
+		if fort_on != 0:
+			ctx.update(PackedInt64Array([fort_held, fort_t, fort_taken]).to_byte_array())
+			ctx.update(ai_fort.to_byte_array())
 		if city_on != 0:
 			ctx.update(PackedInt64Array([cit_siege]).to_byte_array())
 			ctx.update(ai_lay.to_byte_array())
@@ -15939,6 +16683,11 @@ func state_hash() -> int:
 		# Stances and bounds (battles where no order changed them hash as before).
 		for arr in _stn_arrays():
 			ctx.update((arr as PackedInt32Array).to_byte_array())
+	if occ_on != 0:
+		# Buildings held (West towns, slice 2c).
+		for arr in _occ_arrays():
+			ctx.update((arr as PackedInt32Array).to_byte_array())
+		ctx.update(ob_u.to_byte_array())
 	var digest := ctx.finish()
 	return digest.decode_u32(0)
 
@@ -16411,6 +17160,26 @@ func _siege_towers(sc: Dictionary) -> Array:
 		out.append({"side": city_def, "type": ty, "count": UT.stat(ty, "crew"), "x_m": int(c[0]),
 			"y_m": int(c[1]), "facing": face, "files": 1, "tower_r": int(c[2]), "tower_ammo": t_ammo,
 			"ak": int(sc.get("tower_ak", -1))})  # (setup keeps it where it rides on the engine's kind)
+	return out
+
+
+## The West harbour fort's guns (slice 2c), as scenario unit dictionaries
+## of the defending side after the scenario's own units (and the tower
+## engines): a fort gun (UT.FORT_GUN, fixed, a crew of four) on each of the
+## fort's gun platforms (MapGen._w_fort: the four salients, then the
+## seaward curtain), facing out. City key "towers": 0 leaves them out.
+func _fort_guns(sc: Dictionary) -> Array:
+	var out: Array = []
+	if fort_on == 0 or not map_info.has("city"):
+		return out
+	var cd: Dictionary = (sc.get("terrain", {}) as Dictionary).get("city", {})
+	if int(cd.get("towers", 1)) == 0:
+		return out
+	var f: Dictionary = (map_info["city"] as Dictionary).get("fort", {})
+	for gp in f.get("guns", []):
+		var a: Array = gp
+		out.append({"side": city_def, "type": UT.FORT_GUN, "count": UT.stat(UT.FORT_GUN, "crew"), "x_m": int(a[0]),
+			"y_m": int(a[1]), "facing": int(a[2]), "files": 1, "tower_r": 4})
 	return out
 
 

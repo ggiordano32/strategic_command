@@ -356,6 +356,7 @@ func _ready() -> void:
 	hud.skirmish_pressed.connect(_toggle_skirmish)
 	hud.stance_pressed.connect(_cycle_stance)
 	hud.bounds_pressed.connect(_toggle_bounds)
+	hud.occupy_pressed.connect(_toggle_occupy)
 	hud.deploy_pressed.connect(_toggle_deploy)
 	hud.refill_pressed.connect(_toggle_refill)
 	hud.ammo_pressed.connect(_toggle_ammo)
@@ -1038,7 +1039,8 @@ const ORDER_NAMES := {BattleSim.ORDER_MOVE: "move", BattleSim.ORDER_ATTACK: "att
 	BattleSim.ORDER_REFILL: "refill", BattleSim.ORDER_GATE: "gate", BattleSim.ORDER_PLACE: "place",
 	BattleSim.ORDER_READY: "ready", BattleSim.ORDER_AMMO: "ammo", BattleSim.ORDER_FORAGE: "forage",
 	BattleSim.ORDER_KILL: "kill", BattleSim.ORDER_RELEASE: "release", BattleSim.ORDER_WORKS: "works",
-	BattleSim.ORDER_SABOTAGE: "sabotage", BattleSim.ORDER_ATTEMPT: "attempt", BattleSim.ORDER_PARLEY: "parley"}
+	BattleSim.ORDER_SABOTAGE: "sabotage", BattleSim.ORDER_ATTEMPT: "attempt", BattleSim.ORDER_PARLEY: "parley",
+	BattleSim.ORDER_OCCUPY: "occupy"}
 
 
 ## Select only unit u (-1: clear the selection).
@@ -1104,11 +1106,14 @@ func _refresh_actions() -> void:
 	var forage := -1
 	var stance := -1
 	var bounds := -1
+	var occupy := -1
 	for u in selection:
 		if BattleSim.stance_ok(sim.u_type[u]):
 			if stance < 0:
 				stance = orders.value(u, "stance")
 			bounds = maxi(bounds, 1 if bounds_mode or orders.value(u, "bound") != 0 else 0)
+			if sim.occ_on != 0 and sim.u_state[u] == BattleSim.U_READY:
+				occupy = maxi(occupy, 1 if sim.u_occ[u] > 0 or orders.value(u, "occ") != 0 else 0)
 		if UT.cls(sim.u_type[u]) == UT.CLS_MISSILE and sim.u_state[u] == BattleSim.U_READY:
 			# Refill at a wagon (near one, or doing it); forage (in woods).
 			if sim.n_eq > 0 and (sim.wagon_for(u) >= 0 or orders.value(u, "refill") != 0):
@@ -1147,7 +1152,7 @@ func _refresh_actions() -> void:
 		if UT.stat(sim.u_type[u], "fixed") == 0:
 			only_fixed = false
 	hud.engine_only = only_fixed
-	hud.set_selection(selection, run, fire, skirm, deploy, refill, ammo, ammo_word, forage, dogs, release_armed, stance, bounds)
+	hud.set_selection(selection, run, fire, skirm, deploy, refill, ammo, ammo_word, forage, dogs, release_armed, stance, bounds, occupy)
 	_refresh_wall_buttons()
 	if coop != null:
 		var tos := _gift_targets()
@@ -1371,6 +1376,50 @@ func _cycle_stance() -> void:
 	for u in selection:
 		if BattleSim.stance_ok(sim.u_type[u]):
 			_queue({"type": BattleSim.ORDER_STANCE, "unit": u, "stance": nxt})
+	_refresh_actions()
+
+
+## Occupy (West towns, slice 2c): every eligible selected foot unit into the
+## nearest free building that can be held (OCC_PICK_R of it; none picked
+## twice); or, when one of them holds a building or is on its way in, all
+## of them out (a move 8 m out from the door, facing out).
+const OCC_PICK_R := 60 * 1024
+
+func _toggle_occupy() -> void:
+	if sim.occ_on == 0:
+		return
+	var out := false
+	for u in selection:
+		if BattleSim.stance_ok(sim.u_type[u]) and (sim.u_occ[u] > 0 or orders.value(u, "occ") != 0):
+			out = true
+	var taken := {}
+	for u in selection:
+		if not BattleSim.stance_ok(sim.u_type[u]) or sim.u_state[u] != BattleSim.U_READY:
+			continue
+		if out:
+			var b: int = sim.u_occ[u] - 1
+			if b < 0:
+				b = orders.value(u, "occ") - 1
+			if b < 0:
+				continue
+			var f: int = sim.ob_face[b]
+			var x: int = sim.ob_dx[b] + FM.cos_a(f) * 8 * 1024 / FM.TRIG_ONE
+			var y: int = sim.ob_dy[b] + FM.sin_a(f) * 8 * 1024 / FM.TRIG_ONE
+			_queue(BattleSim.make_move_order(0, u, x, y, f, BattleSim.files_to_width(mini(sim.u_alive[u], 10), sim.u_type[u]),
+				orders.value(u, "run")))
+			continue
+		var best := -1
+		var bd := OCC_PICK_R + 1
+		for k in sim.ob_ok.size():
+			if sim.ob_ok[k] == 0 or taken.has(k) or BattleSim.occupy_refusal(sim, u, k) != "":
+				continue
+			var d := FM.approx_len(sim.ob_dx[k] - sim.u_ax[u], sim.ob_dy[k] - sim.u_ay[u])
+			if d < bd:
+				bd = d
+				best = k
+		if best >= 0:
+			taken[best] = true
+			_queue({"type": BattleSim.ORDER_OCCUPY, "unit": u, "building": best, "run": orders.value(u, "run")})
 	_refresh_actions()
 
 
@@ -2432,6 +2481,8 @@ func _on_key(e: InputEventKey) -> void:
 			_cycle_stance()
 		"bounds":
 			_toggle_bounds()
+		"occupy":
+			_toggle_occupy()
 		"deploy":
 			_toggle_deploy()
 		"refill":

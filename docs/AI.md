@@ -1862,3 +1862,49 @@ aside, `PROBE_PCT` 25 % a think, at a walk). Counters `stat_ai[16]` (cover
 spots taken), `stat_ai[17]` (probes). Not built: the AI remembering where
 it last saw a unit; deliberate ambush orders (hold fire until the enemy is
 close) beyond going to ground; probing with cavalry.
+
+## 29. Forts, buildings held, the musket line's reserve (West slice 2c, 2026-10-16)
+
+docs/DESIGN.md "Forts and fighting from buildings". All of it orders a player
+could give (ORDER_OCCUPY, ORDER_GATE, attack and move orders).
+
+- **The fort's garrison (defenders, `sim/siege_ai.gd`).** The scenario puts
+  the best musket companies on the fort's land stretches (`Scenarios.settlement`);
+  they are wall units (`A_WALLU`: they stand and shoot, per man from the
+  parapet) and stay up (`_off_wall` finds no outer gate). Units placed on its
+  parade hold it (`A_CIT`, `_cit_guard`). The fort's guns are tower engines
+  (`_tower`: the ram, ladder parties, men at the gate, else fire at will). The
+  gate (`_fort_gates`) stays open while no attacker is within `FORT_SHUT_R`
+  45 m and none carries a ram or ladders, then it is shut for good; the sally
+  port is never opened. The rest of the army holds the town as before (C7's
+  street posts); a reserve sent up against ladder men comes only from the
+  fort's own garrison (`_esc_reply`).
+- **The attackers' choice (`_fort_choice`, once, `ai_fort` hashed).** Storm the
+  fort as well as the town (2) only with a ram, ladders or guns of their own and
+  when the fort holds `FORT_STORM_PCT` 35 % of the defenders' strength or more
+  (or they are `FORT_STORM_ODDS` 250 % as strong as all the defenders); else
+  take the town round it (1): the storming foot leave the fort's men alone
+  (`_storm`), the ram does not go at its gate, the guns shoot the town's
+  defenders. Storming: the ram goes at the fort's gate once it is shut, the
+  ladder parties at its land stretches in the assault (`_assign_equip`,
+  `_escalade` with the fort's gate), storming foot within `FORT_FOLLOW_R` of a
+  planted set climb it too (`_follow`), and the men over the wall or through
+  the gate (`_fort_party`: in the fort, or foot of the two units nearest its
+  open gate) take its parade and hold it till it falls (FORT_CAP_TICKS).
+- **Buildings held (street AI).** A West musket line's street post becomes
+  the building nearest it (door step within `SP_OCC_R` 24 m, `SP_OCC_MIN` 10
+  firing places or more): it is sent in (ORDER_OCCUPY) and its reserve rule
+  keeps it there, firing at will (`_reserve`). Attacking line foot wait off a
+  held building as off a strongpoint (`_sp_wait`) till the skirmishers have
+  worn it below `SP_WORN`; storming foot that attack it go at its door (the
+  sim's attack goal is the door step).
+- **The musket line's reserve (field battles, West rows, `sim/battle_ai.gd`).**
+  Melee foot and horse counter-charge (`_counter_target`) enemy foot or horse
+  within `CC_REACH` 140 m that fight one of theirs or are charging one (an
+  attack order within `CC_CLOSE` 60 m of it); they do not charge an enemy
+  musket line that is free and shooting (`_gun_line_free`: shots left, not in a
+  melee, 60 % of its men or more, morale 500 or more) while the enemy still has
+  melee to throw (`_melee_left`) for the first `CC_HOLD_T` 3 minutes of the
+  engagement: foot halt behind their line, horse pull out of its fire. The
+  battery guard (`_pick_guard`) counts a West army's musket lines toward
+  `GUARD_MIN_MELEE` and takes pikes first (they stop horse).

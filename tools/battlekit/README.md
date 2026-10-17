@@ -54,3 +54,13 @@ so `game/battlekit.gd` `_build_west` turns porches, awnings and goods to the roa
 stake palisade, crates and jetties. `pack.py` appends them after the older pieces (the older crops are
 pixel-identical after a repack; only their places in the atlas move). The kit shader holds 64 rects
 (`game/battlekit.gdshader`): 61 are used.
+
+## The harbour fort's magazine (slice 2c, 2026-10-16)
+
+```
+blender -b --factory-startup -P tools/battlekit/build.py -- --ppm 8 --out tools/battlekit/_frames --pieces magazine
+python3 tools/battlekit/pack.py && godot --headless --path . --import
+```
+
+`b_magazine`: a low stone vault, buttressed, an iron-banded door at +y (the parade). Packed last (62 of the
+shader's 64 rects). The fort's walls are the existing `wall_10_2` pieces laid along its bastioned trace.

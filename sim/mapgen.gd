@@ -3445,6 +3445,19 @@ const W_EDGE := 34                           # street graph: edges up to this lo
 const W_PAD := 3                             # m kept between buildings (sides and back): no slivers
 const W_SLOPE := 3                           # m of height across a lot at most
 const W_STYLE := 4                           # the view's colonial style
+# The harbour fort with an inside (slice 2c; docs/DESIGN.md "Forts and
+# fighting from buildings"): a bastioned square, low thick walls.
+const F_H: Array[int] = [24, 27, 30]         # half side of the trace's square (m) by level
+const F_B: Array[int] = [13, 14, 15]         # a bastion's salient this far out from the corner (both axes)
+const F_G := 9                               # its gorge (where the flank meets the curtain) this far from the corner ...
+const F_F := 6                               # ... and its flank this long, square to the curtain
+const F_T := 10                              # wall thickness (an earth-backed rampart faced in stone)
+const F_PP := 2                              # outer parapet
+const F_WALL_H := 6                          # walkway height above the ground
+const F_WALLS := 2                           # the sim's wall level for the fort (gate, ladders, battlements)
+const F_DITCH_GAP := 2                       # the ditch this far beyond the wall's outer face ...
+const F_DITCH := 6                           # ... and this wide (land side; a causeway at each gate)
+const B_MAGAZINE := 17                       # the fort's powder magazine (stone, vaulted)
 
 
 ## A West European open town (phase W) rather than a walled plan.
@@ -3499,17 +3512,21 @@ static func west_outline(p: Dictionary, kind: int, w_m: int) -> Dictionary:
 	o["rl2"] = _rr(rng, 70, 120)
 	o["rp2"] = _r(rng, 1024)
 	var fside := 1 if _r(rng, 2) == 0 else -1
-	var fh: int = [11, 14, 17][level]
+	var fh: int = F_H[level]
+	var fb: int = F_B[level]
 	var fjit := _rr(rng, -6, 6)
 	o["fort"] = {}
 	if walls >= 1:
-		var fx := cx + fside * (hw - fh - 22) + fjit
-		var fy := top + fh + 12
+		# (Slice 2c: a fort with an inside; the trace's square half side fh,
+		# its bastions' salients fb out from the corners along both axes.)
+		var fx := cx + fside * (hw - fh - fb - 10) + fjit
+		var fy := top + fh + fb + 4
 		var fdir := 0
 		if coast != 0:
 			fdir = FM.atan2_a(shore_y(cp, fx + 20) - shore_y(cp, fx - 20), 40)
-			fy = shore_y(cp, fx) + fh - 3  # (its sea face just in the water)
-		o["fort"] = {"x": fx, "y": fy, "h": fh, "b": fh * 60 / 100, "dir": fdir, "side": fside}
+			fy = shore_y(cp, fx) + fh + 1  # (its seaward curtain on the shore, the sea bastions in the water)
+		o["fort"] = {"x": fx, "y": fy, "h": fh, "b": fb, "dir": fdir, "side": fside, "level": level,
+			"ext": fh + fb + F_T / 2 + F_DITCH_GAP + F_DITCH + 4}
 	# The outline: the top (the shore, or the top), the sides, the landward edge.
 	var vx := PackedInt32Array()
 	var vy := PackedInt32Array()
@@ -4116,46 +4133,21 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 			for j in range(0, mini((sy - 1 + 1) / 2, oh)):
 				obs[j * ow + i] = C_WATER
 				blk[j * ow + i] = 1
-	# ---- the fort: a bastioned square (four quads at the corners and the core).
+	# ---- the fort (slice 2c): a bastioned trace with an inside: walls,
+	# walkways, stairs, a gate toward the town, a sally port, the ditch on
+	# the land side, a magazine and barracks on its parade.
 	var fort: Dictionary = o["fort"]
+	var fw := {}
 	if not fort.is_empty():
-		var fx: int = fort["x"]
-		var fy: int = fort["y"]
-		var fh: int = fort["h"]
-		var fb: int = fort["b"]
-		var fd: int = fort["dir"]
-		var cs := FM.cos_a(fd)
-		var sn := FM.sin_a(fd)
-		var corner := func(sx: int, sy2: int) -> Vector2i:
-			return Vector2i(fx * 100 + (cs * sx - sn * sy2) / FM.TRIG_ONE, fy * 100 + (sn * sx + cs * sy2) / FM.TRIG_ONE)
-		var parts: Array = []
-		parts.append([corner.call(-fh * 100, -fh * 100), corner.call(fh * 100, -fh * 100), corner.call(fh * 100, fh * 100),
-			corner.call(-fh * 100, fh * 100)])
-		for q in 4:
-			var qx := (fh if q == 1 or q == 2 else -fh) * 100
-			var qy := (fh if q >= 2 else -fh) * 100
-			parts.append([corner.call(qx - fb * 100, qy), corner.call(qx, qy - fb * 100), corner.call(qx + fb * 100, qy),
-				corner.call(qx, qy + fb * 100)])
-		for pt in parts:
-			var q4: Array = pt
-			var xs := PackedInt32Array()
-			var ys := PackedInt32Array()
-			for v in q4:
-				xs.append(((v as Vector2i).x + 50) / 100)
-				ys.append(((v as Vector2i).y + 50) / 100)
-			for c in _poly_cells(xs, ys, ow, oh):
-				obs[c] = C_BUILDING
-				own[c] = blds.size() + 1
-			blds.append([mini(mini(xs[0], xs[1]), mini(xs[2], xs[3])), mini(mini(ys[0], ys[1]), mini(ys[2], ys[3])),
-				maxi(maxi(xs[0], xs[1]), maxi(xs[2], xs[3])), maxi(maxi(ys[0], ys[1]), maxi(ys[2], ys[3])),
-				B_FORT, W_STYLE, SH_QUAD, xs[0], ys[0], xs[1], ys[1], xs[2], ys[2], xs[3], ys[3], 70, MAT_STONE])
-		_disc(blk, ow, oh, fx, fy, fh + fb + 8, 1)
+		fw = _w_fort(wc, fort, coast)
+		wc["fort_w"] = fw
 	# ---- landforms (rolling or rougher ground): the roads bend round them.
 	var land := {}
 	if land_ok and not hg.is_empty():
 		var avoid: Array = [[px - hs - 10, py - hs - 10, px + hs + 10, py + hs + 10]]
 		if not fort.is_empty():
-			avoid.append([int(fort["x"]) - 40, int(fort["y"]) - 40, int(fort["x"]) + 40, int(fort["y"]) + 40])
+			var fe0 := int(fort["ext"])
+			avoid.append([int(fort["x"]) - fe0, int(fort["y"]) - fe0, int(fort["x"]) + fe0, int(fort["y"]) + fe0])
 		var lctx := {"w_m": w_m, "h_m": h_m, "kind": kind, "pal": pal, "seed": int(p["seed"]) * 7 + 5,
 			"hgt": hg, "obs": obs, "avoid": avoid, "ref": Vector2i(att_x, mini(att_y + 30, h_m - 8)),
 			"excl": [[cx - hw - 20, 0, cx + hw + 20, top + W_QUAY[level] + 8], [att_x - 45, int(o["bot"]), att_x + 45, att_y + 120],
@@ -4204,9 +4196,9 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 	var x1 := cx + hw + 14
 	if not fort.is_empty():
 		if int(fort["side"]) < 0:
-			x0 = int(fort["x"]) + int(fort["h"]) + int(fort["b"]) + 10
+			x0 = int(fort["x"]) + int(fort["ext"]) + 4
 		else:
-			x1 = int(fort["x"]) - int(fort["h"]) - int(fort["b"]) - 10
+			x1 = int(fort["x"]) - int(fort["ext"]) - 4
 	var qway := PackedInt32Array()
 	var xq := x0
 	while true:
@@ -4315,7 +4307,7 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 	var mouths: Array = []
 	for k in cxs.size():
 		var xk: int = cxs[k]
-		if not fort.is_empty() and absi(xk - int(fort["x"])) < int(fort["h"]) + int(fort["b"]) + 12:
+		if not fort.is_empty() and absi(xk - int(fort["x"])) < int(fort["ext"]) + 6:
 			continue
 		var cw := 10 if absi(xk - px) < hs + 40 else (8 if k % 2 == 0 else 7)
 		var ys := _w_top(o, xk) + qw / 2 + 2
@@ -4454,6 +4446,12 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 	for j in range(maxi((py - hs) / 4, 0), mini((py + hs) / 4 + 1, vh)):
 		for i in range(maxi((px - hs) / 4, 0), mini((px + hs) / 4 + 1, vw)):
 			veg[j * vw + i] |= V_PLAZA
+	if not fw.is_empty():
+		# (The fort's ditch, drawn as the walled plans' is.)
+		for j in vh:
+			for i in vw:
+				if obs[mini(j * 2 + 1, oh - 1) * ow + mini(i * 2 + 1, ow - 1)] == C_DITCH:
+					veg[j * vw + i] |= V_DITCH
 	var sea := {}
 	if coast != 0:
 		for i in vw:
@@ -4467,7 +4465,7 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 			if piers.size() >= npi:
 				break
 			var pxk := cx + _rr(rng, -hw + 30, hw - 30)
-			if not fort.is_empty() and absi(pxk - int(fort["x"])) < int(fort["h"]) + int(fort["b"]) + 16:
+			if not fort.is_empty() and absi(pxk - int(fort["x"])) < int(fort["ext"]) + 10:
 				continue
 			var clash := false
 			for pr in piers:
@@ -4497,19 +4495,215 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 	for k in vx.size():
 		poly.append(vx[k])
 		poly.append(vy[k])
-	var lay := {"cx": cx, "cy": int(o["cy"]), "r0": int(o["r0"]), "level": level, "walls": 0, "def": int(p["def"]),
-		"seed": int(p["seed"]), "t": 0, "pp": 0, "inner": 0, "wall_h_m": 0,
-		"build_h_m": BUILD_H[level], "poly": poly, "gates": [], "towers": [],
-		"plaza": [px, py, hs, hs + CAPTURE_EXTRA], "agora": [px, py, hs], "cit": {},
+	var has_f := not fw.is_empty()
+	var lay := {"cx": cx, "cy": int(o["cy"]), "r0": int(o["r0"]), "level": level, "walls": F_WALLS if has_f else 0,
+		"def": int(p["def"]),
+		"seed": int(p["seed"]), "t": F_T if has_f else 0, "pp": F_PP if has_f else 0,
+		"inner": F_T - F_PP - WALK_W if has_f else 0, "wall_h_m": F_WALL_H if has_f else 0,
+		"build_h_m": BUILD_H[level], "poly": poly, "gates": fw.get("gates", []), "towers": [],
+		"plaza": [px, py, hs, hs + CAPTURE_EXTRA], "agora": [px, py, hs], "cit": fw.get("cit", {}),
 		"streets": streets, "mouths": mouths, "buildings": blds,
-		"fields": [], "segs": [], "att_x": att_x, "att_y": att_y, "nav": nav,
-		"gate_hp": 0, "plan": int(p["plan"]), "site": int(o["site"]), "coast": coast, "ditch": 0,
+		"fields": [], "segs": fw.get("segs", []), "att_x": att_x, "att_y": att_y, "nav": nav,
+		"gate_hp": GATE_HP[F_WALLS] if has_f else 0, "plan": int(p["plan"]), "site": int(o["site"]), "coast": coast,
+		"ditch": 1 if has_f else 0,
 		"sea": sea, "palisade": 0, "enclosed": 0,
 		"founder": int(p["founder"]), "owner": int(p["owner"]), "banner": int(p["banner"]),
 		"post_veg": post, "west": 1, "wwalls": walls, "props": wc["props"], "lowwalls": wc["lowwalls"],
 		"fort": fort, "top": top, "bot": int(o["bot"]), "hw": hw, "bmat": bmat}
 	out["city"] = lay
 	return lay
+
+
+# ------------------------------------------- the harbour fort (slice 2c) --
+# docs/DESIGN.md "Forts and fighting from buildings". A square trace with a
+# flanked bastion at each corner (curtain, flank, face, salient, face,
+# flank), low thick walls (F_T, walkway F_WALL_H up), stairs up from the
+# parade at every stretch's ends, the main gate in the curtain toward the
+# town, a sally port in the far curtain, the ditch round the land faces
+# (causeways at the gates), the powder magazine and the barracks on the
+# parade, gun platforms at the four salients and on the seaward curtain.
+
+## The trace's vertices in the fort's own frame (metres; x along the shore,
+## y inland, the sea at -y): the north-east corner's five (gorge, flank,
+## salient, flank, gorge) turned through the four corners, clockwise.
+static func fort_trace(fh: int, fb: int) -> Array:
+	var pat: Array[Vector2i] = [Vector2i(fh - F_G, -fh), Vector2i(fh - F_G, -fh - F_F), Vector2i(fh + fb, -fh - fb),
+		Vector2i(fh + F_F, -fh + F_G), Vector2i(fh, -fh + F_G)]
+	var out: Array = []
+	for r in 4:
+		for v in pat:
+			var q := v
+			for k in r:
+				q = Vector2i(-q.y, q.x)
+			out.append(q)
+	return out
+
+
+## Fort-frame point (metres, or cm with cm = 100) to the map's.
+static func _f_w(fort: Dictionary, lx: int, ly: int, cm: int = 1) -> Vector2i:
+	var cs := FM.cos_a(int(fort["dir"]))
+	var sn := FM.sin_a(int(fort["dir"]))
+	return Vector2i(int(fort["x"]) * cm + (cs * lx - sn * ly) / FM.TRIG_ONE,
+		int(fort["y"]) * cm + (sn * lx + cs * ly) / FM.TRIG_ONE)
+
+
+## Build the fort into the West town's grids (wc, _city_west's context):
+## returns {"gates", "segs", "cit", "poly"} for the layout; adds its
+## magazine and barracks to the buildings, its gun platforms to fort["guns"]
+## ([x, y, facing] metres, the salients first) and its middle and gates to
+## fort ("mx", "my").
+static func _w_fort(wc: Dictionary, fort: Dictionary, coast: int) -> Dictionary:
+	var ow: int = wc["ow"]
+	var oh: int = wc["oh"]
+	var obs: PackedByteArray = wc["obs"]
+	var keep: PackedByteArray = wc["keep"]
+	var blk: PackedByteArray = wc["blk"]
+	var fh: int = fort["h"]
+	var fb: int = fort["b"]
+	var fs: int = fort["side"]
+	var fd: int = fort["dir"]
+	var trc := fort_trace(fh, fb)
+	var nv := trc.size()
+	var vx := PackedInt32Array()
+	var vy := PackedInt32Array()
+	for v in trc:
+		var w := _f_w(fort, (v as Vector2i).x, (v as Vector2i).y)
+		vx.append(w.x)
+		vy.append(w.y)
+	var nc := ow * oh
+	var fin := PackedByteArray()
+	fin.resize(nc)
+	fin.fill(0)
+	_fill_poly(fin, ow, oh, vx, vy)
+	var ed := _edges(vx, vy, int(fort["x"]), int(fort["y"]), false)
+	var en_x: PackedInt32Array = ed["nx"]
+	var en_y: PackedInt32Array = ed["ny"]
+	var elen: PackedInt32Array = ed["len"]
+	# Seaward edges (no ditch, no wall men set there by the scenario).
+	var sea_x := FM.sin_a(fd)
+	var sea_y := -FM.cos_a(fd)
+	var esea := PackedInt32Array()
+	for k in nv:
+		var dot := (en_x[k] * sea_x + en_y[k] * sea_y) / FM.TRIG_ONE
+		esea.append(1 if coast != 0 and dot > FM.TRIG_ONE * 55 / 100 else 0)
+	var inner := F_T - F_PP - WALK_W
+	# (The ground under it is open: whatever the shore cells were.)
+	for c in nc:
+		if fin[c] != 0 and obs[c] == C_WATER:
+			obs[c] = C_OPEN
+	_wall_band(obs, keep, fin, ow, oh, vx, vy, F_T, F_PP, inner)
+	# Gates: the main gate in the curtain toward the town (the corner
+	# pattern's fifth edge of each corner is a curtain: 4 east, 9 south, 14
+	# west, 19 north), the sally port in the far one.
+	var e_town := 14 if fs > 0 else 4
+	var e_far := 4 if fs > 0 else 14
+	var gates: Array = []
+	var g0 := _mk_gate(vx, vy, ed, e_town, elen[e_town] / 2, GATE_HW, 0, F_T, 1, 0, 1)
+	g0["fort"] = 1
+	gates.append(g0)
+	var g1 := _mk_gate(vx, vy, ed, e_far, elen[e_far] / 2, POSTERN_HW, 0, F_T, 0, 1, 1)
+	g1["fort"] = 1
+	gates.append(g1)
+	var dummy: Array = []
+	for g in gates.size():
+		_gate_raster(obs, keep, ow, oh, gates[g], g, ed, F_T, 0, dummy)
+	# Walkway stretches and their stairs down to the parade.
+	var cut := PackedInt32Array()
+	for k in nv:
+		var kk := k % 5
+		cut.append(F_T / 2 + 2 if kk == 2 else (4 if kk == 1 or kk == 3 else 2))
+	# (Not SEG_CIT: the fort's walls are the only walls a West town has, laddered as any.)
+	var segs := _segments(vx, vy, ed, gates, cut, F_T, F_PP, inner, esea, 0, 1)
+	_stairs(obs, fin, ow, oh, segs, F_T, inner)
+	# The ditch round the land faces, causeways at both gates.
+	_ditch(obs, fin, ow, oh, vx, vy, esea, gates, gates.size(), F_T / 2 + F_DITCH_GAP, F_T / 2 + F_DITCH_GAP + F_DITCH)
+	# Its ground, the ditch and a margin are kept from the town's roads and lots.
+	var rb := (fh + fb) * 142 / 100 + F_T / 2 + F_DITCH_GAP + F_DITCH + 3
+	_disc(blk, ow, oh, int(fort["x"]), int(fort["y"]), rb, 1)
+	for c in nc:
+		if fin[c] != 0 or obs[c] == C_DITCH:
+			blk[c] = 1
+	# The parade: the barracks along the far curtain, the magazine in its
+	# seaward corner (fronts to the parade).
+	var ia := fh - F_T / 2 - RING_W - 1
+	var bx0 := fs * (ia - 7)
+	var by_lo := -ia + 8
+	var by_hi := ia
+	_w_fort_bld(wc, fort, bx0 * 100, ((by_lo + by_hi) / 2 + fs * (by_hi - by_lo) / 2) * 100, 0, -fs, fs, 0,
+		by_hi - by_lo, 7, B_BARRACKS, 55, fin)
+	_w_fort_bld(wc, fort, fs * (ia - 6) * 100, (-ia + 3 + fs * 3) * 100, 0, -fs, fs, 0, 6, 5, B_MAGAZINE, 45, fin)
+	# Gun platforms: the salients (1 m in from the point, facing out along
+	# the bastion's axis), then the seaward curtain (its walkway, facing the
+	# sea; ports only).
+	var guns: Array = []
+	for r in 4:
+		var sv: Vector2i = trc[r * 5 + 2]
+		if coast != 0 and sv.y < 0:
+			continue  # (the seaward bastions' guns look out to sea: the curtain's below stand for them)
+		var sgx := 1 if sv.x > 0 else -1
+		var sgy := 1 if sv.y > 0 else -1
+		var p := _f_w(fort, sv.x - sgx, sv.y - sgy)
+		var q := _f_w(fort, sv.x * 2, sv.y * 2)
+		guns.append([p.x, p.y, FM.atan2_a(q.y - p.y, q.x - p.x)])
+	if coast != 0:
+		var nsea: int = 1
+		for k in nsea:
+			var lx := 0 if nsea == 1 else (-fh / 3 if k == 0 else fh / 3)
+			var p2 := _f_w(fort, lx, -fh - 1)
+			var q2 := _f_w(fort, lx, -fh - 40)
+			guns.append([p2.x, p2.y, FM.atan2_a(q2.y - p2.y, q2.x - p2.x)])
+	fort["guns"] = guns
+	var poly := PackedInt32Array()
+	for k in nv:
+		poly.append(vx[k])
+		poly.append(vy[k])
+	var rc := fh + F_T / 2
+	var cit := {"x": int(fort["x"]), "y": int(fort["y"]), "rc": rc, "poly": poly, "gate": 0, "fort": 1}
+	return {"gates": gates, "segs": segs, "cit": cit, "poly": poly, "fin": fin}
+
+
+## A building on the fort's parade: quad from front-left corner (ax, ay)
+## cm in the fort's frame, along u (Q12 units given as -1 / 0 / 1), into it
+## along n, fw x fd m, kind kd, height hd (dm), stone; its cells within 0.6
+## m of the drawing, inside the fort (fin) on open ground only.
+static func _w_fort_bld(wc: Dictionary, fort: Dictionary, ax: int, ay: int, ux: int, uy: int, nx: int, ny: int,
+		fw: int, fd: int, kd: int, hd: int, fin: PackedByteArray) -> void:
+	var ow: int = wc["ow"]
+	var oh: int = wc["oh"]
+	var obs: PackedByteArray = wc["obs"]
+	var own: PackedInt32Array = wc["own"]
+	var blds: Array = wc["buildings"]
+	var lq := PackedInt32Array([ax, ay, ax + ux * fw * 100, ay + uy * fw * 100,
+		ax + ux * fw * 100 + nx * fd * 100, ay + uy * fw * 100 + ny * fd * 100, ax + nx * fd * 100, ay + ny * fd * 100])
+	var body := PackedInt32Array()
+	for k in 4:
+		var w := _f_w(fort, lq[k * 2], lq[k * 2 + 1], 100)
+		body.append(w.x)
+		body.append(w.y)
+	var cs := FM.cos_a(int(fort["dir"]))
+	var sn := FM.sin_a(int(fort["dir"]))
+	var wux := cs * ux - sn * uy
+	var wuy := sn * ux + cs * uy
+	var wnx := cs * nx - sn * ny
+	var wny := sn * nx + cs * ny
+	var cells: PackedInt32Array = (_w_cells(_w_grow(body, wux, wuy, wnx, wny, 60), ow, oh) as Array)[2]
+	var idx := blds.size()
+	var n_ok := 0
+	for c in cells:
+		if fin[c] != 0 and obs[c] == C_OPEN:
+			obs[c] = C_BUILDING
+			own[c] = idx + 1
+			n_ok += 1
+	if n_ok == 0:
+		return
+	var xs := PackedInt32Array()
+	var ys := PackedInt32Array()
+	for k in 4:
+		xs.append((body[k * 2] + 50) / 100)
+		ys.append((body[k * 2 + 1] + 50) / 100)
+	blds.append([mini(mini(xs[0], xs[1]), mini(xs[2], xs[3])), mini(mini(ys[0], ys[1]), mini(ys[2], ys[3])),
+		maxi(maxi(xs[0], xs[1]), maxi(xs[2], xs[3])), maxi(maxi(ys[0], ys[1]), maxi(ys[2], ys[3])),
+		kd, W_STYLE, SH_QUAD, xs[0], ys[0], xs[1], ys[1], xs[2], ys[2], xs[3], ys[3], hd, MAT_STONE])
 
 
 ## The point of polyline pts nearest height y (its y within 12 m), or (-1, -1).
@@ -4616,10 +4810,40 @@ static func _w_graph(wc: Dictionary, roads: Array, w_m: int, h_m: int, lnodes: P
 		add.call(xo, _w_bot(o, clampi(xo, cx - hw, cx + hw)) + 16)
 		xo += 26
 	var fort: Dictionary = o["fort"]
+	var gate_links: Array = []  # [gate node, outside node, inside node]
 	if not fort.is_empty():
-		var rr := int(fort["h"]) + int(fort["b"]) + 6
+		var rr := (int(fort["h"]) + int(fort["b"])) * 142 / 100 + F_T / 2 + F_DITCH_GAP + F_DITCH + 5
 		for k in 8:
 			add.call(int(fort["x"]) + FM.cos_a(k * 128) * rr / FM.TRIG_ONE, int(fort["y"]) + FM.sin_a(k * 128) * rr / FM.TRIG_ONE)
+		var fw: Dictionary = wc.get("fort_w", {})
+		if not fw.is_empty():
+			# (Slice 2c.) Each gate: its outside, the gate itself (a node of
+			# that gate: a shut gate cuts exactly it) and its inside; the
+			# parade every 8 m and the foot of each stair.
+			var fgates: Array = fw["gates"]
+			for g in fgates.size():
+				var gd: Dictionary = fgates[g]
+				var n_o: int = add.call(int(gd["ox"]), int(gd["oy"]))
+				nx.append(int(gd["x"]))
+				ny.append(int(gd["y"]))
+				ng.append(g)
+				var n_g := nx.size() - 1
+				var n_i: int = add.call(int(gd["ix"]), int(gd["iy"]))
+				gate_links.append([n_g, n_o, n_i])
+			var fin: PackedByteArray = fw["fin"]
+			var fr := int(fort["h"])
+			var ly := -fr
+			while ly <= fr:
+				var lx := -fr
+				while lx <= fr:
+					var w := _f_w(fort, lx, ly)
+					if w.x > 0 and w.y > 0 and w.x < w_m and w.y < h_m and fin[mini(w.y / 2, oh - 1) * ow + mini(w.x / 2, ow - 1)] != 0:
+						add.call(w.x, w.y)
+					lx += 8
+				ly += 8
+			for sg in fw["segs"]:
+				for e2 in 2:
+					add.call(int(sg[9 + e2 * 6]), int(sg[10 + e2 * 6]))
 	for q in lnodes.size() / 2:
 		add.call(lnodes[q * 2], lnodes[q * 2 + 1])
 	# Inside the town: the open ground between the lots (yards, gardens, the
@@ -4678,11 +4902,28 @@ static func _w_graph(wc: Dictionary, roads: Array, w_m: int, h_m: int, lnodes: P
 			var l2 := dx * dx + dy * dy
 			if l2 > W_EDGE * W_EDGE:
 				continue
-			if not _clear_fat(obs, ow, oh, nx[a], ny[a], nx[b], ny[b], -1):
+			if not _clear_fat(obs, ow, oh, nx[a], ny[a], nx[b], ny[b], ng[a] if ng[a] >= 0 else ng[b]):
 				continue
 			var w := FM.isqrt(l2 * 64)
 			(adj[a] as Array).append([b, w])
 			(adj[b] as Array).append([a, w])
+	# A fort gate always joins its own outside and inside points.
+	for gl in gate_links:
+		var n_g: int = gl[0]
+		for sd in [1, 2]:
+			var n_s: int = gl[sd]
+			if n_s < 0 or n_s == n_g:
+				continue
+			var linked := false
+			for e in adj[n_g]:
+				if int(e[0]) == n_s:
+					linked = true
+			if not linked:
+				var dx2 := nx[n_s] - nx[n_g]
+				var dy2 := ny[n_s] - ny[n_g]
+				var w2 := FM.isqrt((dx2 * dx2 + dy2 * dy2) * 64)
+				(adj[n_g] as Array).append([n_s, w2])
+				(adj[n_s] as Array).append([n_g, w2])
 	_w_join(obs, ow, oh, nx, ny, adj)
 	var e0 := PackedInt32Array()
 	var to := PackedInt32Array()
@@ -4798,6 +5039,10 @@ static func _w_flip(lay: Dictionary, w_m: int, h_m: int) -> void:
 		fort["x"] = w_m - int(fort["x"])
 		fort["y"] = h_m - int(fort["y"])
 		fort["dir"] = (int(fort["dir"]) + 512) & 1023
+		for gp in fort.get("guns", []):
+			gp[0] = w_m - int(gp[0])
+			gp[1] = h_m - int(gp[1])
+			gp[2] = (int(gp[2]) + 512) & 1023
 	var sea: Dictionary = lay.get("sea", {})
 	var piers: Array = sea.get("piers", [])
 	for k in piers.size():

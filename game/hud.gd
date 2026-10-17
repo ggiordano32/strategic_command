@@ -16,6 +16,7 @@ signal halt_pressed
 signal fire_pressed
 signal skirmish_pressed
 signal stance_pressed
+signal occupy_pressed
 signal bounds_pressed
 signal deploy_pressed
 signal refill_pressed
@@ -109,6 +110,7 @@ var fire_button: Button
 var skirm_button: Button
 var stance_button: Button
 var bounds_button: Button
+var occupy_button: Button
 var deploy_button: Button
 var refill_button: Button
 var ammo_button: Button
@@ -344,6 +346,11 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	bounds_button.tooltip_text = "Advance by bounds: half the men run to the next cover while the others shoot, then they swap (lines advance in hops)."
 	bounds_button.pressed.connect(func(): bounds_pressed.emit())
 	bounds_button.visible = false
+	occupy_button = _button("Occupy", Vector2(0, BTN_H), "inside")
+	occupy_button.name = "occupy"
+	occupy_button.tooltip_text = "Foot in a West town: go into the nearest house, tavern or store and hold it - men at the windows and on the roof shoot from there, two hold the door (I). Leave: out by the door."
+	occupy_button.pressed.connect(func(): occupy_pressed.emit())
+	occupy_button.visible = false
 	deploy_button = _button("Deploy: on", Vector2(0, BTN_H), "deploy")
 	deploy_button.tooltip_text = "Artillery: set up to shoot, or pack up to move (takes time either way)"
 	deploy_button.pressed.connect(func(): deploy_pressed.emit())
@@ -395,7 +402,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	gift_button.tooltip_text = "Give the selected units to your ally (they can give them back)"
 	gift_button.pressed.connect(func(): gift_pressed.emit())
 	gift_button.visible = false
-	for b in [run_button, halt_button, fire_button, skirm_button, stance_button, bounds_button, ammo_button, deploy_button, refill_button,
+	for b in [run_button, halt_button, fire_button, skirm_button, stance_button, bounds_button, occupy_button, ammo_button, deploy_button, refill_button,
 			forage_button, man_wall_button, come_down_button, drop_button, release_button,
 			char_buttons["sabotage"], char_buttons["attempt"], char_buttons["parley"], withdraw_button, gift_button]:
 		actions.add_child(b)
@@ -910,7 +917,7 @@ func is_over_ui(screen_pos: Vector2) -> bool:
 ## artillery-only) button. run -1 hides Run (only artillery selected).
 func set_selection(units: Array[int], run: int, fire: int, skirm: int, deploy: int = -1,
 		refill: int = -1, ammo: int = -1, ammo_word: String = "", forage: int = -1, dogs: int = -1,
-		release_armed: bool = false, stance: int = -1, bounds: int = -1) -> void:
+		release_armed: bool = false, stance: int = -1, bounds: int = -1, occupy: int = -1) -> void:
 	for k in _cards:
 		var on := units.has(k)
 		if _tgroups.has(k):
@@ -928,6 +935,8 @@ func set_selection(units: Array[int], run: int, fire: int, skirm: int, deploy: i
 	skirm_button.visible = skirm >= 0
 	stance_button.visible = stance >= 0
 	bounds_button.visible = bounds >= 0
+	occupy_button.visible = occupy >= 0
+	occupy_button.text = "Leave" if occupy > 0 else "Occupy"
 	var stance_word: String = ["Line", "Cover", "Hold"][clampi(stance, 0, 2)]
 	Kit.set_icon(stance_button, ["stance_line", "stance_cover", "stance_hold"][clampi(stance, 0, 2)])
 	deploy_button.visible = deploy >= 0

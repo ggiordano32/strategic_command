@@ -490,7 +490,27 @@ static func _west_ground(h: PackedInt32Array, nx: int, ny: int, cp: Dictionary, 
 		_ramp(h, nx, ny, cx, mid, (bot - top) * 6 / 10, amp * M, 256)
 	var fort: Dictionary = o["fort"]
 	if not fort.is_empty():
+		# The fort's knoll and glacis (slice 2c: its parade levelled at the
+		# middle's height, the ground falling away round the trace).
 		_bump(h, nx, ny, int(fort["x"]) * M, int(fort["y"]) * M, (int(fort["h"]) * 3) * M, _rr(rng, 3, 6) * M)
+		var fxm := int(fort["x"]) * M
+		var fym := int(fort["y"]) * M
+		var fcs := FM.cos_a(int(fort["dir"]))
+		var fsn := FM.sin_a(int(fort["dir"]))
+		var flat := (int(fort["h"]) + 2) * M
+		var fk := clampi((fym + CELL / 2) / CELL, 0, ny - 1) * nx + clampi((fxm + CELL / 2) / CELL, 0, nx - 1)
+		var fz := h[fk]
+		var fr2 := flat * 15 / 10
+		var s0 := _span(fxm - fr2, fxm + fr2, nx)
+		var s1 := _span(fym - fr2, fym + fr2, ny)
+		for j in range(s1.x, s1.y + 1):
+			for i in range(s0.x, s0.y + 1):
+				var dx := i * CELL - fxm
+				var dy := j * CELL - fym
+				var lx := (dx * fcs + dy * fsn) / FM.TRIG_ONE
+				var ly := (dy * fcs - dx * fsn) / FM.TRIG_ONE
+				if absi(lx) <= flat and absi(ly) <= flat:
+					h[j * nx + i] = fz
 	if int(cp["coast"]) != 0:
 		var shore: PackedInt32Array = o["cp"]
 		var lo := 1 << 40

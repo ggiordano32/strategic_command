@@ -1101,6 +1101,9 @@ static func outcome_from_result(built: Dictionary, res: Dictionary, mode: String
 		"sim_winner": w, "ticks": int(res["tick"])}
 	if w != int(sim_side[0]) and w != int(sim_side[1]):
 		out["draw"] = 1  # mutual destruction or time out
+	var fr: Dictionary = res.get("fort", {})
+	if int(fr.get("held", 0)) != 0 and winner == 0:
+		out["fort_holds"] = 1  # (West slice 2c: the town taken, its fort holding)
 	if not chars.is_empty():
 		out["chars"] = chars
 	# Prisoners each campaign side's army took (its sim side total "prisoners").

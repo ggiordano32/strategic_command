@@ -1141,7 +1141,24 @@ def b_pier(P):
     P.box("timber_d", 0, -W / 2 + 0.12, 0.76, L, 0.2, 0.2)
 
 
+def b_magazine(P):
+    """The harbour fort's powder magazine (slice 2c): a low stone vault,
+    buttressed, a heavy door in its front (+y), a lightning-safe stone ridge."""
+    sx, sy = 6.6, 5.2
+    P.box("stone", 0, 0, 0, sx, sy, 2.4)
+    P.cyl("stone_l", -sx / 2, 0, 2.4 - 0.9, sy / 2 + 0.15, sx, 20, axis="x")   # the vault, half sunk in the walls
+    P.box("stone_d", 0, 0, 2.4 + sy / 2 - 1.05, sx + 0.1, 0.5, 0.3)              # the ridge course
+    for i in range(3):
+        x = -sx / 2 + 0.9 + i * (sx - 1.8) / 2
+        for sgn in (-1, 1):
+            P.box("stone_d", x, sgn * (sy / 2 + 0.3), 0, 0.7, 0.6, 2.0)           # buttresses
+    P.box("timber_d", 0, sy / 2 + 0.05, 0, 1.2, 0.15, 1.9)                       # the door
+    P.box("metal", 0, sy / 2 + 0.14, 0.9, 1.25, 0.06, 0.12)                      # its iron bands
+    P.box("metal", 0, sy / 2 + 0.14, 1.5, 1.25, 0.06, 0.12)
+
+
 PIECES_W = {
+    "magazine": (10, b_magazine),
     "tavern": (16, b_tavern), "shop": (12, b_shop), "store": (14, b_store), "warehouse": (24, b_warehouse),
     "chandler": (14, b_chandler), "shack": (10, b_shack), "leanto": (10, b_leanto), "governor": (26, b_governor),
     "lowwall": (10, b_lowwall), "stakes": (14, b_stakes), "crates": (6, b_crates), "pier": (14, b_pier),

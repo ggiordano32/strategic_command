@@ -161,6 +161,26 @@ const SP_COVER_FAR := 2          # ... less this per SP_LAT_STEP from the plain 
 const SP_PAL_COVER_PCT := 30    # ... in a town with works (West walls 1-2: the fort, the palisade) skirmishers this far in ...
 const SP_PAL_LINE_PCT := 80     # ... and line units this far (defence in depth; balance T, measured: 44 / 38 % attacker wins)
 const SP_RUN_R := 30 * M   # a West defender further than this from its street post goes there at the run (balance T)
+## The West harbour fort (slice 2c; docs/AI.md 29): the attackers storm the
+## fort as well as taking the town round it only with a ram, ladders or guns
+## of their own, and only when the fort holds FORT_STORM_PCT % or more of the
+## defenders' strength or they are FORT_STORM_ODDS % as strong as all the
+## defenders; else they take the town and leave the fort be (the town taken
+## wins the battle). The defenders shut the fort's gate once an attacker is
+## within FORT_SHUT_R of it.
+const FORT_STORM_PCT := 35
+const FORT_STORM_ODDS := 250
+const FORT_SHUT_R := 45 * M
+const FORT_FOLLOW_R := 90 * M   # storming the fort: storming foot this near a planted ladder set climb it too
+## Fighting from buildings (slice 2c; docs/AI.md 29): a West musket line's
+## street post becomes the building nearest it (its door step within
+## SP_OCC_R) with SP_OCC_MIN firing places or more: it holds that building.
+const SP_OCC_R := 24 * M
+const SP_OCC_MIN := 10
+const SP_OCC_MAX := 1            # ... at most this many of its units hold buildings
+const OCC_STORM_PULL := 30 * M   # attacking foot count a held house this much nearer (they clear it first, at the door) ...
+const OCC_SHOOT_PUSH := 40 * M   # ... attacking shooters a unit at windows this much farther (men in the open first)
+const ORDER_OCCUPY := 25
 const AT_HAND_FAR := 20 * 1024    # an attacking unit fighting while its target is this far off (box to box) ...
 const AT_HAND_NEAR := 4 * 1024    # ... takes on the enemy this near its box instead (_at_hand)
 const WD_T := 200                 # the stuck watchdog: ticks stuck (u_stuck) before an order is planned again (_watchdog)
@@ -274,7 +294,9 @@ static func _army(sim, side: int) -> void:
 		_close_gates(sim, side)
 		if sim.sg_on != 0 and kn[AP.S_ESC_REPLY] != 0:
 			_esc_reply(sim, side)
-		if sim.cit_r > 0:
+		if sim.fort_on != 0:
+			_fort_gates(sim, side)
+		elif sim.cit_r > 0:
 			_citadel(sim, side)
 		if kn[AP.S_MOUTH] != 0 and sim.ai_cit[side] == 0:
 			_layout(sim, side, kn)  # (in the citadel: the town is lost)
@@ -347,6 +369,8 @@ static func _army(sim, side: int) -> void:
 			if g < 0 or sim.g_state[g] != GATE_CLOSED:
 				sim.ai_gate[side] = _pick_gate(sim, side)
 	sim.ai_phase[side] = phase
+	if sim.fort_on != 0 and sim.ai_fort[side] == 0:
+		_fort_choice(sim, side)
 	if sim.n_eq > 0:
 		_assign_equip(sim, side, phase, kn)
 
@@ -380,7 +404,7 @@ static func _defenders_standing(sim, side: int) -> bool:
 ## A gate the assault can go through now: an open or broken one (nearest
 ## the army), -2 for a town without walls, -1 none.
 static func _breach(sim, side: int) -> int:
-	if sim.n_gates == 0:
+	if sim.n_outer == 0:
 		return -2
 	var c := _army_centre(sim, side)
 	var best := -1
@@ -511,6 +535,12 @@ static func _classify_defender(sim, u: int) -> void:
 	if sim.u_wall[u] > 0:
 		BattleAI._set_mode(sim, u, A_WALLU)
 		return
+	if sim.fort_on != 0 and sim.in_fort(u):
+		# (Slice 2c: the harbour fort's garrison on its parade holds it.)
+		BattleAI._set_mode(sim, u, A_CIT)
+		sim.u_ai_x[u] = sim.u_ax[u]
+		sim.u_ai_y[u] = sim.u_ay[u]
+		return
 	for g in sim.n_gates:
 		if sim.g_cit[g] == 0 and BattleAI._d(sim.u_ax[u] - sim.g_ix[g], sim.u_ay[u] - sim.g_iy[g]) \
 				< AP.of(sim, sim.u_side[u])[AP.S_GATE_POST_R]:
@@ -530,7 +560,7 @@ static func _classify_defender(sim, u: int) -> void:
 
 ## The street AI plays for side `side`: an open town (no gates), not Easy.
 static func _street_ai(sim, side: int) -> bool:
-	return sim.n_gates == 0 and sim.ai_skill[side] != AP.EASY and not sim.map_info.get("city", {}).get("mouths", []).is_empty()
+	return sim.n_outer == 0 and sim.ai_skill[side] != AP.EASY and not sim.map_info.get("city", {}).get("mouths", []).is_empty()
 
 
 ## Unit u is a West row that takes stances (Rome's armies keep their
@@ -568,7 +598,7 @@ static func _strongpoint(sim, u: int) -> void:
 	var grp := _sp_group(sim, u)
 	var k := 0
 	for o in sim.n_units:
-		if o == u or sim.u_side[o] != side or sim.u_state[o] != U_READY or not _street_row(sim, o):
+		if o == u or sim.u_side[o] != side or sim.u_state[o] != U_READY or not _street_row(sim, o) or sim.in_fort(o):
 			continue
 		var go := _sp_group(sim, o)
 		if (go < 2) == cover and (go < grp or (go == grp and o < u)):
@@ -591,6 +621,21 @@ static func _strongpoint(sim, u: int) -> void:
 		p = _sp_cover(sim, u, mo, Vector2i(px, py), pct, p)
 	sim.u_ai_x[u] = p.x
 	sim.u_ai_y[u] = p.y
+	var held_n := 0
+	for o2 in sim.n_units:
+		if o2 != u and sim.u_side[o2] == side and (sim.u_occ[o2] > 0 or sim.u_ocg[o2] > 0 \
+				or (sim.u_ai[o2] == A_RESERVE and sim.occ_on != 0 and sim.occupy_near(o2, sim.u_ai_x[o2], sim.u_ai_y[o2], 512) >= 0)):
+			held_n += 1
+	if not cover and sim.occ_on != 0 and sim.u_cls[u] == UT.CLS_MISSILE and UT.stat(sim.u_type[u], "m_gun") != 0 \
+			and held_n < SP_OCC_MAX:
+		# (Slice 2c: a musket line holds the building nearest its post: its
+		# men at the windows and on the roof, the door held.)
+		var b: int = sim.occupy_near(u, p.x, p.y, SP_OCC_R)
+		if b >= 0 and sim.ob_sn[b] >= SP_OCC_MIN and sim.occupy_refusal(sim, u, b) == "":
+			sim.u_ai_x[u] = sim.ob_dx[b]
+			sim.u_ai_y[u] = sim.ob_dy[b]
+			BattleAI._order(sim, u, {"type": ORDER_OCCUPY, "building": b, "run": 1}, 30)
+			return
 	if not cover and sim.u_stance[u] == STANCE_LINE:
 		BattleAI._order(sim, u, {"type": ORDER_STANCE, "stance": STANCE_HOLD}, 28)
 
@@ -684,6 +729,8 @@ static func _bound_storm(sim, u: int) -> void:
 		# (A defender it has a line of fire at first, nearest first; else the
 		# nearest, gone round to by the streets: fight jitter pass,
 		# 2026-10-16, skirmishers stood for minutes at a house between.)
+		if sim.occ_on != 0 and sim.u_occ[o] > 0:
+			d += OCC_SHOOT_PUSH  # (slice 2c: men at windows are poor targets: those in the open first)
 		var l: bool = sim.lof_units(u, o)
 		if (l and not tl) or (l == tl and d < bd):
 			bd = d
@@ -868,7 +915,7 @@ static func _fallback_post(sim, u: int) -> Vector3i:
 		return Vector3i(x, y, FM.atan2_a(sim.g_y[sim.cit_gate] - y, sim.g_x[sim.cit_gate] - x))
 	var ax: int = sim.agora[0] + ((k % 3) - 1) * sim.agora[2] / 2
 	var ay: int = sim.agora[1] + ((k / 3) % 3 - 1) * sim.agora[2] / 2
-	var face: int = FM.atan2_a(sim.g_y[0] - ay, sim.g_x[0] - ax) if sim.n_gates > 0 else 0
+	var face: int = FM.atan2_a(sim.g_y[0] - ay, sim.g_x[0] - ax) if sim.n_outer > 0 else 0
 	return Vector3i(ax, ay, face)
 
 
@@ -945,6 +992,84 @@ static func _citadel(sim, side: int) -> void:
 			"player": BattleAI.AI_PLAYER_BASE + side, "seq": 8000 + g})
 
 
+## The West harbour fort's gates (slice 2c; defenders, army level): the
+## main gate stays open for the garrison while no attacker is within
+## FORT_SHUT_R of it and none carries a ram or ladders, then it is shut (and
+## stays shut); the sally port is never opened.
+static func _fort_gates(sim, side: int) -> void:
+	var g: int = sim.cit_gate
+	if g < 0 or sim.g_state[g] != GATE_OPEN:
+		return
+	var any := -1
+	for u in sim.n_units:
+		if sim.u_side[u] == side and sim.u_state[u] == U_READY:
+			any = u
+			break
+	if any < 0:
+		return
+	for o in sim.n_units:
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY:
+			continue
+		var cq: int = sim.u_carry[o] if sim.sg_on != 0 else -1
+		if BattleAI._d(sim.u_cx[o] - sim.g_x[g], sim.u_cy[o] - sim.g_y[g]) < FORT_SHUT_R \
+				or (cq >= 0 and (sim.q_kind[cq] == EQ_RAM or sim.q_kind[cq] == EQ_LADDERS)):
+			_shut(sim, side, any, g)  # (attackers near, or bringing a ram or ladders)
+			return
+
+
+## Storming the West harbour fort (slice 2c): unit u is one of the party
+## that takes its parade: in the fort or on its walls already, or foot of
+## the two units nearest its gate once the gate is open or broken.
+static func _fort_party(sim, u: int) -> bool:
+	if sim.in_fort(u):
+		return true
+	var g: int = sim.cit_gate
+	if g < 0 or sim.g_state[g] == GATE_CLOSED or (sim.u_cls[u] != UT.CLS_INF and sim.u_cls[u] != UT.CLS_PIKE):
+		return false
+	var d := BattleAI._d(sim.u_cx[u] - sim.g_ox[g], sim.u_cy[u] - sim.g_oy[g])
+	var nearer := 0
+	for o in sim.n_units:
+		if o == u or sim.u_side[o] != sim.u_side[u] or sim.u_state[o] != U_READY \
+				or (sim.u_cls[o] != UT.CLS_INF and sim.u_cls[o] != UT.CLS_PIKE):
+			continue
+		var d2 := BattleAI._d(sim.u_cx[o] - sim.g_ox[g], sim.u_cy[o] - sim.g_oy[g])
+		if d2 < d or (d2 == d and o < u):
+			nearer += 1
+	return nearer < 2
+
+
+## The attackers' choice at a West harbour fort (slice 2c; once, at their
+## first think): storm the fort as well as the town (ai_fort 2) when they
+## have a ram, ladders or guns of their own and the fort holds
+## FORT_STORM_PCT % of the defenders' strength or more, or they are
+## FORT_STORM_ODDS % as strong as all the defenders; else take the town
+## round it (1). The town taken wins the battle either way.
+static func _fort_choice(sim, side: int) -> void:
+	var kit := false
+	for q in sim.n_eq:
+		if sim.q_side[q] == side and sim.q_state[q] != Q_WRECKED \
+				and (sim.q_kind[q] == EQ_RAM or sim.q_kind[q] == EQ_LADDERS):
+			kit = true
+	var own := 0
+	for u in sim.n_units:
+		if sim.u_side[u] != side or sim.u_state[u] != U_READY or BattleAI.is_char(sim, u):
+			continue
+		own += sim.u_alive[u] * UT.stat(sim.u_type[u], "cost")
+		if sim.u_cls[u] == UT.CLS_ART and UT.stat(sim.u_type[u], "m_gun") != 0 and not sim.is_tower(u):
+			kit = true  # (guns of its own: the gate can be battered)
+	var dfn := 0
+	var fort := 0
+	for u in sim.n_units:
+		if sim.u_side[u] == side or sim.u_state[u] != U_READY or sim.is_tower(u) or BattleAI.is_char(sim, u):
+			continue
+		var st: int = sim.u_alive[u] * UT.stat(sim.u_type[u], "cost")
+		dfn += st
+		if sim.in_fort(u):
+			fort += st
+	var storm := kit and (fort * 100 >= dfn * FORT_STORM_PCT or own * 100 >= dfn * FORT_STORM_ODDS)
+	sim.ai_fort[side] = 2 if storm else 1
+
+
 ## In the citadel: attack attackers that get in, else hold the post
 ## (missile troops shoot from it).
 static func _cit_guard(sim, u: int) -> void:
@@ -995,6 +1120,11 @@ static func _gate_guard(sim, u: int) -> void:
 
 ## Reserve: attack attackers inside the settlement near the post, else hold.
 static func _reserve(sim, u: int) -> void:
+	if sim.occ_on != 0 and (sim.u_occ[u] > 0 or sim.u_ocg[u] > 0):
+		# (Holding a building, or on its way in: it shoots from its windows.)
+		if sim.u_fire[u] == 0 and sim.u_ammo[u] > 0:
+			BattleAI._order(sim, u, {"type": ORDER_FIRE, "on": 1}, 21)
+		return
 	if _engaged(sim, u):
 		return
 	var hx: int = sim.u_ai_x[u]
@@ -1010,8 +1140,8 @@ static func _reserve(sim, u: int) -> void:
 		var run_r := kn[AP.S_RESERVE_RUN]
 		BattleAI._attack(sim, u, t, 1 if BattleAI._dist2(sim, u, t) < run_r * run_r else 0)
 		return
-	var face: int = FM.atan2_a(sim.g_y[0] - hy, sim.g_x[0] - hx) if sim.n_gates > 0 else sim.u_dface[u]
-	if sim.n_gates == 0 and _street_row(sim, u) and BattleAI._d(sim.u_ax[u] - hx, sim.u_ay[u] - hy) > SP_RUN_R:
+	var face: int = FM.atan2_a(sim.g_y[0] - hy, sim.g_x[0] - hx) if sim.n_outer > 0 else sim.u_dface[u]
+	if sim.n_outer == 0 and _street_row(sim, u) and BattleAI._d(sim.u_ax[u] - hx, sim.u_ay[u] - hy) > SP_RUN_R:
 		# (A West unit far from its street post: there at the run, before the
 		# attackers reach the mouth; it walked 120 m and was caught on the way
 		# by the first volley: balance T.)
@@ -1819,6 +1949,8 @@ static func _att_art(sim, u: int, phase: int) -> void:
 			BattleAI._order(sim, u, {"type": ORDER_ATTACK, "target": -1, "gate": g, "run": 0}, 0)
 		return
 	var cg: int = sim.cit_gate
+	if sim.fort_on != 0 and sim.ai_fort[side] != 2:
+		cg = -1  # (taking the town round the fort: the guns are for the town's defenders)
 	if phase == SP_ASSAULT and cg >= 0 and sim.g_state[cg] == GATE_CLOSED and sim.u_ammo[u] > 0 and not left:
 		# The citadel's gate, if it is within reach from here.
 		var f: Vector2i = sim.gate_face(cg)
@@ -1948,6 +2080,9 @@ static func _att_foot(sim, u: int, phase: int) -> void:
 		_storm(sim, u)
 		return
 	if phase == SP_ASSAULT:
+		if sim.fort_on != 0 and sim.n_eq > 0 and sim.u_ai[u] == A_LADDER:
+			_escalade(sim, u, sim.cit_gate, kn)  # (storming the fort)
+			return
 		_storm(sim, u)
 		return
 	var g: int = sim.ai_gate[side]
@@ -2049,12 +2184,17 @@ static func _storm(sim, u: int) -> void:
 		best_d = 1 << 30
 	var cg: int = sim.cit_gate
 	var cit_shut: bool = cg >= 0 and sim.g_state[cg] == GATE_CLOSED
+	var fort_skip: bool = sim.fort_on != 0 and sim.ai_fort[sim.u_side[u]] != 2
 	for o in sim.n_units:
 		if sim.u_side[o] == sim.u_side[u] or sim.u_state[o] != U_READY or sim.u_wall[o] > 0:
 			continue
 		if cit_shut and BattleAI._d(sim.u_cx[o] - sim.cit_x, sim.u_cy[o] - sim.cit_y) < sim.cit_r:
 			continue  # behind the citadel's shut gate
+		if fort_skip and sim.in_fort(o):
+			continue  # (a West fort left be: the town is the prize)
 		var d := BattleAI._d(sim.u_cx[o] - sim.u_cx[u], sim.u_cy[o] - sim.u_cy[u])
+		if sim.occ_on != 0 and sim.u_occ[o] > 0 and sim.u_cls[u] != UT.CLS_MISSILE:
+			d = maxi(d - OCC_STORM_PULL, 0)  # (slice 2c: a held house is cleared first, at its door)
 		if d >= best_d:
 			continue
 		# Spread out: every other unit of ours already on it counts as 25 m
@@ -2072,7 +2212,14 @@ static func _storm(sim, u: int) -> void:
 		if sim.u_order[u] != O_ATTACK or sim.u_target[u] != best:
 			BattleAI._attack(sim, u, best, 1 if best_d < kn[AP.S_STORM_RUN] else 0)
 		return
-	if cit_shut:
+	if sim.fort_on != 0 and sim.ai_fort[sim.u_side[u]] == 2 and sim.fort_taken == 0 and _fort_party(sim, u):
+		# (Storming the fort: over its walls, or in by its broken gate: hold
+		# its parade till it falls; slice 2c.)
+		var rkf := _rank(sim, u, func(o): return sim.u_ai[o] == A_STORM and _fort_party(sim, o))
+		var fp: Vector2i = sim.open_snap(sim, sim.cit_x + _spread(rkf.x % 3, mini(rkf.y, 3), 6 * M), sim.cit_y, sim._ground_mask(u))
+		_go_run(sim, u, fp.x, fp.y, sim.u_dface[u], 5, 1)
+		return
+	if cit_shut and sim.fort_on == 0:
 		# The citadel is shut: the three foot units nearest its gate hack at
 		# it if swords can break it (walls 0-1) and no ram is coming (the
 		# army gives the ram to a unit: _assign_equip); the rest gather before
@@ -2094,7 +2241,7 @@ static func _storm(sim, u: int) -> void:
 		return
 	var px: int = sim.plaza[0]
 	var py: int = sim.plaza[1]
-	if sim.n_gates == 0 and sim.u_ai_x[u] == 0:
+	if sim.n_outer == 0 and sim.u_ai_x[u] == 0:
 		# Open town: by the streets, shared out.
 		var lay: Dictionary = sim.map_info["city"]
 		var mouths: Array = lay.get("mouths", [])
@@ -2145,7 +2292,7 @@ static func _att_missile(sim, u: int, phase: int) -> void:
 		return
 	BattleAI._set_mode(sim, u, A_COVER)
 	if g < 0:
-		if sim.n_gates == 0:
+		if sim.n_outer == 0:
 			# Open town: stand off the edge facing it.
 			var lay: Dictionary = sim.map_info["city"]
 			var cx: int = int(lay["cx"]) * M
@@ -2601,6 +2748,8 @@ static func _ram_target(sim, side: int, phase: int) -> int:
 		return g if g >= 0 and sim.g_state[g] == GATE_CLOSED else -1
 	if phase == SP_ASSAULT:
 		var cg: int = sim.cit_gate
+		if sim.fort_on != 0 and sim.ai_fort[side] != 2:
+			return -1  # (taking the town round the fort: no ram at it)
 		return cg if cg >= 0 and sim.g_state[cg] == GATE_CLOSED else -1
 	return -1
 
@@ -2669,7 +2818,10 @@ static func _assign_equip(sim, side: int, phase: int, kn: PackedInt32Array) -> v
 				BattleAI._set_mode(sim, best, A_RAM)
 				sim.u_ai_x[best] = rq + 1
 				BattleAI._count(sim, side, AP.C_SIEGE)
-	if phase != SP_APPROACH or g < 0:
+	var fstorm: bool = sim.fort_on != 0 and sim.ai_fort[side] == 2 and phase == SP_ASSAULT
+	if fstorm:
+		g = sim.cit_gate  # (storming the fort: its walls and gate)
+	elif phase != SP_APPROACH or g < 0:
 		return
 	_assign_mantlets(sim, side, g)
 	# Siege towers (walls 2-3): each of ours on the ground goes at once (it
@@ -2756,7 +2908,11 @@ static func _follow(sim, side: int, q: int, n: int) -> void:
 	var fb := -1
 	var fd := 0
 	for u in sim.n_units:
-		if sim.u_cls[u] != UT.CLS_INF or sim.u_ai[u] != A_WAIT or not _equip_free(sim, u, side, q):
+		var fm: int = sim.u_ai[u]
+		if sim.u_cls[u] != UT.CLS_INF or not _equip_free(sim, u, side, q):
+			continue
+		if fm != A_WAIT and not (sim.fort_on != 0 and fm == A_STORM and not _engaged(sim, u) \
+				and BattleAI._d(sim.u_cx[u] - sim.q_x[q], sim.u_cy[u] - sim.q_y[q]) < FORT_FOLLOW_R):
 			continue
 		var d := BattleAI._d(sim.u_cx[u] - sim.q_x[q], sim.u_cy[u] - sim.q_y[q])
 		if fb < 0 or d < fd:
@@ -2871,7 +3027,10 @@ static func _escalade(sim, u: int, g: int, kn: PackedInt32Array) -> void:
 	if _engaged(sim, u):
 		return
 	var inside: bool = sim.u_wall[u] > 0 or st == 1
-	if not inside and sim.u_lq[u] >= 0:
+	var fortw: bool = sim.fort_on != 0
+	if not inside and fortw and sim.in_fort(u):
+		inside = true  # (over the fort's wall: on its parade)
+	if not inside and sim.u_lq[u] >= 0 and not fortw:
 		var ra: int = sim.reach_at(sim.u_ax[u], sim.u_ay[u])
 		for k in sim.n_gates:
 			if sim.g_cit[k] == 0 and ra >= 0 and sim.reach_at(sim.g_ix[k], sim.g_iy[k]) == ra:
@@ -2881,7 +3040,7 @@ static func _escalade(sim, u: int, g: int, kn: PackedInt32Array) -> void:
 		var tg := -1
 		var bd := 0
 		for k in sim.n_gates:
-			if sim.g_cit[k] != 0 or sim.g_state[k] != GATE_CLOSED:
+			if (sim.g_cit[k] != 0) != fortw or sim.g_state[k] != GATE_CLOSED:
 				continue
 			var d := BattleAI._d(sim.g_ix[k] - sim.u_cx[u], sim.g_iy[k] - sim.u_cy[u])
 			if tg < 0 or d < bd:
@@ -3044,7 +3203,10 @@ static func _esc_reply(sim, side: int) -> void:
 			if sim.u_side[d] != side or sim.u_state[d] != U_READY:
 				continue
 			var dm: int = sim.u_ai[d]
-			if dm != A_RESERVE and dm != A_PLAZA and not (dm == A_MOUTH and sim.u_ai_y[d] >= 2):
+			if sim.fort_on != 0:
+				if dm != A_CIT:
+					continue  # (a West fort: its garrison, not the town's defenders outside its shut gate)
+			elif dm != A_RESERVE and dm != A_PLAZA and not (dm == A_MOUTH and sim.u_ai_y[d] >= 2):
 				continue  # (the stack's front and the unit behind it stay)
 			if sim.u_cls[d] != UT.CLS_INF or not sim.can_man_walls(sim, d) or sim.u_wall[d] > 0 or _engaged(sim, d):
 				continue

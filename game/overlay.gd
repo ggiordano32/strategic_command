@@ -493,6 +493,8 @@ func _draw() -> void:
 		_draw_deploy_zones(lw)
 	if sim.city_on != 0:
 		_draw_city_marks(lw)
+		if sim.occ_on != 0 or sim.fort_on != 0:
+			_draw_held(lw)
 	if sim.sg_on != 0:
 		_draw_siege_gear(lw)
 	if sim.fire_on != 0:
@@ -579,10 +581,47 @@ func _draw_city_marks(lw: float) -> void:
 		draw_arc(pc, r, 0, TAU, 48, Color(0, 0, 0, 0.5), lw * 3.0)
 		draw_arc(pc, r, -PI * 0.5, -PI * 0.5 + TAU * frac, 48, col2, lw * 3.0)
 		var fs := _font_size(15.0)
-		var where := "Citadel" if not (lay.get("cit", {}) as Dictionary).is_empty() else "Plaza"
+		var where := "Citadel" if not (lay.get("cit", {}) as Dictionary).is_empty() and sim.fort_on == 0 else "Plaza"
 		var txt2 := "%s held %d / %d s" % [where, sim.cap_t / 10, BattleSim.CAPTURE_TICKS / 10]
 		var tw2 := ThemeDB.fallback_font.get_string_size(txt2, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 		draw_string(ThemeDB.fallback_font, pc + Vector2(-tw2 * 0.5, -r - fs * 0.5), txt2, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col2.lightened(0.3))
+
+
+## Slice 2c: the buildings held (their outline in the holder's colour, the
+## door step marked) and the fort's parade being taken (an arc and its time).
+func _draw_held(lw: float) -> void:
+	var k := px_per_m
+	var lay: Dictionary = sim.map_info.get("city", {})
+	var blds: Array = lay.get("buildings", [])
+	if sim.occ_on != 0:
+		for b in sim.ob_u.size():
+			var hu: int = sim.ob_u[b] - 1
+			if hu < 0 or hu >= sim.n_units or b >= blds.size():
+				continue
+			var a: Array = blds[b]
+			var col: Color = COL_SIDE[sim.u_side[hu]]
+			var pts := PackedVector2Array()
+			for q in 4:
+				pts.append(Vector2(float(int(a[7 + q * 2])), float(int(a[8 + q * 2]))) * k)
+			pts.append(pts[0])
+			draw_polyline(pts, Color(0, 0, 0, 0.45), lw * 3.2)
+			draw_polyline(pts, Color(col.r, col.g, col.b, 0.9), lw * 1.8)
+			var dp := Vector2(sim.ob_dx[b], sim.ob_dy[b]) / 1024.0 * k
+			var fa: float = sim.ob_face[b] * TAU / 1024.0
+			var e := Vector2(-sin(fa), cos(fa)) * 1.2 * k
+			draw_line(dp - e, dp + e, Color(0, 0, 0, 0.6), lw * 3.0)
+			draw_line(dp - e, dp + e, col.lightened(0.3), lw * 1.6)
+	if sim.fort_on != 0 and sim.fort_t > 0 and sim.fort_taken == 0:
+		var fc := Vector2(sim.cit_x, sim.cit_y) / 1024.0 * k
+		var fr := float(sim.cit_r) / 1024.0 * k
+		var frac := clampf(float(sim.fort_t) / BattleSim.FORT_CAP_TICKS, 0.0, 1.0)
+		var col2: Color = COL_SIDE[1 - sim.city_def]
+		draw_arc(fc, fr, 0, TAU, 48, Color(0, 0, 0, 0.5), lw * 3.0)
+		draw_arc(fc, fr, -PI * 0.5, -PI * 0.5 + TAU * frac, 48, col2, lw * 3.0)
+		var fs := _font_size(15.0)
+		var txt := "Fort held %d / %d s" % [sim.fort_t / 10, BattleSim.FORT_CAP_TICKS / 10]
+		var tw := ThemeDB.fallback_font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		draw_string(ThemeDB.fallback_font, fc + Vector2(-tw * 0.5, -fr - fs * 0.5), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col2.lightened(0.3))
 
 
 ## A hero's or agent's marker (docs/DESIGN.md "Heroes and agents"): his
