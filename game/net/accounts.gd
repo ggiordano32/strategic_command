@@ -10,7 +10,7 @@ extends RefCounted
 ##  "server": the game server chosen on this device (absent: the default),
 ##  "campaigns": {id: {id, f, token, name, added_at, server}}}
 ## A seat token is only ever sent to the server the campaign was made on
-## (`server`; entries without one belong to the official server).
+## (`server`; entries without one belong to the default server).
 
 var path := "user://online/accounts.json"
 var data := {"device": "", "invite": "", "discord_user": "", "campaigns": {}}

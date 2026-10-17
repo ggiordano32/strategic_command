@@ -296,7 +296,7 @@ func _check_server() -> void:
 	var ok: bool = await net.check_server()
 	if ok:
 		var d: Dictionary = net.describe_info(net.info)
-		_net_line.text = ("Online co-op ready" + ("" if net.is_official() else " (server %s)" % net.server_url()) + ".") if bool(d["ok"]) else str(d["text"])
+		_net_line.text = ("Online co-op ready" + ("" if net.is_default() else " (server %s)" % net.server_url()) + ".") if bool(d["ok"]) else str(d["text"])
 		_net_line.text += " A newer version of the game is on the server: reload the page." if net.new_build_available else ""
 		_net_line.add_theme_color_override("font_color", Kit.COL_GOOD if bool(d["ok"]) and not net.new_build_available else Kit.COL_GOLD)
 	else:
@@ -454,7 +454,7 @@ func _build_home(bg: Control) -> Control:
 	vb.add_child(row)
 	var srv := _menu_button("Game server", show_page.bind("server"))
 	srv.name = "home_server"
-	srv.tooltip_text = "Which server online play uses (the official one, a friend's or your own), and hosting one from this PC."
+	srv.tooltip_text = "Which server online play uses (the default one, a friend's or your own), and hosting one from this PC."
 	row.add_child(srv)
 	var cbt := _menu_button("Custom battle", _open_custom)
 	cbt.name = "home_custom"

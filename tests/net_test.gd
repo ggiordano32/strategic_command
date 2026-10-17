@@ -3,7 +3,7 @@ extends SceneTree
 ##   godot --headless --script res://tests/net_test.gd
 ## Address normalisation, the order detect / pick_base_url chooses in, the
 ## https-page / http-server refusal (simulated with Net.debug_page_https),
-## the ?server= query, join links carrying a non-official server, seats kept
+## the ?server= query, join links carrying a non-default server, seats kept
 ## per server, the compatibility text, and host.gd's address list. Uses a
 ## scratch seat store; no network.
 
@@ -13,7 +13,7 @@ const Host := preload("res://game/net/host.gd")
 const Accounts := preload("res://game/net/accounts.gd")
 const CState := preload("res://campaign/cstate.gd")
 
-const OFFICIAL := "https://strategiccommand.ggior32.dev"
+const DEFAULT := "https://strategiccommand.ggior32.dev"
 var fails := 0
 
 
@@ -24,9 +24,19 @@ func _initialize() -> void:
 	_query()
 	await _net()
 	await _host()
+	_upnp_text()
 	_accounts()
 	print("net_test: %s" % ("PASS" if fails == 0 else "%d FAILED" % fails))
 	quit(1 if fails > 0 else 0)
+
+
+func _upnp_text() -> void:
+	_eq("upnp working", Host.upnp_text("working", 8060, "", "", ""), "Asking your router to open the port...")
+	_eq("upnp ok", Host.upnp_text("ok", 8060, "203.0.113.7", "192.168.1.20", ""),
+		"Port opened on your router (UPnP). Friends on the desktop version join with 203.0.113.7:8060.")
+	_eq("upnp failed", Host.upnp_text("failed", 8061, "", "192.168.1.20", "198.51.100.4"),
+		"Your router did not open the port. Forward TCP 8061 to 192.168.1.20 on your router, or use a tunnel such as Tailscale, and give friends 198.51.100.4:8061.")
+	_eq("upnp off", Host.upnp_text("off", 8060, "", "", ""), "")
 
 
 func _eq(what: String, got, want) -> void:
@@ -36,7 +46,7 @@ func _eq(what: String, got, want) -> void:
 
 
 func _normalise() -> void:
-	_eq("official", Api.normalise_url(OFFICIAL + "/"), OFFICIAL)
+	_eq("default", Api.normalise_url(DEFAULT + "/"), DEFAULT)
 	_eq("bare ip port", Api.normalise_url("192.168.1.20:8060"), "http://192.168.1.20:8060")
 	_eq("localhost", Api.normalise_url("localhost:8060/"), "http://localhost:8060")
 	_eq("domain", Api.normalise_url("Games.Example.com"), "https://games.example.com")
@@ -48,14 +58,14 @@ func _normalise() -> void:
 
 
 func _pick() -> void:
-	_eq("default", Api.pick_base_url("", ""), OFFICIAL)
+	_eq("default", Api.pick_base_url("", ""), DEFAULT)
 	_eq("saved", Api.pick_base_url("", "http://10.0.0.5:8060"), "http://10.0.0.5:8060")
 	_eq("arg beats saved", Api.pick_base_url("127.0.0.1:8072/", "http://10.0.0.5:8060"), "http://127.0.0.1:8072")
 	_eq("origin that is a server", Api.pick_base_url("", "", "https://play.example", true), "https://play.example")
-	_eq("origin that is not (itch)", Api.pick_base_url("", "", "https://html.itch.zone", false), OFFICIAL)
+	_eq("origin that is not (itch)", Api.pick_base_url("", "", "https://html.itch.zone", false), DEFAULT)
 	_eq("saved beats origin", Api.pick_base_url("", "http://10.0.0.5:8060", "https://play.example", true), "http://10.0.0.5:8060")
 	_eq("arg beats origin", Api.pick_base_url("https://a.example", "", "https://play.example", true), "https://a.example")
-	_eq("bad saved falls through", Api.pick_base_url("", "ftp://x", "", false), OFFICIAL)
+	_eq("bad saved falls through", Api.pick_base_url("", "ftp://x", "", false), DEFAULT)
 
 
 func _describe() -> void:
@@ -84,14 +94,14 @@ func _net() -> void:
 	DirAccess.remove_absolute("user://net_test/accounts.json")
 	get_root().add_child(n)
 	await process_frame
-	_eq("starts official", n.server_url(), OFFICIAL)
-	_eq("official link", n.join_link("ABCDEF"), OFFICIAL + "/?join=ABCDEF")
+	_eq("starts official", n.server_url(), DEFAULT)
+	_eq("default link", n.join_link("ABCDEF"), DEFAULT + "/?join=ABCDEF")
 	# A browser on an https page refuses an http server, and keeps the old one.
 	n.debug_page_https = 1
 	var r: Dictionary = n._apply_server("http://192.168.1.20:8060")
 	_eq("refused", r["ok"], false)
 	_eq("refusal text", r["text"], "A browser can only join servers with HTTPS. Use the desktop version to join this server, or ask the host for an https address.")
-	_eq("unchanged", n.server_url(), OFFICIAL)
+	_eq("unchanged", n.server_url(), DEFAULT)
 	_eq("https ok", n.refusal_for("https://games.example.com"), "")
 	_eq("bad address", n._apply_server("ftp://x")["ok"], false)
 	# Desktop (or an http page): any address, saved on the device.
@@ -100,16 +110,16 @@ func _net() -> void:
 	_eq("applied", r["ok"], true)
 	_eq("url", n.server_url(), "http://192.168.1.20:8060")
 	_eq("saved", n.accounts.data.get("server"), "http://192.168.1.20:8060")
-	_eq("not official", n.is_official(), false)
-	_eq("link carries server", n.join_link("ABCDEF"), OFFICIAL + "/?join=ABCDEF&server=" + "http://192.168.1.20:8060".uri_encode())
+	_eq("not default", n.is_default(), false)
+	_eq("link carries server", n.join_link("ABCDEF"), DEFAULT + "/?join=ABCDEF&server=" + "http://192.168.1.20:8060".uri_encode())
 	_eq("a later start reads it", Api.detect_base_url(str(n.accounts.data.get("server", ""))), "http://192.168.1.20:8060")
 	# Seats stay with their server.
 	n.accounts.add("c1", 0, "tok", "Mine", "rome", n.server_url())
 	n.accounts.add("old", 1, "tok2", "Legacy")
 	_eq("local list", n.local_campaigns().size(), 1)
 	_eq("open elsewhere refused", n.open_campaign("old"), null)
-	n._apply_server(OFFICIAL)
-	_eq("official again", n.server_url(), OFFICIAL)
+	n._apply_server(DEFAULT)
+	_eq("default again", n.server_url(), DEFAULT)
 	_eq("saved address cleared", n.accounts.data.has("server"), false)
 	_eq("legacy seat is official", n.local_campaigns().size(), 1)
 	_eq("legacy id", str(n.local_campaigns()[0]["id"]), "old")
@@ -136,6 +146,6 @@ func _accounts() -> void:
 	var a := Accounts.new("user://net_test/acc2.json")
 	a.add("x", 0, "t", "n", "rome", "http://h:1")
 	a.add("y", 0, "t", "n")
-	_eq("filter custom", a.list_for("http://h:1", OFFICIAL).size(), 1)
-	_eq("filter default", a.list_for(OFFICIAL, OFFICIAL).size(), 1)
+	_eq("filter custom", a.list_for("http://h:1", DEFAULT).size(), 1)
+	_eq("filter default", a.list_for(DEFAULT, DEFAULT).size(), 1)
 	DirAccess.remove_absolute("user://net_test/acc2.json")

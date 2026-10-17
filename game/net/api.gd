@@ -11,7 +11,7 @@ extends Node
 ## The server is chosen in this order (`pick_base_url`): "--server=URL" on the
 ## command line, the address saved on this device (accounts.json "server"),
 ## the page's own origin on the web when that origin is a game server (Net
-## probes /api/info for that), else OFFICIAL_SERVER. `base_url` is "" only in
+## probes /api/info for that), else DEFAULT_SERVER. `base_url` is "" only in
 ## tests that build an Api by hand; every call then fails at once with error
 ## "no_server".
 
@@ -19,7 +19,7 @@ signal reachability_changed(online: bool)
 
 const DEFAULT_TIMEOUT := 15.0
 const MAX_BACKOFF := 30.0
-const OFFICIAL_SERVER := "https://strategiccommand.ggior32.dev"
+const DEFAULT_SERVER := "https://strategiccommand.ggior32.dev"
 
 var base_url := ""
 var online := true            # last call reached the server
@@ -40,7 +40,7 @@ func _ready() -> void:
 
 
 ## The server address to start with: --server=, then `saved`, then the page
-## origin when `origin_is_server`, else the official server. Pure: tests call
+## origin when `origin_is_server`, else the default server. Pure: tests call
 ## it with made-up arguments.
 static func pick_base_url(arg: String, saved: String, origin: String = "", origin_is_server: bool = false) -> String:
 	var u := normalise_url(arg)
@@ -51,7 +51,7 @@ static func pick_base_url(arg: String, saved: String, origin: String = "", origi
 		return u
 	if origin_is_server and origin != "":
 		return normalise_url(origin)
-	return OFFICIAL_SERVER
+	return DEFAULT_SERVER
 
 
 ## The command line and the saved address (the page origin is probed later,

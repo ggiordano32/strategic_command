@@ -6,7 +6,7 @@ One Go binary (`scserver`) with SQLite, no other services. It never runs
 game rules; the game clients do. Full reference: `docs/SERVER.md`.
 
 You need your own server only to host games for friends yourself. The
-official server is built into the game as the default.
+default server is built into the game as the default.
 
 ## Run it
 

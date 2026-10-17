@@ -431,7 +431,7 @@ Online dialog.
   credential; it lives in the browser's storage (`user://online/`, i.e.
   IndexedDB). Stored on the server as SHA-256; compared in constant time.
   Seat tokens are kept per server (`campaigns[id].server` in `accounts.json`;
-  entries without one belong to the official server) and only ever sent to
+  entries without one belong to the default server) and only ever sent to
   that server.
   Each device has its own token (device codes mint a new one), so a lost
   device's token could be revoked (a `revoked` column exists; there is no UI

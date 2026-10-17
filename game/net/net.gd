@@ -141,21 +141,21 @@ func server_url() -> String:
 	return api.base_url if api != null else ""
 
 
-func is_official() -> bool:
-	return server_url() == Api.OFFICIAL_SERVER
+func is_default() -> bool:
+	return server_url() == Api.DEFAULT_SERVER
 
 
-## Where the web game is played, for share links: the official server serves it.
+## Where the web game is played, for share links: the default server serves it.
 func site_url() -> String:
-	return Api.OFFICIAL_SERVER
+	return Api.DEFAULT_SERVER
 
 
-## A link that opens the game on this server: the official page, with
+## A link that opens the game on this server: the default page, with
 ## ?server= when the server is another one (a pasted link works in the Join
 ## page as well, which reads the code and the server from it).
 func _link(key: String, code: String) -> String:
 	var l := "%s/?%s=%s" % [site_url(), key, code]
-	if not is_official() and server_url() != "":
+	if not is_default() and server_url() != "":
 		l += "&server=" + server_url().uri_encode()
 	return l
 
@@ -170,7 +170,7 @@ func device_link(code: String) -> String:
 
 ## The campaigns of this device that live on the chosen server.
 func local_campaigns() -> Array:
-	return accounts.list_for(server_url(), Api.OFFICIAL_SERVER)
+	return accounts.list_for(server_url(), Api.DEFAULT_SERVER)
 
 
 func _page_https() -> bool:
@@ -235,7 +235,7 @@ func test_server(url: String) -> Dictionary:
 	return d
 
 
-## Use another server (or the official one: OFFICIAL_SERVER). Saved on this
+## Use another server (or the default one: DEFAULT_SERVER). Saved on this
 ## device. -> {ok, text}; nothing changes when refused.
 func set_server(url: String) -> Dictionary:
 	var res := _apply_server(url)
@@ -257,7 +257,7 @@ func _apply_server(url: String) -> Dictionary:
 		available = false
 		info = {}
 		new_build_available = false
-		if u == Api.OFFICIAL_SERVER:
+		if u == Api.DEFAULT_SERVER:
 			accounts.data.erase("server")
 			accounts.save()
 		else:
@@ -372,7 +372,7 @@ func open_campaign(cid: String) -> OnlineCampaign:
 		return current
 	close_campaign()
 	var e := accounts.get_entry(cid)
-	if e.is_empty() or str(e.get("server", Api.OFFICIAL_SERVER)) != server_url():
+	if e.is_empty() or str(e.get("server", Api.DEFAULT_SERVER)) != server_url():
 		return null
 	current = OnlineCampaign.new()
 	current.setup(api, cid, int(e["f"]), str(e["token"]), rules, build)

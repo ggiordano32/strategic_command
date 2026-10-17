@@ -10,6 +10,10 @@ extends Node
 ## View layer only: nothing here touches the campaign or battle sim.
 
 signal status_changed
+signal upnp_changed
+
+const SETTINGS := "user://settings.cfg"
+const UPNP_WORKING := "Asking your router to open the port..."
 
 const DEFAULT_PORT := 8060
 const PUBLIC_IP_URL := "https://api.ipify.org"
@@ -20,6 +24,116 @@ var status := "Not running."
 var running := false          ## the server answers /healthz
 var public_ip := ""
 var exe_override := ""        ## tests / --scserver=: another binary
+var upnp_enabled := true      ## "Open port with UPnP" (settings.cfg [host] upnp)
+var upnp_state := "off"       ## off | working | ok | failed
+var upnp_external := ""       ## the router's external address when UPnP gave one
+var _upnp: Object = null      ## the UPNP object that opened the port (kept to delete the mapping)
+var _upnp_port := 0
+var _upnp_thread: Thread = null
+var _upnp_gen := 0
+
+
+func _init() -> void:
+	var cf := ConfigFile.new()
+	if cf.load(SETTINGS) == OK:
+		upnp_enabled = int(cf.get_value("host", "upnp", 1)) != 0
+
+
+func set_upnp_enabled(on: bool) -> void:
+	upnp_enabled = on
+	var cf := ConfigFile.new()
+	cf.load(SETTINGS)
+	cf.set_value("host", "upnp", 1 if on else 0)
+	cf.save(SETTINGS)
+
+
+## The Host panel's UPnP line for a state (pure; tests call it). `external` is
+## the router's address, `lan` this PC's network address, `public` the public
+## address found some other way ("" when unknown).
+static func upnp_text(state: String, p: int, external: String, lan: String, public: String) -> String:
+	match state:
+		"working":
+			return UPNP_WORKING
+		"ok":
+			return "Port opened on your router (UPnP). Friends on the desktop version join with %s:%d." % [external, p]
+		"failed":
+			var who := lan if lan != "" else "this PC"
+			var pub := public if public != "" else "<your public address>"
+			return "Your router did not open the port. Forward TCP %d to %s on your router, or use a tunnel such as Tailscale, and give friends %s:%d." % [p, who, pub, p]
+	return ""
+
+
+## Ask the router to forward `port` (worker thread: discover() blocks for
+## seconds). Never blocks the caller; upnp_changed fires when it is done.
+func open_upnp() -> void:
+	if not upnp_enabled or not running or not ClassDB.class_exists("UPNP"):
+		if upnp_enabled and running:
+			upnp_state = "failed"
+			upnp_changed.emit()
+		return
+	_close_thread()
+	upnp_state = "working"
+	upnp_external = ""
+	_upnp_gen += 1
+	_upnp_thread = Thread.new()
+	_upnp_thread.start(_upnp_open_work.bind(port, _upnp_gen))
+	upnp_changed.emit()
+
+
+func _upnp_open_work(p: int, gen: int) -> void:
+	var u: Object = ClassDB.instantiate("UPNP")
+	var ok := false
+	var ext := ""
+	if int(u.call("discover", 2000, 2, "InternetGatewayDevice")) == 0:
+		var gw = u.call("get_gateway")
+		if gw != null and bool(gw.call("is_valid_gateway")):
+			if int(u.call("add_port_mapping", p, p, "Strategic Command", "TCP", 0)) == 0:
+				ok = true
+				ext = str(u.call("query_external_address"))
+	call_deferred("_upnp_done", gen, ok, ext, u if ok else null, p)
+
+
+func _upnp_done(gen: int, ok: bool, ext: String, u: Object, p: int) -> void:
+	if _upnp_thread != null and _upnp_thread.is_started():
+		_upnp_thread.wait_to_finish()  # it only has to return now
+		_upnp_thread = null
+	if gen != _upnp_gen or not running:
+		if ok and u != null:  # stopped meanwhile: take the mapping away again
+			_delete_in_thread(u, p)
+		return
+	upnp_state = "ok" if ok else "failed"
+	_upnp = u
+	_upnp_port = p
+	upnp_external = ext if ext.is_valid_ip_address() and ext != "0.0.0.0" else ""
+	if ok and upnp_external != "":
+		public_ip = upnp_external
+	upnp_changed.emit()
+
+
+func _close_thread() -> void:
+	if _upnp_thread != null and _upnp_thread.is_started() and not _upnp_thread.is_alive():
+		_upnp_thread.wait_to_finish()
+		_upnp_thread = null
+
+
+var _del_threads: Array = []
+
+
+func _delete_in_thread(u: Object, p: int) -> void:
+	var t := Thread.new()
+	_del_threads.append(t)
+	t.start(func(): u.call("delete_port_mapping", p, "TCP"))
+
+
+func _close_upnp() -> void:
+	_upnp_gen += 1  # a discovery still running is ignored when it ends
+	if _upnp != null:
+		_delete_in_thread(_upnp, _upnp_port)
+		_upnp = null
+	if upnp_state != "off":
+		upnp_state = "off"
+		upnp_external = ""
+		upnp_changed.emit()
 
 
 ## The server's file name: scserver.exe on Windows, scserver-arm64 /
@@ -131,6 +245,7 @@ func start(p: int, invite: String = "") -> Dictionary:
 		if await _healthy():
 			running = true
 			_set_status("Running on port %d." % p)
+			open_upnp.call_deferred()
 			return {"ok": true, "text": status}
 	stop()
 	_set_status("The server did not answer in time.")
@@ -150,6 +265,7 @@ func _healthy() -> bool:
 
 
 func stop() -> void:
+	_close_upnp()
 	if pid != 0:
 		OS.kill(pid)
 		pid = 0
@@ -201,6 +317,12 @@ func fetch_public_ip() -> String:
 func _exit_tree() -> void:
 	if pid != 0:
 		stop()
+	for t in _del_threads:  # let the router mapping be removed before quitting
+		if (t as Thread).is_started():
+			(t as Thread).wait_to_finish()
+	_del_threads.clear()
+	if _upnp_thread != null and _upnp_thread.is_started():
+		_upnp_thread.wait_to_finish()  # (bounded by discover()'s timeout)
 
 
 func _notification(what: int) -> void:

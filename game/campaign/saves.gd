@@ -13,6 +13,51 @@ const CData := preload("res://campaign/cdata.gd")
 
 const DIR := "user://campaigns/"
 const EXPORT_PREFIX := "SCC1:"
+const TESTS_SUBDIR := "tests/"
+
+## Sub-folder of DIR that saves go to ("" = the player's own list, which the
+## Continue screen reads; Saves.list() never looks into sub-folders). Set to
+## "tests/" automatically for runs of tests/*.gd and tools/*.gd and for the
+## testing aids (--details, --popup=, --host-start=, --scenario=, --campaign=,
+## --story=); a caller may also set it. Reads fall back to the top folder, so
+## a test aid can open a real save without touching it.
+static var subdir := ""
+static var _auto_done := false
+
+
+static func _test_run() -> bool:
+	var args := OS.get_cmdline_args()
+	for i in args.size():
+		var a := str(args[i])
+		if (a == "-s" or a == "--script") and i + 1 < args.size():
+			var sp := str(args[i + 1]).replace("\\", "/")
+			if sp.contains("tests/") or sp.contains("tools/"):
+				return true
+	for a in OS.get_cmdline_user_args():
+		var u := str(a)
+		if u == "--details" or u.begins_with("--popup=") or u.begins_with("--host-start=") \
+				or u.begins_with("--scenario=") or u.begins_with("--campaign=") or u.begins_with("--story="):
+			return true
+	return false
+
+
+## Folder saves are written to.
+static func dir() -> String:
+	if not _auto_done:
+		_auto_done = true
+		if subdir == "" and _test_run():
+			subdir = TESTS_SUBDIR
+	return DIR + subdir
+
+
+## Existing file for a slot: the current folder's, else the top folder's.
+static func _path(slot: String) -> String:
+	var p := dir() + slot + ".json"
+	if subdir != "" and not FileAccess.file_exists(p):
+		var top := DIR + slot + ".json"
+		if FileAccess.file_exists(top):
+			return top
+	return p
 
 
 static func slot_for(name: String, p_seed: int) -> String:
@@ -26,7 +71,7 @@ static func slot_for(name: String, p_seed: int) -> String:
 
 
 static func save(slot: String, data: Dictionary) -> bool:
-	DirAccess.make_dir_recursive_absolute(DIR)
+	DirAccess.make_dir_recursive_absolute(dir())
 	var st: Dictionary = data["state"]
 	var keep := CData.pack
 	CData.use_state(st)  # names and dates are the state's pack's (formatted now, stored in the meta)
@@ -38,7 +83,7 @@ static func save(slot: String, data: Dictionary) -> bool:
 		"pack": str(st.get("pack", "rome")),
 		"saved_at": int(Time.get_unix_time_from_system()), "phase": str(st["phase"])}
 	CData.use_pack(keep)
-	var f := FileAccess.open(DIR + slot + ".json", FileAccess.WRITE)
+	var f := FileAccess.open(dir() + slot + ".json", FileAccess.WRITE)
 	if f == null:
 		return false
 	f.store_string(JSON.stringify(data, "", true))
@@ -47,7 +92,7 @@ static func save(slot: String, data: Dictionary) -> bool:
 
 
 static func load_slot(slot: String) -> Dictionary:
-	var f := FileAccess.open(DIR + slot + ".json", FileAccess.READ)
+	var f := FileAccess.open(_path(slot), FileAccess.READ)
 	if f == null:
 		return {}
 	var text := f.get_as_text()
@@ -73,7 +118,7 @@ static func parse(text: String) -> Dictionary:
 ## Saved campaigns, newest first: [{slot, name, turn, date, factions, saved_at}].
 static func list() -> Array:
 	var out: Array = []
-	var d := DirAccess.open(DIR)
+	var d := DirAccess.open(dir())
 	if d == null:
 		return out
 	for fn in d.get_files():
@@ -90,7 +135,7 @@ static func list() -> Array:
 
 
 static func delete(slot: String) -> void:
-	DirAccess.remove_absolute(DIR + slot + ".json")
+	DirAccess.remove_absolute(dir() + slot + ".json")
 
 
 static func export_text(data: Dictionary) -> String:

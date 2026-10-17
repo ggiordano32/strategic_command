@@ -200,7 +200,7 @@ func _ready() -> void:
 	var net := get_node_or_null("/root/Net")
 	if net != null:
 		var svrow := Kit.flow(8)
-		_server_label = Kit.label("Server: %s%s" % [net.server_url(), " (official)" if net.is_official() else ""], Kit.FONT, Color.WHITE)
+		_server_label = Kit.label("Server: %s%s" % [net.server_url(), " (default)" if net.is_default() else ""], Kit.FONT, Color.WHITE)
 		_server_label.name = "server_label"
 		svrow.add_child(_server_label)
 		var sb := Kit.button("Change", func(): server_requested.emit(), 110)
