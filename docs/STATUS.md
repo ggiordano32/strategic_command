@@ -2848,14 +2848,15 @@ sea follow-ons (done) -> overworld tap latency (done, 185895f) -> sea help
 -> fog of war on the overworld (done 2026-10-17: last-known state in
 unseen regions, Rome 2 style sight with team union, AI all-seeing, same at
 sea, VERSION 8 + migration; see the "Fog of war" rows).
-**Next, in order:** (1) sea pass
-4, the leeward fleet (built 2026-10-17, not committed: tacks carry their
-way, the engagement rule, sea room, clear starts, AI boards at 1.3x; see
-"Sea pass 4") -> (3) Hunyuan captain miniature (turnarounds from
-the user) -> (4) device checks (Tab S7 / phone: sea top bar at phone width,
-the Game server page, `?prof-tap=3` on the tablet) -> (5) sea balance
+-> sea pass 4, the leeward fleet (done 2026-10-17, da1bb36: tacks carry
+their way, the engagement rule, sea room, clear starts, AI boards at
+1.3x; see "Sea pass 4").
+**Next, in order:** (1) device checks on the Tab S7 / phone of today's
+work (the fog look and markers, the sea top bar at phone width, the Game
+server page, `?prof-tap=3`) -> (2) Hunyuan captain miniature (turnarounds
+from the user) -> (3) sea balance
 follow-ons (the AI against a player who never flees; AI boards at 1.3x
-now) -> (6) auto-resolve refit to pass T's siege
+now) -> (4) auto-resolve refit to pass T's siege
 outcomes. Open from the leftovers: walls 1 and 2 both at 41 % (walls 2 no
 longer harder than walls 1); the charger results are 30-minute draws; two
 bastion guns never bear on the town. Smaller: drag-to-exchange on the bar,
