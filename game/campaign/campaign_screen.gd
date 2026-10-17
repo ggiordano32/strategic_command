@@ -28,6 +28,7 @@ extends Node
 signal exit_requested
 
 const ZProf := preload("res://game/campaign/zprof.gd")
+const TapProf := preload("res://game/campaign/tap_prof.gd")
 const AudioFx := preload("res://game/audio.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const CData := preload("res://campaign/cdata.gd")
@@ -105,6 +106,20 @@ var cmd_bar: CommandBar        # the selection as cards along the bottom (comman
 ## Testing aid (--details; the input tests): a selection opens the full side
 ## panel as it did before the command bar.
 var details_on_select := false
+const SAVE_DELAY_MS := 1500     # save_plan: a plan edit is saved this long after the last one
+var _save_due := 0              # ticks (ms) when the pending plan save is written, 0 none
+var _bar_sig: Array = []        # _refresh_bar: what the command bar was last built for (this frame)
+var _bar_ps: Dictionary = {}
+var _bar_st: Dictionary = {}
+var _drawn_ps: Dictionary = {}  # the state the map / overlay were last drawn for (_refresh_map6)
+var _drawn_st: Dictionary = {}
+var _drawn_f := -2
+var _drawn_sig: Array = []
+var _resolving := false        # _resolve_soon: the turn resolves in two frames
+var _defer_sel := false         # select_army: the selection's reach etc. in the next frame (_refresh_map6)
+var _map6_next := false         # ... asked for
+var _map6_frame := 0            # ... in the first _tick of a later process frame (a frame count, not a draw
+                                # callback: headless runs get it too; a frame is drawn in between)
 var no_bar := false            # testing aid --no-bar: the old layout (side panel only)
 var _force_side := false       # open_details is building the side panel
 var end_button: Button
@@ -218,6 +233,9 @@ func _ready() -> void:
 		_load_online()
 	elif not data.is_empty():
 		_load_data()
+	var tp := TapProf.wanted()   # testing aid --prof-tap (tap_prof.gd)
+	if tp != "":
+		add_child(TapProf.new(self, tp))
 
 
 ## Open a campaign (data from saves.gd or a new one).
@@ -569,19 +587,42 @@ func _t(kind: String, d: Dictionary) -> void:
 
 
 func request_exit() -> void:
+	if _save_due > 0:
+		save()
 	exit_requested.emit()
 
 
+## A plan edit (an order added, changed, undone): the save is written a moment later, once for a burst of taps,
+## not in the tap's frame (a save serialises the whole campaign: 4-6 ms here at turn 10, several times that on a
+## tablet's browser). Flushed by save(), leaving the screen, the window losing focus or closing (_notification).
+func save_plan() -> void:
+	_save_due = Time.get_ticks_msec() + SAVE_DELAY_MS
+
+
+func _save_tick() -> void:
+	if _save_due > 0 and Time.get_ticks_msec() >= _save_due:
+		save()
+
+
+func _notification(what: int) -> void:
+	if _save_due > 0 and what in [NOTIFICATION_WM_CLOSE_REQUEST, NOTIFICATION_APPLICATION_FOCUS_OUT,
+			NOTIFICATION_APPLICATION_PAUSED, NOTIFICATION_WM_WINDOW_FOCUS_OUT, NOTIFICATION_EXIT_TREE]:
+		save()
+
+
 func save() -> void:
+	_save_due = 0
 	if online != null:
 		if f >= 0 and not st.is_empty() and str(st.get("phase", "")) == "plan" and not online.i_submitted():
 			online.set_plan(orders)
 		return
+	var t_sv := ZProf.begin()
 	if f >= 0:
 		data["session"]["plans"][str(f)] = orders.duplicate(true)
 	data["state"] = st
 	if not Saves.save(slot, data):
 		_t("campaign_error", {"what": "save failed", "slot": slot})
+	ZProf.add("h_save", t_sv)
 
 
 # ----------------------------------------------------------------- flow ---
@@ -633,7 +674,7 @@ func _next_step() -> void:
 			next = int(h)
 			break
 	if next < 0:
-		_resolve_turn()
+		_resolve_soon()
 		return
 	var hot := (st["humans"] as Array).size() > 1
 	if hot and f != next:
@@ -644,6 +685,8 @@ func _next_step() -> void:
 
 
 func _set_planner(p_f: int, start: bool) -> void:
+	if _save_due > 0:
+		save()   # (a pending plan save is the old planner's)
 	f = p_f
 	orders = []
 	if online != null:
@@ -714,6 +757,23 @@ func end_turn(skip_warnings: bool = false) -> void:
 	_next_step()
 
 
+## The turn's resolution (the rules and the AI: 25-30 ms on a desktop, over a second in a tablet's browser) runs
+## two frames after the End turn tap, under a "Resolving the turn" dialog drawn first: the tap answers at once.
+func _resolve_soon() -> void:
+	if _resolving:
+		return
+	_resolving = true
+	var box := Kit.vbox(8)
+	box.add_child(Kit.label("The armies march, the AI moves, battles are joined...", Kit.FONT, Color.WHITE, true))
+	show_dialog("Resolving the turn", box, [], 460)
+	dialog_kind = "resolving"
+	await get_tree().process_frame
+	await get_tree().process_frame   # (a frame drawn and shown: on the web the page only shows it between frames)
+	_resolving = false
+	if is_inside_tree():
+		_resolve_turn()
+
+
 func _resolve_turn() -> void:
 	var subs: Array = data["session"]["subs"]
 	var t0 := Time.get_ticks_msec()
@@ -730,8 +790,9 @@ func _resolve_turn() -> void:
 
 # ------------------------------------------------------------- planning ---
 
-## Re-run the preview of the plan; drop orders that no longer apply.
-func _replan() -> void:
+## Re-run the preview of the plan; drop orders that no longer apply. `pre`: the preview of exactly these
+## orders already made (add_order's check), used as it is when it has no errors (CTurn.preview is pure).
+func _replan(pre: Dictionary = {}) -> void:
 	_routes = {}
 	_marks_for = -1
 	if f < 0:
@@ -740,7 +801,9 @@ func _replan() -> void:
 		_refresh()
 		return
 	for guard in 8:
-		var pv := CTurn.preview(st, f, orders)
+		var t_pv := ZProf.begin()
+		var pv: Dictionary = pre if guard == 0 and not pre.is_empty() and (pre["errors"] as Array).is_empty() else CTurn.preview(st, f, orders)
+		ZProf.add("h_preview", t_pv)
 		var errs: Array = pv["errors"]
 		if errs.is_empty():
 			ps = pv["state"]
@@ -758,7 +821,9 @@ func _replan() -> void:
 
 
 func add_order(o: Dictionary) -> String:
+	var t_pv := ZProf.begin()
 	var pv := CTurn.preview(st, f, orders + [o])
+	ZProf.add("h_preview", t_pv)
 	for e in pv["errors"]:
 		if int(e[0]) == orders.size():
 			AudioFx.play("refused", 0.9, 0.0, "ui")
@@ -767,8 +832,8 @@ func add_order(o: Dictionary) -> String:
 	_push_undo()
 	AudioFx.play("chime" if str(o.get("t", "")) in ["propose", "answer", "accept_offer", "decline_offer", "gift_money", "gift_region", "buy_region"] else "order_ok", 0.8, 0.0, "ui")
 	orders.append(o)
-	_replan()
-	save()
+	_replan(pv)
+	save_plan()
 	return ""
 
 
@@ -783,8 +848,8 @@ func add_orders(list: Array) -> String:
 	_push_undo()
 	AudioFx.play("order_ok", 0.8, 0.0, "ui")
 	orders.append_array(list)
-	_replan()
-	save()
+	_replan(pv)
+	save_plan()
 	return ""
 
 
@@ -797,8 +862,8 @@ func set_orders(list: Array) -> String:
 		return str(e[1])
 	_push_undo()
 	orders = list
-	_replan()
-	save()
+	_replan(pv)
+	save_plan()
 	return ""
 
 
@@ -839,7 +904,7 @@ func remove_orders(pred: Callable) -> void:
 		_push_undo()
 	orders = keep
 	_replan()
-	save()
+	save_plan()
 
 
 func _push_undo() -> void:
@@ -854,7 +919,7 @@ func undo() -> void:
 		return
 	orders = _undo.pop_back()
 	_replan()
-	save()
+	save_plan()
 	_t("campaign_input", {"what": "undo"})
 
 
@@ -994,7 +1059,7 @@ func set_move_mode(army: int, mode: int) -> void:
 				mo["tgt"] = int(p6["tgt"])
 			orders.append(mo)
 		_replan()
-		save()
+		save_plan()
 		_t("campaign_input", {"what": "move_mode", "mode": mode})
 		return
 	var found := false
@@ -1006,7 +1071,7 @@ func set_move_mode(army: int, mode: int) -> void:
 		# A march from an earlier turn: re-issue it with the new mode.
 		orders.append({"t": "move", "army": army, "to": stored_move(army), "mode": mode, "persist": 1})
 	_replan()
-	save()
+	save_plan()
 	_t("campaign_input", {"what": "move_mode", "mode": mode})
 	move_toast(army)
 
@@ -1509,12 +1574,23 @@ func _bar_on() -> bool:
 func _refresh_bar() -> void:
 	if cmd_bar == null or map_key == null or hint == null:
 		return
+	var t0 := ZProf.begin()
 	if ps.is_empty() or not _bar_on():
 		cmd_bar.shown = false
 		cmd_bar.visible = false
+		_bar_sig = []
 	else:
-		cmd_bar.refresh()
+		# A tap often asks twice in one frame (show_side, then _refresh_map): the bar is built once per frame for
+		# the same selection, state and plan (a rebuild is the costly part of a tap: new controls, text, icons).
+		var sig := [Engine.get_process_frames(), sel_army, sel_fleet, sel_region, merge_tap, side.visible, orders.size(),
+			_vp(), str(panels._split_sel.get(sel_army, []))]
+		if sig != _bar_sig or not is_same(_bar_ps, ps) or not is_same(_bar_st, st):
+			cmd_bar.refresh()
+			_bar_sig = sig
+			_bar_ps = ps
+			_bar_st = st
 	_layout_bottom()
+	ZProf.add("h_bar", t0)
 
 
 ## The bar is full width at the bottom: the hint line, the map key's buttons,
@@ -1904,7 +1980,7 @@ func set_move6(army: int, c: int, tgt: int) -> void:
 			orders.append({"t": "cancel_move", "army": army})
 		_undo.append(before)
 		_replan()
-		save()
+		save_plan()
 		_t("campaign_input", {"what": "move_cancel"})
 		return
 	var mo := {"t": "move", "army": army, "x": CGrid.cx(c), "y": CGrid.cy(c), "mode": CData.MODE_SIEGE, "persist": 1}
@@ -1920,7 +1996,7 @@ func set_move6(army: int, c: int, tgt: int) -> void:
 	orders.append(mo)
 	_undo.append(before)
 	_replan()
-	save()
+	save_plan()
 	_t("campaign_input", {"what": "move", "tgt": tgt})
 
 
@@ -1958,7 +2034,7 @@ func set_join(army: int, target: int) -> void:
 			orders.append({"t": "cancel_move", "army": army})
 		_undo.append(before)
 		_replan()
-		save()
+		save_plan()
 		_t("campaign_input", {"what": "move_cancel"})
 		return
 	var mo := {"t": "move", "army": army, "join": target, "mode": CData.MODE_SIEGE, "persist": 1}
@@ -1972,7 +2048,7 @@ func set_join(army: int, target: int) -> void:
 	orders.append(mo)
 	_undo.append(before)
 	_replan()
-	save()
+	save_plan()
 	_t("campaign_input", {"what": "move", "join": target})
 
 
@@ -2012,6 +2088,19 @@ func _merge_tap_at(id: int) -> void:
 ## Version 6 map: armies on their cells, the selected army's reach, enemy
 ## zones and links, every planned path.
 func _refresh_map6() -> void:
+	var t_m6 := ZProf.begin()
+	# (what the overlay showed, to redraw only the parts a selection changed: see the end)
+	var was_sel := [overlay.selected_army, overlay.selected_fleet, overlay.merge_tap]
+	var was_fleets: Array = overlay.fleet_paths
+	var was_sea := overlay.sea_reach_rt
+	# (a state changed in place, as the input tests do, is caught by a few of its counts)
+	var sig := [int(st.get("turn", -1)), str(st.get("phase", "")), (ps.get("armies", []) as Array).size(),
+		(ps.get("battles", []) as Array).size(), (ps.get("sieges", []) as Array).size()]
+	var fresh := not (is_same(_drawn_ps, ps) and is_same(_drawn_st, st) and _drawn_f == f) or sig != _drawn_sig
+	# A tap that selects an army shows the bar and the halo in its own frame; the army's reach, zones, links and
+	# merge glyphs (the rules' reach6 and the outlines: the heavy part) follow in the next frame (_tick).
+	var later := _defer_sel and not fresh
+	_defer_sel = false
 	map_view.grid = true
 	overlay.grid = true
 	overlay.player = f
@@ -2024,8 +2113,9 @@ func _refresh_map6() -> void:
 	map_view.attack_targets = []
 	map_view.blocked_targets = []
 	map_view.target_turns = {}
-	map_view.selected_region = sel_region
+	map_view.set_selected_region(sel_region)
 	var paths: Array = []
+	var t_rt := ZProf.begin()
 	if f >= 0:
 		for a in CState.armies_of(ps, f):
 			var rt := route6(int(a["id"]))
@@ -2042,18 +2132,27 @@ func _refresh_map6() -> void:
 					var rt2 := CRules.plan_path(ps, a, c, int(a.get("tgt", -1)), int(a["mode"]))
 					if not rt2.has("why"):
 						paths.append(path_entry(a, rt2))
+	ZProf.add("m6_routes", t_rt)
 	var zones: Array = []
 	var links: Array = []
 	var marks: Array = []
 	var sa := CState.army(ps, sel_army) if sel_army >= 0 else {}
-	if not sa.is_empty():
+	if later and not sa.is_empty():
+		map_view.set_reach(PackedInt32Array())
+		_map6_next = true
+		_map6_frame = Engine.get_process_frames()
+	elif not sa.is_empty():
 		var rt6 := PackedInt32Array()
 		if int(sa["f"]) == f:
+			var t_r6 := ZProf.begin()
 			rt6 = CRules.reach6(ps, sa, 1)
+			ZProf.add("m6_reach6", t_r6)
 			if int(sa["busy"]) == 0:
 				if _marks_for != sel_army:
+					var t_mk := ZProf.begin()
 					_marks = _merge_marks(sa, rt6)
 					_marks_for = sel_army
+					ZProf.add("m6_marks", t_mk)
 				marks = _marks
 				var mt := CState.army(ps, merge_tap) if merge_tap >= 0 else {}
 				if not mt.is_empty():
@@ -2062,12 +2161,16 @@ func _refresh_map6() -> void:
 						var pe := path_entry(sa, pr)
 						pe["preview"] = 1
 						paths.append(pe)
+		var t_sr := ZProf.begin()
 		map_view.set_reach(rt6)
+		ZProf.add("m6_set_reach", t_sr)
+		var t_zl := ZProf.begin()
 		var px := float(CGrid.cell_px())
 		for e in CRules.zone_armies(ps, int(sa["f"])):
 			var zr := CRules.zone_r(ps, e)
 			zones.append([MapOverlay.cell_point(CState.cell(e)), (sqrt(float(zr * zr + zr)) + 0.5) * px])
 		var lk := CRules.links_of(ps, sa, rt6)
+		ZProf.add("m6_zones_links", t_zl)
 		for id in lk["support"]:
 			links.append([sel_army, int(id), 0])
 		for id in lk["attack"]:
@@ -2076,6 +2179,7 @@ func _refresh_map6() -> void:
 		map_view.set_reach(PackedInt32Array())
 	overlay.selected_fleet = sel_fleet
 	overlay.fleet_paths = []
+	var t_fl := ZProf.begin()
 	if CFleet.on(ps) and f >= 0:
 		for fl in CFleet.fleets_of(ps, f):
 			var vy := planned_voyage(int(fl["id"]))
@@ -2093,14 +2197,30 @@ func _refresh_map6() -> void:
 			for e in CFleet.fleets(ps):
 				if CState.at_war(ps, int(sfl["f"]), int(e["f"])):
 					zones.append([MapOverlay.cell_point(CFleet.cell(e)), (sqrt(float(CFleet.FLEET_ZONE * CFleet.FLEET_ZONE + CFleet.FLEET_ZONE)) + 0.5) * px2])
+	ZProf.add("m6_fleets", t_fl)
+	# A new state (an order, a resolved turn, another planner) draws the overlay again, and the map when an owner
+	# changed; a selection on the same state only the overlay parts it shows (paths with zones / links, fleets,
+	# armies with the merge glyphs) and the map's reach / selected-region nodes (map_view.set_reach /
+	# set_selected_region): the map's territories and edges are not drawn again for a tap.
+	var p_paths := fresh or paths != overlay.paths6 or zones != overlay.zones or links != overlay.links
+	var p_armies := fresh or marks != overlay.merge_marks or int(was_sel[2]) != merge_tap   # (the halo is its own node)
+	var p_fleets := fresh or int(was_sel[1]) != sel_fleet or overlay.fleet_paths != was_fleets or overlay.sea_reach_rt != was_sea
 	overlay.paths6 = paths
 	overlay.zones = zones
 	overlay.links = links
 	overlay.merge_marks = marks
 	overlay.merge_tap = merge_tap
-	map_view.queue_redraw()
-	overlay.queue_redraw()
+	if fresh:
+		_drawn_ps = ps
+		_drawn_st = st
+		_drawn_f = f
+		_drawn_sig = sig
+		map_view.refresh_state()
+		overlay.queue_redraw()
+	else:
+		overlay.redraw_parts(p_paths, p_fleets, p_armies)
 	_note_positions()
+	ZProf.add("h_map6", t_m6)
 
 
 ## Version 6: "" if our army sa may merge into our army id now, the checks a
@@ -2291,7 +2411,9 @@ func select_army(id: int) -> void:
 	sel_region = -1
 	if not a.is_empty():
 		show_side(func(box): panels.army_panel(box, id))
+	_defer_sel = true
 	_refresh_map()
+	_defer_sel = false
 	_update_hint()
 
 
@@ -2433,6 +2555,11 @@ func _process(delta: float) -> void:
 
 
 func _tick(delta: float) -> void:
+	_save_tick()
+	if _map6_next and Engine.get_process_frames() > _map6_frame:
+		_map6_next = false
+		if _g() and not ps.is_empty():
+			_refresh_map6()   # (the selected army's reach, deferred from the tap's frame)
 	map_view.pulse += delta
 	overlay.pulse += delta
 	if _resolver != null and _progress != null:
@@ -3186,4 +3313,4 @@ func _drag_preview(c: int, tgt: int) -> void:
 			var pe := path_entry(a, rt)
 			pe["drag"] = 1
 			overlay.drag = pe
-	overlay.queue_redraw()
+	overlay.redraw_parts(true, false, false)   # (the drag preview is drawn with the paths)

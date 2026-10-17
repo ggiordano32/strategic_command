@@ -101,6 +101,10 @@ static var _elev_tex: ImageTexture = null
 static var _elev_gen := -1
 var _table: Node2D = null
 var _pulse_node: Node2D = null
+var _reach_node: Node2D = null  # the selected army's reach (its own node: a selection does not redraw the map)
+var _sel_node: Node2D = null    # the selected region's outline (over the edges, under the coast)
+var _reach_rt := PackedInt32Array()      # the reach set_reach last outlined
+var _owners_drawn := PackedInt32Array()   # the owners the map was last drawn for (refresh_state)
 var _edges: Node2D = null     # children drawn after the map's own drawing, redrawn a frame apart (see _process)
 var _coast_node: Node2D = null
 var _tbl := false
@@ -184,6 +188,7 @@ func _make_water() -> void:
 	m.set_shader_parameter("field_px", Vector2(GeoFields.fine_width(), GeoFields.fine_height()) * GeoFields.sample_px())
 	m.set_shader_parameter("hi", 1.0 if _water_hi() else 0.0)
 	m.set_shader_parameter("shore", ImageTexture.create_from_image(GeoFields.shore_image()))
+	m.set_shader_parameter("depth", ImageTexture.create_from_image(GeoFields.depth_image()))
 	m.set_shader_parameter("wind_dir", GeoFields.wind_dir())
 	m.set_shader_parameter("wind_strength", GeoFields.wind_strength())
 	for i in SeaWaves.TRAINS.size():
@@ -198,12 +203,18 @@ func _make_water() -> void:
 	_table.visible = false
 	_table.draw.connect(_draw_table_land)
 	add_child(_table)
+	_reach_node = Node2D.new()
+	_reach_node.draw.connect(_draw_reach_node)
+	add_child(_reach_node)
 	_pulse_node = Node2D.new()
 	_pulse_node.draw.connect(_draw_pulse)
 	add_child(_pulse_node)
 	_edges = Node2D.new()
 	_edges.draw.connect(_draw_edges)
 	add_child(_edges)
+	_sel_node = Node2D.new()
+	_sel_node.draw.connect(_draw_sel)
+	add_child(_sel_node)
 	_coast_node = Node2D.new()
 	_coast_node.draw.connect(_draw_coast)
 	add_child(_coast_node)
@@ -367,6 +378,9 @@ static func set_terrain_view(on: bool, save := true) -> void:
 
 
 func set_reach(rt: PackedInt32Array) -> void:
+	if rt == _reach_rt and (not rt.is_empty() or reach_loops.is_empty()):
+		return   # (the same reach: its outlines and fill are kept)
+	_reach_rt = rt
 	reach_rects = []
 	reach_loops = []
 	next_loops = []
@@ -374,7 +388,7 @@ func set_reach(rt: PackedInt32Array) -> void:
 	_next_dashes = []
 	_next_dashes_lw = -1.0
 	if rt.size() != CGrid.count():
-		queue_redraw()
+		_redraw_reach()
 		return
 	var px := float(CGrid.cell_px())
 	var now := PackedByteArray()
@@ -399,7 +413,38 @@ func set_reach(rt: PackedInt32Array) -> void:
 				reach_fill.append(lp)
 	if ok:
 		reach_rects = []  # the smooth shapes fill it
-	queue_redraw()
+	_redraw_reach()
+
+
+## Only the reach node is drawn again (before the first draw of the map: the whole map).
+func _redraw_reach() -> void:
+	if _reach_node != null:
+		_reach_node.queue_redraw()
+	else:
+		queue_redraw()
+
+
+## The selected region (outline and tint) changed: only its two nodes are drawn again.
+func set_selected_region(r: int) -> void:
+	if r == selected_region:
+		return
+	selected_region = r
+	if _sel_node != null:
+		_sel_node.queue_redraw()
+	if _pulse_node != null:
+		_pulse_node.queue_redraw()
+
+
+## The state changed (a new preview, a resolved turn): the map is drawn again only when an owner changed, the
+## only thing of the state it shows (the rest is the overlay's). The first call always draws.
+func refresh_state() -> void:
+	var own := PackedInt32Array()
+	if not state.is_empty():
+		own.resize(CData.region_count())
+		for r in own.size():
+			own[r] = CState.owner(state, r)
+	if own != _owners_drawn or own.is_empty():
+		queue_redraw()
 
 
 ## Outlines of a set of cells (1 in `on`): the boundary edges chained into
@@ -650,7 +695,16 @@ func _draw_all() -> void:
 		else:
 			draw_hills(self, _hill_segs[0], 0, lw)
 			draw_hills(self, _hill_segs[1], 1, lw)
-		_draw_reach(lw)
+	# (the reach is the first child, the selected region's outline a child after the edges: both drawn with the map)
+	_owners_drawn = PackedInt32Array()
+	if not state.is_empty():
+		_owners_drawn.resize(CData.region_count())
+		for r in _owners_drawn.size():
+			_owners_drawn[r] = CState.owner(state, r)
+	if _reach_node != null:
+		_reach_node.queue_redraw()
+	if _sel_node != null:
+		_sel_node.queue_redraw()
 	# (the owner edges, borders and target outlines, then the coast, roads and rivers are children drawn after this one:
 	# their redraws are staged over the next frames, see _process)
 	_tbl = tbl
@@ -733,12 +787,23 @@ func _draw_edges() -> void:
 			_edges.draw_polyline(closed, COL_BLOCKED_EDGE, 2.0 * lw, true)
 		# A small cross on the settlement: "not this turn".
 		draw_blocked_cross(_edges, Geo.site(r), lw)
-	if selected_region >= 0:
-		for piece in Geo.cell(selected_region):
-			var closed: PackedVector2Array = piece.duplicate()
-			closed.append(piece[0])
-			_edges.draw_polyline(closed, Color(1, 1, 0.75, 1.0), 3.0 * lw, true)
 	ZProf.add("mv_edges", t0)
+
+
+## The selected region's outline (its own node over the edges: selecting a region does not redraw them).
+func _draw_sel() -> void:
+	if selected_region < 0 or state.is_empty():
+		return
+	var lw := 1.0 / maxf(zoom, 0.05)
+	for piece in Geo.cell(selected_region):
+		var closed: PackedVector2Array = piece.duplicate()
+		closed.append(piece[0])
+		_sel_node.draw_polyline(closed, Color(1, 1, 0.75, 1.0), 3.0 * lw, true)
+
+
+func _draw_reach_node() -> void:
+	if grid and not state.is_empty():
+		_draw_reach(_reach_node, 1.0 / maxf(zoom, 0.05))
 
 
 ## The coastline, roads, rivers, crossings and sea lanes (child node `_coast_node`).
@@ -1079,14 +1144,14 @@ static func draw_blocked_cross(ci: CanvasItem, c: Vector2, lw: float) -> void:
 
 ## Version 6: the selected army's reach (this turn filled, next turn a
 ## dashed outline).
-func _draw_reach(lw: float) -> void:
+func _draw_reach(ci: CanvasItem, lw: float) -> void:
 	if reach_loops.is_empty():
 		return
 	if reach_rects.is_empty():
 		for lp in reach_fill:
-			draw_colored_polygon(lp, COL_REACH)
+			ci.draw_colored_polygon(lp, COL_REACH)
 	for rc in reach_rects:
-		draw_rect(rc, COL_REACH)
+		ci.draw_rect(rc, COL_REACH)
 	if not is_equal_approx(_next_dashes_lw, lw):
 		# Map redraws every frame while an army is selected: cut the dashes
 		# again only when the zoom changes.
@@ -1097,8 +1162,8 @@ func _draw_reach(lw: float) -> void:
 			closed.append(lp[0])
 			_next_dashes.append(next_dashes(closed, lw))
 	for segs in _next_dashes:
-		draw_next_dashes(self, segs, lw)
+		draw_next_dashes(ci, segs, lw)
 	for lp in reach_loops:
 		var closed2: PackedVector2Array = (lp as PackedVector2Array).duplicate()
 		closed2.append(lp[0])
-		draw_reach_edge(self, closed2, lw)
+		draw_reach_edge(ci, closed2, lw)

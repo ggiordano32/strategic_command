@@ -123,11 +123,15 @@ var fleet_paths: Array = []
 const FLEET_W := 30.0
 var sea_reach: Array = []       # the selected fleet's reach this turn: outlines in map pixels
 var _sea_reach_fill: Array = []  # ... the outer ones that triangulate
+var sea_reach_rt := PackedInt32Array()   # the reach those outlines are of
 
 
 ## The selected fleet's reach (CFleet.reach: 0 this turn), drawn over the
 ## water (the map's own reach shading sits under the sea).
 func set_sea_reach(rt: PackedInt32Array) -> void:
+	if rt == sea_reach_rt and (not rt.is_empty() or sea_reach.is_empty()):
+		return   # (the same reach: its outlines are kept)
+	sea_reach_rt = rt
 	sea_reach = []
 	_sea_reach_fill = []
 	if rt.size() != CGrid.count():
@@ -583,6 +587,22 @@ func _draw_part(i: int) -> void:
 			_tips_body()
 	_ci = null
 	ZProf.add(PART_NAMES[i], t0)
+
+
+## A selection changed but not the state: only the parts that show it are drawn again (paths with the zones,
+## links and badges; fleets with the sea reach; armies with the merge glyphs and the halo), not the settlements.
+## Before the first draw: everything.
+func redraw_parts(p_paths: bool, p_fleets: bool, p_armies: bool) -> void:
+	if not _drawn_once:
+		queue_redraw()
+		return
+	if p_paths:
+		(_nodes[P_PATHS] as Node2D).queue_redraw()
+	if p_fleets:
+		(_nodes[P_FLEETS] as Node2D).queue_redraw()
+	if p_armies:
+		(_nodes[P_ARMIES] as Node2D).queue_redraw()
+	(_nodes[P_GLOW] as Node2D).queue_redraw()
 
 
 ## Redraw only the fleets (the ships bob) or only the armies' halo (a selected army): nothing before the first draw.

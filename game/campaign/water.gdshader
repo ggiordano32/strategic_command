@@ -15,10 +15,17 @@ shader_type canvas_item;
 //    green); a few whitecaps on crests only in strongly exposed open sea.
 // The coast line itself is drawn by map_view over the land edge. View only; the
 // clock is `wave_t` (map_view advances it, SeaWaves.t on the CPU).
-// hi = 0 (settings.cfg [map] water = low): depth tint and contour lines only, static.
+// Fourth pass (2026-10-17, owner: "real depth data ... deeper areas darker, the shallows
+// a more sandy light color"): the sea is coloured by the real depth (`depth`, ETOPO 2022,
+// DEPTH baked by tools/geo_fit.py, decoded below): sandy turquoise under ~8 m, the shelf
+// the earlier sea blue to ~200 m, then darker and a little more saturated to the deep.
+// The 3 / 8 km contour lines are gone; a faint line marks the shelf break (200 m) only
+// where the slope is steep. The coast distance (`coast`) still drives waves and surf.
+// hi = 0 (settings.cfg [map] water = low): the depth tint only, static (a texture read).
 
 uniform sampler2D coast : filter_linear, repeat_disable;  // 128 + signed km, sea positive
 uniform sampler2D shore : filter_linear, repeat_disable;  // R exposure 0..1, G shore steepness
+uniform sampler2D depth : filter_linear, repeat_disable;  // DEPTH code: 0 land, 1..31 = 0..30 m, then 30 * exp((v - 31) / 48.64) m
 uniform vec2 field_px = vec2(2760.0, 1400.0);              // map pixels the field covers
 uniform float hi = 1.0;
 uniform float wave_t = 0.0;
@@ -31,10 +38,12 @@ uniform vec4 train3 = vec4(45.0, 18.0, 3.75, 0.27);
 uniform vec4 train4 = vec4(-40.0, 12.0, 3.06, 0.20);
 uniform vec2 gyre_c = vec2(1190.0, 800.0);                 // western Mediterranean (map px)
 uniform float gyre_r = 420.0;
-uniform vec3 c_shore = vec3(0.27, 0.46, 0.52);   // at the coast
-uniform vec3 c_shal = vec3(0.18, 0.33, 0.42);    // about 6 km
-uniform vec3 c_deep = vec3(0.13, 0.25, 0.34);    // 25 km and more
-uniform vec3 c_line = vec3(0.62, 0.80, 0.86);    // contour lines
+uniform vec3 c_sand = vec3(0.56, 0.72, 0.63);    // under 1 m: sand showing through
+uniform vec3 c_shore = vec3(0.30, 0.56, 0.59);   // about 8 m: light turquoise
+uniform vec3 c_shal = vec3(0.18, 0.33, 0.42);    // the shelf, 40 to 120 m: the sea blue of passes 2 and 3
+uniform vec3 c_deep = vec3(0.12, 0.23, 0.34);    // 600 m
+uniform vec3 c_abyss = vec3(0.07, 0.17, 0.32);   // 2500 m and more: darker, a little more saturated
+uniform vec3 c_line = vec3(0.62, 0.80, 0.86);    // shelf-break line
 uniform vec3 c_foam = vec3(0.90, 0.95, 0.96);
 uniform float wave_gain = 1.0;                   // strength of the lit waves
 uniform float table = 0.0;                       // 1: the map-table sea (clean depth bands, softer waves)
@@ -72,11 +81,9 @@ float vnoise(vec2 p) {
 			mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
 }
 
-// A sharp 1 px line at distance k (km) from the coast; fades out when the
-// lines would crowd (zoomed far out).
-float contour(float d, float fw, float k) {
-	float l = 1.0 - smoothstep(0.45 * fw, 1.1 * fw, abs(d - k));
-	return l * smoothstep(3.0, 7.0, k / max(fw, 0.0001));
+// Metres of a DEPTH code (tools/geo_fit.py header; GeoFields.depth_code_m).
+float depth_m(float v) {
+	return v <= 31.0 ? max(v - 1.0, 0.0) : 30.0 * exp((v - 31.0) / 48.64);
 }
 
 // The shared wave fields at map point p (sea_waves.gd _field, line for line):
@@ -123,8 +130,12 @@ void fragment() {
 	float inwin = step(0.0, fuv.x) * step(fuv.x, 1.0) * step(0.0, fuv.y) * step(fuv.y, 1.0);
 	float d = texture(coast, fuv).r * 255.0 - 128.0;   // km, sea side positive
 	d = mix(80.0, d, inwin);                            // outside the window: open sea
-	vec3 col = mix(c_shore, c_shal, smoothstep(0.0, 5.0, d));
-	col = mix(col, c_deep, smoothstep(5.0, 25.0, d));
+	float dv = mix(255.0, texture(depth, fuv).r * 255.0, inwin);   // code; outside the window: deep
+	float dm = depth_m(dv);
+	vec3 col = mix(c_sand, c_shore, smoothstep(0.5, 8.0, dm));
+	col = mix(col, c_shal, smoothstep(6.0, 45.0, dm));
+	col = mix(col, c_deep, smoothstep(120.0, 600.0, dm));
+	col = mix(col, c_abyss, smoothstep(700.0, 2500.0, dm));
 	float fw = fwidth(d);
 	if (table > 0.5) {
 		// Clean depth bands: five steps with antialiased edges and a thin light line on each.
@@ -211,7 +222,9 @@ void fragment() {
 			col = mix(col, c_foam, clamp(foam, 0.0, 0.8));
 		}
 	}
-	float ln = max(contour(d, fw, 3.0) * 0.7, contour(d, fw, 8.0) * 0.45) * step(0.5, d);
-	col = mix(col, c_line, ln * 0.22 * (1.0 - clamp(foam_zone * 1.5, 0.0, 1.0)) * (1.0 - table));
+	// Shelf break: a faint thin line at 200 m (code 123.3), only where the slope is steep.
+	float fv = max(fwidth(dv), 0.0001);
+	float brk = (1.0 - smoothstep(0.5 * fv, 1.2 * fv, abs(dv - 123.3))) * smoothstep(3.0, 10.0, fv) * inwin * step(0.5, d);
+	col = mix(col, c_line, brk * 0.16 * (1.0 - clamp(foam_zone * 1.5, 0.0, 1.0)) * (1.0 - table));
 	COLOR = vec4(col, 1.0);
 }

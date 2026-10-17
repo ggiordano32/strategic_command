@@ -10,6 +10,7 @@ const Icons := preload("res://game/unit_icons.gd")
 const UiScale := preload("res://game/ui_scale.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const UiIcons := preload("res://game/ui_icons.gd")
+const IconRaster := preload("res://game/campaign/icon_raster.gd")  # the icons drawn from a raster atlas
 const Traits := preload("res://game/unit_traits.gd")
 const CData := preload("res://campaign/cdata.gd")
 const FactionEmblem := preload("res://game/faction_emblem.gd")
@@ -128,7 +129,7 @@ static func icon_button(text: String, icon: String, cb: Callable, min_w: float =
 ## state (col: the text colour when the button overrides it). Disabled is an
 ## opaque grey so overlapping strokes do not show.
 static func set_icon(b: Button, icon: String, col: Color = Color(0, 0, 0, 0)) -> void:
-	b.icon = UiIcons.tex(icon, UiIcons.px_for(b.get_theme_font_size("font_size")))
+	b.icon = IconRaster.tex(icon, UiIcons.px_for(b.get_theme_font_size("font_size")))
 	b.add_theme_constant_override("h_separation", ICON_GAP)
 	if b.text == "":
 		b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -187,7 +188,7 @@ static func _draw_label_icon(l: Label) -> void:
 	var col: Color = l.get_meta("icon_col", Color(0, 0, 0, 0))
 	if col.a <= 0.0:
 		col = l.get_theme_color("font_color")
-	UiIcons.draw_icon(l, icon, Rect2(0.0, y0 + (fh - px) * 0.5, px, px), col)
+	IconRaster.draw_icon(l, icon, Rect2(0.0, y0 + (fh - px) * 0.5, px, px), col)
 
 
 static func box(col: Color = PANEL_BG, margin: float = 10.0, radius: int = 6) -> StyleBoxFlat:
@@ -396,7 +397,7 @@ class UnitRow extends Control:
 				if gx + 16 > sz.x - rw:
 					break
 				var rc := Rect2(gx, 3, 16, 16)
-				UiIcons.draw_icon(self, str(Traits.TRAIT_ICONS[t]), rc, Color(1, 0.9, 0.6))
+				IconRaster.draw_icon(self, str(Traits.TRAIT_ICONS[t]), rc, Color(1, 0.9, 0.6))
 				_hits.append([rc, Traits.trait_text(t)])
 				gx += 20
 			# Line 2: green row (good against), red row (weak against).
@@ -413,7 +414,7 @@ class UnitRow extends Control:
 				draw_colored_polygon(tri, c)
 				cx += 8
 				for k in list:
-					UiIcons.draw_icon(self, str(Traits.CLASS_ICONS[k]), Rect2(cx, y2, 15, 15), c)
+					IconRaster.draw_icon(self, str(Traits.CLASS_ICONS[k]), Rect2(cx, y2, 15, 15), c)
 					cx += 17
 				_hits.append([Rect2(x1, y2, cx - x1, 15), Traits.classes_text(ty, pair[0])])
 				cx += 8

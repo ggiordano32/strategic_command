@@ -18,6 +18,7 @@ extends RefCounted
 ##   GeoFields.shore_steep(p)      0..1 steepness of the land beside a sea point
 ##   GeoFields.wind_dir()          unit vector the wind blows TOWARDS (map axes, y south)
 ##   GeoFields.wind_strength()     0..1
+##   GeoFields.depth_at(p)         sea depth in metres at a map point (0 on land)
 ##   GeoFields.cell_class(c)        CLASS_* of grid cell c
 ##   GeoFields.river_dist(c)        cells to the nearest river (float)
 ##   GeoFields.fine() / slope() / relief_field()  the raw fields (FW x FH, row 0 north)
@@ -47,6 +48,7 @@ static var _relief := PackedByteArray()      # units of 8 m
 static var _coast := PackedByteArray()       # 128 + km, sea side positive
 static var _expo := PackedByteArray()        # 0..255 (steps of 8)
 static var _shore := PackedByteArray()       # 0..252 (steps of 36)
+static var _depth := PackedByteArray()       # DEPTH code: 0 land, 1..31 = 0..30 m, then 30 * exp((v - 31) / 48.64)
 static var _px := 2.5                        # map pixels per fine sample
 
 
@@ -77,6 +79,7 @@ static func use_pack(key: String) -> void:
 	_coast = PackedByteArray()
 	_expo = PackedByteArray()
 	_shore = PackedByteArray()
+	_depth = PackedByteArray()
 	_px = 2.5
 
 
@@ -101,6 +104,7 @@ static func ensure() -> void:
 	_coast = _decode(Relief.COAST, n)
 	_expo = _decode(Relief.EXPOSURE, n)
 	_shore = _decode(Relief.SHORE, n)
+	_depth = _decode(Relief.DEPTH, n)
 	_px = 20.0 / float(Relief.FS)
 
 
@@ -193,6 +197,29 @@ static func _bilinear8(f: PackedByteArray, p: Vector2) -> float:
 	var ty := clampf(fy - y0, 0.0, 1.0)
 	var i: int = y0 * Relief.FW + x0
 	return lerpf(lerpf(f[i], f[i + 1], tx), lerpf(f[i + Relief.FW], f[i + Relief.FW + 1], tx), ty)
+
+
+## Sea depth in metres of a DEPTH code (tools/geo_fit.py header; water.gdshader
+## decodes the same curve).
+static func depth_code_m(v: float) -> float:
+	if v <= 0.0:
+		return 0.0
+	if v <= 31.0:
+		return v - 1.0
+	return 30.0 * exp((v - 31.0) / 48.64)
+
+
+## Sea depth in metres at map point p (0 on land; the mean of the DEM's sea samples
+## in the sample's footprint, bilinear on the code; saturates near 3000 m).
+static func depth_at(p: Vector2) -> float:
+	ensure()
+	return depth_code_m(_bilinear8(_depth, p))
+
+
+## The DEPTH codes as an L8 image for the water shader.
+static func depth_image() -> Image:
+	ensure()
+	return Image.create_from_data(Relief.FW, Relief.FH, false, Image.FORMAT_L8, _depth)
 
 
 ## The exposure (R) and shore steepness (G) as an RG8 image for the water shader.

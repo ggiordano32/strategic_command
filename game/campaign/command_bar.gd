@@ -25,6 +25,7 @@ const AudioFx := preload("res://game/audio.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const UiIcons := preload("res://game/ui_icons.gd")
+const IconRaster := preload("res://game/campaign/icon_raster.gd")
 const Icons := preload("res://game/unit_icons.gd")
 const Traits := preload("res://game/unit_traits.gd")
 const UT := preload("res://sim/unit_types.gd")
@@ -55,6 +56,9 @@ const ACT_ICON_PHONE := 24
 const ACT_FONT := 11
 const MAX_TRAITS := 3
 const COL_BG := Color(0.07, 0.085, 0.075, 0.95)
+const WARM_ACTIONS := ["assault", "build", "cancel", "close", "details", "disband", "embark", "exchange", "merge", "raid",
+	"raise", "recruit", "sally", "ship", "shipyard", "siege", "split", "view_map", "walls", "war", "withdraw", "more"]
+const WARM_STATS := ["coin", "forage", "income", "men", "move", "units", "walls"]
 const STANCE_SHORT := {0: "March", 2: "Forced", 3: "Fortify", 4: "Raid"}
 
 var s  # the campaign screen
@@ -78,6 +82,20 @@ func _init(screen) -> void:
 	anchor_top = 1.0
 	anchor_bottom = 1.0
 	grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_warm_icons()
+
+
+## The bar's icons go into the raster atlas when the screen opens (icon_raster.gd), so the first selection
+## already draws them as textures.
+func _warm_icons() -> void:
+	var acts: Array = WARM_ACTIONS.duplicate()
+	acts.append_array(Panels.STANCE_ICONS.values())
+	IconRaster.warm(acts, [ACT_ICON, ACT_ICON_PHONE])
+	var small: Array = WARM_STATS.duplicate()
+	small.append_array(Panels.STANCE_ICONS.values())
+	small.append_array(Panels.CHAR_GLYPH)
+	IconRaster.warm(small, [UiIcons.px_for(12)])
+	IconRaster.warm(Traits.TRAIT_ICONS.values(), [12, 14])
 
 
 ## Top edge (screen y) of the bar, the screen's height when it is hidden.
@@ -209,7 +227,7 @@ func _action(icon: String, label: String, tip: String, cb: Callable, off: String
 	b.text = label
 	b.focus_mode = Control.FOCUS_NONE
 	b.add_theme_font_size_override("font_size", ACT_FONT)
-	b.icon = UiIcons.tex(icon, ACT_ICON_PHONE if phone else ACT_ICON)
+	b.icon = IconRaster.tex(icon, ACT_ICON_PHONE if phone else ACT_ICON)
 	b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	b.vertical_icon_alignment = VERTICAL_ALIGNMENT_TOP
 	b.add_theme_constant_override("h_separation", 0)
@@ -874,7 +892,7 @@ class UnitCard extends Control:
 		if glyph != "":
 			draw_circle(Vector2(cx, cy), r, Color(col, a))
 			draw_arc(Vector2(cx, cy), r, 0, TAU, 20, Color(0, 0, 0, 0.75), 1.5, true)
-			UiIcons.draw_icon(self, glyph, Rect2(cx - r * 0.75, cy - r * 0.75, r * 1.5, r * 1.5), Color(1, 1, 1, 0.95 * a))
+			IconRaster.draw_icon(self, glyph, Rect2(cx - r * 0.75, cy - r * 0.75, r * 1.5, r * 1.5), Color(1, 1, 1, 0.95 * a))
 		elif ty >= 0:
 			Icons.draw_marker(self, Icons.icon_of(ty), Vector2(cx, cy), r, Color(col, a))
 		# Tier pips down the left edge (the campaign has no experience: tier).
@@ -891,7 +909,7 @@ class UnitCard extends Control:
 			var gy := cy + r + (3.0 if compact else 4.0)
 			for k in n:
 				var rc := Rect2(gx + k * (gs + 3.0), gy, gs, gs)
-				UiIcons.draw_icon(self, str(Traits.TRAIT_ICONS[tl[k]]), rc, Color(1, 0.9, 0.6, a))
+				IconRaster.draw_icon(self, str(Traits.TRAIT_ICONS[tl[k]]), rc, Color(1, 0.9, 0.6, a))
 				# (no tap hint on a glyph: the middle of a card is where a finger lands; the hover row has the traits)
 		# Strength bar and numbers.
 		var bw := sz.x - 12.0

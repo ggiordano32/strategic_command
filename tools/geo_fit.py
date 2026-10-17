@@ -9,6 +9,10 @@ the result into the files the game reads. The game never reads the raw data.
          (re-bakes only the wind exposure / shore steepness of the sea from
          the COAST and SLOPE fields already in game/campaign/relief_data.gd:
          no raw data needed; the way to change a map's wind)
+  python3 -I tools/geo_fit.py --config tools/geo/med.json --depth-only --dem DEM
+         --dem-lon0 L --dem-lat0 B --dem-rows R --dem-cols C [--repo .]
+         (re-bakes only DEPTH, the sea depth, from the DEM and the COAST field
+         already in relief_data.gd; no Natural Earth data needed)
   (needs numpy; run it from a venv or system python3 with numpy installed)
 
 Inputs
@@ -77,12 +81,21 @@ PARAMETERS (config keys)
             settlements with land == k. A settlement off its land by a hair is
             reported with the suggested point (the tool does not edit CData).
 
+DEPTH (relief_data.gd, one byte per fine sample, same grid as COAST): the mean
+depth of the DEM's sea samples (z < 0) in the sample's footprint, 0 = land (COAST
+land side), 1..255 sea. Decode: v 1..31 is depth = v - 1 metres (1 m steps to
+30 m); v 32..255 is depth = 30 * exp((v - 31) / 48.64) metres (30 m at v 31,
+about 3000 m at 255; deeper sea saturates). A sea sample whose footprint has no
+DEM sea sample (a creek mouth) is v 1. game/campaign/geo_fields.gd depth_at()
+and water.gdshader decode the same curve.
+
 Outputs (written unless --dry)
   game/campaign/geo_rome.gd: LANDS, ISLANDS, RIVERS replaced (marked GENERATED).
   campaign/data/elev_data.gd: per grid cell integer arrays (see its header).
   game/campaign/relief_data.gd: the fine fields (see its header), among them
             COAST, the signed distance to the coast (land and sea side) of
-            every fine sample, for the water shader and the beaches.
+            every fine sample, for the water shader and the beaches, and
+            DEPTH, the sea depth (see above).
 
 Fetching the data (once, into a fresh directory; treat it as untrusted data)
   DEM: curl -o z.dods "https://www.ngdc.noaa.gov/thredds/dodsC/global/ETOPO2022/30s/30s_surface_elev_netcdf/ETOPO_2022_v1_30s_N90W180_surface.nc.dods?z.z[r0:r1][c0:c1]"
@@ -380,6 +393,21 @@ class Dem:
         s = self._at(self.I, u1, v1) - self._at(self.I, u0, v1) - self._at(self.I, u1, v0) + self._at(self.I, u0, v0)
         m = self._at(self.M, u1, v1) - self._at(self.M, u0, v1) - self._at(self.M, u1, v0) + self._at(self.M, u0, v0)
         return np.where(m > 0.05, s / np.maximum(m, 1e-9), 0.0)
+
+
+    def mean_sea_depth(self, lon_a, lon_b, lat_a, lat_b):
+        """Mean depth (m, positive) of the sea samples (z < 0) in the boxes; -1 if none."""
+        if not hasattr(self, "SI"):
+            sea = (self.z < 0) & (self.z > -20000)
+            self.SI = np.zeros_like(self.I)
+            self.SM = np.zeros_like(self.I)
+            self.SI[1:, 1:] = np.where(sea, -self.z, 0).astype(np.float64).cumsum(0).cumsum(1)
+            self.SM[1:, 1:] = sea.astype(np.float64).cumsum(0).cumsum(1)
+        u0, u1 = (lon_a - self.lon0) / self.step, (lon_b - self.lon0) / self.step
+        v0, v1 = (lat_a - self.lat0) / self.step, (lat_b - self.lat0) / self.step
+        s = self._at(self.SI, u1, v1) - self._at(self.SI, u0, v1) - self._at(self.SI, u1, v0) + self._at(self.SI, u0, v0)
+        m = self._at(self.SM, u1, v1) - self._at(self.SM, u0, v1) - self._at(self.SM, u1, v0) + self._at(self.SM, u0, v0)
+        return np.where(m > 0.05, s / np.maximum(m, 1e-9), -1.0)
 
 
 def read_geojson(path):
@@ -866,6 +894,54 @@ def bake_exposure(cfg, repo, dry=False):
             "bytes": [len(zlib.compress(ex.tobytes(), 9)), len(zlib.compress(shore.tobytes(), 9))]}
 
 
+def encode_depth(d):
+    """Depth in metres (array, >= 0) to the DEPTH byte 1..255 (see the header)."""
+    d = np.maximum(d, 0.0)
+    lin = 1 + np.round(d)
+    log = 31 + np.round(48.64 * np.log(np.maximum(d, 30.0) / 30.0))
+    return np.clip(np.where(d <= 30.0, lin, log), 1, 255).astype(np.uint8)
+
+
+def bake_depth(cfg, repo, dem, dry=False):
+    """Add / replace DEPTH in game/campaign/relief_data.gd (the COAST field
+    already in it says which samples are sea)."""
+    path = out_path(cfg, repo, "relief")
+    text = open(path).read()
+    fw = int(re.search(r"^const FW := (\d+)", text, re.M).group(1))
+    fh = int(re.search(r"^const FH := (\d+)", text, re.M).group(1))
+    fs = int(re.search(r"^const FS := (\d+)", text, re.M).group(1))
+    coast = np.frombuffer(read_relief_const(text, "COAST"), np.uint8).reshape(fh, fw)
+    proj = Proj(cfg)
+    fpx = cfg["cell_px"] / fs
+    fx = np.arange(fw)
+    lon_a = proj.lon0 + fx * fpx / proj.px_lon
+    lon_b = lon_a + fpx / proj.px_lon
+    depth = np.zeros((fh, fw))
+    for y in range(fh):
+        la = proj.lat0 - (y + 1) * fpx / proj.px_lat
+        lb = proj.lat0 - y * fpx / proj.px_lat
+        depth[y] = dem.mean_sea_depth(lon_a, lon_b, np.full(fw, la), np.full(fw, lb))
+    out = np.where(depth < 0, 1, encode_depth(depth)).astype(np.uint8)
+    out[coast < 128] = 0
+    doc = ["## DEPTH: sea depth, one byte per sample (0 land, 1..31 = 0..30 m in 1 m steps,",
+           "## 32..255: 30 * exp((v - 31) / 48.64) m, about 3000 m at 255), mean of the DEM's",
+           "## sea samples in the footprint (tools/geo_fit.py bake_depth, `--depth-only`)."]
+    lines = [l for l in text.split("\n") if not re.match(r"const DEPTH ", l) and l not in doc]
+    while lines and lines[-1] == "":
+        lines.pop()
+    at = next(i for i, l in enumerate(lines) if l.startswith("const FS "))
+    while at > 0 and lines[at - 1] == "":
+        at -= 1
+    lines[at:at] = doc
+    lines.append('const DEPTH := "%s"' % b64z(out.tobytes()))
+    if not dry:
+        open(path, "w").write("\n".join(lines) + "\n")
+    sea = coast >= 128
+    return {"sea_samples": int(sea.sum()), "mean_depth_code": float(out[sea].mean()),
+            "shallow_lt8m": float((out[sea] <= 9).mean()), "no_dem_sea": int(((depth < 0) & sea).sum()),
+            "bytes": len(zlib.compress(out.tobytes(), 9))}
+
+
 # ------------------------------------------------------------ elevation
 
 def classify(mean, mx, relief, land, th, w, h):
@@ -1041,6 +1117,7 @@ def main():
     ap.add_argument("--dem")
     ap.add_argument("--ne")
     ap.add_argument("--exposure-only", action="store_true", help="re-bake only EXPOSURE / SHORE / WIND_*")
+    ap.add_argument("--depth-only", action="store_true", help="re-bake only DEPTH (needs --dem)")
     ap.add_argument("--repo", default=".")
     ap.add_argument("--dem-lon0", type=float, default=-10.7)
     ap.add_argument("--dem-lat0", type=float, default=32.8)
@@ -1054,6 +1131,12 @@ def main():
     cfg = json.load(open(args.config))
     if args.exposure_only:
         print(bake_exposure(cfg, args.repo, args.dry))
+        return
+    if args.depth_only:
+        if not args.dem:
+            ap.error("--dem is required with --depth-only")
+        dem = Dem(load_dem(args.dem, args), args.dem_lon0, args.dem_lat0, args.dem_step)
+        print(bake_depth(cfg, args.repo, dem, args.dry))
         return
     if not args.dem or not args.ne:
         ap.error("--dem and --ne are required (or --exposure-only)")
@@ -1074,6 +1157,7 @@ def main():
     print(bake_elevation(cfg, proj, dem, rivers, args.repo, args.dry, lands + islands))
     if not args.dry:
         print(bake_exposure(cfg, args.repo))
+    print(bake_depth(cfg, args.repo, dem, args.dry))
 
 
 if __name__ == "__main__":
