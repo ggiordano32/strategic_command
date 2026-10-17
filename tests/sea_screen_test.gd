@@ -123,6 +123,17 @@ func _process(_d: float) -> bool:
 				return true
 			_check(_sb.sim.n_units == 4 and int(_sb.player_side) == 0 and _button("sea_full") != null and _button("sea_board") != null,
 				"the sea screen: 4 ships, the player's side 0, the orders bar")
+			var tips := true
+			for n in ["sea_full", "sea_battle_sail", "sea_stop", "sea_round", "sea_chain", "sea_grape", "sea_fire", "sea_board", "sea_hold", "sea_flee"]:
+				var ob := _button(n)
+				tips = tips and ob != null and ob.tooltip_text != ""
+			_check(tips, "every order button has a tooltip")
+			var bk := _button("sea_book_button")
+			_check(bk != null, "the sea screen has the book button")
+			if bk != null:
+				bk.pressed.emit()
+				_check(_sb.book.visible, "the Ship book opens (tests/sea_help_test.gd covers its pages)")
+				_sb.book.close()
 			# A tap on the sea: the selected ship gets a sail order.
 			var s0: int = _sb.selection[0]
 			var p: Vector2 = _sb._pos(s0) + Vector2(0, -300)

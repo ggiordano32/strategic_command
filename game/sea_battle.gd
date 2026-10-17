@@ -54,6 +54,7 @@ const FM := preload("res://sim/fixed_math.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const AudioFx := preload("res://game/audio.gd")
 const CoopHud := preload("res://game/coop_hud.gd")
+const SeaBook := preload("res://game/sea_book.gd")
 const Lockstep := preload("res://sim/lockstep.gd")
 
 const TICK_SEC := 0.1
@@ -149,6 +150,20 @@ var _calpha := 1.0                 # co-op: interpolation between the last two t
 var _hud_shim = null
 var _sc: ScrollContainer = null
 var _cont_btn: Button = null
+# order help (tooltips, the long-press card, the hint line) and the Ship book
+var book: SeaBook = null
+var _book_btn: Button = null
+var _book_resume := -1             # solo: the speed to go back to when the book closes
+var _hint_lbl: Label = null
+var _hint_t := 0.0
+var _help_card: PanelContainer = null
+var _help_catch: Control = null
+var _lp_token := 0                 # long press on an order button: the press being timed
+var _lp_swallow := false           # ... fired, so the release is not a tap
+var _pct_shown := {}               # sail setting -> clock when its speed % first showed in the status line
+const LONG_HELP := 0.5
+const HINT_SEC := 3.0
+const PCT_SEC := 6.0
 
 
 ## What game/coop_hud.gd needs of a HUD (the land Hud's names).
@@ -1051,6 +1066,11 @@ func _build_hud() -> void:
 		b.custom_minimum_size.y = 34
 		sp.add_child(b)
 		_speed_btns.append(b)
+	_book_btn = Kit.icon_button("Ships", "units", _open_book, 64, Kit.FONT_SMALL)
+	_book_btn.name = "sea_book_button"
+	_book_btn.tooltip_text = "Ship book: points of sail, sails, shot, boarding and every ship's numbers"
+	_book_btn.custom_minimum_size.y = 34
+	top.add_child(_book_btn)
 	var lv := Kit.button("Leave", _ask_leave, 64, Kit.FONT_SMALL)
 	lv.name = "sea_leave"
 	lv.custom_minimum_size.y = 34
@@ -1109,11 +1129,22 @@ func _build_hud() -> void:
 	_info.add_theme_constant_override("outline_size", 4)
 	_info.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bot.add_child(_info)
+	_hint_lbl = Kit.label("", Kit.FONT_SMALL, Color(0.85, 0.92, 1.0), true)
+	_hint_lbl.name = "sea_hint"
+	_hint_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_hint_lbl.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
+	_hint_lbl.add_theme_constant_override("outline_size", 4)
+	_hint_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hint_lbl.visible = false
 	_bar = HFlowContainer.new()
 	_bar.add_theme_constant_override("h_separation", 3)
 	_bar.add_theme_constant_override("v_separation", 3)
 	_bar.alignment = FlowContainer.ALIGNMENT_CENTER
 	bot.add_child(_bar)
+	bot.add_child(_hint_lbl)  # (under the row)
+	book = SeaBook.new()
+	book.closed.connect(_book_closed)
+	root.add_child(book)
 	_end_panel = null
 
 
@@ -1209,6 +1240,8 @@ func _refresh_hud() -> void:
 		if not _mine(int(s)):
 			card.modulate = Color(0.7, 0.7, 0.7, 0.75)
 	_info.text = _info_text()
+	if _hint_lbl.visible and _clock - _hint_t > HINT_SEC:
+		_hint_lbl.visible = false
 	if coop != null:
 		_coop_hud_tick()
 
@@ -1233,6 +1266,11 @@ func _info_text() -> String:
 	if sim.s_grap[s] >= 0:
 		mode = "grappled: boarding" if sim.s_boarder[s] != 0 else "grappled: repelling boarders"
 	var sails: String = ["hove to", "battle sail", "full sail"][sim.s_sail[s]]
+	# The first time a setting shows, its speed share too ("battle sail (75 %)").
+	if not _pct_shown.has(sim.s_sail[s]):
+		_pct_shown[sim.s_sail[s]] = _clock
+	if _clock - float(_pct_shown[sim.s_sail[s]]) < PCT_SEC:
+		sails += " (%d %%)" % SeaSim.SAIL_PCT[sim.s_sail[s]]
 	var bs := ""
 	for k in 2:
 		var rl := sim.s_rl[s * 2 + k]
@@ -1247,7 +1285,9 @@ func _info_text() -> String:
 
 ## The orders bar for the selection (rebuilt when the selection changes).
 func _refresh_bar() -> void:
+	_close_help_card()
 	for c in _bar.get_children():
+		_bar.remove_child(c)  # (out of the tree now, so the new buttons keep their names)
 		c.queue_free()
 	var mine: Array[int] = []
 	for s in selection:
@@ -1256,9 +1296,19 @@ func _refresh_bar() -> void:
 	if mine.is_empty() or not interactive:
 		return
 	var s0 := mine[0]
+	var ty0 := sim.s_type[s0]
 	var add := func(text: String, nm: String, on: bool, cb: Callable) -> void:
-		var b := Kit.button(text, cb, 62, 12)
+		var h := SeaBook.order_help(nm, ty0, sim.s_fire[s0] != 0)
+		var b := Kit.button(text, func():
+			if _lp_swallow:
+				_lp_swallow = false  # (the release of a long press: it opened the help card, not an order)
+				return
+			cb.call()
+			if str(h["hint"]) != "":
+				_show_hint(str(h["hint"])), 62, 12)
 		b.name = nm
+		b.tooltip_text = str(h["tip"])
+		_arm_long_help(b, h)
 		b.custom_minimum_size.y = 32
 		if on:
 			b.modulate = Color(1, 0.85, 0.4)
@@ -1287,6 +1337,93 @@ func _refresh_bar() -> void:
 	var tos := _gift_targets()
 	if not tos.is_empty():
 		add.call("Gift to " + coop.player_name(int(tos[0])) if tos.size() == 1 else "Gift to...", "sea_gift", false, _gift)
+
+
+## The 3 s hint line under the row.
+func _show_hint(text: String) -> void:
+	_hint_lbl.text = text
+	_hint_lbl.visible = true
+	_hint_t = _clock
+
+
+## A long press (LONG_HELP s) on an order button opens its help card instead
+## of giving the order; hovering shows its tooltip on a desktop.
+func _arm_long_help(b: Button, h: Dictionary) -> void:
+	b.button_down.connect(func():
+		_lp_swallow = false
+		_lp_token += 1
+		var tok := _lp_token
+		var ref: WeakRef = weakref(b)
+		get_tree().create_timer(LONG_HELP).timeout.connect(func():
+			var bb := ref.get_ref() as Button
+			if tok == _lp_token and bb != null and bb.is_pressed():
+				_lp_swallow = true
+				_open_help_card(h)))
+	b.button_up.connect(func(): _lp_token += 1)
+
+
+func _open_help_card(h: Dictionary) -> void:
+	_close_help_card()
+	var root: Control = _hud.get_child(0)
+	_help_catch = Control.new()
+	_help_catch.name = "sea_help_catch"
+	_help_catch.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_help_catch.mouse_filter = Control.MOUSE_FILTER_STOP
+	_help_catch.gui_input.connect(func(e: InputEvent):
+		if (e is InputEventMouseButton and e.pressed) or (e is InputEventScreenTouch and e.pressed):
+			_close_help_card())
+	root.add_child(_help_catch)
+	var p := Kit.panel(Color(0.08, 0.1, 0.12, 0.96), 12)
+	p.name = "sea_help_card"
+	p.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	p.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	p.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	p.offset_bottom = -(_bar.get_global_rect().size.y + _info.get_global_rect().size.y + 14)
+	var v := Kit.vbox(6)
+	p.add_child(v)
+	v.add_child(Kit.label(str(h["title"]), Kit.FONT_TITLE, Kit.COL_GOLD))
+	v.add_child(Kit.label(str(h["tip"]), Kit.FONT, Color.WHITE, true))
+	if str(h["more"]) != "":
+		v.add_child(Kit.label(str(h["more"]), Kit.FONT_SMALL, Color(0.82, 0.88, 0.92), true))
+	v.add_child(Kit.label("Tap anywhere to close.", Kit.FONT_SMALL, Kit.COL_DIM))
+	p.custom_minimum_size = Vector2(minf(440.0, get_viewport_rect().size.x - 24.0), 0)
+	root.add_child(p)
+	_help_card = p
+	AudioFx.click()
+
+
+func _close_help_card() -> void:
+	if _help_card != null:
+		_help_card.queue_free()
+		_help_card = null
+	if _help_catch != null:
+		_help_catch.queue_free()
+		_help_catch = null
+
+
+func _open_book() -> void:
+	if book.visible:
+		return
+	var s := 0
+	for x in selection:
+		s = x
+		break
+	if selection.is_empty():
+		for u in sim.n_units:
+			if sim.u_side[u] == player_side:
+				s = u
+				break
+	_close_help_card()
+	if coop == null and speed_q != 0:
+		_book_resume = speed_q  # (solo: the battle waits while the book is open)
+		speed_q = 0
+	book.open(sim, s)
+
+
+func _book_closed() -> void:
+	if _book_resume > 0 and speed_q == 0:
+		speed_q = _book_resume
+	_book_resume = -1
 
 
 func _orders_all(typ: int, extra: Dictionary) -> void:
