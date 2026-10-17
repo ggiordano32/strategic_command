@@ -11,6 +11,8 @@ extends RefCounted
 ## them broadsides, raking, chain and grape, a boarding and a capture, a
 ## ship striking, tacking or wearing all happened. A table of each battle
 ## (time to decide, winner, ships sunk / taken / escaped) is printed.
+## sea_room() (sea pass 4): a tack carries her way; lee-coast starts clear
+## and the leeward fleet neither grounds nor hangs back.
 ## lockstep(): two peers sharing side 0 against the battle AI through the
 ## lockstep layer (random orders for their own ships and the other's,
 ## refused alike, through a relay with random delays), every frame's hash
@@ -164,6 +166,13 @@ static func determinism() -> int:
 		if dt < 0:
 			fails += 1
 			printerr("FAIL sea %s: not decided in 15 minutes" % key)
+	# (Sea pass 4) Chain and grape are choices a ship makes close in, so a
+	# single seed may not show them: count them over a few more seeds too.
+	for sd in range(1, 5):
+		for key in ["frigates", "sloops_galleon", "boarding"]:
+			var cs: Dictionary = run(key, sd, 9200)["stats"]
+			for k in ["chain", "grape"]:
+				cover[k] = int(cover.get(k, 0)) + int(cs[k])
 	for k in ["broadsides", "rakes", "chain", "grape", "boardings", "captured", "struck", "deck_fights", "deck_taken",
 			"deck_shots", "fireships"]:
 		if int(cover.get(k, 0)) <= 0:
@@ -191,6 +200,82 @@ static func determinism() -> int:
 	print("sea coverage: ", cover)
 	for line in table:
 		print(line)
+	fails += sea_room()
+	return fails
+
+
+## (Sea pass 4) The leeward fleet: a frigate turning through the wind
+## carries her way round (a tack, not a wear); fleets start clear of
+## shoals (START_CLEAR_M) and the leeward fleet with LEE_ROOM_M of clear
+## water to leeward and on both beams, a lee coast and an island in the
+## way; the leeward fleet runs aground at most once over the set and fires
+## within four minutes in each (the battle AI both sides).
+static func sea_room() -> int:
+	var fails := 0
+	var t := SeaSim.new()
+	t.setup({"sea": 1, "wind_deg": 90, "wind_str": 80, "ai_sides": [0, 0],
+		"units": [{"side": 0, "t": "frigate", "x": 800, "y": 900, "head": 20}, {"side": 1, "t": "sloop", "x": 2200, "y": 150}]}, 5)
+	t.queue_order({"type": SeaSim.O_SAILS, "unit": 0, "on": 2, "tick": 0})
+	for i in 60:
+		t.step()
+	t.queue_order({"type": SeaSim.O_HEAD, "unit": 0, "facing": SeaSim.bearing_to_angle(160)})
+	var slow := 1 << 30
+	for i in 400:
+		t.step()
+		slow = mini(slow, t.s_spd[0])
+	var hb := SeaSim.angle_to_bearing(t.heading(0))
+	if int(t.stats["tacks"]) != 1 or int(t.stats["wears"]) != 0 or absi(hb - 160) > 3:
+		fails += 1
+		printerr("FAIL sea tack: tacks %d wears %d, heading %d (wanted 160)" % [int(t.stats["tacks"]), int(t.stats["wears"]), hb])
+	else:
+		print("PASS sea tack: a frigate tacks through the wind to 160, slowest %d %% of her top speed" % [
+			slow * 100 / maxi(t._vmax(0), 1)])
+	var lee_ground := 0
+	var lines: Array[String] = []
+	for k in 6:
+		var scn := {"sea": 1, "wind_deg": 80 + k * 4, "wind_str": 70, "ai_sides": [1, 1], "layout": "we" if k % 2 == 0 else "gauge1",
+			"land": {"kind": 2, "dirs": (1 << 4) | ((1 << 3) if k >= 3 else 0), "mseed": 101 + k * 37, "ix": 1500, "iy": 400 + k * 80, "ir": 100},
+			"units": [{"side": 0, "t": "frigate"}, {"side": 0, "t": "sloop"}, {"side": 1, "t": "frigate"}, {"side": 1, "t": "sloop"}]}
+		var sim := SeaSim.new()
+		sim.setup(scn, 300 + k)
+		var bad := ""
+		var r := SeaSim.START_CLEAR_M / SeaSim.CELL_M
+		for s in sim.n_units:
+			var gx0 := sim.s_x[s] / (SeaSim.CELL_M * SeaSim.U)
+			var gy0 := sim.s_y[s] / (SeaSim.CELL_M * SeaSim.U)
+			for gy in range(maxi(gy0 - r, 0), mini(gy0 + r + 1, sim.g_h)):
+				for gx in range(maxi(gx0 - r, 0), mini(gx0 + r + 1, sim.g_w)):
+					if (gx - gx0) * (gx - gx0) + (gy - gy0) * (gy - gy0) <= r * r and sim.g[gy * sim.g_w + gx] == 1:
+						bad = "a shoal within %d m of ship %d's start" % [SeaSim.START_CLEAR_M, s]
+			if sim.u_side[s] == 0 and sim._start_bad([s], true) > 0:
+				bad = "land in the leeward ship %d's sea room" % s
+		var first := -1
+		var seen := 0
+		for i in 9000:
+			sim.step()
+			while seen < sim.ev_n:
+				var e := seen % SeaSim.EV_CAP
+				seen += 1
+				var a := sim.ev_a[e]
+				if sim.ev_k[e] == SeaSim.EV_GROUND and sim.u_side[a] == 0:
+					lee_ground += 1
+				elif sim.ev_k[e] == SeaSim.EV_BROADSIDE and sim.u_side[a] == 0 and first < 0:
+					first = sim.ev_t[e]
+			if sim.decided_tick >= 0 or (first >= 0 and i > first + 600):
+				break
+		if bad == "" and (first < 0 or first > 2400):
+			bad = "the leeward fleet's first broadside at tick %d" % first
+		if bad != "":
+			fails += 1
+			printerr("FAIL sea room %d (%s): %s" % [k, str(scn["layout"]), bad])
+		else:
+			lines.append("%d:%02d" % [first / 600, (first / 10) % 60])
+	if lee_ground > 1:
+		fails += 1
+		printerr("FAIL sea room: the leeward fleet ran aground %d times" % lee_ground)
+	elif fails == 0:
+		print("PASS sea room: six lee-coast starts clear, the leeward fleet's first broadsides %s, aground %d" % [
+			", ".join(PackedStringArray(lines)), lee_ground])
 	return fails
 
 
@@ -400,8 +485,10 @@ static func lockstep_coop() -> int:
 			"tk": [["cutlass", 70], ["buccaneers", 30]], "cq": 120},
 		{"side": 0, "t": "sloop", "x": 1300, "y": 1060, "head": 0, "ck": "brethren", "bq": 130},
 		{"side": 0, "t": "fire_ship", "x": 1450, "y": 900, "head": 270, "ck": "brethren"},
-		{"side": 1, "t": "brigantine", "x": 1040, "y": 860, "head": 90, "crew": 60, "troops": 10, "ck": "new_spain",
-			"tk": [["musketeers", 100]]},
+		# (Her rigging shot through: she is caught. Since sea pass 4 a ship
+		# turning off the wind carries her way, so a sound one runs.)
+		{"side": 1, "t": "brigantine", "x": 1040, "y": 860, "head": 90, "crew": 60, "rig": 30, "troops": 10,
+			"ck": "new_spain", "tk": [["musketeers", 100]]},
 		{"side": 1, "t": "frigate", "x": 900, "y": 560, "head": 180, "ck": "new_spain"},
 		{"side": 1, "t": "galleon", "x": 700, "y": 400, "head": 180, "ck": "new_spain"}]}
 	var home := [0, 1, 1, -1, -1, -1]

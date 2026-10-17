@@ -108,7 +108,7 @@ static func pre(s, st: Dictionary, b: Dictionary) -> Control:
 	var wb := int(scn["wind_deg"])
 	var compass: String = ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"][int(round(wb / 45.0)) % 8]
 	var force := "a light" if int(scn["wind_str"]) < 40 else "a moderate" if int(scn["wind_str"]) < 65 else "a fresh" if int(scn["wind_str"]) < 85 else "a strong"
-	info.add_child(Kit.label("%s. The wind: %s breeze from the %s. Fought in real time with the wind: tack upwind, take the weather gauge, rake, board." % [
+	info.add_child(Kit.label("%s. The wind: %s breeze from the %s. Fought in real time with the wind: keep sea room, take the weather gauge when it is yours, rake, board." % [
 		water, force, compass], Kit.FONT_SMALL, Kit.COL_DIM, true))
 	var facs: Array = snap["facs"]
 	var hs := CRules.battle_humans(st, b)

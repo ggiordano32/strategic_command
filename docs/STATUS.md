@@ -2594,6 +2594,84 @@ pause / resume; `-- --out=DIR` saves screenshots), tooltip and book checks
 in `sea_screen_test`. The bar rebuild now removes the old buttons first so
 the new ones keep their names.
 
+**Sea pass 4: the leeward fleet (2026-10-17, Opus, built, not committed;
+DESIGN "Sea battles: the leeward fleet (sea pass 4)", AI.md 30).** Owner:
+"tacking is fun but a bit too extreme; the downwind ships keep running
+aground and never really engage". **Probe** (new `tests/sea_probe.gd`:
+mirrored fleets by seed, open / island / coast water, wind 60-120 deg as
+the campaign rolls it; layouts ns, we, gauge0, gauge1 and `camp` (the
+campaign's coasts and its we / ns rule); modes `ai` (AI both sides),
+`hold` (side 0 hove to, the AI must come) and `order` (side 0 sends each
+ship at the nearest enemy every 10 s); 24 seeds; `--rows` points of sail
+by row, `--seeds=96`, `--swap` side order). Found: (1) every frigate /
+galleon tack failed: head to wind the speed decayed in about a second
+while the turn through the no-go zone takes 20-40 s, so each tack ended in
+irons and a wear (a frigate made ~350 m to windward in 7 min); (2) the
+groundings were ships driven onto shoals to leeward (an island's lee
+shoal, a lee coast): the probes looked down a single line, ships swung
+either side of an island, and a ship aground amidships never got off
+(two frigate duels with no shot in 15 min); (3) the gauge rule sent the
+AI's leeward fleet beating 500-800 m past fighting range (against a
+hove-to enemy: first broadside 6:00, 6 of 24 never); (4) in `we` and on
+campaign coasts the leeward fleet started against a lee shore. AI vs AI
+the leeward fleet's first broadside was already about the windward's
+(both fire when they meet); side 1 won 56 of 96 across the wind (the N3
+15/24). **Changes** (`sim/sea_sim.gd`, no new state): (A) a ship turning
+through the wind carries her way (`TACK_WAY` 300 ticks; 12 head to wind
+and not turning): a frigate tacks in ~29 s, out at ~30 % speed; (B) the
+engagement rule `_closing`: the weather gauge only for a ship that has it
+(she bears down to her range on the target's windward side) or can fetch
+the gauge point on one board; a leeward ship makes for the target's lee
+bow, on a reach when she can, never beating past it; the AI's leeward
+ship whose target lies beyond its fleet's two boards to windward
+(`BOARD_M` 400 x 2 close-hauled, worst sailer) heaves to in line,
+close-hauled toward the enemy, for at most `HOLD_TICKS` 3 min (then beats
+up, so a player keeping the gauge cannot win on the clock); (C) sea room:
+probes down a lane her beam + 12 m either side, a new board with
+`SEA_ROOM_M` 400 m clear, tack `LAYLINE_M` 200 m short of land or the
+edge, within `LEE_SHORE_M` 250 m of a lee shore sail along it (never in
+toward it), `_avoid` tries the side she is turning to first, a ship
+aground amidships works off once her bow points at open water; (D)
+deployment: each line shifted (up to 800 m in / 300 m along, smallest
+first, sign by seed, fleets 600 m apart) so no shoal or land lies within
+`START_CLEAR_M` 300 m and the leeward fleet has `LEE_ROOM_M` 500 m clear
+to leeward and both beams; leftover shoals within 300 m cleared
+(`ter_hash` covers it); (E) the AI boards at `BOARD_PCT` 130 % (was 160).
+Points of sail table left alone: irons + 16 / 55 % measured no gain on the
+slow beat (7:05 -> 7:13 / 7:21), nor did tacking on headers. **Measured**
+(24 seeds, AI both sides, ns / we / gauge0 / gauge1 / camp, before ->
+after): side 1 wins 15 / 9 / 14 / 16 / 8 -> 14 / 14 / 10 / 12 / 9 (96
+seeds 56 / 43 / 48 / 49 / 34 -> 49 / 37 / 50 / 55 / 49, side order
+swapped 46 / 49 / 44 / 45 / 50: noise of about +-6 on 96); groundings
+43 / 32 / 60 / 37 / 66 -> 4 / 4 / 3 / 6 / 20, ships stuck (4+) 2 / 2 / 3 /
+2 / 9 -> 0 / 0 / 0 / 0 / 1, battles with the leeward fleet aground 4 / 1 /
+5 / 5 / 7 -> 0 / 0 / 1 / 1 / 3 (median 0 before and after); leeward vs
+windward first broadside 1:06 / 1:05, 3:03 / 3:00, 2:09 / 2:11, 1:50 /
+1:47, 1:59 / 1:59 -> 1:15 / 1:09, 3:42 / 3:37, 1:56 / 1:56, 2:05 / 2:04,
+2:03 / 2:03 (0.99-1.08 x); the leeward fleet's ground to windward before
+it fires 78-272 m -> 10-57 m; boardings 7 / 8 / 22 / 5 / 7 -> 12 / 16 /
+26 / 14 / 13 (three quarters take the prize). Player hove to: the AI's
+first broadside ns 2:10 -> 2:03, we 3:49 -> 3:53, AI windward 2:09 ->
+2:14, camp 2:45 -> 2:28, AI leeward 5:59 (6 never) -> 7:47 (3 never: 3
+min hold, then the slow beat); the AI's groundings 23 / 23 / 13 / 27 /
+65 -> 3 / 3 / 4 / 6 / 6. Player engaging: groundings 36 / 21 / 43 / 56 /
+64 -> 6 / 4 / 5 / 10 / 1. Cost (desktop, 12 campaign-like battles, 3000 ticks each): 74 -> 100 us a tick (the lane probes and the lee-shore scan), setup 6 -> 9 ms (the start-line search). **Ship book**: the Points of sail
+page (tacks carry their way; sea room; the engagement rule replacing
+"beats up to windward of the enemy first") and the Engaging paragraph.
+**Tests**: determinism `--only=sea` + `SeaChecks.sea_room` (a frigate
+tack without a wear; six lee-coast starts clear with the leeward fleet's
+sea room, aground at most once, firing within 4 min; chain / grape
+coverage also over seeds 1-4 of three set pieces); lockstep `--only=sea`
+(the co-op melee's target now starts with her rigging shot through: a
+sound ship turning off the wind now sails out of irons); sea_screen,
+sea_help, custom_battle; full determinism and full lockstep PASS; `check_scripts` clean.
+campaign_sim not run (fog-of-war work in `campaign/` by another agent;
+AI-only campaign sea battles are auto-resolved, the sea sim is not in
+those hashes). **Open**: a scripted player who never flees wins 15-19 of
+24 against the AI in `order` mode (11-15 before; the AI's flight rule is
+the suspect); the AI's beat up to a hove-to fleet stays slow (a frigate
+makes ~1.5 m/s to windward); phones.
+
 ## West sprites (2026-10-15)
 
 Sprite sets 16-26 (`tools/sprites/spec.json`, atlas `sets` order): musketeers,
@@ -2771,12 +2849,13 @@ sea follow-ons (done) -> overworld tap latency (done, 185895f) -> sea help
 unseen regions, Rome 2 style sight with team union, AI all-seeing, same at
 sea, VERSION 8 + migration; see the "Fog of war" rows).
 **Next, in order:** (1) sea pass
-4, the leeward fleet (owner: tacking fun but too extreme, the downwind
-fleet grounds and never engages; cause: every ship chases the weather
-gauge; brief written) -> (3) Hunyuan captain miniature (turnarounds from
+4, the leeward fleet (built 2026-10-17, not committed: tacks carry their
+way, the engagement rule, sea room, clear starts, AI boards at 1.3x; see
+"Sea pass 4") -> (3) Hunyuan captain miniature (turnarounds from
 the user) -> (4) device checks (Tab S7 / phone: sea top bar at phone width,
 the Game server page, `?prof-tap=3` on the tablet) -> (5) sea balance
-follow-ons (AI boards at 1.6x) -> (6) auto-resolve refit to pass T's siege
+follow-ons (the AI against a player who never flees; AI boards at 1.3x
+now) -> (6) auto-resolve refit to pass T's siege
 outcomes. Open from the leftovers: walls 1 and 2 both at 41 % (walls 2 no
 longer harder than walls 1); the charger results are 30-minute draws; two
 bastion guns never bear on the town. Smaller: drag-to-exchange on the bar,

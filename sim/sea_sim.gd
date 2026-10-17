@@ -27,10 +27,18 @@ extends RefCounted
 ## "irons", off the wind), then rising to the best on a broad reach;
 ## rowed ships ignore the wind. The navigator (_course) beats to windward
 ## in two tacks (laylines) and turns through the wind when the ship has
-## the way for it ("tack" % of its top speed), else wears round; a ship
-## caught in irons without way falls off. Land and shoals (a grid from
-## "land": open sea, an island, a coast on the sides the campaign cell has
-## land) stop ships; deep-draught ships run aground on shoals.
+## the way for it ("tack" % of its top speed), else wears round; turning
+## through the wind she carries her way (TACK_WAY), head to wind otherwise
+## she loses it fast; a ship caught in irons without way falls off. Land
+## and shoals (a grid from "land": open sea, an island, a coast on the
+## sides the campaign cell has land) stop ships; deep-draught ships run
+## aground on shoals. Sea room (sea pass 4): probes look down a lane her
+## beam wide; a new board is the one with SEA_ROOM_M of clear water ahead,
+## she tacks LAYLINE_M short of land or the edge, within LEE_SHORE_M of a
+## lee shore she sails along it and never in toward it, and a ship aground
+## amidships works off once her bow points at open water. The fleets start
+## clear of shoals and land (START_CLEAR_M, the leeward fleet LEE_ROOM_M to
+## leeward and on both beams; _layout shifts the lines).
 ##
 ## Broadsides: each side fires all its working guns at once when loaded and
 ## a target lies in its arc (ARC) and in range of the loaded shot: round
@@ -93,12 +101,16 @@ extends RefCounted
 ## Battle AI (sides with ai_sides 1; every ship thinks every 10 ticks,
 ## staggered): flee to the far edge when beaten, else pick the nearest
 ## weakest enemy; board (coming up under her stern) when its boarding
-## strength, with friends already boarding her, is well above the
-## target's; else engage: beat up to windward of it when far (the weather
-## gauge), then keep the broadside on at the shot's range, presenting the
-## loaded side, rake when the geometry offers it; grape close, chain to
-## cripple (boarders), round otherwise; flee when beaten or hopelessly
-## outgunned.
+## strength, with friends already boarding her, is BOARD_PCT % of the
+## target's or more; else engage: from far off by the engagement rule
+## (_closing: the weather gauge only for a ship that has it or can take it
+## in one board, and she bears down to her range; a leeward ship makes for
+## the enemy's lee bow, on a reach when she can, never beating past her;
+## a leeward AI fleet whose enemy lies beyond two boards to windward holds
+## its line hove to for up to HOLD_TICKS), then keep the broadside on at
+## the shot's range, presenting the loaded side, rake when the geometry
+## offers it; grape close, chain to cripple (boarders), round otherwise;
+## flee when beaten or hopelessly outgunned.
 
 const FM := preload("res://sim/fixed_math.gd")
 const ST := preload("res://sim/sea_types.gd")
@@ -190,6 +202,17 @@ const WIND_EVERY := 300
 const WIND_SPAN := 100           # angle units either side of the start wind (~35 deg)
 const EDGE_M := 90               # ships keep this far from the edge unless fleeing
 const RANGE_PREF := [165, 140, 70]   # metres: the range a ship engages at, by shot
+const TACK_WAY := 300            # ticks: how slowly a ship turning through the wind loses her way (12 when she is not turning)
+const CLOSE_MARGIN := 24         # angle units off the no-go zone a ship sails close-hauled (~8 deg)
+const GAUGE_M := 220             # the weather gauge: a point this far to windward of the enemy
+const BOARD_M := 400             # a board (one leg of a beat): the battle AI beats at most two to reach an enemy
+const SEA_ROOM_M := 400          # a new board leads the way with this much clear water ahead (if either does)
+const LAYLINE_M := 200           # she tacks this far short of land or the field's edge ahead
+const LEE_SHORE_M := 250         # land this close to leeward: she sails along it, never in toward it
+const START_CLEAR_M := 300       # no shoal (nor land, where the field allows) this close to a start line
+const BOARD_PCT := 130          # the battle AI boards when its boarding strength is this % of hers (or more)
+const HOLD_TICKS := 1800         # the battle AI's leeward fleet holds its line at most this long (3 min) before it beats up
+const LEE_ROOM_M := 500          # the leeward fleet starts with this much clear water to leeward and on both beams
 
 # ---- lockstep interface (duck-typed like BattleSim) ----
 var n_units := 0
@@ -516,9 +539,15 @@ func is_tower(_u: int) -> bool:
 ## Ships without a position: each side in a line abreast at its end of the
 ## field (side 0 south / west / downwind, side 1 north / east / upwind for
 ## "gauge1"), facing the enemy or the nearest point of sail, clear of land.
+## Sea room at the start: each fleet's line is shifted (toward the middle
+## and / or along the line: the first of _start_shifts() that serves, the
+## sideways sign by the seed) so that no shoal or land lies within
+## START_CLEAR_M of it and the leeward fleet (the one 200 m or more farther
+## downwind; placed first) has LEE_ROOM_M of clear water to leeward and on
+## both beams, the fleets staying START_APART_M apart (else the shift with
+## the least land in the way). Shoals still within START_CLEAR_M of a ship
+## are then cleared to open water (setup rebuilds the grid the same way).
 func _layout(kind: String, units: Array) -> void:
-	var cx := field_w * U / 2
-	var cy := field_h * U / 2
 	var ax := 0
 	var ay := FM.TRIG_ONE  # side 0 is toward +y (south)
 	var half := (field_h / 2 - 260) * U
@@ -534,31 +563,141 @@ func _layout(kind: String, units: Array) -> void:
 		ax = FM.cos_a(up)
 		ay = FM.sin_a(up)
 		half = mini(field_w, field_h) / 2 * U - 280 * U
+	var lists: Array = [[], []]
 	for side in 2:
-		var list: Array[int] = []
 		for s in n_units:
 			if u_side[s] == side and s_x[s] < 0:
-				list.append(s)
+				(lists[side] as Array).append(s)
+	# The leeward fleet, by the two lines' places along the wind.
+	var proj: Array[int] = [0, 0]
+	for side in 2:
 		var sgn := 1 if side == 0 else -1
-		var bx := cx + sgn * ((ax * (half >> 6)) >> 6)
-		var by := cy + sgn * ((ay * (half >> 6)) >> 6)
-		# Across the axis: (-ay, ax).
-		for i in list.size():
-			var s := list[i]
-			var off := (i * 2 - (list.size() - 1)) * 55 * U
-			var px := bx + ((-ay * (off >> 6)) >> 6)
-			var py := by + ((ax * (off >> 6)) >> 6)
-			# Stagger: every other ship a little back.
-			if i % 2 == 1:
-				px += sgn * ((ax * (40 * U >> 6)) >> 6)
-				py += sgn * ((ay * (40 * U >> 6)) >> 6)
-			var p := _clear_spot(px, py)
-			s_x[s] = p[0]
-			s_y[s] = p[1]
-			var face := FM.atan2_a(-sgn * ay, -sgn * ax)
-			if (units[s] as Dictionary).has("head"):
-				face = s_h16[s] >> 4
-			s_h16[s] = _sailable(s, face) * 16
+		var bx := (sgn * ((ax * (half >> 6)) >> 6)) / U
+		var by := (sgn * ((ay * (half >> 6)) >> 6)) / U
+		proj[side] = (bx * FM.cos_a(w_from) + by * FM.sin_a(w_from)) >> 12
+	var lee := -1
+	if absi(proj[0] - proj[1]) >= 200:
+		lee = 0 if proj[0] < proj[1] else 1
+	var flip := 1 if seed_value % 2 == 0 else -1
+	var order: Array[int] = [0, 1]
+	if lee == 1:
+		order = [1, 0]
+	var done: Array[int] = []
+	for side in order:
+		var list: Array = lists[side]
+		if list.is_empty():
+			continue
+		var shifts := _start_shifts()
+		var best_k := 0
+		var best_bad := 1 << 30
+		for k in shifts.size():
+			var sh: Array = shifts[k]
+			_place_line(side, list, units, ax, ay, half, int(sh[0]), int(sh[1]) * flip)
+			if not _apart(list, done):
+				continue
+			var bad := _start_bad(list, side == lee)
+			if bad < best_bad:
+				best_bad = bad
+				best_k = k
+			if bad == 0:
+				break
+		var bs: Array = shifts[best_k]
+		_place_line(side, list, units, ax, ay, half, int(bs[0]), int(bs[1]) * flip)
+		for s in list:
+			done.append(s)
+	# No shoal within START_CLEAR_M of a start line.
+	var cleared := false
+	var r := START_CLEAR_M / CELL_M
+	for s in done:
+		var gx0 := s_x[s] / (CELL_M * U)
+		var gy0 := s_y[s] / (CELL_M * U)
+		for gy in range(maxi(gy0 - r, 0), mini(gy0 + r + 1, g_h)):
+			for gx in range(maxi(gx0 - r, 0), mini(gx0 + r + 1, g_w)):
+				if (gx - gx0) * (gx - gx0) + (gy - gy0) * (gy - gy0) <= r * r and g[gy * g_w + gx] == 1:
+					g[gy * g_w + gx] = 0
+					cleared = true
+	if cleared:
+		_hash_land()
+
+
+const START_APART_M := 600
+
+
+## The shifts tried for a start line, [toward the middle, along the line]
+## in metres, the smallest moves first (up to 800 m in, 300 m along).
+static func _start_shifts() -> Array:
+	var out: Array = []
+	for cost in range(0, 1101, 50):
+		for du in range(0, 801, 100):
+			for dc: int in [0, 150, -150, 300, -300]:
+				if du + absi(dc) == cost:
+					out.append([du, dc])
+	return out
+
+
+## Side `side`'s ships in `list` in a line abreast at its end of the layout
+## axis (ax, ay) `half` from the middle, moved du m toward the middle and dc
+## m along the line, each on the nearest clear water, facing the enemy (or
+## the nearest point of sail, or her scenario heading).
+func _place_line(side: int, list: Array, units: Array, ax: int, ay: int, half: int, du: int, dc: int) -> void:
+	var cx := field_w * U / 2
+	var cy := field_h * U / 2
+	var sgn := 1 if side == 0 else -1
+	var hh := half - du * U
+	var bx := cx + sgn * ((ax * (hh >> 6)) >> 6) + ((-ay * (dc * U >> 6)) >> 6)
+	var by := cy + sgn * ((ay * (hh >> 6)) >> 6) + ((ax * (dc * U >> 6)) >> 6)
+	# Across the axis: (-ay, ax).
+	for i in list.size():
+		var s: int = list[i]
+		var off := (i * 2 - (list.size() - 1)) * 55 * U
+		var px := bx + ((-ay * (off >> 6)) >> 6)
+		var py := by + ((ax * (off >> 6)) >> 6)
+		# Stagger: every other ship a little back.
+		if i % 2 == 1:
+			px += sgn * ((ax * (40 * U >> 6)) >> 6)
+			py += sgn * ((ay * (40 * U >> 6)) >> 6)
+		var p := _clear_spot(px, py)
+		s_x[s] = p[0]
+		s_y[s] = p[1]
+		var face := FM.atan2_a(-sgn * ay, -sgn * ax)
+		if (units[s] as Dictionary).has("head"):
+			face = bearing_to_angle(int((units[s] as Dictionary)["head"]))
+		s_h16[s] = _sailable(s, face) * 16
+
+
+## True if every ship in `list` is START_APART_M from every ship in `other`.
+func _apart(list: Array, other: Array) -> bool:
+	for s: int in list:
+		for o: int in other:
+			if FM.approx_len(s_x[s] - s_x[o], s_y[s] - s_y[o]) < START_APART_M * U:
+				return false
+	return true
+
+
+## How much shoal and land lies in the way of a start line (0: none):
+## samples every 40 m within START_CLEAR_M of each ship and, for the
+## leeward fleet, along LEE_ROOM_M to leeward and on both beams.
+func _start_bad(list: Array, leeward: bool) -> int:
+	var bad := 0
+	var r := START_CLEAR_M
+	for s: int in list:
+		var dy := -r
+		while dy <= r:
+			var dx := -r
+			while dx <= r:
+				if dx * dx + dy * dy <= r * r and _cell_at(s_x[s] + dx * U, s_y[s] + dy * U) != 0:
+					bad += 1
+				dx += 40
+			dy += 40
+		if leeward:
+			for a: int in [(w_from + FM.ANGLE_HALF) & FM.ANGLE_MASK, (w_from + FM.ANGLE_QUARTER) & FM.ANGLE_MASK,
+					(w_from - FM.ANGLE_QUARTER) & FM.ANGLE_MASK]:
+				var m := 40
+				while m <= LEE_ROOM_M:
+					if _cell_at(s_x[s] + ((FM.cos_a(a) * m) >> 12) * U, s_y[s] + ((FM.sin_a(a) * m) >> 12) * U) != 0:
+						bad += 1
+					m += 40
+	return bad
 
 
 ## The nearest clear water to (x, y) (spiralling toward the centre).
@@ -641,6 +780,10 @@ func _make_land(l: Dictionary) -> void:
 					g[c] = 2
 				elif d < ir + nz + 45 and g[c] == 0:
 					g[c] = 1
+	_hash_land()
+
+
+func _hash_land() -> void:
 	var h := 5381
 	for k in g.size():
 		h = ((h * 33) ^ g[k]) & 0x7FFFFFFF
@@ -858,11 +1001,24 @@ func drive(s: int, h: int) -> int:
 	return 100 - (off - 400) * 18 / 112
 
 
+## Angle off the wind ship s sails close-hauled (as close as the navigator
+## lies: CLOSE_MARGIN off her no-go zone).
+func close_hauled(s: int) -> int:
+	return _irons(s) + CLOSE_MARGIN
+
+
+## True if ship s can lie a course for (tx, ty) without beating.
+func _lies(s: int, tx: int, ty: int) -> bool:
+	if ST.stat(s_type[s], "oars") != 0:
+		return true
+	return absi(FM.angle_diff(w_from, FM.atan2_a(ty - s_y[s], tx - s_x[s]))) >= close_hauled(s)
+
+
 ## A heading near h that ship s can sail (out of the no-go zone).
 func _sailable(s: int, h: int) -> int:
 	if ST.stat(s_type[s], "oars") != 0:
 		return h & FM.ANGLE_MASK
-	var c := _irons(s) + 24
+	var c := close_hauled(s)
 	var d := FM.angle_diff(w_from, h)
 	if absi(d) >= c:
 		return h & FM.ANGLE_MASK
@@ -888,44 +1044,109 @@ func target_speed(s: int) -> int:
 # ------------------------------------------------------------- navigation ---
 
 ## The heading ship s steers for a point: straight there when it can lie
-## that course, else close-hauled on the current tack until the point
-## bears on the other tack's layline (or land / the edge is ahead).
+## that course, else close-hauled on a tack until the point bears on the
+## other tack's layline. Sea room: a new board is the one with clear water
+## SEA_ROOM_M ahead (the one she is on when both or neither have it, else
+## the longer), and she tacks LAYLINE_M short of land or the edge ahead
+## when the other board has more room.
 func _course(s: int, tx: int, ty: int) -> int:
 	var b := FM.atan2_a(ty - s_y[s], tx - s_x[s])
 	if ST.stat(s_type[s], "oars") != 0:
 		s_tack[s] = 0
 		return b
-	var c := _irons(s) + 24
+	var c := close_hauled(s)
 	var d := FM.angle_diff(w_from, b)
 	if absi(d) >= c:
 		s_tack[s] = 0
 		return b
 	if s_tack[s] == 0:
 		var dh := FM.angle_diff(w_from, heading(s))
-		s_tack[s] = 1 if dh >= 0 else -1
+		var cur := 1 if dh >= 0 else -1
+		var r_cur := _clear_run(s, (w_from + cur * c) & FM.ANGLE_MASK, SEA_ROOM_M, false)
+		var r_oth := _clear_run(s, (w_from - cur * c) & FM.ANGLE_MASK, SEA_ROOM_M, false)
+		s_tack[s] = cur if r_cur >= SEA_ROOM_M or r_cur >= r_oth else -cur
 	var hd := (w_from + s_tack[s] * c) & FM.ANGLE_MASK
-	if not _probe_clear(s, hd, 160, false):
-		s_tack[s] = -s_tack[s]
-		hd = (w_from + s_tack[s] * c) & FM.ANGLE_MASK
+	var r_on := _clear_run(s, hd, LAYLINE_M, false)
+	if r_on < LAYLINE_M:
+		var ot := (w_from - s_tack[s] * c) & FM.ANGLE_MASK
+		if _clear_run(s, ot, LAYLINE_M, false) > r_on:
+			s_tack[s] = -s_tack[s]
+			hd = ot
 	return hd
 
 
 ## Clear water along heading h for `dist` metres (probes every 40 m) and
 ## inside the field (EDGE_M from the edges unless `edge_ok`).
 func _probe_clear(s: int, h: int, dist: int, edge_ok: bool) -> bool:
+	return _clear_run(s, h, dist, edge_ok) >= dist
+
+
+## Metres of clear water (0 .. dist, in 40 m steps) ship s has ahead on
+## heading h: a lane her beam wide plus a margin either side, free of land
+## (and of shoals for a deep ship) and inside the field (EDGE_M from the
+## edges, heading outward, unless `edge_ok`).
+func _clear_run(s: int, h: int, dist: int, edge_ok: bool) -> int:
 	var cs := FM.cos_a(h)
 	var sn := FM.sin_a(h)
+	var w := ST.stat(s_type[s], "beam") / 2 + 12
+	var wx := ((-sn * w) >> 12) * U
+	var wy := ((cs * w) >> 12) * U
 	var m := 40
 	while m <= dist:
 		var x := s_x[s] + ((cs * m) >> 12) * U
 		var y := s_y[s] + ((sn * m) >> 12) * U
-		if _blocked(s, x, y):
-			return false
+		if _blocked(s, x, y) or _blocked(s, x + wx, y + wy) or _blocked(s, x - wx, y - wy):
+			return m - 40
 		if not edge_ok and (x < EDGE_M * U or y < EDGE_M * U or x > (field_w - EDGE_M) * U or y > (field_h - EDGE_M) * U) \
 				and _outward(s, h):
-			return false
+			return m - 40
 		m += 40
-	return true
+	return dist
+
+
+## The bearing of the nearest land (or shoal she cannot cross) within
+## LEE_SHORE_M to leeward of ship s (within 60 degrees of dead downwind),
+## or -1.
+func _lee_shore(s: int) -> int:
+	if ST.stat(s_type[s], "oars") != 0:
+		return -1
+	var dn := (w_from + FM.ANGLE_HALF) & FM.ANGLE_MASK
+	var best := -1
+	var bd := LEE_SHORE_M + 1
+	for k: int in [0, -85, 85, -170, 170]:
+		var a := (dn + k) & FM.ANGLE_MASK
+		var cs := FM.cos_a(a)
+		var sn := FM.sin_a(a)
+		var m := 30
+		while m <= LEE_SHORE_M and m < bd:
+			if _blocked(s, s_x[s] + ((cs * m) >> 12) * U, s_y[s] + ((sn * m) >> 12) * U):
+				bd = m
+				best = a
+				break
+			m += 30
+	return best
+
+
+## Heading `want` for ship s, kept off a lee shore: within LEE_SHORE_M of
+## land to leeward she never steers in toward it but sails along it (the
+## shore abeam, on the side nearer to `want` and her heading) until she is
+## clear.
+func _off_lee_shore(s: int, want: int) -> int:
+	var ls := _lee_shore(s)
+	if ls < 0 or absi(FM.angle_diff(want, ls)) >= 300:
+		return want
+	var best := want
+	var bs := 1 << 30
+	var h := heading(s)
+	for sg: int in [1, -1]:
+		var c := _sailable(s, (ls + sg * FM.ANGLE_QUARTER) & FM.ANGLE_MASK)
+		var sc := absi(FM.angle_diff(want, c)) + absi(FM.angle_diff(h, c))
+		if absi(FM.angle_diff(c, ls)) < 224:
+			sc += 1024  # (still in toward it: only if the other is worse)
+		if sc < bs:
+			bs = sc
+			best = c
+	return best
 
 
 func _outward(s: int, h: int) -> bool:
@@ -941,8 +1162,11 @@ func _avoid(s: int, h: int, edge_ok: bool) -> int:
 	var reach := 120 + ST.stat(s_type[s], "len") * 2
 	if _probe_clear(s, h, reach, edge_ok):
 		return h
+	# (The side she is already turning to first: no swinging either side of
+	# an island.)
+	var first := 1 if FM.angle_diff(h, heading(s)) >= 0 else -1
 	for k in range(1, 9):
-		for sg: int in [1, -1]:
+		for sg: int in [first, -first]:
 			var c := (h + sg * k * 57) & FM.ANGLE_MASK
 			if drive(s, c) > 0 and _probe_clear(s, c, reach, edge_ok):
 				return c
@@ -992,30 +1216,87 @@ func _steer(s: int) -> void:
 			want = _course(s, s_flee_x[s], s_flee_y[s])
 		M_FIRE:
 			want = _fire_heading(s)
+	if s_lit[s] < 0:
+		want = _off_lee_shore(s, want)
 	want = _avoid(s, want, edge_ok)
 	if absi(FM.angle_diff(want, s_want[s])) > 28:
 		s_tdir[s] = 0
 	s_want[s] = want
 
 
-## Engage target t: close on it (beating up to windward of it when far),
-## then keep a broadside on at the loaded shot's range, presenting the
-## loaded side; open the range when too close.
+## The range (m) ship s engages at: the loaded shot's (the next one's while
+## reloading), at most four fifths of her gun range.
+func _want_range(s: int) -> int:
+	var rng := ST.stat(s_type[s], "range")
+	return mini(int(RANGE_PREF[s_ld[s * 2]]) if s_rl[s * 2] == 0 else int(RANGE_PREF[s_shot[s]]), rng * 8 / 10)
+
+
+## Metres ship s lies to windward of ship t (negative: to leeward).
+func _upwind_m(s: int, t: int) -> int:
+	var dx := (s_x[s] - s_x[t]) / U
+	var dy := (s_y[s] - s_y[t]) / U
+	return (dx * FM.cos_a(w_from) + dy * FM.sin_a(w_from)) >> 12
+
+
+## How far to windward (m) side `side` can beat in two boards: BOARD_M x 2
+## close-hauled, for its worst sailer to windward (the fleet keeps together).
+func _beat_reach(side: int) -> int:
+	var r := 1 << 30
+	for f in n_units:
+		if u_side[f] == side and u_state[f] == S_SAIL and s_lit[f] < 0 and ST.stat(s_type[f], "oars") == 0 \
+				and not ST.is_fire(s_type[f]):
+			r = mini(r, (2 * BOARD_M * FM.cos_a(close_hauled(f))) >> 12)
+	return r if r < (1 << 30) else 0
+
+
+## Where ship s closes on target t from far off (the engagement rule):
+## [kind, x, y]. Kind 0, she has the weather gauge (or can take it in one
+## board): she bears down to her range on t's windward side (a point
+## GAUGE_M to windward of t when she still has to take the gauge). Kind 1,
+## she is to leeward: she makes for t's lee bow (her range off t's lee
+## side, a little ahead of her), on a reach when she can lie it, else
+## beating, never past t. Kind 2, the battle AI's leeward ship whose enemy
+## lies to windward beyond its fleet's two boards' reach: she stops
+## beating and holds her line close-hauled, hove to, to receive t (for the
+## first HOLD_TICKS: an enemy who keeps the gauge and never comes down is
+## then sought out after all, not left to win on the clock).
+func _closing(s: int, t: int) -> Array:
+	var want_r := _want_range(s)
+	if ST.stat(s_type[s], "oars") != 0:
+		return [0, s_x[t], s_y[t]]
+	var cs := FM.cos_a(w_from)
+	var sn := FM.sin_a(w_from)
+	var up := _upwind_m(s, t)
+	if up >= 0:
+		return [0, s_x[t] + ((cs * want_r) >> 12) * U, s_y[t] + ((sn * want_r) >> 12) * U]
+	var gx := s_x[t] + ((cs * GAUGE_M) >> 12) * U
+	var gy := s_y[t] + ((sn * GAUGE_M) >> 12) * U
+	if _lies(s, gx, gy):
+		return [0, gx, gy]
+	var th := heading(t)
+	var k := want_r * 7 / 10
+	var lx := s_x[t] - ((cs * k) >> 12) * U + ((FM.cos_a(th) * k) >> 12) * U
+	var ly := s_y[t] - ((sn * k) >> 12) * U + ((FM.sin_a(th) * k) >> 12) * U
+	if not _lies(s, lx, ly) and ai_sides[u_side[s]] != 0 and tick < HOLD_TICKS and -up - want_r > _beat_reach(u_side[s]):
+		return [2, lx, ly]
+	return [1, lx, ly]
+
+
+## Engage target t: close on it from far off by the engagement rule
+## (_closing), then keep a broadside on at the loaded shot's range,
+## presenting the loaded side; open the range when too close.
 func _engage_heading(s: int, t: int) -> int:
 	var dx := s_x[t] - s_x[s]
 	var dy := s_y[t] - s_y[s]
 	var d := FM.approx_len(dx, dy) / U
 	var bt := FM.atan2_a(dy, dx)
-	var rng := ST.stat(s_type[s], "range")
-	var want_r := mini(int(RANGE_PREF[s_ld[s * 2]]) if s_rl[s * 2] == 0 else int(RANGE_PREF[s_shot[s]]), rng * 8 / 10)
+	var want_r := _want_range(s)
 	if d > want_r + 220:
-		var gx := s_x[t]
-		var gy := s_y[t]
-		if d > 600 and ST.stat(s_type[s], "oars") == 0:
-			# The weather gauge: make for a point up to windward of it.
-			gx += ((FM.cos_a(w_from) * 220) >> 12) * U
-			gy += ((FM.sin_a(w_from) * 220) >> 12) * U
-		return _course(s, gx, gy)
+		var cl := _closing(s, t)
+		if int(cl[0]) == 2:
+			s_tack[s] = 0
+			return _sailable(s, bt)  # close-hauled, her broadside toward t's approach
+		return _course(s, int(cl[1]), int(cl[2]))
 	var cands: Array[int] = []
 	if d > want_r + 60:
 		cands = [(bt + 160) & FM.ANGLE_MASK, (bt - 160) & FM.ANGLE_MASK]
@@ -1085,7 +1366,7 @@ func _fire_heading(s: int) -> int:
 	var tx := s_x[t] + ((FM.cos_a(th) * s_spd[t]) >> 12) * lead
 	var ty := s_y[t] + ((FM.sin_a(th) * s_spd[t]) >> 12) * lead
 	var b := FM.atan2_a(ty - s_y[s], tx - s_x[s])
-	var lies := absi(FM.angle_diff(w_from, b)) >= _irons(s) + 24
+	var lies := absi(FM.angle_diff(w_from, b)) >= close_hauled(s)
 	s_sail[s] = 2
 	if s_lit[s] < 0 and d < FS_LIGHT_M and lies:
 		_light(s)
@@ -1220,7 +1501,9 @@ func _move(s: int) -> void:
 	elif tv < v:
 		var k := 25
 		if not oars and off_wind(h) < _irons(s):
-			k = 12
+			# Head to wind she loses her way fast, unless she is turning
+			# through it (a tack carries her round on her way).
+			k = TACK_WAY if s_tdir[s] != 0 else 12
 		v -= maxi((v - tv) / k, 1)
 	s_spd[s] = maxi(v, 0)
 	# Way and leeway.
@@ -1247,6 +1530,21 @@ func _move(s: int) -> void:
 	var half := ST.stat(ty, "len") * U / 2
 	var bx := nx + ((FM.cos_a(h) * (half >> 6)) >> 6)
 	var by := ny + ((FM.sin_a(h) * (half >> 6)) >> 6)
+	if _blocked(s, s_x[s], s_y[s]) and st == S_SAIL:
+		# Aground amidships: she works off, slowly and without leeway, once
+		# her bow points at open water within 60 m (the steering turns her).
+		s_spd[s] = mini(s_spd[s], _vmax(s) / 10)
+		var ok := false
+		for m: int in [20, 40, 60]:
+			if not _blocked(s, s_x[s] + ((FM.cos_a(h) * m) >> 12) * U, s_y[s] + ((FM.sin_a(h) * m) >> 12) * U):
+				ok = true
+				break
+		if ok:
+			s_x[s] = clampi(s_x[s] + ((FM.cos_a(h) * s_spd[s]) >> 12), 0, field_w * U)
+			s_y[s] = clampi(s_y[s] + ((FM.sin_a(h) * s_spd[s]) >> 12), 0, field_h * U)
+		else:
+			s_spd[s] = 0
+		return
 	if _blocked(s, bx, by) or _blocked(s, nx, ny):
 		if s_spd[s] > _vmax(s) / 5 and s_ground[s] <= tick:
 			s_hull[s] = maxi(s_hull[s] - maxi(s_hull0[s] / 40, 1), 0)
@@ -2208,7 +2506,7 @@ func _think(s: int) -> void:
 			my_b += s_crew[f] * s_bq[f] / 100 + s_troops[f] * 12 / 10
 	var crippled := s_rig[t2] * 100 / s_rig0[t2] < 40 or s_spd[t2] < _vmax(t2) / 4
 	var runs := s_mode[t2] == M_FLEE and s_spd[t2] * 10 >= s_spd[s] * 9
-	if my_b * 100 > her_b * 160 and not runs and (dist < 260 or crippled or ST.stat(s_type[s], "oars") != 0):
+	if my_b * 100 > her_b * BOARD_PCT and not runs and (dist < 260 or crippled or ST.stat(s_type[s], "oars") != 0):
 		if s_mode[s] != M_BOARD or s_tgt[s] != t2:
 			s_mode[s] = M_BOARD
 			s_tgt[s] = t2
@@ -2222,6 +2520,8 @@ func _think(s: int) -> void:
 		s_tdir[s] = 0
 	s_fire[s] = 1
 	s_sail[s] = 1 if dist < 320 else 2
+	if dist > _want_range(s) + 220 and int(_closing(s, t2)[0]) == 2:
+		s_sail[s] = 1 if _lee_shore(s) >= 0 else 0  # (hove to; under sail near a lee shore)
 	# Shot: grape close, chain to cripple a ship it means to board, else round.
 	if dist < shot_range(s, ST.SHOT_GRAPE) * 9 / 10 and s_crew[t2] * 100 / maxi(s_crew0[t2], 1) > 35:
 		s_shot[s] = ST.SHOT_GRAPE

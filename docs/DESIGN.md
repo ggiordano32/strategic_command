@@ -5599,7 +5599,8 @@ minutes.
   from the enemy (preferring a fast point of sail) when beaten (hull < 28 %,
   crew < 32 % or morale < 22 and the enemy stronger); else the nearest
   weakest enemy (kept unless another is much better); board when its
-  boarding strength (with friends already boarding her) is 1.6 x hers and
+  boarding strength (with friends already boarding her) is 1.6 x hers (1.3
+  x since sea pass 4, below) and
   she is close or crippled (not a ship outrunning it); else engage: beyond
   ~600 m beat up to a point 220 m to windward of her (the weather gauge),
   then hold the broadside on at the loaded shot's range, presenting the
@@ -5776,6 +5777,64 @@ fought", the co-op, deck melee and fire ship bullets).
   (when a figure last struck, for the sparks) is view data, not hashed.
   Desktop: 60-70 us a tick, 160 us during a deck melee (worst 300 us);
   `state_hash` 26-30 us; a snapshot 1.6-1.9 KB.
+
+### Sea battles: the leeward fleet (sea pass 4, as built 2026-10-17)
+
+The owner's tablet report: tacking is fun but too extreme; the downwind
+ships keep running aground and never really engage. Measured first
+(`tests/sea_probe.gd`, STATUS "Sea pass 4"), then these rules (they
+replace the N3a "beyond ~600 m beat up to a point 220 m to windward" and
+"probes ahead" above). Points of sail table unchanged (a gentler
+close-hauled margin measured no gain).
+
+- **Tacking carries her way**: a ship turning through the wind loses her
+  speed slowly (`TACK_WAY`, a 30 s time constant) instead of in about a
+  second; head to wind and not turning she still stops fast. A frigate
+  tacks in about 30 s and comes out at about 30 % speed (before, every
+  frigate or galleon tack ended in irons and a wear).
+- **The engagement rule** (`_closing`, any ship sent to engage, beyond her
+  range + 220 m): the weather gauge is for the ship that has it (to
+  windward of her target: she bears down to her range on its windward
+  side) or can fetch the gauge point (220 m to windward of the target) on
+  one board. A leeward ship makes for the target's lee bow (her range off
+  its lee side, a little ahead of it): on a reach when she can lie it,
+  else beating that far, never past the target. The battle AI's leeward
+  ship whose target lies to windward beyond its fleet's two boards' reach
+  (`BOARD_M` 400 m x 2 close-hauled, for the fleet's worst sailer to
+  windward) stops beating and holds its line: hove to, close-hauled
+  toward the enemy, broadside to its approach (under sail near a lee
+  shore). It holds at most `HOLD_TICKS` (3 min), then beats up after all:
+  a player who keeps the gauge and never comes down must not win on the
+  clock (ties go to the defender).
+- **Sea room** (every ship, any mode): the navigator's probes look down a
+  lane her beam wide plus 12 m either side, not a line; a new board is
+  the one with `SEA_ROOM_M` 400 m of clear water ahead (the board she is
+  on when both or neither have it, else the longer); she tacks `LAYLINE_M`
+  200 m short of land or the edge when the other board has more room;
+  within `LEE_SHORE_M` 250 m of land to leeward (within 60 deg of dead
+  downwind) she never steers in toward it but sails along it, the shore
+  abeam, on the side nearer her course and her heading, until clear;
+  turning away from land she tries the side she is already turning to
+  first (no swinging either side of an island). A ship aground amidships
+  works off at a tenth of her speed, without leeway, once her bow points
+  at open water within 60 m (before, she could lie there all battle).
+- **Deployment**: each fleet's line (no scenario positions) is shifted
+  toward the middle and / or along the line, the smallest move first (up
+  to 800 m in and 300 m along, the sideways sign by the seed, the fleets
+  kept 600 m apart), so that no shoal or land lies within `START_CLEAR_M`
+  300 m of a ship and the leeward fleet (200 m or more farther downwind;
+  placed first) has `LEE_ROOM_M` 500 m of clear water to leeward and on
+  both beams; failing that, the shift with the least land in the way.
+  Shoals still within 300 m of a ship are cleared to open water (setup
+  rebuilds the grid the same way on every peer; `ter_hash` covers it).
+- **Boarding**: the battle AI boards at `BOARD_PCT` 130 % of the target's
+  boarding strength (was 160 %); three quarters of its boardings take the
+  prize in the probe.
+- **Ship book**: the Points of sail page says how a tack carries her way,
+  the sea-room rules and the engagement rule; the Engaging paragraph
+  points to it (`game/sea_book.gd`).
+- **Determinism**: no new state; the rules read the hashed state (tick,
+  positions, the wind, `ai_sides`) and the land grid. Cost: see STATUS.
 
 ### Story campaign: "The Brethren's Due" (agreed 2026-10-14; steps 1-2 built 2026-10-15, see "as built" below)
 

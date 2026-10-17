@@ -1936,3 +1936,37 @@ could give (ORDER_OCCUPY, ORDER_GATE, attack and move orders).
   forage or take up engines stays on the field (Rome's leave it, the
   2026-10-09 rule); horse do not pick a target within a free musket line's
   range + `GUN_COVER_PAD` 30 m (`_gun_covered`), counter-charges excepted.
+
+## 30. Sea battle AI: the leeward fleet (sea pass 4, 2026-10-17)
+
+The sea battle AI (`sim/sea_sim.gd` `_think`, `_closing`; DESIGN "Sea
+battles: the leeward fleet") lives in the sea sim, apart from the land
+battle AI above. What it does since sea pass 4 (the owner: the downwind
+fleet grounds and never engages; measured with `tests/sea_probe.gd`):
+
+- **Target and stance** as in N3a (nearest weakest enemy, flee when
+  beaten, grape close, chain to cripple a ship it means to board).
+- **Boards** when its boarding strength (with friends already boarding the
+  same ship) is `BOARD_PCT` 130 % of hers (was 160 %), she is close or
+  crippled and not outrunning it.
+- **Closing from far off, by the wind**: a ship that has the weather gauge
+  bears down to her range on the enemy's windward side (no hovering up to
+  windward); a ship that can fetch the gauge on one board takes it; a
+  leeward ship makes for the enemy's lee bow, on a reach when she can,
+  never beating past the enemy. A leeward fleet whose enemy lies to
+  windward beyond two boards' reach (its worst sailer to windward) stops
+  beating and heaves to in line, close-hauled toward the enemy, to receive
+  it; after `HOLD_TICKS` (3 min) it beats up anyway, so a player who keeps
+  the gauge and never comes cannot win on the clock.
+- **Seamanship it shares with the player's ships** (the navigator): sea
+  room ahead when choosing a board, tacking short of land, never steering
+  in toward a lee shore within 250 m, working off a bank, tacks that carry
+  their way.
+- **Measured** (24 seeds, mirrored fleets, AI both sides): side 1 wins
+  9-14 of 24 by layout (96 seeds: 37-55 of 96, 44-50 with the side order
+  swapped, so mostly noise; before 34-56, 56 across the wind and 34 on
+  the campaign's coasts); groundings 238 -> 37 over 120 battles; the
+  leeward fleet fires first within 0.99-1.08 x the windward fleet's time.
+  Open: a scripted player who sends every ship at the nearest enemy and
+  never flees wins 15-19 of 24 against it (11-15 before): its flight rule
+  is the suspect (sea balance follow-ons).

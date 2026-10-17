@@ -186,9 +186,12 @@ func _page_sail() -> void:
 		hb.add_child(a)
 		hb.add_child(Kit.label(str(r[1]), 14, Kit.COL_GOLD))
 		col.add_child(hb)
-	_p("The wind: inside the no-go zone (%d degrees either side of the wind for a %s) a ship has no drive and slows to a stop. The navigator beats to windward in two tacks. She turns through the wind (tacks) when she carries at least %d %% of her top speed, else she wears round the other way, through downwind. A ship caught in irons without way falls off. The wind strength changes the speed too: a calm gives 45 %% of top speed, and each point of strength adds 0.7 %% up to a cap of 110 %%. The wind shifts a little every %d s." % [
+	_p("The wind: inside the no-go zone (%d degrees either side of the wind for a %s) a ship has no drive and slows to a stop. The navigator beats to windward in two tacks. She turns through the wind (tacks) when she carries at least %d %% of her top speed, else she wears round the other way, through downwind. Turning through the wind she carries her way round; head to wind and not turning she loses it in seconds, and a ship caught in irons without way falls off. The wind strength changes the speed too: a calm gives 45 %% of top speed, and each point of strength adds 0.7 %% up to a cap of 110 %%. The wind shifts a little every %d s." % [
 		irons, nm, ST.stat(ty, "tack"), SeaSim.WIND_EVERY / 10])
-	_p("Planning a course to a point: tap the sea and the course is drawn with its tacks. A ship sent to engage from far off beats up to windward of the enemy first (the weather gauge).")
+	_p("Planning a course to a point: tap the sea and the course is drawn with its tacks. She keeps sea room: she starts each board on the tack with clear water ahead, tacks %d m short of land or the map edge, and within %d m of a shore to leeward she sails along it, never in toward it." % [
+		SeaSim.LAYLINE_M, SeaSim.LEE_SHORE_M])
+	_p("A ship sent to engage from far off takes the weather gauge only when she has it or can fetch it on one board, and then bears down to her range. From to leeward she makes for the enemy's lee bow, on a reach when she can, and never beats up past her. An enemy fleet to leeward of yours with you more than two boards to windward heaves to in line to receive you (for the first %d minutes), and comes to you after that." % [
+		SeaSim.HOLD_TICKS / 600])
 
 
 func _draw_polar(c: Control) -> void:
@@ -275,7 +278,7 @@ func _page_shot() -> void:
 
 func _page_fight() -> void:
 	_h("Engaging")
-	_p("Tap an enemy to engage her. Your ship sails to keep her broadside on at the range of the shot she holds (round %d m, chain %d m, grape %d m, never more than four fifths of her gun range). From far off she beats up to windward of the enemy first. Her guns fire as the target comes into the arc." % [SeaSim.RANGE_PREF[0], SeaSim.RANGE_PREF[1], SeaSim.RANGE_PREF[2]])
+	_p("Tap an enemy to engage her. Your ship sails to keep her broadside on at the range of the shot she holds (round %d m, chain %d m, grape %d m, never more than four fifths of her gun range). From far off she closes by the wind (the Points of sail page): from to windward she bears down, from to leeward she makes for the enemy's lee bow. Her guns fire as the target comes into the arc." % [SeaSim.RANGE_PREF[0], SeaSim.RANGE_PREF[1], SeaSim.RANGE_PREF[2]])
 	_h("Boarding")
 	_p("Arm Board, then tap an enemy (a struck ship too). She sails alongside, coming up under the stern when far. When the two ships' centres are within 40 %% of their lengths added together plus 8 m, and they are moving slowly relative to each other (or the target is nearly stopped), she grapples; both stop. A boarded ship is taken at once if she has struck. Otherwise the boarding party (%d %% of the boarder's crew and every soldier aboard) fights the defenders on the decks; the defenders, on their own deck, fight at %d %% strength. The defenders strike when their morale is gone or they are under %d %% of the boarders; the boarders are thrown back when theirs is gone or they are under %d %% of the defenders; if both crews are spent the ships part. Cripple her with chain and thin her crew with grape first." % [
 		SeaSim.DECK_BOARD_PCT, SeaSim.DECK_BONUS_PCT, SeaSim.DECK_BREAK_DEF, SeaSim.DECK_BREAK_ATT])
