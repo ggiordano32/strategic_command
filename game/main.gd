@@ -18,6 +18,7 @@ const LoadingPanel := preload("res://game/campaign/loading_panel.gd")
 const MapView := preload("res://game/campaign/map_view.gd")
 const Saves := preload("res://game/campaign/saves.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
+const ServerPage := preload("res://game/net/server_page.gd")
 const CState := preload("res://campaign/cstate.gd")
 const CData := preload("res://campaign/cdata.gd")
 const PackView := preload("res://game/campaign/pack_view.gd")
@@ -84,6 +85,7 @@ var _join_info: Label
 var _join_box: VBoxContainer
 var _share_box: VBoxContainer
 var _net_line: Label
+var _server_page  # game/net/server_page.gd
 var _online_box: VBoxContainer
 
 
@@ -205,6 +207,10 @@ func _ready() -> void:
 				int(sp[9]) if sp.size() > 9 else 900])
 		elif a.begins_with("--menu-page="):
 			show_page(a.get_slice("=", 1))  # testing aid
+		elif a.begins_with("--host-start="):
+			# Testing aid: open the Game server page and press Host > Start on that port.
+			show_page("server")
+			_server_page.autostart.call_deferred(int(a.get_slice("=", 1)))
 		elif a == "--new-campaign":
 			_new_campaign_page()  # testing aid
 		elif a == "--custom" or a.begins_with("--custom-template=") or a.begins_with("--custom-join="):
@@ -284,16 +290,21 @@ func _check_server() -> void:
 	if net == null or _net_line == null:
 		return
 	if not net.has_server():
-		_net_line.text = "Online play needs the game server (open the game from its web address)."
+		_net_line.text = "Online play needs the game server (see Game server)."
 		return
 	_net_line.text = "Checking the game server..."
 	var ok: bool = await net.check_server()
 	if ok:
-		_net_line.text = "Online co-op ready." + (" A newer version of the game is on the server: reload the page." if net.new_build_available else "")
-		_net_line.add_theme_color_override("font_color", Kit.COL_GOOD if not net.new_build_available else Kit.COL_GOLD)
+		var d: Dictionary = net.describe_info(net.info)
+		_net_line.text = ("Online co-op ready" + ("" if net.is_official() else " (server %s)" % net.server_url()) + ".") if bool(d["ok"]) else str(d["text"])
+		_net_line.text += " A newer version of the game is on the server: reload the page." if net.new_build_available else ""
+		_net_line.add_theme_color_override("font_color", Kit.COL_GOOD if bool(d["ok"]) and not net.new_build_available else Kit.COL_GOLD)
 	else:
-		_net_line.text = "The game server is not available: online play is off; local play works as usual."
+		var t = net.launch.get("server_result", null)
+		_net_line.text = str(t["text"]) if t is Dictionary and not bool(t["ok"]) else "The game server is not available: online play is off; local play works as usual."
 		_net_line.add_theme_color_override("font_color", Kit.COL_DIM)
+	if _server_page != null:
+		_server_page.refresh()
 
 
 func _build_menu() -> Control:
@@ -305,6 +316,7 @@ func _build_menu() -> Control:
 	_pages["import"] = _build_import(bg)
 	_pages["join"] = _build_join(bg)
 	_pages["share"] = _build_share(bg)
+	_pages["server"] = _build_server(bg)
 	var center := _scroll_page(bg)
 	_pages["sandbox"] = center.get_parent()
 	var vb := VBoxContainer.new()
@@ -440,6 +452,10 @@ func _build_home(bg: Control) -> Control:
 	row.add_theme_constant_override("v_separation", 8)
 	row.alignment = FlowContainer.ALIGNMENT_CENTER
 	vb.add_child(row)
+	var srv := _menu_button("Game server", show_page.bind("server"))
+	srv.name = "home_server"
+	srv.tooltip_text = "Which server online play uses (the official one, a friend's or your own), and hosting one from this PC."
+	row.add_child(srv)
 	var cbt := _menu_button("Custom battle", _open_custom)
 	cbt.name = "home_custom"
 	row.add_child(cbt)
@@ -555,7 +571,7 @@ func _fill_online() -> void:
 	var net := _net()
 	if net == null:
 		return
-	var list: Array = net.accounts.list()
+	var list: Array = net.local_campaigns()
 	if list.is_empty():
 		return
 	_online_box.add_child(Kit.label("Online", 15, Kit.COL_GOLD))
@@ -597,6 +613,18 @@ func _update_badges(labels: Dictionary) -> void:
 		if is_instance_valid(l) and got.has(cid):
 			l.text = str(got[cid]["text"])
 			l.add_theme_color_override("font_color", got[cid]["color"])
+
+
+func _build_server(bg: Control) -> Control:
+	var vb := _page_box(bg)
+	var net := _net()
+	var pg := ServerPage.new()
+	_server_page = pg
+	vb.add_child(pg)
+	if net != null:
+		pg.setup(net)
+	pg.back_requested.connect(show_page.bind("home"))
+	return vb.get_parent().get_parent()
 
 
 func _build_import(bg: Control) -> Control:
@@ -641,7 +669,7 @@ func _build_join(bg: Control) -> Control:
 	_join_edit.name = "join_code"
 	_join_edit.custom_minimum_size = Vector2(240, 52)
 	_join_edit.add_theme_font_size_override("font_size", 26)
-	_join_edit.max_length = 11
+	_join_edit.max_length = 300  # a whole link can be pasted
 	_join_edit.alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_join_edit.virtual_keyboard_type = LineEdit.KEYBOARD_TYPE_DEFAULT
 	_join_edit.text_changed.connect(func(t: String):
@@ -674,11 +702,19 @@ func _join_find() -> void:
 	for c in _join_box.get_children():
 		c.queue_free()
 	var raw := _join_edit.text
+	var full := raw
 	# A whole link pasted: take its code.
 	for key in ["join=", "link="]:
 		if raw.to_lower().contains(key):
 			raw = raw.substr(raw.to_lower().find(key) + key.length()).get_slice("&", 0)
 	var code: String = NetScript.norm_code(raw)
+	if net != null and full.to_lower().contains("server="):
+		# A link from a friend's own server: switch to it (an http one is refused in a browser).
+		var sv: String = full.substr(full.to_lower().find("server=") + 7).get_slice("&", 0).uri_decode()
+		var sr: Dictionary = await net.set_server(sv)
+		if not bool(sr["ok"]):
+			_join_info.text = str(sr["text"])
+			return
 	if net == null or not net.has_server():
 		_join_info.text = "Online play needs the game server: open the game from its web address."
 		return
@@ -870,6 +906,8 @@ func show_page(p: String) -> void:
 		(_pages[k] as Control).visible = k == p
 	if p == "continue":
 		_fill_continue()
+	if p == "server" and _server_page != null:
+		_server_page.refresh()
 	if p == "home":
 		_subtitle.text = PackView.subtitle(PackView.load_pref())
 		_update_soldiers_button()  # a battle may have switched it (soldier self-check)
@@ -888,6 +926,11 @@ func _new_campaign_page(online: bool = false) -> void:
 		_new_campaign.queue_free()
 		_new_campaign = null
 		_open_campaign(d, sl, lp))
+	_new_campaign.server_requested.connect(func():
+		_new_campaign.queue_free()
+		_new_campaign = null
+		_menu.visible = true
+		show_page("server"))
 	_new_campaign.back.connect(func():
 		_new_campaign.queue_free()
 		_new_campaign = null

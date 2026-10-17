@@ -142,5 +142,8 @@ and Natural Earth coastlines and rivers by a tool that takes any window of
 the globe, so the same engine can carry other settings. Design notes live
 in [`docs/`](docs/).
 
+Playing online, choosing or hosting a game server: [`docs/PLAYING_ONLINE.md`](docs/PLAYING_ONLINE.md);
+running the server yourself: [`server/README.md`](server/README.md).
+
 Playable in any modern browser on Android, iPhone or desktop. Ask Garrett
 for the link and the invite key.

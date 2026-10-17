@@ -55,7 +55,9 @@ hash matches its content. It does not validate orders or results.
   outbox, verification, long-poll), `game/net/net.gd` (autoload `Net`:
   server info, create / join / device codes, Continue badges),
   `game/campaign/online_ui.gd` (the online turn flow on the campaign screen),
-  `game/net/net_selftest.gd` (browser self-test, `?nettest=`).
+  `game/net/net_selftest.gd` (browser self-test, `?nettest=`),
+  `game/net/host.gd` (desktop only: starts and stops the bundled `scserver`),
+  `game/net/server_page.gd` (the Game server page: address, Test, Host a server).
 
 ## 2. Running it
 
@@ -371,7 +373,11 @@ discordapp / ptb / canary), is never returned to clients after being set
 
 - **State format version** (`CState.VERSION`, now 7; the server reports the one it was built for as `state_version` in `/api/info`) must match exactly:
   the server stores the creator's, refuses uploads of another, and a client
-  of another format refuses to open the campaign ("update the game").
+  of another format refuses to open the campaign ("update the game"). The
+  client also compares `/api/info.state_version` with its own `CState.VERSION`
+  before creating a campaign and says "this server is for another version of
+  the game" (Game server page Test, and the Online co-op screen); a server
+  without the field is accepted.
 - **Rules hash** (`rules:xxxxxxxx`): SHA-1 of `campaign/*.gd` + `sim/*.gd`
   (sorted paths), written into `build_stamp.txt` by `tools/export_web.sh`
   (`game/net/net.gd` computes the same from the sources when there is no
@@ -424,6 +430,9 @@ Online dialog.
 - No accounts. A **seat token** (32 random bytes, base64url) is the only
   credential; it lives in the browser's storage (`user://online/`, i.e.
   IndexedDB). Stored on the server as SHA-256; compared in constant time.
+  Seat tokens are kept per server (`campaigns[id].server` in `accounts.json`;
+  entries without one belong to the official server) and only ever sent to
+  that server.
   Each device has its own token (device codes mint a new one), so a lost
   device's token could be revoked (a `revoked` column exists; there is no UI
   for it yet).

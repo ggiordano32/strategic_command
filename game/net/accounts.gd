@@ -7,7 +7,10 @@ extends RefCounted
 ##
 ## {"device": random id, "invite": invite key last used,
 ##  "discord_user": the player's Discord id (optional),
-##  "campaigns": {id: {id, f, token, name, added_at}}}
+##  "server": the game server chosen on this device (absent: the default),
+##  "campaigns": {id: {id, f, token, name, added_at, server}}}
+## A seat token is only ever sent to the server the campaign was made on
+## (`server`; entries without one belong to the official server).
 
 var path := "user://online/accounts.json"
 var data := {"device": "", "invite": "", "discord_user": "", "campaigns": {}}
@@ -46,9 +49,11 @@ func device() -> String:
 	return str(data["device"])
 
 
-func add(id: String, f: int, token: String, name: String, pack: String = "rome") -> void:
+func add(id: String, f: int, token: String, name: String, pack: String = "rome", server: String = "") -> void:
 	data["campaigns"][id] = {"id": id, "f": f, "token": token, "name": name,
 		"added_at": int(Time.get_unix_time_from_system())}
+	if server != "":
+		data["campaigns"][id]["server"] = server
 	if pack != "rome":
 		data["campaigns"][id]["pack"] = pack
 	save()
@@ -68,6 +73,15 @@ func get_entry(id: String) -> Dictionary:
 func list() -> Array:
 	var out: Array = (data["campaigns"] as Dictionary).values()
 	out.sort_custom(func(a, b): return int(a.get("added_at", 0)) > int(b.get("added_at", 0)))
+	return out
+
+
+## Newest first, only the campaigns that live on `server`.
+func list_for(server: String, official: String) -> Array:
+	var out: Array = []
+	for e in list():
+		if str(e.get("server", official)) == server:
+			out.append(e)
 	return out
 
 

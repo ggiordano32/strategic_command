@@ -17,6 +17,7 @@ extends Control
 ## panel: the loading panel opened by the tap (it carries on to the map).
 signal start(data: Dictionary, slot: String, panel: Node)
 signal back
+signal server_requested  ## the Change button of the Server row: the menu opens its Game server page
 signal created_online(id: String, join_code: String)
 
 const TouchScroll := preload("res://game/touch_scroll.gd")
@@ -59,6 +60,7 @@ var online := false
 var _online_box: VBoxContainer
 var _hook_edit: LineEdit
 var _user_edit: LineEdit
+var _server_label: Label
 var _invite_edit: LineEdit
 var _invite_row: Control  # the invite field (with its Paste button on the web)
 var _creating := false
@@ -196,6 +198,15 @@ func _ready() -> void:
 	_online_box.visible = online
 	v.add_child(_online_box)
 	var net := get_node_or_null("/root/Net")
+	if net != null:
+		var svrow := Kit.flow(8)
+		_server_label = Kit.label("Server: %s%s" % [net.server_url(), " (official)" if net.is_official() else ""], Kit.FONT, Color.WHITE)
+		_server_label.name = "server_label"
+		svrow.add_child(_server_label)
+		var sb := Kit.button("Change", func(): server_requested.emit(), 110)
+		sb.name = "server_change"
+		svrow.add_child(sb)
+		_online_box.add_child(svrow)
 	_online_box.add_child(Kit.label("Discord notifications (optional): a channel's webhook URL (Channel settings > Integrations > Webhooks), and your Discord user id for @mentions (Discord settings > Advanced > Developer mode, then right-click your name > Copy User ID).", 13, Kit.COL_DIM, true))
 	_hook_edit = Kit.text_field("https://discord.com/api/webhooks/...", "", 300, "Discord webhook URL", true)
 	_hook_edit.name = "webhook"
@@ -455,11 +466,16 @@ func _start_story(coop: bool = false) -> void:
 func _start_online(story: bool = false) -> void:
 	var net := get_node_or_null("/root/Net")
 	if net == null or not net.has_server():
-		_info.text = "Online play needs the game server: open the game from its web address."
+		_info.text = "Online play needs a game server: use Change to pick one."
 		_info.add_theme_color_override("font_color", Kit.COL_BAD)
 		return
 	if not net.available and not await net.check_server():
-		_info.text = "The game server is not available right now, so online play is off. Local play works as usual."
+		_info.text = "The game server %s is not available right now, so online play is off. Local play works as usual, or use Change to pick another server." % net.server_url()
+		_info.add_theme_color_override("font_color", Kit.COL_BAD)
+		return
+	var sinfo: Dictionary = net.describe_info(net.info)
+	if bool(sinfo["mismatch"]):
+		_info.text = str(sinfo["text"])
 		_info.add_theme_color_override("font_color", Kit.COL_BAD)
 		return
 	var sd := int(seed_edit.text) if seed_edit.text.is_valid_int() else 1

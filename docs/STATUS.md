@@ -1,6 +1,6 @@
 # Strategic Command — Status and Handover
 
-Last updated: 2026-10-16 (slice 2c: harbour forts with an inside, fighting from buildings, the musket line's reserve, built, not committed; balance pass T: firearm AI, per-man fire in cover, street posts, siege rally rule, built, not committed; pathing phase J, fight jitter and stuck units, built, not committed; pathing phase W, West open towns, built, not committed; 2026-10-15 pathing phases C1-C7, street fighting, built, not committed; earlier 2026-10-09: siege towers built, not committed; the general and his bodyguard built, not committed; camels and elephants built, not committed; ammunition kinds and fire, foraging and the ammunition wagon built, not committed; earlier 2026-10-08: a CPU-fed soldier rendering fallback, picked by the battle's self-check, for Chrome on an Adreno 650 tablet that drew no soldiers; earlier 2026-10-07: any ally can join a fought co-op battle and be given units; the battle screen on the overworld; cities worth defending, part 2b: siege equipment as objects, the ladder shuffle and wall-punching bugs; part 2a: units do not pass through each other, street fights; part 1: tower engines, ladders, a ram, hard gates, the battle time limit; earlier 2026-10-06: deployment phase and custom battles built; the continuous campaign overworld built, state format 6; free campaign movement built; sieges and battle odds built on the campaign map; settlement variety built 2026-10-05). Read this first, then `docs/DESIGN.md` for the full
+Last updated: 2026-10-17 (distribution milestone D: standalone game server image, Server field, Host a server, desktop exports, built, not committed; slice 2c: harbour forts with an inside, fighting from buildings, the musket line's reserve, built, not committed; balance pass T: firearm AI, per-man fire in cover, street posts, siege rally rule, built, not committed; pathing phase J, fight jitter and stuck units, built, not committed; pathing phase W, West open towns, built, not committed; 2026-10-15 pathing phases C1-C7, street fighting, built, not committed; earlier 2026-10-09: siege towers built, not committed; the general and his bodyguard built, not committed; camels and elephants built, not committed; ammunition kinds and fire, foraging and the ammunition wagon built, not committed; earlier 2026-10-08: a CPU-fed soldier rendering fallback, picked by the battle's self-check, for Chrome on an Adreno 650 tablet that drew no soldiers; earlier 2026-10-07: any ally can join a fought co-op battle and be given units; the battle screen on the overworld; cities worth defending, part 2b: siege equipment as objects, the ladder shuffle and wall-punching bugs; part 2a: units do not pass through each other, street fights; part 1: tower engines, ladders, a ram, hard gates, the battle time limit; earlier 2026-10-06: deployment phase and custom battles built; the continuous campaign overworld built, state format 6; free campaign movement built; sieges and battle odds built on the campaign map; settlement variety built 2026-10-05). Read this first, then `docs/DESIGN.md` for the full
 design and `CLAUDE.md` for working rules. Update this file whenever a
 milestone lands or the plan changes.
 
@@ -959,6 +959,12 @@ A tuning pass from playtest feedback (built, uncommitted):
   feel right; whether AI batteries and guards behave sensibly in play.
 - bench_4000 (two armies a side) now runs ~10 min to a decision (2,000:
   ~5 min); the AI's second line and batteries could be looked at.
+- Forts leftovers (2026-10-17, slice 2c): walls 1 too easy at 59 % (the
+  garrison pulls a company out of the streets: a sally, or the garrison coming
+  down to the inner streets, would put it back); the field AI still loses to
+  the scripted charger (2 losses 2 draws of 4); walls 3 at 12 % is attrition at
+  the walls, not routing; the West benches cost 12-15 % more.
+- Distribution D open items: see "Distribution (D)" below.
 
 ## Next session (2026-10-10, the co-op campaign)
 
@@ -1986,6 +1992,10 @@ fort; men in a house do not fight room to room; timber houses do not burn
 with men inside; galleries only on taverns' fronts; the West benches cost
 12-15 % more.
 
+**Distribution (D): standalone game server, itch.io, player hosting (as built 2026-10-16 / 17, not committed; DESIGN "Distribution", SERVER.md 2 / 10 / 13 / 15, `docs/PLAYING_ONLINE.md`, `server/README.md`).** The goal: the game on itch.io (web + desktop), the game server a Docker image anyone can run, a "Host a server" button in the desktop build. **Server half (D-server, 2026-10-16):** the Go server can be called from another site. `SC_ALLOWED_ORIGINS` / `-allowed-origins` (comma list, `*`, or suffix wildcards such as `https://*.itch.zone`) adds real CORS (preflight 204, echoed origin, `Vary: Origin`) for `/api/*`, `/healthz` and `/telemetry`, and lets listed origins open the WebSockets; unset is byte-for-byte the old behaviour (own origin only). No web dir (`-web ""` or missing): `/` answers a one-line text page (`SC_GAME_URL` shown), `/api/info` works. `/api/info` has `state_version` (Go constant `StateVersion` = 7, bumped with `CState.VERSION`). `server/Dockerfile` has targets `server` (API only, the public image) and `full` (default, with `build/web`); `server/deploy/selfhost/` (compose profiles `scserver` and `caddy`, Caddyfile, `.env.example`); `.github/workflows/server-image.yml` (tag `v*` + manual: multi-arch push to `ghcr.io/ggiordano32/strategic-command-server`) and `server-test.yml`; `server/README.md` for self-hosters. Test: `server/internal/server/origins_test.go`. **Client half (D-client, 2026-10-17):** the client picks its game server. `Api.pick_base_url` order: `--server=`, the address saved in `accounts.json` (`server`), the page origin on the web only when it answers `/api/info` with `server: "strategic-command"` (probed by the first `Net.check_server`), else `Api.OFFICIAL_SERVER` (https://strategiccommand.ggior32.dev). `Net.server_url()`, `set_server(url)` (normalises to scheme://host[:port]; http for bare IPs / ports, https for domains; refuses an http address from an https page with "A browser can only join servers with HTTPS..."), `test_server(url)` (GET `/api/info` on any address; reports version, invite needed, and "this server is for another version of the game" when `state_version` differs from `CState.VERSION`; a server without the field is accepted). Seats are kept per server (`accounts` entries carry `server`; entries without one belong to the official server; a seat token is only ever sent to its own server). Join and device links on a non-official server carry `&server=<url>`; `?server=` / pasted links on the Join page switch the server. The "newer build on the server" banner only fires when the server is also the page origin (itch.io pages never see it). New menu page "Game server" (`game/net/server_page.gd`; home button, and a Change button beside the Server row on the Online co-op screen): address, Change (field + Paste, Test, Use this server, Use official), and on desktop "Host a server" (`game/net/host.gd`: starts the bundled `scserver` beside the executable with `-web= -allowed-origins=*`, data in `user://host/`, optional invite key, polls `/healthz`, lists LAN addresses and the public address from api.ipify.org, stops it when the game closes; a pid file stops one left by a crash). Desktop exports: presets Windows Desktop / Linux / macOS in `export_presets.cfg`, `tools/export_desktop.sh [windows linux macos]` -> `build/desktop/<platform>/` + `strategic-command-<platform>-<stamp>.zip` (scserver cross-built beside the game; inside the .app for macOS, one binary per CPU), `tools/itch_push.sh` (butler, channels web / windows / linux / mac; not run). Test: `tests/net_test.gd`; testing aid `--host-start=PORT` (starts the hosted server at launch). Verified: server `go vet` / `go test ./...` including `origins_test.go`; the web export served from a foreign origin (python on 8073) with a scratch scserver on 8074 (`-web= -allowed-origins http://127.0.0.1:8073`) passes `server/cmd/webcheck` (create, join, resolve, WebSocket, soldiers); the Linux export starts the bundled scserver from the Host page.
+
+**Open (distribution D):** the GitHub workflows have never run, and the ghcr package must be made public after the first push; the itch.io origin `https://html-classic.itch.zone` (itch staff say stable) is to be confirmed on the first real upload, the sandboxed iframe may send `Origin: null` in some browsers, then `*` is the fallback; the telemetry autoload on itch posts to the page origin, fails and switches itself off; the live playtest server keeps its same-origin-only behaviour (`SC_ALLOWED_ORIGINS` unset); no code signing (SmartScreen / Gatekeeper warn; macOS: right-click > Open); no game icon on the desktop exes (default Godot icon; Windows resource editing needs rcedit); the macOS app version in the preset is static; a game killed by SIGTERM leaves its hosted server running until the next Host > Start (the pid file stops it); Windows and macOS builds are exported but not run here; `tools/itch_push.sh` not run.
+
 **Caribbean plan agreed 2026-10-14 (DESIGN "The Caribbean pack: ships,
 pirates, cover, asymmetry"):** sea battles real time with the wind;
 pirates as raiders with havens; armies embark on fleets (West only). Do
@@ -2635,12 +2645,18 @@ generation, cover) flow back to the Mediterranean campaign for free.
    device pass and the balance numbers serve this.
 3. **Someone outside plays it:** a named public build, guided first turns,
    a settings pass. Done when a stranger reaches turn 10 unaided.
+4. **Distribution D (built 2026-10-17):** the game on itch.io (web +
+   desktop), the game server as a Docker image players can run, "Host a
+   server" in the desktop build; browser players need HTTPS servers (see
+   "Distribution (D)" below).
 
-Immediate order (2026-10-16): shaking / stuck pass -> balance pass T (built 2026-10-16, not committed) ->
-forts with an inside (2c; built 2026-10-16, not committed) -> story step 3 (crew vote, portraits, online
+Immediate order (2026-10-17): shaking / stuck pass -> balance pass T (built 2026-10-16, not committed) ->
+forts with an inside (2c; done 2026-10-17, commit 0812fba) -> distribution D
+(built 2026-10-17, not committed; first itch.io upload and the first image push
+are the user's) -> story step 3 (crew vote, portraits, online
 story, Tortuga) and sea follow-ons (deck melee, fire ships, live co-op at
 sea) -> Hunyuan captain miniature (turnarounds from the user) -> device
-checks.
+checks -> sea balance -> auto-resolve refit.
 
 **Agreed order on 2026-10-08 (evening):** engines as pick-up-able equipment
 with crews as men + per-unit kills (running); then 4d ammunition types and
@@ -3163,6 +3179,7 @@ godot --headless --script res://tests/matchups.gd -- --only=tiers   # tier balan
 #   --camp-attack=N:region --camp-siege=N:region:turns --camp-assault=region --camp-auto --camp-fight --select-army=N --select-region=key
 #   --cam-zoom=Z --dialog=battles|summary|diplomacy|realm|goals --new-campaign
 #   --controls --ios-tab; battle: --demo-ghost=deg
+#   --popup=... (command bar popups, see the Command bar row); --host-start=PORT (desktop: start the hosted game server at launch)
 
 # Tests
 godot --headless --script res://tests/determinism_test.gd
@@ -3204,6 +3221,9 @@ tools/build_server.sh --test                     # go vet + go test + build buil
 SC_BUILD_OUT=build/server-test/scserver tools/build_server.sh   # elsewhere (tests do this)
 tools/run_server.sh 8070                         # serve build/web + API + telemetry on a port
 python3 tests/online_e2e.py                      # two headless clients against a test server (~30 s)
+godot --headless --script res://tests/net_test.gd  # client server choice: address normalising, per-server seats, state_version check
+tools/export_desktop.sh [windows linux macos]    # build/desktop/<platform>/ + zip, scserver bundled beside the game
+tools/itch_push.sh                               # butler push, channels web / windows / linux / mac (not run yet)
 (cd server && PATH=$HOME/.local/go/bin:$PATH go run ./cmd/webcheck -url http://127.0.0.1:8070)
                                                  # the web export in two headless Chromiums
 
@@ -3215,6 +3235,8 @@ python3 tools/serve_web.py 8443 --cert .certs/dev.crt --key .certs/dev.key
 python3 tools/playtest_report.py                 # summarise playtest_logs/
 ```
 
+- Playing online as a player, hosting a server and the HTTPS rule for browsers:
+  `docs/PLAYING_ONLINE.md`; self-hosting the server image: `server/README.md`.
 - Godot's web build needs a secure context, so phones must use HTTPS. The
   self-signed certificate in `.certs/` (gitignored) is created with
   `openssl req -x509 -newkey rsa:2048 -nodes -days 365 -keyout .certs/dev.key

@@ -4857,6 +4857,10 @@ Details in `docs/SERVER.md`. In short:
   resolved with battles, take command, ping, deadline, won / lost), rate
   limited, deduplicated, never blocking.
 
+### Distribution (agreed and built 2026-10-17)
+
+The game ships on itch.io as a web build (HTTPS, any origin) and as desktop builds (Windows, Linux, macOS) that carry the game server (`scserver`) beside the game. The game server is also a standalone Docker image anyone can run (API and live relay, no web build); the official server is the default. Online campaigns and live battles always go through a game server: the official one by default, a friend's by address, or one the player hosts from the desktop build ("Host a server"). The server holds no rules (see SERVER.md); the client refuses a server built for another `CState.VERSION`, and a seat token goes only to the server it was issued by. Browsers can only call HTTPS servers (mixed content), so an itch.io player needs the official server or a self-hosted one behind a domain; desktop players can use plain HTTP on a LAN, a forwarded port or a tunnel such as Tailscale. A server serves other sites only when its owner lists their origins (`SC_ALLOWED_ORIGINS`); by default it answers its own origin.
+
 ## 6. Platforms and tooling
 
 - Working model: design decisions are made in the main session; code
