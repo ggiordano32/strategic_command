@@ -23,7 +23,10 @@ const CBattle := preload("res://campaign/cbattle.gd")
 const SeaChecks := preload("res://tests/sea_checks.gd")
 
 ## A Rome AI-only campaign (seed 4242) after 20 turns, all rules as they are.
-const ROME_20 := "575e23d5"  # = HEAD 1c04fbe before the pack switch existed
+const ROME_20 := "d60c218a"  # format 8 (fog-of-war memory; was 575e23d5, 2026-10-17)
+## The same play without the fog keys (CState.as_format 7) = HEAD 1c04fbe
+## before the pack switch existed: the fog changes no rule.
+const ROME_20_V7 := "575e23d5"
 
 var fails := 0
 
@@ -88,8 +91,10 @@ func _rome_round_trip() -> void:
 	_check(CGrid.count() == rome_cells and CGrid.width() == rome_w and CRules.land_hops(0, 1) == hops, "Rome's grid and tables rebuilt")
 	_check(CData.date_text(0) == "280 BC, summer", "Rome's calendar")
 	var b := _rome20()
-	_check(CState.hash_text(b) == CState.hash_text(a) and CState.hash_text(a) == ROME_20,
-		"Rome after a switch round trip: the same golden (%s, %s; expected %s)" % [CState.hash_text(a), CState.hash_text(b), ROME_20])
+	_check(CState.hash_text(b) == CState.hash_text(a) and CState.hash_text(a) == ROME_20
+		and CState.hash_text(CState.as_format(a, 7)) == ROME_20_V7,
+		"Rome after a switch round trip: the same golden (%s, %s; expected %s; as format 7 %s, expected %s)" % [CState.hash_text(a),
+		CState.hash_text(b), ROME_20, CState.hash_text(CState.as_format(a, 7)), ROME_20_V7])
 	# A state names its pack: use_state switches (resolve_turn calls it).
 	CData.use_pack_script("dummy", Dummy)
 	var c := CTurn.resolve_turn(_rome_turn0(), [])
@@ -153,7 +158,8 @@ func _west() -> void:
 	CData.use_pack("rome")
 	_check(CData.pack == "rome" and CData.gen > g0, "back to Rome after West")
 	var r := _rome20()
-	_check(CState.hash_text(r) == ROME_20, "Rome golden after a West campaign (%s)" % CState.hash_text(r))
+	_check(CState.hash_text(r) == ROME_20 and CState.hash_text(CState.as_format(r, 7)) == ROME_20_V7,
+		"Rome golden after a West campaign (%s)" % CState.hash_text(r))
 
 
 ## Fleets (N1, West only): Rome has none; the West start has fleets and

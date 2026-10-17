@@ -11,7 +11,8 @@ extends RefCounted
 ## by the rules (JSON load does not keep key order). The state carries its own
 ## RNG ("rng", xorshift32) used by the rules and the AI.
 ##
-## Format (VERSION 7; version 7 adds the teams; version 1 has no city_seed, versions 1-2 no builder
+## Format (VERSION 8; version 8 adds the fog of war ("fog", factions[f].mem);
+## version 7 adds the teams; version 1 has no city_seed, versions 1-2 no builder
 ## data "built", versions 1-3 no "sieges", versions 1-4 no free movement
 ## (army mp / dest / mode / stance / idle), versions 1-5 no cells (army x,
 ## y, dest_x, dest_y, tgt; battle x, y, app); older states are migrated on
@@ -30,7 +31,12 @@ extends RefCounted
 ##     gave notice]] (absent when nobody is leaving),
 ##   optional pack (the content pack, campaign/data/<pack>.gd; absent =
 ##     "rome", so a Rome state is the bytes it always was),
+##   fog (version 8: 1 on, 0 off; the view shows everything when off; set
+##     at creation from settings "fog", default 1),
 ##   factions [{alive, treasury, next_army, income, upkeep, war_turns;
+##     version 8: mem {own [last-known owner per region, -1 never seen],
+##     turn [turn of that look per region, -1], mk [last-seen army / fleet
+##     markers]} (campaign/csight.gd, written by CSight.update_memory);
 ##     optional AI profile overrides (absent = the settings / default, see
 ##     campaign/cai_profile.gd): ai_skill, ai_battle_skill, ai_style (0
 ##     Cautious, 1 Balanced, 2 Aggressive; written from CData when not
@@ -77,7 +83,7 @@ const CGrid := preload("res://campaign/cgrid.gd")
 const UT := preload("res://sim/unit_types.gd")
 
 const FORMAT := "strategic_command_campaign"
-const VERSION := 7
+const VERSION := 8
 ## Oldest format this build reads (older states are migrated on load).
 const MIN_VERSION := 1
 
@@ -128,6 +134,9 @@ static func new_campaign(p_name: String, p_seed: int, humans: Array, settings: D
 	# "Unlimited" choice (the sim has no unlimited value; 10 hours never ends).
 	if s.has("time_limit") and int(s["time_limit"]) in [0, 900]:
 		s.erase("time_limit")
+	# Fog of war (version 8): a top-level key, 1 unless the option says 0.
+	st["fog"] = 0 if s.has("fog") and int(s["fog"]) == 0 else 1
+	s.erase("fog")
 	st["settings"] = s
 	var hs: Array = []
 	for h in humans:
@@ -218,7 +227,14 @@ static func new_campaign(p_name: String, p_seed: int, humans: Array, settings: D
 	if CData.ships_on():
 		# Fleets (a pack with ships; campaign/cfleet.gd, loaded here: it preloads this file).
 		(load("res://campaign/cfleet.gd") as GDScript).call("init", st)
+	# Fog of war (version 8): every faction remembers what it sees at the start.
+	_sight().call("update_memory", st)
 	return st
+
+
+## campaign/csight.gd (it preloads this file: loaded at run time here).
+static func _sight() -> GDScript:
+	return load("res://campaign/csight.gd")
 
 
 static func _add_building(rs: Dictionary, chain: int, level: int, slots: int) -> void:
@@ -260,6 +276,8 @@ static func from_json(text: String, upto: int = VERSION) -> Dictionary:
 ## field stance (army_defaults).
 ## 3 -> 4: no sieges yet (an empty "sieges" list switches the siege rules on).
 ## 2 -> 3: every settlement gets an empty builder list "built".
+## 7 -> 8: the fog of war (_migrate8).
+## 6 -> 7: the teams (_migrate7).
 ## 1 -> 2: every settlement gets its city_seed (default_city_seed, the same
 ## value a new campaign gives it, so migrating on two devices agrees).
 ## Makes the state's content pack the active one first (CData.use_state).
@@ -273,7 +291,18 @@ static func migrate(st: Dictionary, upto: int = VERSION) -> Dictionary:
 		_migrate6(st)
 	if int(st.get("version", 0)) < 7 and upto >= 7:
 		_migrate7(st)
+	if int(st.get("version", 0)) < 8 and upto >= 8:
+		_migrate8(st)
 	return st
+
+
+## 7 -> 8: the fog of war, on; every faction's memory is what it sees now
+## (CSight.update_memory: the same on every device).
+static func _migrate8(st: Dictionary) -> void:
+	st["version"] = 8
+	if not st.has("fog"):
+		st["fog"] = 1
+	_sight().call("update_memory", st)
 
 
 ## 6 -> 7: the teams. All humans on team 0 (they were permanently allied),
@@ -419,6 +448,10 @@ static func as_format(st_in: Dictionary, v: int) -> Dictionary:
 		for b in c["battles"]:
 			for k in ["x", "y", "app"]:
 				(b as Dictionary).erase(k)
+	if v < 8:
+		c.erase("fog")
+		for fs in c["factions"]:
+			(fs as Dictionary).erase("mem")
 	if v < 7:
 		c.erase("teams")
 		c.erase("leaving")

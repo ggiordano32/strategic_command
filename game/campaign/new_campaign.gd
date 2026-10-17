@@ -169,6 +169,11 @@ func _ready() -> void:
 		var b := Kit.button("", _cycle.bind(k), 0, 14)
 		_setting_buttons[k] = b
 		sr.add_child(b)
+	settings["fog"] = 1
+	var fb := Kit.button("", _cycle.bind("fog"), 0, 14)   # (fog of war: the state's "fog" key, set at creation so co-op players agree)
+	fb.name = "fog_button"
+	_setting_buttons["fog"] = fb
+	sr.add_child(fb)
 	v.add_child(sr)
 	settings["ai_battle_skill"] = AI_AVERAGE
 	settings["ai_campaign_skill"] = AI_AVERAGE
@@ -299,7 +304,7 @@ var _time_dd: OptionButton
 
 const CHOICES := {"victory_regions": [15, 20, 25, 30], "victory_capitals": [2, 3, 4, 5],
 	"turn_timeout_h": [0, 12, 24, 48, 72], "autoresolve": ["ask", "auto"], "ai_aggression": [70, 100, 130],
-	"ai_battle_skill": [0, 1, 2], "ai_campaign_skill": [0, 1, 2]}
+	"ai_battle_skill": [0, 1, 2], "ai_campaign_skill": [0, 1, 2], "fog": [1, 0]}
 ## AI skill levels (campaign/cai_profile.gd EASY / AVERAGE / SKILLED).
 const AI_AVERAGE := 1
 const SKILL_LABELS: Array[String] = ["Easy", "Average", "Skilled"]
@@ -408,6 +413,8 @@ func _update() -> void:
 	vr["victory_capitals"].text = "with %d great cities" % int(settings["victory_capitals"])
 	vr["turn_timeout_h"].text = "Turn timeout: " + ("off" if int(settings["turn_timeout_h"]) == 0 else "%d h" % int(settings["turn_timeout_h"]))
 	vr["autoresolve"].text = "Battles: " + ("ask" if str(settings["autoresolve"]) == "ask" else "always auto")
+	vr["fog"].text = "Fog of war: " + ("on" if int(settings["fog"]) == 1 else "off")
+	vr["fog"].tooltip_text = "On: you see your regions and their neighbours, and what your armies, fleets and cities can see; the rest shows as last known. Off: everything is visible. Fixed when the campaign is created."
 	vr["ai_aggression"].text = "AI: " + {70: "calm", 100: "normal", 130: "aggressive"}[int(settings["ai_aggression"])]
 	vr["ai_battle_skill"].text = "Battle AI: " + SKILL_LABELS[int(settings["ai_battle_skill"])]
 	vr["ai_campaign_skill"].text = "Campaign AI: " + SKILL_LABELS[int(settings["ai_campaign_skill"])]
@@ -496,7 +503,7 @@ func _start_online(story: bool = false) -> void:
 		seat_f = CStory.player(st)
 	else:
 		st = CState.new_campaign(nm, sd, picks.duplicate(), settings, teams_array(), CData.pack)
-	_creating = true
+		_creating = true
 	_update()
 	_info.text = "Creating the campaign on the server..."
 	_info.add_theme_color_override("font_color", Color.WHITE)

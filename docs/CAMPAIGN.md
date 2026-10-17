@@ -38,7 +38,7 @@ a little worse than good play. No fleets, generals, politics or agents.
   sorted keys; `from_json` turns JSON's floats back into ints (`normalise`).
   `state_hash` = first 32 bits of the MD5 of that canonical JSON.
 
-### State format (version 7; the teams are described in "Teams")
+### State format (version 8; the teams are described in "Teams", the fog of war in "Fog of war")
 
 ```
 format "strategic_command_campaign", version 6, name, seed, turn (0 = 280 BC
@@ -50,7 +50,9 @@ settings {victory_regions 20, victory_capitals 3, turn_timeout_h 0|12|24|48|72
 humans [faction...]   (sorted; who is a player, any count; version 6: permanently allied)
 teams [id per faction]   (version 7; see "Teams"); leaving [[faction, turn]]   (optional)
 winner_team   (optional, version 7: set with winner when the victory was by teams)
-factions [{alive, treasury, next_army, income, upkeep, war_turns}]  (CData order)
+fog 1 | 0   (version 8: the fog of war on / off for the view; see "Fog of war")
+factions [{alive, treasury, next_army, income, upkeep, war_turns;
+  version 8: mem {own, turn, mk} (what it last saw; see "Fog of war")}]  (CData order)
 dip [8*8] 0 war / 1 peace / 2 trade / 3 allied;  dip_turn [8*8] turn of change
 regions [{owner (-1 independent), level 0 village|1 town|2 city, growth,
   slots [[chain, level]...], build [chain, level, turns_left] | [],
@@ -2349,6 +2351,73 @@ who is a player; players on different teams may fight each other. Helpers:
   each battle's guests: `statemeta.go`). The Go server hashes
   a default-shaped version 7 state as its format 6 view too
   (`statemeta.go: hashView`), so the hashes it checks match the game's.
+
+## Fog of war (version 8, 2026-10-17)
+
+Setting: the new-campaign page has "Fog of war: on / off" (`settings.fog`, fixed at creation, saved in the state's `fog` key); the view's `--all-seeing` aid ignores it.
+
+Owner's decisions (2026-10-17): unseen regions show the **last known
+state**; sight is Rome 2 style; **the AI sees everything**; nothing about
+an unseen army, fleet, agent or battle reaches a player through any list
+or panel. `campaign/csight.gd` (`class_name CSight`) holds the rules half:
+pure functions of the state, integers and index order only.
+
+**Sight** (`CSight.visible(st, f)`: one byte per grid cell, computed, never
+stored) is the union over the factions of f's team (`CState.same_team`) of:
+every cell of its regions and of their **land** neighbours
+(`CData.adjacent`, kind 0: a sea lane is not a neighbour for sight); 1
+cell (Chebyshev) round each army, 2 when the army stands on a hill / ridge
+cell (`CGrid.cell_terrain` `K_HILL` / `K_RIDGE`); 1 round each fleet (the
+troops aboard see nothing more); 1 round the city of a character not
+riding with an army; 2 round each settlement it owns (sea cells too: a
+coastal city watches its waters). Sea cells have no region, so the sea is
+seen only from fleets and cities; an unseen sea cell hides fleets.
+
+**Queries** (the view's; each takes an optional last `vis`, the caller's
+cached `visible(st, f)`, to skip the memo in a loop): `region_visible`
+(any cell of the region in sight), `known_owner` / `known_turn` (the
+memory's owner and turn of the last look, -1 never seen; the true owner
+and this turn when in sight), `markers` (last-seen pieces outside sight
+now, cell order), `army_visible` / `fleet_visible` / `char_visible` (by
+index in `armies` / `fleets` / `chars`; a team's own always; a character
+with his army, aboard a fleet at its cell, else at his city),
+`battle_visible` (a faction of f's team fights in it, or its cell is in
+sight). View filters of the rules' lists (the rules and the AI keep the
+unfiltered ones): `battles_for`, `shown_armies`, `armies_in_for`,
+`hostile_field_for`, `zone_armies_for`, `raider_for` (a raid on someone
+else's land only while a raiding army is in sight), `event_seen` /
+`events_for` (an event naming a faction of f's team, world news without a
+place, or one whose region f looked at on the event's turn or later; a
+cell event: in sight now). `visible` keeps a one-entry memo keyed by the
+state's reference and a fingerprint of owners, pieces and teams.
+
+**Memory** (`factions[f]["mem"]`, written by `CSight.update_memory(st)`
+for every faction): `own` / `turn` (one per region: owner and turn when a
+region was last in sight), `mk` (markers `{cell, f, kind 0 army / 1
+fleet, units (unit rows or ships, summed on a shared cell), turn, name
+(the hero riding with an army, else "")}`, cell order, one per cell; a
+marker is written for each foreign piece in sight and dropped when its
+cell is in sight again; at most 400 a faction, the oldest turn dropped
+first). It is written at the end of `cturn.resolve_turn` (after the turn
+counter moves: the turn the player plans), at the end of
+`cturn.apply_battle`, by `new_campaign` and `CStory.new_story`, and by
+the 7 -> 8 migration (the memory is then what each faction sees in the
+migrated state: the same on every device). Team mates' memories match
+while they share a team.
+
+**Setting:** `fog` (top-level, 1 on by default; the creation option
+`settings["fog"]` 0 turns it off and is not kept in `settings`): the
+view shows everything when 0 (the Rome sandbox, tests). Memory is kept
+either way.
+
+**The rules do not read sight:** no rule, AI decision or RNG draw changes
+(the AI is all-seeing, `docs/AI.md`). A format 8 play stripped of its fog
+keys (`CState.as_format(st, 7)`) is the format 7 play: the AI goldens in
+campaign_test and pack_test hold that way, and `campaign_sim` (format 6 by
+default) keeps its hashes. A state of format 7 or older has no fog
+(everything in sight, no memory written); online campaigns are never
+migrated, so an online format 7 campaign plays on without fog. The
+server's `StateVersion` is 8.
 
 ## Victory and defeat
 

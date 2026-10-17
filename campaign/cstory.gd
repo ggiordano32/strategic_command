@@ -118,6 +118,8 @@ static func new_story(p_name: String, p_seed: int, settings: Dictionary = {}, ke
 			humans.append(pf2)
 	var st := CState.new_campaign(p_name, p_seed, humans, stt, [], "west")
 	_setup(st, key, pf, pf2)
+	# (format 8) the fog-of-war memory of the story's start, not the pack's.
+	(load("res://campaign/csight.gd") as GDScript).call("update_memory", st)
 	return st
 
 

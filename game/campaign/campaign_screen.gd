@@ -65,6 +65,8 @@ const MapKey := preload("res://game/campaign/map_key.gd")
 const UiScale := preload("res://game/ui_scale.gd")
 const StoryView := preload("res://game/campaign/story_view.gd")
 const CommandBar := preload("res://game/campaign/command_bar.gd")
+const FogView := preload("res://game/campaign/fog_view.gd")
+const FogLayer := preload("res://game/campaign/fog_layer.gd")
 
 const ZOOM_MIN := 0.2
 const ZOOM_MAX := 2.5
@@ -92,6 +94,7 @@ var map_view: MapView
 var overlay: MapOverlay
 var minis: MinisLayer
 var town_layer: TownLayer
+var fog_layer: Node2D
 var land_trees: LandTrees
 var _mv_zoom := -1.0   # the zoom the map view was last drawn at
 var _mv_settle := 0.0
@@ -188,6 +191,8 @@ const REPLAY_ROUND := 0.13     # seconds per round of steps
 
 
 func _ready() -> void:
+	if "--all-seeing" in OS.get_cmdline_user_args():
+		FogView.all_seeing = true   # testing aid: no fog of war (fog_view.gd)
 	_tele = get_node_or_null("/root/Telemetry")
 	panels = Panels.new(self)
 	Kit.hint_cb = func(t: String): show_toast(t)
@@ -209,6 +214,8 @@ func _ready() -> void:
 	world.add_child(town_layer)
 	town_layer.overlay = overlay
 	MinisLayer.towns = town_layer
+	fog_layer = FogLayer.new()   # the fog of war over the map, towns and trees (fog_layer.gd), under the overlay
+	world.add_child(fog_layer)
 	ol.add_child(overlay)
 	var frame_layer := CanvasLayer.new()   # the map-table frame: over the map and its markers, under the interface
 	frame_layer.layer = 1
@@ -1792,6 +1799,7 @@ func _update_hint() -> void:
 
 
 func _refresh_map() -> void:
+	FogView.update(st, f)   # (the sight changes with the state or the planner only: not per tap)
 	_refresh_bar()
 	map_view.state = ps
 	overlay.state = ps
@@ -2127,6 +2135,8 @@ func _refresh_map6() -> void:
 				continue
 			for a in CState.armies_of(ps, int(h)):
 				# The ally's stored marches (their plan is theirs).
+				if not FogView.army_seen(st, a):
+					continue
 				if int(a.get("dest_x", -1)) >= 0 or int(a.get("tgt", -1)) >= 0:
 					var c := CGrid.at(int(a["dest_x"]), int(a["dest_y"])) if int(a.get("dest_x", -1)) >= 0 else -1
 					var rt2 := CRules.plan_path(ps, a, c, int(a.get("tgt", -1)), int(a["mode"]))
@@ -2167,6 +2177,8 @@ func _refresh_map6() -> void:
 		var t_zl := ZProf.begin()
 		var px := float(CGrid.cell_px())
 		for e in CRules.zone_armies(ps, int(sa["f"])):
+			if not FogView.army_seen(st, e):
+				continue   # (fog: no zone round an army out of sight)
 			var zr := CRules.zone_r(ps, e)
 			zones.append([MapOverlay.cell_point(CState.cell(e)), (sqrt(float(zr * zr + zr)) + 0.5) * px])
 		var lk := CRules.links_of(ps, sa, rt6)
@@ -2174,6 +2186,9 @@ func _refresh_map6() -> void:
 		for id in lk["support"]:
 			links.append([sel_army, int(id), 0])
 		for id in lk["attack"]:
+			var le := CState.army(ps, int(id))
+			if not le.is_empty() and not FogView.army_seen(st, le):
+				continue   # (fog: no attack line to an army out of sight)
 			links.append([sel_army, int(id), 1])
 	else:
 		map_view.set_reach(PackedInt32Array())
@@ -2195,7 +2210,7 @@ func _refresh_map6() -> void:
 		if not sfl.is_empty():
 			var px2 := float(CGrid.cell_px())
 			for e in CFleet.fleets(ps):
-				if CState.at_war(ps, int(sfl["f"]), int(e["f"])):
+				if CState.at_war(ps, int(sfl["f"]), int(e["f"])) and FogView.fleet_seen(st, e):
 					zones.append([MapOverlay.cell_point(CFleet.cell(e)), (sqrt(float(CFleet.FLEET_ZONE * CFleet.FLEET_ZONE + CFleet.FLEET_ZONE)) + 0.5) * px2])
 	ZProf.add("m6_fleets", t_fl)
 	# A new state (an order, a resolved turn, another planner) draws the overlay again, and the map when an owner
@@ -2320,7 +2335,8 @@ func _note_positions() -> void:
 			for e2 in st["events"]:
 				if str(e2["k"]) == "intercepted" and int(e2["turn"]) == turn - 1 and int(e2["r"]) == int(e["r"]) and e2.has("x"):
 					at = MapOverlay.cell_point(CGrid.at(int(e2["x"]), int(e2["y"])))
-			marks.append(at)
+			if FogView.cell_seen(MapOverlay.cell_of_point(at)):
+				marks.append(at)
 		if not steps.is_empty() or not marks.is_empty():
 			_replay_q = {"steps": steps, "from": _shown_cells.duplicate(), "marks": marks}
 	if turn != _shown_turn or replay.is_empty():
@@ -2341,6 +2357,11 @@ func _start_replay() -> void:
 	var last := -1
 	for stp in q["steps"]:
 		var id := int(stp[0])
+		if FogView.on:
+			# (fog: only what the planner's team can see replays: armies in sight, or a gone army's steps in sight)
+			var ra := CState.army(st, id)
+			if not (FogView.army_seen(st, ra) if not ra.is_empty() else FogView.cell_seen(CGrid.at(int(stp[1]), int(stp[2])))):
+				continue
 		if id <= last and not cur.is_empty():
 			rounds.append(cur)
 			cur = []
@@ -3224,6 +3245,10 @@ func _tap6(p: Vector2) -> void:
 		merge_tap = -1
 		_plan_at(p)
 		return
+	var mk := overlay.marker_at(p)
+	if not mk.is_empty():
+		_marker_toast(mk)   # (fog: a last-seen marker says what and when)
+		return
 	var sr := overlay.settlement_at(p)
 	if sr >= 0:
 		select_region(sr)
@@ -3235,6 +3260,15 @@ func _tap6(p: Vector2) -> void:
 		select_region(r)
 		return
 	close_side()
+
+
+## Fog of war: what a tap on a faded last-seen marker says.
+func _marker_toast(mk: Dictionary) -> void:
+	var fleet := int(mk["kind"]) == 1
+	var n := int(mk["units"])
+	var what := "%d ship%s" % [n, "" if n == 1 else "s"] if fleet else "%d unit%s" % [n, "" if n == 1 else "s"]
+	show_toast("%s %s (%s) last seen on turn %d. It is out of sight now, so it may have moved." % [
+		CData.faction_name(int(mk["f"])), "fleet" if fleet else "army", what, int(mk["turn"])])
 
 
 ## Fleets (a pack with ships): a tap on a fleet selects it (ours selected:

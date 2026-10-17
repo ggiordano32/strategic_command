@@ -21,6 +21,7 @@ extends PanelContainer
 ## cards, actions), PHONE_H high.
 ## An action that cannot be done is greyed and says why on hover and on a tap.
 
+const FogView := preload("res://game/campaign/fog_view.gd")
 const AudioFx := preload("res://game/audio.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
@@ -564,6 +565,14 @@ func _build_region(r: int) -> void:
 	var f: int = s.f
 	var rd: Dictionary = CData.REGIONS[r]
 	var rs: Dictionary = ps["regions"][r]
+	if not FogView.region_seen(r):
+		# (fog) out of sight: the owner as last seen and when, nothing else
+		var fo := FogView.shown_owner(ps, r)
+		var ft := FogView.last_seen(ps, r)
+		var fl := _leader(fo, str(rd["city"]), "Out of sight", CData.faction_color(fo).lightened(0.45) if fo >= 0 else Kit.COL_DIM, [],
+			"Never seen" if ft < 0 else "As of turn %d: %s" % [ft, CData.faction_name(fo) if fo >= 0 else "independent"], Kit.COL_GOLD)
+		_assemble(fl, [], [], [_details_action()])
+		return
 	var o := int(rs["owner"])
 	var mine := o == f and f >= 0
 	var lvl := int(rs["level"])

@@ -7,6 +7,7 @@ extends Node2D
 ## y order per town. The ground under them is painted into the land by town_paint.gd.
 ## Graphics Low: the small atlas and a coarser ground texture.
 
+const FogView := preload("res://game/campaign/fog_view.gd")
 const ZProf := preload("res://game/campaign/zprof.gd")
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -129,8 +130,7 @@ func refresh(st: Dictionary, grid: bool) -> void:
 	var changed := false
 	var t0 := Time.get_ticks_usec()
 	for r in CData.region_count():
-		var rg: Dictionary = st["regions"][r]
-		var sig := "%d_%s" % [int(rg["owner"]), TownPlan.sig(st, r)]
+		var sig := "%d_%s" % [FogView.shown_owner(st, r), TownPlan.sig(st, r)]
 		if _sigs.get(r, "") == sig:
 			continue
 		_sigs[r] = sig
@@ -307,7 +307,7 @@ func _draw_town_body(kid: Node2D, r: int) -> void:
 	var shade: Texture2D = _shades[aname]
 	table = Atlas.SETS[aname]
 	kid.material = _mat(aname)
-	var col := CData.faction_color(int(st["regions"][r]["owner"]))
+	var col := CData.faction_color(FogView.shown_owner(st, r))
 	if not _DBG and not Quality.is_low() and Landscape.models:
 		_draw_cmds(kid, r, aname, table, shade, col)
 		return

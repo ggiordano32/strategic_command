@@ -10,6 +10,7 @@ const CRules := preload("res://campaign/crules.gd")
 const CTurn := preload("res://campaign/cturn.gd")
 const CAI := preload("res://campaign/cai.gd")
 const CChars := preload("res://campaign/cchars.gd")
+const FogView := preload("res://game/campaign/fog_view.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Terrain := preload("res://sim/terrain.gd")
@@ -66,6 +67,9 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 	var f: int = s.f
 	var rd: Dictionary = CData.REGIONS[r]
 	var rs: Dictionary = ps["regions"][r]
+	if not FogView.region_seen(r):
+		_unseen_region(box, r)   # (fog: only what was known when it was last seen)
+		return
 	var o := int(rs["owner"])
 	var mine := o == f
 	_close_row(box, "%s (%s)" % [rd["city"], rd["name"]], _fc(o).lightened(0.4))
@@ -129,7 +133,7 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 	if CState.grid_on(ps):
 		here = []
 		for a in ps["armies"]:
-			if CGrid.cheb(CState.cell(a), CGrid.site(r)) <= 1:
+			if CGrid.cheb(CState.cell(a), CGrid.site(r)) <= 1 and FogView.army_seen(s.st, a):
 				here.append(a)
 	if not here.is_empty():
 		box.add_child(Kit.section("Armies" if not CState.grid_on(ps) else "Armies at %s" % rd["city"]))
@@ -167,6 +171,22 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 		var row := Kit.UnitRow.new(gty, int(g["n"]), _fc(o))
 		row.full = int(g["full"])
 		box.add_child(row)
+
+
+## Fog of war: a region out of sight, as last known (its owner, the turn of that look, the ground).
+func _unseen_region(box: VBoxContainer, r: int) -> void:
+	var ps: Dictionary = s.ps
+	var rd: Dictionary = CData.REGIONS[r]
+	var o := FogView.shown_owner(ps, r)
+	var t := FogView.last_seen(ps, r)
+	_close_row(box, "%s (%s)" % [rd["city"], rd["name"]], _fc(o).lightened(0.4) if o >= 0 else Kit.COL_DIM)
+	var fog := Kit.label("Out of sight. " + ("Never seen." if t < 0 else "As of turn %d it belonged to %s." % [t, CData.faction_name(o) if o >= 0 else "nobody (independent)"]),
+		Kit.FONT, Kit.COL_GOLD, true)
+	fog.name = "fog_note"
+	box.add_child(fog)
+	box.add_child(Kit.label("%s, %s ground. Send an army or a fleet near it, or take a neighbouring region, to see it again." % [
+		"Key city" if CData.KEY_CITIES.has(str(rd["key"])) else ("Capital" if CData.is_capital(r) else "Wealth %d" % int(rd["wealth"])),
+		Terrain.KIND_NAMES[int(rd["terrain"])].to_lower()], Kit.FONT_SMALL, Kit.COL_DIM, true))
 
 
 ## (N2) A port's sea trade, its blockade, a pirate haven, a recent sack.
@@ -2282,8 +2302,32 @@ func show_diplomacy(focus: int = -1) -> void:
 			focus_row = row
 		row.add_child(Kit.faction_mark(g, 20))
 		var them := _fstrength(ps, g)
-		var desc := "%s - %s. %d regions, %s army." % [CData.faction_name(g), CState.DIP_NAMES[d],
-			CState.regions_of(ps, g).size(), _compare(mine, them)]
+		var nreg := CState.regions_of(ps, g).size()
+		var asof := ""
+		if FogView.on:
+			# (fog: the regions as last seen, the army as far as it is in sight)
+			nreg = 0
+			var oldest := 1 << 30
+			for r2 in CData.region_count():
+				if FogView.shown_owner(s.st, r2) != g:
+					continue
+				nreg += 1
+				if not FogView.region_seen(r2):
+					oldest = mini(oldest, FogView.last_seen(s.st, r2))
+			var unseen_army := false
+			for a2 in CState.armies_of(ps, g):
+				if not FogView.army_seen(s.st, a2):
+					unseen_army = true
+			if oldest < (1 << 30):
+				asof = " (regions as of turn %d)" % oldest
+			if unseen_army:
+				them = 0
+				for a2 in CState.armies_of(ps, g):
+					if FogView.army_seen(s.st, a2):
+						them += CState.strength(a2)
+				asof += " (army: only what you can see)"
+		var desc := "%s - %s. %d regions, %s army.%s" % [CData.faction_name(g), CState.DIP_NAMES[d],
+			nreg, _compare(mine, them), asof]
 		if CState.same_team(ps, f, g):
 			desc = "%s - on your team (ally). %d regions, %s army." % [CData.faction_name(g), CState.regions_of(ps, g).size(), _compare(mine, them)]
 		elif CState.team_members(ps, CState.team(ps, g)).size() > 1:
@@ -2505,6 +2549,13 @@ func show_battles() -> void:
 		return
 	var st: Dictionary = s.st
 	var list := CTurn.pending_for(st)
+	if FogView.on:
+		var seen_l: Array = []
+		for b in list:
+			if FogView.battle_seen(st, b):
+				seen_l.append(b)
+		if not seen_l.is_empty():
+			list = seen_l   # (fog: battles out of sight stay hidden; they are fought in their own turn)
 	var box := Kit.vbox(10)
 	if list.is_empty():
 		box.add_child(Kit.label("No battles pending.", Kit.FONT, Color.WHITE))
@@ -2559,7 +2610,7 @@ func _chronicle_box(seen: int) -> Control:
 		ch_turns[int(e["turn"])] = 1
 	var turns := {}
 	for e in ch:
-		if int(e["turn"]) > seen and (not _involves(e, f) or int(e["turn"]) <= int(st["turn"]) - CTurn.KEEP_EVENTS_TURNS):
+		if int(e["turn"]) > seen and (not _involves(e, f) or int(e["turn"]) <= int(st["turn"]) - CTurn.KEEP_EVENTS_TURNS) and _event_seen(st, e):
 			(world.get_or_add(int(e["turn"]), []) as Array).append(e)
 			turns[int(e["turn"])] = 1
 	for e in st["events"]:
@@ -2570,7 +2621,7 @@ func _chronicle_box(seen: int) -> Control:
 			if event_text(e, f) != "":
 				(yours.get_or_add(t, []) as Array).append(e)
 				turns[t] = 1
-		elif not ch_turns.has(t) and CRules.CHRONICLE_KINDS.has(str(e["k"])):
+		elif not ch_turns.has(t) and CRules.CHRONICLE_KINDS.has(str(e["k"])) and _event_seen(st, e):
 			(world.get_or_add(t, []) as Array).append(e)
 			turns[t] = 1
 	var list: Array = turns.keys()
@@ -2638,7 +2689,8 @@ func raids_on(st: Dictionary, f: int) -> Array:
 		if CRules.raider(st, r) < 0:
 			continue
 		for a in st["armies"]:
-			if int(a["r"]) == r and CState.stance(a) == CData.ST_RAID and int(a["busy"]) == 0 and CState.at_war(st, int(a["f"]), f):
+			if int(a["r"]) == r and CState.stance(a) == CData.ST_RAID and int(a["busy"]) == 0 and CState.at_war(st, int(a["f"]), f) \
+					and FogView.army_seen(st, a):   # (fog: only raiders in sight)
 				out.append([r, int(a["id"])])
 				break
 	return out
@@ -2728,6 +2780,11 @@ func show_intro() -> void:
 	if CState.team_members(s.st, CState.team(s.st, f)).size() > 1:
 		box.add_child(Kit.label("Your " + _team_names(s.st, f) + ".", Kit.FONT, Kit.COL_GOOD, true))
 	s.show_dialog("A new campaign", box, [["Start", Callable()]], 600)
+
+
+## Fog of war: may the planner read of event e (CSight.event_seen)?
+func _event_seen(st: Dictionary, e: Dictionary) -> bool:
+	return FogView.event_seen(st, e)
 
 
 func _involves(e: Dictionary, f: int) -> bool:
@@ -3232,10 +3289,11 @@ func show_objectives() -> void:
 		int(p["need_capitals"]), "your team holds" if team_names != "" else "you hold", int(p["capitals"])], Kit.FONT, Color.WHITE, true))
 	for key in CData.KEY_CITIES:
 		var r := CData.region_index(key)
-		var o := CState.owner(st, r)
+		var o := FogView.shown_owner(st, r)   # (fog: as last seen)
 		var h := Kit.hbox(6)
 		h.add_child(Kit.faction_mark(o, 18))
-		h.add_child(Kit.label("%s - %s" % [CData.REGIONS[r]["city"], CData.faction_name(o)], Kit.FONT,
+		h.add_child(Kit.label("%s - %s%s" % [CData.REGIONS[r]["city"], CData.faction_name(o) if not FogView.never(r) else "unknown",
+			"" if FogView.region_seen(r) else " (as of turn %d)" % FogView.last_seen(st, r) if not FogView.never(r) else ""], Kit.FONT,
 			Kit.COL_GOOD if CState.is_human(st, o) else Color.WHITE))
 		box.add_child(h)
 	var lose := "You lose if %s loses all its regions." % ("either player's faction" if (st["humans"] as Array).size() > 1 else "your faction")

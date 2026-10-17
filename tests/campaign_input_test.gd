@@ -120,7 +120,7 @@ func _initialize() -> void:
 		_gf_dip, _gf_money, _gf_money_check, _gf_buy, _gf_buy_check, _gf_deal_cancel, _gf_deal_cancel_check,
 		_gf_offer, _gf_accept, _gf_accept_check, _gf_accept_undo, _gf_done,
 		_n_open, _n_tap_rome, _n_tap_carthage, _n_tap_greeks, _n_idle, _n_picks, _n_one_team, _n_idle, _n_one_team_check, _n_dropdown, _n_dropdown_check, _n_start, _n_idle, _n_idle, _n_idle, _n_check,
-		_t_setup, _t_dip, _t_stance, _t_propose, _n_idle, _t_incoming, _t_tap_accept, _n_idle, _t_accept, _t_leave, _n_idle, _t_leave_dialog, _n_idle, _t_leave_planned, _t_notice, _t_text, _t_done, _s_done,
+		_t_setup, _t_dip, _t_stance, _t_propose, _n_idle, _t_incoming, _t_tap_accept, _n_idle, _t_accept, _t_leave, _n_idle, _t_leave_dialog, _n_idle, _t_leave_planned, _t_notice, _t_text, _t_done, _f_fog, _f_fog2, _s_done,
 	]
 
 
@@ -1497,6 +1497,104 @@ func _t_done() -> void:
 	cs.st.erase("leaving")
 	cs.orders = []
 	cs._replan()
+
+
+# ------------------------------------------------ fog of war (view) ---
+
+const FogView := preload("res://game/campaign/fog_view.gd")
+const CSight := preload("res://campaign/csight.gd")
+var _fog_far := -1   # an army out of Rome's sight
+
+
+## A fresh campaign with a Rome and a Greek human (hot seat): armies out of sight are not drawn nor tappable, a
+## marker is drawn and says when, fog off shows all, the other planner sees through its own eyes.
+func _f_fog() -> void:
+	cs.queue_free()
+	var st := CState.new_campaign("FogTest", 3, [rome, greeks])
+	cs = CampaignScreen.new()
+	cs.details_on_select = true
+	cs.no_bar = true
+	cs.open({"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}, "input_test_fog")
+	root.add_child(cs)
+	_key_off()
+	wait = 8
+
+
+func _f_fog2() -> void:
+	hold = true
+	if cs.dialog.visible:
+		cs.close_dialog()
+	cs.cover.visible = false
+	cs._set_planner(rome, false)   # (the hot-seat hand-over done)
+	await process_frame
+	await process_frame
+	var st: Dictionary = cs.st
+	_check(FogView.on and cs.f == rome, "fog is on for the planner (Rome)")
+	var vis := CSight.visible(st, rome)
+	var far := -1
+	var near_foreign := -1
+	for a in st["armies"]:
+		if CState.same_team(st, rome, int(a["f"])):
+			continue
+		if vis[CState.cell(a)] == 0 and far < 0:
+			far = int(a["id"])
+		elif vis[CState.cell(a)] != 0 and near_foreign < 0:
+			near_foreign = int(a["id"])
+	_check(far >= 0, "some foreign army is out of Rome's sight at the start")
+	_fog_far = far
+	var pos: Dictionary = cs.overlay.army_positions()
+	_check(not pos.has(far), "an army out of sight is not drawn (no position)")
+	_check(near_foreign < 0 or pos.has(near_foreign), "a foreign army in sight is drawn")
+	var fa := CState.army(st, far)
+	cs.focus_region(int(fa["r"]), 1.1)
+	await process_frame
+	await process_frame
+	var p := _cell_screen(CState.cell(fa))
+	_check(cs.overlay.army_at(p) != far, "an army out of sight cannot be tapped")
+	_tap(p)
+	await process_frame
+	await process_frame
+	_check(cs.sel_army != far, "a tap on its cell does not select it")
+	cs.deselect_all()
+	# a last-seen marker: written into Rome's memory, drawn, tappable, says its turn
+	var mk: Array = st["factions"][rome]["mem"]["mk"]
+	mk.append({"cell": CState.cell(fa), "f": int(fa["f"]), "kind": 0, "units": 6, "turn": 0, "name": "x"})
+	mk.sort_custom(func(a, b): return int(a["cell"]) < int(b["cell"]))
+	FogView._cur = {}
+	cs._refresh_map()
+	await process_frame
+	var spots: Array = cs.overlay.marker_spots()
+	_check(spots.size() >= 1, "a last-seen marker is drawn (%d)" % spots.size())
+	var q: Vector2 = spots[0][1] if not spots.is_empty() else Vector2.ZERO
+	_check(not cs.overlay.marker_at(q).is_empty() and cs.overlay.army_at(q) != far, "the marker is tappable, the army still is not")
+	_tap(q)
+	await process_frame
+	await process_frame
+	_check(cs._toast != null and cs._toast.visible and "last seen on turn 0" in str(cs._toast.find_children("*", "Label", true, false)[0].text),
+		"a tap on the marker says when it was last seen")
+	# fog off (the state's key): everything is shown
+	st["fog"] = 0
+	FogView._cur = {}
+	cs._refresh_map()
+	await process_frame
+	_check(not FogView.on and cs.overlay.army_positions().has(far) and cs.overlay.marker_spots().is_empty(), "fog off shows every army and no markers")
+	st["fog"] = 1
+	# hot seat: the other player sees through its own eyes
+	FogView._cur = {}
+	cs._set_planner(greeks, false)
+	await process_frame
+	await process_frame
+	_check(FogView.f == greeks and FogView.on, "the planner switch moves the sight to the Greeks")
+	var gv := CSight.visible(st, greeks)
+	var pos2: Dictionary = cs.overlay.army_positions()
+	var agree := true
+	for a in st["armies"]:
+		if pos2.has(int(a["id"])) != (CState.same_team(st, greeks, int(a["f"])) or gv[CState.cell(a)] != 0):
+			agree = false
+	_check(agree, "the armies drawn are exactly the Greeks' own and those in their sight")
+	_check(not FogView.army_seen(st, CState.army(st, int(CState.armies_of(st, rome)[0]["id"]))) or gv[CState.cell(CState.armies_of(st, rome)[0])] != 0,
+		"a Roman army far from the Greeks is hidden from them")
+	hold = false
 
 
 func _s_done() -> void:

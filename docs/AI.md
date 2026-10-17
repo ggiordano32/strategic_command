@@ -332,6 +332,9 @@ on the side the player's two armies face); exploit the player's absence
 - Average: threat by reach (current).
 - Skilled: tracks the player's armies turn to turn and acts on their
   trajectory (where they can be next turn), not just their reach.
+- Fog of war (state format 8, 2026-10-17, owner's decision; replaces the
+  2026-10-06 "AI obeys fog of war"): the campaign AI sees everything; it
+  never reads `campaign/csight.gd`, which only limits what players are shown.
 
 ### Deliberate mistakes (campaign)
 Leaving a city empty for a turn; attacking at bad odds once; over-recruiting

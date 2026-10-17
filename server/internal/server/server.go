@@ -38,7 +38,7 @@ const APIVersion = 3
 // StateVersion is the CState.VERSION (campaign/cstate.gd) this server was
 // built for, reported by /api/info so a client can tell it is talking to a
 // server for another version of the game. Bump it with CState.VERSION.
-const StateVersion = 7
+const StateVersion = 8
 
 // Limits.
 const (

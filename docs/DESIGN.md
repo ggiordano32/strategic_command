@@ -112,6 +112,37 @@ original art.
   terrain with the garrison riding out. Every battle shows its odds (the
   battle formula's prediction) as a balance-of-power bar.
 
+### Fog of war on the overworld (as built 2026-10-17, state format 8)
+
+Owner's decisions: a player sees, Rome 2 style, its own regions and their
+land neighbours, 1 cell round its armies (2 from a hill or ridge), fleets
+and agents in a city, 2 round its cities (their waters too); a team shares
+its sight. Out of sight the map shows the **last known** owner and faded
+markers of the armies and fleets last seen there (with the turn), never
+the live pieces, and no list, panel, battle, raid warning or chronicle
+line tells of what is unseen. The AI sees everything. Rules half:
+`campaign/csight.gd` computes sight from the state every time (never
+stored) and keeps each faction's memory in the state (`factions[f].mem`:
+last-known owner and turn per region, at most 400 last-seen markers),
+written at the end of each turn and after each battle; the rules never
+read sight, so the play is exactly the format 7 play. A campaign option
+`fog` (on by default) lets the view show everything (the sandbox, tests).
+Details: CAMPAIGN.md "Fog of war".
+
+**The view (as built 2026-10-17, `game/campaign/fog_view.gd`, `fog_layer.gd`).** The sight of the planner's team is
+computed once per sight change (a new state, another planner, the setting; `FogView.update`, never per tap) and read
+through `FogView` helpers. The fog is one grid-sized texture over the map, trees and towns and under the overlay: a
+dark blue-grey wash (66 % at most) where nothing is seen, a one-cell soft edge (3x3 blur, bilinear), the sea beyond the
+map's edge fogged too. Region fill and the owner band use the owner as last seen (never-seen land: neutral, no border,
+no name; its settlement a grey dot). Armies, fleets, sieges, blockades, wrecks and battle swords are drawn only when
+seen, so an unseen piece cannot be tapped; last-seen markers (`CSight.markers`) are faded dashed shields / hulls with
+the count and "tN", a tap says "last seen on turn N". Enemy zones, attack links, raid lines and the replay only cover
+seen armies. A region out of sight opens a short panel and bar card (owner as last seen, the turn). Diplomacy shows
+regions as last seen and the army as far as seen, the chronicle uses `CSight.event_seen`, the Battles list the visible
+battles, Goals the key cities as last seen. Creation: "Fog of war: on / off" button beside the other options
+(`settings.fog`); testing aid `--all-seeing`. Not covered: the town models' buildings (TownPlan) still follow the true
+state.
+
 ## 3. Pending battles
 
 A battle created during planning or resolution becomes a *pending battle* on

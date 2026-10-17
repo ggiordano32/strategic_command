@@ -38,7 +38,9 @@ extends RefCounted
 ##      a player become pending (phase "battles") and must be resolved
 ##      (apply_battle) before the next turn can be planned;
 ##   8. AI diplomacy; end of turn (buildings, recruits, money, replenishment,
-##      garrisons, growth); eliminations and victory; turn + 1.
+##      garrisons, growth); eliminations and victory; turn + 1;
+##   9. (format 8) every faction's fog-of-war memory from its sight now
+##      (campaign/csight.gd update_memory; apply_battle does it too).
 ## A faction that submitted nothing simply holds (turn timeout, later).
 
 const CData := preload("res://campaign/cdata.gd")
@@ -51,6 +53,7 @@ const CChars := preload("res://campaign/cchars.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
 const CSea := preload("res://campaign/csea.gd")
 const CStory := preload("res://campaign/cstory.gd")
+const Sight := preload("res://campaign/csight.gd")
 
 const KEEP_EVENTS_TURNS := 2
 
@@ -287,6 +290,7 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 		CStory.end_turn(st)  # (a story campaign) pressures, actors, events; its ending when the game is over
 	if str(st["phase"]) != "over":
 		st["phase"] = "battles" if not (st["battles"] as Array).is_empty() else "plan"
+	Sight.update_memory(st)  # (format 8) every faction remembers what it sees now
 	return st
 
 
@@ -305,6 +309,7 @@ static func apply_battle(st_in: Dictionary, bid: int, outcome: Dictionary) -> Di
 	var sto := CStory.before_battle(st, bid)  # ({} unless a story campaign)
 	CRules.apply_outcome(st, bid, outcome)
 	CStory.battle_done(st, sto)
+	Sight.update_memory(st)  # (format 8) what the battle's side now sees
 	return st
 
 

@@ -32,6 +32,7 @@ const ZProf := preload("res://game/campaign/zprof.gd")
 const CData := preload("res://campaign/cdata.gd")
 const FactionEmblem := preload("res://game/faction_emblem.gd")
 const CState := preload("res://campaign/cstate.gd")
+const FogView := preload("res://game/campaign/fog_view.gd")
 const Geo := preload("res://game/campaign/map_geo.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const CRules := preload("res://campaign/crules.gd")
@@ -251,6 +252,8 @@ func fleet_positions() -> Dictionary:
 	var groups := {}
 	var order: Array = []
 	for fl in state["fleets"]:
+		if not FogView.fleet_seen(state, fl):
+			continue   # (fog: a fleet out of sight is not drawn, nor reachable)
 		var c := CFleet.cell(fl)
 		if not groups.has(c):
 			groups[c] = []
@@ -419,6 +422,8 @@ func _army_positions6() -> Dictionary:
 	var order: Array = []
 	var m := mk()
 	for a in state["armies"]:
+		if not FogView.army_seen(state, a):
+			continue   # (fog: an army out of sight is not drawn, nor reachable)
 		var id := int(a["id"])
 		var key := ""
 		var c := Vector2.ZERO
@@ -692,8 +697,8 @@ func _sites_body() -> void:
 		var rad: float = SITE_R[lvl] * m
 		var w := CState.walls(state, r)
 		if not Minis.on_sites:
-			draw_site(_ci, p, rad, CData.faction_color(int(rs["owner"])), w, m)
-		var sg := CState.siege_at(state, r)
+			draw_site(_ci, p, rad, CData.faction_color(FogView.shown_owner(state, r)) if FogView.shown_owner(state, r) >= 0 else Color(0.62, 0.62, 0.58), w, m)
+		var sg := CState.siege_at(state, r) if FogView.region_seen(r) else {}   # (fog: a siege out of sight is not shown)
 		if not sg.is_empty():
 			var sr := rad + (6.0 + 1.2 * w) * m
 			if grid:
@@ -701,7 +706,7 @@ func _sites_body() -> void:
 			draw_siege_ring(_ci, p, sr, CData.faction_color(int(sg["f"])), m)
 		if CData.KEY_CITIES.has(str(CData.REGIONS[r]["key"])):
 			draw_key_city(_ci, p, rad)
-		if show_names or lvl == CData.CITY:
+		if (show_names or lvl == CData.CITY) and not FogView.never(r):
 			var nm := str(CData.REGIONS[r]["city"])
 			var fs := int(round(FONT * (0.85 + 0.15 * m)))
 			var tw := text_w(nm, fs)
@@ -720,6 +725,8 @@ func _sites_body() -> void:
 			put(_ci, tp, nm, fs, Color(1, 1, 0.95), 4, Color(0, 0, 0, 0.75))
 	# Pending battles.
 	for b in state["battles"]:
+		if not FogView.battle_seen(state, b):
+			continue
 		var p := to_screen(Geo.site(int(b["r"]))) + Vector2(16, -14)
 		if grid and b.has("x"):
 			p = to_screen(cell_point(CGrid.at(int(b["x"]), int(b["y"])))) + Vector2(0, -16)
@@ -742,7 +749,7 @@ func _fleets_body() -> void:
 		var fpos := fleet_positions()
 		for r in CData.region_count():
 			var bk := CSea.blockader(state, r)
-			if bk >= 0 and CFleet.harbour(r) >= 0:
+			if bk >= 0 and CFleet.harbour(r) >= 0 and FogView.region_seen(r):
 				draw_blockade(_ci, to_screen(cell_point(CFleet.harbour(r))),
 					(CSea.k("BLOCKADE_CELLS", 3) + 0.5) * CGrid.cell_px() * zoom, CData.faction_color(bk), m)
 		_draw_wrecks(m)
@@ -760,6 +767,7 @@ func _armies_body() -> void:
 	var pos := _positions()
 	_army_pos = pos
 	_army_epoch = _epoch
+	_last_seen_markers(m)
 	# Armies.
 	for a in state["armies"]:
 		var id := int(a["id"])
@@ -772,6 +780,67 @@ func _armies_body() -> void:
 			if int(mm[0]) == merge_tap:
 				_ci.draw_arc(gp, 7.0 * m + 4.0 + 1.5 * sin(pulse * 6.0), 0, TAU, 20, Color(1, 1, 1, 0.9), 2.0, true)
 			draw_merge_glyph(_ci, gp, int(mm[1]), m)
+
+
+## Fog of war: where the planner's team last saw armies and fleets that are out of sight now (CSight.markers):
+## [marker, screen point] in marker order, two on one cell side by side.
+func marker_spots() -> Array:
+	var out: Array = []
+	if not FogView.on or not grid:
+		return out
+	var m := mk()
+	var by_cell := {}
+	for mkr in FogView.marks:
+		var c := int(mkr["cell"])
+		var k: int = by_cell.get(c, 0)
+		by_cell[c] = k + 1
+		out.append([mkr, to_screen(cell_point(c)) + Vector2(k * (ARMY_W + ARMY_GAP) * m, 0)])
+	return out
+
+
+## The last-seen marker under screen point p ({} none).
+func marker_at(p: Vector2) -> Dictionary:
+	var m := mk()
+	var best := {}
+	var best_d := 1e9
+	for e in marker_spots():
+		var q: Vector2 = e[1]
+		if absf(p.x - q.x) <= ARMY_W * 0.5 * m + 6.0 and absf(p.y - q.y) <= ARMY_H * 0.5 * m + 8.0 and p.distance_to(q) < best_d:
+			best = e[0]
+			best_d = p.distance_to(q)
+	return best
+
+
+const MARKER_A := 0.5
+
+
+## A faded shield (army) or sail (fleet) in the faction's colour with the count as last seen, a dashed outline.
+func _last_seen_markers(m: float) -> void:
+	for e in marker_spots():
+		var mkr: Dictionary = e[0]
+		var c: Vector2 = e[1]
+		var col := CData.faction_color(int(mkr["f"]))
+		var fcol := Color(col.r, col.g, col.b, MARKER_A)
+		var pts: PackedVector2Array
+		if int(mkr["kind"]) == 1:
+			var s := FLEET_W * 0.5 * m
+			pts = PackedVector2Array([c + Vector2(-s, 0.15 * s), c + Vector2(s, 0.15 * s), c + Vector2(0.62 * s, 0.62 * s), c + Vector2(-0.7 * s, 0.62 * s)])
+		else:
+			var rect := Rect2(c - Vector2(ARMY_W, ARMY_H) * 0.5 * m, Vector2(ARMY_W, ARMY_H) * m)
+			pts = PackedVector2Array([rect.position, rect.position + Vector2(rect.size.x, 0),
+				rect.position + Vector2(rect.size.x, rect.size.y - 6 * m), c + Vector2(0, rect.size.y * 0.5 + 3 * m),
+				rect.position + Vector2(0, rect.size.y - 6 * m)])
+		_ci.draw_colored_polygon(pts, fcol)
+		for k in pts.size():
+			_ci.draw_dashed_line(pts[k], pts[(k + 1) % pts.size()], Color(0.9, 0.9, 0.85, 0.6), 1.4, 4.0, true)
+		var n := str(int(mkr["units"]))
+		var afs := int(round(14 * maxf(m, 0.75)))
+		var tw := text_w(n, afs)
+		put(_ci, c + Vector2(-tw * 0.5, afs * 0.3), n, afs, Color(1, 1, 1, 0.75), 3, Color(0, 0, 0, 0.6))
+		if zoom >= 0.6:
+			var tt := "t%d" % int(mkr["turn"])
+			var tfs := int(round(11 * maxf(m, 0.8)))
+			put(_ci, c + Vector2(-text_w(tt, tfs) * 0.5, ARMY_H * 0.5 * m + 6.0 + tfs), tt, tfs, Color(0.85, 0.88, 0.95, 0.8), 3, Color(0, 0, 0, 0.7))
 
 
 # ------------------------------------------------------------- painters ---
@@ -1043,7 +1112,7 @@ func _draw_wrecks(m: float) -> void:
 	var font := ThemeDB.fallback_font
 	for w in state.get("wrecks", []):
 		var c := CGrid.at(int(w[0]), int(w[1]))
-		if c < 0:
+		if c < 0 or not FogView.cell_seen(c):
 			continue
 		var p := to_screen(cell_point(c))
 		draw_wreck(_ci, p, int(w[3]) > 0, m)

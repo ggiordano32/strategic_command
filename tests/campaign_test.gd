@@ -64,6 +64,7 @@ const CP := preload("res://campaign/cai_profile.gd")
 const CAI := preload("res://campaign/cai.gd")
 const CChars := preload("res://campaign/cchars.gd")
 const CoopSession := preload("res://game/net/coop_session.gd")
+const Sight := preload("res://campaign/csight.gd")
 
 var fails := 0
 
@@ -133,6 +134,7 @@ func _init() -> void:
 	_ai_skilled()
 	_chars()
 	_west_raid_defence()
+	_sight()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
 	quit(0 if fails == 0 else 1)
 
@@ -3527,8 +3529,8 @@ func _teams() -> void:
 	# Migration 6 -> 7.
 	var v6 := CState.as_format(CState.new_campaign("test", 4242, [rome, carth]), 6)
 	_check(int(v6["version"]) == 6 and not v6.has("teams"), "a format 6 state has no teams")
-	var m1 := CState.from_json(CState.to_json(v6))
-	var m2 := CState.from_json(CState.to_json(m1))
+	var m1 := CState.from_json(CState.to_json(v6), 7)
+	var m2 := CState.from_json(CState.to_json(m1), 7)
 	var want: Array = []
 	var nxt := 1
 	for f in n:
@@ -3544,7 +3546,7 @@ func _teams() -> void:
 		"migrated: the two humans are friendly, the AI is not")
 	# No teams given = the old campaign.
 	var d1 := CState.new_campaign("test", 4242, [rome, carth])
-	_check(d1["teams"] == want and CState.state_hash(d1) == CState.state_hash(v6), "no teams given: the default shape, the format 6 hash")
+	_check(d1["teams"] == want and CState.state_hash(CState.as_format(d1, 7)) == CState.state_hash(v6), "no teams given: the default shape, the format 6 hash")
 	# Three humans, two on one team.
 	var teams: Array = []
 	for f in n:
@@ -3689,16 +3691,18 @@ func _ai_skilled() -> void:
 		g = CTurn.resolve_turn(g, [])
 	# (Goldens moved with the roads, rivers and hills, 2026-10-09: movement
 	# differs; were 6e1095cd / 3394658370 and 08e7391a / 694925818; then 3666c3b2 / 694925818 and d517c822 / 3622865195 before the Tempe ford and the Tempe and Haliacmon roads; then caadf49a / 1570113520 and 95bb7116 / 2555935071 before the real coasts, rivers and relief, 2026-10-10.)
-	_check(CState.hash_text(g) == "3007c1ab" and int(g["rng"]) == 4197043257,
-		"Average plays and draws the RNG exactly as before step 4 (%s, rng %d)" % [CState.hash_text(g), int(g["rng"])])
+	# (Format 8: hashed without the fog-of-war keys, as_format 7: the AI
+	# sees everything, so the play is the format 7 play.)
+	_check(CState.hash_text(CState.as_format(g, 7)) == "3007c1ab" and int(g["rng"]) == 4197043257,
+		"Average plays and draws the RNG exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(g, 7)), int(g["rng"])])
 	var ge := CState.new_campaign("test", 4242, [])
 	ge["factions"][_f("macedon")]["ai_skill"] = CP.EASY
 	for t in 20:
 		ge = CTurn.resolve_turn(ge, [])
 	# (Easy golden moved 2026-10-13 with reinforcements: an army that was
 	# bounced off a full battle side now joins it; was be6e10a3, same rng.)
-	_check(CState.hash_text(ge) == "bd76985b" and int(ge["rng"]) == 3786296811,
-		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(ge), int(ge["rng"])])
+	_check(CState.hash_text(CState.as_format(ge, 7)) == "bd76985b" and int(ge["rng"]) == 3786296811,
+		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(ge, 7)), int(ge["rng"])])
 	CAI.no_beasts = false
 	CBattle.old_walls = false
 	CData.no_generals = false
@@ -4107,3 +4111,244 @@ func _west_raid_defence() -> void:
 			hit = true
 	_check(hit, "tapping them attacks: a field battle with the raiders")
 	CData.use_pack("rome")
+
+
+## Fog of war (format 8, campaign/csight.gd, docs/CAMPAIGN.md "Fog of war").
+func _sight() -> void:
+	var rome := _f("rome")
+	var carth := _f("carthage")
+	var st := CState.new_campaign("fog", 4242, [rome])
+	_check(int(st["version"]) == 8 and int(st["fog"]) == 1 and not (st["settings"] as Dictionary).has("fog"),
+		"format 8: fog on by default, a top-level key")
+	var off := CState.new_campaign("fog", 4242, [rome], {"fog": 0})
+	_check(int(off["fog"]) == 0 and not (off["settings"] as Dictionary).has("fog"), "the fog option 0 is kept as fog 0")
+	var mem0: Dictionary = st["factions"][rome]["mem"]
+	_check((mem0["own"] as Array).size() == CData.region_count() and (mem0["turn"] as Array).size() == CData.region_count(),
+		"every faction has a memory from the start (one entry per region)")
+	# Rome alone: no armies, characters or fleets (sight from its lands only).
+	var bare := CState.copy(st)
+	var keep: Array = []
+	for a in bare["armies"]:
+		if int(a["f"]) != rome:
+			keep.append(a)
+	bare["armies"] = keep
+	var base := Sight.compute(bare, rome)
+	var cap := CData.region_index(str(CData.FACTIONS[rome]["capital"]))
+	_check(_all_cells(base, cap) and Sight.region_visible(bare, rome, cap), "own region in sight (every cell)")
+	var nb := -1
+	for r in CState.regions_of(bare, rome):
+		for e in CData.adjacent(r):
+			if nb < 0 and int(e[1]) == 0 and CState.owner(bare, int(e[0])) != rome:
+				nb = int(e[0])
+	_check(nb >= 0 and _all_cells(base, nb), "a land neighbour of an own region in sight (every cell; %d)" % nb)
+	# An army far away: radius 1 around it, not 2.
+	var c := _dark_cell(base, 2, false)
+	var scout: Dictionary = CState.copy({"a": CState.armies_of(st, rome)[0]})["a"]
+	scout["id"] = rome * 100000 + 999
+	CState.place(scout, c)
+	var withs := CState.copy(bare)
+	(withs["armies"] as Array).append(scout)
+	var v1 := Sight.compute(withs, rome)
+	var x := CGrid.cx(c)
+	var y := CGrid.cy(c)
+	_check(c >= 0 and v1[c] == 1 and v1[CGrid.at(x + 1, y + 1)] == 1 and v1[CGrid.at(x - 1, y)] == 1,
+		"an army sees the cells next to it")
+	_check(v1[CGrid.at(x + 2, y)] == 0 and v1[CGrid.at(x, y - 2)] == 0 and v1[CGrid.at(x - 2, y + 2)] == 0,
+		"two cells away from an army: not in sight")
+	var hc := _dark_cell(base, 3, true)
+	CState.place(scout, hc)
+	var v2 := Sight.compute(withs, rome)
+	var hx := CGrid.cx(hc)
+	var hy := CGrid.cy(hc)
+	_check(hc >= 0 and v2[CGrid.at(hx + 2, hy)] == 1 and v2[CGrid.at(hx - 2, hy - 2)] == 1 and v2[CGrid.at(hx + 3, hy)] == 0,
+		"an army on a hill / ridge sees 2 cells, not 3 (cell %d)" % hc)
+	# Team union.
+	var ccap := CData.region_index(str(CData.FACTIONS[carth]["capital"]))
+	_check(not Sight.region_visible(st, rome, ccap), "Carthage's capital not in Rome's sight on its own")
+	var teams: Array = CState.default_teams([rome])
+	teams[carth] = teams[rome]
+	var tst := CState.new_campaign("fog", 4242, [rome], {}, teams)
+	_check(Sight.region_visible(tst, rome, ccap) and Sight.visible(tst, rome) == Sight.visible(tst, carth),
+		"team mates share sight (the union)")
+	# Memory: the old owner stays after the region changes hands out of sight.
+	var far := -1
+	for r in CData.region_count():
+		if not _any_cell(base, r) and CState.owner(bare, r) != rome:
+			far = r
+			break
+	var m := CState.copy(withs)
+	CState.place(m["armies"][(m["armies"] as Array).size() - 1], CState.field_cell(far))
+	Sight.update_memory(m)
+	var o0 := CState.owner(m, far)
+	var t0 := int(m["turn"])
+	_check(far >= 0 and Sight.known_owner(m, rome, far) == o0 and Sight.known_turn(m, rome, far) == t0,
+		"a region in sight: the known owner is the owner")
+	var mine := (m["armies"] as Array).pop_back() as Dictionary
+	var o1 := carth if o0 != carth else _f("macedon")
+	m["regions"][far]["owner"] = o1
+	m["turn"] = t0 + 3
+	Sight.update_memory(m)
+	_check(not Sight.region_visible(m, rome, far) and Sight.known_owner(m, rome, far) == o0 and Sight.known_turn(m, rome, far) == t0,
+		"out of sight: the memory keeps the old owner and the turn of the look")
+	var ev_far := {"k": "captured", "r": far, "f": o1, "from": o0, "turn": t0 + 2}
+	var ev_old := {"k": "captured", "r": far, "f": o1, "from": o0, "turn": t0}
+	var ev_war := {"k": "war", "a": carth, "b": _f("macedon"), "turn": t0 + 2}
+	_check(not Sight.event_seen(m, rome, ev_far) and Sight.event_seen(m, rome, ev_old) and Sight.event_seen(m, rome, ev_war)
+		and Sight.event_seen(m, rome, {"k": "captured", "r": far, "f": rome, "turn": t0 + 2})
+		and Sight.events_for(m, rome, [ev_far, ev_war]) == [ev_war],
+		"events: one out of sight after the last look is not told; ours, world news and older ones are")
+	(m["armies"] as Array).append(mine)
+	_check(Sight.known_owner(m, rome, far) == o1 and Sight.known_turn(m, rome, far) == t0 + 3, "in sight again: the new owner")
+	_check(Sight.known_owner(m, rome, CData.region_count() - 1) >= -1, "known_owner of any region answers")
+	# Markers: an enemy army seen, then out of sight, then seen again.
+	var mk := CState.copy(bare)
+	var ei := -1
+	for i in (mk["armies"] as Array).size():
+		var e: Dictionary = mk["armies"][i]
+		if int(e["f"]) != rome and base[CState.cell(e)] == 0:
+			ei = i
+			break
+	var en: Dictionary = mk["armies"][ei]
+	var ec := CState.cell(en)
+	var sc2: Dictionary = scout.duplicate(true)
+	CState.place(sc2, ec)
+	(mk["armies"] as Array).append(sc2)
+	_check(Sight.army_visible(mk, rome, ei), "an enemy army next to ours is shown")
+	Sight.update_memory(mk)
+	_check(_marker_at(mk["factions"][rome]["mem"]["mk"], ec) and not _marker_at(Sight.markers(mk, rome), ec),
+		"seen: a marker is remembered, not shown while in sight")
+	(mk["armies"] as Array).pop_back()
+	mk["turn"] = int(mk["turn"]) + 1
+	Sight.update_memory(mk)
+	var shown := Sight.markers(mk, rome)
+	_check(not Sight.army_visible(mk, rome, ei) and _marker_at(shown, ec), "out of sight: the army is hidden, its last-seen marker shown")
+	_check(not Sight.armies_in_for(mk, int(en["r"]), rome).has(en) and CState.armies_in(mk, int(en["r"])).has(en)
+		and not Sight.shown_armies(mk, rome, mk["armies"]).has(en), "the view's lists leave the unseen army out (the rules' keep it)")
+	var mrow: Dictionary = {}
+	for q in shown:
+		if int(q["cell"]) == ec:
+			mrow = q
+	_check(int(mrow.get("f", -1)) == int(en["f"]) and int(mrow.get("kind", -1)) == 0 and int(mrow.get("units", 0)) >= CState.unit_count(en)
+		and int(mrow.get("turn", -1)) == int(mk["turn"]) - 1 and mrow.get("name") is String, "the marker: faction, kind, units, turn, name")
+	(mk["armies"] as Array).append(sc2)
+	_check(not _marker_at(Sight.markers(mk, rome), ec), "seen again: the marker is not shown")
+	(mk["armies"] as Array).remove_at(ei)  # (the enemy has gone)
+	Sight.update_memory(mk)
+	_check(not _marker_at(mk["factions"][rome]["mem"]["mk"], ec), "seen again with nobody there: the marker is dropped")
+	# The cap: at most 400 markers, the oldest dropped.
+	(mk["armies"] as Array).pop_back()
+	var lots: Array = []
+	var k := 0
+	for cc in base.size():
+		if base[cc] == 0 and k < 450:
+			lots.append({"cell": cc, "f": carth, "kind": 0, "units": 1, "turn": k, "name": ""})
+			k += 1
+	mk["factions"][rome]["mem"]["mk"] = lots
+	mk["turn"] = 1000  # (the markers seen now are the newest)
+	Sight.update_memory(mk)
+	var kept: Array = mk["factions"][rome]["mem"]["mk"]
+	var lo := 1 << 30
+	var sorted_ok := true
+	for i in kept.size():
+		lo = mini(lo, int(kept[i]["turn"]))
+		if i > 0 and int(kept[i]["cell"]) <= int(kept[i - 1]["cell"]):
+			sorted_ok = false
+	_check(kept.size() == Sight.MAX_MARKERS and lo >= 50 and sorted_ok, "at most 400 markers a faction, the oldest dropped, cell order (%d, oldest %d)" % [kept.size(), lo])
+	# Play: plain data, determinism, JSON round trip, the AI unchanged.
+	var p1 := _play(CState.copy(st), 8, -1)
+	var p2 := _play(CState.copy(st), 8, 4)
+	_check(CState.state_hash(p1) == CState.state_hash(p2) and _plain(p1), "8 turns with the fog: same hash through a save / load, plain data")
+	var txt := CState.to_json(p1)
+	var l1 := CState.from_json(txt)
+	var l2 := CState.from_json(txt)
+	_check(CState.state_hash(l1) == CState.state_hash(p1), "JSON round trip keeps the hash (memory included)")
+	_check(Sight.visible(l1, rome) == Sight.visible(l2, rome) and Sight.compute(l1, rome) == Sight.compute(p1, rome)
+		and Sight.markers(l1, rome) == Sight.markers(l2, rome), "visible / markers: the same across two loads")
+	var turned := 0
+	for r in CData.region_count():
+		if int(p1["factions"][rome]["mem"]["turn"][r]) == int(p1["turn"]):
+			turned += 1
+	_check(turned > 0, "the memory is written at the end of each turn (%d regions looked at this turn)" % turned)
+	# Migration 7 -> 8 equals a fresh update of the same state.
+	var v7 := CState.as_format(p1, 7)
+	_check(int(v7["version"]) == 7 and not v7.has("fog") and not (v7["factions"][rome] as Dictionary).has("mem"), "a format 7 copy has no fog keys")
+	var mg := CState.from_json(CState.to_json(v7))
+	var fresh := CState.copy(v7)
+	fresh["version"] = 8
+	fresh["fog"] = 1
+	Sight.update_memory(fresh)
+	_check(int(mg["version"]) == 8 and int(mg["fog"]) == 1 and CState.state_hash(mg) == CState.state_hash(fresh),
+		"migration 7 -> 8: fog on, memory = a fresh update of the same state")
+	# An unmigrated format 7 state (online) has no fog and is left alone.
+	var u7 := CState.from_json(CState.to_json(v7), 7)
+	var h7 := CState.state_hash(u7)
+	Sight.update_memory(u7)
+	var all_on := true
+	for b in Sight.visible(u7, rome):
+		if b == 0:
+			all_on = false
+			break
+	_check(CState.state_hash(u7) == h7 and all_on and Sight.known_owner(u7, rome, far) == CState.owner(u7, far)
+		and Sight.markers(u7, rome).is_empty(), "a format 7 state: everything in sight, no memory written")
+	var r7 := CTurn.resolve_turn(u7, [])
+	_check(int(r7["version"]) == 7 and not (r7["factions"][rome] as Dictionary).has("mem"), "a format 7 state resolves without fog keys")
+	# Battles: shown to their sides, else by sight.
+	var shown_b := true
+	for b in p1["battles"]:
+		for f in CRules.battle_humans(p1, b):
+			shown_b = shown_b and Sight.battle_visible(p1, int(f), int(b["id"]))
+	_check(shown_b, "a battle is shown to the humans in it")
+	# West: fleets see around them, the story start remembers its own start.
+	var w := CState.new_campaign("fog", 99, [0], {}, [], "west")
+	var fls: Array = w.get("fleets", [])
+	var fl_ok := not fls.is_empty()
+	for i in fls.size():
+		var fl: Dictionary = fls[i]
+		var vf := Sight.visible(w, int(fl["f"]))
+		var fc := CGrid.at(int(fl["x"]), int(fl["y"]))
+		fl_ok = fl_ok and vf[fc] == 1 and Sight.fleet_visible(w, int(fl["f"]), i)
+	_check(fl_ok, "West: every fleet is in its own side's sight")
+	var wp := _play(CState.copy(w), 4, 2)
+	_check(CState.state_hash(wp) == CState.state_hash(_play(CState.copy(w), 4, -1)) and _plain(wp), "West: 4 turns with the fog, deterministic, plain data")
+	CData.use_pack("rome")
+
+
+func _all_cells(vis: PackedByteArray, r: int) -> bool:
+	for c in CGrid.cells_of(r):
+		if vis[c] == 0:
+			return false
+	return true
+
+
+func _any_cell(vis: PackedByteArray, r: int) -> bool:
+	for c in CGrid.cells_of(r):
+		if vis[c] != 0:
+			return true
+	return false
+
+
+## The first passable land cell (hill / ridge or not) with nothing in sight
+## within rad cells.
+func _dark_cell(vis: PackedByteArray, rad: int, hill: bool) -> int:
+	for c in vis.size():
+		if not CGrid.passable(c):
+			continue
+		var k := CGrid.cell_terrain(c)
+		if (k == 4 or k == 2) != hill:
+			continue
+		var ok := true
+		for dy in range(-rad, rad + 1):
+			for dx in range(-rad, rad + 1):
+				var d := CGrid.at(CGrid.cx(c) + dx, CGrid.cy(c) + dy)
+				if d < 0 or vis[d] != 0:
+					ok = false
+		if ok:
+			return c
+	return -1
+
+
+func _marker_at(list: Array, c: int) -> bool:
+	for q in list:
+		if int(q["cell"]) == c:
+			return true
+	return false

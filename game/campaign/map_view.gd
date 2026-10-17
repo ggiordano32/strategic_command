@@ -19,6 +19,7 @@ const ZProf := preload("res://game/campaign/zprof.gd")
 const Quality := preload("res://game/quality.gd")
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
+const FogView := preload("res://game/campaign/fog_view.gd")
 const Geo := preload("res://game/campaign/map_geo.gd")
 const GroundPalette := preload("res://game/ground_palette.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
@@ -442,7 +443,7 @@ func refresh_state() -> void:
 	if not state.is_empty():
 		own.resize(CData.region_count())
 		for r in own.size():
-			own[r] = CState.owner(state, r)
+			own[r] = -2 if FogView.never(r) else FogView.shown_owner(state, r)   # (fog: the owner as last seen)
 	if own != _owners_drawn or own.is_empty():
 		queue_redraw()
 
@@ -669,7 +670,7 @@ func _draw_all() -> void:
 			for m in lmeshes:
 				draw_mesh(m, Landscape.ground_tex)
 		for r in CData.region_count():
-			var o := CState.owner(state, r)
+			var o := FogView.shown_owner(state, r)
 			if o >= 0:
 				var tc := CData.faction_color(o)
 				tc.a = TABLE_TINT if tbl else TERRAIN_TINT
@@ -680,7 +681,7 @@ func _draw_all() -> void:
 			draw_polyline(ln, Landscape.COL_BANK, (RIVER_W + BANK_W) * lw, true)
 	else:
 		for r in CData.region_count():
-			var o := CState.owner(state, r)
+			var o := FogView.shown_owner(state, r)
 			var col := region_color(r, o)
 			_fill_cell(r, col)
 	if grid:
@@ -700,7 +701,7 @@ func _draw_all() -> void:
 	if not state.is_empty():
 		_owners_drawn.resize(CData.region_count())
 		for r in _owners_drawn.size():
-			_owners_drawn[r] = CState.owner(state, r)
+			_owners_drawn[r] = -2 if FogView.never(r) else FogView.shown_owner(state, r)
 	if _reach_node != null:
 		_reach_node.queue_redraw()
 	if _sel_node != null:
@@ -751,7 +752,9 @@ func _draw_edges() -> void:
 	# Owner edge: a band of the owner's colour inside each territory, so the
 	# owner reads at once whatever the ground.
 	for r in CData.region_count():
-		var o := CState.owner(state, r)
+		if FogView.never(r):
+			continue   # (fog: no border round land never seen)
+		var o := FogView.shown_owner(state, r)
 		if o < 0:
 			if tbl:
 				# Independent land: no wash, a neutral grey dashed border.
@@ -770,6 +773,8 @@ func _draw_edges() -> void:
 	# Borders between territories (darker where owners differ is implied by
 	# the tint; one thin line everywhere keeps it light).
 	for r in CData.region_count():
+		if FogView.never(r):
+			continue
 		for piece in Geo.cell(r):
 			var closed: PackedVector2Array = piece.duplicate()
 			closed.append(piece[0])
