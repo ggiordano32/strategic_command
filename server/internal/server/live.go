@@ -160,7 +160,13 @@ type wsPeer struct {
 // message to the room.
 func (s *Server) serveWS(w http.ResponseWriter, r *http.Request, failKey string,
 	auth func(ctx context.Context, tok string) (*wsPeer, bool)) {
-	c, err := websocket.Accept(w, r, nil) // checks Origin against Host
+	// Default: the library checks Origin against Host. An origin on the
+	// allow-list (SC_ALLOWED_ORIGINS) is verified here instead.
+	var opts *websocket.AcceptOptions
+	if r.Header.Get("Origin") != "" && s.originAllowed(r) {
+		opts = &websocket.AcceptOptions{InsecureSkipVerify: true}
+	}
+	c, err := websocket.Accept(w, r, opts)
 	if err != nil {
 		return
 	}

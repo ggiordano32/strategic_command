@@ -9,21 +9,23 @@ import (
 
 // Config is everything the server needs; filled from flags / env by main.
 type Config struct {
-	Addr          string         // listen address, e.g. ":8060"
-	DataDir       string         // SQLite file, backups, compressed-file cache
-	WebDir        string         // the Godot web export (build/web)
-	LogDir        string         // playtest telemetry JSONL files
-	InviteKey     string         // if set, required to create a campaign
-	TrustedProxy  []netip.Prefix // peers whose X-Forwarded-For is believed
-	BackupEvery   time.Duration  // 0 = no periodic backups
-	BackupKeep    int
-	TestMode      bool // enables /api/test/* and any webhook URL (never in production)
-	PublicURL     string
-	CompressWeb   bool // precompress the web build (gzip + brotli)
-	BrotliMax     bool // also make a quality-11 brotli copy in the background
-	LeaseDuration time.Duration
-	RoomGrace     time.Duration // an empty live room is kept this long for reconnects
-	CustomTTL     time.Duration // an empty custom battle lobby is kept this long
+	Addr           string         // listen address, e.g. ":8060"
+	DataDir        string         // SQLite file, backups, compressed-file cache
+	WebDir         string         // the Godot web export (build/web)
+	LogDir         string         // playtest telemetry JSONL files
+	InviteKey      string         // if set, required to create a campaign
+	TrustedProxy   []netip.Prefix // peers whose X-Forwarded-For is believed
+	BackupEvery    time.Duration  // 0 = no periodic backups
+	BackupKeep     int
+	TestMode       bool // enables /api/test/* and any webhook URL (never in production)
+	PublicURL      string
+	GameURL        string   // shown on the root page when no web build is served (SC_GAME_URL)
+	AllowedOrigins []string // extra origins allowed to call the API cross-origin; "*" = any (SC_ALLOWED_ORIGINS)
+	CompressWeb    bool     // precompress the web build (gzip + brotli)
+	BrotliMax      bool     // also make a quality-11 brotli copy in the background
+	LeaseDuration  time.Duration
+	RoomGrace      time.Duration // an empty live room is kept this long for reconnects
+	CustomTTL      time.Duration // an empty custom battle lobby is kept this long
 }
 
 // DefaultTrusted is the default trusted-proxy list: loopback and private
@@ -69,3 +71,16 @@ func (c *OffsetClock) Now() time.Time { return time.Now().Add(time.Duration(c.of
 func (c *OffsetClock) Advance(d time.Duration) { c.off.Add(int64(d)) }
 
 func ms(t time.Time) int64 { return t.UnixMilli() }
+
+// ParseOrigins parses a comma-separated origin list (scheme://host[:port],
+// or "*"); trailing slashes are dropped and entries are lower-cased.
+func ParseOrigins(s string) []string {
+	var out []string
+	for _, o := range strings.Split(s, ",") {
+		o = strings.ToLower(strings.TrimRight(strings.TrimSpace(o), "/"))
+		if o != "" {
+			out = append(out, o)
+		}
+	}
+	return out
+}

@@ -91,10 +91,10 @@ func TestRetries(t *testing.T) {
 		sent   bool
 		calls  int
 	}{
-		{[]int{429}, true, 2},           // rate limited, then ok after retry_after
-		{[]int{500, 503}, true, 3},      // two server errors, then ok
+		{[]int{429}, true, 2},            // rate limited, then ok after retry_after
+		{[]int{500, 503}, true, 3},       // two server errors, then ok
 		{[]int{500, 500, 500}, false, 3}, // gives up after three tries
-		{[]int{404}, false, 1},          // rejected: dropped at once
+		{[]int{404}, false, 1},           // rejected: dropped at once
 	}
 	for i, c := range cases {
 		n, f, url, stop := setup(t, c.status...)

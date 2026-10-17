@@ -1,0 +1,5 @@
+# Automatic HTTPS for the domain in SC_DOMAIN (a DNS A/AAAA record must point
+# at this machine, ports 80 and 443 must be reachable). WebSockets pass through.
+{$SC_DOMAIN} {
+	reverse_proxy scserver:8060
+}

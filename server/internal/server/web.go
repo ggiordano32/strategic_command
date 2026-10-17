@@ -94,6 +94,9 @@ func (wb *Web) Stop() {
 // BuildStamp is build_stamp.txt next to the export (written by
 // tools/export_web.sh), so clients can tell a new deploy.
 func (wb *Web) BuildStamp() string {
+	if wb.dir == "" {
+		return ""
+	}
 	b, err := os.ReadFile(filepath.Join(wb.dir, "build_stamp.txt"))
 	if err != nil {
 		return ""
@@ -103,6 +106,9 @@ func (wb *Web) BuildStamp() string {
 
 // file returns the cached file, reloading it if it changed on disk.
 func (wb *Web) file(name string) *webFile {
+	if wb.dir == "" {
+		return nil
+	}
 	full := filepath.Join(wb.dir, filepath.FromSlash(name))
 	st, err := os.Stat(full)
 	if err != nil || !st.Mode().IsRegular() {

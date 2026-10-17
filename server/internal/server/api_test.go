@@ -114,10 +114,10 @@ func TestBadInput(t *testing.T) {
 	e := newEnv(t, nil)
 	text := tstate{Humans: []int{0, 1}}.text()
 	cases := []map[string]any{
-		{"format_version": 1, "seat": 0, "state_gz": gz64(text), "hash": "deadbeef"},           // wrong hash
-		{"format_version": 2, "seat": 0, "state_gz": gz64(text), "hash": StateHash(text)},      // wrong format version
-		{"format_version": 1, "seat": 4, "state_gz": gz64(text), "hash": StateHash(text)},      // not a human seat
-		{"format_version": 1, "seat": 0, "state_gz": "!!!", "hash": StateHash(text)},           // not base64
+		{"format_version": 1, "seat": 0, "state_gz": gz64(text), "hash": "deadbeef"},                      // wrong hash
+		{"format_version": 2, "seat": 0, "state_gz": gz64(text), "hash": StateHash(text)},                 // wrong format version
+		{"format_version": 1, "seat": 4, "state_gz": gz64(text), "hash": StateHash(text)},                 // not a human seat
+		{"format_version": 1, "seat": 0, "state_gz": "!!!", "hash": StateHash(text)},                      // not base64
 		{"format_version": 1, "seat": 0, "state_gz": gz64([]byte("{}")), "hash": StateHash([]byte("{}"))}, // not a state
 		{"format_version": 1, "seat": 0, "state_gz": gz64(text), "hash": StateHash(text), "webhook_url": "https://evil.example/x"},
 		{"format_version": 1, "seat": 0, "state_gz": gz64(text), "hash": StateHash(text), "turn_timeout_h": 5},
@@ -317,8 +317,8 @@ func TestBattleClaimsAndCommand(t *testing.T) {
 	e.submit(c, c.tokA, 1, 0, 0)
 	e.submit(c, c.tokB, 1, 0, 1)
 	ri := e.must2(e.call("GET", p+"/resolve-input", c.tokA, nil))
-	b1 := tbattle{ID: 1, R: 1, Armies: map[int]int{1: 0}, DefF: -1}         // Rome only
-	b2 := tbattle{ID: 2, R: 2, Armies: map[int]int{100001: 1}, DefF: 4}     // Carthage only
+	b1 := tbattle{ID: 1, R: 1, Armies: map[int]int{1: 0}, DefF: -1}     // Rome only
+	b2 := tbattle{ID: 2, R: 2, Armies: map[int]int{100001: 1}, DefF: 4} // Carthage only
 	e.must2(e.upload(c, c.tokB, 1, "turn", battleState(1, b1, b2), map[string]any{"subs_rev": ri["subs_rev"]}))
 	sum := e.must2(e.call("GET", p, c.tokA, nil))
 	if sum["phase"] != "battles" || len(sum["battles"].([]any)) != 2 {

@@ -54,6 +54,8 @@ func main() {
 	roomGrace := flag.Duration("room-grace", mustDur(env("SC_ROOM_GRACE", "90s")), "how long an empty live battle room is kept for reconnects (SC_ROOM_GRACE)")
 	customTTL := flag.Duration("custom-ttl", mustDur(env("SC_CUSTOM_TTL", "10m")), "how long an empty custom battle lobby is kept (SC_CUSTOM_TTL)")
 	logLevel := flag.String("log-level", env("SC_LOG_LEVEL", "info"), "debug, info, warn, error (SC_LOG_LEVEL)")
+	origins := flag.String("allowed-origins", env("SC_ALLOWED_ORIGINS", ""), "origins allowed to call the API cross-origin, comma list of scheme://host[:port] or * (SC_ALLOWED_ORIGINS); default: own origin only")
+	gameURL := flag.String("game-url", env("SC_GAME_URL", ""), "where the game is played, shown on the root page when no web build is served (SC_GAME_URL)")
 	backupNow := flag.Bool("backup-now", false, "write one backup and exit")
 	flag.Parse()
 
@@ -69,7 +71,7 @@ func main() {
 	cfg := server.Config{Addr: *addr, DataDir: *data, WebDir: *web, LogDir: *logs, InviteKey: *invite,
 		TrustedProxy: tp, BackupEvery: *backupEvery, BackupKeep: *backupKeep, TestMode: *testMode,
 		CompressWeb: *compress, BrotliMax: *brMax, LeaseDuration: *lease, RoomGrace: *roomGrace,
-		CustomTTL: *customTTL}
+		CustomTTL: *customTTL, GameURL: *gameURL, AllowedOrigins: server.ParseOrigins(*origins)}
 	srv, err := server.New(cfg, log, nil)
 	if err != nil {
 		log.Error("startup failed", "err", err)
@@ -88,7 +90,9 @@ func main() {
 	if *testMode {
 		log.Warn("TEST MODE: clock control and any webhook URL are enabled; never use this in production")
 	}
-	if _, err := os.Stat(strings.TrimRight(*web, "/") + "/index.html"); err != nil {
+	if *web == "" {
+		log.Info("no web build served (-web is empty); only the API and the root text page")
+	} else if _, err := os.Stat(strings.TrimRight(*web, "/") + "/index.html"); err != nil {
 		log.Warn("no web build found; only the API will work", "web", *web)
 	}
 	srv.Start()

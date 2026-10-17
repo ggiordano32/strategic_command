@@ -19,6 +19,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -33,6 +34,11 @@ const Version = "1.0.0"
 
 // APIVersion is bumped on incompatible API changes.
 const APIVersion = 3
+
+// StateVersion is the CState.VERSION (campaign/cstate.gd) this server was
+// built for, reported by /api/info so a client can tell it is talking to a
+// server for another version of the game. Bump it with CState.VERSION.
+const StateVersion = 7
 
 // Limits.
 const (
@@ -196,6 +202,7 @@ func (s *Server) routes() {
 	})
 	m.HandleFunc("GET /telemetry", s.tele.Status)
 	m.HandleFunc("POST /telemetry", s.telemetryPost)
+	m.HandleFunc("GET /{$}", s.root)
 	m.Handle("/", s.web)
 	s.mux = m
 }
@@ -243,12 +250,22 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 		r = r.WithContext(context.WithValue(r.Context(), ipKey, ip))
 		sw := &statusWriter{ResponseWriter: w}
 		api := strings.HasPrefix(r.URL.Path, "/api/")
+		if !api && len(s.cfg.AllowedOrigins) > 0 && (r.URL.Path == "/healthz" || r.URL.Path == "/telemetry") {
+			if s.cors(sw, r) {
+				s.access(r, sw, ip, start)
+				return
+			}
+		}
 		if api {
 			sw.Header().Set("Cache-Control", "no-store")
 			sw.Header().Set("X-Content-Type-Options", "nosniff")
-			// Same origin only: no CORS headers are ever sent, and
-			// cross-site mutations are refused outright.
-			if r.Method != "GET" && r.Method != "HEAD" && !sameOrigin(r) {
+			// Same origin only unless SC_ALLOWED_ORIGINS lists the caller;
+			// cross-site mutations from anyone else are refused outright.
+			if s.cors(sw, r) {
+				s.access(r, sw, ip, start)
+				return
+			}
+			if r.Method != "GET" && r.Method != "HEAD" && !sameOrigin(r) && !s.originAllowed(r) {
 				fail(sw, http.StatusForbidden, "cross_origin", "cross-origin requests are not allowed")
 				s.access(r, sw, ip, start)
 				return
@@ -298,6 +315,68 @@ func sameOrigin(r *http.Request) bool {
 		return false
 	}
 	return strings.EqualFold(o[i+3:], r.Host)
+}
+
+// originAllowed: the request's Origin is on the allow-list (or the list has
+// "*"). An empty Origin is never "allowed" here (it needs no allowing).
+func (s *Server) originAllowed(r *http.Request) bool {
+	o := strings.ToLower(r.Header.Get("Origin"))
+	if o == "" {
+		return false
+	}
+	for _, a := range s.cfg.AllowedOrigins {
+		if a == "*" || a == o || wildcardOrigin(a, o) {
+			return true
+		}
+	}
+	return false
+}
+
+// wildcardOrigin: an entry like "https://*.itch.zone" matches an origin with
+// the same scheme whose host has one or more labels before ".itch.zone" and
+// the same port (none unless the entry gives one). Both are lower-case.
+func wildcardOrigin(entry, origin string) bool {
+	i := strings.Index(entry, "://*.")
+	if i < 0 {
+		return false
+	}
+	scheme, suffix := entry[:i+3], entry[i+4:] // "https://", ".itch.zone[:port]"
+	if len(suffix) < 2 || !strings.HasPrefix(origin, scheme) {
+		return false
+	}
+	hp := origin[len(scheme):]
+	if !strings.HasSuffix(hp, suffix) || len(hp) == len(suffix) {
+		return false
+	}
+	label := hp[:len(hp)-len(suffix)]
+	return !strings.ContainsAny(label, "/:@?#\\ ") && !strings.HasPrefix(label, ".") && !strings.HasSuffix(label, ".")
+}
+
+// cors adds the CORS headers for an allowed foreign origin and answers its
+// preflight (true = the request is finished). With no allow-list nothing
+// is added and nothing changes. A preflight from an origin not allowed
+// falls through to the normal refusal.
+func (s *Server) cors(w http.ResponseWriter, r *http.Request) bool {
+	if len(s.cfg.AllowedOrigins) == 0 {
+		return false
+	}
+	h := w.Header()
+	h.Add("Vary", "Origin")
+	o := r.Header.Get("Origin")
+	if o == "" || !s.originAllowed(r) {
+		return false
+	}
+	h.Set("Access-Control-Allow-Origin", o)
+	if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
+		h.Add("Vary", "Access-Control-Request-Method")
+		h.Add("Vary", "Access-Control-Request-Headers")
+		h.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		h.Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept")
+		h.Set("Access-Control-Max-Age", "86400")
+		w.WriteHeader(http.StatusNoContent)
+		return true
+	}
+	return false
 }
 
 // clientIP: the socket peer, or (when the peer is a trusted proxy) the
@@ -584,7 +663,7 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 	reply(w, 200, map[string]any{"server": "strategic-command", "version": Version, "api": APIVersion,
-		"build": s.web.BuildStamp(), "invite_required": s.cfg.InviteKey != "", "time": ms(s.clock.Now()),
+		"state_version": StateVersion, "build": s.web.BuildStamp(), "invite_required": s.cfg.InviteKey != "", "time": ms(s.clock.Now()),
 		"test_mode": s.cfg.TestMode})
 }
 
@@ -642,4 +721,23 @@ func nullStr(ns sql.NullString) string {
 		return ns.String
 	}
 	return ""
+}
+
+// root serves the web build's index.html, or, when this server carries no
+// web build (-web "" or the directory has no index.html), a one-line text
+// page saying what it is.
+func (s *Server) root(w http.ResponseWriter, r *http.Request) {
+	if s.web.dir != "" {
+		if st, err := os.Stat(filepath.Join(s.web.dir, "index.html")); err == nil && st.Mode().IsRegular() {
+			s.web.ServeHTTP(w, r)
+			return
+		}
+	}
+	msg := fmt.Sprintf("Strategic Command game server %s, api %d", Version, APIVersion)
+	if s.cfg.GameURL != "" {
+		msg += "; the game is at " + s.cfg.GameURL
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	fmt.Fprintln(w, msg)
 }

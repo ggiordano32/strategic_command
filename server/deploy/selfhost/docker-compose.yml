@@ -1,0 +1,40 @@
+# Self-hosting the Strategic Command game server (the public image, API only).
+# Copy .env.example to .env, edit it, then from this directory:
+#   docker compose --profile scserver up -d     # plain HTTP on port 8060 (LAN, desktop friends)
+#   docker compose --profile caddy up -d        # HTTPS with a domain (browser players too)
+# See server/README.md.
+services:
+  scserver:
+    image: ghcr.io/ggiordano32/strategic-command-server:${SC_TAG:-latest}
+    profiles: ["scserver", "caddy"]
+    restart: unless-stopped
+    ports:
+      - "${SC_PORT:-8060}:8060"
+    volumes:
+      - sc-data:/data          # campaigns.db, backups/, playtest_logs/
+    environment:
+      SC_INVITE_KEY: "${SC_INVITE_KEY:-}"
+      SC_ALLOWED_ORIGINS: "${SC_ALLOWED_ORIGINS:-}"
+      SC_GAME_URL: "${SC_GAME_URL:-}"
+      SC_BACKUP_EVERY: "6h"
+      SC_BACKUP_KEEP: "12"
+    stop_grace_period: 30s
+
+  caddy:
+    image: caddy:2
+    profiles: ["caddy"]
+    restart: unless-stopped
+    depends_on: [scserver]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SC_DOMAIN: "${SC_DOMAIN:?set SC_DOMAIN in .env}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data       # certificates
+      - caddy-config:/config
+volumes:
+  sc-data:
+  caddy-data:
+  caddy-config:

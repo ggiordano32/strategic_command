@@ -97,7 +97,7 @@ Configuration: flags, or the environment variable in brackets (flags win).
 |---|---|---|---|
 | `-addr` | `SC_ADDR` | `:8060` | listen address |
 | `-data` | `SC_DATA_DIR` | `./data` | `campaigns.db`, `backups/`, `webcache/` |
-| `-web` | `SC_WEB_DIR` | `./build/web` | the Godot web export |
+| `-web` | `SC_WEB_DIR` | `./build/web` | the Godot web export; empty or missing: no files are served and `/` answers a one-line text page |
 | `-log-dir` | `SC_LOG_DIR` | `./playtest_logs` | telemetry JSONL |
 | `-invite-key` | `SC_INVITE_KEY` | empty | if set, needed to create campaigns |
 | `-trusted-proxy` | `SC_TRUSTED_PROXY` | loopback + private ranges | peers whose `X-Forwarded-For` is believed |
@@ -108,6 +108,8 @@ Configuration: flags, or the environment variable in brackets (flags win).
 | `-lease` | `SC_LEASE` | `120s` | battle lease length |
 | `-room-grace` | `SC_ROOM_GRACE` | `90s` | an empty, started live battle room is kept this long for reconnects |
 | `-log-level` | `SC_LOG_LEVEL` | `info` | `debug` also logs static file requests |
+| `-allowed-origins` | `SC_ALLOWED_ORIGINS` | empty (own origin only) | comma list of web origins (`scheme://host[:port]`) allowed to call the API cross-origin, or `*` for any (section 13) |
+| `-game-url` | `SC_GAME_URL` | empty | shown on the root page when no web build is served |
 | `-test-mode` | `SC_TEST_MODE` | `false` | `/api/test/clock`, any webhook URL: tests only |
 | `-backup-now` | | | write one backup and exit |
 
@@ -367,7 +369,7 @@ discordapp / ptb / canary), is never returned to clients after being set
 
 ## 10. Versions and compatibility
 
-- **State format version** (`CState.VERSION`, now 1) must match exactly:
+- **State format version** (`CState.VERSION`, now 7; the server reports the one it was built for as `state_version` in `/api/info`) must match exactly:
   the server stores the creator's, refuses uploads of another, and a client
   of another format refuses to open the campaign ("update the game").
 - **Rules hash** (`rules:xxxxxxxx`): SHA-1 of `campaign/*.gd` + `sim/*.gd`
@@ -441,9 +443,27 @@ Online dialog.
   decompressed), 512 KB session blobs, 256 KB per submission; per IP 20
   requests/s (burst 60); per token 10/s (burst 40); failed auth counts
   towards the code limit.
-- **Same origin only**: no CORS headers; non-GET requests with a foreign
-  `Origin` (or `Sec-Fetch-Site: cross-site`) are refused; the WebSocket
-  checks Origin against Host.
+- **Same origin only by default**: no CORS headers; non-GET requests with a
+  foreign `Origin` (or `Sec-Fetch-Site: cross-site`) are refused; the
+  WebSocket checks Origin against Host. `SC_ALLOWED_ORIGINS` (`-allowed-origins`,
+  comma list of `scheme://host[:port]`, `scheme://*.domain` for any
+  subdomain, or `*`) adds origins that may call
+  the server from another site (the web build on itch.io): `/api/*`,
+  `/healthz` and `/telemetry` then answer their OPTIONS preflight with
+  204 and `Access-Control-Allow-Origin` (the origin echoed),
+  `-Allow-Methods: GET, POST, OPTIONS`, `-Allow-Headers: Content-Type,
+  Authorization, Accept`, `-Max-Age: 86400`, `Vary: Origin`; POSTs and
+  WebSocket upgrades from a listed origin pass, any other foreign origin
+  is refused as before. Requests with no Origin (native clients) are
+  always accepted. Auth is a bearer token, never a cookie, so `*` is safe
+  for the API itself. itch.io serves HTML5 games from
+  `https://html-classic.itch.zone` (itch staff: that domain is stable;
+  allowing `itch.zone` generally is advised), so set
+  `https://html-classic.itch.zone,https://*.itch.zone`; see `server/README.md`. Unset, nothing changes.
+- **`/api/info` `state_version`**: the `CState.VERSION` the server was
+  built for (constant `StateVersion` in `server.go`; bump it with
+  `CState.VERSION`), so a client can say "this server is for another
+  version of the game".
 - Client IP for rate limits: the right-most `X-Forwarded-For` address that is
   not a trusted proxy, believed only when the socket peer is a trusted proxy
   (default: loopback and private ranges, which suits Caddy on the LAN).
@@ -489,6 +509,14 @@ docker run -d --name sc --restart unless-stopped -p 8060:8060 -v sc-data:/data \
 
 A new web build needs a new image, or mount it read-only over `/srv/web`
 (commented line in the compose file).
+
+**Standalone game server for other people** (API and live relay, no web
+build): `server/README.md` has the one-command run, compose profiles
+(`server/deploy/selfhost/`: plain HTTP, or Caddy with a domain), the
+variables and backups. The Dockerfile has two targets: `server` (no web
+build, what `.github/workflows/server-image.yml` pushes to
+`ghcr.io/ggiordano32/strategic-command-server` on a `v*` tag) and `full`
+(default, with `build/web`).
 
 **Proxmox:** either an LXC with Docker (or Podman) running the image, or a
 small Debian LXC / VM running the static binary under systemd
