@@ -6388,6 +6388,45 @@ Phase A is data and a pure function; the battle map reads it in phase C.
 - **View.** `TownPlan.site(r, true)` rebuilds its site dictionary from the baked record (so every draw reads the shared data); the old
   generator stays for the legacy region-hop view and for the bake.
 
+### The town plan (shared), phase C: the battle map from the plan, 2026-10-20
+
+A campaign settlement battle is fought on the overworld town. `CTown.battle_plan(st, r)` turns `plan(st, r)` and the site's shape
+into the battle map's canonical frame (the sea up, or an inland town's back: away from its main street's far end; the attackers
+down; the plaza at the origin; decimetres, integers only: piece names and kinds are indices of `MapGen.TP_NAMES` / `TP_KINDS` /
+`TP_LKINDS`) and `CBattle.city_dict` carries it as the city's `tp`. `sim/mapgen.gd` builds the map from it (`tp_geom`); scenario keys and
+custom battles carry no plan and keep the generators.
+
+- **Scale** (`tp_scale`): as much town as the generated maps (a West open town 85 % of its band's area; a walled plan its culture's
+  outline: the castrum's rectangle 2.4 r2, the others' disc, r = `R_LEVEL`), a West town's plaza to its landward edge at most 66 % of the
+  band's depth (the generated band's own: the street fight as long) and drawn out along the shore up to 1.5 times that scale for the
+  rest of its area (no wider than the band), a walled plan's span at most 3.2 radii. Landmark pieces keep their kit size (civic and
+  props x 1.25; a fort with an inside the 2c trace's size).
+- **Shore**: the plan's harbour shore (scaled, along x) is a table after the coast_params layout (`shore_y`, `TP_TAG`), with the
+  seed's two waves on it; beyond its ends it runs on the end's slope. It moves seaward where the plaza and the quay need room.
+- **West open towns** (walls 0-2): the footprint is the outline (its landward and top sides per metre for `_w_bot` / `_w_top`), the
+  plan's main street is the high street, its other streets (and the ring road from level 1) are cross streets traced round what
+  stands, the generated cross streets, second street and lanes fill the gaps (no generated cross street within 30 m of a plan street's mouth), the plan's house slots
+  are the first houses (the lot filler does the rest), street ends beyond the landward edge are the mouths.
+- **Walled plans** (Rome, West walls 3): every fourth footprint point is the walls' trace (towers by the culture's plan), points on the
+  shore are the sea wall, the plaza at the plan's; the citadel stands at the landmark fort (else, for a polis or Punic town, on the high
+  ground); the culture's street lattice inside.
+- **Landmarks**: the town's fort with an inside (`tp_fort_pick`: a fort of its own table first, not the governor's alcazar; else the
+  generic harbour fort; else the generic city fort) is the 2c fort (bastioned square 85-115 % of the generated one by the piece's size;
+  on a headland its seaward curtain on the water; at the high ground turned with its gate to the plaza; the Ulua out on the water with
+  a causeway 8 m wide to the shore and its gate to it). On a walled plan the fort is the citadel ring. Every other landmark is a solid
+  stone body of the piece's size at its place (`B_PIECE`, or `B_FORT` for a second fort, `B_TAVERN` / `B_GOVERNOR` where it can be
+  held); the plaza's civic piece is the town's church (`B_TEMPLE`, held as any church) or the owner's shrine; Cartagena's sea wall is a
+  2 m stone run on the waterline with its baluartes. Bodies carry entry 17 = 1 (drawn as their piece).
+- **View**: the layout's `pieces` (`[piece, x, y, front angle, scale per mille, radius, 1 = the fort with an inside]`) are drawn from the
+  battle kit's block 2 (`BattleKit.draw_piece`, the pre-lit atlas) by a node of the kit under its walls and houses (`city_draw.gd
+  draw_pieces`; the preview draws them in `draw_static`); a fort's piece lies under the kit's walls (its rock and towers show; the trace
+  stays the 2c square).
+- **Agreement** with the overworld (`tests/town_plan_test.gd`): for every region and every level 0-2, walls 0-3 the landmark set and
+  its turn round the town are the same in `CTown.plan` and `TownPlan._build`, the civic piece too (`CTown` follows the overworld's
+  rules: the generic level 2 fort / tower 14 m from the church in centimetres, no church outside the town). Known: Port Royal's
+  gallows and waterfront taverns, where the overworld's `_put` finds water on the live coast field (the fix: `_build` placing
+  landmarks at `CTown.plan`'s points).
+
 ### Audio (as built, 2026-10-10)
 
 ## DESIGN paragraph (Audio)

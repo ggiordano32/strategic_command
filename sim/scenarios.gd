@@ -1393,7 +1393,7 @@ static func siege_test(city_seed: int, level: int, walls: int, ground: int, kind
 ## ([[type, men], ...]) adds units to the attackers' end (light artillery
 ## in the "full kit" row), so the defenders' field army leaves out the same
 ## strength and both sides stay equal. Both sides AI.
-static func fair_siege(city_seed: int, walls: int, plan: int, equip: Dictionary) -> Dictionary:
+static func fair_siege(city_seed: int, walls: int, plan: int, equip: Dictionary, tp: Dictionary = {}) -> Dictionary:
 	var att: Array = SIEGE_ARMY.duplicate(true)
 	att.append_array(equip.get("extra", []).duplicate(true))
 	var level := 2
@@ -1421,6 +1421,8 @@ static func fair_siege(city_seed: int, walls: int, plan: int, equip: Dictionary)
 	var terr := {"kind": Terrain.K_FLAT, "seed": city_seed * 7 + 3, "forest": MapGen.PALETTE_FOREST[MapGen.PAL_DRY],
 		"ground": MapGen.PAL_DRY}
 	var city := {"seed": city_seed, "level": level, "walls": walls, "bld": [1, 2, 4], "plan": plan, "coast": 0}
+	if not tp.is_empty():
+		city["tp"] = tp  # (tests/town_balance.gd: the same siege on a campaign town's plan)
 	var r := settlement(city, terr, att, dfn, 1, [0, 1], equip)
 	return r["scenario"]
 

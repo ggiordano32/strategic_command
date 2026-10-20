@@ -843,6 +843,15 @@ static func _poly_dist(vx: PackedInt32Array, vy: PackedInt32Array, x: int, y: in
 
 ## MapGen.shore_y (canonical y of the shoreline at x, m).
 static func _shore_y(cp: PackedInt32Array, x: int) -> int:
+	if cp.size() > 13 and cp[10] == -77777:
+		# (A plan town's shore table: MapGen.TP_TAG.)
+		var stp := cp[12]
+		var nt := cp.size() - 13
+		var fx := clampi(x - cp[11], 0, (nt - 1) * stp)
+		var i := fx / stp
+		var yt := cp[13 + i] if i >= nt - 1 else cp[13 + i] + (cp[14 + i] - cp[13 + i]) * (fx - i * stp) / stp
+		var wv := (cp[5] * FM.sin_a((cp[6] + x * 1024 / 150) & 1023) + cp[7] * FM.sin_a((cp[8] + x * 1024 / 60) & 1023)) / FM.TRIG_ONE
+		return maxi(yt + wv, 20)
 	var y := cp[0] + cp[1] * (x - cp[2]) / 1000
 	var ex := maxi(absi(x - cp[2]) - cp[3], 0)
 	if ex > 0:

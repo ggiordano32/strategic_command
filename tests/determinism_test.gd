@@ -163,6 +163,9 @@ const BattleAI := preload("res://sim/battle_ai.gd")
 const FM := preload("res://sim/fixed_math.gd")
 const AIP := preload("res://sim/ai_profile.gd")
 const MapGen := preload("res://sim/mapgen.gd")
+const CData := preload("res://campaign/cdata.gd")
+const CState := preload("res://campaign/cstate.gd")
+const CBattle := preload("res://campaign/cbattle.gd")
 
 const M := 1024
 
@@ -330,6 +333,11 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=town" in OS.get_cmdline_user_args():
+		_check_town()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=occupy" in OS.get_cmdline_user_args():
 		_check_occupy()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -383,6 +391,7 @@ func _init() -> void:
 	_check_west()
 	_check_fort()
 	_check_occupy()
+	_check_town()
 	_check_sea()
 	if "--only=equipment" in OS.get_cmdline_user_args():
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -7006,3 +7015,153 @@ func _occ_run(p_seed: int, snaps: Array) -> Dictionary:
 	ev["hashes"] = hashes
 	ev["twin_bad"] = twin_bad
 	return ev
+
+
+# ------------------------------------------ the shared town plan (phase C) ---
+## The city fought in is the city on the map (docs/DESIGN.md "The town plan
+## (shared)"; "--only=town", also in the full run): a campaign settlement
+## battle's map is built from the overworld town's plan (CTown.battle_plan,
+## city "tp"). (1) Havana, a level 2 city at walls 1: the Morro stands at the
+## harbour mouth's seaward end (mouth0) and the Fuerza at its other end
+## (mouth1), and there is no town wall (no outer gate, no wall stretch but
+## the fort's); the Morro is the fort with an inside (fort_on: a parade of its
+## own ground, its main gate and sally port, its walls, guns and garrison);
+## the Fuerza and the cathedral are stone blocks (a traced shot through the
+## cathedral is stopped, one across the plaza is not). (2) The storm of Havana
+## (AI against AI, ladders and a ram) runs with the fort rules (the result
+## carries the fort) and is identical on repeat (every 50 ticks) and across
+## snapshot / restore (at 1,000 and 2,600, 120 ticks each). (3) Carthage at
+## walls 2 (Rome): its Byrsa is the citadel ring, drawn as the piece.
+func _town_scenario(pack: String, key: String, lvl: int, walls: int) -> Dictionary:
+	CData.use_pack(pack)
+	var st := CState.new_campaign("town", 5, [], {}, [], pack)
+	var r := CData.region_index(key)
+	st["regions"][r]["level"] = lvl
+	var got := false
+	for sl in st["regions"][r]["slots"]:
+		if int(sl[0]) == CData.WALLS:
+			sl[1] = walls
+			got = true
+	if not got:
+		st["regions"][r]["slots"].append([CData.WALLS, walls])
+	var city := CBattle.city_dict(st, r)
+	var rd: Dictionary = CData.REGIONS[r]
+	var terr := {"kind": int(rd["terrain"]), "seed": (CState.city_seed(st, r) ^ 0x2545F491) & 0x7FFFFFFF,
+		"forest": int(rd["forest"]), "ground": int(rd["ground"])}
+	var att: Array = []
+	var dfn: Array = []
+	if pack == "west":
+		for e in Scenarios.WEST_ATT:
+			att.append([UT.index_of(str(e[0])), int(e[1])])
+		for e in Scenarios.WEST_DEF:
+			dfn.append([UT.index_of(str(e[0])), int(e[1])])
+	else:
+		att = Scenarios.SIEGE_ARMY.duplicate(true)
+		for k in 5:
+			dfn.append([Scenarios.SIEGE_GARRISON[k], 60])
+	var res := Scenarios.settlement(city, terr, att, dfn, 1, [0, 1], {"ladders": 3, "ram": 1})
+	return {"scenario": res["scenario"], "tp": city.get("tp", {})}
+
+
+func _town_run(sc: Dictionary, p_seed: int, snaps: Array, ticks: int) -> Dictionary:
+	var sim := BattleSim.new()
+	sim.setup(sc, p_seed)
+	var hashes := PackedInt64Array()
+	var twin_bad := 0
+	while sim.tick < ticks and sim.winner < 0:
+		sim.step()
+		if sim.tick % 50 == 0:
+			hashes.append(sim.state_hash())
+		if snaps.has(sim.tick):
+			var copy := BattleSim.new()
+			copy.setup(sc, p_seed)
+			if not copy.restore(sim.snapshot()):
+				twin_bad += 1000
+			else:
+				var probe := BattleSim.new()
+				probe.setup(sc, p_seed)
+				probe.restore(sim.snapshot())
+				for t in 120:
+					probe.step()
+					copy.step()
+					if probe.state_hash() != copy.state_hash():
+						twin_bad += 1
+	return {"hashes": hashes, "twin_bad": twin_bad, "sim": sim}
+
+
+func _check_town() -> void:
+	var bad: Array = []
+	var hv := _town_scenario("west", "havana", 2, 1)
+	var sc: Dictionary = hv["scenario"]
+	var tp: Dictionary = hv["tp"]
+	var sim := BattleSim.new()
+	sim.setup(sc, 4242)
+	var lay: Dictionary = sim.map_info["city"]
+	var pcs := {}
+	for pc in lay.get("pieces", []):
+		pcs[MapGen.tp_kit_name(MapGen.tp_name(int(pc[0])))] = pc
+	var fort: Dictionary = lay.get("fort", {})
+	var px := int((lay["plaza"] as Array)[0])
+	# The plan's mouths: the Morro on mouth0's side of the plaza, the Fuerza on mouth1's.
+	var m0: Array = tp.get("mouth0", [])
+	var m1: Array = tp.get("mouth1", [])
+	var side_ok := m0.size() == 2 and m1.size() == 2 and pcs.has("lm_morro") and pcs.has("lm_fuerza") \
+		and signi(int(pcs["lm_morro"][1]) - px) == signi(int(m0[0])) and signi(int(pcs["lm_fuerza"][1]) - px) == signi(int(m1[0]))
+	if int(lay.get("tp", 0)) != 1 or not side_ok or int(pcs["lm_morro"][6]) != 1 or MapGen.tp_name(int(fort.get("piece", -1))) != "morro":
+		bad.append("Havana walls 1: plan map %d, pieces %s, fort %s, mouths %s / %s" % [int(lay.get("tp", 0)), str(pcs.keys()),
+			MapGen.tp_name(int(fort.get("piece", -1))), str(m0), str(m1)])
+	var garr := 0
+	for u in sim.n_units:
+		if sim.u_side[u] == sim.city_def and sim.u_wall[u] > 0 and sim.u_type[u] != UT.FORT_GUN:
+			garr += 1
+	var plaza_c: int = sim.cmp[(sim.plaza[1] >> 11) * sim.ob_w + (sim.plaza[0] >> 11)]
+	if sim.fort_on != 1 or sim.n_outer != 0 or sim.n_gates != 2 or sim.ws_x0.size() < 8 or garr < 1 or sim.fort_cmp < 0 \
+			or sim.fort_cmp == plaza_c:
+		bad.append("Havana walls 1: the Morro's fort: fort_on %d, outer gates %d, gates %d, stretches %d, garrison units %d, parade piece %d (plaza %d)" % [
+			sim.fort_on, sim.n_outer, sim.n_gates, sim.ws_x0.size(), garr, sim.fort_cmp, plaza_c])
+	# A traced shot through the cathedral (a stone block of the piece's size) is stopped; one across the plaza is not.
+	var cat: Array = pcs.get("cv_cathedral", [])
+	var blocked := -2
+	var open := -2
+	if not cat.is_empty():
+		var cx := int(cat[1]) * M
+		var cy := int(cat[2]) * M
+		var rr := (int(cat[5]) + 8) * M
+		var z := sim.height_at(cx, cy) + 1600
+		blocked = sim._trace(cx - rr, cy, z, cx + rr, cy, z, 0, 0, 0, 0, 0)
+		if blocked < 0:
+			blocked = sim._trace(cx, cy - rr, z, cx, cy + rr, z, 0, 0, 0, 0, 0)
+		var ph := (int((lay["plaza"] as Array)[2]) - 2) * M
+		var pz := sim.height_at(sim.plaza[0], sim.plaza[1]) + 1600
+		open = sim._trace(sim.plaza[0] - ph, sim.plaza[1], pz, sim.plaza[0] + ph, sim.plaza[1], pz, 0, 0, 0, 0, 0)
+	if blocked < 0 or open >= 0:
+		bad.append("Havana: a shot through the cathedral %d (want >= 0), across the plaza %d (want -1)" % [blocked, open])
+	# The storm, repeat and snapshot / restore.
+	var a := _town_run(sc, 53197, [1000, 2600], 3200)
+	var b := _town_run(sc, 53197, [], 3200)
+	if a["hashes"] != b["hashes"]:
+		bad.append("Havana storm: the repeat diverged")
+	if int(a["twin_bad"]) != 0:
+		bad.append("Havana storm: the restored copies diverged (%d)" % int(a["twin_bad"]))
+	var ws: BattleSim = a["sim"]
+	var res := ws.result()
+	if ws.fort_on != 1 or not res.has("fort"):
+		bad.append("Havana storm: fort_on %d, result fort %s" % [ws.fort_on, str(res.get("fort", "-"))])
+	# Carthage (Rome) at walls 2: the Byrsa is the citadel, drawn as its piece.
+	var ca := _town_scenario("rome", "zeugitana", 2, 2)
+	var cs := BattleSim.new()
+	cs.setup(ca["scenario"], 4242)
+	var cl: Dictionary = cs.map_info["city"]
+	var byrsa := false
+	for pc in cl.get("pieces", []):
+		if MapGen.tp_name(int(pc[0])) == "byrsa" and int(pc[6]) == 1:
+			byrsa = true
+	if int(cl.get("tp", 0)) != 1 or (cl["cit"] as Dictionary).is_empty() or not byrsa:
+		bad.append("Carthage walls 2: plan map %d, citadel %s, Byrsa piece %s" % [int(cl.get("tp", 0)), str(not (cl["cit"] as Dictionary).is_empty()), str(byrsa)])
+	CData.use_pack("rome")
+	if bad.is_empty():
+		print("PASS town plan: Havana walls 1 from the plan (Morro at mouth0, the fort with an inside: %d stretches, %d garrison units, its parade its own ground; Fuerza at mouth1; no town wall); a shot through the cathedral stopped at %d, across the plaza clear; the storm to tick %d (winner %d) identical on repeat and across snapshot / restore, result fort %s; Carthage walls 2: the Byrsa's citadel" % [
+			sim.ws_x0.size(), garr, blocked / M, ws.tick, ws.winner, str(res.get("fort", {}))])
+	else:
+		for x in bad:
+			_fail(str(x))

@@ -27,6 +27,7 @@ const SHADER := preload("res://game/battlekit.gdshader")
 ## Block 2 (landmark and civic pieces, "lm_*" / "cv_*"; atlas2_*; tools/battlekit/spec_pieces.py). Used only by
 ## draw_piece for now; its texture is loaded on the first call.
 const Atlas2 := preload("res://game/battlekit_atlas2.gd")
+const CityDraw := preload("res://game/city_draw.gd")
 ## Loaded when needed (the script checkers' scratch project has no assets/).
 var TEX_ALB: Texture2D
 var TEX_NRM: Texture2D
@@ -325,6 +326,8 @@ func _build_houses() -> void:
 	for b in lay["buildings"]:
 		var a: Array = b
 		var kind: int = a[4]
+		if kind == MapGen.B_PIECE:
+			continue  # (a town plan's landmark: drawn as its piece, game/city_draw.gd draw_pieces)
 		var style := clampi(int(a[5]) if a.size() > 5 else 0, 0, 5)
 		if cul_override >= 0:
 			style = cul_override
@@ -398,8 +401,8 @@ func _build_west() -> void:
 	for b in lay.get("buildings", []):
 		var a: Array = b
 		var kind: int = a[4]
-		if kind == MapGen.B_FORT:
-			continue
+		if kind == MapGen.B_FORT or kind == MapGen.B_PIECE or (a.size() > 17 and int(a[17]) == 1):
+			continue  # (a town plan's landmarks are drawn as their pieces: game/city_draw.gd draw_pieces)
 		var h := absi(int(a[0]) * 73 + int(a[1]) * 151) % 100
 		var q0 := Vector2(float(int(a[7])), float(int(a[8])))
 		var q1 := Vector2(float(int(a[9])), float(int(a[10])))
@@ -682,6 +685,11 @@ func _make_nodes() -> void:
 	_low_node = null
 	_shadow = null
 	shadow_ms = 0.0
+	if not (lay.get("pieces", []) as Array).is_empty():
+		# The town plan's landmark pieces (block 2): over the streets' ground, under the walls and houses.
+		var pn := _PieceDraw.new()
+		pn.kit = self
+		add_child(pn)
 	if i_piece.is_empty():
 		return
 	if low:
@@ -796,6 +804,14 @@ func refresh() -> void:
 			_shadow.rebake_instance(i)
 	if changed and _low_node != null:
 		_low_node.queue_redraw()
+
+
+## The town plan's landmark pieces (game/city_draw.gd draw_pieces), drawn once.
+class _PieceDraw extends Node2D:
+	var kit
+
+	func _draw() -> void:
+		CityDraw.draw_pieces(self, kit.lay, float(kit.k), Vector2.ZERO)
 
 
 ## The Low path: no shader, no shadow layer; pre-lit 4 px/m atlas, culture tint by modulate.

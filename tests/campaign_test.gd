@@ -4457,8 +4457,8 @@ func _town_plan() -> void:
 	var hp := CTown.plan(w, hv)
 	var forts := 0
 	for lm in hp["landmarks"]:
-		if int((lm as Dictionary)["fort"]) == 1:
-			forts += 1
+		if int((lm as Dictionary)["fort"]) == 1 and int((lm as Dictionary).get("gen", 0)) == 0:
+			forts += 1  # (the Morro and the Fuerza; a level 2 town's generic fort on the high ground besides)
 	_check(forts == 2 and (hp["wall"] as Array).is_empty() and int(hp["harbour"]) == 1, "Havana at walls 1: Morro and Fuerza, no town wall circuit yet")
 	_set_town(w, hv, 2, 3)
 	_check(not (CTown.plan(w, hv)["wall"] as Array).is_empty() and not (CTown.plan(w, hv)["gates"] as Array).is_empty(), "Havana at walls 3: a wall trace and a gate")

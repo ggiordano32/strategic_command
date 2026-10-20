@@ -57,6 +57,7 @@ const CGrid := preload("res://campaign/cgrid.gd")
 const CChars := preload("res://campaign/cchars.gd")
 const FM := preload("res://sim/fixed_math.gd")
 const CSeaBattle := preload("res://campaign/cseabattle.gd")
+const CTown := preload("res://campaign/ctown.gd")
 
 const FRONT := 100       # m from the centre line to each side's front
 const SECOND_LINE := 45  # m behind the first
@@ -893,6 +894,11 @@ static func city_dict(st: Dictionary, r: int, def_side: int = -1) -> Dictionary:
 		"hstyle": hstyle}
 	if CData.pack == "west":
 		d["west"] = 1  # (a West open town on the battle map: MapGen.is_west, phase W)
+	# The town on the overworld map is the town fought in (the shared town plan, campaign/ctown.gd): the plan
+	# turned into the battle map's frame; sim/mapgen.gd builds the settlement from it.
+	var tp := CTown.battle_plan(st, r)
+	if not tp.is_empty():
+		d["tp"] = tp
 	if def_side >= 0:
 		d["def"] = def_side
 	return d

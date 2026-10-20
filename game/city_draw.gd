@@ -23,6 +23,7 @@ extends RefCounted
 const MapGen := preload("res://sim/mapgen.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const CData := preload("res://campaign/cdata.gd")
+const BattleKit := preload("res://game/battlekit.gd")
 
 const STONE := Color(0.46, 0.43, 0.39)
 const STONE_DARK := Color(0.28, 0.26, 0.24)
@@ -61,6 +62,8 @@ static func draw_static(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2, f
 		kit := false) -> void:
 	var banner := banner_color(lay)
 	_draw_squares(ci, lay, k, o)
+	if not kit:
+		draw_pieces(ci, lay, k, o)  # (the battle's: above the streets' ground, game/battlekit.gd)
 	var sea: Dictionary = lay.get("sea", {})
 	if not sea.is_empty():
 		for mo in sea["moles"]:
@@ -106,6 +109,27 @@ static func draw_over(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2) -> 
 
 static func _p(o: Vector2, k: float, x: float, y: float) -> Vector2:
 	return o + Vector2(x, y) * k
+
+
+## The town plan's landmark pieces (lay "pieces", sim/mapgen.gd tp_*: [piece (MapGen.TP_NAMES), x, y, front
+## angle, scale per mille, radius, 1: the fort with an inside]) from the battle kit's block 2 (game/battlekit.gd draw_piece, the
+## pre-lit atlas), under the walls, the houses and the men: the Morro on its rock, the Fuerza, the cathedral on
+## the plaza, the Byrsa under its citadel ring.
+static func draw_pieces(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2) -> void:
+	for pc in lay.get("pieces", []):
+		var a: Array = pc
+		var nm := MapGen.tp_kit_name(MapGen.tp_name(int(a[0])))
+		if not BattleKit.has_piece(nm):
+			continue
+		var sc := float(int(a[4])) / 1000.0
+		# (The piece's front is image up at yaw 0; the plan's front angle is the map's: atan2 with y down.)
+		var yaw := float(int(a[3]) - 768) * TAU / 1024.0
+		BattleKit.draw_piece(ci, nm, (o / k + Vector2(float(int(a[1])), float(int(a[2])))) / sc, yaw, Color.WHITE, k * sc)
+
+
+## A building record drawn as a landmark piece (draw_pieces), not as a house.
+static func is_piece_body(a: Array) -> bool:
+	return int(a[4]) == MapGen.B_PIECE or (a.size() > 17 and int(a[17]) == 1)
 
 
 ## The agora (paving edge and a fountain) and, inside a citadel, its court.
@@ -168,6 +192,8 @@ static func _draw_buildings(ci: CanvasItem, lay: Dictionary, k: float, o: Vector
 static func _house_shadows(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2, sh: Vector2, scol: Color) -> void:
 	for b in lay["buildings"]:
 		var a: Array = b
+		if is_piece_body(a):
+			continue
 		var shape := int(a[6]) if a.size() > 6 else MapGen.SH_RECT
 		if shape == MapGen.SH_ROUND:
 			ci.draw_circle(_p(o, k, a[7], a[8]) + sh, float(a[9]) * k, scol)
@@ -183,6 +209,8 @@ static func _house_shadows(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2
 static func _house_roofs(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2, fine: bool, ag: Array) -> void:
 	for b in lay["buildings"]:
 		var a: Array = b
+		if is_piece_body(a):
+			continue
 		var kind: int = a[4]
 		var style := clampi(int(a[5]) if a.size() > 5 else 0, 0, 3)
 		var shape := int(a[6]) if a.size() > 6 else MapGen.SH_RECT
@@ -727,6 +755,10 @@ static func plan_surround(sim) -> Dictionary:
 		avoid.append(Rect2(float(lay["att_x"]) - 45.0, float(lay["att_y"]) - 45.0, 90.0, 90.0))
 	for q in sim.n_eq:
 		avoid.append(Rect2(sim.q_x[q] / 1024.0 - 16.0, sim.q_y[q] / 1024.0 - 16.0, 32.0, 32.0))
+	for pc in lay.get("pieces", []):
+		# (A town plan's landmark and its ground.)
+		var pr := float(int(pc[5])) + 14.0
+		avoid.append(Rect2(float(int(pc[1])) - pr, float(int(pc[2])) - pr, pr * 2.0, pr * 2.0))
 	var cap := mini(14 + (lay["buildings"] as Array).size() / 5, 70)
 	var orch_n := 0
 	var fields: Array = out["fields"]

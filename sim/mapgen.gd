@@ -284,6 +284,8 @@ static func city_params(c: Dictionary) -> Dictionary:
 		out["towers"] = int(c["towers"])  # (read by the sim: 0 = no tower engines; not the map's)
 	if int(c.get("west", 0)) != 0:
 		out["west"] = 1  # (the West pack: an open town, phase W; is_west)
+	if c.get("tp") is Dictionary and int((c["tp"] as Dictionary).get("v", 0)) == 1:
+		out["tp"] = c["tp"]  # (a campaign town's shared plan: the map is built from it, tp_geom)
 	return out
 
 
@@ -319,6 +321,12 @@ static func describe(plan: int, level: int, kind: int, seed_v: int, coast: int) 
 ## Canonical centre and radius of a city on a field w_m x h_m metres.
 static func city_frame(c: Dictionary, w_m: int, _h_m: int) -> Vector3i:
 	var p := city_params(c)
+	var g := tp_geom(p)
+	if not g.is_empty():
+		# (A town plan: the plaza; the outline's top at the generated maps' top.)
+		if is_west(p):
+			return Vector3i((w_m / 2) & ~1, W_TOP + int(g["up"]), (int(g["up"]) + int(g["down"])) / 2)
+		return Vector3i((w_m / 2) & ~1, CITY_TOP + int(g["up"]), R_LEVEL[int(p["level"])])
 	if is_west(p):
 		# (A West open town: the band's middle and half its depth.)
 		var lv: int = p["level"]
@@ -333,6 +341,18 @@ static func city_frame(c: Dictionary, w_m: int, _h_m: int) -> Vector3i:
 ## attackers' deployment depth and frontage (metres).
 static func city_field(c: Dictionary, att_width_m: int, att_depth_m: int) -> Vector2i:
 	var p := city_params(c)
+	var g := tp_geom(p)
+	if not g.is_empty():
+		# A town plan: its outline with room round it, the approach and the attackers below.
+		var lv2: int = p["level"]
+		var span := 2 * maxi(-int(g["x0"]), int(g["x1"]))
+		if is_west(p):
+			var ww2 := (maxi(maxi(W_FW[lv2], span + 240), att_width_m + 80) + 3) / 4 * 4
+			var hh2 := (W_TOP + int(g["up"]) + int(g["down"]) + W_APPROACH + att_depth_m + 40 + 3) / 4 * 4
+			return Vector2i(ww2, hh2)
+		var ww3 := (maxi(span + 300, att_width_m + 160) + 3) / 4 * 4
+		var hh3 := (CITY_TOP + int(g["up"]) + int(g["down"]) + WALL_T[int(p["walls"])] / 2 + APPROACH + att_depth_m + 40 + 3) / 4 * 4
+		return Vector2i(ww3, hh3)
 	if is_west(p):
 		# A West open town: the band the field's width across (the town is
 		# the same whatever the armies), the approach and the attackers below.
@@ -371,6 +391,15 @@ static func coast_params(c: Dictionary, w_m: int) -> PackedInt32Array:
 
 ## Canonical y (metres) of the shoreline at x: the sea lies above it.
 static func shore_y(cp: PackedInt32Array, x: int) -> int:
+	if cp.size() > 13 and cp[10] == TP_TAG:
+		# (A plan town's shore: its table, with the seed's waves on it.)
+		var stp := cp[12]
+		var nt := cp.size() - 13
+		var fx := clampi(x - cp[11], 0, (nt - 1) * stp)
+		var i := fx / stp
+		var yt := cp[13 + i] if i >= nt - 1 else cp[13 + i] + (cp[14 + i] - cp[13 + i]) * (fx - i * stp) / stp
+		var wv := (cp[5] * FM.sin_a((cp[6] + x * 1024 / 150) & 1023) + cp[7] * FM.sin_a((cp[8] + x * 1024 / 60) & 1023)) / FM.TRIG_ONE
+		return maxi(yt + wv, 20)
 	var y := cp[0] + cp[1] * (x - cp[2]) / 1000
 	var ex := maxi(absi(x - cp[2]) - cp[3], 0)
 	if ex > 0:
@@ -1361,12 +1390,53 @@ static func plan_outline(p: Dictionary, kind: int, w_m: int, land: int = 1) -> D
 	if vt.size() < vx.size():
 		for k in range(vt.size(), vx.size()):
 			vt.append(-1)
+	# A town plan (tp_geom): its outline (every fourth point of the footprint), the plaza at the frame's
+	# centre, the citadel at its landmark fort (else on its high ground), no funnel.
+	var g := tp_geom(p) if land >= 0 else {}
+	var tp_cit := ""
+	if not g.is_empty():
+		var foot: PackedInt32Array = g["foot"]
+		vx = PackedInt32Array()
+		vy = PackedInt32Array()
+		vt = PackedInt32Array()
+		for i in range(0, foot.size() - 1, 8):
+			vx.append(cx + foot[i])
+			vy.append(cy + foot[i + 1])
+			vt.append(-1)
+		px = cx
+		py = cy
+		funnel = -1
+		sh = PackedInt32Array()
+		var fi := tp_fort_pick(g["landmarks"])
+		var tgt: Array = []
+		if fi >= 0:
+			var fl: Dictionary = (g["landmarks"] as Array)[fi]
+			tgt = [int(fl["bx"]), int(fl["by"])]
+			tp_cit = str(fl["p"])
+			var ft := tp_foot(tp_cit)
+			cit_r = clampi(maxi(int(ft[0]), int(ft[1])) * 6 / 10, 18, 25)
+		elif (g["high"] as Array).size() == 2 and cit_r > 0:
+			tgt = g["high"]
+		if not tgt.is_empty():
+			cit_ang = FM.atan2_a(int(tgt[1]), int(tgt[0]))
+			cit_dist = clampi(FM.approx_len(int(tgt[0]), int(tgt[1])), hs + cit_r + 10, r0 * 70 / 100)
 	# The sea cuts off the back of a coastal city along the shore.
 	var onl := PackedInt32Array()
 	onl.resize(vx.size())
 	onl.fill(0)
 	var cp := PackedInt32Array()
-	if coast != 0:
+	if coast != 0 and not g.is_empty() and (g["shore"] as PackedInt32Array).size() >= 4:
+		# (A plan's shore: the outline's points held on the land; those on it are the sea wall's.)
+		cp = tp_coast(p, g, w_m, cx, cy)
+		var yo := t / 2 if walls > 0 else 3
+		for k in vx.size():
+			var sy := shore_y(cp, vx[k]) + yo
+			if vy[k] <= sy + 4:
+				vy[k] = maxi(vy[k], sy)
+				onl[k] = 1
+				if walls > 0:
+					vt[k] = tow_r
+	elif coast != 0:
 		cp = coast_params(p, w_m)
 		var yoff := t / 2 if walls > 0 else 3
 		var cl := _clip(vx, vy, vt, cp[2], cp[0] + yoff, cp[1], funnel)
@@ -1440,7 +1510,8 @@ static func plan_outline(p: Dictionary, kind: int, w_m: int, land: int = 1) -> D
 		"funnel": funnel, "cit": cit, "cit_jit": cit_jit, "lat_a": lat_a, "lat_b": lat_b, "seam": seam,
 		"blk_w": blk_w, "blk_l": blk_l, "blk_s": blk_s, "built_extra": built_extra, "gate_jit": gate_jit,
 		"field_depth": field_depth, "sea_jit": sea_jit, "mole_l": mole_l, "mole_e": mole_e, "cp": cp,
-		"site": site, "t": t, "tow_r": tow_r, "trg": trg, "rng": rng, "cx": cx, "cy": cy, "r0": r0, "shape": sh}
+		"site": site, "t": t, "tow_r": tow_r, "trg": trg, "rng": rng, "cx": cx, "cy": cy, "r0": r0, "shape": sh,
+		"tp_cit": tp_cit}
 
 
 ## Radius (m) of an oppidum's oval at angle a, with the kidney's dent.
@@ -1831,10 +1902,15 @@ static func _city_plan(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 	_keep_rect(keep, ow, oh, px - ahs, py - ahs, px + ahs, py + ahs)
 	# ---- landmarks, then houses.
 	var buildings: Array = []
+	var pieces: Array = []
+	var tpg := tp_geom(p)
 	var lm := _landmarks(p, px, py, ahs, msw, gates, cx, cy, r0, true)
+	if not tpg.is_empty():
+		_tp_rome_marks(tpg, lm, pieces, inside, keep, occ, obs, ow, oh, cx, cy, int(p["owner"]), cit, t, str(o["tp_cit"]), walls,
+			px, py, ahs)
 	for b in lm:
 		var a: Array = b
-		if _rect_free(inside, keep, occ, ow, oh, a[1], a[2], a[3], a[4]):
+		if int(a[0]) == B_PIECE or _rect_free(inside, keep, occ, ow, oh, a[1], a[2], a[3], a[4]):
 			_mark_rect(occ, ow, oh, a[1], a[2], a[3], a[4])
 			buildings.append([a[1], a[2], a[3], a[4], a[0], a[5], SH_RECT])
 	var enclosed := (plan == PLAN_OPPIDUM and level <= 1) or level == 0
@@ -2065,7 +2141,7 @@ static func _city_plan(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 		"gate_hp": GATE_HP[walls], "plan": plan, "site": site, "coast": coast, "ditch": ditch,
 		"sea": sea, "palisade": 1 if level == 0 and walls > 0 else 0, "enclosed": 1 if enclosed else 0,
 		"founder": int(p["founder"]), "owner": int(p["owner"]), "banner": int(p["banner"]),
-		"post_veg": post}
+		"post_veg": post, "pieces": pieces, "tp": 0 if tpg.is_empty() else 1}
 	out["city"] = lay
 	return lay
 
@@ -3381,6 +3457,10 @@ static func _flip_all(out: Dictionary, hgt: Dictionary, w_m: int, h_m: int) -> v
 			fpts.call(fl, 0, 1)
 	lay["att_x"] = fx.call(int(lay["att_x"]))
 	lay["att_y"] = fy.call(int(lay["att_y"]))
+	for pc in lay.get("pieces", []):
+		pc[1] = fx.call(int(pc[1]))
+		pc[2] = fy.call(int(pc[2]))
+		pc[3] = (int(pc[3]) + 512) & 1023
 	if int(lay.get("west", 0)) != 0:
 		_w_flip(lay, w_m, h_m)
 	var nav: Dictionary = lay["nav"]
@@ -3546,6 +3626,10 @@ static func west_outline(p: Dictionary, kind: int, w_m: int) -> Dictionary:
 	vy.append(_w_bot(o, cx - hw))
 	o["vx"] = vx
 	o["vy"] = vy
+	o["x0"] = cx - hw
+	o["x1"] = cx + hw
+	if not tp_of(p).is_empty():
+		_w_outline_tp(p, w_m, o)
 	return o
 
 
@@ -3553,11 +3637,19 @@ static func west_outline(p: Dictionary, kind: int, w_m: int) -> Dictionary:
 static func _w_top(o: Dictionary, x: int) -> int:
 	if int(o["coast"]) != 0:
 		return shore_y(o["cp"], x)
+	if o.has("tp_top"):
+		var tt: PackedInt32Array = o["tp_top"]
+		return tt[clampi(x, 0, tt.size() - 1)]
 	return int(o["top"])
 
 
 ## The landward edge at x: two waves and a lean, rounded at the ends.
 static func _w_bot(o: Dictionary, x: int) -> int:
+	if o.has("tp_bot"):
+		# (A town plan: the outline's landward side, held level beyond its ends.)
+		var tb: PackedInt32Array = o["tp_bot"]
+		var xx := clampi(x, int(o["x0"]), int(o["x1"]))
+		return maxi(tb[clampi(xx, 0, tb.size() - 1)], _w_top(o, x) + 30)
 	var cx: int = o["cx"]
 	var d := x - cx
 	var y: int = int(o["bot"]) + int(o["ba1"]) * FM.sin_a((d * 1024 / int(o["bl1"]) + int(o["bp1"])) & 1023) / FM.TRIG_ONE \
@@ -4087,6 +4179,7 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 	var walls: int = p["walls"]
 	var coast: int = p["coast"]
 	var o := west_outline(p, kind, w_m)
+	var tpm := o.has("tp")  # (a campaign town's shared plan: tp_geom)
 	var rng := _rng(int(p["seed"]) * 29 + 11)
 	var cx: int = o["cx"]
 	var hw: int = o["hw"]
@@ -4124,7 +4217,8 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 	for x in w_m + 1:
 		botv.append(_w_bot(o, x))
 	var wc := {"o": o, "rng": rng, "ow": ow, "oh": oh, "obs": obs, "inside": inside, "keep": keep, "blk": blk,
-		"own": own, "hgt": hg, "buildings": [], "props": [], "lowwalls": [], "founder": int(p["founder"]), "botv": botv}
+		"own": own, "hgt": hg, "buildings": [], "props": [], "lowwalls": [], "founder": int(p["founder"]), "botv": botv,
+		"pieces": []}
 	var blds: Array = wc["buildings"]
 	# ---- the sea.
 	if coast != 0:
@@ -4141,6 +4235,9 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 	if not fort.is_empty():
 		fw = _w_fort(wc, fort, coast)
 		wc["fort_w"] = fw
+	var tp_roads: Array = []
+	if tpm:
+		tp_roads = _tp_west_marks(wc, p)
 	# ---- landforms (rolling or rougher ground): the roads bend round them.
 	var land := {}
 	if land_ok and not hg.is_empty():
@@ -4148,6 +4245,10 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 		if not fort.is_empty():
 			var fe0 := int(fort["ext"])
 			avoid.append([int(fort["x"]) - fe0, int(fort["y"]) - fe0, int(fort["x"]) + fe0, int(fort["y"]) + fe0])
+		for pc in wc["pieces"]:
+			var pa: Array = pc
+			var pr0 := int(pa[5]) + 8
+			avoid.append([int(pa[1]) - pr0, int(pa[2]) - pr0, int(pa[1]) + pr0, int(pa[2]) + pr0])
 		var lctx := {"w_m": w_m, "h_m": h_m, "kind": kind, "pal": pal, "seed": int(p["seed"]) * 7 + 5,
 			"hgt": hg, "obs": obs, "avoid": avoid, "ref": Vector2i(att_x, mini(att_y + 30, h_m - 8)),
 			"excl": [[cx - hw - 20, 0, cx + hw + 20, top + W_QUAY[level] + 8], [att_x - 45, int(o["bot"]), att_x + 45, att_y + 120],
@@ -4174,7 +4275,7 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 		var c := (ty / 2) * ow + tx / 2
 		if inside[c] == 0 or (absi(tx - px) < hs + 14 and absi(ty - py) < hs + 14) or not _w_free(blk, ow, oh, tx, ty, 6):
 			continue
-		if absi(ty - _w_rail(o, tx)) < 12:
+		if not tpm and absi(ty - _w_rail(o, tx)) < 12:
 			continue
 		post.append([tx - 3, ty - 3, tx + 3, ty + 3, 2])
 		_disc(blk, ow, oh, tx, ty, 3, 1)
@@ -4192,13 +4293,21 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 	# through the plaza, cross streets down to the landward edge, lanes.
 	var roads: Array = []   # [points, width, kind]
 	var qw: int = W_QUAY[level] if coast != 0 else W_BACK
-	var x0 := cx - hw - 14
-	var x1 := cx + hw + 14
-	if not fort.is_empty():
+	var x0 := int(o["x0"]) - 14
+	var x1 := int(o["x1"]) + 14
+	if not fort.is_empty() and not tpm:
 		if int(fort["side"]) < 0:
 			x0 = int(fort["x"]) + int(fort["ext"]) + 4
 		else:
 			x1 = int(fort["x"]) - int(fort["ext"]) - 4
+	elif not fort.is_empty() and int(fort.get("off", 0)) == 0 and coast != 0 \
+			and int(fort["y"]) - shore_y(cp, int(fort["x"])) < int(fort["ext"]) + 10:
+		# (A plan's fort on the shore: the quay stops short of its ground on its side of the plaza.)
+		var frb := (int(fort["h"]) + int(fort["b"])) * 142 / 100 + F_T / 2 + F_DITCH_GAP + F_DITCH + 6
+		if int(fort["x"]) < px:
+			x0 = maxi(x0, int(fort["x"]) + frb)
+		else:
+			x1 = mini(x1, int(fort["x"]) - frb)
 	var qway := PackedInt32Array()
 	var xq := x0
 	while true:
@@ -4207,12 +4316,23 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 		if xq >= x1:
 			break
 		xq = mini(xq + 40, x1)
+	if tpm:
+		# (A plan's shore bends more than the generated: the quay from its first free point, through those.)
+		var qf := PackedInt32Array()
+		for q in qway.size() / 2:
+			if _w_free(blk, ow, oh, qway[q * 2], qway[q * 2 + 1], qw / 2 + 1, bsat):
+				qf.append(qway[q * 2])
+				qf.append(qway[q * 2 + 1])
+		qway = qf if qf.size() >= 4 else qway
 	var quay := _w_road(wc, qway, qw / 2, 0, 0)
 	roads.append([quay, qw, 0])
 	var mw: int = W_MAIN[level]
 	var mway := PackedInt32Array()
 	var xm := cx - hw - 12
 	var plaza_done := false
+	if tpm:
+		mway = _tp_main_way(o, p, w_m)
+		xm = cx + hw + 13
 	while xm <= cx + hw + 12:
 		if not plaza_done and xm > px - 30:
 			mway.append(px)
@@ -4223,8 +4343,9 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 		mway.append(xm)
 		mway.append(_w_rail(o, xm))
 		xm += 46
-	mway.append(cx + hw + 12)
-	mway.append(_w_rail(o, cx + hw + 12))
+	if not tpm:
+		mway.append(cx + hw + 12)
+		mway.append(_w_rail(o, cx + hw + 12))
 	var mpts := _w_road(wc, mway, mw / 2, 1, 0)
 	roads.append([mpts, mw, 1])
 	# ---- landmarks on the plaza (before the other roads, which bend round
@@ -4238,9 +4359,13 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 	var cw2: int = [16, 24, 30][level]
 	var cd2: int = [8, 10, 12][level]
 	var chd := 90 if level > 0 else 65
-	var ch_n := _w_landmark(wc, px + cw2 / 2, py - hs - 2, -1, 0, 0, -1, cw2, cd2, B_TEMPLE, chd, MAT_STONE)
-	if not ch_n and not _w_landmark(wc, px - cw2 / 2, py + hs + 2, 1, 0, 0, 1, cw2, cd2, B_TEMPLE, chd, MAT_STONE):
-		_w_landmark(wc, px - hs / 2 + cw2 / 2, py - hs - 2, -1, 0, 0, -1, cw2, cd2, B_TEMPLE, chd, MAT_STONE)
+	var ch_n := false
+	if tpm:
+		ch_n = _tp_west_civic(wc, p, chd)
+	else:
+		ch_n = _w_landmark(wc, px + cw2 / 2, py - hs - 2, -1, 0, 0, -1, cw2, cd2, B_TEMPLE, chd, MAT_STONE)
+		if not ch_n and not _w_landmark(wc, px - cw2 / 2, py + hs + 2, 1, 0, 0, 1, cw2, cd2, B_TEMPLE, chd, MAT_STONE):
+			_w_landmark(wc, px - hs / 2 + cw2 / 2, py - hs - 2, -1, 0, 0, -1, cw2, cd2, B_TEMPLE, chd, MAT_STONE)
 	if level >= 1:
 		var gs := _w_size(rng, B_GOVERNOR)
 		var gy0 := py + hs + 2 if ch_n else py - hs - 2
@@ -4300,14 +4425,19 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 	# Cross streets.
 	var cxs: Array = []
 	var xc := cx - hw + _rr(rng, 14, 30)
-	while xc < cx + hw - 14:
-		cxs.append(xc)
-		xc += _rr(rng, 50, 82) if level > 0 else _rr(rng, 58, 92)
 	var crosses: Array = []
 	var mouths: Array = []
+	if tpm:
+		_tp_west_streets(wc, p, tp_roads, roads, crosses, mouths, level)
+		xc = int(o["x0"]) + _rr(rng, 14, 30)
+	while xc < (int(o["x1"]) if tpm else cx + hw) - 14:
+		cxs.append(xc)
+		xc += _rr(rng, 50, 82) if level > 0 else _rr(rng, 58, 92)
 	for k in cxs.size():
 		var xk: int = cxs[k]
-		if not fort.is_empty() and absi(xk - int(fort["x"])) < int(fort["ext"]) + 6:
+		if not fort.is_empty() and absi(xk - int(fort["x"])) < int(fort["ext"]) + 6 and not tpm:
+			continue
+		if tpm and _tp_near_mouth(mouths, xk, 30):
 			continue
 		var cw := 10 if absi(xk - px) < hs + 40 else (8 if k % 2 == 0 else 7)
 		var ys := _w_top(o, xk) + qw / 2 + 2
@@ -4333,6 +4463,8 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 		if cpts[n2 - 1] >= _w_bot(o, cpts[n2 - 2]) + 6:
 			mouths.append([cpts[n2 - 2], cpts[n2 - 1], FM.atan2_a(cpts[n2 - 1] - cpts[n2 - 3], cpts[n2 - 2] - cpts[n2 - 4])])
 	# Lanes between neighbouring cross streets.
+	if tpm:
+		crosses.sort_custom(func(a, b): return (a as PackedInt32Array)[0] < (b as PackedInt32Array)[0])
 	for k in range(crosses.size() - 1):
 		var ca: PackedInt32Array = crosses[k]
 		var cb: PackedInt32Array = crosses[k + 1]
@@ -4353,9 +4485,11 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 				roads.append([lpts, W_LANE, 3])
 	# The high street's ends are mouths too (the town's sides).
 	var mn := mpts.size()
-	if mn >= 4:
+	if mn >= 4 and not tpm:
 		mouths.append([mpts[mn - 2], mpts[mn - 1], 0])
 		mouths.append([mpts[0], mpts[1], 512])
+	elif tpm:
+		_tp_mouth(o, mpts, mouths)
 	# Nearest the attackers' line first.
 	mouths.sort_custom(func(a, b):
 		var da := absi(int(a[0]) - att_x) + (400 if int(a[2]) == 0 or int(a[2]) == 512 else 0)
@@ -4371,6 +4505,8 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 	_keep_rect(keep, ow, oh, px - hs, py - hs, px + hs, py + hs)
 	wc.erase("bsat")
 	# ---- buildings on lots along the roads (quay, high street, cross streets, lanes).
+	if tpm:
+		_tp_west_lots(wc, p, roads)
 	for r in roads:
 		_w_lots(wc, r[0], int(r[1]), int(r[2]))
 	# ---- goods on the quay's sea side, a few carts on the wide streets.
@@ -4393,8 +4529,8 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 	if walls >= 2:
 		var run: Array = []   # [cell column, cell row] of the run so far
 		var prow := -1
-		var i0 := (cx - hw + 30) / 2
-		var i1 := (cx + hw - 30) / 2
+		var i0 := (int(o["x0"]) + 30) / 2
+		var i1 := (int(o["x1"]) - 30) / 2
 		for ic in range(i0, i1 + 1):
 			var row := (_w_bot(o, ic * 2 + 1) + 9) / 2
 			if prow >= 0:
@@ -4479,8 +4615,28 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 		var yl := mini(shore_y(cp, 6) + 30, h_m - 8)
 		var yr := mini(shore_y(cp, w_m - 6) + 30, h_m - 8)
 		sea = {"gate": [], "moles": [], "flee": [[6, yl], [w_m - 6, yr]], "piers": piers}
+		if tpm:
+			# (A plan town: the ground the fort and the causeway stand on is no sea.)
+			for j in vh:
+				for i in vw:
+					if (veg[j * vw + i] & V_WATER) != 0:
+						var oc3 := mini(j * 2 + 1, oh - 1) * ow + mini(i * 2 + 1, ow - 1)
+						if obs[oc3] == C_WATER:
+							continue
+						var near_f := not fort.is_empty() and FM.approx_len(i * 4 + 2 - int(fort["x"]), j * 4 + 2 - int(fort["y"])) \
+							< int(fort["h"]) + int(fort["b"]) + F_T / 2
+						if near_f or keep[oc3] != 0:
+							veg[j * vw + i] &= ~V_WATER
 	# ---- woods kept off the town, its approach and the attackers' ground.
 	excl.append([cx - hw - 18, 0 if coast == 0 else top - 10, cx + hw + 18, int(o["bot"]) + 28])
+	if tpm:
+		if not fort.is_empty():
+			var fe1 := int(fort["ext"]) + 12
+			excl.append([int(fort["x"]) - fe1, int(fort["y"]) - fe1, int(fort["x"]) + fe1, int(fort["y"]) + fe1])
+		for pc2 in wc["pieces"]:
+			var pa2: Array = pc2
+			var pr2 := int(pa2[5]) + 10
+			excl.append([int(pa2[1]) - pr2, int(pa2[2]) - pr2, int(pa2[1]) + pr2, int(pa2[2]) + pr2])
 	excl.append([att_x - 40, int(o["bot"]), att_x + 40, att_y + 120])
 	excl.append([w_m * 10 / 100, att_y - 20, w_m * 90 / 100, h_m])
 	# ---- the street graph.
@@ -4509,7 +4665,8 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 		"sea": sea, "palisade": 0, "enclosed": 0,
 		"founder": int(p["founder"]), "owner": int(p["owner"]), "banner": int(p["banner"]),
 		"post_veg": post, "west": 1, "wwalls": walls, "props": wc["props"], "lowwalls": wc["lowwalls"],
-		"fort": fort, "top": top, "bot": int(o["bot"]), "hw": hw, "bmat": bmat}
+		"fort": fort, "top": top, "bot": int(o["bot"]), "hw": hw, "bmat": bmat, "pieces": wc["pieces"],
+		"tp": 1 if tpm else 0}
 	out["city"] = lay
 	return lay
 
@@ -4597,6 +4754,10 @@ static func _w_fort(wc: Dictionary, fort: Dictionary, coast: int) -> Dictionary:
 	# west, 19 north), the sally port in the far one.
 	var e_town := 14 if fs > 0 else 4
 	var e_far := 4 if fs > 0 else 14
+	if int(fort.get("e_town", -1)) >= 0:
+		# (A town plan's fort out on the water: its gate to the shore, the causeway's.)
+		e_town = int(fort["e_town"])
+		e_far = (e_town + 10) % 20
 	var gates: Array = []
 	var g0 := _mk_gate(vx, vy, ed, e_town, elen[e_town] / 2, GATE_HW, 0, F_T, 1, 0, 1)
 	g0["fort"] = 1
@@ -5060,3 +5221,903 @@ static func _w_flip(lay: Dictionary, w_m: int, h_m: int) -> void:
 		bm[k] = bm[nb - 1 - k]
 		bm[nb - 1 - k] = t
 	lay["bmat"] = bm
+
+
+# ------------------------------------------ the shared town plan (phase C) --
+# docs/DESIGN.md "The town plan (shared)". A campaign settlement battle's city
+# carries the overworld town's plan (city "tp": campaign/ctown.gd
+# battle_plan, decimetres in this canonical frame: the sea, or an inland
+# town's back, up; the main street's far end, where the attackers come,
+# down; the plaza at the origin), so the city fought in is the city on the
+# map: the footprint is the open town's outline or the walls' trace, the
+# plan's harbour shore the shoreline (refined by the seed's waves), its
+# streets the street graph, its house slots the first houses (the lot
+# filler does the rest), its landmarks real buildings (a fort with an inside
+# on the 2c machinery, civic pieces as big stone blocks, the sea wall). The
+# plan's shape is scaled to battle size by level (tp_scale): the plaza to
+# the landward edge as deep as the generated maps (a West town 64 % of its
+# band, a walled plan its radius), no wider than they are; landmark pieces
+# keep their own size. Scenario keys and custom battles carry no plan and
+# keep the generators above.
+
+const B_PIECE := 18          # a landmark piece's solid body (drawn by the view from lay "pieces")
+## The plan's piece names (the city dictionary carries integers only: a piece is its index here; the layout's
+## "pieces" too), its town kinds and its landmark kinds (campaign/ctown.gd battle_plan).
+const TP_NAMES: Array[String] = ["morro", "morro_sj", "fuerza", "san_felipe", "harbour_fort", "san_marcos", "alcazar",
+	"ulua", "fort_charles", "rock_fort", "gallows", "tavern", "careened", "byrsa", "cothon", "euryalus", "acropolis",
+	"greek_temple", "seawall", "baluarte", "bast_wall", "temple", "basilica", "chapel", "church", "cathedral",
+	"twin_cathedral", "mansion", "capitol", "tower_rome", "itza_temple", "maya_pyramid", "fort", "shrine", "longhouse",
+	"hut_big", "flagpole", "skull_rock"]
+const TP_KINDS: Array[String] = ["town", "native", "maya", "haven", "roman"]
+const TP_LKINDS: Array[String] = ["fort", "civic", "wall", "prop"]
+const TP_TAG := -77777       # a shore array (coast_params' layout) followed by a table of the plan's shore
+const TP_STEP := 4           # m between the shore table's samples
+## Kit pieces' footprint (metres: width, depth) by plan piece name (game/battlekit_atlas2.gd FOOT, the battle kit's
+## block 2, mirrored here for the rules: the sim cannot read the view's table).
+const TP_FOOT := {"morro": [39, 42], "morro_sj": [37, 38], "fuerza": [24, 24], "san_felipe": [33, 34],
+	"harbour_fort": [24, 25], "san_marcos": [38, 38], "alcazar": [27, 11], "ulua": [36, 39], "fort_charles": [29, 28],
+	"rock_fort": [19, 18], "gallows": [5, 4], "tavern": [9, 7], "careened": [16, 17], "byrsa": [34, 37], "cothon": [32, 32],
+	"euryalus": [36, 39], "acropolis": [34, 39], "greek_temple": [16, 11], "baluarte": [13, 10], "bast_wall": [6, 5],
+	"temple": [12, 8], "basilica": [14, 8], "chapel": [6, 12], "church": [10, 19], "cathedral": [12, 20],
+	"twin_cathedral": [14, 24], "mansion": [9, 6], "capitol": [19, 18], "tower_rome": [8, 8], "itza_temple": [21, 26],
+	"maya_pyramid": [19, 21], "fort": [21, 21]}
+## A civic or prop piece's body on the battle map at this share of the kit piece's size (per mille: the overworld
+## pieces are miniatures, the kit's at their own true size; the owner: "the larger towers and buildings").
+const TP_PIECE_PM := 1250
+## A West plan town's plaza to its landward edge at most this per cent of the generated band's depth (W_D);
+## its area this per cent of the band's; a walled plan's span at most this per cent of its radius.
+const TP_WEST_DOWN := 66
+const TP_WEST_AREA := 85
+const TP_ROME_SPAN := 320
+const TP_WEST_WIDE := 150
+
+static var _tpg_key := ""
+static var _tpg := {}
+
+
+## The city's town plan (city "tp", campaign/ctown.gd battle_plan), {} without.
+static func tp_of(p: Dictionary) -> Dictionary:
+	var tp = p.get("tp", {})
+	if tp is Dictionary and int((tp as Dictionary).get("v", 0)) == 1:
+		return tp
+	return {}
+
+
+## A plan piece's name from its index (TP_NAMES), "" none.
+static func tp_name(i: int) -> String:
+	return TP_NAMES[i] if i >= 0 and i < TP_NAMES.size() else ""
+
+
+## A plan piece's index (TP_NAMES), -1 none.
+static func tp_index(pn: String) -> int:
+	return TP_NAMES.find(pn)
+
+
+## The kit piece's name for a plan piece ("lm_morro", "cv_cathedral": game/battlekit.gd block 2), "" none.
+static func tp_kit_name(pn: String) -> String:
+	if pn in ["morro", "morro_sj", "fuerza", "san_felipe", "harbour_fort", "san_marcos", "alcazar", "ulua",
+			"fort_charles", "rock_fort", "gallows", "tavern", "careened", "byrsa", "cothon", "euryalus", "acropolis",
+			"greek_temple", "baluarte", "bast_wall"]:
+		return "lm_" + pn
+	if TP_FOOT.has(pn):
+		return "cv_" + pn
+	return ""
+
+
+## Scale of the plan on the battle map (battle metres per plan metre, per mille; m = dm x f / 10000): as much
+## town as the generated maps (a West open town TP_WEST_AREA % of its band, a walled plan its disc), a West
+## town's plaza to its landward edge at most TP_WEST_DOWN % of the band's depth and no wider than the band, a
+## walled plan's span at most TP_ROME_SPAN % of its radius. A West town is drawn out along the shore (x) up to
+## TP_WEST_WIDE % of its depth's scale for the rest of the area (the generated band is wide and shallow).
+## Returns (x scale, y scale).
+static func tp_scale(tp: Dictionary, level: int, west: bool, castrum: bool = false) -> Vector2i:
+	var foot: Array = tp["foot"]
+	var down := 1
+	var x0 := 0
+	var x1 := 0
+	var y0 := 0
+	var area := 0
+	var n := foot.size() / 2
+	for i in n:
+		var x := int(foot[i * 2])
+		var y := int(foot[i * 2 + 1])
+		down = maxi(down, y)
+		x0 = mini(x0, x)
+		x1 = maxi(x1, x)
+		y0 = mini(y0, y)
+		area += x * int(foot[((i + 1) % n) * 2 + 1]) - int(foot[((i + 1) % n) * 2]) * y
+	area = maxi(absi(area) / 2, 100)   # dm2
+	var span := maxi(maxi(x1 - x0, down - y0), 1)
+	var r: int = R_LEVEL[level]
+	# (As much town as the generated maps: their area, m2.)
+	# (A walled plan: the culture's own outline's area, the castrum's rectangle 2.4 r2, the others' disc.)
+	var want_a: int = W_HW[level] * W_D[level] * 2 * TP_WEST_AREA / 100 if west else r * r * (240 if castrum else 314) / 100
+	var f := FM.isqrt(want_a * 100 / area * 1000000)    # (10000 x sqrt(want / area): dm2 -> m2)
+	if west:
+		f = clampi(mini(f, W_D[level] * TP_WEST_DOWN / 100 * 10000 / down), 1500, 14000)
+		# (Across the field up to TP_WEST_WIDE % of that, for the rest of the area, no wider than the band.)
+		var fx := want_a * 100 / area * 1000000 / f
+		fx = clampi(mini(fx, f * TP_WEST_WIDE / 100), f, maxi(W_HW[level] * 2 * 10000 / maxi(x1 - x0, 1), f))
+		return Vector2i(fx, f)
+	f = clampi(mini(f, r * TP_ROME_SPAN / 100 * 10000 / span), 1500, 14000)
+	return Vector2i(f, f)
+
+
+## The plan on the battle map, relative to the plaza (metres, this frame's axes), cached: f (tp_scale), foot
+## (flat, the outline; a port's sea side on the shore), shore (flat, ordered along x; [] inland, moved seaward
+## as far as the plaza and the quay need), x0 / x1 / up / down (the outline's extent: up and down positive),
+## lines, lots ([x, y, size, hh, burn]), landmarks (the plan's, with "bx", "by" in metres), civic, high,
+## gates.
+static func tp_geom(p: Dictionary) -> Dictionary:
+	var tp := tp_of(p)
+	if tp.is_empty():
+		return {}
+	var west := is_west(p)
+	var level: int = p["level"]
+	var key := "%d|%d|%d|%d|%s" % [level, 1 if west else 0, int(p["walls"]), int(p.get("plan", PLAN_RING)), str(tp)]
+	if key == _tpg_key:
+		return _tpg
+	var fv := tp_scale(tp, level, west, int(p.get("plan", PLAN_RING)) == PLAN_CASTRUM)
+	var f := fv.y
+	var fx := fv.x
+	var sc := func(v: int) -> int:
+		return v * f / 10000
+	var scx := func(v: int) -> int:
+		return v * fx / 10000
+	var flat := func(a: Array) -> PackedInt32Array:
+		var o := PackedInt32Array()
+		for i in a.size():
+			o.append(int(a[i]) * (fx if i % 2 == 0 else f) / 10000)
+		return o
+	var foot: PackedInt32Array = flat.call(tp["foot"])
+	var shore: PackedInt32Array = flat.call(tp["shore"]) if int(tp.get("coast", 0)) != 0 else PackedInt32Array()
+	var hs: int = W_PLAZA[level] if west else PLAZA_HS[level]
+	if shore.size() >= 4:
+		# The plaza and (a West town) the quay keep room from the water: the shore moved seaward where it is
+		# nearer the plaza than that, the outline's sea side with it.
+		var need: int = hs + (W_QUAY[level] + 10 if west else 16)
+		var sy0 := _tp_shore_at(shore, 0)
+		var shift := maxi(sy0 + need, 0)
+		if shift > 0:
+			var old := shore.duplicate()
+			for i in range(1, shore.size(), 2):
+				shore[i] -= shift
+			for i in range(0, foot.size() - 1, 2):
+				var x := foot[i]
+				if foot[i + 1] < _tp_shore_at(old, x) + 12:
+					foot[i + 1] = _tp_shore_at(shore, x) + 2
+		for i in range(0, foot.size() - 1, 2):
+			foot[i + 1] = maxi(foot[i + 1], _tp_shore_at(shore, foot[i]) + 2)
+	var x0 := 0
+	var x1 := 0
+	var up := 0
+	var down := 0
+	for i in range(0, foot.size() - 1, 2):
+		x0 = mini(x0, foot[i])
+		x1 = maxi(x1, foot[i])
+		up = maxi(up, -foot[i + 1])
+		down = maxi(down, foot[i + 1])
+	up = maxi(up, hs + 8)
+	if shore.size() >= 4:
+		for lm0 in tp["landmarks"]:
+			if int((lm0 as Dictionary).get("off", 0)) != 0 and int(p["walls"]) >= 1:
+				# (A fort out on the water: the sea above the shore deep enough for it and its causeway.)
+				var fr0: int = (F_H[level] + F_B[level]) * 115 / 100
+				up = maxi(up, -_tp_shore_at(shore, int((lm0 as Dictionary)["x"]) * fx / 10000) + 2 * fr0 + 40)
+	var lines: Array = []
+	for ln in tp["lines"]:
+		lines.append(flat.call(ln))
+	var ring: Array = []
+	for ln2 in tp.get("ring", []):
+		ring.append(flat.call(ln2))
+	var lots: Array = []
+	for lt in tp["lots"]:
+		var la: Array = lt
+		lots.append([scx.call(int(la[0])), sc.call(int(la[1])), int(la[2]), int(la[3]), int(la[4])])
+	var lms: Array = []
+	for lm in tp["landmarks"]:
+		var d: Dictionary = (lm as Dictionary).duplicate()
+		d["p"] = tp_name(int(d["p"]))
+		d["kind"] = TP_LKINDS[clampi(int(d["kind"]), 0, TP_LKINDS.size() - 1)]
+		d["bx"] = scx.call(int(d["x"]))
+		d["by"] = sc.call(int(d["y"]))
+		if d.has("line"):
+			d["bline"] = flat.call(d["line"])
+		lms.append(d)
+	var cv: Dictionary = (tp["civic"] as Dictionary).duplicate()
+	cv["p"] = tp_name(int(cv["p"]))
+	cv["bx"] = scx.call(int(cv["x"]))
+	cv["by"] = sc.call(int(cv["y"]))
+	var hi: Array = tp["high"]
+	var out := {"f": f, "fx": fx, "foot": foot, "shore": shore, "x0": x0, "x1": x1, "up": up, "down": down, "lines": lines,
+		"ring": ring, "lots": lots, "landmarks": lms, "civic": cv, "high": [scx.call(int(hi[0])), sc.call(int(hi[1]))] if hi.size() == 2 else [],
+		"gates": tp["gates"], "kind": TP_KINDS[clampi(int(tp["kind"]), 0, TP_KINDS.size() - 1)]}
+	_tpg_key = key
+	_tpg = out
+	return out
+
+
+## y of the plan's shore polyline (flat, relative metres) at x: the most landward crossing, else the nearer end's.
+static func _tp_shore_at(sh: PackedInt32Array, x: int) -> int:
+	var n := sh.size() / 2
+	if n == 0:
+		return -1000
+	var best := -(1 << 30)
+	for k in n - 1:
+		var ax := sh[k * 2]
+		var bx := sh[k * 2 + 2]
+		if (x < mini(ax, bx)) or (x > maxi(ax, bx)):
+			continue
+		var ay := sh[k * 2 + 1]
+		var by := sh[k * 2 + 3]
+		var y := ay if ax == bx else ay + (by - ay) * (x - ax) / (bx - ax)
+		best = maxi(best, y)
+	if best > -(1 << 30):
+		return best
+	return sh[1] if absi(x - sh[0]) < absi(x - sh[n * 2 - 2]) else sh[n * 2 - 1]
+
+
+## The shore of a plan town for shore_y (canonical, absolute metres, field w_m wide, town centre cx, cy): the
+## coast_params layout (the seed's waves, the bend beyond) followed by TP_TAG, the table's first x, its step and
+## the plan's shore every TP_STEP m (beyond its ends: on along the end's slope, at most 1 in 2).
+static func tp_coast(p: Dictionary, g: Dictionary, w_m: int, cx: int, cy: int) -> PackedInt32Array:
+	var sh: PackedInt32Array = g["shore"]
+	var rng := _rng(int(p["seed"]) * 13 + 307)
+	var n := sh.size() / 2
+	var cp := PackedInt32Array([cy + _tp_shore_at(sh, 0), 0, cx, 0, _rr(rng, -200, 200), _rr(rng, 2, 4), _r(rng, 1024),
+		_rr(rng, 1, 2), _r(rng, 1024), cy, TP_TAG, 0, TP_STEP])
+	var xa := sh[0]
+	var xb := sh[n * 2 - 2]
+	var sa := 0
+	var sb := 0
+	if n >= 2:
+		sa = clampi((sh[3] - sh[1]) * 1000 / maxi(sh[2] - sh[0], 1), -500, 500)
+		sb = clampi((sh[n * 2 - 1] - sh[n * 2 - 3]) * 1000 / maxi(sh[n * 2 - 2] - sh[n * 2 - 4], 1), -500, 500)
+	var x := 0
+	while x <= w_m:
+		var rx := x - cx
+		var y := 0
+		if rx < xa:
+			y = sh[1] + sa * (rx - xa) / 1000
+		elif rx > xb:
+			y = sh[n * 2 - 1] + sb * (rx - xb) / 1000
+		else:
+			y = _tp_shore_at(sh, rx)
+		cp.append(cy + mini(y, int(g["down"]) / 2))
+		x += TP_STEP
+	return cp
+
+
+## The landmark that is the town's fort with an inside: a fort piece of the town's own table first (the Morro,
+## San Felipe, the Ulua; not the governor's alcazar), else the generic harbour fort, else the generic city fort;
+## -1 none.
+static func tp_fort_pick(lms: Array) -> int:
+	var best := -1
+	var rank := 9
+	for i in lms.size():
+		var d: Dictionary = lms[i]
+		if str(d["kind"]) != "fort" or str(d["p"]) == "alcazar":
+			continue
+		var rk := 0 if int(d.get("gen", 0)) == 0 and int(d.get("hf", 0)) != 2 else (1 if int(d.get("hf", 0)) == 2 else 2)
+		if rk < rank:
+			rank = rk
+			best = i
+	return best
+
+
+## A plan landmark's kit footprint (metres, [w, d]).
+static func tp_foot(pn: String) -> Array:
+	return TP_FOOT.get(pn, [12, 12])
+
+
+## The fort with an inside (slice 2c) for landmark lm of a plan town (outline o, canonical metres): the
+## bastioned square sized by the piece (85-115 % of the generated fort), at the landmark's place clear of the
+## plaza; on the shore with its seaward curtain on the water (a headland's), out on the water with its gate to
+## the shore (an offshore rock's, a causeway built to it), or turned with its gate to the town (the high ground).
+static func _tp_fort(o: Dictionary, lm: Dictionary, level: int, w_m: int) -> Dictionary:
+	var pn := str(lm["p"])
+	var ft := tp_foot(pn)
+	var e := maxi(int(ft[0]), int(ft[1]))
+	var kpm := clampi(e * 1000 / 36, 850, 1150)
+	var fh: int = F_H[level] * kpm / 1000
+	var fb: int = F_B[level] * kpm / 1000
+	var rr := fh + fb
+	var ext := rr + F_T / 2 + F_DITCH_GAP + F_DITCH + 4
+	var px: int = o["px"]
+	var py: int = o["py"]
+	var hs: int = o["hs"]
+	var coast := int(o["coast"]) != 0
+	var off := coast and int(lm.get("off", 0)) != 0
+	var fx: int = int(o["cx"]) + int(lm["bx"])
+	var fy: int = int(o["cy"]) + int(lm["by"])
+	var need := hs + rr * 142 / 100 + 14
+	if not off:
+		var dx := fx - px
+		var dy := fy - py
+		var l := FM.approx_len(dx, dy)
+		if l < need:
+			if l == 0:
+				dy = 1
+				l = 1
+			fx = px + dx * need / l
+			fy = py + dy * need / l
+	fx = clampi(fx, ext + 8, w_m - ext - 8)
+	var fdir := FM.atan2_a(fy - py, fx - px)
+	var e_town := -1
+	if coast:
+		var cp: PackedInt32Array = o["cp"]
+		var sy := shore_y(cp, fx)
+		var tang := FM.atan2_a(shore_y(cp, fx + 20) - shore_y(cp, fx - 20), 40)
+		if off:
+			fdir = tang
+			fy = maxi(sy - rr - 26, rr + 12)
+			e_town = 9
+		elif fy - sy < rr + 40:
+			fdir = tang
+			fy = sy + fh + 1
+			if FM.approx_len(fx - px, fy - py) < need:
+				fx = clampi(px + (need if fx >= px else -need), ext + 8, w_m - ext - 8)
+				fy = shore_y(cp, fx) + fh + 1
+	var fs := 1
+	if e_town < 0:
+		# (The plaza on the fort's local -x side: the main gate in the west curtain, fs 1.)
+		var lx := (px - fx) * FM.cos_a(fdir) + (py - fy) * FM.sin_a(fdir)
+		fs = 1 if lx < 0 else -1
+	return {"x": fx, "y": fy, "h": fh, "b": fb, "dir": fdir, "side": fs, "level": level, "ext": ext, "piece": tp_index(pn),
+		"off": 1 if off else 0, "e_town": e_town}
+
+
+## West open town, plan mode (west_outline): the plaza at the frame's centre, the plan's outline (its landward
+## and top sides per metre for _w_bot / _w_top), the plan's shore, the fort with an inside, the landmarks.
+static func _w_outline_tp(p: Dictionary, w_m: int, o: Dictionary) -> void:
+	var g := tp_geom(p)
+	var level: int = p["level"]
+	var walls: int = p["walls"]
+	var cx := (w_m / 2) & ~1
+	var cy := W_TOP + int(g["up"])
+	o["cx"] = cx
+	o["cy"] = cy
+	o["px"] = cx
+	o["py"] = cy
+	o["top"] = cy - int(g["up"])
+	o["bot"] = cy + int(g["down"])
+	o["dep"] = int(g["up"]) + int(g["down"])
+	o["r0"] = int(o["dep"]) / 2
+	o["hw"] = maxi(-int(g["x0"]), int(g["x1"]))
+	o["x0"] = cx + int(g["x0"])
+	o["x1"] = cx + int(g["x1"])
+	o["tp"] = 1
+	var coast := int(o["coast"]) != 0
+	if coast:
+		o["cp"] = tp_coast(p, g, w_m, cx, cy)
+	var foot: PackedInt32Array = g["foot"]
+	var vx := PackedInt32Array()
+	var vy := PackedInt32Array()
+	for i in range(0, foot.size() - 1, 2):
+		var x := cx + foot[i]
+		var y := cy + foot[i + 1]
+		if coast:
+			y = maxi(y, shore_y(o["cp"], x) + 2)
+		vx.append(x)
+		vy.append(y)
+	o["vx"] = vx
+	o["vy"] = vy
+	# The outline's landward (largest y) and top (smallest y) side at every metre.
+	var tb := PackedInt32Array()
+	tb.resize(w_m + 1)
+	tb.fill(-1)
+	var tt := PackedInt32Array()
+	tt.resize(w_m + 1)
+	tt.fill(1 << 20)
+	var nv := vx.size()
+	for k in nv:
+		var ax := vx[k]
+		var ay := vy[k]
+		var bx := vx[(k + 1) % nv]
+		var by := vy[(k + 1) % nv]
+		for x in range(clampi(mini(ax, bx), 0, w_m), clampi(maxi(ax, bx), 0, w_m) + 1):
+			var y := ay if ax == bx else ay + (by - ay) * (x - ax) / (bx - ax)
+			tb[x] = maxi(tb[x], y)
+			tt[x] = mini(tt[x], y)
+	for x in w_m + 1:
+		if tb[x] < 0:
+			tb[x] = int(o["bot"])
+		if tt[x] >= (1 << 20):
+			tt[x] = int(o["top"])
+	o["tp_bot"] = tb
+	o["tp_top"] = tt
+	# The fort with an inside (walls 1-2): the plan's landmark fort, else a generic one on the high ground (or
+	# where the generated maps put it).
+	o["fort"] = {}
+	var lms: Array = g["landmarks"]
+	o["tp_fort_i"] = -1
+	if walls >= 1:
+		var fi := tp_fort_pick(lms)
+		var lm: Dictionary = {}
+		if fi >= 0:
+			lm = lms[fi]
+			o["tp_fort_i"] = fi
+		else:
+			var hi: Array = g["high"]
+			var fhh: int = F_H[level] + F_B[level]
+			var hx: int = int(hi[0]) if hi.size() == 2 else (int(g["x1"]) - fhh - 10 if int(p["seed"]) % 2 == 0 else int(g["x0"]) + fhh + 10)
+			var hy: int = int(hi[1]) if hi.size() == 2 else -int(g["up"]) + fhh
+			lm = {"p": "harbour_fort" if coast else "fort", "bx": hx, "by": hy, "off": 0}
+		o["fort"] = _tp_fort(o, lm, level, w_m)
+
+
+## A landmark's solid body (a West plan town): a quad w x d m centred at (x, y) with its front toward `face`,
+## its cells (within 0.6 m of the outline) open ground (or the sea, `wet`) off the roads and the blocked ground;
+## a building record (kind kd, height hd dm, material; entry 17 = 1: drawn by the view as the piece) and the
+## view's piece [kit name, x, y, face, scale per mille, radius m]. Returns false where it does not fit.
+static func _tp_block(wc: Dictionary, pn: String, x: int, y: int, face: int, w: int, d: int, kd: int, hd: int,
+		mat: int, wet: bool, scale_pm: int) -> bool:
+	var ow: int = wc["ow"]
+	var oh: int = wc["oh"]
+	var obs: PackedByteArray = wc["obs"]
+	var keep: PackedByteArray = wc["keep"]
+	var blk: PackedByteArray = wc["blk"]
+	var own: PackedInt32Array = wc["own"]
+	var fx := FM.cos_a(face)
+	var fy := FM.sin_a(face)
+	# (u along the front, n from the front into the body: corners front-left, front-right, back-right, back-left.)
+	var nx := -fx
+	var ny := -fy
+	var ux := -ny
+	var uy := nx
+	var ax := x * 100 - ux * w * 50 / FM.TRIG_ONE - nx * d * 50 / FM.TRIG_ONE
+	var ay := y * 100 - uy * w * 50 / FM.TRIG_ONE - ny * d * 50 / FM.TRIG_ONE
+	var body := _w_quad(ax, ay, ux, uy, nx, ny, w, d, 0, 0)
+	var cells: PackedInt32Array = (_w_cells(_w_grow(body, ux, uy, nx, ny, 60), ow, oh) as Array)[2]
+	if cells.size() < 4:
+		return false
+	for c in cells:
+		var k := obs[c]
+		if keep[c] != 0 or own[c] != 0 or not (k == C_OPEN or (wet and k == C_WATER)) or (blk[c] != 0 and k != C_WATER):
+			return false
+	var blds: Array = wc["buildings"]
+	var idx := blds.size()
+	for c in cells:
+		obs[c] = C_BUILDING
+		own[c] = idx + 1
+		blk[c] = 1
+	var xs := PackedInt32Array()
+	var ys := PackedInt32Array()
+	for k2 in 4:
+		xs.append((body[k2 * 2] + 50) / 100)
+		ys.append((body[k2 * 2 + 1] + 50) / 100)
+	blds.append([mini(mini(xs[0], xs[1]), mini(xs[2], xs[3])), mini(mini(ys[0], ys[1]), mini(ys[2], ys[3])),
+		maxi(maxi(xs[0], xs[1]), maxi(xs[2], xs[3])), maxi(maxi(ys[0], ys[1]), maxi(ys[2], ys[3])),
+		kd, W_STYLE, SH_QUAD, xs[0], ys[0], xs[1], ys[1], xs[2], ys[2], xs[3], ys[3], hd, mat, 1])
+	(wc["pieces"] as Array).append([tp_index(pn), x, y, face, scale_pm, maxi(w, d) / 2, 0])
+	return true
+
+
+## A landmark body tried at (x, y), then nudged up to 5 times 6 m away from the plaza.
+static func _tp_block_near(wc: Dictionary, pn: String, x: int, y: int, face: int, w: int, d: int, kd: int, hd: int,
+		mat: int, wet: bool, scale_pm: int) -> bool:
+	var o: Dictionary = wc["o"]
+	var dx := x - int(o["px"])
+	var dy := y - int(o["py"])
+	var l := maxi(FM.approx_len(dx, dy), 1)
+	for k in 6:
+		var qx := x + dx * 6 * k / l
+		var qy := y + dy * 6 * k / l
+		if _tp_block(wc, pn, qx, qy, face, w, d, kd, hd, mat, wet, scale_pm):
+			return true
+	return false
+
+
+## The plan's landmarks in a West town (_city_west, plan mode, after the fort): the inside fort's piece and,
+## out on the water, its causeway; the other landmarks as solid stone (a second fort, civic pieces, the
+## taverns, the gallows, a careened hull) at their places; the sea wall along the shore. Returns the roads it
+## made ([points, width, kind]: the causeway).
+static func _tp_west_marks(wc: Dictionary, p: Dictionary) -> Array:
+	var o: Dictionary = wc["o"]
+	var g := tp_geom(p)
+	var obs: PackedByteArray = wc["obs"]
+	var keep: PackedByteArray = wc["keep"]
+	var blk: PackedByteArray = wc["blk"]
+	var ow: int = wc["ow"]
+	var oh: int = wc["oh"]
+	var cx: int = o["cx"]
+	var cy: int = o["cy"]
+	var coast := int(o["coast"]) != 0
+	var cp: PackedInt32Array = o["cp"]
+	var roads: Array = []
+	var fort: Dictionary = o["fort"]
+	var fw: Dictionary = wc.get("fort_w", {})
+	if not fort.is_empty() and not fw.is_empty():
+		var g0: Dictionary = (fw["gates"] as Array)[0]
+		var ft := tp_foot(tp_name(int(fort["piece"])))
+		var rr := int(fort["h"]) + int(fort["b"])
+		var spm := 2 * rr * 950 / maxi(maxi(int(ft[0]), int(ft[1])), 1)
+		(wc["pieces"] as Array).append([int(fort["piece"]), int(fort["x"]), int(fort["y"]), int(g0["dir"]), spm, rr, 1])
+		if int(fort.get("off", 0)) != 0 and coast:
+			# The causeway: from the gate's outside to the shore, 8 m wide, open ground.
+			var gx := int(g0["ox"])
+			var gy := int(g0["oy"])
+			var ey := shore_y(cp, gx) + 6
+			_keep_seg(keep, ow, oh, gx, gy, gx, ey, CAUSEWAY_HW + 1)
+			for j in range(maxi((gy - 4) / 2, 0), mini((ey + 4) / 2 + 1, oh)):
+				for i in range(maxi((gx - CAUSEWAY_HW - 1) / 2, 0), mini((gx + CAUSEWAY_HW + 1) / 2 + 1, ow)):
+					var c := j * ow + i
+					if obs[c] == C_WATER:
+						obs[c] = C_OPEN
+						blk[c] = 0
+			roads.append([PackedInt32Array([gx, gy, gx, ey]), 2 * CAUSEWAY_HW, 2])
+	var fi: int = o.get("tp_fort_i", -1)
+	var lms: Array = g["landmarks"]
+	for i in lms.size():
+		if i == fi:
+			continue
+		var d: Dictionary = lms[i]
+		var pn := str(d["p"])
+		var x := cx + int(d["bx"])
+		var y := cy + int(d["by"])
+		var kd2 := str(d["kind"])
+		if kd2 == "wall":
+			if coast:
+				_tp_sea_wall(wc, d)
+			continue
+		if tp_kit_name(pn) == "":
+			continue
+		var ft2 := tp_foot(pn)
+		var w := maxi(int(ft2[0]) * TP_PIECE_PM / 1000, 3)
+		var dd := maxi(int(ft2[1]) * TP_PIECE_PM / 1000, 3)
+		var face := int(d["face"])
+		var kd := B_PIECE
+		var hd := 90
+		var mat := MAT_STONE
+		match pn:
+			"tavern":
+				kd = B_TAVERN
+				hd = 60
+			"gallows":
+				hd = 30
+				mat = MAT_TIMBER
+			"careened":
+				hd = 40
+				mat = MAT_TIMBER
+			"alcazar":
+				kd = B_GOVERNOR
+				hd = 80
+		if kd2 == "fort":
+			kd = B_FORT
+			hd = 110
+		var wet := false
+		if coast:
+			var sy := shore_y(cp, x)
+			if int(d.get("off", 0)) != 0:
+				wet = true
+			elif y - sy < dd / 2 + 6:
+				y = sy + dd / 2 + 4
+		_tp_block_near(wc, pn, x, y, face, w, dd, kd, hd, mat, wet, TP_PIECE_PM)
+	return roads
+
+
+## The sea wall (Cartagena's: a wall run along the harbour shore with a baluarte every fourth piece, a gap at
+## the quay's middle): stone 2 m thick on the waterline, where the plan's line runs; the view's pieces along it.
+static func _tp_sea_wall(wc: Dictionary, d: Dictionary) -> void:
+	var o: Dictionary = wc["o"]
+	var cp: PackedInt32Array = o["cp"]
+	var obs: PackedByteArray = wc["obs"]
+	var own: PackedInt32Array = wc["own"]
+	var blk: PackedByteArray = wc["blk"]
+	var ow: int = wc["ow"]
+	var oh: int = wc["oh"]
+	var ln: PackedInt32Array = d.get("bline", PackedInt32Array())
+	if ln.size() < 4:
+		return
+	var cx: int = o["cx"]
+	var xa := cx + ln[0]
+	var xb := cx + ln[ln.size() - 2]
+	var gap0 := int(o["px"]) - 24
+	var gap1 := int(o["px"]) + 24
+	var blds: Array = wc["buildings"]
+	var x := mini(xa, xb)
+	var q := 0
+	while x < maxi(xa, xb):
+		var x2 := x + 8
+		if x2 > gap0 and x < gap1:
+			x = gap1
+			continue
+		var ya := shore_y(cp, x) + 1
+		var yb := shore_y(cp, x2) + 1
+		var idx := blds.size()
+		var n_ok := 0
+		for i in range(maxi(x / 2, 0), mini(x2 / 2, ow)):
+			var yy := ya + (yb - ya) * (i * 2 - x) / 8
+			for j in range(maxi(yy / 2 - 1, 0), mini(yy / 2 + 1, oh)):
+				var c := j * ow + i
+				if obs[c] == C_OPEN or obs[c] == C_WATER:
+					obs[c] = C_BUILDING
+					own[c] = idx + 1
+					blk[c] = 1
+					n_ok += 1
+		if n_ok > 0:
+			var ang := FM.atan2_a(yb - ya, 8)
+			blds.append([x, mini(ya, yb) - 1, x2, maxi(ya, yb) + 1, B_PIECE, W_STYLE, SH_QUAD, x, ya - 1, x2, yb - 1, x2, yb + 1,
+				x, ya + 1, 60, MAT_STONE, 1])
+			var pn := "baluarte" if q % 4 == 1 else "bast_wall"
+			(wc["pieces"] as Array).append([tp_index(pn), (x + x2) / 2, (ya + yb) / 2, (ang + 768) & 1023,
+				1400 if pn == "bast_wall" else 1000, 4, 0])
+		q += 1
+		x = x2
+
+
+## A plan street's waypoints on the map (absolute): its points; an end within 16 m of the landward edge (or
+## beyond) carried on to 22 m beyond it (a street mouth); an end on the waterfront kept on the land.
+static func _tp_way(o: Dictionary, line: PackedInt32Array, w_m: int) -> PackedInt32Array:
+	var cx: int = o["cx"]
+	var cy: int = o["cy"]
+	var coast := int(o["coast"]) != 0
+	var way := PackedInt32Array()
+	for i in range(0, line.size() - 1, 2):
+		var x := clampi(cx + line[i], 6, w_m - 6)
+		var y := cy + line[i + 1]
+		if coast:
+			y = maxi(y, shore_y(o["cp"], x) + 8)
+		if way.size() >= 2 and absi(way[way.size() - 2] - x) + absi(way[way.size() - 1] - y) < 6:
+			continue
+		way.append(x)
+		way.append(y)
+	if way.size() < 4:
+		return way
+	for e in 2:
+		var k := 0 if e == 0 else way.size() - 2
+		var x2 := way[k]
+		var y2 := way[k + 1]
+		var bot := _w_bot(o, x2)
+		if y2 >= bot - 16:
+			if e == 0:
+				var w2 := PackedInt32Array([x2, bot + 22])
+				w2.append_array(way)
+				way = w2
+			else:
+				way.append(x2)
+				way.append(bot + 22)
+	return way
+
+
+## The town's main street from the plan (its first line), as the high street's waypoints.
+static func _tp_main_way(o: Dictionary, p: Dictionary, w_m: int) -> PackedInt32Array:
+	var lines: Array = tp_geom(p)["lines"]
+	if lines.is_empty():
+		return PackedInt32Array([int(o["px"]), int(o["py"]), int(o["px"]), _w_bot(o, int(o["px"])) + 22])
+	return _tp_way(o, lines[0], w_m)
+
+
+## The plan's other streets (cross streets: roads kind 2, traced round what stands) and the extra roads; their
+## ends beyond the landward edge are street mouths.
+static func _tp_west_streets(wc: Dictionary, p: Dictionary, extra: Array, roads: Array, crosses: Array, mouths: Array,
+		level: int) -> void:
+	var o: Dictionary = wc["o"]
+	var lines: Array = tp_geom(p)["lines"]
+	var w_m: int = int(wc["ow"]) * 2
+	var order: Array = []
+	for k in range(1, lines.size()):
+		var ln: PackedInt32Array = lines[k]
+		var sx := 0
+		for i in range(0, ln.size() - 1, 2):
+			sx += ln[i]
+		order.append([sx / maxi(ln.size() / 2, 1), k])
+	order.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
+	for ok in order:
+		var way := _tp_way(o, lines[int(ok[1])], w_m)
+		if way.size() < 4:
+			continue
+		var cw := 8 if level > 0 else 7
+		var pts := _w_road(wc, way, cw / 2, 1, 12)
+		if pts.size() < 6:
+			continue
+		roads.append([pts, cw, 2])
+		crosses.append(pts)
+		_tp_mouth(o, pts, mouths)
+	for rl in tp_geom(p)["ring"]:
+		var way2 := _tp_way(o, rl, w_m)
+		if way2.size() < 4:
+			continue
+		var pts2 := _w_road(wc, way2, 3, 1, 8)
+		if pts2.size() >= 6:
+			roads.append([pts2, 7, 2])
+			_tp_mouth(o, pts2, mouths)
+	for r in extra:
+		roads.append(r)
+
+
+## A road's ends beyond the landward edge: street mouths [x, y, the way out].
+static func _tp_mouth(o: Dictionary, pts: PackedInt32Array, mouths: Array) -> void:
+	var n := pts.size()
+	if n < 4:
+		return
+	if pts[n - 1] >= _w_bot(o, pts[n - 2]) + 6:
+		mouths.append([pts[n - 2], pts[n - 1], FM.atan2_a(pts[n - 1] - pts[n - 3], pts[n - 2] - pts[n - 4])])
+	if pts[1] >= _w_bot(o, pts[0]) + 6:
+		mouths.append([pts[0], pts[1], FM.atan2_a(pts[1] - pts[3], pts[0] - pts[2])])
+
+
+## The plaza's civic piece (the plan's church, cathedral ...) as the town's church: a stone B_TEMPLE (held as
+## any church) of the piece's size at its place, else beside the plaza (the generated maps' places).
+static func _tp_west_civic(wc: Dictionary, p: Dictionary, chd: int) -> bool:
+	var o: Dictionary = wc["o"]
+	var g := tp_geom(p)
+	var cv: Dictionary = g["civic"]
+	var pn := str(cv["p"])
+	if tp_kit_name(pn) == "":
+		return false
+	var ft := tp_foot(pn)
+	var w := int(ft[0]) * TP_PIECE_PM / 1000
+	var d := int(ft[1]) * TP_PIECE_PM / 1000
+	var px: int = o["px"]
+	var py: int = o["py"]
+	var hs: int = o["hs"]
+	var face := int(cv["face"])
+	var x := int(o["cx"]) + int(cv["bx"])
+	var y := int(o["cy"]) + int(cv["by"])
+	if _tp_block_near(wc, pn, x, y, face, w, d, B_TEMPLE, chd, MAT_STONE, false, TP_PIECE_PM):
+		return true
+	# (Beside the plaza: its landward side, then the others, the front to the plaza.)
+	for q in 4:
+		var a: int = [256, 768, 0, 512][q]
+		var r := hs + d / 2 + 3
+		if _tp_block(wc, pn, px + FM.cos_a(a) * r / FM.TRIG_ONE, py + FM.sin_a(a) * r / FM.TRIG_ONE, (a + 512) & 1023,
+				w, d, B_TEMPLE, chd, MAT_STONE, false, TP_PIECE_PM):
+			return q == 1
+	return false
+
+
+## The plan's house slots as the town's first houses (before the lot filler): a house of the slot's kind at
+## each, its front to the nearest street, where it fits.
+static func _tp_west_lots(wc: Dictionary, p: Dictionary, roads: Array) -> void:
+	var o: Dictionary = wc["o"]
+	var g := tp_geom(p)
+	var rng: PackedInt32Array = wc["rng"]
+	var founder: int = wc["founder"]
+	var cx: int = o["cx"]
+	var cy: int = o["cy"]
+	for lt in g["lots"]:
+		var la: Array = lt
+		var x := cx + int(la[0])
+		var y := cy + int(la[1])
+		# The nearest street point and the street's way there.
+		var bd := 1 << 30
+		var ex := FM.TRIG_ONE
+		var ey := 0
+		var sx := x
+		var sy := y
+		for r in roads:
+			var rp: PackedInt32Array = r[0]
+			for q in range(rp.size() / 2 - 1):
+				var mx := (rp[q * 2] + rp[q * 2 + 2]) / 2
+				var my := (rp[q * 2 + 1] + rp[q * 2 + 3]) / 2
+				var dd := FM.approx_len(mx - x, my - y)
+				if dd < bd:
+					bd = dd
+					var l := maxi(FM.approx_len(rp[q * 2 + 2] - rp[q * 2], rp[q * 2 + 3] - rp[q * 2 + 1]), 1)
+					ex = (rp[q * 2 + 2] - rp[q * 2]) * FM.TRIG_ONE / l
+					ey = (rp[q * 2 + 3] - rp[q * 2 + 1]) * FM.TRIG_ONE / l
+					sx = mx
+					sy = my
+		var hh := int(la[3])
+		var dens := _w_dens(wc, x, y)
+		var kd := B_HOUSE if hh % 5 != 0 else (B_SHOP if dens >= 40 else B_SHACK)
+		var sz := _w_size(rng, kd)
+		var mat := _w_mat(rng, kd, founder)
+		# (n from the street into the lot: toward the slot.)
+		var nx := -ey
+		var ny := ex
+		if (x - sx) * nx + (y - sy) * ny < 0:
+			nx = -nx
+			ny = -ny
+		var ax := x * 100 - ex * sz.x * 50 / FM.TRIG_ONE - nx * sz.y * 50 / FM.TRIG_ONE
+		var ay := y * 100 - ey * sz.x * 50 / FM.TRIG_ONE - ny * sz.y * 50 / FM.TRIG_ONE
+		_w_put(wc, ax, ay, ex, ey, nx, ny, sz.x, sz.y, kd, sz.z, mat, -1)
+
+
+## A plan street leaves the town within `r` m (across) of x: a generated cross street there is not needed.
+static func _tp_near_mouth(mouths: Array, x: int, r: int) -> bool:
+	for m in mouths:
+		if absi(int((m as Array)[0]) - x) < r:
+			return true
+	return false
+
+
+## A walled plan town's landmarks (_city_plan, plan mode): the plaza's civic piece in the temple's stead (the
+## owner's shrine at the plan's place, the piece's size, where it fits; else the generated temple stays); the
+## landmark fort that is the citadel drawn on it; the other landmarks as stone blocks at their places (axis
+## along their front), appended to `lm` ([kind, x0, y0, x1, y1, style], placed with the rest) and to the view's
+## pieces.
+static func _tp_rome_marks(g: Dictionary, lm: Array, pieces: Array, inside: PackedByteArray, keep: PackedByteArray,
+		occ: PackedByteArray, obs: PackedByteArray, ow: int, oh: int, cx: int, cy: int, owner: int, cit: Dictionary, t: int,
+		tp_cit: String, walls: int, px: int, py: int, ahs: int) -> void:
+	var rect := func(pn: String, x: int, y: int, face: int) -> Array:
+		var ft := tp_foot(pn)
+		var w := int(ft[0]) * TP_PIECE_PM / 1000
+		var d := int(ft[1]) * TP_PIECE_PM / 1000
+		# (Its front along y when the face is mostly up or down, else along x.)
+		if absi(FM.sin_a(face)) < absi(FM.cos_a(face)):
+			var tmp := w
+			w = d
+			d = tmp
+		return [x - w / 2, y - d / 2, x + (w + 1) / 2, y + (d + 1) / 2]
+	var fit := func(r: Array) -> bool:
+		return _rect_free(inside, keep, occ, ow, oh, r[0], r[1], r[2], r[3])
+	# (Outside the walls: open ground, none of it inside, the walls and ditch, the roads kept.)
+	var fit_out := func(r: Array) -> bool:
+		var x0 := int(r[0])
+		var y0 := int(r[1])
+		var x1 := int(r[2])
+		var y1 := int(r[3])
+		if x0 < 4 or y0 < 4 or x1 > ow * 2 - 4 or y1 > oh * 2 - 4:
+			return false
+		for j in range(y0 / 2 - 1, (y1 + 1) / 2 + 1):
+			for i in range(x0 / 2 - 1, (x1 + 1) / 2 + 1):
+				var c := j * ow + i
+				if inside[c] != 0 or keep[c] != 0 or occ[c] != 0 or obs[c] != C_OPEN:
+					return false
+		return true
+	var cv: Dictionary = g["civic"]
+	var cpn := str(cv["p"])
+	if tp_kit_name(cpn) != "" and not lm.is_empty() and int((lm[0] as Array)[0]) == B_TEMPLE:
+		var cxp := cx + int(cv["bx"])
+		var cyp := cy + int(cv["by"])
+		var face := int(cv["face"])
+		var r1: Array = rect.call(cpn, cxp, cyp, face)
+		if not fit.call(r1):
+			# (Beside its place off the street, else on a side of the plaza, its front to the plaza.)
+			var ft0 := tp_foot(cpn)
+			var off := maxi(int(ft0[0]), int(ft0[1])) * TP_PIECE_PM / 1000 / 2 + 7
+			var cands: Array = [[cxp + off, cyp, face], [cxp - off, cyp, face], [cxp, cyp + off, face], [cxp, cyp - off, face]]
+			for q in 4:
+				var a: int = [768, 256, 512, 0][q]
+				var rr := ahs + off + 1
+				cands.append([px + FM.cos_a(a) * rr / FM.TRIG_ONE, py + FM.sin_a(a) * rr / FM.TRIG_ONE, (a + 512) & 1023])
+			for cd in cands:
+				var rc: Array = rect.call(cpn, int(cd[0]), int(cd[1]), int(cd[2]))
+				if fit.call(rc):
+					r1 = rc
+					face = int(cd[2])
+					break
+		if fit.call(r1):
+			_mark_rect(occ, ow, oh, r1[0], r1[1], r1[2], r1[3])
+			lm[0] = [B_PIECE, r1[0], r1[1], r1[2], r1[3], owner]
+			pieces.append([tp_index(cpn), (int(r1[0]) + int(r1[2])) / 2, (int(r1[1]) + int(r1[3])) / 2, face, TP_PIECE_PM,
+				maxi(int(r1[2]) - int(r1[0]), int(r1[3]) - int(r1[1])) / 2, 0])
+	var lms: Array = g["landmarks"]
+	var cit_done := false
+	for d in lms:
+		var dd: Dictionary = d
+		var pn := str(dd["p"])
+		var kn := tp_kit_name(pn)
+		if kn == "" or str(dd["kind"]) == "wall":
+			continue
+		if not cit_done and pn == tp_cit and not cit.is_empty():
+			# (The citadel is this fort: its piece over the ring.)
+			var ft2 := tp_foot(pn)
+			var rr := int(cit["rc"]) + t / 2
+			pieces.append([tp_index(pn), int(cit["x"]), int(cit["y"]), int(dd["face"]), 2 * rr * 1000 / maxi(maxi(int(ft2[0]), int(ft2[1])), 1),
+				rr, 1])
+			cit_done = true
+			continue
+		if str(dd["kind"]) == "fort" and walls > 0 and not cit.is_empty() and FM.approx_len(cx + int(dd["bx"]) - int(cit["x"]),
+				cy + int(dd["by"]) - int(cit["y"])) < int(cit["rc"]) + 30:
+			continue  # (on the citadel's ground)
+		var x := cx + int(dd["bx"])
+		var y := cy + int(dd["by"])
+		var r2: Array = rect.call(pn, x, y, int(dd["face"]))
+		var ok := false
+		for k in [0, 1, -1, 2, -2, 3, -3, 4]:
+			# (Nudged toward the plaza or away where it does not fit; outside the walls, on open ground.)
+			var qx := x + (cx - x) * int(k) / 10
+			var qy := y + (cy - y) * int(k) / 10
+			r2 = rect.call(pn, qx, qy, int(dd["face"]))
+			if fit.call(r2) or fit_out.call(r2):
+				ok = true
+				break
+		if not ok:
+			continue
+		_mark_rect(occ, ow, oh, r2[0], r2[1], r2[2], r2[3])
+		lm.append([B_PIECE, r2[0], r2[1], r2[2], r2[3], owner])
+		pieces.append([tp_index(pn), (int(r2[0]) + int(r2[2])) / 2, (int(r2[1]) + int(r2[3])) / 2, int(dd["face"]), TP_PIECE_PM,
+			maxi(int(r2[2]) - int(r2[0]), int(r2[3]) - int(r2[1])) / 2, 0])

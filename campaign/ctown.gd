@@ -125,6 +125,7 @@ static func site(r: int) -> Dictionary:
 	var out := {}
 	if _data.has(key):
 		out = _decode(_data[key] as Dictionary)
+		out["r"] = r
 	_sites[r] = out
 	return out
 
@@ -297,13 +298,13 @@ static func _lm_ok(lm: Dictionary, f: Dictionary) -> bool:
 
 static func _lmk(p: String, x: int, y: int, yaw: int) -> Dictionary:
 	var pd: Array = PD.get(p, [0, 0, 0, 0])
-	var fort := 1 if FORT_PIECES.has(p) else 0
+	var fort := 1 if FORT_PIECES.has(p) or p == "fort" else 0
 	var kind := "prop"
 	if p == "seawall":
 		kind = "wall"
 	elif fort == 1:
 		kind = "fort"
-	elif CIVIC_PIECES.has(p):
+	elif CIVIC_PIECES.has(p) or p == "tower_rome":
 		kind = "civic"
 	return {"p": p, "x": x, "y": y, "yaw": yaw, "w": 2 * int(pd[1]), "d": 2 * int(pd[2]), "h": int(pd[3]), "fort": fort, "kind": kind}
 
@@ -369,16 +370,25 @@ static func _landmarks(s: Dictionary, f: Dictionary, rkey: String) -> Array:
 					var x := int(sp2[0]) - int(sp2[2]) * inset / 1000
 					var y := int(sp2[1]) - int(sp2[3]) * inset / 1000
 					var yw := yaw_facing(-int(sp2[2]), -int(sp2[3])) if str(d.get("face", "")) == "land" else 0
-					out.append(_lmk(pn, x, y, yw))
+					var e1 := _lmk(pn, x, y, yw)
+					if bool(d.get("fort", false)):
+						e1["hf"] = 1
+					out.append(e1)
 					placed_fort = placed_fort or bool(d.get("fort", false))
 			"high":
 				var hp: Array = s["high"]
 				if hp.size() == 2:
-					out.append(_lmk(pn, int(hp[0]), int(hp[1]), 0))
+					var e2 := _lmk(pn, int(hp[0]), int(hp[1]), 0)
+					if bool(d.get("fort", false)):
+						e2["hf"] = 1
+					out.append(e2)
 			"offshore":
 				if have_shore:
 					var sp3 := _shore_pt(s, clampi(n - 2, 0, n - 1))
-					out.append(_lmk(pn, int(sp3[0]) + int(sp3[2]) * 240 / 1000, int(sp3[1]) + int(sp3[3]) * 240 / 1000, 0))
+					var e3 := _lmk(pn, int(sp3[0]) + int(sp3[2]) * 240 / 1000, int(sp3[1]) + int(sp3[3]) * 240 / 1000, 0)
+					e3["hf"] = 1
+					e3["off"] = 1
+					out.append(e3)
 					placed_fort = true
 			"plaza_sea":
 				if have_shore:
@@ -419,8 +429,65 @@ static func _landmarks(s: Dictionary, f: Dictionary, rkey: String) -> Array:
 		var mi2 := mouth_index(s, 0)
 		if mi2 >= 0:
 			var sp7 := _shore_pt(s, mi2)
-			out.append(_lmk("harbour_fort", int(sp7[0]) - int(sp7[2]) * 30 / 1000, int(sp7[1]) - int(sp7[3]) * 30 / 1000, 0))
+			var e7 := _lmk("harbour_fort", int(sp7[0]) - int(sp7[2]) * 30 / 1000, int(sp7[1]) - int(sp7[3]) * 30 / 1000, 0)
+			e7["hf"] = 2
+			out.append(e7)
+	# the generic pieces on the high ground of a level 2 town (the overworld's: a colonial town's fort, a Roman
+	# town's tower, a haven's skull rock from level 1), unless a landmark stands there
+	var hp2: Array = s["high"]
+	if hp2.size() == 2 and not _lm_at(lms, "high", f):
+		# (14 m from the church, measured in the baked centimetres as the overworld does)
+		var bk := baked(int(s["r"])) if s.has("r") else {}
+		var hc: Array = bk.get("high", [int(hp2[0]) * 10, int(hp2[1]) * 10])
+		var cc: Array = bk.get("church", [int((s["church"] as Array)[0]) * 10, int((s["church"] as Array)[1]) * 10])
+		var dx := int(hc[0]) - int(cc[0])
+		var dy := int(hc[1]) - int(cc[1])
+		var far := dx * dx + dy * dy > 1400 * 1400
+		var gp := ""
+		match str(f["style"]):
+			"town":
+				gp = "fort" if int(f["lvl"]) == 2 and far else ""
+			"roman":
+				gp = "tower_rome" if int(f["lvl"]) == 2 and far else ""
+			"haven":
+				gp = "skull_rock" if int(f["lvl"]) >= 1 else ""
+		if gp != "":
+			var eg := _lmk(gp, int(hp2[0]), int(hp2[1]), 0)
+			eg["gen"] = 1
+			out.append(eg)
 	return out
+
+
+## A landmark of the table stands at `at` in this town (with these facts).
+static func _lm_at(lms: Array, at: String, f: Dictionary) -> bool:
+	for lm in lms:
+		if str((lm as Dictionary).get("at", "")) == at and _lm_ok(lm, f):
+			return true
+	return false
+
+
+## True when (x, y) cm (the baked frame) lies inside region r's footprint at size sc per mille, as the overworld
+## tests it (TownPlan.inside: the 24 radii, linear between them, the full size towards the harbour).
+static func inside_foot(r: int, x: int, y: int, sc: int) -> bool:
+	var b := baked(r)
+	if b.is_empty():
+		return true
+	var l := FixedMath.isqrt(x * x + y * y)
+	if l == 0:
+		return true
+	var rad: Array = b["rad"]
+	var n := rad.size()
+	var a := FixedMath.atan2_a(y, x)
+	var fi := a * n
+	var i := (fi / 1024) % n
+	var t := fi % 1024
+	var rr := int(rad[i]) + (int(rad[(i + 1) % n]) - int(rad[i])) * t / 1024
+	var lv := 1000
+	var cd: Array = b["cdir"]
+	if sc < 999 and int(b["near_sea"]) == 1 and (int(cd[0]) != 0 or int(cd[1]) != 0):
+		var w := clampi((x * int(cd[0]) + y * int(cd[1])) / l * 1000 / 10000, 0, 1000)
+		lv = 1000 + (1000 * 1000 / sc - 1000) * (w * w / 1000) / 1000
+	return l * 1000000 <= rr * sc * lv
 
 
 ## The plaza's civic piece with its place.
@@ -439,6 +506,12 @@ static func _civic(s: Dictionary, kind: String, lvl: int, rkey: String) -> Dicti
 				name = "cathedral"
 			elif rkey == "merida" and lvl >= 1:
 				name = "twin_cathedral"
+			if lvl > 0 and s.has("r"):
+				# (the overworld's rule: no church where its place lies outside the town at this size)
+				var bc: Array = baked(int(s["r"]))["church"]
+				var sc := maxi(LVL_S[lvl], 750)
+				if not inside_foot(int(s["r"]), int(bc[0]), int(bc[1]), sc):
+					name = ""
 		"roman":
 			name = "shrine" if lvl == 0 else "temple"
 			if rkey == "latium" and lvl >= 1:
@@ -568,3 +641,127 @@ static func inside_poly(poly: Array, x: int, y: int) -> bool:
 				inside = not inside
 		j = i
 	return inside
+
+
+# ------------------------------------------------------------------ the battle map's plan
+
+## The front of a piece at overworld yaw k (0..7: 0 south, turning anticlockwise on the map), unit vector, 1/10000.
+const YAW_V := [[0, 10000], [7071, 7071], [10000, 0], [7071, -7071], [0, -10000], [-7071, -7071], [-10000, 0], [-7071, 7071]]
+
+
+## The main street's far end (dm, the town frame) and whether there is one: where the overworld's gate stands
+## (plan()'s rule: the end farther out, a harbour's seaward end counted down).
+static func _main_end(s: Dictionary, harbour: bool) -> Array:
+	var lines: Array = s["lines"]
+	var main: Array = lines[0] if lines.size() > 0 else []
+	if main.size() < 4:
+		return []
+	var cd: Array = s["cdir"]
+	var best := -1000000
+	var out: Array = []
+	for e in [[int(main[0]), int(main[1])], [int(main[main.size() - 2]), int(main[main.size() - 1])]]:
+		var l := FixedMath.isqrt(int(e[0]) * int(e[0]) + int(e[1]) * int(e[1]))
+		var sco := l
+		if harbour and l > 0:
+			sco -= 1667 * maxi(0, _dot_pm(int(e[0]), int(e[1]), int(cd[0]), int(cd[1]), 10000)) / 1000
+		if sco > best:
+			best = sco
+			out = [int(e[0]), int(e[1])]
+	return out
+
+
+## The settlement battle's town plan (campaign/cbattle.gd puts it in the city dictionary as "tp"; sim/mapgen.gd
+## builds the battle map from it): plan(st, r) and the site's shape turned into the battle map's canonical frame
+## (the sea, or an inland town's back, up (-y); the land side where the attackers come down (+y), at the main
+## street's far end; x to the right), decimetres, origin the plaza. The map scales it to battle size by level
+## (MapGen.tp_scale); landmark pieces keep their own size. {} without a baked site. Keys:
+##   v 1, kind, level, walls, coast (1: a port on the sea: the shore is the battle's), harbour, up [ux, uy] (the
+##   frame's up in the town frame, 1/10000), foot / wall [x, y, ...], shore [x, y, ...] ([] inland; ordered along
+##   x), lines [[x, y, ...], ...] (street polylines, the main street first), ring (the ring road's, level 1 up),
+##   lots [[x, y, size, hh, burn], ...],
+##   high / mouth0 / mouth1 [x, y] or [], gates [[x, y, face], ...], landmarks [{p, x, y, face, kind, fort, hf,
+##   off, gen, w, d, h, line}], civic {p, x, y, face, w, d, h}; face: the piece's front, an angle 0..1023 in the
+##   map's convention (FixedMath.atan2_a(dy, dx), y down). Integers only (the city dictionary's rule): kind is an
+##   index of MapGen.TP_KINDS, a landmark's kind of MapGen.TP_LKINDS, p of MapGen.TP_NAMES (-1: none).
+static func battle_plan(st: Dictionary, r: int) -> Dictionary:
+	var p := plan(st, r)
+	if p.is_empty():
+		return {}
+	var s := site(r)
+	var shore: PackedInt32Array = s["shore"]
+	var near_sea := int(s["near_sea"]) == 1 and shore.size() >= 6
+	var coast := near_sea and CData.is_port(r)
+	var cd: Array = s["cdir"]
+	var ux := 0
+	var uy := -10000
+	if coast and (int(cd[0]) != 0 or int(cd[1]) != 0):
+		ux = int(cd[0])
+		uy = int(cd[1])
+	else:
+		var me := _main_end(s, false)
+		if not me.is_empty():
+			var l := FixedMath.isqrt(int(me[0]) * int(me[0]) + int(me[1]) * int(me[1]))
+			if l > 0:
+				ux = -int(me[0]) * 10000 / l
+				uy = -int(me[1]) * 10000 / l
+	var rot := func(x: int, y: int) -> Array:
+		return [(x * -uy + y * ux) / 10000, -(x * ux + y * uy) / 10000]
+	var rot_flat := func(a: Array) -> Array:
+		var o: Array = []
+		for i in range(0, a.size() - 1, 2):
+			o.append_array(rot.call(int(a[i]), int(a[i + 1])))
+		return o
+	var face := func(yk: int) -> int:
+		var v: Array = YAW_V[yk & 7]
+		var q: Array = rot.call(int(v[0]), int(v[1]))
+		return FixedMath.atan2_a(int(q[1]), int(q[0]))
+	var pt := func(a: Array) -> Array:
+		return rot.call(int(a[0]), int(a[1])) if a.size() == 2 else []
+	var sh: Array = []
+	if coast:
+		sh = rot_flat.call(Array(shore))
+		# (ordered along x, west to east)
+		if sh.size() >= 4 and int(sh[0]) > int(sh[sh.size() - 2]):
+			var rv: Array = []
+			for i in range(sh.size() - 2, -1, -2):
+				rv.append(int(sh[i]))
+				rv.append(int(sh[i + 1]))
+			sh = rv
+	var lines: Array = []
+	for ln in s["lines"]:
+		lines.append(rot_flat.call(ln))
+	# (the ring road of a colonial or Roman town from level 1, as the overworld draws it)
+	var ring: Array = []
+	var bk := baked(r)
+	if int(p["level"]) >= 1 and (str(p["kind"]) == "town" or str(p["kind"]) == "roman") and bk.has("ring_road"):
+		for ln2 in bk["ring_road"]:
+			ring.append(rot_flat.call(_dm_arr(ln2)))
+	var lots: Array = []
+	for lt in s["lots"]:
+		var la: Array = lt
+		var q2: Array = rot.call(int(la[0]), int(la[1]))
+		lots.append([int(q2[0]), int(q2[1]), int(la[3]), int(la[4]), int(la[5])])
+	var gates: Array = []
+	for g in p["gates"]:
+		var ga: Array = g
+		var q3: Array = rot.call(int(ga[0]), int(ga[1]))
+		gates.append([int(q3[0]), int(q3[1]), face.call(int(ga[2]))])
+	var lms: Array = []
+	for lm in p["landmarks"]:
+		var d: Dictionary = lm
+		var q4: Array = rot.call(int(d["x"]), int(d["y"]))
+		var e := {"p": MapGen.tp_index(str(d["p"])), "x": int(q4[0]), "y": int(q4[1]), "face": face.call(int(d["yaw"])),
+			"kind": MapGen.TP_LKINDS.find(str(d["kind"])),
+			"fort": int(d["fort"]), "hf": int(d.get("hf", 0)), "off": int(d.get("off", 0)), "gen": int(d.get("gen", 0)),
+			"w": int(d["w"]), "d": int(d["d"]), "h": int(d["h"])}
+		if d.has("line"):
+			e["line"] = rot_flat.call(d["line"])
+		lms.append(e)
+	var cv: Dictionary = p["civic"]
+	var q5: Array = rot.call(int(cv["x"]), int(cv["y"]))
+	var civic := {"p": MapGen.tp_index(str(cv["p"])), "x": int(q5[0]), "y": int(q5[1]), "face": face.call(int(cv["yaw"])),
+		"w": int(cv["w"]), "d": int(cv["d"]), "h": int(cv["h"])}
+	return {"v": 1, "kind": MapGen.TP_KINDS.find(str(p["kind"])), "level": int(p["level"]), "walls": int(p["walls"]), "coast": 1 if coast else 0,
+		"harbour": int(p["harbour"]), "up": [ux, uy], "foot": rot_flat.call(p["foot"]), "wall": rot_flat.call(p["wall"]),
+		"shore": sh, "lines": lines, "ring": ring, "lots": lots, "high": pt.call(s["high"]), "mouth0": pt.call(s["mouth0"]),
+		"mouth1": pt.call(s["mouth1"]), "gates": gates, "landmarks": lms, "civic": civic}

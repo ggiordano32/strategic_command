@@ -2333,6 +2333,37 @@ screenshots of 6 towns a pack at zoom 1.2 and 2.4 (default and level 2 / walls 3
 (new `_town_plan`: both packs), town_plan_test, check_scripts. Left for phase C: `TownPlan._build` still places landmarks by the live
 coast field (CTown.plan has its own integer placement for the battle map); the generic city fort and the harbour furniture are not in
 `plan` yet.
+**The city on the map is the city you fight in, phase C: the battle map from the plan (built 2026-10-20, not committed; DESIGN "The town
+plan (shared), phase C").** A campaign settlement battle carries `CTown.battle_plan(st, r)` (the plan turned to the battle frame, integers
+only) as the city's `tp`; `sim/mapgen.gd` builds the West open town (outline, plan shore refined by the seed's waves, plan streets plus the
+generated filler, plan house slots first) or the walled plan (trace from the footprint, citadel at the landmark fort) from it; landmarks
+are real buildings (the town's fort with an inside on the 2c machinery: Havana's Morro, Cartagena's San Felipe, the Ulua offshore with a
+causeway; other forts, civic pieces, taverns as stone bodies; Cartagena's sea wall; Rome's citadel at the Byrsa / acropolis / Euryalus);
+the view draws the kit's block 2 pieces under the walls (`city_draw.gd draw_pieces`, a node of the kit). `CTown.plan` gained the generic
+level 2 fort / tower / skull rock and the overworld's church rule. Scenario keys and custom battles are byte for byte as before (10 ids:
+map and tick-600 state hash equal to HEAD's); no golden moved; campaign_sim unchanged (Rome cdc1d805 32b83031 23f9ed4f 3237d82d a42fc685
+b6fe6c2e, West b137875c edd82dee 0393b18d 2aa8578b deb00750 1d051164). Acceptance (`tests/town_plan_test.gd`): 1020 town / level / walls
+cases, landmark sets, turn order and civic piece equal to the overworld's, 15 known (Port Royal's gallows and waterfront taverns: the
+overworld's `_put` finds water there; fix in `TownPlan._build`: place landmarks at `CTown.plan`'s points). New `determinism_test
+--only=town` (Havana walls 1: Morro at mouth0, the fort's inside, Fuerza at mouth1, no town wall, a shot stopped by the cathedral, the
+storm identical on repeat and across snapshot / restore; Carthage's Byrsa citadel). Balance (`tests/town_balance.gd`, the same armies,
+seeds and city on the generated map and on the plan; attacker wins):
+
+| set | walls 0 | walls 1 | walls 2 | walls 3 |
+|---|---|---|---|---|
+| West town (Cartagena plan, lvl 1), 16 seeds, generated -> plan | 68 -> 62 % | 87 -> 37 % | 62 -> 25 % | - |
+| West city (Havana plan, lvl 2), 16 seeds | 93 -> 56 % | 37 -> 31 % | 18 -> 31 % | - |
+| polis (Athens plan), full kit, 8 seeds | - | 37 -> 62 % | 37 -> 25 % | 37 -> 25 % |
+| castrum (Rome plan), full kit, 8 seeds | - | 62 -> 25 % | 25 -> 25 % | 0 -> 62 % |
+
+Not within 5 points: Cartagena's San Felipe stands on the high ground in the attackers' road (walls 1-2 harder), the plan towns have
+fewer street mouths (5-7 against 8-10) and 60-70 % of the buildings; the Rome rows move both ways at 8 seeds (castrum's 12-sided
+trace). Pooled West walls 0 / 1 / 2: 81 / 62 / 40 % -> 59 / 34 / 28 % (targets 55 / 45 / 35); Rome walls 1 / 2 / 3: 50 / 31 / 19 % -> 44 /
+25 / 44 % (25 % wanted at walls 3). Perf: bench_4000_west 8.53 -> 8.51 ms, bench_west_town 3.51 -> 3.50, bench_4000_city 4.37 -> 4.37
+(identical maps); plan towns' first 3,000 ticks within 0.2 ms of the generated (oppidum 1.35 -> 1.90); set-up 230-450 ms (generated 205-
+480). Left: the walls rows to retune on plan maps (a balance pass), the overworld placing landmarks at `CTown.plan`'s points, a fort trace
+of the piece's own shape (the Morro's triangle: the trace stays the 2c square), the shaded kit path for block 2 pieces, Rome's street
+lattice from the plan's streets, ring-plan towns.
 **The pirate story campaign** (DESIGN "Story campaign: The Brethren's Due",
 agreed 2026-10-14: swashbuckling with a dark edge, ~45 turns, three endings,
 co-op optional; about 4 builds). **Step 1 (4808ccc): the story engine, the
