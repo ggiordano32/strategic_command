@@ -24,6 +24,9 @@ const MapGen := preload("res://sim/mapgen.gd")
 const CData := preload("res://campaign/cdata.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const SHADER := preload("res://game/battlekit.gdshader")
+## Block 2 (landmark and civic pieces, "lm_*" / "cv_*"; atlas2_*; tools/battlekit/spec_pieces.py). Used only by
+## draw_piece for now; its texture is loaded on the first call.
+const Atlas2 := preload("res://game/battlekit_atlas2.gd")
 ## Loaded when needed (the script checkers' scratch project has no assets/).
 var TEX_ALB: Texture2D
 var TEX_NRM: Texture2D
@@ -51,6 +54,9 @@ const WEST_PIECE := {MapGen.B_TAVERN: "tavern", MapGen.B_SHOP: "shop", MapGen.B_
 	MapGen.B_WAREHOUSE: "warehouse", MapGen.B_CHANDLER: "chandler", MapGen.B_GOVERNOR: "governor",
 	MapGen.B_SHACK: "shack", MapGen.B_LEANTO: "leanto", MapGen.B_MAGAZINE: "magazine"}
 const PROP_PIECE := ["barrels", "crates", "cart", "well"]
+
+static var _tex2_low: Texture2D
+static var _name_idx2 := {}
 
 var sim
 var lay: Dictionary = {}
@@ -107,6 +113,57 @@ func setup(p_sim, p_lay: Dictionary, p_k: float) -> void:
 	low = Quality.is_low()
 	_make_nodes()
 	build_ms = (Time.get_ticks_usec() - t0) / 1000.0
+
+
+# ------------------------------------------------- landmark / civic pieces ----
+
+## True when `piece` is a block 2 piece (Atlas2.NAMES: "lm_morro", "cv_cathedral", ...).
+static func has_piece(piece: String) -> bool:
+	_index2()
+	return _name_idx2.has(piece)
+
+
+static func _index2() -> void:
+	if _name_idx2.is_empty():
+		for q in Atlas2.NAMES.size():
+			_name_idx2[Atlas2.NAMES[q]] = q
+
+
+## A block 2 piece's footprint in metres: {"x0","y0","x1","y1"} in the piece frame (origin = the piece origin,
+## y down on the screen, so the piece's front is y0), "h" its height as built, "w" / "d" the extent. {} if unknown.
+static func piece_foot(piece: String) -> Dictionary:
+	_index2()
+	if not _name_idx2.has(piece):
+		return {}
+	var f: Array = Atlas2.FOOT[_name_idx2[piece]]
+	return {"x0": f[0], "y0": f[1], "x1": f[2], "y1": f[3], "h": f[4], "w": f[2] - f[0], "d": f[3] - f[1]}
+
+
+## Draws a block 2 piece on `canvas` (any CanvasItem, inside its _draw) at pos_m metres, turned by yaw radians
+## (0: the piece's front towards screen up; clockwise positive), multiplied by `tint`, at px_per_m screen px per
+## metre (the battle map's k). Uses the pre-lit 4 px/m atlas (Roman palette), so it needs no shader and
+## works on the Low path too; the shaded MultiMesh path comes with the map builder. Leaves the canvas
+## transform reset to identity. Used by nothing yet.
+static func draw_piece(canvas: CanvasItem, piece: String, pos_m: Vector2, yaw: float, tint := Color.WHITE,
+		px_per_m := 10.0) -> void:
+	_index2()
+	if not _name_idx2.has(piece):
+		return
+	if _tex2_low == null:
+		_tex2_low = load("res://assets/battlekit/atlas2_low.png")
+	var p: int = _name_idx2[piece]
+	var an: Array = Atlas2.ANCHOR[p]
+	var r: Array = Atlas2.RECT[p]
+	var e := Vector2(cos(yaw), sin(yaw))
+	var dn := Vector2(-e.y, e.x)
+	var w := float(an[2]) * px_per_m
+	var h := float(an[3]) * px_per_m
+	var o: Vector2 = (pos_m + e * float(an[0]) + dn * float(an[1])) * px_per_m
+	var lowk: float = Atlas2.LOW_PPM / Atlas2.PPM
+	canvas.draw_set_transform_matrix(Transform2D(e, dn, o))
+	canvas.draw_texture_rect_region(_tex2_low, Rect2(-w * 0.5, -h * 0.5, w, h),
+		Rect2(float(r[0]) * lowk, float(r[1]) * lowk, float(r[2]) * lowk, float(r[3]) * lowk), tint)
+	canvas.draw_set_transform_matrix(Transform2D.IDENTITY)
 
 
 # ------------------------------------------------------------ instances ----

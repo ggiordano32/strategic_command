@@ -39,6 +39,9 @@ COL = {
     "leaf_a": (0.28, 0.46, 0.20), "leaf_b": (0.22, 0.40, 0.18), "leaf_c": (0.34, 0.50, 0.22),
     "pine": (0.30, 0.50, 0.32), "palm": (0.40, 0.60, 0.26), "trunk": (0.32, 0.22, 0.14),
     "hay": (0.76, 0.64, 0.32), "turf": (0.38, 0.47, 0.24), "grey": (0.85, 0.85, 0.85),
+    # landmark pieces (spec_pieces.py)
+    "coquina": (0.78, 0.70, 0.52), "gold": (0.85, 0.68, 0.22), "black": (0.05, 0.05, 0.06),
+    "brick": (0.62, 0.34, 0.26), "jade": (0.22, 0.52, 0.40),
 }
 # key -> (colour key or rgb, pattern, mask channel, smooth)
 MATS = {
@@ -57,6 +60,8 @@ MATS = {
     "plaster": ("grey", "plaster", 1, 0),     # G: wall plaster / limewash
     "cloth": ("grey", "stripes", 0, 0),       # R: awning / banner
     "trim": ("grey", "noise", 2, 0),          # B: accent
+    "coquina": ("coquina", "blocks", None, 0), "gold": ("gold", "noise", None, 0),
+    "black": ("black", "noise", None, 0), "brick": ("brick", "blocks", None, 0), "jade": ("jade", "noise", None, 0),
 }
 
 
@@ -1164,12 +1169,43 @@ PIECES_W = {
     "lowwall": (10, b_lowwall), "stakes": (14, b_stakes), "crates": (6, b_crates), "pier": (14, b_pier),
 }
 
+# ------------------------------------------------- landmark / civic pieces (phase B of the same-city work)
+# The overworld minis' geometry (tools/structures/spec.json) through tools/battlekit/spec_pieces.py;
+# front at +y (image up) like the West pieces; the canvas is sized from the geometry.
+LANDMARK_SRC = {
+    "lm_morro": "morro", "lm_morro_sj": "morro_sj", "lm_fuerza": "fuerza", "lm_san_felipe": "san_felipe",
+    "lm_harbour_fort": "harbour_fort", "lm_san_marcos": "san_marcos", "lm_alcazar": "alcazar", "lm_ulua": "ulua",
+    "lm_fort_charles": "fort_charles", "lm_rock_fort": "rock_fort", "lm_gallows": "gallows", "lm_tavern": "tavern",
+    "lm_careened": "careened", "lm_byrsa": "byrsa", "lm_cothon": "cothon", "lm_euryalus": "euryalus",
+    "lm_acropolis": "acropolis", "lm_greek_temple": "greek_temple", "lm_baluarte": "baluarte",
+    "lm_bast_wall": "bast_wall",
+    "cv_temple": "temple", "cv_basilica": "basilica", "cv_chapel": "chapel", "cv_church": "church",
+    "cv_cathedral": "cathedral", "cv_twin_cathedral": "twin_cathedral", "cv_mansion": "mansion",
+    "cv_capitol": "capitol", "cv_tower_rome": "tower_rome", "cv_itza_temple": "itza_temple",
+    "cv_maya_pyramid": "maya_pyramid", "cv_fort": "fort",
+}
+
+
+def _lm(src):
+    def f(P):
+        import importlib.util
+        sp = importlib.util.spec_from_file_location("bk_spec_pieces", os.path.join(HERE, "spec_pieces.py"))
+        m = importlib.util.module_from_spec(sp)
+        sp.loader.exec_module(m)
+        return m.build(P, src)
+    return f
+
+
+PIECES_L = {k: (0, _lm(v)) for k, v in LANDMARK_SRC.items()}
+
+
 # ------------------------------------------------------------------ render
 def render(name, ppm, tilt, out):
-    S, fn = PIECES[name] if name in PIECES else PIECES_W[name]
+    S, fn = PIECES[name] if name in PIECES else (PIECES_W[name] if name in PIECES_W else PIECES_L[name])
     sc = reset()
     P = Piece()
-    fn(P)
+    P.info = None
+    S = fn(P) or S
     objs = P.finish(sc)
     px = int(S * ppm)
     sc.render.resolution_x = px
@@ -1198,7 +1234,7 @@ def render(name, ppm, tilt, out):
         vl.material_override = pass_material(kind)
         sc.render.filepath = "%s_%s.png" % (base, kind)
         bpy.ops.render.render(write_still=True)
-    json.dump({"name": name, "canvas_m": S, "ppm": ppm, "px": px, "zmax": ZMAX, "tilt": tilt},
+    json.dump({"name": name, "canvas_m": S, "ppm": ppm, "px": px, "zmax": ZMAX, "tilt": tilt, "info": P.info},
               open(base + ".json", "w"))
 
 

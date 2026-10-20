@@ -110,7 +110,22 @@ GROUPS = [
 ]
 
 
+# Landmark and civic pieces (spec_pieces.py): `board --set landmarks`.
+GROUPS_NEW = [
+    ["lm_morro", "lm_morro_sj", "lm_san_felipe", "lm_san_marcos", "lm_ulua"],
+    ["lm_fuerza", "lm_harbour_fort", "lm_fort_charles", "lm_rock_fort", "cv_fort", "lm_baluarte", "lm_bast_wall"],
+    ["lm_byrsa", "lm_euryalus", "lm_acropolis", "lm_cothon", "lm_greek_temple"],
+    ["lm_alcazar", "cv_capitol", "cv_temple", "cv_basilica", "cv_tower_rome", "cv_mansion"],
+    ["cv_cathedral", "cv_twin_cathedral", "cv_church", "cv_chapel", "cv_itza_temple", "cv_maya_pyramid"],
+    ["lm_careened", "lm_tavern", "lm_gallows"],
+]
+
+
 def pal_for(n):
+    if n.startswith(("lm_", "cv_")):
+        return PAL["spanish"] if n in ("lm_alcazar", "cv_cathedral", "cv_twin_cathedral", "cv_church", "cv_chapel", "lm_morro",
+                                       "lm_morro_sj", "lm_san_felipe", "lm_san_marcos", "lm_ulua", "lm_fuerza", "lm_harbour_fort",
+                                       "lm_rock_fort", "lm_fort_charles", "cv_fort", "lm_baluarte", "lm_bast_wall") else PAL["roman"]
     if n.startswith(("house_hip", "church", "tower_sq")):
         return PAL["spanish"]
     if n in ("house_gable_m", "longhouse", "stall"):
@@ -120,13 +135,13 @@ def pal_for(n):
     return PAL["roman"]
 
 
-def board(frames, out, style_name, ppm=6.0):
+def board(frames, out, style_name, ppm=6.0, groups=None, tag=""):
     st = STYLE[style_name]
     kit = Kit(frames)
     g = Ground()
     W_ = 1900
     rows = []
-    for gr in GROUPS:
+    for gr in (groups or GROUPS):
         row, x, y_h = [], 16, 0
         for n in gr:
             meta, _ = kit.piece(n, PAL["roman"])
@@ -147,7 +162,7 @@ def board(frames, out, style_name, ppm=6.0):
         y += hh + 26
     img, sh, ao = light_scene(sc, st)
     os.makedirs(out, exist_ok=True)
-    p = os.path.join(out, "kit_board_%s.png" % style_name)
+    p = os.path.join(out, "kit_board_%s%s.png" % (tag, style_name))
     save_png(p, img)
     label_cmd(p, labels)
     print("board", p, W_, H_)
@@ -886,7 +901,10 @@ if __name__ == "__main__":
             print("done", sys.argv[2], sname)
     elif cmd == "board":
         for s in ("A", "B"):
-            board(arg("--frames"), arg("--out"), s)
+            if arg("--set") == "landmarks":
+                board(arg("--frames"), arg("--out"), s, float(arg("--ppm", "6")), GROUPS_NEW, "landmarks_")
+            else:
+                board(arg("--frames"), arg("--out"), s)
     elif cmd == "cultures":
         for s in ("A", "B"):
             cultures(arg("--frames"), arg("--out"), s)
