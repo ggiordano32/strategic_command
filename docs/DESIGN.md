@@ -6363,6 +6363,31 @@ a sprite but kit pieces placed on the real terrain.
   campfires. Neighbours within 2.2 town radii shrink both footprints (down to 0.42) and the centre never drifts toward
   them. `tests/town_plan_test.gd` checks every West and Rome port.
 
+### The town plan (shared), phase A, 2026-10-20
+
+The city on the map is the city you fight in (owner, 2026-10-20: "use the buildings from the overworld city and actually build the
+battlefield with those same features"). Two generators (the overworld's `town_plan.gd`, the battle's `sim/mapgen.gd`) become one plan.
+Phase A is data and a pure function; the battle map reads it in phase C.
+
+- **Bake.** `tools/town_bake.gd` runs the overworld generator once per pack (floats allowed there: it is committed data) and writes
+  `campaign/data/town_sites_<pack>.gd`, a `SITES` dictionary by region key. Everything is an integer in centimetres in the town's local
+  frame (origin the town centre, x east, y south: the frame the pieces use; a metre of a piece is 1.2 map px). Rome 36 towns, 138 KB; West
+  49 towns, 187 KB.
+- **Site** (`CTown.site(r)`, decimetres): `foot` (48 vertices, the full footprint), `shore` (the harbour shore polyline, [] inland), `mouth0`
+  / `mouth1` (the shore's seaward end and its other end), `high` (the highest ground in the outer footprint), `sea_dir` (0..1023
+  anticlockwise from east, -1 inland), `streets` (segments), `plaza`, `lots` (`[x, y, yaw, size, hh, burn]` in fill order; `hh` and `burn` are
+  the colour / sack hashes, baked so the view does not depend on rounding), `steep` (16 sectors), `coast` (48 x 48 land bits at 25 m a
+  cell centred on the town; the footprint is only about three cells across, the shore polyline is the fine detail). Extras for the
+  overworld view (`CTown.baked(r)` in centimetres: `rad`, `fields`, `ring`, `ring_road`, `clear_r`, ...).
+- **Plan** (`CTown.plan(st, r)`, a pure function of the baked site and the state's facts; JSON-plain, identical on every client):
+  `kind` (town / native / maya / haven / roman), `level`, `walls`, `harbour`, `shipyard`, `owner`, `scale` (per mille: 620 / 800 / 1000 by
+  level, x 0.92 for native / Maya / haven), `foot` (scaled, the full size towards the harbour), `wall` (the wall trace at 0.93 of the
+  footprint; open on the harbour side; [] at walls 0 and at a West harbour's walls 1, which has a fort beside an open town), `gates`,
+  `landmarks` (`{p, x, y, yaw, w, d, h, fort, kind}`: forts (`fort` 1, a fort with an inside for the 2c machinery), civic, the sea wall,
+  props), `civic` (the plaza piece). `CTown.PD` (piece sizes) and `CTown.LM` (landmarks by region key) moved here from `town_plan.gd`.
+- **View.** `TownPlan.site(r, true)` rebuilds its site dictionary from the baked record (so every draw reads the shared data); the old
+  generator stays for the legacy region-hop view and for the bake.
+
 ### Audio (as built, 2026-10-10)
 
 ## DESIGN paragraph (Audio)

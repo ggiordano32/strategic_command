@@ -2320,6 +2320,19 @@ landmark towns, growth strips level x walls, shipyard / market, sack, siege); bi
 small 2048 x 320 (about 3.9 MB, was 3.1); plans for all 49 towns at max state 417 ms once (no per-frame cost, ground repaints
 only when a plan changes). `tools/check_scripts.sh` is clean again (2026-10-15). Open: a look on phones (landmark scale, tower heights), Rome's Alexandria is not a region, ships'
 baked contact shadow, atlas must be re-imported after repacking.
+**The city on the map is the city you fight in, phase A: the shared town plan (built 2026-10-20, not committed; the plan is not state, no
+VERSION bump, no hash moves).** The overworld towns' static layout is now baked data both the overworld and (phase C) the battle map read:
+`tools/town_bake.gd` (`--pack=rome|west`) calls the generator (`TownPlan.generate`, grid mode) and writes `campaign/data/town_sites_<pack>.gd`
+(Rome 36 towns 138 KB, West 49 towns 187 KB, integers in centimetres in the town's local frame); `campaign/ctown.gd` (`CTown`, rules side,
+integers only) gives `site(r)` (foot, shore, mouth0 / 1, high, sea_dir, streets, plaza, lots, steep, coast 48 x 48 at 25 m, in dm) and
+`plan(st, r)` (kind, level, walls, harbour, shipyard, owner, scale, scaled foot, wall trace, gates, landmarks as real pieces with size,
+civic piece), plus the piece size table `PD` (dm) and the landmark table `LM`, moved out of `town_plan.gd`. `TownPlan` reads the baked site
+(grid mode; the legacy region-hop mode keeps the generator) and CTown's tables / facts and still does all the painting. Before / after
+screenshots of 6 towns a pack at zoom 1.2 and 2.4 (default and level 2 / walls 3): visually identical, a handful of pixels differ
+(sub-pixel edge shifts from the centimetre rounding, one palm at Puerto Principe walls 1+, draw-order ties). Checked: campaign_test
+(new `_town_plan`: both packs), town_plan_test, check_scripts. Left for phase C: `TownPlan._build` still places landmarks by the live
+coast field (CTown.plan has its own integer placement for the battle map); the generic city fort and the harbour furniture are not in
+`plan` yet.
 **The pirate story campaign** (DESIGN "Story campaign: The Brethren's Due",
 agreed 2026-10-14: swashbuckling with a dark edge, ~45 turns, three endings,
 co-op optional; about 4 builds). **Step 1 (4808ccc): the story engine, the

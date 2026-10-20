@@ -19,65 +19,14 @@ const MapGen := preload("res://sim/mapgen.gd")
 const GeoFields := preload("res://game/campaign/geo_fields.gd")
 const Geo := preload("res://game/campaign/map_geo.gd")
 const Atlas := preload("res://game/minis_atlas.gd")
+const CTown := preload("res://campaign/ctown.gd")
 
 const K := 1.2               # world px a metre
 const NA := 24               # footprint radii (angles)
 const R_FULL_M := 38.0       # the footprint of a level 2 town, metres
-const LVL_S := [0.62, 0.8, 1.0]
 const SHADOW_DIR := Vector2(0.62, 0.78)   # the light is north-west: shadows fall south-east
 
-## Collision radius (m), half width and depth (m) of the shadow, height (m, as drawn) per piece.
-const PD := {
-	"house_s": [3.0, 3.2, 2.7, 13.0], "house_m": [3.0, 2.9, 2.5, 20.0], "adobe": [3.2, 2.9, 2.4, 6.0],
-	"chapel": [4.7, 2.9, 4.5, 21.6], "church": [6.6, 4.4, 7.0, 31.2], "cathedral": [7.6, 5.0, 7.9, 34.3], "mansion": [4.9, 4.5, 3.2, 12.8],
-	"fort": [9.4, 8.6, 8.6, 15.8], "fountain": [3.2, 3.0, 3.0, 6.0], "well": [1.6, 1.4, 1.4, 5.5],
-	"hut": [2.6, 2.4, 2.4, 11.0], "hut_big": [3.6, 3.4, 3.4, 14.0], "palapa": [2.6, 2.6, 2.2, 8.0], "totem": [1.2, 1.0, 1.0, 24.0],
-	"maya_house": [3.0, 2.8, 2.2, 8.0], "maya_pyramid": [10.8, 9.7, 9.7, 28.8], "stela": [1.0, 1.0, 0.5, 10.0],
-	"shack_a": [3.0, 2.8, 2.2, 10.0], "shack_b": [3.0, 2.8, 2.2, 10.0], "tent": [2.8, 2.6, 2.1, 6.0], "cannon": [1.4, 1.4, 0.9, 2.5],
-	"barrels": [2.0, 1.8, 1.8, 2.5], "hullframe": [6.0, 6.0, 1.8, 10.0], "rowboat": [2.8, 3.0, 1.6, 2.0], "skull_rock": [4.0, 4.0, 3.5, 14.0],
-	"flagpole": [0.6, 0.5, 0.5, 18.0], "roman_house": [3.2, 3.0, 2.6, 10.0], "hovel": [2.8, 2.6, 2.2, 9.0], "shrine": [3.8, 3.4, 3.4, 12.0],
-	"temple": [6.6, 6.6, 4.6, 21.6], "basilica": [6.8, 6.4, 3.4, 14.4], "tower_rome": [3.4, 3.2, 3.2, 28.0],
-	"pal_wall": [0.0, 3.0, 0.8, 8.0], "pal_post": [0.0, 1.0, 1.0, 13.0], "pal_gate": [0.0, 4.4, 1.0, 13.0],
-	"stone_wall": [0.0, 3.0, 1.6, 9.0], "stone_tower": [0.0, 3.0, 2.9, 20.0], "stone_gate": [0.0, 4.6, 2.4, 22.0],
-	"bast_wall": [0.0, 3.0, 2.2, 8.0], "bast_point": [0.0, 4.4, 4.2, 11.0], "bast_gate": [0.0, 4.6, 2.6, 18.0],
-	"quay": [0.0, 3.0, 1.8, 1.5], "pier": [0.0, 2.0, 1.9, 2.0], "crane": [2.0, 1.4, 1.4, 22.0], "warehouse": [6.0, 6.6, 3.8, 15.0],
-	"shed": [5.0, 6.0, 3.6, 14.0], "slipway": [0.0, 9.0, 4.2, 4.0], "lighthouse": [3.2, 3.5, 3.5, 44.0], "canoe": [2.4, 2.4, 0.9, 1.5],
-	"tree_b1": [1.8, 2.6, 2.3, 10.0], "tree_b2": [2.0, 3.0, 2.6, 10.0], "palm_a": [1.0, 1.6, 1.4, 13.0], "palm_b": [1.0, 1.6, 1.4, 14.0],
-	"orange": [1.2, 1.9, 1.7, 7.0],
-	"morro": [14.0, 13.0, 11.0, 46.0], "fuerza": [9.0, 9.5, 8.5, 24.0], "san_felipe": [13.0, 14.0, 12.0, 48.0], "morro_sj": [14.0, 14.5, 9.0, 42.0],
-	"harbour_fort": [8.0, 8.0, 6.5, 24.0], "san_marcos": [15.0, 16.0, 16.0, 30.0], "alcazar": [11.0, 12.5, 6.0, 28.0], "ulua": [14.0, 13.0, 10.0, 32.0],
-	"itza_temple": [11.5, 11.0, 11.0, 58.0], "fort_charles": [10.0, 10.0, 7.0, 24.0], "tavern": [5.0, 4.8, 3.6, 16.0], "gallows": [2.6, 2.6, 2.0, 15.0],
-	"rock_fort": [6.0, 6.5, 6.0, 40.0], "careened": [6.5, 6.5, 3.5, 8.0], "baluarte": [0.0, 4.6, 4.8, 12.0], "twin_cathedral": [8.0, 6.0, 8.5, 56.0],
-	"capitol": [13.0, 10.5, 9.5, 40.0], "byrsa": [16.0, 15.0, 14.0, 36.0], "cothon": [14.5, 14.5, 14.5, 12.0], "euryalus": [15.0, 14.5, 9.0, 30.0],
-	"acropolis": [16.0, 16.0, 14.0, 40.0], "greek_temple": [8.5, 8.0, 5.5, 26.0], "burnt": [3.0, 2.7, 2.3, 14.0], "camp_tent": [3.0, 2.8, 2.4, 8.0], "camp_flag": [0.6, 0.5, 0.5, 20.0],
-	"camp_fire": [1.3, 1.3, 1.3, 4.0], "camp_stakes": [3.8, 1.0, 1.0, 4.0], "camp_earth": [3.6, 1.4, 1.4, 3.0],
-	"longhouse": [6.2, 6.2, 3.0, 9.0], "rack": [2.3, 2.1, 0.9, 4.0], "stilt_house": [3.0, 2.8, 2.4, 10.0], "maya_platform": [6.4, 6.0, 6.0, 8.0],
-}
-
 const WALL_COLS := ["wh", "oc", "bl", "co", "wh", "bl", "oc", "co"]
-
-## Landmarks by region key (step 2): piece, where (mouth0 = the harbour mouth's seaward headland, mouth1 = its other
-## end, high = the highest ground, offshore = on a rock in the roads, plaza_sea = between the plaza and the sea,
-## waterfront / beach = a row along the shore, cothon = by the water), inset in metres, face "land" = the front
-## towards the town, wl / lv = least walls / level that show it, fort = it is the town's harbour fort (the
-## generic one stays away), n = count, haven = only while a pirate haven. Spanish forts stay when the town is
-## taken (they are tinted to the owner). The pieces that replace a civic one (the Itza temple, the twin cathedral,
-## the Capitoline temple, Santo Domingo's cathedral) are in _build.
-const LM := {
-	"havana": [{"p": "morro", "at": "mouth0", "in": 5.0, "face": "land", "wl": 1, "fort": true}, {"p": "fuerza", "at": "mouth1", "in": 4.0, "wl": 1, "fort": true}],
-	"cartagena": [{"p": "seawall", "wl": 2, "fort": true}, {"p": "san_felipe", "at": "high", "wl": 1}],
-	"san_juan": [{"p": "morro_sj", "at": "mouth0", "in": 5.0, "face": "land", "wl": 1, "fort": true}],
-	"portobelo": [{"p": "harbour_fort", "at": "mouth0", "in": 3.0, "wl": 1, "fort": true}, {"p": "harbour_fort", "at": "mouth1", "in": 3.0, "wl": 1, "fort": true}],
-	"st_augustine": [{"p": "san_marcos", "at": "mouth1", "in": 12.0, "wl": 2, "fort": true}],
-	"santo_domingo": [{"p": "alcazar", "at": "plaza_sea", "lv": 1}],
-	"veracruz": [{"p": "ulua", "at": "offshore", "wl": 1, "fort": true}],
-	"port_royal": [{"p": "fort_charles", "at": "mouth0", "in": 4.0, "wl": 1, "fort": true}, {"p": "gallows", "at": "mouth1", "in": 2.0}, {"p": "tavern", "at": "waterfront", "n": 3}],
-	"port_de_paix": [{"p": "rock_fort", "at": "high", "wl": 1, "fort": true}, {"p": "careened", "at": "beach", "n": 2, "haven": true}],
-	"zeugitana": [{"p": "byrsa", "at": "high", "lv": 1}, {"p": "cothon", "at": "cothon", "lv": 1}],
-	"sicilia_or": [{"p": "euryalus", "at": "high", "lv": 1}],
-	"attica": [{"p": "acropolis", "at": "high"}],
-	"massalia": [{"p": "greek_temple", "at": "high"}],
-}
 
 static var _gen := -1
 static var _sites := {}
@@ -136,25 +85,27 @@ static func _neighbours(grid: bool) -> Array:
 
 ## Kit piece kind of the town in the state: "town" (colonial), "native", "maya", "haven" or "roman".
 static func style_of(st: Dictionary, r: int) -> String:
-	if CData.pack == "west":
-		if CSea.haven(st, r):
-			return "haven"
-		if CState.owner_culture(st, r) == MapGen.CUL_CELTIC:
-			return "maya" if str(CData.REGIONS[r]["key"]) == "tayasal" else "native"
-		return "town"
-	return "roman"
+	return CTown.kind_of(st, r)
 
 
-## The PD row of a piece (the colour variants share one), [] when unknown.
+static var _pdf := {}
+
+
+## The piece table row of a piece (the colour variants share one) in metres: collision radius, half width, half
+## depth, height; [] when unknown. (The table is CTown.PD, decimetres.)
 static func pd_of(name: String) -> Array:
-	if PD.has(name):
-		return PD[name] as Array
+	if _pdf.is_empty():
+		for k in CTown.PD:
+			var v: Array = CTown.PD[k]
+			_pdf[k] = [float(v[0]) / 10.0, float(v[1]) / 10.0, float(v[2]) / 10.0, float(v[3]) / 10.0]
+	if _pdf.has(name):
+		return _pdf[name] as Array
 	if name.begins_with("house_s"):
-		return PD["house_s"] as Array
+		return _pdf["house_s"] as Array
 	if name.begins_with("house_m"):
-		return PD["house_m"] as Array
+		return _pdf["house_m"] as Array
 	if name.begins_with("adobe"):
-		return PD["adobe"] as Array
+		return _pdf["adobe"] as Array
 	return [1.0, 1.0, 1.0, 1.0] if not name.is_empty() else []
 
 
@@ -235,8 +186,100 @@ static func site(r: int, grid: bool) -> Dictionary:
 	_sync()
 	var key := r * 2 + (1 if grid else 0)
 	if not _sites.has(key):
-		_sites[key] = _make_site(r, grid)
+		_sites[key] = _from_baked(r) if grid and not CTown.site(r).is_empty() else _make_site(r, grid)
 	return _sites[key]
+
+
+## The generator's own site (what tools/town_bake.gd bakes into campaign/data/town_sites_<pack>.gd).
+static func generate(r: int, grid: bool) -> Dictionary:
+	_sync()
+	return _make_site(r, grid)
+
+
+## The unit vector a yaw (0..7) faces (the inverse of yaw_facing).
+static func _yaw_vec(k: int) -> Vector2:
+	var phi := float(k) * PI * 0.25 - PI * 0.5
+	return Vector2(cos(phi), -sin(phi))
+
+
+## A site rebuilt from the shared baked record (CTown.site): centimetres in the town's local frame back
+## to map px (K / 100 px a centimetre). The same dictionary the generator makes, so the view draws it unchanged.
+static func _from_baked(r: int) -> Dictionary:
+	var b := CTown.baked(r)
+	var m := K / 100.0
+	var wc: Array = b["wc"]
+	var c := Vector2(float(wc[0]) / 1000.0, float(wc[1]) / 1000.0)
+	var s := {"r": r, "c": c}
+	s["p0"] = c + _lv(b["p0"], m)
+	var rad := PackedFloat32Array()
+	for v in b["rad"]:
+		rad.append(float(v) * m)
+	s["rad"] = rad
+	s["cdir"] = _uv(b["cdir"])
+	s["cdist"] = float(int(b["cdist"])) * m if int(b["cdist"]) >= 0 else 1e9
+	s["near_sea"] = int(b["near_sea"]) == 1
+	s["hill"] = int(b["hill"]) == 1
+	s["up"] = _uv(b["up"])
+	s["axis"] = _uv(b["axis"])
+	var streets: Array = []
+	for ln in b["lines"]:
+		streets.append(_line(ln, c, m))
+	s["streets"] = streets
+	s["plaza"] = c
+	var rr: Array = []
+	for ln in b["ring_road"]:
+		rr.append(_line(ln, c, m))
+	s["ring_road"] = rr
+	var shore: Array = []
+	var sh: PackedInt32Array = b["shore"]
+	var sn: Array = b["shore_n"]
+	for i in range(sh.size() / 2):
+		shore.append([c + Vector2(float(sh[2 * i]), float(sh[2 * i + 1])) * m,
+			Vector2(float(sn[3 * i]), float(sn[3 * i + 1])) / 1000.0, int(sn[3 * i + 2])])
+	s["shore"] = shore
+	var fields: Array = []
+	for fl in b["fields"]:
+		var fa: Array = fl
+		var ctr := c + Vector2(float(fa[0]), float(fa[1])) * m
+		var row := Vector2(float(fa[2]), float(fa[3])) / 10000.0
+		var hl := float(fa[4]) * m
+		var hw := float(fa[5]) * m
+		var nrm := Vector2(-row.y, row.x)
+		var quad := PackedVector2Array([ctr - row * hl - nrm * hw, ctr + row * hl - nrm * hw, ctr + row * hl + nrm * hw, ctr - row * hl + nrm * hw])
+		fields.append({"ctr": ctr, "row": row, "hl": hl, "hw": hw, "quad": quad, "orchard": int(fa[6]) == 1})
+	s["fields"] = fields
+	s["church"] = c + _lv(b["church"], m)
+	s["church_dir"] = _uv(b["church_dir"])
+	var hi: Array = b["high"]
+	s["fort"] = c + _lv(hi, m) if hi.size() == 2 else Vector2.ZERO
+	s["slots"] = _lots(b["lots"], c, m)
+	s["ring"] = _lots(b["ring"], c, m)
+	s["clear_r"] = float(int(b["clear_r"])) * m
+	return s
+
+
+static func _lv(a: Array, m: float) -> Vector2:
+	return Vector2(float(a[0]), float(a[1])) * m
+
+
+static func _uv(a: Array) -> Vector2:
+	return Vector2(float(a[0]), float(a[1])) / 10000.0
+
+
+static func _line(a: Array, c: Vector2, m: float) -> PackedVector2Array:
+	var pl := PackedVector2Array()
+	for i in range(0, a.size(), 2):
+		pl.append(c + Vector2(float(a[i]), float(a[i + 1])) * m)
+	return pl
+
+
+## House slots [x, y, yaw, size, hh, burn] -> the view's [pos, facing, index, hh, burn].
+static func _lots(a: Array, c: Vector2, m: float) -> Array:
+	var out: Array = []
+	for lt in a:
+		var l: Array = lt
+		out.append([c + Vector2(float(l[0]), float(l[1])) * m, _yaw_vec(int(l[2])), out.size(), int(l[4]), int(l[5])])
+	return out
 
 
 static func _make_site(r: int, grid: bool) -> Dictionary:
@@ -706,6 +749,8 @@ static func _slots(s: Dictionary, rng: RandomNumberGenerator) -> void:
 		occ.append([pos, 3.0 * K])
 		slots.append([pos, face.normalized(), slots.size(), ])
 	slots.sort_custom(func(a, b): return (a[0] as Vector2).distance_to(c) + (0.0 if int(a[2]) < 0 else 0.0) < (b[0] as Vector2).distance_to(c))
+	for sl in slots:
+		_hash_slot(sl)
 	s["slots"] = slots
 	# ring slots (huts, shacks): rings round the centre
 	var ring: Array = []
@@ -729,6 +774,8 @@ static func _slots(s: Dictionary, rng: RandomNumberGenerator) -> void:
 		rocc.append([pos, 4.4 * K])
 		ring.append([pos, (c - pos).normalized().rotated(rng.randf_range(-0.5, 0.5)), ring.size()])
 	ring.sort_custom(func(a, b): return (a[0] as Vector2).distance_to(c) < (b[0] as Vector2).distance_to(c))
+	for rl in ring:
+		_hash_slot(rl)
 	s["ring"] = ring
 	s["occ"] = occ
 
@@ -770,20 +817,7 @@ static func in_ring(s: Dictionary, p: Vector2) -> bool:
 ## What of the state a town shows: level, walls, harbour, shipyard and market levels, a recent sack (1 fresh, 2, 3
 ## fading, 0 none), the besieging faction (-1 none), the style. The plan cache key and the layer's signature.
 static func facts(st: Dictionary, r: int) -> Dictionary:
-	var west := CData.pack == "west"
-	var port := false
-	var yard := 0
-	if west and CData.ships_on():
-		port = style_of(st, r) == "haven" or CFleet.harbour(r) >= 0
-		yard = CState.building(st, r, CData.SHIPYARD)
-	var rs: Dictionary = st["regions"][r]
-	var sack := 0
-	if rs.has("sacked"):
-		var age := int(st["turn"]) - int(rs["sacked"])
-		sack = 1 if age < 3 else (2 if age < 6 else (3 if age < 8 else 0))
-	var sg := CState.siege_at(st, r)
-	return {"lvl": clampi(int(rs["level"]), 0, 2), "walls": CState.walls(st, r), "style": style_of(st, r), "port": port, "yard": yard,
-		"market": CState.building(st, r, CData.MARKET), "sack": sack, "siege": int(sg["f"]) if not sg.is_empty() else -1}
+	return CTown.facts(st, r)
 
 
 static func sig(st: Dictionary, r: int) -> String:
@@ -815,12 +849,11 @@ static func _build(s: Dictionary, r: int, f: Dictionary) -> Dictionary:
 	var yard_lvl: int = f["yard"]
 	var yard := yard_lvl > 0
 	var rkey := str(CData.REGIONS[r]["key"])
-	var lms: Array = LM.get(rkey, []) as Array
-	var rng := _seed_rng(r, 7)
+	var lms: Array = CTown.LM.get(rkey, []) as Array
 	var c: Vector2 = s["c"]
-	var sc: float = float(LVL_S[lvl])
+	var sc: float = float(CTown.LVL_S[lvl]) / 1000.0
 	if style == "maya" or style == "native" or style == "haven":
-		sc *= 0.92
+		sc *= float(CTown.STYLE_S) / 1000.0
 	var items: Array = []
 	var paint_shadows: Array = []
 	var streets_out: Array = []
@@ -950,9 +983,8 @@ static func _build(s: Dictionary, r: int, f: Dictionary) -> Dictionary:
 				break
 		if not ok:
 			continue
-		var idx: int = int(sl[2])
-		var nm := _house_name(style, idx, lvl, rng, pos, s)
-		if int(f["sack"]) > 0 and _burnable(nm) and _burns(pos, int(f["sack"])):
+		var nm := _house_name(style, int(sl[3]), lvl, s)
+		if int(f["sack"]) > 0 and _burnable(nm) and _burns(int(sl[4]), int(f["sack"])):
 			nm = "burnt"
 		_item(items, pos, nm, yaw_facing(sl[1] as Vector2))
 		placed += 1
@@ -1225,9 +1257,17 @@ static func _burnable(nm: String) -> bool:
 
 
 ## Which houses a sack burnt (deterministic from the position; a fresher sack burns more).
-static func _burns(pos: Vector2, sack: int) -> bool:
+static func _burns(burn: int, sack: int) -> bool:
 	var frac: int = [0, 55, 30, 12][clampi(sack, 0, 3)]
-	return absi(int(pos.x * 13.0 + pos.y * 7.0)) % 100 < frac
+	return burn < frac
+
+
+## A slot [pos, facing, idx] gets its colour / type hash and its sack hash (from the position and the fill
+## index: baked as integers in the shared plan, CTown site "lots").
+static func _hash_slot(sl: Array) -> void:
+	var pos: Vector2 = sl[0]
+	sl.append(absi(int(pos.x * 7.0 + pos.y * 13.0) + int(sl[2]) * 31))
+	sl.append(absi(int(pos.x * 13.0 + pos.y * 7.0)) % 100)
 
 
 ## The harbour mouth: the shore sample at the more seaward end of the shore (which 0) or the other end (1), the
@@ -1290,7 +1330,7 @@ static func _landmarks(s: Dictionary, f: Dictionary, lms: Array, items: Array, w
 			continue
 		match at:
 			"mouth0", "mouth1":
-				var m := _mouth(s, 0 if at == "mouth0" else 1, float(d.get("in", 4.0)))
+				var m := _mouth(s, 0 if at == "mouth0" else 1, float(d.get("in", 40)) / 10.0)
 				if not m.is_empty():
 					var nv: Vector2 = m[1]
 					if _put(s, items, m[0], pn, yaw_facing(-nv) if str(d.get("face", "")) == "land" else 0):
@@ -1535,8 +1575,7 @@ static func _siege_camp(s: Dictionary, f: Dictionary, items: Array) -> void:
 			if depth(q3) >= 2.5 and _free(items, q3, 2.0 * K):
 				items.append([q3, "camp_fire", 0, fac])
 
-static func _house_name(style: String, idx: int, lvl: int, _rng: RandomNumberGenerator, pos: Vector2, s: Dictionary) -> String:
-	var h := absi(int(pos.x * 7.0 + pos.y * 13.0) + idx * 31)
+static func _house_name(style: String, h: int, lvl: int, s: Dictionary) -> String:
 	match style:
 		"town":
 			var col: String = WALL_COLS[h % WALL_COLS.size()]

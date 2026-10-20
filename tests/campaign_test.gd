@@ -49,6 +49,9 @@ extends SceneTree
 ## city and the money move together), the buyer's offer, refusals (an army
 ## of the giver in the city at acceptance, the treasury short), a money
 ## gift, the AI left out, determinism.
+## The shared town plan (campaign/ctown.gd, baked data in campaign/data/town_sites_<pack>.gd, both packs): every
+## region has a site, the plan is plain data and the same across two loads of the same state, landmarks lie in the
+## footprint or on the shore, a landmark fort is separate from the town wall, the wall traces of walls 0-3 nest.
 ## Exits 0 on success, 1 on failure.
 
 const CData := preload("res://campaign/cdata.gd")
@@ -65,6 +68,7 @@ const CAI := preload("res://campaign/cai.gd")
 const CChars := preload("res://campaign/cchars.gd")
 const CoopSession := preload("res://game/net/coop_session.gd")
 const Sight := preload("res://campaign/csight.gd")
+const CTown := preload("res://campaign/ctown.gd")
 
 var fails := 0
 
@@ -135,6 +139,7 @@ func _init() -> void:
 	_chars()
 	_west_raid_defence()
 	_sight()
+	_town_plan()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
 	quit(0 if fails == 0 else 1)
 
@@ -4310,6 +4315,153 @@ func _sight() -> void:
 	_check(fl_ok, "West: every fleet is in its own side's sight")
 	var wp := _play(CState.copy(w), 4, 2)
 	_check(CState.state_hash(wp) == CState.state_hash(_play(CState.copy(w), 4, -1)) and _plain(wp), "West: 4 turns with the fog, deterministic, plain data")
+	CData.use_pack("rome")
+
+
+# ------------------------------------- the shared town plan ---
+
+func _set_town(st: Dictionary, r: int, lvl: int, walls: int) -> void:
+	st["regions"][r]["level"] = lvl
+	for sl in st["regions"][r]["slots"]:
+		if int(sl[0]) == CData.WALLS:
+			sl[1] = walls
+
+
+func _pts(flat: Array) -> Dictionary:
+	var d := {}
+	for i in range(0, flat.size(), 2):
+		d["%d,%d" % [int(flat[i]), int(flat[i + 1])]] = true
+	return d
+
+
+func _town_plan() -> void:
+	for pack in ["rome", "west"]:
+		CData.use_pack(pack)
+		var st := CState.new_campaign("tp", 77, [], {}, [], pack)
+		var sites_ok := true
+		var plain_ok := true
+		var same_ok := true
+		var lm_ok := true
+		var fort_ok := true
+		var nest_ok := true
+		var lvl_ok := true
+		var bad := ""
+		var nlm := 0
+		var nfort := 0
+		for r in CData.region_count():
+			var key := str(CData.REGIONS[r]["key"])
+			var s := CTown.site(r)
+			if s.is_empty() or (s["foot"] as PackedInt32Array).size() < 32 or (s["foot"] as PackedInt32Array).size() > 96 or (s["coast"] as PackedByteArray).size() != 2304:
+				sites_ok = false
+				bad += " site:" + key
+				continue
+			if (s["lots"] as Array).is_empty() or (s["streets"] as Array).is_empty():
+				sites_ok = false
+				bad += " lots:" + key
+			var traces: Array = []
+			var foots: Array = []
+			for lvl in 3:
+				for walls in 4:
+					_set_town(st, r, lvl, walls)
+					var p := CTown.plan(st, r)
+					if not _plain(p):
+						plain_ok = false
+					if walls == 3:
+						foots.append(p["foot"])
+					if lvl == 2:
+						traces.append(p["wall"])
+						# the landmarks: in the footprint (a little grown) or on the shore (a mouth, the shore row, a rock)
+						var grown: Array = []
+						for v in (s["foot"] as PackedInt32Array):
+							grown.append(int(v) * 13 / 10)
+						var shore: PackedInt32Array = s["shore"]
+						for lm in p["landmarks"]:
+							var d: Dictionary = lm
+							nlm += 1
+							if int(d["fort"]) == 1:
+								nfort += 1
+							if str(d["kind"]) == "wall":
+								continue
+							var ok := CTown.inside_poly(grown, int(d["x"]), int(d["y"]))
+							for i in range(0, shore.size(), 2):
+								var dx := int(d["x"]) - shore[i]
+								var dy := int(d["y"]) - shore[i + 1]
+								if dx * dx + dy * dy <= 450 * 450:
+									ok = true
+									break
+							if not ok:
+								lm_ok = false
+								bad += " lm:%s/%s" % [key, d["p"]]
+							# a landmark fort has no part in the town wall's trace
+							if str(d["kind"]) == "fort" and _pts(p["wall"]).has("%d,%d" % [int(d["x"]), int(d["y"])]):
+								fort_ok = false
+			# walls 0 - 3 nest: no trace at walls 0, each trace's points are on the next one's, all inside the footprint
+			if not (traces[0] as Array).is_empty():
+				nest_ok = false
+				bad += " w0:" + key
+			for w in 3:
+				var a := _pts(traces[w])
+				var b := _pts(traces[w + 1])
+				for k in a:
+					if not b.has(k):
+						nest_ok = false
+						bad += " nest:%s%d" % [key, w]
+						break
+			# every wall vertex lies on its footprint vertex's ray, inside it (the footprint polygon has thin spikes, so the
+			# test is radial, not point in polygon)
+			var full: Array = foots[2]
+			var wl: Array = traces[3]
+			for i in range(0, wl.size(), 2):
+				var best := 1 << 60
+				for j in range(0, full.size(), 2):
+					var d2 := (int(wl[i]) - int(full[j])) * (int(wl[i]) - int(full[j])) + (int(wl[i + 1]) - int(full[j + 1])) * (int(wl[i + 1]) - int(full[j + 1]))
+					var f2 := int(full[j]) * int(full[j]) + int(full[j + 1]) * int(full[j + 1])
+					var w2 := int(wl[i]) * int(wl[i]) + int(wl[i + 1]) * int(wl[i + 1])
+					if w2 < f2 and d2 < best:
+						best = d2
+				if best == 1 << 60:
+					nest_ok = false
+					bad += " wall-out:" + key
+					break
+			# the footprint grows with the level
+			for lv in 2:
+				var small: Array = foots[lv]
+				var big: Array = foots[lv + 1]
+				for i in range(0, small.size(), 2):
+					if not CTown.inside_poly(big, int(small[i]) * 95 / 100, int(small[i + 1]) * 95 / 100):
+						lvl_ok = false
+						bad += " lvl:" + key
+						break
+			# plan is the same across two loads of the same state
+			_set_town(st, r, 2, 3)
+			var p1 := JSON.stringify(CTown.plan(st, r))
+			CTown._pack = ""
+			CTown._data = {}
+			CTown._sites = {}
+			var p2 := JSON.stringify(CTown.plan(CState.copy(st), r))
+			if p1 != p2:
+				same_ok = false
+				bad += " load:" + key
+		_check(sites_ok, "%s: every region has a baked town site (foot 16-48 vertices, 48 x 48 coast, lots, streets)%s" % [pack, bad])
+		_check(plain_ok, "%s: the town plan is plain data (integers, strings, arrays, dictionaries)" % pack)
+		_check(same_ok, "%s: the plan is identical across two loads of the same state" % pack)
+		_check(lm_ok and nlm > 0, "%s: landmarks lie inside the footprint or on the shore (%d checked)" % [pack, nlm])
+		_check(fort_ok, "%s: a landmark fort is separate from the town wall (%d forts)" % [pack, nfort])
+		_check(nest_ok, "%s: the wall traces of walls 0-3 nest inside the footprint%s" % [pack, bad])
+		_check(lvl_ok, "%s: the footprint grows with the level%s" % [pack, bad])
+	# Havana: the Morro and the Fuerza stand with the walls at 1 although the open town has no wall circuit yet
+	CData.use_pack("west")
+	var w := CState.new_campaign("tp", 77, [], {}, [], "west")
+	var hv := _r("havana")
+	_set_town(w, hv, 2, 1)
+	var hp := CTown.plan(w, hv)
+	var forts := 0
+	for lm in hp["landmarks"]:
+		if int((lm as Dictionary)["fort"]) == 1:
+			forts += 1
+	_check(forts == 2 and (hp["wall"] as Array).is_empty() and int(hp["harbour"]) == 1, "Havana at walls 1: Morro and Fuerza, no town wall circuit yet")
+	_set_town(w, hv, 2, 3)
+	_check(not (CTown.plan(w, hv)["wall"] as Array).is_empty() and not (CTown.plan(w, hv)["gates"] as Array).is_empty(), "Havana at walls 3: a wall trace and a gate")
 	CData.use_pack("rome")
 
 
