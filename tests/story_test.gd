@@ -26,6 +26,10 @@ const CStory := preload("res://campaign/cstory.gd")
 const CCaptain := preload("res://campaign/ccaptain.gd")
 const CAI := preload("res://campaign/cai.gd")
 const SA := preload("res://game/campaign/story_autoplay.gd")
+const StoryView := preload("res://game/campaign/story_view.gd")
+const BustPortrait := preload("res://game/bust_portrait.gd")
+const StoryPortrait := preload("res://game/story_portrait.gd")
+const MinisLayer := preload("res://game/campaign/minis_layer.gd")
 
 var fails := 0
 var turns := 45
@@ -50,6 +54,7 @@ func _init() -> void:
 	_battles()
 	_blocked()
 	_coop()
+	_busts()
 	_shield()
 	_grudge()
 	_step2()
@@ -386,6 +391,37 @@ func _grudge() -> void:
 
 
 ## Co-op: two captains, the crew votes every choice (cstory.gd answer).
+## The painted busts and the figures beside the army banners (view only).
+func _busts() -> void:
+	var st := CStory.new_story("Co", 5, {}, "brethren", true)
+	var sv = StoryView.new({"st": st})
+	var ok := true
+	for k in ["captain", "partner", "mercy"]:
+		var c: Control = sv.portrait(k, 48)
+		ok = ok and c != null and c.texture_filter == CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS and c.custom_minimum_size == Vector2(48, 48)
+		c.free()
+	_check(ok, "portrait(captain | partner | mercy) is the painted bust, 48 px square")
+	var c2: Control = sv.portrait("lindo", 48)
+	_check(c2.texture_filter != CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS and c2.custom_minimum_size == Vector2(48, 48),
+		"portrait(lindo) stays the code-drawn one")
+	_check(not BustPortrait.has("lindo") and StoryPortrait.has("lindo") and BustPortrait.texture("captain") != null and BustPortrait.texture("partner") != null and BustPortrait.texture("mercy") != null,
+		"the three bust textures load, lindo has none")
+	c2.free()
+	var caps := CStory.captains(st)
+	var a0 := int(caps[0])
+	var a1 := int(caps[1])
+	st["armies"] = []
+	_check(MinisLayer.figure_armies(st).is_empty(), "no figures while no army stands on land")
+	var unit := {"t": "x"}
+	st["armies"] = [{"id": 90, "f": a0, "units": [unit]}, {"id": 91, "f": a0, "units": [unit, unit]}, {"id": 92, "f": a1, "units": [unit]}]
+	var fa := MinisLayer.figure_armies(st)
+	_check(fa == [[91, "captain", 0], [92, "rook", 0], [91, "mercy", 1]],
+		"figures: the captain and Mercy beside the lead's largest army (Mercy a slot further left), Rook beside his partner's (%s)" % str(fa))
+	st["chars"] = [{"id": 1, "kind": "hero_foot", "f": a0, "army": 90, "r": 0, "name": "H", "wounded": 0}]
+	fa = MinisLayer.figure_armies(st)
+	_check(int(fa[0][0]) == 90 and int(fa[2][0]) == 90, "figures: the army a hero rides with wins over the largest")
+
+
 func _coop() -> void:
 	var st := CStory.new_story("Co", 5, {}, "brethren", true)
 	var caps := CStory.captains(st)

@@ -67,6 +67,20 @@ static func draw(ci: CanvasItem, key: String, rect: Rect2) -> void:
 	_ci = null
 
 
+## Only the frame (panel, roundel, ring in the character's colour) filling the square centred in rect:
+## game/bust_portrait.gd draws the painted bust over it.
+static func draw_frame(ci: CanvasItem, key: String, rect: Rect2) -> void:
+	if not has(key):
+		return
+	var side := minf(rect.size.x, rect.size.y)
+	_ci = ci
+	_c = rect.get_center()
+	_s = side * 0.5
+	_ink_w = maxf(1.0, side / 48.0)
+	_frame(Color(String(COLS[key])))
+	_ci = null
+
+
 # ---------------------------------------------------------------- pen ---
 
 static func _p(x: float, y: float) -> Vector2:

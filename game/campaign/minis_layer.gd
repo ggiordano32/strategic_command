@@ -19,6 +19,8 @@ const SeaWaves := preload("res://game/campaign/sea_waves.gd")
 const Atlas := preload("res://game/minis_atlas.gd")
 const SHADER := preload("res://game/campaign/minis.gdshader")
 const MapLook := preload("res://game/campaign/map_look.gd")
+const CStory := preload("res://campaign/cstory.gd")
+const CChars := preload("res://campaign/cchars.gd")
 
 static var on_sites := false
 static var on_ships := false
@@ -39,6 +41,24 @@ var _under: Node2D       # drawn behind the sprites: ship wakes and contact shad
 var _wakes: Array = []   # [position, scale, heading]
 static var texture_bytes := 0
 
+## The story's characters standing beside their army's banner (tools/hunyuan renders, assets/minis/characters;
+## origin_px of each sprite is the ground point, from NAME.json). Drawn by `_figs`, a child without the ships'
+## material, redrawn only when the overlay's army positions change.
+const FIG_H := 58.0            # the figure's height on screen at marker scale 1 (the banner is 26 px tall)
+const FIG_SMALL_MK := 0.6      # below this marker scale (and on Quality Low) the 48 px sprite is used
+const FIG_ORIGIN := {   # name -> [big origin, small origin, big height px, small height px] (the sprite's ground point and standing height)
+	"captain": [Vector2(46.0, 98.02), Vector2(23.0, 49.01), 96.0, 48.0],
+	"rook": [Vector2(47.0, 97.80), Vector2(23.5, 48.90), 96.0, 48.0],
+	"mercy": [Vector2(48.5, 97.31), Vector2(24.5, 48.90), 96.0, 48.0],
+}
+static var _fig_tex := {}      # "name" / "name_small" -> Texture2D
+var _figs: Node2D
+var _fig_list: Array = []      # [[army id, sprite name, slot], ...] for the current state
+var _fig_epoch := -1
+var _fig_key: Array = []
+var fig_on := false
+var _fig_only := false
+
 
 func _ready() -> void:
 	z_index = 0
@@ -47,6 +67,10 @@ func _ready() -> void:
 	_under.show_behind_parent = true
 	_under.draw.connect(_draw_under)
 	add_child(_under)
+	_figs = Node2D.new()
+	_figs.draw.connect(_draw_figs)
+	_figs.visible = false
+	add_child(_figs)
 
 
 func _atlas(name_set: String) -> Array:
@@ -147,6 +171,20 @@ func _process(delta: float) -> void:
 	on_sites = s_on
 	on_ships = sh_on
 	_label_lift = tile_px(z) * 0.5
+	fig_on = tbl and not st.is_empty() and z >= SHIP_MIN_ZOOM and CStory.on(st)
+	_figs.visible = fig_on
+	if fig_on:
+		var k := [overlay._epoch, overlay.xform, z, Quality.is_low()]
+		if k != _fig_key:
+			_fig_key = k
+			_figs.queue_redraw()
+	if fig_on and not (s_on or sh_on):
+		if not visible or not _fig_only:
+			visible = true   # (the figures alone: one redraw clears the ship pass, then nothing more)
+			_fig_only = true
+			queue_redraw()
+		return
+	_fig_only = false
 	if not (s_on or sh_on):
 		if visible:
 			visible = false
@@ -277,3 +315,86 @@ func _draw_under() -> void:
 			foam.a = 0.5
 			_under.draw_polyline(pl, foam, maxf(1.0, 1.5 * k), true)
 		_under.draw_arc(c + dir * 4.0 * k + Vector2(0.0, 2.0 * k), 9.0 * k, 0.0, TAU, 20, Color(1, 1, 1, 0.28), maxf(1.0, 1.2 * k), true)
+
+
+# ----------------------------------------------------------- characters ---
+
+static func _fig_texture(nm: String, small: bool) -> Texture2D:
+	var k := nm + ("_small" if small else "")
+	if not _fig_tex.has(k):
+		_fig_tex[k] = load("res://assets/minis/characters/%s.png" % k) as Texture2D
+	return _fig_tex[k]
+
+
+## Which army carries which figure: for the story's lead human's faction the captain, the second human's Rook, the
+## faction CHARS["mercy"] marks Mercy (a second slot, further left, when it is the same faction as a captain). The
+## army: the one a hero character rides with, else the faction's largest. [[army id, sprite, slot], ...]
+static func figure_armies(st: Dictionary) -> Array:
+	var out: Array = []
+	if not CStory.on(st):
+		return out
+	var wants: Array = []   # [faction, sprite]
+	var caps: Array = CStory.captains(st)
+	if caps.size() >= 1:
+		wants.append([int(caps[0]), "captain"])
+	if caps.size() >= 2:
+		wants.append([int(caps[1]), "rook"])
+	var sc := CStory.script_of(st)
+	var chars: Dictionary = sc.get_script_constant_map().get("CHARS", {}) if sc != null else {}
+	if chars.has("mercy") and (chars["mercy"] as Dictionary).has("mark"):
+		var mf := CData.faction_index(str(chars["mercy"]["mark"]))
+		if mf >= 0:
+			wants.append([mf, "mercy"])
+	var used := {}
+	for w in wants:
+		var f: int = w[0]
+		var aid := _figure_army(st, f)
+		if aid < 0:
+			continue
+		var slot := int(used.get(f, 0))
+		used[f] = slot + 1
+		out.append([aid, w[1], slot])
+	return out
+
+
+static func _figure_army(st: Dictionary, f: int) -> int:
+	for c in CChars.all(st):
+		if int(c["f"]) == f and int(c["army"]) >= 0 and str(c["kind"]).begins_with("hero") and not CState.army(st, int(c["army"])).is_empty():
+			return int(c["army"])
+	var best := -1
+	var bn := 0
+	for a in st["armies"]:
+		if int(a["f"]) == f and CState.unit_count(a) > bn:
+			bn = CState.unit_count(a)
+			best = int(a["id"])
+	return best
+
+
+func _draw_figs() -> void:
+	if overlay == null or not fig_on:
+		return
+	var st: Dictionary = overlay.state
+	if _fig_epoch != overlay._epoch:
+		_fig_epoch = overlay._epoch
+		_fig_list = figure_armies(st)
+	if _fig_list.is_empty():
+		return
+	var pos: Dictionary = overlay._positions()   # (the fog-filtered banner positions: an army out of sight has none)
+	var m: float = overlay.mk()
+	var small := Quality.is_low() or m < FIG_SMALL_MK
+	var vp := get_viewport_rect().grow(80.0)
+	for e in _fig_list:
+		var id: int = e[0]
+		if not pos.has(id):
+			continue
+		var c: Vector2 = pos[id]
+		var o: Array = FIG_ORIGIN[e[1]]
+		var tex := _fig_texture(e[1], small)
+		if tex == null:
+			continue
+		var k := FIG_H * m / float(o[3] if small else o[2])
+		var org: Vector2 = o[1] if small else o[0]
+		var feet := Vector2(c.x - overlay.ARMY_W * 0.5 * m - FIG_H * m * (0.30 + 0.62 * float(e[2])), c.y + overlay.ARMY_H * 0.5 * m)
+		if not vp.has_point(feet):
+			continue
+		_figs.draw_texture_rect(tex, Rect2(feet - org * k, tex.get_size() * k), false)

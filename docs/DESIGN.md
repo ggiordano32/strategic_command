@@ -5398,6 +5398,38 @@ share bits 12-19). Still procedural: dogs, characters, and the siege
 equipment drawn in overlay.gd (ladders, ram, siege tower, mantlets: the
 next step, as props like the wagon).
 
+### Characters (as built)
+
+The three Hunyuan characters (tools/hunyuan: the Captain, Captain Rook, Mercy
+Teague) are wired in as view-only art, nothing in `campaign/` or `sim/`:
+
+- **Busts as story portraits.** `game/bust_portrait.gd`: the 256 px
+  `assets/portraits/NAME.png` fitted inside the code-drawn frame of
+  `game/story_portrait.gd` (`StoryPortrait.draw_frame`, the character's colour),
+  the same outer square as `make_control`, so no layout moves. `BUSTS` maps the
+  story keys `captain`, `partner` (Captain Rook) and `mercy`; a `crop` rect per
+  key is there for a bust that reads small (all full for now: head and
+  shoulders already fill the frame at 36 px). Every other key keeps the
+  code-drawn portrait or the badge. `StoryView.portrait()` and the choices'
+  speaker pictures both go through `_face`. Portrait textures are imported
+  with mipmaps and the control draws with mipmapped filtering.
+- **Figures beside the banners.** `game/campaign/minis_layer.gd` (child
+  `_figs`, no ship material, under the overlay): in a story campaign the lead
+  human's faction gets the captain, the second human's Rook, the faction
+  `CHARS["mercy"]` marks gets Mercy (the same faction as the captain in the
+  Brethren story: a second slot, further left). The army: the one a hero
+  character rides with, else the faction's largest on land; an army in a city
+  stands beside its banner there too; carried on a fleet: none. The figure
+  stands left of the banner, feet on the banner's base line, 58 px tall at
+  marker scale 1 (scaled with `mk()`), the 48 px sprite below 0.6 and on
+  Quality Low. Positions are the overlay's cached, fog-filtered banner
+  positions (an army out of sight has none, last-seen markers get no figure);
+  one `draw_texture_rect` per figure, redrawn only when the overlay's epoch,
+  transform or zoom changes. No taps: `army_at` is unchanged. The masks (coat,
+  sash) are not used yet.
+- **Export.** `assets/characters/*` (the 4.7 MB glb meshes) is in every export
+  preset's exclude filter; only the PNGs ship (about 0.25 MB imported).
+
 ## 9. Milestones
 
 1. **Battle sandbox.** Deterministic per-soldier sim, MultiMesh rendering,

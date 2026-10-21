@@ -21,6 +21,7 @@ const Kit := preload("res://game/campaign/ui_kit.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const CCaptainV := preload("res://campaign/ccaptain.gd")
 const StoryPortrait := preload("res://game/story_portrait.gd")
+const Bust := preload("res://game/bust_portrait.gd")
 
 const GAUGES: Array[String] = ["purse", "attention", "favour", "storm", "haven", "port"]
 const GAUGE_NAMES := {"purse": "Purse", "attention": "Armada", "favour": "Patron", "storm": "Storms", "haven": "Haven", "port": "Free port"}
@@ -404,7 +405,7 @@ func _show_choice(pe: Dictionary, page: int = 0, who: int = -1) -> void:
 		var row := Kit.hbox(8)
 		var say: Array = c.get("say", [])
 		if say.size() >= 2 and StoryPortrait.has(str(say[0])):
-			var pc := StoryPortrait.make_control(str(say[0]), 40)
+			var pc := _face(str(say[0]), 40)
 			pc.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 			row.add_child(pc)
 		var b := Kit.button(str(c["t"]), _choose.bind(int(pe["id"]), k), 0, 15)
@@ -656,12 +657,18 @@ func _line(who: String, text: String) -> Control:
 	return h
 
 
-## The portrait of character `who` (a CHARS key) at sz px: the code-drawn one
+## The bust (game/bust_portrait.gd) of a key that has one (captain, partner = Captain Rook, mercy), else the
+## code-drawn portrait: both fill the same square.
+static func _face(who: String, sz: float) -> Control:
+	return Bust.make_control(who, sz) if Bust.has(who) else StoryPortrait.make_control(who, sz)
+
+
+## The portrait of character `who` (a CHARS key) at sz px: the painted bust, else the code-drawn one
 ## (game/story_portrait.gd), else the faction's mark if the script names one
 ## ("mark"), else the badge.
 func portrait(who: String, sz: float) -> Control:
 	if StoryPortrait.has(who):
-		var pc := StoryPortrait.make_control(who, sz)
+		var pc := _face(who, sz)
 		pc.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 		return pc
 	var ch: Dictionary = _chars(s.st).get(who, {"name": who, "role": "", "col": "666666"})
