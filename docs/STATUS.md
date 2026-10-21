@@ -33,6 +33,7 @@ anti-cheat and original art only if it proves fun.
 | Continuous campaign overworld (state format 6) | Built 2026-10-06, committed; tested headless and windowed; not yet played on phones |
 | Deployment phase and custom battles (solo, co-op, head-to-head) | Built 2026-10-06 on a branch; tested headless, end to end and windowed; not yet played on phones |
 | Cities worth defending, part 1 (tower engines, ladders, ram, hard gates, battle time limit) | Built 2026-10-07, committed; tested headless and windowed; not yet played on phones |
+| Mitred wall strips (2026-10-20; owner: the Morro's bastions were rectangles with no point and stuck out at the joins; BUILT, view only): walls are one strip mesh per ring (`BattleKit._wall_ring`), mitred at every vertex (bevel beyond 2.5 thicknesses), from repeating strip textures `assets/battlekit/strips/` (`build.py` `ws_*` / `ps_*`, `tools/battlekit/pack_strips.py`, `game/battlekit_strips.gd`, `game/battlekit_strip.gdshader`); kit instances split around it (houses, strip, gates / towers); shadow bake rasterises the strip; Low path `draw_mesh`. README 'Mitred wall strips'. **Open:** no end-cap pieces (every ring is closed), palisade and timber wall share the `ps_*` strip, Low has the fixed light, the legacy West harbour fort path (`_west_fort`) still tiles `wall_10_2` | Built 2026-10-20, not committed; battle_screen_test, custom_battle_test, sea_screen_test PASS; check_scripts blocked by `tr` shadowing in sim/mapgen.gd (another agent), my files raise nothing; bench_4000_city 1080p vsync off mean 10.33 / 9.97 -> 10.06 / 10.02 ms (old / new, 2 runs); screenshots `samecity/walls/` in the session scratchpad |
 | Cities worth defending, part 2a (units do not pass through each other, street fights) | Built 2026-10-07, committed; tested headless (and the windowed input tests); not yet played on phones |
 | Cities worth defending, part 2b (siege equipment as objects; ladder and wall-punching fixes) | Built 2026-10-07, committed; tested headless, windowed input test, live_e2e; not yet played on phones |
 | Battle screen on the overworld (pre-battle and result, item 4b) | Built 2026-10-07, committed; tested headless (`tests/battle_screen_test.gd`), the windowed input test and online_e2e; not yet played on phones |
@@ -2362,8 +2363,27 @@ trace). Pooled West walls 0 / 1 / 2: 81 / 62 / 40 % -> 59 / 34 / 28 % (targets 5
 25 / 44 % (25 % wanted at walls 3). Perf: bench_4000_west 8.53 -> 8.51 ms, bench_west_town 3.51 -> 3.50, bench_4000_city 4.37 -> 4.37
 (identical maps); plan towns' first 3,000 ticks within 0.2 ms of the generated (oppidum 1.35 -> 1.90); set-up 230-450 ms (generated 205-
 480). Left: the walls rows to retune on plan maps (a balance pass), the overworld placing landmarks at `CTown.plan`'s points, a fort trace
-of the piece's own shape (the Morro's triangle: the trace stays the 2c square), the shaded kit path for block 2 pieces, Rome's street
+of the piece's own shape (done: next paragraph), the shaded kit path for block 2 pieces, Rome's street
 lattice from the plan's streets, ring-plan towns.
+**Fort traces from the piece (built 2026-10-20, not committed; DESIGN "Fort traces from the piece").** Owner: Havana's Morro had the 2c
+square laid over its triangle. `tools/battlekit/fort_trace.py` derives each fort piece's rampart outline from the minis' geometry
+(`tools/structures/spec.json`) into the piece `.json` (`trace`; `build.py` `_add_trace`) and the generated `sim/fort_traces.gd`;
+`BattleKit.piece_trace(name)` for the view. Traces: Morro triangle 3 vertices / 3 salients (corner towers), Morro of San Juan 4 / 4,
+Fuerza 16 / 4 flat-nosed bastions, San Felipe 3 / 3, harbour fort 4 / 4 (towers), San Marcos 24 / 4 (16 in the sim: flanks under 12 m
+dropped), Ulua 16 / 4, Fort Charles 4 / 4, rock fort 4 / 4, generic fort 4 / 4 (towers). Plan towns' forts (West walls 1-2) are built on
+them (`_tp_fort_tr`, `_w_fort_tr`): scaled to the 2c square's area, the piece drawn at the same scale and turn, gate edge to the plaza
+(Ulua: to the causeway), seaward line on the waterline; walls, corner towers, acute tips filled, gate / sally port, cuts and stairs,
+bastion terreplein at walk level (no parade pockets), ditch, barracks / magazine, guns on landward salients and the seaward edge.
+Checked on 17 town / level / walls cases: no parade pockets, only the gates' stretch ends unjoined. Generated maps' forts and walled
+plans unchanged (walls 3 citadels stay the six-sided ring: a triangle of the ring's reach has too little inside; left). Pathing probe
+(`plan:west:havana:2:1`, phase A): PASS, stuck > 30 s 0 (longest ready 10 -> 20 s), fight jitter town 1.6 -> 2.0 %, near obstacles 0.1 ->
+1.7 %, move/nearobs 1.5 -> 5.5 % (not gated), footprint 0.18 -> 0.20 % (phase B line, now just over). Balance (`tests/town_balance.gd`,
+HEAD -> traces, attacker wins): West city (Havana, Morro) walls 1 31 -> 12 %, walls 2 31 -> 12 % (16 seeds); West town (Cartagena, San
+Felipe) walls 1 37 -> 56 %, walls 2 25 -> 68 %; Rome polis 1/2/3 62/25/25 and castrum 25/25/62 unchanged (8 seeds). The balance pass
+follows. Tests: check_scripts clean; determinism full PASS, `--only=town` (new: Morro 3 salients, gate within 45 degrees of the plaza; San Marcos 4,
+no pockets; its storm identical on repeat and across snapshot / restore), `--only=fort`, `--only=occupy`; lockstep full; custom_battle,
+campaign, pack, battle_screen, town_plan PASS; campaign_sim both packs unchanged. Left: walls 3 citadels on the trace (sized for an
+inside), the pieces' inner keeps / lighthouses drawn over the parade (view), bastion terrepleins drawn as ground, the balance pass.
 **The pirate story campaign** (DESIGN "Story campaign: The Brethren's Due",
 agreed 2026-10-14: swashbuckling with a dark edge, ~45 turns, three endings,
 co-op optional; about 4 builds). **Step 1 (4808ccc): the story engine, the

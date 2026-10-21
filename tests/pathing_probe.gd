@@ -3,6 +3,7 @@ extends SceneTree
 ## settlement and landform maps, measuring how men move.
 ##   godot --headless --script res://tests/pathing_probe.gd [-- --ids=siege_town,siege_city]
 ##       [--ticks=6000] [--seed=7] [--phase=A] [--quick] [--west (the West towns only)]
+##   an id "plan:<pack>:<region>:<level>:<walls>" is a campaign town's battle on its plan (plan:west:havana:2:1).
 ## Metrics:
 ## - Jitter: for each man, in each 2 s window, path = the sum of his steps
 ##   and net = his displacement; a man-window jitters when path >= 3 m and
@@ -26,6 +27,10 @@ extends SceneTree
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const MapGen := preload("res://sim/mapgen.gd")
+const UT := preload("res://sim/unit_types.gd")
+const CData := preload("res://campaign/cdata.gd")
+const CState := preload("res://campaign/cstate.gd")
+const CBattle := preload("res://campaign/cbattle.gd")
 const M := 1024
 const W := 20  # jitter window (ticks)
 const SCENS := ["siege_village", "siege_town", "siege_city", "siege_hill", "siege_castrum", "siege_polis",
@@ -161,8 +166,42 @@ func _footprints(sim) -> Vector3i:
 	return Vector3i(n, inside, c3)
 
 
+## A campaign town's settlement battle on its plan (docs/DESIGN.md "The town plan (shared)"): id
+## "plan:<pack>:<region>:<level>:<walls>", the armies of tests/determinism_test.gd _town_scenario.
+func _plan_scenario(id: String) -> Dictionary:
+	var sp := id.split(":")
+	var pack := sp[1]
+	CData.use_pack(pack)
+	var st := CState.new_campaign("town", 5, [], {}, [], pack)
+	var r := CData.region_index(sp[2])
+	st["regions"][r]["level"] = int(sp[3])
+	var got := false
+	for sl in st["regions"][r]["slots"]:
+		if int(sl[0]) == CData.WALLS:
+			sl[1] = int(sp[4])
+			got = true
+	if not got:
+		st["regions"][r]["slots"].append([CData.WALLS, int(sp[4])])
+	var city := CBattle.city_dict(st, r)
+	var rd: Dictionary = CData.REGIONS[r]
+	var terr := {"kind": int(rd["terrain"]), "seed": (CState.city_seed(st, r) ^ 0x2545F491) & 0x7FFFFFFF,
+		"forest": int(rd["forest"]), "ground": int(rd["ground"])}
+	var att: Array = []
+	var dfn: Array = []
+	if pack == "west":
+		for e in Scenarios.WEST_ATT:
+			att.append([UT.index_of(str(e[0])), int(e[1])])
+		for e in Scenarios.WEST_DEF:
+			dfn.append([UT.index_of(str(e[0])), int(e[1])])
+	else:
+		att = Scenarios.SIEGE_ARMY.duplicate(true)
+		for k in 5:
+			dfn.append([Scenarios.SIEGE_GARRISON[k], 60])
+	return Scenarios.settlement(city, terr, att, dfn, 1, [0, 1], {"ladders": 3, "ram": 1})["scenario"]
+
+
 func _run(id: String, ticks: int, sd: int) -> void:
-	var sc: Dictionary = Scenarios.make(id)
+	var sc: Dictionary = _plan_scenario(id) if id.begins_with("plan:") else Scenarios.make(id)
 	sc["ai_sides"] = [0, 1]
 	var sim = BattleSim.new()
 	sim.setup(sc, sd)

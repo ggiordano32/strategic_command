@@ -501,6 +501,15 @@ static func _west_ground(h: PackedInt32Array, nx: int, ny: int, cp: Dictionary, 
 		var fk := clampi((fym + CELL / 2) / CELL, 0, ny - 1) * nx + clampi((fxm + CELL / 2) / CELL, 0, nx - 1)
 		var fz := h[fk]
 		var fr2 := flat * 15 / 10
+		# (A landmark's own trace, MapGen._tp_fort_tr: the parade levelled inside its polygon and 2 m round it.)
+		var tvx := PackedInt32Array()
+		var tvy := PackedInt32Array()
+		if fort.has("tr"):
+			var ftr: PackedInt32Array = fort["tr"]
+			for q in ftr.size() / 2:
+				tvx.append(ftr[q * 2])
+				tvy.append(ftr[q * 2 + 1])
+			fr2 = (int(fort["rr"]) + 3) * M
 		var s0 := _span(fxm - fr2, fxm + fr2, nx)
 		var s1 := _span(fym - fr2, fym + fr2, ny)
 		for j in range(s1.x, s1.y + 1):
@@ -509,7 +518,10 @@ static func _west_ground(h: PackedInt32Array, nx: int, ny: int, cp: Dictionary, 
 				var dy := j * CELL - fym
 				var lx := (dx * fcs + dy * fsn) / FM.TRIG_ONE
 				var ly := (dy * fcs - dx * fsn) / FM.TRIG_ONE
-				if absi(lx) <= flat and absi(ly) <= flat:
+				if not tvx.is_empty():
+					if MapGen._pt_in(tvx, tvy, lx / M, ly / M) or MapGen._poly_dist(tvx, tvy, lx / M, ly / M) <= 2:
+						h[j * nx + i] = fz
+				elif absi(lx) <= flat and absi(ly) <= flat:
 					h[j * nx + i] = fz
 	if int(cp["coast"]) != 0:
 		var shore: PackedInt32Array = o["cp"]

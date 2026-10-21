@@ -27,11 +27,19 @@ const SHADER := preload("res://game/battlekit.gdshader")
 ## Block 2 (landmark and civic pieces, "lm_*" / "cv_*"; atlas2_*; tools/battlekit/spec_pieces.py). Used only by
 ## draw_piece for now; its texture is loaded on the first call.
 const Atlas2 := preload("res://game/battlekit_atlas2.gd")
+const FortTraces := preload("res://sim/fort_traces.gd")
 const CityDraw := preload("res://game/city_draw.gd")
+## The mitred wall strips (tools/battlekit/pack_strips.py): one texture per strip, repeated along the wall.
+const Strips := preload("res://game/battlekit_strips.gd")
+const SHADER_STRIP := preload("res://game/battlekit_strip.gdshader")
+const MITRE_MAX := 2.5          # a mitre longer than this many wall thicknesses is bevelled instead
 ## Loaded when needed (the script checkers' scratch project has no assets/).
 var TEX_ALB: Texture2D
 var TEX_NRM: Texture2D
 var TEX_LOW: Texture2D
+var TEX_S_ALB: Texture2D
+var TEX_S_NRM: Texture2D
+var TEX_S_LOW: Texture2D
 
 const WALL_LEN := 16.0          # a wall piece's length (stone); a palisade piece is PAL_LEN
 const PAL_LEN := 12.0
@@ -87,10 +95,27 @@ var _gate_hit := PackedInt32Array()
 var _timber := false
 var _mm: MultiMesh
 var _mmi: MultiMeshInstance2D
+var _mm_a: MultiMesh                # the instances before strip_at (_mm holds those from strip_at on)
+var _mmi_a: MultiMeshInstance2D
+var _strip_node: Node2D
 var _low_node: Node2D
 var _shadow: Node2D
 var _name_idx := {}
 var roofy := PackedByteArray()      # per atlas piece: 1 = a building (roof palette on Low)
+## The wall strips (_wall_ring): triangles, three vertices each (metres), their UV (u tiles along the wall,
+## v 0 outer edge .. 1 inner edge), the stretch's angle, and per triangle the stretch's origin / unit
+## direction / tile step (the UV is affine in the position; the shadow bake reads it back that way).
+var strip_name := ""                # "" = none (no walls)
+var strip_at := 0                   # the walls stand over the instances before this index, under those after
+var strip_hs := 1.0
+var strip_vo := 0.0                 # metres from the wall's centre line (+ inward) of the texture's top / bottom edge
+var strip_vi := 0.0
+var s_vx := PackedVector2Array()
+var s_uv := PackedVector2Array()
+var s_rot := PackedFloat32Array()   # per triangle
+var s_a := PackedVector2Array()     # per triangle
+var s_d := PackedVector2Array()
+var s_step := PackedFloat32Array()
 
 
 func setup(p_sim, p_lay: Dictionary, p_k: float) -> void:
@@ -138,6 +163,19 @@ static func piece_foot(piece: String) -> Dictionary:
 		return {}
 	var f: Array = Atlas2.FOOT[_name_idx2[piece]]
 	return {"x0": f[0], "y0": f[1], "x1": f[2], "y1": f[3], "h": f[4], "w": f[2] - f[0], "d": f[3] - f[1]}
+
+
+## A landmark fort piece's trace (the outer line of its rampart, bastion salients as vertices) in metres in
+## the piece frame of piece_foot (front, with its gate, toward -y); empty for a piece without one. Data only:
+## the sim's generated table (sim/fort_traces.gd, from the minis' geometry: tools/battlekit/fort_trace.py).
+static func piece_trace(piece: String) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	var pn := "fort" if piece == "cv_fort" else piece.trim_prefix("lm_")
+	var t: Dictionary = FortTraces.T.get(pn, {})
+	var v: Array = t.get("v", [])
+	for q in v.size() / 2:
+		out.append(Vector2(float(int(v[q * 2])), float(int(v[q * 2 + 1]))) * 0.1)
+	return out
 
 
 ## Draws a block 2 piece on `canvas` (any CanvasItem, inside its _draw) at pos_m metres, turned by yaw radians
@@ -217,8 +255,14 @@ func _build_instances() -> void:
 	var cit: Dictionary = lay.get("cit", {})
 	if not cit.is_empty():
 		rings.append(cit["poly"])
+	strip_at = i_piece.size()
+	strip_hs = hs
+	strip_name = wname.replace("wall_", "ws_").replace("pal_", "ps_")
 	for poly: PackedInt32Array in rings:
-		_wall_ring(poly, wname, t / wt, hs)
+		_wall_ring(poly, t / wt)
+	if s_vx.is_empty():
+		strip_name = ""
+		strip_at = 0
 	# Gates over the wall, then the towers over everything.
 	_gate_inst.resize(0)
 	var gates: Array = lay["gates"]
@@ -637,26 +681,114 @@ func _tower(tw: Array, q: int, hs: float) -> void:
 		_add("tower_round", pos, Vector2(cos(a2), sin(a2)), r / 6.4, r / 6.4, hs)
 
 
-func _wall_ring(poly: PackedInt32Array, piece: String, sy: float, hs: float) -> void:
-	var nv := poly.size() / 2
+## One wall ring as a mitred strip (appended to the strip triangles): a quad per stretch along the
+## polygon, the texture's tile repeating along it (the stretch's length cut to whole tiles), its outer
+## edge `strip_vo` and inner edge `strip_vi` from the polygon line (scaled by `sy`, the sim's thickness over the
+## variant's). At each vertex the outer edge runs to where the two neighbouring outer faces meet and the
+## inner edge to where the inner faces meet (a mitre); a mitre longer than MITRE_MAX thicknesses is bevelled
+## (the two faces' own end points, a triangle between them). No end caps: the ring is closed (a gate piece
+## stands over the wall at a gate, a tower at a corner).
+func _wall_ring(poly: PackedInt32Array, sy: float) -> void:
+	var si := Strips.NAMES.find(strip_name)
+	var info: Array = Strips.INFO[si]
+	var tile := float(info[0])
+	strip_vo = float(info[1]) * sy
+	strip_vi = float(info[2]) * sy
+	var thick := strip_vi - strip_vo
+	# The vertices, close points merged; counter-clockwise (area > 0) so that the inside is on the left.
+	var p := PackedVector2Array()
+	for e in poly.size() / 2:
+		var q := Vector2(poly[e * 2], poly[e * 2 + 1])
+		if p.is_empty() or p[p.size() - 1].distance_to(q) >= 0.5:
+			p.append(q)
+	while p.size() > 1 and p[0].distance_to(p[p.size() - 1]) < 0.5:
+		p.remove_at(p.size() - 1)
+	var nv := p.size()
+	if nv < 3:
+		return
 	var area := 0.0
 	for e in nv:
 		var e2 := (e + 1) % nv
-		area += float(poly[e * 2]) * poly[e2 * 2 + 1] - float(poly[e2 * 2]) * poly[e * 2 + 1]
+		area += p[e].x * p[e2].y - p[e2].x * p[e].y
+	if area <= 0.0:
+		p.reverse()
+	var dirs := PackedVector2Array()
+	var nrms := PackedVector2Array()
 	for e in nv:
-		var a := Vector2(poly[e * 2], poly[e * 2 + 1])
-		var b := Vector2(poly[((e + 1) % nv) * 2], poly[((e + 1) % nv) * 2 + 1])
-		var l := a.distance_to(b)
-		if l < 0.5:
-			continue
-		var d := (b - a) / l
-		if area <= 0.0:
-			d = -d   # the piece's outer side must be the polygon's outside
-		var plen := PAL_LEN if _timber else WALL_LEN
-		var cnt := maxi(roundi(l / plen), 1)
-		var step := l / cnt
-		for q in cnt:
-			_add(piece, a + (b - a) / l * step * (q + 0.5), d, step / plen, sy, hs)
+		var dd := (p[(e + 1) % nv] - p[e]).normalized()
+		dirs.append(dd)
+		nrms.append(Vector2(-dd.y, dd.x))
+	# Per vertex and side (0 outer, 1 inner): the end of the stretch before it, the start of the one after.
+	var pe := PackedVector2Array()
+	var ps := PackedVector2Array()
+	var bev := PackedByteArray()
+	pe.resize(nv * 2)
+	ps.resize(nv * 2)
+	bev.resize(nv * 2)
+	for e in nv:
+		var n0: Vector2 = nrms[(e + nv - 1) % nv]
+		var n1: Vector2 = nrms[e]
+		var den := 1.0 + n0.dot(n1)
+		for side in 2:
+			var v := strip_vo if side == 0 else strip_vi
+			var m := (n0 + n1) / maxf(den, 0.0001)
+			if den < 0.05 or m.length() * absf(v) > MITRE_MAX * thick:
+				pe[e * 2 + side] = p[e] + n0 * v
+				ps[e * 2 + side] = p[e] + n1 * v
+				bev[e * 2 + side] = 1
+			else:
+				pe[e * 2 + side] = p[e] + m * v
+				ps[e * 2 + side] = p[e] + m * v
+	for e in nv:
+		var e2 := (e + 1) % nv
+		var l := p[e].distance_to(p[e2])
+		var step := l / float(maxi(roundi(l / tile), 1))
+		var q4 := [ps[e * 2], pe[e2 * 2], pe[e2 * 2 + 1], ps[e * 2 + 1]]
+		_strip_tri([q4[0], q4[1], q4[2]], p[e], dirs[e], step)
+		_strip_tri([q4[0], q4[2], q4[3]], p[e], dirs[e], step)
+		# The bevel at the vertex e2 (the stretch e ends there, the stretch e2 starts): fill the wedge.
+		var bo := bev[e2 * 2] != 0
+		var bi := bev[e2 * 2 + 1] != 0
+		if bo:
+			_strip_tri([pe[e2 * 2], ps[e2 * 2], p[e2] if bi else pe[e2 * 2 + 1]], p[e], dirs[e], step)
+		if bi:
+			_strip_tri([pe[e2 * 2 + 1], ps[e2 * 2 + 1], p[e2] if bo else pe[e2 * 2]], p[e], dirs[e], step)
+
+
+## One strip triangle: its UV from the stretch (origin a, unit direction d, tile step in metres).
+func _strip_tri(v: Array, a: Vector2, d: Vector2, step: float) -> void:
+	var n := Vector2(-d.y, d.x)
+	for q in 3:
+		var w: Vector2 = v[q]
+		s_vx.append(w)
+		s_uv.append(Vector2((w - a).dot(d) / step, ((w - a).dot(n) - strip_vo) / (strip_vi - strip_vo)))
+	s_rot.append(d.angle())
+	s_a.append(a)
+	s_d.append(d)
+	s_step.append(step)
+
+
+## The strip as an ArrayMesh in px: `with_rot` puts the stretch's turn in the vertex colour (the shader's
+## normal), else plain (the Low path's draw_mesh).
+func _strip_mesh(with_rot: bool) -> ArrayMesh:
+	var vx := PackedVector2Array()
+	for q in s_vx.size():
+		vx.append(s_vx[q] * k)
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = vx
+	arr[Mesh.ARRAY_TEX_UV] = s_uv
+	if with_rot:
+		var cols := PackedColorArray()
+		for q in s_rot.size():
+			var c := Color(cos(s_rot[q]) * 0.5 + 0.5, sin(s_rot[q]) * 0.5 + 0.5, 0.0, 1.0)
+			cols.append(c)
+			cols.append(c)
+			cols.append(c)
+		arr[Mesh.ARRAY_COLOR] = cols
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	return mesh
 
 
 ## The quad's transform in px for instance i drawn as piece p.
@@ -679,9 +811,20 @@ func _make_nodes() -> void:
 	elif TEX_ALB == null:
 		TEX_ALB = load("res://assets/battlekit/atlas_albedo.png")
 		TEX_NRM = load("res://assets/battlekit/atlas_nrm.png")
+	if strip_name != "":
+		var base := "res://assets/battlekit/strips/" + strip_name
+		if low:
+			if TEX_S_LOW == null:
+				TEX_S_LOW = load(base + "_low.png")
+		elif TEX_S_ALB == null:
+			TEX_S_ALB = load(base + "_albedo.png")
+			TEX_S_NRM = load(base + "_nrm.png")
 	for c in get_children():
 		c.queue_free()
 	_mmi = null
+	_mmi_a = null
+	_mm_a = null
+	_strip_node = null
 	_low_node = null
 	_shadow = null
 	shadow_ms = 0.0
@@ -695,6 +838,9 @@ func _make_nodes() -> void:
 	if low:
 		_low_node = _LowDraw.new()
 		_low_node.kit = self
+		if strip_name != "":
+			_low_node.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
+			_low_node.strip_mesh = _strip_mesh(false)
 		add_child(_low_node)
 		return
 	shadows_on = not ("--no-kit-shadow" in OS.get_cmdline_user_args())
@@ -704,17 +850,6 @@ func _make_nodes() -> void:
 		_shadow.build(self)
 		add_child(_shadow)
 		shadow_ms = (Time.get_ticks_usec() - t0) / 1000.0
-	_mm = MultiMesh.new()
-	_mm.transform_format = MultiMesh.TRANSFORM_2D
-	_mm.use_custom_data = true
-	_mm.mesh = _make_quad()
-	_mm.instance_count = i_piece.size()
-	var buf := PackedFloat32Array()
-	buf.resize(i_piece.size() * 12)
-	for i in i_piece.size():
-		_write(buf, i)
-	_mm.buffer = buf
-	_mm.custom_aabb = AABB(Vector3(-50, -50, -1), Vector3(sim.field_w / 1024.0 * k + 100, sim.field_h / 1024.0 * k + 100, 2))
 	var mat := ShaderMaterial.new()
 	mat.shader = SHADER
 	mat.set_shader_parameter("albedo_tex", TEX_ALB)
@@ -731,10 +866,50 @@ func _make_nodes() -> void:
 	mat.set_shader_parameter("pal_g", PackedVector3Array(PAL_G))
 	mat.set_shader_parameter("pal_b", PackedVector3Array(PAL_B))
 	BattleLook.apply(mat)
+	# Draw order: the instances before the walls (houses), the wall strip, then the rest (gates, towers).
+	if strip_at > 0:
+		_mm_a = _make_mm(0, strip_at)
+		_mmi_a = MultiMeshInstance2D.new()
+		_mmi_a.multimesh = _mm_a
+		_mmi_a.material = mat
+		add_child(_mmi_a)
+	if strip_name != "":
+		var smat := ShaderMaterial.new()
+		smat.shader = SHADER_STRIP
+		smat.set_shader_parameter("albedo_tex", TEX_S_ALB)
+		smat.set_shader_parameter("nrm_tex", TEX_S_NRM)
+		smat.set_shader_parameter("culture_i", float(culture))
+		smat.set_shader_parameter("stone_tint", PackedVector3Array(STONE_TINT))
+		smat.set_shader_parameter("pal_r", PackedVector3Array(PAL_R))
+		smat.set_shader_parameter("pal_g", PackedVector3Array(PAL_G))
+		smat.set_shader_parameter("pal_b", PackedVector3Array(PAL_B))
+		BattleLook.apply(smat)
+		var sn := MeshInstance2D.new()
+		sn.mesh = _strip_mesh(true)
+		sn.material = smat
+		_strip_node = sn
+		add_child(sn)
+	_mm = _make_mm(strip_at, i_piece.size())
 	_mmi = MultiMeshInstance2D.new()
 	_mmi.multimesh = _mm
 	_mmi.material = mat
 	add_child(_mmi)
+
+
+## A MultiMesh of the instances [a, b).
+func _make_mm(a: int, b: int) -> MultiMesh:
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_2D
+	mm.use_custom_data = true
+	mm.mesh = _make_quad()
+	mm.instance_count = b - a
+	var buf := PackedFloat32Array()
+	buf.resize((b - a) * 12)
+	for i in range(a, b):
+		_write(buf, i, (i - a) * 12)
+	mm.buffer = buf
+	mm.custom_aabb = AABB(Vector3(-50, -50, -1), Vector3(sim.field_w / 1024.0 * k + 100, sim.field_h / 1024.0 * k + 100, 2))
+	return mm
 
 
 func _write(buf: PackedFloat32Array, i: int, o := -1) -> void:
@@ -798,8 +973,9 @@ func refresh() -> void:
 			var buf := PackedFloat32Array()
 			buf.resize(12)
 			_write(buf, i, 0)
-			_mm.set_instance_transform_2d(i, Transform2D(Vector2(buf[0], buf[4]), Vector2(buf[1], buf[5]), Vector2(buf[3], buf[7])))
-			_mm.set_instance_custom_data(i, Color(buf[8], buf[9], buf[10], buf[11]))
+			var mi := i - strip_at   # (gates stand over the wall: in the second multimesh)
+			_mm.set_instance_transform_2d(mi, Transform2D(Vector2(buf[0], buf[4]), Vector2(buf[1], buf[5]), Vector2(buf[3], buf[7])))
+			_mm.set_instance_custom_data(mi, Color(buf[8], buf[9], buf[10], buf[11]))
 		if broke and _shadow != null:
 			_shadow.rebake_instance(i)
 	if changed and _low_node != null:
@@ -817,10 +993,18 @@ class _PieceDraw extends Node2D:
 ## The Low path: no shader, no shadow layer; pre-lit 4 px/m atlas, culture tint by modulate.
 class _LowDraw extends Node2D:
 	var kit
+	var strip_mesh: ArrayMesh
 
 	func _draw() -> void:
 		var lowk: float = float(kit.Atlas.LOW_PPM) / float(kit.Atlas.PPM)
-		for i in kit.i_piece.size():
+		var n: int = kit.i_piece.size()
+		for i in n + 1:
+			if i == kit.strip_at and strip_mesh != null:
+				draw_set_transform_matrix(Transform2D.IDENTITY)
+				var st: Vector3 = kit.STONE_TINT[kit.culture]
+				draw_mesh(strip_mesh, kit.TEX_S_LOW, Transform2D.IDENTITY, Color(st.x, st.y, st.z))
+			if i == n:
+				break
 			var p: int = kit.i_piece[i]
 			var an: Array = kit.Atlas.ANCHOR[p]
 			var r: Array = kit.Atlas.RECT[p]

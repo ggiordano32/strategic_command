@@ -66,6 +66,7 @@ extends RefCounted
 
 const FM := preload("res://sim/fixed_math.gd")
 const Land := preload("res://sim/landforms.gd")
+const FT := preload("res://sim/fort_traces.gd")
 
 const M := 1024
 
@@ -4303,7 +4304,7 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 	elif not fort.is_empty() and int(fort.get("off", 0)) == 0 and coast != 0 \
 			and int(fort["y"]) - shore_y(cp, int(fort["x"])) < int(fort["ext"]) + 10:
 		# (A plan's fort on the shore: the quay stops short of its ground on its side of the plaza.)
-		var frb := (int(fort["h"]) + int(fort["b"])) * 142 / 100 + F_T / 2 + F_DITCH_GAP + F_DITCH + 6
+		var frb := (int(fort["rr"]) if fort.has("tr") else (int(fort["h"]) + int(fort["b"])) * 142 / 100) + F_T / 2 + F_DITCH_GAP + F_DITCH + 6
 		if int(fort["x"]) < px:
 			x0 = maxi(x0, int(fort["x"]) + frb)
 		else:
@@ -4710,6 +4711,8 @@ static func _f_w(fort: Dictionary, lx: int, ly: int, cm: int = 1) -> Vector2i:
 ## ([x, y, facing] metres, the salients first) and its middle and gates to
 ## fort ("mx", "my").
 static func _w_fort(wc: Dictionary, fort: Dictionary, coast: int) -> Dictionary:
+	if fort.has("tr"):
+		return _w_fort_tr(wc, fort, coast)
 	var ow: int = wc["ow"]
 	var oh: int = wc["oh"]
 	var obs: PackedByteArray = wc["obs"]
@@ -4821,6 +4824,283 @@ static func _w_fort(wc: Dictionary, fort: Dictionary, coast: int) -> Dictionary:
 	var rc := fh + F_T / 2
 	var cit := {"x": int(fort["x"]), "y": int(fort["y"]), "rc": rc, "poly": poly, "gate": 0, "fort": 1}
 	return {"gates": gates, "segs": segs, "cit": cit, "poly": poly, "fin": fin}
+
+
+## _w_fort on a landmark's own trace (fort "tr", _tp_fort_tr; docs/DESIGN.md "Forts and fighting from
+## buildings", the trace of the piece): the same machinery on the piece's polygon. The walls follow its
+## edges, its salients are the bastions (an acute one's narrow parade tip filled as rampart; stretches cut
+## short of it so the walk turns it), the main gate in the middle of the piece's gate edge (its front), the
+## sally port in the edge most nearly opposite (not on the sea), the ditch round the land edges, the
+## barracks along the longest other edge and the magazine by the sally port's edge, guns on the landward
+## salients (a flat-nosed bastion's on its nose) and on the most seaward edge; the parade's centre is the
+## citadel's (cit) middle.
+static func _w_fort_tr(wc: Dictionary, fort: Dictionary, coast: int) -> Dictionary:
+	var ow: int = wc["ow"]
+	var oh: int = wc["oh"]
+	var obs: PackedByteArray = wc["obs"]
+	var keep: PackedByteArray = wc["keep"]
+	var blk: PackedByteArray = wc["blk"]
+	var tw := _tr_world(fort)
+	var vx: PackedInt32Array = tw[0]
+	var vy: PackedInt32Array = tw[1]
+	var nv := vx.size()
+	var sal: Array = fort["sal"]
+	var ang: Array = fort["ang"]
+	var nc := ow * oh
+	var fin := PackedByteArray()
+	fin.resize(nc)
+	fin.fill(0)
+	_fill_poly(fin, ow, oh, vx, vy)
+	var pcv: Array = fort["pc"]
+	var pc := _f_w(fort, int(pcv[0]), int(pcv[1]))
+	var ed := _edges(vx, vy, pc.x, pc.y, false)
+	var en_x: PackedInt32Array = ed["nx"]
+	var en_y: PackedInt32Array = ed["ny"]
+	var ee_x: PackedInt32Array = ed["ex"]
+	var ee_y: PackedInt32Array = ed["ey"]
+	var elen: PackedInt32Array = ed["len"]
+	# Seaward edges (no ditch, no wall men set there by the scenario): facing the sea, the map's -y.
+	var esea := PackedInt32Array()
+	for k in nv:
+		esea.append(1 if coast != 0 and -en_y[k] > FM.TRIG_ONE * 55 / 100 else 0)
+	var inner := F_T - F_PP - WALK_W
+	for c in nc:
+		if fin[c] != 0 and obs[c] == C_WATER:
+			obs[c] = C_OPEN
+	_wall_band(obs, keep, fin, ow, oh, vx, vy, F_T, F_PP, inner)
+	# The piece's corner towers: round, on the line's corner (outside the walk and the parade: the walk
+	# turns the corner through them).
+	var twr: PackedInt32Array = fort["tw"]
+	for k in nv:
+		if twr[k] > F_T / 2:
+			_bastion(obs, fin, ow, oh, vx[k], vy[k], twr[k], 0, 0)
+	# An acute salient: the parade's tip narrower than 3 m is rampart (no pocket for men to be pushed into).
+	for k in nv:
+		var a := int(ang[k])
+		if a >= 80 or int(sal[k]) != 1:
+			continue
+		var hlf := a * 512 / 360
+		var sn := maxi(FM.sin_a(hlf), 1)
+		var cs := FM.cos_a(hlf)
+		var reach := (F_T * 50 * FM.TRIG_ONE + 150 * cs) / sn   # cm along the bisector from the point
+		var kp := (k + nv - 1) % nv
+		var bx := -(en_x[kp] + en_x[k])
+		var by := -(en_y[kp] + en_y[k])
+		var bl := maxi(FM.isqrt(bx * bx + by * by), 1)
+		var r := reach / 100 + 2
+		for j in range(maxi((vy[k] - r) / 2, 0), mini((vy[k] + r) / 2 + 1, oh)):
+			for i in range(maxi((vx[k] - r) / 2, 0), mini((vx[k] + r) / 2 + 1, ow)):
+				var c := j * ow + i
+				if fin[c] == 0 or obs[c] != C_OPEN:
+					continue
+				var sd := ((i * 200 + 100 - vx[k] * 100) * bx + (j * 200 + 100 - vy[k] * 100) * by) / bl
+				if sd > 0 and sd <= reach:
+					obs[c] = C_WALL
+					keep[c] = 1
+	# Gates: the main gate in the middle of the piece's gate edge, the sally port in the edge most nearly
+	# opposite it (12 m clear either side, not on the sea).
+	var e_town: int = fort["tg"]
+	var e_far := -1
+	var best := -(1 << 40)
+	for pass_n in 2:
+		for k in nv:
+			if k == e_town or (pass_n == 0 and (elen[k] < 2 * (POSTERN_HW + 10) or esea[k] != 0)):
+				continue
+			var sc := -(en_x[k] * en_x[e_town] + en_y[k] * en_y[e_town]) / FM.TRIG_ONE * 64 + elen[k]
+			if sc > best:
+				best = sc
+				e_far = k
+		if e_far >= 0:
+			break
+	var gates: Array = []
+	var g0 := _mk_gate(vx, vy, ed, e_town, elen[e_town] / 2, GATE_HW, 0, F_T, 1, 0, 1)
+	g0["fort"] = 1
+	gates.append(g0)
+	var g1 := _mk_gate(vx, vy, ed, e_far, elen[e_far] / 2, POSTERN_HW, 0, F_T, 0, 1, 1)
+	g1["fort"] = 1
+	gates.append(g1)
+	var dummy: Array = []
+	for g in gates.size():
+		_gate_raster(obs, keep, ow, oh, gates[g], g, ed, F_T, 0, dummy)
+	# Walkway stretches (cut short of the salients: an acute one's by its cotangent, so the stretches' ends
+	# stay on the walk where it turns the point) and their stairs down to the parade.
+	var cut := _tr_cuts(sal, ang, F_T)
+	var segs := _segments(vx, vy, ed, gates, cut, F_T, F_PP, inner, esea, 0, 1)
+	# (A slanted stretch's ends in whole metres can fall a cell inside the walk: that cell is walk.)
+	for sg in segs:
+		for e2 in 2:
+			var c2 := clampi(int(sg[1 + e2 * 2]) / 2, 0, oh - 1) * ow + clampi(int(sg[e2 * 2]) / 2, 0, ow - 1)
+			if obs[c2] == C_WALL:
+				obs[c2] = C_WALK
+	_stairs(obs, fin, ow, oh, segs, F_T, inner)
+	_ditch(obs, fin, ow, oh, vx, vy, esea, gates, gates.size(), F_T / 2 + F_DITCH_GAP, F_T / 2 + F_DITCH_GAP + F_DITCH)
+	var rb := int(fort["rr"]) + F_T / 2 + F_DITCH_GAP + F_DITCH + 3
+	_disc(blk, ow, oh, int(fort["x"]), int(fort["y"]), rb, 1)
+	for c in nc:
+		if fin[c] != 0 or obs[c] == C_DITCH:
+			blk[c] = 1
+	# The parade: the barracks along the longest other edge, the magazine on the sally port's edge a
+	# quarter along it (fronts to the parade).
+	var e_bar := -1
+	for k in nv:
+		if k != e_town and k != e_far and (e_bar < 0 or elen[k] > elen[e_bar]):
+			e_bar = k
+	var din := F_T / 2 + RING_W + 1
+	if e_bar >= 0 and elen[e_bar] >= 24:
+		var bl2 := mini(elen[e_bar] * 45 / 100, 32)
+		var mx := vx[e_bar] * 100 + ee_x[e_bar] * elen[e_bar] * 50 / FM.TRIG_ONE - en_x[e_bar] * (din + 7) * 100 / FM.TRIG_ONE
+		var my := vy[e_bar] * 100 + ee_y[e_bar] * elen[e_bar] * 50 / FM.TRIG_ONE - en_y[e_bar] * (din + 7) * 100 / FM.TRIG_ONE
+		_w_fort_bld_w(wc, mx - ee_x[e_bar] * bl2 * 50 / FM.TRIG_ONE, my - ee_y[e_bar] * bl2 * 50 / FM.TRIG_ONE,
+			ee_x[e_bar], ee_y[e_bar], en_x[e_bar], en_y[e_bar], bl2, 7, B_BARRACKS, 55, fin)
+	if elen[e_far] >= 24:
+		var mx2 := vx[e_far] * 100 + ee_x[e_far] * elen[e_far] * 25 / FM.TRIG_ONE - en_x[e_far] * (din + 5) * 100 / FM.TRIG_ONE
+		var my2 := vy[e_far] * 100 + ee_y[e_far] * elen[e_far] * 25 / FM.TRIG_ONE - en_y[e_far] * (din + 5) * 100 / FM.TRIG_ONE
+		_w_fort_bld_w(wc, mx2 - ee_x[e_far] * 300 / FM.TRIG_ONE, my2 - ee_y[e_far] * 300 / FM.TRIG_ONE,
+			ee_x[e_far], ee_y[e_far], en_x[e_far], en_y[e_far], 6, 5, B_MAGAZINE, 45, fin)
+	# The parade is the open ground reached from inside the main gate; open ground inside the trace it does not reach
+	# (a bastion's inside behind a narrow gorge, a corner a building shuts in) is filled as rampart (no
+	# pocket the parade cannot reach).
+	var seen := PackedByteArray()
+	seen.resize(nc)
+	seen.fill(0)
+	var st := PackedInt32Array()
+	var c0 := clampi(int(g0["iy"]) / 2, 0, oh - 1) * ow + clampi(int(g0["ix"]) / 2, 0, ow - 1)
+	if obs[c0] == C_OPEN:
+		seen[c0] = 1
+		st.append(c0)
+	while not st.is_empty():
+		var c := st[st.size() - 1]
+		st.resize(st.size() - 1)
+		var ci := c % ow
+		var cj := c / ow
+		for dd in 4:
+			var ni := ci + (1 if dd == 0 else (-1 if dd == 1 else 0))
+			var nj := cj + (1 if dd == 2 else (-1 if dd == 3 else 0))
+			if ni < 0 or nj < 0 or ni >= ow or nj >= oh:
+				continue
+			var n2 := nj * ow + ni
+			if seen[n2] == 0 and fin[n2] != 0 and obs[n2] == C_OPEN:
+				seen[n2] = 1
+				st.append(n2)
+	if seen[c0] != 0:
+		# (filled to the walk's level, a bastion's terreplein: the rampart's inner face between it and the
+		# walk too, where it does not border the parade.)
+		var pk := PackedByteArray()
+		pk.resize(nc)
+		pk.fill(0)
+		for c in nc:
+			if fin[c] != 0 and obs[c] == C_OPEN and seen[c] == 0:
+				obs[c] = C_WALK
+				keep[c] = 1
+				pk[c] = 1
+				for dj in range(-1, 2):
+					for di in range(-1, 2):
+						var bi := clampi(c % ow + di, 0, ow - 1)
+						var bj := clampi(c / ow + dj, 0, oh - 1)
+						if obs[bj * ow + bi] == C_BUILDING:
+							obs[c] = C_WALL  # (a cell shut in by a building on the parade: solid)
+							pk[c] = 0
+		for c in nc:
+			if fin[c] == 0 or obs[c] != C_WALL:
+				continue
+			var ci := c % ow
+			var cj := c / ow
+			var near_pk := false
+			var near_pd := false
+			for dj in range(-2, 3):
+				for di in range(-2, 3):
+					var ni := ci + di
+					var nj := cj + dj
+					if ni < 0 or nj < 0 or ni >= ow or nj >= oh:
+						continue
+					if pk[nj * ow + ni] != 0:
+						near_pk = true
+					if absi(di) <= 1 and absi(dj) <= 1 and seen[nj * ow + ni] != 0:
+						near_pd = true
+			if near_pk and not near_pd:
+				obs[c] = C_WALK
+	# Gun platforms: the landward salients (2 m in from the point, or a flat nose's middle, facing out from
+	# the parade's centre), then the most seaward edge (its walk, facing the sea; ports only).
+	var guns: Array = []
+	for k in nv:
+		var sk := int(sal[k])
+		if sk != 1 and sk != 2:
+			continue
+		var sx := vx[k]
+		var sy := vy[k]
+		if sk == 2:
+			sx = (vx[k] + vx[(k + 1) % nv]) / 2
+			sy = (vy[k] + vy[(k + 1) % nv]) / 2
+		var dx := sx - pc.x
+		var dy := sy - pc.y
+		var l := maxi(FM.isqrt(dx * dx + dy * dy), 1)
+		if coast != 0 and -dy * 100 > l * 55:
+			continue  # (a seaward salient's gun looks out to sea: the sea edge's below stands for it)
+		guns.append([sx - dx * 2 / l, sy - dy * 2 / l, FM.atan2_a(dy, dx)])
+	if coast != 0:
+		var ks := 0
+		for k in nv:
+			if en_y[k] < en_y[ks]:
+				ks = k
+		var lx := ((vx[ks] + vx[(ks + 1) % nv]) * FM.TRIG_ONE / 2 + en_x[ks] * 3 / 2) / FM.TRIG_ONE
+		var ly := ((vy[ks] + vy[(ks + 1) % nv]) * FM.TRIG_ONE / 2 + en_y[ks] * 3 / 2) / FM.TRIG_ONE
+		guns.append([lx, ly, FM.atan2_a(en_y[ks], en_x[ks])])
+	fort["guns"] = guns
+	var poly := PackedInt32Array()
+	for k in nv:
+		poly.append(vx[k])
+		poly.append(vy[k])
+	var cit := {"x": pc.x, "y": pc.y, "rc": int(fort["h"]) + F_T / 2, "poly": poly, "gate": 0, "fort": 1}
+	return {"gates": gates, "segs": segs, "cit": cit, "poly": poly, "fin": fin}
+
+
+## A trace's walkway cuts at its vertices (wall thickness t): a salient's t / 2 + 2 m, an acute one's by its
+## cotangent (the stretches' ends stay on the walk where it turns the point; 18 m at most), another convex
+## corner's 4 m, a flat nose's ends and a reflex corner's 2 m.
+static func _tr_cuts(sal: Array, ang: Array, t: int) -> PackedInt32Array:
+	var cut := PackedInt32Array()
+	for k in sal.size():
+		var a := int(ang[k])
+		var sk := int(sal[k])
+		if sk == 1 and a < 80:
+			var hl := a * 512 / 360
+			cut.append(clampi((t / 2 + 2) * FM.cos_a(hl) / maxi(FM.sin_a(hl), 1), t / 2 + 2, 18))
+		elif sk == 1:
+			cut.append(t / 2 + 2)
+		else:
+			cut.append(4 if a < 180 and sk == 0 else 2)
+	return cut
+
+
+## A building on a trace fort's parade (_w_fort_tr): front-left corner (ax, ay) cm on the map, along the unit
+## (ux, uy) Q12 fw m, into it along (nx, ny) Q12 fd m (toward the wall: its front faces the parade), kind kd,
+## height hd (dm), stone; its cells within 0.6 m of the drawing, inside the fort (fin) on open ground only.
+static func _w_fort_bld_w(wc: Dictionary, ax: int, ay: int, ux: int, uy: int, nx: int, ny: int, fw: int, fd: int,
+		kd: int, hd: int, fin: PackedByteArray) -> void:
+	var ow: int = wc["ow"]
+	var oh: int = wc["oh"]
+	var obs: PackedByteArray = wc["obs"]
+	var own: PackedInt32Array = wc["own"]
+	var blds: Array = wc["buildings"]
+	var body := _w_quad(ax, ay, ux, uy, nx, ny, fw, fd, 0, 0)
+	var cells: PackedInt32Array = (_w_cells(_w_grow(body, ux, uy, nx, ny, 60), ow, oh) as Array)[2]
+	var idx := blds.size()
+	var n_ok := 0
+	for c in cells:
+		if fin[c] != 0 and obs[c] == C_OPEN:
+			obs[c] = C_BUILDING
+			own[c] = idx + 1
+			n_ok += 1
+	if n_ok == 0:
+		return
+	var xs := PackedInt32Array()
+	var ys := PackedInt32Array()
+	for k in 4:
+		xs.append((body[k * 2] + 50) / 100)
+		ys.append((body[k * 2 + 1] + 50) / 100)
+	blds.append([mini(mini(xs[0], xs[1]), mini(xs[2], xs[3])), mini(mini(ys[0], ys[1]), mini(ys[2], ys[3])),
+		maxi(maxi(xs[0], xs[1]), maxi(xs[2], xs[3])), maxi(maxi(ys[0], ys[1]), maxi(ys[2], ys[3])),
+		kd, W_STYLE, SH_QUAD, xs[0], ys[0], xs[1], ys[1], xs[2], ys[2], xs[3], ys[3], hd, MAT_STONE])
 
 
 ## A building on the fort's parade: quad from front-left corner (ax, ay)
@@ -4973,7 +5253,7 @@ static func _w_graph(wc: Dictionary, roads: Array, w_m: int, h_m: int, lnodes: P
 	var fort: Dictionary = o["fort"]
 	var gate_links: Array = []  # [gate node, outside node, inside node]
 	if not fort.is_empty():
-		var rr := (int(fort["h"]) + int(fort["b"])) * 142 / 100 + F_T / 2 + F_DITCH_GAP + F_DITCH + 5
+		var rr := (int(fort["rr"]) if fort.has("tr") else (int(fort["h"]) + int(fort["b"])) * 142 / 100) + F_T / 2 + F_DITCH_GAP + F_DITCH + 5
 		for k in 8:
 			add.call(int(fort["x"]) + FM.cos_a(k * 128) * rr / FM.TRIG_ONE, int(fort["y"]) + FM.sin_a(k * 128) * rr / FM.TRIG_ONE)
 		var fw: Dictionary = wc.get("fort_w", {})
@@ -4992,7 +5272,7 @@ static func _w_graph(wc: Dictionary, roads: Array, w_m: int, h_m: int, lnodes: P
 				var n_i: int = add.call(int(gd["ix"]), int(gd["iy"]))
 				gate_links.append([n_g, n_o, n_i])
 			var fin: PackedByteArray = fw["fin"]
-			var fr := int(fort["h"])
+			var fr := int(fort["rr"]) if fort.has("tr") else int(fort["h"])
 			var ly := -fr
 			while ly <= fr:
 				var lx := -fr
@@ -5521,6 +5801,8 @@ static func _tp_fort(o: Dictionary, lm: Dictionary, level: int, w_m: int) -> Dic
 	var kpm := clampi(e * 1000 / 36, 850, 1150)
 	var fh: int = F_H[level] * kpm / 1000
 	var fb: int = F_B[level] * kpm / 1000
+	if FT.T.has(pn):
+		return _tp_fort_tr(o, lm, level, w_m, pn, fh, fb)
 	var rr := fh + fb
 	var ext := rr + F_T / 2 + F_DITCH_GAP + F_DITCH + 4
 	var px: int = o["px"]
@@ -5565,6 +5847,207 @@ static func _tp_fort(o: Dictionary, lm: Dictionary, level: int, w_m: int) -> Dic
 		fs = 1 if lx < 0 else -1
 	return {"x": fx, "y": fy, "h": fh, "b": fb, "dir": fdir, "side": fs, "level": level, "ext": ext, "piece": tp_index(pn),
 		"off": 1 if off else 0, "e_town": e_town}
+
+
+## A landmark fort's own trace (sim/fort_traces.gd: the outer line of its piece's rampart) scaled to the area
+## of the 2c fort of half side fh and bastions fb: {"tr": vertices x, y (m, the piece frame: x right, y down,
+## the front with the gate at -y; origin the piece's), "spm" the piece's scale per mille, "rr" its farthest
+## vertex, "h" the nearest edge line from the parade's centre, "pc" that centre}.
+static func tp_fort_shape(pn: String, fh: int, fb: int) -> Dictionary:
+	var sq := fort_trace(fh, fb)
+	var a2 := 0
+	for k in sq.size():
+		var p: Vector2i = sq[k]
+		var q: Vector2i = sq[(k + 1) % sq.size()]
+		a2 += p.x * q.y - q.x * p.y
+	return tr_shape(pn, tr_spm_area(pn, absi(a2) / 2))
+
+
+## A trace's scale (per mille) for the area a_m2 (m2).
+static func tr_spm_area(pn: String, a_m2: int) -> int:
+	return FM.isqrt(a_m2 * 1000000 / maxi(int((FT.T[pn] as Dictionary)["area"]), 1))
+
+
+## The trace of plan piece pn (sim/fort_traces.gd) at scale spm per mille (tp_fort_shape's dictionary).
+static func tr_shape(pn: String, spm: int) -> Dictionary:
+	var t: Dictionary = FT.T[pn]
+	var v: Array = t["v"]
+	var twd: Array = t["tw"]
+	var ttr := PackedInt32Array()
+	var tw := PackedInt32Array()
+	var rr := 0
+	for q in v.size() / 2:
+		var x := int(v[q * 2]) * spm / 10000
+		var y := int(v[q * 2 + 1]) * spm / 10000
+		ttr.append(x)
+		ttr.append(y)
+		tw.append(int(twd[q]) * spm / 10000)
+	# A flank too short for a stretch of its own (shorter than 12 m: San Marcos's) is dropped, the face and
+	# the curtain either side of it run on to meet (the walk then turns one corner there, not two).
+	var sal: Array = (t["sal"] as Array).duplicate()
+	var ang: Array = (t["ang"] as Array).duplicate()
+	var tg := int(t["gate"])
+	var again := true
+	while again:
+		again = false
+		var n0 := ttr.size() / 2
+		for k in n0:
+			var k1 := (k + 1) % n0
+			var ex := ttr[k1 * 2] - ttr[k * 2]
+			var ey := ttr[k1 * 2 + 1] - ttr[k * 2 + 1]
+			if ex * ex + ey * ey >= 144 or int(sal[k]) != 0 or int(sal[k1]) != 0 or k == tg or n0 <= 4:
+				continue
+			# (lines k-1 -> k and k1 -> k1 + 1, met at q)
+			var kp := (k + n0 - 1) % n0
+			var kn := (k1 + 1) % n0
+			var ax := ttr[kp * 2]
+			var ay := ttr[kp * 2 + 1]
+			var ux := ttr[k * 2] - ax
+			var uy := ttr[k * 2 + 1] - ay
+			var bx := ttr[kn * 2]
+			var by := ttr[kn * 2 + 1]
+			var vx2 := ttr[k1 * 2] - bx
+			var vy2 := ttr[k1 * 2 + 1] - by
+			var den := ux * vy2 - uy * vx2
+			if den == 0:
+				continue
+			var num := (bx - ax) * vy2 - (by - ay) * vx2
+			var qx := ax + ux * num / den
+			var qy := ay + uy * num / den
+			var mx := (ttr[k * 2] + ttr[k1 * 2]) / 2
+			var my := (ttr[k * 2 + 1] + ttr[k1 * 2 + 1]) / 2
+			if (qx - mx) * (qx - mx) + (qy - my) * (qy - my) > 400:
+				continue
+			var d_in := FM.atan2_a(uy, ux)
+			var d_out := FM.atan2_a(-vy2, -vx2)
+			var turn := FM.angle_diff(d_in, d_out)   # (clockwise on the screen: a right turn is convex)
+			ttr[k * 2] = qx
+			ttr[k * 2 + 1] = qy
+			ang[k] = 180 - turn * 360 / 1024
+			ttr.remove_at(k1 * 2 + 1)
+			ttr.remove_at(k1 * 2)
+			sal.remove_at(k1)
+			ang.remove_at(k1)
+			tw.remove_at(k1)
+			if k1 == 0:
+				tg = n0 - 2 if tg == 0 else tg - 1
+			elif tg > k:
+				tg -= 1
+			again = true
+			break
+	for q in ttr.size() / 2:
+		rr = maxi(rr, FM.isqrt(ttr[q * 2] * ttr[q * 2] + ttr[q * 2 + 1] * ttr[q * 2 + 1]) + 1 + tw[q])
+	var pcv: Array = t["pc"]
+	var pcx := int(pcv[0]) * spm / 10000
+	var pcy := int(pcv[1]) * spm / 10000
+	var h := 1 << 20
+	var n := ttr.size() / 2
+	for k in n:
+		var ax := ttr[k * 2]
+		var ay := ttr[k * 2 + 1]
+		var bx := ttr[((k + 1) % n) * 2]
+		var by := ttr[((k + 1) % n) * 2 + 1]
+		var l := maxi(FM.isqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay)), 1)
+		h = mini(h, absi((bx - ax) * (pcy - ay) - (by - ay) * (pcx - ax)) / l)
+	return {"tr": ttr, "tw": tw, "spm": spm, "rr": rr, "h": h, "pc": [pcx, pcy], "sal": sal, "ang": ang, "tg": tg}
+
+
+## A trace fort's vertices on the map (fort-frame metres through _f_w): [vx, vy].
+static func _tr_world(fort: Dictionary) -> Array:
+	var ftr: PackedInt32Array = fort["tr"]
+	var vx := PackedInt32Array()
+	var vy := PackedInt32Array()
+	for q in ftr.size() / 2:
+		var w := _f_w(fort, ftr[q * 2], ftr[q * 2 + 1])
+		vx.append(w.x)
+		vy.append(w.y)
+	return [vx, vy]
+
+
+## How far seaward (the map's -y) of its origin a trace fort turned to `face` keeps its line: the line of the
+## edge the seaward ray from the origin crosses first (the seaward curtain, or at a salient its face).
+static func _tr_sea(shp: Dictionary, face: int) -> int:
+	var probe := {"x": 0, "y": 0, "dir": (face + 256) & 1023, "tr": shp["tr"]}
+	var w := _tr_world(probe)
+	var vx: PackedInt32Array = w[0]
+	var vy: PackedInt32Array = w[1]
+	var n := vx.size()
+	var best := -(1 << 20)
+	var dist := int(shp["h"])
+	for k in n:
+		var ax := vx[k]
+		var ay := vy[k]
+		var bx := vx[(k + 1) % n]
+		var by := vy[(k + 1) % n]
+		if (ax < 0) == (bx < 0) and ax != 0 and bx != 0:
+			continue
+		var y := ay if ax == bx else ay + (by - ay) * (0 - ax) / (bx - ax)
+		if y >= 0 or y <= best:
+			continue
+		best = y
+		var l := maxi(FM.isqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay)), 1)
+		dist = absi(ax * by - ay * bx) / l
+	return dist
+
+
+## The fort with an inside (slice 2c) on its own piece's trace (_tp_fort for a piece with one): the trace
+## scaled to the 2c fort's area, at the landmark's place clear of the plaza, turned with its gate (the
+## piece's front) to the plaza; on the shore with the line its seaward ray crosses on the waterline; out on
+## the water with its gate to the shore (the causeway's).
+static func _tp_fort_tr(o: Dictionary, lm: Dictionary, level: int, w_m: int, pn: String, fh: int, fb: int) -> Dictionary:
+	var shp := tp_fort_shape(pn, fh, fb)
+	var rr: int = shp["rr"]
+	var ext := rr + F_T / 2 + F_DITCH_GAP + F_DITCH + 4
+	var px: int = o["px"]
+	var py: int = o["py"]
+	var hs: int = o["hs"]
+	var coast := int(o["coast"]) != 0
+	var off := coast and int(lm.get("off", 0)) != 0
+	var fx: int = int(o["cx"]) + int(lm["bx"])
+	var fy: int = int(o["cy"]) + int(lm["by"])
+	var need := hs + rr + 14
+	if not off:
+		var dx := fx - px
+		var dy := fy - py
+		var l := FM.approx_len(dx, dy)
+		if l < need:
+			if l == 0:
+				dy = 1
+				l = 1
+			fx = px + dx * need / l
+			fy = py + dy * need / l
+	fx = clampi(fx, ext + 8, w_m - ext - 8)
+	var face := FM.atan2_a(py - fy, px - fx)
+	if coast:
+		var cp: PackedInt32Array = o["cp"]
+		var sy := shore_y(cp, fx)
+		var tang := FM.atan2_a(shore_y(cp, fx + 20) - shore_y(cp, fx - 20), 40)
+		if off:
+			face = (tang + 256) & 1023
+			fy = maxi(sy - rr - 26, rr + 12)
+		elif fy - sy < rr + 40:
+			# (On the shore: its seaward line on the waterline, its gate still to the plaza.)
+			for it in 2:
+				face = FM.atan2_a(py - (sy + rr / 2), px - fx)
+				var ds := _tr_sea(shp, face)
+				fy = sy + ds + 1
+				if it == 0 and FM.approx_len(fx - px, fy - py) < need:
+					fx = clampi(px + (need if fx >= px else -need), ext + 8, w_m - ext - 8)
+					sy = shore_y(cp, fx)
+				elif it == 0:
+					break
+			# (Not off the map's top: its seaward point at least 4 m in.)
+			var pw := _tr_world({"x": 0, "y": 0, "dir": (face + 256) & 1023, "tr": shp["tr"]})
+			var pwy: PackedInt32Array = pw[1]
+			var twl: PackedInt32Array = shp["tw"]
+			var top := 0
+			for q in pwy.size():
+				top = mini(top, pwy[q] - twl[q])
+			fy = maxi(fy, -top + 4)
+	var h: int = shp["h"]
+	return {"x": fx, "y": fy, "h": h, "b": rr - h, "dir": (face + 256) & 1023, "face": face, "side": 1, "level": level,
+		"ext": ext, "piece": tp_index(pn), "off": 1 if off else 0, "e_town": -1, "tr": shp["tr"], "spm": shp["spm"],
+		"rr": rr, "pc": shp["pc"], "sal": shp["sal"], "ang": shp["ang"], "tg": shp["tg"], "tw": shp["tw"]}
 
 
 ## West open town, plan mode (west_outline): the plaza at the frame's centre, the plan's outline (its landward
@@ -5732,7 +6215,12 @@ static func _tp_west_marks(wc: Dictionary, p: Dictionary) -> Array:
 		var ft := tp_foot(tp_name(int(fort["piece"])))
 		var rr := int(fort["h"]) + int(fort["b"])
 		var spm := 2 * rr * 950 / maxi(maxi(int(ft[0]), int(ft[1])), 1)
-		(wc["pieces"] as Array).append([int(fort["piece"]), int(fort["x"]), int(fort["y"]), int(g0["dir"]), spm, rr, 1])
+		var pface := int(g0["dir"])
+		if fort.has("tr"):
+			# (Its own trace: the piece drawn at the trace's scale and turn, the walls on its rampart.)
+			spm = int(fort["spm"])
+			pface = int(fort["face"])
+		(wc["pieces"] as Array).append([int(fort["piece"]), int(fort["x"]), int(fort["y"]), pface, spm, rr, 1])
 		if int(fort.get("off", 0)) != 0 and coast:
 			# The causeway: from the gate's outside to the shore, 8 m wide, open ground.
 			var gx := int(g0["ox"])

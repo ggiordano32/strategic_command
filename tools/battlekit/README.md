@@ -94,3 +94,40 @@ as the main table, and `FOOT` [x0, y0, x1, y1, height] in metres, y down, the fr
 not packed. In the game: `BattleKit.draw_piece(canvas, name, pos_m, yaw, tint, px_per_m)` (static; the pre-lit
 4 px/m atlas, any CanvasItem inside `_draw`, no shader), `BattleKit.has_piece(name)`, `BattleKit.piece_foot(name)`.
 Used by nothing yet: the map builder (phase C) will add the shaded MultiMesh path.
+
+## Mitred wall strips (2026-10-20)
+
+The walls of a settlement are one mesh per ring, not tiled pieces (a tiled rectangle overshoots at every join that
+is not 90 degrees). `build.py` `PIECES_S`: `ws_<t>_<pp>` (the five stone variants) and `ps_<t>` (palisade 8 / 10 / 12;
+the timber wall is the palisade), the same cross-sections as `wall_*` / `pal_*` but periodic along x (merlons and
+stakes at tile-periodic places), three tiles rendered so the lighting sees no end. `pack_strips.py` lights them like
+`pack.py`, cuts the middle tile and writes `assets/battlekit/strips/<name>_{albedo,nrm,low}.png` (one tile: 16 m stone,
+12 m palisade, repeat-sampled, so they are not in the atlases) and `game/battlekit_strips.gd` (tile, v0 / v1 in metres).
+
+```
+blender -b --factory-startup -P tools/battlekit/build.py -- --ppm 8 --out tools/battlekit/_frames \
+    --pieces ws_8_2,ws_10_2,ws_12_2,ws_12_4,ws_14_4,ps_8,ps_10,ps_12
+python3 tools/battlekit/pack_strips.py && godot --headless --path . --import
+```
+
+In the game (`game/battlekit.gd` `_wall_ring`, `game/battlekit_strip.gdshader`): per stretch a quad (UV.x tiles, UV.y
+outer 0 .. inner 1); at each vertex the outer edge goes to where the neighbouring outer faces meet, the inner edge
+likewise (a mitre; longer than 2.5 thicknesses it is bevelled with a wedge triangle). The vertex colour carries the
+stretch's angle for the normal map. The kit's instances are split around it (`strip_at`): houses, strip, gates and
+towers. Shadow bake reads the strip triangles (`battlekit_shadow.gd _raster_strip`). Graphics Low: `draw_mesh` of the
+`_low` texture (fixed light, no yaw baking). No end-cap pieces: every wall ring is closed (a gate piece stands over the
+wall), so none were needed.
+
+## Fort traces (2026-10-20)
+
+`tools/battlekit/fort_trace.py` (pure Python, no Blender) reads the landmark fort pieces' geometry from
+`tools/structures/spec.json` (the parts lists `spec_pieces.py` builds them from) and writes each fort piece's `trace`
+(the outer line of its rampart: the ground-level masonry bodies united, the corner towers' radii, salients, interior
+angles, the gate edge facing the front, the centroid, the area; piece frame of `BattleKit.piece_foot`, metres) into
+its `_frames/<piece>.json` and generates `sim/fort_traces.gd` (the same in decimetres, by plan piece name; the sim's
+copy, read by `MapGen` and by `BattleKit.piece_trace`). `build.py` adds the trace after rendering a fort piece
+(`_add_trace`). Run it on its own after changing a fort's geometry:
+
+```
+python3 tools/battlekit/fort_trace.py
+```

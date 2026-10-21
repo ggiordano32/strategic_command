@@ -917,6 +917,49 @@ def b_gate_arch(P, state, timber=False, D=11.0, hw=4.0):
             P.seg("timber", (sx * (hw - 0.3), D / 2 - 1.8), (sx * (hw - 0.3), -D / 2 + 3.0), 0.35, 0.0, 3.4)
 
 
+# ---- tileable wall strips (the battle view's mitred walls, game/battlekit.gd _wall_ring) ----
+# The same cross-sections as b_wall_sim / b_pal_sim, but periodic along x with no end caps: three
+# tiles are rendered (so the light, shadow-free height and AO see no end) and tools/battlekit/pack_strips.py
+# cuts the middle tile out. Merlons and stakes sit at tile-periodic places.
+def b_wall_strip(P, t, pp, L=16.0, tiles=3):
+    W = L * tiles
+    wy1 = t / 2 - pp
+    wy0 = wy1 - WALK
+    P.box("stone_d", 0, 0, -0.01, W, t + 0.9, 0.9)
+    P.box("stone", 0, (wy0 + t / 2) / 2, 0, W, t / 2 - wy0, 5.0)
+    P.box("stone_d", 0, (wy0 - t / 2) / 2, 0, W, wy0 + t / 2, 5.0 - 1.1)
+    P.box("stone_l", 0, (wy0 + wy1) / 2, 5.0, W, WALK, 0.25)
+    n = 8                                   # merlons per tile
+    for k in range(tiles):
+        for i in range(n):
+            cx = -W / 2 + k * L + (i + 0.5) * L / n
+            P.box("stone", cx, t / 2 - pp / 2, 5.0, 1.1, pp * 0.85, 1.2)
+    P.box("stone", 0, wy0 + 0.3, 5.0, W, 0.6, 0.5)
+
+
+def b_pal_strip(P, t, L=12.0, tiles=3):
+    W = L * tiles
+    P.box("earth", 0, 0, -0.01, W, t + 0.8, 0.5)
+    P.box("earth", 0, 0, 0, W, t, 2.5)
+    P.box("timber", 0, -0.3, 2.5, W, t - 0.6, 0.2)
+    n = 13                                   # stakes per row and tile
+    for k in range(tiles):
+        r = rng(5 + int(t))                  # the same heights in every tile: periodic
+        for i in range(n):
+            for row, y in enumerate((t / 2 - 0.55, t / 2 - 1.3)):
+                xx = -W / 2 + k * L + (i + (0.5 if row else 0.0) + 0.5) * L / n
+                h = 3.6 + r.uniform(-0.3, 0.3)
+                P.cyl("timber", xx, y, 2.5, 0.42, h, 8, r2=0.32)
+                P.cyl("timber", xx, y, 2.5 + h, 0.32, 0.8, 8, r2=0.04)
+    P.box("timber_d", 0, t / 2 - 2.0, 2.7, W, 0.25, 0.3)
+    for k in range(tiles * 3):
+        P.box("timber_d", -W / 2 + (k + 0.5) * L / 3, -t / 2 + 0.3, 2.5, 0.35, 0.35, 0.9)
+
+
+PIECES_S = {"ws_%d_%d" % (t, pp): (48, (lambda t, pp: lambda P: b_wall_strip(P, t, pp))(t, pp)) for t, pp in WALL_VARIANTS}
+for _t in (8, 10, 12):
+    PIECES_S["ps_%d" % _t] = (36, (lambda t: lambda P: b_pal_strip(P, t))(_t))
+
 PIECES = {
     "tower_timber": (14, b_tower_timber), "gate_c": (14, lambda P: b_gate_arch(P, "c")),
     "gate_o": (14, lambda P: b_gate_arch(P, "o")), "gate_b": (14, lambda P: b_gate_arch(P, "b")),
@@ -1201,7 +1244,7 @@ PIECES_L = {k: (0, _lm(v)) for k, v in LANDMARK_SRC.items()}
 
 # ------------------------------------------------------------------ render
 def render(name, ppm, tilt, out):
-    S, fn = PIECES[name] if name in PIECES else (PIECES_W[name] if name in PIECES_W else PIECES_L[name])
+    S, fn = PIECES[name] if name in PIECES else (PIECES_W[name] if name in PIECES_W else (PIECES_S[name] if name in PIECES_S else PIECES_L[name]))
     sc = reset()
     P = Piece()
     P.info = None
@@ -1236,6 +1279,17 @@ def render(name, ppm, tilt, out):
         bpy.ops.render.render(write_still=True)
     json.dump({"name": name, "canvas_m": S, "ppm": ppm, "px": px, "zmax": ZMAX, "tilt": tilt, "info": P.info},
               open(base + ".json", "w"))
+    _add_trace(name, base + ".json")
+
+
+def _add_trace(name, path):
+    """A landmark fort piece's trace (the outer line of its rampart) into its .json: tools/battlekit/fort_trace.py
+    (also generates sim/fort_traces.gd when run on its own)."""
+    import importlib.util
+    sp = importlib.util.spec_from_file_location("bk_fort_trace", os.path.join(HERE, "fort_trace.py"))
+    m = importlib.util.module_from_spec(sp)
+    sp.loader.exec_module(m)
+    m.add_trace(name, path)
 
 
 def main():

@@ -38,6 +38,10 @@ var _spr: Sprite2D
 var _nrm := PackedByteArray()      # atlas_nrm raw RGBA8 (B = height / 20 m)
 var _alb := PackedByteArray()      # atlas_albedo raw RGBA8 (A = coverage)
 var _aw := 0
+var _snrm := PackedByteArray()     # the wall strip's normal / albedo (the strip is one repeating texture)
+var _salb := PackedByteArray()
+var _sw := 0
+var _sh_px := 0
 var _touch := PackedInt32Array()
 var _ao_n := 3
 var _k := 1.0                      # look strength (diorama 1, painterly PAINT_K)
@@ -51,6 +55,11 @@ func build(p_kit) -> void:
 	_nrm = _raw(kit.TEX_NRM)
 	_alb = _raw(kit.TEX_ALB)
 	_aw = int(Atlas.ATLAS_W)
+	if not kit.s_vx.is_empty():
+		_snrm = _raw(kit.TEX_S_NRM)
+		_salb = _raw(kit.TEX_S_ALB)
+		_sw = kit.TEX_S_NRM.get_width()
+		_sh_px = kit.TEX_S_NRM.get_height()
 	# Bounds of everything, a margin on the north-west, the shadow's reach on the south-east.
 	var lo := Vector2(1e9, 1e9)
 	var hi := Vector2(-1e9, -1e9)
@@ -58,6 +67,9 @@ func build(p_kit) -> void:
 		var fp := _footprint(i)
 		lo = lo.min(fp.position)
 		hi = hi.max(fp.end)
+	for pt in kit.s_vx:
+		lo = lo.min(pt)
+		hi = hi.max(pt)
 	_org = (lo - Vector2(4, 4)).floor()
 	var end := (hi + Vector2(MAX_LEN * 0.75, MAX_LEN * 0.75)).ceil()
 	_w = int((end.x - _org.x) / cell)
@@ -67,8 +79,11 @@ func build(p_kit) -> void:
 	_ao.resize(_w * _h)
 	_px.resize(_w * _h * 4)
 	_px.fill(255)
-	for i in kit.i_piece.size():
-		_raster(i, 0, 0, _w, _h)
+	for i in kit.i_piece.size() + 1:
+		if i == kit.strip_at:
+			_raster_strip(0, 0, _w, _h)   # (the walls stand over the houses before them, under the gates and towers after)
+		if i < kit.i_piece.size():
+			_raster(i, 0, 0, _w, _h)
 	_cast(0, 0, _w, _h, 0, 0, _w, _h)
 	_blur(0, 0, _w, _h)
 	_touch.resize(0)
@@ -151,6 +166,53 @@ func _raster(i: int, x0: int, y0: int, x1: int, y1: int) -> void:
 			if _alb[o + 3] < 128:
 				continue
 			_ht[cy * _w + cx] = float(_nrm[o + 2]) / 255.0 * 20.0 * hs
+
+
+## The wall strip's triangles' heights inside [x0, x1) x [y0, y1): the texel the UV names (the UV is affine in
+## the position: u tiles along the stretch from its origin, v across).
+func _raster_strip(x0: int, y0: int, x1: int, y1: int) -> void:
+	if _snrm.is_empty():
+		return
+	var vx: PackedVector2Array = kit.s_vx
+	var hs: float = kit.strip_hs
+	var vo: float = kit.strip_vo
+	var vspan: float = kit.strip_vi - kit.strip_vo
+	for t in vx.size() / 3:
+		var a := vx[t * 3]
+		var b := vx[t * 3 + 1]
+		var c := vx[t * 3 + 2]
+		var lo := a.min(b).min(c)
+		var hi := a.max(b).max(c)
+		var cx0 := maxi(int(floor((lo.x - _org.x) / cell)), x0)
+		var cy0 := maxi(int(floor((lo.y - _org.y) / cell)), y0)
+		var cx1 := mini(int(ceil((hi.x - _org.x) / cell)), x1)
+		var cy1 := mini(int(ceil((hi.y - _org.y) / cell)), y1)
+		var d: Vector2 = kit.s_d[t]
+		var nn := Vector2(-d.y, d.x)
+		var org: Vector2 = kit.s_a[t]
+		var step: float = kit.s_step[t]
+		var den := (b - a).cross(c - a)
+		if absf(den) < 0.0001:
+			continue
+		for cy in range(cy0, cy1):
+			var qy := _org.y + (cy + 0.5) * cell
+			for cx in range(cx0, cx1):
+				var q := Vector2(_org.x + (cx + 0.5) * cell, qy)
+				var w0 := (b - q).cross(c - q) / den
+				var w1 := (c - q).cross(a - q) / den
+				var w2 := 1.0 - w0 - w1
+				if w0 < 0.0 or w1 < 0.0 or w2 < 0.0:
+					continue
+				var u := (q - org).dot(d) / step
+				var v := ((q - org).dot(nn) - vo) / vspan
+				if v < 0.0 or v >= 1.0:
+					continue
+				var ax := clampi(int((u - floor(u)) * float(_sw)), 0, _sw - 1)
+				var ay := clampi(int(v * float(_sh_px)), 0, _sh_px - 1)
+				var o := (ay * _sw + ax) * 4
+				if _salb[o + 3] < 128:
+					continue
+				_ht[cy * _w + cx] = float(_snrm[o + 2]) / 255.0 * 20.0 * hs
 
 
 ## Shadow and AO from the sources in [sx0, sx1) x [sy0, sy1) into the targets in [tx0, tx1) x [ty0, ty1).
@@ -255,7 +317,11 @@ func rebake_instance(i: int) -> void:
 			_ht[c] = 0.0
 			_sh[c] = 0
 			_ao[c] = 0
-	for j in kit.i_piece.size():
+	for j in kit.i_piece.size() + 1:
+		if j == kit.strip_at:
+			_raster_strip(x0, y0, x1, y1)
+		if j == kit.i_piece.size():
+			break
 		var f2 := _footprint(j)
 		if f2.end.x < _org.x + x0 * cell or f2.position.x > _org.x + x1 * cell \
 				or f2.end.y < _org.y + y0 * cell or f2.position.y > _org.y + y1 * cell:

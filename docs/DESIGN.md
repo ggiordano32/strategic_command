@@ -1772,7 +1772,7 @@ from the sim's tower list (the gate towers are in it). High: one MultiMesh and `
 Celtic, Spanish colonial, native). Low / CPU path: the same instances through `draw_texture_rect_region`
 from the pre-lit atlas, no shader, no shadow layer. `game/battlekit_shadow.gd` bakes a cast shadow + AO
 from the pieces' heights (0.5 m grid, one multiplied sprite), re-baking only the window round a gate
-that breaks. Stairs and banners are drawn above the kit (`CityDraw.draw_over`); the campaign's city
+that breaks. Since 2026-10-20 the walls are not tiled pieces but one mitred strip mesh per ring (`BattleKit._wall_ring`: a quad per stretch from the repeating `assets/battlekit/strips/ws_<t>_<pp>` / `ps_<t>` texture, outer and inner edges meeting the neighbouring stretch's at the mitre, bevelled beyond 2.5 thicknesses), drawn between the houses and the gates / towers. Stairs and banners are drawn above the kit (`CityDraw.draw_over`); the campaign's city
 preview keeps the old polygon drawing (`draw_static` without `kit`). Testing aids: `--no-kit` (old
 look), `--no-kit-shadow`, `--kit-culture=N`, `--city-info`. The crenellated round tower is the
 default; the roofed round tower (read as a ball at game scale) is not used. View only.
@@ -3333,6 +3333,8 @@ parade), `game/hud.gd` / `game/battle.gd` / `game/controls.gd` (Occupy),
   powder magazine in its seaward corner (a new kit piece). The street graph
   gets each gate's three nodes, the parade every 8 m and every stair's foot.
   The town's roads and lots keep clear of the fort and its ditch.
+- **A landmark's own trace** (campaign towns' plan forts, 2026-10-20): the same fort on the piece's outline (the Morro's triangle,
+  San Marcos's bastioned square), DESIGN "Fort traces from the piece".
 - **Its guns.** A fort gun (UT.FORT_GUN: a fixed long gun, crew 4, 260 m,
   roundshot that bounds 40 m, a shot in 40 s, 16 a gun; the tower engines'
   rules: it turns, is shot at, its crew on the walk) on each landward
@@ -6411,16 +6413,52 @@ custom battles carry no plan and keep the generators.
   shore are the sea wall, the plaza at the plan's; the citadel stands at the landmark fort (else, for a polis or Punic town, on the high
   ground); the culture's street lattice inside.
 - **Landmarks**: the town's fort with an inside (`tp_fort_pick`: a fort of its own table first, not the governor's alcazar; else the
-  generic harbour fort; else the generic city fort) is the 2c fort (bastioned square 85-115 % of the generated one by the piece's size;
-  on a headland its seaward curtain on the water; at the high ground turned with its gate to the plaza; the Ulua out on the water with
-  a causeway 8 m wide to the shore and its gate to it). On a walled plan the fort is the citadel ring. Every other landmark is a solid
+  generic harbour fort; else the generic city fort) is the 2c fort on the piece's own trace (since 2026-10-20, "Fort traces from the
+  piece" below: the Morro's triangle, San Marcos's bastioned square, scaled to the area of the 2c square 85-115 % of the generated one
+  by the piece's size; turned with its gate to the plaza; on the shore with its seaward line on the waterline; the Ulua out on the
+  water with a causeway 8 m wide to the shore and its gate to it). On a walled plan the fort is the citadel ring (still the culture's
+  six-sided ring under the piece). Every other landmark is a solid
   stone body of the piece's size at its place (`B_PIECE`, or `B_FORT` for a second fort, `B_TAVERN` / `B_GOVERNOR` where it can be
   held); the plaza's civic piece is the town's church (`B_TEMPLE`, held as any church) or the owner's shrine; Cartagena's sea wall is a
   2 m stone run on the waterline with its baluartes. Bodies carry entry 17 = 1 (drawn as their piece).
 - **View**: the layout's `pieces` (`[piece, x, y, front angle, scale per mille, radius, 1 = the fort with an inside]`) are drawn from the
   battle kit's block 2 (`BattleKit.draw_piece`, the pre-lit atlas) by a node of the kit under its walls and houses (`city_draw.gd
-  draw_pieces`; the preview draws them in `draw_static`); a fort's piece lies under the kit's walls (its rock and towers show; the trace
-  stays the 2c square).
+  draw_pieces`; the preview draws them in `draw_static`); a fort's piece lies under the kit's walls at the trace's scale and turn (its
+  rock and corner towers show, the walls on its rampart).
+
+### Fort traces from the piece (as built, 2026-10-20)
+
+Owner (Havana's Morro): the fort's wall ring was the generic 2c bastioned square laid over the Morro's triangle, so the piece showed
+through and the walls did not follow it. Each landmark fort's trace now comes from its own piece's outline.
+
+- **Data.** `tools/battlekit/fort_trace.py` (pure Python, from the minis' geometry `tools/structures/spec.json`, the parts lists the kit
+  pieces are built from) takes each fort piece's rampart: the boxes and polygons of coquina, brick or stone standing within 2 m of the
+  ground (else the lowest masonry body: the rock fort's top), unites their footprints and keeps the corner towers (a masonry cylinder
+  on a vertex: its radius). Salients: a bastion is a run of convex vertices between reflex ones, its point the run's middle vertex, or
+  with an even run the middle edge (a turned-square bastion's flat nose); with no reflex vertex every corner. The gate edge: the
+  longest of the edges facing the piece's front most (a quarter of the longest or more). Output in the piece frame of
+  `BattleKit.piece_foot` (metres, y down, the front at -y): `trace` in each piece's `_frames/<piece>.json` (`build.py` adds it after
+  rendering a fort piece) and the generated `sim/fort_traces.gd` (decimetres: vertices, salient flags, interior angles, tower radii,
+  the gate edge, the parade's centre = the centroid, the area), which the sim reads (the sim does not read the view) and
+  `BattleKit.piece_trace(name)` reads for the view. Built: Morro triangle (3 salients, towers r 3.1 m), Morro of San Juan 26 x 14
+  rectangle (4), Fuerza square with four flat-nosed bastions (16 vertices), San Felipe triangle (3), harbour fort rectangle (4,
+  towers), San Marcos square with four bastions (24 vertices: shoulder, nose, nose, shoulder, flank, gorge), Ulua rectangle with four
+  bastions (16), Fort Charles rectangle (4), rock fort (its top, 4), the generic city fort square (4, towers).
+- **The fort on it** (`MapGen.tp_fort_shape` / `tr_shape`, `_tp_fort_tr`, `_w_fort_tr`; plan towns' forts at walls 1-2, the 2c
+  machinery otherwise unchanged; the generated maps' forts keep the square). Scaled to the 2c square's area (its `F_H` / `F_B` by
+  level and the piece's size), the piece drawn at that scale (`pieces` entry: the trace's origin, its turn, its scale); a flank shorter
+  than 12 m (San Marcos's) is dropped, its face and curtain run on to meet. Turned with its gate edge to the plaza (the Ulua's to the
+  shore); on the shore the edge the seaward ray from its origin crosses lies on the waterline (its seaward point at least 4 m inside
+  the map). The walls (`_wall_band`) on its edges; its corner towers round C_TOWER outside the walk (the walk turns the corner
+  through them); an acute salient's parade tip narrower than 3 m is rampart; the main gate in the middle of the gate edge, the sally
+  port in the edge most nearly opposite (24 m or longer, not on the sea); stretches cut 7 m short of a salient (an acute one's by its
+  cotangent, 18 m at most), 4 m of another convex corner, 2 m of a flat nose's ends and a reflex corner (a slanted stretch's end cell
+  made walk); the parade is the open ground reached from inside the main gate, open ground it does not reach is rampart at the walk's
+  level (a bastion's terreplein, the inner face beside it too; shut in by a building: solid); the ditch round the land edges; the
+  barracks along the longest other edge, the magazine on the sally port's edge a quarter along; guns on the landward salients (2 m in,
+  or a flat nose's middle) and on the most seaward edge; the citadel's middle (cit x, y: the guns' embrasure arcs, `fort_cmp`) the
+  parade's centre. The knoll's parade is levelled inside the trace and 2 m round it (`terrain.gd`). Nav: ring nodes at the trace's
+  reach, parade nodes over it.
 - **Agreement** with the overworld (`tests/town_plan_test.gd`): for every region and every level 0-2, walls 0-3 the landmark set and
   its turn round the town are the same in `CTown.plan` and `TownPlan._build`, the civic piece too (`CTown` follows the overworld's
   rules: the generic level 2 fort / tower 14 m from the church in centimetres, no church outside the town). Known: Port Royal's

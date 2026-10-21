@@ -207,4 +207,5 @@ def main():
     print("atlas %dx%d, %d pieces, %.1f KB gd" % (W, H, len(items), os.path.getsize(gd) / 1024))
 
 
-main()
+if __name__ == "__main__":
+    main()

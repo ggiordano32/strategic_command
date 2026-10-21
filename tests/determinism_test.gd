@@ -7032,6 +7032,37 @@ func _occ_run(p_seed: int, snaps: Array) -> Dictionary:
 ## carries the fort) and is identical on repeat (every 50 ticks) and across
 ## snapshot / restore (at 1,000 and 2,600, 120 ticks each). (3) Carthage at
 ## walls 2 (Rome): its Byrsa is the citadel ring, drawn as the piece.
+## A plan fort's trace on the map (_check_town): vertices, salients (sim/fort_traces.gd sal 1 or a flat nose),
+## the main gate's way off the plaza's bearing (1024 a turn), open parade cells inside the trace off the
+## parade's piece of ground, stretch ends not joined.
+func _trace_facts(sim: BattleSim, lay: Dictionary) -> Dictionary:
+	var fort: Dictionary = lay.get("fort", {})
+	var poly: PackedInt32Array = (lay["cit"] as Dictionary).get("poly", PackedInt32Array())
+	var vx := PackedInt32Array()
+	var vy := PackedInt32Array()
+	for q in poly.size() / 2:
+		vx.append(poly[q * 2])
+		vy.append(poly[q * 2 + 1])
+	var nsal := 0
+	for v in fort.get("sal", []):
+		if int(v) == 1 or int(v) == 2:
+			nsal += 1
+	var g0: Dictionary = (lay["gates"] as Array)[0]
+	var pl: Array = lay["plaza"]
+	var off := absi(FM.angle_diff(int(g0["dir"]), FM.atan2_a(int(pl[1]) - int(g0["y"]), int(pl[0]) - int(g0["x"]))))
+	var pockets := 0
+	for j in sim.ob_h:
+		for i in sim.ob_w:
+			var c: int = j * sim.ob_w + i
+			if sim.obs[c] == MapGen.C_OPEN and MapGen._pt_in(vx, vy, i * 2 + 1, j * 2 + 1) and sim.cmp[c] != sim.fort_cmp:
+				pockets += 1
+	var loose := 0
+	for k in sim.ws_nb.size():
+		if sim.ws_nb[k] < 0:
+			loose += 1
+	return {"n": vx.size(), "sal": nsal, "gate_off": off, "pockets": pockets, "loose": loose, "traced": 1 if fort.has("tr") else 0}
+
+
 func _town_scenario(pack: String, key: String, lvl: int, walls: int) -> Dictionary:
 	CData.use_pack(pack)
 	var st := CState.new_campaign("town", 5, [], {}, [], pack)
@@ -7115,10 +7146,15 @@ func _check_town() -> void:
 		if sim.u_side[u] == sim.city_def and sim.u_wall[u] > 0 and sim.u_type[u] != UT.FORT_GUN:
 			garr += 1
 	var plaza_c: int = sim.cmp[(sim.plaza[1] >> 11) * sim.ob_w + (sim.plaza[0] >> 11)]
-	if sim.fort_on != 1 or sim.n_outer != 0 or sim.n_gates != 2 or sim.ws_x0.size() < 8 or garr < 1 or sim.fort_cmp < 0 \
+	if sim.fort_on != 1 or sim.n_outer != 0 or sim.n_gates != 2 or sim.ws_x0.size() < 5 or garr < 1 or sim.fort_cmp < 0 \
 			or sim.fort_cmp == plaza_c:
 		bad.append("Havana walls 1: the Morro's fort: fort_on %d, outer gates %d, gates %d, stretches %d, garrison units %d, parade piece %d (plaza %d)" % [
 			sim.fort_on, sim.n_outer, sim.n_gates, sim.ws_x0.size(), garr, sim.fort_cmp, plaza_c])
+	# The fort's own trace (the Morro piece's outline, sim/fort_traces.gd): a triangle, three salients, its gate
+	# to the town; the walls on it (the citadel's poly is the trace), every stretch end but the gates' joined.
+	var mfacts := _trace_facts(sim, lay)
+	if int(mfacts["n"]) != 3 or int(mfacts["sal"]) != 3 or int(mfacts["gate_off"]) > 128 or int(mfacts["loose"]) > 4:
+		bad.append("Havana walls 1: the Morro's trace %s (want 3 vertices, 3 salients, its gate within 45 degrees of the plaza, loose ends <= 4)" % str(mfacts))
 	# A traced shot through the cathedral (a stone block of the piece's size) is stopped; one across the plaza is not.
 	var cat: Array = pcs.get("cv_cathedral", [])
 	var blocked := -2
@@ -7147,6 +7183,21 @@ func _check_town() -> void:
 	var res := ws.result()
 	if ws.fort_on != 1 or not res.has("fort"):
 		bad.append("Havana storm: fort_on %d, result fort %s" % [ws.fort_on, str(res.get("fort", "-"))])
+	# St Augustine (San Marcos) at walls 2: the square with four bastions, its gate to the town, its parade one
+	# piece of ground (no bastion pocket), the storm identical on repeat and across snapshot / restore.
+	var sa := _town_scenario("west", "st_augustine", 2, 2)
+	var ssim := BattleSim.new()
+	ssim.setup(sa["scenario"], 4242)
+	var sfacts := _trace_facts(ssim, ssim.map_info["city"])
+	if MapGen.tp_name(int((ssim.map_info["city"]["fort"] as Dictionary).get("piece", -1))) != "san_marcos" or int(sfacts["sal"]) != 4 \
+			or int(sfacts["gate_off"]) > 128 or int(sfacts["pockets"]) != 0 or int(sfacts["loose"]) > 4 or ssim.fort_cmp < 0:
+		bad.append("St Augustine walls 2: San Marcos's trace %s (want 4 salients, the gate to the plaza, no pockets, loose ends <= 4)" % str(sfacts))
+	var sa1 := _town_run(sa["scenario"], 53197, [1000, 2600], 3200)
+	var sa2 := _town_run(sa["scenario"], 53197, [], 3200)
+	if sa1["hashes"] != sa2["hashes"]:
+		bad.append("St Augustine storm: the repeat diverged")
+	if int(sa1["twin_bad"]) != 0:
+		bad.append("St Augustine storm: the restored copies diverged (%d)" % int(sa1["twin_bad"]))
 	# Carthage (Rome) at walls 2: the Byrsa is the citadel, drawn as its piece.
 	var ca := _town_scenario("rome", "zeugitana", 2, 2)
 	var cs := BattleSim.new()
@@ -7160,8 +7211,8 @@ func _check_town() -> void:
 		bad.append("Carthage walls 2: plan map %d, citadel %s, Byrsa piece %s" % [int(cl.get("tp", 0)), str(not (cl["cit"] as Dictionary).is_empty()), str(byrsa)])
 	CData.use_pack("rome")
 	if bad.is_empty():
-		print("PASS town plan: Havana walls 1 from the plan (Morro at mouth0, the fort with an inside: %d stretches, %d garrison units, its parade its own ground; Fuerza at mouth1; no town wall); a shot through the cathedral stopped at %d, across the plaza clear; the storm to tick %d (winner %d) identical on repeat and across snapshot / restore, result fort %s; Carthage walls 2: the Byrsa's citadel" % [
-			sim.ws_x0.size(), garr, blocked / M, ws.tick, ws.winner, str(res.get("fort", {}))])
+		print("PASS town plan: Havana walls 1 from the plan (Morro at mouth0, the fort with an inside on the Morro's own trace: %s, %d stretches, %d garrison units, its parade its own ground; Fuerza at mouth1; no town wall); a shot through the cathedral stopped at %d, across the plaza clear; the storm to tick %d (winner %d) identical on repeat and across snapshot / restore, result fort %s; St Augustine walls 2: San Marcos's trace %s, its storm to tick %d identical on repeat and across snapshot / restore; Carthage walls 2: the Byrsa's citadel" % [
+			str(mfacts), sim.ws_x0.size(), garr, blocked / M, ws.tick, ws.winner, str(res.get("fort", {})), str(sfacts), (sa1["sim"] as BattleSim).tick])
 	else:
 		for x in bad:
 			_fail(str(x))
