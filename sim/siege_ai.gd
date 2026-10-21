@@ -154,6 +154,10 @@ const SP_LINE_PCT := 40       # (balance T: 60; 40 / 50 / 60 gave 69 / 12 / 31 %
 const SP_STEP := 15
 const SP_WAIT_R := 70 * M
 const SP_WORN := 60
+const SP_WAIT_T := 900       # ... at most this long a strongpoint (ticks: 90 s), then in at the run (docs/AI.md 31)
+const SP_FIRE_PCT := 5       # ... or at once when it loses this % of its men within a SP_FIRE_T mark while waiting
+const SP_FIRE_T := 200       # ... (ticks: 20 s)
+const SP_BAND_T := 900       # a West town with no works (walls 0): the attacking musket lines stand off (out of reach) this long into the assault, then go in
 const SP_LAT_STEP := 6 * M      # a skirmisher's strongpoint: candidates this far apart across the street line ...
 const SP_LAT_N := 3              # ... this many each side (_sp_cover)
 const SP_COVER_R := 10 * M       # ... scored by the cover cells this near
@@ -779,21 +783,66 @@ static func _bound_storm(sim, u: int) -> void:
 ## An attacking West line unit storming an open town (C7): a strongpoint
 ## within SP_WAIT_R (a defending skirmisher unit holding cover spots) still
 ## whole (SP_WORN % of its men, not disordered) is left to the skirmishers:
-## true if u waits (halted) for it to be worn down.
+## true if u waits (halted) for it to be worn down. The wait is bounded
+## (open-town pass, docs/AI.md 31): SP_WAIT_T after the first of ours began
+## waiting on that strongpoint, or as soon as the unit loses SP_FIRE_PCT % of
+## its men within a SP_FIRE_T mark while waiting, it goes in at the strongpoint
+## at the run, and every unit of ours waiting on the same one goes with it;
+## a unit that went in waits no more. (A held building is not a strongpoint
+## here: its men are at the windows, not at cover spots, and the storming
+## foot go at its door.)
 static func _sp_wait(sim, u: int) -> bool:
 	if sim.ai_prog[2] != 0:
 		return false  # all out: everyone goes in
+	if sim.u_ai_y[u] < 0:
+		return false  # (gone in: no more waiting)
 	var side: int = sim.u_side[u]
 	for o in sim.n_units:
 		if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.u_cvb[o] < 0:
 			continue
 		if sim.u_alive[o] * 100 < sim.u_count0[o] * SP_WORN or sim.u_disorder[o] >= 25:
 			continue
-		if BattleAI._d(sim.u_cx[o] - sim.u_cx[u], sim.u_cy[o] - sim.u_cy[u]) < SP_WAIT_R:
-			if sim.u_order[u] == 1:
-				BattleAI._order(sim, u, {"type": 3}, 5)
-			return true
+		if BattleAI._d(sim.u_cx[o] - sim.u_cx[u], sim.u_cy[o] - sim.u_cy[u]) >= SP_WAIT_R:
+			continue
+		# (The wait's memory, u_ai_y: (start tick + 1) * 1024 + the strongpoint
+		# while waiting, -1 - the strongpoint once gone in; u_ai_t: the men it
+		# had at the last SP_FIRE_T mark * 4096 + the mark.)
+		var w0 := -1
+		for f in sim.n_units:
+			if sim.u_side[f] != side or sim.u_state[f] != U_READY or sim.u_ai[f] != A_STORM:
+				continue
+			var fy: int = sim.u_ai_y[f]
+			if fy == -1 - o:
+				return _sp_go(sim, u, o)  # (a unit of ours went in on it: all go together)
+			if fy > 0 and fy % 1024 == o and (w0 < 0 or fy / 1024 - 1 < w0):
+				w0 = fy / 1024 - 1
+		var mark: int = (sim.tick / SP_FIRE_T) % 4096
+		var mine: int = sim.u_ai_y[u]
+		if mine <= 0 or mine % 1024 != o:
+			sim.u_ai_y[u] = (sim.tick + 1) * 1024 + o
+			sim.u_ai_t[u] = sim.u_alive[u] * 4096 + mark
+			if w0 < 0:
+				w0 = sim.tick
+		if sim.tick - w0 >= SP_WAIT_T:
+			return _sp_go(sim, u, o)  # (waited long enough)
+		if sim.u_count0[u] * SP_FIRE_PCT <= (sim.u_ai_t[u] / 4096 - sim.u_alive[u]) * 100:
+			return _sp_go(sim, u, o)  # (shot up while waiting)
+		if mark != sim.u_ai_t[u] % 4096:
+			sim.u_ai_t[u] = sim.u_alive[u] * 4096 + mark
+		if sim.u_order[u] == 1:
+			BattleAI._order(sim, u, {"type": 3}, 5)
+		return true
+	if sim.u_ai_y[u] > 0:
+		sim.u_ai_y[u] = 0  # (nothing to wait for now)
 	return false
+
+
+## Unit u goes in on strongpoint o now (the wait over): at it, at the run.
+static func _sp_go(sim, u: int, o: int) -> bool:
+	sim.u_ai_y[u] = -1 - o
+	if sim.u_order[u] != O_ATTACK or sim.u_target[u] != o:
+		BattleAI._attack(sim, u, o, 1)
+	return true
 
 
 static func _defender(sim, u: int) -> void:
@@ -2498,7 +2547,9 @@ static func _att_missile(sim, u: int, phase: int) -> void:
 			and sim.t_cover[sim.u_otype[u]] != 0:
 		_bound_storm(sim, u)  # (West skirmishers: into the streets by bounds, C7)
 		return
-	if phase == SP_ASSAULT and (sim.ai_prog[2] != 0 or _no_foot(sim, side) or sim.u_ammo[u] <= 0):
+	if phase == SP_ASSAULT and (sim.ai_prog[2] != 0 or _no_foot(sim, side) or sim.u_ammo[u] <= 0 \
+			or (sim.wt_on != 0 and sim.n_outer == 0 and int(sim.map_info.get("city", {}).get("wwalls", 0)) == 0 \
+				and sim.tick - sim.ai_t[side] >= SP_BAND_T)):
 		_storm(sim, u)
 		return
 	BattleAI._set_mode(sim, u, A_COVER)
@@ -2520,6 +2571,15 @@ static func _att_missile(sim, u: int, phase: int) -> void:
 				var edge := int(lay["bot"]) * M
 				var ty2 := clampi(edge + sgn * (want - int(lay["r0"]) * M), 8 * M, sim.field_h - 8 * M)
 				var tx2 := clampi(ox + _spread(rk0.x, rk0.y, 20 * M), 8 * M, sim.field_w - 8 * M)
+				# (A town with no works, walls 0: out of the reach of the defenders it
+				# sees shooting from cover, the owner's houses at the street mouths
+				# picked the band off; none out of reach on the field: in with the
+				# storm. Open-town pass, docs/AI.md 31.)
+				var oy2 := _out_of_cover_reach(sim, side, tx2, ty2, sgn) if int(lay.get("wwalls", 0)) == 0 else ty2
+				if oy2 == -1:
+					_storm(sim, u)
+					return
+				ty2 = oy2
 				if absi(oy - ty2) > 10 * M or sgn * (oy - edge) < 0:
 					_go_home(sim, u, tx2, ty2, 256 if sgn < 0 else 768, 10)
 				return
@@ -2559,6 +2619,28 @@ static func _fire_at_gate(sim, u: int, g: int) -> bool:
 	if sim.u_gtarget[u] != g:
 		BattleAI._order(sim, u, {"type": ORDER_ATTACK, "target": -1, "gate": g, "run": 0}, 0)
 	return true
+
+
+## The West band (an open town's stand-off) at (x, y) moved out (sgn: +1 down the field) of the reach (its range +
+## BattleAI.GUN_COVER_PAD) of every defender the side sees shooting from cover (a held building, cover spots); -1 if
+## the field ends first.
+static func _out_of_cover_reach(sim, side: int, x: int, y: int, sgn: int) -> int:
+	var ny := y
+	for o in sim.n_units:
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.u_ammo[o] <= 0 or sim.mrange(o) <= 0:
+			continue
+		if not ((sim.occ_on != 0 and sim.u_occ[o] > 0) or sim.u_cvb[o] >= 0) or sim.hidden_from(o, side):
+			continue
+		var reach: int = sim.mrange(o) + BattleAI.GUN_COVER_PAD
+		var dx: int = x - sim.u_cx[o]
+		if absi(dx) >= reach:
+			continue
+		var cy: int = sim.u_cy[o] + sgn * FM.isqrt(reach * reach - dx * dx)
+		if sgn * (cy - ny) > 0:
+			ny = cy
+	if ny < 8 * M or ny > sim.field_h - 8 * M:
+		return -1
+	return ny
 
 
 static func _att_cav(sim, u: int, phase: int) -> void:

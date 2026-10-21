@@ -1897,10 +1897,11 @@ could give (ORDER_OCCUPY, ORDER_GATE, attack and move orders).
 - **Buildings held (street AI).** A West musket line's street post becomes
   the building nearest it (door step within `SP_OCC_R` 24 m, `SP_OCC_MIN` 10
   firing places or more): it is sent in (ORDER_OCCUPY) and its reserve rule
-  keeps it there, firing at will (`_reserve`). Attacking line foot wait off a
-  held building as off a strongpoint (`_sp_wait`) till the skirmishers have
-  worn it below `SP_WORN`; storming foot that attack it go at its door (the
-  sim's attack goal is the door step).
+  keeps it there, firing at will (`_reserve`). Storming foot that attack it
+  go at its door (the sim's attack goal is the door step). (Not as first
+  written: attacking line foot do not wait off a held building as off a
+  strongpoint; `_sp_wait` keys on cover spots, `u_cvb`, which men at windows
+  never have. Section 31.)
 - **The musket line's reserve (field battles, West rows, `sim/battle_ai.gd`).**
   Melee foot and horse counter-charge (`_counter_target`) enemy foot or horse
   within `CC_REACH` 140 m that fight one of theirs or are charging one (an
@@ -1980,3 +1981,63 @@ fleet grounds and never engages; measured with `tests/sea_probe.gd`):
   Open: a scripted player who sends every ship at the nearest enemy and
   never flees wins 15-19 of 24 against it (11-15 before): its flight rule
   is the suspect (sea balance follow-ons).
+
+## 31. Open West towns: out of the houses' reach, bounded waits (2026-10-21)
+
+The owner (tablet, West campaign, walls 0): the AI armies do not push into
+towns with no walls; they sit just in range of his musket companies, which
+he puts in the houses at the street mouths (ORDER_OCCUPY, fire at will),
+and get picked off. Measured with `tests/open_town_probe.gd` (a campaign
+town on its own plan at walls 0, the West sets' armies, the AI attacking,
+the defender scripted like the owner: every musket company in the building
+nearest a street mouth, the rest on the plaza; `--occ=mixed`: musketeers in
+houses, buccaneers in cover a quarter of the way in from the mouths).
+Diagnosis: not the C7 wait. `_sp_wait` keys on cover spots (`u_cvb`), which
+a unit in a building never has, so the storming line foot went at the
+doors at once (first at a door 1.2-1.3 min after contact). The halted
+units in reach were the attacking **musket lines in the open-town
+stand-off band** (`A_COVER`: `S_OPEN_PCT` / `S_OPEN_OUT`, 50-70 m off the
+landward edge), well inside a house's 120 m, standing there until all out
+(`S_ASSAULT_ALL`, 4 minutes into the assault): 316 of 351 unit-seconds
+halted in reach a battle. Against buccaneers in cover the C7 wait did
+happen (87 unit-seconds a battle, Havana 180), unbounded.
+
+As built (`sim/siege_ai.gd`; West rows only, Rome untouched):
+
+- **The band out of reach** (walls 0, a town with no works): the band
+  point of an attacking missile unit is moved out, down the field, of the
+  reach (range + `GUN_COVER_PAD` 30 m) of every defender it sees shooting
+  from cover (a held building, cover spots: `_out_of_cover_reach`); none
+  out of reach before the field's edge: it goes in with the storm.
+- **The musket lines go in** (walls 0): `SP_BAND_T` 90 s into the assault
+  the band's missile units storm (`_storm`) with the foot, as at all out,
+  rather than standing out of reach for 4 minutes. All of them at once.
+- **The C7 wait is bounded** (all West open towns): a line unit waiting off
+  a strongpoint goes in on it at the run `SP_WAIT_T` 90 s after the first
+  of ours began waiting on that strongpoint, or at once when it loses
+  `SP_FIRE_PCT` 5 % of its men within a `SP_FIRE_T` 20 s mark while
+  waiting; every unit of ours waiting on the same strongpoint goes with it
+  (the street goes in together), and a unit that went in waits no more
+  (memory in `u_ai_y` / `u_ai_t` of the `A_STORM` unit, hashed).
+
+Tried and not kept: the wait's trigger moved out to the strongpoint's
+reach + pad, a unit already inside it going in at once (the brief's first
+choice): the buccaneers' reach is longer than the distance they are seen
+at, so it ended the wait outright (3 unit-seconds) and won no more; West
+musket lines going in by bounds as the skirmishers do (`_bound_storm`)
+from the start: they stood in reach in the streets instead (14 of 24
+against 19); the band out of reach and the 90 s storm at walls 1-2 (the
+fort, the palisade): AI against AI walls 1 41 -> 52 %, walls 2 33 -> 42 %,
+so both are gated to walls 0. Average and Skilled play these towns alike
+(no Skilled knob is reached in an open town's assault): the probe's
+results are identical at both.
+
+Measured (probe, 3 towns: Havana, Cartagena, Santo Domingo, 8 seeds each,
+per battle; before -> after): owner's defence, attacker wins 19 -> 17 of
+24, attacking line units halted within 120 m of a held house 351 -> 76
+unit-seconds (the band's 316 -> 28), their mean distance 94 -> 106 m,
+attackers killed 392 -> 370, 10.4 -> 9.4 minutes; `--occ=mixed` wins 16 ->
+18, halted in reach 330 -> 58, the C7 wait 87 -> 26 unit-seconds, first at
+a door 1.2 -> 0.9 min. AI against AI (`tests/town_balance.gd`, 16 Spanish
+towns, 16 seeds): walls 0 / 1 / 2 55 / 41 / 33 -> 52 / 39 / 33 %; the
+brief's seven towns 60 / 45 / 25 -> 57 / 46 / 21 %; Rome rows identical.
