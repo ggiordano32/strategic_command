@@ -32,6 +32,14 @@ const NAMES: Array[String] = [
 	"cl_foot", "cl_spear", "cl_horse", "cl_missile", "cl_beast", "cl_engine",
 	"details", "embark", "more",
 ]
+## The West pack's variants (display only): where the pack is "west" the Rome
+## icons that show a bow, an arrow, a crested helmet, a Roman shield, a spear
+## or a ram are drawn by their "_w" twin (resolve()). Gallery: icons_west.png.
+const WEST_NAMES: Array[String] = [
+	"cl_missile_w", "range_w", "fire_w", "hold_fire_w", "barracks_w", "general_w", "workshop_w", "tr_siege_w",
+	"stance_default_w", "cl_spear_w", "tr_anti_cav_w", "tr_ap_w", "tr_long_range_w", "ammo_w",
+]
+const CData := preload("res://campaign/cdata.gd")
 const STROKE := 0.16  # line weight, in half-sizes (unit_icons: 0.17 of its glyph radius)
 const FILL := 0.9     # glyph extent in the cell (5% padding each side)
 
@@ -62,7 +70,16 @@ static func tex(icon: String, px: int = 19) -> Texture2D:
 
 
 static func has(icon: String) -> bool:
-	return NAMES.has(icon)
+	return NAMES.has(icon) or WEST_NAMES.has(icon)
+
+
+## The icon actually drawn for `icon`: its "_w" twin while the West pack is active.
+static func resolve(icon: String) -> String:
+	if CData.pack == "west":
+		var w := icon + "_w"
+		if WEST_NAMES.has(w):
+			return w
+	return icon
 
 
 ## Draw `icon` filling the square centred in `rect` on a CanvasItem (call
@@ -77,7 +94,7 @@ static func draw_rid(rid: RID, icon: String, rect: Rect2, col: Color) -> void:
 	_col = col
 	_s = side * 0.5 * FILL
 	_w = maxf(_s * STROKE, 0.9)
-	_glyph(icon, rect.get_center(), _s)
+	_glyph(resolve(icon), rect.get_center(), _s)
 
 
 ## A Texture2D that draws an icon as vector strokes (see the header).
@@ -237,6 +254,68 @@ static func _glyph(icon: String, c: Vector2, s: float) -> void:
 			_pl([-0.1, -0.55, -0.6, 0.08, -0.1, 0.08], true)
 			if icon == "shipyard":
 				_l(-0.95, 0.85, 0.95, 0.85)
+		"cl_missile_w", "range_w", "fire_w":  # a musket: stock, long barrel, the lock's cock (fire: a ball flying off with dashes)
+			if icon == "fire_w":
+				_l(-0.85, 0.85, -0.1, 0.1, 1.9)
+				_l(-0.1, 0.1, 0.5, -0.5, 0.9)
+				_l(-0.0, 0.0, -0.22, -0.28, 0.8)
+				_dot(0.8, -0.8, 0.14)
+				_l(0.55, -0.1, 0.9, -0.1, 0.7)
+				_l(0.1, -0.55, 0.1, -0.9, 0.7)
+			else:
+				_l(-0.88, 0.85, -0.3, 0.3, 1.9)
+				_l(-0.3, 0.3, 0.9, -0.9, 0.95)
+				_l(-0.12, 0.12, -0.38, -0.2, 0.9)
+		"hold_fire_w":  # the musket struck through
+			_sub("fire_w", 0.0, 0.0, 0.82)
+			_ring(0.0, 0.0, 0.9, 0.85)
+			_l(-0.62, -0.62, 0.62, 0.62, 0.85)
+		"barracks_w", "general_w":  # a tricorne hat (the general's: over a crossed pair of blades)
+			if icon == "barracks_w":
+				_fill([-0.95, 0.35, -0.5, -0.25, -0.28, -0.75, 0.28, -0.75, 0.5, -0.25, 0.95, 0.35, 0.0, 0.15])
+				_l(-0.7, 0.7, 0.7, 0.7, 0.9)
+			else:
+				_fill([-0.95, -0.2, -0.55, -0.7, -0.3, -0.95, 0.3, -0.95, 0.55, -0.7, 0.95, -0.2, 0.0, -0.4])
+				_pl([-0.8, 0.9, -0.1, 0.45, 0.45, 0.2, 0.78, 0.15])
+				_pl([0.8, 0.9, 0.1, 0.45, -0.45, 0.2, -0.78, 0.15])
+		"workshop_w", "tr_siege_w":  # a cannon on a wheeled carriage
+			_l(0.3, 0.0, -0.7, -0.6, 2.3)
+			_l(-0.6, -0.75, -0.82, -0.4, 1.2)
+			_l(0.2, 0.25, 0.9, 0.7, 1.0)
+			_ring(0.0, 0.45, 0.34, 0.9)
+			_dot(0.0, 0.45, 0.1)
+		"stance_default_w":  # a round targe with a boss
+			_ring(0.0, 0.0, 0.85)
+			_ring(0.0, 0.0, 0.5, 0.7)
+			_dot(0.0, 0.0, 0.17)
+		"cl_spear_w", "tr_anti_cav_w":  # a pike with a leaf tip (braced: two, low against the ground)
+			if icon == "cl_spear_w":
+				_l(-0.7, 0.9, 0.5, -0.55, 1.0)
+				_leaf(0.68, -0.76, -0.88, 0.5, 0.15)
+				_l(-0.2, 0.15, 0.2, 0.45, 0.8)
+			else:
+				_l(-0.95, 0.85, 0.95, 0.85, 0.8)
+				for y in [0.55, -0.05]:
+					_l(-0.88, y + 0.3, 0.55, y - 0.85 + 0.3, 0.9)
+					_leaf(0.7, y - 0.7 + 0.3, -1.0, 0.45, 0.13)
+		"tr_ap_w":  # armour piercing: a ball driven through a plate
+			_l(0.15, -0.85, 0.15, 0.85, 1.7)
+			_dot(0.65, 0.0, 0.17)
+			_l(-0.9, 0.0, -0.3, 0.0, 0.9)
+			_l(-0.7, -0.3, -0.3, -0.3, 0.7)
+			_l(-0.7, 0.3, -0.3, 0.3, 0.7)
+		"tr_long_range_w":  # long range: a ball in a dashed flight to a target
+			_ring(0.52, 0.0, 0.38)
+			_dot(0.52, 0.0, 0.1)
+			_l(-0.92, 0.0, -0.62, 0.0)
+			_l(-0.4, 0.0, -0.1, 0.0)
+			_dot(0.05, 0.0, 0.13)
+		"ammo_w":  # a powder keg with hoops, a fuse
+			_pl([-0.5, -0.5, -0.65, 0.0, -0.5, 0.75, 0.5, 0.75, 0.65, 0.0, 0.5, -0.5], true)
+			_l(-0.62, -0.15, 0.62, -0.15, 0.8)
+			_l(-0.62, 0.4, 0.62, 0.4, 0.8)
+			_l(0.0, -0.5, 0.2, -0.85, 0.8)
+			_leaf(0.28, -0.9, -PI * 0.5, 0.3, 0.14)
 		"treasury":  # a stack of three coins
 			_earc(0, -0.45, 0.75, 0.28, 0, TAU)
 			for k in 2:

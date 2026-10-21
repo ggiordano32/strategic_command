@@ -5268,6 +5268,23 @@ reads faction, season icon + year, treasury, income; Deselect / Undo / End
 turn are one bottom-right row. Gallery: `tests/icon_gallery.gd` writes
 `docs/screenshots/icons.png`; before / after: `docs/screenshots/icons_*_phone_*.png`.
 
+West icons (2026-10-21; owner: "Arrows and shield don't quite fit" the Caribbean): the West pack's unit rows
+carry their own glyphs in `game/unit_icons.gd` (display only, the sim never reads "icon"): 23 musketeers (a
+musket: thick stock, thin barrel, the cock, a ramrod), 24 rodeleros (a round targe with a boss, a sword behind
+it), 25 cutlass men (a cutlass crossed with a boarding axe), 26 buccaneers (a plumed wide hat over a long fowling
+piece), 27 lancers (horseshoe, a lance with a swallow-tailed pennon), 28 pistoleers (horseshoe, a flintlock
+pistol), 29 culverins (a cannon on a wheeled carriage, muzzle up-left), 30 the fort gun (the same on a
+parapet), 31 light guns (a short piece on a spoked wheel), 32 native warriors (a macana and a feathered arrow),
+33 native bowmen (a short slanted bow, a fletched arrow), 34 the West general (a tricorne over crossed cutlasses;
+`icon_of` maps the shared general row's 15 to 34 while `CData.pack` is "west"); pikemen keep 3. UI icons with a
+bow, arrow, crested helmet, Roman shield, spear or ram have a "_w" twin in `game/ui_icons.gd` (`WEST_NAMES`:
+cl_missile, range, fire, hold_fire, barracks, general, workshop, tr_siege, stance_default, cl_spear,
+tr_anti_cav, tr_ap, tr_long_range, ammo); `UiIcons.resolve(name)` (used by `draw_rid` and the icon raster atlas)
+picks it while the West pack is active. Movement arrows (move, merge, skirmish, bound, undo...) stay. The West's
+buildings keep the Rome chain names (Barracks, Range, Stables, Workshop); only their icons change. Gallery:
+`tests/icon_gallery.gd` also writes `docs/screenshots/icons_west.png` (glyphs at 16 / 24 / 48 px on both sides,
+tier marks, the twins beside the Rome icons).
+
 ### Sprite pipeline (step 1a, 2026-10-13)
 
 Owner's direction: all art made by us from text, consistent across frames

@@ -52,6 +52,7 @@ static func screen_scale() -> float:
 
 ## Draw `icon` filling the square centred in rect on the canvas item rid, tinted col (as UiIcons.draw_rid).
 static func draw_rid(rid: RID, icon: String, rect: Rect2, col: Color) -> void:
+	icon = UiIcons.resolve(icon)  # the West pack's twin while it is active (the atlas is keyed by it)
 	var side := minf(rect.size.x, rect.size.y)
 	var px := ceili(side * screen_scale() - 0.01)
 	if not enabled or px < 4 or px > MAX_PX or icon == "":
@@ -92,9 +93,10 @@ static func warm(icons: Array, logical_px: Array) -> void:
 		if px < 4 or px > MAX_PX:
 			continue
 		for ic in icons:
-			var key := "%s@%d" % [str(ic), px]
+			var nm := UiIcons.resolve(str(ic))
+			var key := "%s@%d" % [nm, px]
 			if not _slots.has(key):
-				_request(key, str(ic), px)
+				_request(key, nm, px)
 
 
 static func _request(key: String, icon: String, px: int) -> void:

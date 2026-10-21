@@ -1385,7 +1385,7 @@ const CHARS: Array[Dictionary] = [
 const WEST: Array[Dictionary] = [
 	{
 		"key": "musketeers", "line": "musket", "pack": "west", "name": "Musketeers", "short": "Musket",
-		"icon": 4, "sprite": 3, "sprite_set": 16,
+		"icon": 23, "sprite": 3, "sprite_set": 16,
 		"size": 100, "files0": 25,
 		"role": "Line infantry with matchlocks",
 		"desc": "Matchlock men in a close line. The whole unit fires one volley, then reloads for twelve seconds: a volley at 60 m drops a dozen men of a dense block, and every volley that lands shakes the unit it strikes (horses most of all). Armour and shields are little use against a ball. By default they hold their fire until the enemy is within about 85 m or coming on. Poor in melee: keep pikes beside them against horse and foot that close.",
@@ -1428,7 +1428,7 @@ const WEST: Array[Dictionary] = [
 	},
 	{
 		"key": "buccaneers", "line": "buccaneer", "pack": "west", "name": "Buccaneers", "short": "Buccaneer",
-		"icon": 14, "sprite": 4, "sprite_set": 18,
+		"icon": 26, "sprite": 4, "sprite_set": 18,
 		"size": 60, "files0": 15,
 		"role": "Skirmishing marksmen",
 		"desc": "Hunters of Hispaniola's wild cattle with long buccaneer muskets: the best shots in the Indies. They fight in loose order, fire further and truer than any line musketeer but reload slowly, and by default fall back from anything that comes for them. Poor in a stand-up melee.",
@@ -1461,7 +1461,7 @@ const WEST: Array[Dictionary] = [
 	},
 	{
 		"key": "rodeleros", "line": "heavy", "pack": "west", "name": "Rodeleros", "short": "Rodelero",
-		"icon": 0, "sprite": 0, "sprite_set": 19,
+		"icon": 24, "sprite": 0, "sprite_set": 19,
 		"size": 100, "files0": 25,
 		"role": "Sword and buckler shock foot",
 		"desc": "Spanish sword-and-buckler men in morion and breastplate who duck under the pikes and cut their way into the enemy line. They win most straight fights hand to hand, but their small round shields stop nothing a musket throws.",
@@ -1479,7 +1479,7 @@ const WEST: Array[Dictionary] = [
 	},
 	{
 		"key": "cutlass", "line": "heavy", "pack": "west", "name": "Cutlass Men", "short": "Cutlass",
-		"icon": 1, "sprite": 0, "sprite_set": 20,
+		"icon": 25, "sprite": 0, "sprite_set": 20,
 		"size": 100, "files0": 25,
 		"role": "Boarding-party shock foot",
 		"desc": "Pirates with cutlass, axe and pistol in the belt, no armour and no drill: they rush in screaming and win or run. Fast and fierce, poor against a steady front and easy meat for volleys.",
@@ -1498,7 +1498,7 @@ const WEST: Array[Dictionary] = [
 	},
 	{
 		"key": "lancers", "line": "cav", "pack": "west", "name": "Lancers", "short": "Lancers",
-		"icon": 6, "sprite": 5, "sprite_set": 21,
+		"icon": 27, "sprite": 5, "sprite_set": 21,
 		"size": 60, "files0": 15,
 		"role": "Light lance cavalry",
 		"desc": "Spanish and Mexican lancers on quick horses. A charge at full speed is as deadly as any heavy horse's into a flank, a rear or a battery, and they ride down routers and skirmishers. Little armour: volleys and pikes cost them dearly.",
@@ -1520,7 +1520,7 @@ const WEST: Array[Dictionary] = [
 	},
 	{
 		"key": "pistoleers", "line": "pistol", "pack": "west", "name": "Pistoleers", "short": "Pistols",
-		"icon": 13, "sprite": 5, "sprite_set": 22,
+		"icon": 28, "sprite": 5, "sprite_set": 22,
 		"size": 60, "files0": 15,
 		"role": "Pistol cavalry",
 		"desc": "Riders with a brace of pistols. Charging, they fire both barrels' first volley at about 25 m and crash in after it, the volley shaking the target just before the impact; then they fight with the sword. Two shots each, so a second pass needs a reload away from the fight.",
@@ -1550,7 +1550,7 @@ const WEST: Array[Dictionary] = [
 	},
 	{
 		"key": "native_warriors", "line": "light", "pack": "west", "name": "Warriors", "short": "Warriors",
-		"icon": 1, "sprite": 0, "sprite_set": 23,
+		"icon": 32, "sprite": 0, "sprite_set": 23,
 		"size": 100, "files0": 25,
 		"role": "Fast shock foot",
 		"desc": "Maya and Miskito warriors with obsidian-edged clubs, spears and cotton armour: fast through the forest and fierce in a rush, but no match for a volley in the open or a steady pike front.",
@@ -1570,7 +1570,7 @@ const WEST: Array[Dictionary] = [
 	},
 	{
 		"key": "native_bowmen", "line": "archer", "pack": "west", "name": "Bowmen", "short": "Bowmen",
-		"icon": 4, "sprite": 3, "sprite_set": 24, "copy": "archer",
+		"icon": 33, "sprite": 3, "sprite_set": 24, "copy": "archer",
 		"size": 80, "files0": 20,
 		"role": "Missile infantry",
 		"desc": "Native archers who shoot over friends and through the canopy. Arrows do little against breastplates but tell on unarmoured men and horses; by default they fall back from melee.",
@@ -1584,7 +1584,7 @@ const WEST: Array[Dictionary] = [
 	},
 	{
 		"key": "light_gun", "line": "light_gun", "pack": "west", "name": "Light Guns", "short": "Falconets",
-		"icon": 18, "sprite": 6, "sprite_set": 25, "engine_set": 26,
+		"icon": 31, "sprite": 6, "sprite_set": 25, "engine_set": 26,
 		"size": 12, "files0": 4,
 		"role": "Light artillery (falconets)",
 		"desc": "Four small bronze guns on light carriages, three gunners each. A roundshot flies flat and fast and bounds on through the ranks behind, killing a file of men; every shot that lands shakes the unit it strikes. They need a clear line past friends and over the ground, cannot fire on the move and take a while to limber and unlimber. Gunners are poor fighters.",
@@ -1623,7 +1623,7 @@ const WEST: Array[Dictionary] = [
 	},
 	{
 		"key": "field_gun", "line": "field_gun", "pack": "west", "name": "Culverins", "short": "Culverins",
-		"icon": 7, "sprite": 6, "sprite_set": 25, "engine_set": 26,
+		"icon": 29, "sprite": 6, "sprite_set": 25, "engine_set": 26,
 		"size": 12, "files0": 3,
 		"role": "Field artillery (culverins)",
 		"desc": "Three long iron culverins, four gunners to each: the heaviest guns that take the field. A roundshot carries 450 m and ploughs on through eight men; it breaches gates and walls. Very slow to reload, to move and to set up; gunners are poor fighters.",
@@ -1670,7 +1670,7 @@ const WEST: Array[Dictionary] = [
 const FORT_ROWS: Array[Dictionary] = [
 	{
 		"key": "fort_gun", "line": "siege", "pack": "west", "name": "Fort Gun", "short": "Fort Gun",
-		"icon": 7, "sprite": 6, "sprite_set": 25, "engine_set": 26,
+		"icon": 30, "sprite": 6, "sprite_set": 25, "engine_set": 26,
 		"role": "Fort artillery (the bastions' guns)",
 		"desc": "A long iron gun on a garrison carriage behind the fort's parapet, with a crew of four. It sweeps the glacis, the ditch and the town's streets in its line with roundshot that bounds on through the ranks, and batters siege works and guns in reach. It cannot move and turns all the way round. Gone when its crew is shot down or its platform is battered by enemy guns.",
 		"good_vs": "Columns crossing the glacis, batteries, rams and ladder parties in its line.",

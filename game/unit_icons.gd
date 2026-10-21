@@ -14,10 +14,17 @@ extends RefCounted
 ##   15 general: his standard (pole, crossbar, banner, a wreath on top)
 ##   16 war dogs (handlers): a dog's head and a leash   17 the released pack: a running dog
 ##   18 scorpions: a small bolt engine on a tripod   19 gastraphetes: a bow on a stock, the belly rest
+##   The West pack's glyphs (ids 23-34): 23 musketeers: a musket and a powder horn   24 rodeleros: a round targe, a sword behind
+##   25 cutlass men: a cutlass and a boarding axe   26 buccaneers: a long fowling piece, a plumed hat
+##   27 lancers: horseshoe and a pennoned lance   28 pistoleers: horseshoe and a flintlock pistol
+##   29 culverins: a cannon on its carriage   30 fort gun: the same on a parapet   31 light guns: a short piece on a spoked wheel
+##   32 native warriors: a war club and a feathered arrow   33 native bowmen: a short bow, a fletched arrow
+##   34 the West general: a tricorne over crossed cutlasses (icon_of maps 15 to 34 while the West pack is active)
 ## Symbol ids above 99 carry a tier mark (see icon_of).
 
 const UT := preload("res://sim/unit_types.gd")
 const UIIcons := preload("res://game/ui_icons.gd")
+const CData := preload("res://campaign/cdata.gd")
 
 const SIDE_COLORS := [Color(0.35, 0.6, 1.0), Color(1.0, 0.36, 0.28)]
 const ROUT_COLOR := Color(1.0, 0.9, 0.3)
@@ -26,7 +33,10 @@ const ROUT_COLOR := Color(1.0, 0.9, 0.3)
 ## Symbol id of a unit type: the glyph ("icon" field) plus 100 per tier above
 ## the first, so every marker drawn from it carries the tier mark.
 static func icon_of(ty: int) -> int:
-	return UT.stat(ty, "icon") + 100 * (UT.tier_of(ty) - 1)
+	var g: int = UT.stat(ty, "icon")
+	if g == 15 and CData.pack == "west":  # the general's standard is Rome's; the West's is a tricorne
+		g = 34
+	return g + 100 * (UT.tier_of(ty) - 1)
 
 
 ## Disc of radius r in `fill` with a dark rim and the glyph for `icon`;
@@ -184,6 +194,98 @@ static func draw_glyph(ci: CanvasItem, icon: int, c: Vector2, s: float, col: Col
 				c + Vector2(0.2, 0.9) * s]), col, w * 1.1, true)
 			ci.draw_line(c + Vector2(-0.22, 0.1) * s, c + Vector2(-0.45, 0.55) * s, col, w * 0.7, true)
 			ci.draw_line(c + Vector2(0.22, 0.1) * s, c + Vector2(0.45, 0.55) * s, col, w * 0.7, true)
+		23:  # musketeers: a musket at a slant (thick stock, thin long barrel, the lock's cock, a ramrod)
+			ci.draw_line(c + Vector2(-0.9, 0.9) * s, c + Vector2(-0.2, 0.2) * s, col, w * 2.4, true)
+			ci.draw_line(c + Vector2(-0.2, 0.2) * s, c + Vector2(0.95, -0.95) * s, col, w * 0.8, true)
+			ci.draw_line(c + Vector2(-0.05, 0.4) * s, c + Vector2(0.6, -0.25) * s, col, w * 0.55, true)
+			ci.draw_polyline(PackedVector2Array([c + Vector2(-0.15, 0.0) * s, c + Vector2(-0.4, -0.3) * s,
+				c + Vector2(-0.2, -0.38) * s]), col, w * 0.9, true)
+		24:  # rodeleros: a round targe (rim, boss) with a sword behind it
+			ci.draw_arc(c + Vector2(-0.05, 0.05) * s, 0.58 * s, 0, TAU, 16, col, w, true)
+			ci.draw_circle(c + Vector2(-0.05, 0.05) * s, 0.17 * s, col)
+			ci.draw_line(c + Vector2(0.9, -0.9) * s, c + Vector2(0.4, -0.4) * s, col, w * 0.95, true)
+			ci.draw_line(c + Vector2(-0.45, 0.5) * s, c + Vector2(-0.78, 0.83) * s, col, w * 0.95, true)
+			ci.draw_line(c + Vector2(-0.82, 0.45) * s, c + Vector2(-0.45, 0.82) * s, col, w * 0.95, true)
+		25:  # cutlass men: a curved cutlass crossed with a boarding axe
+			ci.draw_polyline(PackedVector2Array([c + Vector2(-0.45, 0.5) * s, c + Vector2(0.0, 0.1) * s,
+				c + Vector2(0.45, -0.35) * s, c + Vector2(0.62, -0.62) * s, c + Vector2(0.88, -0.95) * s]), col, w * 1.1, true)
+			ci.draw_line(c + Vector2(-0.88, 0.88) * s, c + Vector2(-0.5, 0.5) * s, col, w * 1.3, true)
+			ci.draw_line(c + Vector2(-0.82, 0.2) * s, c + Vector2(-0.2, 0.82) * s, col, w, true)
+			ci.draw_line(c + Vector2(0.85, 0.85) * s, c + Vector2(-0.4, -0.5) * s, col, w, true)
+			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(-0.35, -0.38) * s, c + Vector2(-0.98, -0.1) * s,
+				c + Vector2(-0.82, -0.7) * s, c + Vector2(-0.55, -0.9) * s, c + Vector2(-0.3, -0.62) * s]), col)
+		26:  # buccaneers: a wide plumed hat over a long thin fowling piece
+			ci.draw_line(c + Vector2(-0.95, 0.95) * s, c + Vector2(-0.45, 0.78) * s, col, w * 1.9, true)
+			ci.draw_line(c + Vector2(-0.45, 0.78) * s, c + Vector2(1.0, 0.1) * s, col, w * 0.65, true)
+			ci.draw_line(c + Vector2(-0.4, 0.72) * s, c + Vector2(-0.5, 0.45) * s, col, w * 0.8, true)
+			ci.draw_line(c + Vector2(-0.95, -0.2) * s, c + Vector2(0.55, -0.2) * s, col, w * 1.1, true)
+			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(-0.6, -0.25) * s, c + Vector2(-0.5, -0.65) * s,
+				c + Vector2(-0.1, -0.65) * s, c + Vector2(0.0, -0.25) * s]), col)
+			ci.draw_polyline(PackedVector2Array([c + Vector2(0.0, -0.65) * s, c + Vector2(0.45, -0.95) * s,
+				c + Vector2(0.8, -0.7) * s]), col, w * 0.7, true)
+		27:  # lancers: a horseshoe and a long lance with a swallow-tailed pennon
+			ci.draw_arc(c + Vector2(-0.3, 0.3) * s, 0.5 * s, PI * 0.85, PI * 2.15, 12, col, w * 1.3, true)
+			ci.draw_line(c + Vector2(-0.78, 0.42) * s, c + Vector2(-0.72, 0.9) * s, col, w * 1.3, true)
+			ci.draw_line(c + Vector2(0.18, 0.42) * s, c + Vector2(0.12, 0.9) * s, col, w * 1.3, true)
+			ci.draw_line(c + Vector2(0.6, 0.95) * s, c + Vector2(0.6, -0.9) * s, col, w * 0.85, true)
+			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(0.6, -0.88) * s, c + Vector2(0.0, -0.78) * s,
+				c + Vector2(0.18, -0.64) * s, c + Vector2(0.0, -0.46) * s, c + Vector2(0.6, -0.4) * s]), col)
+		28:  # pistoleers: a horseshoe and a flintlock pistol over it
+			ci.draw_arc(c + Vector2(0.2, 0.4) * s, 0.45 * s, PI * 0.85, PI * 2.15, 12, col, w * 1.3, true)
+			ci.draw_line(c + Vector2(-0.22, 0.5) * s, c + Vector2(-0.18, 0.95) * s, col, w * 1.3, true)
+			ci.draw_line(c + Vector2(0.62, 0.5) * s, c + Vector2(0.58, 0.95) * s, col, w * 1.3, true)
+			ci.draw_line(c + Vector2(-0.6, -0.55) * s, c + Vector2(0.95, -0.55) * s, col, w * 1.3, true)
+			ci.draw_line(c + Vector2(-0.55, -0.5) * s, c + Vector2(-0.85, 0.05) * s, col, w * 2.2, true)
+			ci.draw_line(c + Vector2(-0.35, -0.6) * s, c + Vector2(-0.5, -0.88) * s, col, w * 0.9, true)
+		29, 30:  # a cannon on a wheeled carriage, muzzle up-left; the fort gun on a parapet
+			var oy := -0.14 if icon == 30 else 0.0
+			var wr := 0.3 if icon == 30 else 0.36
+			ci.draw_line(c + Vector2(0.35, 0.05 + oy) * s, c + Vector2(-0.78, -0.62 + oy) * s, col, w * 2.4, true)
+			ci.draw_line(c + Vector2(-0.68, -0.77 + oy) * s, c + Vector2(-0.9, -0.4 + oy) * s, col, w * 1.3, true)
+			ci.draw_line(c + Vector2(0.2, 0.3 + oy) * s, c + Vector2(0.95, 0.72 + oy) * s, col, w * 1.1, true)
+			ci.draw_arc(c + Vector2(0.0, 0.5 + oy) * s, wr * s, 0, TAU, 12, col, w, true)
+			ci.draw_circle(c + Vector2(0.0, 0.5 + oy) * s, 0.1 * s, col)
+			if icon == 30:
+				ci.draw_polyline(PackedVector2Array([c + Vector2(-0.98, 0.78) * s, c + Vector2(-0.98, 0.6) * s,
+					c + Vector2(-0.62, 0.6) * s, c + Vector2(-0.62, 0.9) * s, c + Vector2(0.62, 0.9) * s,
+					c + Vector2(0.62, 0.6) * s, c + Vector2(0.98, 0.6) * s, c + Vector2(0.98, 0.78) * s]), col, w, true)
+		31:  # light guns: a short piece on a spoked wheel, the trail on the ground
+			ci.draw_line(c + Vector2(0.15, -0.1) * s, c + Vector2(-0.75, -0.45) * s, col, w * 2.0, true)
+			ci.draw_arc(c + Vector2(0.05, 0.4) * s, 0.5 * s, 0, TAU, 14, col, w, true)
+			for k in 3:
+				var a := PI * k / 3.0 + 0.3
+				ci.draw_line(c + Vector2(0.05, 0.4) * s - Vector2(cos(a), sin(a)) * 0.5 * s,
+					c + Vector2(0.05, 0.4) * s + Vector2(cos(a), sin(a)) * 0.5 * s, col, w * 0.7, true)
+			ci.draw_line(c + Vector2(0.4, 0.2) * s, c + Vector2(0.95, 0.85) * s, col, w, true)
+		32:  # native warriors: a war club (macana) with a flared head, a feathered arrow across it
+			ci.draw_line(c + Vector2(-0.6, 0.9) * s, c + Vector2(0.35, -0.45) * s, col, w * 1.1, true)
+			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(0.15, -0.35) * s, c + Vector2(0.55, -0.15) * s,
+				c + Vector2(0.98, -0.78) * s, c + Vector2(0.7, -0.98) * s, c + Vector2(0.3, -0.8) * s]), col)
+			ci.draw_line(c + Vector2(-0.95, -0.2) * s, c + Vector2(0.25, 0.7) * s, col, w * 0.7, true)
+			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(0.5, 0.88) * s, c + Vector2(0.1, 0.8) * s,
+				c + Vector2(0.35, 0.5) * s]), col)
+			ci.draw_line(c + Vector2(-0.95, -0.2) * s, c + Vector2(-0.95, -0.62) * s, col, w * 0.7, true)
+			ci.draw_line(c + Vector2(-0.75, -0.06) * s, c + Vector2(-0.75, -0.48) * s, col, w * 0.7, true)
+		33:  # native bowmen: a short bow slanted, a fletched arrow (three feathers at the nock)
+			var q := -0.6
+			ci.draw_arc(c + Vector2(-0.28, 0.0).rotated(q) * s, 0.78 * s, -1.2 + q, 1.2 + q, 12, col, w, true)
+			var b0 := Vector2(-0.28 + cos(1.2) * 0.78, sin(1.2) * 0.78).rotated(q)
+			var b1 := Vector2(-0.28 + cos(1.2) * 0.78, -sin(1.2) * 0.78).rotated(q)
+			ci.draw_line(c + b0 * s, c + b1 * s, col, w * 0.6, true)
+			ci.draw_line(c + Vector2(-0.7, 0).rotated(q) * s, c + Vector2(0.75, 0).rotated(q) * s, col, w * 0.8, true)
+			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(1.0, 0).rotated(q) * s,
+				c + Vector2(0.7, -0.18).rotated(q) * s, c + Vector2(0.7, 0.18).rotated(q) * s]), col)
+			for k in 2:
+				var fx := -0.58 + 0.2 * k
+				ci.draw_line(c + Vector2(fx, 0).rotated(q) * s, c + Vector2(fx - 0.2, -0.24).rotated(q) * s, col, w * 0.7, true)
+				ci.draw_line(c + Vector2(fx, 0).rotated(q) * s, c + Vector2(fx - 0.2, 0.24).rotated(q) * s, col, w * 0.7, true)
+		34:  # the West general: a captain's tricorne over crossed cutlasses
+			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(-0.98, 0.0) * s, c + Vector2(-0.55, -0.55) * s,
+				c + Vector2(-0.3, -0.92) * s, c + Vector2(0.3, -0.92) * s, c + Vector2(0.55, -0.55) * s,
+				c + Vector2(0.98, 0.0) * s, c + Vector2(0.0, -0.18) * s]), col)
+			for sg in [-1.0, 1.0]:
+				ci.draw_polyline(PackedVector2Array([c + Vector2(-0.8 * sg, 0.95) * s, c + Vector2(-0.1 * sg, 0.45) * s,
+					c + Vector2(0.45 * sg, 0.15) * s, c + Vector2(0.78 * sg, 0.1) * s]), col, w, true)
 		20, 21, 22:  # heroes and agents (sim/unit_types.gd CHARS): crown, dagger, scroll (game/ui_icons.gd)
 			UIIcons.draw_icon(ci, ["crown", "dagger", "scroll"][icon - 20], Rect2(c - Vector2(s, s), Vector2(s, s) * 2.0), col)
 		_:
