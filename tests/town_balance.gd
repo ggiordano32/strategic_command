@@ -4,6 +4,10 @@ extends SceneTree
 ## (CTown.battle_plan put in the city as "tp"), so the walls rows can be compared map for map.
 ##   godot --headless --script res://tests/town_balance.gd -- --set=west_town|west_city|polis|castrum
 ##       [--walls=0,1,2] [--seeds=16] [--seed0=0] [--old]
+##   godot --headless --script res://tests/town_balance.gd -- --town=west:havana[:level] | rome:zeugitana [...]
+## --town: any campaign town on its own plan (balance pass on plan maps, 2026-10-20). West: the region's terrain,
+## culture and coast (city seed from the key), the West sets' armies; level the campaign's start level, at
+## least 1, unless given. Rome: Scenarios.fair_siege with the region's culture plan and its plan at level 2.
 ## West sets (walls 0-2, both sides the West attack list WEST_ATT, AI against AI, Average; walls 1-2 the
 ## attackers bring three ladder sets and a ram, a two-turn siege): west_town = Scenarios.west_town(12, 1, ...)
 ## on Cartagena's plan at level 1, west_city = west_town(13, 2, ...) on Havana's plan at level 2. Rome sets
@@ -25,7 +29,12 @@ func _initialize() -> void:
 	var seeds := 16
 	var seed0 := 0
 	var old := false
+	var town := ""
 	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--town="):
+			town = a.get_slice("=", 1)
+			set_name = "town:" + town
+
 		if a.begins_with("--set="):
 			set_name = a.get_slice("=", 1)
 		elif a.begins_with("--walls="):
@@ -37,7 +46,7 @@ func _initialize() -> void:
 			seed0 = int(a.get_slice("=", 1))
 		elif a == "--old":
 			old = true
-	var west := set_name.begins_with("west")
+	var west := set_name.begins_with("west") or town.begins_with("west")
 	if walls_l.is_empty():
 		walls_l = [0, 1, 2] if west else [1, 2, 3]
 	for walls in walls_l:
@@ -87,6 +96,8 @@ func _tp(pack: String, key: String, level: int, walls: int) -> Dictionary:
 
 
 func _scenario(set_name: String, walls: int, s: int, old: bool) -> Dictionary:
+	if set_name.begins_with("town:"):
+		return _town_scenario(set_name.substr(5), walls, s, old)
 	if set_name.begins_with("west"):
 		var city_l := set_name == "west_city"
 		var level := 2 if city_l else 1
@@ -111,3 +122,37 @@ func _scenario(set_name: String, walls: int, s: int, old: bool) -> Dictionary:
 	if old:
 		return Scenarios.fair_siege(700 + s * 41, walls, plan, eq2)
 	return Scenarios.fair_siege(700 + s * 41, walls, plan, eq2, _tp("rome", "attica" if plan == MapGen.PLAN_POLIS else "latium", 2, walls))
+
+
+## A campaign town on its own plan (--town=pack:key[:level]).
+func _town_scenario(spec: String, walls: int, s: int, old: bool) -> Dictionary:
+	var parts := spec.split(":")
+	var pack := parts[0]
+	var key := parts[1]
+	CData.use_pack(pack)
+	var r := CData.region_index(key)
+	var cul := CData.region_culture(r)
+	if pack == "rome":
+		var eq2 := {"ladders": 3, "ram": 1, "mantlets": 4, "towers": 1 if walls >= 2 else 0,
+			"extra": [[UT.index_of("scorpions"), 12]]}
+		var tp_r: Dictionary = {} if old else _tp("rome", key, 2, walls)
+		return Scenarios.fair_siege(700 + s * 41, walls, cul, eq2, tp_r)
+	var st0 := CState.new_campaign("bal", 5, [], {}, [], pack)
+	var level := maxi(1, int(st0["regions"][r]["level"]))
+	if parts.size() > 2:
+		level = int(parts[2])
+	var rd: Dictionary = CData.REGIONS[r]
+	var cseed := 0
+	for ch in key.to_utf8_buffer():
+		cseed = (cseed * 31 + int(ch)) % 100000
+	var att: Array = []
+	for e in Scenarios.WEST_ATT:
+		att.append([UT.index_of(str(e[0])), int(e[1])])
+	var dfn: Array = att.duplicate(true)
+	var terr := {"kind": int(rd["terrain"]), "seed": cseed * 7 + 3, "forest": int(rd["forest"]), "ground": int(rd["ground"])}
+	var city := {"seed": cseed, "level": level, "walls": walls, "bld": [1, 2, 4], "plan": cul,
+		"coast": 1 if CData.is_port(r) else 0, "founder": cul, "west": 1}
+	if not old:
+		city["tp"] = _tp("west", key, level, walls)
+	var eq := {"ladders": 3, "ram": 1} if walls > 0 else {}
+	return Scenarios.settlement(city, terr, att, dfn, 1, [0, 1], eq)["scenario"]

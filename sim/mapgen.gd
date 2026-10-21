@@ -1507,6 +1507,10 @@ static func plan_outline(p: Dictionary, kind: int, w_m: int, land: int = 1) -> D
 		g_want = [256, 768] if n_gates == 2 else ([256, 512, 0] if n_gates == 3 else [256, 512, 0, 768])
 	elif plan == PLAN_OPPIDUM:
 		g_want = [768] if n_gates == 2 and level >= 1 else []
+		if not g.is_empty():
+			# (A town plan has no funnel: its main gate facing the attackers as the other plans', balance pass on
+			# plan maps; it had none and the town could not be stormed.)
+			g_want.push_front(256)
 	return {"vx": vx, "vy": vy, "vt": vt, "esea": esea, "px": px, "py": py, "tsp": tsp, "g_want": g_want,
 		"funnel": funnel, "cit": cit, "cit_jit": cit_jit, "lat_a": lat_a, "lat_b": lat_b, "seam": seam,
 		"blk_w": blk_w, "blk_l": blk_l, "blk_s": blk_s, "built_extra": built_extra, "gate_jit": gate_jit,
@@ -3516,6 +3520,8 @@ const W_D: Array[int] = [150, 205, 255]      # band depth: top (shore) to the la
 const W_FW: Array[int] = [440, 560, 680]     # field width at least
 const W_TOP := 48                            # canonical y of the town's top (about the shore)
 const W_APPROACH := 95                       # landward edge to the attackers' front
+const W_PAL_GAP := 2                         # a plan town's palisade (walls 2): its gap at a road this many 2 m cells wide
+const W_LANE_CLEAR := 60                     # a plan town's fort this near the attackers' road (beyond its reach): the road goes round it
 const W_MAIN: Array[int] = [8, 10, 12]       # high street width
 const W_QUAY: Array[int] = [12, 14, 16]      # quay width
 const W_BACK := 7                            # an inland town's back street
@@ -4213,6 +4219,13 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 	_fill_poly(inside, ow, oh, vx, vy)
 	var att_x := cx
 	var att_y := int(o["bot"]) + W_APPROACH
+	if tpm:
+		# (A plan's fort standing in the attackers' road (Cartagena's San Felipe on the high ground before the
+		# town): the approach is round it, on the side away from it (balance pass on plan maps).)
+		var fo: Dictionary = o["fort"]
+		if not fo.is_empty() and int(fo["y"]) > int(o["py"]) and absi(int(fo["x"]) - cx) < int(fo["ext"]) + W_LANE_CLEAR:
+			var sg := 1 if cx >= int(fo["x"]) else -1
+			att_x = clampi(int(fo["x"]) + sg * (int(fo["ext"]) + W_LANE_CLEAR), int(o["x0"]) + 40, int(o["x1"]) - 40)
 	var hg: Dictionary = hgt if int(hgt.get("on", 0)) != 0 else {}
 	var botv := PackedInt32Array()  # the landward edge's y at each metre
 	for x in w_m + 1:
@@ -4456,6 +4469,15 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 		var low := _w_road(wc, PackedInt32Array([xk + jog, ym, xk + jog + _rr(rng, -18, 18), (ym + yb) / 2,
 			xk + jog + _rr(rng, -24, 24), yb]), cw / 2, 1, 34)
 		cpts = low
+		if tpm and (low.size() < 6 or low[low.size() - 1] < _w_bot(o, low[low.size() - 2]) + 6):
+			# (A plan town: a cross street the town's landmarks or the fort stop short of the edge is traced from
+			# the edge inward instead, so it still has its mouth (balance pass on plan maps).)
+			var rv := _w_road(wc, PackedInt32Array([xk + jog, yb, xk + jog, (ym + yb) / 2, xk + jog, ym]), cw / 2, 1, 34)
+			if rv.size() >= 6:
+				cpts = PackedInt32Array()
+				for q in range(rv.size() / 2 - 1, -1, -1):
+					cpts.append(rv[q * 2])
+					cpts.append(rv[q * 2 + 1])
 		if cpts.size() < 6:
 			continue
 		roads.append([cpts, cw, 2])
@@ -4527,7 +4549,9 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 			_w_prop(wc, kx, ex2, ey2, FM.atan2_a(at[3], at[2]))
 			sq += _rr(rng, 14, 30)
 	# ---- the stake palisade along the landward edge (walls 2), gaps at the roads.
-	if walls >= 2:
+	if walls >= 2 and tpm:
+		_tp_palisade(wc, o, keep, blk, obs, ow, oh)
+	elif walls >= 2:
 		var run: Array = []   # [cell column, cell row] of the run so far
 		var prow := -1
 		var i0 := (int(o["x0"]) + 30) / 2
@@ -6412,6 +6436,67 @@ static func _tp_west_streets(wc: Dictionary, p: Dictionary, extra: Array, roads:
 			_tp_mouth(o, pts2, mouths)
 	for r in extra:
 		roads.append(r)
+
+
+## A plan town's stake palisade (walls 2; balance pass on plan maps): 9 m outside the outline's landward side
+## from one end of the town to the other, up its flanks as well (a 4-connected line of 2 m cells: where the
+## edge rises it climbs the column), gaps where the roads, buildings and the sea are.
+static func _tp_palisade(wc: Dictionary, o: Dictionary, keep: PackedByteArray, blk: PackedByteArray, obs: PackedByteArray,
+		ow: int, oh: int) -> void:
+	var path: Array = []
+	var prow := -1
+	for ic in range(maxi(int(o["x0"]) / 2, 1), mini(int(o["x1"]) / 2 + 1, ow - 1)):
+		var row := (_w_bot(o, ic * 2 + 1) + 9) / 2
+		if prow >= 0 and absi(row - prow) > 1:
+			var st := 1 if row > prow else -1
+			# (The climb in the column nearer the town's middle: the outer one when it falls away.)
+			var col := ic if st < 0 else ic - 1
+			for r in range(prow + st, row, st):
+				path.append(Vector2i(col, r))
+		path.append(Vector2i(ic, row))
+		prow = row
+	# (Each cell: 0 free for a stake, 1 a road's, 2 nothing (a building, the sea, off the map). A road's gap is
+	# narrowed to its middle W_PAL_GAP cells, the stakes across the rest of it.)
+	var kind := PackedByteArray()
+	kind.resize(path.size())
+	for k in path.size():
+		var pt0: Vector2i = path[k]
+		var kk := 0 if pt0.y >= 0 and pt0.y + 1 < oh else 2
+		if kk == 0:
+			for dj in 2:
+				var c3 := (pt0.y + dj) * ow + pt0.x
+				if blk[c3] != 0 or obs[c3] != C_OPEN:
+					kk = 2
+				elif keep[c3] != 0 and kk == 0:
+					kk = 1
+		kind[k] = kk
+	var gw := W_PAL_GAP
+	if gw > 0:
+		var k1 := 0
+		while k1 < path.size():
+			if kind[k1] != 1:
+				k1 += 1
+				continue
+			var k2 := k1
+			while k2 + 1 < path.size() and kind[k2 + 1] == 1:
+				k2 += 1
+			var l := k2 - k1 + 1
+			if l > gw + 1:
+				var m0 := k1 + (l - gw) / 2
+				for q in range(k1, k2 + 1):
+					if q < m0 or q >= m0 + gw:
+						kind[q] = 0
+			k1 = k2 + 1
+	var run: Array = []
+	for k in path.size():
+		var pt: Vector2i = path[k]
+		var ok := kind[k] == 0
+		if ok:
+			run.append(pt)
+		if (not ok or k == path.size() - 1) and run.size() >= 2:
+			_w_stakes(wc, run)
+		if not ok:
+			run = []
 
 
 ## A road's ends beyond the landward edge: street mouths [x, y, the way out].

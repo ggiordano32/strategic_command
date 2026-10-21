@@ -1937,6 +1937,16 @@ could give (ORDER_OCCUPY, ORDER_GATE, attack and move orders).
   2026-10-09 rule); horse do not pick a target within a free musket line's
   range + `GUN_COVER_PAD` 30 m (`_gun_covered`), counter-charges excepted.
 
+- **Balance pass on plan maps (2026-10-20).** Attackers in an open campaign
+  town (a plan map, `tp`, with no outer gates: the West's walls 0-2) give
+  the battle up below `S_BEATEN_TOWN_PCT` 25 % of their start strength (and
+  weaker than the defenders) rather than `AP.S_BEATEN_PCT` 35 % (Easy keeps
+  20 %): the street fight is an attrition race they used to quit near even
+  losses (16 West towns, walls 0 40 -> 52 %, walls 1 26 -> 41 %). Scenario
+  keys and custom battles (generated maps) keep 35 %. Leaving a bypassed
+  fort's garrison out of the defenders' strength was measured (+2-3
+  points) and not kept.
+
 ## 30. Sea battle AI: the leeward fleet (sea pass 4, 2026-10-17)
 
 The sea battle AI (`sim/sea_sim.gd` `_think`, `_closing`; DESIGN "Sea

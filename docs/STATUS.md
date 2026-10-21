@@ -2384,7 +2384,82 @@ Felipe) walls 1 37 -> 56 %, walls 2 25 -> 68 %; Rome polis 1/2/3 62/25/25 and ca
 follows. Tests: check_scripts clean; determinism full PASS, `--only=town` (new: Morro 3 salients, gate within 45 degrees of the plaza; San Marcos 4,
 no pockets; its storm identical on repeat and across snapshot / restore), `--only=fort`, `--only=occupy`; lockstep full; custom_battle,
 campaign, pack, battle_screen, town_plan PASS; campaign_sim both packs unchanged. Left: walls 3 citadels on the trace (sized for an
-inside), the pieces' inner keeps / lighthouses drawn over the parade (view), bastion terrepleins drawn as ground, the balance pass.
+inside), the pieces' inner keeps / lighthouses drawn over the parade (view), bastion terrepleins drawn as ground, the balance pass (done: next paragraph).
+**Balance pass on plan maps (built 2026-10-20, not committed; DESIGN "Balance pass on plan maps", AI.md 29).** The walls rows retuned on
+the campaign towns' plan maps. Harness: `tests/town_balance.gd` gained `--town=<pack>:<key>[:level]` (any campaign town on its own plan:
+West with the region's terrain, culture and coast, the West sets' armies, the campaign start level at least 1; Rome `fair_siege` with the
+region's culture plan at level 2); measured AI vs AI, equal force, 16 seeds a town and wall level (scratchpad `bp/`). **Widened before
+(HEAD 106fdb3), attacker wins:**
+
+| set | walls 0 | walls 1 | walls 2 | walls 3 |
+|---|---|---|---|---|
+| the brief's West set: Havana (west_city), Cartagena (west_town), Port Royal, Veracruz, Santo Domingo, Natchez, Tayasal | 47 % | 22 % | 20 % | - |
+| ... by town (same order) | 56 / 62 / 12 / 81 / 12 / 100 / 6 | 12 / 56 / 18 / 31 / 12 / 0 / 25 | 12 / 68 / 0 / 31 / 31 / 0 / 0 | - |
+| 16 Spanish towns (Havana, Cartagena, Port Royal, Veracruz, Santo Domingo, Campeche, Portobelo, St Augustine, Cumana, San Juan, Maracaibo, Merida, Granada, Santiago de Cuba, New Orleans, Puerto Principe) | 35 % | 32 % | 32 % | - |
+| ... the same towns' generated maps (`--old`, the 5 of the brief) | 41 % | 42 % | 22 % | - |
+| Rome: Athens, Carthage, Syracuse, Rome, Massalia, Arverni (oppidum) | - | 29 % | 19 % | 17 % |
+| ... by town (same order) | - | 68 / 6 / 31 / 31 / 37 / 0 | 18 / 0 / 37 / 50 / 12 / 0 | 25 / 0 / 25 / 43 / 12 / 0 |
+| ... their generated maps | - | 48 % | 26 % | 23 % |
+
+**Diagnosis.** *Havana at 12 %* (probes: `bp/` `_bp_probe.gd`, `_bp_map.gd`, now in the scratchpad): at walls 1-2 the Morro's trace
+(reach 100 m) and the town's landmarks stopped the generated cross streets traced from the high street (`_w_trace` found nothing free
+ahead): 2 street mouths against 7 at walls 0, 108 buildings against 146, the west half of the town empty; the attackers funnelled into two
+streets and withdrew at about 55 % losses (the withdrawal rule's "below 35 % of the start and weaker than the foe", the untouched fort
+counted in the foe). Not the Morro's guns (11-27 kills a battle), not the sally (late or never), not the storm choice (always "take the
+town round it"). *Cartagena at 56-68 %* (the west_town set, level 1): San Felipe stands on the high ground in the middle of the town's
+landward band, right in the attackers' lane; the attackers bypass it, it takes houses and posts off the street fight and its garrison
+sallies at 1.3-2 min (the street line thins at once); at level 2 (the `--town` harness) the same fort was the opposite outlier (0-6 %).
+*Spread*: the West street fight is decided as an attrition race (the attackers withdraw near even losses), so one town's 16 seeds swing
+widely (generated maps too: 6-93 % at walls 0); per-town results at 16 seeds carry about +-12 points of binomial noise. Measured
+non-levers (16 towns, 8 seeds, walls 0): plaza depth `TP_WEST_DOWN` 66 -> 55 % (41 %), town area `TP_WEST_AREA` 85 -> 55 / 65 / 75 %
+(44 / 51 / 44 %), filler house density -35 (42 %): within the noise of 40 %. The fort's men left out of the withdrawal's foe strength:
++2-3 points (dropped). *Natives / Maya at walls 1-2* (the oppidum machinery, `is_west` false): the plan's walled oppidum had **no gate**
+(the funnel gate is the generated outline's; plan mode has none): 15-16 draws of 16; the Gallic oppidum the same (Arverni 0 / 0 / 0).
+*Rome*: on the generated maps the six towns give 48 / 26 / 23 % at 16 seeds (the 56 / 38 / 25 targets came from 8 seeds of two plans);
+on the plans the Punic town loses the street fight behind its gate (Carthage: gate down at 1.5 min, the attackers lose 550-670 against
+270-500 and never reach the citadel; generated 25 / 12 / 6 %); the Rome withdrawal threshold (35 -> 25 % for walled plans) moved nothing
+(+1-2 points: Rome sieges are lost by attrition and time, not by quitting; dropped).
+
+**Levers built** (plan maps only; scenario keys and custom battles byte for byte as HEAD: 22 ids' map hash, terrain hash and tick-600
+state hash equal):
+1. *Street mouths* (`_city_west`, plan mode): a generated cross street that stops short of the landward edge is traced from the edge
+   inward (reversed), so it keeps its mouth. Havana walls 1: 2 -> 6 mouths, 108 -> 120 buildings, attacker wins 12 -> 25 % (16 seeds).
+2. *The approach round a fort in the road* (`W_LANE_CLEAR` 60 m): a plan's fort landward of the plaza within its reach + 60 m of the
+   attackers' road moves the road (`att_x`: the deployment, the mouths' order) to its far side, clear of it. Only Cartagena's San Felipe
+   (att_x 366 -> 435).
+3. *The walls-2 palisade* (`_tp_palisade`, `W_PAL_GAP` 2 cells): 9 m outside the plan's whole landward side, up its flanks (a 4-connected
+   line), gaps where roads cross narrowed to 4 m. Walls 2: 42 -> 33 % (the generated palisade's run broke on a round plan's flanks and left
+   every road's full width open: walls 2 was no harder than walls 1).
+4. *The plan oppidum's main gate* (`plan_outline`): a plan oppidum (natives, Maya, Gauls) gets its main gate facing the attackers as the
+   other plans do. Natchez walls 1 0 -> 31 %, Tayasal 25 -> 68 %, Arverni 0 / 0 / 0 -> 56 / 56 / 31 %.
+5. *Rule, open campaign towns* (`SiegeAI.S_BEATEN_TOWN_PCT` 25, `_army`): attackers in an open town on a plan map (no outer gates: West
+   walls 0-2) withdraw below 25 % of their start strength (and weaker than the foe) instead of 35 % (Easy 20 % stays). The map levers
+   could not move walls 0 (above); 16 towns walls 0 40 -> 52 %, walls 1 26 -> 41 %. Gated to plan maps so the scenario keys' rows
+   (generated maps) do not move; to be unified with `AP.S_BEATEN_PCT` when those rows are re-measured.
+
+**After** (16 seeds; Rome unchanged by levers 1-3 and 5):
+
+| set | walls 0 | walls 1 | walls 2 | walls 3 | target |
+|---|---|---|---|---|---|
+| 16 Spanish towns, pooled | 55 % | 41 % | 33 % | - | 55 / 45 / 35 |
+| ... by town (order above) | 50 / 50 / 75 / 93 / 12 / 62 / 93 / 43 / 43 / 87 / 68 / 12 / 37 / 50 / 87 / 12 | 31 / 25 / 37 / 37 / 12 / 31 / 56 / 75 / 81 / 25 / 43 / 56 / 43 / 6 / 43 / 50 | 25 / 0 / 18 / 18 / 68 / 0 / 43 / 56 / 75 / 31 / 18 / 43 / 6 / 50 / 31 / 50 | - | |
+| the brief's West set, pooled | 60 % | 45 % | 25 % | - | |
+| ... by town (Havana, Cartagena sets; Port Royal, Veracruz, Santo Domingo, Natchez, Tayasal) | 75 / 56 / 75 / 93 / 12 / 100 / 12 | 50 / 81 / 37 / 37 / 12 / 31 / 68 | 18 / 50 / 18 / 18 / 68 / 0 / 0 | - | |
+| Rome, pooled | - | 38 % | 29 % | 22 % | 56 / 38 / 25 |
+| ... by town (Athens, Carthage, Syracuse, Rome, Massalia, Arverni) | - | 68 / 6 / 31 / 31 / 37 / 56 | 18 / 0 / 37 / 50 / 12 / 56 | 25 / 0 / 25 / 43 / 12 / 31 | |
+
+West pooled within 5 points of every target. Not met: single towns outside 15 points (at 16 seeds the noise alone is +-12; several
+towns sit 30-40 points off in both directions, e.g. Santo Domingo 12 / 12 / 68, Veracruz 93 % at walls 0); Rome walls 1 (38 against 56)
+and 2 (29 against 38), walls 3 within 3. Natives at walls 2 0 / 16 (Natchez, Tayasal: 3 draws; the walled oppidum with the West
+army's three ladder sets and one ram). Tests: check_scripts clean; determinism full PASS (no golden moved, none re-pinned); lockstep full
+PASS; custom_battle, campaign, pack, town_plan PASS; battle_screen PASS (then a "double free" crash at exit, the same at HEAD); pathing
+probe phase A `plan:west:havana:2:1` PASS (stuck > 30 s 0, longest ready 20 s; fight jitter town 1.7 %, near obstacles 2.5 %; footprint
+0.19 %); campaign_sim both packs unchanged (Rome cdc1d805 32b83031 23f9ed4f 3237d82d a42fc685 b6fe6c2e, West b137875c edd82dee 0393b18d
+2aa8578b deb00750 1d051164); 22 scenario ids (skirmish, battle_2000, bench_4000_hills, test_woods, the 8 sieges, bench_4000_city, the 6
+West towns, bench_west_town, bench_4000_west, west_fort_storm): map hash, terrain hash and tick-600 state hash equal to HEAD's. Left:
+Rome walls 1-2 (the Punic plan's street fight behind the gate; Greek and Punic plans harder than generated at walls 1), the natives'
+walls 2, per-town spread (a 32-seed look at the extreme towns before any town-specific lever), unifying `S_BEATEN_TOWN_PCT` with the
+generated maps' 35 % when the scenario-key rows are re-measured.
 **The pirate story campaign** (DESIGN "Story campaign: The Brethren's Due",
 agreed 2026-10-14: swashbuckling with a dark edge, ~45 turns, three endings,
 co-op optional; about 4 builds). **Step 1 (4808ccc): the story engine, the

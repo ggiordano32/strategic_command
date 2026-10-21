@@ -160,6 +160,7 @@ const SP_COVER_R := 10 * M       # ... scored by the cover cells this near
 const SP_COVER_FAR := 2          # ... less this per SP_LAT_STEP from the plain point
 const SP_PAL_COVER_PCT := 30    # ... in a town with works (West walls 1-2: the fort, the palisade) skirmishers this far in ...
 const SP_PAL_LINE_PCT := 80     # ... and line units this far (defence in depth; balance T, measured: 44 / 38 % attacker wins)
+const S_BEATEN_TOWN_PCT := 25  # attackers in an open campaign town (a plan map, no outer gates) withdraw below this % of their start (and weaker; AP.S_BEATEN_PCT elsewhere)
 const SP_RUN_R := 30 * M   # a West defender further than this from its street post goes there at the run (balance T)
 ## The West harbour fort (slice 2c; docs/AI.md 29): the attackers storm the
 ## fort as well as taking the town round it only with a ram, ladders or guns
@@ -309,8 +310,11 @@ static func _army(sim, side: int) -> void:
 	# Attackers. Clearly lost: withdraw (as in the field).
 	var own := BattleAI._strength(sim, side)
 	var foe := BattleAI._strength(sim, 1 - side)
+	var beaten: int = kn[AP.S_BEATEN_PCT]
+	if sim.n_outer == 0 and int(sim.map_info.get("city", {}).get("tp", 0)) == 1:
+		beaten = mini(beaten, S_BEATEN_TOWN_PCT)  # (an open campaign town: they press on; balance pass on plan maps)
 	if sim.tick > kn[AP.WD_MIN_TICK] and foe > 0 and (own * 100 < foe * kn[AP.WD_FOE_PCT] \
-			or (own * 100 < BattleAI._start_strength(sim, side) * kn[AP.S_BEATEN_PCT] and own < foe)):
+			or (own * 100 < BattleAI._start_strength(sim, side) * beaten and own < foe)):
 		sim.queue_order({"tick": sim.tick, "type": ORDER_WITHDRAW_ALL, "side": side,
 			"player": BattleAI.AI_PLAYER_BASE + side, "seq": 9000})
 		sim.ai_phase[side] = P_WITHDRAW

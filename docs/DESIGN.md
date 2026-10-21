@@ -6465,6 +6465,27 @@ through and the walls did not follow it. Each landmark fort's trace now comes fr
   gallows and waterfront taverns, where the overworld's `_put` finds water on the live coast field (the fix: `_build` placing
   landmarks at `CTown.plan`'s points).
 
+### Balance pass on plan maps (as built, 2026-10-20)
+
+The walls rows retuned on the campaign towns' plan maps (STATUS "Balance pass on plan maps" has the tables). Measured with
+`tests/town_balance.gd --town=<pack>:<key>` over 16 Spanish West towns, the brief's set (Havana, Cartagena, Port Royal, Veracruz, Santo
+Domingo, a native and a Maya town) and six Rome towns, 16 seeds each. A town's own result swings widely (the West street fight is an
+attrition race the attackers quit near even losses; generated maps swing as much), so the targets are read on the pooled towns. All of
+it applies to plan maps only (a city with `tp`); scenario keys and custom battles are unchanged.
+
+- **Street mouths.** A generated cross street of a plan town that stops short of the landward edge (the fort's ground or a landmark in
+  its way) is traced from the edge inward instead and reversed: it keeps its street mouth (Havana walls 1-2 had 2 mouths, now 6).
+- **The approach round a fort in the road.** A plan's fort landward of the plaza and within its reach + `W_LANE_CLEAR` 60 m of the
+  attackers' road (Cartagena's San Felipe on the high ground) moves the road (`att_x`: the attackers' deployment and the mouths' order)
+  to the fort's far side, its reach + 60 m from it.
+- **The walls-2 palisade** (`_tp_palisade`): 9 m outside the plan's whole landward side, up its flanks (a 4-connected line of 2 m cells),
+  broken by buildings and the sea; where a road crosses, its gap is narrowed to its middle `W_PAL_GAP` 2 cells (4 m), stakes across the
+  rest. (The generated palisade's column-by-column run broke on a round plan's flanks and left every road's full width open.)
+- **A plan oppidum's main gate.** A walled plan of the oppidum culture (natives, the Maya, the Gauls) gets its main gate facing the
+  attackers (`g_want` 256 first), as the other plans: the plan has no funnel, and had no gate at all.
+- **Attackers press on in an open campaign town** (AI.md 29): `S_BEATEN_TOWN_PCT` 25 % in place of `AP.S_BEATEN_PCT` 35 % (Average,
+  Hard) for the attackers of a plan map with no outer gates (West walls 0-2).
+
 ### Audio (as built, 2026-10-10)
 
 ## DESIGN paragraph (Audio)
