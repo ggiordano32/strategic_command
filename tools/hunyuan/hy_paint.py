@@ -873,6 +873,45 @@ def hybrid_compare(a):
     print("compare:", p)
 
 
+def ultratex(a):
+    """Ship an UltraTex albedo (tools/ultratex/run.py on the committed, fitted mesh: keep_existing UVs, so the albedo is
+    in the committed atlas layout) as the character's raw texture: no palette snap.  The label map (mask map R = coat,
+    G = sash for the faction tint) still comes from the bake rules run on the albedo.  --albedo PATH, --out OUT
+    (OUT/NAME/ for the stand-ins, OUT/work/NAME/ for albedo / labels / maskmap, OUT/NAME/ultratex/ the preview),
+    --work W (optional: the sheet bake's labels, for texels without a match), --assets writes mesh.glb, minis and bust
+    into assets/ (else everything stays under OUT/NAME/ultratex)."""
+    import numpy as np, shutil
+    ns, texture = load_lib()
+    name = a["name"]
+    d = os.path.join(a["out"], name)
+    os.makedirs(d, exist_ok=True)
+    if not a.get("work"):
+        a["work"] = os.path.join(a["out"], "no_sheet_bake")
+    ob = ns["import_glb"](os.path.join(REPO, "assets", "characters", name, "mesh.glb"))
+    me = ob.data
+    me.calc_loop_triangles()
+    v0, tri0, _, _ = ns["mesh_arrays"](me)
+    uv0 = ns["uv_corners"](me)
+    # the committed mesh as the "painted" mesh: corners in the triangles' own order, so the triangle match is exact
+    ntri = len(tri0)
+    np.savez(os.path.join(d, "hy_mesh.npz"), v=v0[tri0].reshape(-1, 3), f=np.arange(ntri * 3, dtype=np.int32).reshape(-1, 3),
+             uv=uv0.reshape(-1, 2))
+    shutil.copyfile(a["albedo"], os.path.join(d, "hy_raw.png"))
+    bake(a)                       # albedo_reproj.png (the albedo in the 1024 layout, 8 px bleed), work/NAME/{labels,maskmap}.png
+    wd = os.path.join(a["out"], "work", name)
+    alb = ns["read_vup"](os.path.join(d, "albedo_reproj.png"))[..., :3].astype(np.float64)
+    lab = np.rint(ns["read_vup"](os.path.join(wd, "labels.png"))[..., 0] * 255).astype(np.int32)
+    cfg = ns["CHARS"][name]
+    names = list(cfg["palette"].keys())
+    T = alb.shape[0]
+    valid = texture.rasterize(uv0, v0[tri0], np.zeros_like(v0[tri0]), T, None)[0]
+    tot = float(valid.sum())
+    cov = {ch: 100.0 * np.isin(lab, [names.index(n) for n in lst])[valid].sum() / tot for ch, lst in cfg["mask"].items()}
+    print("  mask coverage of the atlas: " + ", ".join("%s (%s) %.1f%%" % (ch, "+".join(cfg["mask"][ch]), c) for ch, c in cov.items()))
+    mesh_path = render_set(a, "ultratex", name, alb, lab, "mini,bust,turn", real=bool(a.get("assets")))
+    print("  mesh:", mesh_path, "%.2f MB" % (os.path.getsize(mesh_path) / 1e6))
+
+
 def parse():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else sys.argv[1:]
     a = {"stage": argv[0], "name": argv[1], "work": None, "out": None, "variant": "turbo", "offload": False}
@@ -881,7 +920,7 @@ def parse():
         k = argv[i]
         if k in ("--work", "--out", "--variant", "--k"):
             a[k[2:]] = int(argv[i + 1]) if k == "--k" else argv[i + 1]; i += 1
-        elif k in ("--hy", "--hat", "--map"):
+        elif k in ("--hy", "--hat", "--map", "--albedo"):
             a[k[2:]] = argv[i + 1]; i += 1
         elif k == "--tag":
             a.setdefault("tags", []).append(argv[i + 1]); i += 1
@@ -899,4 +938,4 @@ def parse():
 
 if __name__ == "__main__":
     A = parse()
-    {"gen": gen, "render": render, "compare": compare, "bake": bake, "hybrid": hybrid, "hybrid_compare": hybrid_compare}[A["stage"]](A)
+    {"gen": gen, "render": render, "compare": compare, "bake": bake, "hybrid": hybrid, "hybrid_compare": hybrid_compare, "ultratex": ultratex}[A["stage"]](A)

@@ -14,7 +14,14 @@ and the same renders, which is what gives the toon look.
 EU, UK and South Korea.** Check it (https://github.com/Tencent/Hunyuan3D-2/blob/main/LICENSE)
 before shipping anything it generated, and before any build that is distributed
 in those territories. The background remover (rembg default model, BRIA RMBG)
-is a separate non-commercial licence too. Nothing here is wired into the game.
+is a separate non-commercial licence too. The UltraTex route adds the FLUX non-commercial licence: the UltraTex
+weights are MIT, but the base model (FLUX.2 Klein base 9B) is under the FLUX non-commercial licence (its outputs may be
+used, production use of the model may not). The owner chose to ship the UltraTex textures anyway and to settle the
+licence later (recorded 2026-10-21). Nothing here is wired into the game.
+
+**Recommended route (2026-10-21): `gen` -> `silfit` -> UltraTex (ComfyUI, `tools/ultratex/run.py`) -> `hy_paint.py ultratex
+--assets`** (section "UltraTex raw (the shipped texture)" below). The hybrid route stays documented as the fallback when
+the GPU route is unavailable.
 
 ## Setup (once)
 
@@ -210,7 +217,29 @@ The stage `render` and `compare` of the experiment (raw / quantised variants nex
 - `OUT/work/NAME/albedo.png`, `labels.png`, `maskmap.png`: the baked texture and label index
 - `assets/characters/NAME/mesh.glb`, `assets/minis/characters/NAME*.png|json`, `assets/portraits/NAME.png`: as before
 
-### Hybrid (face from the sheet bake, body from the paint): the recommended route
+### UltraTex raw (the shipped texture)
+
+UltraTex (FLUX.2 Klein base 9B Q4_K_M, ComfyUI-UltraTex, `keep_existing` UVs) paints the fitted mesh from the front crop
+at 1536 px views into a 2048 atlas in the committed mesh's own UV layout; its raw albedo is shipped with no palette snap
+(the look of the hand-painted source, faces, lacing, belts). Run order:
+
+```sh
+S=~/scratch/hunyuan
+# 1. (GPU, ComfyUI on port 8075, see tools/ultratex/run.py's header) paint the fitted committed mesh
+python3 -I tools/ultratex/run.py assets/characters/NAME/mesh.glb $S/work/NAME/front.png $U/NAME_fit --res 1536 --tex 2048 --tag NAME_fit --memfac 120
+# 2. (Blender, CPU, about 35 s a character) albedo + label map + mask map + renders, writes assets/ with --assets
+~/.local/bin/blender -b --factory-startup -P tools/hunyuan/hy_paint.py -- ultratex NAME --albedo $U/NAME_fit/albedo_raw.png --out $O [--work $S/work] --assets
+```
+
+`ultratex` treats the committed mesh as the painted mesh (same triangles and UVs, so the reprojection into the 1024 layout
+is exact, 8 px bleed past the charts), runs the `bake` stage's rules on it only to get the label map (R = coat, G = sash
+of the mask map; coverage printed: captain R 24.5 / G 6.7 %, Mercy R 36.0 / G 0, Rook R 13.5 / G 1.2 %), and renders with
+paint_render's rig (toon-D ramp, ink hull, no glint / dry-brush): `assets/characters/NAME/mesh.glb` (2.3-2.8 MB, albedo
+1024 px embedded), the minis (96 / 48 + masks + json), the 256 px bust, and `OUT/NAME/ultratex/preview_NAME.png`. Without
+`--assets` everything goes under `OUT/NAME/ultratex`. The mesh must be the one the UltraTex run painted (re-run UltraTex
+after every `silfit`).
+
+### Hybrid (face from the sheet bake, body from the paint): the fallback route
 
 **Route: `gen` -> `silfit` -> `bake` -> `hybrid --assets`** (`silfit` and its re-bake are the next section; without them: `gen` -> `bake` -> `hybrid --assets`) (the shipped assets of captain, Mercy and Rook; the paint bake's ink applies to the head only, below `head_z` the skin is flat colour plus detail; `bake` itself writes nothing to `assets/`, `hybrid --assets` writes mesh, minis and bust, the preview goes to `--out`).
 
