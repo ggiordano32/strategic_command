@@ -22,7 +22,7 @@ const SECTION_NAMES := {"battle": "Battle", "campaign": "Campaign map", "general
 static var BINDINGS: Array = [
 	# ---- battle: selecting
 	{"id": "select", "s": "battle", "label": "Select a unit",
-		"touch": "Tap the unit, its symbol or its card", "mouse": "Left click the unit, its symbol or its card (left click the empty ground: deselect)", "keys": []},
+		"touch": "Tap the unit's symbol (a near miss counts) or its card, also with units selected; double tap its body selects too", "mouse": "Left click the unit, its symbol or its card (left click the empty ground: deselect)", "keys": []},
 	{"id": "select_add", "s": "battle", "label": "Add / remove a unit from the selection",
 		"touch": "+ Add, then tap units or cards", "mouse": "Shift+click or Ctrl+click", "keys": []},
 	{"id": "select_all", "s": "battle", "label": "Select all units",
@@ -35,11 +35,13 @@ static var BINDINGS: Array = [
 		"touch": "Cav button", "mouse": "Cav button", "keys": [KEY_4]},
 	{"id": "deselect", "s": "battle", "label": "Deselect all",
 		"touch": "Two-finger tap, or the None button (with the group buttons)", "mouse": "None button", "keys": [KEY_ESCAPE]},
+	{"id": "undo", "s": "battle", "label": "Undo the last order (up to 5 batches)",
+		"touch": "Undo button on the command bar (shown for 6 s after each order)", "mouse": "Undo button, or the key", "keys": [KEY_Z | KEY_MASK_CTRL]},
 	{"id": "box_select", "s": "battle", "label": "Select units in a box",
 		"touch": "-", "mouse": "Left drag: a box (Shift adds)", "keys": []},
 	# ---- battle: orders
 	{"id": "move", "s": "battle", "label": "Move (keep frontage)",
-		"touch": "Tap the ground", "mouse": "Right click the ground (the whole selection moves, keeping its shape)", "keys": []},
+		"touch": "Tap the ground (or the body of one of your units, away from its symbol)", "mouse": "Right click the ground (the whole selection moves, keeping its shape)", "keys": []},
 	{"id": "move_run", "s": "battle", "label": "Move running",
 		"touch": "Double tap the ground", "mouse": "Double right click the ground", "keys": []},
 	{"id": "line", "s": "battle", "label": "Draw the front line (position, width, facing; at most one rank long: the line stops there)",

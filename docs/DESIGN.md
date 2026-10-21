@@ -5118,15 +5118,36 @@ selecting or ordering anything.
   1.7x with a mouse), so a marker floating over a neighbouring unit selects
   its own unit; long press (touch) or right click on a unit opens its book page.
 - "None" button with the group buttons deselects; Esc too.
-- Ordering into crowds (2026-10-13): with units selected, a plain tap on one of
-  our own units is a MOVE to that point (a "Move" flash); a long press
-  (350 ms; a held click on desktop) or a double tap on it selects it
-  (tight pick: its marker or footprint only), Shift / Ctrl-click adds as
-  before; a tap on an enemy attacks; with nothing selected a tap selects.
-  Drag with a selection always draws the order line (box select only with an
-  empty selection or Shift). With a selection the long press selects instead of
-  opening the unit book (cards and enemy units still do). Constants and rules:
-  top of `game/battle.gd`.
+- A friendly marker always selects (2026-10-20, replacing the 2026-10-13
+  "ordering into crowds" select rule that wrecked formations on a near miss):
+  with or without a selection, a tap within the loose marker radius (2.3x the
+  marker on touch, 1.7x with a mouse) of one of our units' markers selects
+  that unit (nearest marker wins; Shift / Ctrl / Add toggles it). A tap on
+  one of our units' footprint away from its marker, with a selection, is
+  still a MOVE to that point (a "Move" flash: ordering into a crowd); a
+  double tap on our unit selects it; with nothing selected a tap selects; a
+  tap on an enemy attacks. Long press on any unit (selection or not) opens
+  its book page; holding the only selected unit no longer deselects (two-finger
+  tap and the None button do). Drag with a selection always draws the order
+  line (box select only with an empty selection or Shift). Telemetry
+  `tap_select_loose`: the loose radius, beyond the tight one, made the
+  selection. Constants and rules: top of `game/battle.gd`.
+- Undo (2026-10-20): `game/battle.gd` keeps a stack of the last `UNDO_DEPTH`
+  (5) order batches. A batch is every order queued in one frame by the player
+  from the field or the bar (tap move / attack, line drag, group move, run /
+  halt / fire / skirmish / deploy / stance toggles, card orders); before the
+  first order of a batch, each affected own unit's order is recorded as the
+  view predicts it (order kind, destination, facing, frontage, run, attack
+  target, mode flags). Undo pops one batch and re-issues the records as
+  ordinary queued orders (`_queue`, so lockstep and hashes are untouched, the
+  sim does not change): a move back to the old destination / facing /
+  frontage, an attack on the old target, a hold at the unit's centre for a
+  unit that stood without an order, flags only where they changed; broken or
+  dead units are skipped. The command bar's **Undo** button shows for
+  `UNDO_SHOW_SEC` (6 s) after each batch (the timer restarts on each batch and
+  on each undo); Ctrl+Z works while the stack holds anything, paused too.
+  Deployment placements, gates, field works and Drop are not undoable. Flash
+  "Order undone". Telemetry `undo`, `undo_button`, `undo_shown`.
 - Campaign battles have no field result panel: a 1.5 s Victory / Defeat / Draw
   banner (tap to skip), then back to the campaign's own result screen. Custom
   battles and the sandbox keep the panel.

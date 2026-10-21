@@ -36,6 +36,7 @@ signal orders_toggled(on: bool)
 signal book_pressed
 signal card_long_pressed(unit: int)
 signal deselect_pressed
+signal undo_pressed
 signal controls_pressed
 signal gift_pressed
 signal cards_reordered
@@ -130,6 +131,7 @@ var gift_button: Button
 var withdraw_all_button: Button
 var add_button: Button
 var deselect_button: Button
+var undo_button: Button  # the command bar's Undo (battle.gd shows it for a few seconds after each order batch)
 ## Shift / Ctrl / Cmd was held when the last card was clicked.
 var card_mod_add := false
 var group_buttons: Dictionary = {}  # kind -> Button
@@ -294,6 +296,13 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	deselect_button.pressed.connect(func(): deselect_pressed.emit())
 	deselect_button.disabled = not interactive
 	groups.add_child(deselect_button)
+	undo_button = _button("Undo", Vector2(58, BTN_H))
+	undo_button.name = "undo"
+	undo_button.tooltip_text = "Undo the last order (Ctrl+Z)"
+	undo_button.pressed.connect(func(): undo_pressed.emit())
+	undo_button.disabled = not interactive
+	undo_button.visible = false
+	groups.add_child(undo_button)
 	kill_button = _button("Kill elephant", Vector2(0, BTN_H), "kill_beast")
 	kill_button.name = "kill_beast"
 	kill_button.tooltip_text = "Your elephants are running amok: their drivers kill them (5 s) before they trample more of your men"

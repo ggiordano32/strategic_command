@@ -331,10 +331,25 @@ func _initialize() -> void:
 		_step_cr_check_friend,
 		_step_cr_long,
 		_step_cr_check_long,
+		_step_cr_dbl,
+		_step_cr_check_dbl,
+		_step_cr_foot,
+		_step_cr_check_foot,
 		_step_cr_tap_enemy,
 		_step_cr_check_enemy,
 		_step_cr_tap_ground,
 		_step_cr_check_ground,
+		# Undo the last order batch (button, Ctrl+Z, empty stack).
+		_step_ud_start,
+		_step_ud_move,
+		_step_ud_group,
+		_step_ud_check_group,
+		_step_ud_key,
+		_step_ud_check_key,
+		_step_ud_button,
+		_step_ud_check_button,
+		_step_ud_empty,
+		_step_ud_check_empty,
 		# Campaign battle Leave: ignored in the first seconds, then a modal
 		# (Stay keeps the battle, Leave exits).
 		_step_lv_start,
@@ -2834,6 +2849,7 @@ func _step_done() -> void:
 
 # ---------------------------------------------- ordering into crowds ---
 
+var _cr_seq := 0
 var _cr_a := -1   # selected unit
 var _cr_b := -1   # another friendly unit
 
@@ -2898,13 +2914,55 @@ func _step_cr_check_friend() -> void:
 	battle.sim.pending_orders.clear()
 
 
+func _loose_beside_marker(u: int) -> Vector2:
+	# 1.5 marker radii sideways from the marker's centre: inside the loose
+	# hit circle (1.7x mouse, 2.3x touch), outside the tight one (1.0x).
+	var r := maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / battle.camera.zoom.x)
+	return battle.get_canvas_transform() * (Vector2(sim_cx(u), sim_cy(u)) / 1024.0 * Battle.PX_PER_M + Vector2(1.5 * r, -r * 2.2))
+
+
 func _step_cr_long() -> void:
-	battle._tap(battle.get_canvas_transform() * _screen_w(_cr_b), false, true)
+	# Selection [a]; a tap just beside b's marker (loose radius) selects b.
+	_check(battle.selection == [_cr_a], "marker: a is selected (%s)" % str(battle.selection))
+	battle.sim.pending_orders.clear()
+	_cr_seq = battle.sim._order_seq
+	battle._tap(_loose_beside_marker(_cr_b), false)
 
 
 func _step_cr_check_long() -> void:
-	_check(battle.selection == [_cr_b], "crowd: a long press on a friendly unit selects it (%s)" % str(battle.selection))
-	_check(_pending_of(BattleSim.ORDER_MOVE, _cr_a) == 0, "crowd: ... and orders nothing")
+	_check(battle.selection == [_cr_b], "marker: a tap within the loose radius of a friend's marker selects it, with a selection (%s)" % str(battle.selection))
+	_check(_pending_of(BattleSim.ORDER_MOVE, _cr_a) == 0 and _pending_of(BattleSim.ORDER_MOVE, _cr_b) == 0, "marker: ... and orders nothing")
+
+
+func _step_cr_dbl() -> void:
+	# A double tap on a friend's body (away from its marker) selects it.
+	var r := maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / battle.camera.zoom.x)
+	_focus(sim_cx(_cr_a), sim_cy(_cr_a))
+	battle._tap(_unit_screen(_cr_a) + Vector2(0, 2.0 * r * battle.camera.zoom.x) if not battle.UiScale.is_touch() else _unit_screen(_cr_a) + Vector2(0, 4.0 * r * battle.camera.zoom.x), true)
+
+
+func _step_cr_check_dbl() -> void:
+	_check(battle.selection == [_cr_a], "double tap on a friend's footprint selects it (%s)" % str(battle.selection))
+	battle.sim.pending_orders.clear()
+
+
+func _step_cr_foot() -> void:
+	# Selection [a]; a plain tap on b's body (centre, below its marker) is a move.
+	_focus(sim_cx(_cr_b), sim_cy(_cr_b))
+	_no_double_tap()
+	var p := _unit_screen(_cr_b)
+	if battle.UiScale.is_touch():
+		var r := maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / battle.camera.zoom.x)
+		p += Vector2(0, 2.5 * r * battle.camera.zoom.x)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_cr_check_foot() -> void:
+	_check(battle.selection == [_cr_a], "footprint away from the marker keeps the selection (%s)" % str(battle.selection))
+	_check(_pending_of(BattleSim.ORDER_MOVE, _cr_a) == 1, "... and is a move order for the selected unit")
+	battle.sim.pending_orders.clear()
+	battle._select(_cr_b)  # (the steps below expect b selected)
 
 
 func _step_cr_tap_enemy() -> void:
@@ -2936,6 +2994,116 @@ func _step_cr_tap_ground() -> void:
 
 func _step_cr_check_ground() -> void:
 	_check(_pending_of(BattleSim.ORDER_MOVE, _cr_b) == 1, "crowd: a tap on empty ground moves")
+
+
+# ------------------------------------------------------------- undo ---
+
+var _ud := {}   # unit -> {order, dx, dy, dface, files} recorded before the group move
+var _ud_units: Array = []
+
+
+func _ud_snap(u: int) -> Dictionary:
+	var d := {}
+	for k in ["order", "dx", "dy", "dface", "files"]:
+		d[k] = battle.orders.value(u, k)
+	return d
+
+
+func _ud_same() -> bool:
+	for u in _ud_units:
+		if _ud_snap(u) != _ud[u]:
+			return false
+	return true
+
+
+func _step_ud_start() -> void:
+	if is_instance_valid(battle):
+		battle.queue_free()
+	battle = Battle.new()
+	battle.scenario_id = "skirmish"
+	battle.seed_value = 7
+	root.add_child(battle)
+
+
+func _step_ud_move() -> void:
+	var sim := battle.sim
+	if not battle.paused:
+		battle._toggle_pause()
+	_ud_units = []
+	for u in sim.n_units:
+		if sim.u_side[u] == 0 and sim.u_state[u] == BattleSim.U_READY and _ud_units.size() < 2 \
+				and UT.stat(sim.u_type[u], "fixed") == 0:
+			_ud_units.append(u)
+	_check(battle._undo_stack.is_empty() and not battle.hud.undo_button.visible, "undo: nothing to undo at the start, button hidden")
+	# Empty stack: Undo does nothing.
+	var pc: int = battle.orders.pending_count()
+	battle._undo()
+	_check(battle.orders.pending_count() == pc, "undo: an empty stack issues nothing")
+	# Give each unit a move order (batch 1).
+	for u in _ud_units:
+		battle._queue(BattleSim.make_move_order(0, u, sim.u_ax[u] + 15 * 1024, sim.u_ay[u] - 25 * 1024, 300, BattleSim.files_to_width(10, sim.u_type[u]), 0))
+	_ud = {}
+	for u in _ud_units:
+		_ud[u] = _ud_snap(u)
+	_check(_ud[_ud_units[0]]["order"] == BattleSim.O_MOVE, "undo: the first move is predicted")
+	battle.selection = []
+	for u in _ud_units:
+		battle._toggle_in_selection(u)
+
+
+func _step_ud_group() -> void:
+	_check(battle._undo_stack.size() == 1 and battle.hud.undo_button.visible, "undo: one batch recorded, the button shows")
+	var sim := battle.sim
+	battle._group_move(Vector2(sim.u_ax[_ud_units[0]] + 40 * 1024, sim.u_ay[_ud_units[0]] + 10 * 1024), false)
+
+
+func _step_ud_check_group() -> void:
+	_check(battle._undo_stack.size() == 2, "undo: the group move is one batch for both units (%d batches)" % battle._undo_stack.size())
+	_check(not _ud_same(), "undo: the group move changed the orders")
+	var n: int = (battle._undo_stack.back()["recs"] as Array).size()
+	_check(n == _ud_units.size(), "undo: ... recording each unit once (%d)" % n)
+	battle.hud.undo_button.pressed.emit()  # the bar button
+
+
+func _step_ud_key() -> void:
+	_check(_ud_same(), "undo: the Undo button restores every unit's destination / facing / frontage")
+	_check(battle._undo_stack.size() == 1, "undo: one batch popped")
+	# Ctrl+Z pops the first batch (back to no order: a hold at the centre).
+	_key(KEY_Z, {"ctrl": true})
+
+
+func _step_ud_check_key() -> void:
+	_check(battle._undo_stack.is_empty(), "undo: Ctrl+Z popped the last batch")
+	var u: int = _ud_units[0]
+	# (a move to where it stands is a re-form in place: no order left)
+	_check(battle.orders.value(u, "order") == BattleSim.O_NONE or (battle.orders.value(u, "dx") == battle.sim.u_cx[u] \
+		and battle.orders.value(u, "dy") == battle.sim.u_cy[u]), "undo: a unit that had no order holds at its centre (%s: %d,%d vs %d,%d)" % [battle.orders.value(u, "order"), battle.orders.value(u, "dx"), battle.orders.value(u, "dy"), battle.sim.u_cx[u], battle.sim.u_cy[u]])
+	_check(not battle.hud.undo_button.visible, "undo: the button hides when the stack is empty")
+
+
+func _step_ud_button() -> void:
+	var n: int = battle.orders.pending_count()
+	_key(KEY_Z, {"ctrl": true})
+	_ud_n = n
+
+
+var _ud_n := 0
+
+
+func _step_ud_check_button() -> void:
+	_check(battle.orders.pending_count() == _ud_n, "undo: Ctrl+Z with an empty stack does nothing")
+	# The button hides after UNDO_SHOW_SEC but Ctrl+Z still works.
+	var u: int = _ud_units[0]
+	battle._queue(BattleSim.make_halt_order(0, u))
+
+
+func _step_ud_empty() -> void:
+	_check(battle._undo_stack.size() == 1 and battle.hud.undo_button.visible, "undo: a halt is a batch")
+	battle._undo_t = 0.001  # (let the timer run out)
+
+
+func _step_ud_check_empty() -> void:
+	_check(not battle.hud.undo_button.visible and battle._undo_stack.size() == 1, "undo: the button hides after the timer, the stack keeps the batch")
 
 
 func _screen_w(u: int) -> Vector2:

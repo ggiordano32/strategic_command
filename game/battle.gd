@@ -39,24 +39,28 @@ const SPEED_PRESETS := [2, 4, 8, 16]  # --speed=N (main.gd): N indexes these qua
 const DRAG_THRESHOLD := 18.0      # screen px before a touch becomes a drag
 const DOUBLE_TAP_SEC := 0.35
 # Tap rules on the field (first match wins). "Selection" = units selected.
+#   a tap within the loose marker radius (2.3x touch / 1.7x mouse) of one of
+#     our units' markers -> select that unit (nearest marker wins), with or
+#     without a selection; shift / ctrl / Add toggles it. Markers are hit
+#     targets first, so a near miss never turns into a group move.
 #   enemy unit under the tap, selection        -> attack (double tap: charge)
-#   friendly unit, selection, plain tap         -> MOVE order to the tapped point
-#   friendly unit, selection, long press (>= SELECT_LONG_PRESS_SEC) or double
-#     tap, within the unit's own marker / footprint (tight pick) -> select it
-#     (shift / ctrl click adds or removes it, as ever)
-#   anything, no selection                      -> tap on a unit selects it
+#   friendly unit's footprint (away from its marker), selection, plain tap
+#     -> MOVE order to the tapped point (the "Move" flash: ordering into a
+#     crowd); a double tap on it selects it; no selection: a tap selects
 #   ground, selection                           -> move there
-# Drag with a selection (from anywhere, a crowd of our units included) draws
-# the order line; rubber-band select needs an empty selection or shift/ctrl.
-# Friendly picks use the tight radius when a selection exists, so a tap
-# between units reaches the ground; enemies keep the generous one.
+# A long press on any unit opens its book page. Drag with a selection (from
+# anywhere, a crowd of our units included) draws the order line; rubber-band
+# select needs an empty selection or shift/ctrl. Two-finger tap and the None
+# button deselect.
 # MOUSE (real mouse; the touch rules above are unchanged): left click selects
 # (empty ground deselects), left drag is a selection box, right click orders
 # (ground: the whole selection moves keeping its shape; enemy: attack; our
 # unit: move to it; double = run / charge), right drag lays the selection out
 # along the dragged line (the touch drag-to-line rule). Middle drag pans.
-const SELECT_LONG_PRESS_SEC := 0.35
-const TIGHT_PICK_K := 1.0        # marker hit radius factor when units are selected
+const SELECT_LONG_PRESS_SEC := 0.35  # a held mouse click (telemetry label only)
+const UNDO_DEPTH := 5            # order batches Undo remembers
+const UNDO_SHOW_SEC := 6.0       # the Undo button stays this long after each batch
+const TIGHT_PICK_K := 1.0        # marker hit radius factor of the tight pick (counter tap_select_loose)
 const END_BANNER_SEC := 1.5      # campaign battles: the end banner before returning
 const DOUBLE_TAP_DIST := 48.0
 # Two-finger tap = deselect all. Both fingers down within TWO_TAP_DOWN_MS of
@@ -378,6 +382,9 @@ func _ready() -> void:
 	hud.card_long_pressed.connect(func(u: int): _open_book(sim.u_otype[u], "book_open_card"))
 	hud.cards_reordered.connect(func(): _count("card_reorder"))
 	hud.book.closed.connect(_on_book_closed)
+	hud.undo_pressed.connect(func():
+		_count("undo_button")
+		_undo())
 	hud.deselect_pressed.connect(func():
 		_count("deselect_button")
 		_gm_cancel()
@@ -628,6 +635,10 @@ func _process(delta: float) -> void:
 			_exit_timer = 0.1  # live co-op: wait for the final frame so the result is complete
 	if leave_grace > 0.0:
 		leave_grace -= delta
+	if _undo_t > 0.0:
+		_undo_t -= delta
+		if _undo_t <= 0.0:
+			_undo_refresh_button()
 	if leave_dialog != null and leave_dialog.visible and sim.winner >= 0:
 		leave_dialog.visible = false  # (decided meanwhile: the result shows)
 	if coop != null:
@@ -965,10 +976,12 @@ func _queue(order: Dictionary) -> void:
 		var cu := int(order.get("unit", -1))
 		if cu >= 0 and not coop.can_order(cu):
 			return
+		_undo_record(order)
 		coop.issue(order)
 	else:
 		# Solo play: orders apply on the next tick.
 		order["tick"] = sim.tick
+		_undo_record(order)
 		if int(order["type"]) == BattleSim.ORDER_WORKS:
 			order["side"] = player_side  # (live: the lockstep sets the issuer's side)
 		sim.queue_order(order)
@@ -981,6 +994,125 @@ func _queue(order: Dictionary) -> void:
 		_order_events += 1
 		_t("order", {"type": tname, "tick": sim.tick, "unit": int(order.get("unit", -1)),
 			"run": int(order.get("run", 0)), "group": selection.size()})
+
+
+# ----------------------------------------------------------------- undo ---
+# Every order batch the player issues (all the _queue calls of one frame: a
+# tap, a line drag, a group move, a bar button, a card order) first records
+# each own unit's order as the view predicts it (the sim's fields plus what is
+# still queued). Undo pops one batch and re-issues the records as ordinary
+# queued orders, so lockstep, replays and hashes never see anything new.
+
+const UNDO_TYPES := [BattleSim.ORDER_MOVE, BattleSim.ORDER_ATTACK, BattleSim.ORDER_HALT, BattleSim.ORDER_RUN,
+	BattleSim.ORDER_FIRE, BattleSim.ORDER_SKIRMISH, BattleSim.ORDER_WITHDRAW, BattleSim.ORDER_WITHDRAW_ALL,
+	BattleSim.ORDER_DEPLOY, BattleSim.ORDER_REFILL, BattleSim.ORDER_STANCE, BattleSim.ORDER_AMMO,
+	BattleSim.ORDER_FORAGE, BattleSim.ORDER_OCCUPY, BattleSim.ORDER_PICKUP]
+const UNDO_KEYS := ["order", "face", "files", "dx", "dy", "dface", "target", "run", "fire", "skirm",
+	"deploy", "refill", "akind", "forage", "stance", "bound", "gtarget"]
+var _undo_stack: Array = []   # batches: {"frame": int, "recs": [record, ...]}
+var _undo_t := 0.0            # seconds the Undo button still shows
+var _undoing := false
+
+
+func _undo_record(order: Dictionary) -> void:
+	if _undoing or sim.phase != BattleSim.PHASE_BATTLE or not interactive \
+			or not UNDO_TYPES.has(int(order["type"])):
+		return
+	var frame := Engine.get_process_frames()
+	var batch: Dictionary = {}
+	if not _undo_stack.is_empty() and int((_undo_stack.back() as Dictionary)["frame"]) == frame:
+		batch = _undo_stack.back()
+	var fresh: Array = []
+	for u in BattleSim.order_units(sim, order):
+		if sim.u_side[u] != player_side or not _mine(u):
+			continue
+		var seen := false
+		if not batch.is_empty():
+			for r in batch["recs"]:
+				if int(r["u"]) == u:
+					seen = true
+		if seen:
+			continue
+		var rec := {"u": u, "cx": sim.u_cx[u], "cy": sim.u_cy[u]}
+		for k in UNDO_KEYS:
+			rec[k] = orders.value(u, k)
+		fresh.append(rec)
+	if fresh.is_empty():
+		return
+	if batch.is_empty():
+		batch = {"frame": frame, "recs": []}
+		_undo_stack.append(batch)
+		while _undo_stack.size() > UNDO_DEPTH:
+			_undo_stack.pop_front()
+	(batch["recs"] as Array).append_array(fresh)
+	_undo_t = UNDO_SHOW_SEC
+	_undo_refresh_button()
+
+
+func _undo_refresh_button() -> void:
+	var on := _undo_t > 0.0 and not _undo_stack.is_empty()
+	if on and not hud.undo_button.visible:
+		_count("undo_shown")
+	hud.undo_button.visible = on
+
+
+## Undo the last order batch: each unit gets its recorded order back.
+func _undo() -> void:
+	if _undo_stack.is_empty() or not interactive or sim.phase != BattleSim.PHASE_BATTLE:
+		return
+	var batch: Dictionary = _undo_stack.pop_back()
+	_undoing = true
+	for r in batch["recs"]:
+		_undo_unit(r)
+	_undoing = false
+	_count("undo")
+	if coop_hud != null:
+		coop_hud.flash("Order undone", 1.5)
+	elif not (batch["recs"] as Array).is_empty():
+		var f: int = int((batch["recs"] as Array)[0]["u"])
+		overlay.flash("Order undone", Vector2(sim.u_cx[f], sim.u_cy[f]) / M * PX_PER_M)
+	_undo_t = UNDO_SHOW_SEC if not _undo_stack.is_empty() else 0.0
+	_undo_refresh_button()
+	_refresh_actions()
+
+
+func _undo_unit(r: Dictionary) -> void:
+	var u := int(r["u"])
+	if sim.u_state[u] != BattleSim.U_READY or not _mine(u):
+		return
+	# Standing settings first (only those that changed).
+	if orders.value(u, "fire") != int(r["fire"]):
+		_queue(BattleSim.make_fire_order(0, u, int(r["fire"])))
+	if orders.value(u, "skirm") != int(r["skirm"]):
+		_queue(BattleSim.make_skirmish_order(0, u, int(r["skirm"])))
+	if orders.value(u, "deploy") != int(r["deploy"]):
+		_queue(BattleSim.make_deploy_order(0, u, int(r["deploy"])))
+	if orders.value(u, "refill") != int(r["refill"]):
+		_queue(BattleSim.make_refill_order(0, u, int(r["refill"])))
+	if orders.value(u, "akind") != int(r["akind"]):
+		_queue({"type": BattleSim.ORDER_AMMO, "unit": u, "on": 1 if int(r["akind"]) != 0 else 0})
+	if orders.value(u, "forage") != int(r["forage"]):
+		_queue({"type": BattleSim.ORDER_FORAGE, "unit": u, "on": 1 if int(r["forage"]) != 0 else 0})
+	if orders.value(u, "stance") != int(r["stance"]):
+		_queue({"type": BattleSim.ORDER_STANCE, "unit": u, "stance": int(r["stance"])})
+	var run := int(r["run"])
+	var files := int(r["files"])
+	var width := BattleSim.files_to_width(files, sim.u_type[u])
+	var o := int(r["order"])
+	if o == BattleSim.O_ATTACK and int(r["target"]) >= 0 and sim.u_state[int(r["target"])] < BattleSim.U_DESTROYED:
+		_queue(BattleSim.make_attack_order(0, u, int(r["target"]), run))
+	elif o == BattleSim.O_MOVE:
+		var mo := BattleSim.make_move_order(0, u, int(r["dx"]), int(r["dy"]), int(r["dface"]), width, run)
+		if int(r["bound"]) != 0:
+			mo["bound"] = 1
+		_queue(mo)
+	elif o == BattleSim.O_WITHDRAW:
+		_queue(BattleSim.make_withdraw_order(0, u))
+	else:
+		# It stood without an order (or its target is gone): hold where it was.
+		_queue(BattleSim.make_move_order(0, u, int(r["cx"]), int(r["cy"]), int(r["face"]), width, 0))
+		if run != 0:
+			_queue(BattleSim.make_run_order(0, u, run))
 
 
 ## Deployment phase: this player is ready (solo: the battle starts).
@@ -1958,11 +2090,12 @@ func _tap(screen_pos: Vector2, double: bool, long_press := false) -> void:
 	var u := -1 if door >= 0 else _pick_unit(w)
 	var friend_move := false
 	if u >= 0 and sim.u_side[u] == player_side and not selection.is_empty():
-		var wants_select := not _rmb_order and (double or long_press or add_mode or _shift_held())
-		if not wants_select or _pick_unit(w, true) != u:
-			# A plain tap on our own unit while units are selected is a move
-			# there (see the rules at the top); a select needs the tight pick.
-			friend_move = not wants_select
+		# A marker (loose radius) always selects; on the unit's footprint away
+		# from it a plain tap is a move there (see the rules at the top).
+		var wants_select := not _rmb_order and (double or add_mode or _shift_held() \
+			or _marker_unit(w, _marker_hit_r()) == u)
+		if not wants_select:
+			friend_move = true
 			u = -1
 	if u >= 0 and sim.u_side[u] == player_side:
 		if sim.u_state[u] != BattleSim.U_READY:
@@ -1972,10 +2105,10 @@ func _tap(screen_pos: Vector2, double: bool, long_press := false) -> void:
 			_not_mine_hint(u)
 			return
 		_count("tap_select")
+		if _marker_unit(w, _tight_marker_r()) != u and _pick_unit(w, true) != u:
+			_count("tap_select_loose")
 		if add_mode or _shift_held():
 			_toggle_in_selection(u)
-		elif selected == u and selection.size() == 1 and long_press:
-			_select(-1)
 		else:
 			_select(u)
 		return
@@ -2231,6 +2364,32 @@ func _update_matchup(sp: Vector2) -> void:
 		overlay.queue_redraw()
 
 
+## Radius (sim units) of the tight marker hit circle (the marker itself).
+func _tight_marker_r() -> int:
+	return int(maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / camera.zoom.x) * TIGHT_PICK_K / PX_PER_M * M)
+
+
+## The unit whose marker centre is nearest world point w (px) within marker
+## radius r (sim units), or -1. Any side; hidden and destroyed units skip.
+func _marker_unit(w: Vector2, r: int) -> int:
+	var x := int(w.x / PX_PER_M * M)
+	var y := int(w.y / PX_PER_M * M)
+	var mr := maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / camera.zoom.x)
+	var lift := int(2.2 * mr / PX_PER_M * M)
+	var best := -1
+	var best_d := 0
+	for u in sim.n_units:
+		if sim.u_state[u] >= BattleSim.U_DESTROYED or sim.hidden_from(u, player_side):
+			continue
+		var mdx: int = x - sim.u_cx[u]
+		var mdy: int = y - (sim.u_cy[u] - lift)
+		var md := mdx * mdx + mdy * mdy
+		if md <= r * r and (best < 0 or md < best_d):
+			best = u
+			best_d = md
+	return best
+
+
 ## tight: only the marker's own circle and the unit's footprint count (used
 ## to select our units while a selection exists, so taps between units
 ## reach the ground).
@@ -2243,20 +2402,7 @@ func _pick_unit(w: Vector2, tight := false) -> int:
 	# The symbol marker above each unit is a hit target first (generous on
 	# touch screens); a tap on a marker wins over a unit's ground box under
 	# it, since markers float over neighbouring units when zoomed out.
-	var mr := maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / camera.zoom.x)
-	var marker_r := _marker_hit_r()
-	if tight:
-		marker_r = int(maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / camera.zoom.x) * TIGHT_PICK_K / PX_PER_M * M)
-	var lift := int(2.2 * mr / PX_PER_M * M)
-	for u in sim.n_units:
-		if sim.u_state[u] >= BattleSim.U_DESTROYED or sim.hidden_from(u, player_side):
-			continue
-		var mdx: int = x - sim.u_cx[u]
-		var mdy: int = y - (sim.u_cy[u] - lift)
-		var md := mdx * mdx + mdy * mdy
-		if md <= marker_r * marker_r and (best < 0 or md < best_d):
-			best = u
-			best_d = md
+	best = _marker_unit(w, _tight_marker_r() if tight else _marker_hit_r())
 	if best >= 0:
 		return best
 	for u in sim.n_units:
@@ -2463,6 +2609,8 @@ func _on_key(e: InputEventKey) -> void:
 			_select_group("missile")
 		"select_cav":
 			_select_group("cav")
+		"undo":
+			_undo()
 		"deselect":
 			if _gm or _gm_pending:
 				_count("group_move_cancelled")
@@ -2542,23 +2690,11 @@ func _keys_held(delta: float) -> void:
 	if v != Vector2.ZERO:
 		camera.position += v * PAN_SPEED * delta / camera.zoom
 		_clamp_camera()
-	# Long press on a unit on the field: its unit book page.
+	# Long press on a unit on the field: its unit book page (any selection).
 	if _primary >= 0 and not _dragging and not _gesture_multi and _field_lp_start > 0.0 \
-			and Time.get_ticks_msec() / 1000.0 - _field_lp_start >= (SELECT_LONG_PRESS_SEC if not selection.is_empty() else hud.LONG_PRESS_SEC):
-		var lw := _screen_to_world(_press_pos)
-		var u := _pick_unit(lw)
-		if not selection.is_empty() and interactive:
-			# Units selected: a long press on one of ours selects it (the
-			# unit book is still on the card and on enemy units).
-			if u >= 0 and sim.u_side[u] == player_side:
-				_field_lp_start = -1.0
-				_tap(_press_pos, false, true)
-			elif Time.get_ticks_msec() / 1000.0 - _field_lp_start >= hud.LONG_PRESS_SEC:
-				_field_lp_start = -1.0
-				if u >= 0:
-					_open_book(sim.u_otype[u], "book_open_longpress")
-			return
+			and Time.get_ticks_msec() / 1000.0 - _field_lp_start >= hud.LONG_PRESS_SEC:
 		_field_lp_start = -1.0
+		var u := _pick_unit(_screen_to_world(_press_pos))
 		if u >= 0:
 			_open_book(sim.u_otype[u], "book_open_longpress")
 
