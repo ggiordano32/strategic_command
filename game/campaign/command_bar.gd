@@ -755,21 +755,22 @@ func _build_fleet(id: int) -> void:
 		if int(vy[0]) >= 0 or int(vy[1]) >= 0:
 			acts.append(_action("cancel", "Cancel", "Cancel the voyage", func(): s.set_fmove(id, int(vy[0]), int(vy[1])), "", "cancel_voyage"))
 		else:
-			acts.append(_action("move", "Sail", "Tap the sea on the map to sail there, a coast to land the troops, an enemy fleet to attack it", func():
-				s.show_toast("Tap the sea to sail, a coast to land the troops aboard, an enemy fleet to attack."), "", "sail"))
+			acts.append(_action("move", "Sail", "Tap the sea on the map to sail there, a coast to land the troops, an enemy fleet to attack it, your own fleet to join it", func():
+				s.show_toast("Tap the sea to sail, a coast to land the troops aboard, an enemy fleet to attack, your own fleet to join it."), "", "sail"))
 		for a in CState.armies_of(ps, s.f):
 			if CFleet.near_fleet(a, fl):
 				var aid := int(a["id"])
 				acts.append(_action("embark", "Board", "Board an army of %d units" % CState.unit_count(a), func(): s.embark(aid, id),
 					CFleet.embark_check(ps, s.f, aid, id), "board"))
 				break
+		var first_join := -1
 		for o in CFleet.fleets_of(ps, s.f):
-			if int(o["id"]) != id and CGrid.cheb(CFleet.cell(o), CFleet.cell(fl)) <= 1:
+			if int(o["id"]) != id and not CSea.is_flota(o) and CGrid.cheb(CFleet.cell(o), CFleet.cell(fl)) <= 1:
 				var oid := int(o["id"])
 				acts.append(_action("merge", "Join", "Join the fleet alongside (%d ships)" % (o["ships"] as Array).size(), func():
-					if s.add_order({"t": "fmerge", "fleet": id, "into": oid}) == "":
-						s.select_fleet(oid), "", "join"))
-				break
+					s.join_fleet(id, oid), "", "join" if first_join < 0 else "join_%d" % oid))
+				if first_join < 0:
+					first_join = oid
 	if mine and not flota:
 		var port := CFleet.port_of(ps, fl, ff)
 		var yt: Array = s.panels.ship_tab(port) if port >= 0 else [false, ""]

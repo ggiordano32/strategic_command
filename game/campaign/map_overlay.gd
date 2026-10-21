@@ -1354,6 +1354,8 @@ func _fleet_path(fp: Dictionary, fpos: Dictionary) -> void:
 		draw_turn_end(_ci, end_now, col, m)
 	if int(fp["attack"]) != 0:
 		draw_intent(_ci, prev, "attack", col, m)
+	elif int(fp.get("join", 0)) != 0:
+		draw_merge_glyph(_ci, prev, 0, m)
 	elif int(fp["land"]) != 0:
 		_ci.draw_circle(prev, 7.0 * m, Color(0, 0, 0, 0.7))
 		_ci.draw_circle(prev, 5.0 * m, Color(0.95, 0.85, 0.4))

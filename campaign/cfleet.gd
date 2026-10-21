@@ -16,14 +16,18 @@ extends RefCounted
 ##     c: crew %}], carry [army dicts aboard, whole: they leave "armies"
 ##     while at sea], moved (0/1 this turn); optional dest_x, dest_y, tgt
 ##     (a stored voyage: the cell, or the enemy fleet it chases), land (1:
-##     land the troops on arriving at dest, a coast cell), job (AI: the army
+##     land the troops on arriving at dest, a coast cell), join (the id of
+##     another fleet of the faction it sails to merge into; dest_x / dest_y
+##     are that fleet's cell, refreshed every turn), job (AI: the army
 ##     id it is fetching)}] sorted by id,
 ##   next_fleet, regions[r]["sq"] [ship keys] (ordered this turn, launched
 ##   at the end of it), stats["sea_battles"].
 ## Orders (crules.apply_order): ship {r, ship}, embark {army, fleet}, land
 ## {fleet, army (-1 all), x, y}, fmove {fleet, x, y, tgt?, persist?} (a
-## land cell: sail beside it and land everything aboard on arriving),
-## fmerge {fleet, into}, fcancel {fleet}, scuttle {fleet, ship}.
+## land cell: sail beside it and land everything aboard on arriving; tgt =
+## one of the faction's own fleets: sail beside it and merge into it, kept
+## from turn to turn until it does), fmerge {fleet, into} (at once, within
+## a cell), fcancel {fleet}, scuttle {fleet, ship}.
 ## Hooks for N2 (trade, blockades, the flota, pirates) are the docks and
 ## harbours per region, the pirates' capture share and the sea battle event.
 ## N3a: a sea battle with a human faction in it is pending (a battle record
@@ -974,10 +978,22 @@ static func plan(st: Dictionary, f: int, fid: int, dest: int, tgt: int = -1, max
 	if fl["ships"].is_empty():
 		return {"why": "no ships"}
 	var landing := false
+	var join := -1
 	if tgt >= 0:
 		var tf := fleet(st, tgt)
-		if tf.is_empty() or not CState.at_war(st, f, int(tf["f"])):
-			return {"why": "not an enemy fleet"}
+		if tf.is_empty():
+			return {"why": "no such fleet"}
+		if int(tf["f"]) != f and not CState.at_war(st, f, int(tf["f"])):
+			return {"why": "not our fleet"}
+		if int(tf["f"]) == f:
+			if tgt == fid:
+				return {"why": "a fleet cannot join itself"}
+			if tf.has("flota"):
+				return {"why": "the flota sails by the Crown's orders"}
+			if tf.has("busy"):
+				return {"why": "in a sea battle"}
+			join = tgt
+			tgt = -1
 		dest = cell(tf)
 	elif dest < 0:
 		return {"why": "bad order"}
@@ -1001,14 +1017,15 @@ static func plan(st: Dictionary, f: int, fid: int, dest: int, tgt: int = -1, max
 	if coastal(fl) and not coastal_link(cell(fl), dest):
 		return {"why": "too far from the coast for canoes"}
 	var block := block_mask(st, f, tgt)
-	var p := _cached_route(fl, dest, block, max_turns) if tgt < 0 else {}
+	var p := _cached_route(fl, dest, block, max_turns) if (tgt < 0 and join < 0) else {}
 	if p.is_empty():
-		p = find_path(fl, dest, block, landing or tgt >= 0, max_turns)
+		p = find_path(fl, dest, block, landing or tgt >= 0 or join >= 0, max_turns)
 	if p.is_empty():
 		return {"why": "no way there by sea"}
 	p["goal"] = dest
 	p["land"] = 1 if landing else 0
 	p["tgt"] = tgt
+	p["join"] = join
 	return p
 
 
@@ -1072,12 +1089,14 @@ static func _drop_voyage(fl: Dictionary) -> void:
 	fl.erase("dest_y")
 	fl.erase("tgt")
 	fl.erase("land")
+	fl.erase("join")
 
 
-## Fleet fl's stored voyage as [cell, tgt] ([-1, -1] none).
+## Fleet fl's stored voyage as [cell, tgt] ([-1, -1] none); tgt is the enemy
+## fleet it chases, or the fleet of its own faction it sails to join.
 static func voyage(fl: Dictionary) -> Array:
 	var c := CGrid.at(int(fl.get("dest_x", -1)), int(fl.get("dest_y", -1))) if fl.has("dest_x") else -1
-	return [c, int(fl.get("tgt", -1))]
+	return [c, int(fl.get("tgt", fl.get("join", -1)))]
 
 
 ## Run a phase's voyages: moves [[fleet id, dest cell, faction, persist,
@@ -1114,10 +1133,17 @@ static func execute_moves(st: Dictionary, moves: Array) -> void:
 		var done := steps.size() == path.size()
 		fl.erase("route")
 		fl.erase("rgoal")
-		if not done and int(p["tgt"]) < 0:
+		if not done and int(p["tgt"]) < 0 and int(p["join"]) < 0:
 			fl["route"] = path.slice(steps.size())
 			fl["rgoal"] = int(p["goal"])
-		if done or int(m[3]) == 0:
+		if int(p["join"]) >= 0:
+			# A join is kept until the merge below (or it fails): the target
+			# moves, so the destination is its cell as planned this turn.
+			_drop_voyage(fl)
+			fl["join"] = int(p["join"])
+			fl["dest_x"] = CGrid.cx(int(p["goal"]))
+			fl["dest_y"] = CGrid.cy(int(p["goal"]))
+		elif done or int(m[3]) == 0:
 			_drop_voyage(fl)
 		else:
 			var dc := int(m[1]) if int(p["tgt"]) < 0 else int(p["goal"])
@@ -1174,8 +1200,36 @@ static func execute_moves(st: Dictionary, moves: Array) -> void:
 			_rules().event(st, {"k": "fmove_failed", "f": int(fl["f"]), "fleet": int(fl["id"]), "why": "nowhere to land"})
 			continue
 		land(st, fl, lc)
+	_join_pass(st)
 	if not _mlog.is_empty():
 		_rules().event(st, {"k": "fmoves", "steps": _mlog.duplicate()})
+
+
+## After the fleets have sailed: in fleet-id order every fleet with a stored
+## join merges into its target when within a cell of it (the target's id
+## survives; other joins to the merged fleet follow it); a target that is
+## gone (or not ours any more, or a flota) drops the join.
+static func _join_pass(st: Dictionary) -> void:
+	var ids: Array = []
+	for fl in fleets(st):
+		if fl.has("join"):
+			ids.append(int(fl["id"]))
+	for id in ids:
+		var fl := fleet(st, id)
+		if fl.is_empty() or not fl.has("join") or fl.has("busy"):
+			continue
+		var tid := int(fl["join"])
+		var tf := fleet(st, tid)
+		if tf.is_empty() or int(tf["f"]) != int(fl["f"]) or tf.has("flota") or tid == id:
+			_drop_voyage(fl)
+			continue
+		if tf.has("busy") or CGrid.cheb(cell(fl), cell(tf)) > 1:
+			continue
+		if _fmerge(st, int(fl["f"]), id, tid) == "":
+			_rules().event(st, {"k": "fleets_joined", "f": int(tf["f"]), "fleet": id, "into": tid})
+			for o in fleets(st):
+				if int(o.get("join", -1)) == id:
+					o["join"] = tid
 
 
 # ------------------------------------------------------------ sea battles ---

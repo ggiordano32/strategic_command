@@ -1785,7 +1785,7 @@ func _update_hint() -> void:
 	elif not replay.is_empty():
 		hint.text = "Replaying the turn: tap to skip."
 	elif sel_fleet >= 0 and _g():
-		hint.text = "Tap the sea to sail there (shaded: this turn; the wind blows from the east, so westward is fast), a coast to land the troops aboard, an enemy fleet to attack it. Board: select an army beside the fleet and tap the fleet."
+		hint.text = "Tap the sea to sail there (shaded: this turn; the wind blows from the east, so westward is fast), a coast to land the troops aboard, an enemy fleet to attack it, your own fleet to join it. Board: select an army beside the fleet and tap the fleet."
 	elif sel_army >= 0 and _g():
 		hint.text = "Tap (or drag the army to) a spot inside the shaded area to march there this turn, further on for later turns; tap an enemy army to attack it, a city to besiege it. Same spot again: cancel."
 	elif _g():
@@ -2204,7 +2204,7 @@ func _refresh_map6() -> void:
 			if fp.has("why"):
 				continue
 			overlay.fleet_paths.append({"fleet": int(fl["id"]), "path": fp["path"], "t": fp["t"], "land": int(fp["land"]),
-				"attack": 1 if int(fp["tgt"]) >= 0 else 0})
+				"attack": 1 if int(fp["tgt"]) >= 0 else 0, "join": 1 if int(fp.get("join", -1)) >= 0 else 0})
 		var sfl := CFleet.fleet(ps, sel_fleet) if sel_fleet >= 0 else {}
 		overlay.set_sea_reach(CFleet.reach(ps, sfl, 0) if not sfl.is_empty() and int(sfl["f"]) == f else PackedInt32Array())
 		if not sfl.is_empty():
@@ -2492,9 +2492,10 @@ func set_fmove(id: int, c: int, tgt: int = -1) -> void:
 		_flash(str(p["why"]).substr(0, 1).to_upper() + str(p["why"]).substr(1) + ".")
 		return
 	var o := {"t": "fmove", "fleet": id, "x": CGrid.cx(c), "y": CGrid.cy(c), "persist": 1}
-	if int(p["tgt"]) >= 0:
-		var tf := CFleet.fleet(ps, int(p["tgt"]))
-		o["tgt"] = int(p["tgt"])
+	if int(p["tgt"]) >= 0 or int(p.get("join", -1)) >= 0:
+		var tid: int = int(p["tgt"]) if int(p["tgt"]) >= 0 else int(p["join"])
+		var tf := CFleet.fleet(ps, tid)
+		o["tgt"] = tid
 		o["x"] = int(tf["x"])
 		o["y"] = int(tf["y"])
 	if had:
@@ -2502,6 +2503,26 @@ func set_fmove(id: int, c: int, tgt: int = -1) -> void:
 	else:
 		add_order(o)
 	_t("campaign_input", {"what": "fleet_move"})
+
+
+## Our fleet id joins our fleet into: within a cell now, an immediate merge
+## (and the merged-into fleet is selected); farther, a voyage to it that
+## merges on arriving (and goes on from turn to turn).
+func join_fleet(id: int, into: int) -> void:
+	var a := CFleet.fleet(ps, id)
+	var b := CFleet.fleet(ps, into)
+	if a.is_empty() or b.is_empty():
+		return
+	if CGrid.cheb(CFleet.cell(a), CFleet.cell(b)) <= 1:
+		if add_order({"t": "fmerge", "fleet": id, "into": into}) != "":
+			return   # (add_order flashed why)
+		_flash("Joining")
+		select_fleet(into)
+		_t("campaign_input", {"what": "fleet_join"})
+		return
+	set_fmove(id, CFleet.cell(b), into)
+	if sel_fleet >= 0 and not CFleet.fleet(ps, sel_fleet).is_empty():
+		show_side(func(box): panels.fleet_panel(box, sel_fleet))
 
 
 ## Our army id boards our fleet fid (beside it, room aboard).
@@ -3273,7 +3294,9 @@ func _marker_toast(mk: Dictionary) -> void:
 
 ## Fleets (a pack with ships): a tap on a fleet selects it (ours selected:
 ## an enemy's is an attack; an army of ours selected: our fleet is boarding
-## it); with our fleet selected a tap on the sea or a coast is a voyage.
+## it; our fleet selected: another fleet of ours is a join, within a cell
+## now (fmerge), else a voyage to it that merges on arriving); with our
+## fleet selected a tap on the sea or a coast is a voyage.
 ## Returns true when the tap was the fleets'.
 func _tap_fleets(p: Vector2) -> bool:
 	var fid := overlay.fleet_at(p)
@@ -3290,6 +3313,9 @@ func _tap_fleets(p: Vector2) -> bool:
 		var sa := CState.army(ps, sel_army) if sel_army >= 0 else {}
 		if not sa.is_empty() and int(sa["f"]) == f and int(fl["f"]) == f:
 			embark(sel_army, fid)
+			return true
+		if mine_f and int(fl["f"]) == f and not fl.has("flota"):
+			join_fleet(sel_fleet, fid)
 			return true
 		select_fleet(fid)
 		_t("campaign_input", {"what": "select_fleet"})

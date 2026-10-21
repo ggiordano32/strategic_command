@@ -6486,6 +6486,19 @@ through and the walls did not follow it. Each landmark fort's trace now comes fr
   gallows and waterfront taverns, where the overworld's `_put` finds water on the live coast field (the fix: `_build` placing
   landmarks at `CTown.plan`'s points).
 
+### Fleets join by tapping (as built, 2026-10-20)
+
+Controls (campaign map, fleets): with our fleet selected, a tap on another
+fleet of ours (not the flota) is a join: within a cell it is an `fmerge`
+order at once (the merged-into fleet is selected, "Joining"); farther it is
+a voyage to it (`fmove` with `tgt` = that fleet, drawn with the merge
+glyph) that merges on arriving and goes on from turn to turn (`join` on the
+fleet, dest refreshed to the target's cell) until it merges, the target is
+gone, or Cancel / the same tap again. A tap on the selected fleet closes
+the panel; an enemy fleet is an attack; an army selected + our fleet is
+boarding. The fleet card has a Join button for each fleet alongside. Rules
+in CAMPAIGN.md "Fleets"; no `CState.VERSION` bump.
+
 ### Balance pass on plan maps (as built, 2026-10-20)
 
 The walls rows retuned on the campaign towns' plan maps (STATUS "Balance pass on plan maps" has the tables). Measured with

@@ -139,6 +139,8 @@ static var BINDINGS: Array = [
 		"touch": "Tap a highlighted region (red: attack)", "mouse": "Left or right click a highlighted region", "keys": []},
 	{"id": "map_cancel_move", "s": "campaign", "label": "Cancel a planned move",
 		"touch": "Tap its destination again, or Cancel move", "mouse": "Click its destination again", "keys": []},
+	{"id": "map_fleet", "s": "campaign", "label": "Fleets: select, sail, land, attack, join",
+		"touch": "Tap a fleet, then the sea (sail), a coast (land), an enemy fleet (attack) or your own fleet (join it: beside it at once, else sail and merge on arriving)", "mouse": "Click a fleet, then the same targets", "keys": []},
 	{"id": "map_region", "s": "campaign", "label": "Region panel (buildings, raise a new army, garrison)",
 		"touch": "Tap the region or its settlement", "mouse": "Left click the region", "keys": []},
 	{"id": "map_army_reorder", "s": "campaign", "label": "Reorder an army's units (an order: the order they take the field in)",

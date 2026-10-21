@@ -120,7 +120,7 @@ func _initialize() -> void:
 		_gf_dip, _gf_money, _gf_money_check, _gf_buy, _gf_buy_check, _gf_deal_cancel, _gf_deal_cancel_check,
 		_gf_offer, _gf_accept, _gf_accept_check, _gf_accept_undo, _gf_done,
 		_n_open, _n_tap_rome, _n_tap_carthage, _n_tap_greeks, _n_idle, _n_picks, _n_one_team, _n_idle, _n_one_team_check, _n_dropdown, _n_dropdown_check, _n_start, _n_idle, _n_idle, _n_idle, _n_check,
-		_t_setup, _t_dip, _t_stance, _t_propose, _n_idle, _t_incoming, _t_tap_accept, _n_idle, _t_accept, _t_leave, _n_idle, _t_leave_dialog, _n_idle, _t_leave_planned, _t_notice, _t_text, _t_done, _f_fog, _f_fog2, _s_done,
+		_t_setup, _t_dip, _t_stance, _t_propose, _n_idle, _t_incoming, _t_tap_accept, _n_idle, _t_accept, _t_leave, _n_idle, _t_leave_dialog, _n_idle, _t_leave_planned, _t_notice, _t_text, _t_done, _f_fog, _f_fog2, _j_setup, _j_adjacent, _j_far, _j_done, _s_done,
 	]
 
 
@@ -1595,6 +1595,118 @@ func _f_fog2() -> void:
 	_check(not FogView.army_seen(st, CState.army(st, int(CState.armies_of(st, rome)[0]["id"]))) or gv[CState.cell(CState.armies_of(st, rome)[0])] != 0,
 		"a Roman army far from the Greeks is hidden from them")
 	hold = false
+
+
+# ------------------------------------------- fleets: tap to join (West) ---
+
+var _jc := -1
+
+
+func _j_cell(dx: int) -> int:
+	return CGrid.at(CGrid.cx(_jc) + dx, CGrid.cy(_jc))
+
+
+func _j_view(dx: int) -> void:
+	cs.zoom = 1.1
+	cs.offset = cs._vp() * 0.5 - MapOverlay.cell_point(_j_cell(dx)) * cs.zoom
+
+
+func _j_setup() -> void:
+	hold = true
+	cs.queue_free()
+	CData.use_pack("west")
+	var eng := CData.faction_index("england")
+	var st := CState.new_campaign("Fleets", 3, [eng], {}, [], "west")
+	var CFleet := preload("res://campaign/cfleet.gd")
+	for c in CGrid.count():
+		if CFleet.is_sea(c) and CFleet.coast_dist(c) >= 3 and CGrid.cy(c) > 10 and CGrid.cx(c) > 60 and CGrid.cx(c) < 120:
+			var ok := true
+			for dx in range(-30, 31):
+				var j := CGrid.at(CGrid.cx(c) + dx, CGrid.cy(c))
+				if j < 0 or not CFleet.is_sea(j):
+					ok = false
+					break
+			if ok:
+				_jc = c
+				break
+	var mk := func(id: int, c: int) -> Dictionary:
+		return {"id": id, "f": eng, "x": CGrid.cx(c), "y": CGrid.cy(c), "ships": [{"t": "sloop", "h": 100, "c": 100}], "carry": [], "moved": 0}
+	st["fleets"] = [mk.call(900, _j_cell(0)), mk.call(901, _j_cell(1)), mk.call(902, _j_cell(14))]
+	st["next_fleet"] = 903
+	cs = CampaignScreen.new()
+	cs.details_on_select = true
+	cs.no_bar = true
+	cs.open({"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}, "input_test_fleets")
+	root.add_child(cs)
+	_key_off()
+	await process_frame
+	await process_frame
+	if cs.dialog.visible:
+		cs.close_dialog()
+	cs.cover.visible = false
+	_j_view(7)
+	cs._refresh_map()
+	await process_frame
+	await process_frame
+	hold = false
+
+
+func _j_adjacent() -> void:
+	hold = true
+	var pos: Dictionary = cs.overlay.fleet_positions()
+	_check(pos.has(900) and pos.has(901) and pos.has(902), "fleets: three fleets of ours are drawn")
+	cs.select_fleet(900)
+	await process_frame
+	_tap(pos[901])
+	await process_frame
+	await process_frame
+	var o: Dictionary = {}
+	for q in cs.orders:
+		if str(q["t"]) == "fmerge":
+			o = q
+	_check(not o.is_empty() and int(o["fleet"]) == 900 and int(o["into"]) == 901,
+		"fleets: a tap on our fleet beside the selected one plans the merge (fmerge 900 into 901)")
+	_check(cs.sel_fleet == 901 and (cs.ps["fleets"] as Array).size() == 2, "fleets: the merged-into fleet is selected, the other gone from the plan")
+	cs.undo()
+	await process_frame
+	await process_frame
+	_check(cs.orders.is_empty(), "fleets: Undo takes the join back")
+	hold = false
+
+
+func _j_far() -> void:
+	hold = true
+	cs.select_fleet(901)
+	_j_view(7)
+	cs.offset.x -= 300.0   # (clear of the side panel)
+	cs._refresh_map()
+	await process_frame
+	await process_frame
+	var pos: Dictionary = cs.overlay.fleet_positions()
+	_tap(pos[902])
+	await process_frame
+	await process_frame
+	var o: Dictionary = {}
+	for q in cs.orders:
+		if str(q["t"]) == "fmove":
+			o = q
+	_check(not o.is_empty() and int(o["fleet"]) == 901 and int(o.get("tgt", -1)) == 902,
+		"fleets: a tap on a farther fleet of ours plans a voyage to join it (tgt 902)")
+	_check(cs.sel_fleet == 901 and not cs.overlay.fleet_paths.is_empty() and int(cs.overlay.fleet_paths[0].get("join", 0)) == 1,
+		"fleets: the voyage line is drawn as a join")
+	_tap(pos[902])
+	await process_frame
+	await process_frame
+	var still := false
+	for q in cs.orders:
+		if str(q["t"]) == "fmove":
+			still = true
+	_check(not still, "fleets: the same fleet again cancels the voyage")
+	hold = false
+
+
+func _j_done() -> void:
+	CData.use_pack("rome")
 
 
 func _s_done() -> void:

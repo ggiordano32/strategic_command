@@ -1704,7 +1704,8 @@ the Shipyard at `SHIPYARD` 7).
   itself unless nothing else: where landings aim).
 - **State** (West only): `fleets [{id, f, x, y, ships [{t, h, c}], carry
   [army dicts aboard], moved}]` sorted by id, optional per fleet `dest_x`,
-  `dest_y`, `tgt`, `land` (a stored voyage) and `job` (AI); `next_fleet`;
+  `dest_y`, `tgt`, `land` (a stored voyage), `join` (the id of our fleet it
+  sails to merge into) and `job` (AI); `next_fleet`;
   `regions[r].sq` (the ship ordered this turn); `stats.sea_battles`. An army
   aboard leaves `armies` whole and lives in its fleet's `carry` (so no land
   rule sees it; upkeep counts it; its characters stay attached). Start
@@ -1783,7 +1784,21 @@ the Shipyard at `SHIPYARD` 7).
   aboard. A captured region drops its ship order.
 - **Other orders:** `ship {r, ship}` (paid at once; one a turn a region;
   "needs Shipyard n", "your people do not build these", "not a port"),
-  `fmerge {fleet, into}` (beside each other), `scuttle {fleet, ship}`.
+  `fmerge {fleet, into}` (beside each other, at once), `scuttle {fleet, ship}`.
+  **Join by sailing:** `fmove {fleet, x, y, tgt}` with `tgt` one of the
+  faction's own fleets (not the flota, not itself; another faction's
+  fleet not at war is "not our fleet") is a join: the destination is
+  beside that fleet's cell (x, y are ignored), and the fleet keeps the
+  voyage as `join: <target id>` (with `dest_x` / `dest_y`, the target's
+  cell as planned that turn) until it merges, like an army's `dest_army`.
+  Each turn the stored voyage is planned again to the target's current
+  cell. After every voyage of the phase has sailed, a pass in fleet-id
+  order merges each fleet with a `join` into its target when within a cell
+  (`_fmerge`: the target's id survives, the more famous captain commands;
+  other joins to the merged fleet follow it; event `fleets_joined`); a
+  target that is gone, no longer ours or the flota drops the join (the
+  fleet stays). `fcancel`, a sea battle or a failed voyage clear it. The key
+  `join` is optional on a fleet (no `CState.VERSION` bump).
 - **AI** (`campaign/cai_fleet.gd`, before the land plans; deterministic):
   scuttles a ship while in debt; merges empty fleets side by side; builds
   a Shipyard 1 at its best port when it has none, then at most one ship a
@@ -1815,9 +1830,12 @@ the Shipyard at `SHIPYARD` 7).
   swords for an attack, a gold dot for a landing). Tap a fleet to select
   it (the fleet card: ships with hull / crew / guns / places, power,
   upkeep, pace and the wind, port or scurvy, troops aboard, the voyage
-  with Cancel, Board buttons for armies beside it, Join for a fleet
-  alongside); with ours selected tap the sea to sail, a coast to land, an
-  enemy fleet to attack (the same spot again cancels). With an army of
+  with Cancel, Board buttons for armies beside it, a Join button for each
+  fleet alongside); with ours selected tap the sea to sail, a coast to
+  land, an enemy fleet to attack, another fleet of ours to join it (beside
+  it: merged at once; farther: a voyage with `tgt`, drawn with the merge
+  glyph at its end, "Sailing to join the English fleet (n ships)"; the same
+  spot again cancels). With an army of
   ours selected, tapping our fleet boards it (the army card also has
   Board buttons). The city panel of a port has "Ships (Shipyard n)": the
   ship being launched (cancel), the ships it can build with guns /

@@ -37,6 +37,7 @@ func _init() -> void:
 	_hash_view()
 	_west()
 	_fleets()
+	_fleet_joins()
 	_sea()
 	_storms()
 	_captains()
@@ -447,6 +448,119 @@ func _sea() -> void:
 	_check(not CSea.has_marque(sl2, eng, bret) and not CSea.has_marque(sw, eng, bret), "the letter lapses at its turn, and war breaks it")
 	CData.use_pack("rome")
 
+
+
+## Fleets join by sailing (fmove with tgt = a fleet of ours): within a cell
+## the merge is immediate (fmerge); farther the voyage is stored with `join`
+## and carries on from turn to turn (the target's cell refreshed) until it
+## merges; a lost target drops it; another faction's fleet is refused; fcancel
+## clears it; JSON round trip and the same state on two clients.
+func _fleet_joins() -> void:
+	CData.use_pack("west")
+	var eng := CData.faction_index("england")
+	var st := CState.new_campaign("w", 11, [eng], {}, [], "west")
+	var open := -1
+	for c in CGrid.count():
+		if CFleet.is_sea(c) and CFleet.coast_dist(c) >= 3 and CGrid.cy(c) > 10 and CGrid.cx(c) > 60 and CGrid.cx(c) < 120:
+			var ok := true
+			for dx in range(-30, 31):
+				var j := CGrid.at(CGrid.cx(c) + dx, CGrid.cy(c))
+				if j < 0 or not CFleet.is_sea(j):
+					ok = false
+					break
+			if ok:
+				open = c
+				break
+	_check(open >= 0, "joins: an open row of sea found")
+	var fa := _fleet(900, eng, open, ["frigate"])
+	var fb := _fleet(901, eng, CGrid.at(CGrid.cx(open) + 25, CGrid.cy(open)), ["sloop", "sloop"])
+	var base := st.duplicate(true)
+	base["fleets"] = [fa, fb]
+	base["next_fleet"] = 902
+	# Adjacent: fmerge (the tap) merges at once; ships and carry appended, source gone.
+	var s0 := base.duplicate(true)
+	CFleet.place(CFleet.fleet(s0, 900), CGrid.at(CGrid.cx(open) + 24, CGrid.cy(open)))
+	(CFleet.fleet(s0, 900)["carry"] as Array).append({"id": 7777, "f": eng, "units": [], "r": 0})
+	var wl := (CFleet.fleet(s0, 901)["ships"] as Array).size() + (CFleet.fleet(s0, 900)["ships"] as Array).size()
+	_check(CFleet.apply_order(s0, eng, {"t": "fmerge", "fleet": 900, "into": 901}) == ""
+		and CFleet.fleet(s0, 900).is_empty() and (CFleet.fleet(s0, 901)["ships"] as Array).size() == wl
+		and (CFleet.fleet(s0, 901)["carry"] as Array).size() == 1,
+		"joins: adjacent fmerge puts both fleets' ships in the target, the source gone")
+	# Refusals.
+	var other := -1
+	for g in CData.FACTIONS.size():
+		if g != eng and not CState.at_war(base, eng, g) and CState.alive(base, g):
+			other = g
+			break
+	if other >= 0:
+		var s1 := base.duplicate(true)
+		(s1["fleets"] as Array).append(_fleet(950, other, CGrid.at(CGrid.cx(open) + 10, CGrid.cy(open)), ["sloop"]))
+		_check(CFleet.apply_order(s1, eng, {"t": "fmove", "fleet": 900, "x": 0, "y": 0, "tgt": 950}) == "not our fleet",
+			"joins: a fleet of a faction we are not at war with is refused (not our fleet)")
+	_check(CFleet.apply_order(base.duplicate(true), eng, {"t": "fmove", "fleet": 900, "x": 0, "y": 0, "tgt": 900}) != ""
+		and CFleet.apply_order(base.duplicate(true), eng, {"t": "fmove", "fleet": 900, "x": 0, "y": 0, "tgt": 12345}) != "",
+		"joins: itself and a missing fleet are refused")
+	var sf := base.duplicate(true)
+	var fl_flota := _fleet(951, eng, CGrid.at(CGrid.cx(open) + 10, CGrid.cy(open)), ["galleon"])
+	fl_flota["flota"] = 1
+	(sf["fleets"] as Array).append(fl_flota)
+	_check(CFleet.apply_order(sf, eng, {"t": "fmove", "fleet": 900, "x": 0, "y": 0, "tgt": 951}) != "", "joins: the flota is refused")
+	# Sail to join, turn by turn.
+	var orders: Array = [{"t": "fmove", "fleet": 900, "x": CGrid.cx(CFleet.cell(fb)), "y": CGrid.cy(CFleet.cell(fb)), "tgt": 901, "persist": 1}]
+	var pv := CTurn.preview(base, eng, orders)
+	_check((pv["errors"] as Array).is_empty(), "joins: the order previews valid %s" % str(pv["errors"]))
+	var sub_a := CTurn.submission(base, eng, orders)
+	var r1 := CTurn.resolve_turn(base, [sub_a])
+	var r1b := CTurn.resolve_turn(base.duplicate(true), [CTurn.submission(base, eng, orders)])
+	_check(CState.hash_text(r1) == CState.hash_text(r1b), "joins: two clients resolving the same submission agree (%s)" % CState.hash_text(r1))
+	var a1 := CFleet.fleet(r1, 900)
+	_check(not a1.is_empty() and int(a1.get("join", -1)) == 901 and a1.has("dest_x") and CFleet.voyage(a1)[1] == 901,
+		"joins: turn 1 not adjacent, the voyage is stored with join %s" % str(a1.get("join", "-")))
+	var js := CState.from_json(CState.to_json(r1))
+	_check(not js.is_empty() and CState.hash_text(js) == CState.hash_text(r1) and int(CFleet.fleet(js, 900).get("join", -1)) == 901,
+		"joins: the stored join survives the JSON round trip")
+	var g := r1
+	var turns := 1
+	while not CFleet.fleet(g, 900).is_empty() and turns < 8:
+		g = CTurn.resolve_turn(g, [CTurn.submission(g, eng, [])])
+		turns += 1
+	var merged := CFleet.fleet(g, 901)
+	_check(CFleet.fleet(g, 900).is_empty() and not merged.is_empty() and (merged["ships"] as Array).size() == 3
+		and turns >= 2, "joins: it arrives and merges by turn %d (3 ships, the target's id survives)" % turns)
+	# The target sails away: the follower keeps following with the refreshed destination.
+	var base2 := base.duplicate(true)
+	var fa2 := _fleet(900, eng, CGrid.at(CGrid.cx(open) + 25, CGrid.cy(open)), ["galleon"])
+	var fb2 := _fleet(901, eng, open, ["sloop", "sloop"])
+	base2["fleets"] = [fa2, fb2]
+	var run_orders: Array = [{"t": "fmove", "fleet": 900, "x": CGrid.cx(open), "y": CGrid.cy(open), "tgt": 901, "persist": 1},
+		{"t": "fmove", "fleet": 901, "x": CGrid.cx(open) - 30, "y": CGrid.cy(open), "persist": 1}]
+	var r2 := CTurn.resolve_turn(base2, [CTurn.submission(base2, eng, run_orders)])
+	var a2 := CFleet.fleet(r2, 900)
+	var b2 := CFleet.fleet(r2, 901)
+	_check(not a2.is_empty() and not b2.is_empty() and int(a2.get("join", -1)) == 901
+		and int(a2["dest_x"]) == CGrid.cx(open), "joins: the target sailed away, the follower keeps its join (dest %d,%d)" % [int(a2.get("dest_x", -1)), int(a2.get("dest_y", -1))])
+	# Turn 2: the target turns round and sails back east; the follower sails to where it was
+	# (the destination refreshed to the target's cell at the start of the turn) and still follows.
+	var r2b := CTurn.resolve_turn(r2, [CTurn.submission(r2, eng, [{"t": "fmove", "fleet": 901, "x": CGrid.cx(open) + 30,
+		"y": CGrid.cy(open), "persist": 0}])])
+	var a2b := CFleet.fleet(r2b, 900)
+	var b2b := CFleet.fleet(r2b, 901)
+	_check(not a2b.is_empty() and not b2b.is_empty() and int(a2b.get("join", -1)) == 901 and int(a2b["dest_x"]) == int(b2["x"])
+		and CGrid.cheb(CFleet.cell(a2b), CFleet.cell(b2b)) > 1,
+		"joins: next turn the follower still follows, its destination refreshed (dest %d,%d, the target was at %d,%d)" % [int(a2b.get("dest_x", -1)), int(a2b.get("dest_y", -1)), int(b2["x"]), int(b2["y"])])
+	# Target lost: the join is dropped, the fleet stays.
+	var r3 := r1.duplicate(true)
+	(r3["fleets"] as Array).erase(CFleet.fleet(r3, 901))
+	var r3b := CTurn.resolve_turn(r3, [CTurn.submission(r3, eng, [])])
+	var a3 := CFleet.fleet(r3b, 900)
+	_check(not a3.is_empty() and not a3.has("join") and not a3.has("dest_x"), "joins: the target lost, the join is dropped and the fleet stays")
+	# fcancel clears it.
+	var r4 := r1.duplicate(true)
+	_check(CFleet.apply_order(r4, eng, {"t": "fcancel", "fleet": 900}) == "" and not CFleet.fleet(r4, 900).has("join")
+		and not CFleet.fleet(r4, 900).has("dest_x"), "joins: fcancel clears the stored join")
+	var r4b := CTurn.resolve_turn(r4, [CTurn.submission(r4, eng, [])])
+	_check(not CFleet.fleet(r4b, 900).is_empty() and not CFleet.fleet(r4b, 900).has("join"), "joins: a cancelled join does not come back")
+	CData.use_pack("rome")
 
 
 static func _fleet(id: int, f: int, c: int, ships: Array) -> Dictionary:

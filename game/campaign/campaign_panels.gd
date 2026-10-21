@@ -3823,7 +3823,10 @@ func fleet_panel(box: VBoxContainer, id: int) -> void:
 		if not p.has("why"):
 			var last := int((p["t"] as Array)[-1]) if not (p["t"] as Array).is_empty() else 0
 			var when := "this turn" if last == 0 else ("next turn" if last == 1 else "in %d turns" % (last + 1))
-			if int(p["tgt"]) >= 0:
+			if int(p.get("join", -1)) >= 0:
+				var jf := CFleet.fleet(ps, int(p["join"]))
+				txt = "Sailing to join the %s fleet (%d ships), %s." % [CData.FACTIONS[int(jf["f"])]["adj"], (jf["ships"] as Array).size(), when]
+			elif int(p["tgt"]) >= 0:
 				txt = "Attacks the %s fleet (%s)." % [CData.FACTIONS[int(CFleet.fleet(ps, int(p["tgt"]))["f"])]["adj"], when]
 			elif int(p["land"]) != 0:
 				txt = "Sails to land the troops in %s (%s); the landing ends their turn." % [CData.REGIONS[CGrid.region(int(p["goal"]))]["name"], when]
@@ -3831,7 +3834,7 @@ func fleet_panel(box: VBoxContainer, id: int) -> void:
 				txt = "Sails %s (arrives %s)." % [sea_place(CGrid.cx(int(p["goal"])), CGrid.cy(int(p["goal"]))), when]
 		box.add_child(Kit.label(txt, Kit.FONT, Kit.COL_GOOD, true))
 	else:
-		box.add_child(Kit.label("Tap the sea to sail, a coast to land the troops aboard, an enemy fleet to attack.", Kit.FONT_SMALL, Kit.COL_DIM, true))
+		box.add_child(Kit.label("Tap the sea to sail, a coast to land the troops aboard, an enemy fleet to attack, your own fleet to join it.", Kit.FONT_SMALL, Kit.COL_DIM, true))
 	# (Cancel voyage, Board and Join are on the command bar.)
 
 
