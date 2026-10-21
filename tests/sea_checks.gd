@@ -8,11 +8,15 @@ extends RefCounted
 ## galleon, a boarding, upwind and downwind starts, a fight by a coast with
 ## an island) run twice with identical hashes on every tick, the same from
 ## snapshots restored at several ticks, a different seed diverges; across
-## them broadsides, raking, chain and grape, a boarding and a capture, a
+## them broadsides, raking, chain, a boarding and a capture, a
 ## ship striking, tacking or wearing all happened. A table of each battle
 ## (time to decide, winner, ships sunk / taken / escaped) is printed.
 ## sea_room() (sea pass 4): a tack carries her way; lee-coast starts clear
 ## and the leeward fleet neither grounds nor hangs back.
+## flight() (the flight rule, 2026-10-21): a beaten AI fleet flees and its
+## ships escape, let go it rallies and holds, a fleet in flight loses on the
+## clock, a player's ship ordered to load grape fires it (the battle AI no
+## longer loads grape, so grape is not in the AI coverage list).
 ## lockstep(): two peers sharing side 0 against the battle AI through the
 ## lockstep layer (random orders for their own ships and the other's,
 ## refused alike, through a relay with random delays), every frame's hash
@@ -28,7 +32,7 @@ const ST := preload("res://sim/sea_types.gd")
 const Lockstep := preload("res://sim/lockstep.gd")
 
 const SCENARIOS: Array[String] = ["frigates", "sloops_galleon", "boarding", "upwind", "downwind", "coast", "melee",
-	"fireship"]
+	"fireship", "flight"]
 
 
 static func scenario(key: String) -> Dictionary:
@@ -78,6 +82,12 @@ static func scenario(key: String) -> Dictionary:
 			u.append({"side": 1, "t": "galleon", "q": 95})
 			u.append({"side": 1, "t": "frigate", "q": 95})
 			scn["layout"] = "gauge0"
+		"flight":
+			# (The flight rule) Two crack frigates against a frigate and a brigantine: the weaker fleet breaks off.
+			u.append({"side": 0, "t": "frigate", "q": 130})
+			u.append({"side": 0, "t": "frigate", "q": 130})
+			u.append({"side": 1, "t": "frigate", "q": 85})
+			u.append({"side": 1, "t": "brigantine", "q": 85})
 	return scn
 
 
@@ -173,7 +183,7 @@ static func determinism() -> int:
 			var cs: Dictionary = run(key, sd, 9200)["stats"]
 			for k in ["chain", "grape"]:
 				cover[k] = int(cover.get(k, 0)) + int(cs[k])
-	for k in ["broadsides", "rakes", "chain", "grape", "boardings", "captured", "struck", "deck_fights", "deck_taken",
+	for k in ["broadsides", "rakes", "chain", "boardings", "captured", "struck", "deck_fights", "deck_taken",
 			"deck_shots", "fireships"]:
 		if int(cover.get(k, 0)) <= 0:
 			fails += 1
@@ -201,6 +211,7 @@ static func determinism() -> int:
 	for line in table:
 		print(line)
 	fails += sea_room()
+	fails += flight()
 	return fails
 
 
@@ -276,6 +287,101 @@ static func sea_room() -> int:
 	elif fails == 0:
 		print("PASS sea room: six lee-coast starts clear, the leeward fleet's first broadsides %s, aground %d" % [
 			", ".join(PackedStringArray(lines)), lee_ground])
+	return fails
+
+
+## (The flight rule, 2026-10-21) A beaten AI fleet breaks off and runs for
+## the edge (its ships escape, the other side holds the field); pursued by
+## nobody it rallies after a minute and holds; a fleet in flight does not win
+## on the clock; a player's ship ordered to load grape fires it (the battle
+## AI no longer loads grape).
+static func flight() -> int:
+	var fails := 0
+	# Flight and escape (the "flight" scenario, AI both sides).
+	var esc := 0
+	var fled := 0
+	var won := 0
+	for sd in range(1, 5):
+		var sim: SeaSim = run("flight", sd, 9200)["sim"]
+		fled += 1 if sim.stat_fl[0] > 0 and sim.fl_t[1] >= 0 else 0
+		won += 1 if sim.winner == 0 else 0
+		for s in sim.n_units:
+			if sim.u_side[s] == 1 and sim.u_state[s] == SeaSim.S_FLED:
+				esc += 1
+	if fled < 3 or esc < 3 or won < 3:
+		fails += 1
+		printerr("FAIL sea flight: the beaten fleet fled in %d of 4, ships escaped %d, the stronger held the field %d" % [fled, esc, won])
+	else:
+		print("PASS sea flight: the beaten fleet fled in %d of 4, %d ships escaped, the stronger held the field %d" % [fled, esc, won])
+	# Rally: the AI (side 1) flees, the player (side 0) heaves to and lets it go.
+	var rallied := 0
+	var held := 0
+	for sd in range(1, 5):
+		var scn := scenario("flight")
+		scn["ai_sides"] = [0, 1]
+		var sim := SeaSim.new()
+		sim.setup(scn, sd)
+		var stopped := false
+		for i in 6000:
+			if not stopped:
+				for s in 2:
+					if sim.u_state[s] == SeaSim.S_SAIL and (sim.s_mode[s] == SeaSim.M_FREE or i % 300 == 0):
+						var t := 2 if sim.u_state[2] == SeaSim.S_SAIL else 3
+						sim.queue_order({"type": SeaSim.O_TARGET, "unit": s, "target": t})
+			if sim.fl_on[1] == 1 and not stopped:
+				stopped = true
+				for s in 2:
+					sim.queue_order({"type": SeaSim.O_HOLD, "unit": s})
+					sim.queue_order({"type": SeaSim.O_SAILS, "unit": s, "on": 0})
+			sim.step()
+			if sim.fl_on[1] == 2:
+				rallied += 1
+				var ok := true
+				for s in sim.n_units:
+					if sim.u_side[s] == 1 and sim.u_state[s] == SeaSim.S_SAIL and sim.s_mode[s] == SeaSim.M_FLEE \
+							and sim.s_ffl[s] != 0:
+						ok = false
+				held += 1 if ok else 0
+				break
+			if sim.decided_tick >= 0:
+				break
+	if rallied < 2 or held != rallied:
+		fails += 1
+		printerr("FAIL sea flight rally: rallied in %d of 4, holding %d" % [rallied, held])
+	else:
+		print("PASS sea flight rally: let go, the fleet rallied and held in %d of 4" % rallied)
+	# The clock: a fleet in flight does not hold the field, whatever its power.
+	var c := SeaSim.new()
+	var cs := scenario("flight")
+	cs["time_limit"] = 30
+	c.setup(cs, 3)
+	c.fl_on[0] = 1
+	c.fl_t[0] = 0
+	for i in 301:
+		c.step()
+		if c.decided_tick >= 0:
+			break
+	if c.winner != 1 or c.stat_fl[3] != 1:
+		fails += 1
+		printerr("FAIL sea flight clock: winner %d (the fleeing side 0 kept the field?)" % c.winner)
+	else:
+		print("PASS sea flight clock: at the time limit the fleet in flight loses the field")
+	# Grape by a player's order.
+	var gscn := scenario("frigates")
+	gscn["ai_sides"] = [0, 1]
+	var g := SeaSim.new()
+	g.setup(gscn, 11)
+	g.queue_order({"type": SeaSim.O_SHOT, "unit": 0, "on": ST.SHOT_GRAPE, "tick": 0})
+	g.queue_order({"type": SeaSim.O_TARGET, "unit": 0, "target": 1, "tick": 0})
+	for i in 6000:
+		g.step()
+		if int(g.stats["grape"]) > 0 or g.decided_tick >= 0:
+			break
+	if int(g.stats["grape"]) <= 0:
+		fails += 1
+		printerr("FAIL sea grape: a frigate ordered to load grape never fired it")
+	else:
+		print("PASS sea grape: a frigate ordered to load grape fires it")
 	return fails
 
 

@@ -5919,6 +5919,27 @@ close-hauled margin measured no gain).
 - **Determinism**: no new state; the rules read the hashed state (tick,
   positions, the wind, `ai_sides`) and the land grid. Cost: see STATUS.
 
+### Sea battles: the flight rule (sea balance, as built 2026-10-21)
+
+The battle AI judges its fleet every 10 s (docs/AI.md 32): below its
+skill's share of the enemy's fighting strength (Easy 70, Average 50,
+Skilled 40 %) and losing the exchange of the last two minutes, or half
+its ships crippled and nearly as weak, the fleet breaks off: every ship
+that can still sail runs for the edge by her fastest way out before the
+enemy can cut her off (a Skilled fleet with the weather gauge keeps it),
+firing at pursuers as she bears; a dismasted ship fights on. Ships off
+the edge escape (in the campaign they survive), and the fleet that holds
+the sea wins; let go for a minute it rallies and holds, and comes back
+only to a fight it is not losing; four minutes out of reach and it has
+withdrawn; at the time limit a fleet in flight never wins on the clock.
+Measured first, the AI's real losses were its fighting: it now keeps full
+sail in the fight (battle sail only close in by land), never loads grape
+(a broadside loaded with grape cannot fire beyond its short range;
+players still choose it) and boards at 160 % of her strength (sea pass
+4's 130 % boarded too eagerly). Against a player who never flees it now
+wins 43-47 % of equal fights instead of 31-36 % and loses a fifth fewer
+ships.
+
 ### Story campaign: "The Brethren's Due" (agreed 2026-10-14; steps 1-2 built 2026-10-15, see "as built" below)
 
 A single-player (co-op optional) story campaign on the Caribbean pack that

@@ -1980,7 +1980,8 @@ fleet grounds and never engages; measured with `tests/sea_probe.gd`):
   leeward fleet fires first within 0.99-1.08 x the windward fleet's time.
   Open: a scripted player who sends every ship at the nearest enemy and
   never flees wins 15-19 of 24 against it (11-15 before): its flight rule
-  is the suspect (sea balance follow-ons).
+  is the suspect (sea balance follow-ons). Measured in section 32: not
+  the flight but battle sail, grape and eager boarding.
 
 ## 31. Open West towns: out of the houses' reach, bounded waits (2026-10-21)
 
@@ -2041,3 +2042,94 @@ attackers killed 392 -> 370, 10.4 -> 9.4 minutes; `--occ=mixed` wins 16 ->
 a door 1.2 -> 0.9 min. AI against AI (`tests/town_balance.gd`, 16 Spanish
 towns, 16 seeds): walls 0 / 1 / 2 55 / 41 / 33 -> 52 / 39 / 33 %; the
 brief's seven towns 60 / 45 / 25 -> 57 / 46 / 21 %; Rome rows identical.
+
+## 32. Sea battle AI: the flight rule (sea balance, 2026-10-21)
+
+Open since sea pass 4 (section 30): a scripted player who sends every ship
+at the nearest enemy and never flees (`tests/sea_probe.gd --modes=order`)
+won 15-19 of 24 equal-force battles against the AI; the suspect was the
+AI's flight. **Measured first, it was not**: with the AI never fleeing at
+all the player still won 81 of 120 (83 with). The AI lost the exchange
+itself (it dealt 79-93 % of the damage it took). Ablations (24 seeds x 5
+layouts, player wins of 120, from 83): full sail in the fight 75 (the AI
+dropped to battle sail inside 320 m, 75 % speed, and was out-sailed);
+round shot only 76 (a broadside loaded with grape cannot fire beyond its
+short range, and reloads only by firing); no boarding 73 (130 % boarded
+too often); all three 53; nearest target, no hold, no per-ship flight:
+no change. Over 192 seeds x 5: grape for a ship that means to board 544
+of 960 against round 514 to 534; the boarder loading grape at any range
+716, in grape range 619, at 80 m 595; focus fire (friends' target first)
+542-550 against 544. So the fight was mended as well as the flight.
+
+As built (`sim/sea_sim.gd`; state hashed and snapshotted):
+
+- **The flight rule** (`_fleet_judge`, every `FL_EVERY` 10 s per AI
+  side): fighting strength (guns x hull % x the share of the guns its
+  crew can serve, ships still fighting) against the enemy's, and the
+  exchange over the last 2 minutes (`fl_hist`: damage samples, hull and
+  crew lost by share, a ship struck or taken a whole ship). It flees when
+  under its skill's `SEA_FLEE_RATIO` and it took more than it dealt
+  (`FL_TREND_MIN` at least), or with half its ships crippled (rigging
+  under 25 %, hull or crew under 30 %) or taken, under that ratio +
+  `FL_CRIP_ADD` 20 and losing the same way. Fleeing (`fl_on` 1), every
+  ship that can sail away (`s_ffl`; not grappled, rigging 15 % or more:
+  a dismasted ship fights on or strikes) runs for the edge on the
+  heading, of 16, by which she leaves the field soonest at her polar's
+  drive before the nearest enemy can reach that point, with clear water
+  all the way (`_escape_goal`; a Skilled fleet with the weather gauge
+  prefers a heading to windward of the beam); her broadsides fire at
+  pursuers as they bear (fire at will). Off the edge she has escaped
+  (`S_FLED`; the campaign's `FATE_FLED`: the ship survives). The pursuer
+  chases by the ordinary engagement rule.
+- **Rally**: no enemy within `FL_RALLY_M` 600 m for `FL_RALLY_TICKS` 1
+  minute, the fleet stops fleeing (`fl_on` 2) and holds, hove to, until
+  an enemy comes within `FL_HOLD_M` 800 m (at most `HOLD_TICKS` 3 min);
+  the trend starts afresh, so it fights again and flees again only if it
+  loses again.
+- **The end**: as before a side with no ship fighting has lost, so a fleet
+  that got away loses the field with its ships saved; `FL_CAP_TICKS` 4
+  minutes of flight with no enemy within `FL_CLEAR_M` 300 m and its
+  runners are withdrawn (escaped); at the time limit a fleet in flight
+  never holds the field on power.
+- **Profiles**: `ai_skill` per side from the scenario (as BattleSim;
+  default Average): `SEA_FLEE_RATIO` Easy 70, Average 50, Skilled 40 %.
+  No scenario passes it yet (campaign and custom sea battles play
+  Average).
+- **The fight**: full sail in the fight (battle sail only within 320 m of
+  the enemy with land within 250 m to leeward or 400 m ahead: full sail
+  there doubled the groundings); no grape from the AI (chain for a ship
+  meaning to board, else round; a player's ships still load what they are
+  told); `BOARD_PCT` 130 -> 160 (N3a's value). The per-ship flight (a
+  wrecked ship runs when its side is weaker) is unchanged.
+
+Knob, 192 seeds x 5 layouts against the never-fleeing player (before the
+near-land sail rule): the ratio at 60 / 50 / 40 %: player wins 554 / 544 /
+539 of 960, AI ships lost 855 / 877 / 907, escaped 407 / 355 / 309; no
+fleet flight 533 / 953 / 241; the crippled trigger off / +20 / +50: 534 /
+544 / 579 wins, 904 / 877 / 849 lost. Flight buys ships with battles: a
+fleet that escapes concedes the field to a player who never quits.
+
+Measured (before -> after; `tests/sea_probe.gd`, wind 60-120 deg, layouts
+ns / we / gauge0 / gauge1 / camp):
+
+- **Never-fleeing player**, 24 seeds: player wins 15 / 17 / 16 / 16 / 19
+  (83 of 120) -> 8 / 13 / 14 / 16 / 13 (64); AI ships lost 151 -> 96,
+  escaped 37 -> 43; the AI's exchange 79-93 -> 80-114 %; boardings 41 ->
+  39. 96 seeds: 67 / 53 / 70 / 58 / 60 (308 of 480) -> 50 / 54 / 57 /
+  56 / 55 (272), AI ships lost 551 -> 438, escaped 136 -> 165. By skill
+  (96 x 5, after): Easy 280 wins, 398 lost, 229 escaped; Average 272 /
+  438 / 165; Skilled 272 / 452 / 149.
+- **AI against AI**, 96 seeds x 5 and the side order swapped: side 0
+  wins 246 + 240 -> 257 + 233 of 960 (noise); groundings 133 + 110 ->
+  121 + 114; 24 seeds: side 1 wins 59 -> 53 of 120, groundings 37 -> 17.
+- **Player hove to** (the AI must come), 24 seeds: AI wins 80 -> 79 of
+  120.
+- Groundings against the never-fleeing player (96 x 5): the AI's 83 ->
+  45, the player's 120 -> 108.
+
+**Open**: the target (12 of 24 or fewer on every layout) is met on ns
+and we only; with the gauge the scripted player still wins 14-16 of 24
+(57 of 96 at gauge0, 56 at gauge1 and in the campaign's waters). The
+exchange is now even (97-106 % over 96 seeds): what is left is that any
+flight concedes the field, and the player never flees. Passing the
+campaign faction's skill into sea battles is a follow-on.

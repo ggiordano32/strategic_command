@@ -110,7 +110,24 @@ extends RefCounted
 ## its line hove to for up to HOLD_TICKS), then keep the broadside on at
 ## the shot's range, presenting the loaded side, rake when the geometry
 ## offers it; grape close, chain to cripple (boarders), round otherwise;
-## flee when beaten or hopelessly outgunned.
+## flee when beaten or hopelessly outgunned. Full sail in the fight; no
+## grape (a broadside loaded with it cannot fire beyond its short range).
+##
+## The flight rule (2026-10-21, docs/AI.md "Sea battle AI: the flight
+## rule"): every FL_EVERY ticks the battle AI judges its fleet (_fleet_judge):
+## its fighting strength (guns x hull % x guns served) against the enemy's
+## and the exchange over the last 2 minutes (damage samples fl_hist). Under
+## its skill's SEA_FLEE_RATIO (ai_skill: Easy 70, Average 50, Skilled 40 %)
+## and losing the exchange, or half its ships crippled and under the ratio +
+## FL_CRIP_ADD, the fleet flees (fl_on 1): every ship that can sail away
+## (s_ffl) runs for the edge on the heading she leaves the field soonest by
+## her polar before the enemy can get there (_escape_goal; a Skilled fleet
+## with the gauge keeps it), firing at pursuers as she bears; a dismasted ship
+## fights on. A ship off the edge has escaped (S_FLED). No enemy within
+## FL_RALLY_M for a minute: it rallies (fl_on 2) and holds, hove to, until one
+## comes within FL_HOLD_M (at most HOLD_TICKS); FL_CAP_TICKS of flight with no
+## enemy within FL_CLEAR_M: withdrawn (every runner escaped). At the time
+## limit a fleet in flight does not hold the field.
 
 const FM := preload("res://sim/fixed_math.gd")
 const ST := preload("res://sim/sea_types.gd")
@@ -210,9 +227,25 @@ const SEA_ROOM_M := 400          # a new board leads the way with this much clea
 const LAYLINE_M := 200           # she tacks this far short of land or the field's edge ahead
 const LEE_SHORE_M := 250         # land this close to leeward: she sails along it, never in toward it
 const START_CLEAR_M := 300       # no shoal (nor land, where the field allows) this close to a start line
-const BOARD_PCT := 130          # the battle AI boards when its boarding strength is this % of hers (or more)
+const BOARD_PCT := 160          # the battle AI boards when its boarding strength is this % of hers (or more)
 const HOLD_TICKS := 1800         # the battle AI's leeward fleet holds its line at most this long (3 min) before it beats up
 const LEE_ROOM_M := 500          # the leeward fleet starts with this much clear water to leeward and on both beams
+# The flight rule (sea balance, 2026-10-21; docs/AI.md "Sea battle AI: the flight rule"): the battle AI judges its
+# fleet every FL_EVERY ticks and breaks off when it is losing.
+const EASY := 0                  # ai_skill (the scenario's "ai_skill" per side; sim/ai_profile.gd's levels)
+const AVERAGE := 1
+const SKILLED := 2
+const FL_EVERY := 100            # ticks between the fleet's judgements (and the damage samples)
+const FL_HIST := 12              # samples of the exchange kept: the trend over the last 2 minutes
+const SEA_FLEE_RATIO := [70, 50, 40]  # by skill: it flees below this % of the enemy's fighting strength (losing the exchange)
+const FL_CRIP_ADD := 20          # ... or below that + this % with half its ships crippled or taken
+const FL_TREND_MIN := 150        # damage taken in the 2 minutes (1000 = a ship's hull or crew) for a trend at all
+const FL_RIG_PCT := 15           # rigging under this %: she cannot sail away (she fights on or strikes)
+const FL_RALLY_M := 600          # no enemy this close ...
+const FL_RALLY_TICKS := 600      # ... for this long (1 minute): the fleet stops fleeing and holds
+const FL_CAP_TICKS := 2400       # fleeing this long (4 minutes) with no enemy within FL_CLEAR_M: withdrawn
+const FL_CLEAR_M := 300
+const FL_HOLD_M := 800           # rallied, the fleet holds until an enemy comes this close (at most HOLD_TICKS)
 
 # ---- lockstep interface (duck-typed like BattleSim) ----
 var n_units := 0
@@ -225,6 +258,12 @@ var ch_on := 0
 var dep_on := 0
 var dep_need := 0
 var ai_sides := PackedInt32Array([0, 1])
+var ai_skill := PackedInt32Array([AVERAGE, AVERAGE])
+var fl_on := PackedInt32Array([0, 0])      # the flight rule, per side: 1 the fleet is fleeing
+var fl_t := PackedInt32Array([-1, -1])     # ... since this tick
+var fl_far := PackedInt32Array([-1, -1])   # ... with no enemy within FL_RALLY_M since this tick (-1: one is)
+var fl_hist := PackedInt32Array()          # FL_HIST damage samples per side (side x FL_HIST + slot)
+var stat_fl := PackedInt32Array([0, 0, 0, 0])  # view / probe: fleet flights, rallies, withdrawals, wins on the clock refused
 var pending_orders: Array = []
 var _order_seq := 0
 
@@ -284,6 +323,7 @@ var s_kills := PackedInt32Array()
 var s_blown := PackedInt32Array()
 var s_flee_x := PackedInt32Array()
 var s_flee_y := PackedInt32Array()
+var s_ffl := PackedInt32Array()      # 1: she flees with her fleet (the flight rule), 0 not
 var s_lit := PackedInt32Array()      # fire ship: tick she was lit (-1 not)
 var s_aband := PackedInt32Array()    # fire ship: 1 once her crew took to the boat
 var s_fsg := PackedInt32Array()      # fire ship: the ship she is grappled to (-1)
@@ -401,6 +441,13 @@ func setup(scn: Dictionary, p_seed: int) -> void:
 	deck_on = 1 if int(scn.get("deck", 0)) != 0 else 0
 	var ai: Array = scn.get("ai_sides", [0, 1])
 	ai_sides = PackedInt32Array([int(ai[0]), int(ai[1])])
+	var sk: Array = scn.get("ai_skill", [AVERAGE, AVERAGE])
+	ai_skill = PackedInt32Array([clampi(int(sk[0]), EASY, SKILLED), clampi(int(sk[1]), EASY, SKILLED)])
+	fl_on = PackedInt32Array([0, 0])
+	fl_t = PackedInt32Array([-1, -1])
+	fl_far = PackedInt32Array([-1, -1])
+	fl_hist.resize(2 * FL_HIST)
+	fl_hist.fill(0)
 	_make_land(scn.get("land", {}))
 	var units: Array = scn.get("units", [])
 	n_units = units.size()
@@ -485,7 +532,7 @@ func setup(scn: Dictionary, p_seed: int) -> void:
 const SHIP_ARRAYS: Array[String] = ["u_side", "u_state", "s_type", "s_x", "s_y", "s_h16", "s_want", "s_tdir", "s_spd",
 	"s_sail", "s_hull", "s_hull0", "s_crew", "s_crew0", "s_rig", "s_rig0", "s_troops", "s_q", "s_bq", "s_mor", "s_mode",
 	"s_tx", "s_ty", "s_tgt", "s_fire", "s_shot", "s_tack", "s_grap", "s_boarder", "s_bd_t", "s_bd_wait", "s_by", "s_burn",
-	"s_ground", "s_hit_t", "s_end_t", "s_kills", "s_blown", "s_flee_x", "s_flee_y",
+	"s_ground", "s_hit_t", "s_end_t", "s_kills", "s_blown", "s_flee_x", "s_flee_y", "s_ffl",
 	"s_lit", "s_aband", "s_fsg", "s_fs_t", "s_ck_atk", "s_ck_def", "s_ck_shot", "s_ck_rng", "s_ck_sh", "s_ck_rl", "s_cq",
 	"k_on", "k_t0", "k_w", "k_hb", "k_ht", "k_ax0", "k_la", "k_bx0", "k_lb", "k_step"]
 const DECK2_ARRAYS: Array[String] = ["k2_mor", "k2_men0", "k2_cap"]
@@ -940,6 +987,8 @@ func _order(o: Dictionary) -> void:
 func step() -> void:
 	_apply_orders()
 	_wind()
+	if tick % FL_EVERY == 0 and decided_tick < 0:
+		_fleet_judge()
 	for s in n_units:
 		if (tick + s) % 10 == 0 and ai_sides[u_side[s]] != 0 and u_state[s] == S_SAIL and decided_tick < 0:
 			_think(s)
@@ -1212,7 +1261,10 @@ func _steer(s: int) -> void:
 		M_FLEE:
 			edge_ok = true
 			if s_flee_x[s] < 0 or tick % 50 == 0:
-				_flee_goal(s)
+				if s_ffl[s] != 0:
+					_escape_goal(s)
+				else:
+					_flee_goal(s)
 			want = _course(s, s_flee_x[s], s_flee_y[s])
 		M_FIRE:
 			want = _fire_heading(s)
@@ -2437,6 +2489,9 @@ func _decide() -> void:
 		w = 0 if f0 > 0 else 1
 	elif tick >= time_limit:
 		w = 0 if power(0) > power(1) else 1
+		if fl_on[w] == 1 and fl_on[1 - w] != 1:
+			w = 1 - w  # (a fleet in flight does not hold the field)
+			stat_fl[3] += 1
 	if w < 0:
 		return
 	winner = w
@@ -2454,6 +2509,204 @@ func _decide() -> void:
 			_ungrapple(s)
 
 
+# ------------------------------------------------------- the flight rule ---
+
+## Damage side `side` has taken so far (1000 = one ship's hull or crew): hull
+## and crew lost by share, and a ship struck or taken counts 1000 more.
+func _fl_damage(side: int) -> int:
+	var d := 0
+	for s in n_units:
+		if u_side[s] != side or ST.is_fire(s_type[s]):
+			continue
+		d += (s_hull0[s] - s_hull[s]) * 1000 / maxi(s_hull0[s], 1) + (s_crew0[s] - s_crew[s]) * 1000 / maxi(s_crew0[s], 1)
+		if u_state[s] == S_STRUCK or u_state[s] == S_TAKEN:
+			d += 1000
+	return d
+
+
+## Fighting strength of side `side` (the flight rule): guns x hull % x the
+## share of the guns her crew can serve, over its ships still fighting.
+func _fl_strength(side: int) -> int:
+	var p := 0
+	for s in n_units:
+		if u_side[s] == side and u_state[s] == S_SAIL and s_lit[s] < 0 and not ST.is_fire(s_type[s]):
+			p += ST.stat(s_type[s], "guns") * (s_hull[s] * 100 / s_hull0[s]) * _crew_rate(s) / 1000
+	return p
+
+
+## True if ship s can sail away (the flight rule): fighting, not grappled,
+## not a fire ship, her rigging FL_RIG_PCT % or more (dismasted: she fights on).
+func _fl_can_run(s: int) -> bool:
+	return u_state[s] == S_SAIL and s_grap[s] < 0 and s_lit[s] < 0 and not ST.is_fire(s_type[s]) \
+			and s_rig[s] * 100 / s_rig0[s] >= FL_RIG_PCT
+
+
+## An enemy of side `side` within m metres of one of its fighting ships.
+func _fl_near(side: int, m: int) -> bool:
+	for s in n_units:
+		if u_side[s] == side and u_state[s] == S_SAIL and _enemy_within(s, m):
+			return true
+	return false
+
+
+## The battle AI's fleet judgement (every FL_EVERY ticks): the damage
+## samples for the trend (the last FL_HIST, 2 minutes), then for each AI
+## side: fleeing, it rallies when no enemy came within FL_RALLY_M for
+## FL_RALLY_TICKS, or withdraws after FL_CAP_TICKS with no enemy within
+## FL_CLEAR_M; else it flees when its fighting strength is under its
+## skill's SEA_FLEE_RATIO % of the enemy's and it took more damage than it
+## dealt in the last 2 minutes (FL_TREND_MIN at least); with half its ships
+## crippled or taken, under that ratio + FL_CRIP_ADD and losing the same way.
+func _fleet_judge() -> void:
+	var slot := (tick / FL_EVERY) % FL_HIST
+	var now := [_fl_damage(0), _fl_damage(1)]
+	var taken := [int(now[0]) - fl_hist[slot], int(now[1]) - fl_hist[FL_HIST + slot]]
+	fl_hist[slot] = int(now[0])
+	fl_hist[FL_HIST + slot] = int(now[1])
+	for side in 2:
+		if ai_sides[side] == 0:
+			continue
+		if fl_on[side] == 2:
+			# Rallied and holding: until an enemy comes within FL_HOLD_M, at most HOLD_TICKS.
+			if _fl_near(side, FL_HOLD_M) or tick - fl_t[side] >= HOLD_TICKS:
+				fl_on[side] = 0
+			continue
+		if fl_on[side] == 1:
+			_fl_fleeing(side, now)
+			continue
+		var mine := _fl_strength(side)
+		var theirs := _fl_strength(1 - side)
+		if mine <= 0 or theirs <= 0:
+			continue
+		var losing := int(taken[side]) >= FL_TREND_MIN and int(taken[side]) > int(taken[1 - side])
+		var ratio := mine * 100 / theirs
+		var tot := 0
+		var crip := 0
+		for s in n_units:
+			if u_side[s] != side or ST.is_fire(s_type[s]) or u_state[s] == S_FLED:
+				continue
+			tot += 1
+			if u_state[s] != S_SAIL or s_rig[s] * 100 / s_rig0[s] < 25 or s_hull[s] * 100 / s_hull0[s] < 30 \
+					or s_crew[s] * 100 / maxi(s_crew0[s], 1) < 30:
+				crip += 1
+		var lim: int = SEA_FLEE_RATIO[ai_skill[side]]
+		if losing and (ratio < lim or (crip * 2 >= tot and ratio < lim + FL_CRIP_ADD)):
+			fl_on[side] = 1
+			fl_t[side] = tick
+			fl_far[side] = -1
+			stat_fl[0] += 1
+			_fl_send(side)
+
+
+## The fleeing fleet of side `side`: every ship that can sail away runs.
+func _fl_send(side: int) -> void:
+	for s in n_units:
+		if u_side[s] == side and _fl_can_run(s) and s_mode[s] != M_FLEE:
+			s_mode[s] = M_FLEE
+			s_ffl[s] = 1
+			s_flee_x[s] = -1
+			s_sail[s] = 2
+			s_tack[s] = 0
+			s_tdir[s] = 0
+
+
+func _fl_fleeing(side: int, now: Array) -> void:
+	_fl_send(side)  # (a ship whose boarding ended runs too)
+	if _fl_near(side, FL_RALLY_M):
+		fl_far[side] = -1
+	elif fl_far[side] < 0:
+		fl_far[side] = tick
+	if fl_far[side] >= 0 and tick - fl_far[side] >= FL_RALLY_TICKS:
+		# The pursuit broke off: the fleet rallies and holds; the trend starts afresh.
+		fl_on[side] = 2
+		fl_t[side] = tick
+		fl_far[side] = -1
+		stat_fl[1] += 1
+		for k in FL_HIST:
+			fl_hist[k] = int(now[0])
+			fl_hist[FL_HIST + k] = int(now[1])
+		for s in n_units:
+			if u_side[s] == side and s_ffl[s] != 0:
+				s_ffl[s] = 0
+				if u_state[s] == S_SAIL and s_mode[s] == M_FLEE:
+					s_mode[s] = M_FREE
+					s_sail[s] = 0
+		return
+	if tick - fl_t[side] >= FL_CAP_TICKS and not _fl_near(side, FL_CLEAR_M):
+		# Out of reach long enough: the fleet has withdrawn.
+		stat_fl[2] += 1
+		for s in n_units:
+			if u_side[s] == side and u_state[s] == S_SAIL and s_grap[s] < 0 and s_mode[s] == M_FLEE:
+				u_state[s] = S_FLED
+				s_end_t[s] = tick
+				stats["fled"] = int(stats["fled"]) + 1
+				_event(EV_FLED, s, 0, -1, 0, 0)
+
+
+## Where a ship fleeing with her fleet runs (the flight rule): of 16
+## headings she can sail, the one whose way off the field she reaches
+## soonest (her drive there, by her polar) before the nearest enemy can,
+## with clear water all the way (else the longest run); a Skilled fleet that has the weather gauge keeps
+## it (a heading to windward of the beam is preferred).
+func _escape_goal(s: int) -> void:
+	var xm := s_x[s] / U
+	var ym := s_y[s] / U
+	var gauge := false
+	if ai_skill[u_side[s]] == SKILLED:
+		var near := -1
+		var nd := 1 << 40
+		for e in n_units:
+			if u_side[e] != u_side[s] and u_state[e] == S_SAIL and s_lit[e] < 0:
+				var d := FM.approx_len(s_x[e] - s_x[s], s_y[e] - s_y[s])
+				if d < nd:
+					nd = d
+					near = e
+		gauge = near >= 0 and _upwind_m(s, near) > 0
+	var best_x := 0
+	var best_y := 0
+	var found := false
+	var bv := -(1 << 40)
+	for k in 16:
+		var h := (k * 64) & FM.ANGLE_MASK
+		var dr := drive(s, h)
+		if dr <= 0:
+			continue
+		var c := FM.cos_a(h)
+		var sn := FM.sin_a(h)
+		var l := 1 << 20
+		if c > 0:
+			l = mini(l, (field_w + 60 - xm) * 4096 / c)
+		elif c < 0:
+			l = mini(l, (xm + 60) * 4096 / -c)
+		if sn > 0:
+			l = mini(l, (field_h + 60 - ym) * 4096 / sn)
+		elif sn < 0:
+			l = mini(l, (ym + 60) * 4096 / -sn)
+		var ex := xm + ((c * l) >> 12)
+		var ey := ym + ((sn * l) >> 12)
+		var dmin := 1 << 30
+		for e in n_units:
+			if u_side[e] != u_side[s] and u_state[e] == S_SAIL and s_lit[e] < 0:
+				dmin = mini(dmin, FM.approx_len(ex * U - s_x[e], ey * U - s_y[e]) / U)
+		var v := dmin - l * 100 / dr
+		# Land between her and the edge (a coast along it): no way out there.
+		var run := _clear_run(s, h, maxi(l - 60, 40), true)
+		if run < l - 60:
+			v -= (1 << 20) - run
+		if gauge and off_wind(h) < 256:
+			v += 200
+		if v > bv:
+			bv = v
+			best_x = ex
+			best_y = ey
+			found = true
+	if not found:
+		_flee_goal(s)
+		return
+	s_flee_x[s] = best_x * U
+	s_flee_y[s] = best_y * U
+
+
 # --------------------------------------------------------------------- AI ---
 
 ## The battle AI's decision for ship s (see the header).
@@ -2466,6 +2719,10 @@ func _think(s: int) -> void:
 	var crew_pct := s_crew[s] * 100 / maxi(s_crew0[s], 1)
 	var hull_pct := s_hull[s] * 100 / s_hull0[s]
 	if s_mode[s] == M_FLEE:
+		return
+	if fl_on[u_side[s]] == 2:
+		s_mode[s] = M_FREE  # (rallied: hove to, holding, till the enemy comes; _fleet_judge)
+		s_sail[s] = 0
 		return
 	var mine := power(u_side[s])
 	var theirs := power(1 - u_side[s])
@@ -2519,13 +2776,14 @@ func _think(s: int) -> void:
 		s_tack[s] = 0
 		s_tdir[s] = 0
 	s_fire[s] = 1
-	s_sail[s] = 1 if dist < 320 else 2
+	# Full sail in the fight (battle sail only slowed her: flight rule pass); close to the enemy, battle
+	# sail with land close to leeward or ahead.
+	s_sail[s] = 1 if dist < 320 and (_lee_shore(s) >= 0 or _clear_run(s, heading(s), SEA_ROOM_M, true) < SEA_ROOM_M) else 2
 	if dist > _want_range(s) + 220 and int(_closing(s, t2)[0]) == 2:
 		s_sail[s] = 1 if _lee_shore(s) >= 0 else 0  # (hove to; under sail near a lee shore)
-	# Shot: grape close, chain to cripple a ship it means to board, else round.
-	if dist < shot_range(s, ST.SHOT_GRAPE) * 9 / 10 and s_crew[t2] * 100 / maxi(s_crew0[t2], 1) > 35:
-		s_shot[s] = ST.SHOT_GRAPE
-	elif s_bq[s] >= 110 and s_rig[t2] * 100 / s_rig0[t2] > 50 and my_b * 100 > her_b * 90 \
+	# Shot: chain to cripple a ship it means to board, else round. (No grape: a broadside loaded with
+	# grape cannot fire beyond its short range, and the probe's AI lost more with it at any range.)
+	if s_bq[s] >= 110 and s_rig[t2] * 100 / s_rig0[t2] > 50 and my_b * 100 > her_b * 90 \
 			and dist < shot_range(s, ST.SHOT_CHAIN) * 105 / 100:
 		s_shot[s] = ST.SHOT_CHAIN
 	else:
@@ -2697,4 +2955,9 @@ func state_hash() -> int:
 	ctx.update(s_ld.to_byte_array())
 	ctx.update(s_rl.to_byte_array())
 	ctx.update(ai_sides.to_byte_array())
+	ctx.update(ai_skill.to_byte_array())
+	ctx.update(fl_on.to_byte_array())
+	ctx.update(fl_t.to_byte_array())
+	ctx.update(fl_far.to_byte_array())
+	ctx.update(fl_hist.to_byte_array())
 	return ctx.finish().decode_u32(0)

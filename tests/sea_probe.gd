@@ -16,7 +16,11 @@ extends SceneTree
 ## the wind) and the ground it made to windward by its first broadside,
 ## boardings. Summaries per mode and layout. --rows prints the points of
 ## sail by ship row (no-go, close-hauled course and drive, speed made good
-## to windward). Prints only; no pass / fail.
+## to windward). Also (the flight rule, 2026-10-21): ships lost (sunk +
+## taken) and escaped per side, the mean battle length, the damage each
+## side took (hull % + crew %) and the AI side's (1) exchange; --exch the
+## exchange minute by minute; --skill=0|1|2 the AI sides' sea skill.
+## Prints only; no pass / fail.
 
 const SeaSim := preload("res://sim/sea_sim.gd")
 const ST := preload("res://sim/sea_types.gd")
@@ -35,6 +39,8 @@ var layouts: Array = ["ns", "we", "gauge0", "gauge1", "camp"]
 var modes: Array = ["ai", "hold"]
 var verbose := false
 static var swap := false   # --swap: side 1's ships listed first (an index-order check)
+static var skill := -1     # --skill=0|1|2: the AI sides' sea skill (Easy / Average / Skilled; default: none given)
+static var exch := false   # --exch: print the exchange by minute (the AI side's damage dealt / taken)
 
 
 func _initialize() -> void:
@@ -52,6 +58,10 @@ func _initialize() -> void:
 			verbose = true
 		elif a == "--swap":
 			swap = true
+		elif a.begins_with("--skill="):
+			skill = int(a.substr(8))
+		elif a == "--exch":
+			exch = true
 	if rows:
 		_rows()
 	for mode in modes:
@@ -90,8 +100,11 @@ static func scenario(sd: int, lay: String, mode: String) -> Dictionary:
 		land["dirs"] = dirs
 	var wind := 90 + (sd * 53) % 61 - 30
 	var wstr := 50 + (sd * 29) % 46
-	return {"sea": 1, "wind_deg": wind, "wind_str": wstr, "ai_sides": [1 if mode == "ai" else 0, 1], "land": land,
+	var scn := {"sea": 1, "wind_deg": wind, "wind_str": wstr, "ai_sides": [1 if mode == "ai" else 0, 1], "land": land,
 		"layout": lay, "units": u}
+	if skill >= 0:
+		scn["ai_skill"] = [skill, skill]
+	return scn
 
 
 static func water_name(scn: Dictionary, sd: int, lay: String) -> String:
@@ -156,6 +169,17 @@ func ground_kind(sim: SeaSim, s: int, scn: Dictionary) -> String:
 	return "%s %s %s" % [rel, what, "shoal" if best == 1 else "land"]
 
 
+## Damage side `side` has taken: hull lost % + crew lost % summed over its
+## ships (a sunk ship counts her hull and crew as at the end).
+func damage(sim: SeaSim, side: int) -> int:
+	var d := 0
+	for s in sim.n_units:
+		if sim.u_side[s] == side:
+			d += (sim.s_hull0[s] - sim.s_hull[s]) * 100 / maxi(sim.s_hull0[s], 1)
+			d += (sim.s_crew0[s] - sim.s_crew[s]) * 100 / maxi(sim.s_crew0[s], 1)
+	return d
+
+
 func run_one(sd: int, lay: String, mode: String) -> Dictionary:
 	var scn := scenario(sd, lay, mode)
 	var sim := SeaSim.new()
@@ -179,6 +203,7 @@ func run_one(sd: int, lay: String, mode: String) -> Dictionary:
 	var made_max := -(1 << 30)
 	var seen := 0
 	var stop := -1
+	var dmg_min: Array = []   # per minute: [side 0's damage, side 1's damage] (cumulative, % points)
 	for t in 9200:
 		if mode == "order" and t % 100 == 0 and sim.decided_tick < 0:
 			_player_orders(sim)
@@ -200,6 +225,8 @@ func run_one(sd: int, lay: String, mode: String) -> Dictionary:
 				where.append("s%d %s %s" % [sim.u_side[a], ST.row(sim.s_type[a])["key"], ground_kind(sim, a, scn)])
 		if lee >= 0 and first[lee] < 0 and sim.decided_tick < 0:
 			made_max = maxi(made_max, up_proj(sim, lee, w) - int(p0[lee]))
+		if t % 600 == 599 and sim.decided_tick < 0:
+			dmg_min.append([damage(sim, 0), damage(sim, 1)])
 		if sim.ended != 0 and stop < 0:
 			stop = t
 		if stop >= 0:
@@ -216,7 +243,7 @@ func run_one(sd: int, lay: String, mode: String) -> Dictionary:
 			stuck[sim.u_side[s]] += 1
 	return {"ships": ships, "stuck": stuck, "seed": sd, "water": water_name(scn, sd, lay), "fleet": "+".join(PackedStringArray(FLEETS[sd % FLEETS.size()])),
 		"winner": int(r["winner"]), "dt": int(r["decided_tick"]), "first": first, "gr": gr, "where": where, "lee": lee,
-		"made": made, "boardings": int(sim.stats["boardings"]),
+		"made": made, "boardings": int(sim.stats["boardings"]), "dmg": dmg_min, "dmg_end": [damage(sim, 0), damage(sim, 1)],
 		"deck": [int(sim.stats["deck_taken"]), int(sim.stats["deck_repelled"]), int(sim.stats["deck_spent"])], "sides": r["sides"], "wind": int(scn["wind_deg"])}
 
 
@@ -250,6 +277,15 @@ func _layout_run(mode: String, lay: String) -> void:
 	var ships_g := [0, 0]
 	var stuck_g := [0, 0]
 	var lee_ships: Array = []
+	var lost := [0, 0]
+	var esc := [0, 0]
+	var dsum := 0
+	var ex_d: Array = []   # per minute: AI side (1) damage dealt, taken
+	var ex_t: Array = []
+	var ex_end := [0, 0]
+	for m in 15:
+		ex_d.append(0)
+		ex_t.append(0)
 	print("== mode %s layout %s" % [mode, lay])
 	for sd in range(1, seeds + 1):
 		var r := run_one(sd, lay, mode)
@@ -258,6 +294,19 @@ func _layout_run(mode: String, lay: String) -> void:
 		wins[int(r["winner"])] += 1
 		dts.append(int(r["dt"]) if int(r["dt"]) >= 0 else 9000)
 		boards += int(r["boardings"])
+		dsum += int(r["dt"]) if int(r["dt"]) >= 0 else 9000
+		for s in 2:
+			var sdd: Dictionary = r["sides"][s]
+			lost[s] += int(sdd["sunk"]) + int(sdd["taken"])
+			esc[s] += int(sdd["fled"])
+		var prev := [0, 0]
+		var dm: Array = r["dmg"]
+		for m in mini(dm.size(), 15):
+			ex_d[m] = int(ex_d[m]) + int(dm[m][0]) - int(prev[0])
+			ex_t[m] = int(ex_t[m]) + int(dm[m][1]) - int(prev[1])
+			prev = dm[m]
+		ex_end[0] += int(r["dmg_end"][0])
+		ex_end[1] += int(r["dmg_end"][1])
 		for k in 3:
 			deck[k] += int(r["deck"][k])
 		for s in 2:
@@ -286,6 +335,14 @@ func _layout_run(mode: String, lay: String) -> void:
 				int(r["boardings"]), ", ".join(PackedStringArray(r["where"]))])
 	print("  wins side 0 / 1: %d / %d   decided median %s   boardings %d (deck taken %d, thrown back %d, spent %d)" % [
 		wins[0], wins[1], _t(_median(dts)), boards, deck[0], deck[1], deck[2]])
+	print("  ships lost (sunk + taken) s0 %d s1 %d; escaped s0 %d s1 %d; mean battle %s; damage taken (hull %% + crew %%) s0 %d s1 %d, AI (s1) exchange %d %%" % [
+		lost[0], lost[1], esc[0], esc[1], _t(dsum / maxi(seeds, 1)), ex_end[0], ex_end[1], ex_end[0] * 100 / maxi(ex_end[1], 1)])
+	if exch:
+		var line := "  exchange by minute (AI dealt / taken %%, battles still on):"
+		for m in 15:
+			if int(ex_d[m]) + int(ex_t[m]) > 0:
+				line += " %d:%d" % [m + 1, int(ex_d[m]) * 100 / maxi(int(ex_t[m]), 1)]
+		print(line)
 	print("  groundings median s0 %d s1 %d, total s0 %d s1 %d; leeward fleet median %d" % [_median(gr_side[0]),
 		_median(gr_side[1]), _sum(gr_side[0]), _sum(gr_side[1]), _median(gr_lee)])
 	print("  ships grounded s0 %d s1 %d (stuck, 4+ times: s0 %d s1 %d); leeward fleet ships grounded a battle median %d, battles with any %d" % [
