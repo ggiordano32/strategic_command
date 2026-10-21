@@ -1,11 +1,14 @@
 # Hunyuan3D character pipeline (close-up models)
 
-Turnaround sheet -> 3D mesh -> projection-textured in the game's palette -> renders.
+Turnaround sheet -> 3D mesh -> painted in the game's palette -> renders.
 For close-up characters only (overworld captain / hero miniatures, story
-portraits). Shape generation only: the paint / texture model is not used or
-downloaded; the mesh is painted by projecting the sheet's colours and snapping
-them to a 7-8 colour palette (the code-drawn portraits' colours in
-`game/story_portrait.gd`), which is what gives the toon look.
+portraits). Two ways to paint the mesh: the **projection bake** (`texture.py`,
+sheet colours projected and snapped to a 7-8 colour palette, the code-drawn
+portraits' colours in `game/story_portrait.gd`) and the **Hunyuan paint route**
+(section below, the shipped texture of the three characters: Hunyuan3D-2's own
+paint model colours the mesh, `hy_paint.py bake` reprojects that into our atlas,
+calibrates and snaps it to the same palette). Both end in flat palette colours
+and the same renders, which is what gives the toon look.
 
 **Licence: the Tencent Hunyuan 3D licence is non-commercial and excludes the
 EU, UK and South Korea.** Check it (https://github.com/Tencent/Hunyuan3D-2/blob/main/LICENSE)
@@ -118,3 +121,105 @@ of which the grazing-texel search is the slowest step); re-render only 4-14 s.
    Also add `ANCHORS` (what each label looks like on the sheet: sample the sheet; use several hex values per label
    where it varies) and `ZBAND` height priors.
 3. Run it, read the label counts and the albedo (`work/NAME/albedo.png`) and the preview, and adjust the anchors.
+
+
+## Hunyuan paint route (the shipped texture)
+
+The projection bake reads the sheet; the paint model (`Hunyuan3D-2` `hunyuan3d-paint-v2-0-turbo`: multi-view
+diffusion from the front crop, then back-projection into xatlas UVs) paints the mesh itself, so faces, cloth
+structure and the hidden sides are better. Its raw texture is dark and desaturated, so `hy_paint.py bake` lifts it
+back onto the sheet's anchor colours before the palette snap. Licence: the same Tencent non-commercial licence as
+the shape model (not for the EU, UK, South Korea; check before shipping). Nothing is wired into the game.
+
+### CUDA extensions (once)
+
+The paint pipeline needs two compiled extensions from the Hunyuan checkout: `custom_rasterizer`
+(`~/.venvs/src/hy3dgen/texgen/custom_rasterizer`) and `differentiable_renderer` (`mesh_processor`). The machine has
+no CUDA toolkit (the driver is 615.71, torch is the cu124 wheel) and Debian 13's gcc is 14, which nvcc 12.4 rejects,
+so a user-level toolkit from NVIDIA's redistributable tarballs is used, nothing is installed system-wide:
+
+```sh
+# 12.8 nvcc (accepts gcc 14), cudart and cccl headers from https://developer.download.nvidia.com/compute/cuda/redist/
+mkdir -p ~/.venvs/cuda124/n128 && cd ~/.venvs/cuda124/n128
+for p in cuda_nvcc/linux-x86_64/cuda_nvcc-linux-x86_64-12.8.93 cuda_cudart/linux-x86_64/cuda_cudart-linux-x86_64-12.8.90 \
+         cuda_cccl/linux-x86_64/cuda_cccl-linux-x86_64-12.8.90; do
+  curl -LO https://developer.download.nvidia.com/compute/cuda/redist/$p-archive.tar.xz; tar xf $(basename $p)-archive.tar.xz; done
+# nvcc looks for bin/ include/ lib64/ nvvm/ under CUDA_HOME: ~/.venvs/cuda124/home2 symlinks (or copies) the nvcc
+# bin/ nvvm/ and the merged include/ (nvcc + cudart + cccl) and lib64/ (cudart) of the three archives.
+# Patch: crt/math_functions.h declares sinpi / cospi (and the float versions) without noexcept, glibc 2.41 declares
+# them noexcept (true) and the compile stops on the mismatch: the copy under home2/include/crt carries noexcept (true).
+export CUDA_HOME=~/.venvs/cuda124/home2 PATH=$CUDA_HOME/bin:$PATH TORCH_CUDA_ARCH_LIST=8.6   # RTX 3070
+export CC=gcc-14 CXX=g++-14
+source ~/.venvs/hunyuan/bin/activate
+uv pip install diffusers==0.32.2 accelerate xatlas pybind11 omegaconf einops opencv-python-headless pymeshlab
+cd ~/.venvs/src/hy3dgen/texgen/custom_rasterizer && python setup.py install
+cd ../differentiable_renderer && python setup.py install
+```
+
+Run the venv python with `LD_LIBRARY_PATH` including torch's lib dir (`site-packages/torch/lib`) or `import
+custom_rasterizer` fails with `libc10.so: cannot open shared object file`. The weights (`hunyuan3d-paint-v2-0-turbo`,
+the delight and multiview models) come from Hugging Face on first run (~10 GB).
+
+### Stages
+
+```sh
+S=~/scratch/hunyuan     # work (crops, labels) as for the sheet bake; OUT = any folder for the paint results
+# 1. paint (GPU, venv python): committed mesh.glb + front crop -> OUT/NAME/hy_raw.png (2048) + hy_mesh.npz
+~/.venvs/hunyuan/bin/python tools/hunyuan/hy_paint.py gen NAME --work $S/work --out $OUT --offload
+# 2. bake (Blender, CPU): reprojection, calibration, palette, writes assets/characters/NAME/mesh.glb
+~/.local/bin/blender -b --factory-startup -P tools/hunyuan/hy_paint.py -- bake NAME --work $S/work --out $OUT
+# 3. renders: the bake wrote OUT/work/NAME/{albedo,labels,maskmap}.png; paint_render re-renders mesh.glb with them
+~/.local/bin/blender -b --factory-startup -P tools/hunyuan/paint_render.py -- NAME --work $OUT/work --preview $OUT --only mini,bust,turn
+```
+
+`gen --offload` loads both diffusion pipelines on the CPU and lets accelerate move one sub-model to the GPU at a
+time: **peak 4.07 GiB VRAM, about 95 s a character at 2048** (load 36 s). Without it the pipelines do `.to('cuda')`
+in their constructors and do not fit 8 GB next to the desktop. `--variant full` uses the non-turbo model.
+`gen` paints the committed `mesh.glb` (mesh, UVs of the sheet bake) and writes new xatlas UVs: the painted mesh
+has the same triangles in the same order, so the match is exact (centroid distance 0, one to one).
+The stage `render` and `compare` of the experiment (raw / quantised variants next to the sheet bake) remain.
+
+`bake` does, per character (about 45 s, Blender CPU):
+
+1. **Reprojection.** Texels of the committed 1024 chart layout (`texture.rasterize`: triangle and world position
+   per texel) take the raw paint by barycentric lookup in the matching triangle's xatlas UV (bilinear). Texels of a
+   triangle without a match (none in practice) keep the sheet bake's colour and label.
+2. **Calibration.** k-means (k = 11, Lab, seeded) over the reprojected colours; the table (share, mean height,
+   raw L / C / hue, lifted L / C, matched anchor) is printed. An iterative fit matches each cluster to an anchor
+   (hue distance weighted by chroma, lightness, chroma, `ZBAND` priors by the cluster's height) and fits
+   L' = aL L + bL (aL 0.9-3, bL -6..8) and C' = aC C (aC 1-1.3), trimmed (pairs off by > 12 L dropped) and only
+   from clusters with chroma >= 12 or L >= 30 (dark grey clusters match the anchors ambiguously). The remaining
+   chroma ratio of the matched clusters is smoothed over hue (10 degree bins, sigma 18) into a **hue gain**: the
+   paint model drains red cloth far more than skin or leather, and one global slope cannot do both (captain's plume
+   needs about x1.8 at hue 20-30, skin x1.0-1.2); hue is kept.
+3. **Rules** (ported from `texture.bake`, same thresholds, switches from `paint_render.CHARS`): classification in
+   Lab with lightness x0.6 and the `ZBAND` priors, head labels above `face_z`, hat-zone lock above `hat_z`, 3x3
+   majority, small components (120 / 80 head / 400 hat zone) merged, 5x5 majority, hat connectivity, mouth rule,
+   skin prune; flat palette colour; detail layer and ink (`#1a1410`, blobs >= 6 texels) on skin and hair only; mask
+   map R = coat, G = sash. `hy_paint.BAKE_RULES` / `BAKE_BANDS` hold this route's overrides (captain mouth rule on,
+   mouth specks up to 300 / 600 texels, Rook's metal below 60 % height, Mercy's brass below 62 %).
+   Label shares before / after the lift and for the sheet bake are printed.
+4. **Export.** `paint_render.export_mesh`: `assets/characters/NAME/mesh.glb` (committed UVs, albedo embedded, no
+   vertex colours, 1.5-1.6 MB). Then `paint_render.py --only mini,bust,turn` writes the minis (96 / 48 px, masks,
+   json), the 256 px bust (yaw -32) and `preview_NAME.png`.
+
+### Files
+
+- `OUT/NAME/hy_raw.png`, `hy_mesh.npz`, `hy_stats.txt`: the paint model's output (not committed)
+- `OUT/NAME/albedo_reproj.png`: the raw paint in our atlas (look at it first when a colour is wrong)
+- `OUT/work/NAME/albedo.png`, `labels.png`, `maskmap.png`: the baked texture and label index
+- `assets/characters/NAME/mesh.glb`, `assets/minis/characters/NAME*.png|json`, `assets/portraits/NAME.png`: as before
+
+### Hybrid (face from the sheet bake, body from the paint): the recommended route
+
+**Route: `gen` -> `bake` -> `hybrid --assets`** (the shipped assets of captain, Mercy and Rook; the paint bake's ink applies to the head only, below `head_z` the skin is flat colour plus detail; `bake` itself writes nothing to `assets/`, `hybrid --assets` writes mesh, minis and bust, the preview goes to `--out`).
+
+The paint route's faces are soft (the captain loses his eyes, Rook his smile) while its cloth and colour are better,
+so `hy_paint.py hybrid NAME --work W --out O --hy HYPAINT_OUT [--hat hypaint]` merges the two albedos in the shared
+1024 chart layout (same UVs, so no resampling): texels above the collar (`head_z`, 0.82 by default: `face_z` 0.87
+would cut through the mouth and chin) whose sheet-bake label is skin, hair, hat, headscarf or sash take the bake's
+albedo and label, everything else the paint route's; the albedo is blended over about 6 texels at the boundary,
+labels are not. `--hat hypaint` keeps the paint route's hat, trim and plume (only skin and hair from the bake; chosen
+for the captain, whose bake hat plus paint plume mix to brown). It writes mesh, minis, bust and preview into
+`O/NAME/hybrid` (and `hypaint` for comparison) through paint_render's own main with its asset paths redirected:
+nothing is written to `assets/`. `hybrid_compare NAME --out O` makes the [bake | paint | hybrid] image.
