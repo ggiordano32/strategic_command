@@ -406,28 +406,65 @@ def reproject(a, ns, texture, name):
     hv, hf, huv = z["v"], z["f"], z["uv"]
     raw = ns["read_vup"](os.path.join(d, "hy_raw.png"))[..., :3].astype(np.float64)
     Tr = raw.shape[0]
-    # triangle match by centroid (same frame: the paint pipeline keeps the mesh's coordinates)
-    c0 = v0[tri0].mean(1)
-    c1 = hv[hf].mean(1)
-    kd = kdtree.KDTree(len(c1))
-    for i, p in enumerate(c1):
-        kd.insert(p, i)
-    kd.balance()
-    match = np.empty(len(c0), np.int64)
-    dist = np.empty(len(c0))
-    for i, p in enumerate(c0):
-        _co, j, dd_ = kd.find(p)
-        match[i], dist[i] = j, dd_
     H = v0[:, 2].max() - v0[:, 2].min()
-    print("  triangle match: %d / %d, centroid distance median %.2g max %.2g (figure %.3g), one-to-one %d" % (
-        len(c0), len(c1), np.median(dist), dist.max(), H, len(np.unique(match))))
+    if len(hf) == len(tri0):
+        # same triangle count: the committed mesh is the painted mesh in the same order (also after silfit.py moved its
+        # vertices), so triangle i is triangle i.  The corner order of the paint model's faces is found through the
+        # unfitted positions silfit.py stored (fitted -> original), else the corners are taken as they are.
+        match = np.arange(len(tri0))
+        tp = v0[tri0]
+        mpath = a.get("map") or next((q for q in (os.path.join(a["work"], name, "silfit_map.npz"),
+                                                   os.path.join(d, "silfit_map.npz")) if os.path.exists(q)), None)
+        hpos = hv[hf]                                              # (ntri,3,3) the paint model's corners
+        perm = np.tile(np.arange(3), (len(tri0), 1))
+        if mpath:
+            mp = np.load(mpath)
+            fp = mp["fitted"]
+            kt = kdtree.KDTree(len(fp))
+            for i, p in enumerate(fp):
+                kt.insert(p, i)
+            kt.balance()
+            q = [kt.find(p) for p in tp.reshape(-1, 3)]
+            ik = np.array([t[1] for t in q])
+            dk = np.array([t[2] for t in q])
+            orig = mp["orig"][ik].reshape(-1, 3, 3)
+            print("  silfit map: fitted -> original corner distance max %.2g (figure %.3g)" % (dk.max(), H))
+            dd3 = np.linalg.norm(orig[:, :, None, :] - hpos[:, None, :, :], axis=3)      # (ntri, mesh corner, hy corner)
+            perm = dd3.argmin(2)
+            cdist = dd3.min(2).max(1)
+            ok_perm = np.array([len(set(r)) == 3 for r in perm])
+            print("  triangle match by index: %d / %d, corner distance to the unfitted mesh max %.2g, corner permutation not one-to-one %d" % (
+                len(tri0), len(hf), cdist.max(), int((~ok_perm).sum())))
+            dist = np.where(ok_perm, cdist, 1e9)
+        else:
+            dist = np.linalg.norm(tp.mean(1) - hpos.mean(1), axis=1)
+            print("  triangle match by index (no silfit map): centroid distance median %.2g max %.2g (figure %.3g)" % (
+                np.median(dist), dist.max(), H))
+        tuv = huv[hf][np.arange(len(tri0))[:, None], perm]          # uv of the paint model's corner matching each mesh corner
+    else:
+        # triangle match by centroid (same frame: the paint pipeline keeps the mesh's coordinates)
+        c0 = v0[tri0].mean(1)
+        c1 = hv[hf].mean(1)
+        kd = kdtree.KDTree(len(c1))
+        for i, p in enumerate(c1):
+            kd.insert(p, i)
+        kd.balance()
+        match = np.empty(len(c0), np.int64)
+        dist = np.empty(len(c0))
+        for i, p in enumerate(c0):
+            _co, j, dd_ = kd.find(p)
+            match[i], dist[i] = j, dd_
+        print("  triangle match: %d / %d, centroid distance median %.2g max %.2g (figure %.3g), one-to-one %d" % (
+            len(c0), len(c1), np.median(dist), dist.max(), H, len(np.unique(match))))
+        tp = hv[hf[match]]
+        tuv = huv[hf[match]]
     good_tri = dist < 2e-3 * H
     valid, pos, _nr, tid = texture.rasterize(uv0, v0[tri0], np.zeros_like(v0[tri0]), T, None)
     idx = np.nonzero(valid.reshape(-1))[0]
     P = pos.reshape(-1, 3)[idx]
     ti = tid.reshape(-1)[idx]
     mj = match[ti]
-    A, B, C = hv[hf[mj, 0]], hv[hf[mj, 1]], hv[hf[mj, 2]]
+    A, B, C = tp[mj, 0], tp[mj, 1], tp[mj, 2]
     e0, e1, e2 = B - A, C - A, P - A
     d00, d01, d11 = (e0 * e0).sum(1), (e0 * e1).sum(1), (e1 * e1).sum(1)
     d20, d21 = (e2 * e0).sum(1), (e2 * e1).sum(1)
@@ -437,7 +474,7 @@ def reproject(a, ns, texture, name):
     l0 = 1 - l1 - l2
     bc = np.clip(np.stack([l0, l1, l2], 1), 0, None)
     bc /= np.maximum(bc.sum(1, keepdims=True), 1e-9)
-    uv = bc[:, 0:1] * huv[hf[mj, 0]] + bc[:, 1:2] * huv[hf[mj, 1]] + bc[:, 2:3] * huv[hf[mj, 2]]
+    uv = bc[:, 0:1] * tuv[mj, 0] + bc[:, 1:2] * tuv[mj, 1] + bc[:, 2:3] * tuv[mj, 2]
     col = texture.bilinear(raw, uv[:, 0] * Tr - 0.5, uv[:, 1] * Tr - 0.5)
     cov = good_tri[ti]
     print("  reprojected %d texels (%d of the layout's valid), uncovered (no triangle match) %d" % (
@@ -844,7 +881,7 @@ def parse():
         k = argv[i]
         if k in ("--work", "--out", "--variant", "--k"):
             a[k[2:]] = int(argv[i + 1]) if k == "--k" else argv[i + 1]; i += 1
-        elif k in ("--hy", "--hat"):
+        elif k in ("--hy", "--hat", "--map"):
             a[k[2:]] = argv[i + 1]; i += 1
         elif k == "--tag":
             a.setdefault("tags", []).append(argv[i + 1]); i += 1
