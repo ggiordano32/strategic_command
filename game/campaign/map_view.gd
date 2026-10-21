@@ -746,6 +746,8 @@ func redraw_pulse() -> void:
 
 ## The territory edges and outlines (child node `_edges`): the owner's band, the borders, the targets' outlines.
 func _draw_edges() -> void:
+	if (state.get("regions", []) as Array).size() != CData.region_count():
+		return   # (no campaign loaded, or the state of another pack: nothing to outline)
 	var t0 := ZProf.begin()
 	var lw := 1.0 / maxf(zoom, 0.05)
 	var tbl := _tbl

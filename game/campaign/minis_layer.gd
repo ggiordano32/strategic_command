@@ -52,7 +52,12 @@ const FIG_ORIGIN := {   # name -> [big origin, small origin, big height px, smal
 	"mercy": [Vector2(48.5, 97.31), Vector2(24.5, 48.90), 96.0, 48.0],
 }
 static var _fig_tex := {}      # "name" / "name_small" -> Texture2D
+const FIG_TINT := preload("res://game/campaign/fig_tint.gdshader")
+const FIG_TINTED := ["captain", "rook"]   # Mercy's red coat is her identity: no faction tint
+const FIG_STEP := 0.96         # a further figure of the same banner stands this many figure widths further left ...
+const FIG_BACK := 0.25         # ... and this much of its height further up the screen (drawn first, the front one overlaps it)
 var _figs: Node2D
+var _figs_tint: Node2D         # the coats' faction tint, a multiply pass over the figures (skipped on Quality Low)
 var _fig_list: Array = []      # [[army id, sprite name, slot], ...] for the current state
 var _fig_epoch := -1
 var _fig_key: Array = []
@@ -71,6 +76,13 @@ func _ready() -> void:
 	_figs.draw.connect(_draw_figs)
 	_figs.visible = false
 	add_child(_figs)
+	_figs_tint = Node2D.new()
+	_figs_tint.draw.connect(_draw_figs_tint)
+	_figs_tint.visible = false
+	var tm := ShaderMaterial.new()
+	tm.shader = FIG_TINT
+	_figs_tint.material = tm
+	add_child(_figs_tint)
 
 
 func _atlas(name_set: String) -> Array:
@@ -173,11 +185,13 @@ func _process(delta: float) -> void:
 	_label_lift = tile_px(z) * 0.5
 	fig_on = tbl and not st.is_empty() and z >= SHIP_MIN_ZOOM and CStory.on(st)
 	_figs.visible = fig_on
+	_figs_tint.visible = fig_on and not Quality.is_low()
 	if fig_on:
 		var k := [overlay._epoch, overlay.xform, z, Quality.is_low()]
 		if k != _fig_key:
 			_fig_key = k
 			_figs.queue_redraw()
+			_figs_tint.queue_redraw()
 	if fig_on and not (s_on or sh_on):
 		if not visible or not _fig_only:
 			visible = true   # (the figures alone: one redraw clears the ship pass, then nothing more)
@@ -319,8 +333,8 @@ func _draw_under() -> void:
 
 # ----------------------------------------------------------- characters ---
 
-static func _fig_texture(nm: String, small: bool) -> Texture2D:
-	var k := nm + ("_small" if small else "")
+static func _fig_texture(nm: String, small: bool, suffix := "") -> Texture2D:
+	var k := nm + ("_small" if small else "") + suffix
 	if not _fig_tex.has(k):
 		_fig_tex[k] = load("res://assets/minis/characters/%s.png" % k) as Texture2D
 	return _fig_tex[k]
@@ -370,6 +384,29 @@ static func _figure_army(st: Dictionary, f: int) -> int:
 	return best
 
 
+## Where a figure stands: [feet point, scale, sprite origin, small?] or an empty array (out of sight, off screen).
+func _fig_place(e: Array, pos: Dictionary, m: float, small: bool, vp: Rect2) -> Array:
+	var id: int = e[0]
+	if not pos.has(id):
+		return []
+	var c: Vector2 = pos[id]
+	var o: Array = FIG_ORIGIN[e[1]]
+	var k := FIG_H * m / float(o[3] if small else o[2])
+	var org: Vector2 = o[1] if small else o[0]
+	var slot := float(e[2])
+	var feet := Vector2(c.x - overlay.ARMY_W * 0.5 * m - FIG_H * m * (0.30 + FIG_STEP * slot), c.y + overlay.ARMY_H * 0.5 * m - FIG_H * m * FIG_BACK * slot)
+	if not vp.has_point(feet):
+		return []
+	return [feet, k, org]
+
+
+## The figures, the further slots first so the front one overlaps them.
+func _fig_order() -> Array:
+	var l: Array = _fig_list.duplicate()
+	l.sort_custom(func(a, b): return int(a[2]) > int(b[2]))
+	return l
+
+
 func _draw_figs() -> void:
 	if overlay == null or not fig_on:
 		return
@@ -383,18 +420,31 @@ func _draw_figs() -> void:
 	var m: float = overlay.mk()
 	var small := Quality.is_low() or m < FIG_SMALL_MK
 	var vp := get_viewport_rect().grow(80.0)
-	for e in _fig_list:
-		var id: int = e[0]
-		if not pos.has(id):
-			continue
-		var c: Vector2 = pos[id]
-		var o: Array = FIG_ORIGIN[e[1]]
+	for e in _fig_order():
+		var pl := _fig_place(e, pos, m, small, vp)
 		var tex := _fig_texture(e[1], small)
-		if tex == null:
+		if pl.is_empty() or tex == null:
 			continue
-		var k := FIG_H * m / float(o[3] if small else o[2])
-		var org: Vector2 = o[1] if small else o[0]
-		var feet := Vector2(c.x - overlay.ARMY_W * 0.5 * m - FIG_H * m * (0.30 + 0.62 * float(e[2])), c.y + overlay.ARMY_H * 0.5 * m)
-		if not vp.has_point(feet):
+		_figs.draw_texture_rect(tex, Rect2((pl[0] as Vector2) - (pl[2] as Vector2) * float(pl[1]), tex.get_size() * float(pl[1])), false)
+
+
+## The coat toward the faction's colour (fig_tint.gdshader), over the figures of the captain and the partner.
+func _draw_figs_tint() -> void:
+	if overlay == null or not fig_on or Quality.is_low() or _fig_list.is_empty():
+		return
+	var st: Dictionary = overlay.state
+	var pos: Dictionary = overlay._positions()
+	var m: float = overlay.mk()
+	var small := m < FIG_SMALL_MK
+	var vp := get_viewport_rect().grow(80.0)
+	for e in _fig_order():
+		if not FIG_TINTED.has(e[1]):
 			continue
-		_figs.draw_texture_rect(tex, Rect2(feet - org * k, tex.get_size() * k), false)
+		var pl := _fig_place(e, pos, m, small, vp)
+		var tex := _fig_texture(str(e[1]), small, "_mask")
+		if pl.is_empty() or tex == null:
+			continue
+		var f := int(CState.army(st, int(e[0])).get("f", -1))
+		if f < 0:
+			continue
+		_figs_tint.draw_texture_rect(tex, Rect2((pl[0] as Vector2) - (pl[2] as Vector2) * float(pl[1]), tex.get_size() * float(pl[1])), false, CData.faction_color(f))

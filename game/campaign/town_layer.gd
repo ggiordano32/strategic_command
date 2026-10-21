@@ -75,7 +75,8 @@ func _tick(delta: float) -> void:
 	if overlay == null:
 		return
 	var st: Dictionary = overlay.state
-	var tbl := MapView.table_on() and MapView.terrain_view and not st.is_empty() and CData.region_count() > 0
+	var tbl := MapView.table_on() and MapView.terrain_view and not st.is_empty() and CData.region_count() > 0 \
+		and (st.get("regions", []) as Array).size() == CData.region_count()   # (a state of another pack, e.g. a screen about to be freed after a pack switch: no plans)
 	var z: float = overlay.zoom
 	on = tbl and z >= MIN_ZOOM
 	if visible != on:
@@ -299,6 +300,8 @@ func _draw_town_body(kid: Node2D, r: int) -> void:
 	if st.is_empty():
 		return
 	var pl: Dictionary = _plans[r]
+	if not pl.has("items"):
+		return
 	var items: Array = pl["items"]
 	var aname := _variant if _variant != "" else "small"
 	var table: Dictionary = Atlas.SETS[aname]

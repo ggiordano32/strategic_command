@@ -78,6 +78,22 @@ var frame := 0
 var wait := 0
 var hold := false
 var failures := 0
+
+
+## Counts the script errors the engine logs while the test runs (the log stays clean across the pack switch and on an
+## empty state).
+class ErrCount extends Logger:
+	var n := 0
+	var first := ""
+
+	func _log_error(_function: String, file: String, line: int, code: String, rationale: String, _editor_notify: bool, error_type: int, _bt: Array[ScriptBacktrace]) -> void:
+		if error_type == Logger.ERROR_TYPE_SCRIPT:
+			n += 1
+			if first == "":
+				first = "%s:%d %s %s" % [file, line, code, rationale]
+
+
+var _errs := ErrCount.new()
 var steps: Array[Callable] = []
 var rome := CData.faction_index("rome")
 var greeks := CData.faction_index("greeks")
@@ -87,6 +103,7 @@ var _poll := 0
 
 
 func _initialize() -> void:
+	OS.add_logger(_errs)
 	Input.use_accumulated_input = false
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	var st := CState.as_format(CState.new_campaign("InputTest", 3, [rome, greeks]), 5)
@@ -1710,6 +1727,7 @@ func _j_done() -> void:
 
 
 func _s_done() -> void:
+	_check(_errs.n == 0, "the log has no script errors (%d; first %s)" % [_errs.n, _errs.first])
 	print("RESULT: %s" % ("PASS" if failures == 0 else "FAIL (%d)" % failures))
 	quit(0 if failures == 0 else 1)
 
