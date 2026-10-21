@@ -19,3 +19,4 @@ export_credentials.cfg
 
 # Campaign server data (tools/run_server.sh): database, backups, web cache
 /data/
+__pycache__/

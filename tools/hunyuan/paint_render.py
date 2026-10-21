@@ -1,21 +1,18 @@
-"""Blender: raw Hunyuan mesh -> decimated, flat-painted mesh -> renders.
+"""Blender: raw Hunyuan mesh -> decimated, projection-textured mesh -> renders.
 
     ~/.local/bin/blender -b --factory-startup -P tools/hunyuan/paint_render.py -- \
         NAME [--work DIR] [--preview DIR] [--tris 50000] [--only mesh,mini,bust,turn]
 
 Inputs : DIR/NAME/raw.glb and the four crops (front/left/right/back .png) that
          gen.py wrote.  Without raw.glb the committed assets/characters/NAME/mesh.glb
-         is re-rendered (its vertex colours are snapped back to the palette).
-Outputs: assets/characters/NAME/mesh.glb         decimated, vertex-coloured (palette colours)
+         is re-rendered (texture embedded).
+Outputs: assets/characters/NAME/mesh.glb         decimated, textured (embedded 1024 albedo)
          assets/minis/characters/NAME.png (+ _mask.png, _small.png, _small_mask.png, .json)
          assets/portraits/NAME.png
          PREVIEW/preview_NAME.png                turntable sheet (8 angles, two views)
 
-Painting: every vertex samples the sheet view that faces it best (and sees it:
-a z-buffer per view), the colour is snapped to the character's palette
-(the game's portrait colours, game/story_portrait.gd), labels are smoothed by a
-neighbour vote.  Palette entries with a mask channel (R = coat, G = sash /
-plume / headscarf) go to the mask pass.
+Texture: see texture.py and README (atlas of view charts, palette label + detail layer, baked 1024 albedo).
+Palette entries with a mask channel (R = coat, G = sash / plume / headscarf) go to the mask pass.
 
 The miniature uses the structures' camera, light, toon-D material and outline
 (tools/structures/build.py is executed as a library, so the look stays in sync).
@@ -32,6 +29,7 @@ import numpy as np
 from mathutils import Matrix, Vector, kdtree
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 
 # ------------------------------------------------------------------ palettes
@@ -39,6 +37,8 @@ REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 CHARS = {
     "mercy": {
         "bust": (0.16, 0.56), "height_m": 1.8, "head_labels": ["hat", "hair", "skin"],
+        "mask": {"R": ["coat"], "G": []}, "face_z": 0.87, "hat_z": 0.93, "hat_zone": ["hat"], "hat_labels": ["hat"],
+        "hat_lock": True, "skin_prune": False, "mouth_fix": True,
         "palette": {
             "coat": ("b8432f", "R"), "skin": ("c98f60", None), "hair": ("2a1a14", None),
             "hat": ("2c2a38", None), "shirt": ("e8c8b0", None), "leather": ("6a4a2e", None),
@@ -47,6 +47,9 @@ CHARS = {
     },
     "rook": {
         "bust": (0.14, 0.52), "height_m": 2.0, "head_labels": ["skin", "hair", "headscarf"],
+        "mask": {"R": ["coat"], "G": ["sash"]}, "face_z": 0.87, "hat_z": 0.90,
+        "hat_zone": ["headscarf", "hair"], "hat_labels": ["headscarf"],
+        "hat_lock": False, "skin_prune": False, "mouth_fix": False,
         "palette": {
             "coat": ("2f7f6f", "R"), "skin": ("a8704a", None), "hair": ("1c1412", None),
             "headscarf": ("e8dcb8", None), "sash": ("d9302a", "G"), "leather": ("7a5a34", None),
@@ -55,6 +58,9 @@ CHARS = {
     },
     "captain": {
         "bust": (0.26, 0.64), "height_m": 1.85, "head_labels": ["hat", "plume", "hair", "skin"],
+        "mask": {"R": ["coat"], "G": ["sash"]}, "face_z": 0.87, "head_alias": {"gold": "hat"},
+        "hat_z": 0.93, "hat_zone": ["hat", "gold", "sash"], "hat_labels": ["hat"],
+        "hat_lock": True, "skin_prune": False, "mouth_fix": False,
         "palette": {
             "coat": ("4a4a52", "R"), "sash": ("d9302a", "G"), "gold": ("d9a31f", None),
             "skin": ("d9a67a", None), "hair": ("7a6a5a", None), "hat": ("16161a", None),
@@ -72,7 +78,7 @@ CHARS["captain"]["head_labels"] = ["hat", "sash", "hair", "skin"]
 ZBAND = {"mercy": {"hat": (0.80, 1.01), "boots": (0.0, 0.33)},
          "rook": {"headscarf": (0.85, 1.01)},
          "captain": {"hat": (0.78, 1.01)}}
-ANCHORS = {'mercy': {'coat': '7a2a20', 'skin': 'b88a6a', 'hair': '2e2018', 'hat': '2a2824', 'shirt': 'd8c8b0', 'leather': '5a4030', 'boots': '2e2218', 'brass': 'a8843a'}, 'rook': {'coat': ['457080', '2d5560', '5a8a96', '1f3d48'], 'skin': '9a6a4a', 'hair': '20181a', 'headscarf': 'e0d8c0', 'sash': 'c03028', 'leather': '6a4a2e', 'metal': '8a8a8a', 'trousers': 'cfc3a6'}, 'captain': {'coat': '2a3040', 'sash': 'b02828', 'gold': 'b08a40', 'skin': 'c09878', 'hair': '7a6a60', 'hat': '2a2a2e', 'leather': '4a3828', 'shirt': 'd8c8b0'}}
+ANCHORS = {'mercy': {'coat': '7a2a20', 'skin': 'b88a6a', 'hair': '2e2018', 'hat': '2a2824', 'shirt': 'd8c8b0', 'leather': '5a4030', 'boots': '2e2218', 'brass': 'a8843a'}, 'rook': {'coat': ['457080', '2d5560', '5a8a96', '1f3d48'], 'skin': '9a6a4a', 'hair': '20181a', 'headscarf': 'e0d8c0', 'sash': 'c03028', 'leather': '6a4a2e', 'metal': '8a8a8a', 'trousers': 'cfc3a6'}, 'captain': {'coat': ['2a2826', '38302c', '262320'], 'sash': 'b02828', 'gold': 'b08a40', 'skin': 'c09878', 'hair': '7a6a60', 'hat': '2a2a2e', 'leather': ['593c2b', '3e2c1d', '322115'], 'shirt': 'd8c8b0'}}
 
 
 def hex_rgb(h):
@@ -216,17 +222,60 @@ class View:
         ys, xs = np.nonzero(self.alpha > 0.5)
         self.x0, self.x1, self.y0, self.y1 = xs.min(), xs.max(), ys.min(), ys.max()
         self.h_px = self.y1 - self.y0
-        self.col = box_blur(bleed(self.rgb, self.alpha), 2)
+        self.rgb_bled = bleed(self.rgb, self.alpha)
+        self.col_src = self.rgb_bled
+        self.col = box_blur(self.rgb_bled, 2)
         yy, xx = np.nonzero(self.alpha > 0.5)
         self.cx = xx.mean()   # centroid of the silhouette, px
         self.u, self.d, self.to_cam = (np.array(t, float) for t in VDEF[key])
 
+    fit = None      # (a, b, c, d): px = a*u + b, py = c*z + d, set by fit_view
+
     def project(self, v, zmin, H, ucen):
         sc = self.h_px / H
         u = v @ self.u
+        if self.fit is not None:
+            a, b, c, d = self.fit
+            return a * u + b, c * v[:, 2] + d, v @ self.d, sc
         px = self.cx + (u - ucen) * sc
         py = self.y1 - (v[:, 2] - zmin) * sc
         return px, py, v @ self.d, sc
+
+
+def fit_view(vw, v, zmin, H, ucen, bands=(0.10, 0.30, 0.50, 0.70, 0.90)):
+    """Least-squares fit of the mesh silhouette to the sheet silhouette: vertical = feet / crown extents,
+    horizontal = the left / right extents at five height bands (10 / 30 / 50 / 70 / 90 %).
+    Gives px = a*u + b, py = c*z + d.  Falls back to the nominal projection when unstable."""
+    vw.fit = None
+    sc = vw.h_px / H
+    c = -sc
+    d = vw.y1 + zmin * sc
+    u = v @ vw.u
+    al = vw.alpha > 0.5
+    xs_m, xs_s = [], []
+    for f in bands:
+        zlo, zhi = zmin + (f - 0.04) * H, zmin + (f + 0.04) * H
+        sel = (v[:, 2] >= zlo) & (v[:, 2] <= zhi)
+        r0, r1 = int(c * zhi + d), int(c * zlo + d)
+        if sel.sum() < 20 or r1 <= r0:
+            continue
+        cols = np.nonzero(al[max(r0, 0):r1 + 1].any(0))[0]
+        if len(cols) == 0:
+            continue
+        xs_m += [u[sel].min(), u[sel].max()]
+        xs_s += [cols.min(), cols.max()]
+    nom_a = sc
+    nom_b = vw.cx - ucen * sc
+    if len(xs_m) >= 6:
+        A = np.stack([xs_m, np.ones(len(xs_m))], 1)
+        (a, b), *_ = np.linalg.lstsq(A, np.array(xs_s, float), rcond=None)
+        res = np.abs(A @ np.array([a, b]) - xs_s)
+        ok = 0.88 < a / nom_a < 1.12 and res.mean() < 0.03 * vw.alpha.shape[1]
+        print("  fit %-5s scale x %.3f (nominal 1.000)  offset %+.1f px  vertical scale 1.000 offset %+.1f px  "
+              "mean residual %.1f px  %s" % (vw.key, a / nom_a, a * ucen + b - vw.cx, 0.0, res.mean(), "applied" if ok else "UNSTABLE: nominal kept"))
+        if ok:
+            vw.fit = (a, b, c, d)
+    return vw.fit
 
 
 def silhouette_ucen(view, v, zmin, H):
@@ -273,63 +322,6 @@ def orient(v, views, zmin, H):
         if best is None or sc > best[0]:
             best = (sc, k, R)
     return best[1], best[2]
-
-
-def paint_labels(v, nrm, edges, views, pal_lab, ncol, zmin, H, bands=None, owner=None):
-    N = len(v)
-    best_w = np.full(N, -1.0)
-    rgb = np.zeros((N, 3))
-    ucen = {k: silhouette_ucen(vw, v, zmin, H) for k, vw in views.items()}
-    for k, vw in views.items():
-        px, py, depth, sc = vw.project(v, zmin, H, ucen[k])
-        # z-buffer on a 512 grid
-        G = 512
-        s = G / vw.alpha.shape[0]
-        gx = np.clip((px * s).astype(int), 0, G - 1)
-        gy = np.clip((py * s).astype(int), 0, G - 1)
-        zb = np.full(G * G, 1e9)
-        np.minimum.at(zb, gy * G + gx, depth)
-        zb = zb.reshape(G, G)
-        zn = zb.copy()
-        for dy in (-1, 0, 1):
-            for dx in (-1, 0, 1):
-                zn = np.minimum(zn, np.roll(np.roll(zb, dy, 0), dx, 1))
-        vis = depth <= zn[gy, gx] + 0.04
-        facing = np.maximum(nrm @ vw.to_cam, 0.0)
-        w = facing * (0.25 + 0.75 * vis)
-        w = np.where(vis, facing + 1.0, facing * 0.2)      # visible beats hidden
-        ix = np.clip(np.round(px).astype(int), 0, vw.rgb.shape[1] - 1)
-        iy = np.clip(np.round(py).astype(int), 0, vw.rgb.shape[0] - 1)
-        take = w > best_w
-        rgb[take] = vw.col[iy[take], ix[take]]
-        best_w[take] = w[take]
-    lab = rgb_to_lab(rgb)
-    # lightness counts little: the sheets are shaded, the palette is flat
-    d = np.stack([(lab[:, None, 0] - pal_lab[None, :, 0]) * 0.6,
-                  lab[:, None, 1] - pal_lab[None, :, 1], lab[:, None, 2] - pal_lab[None, :, 2]], -1)
-    dist = (d ** 2).sum(-1)
-    if owner is not None:      # several anchors per palette entry: nearest of each
-        dd = np.full((len(dist), ncol), 1e9)
-        for j, o in enumerate(owner):
-            dd[:, o] = np.minimum(dd[:, o], dist[:, j])
-        dist = dd
-    zf = (v[:, 2] - zmin) / H
-    for i, (lo, hi) in (bands or {}).items():
-        dist[(zf < lo) | (zf > hi), i] += 1e5
-    lab_idx = dist.argmin(1)
-    # neighbour vote smoothing
-    a, b = edges[:, 0], edges[:, 1]
-    for _ in range(12):
-        cnt = np.zeros((N, ncol))
-        np.add.at(cnt, (a, lab_idx[b]), 1.0)
-        np.add.at(cnt, (b, lab_idx[a]), 1.0)
-        cnt[np.arange(N), lab_idx] += 1.5
-        lab_idx = cnt.argmax(1)
-    if os.environ.get("HY_DEBUG"):
-        for i in range(ncol):
-            m = lab_idx == i
-            print("  label %d: %6d verts, mean sampled rgb %s" % (i, m.sum(), np.round(rgb[m].mean(0), 2) if m.any() else "-"))
-    return lab_idx, rgb
 
 
 # ------------------------------------------------------------------ mesh cleanup
@@ -379,107 +371,185 @@ def decimate(ob, target_tris):
         p.use_smooth = True
 
 
-def set_vertex_colors(me, rgb_lin):
-    if "Col" in me.color_attributes:
-        me.color_attributes.remove(me.color_attributes["Col"])
-    ca = me.color_attributes.new("Col", "FLOAT_COLOR", "POINT")
-    flat = np.concatenate([rgb_lin, np.ones((len(rgb_lin), 1))], 1).astype(np.float32).ravel()
-    ca.data.foreach_set("color", flat)
-    me.color_attributes.active_color = ca
-    me.color_attributes.render_color_index = list(me.color_attributes.keys()).index("Col")
+# ------------------------------------------------------------------ UV + texture
+def set_uv(me, uvc):
+    """Write per-corner uvs (ntri,3,2) into the mesh's first uv layer (loop-triangle order)."""
+    me.calc_loop_triangles()
+    lt = np.empty(len(me.loop_triangles) * 3, np.int32)
+    me.loop_triangles.foreach_get("loops", lt)
+    for name in list(me.uv_layers.keys()):
+        me.uv_layers.remove(me.uv_layers[name])
+    me.uv_layers.new(name="UVMap")
+    uv = np.zeros((len(me.loops), 2))
+    uv[lt] = uvc.reshape(-1, 2)
+    me.uv_layers[0].data.foreach_set("uv", uv.ravel())
+    me.update()
 
 
-def get_vertex_colors(me):
-    ca = me.color_attributes[0]
-    n = len(me.vertices)
-    arr = np.empty(len(ca.data) * 4, np.float32)
-    ca.data.foreach_get("color", arr)
-    arr = arr.reshape(-1, 4)[:, :3]
-    if ca.domain == "CORNER":
-        out = np.zeros((n, 3))
-        idx = np.empty(len(me.loops), np.int32)
-        me.loops.foreach_get("vertex_index", idx)
-        out[idx] = arr
-        return out
-    return arr.astype(np.float64)
+def uv_corners(me):
+    """(ntri,3,2) uv of every loop-triangle corner, in the triangles' own order."""
+    me.calc_loop_triangles()
+    lt = np.empty(len(me.loop_triangles) * 3, np.int32)
+    me.loop_triangles.foreach_get("loops", lt)
+    uv = np.empty(len(me.loops) * 2, np.float64)
+    me.uv_layers[0].data.foreach_get("uv", uv)
+    return uv.reshape(-1, 2)[lt.reshape(-1, 3)]
 
 
-def export_mesh(ob, path):
+def read_vup(path):
+    """Image file -> (H,W,4) float array in Blender's pixel order (row 0 = bottom = v 0), raw values."""
+    im = bpy.data.images.load(path)
+    im.colorspace_settings.name = "Non-Color"
+    w, h = im.size
+    a = np.array(im.pixels[:], dtype=np.float32).reshape(h, w, 4).copy()
+    bpy.data.images.remove(im)
+    return a
+
+
+def write_vup(path, rgb, alpha=1.0):
+    h, w = rgb.shape[:2]
+    arr = np.ones((h, w, 4), np.float32)
+    arr[..., :3] = np.clip(rgb, 0, 1)
+    arr[..., 3] = alpha
+    im = bpy.data.images.new("o", w, h, alpha=True, float_buffer=False)
+    im.colorspace_settings.name = "Non-Color"
+    im.pixels.foreach_set(arr.ravel())
+    im.filepath_raw = path
+    im.file_format = "PNG"
+    im.save()
+    bpy.data.images.remove(im)
+
+
+def export_mesh(ob, albedo_path, path):
+    """GLB with the albedo texture embedded (glTF baseColorTexture), no vertex colours."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    me = ob.data
+    for n in list(me.color_attributes.keys()):
+        me.color_attributes.remove(me.color_attributes[n])
+    im = bpy.data.images.load(albedo_path)
+    im.colorspace_settings.name = "sRGB"
+    m = bpy.data.materials.new("character")
+    m.use_nodes = True
+    nt = m.node_tree
+    bsdf = nt.nodes["Principled BSDF"]
+    tex = nt.nodes.new("ShaderNodeTexImage")
+    tex.image = im
+    nt.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+    bsdf.inputs["Roughness"].default_value = 1.0
+    me.materials.clear()
+    me.materials.append(m)
+    for p in me.polygons:
+        p.use_smooth = True
     bpy.ops.object.select_all(action="DESELECT")
     ob.select_set(True)
     bpy.context.view_layer.objects.active = ob
     kw = dict(filepath=path, export_format="GLB", use_selection=True, export_apply=True,
-              export_normals=True, export_texcoords=False, export_materials="NONE")
-    for extra in ({"export_vertex_color": "ACTIVE"}, {"export_active_vertex_color_when_no_material": True}, {}):
+              export_normals=True, export_texcoords=True, export_materials="EXPORT",
+              export_image_format="AUTO")
+    for extra in ({"export_vertex_color": "NONE"}, {"export_active_vertex_color_when_no_material": False}, {}):
         try:
             bpy.ops.export_scene.gltf(**kw, **extra)
             return
-        except TypeError:
-            continue
+        except TypeError as e:
+            print("  gltf export option rejected:", e)
+    raise RuntimeError("glb export failed")
 
 
 # ------------------------------------------------------------------ rendering
-class Rig:
-    """The character as one object per palette colour, with the structures' materials."""
+def tex_node(nt, ns, path, closest=False):
+    img = bpy.data.images.load(path)
+    img.colorspace_settings.name = "Non-Color"      # the look is "Raw": values pass straight through
+    t = ns["node"](nt, "ShaderNodeTexImage")
+    t.image = img
+    t.interpolation = "Closest" if closest else "Linear"
+    t.extension = "EXTEND"
+    return t
 
-    def __init__(self, ns, cfg, names, labels, mesh_ob, H_m, style="D"):
+
+def textured_shade(ns, name, albedo_path, style="D"):
+    """The structures' toon material (ramp * colour * height gradient) with the albedo texture as colour."""
+    m = ns["shade_material"](name, style, (1.0, 1.0, 1.0), False)
+    nt = m.node_tree
+    mx = None
+    for nd in nt.nodes:
+        if nd.bl_idname == "ShaderNodeMix" and nd.blend_type == "MULTIPLY":
+            a = ns["sock"](nd, "A_Color")
+            b = ns["sock"](nd, "B_Color")
+            if a.is_linked and not b.is_linked:
+                mx = nd
+                break
+    t = tex_node(nt, ns, albedo_path)
+    hs = nt.nodes.new("ShaderNodeHueSaturation")      # style D's saturation / value lift
+    hs.inputs["Saturation"].default_value = 1.3
+    hs.inputs["Value"].default_value = 1.06
+    nt.links.new(t.outputs["Color"], hs.inputs["Color"])
+    nt.links.new(hs.outputs["Color"], ns["sock"](mx, "B_Color"))
+    return m
+
+
+def mask_texture_material(ns, mask_path):
+    m, nt = ns["new_material"]("pass_mask_tex")
+    t = tex_node(nt, ns, mask_path, closest=True)
+    em = ns["node"](nt, "ShaderNodeEmission")
+    nt.links.new(t.outputs["Color"], em.inputs["Color"])
+    out = ns["node"](nt, "ShaderNodeOutputMaterial")
+    nt.links.new(em.outputs[0], out.inputs["Surface"])
+    return m
+
+
+class Rig:
+    """The character as one textured object with the structures' toon material, plus the mask pass."""
+
+    def __init__(self, ns, cfg, v_raw, tri, uvc, lab_img, albedo_path, mask_path, H_m, names):
         self.ns = ns
-        me = mesh_ob.data
-        v = np.empty(len(me.vertices) * 3, np.float32)
-        me.vertices.foreach_get("co", v)
-        v = v.reshape(-1, 3).astype(np.float64)
-        zmin, zmax = v[:, 2].min(), v[:, 2].max()
+        zmin, zmax = v_raw[:, 2].min(), v_raw[:, 2].max()
         k = H_m / (zmax - zmin)
-        cx = (v[:, 0].min() + v[:, 0].max()) / 2
-        cy = (v[:, 1].min() + v[:, 1].max()) / 2
-        self.v = (v - np.array([cx, cy, zmin])) * k      # feet at z = 0, facing -y
-        tri = np.empty(len(me.loop_triangles) * 3, np.int32)
-        me.calc_loop_triangles()
-        me.loop_triangles.foreach_get("vertices", tri)
-        self.tri = tri.reshape(-1, 3)
-        self.sc = ns["reset_scene"]()     # clears the imported mesh: arrays are copied above
-        self.labels = labels
+        cx = (v_raw[:, 0].min() + v_raw[:, 0].max()) / 2
+        cy = (v_raw[:, 1].min() + v_raw[:, 1].max()) / 2
+        vs = (v_raw - np.array([cx, cy, zmin])) * k          # feet at z = 0, facing -y
+        # weld by position (UV seams split vertices in an imported glb): smooth normals + a closed hull
+        key = np.round(vs / 1e-5).astype(np.int64)
+        _, first, inv = np.unique(key, axis=0, return_index=True, return_inverse=True)
+        inv = inv.ravel()
+        self.v = vs[first]
+        t2 = inv[tri]
+        ok = (t2[:, 0] != t2[:, 1]) & (t2[:, 1] != t2[:, 2]) & (t2[:, 0] != t2[:, 2])
+        self.tri = t2[ok]
+        uvc = uvc[ok]
+        T = lab_img.shape[0]
+        cu = np.clip((uvc[..., 0] * T).astype(int), 0, T - 1)
+        cv = np.clip((uvc[..., 1] * T).astype(int), 0, T - 1)
+        self.lab = np.zeros(len(self.v), np.int32)
+        self.lab[self.tri.ravel()] = lab_img[cv, cu].ravel()      # a label per vertex (head / skin lookups)
         self.names = names
         self.cfg = cfg
-        self.objs = []
         self.H = H_m
-        self.mat_cache = {}
-        # face label = label of its first vertex that agrees with another, else the first
-        l0, l1, l2 = labels[self.tri[:, 0]], labels[self.tri[:, 1]], labels[self.tri[:, 2]]
-        fl = np.where(l1 == l2, l1, l0)
-        self.fl = fl
-        pal = cfg["palette"]
-        self.pivot = Vector((0, 0, 0))
-        for i, nm in enumerate(names):
-            sel = np.nonzero(fl == i)[0]
-            if len(sel) == 0:
-                continue
-            hexc, ch = pal[nm]
-            idx = self.tri[sel]
-            used, inv = np.unique(idx.ravel(), return_inverse=True)
-            m = bpy.data.meshes.new("c_" + nm)
-            m.from_pydata(self.v[used].tolist(), [], inv.reshape(-1, 3).tolist())
-            m.update()
-            for p in m.polygons:
-                p.use_smooth = True
-            ob = bpy.data.objects.new("c_" + nm, m)
-            self.sc.collection.objects.link(ob)
-            ob["sc_mask"] = list({"R": (1, 0, 0), "G": (0, 1, 0), "B": (0, 0, 1)}.get(ch, (0, 0, 0))) + [1.0]
-            rgb = ns["adjust"](hex_rgb(hexc), style)
-            ob.data.materials.append(ns["shade_material"]("s_" + nm, style, rgb, False))
-            ob.rotation_mode = "XYZ"
-            self.objs.append((ob, nm, rgb))
+        self.albedo_path = albedo_path
+        self.sc = ns["reset_scene"]()
+        m = bpy.data.meshes.new("figure")
+        m.from_pydata(self.v.tolist(), [], self.tri.tolist())
+        m.update()
+        m.uv_layers.new(name="UVMap")
+        m.uv_layers[0].data.foreach_set("uv", uvc.reshape(-1, 2).ravel())
+        for p in m.polygons:
+            p.use_smooth = True
+        self.ob = bpy.data.objects.new("figure", m)
+        self.sc.collection.objects.link(self.ob)
+        self.mask_mat = mask_texture_material(ns, mask_path)
         self.outlines = []
+        self.materials("D")
+
+    def materials(self, tag):
+        self.ob.data.materials.clear()
+        self.ob.data.materials.append(textured_shade(self.ns, "sh_" + tag, self.albedo_path))
 
     def pose(self, yaw_deg):
-        for ob, _, _ in self.objs:
-            ob.rotation_euler = (0, 0, math.radians(yaw_deg))
+        self.ob.rotation_euler = (0, 0, math.radians(yaw_deg))
         for o in self.outlines:
             o.rotation_euler = (0, 0, math.radians(yaw_deg))
 
     def outline(self, thick):
-        """One inverted hull round the whole figure (per-part hulls spike at the seams)."""
+        """One inverted hull round the whole figure."""
         ns = self.ns
         for o in self.outlines:
             bpy.data.objects.remove(o)
@@ -535,7 +605,7 @@ class Rig:
         vl = bpy.context.view_layer
         for o in self.outlines:
             o.hide_render = mask
-        vl.material_override = self.ns["mask_material"]() if mask else None
+        vl.material_override = self.mask_mat if mask else None
         self.sc.render.filepath = path
         bpy.ops.render.render(write_still=True)
         vl.material_override = None
@@ -563,76 +633,131 @@ def write_png(path, arr):
 
 
 # ------------------------------------------------------------------ main
+def build_texture(name, cfg, names, pal_rgb, wd, tris, debug):
+    """raw.glb -> oriented, decimated, UV-unwrapped mesh + baked albedo / label textures."""
+    import texture
+    ob = import_glb(os.path.join(wd, "raw.glb"))
+    me = ob.data
+    me.calc_loop_triangles()
+    v, tri, edges, nrm = mesh_arrays(me)
+    zmin, zmax = v[:, 2].min(), v[:, 2].max()
+    H = zmax - zmin
+    views = {k: View(k, load_view(os.path.join(wd, k + ".png"))) for k in VIEWS}
+    kk, R = orient(v, views, zmin, H)
+    v = v @ R.T
+    me.vertices.foreach_set("co", v.astype(np.float32).ravel())
+    me.update()
+    print("  rotated %d deg to face -y" % (kk * 90))
+    decimate(ob, tris)
+    me = ob.data
+    me.calc_loop_triangles()
+    v, tri, edges, nrm = mesh_arrays(me)
+    zmin, zmax = v[:, 2].min(), v[:, 2].max()
+    H = zmax - zmin
+    head_z = cfg.get("head_z", 0.82)
+    T = 1024
+    ucen = {k: silhouette_ucen(vw, v, zmin, H) for k, vw in views.items()}
+    for k, vw in views.items():
+        fit_view(vw, v, zmin, H, ucen[k])
+    t1 = time.time()
+    own, vis = texture.assign_views(v, tri, nrm, views, ucen, zmin, H, head_z)
+    uvc, scale = texture.build_atlas(v, tri, own, views, zmin, H, head_z, T, cfg.get("head_density", 2.0))
+    print("  atlas: views owning %s tris, body %.0f px per figure height (%.1fs)" % (
+        np.bincount(own, minlength=4).tolist(), scale * H, time.time() - t1))
+    set_uv(me, uvc)
+    t1 = time.time()
+    order = np.concatenate([np.nonzero(~vis)[0], np.nonzero(vis)[0]])      # occluded triangles first: visible ones win
+    valid, pos, nr, tid = texture.rasterize(uvc, v[tri], nrm[tri], T, order)
+    vid = np.where(valid, own[np.maximum(tid, 0)], 0)
+    print("  rasterised %d texels (%.1fs)" % (valid.sum(), time.time() - t1))
+    anc = [(i, hx) for i, n in enumerate(names) for hx in ([ANCHORS[name][n]] if isinstance(ANCHORS[name][n], str) else ANCHORS[name][n])]
+    owner = np.array([i for i, _ in anc])
+    pal_lab = rgb_to_lab(np.array([hex_rgb(hx) for _, hx in anc]))
+    bands = {names.index(k): b for k, b in ZBAND[name].items() if k in names}
+    # captain's head_labels name 'sash' (the plume) and 'hat'; only labels that exist count
+    head_ids = [names.index(n) for n in cfg["head_labels"] if n in names]
+    detail_ids = [names.index(n) for n in ("skin", "hair") if n in names]
+    alias = {names.index(a_): names.index(b_) for a_, b_ in cfg.get("head_alias", {}).items() if a_ in names and b_ in names}
+    lock = cfg.get("hat_lock", False)
+    rules = {"hat_z": cfg.get("hat_z", 2.0) if lock else 2.0,
+             "zone_ids": [names.index(n) for n in cfg.get("hat_zone", []) if n in names] if lock else [],
+             "hat_ids": [names.index(n) for n in cfg.get("hat_labels", []) if n in names] if lock else [],
+             "mouth": cfg.get("mouth_fix", False), "skin_prune": cfg.get("skin_prune", False)}
+    stats = {}
+    t1 = time.time()
+    albedo, labels, _ = texture.bake(valid, pos, nr, vid, views, ucen, zmin, H, pal_rgb, pal_lab, owner, bands, names, rgb_to_lab, srgb_to_lin, lin_to_srgb,
+                                     shift=cfg.get("shift"), debug=debug, head_ids=head_ids,
+                                     face_z=cfg.get("face_z", 0.87), head_z=head_z, alias=alias, rules=rules, detail_ids=detail_ids, stats=stats)
+    print("  label components removed: %d; ink texels: %d; hat strays %d; mouth specks %d; skin pruned %d" % (
+        stats.get("removed", 0), stats.get("ink_texels", 0), stats.get("hat_stray", 0), stats.get("mouth", 0), stats.get("skin_pruned", 0)))
+    print("  baked (%.1fs)" % (time.time() - t1))
+    albedo, cover = texture.dilate_into(albedo, valid, 8)
+    labels = texture.dilate_labels(labels, valid, 8)
+    return ob, albedo, labels, uvc, v, tri
+
+
+def mask_image(labels, names, cfg):
+    m = np.zeros(labels.shape + (3,))
+    for ch, lst in cfg["mask"].items():
+        for nm in lst:
+            m[labels == names.index(nm), {"R": 0, "G": 1, "B": 2}[ch]] = 1.0
+    return m
+
+
 def main():
     a = parse_args()
     name = a["name"]
     cfg = CHARS[name]
     names = list(cfg["palette"].keys())
     pal_rgb = np.array([hex_rgb(cfg["palette"][n][0]) for n in names])
-    anc = [(i, hx) for i, n in enumerate(names) for hx in ([ANCHORS[name][n]] if isinstance(ANCHORS[name][n], str) else ANCHORS[name][n])]
-    anc_owner = np.array([i for i, _ in anc])
-    pal_lab = rgb_to_lab(np.array([hex_rgb(hx) for _, hx in anc]))   # classify against the sheet colours
     wd = os.path.join(a["work"], name)
     raw = os.path.join(wd, "raw.glb")
     mesh_path = os.path.join(REPO, "assets", "characters", name, "mesh.glb")
     mini_dir = os.path.join(REPO, "assets", "minis", "characters")
     port_path = os.path.join(REPO, "assets", "portraits", name + ".png")
     prev_dir = a["preview"] or a["work"]
+    albedo_path = os.path.join(wd, "albedo.png")
+    labels_path = os.path.join(wd, "labels.png")
+    mask_path = os.path.join(wd, "maskmap.png")
     t0 = time.time()
     os.environ.setdefault("SC_DBG", "nogloss,nobev")   # organic meshes: no glint / dry-brush edge (noisy)
     ns = load_structures()
+    os.makedirs(wd, exist_ok=True)
 
-    # ---- mesh: decimate + paint, or reload
-    if os.path.exists(raw):
+    # ---- mesh: decimate + unwrap + bake the texture, or reload the committed glb
+    if os.path.exists(raw) and "mesh" in a["only"]:
         print("[%s] importing %s" % (name, raw))
-        ob = import_glb(raw)
-        me = ob.data
-        me.calc_loop_triangles()
-        v, tri, edges, nrm = mesh_arrays(me)
-        zmin, zmax = v[:, 2].min(), v[:, 2].max()
-        H = zmax - zmin
-        views = {k: View(k, load_view(os.path.join(wd, k + ".png"))) for k in VIEWS}
-        kk, R = orient(v, views, zmin, H)
-        v = v @ R.T
-        nrm = nrm @ R.T
-        print("  rotated %d deg to face -y" % (kk * 90))
-        bands = {names.index(k): b for k, b in ZBAND[name].items() if k in names}
-        labels, _ = paint_labels(v, nrm, edges, views, pal_lab, len(names), zmin, H, bands, anc_owner)
-        # move the rotated dense positions back into the mesh
-        me.vertices.foreach_set("co", v.astype(np.float32).ravel())
-        me.update()
-        # transfer labels through a decimated copy
-        kd = kdtree.KDTree(len(v))
-        for i, p in enumerate(v):
-            kd.insert(Vector(p), i)
-        kd.balance()
-        decimate(ob, a["tris"])
-        me = ob.data
-        v2, tri2, edges2, _ = mesh_arrays(me)
-        lab2 = np.empty(len(v2), np.int32)
-        for i, p in enumerate(v2):
-            lab2[i] = labels[kd.find(Vector(p))[1]]
-        n2 = len(v2)
-        for _ in range(4):
-            cnt = np.zeros((n2, len(names)))
-            np.add.at(cnt, (edges2[:, 0], lab2[edges2[:, 1]]), 1.0)
-            np.add.at(cnt, (edges2[:, 1], lab2[edges2[:, 0]]), 1.0)
-            cnt[np.arange(n2), lab2] += 1.5
-            lab2 = cnt.argmax(1)
-        set_vertex_colors(me, srgb_to_lin(pal_rgb[lab2]))
-        export_mesh(ob, mesh_path)
-        print("  mesh.glb: %d verts, %d tris, %.2f MB" % (n2, len(tri2), os.path.getsize(mesh_path) / 2 ** 20))
+        ob, albedo, labels, uvc, v_raw, tri = build_texture(name, cfg, names, pal_rgb, wd, a["tris"], bool(os.environ.get("HY_DEBUG")))
+        write_vup(albedo_path, albedo)
+        write_vup(labels_path, np.stack([labels / 255.0] * 3, -1))
+        export_mesh(ob, albedo_path, mesh_path)
+        print("  mesh.glb: %d verts, %d tris, %.2f MB; albedo.png %.2f MB" % (
+            len(v_raw), len(tri), os.path.getsize(mesh_path) / 2 ** 20, os.path.getsize(albedo_path) / 2 ** 20))
     else:
         print("[%s] re-rendering %s" % (name, mesh_path))
         ob = import_glb(mesh_path)
         me = ob.data
-        cols = lin_to_srgb(get_vertex_colors(me))
-        lab2 = rgb_to_lab(cols)
-        d = ((lab2[:, None, :] - pal_lab[None]) ** 2).sum(-1)
-        lab2 = d.argmin(1)
         me.calc_loop_triangles()
-    # the Rig works on the mesh's own vertex positions (feet to z=0, scaled to metres)
-    rig = Rig(ns, cfg, names, lab2, ob, cfg["height_m"])
+        img = None
+        for mat in me.materials:
+            for nd in mat.node_tree.nodes:
+                if nd.type == "TEX_IMAGE":
+                    img = nd.image
+        img.colorspace_settings.name = "Non-Color"
+        w_, h_ = img.size
+        albedo = np.array(img.pixels[:], np.float32).reshape(h_, w_, 4)[..., :3].astype(np.float64)
+        v_raw, tri, _, _ = mesh_arrays(me)
+        uvc = uv_corners(me)
+        if os.path.exists(labels_path):
+            labels = np.rint(read_vup(labels_path)[..., 0] * 255).astype(np.int32)
+        else:
+            lab_a = rgb_to_lab(albedo.reshape(-1, 3))
+            d = ((lab_a[:, None, :] - rgb_to_lab(pal_rgb)[None]) ** 2).sum(-1)
+            labels = d.argmin(1).reshape(h_, w_)
+        write_vup(albedo_path, albedo)
+    write_vup(mask_path, mask_image(labels, names, cfg))
+    rig = Rig(ns, cfg, v_raw, tri, uvc, labels, albedo_path, mask_path, cfg["height_m"], names)
+    lab2 = rig.lab
     v = rig.v
     head_ids = [names.index(n) for n in cfg["head_labels"] if n in names]
     hm = np.isin(lab2, head_ids)
@@ -665,6 +790,10 @@ def main():
             base = os.path.join(mini_dir, name + tag)
             rig.render(base + ".png")
             rig.render(base + "_mask.png", mask=True)
+            mk = read_png(base + "_mask.png")
+            body = mk[..., 3] > 0.5
+            print("  mask coverage %s: R %.1f%%  G %.1f%% of the figure" % (
+                tag or "big", 100.0 * (mk[..., 0][body] > 0.5).mean(), 100.0 * (mk[..., 1][body] > 0.5).mean()))
             info[tag or "big"] = {"w": rx, "h": ry, "ppm": ppm, "m_per_px": 1.0 / ppm, "tilt": tilt,
                                   "origin_px": [rx / 2 - cen.x * ppm, ry / 2 + ymid * ppm],
                                   "height_m": cfg["height_m"]}
@@ -674,24 +803,25 @@ def main():
     if "bust" in a["only"]:
         ns["HEIGHT"]["D"] = None
         # shade materials were built with the gradient: rebuild the rig's materials
-        for ob_, nm, rgb in rig.objs:
-            ob_.data.materials.clear()
-            ob_.data.materials.append(ns["shade_material"]("sb_" + nm, "D", rgb, False))
+        rig.materials("bust")
         sk = (lab2 == names.index("skin")) & (v[:, 2] > 0.75 * cfg["height_m"])
         skin_top = np.percentile(v[sk, 2], 99.0)
         above, win = cfg["bust"]
+        win = win * 1.3                                   # wider window: hat, plume and the far shoulder
         zt = skin_top + above
         zb = zt - win
-        sel = sk & (v[:, 2] > skin_top - 0.25)
         yaw = math.radians(-32)
-        hx, hy = v[sel, 0].mean(), v[sel, 1].mean()
-        xm = hx * math.cos(yaw) - hy * math.sin(yaw)      # head centre after the figure's yaw
-        ym = hx * math.sin(yaw) + hy * math.cos(yaw)
+        zsel = (v[:, 2] > zb) & (v[:, 2] < zt)
+        xr = v[zsel, 0] * math.cos(yaw) - v[zsel, 1] * math.sin(yaw)
+        yr = v[zsel, 0] * math.sin(yaw) + v[zsel, 1] * math.cos(yaw)
+        xm = (np.percentile(xr, 0.5) + np.percentile(xr, 99.5)) / 2
+        ym = yr.mean()
         zc = (zt + zb) / 2
+        span = max(win * 1.08, (np.percentile(xr, 99.5) - np.percentile(xr, 0.5)) * 1.06)
         rig.pose(-32)
         t = math.radians(80.0)
-        rig.camera(80.0, Vector((xm, 0, 0)), (zt - zb) * 1.08, 256, 256)
-        rig.outline(1.3 / (256 / ((zt - zb) * 1.08)))
+        rig.camera(80.0, Vector((xm, 0, 0)), span, 256, 256)
+        rig.outline(1.3 / (256 / span))
         for o in list(bpy.data.objects):
             if o.type == "LIGHT":
                 bpy.data.objects.remove(o)
@@ -702,9 +832,7 @@ def main():
         os.makedirs(os.path.dirname(port_path), exist_ok=True)
         rig.render(port_path)
         ns["HEIGHT"]["D"] = (1.2, 0.80, 1.0)
-        for ob_, nm, rgb in rig.objs:
-            ob_.data.materials.clear()
-            ob_.data.materials.append(ns["shade_material"]("s2_" + nm, "D", rgb, False))
+        rig.materials("D2")
 
     # ---- turntable: 8 headings, miniature view and a low (eye-level) view
     if "turn" in a["only"]:
