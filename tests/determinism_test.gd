@@ -348,11 +348,17 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=end" in OS.get_cmdline_user_args():
+		_check_end()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=engines" in OS.get_cmdline_user_args():
 		_check_engines()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	_check_end()
 	_check_deploy()
 	_check_deploy_unlimited()
 	_check_kills_by()
@@ -591,6 +597,108 @@ func _check_sea() -> void:
 func _fail(msg: String) -> void:
 	printerr("FAIL ", msg)
 	_ok = false
+
+
+## The end of the battle (docs/DESIGN.md "Battle end: End battle /
+## Continue"; "--only=end", also in the full run). test_pike_front (both
+## sides human, scripted): without an input it ends END_AFTER after the
+## decision; ORDER_PURSUE / ORDER_END before the decision change nothing
+## (the same hash on every tick as the plain run); ORDER_PURSUE after it
+## runs the pursuit on past END_AFTER to the hard stop (END_PURSUIT_MAX)
+## or, test_cav_rear, the loser's last unit off the field; ORDER_END ends it on its tick; a side under the
+## AI cannot choose; snapshot / restore carry the pursue flag.
+func _end_run(sc: Dictionary, inputs: Array, limit: int, hashes: PackedInt64Array = PackedInt64Array()) -> BattleSim:
+	var sim := BattleSim.new()
+	sim.setup(sc, 7)
+	var todo := inputs.duplicate()
+	while sim.ended == 0 and sim.tick < limit:
+		var rest: Array = []
+		for inp in todo:
+			# [typ, side, tick] or [typ, side, -k]: k ticks after the decision
+			var at: int = int(inp[2]) if int(inp[2]) >= 0 else (sim.decided_tick - int(inp[2]) if sim.decided_tick >= 0 else 1 << 30)
+			if sim.tick >= at:
+				sim.queue_order({"tick": sim.tick, "type": int(inp[0]), "side": int(inp[1]), "player": 0})
+			else:
+				rest.append(inp)
+		todo = rest
+		sim.step()
+		hashes.append(sim.state_hash())
+	return sim
+
+
+func _check_end() -> void:
+	var sc: Dictionary = Scenarios.make("test_pike_front")
+	var h0 := PackedInt64Array()
+	var base := _end_run(sc, [], 12000, h0)
+	var dec := base.decided_tick
+	if dec < 0 or base.ended == 0 or base.tick - dec != BattleSim.END_AFTER + 1 or base.end_how() != "timeout" or base.pursue != 0:
+		_fail("end: the plain run (decided %d, ended %d at %d, %s)" % [dec, base.ended, base.tick, base.end_how()])
+		return
+	# Before the decision: ignored (bit for bit the plain run).
+	var h1 := PackedInt64Array()
+	var early := _end_run(sc, [[BattleSim.ORDER_PURSUE, 0, 5], [BattleSim.ORDER_END, 1, 10], [BattleSim.ORDER_END, 0, dec - 1]], 12000, h1)
+	if h1 != h0 or early.pursue != 0 or early.tick != base.tick:
+		_fail("end: inputs before the decision changed the battle (%d / %d ticks)" % [h1.size(), h0.size()])
+	else:
+		print("PASS end: no input ends %d ticks after the decision (tick %d, timeout); Continue / End before it change no hash (%d ticks)" % [
+			BattleSim.END_AFTER, dec, h0.size()])
+	# Continue: the pursuit runs on past END_AFTER.
+	var h2 := PackedInt64Array()
+	var pur := _end_run(sc, [[BattleSim.ORDER_PURSUE, 1, -10]], 12000, h2)
+	var how := pur.end_how()
+	var ok_hs := h2.size() > dec + 11 and h2[dec + 9] == h0[dec + 9] and h2[dec + 10] != h0[dec + 10]
+	if pur.pursue != 1 or pur.decided_tick != dec or not ok_hs or not (
+			(how == "hard_stop" and pur.tick - dec == BattleSim.END_PURSUIT_MAX + 1) or (how == "last_unit" and pur.tick - dec > BattleSim.END_AFTER + 1)):
+		_fail("end: Continue (pursue %d, ended at %d, %d after the decision, %s, hash from the input %s)" % [
+			pur.pursue, pur.tick, pur.tick - dec, how, str(ok_hs)])
+	else:
+		print("PASS end: Continue from the losing side at +10 ticks: hashed from its tick, the pursuit runs to %d ticks after the decision (%s; loser's men left %d)" % [
+			pur.tick - dec, how, pur.alive_count(1 - pur.winner)])
+	# The loser's last unit off the field ends a pursuit as before (test_cav_rear).
+	var sc2: Dictionary = Scenarios.make("test_cav_rear")
+	var lu0 := _end_run(sc2, [], 12000)
+	var lu := _end_run(sc2, [[BattleSim.ORDER_PURSUE, 0, -1]], 12000)
+	if lu0.decided_tick < 0 or lu.pursue != 1 or lu.end_how() != "last_unit" or lu.tick != lu0.tick:
+		_fail("end: the last unit with Continue (%s at %d, without %s at %d)" % [lu.end_how(), lu.tick, lu0.end_how(), lu0.tick])
+	else:
+		print("PASS end: with Continue the battle still ends when the loser's last unit leaves the field (tick %d, %d after the decision)" % [
+			lu.tick, lu.tick - lu.decided_tick])
+	# End battle: ended on its tick (also after a Continue).
+	var en := _end_run(sc, [[BattleSim.ORDER_END, 0, -20]], 12000)
+	var en2 := _end_run(sc, [[BattleSim.ORDER_PURSUE, 0, -5], [BattleSim.ORDER_END, 1, -700]], 12000)
+	if en.tick != dec + 21 or en.end_how() != "end" or en2.tick != dec + 701 or en2.end_how() != "end" or en2.pursue != 1:
+		_fail("end: End battle (at %d / %d after the decision, %s / %s)" % [en.tick - dec, en2.tick - dec, en.end_how(), en2.end_how()])
+	else:
+		print("PASS end: End battle ends on its tick (+20: tick %d; after a Continue, +700: tick %d)" % [en.tick, en2.tick])
+	# A side under the battle AI cannot choose.
+	var sc3: Dictionary = sc.duplicate(true)
+	sc3["ai_sides"] = [1]
+	var ai_base := _end_run(sc3, [], 12000)
+	var ai_in := _end_run(sc3, [[BattleSim.ORDER_PURSUE, 1, -3], [BattleSim.ORDER_END, 1, -30]], 12000)
+	if ai_base.decided_tick < 0 or ai_in.tick != ai_base.tick or ai_in.pursue != 0 or ai_in.state_hash() != ai_base.state_hash():
+		_fail("end: the AI side's inputs counted (decided %d, ended %d / %d)" % [ai_base.decided_tick, ai_in.tick, ai_base.tick])
+	else:
+		print("PASS end: Continue / End from a side under the AI ignored (ended at tick %d as without)" % ai_in.tick)
+	# Snapshot / restore carry the pursue flag.
+	var s1 := BattleSim.new()
+	s1.setup(sc, 7)
+	while s1.decided_tick < 0 and s1.tick < 12000:
+		s1.step()
+	s1.queue_order({"tick": s1.tick, "type": BattleSim.ORDER_PURSUE, "side": 0, "player": 0})
+	s1.step()
+	var blob := s1.snapshot()
+	var s2 := BattleSim.new()
+	s2.setup(sc, 7)
+	var rok := s2.restore(blob)
+	var same := rok and s2.pursue == 1 and s2.state_hash() == s1.state_hash()
+	while same and s1.ended == 0 and s1.tick < 12000:
+		s1.step()
+		s2.step()
+		same = s1.state_hash() == s2.state_hash() and s1.ended == s2.ended
+	if not same or s2.ended == 0 or s2.tick - s2.decided_tick <= BattleSim.END_AFTER + 1:
+		_fail("end: snapshot / restore with Continue (restored %s, pursue %d, ended %d at +%d)" % [str(rok), s2.pursue, s2.ended, s2.tick - s2.decided_tick])
+	else:
+		print("PASS end: snapshot / restore carry Continue (both end at +%d ticks, the same hash every tick)" % (s2.tick - s2.decided_tick))
 
 
 ## Every mechanic must actually have happened somewhere in the run.

@@ -114,6 +114,21 @@ const LEAVE_GRACE_SEC := 3.0
 var leave_grace := LEAVE_GRACE_SEC
 var leave_dialog: Control  # the "Leave the battle?" modal (built on first use)
 var _leave_text: Label
+## End of the battle (docs/DESIGN.md "Battle end: End battle / Continue"):
+## with end_choice on (campaign battles), an interactive battle decided for a
+## side (not a draw) asks End battle / Continue in a modal over the field;
+## Continue (sim ORDER_PURSUE) runs the pursuit on, the top-right button
+## becoming "End battle" (sim ORDER_END), until the loser has left the field
+## or the sim's hard stop. Custom battles and the sandbox keep their field
+## result panel (end_choice off).
+var end_choice := false
+var end_dialog: Control  # the End battle / Continue modal (built on first use)
+var _end_title: Label
+var _end_text: Label
+var _end_flow := false   # the choice was offered in this battle
+var _end_sent := 0       # what this player chose: 1 Continue, 2 End battle
+var _pursuit_view := false  # pursuing: the button reads End battle, the banner is small
+var _end_banner := ""    # the decision banner's text (Victory / Defeat)
 ## Live co-op battle (game/net/coop_session.gd, milestone 5), or null: the
 ## session runs the lockstep layer and owns the sim once the battle starts
 ## (before that `sim` is a stand-in built from the same scenario for the
@@ -335,6 +350,7 @@ func _ready() -> void:
 		if str((su[k] as Dictionary).get("label", "")) != "":
 			hud.unit_labels[k] = str(su[k]["label"])  # (reinforcements: their army's name)
 	if campaign_mode:
+		end_choice = true
 		hud.result_menu_button.text = "Back to campaign"
 		# The menu button is a bare 50 px icon; as "Leave" it needs its width
 		# back and an exit icon instead of the menu glyph.
@@ -528,6 +544,10 @@ func _on_orders_toggled(on: bool) -> void:
 
 
 func _on_menu() -> void:
+	if _end_flow and sim.winner >= 0 and sim.ended == 0:
+		_count("end_battle_button")
+		_end_battle()  # (decided, pursuing or still asked: the menu ends the battle)
+		return
 	if campaign_mode and sim.winner < 0:
 		if leave_grace > 0.0:
 			_count("leave_grace")  # (a stray tap while the battle opened)
@@ -602,6 +622,159 @@ func is_decided() -> bool:
 	return sim.winner >= 0
 
 
+# ------------------------------------------------------- end of battle ---
+
+## The choice at the decision: offered with end_choice, to a player who
+## commands (interactive), for a side's win (a draw ends at once).
+func _end_choice_open() -> bool:
+	return end_choice and interactive and not bench_mode and (sim.winner == 0 or sim.winner == 1) and sim.ended == 0
+
+
+## The battle is decided: End battle / Continue in a modal over the field
+## (the dim catches every tap; the pursuit runs on underneath). No answer:
+## the sim ends it after END_AFTER as before.
+func _show_end_dialog(title: String) -> void:
+	_end_flow = true
+	_end_banner = title
+	if end_dialog == null:
+		var dim := ColorRect.new()
+		dim.name = "end_dialog"
+		dim.color = Color(0, 0, 0, 0.45)
+		dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		dim.mouse_filter = Control.MOUSE_FILTER_STOP
+		var cc := CenterContainer.new()
+		cc.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		dim.add_child(cc)
+		var pn := Hud.Kit.panel(Hud.Kit.PANEL_BG, 16.0)
+		cc.add_child(pn)
+		var vb := Hud.Kit.vbox(14)
+		pn.add_child(vb)
+		_end_title = Hud.Kit.label("", 26, Color.WHITE)
+		_end_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		vb.add_child(_end_title)
+		_end_text = Hud.Kit.label("", Hud.Kit.FONT_TITLE, Color.WHITE, true)
+		_end_text.custom_minimum_size = Vector2(minf(340.0, get_viewport_rect().size.x - 64.0), 0)
+		_end_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		vb.add_child(_end_text)
+		var row := Hud.Kit.hbox(12)
+		row.alignment = BoxContainer.ALIGNMENT_CENTER
+		var go := Hud.Kit.icon_button("End battle", "withdraw", func():
+			_count("end_choice_end")
+			_end_battle(), 140)
+		go.name = "end_go"
+		var on := Hud.Kit.button("Continue", func():
+			_count("end_choice_continue")
+			_end_continue(), 140)
+		on.name = "end_continue"
+		row.add_child(go)
+		row.add_child(on)
+		vb.add_child(row)
+		hud.add_child(dim)
+		hud.add_ui_control(dim)
+		end_dialog = dim
+	_end_title.text = title
+	_end_text.text = "The enemy is broken and running." if sim.winner == player_side else "Your army is broken."
+	end_dialog.visible = true
+	_t("end_choice_shown", {"tick": sim.tick, "winner": sim.winner, "my_side": player_side})
+
+
+## The sim input for the end of the battle (ORDER_PURSUE / ORDER_END), for
+## this player's side: through the lockstep layer in co-op.
+func _queue_end_input(typ: int) -> void:
+	if coop != null:
+		if coop.can_issue():
+			coop.issue({"type": typ})
+		return
+	sim.queue_order({"tick": sim.tick, "type": typ, "side": player_side})
+
+
+## Continue: the pursuit runs on (to the loser's last unit on the field or
+## the sim's hard stop); End battle stays on the top-right button.
+func _end_continue() -> void:
+	if end_dialog != null:
+		end_dialog.visible = false
+	if sim.ended != 0 or _end_sent != 0:
+		return
+	_end_sent = 1
+	_queue_end_input(BattleSim.ORDER_PURSUE)
+	_t("end_choice", {"choice": "continue", "tick": sim.tick})
+	_start_pursuit_view()
+
+
+## End battle: the sim ends it on its next step; the view returns as at
+## any end.
+func _end_battle() -> void:
+	if end_dialog != null:
+		end_dialog.visible = false
+	if sim.ended != 0 or _end_sent == 2:
+		return
+	_end_sent = 2
+	_queue_end_input(BattleSim.ORDER_END)
+	_t("end_choice", {"choice": "end", "tick": sim.tick, "pursuing": sim.pursue})
+	if coop == null and paused:
+		_set_paused(false)  # (solo: the end input needs a step)
+
+
+func _start_pursuit_view() -> void:
+	if _pursuit_view:
+		return
+	_pursuit_view = true
+	hud.menu_button.text = "End battle"
+	hud.menu_button.tooltip_text = "End the battle now: back to the campaign"
+	hud.banner.add_theme_font_size_override("font_size", 20)
+	_refresh_pursuit_banner()
+
+
+func _refresh_pursuit_banner() -> void:
+	var left := maxi(sim.decided_tick + BattleSim.END_PURSUIT_MAX - sim.tick, 0) / 10
+	hud.banner.text = "%s: pursuing\n%d:%02d left" % [_end_banner, left / 60, left % 60]
+	hud.banner.visible = true
+
+
+## Every frame while the choice is open or the pursuit runs: another
+## player's Continue (the sim's pursue flag) closes the modal here too.
+func _end_tick() -> void:
+	if sim.ended != 0:
+		if end_dialog != null:
+			end_dialog.visible = false
+		return
+	if sim.pursue != 0 and not _pursuit_view:
+		if end_dialog != null:
+			end_dialog.visible = false
+		_start_pursuit_view()
+		if _end_sent != 1 and coop != null and coop_hud != null:
+			coop_hud.flash("%s continues the pursuit" % _end_other_name(), 3.0)
+	if _pursuit_view:
+		_refresh_pursuit_banner()
+
+
+## Another player of this battle (live co-op), for the pursuit flash.
+func _end_other_name() -> String:
+	if coop != null and coop.ls != null:
+		for p in coop.ls.active_players():
+			if p != coop.me:
+				return coop.player_name(p)
+	return "An ally"
+
+
+## The battle ended after the choice was offered: the banner back at full
+## size, telemetry of how it ended, and back to the campaign.
+func _end_finished() -> void:
+	if end_dialog != null:
+		end_dialog.visible = false
+	var how: String = sim.end_how()
+	_count("end_pursuit_ended_" + how)
+	_t("end_pursuit_ended", {"how": how, "pursue": sim.pursue, "tick": sim.tick,
+		"secs": maxi(sim.tick - sim.decided_tick, 0) / 10, "mine": _end_sent})
+	hud.banner.remove_theme_font_size_override("font_size")
+	hud.banner.add_theme_font_size_override("font_size", 32)
+	hud.banner.text = _end_banner
+	hud.banner.visible = true
+	if campaign_mode:
+		_exit_timer = 0.3 if _end_sent == 2 else END_BANNER_SEC
+
+
 ## Frame both armies in the part of the screen the HUD leaves clear (below
 ## the top buttons, above the group bar and unit cards).
 func _fit_camera() -> void:
@@ -641,9 +814,13 @@ func _process(delta: float) -> void:
 			_undo_refresh_button()
 	if leave_dialog != null and leave_dialog.visible and sim.winner >= 0:
 		leave_dialog.visible = false  # (decided meanwhile: the result shows)
+	if _end_flow and not _result_shown:
+		_end_tick()
 	if coop != null:
 		_coop_step(delta)
-	elif not paused and not _bench_done:
+	elif not paused and not _bench_done and not (campaign_mode and sim.ended != 0):
+		# (A campaign battle stops at its end: the result returned is the
+		# state at `ended`.)
 		_acc += delta * speed_q / 4.0
 		var steps := 0
 		while _acc >= TICK_SEC and steps < MAX_TICKS_PER_FRAME and not _bench_done:
@@ -758,6 +935,8 @@ func _after_tick(ms: float) -> void:
 			AudioFx.play("horn_victory" if sim.winner == player_side else ("horn_start" if sim.winner >= 2 else "horn_defeat"), 0.9, 0.0, "horn")
 		var secs: int = maxi(sim.decided_tick, 0) / 10
 		hud.banner.visible = false
+		if _end_flow:
+			_end_finished()
 		if not campaign_mode:
 			hud.show_result(sim.result(), "%s   (decided after %d:%02d)" % [hud.banner.text, secs / 60, secs % 60], player_side)
 		_t("battle_result", {"scenario": scenario_id, "tick": sim.tick, "result": sim.result()})
@@ -809,7 +988,9 @@ func _show_result() -> void:
 		text = "Defeat" if interactive else "Red wins"
 	hud.banner.text = text
 	hud.banner.visible = true
-	if campaign_mode and not bench_mode:
+	if _end_choice_open():
+		_show_end_dialog(text)  # End battle / Continue; back to the campaign at the end
+	elif campaign_mode and not bench_mode:
 		_exit_timer = END_BANNER_SEC  # no field result panel: the campaign shows it
 
 

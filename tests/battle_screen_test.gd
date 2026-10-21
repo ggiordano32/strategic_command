@@ -16,6 +16,11 @@ extends SceneTree
 ## terrain preview instead of the city, no equipment line, the cards; the
 ## defenders bring 26 units and more (their support), so the card lists
 ## those past the 24 field slots as "Arriving: n units" (reinforcements).
+## The end of a campaign battle: at the decision the End battle / Continue
+## modal (no return timer); Continue keeps the timer off, relabels the
+## top-right button "End battle" and the pursuit runs past the old 60 s
+## end; that button ends it and the screen returns; End battle in the modal
+## ends it on the next tick and returns.
 
 const CampaignScreen := preload("res://game/campaign/campaign_screen.gd")
 const BattleScreen := preload("res://game/campaign/battle_screen.gd")
@@ -27,6 +32,8 @@ const CChars := preload("res://campaign/cchars.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const CityPreview := preload("res://game/campaign/city_preview.gd")
+const Battle := preload("res://game/battle.gd")
+const BattleSim := preload("res://sim/battle_sim.gd")
 
 var cs: CampaignScreen
 var rome := CData.faction_index("rome")
@@ -340,9 +347,105 @@ func _process(_d: float) -> bool:
 							on2 += 1
 				_check(on2 >= 2 and arr.begins_with("Arriving: %d units" % on2) and _label(scr, "arriving_0") == "",
 					"the defenders' reinforcements line: " + arr)
+			_end_open()
+			_wait = 5
+		13:
+			_end_decide()
+			if _eb != null and _eb.end_dialog != null:
+				var cont: Button = _eb.end_dialog.find_child("end_continue", true, false)
+				if cont != null:
+					cont.pressed.emit()
+			_wait = 3
+		14:
+			_end_pursue()
+			_wait = 3
+		15:
+			if _eb != null and not _eb_exit and _frame < 40000:
+				_step -= 1  # (the end banner's short wait, then back)
+				return false
+			_check(_eb_exit, "after End battle the battle returns to the campaign")
+			_end_close()
+			_end_open()
+			_wait = 5
+		16:
+			_end_decide()
+			if _eb != null and _eb.end_dialog != null:
+				var go: Button = _eb.end_dialog.find_child("end_go", true, false)
+				if go != null:
+					go.pressed.emit()
+			if _eb != null:
+				_eb._do_tick()
+				_check(_eb.sim.ended != 0 and _eb.sim.pursue == 0 and _eb.sim.end_how() == "end" and not _eb.end_dialog.visible,
+					"End battle in the modal ends the battle on the next tick")
+			_wait = 3
+		17:
+			if _eb != null and not _eb_exit and _frame < 40000:
+				_step -= 1
+				return false
+			_check(_eb_exit, "and returns to the campaign")
+			_end_close()
 			print("RESULT: ", "PASS" if _ok else "FAIL")
 			quit(0 if _ok else 1)
 	return false
+
+
+# End of a campaign battle (docs/DESIGN.md "Battle end: End battle /
+# Continue"): a battle screen in campaign mode on test_pike_front (both
+# sides human; the player side 0), stepped by hand to the decision.
+var _eb = null
+var _eb_exit := false
+
+
+func _end_open() -> void:
+	_eb = Battle.new()
+	_eb.scenario_id = "test_pike_front"
+	_eb.seed_value = 7
+	_eb.campaign_mode = true
+	_eb_exit = false
+	_eb.exit_requested.connect(func(): _eb_exit = true)
+	root.add_child(_eb)
+
+
+func _end_close() -> void:
+	if _eb != null:
+		_eb.queue_free()
+		_eb = null
+
+
+func _end_decide() -> void:
+	if _eb == null:
+		_check(false, "the end-of-battle screen opened")
+		return
+	var k := 0
+	while _eb.sim.winner < 0 and k < 3000:
+		_eb._do_tick()
+		k += 1
+	var dlg: Control = _eb.end_dialog
+	_check(_eb.sim.winner == 0 and _eb.sim.ended == 0 and dlg != null and dlg.visible and _eb._exit_timer <= 0.0
+		and dlg.find_child("end_go", true, false) != null and dlg.find_child("end_continue", true, false) != null,
+		"at the decision a campaign battle asks End battle / Continue (tick %d), no return timer" % _eb.sim.tick)
+	if dlg != null:
+		var txt := ""
+		for l in dlg.find_children("*", "Label", true, false):
+			txt += (l as Label).text + " "
+		_check(txt.contains("Victory") and txt.contains("The enemy is broken and running."), "the modal says: " + txt.strip_edges())
+
+
+func _end_pursue() -> void:
+	if _eb == null:
+		return
+	_check(not _eb.end_dialog.visible and _eb._exit_timer <= 0.0 and _eb.hud.menu_button.text == "End battle"
+		and _eb.hud.banner.text.begins_with("Victory: pursuing"),
+		"Continue closes the modal, keeps the return timer off, the button reads End battle, the banner: " + _eb.hud.banner.text.replace("\n", " / "))
+	var dec: int = _eb.sim.decided_tick
+	while _eb.sim.ended == 0 and _eb.sim.tick < dec + BattleSim.END_AFTER + 100:
+		_eb._do_tick()
+	_check(_eb.sim.pursue == 1 and _eb.sim.ended == 0 and _eb._exit_timer <= 0.0,
+		"the pursuit runs on past the old 60 s end (tick %d, decided %d)" % [_eb.sim.tick, dec])
+	_eb.hud.menu_pressed.emit()
+	_eb._do_tick()
+	_check(_eb.sim.ended != 0 and _eb.sim.end_how() == "end" and _eb._exit_timer > 0.0,
+		"End battle on the top-right button ends it (%s), the return timer set" % _eb.sim.end_how())
 
 
 ## Format 5: an Epirote army marching into Samnium runs into Rome's army

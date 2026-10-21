@@ -56,6 +56,11 @@ extends RefCounted
 ## (sim.dep_need) is kept here: the players taking part (set at the start,
 ## a dropped player's bit cleared, an admitted player's set), so the battle
 ## never waits for someone who has gone.
+##
+## End of the battle (after the decision): "pursue" (Continue) and "end"
+## (End battle) are the sim's ORDER_PURSUE / ORDER_END with the issuer's
+## side; one from any player taking part is enough (the sim's pursue flag
+## and `ended` are hashed).
 
 const BattleSim := preload("res://sim/battle_sim.gd")
 const SeaSim := preload("res://sim/sea_sim.gd")
@@ -492,6 +497,11 @@ func _apply(o: Dictionary) -> void:
 			if typ == BattleSim.ORDER_READY:
 				# Deployment: this player is ready (applied by the sim's next step).
 				sim.queue_order({"tick": sim.tick, "type": BattleSim.ORDER_READY, "who": p, "player": p,
+					"seq": int(o["n"]) * 64 + int(o["i"])})
+			elif typ == BattleSim.ORDER_PURSUE or typ == BattleSim.ORDER_END:
+				# The end of the battle (after the decision): Continue / End
+				# battle for the issuer's side; one from any player is enough.
+				sim.queue_order({"tick": sim.tick, "type": typ, "side": side_of(p), "player": p,
 					"seq": int(o["n"]) * 64 + int(o["i"])})
 			elif typ == BattleSim.ORDER_WORKS:
 				# Deployment: field works of the issuer's own side.

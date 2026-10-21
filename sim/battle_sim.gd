@@ -82,7 +82,9 @@ const ORDER_ATTEMPT := 22       # unit (an assassin), target (an enemy character
 const ORDER_PARLEY := 23        # unit (a diplomat), target (a routing or wavering enemy unit): ask it to surrender
 const ORDER_STANCE := 24        # unit, stance (STANCE_LINE / STANCE_COVER / STANCE_HOLD)
 const ORDER_OCCUPY := 25        # unit, building (a West town's house, tavern, store...: its men go in to the windows, the roof and the door)
-const ORDER_LAST := 25
+const ORDER_PURSUE := 26        # side (a human side, after the decision: the pursuit runs on to END_PURSUIT_MAX)
+const ORDER_END := 27           # side (a human side, after the decision: the battle ends at once)
+const ORDER_LAST := 27
 
 # Battle phase (scenario "deploy_time" > 0 starts in PHASE_DEPLOY, see the
 # "deployment phase" section at the end of this file).
@@ -686,6 +688,12 @@ const REINF_TIME := 1200          # 120 s
 const REINF_SLOW := 100           # 10 s
 const REINF_FIELD_MAX := 30
 const END_AFTER := 600            # pursuit continues 60 s after the decision
+## End of battle (docs/DESIGN.md "Battle end: End battle / Continue"): after
+## the decision a human side may choose Continue (ORDER_PURSUE: the pursuit
+## runs on until the loser has no unit on the field or END_PURSUIT_MAX after
+## the decision) or End battle (ORDER_END: `ended` at once). No choice: as
+## before, END_AFTER.
+const END_PURSUIT_MAX := 3000     # 5 min: the pursuit's hard stop
 
 # Removal reasons.
 const GONE_KILLED := 0
@@ -757,6 +765,7 @@ var ai_style: PackedInt32Array = PackedInt32Array([1, 1])
 var winner: int = -1  # -1 undecided, else winning side (2 = draw)
 var decided_tick: int = -1
 var ended: int = 0    # 1 once the result is final (pursuit over)
+var pursue: int = 0   # 1 once a human side chose Continue after the decision (hashed when set)
 
 # Soldiers (struct of arrays).
 var n: int = 0
@@ -1798,6 +1807,7 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	winner = -1
 	decided_tick = -1
 	ended = 0
+	pursue = 0
 	pending_orders = []
 	_order_seq = 0
 	field_w = int(scenario["width_m"]) * M
@@ -6778,6 +6788,16 @@ func _apply_orders(max_player: int = 1 << 30) -> void:
 		if int(o["type"]) == ORDER_PLACE:
 			_placing.append(int(o.get("unit", -1)))
 	for o in due:
+		if int(o["type"]) == ORDER_PURSUE or int(o["type"]) == ORDER_END:
+			# (The end of the battle: a human side's choice once it is decided,
+			# not a draw; before the decision it does nothing.)
+			var es := int(o.get("side", -1))
+			if (es == 0 or es == 1) and ai_sides[es] == 0 and (winner == 0 or winner == 1) and ended == 0:
+				if int(o["type"]) == ORDER_PURSUE:
+					pursue = 1
+				else:
+					ended = 1
+			continue
 		if int(o["type"]) == ORDER_READY:
 			if phase == PHASE_DEPLOY:
 				dep_ready |= 1 << clampi(int(o.get("who", 0)), 0, 30)
@@ -6904,7 +6924,8 @@ static func order_fields(sim, u: int) -> Dictionary:
 static func order_units(sim, o: Dictionary) -> Array[int]:
 	var out: Array[int] = []
 	if int(o["type"]) == ORDER_GATE or int(o["type"]) == ORDER_KILL or int(o["type"]) == ORDER_RELEASE \
-			or int(o["type"]) == ORDER_WORKS or (int(o["type"]) >= ORDER_SABOTAGE and int(o["type"]) <= ORDER_PARLEY):
+			or int(o["type"]) == ORDER_WORKS or (int(o["type"]) >= ORDER_SABOTAGE and int(o["type"]) <= ORDER_PARLEY) \
+			or int(o["type"]) == ORDER_PURSUE or int(o["type"]) == ORDER_END:
 		return out  # not a unit order (applied by the sim to the gate; the drivers of an amok beast; a pack)
 	if int(o["type"]) == ORDER_WITHDRAW_ALL:
 		var side := int(o.get("side", -1))
@@ -14794,12 +14815,7 @@ func _ch_near(u: int, k: int) -> bool:
 func _check_winner() -> void:
 	if winner >= 0:
 		if ended == 0:
-			var loser_on := 0
-			for u in n_units:
-				if winner < 2 and u_side[u] != winner and u_state[u] < U_DESTROYED and t_fixed[u_type[u]] == 0 \
-						and u_hand[u] < 0 and u_char[u] == 0:
-					loser_on += 1
-			if winner == 2 or loser_on == 0 or tick - decided_tick >= END_AFTER:
+			if winner == 2 or loser_on_field() == 0 or tick - decided_tick >= (END_PURSUIT_MAX if pursue != 0 else END_AFTER):
 				ended = 1
 		return
 	# A side still fights while it has a ready unit that is not withdrawing
@@ -14826,6 +14842,48 @@ func _check_winner() -> void:
 
 
 # ---------------------------------------------------------------- query ---
+
+## Units of the decided battle's loser still on the field (not destroyed;
+## fixed pieces, packs and characters left out); 0 for a draw.
+func loser_on_field() -> int:
+	var c := 0
+	for u in n_units:
+		if winner < 2 and u_side[u] != winner and u_state[u] < U_DESTROYED and t_fixed[u_type[u]] == 0 \
+				and u_hand[u] < 0 and u_char[u] == 0:
+			c += 1
+	return c
+
+
+## How an ended battle ended (for the view's telemetry): "draw", "last_unit"
+## (the loser has no unit left on the field), "hard_stop" (the pursuit's
+## END_PURSUIT_MAX), "timeout" (END_AFTER without a choice), else "end" (a
+## side's End battle).
+func end_how() -> String:
+	if winner == 2:
+		return "draw"
+	if loser_on_field() == 0:
+		return "last_unit"
+	if pursue != 0 and tick - decided_tick >= END_PURSUIT_MAX:
+		return "hard_stop"
+	if pursue == 0 and tick - decided_tick >= END_AFTER:
+		return "timeout"
+	return "end"
+
+
+## Seconds of pursuit left under the hard stop (0 when not pursuing).
+func pursuit_secs_left() -> int:
+	if pursue == 0 or decided_tick < 0 or ended != 0:
+		return 0
+	return maxi(decided_tick + END_PURSUIT_MAX - tick, 0) / 10
+
+
+static func make_pursue_order(p_tick: int, side: int) -> Dictionary:
+	return {"tick": p_tick, "type": ORDER_PURSUE, "side": side}
+
+
+static func make_end_order(p_tick: int, side: int) -> Dictionary:
+	return {"tick": p_tick, "type": ORDER_END, "side": side}
+
 
 func alive_count(side: int = -1) -> int:
 	var c := 0
@@ -16697,6 +16755,9 @@ func state_hash() -> int:
 		for arr in _occ_arrays():
 			ctx.update((arr as PackedInt32Array).to_byte_array())
 		ctx.update(ob_u.to_byte_array())
+	if pursue != 0:
+		# Continue chosen after the decision (a battle without it hashes as before).
+		ctx.update(PackedInt64Array([pursue]).to_byte_array())
 	var digest := ctx.finish()
 	return digest.decode_u32(0)
 

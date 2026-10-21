@@ -86,6 +86,14 @@ extends SceneTree
 ##    REINF_TIME rule; the peers order the arrivals they command; a third
 ##    peer joins by snapshot after the first arrival. Every frame equal; the
 ##    arrivals the same on all three.
+## 16. The end of the battle (docs/DESIGN.md "Battle end: End battle /
+##    Continue"; "--only=end"): test_pike_front head to head (player 0
+##    side 0, player 1 side 1). Run 1: B (the losing side) sends Continue
+##    before the decision (ignored) and after it; a third peer joins by
+##    snapshot during the pursuit; A sends End battle 70 s after the
+##    decision. Every frame equal on all three, the pursue flag set on all,
+##    the battle past END_AFTER and ended on the same tick everywhere by the
+##    End. Run 2: A's End alone ends it at once on both.
 ## Exits 0 on success.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -143,6 +151,11 @@ func _init() -> void:
 		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 		quit(0 if _ok else 1)
 		return
+	if OS.get_cmdline_user_args().has("--only=end"):
+		_test_lockstep_end()
+		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
+		quit(0 if _ok else 1)
+		return
 	if OS.get_cmdline_user_args().has("--only=occupy"):
 		_test_lockstep_occupy()
 		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
@@ -164,6 +177,7 @@ func _init() -> void:
 	_test_lockstep_occupy()
 	_test_lockstep_chars()
 	_test_lockstep_reinf()
+	_test_lockstep_end()
 	_test_easy_snapshots()
 	_test_lockstep_easy()
 	_test_skilled_snapshots()
@@ -2493,6 +2507,88 @@ func _test_lockstep_reinf() -> void:
 	else:
 		print("PASS reinf lockstep: %d frames A/B and %d A/C equal (C joined at frame %d, after the first arrival); arrivals (unit@tick) %s on both, %d by the REINF_TIME rule; side 0's arrivals ordered by their players %d of 2; sim tick %d" % [
 			n_ab, n_ac, c_join, " ".join(arr_a), sa.stat_arr_late, ordered, sa.tick])
+
+
+# ------------------------------------------------------ end of battle ---
+
+func _test_lockstep_end() -> void:
+	for run in 2:
+		var scen: Dictionary = Scenarios.make("test_pike_front")
+		var home := [0, 1]
+		var relay := Relay.new()
+		var a := _new_peer(scen, home, 0, "A", [0, 1])
+		var b := _new_peer(scen, home, 1, "B", [0, 1])
+		a.latency = 1
+		b.latency = 3
+		b.d = 4
+		var peers: Array[Peer] = [a, b]
+		var c: Peer = null
+		var c_join := -1
+		var now := 0
+		var early_sent := false
+		var pur_sent := false
+		var end_sent := false
+		var pur_seen := -1
+		while now < 20000 and not (a.ls.sim.ended != 0 and b.ls.sim.ended != 0 and (c == null or c.ls.sim.ended != 0)):
+			now += 1
+			for p in peers:
+				var sim = p.ls.sim
+				if run == 0 and p.me == 1 and not early_sent and sim.tick > 5:
+					p.issue({"type": BattleSim.ORDER_PURSUE})  # (before the decision: nothing)
+					early_sent = true
+				if run == 0 and p.me == 1 and not pur_sent and sim.winner >= 0:
+					p.issue({"type": BattleSim.ORDER_PURSUE})
+					pur_sent = true
+				if p.me == 0 and not end_sent and sim.winner >= 0 and sim.tick - sim.decided_tick >= (700 if run == 0 else 30):
+					p.issue({"type": BattleSim.ORDER_END})
+					end_sent = true
+				p.flush(relay, now)
+				p.deliver(relay, now)
+				p.run(p.rng.randi() % 3, true)
+			if pur_seen < 0 and a.ls.sim.pursue != 0:
+				pur_seen = a.ls.sim.tick
+			if c != null:
+				c.flush(relay, now)
+				c.deliver(relay, now)
+				c.run(4, true)
+			elif run == 0 and pur_seen >= 0 and a.ls.sim.tick > pur_seen + 50:
+				c_join = now
+				c = _new_peer(scen, home, 1, "C", [0, 1])
+				c.latency = 2
+				if not c.ls.restore(a.ls.snapshot()):
+					_fail("end lockstep: C could not restore A's snapshot")
+					return
+				c.hashes[c.ls.frame] = c.ls.state_hash()
+				c.cursor = 0
+				while c.cursor < relay.items.size() and int(relay.items[c.cursor]["s"]) <= c.ls.last_s:
+					c.cursor += 1
+				c.sent_k = 1 << 30
+		# Let everyone reach the same frame.
+		for k in 200:
+			now += 1
+			for p in peers:
+				p.flush(relay, now)
+				p.deliver(relay, now)
+				p.run(4, true)
+		var n_ab := _compare(a, b, 0, "end A/B")
+		var n_ac := _compare(a, c, c_join, "end A/C") if c != null else 0
+		var sa = a.ls.sim
+		var sb = b.ls.sim
+		var dec: int = sa.decided_tick
+		var ok: bool = n_ab > 500 and sa.ended != 0 and sb.ended != 0 and sa.pursue == sb.pursue and dec == sb.decided_tick \
+				and sa.end_how() == "end"
+		if run == 0:
+			ok = ok and sa.pursue == 1 and pur_seen > dec and n_ac > 100 and c.ls.sim.ended != 0 and c.ls.sim.pursue == 1
+		else:
+			ok = ok and sa.pursue == 0
+		if not ok:
+			_fail("end lockstep run %d: A/B %d, A/C %d frames; decided %d / %d, pursue %d / %d (seen %d), ended %d / %d, %s" % [
+				run, n_ab, n_ac, dec, sb.decided_tick, sa.pursue, sb.pursue, pur_seen, sa.ended, sb.ended, sa.end_how()])
+		elif run == 0:
+			print("PASS end lockstep: B's Continue before the decision ignored, after it the pursue flag on all three (tick %d, decided %d); C joined by snapshot during the pursuit; A's End battle ended it on every peer (%s); %d frames A/B and %d A/C equal" % [
+				pur_seen, dec, sa.end_how(), n_ab, n_ac])
+		else:
+			print("PASS end lockstep: A's End battle 3 s after the decision ended it on both (pursue 0); %d frames A/B equal" % n_ab)
 
 
 # ------------------------------------------- fighting from buildings (2c) ---

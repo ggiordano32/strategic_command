@@ -5148,9 +5148,37 @@ selecting or ordering anything.
   on each undo); Ctrl+Z works while the stack holds anything, paused too.
   Deployment placements, gates, field works and Drop are not undoable. Flash
   "Order undone". Telemetry `undo`, `undo_button`, `undo_shown`.
-- Campaign battles have no field result panel: a 1.5 s Victory / Defeat / Draw
-  banner (tap to skip), then back to the campaign's own result screen. Custom
-  battles and the sandbox keep the panel.
+- Campaign battles have no field result panel; they end with a choice
+  (owner 2026-10-20, Rome 2's end of battle). **Battle end: End battle /
+  Continue.** When a side is decided (the other has no ready unit; not a
+  draw), an interactive campaign battle shows a modal over the field: the
+  banner's title (Victory / Defeat), one line ("The enemy is broken and
+  running." / "Your army is broken."), [End battle] [Continue]. End battle
+  queues the sim input `ORDER_END` for the player's side: `ended` on its
+  tick. Continue queues `ORDER_PURSUE`: the sim's `pursue` flag (hashed once
+  set, in snapshots) moves the end from `END_AFTER` (60 s after the decision)
+  to the loser's last unit off the field or the hard stop `END_PURSUIT_MAX`
+  (3000 ticks, 5 min); the modal closes, the top-right button reads "End
+  battle" (no Stay / Leave modal after the decision) and queues `ORDER_END`,
+  and the banner shows small at the top ("Victory: pursuing", the time left
+  under the hard stop). No answer: the sim ends it after 60 s as before. Both
+  inputs count only from a human side (not one under the battle AI) and only
+  after the decision (before it Leave / withdraw covers leaving); one from
+  any side is enough (co-op: one Continue closes the modal on every peer,
+  with the flash "<name> continues the pursuit"; one End ends it for all).
+  At `ended` a campaign battle stops stepping (the result handed to the
+  campaign is the state at `ended`) and returns after the 1.5 s Victory /
+  Defeat banner (0.3 s after this player's own End; tap to skip). A draw
+  (both gone or the time limit) and a non-interactive campaign battle end
+  as before: the banner, then back. No input = the old end, so no
+  determinism golden moved. The modal is one flag (`end_choice` in
+  `game/battle.gd`, on for campaign battles); custom battles and the sandbox
+  keep the field result panel and the 60 s end (in a head-to-head custom
+  battle the loser's End would cut the winner's pursuit short). Telemetry:
+  counters `end_choice_end`, `end_choice_continue`, `end_battle_button`,
+  `end_pursuit_ended_<how>` (`end`, `last_unit`, `hard_stop`, `timeout`)
+  and events `end_choice_shown`, `end_choice`, `end_pursuit_ended`.
+  Sea battles are untouched.
 - Keys: Space / P pause, + / - speed, 1-4 and Ctrl+A group selects, R run,
   H halt, F fire, K skirmish, Shift+D deploy, Y refill, O orders overlay,
   W A S D / arrows pan, Page Up / Down zoom, B book, F3 readout, F11 fullscreen.
