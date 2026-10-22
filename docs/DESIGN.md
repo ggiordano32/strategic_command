@@ -5136,11 +5136,12 @@ selecting or ordering anything.
   field; touch unchanged): a real left click is an emulated touch with
   `device == DEVICE_ID_EMULATION` (`_press_mouse`). Left click only selects
   (`_left_click`): our or another faction's army / fleet (viewing, never an
-  attack), a settlement or region; our other army with ours selected still
-  merges and our other fleet with ours selected still joins; empty map (sea,
+  attack), a settlement or region; a left click on our other
+  army / fleet selects it, never merges or joins; empty map (sea,
   nothing pickable) deselects and never orders; Shift keeps the selection.
   Right click without a drag is the order (`_right_order`): exactly the tap
-  for that target (march / attack / siege / join / board; sail / land /
+  for that target (march / attack / siege / merge or join our other army or
+  fleet / board; sail / land /
   attack / join; the same spot again cancels), only with an army or fleet of
   ours selected, else nothing. A right drag past 14 px pans, middle drag
   pans, wheel zooms. Esc deselects (`deselect_all`). The hint line says

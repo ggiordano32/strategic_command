@@ -1793,6 +1793,13 @@ func _jm_run() -> void:
 	await process_frame
 	await process_frame
 	_check(cs.sel_fleet == 900, "mouse: a left click on our fleet selects it")
+	_jm_click(pos[901])
+	await process_frame
+	await process_frame
+	_check(cs.sel_fleet == 901 and _jm_fmoves().is_empty() and cs.orders.is_empty(), "mouse: a left click on our other fleet selects it, plans nothing (no join)")
+	cs.select_fleet(900)
+	await process_frame
+	pos = cs.overlay.fleet_positions()
 	if pos.has(905):
 		_jm_click(pos[905])
 		await process_frame
@@ -1826,6 +1833,27 @@ func _jm_run() -> void:
 	await process_frame
 	mv = _jm_fmoves()
 	_check(mv.size() == 1 and int(mv[0].get("tgt", -1)) == 902, "mouse: a right click on our other fleet plans the join")
+	cs.select_fleet(900)
+	cs.orders = []
+	cs._replan()
+	_j_view(7)
+	cs._refresh_map()
+	await process_frame
+	await process_frame
+	pos = cs.overlay.fleet_positions()
+	_jm_rclick(pos[901])
+	await process_frame
+	await process_frame
+	var fm := false
+	for q in cs.orders:
+		if str(q["t"]) == "fmerge":
+			fm = true
+	_check(fm and cs.sel_fleet == 901, "mouse: a right click on the fleet beside ours joins it (fmerge)")
+	cs.undo()
+	await process_frame
+	await process_frame
+	cs.select_fleet(901)
+	await process_frame
 	# Esc deselects.
 	var k := InputEventKey.new()
 	k.keycode = KEY_ESCAPE

@@ -1860,9 +1860,9 @@ func _update_hint() -> void:
 	elif not replay.is_empty():
 		hint.text = "Replaying the turn: tap to skip."
 	elif sel_fleet >= 0 and _g() and last_mouse:
-		hint.text = "Right-click the sea to sail there (shaded: this turn; the wind blows from the east, so westward is fast), a coast to land the troops aboard, an enemy fleet to attack it, your own fleet to join it. Left-click empty sea to deselect."
+		hint.text = "Right-click the sea to sail there (shaded: this turn; the wind blows from the east, so westward is fast), a coast to land the troops aboard, an enemy fleet to attack it, your own fleet to join it (a left click only selects). Left-click empty sea to deselect."
 	elif sel_army >= 0 and _g() and last_mouse:
-		hint.text = "Right-click a spot inside the shaded area to march there this turn, further on for later turns; right-click an enemy army to attack it, a city to besiege it. Same spot again: cancel. Left-click empty ground to deselect."
+		hint.text = "Right-click a spot inside the shaded area to march there this turn, further on for later turns; right-click an enemy army to attack it, a city to besiege it, your other army to merge. Same spot again: cancel. Left-click empty ground to deselect."
 	elif _g() and last_mouse:
 		hint.text = "Left-click an army to move it or recruit into it (at a city), a city for buildings or a new army. Right-click orders, a right drag pans."
 	elif sel_fleet >= 0 and _g():
@@ -3461,8 +3461,8 @@ func _tap_fleets(p: Vector2) -> bool:
 
 
 ## Real mouse, left click on the overworld (Total War): it only selects. One of our armies / fleets, a city or a
-## region selects it (another faction's army or fleet for viewing: the card, never an attack); our other army with ours
-## selected still merges and our other fleet with ours selected still joins (the second-tap flow); empty map
+## region selects it (another faction's army or fleet for viewing: the card, never an attack); with ours
+## selected, a left click on our other army / fleet SELECTS it (merge and join are the right click's); empty map
 ## (sea, nothing pickable) deselects, and never orders. Shift keeps the selection. Orders are the right button's.
 func _left_click(p: Vector2) -> void:
 	if f < 0:
@@ -3474,20 +3474,14 @@ func _left_click(p: Vector2) -> void:
 		var sf := CFleet.fleet(ps, sel_fleet) if sel_fleet >= 0 else {}
 		if fid == sel_fleet:
 			close_side()
-		elif not sf.is_empty() and int(sf["f"]) == f and int(fl["f"]) == f and not fl.has("flota"):
-			join_fleet(sel_fleet, fid)
 		else:
 			select_fleet(fid)
 			_t("campaign_input", {"what": "select_fleet"})
 		return
 	var id := overlay.army_at(p)
 	if id >= 0:
-		var sa := CState.army(ps, sel_army) if sel_army >= 0 else {}
-		var mine_sel := not sa.is_empty() and int(sa["f"]) == f and int(sa["busy"]) == 0
 		if id == sel_army:
 			close_side()
-		elif mine_sel and int(CState.army(ps, id)["f"]) == f:
-			_merge_tap_at(id)
 		else:
 			select_army(id)
 			_t("campaign_input", {"what": "select_army"})
