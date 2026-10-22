@@ -36,6 +36,7 @@ signal withdraw_all_pressed
 signal group_pressed(kind: String)
 signal add_toggled(on: bool)
 signal orders_toggled(on: bool)
+signal paths_toggled(on: bool)
 signal book_pressed
 signal card_long_pressed(unit: int)
 signal deselect_pressed
@@ -93,6 +94,7 @@ var _note_left := 0.0
 var _arr_seen := 0
 var pause_button: Button
 var orders_button: Button
+var paths_button: Button      # town maps: the Paths overlay (impassable ground hatched)
 var speed_button: Button
 ## Speed popover under the speed button: value label, slider (quarter
 ## steps), tick labels.
@@ -249,6 +251,13 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	orders_button.toggled.connect(func(on: bool):
 		set_orders_text(on)
 		orders_toggled.emit(on))
+	paths_button = _button("Paths", Vector2(66, BTN_H))
+	paths_button.name = "paths"
+	paths_button.toggle_mode = true
+	BTheme.plate(paths_button, true)
+	Kit.tip(paths_button, "Paths", "Hatch what men cannot walk on (houses, walls, rocks) when a unit is selected or a route is drawn; streets and alleys stay clear.")
+	paths_button.toggled.connect(func(on: bool): paths_toggled.emit(on))
+	paths_button.visible = false   # (shown on town maps)
 	pause_button = _button("Pause", Vector2(74, BTN_H))
 	pause_button.pressed.connect(func(): pause_pressed.emit())
 	speed_button = _button("1x", Vector2(50, BTN_H))
@@ -268,7 +277,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	controls_button = _button("Keys", Vector2(54, BTN_H), "key")
 	Kit.tip(controls_button, "Controls", "Every touch, mouse and key input (F1).")
 	controls_button.pressed.connect(func(): controls_pressed.emit())
-	for b in [withdraw_all_button, book_button, controls_button, orders_button, pause_button, speed_button, menu]:
+	for b in [withdraw_all_button, book_button, controls_button, orders_button, paths_button, pause_button, speed_button, menu]:
 		top.add_child(b)
 	_top = top
 	_ui_controls.append(top)
@@ -390,7 +399,9 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	bounds_button.visible = false
 	occupy_button = _button("Occupy", Vector2(0, BTN_H), "inside")
 	occupy_button.name = "occupy"
-	Kit.tip(occupy_button, "Occupy", "Hold the nearest house, tavern or store: men at the windows and roof shoot, two hold the door (I). Leave goes out by the door.")
+	occupy_button.toggle_mode = true
+	BTheme.plate(occupy_button, true)
+	Kit.tip(occupy_button, "Occupy", "Lights the buildings these men can hold: point at one to see what its windows and roof cover, then click it (tap twice on a touch screen) to send them in (I). Leave goes out by the door.")
 	occupy_button.pressed.connect(func(): occupy_pressed.emit())
 	occupy_button.visible = false
 	deploy_button = _button("Deploy: on", Vector2(0, BTN_H), "deploy")

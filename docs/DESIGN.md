@@ -3011,8 +3011,10 @@ walls' heights in `_land_heights`, `CLR_MARGIN_W`), `sim/scenarios.gd`
   pale blue under terracotta; culture slots 6 and 7, unused before); the
   fort as curtain pieces and four bastions round a keep; the jetties as
   pier pieces. Shadows come from `battlekit_shadow.gd` as for every kit
-  piece. Streets are sandy earth with the plaza paved
-  (`city_streets.gd`), the town's ground trodden only within about 8 m of
+  piece. Streets are pale packed earth with a darker rim, the alleys
+  between houses a warmer darker earth, the plaza paved, clipped to the
+  sim's open cells with a dark footing under every house (2026-10-22,
+  "Reading a town battle" under Controls additions; `city_streets.gd`), the town's ground trodden only within about 8 m of
   houses and roads (`terrain_layer.gd` `_west_built`, view only; the sim's
   V_URBAN covers the whole band), palms on any West map.
 - **Not built (open).** (The fort's inside, its garrison and guns and units
@@ -3452,8 +3454,11 @@ parade), `game/hud.gd` / `game/battle.gd` / `game/controls.gd` (Occupy),
   door step marked, the fort's parade being taken as an arc with its time
   (`game/overlay.gd`); men in a building stand along its roof edge and
   windows (the diorama look: men on the parapet, muskets out). The order
-  panel's **Occupy** button (key I): every selected foot unit into the
-  nearest free building within 60 m; **Leave** once one holds a building.
+  panel's **Occupy** button (key I): arms a pick (2026-10-22: the
+  buildings the selection may take light up, a hover or a first tap shows
+  one's sight fans, a click or second tap sends the men in, the others of
+  the selection to the nearest free ones within 60 m; "Reading a town
+  battle" under Controls additions); **Leave** once one holds a building.
 - **Not built.** Ships offshore for the sea guns; a sally from the fort
   (the defenders never open the sally port); the garrison does not come
   down to help the town; men inside a building do not fight room to room
@@ -5169,6 +5174,54 @@ selecting or ordering anything.
   on each undo); Ctrl+Z works while the stack holds anything, paused too.
   Deployment placements, gates, field works and Drop are not undoable. Flash
   "Order undone". Telemetry `undo`, `undo_button`, `undo_shown`.
+- Reading a town battle (owner 2026-10-22: "it is difficult to tell where
+  the pathing is going to take units ... what is a street vs what is not
+  walkable ... I would rather you press the button, and then it shows all of
+  the buildings that can be occupied, and the sight lines of that building").
+  View only; the sim, its inputs and its hash are untouched (read-only
+  queries: `BattleSim.route_to`, `occupy_refusal`, the obstacle cells).
+  - **Streets and alleys** (`game/city_streets.gd`, now given the sim): the
+    painted ground is clipped to what the sim says is open (rock, cliff,
+    wall and sea cells get no street paint), a house's own cells get a dark
+    footing, streets are a pale packed earth (paving in the Rome pack) with a
+    darker rim, the gaps between houses (within 3 m of a footprint) a warmer,
+    darker alley earth; impassable blocks read as blocks, passable gaps as
+    alleys.
+  - **Paths** (HUD toggle on town maps, remembered in settings.cfg [ui]
+    paths, on by default): a faint red diagonal hatch on every cell the sim
+    bars to foot on the ground (houses, walls, rocks; the sea is left clear),
+    one 2 m-cell mask texture and a world-space shader on `CityLayer`
+    (`set_paths_alpha`), shown when the selection changes and fading out
+    over 2 s; a route being drawn (a drag) keeps it. Telemetry
+    `paths_toggle`.
+  - **The move preview is the sim's path.** A drag preview (touch drag,
+    right-button drag), the mouse hover with units selected, and the
+    selected unit's order line draw `BattleSim.route_to` (the street search
+    `_plan_path` uses, run read-only from the order rule's own end point:
+    a tap on a house keeps to open ground beside it) from the unit's centre
+    as a dotted line through the streets (`OrderPreview.move_route_for` /
+    `order_route`, cached per unit and cell). A goal with no way (every
+    way shut, or the order rule's snap 3) shows the ghost's men in red and
+    "No way through". Once per (unit, cell, gates), not per frame.
+  - **Occupy is a pick** (`game/occupy_view.gd`, `game/battle.gd`
+    `_toggle_occupy` and the `_occupy_*` functions): the button arms the mode
+    (lit); every building some selected foot unit may take
+    (`occupy_refusal` clear, an inside of 4+ firing places, no holder) is
+    outlined in gold with its door step and a chevron into the door; a mouse
+    hover (a first touch tap) on one shows its sight fans and a tip
+    ("House: 12 places, holds 14 men", "Click to send them in" / "Tap again
+    ..."); the fans are one per face, 16 rays from the face's firing places
+    out to the weapon range (25-80 m), each cut at the first obstacle cell
+    (another house, wall, tower, gate, rock; its own cells, open ground,
+    ditch and water let it through), built once per building and range
+    (0.7 ms); a click (a second tap) sends the man nearest its door in with
+    `ORDER_OCCUPY` and the others of the selection to the nearest free lit
+    buildings within 60 m, none twice; a tap elsewhere, Esc, the button
+    again or another selection cancels. A selected unit that holds a
+    building shows that building's fans and places at once (the button says
+    Leave, which goes out as before). Telemetry `occupy_arm`,
+    `occupy_preview`, `occupy_pick`, `occupy_cancel`. Test:
+    `tests/city_read_test.gd` (desktop and `--phone`).
 - Campaign battles have no field result panel; they end with a choice
   (owner 2026-10-20, Rome 2's end of battle). **Battle end: End battle /
   Continue.** When a side is decided (the other has no ready unit; not a

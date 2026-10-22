@@ -341,3 +341,61 @@ func wall_refusal(u: int, x: int, y: int) -> String:
 	if sim.route_to(from.x, from.y, foot.x, foot.y, gm).is_empty():
 		return "No way to a stair of that wall from here"
 	return ""
+
+
+# ---------------------------------------------------------------- routes ---
+# The way a ground move will go through a town's streets: the sim's own
+# street search (BattleSim.route_to, read-only: the planner _plan_path
+# uses), run once per (unit, ends, gates) and cached. For the move preview
+# (a drag, the mouse hover) and the selected unit's order line.
+
+var _routes := {}   # key -> {"pts": PackedInt32Array (x, y pairs from the unit's centre), "blocked": bool}
+
+
+## The route unit u takes for `order` (a move order dictionary) if given
+## now: {"pts": [x, y, ...] from the unit's centre to the goal (sim units),
+## "blocked": true if every way there is shut (or it cannot get there at
+## all), "goal": Vector2i}. {} when the move is not a street march (no
+## streets, on a wall, an engine of a tower, in place).
+func move_route_for(u: int, order: Dictionary) -> Dictionary:
+	if sim.obs_on == 0 or sim.ng_x.is_empty() or sim.city_on == 0 or sim.u_state[u] != BattleSim.U_READY:
+		return {}
+	if sim.u_wall[u] > 0 or sim.u_stair[u] != 0:
+		return {}
+	var d: Dictionary = (_view[u] as Dictionary).duplicate() if _view.has(u) else BattleSim.order_fields(sim, u)
+	BattleSim.apply_order_rule(sim, u, d, order)
+	if int(d["order"]) != BattleSim.O_MOVE:
+		return {}
+	return route_from_fields(u, d)
+
+
+## The route of u's predicted order (a move in progress or pending): {} if
+## it is not a street march.
+func order_route(u: int) -> Dictionary:
+	if sim.obs_on == 0 or sim.ng_x.is_empty() or sim.city_on == 0 or sim.u_state[u] != BattleSim.U_READY:
+		return {}
+	if sim.u_wall[u] > 0 or sim.u_stair[u] != 0:
+		return {}
+	var d: Dictionary = _view[u] if _view.has(u) else BattleSim.order_fields(sim, u)
+	if int(d["order"]) != BattleSim.O_MOVE:
+		return {}
+	return route_from_fields(u, d)
+
+
+func route_from_fields(u: int, d: Dictionary) -> Dictionary:
+	var ax := int(d["ax"])
+	var ay := int(d["ay"])
+	var gx := int(d["dx"])
+	var gy := int(d["dy"])
+	var key := [u, ax >> 11, ay >> 11, gx >> 11, gy >> 11, sim.nav_epoch, int(d.get("snap", 0))]
+	if _routes.has(key):
+		return _routes[key]
+	if _routes.size() > 96:
+		_routes.clear()
+	var gm: int = sim._ground_mask(u)
+	var r: PackedInt32Array = sim.route_to(ax, ay, gx, gy, gm)
+	var pts := PackedInt32Array([sim.u_cx[u], sim.u_cy[u]])
+	pts.append_array(r)
+	var out := {"pts": pts, "blocked": r.is_empty() or int(d.get("snap", 0)) == 3, "goal": Vector2i(gx, gy)}
+	_routes[key] = out
+	return out

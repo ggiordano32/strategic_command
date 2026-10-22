@@ -12,6 +12,7 @@ extends Node2D
 const CityDraw := preload("res://game/city_draw.gd")
 const BattleKit := preload("res://game/battlekit.gd")
 const CityStreets := preload("res://game/city_streets.gd")
+const MapGen := preload("res://sim/mapgen.gd")
 
 var sim
 var px_per_m := 10.0
@@ -45,7 +46,7 @@ func setup(p_sim, p_px_per_m: float) -> void:
 		for a in OS.get_cmdline_user_args():
 			if str(a).begins_with("--kit-culture="):
 				sty = clampi(int(str(a).get_slice("=", 1)), 0, 7)
-		st.build(lay, px_per_m, sty)
+		st.build(lay, px_per_m, sty, sim)
 		kit = BattleKit.new()
 		add_child(kit)
 		kit.setup(sim, lay, px_per_m)
@@ -58,6 +59,87 @@ func setup(p_sim, p_px_per_m: float) -> void:
 	add_child(gates_node)
 	queue_redraw()
 	build_ms = (Time.get_ticks_usec() - t0) / 1000.0
+
+
+# ---------------------------------------------------------------- paths ---
+# The Paths overlay (view only): a faint red diagonal hatch on every cell the
+# sim says men cannot stand in on the ground (BattleSim.nav's ground bit:
+# houses, walls, rocks, cliffs; the sea is left clear), one mask texture of the
+# map's 2 m cells built once on first use, hatched by a shader in world
+# space, faded by its alpha (game/battle.gd: 2 s after the selection changes).
+
+const SETTINGS := "user://settings.cfg"
+const PATHS_SHADER := """
+shader_type canvas_item;
+uniform float alpha = 0.0;
+uniform float period = 10.0;
+varying vec2 wpos;
+void vertex() { wpos = (MODEL_MATRIX * vec4(VERTEX, 0.0, 1.0)).xy; }
+void fragment() {
+	float m = texture(TEXTURE, UV).r;
+	float h = fract((wpos.x + wpos.y) / period);
+	float d = abs(h - 0.5) * 2.0;
+	float w = max(fwidth(d), 0.02);
+	float line = smoothstep(0.62 - w, 0.62 + w, d);
+	COLOR = vec4(0.95, 0.30, 0.22, m * (0.10 + 0.55 * line) * alpha);
+}
+"""
+var paths_node: Sprite2D
+var paths_cells := 0          # cells hatched (tests)
+var paths_alpha := 0.0
+
+
+static func load_paths_pref() -> bool:
+	var cf := ConfigFile.new()
+	return cf.load(SETTINGS) != OK or int(cf.get_value("ui", "paths", 1)) != 0
+
+
+static func save_paths_pref(on: bool) -> void:
+	var cf := ConfigFile.new()
+	cf.load(SETTINGS)
+	cf.set_value("ui", "paths", 1 if on else 0)
+	cf.save(SETTINGS)
+
+
+## Cells the hatch covers: the ground bit is clear and it is not the sea.
+func paths_mask() -> PackedByteArray:
+	var n: int = sim.ob_w * sim.ob_h
+	var px := PackedByteArray()
+	px.resize(n)
+	var cnt := 0
+	for i in n:
+		if (sim.nav[i] & MapGen.NAV_GROUND) == 0 and sim.obs[i] != MapGen.C_WATER:
+			px[i] = 255
+			cnt += 1
+	paths_cells = cnt
+	return px
+
+
+## Set the hatch's strength (0 hides it); builds the mask on first use.
+func set_paths_alpha(a: float) -> void:
+	paths_alpha = a
+	if a <= 0.001:
+		if paths_node != null:
+			paths_node.visible = false
+		return
+	if sim == null or sim.obs_on == 0 or sim.city_on == 0:
+		return
+	if paths_node == null:
+		var img := Image.create_from_data(sim.ob_w, sim.ob_h, false, Image.FORMAT_R8, paths_mask())
+		paths_node = Sprite2D.new()
+		paths_node.texture = ImageTexture.create_from_image(img)
+		paths_node.centered = false
+		paths_node.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		paths_node.scale = Vector2.ONE * (2.0 * px_per_m)
+		var mat := ShaderMaterial.new()
+		var sh := Shader.new()
+		sh.code = PATHS_SHADER
+		mat.shader = sh
+		mat.set_shader_parameter("period", px_per_m * 0.9)
+		paths_node.material = mat
+		add_child(paths_node)
+	paths_node.visible = true
+	(paths_node.material as ShaderMaterial).set_shader_parameter("alpha", a)
 
 
 ## Redraw the gates (after a tick).

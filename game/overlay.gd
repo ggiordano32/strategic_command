@@ -5,6 +5,7 @@ extends Node2D
 
 const BattleSim := preload("res://sim/battle_sim.gd")
 const UT := preload("res://sim/unit_types.gd")
+const OccView := preload("res://game/occupy_view.gd")
 const Icons := preload("res://game/unit_icons.gd")
 const UIIcons := preload("res://game/ui_icons.gd")
 const WorksLayer := preload("res://game/works_layer.gd")
@@ -46,6 +47,15 @@ var _icon := PackedInt32Array()  # unit -> symbol id
 ## selected (-1 none) and the selected unit's matchup against it (1 / 0 / -1).
 var match_u := -1
 var match_v := 0
+## The Occupy flow (game/battle.gd): the buildings the selection may be sent into (lit), the one shown
+## (its sight fans, its places, a tip) and the tip's last line; the fan cache is per (building, range).
+var occ_mode := false
+var occ_lit: Array[int] = []
+var occ_focus := -1
+var occ_range_m := 60.0
+var occ_hint := ""
+var _occ_fans := {}
+var occ_fan_us := 0   # microseconds the last fan cost to build (tests, benchmarks)
 
 const COL_SIDE := [Color(0.35, 0.6, 1.0), Color(1.0, 0.36, 0.28)]
 const COL_FIRE := Color(1.0, 0.75, 0.25, 0.8)
@@ -61,6 +71,9 @@ const COL_WOODS := Color(0.85, 1.0, 0.35)
 const COL_COVER := Color(0.55, 0.9, 0.45)  # own cover troops in cover (a leaf; filled: gone to ground)
 const REVEAL_FX := 15     # ticks a "seen after hiding" ring spreads from a marker
 const COL_BLOCK_CELL := Color(1.0, 0.35, 0.3, 0.7)
+const COL_OCC := Color(1.0, 0.82, 0.30)           # an occupiable building, its fans
+const COL_ROUTE := Color(1.0, 0.97, 0.78, 0.95)    # the street route a move will take (dotted)
+const COL_NOWAY := Color(1.0, 0.3, 0.25, 0.95)     # ... none found
 const FLASH_MS := 2500
 const COL_WALL := Color(1.0, 0.92, 0.45)
 const COL_STAIR := Color(0.45, 1.0, 0.95)
@@ -495,6 +508,8 @@ func _draw() -> void:
 		_draw_city_marks(lw)
 		if sim.occ_on != 0 or sim.fort_on != 0:
 			_draw_held(lw)
+		if occ_mode or occ_focus >= 0:
+			_draw_occupy(lw)
 	if sim.sg_on != 0:
 		_draw_siege_gear(lw)
 	if sim.fire_on != 0:
@@ -521,6 +536,8 @@ func _draw() -> void:
 			_draw_selected(u, lw, r, u == primary)
 	if hover_w.x >= 0.0 and not preview_on:
 		_draw_wall_hover(hover_w, lw)
+		if not occ_mode and sim.city_on != 0 and orders != null and not selected_units.is_empty():
+			_draw_hover_route(hover_w, lw)
 	if preview_on:
 		_draw_preview(lw)
 	if sim.phase == BattleSim.PHASE_DEPLOY and sim.fw_on != 0:
@@ -622,6 +639,116 @@ func _draw_held(lw: float) -> void:
 		var txt := "Fort held %d / %d s" % [sim.fort_t / 10, BattleSim.FORT_CAP_TICKS / 10]
 		var tw := ThemeDB.fallback_font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 		draw_string(ThemeDB.fallback_font, fc + Vector2(-tw * 0.5, -fr - fs * 0.5), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col2.lightened(0.3))
+
+
+## The mouse over the field with units selected in a town: the street route of the primary unit to the
+## point (faint, dotted); "No way through" in red where the sim finds none.
+func _draw_hover_route(w: Vector2, lw: float) -> void:
+	var u := selected_units[0]
+	if u < 0 or u >= sim.n_units or sim.u_state[u] != BattleSim.U_READY:
+		return
+	var c := w / px_per_m * M
+	var rt: Dictionary = orders.move_route_for(u, BattleSim.make_move_order(0, u, int(c.x), int(c.y),
+		_v(u, "face"), BattleSim.files_to_width(_v(u, "files"), sim.u_type[u]), 0))
+	if rt.is_empty():
+		return
+	var no_way: bool = rt["blocked"]
+	var col := COL_NOWAY if no_way else Color(COL_ROUTE, 0.7)
+	_draw_route(rt["pts"], col, lw)
+	if no_way:
+		draw_string(ThemeDB.fallback_font, w + Vector2(px_per_m * 1.5, -px_per_m * 2.0), "No way through",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), COL_NOWAY)
+
+
+## The fans of building b at the current range, built once (a few thousand cell reads) and kept.
+func occ_fans(b: int) -> Array:
+	var key := [b, int(occ_range_m)]
+	if not _occ_fans.has(key):
+		if _occ_fans.size() > 40:
+			_occ_fans.clear()
+		var t0 := Time.get_ticks_usec()
+		_occ_fans[key] = OccView.fans(sim, b, occ_range_m)
+		occ_fan_us = Time.get_ticks_usec() - t0
+	return _occ_fans[key]
+
+
+## The Occupy flow: every building the selection may take outlined in gold with its door step marked, and
+## the shown one (occ_focus: the finger's or the mouse's pick, or the one a selected unit holds) with its
+## sight fans, its firing places and a tip (kind, places, men held).
+func _draw_occupy(lw: float) -> void:
+	var k := px_per_m
+	if occ_mode:
+		for b in occ_lit:
+			if b == occ_focus:
+				continue
+			_draw_occ_outline(b, lw, 0.85, 1.7)
+	if occ_focus < 0 or occ_focus >= sim.ob_ok.size():
+		return
+	var b := occ_focus
+	for f in occ_fans(b):
+		var pts := PackedVector2Array()
+		for p in (f["pts"] as PackedVector2Array):
+			pts.append(p * k)
+		draw_colored_polygon(pts, Color(COL_OCC, 0.23))
+		var edge := pts.slice(1)
+		draw_polyline(edge, Color(COL_OCC, 0.7), lw)
+		draw_line(pts[0], pts[1], Color(COL_OCC, 0.45), lw)
+		draw_line(pts[0], pts[pts.size() - 1], Color(COL_OCC, 0.45), lw)
+	_draw_occ_outline(b, lw, 1.0, 2.6)
+	var s0: int = sim.ob_s0[b]
+	var pr := maxf(k * 0.28, 1.6)
+	for i in sim.ob_sn[b]:
+		var pp := Vector2(sim.sp_x[s0 + i], sim.sp_y[s0 + i]) / M * k
+		draw_circle(pp, pr * 1.5, Color(0, 0, 0, 0.5))
+		draw_circle(pp, pr, COL_OCC.lightened(0.35))
+	# The tip, above the building.
+	var q := OccView.quad(sim, b)
+	if q.size() < 4:
+		return
+	var top := q[0]
+	for v in q:
+		if v.y < top.y:
+			top = v
+	var title := "%s: %d places, holds %d men" % [OccView.kind_name(sim, b), OccView.places(sim, b), OccView.holds(sim, b)]
+	var fs := _font_size(14.0)
+	var tw := maxf(ThemeDB.fallback_font.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x,
+		ThemeDB.fallback_font.get_string_size(occ_hint, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x)
+	var lines := 2 if occ_hint != "" else 1
+	var at := Vector2(top.x * k, top.y * k) + Vector2(-tw * 0.5, -fs * 0.8 - (lines - 1) * fs * 1.25)
+	var box := Rect2(at + Vector2(-fs * 0.5, -fs * 1.1), Vector2(tw + fs, fs * (0.4 + 1.25 * lines)))
+	draw_rect(box, Color(0.12, 0.09, 0.05, 0.9))
+	draw_rect(box, Color(COL_OCC, 0.9), false, lw)
+	draw_string(ThemeDB.fallback_font, at, title, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 0.95, 0.8))
+	if occ_hint != "":
+		draw_string(ThemeDB.fallback_font, at + Vector2(0, fs * 1.25), occ_hint, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, COL_OCC)
+
+
+## Building b's outline in gold over a dark underlay, with the door step marked by a bar and a small chevron.
+func _draw_occ_outline(b: int, lw: float, a: float, wk: float) -> void:
+	var k := px_per_m
+	var q := OccView.quad(sim, b)
+	if q.size() < 4:
+		return
+	var pts := PackedVector2Array()
+	for v in q:
+		pts.append(v * k)
+	pts.append(pts[0])
+	draw_colored_polygon(pts.slice(0, 4), Color(COL_OCC, 0.12 * a))
+	draw_polyline(pts, Color(0, 0, 0, 0.5 * a), lw * (wk + 1.6))
+	draw_polyline(pts, Color(COL_OCC, a), lw * wk)
+	var dp := Vector2(sim.ob_dx[b], sim.ob_dy[b]) / M * k
+	var fa: float = sim.ob_face[b] * TAU / 1024.0
+	var out := Vector2(cos(fa), sin(fa))
+	var side := Vector2(-out.y, out.x)
+	var e := side * 1.1 * k
+	draw_line(dp - e, dp + e, Color(0, 0, 0, 0.6 * a), lw * 3.2)
+	draw_line(dp - e, dp + e, COL_OCC.lightened(0.3), lw * 1.8)
+	# (A chevron pointing into the door, from the step.)
+	var tip := dp - out * 0.2 * k
+	var c1 := dp + out * 1.4 * k + side * 0.9 * k
+	var c2 := dp + out * 1.4 * k - side * 0.9 * k
+	draw_polyline(PackedVector2Array([c1, tip, c2]), Color(0, 0, 0, 0.6 * a), lw * 3.0)
+	draw_polyline(PackedVector2Array([c1, tip, c2]), COL_OCC.lightened(0.3), lw * 1.6)
 
 
 ## A hero's or agent's marker (docs/DESIGN.md "Heroes and agents"): his
@@ -826,7 +953,11 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 		var dang: float = _v(u, "dface") * TAU / 1024.0
 		var dfwd := Vector2(cos(dang), sin(dang))
 		var dright := Vector2(-dfwd.y, dfwd.x)
-		_dash_outlined(a, d, Color(0.6, 1.0, 0.6, 0.85), lw, 8.0 / zoom)
+		var srt: Dictionary = orders.order_route(u) if orders != null else {}
+		if not srt.is_empty() and not srt["blocked"] and (srt["pts"] as PackedInt32Array).size() > 4:
+			_draw_route(srt["pts"], Color(0.6, 1.0, 0.6, 0.9), lw, false)
+		else:
+			_dash_outlined(a, d, Color(0.6, 1.0, 0.6, 0.85), lw, 8.0 / zoom)
 		_draw_woods_along(_v(u, "ax"), _v(u, "ay"), _v(u, "dx"), _v(u, "dy"), lw)
 		draw_line(d - dright * hw, d + dright * hw, Color(0, 0, 0, 0.4), lw * 3.0)
 		draw_line(d - dright * hw, d + dright * hw, Color(0.6, 1.0, 0.6, 0.9), lw * 1.5)
@@ -1137,6 +1268,18 @@ func _draw_preview(lw: float) -> void:
 			if not wpl.is_empty() and wpl["mode"] != "hold":
 				_draw_wall_plan(u, wpl, lw, true)
 				continue
+		var no_way := false
+		if sim.city_on != 0 and orders != null:
+			# The streets it will take (the sim's own search), dotted; none: red.
+			var c2 := centre / px_per_m * M
+			var rt: Dictionary = orders.move_route_for(u, BattleSim.make_move_order(0, u, int(c2.x), int(c2.y),
+				face, p["width"], 0))
+			if not rt.is_empty():
+				no_way = rt["blocked"]
+				_draw_route(rt["pts"], COL_NOWAY if no_way else COL_ROUTE, lw, false)
+				if no_way:
+					draw_string(ThemeDB.fallback_font, centre + Vector2(px_per_m * 1.5, -px_per_m * 2.0), "No way through",
+						HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), COL_NOWAY)
 		var pfiles: int = p["files"]
 		if sim.u_carry[u] >= 0 and BattleSim.carry_files(sim, u, sim.u_carry[u]) > 0:
 			pfiles = BattleSim.carry_files(sim, u, sim.u_carry[u])  # (carrying: the ghost of its carry pattern)
@@ -1145,7 +1288,9 @@ func _draw_preview(lw: float) -> void:
 		for k in range(0, offs.size(), 2):
 			var dp := centre + Vector2(offs[k], offs[k + 1]) * (px_per_m / M)
 			var dc := Color(1, 1, 1, 0.55)
-			if feat:
+			if no_way:
+				dc = COL_NOWAY
+			elif feat:
 				# Men who would stand in woods (green) or in a wall / house (red).
 				var sx := int(dp.x / px_per_m * M)
 				var sy := int(dp.y / px_per_m * M)
@@ -1160,6 +1305,37 @@ func _draw_preview(lw: float) -> void:
 		var ang := face * TAU / 1024.0
 		var fwd := Vector2(cos(ang), sin(ang))
 		draw_line(centre, centre + fwd * px_per_m * 5.0, Color(1, 1, 0.6, 0.9), lw * 1.5)
+
+
+## A street route (sim units, x, y pairs) as a dotted line: a dark underlay dot
+## and a lit one every ~2 m, ending in a larger dot at the goal. Dots are
+## screen-sized when zoomed out.
+func _draw_route(pts: PackedInt32Array, col: Color, lw: float, goal_dot := true) -> void:
+	if pts.size() < 4:
+		return
+	var step := maxf(px_per_m * 1.9, 11.0 / zoom)
+	var rad := maxf(lw * 1.25, px_per_m * 0.22)
+	var carry := 0.0
+	var prev := to_px(pts[0], pts[1])
+	var dots := 0
+	for i in range(1, pts.size() / 2):
+		var q := to_px(pts[i * 2], pts[i * 2 + 1])
+		var seg := prev.distance_to(q)
+		if seg <= 0.01:
+			continue
+		var dir := (q - prev) / seg
+		var t := carry
+		while t <= seg and dots < 600:
+			var at := prev + dir * t
+			draw_circle(at, rad * 1.7, Color(0, 0, 0, 0.35))
+			draw_circle(at, rad, col)
+			t += step
+			dots += 1
+		carry = t - seg
+		prev = q
+	if goal_dot:
+		draw_circle(prev, rad * 2.4, Color(0, 0, 0, 0.4))
+		draw_circle(prev, rad * 1.7, col)
 
 
 ## Footprint of a formation: rectangle from the front line back through the

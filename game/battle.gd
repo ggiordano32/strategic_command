@@ -31,6 +31,7 @@ const CoopHud := preload("res://game/coop_hud.gd")
 const Lockstep := preload("res://sim/lockstep.gd")
 const CData := preload("res://campaign/cdata.gd")
 const FM := preload("res://sim/fixed_math.gd")
+const OccView := preload("res://game/occupy_view.gd")
 const Traits := preload("res://game/unit_traits.gd")
 
 const PX_PER_M := 10.0
@@ -384,6 +385,7 @@ func _ready() -> void:
 	hud.stance_pressed.connect(_cycle_stance)
 	hud.bounds_pressed.connect(_toggle_bounds)
 	hud.occupy_pressed.connect(_toggle_occupy)
+	hud.paths_toggled.connect(_on_paths_toggled)
 	hud.deploy_pressed.connect(_toggle_deploy)
 	hud.refill_pressed.connect(_toggle_refill)
 	hud.ammo_pressed.connect(_toggle_ammo)
@@ -419,6 +421,11 @@ func _ready() -> void:
 	if coop != null:
 		_coop_ready()
 	hud.orders_button.set_pressed_no_signal(show_all_orders)
+	if sim.city_on != 0 and sim.obs_on != 0:
+		# Town maps: the Paths toggle (remembered; on by default).
+		paths_on = CityLayer.load_paths_pref()
+		hud.paths_button.visible = true
+		hud.paths_button.set_pressed_no_signal(paths_on)
 	hud.set_orders_text(show_all_orders)
 	overlay.show_all_orders = show_all_orders
 	overlay.player_side = player_side
@@ -541,6 +548,36 @@ func _apply_debug_args() -> void:
 				if sim.u_side[u] == player_side and u % 2 == 0:
 					_queue(BattleSim.make_move_order(0, u, sim.u_ax[u] + 6 * 1024,
 						sim.u_ay[u] - 40 * 1024, 760, 32 * 1024, 0))
+
+
+## Paths overlay (town maps): the toggle, remembered; the hatch shows when a unit is selected, a route
+## is being drawn, or the toggle is switched on, then fades over PATHS_FADE_SEC.
+const PATHS_FADE_SEC := 2.0
+var paths_on := false
+var _paths_t := 99.0           # seconds since the hatch was last called for
+
+func _on_paths_toggled(on: bool) -> void:
+	paths_on = on
+	CityLayer.save_paths_pref(on)
+	_count("paths_toggle")
+	if on:
+		_paths_poke()
+	else:
+		_paths_apply()
+
+
+func _paths_poke() -> void:
+	_paths_t = 0.0
+	_paths_apply()
+
+
+func _paths_apply() -> void:
+	if city == null:
+		return
+	var a := 0.0
+	if paths_on and (not selection.is_empty() or _paths_t < 0.01):
+		a = clampf(1.0 - _paths_t / PATHS_FADE_SEC, 0.0, 1.0)
+	city.set_paths_alpha(a)
 
 
 func _on_orders_toggled(on: bool) -> void:
@@ -905,6 +942,12 @@ func _process(delta: float) -> void:
 		soldiers.set_alpha(clampf(_acc / TICK_SEC, 0.0, 1.0))
 	_keys_held(delta)
 	orders.refresh()  # drop orders the sim has applied
+	if paths_on and city != null and (_paths_t < PATHS_FADE_SEC or (city.paths_node != null and city.paths_node.visible)):
+		if overlay.preview_on:
+			_paths_t = 0.0   # (a route being drawn: the hatch stays)
+		else:
+			_paths_t += delta
+		_paths_apply()
 	# Redrawn every frame, paused or not, so order changes show at once.
 	overlay.zoom = camera.zoom.x
 	overlay.queue_redraw()
@@ -1463,6 +1506,10 @@ func _selection_changed() -> void:
 		if u != selected:
 			ordered.append(u)
 	overlay.selected_units = ordered
+	if occupy_mode:
+		_occupy_cancel(false)
+	if not selection.is_empty() and paths_on:
+		_paths_poke()
 	var flags := {}
 	for u in selection:
 		flags[u] = true
@@ -1532,6 +1579,10 @@ func _refresh_actions() -> void:
 			only_fixed = false
 	hud.engine_only = only_fixed
 	hud.set_selection(selection, run, fire, skirm, deploy, refill, ammo, ammo_word, forage, dogs, release_armed, stance, bounds, occupy)
+	hud.occupy_button.set_pressed_no_signal(occupy_mode and occupy == 0)
+	if occupy_mode and OccView.eligible(sim, selection).is_empty():
+		_occupy_cancel(false)
+	_sync_occupy_overlay()
 	_refresh_wall_buttons()
 	if coop != null:
 		var tos := _gift_targets()
@@ -1758,11 +1809,19 @@ func _cycle_stance() -> void:
 	_refresh_actions()
 
 
-## Occupy (West towns, slice 2c): every eligible selected foot unit into the
-## nearest free building that can be held (OCC_PICK_R of it; none picked
-## twice); or, when one of them holds a building or is on its way in, all
-## of them out (a move 8 m out from the door, facing out).
+## Occupy (West towns, slice 2c; the pick flow 2026-10-22). With none of the
+## selection in a building: the button arms the mode, every building the
+## selected foot may be sent into lights up (OccView.lit, the sim's own
+## rule), a mouse hover or a first touch tap on a lit one shows its sight
+## fans and places, a click or a second tap sends the men in (the nearest man
+## to its door; the others to the nearest free lit building within
+## OCC_PICK_R, none picked twice); a tap elsewhere, Esc, the button again or
+## another selection cancels. When one of them holds a building or is on its
+## way in, the button is Leave: all of them out (a move 8 m out from the
+## door, facing out).
 const OCC_PICK_R := 60 * 1024
+var occupy_mode := false       # the Occupy button is armed: the lit buildings wait for a pick
+var _occ_lit: Array[int] = []
 
 func _toggle_occupy() -> void:
 	if sim.occ_on == 0:
@@ -1771,35 +1830,160 @@ func _toggle_occupy() -> void:
 	for u in selection:
 		if BattleSim.stance_ok(sim.u_type[u]) and (sim.u_occ[u] > 0 or orders.value(u, "occ") != 0):
 			out = true
-	var taken := {}
+	if out:
+		_occupy_cancel(false)
+		_occupy_leave()
+		return
+	if occupy_mode:
+		_occupy_cancel(true)
+		return
+	var lit := OccView.lit(sim, selection)
+	if lit.is_empty():
+		if selected >= 0:
+			overlay.flash("No building here can be held by them", Vector2(sim.u_cx[selected], sim.u_cy[selected]) / M * PX_PER_M)
+		return
+	occupy_mode = true
+	_occ_lit = lit
+	overlay.occ_mode = true
+	overlay.occ_lit = lit
+	overlay.occ_focus = -1
+	overlay.occ_hint = ""
+	overlay.occ_range_m = OccView.range_m(sim, selected)
+	_count("occupy_arm")
+	_refresh_actions()
+	overlay.queue_redraw()
+
+
+## Leave the armed Occupy mode (counter occupy_cancel when the player did).
+func _occupy_cancel(counted: bool) -> void:
+	if not occupy_mode:
+		return
+	occupy_mode = false
+	_occ_lit = []
+	overlay.occ_mode = false
+	overlay.occ_lit = []
+	overlay.occ_focus = -1
+	overlay.occ_hint = ""
+	if counted:
+		_count("occupy_cancel")
+	_sync_occupy_overlay()
+	_refresh_actions()
+	overlay.queue_redraw()
+
+
+## The shown building: the armed mode's pick (set by hover / first tap), else the building the selected unit holds.
+func _sync_occupy_overlay() -> void:
+	if occupy_mode or sim.occ_on == 0:
+		return
+	var f := -1
+	if selected >= 0 and selected < sim.n_units and sim.u_occ[selected] > 0:
+		f = sim.u_occ[selected] - 1
+	if f != overlay.occ_focus:
+		overlay.occ_focus = f
+		overlay.occ_hint = ""
+		if f >= 0:
+			overlay.occ_range_m = OccView.range_m(sim, selected)
+		overlay.queue_redraw()
+
+
+## The men out of their buildings: a move 8 m out from the door, facing out.
+func _occupy_leave() -> void:
 	for u in selection:
 		if not BattleSim.stance_ok(sim.u_type[u]) or sim.u_state[u] != BattleSim.U_READY:
 			continue
-		if out:
-			var b: int = sim.u_occ[u] - 1
-			if b < 0:
-				b = orders.value(u, "occ") - 1
-			if b < 0:
-				continue
-			var f: int = sim.ob_face[b]
-			var x: int = sim.ob_dx[b] + FM.cos_a(f) * 8 * 1024 / FM.TRIG_ONE
-			var y: int = sim.ob_dy[b] + FM.sin_a(f) * 8 * 1024 / FM.TRIG_ONE
-			_queue(BattleSim.make_move_order(0, u, x, y, f, BattleSim.files_to_width(mini(sim.u_alive[u], 10), sim.u_type[u]),
-				orders.value(u, "run")))
+		var b: int = sim.u_occ[u] - 1
+		if b < 0:
+			b = orders.value(u, "occ") - 1
+		if b < 0:
+			continue
+		var f: int = sim.ob_face[b]
+		var x: int = sim.ob_dx[b] + FM.cos_a(f) * 8 * 1024 / FM.TRIG_ONE
+		var y: int = sim.ob_dy[b] + FM.sin_a(f) * 8 * 1024 / FM.TRIG_ONE
+		_queue(BattleSim.make_move_order(0, u, x, y, f, BattleSim.files_to_width(mini(sim.u_alive[u], 10), sim.u_type[u]),
+			orders.value(u, "run")))
+	_refresh_actions()
+
+
+## The lit building under world point w (px): inside its footprint, or its door step, or within the
+## marker's hit radius of its middle; the nearest middle wins. -1: none.
+func _occupy_building_at(w: Vector2) -> int:
+	var p := w / PX_PER_M
+	var best := -1
+	var bd := 1e18
+	var hit_r := float(_marker_hit_r()) / M
+	for b in _occ_lit:
+		var q := OccView.quad(sim, b)
+		if q.size() < 4:
+			continue
+		var mid := (q[0] + q[1] + q[2] + q[3]) * 0.25
+		var dstep := p.distance_to(Vector2(sim.ob_dx[b], sim.ob_dy[b]) / M)
+		if Geometry2D.is_point_in_polygon(p, q) or dstep < 2.5 or p.distance_to(mid) < minf(hit_r, 6.0):
+			var d := p.distance_squared_to(mid)
+			if d < bd:
+				bd = d
+				best = b
+	return best
+
+
+## Show building b's fans (b < 0: none) with the line saying what the next tap / click does.
+func _occupy_focus(b: int, hint: String) -> void:
+	if b != overlay.occ_focus:
+		if b >= 0:
+			_count("occupy_preview")
+		overlay.occ_focus = b
+	overlay.occ_hint = hint if b >= 0 else ""
+	overlay.queue_redraw()
+
+
+## A tap while the Occupy mode is armed (touch: the first tap on a lit building shows it, the second
+## sends the men in; the mouse's click does at once, the hover having shown it).
+func _occupy_tap(w: Vector2) -> void:
+	var b := _occupy_building_at(w)
+	if b < 0:
+		_occupy_cancel(true)
+		return
+	if UiScale.is_touch() and overlay.occ_focus != b:
+		_occupy_focus(b, "Tap again to send them in")
+		return
+	_occupy_send(b)
+
+
+## Send the selection into building b: the man nearest its door in, the others each to the nearest free
+## lit building within OCC_PICK_R.
+func _occupy_send(b: int) -> void:
+	var taken := {b: true}
+	var first := -1
+	var fd := 1 << 60
+	for u in selection:
+		if BattleSim.occupy_refusal(sim, u, b) != "":
+			continue
+		var d := FM.approx_len(sim.ob_dx[b] - sim.u_ax[u], sim.ob_dy[b] - sim.u_ay[u])
+		if d < fd:
+			fd = d
+			first = u
+	if first < 0:
+		overlay.flash("They cannot hold that building", Vector2(sim.ob_dx[b], sim.ob_dy[b]) / M * PX_PER_M)
+		return
+	var sent := [first]
+	_queue({"type": BattleSim.ORDER_OCCUPY, "unit": first, "building": b, "run": orders.value(first, "run")})
+	for u in selection:
+		if u == first or not BattleSim.stance_ok(sim.u_type[u]) or sim.u_state[u] != BattleSim.U_READY:
 			continue
 		var best := -1
 		var bd := OCC_PICK_R + 1
-		for k in sim.ob_ok.size():
-			if sim.ob_ok[k] == 0 or taken.has(k) or BattleSim.occupy_refusal(sim, u, k) != "":
+		for k in _occ_lit:
+			if taken.has(k) or BattleSim.occupy_refusal(sim, u, k) != "":
 				continue
-			var d := FM.approx_len(sim.ob_dx[k] - sim.u_ax[u], sim.ob_dy[k] - sim.u_ay[u])
-			if d < bd:
-				bd = d
+			var d2 := FM.approx_len(sim.ob_dx[k] - sim.u_ax[u], sim.ob_dy[k] - sim.u_ay[u])
+			if d2 < bd:
+				bd = d2
 				best = k
 		if best >= 0:
 			taken[best] = true
+			sent.append(u)
 			_queue({"type": BattleSim.ORDER_OCCUPY, "unit": u, "building": best, "run": orders.value(u, "run")})
-	_refresh_actions()
+	_count("occupy_pick")
+	_occupy_cancel(false)
 
 
 ## Bounds: a view-side mode that adds "bound" to the player's move orders.
@@ -2324,6 +2508,9 @@ func _tap(screen_pos: Vector2, double: bool, long_press := false) -> void:
 	if works_mode != "" and sim.phase == BattleSim.PHASE_DEPLOY:
 		_works_tap(w)
 		return
+	if occupy_mode:
+		_occupy_tap(w)
+		return
 	# A tap in a gate's doorway is about the gate: it is tested before the
 	# units, so a marker floating over the gate (men on the wall above it)
 	# or a unit box cannot steal it. Outside the doorway units pick first and
@@ -2735,6 +2922,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif _mouse_pan:
 			camera.position -= (event as InputEventMouseMotion).relative / camera.zoom
 			_clamp_camera()
+		elif occupy_mode:
+			# Occupy armed: the lit building under the mouse shows its fans.
+			var ow := _screen_to_world((event as InputEventMouseMotion).position)
+			_occupy_focus(_occupy_building_at(ow), "Click to send them in")
 		elif sim.city_on != 0 and not selection.is_empty():
 			# Walls: the stretch under the mouse lights up (overlay); not in
 			# a gate's doorway, where a click is about the gate.
@@ -2859,7 +3050,9 @@ func _on_key(e: InputEventKey) -> void:
 		"undo":
 			_undo()
 		"deselect":
-			if _gm or _gm_pending:
+			if occupy_mode:
+				_occupy_cancel(true)
+			elif _gm or _gm_pending:
 				_count("group_move_cancelled")
 				_gm_cancel()
 			else:

@@ -12,7 +12,7 @@ const LANE_GROW := 3.0      # metres: a lane runs this far from the houses' foot
 const MARGIN := 6.0
 
 
-func build(lay: Dictionary, k: float, style: int) -> void:
+func build(lay: Dictionary, k: float, style: int, sim = null) -> void:
 	var lo := Vector2(1e9, 1e9)
 	var hi := Vector2(-1e9, -1e9)
 	var rects: Array = []
@@ -89,6 +89,24 @@ func build(lay: Dictionary, k: float, style: int) -> void:
 		var cx := i % w
 		var cy := i / w
 		var z := zone[i]
+		if sim != null and sim.obs_on != 0:
+			# What the sim says of this ground (2 m cells): a house's cells get a dark footing (men cannot go
+			# there), rock, cliff, wall and sea cells no street paint at all.
+			var sx := int((org.x + (cx + 0.5) * CELL) * 0.5)
+			var sy := int((org.y + (cy + 0.5) * CELL) * 0.5)
+			if sx >= 0 and sy >= 0 and sx < sim.ob_w and sy < sim.ob_h:
+				var k0: int = sim.obs[sy * sim.ob_w + sx]
+				if k0 == MapGen.C_BUILDING:
+					var nf := float((((cx * 374761393) ^ (cy * 668265263)) * 1274126177 >> 8) & 255) / 255.0
+					var fo := Vector3(0.27, 0.23, 0.19) * (0.9 + 0.2 * nf)
+					var oo := i * 4
+					px[oo] = int(fo.x * 255.0)
+					px[oo + 1] = int(fo.y * 255.0)
+					px[oo + 2] = int(fo.z * 255.0)
+					px[oo + 3] = 235
+					continue
+				elif k0 != MapGen.C_OPEN and k0 != MapGen.C_DITCH:
+					continue
 		var edge := false
 		if cx == 0 or cy == 0 or cx == w - 1 or cy == h - 1:
 			edge = true
@@ -104,10 +122,13 @@ func build(lay: Dictionary, k: float, style: int) -> void:
 			if edge:
 				col *= 0.75
 		elif west:
-			col = Vector3(0.66, 0.57, 0.42) if z == 2 else Vector3(0.60, 0.52, 0.39)
-			col *= 0.9 + 0.16 * n
+			# Streets: pale packed earth with a darker rim; alleys between the houses: a warmer, darker earth.
+			col = Vector3(0.76, 0.69, 0.55) if z == 2 else Vector3(0.56, 0.44, 0.31)
+			col *= 0.92 + 0.12 * n
+			if edge:
+				col *= 0.74 if z == 2 else 0.8
 		elif paved:
-			col = Vector3(0.66, 0.62, 0.55) if z == 2 else Vector3(0.60, 0.56, 0.49)
+			col = Vector3(0.68, 0.64, 0.57) if z == 2 else Vector3(0.54, 0.49, 0.42)
 			var cob := (cx / 2 + (cy / 2 % 2) * 1) % 3   # cobbles 1 m, offset rows
 			col *= 0.9 + 0.14 * n - (0.07 if (cx % 2 == 0 or cy % 2 == 0) else 0.0) + hv
 			col *= 1.0 - 0.025 * float(cob)
@@ -118,8 +139,8 @@ func build(lay: Dictionary, k: float, style: int) -> void:
 			col *= 0.88 + 0.2 * n
 			if edge:
 				col *= 0.9
-		var al := 1.0 if z >= 2 else 0.9
-		if edge and not paved and z != 3:
+		var al := 1.0 if z >= 2 else 0.95
+		if edge and not paved and z != 3 and not west:
 			al *= 0.6
 		var o := i * 4
 		px[o] = clampi(int(col.x * 255.0), 0, 255)
