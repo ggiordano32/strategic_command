@@ -52,6 +52,9 @@ const SeaSim := preload("res://sim/sea_sim.gd")
 const ST := preload("res://sim/sea_types.gd")
 const FM := preload("res://sim/fixed_math.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
+const BTheme := preload("res://game/battle_theme.gd")
+const SeaKey := preload("res://game/sea_key.gd")
+const CData := preload("res://campaign/cdata.gd")
 const AudioFx := preload("res://game/audio.gd")
 const CoopHud := preload("res://game/coop_hud.gd")
 const SeaBook := preload("res://game/sea_book.gd")
@@ -127,6 +130,10 @@ var _clock_lbl: Label
 var _msg_lbl: Label
 var _rose: Control
 var _speed_btns: Array = []
+var _speed_seg: Kit.Segmented = null   # the speed capsule (lit: the speed in force)
+var _speed_lit := -1
+var _key_btn: Button = null
+var _key_panel: PanelContainer = null
 var _end_panel: PanelContainer
 var _leave_dlg: PanelContainer
 var _card_nodes := {}
@@ -555,10 +562,10 @@ func _draw_ships() -> void:
 			var b := _draw_pos(o)
 			for k in 4:
 				var off := Vector2(sin(k * 2.1), cos(k * 1.3)) * 7.0
-				_ships.draw_line(a + off, b - off, Color(0.15, 0.1, 0.06, 0.95), 1.4 * lw + 0.6)
+				_ships.draw_line(a + off, b - off, SeaKey.col("grapple", Color.WHITE, 0.95), 1.4 * lw + 0.6)
 			var mid := (a + b) * 0.5
 			var rad := a.distance_to(b) * 0.5 + float(ST.stat(sim.s_type[s], "len")) * VIS * 0.55
-			_ships.draw_arc(mid, rad + 2.0 * sin(_clock * 5.0), 0, TAU, 36, Color(1, 0.8, 0.3, 0.85), 2.5 * lw, true)
+			_ships.draw_arc(mid, rad + 2.0 * sin(_clock * 5.0), 0, TAU, 36, SeaKey.col("board", Color.WHITE, 0.85), 2.5 * lw, true)
 			for k2 in 10:
 				var ang2 := _clock * 7.0 + k2 * 2.4
 				var sp := mid + Vector2(cos(ang2), sin(ang2 * 1.3)) * (4.0 + (k2 % 3) * 5.0)
@@ -689,7 +696,7 @@ func _draw_ship(s: int, lw: float) -> void:
 				_ships.draw_circle(ep, 0.6 + (1.0 - ph) * 0.8, Color(1.0, 0.7, 0.3, 0.9 * (1.0 - ph)))
 	# Selection ring and a small health bar for every ship.
 	if selection.has(s):
-		_ships.draw_arc(p, ln * 0.62 + 4.0, 0, TAU, 32, Color(1, 1, 1, 0.9), 2.0 * lw, true)
+		_ships.draw_arc(p, ln * 0.62 + 4.0, 0, TAU, 32, SeaKey.col("selected", _side_col(sim.u_side[s]), 0.95), 2.0 * lw, true)
 	if st == SeaSim.S_SAIL:
 		var bw := maxf(ln, 26.0 * lw)
 		var bp := p + Vector2(-bw * 0.5, -ln * 0.55 - 10.0 * lw)
@@ -793,16 +800,17 @@ func _draw_orders(lw: float) -> void:
 			SeaSim.M_GOTO:
 				var g := Vector2(sim.s_tx[s], sim.s_ty[s]) / 1024.0
 				var pts := course_points(s)
+				var flag := _side_col(sim.u_side[s])
 				for i in range(1, pts.size()):
-					_dashed(pts[i - 1], pts[i], Color(1, 1, 0.85, al), 1.6 * lw, 10.0 * lw)
-				_ships.draw_arc(g, 9.0 * lw + 3.0, 0, TAU, 20, Color(1, 1, 0.85, al), 1.6 * lw)
+					_dashed(pts[i - 1], pts[i], SeaKey.col("course", flag, al), 1.6 * lw, 10.0 * lw)
+				_ships.draw_arc(g, 9.0 * lw + 3.0, 0, TAU, 20, SeaKey.col("waypoint", flag, al), 1.6 * lw)
 				if pts.size() > 2:
-					_ships.draw_circle(pts[1], 3.0 * lw + 1.0, Color(1, 0.9, 0.5, al))
+					_ships.draw_circle(pts[1], 3.0 * lw + 1.0, SeaKey.col("course", flag, al))
 			SeaSim.M_ENGAGE, SeaSim.M_BOARD:
 				var t := sim.s_tgt[s]
 				if t >= 0:
 					var tp := _pos(t)
-					var c := Color(1, 0.35, 0.3, al) if sim.s_mode[s] == SeaSim.M_ENGAGE else Color(1, 0.85, 0.3, al)
+					var c := SeaKey.col("attack" if sim.s_mode[s] == SeaSim.M_ENGAGE else "board", Color.WHITE, al)
 					_dashed(p, tp, c, 1.6 * lw, 8.0 * lw)
 					var tl := float(ST.stat(sim.s_type[t], "len")) * VIS
 					_ships.draw_arc(tp, tl * 0.62 + 6.0, 0, TAU, 28, c, 2.0 * lw, true)
@@ -810,15 +818,15 @@ func _draw_orders(lw: float) -> void:
 				var tf := sim.s_tgt[s]
 				if tf >= 0:
 					var tpf := _pos(tf)
-					var cf := Color(1, 0.55, 0.15, al)
+					var cf := SeaKey.col("fire", Color.WHITE, al)
 					_dashed(p, tpf, cf, 2.0 * lw, 6.0 * lw)
 					_ships.draw_arc(tpf, float(ST.stat(sim.s_type[tf], "len")) * VIS * 0.62 + 8.0, 0, TAU, 28, cf, 2.4 * lw, true)
 					if sim.s_lit[s] < 0:
-						_ships.draw_arc(p, float(SeaSim.FS_LIGHT_M), 0, TAU, 48, Color(1, 0.55, 0.15, al * 0.25), 1.2 * lw)
+						_ships.draw_arc(p, float(SeaSim.FS_LIGHT_M), 0, TAU, 48, SeaKey.col("fire", Color.WHITE, al * 0.25), 1.2 * lw)
 			SeaSim.M_FLEE:
 				var fpts := course_points(s)
 				for i in range(1, fpts.size()):
-					_dashed(fpts[i - 1], fpts[i], Color(0.8, 0.8, 0.8, al * 0.7), 1.2 * lw, 6.0 * lw)
+					_dashed(fpts[i - 1], fpts[i], SeaKey.col("flee", Color.WHITE, al * 0.8), 1.4 * lw, 6.0 * lw)
 		if sel:
 			# The broadsides' arcs and reach, loaded (white) or reloading (dim).
 			var h := sim.heading(s)
@@ -827,7 +835,7 @@ func _draw_orders(lw: float) -> void:
 				var rng := float(sim.shot_range(s, sim.s_ld[s * 2 + k]))
 				var half := SeaSim.ARC * TAU / 1024.0
 				var loaded := sim.s_rl[s * 2 + k] == 0
-				var ac := Color(1, 1, 1, 0.22) if loaded else Color(1, 1, 1, 0.07)
+				var ac := SeaKey.col("arcs", Color.WHITE, 0.4 if loaded else 0.12)
 				_ships.draw_arc(p, rng, ctr - half, ctr + half, 16, ac, 1.4 * lw)
 				_ships.draw_line(p, p + Vector2(cos(ctr - half), sin(ctr - half)) * rng, ac, 1.0 * lw)
 				_ships.draw_line(p, p + Vector2(cos(ctr + half), sin(ctr + half)) * rng, ac, 1.0 * lw)
@@ -955,6 +963,13 @@ func _build_hud() -> void:
 	top.add_theme_constant_override("separation", 6)
 	top.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(top)
+	var desk := BTheme.desktop(get_viewport_rect().size.x)
+	if desk:
+		var em := Kit.emblem(CData.pack, 40.0)
+		em.name = "bar_emblem"
+		em.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		em.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		top.add_child(em)
 	_rose = Control.new()
 	_rose.custom_minimum_size = Vector2(150, 56)
 	_rose.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -965,7 +980,9 @@ func _build_hud() -> void:
 	mid.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	mid.add_theme_constant_override("separation", 0)
 	top.add_child(mid)
-	var tl := Kit.label(title_text, Kit.FONT_SMALL, Kit.COL_GOLD)
+	# Desktop: the setting's emblem at the left of the bar and the title in the title face (18); phones as before.
+	var tl: Label = Kit.title(title_text, 18) if desk else Kit.label(title_text, Kit.FONT_SMALL, Kit.COL_GOLD)
+	tl.name = "sea_title"
 	tl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	tl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	tl.clip_text = true
@@ -975,25 +992,40 @@ func _build_hud() -> void:
 	_clock_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_clock_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	mid.add_child(_clock_lbl)
-	var sp := HBoxContainer.new()
-	sp.add_theme_constant_override("separation", 2)
-	top.add_child(sp)
+	# The speeds: one capsule (II 1x 2x 4x, the one in force lit); each press acts, even on the lit one (II toggles).
+	_speed_lit = SPEEDS.find(speed_q)
+	_speed_seg = BTheme.capsule([["II", 0], ["1x", 1], ["2x", 2], ["4x", 3]], func(i: int): _on_speed(SPEEDS[i]), "sea_speed",
+		Kit.FONT_SMALL, 40.0, 34.0, _speed_lit)
+	var stips := [["Pause", "Hold the battle (the guns and the wind stop)."], ["Normal speed", "Real time."], ["Twice as fast", "2x."],
+		["Four times as fast", "4x, to close a long chase."]]
 	for i in SPEEDS.size():
-		var q: int = SPEEDS[i]
-		var b := Kit.button(["II", "1x", "2x", "4x"][i], func(): _on_speed(q), 40, Kit.FONT_SMALL)
-		b.name = "sea_speed_%d" % i
-		b.custom_minimum_size.y = 34
-		sp.add_child(b)
-		_speed_btns.append(b)
+		var sb: Button = _speed_seg.buttons()[i]
+		Kit.tip(sb, stips[i][0], stips[i][1])
+		_speed_btns.append(sb)
+	top.add_child(_speed_seg)
 	_book_btn = Kit.icon_button("Ships", "units", _open_book, 64, Kit.FONT_SMALL)
 	_book_btn.name = "sea_book_button"
-	_book_btn.tooltip_text = "Ship book: points of sail, sails, shot, boarding and every ship's numbers"
+	Kit.tip(_book_btn, "Ship book", "Points of sail, sails, shot, boarding and every ship's numbers.")
 	_book_btn.custom_minimum_size.y = 34
+	BTheme.plate(_book_btn, false, false, false)
 	top.add_child(_book_btn)
+	_key_btn = Kit.icon_button("Key", "key", func(): _set_key(_key_panel == null or not _key_panel.visible), 60, Kit.FONT_SMALL)
+	_key_btn.name = "sea_key_button"
+	Kit.tip(_key_btn, "Key", "What each line and marker on the water means.")
+	_key_btn.custom_minimum_size.y = 34
+	BTheme.plate(_key_btn, false, false, false)
+	top.add_child(_key_btn)
 	var lv := Kit.button("Leave", _ask_leave, 64, Kit.FONT_SMALL)
 	lv.name = "sea_leave"
+	Kit.tip(lv, "Leave", "Withdraw from the battle. It counts as lost.")
 	lv.custom_minimum_size.y = 34
+	BTheme.plate(lv, false, false, false)
 	top.add_child(lv)
+	var brule := BTheme.bar_rule()
+	brule.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	brule.offset_top = 62.0
+	brule.offset_bottom = 63.0
+	root.add_child(brule)
 	# Event messages under the top bar.
 	_msg_lbl = Kit.label("", Kit.FONT_SMALL, Color.WHITE, true)
 	_msg_lbl.set_anchors_preset(Control.PRESET_TOP_WIDE)
@@ -1061,6 +1093,19 @@ func _build_hud() -> void:
 	_bar.alignment = FlowContainer.ALIGNMENT_CENTER
 	bot.add_child(_bar)
 	bot.add_child(_hint_lbl)  # (under the row)
+	_key_panel = SeaKey.KeyPanel.new(_side_col(player_side))
+	_key_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_key_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_key_panel.offset_top = 68.0
+	_key_panel.offset_right = -6.0
+	_key_panel.offset_left = -6.0 - minf(340.0, get_viewport_rect().size.x - 12.0)
+	_key_panel.offset_bottom = 68.0 + minf(420.0, get_viewport_rect().size.y - 160.0)
+	_key_panel.toggled.connect(_set_key)
+	_key_panel.visible = SeaKey.load_pref()
+	root.add_child(_key_panel)
+	if not _key_panel.visible and not SeaKey.hinted:
+		SeaKey.hinted = true
+		_show_hint("Not sure what a line means? Tap Key, top right.")
 	book = SeaBook.new()
 	book.closed.connect(_book_closed)
 	root.add_child(book)
@@ -1141,11 +1186,27 @@ func _card_input(e: InputEvent, s: int) -> void:
 	_refresh_bar()
 
 
+## The Key panel open or closed (remembered in settings).
+func _set_key(on: bool) -> void:
+	_key_panel.visible = on
+	SeaKey.save_pref(on)
+	_count("key_open" if on else "key_close")
+
+
+## The speed capsule's lit segment (restyled only when it changes).
+func _light_speed(i: int) -> void:
+	if _speed_seg == null or i == _speed_lit:
+		return
+	_speed_lit = i
+	_speed_seg.set_value(i)
+	for b in _speed_seg.buttons():
+		BTheme.trim_margins(b, 6.0)
+
+
 func _refresh_hud() -> void:
 	var secs := sim.tick / 10
 	_clock_lbl.text = "%d:%02d%s" % [secs / 60, secs % 60, "  paused" if speed_q == 0 else ""]
-	for i in _speed_btns.size():
-		(_speed_btns[i] as Button).modulate = Color(1, 0.85, 0.4) if SPEEDS[i] == speed_q else Color.WHITE
+	_light_speed(SPEEDS.find(speed_q))
 	var lines: Array[String] = []
 	for m in _msgs:
 		lines.append(str(m[0]))
@@ -1225,28 +1286,48 @@ func _refresh_bar() -> void:
 		return
 	var s0 := mine[0]
 	var ty0 := sim.s_type[s0]
-	var add := func(text: String, nm: String, on: bool, cb: Callable) -> void:
-		var h := SeaBook.order_help(nm, ty0, sim.s_fire[s0] != 0)
-		var b := Kit.button(text, func():
+	# One order: its help (title, tip, hint), the handler (a long press gives the help card, not the order).
+	var order_cb := func(h: Dictionary, cb: Callable) -> Callable:
+		return func():
 			if _lp_swallow:
 				_lp_swallow = false  # (the release of a long press: it opened the help card, not an order)
 				return
 			cb.call()
 			if str(h["hint"]) != "":
-				_show_hint(str(h["hint"])), 62, 12)
+				_show_hint(str(h["hint"]))
+	var add := func(text: String, nm: String, on: bool, cb: Callable) -> void:
+		var h := SeaBook.order_help(nm, ty0, sim.s_fire[s0] != 0)
+		var b := Kit.button(text, order_cb.call(h, cb), 62, 12)
 		b.name = nm
-		b.tooltip_text = str(h["tip"])
+		Kit.tip(b, str(h["title"]), str(h["tip"]))
 		_arm_long_help(b, h)
 		b.custom_minimum_size.y = 32
-		if on:
-			b.modulate = Color(1, 0.85, 0.4)
+		BTheme.plate(b, false, on, false)   # (Kit.button has the motion already; lit when the order is on)
 		_bar.add_child(b)
-	add.call("Full sail", "sea_full", sim.s_sail[s0] == 2, func(): _orders_all(SeaSim.O_SAILS, {"on": 2}))
-	add.call("Battle sail", "sea_battle_sail", sim.s_sail[s0] == 1, func(): _orders_all(SeaSim.O_SAILS, {"on": 1}))
-	add.call("Heave to", "sea_stop", sim.s_sail[s0] == 0, func(): _orders_all(SeaSim.O_SAILS, {"on": 0}))
-	add.call("Round", "sea_round", sim.s_shot[s0] == ST.SHOT_ROUND, func(): _orders_all(SeaSim.O_SHOT, {"on": ST.SHOT_ROUND}))
-	add.call("Chain", "sea_chain", sim.s_shot[s0] == ST.SHOT_CHAIN, func(): _orders_all(SeaSim.O_SHOT, {"on": ST.SHOT_CHAIN}))
-	add.call("Grape", "sea_grape", sim.s_shot[s0] == ST.SHOT_GRAPE, func(): _orders_all(SeaSim.O_SHOT, {"on": ST.SHOT_GRAPE}))
+	# The sail settings and the shot kinds are choices of one: a capsule each, the one in force lit, the labels as before.
+	var group := func(items: Array) -> void:   # [[text, name, on, cb], ...]
+		var opts: Array = []
+		var lit = null
+		var by := {}
+		for it in items:
+			opts.append([it[0], it[1]])
+			if it[2]:
+				lit = it[1]
+			by[it[1]] = [SeaBook.order_help(str(it[1]), ty0, sim.s_fire[s0] != 0), it[3]]
+		var sg := BTheme.capsule(opts, func(nm: String): order_cb.call(by[nm][0], by[nm][1]).call(), "", 12, 62.0, 32.0, lit)
+		for gb in sg.buttons():
+			var gn: String = str(gb.get_meta("seg_value"))
+			gb.name = gn
+			var gh: Dictionary = by[gn][0]
+			Kit.tip(gb, str(gh["title"]), str(gh["tip"]))
+			_arm_long_help(gb, gh)
+		_bar.add_child(sg)
+	group.call([["Full sail", "sea_full", sim.s_sail[s0] == 2, func(): _orders_all(SeaSim.O_SAILS, {"on": 2})],
+		["Battle sail", "sea_battle_sail", sim.s_sail[s0] == 1, func(): _orders_all(SeaSim.O_SAILS, {"on": 1})],
+		["Heave to", "sea_stop", sim.s_sail[s0] == 0, func(): _orders_all(SeaSim.O_SAILS, {"on": 0})]])
+	group.call([["Round", "sea_round", sim.s_shot[s0] == ST.SHOT_ROUND, func(): _orders_all(SeaSim.O_SHOT, {"on": ST.SHOT_ROUND})],
+		["Chain", "sea_chain", sim.s_shot[s0] == ST.SHOT_CHAIN, func(): _orders_all(SeaSim.O_SHOT, {"on": ST.SHOT_CHAIN})],
+		["Grape", "sea_grape", sim.s_shot[s0] == ST.SHOT_GRAPE, func(): _orders_all(SeaSim.O_SHOT, {"on": ST.SHOT_GRAPE})]])
 	add.call("Fire at will" if sim.s_fire[s0] != 0 else "Hold fire", "sea_fire", sim.s_fire[s0] != 0,
 		func(): _orders_all(SeaSim.O_FIRE, {"on": 0 if sim.s_fire[s0] != 0 else 1}))
 	add.call("Board", "sea_board", arm == "board", func():
@@ -1334,7 +1415,7 @@ func _open_help_card(h: Dictionary) -> void:
 		if (e is InputEventMouseButton and e.pressed) or (e is InputEventScreenTouch and e.pressed):
 			_close_help_card())
 	root.add_child(_help_catch)
-	var p := Kit.panel(Color(0.08, 0.1, 0.12, 0.96), 12)
+	var p := Kit.trim_panel(Color(Kit.PANEL_BG, 0.97), 14)   # the kit's tip plate, with the whole help as its body
 	p.name = "sea_help_card"
 	p.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
 	p.grow_horizontal = Control.GROW_DIRECTION_BOTH
@@ -1342,8 +1423,11 @@ func _open_help_card(h: Dictionary) -> void:
 	p.offset_bottom = -(_bar.get_global_rect().size.y + _info.get_global_rect().size.y + 14)
 	var v := Kit.vbox(6)
 	p.add_child(v)
-	v.add_child(Kit.label(str(h["title"]), Kit.FONT_TITLE, Kit.COL_GOLD))
-	v.add_child(Kit.label(str(h["tip"]), Kit.FONT, Color.WHITE, true))
+	var ht := Kit.title(str(h["title"]), 18)
+	ht.name = "sea_help_title"
+	v.add_child(ht)
+	v.add_child(Kit.rule())
+	v.add_child(Kit.label(str(h["tip"]), Kit.FONT, Kit.COL_BONE, true))
 	if str(h["more"]) != "":
 		v.add_child(Kit.label(str(h["more"]), Kit.FONT_SMALL, Color(0.82, 0.88, 0.92), true))
 	v.add_child(Kit.label("Tap anywhere to close.", Kit.FONT_SMALL, Kit.COL_DIM))
@@ -1458,9 +1542,9 @@ func _draw_rose() -> void:
 	var wt := _wind_to()
 	var tail := c - wt * (r - 4)
 	var tip := c + wt * (r - 4)
-	_rose.draw_line(tail, tip, Color(0.6, 0.85, 1.0), 3.0, true)
+	_rose.draw_line(tail, tip, SeaKey.col("wind"), 3.0, true)
 	var side := Vector2(-wt.y, wt.x)
-	_rose.draw_colored_polygon(PackedVector2Array([tip + wt * 3, tip - wt * 8 + side * 6, tip - wt * 8 - side * 6]), Color(0.6, 0.85, 1.0))
+	_rose.draw_colored_polygon(PackedVector2Array([tip + wt * 3, tip - wt * 8 + side * 6, tip - wt * 8 - side * 6]), SeaKey.col("wind"))
 	var brg := SeaSim.angle_to_bearing(sim.w_from)
 	var names := ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 	var nm: String = names[int(round(brg / 45.0)) % 8]
@@ -1474,13 +1558,18 @@ func _draw_rose() -> void:
 func _show_end() -> void:
 	_end_shown = true
 	var won := sim.winner == player_side
-	var p := Kit.panel(Color(0.08, 0.1, 0.12, 0.94), 14)
+	var p := Kit.trim_panel(Color(Kit.PANEL_BG, 0.97), 18)
+	p.name = "sea_end_panel"
 	p.set_anchors_preset(Control.PRESET_CENTER)
 	p.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	p.grow_vertical = Control.GROW_DIRECTION_BOTH
 	var v := Kit.vbox(8)
 	p.add_child(v)
-	v.add_child(Kit.label("VICTORY" if won else "DEFEAT", 24, Kit.COL_GOOD if won else Kit.COL_BAD))
+	var et := Kit.title("VICTORY" if won else "DEFEAT", 28, Kit.COL_GOOD if won else Kit.COL_BAD)
+	et.name = "sea_end_title"
+	et.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(et)
+	v.add_child(Kit.rule())
 	var r := sim.result()
 	for sd in [player_side, 1 - player_side]:
 		var t: Dictionary = r["sides"][sd]
@@ -1506,16 +1595,21 @@ func _ask_leave() -> void:
 		return
 	if _leave_dlg != null:
 		return
-	var p := Kit.panel(Color(0.08, 0.1, 0.12, 0.95), 14)
+	var p := Kit.trim_panel(Color(Kit.PANEL_BG, 0.97), 18)
+	p.name = "sea_leave_panel"
 	p.set_anchors_preset(Control.PRESET_CENTER)
 	p.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	p.grow_vertical = Control.GROW_DIRECTION_BOTH
 	var v := Kit.vbox(8)
 	p.add_child(v)
-	var txt := "Leave the battle? It counts as lost: your ships still fighting make their escape, the struck are taken."
+	var lt := Kit.title("Leave the battle?", 22)
+	lt.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(lt)
+	v.add_child(Kit.rule())
+	var txt := "It counts as lost: your ships still fighting make their escape, the struck are taken."
 	if coop != null and _coop_others_in():
-		txt = "Leave the battle? Your ships go to %s." % _coop_heir_name()
-	v.add_child(Kit.label(txt, Kit.FONT, Color.WHITE, true))
+		txt = "Your ships go to %s." % _coop_heir_name()
+	v.add_child(Kit.label(txt, Kit.FONT, Kit.COL_BONE, true))
 	var h := Kit.hbox(8)
 	h.add_child(Kit.button("Leave", func(): exit_requested.emit(), 100))
 	h.add_child(Kit.button("Stay", func():
@@ -1825,15 +1919,9 @@ func _coop_hud_tick() -> void:
 	var ls = coop.ls
 	if ls != null:
 		var mine_q: int = ls.vote_speed_q if ls.vote_speed_by == coop.me else -1
+		_light_speed(0 if ls.paused != 0 else SPEEDS.find(ls.speed_q))
 		for i in _speed_btns.size():
-			var q: int = SPEEDS[i]
-			var b: Button = _speed_btns[i]
-			if q == 0:
-				b.modulate = Color(1, 0.85, 0.4) if ls.paused != 0 else Color.WHITE
-			elif q == mine_q:
-				b.modulate = Color(0.7, 0.9, 1.0)
-			else:
-				b.modulate = Color(1, 0.85, 0.4) if q == ls.speed_q and ls.paused == 0 else Color.WHITE
+			(_speed_btns[i] as Button).modulate = Color(0.7, 0.9, 1.0) if SPEEDS[i] != 0 and SPEEDS[i] == mine_q else Color.WHITE   # (this player's open vote)
 	if _cont_btn != null and _cont_btn.disabled and (ls == null or coop.final_frame >= 0):
 		_cont_btn.disabled = false
 		_cont_btn.text = "Continue"

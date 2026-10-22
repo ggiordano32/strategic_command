@@ -11,6 +11,9 @@ signal speed_pressed
 ## final: the finger / button was released (co-op votes only then).
 signal speed_chosen(q: int, final: bool)
 signal menu_pressed
+## The top-right Menu / Leave / End battle button (battle.gd: the Menu overlay, the Leave ask or End battle); menu_pressed is
+## "back to the menu" (the result panels' Back to menu buttons).
+signal menu_button_pressed
 signal run_pressed
 signal halt_pressed
 signal fire_pressed
@@ -56,7 +59,9 @@ const UnitBook := preload("res://game/unit_book.gd")
 const Controls := preload("res://game/controls.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const Traits := preload("res://game/unit_traits.gd")
+const BTheme := preload("res://game/battle_theme.gd")
 const CONFIRM_SEC := 3.0
+const BANNER_SIZE := 30   # the end banner (Cinzel); the pursuit line is 20
 const LONG_PRESS_SEC := 0.5
 # Layout in logical pixels (game/ui_scale.gd turns them into device sizes).
 const BTN_H := 42.0
@@ -162,6 +167,12 @@ var _sim
 var _player_side := 0
 var _root: Control
 var _top: HBoxContainer
+## The top bar's dressing: a gold rule, and (desktop) the setting's emblem and the battle's name (set_title).
+var bar_rule: Control
+var title_block: HBoxContainer = null
+var _left: HBoxContainer
+var _title_pack := ""
+var _title_text := ""
 var _bottom: VBoxContainer
 var book: UnitBook
 var book_button: Button
@@ -200,10 +211,15 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	# full readout, shown below the top bar so it never sits under a button.
 	stats_button = _button("...", Vector2(0, BTN_H))
 	stats_button.add_theme_font_size_override("font_size", FONT_SMALL)
-	stats_button.position = Vector2(MARGIN, MARGIN)
-	stats_button.tooltip_text = "Performance: tap for details"
+	Kit.tip(stats_button, "Performance", "Frame rate and tick time. Tap for the full readout.")
 	stats_button.pressed.connect(func(): set_stats_expanded(not stats_expanded))
-	root.add_child(stats_button)
+	_left = HBoxContainer.new()   # (the readout, then on a desktop the battle's emblem and name)
+	_left.name = "top_left"
+	_left.position = Vector2(MARGIN, MARGIN)
+	_left.add_theme_constant_override("separation", 14)
+	_left.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(_left)
+	_left.add_child(stats_button)
 	_ui_controls.append(stats_button)
 	stats_panel = PanelContainer.new()
 	stats_panel.add_theme_stylebox_override("panel", _box(Color(0, 0, 0, 0.6)))
@@ -224,37 +240,45 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	top.add_theme_constant_override("separation", int(GAP))
 	root.add_child(top)
 	book_button = _button("Units", Vector2(64, BTN_H), "units")
-	book_button.tooltip_text = "Unit book: what every unit type does"
+	Kit.tip(book_button, "Unit book", "What every unit type does.")
 	book_button.pressed.connect(func(): book_pressed.emit())
 	orders_button = _button("Orders", Vector2(78, BTN_H), "move")
 	orders_button.toggle_mode = true
-	orders_button.tooltip_text = "Show where every unit is headed"
+	BTheme.plate(orders_button, true)
+	Kit.tip(orders_button, "Orders", "Show where every unit is headed.")
 	orders_button.toggled.connect(func(on: bool):
 		set_orders_text(on)
 		orders_toggled.emit(on))
 	pause_button = _button("Pause", Vector2(74, BTN_H))
 	pause_button.pressed.connect(func(): pause_pressed.emit())
 	speed_button = _button("1x", Vector2(50, BTN_H))
-	speed_button.tooltip_text = "Battle speed: tap for the slider (+ / - keys)"
+	Kit.tip(speed_button, "Battle speed", "Opens the slider. The + and - keys step it.")
 	speed_button.pressed.connect(func():
 		set_speed_panel_open(not speed_panel.visible)
 		speed_pressed.emit())
 	withdraw_all_button = _button("Withdraw army", Vector2(0, BTN_H), "withdraw")
-	withdraw_all_button.tooltip_text = "Every unit leaves the battle (tap twice)"
+	Kit.tip(withdraw_all_button, "Withdraw army", "Every unit leaves the battle. Tap twice to confirm.")
 	withdraw_all_button.pressed.connect(_on_withdraw_all)
 	withdraw_all_button.disabled = not interactive
 	var menu := _button("", Vector2(50, BTN_H), "menu")
 	menu.name = "menu"
-	menu.tooltip_text = "Menu"
-	menu.pressed.connect(func(): menu_pressed.emit())
+	Kit.tip(menu, "Menu", "Resume, options, controls, or leave the battle.")
+	menu.pressed.connect(func(): menu_button_pressed.emit())
 	menu_button = menu
 	controls_button = _button("Keys", Vector2(54, BTN_H), "key")
-	controls_button.tooltip_text = "Controls: every touch, mouse and key input (F1)"
+	Kit.tip(controls_button, "Controls", "Every touch, mouse and key input (F1).")
 	controls_button.pressed.connect(func(): controls_pressed.emit())
 	for b in [withdraw_all_button, book_button, controls_button, orders_button, pause_button, speed_button, menu]:
 		top.add_child(b)
 	_top = top
 	_ui_controls.append(top)
+	# A gold rule under the top bar; on a desktop the setting's emblem and the battle's name in the title face.
+	bar_rule = BTheme.bar_rule()
+	bar_rule.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	bar_rule.offset_top = MARGIN + BTN_H + 3.0
+	bar_rule.offset_bottom = bar_rule.offset_top + 1.0
+	root.add_child(bar_rule)
+	get_viewport().size_changed.connect(_layout_title)
 
 	# Bottom: a row with the group buttons (left) and the selection's
 	# actions (right), then the unit cards in as many rows as they need.
@@ -275,37 +299,44 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	var groups := HBoxContainer.new()
 	groups.add_theme_constant_override("separation", int(GAP))
 	row.add_child(groups)
-	for kind in ["All", "Inf", "Missile", "Cav"]:
-		var gb := _button(kind, Vector2(54, BTN_H))
-		gb.tooltip_text = "Select all %s units" % kind.to_lower()
-		if kind == "Missile":
-			gb.tooltip_text = "Select all missile units and artillery"
-		gb.pressed.connect(func(): group_pressed.emit(kind.to_lower()))
+	# All / Inf / Missile / Cav / None: one capsule (momentary segments, nothing stays lit).
+	var gsel := BTheme.capsule([["All", "all"], ["Inf", "inf"], ["Missile", "missile"], ["Cav", "cav"], ["None", "none"]],
+		func(kind: String):
+			if kind == "none":
+				deselect_pressed.emit()
+			else:
+				group_pressed.emit(kind), "group", FONT, 50.0, BTN_H)
+	gsel.name = "group_capsule"
+	var gtips := {"all": ["Select all", "Every unit you command."], "inf": ["Infantry", "Select all infantry units."],
+		"missile": ["Missile troops", "Select all missile units and artillery."], "cav": ["Cavalry", "Select all cavalry units."],
+		"none": ["Deselect", "Clear the selection (Esc)."]}
+	for gb in gsel.buttons():
+		var gk: String = str(gb.get_meta("seg_value"))
+		Kit.tip(gb, gtips[gk][0], gtips[gk][1])
 		gb.disabled = not interactive
-		groups.add_child(gb)
-		group_buttons[kind.to_lower()] = gb
+		if gk == "none":
+			deselect_button = gb
+			gb.name = "deselect"
+		else:
+			group_buttons[gk] = gb
+	groups.add_child(gsel)
 	add_button = _button("Add", Vector2(58, BTN_H), "plus")
 	add_button.toggle_mode = true
-	add_button.tooltip_text = "Taps on units or cards add to / remove from the selection"
+	BTheme.plate(add_button, true)
+	Kit.tip(add_button, "Add", "Taps on units or cards add to, or remove from, the selection.")
 	add_button.toggled.connect(func(on: bool): add_toggled.emit(on))
 	add_button.disabled = not interactive
 	groups.add_child(add_button)
-	deselect_button = _button("", Vector2(54, BTN_H), "deselect")
-	deselect_button.name = "deselect"
-	deselect_button.tooltip_text = "Deselect all (Esc)"
-	deselect_button.pressed.connect(func(): deselect_pressed.emit())
-	deselect_button.disabled = not interactive
-	groups.add_child(deselect_button)
 	undo_button = _button("Undo", Vector2(58, BTN_H))
 	undo_button.name = "undo"
-	undo_button.tooltip_text = "Undo the last order (Ctrl+Z)"
+	Kit.tip(undo_button, "Undo", "Take back the last order (Ctrl+Z).")
 	undo_button.pressed.connect(func(): undo_pressed.emit())
 	undo_button.disabled = not interactive
 	undo_button.visible = false
 	groups.add_child(undo_button)
 	kill_button = _button("Kill elephant", Vector2(0, BTN_H), "kill_beast")
 	kill_button.name = "kill_beast"
-	kill_button.tooltip_text = "Your elephants are running amok: their drivers kill them (5 s) before they trample more of your men"
+	Kit.tip(kill_button, "Kill elephants", "Their drivers kill the rampaging elephants in 5 s, before more of your men are trampled.")
 	kill_button.pressed.connect(func(): kill_pressed.emit())
 	kill_button.visible = false
 	kill_button.disabled = not interactive
@@ -338,77 +369,81 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	row.add_child(carry_note)
 	row.move_child(carry_note, actions.get_index())  # (left of the order buttons)
 	run_button = _button("Run: off", Vector2(0, BTN_H), "run")
+	Kit.tip(run_button, "Run", "Run or walk: the selection's pace.")
 	run_button.pressed.connect(func(): run_pressed.emit())
 	halt_button = _button("Halt", Vector2(54, BTN_H), "cancel")
+	Kit.tip(halt_button, "Halt", "Stop where they stand and drop their orders.")
 	halt_button.pressed.connect(func(): halt_pressed.emit())
 	fire_button = _button("Fire: at will", Vector2(0, BTN_H), "fire")
-	fire_button.tooltip_text = "Missile troops: fire at will, or hold fire"
+	Kit.tip(fire_button, "Fire", "Missile troops fire at will, or hold fire.")
 	fire_button.pressed.connect(func(): fire_pressed.emit())
 	skirm_button = _button("Skirmish: on", Vector2(0, BTN_H), "skirmish")
-	skirm_button.tooltip_text = "Missile troops fall back from approaching melee troops"
+	Kit.tip(skirm_button, "Skirmish", "Missile troops fall back from approaching melee troops.")
 	skirm_button.pressed.connect(func(): skirmish_pressed.emit())
 	stance_button = _button("Stance: Line", Vector2(0, BTN_H), "stance_line")
-	stance_button.tooltip_text = "Line: keep the formation. Take cover: men go to cover spots when standing or shooting. Hold street: lines fill the street across their front, skirmishers hold its corners."
+	Kit.tip(stance_button, "Stance", "Line keeps the formation. Cover takes cover spots. Hold street fills the street.")
 	stance_button.pressed.connect(func(): stance_pressed.emit())
 	stance_button.visible = false
 	bounds_button = _button("Bounds: off", Vector2(0, BTN_H), "bound")
-	bounds_button.tooltip_text = "Advance by bounds: half the men run to the next cover while the others shoot, then they swap (lines advance in hops)."
+	Kit.tip(bounds_button, "Bounds", "Half the men run to the next cover while the others shoot, then they swap.")
 	bounds_button.pressed.connect(func(): bounds_pressed.emit())
 	bounds_button.visible = false
 	occupy_button = _button("Occupy", Vector2(0, BTN_H), "inside")
 	occupy_button.name = "occupy"
-	occupy_button.tooltip_text = "Foot in a West town: go into the nearest house, tavern or store and hold it - men at the windows and on the roof shoot from there, two hold the door (I). Leave: out by the door."
+	Kit.tip(occupy_button, "Occupy", "Hold the nearest house, tavern or store: men at the windows and roof shoot, two hold the door (I). Leave goes out by the door.")
 	occupy_button.pressed.connect(func(): occupy_pressed.emit())
 	occupy_button.visible = false
 	deploy_button = _button("Deploy: on", Vector2(0, BTN_H), "deploy")
-	deploy_button.tooltip_text = "Artillery: set up to shoot, or pack up to move (takes time either way)"
+	Kit.tip(deploy_button, "Deploy", "Artillery sets up to shoot or packs up to move. Both take time.")
 	deploy_button.pressed.connect(func(): deploy_pressed.emit())
 	refill_button = _button("Refill: off", Vector2(0, BTN_H), "pick_up")
-	refill_button.tooltip_text = "Artillery: bring up shots from the baggage; missile troops and batteries near an ammunition wagon: refill from it (cannot move or shoot meanwhile)"
+	Kit.tip(refill_button, "Refill", "Artillery brings up shots from the baggage; missile troops refill at an ammunition wagon. No moving or shooting meanwhile.")
 	refill_button.pressed.connect(func(): refill_pressed.emit())
 	ammo_button = _button("Ammo: arrows", Vector2(0, BTN_H), "ammo")
 	ammo_button.name = "ammo"
-	ammo_button.tooltip_text = "Units with a second ammunition kind (fire arrows, heavy bolts ...): shoot it, or the standard kind (V)"
+	Kit.tip(ammo_button, "Ammunition", "Shoot the second kind (fire arrows, heavy bolts) or the standard one (V).")
 	ammo_button.pressed.connect(func(): ammo_pressed.emit())
 	forage_button = _button("Forage: off", Vector2(0, BTN_H), "forage")
 	forage_button.name = "forage"
-	forage_button.tooltip_text = "Missile troops in woods: make arrows / javelins for their quivers, slowly; they cannot move or shoot meanwhile (J)"
+	Kit.tip(forage_button, "Forage", "Missile troops in woods make arrows or javelins, slowly. No moving or shooting meanwhile (J).")
 	forage_button.pressed.connect(func(): forage_pressed.emit())
 	man_wall_button = _button("Man the wall", Vector2(0, BTN_H), "wall_up")
-	man_wall_button.tooltip_text = "Up onto the nearest stretch of wall (facing the enemy) by its stair (M)"
+	Kit.tip(man_wall_button, "Man the wall", "Climb the nearest stretch of wall by its stair, facing the enemy (M).")
 	man_wall_button.pressed.connect(func(): man_wall_pressed.emit())
 	man_wall_button.visible = false
 	come_down_button = _button("Come down", Vector2(0, BTN_H), "wall_down")
-	come_down_button.tooltip_text = "Down off the wall by a stair, into the street just inside it (Shift+M)"
+	Kit.tip(come_down_button, "Come down", "Leave the wall by a stair, into the street inside it (Shift+M).")
 	come_down_button.pressed.connect(func(): come_down_pressed.emit())
 	come_down_button.visible = false
 	drop_button = _button("Drop", Vector2(0, BTN_H), "drop")
-	drop_button.tooltip_text = "Put down the ladders, the ram, a wagon or engines where the unit stands, free to fight (X); any foot unit takes it up again (tap it)"
+	Kit.tip(drop_button, "Drop", "Put down the ladders, ram, wagon or engines where the unit stands (X). Any foot unit takes them up again.")
 	drop_button.pressed.connect(func(): drop_pressed.emit())
 	drop_button.visible = false
 	release_button = _button("Release: 0", Vector2(0, BTN_H), "release")
 	release_button.name = "release"
 	release_button.toggle_mode = true
-	release_button.tooltip_text = "War dogs: let the pack loose, then tap an enemy unit within 80 m (U); they come back when no enemy is near"
+	BTheme.plate(release_button, true)
+	Kit.tip(release_button, "Release", "Let the war dogs loose, then tap an enemy unit within 80 m (U).")
 	release_button.pressed.connect(func(): release_pressed.emit())
 	release_button.visible = false
-	for a in [["sabotage", "Sabotage", "fire", "Assassin: tap an enemy battery (he wrecks its engines) or a shut gate (he unbars it from inside) (Shift+B)"],
-			["attempt", "Attempt", "dagger", "Assassin: tap an enemy hero or general: one strike, 40 % kills, 30 % wounds (T)"],
-			["parley", "Parley", "scroll", "Diplomat: tap a routing or wavering enemy unit: it may surrender (Shift+P)"]]:
+	for a in [["sabotage", "Sabotage", "fire", "Assassin: tap an enemy battery to wreck its engines, or a shut gate to unbar it from inside (Shift+B)."],
+			["attempt", "Attempt", "dagger", "Assassin: tap an enemy hero or general. One strike: 40 % kills, 30 % wounds (T)."],
+			["parley", "Parley", "scroll", "Diplomat: tap a routing or wavering enemy unit. It may surrender (Shift+P)."]]:
 		var act: String = a[0]
 		var cb := _button(str(a[1]), Vector2(0, BTN_H), str(a[2]))
 		cb.name = "char_" + act
 		cb.toggle_mode = true
-		cb.tooltip_text = str(a[3])
+		BTheme.plate(cb, true)
+		Kit.tip(cb, str(a[1]), str(a[3]))
 		cb.pressed.connect(func(): char_pressed.emit(act))
 		cb.visible = false
 		char_buttons[act] = cb
 	withdraw_button = _button("Withdraw", Vector2(0, BTN_H), "withdraw")
-	withdraw_button.tooltip_text = "Leave the battle by your own map edge"
+	Kit.tip(withdraw_button, "Withdraw", "Leave the battle by your own map edge.")
 	withdraw_button.pressed.connect(func(): withdraw_pressed.emit())
 	# Live co-op: give the selected units to the ally (hidden otherwise).
 	gift_button = _button("Gift", Vector2(0, BTN_H), "gift")
-	gift_button.tooltip_text = "Give the selected units to your ally (they can give them back)"
+	Kit.tip(gift_button, "Gift", "Give the selected units to your ally. They can give them back.")
 	gift_button.pressed.connect(func(): gift_pressed.emit())
 	gift_button.visible = false
 	for b in [run_button, halt_button, fire_button, skirm_button, stance_button, bounds_button, occupy_button, ammo_button, deploy_button, refill_button,
@@ -473,12 +508,17 @@ func build(sim, player_side: int, interactive: bool) -> void:
 
 	# Result banner, top centre.
 	banner = Label.new()
+	banner.name = "banner"
 	banner.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
 	banner.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	banner.position.y = BTN_H + 3 * MARGIN
-	banner.add_theme_font_size_override("font_size", 32)
-	banner.add_theme_color_override("font_outline_color", Color.BLACK)
-	banner.add_theme_constant_override("outline_size", 8)
+	banner.add_theme_font_size_override("font_size", BANNER_SIZE)
+	var bf := Kit.title_font()
+	if bf != null:
+		banner.add_theme_font_override("font", bf)   # Victory / Defeat / Draw in the title face over a trim plate
+	banner.add_theme_color_override("font_color", Kit.COL_GOLD)
+	banner.add_theme_stylebox_override("normal", Kit.trim_box(Color(Kit.PANEL_BG, 0.88), 16.0))
+	banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	banner.visible = false
 	root.add_child(banner)
@@ -510,7 +550,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 
 	# Benchmark summary panel, centre.
 	bench_panel = PanelContainer.new()
-	bench_panel.add_theme_stylebox_override("panel", _box(Color(0, 0, 0, 0.8)))
+	bench_panel.add_theme_stylebox_override("panel", Kit.trim_box(Kit.PANEL_BG, 14.0))
 	bench_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	bench_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	bench_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
@@ -528,7 +568,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 
 	# Battle result panel, centre.
 	result_panel = PanelContainer.new()
-	result_panel.add_theme_stylebox_override("panel", _box(Color(0, 0, 0, 0.82)))
+	result_panel.add_theme_stylebox_override("panel", Kit.trim_box(Color(Kit.PANEL_BG, 0.97), 16.0))
 	result_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	result_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	result_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
@@ -537,10 +577,11 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	var rvb := VBoxContainer.new()
 	rvb.add_theme_constant_override("separation", 8)
 	result_panel.add_child(rvb)
-	result_title = Label.new()
-	result_title.add_theme_font_size_override("font_size", 20)
+	result_title = Kit.title("", 22)
+	result_title.name = "result_title"
 	result_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	rvb.add_child(result_title)
+	rvb.add_child(Kit.rule())
 	var rscroll := TouchScroll.new()
 	rscroll.custom_minimum_size = Vector2(560, 240)
 	rscroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -572,7 +613,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 
 	# Deployment bar, top centre under the buttons.
 	deploy_panel = PanelContainer.new()
-	deploy_panel.add_theme_stylebox_override("panel", _box(Color(0.03, 0.08, 0.16, 0.85)))
+	deploy_panel.add_theme_stylebox_override("panel", Kit.trim_box(Kit.PANEL_BG, 10.0))
 	deploy_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
 	deploy_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	deploy_panel.position.y = BTN_H + 2 * MARGIN
@@ -586,7 +627,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	deploy_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	dh.add_child(deploy_label)
 	ready_button = _button("Start battle", Vector2(130, BTN_H), "battles")
-	ready_button.tooltip_text = "Ready: the battle starts when every player is ready, or when the time runs out (Enter)"
+	Kit.tip(ready_button, "Start battle", "The battle starts when every player is ready, or when the time runs out (Enter).")
 	ready_button.pressed.connect(func(): ready_pressed.emit())
 	dh.add_child(ready_button)
 	_ui_controls.append(deploy_panel)
@@ -595,7 +636,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	# the count left to place, then Rotate and Remove (toggles: the mode the
 	# next tap or drag on the field uses).
 	works_panel = PanelContainer.new()
-	works_panel.add_theme_stylebox_override("panel", _box(Color(0.10, 0.07, 0.03, 0.85)))
+	works_panel.add_theme_stylebox_override("panel", Kit.trim_box(Kit.PANEL_BG, 10.0))
 	works_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
 	works_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	works_panel.position.y = 2 * BTN_H + 5 * MARGIN
@@ -611,8 +652,9 @@ func build(sim, player_side: int, interactive: bool) -> void:
 		var mode: String = m[0]
 		var b := _button(m[1], Vector2(0, BTN_H), mode)
 		b.toggle_mode = true
+		BTheme.plate(b, true)
 		b.name = "works_" + mode
-		b.tooltip_text = m[2]
+		Kit.tip(b, m[1], m[2])
 		b.pressed.connect(func(): works_pressed.emit(mode))
 		wh.add_child(b)
 		works_buttons[mode] = b
@@ -631,6 +673,46 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	controls = Controls.new()
 	root.add_child(controls)
 	_ui_controls.append(controls)
+
+
+## The battle's name for the top bar (desktop only: the setting's emblem and the name in the title face).
+func set_title(text: String, pack: String) -> void:
+	_title_text = text
+	_title_pack = pack
+	if title_block != null:
+		title_block.queue_free()
+		title_block = null
+	_layout_title()
+
+
+func _layout_title() -> void:
+	if _root == null or _top == null:
+		return
+	var want := BTheme.desktop(get_viewport().get_visible_rect().size.x) and _title_text != ""
+	if not want:
+		if title_block != null:
+			title_block.visible = false
+		return
+	if title_block == null:
+		title_block = BTheme.title_block(_title_pack, _title_text)
+		title_block.name = "title_block"
+		_left.add_child(title_block)
+	title_block.visible = true
+	# (as wide as the room between the readout and the buttons on the right; the readout is about 170 px)
+	var room := get_viewport().get_visible_rect().size.x - _top.get_combined_minimum_size().x - 2.0 * MARGIN - 190.0 - 40.0 - 28.0
+	var tf: Font = Kit.title_font() if Kit.title_font() != null else ThemeDB.fallback_font
+	var tw := tf.get_string_size(_title_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x + 4.0
+	(title_block.get_node("bar_title") as Control).custom_minimum_size.x = clampf(minf(tw, room), 40.0, 520.0)
+
+
+## The end banner's colour: green for a win, red for a loss, gold otherwise.
+func tint_banner(text: String) -> void:
+	var col := Kit.COL_GOLD
+	if text.begins_with("Victory") or text == "Blue wins":
+		col = Kit.COL_GOOD
+	elif text.begins_with("Defeat") or text == "Red wins":
+		col = Kit.COL_BAD
+	banner.add_theme_color_override("font_color", col)
 
 
 ## Cards wrap into rows: as wide as fits up to CARD_MAX_W, at least
@@ -806,7 +888,7 @@ func set_card_owner(u: int, foreign: bool, col: Color, band: bool = false) -> vo
 func _build_speed_panel(root: Control) -> void:
 	speed_panel = PanelContainer.new()
 	speed_panel.name = "speed_panel"
-	speed_panel.add_theme_stylebox_override("panel", _box(Color(0.05, 0.06, 0.09, 0.92), 10.0))
+	speed_panel.add_theme_stylebox_override("panel", Kit.trim_box(Kit.PANEL_BG, 10.0))
 	speed_panel.visible = false
 	root.add_child(speed_panel)
 	var v := VBoxContainer.new()
@@ -835,17 +917,17 @@ func _build_speed_panel(root: Control) -> void:
 	speed_slider.scrollable = false  # the wheel zooms the map, never the speed
 	speed_slider.custom_minimum_size = Vector2(270, 40)
 	# Touch-sized handle and a visible track.
-	var grab := _disc(30, Color(0.92, 0.93, 0.97))
+	var grab := _disc(30, Kit.COL_BONE)
 	speed_slider.add_theme_icon_override("grabber", grab)
-	speed_slider.add_theme_icon_override("grabber_highlight", _disc(30, Color(1, 1, 1)))
+	speed_slider.add_theme_icon_override("grabber_highlight", _disc(30, Kit.COL_GOLD))
 	var track := StyleBoxFlat.new()
-	track.bg_color = Color(0.3, 0.32, 0.38)
+	track.bg_color = Color(0.28, 0.26, 0.2)
 	track.set_corner_radius_all(3)
 	track.content_margin_top = 3
 	track.content_margin_bottom = 3
 	speed_slider.add_theme_stylebox_override("slider", track)
 	var fill := track.duplicate() as StyleBoxFlat
-	fill.bg_color = Color(0.45, 0.62, 0.9)
+	fill.bg_color = Kit.COL_RULE
 	speed_slider.add_theme_stylebox_override("grabber_area", fill)
 	speed_slider.add_theme_stylebox_override("grabber_area_highlight", fill)
 	speed_slider.value_changed.connect(func(x: float):
@@ -1342,7 +1424,8 @@ func _cell(text: String, col: Color) -> Label:
 ## A HUD button; with an icon (game/ui_icons.gd) left of the text, or bare
 ## when the text is "" (Menu, Deselect).
 func _button(text: String, size: Vector2, icon: String = "") -> Button:
-	var b := Button.new()
+	Kit.install_tips()
+	var b := Kit.TipButton.new()
 	b.text = text
 	b.custom_minimum_size = size
 	b.focus_mode = Control.FOCUS_NONE
@@ -1350,6 +1433,7 @@ func _button(text: String, size: Vector2, icon: String = "") -> Button:
 	b.pressed.connect(AudioFx.click)
 	if icon != "":
 		Kit.set_icon(b, icon)
+	BTheme.plate(b)   # the nav plate and the hover / press motion; toggle buttons call plate(b, true) again
 	return b
 
 
@@ -1468,7 +1552,7 @@ class CardFace extends Control:
 			Kit.UiIcons.draw_icon(self, "general", Rect2(gx, 2, 12, 12),
 				Color(0.5, 0.5, 0.5) if state == ST_GONE else Color(1.0, 0.82, 0.25))
 		if selected:
-			draw_rect(Rect2(Vector2(1, 1), sz - Vector2(2, 2)), Color(1, 1, 1, 0.95), false, 2.0)
+			Kit.draw_trim(self, Rect2(Vector2.ZERO, sz), 2.0, 9.0, Kit.COL_GOLD)   # only the selected card is trimmed
 		elif fighting and state == ST_OK:
 			draw_rect(Rect2(Vector2(0.5, 0.5), sz - Vector2(1, 1)), Color(1, 1, 1, 0.25), false, 1.0)
 

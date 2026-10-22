@@ -17,6 +17,7 @@ const SeaSim := preload("res://sim/sea_sim.gd")
 const ST := preload("res://sim/sea_types.gd")
 const FM := preload("res://sim/fixed_math.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
+const BTheme := preload("res://game/battle_theme.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
 
 const PAGES := ["Points of sail", "Sails", "Shot", "Fighting", "Fire", "Ships"]
@@ -43,7 +44,7 @@ func _init() -> void:
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(dim)
 	var panel := PanelContainer.new()
-	panel.add_theme_stylebox_override("panel", Kit.box(Color(0.1, 0.12, 0.13, 1.0), 12, 8))
+	panel.add_theme_stylebox_override("panel", Kit.trim_box(Color(Kit.PANEL_BG, 1.0), 14.0))
 	panel.set_anchors_preset(Control.PRESET_FULL_RECT)
 	panel.offset_left = 10
 	panel.offset_top = 10
@@ -66,6 +67,7 @@ func _init() -> void:
 		b.custom_minimum_size = Vector2(150, 48)
 		b.add_theme_font_size_override("font_size", 16)
 		b.pressed.connect(show_page.bind(i))
+		BTheme.plate(b, true)
 		list.add_child(b)
 		_list.append(b)
 	var page := VBoxContainer.new()
@@ -74,7 +76,7 @@ func _init() -> void:
 	row.add_child(page)
 	var head := HBoxContainer.new()
 	page.add_child(head)
-	_title = Kit.label("Ship book", 20, Color(0.8, 0.8, 0.8))
+	_title = Kit.title("Ship book", 22)
 	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(_title)
 	close_button = Kit.button("Close", close, 90, 16)
@@ -147,7 +149,7 @@ func _p(text: String, col: Color = Color(0.9, 0.9, 0.88)) -> void:
 
 
 func _h(text: String) -> void:
-	_body.add_child(Kit.label(text, 17, Kit.COL_GOLD))
+	_body.add_child(Kit.title(text, 18))
 
 
 # ------------------------------------------------------------ the pages ---
@@ -325,7 +327,7 @@ func _page_ships() -> void:
 		p.name = "sea_book_ship_%s" % str(r["key"])
 		var v := Kit.vbox(3)
 		p.add_child(v)
-		v.add_child(Kit.label("%s  (%d m long)" % [str(r["name"]), int(r["len"])], 17, Kit.COL_GOLD))
+		v.add_child(Kit.title("%s  (%d m long)" % [str(r["name"]), int(r["len"])], 18))
 		var lines: Array[String] = []
 		if ST.is_fire(i):
 			lines.append("No guns. Crew %d, hull %d, rigging %d. Sailed at an enemy and lit near her; boarding quality %d %%." % [int(r["crew"]), int(r["hull"]), int(r["rig"]), int(r["board"])])

@@ -139,6 +139,38 @@ func _process(_d: float) -> bool:
 			_check(sb.book.find_children("sea_book_ship_*", "", true, false).size() == ST.ROWS.size(), "the Ships page lists every row (%d)" % ST.ROWS.size())
 			sb.book.close()
 			_check(not sb.book.visible and sb.speed_q == 4, "closing the book resumes the speed")
+			# The Key (owner 2026-10-22: "what the different coloured lines mean"): a bar button, a panel with a row and a
+			# drawn sample for every kind in SeaKey.KINDS, the drawing code uses only those kinds, open / closed is remembered.
+			var kb := _btn("sea_key_button")
+			_check(kb != null and kb.tooltip_text != "", "the top bar has a Key button with a tip")
+			var SK := preload("res://game/sea_key.gd")
+			var was := SK.load_pref()
+			sb._set_key(true)
+			var kp: Control = sb.find_child("sea_key_panel", true, false)
+			_check(kp != null and kp.visible and SK.load_pref(), "the Key opens and is remembered open")
+			var missing: Array = []
+			for id in SK.ids():
+				var row: Node = kp.find_child("sea_key_row_" + str(id), true, false)
+				if row == null or row.find_children("*", "Control", true, false).is_empty():
+					missing.append(id)
+			_check(missing.is_empty(), "the Key has a row with a sample for every kind (%d kinds; missing %s)" % [SK.ids().size(), missing])
+			var src := FileAccess.get_file_as_string("res://game/sea_battle.gd")
+			var used := {}
+			for m in RegEx.create_from_string("SeaKey\\.col\\(\"([a-z]+)\"").search_all(src):
+				used[m.get_string(1)] = true
+			var stray: Array = []
+			for k in used:
+				if not SK.ids().has(k):
+					stray.append(k)
+			_check(not used.is_empty() and stray.is_empty(), "the drawing uses only Key kinds (%s; stray %s)" % [used.keys(), stray])
+			var distinct := {}
+			for id in ["attack", "board", "fire", "flee", "arcs", "wind"]:
+				distinct[SK.col(id).to_html()] = true
+			_check(distinct.size() == 6, "attack, boarding, fire ship, flee, guns and wind have six different colours")
+			sb._set_key(false)
+			_check(not kp.visible and not SK.load_pref(), "the Key closes and is remembered closed")
+			SK.save_pref(was)
+			_check(SK.hinted, "the first sea battle of the session pointed at the Key")
 			print("RESULT: ", "PASS" if _ok else "FAIL")
 			quit(0 if _ok else 1)
 			return true

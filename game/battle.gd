@@ -11,6 +11,8 @@ const Scenarios := preload("res://sim/scenarios.gd")
 const SoldierLayer := preload("res://game/soldier_layer.gd")
 const Overlay := preload("res://game/overlay.gd")
 const Hud := preload("res://game/hud.gd")
+const BTheme := preload("res://game/battle_theme.gd")
+const BattleMenu := preload("res://game/battle_menu.gd")
 const OrderPreview := preload("res://game/order_preview.gd")
 const Quality := preload("res://game/quality.gd")
 const TerrainLayer := preload("res://game/terrain_layer.gd")
@@ -254,6 +256,8 @@ var _field_lp_start := -1.0
 var _press_sec := 0.0          # when the primary touch went down (s)
 var _exit_timer := -1.0        # campaign battle decided: seconds until we return
 var _paused_before_controls := false
+var menu: Control = null   # the Menu overlay (built on first use)
+var _paused_before_menu := false
 const GM_MOVE_PX := 24.0      # three-finger movement before the ghost appears
 const GM_TURN_RAD := 0.14     # ... or this much twist (8 degrees)
 const GM_STEP := PI / 12.0    # wheel / Q / E turn step (15 degrees)
@@ -345,6 +349,7 @@ func _ready() -> void:
 	hud = Hud.new()
 	add_child(hud)
 	hud.build(sim, player_side, interactive)
+	hud.set_title(_hud_title(), hud.book.pack)
 	var su: Array = scn.get("units", [])
 	for k in mini(su.size(), sim.n_units):
 		if str((su[k] as Dictionary).get("label", "")) != "":
@@ -355,6 +360,7 @@ func _ready() -> void:
 		# The menu button is a bare 50 px icon; as "Leave" it needs its width
 		# back and an exit icon instead of the menu glyph.
 		hud.menu_button.text = "Leave"
+		Hud.Kit.tip(hud.menu_button, "Leave", "Withdraw from the battle. It asks first.")
 		hud.menu_button.custom_minimum_size.x = 0
 		Hud.Kit.set_icon(hud.menu_button, "withdraw")
 		# (set_icon centred the glyph while the button had no text: put it back
@@ -370,6 +376,7 @@ func _ready() -> void:
 	hud.speed_pressed.connect(func(): _count("speed_open"))
 	hud.speed_chosen.connect(_on_speed_chosen)
 	hud.menu_pressed.connect(_on_menu)
+	hud.menu_button_pressed.connect(_on_menu_button)
 	hud.run_pressed.connect(_toggle_run)
 	hud.halt_pressed.connect(_halt)
 	hud.fire_pressed.connect(_toggle_fire)
@@ -543,6 +550,50 @@ func _on_orders_toggled(on: bool) -> void:
 	_count("orders_overlay_on" if on else "orders_overlay_off")
 
 
+## The top-right button: the Menu overlay in a battle of the battles list and the custom battles; in a campaign battle
+## it is Leave (a confirm), and End battle once the battle is decided (as before).
+func _on_menu_button() -> void:
+	if campaign_mode or bench_mode or (_end_flow and sim.winner >= 0 and sim.ended == 0):
+		_on_menu()
+		return
+	_open_menu()
+
+
+## "Terrain" line for the top bar: the battle's name, then its ground.
+func _hud_title() -> String:
+	var t := ""
+	match scenario_id:
+		"campaign", "campaign_live":
+			t = "Campaign battle"
+		"custom":
+			t = "Custom battle"
+		_:
+			t = Scenarios.title(scenario_id)
+	var ter := terrain_name(sim).trim_prefix("Terrain: ")
+	return "%s - %s" % [t, ter] if t != "" else ter.capitalize()
+
+
+## The battle's Menu overlay (game/battle_menu.gd): Resume, Options, Controls, Leave the battle. Solo, the battle is
+## paused while it is open and the pause is put back on close.
+func _open_menu() -> void:
+	_count("menu_open")
+	if menu == null:
+		menu = BattleMenu.new(self, _hud_title().get_slice(" - ", 0), hud.book.pack)
+		menu.closed.connect(func(): _set_paused(_paused_before_menu))
+		hud.add_child(menu)
+		hud.add_ui_control(menu)
+	if not menu.visible:
+		_paused_before_menu = paused
+		_set_paused(true)
+	menu.open()
+	_gm_cancel()
+	overlay.preview_on = false
+	_dragging = false
+	_touches.clear()
+	_primary = -1
+	_gesture_multi = false
+
+
 func _on_menu() -> void:
 	if _end_flow and sim.winner >= 0 and sim.ended == 0:
 		_count("end_battle_button")
@@ -579,11 +630,17 @@ func _show_leave_dialog() -> void:
 		cc.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		dim.add_child(cc)
-		var pn := Hud.Kit.panel(Hud.Kit.PANEL_BG, 16.0)
+		var pn := Hud.Kit.trim_panel(Hud.Kit.PANEL_BG, 20.0)   # the dialog frame: trim, title face, rule
+		pn.name = "leave_panel"
 		cc.add_child(pn)
 		var vb := Hud.Kit.vbox(14)
 		pn.add_child(vb)
-		_leave_text = Hud.Kit.label("", Hud.Kit.FONT_TITLE, Color.WHITE, true)
+		var lt := Hud.Kit.title("Leave the battle?", 22)
+		lt.name = "leave_title"
+		lt.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		vb.add_child(lt)
+		vb.add_child(Hud.Kit.rule())
+		_leave_text = Hud.Kit.label("", Hud.Kit.FONT_TITLE, Hud.Kit.COL_BONE, true)
 		_leave_text.custom_minimum_size = Vector2(minf(340.0, get_viewport_rect().size.x - 64.0), 0)
 		vb.add_child(_leave_text)
 		var row := Hud.Kit.hbox(12)
@@ -597,15 +654,17 @@ func _show_leave_dialog() -> void:
 			_leave_now(), 120)
 		go.name = "leave_go"
 		go.add_theme_color_override("font_color", Hud.Kit.COL_BAD)
+		BTheme.plate(stay)
+		BTheme.plate(go)
 		row.add_child(stay)
 		row.add_child(go)
 		vb.add_child(row)
 		hud.add_child(dim)
 		hud.add_ui_control(dim)
 		leave_dialog = dim
-	var txt := "Leave the battle? Your army withdraws (a defeat)."
+	var txt := "Your army withdraws (a defeat)."
 	if coop != null and _coop_others_in():
-		txt = "Leave the battle? Your units go to %s." % _coop_heir_name()
+		txt = "Your units go to %s." % _coop_heir_name()
 	_leave_text.text = txt
 	leave_dialog.visible = true
 
@@ -646,14 +705,17 @@ func _show_end_dialog(title: String) -> void:
 		cc.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		dim.add_child(cc)
-		var pn := Hud.Kit.panel(Hud.Kit.PANEL_BG, 16.0)
+		var pn := Hud.Kit.trim_panel(Hud.Kit.PANEL_BG, 20.0)   # the dialog frame: trim, title face, rule
+		pn.name = "end_panel"
 		cc.add_child(pn)
 		var vb := Hud.Kit.vbox(14)
 		pn.add_child(vb)
-		_end_title = Hud.Kit.label("", 26, Color.WHITE)
+		_end_title = Hud.Kit.title("", 28)
+		_end_title.name = "end_title"
 		_end_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		vb.add_child(_end_title)
-		_end_text = Hud.Kit.label("", Hud.Kit.FONT_TITLE, Color.WHITE, true)
+		vb.add_child(Hud.Kit.rule())
+		_end_text = Hud.Kit.label("", Hud.Kit.FONT_TITLE, Hud.Kit.COL_BONE, true)
 		_end_text.custom_minimum_size = Vector2(minf(340.0, get_viewport_rect().size.x - 64.0), 0)
 		_end_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		vb.add_child(_end_text)
@@ -667,6 +729,8 @@ func _show_end_dialog(title: String) -> void:
 			_count("end_choice_continue")
 			_end_continue(), 140)
 		on.name = "end_continue"
+		BTheme.plate(go)
+		BTheme.plate(on)
 		row.add_child(go)
 		row.add_child(on)
 		vb.add_child(row)
@@ -674,6 +738,7 @@ func _show_end_dialog(title: String) -> void:
 		hud.add_ui_control(dim)
 		end_dialog = dim
 	_end_title.text = title
+	_end_title.add_theme_color_override("font_color", Hud.Kit.COL_GOOD if sim.winner == player_side else Hud.Kit.COL_BAD)
 	_end_text.text = "The enemy is broken and running." if sim.winner == player_side else "Your army is broken."
 	end_dialog.visible = true
 	_t("end_choice_shown", {"tick": sim.tick, "winner": sim.winner, "my_side": player_side})
@@ -721,7 +786,7 @@ func _start_pursuit_view() -> void:
 		return
 	_pursuit_view = true
 	hud.menu_button.text = "End battle"
-	hud.menu_button.tooltip_text = "End the battle now: back to the campaign"
+	Hud.Kit.tip(hud.menu_button, "End battle", "End the battle now and go back to the campaign.")
 	hud.banner.add_theme_font_size_override("font_size", 20)
 	_refresh_pursuit_banner()
 
@@ -768,7 +833,7 @@ func _end_finished() -> void:
 	_t("end_pursuit_ended", {"how": how, "pursue": sim.pursue, "tick": sim.tick,
 		"secs": maxi(sim.tick - sim.decided_tick, 0) / 10, "mine": _end_sent})
 	hud.banner.remove_theme_font_size_override("font_size")
-	hud.banner.add_theme_font_size_override("font_size", 32)
+	hud.banner.add_theme_font_size_override("font_size", Hud.BANNER_SIZE)
 	hud.banner.text = _end_banner
 	hud.banner.visible = true
 	if campaign_mode:
@@ -987,6 +1052,7 @@ func _show_result() -> void:
 	elif sim.winner == 1 - player_side:
 		text = "Defeat" if interactive else "Red wins"
 	hud.banner.text = text
+	hud.tint_banner(text)
 	hud.banner.visible = true
 	if _end_choice_open():
 		_show_end_dialog(text)  # End battle / Continue; back to the campaign at the end
@@ -2632,8 +2698,8 @@ func _input(event: InputEvent) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if hud.book.visible or hud.controls.visible:
-		return  # the book and the controls page are modal; they handle their own keys
+	if hud.book.visible or hud.controls.visible or (menu != null and menu.visible):
+		return  # the book, the controls page and the Menu are modal; they handle their own keys
 	if event is InputEventScreenTouch:
 		_update_matchup(event.position if event.pressed else Vector2(-1e6, -1e6))
 		_on_touch(event)

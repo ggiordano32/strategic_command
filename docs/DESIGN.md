@@ -6933,6 +6933,54 @@ resolve: "Resolving the turn" shows this panel when the last resolve took over 0
 Tests: `tests/theme_test.gd` (windowed; the kit, the campaign screen in both settings, the Menu overlay, the loading
 panel and the slow resolve, the diorama-zoom labels, the phone layout; `--shots=DIR` saves screenshots).
 
+**Pass 2 (2026-10-22: the battle HUD, the battle modals and Menu, the sea screen; view only).** Shared helper
+`game/battle_theme.gd`: the kit's nav plate and a lit variant (a toggle that is on) built once and shared by every
+button (no styles allocated per button, so the sea order bar, rebuilt on each selection, costs nothing), the kit's
+hover / press motion, a capsule of momentary segments, the top-bar title block and gold rule.
+- *Battle HUD* (`hud.gd`): the top bar has a gold rule and, on a desktop only (window 820 logical px or wider, no
+  touch), the setting's emblem and the battle's name / terrain ("Battle: 2,000 soldiers - Ridge") in Cinzel 18 beside the
+  readout; phones keep the row as before. Every command button is a kit button in the nav plate with the hover / press
+  motion; the toggles (Orders, Add, Release, the character acts, the field works) show the lit plate when on. **All /
+  Inf / Missile / Cav / None** are one capsule (`group_capsule`): momentary, nothing stays lit, 50 x 42 touch
+  segments; `group_buttons` keeps its keys and `deselect_button` is the None segment (name `deselect`). Only SELECTED
+  unit cards carry the trim (gold rule, corner brackets), as the campaign's command bar. Every button has a boxed
+  `Kit.tip` (title and one line; the old long strings trimmed; Run and Halt, which had none, got one). **No touch
+  long-press tips in the battle:** HUD buttons carry the meta `tip_host_skip`, because a press held half a second and
+  released must still give the order mid-fight; the tip shows on a desktop hover. The end banner (Victory / Defeat /
+  Draw) is Cinzel 30 over a trim plate, green / red / gold (the pursuit line stays 20); the result panel of a custom
+  battle, the bench panel, the speed popover (gold slider) and the deployment bars are trim panels with a Cinzel title
+  and a rule.
+- *Battle modals and Menu* (`battle.gd`, new `game/battle_menu.gd`): the End battle / Continue card and the Leave confirm
+  (campaign battles) are the dialog frame (trim panel, Cinzel title, rule, plate buttons; the Leave text now sits under
+  the title "Leave the battle?"). The top-right Menu of a non-campaign battle (the battles list, custom battles) opens the
+  campaign Menu's overlay: emblem, the battle's name, Resume, Options (the title screen's rows, `bmenu_*`), Controls,
+  Leave the battle with its confirm (Leave / Stay). Solo, the battle is paused while it is open and the pause put back
+  on close (co-op cannot pause: it runs on, as with the unit book); Esc, Resume and a tap on the dimmed field close it.
+  **Campaign battles keep the "Leave" button and its confirm** (the grace, the End battle button, the tests that tap
+  them); the Back to menu buttons of the result panels still leave at once.
+- *Sea screen* (`sea_battle.gd`, `sea_book.gd`): the top bar has the emblem and the title in Cinzel 18 on a desktop,
+  a gold rule; the speeds (II 1x 2x 4x) are one capsule with the speed in force lit (a press acts even on the lit one:
+  II toggles pause in co-op); Full sail / Battle sail / Heave to and Round / Chain / Grape are capsules with the same
+  labels and names; the other orders, Ships, Key, Leave and Douse are plate buttons (lit when on); the boxed tip body is
+  the long-press help card's text, and the card itself is a trim panel with a Cinzel title; the ship book's panel and
+  page buttons are themed and its titles are Cinzel; the end panel and the Leave confirm are framed.
+- *The sea Key* (owner 2026-10-22: "I'm not sure what the different coloured lines mean"): `game/sea_key.gd` holds the one
+  list of drawn kinds (`KINDS`) and the one colour function (`col`) the drawing uses, so they cannot disagree. A **Key**
+  button on the top bar opens a trim panel (a drawn sample on a strip of sea, a name and one line per kind), closable,
+  open / closed remembered in settings.cfg `[ui] sea_key`; the first sea battle of a session shows a 3 s hint pointing at
+  it (not when the Key is remembered open). One colour per meaning: the selected ship's ring, course and destination
+  ring in her flag's colour (lightened); attack order red; boarding (the target and the grapple ring) gold; fire ship
+  (target and lighting reach) orange; flee heading violet (was grey); broadside arcs and range teal (were white); wind
+  white (the rose's arrow was pale blue); wake white foam; grapple lines dark brown. Before, the course was cream, the
+  arcs, the selection ring and the rose white and the wind arrow blue.
+- *Loading*: the battle build uses the themed panel (key art of the campaign's pack, tip, trim; `_enter_battle`) when the
+  last build was slow; a sea battle is added directly (as before; its build is fast).
+Tests: `tests/battle_theme_test.gd` (windowed; `-- --shots=DIR`, `--phone` for an 844x390 touch layout), `sea_help_test`
+(the Key lists every kind, the drawing uses only those kinds, six distinct colours, remembered, the hint), `input_test`
+(its Leave text check), `sea_screen_test`, `battle_screen_test`, `theme_test`. Frame time (RTX 3070, 1920x1080, vsync off,
+mean ms over 8 s from tick 600, HEAD -> now, 2 runs): bench_2000 paused 3.06 / 2.99 -> 2.94 / 2.85, running 3.19 / 3.02 ->
+2.98 / 2.86; bench_4000_city paused 4.89 / 5.43 -> 5.22 / 5.21, running 5.20 / 5.71 -> 5.54 / 5.46: within noise.
+
 ### Overworld view layers follow the pan every frame (2026-10-22)
 
 The ships (`minis_layer.gd`) are screen-space, so unlike the armies (slid by the overlay) they are redrawn; on Quality Low the 10 Hz throttle now limits only the bobbing, and a frame where the overlay transform or zoom changed always redraws (measured max lag while panning 21.6 px before, 0 after; High was 0 already: the screen sets the view in its own `_process`, a parent of the layer, so it runs first). The town and fog layers sit in the scaled world node and the figures redraw on every transform change, so they never lagged. Probe: `tests/zoom_sweep.gd -- --lag`.

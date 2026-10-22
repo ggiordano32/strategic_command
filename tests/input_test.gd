@@ -3169,7 +3169,7 @@ func _step_lv_check_ask() -> void:
 	if d != null:
 		txt = battle._leave_text.text
 		_tap_control(d.find_child("leave_stay", true, false) as Control)
-	_check(txt.begins_with("Leave the battle? Your army withdraws"), "the modal says what leaving costs (%s)" % txt)
+	_check(txt.begins_with("Your army withdraws"), "the modal says what leaving costs (%s)" % txt)
 
 
 func _step_lv_check_stay() -> void:
