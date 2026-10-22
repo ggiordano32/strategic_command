@@ -4488,6 +4488,38 @@ func _sight() -> void:
 		var fc := CGrid.at(int(fl["x"]), int(fl["y"]))
 		fl_ok = fl_ok and vf[fc] == 1 and Sight.fleet_visible(w, int(fl["f"]), i)
 	_check(fl_ok, "West: every fleet is in its own side's sight")
+	# Fleet sight (2026-10-22, owner: "the ships need a much wider range of view"): FLEET_R 3 round a fleet at sea.
+	var wf := CState.copy(w)
+	var wf0: int = int((wf["fleets"] as Array)[0]["f"])
+	var proto: Dictionary = (wf["fleets"] as Array)[0].duplicate(true)
+	var fkeep: Array = []
+	for e in wf["fleets"]:
+		if int(e["f"]) != wf0:
+			fkeep.append(e)
+	wf["fleets"] = fkeep
+	var dark := Sight.compute(wf, wf0)
+	var fsc := -1
+	for q in dark.size():
+		if not CFleet.is_sea(q):
+			continue
+		var clear := true
+		for dy in range(-4, 5):
+			for dx in range(-4, 5):
+				var d := CGrid.at(CGrid.cx(q) + dx, CGrid.cy(q) + dy)
+				if d < 0 or dark[d] != 0:
+					clear = false
+		if clear:
+			fsc = q
+			break
+	_check(fsc >= 0 and Sight.FLEET_R == 3, "West: a dark open-sea cell for the fleet sight case")
+	if fsc >= 0:
+		proto["x"] = CGrid.cx(fsc)
+		proto["y"] = CGrid.cy(fsc)
+		(wf["fleets"] as Array).append(proto)
+		var vfl := Sight.compute(wf, wf0)
+		_check(vfl[CGrid.at(CGrid.cx(fsc) + 3, CGrid.cy(fsc) - 3)] == 1 and vfl[CGrid.at(CGrid.cx(fsc) - 3, CGrid.cy(fsc))] == 1
+				and vfl[CGrid.at(CGrid.cx(fsc) + 4, CGrid.cy(fsc))] == 0 and vfl[CGrid.at(CGrid.cx(fsc), CGrid.cy(fsc) + 4)] == 0,
+			"a fleet at sea sees 3 cells round it, not 4")
 	var wp := _play(CState.copy(w), 4, 2)
 	_check(CState.state_hash(wp) == CState.state_hash(_play(CState.copy(w), 4, -1)) and _plain(wp), "West: 4 turns with the fog, deterministic, plain data")
 	_sight_coast("west", 0)

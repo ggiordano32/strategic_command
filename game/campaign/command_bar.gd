@@ -755,8 +755,8 @@ func _build_fleet(id: int) -> void:
 		if int(vy[0]) >= 0 or int(vy[1]) >= 0:
 			acts.append(_action("cancel", "Cancel", "Cancel the voyage", func(): s.set_fmove(id, int(vy[0]), int(vy[1])), "", "cancel_voyage"))
 		else:
-			acts.append(_action("move", "Sail", "Tap the sea on the map to sail there, a coast to land the troops, an enemy fleet to attack it, your own fleet to join it", func():
-				s.show_toast("Tap the sea to sail, a coast to land the troops aboard, an enemy fleet to attack, your own fleet to join it."), "", "sail"))
+			acts.append(_action("move", "Sail", "Tap the sea on the map to sail there, a lit beach to land the troops, an enemy fleet to attack it, your own fleet to join it", func():
+				s.show_toast("Tap the sea to sail, a lit beach to land the troops aboard, an enemy fleet to attack, your own fleet to join it."), "", "sail"))
 		for a in CState.armies_of(ps, s.f):
 			if CFleet.near_fleet(a, fl):
 				var aid := int(a["id"])

@@ -128,6 +128,9 @@ const FLEET_W := 30.0
 var sea_reach: Array = []       # the selected fleet's reach this turn: outlines in map pixels
 var _sea_reach_fill: Array = []  # ... the outer ones that triangulate
 var sea_reach_rt := PackedInt32Array()   # the reach those outlines are of
+var landing_cells := PackedInt32Array()   # the beaches a loaded fleet can land on this turn (lit), or where an army boards
+var _landing_segs := PackedVector2Array()   # ... their coast as segment pairs (map px)
+const COL_LANDING := Color(1.0, 0.92, 0.5)
 
 
 ## The selected fleet's reach (CFleet.reach: 0 this turn), drawn over the
@@ -148,6 +151,47 @@ func set_sea_reach(rt: PackedInt32Array) -> void:
 	for lp in sea_reach:
 		if MapView._area(lp) > 0.0 and not Geometry2D.triangulate_polygon(lp).is_empty():
 			_sea_reach_fill.append(lp)
+
+
+## Light the beaches of the selected fleet's landing reach: with one of our fleets selected that carries troops, the
+## land_ok beaches beside the sea cells it reaches this turn (sea_reach_rt); with an army of ours selected beside a
+## fleet of ours it may board (CFleet.embark_check), the beach it boards from. True when the lit set changed.
+func set_landing(st: Dictionary, f: int, fleet: Dictionary, army: Dictionary) -> bool:
+	var lit := PackedInt32Array()
+	if CFleet.on(st) and f >= 0:
+		if not fleet.is_empty() and int(fleet["f"]) == f and not (fleet["carry"] as Array).is_empty() \
+				and sea_reach_rt.size() == CGrid.count():
+			for c in MapView.beach_cells():
+				if not CFleet.land_ok(st, f, c):
+					continue
+				for k in 8:
+					var j := CGrid.at(CGrid.cx(c) + CGrid.DX[k], CGrid.cy(c) + CGrid.DY[k])
+					if j >= 0 and sea_reach_rt[j] == 0:
+						lit.append(c)
+						break
+		elif fleet.is_empty() and not army.is_empty() and int(army["f"]) == f:
+			var ac := CState.cell(army)
+			var r := CGrid.site_region(ac)
+			var from := ac if MapView.beach_points(ac).size() > 0 else (CFleet.harbour(r) if r >= 0 else -1)
+			if from >= 0 and MapView.beach_points(from).size() > 0:
+				for fl in CFleet.fleets_of(st, f):
+					if CFleet.embark_check(st, f, int(army["id"]), int(fl["id"])) == "":
+						lit.append(from)
+						break
+	if lit == landing_cells:
+		return false
+	landing_cells = lit
+	_landing_segs = PackedVector2Array()
+	for c in lit:
+		var pts := MapView.beach_points(c)
+		if pts.size() == 1:
+			_landing_segs.append(pts[0] - Vector2(2, 0))
+			_landing_segs.append(pts[0] + Vector2(2, 0))
+		for i in pts.size() - 1:
+			if pts[i].distance_squared_to(pts[i + 1]) <= 36.0:   # (a gap where the coast leaves the cell and returns)
+				_landing_segs.append(pts[i])
+				_landing_segs.append(pts[i + 1])
+	return true
 
 
 ## Map point (map pixels) of the centre of grid cell c.
@@ -965,6 +1009,12 @@ func _fleets_body() -> void:
 		cl.append(cl[0])
 		_ci.draw_polyline(cl, Color(0, 0, 0, 0.35), 3.0, true)
 		_ci.draw_polyline(cl, Color(1, 0.98, 0.85, 0.6), 1.5, true)
+	# The beaches a landing can aim for: sand-gold, glowing, over the coast.
+	if _landing_segs.size() >= 2:
+		var sp: PackedVector2Array = xform * _landing_segs
+		_ci.draw_multiline(sp, Color(0, 0, 0, 0.4), 6.0, true)
+		_ci.draw_multiline(sp, Color(COL_LANDING.r, COL_LANDING.g, COL_LANDING.b, 0.5), 4.6, true)
+		_ci.draw_multiline(sp, Color(1.0, 0.98, 0.8, 0.95), 2.2, true)
 	if state.has("fleets"):
 		var fpos := fleet_positions()
 		for r in CData.region_count():

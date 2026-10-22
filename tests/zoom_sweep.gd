@@ -101,6 +101,7 @@ func _process(_d: float) -> bool:
 				"pulse": cs.map_view._pulse_node.visible = false
 				"edges": cs.map_view._edges.visible = false
 				"coast": cs.map_view._coast_node.visible = false
+				"beach": cs.map_view._beach_node.visible = false
 				"water": cs.map_view._water.visible = false
 				"table": cs.map_view._table.visible = false
 		last = Time.get_ticks_usec()

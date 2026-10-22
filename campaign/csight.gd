@@ -10,7 +10,7 @@ extends RefCounted
 ##     every cell of those regions;
 ##   - each army: the cells within ARMY_R (Chebyshev) of its cell, HILL_R
 ##     when it stands on a hill / ridge cell (CGrid.cell_terrain);
-##   - each fleet: FLEET_R around its sea cell (the armies aboard ride with
+##   - each fleet: FLEET_R (3) around its sea cell (the armies aboard ride with
 ##     it and see nothing more);
 ##   - each character not riding with an army: CHAR_R around his city;
 ##   - each settlement it owns: CITY_R around the settlement cell (sea cells
@@ -47,7 +47,7 @@ const Terrain := preload("res://sim/terrain.gd")
 const VERSION_FOG := 8
 const ARMY_R := 1
 const HILL_R := 2
-const FLEET_R := 1
+const FLEET_R := 3
 const CHAR_R := 1
 const CITY_R := 2
 const COAST_R := 2

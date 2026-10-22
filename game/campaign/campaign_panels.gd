@@ -3812,7 +3812,7 @@ func fleet_panel(box: VBoxContainer, id: int) -> void:
 				txt = "Sails %s (arrives %s)." % [sea_place(CGrid.cx(int(p["goal"])), CGrid.cy(int(p["goal"]))), when]
 		box.add_child(Kit.label(txt, Kit.FONT, Kit.COL_GOOD, true))
 	else:
-		box.add_child(Kit.label("Tap the sea to sail, a coast to land the troops aboard, an enemy fleet to attack, your own fleet to join it.", Kit.FONT_SMALL, Kit.COL_DIM, true))
+		box.add_child(Kit.label("Tap the sea to sail, a lit beach to land the troops aboard, an enemy fleet to attack, your own fleet to join it.", Kit.FONT_SMALL, Kit.COL_DIM, true))
 	# (Cancel voyage, Board and Join are on the command bar.)
 
 

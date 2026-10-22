@@ -25,6 +25,7 @@ const GroundPalette := preload("res://game/ground_palette.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const Landscape := preload("res://game/campaign/landscape.gd")
 const CLanes := preload("res://campaign/clanes.gd")
+const CFleet := preload("res://campaign/cfleet.gd")
 const GeoFields := preload("res://game/campaign/geo_fields.gd")
 const WATER_SHADER := preload("res://game/campaign/water.gdshader")
 const SeaWaves := preload("res://game/campaign/sea_waves.gd")
@@ -117,12 +118,25 @@ static var _elev_tex: ImageTexture = null
 static var _elev_gen := -1
 var _table: Node2D = null
 var _pulse_node: Node2D = null
+## Beaches and cliffs along the coast (2026-10-22): a coast cell a fleet may land on (CFleet.land_ok's geometric part:
+## land with open sea beside it) gets a sand strip on the land side of the coastline, any other coast cell (water
+## beside it that no fleet sails: a lagoon, a lake) a dark rock line with hatch ticks. Widths are screen px (times lw).
+const COL_SAND := Color(0.93, 0.84, 0.58)
+const COL_FOAM := Color(1.0, 1.0, 1.0)
+const COL_ROCK := Color(0.16, 0.14, 0.13)
+const COL_ROCK_RELIEF := Color(0.05, 0.05, 0.06)
+const BEACH_STEP := 4.0            # map px between the samples along the coastline
+const BEACH_BAND := 1.08           # the strip's offset is rebuilt when the zoom changes by this factor
+const CLIFF_TICK_GAP := 6.0        # screen px between the hatch ticks
+const CLIFF_TICK_LEN := 3.8
 var _reach_node: Node2D = null  # the selected army's reach (its own node: a selection does not redraw the map)
 var _sel_node: Node2D = null    # the selected region's outline (over the edges, under the coast)
 var _reach_rt := PackedInt32Array()      # the reach set_reach last outlined
 var _owners_drawn := PackedInt32Array()   # the owners the map was last drawn for (refresh_state)
 var _edges: Node2D = null     # children drawn after the map's own drawing, redrawn a frame apart (see _process)
 var _coast_node: Node2D = null
+var _beach_node: Node2D = null   # the beaches and cliffs (see "beaches and cliffs")
+var _beach_band := -9999         # the zoom band (and style, pack) the beach node was drawn for
 var _tbl := false
 var _stage := 0
 var _heavy_frame := -1
@@ -145,6 +159,17 @@ static var _lane_dashes: Array = []   # ... cut into dashes for this line scale 
 static var _lane_dash_key := ""
 static var _river_lines: Array = []
 static var _cross_marks: Array = []
+## The coast dressing: runs of the coastline [kind (1 beach, 2 cliff), points (map px), inward normals], built once
+## from the land polygons and the grid.
+static var _coast_runs: Array = []
+static var _coast_class := PackedByteArray()   # per cell: 0 not coast, 1 landing coast, 2 other coast, 255 unknown
+static var _coast_drawn := PackedByteArray()   # per cell: bit 1 a beach segment was drawn, bit 2 a cliff segment
+static var _beach_cell_pts: Dictionary = {}    # cell -> PackedVector2Array of its beach's coast points (map px)
+static var _beach_cells := PackedInt32Array()  # the cells with a beach, ascending
+static var _coast_unseen := PackedInt32Array()  # coast cells of the grid with no outline of the map within two cells
+static var _coast_ms := -1.0                   # build time, ms (for the record)
+static var _coast_geo_key := ""
+static var _coast_geo: Array = []              # the runs offset for the zoom band: [kind, line, foam line, tick segments]
 static var _gen := 0           # map_geo.gd's gen these caches belong to
 
 
@@ -165,6 +190,14 @@ static func _sync_gen() -> void:
 	_lane_dash_key = ""
 	_river_lines = []
 	_cross_marks = []
+	_coast_runs = []
+	_coast_class = PackedByteArray()
+	_coast_drawn = PackedByteArray()
+	_coast_unseen = PackedInt32Array()
+	_beach_cell_pts = {}
+	_beach_cells = PackedInt32Array()
+	_coast_geo_key = ""
+	_coast_geo = []
 
 var state: Dictionary = {}
 var zoom := 1.0
@@ -239,6 +272,9 @@ func _make_water() -> void:
 	_sel_node = Node2D.new()
 	_sel_node.draw.connect(_draw_sel)
 	add_child(_sel_node)
+	_beach_node = Node2D.new()   # (under the coast node: its own redraw, only when the zoom band changes)
+	_beach_node.draw.connect(_draw_beach_node)
+	add_child(_beach_node)
 	_coast_node = Node2D.new()
 	_coast_node.draw.connect(_draw_coast)
 	add_child(_coast_node)
@@ -324,6 +360,7 @@ func _process(delta: float) -> void:
 		_heavy_frame = Engine.get_process_frames()
 		if _coast_node != null:
 			_coast_node.queue_redraw()
+		_refresh_beach()
 	if _water != null and _water_hi():
 		SeaWaves.t += delta
 		(_water.material as ShaderMaterial).set_shader_parameter("wave_t", SeaWaves.t)
@@ -898,6 +935,320 @@ static func _draw_lanes(ci: CanvasItem, lw: float) -> void:
 				ci.draw_multiline(segs, COL_SEA_LANE, LANE_W * lw, true)
 
 
+# ----------------------------------------------------------- beaches and cliffs ---
+
+## True when cell c (land or sea) is open sea: where fleets sail (CFleet.is_sea; a pack without ships: any sea).
+static func _open_sea(c: int) -> bool:
+	if CData.ships_on():
+		return CFleet.is_sea(c)
+	return CGrid.region(c) == -1
+
+
+## What kind of coast land cell c is: 1 a landing coast (a passable cell with open sea in one of its 8 neighbours:
+## where CFleet.land_ok can hold, the geometric part of the rule), 2 other coast (water beside it no fleet sails, or
+## unclaimed land), 0 not coast.
+static func coast_class(c: int) -> int:
+	if c < 0 or CGrid.region(c) == -1:
+		return 0
+	if _coast_class.size() != CGrid.count():
+		_coast_class.resize(CGrid.count())
+		_coast_class.fill(255)
+	if _coast_class[c] != 255:
+		return _coast_class[c]
+	var k := 0
+	for d in 8:
+		var j := CGrid.at(CGrid.cx(c) + CGrid.DX[d], CGrid.cy(c) + CGrid.DY[d])
+		if j < 0 or CGrid.region(j) != -1:
+			continue
+		if _open_sea(j) and CGrid.passable(c):
+			k = 1
+			break
+		k = 2
+	_coast_class[c] = k
+	return k
+
+
+## The land cell a coastline sample belongs to: the first land cell inland of it, and its coast class (cell, class).
+static func _sample_cell(p: Vector2, n: Vector2) -> Array:
+	var px := float(CGrid.cell_px())
+	var best := -1
+	var cls := 0
+	for dist in [3.0, 9.0]:
+		var q: Vector2 = p + n * dist
+		var c := CGrid.at(int(floor(q.x / px)), int(floor(q.y / px)))
+		if c < 0 or CGrid.region(c) == -1:
+			continue
+		var k := coast_class(c)
+		if k > 0:
+			return [c, k]
+		if best < 0:
+			best = c
+	if best < 0:
+		return [-1, 0]
+	# (the polygon and the raster differ by a fraction of a cell: take a coast cell beside it)
+	for d in 8:
+		var j := CGrid.at(CGrid.cx(best) + CGrid.DX[d], CGrid.cy(best) + CGrid.DY[d])
+		var k2 := coast_class(j)
+		if k2 == 1:
+			return [j, 1]
+		if k2 == 2:
+			cls = 2
+			best = j
+	return [best, cls] if cls > 0 else [-1, 0]
+
+
+## Samples every land polygon's outline every BEACH_STEP and groups the runs of one kind (once, with the geometry).
+static func _build_coast_dressing() -> void:
+	var t0 := Time.get_ticks_usec()
+	_coast_runs = []
+	_coast_class = PackedByteArray()
+	_coast_drawn = PackedByteArray()
+	_coast_drawn.resize(CGrid.count())
+	_coast_unseen = PackedInt32Array()
+	_beach_cell_pts = {}
+	for poly in Geo.lands() + Geo.islands():
+		var pl: PackedVector2Array = poly
+		var m := pl.size()
+		if m < 3:
+			continue
+		var cur_kind := 0
+		var pts := PackedVector2Array()
+		var nrm := PackedVector2Array()
+		var carry := 0.0
+		for i in m:
+			var a := pl[i]
+			var b := pl[(i + 1) % m]
+			var seg := b - a
+			var ln := seg.length()
+			if ln < 0.001:
+				continue
+			var t := seg / ln
+			var n0 := Vector2(-t.y, t.x)
+			var pos := carry
+			while pos < ln:
+				var p := a + t * pos
+				# the land side: the normal or its opposite, whichever has land just inland
+				var sc := _sample_cell(p, n0)
+				var nn := n0
+				if int(sc[0]) < 0:
+					sc = _sample_cell(p, -n0)
+					nn = -n0
+				var kind: int = int(sc[1])
+				if kind != cur_kind and not pts.is_empty():
+					_coast_runs.append([cur_kind, pts, nrm])
+					pts = PackedVector2Array()
+					nrm = PackedVector2Array()
+				cur_kind = kind
+				if kind > 0:
+					pts.append(p)
+					nrm.append(nn)
+					var c: int = int(sc[0])
+					_coast_drawn[c] = _coast_drawn[c] | kind
+					if kind == 1:
+						var bp: PackedVector2Array = _beach_cell_pts.get(c, PackedVector2Array())
+						bp.append(p)   # (a packed array is a value: put it back)
+						_beach_cell_pts[c] = bp
+				pos += BEACH_STEP
+			carry = pos - ln
+		if not pts.is_empty():
+			_coast_runs.append([cur_kind, pts, nrm])
+	# A coast cell the outline did not cross (a corner, a spit): the three coastline samples of the same kind nearest
+	# its centre (any kind when none) are its strip, so the dressing stays on the coastline.
+	var px := float(CGrid.cell_px())
+	var w := CGrid.width()
+	var buckets := {}   # cell -> Array of [run, index] of the samples inside it
+	for ri in _coast_runs.size():
+		var rp: PackedVector2Array = _coast_runs[ri][1]
+		for i in rp.size():
+			var bc := CGrid.at(int(floor(rp[i].x / px)), int(floor(rp[i].y / px)))
+			if not buckets.has(bc):
+				buckets[bc] = []
+			(buckets[bc] as Array).append([ri, i])
+	for c in CGrid.count():
+		var k := coast_class(c)
+		if k == 0 or (_coast_drawn[c] & k) != 0:
+			continue
+		var ctr := Vector2((c % w + 0.5) * px, (c / w + 0.5) * px)
+		var best: Array = []
+		var bd := INF
+		for want_kind in [k, 0]:
+			for dy in range(-2, 3):
+				for dx in range(-2, 3):
+					var bc2 := CGrid.at(CGrid.cx(c) + dx, CGrid.cy(c) + dy)
+					for e in buckets.get(bc2, []):
+						var run: Array = _coast_runs[int(e[0])]
+						if want_kind != 0 and int(run[0]) != want_kind:
+							continue
+						var d := ctr.distance_squared_to((run[1] as PackedVector2Array)[int(e[1])])
+						if d < bd:
+							bd = d
+							best = e
+			if not best.is_empty():
+				break
+		if best.is_empty():
+			# (no outline within two cells: cells the grid gives a region but the map draws as sea; nothing to dress)
+			_coast_unseen.append(c)
+			continue
+		var src: Array = _coast_runs[int(best[0])]
+		var sp: PackedVector2Array = src[1]
+		var sn: PackedVector2Array = src[2]
+		var fpts := PackedVector2Array()
+		var fn := PackedVector2Array()
+		for i in range(maxi(0, int(best[1]) - 1), mini(sp.size(), int(best[1]) + 2)):
+			fpts.append(sp[i])
+			fn.append(sn[i])
+		_coast_runs.append([k, fpts, fn])
+		_coast_drawn[c] = _coast_drawn[c] | k
+		if k == 1:
+			_beach_cell_pts[c] = fpts
+	var cells: Array = _beach_cell_pts.keys()
+	cells.sort()
+	_beach_cells = PackedInt32Array(cells)
+	_coast_ms = (Time.get_ticks_usec() - t0) / 1000.0
+
+
+## Every cell with a beach, ascending (the cells a landing can aim for).
+static func beach_cells() -> PackedInt32Array:
+	return _beach_cells
+
+
+## The coast points (map px) of cell c's beach, empty when it has none.
+static func beach_points(c: int) -> PackedVector2Array:
+	return _beach_cell_pts.get(c, PackedVector2Array())
+
+
+## Counts for the tests: the cells with a drawn beach segment, with a cliff segment, and the runs.
+static func coast_counts() -> Array:
+	var nb := 0
+	var nc := 0
+	for v in _coast_drawn:
+		if (v & 1) != 0:
+			nb += 1
+		if (v & 2) != 0:
+			nc += 1
+	return [nb, nc, _coast_runs.size(), _coast_ms]
+
+
+## Coast cells the grid knows and the map does not draw as land (so they carry no dressing).
+static func coast_unseen() -> PackedInt32Array:
+	return _coast_unseen
+
+
+## True when a segment of kind (1 beach, 2 cliff) was built for cell c.
+static func coast_drawn(c: int, kind: int) -> bool:
+	return c >= 0 and c < _coast_drawn.size() and (_coast_drawn[c] & kind) != 0
+
+
+## The runs offset for this zoom band (the strip sits inland of the coastline by a fixed screen distance).
+static func _coast_geometry(lw: float, tbl: bool) -> Array:
+	var band := int(round(log(maxf(lw, 0.001)) / log(BEACH_BAND)))
+	var key := "%d:%d:%s" % [_gen, band, "t" if tbl else "r"]
+	if key == _coast_geo_key:
+		return _coast_geo
+	_coast_geo_key = key
+	_coast_geo = []
+	var lq := pow(BEACH_BAND, float(band))
+	var stride := maxi(1, int(ceil(CLIFF_TICK_GAP * lq / BEACH_STEP)))
+	for run in _coast_runs:
+		var pts: PackedVector2Array = run[1]
+		var nrm0: PackedVector2Array = run[2]
+		var n := pts.size()
+		var nrm := PackedVector2Array()   # (the normals averaged over their neighbours: no kinks at the polygon's corners)
+		nrm.resize(n)
+		for i in n:
+			var sum := nrm0[i] * 2.0
+			if i > 0:
+				sum += nrm0[i - 1]
+			if i < n - 1:
+				sum += nrm0[i + 1]
+			nrm[i] = sum.normalized() if sum.length() > 0.01 else nrm0[i]
+		if int(run[0]) == 1:
+			var line := PackedVector2Array()
+			var foam := PackedVector2Array()
+			line.resize(n)
+			foam.resize(n)
+			var off := (3.0 if tbl else 1.7) * lq
+			for i in n:
+				line[i] = pts[i] + nrm[i] * off
+				foam[i] = pts[i] - nrm[i] * (1.2 * lq)
+			_coast_geo.append([1, line, foam, PackedVector2Array()])
+		else:
+			var line2 := PackedVector2Array()
+			line2.resize(n)
+			var ticks := PackedVector2Array()
+			for i in n:
+				line2[i] = pts[i] + nrm[i] * (0.7 * lq)
+				if tbl and i % stride == 0:
+					ticks.append(pts[i] + nrm[i] * (0.7 * lq))
+					ticks.append(pts[i] + nrm[i] * ((0.7 + CLIFF_TICK_LEN) * lq))
+			_coast_geo.append([2, line2, PackedVector2Array(), ticks])
+	return _coast_geo
+
+
+## The zoom band of line scale lw (BEACH_BAND steps), with the style and the pack folded in.
+static func _beach_band_of(lw: float) -> int:
+	return int(round(log(maxf(lw, 0.001)) / log(BEACH_BAND))) * 4 + (1 if table_on() else 0) + _gen * 100000
+
+
+## Draw the beach node again when the zoom band (or the style, the pack) changed since it was drawn.
+func _refresh_beach() -> void:
+	if _beach_node == null:
+		return
+	if not grid:
+		return
+	var band := _beach_band_of(1.0 / maxf(zoom, 0.05))
+	if band != _beach_band:
+		_beach_band = band
+		_beach_node.queue_redraw()
+
+
+func _draw_beach_node() -> void:
+	if not grid:
+		return
+	var t0 := ZProf.begin()
+	_draw_coast_dressing(_beach_node, 1.0 / maxf(zoom, 0.05))
+	ZProf.add("mv_beach", t0)
+
+
+## Beach and cliff strips along the coastline, in the table or the relief style, widths for the zoom band of lw.
+static func _draw_coast_dressing(ci: CanvasItem, lw: float) -> void:
+	var tbl := table_on()
+	var lq := pow(BEACH_BAND, float(int(round(log(maxf(lw, 0.001)) / log(BEACH_BAND)))))
+	for g in _coast_geometry(lw, tbl):
+		var line: PackedVector2Array = g[1]
+		if line.size() < 2:
+			continue
+		if int(g[0]) == 1:
+			draw_beach(ci, line, g[2], lq, tbl)
+		else:
+			draw_cliff(ci, line, g[3], lq, tbl)
+
+
+## A beach: a sand strip (pale ribbon with a soft edge and a faint foam line on the water side in the table style, a
+## thin sand band on the relief).
+static func draw_beach(ci: CanvasItem, line: PackedVector2Array, foam: PackedVector2Array, lw: float, tbl: bool) -> void:
+	if tbl:
+		var c := COL_SAND
+		if foam.size() >= 2:
+			ci.draw_polyline(foam, Color(COL_FOAM.r, COL_FOAM.g, COL_FOAM.b, 0.5), 1.3 * lw, true)
+		ci.draw_polyline(line, Color(c.r, c.g, c.b, 0.25), 7.0 * lw, true)
+		ci.draw_polyline(line, Color(c.r, c.g, c.b, 0.5), 5.6 * lw, true)
+		ci.draw_polyline(line, Color(c.r, c.g, c.b, 0.95), 4.0 * lw, true)
+	else:
+		ci.draw_polyline(line, Color(COL_SAND.r, COL_SAND.g, COL_SAND.b, 0.95), 2.2 * lw, true)
+
+
+## A cliff: a dark rock line, with short hatch ticks inland in the table style; a darker coast line on the relief.
+static func draw_cliff(ci: CanvasItem, line: PackedVector2Array, ticks: PackedVector2Array, lw: float, tbl: bool) -> void:
+	if tbl:
+		ci.draw_polyline(line, Color(COL_ROCK.r, COL_ROCK.g, COL_ROCK.b, 0.95), 2.6 * lw, true)
+		if ticks.size() >= 2:
+			ci.draw_multiline(ticks, Color(COL_ROCK.r, COL_ROCK.g, COL_ROCK.b, 0.8), 1.1 * lw, true)
+	else:
+		ci.draw_polyline(line, Color(COL_ROCK_RELIEF.r, COL_ROCK_RELIEF.g, COL_ROCK_RELIEF.b, 0.97), 2.8 * lw, true)
+
+
+
 ## The steps of preparing the campaign map for the loading panel:
 ## [[label, Callable], ...] (each is cheap once done).
 static func prepare_steps() -> Array:
@@ -974,6 +1325,7 @@ static func geometry_lines() -> void:
 			_road_lines.append(_smooth_open(_smooth_open(pts)))
 	_track_lines = _cut_at_towns(_road_lines)
 	_build_lanes()
+	_build_coast_dressing()
 	for vi in Geo.RIVERS.size():
 		_river_lines.append(Geo.river_line(vi))
 	var info := Geo.crossings()

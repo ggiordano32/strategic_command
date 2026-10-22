@@ -1860,13 +1860,13 @@ func _update_hint() -> void:
 	elif not replay.is_empty():
 		hint.text = "Replaying the turn: tap to skip."
 	elif sel_fleet >= 0 and _g() and last_mouse:
-		hint.text = "Right-click the sea to sail there (shaded: this turn; the wind blows from the east, so westward is fast), a coast to land the troops aboard, an enemy fleet to attack it, your own fleet to join it (a left click only selects). Left-click empty sea to deselect."
+		hint.text = "Right-click the sea to sail there (shaded: this turn; the wind blows from the east, so westward is fast), a lit beach to land the troops aboard, an enemy fleet to attack it, your own fleet to join it (a left click only selects). Left-click empty sea to deselect."
 	elif sel_army >= 0 and _g() and last_mouse:
 		hint.text = "Right-click a spot inside the shaded area to march there this turn, further on for later turns; right-click an enemy army to attack it, a city to besiege it, your other army to merge. Same spot again: cancel. Left-click empty ground to deselect."
 	elif _g() and last_mouse:
 		hint.text = "Left-click an army to move it or recruit into it (at a city), a city for buildings or a new army. Right-click orders, a right drag pans."
 	elif sel_fleet >= 0 and _g():
-		hint.text = "Tap the sea to sail there (shaded: this turn; the wind blows from the east, so westward is fast), a coast to land the troops aboard, an enemy fleet to attack it, your own fleet to join it. Board: select an army beside the fleet and tap the fleet."
+		hint.text = "Tap the sea to sail there (shaded: this turn; the wind blows from the east, so westward is fast), a lit beach to land the troops aboard, an enemy fleet to attack it, your own fleet to join it. Board: select an army beside the fleet and tap the fleet."
 	elif sel_army >= 0 and _g():
 		hint.text = "Tap (or drag the army to) a spot inside the shaded area to march there this turn, further on for later turns; tap an enemy army to attack it, a city to besiege it. Same spot again: cancel."
 	elif _g():
@@ -2293,6 +2293,8 @@ func _refresh_map6() -> void:
 			for e in CFleet.fleets(ps):
 				if CState.at_war(ps, int(sfl["f"]), int(e["f"])) and FogView.fleet_seen(st, e):
 					zones.append([MapOverlay.cell_point(CFleet.cell(e)), (sqrt(float(CFleet.FLEET_ZONE * CFleet.FLEET_ZONE + CFleet.FLEET_ZONE)) + 0.5) * px2])
+	var lfl := CFleet.fleet(ps, sel_fleet) if CFleet.on(ps) and sel_fleet >= 0 else {}
+	var land_changed := overlay.set_landing(ps, f, lfl, CState.army(ps, sel_army) if sel_army >= 0 else {})
 	ZProf.add("m6_fleets", t_fl)
 	# A new state (an order, a resolved turn, another planner) draws the overlay again, and the map when an owner
 	# changed; a selection on the same state only the overlay parts it shows (paths with zones / links, fleets,
@@ -2300,7 +2302,7 @@ func _refresh_map6() -> void:
 	# set_selected_region): the map's territories and edges are not drawn again for a tap.
 	var p_paths := fresh or paths != overlay.paths6 or zones != overlay.zones or links != overlay.links
 	var p_armies := fresh or marks != overlay.merge_marks or int(was_sel[2]) != merge_tap   # (the halo is its own node)
-	var p_fleets := fresh or int(was_sel[1]) != sel_fleet or overlay.fleet_paths != was_fleets or overlay.sea_reach_rt != was_sea
+	var p_fleets := fresh or int(was_sel[1]) != sel_fleet or overlay.fleet_paths != was_fleets or overlay.sea_reach_rt != was_sea or land_changed
 	overlay.paths6 = paths
 	overlay.zones = zones
 	overlay.links = links
@@ -2801,6 +2803,8 @@ func _fight_sea(b: Dictionary, hf: int) -> void:
 	sb.seed_value = int(_battle_built["seed"])
 	sb.player_side = int(_battle_built["player_side"])
 	sb.campaign_mode = true
+	sb.look_cell = Vector2i(int(b["x"]), int(b["y"]))   # the water and land look (game/sea_look.gd)
+	sb.look_region = int(b["r"])
 	sb.title_text = BattleScreen.title(st, b)
 	var facs := CRules.battle_factions(st, b)
 	var names := ["", ""]
@@ -2939,6 +2943,8 @@ func _fight_sea_live(bst: Dictionary, b: Dictionary, hs: Array, hmin: int, v: in
 	sb.seed_value = int(_battle_built["seed"])
 	sb.player_side = coop.side_of_player(online.f)
 	sb.campaign_mode = true
+	sb.look_cell = Vector2i(int(b["x"]), int(b["y"]))   # the water and land look (game/sea_look.gd)
+	sb.look_region = int(b["r"])
 	sb.title_text = BattleScreen.title(bst, b)
 	sb.coop = coop
 	sb.coop_region = sb.title_text

@@ -388,6 +388,25 @@ func rows() -> Array:
 				ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.SEA)
 				Overlay.draw_wreck(ci, sz * 0.5 + Vector2(0, 4), true, 1.0)])
 	if format >= 6:
+		# (beaches and cliffs along every coast, both packs, both map styles)
+		out.append(["Beach: a fleet may land or embark troops here (lit when a loaded fleet can reach it)", func(ci: Control, sz: Vector2):
+			_shore(ci, sz)
+			var tbl := MapView.table_on()
+			var line := PackedVector2Array([_l(sz) + Vector2(0, 2.4), Vector2(sz.x * 0.5, sz.y * 0.5 + 2.4), _r(sz) + Vector2(0, 2.4)])
+			var foam := PackedVector2Array([_l(sz) - Vector2(0, 0.9), Vector2(sz.x * 0.5, sz.y * 0.5 - 0.9), _r(sz) - Vector2(0, 0.9)])
+			MapView.draw_beach(ci, line, foam, 1.0, tbl)])
+		out.append(["Cliffs and rock: no landing", func(ci: Control, sz: Vector2):
+			_shore(ci, sz)
+			var tbl := MapView.table_on()
+			var line := PackedVector2Array([_l(sz) + Vector2(0, 0.7), Vector2(sz.x * 0.5, sz.y * 0.5 + 0.7), _r(sz) + Vector2(0, 0.7)])
+			var ticks := PackedVector2Array()
+			var x := 12.0
+			while x < sz.x - 10.0:
+				ticks.append(Vector2(x, sz.y * 0.5 + 0.7))
+				ticks.append(Vector2(x, sz.y * 0.5 + 4.5))
+				x += 6.0
+			MapView.draw_cliff(ci, line, ticks, 1.0, tbl)])
+	if format >= 6:
 		# (the lanes are curves through the sea, both packs, both map styles)
 		var lane_text := "Sea lane: the ports' trade routes (ships sail where they like)" if CData.ships_on() else "Sea lane between ports"
 		out.append([lane_text, func(ci: Control, sz: Vector2):
@@ -408,6 +427,13 @@ func rows() -> Array:
 
 static func _land(ci: Control, sz: Vector2) -> void:
 	ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.LAND.darkened(0.3))
+
+
+## A coast sample: sea above, land below.
+static func _shore(ci: Control, sz: Vector2) -> void:
+	ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.SEA)
+	ci.draw_rect(Rect2(0, sz.y * 0.5, sz.x, sz.y * 0.5), MapView.LAND.darkened(0.3))
+	ci.draw_line(Vector2(0, sz.y * 0.5), Vector2(sz.x, sz.y * 0.5), MapView.COAST, 1.6)
 
 
 static func _l(sz: Vector2) -> Vector2:

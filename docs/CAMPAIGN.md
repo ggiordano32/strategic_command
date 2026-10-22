@@ -2438,7 +2438,8 @@ stored) is the union over the factions of f's team (`CState.same_team`) of:
 every cell of its regions and of their **land** neighbours
 (`CData.adjacent`, kind 0: a sea lane is not a neighbour for sight); 1
 cell (Chebyshev) round each army, 2 when the army stands on a hill / ridge
-cell (`CGrid.cell_terrain` `K_HILL` / `K_RIDGE`); 1 round each fleet (the
+cell (`CGrid.cell_terrain` `K_HILL` / `K_RIDGE`); 3 round each fleet
+(`FLEET_R`, 2026-10-22, owner: "the ships need a much wider range of view"; was 1; a fleet at sea or in port alike; the
 troops aboard see nothing more); 1 round the city of a character not
 riding with an army; 2 round each settlement it owns (sea cells too: a
 coastal city watches its waters). **Coasts (2026-10-22, owner: "less fog off
