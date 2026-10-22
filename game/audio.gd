@@ -35,6 +35,9 @@ const CAPS := {
 	"melee": [1, 100], "impact": [1, 100], "volley": [1, 100], "art": [2, 100], "state": [1, 100],
 	"gate": [1, 150], "ladder": [1, 300], "beast": [1, 300], "horn": [1, 500], "ui": [3, 60],
 }
+## Overlap, s, of the two players of a looping ambient clip (see Looper).
+const BED_OVERLAP := 2.0
+const FIRE_OVERLAP := 1.0
 const LOOPS := ["bed_battle", "bed_map", "fire_loop"]
 const CLIPS := ["melee", "charge", "volley", "whoosh", "bolt_release", "bolt_impact", "stone_release",
 	"stone_impact", "burst", "fire_loop", "gate_blow", "gate_break", "creak", "unit_break", "unit_rally",
@@ -50,8 +53,8 @@ var _streams := {}
 var _pool: Array[AudioStreamPlayer] = []
 var _next := 0
 var _pan_bus := PackedStringArray()
-var _bed: AudioStreamPlayer
-var _fire: AudioStreamPlayer
+var _bed: Looper     # the ambient bed: two players handing over, see Looper
+var _fire: Looper
 var _bed_name := ""
 var _battle_depth := 0
 var _fire_target := 0.0
@@ -85,21 +88,18 @@ func _ready() -> void:
 				s = s.duplicate()
 				s.loop_mode = AudioStreamWAV.LOOP_FORWARD
 				s.loop_begin = 0
-				s.loop_end = (s.data.size() / 2) - 1
+				# Samples, from the length: the clips are QOA-compressed on import, so
+				# data.size() / 2 is a fraction of the length and looped the bed early.
+				s.loop_end = int(round(s.get_length() * s.mix_rate))
 			_streams[n] = s
 	for i in POOL:
 		var p := AudioStreamPlayer.new()
 		p.bus = "Effects"
 		add_child(p)
 		_pool.append(p)
-	_bed = AudioStreamPlayer.new()
-	_bed.bus = "Ambient"
-	add_child(_bed)
-	_fire = AudioStreamPlayer.new()
-	_fire.bus = "Ambient"
-	_fire.stream = _streams.get("fire_loop")
-	_fire.volume_db = -80.0
-	add_child(_fire)
+	_bed = Looper.new(_loop_player(), _loop_player(), BED_OVERLAP)
+	_fire = Looper.new(_loop_player(), _loop_player(), FIRE_OVERLAP)
+	_fire.level = 0.0
 	apply_volumes()
 	if unlocked:
 		_refresh_bed()
@@ -134,6 +134,13 @@ func _build_buses() -> void:
 			AudioServer.set_bus_send(i, "Master")
 
 
+func _loop_player() -> AudioStreamPlayer:
+	var p := AudioStreamPlayer.new()
+	p.bus = "Ambient"
+	add_child(p)
+	return p
+
+
 func _input(event: InputEvent) -> void:
 	if unlocked:
 		return
@@ -149,15 +156,17 @@ func _input(event: InputEvent) -> void:
 func _process(delta: float) -> void:
 	if _fire != null and unlocked:
 		var v := _fire_target * 0.55
-		var cur := db_to_linear(_fire.volume_db) if _fire.playing else 0.0
-		cur = move_toward(cur, v, delta * 1.5)
+		var cur := move_toward(_fire.level if _fire.playing() else 0.0, v, delta * 1.5)
 		if cur < 0.01:
-			if _fire.playing:
-				_fire.stop()
+			_fire.stop()
+			_fire.level = 0.0
 		else:
-			if not _fire.playing:
-				_fire.play()
-			_fire.volume_db = linear_to_db(cur)
+			if not _fire.playing():
+				_fire.start(_streams.get("fire_loop"))
+			_fire.set_level(cur)
+		_fire.tick(delta)
+	if _bed != null and unlocked:
+		_bed.tick(delta)
 
 
 # ---------------------------------------------------------------- settings --
@@ -241,12 +250,10 @@ func _refresh_bed() -> void:
 	if _bed == null or not unlocked:
 		return
 	var want := "bed_battle" if _battle_depth > 0 else "bed_map"
-	if want == _bed_name and _bed.playing:
+	if want == _bed_name and _bed.playing():
 		return
 	_bed_name = want
-	_bed.stream = _streams.get(want)
-	if _bed.stream != null:
-		_bed.play()
+	_bed.start(_streams.get(want))
 	if _battle_depth == 0:
 		_fire_target = 0.0
 
@@ -409,3 +416,78 @@ func _dbg_after_play(p: AudioStreamPlayer, clip: String) -> void:
 		p.bus, on0, pos0, pos200, pos1400, on200, sample, JSON.stringify(_dbg_ctx())])
 	_dbg_playing = p.playing and p.stream == st
 	_dbg_refresh()
+
+
+## A looping ambient clip on two players, so the loop does not depend on the
+## backend's own loop (on the web the Sample path can leave a gap at the wrap).
+## At (length - overlap) s the second player starts the clip from 0 and the
+## two cross-fade, equal power (cos / sin: the clip's end and start are
+## different noise, so equal power keeps the level), then the first stops and
+## the roles swap. The files keep their baked 2 s end-into-start crossfade, so
+## their head is constant power on its own and the extra fade adds no dip.
+class Looper extends RefCounted:
+	var a: AudioStreamPlayer
+	var b: AudioStreamPlayer
+	var cur: AudioStreamPlayer
+	var old: AudioStreamPlayer
+	var x := 2.0
+	var t := -1.0      # seconds into the hand-over, -1 when none
+	var level := 1.0   # linear gain of the whole clip
+
+	func _init(pa: AudioStreamPlayer, pb: AudioStreamPlayer, overlap: float) -> void:
+		a = pa
+		b = pb
+		cur = pa
+		x = overlap
+
+	func playing() -> bool:
+		return cur.playing
+
+	func start(s: AudioStream) -> void:
+		a.stop()
+		b.stop()
+		t = -1.0
+		cur = a
+		cur.stream = s
+		if s != null:
+			cur.volume_db = _gdb(level)
+			cur.play()
+
+	func stop() -> void:
+		a.stop()
+		b.stop()
+		t = -1.0
+
+	func set_level(l: float) -> void:
+		level = l
+		_apply()
+
+	func tick(delta: float) -> void:
+		if not cur.playing or cur.stream == null:
+			return
+		if t < 0.0:
+			var dur := cur.stream.get_length()
+			if dur > 2.0 * x + 1.0 and cur.get_playback_position() >= dur - x:
+				old = cur
+				cur = b if cur == a else a
+				cur.stream = old.stream
+				cur.volume_db = -80.0
+				cur.play(0.0)
+				t = 0.0
+		else:
+			t += delta
+			if t >= x:
+				old.stop()
+				t = -1.0
+		_apply()
+
+	func _apply() -> void:
+		if t < 0.0:
+			cur.volume_db = _gdb(level)
+		else:
+			var k := clampf(t / x, 0.0, 1.0)
+			cur.volume_db = _gdb(level * sin(k * PI / 2.0))
+			old.volume_db = _gdb(level * cos(k * PI / 2.0))
+
+	static func _gdb(l: float) -> float:
+		return -80.0 if l <= 0.0001 else linear_to_db(l)

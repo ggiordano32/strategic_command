@@ -17,6 +17,8 @@
 //	    only the soldier check (works against tools/serve_web.py too)
 //	go run ./cmd/webcheck -url http://127.0.0.1:8092 -audio [-audio-autoplay] [-audio-query '&audio-exp=master']
 //	    only the sound check (see audio.go; works against tools/serve_web.py too)
+//	go run ./cmd/webcheck -url http://127.0.0.1:8092 -audio-loop
+//	    only the ambient bed loop check: 54 s of bed_map, no gap at the seam (checkAudioLoop)
 //
 // After the turn flow, A loads ?scenario=skirmish&speed=3 and the battle's
 // soldier self-check (game/soldier_layer.gd, console "SOLDIER_PROBE") must
@@ -133,6 +135,7 @@ func main() {
 	soldiersOnly := flag.Bool("soldiers", false, "only check that a battle draws its soldiers")
 	audioOnly := flag.Bool("audio", false, "only check that sound plays after the first input")
 	audioAutoplay := flag.Bool("audio-autoplay", false, "also run the sound check with --autoplay-policy=no-user-gesture-required")
+	audioLoop := flag.Bool("audio-loop", false, "only check that the ambient bed loops without a gap (plays bed_map for 54 s)")
 	audioQuery := flag.String("audio-query", "", "extra URL query for the sound check (diagnosis, e.g. '&audio-exp=master')")
 	flag.Parse()
 
@@ -182,6 +185,15 @@ func main() {
 			checkAudio(newBrowserWith, front, *url, *audioQuery, *shots, true, false, check)
 			checkAudio(newBrowserWith, front, *url, *audioQuery, *shots, true, true, check)
 		}
+	}
+	if *audioLoop {
+		checkAudioLoop(newBrowserWith, front, *url, *audioQuery, check)
+		if fails == 0 {
+			fmt.Println("RESULT: PASS")
+			return
+		}
+		fmt.Printf("RESULT: FAIL (%d)\n", fails)
+		os.Exit(1)
 	}
 	if *audioOnly {
 		audio()

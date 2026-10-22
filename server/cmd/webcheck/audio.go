@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +27,7 @@ const audioHook = `(function(){
   if (!C || window.__wcCtx) return;
   window.__wcCtx = [];
   window.__wcPeak = 0;
+  window.__wcSeries = []; window.__wcRec = false;  // -audio-loop: [context time, peak of the last ~40 ms]
   var W = function(o){ var x = new C(o); window.__wcCtx.push(x); return x; };
   W.prototype = C.prototype;
   window.AudioContext = W;
@@ -39,8 +42,18 @@ const audioHook = `(function(){
       if (!c.__wcTap) {
         var an = c.createAnalyser(); an.fftSize = 2048; oc.call(an, dst); c.__wcTap = an;
         var buf = new Float32Array(an.fftSize);
-        setInterval(function(){ an.getFloatTimeDomainData(buf);
-          for (var i = 0; i < buf.length; i++) { var v = Math.abs(buf[i]); if (v > window.__wcPeak) window.__wcPeak = v; } }, 20);
+        setInterval(function(){ an.getFloatTimeDomainData(buf); var m = 0;
+          for (var i = 0; i < buf.length; i++) { var v = Math.abs(buf[i]); if (v > m) m = v; }
+          if (m > window.__wcPeak) window.__wcPeak = m;
+        }, 20);
+        // -audio-loop: every 1024-sample block's peak with its play time (a
+        // timer misses blocks when the page is busy; a script processor does not).
+        var sp = c.createScriptProcessor(1024, 1, 1);
+        sp.onaudioprocess = function(e){ if (!window.__wcRec) return;
+          var d = e.inputBuffer.getChannelData(0), m = 0;
+          for (var i = 0; i < d.length; i++) { var v = Math.abs(d[i]); if (v > m) m = v; }
+          window.__wcSeries.push([e.playbackTime, m]); };
+        oc.call(an, sp); oc.call(sp, dst);
       }
       var args = Array.prototype.slice.call(arguments); args[0] = c.__wcTap;
       oc.apply(this, args);
@@ -207,4 +220,128 @@ func timeOf(s []ctxState) float64 {
 		return -1
 	}
 	return s[0].Time
+}
+
+// checkAudioLoop (-audio-loop): the ambient bed must loop without a gap.
+// It opens the page (?audio-debug=1, so a click unlocks sound and the map
+// bed, bed_map, a 48 s loop, starts), records the peak at the speakers every
+// 20 ms for 54 s of the AudioContext's clock, and slides a 150 ms window over
+// 3-52 s after the click (the seam is at 48 s, the player hand-over starts at
+// 46 s). Passes when no window's peak falls under a quarter of the median
+// window peak, i.e. no gap anywhere (also covers a loop that wraps too early).
+// Prints the lowest ratio for 44-52 s too.
+func checkAudioLoop(newB func(autoplay bool) (context.Context, context.CancelFunc), front func(context.Context),
+	url, extra string, check func(bool, string)) {
+	ctx, cancel := newB(false)
+	defer cancel()
+	c := &console{who: "loop"}
+	listen(ctx, c)
+	front(ctx)
+	if _, err := chromedp.Call(ctx, page.AddScriptToEvaluateOnNewDocument,
+		page.AddScriptToEvaluateOnNewDocumentParams{Source: audioHook}); err != nil {
+		check(false, "audio loop: add the hook: "+err.Error())
+		return
+	}
+	if err := chromedp.Do(ctx, chromedp.EmulateViewport(1280, 720), chromedp.Navigate(url+"/?audio-debug=1"+extra)); err != nil {
+		check(false, "audio loop: navigate: "+err.Error())
+		return
+	}
+	if c.wait(regexp.MustCompile(`AUDIODEBUG ready .*`), 90*time.Second) == nil {
+		check(false, "audio loop: the page never printed AUDIODEBUG ready")
+		return
+	}
+	time.Sleep(2 * time.Second)
+	chromedp.Run(ctx, chromedp.Evaluate[any]("window.__wcSeries = []; window.__wcRec = true"))
+	if err := chromedp.Do(ctx, chromedp.MouseClickXY(640, 40)); err != nil {
+		check(false, "audio loop: input: "+err.Error())
+		return
+	}
+	cur := func() float64 {
+		s, err := chromedp.Run(ctx, chromedp.Evaluate[string](audioState))
+		var out []ctxState
+		if err == nil {
+			json.Unmarshal([]byte(s), &out)
+		}
+		return timeOf(out)
+	}
+	t0 := cur()
+	for cur()-t0 < 54 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	raw, err := chromedp.Run(ctx, chromedp.Evaluate[string]("JSON.stringify(window.__wcSeries)"))
+	if err != nil {
+		check(false, "audio loop: read the series: "+err.Error())
+		return
+	}
+	var ser [][2]float64
+	json.Unmarshal([]byte(raw), &ser)
+	// Peak of every 150 ms window (step 50 ms) at time rel (s after the click).
+	win := func(rel float64) float64 {
+		m := 0.0
+		for _, e := range ser {
+			if e[0]-t0 >= rel && e[0]-t0 < rel+0.15 && e[1] > m {
+				m = e[1]
+			}
+		}
+		return m
+	}
+	// The typical level: the median of the 150 ms window peaks (step 50 ms)
+	// from 3 s to 52 s. A gull or a swell crest would make a running maximum
+	// a poor yardstick: the quietest trough of a gap-free bed sits at 0.18-0.2
+	// of it, so the check uses the median, where a trough is above 0.5.
+	var peaks []float64
+	for rel := 3.0; rel < 52; rel += 0.05 {
+		peaks = append(peaks, win(rel))
+	}
+	sorted := append([]float64(nil), peaks...)
+	sort.Float64s(sorted)
+	med := sorted[len(sorted)/2]
+	minSeam, minAll, atSeam, atAll := 9.0, 9.0, 0.0, 0.0
+	for i, w := range peaks {
+		rel := 3.0 + 0.05*float64(i)
+		r := w / med
+		if rel >= 44 && rel < 52 && r < minSeam {
+			minSeam, atSeam = r, rel
+		}
+		if r < minAll {
+			minAll, atAll = r, rel
+		}
+	}
+	run := sorted[len(sorted)-1]
+	fmt.Printf("  audio loop: %d samples over %.1f s, median 150 ms peak %.3f (loudest %.3f); lowest 150 ms window / median: 44-52 s %.2f (at %.2f s), 3-52 s %.2f (at %.2f s)\n",
+		len(ser), cur()-t0, med, run, minSeam, atSeam, minAll, atAll)
+	// A loop that wraps early (the bed cut off every few seconds and started
+	// again, no silence) repeats its own signal: the 100 ms-bin peak series
+	// correlates with itself at the wrap period. A 48 s bed has no repeat
+	// inside 52 s, so the correlation at lags of 5-30 s must stay low.
+	nb := int((52.0 - 3.0) / 0.1)
+	bins := make([]float64, nb)
+	for i := range bins {
+		bins[i] = win(3.0 + 0.1*float64(i))
+	}
+	mean := 0.0
+	for _, v := range bins {
+		mean += v / float64(nb)
+	}
+	var v0 float64
+	for _, v := range bins {
+		v0 += (v - mean) * (v - mean)
+	}
+	bestC, bestLag := -1.0, 0.0
+	for lag := 50; lag <= 300; lag++ {
+		var cc, va, vb float64
+		for i := 0; i+lag < nb; i++ {
+			a, b := bins[i]-mean, bins[i+lag]-mean
+			cc += a * b
+			va += a * a
+			vb += b * b
+		}
+		if va > 0 && vb > 0 && cc/math.Sqrt(va*vb) > bestC {
+			bestC, bestLag = cc/math.Sqrt(va*vb), float64(lag)*0.1
+		}
+	}
+	fmt.Printf("  audio loop: highest self-correlation of the peak series at lags 5-30 s: %.2f (at %.1f s)\n", bestC, bestLag)
+	check(bestC < 0.8, fmt.Sprintf("audio loop: the bed does not repeat early (self-correlation %.2f at %.1f s, needs under 0.8)", bestC, bestLag))
+	check(len(ser) > 1500 && med > 0.005 && minAll >= 0.25,
+		fmt.Sprintf("audio loop: no gap in 3-52 s of the bed, seam at 48 s included: lowest 150 ms window %.2f of the median (needs 0.25 or more)", minAll))
 }

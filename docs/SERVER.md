@@ -595,6 +595,8 @@ the file; clients only know the domain, so nothing changes for them.
   spliced in front of the speakers) and the test horn must play as a
   sample with an advancing position. `-audio-autoplay` adds the two cases
   with the flag, `-audio-query '&...'` passes extra URL options.
+  `-audio-loop` plays the map bed for 54 s: no 150 ms window under a quarter of the median
+  window peak (no gap) and no self-correlation above 0.8 at lags of 5-30 s (no early wrap).
 
 ## 17. Live battle rooms (milestone 5)
 
