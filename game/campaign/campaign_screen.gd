@@ -3470,8 +3470,6 @@ func _left_click(p: Vector2) -> void:
 	var shift := Input.is_key_pressed(KEY_SHIFT)
 	var fid := overlay.fleet_at(p) if CFleet.on(ps) else -1
 	if fid >= 0:
-		var fl := CFleet.fleet(ps, fid)
-		var sf := CFleet.fleet(ps, sel_fleet) if sel_fleet >= 0 else {}
 		if fid == sel_fleet:
 			close_side()
 		else:
