@@ -1,14 +1,17 @@
 extends RefCounted
 ## The title menu's view settings (user://settings.cfg [menu]) and its testing aids. View only.
-##   background = diorama | art | auto   (auto: diorama on High graphics, art on Low)
+##   background = art_west | art_rome | diorama_west | diorama_rome   (the title screen's selector; the old values
+##                art / auto / diorama are migrated to the picture / the diorama of the last-played setting)
 ##   emblems    = drawn | painted         (painted falls back to drawn when the PNG is missing)
-## Aids: --menu-bg=diorama|art|auto and --menu-emblems=drawn|painted force one for the session;
+## Aids: --menu-bg=<one of the four> (or an old value) and --menu-emblems=drawn|painted force one for the session;
 ## --dev (or ?dev on the web) shows the Tests and benchmarks entries in Options.
 
-const Quality := preload("res://game/quality.gd")
 const Saves := preload("res://game/campaign/saves.gd")
 const SETTINGS := "user://settings.cfg"
-const BACKGROUNDS: Array[String] = ["auto", "diorama", "art"]
+const BACKGROUNDS: Array[String] = ["art_west", "art_rome", "diorama_west", "diorama_rome"]
+const LEGACY: Array[String] = ["auto", "art", "diorama"]
+const LABELS := {"art_west": "The Caribbean, painted", "art_rome": "Rome, painted",
+	"diorama_west": "The Caribbean, the map table", "diorama_rome": "Rome, the relief map"}
 const EMBLEMS: Array[String] = ["drawn", "painted"]
 
 ## Set by tests to show the developer entries without a command line.
@@ -34,7 +37,7 @@ static func _aid(prefix: String) -> String:
 	return ""
 
 
-static func _cfg_get(key: String, def: String, allowed: Array[String]) -> String:
+static func _cfg_get(key: String, def: String, allowed: Array) -> String:
 	var cf := ConfigFile.new()
 	if cf.load(SETTINGS) != OK:
 		return def
@@ -49,21 +52,47 @@ static func _cfg_set(key: String, v: String) -> void:
 	cf.save(SETTINGS)
 
 
-## The setting: auto / diorama / art.
-static func background_pref() -> String:
-	if BACKGROUNDS.has(bg_override):
-		return bg_override
+## "art" or "diorama".
+static func kind(c: String) -> String:
+	return c.get_slice("_", 0)
+
+
+## "west" or "rome".
+static func pack_of(c: String) -> String:
+	return c.get_slice("_", 1)
+
+
+## Any stored / aid value as one of the four; old values (art, auto, diorama) take the given setting.
+static func normalize(v: String, pack: String) -> String:
+	if BACKGROUNDS.has(v):
+		return v
+	var p := pack if pack == "west" or pack == "rome" else "rome"
+	return ("diorama_" if v == "diorama" else "art_") + p
+
+
+## The choice in force: a test's override, a command-line aid, else the saved one (first run: the picture of `pack`,
+## the last-played setting).
+static func background_pref(pack: String) -> String:
+	if bg_override != "":
+		return normalize(bg_override, pack)
 	var o := _aid("--menu-bg=")
-	if BACKGROUNDS.has(o):
-		return o
+	if BACKGROUNDS.has(o) or LEGACY.has(o):
+		return normalize(o, pack)
 	if Saves._test_run():
-		return "art"   # (a test run never builds the live map behind a menu it did not ask about: it switches the content pack)
-	return _cfg_get("background", "auto", BACKGROUNDS)
+		return normalize("art", pack)   # (a test run never builds the live map behind a menu it did not ask about: it switches the content pack)
+	return stored_background(pack)
 
 
 ## The saved choice, whatever an aid or a test forces.
-static func stored_background() -> String:
-	return _cfg_get("background", "auto", BACKGROUNDS)
+static func stored_background(pack: String) -> String:
+	return normalize(_cfg_get("background", "", BACKGROUNDS + LEGACY), pack)
+
+
+## Rewrite an old saved value as one of the four.
+static func migrate(pack: String) -> void:
+	var cf := ConfigFile.new()
+	if cf.load(SETTINGS) == OK and cf.has_section_key("menu", "background") and not BACKGROUNDS.has(str(cf.get_value("menu", "background"))):
+		set_background(normalize(str(cf.get_value("menu", "background")), pack))
 
 
 static func stored_emblems() -> String:
@@ -72,14 +101,6 @@ static func stored_emblems() -> String:
 
 static func set_background(v: String) -> void:
 	_cfg_set("background", v)
-
-
-## The background in force: diorama or art.
-static func background() -> String:
-	var p := background_pref()
-	if p == "auto":
-		return "art" if Quality.is_low() else "diorama"
-	return p
 
 
 static func emblems_pref() -> String:

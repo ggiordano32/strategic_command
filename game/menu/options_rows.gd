@@ -7,9 +7,9 @@ extends RefCounted
 ##
 ##   var rows := OptionsRows.new()
 ##   rows.build(parent, {"prefix": "home", "narrow": false, "title": true, "dev": false, "win": get_window(),
-##       "on_size": Callable, "on_controls": Callable, "on_book": Callable, "on_tests": Callable, "on_menu_bg": Callable})
+##       "on_size": Callable, "on_controls": Callable, "on_book": Callable, "on_tests": Callable})
 ##   rows.refresh()   # the controls show the stored values again
-## Controls are named "<prefix>_<key>": ui_size, quality, soldiers, fullscreen, battle_look, map_style, menu_bg,
+## Controls are named "<prefix>_<key>": ui_size, quality, soldiers, fullscreen, battle_look, map_style,
 ## menu_emblems; audio_mute and audio_master / audio_effects / audio_ambient (sliders).
 
 const Kit := preload("res://game/campaign/ui_kit.gd")
@@ -60,10 +60,6 @@ func build(parent: Control, o: Dictionary) -> void:
 		MapView.style_pref, "Campaign map", "Auto: the map table (painted miniatures, banded relief and sea) for the Caribbean, the relief map for Rome. " \
 		+ "Table and Relief force one. Takes effect on the next map.", func(v): MapView.set_style(str(v)))
 	if title:
-		_choice(parent, "menu_bg", "Menu picture", "The picture behind this menu.", [["Auto", "auto"], ["Diorama", "diorama"], ["Art", "art"]],
-			MenuPrefs.stored_background(), "Menu picture", "Diorama: the live campaign map. Art: a painted picture. Auto: the diorama on High graphics, the picture on Low.", func(v):
-				MenuPrefs.set_background(str(v))
-				_call("on_menu_bg"))
 		_choice(parent, "menu_emblems", "Emblems", "The marks of the two settings.", [["Drawn", "drawn"], ["Painted", "painted"]],
 			MenuPrefs.stored_emblems(), "Emblems", "Drawn in code, or painted pictures (when the files are installed).", func(v):
 				MenuPrefs.set_emblems(str(v))
@@ -212,7 +208,6 @@ func refresh() -> void:
 	put.call("battle_look", BattleLook.pref())
 	MapView.load_view_pref()
 	put.call("map_style", MapView.style_pref)
-	put.call("menu_bg", MenuPrefs.stored_background())
 	put.call("menu_emblems", MenuPrefs.stored_emblems())
 	var a = AudioFx.inst()
 	put.call("audio_mute", 0 if a != null and a.muted else 1)

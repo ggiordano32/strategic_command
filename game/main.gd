@@ -95,6 +95,14 @@ var _continue_entry: Button = null
 var _continue_emblem: Control = null
 var _recent: Dictionary = {}     # the most recent save: {kind, slot / id, name, turn, pack}
 var _phone_layout := false
+var _bg_choice := ""              # the title screen's background (one of MenuPrefs.BACKGROUNDS; "" before the first resolve)
+var _sel: VBoxContainer = null    # the background selector at the bottom of the title screen
+var _sel_label: Label = null
+var _sel_prev: Button = null
+var _sel_next: Button = null
+var _sel_zone: Control = null
+var _sel_press := Vector2.ZERO
+var _home_info: Label = null
 var _continue_box: VBoxContainer
 var _import_edit: TextEdit
 var _import_info: Label
@@ -537,12 +545,145 @@ func _build_home(bg: Control) -> Control:
 	_entry("Options", "home_options", show_page.bind("options"))
 	var info := Kit.label("Godot %s, %s renderer" % [Engine.get_version_info()["string"],
 		ProjectSettings.get_setting("rendering/renderer/rendering_method", "?")], 12, Color(1, 1, 1, 0.45))
+	_home_info = info
 	info.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
 	info.offset_left = 30
 	info.offset_top = -30
 	home.add_child(info)
+	_build_selector(home)
 	_layout_home()
 	return home
+
+
+## A chevron drawn in code (the kit has no chevron icon): dir -1 points left, +1 right.
+class Chevron extends Control:
+	var dir := 1
+	func _draw() -> void:
+		var c := size * 0.5
+		var h := minf(size.x, size.y) * 0.2
+		var a := Vector2(-dir * h * 0.6, 0.0) + c
+		var pts := PackedVector2Array([a + Vector2(dir * h, -h * 1.5), a + Vector2(dir * h * 2.0, 0.0), a + Vector2(dir * h, h * 1.5)])
+		draw_polyline(pts, Color(Kit.COL_BONE, 0.95), 2.5, true)
+
+
+## The background selector, bottom centre of the title screen: a gold rule, then [<] name [>].
+func _build_selector(home: Control) -> void:
+	_sel = VBoxContainer.new()
+	_sel.name = "bg_selector"
+	_sel.add_theme_constant_override("separation", 8)
+	_sel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	home.add_child(_sel)
+	var rl := Kit.rule(Color(Kit.COL_GOLD, 0.55))
+	rl.custom_minimum_size = Vector2(0, 1)
+	_sel.add_child(rl)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_sel.add_child(row)
+	_sel_prev = _sel_arrow(-1)
+	row.add_child(_sel_prev)
+	# the middle is the swipe zone (a drag along it steps the choice)
+	_sel_zone = Control.new()
+	_sel_zone.name = "bg_zone"
+	_sel_zone.mouse_filter = Control.MOUSE_FILTER_STOP
+	_sel_zone.gui_input.connect(_on_sel_input)
+	row.add_child(_sel_zone)
+	_sel_label = Kit.label("", 18, Kit.COL_BONE)
+	_sel_label.name = "bg_label"
+	_sel_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_sel_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_sel_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_sel_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	MenuStyle.use_display(_sel_label, 18)
+	_sel_label.add_theme_color_override("font_outline_color", Color(0.03, 0.04, 0.04, 0.9))
+	_sel_label.add_theme_constant_override("outline_size", 5)
+	_sel_zone.add_child(_sel_label)
+	_sel_next = _sel_arrow(1)
+	row.add_child(_sel_next)
+	_layout_selector()
+
+
+func _sel_arrow(dir: int) -> Button:
+	var b := Button.new()
+	b.name = "bg_prev" if dir < 0 else "bg_next"
+	b.focus_mode = Control.FOCUS_NONE
+	Kit.nav_style(b)
+	b.pressed.connect(AudioFx.click)
+	b.pressed.connect(_step_bg.bind(dir))
+	var ch := Chevron.new()
+	ch.dir = dir
+	ch.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ch.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	b.add_child(ch)
+	Kit.tip(b, "Menu picture", "Step to the %s background." % ("previous" if dir < 0 else "next"))
+	return b
+
+
+func _layout_selector() -> void:
+	if _sel == null:
+		return
+	var ph := _is_phone()
+	var bs := 36.0 if ph else 44.0
+	for b in [_sel_prev, _sel_next]:
+		(b as Control).custom_minimum_size = Vector2(bs, bs)
+	_sel_zone.custom_minimum_size = Vector2(clampf(get_viewport_rect().size.x - 2.0 * bs - 44.0, 200.0, 340.0), bs)
+	MenuStyle.use_display(_sel_label, 16 if ph else 18)
+	_sel.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM, Control.PRESET_MODE_MINSIZE)
+	_sel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_sel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_sel.offset_bottom = -(10.0 if ph else 24.0)
+	_sel.offset_top = _sel.offset_bottom - (bs + 9.0)
+
+
+func _on_sel_input(ev: InputEvent) -> void:
+	if ev is InputEventMouseButton and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+		if ev.pressed:
+			_sel_press = (ev as InputEventMouseButton).position
+		else:
+			var dx: float = (ev as InputEventMouseButton).position.x - _sel_press.x
+			if absf(dx) >= 40.0:
+				_step_bg(-1 if dx > 0.0 else 1)   # (dragging right pulls the previous picture in)
+	elif ev is InputEventScreenTouch:
+		if ev.pressed:
+			_sel_press = (ev as InputEventScreenTouch).position
+		else:
+			var dx2: float = (ev as InputEventScreenTouch).position.x - _sel_press.x
+			if absf(dx2) >= 40.0:
+				_step_bg(-1 if dx2 > 0.0 else 1)
+
+
+## Step the background selector (wraps) and keep the choice.
+func _step_bg(dir: int) -> void:
+	if _bg == null:
+		return
+	var n := MenuPrefs.BACKGROUNDS.size()
+	var i := MenuPrefs.BACKGROUNDS.find(_current_bg())
+	_set_bg(MenuPrefs.BACKGROUNDS[(i + dir + n) % n], true)
+
+
+func _current_bg() -> String:
+	return _bg_choice if _bg_choice != "" else MenuPrefs.stored_background(_last_pack())
+
+
+func _set_bg(c: String, switch: bool) -> void:
+	_bg_choice = c
+	MenuPrefs.set_background(c)
+	if switch and _bg != null:
+		_bg.switch_to(c)
+	_apply_wordmark()
+
+
+## The wordmark's emblem and subtitle and the selector's name follow the selected background's setting.
+func _apply_wordmark() -> void:
+	var c := _current_bg()
+	var pk := MenuPrefs.pack_of(c)
+	if _sel_label != null:
+		_sel_label.text = str(MenuPrefs.LABELS[c])
+	if _home_emblem != null:
+		(_home_emblem as Emblem).pack = pk
+		_home_emblem.queue_redraw()
+	if _subtitle != null:
+		_subtitle.text = PackView.subtitle(pk)
 
 
 ## One entry of the stack: a wrapper (so the slide-in can move the button) holding a flat button.
@@ -599,6 +740,8 @@ func _layout_home() -> void:
 		_home_stack.offset_right = ml + 380
 		_home_mark.position = Vector2(30, 22)
 		_home_emblem.custom_minimum_size = Vector2(64, 64)
+	_layout_selector()
+	_home_info.visible = not _phone_layout   # (the engine line would sit under the selector on a phone)
 	_home_stack.grow_horizontal = Control.GROW_DIRECTION_BOTH if _phone_layout else Control.GROW_DIRECTION_END
 	_home_stack.grow_vertical = Control.GROW_DIRECTION_BOTH
 
@@ -646,10 +789,7 @@ func _update_home() -> void:
 		Kit.tip(_continue_entry, "Continue", t)
 		(_continue_emblem as Emblem).pack = str(_recent["pack"])
 		_continue_emblem.queue_redraw()
-	var lp := _last_pack()
-	(_home_emblem as Emblem).pack = lp
-	_home_emblem.queue_redraw()
-	_subtitle.text = PackView.subtitle(lp)
+	_apply_wordmark()
 	_layout_home()
 
 
@@ -975,7 +1115,7 @@ func _build_options(bg: Control) -> Control:
 	panel.add_child(inner)
 	_opts = OptionsRows.new()
 	_opts.build(inner, {"prefix": "home", "narrow": narrow, "title": true, "dev": MenuPrefs.dev(), "win": get_window(),
-		"on_controls": _open_controls, "on_book": _open_book, "on_tests": _open_tests, "on_menu_bg": _activate_bg})
+		"on_controls": _open_controls, "on_book": _open_book, "on_tests": _open_tests})
 	return vb.get_parent().get_parent()
 
 
@@ -989,8 +1129,11 @@ func _open_tests() -> void:
 func _activate_bg() -> void:
 	if _bg == null or not _menu.visible:
 		return
-	_bg.activate(_last_pack())
-	_bg.show_pack(_last_pack())
+	var lp := _last_pack()
+	MenuPrefs.migrate(lp)
+	_bg_choice = MenuPrefs.background_pref(lp)
+	_bg.activate(_bg_choice)
+	_apply_wordmark()
 
 
 func _menu_visibility() -> void:
@@ -1437,6 +1580,8 @@ func show_page(p: String) -> void:
 		_back_btn.visible = p != "home"
 	if _bg != null:
 		_bg.set_dim((0.45 if _phone_layout else 0.0) if p == "home" else 0.66, p == "home")
+		if p == "home" and _bg_choice != "":
+			_bg.show_pack(MenuPrefs.pack_of(_bg_choice))   # (a setting card may have shown the other picture)
 	if p == "campaign":
 		_fill_continue()
 	if p == "grand":
@@ -1460,6 +1605,15 @@ func go_back() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if _menu.visible and page == "home" and not book.visible and not controls.visible and custom == null and _new_campaign == null:
+		if event.is_action_pressed("ui_left"):
+			_step_bg(-1)
+			get_viewport().set_input_as_handled()
+			return
+		if event.is_action_pressed("ui_right"):
+			_step_bg(1)
+			get_viewport().set_input_as_handled()
+			return
 	if event.is_action_pressed("ui_cancel") and _menu.visible and page != "home" and not book.visible \
 			and not controls.visible and custom == null and _new_campaign == null:
 		go_back()

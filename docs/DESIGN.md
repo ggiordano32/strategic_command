@@ -6672,23 +6672,37 @@ Button names are kept for the tests: `home_campaign`, `home_grand`, `home_battle
 are new; `home_controls`, `home_sandbox`, `home_custom`, `home_server`, `home_soldiers`, `home_quality`,
 `home_battle_look`, `home_map_style`, `home_Join`, `home_Import` live on their new pages. (After pass 2 the Options names are capsules: `home_<key>` with its segments `home_<key>_<value>`, e.g. `home_quality_low`; the in-game Menu's use `menu_<key>`; `home_Join` is the Join page's, the card's Join is `grand_join`.)
 
-**Backgrounds** (`[menu] background = auto | diorama | art` in `user://settings.cfg`; Options toggles it;
-`--menu-bg=` forces one for the session; a test run defaults to art so it never switches the content pack):
+**Backgrounds** (`[menu] background = art_west | art_rome | diorama_west | diorama_rome` in `user://settings.cfg`, set by
+the selector at the bottom of the title screen, see "Background selector" below; `--menu-bg=` forces one for the session
+and also takes the old values; a test run defaults to the picture so it never switches the content pack):
 - *diorama*: the live overworld. `game/menu/diorama.gd` builds a non-interactive copy of the campaign screen's layer
   stack (MapView, LandTrees, TownLayer, MinisLayer, MapOverlay) inside a SubViewport (the layers use canvas layers)
   on `CState.new_campaign("Menu", 7, [0], {"fog": 0}, [], pack)`, never saved, fog off, at a fixed scene per setting
   (Port Royal from the sea at zoom 2.6; Campania / the Bay of Naples at 2.0), drifting 13 px each way over a 4
-  minute sine (about 20 px a minute at its fastest). Rome is forced to the table style while it shows (its own
-  default is the relief map; the stale bake is dropped on release). The build is queued as steps that `_process`
+  minute sine (about 20 px a minute at its fastest). The map style is forced per scene while it shows (the Caribbean the
+  table, Rome the relief map, whatever the campaign map's own setting; it and the stale bake are put back on release). The build is queued as steps that `_process`
   runs one a frame (map, relief, landscape, state, layers, refresh), so the menu is never blocked and freeing the
   node in between is harmless. It holds the content pack (`CData`, `Geo`) of its setting, so it is freed when the
-  menu hides (`release()` puts Rome back) and built again when it shows. It follows the last-played setting only:
-  a second world would cost seconds (the card hover cross-fades the art style, not the diorama).
+  menu hides (`release()` puts Rome back) and built again when it shows. It is built for the selected
+  setting only (one world at a time; the setting's key art stands in until it is ready); the campaign-card hover
+  cross-fades the key art, not the diorama.
 - *art*: `assets/ui/keyart/<pack>.jpg` fitted cover-style with a 1 % parallax (pointer, or tilt on a phone), a
-  dark gradient placeholder when the file is missing; it follows the hovered / last-played card (0.5 s cross-fade).
-- *auto*: diorama on High graphics, art on Low (`Quality.is_low()`).
+  dark gradient placeholder when the file is missing; it follows the selected choice, and the hovered setting card on the campaign pages (0.5 s cross-fade).
+- There is no *auto* any more: Quality Low no longer forces the picture; a chosen diorama on Low uses the Low layers
+  as the campaign does.
 Measured on this PC (RTX 3070, relief cached): Caribbean about 1.0-1.3 s (the first world after a Rome menu also
 rebuilds the map geometry), Rome about 0.65 s; the longest single frame is the landscape bake, about 250 ms.
+
+**Background selector** (owner 2026-10-22, after Rome 2's menu): bottom centre of the title page only, a thin gold rule
+over `[<]  The Caribbean, painted  [>]` (`bg_selector`, built in `main.gd`): 44 px nav-style arrow buttons (36 px on
+phones) with a chevron drawn in code (the kit has no chevron icon), the name in Cinzel 18 (16 on phones) in bone with a
+dark outline. The choices, in order and wrapping: The Caribbean, painted (`art_west`), Rome, painted (`art_rome`), The
+Caribbean, the map table (`diorama_west`), Rome, the relief map (`diorama_rome`). The arrows, the Left / Right keys and
+a 40 px swipe along the name step it; the switch cross-fades the pictures over 0.5 s (`MenuBg.switch_to`) and a diorama
+builds as before. The choice is saved at once; old saved values migrate (`art` and `auto` to the picture, `diorama` to
+the diorama, of the last-played setting; first run: the painting of the last-played setting). The wordmark's emblem and
+subtitle follow the selected choice's setting; Continue keeps its own save's emblem. Options no longer has a Menu
+picture row (the title screen's and the in-game Menu's).
 
 **Emblems** (`[menu] emblems = drawn | painted`; `--menu-emblems=`): `game/menu/emblem.gd`. *Drawn*: code-drawn vector
 marks (`Emblem.draw_mark`): the West's black flag on its staff with a compass rose over two crossed cutlasses, Rome's
@@ -6719,7 +6733,7 @@ a long string").** View only.
   row, the label (16, bone) with a one-line description (13, dim) left and a capsule right (under the label on phones and
   in the 440 px in-game column): UI size S / M / L, Graphics Auto / High / Low (the description says what Auto is now),
   Soldiers Auto / Compatible, Fullscreen, Battle look Diorama / Painterly, Campaign map Auto / Table / Relief; the title
-  page adds Menu picture Auto / Diorama / Art and Emblems Drawn / Painted and its Help section (Controls, Unit book,
+  page adds Emblems Drawn / Painted (the menu picture moved to the title screen's selector) and its Help section (Controls, Unit book,
   Tests with `--dev`). Audio: a Sound On / Off capsule and three sliders (master, effects, ambient) with their percent.
   The page sits in a trim panel so it reads over any picture; it scrolls (the Help buttons are at the bottom).
 - *Grand Campaign page* (`main.gd`): the heading and a line, then two trim cards side by side (stacked under 640

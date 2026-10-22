@@ -22,8 +22,8 @@ signal built(ms: float)
 
 ## Per setting: the region the camera looks at, its zoom, and where that spot sits in the window (fractions).
 const SCENES := {
-	"west": {"region": "port_royal", "zoom": 2.6, "at": Vector2(0.62, 0.40), "shift": Vector2(-10, 10)},
-	"rome": {"region": "campania", "zoom": 2.0, "at": Vector2(0.64, 0.44), "shift": Vector2(-70, -25)},
+	"west": {"style": "table", "region": "port_royal", "zoom": 2.6, "at": Vector2(0.62, 0.40), "shift": Vector2(-10, 10)},
+	"rome": {"style": "relief", "region": "campania", "zoom": 2.0, "at": Vector2(0.64, 0.44), "shift": Vector2(-70, -25)},
 }
 const DRIFT_PX := 13.0       # amplitude: with a 4 minute period about 20 px a minute at the fastest
 const DRIFT_PERIOD := 240.0
@@ -45,6 +45,7 @@ var _t := 0.0
 var _zoom := 1.5
 var _canceled := false
 var _forced := false
+var _prev_style := "auto"
 var _steps: Array = []
 var _t0 := 0
 var _tl := 0
@@ -70,10 +71,15 @@ func build(p_pack: String, vp: Vector2) -> void:
 
 func _use_pack() -> void:
 	PackView.use_pack(pack)
-	# Rome's own map style is the plain relief; the diorama wants the miniatures table (put back in release()).
-	if MapView.style_pref == "auto" and pack == "rome":
+	# The Caribbean shows the miniatures table, Rome the relief map, whatever the campaign map's own setting is
+	# (put back in release()).
+	var want: String = str(SCENES[pack]["style"])
+	MapView.load_view_pref()
+	if MapView.style_pref != want:
 		_forced = true
-		MapView.style_pref = "table"
+		_prev_style = MapView.style_pref
+		MapView.style_pref = want
+		Landscape._baked = false
 
 
 func _make_state() -> void:
@@ -175,7 +181,7 @@ func release() -> void:
 		MapView.instance = null
 	if _forced:
 		_forced = false
-		MapView.style_pref = "auto"
-		Landscape._baked = false   # (baked for the table: the campaign bakes it again for its own style)
+		MapView.style_pref = _prev_style
+		Landscape._baked = false   # (baked for this style: the campaign bakes it again for its own)
 	PackView.use_pack("rome")
 	queue_free()

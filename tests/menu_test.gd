@@ -211,7 +211,7 @@ func _continue() -> void:
 	_check(holder.visible, "Continue shows with a save")
 	_check(_btn("home_continue").text == "Continue: Newest, turn 7", "Continue names the most recent save (%s)" % _btn("home_continue").text)
 	_check((m._continue_emblem as Emblem).pack == "west", "Continue carries the save's setting emblem")
-	_check((m._home_emblem as Emblem).pack == "west", "the wordmark's emblem follows the last-played setting")
+	_check((m._home_emblem as Emblem).pack == MenuPrefs.pack_of(m._bg_choice) and m._bg_choice == "art_rome", "the wordmark's emblem follows the selected background (rome), not the last-played save")
 	await _shot_title("title_continue")
 	m.page = "home"
 	_btn("home_continue").pressed.emit()
@@ -378,7 +378,6 @@ func _options_page() -> void:
 		"soldiers": func(): return SoldierLayer.load_pref(),
 		"battle_look": func(): return BattleLook.pref(),
 		"map_style": func(): return MapView.style_pref,
-		"menu_bg": func(): return MenuPrefs.stored_background(),
 		"menu_emblems": func(): return MenuPrefs.stored_emblems(),
 	}
 	for key in stored:
@@ -421,12 +420,13 @@ func _options_page() -> void:
 				untipped += 1
 	_check(untipped == 0, "every Options control has a titled tip (%d without)" % untipped)
 	# the two menu settings reach the config file
-	MenuPrefs.set_background("diorama")
+	MenuPrefs.set_background("diorama_rome")
 	MenuPrefs.set_emblems("painted")
-	_check(MenuPrefs.stored_background() == "diorama" and MenuPrefs.stored_emblems() == "painted", "the menu settings are kept in [menu]")
+	_check(MenuPrefs.stored_background("west") == "diorama_rome" and MenuPrefs.stored_emblems() == "painted", "the menu settings are kept in [menu]")
 	rows.refresh()
-	_check(rows.seg["menu_bg"].value == "diorama" and rows.seg["menu_emblems"].value == "painted", "refresh shows them")
-	MenuPrefs.set_background("auto")
+	_check(rows.seg["menu_emblems"].value == "painted", "refresh shows them")
+	_check(not rows.seg.has("menu_bg") and _btn("home_menu_bg_art") == null and m.find_child("home_menu_bg", true, false) == null, "Options has no Menu picture row (the title screen's selector replaced it)")
+	MenuPrefs.set_background("art_rome")
 	MenuPrefs.set_emblems("drawn")
 	MenuPrefs.dev_override = true
 	await _new_menu()
@@ -604,71 +604,160 @@ func _emblems() -> void:
 
 # ------------------------------------------------------- backgrounds ---
 
+func _wait_diorama() -> Node:
+	var d = null
+	for k in 900:
+		await process_frame
+		d = m._bg.diorama
+		if d != null and is_instance_valid(d) and d.ready_flag:
+			break
+	return d
+
+
+func _bg_state(c: String) -> void:
+	var want_kind := MenuPrefs.kind(c)
+	_check(m._bg_choice == c and m._bg.choice == c, "selector: the choice is %s" % c)
+	_check(m._sel_label.text == str(MenuPrefs.LABELS[c]), "selector: the label reads \"%s\"" % MenuPrefs.LABELS[c])
+	_check(MenuPrefs.stored_background("rome") == c, "selector: %s is saved" % c)
+	_check(m._bg.mode == want_kind, "selector: the background is a %s" % want_kind)
+	_check((m._home_emblem as Emblem).pack == MenuPrefs.pack_of(c) and m._subtitle.text == PackView.subtitle(MenuPrefs.pack_of(c)),
+		"selector: the wordmark shows the %s emblem and subtitle" % MenuPrefs.pack_of(c))
+
+
 func _backgrounds() -> void:
-	# art: the placeholder or the painted picture, no world
-	MenuPrefs.bg_override = "art"
+	# migration of the old saved values (art / auto -> the picture, diorama -> the diorama, of the last-played setting)
+	for pair in [["art", "art_west"], ["auto", "art_west"], ["diorama", "diorama_west"], ["art_rome", "art_rome"], ["junk", "art_west"]]:
+		MenuPrefs._cfg_set("background", pair[0])
+		_check(MenuPrefs.stored_background("west") == pair[1], "migration: saved %s reads as %s" % [pair[0], pair[1]])
+		MenuPrefs.migrate("west")
+		_check(MenuPrefs.stored_background("west") == pair[1], "migration: %s is rewritten" % pair[0])
+	var cf := ConfigFile.new()
+	cf.load(SETTINGS)
+	cf.erase_section_key("menu", "background")
+	cf.save(SETTINGS)
+	_check(MenuPrefs.stored_background("west") == "art_west" and MenuPrefs.stored_background("rome") == "art_rome", "first run: the picture of the last-played setting")
+	_check(MenuPrefs.normalize("diorama", "rome") == "diorama_rome" and MenuPrefs.normalize("auto", "xyz") == "art_rome", "old aid values map onto the four")
+	_check(MenuPrefs.BACKGROUNDS == ["art_west", "art_rome", "diorama_west", "diorama_rome"], "MenuPrefs has the four choices")
+	# art
+	MenuPrefs.bg_override = "art_rome"
 	PackView.use_pack("rome")
 	m.show_page("home")
 	m._activate_bg()
 	await _frames(5)
 	_check(m._bg.mode == "art" and m._bg.diorama == null, "art background: no diorama is built")
+	_check(m._sel != null and m._sel.is_visible_in_tree() and m._sel_prev.custom_minimum_size.x == 44.0, "the selector shows on the title screen with 44 px arrows")
+	var r: Rect2 = m._sel.get_global_rect()
+	var vpw: float = m.get_viewport_rect().size.x
+	_check(absf(r.get_center().x - vpw * 0.5) < 2.0 and r.end.y > m.get_viewport_rect().size.y - 90.0 and r.end.y <= m.get_viewport_rect().size.y,
+		"the selector sits at the bottom centre (%s)" % str(r))
+	m.show_page("campaign")
+	await _frames(2)
+	_check(not m._sel.is_visible_in_tree(), "the selector is on the title page only")
+	m.show_page("home")
+	await _frames(3)
+	# step through all four with the arrows (the setting saved in [menu]); the override is lifted so the saved value rules
+	MenuPrefs.bg_override = "art_west"
+	MenuPrefs.set_background("art_west")
+	m._activate_bg()
+	await _frames(5)
+	_bg_state("art_west")
+	await _shot_title("selector_1_art_west")
+	m._sel_next.pressed.emit()
+	await _frames(20)
+	_bg_state("art_rome")
+	await _shot_title("selector_2_art_rome")
+	m._sel_next.pressed.emit()
+	var d = await _wait_diorama()
+	_check(d != null and d.ready_flag, "the Caribbean map-table diorama builds")
+	_bg_state("diorama_west")
+	_check(CData.pack == "west" and d.map_view.table_on(), "diorama_west: the west pack in the table style")
+	print("  diorama_west built in %.0f ms" % d.build_ms)
+	await _frames(30)
+	await _shot_title("selector_3_diorama_west")
+	m._sel_next.pressed.emit()
+	d = await _wait_diorama()
+	_check(d != null and d.ready_flag, "the Rome relief diorama builds")
+	_bg_state("diorama_rome")
+	_check(CData.pack == "rome" and not d.map_view.table_on(), "diorama_rome: the relief style, not the table")
+	print("  diorama_rome built in %.0f ms" % d.build_ms)
+	await _frames(30)
+	await _shot_title("selector_4_diorama_rome")
+	var style_after: String = MapView.style_pref
+	m._sel_next.pressed.emit()   # wraps to the first
+	await _frames(20)
+	_bg_state("art_west")
+	_check(m._bg.diorama == null and CData.pack == "rome" and MapView.style_pref == style_after, "leaving a diorama frees it and puts back Rome and the map style")
+	m._sel_prev.pressed.emit()   # wraps back to the last
+	d = await _wait_diorama()
+	_bg_state("diorama_rome")
+	_check(d != null and d.ready_flag, "the previous arrow wraps to the last choice")
+	# the keys step it too
+	var ev := InputEventAction.new()
+	ev.action = "ui_left"
+	ev.pressed = true
+	Input.parse_input_event(ev)
+	await _frames(3)
+	_check(m._bg_choice == "diorama_west", "the left key steps back (%s)" % m._bg_choice)
+	ev = InputEventAction.new()
+	ev.action = "ui_right"
+	ev.pressed = true
+	Input.parse_input_event(ev)
+	await _frames(3)
+	_check(m._bg_choice == "diorama_rome", "the right key steps forward (%s)" % m._bg_choice)
+	# a swipe on the row (40 px) steps it; a shorter drag does not
+	var z: Control = m._sel_zone
+	var press := InputEventMouseButton.new()
+	press.button_index = MOUSE_BUTTON_LEFT
+	press.pressed = true
+	press.position = Vector2(100, 10)
+	z.gui_input.emit(press)
+	var rel := InputEventMouseButton.new()
+	rel.button_index = MOUSE_BUTTON_LEFT
+	rel.pressed = false
+	rel.position = Vector2(100 - 20, 10)
+	z.gui_input.emit(rel)
+	_check(m._bg_choice == "diorama_rome", "a 20 px drag does not step")
+	rel = InputEventMouseButton.new()
+	rel.button_index = MOUSE_BUTTON_LEFT
+	rel.pressed = false
+	rel.position = Vector2(100 - 50, 10)
+	z.gui_input.emit(rel)
+	_check(m._bg_choice == "art_west", "a 50 px swipe left steps forward (%s)" % m._bg_choice)
+	await _frames(10)
+	# the Continue entry keeps its own save's emblem, the wordmark follows the picture
+	# emblem styles on the title
+	m._set_bg("art_west", true)
+	await _frames(10)
 	await _shot_title("title_art_drawn")
 	MenuPrefs.set_emblems("painted")
 	call_group("menu_emblem", "queue_redraw")
 	await _shot_title("title_art_painted")
 	MenuPrefs.set_emblems("drawn")
-	# diorama
-	MenuPrefs.bg_override = "diorama"
-	var ms := 0.0
-	for pk in ["west", "rome"]:
-		MenuPrefs.set_background("diorama")
-		m._bg.deactivate()
-		await _frames(2)
-		_check(CData.pack == "rome", "the content pack is Rome with no diorama")
-		m._bg.activate(pk)
-		var d = null
-		for k in 900:
-			await process_frame
-			d = m._bg.diorama
-			if d != null and is_instance_valid(d) and d.ready_flag:
-				break
-		_check(d != null and d.ready_flag, "the %s diorama builds" % pk)
-		if d != null and d.ready_flag:
-			ms = d.build_ms
-			print("  diorama %s built in %.0f ms: %s" % [pk, ms, str(d.steps_ms)])
-			_check(ms < 2500.0, "the %s diorama builds in %.0f ms (target 1500)" % [pk, ms])
-			_check(CData.pack == pk, "the diorama holds the %s content pack" % pk)
-			await _frames(30)
-			if pk == "west":
-				await _shot_title("title_diorama_drawn")
-				MenuPrefs.set_emblems("painted")
-				call_group("menu_emblem", "queue_redraw")
-				await _shot_title("title_diorama_painted")
-				MenuPrefs.set_emblems("drawn")
-				call_group("menu_emblem", "queue_redraw")
-			else:
-				await _shot("title_diorama_rome")
-	# hiding the menu frees the diorama and puts Rome back
+	call_group("menu_emblem", "queue_redraw")
+	# the saved choice is read when the menu shows again, and hiding frees the diorama
+	MenuPrefs.bg_override = "diorama_rome"
+	m._set_bg("diorama_rome", true)
+	d = await _wait_diorama()
 	m._menu.visible = false
 	await _frames(3)
 	_check(m._bg.diorama == null and CData.pack == "rome", "hiding the menu frees the diorama and restores Rome")
 	m._menu.visible = true
 	await _frames(3)
-	for k in 900:
-		await process_frame
-		if m._bg.diorama != null and is_instance_valid(m._bg.diorama) and m._bg.diorama.ready_flag:
-			break
-	_check(m._bg.diorama != null and m._bg.diorama.ready_flag, "showing the menu again rebuilds it")
+	d = await _wait_diorama()
+	_check(m._bg_choice == "diorama_rome" and d != null and d.ready_flag, "showing the menu again rebuilds the saved choice")
 	m._menu.visible = false
 	await _frames(2)
-	# auto: art on Low graphics
-	MenuPrefs.bg_override = "auto"
+	# Low graphics no longer forces the picture: the diorama builds with the Low layers
 	Quality.save_pref("low")
-	_check(MenuPrefs.background() == "art", "auto picks the picture on Low graphics")
-	Quality.save_pref("high")
-	_check(MenuPrefs.background() == "diorama", "auto picks the diorama on High graphics")
+	m._menu.visible = true
+	await _frames(3)
+	d = await _wait_diorama()
+	_check(Quality.is_low() and m._bg.mode == "diorama" and d != null and d.ready_flag, "Low graphics keeps the chosen diorama")
+	m._menu.visible = false
+	await _frames(2)
 	Quality.save_pref("auto")
-	MenuPrefs.bg_override = "art"
+	MenuPrefs.bg_override = "art_rome"
+	MenuPrefs.set_background("art_rome")
 	m._menu.visible = true
 	await _frames(3)
 

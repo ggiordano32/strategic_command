@@ -1,8 +1,9 @@
 extends Control
-## The title menu's background (MenuPrefs.background): the live overworld (diorama.gd) or painted key art
-## (assets/ui/keyart/<pack>.jpg, a dark placeholder until the file exists), fitted cover-style with a 1 %
-## parallax. The key art follows the setting of the hovered / last-played campaign card (0.5 s cross-fade); the
-## diorama shows the last-played setting (it is built once for it: a second world would cost seconds).
+## The title menu's background, one of MenuPrefs.BACKGROUNDS (the selector at the bottom of the title screen): the
+## live overworld (diorama.gd) or painted key art (assets/ui/keyart/<pack>.jpg, a dark placeholder until the file
+## exists) of one setting, fitted cover-style with a 1 % parallax. Switching cross-fades the pictures (0.5 s); a
+## diorama is built for the chosen setting (a step a frame; the setting's key art stands in until it is ready). On
+## the campaign pages the key art follows the hovered setting card.
 ## A gradient darkens the left side under the entries. View only.
 
 const MenuPrefs := preload("res://game/menu/menu_prefs.gd")
@@ -14,13 +15,14 @@ const PLACEHOLDER := {"west": [Color(0.05, 0.12, 0.14), Color(0.22, 0.16, 0.08)]
 
 signal diorama_built(ms: float)
 
-var pack := "rome"            # the setting the key art shows
-var last_played := "rome"     # the setting the diorama is built for
+var choice := "art_rome"      # the background in force (one of MenuPrefs.BACKGROUNDS)
+var pack := "rome"            # the setting the key art shows (the choice's, or the hovered card's)
 var mode := "art"             # what is in force: diorama / art
 var diorama: Node = null
 var _holder: SubViewportContainer
 var _vp: SubViewport
 var _art := {}                # pack -> ArtLayer
+var _tw := {}                 # pack -> its fade tween
 var _dim: ColorRect
 var _shade: TextureRect
 var _building := false
@@ -110,35 +112,56 @@ func set_dim(a: float, shade: bool) -> void:
 	_shade.visible = shade
 
 
-## Show the setting's key art (cross-fade).
+func _fade_art(p: String) -> void:
+	for k in _art:
+		var a: Control = _art[k]
+		if _tw.has(k) and (_tw[k] as Tween).is_valid():
+			(_tw[k] as Tween).kill()
+		var tw := create_tween()
+		tw.tween_property(a, "modulate:a", 1.0 if k == p else 0.0, 0.5)
+		_tw[k] = tw
+
+
+## Show the setting's key art (cross-fade); a diorama in force stays.
 func show_pack(p: String) -> void:
 	if not _art.has(p) or p == pack and (_art[p] as Control).modulate.a > 0.5:
 		pack = p
 		return
 	pack = p
-	for k in _art:
-		var a: Control = _art[k]
-		var to := 1.0 if (k == p and mode == "art") else 0.0
-		var tw := create_tween()
-		tw.tween_property(a, "modulate:a", to, 0.5)
-
-
-## Start / refresh the background for the current settings. Called when the menu shows.
-func activate(p_last_played: String) -> void:
-	last_played = p_last_played
-	mode = MenuPrefs.background()
-	if pack == "":
-		pack = last_played
-	set_process(true)
 	if mode == "art":
-		_drop_diorama()
-		_holder.visible = false
-		for k in _art:
-			(_art[k] as Control).modulate.a = 1.0 if k == pack else 0.0
-	else:
-		# the last-played key art is the stand-in until the world is ready
-		for k in _art:
-			(_art[k] as Control).modulate.a = 1.0 if k == last_played else 0.0
+		_fade_art(p)
+
+
+## Start / refresh the background for `c` (one of MenuPrefs.BACKGROUNDS) at once. Called when the menu shows.
+func activate(c: String) -> void:
+	choice = c
+	mode = MenuPrefs.kind(c)
+	pack = MenuPrefs.pack_of(c)
+	set_process(true)
+	_drop_diorama()
+	_holder.visible = false
+	for k in _tw:
+		if (_tw[k] as Tween).is_valid():
+			(_tw[k] as Tween).kill()
+	_tw.clear()
+	# (the setting's key art is the stand-in until a diorama is ready)
+	for k in _art:
+		(_art[k] as Control).modulate.a = 1.0 if k == pack else 0.0
+	if mode == "diorama":
+		_start_diorama.call_deferred()
+
+
+## Change to `c` with a cross-fade; the diorama is dropped and, if chosen, built anew for its setting.
+func switch_to(c: String) -> void:
+	if c == choice and (mode == "art" or diorama != null):
+		return
+	choice = c
+	mode = MenuPrefs.kind(c)
+	pack = MenuPrefs.pack_of(c)
+	_drop_diorama()
+	_holder.visible = false
+	_fade_art(pack)
+	if mode == "diorama":
 		_start_diorama.call_deferred()
 
 
@@ -162,8 +185,8 @@ func _start_diorama() -> void:
 		create_tween().tween_property(_holder, "modulate:a", 1.0, 0.5)
 		diorama_built.emit(ms)
 		if "--menu-log" in OS.get_cmdline_user_args():
-			print("DIORAMA ", last_played, " built in ", snappedf(ms, 0.1), " ms: ", d.steps_ms), CONNECT_ONE_SHOT)
-	d.build(last_played, size)
+			print("DIORAMA ", choice, " built in ", snappedf(ms, 0.1), " ms: ", d.steps_ms), CONNECT_ONE_SHOT)
+	d.build(MenuPrefs.pack_of(choice), size)
 
 
 func _drop_diorama() -> void:
