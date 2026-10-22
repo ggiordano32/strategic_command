@@ -6930,3 +6930,7 @@ resolve: "Resolving the turn" shows this panel when the last resolve took over 0
 
 Tests: `tests/theme_test.gd` (windowed; the kit, the campaign screen in both settings, the Menu overlay, the loading
 panel and the slow resolve, the diorama-zoom labels, the phone layout; `--shots=DIR` saves screenshots).
+
+### Overworld view layers follow the pan every frame (2026-10-22)
+
+The ships (`minis_layer.gd`) are screen-space, so unlike the armies (slid by the overlay) they are redrawn; on Quality Low the 10 Hz throttle now limits only the bobbing, and a frame where the overlay transform or zoom changed always redraws (measured max lag while panning 21.6 px before, 0 after; High was 0 already: the screen sets the view in its own `_process`, a parent of the layer, so it runs first). The town and fog layers sit in the scaled world node and the figures redraw on every transform change, so they never lagged. Probe: `tests/zoom_sweep.gd -- --lag`.

@@ -23,6 +23,17 @@ var select_army := false
 var dump_from := -1
 var off_list: PackedStringArray = []
 var phase_name := ""
+var lag_mode := false      # --lag[=legacy]: scripted pan, the ships' drawn position against the overlay's (see _lag)
+var lag_legacy := false
+var lag_n := 0
+var lag_max := 0.0
+var lag_sum := 0.0
+var lag_wake_late := 0
+var lag_frames := 0
+var lag_ms: Array = []
+var lag_proc: Array = []   # the engine's process time per frame (ms; script + node _process)
+var lag_last := 0
+const LAG_PAN := 120
 
 func _initialize() -> void:
 	for a in OS.get_cmdline_user_args():
@@ -35,6 +46,9 @@ func _initialize() -> void:
 	ZProf.on = true
 	var off := ""
 	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--lag"):
+			lag_mode = true
+			lag_legacy = a == "--lag=legacy"
 		if a == "--select":
 			select_army = true
 		if a.begins_with("--dump="):
@@ -106,6 +120,8 @@ func _process(_d: float) -> bool:
 				"table": cs.map_view._table.visible = false
 		last = Time.get_ticks_usec()
 		return false
+	if lag_mode:
+		return _lag()
 	if shots != "":
 		return _shots()
 	var now := Time.get_ticks_usec()
@@ -130,6 +146,67 @@ func _process(_d: float) -> bool:
 		cs._clamp_view()
 	step += 1
 	return false
+
+## The ship lag: a pan (2 x LAG_PAN frames, 6 x 4 px a frame, direction flips every 40 / 50 frames) at zoom 1.2 on the focus. At the start of each
+## frame (the previous frame has been drawn and shown) the ships' screen positions as the minis layer last drew them are
+## compared with where the overlay puts them for the transform it holds now (the armies' positions): the distance is the
+## lag in px. Also the wakes' draw frame against the ships'. Prints LAG lines; --lag=legacy restores the old 10 Hz throttle.
+func _lag() -> bool:
+	var MinisLayer := preload("res://game/campaign/minis_layer.gd")
+	var r := CData.region_index(focus)
+	if frame == 41:
+		MinisLayer.probe = true
+		MinisLayer.probe_legacy = lag_legacy
+		cs.focus_region(r, 1.2)
+		return false
+	if frame < 60:
+		return false
+	var now := Time.get_ticks_usec()
+	if lag_last != 0:
+		lag_ms.append(float(now - lag_last) / 1000.0)
+	lag_last = now
+	if lag_frames >= 20:
+		lag_proc.append(Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0)
+	var rec_: Dictionary = MinisLayer.probe_rec
+	if lag_frames == 0:   # centre the first visible fleet so it stays on screen through the pan
+		var fp0: Dictionary = cs.overlay.fleet_positions()
+		if not fp0.is_empty():
+			cs.offset += cs._vp() * 0.5 - (fp0[fp0.keys()[0]] as Vector2)
+			cs._clamp_view()
+		lag_frames = 1
+		return false
+	if lag_frames >= 20 and rec_.has("ships"):   # (20 frames to settle, then the pan)
+		var fp: Dictionary = cs.overlay.fleet_positions()
+		for id in rec_["ships"]:
+			if fp.has(id):
+				var d := ((rec_["ships"][id] as Vector2) - (fp[id] as Vector2)).length()
+				lag_max = maxf(lag_max, d)
+				lag_sum += d
+				lag_n += 1
+		if int(rec_.get("wakes_f", -1)) != int(rec_.get("ships_f", -2)):
+			lag_wake_late += 1
+	if lag_frames >= 20 + LAG_PAN * 2:
+		var s := lag_ms.slice(20)
+		var tot := 0.0
+		for v in s:
+			tot += float(v)
+		s.sort()
+		print("LAG quality=%s legacy=%s ships_seen=%d max_lag_px=%.2f mean_lag_px=%.2f wake_late_frames=%d frame_ms mean=%.2f p90=%.2f max=%.2f process_ms mean=%.3f" % ["low" if preload("res://game/quality.gd").is_low() else "high", lag_legacy, lag_n, lag_max, lag_sum / maxf(1.0, lag_n), lag_wake_late, tot / s.size(), s[s.size() * 9 / 10], s[-1], _mean(lag_proc)])
+		quit(0 if (lag_n > 0 and lag_max < 1.0) else 1)
+		return true
+	if lag_frames >= 20:
+		var k := lag_frames - 20
+		var dx := 6.0 * (1.0 if (k / 40) % 2 == 0 else -1.0)
+		cs.offset += Vector2(dx, 4.0 * (1.0 if (k / 50) % 2 == 0 else -1.0))
+		cs._clamp_view()
+	lag_frames += 1
+	return false
+
+func _mean(a: Array) -> float:
+	var t := 0.0
+	for v in a:
+		t += float(v)
+	return t / maxf(1.0, a.size())
 
 var shot_t0 := 0
 

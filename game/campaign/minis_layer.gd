@@ -37,6 +37,11 @@ const SHIP_K := 1.0
 var overlay: Node2D
 var _tex := {}   # set name -> [shade, mask material]
 var _t_acc := 0.0
+var _draw_key: Array = []   # [xform, zoom] the ships were last drawn for (Low's 10 Hz bobbing redraw never skips a frame where this moved)
+## Test probe (tests/zoom_sweep.gd --lag): what the last draws put where, and in which frame.
+static var probe := false
+static var probe_legacy := false   # test only: the old throttle (no redraw for a moved view on Low), to measure the lag it caused
+static var probe_rec := {}
 var _under: Node2D       # drawn behind the sprites: ship wakes and contact shadows
 var _wakes: Array = []   # [position, scale, heading]
 static var texture_bytes := 0
@@ -214,7 +219,13 @@ func _process(delta: float) -> void:
 		return
 	visible = true
 	_t_acc += delta
-	if Quality.is_low() and _t_acc < 0.1:
+	# Low redraws the bobbing at 10 Hz only; a frame where the view moved (pan or zoom) always redraws, so the
+	# ships stay put under the finger like the overlay's armies (the screen sets the overlay's view in its own
+	# _process, a parent of this layer's canvas layer, so it runs first in the same frame: no one-frame lag)
+	var dk := [overlay.xform, z]
+	var moved := dk != _draw_key
+	_draw_key = dk
+	if Quality.is_low() and _t_acc < 0.1 and not (moved and not probe_legacy):
 		return
 	_t_acc = 0.0
 	queue_redraw()
@@ -245,6 +256,13 @@ func _draw_body() -> void:
 				if vp.has_point(q):
 					items.append([q.y, 1, fl, q])
 	items.sort_custom(func(a, b): return float(a[0]) < float(b[0]))
+	if probe:
+		var pp := {}
+		for it in items:
+			pp[int((it[2] as Dictionary)["id"])] = it[3]
+		probe_rec["ships"] = pp
+		probe_rec["ships_f"] = Engine.get_process_frames()
+		probe_rec["ships_xf"] = overlay.xform
 	var tile := tile_px(z)
 	var small := Quality.is_low() or tile < 92.0
 	var aname := "small" if small else "big"
@@ -312,6 +330,9 @@ func _ship(fl: Dictionary, c: Vector2, pxm: float, table: Dictionary, shade: Tex
 
 ## A soft contact shadow (south-east, the light is north-west) and a small wake behind each ship.
 func _draw_under() -> void:
+	if probe:
+		probe_rec["wakes"] = _wakes.duplicate()
+		probe_rec["wakes_f"] = Engine.get_process_frames()
 	var low := Quality.is_low()
 	for w in _wakes:
 		var c: Vector2 = w[0]
