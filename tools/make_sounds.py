@@ -198,22 +198,18 @@ def cannon():
 
 
 def fire_loop():
-    r = rng("fire")
-    d = 1.5
+    """12 s of low roar with randomised crackle (about 15 pops a second, a few
+    bigger snaps); circular, so the loop point is seamless."""
+    r = rng("fire12")
+    d = 12.0
     n = int(SR * d)
-    base = band(noise(r, d), 100, 900) * 0.5
+    base = band(noise(r, d), 100, 900) * 0.5 * (0.8 + 0.2 * wander(r, n, 2.5))
     pops = np.zeros(n)
-    for _ in range(22):
+    for _ in range(180):
         at = int(r.random() * n)
         w = band(noise(r, 0.03), 1500, 6000) * env(int(SR * 0.03), 0.0005, 0.008, 4)
-        k = min(len(w), n - at)
-        pops[at:at + k] += w[:k] * (0.4 + r.random())
-        if k < len(w):  # wrap for a seamless loop
-            pops[:len(w) - k] += w[k:] * 0.5
-    y = base + pops * 1.2
-    x = max(1, int(0.05 * SR))  # crossfade ends
-    y[:x] = y[:x] * np.linspace(0, 1, x) + y[-x:] * np.linspace(1, 0, x)
-    return y[:-x]
+        pops += np.roll(np.pad(w, (0, n - len(w))), at) * (0.3 + r.random() ** 2 * 1.4)
+    return base + pops * 1.2
 
 
 def gate_blow():
@@ -316,34 +312,135 @@ def dogs():
     return y
 
 
-def battle_bed():
-    r = rng("battlebed")
-    d = 3.0
-    n = int(SR * d)
-    t = np.arange(n) / SR
-    wind = band(noise(r, d), 60, 500) * (0.6 + 0.4 * np.sin(2 * np.pi * (1 / d) * 1 * t + 1))
-    wind += 0.3 * band(noise(r, d), 400, 1500) * (0.5 + 0.5 * np.sin(2 * np.pi * (1 / d) * 3 * t))
-    drums = np.zeros(n)
-    beat = d / 4
-    for i in range(4):  # distant march: a thud each beat, accented on 1 and 5
-        at = int(i * beat * SR)
-        w = np.sin(2 * np.pi * 70 * t_of(0.3) * (1 - 0.4 * t_of(0.3))) * env(int(SR * 0.3), 0.005, 0.1, 4)
-        w = w * (1.0 if i % 4 == 0 else 0.6)
-        k = min(len(w), n - at)
-        drums[at:at + k] += w[:k]
-    y = wind / np.max(np.abs(wind)) * 0.5 + band(drums, 40, 250) * 0.55
+BED_D = 48.0   # loop length of the two beds, s
+BED_X = 2.0    # equal-power crossfade at the loop point, s
+BED_RMS = 10 ** (-28 / 20)
+
+
+def wander(r, n, period):
+    """Smooth random curve in 0..1 (cosine-interpolated knots every ~period s)."""
+    k = int(n / SR / period) + 3
+    kn = r.random(k)
+    pos = np.arange(n) / SR / period
+    i = pos.astype(int)
+    f = (1 - np.cos(np.pi * (pos - i))) / 2
+    return kn[i] * (1 - f) + kn[i + 1] * f
+
+
+def swell(r, n, period, jitter=0.25):
+    """Surf-swell envelope: a phase that advances at 1/period Hz, the period
+    on a random walk (+-jitter), so no swell repeats exactly. 0..1, peaky."""
+    wk = band(r.standard_normal(n), 0, 0.15)
+    wk = wk / np.max(np.abs(wk))
+    f = (1.0 / period) / (1 + jitter * wk)
+    ph = 2 * np.pi * np.cumsum(f) / SR + 2 * np.pi * r.random()
+    return (0.5 + 0.5 * np.sin(ph)) ** 1.6
+
+
+def seamless(g, x_s=BED_X):
+    """g is BED_D + x_s long; crossfade its tail into its head (equal power) and
+    return BED_D s whose last sample runs on into its first."""
+    n = int(SR * BED_D)
+    x = int(SR * x_s)
+    out = g[:n].copy()
+    u = np.linspace(0, 1, x, endpoint=False)
+    out[:x] = g[:x] * np.sin(u * np.pi / 2) + g[n:n + x] * np.cos(u * np.pi / 2)
+    out -= np.mean(out)
+    return out * min(1.0, 10 ** (-12 / 20) / np.max(np.abs(out)))  # peak at most -12 dBFS
+
+
+def gull(r):
+    """One gull cry: 2-4 falling-rising 'kyow' syllables, a formant-ish buzz."""
+    out = np.zeros(int(SR * 2.2))
+    at = 0.0
+    f0 = 1500 + 500 * r.random()
+    for k in range(int(r.integers(2, 5))):
+        d = 0.28 + 0.12 * r.random()
+        t = t_of(d)
+        u = t / d
+        f = f0 * (1.25 - 0.55 * u + 0.25 * np.sin(np.pi * u) ** 2) * (1 - 0.06 * k)
+        ph = 2 * np.pi * np.cumsum(f) / SR
+        y = np.sin(ph) + 0.55 * np.sin(2 * ph) + 0.3 * np.sin(3 * ph)
+        y *= 1 + 0.35 * np.sin(2 * np.pi * (45 + 15 * r.random()) * t)
+        y = band(y + 0.15 * noise(r, d), 700, 5000) * np.sin(np.pi * u) ** 0.8
+        place(out, y, at, 1.0 - 0.12 * k)
+        at += d + 0.1 + 0.1 * r.random()
+    return out
+
+
+def crow(r):
+    """A far crow: two or three rough low 'caw's."""
+    out = np.zeros(int(SR * 2.0))
+    at = 0.0
+    for k in range(int(r.integers(2, 4))):
+        d = 0.32
+        t = t_of(d)
+        f = 420 - 110 * t / d
+        ph = 2 * np.pi * np.cumsum(f) / SR
+        y = sum(h * np.sin((i + 1) * ph) for i, h in enumerate((1.0, 0.7, 0.55, 0.4, 0.25)))
+        y *= 0.55 + 0.45 * np.sin(2 * np.pi * 70 * t)
+        y = band(y + 0.3 * noise(r, d), 300, 3200) * np.sin(np.pi * t / d) ** 0.7
+        place(out, y, at, 1.0 - 0.15 * k)
+        at += d + 0.15 + 0.1 * r.random()
+    return out
+
+
+def events(r, fns, counts, gains, total, lo=6.0, hi=6.0, gap=5.0):
+    """Place event clips at random times, none within lo s of the start or hi s
+    of the end of the loop and none closer than gap s to another."""
+    y = np.zeros(total)
+    d = total / SR
+    taken = []
+    for fn, c, g in zip(fns, counts, gains):
+        for _ in range(c):
+            for _try in range(200):
+                at = lo + r.random() * (d - lo - hi - 2.5)
+                if all(abs(at - o) > gap for o in taken):
+                    break
+            taken.append(at)
+            e = fn(r)
+            place(y, e / np.max(np.abs(e)), at, g * 0.25 * (0.7 + 0.3 * r.random()))  # g: share of the -12 dBFS peak
     return y
 
 
+def rig_creak(r):
+    """Far-off rigging: a slow low groan, band-limited and soft."""
+    d = 1.8
+    t = t_of(d)
+    f = 130 + 25 * np.sin(2 * np.pi * 1.1 * t) + 10 * wander(r, len(t), 0.4)
+    ph = 2 * np.pi * np.cumsum(f) / SR
+    y = np.sin(ph) + 0.6 * np.sin(2 * ph) + 0.4 * np.sin(3 * ph)
+    y *= 0.5 + 0.5 * np.abs(np.sin(2 * np.pi * 5.5 * t))
+    y = band(y + 0.3 * noise(r, d), 100, 900)
+    return y * np.sin(np.pi * t / d) ** 2
+
+
 def map_bed():
-    r = rng("mapbed")
-    d = 3.0
-    n = int(SR * d)
-    t = np.arange(n) / SR
-    w = band(noise(r, d), 80, 900)
-    w = w * (0.55 + 0.45 * np.sin(2 * np.pi * (1 / d) * t)) + 0.4 * band(noise(r, d), 500, 2200) * (
-        0.5 + 0.5 * np.sin(2 * np.pi * (3 / d) * t + 2))
-    return w
+    """48 s sea bed: two surf layers on ~7 s and ~11 s swells (random-walk
+    periods), a low wind with a 20-40 s drift, 2-3 gulls and one rigging creak."""
+    r = rng("mapbed48")
+    n = int(SR * (BED_D + BED_X))
+    surf1 = band(noise(r, BED_D + BED_X), 120, 1100) * (0.12 + swell(r, n, 7.0))
+    surf2 = band(noise(r, BED_D + BED_X), 500, 3500) * (0.05 + swell(r, n, 11.0)) * 0.45
+    wind = band(noise(r, BED_D + BED_X), 90, 420) * (0.2 + wander(r, n, 30.0)) * 0.8
+    base = surf1 + surf2 + wind
+    base *= BED_RMS / np.sqrt(np.mean(base ** 2))
+    ev = events(r, (gull, rig_creak), (int(r.integers(2, 4)), 1), (0.9, 0.45), n,
+                hi=6.0 + BED_X)
+    return seamless(base + ev)
+
+
+def battle_bed():
+    """48 s battlefield bed: low wind, a very slow distant rumble, a far crow or gull now and then."""
+    r = rng("battlebed48")
+    n = int(SR * (BED_D + BED_X))
+    wind = band(noise(r, BED_D + BED_X), 70, 520) * (0.25 + wander(r, n, 25.0))
+    wind += 0.35 * band(noise(r, BED_D + BED_X), 400, 1600) * (0.1 + wander(r, n, 9.0))
+    rum = band(noise(r, BED_D + BED_X), 25, 110) * (0.15 + wander(r, n, 17.0)) * 2.2
+    base = wind + rum
+    base *= 1.25 * BED_RMS / np.sqrt(np.mean(base ** 2))
+    ev = events(r, (crow, gull), (2, 1), (0.5, 0.5), n, hi=6.0 + BED_X)
+    return seamless(base + ev)
 
 
 # ------------------------------------------------------------- overworld ---
@@ -406,7 +503,7 @@ CLIPS = {
     "elephant": (elephant, 0.75), "dogs": (dogs, 0.7),
     "tap": (tap, 0.4), "order_ok": (order_ok, 0.5), "refused": (refused, 0.6), "end_turn": (end_turn, 0.8),
     "turn_resolved": (turn_resolved, 0.6), "battle_pending": (battle_pending, 0.7), "chime": (chime, 0.6),
-    "bed_battle": (battle_bed, 0.6), "bed_map": (map_bed, 0.5),
+    "bed_battle": (battle_bed, 0.2512), "bed_map": (map_bed, 0.2512),
     "musket": (musket_volley, 0.8), "cannon": (cannon, 0.9),
 }
 
@@ -429,10 +526,11 @@ def main():
         if only and name not in only:
             continue
         x = fn()
-        x = x[:int(1.5 * SR)] if not name.startswith("bed") else x
-        if not name.startswith("bed") and name != "fire_loop":
+        long = name.startswith("bed") or name == "fire_loop"
+        x = x if long else x[:int(1.5 * SR)]
+        if not long:
             x = np.concatenate([x, np.zeros(max(0, int(0.1 * SR) - len(x)))])
-        write(name, finish(x, peak))
+        write(name, x if name.startswith("bed") else finish(x, peak))
         total += len(x) * 2
     print("total bytes", total)
 

@@ -29,7 +29,7 @@ const SETTINGS := "user://settings.cfg"
 const DIR := "res://game/sounds/"
 const POOL := 14
 const PANS := [-1.0, -0.5, 0.0, 0.5, 1.0]
-const DEFAULTS := {"master": 80, "effects": 100, "ambient": 60}
+const DEFAULTS := {"master": 80, "effects": 100, "ambient": 35}
 ## bucket -> [clips, window ms]
 const CAPS := {
 	"melee": [1, 100], "impact": [1, 100], "volley": [1, 100], "art": [2, 100], "state": [1, 100],
