@@ -2989,6 +2989,28 @@ generation, cover) flow back to the Mediterranean campaign for free.
    desktop), the game server as a Docker image players can run, "Host a
    server" in the desktop build; browser players need HTTPS servers (see
    "Distribution (D)" below).
+5. **A navy for Rome (agreed 2026-10-22, after the Caribbean polish):** the
+   Rome pack has no fleets. Galleys in the sea sim (trireme / quinquereme /
+   lembos: oared polars that barely care about the wind, ramming, the corvus
+   for boarding, an oared-ship AI), Rome fleets / ports / transports on the
+   campaign reusing the Caribbean fleet machinery, Rome sea battle maps. The
+   ocean trade lanes (drawn with the map work of 2026-10-22, rules for
+   raiding / blockading a lane as a second step) are written pack-agnostic so
+   Rome's navy uses them as the Caribbean does.
+
+**Tomorrow's list (2026-10-22, agreed; ~10 % of the budget: Sonnet, lean):**
+the relief map's Caribbean city markers (floating names are hard to tap) +
+less fog over the sea off our own coast (csight: own coastal regions see 2
+cells out, ports / forts 3) -> roads for the West (the Camino Real, the
+Portobelo trail, the island roads; baked like Rome's; drawn in both styles)
++ the pathing detour (the Veracruz -> Orizaba repro: the road / terrain
+costs; a direct line unless the road saves a turn) + ocean trade lanes drawn
+on both maps -> the sea battle look (water with the bathymetry's depth
+colouring, wind-driven crests, foam at the shore and in wakes; the land /
+shoreline with the land maps' beach and cliff edges) -> faction crests
+through Klein 4B from the drawn marks -> UI theme pass 2 (battle HUD, sea
+screen) -> Rome walls 1-2 (Thursday). Lane rules (raiding / blockading) and
+the Rome navy follow.
 
 Immediate order (2026-10-17, evening; everything marked done is committed and in the evening export of 2026-10-17): shaking / stuck pass (done) -> balance pass T (done, 8ab0506) ->
 forts with an inside (2c; done, 0812fba) and its leftovers (done: sally,
