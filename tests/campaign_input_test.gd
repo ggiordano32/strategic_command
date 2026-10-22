@@ -1296,8 +1296,8 @@ func _n_tap_greeks() -> void:
 func _n_picks() -> void:
 	var carthage := CData.faction_index("carthage")
 	_check(_nc.picks == [rome, carthage, greeks], "three humans switched on, in the order tapped: %s" % [_nc.picks])
-	_check(_nbtn("faction_rome").text == "You" and _nbtn("faction_carthage").text == "Human" and _nbtn("faction_macedon").text == "AI",
-		"the first is marked You, the others Human / AI")
+	_check(_nbtn("faction_rome").text == "You" and _nbtn("faction_carthage").text == "Human" and _nc._human_segs[CData.faction_index("macedon")].value == 0,
+		"the first is marked You, the others Human / AI (the capsule's lit side)")
 	_check(_nc.teams_array() == [0, 1, 2, 3, 4, 5, 6, 7], "each faction starts on a team of its own")
 
 

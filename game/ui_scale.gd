@@ -99,5 +99,15 @@ static func cycle_size(win: Window) -> void:
 	apply(win)
 
 
+## Set the size by name ("S" / "M" / "L").
+static func set_size_name(win: Window, nm: String) -> void:
+	var i := SIZE_NAMES.find(nm.to_upper())
+	if i < 0 or i == size_idx:
+		return
+	size_idx = i
+	save_settings()
+	apply(win)
+
+
 static func size_name() -> String:
 	return SIZE_NAMES[size_idx]

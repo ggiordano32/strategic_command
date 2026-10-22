@@ -6660,19 +6660,17 @@ height under 520: the stack centred, a flat dim over the picture):
    a card opens the existing new-campaign faction page for that setting (`NewCampaign.pack_pick`; the Setting row is
    then hidden); below, **Your campaigns** (local saves of either setting, a row with its setting's emblem, Delete)
    and Import.
-3. **Grand Campaign** (online co-op): Host a new grand campaign (the online new-campaign flow), Join with a code,
-   Game server, the server status line (`_net_line`: this page only), **Your grand campaigns** (the seats this device
-   holds, with the live badges).
+3. **Grand Campaign** (online co-op; pass 2, see "Menu pass 2" below): the Host card, the Join card, **Your grand
+   campaigns** (rows with the live badges) and the Game server row.
 4. **Battles**: Custom battle, Battle sandbox (the old sandbox page, its Back now the page's).
-5. **Options**: UI size, Graphics, Soldiers, Fullscreen; Battle look, Map style, Menu picture, Emblems; Audio (the
-   row); Controls, Unit book; Tests and benchmarks only with `--dev` (or `?dev` on the web; the sandbox page's own
-   Tests button likewise; the old `--menu-tests` aid still opens it).
+5. **Options**: rows, not cycle buttons (pass 2, below): Display, Looks, Audio, Help; Tests and benchmarks only with
+   `--dev` (or `?dev` on the web; the sandbox page's own Tests button likewise; the old `--menu-tests` aid still opens it).
 Entries slide in from the left on open (0.25 s each, 0.07 s stagger) and grow 3 % on hover / press with a brighter
 label. Every sub-page has a **< Back** at the top-left (`go_back`, parent table `BACK`); Esc (`ui_cancel`) and the
 Android back request do the same. The page dim is 0.66 on sub-pages so the centred content reads over any picture.
 Button names are kept for the tests: `home_campaign`, `home_grand`, `home_battles`, `home_options`, `home_continue`
 are new; `home_controls`, `home_sandbox`, `home_custom`, `home_server`, `home_soldiers`, `home_quality`,
-`home_battle_look`, `home_map_style`, `home_Join`, `home_Import` live on their new pages.
+`home_battle_look`, `home_map_style`, `home_Join`, `home_Import` live on their new pages. (After pass 2 the Options names are capsules: `home_<key>` with its segments `home_<key>_<value>`, e.g. `home_quality_low`; the in-game Menu's use `menu_<key>`; `home_Join` is the Join page's, the card's Join is `grand_join`.)
 
 **Backgrounds** (`[menu] background = auto | diorama | art` in `user://settings.cfg`; Options toggles it;
 `--menu-bg=` forces one for the session; a test run defaults to art so it never switches the content pack):
@@ -6698,6 +6696,55 @@ eagle over a laurel wreath, crisp at any size. *Painted*: `assets/ui/emblems/<pa
 yet imported is read straight from the project folder); a missing file falls back to the drawn mark. Used on the
 cards, the Continue entry, the save rows (local and online) and beside the wordmark. Both styles are in the
 screenshots; the choice is the owner's.
+
+**Menu pass 2 (2026-10-22: "some of the options and buttons are hard to read. The tooltips should be in a box, not just
+a long string").** View only.
+- *Boxed tooltips, kit-wide* (`ui_kit.gd`). `Kit.tip(control, title, text)`: a trim panel (dark warm plate, gold rule,
+  bracket corners), an optional title (Cinzel 16) over a wrapped body (UI face 14, bone), at most 320 px wide. How: the
+  kit's controls are subclasses with `_make_custom_tooltip` (`TipButton` for `Kit.button` / `hero_button` / the menu
+  buttons, `TipOption` for `Kit.dropdown`, `TipEdit` for `Kit.text_field`) returning `Kit.tip_box(title, body)`; any
+  other control gets the same plate and the 14 / bone type from the default theme's `TooltipPanel` / `TooltipLabel`
+  (`Kit.install_tips`, run by every kit control) with "title\nbody" as its text. Desktop delay 0.4 s
+  (`gui/timers/tooltip_delay_sec` in project.godot). Touch: `Kit.TipHost` (one node under the root) watches the
+  touches; a press that stays within 8 px for 0.45 s on a control with a tip shows the same box above the finger until
+  release, and that release is swallowed (a button under it is off for two frames) so reading a tip never gives an order.
+  A control with the meta `tip_host_skip` is left alone (the sea screen's order buttons have their own help card). The
+  Options, Grand, faction-page and online-panel tips are converted to `Kit.tip` with a short title and two or three
+  sentences; plain `tooltip_text` on a kit button is boxed too, without a title.
+- *Kit controls*: `Kit.segmented(options, value, cb, name)` (a capsule of choices, the lit one gold; segments named
+  `<name>_<value>`), `Kit.toggle` (Off / On), `Kit.slider` (0-100, gold fill, round grabber, 30 px tall), `Kit.dot`
+  (status dot), `Kit.field_style` (text fields: dark inset, thin gold edge, gold while focused), dropdowns in the nav
+  style.
+- *Options* (`game/menu/options_rows.gd`, one builder for the title screen's page and the in-game Menu's): each setting is a
+  row, the label (16, bone) with a one-line description (13, dim) left and a capsule right (under the label on phones and
+  in the 440 px in-game column): UI size S / M / L, Graphics Auto / High / Low (the description says what Auto is now),
+  Soldiers Auto / Compatible, Fullscreen, Battle look Diorama / Painterly, Campaign map Auto / Table / Relief; the title
+  page adds Menu picture Auto / Diorama / Art and Emblems Drawn / Painted and its Help section (Controls, Unit book,
+  Tests with `--dev`). Audio: a Sound On / Off capsule and three sliders (master, effects, ambient) with their percent.
+  The page sits in a trim panel so it reads over any picture; it scrolls (the Help buttons are at the bottom).
+- *Grand Campaign page* (`main.gd`): the heading and a line, then two trim cards side by side (stacked under 640
+  logical wide or on a phone). **Host a grand campaign**: the two settings as mini-cards (emblem, name, year; the lit one
+  gold), the **Host** hero button (opens the faction page in online mode for the picked setting), and under it the
+  server line with a status dot, "Server: <host> - ready / invite key needed / not reachable / checking...", and a Change
+  link. **Join a grand campaign**: the code field (uppercase as typed, 6 or 8 characters, a whole link works), Paste,
+  Join; the error or result under the field (the 6 / 8 hint is checked before the server is, so it shows at once) and
+  the seats to take ("Play as ...") inside the card; the separate join page stays for `?join=` / `?server=` links.
+  **Your grand campaigns**: one row per seat (setting emblem, the campaign's name, your faction's flag and name, "- turn
+  N" once the server has answered, the live badge from `Net.badge_for` ("Your turn", "Waiting for X", "N battles
+  pending", "Offline"), Resume, and a small x that asks "Sure?" before forgetting); an empty line points at the Host
+  card. The **Game server** row at the bottom: "Game server: <address>" with the same dot and Change (the server page's
+  Back returns here). `_join_find_in(edit, info, box)` serves both the card and the page.
+- *Faction page* (`new_campaign.gd`, both modes): a fixed top bar (Back, the setting's emblem, "New campaign" / "New grand
+  campaign" in Cinzel, Start as the hero button, off with the reason as its tip until a human is picked), then the
+  instruction line, the **Story** panel (West: cards with a two-line description and a button; online one card), the two
+  team buttons, the faction rows (flag 36 px, name 16 bold, the blurb 13 dim wrapped so the row grows, an AI / Human
+  capsule, the team dropdown; a human row has a gold left edge), the **Settings** panel of rows (Name, Seed with a
+  dice, Victory as two steppers, Turn timeout, Battles, AI aggression, Battle AI, Campaign AI, Fog of war, Deployment,
+  Battle time; each with a line and a tip) and, online, the **Online** panel (server and Change, Discord webhook, user
+  id, invite key). Under 700 logical wide (or a touch screen under 520 high) the rows stack and the Settings panel
+  folds under a "Settings" header. Names kept for the tests: `faction_<key>` is now the Human segment of the capsule
+  (`ai_<key>` the AI one), `team_<key>`, `start_campaign`, `all_one_team`, `everyone_alone`, `campaign_name`,
+  `campaign_seed`, `deploy_time`, `time_limit`, `server_change`, `webhook`, `discord_user`, `invite`.
 
 Tests: `tests/menu_test.gd` (windowed: every entry and Back, Esc and the back request, Continue hidden / shown /
 opens, the cards open the right pack's faction page, the server line on Grand Campaign only, Options cycles each

@@ -9,11 +9,8 @@ extends Control
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const AudioFx := preload("res://game/audio.gd")
 const UiScale := preload("res://game/ui_scale.gd")
-const Quality := preload("res://game/quality.gd")
-const SoldierLayer := preload("res://game/soldier_layer.gd")
-const BattleLook := preload("res://game/battle_look.gd")
-const MapView := preload("res://game/campaign/map_view.gd")
 const MenuStyle := preload("res://game/menu/menu_style.gd")
+const OptionsRows := preload("res://game/menu/options_rows.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -24,11 +21,6 @@ var s  # the campaign screen
 var page := "main"      # main | options | confirm
 var column: PanelContainer
 var body: VBoxContainer   # the page in the column
-var _size_b: Button
-var _quality_b: Button
-var _soldiers_b: Button
-var _look_b: Button
-var _style_b: Button
 var _fade: Tween = null
 
 
@@ -232,32 +224,16 @@ func _build_confirm() -> void:
 
 
 # ----------------------------------------------------------------- options ---
-# The same settings, saved values and cycles as the title screen's Options page (game/main.gd).
+# The same rows, settings and saved values as the title screen's Options page (game/menu/options_rows.gd).
+
+var _rows: OptionsRows = null
+
 
 func _build_options() -> void:
 	body.add_child(Kit.title("Options", 24))
 	body.add_child(Kit.rule())
-	body.add_child(Kit.label("Display", Kit.FONT, Kit.COL_GOLD))
-	var r1 := Kit.flow(8)
-	_size_b = _opt("menu_ui_size", _cycle_ui_size, "Size of buttons and text (S / M / L)")
-	_quality_b = _opt("menu_quality", _cycle_quality, "Graphics. Auto: Low on devices that need the compatible soldiers path or that run a battle slowly, else High. Takes effect at the next battle; the map on the next open.")
-	_soldiers_b = _opt("menu_soldiers", _cycle_soldiers, "How soldiers are drawn. Auto: the fast way, switching by itself to compatible if this device shows no soldiers.")
-	for b in [_size_b, _quality_b, _soldiers_b]:
-		r1.add_child(b)
-	var fs := Kit.button("Fullscreen", _toggle_fullscreen, 150)
-	Kit.nav_style(fs)
-	fs.name = "menu_fullscreen"
-	r1.add_child(fs)
-	body.add_child(r1)
-	body.add_child(Kit.label("Looks", Kit.FONT, Kit.COL_GOLD))
-	var r2 := Kit.flow(8)
-	_look_b = _opt("menu_battle_look", _cycle_look, "Battle map look: Diorama or Painterly. Takes effect at the next battle.")
-	_style_b = _opt("menu_map_style", _cycle_style, "Campaign map style: Auto, Table or Relief. Takes effect on the next map.")
-	r2.add_child(_look_b)
-	r2.add_child(_style_b)
-	body.add_child(r2)
-	body.add_child(Kit.label("Audio", Kit.FONT, Kit.COL_GOLD))
-	body.add_child(_audio_row())
+	_rows = OptionsRows.new()
+	_rows.build(body, {"prefix": "menu", "narrow": true, "title": false, "help": false, "win": get_window(), "on_size": _layout})
 	body.add_child(Kit.rule())
 	var bb := Kit.button("Back", func(): back(), 120)
 	bb.name = "menu_options_back"
@@ -265,111 +241,3 @@ func _build_options() -> void:
 	var brow := Kit.hbox(8)
 	brow.add_child(bb)
 	body.add_child(brow)
-	_update()
-
-
-func _opt(nm: String, cb: Callable, tip: String) -> Button:
-	var b := Kit.button("", cb, 150)
-	b.name = nm
-	b.tooltip_text = tip
-	Kit.nav_style(b)
-	return b
-
-
-func _update() -> void:
-	if _size_b == null or not is_instance_valid(_size_b):
-		return
-	_size_b.text = "UI size: " + UiScale.size_name()
-	var p := Quality.load_pref()
-	_quality_b.text = "Graphics: " + (p if p != "auto" else "auto (%s)" % ("low" if Quality.is_low() else "high"))
-	_soldiers_b.text = "Soldiers: " + ("compatible" if SoldierLayer.load_pref() == "cpu" else "auto")
-	_look_b.text = "Battle look: " + BattleLook.pref()
-	MapView.load_view_pref()
-	_style_b.text = "Map: " + MapView.style_pref
-
-
-func _cycle_ui_size() -> void:
-	UiScale.cycle_size(get_window())
-	_update()
-	_layout()
-
-
-func _cycle_quality() -> void:
-	var p := Quality.load_pref()
-	Quality.save_pref("high" if p == "auto" else ("low" if p == "high" else "auto"))
-	_update()
-
-
-func _cycle_soldiers() -> void:
-	SoldierLayer.save_pref("auto" if SoldierLayer.load_pref() == "cpu" else "cpu")
-	_update()
-
-
-func _cycle_look() -> void:
-	BattleLook.save_pref("painterly" if BattleLook.pref() == "diorama" else "diorama")
-	_update()
-
-
-func _cycle_style() -> void:
-	var p := MapView.style_pref
-	MapView.set_style("table" if p == "auto" else ("relief" if p == "table" else "auto"))
-	_update()
-
-
-func _toggle_fullscreen() -> void:
-	if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN:
-		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
-	else:
-		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
-
-
-func _audio_row() -> Control:
-	var box := Kit.vbox(8)
-	box.name = "audio_row"
-	var mute := Kit.button("", Callable(), 150)
-	mute.name = "audio_mute"
-	Kit.nav_style(mute)
-	var mrow := Kit.hbox(8)
-	mrow.add_child(mute)
-	box.add_child(mrow)
-	var labels := {}
-	for k in ["master", "effects", "ambient"]:
-		var h := Kit.hbox(4)
-		var minus := Kit.button("-", Callable(), 42)
-		Kit.nav_style(minus)
-		var l := Kit.label("", Kit.FONT)
-		l.custom_minimum_size = Vector2(150, 0)
-		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		var plus := Kit.button("+", Callable(), 42)
-		Kit.nav_style(plus)
-		h.add_child(minus)
-		h.add_child(l)
-		h.add_child(plus)
-		box.add_child(h)
-		labels[k] = l
-		minus.name = "audio_%s_minus" % k
-		plus.name = "audio_%s_plus" % k
-		var step := func(d: int):
-			var a = AudioFx.inst()
-			if a != null:
-				a.set_volume(k, int(a.vol[k]) + d)
-				AudioFx.play("tap", 1.0)
-			_update_audio(mute, labels)
-		minus.pressed.connect(step.bind(-10))
-		plus.pressed.connect(step.bind(10))
-	mute.pressed.connect(func():
-		var a = AudioFx.inst()
-		if a != null:
-			a.set_muted(not a.muted)
-		_update_audio(mute, labels))
-	_update_audio(mute, labels)
-	return box
-
-
-func _update_audio(mute: Button, labels: Dictionary) -> void:
-	var a = AudioFx.inst()
-	var vol: Dictionary = a.vol if a != null else AudioFx.DEFAULTS
-	mute.text = "Sound: " + ("off" if a != null and a.muted else "on")
-	for k in labels:
-		labels[k].text = "%s %d%%" % [str(k).capitalize(), int(vol[k])]

@@ -69,7 +69,8 @@ static func label(text: String, size: int = FONT, col: Color = Color.WHITE, p_wr
 
 
 static func button(text: String, cb: Callable, min_w: float = 0.0, size: int = FONT) -> Button:
-	var b := Button.new()
+	install_tips()
+	var b := TipButton.new()
 	b.text = text
 	b.custom_minimum_size = Vector2(min_w, BTN_H)
 	b.focus_mode = Control.FOCUS_NONE
@@ -80,6 +81,421 @@ static func button(text: String, cb: Callable, min_w: float = 0.0, size: int = F
 	b.add_theme_color_override("font_hover_color", Color(1.0, 0.96, 0.82))  # the menu's hot label
 	motion(b)
 	return b
+
+
+# ----------------------------------------------------------------- tooltips ---
+# One tooltip look for the whole game: a trim panel (dark warm plate, gold rule, bracket corners), an optional title line
+# (Cinzel 16) and a wrapped body (the UI face 14, bone), at most TIP_MAX_W wide. How:
+#  - the kit's controls (TipButton, TipOption, TipEdit; Kit.button / dropdown / text_field make them) override
+#    _make_custom_tooltip and return tip_box(); `Kit.tip(control, title, text)` sets the title (a meta) and the body
+#    (tooltip_text). Any other control (a plain Button.new(), a Label) gets the same plate and the 14 / bone type from
+#    the default theme's TooltipPanel / TooltipLabel (install_tips); its tooltip_text then carries "title\nbody".
+#  - the desktop delay is project.godot gui/timers/tooltip_delay_sec = 0.4.
+#  - touch: TipHost (one node under the root, made by install_tips) watches the touches; a press that stays put for
+#    LONG_TIP s on a control with a tip shows the same box above the finger until the finger lifts, and the release
+#    is swallowed (a button under it is off for that release) so reading a tip never gives an order. A control with the
+#    meta "tip_host_skip" has a long press of its own (the sea screen's help card).
+
+const TIP_MAX_W := 320.0
+const LONG_TIP := 0.45
+
+static var _tips_ready := false
+
+
+## Install the default theme's tooltip look and the touch long-press host (once; every kit control does it).
+static func install_tips() -> void:
+	if _tips_ready:
+		return
+	_tips_ready = true
+	var th := ThemeDB.get_default_theme()
+	if th != null:
+		th.set_stylebox("panel", "TooltipPanel", trim_box(PANEL_BG, 10.0))
+		th.set_font_size("font_size", "TooltipLabel", 14)
+		th.set_color("font_color", "TooltipLabel", COL_BONE)
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree != null and tree.root != null and tree.root.get_node_or_null("KitTipHost") == null:
+		var h := TipHost.new()
+		h.name = "KitTipHost"
+		tree.root.add_child.call_deferred(h)
+
+
+## The tip box: title (optional) over a wrapped body.
+static func tip_box(title_text: String, body: String) -> Control:
+	var p := PanelContainer.new()
+	p.name = "tip_box"
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.add_theme_stylebox_override("panel", trim_box(PANEL_BG, 10.0))
+	var v := vbox(4)
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.add_child(v)
+	var inner := TIP_MAX_W - 20.0
+	if title_text != "":
+		var t := label(title_text, 16, COL_GOLD, true)
+		t.name = "tip_title"
+		var f := title_font()
+		var tw := 0.0
+		if f != null:
+			t.add_theme_font_override("font", f)
+			tw = f.get_string_size(title_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
+		else:
+			tw = ThemeDB.fallback_font.get_string_size(title_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
+		t.custom_minimum_size.x = minf(tw + 2.0, inner)
+		t.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		v.add_child(t)
+	var b := label(body, 14, COL_BONE, true)
+	b.name = "tip_body"
+	b.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var bw := ThemeDB.fallback_font.get_multiline_string_size(body, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
+	b.custom_minimum_size.x = minf(maxf(bw + 2.0, 60.0), inner)
+	v.add_child(b)
+	return p
+
+
+static func _has_box(c: Control) -> bool:
+	return c is TipButton or c is TipOption or c is TipEdit
+
+
+## Give a control a boxed tooltip: a short title and a body of two or three sentences.
+static func tip(c: Control, title_text: String, text: String) -> void:
+	install_tips()
+	if c is Segmented:
+		for sb in (c as Segmented).buttons():
+			tip(sb, title_text, text)
+		return
+	c.set_meta("tip_title", title_text)
+	c.set_meta("tip_body", text)
+	c.tooltip_text = text if _has_box(c) or title_text == "" else title_text + "\n" + text
+
+
+## [title, body] of a control's tip, or [] when it has none.
+static func tip_of(c: Control) -> Array:
+	if c.has_meta("tip_body") and str(c.tooltip_text) != "":
+		return [str(c.get_meta("tip_title", "")), str(c.get_meta("tip_body"))]
+	if c.tooltip_text != "":
+		return ["", c.tooltip_text]
+	return []
+
+
+class TipButton extends Button:
+	const KitSelf := preload("res://game/campaign/ui_kit.gd")
+
+	func _make_custom_tooltip(for_text: String) -> Object:
+		return KitSelf.tip_box(str(get_meta("tip_title", "")), for_text)
+
+
+class TipOption extends OptionButton:
+	const KitSelf := preload("res://game/campaign/ui_kit.gd")
+
+	func _make_custom_tooltip(for_text: String) -> Object:
+		return KitSelf.tip_box(str(get_meta("tip_title", "")), for_text)
+
+
+class TipEdit extends LineEdit:
+	const KitSelf := preload("res://game/campaign/ui_kit.gd")
+
+	func _make_custom_tooltip(for_text: String) -> Object:
+		return KitSelf.tip_box(str(get_meta("tip_title", "")), for_text)
+
+
+## The touch long press (see the section header). Test hooks: press(pos) / release() act as a touch.
+class TipHost extends Node:
+	const KitSelf := preload("res://game/campaign/ui_kit.gd")
+	const UiScaleSelf := preload("res://game/ui_scale.gd")
+	var _down := false
+	var _t := 0.0
+	var _start := Vector2.ZERO
+	var _pos := Vector2.ZERO
+	var target: Control = null    # the control the box is for while it shows
+	var box: Control = null
+	var _layer: CanvasLayer = null
+
+	func _ready() -> void:
+		process_mode = Node.PROCESS_MODE_ALWAYS
+		set_process(false)
+		_layer = CanvasLayer.new()
+		_layer.layer = 127
+		add_child(_layer)
+
+	func _input(e: InputEvent) -> void:
+		if not UiScaleSelf.is_touch():
+			return
+		if e is InputEventScreenTouch:
+			if e.pressed:
+				press(e.position)
+			else:
+				release()
+		elif e is InputEventScreenDrag and _down:
+			if e.position.distance_to(_start) > 8.0 and box == null:
+				cancel()
+			else:
+				_pos = e.position
+
+	func press(pos: Vector2) -> void:
+		cancel()
+		_down = true
+		_t = 0.0
+		_start = pos
+		_pos = pos
+		set_process(true)
+
+	func cancel() -> void:
+		_down = false
+		set_process(false)
+		_hide()
+
+	func release() -> void:
+		var tg := target
+		var shown := box != null
+		cancel()
+		if shown and tg is BaseButton and is_instance_valid(tg) and not (tg as BaseButton).disabled:
+			var bb := tg as BaseButton
+			bb.disabled = true   # (the release that ends a long press does not press the button)
+			await get_tree().process_frame
+			await get_tree().process_frame
+			if is_instance_valid(bb):
+				bb.disabled = false
+		target = null
+
+	func _process(delta: float) -> void:
+		if not _down or box != null:
+			return
+		_t += delta
+		if _t >= KitSelf.LONG_TIP:
+			show_for(_pos)
+
+	## Show the box of the control under pos, above it.
+	func show_for(pos: Vector2) -> void:
+		var c := _find(get_tree().root, pos)
+		if c == null:
+			set_process(false)
+			return
+		var tt := KitSelf.tip_of(c)
+		target = c
+		box = KitSelf.tip_box(str(tt[0]), str(tt[1]))
+		_layer.add_child(box)
+		var sz := box.get_combined_minimum_size()
+		box.size = sz
+		var vp := get_viewport().get_visible_rect().size
+		var x := clampf(pos.x - sz.x * 0.5, 6.0, maxf(vp.x - sz.x - 6.0, 6.0))
+		var y := pos.y - sz.y - 28.0
+		if y < 6.0:
+			y = minf(pos.y + 40.0, maxf(vp.y - sz.y - 6.0, 6.0))
+		box.position = Vector2(x, y)
+		set_process(false)
+
+	func _hide() -> void:
+		if box != null:
+			box.queue_free()
+			box = null
+
+	func _find(n: Node, pos: Vector2) -> Control:
+		for i in range(n.get_child_count() - 1, -1, -1):
+			var c := n.get_child(i)
+			if c == self:
+				continue
+			if c is CanvasItem and not (c as CanvasItem).visible:
+				continue
+			if c is Window:
+				continue
+			var r := _find(c, pos)
+			if r != null:
+				return r
+		if n is Control:
+			var ct := n as Control
+			if ct.is_visible_in_tree() and ct.mouse_filter != Control.MOUSE_FILTER_IGNORE and not ct.has_meta("tip_host_skip") \
+					and not KitSelf.tip_of(ct).is_empty() and ct.get_global_rect().has_point(pos):
+				return ct
+		return null
+
+
+# ------------------------------------------------------- segmented, slider ---
+
+## A row of choices in one capsule: the chosen one lit gold. options: [label, value] pairs (or plain values used as
+## their own label). Emits changed(value) when the player picks; set_value() moves the lit one silently. Each segment
+## is a Button named "<nm>_<value>" (nm: this node's name).
+class Segmented extends HBoxContainer:
+	const KitSelf := preload("res://game/campaign/ui_kit.gd")
+	signal changed(value)
+	var value = null
+	var values: Array = []
+	var _btns: Array[Button] = []
+	var _fsize := 14
+
+	func _init(options: Array, p_value, p_size: int = 14, min_w: float = 0.0) -> void:
+		add_theme_constant_override("separation", 0)
+		_fsize = p_size
+		value = p_value
+		for o in options:
+			var lab := str(o[0]) if o is Array else str(o)
+			var val = o[1] if o is Array else o
+			values.append(val)
+			var b := KitSelf.TipButton.new()
+			b.text = lab
+			b.focus_mode = Control.FOCUS_NONE
+			b.custom_minimum_size = Vector2(min_w, 36.0)
+			b.add_theme_font_size_override("font_size", p_size)
+			b.set_meta("seg_value", val)
+			b.pressed.connect(KitSelf.AudioFx.click)
+			b.pressed.connect(pick.bind(val))
+			add_child(b)
+			_btns.append(b)
+		_restyle()
+
+	func buttons() -> Array[Button]:
+		return _btns
+
+	func button_for(v) -> Button:
+		for b in _btns:
+			if b.get_meta("seg_value") == v:
+				return b
+		return null
+
+	func rename_all(nm: String) -> void:
+		name = nm
+		for b in _btns:
+			b.name = "%s_%s" % [nm, str(b.get_meta("seg_value")).to_lower()]
+
+	func pick(v) -> void:
+		if v == value:
+			return
+		value = v
+		_restyle()
+		changed.emit(v)
+
+	func set_value(v) -> void:
+		value = v
+		_restyle()
+
+	func set_disabled(d: bool) -> void:
+		for b in _btns:
+			b.disabled = d
+
+	func _restyle() -> void:
+		var n := _btns.size()
+		for i in n:
+			var b := _btns[i]
+			var on: bool = b.get_meta("seg_value") == value
+			var cols := {"normal": Color(0.10, 0.12, 0.11, 0.96), "hover": Color(0.17, 0.19, 0.16, 0.98), "pressed": Color(0.22, 0.22, 0.16, 1.0),
+				"disabled": Color(0.09, 0.1, 0.1, 0.8)}
+			if on:
+				cols = {"normal": Color(0.30, 0.22, 0.08, 1.0), "hover": Color(0.36, 0.27, 0.10, 1.0), "pressed": Color(0.40, 0.30, 0.11, 1.0),
+					"disabled": Color(0.2, 0.17, 0.1, 0.8)}
+			for k in cols:
+				var sb := StyleBoxFlat.new()
+				sb.bg_color = cols[k]
+				sb.set_content_margin_all(6.0)
+				sb.content_margin_left = 12.0
+				sb.content_margin_right = 12.0
+				sb.set_border_width_all(1)
+				sb.border_color = KitSelf.COL_GOLD if on else Color(KitSelf.COL_RULE, 0.6)
+				if k == "hover" and not on:
+					sb.border_color = KitSelf.COL_RULE.lightened(0.3)
+				var r := 5
+				sb.corner_radius_top_left = r if i == 0 else 0
+				sb.corner_radius_bottom_left = r if i == 0 else 0
+				sb.corner_radius_top_right = r if i == n - 1 else 0
+				sb.corner_radius_bottom_right = r if i == n - 1 else 0
+				if i > 0:
+					sb.border_width_left = 0 if not on else 1
+				b.add_theme_stylebox_override(k, sb)
+			b.add_theme_stylebox_override("focus", b.get_theme_stylebox("normal"))
+			b.add_theme_color_override("font_color", KitSelf.COL_GOLD if on else KitSelf.COL_BONE)
+			b.add_theme_color_override("font_hover_color", Color(1.0, 0.96, 0.82))
+			b.add_theme_color_override("font_pressed_color", KitSelf.COL_GOLD)
+			b.add_theme_color_override("font_disabled_color", Color(0.55, 0.52, 0.45))
+
+
+## A capsule of choices (see Segmented); nm names it and its segments.
+static func segmented(options: Array, value, cb: Callable = Callable(), nm: String = "", size: int = FONT_SMALL + 1) -> Segmented:
+	install_tips()
+	var sg := Segmented.new(options, value, size)
+	if nm != "":
+		sg.rename_all(nm)
+	if cb.is_valid():
+		sg.changed.connect(cb)
+	return sg
+
+
+## An on / off switch as a two-segment capsule (value 1 = on, 0 = off); cb(on: bool).
+static func toggle(on: bool, cb: Callable = Callable(), nm: String = "", labels: Array = ["Off", "On"]) -> Segmented:
+	var sg := segmented([[labels[0], 0], [labels[1], 1]], 1 if on else 0, Callable(), nm)
+	if cb.is_valid():
+		sg.changed.connect(func(v): cb.call(int(v) == 1))
+	return sg
+
+
+static var _grabber: ImageTexture = null
+
+
+static func _grabber_tex(col: Color) -> ImageTexture:
+	var n := 24
+	var img := Image.create(n, n, false, Image.FORMAT_RGBA8)
+	var c := Vector2(n * 0.5 - 0.5, n * 0.5 - 0.5)
+	for y in n:
+		for x in n:
+			var d := Vector2(x, y).distance_to(c)
+			var a := clampf(n * 0.5 - 1.5 - d, 0.0, 1.0)
+			var ring := clampf(n * 0.5 - 0.5 - d, 0.0, 1.0)
+			if ring > 0.0:
+				img.set_pixel(x, y, Color(COL_INK.r, COL_INK.g, COL_INK.b, ring) if a < 1.0 else col)
+	return ImageTexture.create_from_image(img)
+
+
+## A 0-100 slider in the kit's look: a dark groove, a gold fill, a round grabber; 30 px tall so a finger can take it.
+static func slider(value: int, cb: Callable = Callable(), min_w: float = 160.0) -> HSlider:
+	var s := HSlider.new()
+	s.min_value = 0
+	s.max_value = 100
+	s.step = 1
+	s.value = value
+	s.focus_mode = Control.FOCUS_NONE
+	s.custom_minimum_size = Vector2(min_w, 30)
+	var groove := StyleBoxFlat.new()
+	groove.bg_color = Color(0.05, 0.05, 0.045, 0.95)
+	groove.set_corner_radius_all(3)
+	groove.set_border_width_all(1)
+	groove.border_color = Color(COL_RULE, 0.5)
+	groove.content_margin_top = 4
+	groove.content_margin_bottom = 4
+	s.add_theme_stylebox_override("slider", groove)
+	for k in ["grabber_area", "grabber_area_highlight"]:
+		var fill := StyleBoxFlat.new()
+		fill.bg_color = COL_RULE if k == "grabber_area" else COL_GOLD
+		fill.set_corner_radius_all(3)
+		fill.content_margin_top = 4
+		fill.content_margin_bottom = 4
+		s.add_theme_stylebox_override(k, fill)
+	if _grabber == null:
+		_grabber = _grabber_tex(COL_GOLD)
+	for k in ["grabber", "grabber_highlight", "grabber_disabled"]:
+		s.add_theme_icon_override(k, _grabber)
+	if cb.is_valid():
+		s.value_changed.connect(func(v: float): cb.call(int(v)))
+	return s
+
+
+## A status dot (green, gold, red, dim) of d px.
+class Dot extends Control:
+	var col := Color.WHITE
+
+	func _init(p_col: Color, d: float = 10.0) -> void:
+		col = p_col
+		custom_minimum_size = Vector2(d, d)
+		size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func set_col(c: Color) -> void:
+		col = c
+		queue_redraw()
+
+	func _draw() -> void:
+		var r := minf(size.x, size.y) * 0.5
+		draw_circle(size * 0.5, r, Color(0.05, 0.04, 0.03, 0.9))
+		draw_circle(size * 0.5, maxf(r - 1.5, 1.0), col)
+
+
+static func dot(col: Color, d: float = 10.0) -> Dot:
+	return Dot.new(col, d)
 
 
 # ------------------------------------------------------------------ theme ---
@@ -266,7 +682,8 @@ const TIME_OPTIONS := [["10 min", 600], ["15 min", 900], ["20 min", 1200], ["30 
 ## selected one's value (an unknown value adds an item "<value>"), cb(value)
 ## is called when the player picks. The popup's text and rows are touch-sized.
 static func dropdown(options: Array, value, cb: Callable, min_w: float = 0.0, size: int = FONT) -> OptionButton:
-	var ob := OptionButton.new()
+	install_tips()
+	var ob := TipOption.new()
 	ob.custom_minimum_size = Vector2(min_w, BTN_H)
 	ob.focus_mode = Control.FOCUS_NONE
 	ob.fit_to_longest_item = true
@@ -286,6 +703,7 @@ static func dropdown(options: Array, value, cb: Callable, min_w: float = 0.0, si
 		sel = ob.item_count - 1
 	ob.select(sel)
 	ob.pressed.connect(AudioFx.click)
+	nav_style(ob)
 	ob.item_selected.connect(func(i: int):
 		if cb.is_valid():
 			cb.call(ob.get_item_metadata(i)))
@@ -771,10 +1189,12 @@ static var _clip_wait := {}   # clipboard read number -> Callable(ok: bool, text
 ## prompt asks (default: the placeholder). trim: drop surrounding spaces from
 ## prompted and pasted text (keys and codes).
 static func text_field(placeholder: String, text: String = "", min_w: float = 200.0, p_title: String = "", trim: bool = false) -> LineEdit:
-	var le := LineEdit.new()
+	install_tips()
+	var le := TipEdit.new()
 	le.placeholder_text = placeholder
 	le.text = text
 	le.custom_minimum_size = Vector2(min_w, BTN_H)
+	field_style(le)
 	le.set_meta("title", p_title if p_title != "" else placeholder)
 	if trim:
 		le.set_meta("trim", 1)
@@ -782,6 +1202,23 @@ static func text_field(placeholder: String, text: String = "", min_w: float = 20
 		_web_init()
 		le.gui_input.connect(func(e: InputEvent): _field_input(e, le))
 	return le
+
+
+## The text field's look: a dark inset with a thin gold edge, brighter while it has the focus.
+static func field_style(le: LineEdit) -> void:
+	for k in ["normal", "focus", "read_only"]:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(0.035, 0.03, 0.025, 0.96)
+		sb.set_corner_radius_all(4)
+		sb.set_border_width_all(1)
+		sb.border_color = COL_GOLD if k == "focus" else Color(COL_RULE, 0.6)
+		sb.content_margin_left = 9.0
+		sb.content_margin_right = 9.0
+		sb.content_margin_top = 4.0
+		sb.content_margin_bottom = 4.0
+		le.add_theme_stylebox_override(k, sb)
+	le.add_theme_color_override("font_placeholder_color", Color(COL_BONE, 0.42))
+	le.add_theme_color_override("caret_color", COL_GOLD)
 
 
 ## A multi-line text box (pasted saves): Ctrl+V works on the web too.

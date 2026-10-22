@@ -32,6 +32,7 @@ const MenuPrefs := preload("res://game/menu/menu_prefs.gd")
 const MenuBg := preload("res://game/menu/menu_bg.gd")
 const Emblem := preload("res://game/menu/emblem.gd")
 const MenuStyle := preload("res://game/menu/menu_style.gd")
+const OptionsRows := preload("res://game/menu/options_rows.gd")
 ## Menu terrain choices for the playable battles: -1 = random from the seed.
 const TERRAIN_CHOICES := [-1, Terrain.K_FLAT, Terrain.K_ROLLING, Terrain.K_RIDGE,
 	Terrain.K_VALLEY, Terrain.K_HILL, Terrain.K_SLOPE]
@@ -93,8 +94,6 @@ var _entries: Array = []         # the title screen's entry wrappers, in order
 var _continue_entry: Button = null
 var _continue_emblem: Control = null
 var _recent: Dictionary = {}     # the most recent save: {kind, slot / id, name, turn, pack}
-var _bg_button: Button = null
-var _emblem_button: Button = null
 var _phone_layout := false
 var _continue_box: VBoxContainer
 var _import_edit: TextEdit
@@ -104,9 +103,20 @@ var _join_edit: LineEdit
 var _join_info: Label
 var _join_box: VBoxContainer
 var _share_box: VBoxContainer
-var _net_line: Label
+var _net_line: Label             # the Host card's server line ("Server: <host> - ready")
+var _net_dot: Kit.Dot
+var _srv_label: Label            # the Game server row at the bottom of the Grand Campaign page
+var _srv_dot: Kit.Dot
 var _server_page  # game/net/server_page.gd
 var _online_box: VBoxContainer
+var _grand_cards: BoxContainer   # the Host and Join cards (side by side, stacked on a phone)
+var _grand_col: VBoxContainer
+var _gh_pack := "west"           # the Host card's picked setting
+var _gh_cards := {}              # pack key -> its mini-card
+var _gj_edit: LineEdit           # the Join card's code field
+var _gj_info: Label
+var _gj_box: VBoxContainer
+var _opts: OptionsRows = null    # the Options page's rows
 
 
 var custom: CustomBattle = null
@@ -115,11 +125,6 @@ var _shot_frames := 0
 var _tests_box: Control
 var _tests_button: Button
 var _help: Label
-var _size_button: Button
-var _soldiers_button: Button
-var _quality_button: Button
-var _look_button: Button
-var _style_button: Button
 
 
 func _ready() -> void:
@@ -140,6 +145,7 @@ func _ready() -> void:
 	add_child(_menu)
 	_menu.visibility_changed.connect(_menu_visibility)
 	get_tree().root.size_changed.connect(_layout_home)
+	get_tree().root.size_changed.connect(_layout_grand)
 	show_page("home")
 	_activate_bg.call_deferred()
 	book = UnitBook.new()
@@ -307,25 +313,47 @@ func _net() -> Node:
 	return get_node_or_null("/root/Net")
 
 
-## Is the campaign server there? (A line on the home page says.)
+## The server's state for the Grand Campaign page: kind is "ready", "invite", "down" or "checking" (the dot's colour),
+## word what follows "Server: <host> - ".
+func _server_state(kind: String, word: String) -> void:
+	var col: Color = {"ready": Kit.COL_GOOD, "invite": Kit.COL_GOLD, "down": Kit.COL_BAD}.get(kind, Kit.COL_DIM)
+	var net := _net()
+	var host := "no server"
+	if net != null and net.has_server():
+		host = net.server_url().trim_prefix("https://").trim_prefix("http://").trim_suffix("/")
+	if _net_line != null:
+		_net_line.text = "Server: %s - %s" % [host, word]
+		_net_line.set_meta("kind", kind)
+		_net_dot.set_col(col)
+	if _srv_label != null:
+		_srv_label.text = "Game server: %s%s" % [host, " (default)" if net != null and net.has_server() and net.is_default() else ""]
+		_srv_dot.set_col(col)
+
+
+## Is the campaign server there? (The Grand Campaign page says.)
 func _check_server() -> void:
 	var net := _net()
 	if net == null or _net_line == null:
 		return
 	if not net.has_server():
-		_net_line.text = "Online play needs the game server (see Game server)."
+		_server_state("down", "none chosen (see Change)")
 		return
-	_net_line.text = "Checking the game server..."
+	_server_state("checking", "checking...")
 	var ok: bool = await net.check_server()
 	if ok:
 		var d: Dictionary = net.describe_info(net.info)
-		_net_line.text = ("Online co-op ready" + ("" if net.is_default() else " (server %s)" % net.server_url()) + ".") if bool(d["ok"]) else str(d["text"])
-		_net_line.text += " A newer version of the game is on the server: reload the page." if net.new_build_available else ""
-		_net_line.add_theme_color_override("font_color", Kit.COL_GOOD if bool(d["ok"]) and not net.new_build_available else Kit.COL_GOLD)
+		if bool(d["mismatch"]):
+			_server_state("down", "another version of the game")
+		elif not bool(d["ok"]):
+			_server_state("down", "not a game server")
+		else:
+			_server_state("invite" if bool(d["invite_required"]) else "ready", "invite key needed" if bool(d["invite_required"]) else "ready")
+		if net.new_build_available:
+			_net_line.text += " - newer version, reload the page"
 	else:
 		var t = net.launch.get("server_result", null)
-		_net_line.text = str(t["text"]) if t is Dictionary and not bool(t["ok"]) else "The game server is not available: online play is off; local play works as usual."
-		_net_line.add_theme_color_override("font_color", Kit.COL_DIM)
+		_server_state("down", "not reachable")
+		Kit.tip(_net_line, "Game server", str(t["text"]) if t is Dictionary and not bool(t["ok"]) else "The game server is not available: online play is off; local play works as usual.")
 	if _server_page != null:
 		_server_page.refresh()
 
@@ -379,18 +407,18 @@ func _build_menu() -> Control:
 	row.alignment = FlowContainer.ALIGNMENT_CENTER
 	vb.add_child(row)
 	_terrain_button = _menu_button("", _cycle_terrain)
-	_terrain_button.tooltip_text = "Ground for the three battles (tests have their own)"
+	Kit.tip(_terrain_button, "Terrain", "The ground for the three playable battles; the tests have their own.")
 	row.add_child(_terrain_button)
 	_ground_button = _menu_button("", _cycle_ground)
-	_ground_button.tooltip_text = "Region look and woods: plain (no woods), arid, dry, green, rocky"
+	Kit.tip(_ground_button, "Ground", "The region look and the woods: plain (no woods), arid, dry, green or rocky.")
 	row.add_child(_ground_button)
 	_ai_button = _menu_button("", _cycle_ai_skill)
-	_ai_button.tooltip_text = "Battle AI skill (Easy and Skilled play like Average for now)"
+	Kit.tip(_ai_button, "Battle AI", "How well the enemy plays. Easy and Skilled play like Average for now.")
 	row.add_child(_ai_button)
 	_update_ai_button()
 	row.add_child(_menu_button("Custom battle", _open_custom))
 	_replay_button = _menu_button("Replay last battle", _replay)
-	_replay_button.tooltip_text = "Same battle, same seed, same ground"
+	Kit.tip(_replay_button, "Replay", "The same battle with the same seed and the same ground.")
 	_replay_button.disabled = true
 	row.add_child(_replay_button)
 	row.add_child(_menu_button("Unit book", _open_book))
@@ -414,7 +442,7 @@ func _build_menu() -> Control:
 		tb.custom_minimum_size = Vector2(205, 36)
 		tb.add_theme_font_size_override("font_size", 13)
 		tb.clip_text = true
-		tb.tooltip_text = Scenarios.title(id)
+		Kit.tip(tb, "Test scenario", Scenarios.title(id))
 		grid.add_child(tb)
 	_tests_box = grid
 	var help := Label.new()
@@ -615,7 +643,7 @@ func _update_home() -> void:
 		else:
 			t += ", online"
 		_continue_entry.text = t
-		_continue_entry.tooltip_text = t
+		Kit.tip(_continue_entry, "Continue", t)
 		(_continue_emblem as Emblem).pack = str(_recent["pack"])
 		_continue_emblem.queue_redraw()
 	var lp := _last_pack()
@@ -717,38 +745,201 @@ func _build_campaign(bg: Control) -> Control:
 const CARD_TITLES := {"west": "The Caribbean, 1650", "rome": "Rome, 280 BC"}
 
 
-## Grand Campaign (online co-op): host, join, this device's online campaigns, the game server.
+## The page's content width: the two cards side by side, or the screen's width on a phone.
+func _grand_width() -> float:
+	return minf(740.0, get_viewport_rect().size.x - 32.0)
+
+
+## Grand Campaign (online co-op): the Host card and the Join card, this device's online campaigns, the game server.
 func _build_grand(bg: Control) -> Control:
 	var vb := _page_box(bg)
+	_grand_col = vb
+	vb.add_theme_constant_override("separation", 12)
 	vb.add_child(_heading("Grand Campaign"))
-	var intro := Kit.label("Online co-op: each player on their own device, turns resolve when everyone has submitted.", 14, Kit.COL_DIM, true)
-	intro.custom_minimum_size.x = 560
+	var intro := Kit.label("Online co-op: each player on their own device; the turn resolves when everyone has submitted.", 14, Kit.COL_DIM, true)
+	intro.name = "grand_intro"
 	vb.add_child(intro)
-	var row := HFlowContainer.new()
-	row.add_theme_constant_override("h_separation", 8)
-	row.add_theme_constant_override("v_separation", 8)
-	row.alignment = FlowContainer.ALIGNMENT_CENTER
-	row.custom_minimum_size.x = 640
-	vb.add_child(row)
-	for d in [["Host a new grand campaign", "home_Online_co-op", _new_campaign_page.bind(true, "")], ["Join with a code", "home_Join", show_page.bind("join")],
-			["Game server", "home_server", show_page.bind("server")]]:
-		var b := _menu_button(d[0], d[2])
-		b.name = d[1]
-		b.custom_minimum_size = Vector2(190, 52)
-		b.add_theme_font_size_override("font_size", 16)
-		if d[1] == "home_server":
-			b.tooltip_text = "Which server online play uses (the default one, a friend's or your own), and hosting one from this PC."
-		row.add_child(b)
-	_net_line = Kit.label("", 13, Kit.COL_DIM)
-	_net_line.name = "net_line"
-	_net_line.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vb.add_child(_net_line)
-	vb.add_child(Kit.label("Your grand campaigns", 20, Kit.COL_GOLD))
+	_grand_cards = BoxContainer.new()
+	_grand_cards.name = "grand_cards"
+	_grand_cards.add_theme_constant_override("separation", 14)
+	vb.add_child(_grand_cards)
+	_grand_cards.add_child(_build_host_card())
+	_grand_cards.add_child(_build_join_card())
+	vb.add_child(Kit.title("Your grand campaigns", 20))
 	_online_box = Kit.vbox(6)
-	_online_box.custom_minimum_size.x = 560
+	_online_box.name = "online_box"
 	_online_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vb.add_child(_online_box)
+	# The server row.
+	var sp := Kit.panel(Color(0.07, 0.06, 0.05, 0.9), 8)
+	sp.name = "server_row"
+	var sh := Kit.hbox(8)
+	sp.add_child(sh)
+	_srv_dot = Kit.dot(Kit.COL_DIM)
+	sh.add_child(_srv_dot)
+	_srv_label = Kit.label("Game server", 14, Kit.COL_BONE)
+	_srv_label.name = "server_row_label"
+	_srv_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_srv_label.clip_text = true
+	sh.add_child(_srv_label)
+	var chg := Kit.button("Change", show_page.bind("server"), 100, 14)
+	chg.name = "home_server"
+	Kit.nav_style(chg)
+	Kit.tip(chg, "Game server", "Which server online play uses: the default one, a friend's or your own, and hosting one from this PC.")
+	sh.add_child(chg)
+	vb.add_child(sp)
+	_layout_grand()
 	return vb.get_parent().get_parent()
+
+
+## Cards side by side on a roomy screen, stacked on a phone; the column as wide as the cards.
+func _layout_grand() -> void:
+	if _grand_cards == null:
+		return
+	var w := _grand_width()
+	_phone_layout = _is_phone()
+	_grand_cards.vertical = w < 640.0 or _phone_layout
+	for c in _grand_cards.get_children():
+		(c as Control).custom_minimum_size.x = w if _grand_cards.vertical else (w - 14.0) * 0.5
+		(c as Control).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_grand_col.custom_minimum_size.x = w
+
+
+func _card_panel(nm: String) -> PanelContainer:
+	var card := Kit.trim_panel(Color(0.06, 0.055, 0.045, 0.93), 14)
+	card.name = nm
+	return card
+
+
+## Host a grand campaign: the setting (two mini-cards), Host, and the server's state under it.
+func _build_host_card() -> Control:
+	var card := _card_panel("host_card")
+	var v := Kit.vbox(8)
+	card.add_child(v)
+	v.add_child(Kit.title("Host a grand campaign", 20))
+	v.add_child(Kit.label("Pick a setting, then choose who plays each faction. The others join with a code.", 13, Kit.COL_DIM, true))
+	var pr := Kit.hbox(8)
+	var first := ""
+	for key in ["west", "rome"]:
+		if not CData.has_pack(key):
+			continue
+		if first == "":
+			first = key
+		var b := Kit.button("", _gh_select.bind(key), 0, 14)
+		b.name = "host_pack_" + key
+		b.custom_minimum_size = Vector2(0, 58)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var inner := Kit.hbox(8)
+		inner.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		inner.offset_left = 8
+		inner.offset_right = -6
+		inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		inner.alignment = BoxContainer.ALIGNMENT_CENTER
+		var em := Kit.emblem(key, 36)
+		em.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		em.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		inner.add_child(em)
+		var tv := Kit.vbox(0)
+		tv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		tv.alignment = BoxContainer.ALIGNMENT_CENTER
+		tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var tl := Kit.label(str(CARD_TITLES[key]).get_slice(", ", 0), 15, Kit.COL_BONE)
+		tl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		tv.add_child(tl)
+		var yl := Kit.label(str(CARD_TITLES[key]).get_slice(", ", 1), 12, Kit.COL_DIM)
+		yl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		tv.add_child(yl)
+		inner.add_child(tv)
+		b.add_child(inner)
+		Kit.tip(b, CARD_TITLES[key], PackView.subtitle(key))
+		pr.add_child(b)
+		_gh_cards[key] = b
+	v.add_child(pr)
+	if not _gh_cards.has(_gh_pack):
+		_gh_pack = first
+	var hb := Kit.hero_button("Host", "", func(): _new_campaign_page(true, _gh_pack), 0, 20)
+	hb.name = "home_Online_co-op"
+	Kit.tip(hb, "Host a grand campaign", "Opens the faction page for the chosen setting: pick the humans (two at least) and the rules, then send the join code.")
+	v.add_child(hb)
+	var st := Kit.hbox(8)
+	_net_dot = Kit.dot(Kit.COL_DIM)
+	st.add_child(_net_dot)
+	_net_line = Kit.label("", 13, Kit.COL_DIM, true)
+	_net_line.name = "net_line"
+	_net_line.mouse_filter = Control.MOUSE_FILTER_STOP
+	_net_line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	st.add_child(_net_line)
+	var ch := Kit.button("Change", show_page.bind("server"), 0, 13)
+	ch.name = "host_server_change"
+	ch.custom_minimum_size = Vector2(70, 32)
+	Kit.nav_style(ch)
+	Kit.tip(ch, "Game server", "Pick another server for online play, or host one from this PC.")
+	st.add_child(ch)
+	v.add_child(st)
+	_gh_select(_gh_pack)
+	return card
+
+
+## The Host card's setting: the picked mini-card is lit.
+func _gh_select(key: String) -> void:
+	_gh_pack = key
+	for k in _gh_cards:
+		var b: Button = _gh_cards[k]
+		var on: bool = k == key
+		var cols := {"normal": [Color(0.30, 0.22, 0.08, 1.0) if on else Color(0.11, 0.13, 0.12, 0.94), Kit.COL_GOLD if on else Color(Kit.COL_RULE, 0.6)],
+			"hover": [Color(0.36, 0.27, 0.10, 1.0) if on else Color(0.17, 0.19, 0.16, 0.97), Kit.COL_GOLD],
+			"pressed": [Color(0.40, 0.30, 0.11, 1.0), Color(1.0, 0.9, 0.55)]}
+		for st in cols:
+			var sb := Kit.box(cols[st][0], 6.0, 5)
+			sb.set_border_width_all(2 if on else 1)
+			sb.border_color = cols[st][1]
+			b.add_theme_stylebox_override(st, sb)
+		b.add_theme_stylebox_override("focus", b.get_theme_stylebox("normal"))
+		b.set_meta("on", on)
+
+
+## Join a grand campaign: a code field (uppercase as typed), Paste, Join, and the result under it.
+func _build_join_card() -> Control:
+	var card := _card_panel("join_card")
+	var v := Kit.vbox(8)
+	card.add_child(v)
+	v.add_child(Kit.title("Join a grand campaign", 20))
+	v.add_child(Kit.label("Enter the code from the player who hosts, or a device code to carry your own campaign here.", 13, Kit.COL_DIM, true))
+	var h := Kit.hbox(6)
+	_gj_edit = Kit.text_field("Join code", "", 120, "Join code or device code", true)
+	_gj_edit.name = "grand_join_code"
+	_gj_edit.custom_minimum_size = Vector2(120, 48)
+	_gj_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_gj_edit.add_theme_font_size_override("font_size", 20)
+	_gj_edit.max_length = 300  # a whole link can be pasted
+	_gj_edit.virtual_keyboard_type = LineEdit.KEYBOARD_TYPE_DEFAULT
+	_gj_edit.text_changed.connect(func(t: String):
+		var up: String = t.to_upper()
+		if up != t:
+			var c := _gj_edit.caret_column
+			_gj_edit.text = up
+			_gj_edit.caret_column = c)
+	_gj_edit.text_submitted.connect(func(_t): _join_find_in(_gj_edit, _gj_info, _gj_box))
+	Kit.tip(_gj_edit, "Codes", "A join code has 6 characters, a device code 8 (letters and digits; no 0, 1, I, L, O, U or V). A whole invite link works too.")
+	h.add_child(_gj_edit)
+	var pb := Kit.button("Paste", func(): Kit.paste_into(_gj_edit), 70, 14)
+	pb.name = "grand_join_paste"
+	pb.custom_minimum_size.y = 48
+	Kit.nav_style(pb)
+	Kit.arm_paste(pb)
+	h.add_child(pb)
+	var jb := Kit.hero_button("Join", "", func(): _join_find_in(_gj_edit, _gj_info, _gj_box), 80, 18)
+	jb.name = "grand_join"
+	h.add_child(jb)
+	v.add_child(h)
+	_gj_info = Kit.label("", 13, Kit.COL_BAD, true)
+	_gj_info.name = "grand_join_info"
+	_gj_edit.set_meta("hint", _gj_info)
+	v.add_child(_gj_info)
+	_gj_box = Kit.vbox(8)
+	_gj_box.name = "grand_join_box"
+	v.add_child(_gj_box)
+	return card
 
 
 ## Battles: a custom battle, or the sandbox with its fixed scenarios.
@@ -769,98 +960,23 @@ func _build_battles(bg: Control) -> Control:
 	return vb.get_parent().get_parent()
 
 
-## Options: display, looks, audio and help. Tests and benchmarks only with --dev.
+## Options: display, looks, audio and help as rows (game/menu/options_rows.gd, shared with the in-game Menu), in a
+## panel so they read over any picture. Tests and benchmarks only with --dev.
 func _build_options(bg: Control) -> Control:
 	var vb := _page_box(bg)
 	vb.add_child(_heading("Options"))
-	vb.add_child(Kit.label("Display", 18, Kit.COL_GOLD))
-	var r1 := _opt_row(vb)
-	_size_button = _menu_button("", _cycle_ui_size)
-	_size_button.name = "home_ui_size"
-	_size_button.tooltip_text = "Size of buttons and text (S / M / L)"
-	r1.add_child(_size_button)
-	_quality_button = _menu_button("", _cycle_quality)
-	_quality_button.name = "home_quality"
-	_quality_button.tooltip_text = "Graphics. Auto: Low on devices that need the compatible soldiers path or that run a battle slowly, else High. Low: a plainer ground (no noise patches or water animation), no grass, scrub or orchards, a still sea on the map. Takes effect at the next battle; the map on the next open."
-	r1.add_child(_quality_button)
-	_soldiers_button = _menu_button("", _cycle_soldier_rendering)
-	_soldiers_button.name = "home_soldiers"
-	_soldiers_button.tooltip_text = "How soldiers are drawn. Auto: the fast way, switching by itself to compatible if this device shows no soldiers. Compatible: always the way that works on every device (a little more work per tick)."
-	r1.add_child(_soldiers_button)
-	var fs := _menu_button("Fullscreen", _toggle_fullscreen)
-	fs.name = "home_fullscreen"
-	r1.add_child(fs)
-	vb.add_child(Kit.label("Looks", 18, Kit.COL_GOLD))
-	var r2 := _opt_row(vb)
-	_look_button = _menu_button("", _cycle_battle_look)
-	_look_button.name = "home_battle_look"
-	_look_button.tooltip_text = "Battle map look. Diorama: a tabletop miniatures board (splatted ground, rim light and outlines, saturated colour, a bevelled board edge, a light blur at the screen edges on High). Painterly: the softer grounded look. Takes effect at the next battle."
-	r2.add_child(_look_button)
-	_style_button = _menu_button("", _cycle_map_style)
-	_style_button.name = "home_map_style"
-	_style_button.tooltip_text = "Campaign map style. Auto: the map table (painted miniatures, banded relief and sea) for the Caribbean, the relief map for Rome. Table / Relief force one. Takes effect at once on the next map."
-	r2.add_child(_style_button)
-	_bg_button = _menu_button("", _cycle_menu_bg)
-	_bg_button.name = "home_menu_bg"
-	_bg_button.tooltip_text = "The picture behind this menu. Diorama: the live campaign map. Art: a painted picture. Auto: the diorama on High graphics, the picture on Low."
-	r2.add_child(_bg_button)
-	_emblem_button = _menu_button("", _cycle_menu_emblems)
-	_emblem_button.name = "home_menu_emblems"
-	_emblem_button.tooltip_text = "The settings' emblems: drawn in code, or painted pictures (when the files are installed)."
-	r2.add_child(_emblem_button)
-	vb.add_child(Kit.label("Audio", 18, Kit.COL_GOLD))
-	vb.add_child(_build_audio_row())
-	vb.add_child(Kit.label("Help", 18, Kit.COL_GOLD))
-	var r3 := _opt_row(vb)
-	var cb := _menu_button("Controls", _open_controls)
-	cb.name = "home_controls"
-	r3.add_child(cb)
-	var ub := _menu_button("Unit book", _open_book)
-	ub.name = "home_unit_book"
-	r3.add_child(ub)
-	if MenuPrefs.dev():
-		var tb := _menu_button("Tests and benchmarks", _open_tests)
-		tb.name = "home_tests"
-		r3.add_child(tb)
-	_update_size_button()
-	_update_soldiers_button()
-	_update_quality_button()
-	_update_look_button()
-	_update_style_button()
-	_update_menu_buttons()
+	var panel := Kit.trim_panel(Color(0.06, 0.055, 0.045, 0.93), 16)
+	panel.name = "options_panel"
+	vb.add_child(panel)
+	var inner := Kit.vbox(8)
+	inner.name = "options_rows"
+	var narrow := _is_phone() or get_viewport_rect().size.x < 720.0
+	inner.custom_minimum_size.x = minf(660.0, get_viewport_rect().size.x - 72.0)
+	panel.add_child(inner)
+	_opts = OptionsRows.new()
+	_opts.build(inner, {"prefix": "home", "narrow": narrow, "title": true, "dev": MenuPrefs.dev(), "win": get_window(),
+		"on_controls": _open_controls, "on_book": _open_book, "on_tests": _open_tests, "on_menu_bg": _activate_bg})
 	return vb.get_parent().get_parent()
-
-
-func _opt_row(vb: Control) -> HFlowContainer:
-	var row := HFlowContainer.new()
-	row.add_theme_constant_override("h_separation", 8)
-	row.add_theme_constant_override("v_separation", 8)
-	row.custom_minimum_size.x = 720
-	vb.add_child(row)
-	return row
-
-
-func _cycle_menu_bg() -> void:
-	var p := MenuPrefs.stored_background()
-	MenuPrefs.set_background(MenuPrefs.BACKGROUNDS[(MenuPrefs.BACKGROUNDS.find(p) + 1) % MenuPrefs.BACKGROUNDS.size()])
-	_update_menu_buttons()
-	_activate_bg()
-
-
-func _cycle_menu_emblems() -> void:
-	var p := MenuPrefs.stored_emblems()
-	MenuPrefs.set_emblems(MenuPrefs.EMBLEMS[(MenuPrefs.EMBLEMS.find(p) + 1) % MenuPrefs.EMBLEMS.size()])
-	_update_menu_buttons()
-	get_tree().call_group("menu_emblem", "queue_redraw")
-
-
-func _update_menu_buttons() -> void:
-	if _bg_button != null:
-		var p := MenuPrefs.stored_background()
-		_bg_button.text = "Menu picture: " + (p if p != "auto" else "auto (%s)" % MenuPrefs.background())
-	if _emblem_button != null:
-		var e := MenuPrefs.stored_emblems()
-		_emblem_button.text = "Emblems: " + e + (" (no files)" if e == "painted" and Emblem.painted("west") == null and Emblem.painted("rome") == null else "")
 
 
 func _open_tests() -> void:
@@ -919,54 +1035,84 @@ func _fill_continue() -> void:
 		_continue_box.add_child(h)
 
 
-## The faction name of an online seat (its campaign's pack, restored after).
-func _seat_name(e: Dictionary) -> String:
+## An online seat's faction, read under its campaign's pack (restored after): {name, mark}.
+func _seat_info(e: Dictionary) -> Dictionary:
 	var keep := CData.pack
 	PackView.use_pack(str(e.get("pack", "rome")))
-	var n := CData.faction_name(int(e["f"]))
+	var f := int(e["f"])
+	var out := {"name": CData.faction_name(f), "mark": Kit.faction_mark(f, 22)}
 	PackView.use_pack(keep)
-	return n
+	return out
 
 
-## Online campaigns this device has a seat in, with live status badges.
+## Online campaigns this device has a seat in, with live status badges: one row each (the setting's emblem, the
+## campaign's name, your faction and the turn, the badge, Resume and a small x to forget it).
 func _fill_online() -> void:
 	for c in _online_box.get_children():
 		c.queue_free()
 	var net := _net()
 	if net == null:
-		_online_box.add_child(Kit.label("Online play needs the game server.", 15, Kit.COL_DIM))
+		_online_box.add_child(Kit.label("Online play needs the game server.", 14, Kit.COL_DIM))
 		return
 	var list: Array = net.local_campaigns()
 	if list.is_empty():
-		_online_box.add_child(Kit.label("No grand campaigns on this device yet.", 15, Kit.COL_DIM))
+		var el := Kit.label("No grand campaigns on this device yet. Host one above, or join with a code.", 14, Kit.COL_DIM, true)
+		el.name = "online_empty"
+		_online_box.add_child(el)
 		return
 	var badges := {}
 	for e in list:
 		var cid := str(e["id"])
-		var h := Kit.hbox(6)
-		h.add_child(Emblem.make(str(e.get("pack", "rome")), 32))
-		var b := _menu_button("%s - %s" % [e.get("name", cid), _seat_name(e)], _open_online.bind(cid))
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		b.clip_text = true
-		b.name = "online_" + cid
-		h.add_child(b)
-		var badge := Kit.label("..." if net.has_server() else "Offline", 14, Kit.COL_DIM)
-		badge.custom_minimum_size.x = 150
+		var row := Kit.panel(Color(0.06, 0.055, 0.045, 0.92), 8)
+		row.name = "grow_" + cid
+		var h := Kit.hbox(10)
+		row.add_child(h)
+		var em := Emblem.make(str(e.get("pack", "rome")), 40)
+		em.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		h.add_child(em)
+		var info := _seat_info(e)
+		var mid := Kit.vbox(2)
+		mid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var nl := Kit.label(str(e.get("name", cid)), 16, Kit.COL_BONE)
+		nl.clip_text = true
+		nl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		nl.custom_minimum_size.x = 40
+		mid.add_child(nl)
+		var fr := Kit.hbox(6)
+		fr.add_child(info["mark"])
+		var fl := Kit.label(str(info["name"]), 13, Kit.COL_DIM)
+		fl.name = "faction"
+		fr.add_child(fl)
+		var tl := Kit.label("", 13, Kit.COL_DIM)
+		tl.name = "turn"
+		fr.add_child(tl)
+		mid.add_child(fr)
+		h.add_child(mid)
+		var badge := Kit.label("..." if net.has_server() else "Offline", 13, Kit.COL_DIM, true)
+		badge.custom_minimum_size.x = 110
+		badge.size_flags_horizontal = Control.SIZE_SHRINK_END
+		badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		badge.name = "badge"
-		badge.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		h.add_child(badge)
-		badges[cid] = badge
-		var del := Kit.button("Forget", Callable(), 80)
-		del.tooltip_text = "Remove this campaign from this device (it stays on the server; the other players keep playing)."
+		badges[cid] = {"badge": badge, "turn": tl}
+		var rb := Kit.button("Resume", _open_online.bind(cid), 90, 14)
+		rb.name = "online_" + cid
+		Kit.nav_style(rb)
+		h.add_child(rb)
+		var del := Kit.button("x", Callable(), 36, 14)
+		del.name = "forget_" + cid
+		Kit.nav_style(del)
+		Kit.tip(del, "Forget this campaign", "Removes it from this device (it stays on the server; the other players keep playing). Press twice to confirm.")
 		del.pressed.connect(func():
 			if del.text == "Sure?":
 				net.accounts.remove(cid)
 				_fill_online()
 			else:
-				del.text = "Sure?")
+				del.text = "Sure?"
+				del.custom_minimum_size.x = 64
+				del.add_theme_color_override("font_color", Kit.COL_BAD))
 		h.add_child(del)
-		_online_box.add_child(h)
+		_online_box.add_child(row)
 	if net.has_server():
 		_update_badges(badges)
 
@@ -975,10 +1121,14 @@ func _update_badges(labels: Dictionary) -> void:
 	var net := _net()
 	var got: Dictionary = await net.refresh_badges()
 	for cid in labels:
-		var l: Label = labels[cid]
+		var l: Label = labels[cid]["badge"]
 		if is_instance_valid(l) and got.has(cid):
 			l.text = str(got[cid]["text"])
 			l.add_theme_color_override("font_color", got[cid]["color"])
+			var sm: Dictionary = got[cid].get("summary", {})
+			var tl: Label = labels[cid]["turn"]
+			if is_instance_valid(tl) and sm.has("turn"):
+				tl.text = " - turn %d" % (int(sm["turn"]) + 1)
 
 
 func _build_server(bg: Control) -> Control:
@@ -1062,10 +1212,17 @@ func _build_join(bg: Control) -> Control:
 
 
 func _join_find() -> void:
+	_join_find_in(_join_edit, _join_info, _join_box)
+
+
+## Look up the code in `edit` and show the result in `info` (errors) and `box` (the seats to take): the join page and the
+## Grand Campaign page's Join card share this.
+func _join_find_in(edit: LineEdit, info: Label, box: VBoxContainer) -> void:
 	var net := _net()
-	for c in _join_box.get_children():
+	for c in box.get_children():
 		c.queue_free()
-	var raw := _join_edit.text
+	info.add_theme_color_override("font_color", Kit.COL_BAD)
+	var raw := edit.text
 	var full := raw
 	# A whole link pasted: take its code.
 	for key in ["join=", "link="]:
@@ -1077,33 +1234,33 @@ func _join_find() -> void:
 		var sv: String = full.substr(full.to_lower().find("server=") + 7).get_slice("&", 0).uri_decode()
 		var sr: Dictionary = await net.set_server(sv)
 		if not bool(sr["ok"]):
-			_join_info.text = str(sr["text"])
+			info.text = str(sr["text"])
 			return
+	if code.length() != 6 and code.length() != 8:
+		info.text = JOIN_HINT
+		return
 	if net == null or not net.has_server():
-		_join_info.text = "Online play needs the game server: open the game from its web address."
+		info.text = "Online play needs the game server: open the game from its web address."
 		return
 	if not net.available and not await net.check_server():
-		_join_info.text = "The game server is not available right now, so online play is off. Local play works as usual."
+		info.text = "The game server is not available right now, so online play is off. Local play works as usual."
 		return
 	if code.length() == 8:
 		_claim_device_code(code)
 		return
-	if code.length() != 6:
-		_join_info.text = "A join code has 6 characters, a device code 8 (letters and digits; no 0, 1, I, L, O, U or V)."
-		return
-	_join_info.add_theme_color_override("font_color", Kit.COL_DIM)
-	_join_info.text = "Looking..."
+	info.add_theme_color_override("font_color", Kit.COL_DIM)
+	info.text = "Looking..."
 	var r: Dictionary = await net.join_preview(code)
-	_join_info.add_theme_color_override("font_color", Kit.COL_BAD)
+	info.add_theme_color_override("font_color", Kit.COL_BAD)
 	if not r["ok"]:
-		_join_info.text = _net_error(r, "No open campaign has that code. Check it with the player who sent it (it stops working once every seat is taken).")
+		info.text = _net_error(r, "No open campaign has that code. Check it with the player who sent it (it stops working once every seat is taken).")
 		return
-	_join_info.text = ""
+	info.text = ""
 	var d: Dictionary = CState.normalise(r["data"])
 	if int(d.get("format_version", 0)) > CState.VERSION or int(d.get("format_version", 0)) < CState.MIN_VERSION:
-		_join_info.text = "That campaign was made by a different version of the game: reload the page to update."
+		info.text = "That campaign was made by a different version of the game: reload the page to update."
 		return
-	_join_box.add_child(Kit.label("%s, turn %d." % [d.get("name", ""), int(d.get("turn", 0)) + 1], 17, Color.WHITE))
+	box.add_child(Kit.label("%s, turn %d." % [d.get("name", ""), int(d.get("turn", 0)) + 1], 17, Color.WHITE))
 	var free: Array = []
 	var taken: Array[String] = []
 	for seat in d["seats"]:
@@ -1112,37 +1269,41 @@ func _join_find() -> void:
 		else:
 			free.append(seat)
 	if not taken.is_empty():
-		_join_box.add_child(Kit.label("Playing already: " + ", ".join(taken) + ".", 14, Kit.COL_DIM))
+		box.add_child(Kit.label("Playing already: " + ", ".join(taken) + ".", 14, Kit.COL_DIM, true))
 	if free.is_empty():
-		_join_box.add_child(Kit.label("Every seat is taken.", 15, Kit.COL_BAD))
+		box.add_child(Kit.label("Every seat is taken.", 15, Kit.COL_BAD))
 		return
-	var du := Kit.text_field("Your Discord user id (optional, for @mentions)", str(net.accounts.data.get("discord_user", "")), 380, "Your Discord user id", true)
-	_join_box.add_child(Kit.field_box(du))
+	var du := Kit.text_field("Your Discord user id (optional, for @mentions)", str(net.accounts.data.get("discord_user", "")), 200, "Your Discord user id", true)
+	du.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.add_child(Kit.field_box(du))
 	var row := Kit.flow(8)
 	for seat in free:
 		var f := int(seat["f"])
-		var b := _menu_button("Play as %s" % seat["name"], func(): _join_seat(code, f, du.text.strip_edges()))
+		var b := _menu_button("Play as %s" % seat["name"], func(): _join_seat(code, f, du.text.strip_edges(), info))
 		b.name = "join_seat_%d" % f
-		b.custom_minimum_size = Vector2(220, 52)
+		b.custom_minimum_size = Vector2(200, 48)
 		var img := Image.create(20, 20, false, Image.FORMAT_RGBA8)
 		img.fill(CData.faction_color(f))
 		b.icon = ImageTexture.create_from_image(img)
 		row.add_child(b)
-	_join_box.add_child(row)
+	box.add_child(row)
 
 
-func _join_seat(code: String, f: int, discord_user: String) -> void:
+const JOIN_HINT := "A join code has 6 characters, a device code 8 (letters and digits; no 0, 1, I, L, O, U or V)."
+
+
+func _join_seat(code: String, f: int, discord_user: String, info: Label) -> void:
 	var net := _net()
 	if discord_user != "":
 		net.accounts.set_value("discord_user", discord_user)
-	_join_info.add_theme_color_override("font_color", Kit.COL_DIM)
-	_join_info.text = "Joining..."
+	info.add_theme_color_override("font_color", Kit.COL_DIM)
+	info.text = "Joining..."
 	var r: Dictionary = await net.join(code, f, discord_user)
-	_join_info.add_theme_color_override("font_color", Kit.COL_BAD)
+	info.add_theme_color_override("font_color", Kit.COL_BAD)
 	if not r["ok"]:
-		_join_info.text = _net_error(r, "Could not join.")
+		info.text = _net_error(r, "Could not join.")
 		return
-	_join_info.text = ""
+	info.text = ""
 	_tele_event("online_join", {"f": f})
 	_open_online(str(r["data"]["id"]))
 
@@ -1283,10 +1444,12 @@ func show_page(p: String) -> void:
 		_check_server()
 	if p == "server" and _server_page != null:
 		_server_page.refresh()
+	if p == "options" and _opts != null:
+		_opts.refresh()
 	if p == "home":
 		_update_home()
-		_update_soldiers_button()  # a battle may have switched it (soldier self-check)
-		_update_quality_button()
+		if _opts != null:
+			_opts.refresh()  # a battle may have switched Soldiers (soldier self-check)
 		_slide_in(_entries)
 
 
@@ -1412,65 +1575,6 @@ func _toggle_tests() -> void:
 	_tests_button.text = "Tests and benchmarks  " + ("-" if _tests_box.visible else "+")
 
 
-func _cycle_ui_size() -> void:
-	UiScale.cycle_size(get_window())
-	_update_size_button()
-
-
-func _update_size_button() -> void:
-	if _size_button != null:
-		_size_button.text = "UI size: " + UiScale.size_name()
-
-
-## Soldier rendering (user://settings.cfg [video] soldiers): auto (the data
-## texture, falling back by itself; game/soldier_layer.gd) or compatible
-## (always CPU-fed).
-func _cycle_soldier_rendering() -> void:
-	SoldierLayer.save_pref("auto" if SoldierLayer.load_pref() == "cpu" else "cpu")
-	_update_soldiers_button()
-
-
-func _update_soldiers_button() -> void:
-	if _soldiers_button != null:
-		_soldiers_button.text = "Soldiers: " + ("compatible" if SoldierLayer.load_pref() == "cpu" else "auto")
-
-
-## Graphics quality (user://settings.cfg [video] quality; game/quality.gd):
-## auto -> high -> low.
-func _cycle_quality() -> void:
-	var p := Quality.load_pref()
-	Quality.save_pref("high" if p == "auto" else ("low" if p == "high" else "auto"))
-	_update_quality_button()
-
-
-func _cycle_map_style() -> void:
-	var p := MapView.style_pref
-	MapView.set_style("table" if p == "auto" else ("relief" if p == "table" else "auto"))
-	_update_style_button()
-
-
-func _update_style_button() -> void:
-	if _style_button != null:
-		MapView.load_view_pref()
-		_style_button.text = "Map: " + MapView.style_pref
-
-
-func _cycle_battle_look() -> void:
-	BattleLook.save_pref("painterly" if BattleLook.pref() == "diorama" else "diorama")
-	_update_look_button()
-
-
-func _update_look_button() -> void:
-	if _look_button != null:
-		_look_button.text = "Battle look: " + BattleLook.pref()
-
-
-func _update_quality_button() -> void:
-	if _quality_button != null:
-		var p := Quality.load_pref()
-		_quality_button.text = "Graphics: " + (p if p != "auto" else "auto (%s)" % ("low" if Quality.is_low() else "high"))
-
-
 ## Settlement battles: a seed, the level and walls, the ground kind, attack
 ## or defend; Start opens the settlement's battle map (the ground palette is
 ## the Ground button's; Plain uses the dry one).
@@ -1487,7 +1591,7 @@ func _build_siege_row() -> Control:
 	box.add_child(l)
 	_siege_seed = Kit.text_field("seed", "1", 96, "Settlement seed", true)
 	_siege_seed.custom_minimum_size = Vector2(96, 42)
-	_siege_seed.tooltip_text = "Settlement seed: the same seed, level and walls always give the same map"
+	Kit.tip(_siege_seed, "Settlement seed", "The same seed, level and walls always give the same map.")
 	box.add_child(_siege_seed)
 	for key in ["plan", "level", "walls", "kind", "coast", "side", "equip"]:
 		var b := _menu_button("", _cycle_siege.bind(key))
@@ -1619,64 +1723,9 @@ func _replay() -> void:
 	_start_with(_last_id, _last_seed, _last_terrain)
 
 
-## Sound settings ([audio] in user://settings.cfg; game/audio.gd): a mute
-## toggle and -/+ steps of 10 % for master, effects and ambient.
-func _build_audio_row() -> Control:
-	var box := HFlowContainer.new()
-	box.add_theme_constant_override("h_separation", 8)
-	box.add_theme_constant_override("v_separation", 8)
-	box.alignment = FlowContainer.ALIGNMENT_CENTER
-	box.name = "audio_row"
-	var mute := _menu_button("", Callable())
-	mute.name = "audio_mute"
-	box.add_child(mute)
-	var labels := {}
-	for k in ["master", "effects", "ambient"]:
-		var h := HBoxContainer.new()
-		h.add_theme_constant_override("separation", 4)
-		var minus := _menu_button("-", Callable())
-		minus.custom_minimum_size = Vector2(42, 42)
-		var l := Label.new()
-		l.custom_minimum_size = Vector2(120, 0)
-		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		l.add_theme_font_size_override("font_size", 15)
-		var plus := _menu_button("+", Callable())
-		plus.custom_minimum_size = Vector2(42, 42)
-		h.add_child(minus)
-		h.add_child(l)
-		h.add_child(plus)
-		box.add_child(h)
-		labels[k] = l
-		minus.name = "audio_%s_minus" % k
-		plus.name = "audio_%s_plus" % k
-		var step := func(d: int):
-			var a = AudioFx.inst()
-			if a != null:
-				a.set_volume(k, int(a.vol[k]) + d)
-				AudioFx.play("tap", 1.0)
-			_update_audio_row(mute, labels)
-		minus.pressed.connect(step.bind(-10))
-		plus.pressed.connect(step.bind(10))
-	mute.pressed.connect(func():
-		var a = AudioFx.inst()
-		if a != null:
-			a.set_muted(not a.muted)
-		_update_audio_row(mute, labels))
-	_update_audio_row(mute, labels)
-	return box
-
-
-func _update_audio_row(mute: Button, labels: Dictionary) -> void:
-	var a = AudioFx.inst()
-	var vol: Dictionary = a.vol if a != null else AudioFx.DEFAULTS
-	mute.text = "Sound: " + ("off" if a != null and a.muted else "on")
-	for k in labels:
-		labels[k].text = "%s %d%%" % [str(k).capitalize(), int(vol[k])]
-
-
 func _menu_button(text: String, cb: Callable) -> Button:
-	var b := Button.new()
+	Kit.install_tips()
+	var b := Kit.TipButton.new()
 	b.text = text
 	b.custom_minimum_size = Vector2(150, 42)
 	b.add_theme_font_size_override("font_size", 15)
@@ -1693,15 +1742,6 @@ func _open_book() -> void:
 	if tele != null:
 		tele.event("book_open", {"from": "menu"})
 	book.open()
-
-
-func _toggle_fullscreen() -> void:
-	# Works on desktop and Android browsers; iPhone Safari has no fullscreen
-	# API for pages (use "Add to Home Screen" there instead).
-	if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN:
-		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
-	else:
-		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
 
 
 func _process(_delta: float) -> void:
@@ -1758,7 +1798,8 @@ func _end_battle() -> void:
 		custom.visible = true
 		return
 	_menu.visible = true
-	_update_soldiers_button()
+	if _opts != null:
+		_opts.refresh()
 
 
 # --------------------------------------------------------- custom battles ---

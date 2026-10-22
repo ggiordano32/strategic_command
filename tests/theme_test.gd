@@ -297,13 +297,16 @@ func _menu(pack: String) -> void:
 	# Options.
 	_button_in(gm, "menu_options").pressed.emit()
 	await _frames(3)
-	_check(gm.page == "options" and _button_in(gm, "menu_quality") != null and _button_in(gm, "menu_map_style") != null \
-		and _button_in(gm, "menu_battle_look") != null and _button_in(gm, "menu_soldiers") != null and _button_in(gm, "audio_mute") != null,
-		"Options has the title screen's settings (UI size, graphics, soldiers, fullscreen, battle look, map style, audio)")
+	var rows = gm._rows
+	_check(gm.page == "options" and rows != null and rows.seg.has("quality") and rows.seg.has("map_style") and rows.seg.has("battle_look") \
+		and rows.seg.has("soldiers") and rows.seg.has("ui_size") and rows.seg.has("fullscreen") and rows.seg.has("audio_mute") and rows.sliders.size() == 3,
+		"Options has the title screen's rows (UI size, graphics, soldiers, fullscreen, battle look, map style, audio)")
+	_check(not rows.seg.has("menu_bg") and gm.find_child("menu_quality_low", true, false) != null, "the in-game rows leave out the menu picture and emblems")
 	var q0 := Quality.load_pref()
-	_button_in(gm, "menu_quality").pressed.emit()
+	var qother := "low" if q0 != "low" else "high"
+	rows.seg["quality"].button_for(qother).pressed.emit()
 	await _frames(2)
-	_check(Quality.load_pref() != q0 and _button_in(gm, "menu_quality").text.begins_with("Graphics:"), "the graphics button cycles the saved setting")
+	_check(Quality.load_pref() == qother and rows.seg["quality"].value == qother, "the graphics capsule sets the saved setting")
 	Quality.save_pref(q0)
 	await _shot("menu_%s_options" % pack)
 	gm.back()

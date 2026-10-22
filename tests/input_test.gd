@@ -1190,11 +1190,22 @@ func _step_menu_book_open() -> void:
 	_menu = (load("res://game/main.gd") as GDScript).new()
 	root.add_child(_menu)
 	steps.push_front(_step_menu_book_tap)
+	steps.push_front(_step_menu_scroll)
 	steps.push_front(_step_menu_options)
 
 
 func _step_menu_options() -> void:
 	_menu.show_page("options")   # (the Unit book and Controls buttons live on the Options page)
+
+
+## (The Options page is rows now and longer than the window: bring the Help buttons into view before tapping them.)
+func _step_menu_scroll() -> void:
+	for b in _menu.find_children("home_unit_book", "Button", true, false):
+		var sc: Node = b.get_parent()
+		while sc != null and not (sc is ScrollContainer):
+			sc = sc.get_parent()
+		if sc != null:
+			(sc as ScrollContainer).ensure_control_visible(b)
 
 
 func _step_menu_book_tap() -> void:

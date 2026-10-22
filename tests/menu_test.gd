@@ -3,9 +3,12 @@ extends SceneTree
 ##   godot --resolution 1280x720 --script res://tests/menu_test.gd [-- --shots=DIR]
 ## Every entry opens its page and Back (the button, Esc, the Android back request) returns; Continue is hidden
 ## with no saves and shown with one (the most recent, with its setting's emblem) and opens it; the Campaign cards
-## open the new-campaign page for the right setting; Grand Campaign carries the server line (the title screen
-## does not), Host / Join / Game server; Battles opens the sandbox and the custom battle; Options cycles each
-## setting (user://settings.cfg is put back afterwards); both backgrounds build (the diorama's build time is
+## open the new-campaign page for the right setting (its blurbs are not clipped, Start waits for a human with a tip);
+## Grand Campaign carries the server line (the title screen does not), the Host card (it opens the faction page in
+## online mode for the picked setting), the Join card (validates a code, shows the error), Your grand campaigns (rows
+## from a stub seat store), the Game server row; Battles opens the sandbox and the custom battle; Options' capsules
+## set the stored values and its sliders the volumes (user://settings.cfg is put back afterwards); boxed tooltips (the
+## box on a tipped button, the touch long press); both backgrounds build (the diorama's build time is
 ## printed, the content pack is Rome again when the menu hides); both emblem styles draw; the phone layout
 ## (--ui-dpr 3, touch) stacks the entries centred. Script errors logged during the run are counted.
 ## --shots=DIR also saves the screenshots (title x background x emblems, the pages, the phone layout).
@@ -19,6 +22,12 @@ const PackView := preload("res://game/campaign/pack_view.gd")
 const MenuPrefs := preload("res://game/menu/menu_prefs.gd")
 const Emblem := preload("res://game/menu/emblem.gd")
 const Quality := preload("res://game/quality.gd")
+const Kit := preload("res://game/campaign/ui_kit.gd")
+const Accounts := preload("res://game/net/accounts.gd")
+const SoldierLayer := preload("res://game/soldier_layer.gd")
+const BattleLook := preload("res://game/battle_look.gd")
+const MapView := preload("res://game/campaign/map_view.gd")
+const AudioFx := preload("res://game/audio.gd")
 
 const SETTINGS := "user://settings.cfg"
 
@@ -131,6 +140,7 @@ func _run() -> void:
 	await _grand_page()
 	await _battles_page()
 	await _options_page()
+	await _tooltips()
 	await _emblems()
 	await _backgrounds()
 	await _phone()
@@ -232,7 +242,10 @@ func _campaign_page() -> void:
 		var key := "brethren" if pk == "west" else "rome"
 		_check(m._new_campaign.find_child("row_" + key, true, false) != null, "... with its faction rows (%s)" % key)
 		_check(m._new_campaign.find_child("pack_west", true, false) == null, "... without the Setting row")
-		await _shot("newcampaign_" + pk)
+		await _shot("faction_" + pk)
+		await _faction_checks(m._new_campaign, key)
+		if pk == "west":
+			await _scroll_shot(m._new_campaign, "faction_west_settings", 100000)
 		m._new_campaign.back.emit()
 		await _frames(3)
 		_check(m._new_campaign == null and m._menu.visible and m.page == "campaign", "Back from the faction page returns to Campaign")
@@ -245,25 +258,90 @@ func _campaign_page() -> void:
 # -------------------------------------------------------------- grand ---
 
 func _grand_page() -> void:
+	var net: Node = m._net()
+	var keep_accounts = null
+	var keep_base := ""
+	if net != null:
+		# A scratch seat store and a server nobody listens on: the rows come from the stub, nothing leaves the machine.
+		keep_accounts = net.accounts
+		keep_base = net.api.base_url
+		net.api.base_url = "http://127.0.0.1:8074"
+		net.accounts = Accounts.new("user://menu_test/accounts.json")
+		net.accounts.data["campaigns"] = {}
+		net.accounts.save()
 	m.show_page("grand")
 	await _frames(3)
 	_check(m._pages["grand"].is_ancestor_of(m._net_line), "the server line is on the Grand Campaign page")
-	for nm in ["home_Online_co-op", "home_Join", "home_server"]:
-		_check(_btn(nm) != null and _btn(nm).is_visible_in_tree(), "%s is on the Grand Campaign page" % nm)
-	await _shot("grand_page")
-	await _press("home_Join")
-	_check(m.page == "join", "Join with a code opens the join page")
-	m._back_btn.pressed.emit()
-	_check(m.page == "grand", "Back from Join returns to Grand Campaign")
+	for nm in ["home_Online_co-op", "grand_join", "grand_join_code", "grand_join_paste", "home_server", "host_pack_west", "host_pack_rome", "host_server_change"]:
+		_check(_btn(nm) != null and _btn(nm).is_visible_in_tree() or (nm == "grand_join_code" and m._gj_edit.is_visible_in_tree()), "%s is on the Grand Campaign page" % nm)
+	_check(m._grand_cards.get_child_count() == 2 and not m._grand_cards.vertical, "the Host and Join cards sit side by side")
+	_check(m.find_child("online_empty", true, false) != null or net == null, "no campaigns: the empty line shows (the Host card is the call to action)")
+	_check(m._net_line.text.begins_with("Server: "), "the server line reads 'Server: <host> - state' (%s)" % m._net_line.text)
+	for k in 60:
+		if net == null or m._net_line.text.contains("not reachable"):
+			break
+		await create_timer(0.25).timeout
+	_check(net == null or m._net_line.text.contains("not reachable"), "an unreachable server shows '- not reachable' (%s)" % m._net_line.text)
+	_check(net == null or m._srv_label.text.begins_with("Game server: 127.0.0.1:8074"), "the Game server row names the address (%s)" % m._srv_label.text)
+	await _shot("grand_empty")
+	# The Join card validates the code locally and says what is wrong.
+	m._gj_edit.text = "ab"
+	m._gj_edit.text_changed.emit("ab")
+	_check(m._gj_edit.text == "AB", "the code is uppercase as typed")
+	await _press("grand_join")
+	_check(m._gj_info.text.contains("6 characters") and m._gj_info.text.contains("8"), "a short code shows the hint under the field (%s)" % m._gj_info.text)
+	_check(Kit.tip_of(m._gj_edit)[1].contains("6 characters"), "and the field's tip carries it")
+	await _shot("grand_join_error")
+	# Host card: the setting then Host opens the faction page online for it.
+	for pk in ["rome", "west"]:
+		await _press("host_pack_" + pk)
+		_check(m._gh_pack == pk and bool(_btn("host_pack_" + pk).get_meta("on")), "the %s mini-card is lit" % pk)
+		await _press("home_Online_co-op")
+		_check(m._new_campaign != null and m._new_campaign.online and m._new_campaign.pack_pick == pk, "Host opens the online faction page for %s" % pk)
+		_check(m._new_campaign.find_child("nc_title", true, false).text == "New grand campaign", "... titled New grand campaign")
+		if pk == "west":
+			await _shot("faction_west_online")
+			await _scroll_shot(m._new_campaign, "faction_west_online_bottom", 100000)
+		m._new_campaign.back.emit()
+		await _frames(3)
+		_check(m.page == "grand" and m._menu.visible, "... and Back returns to Grand Campaign")
 	await _press("home_server")
 	_check(m.page == "server", "Game server opens its page")
 	m._back_btn.pressed.emit()
 	_check(m.page == "grand", "Back from Game server returns to Grand Campaign")
-	await _press("home_Online_co-op")
-	_check(m._new_campaign != null and m._new_campaign.online, "Host a new grand campaign opens the online new-campaign page")
-	m._new_campaign.back.emit()
-	await _frames(3)
-	_check(m.page == "grand" and m._menu.visible, "... and Back returns to Grand Campaign")
+	await _press("host_server_change")
+	_check(m.page == "server", "the Host card's Change opens the server page too")
+	m._back_btn.pressed.emit()
+	m.show_page("join")
+	_check(m.page == "join" and m._join_edit != null, "the separate join page is still reachable")
+	m._back_btn.pressed.emit()
+	# Your grand campaigns: rows from a stub seat store.
+	if net != null:
+		net.accounts.add("stubw", 2, "tok", "Port Royal run", "west", "http://127.0.0.1:8074")
+		net.accounts.add("stubr", 0, "tok", "Senate game", "rome", "http://127.0.0.1:8074")
+		m.show_page("grand")
+		await _frames(4)
+		for cid in ["stubw", "stubr"]:
+			var row := m.find_child("grow_" + cid, true, false) as Control
+			_check(row != null, "a row for the %s seat" % cid)
+			_check(m.find_child("online_" + cid, true, false) != null and m.find_child("forget_" + cid, true, false) != null, "... with Resume and a forget x")
+			_check(row != null and row.find_child("badge", true, false) != null and row.find_child("turn", true, false) != null, "... a badge and the turn")
+			_check(row != null and (row.find_child("faction", true, false) as Label).text != "", "... and the faction (%s)" % ((row.find_child("faction", true, false) as Label).text if row != null else ""))
+		_check((m.find_child("grow_stubw", true, false).find_child("faction", true, false) as Label).text == "England", "the West seat names England")
+		_check(CData.pack == "rome", "reading the seats puts the content pack back")
+		_check(m.find_child("online_empty", true, false) == null, "the empty line is gone")
+		var fg := m.find_child("forget_stubr", true, false) as Button
+		fg.pressed.emit()
+		_check(fg.text == "Sure?" and net.accounts.get_entry("stubr").size() > 0, "x asks first")
+		fg.pressed.emit()
+		await _frames(2)
+		_check(net.accounts.get_entry("stubr").is_empty(), "the second press forgets it")
+		await _shot("grand_campaigns")
+		net.accounts.data["campaigns"] = {}
+		net.accounts.save()
+		DirAccess.remove_absolute(ProjectSettings.globalize_path("user://menu_test/accounts.json"))
+		net.accounts = keep_accounts
+		net.api.base_url = keep_base
 
 
 # ------------------------------------------------------------ battles ---
@@ -285,29 +363,69 @@ func _battles_page() -> void:
 # ------------------------------------------------------------ options ---
 
 func _options_page() -> void:
+	var size0 := UiScale.size_name()
 	m.show_page("options")
 	await _frames(3)
-	await _shot("options_page")
+	await _shot("options")
 	_check(_btn("home_tests") == null, "no Tests and benchmarks without --dev")
 	_check(not m._tests_button.visible, "the sandbox page hides its Tests button without --dev")
-	for nm in ["home_ui_size", "home_quality", "home_soldiers", "home_battle_look", "home_map_style", "home_menu_bg", "home_menu_emblems"]:
-		var b := _btn(nm)
-		_check(b != null, "Options has %s" % nm)
-		if b == null:
+	var rows = m._opts
+	_check(rows != null and rows.find_row_count() >= 11, "Options is rows (%d settings)" % (rows.find_row_count() if rows != null else 0))
+	# Every capsule sets its stored value.
+	var stored := {
+		"ui_size": func(): return UiScale.size_name(),
+		"quality": func(): return Quality.load_pref(),
+		"soldiers": func(): return SoldierLayer.load_pref(),
+		"battle_look": func(): return BattleLook.pref(),
+		"map_style": func(): return MapView.style_pref,
+		"menu_bg": func(): return MenuPrefs.stored_background(),
+		"menu_emblems": func(): return MenuPrefs.stored_emblems(),
+	}
+	for key in stored:
+		var sg = rows.seg.get(key)
+		_check(sg != null and sg.name == "home_" + key, "Options has the %s capsule" % key)
+		if sg == null:
 			continue
-		var seen := {b.text: true}
-		for k in 4:
-			b.pressed.emit()
+		var all_ok := true
+		for v in sg.values:
+			sg.button_for(v).pressed.emit()
 			await _frames(1)
-			seen[b.text] = true
-		_check(seen.size() >= 2, "%s cycles (%s)" % [nm, ", ".join(seen.keys())])
-	_check(_btn("audio_mute") != null and _btn("home_controls") != null and _btn("home_unit_book") != null and _btn("home_fullscreen") != null, "Options has Audio, Controls, Unit book and Fullscreen")
+			if str((stored[key] as Callable).call()) != str(v) or sg.value != v:
+				all_ok = false
+				printerr("   %s: picked %s, stored %s" % [key, str(v), str((stored[key] as Callable).call())])
+		_check(all_ok, "%s: each choice sets the stored value (%s)" % [key, ", ".join(sg.values.map(func(x): return str(x)))])
+	UiScale.set_size_name(root, size0)
+	# Fullscreen is a toggle (the window mode is not touched here), Sound and the sliders reach the audio settings.
+	_check(rows.seg.has("fullscreen") and rows.seg.has("audio_mute") and _btn("home_controls") != null and _btn("home_unit_book") != null, "Options has Fullscreen, Sound, Controls and Unit book")
+	var a = AudioFx.inst()
+	if a != null:
+		var vol0: Dictionary = a.vol.duplicate()
+		var muted0: bool = a.muted
+		for k in ["master", "effects", "ambient"]:
+			var sl: HSlider = rows.sliders[k]
+			_check(sl != null and sl.name == "audio_" + k and sl.max_value == 100, "a 0-100 slider for %s" % k)
+			sl.value = 35
+			_check(int(a.vol[k]) == 35, "the %s slider sets the volume (%d)" % [k, int(a.vol[k])])
+		rows.seg["audio_mute"].button_for(0).pressed.emit()
+		_check(a.muted, "Sound off mutes")
+		rows.seg["audio_mute"].button_for(1).pressed.emit()
+		_check(not a.muted, "Sound on unmutes")
+		for k in vol0:
+			a.set_volume(k, int(vol0[k]))
+		a.set_muted(muted0)
+	# every capsule has a boxed tip
+	var untipped := 0
+	for key in rows.seg:
+		for b in (rows.seg[key] as Kit.Segmented).buttons():
+			if Kit.tip_of(b).is_empty() or str(Kit.tip_of(b)[0]) == "":
+				untipped += 1
+	_check(untipped == 0, "every Options control has a titled tip (%d without)" % untipped)
 	# the two menu settings reach the config file
 	MenuPrefs.set_background("diorama")
 	MenuPrefs.set_emblems("painted")
 	_check(MenuPrefs.stored_background() == "diorama" and MenuPrefs.stored_emblems() == "painted", "the menu settings are kept in [menu]")
-	m._update_menu_buttons()
-	_check(_btn("home_menu_bg").text.contains("diorama") and _btn("home_menu_emblems").text.contains("painted"), "their buttons show them")
+	rows.refresh()
+	_check(rows.seg["menu_bg"].value == "diorama" and rows.seg["menu_emblems"].value == "painted", "refresh shows them")
 	MenuPrefs.set_background("auto")
 	MenuPrefs.set_emblems("drawn")
 	MenuPrefs.dev_override = true
@@ -319,6 +437,136 @@ func _options_page() -> void:
 	_check(m.page == "sandbox" and m._tests_box.visible, "... and open the test list")
 	MenuPrefs.dev_override = false
 	await _new_menu()
+
+
+# --------------------------------------------------------- tooltips ---
+
+func _tooltips() -> void:
+	# The box: title in the display face over a wrapped body, 320 px at most.
+	var b := Kit.button("Tipped", Callable())
+	Kit.tip(b, "Fog of war", "On: you see your regions and their neighbours, and what your armies, fleets and cities can see; the rest shows as last known. Off: everything is visible.")
+	var box := b._make_custom_tooltip(b.tooltip_text) as Control
+	root.add_child(box)
+	await _frames(2)
+	var title := box.find_child("tip_title", true, false) as Label
+	var body := box.find_child("tip_body", true, false) as Label
+	_check(title != null and title.text == "Fog of war" and body != null and body.text.begins_with("On:"), "a tipped kit button builds a title and a body")
+	_check(title.has_theme_font_override("font") == (Kit.title_font() != null) and title.get_theme_font_size("font_size") == 16 and body.get_theme_font_size("font_size") == 14, "title 16 (display face), body 14")
+	_check(box.size.x <= 320.5 and box.size.x >= 200.0 and body.get_line_count() >= 3, "wrapped within 320 px (%.0f wide, %d lines)" % [box.size.x, body.get_line_count()])
+	_check(box.get_theme_stylebox("panel") is Kit.TrimBox, "the plate is the trim box")
+	await _shot_node("tooltip_box", box, Vector2(40, 40))
+	box.queue_free()
+	var plain := Kit.button("Plain", Callable())
+	plain.tooltip_text = "Just a body"
+	var pb := plain._make_custom_tooltip(plain.tooltip_text) as Control
+	_check(pb.find_child("tip_title", true, false) == null and (pb.find_child("tip_body", true, false) as Label).text == "Just a body", "a plain tooltip_text on a kit button is boxed without a title")
+	pb.free()
+	_check(ProjectSettings.get_setting("gui/timers/tooltip_delay_sec", 0.5) <= 0.41, "the desktop delay is 0.4 s")
+	# Touch: a long press shows the box above the finger until release; a short tap shows none.
+	UiScale._touch_override = 1
+	var host := root.get_node_or_null("KitTipHost")
+	_check(host != null, "the touch tip host is installed")
+	if host == null:
+		UiScale._touch_override = 0
+		return
+	var pressed := [0]
+	var tb := Kit.button("Hold me", func(): pressed[0] += 1)
+	Kit.tip(tb, "Hold", "Long press to read this.")
+	tb.position = Vector2(300, 300)
+	tb.size = Vector2(160, 44)
+	root.add_child(tb)
+	await _frames(2)
+	var finger := Vector2(380, 320)
+	host.press(finger)
+	await create_timer(0.2).timeout
+	_check(host.box == null, "no box before the long press time")
+	host.release()
+	host.press(finger)
+	await create_timer(0.65).timeout
+	_check(host.box != null and host.target == tb, "a long press on a tipped control shows the box")
+	if host.box != null:
+		var r: Rect2 = (host.box as Control).get_global_rect()
+		_check(r.end.y <= finger.y and r.position.x >= 0.0 and r.end.x <= root.get_visible_rect().size.x, "... above the finger and inside the screen")
+		await _shot("tooltip_long_press")
+	host.release()
+	await _frames(1)
+	_check(host.box == null or host.box.is_queued_for_deletion(), "lifting the finger removes it")
+	_check(tb.disabled, "... and that release is swallowed (the button is off for it)")
+	await _frames(4)
+	_check(not tb.disabled and pressed[0] == 0, "then it is back on, and nothing was pressed")
+	host.press(Vector2(50, 600))
+	await create_timer(0.6).timeout
+	_check(host.box == null, "a long press on nothing shows no box")
+	host.release()
+	tb.queue_free()
+	UiScale._touch_override = 0
+
+
+func _scroll_shot(nc: Control, name: String, y: int) -> void:
+	for sc in nc.find_children("*", "ScrollContainer", true, false):
+		(sc as ScrollContainer).scroll_vertical = y
+	await _frames(3)
+	await _shot(name)
+	for sc in nc.find_children("*", "ScrollContainer", true, false):
+		(sc as ScrollContainer).scroll_vertical = 0
+
+
+func _shot_node(name: String, n: Control, at: Vector2) -> void:
+	if _shots == "":
+		return
+	var bgc := ColorRect.new()
+	bgc.color = Color(0.2, 0.25, 0.22)
+	bgc.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	root.add_child(bgc)
+	root.move_child(bgc, n.get_index())
+	n.position = at
+	await _frames(3)
+	var img := root.get_viewport().get_texture().get_image()
+	var r := Rect2i(Vector2i(at) - Vector2i(20, 20), Vector2i(n.size) + Vector2i(40, 40))
+	img.get_region(r).save_png("%s/%s.png" % [_shots, name])
+	bgc.queue_free()
+
+
+# ----------------------------------------------------------- faction page ---
+
+## The faction page: blurbs wrapped inside their rows (never clipped), Start off with a tip until a human is picked.
+func _faction_checks(nc: Control, key: String) -> void:
+	await _frames(3)
+	var clipped := 0
+	var rows := 0
+	for r in nc.find_children("row_*", "PanelContainer", true, false):
+		rows += 1
+		var bl := r.find_child("blurb_*", true, false) as Label
+		if bl == null:
+			continue
+		var font := bl.get_theme_font("font")
+		var fh := font.get_height(bl.get_theme_font_size("font_size"))
+		if bl.get_line_count() < 1 or bl.size.y + 0.5 < bl.get_line_count() * fh or not (r as Control).get_global_rect().grow(0.5).encloses(bl.get_global_rect()):
+			clipped += 1
+	_check(rows == CData.faction_count() and clipped == 0, "the faction rows hold their whole blurbs (%d rows, %d clipped)" % [rows, clipped])
+	var st := nc.find_child("start_campaign", true, false) as Button
+	_check(st != null and st.disabled and str(Kit.tip_of(st)[1]).contains("Switch at least one faction"), "Start is off with the reason as its tip until a human is picked")
+	var who := nc.find_child("faction_" + key, true, false) as Button
+	who.pressed.emit()
+	await _frames(2)
+	_check(not st.disabled and who.text == "You", "picking a human turns Start on (and marks you)")
+	var row := nc.find_child("row_" + key, true, false) as PanelContainer
+	var sb := row.get_theme_stylebox("panel") as StyleBoxFlat
+	_check(sb != null and sb.border_width_left == 3 and sb.border_color == Kit.COL_GOLD, "a human row has the gold left edge")
+	nc.find_child("ai_" + key, true, false).pressed.emit()
+	await _frames(2)
+	_check(st.disabled, "back to AI: Start is off again")
+	for nm in ["campaign_name", "campaign_seed", "seed_dice", "turn_timeout_h_24", "autoresolve_auto", "ai_aggression_130", "ai_battle_skill_2", "ai_campaign_skill_0", "fog_0", "step_victory_regions_plus", "step_victory_capitals_minus"]:
+		_check(nc.find_child(nm, true, false) != null, "the Settings panel has %s" % nm)
+	var s0: int = int(nc.settings["victory_regions"])
+	nc.find_child("step_victory_regions_plus", true, false).pressed.emit()
+	nc.find_child("turn_timeout_h_24", true, false).pressed.emit()
+	nc.find_child("fog_0", true, false).pressed.emit()
+	await _frames(1)
+	_check(int(nc.settings["victory_regions"]) > s0 and int(nc.settings["turn_timeout_h"]) == 24 and int(nc.settings["fog"]) == 0, "the steppers and capsules set the settings")
+	var seed0: String = nc.seed_edit.text
+	nc.find_child("seed_dice", true, false).pressed.emit()
+	_check(nc.seed_edit.text != "" and nc.seed_edit.text.is_valid_int(), "the dice rolls a seed (%s -> %s)" % [seed0, nc.seed_edit.text])
 
 
 # ----------------------------------------------------------- emblems ---
@@ -454,6 +702,46 @@ func _phone() -> void:
 	m.show_page("campaign")
 	await _frames(3)
 	await _shot("campaign_phone")
+	m.show_page("grand")
+	await _frames(3)
+	_check(m._grand_cards.vertical, "phone: the Host and Join cards stack")
+	await _shot("grand_phone")
+	m.show_page("options")
+	await _frames(3)
+	await _shot("options_phone")
+	# a long press on an Options capsule on the phone
+	var host := root.get_node_or_null("KitTipHost")
+	var qb: Button = m._opts.seg["quality"].button_for("low")
+	if host != null and qb != null:
+		var c := qb.get_global_rect().get_center()
+		host.press(c)
+		await create_timer(0.65).timeout
+		_check(host.box != null and host.target == qb, "phone: a long press on a capsule shows its tip")
+		await _shot("tooltip_long_press_phone")
+		host.release()
+		await _frames(4)
+	m.show_page("campaign")
+	await _frames(2)
+	for pk in ["west", "rome"]:
+		await _press("card_" + pk)
+		var nc: Control = m._new_campaign
+		await _frames(4)
+		_check(nc.find_child("settings_fold", true, false) != null and not nc.find_child("settings_body", true, false).visible, "phone: the Settings panel is folded under a Settings header (%s)" % pk)
+		var wide := 0
+		for r in nc.find_children("row_*", "PanelContainer", true, false):
+			if (r as Control).get_global_rect().end.x > vp.x + 0.5:
+				wide += 1
+		_check(wide == 0, "phone: the faction rows fit the width (%s)" % pk)
+		await _faction_checks(nc, "england" if pk == "west" else "rome")
+		await _shot("faction_%s_phone" % pk)
+		nc.find_child("settings_fold", true, false).pressed.emit()
+		await _frames(3)
+		_check(nc.find_child("settings_body", true, false).visible, "phone: the fold opens")
+		if pk == "west":
+			await _scroll_shot(nc, "faction_west_phone_settings", 100000)
+			await _scroll_shot(nc, "faction_west_phone_rows", 560)
+		nc.back.emit()
+		await _frames(3)
 	m.show_page("home")
 	UiScale._dpr_override = 1.0
 	UiScale._touch_override = 0

@@ -472,7 +472,7 @@ func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 			# (with their army if it is in it, else to be given units).
 			tb = Kit.icon_button("Fight together", "alliance", func(): s.fight_live(bid, true), 0)
 			tb.name = "together_%d" % bid
-			tb.tooltip_text = "Open the battle for %s to join: they command their own army, or the units you give them." % _names(allies)
+			Kit.tip(tb, "Join the battle", "Open the battle for %s to join: they command their own army, or the units you give them." % _names(allies))
 			if not wanting.is_empty():
 				tb.add_theme_color_override("font_color", Kit.COL_GOLD)
 				h.add_child(tb)
@@ -502,7 +502,7 @@ func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 			h.add_child(kb)
 		var wb := Kit.button("Leave it to %s" % _names(others), func(): _choose(bid, "wait"), 0)
 		wb.name = "wait_%d" % bid
-		wb.tooltip_text = "%s fights or auto-resolves it (they are pinged)." % _names(others)
+		Kit.tip(wb, "Wait for them", "%s fights or auto-resolves it (they are pinged)." % _names(others))
 		h.add_child(wb)
 		var cb := Kit.button(("Fight it without %s" if foes else "Fight it for %s") % _names(others), func(): _choose(bid, "command"), 0)
 		cb.name = "command_%d" % bid
@@ -566,7 +566,7 @@ func _live_card(card: Control, v: VBoxContainer, h: HBoxContainer, bid: int, liv
 	if str(live.get("state", "")) != "lobby" and not others.is_empty() and mine:
 		var kb := Kit.button("Join, %s keeps my army" % _name(host), func(): s.fight_live(bid, false, true), 0, Kit.FONT_SMALL)
 		kb.name = "join_keep_%d" % bid
-		kb.tooltip_text = "Watch and take gifted units; %s keeps commanding your army." % _name(host)
+		Kit.tip(kb, "Watch", "Watch and take gifted units; %s keeps commanding your army." % _name(host))
 		if host != oc.f:
 			h.add_child(kb)
 	return card
@@ -680,13 +680,13 @@ func show_online() -> void:
 	box.add_child(dh)
 	var tmo := int(sm.get("timeout_h", 0))
 	var tb := Kit.button("Turn timeout: " + ("off" if tmo == 0 else "%d h" % tmo), func(): _cycle_timeout(tmo), 0)
-	tb.tooltip_text = "After the first player submits, the other has this long; then the waiting player may resolve the turn without them."
+	Kit.tip(tb, "Turn timeout", "After the first player submits, the other has this long; then the waiting player may resolve the turn without them.")
 	box.add_child(tb)
 	box.add_child(Kit.section("Safety"))
 	var vt := Kit.button("Check results on this device: " + ("on" if oc.verify_enabled else "off"), func():
 		oc.verify_enabled = not oc.verify_enabled
 		show_online(), 0)
-	vt.tooltip_text = "Re-runs your ally's turn resolutions here and warns if this device gets a different result."
+	Kit.tip(vt, "Verify turns", "Re-runs your ally's turn resolutions here and warns if this device gets a different result.")
 	box.add_child(vt)
 	box.add_child(Kit.icon_button("History and rollback", "undo", func(): show_history(), 0))
 	box.add_child(Kit.label("Version %d, state %s, rules %s." % [oc.version, oc.state_hash, oc.rules], Kit.FONT_SMALL, Kit.COL_DIM))

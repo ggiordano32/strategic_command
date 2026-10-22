@@ -1349,6 +1349,7 @@ func _show_hint(text: String) -> void:
 ## A long press (LONG_HELP s) on an order button opens its help card instead
 ## of giving the order; hovering shows its tooltip on a desktop.
 func _arm_long_help(b: Button, h: Dictionary) -> void:
+	b.set_meta("tip_host_skip", true)  # (the kit's touch long-press tip box stays out: this opens the help card)
 	b.button_down.connect(func():
 		_lp_swallow = false
 		_lp_token += 1
