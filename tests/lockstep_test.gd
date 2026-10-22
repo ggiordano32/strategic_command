@@ -195,7 +195,9 @@ func _init() -> void:
 ## sharing side 0 of a sea battle by a coast against the battle AI, random
 ## orders (their own ships' and, refused alike, the other's), every frame
 ## equal; a third peer restored from A's snapshot mid-battle follows; solo
-## through Lockstep equals the plain SeaSim. Live co-op at sea
+## through Lockstep equals the plain SeaSim; a Douse order from the peer
+## that commands the ship applied alike (the other's refused alike), a
+## joiner from a snapshot mid-douse follows. Live co-op at sea
 ## (SeaChecks.lockstep_coop): two players on one side with a deck melee and
 ## a fire ship, a ship given and ordered by its new commander, pause and
 ## speed votes, a drop and re-admission, a joiner from a snapshot; every

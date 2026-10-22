@@ -17,6 +17,13 @@ extends RefCounted
 ## ships escape, let go it rallies and holds, a fleet in flight loses on the
 ## clock, a player's ship ordered to load grape fires it (the battle AI no
 ## longer loads grape, so grape is not in the AI coverage list).
+## douse() (the Douse order, 2026-10-22): a burning frigate with a thin
+## crew, an enemy abeam in range: left alone her magazine blows; doused the
+## fire is out, her guns silent meanwhile (loaded guns keep their load), the
+## order off by itself, the guns firing again after; snapshot / restore
+## carry s_douse; refused with no fire and for a fire ship; the battle AI
+## douses by its skill (Easy any fire, Average a fire outgrowing her crew,
+## Skilled not with a target in arc while the magazine is safe).
 ## lockstep(): two peers sharing side 0 against the battle AI through the
 ## lockstep layer (random orders for their own ships and the other's,
 ## refused alike, through a relay with random delays), every frame's hash
@@ -212,6 +219,7 @@ static func determinism() -> int:
 		print(line)
 	fails += sea_room()
 	fails += flight()
+	fails += douse()
 	return fails
 
 
@@ -301,18 +309,21 @@ static func flight() -> int:
 	var esc := 0
 	var fled := 0
 	var won := 0
-	for sd in range(1, 5):
+	# (8 seeds since the Douse, 2026-10-22: over seeds 1-4 two escapes came from the companion of a ship
+	# whose magazine blew; doused, that ship survives to strike and both are taken. Seeds 1-16: 10 escapes
+	# before, 8 after, the flight and the wins unchanged.)
+	for sd in range(1, 9):
 		var sim: SeaSim = run("flight", sd, 9200)["sim"]
 		fled += 1 if sim.stat_fl[0] > 0 and sim.fl_t[1] >= 0 else 0
 		won += 1 if sim.winner == 0 else 0
 		for s in sim.n_units:
 			if sim.u_side[s] == 1 and sim.u_state[s] == SeaSim.S_FLED:
 				esc += 1
-	if fled < 3 or esc < 3 or won < 3:
+	if fled < 6 or esc < 4 or won < 6:
 		fails += 1
-		printerr("FAIL sea flight: the beaten fleet fled in %d of 4, ships escaped %d, the stronger held the field %d" % [fled, esc, won])
+		printerr("FAIL sea flight: the beaten fleet fled in %d of 8, ships escaped %d, the stronger held the field %d" % [fled, esc, won])
 	else:
-		print("PASS sea flight: the beaten fleet fled in %d of 4, %d ships escaped, the stronger held the field %d" % [fled, esc, won])
+		print("PASS sea flight: the beaten fleet fled in %d of 8, %d ships escaped, the stronger held the field %d" % [fled, esc, won])
 	# Rally: the AI (side 1) flees, the player (side 0) heaves to and lets it go.
 	var rallied := 0
 	var held := 0
@@ -382,6 +393,122 @@ static func flight() -> int:
 		printerr("FAIL sea grape: a frigate ordered to load grape never fired it")
 	else:
 		print("PASS sea grape: a frigate ordered to load grape fires it")
+	return fails
+
+
+## The douse scene: a frigate (side 0, crew `crew` %) burning at `burn`,
+## an enemy frigate abeam to starboard 120 m off holding her fire, no AI
+## unless `ai` (then side 0's skill `skill`).
+static func _douse_sim(crew: int, burn: int, ai: int = 0, skill: int = 1) -> SeaSim:
+	var sim := SeaSim.new()
+	sim.setup({"sea": 1, "wind_deg": 0, "wind_str": 60, "ai_sides": [ai, 0], "ai_skill": [skill, 1], "units": [
+		{"side": 0, "t": "frigate", "x": 1000, "y": 800, "head": 0, "crew": crew},
+		{"side": 1, "t": "frigate", "x": 1120, "y": 800, "head": 0},
+		{"side": 0, "t": "fire_ship", "x": 300, "y": 300, "head": 0}]}, 21)
+	sim.queue_order({"type": SeaSim.O_FIRE, "unit": 1, "on": 0, "tick": 0})
+	sim.queue_order({"type": SeaSim.O_SAILS, "unit": 0, "on": 0, "tick": 0})
+	sim.queue_order({"type": SeaSim.O_SAILS, "unit": 1, "on": 0, "tick": 0})
+	sim.s_burn[0] = burn
+	return sim
+
+
+## Broadsides fired by ship s among the events seen since `seen` (returns
+## [count, new seen]).
+static func _fired(sim: SeaSim, s: int, seen: int) -> Array:
+	var n := 0
+	while seen < sim.ev_n:
+		var i := seen % SeaSim.EV_CAP
+		seen += 1
+		if sim.ev_k[i] == SeaSim.EV_BROADSIDE and sim.ev_a[i] == s:
+			n += 1
+	return [n, seen]
+
+
+static func douse() -> int:
+	var fails := 0
+	# Left alone: the thin crew lose the race and the magazine blows.
+	var a := _douse_sim(55, 200)
+	var blew := -1
+	var fired_a := 0
+	var seen := 0
+	for t in 6000:
+		a.step()
+		var fr := _fired(a, 0, seen)
+		fired_a += int(fr[0])
+		seen = int(fr[1])
+		if a.s_blown[0] != 0 or a.u_state[0] == SeaSim.S_SUNK:
+			blew = a.tick if a.s_blown[0] != 0 else -2
+			break
+	# Doused from tick 0: out at tick U, the guns silent meanwhile.
+	var b := _douse_sim(55, 200)
+	b.queue_order({"type": SeaSim.O_DOUSE, "unit": 0, "on": 1, "tick": 0})
+	b.queue_order({"type": SeaSim.O_DOUSE, "unit": 1, "on": 1, "tick": 0})   # no fire: refused
+	b.queue_order({"type": SeaSim.O_DOUSE, "unit": 2, "on": 1, "tick": 0})   # a fire ship: refused
+	var out_t := -1
+	var fired_on := 0
+	var fired_after := 0
+	var ld0 := -1
+	var snap_ok := ""
+	var copy: SeaSim = null
+	seen = 0
+	for t in 1500:
+		b.step()
+		if b.tick == 2:
+			ld0 = b.s_rl[0] + b.s_rl[1]
+		if b.tick == 40 and b.s_douse[0] != 0:
+			copy = SeaSim.new()
+			copy.setup({"sea": 1, "wind_deg": 0, "wind_str": 60, "ai_sides": [0, 0], "ai_skill": [1, 1], "units": [
+				{"side": 0, "t": "frigate", "x": 1000, "y": 800, "head": 0, "crew": 55},
+				{"side": 1, "t": "frigate", "x": 1120, "y": 800, "head": 0},
+				{"side": 0, "t": "fire_ship", "x": 300, "y": 300, "head": 0}]}, 21)
+			if not copy.restore(b.snapshot()) or copy.s_douse[0] != 1 or copy.state_hash() != b.state_hash():
+				snap_ok = "the snapshot at tick 40 did not carry s_douse"
+				copy = null
+		elif copy != null:
+			copy.step()
+			if snap_ok == "" and copy.state_hash() != b.state_hash():
+				snap_ok = "the restored copy diverged at tick %d" % b.tick
+		var fr2 := _fired(b, 0, seen)
+		seen = int(fr2[1])
+		if out_t < 0:
+			fired_on += int(fr2[0])
+			if b.s_burn[0] == 0:
+				out_t = b.tick
+				if b.s_douse[0] != 0:
+					snap_ok = "s_douse still on with the fire out"
+				if b.s_rl[0] + b.s_rl[1] != ld0:
+					snap_ok = "the guns reloaded while dousing (%d -> %d)" % [ld0, b.s_rl[0] + b.s_rl[1]]
+		else:
+			fired_after += int(fr2[0])
+			if fired_after > 0 and b.tick > out_t + 200:
+				break
+	var refused := b.s_douse[1] == 0 and b.s_douse[2] == 0 and int(b.stats["douse"]) == 1
+	if blew <= 0 or fired_a <= 0 or out_t < 0 or fired_on != 0 or fired_after <= 0 or snap_ok != "" or not refused:
+		fails += 1
+		printerr("FAIL sea douse: left alone blew at %d (fired %d); doused out at %d, fired meanwhile %d, after %d; %s; refused %s" % [
+			blew, fired_a, out_t, fired_on, fired_after, snap_ok, refused])
+	else:
+		print("PASS sea douse: a frigate at 55 %% crew burning 200, left alone, fires %d broadsides and her magazine blows at tick %d; doused, the fire is out at tick %d with the guns silent (none fired, the reload held) and the order off by itself, she fires %d after; a snapshot mid-douse carries it; refused with no fire and for a fire ship" % [
+			fired_a, blew, out_t, fired_after])
+	# The battle AI by skill: thin crew (losing the race) and a full one.
+	var res: Array[String] = []
+	var want := {"easy full": 1, "average full": 0, "average thin": 1, "skilled thin arc": 0, "skilled thin hot": 1}
+	var cases := [["easy full", 0, 100, 100], ["average full", 1, 100, 100], ["average thin", 1, 55, 100],
+		["skilled thin arc", 2, 55, 100], ["skilled thin hot", 2, 55, 400]]
+	var got := {}
+	for c in cases:
+		var sim := _douse_sim(int(c[2]), int(c[3]), 1, int(c[1]))
+		var on := 0
+		for t in 40:
+			sim.step()
+			on = maxi(on, sim.s_douse[0])
+		got[str(c[0])] = on
+		res.append("%s %d" % [str(c[0]), on])
+	if got != want:
+		fails += 1
+		printerr("FAIL sea douse AI: ", ", ".join(res))
+	else:
+		print("PASS sea douse AI (douses within 4 s): ", ", ".join(res))
 	return fails
 
 
@@ -571,7 +698,79 @@ static func lockstep() -> int:
 		printerr("FAIL sea: solo through lockstep differs from the plain sim at tick %d" % bad)
 	else:
 		print("PASS sea: solo through lockstep equals the plain sim (900 ticks)")
+	fails += lockstep_douse()
 	return fails
+
+
+## (The Douse order) Two peers: player 1's frigate burns (set alike on both
+## after setup), player 0 orders her doused (not his ship: refused alike),
+## player 1 does at frame 3; every frame's hash equal, s_douse on on both,
+## the hash differs from a run without the order; a third peer restored
+## from player 0's snapshot mid-douse follows to the fire's end.
+static func lockstep_douse() -> int:
+	var scn := {"sea": 1, "wind_deg": 0, "wind_str": 60, "ai_sides": [0, 1], "units": [
+		{"side": 0, "t": "frigate", "x": 1000, "y": 800, "head": 0, "crew": 55},
+		{"side": 0, "t": "sloop", "x": 700, "y": 800, "head": 0},
+		{"side": 1, "t": "frigate", "x": 1400, "y": 300, "head": 180}]}
+	var home := [1, 0, -1]
+	var peers: Array = []
+	for i in 3:
+		var ls := Lockstep.new()
+		ls.setup(scn, 55, home, [0, 1], 0)
+		ls.sim.s_burn[0] = 200
+		peers.append(ls)
+	var ctl: Lockstep = peers[2]   # no douse order: the control
+	var msgs: Array = []
+	var joiner: Lockstep = null
+	var bad := ""
+	var on_frames := 0
+	for f in 900:
+		var o0: Array = []
+		var o1: Array = []
+		if f == 2:
+			o0.append({"f": f + 1, "type": SeaSim.O_DOUSE, "unit": 0, "on": 1})
+		if f == 2:
+			o1.append({"f": f + 1, "type": SeaSim.O_DOUSE, "unit": 0, "on": 1})
+		var m0 := {"p": 0, "n": f + 1, "k": f + 1, "o": o0}
+		var m1 := {"p": 1, "n": f + 1, "k": f + 1, "o": o1}
+		msgs.append(m0)
+		msgs.append(m1)
+		for k in 2:
+			(peers[k] as Lockstep).receive(m0)
+			(peers[k] as Lockstep).receive(m1)
+		ctl.receive({"p": 0, "n": f + 1, "k": f + 1, "o": []})
+		ctl.receive({"p": 1, "n": f + 1, "k": f + 1, "o": []})
+		if joiner != null:
+			joiner.receive(m0)
+			joiner.receive(m1)
+		for ls in peers + ([joiner] if joiner != null else []):
+			while (ls as Lockstep).can_advance():
+				(ls as Lockstep).advance()
+		var a: Lockstep = peers[0]
+		var b: Lockstep = peers[1]
+		if bad == "" and a.state_hash() != b.state_hash():
+			bad = "the peers differ at frame %d" % a.frame
+		if bad == "" and joiner != null and joiner.frame == a.frame and joiner.state_hash() != a.state_hash():
+			bad = "the joiner differs at frame %d" % a.frame
+		if a.sim.s_douse[0] != 0:
+			on_frames += 1
+			if joiner == null and on_frames == 30:
+				joiner = Lockstep.new()
+				joiner.setup(scn, 55, home, [0, 1], 0)
+				if not joiner.restore(a.snapshot()) or joiner.sim.s_douse[0] != 1:
+					bad = "the joiner's snapshot did not carry s_douse"
+		if a.sim.s_burn[0] == 0 and on_frames > 0 and joiner != null:
+			break
+	var a2: Lockstep = peers[0]
+	var b2: Lockstep = peers[1]
+	if bad != "" or on_frames <= 0 or a2.sim.s_douse[0] != 0 or a2.sim.s_burn[0] != 0 or a2.rejected != 1 or b2.rejected != 1 \
+			or ctl.state_hash() == a2.state_hash():
+		printerr("FAIL sea lockstep douse: %s; dousing %d frames, refused %d / %d, burn at the end %d" % [bad, on_frames,
+			a2.rejected, b2.rejected, a2.sim.s_burn[0]])
+		return 1
+	print("PASS sea lockstep douse: player 1's order from the peer applied alike (dousing %d frames, the fire out at frame %d), player 0's for her refused on both, a joiner restored mid-douse follows; the control without it differs" % [
+		on_frames, a2.frame])
+	return 0
 
 
 ## Live co-op at sea (milestone 5 at sea): two players on side 0 (player 0

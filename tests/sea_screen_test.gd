@@ -123,6 +123,12 @@ func _process(_d: float) -> bool:
 				return true
 			_check(_sb.sim.n_units == 4 and int(_sb.player_side) == 0 and _button("sea_full") != null and _button("sea_board") != null,
 				"the sea screen: 4 ships, the player's side 0, the orders bar")
+			# The look (game/sea_look.gd): the drawn shore stays inside the sim's land, the props are placed.
+			var lk = _sb._look
+			_check(lk != null and lk.shore_ok(), "the drawn shore lies inside the sim's land cells")
+			_check(lk != null and lk.trees.size() <= lk.TREE_CAP and lk.fld_tex != null and lk.water_mat != null,
+				"the look is baked (%d trees, %d forts, %.0f ms)" % [lk.trees.size(), lk.forts.size(), lk.build_ms])
+			_shot("sea_campaign")
 			var tips := true
 			for n in ["sea_full", "sea_battle_sail", "sea_stop", "sea_round", "sea_chain", "sea_grape", "sea_fire", "sea_board", "sea_hold", "sea_flee"]:
 				var ob := _button(n)
@@ -181,6 +187,17 @@ func _process(_d: float) -> bool:
 			_finish()
 			return true
 	return false
+
+
+## A screenshot of the battle when the run has a window and --shots=DIR (docs: the look paragraph).
+func _shot(nm: String) -> void:
+	var dir := ""
+	for a in OS.get_cmdline_user_args():
+		if str(a).begins_with("--shots="):
+			dir = str(a).substr(8)
+	if dir == "" or DisplayServer.get_name() == "headless":
+		return
+	root.get_texture().get_image().save_png(dir.path_join(nm + ".png"))
 
 
 func _finish() -> void:

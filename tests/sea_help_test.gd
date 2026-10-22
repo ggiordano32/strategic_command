@@ -6,6 +6,9 @@ extends SceneTree
 ## Every order button has a tooltip, a long press opens the help card, a tap
 ## closes it, a sail / shot change shows the hint, the status line gives the
 ## speed share, the Ship book opens (pausing solo) and lists every ship row.
+## Douse (2026-10-22): no Douse button while she is sound; set alight, the bar
+## shows it with its tip, a press douses her (the telemetry counter), and the
+## Fire page explains fires, the magazine and Douse.
 
 const SeaBattle := preload("res://game/sea_battle.gd")
 const SeaSim := preload("res://sim/sea_sim.gd")
@@ -69,6 +72,7 @@ func _process(_d: float) -> bool:
 			_check(sb._hint_lbl.visible and sb._hint_lbl.text.contains("75 %"), "a sail change shows the hint: " + sb._hint_lbl.text)
 			_shot("1_tooltip_bar")
 			# A long press: button_down, then wait.
+			_check(_btn("sea_douse") == null, "no Douse button while she is not burning")
 			_btn("sea_chain").button_down.emit()
 			_step = 1
 			_frame = 0
@@ -87,6 +91,30 @@ func _process(_d: float) -> bool:
 			_shot("2_help_card")
 			sb._close_help_card()
 			_check(sb._help_card == null, "the help card closes")
+			# Douse: set her alight (paused, so the fire holds); the bar shows the button with its tip.
+			sb.speed_q = 0
+			sb.sim.s_burn[sb.selection[0]] = 300
+			_step = 20
+			_frame = 0
+		20:
+			if _frame < 4:
+				return false
+			var db := _btn("sea_douse")
+			_check(db != null and db.tooltip_text == "Douse: all hands to the buckets. Guns silent; the fire is fought twice as fast. Off by itself when the fire is out.",
+				"burning, the bar shows Douse with its tip: " + (db.tooltip_text if db != null else "none"))
+			if db != null:
+				sb._lp_swallow = false  # (step 1 opened the help card by hand: no real release swallowed it)
+				db.pressed.emit()
+				sb.sim.step()
+			_check(sb.sim.s_douse[sb.selection[0]] == 1 and int(sb.input_counts.get("douse", 0)) == 1,
+				"a press douses her (s_douse %d, telemetry douse %d)" % [sb.sim.s_douse[sb.selection[0]], int(sb.input_counts.get("douse", 0))])
+			_shot("1b_douse_bar")
+			sb.speed_q = 4
+			_step = 21
+			_frame = 0
+		21:
+			if _frame < 4:
+				return false
 			sb.speed_q = 4
 			sb._open_book()
 			_check(sb.book.visible and sb.speed_q == 0, "the Ship book opens and pauses a solo battle")
@@ -98,10 +126,16 @@ func _process(_d: float) -> bool:
 				return false
 			if page > 0:
 				_shot("3_book_%d" % (page - 1))
-			if page < 5:
+			if page < sb.book.PAGES.size():
 				sb.book.show_page(page)
+				if sb.book.PAGES[page] == "Fire":
+					var txt := ""
+					for c in sb.book.find_children("*", "Label", true, false):
+						txt += (c as Label).text + "\n"
+					_check(txt.contains("Douse") and txt.contains("magazine") and txt.contains("0.5 %") and txt.contains("Don't lie alongside"),
+						"the Fire page explains the start, the magazine, Douse and keeping clear")
 				return false
-			sb.book.show_page(4)
+			sb.book.show_page(sb.book.PAGES.find("Ships"))
 			_check(sb.book.find_children("sea_book_ship_*", "", true, false).size() == ST.ROWS.size(), "the Ships page lists every row (%d)" % ST.ROWS.size())
 			sb.book.close()
 			_check(not sb.book.visible and sb.speed_q == 4, "closing the book resumes the speed")

@@ -6005,6 +6005,48 @@ players still choose it) and boards at 160 % of her strength (sea pass
 wins 43-47 % of equal fights instead of 31-36 % and loses a fifth fewer
 ships.
 
+### Sea battles: Douse (as built 2026-10-22)
+
+A burning ship can douse (the orders row shows Douse only while she
+burns): all hands to the buckets, her guns silent (they neither fire nor
+reload; a loaded broadside keeps its load) and the fire fought twice as
+fast, so a crew thinned to two fifths still wins against a fire that a
+full crew only just holds; boarded meanwhile, her men fight at half
+strength. It turns off by itself when the fire is out. The battle AI
+douses when a fire is outgrowing its crew and nobody is coming to board
+her (Easy on any fire; Skilled only with nothing in its arc, unless the
+fire nears the magazine). Before, most fires in AI-against-AI battles
+ended with the ship lost (47 of 67 in the probe); now about one in five
+(12 of 55; docs/AI.md 32.1). The Ship
+book's Fire page explains how fires start, the crew's fight, the magazine
+and Douse, and warns against lying alongside a burning ship. The fire's
+smoke column already scales with its strength, so it thins as she is
+doused.
+
+### Sea battles: the look (as built 2026-10-22)
+
+View only (`game/sea_look.gd`, `sea_water.gdshader`, `sea_land.gdshader`,
+`sea_shore.gdshaderinc`; nothing in the sim changed). Per battle the sim's
+20 m land grid is baked to 10 m fields: the signed distance to the sim's
+coast, a depth (the campaign's bathymetry sampled over the battle's cell,
+capped by a shelf from the distance to land; custom battles use open-water
+depth plus the shelf), the coast's steepness (the relief of the land cells it
+faces) and the woods. Water: sandy turquoise shallows to the dark deep, two
+wave trains running before the sim's wind (direction eased, strength from
+`w_str`) with crests lit from the north-west like the battle kit, whitecaps
+in a hard wind, a small sun glitter, breaker lines and a swash band of foam
+fading with depth along the shore, and the ships' wakes as foam on the water
+(not a line); the diorama's saturation and rim as on the land maps. Land:
+the land layer's ground palette, a sand beach band, a cliff bevel and drop
+shadow where the coast is steep, sparse kit trees and palms (600, 200 on
+Graphics Low) and the harbour forts of the campaign's town (Havana's two)
+at the coast. Shoreline: the sim's cell edge is refined for drawing with the
+land maps' two-scale shore noise (seeded by the battle seed), always 5 to 14
+m INTO the sim's land: the water is drawn over sim land, never land over sim
+water, so no ship ever lies over drawn land (`SeaLook.shore_ok`, tested).
+Graphics Low: the depth colouring and a still shore wash, no animation, no
+time uniform. Tests: `tests/sea_look_test.gd`; frame times in STATUS.
+
 ### Story campaign: "The Brethren's Due" (agreed 2026-10-14; steps 1-2 built 2026-10-15, see "as built" below)
 
 A single-player (co-op optional) story campaign on the Caribbean pack that

@@ -81,7 +81,12 @@ extends RefCounted
 ## little every second and is fought down by the crew (FIRE_FIGHT x the
 ## crew's share); it eats the hull by its intensity. Past MAG_LV each
 ## second rolls (sim RNG) for the magazine: she blows up, holing, killing
-## and setting alight her neighbours within BLAST_M. Fire ships (rows with
+## and setting alight her neighbours within BLAST_M. Douse (O_DOUSE, s_douse;
+## 2026-10-22): while she burns, all hands to the buckets: her guns neither
+## fire nor reload (loaded guns keep their load), the crew fight the fire at
+## DOUSE_FIGHT_PCT %, her men in a deck melee strike and fire at
+## DOUSE_DECK_PCT %; off by itself the second the fire is out (refused with
+## no fire, and for a fire ship). Fire ships (rows with
 ## "fire"): sailed at a mark (M_FIRE), lit when she can lie the course
 ## within FS_LIGHT_M, her crew lash the helm and take to the boat at
 ## FS_ABANDON_M; whatever she touches she grapples (FS_STICK_TICKS) and sets
@@ -170,7 +175,8 @@ const O_BOARD := 9      # unit, target: lay her alongside and board
 const O_HEAD := 10      # unit, facing (angle 0..1023): hold that heading
 const O_DECK := 11      # unit (boarder), target, on (1 boarders won), a, b (crews left): N3b deck result (outside melee, "deck" 1)
 const O_LIGHT := 12     # unit (a fire ship): light her now (her crew take to the boat)
-const O_LAST := 12
+const O_DOUSE := 14     # unit, on: 1 all hands to the buckets (only while she burns), 0 back to the guns
+const O_LAST := 14
 
 const ARC := 120                 # half-width of a broadside's arc (angle units, ~42 deg)
 const SAIL_PCT := [0, 75, 100]
@@ -182,6 +188,9 @@ const FIRE_GROW := 25            # intensity a second (+ a roll of up to FIRE_GR
 const FIRE_GROW_ROLL := 20
 const FIRE_FIGHT := 45           # intensity a second the crew beats down (at full crew)
 const FIRE_MAX := 1000
+const DOUSE_FIGHT_PCT := 200     # Douse: the crew fight the fire at this % (guns silent: neither fire nor reload)
+const DOUSE_DECK_PCT := 50       # ... and her men strike and fire in a deck melee at this % (the rest at the buckets)
+const DOUSE_BOARD_M := 200       # the battle AI does not douse with an enemy this close coming to board her
 const FIRE_HULL := 120000        # hull lost a second: hull0 x intensity / FIRE_HULL (at least 1)
 const MAG_LV := 500              # past this intensity the magazine may go ...
 const MAG_DIV := 4               # ... at (intensity - MAG_LV) / MAG_DIV per mille a second
@@ -328,6 +337,7 @@ var s_lit := PackedInt32Array()      # fire ship: tick she was lit (-1 not)
 var s_aband := PackedInt32Array()    # fire ship: 1 once her crew took to the boat
 var s_fsg := PackedInt32Array()      # fire ship: the ship she is grappled to (-1)
 var s_fs_t := PackedInt32Array()     # ... since this tick
+var s_douse := PackedInt32Array()    # 1: all hands fighting her fire (O_DOUSE; off by itself when it is out)
 var s_ck_atk := PackedInt32Array()   # crew kit (deck melee): atk, def, shot %, range, volleys, reload
 var s_ck_def := PackedInt32Array()
 var s_ck_shot := PackedInt32Array()
@@ -399,7 +409,8 @@ var ev_e := PackedInt32Array()
 var stats := {"broadsides": 0, "hits": 0, "rakes": 0, "boardings": 0, "captured": 0, "repelled": 0, "struck": 0,
 	"sunk": 0, "fires": 0, "blown": 0, "tacks": 0, "wears": 0, "grounded": 0, "fled": 0, "chain": 0, "grape": 0,
 	"deck_fights": 0, "deck_taken": 0, "deck_repelled": 0, "deck_spent": 0, "deck_shots": 0, "deck_ticks": 0,
-	"captains_fallen": 0, "fireships": 0, "fire_contacts": 0, "fs_spread": 0}
+	"captains_fallen": 0, "fireships": 0, "fire_contacts": 0, "fs_spread": 0, "fire_sunk": 0, "fire_out": 0,
+	"douse": 0, "douse_out": 0}
 
 
 # ------------------------------------------------------------------ setup ---
@@ -533,7 +544,7 @@ const SHIP_ARRAYS: Array[String] = ["u_side", "u_state", "s_type", "s_x", "s_y",
 	"s_sail", "s_hull", "s_hull0", "s_crew", "s_crew0", "s_rig", "s_rig0", "s_troops", "s_q", "s_bq", "s_mor", "s_mode",
 	"s_tx", "s_ty", "s_tgt", "s_fire", "s_shot", "s_tack", "s_grap", "s_boarder", "s_bd_t", "s_bd_wait", "s_by", "s_burn",
 	"s_ground", "s_hit_t", "s_end_t", "s_kills", "s_blown", "s_flee_x", "s_flee_y", "s_ffl",
-	"s_lit", "s_aband", "s_fsg", "s_fs_t", "s_ck_atk", "s_ck_def", "s_ck_shot", "s_ck_rng", "s_ck_sh", "s_ck_rl", "s_cq",
+	"s_lit", "s_aband", "s_fsg", "s_fs_t", "s_douse", "s_ck_atk", "s_ck_def", "s_ck_shot", "s_ck_rng", "s_ck_sh", "s_ck_rl", "s_cq",
 	"k_on", "k_t0", "k_w", "k_hb", "k_ht", "k_ax0", "k_la", "k_bx0", "k_lb", "k_step"]
 const DECK2_ARRAYS: Array[String] = ["k2_mor", "k2_men0", "k2_cap"]
 const FIG_ARRAYS: Array[String] = ["f_n", "f_side", "f_x", "f_y", "f_kind", "f_atk", "f_def", "f_shot", "f_rng", "f_sh",
@@ -940,6 +951,8 @@ func _order(o: Dictionary) -> void:
 		O_LIGHT:
 			if ST.is_fire(s_type[s]):
 				_light(s)
+		O_DOUSE:
+			_set_douse(s, int(o.get("on", 1)))
 		O_SAIL:
 			s_mode[s] = M_GOTO
 			s_tx[s] = clampi(int(o.get("x", 0)), 0, field_w) * U
@@ -1982,11 +1995,16 @@ func _deck_step(s: int) -> void:
 			if (f_y[fb] < k_hb[s]) == (f_side[fb] == 0):
 				df = df * DECK_BONUS_PCT / 100
 			var p := DECK_KILL_PM * 2 * atk / maxi(atk + df, 1)
+			if s_douse[ships[sd]] != 0:
+				p = p * DOUSE_DECK_PCT / 100  # (her men half at the buckets)
 			k = mini((f_n[fi] * p + _roll(1000)) / 1000, f_n[fb])
 			f_hit[fi] = tick
 		elif f_sh[fi] > 0 and f_ld[fi] == 0 and bd <= f_rng[fi]:
 			# A volley: pistols over the rail, muskets, bows.
-			k = mini((f_n[fi] * f_shot[fi] * DECK_SHOT_PM + _roll(1000)) / 1000, f_n[fb])
+			var vp := f_shot[fi] * DECK_SHOT_PM
+			if s_douse[ships[sd]] != 0:
+				vp = vp * DOUSE_DECK_PCT / 100
+			k = mini((f_n[fi] * vp + _roll(1000)) / 1000, f_n[fb])
 			f_sh[fi] -= 1
 			f_ld[fi] = f_rl[fi]
 			f_hit[fi] = tick
@@ -2118,6 +2136,7 @@ func _capture(p: int, c: int) -> void:
 	s_end_t[p] = tick
 	s_sail[p] = 0
 	s_burn[p] = 0
+	s_douse[p] = 0
 	var pc := clampi(s_crew[c] / 8, 1, 40)
 	s_crew[c] = maxi(s_crew[c] - pc, 1)
 	s_crew[p] = pc
@@ -2181,8 +2200,8 @@ func guns_working(s: int) -> int:
 
 func _gunnery() -> void:
 	for s in n_units:
-		if u_state[s] != S_SAIL or ST.stat(s_type[s], "guns") == 0:
-			continue
+		if u_state[s] != S_SAIL or ST.stat(s_type[s], "guns") == 0 or s_douse[s] != 0:
+			continue  # (dousing: the gun crews are at the buckets; loaded guns keep their load)
 		var rate := _crew_rate(s)
 		for k in 2:
 			var i := s * 2 + k
@@ -2323,6 +2342,7 @@ func _sink(s: int) -> void:
 	s_end_t[s] = tick
 	s_spd[s] = 0
 	s_burn[s] = 0
+	s_douse[s] = 0
 	s_fsg[s] = -1
 	stats["sunk"] = int(stats["sunk"]) + 1
 	_event(EV_SINK, s, 0, -1, 0, 0)
@@ -2342,26 +2362,52 @@ func _shock(s: int, n: int) -> void:
 func _fires() -> void:
 	for s in n_units:
 		if s_burn[s] == 0:
+			s_douse[s] = 0
 			continue
 		if u_state[s] == S_SUNK or u_state[s] == S_FLED:
 			s_burn[s] = 0
+			s_douse[s] = 0
 			continue
 		if ST.is_fire(s_type[s]):
 			_fireship_burn(s)
 			continue
 		# The fire grows; the crew fight it (by their share of a full crew).
 		s_burn[s] += FIRE_GROW + _roll(FIRE_GROW_ROLL + 1)
-		s_burn[s] -= FIRE_FIGHT * mini(s_crew[s], s_crew0[s]) / maxi(s_crew0[s], 1)
+		s_burn[s] -= fire_fight(s)
 		if s_burn[s] <= 0:
 			s_burn[s] = 0
+			stats["fire_out"] = int(stats["fire_out"]) + 1
+			if s_douse[s] != 0:
+				s_douse[s] = 0  # (out: back to the guns)
+				stats["douse_out"] = int(stats["douse_out"]) + 1
 			continue
 		s_burn[s] = mini(s_burn[s], FIRE_MAX)
 		s_hull[s] = maxi(s_hull[s] - maxi(s_hull0[s] * s_burn[s] / FIRE_HULL, 1), 0)
 		if s_hull[s] == 0:
+			stats["fire_sunk"] = int(stats["fire_sunk"]) + 1
 			_sink(s)
 			continue
 		if s_burn[s] > MAG_LV and _roll(1000) < (s_burn[s] - MAG_LV) / MAG_DIV:
 			_blast(s)
+
+
+## Intensity a second ship s's crew beat her fire down by: FIRE_FIGHT x the
+## crew's share of a full crew, DOUSE_FIGHT_PCT % of that while dousing.
+func fire_fight(s: int) -> int:
+	var f := FIRE_FIGHT * mini(s_crew[s], s_crew0[s]) / maxi(s_crew0[s], 1)
+	return f * DOUSE_FIGHT_PCT / 100 if s_douse[s] != 0 else f
+
+
+## The Douse order for ship s (on 1 / 0): on only while she burns (not a fire
+## ship); off at any time.
+func _set_douse(s: int, on: int) -> void:
+	if on == 0:
+		s_douse[s] = 0
+		return
+	if s_burn[s] == 0 or ST.is_fire(s_type[s]) or s_douse[s] != 0:
+		return
+	s_douse[s] = 1
+	stats["douse"] = int(stats["douse"]) + 1
 
 
 ## A burning fire ship (a second): she burns down; the ship she is grappled
@@ -2711,6 +2757,8 @@ func _escape_goal(s: int) -> void:
 
 ## The battle AI's decision for ship s (see the header).
 func _think(s: int) -> void:
+	if s_lit[s] < 0 and not ST.is_fire(s_type[s]):
+		_think_douse(s)
 	if s_grap[s] >= 0 or s_lit[s] >= 0:
 		return
 	if ST.is_fire(s_type[s]):
@@ -2788,6 +2836,44 @@ func _think(s: int) -> void:
 		s_shot[s] = ST.SHOT_CHAIN
 	else:
 		s_shot[s] = ST.SHOT_ROUND
+
+
+## The battle AI's Douse (2026-10-22): with a fire aboard and no enemy about
+## to board her (grappled, or one within DOUSE_BOARD_M sailing to board her),
+## Easy douses at once; Average when the fire is outgrowing the crew (its
+## mean growth over her fight at the current crew share); Skilled when it is
+## outgrowing them and no enemy is in either broadside's arc and range, or
+## the fire is past 3 / 5 of MAG_LV whatever bears. A boarder coming: back
+## to the guns and the deck. Off by itself when the fire is out.
+func _think_douse(s: int) -> void:
+	if s_burn[s] == 0:
+		return
+	if _board_threat(s):
+		s_douse[s] = 0
+		return
+	if s_douse[s] != 0:
+		return
+	var sk := ai_skill[u_side[s]]
+	var losing := (FIRE_GROW + FIRE_GROW_ROLL / 2) > fire_fight(s)
+	var go := sk == EASY or losing
+	if sk == SKILLED and losing and s_burn[s] <= MAG_LV * 3 / 5 and (_pick_target(s, 0) >= 0 or _pick_target(s, 1) >= 0):
+		go = false  # (Skilled: the guns first while the magazine is safe)
+	if go:
+		_set_douse(s, 1)
+
+
+## An enemy is at ship s: grappled, or one within DOUSE_BOARD_M sailing to board her.
+func _board_threat(s: int) -> bool:
+	if s_grap[s] >= 0:
+		return true
+	for e in n_units:
+		if u_side[e] == u_side[s] or u_state[e] != S_SAIL or s_mode[e] != M_BOARD or s_tgt[e] != s:
+			continue
+		var dx := s_x[e] - s_x[s]
+		var dy := s_y[e] - s_y[s]
+		if absi(dx) < DOUSE_BOARD_M * U and absi(dy) < DOUSE_BOARD_M * U and FM.approx_len(dx, dy) < DOUSE_BOARD_M * U:
+			return true
+	return false
 
 
 ## The battle AI's fire ship: at the biggest enemy when the wind serves (her

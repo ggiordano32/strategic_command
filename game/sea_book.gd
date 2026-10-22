@@ -8,7 +8,8 @@ extends Control
 ##
 ## Pages: Points of sail (a code-drawn polar diagram of drive() for a ship,
 ## wind from the top), Sails, Shot, Fighting (engaging, boarding, striking,
-## fire), Ships (every row of sim/sea_types.gd).
+## fire ships), Fire (how a fire starts, the crew's fight, the magazine,
+## Douse), Ships (every row of sim/sea_types.gd).
 
 signal closed
 
@@ -18,7 +19,7 @@ const FM := preload("res://sim/fixed_math.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
 
-const PAGES := ["Points of sail", "Sails", "Shot", "Fighting", "Ships"]
+const PAGES := ["Points of sail", "Sails", "Shot", "Fighting", "Fire", "Ships"]
 const KT := 1.94   # the status line's knots per unit (game/sea_battle.gd)
 
 var sim: SeaSim = null
@@ -135,6 +136,8 @@ func show_page(i: int) -> void:
 		3:
 			_page_fight()
 		4:
+			_page_fire()
+		5:
 			_page_ships()
 	_scroll.scroll_vertical = 0
 
@@ -286,9 +289,32 @@ func _page_fight() -> void:
 	_p("Hits, losses and raking lower a ship's morale; quiet time restores it. She strikes her colours at 0 morale, or when her crew is under 18 % of its full number (or her hull under 12 % with her rigging under 25 %) and an enemy lies within 400 m. A struck ship stops and is out of the fight; the winner takes her when the battle is decided. A fire ship's crew never strike: they fire her.")
 	_h("Ending")
 	_p("The battle is decided when a side has no ship fighting (sunk, struck, taken or off the map edge), or after %d minutes by the fighting power left (a tie goes to the defender). Flee sets full sail for the map edge farthest from the enemy; a ship that leaves the map escapes and is out of the battle." % (SeaSim.TIME_LIMIT / 600))
-	_h("Fire")
-	_p("A round shot hit has a 0.5 %% chance to start a fire (4 times that on a fire ship). A fire's strength grows every second and is beaten down by the crew (less as the crew thin); it eats the hull in proportion to its strength. Past strength %d of %d each second may set off the magazine: she blows up, holing and killing in a %d m blast and setting her neighbours alight. A fire ship (no guns) is sailed at an enemy and lit within %d m of her mark when she can lie the course; her crew take to the boat at %d m; what she touches is grappled and set alight and she burns down. Tap an enemy to send her in, or press Light her. Ships within %d m of a burning fire ship catch fire too." % [
-		SeaSim.MAG_LV, SeaSim.FIRE_MAX, SeaSim.BLAST_M, SeaSim.FS_LIGHT_M, SeaSim.FS_ABANDON_M, SeaSim.FS_SPREAD_M])
+	_h("Fire ships")
+	_p("A fire ship (no guns) is sailed at an enemy and lit within %d m of her mark when she can lie the course; her crew take to the boat at %d m; what she touches is grappled and set alight and she burns down. Tap an enemy to send her in, or press Light her. Ships within %d m of a burning fire ship catch fire too. Fires and Douse: the Fire page." % [
+		SeaSim.FS_LIGHT_M, SeaSim.FS_ABANDON_M, SeaSim.FS_SPREAD_M])
+
+
+func _page_fire() -> void:
+	var grow_lo := SeaSim.FIRE_GROW
+	var grow_hi := SeaSim.FIRE_GROW + SeaSim.FIRE_GROW_ROLL
+	var grow := SeaSim.FIRE_GROW + SeaSim.FIRE_GROW_ROLL / 2
+	var fight := SeaSim.FIRE_FIGHT
+	var douse := fight * SeaSim.DOUSE_FIGHT_PCT / 100
+	_h("How a fire starts")
+	_p("Each round shot hit has a %.1f %% chance to start a fire (4 times that on a fire ship); chain and grape never do. A fire ship sets alight whatever she touches (strength %d, and more every second she lies alongside), and sparks from her catch ships within %d m. A magazine blowing up sets each neighbour within %d m alight half the time." % [
+		SeaSim.FIRE_PM / 10.0, SeaSim.FS_FIRE, SeaSim.FS_SPREAD_M, SeaSim.BLAST_M])
+	_h("The crew's fight")
+	_p("A fire has a strength from 1 to %d. Every second it grows by %d to %d (%d on average) and her crew beat it down by %d at full strength, less in step as the crew thin. A full crew puts a fresh fire (strength %d) out in about %d seconds; a crew under %d %% of its full number cannot keep up and the fire grows. While she burns the fire eats her hull by its strength: a full blaze takes 1 / %d of her hull a second, so she burns to the waterline in about %d minutes." % [
+		SeaSim.FIRE_MAX, grow_lo, grow_hi, grow, fight, SeaSim.FIRE_START, (SeaSim.FIRE_START + fight - grow - 1) / maxi(fight - grow, 1),
+		grow * 100 / fight + 1, SeaSim.FIRE_HULL / SeaSim.FIRE_MAX, SeaSim.FIRE_HULL / SeaSim.FIRE_MAX / 60])
+	_h("The magazine")
+	_p("Past strength %d each second may set off her magazine: the chance a second grows with the fire, %.1f %% at a full blaze. She blows up and is gone; every ship within %d m is holed, loses men and heart, and half the time catches fire herself." % [
+		SeaSim.MAG_LV, (SeaSim.FIRE_MAX - SeaSim.MAG_LV) / float(SeaSim.MAG_DIV) / 10.0, SeaSim.BLAST_M])
+	_h("Douse")
+	_p("Douse (on the orders row while she burns): all hands to the buckets. Her guns go silent (they neither fire nor reload; a loaded broadside keeps its load) and the crew fight the fire at %d %%: %d a second at full strength, so even a crew down to %d %% gains on it. It turns off by itself the second the fire is out. Boarded while dousing, her men fight on the deck at %d %%. The battle AI douses too when a fire outgrows its crew." % [
+		SeaSim.DOUSE_FIGHT_PCT, douse, grow * 100 / douse + 1, SeaSim.DOUSE_DECK_PCT])
+	_h("Keep clear")
+	_p("Don't lie alongside a burning ship: when her magazine goes, everything within %d m goes with her, and a fire ship's sparks jump to whatever is close. Board or rake a burning enemy from a distance, or let her burn." % SeaSim.BLAST_M)
 
 
 func _page_ships() -> void:
@@ -373,6 +399,10 @@ static func order_help(key: String, ship_type: int, fire_on: bool = true) -> Dic
 		"sea_flee":
 			return {"title": "Flee", "tip": "Flee: full sail for the map edge farthest from the enemy. A ship that leaves the map escapes and is out of the battle.",
 				"more": "Use it for a ship that cannot win; she can still be hit on the way out.", "hint": ""}
+		"sea_douse":
+			return {"title": "Douse", "tip": "Douse: all hands to the buckets. Guns silent; the fire is fought twice as fast. Off by itself when the fire is out.",
+				"more": "Loaded guns keep their load. Boarded while dousing, her men fight on the deck at %d %%. Press it again to send the crew back to the guns." % SeaSim.DOUSE_DECK_PCT,
+				"hint": ""}
 		"sea_light":
 			return {"title": "Light her", "tip": "Light her: sets the fire ship alight now; her crew take to the boat and she burns down. Tap an enemy instead to send her in.",
 				"more": "A sent-in fire ship lights herself within %d m of her mark when she can lie the course. What she touches is grappled and set alight." % SeaSim.FS_LIGHT_M, "hint": ""}

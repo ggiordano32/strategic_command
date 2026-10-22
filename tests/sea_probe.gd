@@ -20,6 +20,10 @@ extends SceneTree
 ## taken) and escaped per side, the mean battle length, the damage each
 ## side took (hull % + crew %) and the AI side's (1) exchange; --exch the
 ## exchange minute by minute; --skill=0|1|2 the AI sides' sea skill.
+## Fire (the Douse order, 2026-10-22): fires started and put out, ships
+## lost burning per side (sunk or blown up with a fire aboard; of those the
+## sim's burnt down / magazine counts), douse orders and fires out while
+## dousing.
 ## Prints only; no pass / fail.
 
 const SeaSim := preload("res://sim/sea_sim.gd")
@@ -204,7 +208,12 @@ func run_one(sd: int, lay: String, mode: String) -> Dictionary:
 	var seen := 0
 	var stop := -1
 	var dmg_min: Array = []   # per minute: [side 0's damage, side 1's damage] (cumulative, % points)
+	var burnt := [0, 0]       # ships lost burning (sunk or blown up with a fire aboard), per side
+	var burn0 := PackedInt32Array()
+	burn0.resize(sim.n_units)
 	for t in 9200:
+		for s in sim.n_units:
+			burn0[s] = sim.s_burn[s]
 		if mode == "order" and t % 100 == 0 and sim.decided_tick < 0:
 			_player_orders(sim)
 		sim.step()
@@ -219,6 +228,8 @@ func run_one(sd: int, lay: String, mode: String) -> Dictionary:
 					first[sd2] = sim.ev_t[i]
 					if sd2 == lee:
 						made = up_proj(sim, lee, w) - int(p0[lee])
+			elif k == SeaSim.EV_SINK and burn0[a] > 0 and not ST.is_fire(sim.s_type[a]):
+				burnt[sim.u_side[a]] += 1
 			elif k == SeaSim.EV_GROUND:
 				gr[sim.u_side[a]] += 1
 				per[a] += 1
@@ -244,7 +255,9 @@ func run_one(sd: int, lay: String, mode: String) -> Dictionary:
 	return {"ships": ships, "stuck": stuck, "seed": sd, "water": water_name(scn, sd, lay), "fleet": "+".join(PackedStringArray(FLEETS[sd % FLEETS.size()])),
 		"winner": int(r["winner"]), "dt": int(r["decided_tick"]), "first": first, "gr": gr, "where": where, "lee": lee,
 		"made": made, "boardings": int(sim.stats["boardings"]), "dmg": dmg_min, "dmg_end": [damage(sim, 0), damage(sim, 1)],
-		"deck": [int(sim.stats["deck_taken"]), int(sim.stats["deck_repelled"]), int(sim.stats["deck_spent"])], "sides": r["sides"], "wind": int(scn["wind_deg"])}
+		"deck": [int(sim.stats["deck_taken"]), int(sim.stats["deck_repelled"]), int(sim.stats["deck_spent"])], "sides": r["sides"], "wind": int(scn["wind_deg"]),
+		"burnt": burnt, "fire": [int(sim.stats["fires"]), int(sim.stats["fire_out"]), int(sim.stats["fire_sunk"]),
+			int(sim.stats["blown"]), int(sim.stats["douse"]), int(sim.stats["douse_out"])]}
 
 
 static func _t(ticks: int) -> String:
@@ -283,6 +296,8 @@ func _layout_run(mode: String, lay: String) -> void:
 	var ex_d: Array = []   # per minute: AI side (1) damage dealt, taken
 	var ex_t: Array = []
 	var ex_end := [0, 0]
+	var burnt := [0, 0]
+	var fire := [0, 0, 0, 0, 0, 0]
 	for m in 15:
 		ex_d.append(0)
 		ex_t.append(0)
@@ -305,6 +320,10 @@ func _layout_run(mode: String, lay: String) -> void:
 			ex_d[m] = int(ex_d[m]) + int(dm[m][0]) - int(prev[0])
 			ex_t[m] = int(ex_t[m]) + int(dm[m][1]) - int(prev[1])
 			prev = dm[m]
+		for s in 2:
+			burnt[s] += int(r["burnt"][s])
+		for k in 6:
+			fire[k] += int(r["fire"][k])
 		ex_end[0] += int(r["dmg_end"][0])
 		ex_end[1] += int(r["dmg_end"][1])
 		for k in 3:
@@ -337,6 +356,8 @@ func _layout_run(mode: String, lay: String) -> void:
 		wins[0], wins[1], _t(_median(dts)), boards, deck[0], deck[1], deck[2]])
 	print("  ships lost (sunk + taken) s0 %d s1 %d; escaped s0 %d s1 %d; mean battle %s; damage taken (hull %% + crew %%) s0 %d s1 %d, AI (s1) exchange %d %%" % [
 		lost[0], lost[1], esc[0], esc[1], _t(dsum / maxi(seeds, 1)), ex_end[0], ex_end[1], ex_end[0] * 100 / maxi(ex_end[1], 1)])
+	print("  fire: started %d, put out %d, ships lost burning s0 %d s1 %d (burnt down %d, magazine %d); douse orders %d, fires out while dousing %d" % [
+		fire[0], fire[1], burnt[0], burnt[1], fire[2], fire[3], fire[4], fire[5]])
 	if exch:
 		var line := "  exchange by minute (AI dealt / taken %%, battles still on):"
 		for m in 15:

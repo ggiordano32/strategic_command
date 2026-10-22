@@ -132,7 +132,9 @@ extends SceneTree
 ## Sea battles (N3a; "--only=sea", also in the full run; tests/sea_checks.gd):
 ## a frigate duel, sloops against a galleon, a boarding, upwind and downwind
 ## starts, a coast with an island: identical on repeat and across snapshot /
-## restore, a different seed diverges, every sea mechanic seen.
+## restore, a different seed diverges, every sea mechanic seen; Douse (a
+## thin crew's fire: left alone the magazine blows, doused it is out with
+## the guns silent meanwhile; snapshots carry s_douse; the AI by skill).
 ## Reinforcements (2026-10-13; "--only=reinf", also in the full run):
 ## Scenarios.reinf_battle at half size, 36 units (24 on the field and 12
 ## reserves at its edge) against 24, both AI; side 0's left-wing horse

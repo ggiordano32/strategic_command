@@ -66,6 +66,7 @@ const LONG_PRESS := 0.35
 const DOUBLE_TAP := 0.35
 const GunSmoke := preload("res://game/gun_smoke.gd")
 const BattleLook := preload("res://game/battle_look.gd")
+const SeaLook := preload("res://game/sea_look.gd")
 const COL_SEA := Color(0.13, 0.36, 0.5)
 const COL_SEA_DEEP := Color(0.09, 0.27, 0.4)
 const COL_SAIL := Color(0.96, 0.94, 0.86)
@@ -73,7 +74,6 @@ const COL_HULL := Color(0.42, 0.27, 0.16)
 const COL_DECK := Color(0.68, 0.55, 0.37)
 const SIDE_COLS := [Color(0.25, 0.55, 0.95), Color(0.9, 0.3, 0.25)]
 const SPEEDS := [0, 4, 8, 16]   # quarter steps: pause, 1x, 2x, 4x
-const LAND_UP := 3               # land texture pixels a grid cell (smoothed between cells)
 const VIS := 1.5                 # ships drawn this much larger than their length (to read on a phone)
 
 # ---- set by whoever opens it ----
@@ -87,6 +87,9 @@ var side_cols: Array = SIDE_COLS.duplicate()
 var coop = null              # live co-op: game/net/coop_session.gd (null: solo)
 var coop_hud = null
 var coop_region := ""
+var look_cell := Vector2i(-1, -1)   # the campaign cell of the battle (the look: bathymetry, harbour fort); (-1, -1): none
+var look_region := -1               # ... and its nearest region
+var _look: SeaLook
 var interactive := true
 
 var sim: SeaSim
@@ -112,7 +115,8 @@ var _msgs: Array = []              # [text, age, color]
 # nodes
 var camera: Camera2D
 var _water: Node2D
-var _land: Sprite2D
+var _land: Node2D
+var _props: Node2D
 var _ships: Node2D
 var _sky: Node2D
 var _hud: CanvasLayer
@@ -161,6 +165,8 @@ var _help_catch: Control = null
 var _lp_token := 0                 # long press on an order button: the press being timed
 var _lp_swallow := false           # ... fired, so the release is not a tap
 var _pct_shown := {}               # sail setting -> clock when its speed % first showed in the status line
+var _bar_fire := 0                 # (Douse) the selection's burning / dousing bits the bar was built for
+var input_counts := {}             # telemetry counters of this battle's inputs ("douse")
 const LONG_HELP := 0.5
 const HINT_SEC := 3.0
 const PCT_SEC := 6.0
@@ -192,15 +198,19 @@ func _ready() -> void:
 	for s in n:
 		_wake.append(PackedVector2Array())
 	_snap_prev()
+	_look = SeaLook.new()
+	_look.setup(sim, seed_value, scenario, look_cell, look_region)
 	_water = Node2D.new()
 	_water.draw.connect(_draw_water)
+	_water.material = _look.water_mat
 	add_child(_water)
-	_land = Sprite2D.new()
-	_land.centered = false
-	_land.texture = _land_texture()
-	_land.scale = Vector2(SeaSim.CELL_M, SeaSim.CELL_M) / float(LAND_UP)
-	_land.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_land = Node2D.new()
+	_land.draw.connect(_draw_land)
+	_land.material = _look.land_mat
 	add_child(_land)
+	_props = Node2D.new()
+	_props.draw.connect(_look.draw_props.bind(_props))
+	add_child(_props)
 	_ships = Node2D.new()
 	_ships.draw.connect(_draw_ships)
 	add_child(_ships)
@@ -274,7 +284,7 @@ func _process(delta: float) -> void:
 		_decided_at = _clock
 	if _decided_at >= 0.0 and not _end_shown and _clock - _decided_at > 3.5:
 		_show_end()
-	_water.queue_redraw()
+	_look.tick(_clock, sim)
 	_ships.queue_redraw()
 	_sky.queue_redraw()
 	_rose.queue_redraw()
@@ -471,104 +481,15 @@ func _ship_col(s: int) -> Color:
 
 # ----------------------------------------------------------------- drawing ---
 
-func _land_texture() -> Texture2D:
-	var gw := sim.g_w
-	var gh := sim.g_h
-	var img := Image.create(gw * LAND_UP, gh * LAND_UP, false, Image.FORMAT_RGBA8)
-	var val := PackedFloat32Array()
-	val.resize(gw * gh)
-	for c in gw * gh:
-		val[c] = [0.0, 0.5, 1.0][sim.g[c]]
-	var any := false
-	for c in gw * gh:
-		if sim.g[c] != 0:
-			any = true
-			break
-	if not any:
-		img.fill(Color(0, 0, 0, 0))
-		return ImageTexture.create_from_image(img)
-	# A soft blur over the cells first: the coast comes out round, not stepped.
-	for pass_i in 2:
-		var bl := PackedFloat32Array()
-		bl.resize(gw * gh)
-		for gy in gh:
-			for gx in gw:
-				var acc := 0.0
-				var wsum := 0.0
-				for dy in [-1, 0, 1]:
-					for dx in [-1, 0, 1]:
-						var x2: int = clampi(gx + dx, 0, gw - 1)
-						var y2: int = clampi(gy + dy, 0, gh - 1)
-						var wgt := 4.0 if dx == 0 and dy == 0 else (2.0 if dx == 0 or dy == 0 else 1.0)
-						acc += val[y2 * gw + x2] * wgt
-						wsum += wgt
-				bl[gy * gw + gx] = acc / wsum
-		val = bl
-	var up := float(LAND_UP)
-	for y in gh * LAND_UP:
-		var fy := (y + 0.5) / up - 0.5
-		var y0 := clampi(int(floor(fy)), 0, gh - 1)
-		var y1 := clampi(y0 + 1, 0, gh - 1)
-		var ty := clampf(fy - floor(fy), 0.0, 1.0)
-		for x in gw * LAND_UP:
-			var fx := (x + 0.5) / up - 0.5
-			var x0 := clampi(int(floor(fx)), 0, gw - 1)
-			var x1 := clampi(x0 + 1, 0, gw - 1)
-			var tx := clampf(fx - floor(fx), 0.0, 1.0)
-			var v := lerpf(lerpf(val[y0 * gw + x0], val[y0 * gw + x1], tx), lerpf(val[y1 * gw + x0], val[y1 * gw + x1], tx), ty)
-			var col := Color(0, 0, 0, 0)
-			if v > 0.74:
-				var g := clampf((v - 0.74) * 5.0, 0.0, 1.0)
-				col = Color(0.85, 0.78, 0.55).lerp(Color(0.33, 0.5, 0.26), g)
-				var n := sin(x * 0.37 + y * 0.21) * 0.03 + sin(x * 0.11 - y * 0.29) * 0.04
-				col = col.darkened(n + 0.04)
-			elif v > 0.66:
-				col = Color(0.9, 0.84, 0.62)
-			elif v > 0.2:
-				col = Color(0.55, 0.82, 0.78, 0.2 + (v - 0.2) * 1.0)
-			img.set_pixel(x, y, col)
-	var tex := ImageTexture.create_from_image(img)
-	return tex
-
-
+## The water: one rect over the field and a margin, the whole look in game/sea_water.gdshader
+## (drawn once; the shader's uniforms move with SeaLook.tick).
 func _draw_water() -> void:
-	var w := float(sim.field_w)
-	var h := float(sim.field_h)
-	_water.draw_rect(Rect2(-2000, -2000, w + 4000, h + 4000), COL_SEA_DEEP)
-	_water.draw_rect(Rect2(0, 0, w, h), COL_SEA)
-	# Waves running before the wind: crests drifting downwind, fading in and out.
-	var wt := _wind_to()
-	var perp := Vector2(-wt.y, wt.x)
-	var spd := 3.0 + sim.w_str * 0.06
-	var vr := _view_rect().grow(40.0)
-	var step := 90.0
-	var zoom := camera.zoom.x if camera != null else 1.0
-	if zoom < 0.3:
-		step = 180.0
-	var x0 := floorf(vr.position.x / step) * step
-	var y0 := floorf(vr.position.y / step) * step
-	var yy := y0
-	var lw := 1.3 / maxf(zoom, 0.2)
-	while yy < vr.end.y:
-		var xx := x0
-		while xx < vr.end.x:
-			var hsh := absf(sin(xx * 12.9898 + yy * 78.233) * 43758.5453)
-			var fr := hsh - floorf(hsh)
-			var ph := fposmod(_clock * 0.18 + fr * 7.0, 1.0)
-			var c := Vector2(xx + fr * step, yy + fposmod(fr * 13.0, 1.0) * step) + wt * spd * (ph * 8.0)
-			var a := sin(ph * PI) * 0.16
-			var ln := 14.0 + fr * 18.0
-			var arc := PackedVector2Array()
-			for k in 5:
-				var t := float(k) / 4.0 - 0.5
-				arc.append(c + perp * ln * t - wt * ln * 0.22 * (1.0 - 4.0 * t * t))
-			_water.draw_polyline(arc, Color(0.8, 0.9, 0.96, a), lw)
-			if fr > 0.82:
-				_water.draw_circle(c + wt * 2.0, lw * 1.2, Color(1, 1, 1, a * 0.8))
-			xx += step
-		yy += step
-	# The field's edge (beyond it ships have left the battle).
-	_water.draw_rect(Rect2(0, 0, w, h), Color(1, 1, 1, 0.08), false, 3.0 / maxf(zoom, 0.2))
+	_water.draw_rect(Rect2(-2000, -2000, float(sim.field_w) + 4000.0, float(sim.field_h) + 4000.0), Color.WHITE)
+
+
+## The land: one rect over the sim's grid and a margin (the coast goes on past the field), game/sea_land.gdshader.
+func _draw_land() -> void:
+	_land.draw_rect(Rect2(-900, -900, float(sim.g_w * SeaSim.CELL_M) + 1800.0, float(sim.g_h * SeaSim.CELL_M) + 1800.0), Color.WHITE)
 
 
 func _view_rect() -> Rect2:
@@ -591,9 +512,7 @@ func _draw_ships() -> void:
 		if sim.u_state[s] != SeaSim.S_SUNK and sim.u_state[s] != SeaSim.S_FLED:
 			pts.append(p)
 		var bm := float(ST.stat(sim.s_type[s], "beam"))
-		for i in range(1, pts.size()):
-			var f := float(i) / pts.size()
-			_ships.draw_line(pts[i - 1], pts[i], Color(0.92, 0.97, 1.0, 0.18 * f), bm * (1.6 - f), true)
+		_look.draw_wake(_ships, pts, bm, clampf(float(sim.s_spd[s]) / maxf(float(ST.stat(sim.s_type[s], "vmax")) * 10.24, 1.0), 0.0, 1.0), _head(s))
 	# Debris and splashes on the water.
 	for f in _fx:
 		var age := float(f[2])
@@ -1240,6 +1159,11 @@ func _refresh_hud() -> void:
 		if not _mine(int(s)):
 			card.modulate = Color(0.7, 0.7, 0.7, 0.75)
 	_info.text = _info_text()
+	# (Douse) The bar shows Douse only while a selected ship burns: rebuild it when that changes.
+	var fk := _bar_fire_key()
+	if fk != _bar_fire:
+		_bar_fire = fk
+		_refresh_bar()
 	if _hint_lbl.visible and _clock - _hint_t > HINT_SEC:
 		_hint_lbl.visible = false
 	if coop != null:
@@ -1265,6 +1189,10 @@ func _info_text() -> String:
 		mode = "ablaze, her helm lashed" if sim.s_aband[s] != 0 else "ablaze, steering for her mark"
 	if sim.s_grap[s] >= 0:
 		mode = "grappled: boarding" if sim.s_boarder[s] != 0 else "grappled: repelling boarders"
+	if sim.s_douse[s] != 0:
+		mode += ", all hands dousing the fire (guns silent)"
+	elif sim.s_burn[s] > 0 and not ST.is_fire(sim.s_type[s]):
+		mode += ", on fire"
 	var sails: String = ["hove to", "battle sail", "full sail"][sim.s_sail[s]]
 	# The first time a setting shows, its speed share too ("battle sail (75 %)").
 	if not _pct_shown.has(sim.s_sail[s]):
@@ -1326,6 +1254,18 @@ func _refresh_bar() -> void:
 		_refresh_bar())
 	add.call("Hold course", "sea_hold", sim.s_mode[s0] == SeaSim.M_FREE, func(): _orders_all(SeaSim.O_HOLD, {}))
 	add.call("Flee", "sea_flee", sim.s_mode[s0] == SeaSim.M_FLEE, func(): _orders_all(SeaSim.O_FLEE, {}))
+	# Douse: only while a selected ship burns; toggled (on for the burning ones, off for all).
+	var burning := false
+	var dousing := false
+	for s in mine:
+		if sim.s_burn[s] > 0 and not ST.is_fire(sim.s_type[s]):
+			burning = true
+			dousing = dousing or sim.s_douse[s] != 0
+	if burning:
+		add.call("Douse", "sea_douse", dousing, func():
+			if not dousing:
+				_count("douse")
+			_orders_all(SeaSim.O_DOUSE, {"on": 0 if dousing else 1}))
 	var fires := false
 	for s in mine:
 		if ST.is_fire(sim.s_type[s]) and sim.s_lit[s] < 0:
@@ -1337,6 +1277,26 @@ func _refresh_bar() -> void:
 	var tos := _gift_targets()
 	if not tos.is_empty():
 		add.call("Gift to " + coop.player_name(int(tos[0])) if tos.size() == 1 else "Gift to...", "sea_gift", false, _gift)
+
+
+## (Douse) Bits of the selection the bar depends on: burning (1), dousing (2) per ship.
+func _bar_fire_key() -> int:
+	var k := 0
+	for s in selection:
+		if s < 0 or s >= sim.n_units:
+			continue
+		k = k * 4 + (1 if sim.s_burn[s] > 0 and sim.u_state[s] == SeaSim.S_SAIL else 0) + (2 if sim.s_douse[s] != 0 else 0)
+		k &= 0x3FFFFFFF
+	return k
+
+
+## A telemetry counter of this battle's inputs (view only): kept in
+## input_counts and sent as a "sea_input" record.
+func _count(key: String) -> void:
+	input_counts[key] = int(input_counts.get(key, 0)) + 1
+	var tele := get_node_or_null("/root/Telemetry")
+	if tele != null:
+		tele.event("sea_input", {"key": key, "n": int(input_counts[key]), "tick": sim.tick})
 
 
 ## The 3 s hint line under the row.

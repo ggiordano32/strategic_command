@@ -2133,3 +2133,51 @@ and we only; with the gauge the scripted player still wins 14-16 of 24
 exchange is now even (97-106 % over 96 seeds): what is left is that any
 flight concedes the field, and the player never flees. Passing the
 campaign faction's skill into sea battles is a follow-on.
+
+### 32.1 Addendum: Douse (2026-10-22)
+
+The owner asked for a Douse order ("lets add a douse to the list"). The
+rule (`sim/sea_sim.gd` `O_DOUSE` 14 {unit, on}, `s_douse` hashed and
+snapshotted): while on, the ship's guns neither fire nor reload (a loaded
+broadside keeps its load), the crew fight the fire at `DOUSE_FIGHT_PCT`
+200 % (`fire_fight`: 45 x 2 x the crew share against a mean growth of 35
+a second, so a crew of 39 % still gains, against 78 % without), and her
+men in a deck melee strike and fire at `DOUSE_DECK_PCT` 50 % (a grappled
+ship may douse; the outside melee of scenario "deck" 1 is not touched).
+It turns off by itself the second the fire is out, and when she sinks or
+is taken; refused with no fire and for a fire ship. It goes through the
+lockstep as every other ship order (`_sim_order`, the issuer's own ship
+only).
+
+The battle AI (`_think_douse`, every think, before the grappled / fleeing
+returns): no douse with an enemy at her (grappled, or one within
+`DOUSE_BOARD_M` 200 m sailing to board her; a dousing ship stops when
+one comes). Easy douses at once on any fire; Average when the fire is
+outgrowing the crew (mean growth over `fire_fight` at the current crew);
+Skilled when it is outgrowing them and nothing is in either broadside's
+arc and range, or once the fire is past 3 / 5 of `MAG_LV` (300) whatever
+bears (without that, a Skilled ship always in action never doused and
+blew up as before). Off when it is out.
+
+Measured (`tests/sea_probe.gd`, 24 seeds x 5 layouts, before -> after;
+the probe's new fire line):
+
+- **AI against AI** (and the side order swapped): fires 67 + 71 -> 55 +
+  74, put out 8 + 11 -> 42 + 53; ships lost burning 47 + 46 -> 12 + 10;
+  magazines 47 + 44 -> 12 + 10; side 0 wins 67 + 61 -> 72 + 59 of 240
+  (noise; the unswapped run was 67 / 53 before too).
+- **Never-fleeing player** (`--modes=order`; the player never douses):
+  player wins 64 -> 62 of 120, AI ships lost 96 -> 86, escaped 43 -> 46,
+  AI ships lost burning 25 -> 6, the AI's exchange 100 -> 106 %.
+- **Player hove to**: AI wins 79 -> 81, AI ships lost burning 14 -> 4,
+  exchange 110 -> 118 %.
+- **By skill** (AI against AI, both sides that skill): ships lost burning
+  Easy 36 -> 8, Average 47 -> 12, Skilled 46 -> 18; douse orders 53 / 42
+  / 47, fires out while dousing 46 / 35 / 25; exchange 93 / 95 / 94 %.
+  Easy loses fewest ships to fire: its guns go silent for every fire,
+  which costs it nothing measurable here.
+- Nothing else moved beyond noise (battle length, boardings, groundings).
+  `tests/sea_checks.gd` flight() now counts 8 seeds (fled 8 / 8, 5
+  escaped, 8 held): over seeds 1-4, 2 of the 4 escapes were the companion
+  of a ship whose magazine blew; doused, she survives to strike and both
+  are taken (seeds 1-16: 10 escapes before, 8 after).
