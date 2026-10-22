@@ -1190,13 +1190,17 @@ func _step_menu_book_open() -> void:
 	_menu = (load("res://game/main.gd") as GDScript).new()
 	root.add_child(_menu)
 	steps.push_front(_step_menu_book_tap)
+	steps.push_front(_step_menu_options)
+
+
+func _step_menu_options() -> void:
+	_menu.show_page("options")   # (the Unit book and Controls buttons live on the Options page)
 
 
 func _step_menu_book_tap() -> void:
-	for b in _menu.find_children("*", "Button", true, false):
-		if (b as Button).text == "Unit book":
-			_tap_control(b)
-			return
+	for b in _menu.find_children("home_unit_book", "Button", true, false):
+		_tap_control(b)
+		return
 	_check(false, "menu has a Unit book button")
 
 
@@ -1214,6 +1218,7 @@ func _step_check_menu_book_closed() -> void:
 	steps.push_front(_step_terrain_cycle)
 	steps.push_front(_step_menu_sandbox_check)
 	steps.push_front(_step_menu_sandbox)
+	steps.push_front(_step_menu_battles)
 	steps.push_front(_step_menu_controls_check)
 	steps.push_front(_step_menu_controls)
 
@@ -1229,6 +1234,10 @@ func _step_menu_controls_check() -> void:
 	_check(_menu.controls.visible, "Controls opens from the main menu")
 	_check(_menu.controls.find_children("*", "Label", true, false).size() > 60, "the Controls page lists the bindings")
 	_tap_control(_menu.controls.close_button)
+
+
+func _step_menu_battles() -> void:
+	_menu.show_page("battles")   # (Battle sandbox is on the Battles page)
 
 
 func _step_menu_sandbox() -> void:

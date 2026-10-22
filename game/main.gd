@@ -28,6 +28,10 @@ const MapGen := preload("res://sim/mapgen.gd")
 const CustomBattle := preload("res://game/custom/custom_battle.gd")
 const CustomSetup := preload("res://game/custom/custom_setup.gd")
 const SeaBattle := preload("res://game/sea_battle.gd")
+const MenuPrefs := preload("res://game/menu/menu_prefs.gd")
+const MenuBg := preload("res://game/menu/menu_bg.gd")
+const Emblem := preload("res://game/menu/emblem.gd")
+const MenuStyle := preload("res://game/menu/menu_style.gd")
 ## Menu terrain choices for the playable battles: -1 = random from the seed.
 const TERRAIN_CHOICES := [-1, Terrain.K_FLAT, Terrain.K_ROLLING, Terrain.K_RIDGE,
 	Terrain.K_VALLEY, Terrain.K_HILL, Terrain.K_SLOPE]
@@ -73,9 +77,25 @@ var campaign: CampaignScreen = null
 var _preparing := false  # a campaign is opening behind the loading panel
 var _new_campaign: NewCampaign = null
 var _subtitle: Label = null
-## Menu pages: "home", "sandbox", "continue", "import", "join", "share".
+## Menu pages: "home" (the title screen), "campaign", "grand", "battles", "options", and below them "sandbox",
+## "import", "join", "share", "server". BACK says where a page's Back goes.
 var _pages := {}
 var page := "home"
+const BACK := {"campaign": "home", "grand": "home", "battles": "home", "options": "home", "sandbox": "battles",
+	"import": "campaign", "join": "grand", "server": "grand", "share": "grand"}
+var _bg: Control = null          # the title menu's background (game/menu/menu_bg.gd)
+var _back_btn: Button = null
+var _home: Control = null
+var _home_stack: VBoxContainer = null
+var _home_mark: HBoxContainer = null
+var _home_emblem: Control = null
+var _entries: Array = []         # the title screen's entry wrappers, in order
+var _continue_entry: Button = null
+var _continue_emblem: Control = null
+var _recent: Dictionary = {}     # the most recent save: {kind, slot / id, name, turn, pack}
+var _bg_button: Button = null
+var _emblem_button: Button = null
+var _phone_layout := false
 var _continue_box: VBoxContainer
 var _import_edit: TextEdit
 var _import_info: Label
@@ -118,7 +138,10 @@ func _ready() -> void:
 			_shot_frames = int(a.get_slice("=", 1))
 	_menu = _build_menu()
 	add_child(_menu)
+	_menu.visibility_changed.connect(_menu_visibility)
+	get_tree().root.size_changed.connect(_layout_home)
 	show_page("home")
+	_activate_bg.call_deferred()
 	book = UnitBook.new()
 	add_child(book)
 	controls = Controls.new()
@@ -309,10 +332,15 @@ func _check_server() -> void:
 
 func _build_menu() -> Control:
 	var bg := ColorRect.new()
-	bg.color = Color(0.12, 0.15, 0.12)
+	bg.color = Color(0.07, 0.09, 0.09)
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_bg = MenuBg.new()
+	bg.add_child(_bg)
 	_pages["home"] = _build_home(bg)
-	_pages["continue"] = _build_continue(bg)
+	_pages["campaign"] = _build_campaign(bg)
+	_pages["grand"] = _build_grand(bg)
+	_pages["battles"] = _build_battles(bg)
+	_pages["options"] = _build_options(bg)
 	_pages["import"] = _build_import(bg)
 	_pages["join"] = _build_join(bg)
 	_pages["share"] = _build_share(bg)
@@ -367,8 +395,8 @@ func _build_menu() -> Control:
 	row.add_child(_replay_button)
 	row.add_child(_menu_button("Unit book", _open_book))
 	_tests_button = _menu_button("Tests and benchmarks  +", _toggle_tests)
+	_tests_button.visible = MenuPrefs.dev() or "--menu-tests" in OS.get_cmdline_user_args()
 	row.add_child(_tests_button)
-	row.add_child(_menu_button("< Back", show_page.bind("home")))
 	_update_terrain_button()
 	_update_ground_button()
 	vb.add_child(_build_siege_row())
@@ -396,6 +424,11 @@ func _build_menu() -> Control:
 	help.modulate = Color(1, 1, 1, 0.75)
 	vb.add_child(help)
 	_help = help
+	_back_btn = Kit.button("< Back", go_back, 110, 16)
+	_back_btn.name = "menu_back"
+	_back_btn.position = Vector2(14, 10)
+	_back_btn.visible = false
+	bg.add_child(_back_btn)
 	return bg
 
 
@@ -404,6 +437,7 @@ func _build_menu() -> Control:
 func _scroll_page(bg: Control) -> CenterContainer:
 	var scroll := TouchScroll.new()
 	scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	scroll.offset_top = 56
 	scroll.visible = false
 	bg.add_child(scroll)
 	var center := CenterContainer.new()
@@ -421,116 +455,446 @@ func _page_box(bg: Control) -> VBoxContainer:
 	return vb
 
 
+# ------------------------------------------------------------ title menu ---
+
+func _heading(text: String, fsize: int = 28) -> Label:
+	var l := Kit.label(text, fsize, Kit.COL_GOLD)
+	MenuStyle.use_display(l, fsize)
+	return l
+
+
+func _is_phone() -> bool:
+	return UiScale.is_touch() and get_viewport_rect().size.y < 520.0
+
+
+## The title screen: the wordmark top-left, a stack of entries over the background (centred on phones).
 func _build_home(bg: Control) -> Control:
-	var vb := _page_box(bg)
-	var title := Kit.label("Strategic Command", 30, Color(1, 0.92, 0.7))
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vb.add_child(title)
-	var sub := Kit.label(PackView.subtitle("rome"), 15, Kit.COL_DIM)
-	_subtitle = sub
+	var home := Control.new()
+	home.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	home.visible = false
+	home.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bg.add_child(home)
+	_home = home
+	# Wordmark: the last-played setting's emblem and the title in the display face.
+	_home_mark = HBoxContainer.new()
+	_home_mark.add_theme_constant_override("separation", 14)
+	_home_mark.position = Vector2(30, 22)
+	home.add_child(_home_mark)
+	_home_emblem = Emblem.make("rome", 64)
+	_home_emblem.name = "home_emblem"
+	_home_mark.add_child(_home_emblem)
+	var tv := VBoxContainer.new()
+	tv.add_theme_constant_override("separation", 0)
+	tv.alignment = BoxContainer.ALIGNMENT_CENTER
+	_home_mark.add_child(tv)
+	var title := Kit.label("STRATEGIC COMMAND", 34, Color(1, 0.92, 0.7))
+	MenuStyle.use_display(title, 34)
+	title.add_theme_color_override("font_outline_color", Color(0.1, 0.07, 0.04))
+	title.add_theme_constant_override("outline_size", 6)
+	title.name = "home_title"
+	tv.add_child(title)
+	_subtitle = Kit.label(PackView.subtitle("rome"), 14, Kit.COL_DIM)
+	tv.add_child(_subtitle)
+	# The entries.
+	_home_stack = VBoxContainer.new()
+	_home_stack.add_theme_constant_override("separation", 6)
+	home.add_child(_home_stack)
+	_continue_entry = _entry("Continue", "home_continue", _continue_recent)
+	_continue_emblem = Emblem.make("rome", 34)
+	_continue_emblem.position = Vector2(6, 10)
+	_continue_entry.add_child(_continue_emblem)
+	_entry("Campaign", "home_campaign", show_page.bind("campaign"))
+	_entry("Grand Campaign", "home_grand", show_page.bind("grand"))
+	_entry("Battles", "home_battles", show_page.bind("battles"))
+	_entry("Options", "home_options", show_page.bind("options"))
+	var info := Kit.label("Godot %s, %s renderer" % [Engine.get_version_info()["string"],
+		ProjectSettings.get_setting("rendering/renderer/rendering_method", "?")], 12, Color(1, 1, 1, 0.45))
+	info.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+	info.offset_left = 30
+	info.offset_top = -30
+	home.add_child(info)
+	_layout_home()
+	return home
+
+
+## One entry of the stack: a wrapper (so the slide-in can move the button) holding a flat button.
+func _entry(text: String, nm: String, cb: Callable) -> Button:
+	var holder := Control.new()
+	holder.custom_minimum_size = Vector2(380, 54)
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var b := Button.new()
+	b.text = text
+	b.name = nm
+	b.focus_mode = Control.FOCUS_NONE
+	b.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	b.pressed.connect(AudioFx.click)
+	b.pressed.connect(cb)
+	MenuStyle.entry_style(b, 26, false)
+	holder.add_child(b)
+	_home_stack.add_child(holder)
+	_entries.append(holder)
+	return b
+
+
+## Place the wordmark and the stack: left side on a desktop, centred on a phone.
+func _layout_home() -> void:
+	if _home == null or _home_stack == null:
+		return
+	var sz := get_viewport_rect().size
+	_phone_layout = _is_phone()
+	var fs := 22 if _phone_layout else 26
+	for w in _entries:
+		var b: Button = w.get_child(0)
+		b.add_theme_font_size_override("font_size", fs)
+		b.alignment = HORIZONTAL_ALIGNMENT_CENTER if _phone_layout else HORIZONTAL_ALIGNMENT_LEFT
+		var cont := b == _continue_entry
+		(w as Control).custom_minimum_size = Vector2(320 if _phone_layout else 380, 42 if _phone_layout else 54)
+		b.get_theme_stylebox("normal").content_margin_left = (60.0 if cont else 6.0)
+		b.get_theme_stylebox("hover").content_margin_left = (64.0 if cont else 10.0)
+		b.get_theme_stylebox("pressed").content_margin_left = (64.0 if cont else 10.0)
+	if _continue_emblem != null:
+		var h := 42.0 if _phone_layout else 54.0
+		_continue_emblem.custom_minimum_size = Vector2(h - 14.0, h - 14.0)
+		_continue_emblem.size = Vector2(h - 14.0, h - 14.0)
+		_continue_emblem.position = Vector2(8, 7)
+	_home_stack.add_theme_constant_override("separation", 2 if _phone_layout else 6)
+	if _phone_layout:
+		_home_stack.set_anchors_and_offsets_preset(Control.PRESET_CENTER, Control.PRESET_MODE_MINSIZE)
+		_home_stack.offset_top += 24
+		_home_stack.offset_bottom += 24
+		_home_mark.position = Vector2(14, 8)
+		_home_emblem.custom_minimum_size = Vector2(40, 40)
+	else:
+		_home_stack.set_anchors_and_offsets_preset(Control.PRESET_CENTER_LEFT, Control.PRESET_MODE_MINSIZE)
+		var ml := maxf(40.0, sz.x * 0.07)
+		_home_stack.offset_left = ml
+		_home_stack.offset_right = ml + 380
+		_home_mark.position = Vector2(30, 22)
+		_home_emblem.custom_minimum_size = Vector2(64, 64)
+	_home_stack.grow_horizontal = Control.GROW_DIRECTION_BOTH if _phone_layout else Control.GROW_DIRECTION_END
+	_home_stack.grow_vertical = Control.GROW_DIRECTION_BOTH
+
+
+## The most recent save, local or online (online ones are ordered by when they were added: no play time is kept).
+func _find_recent() -> Dictionary:
+	var best := {}
+	var list := Saves.list()
+	if not list.is_empty():
+		var m: Dictionary = list[0]
+		best = {"kind": "local", "slot": str(m["slot"]), "name": str(m.get("name", m["slot"])), "turn": int(m.get("turn", 0)) + 1,
+			"pack": str(m.get("pack", "rome")), "at": int(m.get("saved_at", 0))}
+	var net := _net()
+	if net != null:
+		for e in net.local_campaigns():
+			var at := int(e.get("added_at", 0))
+			if best.is_empty() or at > int(best["at"]):
+				best = {"kind": "online", "id": str(e["id"]), "name": str(e.get("name", e["id"])), "turn": 0,
+					"pack": str(e.get("pack", "rome")), "at": at}
+			break
+	return best
+
+
+## The setting of the last-played campaign (else the last chosen on the new-campaign screen).
+func _last_pack() -> String:
+	var aid := MenuPrefs.pack_aid()
+	if aid != "" and CData.has_pack(aid):
+		return aid
+	var r := _find_recent() if _recent.is_empty() else _recent
+	var p := str(r.get("pack", "")) if not r.is_empty() else ""
+	return p if p != "" and CData.has_pack(p) else PackView.load_pref()
+
+
+func _update_home() -> void:
+	_recent = _find_recent()
+	var has := not _recent.is_empty()
+	(_continue_entry.get_parent() as Control).visible = has
+	if has:
+		var t := "Continue: %s" % _recent["name"]
+		if str(_recent["kind"]) == "local":
+			t += ", turn %d" % int(_recent["turn"])
+		else:
+			t += ", online"
+		_continue_entry.text = t
+		_continue_entry.tooltip_text = t
+		(_continue_emblem as Emblem).pack = str(_recent["pack"])
+		_continue_emblem.queue_redraw()
+	var lp := _last_pack()
+	(_home_emblem as Emblem).pack = lp
+	_home_emblem.queue_redraw()
+	_subtitle.text = PackView.subtitle(lp)
+	_layout_home()
+
+
+func _continue_recent() -> void:
+	if _recent.is_empty():
+		return
+	if str(_recent["kind"]) == "online":
+		_open_online(str(_recent["id"]))
+		return
+	var sl := str(_recent["slot"])
+	var d := Saves.load_slot(sl)
+	if not d.is_empty():
+		_open_campaign(d, sl)
+
+
+## The entries slide in from the left, 0.25 s each, staggered.
+func _slide_in(nodes: Array) -> void:
+	var i := 0
+	for w in nodes:
+		var holder: Control = w
+		if not holder.visible:
+			continue
+		var b: Control = holder.get_child(0)
+		b.modulate.a = 0.0
+		b.position.x = -40.0
+		var tw := b.create_tween()
+		tw.tween_interval(0.07 * i)
+		tw.tween_property(b, "position:x", 0.0, 0.25).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+		tw.parallel().tween_property(b, "modulate:a", 1.0, 0.25)
+		i += 1
+
+
+func _pack_card(pack: String, label: String) -> Button:
+	var b := Button.new()
+	b.name = "card_" + pack
+	b.focus_mode = Control.FOCUS_NONE
+	b.custom_minimum_size = Vector2(250, 220)
+	MenuStyle.card_style(b)
+	b.pressed.connect(AudioFx.click)
+	b.pressed.connect(_new_campaign_page.bind(false, pack))
+	b.mouse_entered.connect(func(): _bg.show_pack(pack))
+	var v := VBoxContainer.new()
+	v.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	v.offset_left = 12
+	v.offset_right = -12
+	v.offset_top = 12
+	v.offset_bottom = -12
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_theme_constant_override("separation", 6)
+	v.alignment = BoxContainer.ALIGNMENT_CENTER
+	b.add_child(v)
+	var em := Emblem.make(pack, 96)
+	em.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	v.add_child(em)
+	var t := Kit.label(label, 22, Color(1, 0.92, 0.7))
+	MenuStyle.use_display(t, 22)
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_child(t)
+	var sub := Kit.label(PackView.subtitle(pack), 13, Kit.COL_DIM, true)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vb.add_child(sub)
-	var camp := HFlowContainer.new()
-	camp.add_theme_constant_override("h_separation", 8)
-	camp.add_theme_constant_override("v_separation", 8)
-	camp.alignment = FlowContainer.ALIGNMENT_CENTER
-	camp.custom_minimum_size.x = 640
-	vb.add_child(camp)
-	for d in [["New campaign", _new_campaign_page.bind(false)], ["Online co-op", _new_campaign_page.bind(true)],
-			["Join", show_page.bind("join")], ["Continue", show_page.bind("continue")],
-			["Import", show_page.bind("import")]]:
-		var b := _menu_button(d[0], d[1])
-		b.custom_minimum_size = Vector2(150 if d[0] in ["Join", "Import"] else 190, 52)
-		b.add_theme_font_size_override("font_size", 17)
-		b.name = "home_" + str(d[0]).replace(" ", "_")
-		camp.add_child(b)
-	_net_line = Kit.label("", 13, Kit.COL_DIM)
-	_net_line.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vb.add_child(_net_line)
+	sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_child(sub)
+	return b
+
+
+## Campaign (single player): the two settings as cards, then this device's saved campaigns and Import.
+func _build_campaign(bg: Control) -> Control:
+	var vb := _page_box(bg)
+	vb.add_child(_heading("Campaign"))
+	vb.add_child(Kit.label("One player, or several taking turns on this device. Pick a setting to begin.", 14, Kit.COL_DIM))
+	var cards := HFlowContainer.new()
+	cards.add_theme_constant_override("h_separation", 16)
+	cards.add_theme_constant_override("v_separation", 12)
+	cards.alignment = FlowContainer.ALIGNMENT_CENTER
+	for key in ["west", "rome"]:
+		if CData.has_pack(key):
+			cards.add_child(_pack_card(key, CARD_TITLES[key]))
+	vb.add_child(cards)
+	var yh := Kit.hbox(8)
+	yh.add_child(Kit.label("Your campaigns", 20, Kit.COL_GOLD))
+	vb.add_child(yh)
+	_continue_box = Kit.vbox(6)
+	_continue_box.custom_minimum_size.x = 560
+	_continue_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vb.add_child(_continue_box)
+	var imp := _menu_button("Import a campaign", show_page.bind("import"))
+	imp.name = "home_Import"
+	vb.add_child(imp)
+	return vb.get_parent().get_parent()
+
+
+const CARD_TITLES := {"west": "The Caribbean, 1650", "rome": "Rome, 280 BC"}
+
+
+## Grand Campaign (online co-op): host, join, this device's online campaigns, the game server.
+func _build_grand(bg: Control) -> Control:
+	var vb := _page_box(bg)
+	vb.add_child(_heading("Grand Campaign"))
+	var intro := Kit.label("Online co-op: each player on their own device, turns resolve when everyone has submitted.", 14, Kit.COL_DIM, true)
+	intro.custom_minimum_size.x = 560
+	vb.add_child(intro)
 	var row := HFlowContainer.new()
 	row.add_theme_constant_override("h_separation", 8)
 	row.add_theme_constant_override("v_separation", 8)
 	row.alignment = FlowContainer.ALIGNMENT_CENTER
+	row.custom_minimum_size.x = 640
 	vb.add_child(row)
-	var srv := _menu_button("Game server", show_page.bind("server"))
-	srv.name = "home_server"
-	srv.tooltip_text = "Which server online play uses (the default one, a friend's or your own), and hosting one from this PC."
-	row.add_child(srv)
-	var cbt := _menu_button("Custom battle", _open_custom)
-	cbt.name = "home_custom"
-	row.add_child(cbt)
-	var sb := _menu_button("Battle sandbox", show_page.bind("sandbox"))
-	sb.name = "home_sandbox"
-	row.add_child(sb)
-	row.add_child(_menu_button("Unit book", _open_book))
-	var cb := _menu_button("Controls", _open_controls)
-	cb.name = "home_controls"
-	row.add_child(cb)
+	for d in [["Host a new grand campaign", "home_Online_co-op", _new_campaign_page.bind(true, "")], ["Join with a code", "home_Join", show_page.bind("join")],
+			["Game server", "home_server", show_page.bind("server")]]:
+		var b := _menu_button(d[0], d[2])
+		b.name = d[1]
+		b.custom_minimum_size = Vector2(190, 52)
+		b.add_theme_font_size_override("font_size", 16)
+		if d[1] == "home_server":
+			b.tooltip_text = "Which server online play uses (the default one, a friend's or your own), and hosting one from this PC."
+		row.add_child(b)
+	_net_line = Kit.label("", 13, Kit.COL_DIM)
+	_net_line.name = "net_line"
+	_net_line.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vb.add_child(_net_line)
+	vb.add_child(Kit.label("Your grand campaigns", 20, Kit.COL_GOLD))
+	_online_box = Kit.vbox(6)
+	_online_box.custom_minimum_size.x = 560
+	_online_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vb.add_child(_online_box)
+	return vb.get_parent().get_parent()
+
+
+## Battles: a custom battle, or the sandbox with its fixed scenarios.
+func _build_battles(bg: Control) -> Control:
+	var vb := _page_box(bg)
+	vb.add_child(_heading("Battles"))
+	vb.add_child(Kit.label("Real-time battles without a campaign.", 14, Kit.COL_DIM))
+	for d in [["Custom battle", "home_custom", _open_custom, "Pick the armies, the ground and the sides; play alone or with a friend online."],
+			["Battle sandbox", "home_sandbox", show_page.bind("sandbox"), "The ready-made battles and settlement sieges, with ground and AI choices."]]:
+		var b := _menu_button(d[0], d[2])
+		b.name = d[1]
+		b.custom_minimum_size = Vector2(420, 56)
+		b.add_theme_font_size_override("font_size", 19)
+		vb.add_child(b)
+		var l := Kit.label(d[3], 13, Kit.COL_DIM, true)
+		l.custom_minimum_size.x = 420
+		vb.add_child(l)
+	return vb.get_parent().get_parent()
+
+
+## Options: display, looks, audio and help. Tests and benchmarks only with --dev.
+func _build_options(bg: Control) -> Control:
+	var vb := _page_box(bg)
+	vb.add_child(_heading("Options"))
+	vb.add_child(Kit.label("Display", 18, Kit.COL_GOLD))
+	var r1 := _opt_row(vb)
 	_size_button = _menu_button("", _cycle_ui_size)
+	_size_button.name = "home_ui_size"
 	_size_button.tooltip_text = "Size of buttons and text (S / M / L)"
-	row.add_child(_size_button)
-	_soldiers_button = _menu_button("", _cycle_soldier_rendering)
-	_soldiers_button.name = "home_soldiers"
-	_soldiers_button.tooltip_text = "How soldiers are drawn. Auto: the fast way, switching by itself to compatible if this device shows no soldiers. Compatible: always the way that works on every device (a little more work per tick)."
-	row.add_child(_soldiers_button)
+	r1.add_child(_size_button)
 	_quality_button = _menu_button("", _cycle_quality)
 	_quality_button.name = "home_quality"
 	_quality_button.tooltip_text = "Graphics. Auto: Low on devices that need the compatible soldiers path or that run a battle slowly, else High. Low: a plainer ground (no noise patches or water animation), no grass, scrub or orchards, a still sea on the map. Takes effect at the next battle; the map on the next open."
-	row.add_child(_quality_button)
+	r1.add_child(_quality_button)
+	_soldiers_button = _menu_button("", _cycle_soldier_rendering)
+	_soldiers_button.name = "home_soldiers"
+	_soldiers_button.tooltip_text = "How soldiers are drawn. Auto: the fast way, switching by itself to compatible if this device shows no soldiers. Compatible: always the way that works on every device (a little more work per tick)."
+	r1.add_child(_soldiers_button)
+	var fs := _menu_button("Fullscreen", _toggle_fullscreen)
+	fs.name = "home_fullscreen"
+	r1.add_child(fs)
+	vb.add_child(Kit.label("Looks", 18, Kit.COL_GOLD))
+	var r2 := _opt_row(vb)
 	_look_button = _menu_button("", _cycle_battle_look)
 	_look_button.name = "home_battle_look"
 	_look_button.tooltip_text = "Battle map look. Diorama: a tabletop miniatures board (splatted ground, rim light and outlines, saturated colour, a bevelled board edge, a light blur at the screen edges on High). Painterly: the softer grounded look. Takes effect at the next battle."
-	row.add_child(_look_button)
+	r2.add_child(_look_button)
 	_style_button = _menu_button("", _cycle_map_style)
 	_style_button.name = "home_map_style"
 	_style_button.tooltip_text = "Campaign map style. Auto: the map table (painted miniatures, banded relief and sea) for the Caribbean, the relief map for Rome. Table / Relief force one. Takes effect at once on the next map."
-	row.add_child(_style_button)
-	row.add_child(_menu_button("Fullscreen", _toggle_fullscreen))
+	r2.add_child(_style_button)
+	_bg_button = _menu_button("", _cycle_menu_bg)
+	_bg_button.name = "home_menu_bg"
+	_bg_button.tooltip_text = "The picture behind this menu. Diorama: the live campaign map. Art: a painted picture. Auto: the diorama on High graphics, the picture on Low."
+	r2.add_child(_bg_button)
+	_emblem_button = _menu_button("", _cycle_menu_emblems)
+	_emblem_button.name = "home_menu_emblems"
+	_emblem_button.tooltip_text = "The settings' emblems: drawn in code, or painted pictures (when the files are installed)."
+	r2.add_child(_emblem_button)
+	vb.add_child(Kit.label("Audio", 18, Kit.COL_GOLD))
 	vb.add_child(_build_audio_row())
+	vb.add_child(Kit.label("Help", 18, Kit.COL_GOLD))
+	var r3 := _opt_row(vb)
+	var cb := _menu_button("Controls", _open_controls)
+	cb.name = "home_controls"
+	r3.add_child(cb)
+	var ub := _menu_button("Unit book", _open_book)
+	ub.name = "home_unit_book"
+	r3.add_child(ub)
+	if MenuPrefs.dev():
+		var tb := _menu_button("Tests and benchmarks", _open_tests)
+		tb.name = "home_tests"
+		r3.add_child(tb)
 	_update_size_button()
 	_update_soldiers_button()
 	_update_quality_button()
 	_update_look_button()
 	_update_style_button()
-	var info := Kit.label("Godot %s, %s renderer" % [Engine.get_version_info()["string"],
-		ProjectSettings.get_setting("rendering/renderer/rendering_method", "?")], 12, Color(1, 1, 1, 0.5))
-	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vb.add_child(info)
+	_update_menu_buttons()
 	return vb.get_parent().get_parent()
 
 
-func _build_continue(bg: Control) -> Control:
-	var vb := _page_box(bg)
-	vb.add_child(Kit.label("Continue a campaign", 22, Kit.COL_GOLD))
-	var scroll := TouchScroll.new()
-	scroll.custom_minimum_size = Vector2(560, 250)
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	vb.add_child(scroll)
-	var both := Kit.vbox(8)
-	both.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(both)
-	_online_box = Kit.vbox(6)
-	_online_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	both.add_child(_online_box)
-	_continue_box = Kit.vbox(6)
-	_continue_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	both.add_child(_continue_box)
-	vb.add_child(_menu_button("< Back", show_page.bind("home")))
-	return vb.get_parent().get_parent()
+func _opt_row(vb: Control) -> HFlowContainer:
+	var row := HFlowContainer.new()
+	row.add_theme_constant_override("h_separation", 8)
+	row.add_theme_constant_override("v_separation", 8)
+	row.custom_minimum_size.x = 720
+	vb.add_child(row)
+	return row
+
+
+func _cycle_menu_bg() -> void:
+	var p := MenuPrefs.stored_background()
+	MenuPrefs.set_background(MenuPrefs.BACKGROUNDS[(MenuPrefs.BACKGROUNDS.find(p) + 1) % MenuPrefs.BACKGROUNDS.size()])
+	_update_menu_buttons()
+	_activate_bg()
+
+
+func _cycle_menu_emblems() -> void:
+	var p := MenuPrefs.stored_emblems()
+	MenuPrefs.set_emblems(MenuPrefs.EMBLEMS[(MenuPrefs.EMBLEMS.find(p) + 1) % MenuPrefs.EMBLEMS.size()])
+	_update_menu_buttons()
+	get_tree().call_group("menu_emblem", "queue_redraw")
+
+
+func _update_menu_buttons() -> void:
+	if _bg_button != null:
+		var p := MenuPrefs.stored_background()
+		_bg_button.text = "Menu picture: " + (p if p != "auto" else "auto (%s)" % MenuPrefs.background())
+	if _emblem_button != null:
+		var e := MenuPrefs.stored_emblems()
+		_emblem_button.text = "Emblems: " + e + (" (no files)" if e == "painted" and Emblem.painted("west") == null and Emblem.painted("rome") == null else "")
+
+
+func _open_tests() -> void:
+	show_page("sandbox")
+	if not _tests_box.visible:
+		_toggle_tests()
+
+
+## Start (or refresh) the background for the current setting; the diorama is built a frame later.
+func _activate_bg() -> void:
+	if _bg == null or not _menu.visible:
+		return
+	_bg.activate(_last_pack())
+	_bg.show_pack(_last_pack())
+
+
+func _menu_visibility() -> void:
+	if _menu.visible:
+		_activate_bg.call_deferred()
+		_update_home()
+	elif _bg != null:
+		_bg.deactivate()
 
 
 func _fill_continue() -> void:
 	for c in _continue_box.get_children():
 		c.queue_free()
-	_fill_online()
 	var list := Saves.list()
-	if not list.is_empty() and _online_box.get_child_count() > 0:
-		_continue_box.add_child(Kit.label("On this device", 15, Kit.COL_GOLD))
-	if list.is_empty() and _online_box.get_child_count() == 0:
+	if list.is_empty():
 		_continue_box.add_child(Kit.label("No saved campaigns yet.", 15, Kit.COL_DIM))
 	for m in list:
 		var h := Kit.hbox(6)
 		var sl := str(m["slot"])
+		h.add_child(Emblem.make(str(m.get("pack", "rome")), 32))
 		var b := _menu_button("%s - %s - %s" % [m.get("name", sl), " & ".join(m.get("factions", [])), m.get("date", "")], Callable())
 		b.pressed.connect(func():
 			# (off at once: a second tap cannot open it twice; the panel follows in the same frame)
@@ -570,15 +934,17 @@ func _fill_online() -> void:
 		c.queue_free()
 	var net := _net()
 	if net == null:
+		_online_box.add_child(Kit.label("Online play needs the game server.", 15, Kit.COL_DIM))
 		return
 	var list: Array = net.local_campaigns()
 	if list.is_empty():
+		_online_box.add_child(Kit.label("No grand campaigns on this device yet.", 15, Kit.COL_DIM))
 		return
-	_online_box.add_child(Kit.label("Online", 15, Kit.COL_GOLD))
 	var badges := {}
 	for e in list:
 		var cid := str(e["id"])
 		var h := Kit.hbox(6)
+		h.add_child(Emblem.make(str(e.get("pack", "rome")), 32))
 		var b := _menu_button("%s - %s" % [e.get("name", cid), _seat_name(e)], _open_online.bind(cid))
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -596,7 +962,7 @@ func _fill_online() -> void:
 		del.pressed.connect(func():
 			if del.text == "Sure?":
 				net.accounts.remove(cid)
-				_fill_continue()
+				_fill_online()
 			else:
 				del.text = "Sure?")
 		h.add_child(del)
@@ -623,7 +989,7 @@ func _build_server(bg: Control) -> Control:
 	vb.add_child(pg)
 	if net != null:
 		pg.setup(net)
-	pg.back_requested.connect(show_page.bind("home"))
+	pg.back_requested.connect(show_page.bind("grand"))
 	return vb.get_parent().get_parent()
 
 
@@ -641,7 +1007,6 @@ func _build_import(bg: Control) -> Control:
 	h.add_child(_menu_button("Paste", func(): Kit.paste_into(_import_edit)))
 	Kit.arm_paste(h.get_child(-1))
 	h.add_child(_menu_button("Import and play", _do_import))
-	h.add_child(_menu_button("< Back", show_page.bind("home")))
 	vb.add_child(h)
 	return vb.get_parent().get_parent()
 
@@ -693,7 +1058,6 @@ func _build_join(bg: Control) -> Control:
 	vb.add_child(_join_info)
 	_join_box = Kit.vbox(8)
 	vb.add_child(_join_box)
-	vb.add_child(_menu_button("< Back", show_page.bind("home")))
 	return vb.get_parent().get_parent()
 
 
@@ -901,23 +1265,55 @@ func _open_online(cid: String) -> void:
 
 
 func show_page(p: String) -> void:
+	if p == "continue":
+		p = "campaign"   # (the old Continue page: its list is Your campaigns now)
+	if not _pages.has(p):
+		p = "home"
 	page = p
 	for k in _pages:
 		(_pages[k] as Control).visible = k == p
-	if p == "continue":
+	if _back_btn != null:
+		_back_btn.visible = p != "home"
+	if _bg != null:
+		_bg.set_dim((0.45 if _phone_layout else 0.0) if p == "home" else 0.66, p == "home")
+	if p == "campaign":
 		_fill_continue()
+	if p == "grand":
+		_fill_online()
+		_check_server()
 	if p == "server" and _server_page != null:
 		_server_page.refresh()
 	if p == "home":
-		_subtitle.text = PackView.subtitle(PackView.load_pref())
+		_update_home()
 		_update_soldiers_button()  # a battle may have switched it (soldier self-check)
 		_update_quality_button()
+		_slide_in(_entries)
 
 
-func _new_campaign_page(online: bool = false) -> void:
+## Back from a sub-page (the button at the top left, Esc, the Android back key).
+func go_back() -> void:
+	if page != "home":
+		show_page(BACK.get(page, "home"))
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event.is_action_pressed("ui_cancel") and _menu.visible and page != "home" and not book.visible \
+			and not controls.visible and custom == null and _new_campaign == null:
+		go_back()
+		get_viewport().set_input_as_handled()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_GO_BACK_REQUEST and _menu != null and _menu.visible and page != "home" \
+			and not book.visible and not controls.visible:
+		go_back()
+
+
+func _new_campaign_page(online: bool = false, pack: String = "") -> void:
 	_menu.visible = false
 	_new_campaign = NewCampaign.new()
 	_new_campaign.online = online
+	_new_campaign.pack_pick = pack
 	_new_campaign.created_online.connect(func(cid, code):
 		_new_campaign.queue_free()
 		_new_campaign = null
@@ -1285,6 +1681,7 @@ func _menu_button(text: String, cb: Callable) -> Button:
 	b.custom_minimum_size = Vector2(150, 42)
 	b.add_theme_font_size_override("font_size", 15)
 	b.focus_mode = Control.FOCUS_NONE
+	MenuStyle.button_style(b)
 	b.pressed.connect(AudioFx.click)
 	if cb.is_valid():
 		b.pressed.connect(cb)
@@ -1367,6 +1764,8 @@ func _end_battle() -> void:
 # --------------------------------------------------------- custom battles ---
 
 func _open_custom() -> void:
+	if _bg != null:
+		_bg.deactivate()   # (the diorama may have switched the content pack: Rome back before the screen builds)
 	if custom == null:
 		custom = CustomBattle.new()
 		custom.back.connect(func():

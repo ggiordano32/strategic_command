@@ -57,6 +57,8 @@ var _pack_buttons := {}  # pack key -> its Setting button
 var _start_button: Button
 var _setting_buttons := {}
 var online := false
+## Open on this setting and hide the Setting row (the title menu's cards).
+var pack_pick := ""
 var _online_box: VBoxContainer
 var _hook_edit: LineEdit
 var _user_edit: LineEdit
@@ -97,6 +99,9 @@ func _ready() -> void:
 	_info = Kit.label("", Kit.FONT, Color.WHITE, true)
 	v.add_child(_info)
 	var pk := PackView.load_pref()
+	if pack_pick != "" and CData.has_pack(pack_pick):
+		pk = pack_pick
+		PackView.save_pref(pk)
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--pack="):
 			pk = a.get_slice("=", 1)  # testing aid
@@ -104,7 +109,7 @@ func _ready() -> void:
 		pk = "rome"
 	PackView.use_pack(pk)
 	var avail := PackView.available()
-	if avail.size() > 1:
+	if avail.size() > 1 and pack_pick == "":
 		var sr0 := Kit.flow(8)
 		sr0.add_child(Kit.label("Setting", Kit.FONT, Kit.COL_DIM))
 		for c in avail:

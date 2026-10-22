@@ -294,7 +294,7 @@ func _menu_lists() -> void:
 	var m = (load("res://game/main.gd") as GDScript).new()
 	root.add_child(m)
 	await _frames(4)
-	m.show_page("continue")
+	m.show_page("campaign")
 	await _frames(4)
 	var sc = m._continue_box.get_parent()
 	while sc != null and not (sc is ScrollContainer):  # the list sits in a box inside the scroll area
