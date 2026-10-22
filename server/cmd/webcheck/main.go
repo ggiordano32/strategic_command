@@ -14,14 +14,19 @@
 //	    the lobby, 600 frames in lockstep with every frame's hash compared over
 //	    the relay, then B leaves and joins again mid-battle (snapshot)
 //	go run ./cmd/webcheck -url http://127.0.0.1:8092 -soldiers [-shots DIR]
-//	    only the last check (works against tools/serve_web.py too)
+//	    only the soldier check (works against tools/serve_web.py too)
+//	go run ./cmd/webcheck -url http://127.0.0.1:8092 -audio [-audio-autoplay] [-audio-query '&audio-exp=master']
+//	    only the sound check (see audio.go; works against tools/serve_web.py too)
 //
 // After the turn flow, A loads ?scenario=skirmish&speed=3 and the battle's
 // soldier self-check (game/soldier_layer.gd, console "SOLDIER_PROBE") must
 // report soldiers drawn in WebGL: the sim can run perfectly with nothing on
 // screen, which no other check notices. Both rendering paths are checked
 // (the data texture and the CPU-fed fallback, ?soldiers=cpu), and the
-// automatic switch between them (see checkSoldiers).
+// automatic switch between them (see checkSoldiers). Last, sound: in a
+// browser without the autoplay flag, one click (desktop) and one tap
+// (phone) must start the page's AudioContext and a test clip that plays
+// (?audio-debug=1, see checkAudio).
 //
 // Exit code 0 when everything passed.
 package main
@@ -126,42 +131,41 @@ func main() {
 	flag.BoolVar(&verbose, "v", false, "print every console line")
 	live := flag.Bool("live", false, "check a live co-op battle instead of the turn flow")
 	soldiersOnly := flag.Bool("soldiers", false, "only check that a battle draws its soldiers")
+	audioOnly := flag.Bool("audio", false, "only check that sound plays after the first input")
+	audioAutoplay := flag.Bool("audio-autoplay", false, "also run the sound check with --autoplay-policy=no-user-gesture-required")
+	audioQuery := flag.String("audio-query", "", "extra URL query for the sound check (diagnosis, e.g. '&audio-exp=master')")
 	flag.Parse()
 
 	// Two browser processes: separate storage, like two devices, and each
 	// tab is the visible one (a hidden tab gets no animation frames, and
 	// Godot's main loop runs on them).
-	newBrowser := func() (context.Context, context.CancelFunc) {
+	// autoplay: --autoplay-policy=no-user-gesture-required (every check but
+	// the sound one, which needs the browser's real gesture rule).
+	newBrowserWith := func(autoplay bool) (context.Context, context.CancelFunc) {
 		opts := append(chromedp.DefaultExecAllocatorOptions[:],
 			chromedp.ExecPath(*chrome),
 			chromedp.Flag("headless", "new"),
 			chromedp.Flag("use-angle", "swiftshader"),
 			chromedp.Flag("enable-unsafe-swiftshader", true),
 			chromedp.Flag("ignore-gpu-blocklist", true),
-			chromedp.Flag("autoplay-policy", "no-user-gesture-required"),
 			chromedp.Flag("disable-background-timer-throttling", true),
 			chromedp.Flag("disable-backgrounding-occluded-windows", true),
 			chromedp.Flag("disable-renderer-backgrounding", true),
 		)
+		if autoplay {
+			opts = append(opts, chromedp.Flag("autoplay-policy", "no-user-gesture-required"))
+		}
 		alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
 		ctx, cancel := chromedp.NewContext(alloc)
 		return ctx, func() { cancel(); cancelAlloc() }
 	}
+	newBrowser := func() (context.Context, context.CancelFunc) { return newBrowserWith(true) }
 	front := func(ctx context.Context) {
 		chromedp.Call(ctx, page.BringToFront, cdp.Empty{})
 		chromedp.Call(ctx, emulation.SetFocusEmulationEnabled, emulation.SetFocusEmulationEnabledParams{Enabled: true})
 	}
 	deadline := time.AfterFunc(*timeout, func() { fmt.Println("timeout"); os.Exit(1) })
 	defer deadline.Stop()
-	ctxA, cancelA := newBrowser()
-	defer cancelA()
-	ca := &console{who: "A"}
-	listen(ctxA, ca)
-	phone := chromedp.EmulateViewport(780, 360, chromedp.EmulateScale(2), chromedp.EmulateMobile, chromedp.EmulateTouch)
-	inv := ""
-	if *invite != "" {
-		inv = "&invite=" + *invite
-	}
 	fails := 0
 	check := func(ok bool, what string) {
 		if ok {
@@ -170,6 +174,32 @@ func main() {
 			fmt.Println("  FAIL " + what)
 			fails++
 		}
+	}
+	audio := func() {
+		checkAudio(newBrowserWith, front, *url, *audioQuery, *shots, false, false, check)
+		checkAudio(newBrowserWith, front, *url, *audioQuery, *shots, false, true, check)
+		if *audioAutoplay {
+			checkAudio(newBrowserWith, front, *url, *audioQuery, *shots, true, false, check)
+			checkAudio(newBrowserWith, front, *url, *audioQuery, *shots, true, true, check)
+		}
+	}
+	if *audioOnly {
+		audio()
+		if fails == 0 {
+			fmt.Println("RESULT: PASS")
+			return
+		}
+		fmt.Printf("RESULT: FAIL (%d)\n", fails)
+		os.Exit(1)
+	}
+	ctxA, cancelA := newBrowser()
+	defer cancelA()
+	ca := &console{who: "A"}
+	listen(ctxA, ca)
+	phone := chromedp.EmulateViewport(780, 360, chromedp.EmulateScale(2), chromedp.EmulateMobile, chromedp.EmulateTouch)
+	inv := ""
+	if *invite != "" {
+		inv = "&invite=" + *invite
 	}
 	t0 := time.Now()
 	front(ctxA)
@@ -232,6 +262,8 @@ func main() {
 	}
 	cancelB()
 	checkSoldiers(ctxA, ca, phone, *url, *shots, check)
+	cancelA()
+	audio()
 	for _, c := range []*console{ca, cb} {
 		for _, l := range c.all {
 			if strings.Contains(l, "EXCEPTION") || strings.Contains(l, "SCRIPT ERROR") {

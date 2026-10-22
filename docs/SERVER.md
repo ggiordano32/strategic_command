@@ -587,7 +587,14 @@ the file; clients only know the domain, so nothing changes for them.
 - `server/cmd/webcheck`: the web export in two headless Chromium processes
   (`?nettest=a` / `?nettest=b&join=CODE`, `game/net/net_selftest.gd`):
   create, join, WebSocket echo from the browser, submit, resolution, the
-  other browser picking it up by long-poll, equal hashes.
+  other browser picking it up by long-poll, equal hashes; then a battle
+  draws its soldiers (both paths), then sound (`audio.go`, `-audio` runs
+  it alone): a browser WITHOUT the autoplay flag opens `?audio-debug=1`,
+  one desktop click and one phone tap; the page's AudioContext must be
+  running, a non-silent signal must reach its destination (an analyser
+  spliced in front of the speakers) and the test horn must play as a
+  sample with an advancing position. `-audio-autoplay` adds the two cases
+  with the flag, `-audio-query '&...'` passes extra URL options.
 
 ## 17. Live battle rooms (milestone 5)
 
