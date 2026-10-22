@@ -2998,7 +2998,7 @@ generation, cover) flow back to the Mediterranean campaign for free.
    raiding / blockading a lane as a second step) are written pack-agnostic so
    Rome's navy uses them as the Caribbean does.
 
-**Tomorrow's list (2026-10-22, agreed; ~10 % of the budget: Sonnet, lean):**
+**Thursday's list (2026-10-22, agreed; starts after 2 pm with a full budget):**
 the relief map's Caribbean city markers (floating names are hard to tap) +
 less fog over the sea off our own coast (csight: own coastal regions see 2
 cells out, ports / forts 3) -> roads for the West (the Camino Real, the
