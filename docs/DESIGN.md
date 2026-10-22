@@ -5460,6 +5460,41 @@ differences far from the origin predate the atlas). Frame time at 4,000
 men is unchanged within noise on this desktop; Graphics Low keeps the
 animation (holding it measured no cheaper).
 
+**Men turn to their march (2026-10-22, owner: "it looks like the units just
+enable a walking motion and then slide to the area as a group"; view only).**
+The drawn heading is no longer always the sim's facing. `SoldierLayer.
+_update_yaw` (once a tick, from the sim's arrays; nothing is written back)
+keeps per man a drawn yaw. A formed man is *large-moving* when he moved at
+least 0.6 m over the last 0.5 s (a ring of 6 position snapshots) and either
+his unit has an order (a move the sim does not snap: more than 12 m from the
+anchor, an attack advance) or his place in the formation is 8 m or more
+away (a big re-form). A large-moving man is drawn along his own movement;
+anyone else at the sim's facing. The drawn yaw chases that target at most 34
+angle units (1024 a turn) a tick, 120 degrees a second, so a unit whose sim
+facing flips (the sim turns a marching unit at once, then to its final facing
+at the last stretch) wheels visibly instead of snapping, and men return to
+the unit's facing smoothly on arrival. Only men still off the sim's facing
+cost anything: a unit with no order, settled, not turning and with no man
+overridden is skipped (a 4,000-man march costs about a millisecond a tick).
+Passing it to the shaders needs no new data: the state word (texture block 5,
+CPU `[1].y`) is `state + 16 x hd`, hd 0 = the sim's facing, else yaw (10
+bits) and this tick's step (7 bits), interpolated like the positions (yaw -
+step x (1 - alpha)). **Short re-forms** (dressing the line, the snaps of 12 m
+or less, the last metres to a place) keep the facing and the shader picks
+the gait from his velocity against his heading: forward as before; a side
+step at 0.7 x the cycle rate (to the left the cycle reversed, so the
+other leg leads); a back step at 0.5 x reversed. The atlas has no strafe
+frames (a side and back set would be new action rows in `spec.json`, new
+poses for every humanoid rig and a repack, a day with the check of every set
+rather than an hour, and with six frames of walk at 12 px a man the shuffle
+reads the same); this uses the walk frames. Both shader variants share the
+code (`soldiers.gdshaderinc`); texture and CPU paths draw identical pixels
+(`tests/soldier_facing_test.gd`, 0 px differ on a marching column and a
+dressing line). Frame time, 1080p vsync off, mean over 8 s from tick 600
+(old / new, two runs): bench_2000 texture 3.06 / 3.13, 3.03 / 3.04 ms, CPU
+3.19 / 3.20, 3.00 / 3.05; bench_4000_city texture 5.33 / 5.54, 5.46 / 5.55,
+CPU 5.57 / 5.47, 5.57 / 5.60: within noise.
+
 **Missile sets (step 1c, 2026-10-13).** Four more sets on the shared
 humanoid rig, each with a pose variant (spec `pose`) replacing the shared
 attack: 5 **Archers** (cloth tunic, coloured cap, quiver, bow in the off

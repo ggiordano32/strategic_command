@@ -33,6 +33,17 @@
 // it moves (packed, or carried), attack frame by its state, wrecked = the
 // death's last frame, abandoned = idle darkened.
 //
+// Drawn heading (view only, soldier_layer.gd `_update_yaw`): the state word
+// (texture block 5, CPU [1].y) is state + 16 x hd. hd 0: the man is drawn at
+// the sim's facing. hd > 0: a formed man whose own movement is large (or whose
+// unit turns) is drawn at his view-side heading, h = hd - 1 = yaw + 1024 x
+// (step + 64): yaw 0..1023 is this tick's heading (1024 a turn, the sim's
+// angle), step the change since the last tick (a yaw-rate capped turn); the
+// shader interpolates yaw - step x (1 - alpha). A formed man who walks
+// sideways or backwards against his heading (re-forming, dressing the line)
+// plays the walk cycle slower (sideways: 0.7 x) and, for steps to the left
+// and backwards (0.5 x), reversed: the atlas has no strafe frames.
+//
 // Sprites: one atlas, SPRITES cells side by side. Each cell maps the local
 // box x (forward) -1.6..4.4 m, y (right) -1.25..1.25 m. The quad drawn per
 // soldier covers only its sprite's rect of that box (soldier_layer.gd
@@ -137,7 +148,8 @@ void tint(inout vec3 add, inout float k, vec3 target, float amt) {
 
 // Atlas men: the action from the state, the frame from the clock and the
 // man's phase; uv in -> atlas uv out, lp = the quad corner in metres.
-void atlas_frame(int set, int st, float moved, bool shoot, float idx, inout vec2 uv, out vec2 lp) {
+void atlas_frame(int set, int st, vec2 vel, float ang, bool shoot, float idx, inout vec2 uv, out vec2 lp) {
+	float moved = length(vel);
 	int act = 0;
 	float pick = 0.0;  // < 0: the death's last frame; 1: its middle frame
 	float fix = -1.0;  // >= 0: this frame (engines shooting)
@@ -175,25 +187,48 @@ void atlas_frame(int set, int st, float moved, bool shoot, float idx, inout vec2
 		fr = min(pick, n - 1.0);
 	} else if (anim_on > 0.5) {
 		float rate = st == 2 ? 1.6 : 1.0;  // routing: running
+		float rev = 1.0;
+		if (act == 1 && st == 0) {
+			// Against his heading: a side step (slower, a left step reversed)
+			// or a back step (slower still, reversed).
+			vec2 fwd = vec2(cos(ang), sin(ang));
+			float along = dot(vel, fwd);
+			if (along < -0.5 * moved) {
+				rate = 0.5;
+				rev = -1.0;
+			} else if (along < 0.5 * moved) {
+				rate = 0.7;
+				if (dot(vel, vec2(-fwd.y, fwd.x)) < 0.0) {
+					rev = -1.0;
+				}
+			}
+		}
 		float phase = fract(idx * 0.6180339);
-		fr = mod(floor(now * 0.1 * action_fps(act) * rate + phase * n), n);
+		float cyc = floor(now * 0.1 * action_fps(act) * rate + phase * n);
+		fr = mod(rev < 0.0 ? n - 1.0 - cyc : cyc, n);
 	}
 	vec2 px = vec2(uv.x * a.z, uv.y * a.w);  // corner in the frame, px
 	lp = (px - b.xy) / 24.0;                 // metres (ATLAS_PX_PER_M)
 	uv = (vec2(a.x + fr * b.z, a.y) + px) / ATLAS_SIZE;
 }
 
-void place(vec2 cur, vec2 prv, float facing, int st, int spr, vec4 r, int side, bool sel, bool fire,
+void place(vec2 cur, vec2 prv, float facing, int hd, int st, int spr, vec4 r, int side, bool sel, bool fire,
 		int set, int pal, bool shoot, float idx, inout vec2 uv, out vec2 pos, out vec4 col, out vec4 look) {
 	bool engine = st >= 6;
 	bool dead = st == 4 || st == 7 || st == 8;
 	vec2 p = mix(prv, cur, alpha) * px_per_unit;
-	float ang = facing * (6.2831853 / 1024.0);
+	float yaw = facing;
+	if (hd > 0 && st == 0) {
+		int hh = hd - 1;
+		int stp = hh / 1024;
+		yaw = float(hh - stp * 1024) - float(stp - 64) * (1.0 - alpha);
+	}
+	float ang = yaw * (6.2831853 / 1024.0);
 	vec3 base = side == 0 ? color_side0 : color_side1;
 	look = vec4(0.0);
 	vec2 lp;
 	if (set > 0) {
-		atlas_frame(set, st, length(cur - prv), shoot, idx, uv, lp);
+		atlas_frame(set, st, cur - prv, ang, shoot, idx, uv, lp);
 	} else {
 		lp = vec2(mix(r.x, r.y, uv.x), mix(r.z, r.w, uv.y));
 		uv = vec2((float(spr) + (lp.x - CELL_X0) / CELL_W) / float(SPRITES),
@@ -262,11 +297,16 @@ void place(vec2 cur, vec2 prv, float facing, int st, int spr, vec4 r, int side, 
 
 void vertex() {
 #ifdef CPU_FED
-	int st = int(MODEL_MATRIX[1].y + 0.5);
+	float sbw = floor(MODEL_MATRIX[1].y + 0.5);  // state + 16 x hd
+	float hdw = floor(sbw / 16.0);
+	int hd = int(hdw);
+	int st = int(sbw - hdw * 16.0);
 	bool want_dead = layer_pass < 0.5;
 #else
 	int i = slot_index(INSTANCE_CUSTOM);
-	int st = fetch_int(5, i);
+	int sb = fetch_int(5, i);  // state + 16 x hd
+	int hd = sb / 16;
+	int st = sb - hd * 16;
 	bool want_dead = layer_pass == 0;
 #endif
 	// 0 formed, 1 fighting, 2 routing, 3 knocked down, 4 dead, 5 off field;
@@ -291,7 +331,7 @@ void vertex() {
 		float lk = floor(INSTANCE_CUSTOM.z + 0.5);  // sprite set + 32 x palette
 		int set = int(mod(lk, 32.0));
 		int pal = int(floor(lk / 32.0));
-		place(MODEL_MATRIX[3].xy, MODEL_MATRIX[0].xy, MODEL_MATRIX[1].x, st, spr, sprite_rect(spr),
+		place(MODEL_MATRIX[3].xy, MODEL_MATRIX[0].xy, MODEL_MATRIX[1].x, hd, st, spr, sprite_rect(spr),
 			side, sel, fire, set, pal, shoot, INSTANCE_CUSTOM.w, uv, pos, col, look);
 		// skip_vertex_transform: pos is already in the layer's (= canvas) space.
 		VERTEX = pos;
@@ -301,7 +341,7 @@ void vertex() {
 		int uidx = fetch_int(6, i);
 		int flags = fetch_int(7, uidx);
 		int spr = clamp(st >= 6 ? bitfield(flags, 256, 16) : bitfield(flags, 16, 16), 0, SPRITES - 1);
-		place(cur, prv, float(fetch_int(4, i)), st, spr, spr_rect[spr], bitfield(flags, 1, 2),
+		place(cur, prv, float(fetch_int(4, i)), hd, st, spr, spr_rect[spr], bitfield(flags, 1, 2),
 			bitfield(flags, 2, 2) != 0, bitfield(flags, 4, 2) != 0,
 			st >= 6 ? bitfield(fetch_int(8, uidx), 1, 32) : bitfield(flags, 4096, 32),
 			bitfield(flags, 131072, 16), bitfield(flags, 8, 2) != 0, float(i), uv, pos, col, look);

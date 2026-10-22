@@ -34,6 +34,8 @@ const Kit := preload("res://game/campaign/ui_kit.gd")
 const CityPreview := preload("res://game/campaign/city_preview.gd")
 const Battle := preload("res://game/battle.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
+const Scenarios := preload("res://sim/scenarios.gd")
+const SoldierLayer := preload("res://game/soldier_layer.gd")
 
 var cs: CampaignScreen
 var rome := CData.faction_index("rome")
@@ -384,6 +386,7 @@ func _process(_d: float) -> bool:
 				return false
 			_check(_eb_exit, "and returns to the campaign")
 			_end_close()
+			_facing_cases()
 			print("RESULT: ", "PASS" if _ok else "FAIL")
 			quit(0 if _ok else 1)
 	return false
@@ -473,3 +476,85 @@ func _field() -> void:
 	cs = CampaignScreen.new()
 	cs.open({"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}, "battle_screen_test5")
 	root.add_child(cs)
+
+
+# The men's drawn heading (view only: game/soldier_layer.gd `_update_yaw`,
+# docs/DESIGN.md "Men turn to their march"). Headless: the view's arrays.
+
+static func _adiff(a: float, b: float) -> float:
+	return fposmod(a - b + 512.0, 1024.0) - 512.0
+
+
+func _facing_run(move_m: Vector2, ticks: int, probe: Callable, settle := 0) -> Dictionary:
+	var sim := BattleSim.new()
+	sim.setup(Scenarios.make("skirmish"), 42)
+	var lay := SoldierLayer.new()
+	root.add_child(lay)
+	lay.setup(sim, 24.0)
+	var u := 0
+	for t in settle:
+		sim.step()
+		lay.upload()
+	var face: int = sim.u_face[u]
+	# (From the formation's anchor: the sim snaps a move of at most 12 m from there.)
+	sim.queue_order(BattleSim.make_move_order(sim.tick, u, sim.u_ax[u] + int(move_m.x * 1024.0), sim.u_ay[u] + int(move_m.y * 1024.0), face,
+			BattleSim.files_to_width(sim.u_files[u], sim.u_type[u]), 0))  # (the width kept: a new width is a big re-form)
+	var base: int = sim.u_slot_base[u]
+	var men := PackedInt32Array()
+	for s in sim.u_alive[u]:
+		men.append(sim.slot_soldier[base + s])
+	var last := {}
+	var st := {"max_step": 0.0, "max_off": 0.0, "moved_max": 0.0, "face": face, "u": u, "men": men}
+	var start := PackedVector2Array()
+	for i in men:
+		start.append(Vector2(sim.pos_x[i], sim.pos_y[i]))
+	for t in ticks:
+		sim.step()
+		lay.upload()
+		for k in men.size():
+			var i := men[k]
+			var y := lay.drawn_yaw(i)
+			if last.has(i):
+				st["max_step"] = maxf(st["max_step"], absf(_adiff(y, last[i])))
+			last[i] = y
+			st["max_off"] = maxf(st["max_off"], absf(_adiff(y, float(sim.facing[i]))))
+			st["moved_max"] = maxf(st["moved_max"], Vector2(sim.pos_x[i], sim.pos_y[i]).distance_to(start[k]) / 1024.0)
+		probe.call(sim, lay, t, st)
+	st["sim"] = sim
+	st["lay"] = lay
+	return st
+
+
+func _facing_cases() -> void:
+	# A long oblique march (58 m): halfway the men face their own march.
+	var mid := {"n": 0, "on": 0, "off_final": 0.0}
+	var probe_long := func(sm, ly, t: int, st: Dictionary) -> void:
+		if t == 120:
+			for i in st["men"]:
+				var dx: float = sm.pos_x[i] - sm.prev_x[i]
+				var dy: float = sm.pos_y[i] - sm.prev_y[i]
+				if dx * dx + dy * dy < 400.0:
+					continue
+				mid["n"] += 1
+				var hd := atan2(dy, dx) * 1024.0 / TAU
+				if absf(_adiff(ly.drawn_yaw(i), hd)) <= 40.0 and absf(_adiff(ly.drawn_yaw(i), float(st["face"]))) > 40.0:
+					mid["on"] += 1
+	var r := _facing_run(Vector2(50, 30), 520, probe_long)
+	var sim: BattleSim = r["sim"]
+	var lay = r["lay"]
+	_check(mid["n"] >= 20 and mid["on"] >= mid["n"] * 8 / 10,
+		"a long march: halfway %d of %d moving men are drawn along their own movement, not the unit's facing" % [mid["on"], mid["n"]])
+	var back := true
+	for i in r["men"]:
+		if sim.state[i] == 0 and absf(_adiff(lay.drawn_yaw(i), float(sim.u_face[0]))) > 2.0:
+			back = false
+	_check(sim.u_order[0] == 0 and sim.u_face[0] == r["face"] and back,
+		"on arrival every man is drawn at the unit's facing again (%d)" % sim.u_face[0])
+	_check(r["max_step"] <= float(lay.yaw_cap) + 0.5,
+		"the yaw-rate cap: no man turns more than %d units (%.0f degrees) a tick; the worst %.1f" % [lay.yaw_cap, lay.yaw_cap * 360.0 / 1024.0, r["max_step"]])
+	lay.queue_free()
+	# A short re-form (8 m to the side, the same facing): the men keep it.
+	var rr := _facing_run(Vector2(0, 8), 45, func(_a, _b, _t, _c): pass, 120)
+	_check(rr["moved_max"] > 3.0 and rr["max_off"] < 0.5,
+		"a short re-form: men moved up to %.1f m and are drawn at the unit's facing throughout (largest difference %.1f units)" % [rr["moved_max"], rr["max_off"]])
+	(rr["lay"] as Node).queue_free()

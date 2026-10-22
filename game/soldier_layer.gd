@@ -56,6 +56,19 @@ const C_IDX := 11    # the instance's index (the man's animation phase)
 const F_SHOOT := 8
 const PR_STEP := 256
 
+## Drawn heading (view only; see soldiers.gdshaderinc and `_update_yaw`).
+## A formed man whose own movement is large is drawn facing it: a man moved
+## YAW_LARGE_D (0.6 m) over the last YAW_WIN ticks (0.5 s) and either his unit
+## has an order or his place is YAW_LARGE_P (8 m) away; the heading is turned
+## at most yaw_cap angle units (1024 a turn) a tick, towards the unit's facing
+## again when the movement is small or over. Shorter movements keep the
+## facing (side or back steps, drawn by the shader).
+const YAW_WIN := 5
+const YAW_CAP := 34              # 120 degrees a second (a tick is 0.1 s)
+const YAW_LARGE_D := 614
+const YAW_LARGE_P := 8192
+const YAW_RING := YAW_WIN + 1
+
 const SETTINGS := "user://settings.cfg"
 
 ## Sprite cells (see soldiers.gdshaderinc): local box x -1.6..4.4 m forward,
@@ -187,6 +200,22 @@ var _pr_t1_seen := PackedInt32Array()
 var _pr_free_tail := PackedInt32Array()   # cap x -1 (t1 of free slots)
 ## Microseconds the last upload() took (both paths; for benchmarks).
 var upload_us := 0
+## The yaw-rate cap in angle units a tick (tests set it; YAW_CAP).
+var yaw_cap := YAW_CAP
+## Large movement turns men to their heading (false: always the sim's facing).
+var follow_heading := true
+
+# Drawn heading state, per soldier / unit (see _update_yaw).
+var _yc := PackedInt32Array()       # soldier: drawn yaw 0..1023 while overridden, else -1
+var _yd := PackedInt32Array()       # soldier: its change since the last tick
+var _yu_seen := PackedInt32Array()  # unit: facing at the last update
+var _yu_ovr := PackedInt32Array()   # unit: men overridden at the last update
+var _ring_x: Array[PackedInt32Array] = []
+var _ring_y: Array[PackedInt32Array] = []
+var _yaw_tick := -1
+var _yaw_sim = null
+var _yaw_out := PackedInt32Array()  # the state words of the last update (same tick: reused)
+var _yaw_users := 0                 # men overridden at the last update
 
 
 func setup(p_sim, p_px_per_m: float) -> void:
@@ -604,7 +633,7 @@ func upload() -> void:
 	var pxs: PackedInt32Array = sim.prev_x
 	var pys: PackedInt32Array = sim.prev_y
 	var fs: PackedInt32Array = sim.facing
-	var sts: PackedInt32Array = sim.state
+	var sts: PackedInt32Array = _update_yaw() if follow_heading else sim.state
 	if sim.n_eng > 0:
 		for e in sim.n_eng:
 			_e_state[e] = _engine_view_state(e)
@@ -633,6 +662,117 @@ func upload() -> void:
 	else:
 		_upload_gpu(xs, ys, pxs, pys, fs, sts, missiles)
 	upload_us = Time.get_ticks_usec() - t0
+
+
+## The state words of the soldiers: state + 16 x the drawn-heading code (see
+## soldiers.gdshaderinc) for the men drawn off the sim's facing. Runs once a
+## tick; a unit with no order, settled, not turning and with no man still
+## overridden costs nothing. View only: reads the sim, writes only its own
+## arrays.
+func _update_yaw() -> PackedInt32Array:
+	var tick: int = sim.tick
+	if sim == _yaw_sim and tick == _yaw_tick and _yaw_out.size() == sim.state.size():
+		return _yaw_out if _yaw_users > 0 else sim.state
+	var n: int = sim.n
+	var nu: int = sim.n_units
+	var gap := tick - _yaw_tick
+	if sim != _yaw_sim or _yc.size() != n or gap < 1 or gap > YAW_WIN:
+		_yaw_sim = sim
+		_yc.resize(n)
+		_yc.fill(-1)
+		_yd.resize(n)
+		_yd.fill(0)
+		_yu_seen = sim.u_face.duplicate()
+		_yu_ovr.resize(nu)
+		_yu_ovr.fill(0)
+		_ring_x.clear()
+		_ring_y.clear()
+		for k in YAW_RING:
+			_ring_x.append(sim.pos_x.duplicate())
+			_ring_y.append(sim.pos_y.duplicate())
+	else:
+		for t in range(_yaw_tick + 1, tick):
+			_ring_x[t % YAW_RING] = sim.prev_x.duplicate()  # (ticks the view skipped)
+			_ring_y[t % YAW_RING] = sim.prev_y.duplicate()
+		_ring_x[tick % YAW_RING] = sim.pos_x.duplicate()
+		_ring_y[tick % YAW_RING] = sim.pos_y.duplicate()
+	_yaw_tick = tick
+	var old_x: PackedInt32Array = _ring_x[posmod(tick - YAW_WIN, YAW_RING)]
+	var old_y: PackedInt32Array = _ring_y[posmod(tick - YAW_WIN, YAW_RING)]
+	var px: PackedInt32Array = sim.pos_x
+	var py: PackedInt32Array = sim.pos_y
+	var fc: PackedInt32Array = sim.facing
+	var st: PackedInt32Array = sim.state
+	var ss: PackedInt32Array = sim.slot_soldier
+	var offx: PackedInt32Array = sim.off_x
+	var offy: PackedInt32Array = sim.off_y
+	var out: PackedInt32Array = st
+	var copied := false
+	var cap := yaw_cap
+	var users := 0
+	for u in nu:
+		var alive: int = sim.u_alive[u]
+		var uf: int = sim.u_face[u]
+		var turned := uf != _yu_seen[u]
+		var march: bool = sim.u_order[u] != 0
+		if alive <= 0 or not (turned or march or sim.u_settled[u] == 0 or _yu_ovr[u] != 0):
+			continue
+		var base: int = sim.u_slot_base[u]
+		var ax: int = sim.u_ax[u]
+		var ay: int = sim.u_ay[u]
+		var useen: int = _yu_seen[u]
+		var cnt := 0
+		for s in alive:
+			var i: int = ss[base + s]
+			var yc: int = _yc[i]
+			if st[i] != 0:
+				if yc >= 0:
+					_yc[i] = -1
+					_yd[i] = 0
+				continue
+			var f: int = fc[i]
+			var cur: int = yc
+			if yc < 0:
+				cur = useen if turned else f
+			var tgt := f
+			var dx: int = px[i] - old_x[i]
+			var dy: int = py[i] - old_y[i]
+			if dx * dx + dy * dy >= YAW_LARGE_D * YAW_LARGE_D:
+				var large := march
+				if not large:
+					var qx: int = ax + offx[base + s] - px[i]
+					var qy: int = ay + offy[base + s] - py[i]
+					large = qx * qx + qy * qy >= YAW_LARGE_P * YAW_LARGE_P
+				if large:
+					tgt = int(roundf(atan2(float(dy), float(dx)) * (1024.0 / TAU))) & 1023
+			var stp := clampi(((tgt - cur + 512) & 1023) - 512, -cap, cap)
+			var nw := (cur + stp) & 1023
+			if stp == 0 and nw == f:
+				if yc >= 0:
+					_yc[i] = -1
+					_yd[i] = 0
+				continue
+			_yc[i] = nw
+			_yd[i] = stp
+			if not copied:
+				copied = true
+				out = st.duplicate()
+			out[i] = 16 * (1 + nw + 1024 * (stp + 64))
+			cnt += 1
+		_yu_ovr[u] = cnt
+		_yu_seen[u] = uf
+		users += cnt
+	_yaw_users = users
+	_yaw_out = out
+	return out
+
+
+## Test aid: the heading man i is drawn at (angle units, 1024 a turn) at
+## interpolation a (1 = this tick), the sim's facing when not overridden.
+func drawn_yaw(i: int, a := 1.0) -> float:
+	if i < _yc.size() and _yc[i] >= 0 and sim.state[i] == 0:
+		return float(_yc[i]) - float(_yd[i]) * (1.0 - a)
+	return float(sim.facing[i])
 
 
 ## An engine's view state (see ENGINE_OK): from its sim state and, while
