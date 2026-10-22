@@ -24,6 +24,7 @@ const Geo := preload("res://game/campaign/map_geo.gd")
 const GroundPalette := preload("res://game/ground_palette.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const Landscape := preload("res://game/campaign/landscape.gd")
+const CLanes := preload("res://campaign/clanes.gd")
 const GeoFields := preload("res://game/campaign/geo_fields.gd")
 const WATER_SHADER := preload("res://game/campaign/water.gdshader")
 const SeaWaves := preload("res://game/campaign/sea_waves.gd")
@@ -55,6 +56,20 @@ const COL_RIVER := Color(0.22, 0.46, 0.78, 0.95)
 const RIVER_W := 2.4
 const COL_ROAD := Color(0.55, 0.4, 0.22, 0.85)
 const ROAD_W := 1.7
+## The table style paints roads as dirt tracks (a soft-edged ochre ribbon, broken by the towns) and the sea
+## lanes as pale dashed curves (2026-10-22).
+const COL_TRACK := Color(0.50, 0.36, 0.17)
+const TRACK_CORE_W := 2.4
+const TRACK_EDGE_W := 4.6
+const TRACK_GAP_VILLAGE := 8.0     # map px cleared round a settlement's centre
+const TRACK_GAP_TOWN := 11.0
+const TRACK_GAP_CITY := 14.0
+const COL_LANE_TABLE := Color(0.93, 0.97, 1.0, 0.62)
+const LANE_TABLE_DASH := 6.0
+const LANE_TABLE_GAP := 5.0
+const LANE_TABLE_W := 1.9
+const LANE_DASH := 4.0
+const LANE_GAP := 3.5
 const COL_HILL := Color(0.25, 0.18, 0.08, 0.2)
 const COL_RIDGE := Color(0.2, 0.13, 0.05, 0.3)
 ## Relief shading (2026-10-10): an elevation field from the grid (ridge 2,
@@ -124,6 +139,10 @@ static var _hill_segs: Array = []
 static var _shade_tex: ImageTexture = null
 static var _shade_ms := -1.0   # bake time, ms (for the record)
 static var _road_lines: Array = []
+static var _track_lines: Array = []   # the road lines cut open at the settlements (table style)
+static var _lane_lines: Array = []    # sea lanes: smoothed polylines (map px) through the sea
+static var _lane_dashes: Array = []   # ... cut into dashes for this line scale / style
+static var _lane_dash_key := ""
 static var _river_lines: Array = []
 static var _cross_marks: Array = []
 static var _gen := 0           # map_geo.gd's gen these caches belong to
@@ -140,6 +159,10 @@ static func _sync_gen() -> void:
 	_hill_segs = []
 	_shade_tex = null
 	_road_lines = []
+	_track_lines = []
+	_lane_lines = []
+	_lane_dashes = []
+	_lane_dash_key = ""
 	_river_lines = []
 	_cross_marks = []
 
@@ -830,8 +853,12 @@ func _draw_coast_body() -> void:
 	# Land routes (dashed) and sea lanes (dotted, light blue).
 	if grid:
 		# Roads, rivers and the crossings over them.
-		for ln in _road_lines:
-			draw_road(_coast_node, ln, lw)
+		if table_on():
+			for ln in _track_lines:
+				draw_track(_coast_node, ln, lw)
+		else:
+			for ln in _road_lines:
+				draw_road(_coast_node, ln, lw)
 		for ln in _river_lines:
 			draw_river(_coast_node, ln, lw)
 		for cm in _cross_marks:
@@ -839,15 +866,9 @@ func _draw_coast_body() -> void:
 				draw_ford(_coast_node, cm[0], cm[1], lw)
 			else:
 				draw_bridge(_coast_node, cm[0], cm[1], lw)
-		# Version 6: armies walk the grid; sea lanes join the port cells (not
-		# in a pack with ships: armies cross on fleets, the lanes are trade data).
-		var px := float(CGrid.cell_px())
-		for pair in ([] if CData.ships_on() else CData.SEA_LANES):
-			var c0 := CGrid.port(CData.region_index(pair[0]))
-			var c1 := CGrid.port(CData.region_index(pair[1]))
-			var p0 := Vector2((CGrid.cx(c0) + 0.5) * px, (CGrid.cy(c0) + 0.5) * px)
-			var p1 := Vector2((CGrid.cx(c1) + 0.5) * px, (CGrid.cy(c1) + 0.5) * px)
-			draw_sea_lane(_coast_node, p0, p1, lw)
+		# Sea lanes (every pack, both styles): curves through the sea between the ports. They are trade routes
+		# in a pack with ships, where armies cross on fleets, and the armies' links in one without.
+		_draw_lanes(_coast_node, lw)
 		return
 	for pair in CData.ROUTES:
 		var p0 := Geo.site(CData.region_index(pair[0]))
@@ -857,6 +878,24 @@ func _draw_coast_body() -> void:
 		var p0 := Geo.site(CData.region_index(pair[0]))
 		var p1 := Geo.site(CData.region_index(pair[1]))
 		draw_sea_lane(_coast_node, p0, p1, lw)
+
+
+## The sea lanes as dashed curves (dashes cut for this line scale and style, cached).
+static func _draw_lanes(ci: CanvasItem, lw: float) -> void:
+	var tbl := table_on()
+	var key := "%d:%.4f:%s" % [_gen, lw, "t" if tbl else "r"]
+	if key != _lane_dash_key:
+		_lane_dash_key = key
+		_lane_dashes = []
+		for ln in _lane_lines:
+			_lane_dashes.append(dash_polyline(ln, (LANE_TABLE_DASH if tbl else LANE_DASH) * lw, (LANE_TABLE_GAP if tbl else LANE_GAP) * lw))
+	for segs in _lane_dashes:
+		if (segs as PackedVector2Array).size() >= 2:
+			if tbl:
+				ci.draw_multiline(segs, Color(0.05, 0.12, 0.2, 0.22), (LANE_TABLE_W + 1.6) * lw, true)
+				ci.draw_multiline(segs, COL_LANE_TABLE, LANE_TABLE_W * lw, true)
+			else:
+				ci.draw_multiline(segs, COL_SEA_LANE, LANE_W * lw, true)
 
 
 ## The steps of preparing the campaign map for the loading panel:
@@ -933,6 +972,8 @@ static func geometry_lines() -> void:
 			pts.append(Vector2((c % w + 0.5) * px, (c / w + 0.5) * px))
 		if pts.size() >= 2:
 			_road_lines.append(_smooth_open(_smooth_open(pts)))
+	_track_lines = _cut_at_towns(_road_lines)
+	_build_lanes()
 	for vi in Geo.RIVERS.size():
 		_river_lines.append(Geo.river_line(vi))
 	var info := Geo.crossings()
@@ -949,6 +990,231 @@ static func geometry_lines() -> void:
 					at = hit
 					break
 		_cross_marks.append([at, (b - a).normalized(), int(cr[2])])
+
+
+## The road polylines with a gap round every settlement (the town models stand on the track).
+static func _cut_at_towns(lines: Array) -> Array:
+	var sites: Array = []
+	for r in CData.region_count():
+		var lvl := int(CData.REGIONS[r]["level"])
+		var rad := TRACK_GAP_CITY if lvl >= CData.CITY else (TRACK_GAP_TOWN if lvl >= CData.TOWN else TRACK_GAP_VILLAGE)
+		var c := CGrid.site(r)
+		var px := float(CGrid.cell_px())
+		sites.append([Vector2((CGrid.cx(c) + 0.5) * px, (CGrid.cy(c) + 0.5) * px), rad * rad])
+	var out: Array = []
+	for ln in lines:
+		var run := PackedVector2Array()
+		for p in ln:
+			var inside := false
+			for st in sites:
+				if p.distance_squared_to(st[0]) < float(st[1]):
+					inside = true
+					break
+			if inside:
+				if run.size() >= 2:
+					out.append(run)
+				run = PackedVector2Array()
+			else:
+				run.append(p)
+		if run.size() >= 2:
+			out.append(run)
+	return out
+
+
+## The sea lanes (CData.SEA_LANES and SEA_LANE_EXITS) as smoothed curves through the sea (campaign/clanes.gd cells).
+static func _build_lanes() -> void:
+	_lane_lines = []
+	for i in CData.SEA_LANES.size():
+		var ln := _resample(lane_curve(CLanes.lane(i), i), 4.0)
+		if ln.size() >= 2:
+			_lane_lines.append(ln)
+	for i in CData.SEA_LANE_EXITS.size():
+		var ln := _resample(lane_curve(CLanes.exit_lane(i), CData.SEA_LANES.size() + i), 4.0)
+		if ln.size() >= 2:
+			_lane_lines.append(ln)
+
+
+static func _cell_pt(c: int) -> Vector2:
+	var px := float(CGrid.cell_px())
+	return Vector2((CGrid.cx(c) + 0.5) * px, (CGrid.cy(c) + 0.5) * px)
+
+
+## True when map point p lies in open sea.
+static func _sea_at(p: Vector2) -> bool:
+	var px := float(CGrid.cell_px())
+	return CLanes.is_open(CGrid.at(int(floor(p.x / px)), int(floor(p.y / px))))
+
+
+## The segment a-b runs through open sea with `clear` map px either side (the
+## first and last `skip` px, at a port, are not checked).
+static func _sea_line(a: Vector2, b: Vector2, clear: float, skip: float) -> bool:
+	var d := b - a
+	var dl := d.length()
+	if dl < 0.001:
+		return true
+	var nrm := Vector2(-d.y, d.x) / dl
+	var n := maxi(int(dl / 5.0), 1)
+	for k in n + 1:
+		var p := a + d * (float(k) / n)
+		if _near_port(p, skip):
+			continue
+		if not _sea_at(p) or not _sea_at(p + nrm * clear) or not _sea_at(p - nrm * clear):
+			return false
+	return true
+
+
+static var _port_pts: Array = []   # the two port points of the lane being smoothed
+
+
+static func _near_port(p: Vector2, skip: float) -> bool:
+	for q in _port_pts:
+		if p.distance_to(q) < skip:
+			return true
+	return false
+
+
+static func _chaikin(pts: PackedVector2Array, passes: int) -> PackedVector2Array:
+	for _k in passes:
+		pts = _smooth_open(pts)
+	return pts
+
+
+## A lane's route cells as a gentle curve (map px) that stays in the sea: the
+## cells' centres cut down to the corners that are needed (straight sight lines
+## over open water), the corners rounded (Chaikin); a lane that comes out
+## straight bends a little to one side (a quadratic arc, the side alternating
+## by lane `idx`, flipped if it would meet land). Falls back to the cells' own
+## line when the curve would touch land.
+static func lane_curve(cells: PackedInt32Array, idx: int) -> PackedVector2Array:
+	var raw := PackedVector2Array()
+	for c in cells:
+		raw.append(_cell_pt(c))
+	if raw.size() < 2:
+		return raw
+	var px := float(CGrid.cell_px())
+	var skip := px * 3.0
+	_port_pts = [raw[0], raw[raw.size() - 1]]
+	var clear := px * 0.45
+	# Sight-line simplification.
+	var pts := PackedVector2Array([raw[0]])
+	var i := 0
+	while i < raw.size() - 1:
+		# as far as the sight line stays in open water
+		# (found by doubling and bisecting: the sight lines are nearly monotonic along a route)
+		var last := raw.size() - 1
+		var lo := i + 1   # visible (adjacent cells always are)
+		var hi := last + 1
+		var stepj := 2
+		while lo + stepj - 1 < last + 1 and lo + stepj - 1 <= last:
+			if _sea_line(raw[i], raw[lo + stepj - 1], clear, skip):
+				lo = lo + stepj - 1
+				stepj *= 2
+			else:
+				hi = lo + stepj - 1
+				break
+		while hi - lo > 1:
+			var mid := (lo + hi) / 2
+			if _sea_line(raw[i], raw[mid], clear, skip):
+				lo = mid
+			else:
+				hi = mid
+		pts.append(raw[lo])
+		i = lo
+	if pts.size() == 2:
+		var a := pts[0]
+		var b := pts[1]
+		var d := b - a
+		var dl := d.length()
+		var nrm := Vector2(-d.y, d.x) / maxf(dl, 0.001)
+		var side := 1.0 if idx % 2 == 0 else -1.0
+		for _try in 2:
+			var ctl := (a + b) * 0.5 + nrm * (dl * 0.16 * side)   # (a quadratic's mid is half the control offset: 8 %)
+			var curve := PackedVector2Array()
+			for k in 25:
+				var t := float(k) / 24.0
+				curve.append(a * ((1.0 - t) * (1.0 - t)) + ctl * (2.0 * t * (1.0 - t)) + b * (t * t))
+			if _curve_ok(curve, clear * 0.5):
+				return curve
+			side = -side
+		if _curve_ok(pts, 0.0):
+			return pts
+		return _chaikin(raw, 2)
+	for passes in [3, 2]:
+		var sm := _chaikin(pts, passes)
+		if _curve_ok(sm, clear * 0.5):
+			return sm
+	for passes in [3, 2]:
+		var sm := _chaikin(raw, passes)
+		if _curve_ok(sm, 0.0):
+			return sm
+	return raw
+
+
+## Every point of the curve lies in open sea (but near the ports), `clear` px to either side.
+static func _curve_ok(curve: PackedVector2Array, clear: float) -> bool:
+	var skip := float(CGrid.cell_px()) * 3.0
+	var step := maxi(curve.size() / 120, 1)
+	var k := 0
+	while k < curve.size():
+		var p := curve[k]
+		if not _near_port(p, skip):
+			if not _sea_at(p):
+				return false
+			if clear > 0.0 and k > 0 and k < curve.size() - 1:
+				var nrm := (curve[k + 1] - curve[k - 1]).orthogonal().normalized() * clear
+				if not _sea_at(p + nrm) or not _sea_at(p - nrm):
+					return false
+		k += step
+	# (a coarse sample can step over a one-cell spit: the segments between samples are short, a few px)
+	return true
+
+
+## The polyline's points spaced `step` px apart along it (the ends kept).
+static func _resample(pts: PackedVector2Array, step: float) -> PackedVector2Array:
+	if pts.size() < 2:
+		return pts
+	var out := PackedVector2Array([pts[0]])
+	var acc := 0.0
+	for k in pts.size() - 1:
+		var a := pts[k]
+		var b := pts[k + 1]
+		var seg := a.distance_to(b)
+		while acc + seg >= step and seg > 0.0001:
+			var t := (step - acc) / seg
+			a = a.lerp(b, t)
+			out.append(a)
+			seg = a.distance_to(b)
+			acc = 0.0
+		acc += seg
+	if out[out.size() - 1].distance_to(pts[pts.size() - 1]) > 0.01:
+		out.append(pts[pts.size() - 1])
+	return out
+
+
+## A polyline cut into dashes: segment pairs for draw_multiline.
+static func dash_polyline(pts: PackedVector2Array, dash: float, gap: float) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	var on := true
+	var left := dash
+	for k in pts.size() - 1:
+		var a := pts[k]
+		var b := pts[k + 1]
+		var seg := a.distance_to(b)
+		if seg < 0.0001:
+			continue
+		var dir := (b - a) / seg
+		var pos := 0.0
+		while pos < seg:
+			var take := minf(left, seg - pos)
+			if on:
+				out.append(a + dir * pos)
+				out.append(a + dir * (pos + take))
+			pos += take
+			left -= take
+			if left <= 0.0001:
+				on = not on
+				left = dash if on else gap
+	return out
 
 
 ## Crossing id at map point p (within `rad` map px of its glyph), -1 none.
@@ -1056,7 +1322,18 @@ static func draw_river(ci: CanvasItem, pts: PackedVector2Array, lw: float) -> vo
 
 
 static func draw_road(ci: CanvasItem, pts: PackedVector2Array, lw: float) -> void:
+	if table_on():
+		draw_track(ci, pts, lw)
+		return
 	ci.draw_polyline(pts, COL_ROAD, ROAD_W * lw, true)
+
+
+## The table style's road: a dirt track, an ochre ribbon with a soft edge.
+static func draw_track(ci: CanvasItem, pts: PackedVector2Array, lw: float) -> void:
+	var c := COL_TRACK
+	ci.draw_polyline(pts, Color(c.r, c.g, c.b, 0.14), TRACK_EDGE_W * lw, true)
+	ci.draw_polyline(pts, Color(c.r, c.g, c.b, 0.26), (TRACK_EDGE_W - 1.2) * lw, true)
+	ci.draw_polyline(pts, Color(c.r, c.g, c.b, 0.8), TRACK_CORE_W * lw, true)
 
 
 ## A ford: the river broken by three pale stepping stones along the step.
@@ -1073,7 +1350,15 @@ static func draw_bridge(ci: CanvasItem, p: Vector2, dir: Vector2, lw: float) -> 
 	ci.draw_line(p - half, p + half, COL_BRIDGE.lightened(0.3), 3.2 * lw, true)
 
 
-## A sea lane (dotted, light blue) between two ports.
+## A sea lane (dashed, pale) as a polyline through the sea.
+static func draw_sea_lane_line(ci: CanvasItem, pts: PackedVector2Array, lw: float) -> void:
+	var tbl := table_on()
+	var segs := dash_polyline(pts, (LANE_TABLE_DASH if tbl else LANE_DASH) * lw, (LANE_TABLE_GAP if tbl else LANE_GAP) * lw)
+	if segs.size() >= 2:
+		ci.draw_multiline(segs, COL_LANE_TABLE if tbl else COL_SEA_LANE, (LANE_TABLE_W if tbl else LANE_W) * lw, true)
+
+
+## A sea lane (versions 1-5: straight, dotted, light blue) between two ports.
 static func draw_sea_lane(ci: CanvasItem, p0: Vector2, p1: Vector2, lw: float) -> void:
 	ci.draw_dashed_line(p0, p1, COL_SEA_LANE, LANE_W * lw, SEA_LANE_DASH * lw, true)
 

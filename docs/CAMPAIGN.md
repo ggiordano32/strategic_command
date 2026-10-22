@@ -1428,6 +1428,51 @@ Static data and rules only: no state change, `CState.VERSION` stays 6
   `MapView.crossing_near(p, rad)` finds the crossing at a map point (for a
   tap hint: not wired into the campaign screen yet).
 
+### West roads, sea lanes as routes, the detour rule (2026-10-22, still format 6)
+
+Owner: "add actual roads for any road cells that we have ... there would have been actual trade routes"; "the pathing
+is not exactly intuitive ... the army goes east through Veracruz before moving west to Orizaba"; "add ocean trade
+routes to both maps". Static data and one search rule; the state format stays 8 (the rules hash changes).
+
+- **West roads** (`game/campaign/geo_west.gd` `ROADS`, same form as Rome's, baked by `tools/campaign_grid.gd --pack=west`
+  into `west_grid_data.gd`, same checks: roads on land, over a river only at a crossing, landmasses connected): 25 roads,
+  445 road cells (cost 6): the Camino Real Veracruz - Orizaba - Puebla / Mexico, the Tampico road, the Tehuantepec and
+  Campeche roads to Merida and Valladolid, the Honduran road Trujillo - Comayagua - Granada, the Mosquito coast track
+  Trujillo - Cabo Gracias - Bluefields, the isthmus trail Portobelo - Panama - Veraguas, Cartagena - Mompox (the
+  Magdalena at its ford), Cartagena - Santa Marta, Maracaibo - Coro - La Guaira, the Camino Real of Cuba Havana - Santiago,
+  Hispaniola's Santo Domingo - Cibao - Port-de-Paix - Leogane - Santo Domingo ring, Jamaica's Port Royal - Sevilla, Puerto
+  Rico's San Juan - San German, the Florida road St Augustine - Apalachee - Pensacola, the Gulf coast road to New Orleans
+  and the Natchez road. The polylines were authored as waypoints and then traced over the grid (cheapest land path
+  between them, 4-connected) so each stays on land and on one bank; the file keeps the traced corners (the waypoint
+  lists are not kept). Some roads run off the end of the playable land (towards Mexico City): only their region cells
+  are road cells, the view draws the line to the grid edge.
+- **Sea lanes as routes** (`campaign/clanes.gd`, integer, no state): `CLanes.lane(i)` / `exit_lane(i)` return the sea
+  cells a lane sails: A* over open-sea cells (a sea of 300+ cells: not a lake or a lagoon), the cost 10 / 14 a step plus
+  a penalty next to land (20, 10, 4 at 1, 2, 3 cells), diagonals only between two open cells, ties by cell index; the
+  port cells (land, some touch the sea only at a corner or lie a cell or two inland: New Orleans, Pensacola) join the
+  route through the nearest open-sea cell. `CData.SEA_LANE_EXITS` ([port key, grid x, grid y]; optional, Rome has none)
+  adds a lane from a port to the open sea at the map's edge: the West's Florida channel, Havana out to the Atlantic.
+  West `SEA_LANES` gained Havana - Portobelo, Havana - Cartagena, Havana - Santo Domingo, Port Royal - Santo Domingo and
+  Cartagena - Santo Domingo (43 lanes with the exit; the West's armies still cross only on fleets, so the lanes are
+  trade-route data and `CData.adjacent` kind 1). The rules for raiding or blockading a lane are a later step and read
+  the same cells (`CLanes`), so Rome's future navy can too.
+- **The detour rule** (`CGrid.find_path`, integer, deterministic; `CGrid.detour_rule` is a static var so tests can
+  measure with and without): the cheapest path is kept only if it is at most `DETOUR_PCT` (25) % longer than the direct
+  path (the fewest cells as octile length, 10 a straight step and 14 a diagonal, ties by the cheaper; `_shortest`) or
+  it arrives a whole turn sooner than the direct path (turn of arrival, not cost); otherwise the army walks the
+  direct path (`_schedule` gives its turn / points table). A path whose length is within the bound of the octile
+  distance is accepted without the second search (almost every call), a path using a sea link is left alone. The
+  turn of arrival can never get later. The march preview already drew the actual path cells
+  (`campaign_screen.path_entry`, the overlay's points per cell), not a line: no change there.
+- **View** (`map_view.gd`): on the relief map roads stay thin tan lines; on the table map they are dirt tracks (an ochre
+  ribbon, a soft double edge, broken by a gap round every settlement: 8 / 11 / 14 px for village / town / city);
+  sea lanes are dashed pale curves in both styles and both packs (relief: the dotted light blue, table: a longer
+  white dash with a faint shadow), the route cells cut down to the sight lines over open water, rounded (Chaikin), a
+  straight one bent a little (a quadratic arc, the side alternating by lane); a curve that would touch land falls back
+  to the cells' own line. Key rows: Road (the style's own sample), Sea lane (also in the West, where it reads as the
+  ports' trade routes).
+- **Measured**: see docs/STATUS.md (changed routes, turns before / after, the pins).
+
 ### Real geography (2026-10-10, still format 6)
 
 The overworld is fitted to public-domain data: elevation from ETOPO 2022
@@ -2396,8 +2441,18 @@ cell (Chebyshev) round each army, 2 when the army stands on a hill / ridge
 cell (`CGrid.cell_terrain` `K_HILL` / `K_RIDGE`); 1 round each fleet (the
 troops aboard see nothing more); 1 round the city of a character not
 riding with an army; 2 round each settlement it owns (sea cells too: a
-coastal city watches its waters). Sea cells have no region, so the sea is
-seen only from fleets and cities; an unseen sea cell hides fleets.
+coastal city watches its waters). **Coasts (2026-10-22, owner: "less fog off
+our own coast"; no `CState.VERSION` bump, sight is computed):** every owned
+*coastal* region (a cell of it with a sea cell among its 8 neighbours) sees
+the sea cells within `COAST_R` 2 (Chebyshev) of any of its coast cells, its
+own sea; `COAST_PORT_R` 3 for a region with a harbour (`CFleet.harbour`, a
+pack with ships) or walls 3 (a fort). Sea cells only (never the land of
+another owner), so an enemy's coast, an inland region and the sea beyond
+these radii are unchanged; the halo of a region is static grid data, built
+once per region and radius (`CSight._halo`). The memory markers follow the
+sight; Rome's 20-turn format-8 golden did not move. Sea cells have no
+region, so the sea is seen only from fleets, cities and these coasts; an
+unseen sea cell hides fleets.
 
 **Queries** (the view's; each takes an optional last `vis`, the caller's
 cached `visible(st, f)`, to skip the memo in a loop): `region_visible`

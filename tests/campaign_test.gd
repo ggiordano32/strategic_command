@@ -57,6 +57,7 @@ extends SceneTree
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
 const CRules := preload("res://campaign/crules.gd")
+const CLanes := preload("res://campaign/clanes.gd")
 const CTurn := preload("res://campaign/cturn.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
@@ -68,6 +69,7 @@ const CAI := preload("res://campaign/cai.gd")
 const CChars := preload("res://campaign/cchars.gd")
 const CoopSession := preload("res://game/net/coop_session.gd")
 const Sight := preload("res://campaign/csight.gd")
+const CFleet := preload("res://campaign/cfleet.gd")
 const CTown := preload("res://campaign/ctown.gd")
 
 var fails := 0
@@ -138,6 +140,8 @@ func _init() -> void:
 	_ai_skilled()
 	_chars()
 	_west_raid_defence()
+	_detour_rule()
+	_west_roads()
 	_sight()
 	_town_plan()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
@@ -4118,6 +4122,177 @@ func _west_raid_defence() -> void:
 	CData.use_pack("rome")
 
 
+## "x: cost" per cell of a path from `start`, and its total step cost.
+func _path_text(start: int, path: Array) -> String:
+	var txt := ""
+	var cost := 0
+	var prev := start
+	for c in path:
+		cost += CGrid.step_cost(prev, int(c))
+		txt += "(%d,%d)%d%s " % [CGrid.cx(int(c)), CGrid.cy(int(c)), CGrid.cost(int(c)), "R" if CGrid.is_road(int(c)) else ""]
+		prev = int(c)
+	return "%d cells, cost %d: %s" % [path.size(), cost, txt]
+
+
+## The pathing detour rule (owner 2026-10-22, West, New Spain: "an army north-west of Veracruz ... send it to
+## siege Orizaba, the army goes east through Veracruz before moving west"). A route may be at most
+## CGrid.DETOUR_PCT longer than the direct path unless the longer one arrives a whole turn sooner. On the
+## grid before the West roads the cheapest route had no such loop from the campaign's start cell; the roads
+## made it: the Tampico road runs down to Veracruz's gate and the Camino Real west from it, so a road-hugging
+## route from the north-west beside the town is far cheaper than the direct line over the ridge cells.
+func _detour_rule() -> void:
+	CData.use_pack("west")
+	var ns := _f("new_spain")
+	var vc := CData.region_index("veracruz")
+	var st := CState.new_campaign("t", 77, [ns], {}, [], "west")
+	var goal := CGrid.site(CData.region_index("orizaba"))
+	var vsite := CGrid.site(vc)
+	var a: Dictionary = {}
+	for q in CState.armies_of(st, ns):
+		if int(q["r"]) == vc:
+			a = q
+	# The campaign's start: New Spain's Veracruz army walks west.
+	var home := CState.cell(a)
+	var ph := CRules.plan_path(st, a, goal)
+	var xmax := 0
+	for c in ph["path"]:
+		xmax = maxi(xmax, CGrid.cx(int(c)))
+	_check(not ph.has("why") and xmax <= CGrid.cx(home) and (ph["path"] as Array).size() <= 6,
+		"West start: the Veracruz army reaches Orizaba without leaving its west side (%s)" % _path_text(home, ph["path"]))
+	# North-west of Veracruz: the road loop and the rule.
+	CState.place(a, CGrid.at(8, 58))
+	var start := CState.cell(a)
+	CGrid.detour_rule = false
+	var p0 := CRules.plan_path(st, a, goal)
+	CGrid.detour_rule = true
+	var p1 := CRules.plan_path(st, a, goal)
+	print("DETOUR  no rule: turns %d, %s" % [int(p0["t"].back()) + 1, _path_text(start, p0["path"])])
+	print("DETOUR  rule:    turns %d, %s" % [int(p1["t"].back()) + 1, _path_text(start, p1["path"])])
+	var near0 := false
+	var near1 := false
+	for c in p0["path"]:
+		near0 = near0 or CGrid.cheb(int(c), vsite) <= 2
+	for c in p1["path"]:
+		near1 = near1 or CGrid.cheb(int(c), vsite) <= 2
+	_check(near0 and not near1, "West (8,58) -> Orizaba: the cheapest route skirts Veracruz's gate, the rule's does not")
+	_check(int(p1["t"].back()) <= int(p0["t"].back()), "West (8,58) -> Orizaba: no later with the rule (%d, was %d)" % [int(p1["t"].back()), int(p0["t"].back())])
+	_check(CGrid._path_len(start, p0["path"]) * 100 > CGrid._path_len(start, p1["path"]) * (100 + CGrid.DETOUR_PCT),
+		"West (8,58) -> Orizaba: the cheapest route was a detour of more than %d %% (%d against %d)" % [CGrid.DETOUR_PCT,
+		CGrid._path_len(start, p0["path"]), CGrid._path_len(start, p1["path"])])
+	# 40 random army routes per pack (the same every run): how many change, the turns before and after.
+	var kept := 0
+	var worse := 0
+	for pk in ["west", "rome"]:
+		CData.use_pack(pk)
+		var seed_v := 20261022 + (0 if pk == "west" else 7)
+		var land: Array = []
+		for c in CGrid.count():
+			if CGrid.passable(c):
+				land.append(c)
+		var n := land.size()
+		var routes := 0
+		var changed := 0
+		var sum_t0 := 0
+		var sum_t1 := 0
+		var sum_c0 := 0
+		var sum_c1 := 0
+		var sum_l0 := 0
+		var sum_l1 := 0
+		var tries := 0
+		while routes < 40 and tries < 4000:
+			tries += 1
+			seed_v = (seed_v * 1103515245 + 12345) & 0x7fffffff
+			var c0: int = land[(seed_v >> 4) % n]
+			seed_v = (seed_v * 1103515245 + 12345) & 0x7fffffff
+			var g: int = land[(seed_v >> 4) % n]
+			seed_v = (seed_v * 1103515245 + 12345) & 0x7fffffff
+			var full: int = [100, 150, 200][(seed_v >> 4) % 3]
+			# (army routes: a march of 6-25 cells to a cell of the same landmass)
+			if not CGrid.passable(c0) or not CGrid.passable(g) or CGrid.cheb(c0, g) < 6 or CGrid.cheb(c0, g) > 25 \
+					or int(CData.REGIONS[CGrid.region(c0)]["land"]) != int(CData.REGIONS[CGrid.region(g)]["land"]):
+				continue
+			CGrid.detour_rule = false
+			var r0 := CGrid.find_path(c0, g, full, full, PackedByteArray(), PackedInt32Array(), false, 12, 6000)
+			CGrid.detour_rule = true
+			var r1 := CGrid.find_path(c0, g, full, full, PackedByteArray(), PackedInt32Array(), false, 12, 6000)
+			if r0.is_empty() or (r0["path"] as Array).is_empty() or r1.is_empty():
+				continue
+			routes += 1
+			var t0: int = int(r0["t"].back()) + 1
+			var t1: int = int(r1["t"].back()) + 1
+			sum_t0 += t0
+			sum_t1 += t1
+			sum_l0 += (r0["path"] as Array).size()
+			sum_l1 += (r1["path"] as Array).size()
+			var cs0 := 0
+			var cs1 := 0
+			var pv := c0
+			for c in r0["path"]:
+				cs0 += CGrid.step_cost(pv, int(c))
+				pv = int(c)
+			pv = c0
+			for c in r1["path"]:
+				cs1 += CGrid.step_cost(pv, int(c))
+				pv = int(c)
+			sum_c0 += cs0
+			sum_c1 += cs1
+			if r0["path"] != r1["path"]:
+				changed += 1
+				if t1 < t0:
+					kept += 1
+			if t1 > t0:
+				worse += 1
+		CGrid.detour_rule = true
+		print("DETOUR %s: %d random routes, %d changed (%d of them keep a detour that saves a turn); mean turns %.2f -> %.2f; mean cells %.1f -> %.1f; mean cost %.0f -> %.0f" % [
+			pk, routes, changed, kept, float(sum_t0) / routes, float(sum_t1) / routes, float(sum_l0) / routes, float(sum_l1) / routes,
+			float(sum_c0) / routes, float(sum_c1) / routes])
+		_check(routes == 40 and sum_t1 <= sum_t0, "%s: 40 random routes, the rule never makes the mean turns worse (%d -> %d)" % [pk, sum_t0, sum_t1])
+	_check(worse == 0, "no route arrives later with the detour rule (%d)" % worse)
+	CGrid.detour_rule = true
+	CData.use_pack("rome")
+
+
+## The West's roads (2026-10-22): baked from geo_west.gd ROADS like Rome's: a road cell costs GRID_ROAD, the
+## Camino Real runs Veracruz to Orizaba and on, the isthmus trail and the Cuban road exist, no road on the sea,
+## the sea lanes are routes through the sea (campaign/clanes.gd) and none crosses land.
+func _west_roads() -> void:
+	CData.use_pack("west")
+	var roads := 0
+	for c in CGrid.count():
+		if CGrid.is_road(c):
+			roads += 1
+			if not CGrid.passable(c) or CGrid.cost(c) > CData.GRID_ROAD:
+				_check(false, "West road cell %d is land and costs at most %d" % [c, CData.GRID_ROAD])
+	print("West road cells: %d" % roads)
+	_check(roads >= 300, "the West has roads (%d road cells)" % roads)
+	var vc := CData.region_index("veracruz")
+	var orz := CData.region_index("orizaba")
+	_check(CGrid.is_road(CGrid.site(vc)) and CGrid.is_road(CGrid.site(orz)), "the Camino Real joins Veracruz and Orizaba")
+	for pair in [["portobelo", "veraguas"], ["havana", "santiago_de_cuba"], ["santo_domingo", "port_de_paix"], ["port_royal", "sevilla_jamaica"],
+			["st_augustine", "apalachee"], ["merida", "campeche"], ["cartagena", "mompox"]]:
+		_check(CGrid.is_road(CGrid.site(CData.region_index(pair[0]))) and CGrid.is_road(CGrid.site(CData.region_index(pair[1]))),
+			"West roads reach %s and %s" % [pair[0], pair[1]])
+	var lanes := 0
+	var bad := 0
+	for i in CData.SEA_LANES.size() + CData.SEA_LANE_EXITS.size():
+		var cells := CLanes.lane(i) if i < CData.SEA_LANES.size() else CLanes.exit_lane(i - CData.SEA_LANES.size())
+		_check(cells.size() >= 2, "West sea lane %d has a route through the sea" % i)
+		lanes += 1
+		for k in range(1, cells.size() - 1):
+			if CGrid.region(cells[k]) != -1:
+				bad += 1
+	_check(bad == 0, "no West sea lane crosses land (%d lanes)" % lanes)
+	CData.use_pack("rome")
+	var rbad := 0
+	for i in CData.SEA_LANES.size():
+		var cells := CLanes.lane(i)
+		_check(cells.size() >= 2, "Rome sea lane %d has a route through the sea" % i)
+		for k in range(1, cells.size() - 1):
+			if CGrid.region(cells[k]) != -1:
+				rbad += 1
+	_check(rbad == 0, "no Rome sea lane crosses land")
+
+
 ## Fog of war (format 8, campaign/csight.gd, docs/CAMPAIGN.md "Fog of war").
 func _sight() -> void:
 	var rome := _f("rome")
@@ -4315,7 +4490,118 @@ func _sight() -> void:
 	_check(fl_ok, "West: every fleet is in its own side's sight")
 	var wp := _play(CState.copy(w), 4, 2)
 	_check(CState.state_hash(wp) == CState.state_hash(_play(CState.copy(w), 4, -1)) and _plain(wp), "West: 4 turns with the fog, deterministic, plain data")
+	_sight_coast("west", 0)
 	CData.use_pack("rome")
+	_sight_coast("rome", rome)
+
+
+## Coasts (format 8): the sea cells within COAST_R of an owned region's coast cells, COAST_PORT_R with a harbour or walls 3.
+## The faction owns one region only (every other region of it given to the next faction, armies / fleets / characters of
+## the faction removed), so what it sees is that region, its land neighbours, CITY_R round the town and its coast.
+func _sight_coast(pack: String, f: int) -> void:
+	CData.use_pack(pack)
+	var st := CState.new_campaign("coast", 4242, [f], {}, [], pack)
+	var g := (f + 1) % CState.nf()
+	var coastal := -1
+	var port := -1
+	var inland := -1
+	for r in CData.region_count():
+		var h2 := Sight._halo(r, 2)
+		var h3 := Sight._halo(r, 3)
+		var has_port: bool = CData.ships_on() and CFleet.harbour(r) >= 0
+		if h2.is_empty():
+			if inland < 0:
+				inland = r
+			continue
+		# a sea cell two cells off the coast that is further than CITY_R from the town, and one 3 off
+		if coastal < 0 and not has_port and CState.walls(st, r) < 3 and _far_cell(h2, r) >= 0 and _far_cell(_diff(h3, h2), r) >= 0:
+			coastal = r
+		if port < 0 and has_port and _far_cell(h2, r) >= 0 and _far_cell(_diff(h3, h2), r) >= 0:
+			port = r
+	_check(inland >= 0, "%s: there is an inland region (no coast cells)" % pack)
+	var cases: Array = []
+	if coastal >= 0:
+		cases.append([coastal, false])
+	if port >= 0:
+		cases.append([port, true])
+	_check(not cases.is_empty(), "%s: a coastal region to test (%d), a port (%d)" % [pack, coastal, port])
+	for cs in cases:
+		var r: int = cs[0]
+		var one := _only_region(st, f, g, r)
+		var vis := Sight.compute(one, f)
+		var h2 := Sight._halo(r, 2)
+		var h3 := Sight._halo(r, 3)
+		var two := _far_cell(h2, r)
+		var three := _far_cell(_diff(h3, h2), r)
+		_check(vis[two] == 1, "%s: %s %s sees the sea 2 cells off its coast (cell %d)" % [pack, "port" if cs[1] else "coastal region", CData.REGIONS[r]["key"], two])
+		if cs[1]:
+			_check(vis[three] == 1, "%s: a port sees 3 cells off its coast (cell %d)" % [pack, three])
+		else:
+			_check(vis[three] == 0, "%s: a coastal region does not see 3 cells off (cell %d)" % [pack, three])
+			_set_walls(one, r, 3)
+			var fort := Sight.compute(one, f)
+			_check(fort[three] == 1, "%s: walls 3 (a fort) sees 3 cells off its coast" % pack)
+		# the enemy's coast is unchanged: nothing of the sea off another owner's region (far from ours) is seen
+		var dark := 0
+		var lit := 0
+		for q in CData.region_count():
+			if q == r or CState.owner(one, q) == f or _near(r, q):
+				continue
+			for c in Sight._halo(q, 2):
+				if CGrid.cheb(c, CGrid.site(r)) > 8:
+					if vis[c] == 1:
+						lit += 1
+					else:
+						dark += 1
+		_check(lit == 0 and dark > 0, "%s: the sea off the others' coasts stays dark (%d dark, %d lit)" % [pack, dark, lit])
+	if inland >= 0:
+		var one := _only_region(st, f, g, inland)
+		var vis := Sight.compute(one, f)
+		var far := true
+		for c in vis.size():
+			if vis[c] == 1 and CGrid.region(c) == -1 and CGrid.cheb(c, CGrid.site(inland)) > Sight.CITY_R:
+				far = false
+		_check(far, "%s: an inland region sees no sea beyond its town's CITY_R" % pack)
+
+
+## A sea cell of cells that is more than CITY_R from region r's settlement (-1 none).
+func _far_cell(cells: PackedInt32Array, r: int) -> int:
+	for c in cells:
+		if CGrid.cheb(c, CGrid.site(r)) > Sight.CITY_R + 1:
+			return c
+	return -1
+
+
+func _diff(a: PackedInt32Array, b: PackedInt32Array) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	for c in a:
+		if b.find(c) < 0:
+			out.append(c)
+	return out
+
+
+## Regions r and q touch by land (or are the same).
+func _near(r: int, q: int) -> bool:
+	for e in CData.adjacent(r):
+		if int(e[0]) == q:
+			return true
+	return false
+
+
+## A copy of st where faction f owns region r only (its other regions go to g) and has no armies, fleets or characters.
+func _only_region(st: Dictionary, f: int, g: int, r: int) -> Dictionary:
+	var one := CState.copy(st)
+	for q in CData.region_count():
+		if q != r and CState.owner(one, q) == f:
+			one["regions"][q]["owner"] = g
+	one["regions"][r]["owner"] = f
+	for key in ["armies", "fleets", "chars"]:
+		var keep: Array = []
+		for e in one.get(key, []):
+			if int(e["f"]) != f:
+				keep.append(e)
+		one[key] = keep
+	return one
 
 
 # ------------------------------------- the shared town plan ---

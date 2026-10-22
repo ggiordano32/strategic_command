@@ -116,8 +116,9 @@ original art.
 
 Owner's decisions: a player sees, Rome 2 style, its own regions and their
 land neighbours, 1 cell round its armies (2 from a hill or ridge), fleets
-and agents in a city, 2 round its cities (their waters too); a team shares
-its sight. Out of sight the map shows the **last known** owner and faded
+and agents in a city, 2 round its cities (their waters too), and (2026-10-22) the sea
+within 2 cells of the coast of each coastal region of its own, 3 for a region with a
+harbour or walls 3; a team shares its sight. Out of sight the map shows the **last known** owner and faded
 markers of the armies and fleets last seen there (with the turn), never
 the live pieces, and no list, panel, battle, raid warning or chronicle
 line tells of what is unseen. The AI sees everything. Rules half:
@@ -5495,6 +5496,33 @@ Teague) are wired in as view-only art, nothing in `campaign/` or `sim/`:
 - **Export.** `assets/characters/*` (the 4.7 MB glb meshes) is in every export
   preset's exclude filter; only the PNGs ship (about 0.25 MB imported).
 
+### Overworld settlement markers and banners at towns (2026-10-22)
+
+- **Every settlement has a marker that is its tap target.** Owner: "not all of the cities have icons in the Caribbean, some
+  are just floating names, which makes them really hard to click." The relief style always drew `draw_site` (a disc in
+  the owner's colour, a white rim, a wall ring for walls 1-3), so the floating names were the **table style's**: from
+  zoom 0.55 the town models replace the icons, and the small or sparse ones (a level 0-1 hamlet of 8-14 pieces, 45-90
+  world px wide, a hut at zoom 0.6) were a name over a few huts. Now the overworld overlay draws the disc over a model
+  that is `Minis.weak(zoom, r)` (under 96 px wide on screen or 20 pieces or fewer; the model's piece count is in the
+  town layer's `info`) at 85 % size, and in the relief style as before at `_site_rad` (the level's radius, at least
+  4.5 / 6 / 7.5 px). A settlement with a harbour (`CFleet.harbour`) carries a small anchor mark beside the disc
+  (`draw_harbour_mark`). The names stay above the marker. `settlement_at` takes a tap within 22 px of the anchor (was
+  16), except within 30 % of a cell's width of the centre of a ring cell (a march or a siege camp laid on a cell next
+  to the town stays that cell's tap); the model's ellipse still takes taps over big models.
+- **Banners at towns.** A garrison's banner (and an army standing at a model) must stay with its own town; the first
+  version put Veracruz's new 2-stack far west of the town, on the besiegers of Orizaba. `map_overlay.gd`
+  `_army_positions6` places in three passes with one list of taken rectangles (banners and the five tents of every
+  siege camp): field armies on their cells; then the armies of each town, a stack of banners, on a 24-spot ring at the
+  town's footprint (the model's built-up core, 70 % x 85 % of its rectangle; in the relief style the marker with its
+  walls) plus a banner, keeping the spots wholly on land and free, scoring the one furthest from the nearest other
+  town (the side away from neighbours), not on the harbour side, not inside another town's model or siege ring, not
+  over a besieger's own cell, beside the town rather than above it (the relief style tries the spot under the marker
+  first, as before); with none free the stack goes under the model and lower by a banner while taken; then each
+  besieger's group on its cell of the ring, and when that is taken pushed along the ring and out along up to three
+  more rings (a banner's height apart), the nearest free spot wholly on land (any free spot when the land has none).
+  `tests/banner_test.gd` (West table, Rome relief; every settlement, a garrison of 3 and 1 / 3 / 8 besiegers, two zooms:
+  no two banners overlap, the garrison touches its footprint, the besiegers keep to the rings).
+
 ## 9. Milestones
 
 1. **Battle sandbox.** Deterministic per-soldier sim, MultiMesh rendering,
@@ -6402,6 +6430,16 @@ fleets are painted miniatures (`minis_layer.gd`, tools/structures; exaggerated s
 about 88 px x sqrt(zoom) wide, shown from zoom 0.55, ships from 0.35): base by culture and
 size, harbour (port), slipway (Shipyard level), walls (palisade / stone / star fort), ships by
 heading; the overlay keeps names, banners and hit areas.
+
+**Roads and sea lanes on both map styles (as built, 2026-10-22; view only, data in `geo_west.gd` / `west.gd`).** Owner: "add
+actual roads for any road cells that we have ... ocean trade routes on both maps". The West has 25 roads (445 road cells)
+baked like Rome's. Relief: roads are the thin tan lines of before. Table: roads are dirt tracks, an ochre ribbon (2.4 px
+core, a soft double edge to 4.6 px) broken by a gap round every settlement so the town models stand on it; rivers and
+crossings as before. Sea lanes (every pack, both styles) are dashed pale curves between the ports, routed through open
+sea by `campaign/clanes.gd` (round the islands, off the coast, never across land) and smoothed in `map_view.gd`; the table
+style's dash is longer and white with a faint shadow. `SEA_LANE_EXITS` adds a lane from a port to the map edge (the Florida
+channel). The rules for raiding or blockading a lane come later and read the same cells. Pathing: a march may be at most
+25 % longer than the direct path unless the longer one gets there a whole turn sooner (`CGrid.find_path`, docs/CAMPAIGN.md).
 
 **Overworld towns modelled into the landscape (as built, 2026-10-15, step 1; view only).** A town is no longer
 a sprite but kit pieces placed on the real terrain.

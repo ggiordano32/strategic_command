@@ -14,7 +14,11 @@ extends RefCounted
 ##     it and see nothing more);
 ##   - each character not riding with an army: CHAR_R around his city;
 ##   - each settlement it owns: CITY_R around the settlement cell (sea cells
-##     too: a coastal city watches its waters).
+##     too: a coastal city watches its waters);
+##   - each coastal region it owns: the sea cells within COAST_R of any of
+##     its coast cells (a cell of the region with a sea cell beside it), its
+##     own sea; COAST_PORT_R when the region has a harbour (a pack with ships)
+##     or walls 3 (a fort). Sea cells only: the enemy's coast stays dark.
 ## The AI sees everything (nothing in the AI reads this file); the rules
 ## never consult sight, so the fog changes nothing but what a player is
 ## shown.
@@ -37,6 +41,7 @@ const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const CRules := preload("res://campaign/crules.gd")
+const CFleet := preload("res://campaign/cfleet.gd")
 const Terrain := preload("res://sim/terrain.gd")
 
 const VERSION_FOG := 8
@@ -45,6 +50,8 @@ const HILL_R := 2
 const FLEET_R := 1
 const CHAR_R := 1
 const CITY_R := 2
+const COAST_R := 2
+const COAST_PORT_R := 3
 const MAX_MARKERS := 400
 
 ## View-side memo of the last visible() call (not used by update_memory):
@@ -123,6 +130,12 @@ static func compute(st: Dictionary, f: int) -> PackedByteArray:
 		var o := CState.owner(st, r)
 		if o >= 0 and mine[o] != 0:
 			_square(vis, CGrid.site(r), CITY_R)
+	# Coasts: an owned coastal region's own sea.
+	for r in nr:
+		var o := CState.owner(st, r)
+		if o >= 0 and mine[o] != 0:
+			for c in _halo(r, COAST_PORT_R if _port_or_fort(st, r) else COAST_R):
+				vis[c] = 1
 	# Armies (on the grid).
 	if CState.grid_on(st):
 		for a in st["armies"]:
@@ -154,6 +167,53 @@ static func compute(st: Dictionary, f: int) -> PackedByteArray:
 ## to skip the memo's fingerprint in a loop), else visible().
 static func _vis(st: Dictionary, f: int, vis: PackedByteArray) -> PackedByteArray:
 	return vis if vis.size() == CGrid.count() else visible(st, f)
+
+
+## Region r has a harbour (a pack with ships) or walls 3 (a fort): its sea reaches COAST_PORT_R.
+static func _port_or_fort(st: Dictionary, r: int) -> bool:
+	return (CData.ships_on() and CFleet.harbour(r) >= 0) or CState.walls(st, r) >= 3
+
+
+static var _halo_key := ""
+static var _halos := {}   # r * 8 + rad -> the sea cells within rad (Chebyshev) of a coast cell of region r, in index order
+
+
+## The sea cells within rad of any coast cell of region r (a cell of r with a sea cell among its 8 neighbours),
+## ascending; empty for an inland region. Static grid data, built once per region and radius.
+static func _halo(r: int, rad: int) -> PackedInt32Array:
+	CGrid.ensure()
+	var key := "%s_%d_%d" % [CData.pack, CGrid.count(), CGrid.width()]
+	if key != _halo_key:
+		_halo_key = key
+		_halos = {}
+	var k := r * 8 + rad
+	if _halos.has(k):
+		return _halos[k]
+	var w := CGrid.width()
+	var h := CGrid.height()
+	var mark := PackedByteArray()
+	mark.resize(CGrid.count())
+	for c in CGrid.cells_of(r):
+		var x0 := CGrid.cx(c)
+		var y0 := CGrid.cy(c)
+		var coast := false
+		for dy in range(-1, 2):
+			for dx in range(-1, 2):
+				var j := CGrid.at(x0 + dx, y0 + dy)
+				if j >= 0 and CGrid.region(j) == -1:
+					coast = true
+		if not coast:
+			continue
+		for y in range(maxi(y0 - rad, 0), mini(y0 + rad, h - 1) + 1):
+			for x in range(maxi(x0 - rad, 0), mini(x0 + rad, w - 1) + 1):
+				if CGrid.region(y * w + x) == -1:
+					mark[y * w + x] = 1
+	var out := PackedInt32Array()
+	for i in mark.size():
+		if mark[i] != 0:
+			out.append(i)
+	_halos[k] = out
+	return out
 
 
 static func _square(vis: PackedByteArray, c: int, rad: int) -> void:
@@ -476,7 +536,7 @@ static func _signature(st: Dictionary, f: int) -> PackedInt64Array:
 	s[2] = int(st.get("turn", 0))
 	var h := 0
 	for r in (st["regions"] as Array).size():
-		h = (h * 31 + int(st["regions"][r]["owner"]) + 2) & 0xFFFFFFFFFFFF
+		h = (h * 31 + int(st["regions"][r]["owner"]) + 2 + 64 * CState.walls(st, r)) & 0xFFFFFFFFFFFF
 	s[3] = h
 	h = 0
 	for a in st.get("armies", []):

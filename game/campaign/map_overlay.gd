@@ -49,6 +49,7 @@ const ARMY_W := 30.0
 const ARMY_H := 26.0
 const ARMY_GAP := 4.0
 const SITE_R := [5.0, 7.0, 9.5]
+const SITE_HIT := 22.0      # px: a settlement's tap radius round its anchor (touch-sized; was 16)
 const FONT := 13
 const DIORAMA_ZOOM := 1.6   # from this zoom the city names are 18 px or more and use the display face
 
@@ -287,41 +288,208 @@ func fleet_positions() -> Dictionary:
 	return out
 
 
-## Where the army banners of settlement r stand: on land beside its model, away from the harbour. The spots
-## are tried in turn (the side away from the harbour, the other side, below, above; each nearer in steps) and
-## the first whose banner is wholly on land wins; the town's own anchor when none is. Cached per zoom.
-var _spot_cache := {}
+## Banners at towns (version 6; owner 2026-10-22: a garrison's banner drew far west of Veracruz, on the besiegers of
+## Orizaba). The rule, in `_army_positions6` / `_garrison_spot` / `_ring_nudge`, one pass in this order, every group's
+## rectangle added to `placed` so that no two banners (and no siege camp tent) overlap:
+##   1. armies elsewhere (a march, a replay, a field cell) stand on their cell, side by side;
+##   2. the armies inside a town, or standing at its model, make one stack (banners one under the other) on a ring
+##      round the town's footprint (the model's rectangle, or the marker with its walls in the relief style) at the
+##      footprint + a banner: 24 spots, kept when wholly on land and free of other banners and tents, the best one by
+##      distance from the nearest other settlement (the side away from the neighbours), off the harbour side, and
+##      beside the town rather than above or below it; the relief style tries the spot under the marker first. No
+##      spot: the stack goes under the model (the town's name is over it), lower by a banner while it is taken;
+##   3. a besieger stands on its cell of the ring of the besieged town; when that spot is taken (by the garrison, a tent
+##      or another banner: the cells of a small ring are closer than a banner is wide) it is pushed along the ring (the
+##      same radius), then along the rings a banner's height further out, to the nearest free spot wholly on land.
+## `banner_reach(r)` is the screen rectangle a garrison's banners touch at least (footprint + 8 px).
+var _land_cache := {}       # "tag_k" -> bool: the spot is wholly on land (world-fixed, kept per ~5 % band of zoom)
 var _spot_zoom := -99999
+const RING_N := 24
 
 
-func _side_spot(r: int, m: float) -> Vector2:
-	# the choice among the candidate spots (a land test of each) is kept per town for a ~5 % band of zoom: a wheel or
-	# pinch step moves the candidates with the zoom but does not run the land tests again; a pan neither
+func _land_band() -> void:
 	var band := int(floor(log(maxf(zoom, 0.01)) * 20.0))
 	if band != _spot_zoom:
-		_spot_cache.clear()
+		_land_cache.clear()
 		_spot_zoom = band
+
+
+## The town's footprint relative to its anchor (screen px): the model's built-up core, or the marker with its wall ring.
+func _footprint(r: int) -> Rect2:
+	if Minis.on_sites:
+		# (the model's rectangle spans its fields and outlying houses: the banners hug the built-up core, 70 % x 85 %)
+		var mr := Minis.model_rect(zoom, r)
+		var cc := mr.get_center()
+		return Rect2(cc - Vector2(mr.size.x * 0.35, mr.size.y * 0.425), Vector2(mr.size.x * 0.7, mr.size.y * 0.85))
+	var m := mk()
+	var rad := _site_rad(r) + (3.0 + 1.2 * CState.walls(state, r)) * m + 2.5
+	return Rect2(-rad, -rad, rad * 2.0, rad * 2.0)
+
+
+## Radius of settlement r's marker (screen px).
+func _site_rad(r: int) -> float:
+	var lvl := clampi(int(state["regions"][r]["level"]), 0, 2)
+	return maxf(SITE_R[lvl] * mk(), 4.5 + 1.5 * lvl)
+
+
+## The screen rectangle a garrison's banners touch at least: the town's footprint and a margin of 8 px (the banners
+## stand on a ring just outside the footprint).
+func banner_reach(r: int) -> Rect2:
+	var fp := _footprint(r)
+	return Rect2(to_screen(site_point(r)) + fp.position, fp.size).grow(8.0)
+
+
+## The siege ring's radius round town r on screen (the dashed ring `_sites_body` draws).
+func siege_ring_radius(r: int) -> float:
+	var m := mk()
+	var sr := _site_rad(r) + (6.0 + 1.2 * CState.walls(state, r)) * m
+	if grid:
+		sr = maxf(sr, CGrid.cell_px() * 1.1 * zoom)
+	return sr
+
+
+## The rectangle of a stack of n banners whose first one is centred at c (stack: one under the other; else side by side).
+func _group_rect(c: Vector2, n: int, stack: bool, m: float) -> Rect2:
+	var hw := ARMY_W * 0.5 * m
+	var hh := ARMY_H * 0.5 * m
+	if stack:
+		return Rect2(c.x - hw, c.y - hh, hw * 2.0, hh * 2.0 + (n - 1) * (ARMY_H * m * 0.9 + 3.0))
+	var step := (ARMY_W + ARMY_GAP) * m * (0.8 if m < 0.8 else 1.0)
+	var x0 := c.x - (n - 1) * 0.5 * step - hw
+	return Rect2(x0, c.y - hh, hw * 2.0 + (n - 1) * step, hh * 2.0)
+
+
+func _free(rc: Rect2, placed: Array) -> bool:
+	var g := rc.grow(1.5)
+	for o in placed:
+		if g.intersects(o):
+			return false
+	return true
+
+
+## The tents of the sieges in sight as rectangles (`draw_siege_ring` puts five on the upper half of the ring).
+func _tent_rects() -> Array:
+	var out: Array = []
+	var m := mk()
+	var ts := 5.5 * m
+	for sg in state.get("sieges", []):
+		var r := int(sg["r"])
+		if not FogView.region_seen(r):
+			continue
+		var p := to_screen(site_point(r))
+		var rr := siege_ring_radius(r) + 6.0 * m
+		for k in 5:
+			var a := PI + PI * (k + 0.5) / 5
+			var c := p + Vector2(cos(a), sin(a)) * rr
+			out.append(Rect2(c - Vector2(ts, ts), Vector2(ts, ts) * 2.0))
+	return out
+
+
+## Where the stack of n garrison banners of town r stands (the first banner's centre); `placed` holds the rectangles
+## taken. Also called for the armies standing at the town's model.
+func _garrison_spot(r: int, n: int, placed: Array, soft: Array, m: float) -> Vector2:
+	_land_band()
 	var base := to_screen(site_point(r))
-	var hs := -port_side(r) if CFleet.harbour(r) >= 0 else 1.0
-	var hw := Minis.half_w(zoom, r) + ARMY_W * 0.5 * m + 4.0
-	var mr := Minis.model_rect(zoom, r)
-	var below := mr.end.y + ARMY_H * 0.5 * m
-	var cands: Array = []
-	for f in [1.0, 0.7, 0.4]:
-		cands.append(Vector2(hs * hw * f, -ARMY_H * 0.2 * m))
-		cands.append(Vector2(-hs * hw * f, -ARMY_H * 0.2 * m))
-	for f in [1.0, 0.6]:
-		cands.append(Vector2(0, below * f))
-		cands.append(Vector2(0, -(ARMY_H * 0.6 * m + 6.0) * f - mr.size.y * 0.3))
-	if not _spot_cache.has(r):
-		var pick := -1
-		for i in cands.size():
-			if _banner_on_land(base + (cands[i] as Vector2), m):
-				pick = i
-				break
-		_spot_cache[r] = pick
-	var ix: int = _spot_cache[r]
-	return base if ix < 0 else base + (cands[ix] as Vector2)
+	var fp := _footprint(r)
+	var mc := base + fp.position + fp.size * 0.5
+	var hs := -port_side(r) if (CFleet.harbour(r) >= 0 or CFleet.dock(r) >= 0) else 0.0   # the side away from the harbour
+	var ax := fp.size.x * 0.5 + ARMY_W * 0.5 * m + 4.0
+	var ay := fp.size.y * 0.5 + ARMY_H * 0.5 * m + 2.0
+	var half_stack := (n - 1) * (ARMY_H * m * 0.9 + 3.0) * 0.5 if Minis.on_sites else 0.0
+	var near: Array = []   # the other towns within reach of the ring: [anchor, model rect, siege ring radius]
+	for q in CData.region_count():
+		if q == r:
+			continue
+		var qa := to_screen(site_point(q))
+		if qa.distance_to(base) < 520.0:
+			var qf := _footprint(q)
+			near.append([qa, Rect2(qa + qf.position, qf.size), siege_ring_radius(q) if not CState.siege_at(state, q).is_empty() else 0.0])
+	var best := Vector2.ZERO
+	var best_s := -1e18
+	var cands: Array = []   # [centre of the first banner, ring index]
+	if not Minis.on_sites:
+		cands.append([base + Vector2(0, (ARMY_H * 0.5 + 12.0) * m), 100])   # the relief style's own spot, under the marker
+	for i in RING_N:
+		var ang := TAU * i / RING_N + PI * 0.5 / RING_N
+		cands.append([mc + Vector2(cos(ang) * ax, sin(ang) * ay) - Vector2(0, half_stack), i])
+	for need_land in [true, false]:   # (an islet: a banner over the water is better than none, never over another banner)
+		var found := false
+		for cd in cands:
+			var c: Vector2 = cd[0]
+			var i: int = cd[1]
+			var rc := _group_rect(c, n, Minis.on_sites, m)
+			if not _free(rc, placed):
+				continue
+			if need_land:
+				var tag := "g%d_%d" % [r, i]
+				if not _land_cache.has(tag):
+					_land_cache[tag] = _banner_on_land(c, m)
+				if not _land_cache[tag]:
+					continue
+			var taken := 0.0   # (a besieger's own cell: it can be pushed, but better not)
+			for o in soft:
+				if rc.intersects(o):
+					taken += 120.0
+			if i == 100:
+				if taken == 0.0:
+					return c   # (the relief style's usual spot is free: as it always was)
+				continue
+			var nd := 400.0
+			var pen := taken
+			for e in near:
+				var d := c.distance_to(e[0])
+				nd = minf(nd, d)
+				if (e[1] as Rect2).intersects(rc):
+					pen += 400.0
+				if float(e[2]) > 0.0 and d < float(e[2]) + ARMY_W * 0.5 * m:
+					pen += 250.0
+			var sc := minf(nd, 300.0) - pen - 0.12 * absf(c.y - mc.y)
+			if hs != 0.0 and (c.x - base.x) * hs < 0.0:
+				sc -= 70.0   # (the harbour side: the water, the quay, the fleet)
+			if sc > best_s:
+				best_s = sc
+				best = c
+			found = true
+		if found:
+			return best
+	# no free spot round the town: under it (the name is above the model), lower by a banner while it is taken
+	var down := base.y + fp.end.y + ARMY_H * 0.5 * m + 2.0
+	var cc := Vector2(base.x, down)
+	for k in 6:
+		if _free(_group_rect(cc, n, Minis.on_sites, m), placed):
+			break
+		cc.y += ARMY_H * m * 0.9 + 3.0
+	return cc
+
+
+## A besieger's group at screen point c (n banners side by side) round town r: the cell's spot when free, else the
+## nearest free spot on the same ring, wholly on land (alternating sides, 12 steps each way), then on the rings
+## outside it (a banner's height further out each, three of them).
+func _ring_nudge(c: Vector2, n: int, r: int, key: String, placed: Array, m: float) -> Vector2:
+	_land_band()
+	if _free(_group_rect(c, n, false, m), placed):
+		return c
+	var site := to_screen(site_point(r))
+	var d := c - site
+	var rad0 := maxf(d.length(), 8.0)
+	var ang := d.angle()
+	for need_land in [true, false]:   # (a narrow spit or an islet: then a banner may stand over the water, never over another)
+		for j in 4:
+			var rad := rad0 + j * (ARMY_H * m * 0.9 + 2.0)
+			var step := (ARMY_W * m * maxf(n, 1) + ARMY_GAP + 4.0) / rad
+			for k in range(0 if j > 0 else 1, 13):
+				for sgn in ([1.0, -1.0] if k > 0 else [1.0]):
+					var q: Vector2 = site + Vector2.from_angle(ang + sgn * k * step) * rad
+					if not _free(_group_rect(q, n, false, m), placed):
+						continue
+					if not need_land:
+						return q
+					var tag := "b%s_%d_%d" % [key, j, int(sgn) * k]
+					if not _land_cache.has(tag):
+						_land_cache[tag] = _banner_on_land(q, m)
+					if _land_cache[tag]:
+						return q
+	return c
 
 
 ## True when a banner centred at screen point c (marker scale m) stands wholly on land.
@@ -387,10 +555,22 @@ func fleet_at(p: Vector2) -> int:
 	return best
 
 
+## The settlement whose marker (22 px round its anchor: a touch-sized target; it was 16) or model holds screen point p.
+## A tap within 30 % of a cell's width of the centre of a cell next to the town but 16 px or more from the anchor is that
+## cell's (a march or a siege camp laid on the ring), not the town's.
 func settlement_at(p: Vector2) -> int:
 	for r in CData.region_count():
-		if to_screen(site_point(r)).distance_to(p) <= 16.0:
-			return r
+		var q := to_screen(site_point(r))
+		var d := q.distance_to(p)
+		if d > SITE_HIT:
+			continue
+		if d > 16.0 and grid:
+			var cpx := CGrid.cell_px() * zoom
+			var c := cell_of_point(xform.affine_inverse() * p)
+			if c >= 0 and c != CGrid.site(r) and CGrid.cheb(c, CGrid.site(r)) == 1 \
+					and to_screen(cell_point(c)).distance_to(p) <= cpx * 0.3:
+				continue
+		return r
 	return _town_at(p)
 
 
@@ -418,50 +598,80 @@ func _town_at(p: Vector2) -> int:
 	return best
 
 
-## Version 6: armies at their cells; armies sharing a cell side by side;
-## armies inside the walls under their settlement (as version 5 draws a
-## region's armies); during a replay at replay_pos.
+## Version 6: armies at their cells; armies sharing a cell side by side; the armies of a town (inside its walls or
+## standing at its model) one stack beside the town; besiegers on the ring; no two banners overlap (see "Banners at
+## towns" above); during a replay at replay_pos.
 func _army_positions6() -> Dictionary:
 	var out := {}
 	var groups := {}
 	var order: Array = []
 	var m := mk()
+	var besieger := {}   # army id -> the region it besieges
+	for sg in state.get("sieges", []):
+		var sr := int(sg["r"])
+		if FogView.region_seen(sr):
+			for a in CRules.besiegers(state, sr):
+				besieger[int(a["id"])] = sr
 	for a in state["armies"]:
 		if not FogView.army_seen(state, a):
 			continue   # (fog: an army out of sight is not drawn, nor reachable)
 		var id := int(a["id"])
 		var key := ""
 		var c := Vector2.ZERO
+		var kind := 0   # 0 free, 1 at a town (a stack), 2 besieging (kind of the ring's town in g[3])
+		var town_r := -1
 		if replay_pos.has(id):
 			c = to_screen(replay_pos[id])
 			key = "p%d_%d" % [int(c.x / 6.0), int(c.y / 6.0)]
 		elif CRules.inside(state, a):
-			var r := CGrid.site_region(CState.cell(a))
-			c = to_screen(site_point(r)) + Vector2(0, (ARMY_H * 0.5 + 12.0) * m + Minis.army_drop())
-			if Minis.on_sites:
-				c = _side_spot(r, m)
-			key = "s%d" % r
+			town_r = CGrid.site_region(CState.cell(a))
+			c = to_screen(site_point(town_r)) + Vector2(0, (ARMY_H * 0.5 + 12.0) * m + Minis.army_drop())
+			key = "s%d" % town_r
+			kind = 1
+		elif besieger.has(id):
+			c = to_screen(cell_point(CState.cell(a)))
+			key = "c%d" % CState.cell(a)
+			kind = 2
+			town_r = besieger[id]
 		else:
 			c = to_screen(cell_point(CState.cell(a)))
 			key = "c%d" % CState.cell(a)
 			var nr := _model_at(c) if Minis.on_sites else -1
 			if nr >= 0:
-				c = _side_spot(nr, m)   # at a miniature town: beside it, not over its name
+				town_r = nr   # at a miniature town: beside it, not over its name
 				key = "s%d" % nr
+				kind = 1
 		if not groups.has(key):
-			groups[key] = [c, []]
+			groups[key] = [c, [], kind, town_r]
 			order.append(key)
 		(groups[key][1] as Array).append(id)
+		if kind == 2:
+			groups[key][2] = 2
+			groups[key][3] = town_r
+	var placed: Array = _tent_rects()
 	var step := (ARMY_W + ARMY_GAP) * m * (0.8 if m < 0.8 else 1.0)
+	var soft: Array = []   # the besiegers' own cells
 	for key in order:
-		var g: Array = groups[key]
-		var ids: Array = g[1]
-		var n := ids.size()
-		for k in n:
-			if Minis.on_sites and str(key).begins_with("s"):
-				out[int(ids[k])] = (g[0] as Vector2) + Vector2(0, k * (ARMY_H * m * 0.9 + 3.0))
-			else:
-				out[int(ids[k])] = (g[0] as Vector2) + Vector2((k - (n - 1) * 0.5) * step, 0)
+		if int(groups[key][2]) == 2:
+			soft.append(_group_rect(groups[key][0], (groups[key][1] as Array).size(), false, m))
+	for pass_kind in [0, 1, 2]:
+		for key in order:
+			var g: Array = groups[key]
+			if int(g[2]) != pass_kind:
+				continue
+			var ids: Array = g[1]
+			var n := ids.size()
+			var c: Vector2 = g[0]
+			if pass_kind == 2:
+				c = _ring_nudge(c, n, int(g[3]), str(key), placed, m)
+			elif pass_kind == 1:
+				c = _garrison_spot(int(g[3]), n, placed, soft, m)
+			placed.append(_group_rect(c, n, pass_kind == 1 and Minis.on_sites, m))
+			for k in n:
+				if pass_kind == 1 and Minis.on_sites:
+					out[int(ids[k])] = c + Vector2(0, k * (ARMY_H * m * 0.9 + 3.0))
+				else:
+					out[int(ids[k])] = c + Vector2((k - (n - 1) * 0.5) * step, 0)
 	return out
 
 
@@ -699,15 +909,16 @@ func _sites_body() -> void:
 		var p := to_screen(site_point(r))
 		var rs: Dictionary = state["regions"][r]
 		var lvl := int(rs["level"])
-		var rad: float = SITE_R[lvl] * m
+		var rad: float = _site_rad(r)
 		var w := CState.walls(state, r)
-		if not Minis.on_sites:
-			draw_site(_ci, p, rad, CData.faction_color(FogView.shown_owner(state, r)) if FogView.shown_owner(state, r) >= 0 else Color(0.62, 0.62, 0.58), w, m)
+		# every settlement has a marker that is its tap target: the relief style's, and over a table-style model that
+		# is small or sparse (a bare name over a hut was hard to hit); the harbour mark for a port
+		if not Minis.on_sites or Minis.weak(zoom, r):
+			var oc := CData.faction_color(FogView.shown_owner(state, r)) if FogView.shown_owner(state, r) >= 0 else Color(0.62, 0.62, 0.58)
+			draw_site(_ci, p, rad * (1.0 if not Minis.on_sites else 0.85), oc, w, m, CFleet.harbour(r) >= 0 or CFleet.dock(r) >= 0)
 		var sg := CState.siege_at(state, r) if FogView.region_seen(r) else {}   # (fog: a siege out of sight is not shown)
 		if not sg.is_empty():
-			var sr := rad + (6.0 + 1.2 * w) * m
-			if grid:
-				sr = maxf(sr, CGrid.cell_px() * 1.1 * zoom)  # round the ring the besiegers stand on
+			var sr := siege_ring_radius(r)   # (round the ring the besiegers stand on)
 			draw_siege_ring(_ci, p, sr, CData.faction_color(int(sg["f"])), m)
 		if CData.KEY_CITIES.has(str(CData.REGIONS[r]["key"])):
 			draw_key_city(_ci, p, rad)
@@ -960,12 +1171,25 @@ static func draw_merge_glyph(ci: CanvasItem, p: Vector2, kind: int, m: float) ->
 
 ## A settlement: walls (w 0-3), a white rim and the owner's colour (the
 ## same faction colour as its banners and the land's owner band).
-static func draw_site(ci: CanvasItem, p: Vector2, rad: float, owner_col: Color, w: int, m: float) -> void:
+static func draw_site(ci: CanvasItem, p: Vector2, rad: float, owner_col: Color, w: int, m: float, port := false) -> void:
 	if w > 0:
 		draw_wall_ring(ci, p, rad, w, m)
 	ci.draw_circle(p, rad + 2.5, COL_OUTLINE)
 	ci.draw_circle(p, rad + 1.5, Color(1, 1, 1, 0.95))
 	ci.draw_circle(p, rad, owner_col)
+	if port:
+		draw_harbour_mark(ci, p + Vector2(rad + (6.5 + 1.2 * w) * m, rad * 0.5 + 1.0), m)
+
+
+## A harbour mark: a small white anchor on a dark disc (a settlement with a port).
+static func draw_harbour_mark(ci: CanvasItem, p: Vector2, m: float) -> void:
+	var s := maxf(m, 0.7) * 5.5
+	ci.draw_circle(p, s * 1.35, Color(0.06, 0.1, 0.16, 0.85))
+	var wc := Color(0.95, 0.96, 0.98)
+	ci.draw_arc(p + Vector2(0, -s * 0.72), s * 0.2, 0, TAU, 10, wc, 1.2, true)
+	ci.draw_line(p + Vector2(0, -s * 0.5), p + Vector2(0, s * 0.8), wc, 1.4, true)
+	ci.draw_line(p + Vector2(-s * 0.45, -s * 0.2), p + Vector2(s * 0.45, -s * 0.2), wc, 1.3, true)
+	ci.draw_arc(p + Vector2(0, s * 0.1), s * 0.7, 0.15 * PI, 0.85 * PI, 10, wc, 1.4, true)
 
 
 ## A key city (the default victory condition): a white star with a dark

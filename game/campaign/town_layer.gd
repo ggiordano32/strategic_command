@@ -185,7 +185,7 @@ func info(r: int) -> Dictionary:
 	var pl: Dictionary = _plans[r]
 	var w: Vector2 = pl["water"]
 	var c: Vector2 = pl["c"]
-	_info[r] = {"c": c, "p0": (TownPlan.site(r, _grid))["p0"], "half_w": pl["half_w"], "top": pl["top"], "bottom": pl["bottom"], "water": w,
+	_info[r] = {"c": c, "p0": (TownPlan.site(r, _grid))["p0"], "half_w": pl["half_w"], "n": (pl["items"] as Array).size(), "top": pl["top"], "bottom": pl["bottom"], "water": w,
 		"side": 0.0 if w == Vector2.ZERO else (-1.0 if w.x < c.x else 1.0)}
 	return _info[r]
 

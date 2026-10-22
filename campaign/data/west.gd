@@ -141,6 +141,17 @@ const SEA_LANES: Array = [
 	["leogane", "santo_domingo"], ["port_de_paix", "leogane"], ["santo_domingo", "san_german"],
 	["santo_domingo", "san_juan"], ["san_juan", "san_german"], ["san_juan", "port_of_spain"],
 	["havana", "port_royal"],
+	# The Carrera de Indias and the Windward Passage (2026-10-22): Havana is the
+	# gathering port for the Tierra Firme fleets.
+	["havana", "portobelo"], ["havana", "cartagena"], ["havana", "santo_domingo"],
+	["port_royal", "santo_domingo"], ["cartagena", "santo_domingo"],
+]
+
+## Lanes from a port out to the open sea at the map's edge: [port region key,
+## grid x, grid y] (campaign/clanes.gd). The Florida channel: Havana through the
+## Straits and up the Gulf Stream to the Atlantic edge, the fleets' way home.
+const SEA_LANE_EXITS: Array = [
+	["havana", 187, 6],
 ]
 
 ## Factions (see rome.gd). Armies, mixes and compositions in the West rows

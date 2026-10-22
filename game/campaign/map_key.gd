@@ -387,6 +387,16 @@ func rows() -> Array:
 			out.append(["Wreck: a treasure ship went down here; pirate fleets show their captain's name", func(ci: Control, sz: Vector2):
 				ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.SEA)
 				Overlay.draw_wreck(ci, sz * 0.5 + Vector2(0, 4), true, 1.0)])
+	if format >= 6:
+		# (the lanes are curves through the sea, both packs, both map styles)
+		var lane_text := "Sea lane: the ports' trade routes (ships sail where they like)" if CData.ships_on() else "Sea lane between ports"
+		out.append([lane_text, func(ci: Control, sz: Vector2):
+			ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.SEA)
+			var pts := PackedVector2Array()
+			for k in 21:
+				var t := float(k) / 20.0
+				pts.append(_l(sz).lerp(_r(sz), t) + Vector2(0, -sin(t * PI) * sz.y * 0.28))
+			MapView.draw_sea_lane_line(ci, pts, 1.0)])
 	else:
 		out.append(["Sea lane between ports", func(ci: Control, sz: Vector2):
 			ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.SEA)

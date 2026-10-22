@@ -445,6 +445,15 @@ static func step_cost(a: int, b: int) -> int:
 static func find_path(start: int, goal: int, full: int, mp: int, block: PackedByteArray,
 		zone: PackedInt32Array = PackedInt32Array(), adjacent: bool = false, max_turns: int = 12,
 		max_nodes: int = 6000) -> Dictionary:
+	var res := _find_cheapest(start, goal, full, mp, block, zone, adjacent, max_turns, max_nodes)
+	if not detour_rule or res.is_empty() or (res["path"] as Array).size() < 3:
+		return res
+	return _limit_detour(res, start, goal, full, mp, block, zone, adjacent, max_nodes)
+
+
+## The cheapest path (A* on the g above), whatever its shape.
+static func _find_cheapest(start: int, goal: int, full: int, mp: int, block: PackedByteArray,
+		zone: PackedInt32Array, adjacent: bool, max_turns: int, max_nodes: int) -> Dictionary:
 	ensure()
 	if start < 0 or goal < 0 or full <= 0:
 		return {}
@@ -547,6 +556,138 @@ static func find_path(start: int, goal: int, full: int, mp: int, block: PackedBy
 		ts.append(tt)
 		ms.append(lf)
 	return {"path": path, "t": ts, "m": ms}
+
+
+## The detour rule (owner 2026-10-22: an army went east through Veracruz to
+## reach Orizaba to its west). The cheapest path is taken only when it is at
+## most DETOUR_PCT % longer than the direct path (the fewest cells, as octile
+## length: 10 a straight step, 14 a diagonal; ties by the cheaper) or when it
+## arrives a whole turn sooner than the direct path; otherwise the army walks
+## the direct path. So the turn of arrival never gets later. Paths that use a
+## sea link are left alone. (static var: the tests measure with and without.)
+const DETOUR_PCT := 25
+static var detour_rule := true
+
+
+static func _path_len(start: int, path: Array) -> int:
+	var tot := 0
+	var prev := start
+	for c in path:
+		tot += 10 if (prev % _gw == int(c) % _gw or prev / _gw == int(c) / _gw) else 14
+		prev = int(c)
+	return tot
+
+
+static func _limit_detour(res: Dictionary, start: int, goal: int, full: int, mp: int,
+		block: PackedByteArray, zone: PackedInt32Array, adjacent: bool, max_nodes: int) -> Dictionary:
+	var path: Array = res["path"]
+	var prev := start
+	for c in path:
+		if cheb(prev, int(c)) != 1:
+			return res  # a sea link: not a walk
+		prev = int(c)
+	var plen := _path_len(start, path)
+	var lb := octile(start, goal) - (14 if adjacent else 0)
+	if plen * 100 <= maxi(lb, 0) * (100 + DETOUR_PCT):
+		return res  # within the bound of any direct path
+	var direct := _shortest(start, goal, block, zone, adjacent, max_nodes * 2)
+	if direct.is_empty():
+		return res
+	var dlen := _path_len(start, direct)
+	if plen * 100 <= dlen * (100 + DETOUR_PCT):
+		return res
+	var sched := _schedule(direct, start, full, mp)
+	var t_det: int = (res["t"] as Array)[(res["t"] as Array).size() - 1]
+	var t_dir: int = (sched["t"] as Array)[(sched["t"] as Array).size() - 1]
+	if t_det < t_dir:
+		return res  # the detour saves a whole turn
+	return sched
+
+
+## The turn and the points left at each cell of a walked path (find_path's
+## "t" and "m"), by the same rule as the search.
+static func _schedule(path: Array, start: int, full: int, mp: int) -> Dictionary:
+	var ts: Array = []
+	var ms: Array = []
+	var gu := full - clampi(mp, 0, full)
+	var prev := start
+	for c in path:
+		var t := gu / full
+		var left := full - (gu - t * full)
+		if gu > 0 and gu % full == 0:
+			t = gu / full - 1
+			left = 0
+		var cst := step_cost(prev, int(c))
+		gu = gu + cst if left >= cst else (t + 1) * full + cst
+		var tt := gu / full
+		var lf := full - (gu - tt * full)
+		if gu > 0 and gu % full == 0:
+			tt -= 1
+			lf = 0
+		ts.append(tt)
+		ms.append(lf)
+		prev = int(c)
+	return {"path": path, "t": ts, "m": ms}
+
+
+## The direct path: the fewest octile length, ties by the cheaper step costs
+## (A* on length * 4096 + cost). Walking steps only; {} none within max_nodes.
+static func _shortest(start: int, goal: int, block: PackedByteArray, zone: PackedInt32Array,
+		adjacent: bool, max_nodes: int) -> Array:
+	var n := _n
+	var w := _gw
+	var g := PackedInt32Array()
+	g.resize(n)
+	g.fill(INF)
+	var prev := PackedInt32Array()
+	prev.resize(n)
+	prev.fill(-1)
+	var has_block := block.size() == n
+	var has_zone := zone.size() == n
+	var gx := goal % w
+	var gy := goal / w
+	g[start] = 0
+	var heap: Array[int] = []
+	_push(heap, octile(start, goal) * 4096 * 65536 + start)
+	var found := -1
+	var nodes := 0
+	while not heap.is_empty():
+		var top := _pop(heap)
+		var u := top & 65535
+		var gu := g[u]
+		var hu := octile(u, goal) * 4096
+		if top >> 16 != gu + hu:
+			continue
+		if adjacent:
+			if absi(u % w - gx) <= 1 and absi(u / w - gy) <= 1:
+				found = u
+				break
+		elif u == goal:
+			found = u
+			break
+		nodes += 1
+		if nodes > max_nodes:
+			break
+		var base := u * 8
+		for k in 8:
+			var v := _nb[base + k]
+			if v < 0 or (has_block and block[v] != 0) or (has_zone and zone[v] > 0):
+				continue
+			if adjacent and v == goal:
+				continue
+			var ng := gu + (10 if k % 2 == 0 else 14) * 4096 + _nbc[base + k]
+			if ng < g[v]:
+				g[v] = ng
+				prev[v] = u
+				_push(heap, (ng + octile(v, goal) * 4096) * 65536 + v)
+	if found < 0:
+		return []
+	var path: Array = []
+	var c2 := found
+	while c2 != start:
+		path.push_front(c2)
+		c2 = prev[c2]
+	return path
 
 
 ## The search's heuristic: the octile distance at H_PCT % of the cheapest

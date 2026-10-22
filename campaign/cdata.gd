@@ -77,6 +77,9 @@ static var year_shift := 0
 static var REGIONS: Array[Dictionary] = _ROME.REGIONS
 static var ROUTES: Array = _ROME.ROUTES
 static var SEA_LANES: Array = _ROME.SEA_LANES
+## Sea lanes from a port out to the open sea at the map's edge: [port region key, grid x, grid y] (the sea cell
+## nearest that cell; campaign/clanes.gd routes them). Optional in a pack (none: Rome).
+static var SEA_LANE_EXITS: Array = []
 static var FACTIONS: Array[Dictionary] = _ROME.FACTIONS
 static var ROSTERS: Dictionary = _ROME.ROSTERS
 static var START_WARS: Array = _ROME.START_WARS
@@ -338,6 +341,7 @@ static func use_pack_script(key: String, p: GDScript) -> void:
 	REGIONS = c["REGIONS"]
 	ROUTES = c["ROUTES"]
 	SEA_LANES = c["SEA_LANES"]
+	SEA_LANE_EXITS = c.get("SEA_LANE_EXITS", [])
 	FACTIONS = c["FACTIONS"]
 	ROSTERS = c["ROSTERS"]
 	START_WARS = c["START_WARS"]

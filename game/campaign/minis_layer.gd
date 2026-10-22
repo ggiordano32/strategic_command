@@ -114,6 +114,15 @@ static func half_w(zoom: float, r: int) -> float:
 	return float(i["half_w"]) * zoom
 
 
+## True when settlement r's model is too small or too sparse to be a sure tap target at this zoom (under 96 px wide
+## or 20 pieces or fewer): the overlay then draws its code marker (owner colour, walls, harbour) over the model too.
+static func weak(zoom: float, r: int) -> bool:
+	var i := _info(r)
+	if i.is_empty():
+		return true
+	return float(i["half_w"]) * 2.0 * zoom < 96.0 or int(i.get("n", 0)) <= 20
+
+
 ## Where fleets in port wait: in the water off the harbour (the town plan's water spot, on the real sea),
 ## else beside the model on the harbour side (side -1 / +1), a little below its anchor.
 static func fleet_spot(r: int, site: Vector2, side: float, zoom: float, to_screen: Callable) -> Vector2:
