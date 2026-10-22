@@ -461,6 +461,23 @@ func _tooltips() -> void:
 	var pb := plain._make_custom_tooltip(plain.tooltip_text) as Control
 	_check(pb.find_child("tip_title", true, false) == null and (pb.find_child("tip_body", true, false) as Label).text == "Just a body", "a plain tooltip_text on a kit button is boxed without a title")
 	pb.free()
+	# An empty tooltip shows nothing: no box for a button with no tip, "", whitespace or a blank tip().
+	for tv in [null, "", "\n", " \n  "]:
+		var eb := Kit.button("Continue", Callable())
+		if tv != null:
+			eb.tooltip_text = str(tv)
+		_check(eb._make_custom_tooltip(eb.tooltip_text) == null, "a kit button with tip %s makes no tooltip control" % [var_to_str(tv)])
+		_check(Kit.tip_of(eb).is_empty(), "... and the touch host finds no tip on it")
+		eb.free()
+	var eb2 := Kit.button("Continue", Callable())
+	Kit.tip(eb2, "", "")
+	_check(eb2.tooltip_text == "" and eb2._make_custom_tooltip("") == null, "Kit.tip with an empty title and text clears the tip")
+	eb2.free()
+	var eo := Kit.dropdown([["a", 1]], 1, Callable())
+	var ee := Kit.text_field("x")
+	_check(eo._make_custom_tooltip("\n") == null and ee._make_custom_tooltip("") == null, "dropdowns and fields too")
+	eo.free()
+	ee.free()
 	_check(ProjectSettings.get_setting("gui/timers/tooltip_delay_sec", 0.5) <= 0.41, "the desktop delay is 0.4 s")
 	# Touch: a long press shows the box above the finger until release; a short tap shows none.
 	UiScale._touch_override = 1

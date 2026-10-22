@@ -151,6 +151,13 @@ static func tip_box(title_text: String, body: String) -> Control:
 	return p
 
 
+## The box, or null when title and body are both blank (an empty tooltip shows nothing).
+static func tip_box_or_null(title_text: String, body: String) -> Control:
+	if title_text.strip_edges() == "" and body.strip_edges() == "":
+		return null
+	return tip_box(title_text.strip_edges(), body.strip_edges() if body.strip_edges() != "" else title_text.strip_edges())
+
+
 static func _has_box(c: Control) -> bool:
 	return c is TipButton or c is TipOption or c is TipEdit
 
@@ -162,6 +169,9 @@ static func tip(c: Control, title_text: String, text: String) -> void:
 		for sb in (c as Segmented).buttons():
 			tip(sb, title_text, text)
 		return
+	if title_text.strip_edges() == "" and text.strip_edges() == "":
+		c.tooltip_text = ""
+		return
 	c.set_meta("tip_title", title_text)
 	c.set_meta("tip_body", text)
 	c.tooltip_text = text if _has_box(c) or title_text == "" else title_text + "\n" + text
@@ -169,32 +179,32 @@ static func tip(c: Control, title_text: String, text: String) -> void:
 
 ## [title, body] of a control's tip, or [] when it has none.
 static func tip_of(c: Control) -> Array:
-	if c.has_meta("tip_body") and str(c.tooltip_text) != "":
+	if c.tooltip_text.strip_edges() == "":
+		return []
+	if c.has_meta("tip_body"):
 		return [str(c.get_meta("tip_title", "")), str(c.get_meta("tip_body"))]
-	if c.tooltip_text != "":
-		return ["", c.tooltip_text]
-	return []
+	return ["", c.tooltip_text]
 
 
 class TipButton extends Button:
 	const KitSelf := preload("res://game/campaign/ui_kit.gd")
 
 	func _make_custom_tooltip(for_text: String) -> Object:
-		return KitSelf.tip_box(str(get_meta("tip_title", "")), for_text)
+		return KitSelf.tip_box_or_null(str(get_meta("tip_title", "")), for_text)
 
 
 class TipOption extends OptionButton:
 	const KitSelf := preload("res://game/campaign/ui_kit.gd")
 
 	func _make_custom_tooltip(for_text: String) -> Object:
-		return KitSelf.tip_box(str(get_meta("tip_title", "")), for_text)
+		return KitSelf.tip_box_or_null(str(get_meta("tip_title", "")), for_text)
 
 
 class TipEdit extends LineEdit:
 	const KitSelf := preload("res://game/campaign/ui_kit.gd")
 
 	func _make_custom_tooltip(for_text: String) -> Object:
-		return KitSelf.tip_box(str(get_meta("tip_title", "")), for_text)
+		return KitSelf.tip_box_or_null(str(get_meta("tip_title", "")), for_text)
 
 
 ## The touch long press (see the section header). Test hooks: press(pos) / release() act as a touch.

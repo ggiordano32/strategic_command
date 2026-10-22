@@ -115,10 +115,31 @@ func _button_in(parent: Node, nm: String) -> Button:
 	return parent.find_child(nm, true, false) as Button
 
 
+func _empty_tips() -> void:
+	# An empty tooltip shows nothing: no box for a button with no tip, "", whitespace or a blank tip().
+	for tv in [null, "", "\n", " \n  "]:
+		var eb := Kit.button("Continue", Callable())
+		if tv != null:
+			eb.tooltip_text = str(tv)
+		_check(eb._make_custom_tooltip(eb.tooltip_text) == null, "a kit button with tip %s makes no tooltip control" % [var_to_str(tv)])
+		_check(Kit.tip_of(eb).is_empty(), "... and the touch host finds no tip on it")
+		eb.free()
+	var eb2 := Kit.button("Continue", Callable())
+	Kit.tip(eb2, "", "")
+	_check(eb2.tooltip_text == "" and eb2._make_custom_tooltip("") == null, "Kit.tip with an empty title and text clears the tip")
+	eb2.free()
+	var eo := Kit.dropdown([["a", 1]], 1, Callable())
+	var ee := Kit.text_field("x")
+	_check(eo._make_custom_tooltip("\n") == null and ee._make_custom_tooltip("") == null, "dropdowns and fields too")
+	eo.free()
+	ee.free()
+
+
 func _run() -> void:
 	UiScale._dpr_override = 1.0
 	UiScale._touch_override = 0
 	Kit.anim_override = 0
+	_empty_tips()
 	await _kit()
 	await _screen("west")
 	await _loading()
