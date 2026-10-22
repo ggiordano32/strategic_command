@@ -46,6 +46,7 @@ uniform vec3 c_abyss = vec3(0.07, 0.17, 0.32);   // 2500 m and more: darker, a l
 uniform vec3 c_line = vec3(0.62, 0.80, 0.86);    // shelf-break line
 uniform vec3 c_foam = vec3(0.90, 0.95, 0.96);
 uniform float wave_gain = 1.0;                   // strength of the lit waves
+uniform float table_depth = 0.75;                // table style: share of the depth colouring in the banded sea (0: the old bands)
 uniform float table = 0.0;                       // 1: the map-table sea (clean depth bands, softer waves)
 
 const float WARP_A = 3.0;      // phase warp size in rad for the 56 px train (x 56 / wavelength for shorter ones; x the noise, +-1.2 typical)
@@ -150,7 +151,18 @@ void fragment() {
 			float e = i == 0 ? 1.2 : (i == 1 ? 4.0 : (i == 2 ? 10.0 : 22.0));
 			edge = max(edge, (1.0 - smoothstep(0.5 * fw, 1.2 * fw, abs(d - e))) * smoothstep(2.5, 6.0, e / max(fw, 0.0001)));
 		}
-		col = mix(col, vec3(0.80, 0.95, 0.96), edge * 0.32 * step(0.0, d));
+		// The ocean floor under the bands (2026-10-22, owner: "use the ocean and ocean floor of the relief map in the
+		// table"): the real depth (the same `dm` the relief sea uses) in the table's own, brighter palette: sand
+		// showing through the shallows, turquoise to ~8 m, the shelf blue, a dark deep. The bands keep their say
+		// as a light offset round the depth colour (so the miniature's clean steps and lines stay), and the depth
+		// colour is blended, not pasted. Works on "low" too (a texture read, no animation).
+		vec3 tcol = mix(vec3(0.66, 0.86, 0.74), vec3(0.28, 0.74, 0.78), smoothstep(0.5, 8.0, dm));
+		tcol = mix(tcol, vec3(0.19, 0.55, 0.74), smoothstep(6.0, 45.0, dm));
+		tcol = mix(tcol, vec3(0.11, 0.36, 0.62), smoothstep(120.0, 600.0, dm));
+		tcol = mix(tcol, vec3(0.05, 0.20, 0.46), smoothstep(700.0, 2500.0, dm));
+		vec3 bands = col;
+		col = mix(bands, tcol, table_depth) + (bands - vec3(0.13, 0.40, 0.64)) * 0.24 * table_depth * step(0.0, d);
+		col = mix(col, vec3(0.80, 0.95, 0.96), edge * 0.28 * step(0.0, d));
 	}
 	float foam_zone = 0.0;
 	if (hi > 0.5) {
