@@ -5132,6 +5132,25 @@ selecting or ordering anything.
   line (box select only with an empty selection or Shift). Telemetry
   `tap_select_loose`: the loose radius, beyond the tight one, made the
   selection. Constants and rules: top of `game/battle.gd`.
+- Campaign map, real mouse (2026-10-22, the Total War scheme as on the battle
+  field; touch unchanged): a real left click is an emulated touch with
+  `device == DEVICE_ID_EMULATION` (`_press_mouse`). Left click only selects
+  (`_left_click`): our or another faction's army / fleet (viewing, never an
+  attack), a settlement or region; our other army with ours selected still
+  merges and our other fleet with ours selected still joins; empty map (sea,
+  nothing pickable) deselects and never orders; Shift keeps the selection.
+  Right click without a drag is the order (`_right_order`): exactly the tap
+  for that target (march / attack / siege / join / board; sail / land /
+  attack / join; the same spot again cancels), only with an army or fleet of
+  ours selected, else nothing. A right drag past 14 px pans, middle drag
+  pans, wheel zooms. Esc deselects (`deselect_all`). The hint line says
+  "Right-click ..." after a mouse input and "Tap ..." after a touch
+  (`last_mouse`). Touch: a two-finger tap (down within 120 ms, up within
+  250 ms, each under 12 px) deselects, as on the field. The Deselect button
+  shows for armies, fleets and regions on every input: it was missing with
+  the command bar on because `show_side` returns early (the bar shows the
+  selection) before `_update_deselect`; `_refresh_bar` now updates it, and
+  `_refresh` drops a selection whose army / fleet is gone (after a battle).
 - Undo (2026-10-20): `game/battle.gd` keeps a stack of the last `UNDO_DEPTH`
   (5) order batches. A batch is every order queued in one frame by the player
   from the field or the bar (tap move / attack, line drag, group move, run /

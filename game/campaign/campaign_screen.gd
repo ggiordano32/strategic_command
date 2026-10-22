@@ -72,6 +72,9 @@ const FogLayer := preload("res://game/campaign/fog_layer.gd")
 const ZOOM_MIN := 0.2
 const ZOOM_MAX := 2.5
 const DRAG_THRESHOLD := 14.0
+const TWO_TAP_DOWN_MS := 120    # two-finger tap: both fingers down within, up within TWO_TAP_TOTAL_MS of the first
+const TWO_TAP_TOTAL_MS := 250
+const TWO_TAP_MOVE := 12.0
 const PANEL_W := 360.0
 const TOP_H := 46.0
 
@@ -167,6 +170,14 @@ var _multi := false
 var _pinch_d := 0.0
 var _pinch_mid := Vector2.ZERO
 var _mouse_pan := false
+var _rmb_down := false           # real mouse: right button held (a click orders, a drag pans)
+var _rmb_start := Vector2.ZERO
+var _rmb_dragged := false
+var _press_mouse := false        # the press now down is the real mouse's left button (emulated touch)
+var last_mouse := false          # the last map input came from a real mouse (the hint's words)
+var _tt_t0 := 0                  # two-finger tap: first finger down (ms)
+var _tt_ok := false
+var _tt_start := {}
 
 # Version 6.
 var undo_button: Button
@@ -1631,6 +1642,7 @@ func _refresh_bar() -> void:
 			_bar_sig = sig
 			_bar_ps = ps
 			_bar_st = st
+	_update_deselect()   # (show_side returns early while the bar shows the selection: the button follows here)
 	_layout_bottom()
 	ZProf.add("h_bar", t0)
 
@@ -1726,7 +1738,20 @@ func open_unit_page(ty: int, recruit_cb: Callable, recruit_text: String) -> void
 	show_dialog(str(UT.TYPES[ty]["name"]), entry, btns, 900)
 
 
+## A selection whose army / fleet no longer exists (destroyed, merged away or taken in a battle) is dropped, so
+## the hint, the bar and the Deselect button never follow a stale id.
+func _prune_selection() -> void:
+	if ps.is_empty():
+		return
+	if sel_army >= 0 and CState.army(ps, sel_army).is_empty():
+		sel_army = -1
+		merge_tap = -1
+	if sel_fleet >= 0 and (not CFleet.on(ps) or CFleet.fleet(ps, sel_fleet).is_empty()):
+		sel_fleet = -1
+
+
 func _refresh() -> void:
+	_prune_selection()
 	_refresh_top()
 	story.refresh()
 	_refresh_map()
@@ -1834,6 +1859,12 @@ func _update_hint() -> void:
 		hint.text = "Turn submitted. You can look around; Unsubmit to change your orders."
 	elif not replay.is_empty():
 		hint.text = "Replaying the turn: tap to skip."
+	elif sel_fleet >= 0 and _g() and last_mouse:
+		hint.text = "Right-click the sea to sail there (shaded: this turn; the wind blows from the east, so westward is fast), a coast to land the troops aboard, an enemy fleet to attack it, your own fleet to join it. Left-click empty sea to deselect."
+	elif sel_army >= 0 and _g() and last_mouse:
+		hint.text = "Right-click a spot inside the shaded area to march there this turn, further on for later turns; right-click an enemy army to attack it, a city to besiege it. Same spot again: cancel. Left-click empty ground to deselect."
+	elif _g() and last_mouse:
+		hint.text = "Left-click an army to move it or recruit into it (at a city), a city for buildings or a new army. Right-click orders, a right drag pans."
 	elif sel_fleet >= 0 and _g():
 		hint.text = "Tap the sea to sail there (shaded: this turn; the wind blows from the east, so westward is fast), a coast to land the troops aboard, an enemy fleet to attack it, your own fleet to join it. Board: select an army beside the fleet and tap the fleet."
 	elif sel_army >= 0 and _g():
@@ -3077,20 +3108,37 @@ func _unhandled_input(event: InputEvent) -> void:
 			_zoom_at(mb.position, 1.15)
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			_zoom_at(mb.position, 1.0 / 1.15)
+		elif mb.button_index == MOUSE_BUTTON_RIGHT and _g():
+			# Real mouse (Total War): a right click is the ORDER for the selection (what a tap does), a right drag
+			# pans, a right click with nothing to order does nothing.
+			if mb.device == InputEvent.DEVICE_ID_EMULATION:
+				return
+			if mb.pressed:
+				_set_last_mouse(true)
+				_rmb_down = true
+				_rmb_start = mb.position
+				_rmb_dragged = false
+			elif _rmb_down:
+				_rmb_down = false
+				_mouse_pan = false
+				if not _rmb_dragged:
+					_right_order(mb.position)
 		elif mb.button_index == MOUSE_BUTTON_RIGHT or mb.button_index == MOUSE_BUTTON_MIDDLE:
 			_mouse_pan = mb.pressed
-			if mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT and sel_army >= 0 and _g():
-				_mouse_pan = false
-				_plan_at(mb.position)
-			elif mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT and sel_army >= 0:
+			if mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT and sel_army >= 0:
 				# Right click on a region with an army selected: move there.
 				var r := _region_at(mb.position)
 				if r >= 0 and map_view.targets.has(r):
 					set_move(sel_army, r)
 					_mouse_pan = false
-	elif event is InputEventMouseMotion and _mouse_pan:
-		offset += (event as InputEventMouseMotion).relative
-		_clamp_view()
+	elif event is InputEventMouseMotion:
+		var mm := event as InputEventMouseMotion
+		if _rmb_down and not _rmb_dragged and mm.position.distance_to(_rmb_start) > DRAG_THRESHOLD:
+			_rmb_dragged = true
+			_mouse_pan = true
+		if _mouse_pan:
+			offset += mm.relative
+			_clamp_view()
 	elif event is InputEventMagnifyGesture:
 		_zoom_at(event.position, event.factor)
 	elif event is InputEventPanGesture:
@@ -3099,8 +3147,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventKey and event.pressed and not event.echo:
 		match Controls.action_for_key(event as InputEventKey, "campaign"):
 			"map_deselect":
-				if side.visible:
-					close_side()
+				if side.visible or sel_army >= 0 or sel_fleet >= 0 or sel_region >= 0 or merge_tap >= 0:
+					deselect_all()
+					get_viewport().set_input_as_handled()
 			"map_end_turn":
 				if not end_button.disabled:
 					end_turn()
@@ -3157,10 +3206,25 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 		_skip_release = false
 		_touches.erase(e.index)
 		return
+	var is_mouse := e.device == InputEvent.DEVICE_ID_EMULATION
 	if e.pressed:
 		_touches[e.index] = e.position
+		_set_last_mouse(is_mouse)
+		if not is_mouse:
+			# Two-finger tap = deselect: both fingers down within 120 ms, up within 250 ms, each under 12 px.
+			var tnow := Time.get_ticks_msec()
+			if _touches.size() == 1:
+				_tt_t0 = tnow
+				_tt_ok = false
+				_tt_start.clear()
+			elif _touches.size() == 2:
+				_tt_ok = tnow - _tt_t0 <= TWO_TAP_DOWN_MS
+			else:
+				_tt_ok = false
+			_tt_start[e.index] = e.position
 		if _touches.size() == 1:
 			_press_pos = e.position
+			_press_mouse = is_mouse
 			_dragging = false
 			_multi = false
 			_drag_army = -1
@@ -3189,6 +3253,14 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 	if not _touches.has(e.index):
 		return
 	_touches.erase(e.index)
+	if _tt_ok and _touches.is_empty():
+		_tt_ok = false
+		if Time.get_ticks_msec() - _tt_t0 <= TWO_TAP_TOTAL_MS:
+			_multi = false
+			_dragging = false
+			if side.visible or sel_army >= 0 or sel_fleet >= 0 or sel_region >= 0 or merge_tap >= 0:
+				deselect_all()
+			return
 	if _multi:
 		if _touches.is_empty():
 			_multi = false
@@ -3196,7 +3268,10 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 			_start_pinch()
 		return
 	if not _dragging:
-		_tap(e.position)
+		if _press_mouse and _g():
+			_left_click(e.position)
+		else:
+			_tap(e.position)
 	_dragging = false
 
 
@@ -3204,6 +3279,8 @@ func _on_drag(e: InputEventScreenDrag) -> void:
 	if not _touches.has(e.index):
 		return
 	_touches[e.index] = e.position
+	if _tt_ok and _tt_start.has(e.index) and e.position.distance_to(_tt_start[e.index]) > TWO_TAP_MOVE:
+		_tt_ok = false
 	if _multi:
 		if _touches.size() >= 2:
 			var ks := _touches.keys()
@@ -3381,6 +3458,78 @@ func _tap_fleets(p: Vector2) -> bool:
 				show_side(func(box): panels.fleet_panel(box, sel_fleet))
 			return true
 	return false
+
+
+## Real mouse, left click on the overworld (Total War): it only selects. One of our armies / fleets, a city or a
+## region selects it (another faction's army or fleet for viewing: the card, never an attack); our other army with ours
+## selected still merges and our other fleet with ours selected still joins (the second-tap flow); empty map
+## (sea, nothing pickable) deselects, and never orders. Shift keeps the selection. Orders are the right button's.
+func _left_click(p: Vector2) -> void:
+	if f < 0:
+		return
+	var shift := Input.is_key_pressed(KEY_SHIFT)
+	var fid := overlay.fleet_at(p) if CFleet.on(ps) else -1
+	if fid >= 0:
+		var fl := CFleet.fleet(ps, fid)
+		var sf := CFleet.fleet(ps, sel_fleet) if sel_fleet >= 0 else {}
+		if fid == sel_fleet:
+			close_side()
+		elif not sf.is_empty() and int(sf["f"]) == f and int(fl["f"]) == f and not fl.has("flota"):
+			join_fleet(sel_fleet, fid)
+		else:
+			select_fleet(fid)
+			_t("campaign_input", {"what": "select_fleet"})
+		return
+	var id := overlay.army_at(p)
+	if id >= 0:
+		var sa := CState.army(ps, sel_army) if sel_army >= 0 else {}
+		var mine_sel := not sa.is_empty() and int(sa["f"]) == f and int(sa["busy"]) == 0
+		if id == sel_army:
+			close_side()
+		elif mine_sel and int(CState.army(ps, id)["f"]) == f:
+			_merge_tap_at(id)
+		else:
+			select_army(id)
+			_t("campaign_input", {"what": "select_army"})
+		return
+	var mk := overlay.marker_at(p)
+	if not mk.is_empty():
+		_marker_toast(mk)
+		return
+	var sr := overlay.settlement_at(p)
+	if sr >= 0:
+		select_region(sr)
+		return
+	if _crossing_note(p):
+		return
+	var r := Geo.region_at(_map_point(p))
+	if r >= 0:
+		select_region(r)
+		return
+	if not shift:
+		deselect_all()
+
+
+## Real mouse, right click (no drag) on the overworld: the ORDER for what is selected, exactly what a tap on that
+## target does (an army: march / attack / siege / join / board; a fleet: sail / land / attack / join). With nothing
+## of ours selected, nothing.
+func _right_order(p: Vector2) -> void:
+	if f < 0:
+		return
+	var sf := CFleet.fleet(ps, sel_fleet) if sel_fleet >= 0 and CFleet.on(ps) else {}
+	if not sf.is_empty():
+		if int(sf["f"]) == f:
+			_tap_fleets(p)
+		return
+	var sa := CState.army(ps, sel_army) if sel_army >= 0 else {}
+	if not sa.is_empty() and int(sa["f"]) == f and int(sa["busy"]) == 0:
+		_tap6(p)
+
+
+func _set_last_mouse(v: bool) -> void:
+	if v != last_mouse:
+		last_mouse = v
+		_update_hint()
 
 
 ## What screen point p targets for the selected army: [cell, tgt] (an enemy

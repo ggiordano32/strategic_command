@@ -137,7 +137,7 @@ func _initialize() -> void:
 		_gf_dip, _gf_money, _gf_money_check, _gf_buy, _gf_buy_check, _gf_deal_cancel, _gf_deal_cancel_check,
 		_gf_offer, _gf_accept, _gf_accept_check, _gf_accept_undo, _gf_done,
 		_n_open, _n_tap_rome, _n_tap_carthage, _n_tap_greeks, _n_idle, _n_picks, _n_one_team, _n_idle, _n_one_team_check, _n_dropdown, _n_dropdown_check, _n_start, _n_idle, _n_idle, _n_idle, _n_check,
-		_t_setup, _t_dip, _t_stance, _t_propose, _n_idle, _t_incoming, _t_tap_accept, _n_idle, _t_accept, _t_leave, _n_idle, _t_leave_dialog, _n_idle, _t_leave_planned, _t_notice, _t_text, _t_done, _f_fog, _f_fog2, _j_setup, _j_adjacent, _j_far, _j_done, _s_done,
+		_t_setup, _t_dip, _t_stance, _t_propose, _n_idle, _t_incoming, _t_tap_accept, _n_idle, _t_accept, _t_leave, _n_idle, _t_leave_dialog, _n_idle, _t_leave_planned, _t_notice, _t_text, _t_done, _f_fog, _f_fog2, _j_setup, _j_adjacent, _j_far, _jm_run, _j_done, _s_done,
 	]
 
 
@@ -1648,7 +1648,9 @@ func _j_setup() -> void:
 				break
 	var mk := func(id: int, c: int) -> Dictionary:
 		return {"id": id, "f": eng, "x": CGrid.cx(c), "y": CGrid.cy(c), "ships": [{"t": "sloop", "h": 100, "c": 100}], "carry": [], "moved": 0}
-	st["fleets"] = [mk.call(900, _j_cell(0)), mk.call(901, _j_cell(1)), mk.call(902, _j_cell(14))]
+	var foe: Dictionary = mk.call(905, _j_cell(-2))
+	foe["f"] = (eng + 1) % CData.FACTIONS.size()
+	st["fleets"] = [mk.call(900, _j_cell(0)), mk.call(901, _j_cell(1)), mk.call(902, _j_cell(14)), foe]
 	st["next_fleet"] = 903
 	cs = CampaignScreen.new()
 	cs.details_on_select = true
@@ -1683,7 +1685,7 @@ func _j_adjacent() -> void:
 			o = q
 	_check(not o.is_empty() and int(o["fleet"]) == 900 and int(o["into"]) == 901,
 		"fleets: a tap on our fleet beside the selected one plans the merge (fmerge 900 into 901)")
-	_check(cs.sel_fleet == 901 and (cs.ps["fleets"] as Array).size() == 2, "fleets: the merged-into fleet is selected, the other gone from the plan")
+	_check(cs.sel_fleet == 901 and (cs.ps["fleets"] as Array).size() == 3, "fleets: the merged-into fleet is selected, the other gone from the plan")
 	cs.undo()
 	await process_frame
 	await process_frame
@@ -1719,6 +1721,166 @@ func _j_far() -> void:
 		if str(q["t"]) == "fmove":
 			still = true
 	_check(not still, "fleets: the same fleet again cancels the voyage")
+	hold = false
+
+
+func _jm_click(p: Vector2) -> void:
+	# A real mouse's left click: the engine emulates a touch with this device id.
+	for pressed in [true, false]:
+		var e := InputEventScreenTouch.new()
+		e.index = 0
+		e.device = InputEvent.DEVICE_ID_EMULATION
+		e.position = _win(p)
+		e.pressed = pressed
+		Input.parse_input_event(e)
+
+
+func _jm_rclick(p: Vector2) -> void:
+	for pressed in [true, false]:
+		var e := InputEventMouseButton.new()
+		e.button_index = MOUSE_BUTTON_RIGHT
+		e.pressed = pressed
+		e.position = _win(p)
+		e.global_position = e.position
+		e.button_mask = MOUSE_BUTTON_MASK_RIGHT if pressed else 0
+		Input.parse_input_event(e)
+
+
+func _jm_fmoves() -> Array:
+	var out := []
+	for q in cs.orders:
+		if str(q["t"]) == "fmove":
+			out.append(q)
+	return out
+
+
+func _jm_run() -> void:
+	hold = true
+	cs.no_bar = false
+	cs.details_on_select = false
+	cs.close_side()
+	cs.orders = []
+	cs._replan()
+	_j_view(7)
+	cs._refresh_map()
+	await process_frame
+	await process_frame
+	FogView.all_seeing = true   # (the enemy fleet beside ours is drawn)
+	cs._refresh_map()
+	await process_frame
+	var pos: Dictionary = cs.overlay.fleet_positions()
+	var sea: Vector2 = cs.overlay.to_screen(MapOverlay.cell_point(_j_cell(7)))
+	# The Deselect button follows a fleet selection (the command bar shows it, the side panel stays shut).
+	cs.select_fleet(900)
+	await process_frame
+	_check(cs.sel_fleet == 900 and not cs.side.visible and cs.deselect_button.is_visible_in_tree(), "mouse: Deselect shows with a fleet selected (command bar on)")
+	cs.last_mouse = false
+	_check(cs.deselect_button.is_visible_in_tree(), "touch: Deselect shows with a fleet selected")
+	# Hints per input kind.
+	cs._set_last_mouse(true)
+	_check(cs.hint.text.begins_with("Right-click the sea"), "hint (mouse, fleet): " + cs.hint.text.left(30))
+	cs._set_last_mouse(false)
+	_check(cs.hint.text.begins_with("Tap the sea"), "hint (touch, fleet): " + cs.hint.text.left(30))
+	# Left click on empty sea deselects and plans nothing.
+	_jm_click(sea)
+	await process_frame
+	await process_frame
+	_check(cs.sel_fleet == -1 and _jm_fmoves().is_empty() and not cs.deselect_button.visible and cs.last_mouse,
+		"mouse: a left click on empty sea deselects and plans nothing")
+	_check(cs.hint.text.begins_with("Left-click"), "hint (mouse, nothing selected): " + cs.hint.text.left(30))
+	# A left click on our fleet selects it; on an enemy fleet it selects it for viewing (no attack).
+	_jm_click(pos[900])
+	await process_frame
+	await process_frame
+	_check(cs.sel_fleet == 900, "mouse: a left click on our fleet selects it")
+	if pos.has(905):
+		_jm_click(pos[905])
+		await process_frame
+		await process_frame
+		_check(cs.sel_fleet == 905 and _jm_fmoves().is_empty(), "mouse: a left click on an enemy fleet selects it for viewing, no attack")
+	else:
+		_check(false, "the enemy fleet is drawn")
+	# Right click: nothing selected of ours does nothing; with ours selected it is the order.
+	cs.deselect_all()
+	_jm_rclick(sea)
+	await process_frame
+	_check(_jm_fmoves().is_empty() and cs.sel_fleet == -1, "mouse: a right click with nothing selected does nothing")
+	cs.select_fleet(900)
+	await process_frame
+	_jm_rclick(sea)
+	await process_frame
+	await process_frame
+	var mv := _jm_fmoves()
+	_check(mv.size() == 1 and int(mv[0]["fleet"]) == 900 and cs.sel_fleet == 900, "mouse: a right click on the sea plans the voyage")
+	_jm_rclick(sea)
+	await process_frame
+	await process_frame
+	_check(_jm_fmoves().is_empty(), "mouse: the same spot again cancels it")
+	cs.offset.x -= 300.0
+	cs._refresh_map()
+	await process_frame
+	await process_frame
+	pos = cs.overlay.fleet_positions()
+	_jm_rclick(pos[902])
+	await process_frame
+	await process_frame
+	mv = _jm_fmoves()
+	_check(mv.size() == 1 and int(mv[0].get("tgt", -1)) == 902, "mouse: a right click on our other fleet plans the join")
+	# Esc deselects.
+	var k := InputEventKey.new()
+	k.keycode = KEY_ESCAPE
+	k.physical_keycode = KEY_ESCAPE
+	k.pressed = true
+	Input.parse_input_event(k)
+	await process_frame
+	await process_frame
+	_check(cs.sel_fleet == -1 and not cs.deselect_button.visible, "Esc deselects the fleet")
+	# Two-finger tap deselects (touch).
+	cs.select_fleet(900)
+	await process_frame
+	for pressed in [true, false]:
+		for i in 2:
+			var e := InputEventScreenTouch.new()
+			e.index = i
+			e.position = _win(sea + Vector2(30 * i, 0))
+			e.pressed = pressed
+			Input.parse_input_event(e)
+	await process_frame
+	await process_frame
+	_check(cs.sel_fleet == -1, "touch: a two-finger tap deselects")
+	# Back from a battle: the fleet that was selected is gone / survives.
+	cs.select_fleet(901)
+	await process_frame
+	cs._set_visible(false)
+	cs._set_visible(true)
+	cs._replan()
+	await process_frame
+	_check(cs.sel_fleet == 901 and cs.deselect_button.is_visible_in_tree(), "after a battle: a surviving fleet stays selected with the Deselect button")
+	var left: Array = []
+	for fl in cs.st["fleets"]:
+		if int(fl["id"]) != 901:
+			left.append(fl)
+	cs.st["fleets"] = left
+	cs._replan()
+	await process_frame
+	_check(cs.sel_fleet == -1 and not cs.deselect_button.visible, "after a battle: a fleet that is gone is deselected, no stale button")
+	var arm: Array = CState.armies_of(cs.ps, CData.faction_index("england"))
+	if arm.is_empty():
+		_check(false, "the English have an army")
+	else:
+		var aid := int(arm[0]["id"])
+		cs.select_army(aid)
+		await process_frame
+		_check(cs.sel_army == aid and cs.deselect_button.is_visible_in_tree(), "after a battle: a selected army has the Deselect button (bar on)")
+		var rest: Array = []
+		for a in cs.st["armies"]:
+			if int(a["id"]) != aid:
+				rest.append(a)
+		cs.st["armies"] = rest
+		cs._replan()
+		await process_frame
+		_check(cs.sel_army == -1 and not cs.deselect_button.visible, "after a battle: an army that is gone is deselected, no stale button")
+	FogView.all_seeing = false
 	hold = false
 
 
