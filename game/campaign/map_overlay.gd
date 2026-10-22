@@ -43,12 +43,14 @@ const CCaptain := preload("res://campaign/ccaptain.gd")
 const SeaWaves := preload("res://game/campaign/sea_waves.gd")
 const MapView := preload("res://game/campaign/map_view.gd")
 const Minis := preload("res://game/campaign/minis_layer.gd")  # miniatures replace the icons / hulls when Minis.on_*
+const MenuStyle := preload("res://game/menu/menu_style.gd")
 
 const ARMY_W := 30.0
 const ARMY_H := 26.0
 const ARMY_GAP := 4.0
 const SITE_R := [5.0, 7.0, 9.5]
 const FONT := 13
+const DIORAMA_ZOOM := 1.6   # from this zoom the city names are 18 px or more and use the display face
 
 ## The drawing style, shared with the map key (map_key.gd draws its samples
 ## with the same static painters below, so the key cannot drift from the
@@ -178,25 +180,28 @@ func mk() -> float:
 static var _lines := {}
 
 
-static func text_line(text: String, fs: int) -> TextLine:
-	var key := "%d|%s" % [fs, text]
+static func text_line(text: String, fs: int, display: bool = false) -> TextLine:
+	var key := "%d|%s|%d" % [fs, text, 1 if display else 0]
 	var tl: TextLine = _lines.get(key)
 	if tl == null:
 		if _lines.size() > 600:
 			_lines.clear()
 		tl = TextLine.new()
-		tl.add_string(text, ThemeDB.fallback_font, fs)
+		var f: Font = ThemeDB.fallback_font
+		if display and MenuStyle.display_font(true) != null:
+			f = MenuStyle.display_font(true)
+		tl.add_string(text, f, fs)
 		_lines[key] = tl
 	return tl
 
 
-static func text_w(text: String, fs: int) -> float:
-	return text_line(text, fs).get_size().x
+static func text_w(text: String, fs: int, display: bool = false) -> float:
+	return text_line(text, fs, display).get_size().x
 
 
 ## draw_string / draw_string_outline at the baseline point `at`, with an outline of width ow (0 none).
-static func put(ci: CanvasItem, at: Vector2, text: String, fs: int, col: Color, ow := 0, oc := Color(0, 0, 0)) -> void:
-	var tl := text_line(text, fs)
+static func put(ci: CanvasItem, at: Vector2, text: String, fs: int, col: Color, ow := 0, oc := Color(0, 0, 0), display := false) -> void:
+	var tl := text_line(text, fs, display)
 	var top := at - Vector2(0.0, tl.get_line_ascent())
 	var rid := ci.get_canvas_item()
 	if ow > 0:
@@ -709,7 +714,11 @@ func _sites_body() -> void:
 		if (show_names or lvl == CData.CITY) and not FogView.never(r):
 			var nm := str(CData.REGIONS[r]["city"])
 			var fs := int(round(FONT * (0.85 + 0.15 * m)))
-			var tw := text_w(nm, fs)
+			# At the diorama zoom the names are 18 px or more and use the display face; smaller zooms are as before.
+			var disp := zoom >= DIORAMA_ZOOM and MenuStyle.display_font(true) != null
+			if disp:
+				fs = int(round(minf(22.0, 18.0 + (zoom - DIORAMA_ZOOM) * 4.0)))
+			var tw := text_w(nm, fs, disp)
 			var tp := p + Vector2(-tw * 0.5, -rad - 5.0 - Minis.label_lift_of(zoom, r))
 			for _k in 4:
 				var lr := Rect2(tp.x - 2.0, tp.y - fs, tw + 4.0, fs + 3.0)
@@ -722,7 +731,7 @@ func _sites_body() -> void:
 					placed.append(lr)
 					break
 				tp.y -= fs + 3.0
-			put(_ci, tp, nm, fs, Color(1, 1, 0.95), 4, Color(0, 0, 0, 0.75))
+			put(_ci, tp, nm, fs, Color(1, 1, 0.95), 4, Color(0, 0, 0, 0.75), disp)
 	# Pending battles.
 	for b in state["battles"]:
 		if not FogView.battle_seen(state, b):

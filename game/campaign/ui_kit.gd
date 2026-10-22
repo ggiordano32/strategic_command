@@ -3,6 +3,26 @@ extends RefCounted
 ## unit row. Sizes are logical pixels (game/ui_scale.gd makes them touch-sized
 ## on phones and compact on desktops), matching the battle HUD: 42 px
 ## buttons, 15 px text.
+##
+## THE THEME (one look for the title menu and the in-game screens; the menu's
+## dressing is game/menu/menu_style.gd, the marks game/menu/emblem.gd):
+##  - Colours: gold b08a40 (rules, trim; COL_RULE), bright gold ffd973 (COL_GOLD:
+##    titles, the lit choice), bone e8dcb0 (COL_BONE: the hot label), ink 1a1410
+##    (the trim panel's outer line), the dark warm panel PANEL_BG. Good / bad
+##    greens and reds stay for numbers.
+##  - Type: Cinzel Bold (title_font(), assets/ui/fonts, OFL) for TITLES only
+##    (dialog and panel titles, the faction name, the leader card, End turn,
+##    city names at the diorama zoom) and never under 18 px (title() clamps);
+##    every body text, button and number keeps the UI face at FONT 15 /
+##    FONT_SMALL 13 / FONT_TITLE 18.
+##  - Trim: trim_box() / trim_panel() = the dark panel, a 1 px gold rule inset
+##    4 px and four corner brackets (drawn, no textures) on dialogs, the side
+##    panel and the selected card; rule() = a gold hairline between sections.
+##  - Buttons: BTN_H 40 (48 for the End turn row), 6 px gaps, the hover / press
+##    motion of the menu (scale 1.03 in 0.1 s, brighter label; none on
+##    Quality Low or --no-anim); hero_button() = gold-trimmed, larger (End turn).
+##  - Spacing: 8 px panel margins, 6-8 px between rows, 14 px between top bar
+##    groups. Phones keep their touch sizes and single rows.
 
 const AudioFx := preload("res://game/audio.gd")
 const UT := preload("res://sim/unit_types.gd")
@@ -14,6 +34,9 @@ const IconRaster := preload("res://game/campaign/icon_raster.gd")  # the icons d
 const Traits := preload("res://game/unit_traits.gd")
 const CData := preload("res://campaign/cdata.gd")
 const FactionEmblem := preload("res://game/faction_emblem.gd")
+const MenuStyle := preload("res://game/menu/menu_style.gd")
+const MenuEmblem := preload("res://game/menu/emblem.gd")
+const Quality := preload("res://game/quality.gd")
 
 const BTN_H := 40.0
 const FONT := 15
@@ -25,6 +48,11 @@ const COL_BAD := Color(1.0, 0.6, 0.5)
 const COL_GOLD := Color(1.0, 0.85, 0.45)
 const PANEL_BG := Color(0.1, 0.12, 0.11, 0.96)
 const COL_TEXT := Color(0.875, 0.875, 0.875)  # the default theme's button text
+const COL_RULE := Color(0.69, 0.54, 0.25)      # b08a40, the menu's gold
+const COL_BONE := Color(0.91, 0.86, 0.69)      # e8dcb0
+const COL_INK := Color(0.10, 0.08, 0.06)       # 1a1410
+const TITLE_MIN := 18                          # a display face is never used under this size
+const HOT_SCALE := 1.03
 const ICON_GAP := 6
 
 
@@ -49,7 +77,181 @@ static func button(text: String, cb: Callable, min_w: float = 0.0, size: int = F
 	b.pressed.connect(AudioFx.click)  # every button's click sound (game/audio.gd)
 	if cb.is_valid():
 		b.pressed.connect(cb)
+	b.add_theme_color_override("font_hover_color", Color(1.0, 0.96, 0.82))  # the menu's hot label
+	motion(b)
 	return b
+
+
+# ------------------------------------------------------------------ theme ---
+
+## Tests: 1 forces the button motion on, 0 off, -1 the setting (Quality Low and --no-anim switch it off).
+static var anim_override := -1
+static var _anim_at := -100000
+static var _anim_val := true
+
+
+## Whether the hover / press motion runs. Read from the settings at most every 2 s (the check is on the press path).
+static func anim_on() -> bool:
+	if anim_override >= 0:
+		return anim_override == 1
+	var now := Time.get_ticks_msec()
+	if now - _anim_at > 2000:
+		_anim_at = now
+		_anim_val = not Quality.is_low() and not ("--no-anim" in OS.get_cmdline_user_args())
+	return _anim_val
+
+
+## The menu's motion on a button: it grows 3 % (0.1 s) under the pointer or finger and goes back. The signals only
+## start a tween; nothing runs at build time and a disabled button stays put.
+static func motion(b: BaseButton) -> void:
+	b.mouse_entered.connect(_grow.bind(b, HOT_SCALE))
+	b.mouse_exited.connect(_grow.bind(b, 1.0))
+	b.button_down.connect(_grow.bind(b, HOT_SCALE))
+	b.button_up.connect(func(): _grow(b, HOT_SCALE if b.is_hovered() else 1.0))
+
+
+static func _grow(b: BaseButton, k: float) -> void:
+	if not is_instance_valid(b) or not b.is_inside_tree():
+		return
+	if b.has_meta("grow_tw"):
+		var old = b.get_meta("grow_tw")
+		if old is Tween and (old as Tween).is_valid():
+			(old as Tween).kill()
+	if not anim_on() or b.disabled:
+		if b.scale != Vector2.ONE:
+			b.scale = Vector2.ONE
+		return
+	b.pivot_offset = b.size * 0.5
+	var tw := b.create_tween()
+	b.set_meta("grow_tw", tw)
+	tw.tween_property(b, "scale", Vector2(k, k), 0.1)
+
+
+## The display face (Cinzel Bold), null when the font file is missing (labels then keep the UI face).
+static func title_font() -> Font:
+	return MenuStyle.display_font(true)
+
+
+## A title in the display face; never under TITLE_MIN px.
+static func title(text: String, size: int = 22, col: Color = COL_GOLD) -> Label:
+	var l := label(text, maxi(size, TITLE_MIN), col)
+	var f := title_font()
+	if f != null:
+		l.add_theme_font_override("font", f)
+	return l
+
+
+## A thin gold hairline between sections.
+static func rule(col: Color = Color(COL_RULE, 0.55)) -> Control:
+	var c := ColorRect.new()
+	c.color = col
+	c.custom_minimum_size = Vector2(0, 1)
+	c.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	c.name = "rule"
+	return c
+
+
+## The setting's emblem (painted or drawn by the [menu] emblems setting) as a square Control of `px`.
+static func emblem(pack: String, px: float) -> Control:
+	return MenuEmblem.make(pack, px)
+
+
+## The corner brackets and the rule of the trim, as polylines for a rect: [rule (closed), bracket, bracket, bracket,
+## bracket]. inset: the rule's distance from the edge; the brackets sit 2 px outside it.
+static func trim_lines(r: Rect2, inset: float, blen: float) -> Array:
+	var g := r.grow(-inset)
+	var out: Array = [PackedVector2Array([g.position, Vector2(g.end.x, g.position.y), g.end, Vector2(g.position.x, g.end.y), g.position])]
+	var b := g.grow(2.0)
+	var l := minf(blen, minf(b.size.x, b.size.y) * 0.4)
+	for c in 4:
+		var sx := 1.0 if c % 2 == 0 else -1.0
+		var sy := 1.0 if c < 2 else -1.0
+		var o := Vector2(b.position.x if sx > 0 else b.end.x, b.position.y if sy > 0 else b.end.y)
+		out.append(PackedVector2Array([o + Vector2(0, sy * l), o, o + Vector2(sx * l, 0)]))
+	return out
+
+
+## Draw the trim on any CanvasItem (the selected card, a custom panel).
+static func draw_trim(ci: CanvasItem, r: Rect2, inset: float = 4.0, blen: float = 12.0, col: Color = COL_RULE) -> void:
+	var ls := trim_lines(r, inset, blen)
+	ci.draw_polyline(ls[0], Color(col, 0.6), 1.0)
+	for k in range(1, ls.size()):
+		ci.draw_polyline(ls[k], Color(col.lightened(0.35), 1.0), 2.0)
+
+
+## The dark warm panel with a 1 px gold rule inset 4 px and corner brackets (no textures).
+class TrimBox extends StyleBox:
+	const KitSelf := preload("res://game/campaign/ui_kit.gd")
+	var bg := PANEL_BG
+	var inset := 4.0
+	var blen := 12.0
+
+	func _draw(ci: RID, r: Rect2) -> void:
+		RenderingServer.canvas_item_add_rect(ci, r, bg)
+		var o := r.grow(-0.5)
+		RenderingServer.canvas_item_add_polyline(ci, PackedVector2Array([o.position, Vector2(o.end.x, o.position.y), o.end,
+			Vector2(o.position.x, o.end.y), o.position]), PackedColorArray([Color(COL_INK, 0.95)]), 1.0)
+		var ls := KitSelf.trim_lines(r, inset, blen)
+		RenderingServer.canvas_item_add_polyline(ci, ls[0], PackedColorArray([Color(COL_RULE, 0.6)]), 1.0)
+		for k in range(1, ls.size()):
+			RenderingServer.canvas_item_add_polyline(ci, ls[k], PackedColorArray([COL_RULE.lightened(0.35)]), 2.0)
+
+
+## A StyleBox for dialogs and side panels: PANEL_BG (or col) with the trim; margin is the content margin
+## (at least inset + 6 so text clears the rule).
+static func trim_box(col: Color = PANEL_BG, margin: float = 12.0, inset: float = 4.0) -> StyleBox:
+	var sb := TrimBox.new()
+	sb.bg = col
+	sb.inset = inset
+	sb.set_content_margin_all(maxf(margin, inset + 6.0))
+	return sb
+
+
+static func trim_panel(col: Color = PANEL_BG, margin: float = 12.0) -> PanelContainer:
+	var p := PanelContainer.new()
+	p.add_theme_stylebox_override("panel", trim_box(col, margin))
+	return p
+
+
+## The hero button (End turn): gold trim, larger, the display face; same signature as icon_button's.
+static func hero_button(text: String, icon: String, cb: Callable, min_w: float = 130.0, size: int = 18) -> Button:
+	var b := button(text, cb, min_w, size)
+	b.custom_minimum_size.y = 48.0
+	var f := title_font()
+	if f != null:
+		b.add_theme_font_override("font", f)
+	var cols := {"normal": Color(0.20, 0.15, 0.06, 0.97), "hover": Color(0.30, 0.22, 0.08, 1.0),
+		"pressed": Color(0.38, 0.28, 0.10, 1.0), "disabled": Color(0.12, 0.11, 0.09, 0.9)}
+	for k in cols:
+		var sb := box(cols[k], 8.0, 6)
+		sb.set_border_width_all(2)
+		sb.border_color = COL_RULE.lightened(0.35) if k != "disabled" else Color(0.35, 0.3, 0.2, 0.6)
+		if k == "hover" or k == "pressed":
+			sb.border_color = COL_GOLD
+		b.add_theme_stylebox_override(k, sb)
+	b.add_theme_stylebox_override("focus", b.get_theme_stylebox("normal"))
+	b.add_theme_color_override("font_color", COL_BONE)
+	b.add_theme_color_override("font_hover_color", Color(1.0, 0.97, 0.85))
+	b.add_theme_color_override("font_pressed_color", COL_GOLD)
+	b.add_theme_color_override("font_disabled_color", Color(0.55, 0.52, 0.45))
+	if icon != "":
+		set_icon(b, icon, COL_BONE)
+	b.name = "hero_button"
+	return b
+
+
+## A top-bar navigation button in the menu's style: a dark plate with a thin gold edge, brighter under the pointer.
+## Margins as the default button's so the row keeps its width.
+static func nav_style(b: Button) -> void:
+	var cols := {"normal": [Color(0.11, 0.13, 0.12, 0.94), Color(COL_RULE, 0.6)], "hover": [Color(0.17, 0.19, 0.16, 0.97), COL_GOLD],
+		"pressed": [Color(0.22, 0.22, 0.16, 1.0), Color(1.0, 0.9, 0.55)], "disabled": [Color(0.09, 0.1, 0.1, 0.8), Color(0.3, 0.3, 0.3, 0.5)]}
+	for k in cols:
+		var sb := box(cols[k][0], 4.0, 5)
+		sb.set_border_width_all(1)
+		sb.border_color = cols[k][1]
+		b.add_theme_stylebox_override(k, sb)
+	b.add_theme_stylebox_override("focus", b.get_theme_stylebox("normal"))
 
 
 ## Deployment time choices ([label, seconds]; -1: no countdown, the battle
@@ -487,11 +689,11 @@ const BAND_COLS: Array[Color] = [Color(1.0, 0.45, 0.4), Color(1.0, 0.65, 0.5), C
 ## colour, defenders right), and "Your chance 62%: likely victory. Expected
 ## losses: yours 18%, theirs 41%." me: 0 the viewer attacks, 1 defends, -1
 ## neither (the attackers' view). names / cols: [attackers, defenders].
-static func odds_view(od: Dictionary, me: int, names: Array, cols: Array, title: String) -> Control:
+static func odds_view(od: Dictionary, me: int, names: Array, cols: Array, p_title: String) -> Control:
 	var v := vbox(3)
 	v.name = "odds"
-	if title != "":
-		v.add_child(label(title, FONT_SMALL, COL_GOLD, true))
+	if p_title != "":
+		v.add_child(label(p_title, FONT_SMALL, COL_GOLD, true))
 	var share := int(od["share"])
 	var bar := OddsBar.new(share, cols, ["%s %d%%" % [names[0], share], "%d%% %s" % [100 - share, names[1]]])
 	bar.name = "odds_bar"
@@ -565,15 +767,15 @@ static var _js_cb: JavaScriptObject = null
 static var _clip_wait := {}   # clipboard read number -> Callable(ok: bool, text: String)
 
 
-## A one-line text field (see the section header). title: what the browser
+## A one-line text field (see the section header). p_title: what the browser
 ## prompt asks (default: the placeholder). trim: drop surrounding spaces from
 ## prompted and pasted text (keys and codes).
-static func text_field(placeholder: String, text: String = "", min_w: float = 200.0, title: String = "", trim: bool = false) -> LineEdit:
+static func text_field(placeholder: String, text: String = "", min_w: float = 200.0, p_title: String = "", trim: bool = false) -> LineEdit:
 	var le := LineEdit.new()
 	le.placeholder_text = placeholder
 	le.text = text
 	le.custom_minimum_size = Vector2(min_w, BTN_H)
-	le.set_meta("title", title if title != "" else placeholder)
+	le.set_meta("title", p_title if p_title != "" else placeholder)
 	if trim:
 		le.set_meta("trim", 1)
 	if OS.has_feature("web"):

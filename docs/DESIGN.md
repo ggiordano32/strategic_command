@@ -6704,3 +6704,53 @@ opens, the cards open the right pack's faction page, the server line on Grand Ca
 setting and `settings.cfg` is restored, `--dev` entries, both backgrounds build and free, auto follows Graphics,
 both emblem styles, the phone layout centred, script errors counted); `input_test` and `touch_scroll_test` now go
 through the Options / Battles / Campaign pages.
+
+### UI theme (as built, 2026-10-21, pass 1: the kit and the campaign screen)
+
+Owner's call: "the in game menu needs some work. trim, font, anything else". The title menu's dressing (Cinzel, gold
+`b08a40` / ink `1a1410` / bone `e8dcb0`, the dark warm panel, the 3 % hover growth, the setting emblems and key art)
+now runs through the shared widget kit, `game/campaign/ui_kit.gd` (its header documents the theme: colours, type, trim,
+buttons, spacing). View only: nothing in `sim/` or `campaign/` changed. Pass 2 (the battle HUD, the sea screen) is
+separate.
+
+**The kit.** `Kit.title(text, size)` is a Label in Cinzel Bold (`Kit.title_font()`; the UI face when the file is
+missing), used for titles only (dialog and panel titles, the faction name, the leader card, End turn, loading titles,
+city names at the diorama zoom) and never under 18 px (it clamps); body text, buttons and numbers keep the UI face.
+`Kit.trim_box()` / `Kit.trim_panel()`: the dark panel with a 1 px gold rule inset 4 px and four corner brackets, drawn by
+a StyleBox (`Kit.TrimBox`, no textures); `Kit.draw_trim(canvas_item, rect)` draws the same on a custom control; used by
+dialogs, the side panel, the loading panel and the selected unit card. `Kit.rule()` is the gold hairline between
+sections. `Kit.button` / `icon_button` (so every kit button, battle HUD included) get the menu's motion: a tween
+to scale 1.03 in 0.1 s on hover / press and a brighter hover label; the signals only start a tween (nothing at build
+time), a disabled button stays put, and it is off on Quality Low and with `--no-anim` (`Kit.anim_on()`, read from the
+settings at most every 2 s; tests force it with `Kit.anim_override`). `Kit.hero_button(text, icon, cb)`: gold-trimmed,
+48 px, 18 pt Cinzel (End turn). `Kit.nav_style(button)`: the menu's dark plate with a thin gold edge for the top bar and
+the Menu's option buttons, with the default button's margins so rows keep their width. `Kit.emblem(pack, px)`: the
+setting's emblem control (painted or drawn by `[menu] emblems`).
+
+**Campaign screen.** Top bar: the setting's emblem at the left, the faction name in Cinzel 18, date, gold, income,
+the icon buttons as plates, a gold rule under the bar; below 820 logical px wide (phones) the emblem is hidden and the
+name keeps the UI face, so the phone row is as before. End turn is the hero button. The command bar: only the selected
+unit card carries the gold trim; the leader card title is Cinzel 18 on desktop (15 plain on phones). The side panel has
+the trim, panel titles are Cinzel 18. `show_dialog` (so the "Resolving the turn" wait, confirms, diplomacy / build /
+recruit popups and the story cards' frame) uses the trim panel with the title in Cinzel 22 and a rule under it; the
+story cards' layout is unchanged. City names are Cinzel at 18-22 px from zoom 1.6 (`MapOverlay.DIORAMA_ZOOM`), the UI
+face at smaller zooms.
+
+**The Menu** (the top-right button; `game/campaign/game_menu.gd`): an overlay like the title screen: the map dimmed, a
+dark column on the left (440 logical px at most) with the setting's emblem, the campaign's name in Cinzel and the date,
+then Resume, Save, Options, Controls, Main menu (a confirm page: "Leave to the main menu?" with Main menu / Stay; the
+campaign is saved first). Under a rule: Export save as text and Play online (a local campaign) or the Online page (an
+online one), and the state hash. Options holds the title screen's settings with the same saved values (UI size,
+Graphics, Soldiers, Fullscreen, Battle look, Map style, Sound and the three volumes) as plate buttons; the cycles are
+duplicated from `game/main.gd`'s Options page (a later cleanup could move both into one helper). Esc, the Android back
+request and a tap on the dimmed map close it (one step back from Options or the confirm); Controls closes it and opens
+the controls page.
+
+**Loading** (`loading_panel.gd`): the setting's key art (`assets/ui/keyart/<pack>.jpg`, cover-fitted, darkened 40 %,
+a dark fill without the file) behind a trim panel with the title in Cinzel, a one-line tip from `LoadingPanel.TIPS`
+(view-side random choice), the progress bar and the step. Used by the campaign start, the battle build and the turn
+resolve: "Resolving the turn" shows this panel when the last resolve took over 0.5 s (`last_resolve_ms`, measured in
+`_resolve_turn`), else the small dialog as before (the first resolve of a session always the dialog).
+
+Tests: `tests/theme_test.gd` (windowed; the kit, the campaign screen in both settings, the Menu overlay, the loading
+panel and the slow resolve, the diorama-zoom labels, the phone layout; `--shots=DIR` saves screenshots).

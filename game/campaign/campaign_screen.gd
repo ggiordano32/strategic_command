@@ -65,6 +65,7 @@ const MapKey := preload("res://game/campaign/map_key.gd")
 const UiScale := preload("res://game/ui_scale.gd")
 const StoryView := preload("res://game/campaign/story_view.gd")
 const CommandBar := preload("res://game/campaign/command_bar.gd")
+const GameMenu := preload("res://game/campaign/game_menu.gd")
 const FogView := preload("res://game/campaign/fog_view.gd")
 const FogLayer := preload("res://game/campaign/fog_layer.gd")
 
@@ -132,6 +133,10 @@ var map_key: MapKey            # the map key (bottom left)
 var dialog: PanelContainer
 var dialog_box: VBoxContainer
 var dialog_title: Label
+var dialog_rule: Control
+var game_menu: GameMenu        # the in-game Menu overlay (game_menu.gd)
+var top_emblem: Control        # the setting's emblem, left of the top bar
+var _top_title := -1           # the faction name's face: 1 the display face, 0 the UI face
 var dialog_buttons: HBoxContainer
 var dialog_scroll: ScrollContainer
 var cover: ColorRect
@@ -770,15 +775,25 @@ func _resolve_soon() -> void:
 	if _resolving:
 		return
 	_resolving = true
-	var box := Kit.vbox(8)
-	box.add_child(Kit.label("The armies march, the AI moves, battles are joined...", Kit.FONT, Color.WHITE, true))
-	show_dialog("Resolving the turn", box, [], 460)
-	dialog_kind = "resolving"
-	await get_tree().process_frame
-	await get_tree().process_frame   # (a frame drawn and shown: on the web the page only shows it between frames)
+	var lp = null
+	if LoadingPanel.slow_resolve():
+		# The last resolve took over half a second: the key art panel with a tip, as the battle build has.
+		lp = LoadingPanel.open(get_tree().root, "Resolving the turn", 1, str(st.get("pack", CData.pack)))
+		await lp.step("The armies march, the AI moves")
+		await get_tree().process_frame
+	else:
+		var box := Kit.vbox(8)
+		box.add_child(Kit.label("The armies march, the AI moves, battles are joined...", Kit.FONT, Color.WHITE, true))
+		show_dialog("Resolving the turn", box, [], 460)
+		dialog_kind = "resolving"
+		await get_tree().process_frame
+		await get_tree().process_frame   # (a frame drawn and shown: on the web the page only shows it between frames)
 	_resolving = false
 	if is_inside_tree():
 		_resolve_turn()
+	if lp != null and is_instance_valid(lp):
+		await lp.done()
+		lp.close()
 
 
 func _resolve_turn() -> void:
@@ -787,6 +802,7 @@ func _resolve_turn() -> void:
 	st = CTurn.resolve_turn(st, subs)
 	data["session"]["subs"] = []
 	data["session"]["plans"] = {}
+	LoadingPanel.last_resolve_ms = float(Time.get_ticks_msec() - t0)
 	_t("campaign_turn_resolved", {"turn": int(st["turn"]), "ms": Time.get_ticks_msec() - t0,
 		"hash": CState.hash_text(st), "battles": (st["battles"] as Array).size()})
 	f = -1
@@ -1305,11 +1321,21 @@ func _crossing_note(p: Vector2) -> bool:
 func _build_ui() -> void:
 	# Top bar.
 	var top := Kit.panel(Color(0.08, 0.09, 0.08, 0.92), 4)
+	var topsb := top.get_theme_stylebox("panel") as StyleBoxFlat
+	topsb.border_width_bottom = 1   # the gold rule under the bar
+	topsb.border_color = Color(Kit.COL_RULE, 0.8)
+	topsb.set_corner_radius_all(0)
+	top.name = "top_bar"
 	top.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
 	top.offset_bottom = TOP_H
 	ui.add_child(top)
 	top_box = Kit.hbox(5)
 	top.add_child(top_box)
+	top_emblem = Kit.emblem(str(st.get("pack", CData.pack)), 34.0)   # the setting's mark (painted or drawn by the menu setting)
+	top_emblem.name = "top_emblem"
+	top_emblem.add_to_group("menu_emblem")
+	top_emblem.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	top_box.add_child(top_emblem)
 	# Faction, then the date (season icon), treasury and income a turn, each
 	# with its icon; a tap opens the realm.
 	var info := Kit.hbox(14)
@@ -1321,7 +1347,7 @@ func _build_ui() -> void:
 		if e is InputEventMouseButton and not e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
 			panels.show_faction())
 	top_box.add_child(info)
-	top_label = Kit.label("", Kit.FONT)
+	top_label = Kit.title("", 18)   # the faction name in the display face (the UI face on narrow screens: _refresh_top)
 	top_date = Kit.icon_label("", "summer", Kit.FONT)
 	top_money = Kit.label_icon(Kit.label("", Kit.FONT), "treasury", Kit.COL_GOLD)
 	top_income = Kit.icon_label("", "income", Kit.FONT)
@@ -1350,8 +1376,11 @@ func _build_ui() -> void:
 	menu_b.name = "menu"
 	menu_b.tooltip_text = "Menu"
 	top_box.add_child(menu_b)
+	for nb in top_box.get_children():
+		if nb is Button and nb != net_button:
+			Kit.nav_style(nb)
 	# Side panel (right).
-	side = Kit.panel(Kit.PANEL_BG, 8)
+	side = Kit.trim_panel(Kit.PANEL_BG, 10)
 	side.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
 	side.offset_left = -PANEL_W
 	side.offset_top = TOP_H + 4
@@ -1411,8 +1440,7 @@ func _build_ui() -> void:
 	undo_button.custom_minimum_size = Vector2(56, 48)
 	undo_button.visible = false
 	bottom_bar.add_child(undo_button)
-	end_button = Kit.icon_button("End turn", "end_turn", func(): end_turn(), 130, 17)
-	end_button.custom_minimum_size = Vector2(130, 48)
+	end_button = Kit.hero_button("End turn", "end_turn", func(): end_turn(), 130, 18)
 	bottom_bar.add_child(end_button)
 	wait_panel = Kit.panel(Color(0.1, 0.12, 0.1, 0.95), 8)
 	wait_panel.name = "wait_panel"
@@ -1430,7 +1458,7 @@ func _build_ui() -> void:
 	dim.mouse_filter = Control.MOUSE_FILTER_STOP
 	dim.visible = false
 	ui.add_child(dim)
-	dialog = Kit.panel(Color(0.1, 0.12, 0.11, 0.98), 12)
+	dialog = Kit.trim_panel(Color(0.1, 0.12, 0.11, 0.98), 12)
 	dialog.set_anchors_preset(Control.PRESET_CENTER)
 	dialog.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	dialog.grow_vertical = Control.GROW_DIRECTION_BOTH
@@ -1439,8 +1467,12 @@ func _build_ui() -> void:
 	ui.add_child(dialog)
 	var dv := Kit.vbox(8)
 	dialog.add_child(dv)
-	dialog_title = Kit.label("", Kit.FONT_TITLE, Kit.COL_GOLD)
+	dialog_title = Kit.title("", 22)   # the display face
+	dialog_title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	dialog_title.custom_minimum_size.x = 40
 	dv.add_child(dialog_title)
+	dialog_rule = Kit.rule()
+	dv.add_child(dialog_rule)
 	dialog_scroll = TouchScroll.new()
 	dialog_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	dialog_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -1451,6 +1483,8 @@ func _build_ui() -> void:
 	dialog_buttons = Kit.hbox(8)
 	dialog_buttons.alignment = BoxContainer.ALIGNMENT_END
 	dv.add_child(dialog_buttons)
+	game_menu = GameMenu.new(self)   # the in-game Menu, over everything above
+	ui.add_child(game_menu)
 
 
 func _vp() -> Vector2:
@@ -1473,6 +1507,7 @@ func show_dialog(title: String, content: Control, buttons: Array, width: float =
 	_dlg_gen += 1
 	dialog_title.text = title
 	dialog_title.visible = title != ""
+	dialog_rule.visible = title != ""
 	dialog_box.add_child(content)
 	for bdef in buttons:
 		var cb: Callable = bdef[1]
@@ -1753,6 +1788,21 @@ func _refresh_top() -> void:
 	var lc := CData.faction_color(fs).lightened(0.45)
 	var turn := int(st["turn"])
 	top_label.text = " " + CData.faction_name(fs)
+	var pk := str(st.get("pack", CData.pack))
+	if top_emblem != null and (top_emblem as Object).get("pack") != pk:
+		top_emblem.set("pack", pk)
+		top_emblem.queue_redraw()
+	# The display face for the faction name and the emblem only where the bar has room (not on a phone).
+	var roomy := _vp().x >= 820.0
+	top_emblem.visible = roomy
+	if int(roomy) != _top_title:
+		_top_title = int(roomy)
+		if roomy and Kit.title_font() != null:
+			top_label.add_theme_font_override("font", Kit.title_font())
+			top_label.add_theme_font_size_override("font_size", 18)
+		else:
+			top_label.remove_theme_font_override("font")
+			top_label.add_theme_font_size_override("font_size", Kit.FONT)
 	top_date.text = CData.date_text(turn).get_slice(",", 0)
 	Kit.label_icon(top_date, "summer" if turn % 2 == 0 else "winter")
 	top_money.text = Kit.money(int(ps["factions"][fs]["treasury"]))
@@ -3009,7 +3059,7 @@ func _zoom_at(p: Vector2, factor: float) -> void:
 
 
 func _blocked() -> bool:
-	return dialog.visible or book.visible or controls_page.visible or cover.visible or battle != null
+	return dialog.visible or book.visible or controls_page.visible or cover.visible or battle != null or game_menu.visible
 
 
 func _unhandled_input(event: InputEvent) -> void:

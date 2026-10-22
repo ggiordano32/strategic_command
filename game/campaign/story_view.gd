@@ -581,7 +581,7 @@ func show_ending() -> void:
 	var ed: Dictionary = (m.get("ENDINGS", {}) as Dictionary).get(e, {"title": e, "sub": "", "text": ""})
 	var box := Kit.vbox(10)
 	box.name = "story_ending"
-	var tl := Kit.label(str(ed["title"]), 30, Kit.COL_GOLD)
+	var tl := Kit.title(str(ed["title"]), 30)
 	tl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(tl)
 	var sl := Kit.label(str(ed["sub"]), Kit.FONT, COL_NARRATOR, true)

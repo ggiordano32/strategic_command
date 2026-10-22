@@ -50,7 +50,7 @@ func _fc(f: int) -> Color:
 
 func _close_row(box: Container, title: String, col: Color) -> void:
 	var h := Kit.hbox(6)
-	var t := Kit.label(title, Kit.FONT_TITLE, col)
+	var t := Kit.title(title, 18, col)
 	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	h.add_child(t)
@@ -3397,29 +3397,7 @@ func show_warnings(list: Array) -> void:
 # ------------------------------------------------------------------ menu ---
 
 func show_menu() -> void:
-	var box := Kit.vbox(8)
-	if s.online != null:
-		box.add_child(Kit.label("%s - %s. Online: saved on the server." % [str(s.st["name"]), CData.date_text(int(s.st["turn"]))], Kit.FONT, Color.WHITE, true))
-	else:
-		box.add_child(Kit.label("%s - %s. Saved automatically." % [str(s.st["name"]), CData.date_text(int(s.st["turn"]))], Kit.FONT, Color.WHITE, true))
-	box.add_child(Kit.label("State %s" % CState.hash_text(s.st), Kit.FONT_SMALL, Kit.COL_DIM))
-	var fl := Kit.flow(8)
-	if s.online != null:
-		fl.add_child(Kit.icon_button("Online", "online", func(): s.onl.show_online(), 0))
-	else:
-		fl.add_child(Kit.icon_button("Export save as text", "export", func(): show_export(), 0))
-		var net: Node = s.get_node_or_null("/root/Net")
-		if net != null and net.has_server() and str(s.st["phase"]) == "plan" and int(s.st["turn"]) >= 0:
-			var ob := Kit.icon_button("Play online", "online", func(): show_go_online(), 0)
-			ob.name = "menu_go_online"
-			fl.add_child(ob)
-	fl.add_child(Kit.button("Controls", func():
-		s.close_dialog()
-		s.controls_page.open(), 0))
-	box.add_child(fl)
-	s.show_dialog("Campaign", box, [["Main menu", func():
-		s.save()
-		s.request_exit()], ["Back", Callable()]], 520)
+	s.game_menu.open()   # the overlay (game_menu.gd): Resume, Save, Options, Controls, Main menu
 
 
 ## Move a local campaign online: the current state becomes an online

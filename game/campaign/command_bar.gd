@@ -192,7 +192,7 @@ func _leader(fac: int, title: String, sub: String, title_col: Color, stats: Arra
 	head.add_child(Kit.faction_mark(fac, 30.0 if phone else 36.0))
 	var tv := Kit.vbox(0)
 	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var tl := Kit.label(title, 15 if phone else 17, title_col)
+	var tl := Kit.label(title, 15, title_col) if phone else Kit.title(title, 18, title_col)   # the display face from 18 px
 	tl.name = "leader_title"
 	tl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	tl.custom_minimum_size.x = 40
@@ -892,7 +892,7 @@ class UnitCard extends Control:
 			bg = Color(1, 1, 1, 0.24)
 		draw_rect(Rect2(Vector2.ZERO, sz), bg)
 		if selected:
-			draw_rect(Rect2(Vector2(1, 1), sz - Vector2(2, 2)), Color(1, 0.95, 0.5), false, 2.0)
+			Kit.draw_trim(self, Rect2(Vector2.ZERO, sz), 2.0, 9.0)   # the gold trim: only the selected card has it
 		var font := ThemeDB.fallback_font
 		var fs := 10 if compact else 11
 		draw_string(font, Vector2(3, fs + 2), title, HORIZONTAL_ALIGNMENT_CENTER, sz.x - 6, fs, Color(1, 1, 1, a))
