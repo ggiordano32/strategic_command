@@ -5234,6 +5234,8 @@ selecting or ordering anything.
 
 ## 8. Art
 
+**Faction crests** (view only, `game/faction_crest.gd`): painted crests for all 16 factions of both packs, FLUX.2 Klein 4B (Apache-2.0) editing our own drawn mark (the West emblems; a faction-colour shield for Rome, which has no drawn emblem) into a heraldic crest, picked by eye of four, flattened to gold / ink / the faction colour / bone, 256 px and 64 px files in `assets/ui/crests/<pack>/`. `Kit.faction_mark` returns the crest under the painted emblems setting (the 64 px file at 64 px and below) and the drawn emblem or swatch under drawn or when a file is missing. Army banners keep the drawn marks (they do not go through `faction_mark`; the crests are readable at 24 px by silhouette and colour but the drawn flags read better there). Route and prompts: `tools/menu_art/README.md`; sheet `docs/screenshots/crests.png`.
+
 - Placeholder top-down sprites, tinted per faction, until the game is proven fun.
 - Per unit type: idle, walk, attack, die. One sprite sheet each.
 

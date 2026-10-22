@@ -30,3 +30,15 @@ Kept (FLUX.2 Klein 4B distilled, 4 steps, CFG 1, euler):
 | Cinzel | https://github.com/google/fonts/tree/main/ofl/cinzel (OFL.txt copied to assets/ui/fonts/) | SIL Open Font Licence 1.1 |
 
 Timings (RTX, 8 GB, distilled 4 steps): about 5 s per 1344x768 image, about 6 s per 1024x1024 image; the first image after starting ComfyUI took 11 s (about 6 s model load).
+
+## Faction crests (assets/ui/crests/<pack>/<key>.png 256 px + <key>_64.png)
+
+Painted crests for the 16 factions (West: new_spain, tierra_firme, england, france, dutch, brethren, itza, miskito; Rome: rome, carthage, macedon, epirus, greeks, syracuse, iberians, gauls), made from our drawn marks as the reference image so the composition stays ours:
+
+    godot --resolution 512x512 --script res://tools/menu_art/render_refs.gd -- --out=REF      # West: game/faction_emblem.gd at 512 px; Rome (no drawn emblem): a shield in the faction colour with a gold rim
+    python3 tools/menu_art/crests.py REF CAND [--only west/england] [--seeds 1,2,3,4]         # Klein 4B edit, 4 candidates each (prompts in crests.py)
+    ~/Applications/ComfyUI/.venv/bin/python tools/menu_art/crest_flatten.py CAND/west_england_1.png c8402f assets/ui/crests/west/england.png assets/ui/crests/west/england_64.png
+
+crests.py is ComfyUI's template image_flux2_klein_image_edit_4b_distilled as an API graph (reference through ImageScaleToTotalPixels 1 MP, VAEEncode, ReferenceLatent on the positive and the zeroed negative; 4 steps, CFG 1, euler; same three model files as the table above, so the licence table is unchanged). Prompt: "heraldic crest of <name>, <character>, flat vector heraldry, gold and <colour> on white, clean edges, bold simple shapes, no text". crest_flatten.py: background flood-filled to transparent, every other pixel to the nearest of gold b08a40 / ink 1a1410 / the faction colour (CData) / bone e8dcb0 (enclosed light fields, as in the emblems), median-smoothed, 4x supersampled to 256 and 64 px. Wiring: `Kit.faction_mark` (game/faction_crest.gd) under `[menu] emblems = painted`; test and gallery: tests/crest_gallery.gd -> docs/screenshots/crests.png.
+
+Kept (seed of 1-4): new_spain 2, tierra_firme 2, england 1, france 2, dutch 1, brethren 1, itza 1, miskito 1; rome 1, carthage 4, macedon 2, epirus 3, greeks 4, syracuse 1, iberians 2, gauls 4. About 10.5 s per 1024 px edit (64 images, about 11.5 min; first 18.6 s).

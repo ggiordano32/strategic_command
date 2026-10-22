@@ -34,6 +34,7 @@ const IconRaster := preload("res://game/campaign/icon_raster.gd")  # the icons d
 const Traits := preload("res://game/unit_traits.gd")
 const CData := preload("res://campaign/cdata.gd")
 const FactionEmblem := preload("res://game/faction_emblem.gd")
+const FactionCrest := preload("res://game/faction_crest.gd")
 const MenuStyle := preload("res://game/menu/menu_style.gd")
 const MenuEmblem := preload("res://game/menu/emblem.gd")
 const Quality := preload("res://game/quality.gd")
@@ -875,11 +876,15 @@ static func swatch(col: Color, size: float = 16.0) -> ColorRect:
 	return c
 
 
-## A faction's mark: its emblem (game/faction_emblem.gd) when it has one,
-## else the plain colour swatch. f is a faction index.
+## A faction's mark: its painted crest (game/faction_crest.gd) under the painted
+## emblems setting when the file exists, else its drawn emblem
+## (game/faction_emblem.gd) when it has one, else the plain colour swatch.
+## f is a faction index.
 static func faction_mark(f: int, size: float = 16.0) -> Control:
 	if f >= 0 and f < CData.FACTIONS.size():
 		var key := str(CData.FACTIONS[f]["key"])
+		if FactionCrest.wanted(CData.pack, key):
+			return FactionCrest.mark(CData.pack, key, size)
 		if FactionEmblem.has(key):
 			return FactionEmblem.mark(key, size, CData.faction_color(f))
 	return swatch(CData.faction_color(f), size)
