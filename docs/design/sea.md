@@ -510,3 +510,67 @@ West pins stay.
 the look (shore colours, props) and a check of each lane's cells for a
 sensible coast mask. Done when a Rome campaign fights a sea battle from a
 lane raid with the corvus deciding it.
+
+### Rome's navy R1: galleys in the sea sim (as built 2026-10-23)
+
+Built as planned in `sim/sea_types.gd` and `sim/sea_sim.gd` (header
+paragraph "Galleys"), with these differences and fixed numbers. **Rows**:
+`lembos` (20 x 4 m, vmax 100, turn 110, hull 120, crew 50, board 100, no
+ram, marines 50, dash 45 s), `trireme` (37 x 6, 92, 80, 260, 200, board 100,
+ram 100, marines 20, dash 40), `quinquereme` (45 x 7, 84, 60, 420, 300,
+board 110, ram 140, corvus 1, marines 120, dash 35, deep draught) and a
+second row `quinquereme_p` "Punic quinquereme" (hull 440, board 105, no
+corvus, marines 40) so R2 can give the corvus to Rome by row; all reload 8,
+no guns, no rigging; the four new fields are 0 on every sail row and the
+war canoe (`ST.is_galley`: oars and no guns, so the canoe keeps today's
+rules exactly). **Stroke**: as planned (cruise `CRUISE_PCT` 65, the meter
+in tenths of a second, refill `DASH_FILL` 3 a second); a galley starts at
+cruise. **Speeds** are the sim's (1/1024 m a tick, about 100 = 1 m/s):
+`RAM_MIN` 300, `CORVUS_REL` 500. **Ramming** (`_rams`, first in
+`_contacts`): the rammer's bow point inside the other hull's box (2 m
+margin) with her keel inside the 30 degree bow cone; closing speed = the
+rammer's speed less the struck ship's along the rammer's heading; damage
+ram x closing / `RAM_DIV` 600, x2 within 45 degrees of her beam; bow to bow
+(her heading within 45 degrees of the reverse and the rammer in her bow
+cone) one blow, half of the heavier ram's, to both, both back water;
+`RAM_BACK` 4 s, `RAM_COOL` 6 s; added: the blow halves the struck ship's
+way, and the blows of a tick are found first and struck after (two ships
+ramming each other both strike: no edge to the lower index). Only enemies
+are rammed. **Corvus**: as planned (any grapple a corvus ship makes is a
+corvus boarding, logged as `EV_GRAPPLE` with b 1), firing at will or on her
+ordered target; in a corvus melee the deck bonus (`DECK_BONUS_PCT`) is the
+boarders' and the defenders lose their home bonus (the plan's "for her
+side"); after her boarders are thrown back the bridge is hauled up for
+`CORVUS_COOL` 30 s (the AI does not reboard meanwhile; without it a corvus
+ship reboarded every second and lost every melee). **Marines** join the
+scenario's troops; with no kit given they fight as `ST.DECK_MARINES`
+(atk 30, def 30, the javelin line). **Missiles**: a galley's troops (not
+the rowers) throw every `reload` seconds at the nearest enemy within
+`MSL_M` 60 m, troops x shot % x `DECK_SHOT_PM` / 1000 crew killed, morale
+as for grape; events `EV_RAM` 16, `EV_MISSILE` 17. **AI**: a ram ship sets
+up `SETUP_M` 120 m off the target's beam (the lead point; her stern
+quarter when the galley is faster: the diekplous) and runs in at a right
+angle when fresh (meter over a third, the ram ready), dashing the last
+`RUN_M` 60 m; a corvus ship with a ram comes in the same way and boards
+(the ram stops her alongside, then the bridge drops); a light galley (no
+ram, no corvus) passes over ships of more than twice her hull unless
+crippled (hull under 40 %) or her side outnumbers theirs two to one, flees
+when nothing is left for her, and engages at `MSL_STAND` 40 m, opening
+inside 25 m; galleys flee straight away from the nearest enemy. Engage and
+board set the stroke for a player's galley too (as the board order already
+set the sails). Power and the flight rule count a galley's ram, marines and
+boarders in place of guns (`_guns_eq`). **State**: `s_dash`, `s_ram_t`,
+`s_msl`, `s_cv_t`, `k_cv` (`GAL_ARRAYS`), in snapshots, hashed only when the
+battle has a galley (`gal_on`), so every existing sea hash and pin is
+unchanged. **Measured** (`tests/sea_probe.gd --ships0= --ships1= --mirror`,
+8 seeds x layouts ns and gauge0, each seed with the fleets both ways, AI
+both sides): 4 v 4 triremes decided in 5:39 / 6:28 mean (ns 16-0 to side 0:
+the mirrored ns start is one geometry and the first mover wins it; gauge0
+8-8); 2 corvus v 3 Punic quinqueremes 14 of 32 to the corvus (6:22 / 5:24);
+6 lembos v 2 triremes 6 of 32 to the lembos (6:02 / 8:19); no battle went
+to the time limit. Moved from the plan's numbers to get there: lembos
+marines 10 -> 50 and board 90 -> 100 (with 10 she never won), the Punic
+quinquereme's marines 40 (the plan gave none; at 120 the corvus side won
+1 of 32). Not done (R2): the view (rig, oars, the stroke buttons and
+help, the Ship book's galley page; the book lists the new rows as text),
+the campaign rows.

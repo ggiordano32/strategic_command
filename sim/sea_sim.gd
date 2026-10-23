@@ -133,6 +133,32 @@ extends RefCounted
 ## comes within FL_HOLD_M (at most HOLD_TICKS); FL_CAP_TICKS of flight with no
 ## enemy within FL_CLEAR_M: withdrawn (every runner escaped). At the time
 ## limit a fleet in flight does not hold the field.
+##
+## Galleys (R1, Rome's navy; docs/design/sea.md "Rome's navy"): rows with
+## oars and no guns (ST.is_galley). The sail order (O_SAILS) is the stroke:
+## 0 rest, 1 cruise (CRUISE_PCT % of vmax), 2 ramming speed (vmax) while
+## the dash meter (s_dash, 1/10 s; the row's "dash" seconds full) lasts: it
+## drains 10 a second at ramming speed and refills DASH_FILL a second off
+## it; empty, she drops to cruise. A row with a "ram" whose bow meets an
+## enemy hull inside her bow cone (RAM_CONE) closing at RAM_MIN or more
+## rams (_rams, in _contacts): ram x closing / RAM_DIV hull, x2 with the
+## strike within RAM_BEAM of her beam, half to both bow to bow; the rammer
+## backs water (speed 0) RAM_BACK ticks and rams again after RAM_COOL. A
+## "corvus" ship within grapple reach of an enemy at a relative speed up to
+## CORVUS_REL drops the bridge and boards at once (not within CORVUS_COOL
+## of her boarders being thrown back); over the corvus the deck bonus
+## (DECK_BONUS_PCT) is her boarders', not the defenders' (k_cv). Her "marines" go into the
+## troops (kit ST.DECK_MARINES unless given) and throw before contact: every
+## `reload` seconds at the nearest enemy within MSL_M, crew only (the deck
+## volley's DECK_SHOT_PM). Battle AI: a ram ship sets up SETUP_M off the
+## target's beam and runs in at a right angle, dashing the last RUN_M m (for
+## her stern quarter when faster: the diekplous), not with a tired crew (the
+## meter under a third); a corvus ship closes and boards; a ram-less galley
+## (the lembos) keeps clear of ships over twice her hull unless they are
+## crippled or her side outnumbers theirs two to one, and engages at
+## MSL_STAND; galleys flee straight away from the nearest enemy. The galley
+## arrays (GAL_ARRAYS) are hashed only in a battle with a galley (gal_on), so
+## every battle without one hashes as before.
 
 const FM := preload("res://sim/fixed_math.gd")
 const ST := preload("res://sim/sea_types.gd")
@@ -255,6 +281,21 @@ const FL_RALLY_TICKS := 600      # ... for this long (1 minute): the fleet stops
 const FL_CAP_TICKS := 2400       # fleeing this long (4 minutes) with no enemy within FL_CLEAR_M: withdrawn
 const FL_CLEAR_M := 300
 const FL_HOLD_M := 800           # rallied, the fleet holds until an enemy comes this close (at most HOLD_TICKS)
+# Galleys (R1, Rome's navy). Speeds in the sim's units (1/1024 m a tick: 100 is about 1 m/s).
+const CRUISE_PCT := 65           # the cruising stroke (O_SAILS 1), % of vmax; 2 is vmax while the dash meter lasts
+const DASH_FILL := 3             # dash meter (1/10 s) refilled a second off ramming speed (it drains 10 a second at it)
+const RAM_MIN := 300             # closing speed for a ram (about 2.9 m/s)
+const RAM_CONE := 85             # the rammer's bow cone either side of her heading (30 degrees)
+const RAM_DIV := 600             # hull damage = ram x closing speed / RAM_DIV
+const RAM_BEAM := 128            # the strike within this of a right angle to her keel (45 degrees): x2
+const RAM_BACK := 40             # ticks the rammer backs water (speed 0) after the blow
+const RAM_COOL := 60             # ticks before she can ram again (a push is not a ram)
+const CORVUS_REL := 500          # the corvus drops at a relative speed up to this
+const CORVUS_COOL := 300         # ticks after her boarders are thrown back before it drops again
+const MSL_M := 60                # the marines' javelins and arrows reach this far before contact
+const MSL_STAND := 40            # a galley without a ram engages at this range
+const RUN_M := 60                # a ram run dashes the last RUN_M metres (bow to her side)
+const SETUP_M := 120             # a ram ship sets up her run this far off the target's beam
 
 # ---- lockstep interface (duck-typed like BattleSim) ----
 var n_units := 0
@@ -272,6 +313,7 @@ var fl_on := PackedInt32Array([0, 0])      # the flight rule, per side: 1 the fl
 var fl_t := PackedInt32Array([-1, -1])     # ... since this tick
 var fl_far := PackedInt32Array([-1, -1])   # ... with no enemy within FL_RALLY_M since this tick (-1: one is)
 var fl_hist := PackedInt32Array()          # FL_HIST damage samples per side (side x FL_HIST + slot)
+var gal_on := 0                            # (R1) 1: a galley in the battle (the galley arrays are hashed)
 var stat_fl := PackedInt32Array([0, 0, 0, 0])  # view / probe: fleet flights, rallies, withdrawals, wins on the clock refused
 var pending_orders: Array = []
 var _order_seq := 0
@@ -374,6 +416,13 @@ var f_sh := PackedInt32Array()       # volleys left
 var f_rl := PackedInt32Array()
 var f_ld := PackedInt32Array()       # ticks to reload (0: ready)
 var f_hit := PackedInt32Array()      # view: tick it last struck or fired (not hashed)
+# Galleys (R1; hashed when gal_on): the dash meter (1/10 s), the tick of her
+# last ram, ticks to her next missile volley, 1: this melee was boarded by the corvus.
+var s_dash := PackedInt32Array()
+var s_ram_t := PackedInt32Array()
+var s_msl := PackedInt32Array()
+var s_cv_t := PackedInt32Array()     # tick her boarders were last thrown back (the corvus is hauled up)
+var k_cv := PackedInt32Array()
 
 # ---- rebuilt by setup() (not in snapshots) ----
 var g_w := 0
@@ -398,6 +447,9 @@ const EV_LIT := 12        # a: fire ship
 const EV_ABANDON := 13    # a: fire ship (her crew take to the boat)
 const EV_FS_CONTACT := 14 # a: fire ship, c: the ship she grapples and sets alight
 const EV_DECK_END := 15   # a: boarder, c: target, d: 1 taken / 2 thrown back / 3 both spent
+const EV_RAM := 16        # a: rammer, b: 0 a blow / 1 on the beam / 2 bow to bow, c: struck, d: hull lost, e: closing speed
+const EV_MISSILE := 17    # a: galley, c: target, d: men killed
+# (EV_GRAPPLE's b is 1 when the corvus dropped.)
 var ev_n := 0
 var ev_t := PackedInt32Array()
 var ev_k := PackedInt32Array()
@@ -459,6 +511,7 @@ func setup(scn: Dictionary, p_seed: int) -> void:
 	fl_far = PackedInt32Array([-1, -1])
 	fl_hist.resize(2 * FL_HIST)
 	fl_hist.fill(0)
+	gal_on = 0
 	_make_land(scn.get("land", {}))
 	var units: Array = scn.get("units", [])
 	n_units = units.size()
@@ -483,6 +536,11 @@ func setup(scn: Dictionary, p_seed: int) -> void:
 		set(nm, a3)
 	f_hit.resize(n_units * FIG)
 	f_hit.fill(-100)
+	for nm in GAL_ARRAYS:
+		var a4 := PackedInt32Array()
+		a4.resize(n_units)
+		a4.fill(0)
+		set(nm, a4)
 	s_tkp.resize(n_units * TK_MAX * TKP)
 	s_tkp.fill(0)
 	u_hand.resize(n_units)
@@ -503,7 +561,7 @@ func setup(scn: Dictionary, p_seed: int) -> void:
 		s_crew[s] = maxi(s_crew0[s] * clampi(int(d.get("crew", 100)), 1, 100) / 100, 1)
 		s_rig0[s] = maxi(ST.stat(ty, "rig"), 1)
 		s_rig[s] = s_rig0[s] * clampi(int(d.get("rig", 100)), 0, 100) / 100
-		s_troops[s] = maxi(int(d.get("troops", 0)), 0)
+		s_troops[s] = maxi(int(d.get("troops", 0)), 0) + ST.stat(ty, "marines")
 		s_q[s] = clampi(int(d.get("q", 100)), 40, 160)
 		s_bq[s] = clampi(int(d.get("bq", ST.stat(ty, "board"))), 40, 200)
 		s_mor[s] = clampi(int(d.get("mor", 100)), 20, 150)
@@ -519,6 +577,13 @@ func setup(scn: Dictionary, p_seed: int) -> void:
 		s_flee_y[s] = -1
 		s_lit[s] = -1
 		s_fsg[s] = -1
+		s_ram_t[s] = -1000
+		s_cv_t[s] = -1000
+		s_dash[s] = ST.stat(ty, "dash") * 10
+		if ST.stat(ty, "dash") > 0:
+			s_sail[s] = 1  # (a galley cruises)
+		if ST.is_galley(ty) or ST.stat(ty, "ram") > 0 or ST.stat(ty, "corvus") > 0 or ST.stat(ty, "dash") > 0:
+			gal_on = 1
 		_setup_kits(s, d)
 		if d.has("x") and d.has("y"):
 			s_x[s] = int(d["x"]) * U
@@ -547,6 +612,7 @@ const SHIP_ARRAYS: Array[String] = ["u_side", "u_state", "s_type", "s_x", "s_y",
 	"s_lit", "s_aband", "s_fsg", "s_fs_t", "s_douse", "s_ck_atk", "s_ck_def", "s_ck_shot", "s_ck_rng", "s_ck_sh", "s_ck_rl", "s_cq",
 	"k_on", "k_t0", "k_w", "k_hb", "k_ht", "k_ax0", "k_la", "k_bx0", "k_lb", "k_step"]
 const DECK2_ARRAYS: Array[String] = ["k2_mor", "k2_men0", "k2_cap"]
+const GAL_ARRAYS: Array[String] = ["s_dash", "s_ram_t", "s_msl", "s_cv_t", "k_cv"]
 const FIG_ARRAYS: Array[String] = ["f_n", "f_side", "f_x", "f_y", "f_kind", "f_atk", "f_def", "f_shot", "f_rng", "f_sh",
 	"f_rl", "f_ld"]
 
@@ -588,6 +654,17 @@ func _setup_kits(s: int, d: Dictionary) -> void:
 			s_tkp[b + 5] = int(sh[2])
 			s_tkp[b + 6] = int(sh[3])
 		k += 1
+	if k == 0 and ST.stat(s_type[s], "marines") > 0:
+		# (R1) A galley's marines, no kit given: ST.DECK_MARINES.
+		var b2 := s * TK_MAX * TKP
+		var msh: Array = ST.DECK_LINE_SHOT.get(str(ST.DECK_MARINES["line"]), [0, 0, 0, 0])
+		s_tkp[b2] = 100
+		s_tkp[b2 + 1] = int(ST.DECK_MARINES["atk"])
+		s_tkp[b2 + 2] = int(ST.DECK_MARINES["def"])
+		s_tkp[b2 + 3] = int(msh[0])
+		s_tkp[b2 + 4] = int(msh[1])
+		s_tkp[b2 + 5] = int(msh[2])
+		s_tkp[b2 + 6] = int(msh[3])
 
 
 func is_tower(_u: int) -> bool:
@@ -1010,10 +1087,14 @@ func step() -> void:
 			_steer(s)
 	for s in n_units:
 		_move(s)
+	if gal_on != 0:
+		_stroke()
 	_contacts()
 	if tick % DECK_EVERY == 0:
 		_decks()
 	_gunnery()
+	if gal_on != 0:
+		_missiles()
 	if tick % 10 == 0:
 		_fires()
 		_morale()
@@ -1091,7 +1172,13 @@ func target_speed(s: int) -> int:
 	if u_state[s] != S_SAIL or s_grap[s] >= 0:
 		return 0
 	var ty := s_type[s]
-	var v := _vmax(s) * drive(s, heading(s)) / 100 * int(SAIL_PCT[s_sail[s]]) / 100
+	var pct := int(SAIL_PCT[s_sail[s]])
+	if ST.stat(ty, "dash") > 0:
+		# (R1) The stroke: rest, cruise, ramming speed while the meter lasts; backing water after a ram.
+		if tick - s_ram_t[s] < RAM_BACK:
+			return 0
+		pct = 0 if s_sail[s] == 0 else (100 if s_sail[s] == 2 and s_dash[s] > 0 else CRUISE_PCT)
+	var v := _vmax(s) * drive(s, heading(s)) / 100 * pct / 100
 	if ST.stat(ty, "oars") != 0:
 		v = v * (300 + 700 * s_crew[s] / maxi(s_crew0[s], 1)) / 1000
 	else:
@@ -1292,6 +1379,8 @@ func _steer(s: int) -> void:
 ## The range (m) ship s engages at: the loaded shot's (the next one's while
 ## reloading), at most four fifths of her gun range.
 func _want_range(s: int) -> int:
+	if ST.is_galley(s_type[s]):
+		return MSL_STAND
 	var rng := ST.stat(s_type[s], "range")
 	return mini(int(RANGE_PREF[s_ld[s * 2]]) if s_rl[s * 2] == 0 else int(RANGE_PREF[s_shot[s]]), rng * 8 / 10)
 
@@ -1351,6 +1440,8 @@ func _closing(s: int, t: int) -> Array:
 ## (_closing), then keep a broadside on at the loaded shot's range,
 ## presenting the loaded side; open the range when too close.
 func _engage_heading(s: int, t: int) -> int:
+	if ST.stat(s_type[s], "ram") > 0 and ST.is_galley(s_type[s]):
+		return _ram_heading(s, t)
 	var dx := s_x[t] - s_x[s]
 	var dy := s_y[t] - s_y[s]
 	var d := FM.approx_len(dx, dy) / U
@@ -1365,7 +1456,7 @@ func _engage_heading(s: int, t: int) -> int:
 	var cands: Array[int] = []
 	if d > want_r + 60:
 		cands = [(bt + 160) & FM.ANGLE_MASK, (bt - 160) & FM.ANGLE_MASK]
-	elif d >= want_r - 50:
+	elif d >= want_r - (15 if ST.is_galley(s_type[s]) else 50):  # (a galley opens inside her missile range)
 		cands = [(bt + 256) & FM.ANGLE_MASK, (bt - 256) & FM.ANGLE_MASK]
 	else:
 		cands = [(bt + 340) & FM.ANGLE_MASK, (bt - 340) & FM.ANGLE_MASK]
@@ -1390,6 +1481,16 @@ func _board_heading(s: int, t: int) -> int:
 	var dx := s_x[t] - s_x[s]
 	var dy := s_y[t] - s_y[s]
 	var d := FM.approx_len(dx, dy) / U
+	var galley := ST.is_galley(s_type[s])
+	if galley and ST.stat(s_type[s], "corvus") != 0:
+		# (R1) The corvus: a ram ship comes in as for a ram (the bridge drops
+		# once the blow has stopped her alongside); else straight at her
+		# (where she will be), dashing the last RUN_M m.
+		if ST.stat(s_type[s], "ram") > 0:
+			return _ram_heading(s, t)
+		var cl := _lead_point(s, t, d)
+		_run_stroke(s, d - ST.stat(s_type[s], "len") / 2 <= RUN_M)
+		return FM.atan2_a(int(cl[1]) - s_y[s], int(cl[0]) - s_x[s])
 	var th := heading(t)
 	var lead := clampi(d * 10 / maxi(s_spd[s] * 10 / U, 2), 0, 60)  # ticks ahead
 	var tx := s_x[t] + ((FM.cos_a(th) * s_spd[t]) >> 12) * lead / 4
@@ -1399,7 +1500,7 @@ func _board_heading(s: int, t: int) -> int:
 		var back := ST.stat(s_type[t], "len") / 2 + mini(d / 3, 70)
 		var ax := tx - ((FM.cos_a(th) * back) >> 12) * U
 		var ay := ty - ((FM.sin_a(th) * back) >> 12) * U
-		s_sail[s] = 2
+		s_sail[s] = 1 if galley else 2  # (a galley cruises in)
 		return _course(s, ax, ay)
 	# Close: come up alongside, matching her speed.
 	var mine := s_spd[s]
@@ -1481,6 +1582,8 @@ func _ignite(o: int, lv: int) -> void:
 
 
 func _flee_goal(s: int) -> void:
+	if ST.is_galley(s_type[s]) and _galley_flee(s):
+		return
 	# The edge point (of the four nearest) farthest from the enemy.
 	var cands := [[s_x[s], -60 * U], [s_x[s], (field_h + 60) * U], [-60 * U, s_y[s]], [(field_w + 60) * U, s_y[s]]]
 	var best := 0
@@ -1685,6 +1788,8 @@ func _fs_alongside(s: int) -> void:
 ## Ships too close push apart; boarders grapple their target; a lit fire
 ## ship grapples whatever she touches and sets it alight.
 func _contacts() -> void:
+	if gal_on != 0:
+		_rams()
 	for a in n_units:
 		if u_state[a] == S_SUNK or u_state[a] == S_FLED:
 			continue
@@ -1726,7 +1831,9 @@ func _contacts() -> void:
 		var vy := ((FM.sin_a(heading(s)) * s_spd[s]) >> 12) - ((FM.sin_a(heading(t)) * s_spd[t]) >> 12)
 		if FM.approx_len(vx, vy) > 360 and s_spd[t] > 150:
 			continue
-		_grapple(s, t)
+		_grapple(s, t, 1 if ST.stat(s_type[s], "corvus") != 0 else 0)
+	if gal_on != 0:
+		_corvus()
 	for s in n_units:
 		if s_lit[s] < 0 or s_fsg[s] >= 0 or u_state[s] != S_SAIL:
 			continue
@@ -1746,7 +1853,7 @@ func _contacts() -> void:
 			break
 
 
-func _grapple(s: int, t: int) -> void:
+func _grapple(s: int, t: int, cv: int = 0) -> void:
 	s_grap[s] = t
 	s_grap[t] = s
 	s_boarder[s] = 1
@@ -1754,7 +1861,7 @@ func _grapple(s: int, t: int) -> void:
 	s_bd_t[s] = tick
 	s_mode[s] = M_FREE
 	stats["boardings"] = int(stats["boardings"]) + 1
-	_event(EV_GRAPPLE, s, 0, t, 0, 0)
+	_event(EV_GRAPPLE, s, cv, t, 0, 0)
 	if u_state[t] == S_STRUCK:
 		_capture(t, s)
 		return
@@ -1762,6 +1869,7 @@ func _grapple(s: int, t: int) -> void:
 		s_bd_wait[s] = 1
 	else:
 		_deck_open(s, t)
+		k_cv[s] = cv
 
 
 # ------------------------------------------------------------- deck melee ---
@@ -1992,7 +2100,10 @@ func _deck_step(s: int) -> void:
 			# Cold steel: shaken men strike weaker; a man on his own deck defends better.
 			var atk := f_atk[fi] * (60 + clampi(k2_mor[s * 2 + sd], 0, 100) * 40 / 100) / 100
 			var df := f_def[fb]
-			if (f_y[fb] < k_hb[s]) == (f_side[fb] == 0):
+			if k_cv[s] != 0:
+				if f_side[fb] == 0:
+					df = df * DECK_BONUS_PCT / 100  # (over the corvus: the bonus is the boarders')
+			elif (f_y[fb] < k_hb[s]) == (f_side[fb] == 0):
 				df = df * DECK_BONUS_PCT / 100
 			var p := DECK_KILL_PM * 2 * atk / maxi(atk + df, 1)
 			if s_douse[ships[sd]] != 0:
@@ -2090,6 +2201,8 @@ func _deck_step(s: int) -> void:
 ## Boarder s's men are back aboard (thrown back, or spent: both = 1).
 func _repelled(s: int, t: int, both: int) -> void:
 	_ungrapple(s)
+	if gal_on != 0:
+		s_cv_t[s] = tick
 	s_mor[s] -= 15 if both != 0 else 25
 	s_mode[s] = M_FREE
 	stats["repelled"] = int(stats["repelled"]) + 1
@@ -2098,6 +2211,7 @@ func _repelled(s: int, t: int, both: int) -> void:
 
 func _deck_close(m: int) -> void:
 	k_on[m] = 0
+	k_cv[m] = 0
 	var base := m * FIG
 	for i in FIG:
 		f_n[base + i] = 0
@@ -2518,7 +2632,7 @@ func power(side: int) -> int:
 	var p := 0
 	for s in n_units:
 		if u_side[s] == side and u_state[s] == S_SAIL and s_lit[s] < 0:
-			p += (ST.stat(s_type[s], "guns") * 10 + s_hull[s] / 10) * (s_hull[s] * 100 / s_hull0[s] + s_crew[s] * 100 /
+			p += (_guns_eq(s) * 10 + s_hull[s] / 10) * (s_hull[s] * 100 / s_hull0[s] + s_crew[s] * 100 /
 				maxi(s_crew0[s], 1)) / 200
 	return p
 
@@ -2576,7 +2690,10 @@ func _fl_strength(side: int) -> int:
 	var p := 0
 	for s in n_units:
 		if u_side[s] == side and u_state[s] == S_SAIL and s_lit[s] < 0 and not ST.is_fire(s_type[s]):
-			p += ST.stat(s_type[s], "guns") * (s_hull[s] * 100 / s_hull0[s]) * _crew_rate(s) / 1000
+			var cr := _crew_rate(s)
+			if ST.is_galley(s_type[s]):
+				cr = clampi(s_crew[s] * 1000 / maxi(s_crew0[s], 1), 150, 1000)
+			p += _guns_eq(s) * (s_hull[s] * 100 / s_hull0[s]) * cr / 1000
 	return p
 
 
@@ -2695,6 +2812,8 @@ func _fl_fleeing(side: int, now: Array) -> void:
 ## with clear water all the way (else the longest run); a Skilled fleet that has the weather gauge keeps
 ## it (a heading to windward of the beam is preferred).
 func _escape_goal(s: int) -> void:
+	if ST.is_galley(s_type[s]) and _galley_flee(s):
+		return
 	var xm := s_x[s] / U
 	var ym := s_y[s] / U
 	var gauge := false
@@ -2781,6 +2900,11 @@ func _think(s: int) -> void:
 		s_sail[s] = 2
 		return
 	# Target: near and weak; keep the current one unless another is much better.
+	# (R1) A light galley (no ram, no corvus) passes over ships of more than
+	# twice her hull unless crippled or her side outnumbers theirs two to one.
+	var galley := ST.is_galley(s_type[s])
+	var light := galley and ST.stat(s_type[s], "ram") == 0 and ST.stat(s_type[s], "corvus") == 0
+	var swarm := light and fighting(u_side[s]) >= 2 * fighting(1 - u_side[s])
 	var best := -1
 	var bs := 1 << 40
 	var cur_score := 1 << 40
@@ -2789,6 +2913,12 @@ func _think(s: int) -> void:
 			continue
 		var d := FM.approx_len(s_x[t] - s_x[s], s_y[t] - s_y[s]) / U
 		var sc := d + s_hull[t] * 300 / s_hull0[t]
+		if light:
+			var crip_t := s_hull[t] * 100 / s_hull0[t] < 40
+			if not crip_t and not swarm and s_hull0[t] > 2 * s_hull0[s]:
+				continue
+			if crip_t:
+				sc -= 300
 		if t == s_tgt[s]:
 			cur_score = sc
 		if sc < bs:
@@ -2796,6 +2926,11 @@ func _think(s: int) -> void:
 			best = t
 	if best < 0:
 		s_mode[s] = M_FREE
+		if light and _nearest_enemy(s) >= 0:
+			# (R1) Nothing a light galley can take on: she keeps clear, off the field.
+			s_mode[s] = M_FLEE
+			s_flee_x[s] = -1
+			s_sail[s] = 2
 		return
 	if s_tgt[s] >= 0 and cur_score < (1 << 40) and cur_score <= bs + 150:
 		best = s_tgt[s]
@@ -2811,6 +2946,8 @@ func _think(s: int) -> void:
 			my_b += s_crew[f] * s_bq[f] / 100 + s_troops[f] * 12 / 10
 	var crippled := s_rig[t2] * 100 / s_rig0[t2] < 40 or s_spd[t2] < _vmax(t2) / 4
 	var runs := s_mode[t2] == M_FLEE and s_spd[t2] * 10 >= s_spd[s] * 9
+	if galley and ST.stat(s_type[s], "corvus") != 0 and not runs and tick - s_cv_t[s] >= CORVUS_COOL:
+		my_b = 1 << 30  # (R1) the corvus: she closes and boards (not while it is hauled up after a repulse)
 	if my_b * 100 > her_b * BOARD_PCT and not runs and (dist < 260 or crippled or ST.stat(s_type[s], "oars") != 0):
 		if s_mode[s] != M_BOARD or s_tgt[s] != t2:
 			s_mode[s] = M_BOARD
@@ -2824,6 +2961,10 @@ func _think(s: int) -> void:
 		s_tack[s] = 0
 		s_tdir[s] = 0
 	s_fire[s] = 1
+	if galley:
+		if s_sail[s] == 0:
+			s_sail[s] = 1  # (the stroke is set by the run: _ram_heading)
+		return
 	# Full sail in the fight (battle sail only slowed her: flight rule pass); close to the enemy, battle
 	# sail with land close to leeward or ahead.
 	s_sail[s] = 1 if dist < 320 and (_lee_shore(s) >= 0 or _clear_run(s, heading(s), SEA_ROOM_M, true) < SEA_ROOM_M) else 2
@@ -2836,6 +2977,308 @@ func _think(s: int) -> void:
 		s_shot[s] = ST.SHOT_CHAIN
 	else:
 		s_shot[s] = ST.SHOT_ROUND
+
+
+# ---------------------------------------------------------- galleys (R1) ---
+
+## The row's guns, or for a galley what stands for them in the fleet's
+## strength (power, the flight rule): her ram, marines and boarders.
+func _guns_eq(s: int) -> int:
+	var ty := s_type[s]
+	if not ST.is_galley(ty):
+		return ST.stat(ty, "guns")
+	return (ST.stat(ty, "ram") + ST.stat(ty, "marines") * 2 + ST.stat(ty, "crew") * ST.stat(ty, "board") / 100) / 20
+
+
+## The dash meter of every galley: it drains a tenth of a second a tick at
+## ramming speed and refills DASH_FILL a second off it; empty, she drops to cruise.
+func _stroke() -> void:
+	for s in n_units:
+		var dm := ST.stat(s_type[s], "dash") * 10
+		if dm <= 0:
+			continue
+		if s_sail[s] == 2 and s_dash[s] > 0 and u_state[s] == S_SAIL and s_grap[s] < 0 and tick - s_ram_t[s] >= RAM_BACK:
+			s_dash[s] -= 1
+		elif tick % 10 == 0:
+			s_dash[s] = mini(s_dash[s] + DASH_FILL, dm)
+		if s_dash[s] == 0 and s_sail[s] == 2:
+			s_sail[s] = 1  # (the rowers are spent)
+
+
+## The stroke of a galley on a run: ramming speed when `close` and the
+## meter allows (a run under way, or a meter above a third), else cruise.
+func _run_stroke(s: int, close: bool) -> void:
+	var dm := ST.stat(s_type[s], "dash") * 10
+	if close and s_dash[s] > 0 and (s_sail[s] == 2 or s_dash[s] * 3 > dm):
+		s_sail[s] = 2
+	else:
+		s_sail[s] = 1
+
+
+## Where ship t will be when ship s (d metres off) reaches her: [x, y].
+func _lead_point(s: int, t: int, d: int) -> Array:
+	var cruise := maxi(_vmax(s) * CRUISE_PCT / 100, 1)
+	var lead := clampi(d * U / maxi(s_spd[s], cruise), 0, 80)
+	var th := heading(t)
+	return [s_x[t] + ((FM.cos_a(th) * s_spd[t]) >> 12) * lead, s_y[t] + ((FM.sin_a(th) * s_spd[t]) >> 12) * lead]
+
+
+## A ram ship engaging t: set up SETUP_M off the beam of t she is on, then
+## (fresh, the ram ready) run in at a right angle to her keel, dashing the
+## last RUN_M m; faster than her, for her stern quarter (the diekplous).
+func _ram_heading(s: int, t: int) -> int:
+	var d := FM.approx_len(s_x[t] - s_x[s], s_y[t] - s_y[s]) / U
+	var lp := _lead_point(s, t, d)
+	var px: int = lp[0]
+	var py: int = lp[1]
+	var th := heading(t)
+	var ct := FM.cos_a(th)
+	var st := FM.sin_a(th)
+	var rx := (s_x[s] - px) / U
+	var ry := (s_y[s] - py) / U
+	var along := (rx * ct + ry * st) >> 12
+	var across := (ry * ct - rx * st) >> 12
+	var sg := 1 if across >= 0 else -1
+	var acr := absi(across)
+	var half := ST.stat(s_type[t], "len") / 2
+	var aim := 0
+	if s_spd[t] > 100 and s_spd[t] * 10 < _vmax(s) * 9:
+		aim = -half / 2  # (the diekplous: for her stern quarter)
+	var ax := px + ((ct * aim) >> 12) * U
+	var ay := py + ((st * aim) >> 12) * U
+	var fresh := s_dash[s] > 0 and (s_sail[s] == 2 or s_dash[s] * 3 > ST.stat(s_type[s], "dash") * 10)
+	if tick - s_ram_t[s] >= RAM_COOL and fresh and acr >= 10 and absi(along - aim) * 10 <= acr * 7 + half * 10 \
+			and d < SETUP_M * 2:
+		_run_stroke(s, d - ST.stat(s_type[s], "len") / 2 <= RUN_M)
+		return FM.atan2_a(ay - s_y[s], ax - s_x[s])
+	s_sail[s] = 1
+	var gx := clampi(ax + ((-st * sg * SETUP_M) >> 12) * U, EDGE_M * U, (field_w - EDGE_M) * U)
+	var gy := clampi(ay + ((ct * sg * SETUP_M) >> 12) * U, EDGE_M * U, (field_h - EDGE_M) * U)
+	return FM.atan2_a(gy - s_y[s], gx - s_x[s])
+
+
+func _nearest_enemy(s: int) -> int:
+	var best := -1
+	var bd := 1 << 40
+	for e in n_units:
+		if u_side[e] != u_side[s] and u_state[e] == S_SAIL and s_lit[e] < 0:
+			var d := FM.approx_len(s_x[e] - s_x[s], s_y[e] - s_y[s])
+			if d < bd:
+				bd = d
+				best = e
+	return best
+
+
+## A galley flees straight away from the nearest enemy, to the edge 60 m
+## past it (false: no enemy, the usual goal).
+func _galley_flee(s: int) -> bool:
+	var e := _nearest_enemy(s)
+	if e < 0:
+		return false
+	var h := FM.atan2_a(s_y[s] - s_y[e], s_x[s] - s_x[e])
+	var xm := s_x[s] / U
+	var ym := s_y[s] / U
+	var c := FM.cos_a(h)
+	var sn := FM.sin_a(h)
+	var l := 1 << 20
+	if c > 0:
+		l = mini(l, (field_w + 60 - xm) * 4096 / c)
+	elif c < 0:
+		l = mini(l, (xm + 60) * 4096 / -c)
+	if sn > 0:
+		l = mini(l, (field_h + 60 - ym) * 4096 / sn)
+	elif sn < 0:
+		l = mini(l, (ym + 60) * 4096 / -sn)
+	s_flee_x[s] = (xm + ((c * l) >> 12)) * U
+	s_flee_y[s] = (ym + ((sn * l) >> 12)) * U
+	return true
+
+
+## Rams (in _contacts): a ram ship (the ram ready, not grappled) whose bow
+## lies inside an enemy's hull, that hull in her bow cone, closing on it at
+## RAM_MIN or more, strikes (_ram); the first such enemy in index order.
+## The blows are found first and struck after, so two ships ramming each
+## other in one tick both strike (no edge to the lower index); bow to bow
+## is one blow to both.
+func _rams() -> void:
+	var hits := PackedInt32Array()
+	for a in n_units:
+		var ra := ST.stat(s_type[a], "ram")
+		if ra <= 0 or u_state[a] != S_SAIL or s_grap[a] >= 0 or tick - s_ram_t[a] < RAM_COOL:
+			continue
+		var ha := heading(a)
+		var hl := ST.stat(s_type[a], "len") * U / 2
+		var px := s_x[a] + ((FM.cos_a(ha) * (hl >> 6)) >> 6)
+		var py := s_y[a] + ((FM.sin_a(ha) * (hl >> 6)) >> 6)
+		for b in n_units:
+			if b == a or u_side[b] == u_side[a] or not (u_state[b] == S_SAIL or u_state[b] == S_STRUCK) or s_lit[b] >= 0:
+				continue
+			var tb := s_type[b]
+			var half_b := ST.stat(tb, "len") * U / 2
+			var rx := px - s_x[b]
+			var ry := py - s_y[b]
+			if absi(rx) > half_b + 4 * U or absi(ry) > half_b + 4 * U:
+				continue
+			var hb := heading(b)
+			var cb := FM.cos_a(hb)
+			var sb := FM.sin_a(hb)
+			var along := (rx * cb + ry * sb) >> 12
+			var across := (ry * cb - rx * sb) >> 12
+			if absi(along) > half_b + 2 * U or absi(across) > ST.stat(tb, "beam") * U / 2 + 2 * U:
+				continue
+			# Her keel abreast of the bow inside the rammer's bow cone.
+			var kl := clampi(along, -half_b, half_b)
+			var kx := s_x[b] + ((cb * kl) >> 12)
+			var ky := s_y[b] + ((sb * kl) >> 12)
+			if absi(FM.angle_diff(ha, FM.atan2_a(ky - s_y[a], kx - s_x[a]))) > RAM_CONE:
+				continue
+			var closing := s_spd[a] - ((s_spd[b] * FM.cos_a(hb - ha)) >> 12)
+			if closing < RAM_MIN:
+				continue
+			hits.append_array([a, b, closing])
+			break
+	for i in range(0, hits.size(), 3):
+		var a2 := hits[i]
+		var b2 := hits[i + 1]
+		if s_ram_t[a2] == tick or u_state[b2] == S_SUNK:
+			continue  # (bow to bow: the other's blow was both; she went down to another blow)
+		_ram(a2, b2, hits[i + 2])
+
+
+## Ship a rams ship b closing at `closing`: ram x closing / RAM_DIV hull,
+## doubled on her beam; bow to bow (b's heading within RAM_BEAM of the
+## reverse of a's and a in b's bow cone) both take half of the heavier ram's
+## blow. The blow halves b's way; the rammer (both, bow to bow, when b has a
+## ram) backs water.
+func _ram(a: int, b: int, closing: int) -> void:
+	var ha := heading(a)
+	var hb := heading(b)
+	var ra := ST.stat(s_type[a], "ram")
+	var rb := ST.stat(s_type[b], "ram")
+	var kind := 0
+	var dmg := ra * closing / RAM_DIV
+	var bow := absi(FM.angle_diff(ha, (hb + FM.ANGLE_HALF) & FM.ANGLE_MASK)) < RAM_BEAM \
+			and absi(FM.angle_diff(hb, FM.atan2_a(s_y[a] - s_y[b], s_x[a] - s_x[b]))) <= RAM_CONE
+	if bow:
+		kind = 2
+		dmg = maxi(ra, rb) * closing / (RAM_DIV * 2)
+	elif absi(absi(FM.angle_diff(ha, hb)) - FM.ANGLE_QUARTER) <= RAM_BEAM:
+		kind = 1
+		dmg *= 2
+	dmg = maxi(dmg, 1)
+	s_ram_t[a] = tick
+	s_spd[a] = 0
+	s_spd[b] = s_spd[b] / 2  # (the blow checks her way)
+	if bow:
+		s_spd[b] = 0
+		if rb > 0:
+			s_ram_t[b] = tick
+	stats["rams"] = int(stats.get("rams", 0)) + 1
+	if kind == 1:
+		stats["rams_beam"] = int(stats.get("rams_beam", 0)) + 1
+	elif kind == 2:
+		stats["rams_bow"] = int(stats.get("rams_bow", 0)) + 1
+	_event(EV_RAM, a, kind, b, dmg, closing)
+	_ram_hit(b, dmg)
+	if bow:
+		_ram_hit(a, dmg)
+
+
+func _ram_hit(t: int, dmg: int) -> void:
+	if u_state[t] == S_SUNK:
+		return
+	var h0 := s_hull[t]
+	s_hull[t] = maxi(s_hull[t] - dmg, 0)
+	s_mor[t] -= (h0 - s_hull[t]) * 100 / s_hull0[t] / 2 + 2
+	s_hit_t[t] = tick
+	if s_hull[t] == 0:
+		_sink(t)
+
+
+## The corvus (in _contacts, after the boarders): a corvus ship within
+## grapple reach of an enemy (firing at will, or her ordered target) at a
+## relative speed up to CORVUS_REL drops it and boards at once.
+func _corvus() -> void:
+	for s in n_units:
+		if ST.stat(s_type[s], "corvus") == 0 or u_state[s] != S_SAIL or s_grap[s] >= 0 or s_lit[s] >= 0 \
+				or tick - s_cv_t[s] < CORVUS_COOL:
+			continue
+		for t in n_units:
+			if u_side[t] == u_side[s] or not (u_state[t] == S_SAIL or u_state[t] == S_STRUCK) or s_grap[t] >= 0 \
+					or s_lit[t] >= 0 or ST.is_fire(s_type[t]):
+				continue
+			if s_fire[s] == 0 and t != s_tgt[s]:
+				continue
+			var reach := ((ST.stat(s_type[s], "len") + ST.stat(s_type[t], "len")) * 40 / 100 + 8) * U
+			var dx := s_x[t] - s_x[s]
+			var dy := s_y[t] - s_y[s]
+			if absi(dx) > reach or absi(dy) > reach or FM.approx_len(dx, dy) > reach:
+				continue
+			var vx := ((FM.cos_a(heading(s)) * s_spd[s]) >> 12) - ((FM.cos_a(heading(t)) * s_spd[t]) >> 12)
+			var vy := ((FM.sin_a(heading(s)) * s_spd[s]) >> 12) - ((FM.sin_a(heading(t)) * s_spd[t]) >> 12)
+			if FM.approx_len(vx, vy) > CORVUS_REL:
+				continue
+			stats["corvus"] = int(stats.get("corvus", 0)) + 1
+			_grapple(s, t, 1)
+			break
+
+
+## Shot % of ship s's troops (their kits by share; no kit: ST.DECK_TROOPS).
+func _troop_shot(s: int) -> int:
+	var sum := 0
+	var acc := 0
+	for k in TK_MAX:
+		var b := (s * TK_MAX + k) * TKP
+		if s_tkp[b] > 0 and s_tkp[b + 4] > 0:
+			sum += s_tkp[b]
+			acc += s_tkp[b] * s_tkp[b + 3]
+		elif s_tkp[b] > 0:
+			sum += s_tkp[b]
+	if sum == 0:
+		return int(ST.DECK_TROOPS["shot"])
+	return acc / sum
+
+
+## Galleys' missiles before contact: every `reload` seconds her troops (the
+## marines) throw at the nearest enemy within MSL_M (firing at will, or her
+## ordered target), killing crew only: troops x shot % x DECK_SHOT_PM / 1000.
+func _missiles() -> void:
+	if decided_tick >= 0:
+		return
+	for s in n_units:
+		if not ST.is_galley(s_type[s]) or u_state[s] != S_SAIL or s_grap[s] >= 0:
+			continue
+		if s_msl[s] > 0:
+			s_msl[s] -= 1
+			continue
+		if s_troops[s] <= 0:
+			continue
+		var best := -1
+		var bd := MSL_M * U + 1
+		for t in n_units:
+			if u_side[t] == u_side[s] or u_state[t] != S_SAIL or s_lit[t] >= 0 or s_grap[t] >= 0:
+				continue
+			if s_fire[s] == 0 and t != s_tgt[s]:
+				continue
+			var dx := s_x[t] - s_x[s]
+			var dy := s_y[t] - s_y[s]
+			if absi(dx) > MSL_M * U or absi(dy) > MSL_M * U:
+				continue
+			var d := FM.approx_len(dx, dy)
+			if d < bd:
+				bd = d
+				best = t
+		if best < 0:
+			continue
+		var kills := mini((s_troops[s] * _troop_shot(s) * DECK_SHOT_PM + _roll(1000)) / 1000, s_crew[best])
+		s_crew[best] -= kills
+		s_kills[s] += kills
+		if kills > 0:
+			s_mor[best] -= kills * 150 / maxi(s_crew0[best], 1) + 1
+			s_hit_t[best] = tick
+		s_msl[s] = ST.stat(s_type[s], "reload") * 10
+		stats["missiles"] = int(stats.get("missiles", 0)) + 1
+		_event(EV_MISSILE, s, 0, best, kills, 0)
 
 
 ## The battle AI's Douse (2026-10-22): with a fire aboard and no enemy about
@@ -3046,4 +3489,7 @@ func state_hash() -> int:
 	ctx.update(fl_t.to_byte_array())
 	ctx.update(fl_far.to_byte_array())
 	ctx.update(fl_hist.to_byte_array())
+	if gal_on != 0:
+		for nm in GAL_ARRAYS:
+			ctx.update((get(nm) as PackedInt32Array).to_byte_array())
 	return ctx.finish().decode_u32(0)

@@ -24,6 +24,12 @@ extends SceneTree
 ## lost burning per side (sunk or blown up with a fire aboard; of those the
 ## sim's burnt down / magazine counts), douse orders and fires out while
 ## dousing.
+## Fleets (Rome's navy R1, 2026-10-23): --ships=key:n,key:n both sides
+## (e.g. trireme:4), --ships0= / --ships1= one side each (default: the
+## FLEETS by seed); --mirror plays each seed twice, the fleets swapping
+## sides, and prints the wins by fleet (A: --ships0's, B: --ships1's), the
+## battles decided only at the time limit and the galleys' rams (on the
+## beam, bow to bow), corvus boardings and missile volleys.
 ## Prints only; no pass / fail.
 
 const SeaSim := preload("res://sim/sea_sim.gd")
@@ -44,7 +50,12 @@ var modes: Array = ["ai", "hold"]
 var verbose := false
 static var swap := false   # --swap: side 1's ships listed first (an index-order check)
 static var skill := -1     # --skill=0|1|2: the AI sides' sea skill (Easy / Average / Skilled; default: none given)
+static var json_f: FileAccess = null  # --json=PATH: one JSON line a battle (tools/balance), default off
 static var exch := false   # --exch: print the exchange by minute (the AI side's damage dealt / taken)
+static var ships0: Array = []  # --ships= / --ships0=: side 0's ship keys (empty: FLEETS by seed)
+static var ships1: Array = []  # --ships= / --ships1=: side 1's
+static var mirror := false     # --mirror: each seed twice, the fleets swapped
+static var flip := false       # (this run: the fleets swapped)
 
 
 func _initialize() -> void:
@@ -66,6 +77,17 @@ func _initialize() -> void:
 			skill = int(a.substr(8))
 		elif a == "--exch":
 			exch = true
+		elif a.begins_with("--json="):
+			json_f = FileAccess.open(a.substr(7), FileAccess.WRITE)
+		elif a.begins_with("--ships="):
+			ships0 = _ship_list(a.substr(8))
+			ships1 = ships0.duplicate()
+		elif a.begins_with("--ships0="):
+			ships0 = _ship_list(a.substr(9))
+		elif a.begins_with("--ships1="):
+			ships1 = _ship_list(a.substr(9))
+		elif a == "--mirror":
+			mirror = true
 	if rows:
 		_rows()
 	for mode in modes:
@@ -74,11 +96,26 @@ func _initialize() -> void:
 	quit(0)
 
 
+## "key:n,key:n" to the ship keys (n of each).
+static func _ship_list(txt: String) -> Array:
+	var out: Array = []
+	for part in txt.split(",", false):
+		var kv := part.split(":")
+		for i in (int(kv[1]) if kv.size() > 1 else 1):
+			out.append(kv[0])
+	return out
+
+
 static func scenario(sd: int, lay: String, mode: String) -> Dictionary:
 	var u: Array = []
 	var fl: Array = FLEETS[sd % FLEETS.size()]
+	var fls: Array = [fl, fl]
+	if not ships0.is_empty() or not ships1.is_empty():
+		fls = [ships0 if not ships0.is_empty() else fl, ships1 if not ships1.is_empty() else fl]
+	if flip:
+		fls = [fls[1], fls[0]]
 	for side in 2:
-		for k in fl:
+		for k in fls[side]:
 			u.append({"side": (1 - side) if swap else side, "t": k})
 	var land := {"kind": 0, "mseed": sd * 7919 % 100000}
 	var w := sd % 3
@@ -252,7 +289,14 @@ func run_one(sd: int, lay: String, mode: String) -> Dictionary:
 			ships[sim.u_side[s]] += 1
 		if per[s] >= 4:
 			stuck[sim.u_side[s]] += 1
-	return {"ships": ships, "stuck": stuck, "seed": sd, "water": water_name(scn, sd, lay), "fleet": "+".join(PackedStringArray(FLEETS[sd % FLEETS.size()])),
+	var fleet_txt := "+".join(PackedStringArray(FLEETS[sd % FLEETS.size()]))
+	if not ships0.is_empty() or not ships1.is_empty():
+		var fa := "+".join(PackedStringArray(ships0)) if not ships0.is_empty() else fleet_txt
+		var fb := "+".join(PackedStringArray(ships1)) if not ships1.is_empty() else fleet_txt
+		fleet_txt = (fb + " v " + fa) if flip else (fa + " v " + fb)
+	return {"ships": ships, "stuck": stuck, "seed": sd, "water": water_name(scn, sd, lay), "fleet": fleet_txt, "flip": 1 if flip else 0,
+		"gal": [int(sim.stats.get("rams", 0)), int(sim.stats.get("rams_beam", 0)), int(sim.stats.get("rams_bow", 0)),
+			int(sim.stats.get("corvus", 0)), int(sim.stats.get("missiles", 0))],
 		"winner": int(r["winner"]), "dt": int(r["decided_tick"]), "first": first, "gr": gr, "where": where, "lee": lee,
 		"made": made, "boardings": int(sim.stats["boardings"]), "dmg": dmg_min, "dmg_end": [damage(sim, 0), damage(sim, 1)],
 		"deck": [int(sim.stats["deck_taken"]), int(sim.stats["deck_repelled"]), int(sim.stats["deck_spent"])], "sides": r["sides"], "wind": int(scn["wind_deg"]),
@@ -301,11 +345,31 @@ func _layout_run(mode: String, lay: String) -> void:
 	for m in 15:
 		ex_d.append(0)
 		ex_t.append(0)
+	var fleet_w := [0, 0]
+	var clock := 0
+	var gal := [0, 0, 0, 0, 0]
+	var runs := 0
 	print("== mode %s layout %s" % [mode, lay])
-	for sd in range(1, seeds + 1):
+	for k_run in range(1, seeds * (2 if mirror else 1) + 1):
+		var sd := (k_run + 1) / 2 if mirror else k_run
+		flip = mirror and k_run % 2 == 0
 		var r := run_one(sd, lay, mode)
+		runs += 1
+		fleet_w[int(r["winner"]) ^ (1 if flip else 0)] += 1
+		if int(r["dt"]) < 0 or int(r["dt"]) >= 9000:
+			clock += 1
+		for k in 5:
+			gal[k] += int(r["gal"][k])
 		var f: Array = r["first"]
 		var g: Array = r["gr"]
+		if json_f != null:
+			var jr: Dictionary = r.duplicate()
+			jr["probe"] = "sea"
+			jr["mode"] = mode
+			jr["layout"] = lay
+			jr["seed"] = sd
+			json_f.store_line(JSON.stringify(jr))
+			json_f.flush()
 		wins[int(r["winner"])] += 1
 		dts.append(int(r["dt"]) if int(r["dt"]) >= 0 else 9000)
 		boards += int(r["boardings"])
@@ -354,8 +418,12 @@ func _layout_run(mode: String, lay: String) -> void:
 				int(r["boardings"]), ", ".join(PackedStringArray(r["where"]))])
 	print("  wins side 0 / 1: %d / %d   decided median %s   boardings %d (deck taken %d, thrown back %d, spent %d)" % [
 		wins[0], wins[1], _t(_median(dts)), boards, deck[0], deck[1], deck[2]])
+	if not ships0.is_empty() or not ships1.is_empty():
+		print("  fleets: A %s wins %d, B %s wins %d (of %d); decided only at the time limit %d; rams %d (beam %d, bow to bow %d), corvus %d, missile volleys %d" % [
+			"+".join(PackedStringArray(ships0)), fleet_w[0], "+".join(PackedStringArray(ships1)), fleet_w[1], runs, clock,
+			gal[0], gal[1], gal[2], gal[3], gal[4]])
 	print("  ships lost (sunk + taken) s0 %d s1 %d; escaped s0 %d s1 %d; mean battle %s; damage taken (hull %% + crew %%) s0 %d s1 %d, AI (s1) exchange %d %%" % [
-		lost[0], lost[1], esc[0], esc[1], _t(dsum / maxi(seeds, 1)), ex_end[0], ex_end[1], ex_end[0] * 100 / maxi(ex_end[1], 1)])
+		lost[0], lost[1], esc[0], esc[1], _t(dsum / maxi(runs, 1)), ex_end[0], ex_end[1], ex_end[0] * 100 / maxi(ex_end[1], 1)])
 	print("  fire: started %d, put out %d, ships lost burning s0 %d s1 %d (burnt down %d, magazine %d); douse orders %d, fires out while dousing %d" % [
 		fire[0], fire[1], burnt[0], burnt[1], fire[2], fire[3], fire[4], fire[5]])
 	if exch:

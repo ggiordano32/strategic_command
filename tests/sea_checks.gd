@@ -29,6 +29,21 @@ extends RefCounted
 ## refused alike, through a relay with random delays), every frame's hash
 ## equal; a third peer restored from a snapshot mid-battle follows; a solo
 ## run through Lockstep equals the plain sim.
+## galleys() (Rome's navy R1, 2026-10-23; also in determinism()): a
+## trireme rams a frigate hove to on her beam (hull lost = ram x closing x 2
+## / RAM_DIV) and backs water RAM_BACK ticks; two triremes bow to bow both
+## lose half the blow and both back water; a corvus quinquereme grapples a
+## sloop (soldiers aboard) passing at relative speed 400 (the bridge:
+## EV_GRAPPLE b 1, a corvus melee k_cv)
+## where the Punic quinquereme ordered to board her does not; the dash
+## meter drains a tenth of a second a tick at ramming speed, drops her to
+## cruise when empty and refills DASH_FILL a second; a sail-only battle's
+## hash ignores the galley arrays; over seeds the "galleys" scenario rams,
+## drops the corvus and throws missiles. The "galleys" scenario is in
+## SCENARIOS (twice the same, snapshots, a seed diverges).
+## lockstep_galleys() (in lockstep()): two peers sharing the galleys' side 0
+## (random orders, strokes among them) equal every frame, a joiner restored
+## mid-battle follows.
 ## campaign(): a West campaign with a player: an interception with the
 ## player's fleet is a pending sea battle; fought in the sea sim, its
 ## outcome written back (ships lost / taken / damaged, the event), the same
@@ -39,7 +54,7 @@ const ST := preload("res://sim/sea_types.gd")
 const Lockstep := preload("res://sim/lockstep.gd")
 
 const SCENARIOS: Array[String] = ["frigates", "sloops_galleon", "boarding", "upwind", "downwind", "coast", "melee",
-	"fireship", "flight"]
+	"fireship", "flight", "galleys"]
 
 
 static func scenario(key: String) -> Dictionary:
@@ -95,6 +110,13 @@ static func scenario(key: String) -> Dictionary:
 			u.append({"side": 0, "t": "frigate", "q": 130})
 			u.append({"side": 1, "t": "frigate", "q": 85})
 			u.append({"side": 1, "t": "brigantine", "q": 85})
+		"galleys":
+			# (R1, Rome's navy) Triremes and a lembos against a corvus quinquereme and a trireme.
+			u.append({"side": 0, "t": "trireme"})
+			u.append({"side": 0, "t": "trireme"})
+			u.append({"side": 0, "t": "lembos"})
+			u.append({"side": 1, "t": "quinquereme"})
+			u.append({"side": 1, "t": "trireme"})
 	return scn
 
 
@@ -220,6 +242,7 @@ static func determinism() -> int:
 	fails += sea_room()
 	fails += flight()
 	fails += douse()
+	fails += galleys()
 	return fails
 
 
@@ -512,6 +535,179 @@ static func douse() -> int:
 	return fails
 
 
+# ---------------------------------------------------------------- galleys ---
+
+## A sim of `units` (no AI), seed 5, wind from the east.
+static func _gal_sim(units: Array) -> SeaSim:
+	var sim := SeaSim.new()
+	sim.setup({"sea": 1, "wind_deg": 90, "wind_str": 40, "ai_sides": [0, 0], "units": units}, 5)
+	return sim
+
+
+## The first event of kind k since `seen` (its index), or -1.
+static func _first_ev(sim: SeaSim, k: int, seen: int) -> int:
+	for e in range(maxi(seen, sim.ev_n - SeaSim.EV_CAP), sim.ev_n):
+		if sim.ev_k[e % SeaSim.EV_CAP] == k:
+			return e % SeaSim.EV_CAP
+	return -1
+
+
+static func galleys() -> int:
+	var fails := 0
+	# A trireme at ramming speed into a frigate hove to, square on her beam.
+	var a := _gal_sim([{"side": 0, "t": "trireme", "x": 1000, "y": 800, "head": 90},
+		{"side": 1, "t": "frigate", "x": 1085, "y": 800, "head": 0}])
+	a.queue_order({"type": SeaSim.O_SAILS, "unit": 0, "on": 2, "tick": 0})
+	a.queue_order({"type": SeaSim.O_HEAD, "unit": 0, "facing": SeaSim.bearing_to_angle(90), "tick": 0})
+	a.queue_order({"type": SeaSim.O_SAILS, "unit": 1, "on": 0, "tick": 0})
+	a.queue_order({"type": SeaSim.O_FIRE, "unit": 1, "on": 0, "tick": 0})
+	a.s_spd[1] = 0
+	var ev := -1
+	var hull0 := a.s_hull[1]
+	var back_ok := true
+	var t_ram := -1
+	var moved_after := false
+	var lost := 0
+	for t in 400:
+		a.step()
+		if ev < 0:
+			ev = _first_ev(a, SeaSim.EV_RAM, 0)
+			if ev >= 0:
+				t_ram = a.tick
+				lost = hull0 - a.s_hull[1]
+		elif a.tick - t_ram < SeaSim.RAM_BACK - 1:
+			back_ok = back_ok and a.s_spd[0] == 0
+		elif a.tick - t_ram > SeaSim.RAM_BACK + 20 and a.s_spd[0] > 0:
+			moved_after = true
+	if ev < 0:
+		fails += 1
+		printerr("FAIL sea ram: the trireme never rammed the frigate")
+	else:
+		var clos := a.ev_e[ev]
+		var want := ST.stat(ST.index_of("trireme"), "ram") * clos / SeaSim.RAM_DIV * 2
+		if a.ev_b[ev] != 1 or a.ev_d[ev] != want or lost != want or clos < SeaSim.RAM_MIN or not back_ok or not moved_after:
+			fails += 1
+			printerr("FAIL sea ram: kind %d (want 1, beam), closing %d, hull lost %d, event %d, formula %d; backed water %s, under way after %s" % [
+				a.ev_b[ev], clos, lost, a.ev_d[ev], want, back_ok, moved_after])
+		else:
+			print("PASS sea ram: a trireme closing at %d strikes a frigate hove to on the beam for %d hull (100 x %d x 2 / %d), backs water %d ticks, then gets under way" % [
+				clos, lost, clos, SeaSim.RAM_DIV, SeaSim.RAM_BACK])
+	# Two triremes bow to bow.
+	var b := _gal_sim([{"side": 0, "t": "trireme", "x": 1000, "y": 800, "head": 90},
+		{"side": 1, "t": "trireme", "x": 1120, "y": 800, "head": 270}])
+	for u in 2:
+		b.queue_order({"type": SeaSim.O_SAILS, "unit": u, "on": 2, "tick": 0})
+		b.queue_order({"type": SeaSim.O_HEAD, "unit": u, "facing": SeaSim.bearing_to_angle(90 if u == 0 else 270), "tick": 0})
+		b.queue_order({"type": SeaSim.O_FIRE, "unit": u, "on": 0, "tick": 0})
+	var evb := -1
+	var tb := -1
+	for t in 300:
+		b.step()
+		evb = _first_ev(b, SeaSim.EV_RAM, 0)
+		if evb >= 0:
+			tb = b.tick - 1
+			break
+	var n_rams := 0
+	for e in b.ev_n:
+		if b.ev_k[e] == SeaSim.EV_RAM:
+			n_rams += 1
+	if evb < 0 or b.ev_b[evb] != 2 or n_rams != 1:
+		fails += 1
+		printerr("FAIL sea ram bow to bow: event %d kind %d, %d blows" % [evb, b.ev_b[evb] if evb >= 0 else -1, n_rams])
+	else:
+		var wb := 100 * b.ev_e[evb] / (SeaSim.RAM_DIV * 2)
+		var l0 := b.s_hull0[0] - b.s_hull[0]
+		var l1 := b.s_hull0[1] - b.s_hull[1]
+		if l0 != wb or l1 != wb or b.ev_d[evb] != wb or b.s_ram_t[0] != tb or b.s_ram_t[1] != tb:
+			fails += 1
+			printerr("FAIL sea ram bow to bow: lost %d / %d, event %d, half the blow %d; ram ticks %d / %d (%d)" % [l0, l1,
+				b.ev_d[evb], wb, b.s_ram_t[0], b.s_ram_t[1], tb])
+		else:
+			print("PASS sea ram bow to bow: closing %d, one blow, each loses %d hull (half of 100 x %d / %d), both back water" % [
+				b.ev_e[evb], wb, b.ev_e[evb], SeaSim.RAM_DIV])
+	# The corvus: a sloop passes abeam at a relative speed of 400.
+	var got := []
+	for key in ["quinquereme", "quinquereme_p"]:
+		var c := _gal_sim([{"side": 0, "t": key, "x": 1000, "y": 800, "head": 0},
+			{"side": 1, "t": "sloop", "x": 1020, "y": 800, "head": 0, "troops": 150}])
+		c.queue_order({"type": SeaSim.O_SAILS, "unit": 0, "on": 0, "tick": 0})
+		c.queue_order({"type": SeaSim.O_BOARD, "unit": 0, "target": 1, "tick": 0})
+		c.s_spd[0] = 0
+		c.s_spd[1] = 400
+		c.step()
+		var g := _first_ev(c, SeaSim.EV_GRAPPLE, 0)
+		got.append([c.s_grap[0], c.k_cv[0], c.ev_b[g] if g >= 0 else -1, c.s_spd[1]])
+	if int(got[0][0]) != 1 or int(got[0][1]) != 1 or int(got[0][2]) != 1 or int(got[1][0]) != -1:
+		fails += 1
+		printerr("FAIL sea corvus: corvus quinquereme [grapple, k_cv, event b, sloop speed] %s, Punic %s" % [got[0], got[1]])
+	else:
+		print("PASS sea corvus: a sloop passing at %d is grappled by the corvus (the event marked, the melee a corvus one); the Punic quinquereme ordered to board does not grapple" % int(got[0][3]))
+	# The dash meter.
+	var d := _gal_sim([{"side": 0, "t": "trireme", "x": 200, "y": 800, "head": 90},
+		{"side": 1, "t": "lembos", "x": 2200, "y": 200, "head": 0}])
+	d.queue_order({"type": SeaSim.O_SAILS, "unit": 0, "on": 2, "tick": 0})
+	d.queue_order({"type": SeaSim.O_HEAD, "unit": 0, "facing": SeaSim.bearing_to_angle(90), "tick": 0})
+	d.queue_order({"type": SeaSim.O_SAILS, "unit": 1, "on": 0, "tick": 0})
+	var full := ST.stat(ST.index_of("trireme"), "dash") * 10
+	var top := 0
+	var empty_t := -1
+	for t in 600:
+		d.step()
+		top = maxi(top, d.s_spd[0])
+		if empty_t < 0 and d.s_dash[0] == 0:
+			empty_t = d.tick
+	var cruise := d._vmax(0) * SeaSim.CRUISE_PCT / 100
+	var refill := d.s_dash[0]
+	var spd_after := d.s_spd[0]
+	var stroke_after := d.s_sail[0]
+	d.queue_order({"type": SeaSim.O_SAILS, "unit": 0, "on": 2, "tick": d.tick})
+	var again := -1
+	for t in 100:
+		d.step()
+		if again < 0 and d.s_dash[0] == 0:
+			again = t + 1
+	var want_fill := (600 - empty_t) / 10 * SeaSim.DASH_FILL
+	if absi(empty_t - full) > 2 or stroke_after != 1 or top <= cruise * 105 / 100 or spd_after > cruise + 5 \
+			or absi(refill - want_fill) > SeaSim.DASH_FILL or absi(again - refill) > 2 or d.s_sail[0] != 1:
+		fails += 1
+		printerr("FAIL sea dash: full %d, empty at tick %d, stroke %d, top speed %d (cruise %d), speed after %d, refilled %d (want %d), spent again in %d ticks" % [
+			full, empty_t, stroke_after, top, cruise, spd_after, refill, want_fill, again])
+	else:
+		print("PASS sea dash: a full meter (%d) lasts %d ticks at ramming speed (top %d against cruise %d), then she drops to cruise (%d) and refills %d in %d ticks; ordered to dash again she spends it in %d" % [
+			full, empty_t, top, cruise, spd_after, refill, 600 - empty_t, again])
+	# A battle without a galley: the galley arrays are not in its hash.
+	var f := SeaSim.new()
+	f.setup(scenario("frigates"), 3)
+	var h0 := f.state_hash()
+	f.s_dash[0] = 77
+	f.s_ram_t[0] = 5
+	if f.gal_on != 0 or f.state_hash() != h0:
+		fails += 1
+		printerr("FAIL sea galleys: a sail-only battle hashes the galley arrays (gal_on %d)" % f.gal_on)
+	else:
+		print("PASS sea galleys: a sail-only battle's hash leaves out the galley arrays (gal_on 0)")
+	# Over seeds the galley fight rams, boards by the corvus and throws.
+	var cov := {"rams": 0, "rams_beam": 0, "corvus": 0, "missiles": 0, "deck_fights": 0}
+	var won := [0, 0]
+	for sd in range(1, 7):
+		var r := run("galleys", sd, 9200)
+		var stt: Dictionary = r["stats"]
+		for k in cov:
+			cov[k] = int(cov[k]) + int(stt.get(k, 0))
+		var w := int((r["result"] as Dictionary)["winner"])
+		if w >= 0:
+			won[w] += 1
+	var bad := false
+	for k in cov:
+		bad = bad or int(cov[k]) <= 0
+	if bad or won[0] + won[1] != 6:
+		fails += 1
+		printerr("FAIL sea galleys over 6 seeds: ", cov, " won ", won)
+	else:
+		print("PASS sea galleys over 6 seeds: ", cov, ", won side 0 / 1: %d / %d" % [won[0], won[1]])
+	return fails
+
+
 # --------------------------------------------------------------- lockstep ---
 
 class Peer:
@@ -699,6 +895,7 @@ static func lockstep() -> int:
 	else:
 		print("PASS sea: solo through lockstep equals the plain sim (900 ticks)")
 	fails += lockstep_douse()
+	fails += lockstep_galleys()
 	return fails
 
 
@@ -707,6 +904,84 @@ static func lockstep() -> int:
 ## player 1 does at frame 3; every frame's hash equal, s_douse on on both,
 ## the hash differs from a run without the order; a third peer restored
 ## from player 0's snapshot mid-douse follows to the fire's end.
+static func lockstep_galleys() -> int:
+	var scn := scenario("galleys")
+	scn["ai_sides"] = [0, 1]
+	var home: Array = []
+	var k := 0
+	for d in scn["units"]:
+		if int(d["side"]) == 0:
+			home.append(k % 2)
+			k += 1
+		else:
+			home.append(-1)
+	const LEAD := 3
+	var peers: Array = []
+	for i in 2:
+		var p := Peer.new()
+		p.ls = Lockstep.new()
+		p.ls.setup(scn, 4321, home, [0, 1], 0)
+		p.me = i
+		p.rng = 7 + i * 13
+		peers.append(p)
+	var sent: Array = []
+	var inbox: Array = []   # [deliver at step, to peer, msg]
+	var joiner: Peer = null
+	var join_from := -1
+	var bad := ""
+	for step in 1500:
+		for p: Peer in peers:
+			p.n += 1
+			var msg := {"p": p.me, "n": p.n, "k": p.ls.frame + LEAD, "o": _orders(p, p.ls.frame + LEAD)}
+			sent.append(msg)
+			p.ls.receive(msg)
+			inbox.append([step + 1 + (p.n + p.me) % 2, 1 - p.me, msg])
+			if joiner != null:
+				inbox.append([step + 1, 2, msg])
+		var rest: Array = []
+		for it in inbox:
+			if int(it[0]) > step:
+				rest.append(it)
+				continue
+			var q: Peer = joiner if int(it[1]) == 2 else peers[int(it[1])]
+			q.ls.receive(it[2])
+		inbox = rest
+		for p in peers + ([joiner] if joiner != null else []):
+			while (p as Peer).ls.can_advance():
+				(p as Peer).ls.advance()
+				(p as Peer).hashes[(p as Peer).ls.frame] = (p as Peer).ls.state_hash()
+		if step == 500:
+			joiner = Peer.new()
+			joiner.me = 2
+			joiner.ls = Lockstep.new()
+			joiner.ls.setup(scn, 4321, home, [0, 1], 0)
+			if not joiner.ls.restore((peers[0] as Peer).ls.snapshot()):
+				bad = "the joiner could not restore a snapshot"
+			join_from = joiner.ls.frame
+			for m in sent:
+				joiner.ls.receive(m)
+	var a: Peer = peers[0]
+	var b: Peer = peers[1]
+	var n_cmp := 0
+	var n_j := 0
+	for f in a.hashes:
+		if b.hashes.has(f):
+			n_cmp += 1
+			if bad == "" and int(a.hashes[f]) != int(b.hashes[f]):
+				bad = "the peers differ at frame %d" % int(f)
+		if joiner != null and joiner.hashes.has(f) and int(f) > join_from:
+			n_j += 1
+			if bad == "" and int(a.hashes[f]) != int(joiner.hashes[f]):
+				bad = "the joiner differs at frame %d" % int(f)
+	var st: Dictionary = a.ls.sim.stats
+	if bad != "" or n_cmp < 1000 or n_j < 500:
+		printerr("FAIL sea lockstep galleys: %s (frames compared %d, joiner %d)" % [bad, n_cmp, n_j])
+		return 1
+	print("PASS sea lockstep galleys: two peers equal on %d frames, a joiner from frame %d on %d; rams %d, corvus %d, missile volleys %d" % [
+		n_cmp, join_from, n_j, int(st.get("rams", 0)), int(st.get("corvus", 0)), int(st.get("missiles", 0))])
+	return 0
+
+
 static func lockstep_douse() -> int:
 	var scn := {"sea": 1, "wind_deg": 0, "wind_str": 60, "ai_sides": [0, 1], "units": [
 		{"side": 0, "t": "frigate", "x": 1000, "y": 800, "head": 0, "crew": 55},
