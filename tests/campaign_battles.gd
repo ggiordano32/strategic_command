@@ -218,8 +218,8 @@ func _fit_state(pack: String, r: int, ratio: int, walls: int, field: bool, turns
 	for side in 2:
 		var units: Array = []
 		for key in mix:
-			var n := UT.size_of(UT.index_of(key))
-			units.append({"t": key, "n": n * ratio / 100 if side == 0 else n})
+			var cnt := UT.size_of(UT.index_of(key))
+			units.append({"t": key, "n": cnt * ratio / 100 if side == 0 else cnt})
 		(st["armies"] as Array).append({"id": side + 1, "f": side, "r": r, "units": units, "from": -1, "moved": 1, "busy": 1})
 		ids[side].append(side + 1)
 	var b := {"id": 1, "r": r, "turn": 5, "att": ids[0], "def": ids[1], "att_f": 0, "def_f": 1, "reinf": [],
@@ -231,13 +231,13 @@ func _fit_state(pack: String, r: int, ratio: int, walls: int, field: bool, turns
 
 
 ## [attacker win %, attackers' / defenders' men killed] over n formula samples of one state.
-func _fit_cell(sts: Array, n: int) -> Array:
+func _fit_cell(sts: Array, samples: int) -> Array:
 	var wins := 0
 	var tot := 0
 	var ka := 0
 	var kd := 0
 	for st in sts:
-		for i in n:
+		for i in samples:
 			var o := CBattle.formula(st, st["battles"][0])
 			tot += 1
 			if int(o["winner"]) == 0:
