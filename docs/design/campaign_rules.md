@@ -46,6 +46,7 @@ original art.
   the stronger side's (blockades); the treasure fleet sails along its lane, which is where a raider meets it. Rome's
   lanes pay the same way and will carry its navy. As built: docs/CAMPAIGN.md "Lane trade, raids and blockades".
 - Armies recruit in owned settlements, limited by the military buildings present.
+- Missile units come from the Range (owner 2026-10-23): every non-siege missile line (archers, javelins, slingers, buccaneers, and now **musketeers**: Range of their tier, 1 for musketeers, 2 for the veterans) is made at the Range, not the Barracks; mounted missile units (camel archers, light horse, pistoleers, cuirassiers) keep the Stables for the horse and also need a Range 1. Artillery stays the Workshop. Capitals start with a Range 1, towns do not (a town needs one built to raise musketeers).
 - **Reuse:** the campaign layer is meant to carry a different game later
   (the American West). Everything specific to the Mediterranean is data:
   regions, routes, sea lanes, factions, rosters, starts and numbers in
@@ -59,6 +60,7 @@ original art.
 - States per faction pair: war, peace, trade agreement.
 - The two players are permanently allied.
 - AI accepts or refuses proposals from a simple score (relative strength, war weariness, shared enemies).
+- Team victory option (2026-10-23, owner: a few AI team-ups ended the game early): the creation setting `team_regions` (1 default, the old rule: the regions of every member of the players' team count toward the regions and key cities to win; 0: only the regions the human players hold count, AI factions that joined the team do not; co-op players always count). Stored in `settings` only when 0 (absent reads 1, no `CState.VERSION` bump); `CRules.victory_progress` / `_check_victory_teams` honour it; the Goals panel says which rule is on. The victory goal is otherwise `victory_regions` (default 20) with `victory_capitals` (default 3) key cities.
 
 ### Settlement attacks
 
@@ -620,7 +622,7 @@ existing systems.
 ### Fog of war on the overworld (as built 2026-10-17, state format 8)
 
 Owner's decisions: a player sees, Rome 2 style, its own regions and their
-land neighbours, 1 cell round its armies (2 from a hill or ridge), fleets
+land neighbours, 1 cell round its armies (2 from a hill or ridge), fleets (5 cells round a fleet at sea, 2026-10-23: a masthead lookout; 3 before)
 and agents in a city, 2 round its cities (their waters too), and (2026-10-22) the sea
 within 2 cells of the coast of each coastal region of its own, 3 for a region with a
 harbour or walls 3; a team shares its sight. Out of sight the map shows the **last known** owner and faded

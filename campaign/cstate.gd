@@ -98,7 +98,7 @@ const AI_AVERAGE := 1
 const AI_BALANCED := 1
 
 const DEFAULT_SETTINGS := {"victory_regions": 20, "victory_capitals": 3, "turn_timeout_h": 0,
-	"autoresolve": "ask", "ai_aggression": 100}
+	"autoresolve": "ask", "ai_aggression": 100, "team_regions": 1}
 const TIMEOUT_CHOICES := [0, 12, 24, 48, 72]
 
 
@@ -134,6 +134,11 @@ static func new_campaign(p_name: String, p_seed: int, humans: Array, settings: D
 	# "Unlimited" choice (the sim has no unlimited value; 10 hours never ends).
 	if s.has("time_limit") and int(s["time_limit"]) in [0, 900]:
 		s.erase("time_limit")
+	# Whose regions count toward victory: 1 team-mates' too (the rule always
+	# was), 0 only the players' own. Kept only when 0 (absent reads as 1),
+	# so a default campaign keeps its hash.
+	if s.has("team_regions") and int(s["team_regions"]) != 0:
+		s.erase("team_regions")
 	# Fog of war (version 8): a top-level key, 1 unless the option says 0.
 	st["fog"] = 0 if s.has("fog") and int(s["fog"]) == 0 else 1
 	s.erase("fog")

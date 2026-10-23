@@ -149,7 +149,7 @@ const LINE_CHAIN := {"heavy": BARRACKS, "light": BARRACKS, "spear": BARRACKS, "p
 	"archer": RANGE, "javelin": RANGE, "cav": STABLES, "bolt": WORKSHOP, "stone": WORKSHOP, "siege": WORKSHOP,
 	"camel": STABLES, "camel_archer": STABLES, "elephant": STABLES, "cav_missile": STABLES, "sling": RANGE,
 	"general": BARRACKS, "dogs": BARRACKS, "light_art": WORKSHOP, "belly_bow": RANGE,
-	"musket": BARRACKS, "buccaneer": RANGE, "pistol": STABLES, "light_gun": WORKSHOP, "field_gun": WORKSHOP}
+	"musket": RANGE, "buccaneer": RANGE, "pistol": STABLES, "light_gun": WORKSHOP, "field_gun": WORKSHOP}
 ## Buildings a unit type needs where they differ from its line's chain at
 ## its tier (the ammunition wagons: the Workshop, and Stables for the
 ## horses): key -> [[chain, level], ...], all of them.
@@ -158,13 +158,17 @@ const LINE_CHAIN := {"heavy": BARRACKS, "light": BARRACKS, "spear": BARRACKS, "p
 ## archers' bows); slingers need only their line's Range of their tier.
 ## War dogs: Barracks 1 (their line) and Stables 1 (the kennels are kept
 ## with the horses): every capital has both from the start, towns not.
+## Every non-siege missile unit is made at the Range (owner 2026-10-23):
+## musketeers a Range of their tier (muskets were Barracks); the mounted
+## missile lines (camel archers, light horse, pistoleers, cuirassiers) keep
+## the Stables for the horses and need a Range 1 too.
 ## Gastraphetes (the Greek belly-bow): a Range 2 (a workshop-made weapon).
 const UNIT_NEEDS := {"wagon": [[WORKSHOP, 1]], "wagon2": [[WORKSHOP, 2], [STABLES, 1]],
 	"wagon3": [[WORKSHOP, 2], [STABLES, 2]], "camel": [[STABLES, 1]], "camel_archer": [[STABLES, 1], [RANGE, 1]],
 	"elephant": [[STABLES, 3]], "cav_jav": [[STABLES, 1], [RANGE, 1]], "numidians": [[STABLES, 2], [RANGE, 1]],
 	"tarentines": [[STABLES, 2], [RANGE, 1]], "gallic_horse": [[STABLES, 2], [RANGE, 1]],
 	"iberian_horse": [[STABLES, 2], [RANGE, 1]], "dog_handlers": [[BARRACKS, 1], [STABLES, 1]],
-	"gastraphetes": [[RANGE, 2]]}
+	"gastraphetes": [[RANGE, 2]], "pistoleers": [[STABLES, 1], [RANGE, 1]], "cuirassiers": [[STABLES, 2], [RANGE, 1]]}
 ## Workshop level needed per artillery line (other lines: level = tier).
 const ART_LEVEL := {"bolt": 1, "stone": 2, "light_art": 1, "light_gun": 1, "field_gun": 2}
 ## Buildings standing at the start: capitals and the other regions per level.

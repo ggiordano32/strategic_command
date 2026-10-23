@@ -3115,12 +3115,15 @@ static func check_eliminations(st: Dictionary) -> void:
 ## Players' progress toward victory: {regions, capitals, need_regions,
 ## need_capitals}.
 ## With `team` >= 0: that team's members together instead of the players.
+## Setting team_regions 0 (absent reads 1): with a team, only the regions its
+## human members hold count (AI team-mates' do not).
 static func victory_progress(st: Dictionary, team: int = -1) -> Dictionary:
 	var regions := 0
 	var caps := 0
+	var tm := int(st["settings"].get("team_regions", 1)) != 0
 	for r in CData.region_count():
 		var ow := CState.owner(st, r)
-		if (CState.is_human(st, ow) if team < 0 else (ow >= 0 and CState.team(st, ow) == team)):
+		if (CState.is_human(st, ow) if team < 0 else (ow >= 0 and CState.team(st, ow) == team and (tm or CState.is_human(st, ow)))):
 			regions += 1
 			if CData.KEY_CITIES.has(str(CData.REGIONS[r]["key"])):
 				caps += 1

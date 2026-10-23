@@ -3686,6 +3686,28 @@ func _teams() -> void:
 	vs["settings"]["victory_capitals"] = 0
 	CRules.check_victory(vs)
 	_check(int(vs["winner"]) == 1, "a member's own regions count too")
+	# team_regions: an AI faction merged into the player's team counts (1) or not (0).
+	var tmx: Array = []
+	for f in n:
+		tmx.append(5 if (f == rome or f == syra) else 10 + f)
+	var tw := CState.new_campaign("test", 4242, [rome], {"victory_capitals": 0}, tmx)
+	_check(not tw["settings"].has("team_regions") and CState.state_hash(tw) == CState.state_hash(CState.new_campaign("test", 4242, [rome], {"victory_capitals": 0, "team_regions": 1}, tmx)),
+		"team_regions 1 is the default and not stored (same hash)")
+	var own_n := CState.regions_of(tw, rome).size()
+	var mate_n := CState.regions_of(tw, syra).size()
+	tw["settings"]["victory_regions"] = own_n + mate_n
+	var tw1 := CState.copy(tw)
+	CRules.check_victory(tw1)
+	_check(int(CRules.victory_progress(tw, 5)["regions"]) == own_n + mate_n and int(tw1["winner"]) == 1, "team_regions 1: the AI team-mate's regions count, the win fires")
+	var tw0 := CState.copy(tw)
+	tw0["settings"]["team_regions"] = 0
+	CRules.check_victory(tw0)
+	_check(int(CRules.victory_progress(tw0, 5)["regions"]) == own_n and int(tw0["winner"]) == -1, "team_regions 0: only the player's own regions count, no win")
+	tw0["settings"]["victory_regions"] = own_n
+	CRules.check_victory(tw0)
+	_check(int(tw0["winner"]) == 1, "team_regions 0: the player's own regions still win")
+	var tc := CState.new_campaign("test", 4242, [rome, syra], {"team_regions": 0}, tmx)
+	_check(int(CRules.victory_progress(tc, 5)["regions"]) == CState.regions_of(tc, rome).size() + CState.regions_of(tc, syra).size(), "team_regions 0: co-op players always count")
 	# Players lose when no player's team has a member left.
 	var dead := CState.copy(st)
 	for f in [rome, carth, mace]:
@@ -5031,7 +5053,7 @@ func _sight() -> void:
 		var fc := CGrid.at(int(fl["x"]), int(fl["y"]))
 		fl_ok = fl_ok and vf[fc] == 1 and Sight.fleet_visible(w, int(fl["f"]), i)
 	_check(fl_ok, "West: every fleet is in its own side's sight")
-	# Fleet sight (2026-10-22, owner: "the ships need a much wider range of view"): FLEET_R 3 round a fleet at sea.
+	# Fleet sight (2026-10-22, owner: "the ships need a much wider range of view"): FLEET_R round a fleet at sea.
 	var wf := CState.copy(w)
 	var wf0: int = int((wf["fleets"] as Array)[0]["f"])
 	var proto: Dictionary = (wf["fleets"] as Array)[0].duplicate(true)
@@ -5046,23 +5068,23 @@ func _sight() -> void:
 		if not CFleet.is_sea(q):
 			continue
 		var clear := true
-		for dy in range(-4, 5):
-			for dx in range(-4, 5):
+		for dy in range(-6, 7):
+			for dx in range(-6, 7):
 				var d := CGrid.at(CGrid.cx(q) + dx, CGrid.cy(q) + dy)
 				if d < 0 or dark[d] != 0:
 					clear = false
 		if clear:
 			fsc = q
 			break
-	_check(fsc >= 0 and Sight.FLEET_R == 3, "West: a dark open-sea cell for the fleet sight case")
+	_check(fsc >= 0 and Sight.FLEET_R == 5, "West: a dark open-sea cell for the fleet sight case")
 	if fsc >= 0:
 		proto["x"] = CGrid.cx(fsc)
 		proto["y"] = CGrid.cy(fsc)
 		(wf["fleets"] as Array).append(proto)
 		var vfl := Sight.compute(wf, wf0)
-		_check(vfl[CGrid.at(CGrid.cx(fsc) + 3, CGrid.cy(fsc) - 3)] == 1 and vfl[CGrid.at(CGrid.cx(fsc) - 3, CGrid.cy(fsc))] == 1
-				and vfl[CGrid.at(CGrid.cx(fsc) + 4, CGrid.cy(fsc))] == 0 and vfl[CGrid.at(CGrid.cx(fsc), CGrid.cy(fsc) + 4)] == 0,
-			"a fleet at sea sees 3 cells round it, not 4")
+		_check(vfl[CGrid.at(CGrid.cx(fsc) + 5, CGrid.cy(fsc) - 5)] == 1 and vfl[CGrid.at(CGrid.cx(fsc) - 5, CGrid.cy(fsc))] == 1
+				and vfl[CGrid.at(CGrid.cx(fsc) + 6, CGrid.cy(fsc))] == 0 and vfl[CGrid.at(CGrid.cx(fsc), CGrid.cy(fsc) + 6)] == 0,
+			"a fleet at sea sees 5 cells round it, not 6")
 	var wp := _play(CState.copy(w), 4, 2)
 	_check(CState.state_hash(wp) == CState.state_hash(_play(CState.copy(w), 4, -1)) and _plain(wp), "West: 4 turns with the fog, deterministic, plain data")
 	_sight_coast("west", 0)

@@ -594,7 +594,7 @@ a long string").** View only.
   instruction line, the **Story** panel (West: cards with a two-line description and a button; online one card), the two
   team buttons, the faction rows (flag 36 px, name 16 bold, the blurb 13 dim wrapped so the row grows, an AI / Human
   capsule, the team dropdown; a human row has a gold left edge), the **Settings** panel of rows (Name, Seed with a
-  dice, Victory as two steppers, Turn timeout, Battles, AI aggression, Battle AI, Campaign AI, Fog of war, Deployment,
+  dice, Victory as two steppers, Victory counts (your regions only / your team's, 2026-10-23), Turn timeout, Battles, AI aggression, Battle AI, Campaign AI, Fog of war, Deployment,
   Battle time; each with a line and a tip) and, online, the **Online** panel (server and Change, Discord webhook, user
   id, invite key). Under 700 logical wide (or a touch screen under 520 high) the rows stack and the Settings panel
   folds under a "Settings" header. Names kept for the tests: `faction_<key>` is now the Human segment of the capsule

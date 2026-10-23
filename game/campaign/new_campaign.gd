@@ -430,6 +430,8 @@ func _build_settings() -> Control:
 	vh.add_child(_stepper("victory_regions", "%d regions", "Regions to win", "Hold this many regions to win outright."))
 	vh.add_child(_stepper("victory_capitals", "%d cities", "Great cities to win", "...and hold this many of the great cities."))
 	_srow(body, "victory", "Victory", "Win by holding this many regions, with this many great cities.", vh)
+	_setting_seg(body, "team_regions", "Victory counts", "Team-mates: AI factions that join your team by diplomacy. Co-op players always count.", ["Your regions only", "Your team's regions"],
+		"Victory counts", "Your team's regions: AI factions that join your team by diplomacy add their regions to the goal. Your regions only: just the regions the players hold count. Co-op players always count.")
 	_setting_seg(body, "turn_timeout_h", "Turn timeout", "When the time is up the turn resolves without the slow players.", ["Off", "12 h", "24 h", "48 h", "72 h"],
 		"Turn timeout", "Online: how long the others wait for a player before the turn resolves without them. Off: only when everyone has submitted.")
 	_setting_seg(body, "autoresolve", "Battles", "Fight the battles yourself, or let them resolve.", ["Ask", "Always auto"],
@@ -526,7 +528,7 @@ func _set_pack(key: String) -> void:
 
 const CHOICES := {"victory_regions": [15, 20, 25, 30], "victory_capitals": [2, 3, 4, 5],
 	"turn_timeout_h": [0, 12, 24, 48, 72], "autoresolve": ["ask", "auto"], "ai_aggression": [70, 100, 130],
-	"ai_battle_skill": [0, 1, 2], "ai_campaign_skill": [0, 1, 2], "fog": [1, 0]}
+	"ai_battle_skill": [0, 1, 2], "ai_campaign_skill": [0, 1, 2], "fog": [1, 0], "team_regions": [0, 1]}
 ## AI skill levels (campaign/cai_profile.gd EASY / AVERAGE / SKILLED).
 const AI_AVERAGE := 1
 const SKILL_LABELS: Array[String] = ["Easy", "Average", "Skilled"]

@@ -2,18 +2,18 @@
  "_note": "the pins in force; docs/STATUS.md 'Verification pins' is the source of truth, keep this file equal to it",
  "rome": [
   "b2cb4eab",
-  "554c2db0",
+  "e40de96c",
   "8aeea476",
   "a065aa4c",
   "d94dbb4e",
   "c798d183"
  ],
  "west": [
-  "9ab4e83f",
-  "b83cf517",
-  "c7e43889",
-  "6365cfdf",
-  "ca6d682b",
-  "5c37c9af"
+  "69971b5f",
+  "e323246e",
+  "ce4d2db4",
+  "2fa4bd9d",
+  "582c4808",
+  "1e9aeaf9"
  ]
 }

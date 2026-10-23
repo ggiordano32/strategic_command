@@ -3361,6 +3361,9 @@ func show_objectives() -> void:
 	box.add_child(Kit.label("Win together%s: hold %d regions (%s hold %d) including %d of the five great cities (%s hold %d)." % [
 		" (" + team_names + ")" if team_names != "" else "", int(p["need_regions"]), "your team holds" if team_names != "" else "you hold", int(p["regions"]),
 		int(p["need_capitals"]), "your team holds" if team_names != "" else "you hold", int(p["capitals"])], Kit.FONT, Color.WHITE, true))
+	if team_names != "":
+		box.add_child(Kit.label("Victory counts: %s." % ("only the regions the players hold (AI team-mates' do not)" if int(st["settings"].get("team_regions", 1)) == 0
+			else "your whole team's regions, AI team-mates' too"), Kit.FONT_SMALL, Kit.COL_DIM, true))
 	for key in CData.KEY_CITIES:
 		var r := CData.region_index(key)
 		var o := FogView.shown_owner(st, r)   # (fog: as last seen)

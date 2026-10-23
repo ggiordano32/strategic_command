@@ -154,7 +154,7 @@ func set_unit_type(ty: int, p_side_color: Color = Color(0.35, 0.6, 1.0)) -> void
 		"archer": "Range", "javelin": "Range", "cav": "Stables", "bolt": "Workshop", "stone": "Workshop",
 		"siege": "Workshop", "camel": "Stables", "camel_archer": "Stables", "elephant": "Stables",
 		"cav_missile": "Stables", "sling": "Range", "light_art": "Workshop", "belly_bow": "Range",
-		"musket": "Barracks", "buccaneer": "Range", "pistol": "Stables", "light_gun": "Workshop", "field_gun": "Workshop"}
+		"musket": "Range", "buccaneer": "Range", "pistol": "Stables", "light_gun": "Workshop", "field_gun": "Workshop"}
 	var bld: String = lines.get(UT.line_of(ty), "")
 	var need := tier if UT.cls(ty) != UT.CLS_ART else int(CData.ART_LEVEL.get(UT.line_of(ty), 2 if UT.base_of(ty) == UT.STONE else 1))
 	var need_txt := "%s %d" % [bld, need]
