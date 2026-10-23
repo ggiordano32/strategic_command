@@ -407,9 +407,12 @@ call (`add_order`, `set_move_mode`, `_set_stance6`, ...). **Details** opens
 the old full panel in the side panel, which now opens only on demand (and
 for Build / Recruit into an army, which scroll to their section there); its
 Close hides it and keeps the selection. Layout: full width at the bottom,
-132 px (96 on a phone: narrower than 700 or lower than 560 logical px, one
-horizontally scrolling row); the map key buttons, the End turn row, the hint
-and the toasts rise above it while it shows. Versions before 6 keep the side
+132 px at least (96 on a phone: narrower than 700 or lower than 560 logical px, one
+horizontally scrolling row); the reported height is the larger of that and the
+built content's real minimum height (a level-3 city with seven buildings is
+about 148), so the map key buttons, the End turn row, the hint and the toasts
+rise above it by what it really takes while it shows; the hint wraps in the
+room left between the key buttons and the End turn row. Versions before 6 keep the side
 panel only. Testing aids: `--details` / `--no-bar` (the old behaviour).
 
 **Round 2 (2026-10-16, owner's tablet playtest).** *Recruit popup tabs:* the

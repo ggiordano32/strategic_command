@@ -262,6 +262,9 @@ func _initialize() -> void:
 		_step_gd_check_door_marker,
 		_step_gd_tap_marker,
 		_step_gd_check_marker,
+		_step_hover_touch,
+		_step_hover_mouse,
+		_step_hover_mouse2,
 		_step_eq_start,
 		_step_eq_tap_piece,
 		_step_eq_check_piece,
@@ -2372,6 +2375,49 @@ func _step_gd_tap_marker() -> void:
 func _step_gd_check_marker() -> void:
 	_check(battle.selection == [_gd_wall], "a long press on the marker just outside the doorway selects the unit (%s)" % str(battle.selection))
 	_check(_gd_gate_orders().size() == 2, "... and asks nothing of the gate")
+
+
+## Touch has no hover: a tap with a unit selected in a city battle leaves the
+## overlay's hover point unset (no route preview to the last tap); a mouse
+## (the touch flag off) still sets it.
+func _hv_pt() -> Vector2:
+	return battle.get_canvas_transform() * _gd_point(_gd_gate, 6 * 1024, -8 * 1024)
+
+
+func _step_hover_touch() -> void:
+	var sim := battle.sim
+	if not battle.paused:
+		battle._toggle_pause()
+	battle._select(_gd_sel)
+	battle.overlay.hover_w = Vector2(-1, -1)
+	var was: int = battle.UiScale._touch_override
+	battle.UiScale._touch_override = 1
+	var p := _world_to_screen(_gd_point(_gd_gate, 6 * 1024, -8 * 1024))
+	_no_double_tap()
+	_mouse_move(_hv_pt(), Vector2(3, 3))   # the emulated motion a touch brings
+	_touch(0, p, true)
+	_touch(0, p, false)
+	battle.UiScale._touch_override = was
+	_check(sim.city_on != 0, "hover: a city battle")
+
+
+func _step_hover_mouse() -> void:
+	_check(battle.overlay.hover_w.x < 0.0, "hover: after a touch press and release the hover point is unset (%s)" % str(battle.overlay.hover_w))
+	battle._select(_gd_sel)
+	var was: int = battle.UiScale._touch_override
+	battle.UiScale._touch_override = 1
+	_mouse_move(_hv_pt(), Vector2(3, 3))
+	battle.UiScale._touch_override = was
+	_check(battle.overlay.hover_w.x < 0.0, "hover: touch-flag motion does not set it")
+
+
+func _step_hover_mouse2() -> void:
+	battle._select(_gd_sel)
+	var was: int = battle.UiScale._touch_override
+	battle.UiScale._touch_override = 0
+	_mouse_move(_hv_pt(), Vector2(3, 3))
+	battle.UiScale._touch_override = was
+	_check(battle.overlay.hover_w.x >= 0.0, "hover: a mouse (touch flag off) sets it for the preview")
 
 
 # Siege equipment (part 2b): tap a piece to pick it up, refusals, tap a

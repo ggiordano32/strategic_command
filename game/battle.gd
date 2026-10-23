@@ -3073,6 +3073,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
 		_update_matchup(event.position if event.pressed else Vector2(-1e6, -1e6))
 		_on_touch(event)
+		if not event.pressed and overlay.hover_w.x >= 0.0:
+			overlay.hover_w = Vector2(-1, -1)   # a lifted finger hovers nothing
+			overlay.queue_redraw()
 	elif event is InputEventScreenDrag:
 		_update_matchup(event.position)
 		_on_drag(event)
@@ -3110,9 +3113,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			# Occupy armed: the lit building under the mouse shows its fans.
 			var ow := _screen_to_world((event as InputEventMouseMotion).position)
 			_occupy_focus(_occupy_building_at(ow), "Click to send them in")
-		elif sim.city_on != 0 and not selection.is_empty():
+		elif sim.city_on != 0 and not selection.is_empty() and not UiScale.is_touch():
 			# Walls: the stretch under the mouse lights up (overlay); not in
-			# a gate's doorway, where a click is about the gate.
+			# a gate's doorway, where a click is about the gate. Touch has no
+			# hover: its emulated motion would leave the route preview (and
+			# this) drawn to wherever the last tap fell.
 			var hw := _screen_to_world((event as InputEventMouseMotion).position)
 			overlay.hover_w = hw if _gate_doorway(hw) < 0 else Vector2(-1, -1)
 			overlay.queue_redraw()

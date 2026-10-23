@@ -137,7 +137,7 @@ func _initialize() -> void:
 		_gf_dip, _gf_money, _gf_money_check, _gf_buy, _gf_buy_check, _gf_deal_cancel, _gf_deal_cancel_check,
 		_gf_offer, _gf_accept, _gf_accept_check, _gf_accept_undo, _gf_done,
 		_n_open, _n_tap_rome, _n_tap_carthage, _n_tap_greeks, _n_idle, _n_picks, _n_one_team, _n_idle, _n_one_team_check, _n_dropdown, _n_dropdown_check, _n_start, _n_idle, _n_idle, _n_idle, _n_check,
-		_t_setup, _t_dip, _t_stance, _t_propose, _n_idle, _t_incoming, _t_tap_accept, _n_idle, _t_accept, _t_leave, _n_idle, _t_leave_dialog, _n_idle, _t_leave_planned, _t_notice, _t_text, _t_done, _f_fog, _f_fog2, _j_setup, _j_adjacent, _j_far, _jm_run, _j_lanes, _j_done, _s_done,
+		_t_setup, _t_dip, _t_stance, _t_propose, _n_idle, _t_incoming, _t_tap_accept, _n_idle, _t_accept, _t_leave, _n_idle, _t_leave_dialog, _n_idle, _t_leave_planned, _t_notice, _t_text, _t_done, _f_fog, _f_fog2, _j_setup, _j_adjacent, _j_far, _jm_run, _j_lanes, _j_barfit, _j_done, _s_done,
 	]
 
 
@@ -2011,6 +2011,61 @@ func _j_lanes() -> void:
 	if rt.has(hv):
 		(ps2["fleets"] as Array).pop_back()
 	cs.deselect_all()
+	hold = false
+
+
+## The command bar's reported height is its real content height: a level-3
+## West city with a garrison and seven buildings at phone sizes, and a Rome
+## city; the End turn row, the map key's buttons and the hint clear the bar.
+func _j_barfit() -> void:
+	hold = true
+	var win := root.content_scale_size
+	var root_size := root.size
+	cs.no_bar = false
+	cs.details_on_select = false
+	cs.close_side()
+	var r := CData.region_index("havana")
+	var rs: Dictionary = cs.st["regions"][r]
+	rs["owner"] = cs.f
+	rs["level"] = 2
+	rs["slots"] = [[CData.WALLS, 2]]
+	for c in 7:
+		(rs["slots"] as Array).append([c, 1])
+	cs._replan()
+	for sz in [Vector2i(1000, 461), Vector2i(915, 412), Vector2i(844, 390), Vector2i(1280, 720)]:
+		root.content_scale_size = sz
+		if DisplayServer.get_name() == "headless":
+			root.size = sz
+		cs.close_side()
+		await process_frame
+		cs.select_region(r)
+		for k in 4:
+			await process_frame
+		var bar = cs.cmd_bar
+		var br: Rect2 = bar.get_global_rect()
+		var tag := "bar fit %dx%d: " % [sz.x, sz.y]
+		_check(bar.shown and bar.find_child("building_row", true, false) != null, tag + "the city's bar shows with its buildings")
+		_check(bar.height() >= bar.get_combined_minimum_size().y - 0.5 and absf(br.size.y - bar.height()) < 1.0,
+			tag + "the reported height %.0f is the real one (%.0f, content %.0f)" % [bar.height(), br.size.y, bar.get_combined_minimum_size().y])
+		var parts := {"End turn row": cs.bottom_bar, "Terrain": cs.map_key.view_button, "Key": cs.map_key.button, "hint": cs.hint}
+		for k in parts:
+			var c: Control = parts[k]
+			if c.is_visible_in_tree():
+				_check(not c.get_global_rect().intersects(br), tag + "%s clears the bar (%s vs %s)" % [k, str(c.get_global_rect()), str(br)])
+		for c in cs.bottom_bar.get_children():
+			if c is Control and (c as Control).is_visible_in_tree():
+				_check(not (c as Control).get_global_rect().intersects(br), tag + "%s clears the bar" % c.name)
+		var hr: Rect2 = cs.hint.get_global_rect()
+		if cs.hint.text != "":
+			for b in [cs.map_key.view_button, cs.map_key.button]:
+				_check(not hr.intersects((b as Control).get_global_rect()), tag + "the hint is clear of the map key's buttons")
+	cs.close_side()
+	root.content_scale_size = win
+	if DisplayServer.get_name() == "headless":
+		root.size = root_size
+	cs.no_bar = true
+	cs.details_on_select = true
+	await process_frame
 	hold = false
 
 

@@ -1654,6 +1654,9 @@ func _refresh_bar() -> void:
 func _layout_bottom() -> void:
 	var lift := cmd_bar.height() + 4.0 if cmd_bar.shown else 0.0   # the bottom corners rise above the bar
 	hint.offset_bottom = -12.0 - lift
+	# narrow screens: the hint wraps in the room between the map key's buttons and the End turn row
+	var room := _vp().x - hint.offset_left - bottom_bar.get_combined_minimum_size().x - 16.0 - 30.0   # (30: the fit button)
+	hint.offset_right = hint.offset_left + clampf(room, 120.0, 412.0)
 	bottom_bar.offset_bottom = -8.0 - lift
 	side.offset_bottom = -62.0 - lift
 	map_key.set_lift(lift)

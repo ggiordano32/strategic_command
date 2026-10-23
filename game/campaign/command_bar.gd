@@ -155,6 +155,9 @@ func refresh() -> bool:
 			_build_fleet(id)
 		_:
 			_build_region(id)
+	# the real content height (the card, strip, two rows of buildings, the action grid) is the floor's ceiling:
+	# the bar grows upward past a too-small _h, so what rises above its corners must use the real one
+	_h = maxf(_h, ceilf(get_combined_minimum_size().y))
 	_place()
 	shown = true
 	visible = true
