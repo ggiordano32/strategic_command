@@ -94,6 +94,9 @@ static var no_beasts := false
 ## --no-buildup): no military build-up, wagons or raising a line at another
 ## centre (docs/AI.md 23), as if BU_RANGE, BU_WORKSHOP and WAGON_MIN were 0.
 static var no_buildup := false
+## Test switch (tests/campaign_sim.gd --no-water): amphibious armies plan with
+## the land fields only, as before docs/AI.md 34.
+static var no_water := false
 
 # Every ratio, odds cutoff, turn count, share and weight the AI decides with
 # is a knob of the faction's skill / personality profile
@@ -194,6 +197,7 @@ static func _aggr(st: Dictionary) -> int:
 
 static func _merge(st: Dictionary, f: int) -> void:
 	var mine := CState.armies_of(st, f)
+	var band := CP.of(st, f)[CP.AMPHIB_BAND] != 0 and CData.ships_on()  # (docs/AI.md 34: a band stays amphibious)
 	for i in mine.size():
 		var a: Dictionary = mine[i]
 		if CState.army_index(st, int(a["id"])) < 0 or int(a["busy"]) != 0:
@@ -206,6 +210,8 @@ static func _merge(st: Dictionary, f: int) -> void:
 				if CGrid.cheb(CState.cell(a), CState.cell(b)) > 1:
 					continue
 			elif int(b["r"]) != int(a["r"]):
+				continue
+			if band and CRules.amphibious(st, a) != CRules.amphibious(st, b):
 				continue
 			if CState.unit_count(a) + CState.unit_count(b) <= CData.ARMY_MAX:
 				CRules.apply_order(st, f, {"t": "merge", "army": int(b["id"]), "into": int(a["id"])})
@@ -271,9 +277,9 @@ static func _build(st: Dictionary, f: int) -> void:
 		if not bi.has("why") and int(bi["cost"]) <= bb:
 			if CRules.apply_order(st, f, {"t": "build", "r": bu[0], "chain": bu[1]}) == "":
 				spent += int(bi["cost"])
-		elif kn[CP.BU_SAVE] != 0 and (not bi.has("why") or str(bi["why"]) == "not enough money") \
+		elif kn[CP.BU_SAVE] != 0 and bu.size() < 3 and (not bi.has("why") or str(bi["why"]) == "not enough money") \
 				and CState.battle_at(st, bu[0]).is_empty():
-			return
+			return  # (a pack build-up line's goal, [site, chain, 1], never holds the rest: docs/AI.md 34)
 	for r in regions:
 		if not CState.battle_at(st, r).is_empty():
 			continue
@@ -282,11 +288,14 @@ static func _build(st: Dictionary, f: int) -> void:
 		if thr > defence(st, r) / kn[CP.WALLS_THREAT_DIV]:
 			want.append(CData.WALLS)
 		var centre := CData.is_capital(r) or int(st["regions"][r]["level"]) >= CData.TOWN
+		if centre and kn[CP.RANGE_FIRST_PCT] > 0 and CState.building(st, r, CData.RANGE) == 0 \
+				and _range_heavy(mix, kn[CP.RANGE_FIRST_PCT]):
+			want.append(CData.RANGE)  # (docs/AI.md 34: the main line is raised at a Range)
 		want.append(CData.FARM)
 		want.append(CData.MARKET)
 		if centre:
 			for c in [CData.BARRACKS, CData.STABLES, CData.RANGE]:
-				if _wants_chain(mix, c):
+				if _wants_chain(mix, c) and not want.has(c):
 					want.append(c)
 			if _wants_engines(mix):
 				want.append(CData.WORKSHOP)
@@ -309,7 +318,7 @@ static func _build(st: Dictionary, f: int) -> void:
 ## switches leave them out).
 static func _wants_engines(mix: Dictionary) -> bool:
 	return mix.has("bolt") or mix.has("stone") or (mix.has("light_art") and not CData.no_light_art and not no_beasts) \
-		or mix.has("light_gun") or mix.has("field_gun")
+		or mix.has("light_gun") or mix.has("field_gun") or mix.has("mortar")
 
 
 ## The military build-up (docs/AI.md 23): the next [region, chain] to build
@@ -330,6 +339,16 @@ static func _buildup(st: Dictionary, f: int, regions: Array[int], mix: Dictionar
 		# Heroes (CData.CHAR_NEEDS) come from Barracks 2: a faction that
 		# raises them wants one at its military centre (after the above).
 		goals.append([CData.BARRACKS, int(CData.CHAR_NEEDS["hero_foot"][1])])
+	if kn[CP.BU_LINE_MAX] > 0 and regions.size() >= kn[CP.BU_LINE_REGIONS]:
+		# (docs/AI.md 34) The pack's build-up lines in the mix (the West's
+		# mortars, Workshop 3; grenadiers, Barracks 3): their chain to the
+		# level their first tier needs.
+		for line in CData.AI_BUILDUP_LINES:
+			if not mix.has(str(line)):
+				continue
+			var nd := _line_entry(f, str(line))
+			if not nd.is_empty():
+				goals.append([int(nd[0]), mini(int(nd[1]), kn[CP.BU_LINE_MAX]), 1])
 	for g in goals:
 		var c: int = g[0]
 		var site := -1
@@ -347,8 +366,27 @@ static func _buildup(st: Dictionary, f: int, regions: Array[int], mix: Dictionar
 		if CState.building(st, site, CData.FARM) < 1 \
 				or (CState.building(st, site, CData.MARKET) < 1 and _free_slots(st, site) > 1):
 			return []
+		if (g as Array).size() > 2:
+			return [site, c, 1]  # (a line goal: built when affordable, no saving for it)
 		return [site, c]
 	return []
+
+
+## [chain, level] the first tier of faction f's `line` needs ([] none).
+static func _line_entry(f: int, line: String) -> Array:
+	for tier in [1, 2, 3]:
+		var key := CState.roster_type(f, line, tier)
+		if key != "":
+			return CRules.needs(key)
+	return []
+
+
+## A Range line has at least pct % of the mix (RANGE_FIRST_PCT).
+static func _range_heavy(mix: Dictionary, pct: int) -> bool:
+	for line in CData.LINE_ORDER:
+		if mix.has(line) and int(CData.LINE_CHAIN[line]) == CData.RANGE and int(mix[line]) >= pct:
+			return true
+	return false
 
 
 static func _centre(st: Dictionary, r: int) -> bool:
@@ -472,6 +510,8 @@ static func _recruit(st: Dictionary, f: int, moves: Array = []) -> void:
 			var id := int(a["id"])
 			if int(a["busy"]) != 0 or marching.has(id) or _has_wagon(a) or _missiles(a) < kn[CP.WAGON_MIN]:
 				continue
+			if kn[CP.AMPHIB_BAND] != 0 and CRules.amphibious(st, a):
+				continue  # (a band stays amphibious)
 			for e in scored:
 				var r: int = e[1]
 				var key := _best_type(st, f, r, "siege") if CState.building(st, r, CData.WORKSHOP) > 0 else ""
@@ -484,6 +524,7 @@ static func _recruit(st: Dictionary, f: int, moves: Array = []) -> void:
 					up += CState.upkeep_of(ty)
 				break
 	var guard := 0
+	var raised := {}  # region -> 1 / 0: a band (amphibious) / other recruits there this turn without an army named (_recruit_order)
 	for e in scored:
 		var r: int = e[1]
 		while guard < kn[CP.RECRUIT_MAX]:
@@ -492,14 +533,14 @@ static func _recruit(st: Dictionary, f: int, moves: Array = []) -> void:
 			var lean := kn[CP.RECRUIT_LEAN_PCT]
 			if lean > 0 and CState.rand(st, 100) < lean:
 				line = _most_line(st, f, mix)  # more of what it already has
-			var key := _best_type(st, f, r, line)
+			var key := _mix_type(st, f, r, line, kn)
 			var rr := r  # (where it is raised)
 			if key == "" and kn[CP.BU_RANGE] > 0 and not no_buildup:
 				# The build-up: a line r lacks the building for is raised at
 				# the next recruiting centre that has it (the Workshop's
 				# engines, the Range 2's gastraphetes).
 				for e2 in scored:
-					key = _best_type(st, f, int(e2[1]), line)
+					key = _mix_type(st, f, int(e2[1]), line, kn)
 					if key != "":
 						rr = int(e2[1])
 						break
@@ -512,7 +553,8 @@ static func _recruit(st: Dictionary, f: int, moves: Array = []) -> void:
 				return
 			if int(fs["treasury"]) - CRules.unit_price(st, f, rr, key) < _reserve(st, f) / kn[CP.RECRUIT_RESERVE_DIV]:
 				return
-			if CRules.apply_order(st, f, _recruit_order(st, f, rr, key, marching, moves, kn)) != "":
+			var o := _recruit_order(st, f, rr, key, marching, moves, kn, raised)
+			if o.is_empty() or CRules.apply_order(st, f, o) != "":
 				break
 			up += CState.upkeep_of(ty)
 
@@ -602,7 +644,7 @@ static func _raise_char(st: Dictionary, f: int, a: Dictionary, kind: String, flo
 ## 1); with no army there at all, the old form (it joins no army now).
 ## marching: army id -> 1 (updated); moves: the planned moves (updated).
 static func _recruit_order(st: Dictionary, f: int, r: int, key: String, marching: Dictionary, moves: Array,
-		kn: PackedInt32Array) -> Dictionary:
+		kn: PackedInt32Array, raised: Dictionary = {}) -> Dictionary:
 	var o := {"t": "recruit", "r": r, "unit": key}
 	if not CState.grid_on(st):
 		return o
@@ -610,8 +652,17 @@ static func _recruit_order(st: Dictionary, f: int, r: int, key: String, marching
 	var hold := -1
 	var small := -1
 	var any_march := false
+	# (docs/AI.md 34) The band: an amphibious recruit joins only an amphibious
+	# army, others never one; a band raised this turn ("new") keeps the
+	# region's unnamed recruits apart ({}: not this turn).
+	var band := kn[CP.AMPHIB_BAND] != 0 and CData.ships_on()
+	var wet := band and UT.stat(UT.index_of(key), "amphib") != 0
+	var skipped := false
 	for a in st["armies"]:
 		if int(a["f"]) != f or int(a["busy"]) != 0 or CGrid.cheb(CState.cell(a), site) > 1:
+			continue
+		if band and CRules.amphibious(st, a) != wet:
+			skipped = true
 			continue
 		var id := int(a["id"])
 		if CRules.army_recruit_check(st, f, r, id, key) != "":
@@ -631,8 +682,13 @@ static func _recruit_order(st: Dictionary, f: int, r: int, key: String, marching
 				moves.remove_at(k)
 	if hold >= 0:
 		o["army"] = hold
-	elif any_march:
+	elif any_march or (band and (wet or skipped)):
 		o["new"] = 1
+	if band and hold < 0:
+		var k := 1 if wet else 0
+		if raised.has(r) and int(raised[r]) != k:
+			return {}
+		raised[r] = k
 	return o
 
 
@@ -700,6 +756,45 @@ static func _best_type(st: Dictionary, f: int, r: int, line: String) -> String:
 		if key != "" and CRules.recruit_check(st, f, r, key) == "":
 			return key
 	return ""
+
+
+## The type of `line` the mix recruiting raises in r (docs/AI.md 34): the
+## best tier r allows, but a line's specialist (CData.AI_SPECIALISTS) only
+## while faction f holds fewer than SPECIALIST_PCT % of the line's units as
+## that specialist; else the best tier below it r allows (the line's main
+## unit). Rome has no specialists: _best_type.
+static func _mix_type(st: Dictionary, f: int, r: int, line: String, kn: PackedInt32Array) -> String:
+	var key := _best_type(st, f, r, line)
+	if key == "" or kn[CP.SPECIALIST_PCT] >= 100 or not CData.AI_SPECIALISTS.has(key):
+		return key
+	var main := ""
+	var ro: Array = CData.roster(f).get(line, [])
+	for tier in range(ro.find(key), 0, -1):
+		var k2 := CState.roster_type(f, line, tier)
+		if k2 != "" and not CData.AI_SPECIALISTS.has(k2) and CRules.recruit_check(st, f, r, k2) == "":
+			main = k2
+			break
+	if main == "":
+		return key
+	var n_line := 0
+	var n_spec := 0
+	for a in CState.armies_of(st, f):
+		for u in a["units"]:
+			var ty := CState.unit_type(u)
+			if UT.line_of(ty) == line:
+				n_line += 1
+				if str(u["t"]) == key:
+					n_spec += 1
+	for rs in st["regions"]:
+		if int(rs["owner"]) == f:
+			for k in rs["queue"]:
+				if UT.line_of(UT.index_of(str(k))) == line:
+					n_line += 1
+					if str(k) == key:
+						n_spec += 1
+	if n_spec * 100 < kn[CP.SPECIALIST_PCT] * (n_line + 1):
+		return key
+	return main
 
 
 static func _any_type(st: Dictionary, f: int, r: int) -> String:
@@ -1763,8 +1858,9 @@ static func _border_weak(st: Dictionary, f: int, g: int, kn: PackedInt32Array) -
 			continue
 		var full := CState.max_mp6(_default_of(a))
 		var c := CState.cell(a)
+		var sf := _sf_of(st, a)
 		for r in CState.regions_of(st, sides[1 - k]):
-			var d: int = (_sf[r] as PackedInt32Array)[c]
+			var d: int = (sf[r] as PackedInt32Array)[c]
 			if d < CGrid.INF and d - int(_site_cost[r]) <= full:
 				near[k] += CState.strength(a)
 				break
@@ -1864,7 +1960,8 @@ static func eta(st: Dictionary, a: Dictionary, r: int, full: int = -1) -> int:
 	if full < 0:
 		full = CState.full_mp(st, a)
 	var left := mini(CState.mp(a), full) if full == CState.full_mp(st, a) and int(a["moved"]) != 0 else full
-	return _eta_d(site_dist(CState.cell(a), r, not CState.friendly(st, int(a["f"]), CState.owner(st, r))), full, left)
+	return _eta_d(site_dist(CState.cell(a), r, not CState.friendly(st, int(a["f"]), CState.owner(st, r)),
+		not no_water and CRules.amphibious(st, a)), full, left)
 
 
 ## Turns for distance d with `full` points a turn and `left` now.
@@ -1878,6 +1975,26 @@ static func _eta_d(d: int, full: int, left: int) -> int:
 
 static var _sf: Array = []
 static var _site_cost: Array[int] = []
+static var _sfw: Array = []  # the same over the coastal water (amphibious armies), built on first use
+
+
+## The settlements' distance fields army a plans with: over the coastal sea
+## too when it is amphibious (CRules.amphibious; docs/AI.md 34), else the
+## land ones. Static memos like _sf (no state: the same on every client).
+static func _sf_of(st: Dictionary, a: Dictionary) -> Array:
+	if _sf.is_empty():
+		site_dist(0, 0, false)
+	if no_water or not CRules.amphibious(st, a):
+		return _sf
+	return _water_fields()
+
+
+static func _water_fields() -> Array:
+	if _sfw.is_empty():
+		CFleet.ensure()
+		for k in CData.region_count():
+			_sfw.append(CGrid.field(CGrid.site(k), FIELD_SEA, true))
+	return _sfw
 
 
 ## The pack changed (CData.use_pack_script): drop the memos built from it.
@@ -1885,16 +2002,17 @@ static func pack_reset() -> void:
 	_near_memo = {}
 	_sf = []
 	_site_cost = []
+	_sfw = []
 
 
 ## Static distance from cell c to region r's settlement (ring: next to it,
 ## when `ring`), from the memoised fields of every settlement.
-static func site_dist(c: int, r: int, ring: bool) -> int:
+static func site_dist(c: int, r: int, ring: bool, water: bool = false) -> int:
 	if _sf.is_empty():
 		for k in CData.region_count():
 			_sf.append(CGrid.field(CGrid.site(k), FIELD_SEA))
 			_site_cost.append(CGrid.cost(CGrid.site(k)))
-	var d: int = (_sf[r] as PackedInt32Array)[c]
+	var d: int = ((_water_fields() if water else _sf)[r] as PackedInt32Array)[c]
 	if ring and d < CGrid.INF:
 		d = maxi(d - CGrid.cost(CGrid.site(r)), 0)
 	return d
@@ -1933,10 +2051,9 @@ static func _move_grid(st: Dictionary, f: int, out: Array, cx_in: Dictionary = {
 		var full := CState.max_mp6(_default_of(a))
 		var t: Array[int] = []
 		var c := CState.cell(a)
-		if _sf.is_empty():
-			site_dist(0, 0, false)
+		var sf := _sf_of(st, a)
 		for r in nreg:
-			var d: int = (_sf[r] as PackedInt32Array)[c]
+			var d: int = (sf[r] as PackedInt32Array)[c]
 			if d >= CGrid.INF:
 				t.append(CRules.INF)
 				continue
@@ -2073,7 +2190,10 @@ static func _toward(st: Dictionary, f: int, a: Dictionary, dest: int, cx: Dictio
 	if r < 0:
 		return dest
 	var full := CState.max_mp6(_default_of(a))
-	var fld := CGrid.field(CGrid.site(r), FIELD_SEA)
+	var wet := not no_water and CRules.amphibious(st, a)  # (docs/AI.md 34: by the coastal water too)
+	if wet:
+		CFleet.ensure()
+	var fld := CGrid.field(CGrid.site(r), FIELD_SEA, wet)
 	var c := CState.cell(a)
 	if fld[c] >= CGrid.INF or fld[c] - fld[dest] <= full * CP.of(st, f)[CP.TOWARD_PCT] / 100:
 		return dest
@@ -2084,7 +2204,7 @@ static func _toward(st: Dictionary, f: int, a: Dictionary, dest: int, cx: Dictio
 	var trail: Array[int] = []
 	var start_d := fld[c]
 	for guard in 60:
-		var nx := CGrid.downhill(fld, c, FIELD_SEA)
+		var nx := CGrid.downhill(fld, c, FIELD_SEA, wet)
 		if nx < 0 or start_d - fld[nx] > full:
 			break
 		c = nx
@@ -2194,10 +2314,11 @@ static func _context6(st: Dictionary, f: int) -> Dictionary:
 			foe[ar] = 1
 		var full := CState.max_mp6(_default_of(a))
 		var c := CState.cell(a)
+		var sf := _sf_of(st, a)
 		for r in n:
 			# Within its march of the settlement (of the ring for a city of
 			# ours, hostile to it): "thr" for our regions, "near" for all.
-			var d: int = (_sf[r] as PackedInt32Array)[c]
+			var d: int = (sf[r] as PackedInt32Array)[c]
 			if d < CGrid.INF and d - int(_site_cost[r]) <= full:
 				thr[r] += s
 	var sea: Array[int] = []
@@ -2341,7 +2462,7 @@ static func needed_home(st: Dictionary, f: int, a: Dictionary, cx: Dictionary) -
 static func _reaches(a: Dictionary, r: int) -> bool:
 	if _sf.is_empty():
 		site_dist(0, 0, false)
-	return site_dist(CState.cell(a), r, false) <= CState.max_mp6(_default_of(a))
+	return site_dist(CState.cell(a), r, false, not no_water and CRules.amphibious({}, a)) <= CState.max_mp6(_default_of(a))
 
 
 static func _attack6(st: Dictionary, f: int, tg: Dictionary, _etas: Dictionary, used: Dictionary, out: Array,
@@ -2440,7 +2561,10 @@ static func _attack6(st: Dictionary, f: int, tg: Dictionary, _etas: Dictionary, 
 	# turn.
 	var all: Array = now + soon
 	var lead: Dictionary = all[0]
-	var fld := CGrid.field(site, FIELD_SEA)
+	var wet := not no_water and CRules.amphibious(st, lead)  # (docs/AI.md 34)
+	if wet:
+		CFleet.ensure()
+	var fld := CGrid.field(site, FIELD_SEA, wet)
 	var full := CState.max_mp6(_default_of(lead))
 	var zm: PackedInt32Array = cx["zone"] if cx.has("zone") else PackedInt32Array()
 	if zm.is_empty():
@@ -2451,7 +2575,7 @@ static func _attack6(st: Dictionary, f: int, tg: Dictionary, _etas: Dictionary, 
 	for guard in 200:
 		if fld[c] <= full * kn[CP.GATHER_PCT] / 100:
 			break
-		var nx := CGrid.downhill(fld, c, FIELD_SEA)
+		var nx := CGrid.downhill(fld, c, FIELD_SEA, wet)
 		if nx < 0:
 			break
 		c = nx
@@ -2703,10 +2827,11 @@ static func _reach_def(st: Dictionary, f: int, cx: Dictionary, t: int) -> int:
 			var full := CState.max_mp6(_default_of(e))
 			var c := CState.cell(e)
 			var row: Array[int] = by_f[g]
+			var sf := _sf_of(st, e)
 			for r in n:
 				if r == int(e["r"]):
 					continue
-				var dd: int = (_sf[r] as PackedInt32Array)[c]
+				var dd: int = (sf[r] as PackedInt32Array)[c]
 				if dd < CGrid.INF and dd - int(_site_cost[r]) <= full:
 					row[r] += s
 		cx["rdef"] = by_f
@@ -2924,6 +3049,37 @@ static func _raid6(st: Dictionary, f: int, free: Array, etas: Dictionary, used: 
 		used[int(best_a["id"])] = 1
 		want[int(best_a["id"])] = CData.ST_RAID
 		_go(out, best_a, CGrid.camp(best_t), f, CData.MODE_SIEGE)
+	if CP.of(st, f)[CP.AMPHIB_BAND] != 0 and CData.ships_on():
+		# (docs/AI.md 34) Each free band raids too: the richest region at war
+		# it reaches this turn (by the coastal water) that no army threatens
+		# beyond its strength, one raider a region.
+		var taken := {best_t: 1}
+		for a in free:
+			var id := int(a["id"])
+			if used.has(id) or CRules.siege_role(st, a) != 0 or not CRules.amphibious(st, a) or _hold(cx, st, f, a):
+				continue
+			var et: Array = etas[id]["t"]
+			var bt := -1
+			var bv := 0
+			for t in CData.region_count():
+				if int(et[t]) != 0:
+					continue
+				var o := CState.owner(st, t)
+				if o < 0 or not CState.at_war(st, f, o) or int(CData.REGIONS[t]["wealth"]) < raid_w or taken.has(t):
+					continue
+				if not CState.siege_at(st, t).is_empty() or not CState.battle_at(st, t).is_empty() or CRules.raider(st, t) >= 0:
+					continue
+				if int(cx["foe"][t]) != 0 or int(cx["thr"][t]) > _str(cx, a):
+					continue
+				var v := CRules.region_income(st, t)
+				if v > bv:
+					bv = v
+					bt = t
+			if bt >= 0:
+				used[id] = 1
+				want[id] = CData.ST_RAID
+				_go(out, a, CGrid.camp(bt), f, CData.MODE_SIEGE)
+				taken[bt] = 1
 	# Raiders already in place keep raiding while it is safe.
 	for a in free:
 		var id := int(a["id"])

@@ -2956,6 +2956,8 @@ static func end_of_turn(st: Dictionary) -> void:
 ## CData.ARMY_MAX; one that does not fit starts the next group. Armies
 ## raised by this turn's recruits (`fresh`: id -> 1) stay apart this turn
 ## (a "Raise new army" is not swallowed by the army in the city at once).
+## An amphibious army and a land-bound one never merge here (the band would
+## lose its trait; 2026-10-23, docs/AI.md 34): merging them is an order.
 static func _auto_merge6(st: Dictionary, fresh: Dictionary = {}) -> void:
 	var arr: Array = st["armies"]
 	var gone := PackedByteArray()
@@ -2972,7 +2974,7 @@ static func _auto_merge6(st: Dictionary, fresh: Dictionary = {}) -> void:
 					or CState.stance(b) != CState.stance(a) or not _idle_in_town(b) or fresh.has(int(b["id"])):
 				continue
 			if CState.unit_count(a) + CState.unit_count(b) > CData.ARMY_MAX \
-					or CChars.merge_conflict(st, int(a["id"]), int(b["id"])):
+					or CChars.merge_conflict(st, int(a["id"]), int(b["id"])) or amphibious(st, a) != amphibious(st, b):
 				continue
 			CChars.transfer(st, int(b["id"]), int(a["id"]))
 			(a["units"] as Array).append_array(b["units"])

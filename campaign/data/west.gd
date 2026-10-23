@@ -280,6 +280,13 @@ const ROSTERS := {
 		"light": ["native_warriors", "", ""], "archer": ["native_bowmen", "", ""]},
 }
 
+## The campaign AI (CData.AI_BUILDUP_LINES / AI_SPECIALISTS; docs/AI.md 34):
+## the mortars need a Workshop 3 and England's grenadiers a Barracks 3, past
+## the AI's usual build-up; the canoe raiders, boarding grenadiers and
+## coureurs are their line's specialists, not its veterans.
+const AI_BUILDUP_LINES: Array = ["mortar", "grenadier"]
+const AI_SPECIALISTS: Array = ["canoe_raiders", "boarding_grenadiers", "coureurs"]
+
 const START_WARS: Array = [
 	["new_spain", "england"], ["new_spain", "brethren"], ["tierra_firme", "brethren"],
 	["brethren", "dutch"],

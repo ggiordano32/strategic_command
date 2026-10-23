@@ -31,6 +31,8 @@ extends SceneTree
 ## --no-dogs: the AI recruits no war dogs (mix weight 0; CData.no_dogs).
 ## --no-light-art: nor scorpions or gastraphetes (CData.no_light_art).
 ## --no-buildup: no military build-up or wagons (CAI.no_buildup).
+## --no-water: amphibious armies plan by the land fields only (CAI.no_water).
+## --seed0=N: start at seed index N (seeds 1000 + 77 n; shards a long run).
 ## Each seed also prints the build-up (docs/AI.md 23): per faction alive at
 ## the end its regions, best Workshop / Range / Barracks / Stables level,
 ## wagons, scorpions, gastraphetes, light horse and missile units with a
@@ -48,6 +50,7 @@ const CAI := preload("res://campaign/cai.gd")
 const UT := preload("res://sim/unit_types.gd")
 
 var seeds := 4
+var seed0 := 0               # --seed0=N: the first seed index (shards a long run: seeds 1000 + 77 n for n in seed0 .. seed0 + seeds - 1)
 var turns := 60
 var every := 5
 var no_sieges := false
@@ -77,6 +80,8 @@ func _init() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--seeds="):
 			seeds = int(a.get_slice("=", 1))
+		elif a.begins_with("--seed0="):
+			seed0 = int(a.get_slice("=", 1))
 		elif a.begins_with("--turns="):
 			turns = int(a.get_slice("=", 1))
 		elif a.begins_with("--every="):
@@ -95,6 +100,8 @@ func _init() -> void:
 			CAI.no_beasts = true  # (the AI recruits none of CAI.BEAST_LINES)
 		elif a == "--no-buildup":
 			CAI.no_buildup = true  # (no military build-up or wagons; docs/AI.md 23)
+		elif a == "--no-water":
+			CAI.no_water = true  # (amphibious armies plan by the land fields only; docs/AI.md 34)
 		elif a == "--no-generals":
 			CData.no_generals = true  # (no starting generals, none recruited)
 		elif a == "--no-dogs":
@@ -123,7 +130,7 @@ func _init() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--json="):
 			jf = FileAccess.open(a.substr(7), FileAccess.WRITE)
-	for sd in seeds:
+	for sd in range(seed0, seed0 + seeds):
 		var h1 := _run(sd, true)
 		if jf != null:
 			jf.store_line(JSON.stringify({"probe": "campaign_sim", "pack": pack, "seed": 1000 + sd * 77, "hash": h1}))
@@ -200,7 +207,9 @@ func _run(sd: int, verbose: bool) -> String:
 		var dead_at := {}  # faction -> turn eliminated (every faction)
 		var crossings := 0  # armies that ended a turn on another landmass (sea lanes, or landed from a fleet)
 		var last_land := _army_lands(st)  # army id -> landmass last seen on land (aboard a fleet: kept)
-		var fl_ev := {"ship_built": 0, "sea_battle": 0, "landed": 0, "embarked": 0, "army_sunk": 0, "fmove_failed": 0}
+		var fl_ev := {"ship_built": 0, "sea_battle": 0, "landed": 0, "embarked": 0, "army_sunk": 0, "fmove_failed": 0, "canoes_sunk": 0}
+		var amph := [0, 0, 0]  # army-turns amphibious, afloat at the end of a turn, captures by an army that was afloat the turn before
+		var was_afloat := {}  # army id -> 1: afloat at the end of the last turn
 		for t in turns:
 			var t0 := Time.get_ticks_usec()
 			st = CTurn.resolve_turn(st, [])
@@ -221,6 +230,19 @@ func _run(sd: int, verbose: bool) -> String:
 			for e in st["events"]:
 				if int(e["turn"]) == t and fl_ev.has(str(e["k"])):
 					fl_ev[str(e["k"])] = int(fl_ev[str(e["k"])]) + 1
+				if int(e["turn"]) == t and str(e["k"]) == "captured" and CData.ships_on():
+					for a in CState.armies_of(st, int(e["f"])):
+						if was_afloat.has(int(a["id"])) and int(a["r"]) == int(e["r"]):
+							amph[2] += 1
+							break
+			if CData.ships_on():
+				was_afloat = {}
+				for a in st["armies"]:
+					if CRules.amphibious(st, a):
+						amph[0] += 1
+						if CRules.afloat(a):
+							amph[1] += 1
+							was_afloat[int(a["id"])] = 1
 			for f in CState.nf():
 				if not dead_at.has(f) and not CState.alive(st, f):
 					dead_at[f] = int(st["turn"])
@@ -275,6 +297,8 @@ func _run(sd: int, verbose: bool) -> String:
 			print("fleets: ships launched %d, sea battles %d, embarkations %d, landings %d, armies sunk %d, voyages refused %d; at the end %d fleets, %d ships" % [
 				int(fl_ev["ship_built"]), int(fl_ev["sea_battle"]), int(fl_ev["embarked"]), int(fl_ev["landed"]),
 				int(fl_ev["army_sunk"]), int(fl_ev["fmove_failed"]), (st["fleets"] as Array).size(), ships])
+			print("amphibious: army-turns %d, afloat at a turn's end %d, towns taken from the water %d, canoes sunk %d" % [
+				amph[0], amph[1], amph[2], int(fl_ev["canoes_sunk"])])
 			# N2: trade, blockades, the flota, pirates.
 			var sx: Dictionary = st["stats"]
 			var pl: Array = []
@@ -489,6 +513,17 @@ func _buildup(st: Dictionary) -> void:
 		var nr := CState.regions_of(st, f).size()
 		print("  %s: regions %d | best W %d R %d B %d S %d | wagons %d scorpions %d gastraphetes %d light horse %d kind units %d" % [
 			short[f], nr, lv[0], lv[1], lv[2], lv[3], n[0], n[1], n[2], n[3], n[4]])
+		var tc := {}  # unit type -> units of it in f's armies at the end
+		for a in CState.armies_of(st, f):
+			for u in a["units"]:
+				var tk := str(u["t"])
+				tc[tk] = int(tc.get(tk, 0)) + 1
+		var tks: Array = tc.keys()
+		tks.sort()
+		var tparts: Array = []
+		for tk in tks:
+			tparts.append("%s %d" % [tk, int(tc[tk])])
+		print("    units: " + ", ".join(tparts))
 		if not bu_all.has(f):
 			bu_all[f] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 		var b: Array = bu_all[f]

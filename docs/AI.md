@@ -1966,6 +1966,9 @@ As built (`campaign/cai.gd` `_buildup`, `_build`, `_recruit`):
 | `BU_SAVE` | 0 / 1 / 1 | while it waits for money nothing else is built |
 | `WAGON_MIN` | 0 / 3 / 2 | missile / artillery units in an army for a wagon (0 never) |
 
+(2026-10-23: the mortar counts as an engine, and the pack's build-up lines raise the Workshop / Barracks to level 3:
+section 34.)
+
 Easy builds and recruits as before (all 0). Test switch `CAI.no_buildup`
 (`campaign_sim --no-buildup`; set in `campaign_test`'s step-4 goldens):
 none of the above; with it the 6x60 hashes are the old ones
@@ -2468,3 +2471,85 @@ after: 78 / 22 / 72 / 56 / 47 / 75, 47 / 16 / 41 / 9 / 16 / 81, 16 / 9 / 22 /
 untouched by construction; campaign_sim pins unchanged. Open: the Punic and
 Greek citadel fight, Rome's castrum at walls 2 (38 -> 9 %: the plaza fight
 against the stack's tail), gate HP at walls 2, Carthage the low outlier.
+
+## 34. The West AI after the Caribbean batch 1 (2026-10-23)
+
+Measured first (`campaign_sim` West, all Average, 60 turns; 24 seeds by `--seed0=0/6/12/18` shards of 6): HEAD
+53.3 battles a seed, 15 eliminations in 24 seeds (the six pin seeds: 55.7 and 1), 22.8 landings. Nobody raised a
+mortar or a grenadier (the build-up stopped at Workshop 1 / Barracks 2: New Spain and Tierra Firme best Workshop 1.0,
+England 0.8); the Miskito raised only canoe raiders (13 a campaign, 3 warriors), France more coureurs than
+buccaneers; raider-only armies existed about 5 army-turns a campaign and an afloat army planned with land fields only
+(every settlement INF from a sea cell: it stood still). As built (`campaign/cai.gd`, `cai_profile.gd` ids 115-119,
+the pack lists `CData.AI_BUILDUP_LINES` / `AI_SPECIALISTS` in `campaign/data/west.gd`; Rome has neither, so Rome is
+unchanged by construction: its 6 x 60, format 8, `ROME_20` and the goldens did not move):
+
+- **Build-up lines.** `_wants_engines` counts the mortar. After its usual goals the build-up (section 24) raises, at
+  the same military centre, the chain of each pack build-up line the mix holds (the West: `mortar` -> Workshop 3,
+  `grenadier` -> Barracks 3) to the level its first roster tier needs (`_line_entry`, `CRules.needs`), up to
+  `BU_LINE_MAX`, in a faction of at least `BU_LINE_REGIONS` regions. Such a goal never holds the rest of the building
+  (`BU_SAVE` does not apply: it is built when the build-up's budget covers it), so the economy is not starved for a
+  2,000-gold Workshop 3.
+- **A Range first.** A recruiting centre (capital or town) without a Range puts it first in its wants when one Range
+  line has at least `RANGE_FIRST_PCT` % of the mix (towns start with a Barracks only; the West's main line, the
+  musket, is raised at the Range). Rome's largest Range line is 25 %.
+- **Specialists.** `_mix_type`: the mix recruiting takes the best tier the centre allows, but a line's specialist
+  (`AI_SPECIALISTS`: canoe raiders, boarding grenadiers, coureurs) only while the faction holds fewer than
+  `SPECIALIST_PCT` % of the line's units (armies and queues) as that specialist; else the best tier below it there
+  (the warriors, cutlass men, buccaneers). The Itza holcan are the only unit of their line, not a specialist.
+- **Bands.** `AMPHIB_BAND`: an amphibious recruit (the canoe raiders) joins only an amphibious army at the
+  settlement, else raises a new one (`"new": 1`); other recruits never join a band; a region whose unnamed recruits
+  would mix with a band's this turn waits a turn; the AI's `_merge` and the wagon skip bands, and the rules'
+  end-of-turn auto-merge (`CRules._auto_merge6`) no longer merges an amphibious army with a land-bound one (a rule,
+  pack-agnostic; docs/design/campaign_rules.md "Amphibious armies"). Each free band may also raid on its own (the
+  richest region at war it reaches this turn that no army threatens beyond its strength), besides the faction's one
+  raid a turn.
+- **Water distances.** An amphibious army plans with distance fields over the coastal water (`CGrid.field(src,
+  sea, true)`, `CGrid.downhill(..., true)`, the water tables of `CGrid._water_tables`; `CAI._sf_of`,
+  `_water_fields`): its turns to every settlement (the targets, raids, screens, the frontier march), the threat it
+  poses to the other side's cities (`_context6`, `_reach_def`, `_border_weak`), `_reaches`, `eta`, the "toward"
+  waypoint and the staging trail. The fields are static memos like the land ones (no state; the same on every
+  client), built once on the first amphibious army: about 0.3 s once (a turn of 388 ms against 69 ms in seed 1000),
+  mean turn time unchanged within the machine's load (24 seeds 116 -> 105 ms; Rome 73 -> 68). Test switch
+  `CAI.no_water` (`campaign_sim --no-water`).
+
+| Knob (`cai_profile.gd`, ids 115-119) | Easy | Average | Skilled |
+|---|---|---|---|
+| `BU_LINE_MAX` | 0 | 3 | 3 |
+| `BU_LINE_REGIONS` | 0 | 3 | 3 |
+| `RANGE_FIRST_PCT` | 0 | 30 | 30 |
+| `SPECIALIST_PCT` | 100 (as before) | 30 | 30 |
+| `AMPHIB_BAND` | 0 | 1 | 1 |
+
+Easy builds and recruits as before, but for two pack-agnostic pieces: France and Tierra Firme now want a Workshop
+(the mortar counts as an engine) and an amphibious army plans by the water and keeps out of the auto-merge.
+
+Measured per change (the six pin seeds, West, Average; each step as built, the later pieces switched off by
+`--knob` / `--no-water`):
+
+| Step | Battles | Eliminated | Landings |
+|---|---|---|---|
+| HEAD | 55.7 | 1 (Miskito 44) | 23.8 |
+| + build-up lines and a Range first (`--knob=a:118=100 --knob=a:119=0 --no-water`) | 54.0 | 5 | 20.0 |
+| + specialists (`--knob=a:119=0 --no-water`) | 53.7 | 2 | 22.3 |
+| + bands, land fields (`--no-water`; before the auto-merge exemption) | 58.3 | 3 | 23.8 |
+| + water fields (before the auto-merge exemption) | 61.3 | 5 | 24.2 |
+| + bands kept out of the auto-merge (as built) | 53.3 | 5 | 21.5 |
+
+24 seeds, HEAD -> as built: battles 53.3 -> 54.9 a seed, eliminations 15 -> 18 (the Brethren 3 -> 4, the Dutch
+1 -> 2, England 0 -> 1, France 1 -> 2, the Itza 5 -> 4, the Miskito 5 -> 5), landings 22.8 -> 20.8, sea battles
+27.1 -> 28.9; best Workshop New Spain / Tierra Firme 1.0 / 1.0 -> 2.6 / 2.7, mortars 0 -> 0.2 / 0.5 a campaign,
+heavy guns 0 -> 0.3 (New Spain); Ranges finished 30.1 -> 39.6 a campaign, farms 21.9 -> 16.9 and markets 23.8 ->
+15.5 (the build-up's price), regions held alike (New Spain 13.5 -> 13.2, Tierra Firme 13.0 -> 13.8); the Miskito
+raise warriors 3.4 -> 10.1 and raiders 13.0 -> 5.3, France buccaneers 2.0 -> 3.8 and coureurs 3.8 -> 2.6;
+amphibious army-turns about 5 -> 61 a campaign, afloat at a turn's end 1.8, a town taken from the water once in 24
+campaigns.
+
+Knobs probed for the pacing (24 seeds; battles / eliminations / landings): `SPECIALIST_PCT` 30 / 40 / 50 = 54.9 / 18
+/ 20.8, 51.5 / 17 / 21.4, 55.0 / 22 / 22.0 (not monotone: the seed noise); `RANGE_FIRST_PCT` 0 = 52.1 / 19 / 22.2.
+Kept 30 and 30. No knob shared with Rome was touched, so the battles stay below the 56-64 the six pin seeds once
+showed (24 seeds put HEAD at 53.3 too).
+
+Open: England reaches Barracks 3 almost never (best Barracks 1.8; no grenadier in the 24 campaigns, one at
+`SPECIALIST_PCT` 50: 5 regions and the Workshop goals first), the mortar's 2-3 % mix share gives a piece or none; the bands mostly sit in the Miskito
+capital, held there by the landing threat (`_hold`, section 12.2), and take a town from the water once in 24
+campaigns; the 0.3 s water-field build is a one-off on the web too (not measured there).

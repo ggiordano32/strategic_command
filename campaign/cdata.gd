@@ -95,6 +95,14 @@ static var GRID: GDScript = _ROME.GRID
 static var NAMES: Dictionary = _ROME.NAMES
 static var NAMES_BY_FACTION: Dictionary = _ROME.NAMES_BY_FACTION
 static var NAMES_DEFAULT: Array[String] = _ROME.NAMES_DEFAULT
+## The campaign AI's pack lists (optional; none: Rome). AI_BUILDUP_LINES:
+## lines whose first tier needs a building past the AI's usual build-up (its
+## chain is raised to that level at the military centre when the mix holds
+## the line; cai.gd _buildup, CP.BU_LINE_MAX). AI_SPECIALISTS: unit keys
+## that sit in a higher place of their line as a specialist, not as the
+## line's veterans (raised for a share of the line, CP.SPECIALIST_PCT).
+static var AI_BUILDUP_LINES: Array = []
+static var AI_SPECIALISTS: Array = []
 
 const INDEPENDENT := -1
 const INDEPENDENT_COLOR := "8c8c84"
@@ -374,6 +382,8 @@ static func use_pack_script(key: String, p: GDScript) -> void:
 	NAMES = c["NAMES"]
 	NAMES_BY_FACTION = c["NAMES_BY_FACTION"]
 	NAMES_DEFAULT = c["NAMES_DEFAULT"]
+	AI_BUILDUP_LINES = c.get("AI_BUILDUP_LINES", [])
+	AI_SPECIALISTS = c.get("AI_SPECIALISTS", [])
 	SHIPS = c.get("SHIPS", null)
 	var pack_chains: Array[Dictionary] = c.get("CHAINS", BASE_CHAINS)  # (a pack's own texts / levels)
 	_ship_c = SHIPS.get_script_constant_map() if SHIPS != null else {}

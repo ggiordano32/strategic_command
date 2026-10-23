@@ -2129,7 +2129,9 @@ the kind's `obj`, not the row's.
   grenadiers and the holcan the heavy line's second place (Barracks 2), the canoe raiders the light line's second place
   but with Barracks 1 through `UNIT_NEEDS` (as `heavy_gun` does for the Workshop). The AI recruits the highest place it
   can, so the French AI raises coureurs at a Range 2, the Brethren's boarding grenadiers at a Barracks 2, the Miskito's
-  canoe raiders everywhere (their warriors stay in the starting armies and the player's list).
+  canoe raiders everywhere (their warriors stay in the starting armies and the player's list). Since the West AI pass
+  (2026-10-23, docs/AI.md 34) the three are the pack's `AI_SPECIALISTS`: the AI raises them for `SPECIALIST_PCT` (30 %)
+  of their line and the line's main unit otherwise, and the canoe raiders muster as their own amphibious band.
 - **No charge-fear stat for foot.** `fear_r` / `fear_foot` is a standing aura (elephants) and `charge` the horse's
   impact; the holcan's shock is their attack and damage alone.
 - **Icons.** The rows reuse existing glyphs (24, 28, 26, 25, 32, 32, 29); the new tier-2 rows carry the tier chevron.
@@ -2140,7 +2142,8 @@ the kind's `obj`, not the row's.
   5 -> 3 + mortar 2; France musket 35 -> 33 + mortar 2, pistol 15 -> 12 + dragoon 3; the Dutch field_gun 10 -> 7 + mortar 3;
   the Itza light 60 -> 52 + heavy 8 (holcan). The Brethren and the Miskito have their units inside existing lines.
   `composition` is untouched (the new lines are not main arms). The AI's build-up asks for a Workshop of at most level 2
-  and a Barracks 2, so it does not yet build the Workshop 3 or Barracks 3 the mortars and grenadiers need (follow-up).
+  and a Barracks 2, so it does not yet build the Workshop 3 or Barracks 3 the mortars and grenadiers need (follow-up;
+  done 2026-10-23: the pack's `AI_BUILDUP_LINES`, docs/AI.md 34).
 - **Lists.** `LINE_ORDER` has `grenadier` after heavy, `dragoon` after pistol and `mortar` after the field guns;
   `WEST_LINES` (the custom picker) and the unit book's building table likewise; the West `CHAINS` texts name the new units
   where they are built. The unit book reads the rows by itself.

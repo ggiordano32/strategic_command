@@ -690,8 +690,11 @@ in the army makes it land-bound. Pack-agnostic rules; in a pack without ships (R
   order). Its own side's fleets, and fleets at peace, do not. A fleet that stays put does not sink an army that paddles
   by (only voyage steps do).
 - **AI.** The AI plans marches through the same planner, so an amphibious army ordered across water gets the wide
-  passability; the AI's distance estimates (`CGrid.field`, the staging and "toward" waypoints) stay land-only, so it does
-  not yet pick targets that only water reaches. Follow-up when the first amphibious row is in.
+  passability. Since 2026-10-23 (docs/AI.md 34) its distance estimates for an amphibious army use the water too
+  (`CGrid.field(src, sea, water)` and `CGrid.downhill(..., water)`, memoised apart from the land fields; `CAI._sf_of`),
+  so it picks targets, raids and staging points the water reaches; its canoe raiders muster as their own band.
+- **Auto-merge** (2026-10-23): the end-of-turn merge of idle armies on a settlement (`CRules._auto_merge6`) never
+  merges an amphibious army with a land-bound one (the band would lose its trait); a player merges them by order.
 - **View.** An afloat army's banner is drawn on its sea cell with a small canoe under it; the hint for a selected
   amphibious army says it may paddle along the coast; fog sees it as an army (by its cell).
 - **Old saves / pins.** Nothing stored, no unit has the trait: no `CState.VERSION` bump, every pin unmoved. Tests:

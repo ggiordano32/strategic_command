@@ -850,14 +850,23 @@ static func reach(start: int, full: int, mp: int, block: PackedByteArray, max_t:
 
 ## Static distance field from cell `src` (points over passable land, a sea
 ## lane costing `sea` points; no state: peace, armies and battles ignored).
-## Memoised per (src, sea): the same on every client.
-static func field(src: int, sea: int) -> PackedInt32Array:
+## Memoised per (src, sea): the same on every client. water: over the
+## amphibious armies' tables too (the coastal sea cells, _water_tables, which
+## CFleet.ensure enables; without them the land field), memoised apart.
+static func field(src: int, sea: int, water: bool = false) -> PackedInt32Array:
 	ensure()
 	var key := src * 4096 + sea
-	if _fields.has(key):
-		return _fields[key]
 	var nb := _nb
 	var nbc := _nbc
+	if water:
+		_water_tables()
+		if _nbw.is_empty():
+			return field(src, sea)  # (no water tables yet: never memoised as water)
+		key = -1 - key
+		nb = _nbw
+		nbc = _nbcw
+	if _fields.has(key):
+		return _fields[key]
 	var g := PackedInt32Array()
 	g.resize(_n)
 	g.fill(INF)
@@ -908,12 +917,17 @@ static func field(src: int, sea: int) -> PackedInt32Array:
 
 ## Next cell from c down the field (the neighbour, or sea link, with the
 ## lowest value; ties by neighbour order), -1 at the bottom.
-static func downhill(fld: PackedInt32Array, c: int, sea: int) -> int:
+static func downhill(fld: PackedInt32Array, c: int, sea: int, water: bool = false) -> int:
 	ensure()
+	var nb := _nb
+	if water:
+		_water_tables()
+		if not _nbw.is_empty():
+			nb = _nbw
 	var best := -1
 	var bv := fld[c]
 	for k in 8:
-		var v := _nb[c * 8 + k]
+		var v := nb[c * 8 + k]
 		if v >= 0 and fld[v] < bv:
 			bv = fld[v]
 			best = v

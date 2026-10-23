@@ -190,7 +190,13 @@ const SEA_SCREEN := SK_SUPPORT + 36       # (6) screens and stances answer the l
 const SORTIE_ODDS_PCT := SK_SUPPORT + 37  # (6) sortie against the port's blockader when our fleet has at least this % of the enemy's power at the spot (0 never)
 const SORTIE_REACH := SK_SUPPORT + 38     # (6) ... an enemy fleet within BLOCKADE_CELLS + this many cells of the harbour
 const SORTIE_HUNT_PCT := SK_SUPPORT + 39  # (6) ... and against one merely passing (in reach, not blockading) at this % (0 never)
-const N_KNOBS := SK_SUPPORT + 40
+# The West AI after the Caribbean batch 1 (docs/AI.md 34, 2026-10-23).
+const BU_LINE_MAX := SK_SUPPORT + 40      # the build-up also raises the chain of each pack build-up line in the mix (CData.AI_BUILDUP_LINES: mortars, grenadiers) to the level its first tier needs, up to this level (0 off) ...
+const BU_LINE_REGIONS := SK_SUPPORT + 41  # ... in a faction of at least this many regions
+const RANGE_FIRST_PCT := SK_SUPPORT + 42  # a recruiting centre without a Range builds one first when a Range line has at least this % of the mix (0 off)
+const SPECIALIST_PCT := SK_SUPPORT + 43   # a line's specialist (CData.AI_SPECIALISTS: canoe raiders, boarding grenadiers, coureurs) is raised while it is below this % of the line's units, else the line's main unit (100: always the specialist, as before)
+const AMPHIB_BAND := SK_SUPPORT + 44      # amphibious recruits (the canoe raiders) muster as their own band: into an amphibious army at the settlement, else a new one; no other recruit or merge joins it (1), or as any recruit (0)
+const N_KNOBS := SK_SUPPORT + 45
 
 # Deliberate mistakes (docs/AI.md 4, "Deliberate mistakes (campaign)"),
 # rolled with CState.rand at the decision point (cai.gd _mistake); each is a
@@ -345,6 +351,16 @@ const KNOBS: Array = [
 	[SORTIE_ODDS_PCT, 0, 110, 100],
 	[SORTIE_REACH, 0, 1, 2],
 	[SORTIE_HUNT_PCT, 0, 0, 130],
+	# The West AI after batch 1 (2026-10-23; docs/AI.md 34): Easy builds and
+	# recruits as before; Average and Skilled build up to the Workshop 3 /
+	# Barracks 3 the pack's build-up lines need, a Range first in a
+	# musket-heavy recruiting centre, and raise a line's specialist for a
+	# share of the line.
+	[BU_LINE_MAX, 0, 3, 3],
+	[BU_LINE_REGIONS, 0, 3, 3],
+	[RANGE_FIRST_PCT, 0, 30, 30],
+	[SPECIALIST_PCT, 100, 30, 30],
+	[AMPHIB_BAND, 0, 1, 1],
 ]
 
 ## Personality offsets [knob, CAUTIOUS, BALANCED, AGGRESSIVE] (docs/AI.md 5:
