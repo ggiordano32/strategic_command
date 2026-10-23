@@ -22,6 +22,7 @@ const Kit := preload("res://game/campaign/ui_kit.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const CData := preload("res://campaign/cdata.gd")
 const Landscape := preload("res://game/campaign/landscape.gd")
+const FogView := preload("res://game/campaign/fog_view.gd")
 
 const SETTINGS := "user://settings.cfg"
 const BUTTON_W := 76.0
@@ -38,6 +39,7 @@ var expanded := false
 var persist := true  # save open / closed (tests and screenshots switch it off)
 var own_col := CData.faction_color(0)
 var enemy_col := CData.faction_color(1)
+var fog := false  # the fog rows are shown (FogView.on at the last set_format)
 
 var button: Button
 var view_button: Button     # Terrain / Political, above the Key button
@@ -148,9 +150,10 @@ func set_expanded(on: bool) -> void:
 
 ## The rows for a format (6, 5 or older), rebuilt only when it changes.
 func set_format(p_format: int, p_own: Color, p_enemy: Color) -> void:
-	if p_format == format and p_own == own_col and p_enemy == enemy_col:
+	if p_format == format and p_own == own_col and p_enemy == enemy_col and fog == FogView.on:
 		return
 	format = p_format
+	fog = FogView.on
 	own_col = p_own
 	enemy_col = p_enemy
 	for c in list.get_children():
@@ -287,6 +290,13 @@ func rows() -> Array:
 	out.append(["Selected army", func(ci: Control, sz: Vector2):
 		_land(ci, sz)
 		Overlay.draw_banner(ci, Vector2(sz.x * 0.5, sz.y * 0.42), oc, 0.75, true, 6, 1.0, 3.0)])
+	if format >= 6 and fog:
+		out.append(["Last seen: an enemy army that was here on that turn (out of sight now; tap it)", func(ci: Control, sz: Vector2):
+			_land(ci, sz)
+			Overlay.draw_last_seen(ci, Vector2(sz.x * 0.5, sz.y * 0.42), 0.75, false, ec, "6")])
+		out.append(["Last seen: an enemy fleet, likewise", func(ci: Control, sz: Vector2):
+			ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.SEA)
+			Overlay.draw_last_seen(ci, Vector2(sz.x * 0.5, sz.y * 0.42), 0.75, true, ec, "3")])
 	out.append(["Inside the walls", func(ci: Control, sz: Vector2):
 		_land(ci, sz)
 		Overlay.draw_tower(ci, Overlay.draw_banner(ci, Vector2(sz.x * 0.5, sz.y * 0.45), oc, 0.75, true, 6, 1.0), 0.75)])

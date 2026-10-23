@@ -1855,6 +1855,11 @@ func _refresh_top() -> void:
 		end_button.disabled = bool(eb[1]) or nb > 0
 
 
+## One clause for the idle hint: what the faded markers in the fog are.
+func _fog_hint() -> String:
+	return " Faded markers: where an enemy was last seen." if FogView.on else ""
+
+
 func _update_hint() -> void:
 	if st.is_empty() or f < 0:
 		hint.text = ""
@@ -1870,13 +1875,13 @@ func _update_hint() -> void:
 	elif sel_army >= 0 and _g() and last_mouse:
 		hint.text = "Right-click a spot inside the shaded area to march there this turn, further on for later turns; right-click an enemy army to attack it, a city to besiege it, your other army to merge. Same spot again: cancel. Left-click empty ground to deselect."
 	elif _g() and last_mouse:
-		hint.text = "Left-click an army to move it or recruit into it (at a city), a city for buildings or a new army. Right-click orders, a right drag pans."
+		hint.text = "Left-click an army to move it or recruit into it (at a city), a city for buildings or a new army. Right-click orders, a right drag pans." + _fog_hint()
 	elif sel_fleet >= 0 and _g():
 		hint.text = "Tap the sea to sail there (shaded: this turn; " + CFleet.wind_words() + "), a lit beach to land the troops aboard, an enemy fleet to attack it, your own fleet to join it, an enemy lane (drawn bold) to raid it, an empty fleet on an enemy harbour to blockade it. Board: select an army beside the fleet and tap the fleet."
 	elif sel_army >= 0 and _g():
 		hint.text = "Tap (or drag the army to) a spot inside the shaded area to march there this turn, further on for later turns; tap an enemy army to attack it, a city to besiege it. Same spot again: cancel."
 	elif _g():
-		hint.text = "Tap an army to move it or recruit into it (at a city), a city for buildings or a new army."
+		hint.text = "Tap an army to move it or recruit into it (at a city), a city for buildings or a new army." + _fog_hint()
 	elif sel_army >= 0 and CState.moves_on(ps):
 		hint.text = "Tap a region to march there (bright: this turn, dim: later turns; red: enemy land). Tap it again to cancel."
 	elif sel_army >= 0:

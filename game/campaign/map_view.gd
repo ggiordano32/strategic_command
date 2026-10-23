@@ -38,11 +38,11 @@ const TINT := 0.55         # owner colour over the region's ground
 const GROUND_LIFT := 0.36  # the battle palettes are darker than a map should be
 ## Lines and highlights, shared with the map key (map_key.gd draws its
 ## samples with the painters below). Widths are screen px (times lw).
-const COL_SEA_LANE := Color(0.75, 0.9, 1.0, 0.6)
+const COL_SEA_LANE := Color(0.75, 0.9, 1.0, 0.32)
 const SEA_LANE_DASH := 3.0
 const COL_ROUTE := Color(0.25, 0.18, 0.1, 0.55)   # versions 1-5: land routes
 const ROUTE_DASH := 7.0
-const LANE_W := 1.6
+const LANE_W := 1.25
 const COL_REACH := Color(1.0, 0.98, 0.85, 0.36)    # version 6: reach this turn (fill)
 const COL_REACH_EDGE := Color(1, 0.95, 0.6, 0.95)
 const COL_REACH_NEXT := Color(1, 1, 0.9, 0.7)     # ... next turn (dashed outline)
@@ -65,10 +65,10 @@ const TRACK_EDGE_W := 4.6
 const TRACK_GAP_VILLAGE := 8.0     # map px cleared round a settlement's centre
 const TRACK_GAP_TOWN := 11.0
 const TRACK_GAP_CITY := 14.0
-const COL_LANE_TABLE := Color(0.93, 0.97, 1.0, 0.62)
+const COL_LANE_TABLE := Color(0.93, 0.97, 1.0, 0.38)
 const LANE_TABLE_DASH := 6.0
 const LANE_TABLE_GAP := 5.0
-const LANE_TABLE_W := 1.9
+const LANE_TABLE_W := 1.5
 const LANE_DASH := 4.0
 const LANE_GAP := 3.5
 const COL_HILL := Color(0.25, 0.18, 0.08, 0.2)
@@ -931,7 +931,7 @@ static func _draw_lanes(ci: CanvasItem, lw: float) -> void:
 	for segs in _lane_dashes:
 		if (segs as PackedVector2Array).size() >= 2:
 			if tbl:
-				ci.draw_multiline(segs, Color(0.05, 0.12, 0.2, 0.22), (LANE_TABLE_W + 1.6) * lw, true)
+				ci.draw_multiline(segs, Color(0.05, 0.12, 0.2, 0.10), (LANE_TABLE_W + 1.6) * lw, true)
 				ci.draw_multiline(segs, COL_LANE_TABLE, LANE_TABLE_W * lw, true)
 			else:
 				ci.draw_multiline(segs, COL_SEA_LANE, LANE_W * lw, true)

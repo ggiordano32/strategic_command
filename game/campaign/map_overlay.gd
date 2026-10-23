@@ -1112,29 +1112,31 @@ const MARKER_A := 0.5
 func _last_seen_markers(m: float) -> void:
 	for e in marker_spots():
 		var mkr: Dictionary = e[0]
-		var c: Vector2 = e[1]
 		var col := CData.faction_color(int(mkr["f"]))
-		var fcol := Color(col.r, col.g, col.b, MARKER_A)
-		var pts: PackedVector2Array
-		if int(mkr["kind"]) == 1:
-			var s := FLEET_W * 0.5 * m
-			pts = PackedVector2Array([c + Vector2(-s, 0.15 * s), c + Vector2(s, 0.15 * s), c + Vector2(0.62 * s, 0.62 * s), c + Vector2(-0.7 * s, 0.62 * s)])
-		else:
-			var rect := Rect2(c - Vector2(ARMY_W, ARMY_H) * 0.5 * m, Vector2(ARMY_W, ARMY_H) * m)
-			pts = PackedVector2Array([rect.position, rect.position + Vector2(rect.size.x, 0),
-				rect.position + Vector2(rect.size.x, rect.size.y - 6 * m), c + Vector2(0, rect.size.y * 0.5 + 3 * m),
-				rect.position + Vector2(0, rect.size.y - 6 * m)])
-		_ci.draw_colored_polygon(pts, fcol)
-		for k in pts.size():
-			_ci.draw_dashed_line(pts[k], pts[(k + 1) % pts.size()], Color(0.9, 0.9, 0.85, 0.6), 1.4, 4.0, true)
-		var n := str(int(mkr["units"]))
-		var afs := int(round(14 * maxf(m, 0.75)))
-		var tw := text_w(n, afs)
-		put(_ci, c + Vector2(-tw * 0.5, afs * 0.3), n, afs, Color(1, 1, 1, 0.75), 3, Color(0, 0, 0, 0.6))
-		if zoom >= 0.6:
-			var tt := "t%d" % int(mkr["turn"])
-			var tfs := int(round(11 * maxf(m, 0.8)))
-			put(_ci, c + Vector2(-text_w(tt, tfs) * 0.5, ARMY_H * 0.5 * m + 6.0 + tfs), tt, tfs, Color(0.85, 0.88, 0.95, 0.8), 3, Color(0, 0, 0, 0.7))
+		draw_last_seen(_ci, e[1], m, int(mkr["kind"]) == 1, col, str(int(mkr["units"])))
+		var c: Vector2 = e[1]
+		var tt := "seen t%d" % int(mkr["turn"])
+		var tfs := int(round(11 * maxf(m, 0.8)))
+		put(_ci, c + Vector2(-text_w(tt, tfs) * 0.5, ARMY_H * 0.5 * m + 6.0 + tfs), tt, tfs, Color(0.85, 0.88, 0.95, 0.8), 3, Color(0, 0, 0, 0.7))
+
+
+## The last-seen marker itself (shield for an army, hull for a fleet) at c, scale m, with its count n.
+static func draw_last_seen(ci: CanvasItem, c: Vector2, m: float, fleet: bool, col: Color, n: String) -> void:
+	var fcol := Color(col.r, col.g, col.b, MARKER_A)
+	var pts: PackedVector2Array
+	if fleet:
+		var s := FLEET_W * 0.5 * m
+		pts = PackedVector2Array([c + Vector2(-s, 0.15 * s), c + Vector2(s, 0.15 * s), c + Vector2(0.62 * s, 0.62 * s), c + Vector2(-0.7 * s, 0.62 * s)])
+	else:
+		var rect := Rect2(c - Vector2(ARMY_W, ARMY_H) * 0.5 * m, Vector2(ARMY_W, ARMY_H) * m)
+		pts = PackedVector2Array([rect.position, rect.position + Vector2(rect.size.x, 0),
+			rect.position + Vector2(rect.size.x, rect.size.y - 6 * m), c + Vector2(0, rect.size.y * 0.5 + 3 * m),
+			rect.position + Vector2(0, rect.size.y - 6 * m)])
+	ci.draw_colored_polygon(pts, fcol)
+	for k in pts.size():
+		ci.draw_dashed_line(pts[k], pts[(k + 1) % pts.size()], Color(0.9, 0.9, 0.85, 0.6), 1.4, 4.0, true)
+	var afs := int(round(14 * maxf(m, 0.75)))
+	put(ci, c + Vector2(-text_w(n, afs) * 0.5, afs * 0.3), n, afs, Color(1, 1, 1, 0.75), 3, Color(0, 0, 0, 0.6))
 
 
 # ------------------------------------------------------------- painters ---
