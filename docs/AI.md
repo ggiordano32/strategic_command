@@ -1383,6 +1383,55 @@ and a home voyage (item 7) carries the dock region as the sixth element of its m
 voyage the AI plans casts a docked fleet off (`CFleet.execute_moves`); docked enemy fleets are not prey (`_prey`: nothing
 to fight behind the mole). No knob; the pins moved (docs/STATUS.md).
 
+### 12.4 Sorties (2026-10-23)
+
+Docking (12.3) halved the AI's sea battles: a docked fleet cannot be attacked, and it never came out against an enemy fleet
+lying off its own port. `CAIFleet._sorties` (item 10 of the `cai_fleet.gd` header) runs each turn after the transports and
+the landings, before the attacks: for each port (region order) where fleets of ours (a pirate: also at a patron's or an
+ally's port) lie docked, the strongest of them (lowest id on ties; docked fleets on one cell are merged by `_merge` at the
+start of the act) that is empty, not in a pending battle and at a mean hull of at least `BLOCKADE_HULL` sorties: an fmove
+tuple after the target (`tgt` = its id), which casts it off and fights on the way. Targets: enemy fleets at war, not docked
+nor busy, within `BLOCKADE_CELLS` + `SORTIE_REACH` of the harbour, that it reaches this turn (straight line at its pace),
+out of the storms' cones, along the coast for a coastal fleet. A fleet within `BLOCKADE_CELLS` ("lying off the port", on the
+blockade's ground whether or not it holds the blockade) needs `SORTIE_ODDS_PCT`; one beyond it (merely passing) needs
+`SORTIE_HUNT_PCT` (0: never). The odds are our fleet's power against the enemy's at the spot (`_sortie_foe`): every fleet at
+war with us within `FLEET_ZONE` + 1 of the target, not docked, not busy (`CFleet.sea_battle` gathers the whole zone), times
+the target's own port's guns (`PORT_DEF_PCT` + `PORT_WALL_PCT` x walls) when it lies within `PORT_CELLS` of a harbour of its
+own. Our side gets no port bonus: the sortie is the attacker, and `CFleet.resolve` gives the bonus to the defender only.
+Choice: the port's blockader's fleets (`CSea.blockader`) first, then the others lying off it, then the passing; the weakest
+enemy at the spot, then the lowest id. Counted `sorties`. The next turn the fleet follows the ordinary rules (prey, blockade,
+home; it docks again when it comes home).
+
+| Knob (`cai_profile.gd`, ids 112-114) | Easy | Average | Skilled |
+|---|---|---|---|
+| `SORTIE_ODDS_PCT` sortie against a fleet lying off the port with at least this % of the enemy's power at the spot (0 never) | 0 | 110 | 100 |
+| `SORTIE_REACH` targets within `BLOCKADE_CELLS` + this many cells of the harbour | 0 | 1 | 2 |
+| `SORTIE_HUNT_PCT` ... and against one merely passing (beyond `BLOCKADE_CELLS`) at this % (0 never) | 0 | 0 | 130 |
+
+**Measured** (`campaign_sim` 6 x 60, all Average, the pin seeds; HEAD = the victory-counts / Range commit `3a2dc87`, means a
+campaign, eliminations counted over the 6 seeds):
+
+| | Rome HEAD | Rome after | West HEAD | West after |
+|---|---|---|---|---|
+| battles | 47.3 | 47.5 | 50.8 | 50.8 |
+| eliminations (per 6) | 10 | 10 | 1 | 1 |
+| sea battles | 10.8 | 10.0 | 27.5 | 27.5 |
+| landings | 8.7 | 8.5 | 23.7 | 23.7 |
+| sorties | 0 | 0.3 | 0 | 0.8 |
+
+All Skilled (6 seeds): Rome 64.8 -> 65.8 battles, 14 -> 18 eliminations, sea battles 13.0 -> 14.0, 1.0 sorties a campaign;
+the West unchanged (78.0 battles, 8 eliminations, 20.0 sea battles; 0.5 sorties, hashes unmoved). Average `SORTIE_ODDS_PCT`
+tried at 100 and 90 (`--knob=a:112=`, below the 110 floor, as a probe only): Rome 10.0 / 10.7 sea battles, the West 29.0
+(1.7 sorties a campaign); kept at 110.
+
+**Why so few** (probe, all Average, 6 seeds a pack: every docked fleet with an enemy fleet in reach, a turn each): our docked
+fleet had 110 % of the enemy at the spot in 3 of 222 cases in Rome and 7 of 91 in the West; it had less than 70 % in 208 of
+222 and 73 of 91. An AI fleet only comes to lie off a port when it outguns its guard by `SAFE_PCT` 130 (all the guard's
+fleets within `GUARD_CELLS`, docked ones included), and a blockade only holds while the blockader is stronger than the
+owner's fleets there, so the fleet off a port is almost never one the port's fleet outguns. The West's few sorties were the
+attacks `_prey` (`ATTACK_PCT` 140) would have made anyway: its hashes did not move. The sea battles Docking removed were the
+enemy's attacks on fleets now docked, not sorties the docked side declined; this rule does not bring them back.
+
 ## 13. As built: siege equipment and wall towers (2026-10-07)
 
 The settlement AI uses and answers the siege gear of docs/DESIGN.md

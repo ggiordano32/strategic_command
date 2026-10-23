@@ -50,6 +50,13 @@ extends RefCounted
 ##     port of ours (or a patron's) docks there (an at-once fdock: sheltered,
 ##     the yard repairs it); a home voyage (7.) docks on arriving; a fleet
 ##     given any voyage casts off by it. Docked fleets are not prey.
+## 10. (Sorties, docs/AI.md 12.4, 2026-10-23) before the attacks (4.): at each
+##     port where fleets of ours lie docked, the strongest of them in good
+##     repair and empty comes out against an enemy fleet at war lying within
+##     BLOCKADE_CELLS + SORTIE_REACH of the harbour (not docked, not in a
+##     pending battle; the port's blockader first) when it has SORTIE_ODDS_PCT
+##     of the enemy's power at the spot (SORTIE_HUNT_PCT for a fleet merely
+##     passing; Skilled only); Easy never. Next turn it follows the rules above.
 ## Distances for choices are straight-line estimates (octile cells at the
 ## fleet's mean pace); only the chosen voyage is searched (CFleet.plan).
 
@@ -201,6 +208,8 @@ static func act(st: Dictionary, f: int, moves: Array, fmoves: Array, cx_in: Dict
 			fmoves.append([int(fl["id"]), dest, f, 0, -1])
 		elif not _danger(st, f, fl):
 			used[int(fl["id"])] = 1  # (nowhere safe to land: wait; in danger it runs home below)
+	# (Sorties) docked fleets come out against a fleet lying off their port.
+	_sorties(st, f, mine, used, fmoves)
 	# Attacks.
 	for fl in mine:
 		if used.has(int(fl["id"])) or not (fl["carry"] as Array).is_empty():
@@ -587,6 +596,93 @@ static func _prey(st: Dictionary, f: int, fl: Dictionary, treasure_only: bool = 
 			bp = ep
 			best = int(e["id"])
 	return best
+
+
+## (Sorties, docs/AI.md 12.4) For each port (region order) where fleets of
+## ours in `mine` lie docked: the strongest of them (lowest id on ties) that
+## is empty, free (not used this act, not in a pending battle) and in good
+## repair (BLOCKADE_HULL) sorties against an enemy fleet at war within
+## BLOCKADE_CELLS + SORTIE_REACH of the harbour that is not docked nor busy,
+## out of the storms' cones, that it reaches this turn: a fleet lying off the
+## port (within BLOCKADE_CELLS: the blockade's ground, whether or not it holds
+## the blockade) at SORTIE_ODDS_PCT of the enemy's power at the spot
+## (_sortie_foe), one merely passing (beyond) at SORTIE_HUNT_PCT (0: never).
+## The port's blockader (CSea.blockader) first, then the others lying off it,
+## then the passing; the weakest enemy at the spot, then the lowest id. An
+## fmove after it (tgt), counted C_SORTIES.
+static func _sorties(st: Dictionary, f: int, mine: Array, used: Dictionary, fmoves: Array) -> void:
+	var kn := CP.of(st, f)
+	var odds := kn[CP.SORTIE_ODDS_PCT]
+	var hunt := kn[CP.SORTIE_HUNT_PCT]
+	if odds <= 0 and hunt <= 0:
+		return
+	var rad := CSea.k("BLOCKADE_CELLS", 3)
+	var reach := rad + kn[CP.SORTIE_REACH]
+	for r in CData.region_count():
+		var hb := CFleet.harbour(r)
+		if hb < 0:
+			continue
+		var fl := {}
+		for x in mine:
+			if CFleet.docked(x) != r or used.has(int(x["id"])) or x.has("busy") or not (x["carry"] as Array).is_empty() \
+					or _hull(x) < BLOCKADE_HULL:
+				continue
+			if fl.is_empty() or _power(x) > _power(fl):
+				fl = x
+		if fl.is_empty():
+			continue
+		var mine_p := _power(fl)
+		var bk := CSea.blockader(st, r)
+		var best := -1
+		var b_rank := -1
+		var b_foe := 0
+		for e in CFleet.fleets(st):
+			if not CState.at_war(st, f, int(e["f"])) or (e["ships"] as Array).is_empty() or CFleet.docked(e) >= 0 \
+					or e.has("busy"):
+				continue
+			var d := CGrid.cheb(CFleet.cell(e), hb)
+			if d > reach:
+				continue
+			# rank 2: the port's blockader lying off it; 1: another lying off it; 0: passing
+			var rank := 0 if d > rad else (2 if int(e["f"]) == bk else 1)
+			var pct := odds if rank > 0 else hunt
+			if pct <= 0 or rank < b_rank:
+				continue
+			if _storm_at(st, CFleet.cell(e)) or _turns(fl, CFleet.cell(e)) > 0:
+				continue
+			if CFleet.coastal(fl) and not CFleet.coastal_link(CFleet.cell(fl), CFleet.cell(e)):
+				continue
+			var foe := _sortie_foe(st, f, e)
+			if mine_p * 100 < foe * pct:
+				continue
+			if rank > b_rank or foe < b_foe:
+				best = int(e["id"])
+				b_rank = rank
+				b_foe = foe
+		if best < 0:
+			continue
+		used[int(fl["id"])] = 1
+		fl.erase("job")
+		fmoves.append([int(fl["id"]), -1, f, 0, best])
+		CP.count(CP.C_SORTIES, f)
+
+
+## (Sorties) The enemy's power a sortie against fleet e meets: the fleets at
+## war with f within FLEET_ZONE + 1 of it (CFleet.sea_battle gathers every
+## fleet in the zone; not docked, not busy), times its port's guns when e
+## lies in a port of its own (CFleet.resolve's defender bonus; the sortie is
+## the attacker, which has none).
+static func _sortie_foe(st: Dictionary, f: int, e: Dictionary) -> int:
+	var p := 0
+	var c := CFleet.cell(e)
+	for x in CFleet.fleets(st):
+		if CState.at_war(st, f, int(x["f"])) and CFleet.docked(x) < 0 and not x.has("busy") \
+				and CGrid.cheb(CFleet.cell(x), c) <= CFleet.FLEET_ZONE + 1:
+			p += _power(x)
+	var r := CFleet.port_of(st, e, int(e["f"]))
+	if r >= 0:
+		p = p * (CFleet.PORT_DEF_PCT + CFleet.PORT_WALL_PCT * CState.walls(st, r)) / 100
+	return p
 
 
 ## (N2) Where fleet fl lies in wait for fleet e on its course (e's route,

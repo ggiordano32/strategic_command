@@ -314,6 +314,8 @@ func _run(sd: int, verbose: bool) -> String:
 			ct[0], ct[1], ct[2], ct[3]])
 		print("AI mistakes (all factions): city left empty %d, attack at bad odds %d, over-recruiting %d, unwise war %d, conquest not garrisoned %d" % [
 			ct[4], ct[5], ct[6], ct[7], ct[8]])
+		print("AI sea counters (all factions): sea garrisons %d, ferries refused %d, sorties %d" % [
+			ct[CP.COUNTER_KEYS.find(CP.C_SEA_HOLD)], ct[CP.COUNTER_KEYS.find(CP.C_FERRY_REFUSED)], ct[CP.COUNTER_KEYS.find(CP.C_SORTIES)]])
 		for f in keys:
 			var mk: Array = []
 			for key in CP.COUNTER_KEYS:

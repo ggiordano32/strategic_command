@@ -726,6 +726,20 @@ Built as planned; what the build settled or changed:
   fleet, a port lost without a capture, the storm, the AI docking, determinism) and `campaign_input_test._j_dock` (12
   checks: Dock at sea and the city tap, the same city cancels, Cast off / Stay, Dock at a dock, the settlement card's list).
 
+### Sorties (as built, 2026-10-23)
+
+The fleet AI's answer to a fleet lying off its port (docs/AI.md 12.4; `CAIFleet._sorties`, no rules change): each turn, at
+each port where fleets of the AI lie docked, the strongest of them, empty and in repair (`BLOCKADE_HULL`), casts off and
+attacks an enemy fleet at war within `BLOCKADE_CELLS` of the harbour (the blockader first) when it has `SORTIE_ODDS_PCT` of
+the enemy's power at the spot (the enemy fleets in the battle's zone, times the target's own port guns when it lies in its
+own port), and at Skilled one merely passing within `SORTIE_REACH` cells more at `SORTIE_HUNT_PCT`. Knobs Easy / Average /
+Skilled: `SORTIE_ODDS_PCT` 0 / 110 / 100, `SORTIE_REACH` 0 / 1 / 2, `SORTIE_HUNT_PCT` 0 / 0 / 130. Next turn the fleet follows
+the ordinary rules and docks again when it comes home. Measured (6 x 60, Average): 0.3 sorties a campaign in Rome, 0.8 in the
+West; sea battles Rome 10.8 -> 10.0, the West 27.5 unchanged. A fleet lies off a port only when it outguns the port's
+fleets (blockade stations need `SAFE_PCT` 130 over the guard, a blockade needs more power than the owner's fleets there), so
+a sortie with the odds is rare; the sea battles Docking removed were attacks on the docked fleets, which this rule does not
+restore.
+
 ### Port rule (2026-10-23)
 
 Owner, phone playtest: "what are the anchor markers? They are on every city now." With `HARBOUR_MAX` 4 (Chebyshev, site to the

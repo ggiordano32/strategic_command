@@ -149,6 +149,7 @@ func _init() -> void:
 	_rome_fleets()
 	_ai_sea_garrison()
 	_docking()
+	_sortie()
 	_sight()
 	_town_plan()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
@@ -5619,4 +5620,87 @@ func _docking() -> void:
 	_check(ai_n > 0, "docking: the AI docks its free fleets lying at its docks (%d of %d docked after a turn)" % [ai_n, (sai2["fleets"] as Array).size()])
 	var sd1 := CTurn.resolve_turn(sai, [])
 	_check(CState.state_hash(sd1) == CState.state_hash(sai2), "docking: the turn is deterministic with docked fleets")
+	CData.use_pack("rome")
+
+
+## (Sorties, docs/AI.md 12.4) A docked AI fleet comes out against an enemy
+## fleet lying off its port when it has the odds; not without them, not
+## loaded, not at Easy; a fleet merely passing only at Skilled.
+func _sortie() -> void:
+	CData.use_pack("rome")
+	var syr := _f("syracuse")
+	var car := _f("carthage")
+	var st := CState.new_campaign("so", 77, [])
+	CState.set_dip(st, syr, car, CState.WAR)
+	st["fleets"] = []
+	var port := -1
+	for r in CState.regions_of(st, syr):
+		if CFleet.dock(r) >= 0 and port < 0:
+			port = r
+	var hb := CFleet.harbour(port)
+	var dk := CFleet.dock(port)
+	var rad := CSea.k("BLOCKADE_CELLS", 3)
+	# A sea cell lying off the port (2 from the harbour) and one passing (rad + 1).
+	var off := -1
+	var pass_c := -1
+	for j in CGrid.disc(hb, rad + 2):
+		if not CFleet.is_sea(j):
+			continue
+		var d := CGrid.cheb(j, hb)
+		if d == 2 and off < 0:
+			off = j
+		if d == rad + 1 and pass_c < 0:
+			pass_c = j
+	var tri := {"t": "trireme", "h": 100, "c": 100}
+	var ours := {"id": 960, "f": syr, "x": CGrid.cx(dk), "y": CGrid.cy(dk), "in": port,
+		"ships": [tri.duplicate(), tri.duplicate(), tri.duplicate()], "carry": [], "moved": 0}
+	var theirs := {"id": 961, "f": car, "x": CGrid.cx(off), "y": CGrid.cy(off), "ships": [tri.duplicate()], "carry": [], "moved": 0}
+	(st["fleets"] as Array).append(ours)
+	(st["fleets"] as Array).append(theirs)
+	_check(port >= 0 and off >= 0 and pass_c >= 0 and CFleet.docked(ours) == port, "sortie: a Syracusan fleet docked in %s, a Punic one off it" % CData.REGIONS[maxi(port, 0)]["name"])
+	var sorties := func(s: Dictionary) -> Array:
+		CAIFleet._pw = {}
+		CAIFleet._stormy = false
+		var mine: Array = []
+		for fl in CFleet.fleets_of(s, syr):
+			mine.append(fl)
+		var out: Array = []
+		CAIFleet._sorties(s, syr, mine, {}, out)
+		return out
+	var c0 := CP.counter(CP.C_SORTIES, syr)
+	var fm: Array = sorties.call(st)
+	_check(fm.size() == 1 and int(fm[0][0]) == 960 and int(fm[0][4]) == 961 and CP.counter(CP.C_SORTIES, syr) == c0 + 1,
+		"sortie: three triremes come out against one lying off the port (%s)" % str(fm))
+	# The fleet casts off and fights it.
+	var sb := CState.copy(st)
+	var sb0 := int(sb["stats"].get("sea_battles", 0))
+	CFleet.execute_moves(sb, sorties.call(sb))
+	var ob: Dictionary = CFleet.fleet(sb, 960)
+	_check(CFleet.docked(ob) < 0 and int(sb["stats"].get("sea_battles", 0)) == sb0 + 1, "sortie: ... it casts off and the sea battle is fought")
+	# Without the odds it stays docked.
+	var sw := CState.copy(st)
+	CFleet.fleet(sw, 961)["ships"] = [tri.duplicate(), tri.duplicate(), tri.duplicate()]
+	_check((sorties.call(sw) as Array).is_empty(), "sortie: not against an equal fleet at Average (SORTIE_ODDS_PCT %d)" % CP.of(sw, syr)[CP.SORTIE_ODDS_PCT])
+	# A loaded fleet never sorties; nor one in poor repair.
+	var sl := CState.copy(st)
+	var a: Dictionary = (CState.armies_of(sl, syr)[0] as Dictionary).duplicate(true)
+	(sl["armies"] as Array).erase(CState.armies_of(sl, syr)[0])
+	CFleet.fleet(sl, 960)["carry"] = [a]
+	_check((sorties.call(sl) as Array).is_empty(), "sortie: a loaded fleet stays in port")
+	var sh := CState.copy(st)
+	for x in CFleet.fleet(sh, 960)["ships"]:
+		x["h"] = CAIFleet.BLOCKADE_HULL - 10
+	_check((sorties.call(sh) as Array).is_empty(), "sortie: nor one under BLOCKADE_HULL repair")
+	# Easy never.
+	var se := CState.copy(st)
+	se["factions"][syr]["ai_skill"] = CP.EASY
+	_check((sorties.call(se) as Array).is_empty(), "sortie: Easy never comes out")
+	# A fleet merely passing (beyond BLOCKADE_CELLS, within the reach): Skilled only.
+	var sp := CState.copy(st)
+	CFleet.place(CFleet.fleet(sp, 961), pass_c)
+	_check((sorties.call(sp) as Array).is_empty(), "sortie: Average lets a passing fleet go (SORTIE_HUNT_PCT 0)")
+	sp["factions"][syr]["ai_skill"] = CP.SKILLED
+	var fs: Array = sorties.call(sp)
+	_check(fs.size() == 1 and int(fs[0][4]) == 961, "sortie: Skilled hunts it at SORTIE_HUNT_PCT %d (%s)" % [CP.of(sp, syr)[CP.SORTIE_HUNT_PCT], str(fs)])
+	CAIFleet._pw = {}
 	CData.use_pack("rome")
