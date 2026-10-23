@@ -915,7 +915,8 @@ func _interception() -> void:
 			"the interception is a field battle on the region's ground and woods, without the garrison")
 		var od := CBattle.battle_odds(s2, b)
 		var fo := CBattle.formula(CState.copy(s2), b)
-		_check(int(od["def"]) == CState.strength(CState.army(s2, int(e["id"]))) and int(fo["garrison_pct"]) == int(s2["regions"][_r("apulia")]["gar"]),
+		# (The defenders of a field battle count FIELD_DEF_PCT of their strength since the 2026-10-22 refit: Rome 101 %.)
+		_check(int(od["def"]) == CState.strength(CState.army(s2, int(e["id"]))) * int(CBattle.FIELD_DEF_PCT[0]) / 100 and int(fo["garrison_pct"]) == int(s2["regions"][_r("apulia")]["gar"]),
 			"its odds and the formula leave the garrison out")
 		# Won by Rome: Epirus falls back, the siege begins.
 		var w := CTurn.apply_battle(s2, int(b["id"]), {"winner": 0, "mode": "fought", "units": [], "garrison_pct": 0})
@@ -1529,7 +1530,13 @@ func _odds() -> void:
 	# A field battle: no walls, no ground, the garrison where it is told.
 	var f0 := CBattle.strengths(st2, arm[0], arm[1], ap, false, 1)
 	var s0 := CBattle.strengths(st2, arm[0], arm[1], ap, true, 1)
-	_check(int(f0[1]) < int(s0[1]) and int(f0[0]) == int(s0[0]), "in the field the garrison has no walls and nobody the ground")
+	# (Since the 2026-10-22 refit the walls term can be under 100 %, so "less than a settlement battle's" no
+	# longer says it: the field side is the plain men and garrison, times FIELD_DEF_PCT, no ground, no walls.)
+	var men_d := CBattle.garrison_men_strength(st2, ap)
+	for x in arm[1]:
+		men_d += CState.strength(x)
+	_check(absi(int(f0[1]) - men_d * int(CBattle.FIELD_DEF_PCT[0]) / 100) <= arm[1].size() + 1 and int(f0[0]) == int(s0[0]),
+		"in the field the garrison has no walls and nobody the ground (%d against %d men, %d in a settlement battle)" % [int(f0[1]), men_d, int(s0[1])])
 
 
 ## Co-op: two allied players besiege together; both order the assault: one
@@ -2223,7 +2230,9 @@ func _grid_stances() -> void:
 	var od1 := CBattle.odds(st, [e], [a], int(a["r"]), false, -1)
 	a["stance"] = CData.ST_DEFAULT
 	var od0 := CBattle.odds(st, [e], [a], int(a["r"]), false, -1)
-	_check(int(od1["win"]) > int(od0["win"]), "an army caught on a forced march fights worse (%d%% vs %d%% against it)" % [int(od1["win"]), int(od0["win"])])
+	# (Compared by strength and the per mille chance since the 2026-10-22 refit: the steeper curve gives both 0 %.)
+	_check(int(od1["def"]) < int(od0["def"]) and int(od1["win_pm"]) >= int(od0["win_pm"]),
+		"an army caught on a forced march fights worse (strength %d vs %d, %d vs %d per mille against it)" % [int(od1["def"]), int(od0["def"]), int(od1["win_pm"]), int(od0["win_pm"])])
 	# Caught on a forced march: its units start shaken in the battle.
 	a["stance"] = CData.ST_FORCED
 	CRules.execute_moves6(st, [[int(e["id"]), CState.cell(a), ep, 0, 0, int(a["id"])]])

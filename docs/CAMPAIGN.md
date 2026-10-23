@@ -677,12 +677,46 @@ test exaggerates numbers; in an army line the gap is smaller.
   AI, from the same inputs as a fought battle, run in 24 ms slices per frame
   with a progress bar. Above 2,600 soldiers it runs every unit at half its men
   (artillery unscaled) and scales the losses back up.
-- **AI-only battles:** formula. Side strength = men x (unit price / unit
-  size), defenders + garrison (+15% per wall level), defenders x (100 +
-  ground)% (hill / ridge 15, rolling / valley 10, flat 5). Attacker wins with
-  chance Sa^3 / (Sa^3 + Sd^3) (state RNG). Winner loses 3.2% per 100% of the
-  loser/winner strength ratio (4-45%) killed; loser 66% - 12% x ratio +-5 (35-80%)
-  killed and 20% routed.
+- **AI-only battles:** formula (refitted 2026-10-22 to what fought AI-vs-AI
+  battles produce; `tests/campaign_battles.gd --only=fit`). Side strength =
+  men x (unit price / unit size). A settlement battle: the defending side
+  (garrison and armies inside) x (100 + ground)% (hill / ridge 15, rolling /
+  valley 10, flat 5) x `WALLS_PCT` / 100 for the walls level and the
+  attackers' kit (`WALLS_PCT` for Rome, `WALLS_PCT_WEST` for the West; rows
+  walls 0-3, columns kit 0 / 1 / 2):
+
+  | Pack | walls 0 | walls 1 | walls 2 | walls 3 |
+  |---|---|---|---|---|
+  | Rome | 93 | 87 | 96 | 167 / 114 / 101 |
+  | West | 92 | 99 / 99 / 98 | 103 / 103 / 101 | 107 / 107 / 105 (extrapolated) |
+
+  A field battle (no walls, no ground): the defenders x `FIELD_DEF_PCT` (Rome
+  101, West 110). Attacker wins with chance Sa^k / (Sa^k + Sd^k) (state RNG),
+  k = `WIN_EXP` (Rome 10, West 7; was 3). The winner loses `WIN_KILL_PM` 5.5 %
+  per 100 % of the loser / winner strength ratio q (4-70 %) killed and 5 %
+  routed; the loser `LOSE_KILL` 72 % - 1.2 % x q per 100 % (+-5, 35-80 %)
+  killed and 20 % routed (was 3.2 % x q and 66 % - 1.2 % x q). The old
+  constants stay behind `CBattle.old_walls` for the golden campaigns of
+  `campaign_test`.
+
+  Fitted 2026-10-22 against the fought equal-force tables (draws count
+  against the attacker; loss ratio = attackers' men killed / defenders' men
+  killed; the formula column from 200 samples a cell):
+
+  | Cell | Fought win % / loss ratio | Formula |
+  |---|---|---|
+  | West walls 0 / 1 / 2 (16 towns x 16 seeds) | 52.7 / 0.98, 39.8 / 1.09, 33.6 / 1.14 | 52.5 / 0.98, 39.4 / 1.09, 34.8 / 1.15 |
+  | Rome walls 0 / 1 / 2 / 3 (six plan towns x 16) | 43.8 / 0.87, 58.3 / 0.92, 34.4 / 1.05, 25.0 / 1.03 | 41.8 / 1.05, 58.8 / 0.94, 35.8 / 1.10, 27.8 / 1.19 |
+  | Rome field 0.7 / 1.0 / 1.4 (48 seeds, four regions) | 0 / 1.14, 43.8 / 1.00, 100 / 0.78 | 1.5 / 1.17, 44.5 / 1.03, 97.5 / 0.85 |
+  | West field 0.7 / 1.0 / 1.4 | 2.1 / 1.15, 33.3 / 0.99, 81.2 / 0.84 | 4.5 / 1.30, 35.5 / 1.16, 85.0 / 0.99 |
+
+  Every cell within 5 points and 20 % of the loss ratio (Rome walls 0's ratio
+  is 20 %, outside the owner's list). The fought armies are two identical
+  compositions (equal force by scaling the men), which makes the sim's result
+  steeper than a campaign's mixed armies: on the random armies of
+  `--only=calib` the favourite wins fewer than the curve says (see the
+  numbers below). The kills are the fought ones: 50-65 % of both sides at
+  equal strength, the winner 35 % against a loser of 0.7 of its strength.
 
 Timings (native Linux desktop, AMD Ryzen 7 5800X, one thread):
 
@@ -702,7 +736,14 @@ armies of 2-12 units, random lines and tiers, random garrisons): the
 formula's favourite won the sim battle 53 / 60 (88%); by predicted chance:
 0-20% -> sim attacker won 4%, 20-40% -> 0%, 40-60% -> 38%, 60-80% -> 75%,
 80-100% -> 100%. Killed share winner / loser: sim 23% / 60%, formula
-19% / 58%.
+19% / 58%. (The cube law and 32 / 66 % kills of that fit.) After the
+2026-10-22 refit, same harness (n = 60, the sim has changed since): favourite
+won 47 / 60 (78%); predicted 0-20% -> sim attacker won 15% (34 battles),
+20-40% -> 0% (4), 60-80% -> 50% (2), 80-100% -> 65% (20); killed share
+winner / loser: sim 18% / 47%, formula 31% / 65%. The refit is to equal-force
+fixtures, so on mixed random armies it is too sure and too bloody; the
+`--only=fit` rows are the guard, this paragraph the caveat. A fit to mixed
+armies of measured composition is the open follow-up.
 
 ## Sieges and battle odds (version 4)
 

@@ -55,6 +55,7 @@ Thursday's list (2026-10-22), all landed on 2026-10-22 and committed except wher
 | 5 | UI theme pass 2 (battle HUD, sea screen) | Landed (`3d71680`): row "In-game UI theme, pass 2" |
 | 6 | Rome walls 1-2 | Landed (`07b9d27`): row "Rome walls 1-2 balance pass" |
 | 7 | Same day, owner requests: waypoints (`f690bdf`), reading a town battle (`4fc9b9d`), men turn to their march (`1431401`), beaches and cliffs (`bd50be8`), table sea on the bathymetry (`53da70e`), ships popping while panning (`80a4376`), ambient beds (`8e7986c`, `62e1969`) | Landed |
+| 8 | Auto-resolve refit (the formula fitted to fought sieges and field battles) | Built 2026-10-22, not committed: row "Auto-resolve refit" |
 
 Next, in order (the open items of the list; detail in the areas below): (1) lane rules (raiding / blockading a trade lane), (2) the Rome navy (goal 5), (3) device checks on the Tab S7 / phone of the week (fog look and markers, sea top bar, Game server page, `?prof-tap=3`, waypoints, the Paths overlay, crests), (4) Hunyuan characters wired in, (5) sea balance follow-ons, (6) auto-resolve refit to pass T and the Rome walls results.
 
@@ -94,7 +95,7 @@ One bullet per open item pulled from the rows' **Open:** texts; the bracket name
 - Raids: the AI raiding beside a garrisoned stack is legal but maybe too bold (an AI odds question). [paragraph "Raids on a player's city"]
 - Roads, rivers and hills: a tap on a crossing showing its name; contact across a river edge without a crossing. [row "Roads, rivers and hills on the overworld"]
 - N-player: per-army AI for AI allies on a player side; custom battles still two seats; Discord texts still say "ally". [section "Next session (week of 2026-10-13; paused 2026-10-10 midday)"]
-- Campaign AI: auto-resolve refit to pass T's siege outcomes; Skilled vs Average ~47 % (AI-competency pass); Epirus's start; the tuning backlog. [overview, "Tuning backlog"]
+- Campaign AI: Skilled vs Average ~47 % (AI-competency pass); Epirus's start; the tuning backlog. [overview, "Tuning backlog"]
 - Smaller: drag-to-exchange on the bar, punitive landing ship, West villages' map coverage, hill-city setup time, the 23 old test saves in this machine's user folder. [section "Where we are headed" (Immediate order paragraph)]
 
 ### Overworld view
@@ -132,12 +133,12 @@ Pinned values to compare after a change (they move only with a stated reason; th
 
 | Pin | Value | Set |
 |---|---|---|
-| `campaign_sim` 6 x 60, West pack | `bc182ad5 7996ade0 26eeeeda 03d3994b b817ccec 368eb624` | 2026-10-22 (row "West roads, sea lanes as routes"; were `b137875c edd82dee 0393b18d 2aa8578b deb00750 1d051164`) |
-| `campaign_sim` 6 x 60, Rome pack | `a28e0bbe 68fcfe65 c328ee2e 9e9c3801 a42fc685 b6fe6c2e` | 2026-10-22 (same row; were `cdc1d805 32b83031 23f9ed4f 3237d82d` for the first four) |
+| `campaign_sim` 6 x 60, West pack | `f35b6a3a 3c4807ee 40ab341c da4ecb04 7896bb0d 5bd06f73` | 2026-10-22 (row "Auto-resolve refit"; were `bc182ad5 7996ade0 26eeeeda 03d3994b b817ccec 368eb624`) |
+| `campaign_sim` 6 x 60, Rome pack | `7a4fdddc 2e06d5ab 3054d32e 658ce540 e2295baf 7f4ea2af` | 2026-10-22 (same row; were `a28e0bbe 68fcfe65 c328ee2e 9e9c3801 a42fc685 b6fe6c2e`) |
 | `campaign_sim --format=8`, Rome | `4d21f126 1c4a86e9 286a3c80 d53713d6 605c409f 77cfbf4c` | 2026-10-17 (row "Fog of war on the overworld, rules half") |
 | `campaign_sim --format=8`, West | `d8cded2d d73b8c5d e64845ba 8eea9504 7c3efd9e 679e2092` | 2026-10-17 (same row) |
 | AI goldens as format 7 (`as_format(st, 7)`) | `3007c1ab`, `bd76985b` (`tests/campaign_test.gd`) | 2026-10-17 |
-| `tests/pack_test.gd` Rome AI-only campaign, seed 4242, 20 turns | `ROME_20` `d60c218a` (format 8); as format 7 `ROME_20_V7` `575e23d5` | 2026-10-17 (was `575e23d5`) |
+| `tests/pack_test.gd` Rome AI-only campaign, seed 4242, 20 turns | `ROME_20` `3c26a0bc` (format 8); as format 7 `ROME_20_V7` `57aa56ba` | 2026-10-22 (row "Auto-resolve refit"; were `d60c218a` / `575e23d5`) |
 | `tests/pack_test.gd` "pack" state hash as the server sees it (also in Go `TestStateHashPack`) | `a9a7a1e4`, `a5c588a1` | 2026-10-13 |
 
 The determinism goldens (four flat digests, every `--only=` pin) are in `tests/determinism_test.gd`; rows say "goldens unmoved" when a change keeps them.
@@ -154,7 +155,7 @@ godot --headless --script res://tests/campaign_solo.gd      # 20 turns of a play
 godot --headless --script res://tests/story_test.gd         # the story campaign (-- --turns=45 --seeds=8 --quick)
 # Story testing aids: -- --story=seed[:turns] (turns autoplayed) --story-path=first|random|republic|pardon|legend
 #   --story-show=EVENT|ending --story-seen=N --story-choices --story-log
-godot --headless --script res://tests/campaign_battles.gd   # auto-resolve timing, formula calibration
+godot --headless --script res://tests/campaign_battles.gd   # auto-resolve timing, formula calibration; -- --only=fit: the formula against the fought tables
 godot --script res://tests/campaign_input_test.gd           # needs a window
 godot --headless --script res://tests/battle_screen_test.gd  # battle screen: pre-battle, auto / fought result, field battle
 godot --headless --script res://tests/matchups.gd -- --only=tiers   # tier balance

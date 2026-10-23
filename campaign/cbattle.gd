@@ -36,8 +36,9 @@ extends RefCounted
 ## formula(): battles between AI factions only, without the sim: side
 ## strengths from men x value per man (unit price / size), modified for the
 ## garrison's walls and the defender's ground; attacker wins with probability
-## Sa^3 / (Sa^3 + Sd^3) (calibrated against AI-vs-AI sim battles, see
-## tests/campaign_battles.gd); losses from the strength ratio. A field
+## Sa^k / (Sa^k + Sd^k), k by pack (WIN_EXP; refitted 2026-10-22 to what
+## fought AI-vs-AI battles produce, tests/campaign_battles.gd --only=fit);
+## losses from the strength ratio. A field
 ## battle of a siege (sally, relief: settlement 0) counts the garrison on the
 ## owner's side without its walls and gives nobody the ground.
 ##
@@ -77,14 +78,41 @@ const MANTLETS := [2, 4]     # ... mantlets after RAM_TURNS, MANTLET_TURNS turns
 ## counts this % by wall level (rows) and the attackers' kit (columns: 0 an
 ## assault on arrival, artillery only; 1 ladders / a ram, one or two siege
 ## turns; 2 the full kit of three turns or more). A prediction of the sim,
-## not a bonus: fitted 2026-10-10 to the equal-force sieges
-## (tests/matchups.gd --only=fair-sieges, both Average, ring and polis, 20
-## battles a cell, draws left out) as (lost / won)^(1/3), pooled where more
-## kit or lower walls came out better for the defenders (noise at 20
-## battles): attacker won by column (artillery only / ladders + ram / full
-## kit) walls 1 50 / 32 / 40 %, walls 2 26 / 17 / 16 %, walls 3 5 / 15 /
-## 26 %. (Was: the garrison alone +15 % a level.)
-const WALLS_PCT := [[100, 100, 100], [115, 115, 114], [162, 162, 158], [262, 178, 158]]
+## not a bonus. Refitted 2026-10-22 (the sieges changed: balance pass T, the
+## plan maps, forts with an inside, the open-town AI, Rome walls 1-2), per
+## pack, to the equal-force fought rows (tools/balance west_walls /
+## rome_walls, 16 seeds a town) through the ground bonus and WIN_EXP:
+## attacker won West walls 0 / 1 / 2 (16 Spanish towns, ladders + ram =
+## kit 1) 52.7 / 39.8 / 33.6 %, Rome walls 1 / 2 / 3 (six plan towns, the
+## full kit = kit 2) 58.3 / 34.4 / 25.0 % and, measured the same way, Rome
+## walls 0 43.8 %. Below 100 where the sim's defenders do worse than the ground
+## bonus alone gives them (open towns, low walls). The columns not measured
+## keep the old table's relation to the fitted one (Rome walls 3, kit 0 / 1:
+## x 262 / 158 and 178 / 158); West walls 3 is the walls 2 row + 4 as in Rome.
+const WALLS_PCT := [[93, 93, 93], [87, 87, 87], [96, 96, 96], [167, 114, 101]]
+const WALLS_PCT_WEST := [[92, 92, 92], [99, 99, 98], [103, 103, 101], [107, 107, 105]]
+## The strength-ratio curve: the attackers win with Sa^k / (Sa^k + Sd^k),
+## k by pack (index 0 Rome, 1 West; was 3 for both). Fought equal-composition
+## field battles at strength ratios 0.7 / 0.85 / 1.0 / 1.15 / 1.4 (48 seeds a
+## cell, four regions): attacker won Rome 0 / 19 / 44 / 92 / 100 %, West
+## 2 / 17 / 33 / 61 / 81 %. The lowest k that keeps the 0.7 / 1.0 / 1.4
+## cells within 5 points; the random mixed armies of --only=calib sit between
+## this and the old cube (see docs/CAMPAIGN.md "The formula").
+const WIN_EXP := [10, 7]
+## ... and in a field battle the defenders count this % of their strength
+## (the sim's equal armies favour the side that does not march into them;
+## the same fought rows): Rome 101, West 110. Settlement battles have the
+## ground bonus and the walls instead.
+const FIELD_DEF_PCT := [101, 110]
+## Men killed (% of a side) in a formula battle: the winner kills' price is
+## WIN_KILL_PM per mille of q (loser / winner strength, per mille), the loser
+## loses LOSE_KILL less LOSE_KILL_SLOPE per mille of q (+-5 by the RNG). The
+## fought battles kill 50-65 % of both sides at equal strength (the winner
+## 35 % against a loser with 0.7 of its strength): attackers' losses over
+## defenders' losses fitted within 20 % per cell.
+const WIN_KILL_PM := 55
+const LOSE_KILL := 72
+const LOSE_KILL_SLOPE := 12
 ## Test switch (tests/campaign_test.gd golden campaigns): the formula as it
 ## was before the fit (the garrison alone +15 % a wall level, fortified 125 %).
 static var old_walls := false
@@ -1186,7 +1214,13 @@ static func kit_of(st: Dictionary, b: Dictionary) -> int:
 
 ## WALLS_PCT for region r's walls against kit k.
 static func walls_pct(st: Dictionary, r: int, k: int) -> int:
-	return int(WALLS_PCT[clampi(CState.walls(st, r), 0, 3)][clampi(k, 0, 2)])
+	var tab: Array = WALLS_PCT_WEST if _pack_ix() == 1 else WALLS_PCT
+	return int(tab[clampi(CState.walls(st, r), 0, 3)][clampi(k, 0, 2)])
+
+
+## The active pack's column in the per-pack constants (0 Rome, 1 West).
+static func _pack_ix() -> int:
+	return 1 if CData.pack == "west" else 0
 
 
 ## Formula strengths [attackers, defenders] of two groups of armies in
@@ -1218,6 +1252,8 @@ static func strengths(st: Dictionary, attackers: Array, defenders: Array, r: int
 		s[1] = s[1] * (100 + ground_bonus(r)) / 100 * walls_pct(st, r, kit) / 100
 	elif gs >= 0:
 		s[gs] += garrison_men_strength(st, r)
+	if not settlement and not old_walls:
+		s[1] = s[1] * int(FIELD_DEF_PCT[_pack_ix()]) / 100
 	return s
 
 
@@ -1310,11 +1346,21 @@ static func _win_loss_pm(q: int) -> int:
 
 
 static func _lose_loss_pm(q: int) -> int:
-	return clampi(66 - q * 12 / 1000, 35, 80) * 10 + LOSE_ROUT * (100 - CData.ROUT_RETURN) / 10
+	return clampi(_lose_kill(q), 35, 80) * 10 + LOSE_ROUT * (100 - CData.ROUT_RETURN) / 10
 
 
+## % killed on the winning side at q = loser / winner strength (per mille).
 static func _win_kill(q: int) -> int:
-	return clampi(q * 32 / 1000, 4, 45)
+	if old_walls:
+		return clampi(q * 32 / 1000, 4, 45)
+	return clampi(q * WIN_KILL_PM / 1000, 4, 70)
+
+
+## % killed on the losing side before the clamp to 35-80 and the RNG's +-5.
+static func _lose_kill(q: int) -> int:
+	if old_walls:
+		return 66 - q * 12 / 1000
+	return LOSE_KILL - q * LOSE_KILL_SLOPE / 1000
 
 
 ## Defender's % bonus from the region's ground.
@@ -1327,15 +1373,25 @@ static func ground_bonus(r: int) -> int:
 	return 5
 
 
-## Attacker's chance to win battle b in per mille (formula model).
+## Attacker's chance to win battle b in per mille (formula model):
+## Sa^k / (Sa^k + Sd^k) with k = WIN_EXP of the pack (3 before 2026-10-22),
+## from the ratio in per mille so it cannot overflow.
 static func win_chance(sa: int, sd: int) -> int:
-	var a := sa / 20
-	var d := sd / 20
-	var a3 := a * a * a
-	var d3 := d * d * d
-	if a3 + d3 <= 0:
+	if old_walls:
+		var a := sa / 20
+		var d := sd / 20
+		var a3 := a * a * a
+		var d3 := d * d * d
+		if a3 + d3 <= 0:
+			return 500
+		return int(1000 * a3 / (a3 + d3))
+	if sa <= 0 and sd <= 0:
 		return 500
-	return int(1000 * a3 / (a3 + d3))
+	var x := clampi(sa * 1000 / maxi(sd, 1), 0, 4000)  # Sa / Sd, per mille
+	var ak := 1000  # (x / 1000)^k, per mille
+	for i in int(WIN_EXP[_pack_ix()]):
+		ak = ak * x / 1000
+	return 1000 * ak / (ak + 1000)
 
 
 ## Formula outcome for battle b (uses and advances the state's RNG).
@@ -1350,7 +1406,7 @@ static func formula(st: Dictionary, b: Dictionary) -> Dictionary:
 	# q = loser / winner strength in per mille.
 	var q := clampi(sl * 1000 / sw, 0, 3000)
 	var win_kill := _win_kill(q)                               # % killed on the winning side
-	var lose_kill := clampi(66 - q * 12 / 1000 + CState.rand(st, 11) - 5, 35, 80)
+	var lose_kill := clampi(_lose_kill(q) + CState.rand(st, 11) - 5, 35, 80)
 	var arm := CRules.battle_armies(st, b)
 	var units: Array = []
 	for side in 2:
