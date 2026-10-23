@@ -253,7 +253,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	paths_button.name = "paths"
 	paths_button.toggle_mode = true
 	BTheme.plate(paths_button, true)
-	Kit.tip(paths_button, "Paths", "Hatch what men cannot walk on (houses, walls, rocks) when a unit is selected or a route is drawn; streets and alleys stay clear.")
+	Kit.tip(paths_button, "Paths", "Hatch what men cannot walk on (houses, walls, rocks) when a unit is selected or a route is drawn; streets and alleys stay clear.\nRed: cannot be crossed.\nAmber: rubble: slow going, low cover (a breached wall, a fallen house).")
 	paths_button.toggled.connect(func(on: bool): paths_toggled.emit(on))
 	paths_button.visible = false   # (shown on town maps)
 	pause_button = _button("Pause", Vector2(74, BTN_H))
@@ -1177,6 +1177,15 @@ func update_cards(sim) -> void:
 			st = CardFace.ST_WAVER
 		f.state = st
 		f.under_fire = tick - sim.u_hit_t[u] < 10 or tick - sim.u_charged_t[u] < 15
+		# Holding a building under fire (destruction): its hit points as a small bar.
+		f.bld_pm = -1
+		var bpm: int = sim.occ_hp_pm(u)
+		if bpm >= 0:
+			var ob: int = sim.u_occ[u] - 1
+			if bpm < 1000 and tick - sim.ob_hit_t[ob] < 300:
+				f.bld_pm = bpm
+			if bpm < 1000:
+				f.summary += " | building %d%%" % (bpm / 10)
 		f.fighting = sim.u_fighting[u] > 0
 		f.refilling = sim.u_refill[u] != 0 or sim.u_rprog[u] > 0 or sim.u_forage[u] != 0
 		if not art and (sim.u_refill[u] != 0 or sim.u_rprog[u] > 0):
@@ -1484,6 +1493,8 @@ class CardFace extends Control:
 	var general := false
 	## A hero or agent (campaign characters): "crown", "dagger" or "scroll" in the same corner.
 	var char_icon := ""
+	## Holding a building under fire: its hit points per mille (-1: no bar).
+	var bld_pm := -1
 
 	func _draw() -> void:
 		var sz := size
@@ -1537,6 +1548,11 @@ class CardFace extends Control:
 		var frac := clampf(float(alive) / maxf(count0, 1), 0.0, 1.0)
 		draw_rect(Rect2(bx, by, bw, 12), Color(1, 1, 1, 0.1))
 		draw_rect(Rect2(bx, by, bw * frac, 12), Color(bar, 0.55))
+		if bld_pm >= 0:
+			# The building it holds: a thin stone bar over the headcount, red below a third.
+			var bf := clampf(bld_pm / 1000.0, 0.0, 1.0)
+			draw_rect(Rect2(bx, by - 4, bw, 3), Color(0, 0, 0, 0.45))
+			draw_rect(Rect2(bx, by - 4, bw * bf, 3), Color(0.92, 0.32, 0.22) if bld_pm < 333 else Color(0.78, 0.72, 0.6))
 		var aw := 0.0
 		if ammo_text != "":
 			aw = font.get_string_size(ammo_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x + 3

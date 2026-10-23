@@ -2480,3 +2480,112 @@ moves men off a stretch under heavy fire and out of a building below a third of 
 damaged in a battle are repaired by the next turn (no persistence in this plan; a later item: repairs cost gold).
 Balance: re-run `tools/balance` rome_walls and west_walls after; breaching should make the attacker's odds against
 walls 2-3 rise a few points, not flip them.
+
+**Owner's addition (2026-10-23).** "The rubble should leave a patch that allows for low cover": a breached stretch's
+and a fallen building's cells are a terrain patch of kind rubble with low cover (cover-trait units as among rocks,
+other foot RUBBLE_COVER_PCT 35 % of it, riders none), no line-of-sight block, a Key row and a Paths legend line.
+
+### Destruction (as built, 2026-10-23)
+
+Code: `sim/battle_sim.gd` section "destruction" (`_setup_destr`, `_destr_graph`, `_destr_restore`, `_destr_at`,
+`_destr_hit`, `_breach`, `_breach_throw`, `_collapse`, `rubble_at`, `occ_hp_pm`; hooks in `_land_bolt`,
+`_land_stone`, `_land`, `_nav_of`, `_obs_top` / `_cell_top`, `_obs_run`, `_cover_at` / `_cover_from`, the march
+speed, `_node_open`, `_roots`, `reach_at`, `wall_snap`, `spill_end` / `ws_join`, `_wall_col_goal`, `_climb`,
+`_ladder_start`, the occupy refusals, `restore()`, `state_hash()`), `sim/mapgen.gd` (`C_RUBBLE` 32, never set by
+the generator), the view (`game/battlekit.gd` `_RubbleDraw` / `fallen` / `_rubble_changed`,
+`game/battlekit_shadow.gd` `rebake_rect`, `game/city_draw.gd` `rubble_cells` / `draw_rubble`,
+`game/city_layer.gd` the no-kit rubble and the Paths mask, `game/overlay.gd` FX_RUIN and `_destr_events`,
+`game/hud.gd` the card's building bar and the Paths tooltip, `game/battle.gd` `destr_line` and `--demo-breach`,
+`game/unit_book.gd` "Breaches and ruins"), test `tests/determinism_test.gd` `_check_destr` (`--only=destr`).
+
+**Hit points (centi-hp, as the gates).** A stretch: WS_HP 1,200 / 2,000 / 3,000 by the walls level (a West fort's
+trace the same by its level). Its cells: every wall-body and walkway cell (C_WALL / C_WALK) within the wall's
+thickness of a walkway stretch's centre line goes to the nearest stretch (`ws_cell`); wall cells with no walkway
+stretch near (a citadel ring without a walkway, short spans between close towers) belong to none and stand, as do
+towers, stairs and gates. A building: every record of the layout (`map_info` city "buildings", index order: Rome's
+houses, temples, markets too; `ob_ok` is unchanged, so what can be held is as before) owns its C_BUILDING cells
+(rect: the cell centre inside; quad: the outline grown 0.6 m, as `occ_bg`; round: the radius + 1 m; then two
+passes give a stray cell to the building beside it; every building cell ends with an owner on the maps checked).
+Its hit points: OB_HP_BASE 300 + OB_HP_CELL 60 per cell; a West stone house (record material not timber) x
+OB_STONE_PCT 150 %; timber and every Rome house 100 % (the Rome records carry no material; "a stone house of a
+Rome capital 1.5x" was not built: say if wanted).
+
+**Damage.** What a gate takes from the same shot, from the attacking side only (the defenders' own shots never
+hurt their walls: their towers' engines fire out over them; buildings are hurt by either side): a flat shot
+(`_land_bolt`) stopped by the line of fire (`lof_block`) at a stretch's or building's cell, looked for at the stop
+point and 1 and 2 m on: GATE_BOLT 80 x ammunition `obj` % x the type's `m_obj` % (a bolt 80, a falconet 160, a
+culverin 360, a fort gun 240); a lobbed stone or shell landing on one (`_land_stone`, not when it struck a tower):
+GATE_STONE 360 x `obj` %, plus DESTR_BLAST_K 60 per metre of blast for a bursting (aoe) shell (the stand-in for "a
+mortar shell as its blast stat": mortars are not in the roster yet); on a building a lobbed shot does OB_ARC_PCT
+150 % (through the roof). So a stretch breaches after 4 / 6 / 9 culverin or stone hits (walls 1 / 2 / 3), 15 / 25 /
+38 bolts; a 20-cell Rome house falls after 3 stones.
+
+**Breach.** `ws_state` 1, `ws_hp` 0, `stat_breaches`, `rub_n` + 1, the event EV_BREACH (stretch) in the view ring
+`ev_k / ev_a / ev_t` (EV_N 32; not hashed, like `bk_*`). The men standing on the stretch's cells (every unit on a
+wall or a stair, soldier index order) each die with BREACH_KILL_PCT 60 (the sim's RNG; credited to the shooter's
+unit). The cells become C_RUBBLE: nav ground (as a broken gate's cells), no height for the line of fire or the
+walkway, no cover from the wall. A unit on the stretch (or climbing a stair or ladder to it) is a ground unit again
+(`u_wall` / `u_stair` 0, no order, files at most half its men); its survivors on the stretch, a joined stretch's
+walkway, a tower or a ladder are thrown down inside (`_breach_throw`: from their place along the stretch, in past
+the walkway to the first ground that is not rubble, else beside the stretch's inside point), those at a ladder's or
+stair's foot stay; a unit on another stretch that had men on this one takes them back to its anchor. A tower's
+engine crew (a wall unit of the stretch beside its tower) stays: the tower stands. Shaken: `u_hit_t` and
+DESTR_MORALE 150. `nav_epoch` + 1 (paths replanned, routers' exit fields restarted). Joins: `ws_join` (a breached
+stretch is joined to nothing), `wall_snap` skips it (a tap on the rubble is a ground move), nobody climbs to it
+(`_climb`, `_ladder_start`). The way in: per stretch (not facing the sea) a closed pair of street graph nodes
+inside and outside its middle (`ng_gate` -2 - stretch, joined to each other and to the four nearest nodes in
+clear sight on each side; open when breached: `_node_open`), and the pieces of open ground beside its cells
+(`ws_cmp`) joined in `_roots` once it is breached, so `reach_at` / `reach_snap` / the planner see one piece.
+
+**Collapse.** `ob_state` 1, `stat_collapses`, EV_COLLAPSE. The unit holding it (West, `ob_u`) loses each man with
+COLLAPSE_KILL_PCT 70 (RNG, index order), the rest come out at the door (`_occ_leave`), no order, shaken
+(DESTR_MORALE); units sent to it lose the errand. Its cells are rubble; it cannot be held again ("it has fallen").
+
+**Rubble.** C_RUBBLE cells: ground for everyone (horses too), the march at RUBBLE_SPEED 600 per mille with the
+anchor on it, no line-of-fire or sight block (sight in towns never used the houses), stones plough on through it.
+Low cover (the owner's addition): a cover-trait man standing in it has COV_RUBBLE, COVER_STOP 60 (as COV_ROCK),
+gone-to-ground on top as anywhere; any other foot man (not a rider, not on a wall) there has a missile or ball
+stopped with COVER_STOP x RUBBLE_COVER_PCT 35 % = 21 % (`stat_rubble_stop`); artillery and melee unchanged. Fire
+pots burning a house down are a later item.
+
+**State and hashes.** New sim state `ws_hp`, `ws_hp0`, `ws_state`, `ws_hit_t`, `ob_hp`, `ob_hp0`, `ob_state`,
+`ob_hit_t`, `rub_n`, the events ring and the stats are script variables (snapshotted); `ws_hp`, `ws_state`,
+`ob_hp`, `ob_state` are hashed with `city_on` only (open-field hashes unmoved). Static (setup; out of snapshots):
+`ws_cell`, `ob_cell`, `ws_cmp`, `ob_cmp`, `ws_in`, `obs0` (the generator's cells; `restore()` writes the fallen
+pieces' rubble back onto `obs` from it, `nav` is snapshotted), the breach nodes in the street graph. Before any
+breach the closed nodes are never used, so the paths are as before; the fortified hashes move by the hashed
+arrays.
+
+**View.** The kit (High and Low) draws the rubble over the wall strip and the houses before it, under the gates
+and towers: a dusty bed a little wider than each 2 m cell with broken stones by a hash of the cell (4 a cell with
+shadows on High, 2 on Low); a fallen building's pieces are hidden (zero-size instance on High, skipped on Low) and
+its shadow and the wall strip's under a breach are baked again. The drawn style without the kit draws the same
+rubble on the gates node. At the moment of the fall the overlay puts FX_BLAST dust rings along the stretch (four)
+or on the house and an FX_RUIN haze fading over 10 s; a gate-break sound plays. The Paths hatch: rubble in a
+sparser amber hatch the other way (mask value 128), rebuilt when rubble appears; its tooltip: "Red: cannot be
+crossed. Amber: rubble: slow going, low cover (a breached wall, a fallen house)". The battle has no map Key: the
+Key row is the book's "Breaches and ruins" paragraph (Settlements and sieges page). The unit card of a unit holding
+a building hit in the last 30 s has a thin bar for the building's hit points over its headcount bar (red below a
+third) and "building N%" in its summary. The end dialog and the result panel title add "N wall stretch(es)
+breached, N building(s) fallen, N men lost in the ruins". Testing aid: `--demo-breach` (the first wall unit's
+stretch and the three buildings nearest it knocked down).
+
+**AI.** Untouched (the follow-up stands). It does not crash or misuse rubble: its wall orders to a breached stretch
+become ground moves into the breach, its ladder parties at a breached stretch stand at the foot, and its paths use
+a breach once open like any street.
+
+**Tests.** `tests/determinism_test.gd --only=destr` (also in the full run): stretches breach after 4 / 6 / 9
+culverin-weight hits (walls 1 / 2 / 3, three city seeds each); 139 of 208 men on them lost (66 %); with the gates
+shut an attacking foot unit gets in through a breach (tick 1,160); stone throwers ordered at a wall unit take 2,880
+off its stretch; a held West house falls after 7 lobbed hits and its company loses 243 of 320 (75 %, four seeds),
+the rest out on the ground, the house unholdable and rubble; arrows are stopped 17 % of the time at a man without
+the cover trait in rubble (0 % in the open; want about 21), 61 % at a cover man there (rocks 60); a breach repeats
+exactly and survives snapshot / restore. The flat goldens and every open-field run hash are unmoved; the fortified
+runs' final hashes moved (cit_ops, gate_ops, siege_castrum / city / hill / oppidum / polis / punic / village@ai,
+siege_eq_ring3; not pinned constants, so nothing re-pinned).
+
+**Harness** (`tools/balance`, attacker wins %, 16 seeds; HEAD `5eef2c9eee` -> `d4109e6517`): rome_walls pooled walls 1
+/ 2 / 3: 58 -> 58, 34 -> 32, 25 -> 24 (no cell beyond its interval); west_walls pooled walls 0 / 1 / 2: 53 -> 54,
+38 -> 39, 31 -> 34 (none beyond its interval). The aim (walls 2-3 up a few points) is not met in Rome and only
+just in the West: the AI does not aim at walls yet, so breaches come only from shots at men on them. It is the AI
+follow-up's to deliver.

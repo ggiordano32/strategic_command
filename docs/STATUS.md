@@ -82,6 +82,8 @@ One bullet per open item pulled from the rows' **Open:** texts; the bracket name
 - General open items still standing: iPhone determinism is not cross-checked, deferred battle features (fatigue, horse archers, a manual brace), artillery unplaytested. [overview, "### Open items"]
 
 ### Siege AI and towns
+
+- Destruction AI follow-up (2026-10-23; the sim landed: `docs/design/siege_and_towns.md` "Destruction (as built)"): besieging artillery does not aim at wall stretches yet, assaults do not treat a breach as an entry, defenders do not leave a building below a third of its hit points; the walls odds are unchanged (rome_walls 58 / 32 / 24, west_walls 54 / 39 / 34) until then. Mortars (batch 1) use the bursting-shell rule. Later: fire burning houses down, campaign repair costs for breached walls.
 - Rome walls 1-2: the Greek / Punic citadel fight (the plaza is the citadel), Rome's castrum at walls 2 (38 -> 9 %), gate HP at walls 2 untested, Carthage the outlier; the long runs belong on the balance harness `tools/balance`. [row "Rome walls 1-2 balance pass"]
 - Forts leftovers: West walls 1 and 2 both at 41 % (45 / 35 wanted), the charger results are 30-minute draws, two bastion guns never bear on the town; no sally from the fort in every case, men in a house do not fight room to room, timber houses do not burn with men inside. [paragraph "Forts leftovers"]
 - Plan maps: walls 3 citadels on the trace, the natives' walls 2, per-town spread (a 32-seed look at the extreme towns), `S_BEATEN_TOWN_PCT` unification with the generated maps' 35 %. [paragraphs "Balance pass on plan maps", "Fort traces from the piece"]

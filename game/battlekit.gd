@@ -89,6 +89,11 @@ var i_cul := PackedInt32Array()     # culture of the instance (palette)
 var shadow_cell := 0.5              # metres per cell of the baked shadow
 var tropic := false                 # palms and the Caribbean palette (pack "west")
 var i_flash := PackedFloat32Array()
+var i_bld := PackedInt32Array()     # the layout building the instance draws (-1 none): hidden once it has fallen
+var _cur_bld := -1                  # (set while a building's pieces are added)
+var _rub_seen := 0                  # sim.rub_n drawn (destruction: rubble, hidden houses)
+var _rubble_cells := PackedInt32Array()
+var _rubble_node: Node2D
 var _gate_inst := PackedInt32Array()
 var _gate_state := PackedInt32Array()
 var _gate_hit := PackedInt32Array()
@@ -217,6 +222,7 @@ func _add(piece: String, pos: Vector2, e: Vector2, sx: float, sy: float, hs: flo
 	i_gate.append(gate)
 	i_cul.append(culture if cul < 0 else cul)
 	i_flash.append(0.0)
+	i_bld.append(_cur_bld)
 	return i_piece.size() - 1
 
 
@@ -367,7 +373,10 @@ func _cliff(c: Dictionary) -> void:
 func _build_houses() -> void:
 	if not lay.has("buildings"):
 		return
+	var bi := -1
 	for b in lay["buildings"]:
+		bi += 1
+		_cur_bld = bi
 		var a: Array = b
 		var kind: int = a[4]
 		if kind == MapGen.B_PIECE:
@@ -423,6 +432,7 @@ func _build_houses() -> void:
 			sx = (fw + 0.6) / float(an[2])
 			sy = sx
 		_add(pname, pos, e, sx, sy, 1.0, -1, style)
+	_cur_bld = -1
 	# The agora: a well for the fountain, a few stalls at its corners.
 	var ag: Array = lay.get("agora", lay.get("plaza", []))
 	if ag.size() >= 3:
@@ -442,7 +452,10 @@ func _build_houses() -> void:
 ## goods in the streets, the jetties.
 func _build_west() -> void:
 	var founder := clampi(int(lay.get("founder", 0)), 0, 7)
+	var bi := -1
 	for b in lay.get("buildings", []):
+		bi += 1
+		_cur_bld = bi
 		var a: Array = b
 		var kind: int = a[4]
 		if kind == MapGen.B_FORT or kind == MapGen.B_PIECE or (a.size() > 17 and int(a[17]) == 1):
@@ -493,6 +506,7 @@ func _build_west() -> void:
 			if h % 2 == 0:
 				e = -e
 		_add(pname, pos, e, sx, sy, 1.0, -1, cul)
+	_cur_bld = -1
 	_west_fort()
 	_west_stakes()
 	for pr in lay.get("props", []):
@@ -825,6 +839,7 @@ func _make_nodes() -> void:
 	_mmi_a = null
 	_mm_a = null
 	_strip_node = null
+	_rubble_node = null
 	_low_node = null
 	_shadow = null
 	shadow_ms = 0.0
@@ -889,6 +904,9 @@ func _make_nodes() -> void:
 		sn.material = smat
 		_strip_node = sn
 		add_child(sn)
+	_rubble_node = _RubbleDraw.new()
+	_rubble_node.kit = self
+	add_child(_rubble_node)
 	_mm = _make_mm(strip_at, i_piece.size())
 	_mmi = MultiMeshInstance2D.new()
 	_mmi.multimesh = _mm
@@ -915,6 +933,8 @@ func _make_mm(a: int, b: int) -> MultiMesh:
 func _write(buf: PackedFloat32Array, i: int, o := -1) -> void:
 	var p := i_piece[i]
 	var xf := _xform(i, p)
+	if fallen(i):
+		xf = Transform2D(Vector2.ZERO, Vector2.ZERO, xf.origin)  # (a fallen building: its rubble is drawn instead)
 	if o < 0:
 		o = i * 12
 	buf[o] = xf.x.x
@@ -978,8 +998,57 @@ func refresh() -> void:
 			_mm.set_instance_custom_data(mi, Color(buf[8], buf[9], buf[10], buf[11]))
 		if broke and _shadow != null:
 			_shadow.rebake_instance(i)
+	if sim.rub_n != _rub_seen:
+		_rubble_changed()
+		changed = true
 	if changed and _low_node != null:
 		_low_node.queue_redraw()
+
+
+# ------------------------------------------------------------- destruction ----
+
+## Instance i draws a building that has fallen (sim.ob_state).
+func fallen(i: int) -> bool:
+	var b := i_bld[i] if i < i_bld.size() else -1
+	return b >= 0 and b < sim.ob_state.size() and sim.ob_state[b] != 0
+
+
+## A stretch was breached or a building fell: the rubble cells again, the fallen buildings' pieces
+## hidden, the shadow under them baked again (High).
+func _rubble_changed() -> void:
+	_rub_seen = sim.rub_n
+	_rubble_cells = CityDraw.rubble_cells(sim)
+	if _rubble_node != null:
+		_rubble_node.queue_redraw()
+	var box := Rect2()
+	var have := false
+	for i in i_piece.size():
+		if not fallen(i):
+			continue
+		if _mm != null:
+			var buf := PackedFloat32Array()
+			buf.resize(12)
+			_write(buf, i, 0)
+			var mm: MultiMesh = _mm_a if i < strip_at and _mm_a != null else _mm
+			var mi := i if mm == _mm_a else i - strip_at
+			if mi >= 0 and mi < mm.instance_count:
+				mm.set_instance_transform_2d(mi, Transform2D(Vector2(buf[0], buf[4]), Vector2(buf[1], buf[5]), Vector2(buf[3], buf[7])))
+	for c in _rubble_cells:
+		var r := Rect2(Vector2(c % sim.ob_w, c / sim.ob_w) * 2.0, Vector2(2, 2))
+		box = r if not have else box.merge(r)
+		have = true
+	if have and _shadow != null:
+		_shadow.rebake_rect(box)
+
+
+## Rubble (destruction): the breached stretches and fallen buildings, over the wall strip and the
+## houses before it, under the gates and towers (High; the Low path draws it in _LowDraw).
+class _RubbleDraw extends Node2D:
+	var kit
+
+	func _draw() -> void:
+		if not kit._rubble_cells.is_empty():
+			kit.CityDraw.draw_rubble(self, kit.sim, kit._rubble_cells, float(kit.k), Vector2.ZERO, false)
 
 
 ## The town plan's landmark pieces (game/city_draw.gd draw_pieces), drawn once.
@@ -1003,8 +1072,13 @@ class _LowDraw extends Node2D:
 				draw_set_transform_matrix(Transform2D.IDENTITY)
 				var st: Vector3 = kit.STONE_TINT[kit.culture]
 				draw_mesh(strip_mesh, kit.TEX_S_LOW, Transform2D.IDENTITY, Color(st.x, st.y, st.z))
+			if i == kit.strip_at and not kit._rubble_cells.is_empty():
+				draw_set_transform_matrix(Transform2D.IDENTITY)
+				kit.CityDraw.draw_rubble(self, kit.sim, kit._rubble_cells, float(kit.k), Vector2.ZERO, true)
 			if i == n:
 				break
+			if kit.fallen(i):
+				continue
 			var p: int = kit.i_piece[i]
 			var an: Array = kit.Atlas.ANCHOR[p]
 			var r: Array = kit.Atlas.RECT[p]

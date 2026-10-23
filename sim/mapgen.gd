@@ -82,6 +82,7 @@ const C_STAIR := 7     # stair in the wall's inner face by a tower: walkway <-> 
 const C_GATE := 8      # + gate index (8..12; is_gate())
 const C_ROCK := 30     # rock outcrop (landforms, sim/landforms.gd): nobody; missiles pass over (cover in 2b)
 const C_CLIFF := 31    # cliff face: nobody; missiles pass over (sight in 2b)
+const C_RUBBLE := 32   # a breached wall stretch's or a fallen building's cells (set by the battle sim, never by the generator): ground, slow, low cover
 
 # Passability bits (BattleSim.nav).
 const NAV_GROUND := 1

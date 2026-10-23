@@ -340,6 +340,11 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=destr" in OS.get_cmdline_user_args():
+		_check_destr()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=occupy" in OS.get_cmdline_user_args():
 		_check_occupy()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -405,6 +410,7 @@ func _init() -> void:
 	_check_west()
 	_check_fort()
 	_check_occupy()
+	_check_destr()
 	_check_town()
 	_check_sea()
 	if "--only=equipment" in OS.get_cmdline_user_args():
@@ -7301,6 +7307,376 @@ func _occ_run(p_seed: int, snaps: Array) -> Dictionary:
 	ev["hashes"] = hashes
 	ev["twin_bad"] = twin_bad
 	return ev
+
+
+# ------------------------------------------------------------ destruction ---
+## Walls and buildings fall (docs/design/siege_and_towns.md "Destruction",
+## 2026-10-23; "--only=destr", also in the full run). (1) Rome, walls 1 / 2 /
+## 3, three city seeds each: a stretch with a defending unit on it breaches
+## after ceil(WS_HP / 360) culverin-weight hits (a stone's too), the men on
+## it die at about BREACH_KILL_PCT (summed over the nine), the survivors are
+## on the ground inside (none on a wall cell), the unit is off the wall, its
+## cells are rubble; with the gates shut an attacking foot unit then reaches
+## the ground inside through the breach (walls 1); stone throwers ordered at
+## a wall unit damage its stretch. (2) West, four seeds: a musket company in
+## a house; the house falls after ceil(hp / 540) lobbed hits, the company
+## loses about COLLAPSE_KILL_PCT and is out on the ground, the house cannot
+## be held again and its cells are rubble. (3) Rubble cover: arrows at a man
+## without the cover trait in rubble are stopped about COVER_STOP x
+## RUBBLE_COVER_PCT % of the time (in the open: none), at a cover man there
+## as among rocks (COVER_STOP[COV_ROCK]). (4) A breach repeats exactly and
+## survives snapshot / restore.
+func _check_destr() -> void:
+	var bad: Array = []
+	var men_on := 0
+	var lost := 0
+	var hits_txt: Array[String] = []
+	var passed := -1
+	var stone_dmg := 0
+	for walls in [1, 2, 3]:
+		for cs in [31, 32, 33]:
+			var sc := Scenarios.siege_test(cs, 2, walls, MapGen.PAL_DRY, Terrain.K_FLAT)
+			sc["ai_sides"] = []
+			sc["orders"] = []
+			sc["deploy_zones"] = []
+			var sim := BattleSim.new()
+			sim.setup(sc, 3)
+			var wu := -1
+			var att := -1
+			var stone := -1
+			for u in sim.n_units:
+				if sim.u_side[u] == sim.city_def and sim.u_wall[u] > 0 and wu < 0:
+					wu = u
+				elif sim.u_side[u] != sim.city_def and UT.base_of(sim.u_type[u]) == UT.HEAVY and att < 0:
+					att = u
+				elif sim.u_side[u] != sim.city_def and UT.base_of(sim.u_type[u]) == UT.STONE and stone < 0:
+					stone = u
+			if wu < 0 or att < 0:
+				bad.append("destr: walls %d seed %d: no wall unit (%d) or attacker (%d)" % [walls, cs, wu, att])
+				continue
+			for t in 20:
+				sim.step()
+			var sg: int = sim.u_wall[wu] - 1
+			var cell := -1
+			for c in sim.ws_cell.size():
+				if sim.ws_cell[c] == sg + 1 and sim.obs[c] == MapGen.C_WALK:
+					cell = c
+					break
+			var on := 0
+			for u in sim.n_units:
+				var base: int = sim.u_slot_base[u]
+				for s in sim.u_alive[u]:
+					var i: int = sim.slot_soldier[base + s]
+					if sim.ws_cell[(sim.pos_y[i] >> 11) * sim.ob_w + (sim.pos_x[i] >> 11)] == sg + 1:
+						on += 1
+			var k0: int = sim.stat_breach_kill
+			var mor0: int = sim.u_morale[wu]
+			var x := ((cell % sim.ob_w) << 11) + 1024
+			var y := ((cell / sim.ob_w) << 11) + 1024
+			var n := 0
+			while sim.ws_state[sg] == BattleSim.WS_STANDING and n < 40:
+				sim._destr_hit(x, y, BattleSim.GATE_BOLT * 450 / 100, att, 100)
+				n += 1
+			var want: int = (BattleSim.WS_HP[walls] + 359) / 360
+			hits_txt.append(str(n))
+			if n != want:
+				bad.append("destr: walls %d seed %d: breached after %d hits (want %d)" % [walls, cs, n, want])
+			men_on += on
+			lost += sim.stat_breach_kill - k0
+			if sim.u_alive[wu] > 0:
+				if sim.u_wall[wu] != 0 or sim.u_morale[wu] >= mor0:
+					bad.append("destr: walls %d seed %d: the wall unit still on the wall (%d) or not shaken" % [walls, cs, sim.u_wall[wu]])
+				var base2: int = sim.u_slot_base[wu]
+				for s in sim.u_alive[wu]:
+					var i2: int = sim.slot_soldier[base2 + s]
+					if (sim.nav_at(sim.pos_x[i2], sim.pos_y[i2]) & MapGen.NAV_GROUND) == 0 \
+							or sim.obs_kind(sim.pos_x[i2], sim.pos_y[i2]) == MapGen.C_RUBBLE:
+						bad.append("destr: walls %d seed %d: a survivor off the ground inside" % [walls, cs])
+						break
+			if sim.obs[cell] != MapGen.C_RUBBLE or (sim.nav[cell] & MapGen.NAV_GROUND) == 0:
+				bad.append("destr: walls %d seed %d: the breach is not rubble ground" % [walls, cs])
+			if walls == 1 and cs == 31:
+				passed = _destr_pass(sim, sc, sg, att)
+			if walls == 1 and cs == 32 and stone >= 0:
+				stone_dmg = _destr_stones(sc, wu, stone)
+	var pct := lost * 100 / maxi(men_on, 1)
+	if men_on < 30 or pct < 45 or pct > 75:
+		bad.append("destr: %d of %d men on the breached stretches lost (%d%%, want about %d)" % [lost, men_on, pct, BattleSim.BREACH_KILL_PCT])
+	if passed < 0:
+		bad.append("destr: no attacking foot got in through the breach with the gates shut (%d)" % passed)
+	if stone_dmg <= 0:
+		bad.append("destr: stone throwers at a wall unit did not hurt its stretch")
+	var col := _destr_collapse()
+	if not str(col.get("bad", "")).is_empty():
+		bad.append(col["bad"])
+	var cov := _destr_cover()
+	if not str(cov.get("bad", "")).is_empty():
+		bad.append(cov["bad"])
+	var rep := _destr_repeat()
+	if rep != "":
+		bad.append(rep)
+	if bad.is_empty():
+		print("PASS destruction: stretches breached after %s hits (walls 1 / 2 / 3, three seeds each), %d of %d men on them lost (%d%%), an attacker in through a breach at tick %d with the gates shut, stones at a wall unit took %d off its stretch; houses fell after %s hits, %d of %d men inside lost (%d%%), the rest out; rubble stopped %d%% of arrows at a man without cover (open %d%%), %d%% at a cover man (rocks %d%%); identical on repeat and across snapshot / restore" % [
+			"/".join(hits_txt), lost, men_on, pct, passed, stone_dmg, col["hits"], int(col["lost"]), int(col["men"]), int(col["pct"]),
+			int(cov["rub"]), int(cov["open"]), int(cov["cov"]), BattleSim.COVER_STOP[BattleSim.COV_ROCK]])
+	else:
+		for b in bad:
+			_fail(str(b))
+
+
+## An attacking foot unit ordered to the ground inside a breached stretch sg (the gates shut, no AI):
+## the tick its centre is on that ground's piece (the pieces with every gate shut), -1 never.
+func _destr_pass(sim: BattleSim, _sc: Dictionary, sg: int, att: int) -> int:
+	var l := BattleSim.seg_len(sim, sg)
+	var mp := BattleSim.seg_pt(sim, sg, l / 2)
+	var dc := FM.cos_a(sim.ws_dir[sg])
+	var ds := FM.sin_a(sim.ws_dir[sg])
+	var ix: int = mp.x - dc * (sim.ws_in[sg] + 6 * M) / FM.TRIG_ONE
+	var iy: int = mp.y - ds * (sim.ws_in[sg] + 6 * M) / FM.TRIG_ONE
+	var want: int = sim.cmp[(iy >> 11) * sim.ob_w + (ix >> 11)]
+	if want < 0 or sim.reach_at(sim.u_cx[att], sim.u_cy[att]) != sim.reach_at(ix, iy):
+		return -2
+	sim.queue_order(BattleSim.make_move_order(sim.tick, att, ix, iy, sim.ws_dir[sg] + 512, 0, 1))
+	var t_end: int = sim.tick + 2400
+	while sim.tick < t_end:
+		sim.step()
+		for g in sim.n_gates:
+			if sim.g_state[g] != BattleSim.GATE_CLOSED and sim.g_cit[g] == 0:
+				return -3
+		if sim.tick % 10 == 0 and sim.cmp[(sim.u_cy[att] >> 11) * sim.ob_w + (sim.u_cx[att] >> 11)] == want:
+			return sim.tick
+	return -1
+
+
+## Stone throwers ordered at a wall unit: the hit points they take off its stretch in 2,000 ticks.
+func _destr_stones(sc: Dictionary, wu: int, stone: int) -> int:
+	var s2 := sc.duplicate(true)
+	s2["orders"] = [BattleSim.make_attack_order(0, stone, wu, 0)]
+	var sim := BattleSim.new()
+	sim.setup(s2, 3)
+	while sim.tick < 2000:
+		sim.step()
+	return sim.stat_wall_dmg
+
+
+## West: a musket company in a house; the house struck by lobbed hits until it falls, four seeds.
+func _destr_collapse() -> Dictionary:
+	var men := 0
+	var lost := 0
+	var hits: Array[String] = []
+	var bad := ""
+	for sd in [7, 8, 9, 10]:
+		var sc := _occ_sc()
+		var sim := BattleSim.new()
+		sim.setup(sc, sd)
+		var d := -1
+		var mus := -1
+		for u in sim.n_units:
+			if sim.u_side[u] == 1 and d < 0:
+				d = u
+			elif sim.u_side[u] == 0 and UT.key_of(sim.u_type[u]) == "musketeers":
+				mus = u
+		var bb := sim.occupy_near(d, sim.u_ax[d], sim.u_ay[d], 200 * M)
+		sc["orders"] = [{"tick": 0, "type": BattleSim.ORDER_OCCUPY, "unit": d, "building": bb, "run": 1}]
+		sim = BattleSim.new()
+		sim.setup(sc, sd)
+		while sim.tick < 400 and sim.u_occ[d] == 0:
+			sim.step()
+		if sim.u_occ[d] == 0:
+			bad = "destr: seed %d: the company never got into building %d" % [sd, bb]
+			break
+		var in0: int = sim.u_alive[d]
+		var cell := -1
+		for c in sim.ob_cell.size():
+			if sim.ob_cell[c] == bb + 1:
+				cell = c
+				break
+		var x := ((cell % sim.ob_w) << 11) + 1024
+		var y := ((cell / sim.ob_w) << 11) + 1024
+		var n := 0
+		while sim.ob_state[bb] == BattleSim.WS_STANDING and n < 80:
+			sim._destr_hit(x, y, BattleSim.GATE_STONE, mus, BattleSim.OB_ARC_PCT)
+			n += 1
+		var dmg := BattleSim.GATE_STONE * BattleSim.OB_ARC_PCT / 100
+		var want: int = (sim.ob_hp0[bb] + dmg * 100 - 1) / (dmg * 100)
+		hits.append(str(n))
+		if n != want:
+			bad = "destr: seed %d: house %d fell after %d hits (want %d)" % [sd, bb, n, want]
+		men += in0
+		lost += in0 - sim.u_alive[d]
+		if sim.u_occ[d] != 0 or sim.ob_u[bb] != 0 or BattleSim.occupy_refusal(sim, d, bb) != "it has fallen" \
+				or sim.obs[cell] != MapGen.C_RUBBLE or (sim.nav[cell] & MapGen.NAV_GROUND) == 0:
+			bad = "destr: seed %d: after the fall: in it %d, held by %d, refusal '%s', rubble %d" % [sd, sim.u_occ[d], sim.ob_u[bb],
+				BattleSim.occupy_refusal(sim, d, bb), 1 if sim.obs[cell] == MapGen.C_RUBBLE else 0]
+		var base: int = sim.u_slot_base[d]
+		for s in sim.u_alive[d]:
+			var i: int = sim.slot_soldier[base + s]
+			if (sim.nav_at(sim.pos_x[i], sim.pos_y[i]) & MapGen.NAV_GROUND) == 0:
+				bad = "destr: seed %d: a survivor still inside the walls of the house" % sd
+				break
+		for t in 50:
+			sim.step()
+	var pct := lost * 100 / maxi(men, 1)
+	if bad == "" and (pct < 55 or pct > 85):
+		bad = "destr: %d of %d men in the fallen houses lost (%d%%, want about %d)" % [lost, men, pct, BattleSim.COLLAPSE_KILL_PCT]
+	return {"bad": bad, "men": men, "lost": lost, "pct": pct, "hits": "/".join(hits)}
+
+
+## Arrows (an arcing missile) landing on one man after another: the % stopped, a man of unit tu
+## standing in rubble (rub) or on open ground.
+func _destr_shots(sim: BattleSim, tu: int, shooter: int, rub: bool, n: int) -> int:
+	var cells := PackedInt32Array()
+	for c in sim.obs.size():
+		if sim.obs[c] == (MapGen.C_RUBBLE if rub else MapGen.C_OPEN):
+			if rub or (sim.veg[mini(((c / sim.ob_w) >> 1) * sim.veg_w + ((c % sim.ob_w) >> 1), sim.veg.size() - 1)] & MapGen.V_DENS) == 0:
+				cells.append(c)
+	if cells.is_empty():
+		return -1
+	var arc_ty := UT.ARCHER
+	var p: int = sim.pr_free
+	var stops := 0
+	var shots := 0
+	sim.u_cvb[tu] = 0  # (the landing finds the nearest man of the unit, not a formation slot)
+	var k := 0
+	while shots < n and sim.u_alive[tu] > 0:
+		var i: int = sim.slot_soldier[sim.u_slot_base[tu] + k % sim.u_alive[tu]]
+		k += 1
+		var c: int = cells[(k * 7919) % cells.size()] if rub else -1
+		if rub:
+			sim.pos_x[i] = ((c % sim.ob_w) << 11) + 1024
+			sim.pos_y[i] = ((c / sim.ob_w) << 11) + 1024
+		elif sim.obs_kind(sim.pos_x[i], sim.pos_y[i]) != MapGen.C_OPEN or sim.veg_d(sim.pos_x[i], sim.pos_y[i]) > 0:
+			continue
+		sim.u_gnd[tu] = 0
+		var s0: int = sim.stat_rubble_stop + sim.stat_cover_stop + sim.stat_ground_stop + sim.stat_veg_stop + sim.stat_wall_cover
+		sim.pr_sx[p] = sim.pos_x[i]
+		sim.pr_sy[p] = maxi(sim.pos_y[i] - 40 * M, 0)
+		sim.pr_x[p] = sim.pos_x[i]
+		sim.pr_y[p] = sim.pos_y[i]
+		sim.pr_t0[p] = sim.tick
+		sim.pr_unit[p] = shooter
+		sim.pr_ty[p] = arc_ty
+		sim.pr_tu[p] = tu
+		sim.pr_ak[p] = -1
+		sim._land(p)
+		shots += 1
+		if sim.stat_rubble_stop + sim.stat_cover_stop + sim.stat_ground_stop + sim.stat_veg_stop + sim.stat_wall_cover > s0:
+			stops += 1
+	sim.u_cvb[tu] = -1
+	return stops * 100 / maxi(shots, 1)
+
+
+## Rubble cover: a West house brought down, then arrows at men of a company without the cover trait
+## in its rubble and in the open, and at men of a cover company in the rubble.
+func _destr_cover() -> Dictionary:
+	var sc := Scenarios.west_town(11, 0, 0, 1, Terrain.K_FLAT, MapGen.PAL_DRY, MapGen.CUL_LATIN)
+	var keep: Array = []
+	var got := {}
+	for ud in sc["units"]:
+		var ty := int(ud["type"])
+		var key := "%d:%s" % [int(ud["side"]), UT.key_of(ty)]
+		var cv := UT.stat(ty, "cover") != 0
+		if (key == "1:musketeers" or key == "0:musketeers" or (cv and not got.has("cover"))) and not got.has(key):
+			got[key] = true
+			if cv:
+				got["cover"] = true
+			keep.append(ud)
+	sc["units"] = keep
+	sc["deploy_zones"] = []
+	sc["ai_sides"] = []
+	var sim := BattleSim.new()
+	sim.setup(sc, 5)
+	var plain := -1
+	var cover := -1
+	var shooter := -1
+	for u in sim.n_units:
+		if sim.t_cover[sim.u_otype[u]] != 0 and cover < 0:
+			cover = u
+		elif sim.u_side[u] == 1 and plain < 0:
+			plain = u
+		elif sim.u_side[u] == 0 and shooter < 0 and sim.t_cover[sim.u_otype[u]] == 0:
+			shooter = u
+	var bb := -1
+	var best := 1 << 40
+	for b in sim.ob_hp.size():
+		if sim.ob_hp0[b] <= 0:
+			continue
+		var d := 0
+		for c in sim.ob_cell.size():
+			if sim.ob_cell[c] == b + 1:
+				d += 1
+		if d >= 12 and d < best:
+			best = d
+			bb = b
+	var cell := sim.ob_cell.find(bb + 1)
+	while sim.ob_state[bb] == BattleSim.WS_STANDING:
+		sim._destr_hit(((cell % sim.ob_w) << 11) + 1024, ((cell / sim.ob_w) << 11) + 1024, 400, shooter, 100)
+	var open_pct := _destr_shots(sim, plain, shooter, false, 200)
+	var rub_pct := _destr_shots(sim, plain, shooter, true, 400)
+	var cov_pct := _destr_shots(sim, cover, shooter, true, 400)
+	var want_rub: int = BattleSim.COVER_STOP[BattleSim.COV_RUBBLE] * BattleSim.RUBBLE_COVER_PCT / 100
+	var want_cov: int = BattleSim.COVER_STOP[BattleSim.COV_ROCK]
+	var bad := ""
+	if cover < 0 or plain < 0 or open_pct < 0 or open_pct > 5 or absi(rub_pct - want_rub) > 7 or absi(cov_pct - want_cov) > 9 \
+			or BattleSim.COVER_STOP[BattleSim.COV_RUBBLE] != want_cov:
+		bad = "destr: rubble cover: stopped in the open %d%%, in rubble %d%% (want about %d), a cover man in rubble %d%% (want about %d, as among rocks); units %d / %d" % [
+			open_pct, rub_pct, want_rub, cov_pct, want_cov, plain, cover]
+	return {"bad": bad, "open": open_pct, "rub": rub_pct, "cov": cov_pct}
+
+
+## A breach in a running siege (stone throwers at a wall unit, AI both sides): identical on repeat
+## (every 50 ticks) and across snapshot / restore (at the breach + 20 ticks, 150 ticks on); "" if so.
+func _destr_repeat() -> String:
+	var sc := Scenarios.siege_test(31, 2, 1, MapGen.PAL_DRY, Terrain.K_FLAT)
+	sc["deploy_zones"] = []
+	var a := BattleSim.new()
+	a.setup(sc, 3)
+	var b := BattleSim.new()
+	b.setup(sc, 3)
+	var sg := -1
+	for c in a.ws_cell.size():
+		if a.ws_cell[c] > 0 and a.obs[c] == MapGen.C_WALK:
+			sg = a.ws_cell[c] - 1
+			break
+	var cell := a.ws_cell.find(sg + 1)
+	var att := -1
+	for u in a.n_units:
+		if a.u_side[u] != a.city_def:
+			att = u
+			break
+	var snap_t := -1
+	while a.tick < 1200:
+		if a.tick == 300:
+			# (Both copies: the stretch knocked down at once, the men on it lost or thrown down.)
+			for s in [a, b]:
+				while (s as BattleSim).ws_state[sg] == BattleSim.WS_STANDING:
+					(s as BattleSim)._destr_hit(((cell % a.ob_w) << 11) + 1024, ((cell / a.ob_w) << 11) + 1024, 500, att, 100)
+			snap_t = 320
+		a.step()
+		b.step()
+		if a.tick % 50 == 0 and a.state_hash() != b.state_hash():
+			return "destr: a breach diverged on repeat at tick %d" % a.tick
+		if a.tick == snap_t:
+			var c1 := BattleSim.new()
+			c1.setup(sc, 3)
+			var c2 := BattleSim.new()
+			c2.setup(sc, 3)
+			if not c1.restore(a.snapshot()) or not c2.restore(a.snapshot()):
+				return "destr: a snapshot with a breach did not restore"
+			if c1.state_hash() != a.state_hash() or c1.obs[cell] != MapGen.C_RUBBLE:
+				return "destr: the restored copy differs (hash or rubble)"
+			for t in 150:
+				c1.step()
+				c2.step()
+			var probe := a.snapshot()
+			var a2 := BattleSim.new()
+			a2.setup(sc, 3)
+			a2.restore(probe)
+			for t in 150:
+				a2.step()
+			if c1.state_hash() != c2.state_hash() or c1.state_hash() != a2.state_hash():
+				return "destr: the restored copies diverged"
+	return ""
 
 
 # ------------------------------------------ the shared town plan (phase C) ---

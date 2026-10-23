@@ -13,6 +13,7 @@ const CityDraw := preload("res://game/city_draw.gd")
 const BattleKit := preload("res://game/battlekit.gd")
 const CityStreets := preload("res://game/city_streets.gd")
 const MapGen := preload("res://sim/mapgen.gd")
+const Quality := preload("res://game/quality.gd")
 
 var sim
 var px_per_m := 10.0
@@ -64,7 +65,8 @@ func setup(p_sim, p_px_per_m: float) -> void:
 # ---------------------------------------------------------------- paths ---
 # The Paths overlay (view only): a faint red diagonal hatch on every cell the
 # sim says men cannot stand in on the ground (BattleSim.nav's ground bit:
-# houses, walls, rocks, cliffs; the sea is left clear), one mask texture of the
+# houses, walls, rocks, cliffs; the sea is left clear), a sparser amber one
+# the other way on rubble (a breach, a fallen house: slow going, low cover), one mask texture of the
 # map's 2 m cells built once on first use, hatched by a shader in world
 # space, faded by its alpha (game/battle.gd: 2 s after the selection changes).
 
@@ -81,12 +83,22 @@ void fragment() {
 	float d = abs(h - 0.5) * 2.0;
 	float w = max(fwidth(d), 0.02);
 	float line = smoothstep(0.62 - w, 0.62 + w, d);
-	COLOR = vec4(0.95, 0.30, 0.22, m * (0.10 + 0.55 * line) * alpha);
+	if (m > 0.75) {
+		COLOR = vec4(0.95, 0.30, 0.22, (0.10 + 0.55 * line) * alpha);
+	} else {
+		// rubble (mask 0.5): slow going, low cover - a sparser amber hatch the other way
+		float h2 = fract((wpos.x - wpos.y) / (period * 1.6));
+		float d2 = abs(h2 - 0.5) * 2.0;
+		float w2 = max(fwidth(d2), 0.02);
+		float l2 = smoothstep(0.75 - w2, 0.75 + w2, d2);
+		COLOR = vec4(0.98, 0.72, 0.25, step(0.25, m) * (0.06 + 0.5 * l2) * alpha);
+	}
 }
 """
 var paths_node: Sprite2D
 var paths_cells := 0          # cells hatched (tests)
 var paths_alpha := 0.0
+var _paths_rub := 0           # sim.rub_n the mask was built for (destruction: rebuilt when rubble appears)
 
 
 static func load_paths_pref() -> bool:
@@ -111,6 +123,9 @@ func paths_mask() -> PackedByteArray:
 		if (sim.nav[i] & MapGen.NAV_GROUND) == 0 and sim.obs[i] != MapGen.C_WATER:
 			px[i] = 255
 			cnt += 1
+		elif sim.obs[i] == MapGen.C_RUBBLE:
+			px[i] = 128  # (rubble: walkable, slow; a sparse yellow hatch)
+	_paths_rub = sim.rub_n
 	paths_cells = cnt
 	return px
 
@@ -124,6 +139,9 @@ func set_paths_alpha(a: float) -> void:
 		return
 	if sim == null or sim.obs_on == 0 or sim.city_on == 0:
 		return
+	if paths_node != null and _paths_rub != sim.rub_n:
+		paths_node.texture = ImageTexture.create_from_image(Image.create_from_data(sim.ob_w, sim.ob_h, false,
+			Image.FORMAT_R8, paths_mask()))
 	if paths_node == null:
 		var img := Image.create_from_data(sim.ob_w, sim.ob_h, false, Image.FORMAT_R8, paths_mask())
 		paths_node = Sprite2D.new()
@@ -202,9 +220,18 @@ static func draw_bridge(ci: CanvasItem, r: Dictionary, sc: float, o: Vector2) ->
 ## The gates, redrawn every tick.
 class _Gates extends Node2D:
 	var layer
+	var _rub_seen := 0
+	var _rub_cells := PackedInt32Array()
 
 	func _draw() -> void:
 		var sim = layer.sim
+		if not layer.use_kit and sim.rub_n > 0:
+			# (The drawn style without the kit: the rubble of breaches and fallen houses here; the kit
+			# draws its own, game/battlekit.gd.)
+			if sim.rub_n != _rub_seen:
+				_rub_seen = sim.rub_n
+				_rub_cells = CityDraw.rubble_cells(sim)
+			CityDraw.draw_rubble(self, sim, _rub_cells, layer.px_per_m, Vector2.ZERO, Quality.is_low())
 		for g in sim.n_gates:
 			CityDraw.draw_gate(self, layer.lay, g, sim.g_state[g], sim.tick - sim.g_hit_t[g] < 4, sim.tick,
 				layer.px_per_m, Vector2.ZERO, layer.use_kit)

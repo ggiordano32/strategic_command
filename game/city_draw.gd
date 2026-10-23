@@ -1001,3 +1001,59 @@ static func draw_surround(ci: CanvasItem, plan: Dictionary, k: float, o: Vector2
 	for oc in plan.get("orchards", []):
 		var rr: Rect2 = oc
 		ci.draw_rect(Rect2(o + rr.position * k, rr.size * k), base.darkened(0.07) * Color(1, 1, 1, 0.55))
+
+
+# ------------------------------------------------------------ destruction ---
+
+const RUBBLE_DUST := Color(0.60, 0.55, 0.46)
+const RUBBLE_STONES: Array[Color] = [Color(0.56, 0.53, 0.48), Color(0.66, 0.62, 0.55), Color(0.47, 0.44, 0.40),
+	Color(0.62, 0.52, 0.40), Color(0.52, 0.40, 0.30)]
+
+
+## The 2 m cells of the battle's rubble (a breached wall stretch, a fallen building: sim.obs C_RUBBLE),
+## in index order. Empty when nothing has fallen.
+static func rubble_cells(sim) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	if sim == null or sim.rub_n <= 0:
+		return out
+	var obs: PackedByteArray = sim.obs
+	for c in obs.size():
+		if obs[c] == MapGen.C_RUBBLE:
+			out.append(c)
+	return out
+
+
+## Rubble over `cells` (sim 2 m cells): a dusty bed a little wider than each cell, broken stones and
+## blocks scattered on it by a hash of the cell (the same every frame), each with a shadow to the south
+## east. `low` (Graphics Low): two stones a cell, no shadows. Scale sc px a metre, offset o.
+static func draw_rubble(ci: CanvasItem, sim, cells: PackedInt32Array, sc: float, o: Vector2, low: bool) -> void:
+	var ow: int = sim.ob_w
+	for c in cells:
+		var i := c % ow
+		var j := c / ow
+		var h := ((i * 73856093) ^ (j * 19349663)) & 0x7FFFFFFF
+		var p := o + Vector2(i * 2, j * 2) * sc
+		ci.draw_rect(Rect2(p - Vector2(0.25, 0.25) * sc, Vector2(2.5, 2.5) * sc),
+			RUBBLE_DUST.darkened(float(h % 7) * 0.025))
+	for c in cells:
+		var i := c % ow
+		var j := c / ow
+		var h := ((i * 73856093) ^ (j * 19349663)) & 0x7FFFFFFF
+		var p := o + Vector2(i * 2, j * 2) * sc
+		var n := 2 if low else 4
+		for q in n:
+			var hq := ((h >> (q * 5)) * 2654435761 + q * 40503) & 0x7FFFFFFF
+			var at := p + Vector2(float(hq % 19) / 19.0 * 2.0, float((hq / 19) % 19) / 19.0 * 2.0) * sc
+			var r := (0.22 + float((hq / 361) % 6) * 0.07) * sc
+			var col: Color = RUBBLE_STONES[(hq / 2166) % RUBBLE_STONES.size()]
+			var ang := float((hq / 13) % 31) * 0.2
+			var ax := Vector2(cos(ang), sin(ang)) * r
+			var ay := Vector2(-ax.y, ax.x) * 0.7
+			var poly := PackedVector2Array([at - ax - ay, at + ax * 0.9 - ay * 1.1, at + ax + ay * 0.8, at - ax * 0.8 + ay])
+			if not low:
+				var sh := Vector2(0.18, 0.18) * sc
+				var spoly := PackedVector2Array()
+				for v in poly:
+					spoly.append(v + sh)
+				ci.draw_colored_polygon(spoly, Color(0.1, 0.08, 0.06, 0.35))
+			ci.draw_colored_polygon(poly, col)

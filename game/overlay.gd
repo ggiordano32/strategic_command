@@ -110,7 +110,8 @@ const FX_FIRE := 1     # a fire missile: sparks, then smoke
 const FX_BLAST := 2    # an explosive stone: flash, ring, lingering smoke
 const FX_DUST := 3     # an ordinary stone: a puff
 const FX_CHIP := 4     # a ball stopped by a wall, house or rock (phase C0): a pale flash, chips and a lingering dust cloud
-const FX_LIFE := [0.0, 2.0, 3.0, 0.8, 1.6]
+const FX_RUIN := 5     # a wall stretch breached or a building fallen (destruction): a dust haze over it fading for 10 s
+const FX_LIFE := [0.0, 2.0, 3.0, 0.8, 1.6, 10.0]
 const COL_SMOKE := Color(0.22, 0.2, 0.19)
 var _clock := 0.0
 var fx_trk_us := 0
@@ -130,6 +131,7 @@ var _tr_tick := -1
 ## layer reads it: the muzzle flash frame shows only for a fresh shot).
 var shot_t := PackedInt32Array()
 var _bk_seen := -1                     # blocked shots seen so far (sim.bk_n; -1: not looked yet)
+var _ev_seen := -1                     # destruction events seen so far (sim.ev_n; -1: not looked yet)
 # Gun smoke (docs/DESIGN.md "Firearms"; view only, no sim state): each gun
 # missile seen leaving puts a white puff (one per SMOKE_CELL_M cell per
 # volley) in front of the man or engine that fired it, with a muzzle flash
@@ -187,6 +189,8 @@ func _process(delta: float) -> void:
 		if sim.ft_on != 0:
 			_blocked_shots()
 		fx_trk_us += Time.get_ticks_usec() - t0
+	if sim.tick != _tr_tick and sim.city_on != 0:
+		_destr_events()
 	_tr_tick = sim.tick
 
 
@@ -271,6 +275,36 @@ func _blocked_shots() -> void:
 		var r := k % BattleSim.BK_N
 		_fx_spawn(FX_CHIP, to_px(sim.bk_x[r], sim.bk_y[r]), 0.0)
 	_bk_seen = n
+
+
+## Walls breached and buildings fallen since the last look (the sim's events ring, BattleSim.ev_*):
+## dust rings along the piece (FX_BLAST) and a haze over it fading for 10 s (FX_RUIN).
+func _destr_events() -> void:
+	var n: int = sim.ev_n
+	if _ev_seen < 0 or n < _ev_seen:
+		_ev_seen = n  # (a fresh view or a restored sim: nothing to replay)
+		return
+	for k in range(maxi(_ev_seen, n - BattleSim.EV_N), n):
+		var r := k % BattleSim.EV_N
+		var a: int = sim.ev_a[r]
+		var pts: Array[Vector2] = []
+		var rad := 0.0
+		if sim.ev_k[r] == BattleSim.EV_BREACH and a < sim.ws_x0.size():
+			var p0 := to_px(sim.ws_x0[a], sim.ws_y0[a])
+			var p1 := to_px(sim.ws_x1[a], sim.ws_y1[a])
+			for q in 4:
+				pts.append(p0.lerp(p1, (q + 0.5) / 4.0))
+			rad = p0.distance_to(p1) / 4.0
+		elif sim.ev_k[r] == BattleSim.EV_COLLAPSE:
+			var blds: Array = (sim.map_info.get("city", {}) as Dictionary).get("buildings", [])
+			if a < blds.size():
+				var b: Array = blds[a]
+				pts.append(Vector2(float(int(b[0]) + int(b[2])), float(int(b[1]) + int(b[3]))) * 0.5 * px_per_m)
+				rad = maxf(float(int(b[2]) - int(b[0])), float(int(b[3]) - int(b[1]))) * 0.5 * px_per_m
+		for pt in pts:
+			_fx_spawn(FX_BLAST, pt, maxf(rad, px_per_m * 3.0))
+			_fx_spawn(FX_RUIN, pt, maxf(rad, px_per_m * 3.0))
+	_ev_seen = n
 
 
 ## Gun missile p (of type ty) has just left: a big puff (an engine) or a bank puff (a man).
@@ -383,6 +417,14 @@ func _draw_fx(lw: float) -> void:
 					var ang := float(sd % 5) + k * 1.57
 					var c := p + Vector2(cos(ang) * rr * 0.4 * (0.4 + s) + pm * s, sin(ang) * rr * 0.3 - rr * (0.3 + 1.2 * s))
 					draw_circle(c, rr * (0.45 + 0.5 * s), Color(COL_SMOKE, 0.42 * clampf(1.0 - s, 0.0, 1.0) * minf(1.0, a * 5.0)))
+			FX_RUIN:
+				# A pale dust haze over the rubble, settling and fading over 10 s.
+				var f := a / 10.0
+				var rr2 := _fx_rad[i]
+				for k in 3:
+					var ang2 := float((sd + k * 5) % 9) * 0.7
+					var c2 := p + Vector2(cos(ang2) * rr2 * 0.35 + pm * 1.5 * f * k, sin(ang2) * rr2 * 0.25 - rr2 * 0.3 * f)
+					draw_circle(c2, rr2 * (0.7 + 0.5 * f), Color(0.72, 0.66, 0.56, 0.38 * (1.0 - f) * minf(1.0, a * 3.0)))
 			FX_DUST:
 				var f := a / 0.8
 				draw_circle(p, pm * (0.35 + 0.9 * f), Color(0.55, 0.45, 0.32, 0.4 * (1.0 - f)))

@@ -549,6 +549,34 @@ func _apply_debug_args() -> void:
 				_queue(BattleSim.make_move_order(0, wu, tx, ty, sim.u_face[wu], 10 * 1024, 0))
 			else:
 				_come_down()
+		elif a == "--demo-breach":
+			# --demo-breach: the stretch of the first wall unit knocked down and the three
+			# buildings nearest it brought down (destruction); for screenshots.
+			var wb := -1
+			for u in sim.n_units:
+				if sim.u_wall[u] > 0:
+					wb = u
+					break
+			if wb >= 0:
+				var sgb: int = sim.u_wall[wb] - 1
+				var cb: int = sim.ws_cell.find(sgb + 1)
+				while cb >= 0 and sim.ws_state[sgb] == 0:
+					sim._destr_hit(((cb % sim.ob_w) << 11) + 1024, ((cb / sim.ob_w) << 11) + 1024, 500, -1, 100)
+				var mp := BattleSim.seg_pt(sim, sgb, BattleSim.seg_len(sim, sgb) / 2)
+				camera.position = Vector2(mp) / M * PX_PER_M
+				var near: Array = []
+				for b in sim.ob_hp.size():
+					var cc: int = sim.ob_cell.find(b + 1)
+					if cc >= 0:
+						near.append([absi((cc % sim.ob_w) * 2048 - mp.x) + absi((cc / sim.ob_w) * 2048 - mp.y), cc])
+				near.sort()
+				for q in mini(3, near.size()):
+					var c3: int = near[q][1]
+					var b3: int = sim.ob_cell[c3] - 1
+					while sim.ob_state[b3] == 0:
+						sim._destr_hit(((c3 % sim.ob_w) << 11) + 1024, ((c3 / sim.ob_w) << 11) + 1024, 500, -1, 100)
+				soldiers.upload()
+				_view_tick()
 		elif a == "--show-orders":
 			hud.orders_button.button_pressed = true
 		elif a == "--demo-orders":
@@ -787,6 +815,9 @@ func _show_end_dialog(title: String) -> void:
 	_end_title.text = title
 	_end_title.add_theme_color_override("font_color", Hud.Kit.COL_GOOD if sim.winner == player_side else Hud.Kit.COL_BAD)
 	_end_text.text = "The enemy is broken and running." if sim.winner == player_side else "Your army is broken."
+	var dl := destr_line(sim)
+	if dl != "":
+		_end_text.text += "\n" + dl
 	end_dialog.visible = true
 	_t("end_choice_shown", {"tick": sim.tick, "winner": sim.winner, "my_side": player_side})
 
@@ -1058,7 +1089,11 @@ func _after_tick(ms: float) -> void:
 		if _end_flow:
 			_end_finished()
 		if not campaign_mode:
-			hud.show_result(sim.result(), "%s   (decided after %d:%02d)" % [hud.banner.text, secs / 60, secs % 60], player_side)
+			var title := "%s   (decided after %d:%02d)" % [hud.banner.text, secs / 60, secs % 60]
+			var dl := destr_line(sim)
+			if dl != "":
+				title += "\n" + dl
+			hud.show_result(sim.result(), title, player_side)
 		_t("battle_result", {"scenario": scenario_id, "tick": sim.tick, "result": sim.result()})
 		if not custom_summary.is_empty():
 			var rs: Dictionary = sim.result()
@@ -1096,6 +1131,21 @@ static func terrain_name(p_sim) -> String:
 		return "Terrain: flat"
 	var k: int = p_sim.ter_info.get("kind", 0)
 	return "Terrain: %s" % Terrain.KIND_NAMES[k].to_lower()
+
+
+## The result's line for walls breached and buildings fallen (destruction), "" if none.
+static func destr_line(p_sim) -> String:
+	if p_sim.city_on == 0 or p_sim.rub_n <= 0:
+		return ""
+	var parts: Array[String] = []
+	if p_sim.stat_breaches > 0:
+		parts.append("%d wall stretch%s breached" % [p_sim.stat_breaches, "" if p_sim.stat_breaches == 1 else "es"])
+	if p_sim.stat_collapses > 0:
+		parts.append("%d building%s fallen" % [p_sim.stat_collapses, "" if p_sim.stat_collapses == 1 else "s"])
+	var lost: int = p_sim.stat_breach_kill + p_sim.stat_collapse_kill
+	if lost > 0:
+		parts.append("%d men lost in the ruins" % lost)
+	return ", ".join(parts)
 
 
 func _show_result() -> void:
@@ -4206,6 +4256,7 @@ func _audio_tick() -> void:
 		_au_prev["rel"] = sim.stat_released
 		_au_prev["tup"] = sim.stat_tower_hits
 		_au_prev["tdown"] = sim.stat_towers_down
+		_au_prev["destr"] = sim.stat_breaches + sim.stat_collapses
 		_au_state = sim.u_state.duplicate()
 		_au_stair = sim.u_stair.duplicate()
 		_au_ghp = sim.g_hp.duplicate()
@@ -4246,6 +4297,8 @@ func _audio_tick() -> void:
 		AudioFx.play("bolt_impact", 0.5, 0.0, "ladder")
 	if _au_delta("tdown", sim.stat_towers_down) > 0:
 		AudioFx.play("gate_break", 0.6, 0.0, "ladder")
+	if _au_delta("destr", sim.stat_breaches + sim.stat_collapses) > 0:
+		AudioFx.play("gate_break", 0.8, 0.0, "ladder")  # (a wall stretch breached, a building fallen)
 	if sim.stat_bolts + sim.stat_stones > 0:
 		_au_landings()
 	_au_units()

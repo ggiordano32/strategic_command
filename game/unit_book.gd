@@ -303,6 +303,10 @@ static func siege_help() -> String:
 			BattleSim.EQ_LANES[BattleSim.EQ_TOWER], BattleSim.EQ_CLIMB[BattleSim.EQ_TOWER] / 10,
 			BattleSim.EQ_CLIMB[BattleSim.EQ_TOWER] % 10, BattleSim.EQ_HP[BattleSim.EQ_TOWER]],
 		"",
+		"Breaches and ruins. Every stretch of wall between two towers has %d / %d / %d hit points (wall level 1 / 2 / 3) and every house %d plus %d for each 2 m of its floor (a West stone house half as much again). The attackers' engines take them off as they do a gate's: a bolt or a ball that strikes the wall or a house on its way, a stone or shell that lands on it (on a house half as much again; a bursting shell more by its blast); the defenders' own shots never harm their walls. A stretch at 0 is breached: it falls to rubble, the men on it die with a %d%% chance each and the rest are thrown down inside, shaken; its towers and stairs stand, and the breach is a way in for foot and horse. A house at 0 falls: the unit holding it loses %d%% of its men and the rest come out at the door, shaken. Rubble (drawn as broken stone; the Paths hatch shows it amber: slow going, low cover) is crossed at %d%% speed, blocks no shot or sight, and is low cover: men with the cover trait take cover in it as among rocks, other foot have %d%% of that, horsemen none." % [
+			BattleSim.WS_HP[1], BattleSim.WS_HP[2], BattleSim.WS_HP[3], BattleSim.OB_HP_BASE, BattleSim.OB_HP_CELL,
+			BattleSim.BREACH_KILL_PCT, BattleSim.COLLAPSE_KILL_PCT, BattleSim.RUBBLE_SPEED / 10, BattleSim.RUBBLE_COVER_PCT],
+		"",
 		"Taking the city. Besides breaking the defenders' army, the attackers win by holding the plaza: a unit of at least %d men in it, and no defending unit within %d m beyond it, for %d seconds in a row (the ring round the plaza fills) - then every defender breaks. Where there is a citadel (acropolis or Byrsa) its court is the place to hold, so the attackers must break two gates; its gate starts open and the defenders shut it when they fall back into it." % [
 			BattleSim.CAPTURE_MEN, BattleSim.CAPTURE_CLEAR / 1024, BattleSim.CAPTURE_TICKS / 10],
 		"",

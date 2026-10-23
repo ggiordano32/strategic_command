@@ -9,6 +9,7 @@ extends Node2D
 
 const Atlas := preload("res://game/battlekit_atlas.gd")
 const BattleLook := preload("res://game/battle_look.gd")
+const MapGen := preload("res://sim/mapgen.gd")
 
 var cell := 0.5                    # metres (the kit's shadow_cell)
 const TAN_ELEV := 0.62             # tan(32 degrees): a shadow is 1.6 x its piece's height long
@@ -133,6 +134,8 @@ func _footprint(i: int) -> Rect2:
 ## Rasterise instance i's heights into cells inside [x0, x1) x [y0, y1) (later instances replace
 ## earlier ones where the piece covers the cell).
 func _raster(i: int, x0: int, y0: int, x1: int, y1: int) -> void:
+	if kit.fallen(i):
+		return  # (a fallen building casts nothing)
 	var p: int = kit.i_piece[i]
 	var an: Array = Atlas.ANCHOR[p]
 	var rc: Array = Atlas.RECT[p]
@@ -177,6 +180,7 @@ func _raster_strip(x0: int, y0: int, x1: int, y1: int) -> void:
 	var hs: float = kit.strip_hs
 	var vo: float = kit.strip_vo
 	var vspan: float = kit.strip_vi - kit.strip_vo
+	var rub: bool = kit.sim.rub_n > 0
 	for t in vx.size() / 3:
 		var a := vx[t * 3]
 		var b := vx[t * 3 + 1]
@@ -203,6 +207,8 @@ func _raster_strip(x0: int, y0: int, x1: int, y1: int) -> void:
 				var w2 := 1.0 - w0 - w1
 				if w0 < 0.0 or w1 < 0.0 or w2 < 0.0:
 					continue
+				if rub and kit.sim.obs_kind(int(q.x * 1024.0), int(q.y * 1024.0)) == MapGen.C_RUBBLE:
+					continue  # (a breach: no wall there)
 				var u := (q - org).dot(d) / step
 				var v := ((q - org).dot(nn) - vo) / vspan
 				if v < 0.0 or v >= 1.0:
@@ -303,9 +309,13 @@ func _set_px(i: int) -> void:
 
 ## Instance i changed piece (a gate broke): re-raster and re-cast the window round it.
 func rebake_instance(i: int) -> void:
+	rebake_rect(_footprint(i))
+
+
+## Bake the shadow again round a box (metres): a gate broken, a stretch breached, a building fallen.
+func rebake_rect(fp: Rect2) -> void:
 	if _spr == null:
 		return
-	var fp := _footprint(i)
 	var x0 := maxi(int(floor((fp.position.x - 4.0 - _org.x) / cell)), 0)
 	var y0 := maxi(int(floor((fp.position.y - 4.0 - _org.y) / cell)), 0)
 	var x1 := mini(int(ceil((fp.end.x + MAX_LEN * 0.75 + 2.0 - _org.x) / cell)), _w)
