@@ -168,7 +168,8 @@ const UNIT_NEEDS := {"wagon": [[WORKSHOP, 1]], "wagon2": [[WORKSHOP, 2], [STABLE
 	"elephant": [[STABLES, 3]], "cav_jav": [[STABLES, 1], [RANGE, 1]], "numidians": [[STABLES, 2], [RANGE, 1]],
 	"tarentines": [[STABLES, 2], [RANGE, 1]], "gallic_horse": [[STABLES, 2], [RANGE, 1]],
 	"iberian_horse": [[STABLES, 2], [RANGE, 1]], "dog_handlers": [[BARRACKS, 1], [STABLES, 1]],
-	"gastraphetes": [[RANGE, 2]], "pistoleers": [[STABLES, 1], [RANGE, 1]], "cuirassiers": [[STABLES, 2], [RANGE, 1]]}
+	"gastraphetes": [[RANGE, 2]], "pistoleers": [[STABLES, 1], [RANGE, 1]], "cuirassiers": [[STABLES, 2], [RANGE, 1]],
+	"heavy_gun": [[WORKSHOP, 3]]}
 ## Workshop level needed per artillery line (other lines: level = tier).
 const ART_LEVEL := {"bolt": 1, "stone": 2, "light_art": 1, "light_gun": 1, "field_gun": 2}
 ## Buildings standing at the start: capitals and the other regions per level.
@@ -369,13 +370,14 @@ static func use_pack_script(key: String, p: GDScript) -> void:
 	NAMES_BY_FACTION = c["NAMES_BY_FACTION"]
 	NAMES_DEFAULT = c["NAMES_DEFAULT"]
 	SHIPS = c.get("SHIPS", null)
+	var pack_chains: Array[Dictionary] = c.get("CHAINS", BASE_CHAINS)  # (a pack's own texts / levels)
 	_ship_c = SHIPS.get_script_constant_map() if SHIPS != null else {}
 	if SHIPS != null:
-		var ch: Array[Dictionary] = BASE_CHAINS.duplicate()
+		var ch: Array[Dictionary] = pack_chains.duplicate()
 		ch.append(SHIPYARD_CHAIN)
 		CHAINS = ch
 	else:
-		CHAINS = BASE_CHAINS
+		CHAINS = pack_chains
 	_ship_idx = {}
 	pack = key
 	gen += 1

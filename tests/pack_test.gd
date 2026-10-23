@@ -13,6 +13,7 @@ const CState := preload("res://campaign/cstate.gd")
 const CTurn := preload("res://campaign/cturn.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const CRules := preload("res://campaign/crules.gd")
+const UT := preload("res://sim/unit_types.gd")
 const Dummy := preload("res://tests/data/dummy_pack.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
 const CSea := preload("res://campaign/csea.gd")
@@ -37,6 +38,7 @@ func _init() -> void:
 	_refusals()
 	_hash_view()
 	_west()
+	_heavy_guns()
 	_fleets()
 	_fleet_joins()
 	_sea()
@@ -311,6 +313,55 @@ func _fleets() -> void:
 	_check(CFleet.fleet(s4, 910).is_empty() == (sunk == 1) and (CFleet.fleet(s4, 910).is_empty() or CFleet.carried_units(CFleet.fleet(s4, 910)) <= CFleet.capacity(CFleet.fleet(s4, 910))),
 		"a sunk transport drowns its troops (fleet gone %s, armies sunk %d)" % [CFleet.fleet(s4, 910).is_empty(), sunk])
 	CData.use_pack("rome")
+
+
+## The West's Workshop has three levels (heavy guns at 3; owner 2026-10-23),
+## the nations recruit heavy guns, pirates and natives never; Rome's chains
+## are unchanged.
+func _heavy_guns() -> void:
+	CData.use_pack("rome")
+	var rome_ws: Dictionary = CData.CHAINS[CData.WORKSHOP]
+	_check(int(rome_ws["levels"]) == 2 and (rome_ws["cost"] as Array).size() == 2 and str(rome_ws["desc"]).begins_with("Level 1 bolt throwers"),
+		"Rome's Workshop is still two levels with its own text")
+	CData.use_pack("west")
+	var ws: Dictionary = CData.CHAINS[CData.WORKSHOP]
+	_check(int(ws["levels"]) == 3 and ws["cost"] == [600, 1200, 2000] and ws["turns"] == [2, 3, 3] and str(ws["desc"]).contains("heavy guns")
+		and not str(ws["desc"]).contains("stone") and CData.CHAINS.size() == 8, "the West's Workshop: three levels, heavy guns in its text")
+	var st := CState.new_campaign("w", 5, [CData.faction_index("england")], {}, [], "west")
+	var ok := true
+	for fk in ["new_spain", "tierra_firme", "england", "france", "dutch"]:
+		var f := CData.faction_index(fk)
+		var r: int = CState.regions_of(st, f)[0]
+		for lv in [0, 2, 3]:
+			var found := false
+			for sl in st["regions"][r]["slots"]:
+				if int(sl[0]) == CData.WORKSHOP:
+					sl[1] = lv
+					found = true
+			if not found:
+				(st["regions"][r]["slots"] as Array).append([CData.WORKSHOP, lv])
+			st["regions"][r]["queue"] = []
+			st["factions"][f]["treasury"] = 100000
+			var why := CRules.recruit_check(st, f, r, "heavy_gun")
+			if (lv == 3) != (why == ""):
+				ok = false
+				print("  heavy_gun %s workshop %d: %s" % [fk, lv, why])
+	_check(ok, "heavy guns: the five nations may recruit them with a Workshop 3, not with 2 (or none)")
+	var bret := CData.faction_index("brethren")
+	var rb: int = CState.regions_of(st, bret)[0]
+	(st["regions"][rb]["slots"] as Array).append([CData.WORKSHOP, 3])
+	st["factions"][bret]["treasury"] = 100000
+	var ok2 := true
+	for fk in ["brethren", "itza", "miskito"]:
+		var f := CData.faction_index(fk)
+		var r: int = CState.regions_of(st, f)[0]
+		st["regions"][r]["queue"] = []
+		ok2 = ok2 and CRules.recruit_check(st, f, r, "heavy_gun") == "not in your roster"
+	_check(ok2, "pirates and natives never raise heavy guns")
+	var hg := UT.index_of("heavy_gun")
+	_check(hg >= 0 and UT.price_of(hg) == 720 and UT.stat(hg, "m_obj") == 700 and UT.stat(hg, "m_range") == 520 * 1024
+		and hg > UT.FORT_GUN and UT.index_of("fort_gun") == UT.FORT_GUN and UT.line_of(hg) == "field_gun",
+		"heavy gun row: 720 a unit, wall breaker, after the fort gun (earlier indices unchanged)")
 
 
 ## N2 (West only): a blockade cuts the port's income and pays the

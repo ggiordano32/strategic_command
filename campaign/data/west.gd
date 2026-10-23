@@ -228,6 +228,27 @@ const FACTIONS: Array[Dictionary] = [
 		"ai_style": AI_CAUTIOUS, "composition": {"arms": ["light", "archer", "musket"], "art_pct": 0, "cav_pct": 0, "upgrade": 0}},
 ]
 
+## Building chains in the West's words (CData.CHAINS; the same keys, levels,
+## costs and rules as Rome's, only the texts differ, and the Workshop has a
+## third level for the heavy guns; owner 2026-10-23). The Shipyard is added
+## by CData (SHIPS).
+const CHAINS: Array[Dictionary] = [
+	{"key": "farm", "name": "Farms", "levels": 3, "cost": [400, 900, 1600], "turns": [1, 2, 3],
+		"desc": "+1 growth and +40 income per level; from level 2 granaries make a siege's supplies last a turn longer"},
+	{"key": "market", "name": "Market", "levels": 3, "cost": [500, 1000, 1800], "turns": [1, 2, 3],
+		"desc": "+90 income per level; +15% trade income per level"},
+	{"key": "barracks", "name": "Barracks", "levels": 3, "cost": [400, 900, 1600], "turns": [1, 2, 3],
+		"desc": "Pikemen (veterans at level 2), rodeleros, cutlass men and native warriors, and the general's guard (level 1; one general an army); war dogs (level 1, with Stables 1); faster replenishment"},
+	{"key": "range", "name": "Range", "levels": 3, "cost": [350, 800, 1400], "turns": [1, 2, 3],
+		"desc": "Musketeers (level 1; veterans level 2), buccaneers and native bowmen; the pistol horse needs a Range 1 too; faster replenishment"},
+	{"key": "stables", "name": "Stables", "levels": 3, "cost": [500, 1000, 1800], "turns": [1, 2, 3],
+		"desc": "Lancers (level 1), pistoleers (level 1, with a Range 1) and cuirassiers (level 2, with a Range 1); faster replenishment"},
+	{"key": "workshop", "name": "Workshop", "levels": 3, "cost": [600, 1200, 2000], "turns": [2, 3, 3],
+		"desc": "Level 1 falconets (light guns) and the hand cart (ammunition), level 2 culverins and ammunition wagons (with Stables), level 3 heavy guns (24-pounders): siege pieces that breach bastions"},
+	{"key": "walls", "name": "Walls", "levels": 3, "cost": [400, 900, 1600], "turns": [2, 2, 3],
+		"desc": "Stockade, bastions and batteries: +1 garrison unit, better garrison and higher ground for the defenders per level"},
+]
+
 ## Rosters (slice 2a): pike and shot for the Europeans (Spain's rodeleros and
 ## lancers, England's pistol horse and cuirassiers, the Dutch guns, France's
 ## buccaneers and pistoleers), buccaneers and cutlass men for the Brethren,
@@ -235,19 +256,19 @@ const FACTIONS: Array[Dictionary] = [
 ## muskets). Generals, war dogs and wagons are shared Rome rows.
 const ROSTERS := {
 	"new_spain": {"musket": ["musketeers", "musketeers2", ""], "pike": ["w_pikemen", "w_pikemen2", ""],
-		"heavy": ["rodeleros", "", ""], "cav": ["lancers", "", ""], "light_gun": ["light_gun"], "field_gun": ["field_gun"],
+		"heavy": ["rodeleros", "", ""], "cav": ["lancers", "", ""], "light_gun": ["light_gun"], "field_gun": ["field_gun", "heavy_gun"],
 		"siege": ["wagon", "wagon2", "wagon3"], "general": ["general"], "dogs": ["dog_handlers"]},
 	"tierra_firme": {"musket": ["musketeers", "musketeers2", ""], "pike": ["w_pikemen", "w_pikemen2", ""],
-		"heavy": ["rodeleros", "", ""], "cav": ["lancers", "", ""], "light_gun": ["light_gun"],
+		"heavy": ["rodeleros", "", ""], "cav": ["lancers", "", ""], "light_gun": ["light_gun"], "field_gun": ["", "heavy_gun"],
 		"siege": ["wagon", "wagon2", "wagon3"], "general": ["general"]},
 	"england": {"musket": ["musketeers", "musketeers2", ""], "pike": ["w_pikemen", "w_pikemen2", ""],
-		"pistol": ["pistoleers", "cuirassiers", ""], "light_gun": ["light_gun"], "field_gun": ["field_gun"],
+		"pistol": ["pistoleers", "cuirassiers", ""], "light_gun": ["light_gun"], "field_gun": ["field_gun", "heavy_gun"],
 		"siege": ["wagon", "wagon2", "wagon3"], "general": ["general"]},
 	"france": {"musket": ["musketeers", "musketeers2", ""], "pike": ["w_pikemen", "w_pikemen2", ""],
-		"buccaneer": ["buccaneers", "", ""], "pistol": ["pistoleers", "cuirassiers", ""],
+		"buccaneer": ["buccaneers", "", ""], "pistol": ["pistoleers", "cuirassiers", ""], "field_gun": ["", "heavy_gun"],
 		"siege": ["wagon", "wagon2", "wagon3"], "general": ["general"]},
 	"dutch": {"musket": ["musketeers", "musketeers2", ""], "pike": ["w_pikemen", "w_pikemen2", ""],
-		"light_gun": ["light_gun"], "field_gun": ["field_gun"], "siege": ["wagon", "wagon2", "wagon3"], "general": ["general"]},
+		"light_gun": ["light_gun"], "field_gun": ["field_gun", "heavy_gun"], "siege": ["wagon", "wagon2", "wagon3"], "general": ["general"]},
 	"brethren": {"buccaneer": ["buccaneers", "", ""], "musket": ["musketeers", "", ""], "heavy": ["cutlass", "", ""],
 		"light_gun": ["light_gun"], "siege": ["wagon", "", ""], "general": ["general"]},
 	"itza": {"light": ["native_warriors", "", ""], "archer": ["native_bowmen", "", ""], "siege": ["wagon", "", ""],

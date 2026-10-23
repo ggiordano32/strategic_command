@@ -1705,6 +1705,50 @@ const WEST_TIERS: Array[Dictionary] = [
 		"blurb": "Pistol riders in three-quarter armour on heavy horses.",
 		"add": {"armour": 6, "mass": 40, "charge": 10, "run": -30}, "price_add": 10},
 ]
+## West rows added after the fort gun (so every earlier index, the tier rows
+## and the fort gun, is unchanged): the heavy guns (owner 2026-10-23: tiers 2
+## and 3 of the Workshop are light and heavy guns in the Caribbean).
+const WEST_LATE: Array[Dictionary] = [
+	{
+		"key": "heavy_gun", "line": "field_gun", "pack": "west", "tier": 2, "name": "Heavy Guns", "short": "24-pdrs",
+		"icon": 29, "sprite": 6, "sprite_set": 25, "engine_set": 26,
+		"size": 12, "files0": 3,
+		"role": "Siege artillery (24-pounders)",
+		"desc": "Three massive 24-pounders, four gunners to each: the guns that open a bastion. A roundshot carries 520 m, ploughs through ten men and splinters gates and walls in a few hits. Slowest of all to reload, to haul and to plant; gunners are poor fighters.",
+		"good_vs": "Walls, gates and bastions, batteries, blocks standing in its great range.",
+		"weak_vs": "Cavalry and foot that reach it, anything behind friends or a crest, a war of movement.",
+		"cls": CLS_ART,
+		"attack": 14, "defence": 14, "armour": 3, "shield": 0, "mshield": 0,
+		"damage": 22, "reach": 1024, "mass": 70,
+		"walk": 40,         # 0.4 m/s: teams of oxen on the drag ropes
+		"run": 400,
+		"hp": 75, "cooldown": 12, "morale": 450,
+		"file_sp": 9 * 1024, "rank_sp": 1229,
+		"turn": 2,
+		"crew": 4, "crew_min": 2,
+		"m_gun": 1,
+		"m_kind": 1,
+		"m_range": 520 * 1024,
+		"m_min": 20 * 1024,
+		"m_damage": 420,
+		"m_ap": 100,
+		"m_ammo": 10, "m_reserve": 10, "m_refill": 80,
+		"m_reload": 520,    # 52 s a shot at full crew
+		"m_spread": 12, "m_spread0": 500,
+		"m_speed": 32768,   # 320 m/s
+		"m_arc": 0, "m_apex": 2,
+		"m_pierce": 10,
+		"m_plough": 60 * 1024,
+		"m_fear": 90,
+		"m_obj": 700,       # a wall breaker (culverins 450)
+		"arc": 57, "traverse": 2,
+		"deploy": 240,      # 24 s to set up
+		"e_hp": 400,
+		"cost": 60,         # 720 a unit
+		"climb": 50,
+		"m_hgain": 80,
+	},
+]
 
 
 static func wagon_stat(w: int, field: String) -> int:
@@ -1726,10 +1770,10 @@ static var _by_key := {}
 ## Indices of the siege types (after the tier rows).
 static var TOWER_BOLT: int = BASE.size() + TIERS.size()
 static var TOWER_STONE: int = BASE.size() + TIERS.size() + 1
-## The Rome rows' count: every row before the West pack's (WEST, WEST_TIERS, FORT_ROWS).
-static var ROME_N: int = TYPES.size() - WEST.size() - WEST_TIERS.size() - FORT_ROWS.size()
-## The West fort's gun (slice 2c): the last row.
-static var FORT_GUN: int = TYPES.size() - FORT_ROWS.size()
+## The Rome rows' count: every row before the West pack's (WEST, WEST_TIERS, FORT_ROWS, WEST_LATE).
+static var ROME_N: int = TYPES.size() - WEST.size() - WEST_TIERS.size() - FORT_ROWS.size() - WEST_LATE.size()
+## The West fort's gun (slice 2c): the last row but WEST_LATE.
+static var FORT_GUN: int = TYPES.size() - WEST_LATE.size() - FORT_ROWS.size()
 
 
 static func _build_types() -> Array[Dictionary]:
@@ -1851,6 +1895,11 @@ static func _build_types() -> Array[Dictionary]:
 		row["base"] = out.size()
 		row["tier"] = 1
 		row["price"] = 0
+		out.append(row)
+	for wl in WEST_LATE:
+		var row: Dictionary = wl.duplicate()
+		row["base"] = out.size()
+		row["price"] = int(row["cost"]) * int(row["size"])
 		out.append(row)
 	return out
 

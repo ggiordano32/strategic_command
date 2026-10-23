@@ -1745,6 +1745,8 @@ aim in the sim (cover and line of sight: built, "Cover and line of sight"), gun 
 and wagon refills (an `AMMO` row would change the hashed wagon stock
 width: needs the same gating).
 
+**Heavy guns (West, owner 2026-10-23).** `heavy_gun` ("Heavy Guns", short 24-pdrs), line `field_gun` (its second tier), icon 29, the cannon sprite and engine sets as the culverins; a row after the fort gun (`UnitTypes.WEST_LATE`, so every earlier row index is unchanged). The West artillery now: falconets (light_gun, Workshop 1: size 12, 300 m, damage 230, reload 25 s, 360 a unit), culverins (field_gun, Workshop 2: 450 m, damage 320, reload 40 s, `m_obj` 450, 480 a unit), heavy guns (Workshop 3): size 12 (three pieces, four gunners each), range 520 m, damage 420, ap 100, pierce 10, plough 60 m, fear 90, `m_obj` 700 (the wall breaker), reload 52 s, walk 0.4 m/s, deploy 24 s, 10 shots and 10 in reserve, e_hp 400, cost 60 (720 a unit). Raised by the nations only.
+
 ### Cover and line of sight (as built, West slice 2b, 2026-10-15)
 
 The "Cover (battle, slice 2b)" paragraph of "The Caribbean pack" made
