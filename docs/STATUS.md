@@ -95,7 +95,7 @@ One bullet per open item pulled from the rows' **Open:** texts; the bracket name
 - Flight rule: gauge / camp layouts; a scripted player who never flees wins 15-19 of 24 against the AI in `order` mode (the AI's flight rule is the suspect); the AI's beat to windward stays slow. [row "Sea battle AI: the flight rule", paragraph "Sea pass 4: the leeward fleet"]
 - Sea follow-ons: drop the two `online_ui.gd` gates, head-to-head humans at sea, smoke blocking aim, shore batteries, the formula fitted to fought results, balance of the deck melee. [paragraph "Sea follow-ons built 2026-10-16"]
 - N2 / N2b: the AI sacks rarely, pirates seldom hold a haven late, flota interceptions are rare, storms rarely sink AI ships, salvage of wrecks, privateer captains for the nations. [paragraphs "N2 trade, blockades, the flota and the pirate loop", "N2b hurricanes, notorious captains and named treasure galleons"]
-- The Rome navy (goal 5): not started. ["Where we are headed", overview]
+- The Rome navy (goal 5): R1 and R2 built (2026-10-23); R3 open. Docking (a fleet in a port city: `docs/design/sea.md` "Docking (plan, 2026-10-23)") in progress. ["Where we are headed", overview]
 - Lane rules: the lanes' sight (a port seeing its lane's cells within `CITY_R` + 1) is not in `csight.gd`, the raided lane and the chronicle row are shown to the owners whatever the fog; the AI raids with lone sloops and a junction raids every lane through it; a Skilled siege blockade is untested; no device look at the raid taps yet. [row "Lane trade, raids and blockades"]
 
 ### Campaign rules

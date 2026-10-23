@@ -618,3 +618,57 @@ pin seeds (5 before turn 30; turns 11-44; it fell in 5 of 6 at HEAD): its AI sen
 and Carthage lands in the empty cities; see the history row. (2026-10-23: the AI's garrisons against landings,
 docs/AI.md 12.2: 1 of 6, at turn 27; with the data follow-up, Syracuse's start fleet trimmed and Rome
 `SEA_TRADE_PCT` 50, `BLOCKADE_CUT_PCT` 75 as the West: 4 of 6, at turns 16, 33, 47, 56.)
+
+## Docking (plan, 2026-10-23)
+
+The owner, 2026-10-23: a fleet should be able to **dock with a city**, not only lie off it; armies keep
+boarding and landing from the shore as they do now. Today "in port" means within `PORT_CELLS` (2) of an
+own harbour: repairs, storm shelter, boarding from the settlement. Docking makes the port a place a fleet
+is *in*, as Rome 2's: sheltered behind the mole, refitted by the yard, lost with the city.
+
+**State.** A fleet lying in port carries `"in": r` (the region; absent otherwise, so old saves and the
+West pins read as before: no `CState.VERSION` bump) and sits on `CFleet.dock(r)`. `CFleet.docked(fl)`
+is `r` or -1. New fleets (the start fleets of `init`, a ship launched where no fleet of ours lies at the
+dock) start docked; a ship launched at a port joins the fleet docked there first, else one beside the
+dock as now.
+
+**Orders.** `fdock {fleet, r}`: a station order like `fblockade` (`CSea.station_plan`, kind 3): the
+fleet sails to `dock(r)` (a stored voyage, kept till it arrives, carried as `"dk": r` on the fleet) and
+docks the turn it gets there; at the dock already, it docks at once. `r` must have a dock and be ours,
+an ally's, or (a pirate) a marque patron's; the fleet not `busy`, `sto` or `flota`. `fundock {fleet}`:
+casts off (the fleet stays on the dock cell, undocked). Any voyage order (`fmove`, `fraid`,
+`fblockade`, a join, a landing anywhere but the city) casts off as it is planned, even for zero steps.
+At the end of a turn a docked fleet whose port is no longer ours or friendly (captured by land,
+diplomacy) is cast off.
+
+**Docked, a fleet** has no zone and fights nothing: it is left out of `block_mask`, `zone_owner`,
+`sea_battle`'s gathering, `execute_moves`' foes and the end-of-turn zone fights (an enemy fleet may lie
+on the dock cell: that is a blockade, and the fleet casting off into its zone fights it on the way out,
+with `PORT_DEF_PCT` as any defender in its own port). It counts for `CSea._blockade_sides` as now (the
+rule's "stronger than its own fleets there" stands for the sortie it would make). Storms skip it
+(`cstorm`: `STORM_PORT_PCT` is for fleets lying off the port); no scurvy. **Repair**: docked, `REPAIR` +
+`REPAIR_YARD` x the Shipyard level (+ the haven bonus); lying off an own harbour within `PORT_CELLS`
+undocked, `REPAIR` alone (the crews put in at the beach; the yard works on ships at its quay). Boarding
+is unchanged (`near_fleet`: beside the fleet, or in the settlement whose harbour it lies beside); a
+docked fleet's troops may also `land` straight into the settlement cell (`CGrid.site(r)`) whatever its
+distance from the dock. Upkeep, sight, trade and the lanes are unchanged.
+
+**The city falls** (`CRules._capture`): the fleets docked there that are not friendly to the captor are
+taken as prizes: their ships join (or form) a fleet of the captor's docked at `r` at `TAKEN_PCT` hull and
+crew (event `fleet_taken {f, from, r, ships}`), the troops aboard are destroyed (event `destroyed`). A
+pack without ships, or a captor whose people build none, still takes them (a prize is a prize). A sack
+leaves docked fleets alone (behind the chain).
+
+**AI** (`cai_fleet`): docked is in port for every rule; a free fleet lying at an own dock with no job
+docks (an at-once `fdock`), a home voyage (7.) docks on arrival (`dk`), and a fleet given a voyage
+casts off by it. No new knob.
+
+**View.** The fleet card reads "In port at Carthage" with **Cast off**; an undocked fleet of ours has
+**Dock**: at an own dock it docks there, else tapping one of our (or an ally's) port cities with the
+fleet selected orders `fdock` (the voyage drawn to the dock, status "Sailing to dock at ..."), and
+tapping the same city again cancels as the station orders do. A docked fleet is drawn at the town
+plan's water spot with the sails furled (oars shipped) and no wake ring; the settlement card lists the
+fleets in port ("In port: Carthaginian fleet, 5 ships"). The Ship book's campaign page gets a Docking
+paragraph. Tests: `campaign_test._docking` (order, arrival, shelter, repair, launches, landing into the
+city, the prize, cast off by a voyage and by capture, the storm) and a campaign input case for the
+buttons and the city tap.
