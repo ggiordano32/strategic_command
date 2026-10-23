@@ -1748,6 +1748,215 @@ const WEST_LATE: Array[Dictionary] = [
 		"climb": 50,
 		"m_hgain": 80,
 	},
+	# ---- The Caribbean roster, batch 1 (owner 2026-10-23; docs/design/battle_sim.md "The Caribbean roster,
+	# batch 1"): seven rows after the heavy gun, so every earlier index is unchanged. Sprite sets 27-33
+	# (docs/design/art_pipeline.md). The grenade and the shell are AMMO kinds 11 and 12 (aoe bursts).
+	{
+		"key": "grenadiers", "line": "grenadier", "pack": "west", "tier": 1, "name": "Grenadiers", "short": "Grenadier",
+		"icon": 24, "sprite": 0, "sprite_set": 27,
+		"size": 60, "files0": 15,
+		"role": "Elite foot with hand grenades",
+		"desc": "Tall picked men in fur caps who carry iron grenades and a sword. They lob a grenade over their own front into the enemy's ranks or a held house: it bursts 3 m wide, throws men down and shakes the whole unit, and four make a door give way. Four throws and they are swordsmen; stay clear of their own grenades and of any volley.",
+		"good_vs": "Pike blocks and dense columns, men holding houses or a gate, anything standing still in range 25 m.",
+		"weak_vs": "Musket volleys and cannon before they close, cavalry, being caught reloading with nothing left to throw.",
+		"cls": CLS_MISSILE,  # (the sim runs the fire logic of CLS_MISSILE, cavalry and artillery only: a melee-trained man who throws is missile class; with ammo it stands off at 85 % of the range and throws, then closes)
+		"attack": 41, "defence": 30,  # between rodeleros 42 / 34 and cutlass men 40 / 26
+		"armour": 5, "shield": 0, "mshield": 0,  # a buff coat, no shield: the musket is slung on the back
+		"damage": 40, "reach": 1126, "mass": 75,
+		"walk": 145, "run": 410,
+		"hp": 95, "cooldown": 10,
+		"morale": 900,      # rodeleros 860: picked men
+		"m_kind": 2,        # lobbed, bursts (the grenade AMMO kind: aoe)
+		"m_range": 25 * 1024,
+		"m_min": 6 * 1024,  # (artillery's minimum only: foot do not read it yet)
+		"m_damage": 150, "m_ap": 0,
+		"m_ammo": 4,
+		"m_reload": 150,    # 15 s
+		"m_spread": 60, "m_spread0": 1024,
+		"m_speed": 2560,    # 25 m/s
+		"m_arc": 1, "m_lead": 90, "m_long": 50,
+		"m_fear": 80,       # a burst among them: culverins 80
+		"m_obj": 120,       # a door in a few throws (the grenade kind's obj gives about 96 a throw)
+		"m_hgain": 100, "m_ak": 11,
+		"cost": 8,          # 480 a unit: musketeers 6 x 1.4
+		"climb": 14,
+	},
+	{
+		"key": "dragoons", "line": "dragoon", "pack": "west", "tier": 1, "name": "Dragoons", "short": "Dragoons",
+		"icon": 28, "sprite": 5, "sprite_set": 28,
+		"size": 40, "files0": 10,
+		"role": "Mounted musketeers",
+		"desc": "Foot with horses: they ride to a flank or a ford at a lancer's pace and shoot a musket volley from the saddle's side, a volley every twenty-four seconds and none on the move. Poor in a melee and thin on the ground; a charge into them ends it.",
+		"good_vs": "Gun crews and batteries, a flank no foot can reach in time, skirmishers and routers.",
+		"weak_vs": "Cavalry, any melee unit that closes, volleys from a steady line.",
+		"cls": CLS_CAV, "mount": MOUNT_HORSE,
+		"attack": 26, "defence": 24,  # pistoleers 32 / 28
+		"armour": 4, "shield": 0, "mshield": 0,
+		"damage": 28, "reach": 1228, "mass": 360,
+		"walk": 220, "run": 860,  # lancers'
+		"hp": 130, "cooldown": 10,
+		"morale": 660,
+		"file_sp": 2048, "rank_sp": 3072,
+		"charge": 25,       # pistoleers 55: a horse to get there, not a charge
+		"turn": 18,
+		"m_vuln": 120, "m_down": 9,
+		"m_gun": 1,
+		"m_range": 120 * 1024,
+		"m_damage": 120, "m_ap": 85, "m_spen": 60,
+		"m_ammo": 20,       # the musketeers'
+		"m_reload": 240,    # 24 s: twice the musketeers' 12
+		"m_spread": 10, "m_spread0": 512, "m_spread2": 135,
+		"m_speed": 20480, "m_arc": 0, "m_apex": 3,
+		"m_fear": 60,
+		"m_hgain": 50,
+		"cost": 10,         # 400 a unit (pistoleers' 10 a man, 60 men)
+		"climb": 24,
+	},
+	{
+		"key": "coureurs", "line": "buccaneer", "pack": "west", "tier": 2, "name": "Coureurs des Bois", "short": "Coureurs",
+		"icon": 26, "sprite": 4, "sprite_set": 29,
+		"size": 50, "files0": 10,
+		"role": "Woodsmen marksmen",
+		"desc": "French trappers and Indian-trained runners in fringed hide, with a long musket and a knife. They go through trees and scrub nearly as if it were open ground, fire from every rock and trunk, and are gone before a line can turn. Few rounds, little taste for a stand-up fight.",
+		"good_vs": "Flanks reached through the woods, gun crews and officers, anything that cannot follow them into the trees.",
+		"weak_vs": "Cavalry in the open, any melee unit that closes, a long fight (two rounds fewer than buccaneers).",
+		"cls": CLS_MISSILE,
+		"attack": 28, "defence": 22,
+		"armour": 2, "shield": 0, "mshield": 0,
+		"damage": 30, "reach": 1126, "mass": 70,
+		"walk": 160, "run": 430,
+		"hp": 85, "cooldown": 10,
+		"morale": 680,      # as buccaneers
+		"file_sp": 1843, "rank_sp": 2048,
+		"skirm": 1,
+		"cover": 1,
+		"woods_pct": 45,    # native warriors and bowmen 60: the best in the table
+		"m_gun": 1,
+		"m_range": 140 * 1024,
+		"m_damage": 130,
+		"m_ap": 85, "m_spen": 60,
+		"m_ammo": 22,       # buccaneers 24
+		"m_reload": 180,
+		"m_spread": 10, "m_spread0": 512, "m_spread2": 100,  # the buccaneers' accuracy
+		"m_speed": 20480,
+		"m_arc": 0, "m_apex": 3,
+		"m_fear": 30,
+		"m_hgain": 60,
+		"cost": 8,          # 400 a unit: buccaneers 7 x 1.2
+		"climb": 13,
+	},
+	{
+		"key": "boarding_grenadiers", "line": "heavy", "pack": "west", "tier": 2, "name": "Boarding Grenadiers", "short": "Boarders",
+		"icon": 25, "sprite": 0, "sprite_set": 30,
+		"size": 60, "files0": 15,
+		"role": "Cutlass men with grenades",
+		"desc": "The Brethren's door-openers: cutlass men with a pair of grenades each, thrown at a gate or a packed deck before the rush. They burst 3 m wide and shake the whole unit they land among; after the second throw they are cutlass men, unarmoured and fierce, and brittle under fire.",
+		"good_vs": "A shut gate, men packed behind a barricade or on a deck, musketeers and gun crews they reach.",
+		"weak_vs": "Formed pikes, volleys and cannon on the approach, cavalry in the open.",
+		"cls": CLS_MISSILE,  # (as the grenadiers)
+		"attack": 40, "defence": 26,
+		"armour": 3, "shield": 10, "mshield": 10,
+		"damage": 40, "reach": 1126, "mass": 70,
+		"walk": 165, "run": 460,
+		"hp": 90, "cooldown": 9,
+		"morale": 700,
+		"cover": 1,
+		"m_kind": 2,
+		"m_range": 15 * 1024,
+		"m_min": 3 * 1024,
+		"m_damage": 150, "m_ap": 0,
+		"m_ammo": 2,        # two grenades each
+		"m_reload": 120,
+		"m_spread": 60, "m_spread0": 1024,
+		"m_speed": 2560,
+		"m_arc": 1, "m_lead": 90, "m_long": 50,
+		"m_fear": 80,
+		"m_obj": 120,
+		"m_hgain": 100, "m_ak": 11,
+		"cost": 7,          # 420 a unit: cutlass men 5 x 1.3
+		"climb": 13,
+	},
+	{
+		"key": "canoe_raiders", "line": "light", "pack": "west", "tier": 2, "name": "Canoe Raiders", "short": "Raiders",
+		"icon": 32, "sprite": 4, "sprite_set": 31,
+		"size": 60, "files0": 15,
+		"role": "Amphibious javelin raiders",
+		"desc": "Miskito paddlers with javelins and a club, quick as deer and at home in the shallows. On the campaign map a war party of nothing but raiders paddles the coast at a walk and lands anywhere, but a warship that sights it sinks it. On the field they throw and fall back into cover.",
+		"good_vs": "Gun crews and musketeers caught reloading, skirmishers, flanks reached through the woods.",
+		"weak_vs": "Volleys and cannon in the open, cavalry, a sustained melee.",
+		"cls": CLS_MISSILE,  # (as the javelinmen)
+		"attack": 38, "defence": 24,
+		"armour": 2, "shield": 10, "mshield": 20,
+		"damage": 34, "reach": 1229, "mass": 65,
+		"walk": 185, "run": 500,  # native warriors 175 / 480
+		"hp": 85, "cooldown": 9,
+		"morale": 620,
+		"file_sp": 1843, "rank_sp": 2048,
+		"cover": 1,
+		"woods_pct": 60,
+		"amphib": 1,
+		# the Rome javelinmen's javelin
+		"m_range": 40 * 1024, "m_damage": 42, "m_ap": 60, "m_ammo": 6, "m_spen": 15, "m_reload": 28,
+		"m_spread": 40, "m_spread0": 717, "m_speed": 2253, "m_arc": 0, "m_apex": 10, "m_hgain": 100, "m_ak": 1,
+		"cost": 4,          # 240 a unit, native warriors' price a man
+		"climb": 11,
+	},
+	{
+		"key": "holcan", "line": "heavy", "pack": "west", "tier": 2, "name": "Holcan Warriors", "short": "Holcan",
+		"icon": 32, "sprite": 0, "sprite_set": 32,
+		"size": 60, "files0": 15,
+		"role": "Shock foot",
+		"desc": "The Itza's war-chiefs' picked men: quilted cotton, a tall fan of feathers and the great obsidian-edged macuahuitl swung in both hands. They hit a line harder than any other foot in the Indies and the sight of the charge shakes the men it falls on, but they wear no armour and give way to a volley and to horse.",
+		"good_vs": "A line or a flank in melee, men already shaken, musketeers and gun crews they reach.",
+		"weak_vs": "Volleys and cannon on the way in, pike fronts, cavalry.",
+		"cls": CLS_INF,
+		"attack": 46, "defence": 26,  # rodeleros 42 / 34: all edge, no shield
+		"armour": 0, "shield": 0, "mshield": 0,
+		"damage": 46, "reach": 1331, "mass": 75,
+		"walk": 160, "run": 450,
+		"hp": 100, "cooldown": 10,
+		"morale": 900,
+		# (No charge-fear stat for foot: fear_r / fear_foot is a standing aura and "charge" is the horse's impact,
+		# so the holcan's shock is its attack and damage alone.)
+		"cost": 6,          # 360 a unit: rodeleros
+		"climb": 13,
+	},
+	{
+		"key": "mortar", "line": "mortar", "pack": "west", "tier": 1, "name": "Mortars", "short": "Mortars",
+		"icon": 29, "sprite": 6, "sprite_set": 25, "engine_set": 33,
+		"size": 12, "files0": 3,
+		"role": "Siege artillery (mortars)",
+		"desc": "Three squat iron mortars, four gunners to each. A hollow shell climbs high over walls, houses and friends and bursts 4 m wide where it lands: it kills a knot of men, wrecks what they hide behind and breaks a gate or a wall in a few hits. Hopeless against anything that moves; the shortest range of 60 m, a minute to reload, the slowest to haul.",
+		"good_vs": "Forts, walls, bastions and held houses, packed blocks and batteries standing still.",
+		"weak_vs": "Anything that moves, cavalry and foot that reach it, being counter-battered.",
+		"cls": CLS_ART,
+		"attack": 14, "defence": 14, "armour": 3, "shield": 0, "mshield": 0,
+		"damage": 22, "reach": 1024, "mass": 70,
+		"walk": 40,
+		"run": 400,
+		"hp": 75, "cooldown": 12, "morale": 450,
+		"file_sp": 8 * 1024, "rank_sp": 1229,
+		"turn": 2,
+		"crew": 4, "crew_min": 2,
+		"m_kind": 2,
+		"m_range": 300 * 1024,
+		"m_min": 60 * 1024,
+		"m_damage": 200, "m_ap": 0,  # moderate: a third of that at the edge of the burst
+		"m_ammo": 8, "m_reserve": 8, "m_refill": 80,
+		"m_reload": 600,    # 60 s a shell at full crew
+		"m_spread": 60, "m_spread0": 2048,  # wide: poor against anything moving (stone thrower 48 / 1536)
+		"m_speed": 3072,    # 30 m/s: a 10 s flight at 300 m
+		"m_arc": 1, "m_lead": 90, "m_long": 50,
+		"m_pierce": 6,
+		"m_fear": 90,
+		"m_obj": 500,       # against walls and gates (the destruction build reads it)
+		"arc": 57, "traverse": 2,
+		"deploy": 240,
+		"e_hp": 320,
+		"cost": 50,         # 600 a unit
+		"climb": 50,
+		"m_hgain": 150, "m_ak": 12,
+	},
 ]
 
 
@@ -2072,6 +2281,19 @@ const AMMO: Array[Dictionary] = [
 	{"key": "lead_bullets", "name": "Lead bullets", "short": "lead", "base": 9, "share": 33, "dmg": 130, "obj": 100,
 		"ap": 20, "pierce": 100, "range": 85, "rate": 100, "fear": 0, "blast": 0, "fire": 0,
 		"desc": "Cast lead sling bullets, a third of the bag: they hit harder and bite through some armour, at a shorter range."},
+	# (Caribbean batch 1, 2026-10-23) Grenade: the grenadiers' and boarding grenadiers' standard kind (a lobbed
+	# stone, m_kind 2): a burst 3 m round where it lands (aoe: every man in it struck, full damage at the
+	# centre to a third at the edge, the survivors thrown and down), no plough. obj 27 % of a stone against
+	# gates and towers (about 96 a throw: the row's m_obj 120 at the bolt's 80 per 100; a door in a few
+	# throws).
+	{"key": "grenade", "name": "Grenades", "short": "grenades", "base": -1, "share": 100, "dmg": 100, "obj": 27,
+		"ap": 0, "pierce": 100, "range": 100, "rate": 100, "fear": 0, "blast": 3072, "fire": 0, "aoe": 1, "wagon": 0,
+		"desc": "Iron grenades with a slow match, lobbed over friends: a burst 3 m wide that throws men down."},
+	# Shell: the mortar's kind, a burst 4 m round; obj 111 % of a stone against gates, towers and walls
+	# (about 400 a shell: the row's m_obj 500 at the bolt's 80 per 100).
+	{"key": "shell", "name": "Mortar shells", "short": "shells", "base": -1, "share": 100, "dmg": 100, "obj": 111,
+		"ap": 0, "pierce": 100, "range": 100, "rate": 100, "fear": 0, "blast": 4096, "fire": 0, "aoe": 1, "wagon": 0,
+		"desc": "Hollow iron shells lobbed high over walls: a burst 4 m wide where they land."},
 ]
 ## Fields of AMMO the sim reads, in t_k_* order (BattleSim._load_types).
 const AMMO_FIELDS: Array[String] = ["base", "share", "dmg", "obj", "ap", "pierce", "range", "rate", "fear",

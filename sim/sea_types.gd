@@ -124,7 +124,11 @@ const DECK_TROOPS := {"atk": 26, "def": 24, "shot": 24, "rng": 6, "shots": 2, "r
 ## range [shot %, cells, volleys, reload ticks]; atk / def from the row
 ## (attack; defence + armour + shield / 2).
 const DECK_LINE_SHOT := {"musket": [26, 7, 2, 120], "buccaneer": [34, 8, 2, 140], "pistol": [30, 3, 2, 0],
-	"archer": [12, 6, 3, 25], "javelin": [16, 3, 1, 0], "sling": [10, 5, 2, 20]}
+	"archer": [12, 6, 3, 25], "javelin": [16, 3, 1, 0], "sling": [10, 5, 2, 20],
+	"grenadier": [30, 3, 2, 0], "dragoon": [26, 7, 2, 240]}
+## Per unit key where the line cannot tell them apart (the boarding grenadiers are of the cutlass men's "heavy"
+## line): the same four numbers. Two grenades at deck range, no reload.
+const DECK_UNIT_SHOT := {"boarding_grenadiers": [30, 3, 2, 0]}
 ## (R1) A galley's marines when the scenario gives the troops no kit: armoured
 ## spearmen and javelins (the javelin line of DECK_LINE_SHOT).
 const DECK_MARINES := {"atk": 30, "def": 30, "line": "javelin"}

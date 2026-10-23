@@ -648,7 +648,7 @@ func _setup_kits(s: int, d: Dictionary) -> void:
 		else:
 			s_tkp[b + 1] = maxi(UT.stat(ty, "attack"), 5)
 			s_tkp[b + 2] = maxi(UT.stat(ty, "defence") + UT.stat(ty, "armour") + UT.stat(ty, "shield") / 2, 5)
-			var sh: Array = ST.DECK_LINE_SHOT.get(UT.line_of(ty), [0, 0, 0, 0])
+			var sh: Array = ST.DECK_UNIT_SHOT.get(UT.key_of(ty), ST.DECK_LINE_SHOT.get(UT.line_of(ty), [0, 0, 0, 0]))
 			s_tkp[b + 3] = int(sh[0])
 			s_tkp[b + 4] = int(sh[1])
 			s_tkp[b + 5] = int(sh[2])

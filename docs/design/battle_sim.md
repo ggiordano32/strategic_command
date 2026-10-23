@@ -2096,3 +2096,51 @@ atlas rebuilt, `soldier_facing_test` on both paths); (2) the two sim traits (woo
 blast missile with an arc) and the campaign's amphibious move (Opus for the hashed paths); (3) the rows, AI mixes,
 unit book, custom battle lists, recruit chains, tests and the West pins (Sonnet). Then a playtest and the AI's use of
 each piece (grenades at a gate, dragoons on a flank, mortars at a siege) as follow-ups.
+
+### The Caribbean roster, batch 1 (as built, 2026-10-23)
+
+Seven rows after the heavy gun in `UnitTypes.WEST_LATE` (so every earlier index, the fort gun's and the heavy gun's
+included, is unchanged; `pack_test _batch1`), sprite sets 27-33 of `art_pipeline.md`, two new ammunition kinds appended
+to `AMMO` (indices 11 and 12; `grenade` and `shell`, both standard kinds, `base` -1, `aoe` 1: every man within the
+burst is struck, full damage at the centre to a third at the edge, the survivors thrown and down, no plough). Their
+`obj` is the stone's gate / tower damage (360) times 27 % and 111 %: about 96 and 400 a hit, the row's `m_obj` (120,
+500) at the bolt's 80 per 100. The row `m_obj` itself is stored for the destruction build; the lobbed landing reads
+the kind's `obj`, not the row's.
+
+| Row (key) | Line, tier | Buildings | Who | Men, cost | Melee | Missile |
+|---|---|---|---|---|---|---|
+| Grenadiers (`grenadiers`) | `grenadier`, 1 | Barracks 3 (West Barracks has 3 levels) | England | 60, 8 (480 a unit) | attack 41, defence 30, armour 5, hp 95, morale 900, walk 1.45 / run 4.1 | grenade: 25 m, min 6 m, 4 a man, reload 15 s, damage 150, burst 3 m, fear 80, `m_obj` 120 |
+| Dragoons (`dragoons`) | `dragoon`, 1 | Stables 2 + Range 1 | England, France | 40, 10 (400) | cls cav, mount horse, attack 26, defence 24, charge 25, hp 130, walk 2.2 / run 8.6 (lancers') | musket as the musketeers' (120 m, damage 120, 20 a man) at reload 24 s (twice), `m_gun`, no fire on the move |
+| Coureurs des Bois (`coureurs`) | `buccaneer`, 2 | Range 2 | France | 50, 8 (400) | as buccaneers (attack 28, morale 680), `cover` 1, skirmishing | buccaneer musket (140 m, 130, `m_spread2` 100), 22 rounds (buccaneers 24); `woods_pct` 45 (native warriors and bowmen 60 were the best) |
+| Boarding Grenadiers (`boarding_grenadiers`) | `heavy`, 2 | Barracks 2 | the Brethren | 60, 7 (420) | the cutlass men's exactly (40 / 26, armour 3, hp 90, morale 700, cover) | grenade: 15 m, min 3 m, 2 a man, reload 12 s |
+| Canoe Raiders (`canoe_raiders`) | `light`, 2 | Barracks 1 (`UNIT_NEEDS`) | Miskito | 60, 4 (240) | attack 38, defence 24, walk 1.85 / run 5.0 (warriors 1.75 / 4.8), `cover` 1, `amphib` 1 | the Rome javelinmen's javelin (40 m, damage 42, ap 60, 6 a man) |
+| Holcan Warriors (`holcan`) | `heavy`, 2 | Barracks 2 | Itza | 60, 6 (360) | attack 46, defence 26, damage 46, armour 0, hp 100, morale 900 | none |
+| Mortars (`mortar`) | `mortar`, 1 | Workshop 3 (`ART_LEVEL`) | New Spain, Tierra Firme, England, France, the Dutch | 12 (3 pieces of 4), 50 (600) | crews as the guns' | shell: 300 m, min 60 m, 8 a piece, reload 60 s, damage 200, burst 4 m, `m_arc` 1 (over walls), spread 6 % + 2 m, speed 30 m/s, `m_obj` 500, walk 0.4, deploy 24 s, `e_hp` 320 |
+
+**What differs from the plan.**
+- **Class.** The grenadiers, boarding grenadiers and canoe raiders are `cls` missile, not infantry: the sim runs the fire
+  logic (`_missile_think`, `_update_missiles`, the stand-off at 85 % of the range) for missile, cavalry and artillery
+  classes only, so an infantry-class unit with `m_ammo` never shoots. As missile troops they stand off and throw, and with
+  the ammunition gone they close and fight (their melee is the row's). The holcan stay infantry.
+- **Minimum range.** `m_min` was read for artillery only. `BattleSim._in_range` now refuses a target nearer than the
+  unit's `m_min` (default 0: no other foot or horse row has one), so grenadiers do not throw at men in contact with them.
+  Per-man `_fire` still does not check it.
+- **Slots.** The roster is tier-indexed: the coureurs take the buccaneer line's second place (Range 2), the boarding
+  grenadiers and the holcan the heavy line's second place (Barracks 2), the canoe raiders the light line's second place
+  but with Barracks 1 through `UNIT_NEEDS` (as `heavy_gun` does for the Workshop). The AI recruits the highest place it
+  can, so the French AI raises coureurs at a Range 2, the Brethren's boarding grenadiers at a Barracks 2, the Miskito's
+  canoe raiders everywhere (their warriors stay in the starting armies and the player's list).
+- **No charge-fear stat for foot.** `fear_r` / `fear_foot` is a standing aura (elephants) and `charge` the horse's
+  impact; the holcan's shock is their attack and damage alone.
+- **Icons.** The rows reuse existing glyphs (24, 28, 26, 25, 32, 32, 29); the new tier-2 rows carry the tier chevron.
+- **Deck fights.** `ST.DECK_LINE_SHOT` gained the `grenadier` and `dragoon` lines and `ST.DECK_UNIT_SHOT` (by unit key) the
+  boarding grenadiers, whose line is the cutlass men's; the Brethren's `DECK_CREWS` kit is unchanged.
+- **AI mixes** (sums as before; the new line's share is taken from its nearest line): New Spain light_gun 5 -> 3 + mortar 2;
+  Tierra Firme light_gun 5 -> 3 + mortar 2; England musket 40 -> 37 + grenadier 3, pistol 20 -> 17 + dragoon 3, field_gun
+  5 -> 3 + mortar 2; France musket 35 -> 33 + mortar 2, pistol 15 -> 12 + dragoon 3; the Dutch field_gun 10 -> 7 + mortar 3;
+  the Itza light 60 -> 52 + heavy 8 (holcan). The Brethren and the Miskito have their units inside existing lines.
+  `composition` is untouched (the new lines are not main arms). The AI's build-up asks for a Workshop of at most level 2
+  and a Barracks 2, so it does not yet build the Workshop 3 or Barracks 3 the mortars and grenadiers need (follow-up).
+- **Lists.** `LINE_ORDER` has `grenadier` after heavy, `dragoon` after pistol and `mortar` after the field guns;
+  `WEST_LINES` (the custom picker) and the unit book's building table likewise; the West `CHAINS` texts name the new units
+  where they are built. The unit book reads the rows by itself.

@@ -9263,6 +9263,8 @@ func _missile_think(u: int) -> void:
 ## ground the height-adjusted range).
 func _in_range(u: int, t: int, rng: int) -> bool:
 	var d := _unit_dist(u, t)
+	if d < t_m_min[u_type[u]]:
+		return false  # (a grenadier's minimum: not at men in contact; no other foot or horse has one)
 	if ter_on == 0 and obs_on == 0 and fwh_on == 0:
 		return d <= rng
 	return d <= range_vs(u, t)

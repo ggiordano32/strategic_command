@@ -69,8 +69,8 @@ const TEMPLATES: Array[String] = ["skirmish", "battle_2000", "test_cav_archers",
 ## shows only the pack's rows, in these lines.
 const PACKS: Array[String] = ["rome", "west"]
 const PACK_NAMES := {"rome": "Rome", "west": "The West"}
-const WEST_LINES: Array[String] = ["musket", "pike", "buccaneer", "heavy", "light", "archer", "cav", "pistol",
-	"light_gun", "field_gun"]
+const WEST_LINES: Array[String] = ["musket", "pike", "buccaneer", "heavy", "grenadier", "light", "archer", "cav", "pistol",
+	"dragoon", "light_gun", "field_gun", "mortar"]
 const WEST_ARMY := [["lancers", 60], ["musketeers", 100], ["w_pikemen", 120], ["musketeers", 100],
 	["rodeleros", 100], ["buccaneers", 60], ["light_gun", 12], ["pistoleers", 60]]
 

@@ -4867,8 +4867,8 @@ func _sea_lanes() -> void:
 
 
 
-## Amphibious armies (2026-10-23): a unit row with "amphib" 1 (here "buccaneers", flagged for the test only)
-## paddles the coastal sea at foot pace, ends its turn afloat, lands, and is sunk by an enemy fleet that
+## Amphibious armies (2026-10-23): a unit row with "amphib" 1 (the real "canoe_raiders" row of the Caribbean
+## roster, batch 1) paddles the coastal sea at foot pace, ends its turn afloat, lands, and is sunk by an enemy fleet that
 ## sails within FLEET_ZONE. Cumana - Port of Spain (the gulf of Paria) has no land path.
 func _amphibious() -> void:
 	CData.use_pack("west")
@@ -4876,9 +4876,13 @@ func _amphibious() -> void:
 	var ns := _f("new_spain")
 	var cu := _r("cumana")
 	var ps := _r("port_of_spain")
-	var ty := UT.index_of("buccaneers")
-	_check(UT.stat(ty, "amphib") == 0 and UT.stat(UT.index_of("musketeers"), "amphib") == 0 and UT.stat(UT.index_of("general"), "amphib") == 0,
-		"amphibious: no row has the trait (default 0, the general's too)")
+	var ty := UT.index_of("canoe_raiders")
+	var only := true
+	for t in UT.TYPES.size():
+		if (UT.stat(t, "amphib") != 0) != (t == ty):
+			only = false
+	_check(UT.stat(ty, "amphib") == 1 and only and UT.stat(UT.index_of("general"), "amphib") == 0,
+		"amphibious: only the canoe raiders' row has the trait (the general's is 0)")
 	var st := CState.new_campaign("amph", 5150, [eng], {}, [], "west")
 	st["fleets"] = []
 	st["regions"][cu]["owner"] = eng
@@ -4886,15 +4890,15 @@ func _amphibious() -> void:
 	CState.set_dip(st, eng, ns, CState.WAR)
 	var start := CState.field_cell(cu)
 	var goal := CState.field_cell(ps)
-	var canoes := _army(st, eng, "cumana", ["buccaneers", "buccaneers"])
-	var mixed := _army(st, eng, "cumana", ["buccaneers", "musketeers"])
-	var chief := _army(st, eng, "cumana", ["buccaneers", "general"])
-	for x in [canoes, mixed, chief]:
+	var canoes := _army(st, eng, "cumana", ["canoe_raiders", "canoe_raiders"])
+	var mixed := _army(st, eng, "cumana", ["canoe_raiders", "musketeers"])
+	var chief := _army(st, eng, "cumana", ["canoe_raiders", "general"])
+	var foot := _army(st, eng, "cumana", ["buccaneers", "musketeers"])
+	for x in [canoes, mixed, chief, foot]:
 		CState.place(x, start)
-	var foot0 := CRules.plan_path(st, canoes, goal)
-	var reach0 := CRules.reach6(st, mixed, 1)
+	var foot0 := CRules.plan_path(st, foot, goal)
+	var reach0 := CRules.reach6(st, foot, 1)
 	_check(foot0.has("why"), "amphibious: without the trait no path crosses the gulf (%s)" % str(foot0.get("why", "")))
-	UT.TYPES[ty]["amphib"] = 1
 	_check(CRules.amphibious(st, canoes) and not CRules.amphibious(st, mixed) and not CRules.amphibious(st, chief),
 		"amphibious: only an army of amphibious units is (a mixed army, or one with a general, is not)")
 	var pp := CRules.plan_path(st, canoes, goal)
@@ -4908,7 +4912,7 @@ func _amphibious() -> void:
 	_check(CRules.plan_path(st, mixed, goal).has("why") and CRules.plan_path(st, chief, goal).has("why"),
 		"amphibious: a mixed army (and one with a general) cannot")
 	var reach1 := CRules.reach6(st, mixed, 1)
-	_check(reach0 == reach1, "amphibious: a normal army's reach is unchanged by the flag on another unit")
+	_check(reach0 == reach1, "amphibious: a mixed army's reach is the foot army's (the flag on one unit changes nothing)")
 	var rc := CRules.reach6(st, canoes, 1)
 	var wet_ok := false
 	var wet_mixed := false
@@ -4978,7 +4982,7 @@ func _amphibious() -> void:
 					l1 = j
 					l0 = q
 	if w3 >= 0:
-		for oid in [int(mixed["id"]), int(chief["id"])]:
+		for oid in [int(mixed["id"]), int(chief["id"]), int(foot["id"])]:
 			(s3["armies"] as Array).erase(CState.army(s3, oid))  # (their zones would stop the step)
 		CState.place(a3, w3)
 		var foe_a := _army(s3, ns, "cumana", ["musketeers"])
@@ -4988,8 +4992,6 @@ func _amphibious() -> void:
 		var res := CRules._step6(s3, foe_a, l1, {"aim": {"targets": []}})
 		_check(res == "" and (s3["battles"] as Array).size() == nb0 and int(a3["busy"]) == 0 and CRules.zone_r(s3, a3) == 0,
 			"amphibious: a land army stepping beside an afloat army starts no battle; the afloat army has no zone of control (step \"%s\", %d battles, busy %d)" % [res, (s3["battles"] as Array).size(), int(a3["busy"])])
-	UT.TYPES[ty].erase("amphib")
-	_check(not CRules.amphibious(st, canoes), "amphibious: the test flag is removed again")
 	CData.use_pack("rome")
 
 

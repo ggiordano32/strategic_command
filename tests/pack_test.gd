@@ -39,6 +39,7 @@ func _init() -> void:
 	_hash_view()
 	_west()
 	_heavy_guns()
+	_batch1()
 	_fleets()
 	_fleet_joins()
 	_sea()
@@ -362,6 +363,126 @@ func _heavy_guns() -> void:
 	_check(hg >= 0 and UT.price_of(hg) == 720 and UT.stat(hg, "m_obj") == 700 and UT.stat(hg, "m_range") == 520 * 1024
 		and hg > UT.FORT_GUN and UT.index_of("fort_gun") == UT.FORT_GUN and UT.line_of(hg) == "field_gun",
 		"heavy gun row: 720 a unit, wall breaker, after the fort gun (earlier indices unchanged)")
+
+
+## The Caribbean roster, batch 1 (owner 2026-10-23): each unit is recruitable by its factions with its
+## buildings and by nobody else; the rows sit after the heavy gun (every earlier index unchanged).
+func _batch1() -> void:
+	CData.use_pack("west")
+	var st := CState.new_campaign("b1", 7, [CData.faction_index("england")], {}, [], "west")
+	var B := CData.BARRACKS
+	var R := CData.RANGE
+	var S := CData.STABLES
+	var W := CData.WORKSHOP
+	# key: [factions, {chain: level needed}]
+	var want := {
+		"grenadiers": [["england"], {B: 3}],
+		"dragoons": [["england", "france"], {S: 2, R: 1}],
+		"coureurs": [["france"], {R: 2}],
+		"boarding_grenadiers": [["brethren"], {B: 2}],
+		"canoe_raiders": [["miskito"], {B: 1}],
+		"holcan": [["itza"], {B: 2}],
+		"mortar": [["new_spain", "tierra_firme", "england", "france", "dutch"], {W: 3}],
+	}
+	var facs := ["new_spain", "tierra_firme", "england", "france", "dutch", "brethren", "itza", "miskito"]
+	var ok_all := true
+	var ok_low := true
+	for key in want:
+		var who: Array = want[key][0]
+		var need: Dictionary = want[key][1]
+		for fk in facs:
+			var f := CData.faction_index(fk)
+			var r: int = CState.regions_of(st, f)[0]
+			for c in [B, R, S, W]:
+				var found := false
+				for sl in st["regions"][r]["slots"]:
+					if int(sl[0]) == c:
+						sl[1] = 3
+						found = true
+				if not found:
+					(st["regions"][r]["slots"] as Array).append([c, 3])
+			st["regions"][r]["queue"] = []
+			st["factions"][f]["treasury"] = 100000
+			var why := CRules.recruit_check(st, f, r, key)
+			if (why == "") != who.has(fk):
+				ok_all = false
+				print("  %s by %s with everything at 3: '%s'" % [key, fk, why])
+			# Every building at the needed level but one chain a level short: refused.
+			if who.has(fk):
+				for c in need:
+					for sl in st["regions"][r]["slots"]:
+						sl[1] = 3
+					for sl in st["regions"][r]["slots"]:
+						if int(sl[0]) == int(c):
+							sl[1] = int(need[c]) - 1
+					st["regions"][r]["queue"] = []
+					var why2 := CRules.recruit_check(st, f, r, key)
+					if not why2.begins_with("needs"):
+						ok_low = false
+						print("  %s by %s with chain %d at %d: '%s'" % [key, fk, int(c), int(need[c]) - 1, why2])
+				# ... and exactly the needed levels (other chains 0) is enough.
+				for sl in st["regions"][r]["slots"]:
+					sl[1] = int(need.get(int(sl[0]), 0))
+				st["regions"][r]["queue"] = []
+				var why3 := CRules.recruit_check(st, f, r, key)
+				if why3 != "":
+					ok_low = false
+					print("  %s by %s with exactly its needs: '%s'" % [key, fk, why3])
+	_check(ok_all, "batch 1: each unit is in its factions' rosters and nobody else's")
+	_check(ok_low, "batch 1: each needs exactly its buildings (a level short is refused, the levels alone are enough)")
+	var order := ["grenadiers", "dragoons", "coureurs", "boarding_grenadiers", "canoe_raiders", "holcan", "mortar"]
+	var idx_ok := UT.index_of("heavy_gun") == UT.FORT_GUN + 1 and UT.TYPES.size() == UT.FORT_GUN + 2 + order.size() \
+		and UT.index_of("fort_gun") == UT.FORT_GUN
+	for i in order.size():
+		idx_ok = idx_ok and UT.index_of(order[i]) == UT.FORT_GUN + 2 + i and UT.pack_of(UT.index_of(order[i])) == "west"
+	_check(idx_ok, "batch 1: the seven rows follow the heavy gun in order (the fort gun and heavy gun keep their indices)")
+	var sets := {"grenadiers": 27, "dragoons": 28, "coureurs": 29, "boarding_grenadiers": 30, "canoe_raiders": 31, "holcan": 32}
+	var sets_ok := UT.stat(UT.index_of("mortar"), "engine_set") == 33 and UT.stat(UT.index_of("mortar"), "sprite_set") == 25
+	for k in sets:
+		sets_ok = sets_ok and UT.stat(UT.index_of(k), "sprite_set") == int(sets[k])
+	_check(sets_ok, "batch 1: sprite sets 27-32 and the mortar's engine set 33")
+	var gr := UT.index_of("grenadiers")
+	var bg := UT.index_of("boarding_grenadiers")
+	var mo := UT.index_of("mortar")
+	var ak_gr := UT.ammo_index("grenade")
+	var ak_sh := UT.ammo_index("shell")
+	_check(ak_gr >= 0 and ak_sh == ak_gr + 1 and UT.stat(gr, "m_ak") == ak_gr and UT.stat(bg, "m_ak") == ak_gr and UT.stat(mo, "m_ak") == ak_sh
+		and UT.ammo_stat(ak_gr, "blast") == 3 * 1024 and UT.ammo_stat(ak_sh, "blast") == 4 * 1024
+		and UT.ammo_stat(ak_gr, "aoe") == 1 and UT.ammo_stat(ak_sh, "aoe") == 1
+		and UT.stat(gr, "m_kind") == 2 and UT.stat(mo, "m_kind") == 2 and UT.stat(mo, "m_arc") == 1 and UT.stat(gr, "m_arc") == 1,
+		"batch 1: the grenade (3 m) and the shell (4 m) are bursting lobbed kinds")
+	_check(UT.stat(gr, "m_range") == 25 * 1024 and UT.stat(gr, "m_ammo") == 4 and UT.stat(gr, "m_reload") == 150 and UT.stat(gr, "m_obj") == 120
+		and UT.stat(bg, "m_range") == 15 * 1024 and UT.stat(bg, "m_ammo") == 2
+		and UT.stat(mo, "m_range") == 300 * 1024 and UT.stat(mo, "m_min") == 60 * 1024 and UT.stat(mo, "m_reload") == 600
+		and UT.stat(mo, "m_obj") == 500 and UT.stat(mo, "walk") == 40 and UT.stat(mo, "deploy") == 240 and UT.stat(mo, "e_hp") == 320
+		and UT.price_of(mo) == 600 and UT.size_of(mo) == 12 and CData.ART_LEVEL["mortar"] == 3,
+		"batch 1: grenade, shell and mortar numbers as agreed")
+	var best := 100
+	for t in UT.TYPES.size():
+		if UT.pack_of(t) == "west" and UT.key_of(t) != "coureurs":
+			best = mini(best, UT.stat(t, "woods_pct"))
+	var cr := UT.index_of("coureurs")
+	_check(UT.stat(cr, "woods_pct") == best - 15 and UT.stat(cr, "cover") == 1 and UT.stat(cr, "m_ammo") == UT.stat(UT.index_of("buccaneers"), "m_ammo") - 2
+		and UT.stat(cr, "m_spread2") == UT.stat(UT.index_of("buccaneers"), "m_spread2") and UT.tier_of(cr) == 2,
+		"batch 1: the coureurs' woods pace is 15 points better than any other row, two rounds fewer than buccaneers")
+	var amph_ok := true
+	for t in UT.TYPES.size():
+		if (UT.stat(t, "amphib") != 0) != (UT.key_of(t) == "canoe_raiders"):
+			amph_ok = false
+	_check(amph_ok, "batch 1: only the canoe raiders paddle")
+	# The custom picker lists the new lines and every new row is in it.
+	var CS := preload("res://game/custom/custom_setup.gd")
+	var lines := CS.picker_lines("west")
+	_check(lines.has("grenadier") and lines.has("dragoon") and lines.has("mortar"), "batch 1: the custom battle picker lists the new lines")
+	# The West mixes name only lines the roster has and the AI's keys sum as before (99 or 100).
+	var mix_ok := true
+	for fa in CData.FACTIONS:
+		for line in fa["mix"]:
+			if not CData.LINE_CHAIN.has(line) or not CData.roster(CData.faction_index(str(fa["key"]))).has(line):
+				if line != "general" and line != "dogs":
+					mix_ok = false
+					print("  mix line '%s' of %s has no roster/chain" % [line, fa["key"]])
+	_check(mix_ok, "batch 1: every mix line of every West faction is in its roster")
 
 
 ## N2 (West only): a blockade cuts the port's income and pays the
