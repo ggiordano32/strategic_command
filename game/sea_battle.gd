@@ -229,6 +229,7 @@ func _ready() -> void:
 	camera.make_current()
 	_frame_fleet()
 	_build_hud()
+	AudioFx.set_battle_kind("coast")
 	AudioFx.enter_battle()
 	for s in n:
 		if sim.u_side[s] == player_side and _mine(s):

@@ -372,6 +372,15 @@ func _ready() -> void:
 	_fit_camera()
 	_au_on = not bench_mode and AudioFx.on()
 	if _au_on:
+		# The bed: the sea in the map (a coast or port battle) is the coast bed, else the pack's inland one.
+		var kind := "coast"
+		if sim.sea_on == 0:
+			kind = "inland_rome"
+			for u in sim.n_units:
+				if UT.pack_of(sim.u_otype[u]) == "west":
+					kind = "inland_west"
+					break
+		AudioFx.set_battle_kind(kind)
 		AudioFx.enter_battle()
 	hud.card_pressed.connect(_on_card)
 	hud.pause_pressed.connect(_toggle_pause)

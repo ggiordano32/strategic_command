@@ -38,11 +38,11 @@ const CAPS := {
 ## Overlap, s, of the two players of a looping ambient clip (see Looper).
 const BED_OVERLAP := 2.0
 const FIRE_OVERLAP := 1.0
-const LOOPS := ["bed_battle", "bed_map", "fire_loop"]
+const LOOPS := ["bed_battle", "bed_battle_inland_rome", "bed_battle_inland_west", "bed_map", "fire_loop"]
 const CLIPS := ["melee", "charge", "volley", "whoosh", "bolt_release", "bolt_impact", "stone_release",
 	"stone_impact", "burst", "fire_loop", "gate_blow", "gate_break", "creak", "unit_break", "unit_rally",
 	"horn_start", "horn_victory", "horn_defeat", "elephant", "dogs", "tap", "order_ok", "refused",
-	"end_turn", "turn_resolved", "battle_pending", "chime", "bed_battle", "bed_map", "musket", "cannon"]
+	"end_turn", "turn_resolved", "battle_pending", "chime", "bed_battle", "bed_battle_inland_rome", "bed_battle_inland_west", "bed_map", "musket", "cannon"]
 
 var active := false      # a device is there (not headless)
 var unlocked := false    # the first user input happened (always true off the web)
@@ -57,6 +57,7 @@ var _bed: Looper     # the ambient bed: two players handing over, see Looper
 var _fire: Looper
 var _bed_name := ""
 var _battle_depth := 0
+var _battle_kind := "coast"  # "coast" (bed_battle), "inland_rome" or "inland_west" (bed_battle_<kind>); coast when unknown
 var _fire_target := 0.0
 var _stamps := {}
 var debug := false
@@ -249,10 +250,16 @@ func _play(clip: String, v: float, pan: float, bucket: String) -> void:
 func _refresh_bed() -> void:
 	if _bed == null or not unlocked:
 		return
-	var want := "bed_battle" if _battle_depth > 0 else "bed_map"
+	var want := "bed_map"
+	if _battle_depth > 0:
+		want = "bed_battle"
+		if _battle_kind in ["inland_rome", "inland_west"]:
+			want = "bed_battle_" + _battle_kind
 	if want == _bed_name and _bed.playing():
 		return
 	_bed_name = want
+	if debug:
+		print("AUDIODEBUG bed=%s kind=%s" % [want, _battle_kind])
 	_bed.start(_streams.get(want))
 	if _battle_depth == 0:
 		_fire_target = 0.0
@@ -284,6 +291,15 @@ static func click() -> void:
 	play("tap", 0.8, 0.0, "ui")
 
 
+## The kind of battlefield, set before enter_battle: "coast" (the sea is in the
+## map, or unknown: bed_battle), "inland_rome" or "inland_west" (bed_battle_<kind>).
+## Reset to coast when the battle is left.
+static func set_battle_kind(kind: String) -> void:
+	var a = inst()
+	if a != null:
+		a._battle_kind = kind
+
+
 static func enter_battle() -> void:
 	var a = inst()
 	if a != null:
@@ -295,6 +311,8 @@ static func leave_battle() -> void:
 	var a = inst()
 	if a != null:
 		a._battle_depth = maxi(a._battle_depth - 1, 0)
+		if a._battle_depth == 0:
+			a._battle_kind = "coast"
 		a._refresh_bed()
 
 

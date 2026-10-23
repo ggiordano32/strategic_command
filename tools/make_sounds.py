@@ -430,17 +430,140 @@ def map_bed():
     return seamless(base + ev)
 
 
+def _battle_base(r, n, wind_lo=70, wind_hi=520, rum=2.2, gain=1.25):
+    """The shared battlefield floor: low wind, a very slow distant rumble."""
+    wind = band(noise(r, BED_D + BED_X), wind_lo, wind_hi) * (0.25 + wander(r, n, 25.0))
+    wind += 0.35 * band(noise(r, BED_D + BED_X), 400, 1600) * (0.1 + wander(r, n, 9.0))
+    rm = band(noise(r, BED_D + BED_X), 25, 110) * (0.15 + wander(r, n, 17.0)) * rum
+    base = wind + rm
+    return base * gain * BED_RMS / np.sqrt(np.mean(base ** 2))
+
+
 def battle_bed():
-    """48 s battlefield bed: low wind, a very slow distant rumble, a far crow or gull now and then."""
+    """Coast battlefield bed (file bed_battle): the old low wind and distant rumble
+    plus a far, soft surf on a slow ~13 s swell and 1-2 gulls and a far crow."""
     r = rng("battlebed48")
     n = int(SR * (BED_D + BED_X))
-    wind = band(noise(r, BED_D + BED_X), 70, 520) * (0.25 + wander(r, n, 25.0))
-    wind += 0.35 * band(noise(r, BED_D + BED_X), 400, 1600) * (0.1 + wander(r, n, 9.0))
-    rum = band(noise(r, BED_D + BED_X), 25, 110) * (0.15 + wander(r, n, 17.0)) * 2.2
-    base = wind + rum
-    base *= 1.25 * BED_RMS / np.sqrt(np.mean(base ** 2))
-    ev = events(r, (crow, gull), (2, 1), (0.5, 0.5), n, hi=6.0 + BED_X)
-    return seamless(base + ev)
+    base = _battle_base(r, n)
+    surf = band(noise(r, BED_D + BED_X), 150, 1400) * (0.1 + swell(r, n, 13.0, 0.3))
+    surf *= 0.45 * BED_RMS / np.sqrt(np.mean(surf ** 2))  # far: well under the wind
+    ev = events(r, (crow, gull), (1, int(r.integers(1, 3))), (0.4, 0.5), n, hi=6.0 + BED_X)
+    return seamless(base + surf + ev)
+
+
+def cicada(r):
+    """One cicada's buzz: a 3.5-5 kHz carrier pulsed at 55-90 Hz, swelling in and out over 2-6 s."""
+    d = 2.0 + 4.0 * r.random()
+    t = t_of(d)
+    f = 3600 + 1300 * r.random()
+    y = np.sin(2 * np.pi * f * t + 3 * np.sin(2 * np.pi * 7 * t))
+    y *= 0.5 + 0.5 * np.sign(np.sin(2 * np.pi * (55 + 35 * r.random()) * t)) * 0.8
+    y = band(y + 0.25 * noise(r, d), 2500, 6500)
+    return y * np.sin(np.pi * t / d) ** 1.5
+
+
+def dog_bark(r):
+    """A far dog: two low barks, soft and band-limited."""
+    out = np.zeros(int(SR * 1.2))
+    for at in (0.0, 0.4 + 0.1 * r.random()):
+        d = 0.16
+        t = t_of(d)
+        ph = 2 * np.pi * np.cumsum(430 * (1 - 0.35 * t / d)) / SR
+        y = band(np.sin(ph) + 0.7 * np.sin(2 * ph) + 0.4 * band(noise(r, d), 400, 2200), 250, 2200)
+        place(out, y * env(len(t), 0.01, d, 4), at, 1.0)
+    return out
+
+
+def cricket(r):
+    """A cricket's chirp: 3-4 pulses of a ~4.6 kHz tone."""
+    out = np.zeros(int(SR * 0.4))
+    f = 4300 + 600 * r.random()
+    for k in range(int(r.integers(3, 5))):
+        d = 0.03
+        t = t_of(d)
+        place(out, np.sin(2 * np.pi * f * t) * np.sin(np.pi * t / d), 0.07 * k, 1.0)
+    return out
+
+
+def tree_frog(r):
+    """A tree frog: a short rising 'krik' trill around 2 kHz."""
+    d = 0.22 + 0.1 * r.random()
+    t = t_of(d)
+    f = 1700 + 500 * r.random() + 500 * t / d
+    y = np.sin(2 * np.pi * np.cumsum(f) / SR) * (0.5 + 0.5 * np.sign(np.sin(2 * np.pi * 40 * t)))
+    y = band(y + 0.1 * noise(r, d), 1200, 3500)
+    return y * np.sin(np.pi * t / d)
+
+
+def parrot(r):
+    """A far parrot-like squawk: 2 harsh falling-rising notes, 1.1-2 kHz."""
+    out = np.zeros(int(SR * 1.2))
+    at = 0.0
+    for k in range(int(r.integers(2, 4))):
+        d = 0.22 + 0.08 * r.random()
+        t = t_of(d)
+        u = t / d
+        f = (1300 + 300 * r.random()) * (1.3 - 0.6 * u)
+        ph = 2 * np.pi * np.cumsum(f) / SR
+        y = sum(h * np.sin((i + 1) * ph) for i, h in enumerate((1.0, 0.8, 0.6, 0.4, 0.3)))
+        y *= 0.6 + 0.4 * np.sin(2 * np.pi * 90 * t)
+        y = band(y + 0.3 * noise(r, d), 700, 5000) * np.sin(np.pi * u) ** 0.6
+        place(out, y, at, 1.0 - 0.1 * k)
+        at += d + 0.08
+    return out
+
+
+def tropic_call(r):
+    """A tropical bird: a clear whistled phrase, three rising-falling notes (~1.8-2.8 kHz)."""
+    out = np.zeros(int(SR * 1.5))
+    at = 0.0
+    for f0 in (2000, 2500, 2200):
+        d = 0.2
+        t = t_of(d)
+        f = f0 * (1 + 0.25 * np.sin(np.pi * t / d)) + 60 * np.sin(2 * np.pi * 14 * t)
+        ph = 2 * np.pi * np.cumsum(f) / SR
+        y = np.sin(ph) + 0.25 * np.sin(2 * ph)
+        place(out, y * np.sin(np.pi * t / d) ** 0.8, at, 1.0)
+        at += d + 0.06
+    return out
+
+
+def chorus(r, n, fn, count, gain, lo=6.0, hi=6.0, burst=None):
+    """count random-time instances of fn (peak-normalised, gain 0..1 of the -12 dBFS
+    peak), none within lo / hi s of the loop's ends (hi counts the baked crossfade)."""
+    y = np.zeros(n)
+    d = n / SR
+    for _ in range(count):
+        at = lo + r.random() * (d - lo - hi - 6.5)
+        e = fn(r)
+        place(y, e / np.max(np.abs(e)), at, gain * 0.25 * (0.5 + 0.5 * r.random()))
+    return y
+
+
+def inland_rome_bed():
+    """Inland Roman bed: wind in dry grass (higher, rustling, no rumble), a sparse
+    random cicada chorus, 1-2 far crows and one distant dog bark. No gull, no surf."""
+    r = rng("battlebed_rome48")
+    n = int(SR * (BED_D + BED_X))
+    base = _battle_base(r, n, 90, 650, rum=1.2, gain=1.1)
+    grass = band(noise(r, BED_D + BED_X), 1800, 5500) * (0.1 + wander(r, n, 6.0)) ** 2
+    base += grass * 0.5 * BED_RMS / np.sqrt(np.mean(grass ** 2))
+    cic = chorus(r, n, cicada, int(r.integers(9, 13)), 0.22, hi=6.0)
+    ev = events(r, (crow, dog_bark), (int(r.integers(1, 3)), 1), (0.45, 0.4), n, hi=6.0 + BED_X)
+    return seamless(base + cic + ev)
+
+
+def inland_west_bed():
+    """Inland Caribbean bed: wind in leaves (a mid rustle over the wind), a soft cricket
+    and tree-frog chorus, 2-3 far parrot squawks and one tropical bird call. No gull, no surf."""
+    r = rng("battlebed_west48")
+    n = int(SR * (BED_D + BED_X))
+    base = _battle_base(r, n, 80, 600, rum=1.2, gain=1.1)
+    leaves = band(noise(r, BED_D + BED_X), 1000, 4000) * (0.1 + wander(r, n, 8.0)) ** 2
+    base += leaves * 0.6 * BED_RMS / np.sqrt(np.mean(leaves ** 2))
+    chor = chorus(r, n, cricket, 150, 0.07) + chorus(r, n, tree_frog, 60, 0.09)
+    ev = events(r, (parrot, tropic_call), (int(r.integers(2, 4)), 1), (0.5, 0.45), n, hi=6.0 + BED_X)
+    return seamless(base + chor + ev)
 
 
 # ------------------------------------------------------------- overworld ---
@@ -503,7 +626,9 @@ CLIPS = {
     "elephant": (elephant, 0.75), "dogs": (dogs, 0.7),
     "tap": (tap, 0.4), "order_ok": (order_ok, 0.5), "refused": (refused, 0.6), "end_turn": (end_turn, 0.8),
     "turn_resolved": (turn_resolved, 0.6), "battle_pending": (battle_pending, 0.7), "chime": (chime, 0.6),
-    "bed_battle": (battle_bed, 0.2512), "bed_map": (map_bed, 0.2512),
+    "bed_battle": (battle_bed, 0.2512),
+    "bed_battle_inland_rome": (inland_rome_bed, 0.2512), "bed_battle_inland_west": (inland_west_bed, 0.2512),
+    "bed_map": (map_bed, 0.2512),
     "musket": (musket_volley, 0.8), "cannon": (cannon, 0.9),
 }
 
