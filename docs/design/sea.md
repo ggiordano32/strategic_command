@@ -614,4 +614,5 @@ campaign map draws the galleys with the sprites of the sail ships of about their
 the version, so a bump would have moved the West pins; a Rome save without `fleets` plays as before, a
 new one carries them, and the online rules hash separates the builds); Syracuse still falls in 6 of 6
 pin seeds (5 before turn 30; turns 11-44; it fell in 5 of 6 at HEAD): its AI sends its armies abroad
-and Carthage lands in the empty cities; see the history row.
+and Carthage lands in the empty cities; see the history row. (2026-10-23: the AI's garrisons against landings,
+docs/AI.md 12.2: 1 of 6, at turn 27.)

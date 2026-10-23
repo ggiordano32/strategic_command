@@ -19,7 +19,14 @@ extends RefCounted
 ##     there, or idle IDLE_TURNS turns and not needed at home) that fits a
 ##     free fleet: beside it, it boards and sails (3.); else the fleet sails
 ##     to the coast cell nearest the army and the army marches there (it is
-##     kept out of the land plans: CAI.fleet_reserved);
+##     kept out of the land plans: CAI.fleet_reserved). (Garrisons against
+##     landings, docs/AI.md 12.2, 2026-10-23) "Not needed at home" counts the
+##     troops hostile fleets can land (CAI._sea_threat, CAI.needed_home: what
+##     stays must cover SEA_AWAY_PCT of the threat a turn ahead), and no army
+##     boards, nor does a loaded fleet sail to land (3.), while the fleets at
+##     war within a turn's sail of the route outgun the carrier beyond
+##     FERRY_ODDS_PCT (_ferry_safe); a loaded fleet with nowhere safe to land
+##     waits, or runs home in danger (7.);
 ##  6. (N2) free fleets in good repair blockade the richest enemy port
 ##     within BLOCKADE_TURNS whose defenders they outgun by SAFE_PCT (a
 ##     station on its approach, outside enemy zones), or keep the one they
@@ -157,10 +164,16 @@ static func act(st: Dictionary, f: int, moves: Array, fmoves: Array, cx_in: Dict
 			continue
 		var id := int(a["id"])
 		taken[id] = 1
+		var p0 := CState.cell(a) if CFleet.near_fleet(a, fl) else _coast_for(st, a)
+		if not _ferry_safe(st, f, fl, [CFleet.cell(fl), p0]):
+			fl.erase("job")  # (a stronger navy within a turn's sail: the army stays ashore)
+			CP.count(CP.C_FERRY_REFUSED, f)
+			continue
 		fl["job"] = id
 		if CFleet.near_fleet(a, fl):
 			if CRules.apply_order(st, f, {"t": "embark", "army": id, "fleet": int(fl["id"])}) == "":
 				fl.erase("job")
+			cx.erase("cover")  # (CAI.needed_home's memo: an army has left)
 			continue
 		var p := _coast_for(st, a)
 		if p < 0 or not _approach(st, fl, p) or _storm_at(st, p):
@@ -178,10 +191,12 @@ static func act(st: Dictionary, f: int, moves: Array, fmoves: Array, cx_in: Dict
 	for fl in mine:
 		if (fl["carry"] as Array).is_empty() or used.has(int(fl["id"])):
 			continue
-		used[int(fl["id"])] = 1
 		var dest := _landing(st, f, fl)
 		if dest >= 0:
+			used[int(fl["id"])] = 1
 			fmoves.append([int(fl["id"]), dest, f, 0, -1])
+		elif not _danger(st, f, fl):
+			used[int(fl["id"])] = 1  # (nowhere safe to land: wait; in danger it runs home below)
 	# Attacks.
 	for fl in mine:
 		if used.has(int(fl["id"])) or not (fl["carry"] as Array).is_empty():
@@ -355,8 +370,36 @@ static func _stranded(st: Dictionary, f: int, cx: Dictionary) -> Array:
 			continue
 		if CAI._hold(cx, st, f, a):
 			continue
+		if CAI.needed_home(st, f, a, cx):
+			CP.count(CP.C_FERRY_REFUSED, f)
+			continue
 		out.append(a)
 	return out
+
+
+## (Garrisons against landings) Fleet fl may ferry troops past the cells
+## `route` (where it is, where it embarks or lands, the way between): each
+## fleet at war with f that reaches one of them this turn (straight line at its
+## pace) has at most 100 / FERRY_ODDS_PCT times fl's power, summed over the
+## fleets near the same cell (the sea-battle odds: the rolls of
+## CFleet.resolve are ROLL_MIN .. ROLL_MIN + ROLL_SPAN %). Off at 0 (Easy).
+static func _ferry_safe(st: Dictionary, f: int, fl: Dictionary, route: Array) -> bool:
+	var pct := CP.of(st, f)[CP.FERRY_ODDS_PCT]
+	if pct <= 0:
+		return true
+	var mine := _power(fl)
+	for c in route:
+		if int(c) < 0:
+			continue
+		var foe := 0
+		for e in CFleet.fleets(st):
+			if not CState.at_war(st, f, int(e["f"])) or (e["ships"] as Array).is_empty() or CSea.is_flota(e):
+				continue
+			if CGrid.octile(CFleet.cell(e), int(c)) <= maxi(CFleet.speed(e), 1):
+				foe += _power(e)
+		if mine * 100 < foe * pct:
+			return false
+	return true
 
 
 ## The army fleet fl fetches: its job if still a candidate, else the nearest
@@ -450,6 +493,8 @@ static func _landing(st: Dictionary, f: int, fl: Dictionary) -> int:
 		var tt := _turns(fl, b)
 		if tt > MAX_TURNS or not _approach(st, fl, b) or _storm_at(st, b):
 			continue
+		if not _ferry_safe(st, f, fl, [b, _mid(CFleet.cell(fl), b)]):
+			continue
 		var d := maxi(CAI.target_defence(st, f, t), 1)
 		# The formula's chance of the troops against the AI's defence estimate
 		# (docs/AI.md 12.1): at least the level's attack threshold.
@@ -472,13 +517,18 @@ static func _landing(st: Dictionary, f: int, fl: Dictionary) -> int:
 		var b := CFleet.beach(r)
 		var land := int(CData.REGIONS[r]["land"])
 		if b < 0 or not work.has(land) or land == here or not CState.friendly(st, f, CState.owner(st, r)) \
-				or not _approach(st, fl, b) or _storm_at(st, b):
+				or not _approach(st, fl, b) or _storm_at(st, b) or not _ferry_safe(st, f, fl, [b, _mid(CFleet.cell(fl), b)]):
 			continue
 		var d := CGrid.octile(CFleet.cell(fl), b)
 		if d < bd:
 			bd = d
 			home = b
 	return home
+
+
+## The cell halfway between cells a and b (straight line).
+static func _mid(a: int, b: int) -> int:
+	return CGrid.at((CGrid.cx(a) + CGrid.cx(b)) / 2, (CGrid.cy(a) + CGrid.cy(b)) / 2)
 
 
 # ---------------------------------------------------------------- fights ---

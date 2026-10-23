@@ -146,6 +146,7 @@ func _init() -> void:
 	_west_roads()
 	_sea_lanes()
 	_rome_fleets()
+	_ai_sea_garrison()
 	_sight()
 	_town_plan()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
@@ -3755,13 +3756,14 @@ func _ai_skilled() -> void:
 	var g := CState.new_campaign("test", 4242, [])
 	for t in 20:
 		g = CTurn.resolve_turn(g, [])
+	# (2026-10-23, garrisons against landings, docs/AI.md 12.2: were 90d0b2cd / 2030669350 and, Easy, 75f80cd7 / 2506378597;)
 	# (2026-10-23, Rome fleets R2: were 519bcec8 / 2959563086 and, Easy, 9f1555b0 / 3720338208;) (Goldens moved with the roads, rivers and hills, 2026-10-09: movement
 	# differs; (2026-10-22: the AI's odds as win chances, docs/AI.md 12.1: it
 	# attacks at 55 % predicted instead of 130 % of its defence estimate: were
 	# e641d961 / 1208372723 and, Easy, 1508a9cb / 256607262;) (2026-10-22: the sea lanes pay, Rome's income moves: were 3007c1ab / 4197043257 and, Easy, bd76985b / 3786296811;) were 6e1095cd / 3394658370 and 08e7391a / 694925818; then 3666c3b2 / 694925818 and d517c822 / 3622865195 before the Tempe ford and the Tempe and Haliacmon roads; then caadf49a / 1570113520 and 95bb7116 / 2555935071 before the real coasts, rivers and relief, 2026-10-10.)
 	# (Format 8: hashed without the fog-of-war keys, as_format 7: the AI
 	# sees everything, so the play is the format 7 play.)
-	_check(CState.hash_text(CState.as_format(g, 7)) == "90d0b2cd" and int(g["rng"]) == 2030669350,
+	_check(CState.hash_text(CState.as_format(g, 7)) == "1e444176" and int(g["rng"]) == 4029223508,
 		"Average plays and draws the RNG exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(g, 7)), int(g["rng"])])
 	var ge := CState.new_campaign("test", 4242, [])
 	ge["factions"][_f("macedon")]["ai_skill"] = CP.EASY
@@ -3769,7 +3771,7 @@ func _ai_skilled() -> void:
 		ge = CTurn.resolve_turn(ge, [])
 	# (Easy golden moved 2026-10-13 with reinforcements: an army that was
 	# bounced off a full battle side now joins it; was be6e10a3, same rng.)
-	_check(CState.hash_text(CState.as_format(ge, 7)) == "75f80cd7" and int(ge["rng"]) == 2506378597,
+	_check(CState.hash_text(CState.as_format(ge, 7)) == "e8a57e07" and int(ge["rng"]) == 1561397015,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(ge, 7)), int(ge["rng"])])
 	CAI.no_beasts = false
 	CBattle.old_walls = false
@@ -4482,6 +4484,88 @@ func _rome_fleets() -> void:
 		var oc: Dictionary = CSB.outcome_from_result(bt, sim.result(), "fought")
 		var ap := CTurn.apply_battle(s3, int(pend[0]["id"]), oc)
 		_check(sim.ended != 0 and not ap.is_empty(), "Rome fleets: the galley battle is decided (%d s) and written back" % (sim.tick / 10))
+	CData.use_pack("rome")
+
+
+## Garrisons against landings (docs/AI.md 12.2): a coastal city of an AI
+## faction counts the troops a hostile fleet can land at its beach as threat
+## (what it carries, or an army beside it that it can take aboard), its army
+## holds against it, does not sail away from it, and a ferry is refused while
+## a stronger navy lies within a turn's sail.
+func _ai_sea_garrison() -> void:
+	CData.use_pack("rome")
+	var syr := _f("syracuse")
+	var car := _f("carthage")
+	var br := _r("bruttium")
+	var st := CState.new_campaign("sg", 77, [])
+	CState.set_dip(st, syr, car, CState.WAR)
+	var mine: Dictionary = CState.armies_of(st, syr)[0]
+	mine["units"] = (mine["units"] as Array).slice(0, 3)
+	mine["idle"] = CAIFleet.IDLE_TURNS   # (idle long enough to be shipped elsewhere)
+	CState.place(mine, CGrid.site(br))
+	var foe: Dictionary = (CState.armies_of(st, car)[0] as Dictionary).duplicate(true)
+	st["armies"] = [mine]
+	st["fleets"] = []
+	var dk := CFleet.dock(br)
+	var punic := {"id": 950, "f": car, "x": CGrid.cx(dk), "y": CGrid.cy(dk), "ships": [{"t": "quinquereme_p", "h": 100, "c": 100},
+		{"t": "trireme", "h": 100, "c": 100}, {"t": "corbita", "h": 100, "c": 100}], "carry": [], "moved": 0}
+	(st["fleets"] as Array).append(punic)
+	var cx := CAI._context6(st, syr)
+	_check(int(cx["sea"][br]) == 0 and not CAI._hold(cx, st, syr, mine), "sea garrison: an empty Punic fleet with no army near is no landing threat (%d)" % int(cx["sea"][br]))
+	foe["units"] = (foe["units"] as Array).slice(0, mini(4, CFleet.capacity(punic)))
+	punic["carry"] = [foe]
+	var fs := CState.strength(foe)
+	cx = CAI._context6(st, syr)
+	_check(int(cx["sea"][br]) == fs and int(cx["thr"][br]) >= fs and int(cx["far"][br]) >= fs,
+		"sea garrison: the troops a fleet at war carries off Bruttium are its threat (%d of %d)" % [int(cx["sea"][br]), fs])
+	var weak := CAI.defence(st, br) - CState.strength(mine) < fs
+	_check(weak and CAI._hold(cx, st, syr, mine), "sea garrison: the army in Bruttium holds against the landing")
+	_check(CAI.needed_home(st, syr, mine, cx), "sea garrison: ... and is needed at home (no expedition overseas, no embarking)")
+	var stranded := CAIFleet._stranded(st, syr, cx)
+	var s0 := CState.copy(st)
+	(s0["fleets"] as Array)[0]["carry"] = []
+	var free0 := CAIFleet._stranded(s0, syr, CAI._context6(s0, syr))
+	_check(not stranded.has(mine) and free0.size() == 1 and int(free0[0]["id"]) == int(mine["id"]),
+		"sea garrison: the fleet AI does not take it aboard (it would with no landing threat)")
+	var sp := CState.copy(st)
+	CState.set_dip(sp, syr, car, CState.PEACE)
+	var cp := CAI._context6(sp, syr)
+	_check(int(cp["sea"][br]) == 0 and not CAI._hold(cp, sp, syr, CState.army(sp, int(mine["id"]))),
+		"sea garrison: a fleet at peace is no threat at Average")
+	sp["factions"][syr]["ai_skill"] = CP.SKILLED
+	cp = CAI._context6(sp, syr)
+	_check(int(cp["sea"][br]) == fs * CP.of(sp, syr)[CP.SEA_PEACE_PCT] / 100 and int(cp["sea"][br]) > 0,
+		"sea garrison: Skilled counts a fleet of a neighbour at peace at SEA_PEACE_PCT (%d)" % int(cp["sea"][br]))
+	# An empty fleet beside an army of its side lifts it (Average), not at Easy.
+	var sl := CState.copy(st)
+	var pl: Dictionary = CFleet.fleet(sl, 950)
+	var ashore: Dictionary = (pl["carry"] as Array)[0]
+	pl["carry"] = []
+	var near := -1
+	for k in 8:
+		var j := CGrid.at(CGrid.cx(dk) + CGrid.DX[k], CGrid.cy(dk) + CGrid.DY[k])
+		if j >= 0 and not CFleet.is_sea(j) and CGrid.passable(j) and CGrid.cheb(j, CGrid.site(br)) > 1:
+			near = j
+	CState.place(ashore, near)
+	(sl["armies"] as Array).append(ashore)
+	var cl := CAI._context6(sl, syr)
+	_check(near >= 0 and int(cl["sea"][br]) == CState.strength(ashore), "sea garrison: an army beside an empty fleet counts (lift %d of %d)" % [int(cl["sea"][br]), CState.strength(ashore)])
+	sl["factions"][syr]["ai_skill"] = CP.EASY
+	cl = CAI._context6(sl, syr)
+	_check(int(cl["sea"][br]) == 0 and not CAI.needed_home(sl, syr, CState.army(sl, int(mine["id"])), cl),
+		"sea garrison: Easy counts only loaded fleets and sails away regardless")
+	# A ferry past a stronger navy is refused; a weaker one or none is not.
+	var sf := CState.copy(st)
+	(sf["fleets"] as Array).append({"id": 951, "f": syr, "x": CGrid.cx(dk) + 1, "y": CGrid.cy(dk), "ships": [{"t": "trireme", "h": 100, "c": 100},
+		{"t": "corbita", "h": 100, "c": 100}], "carry": [], "moved": 0})
+	var ours: Dictionary = CFleet.fleet(sf, 951)
+	CAIFleet._pw = {}
+	_check(not CAIFleet._ferry_safe(sf, syr, ours, [CFleet.cell(ours)]), "sea garrison: no ferry with a stronger Punic fleet within a turn's sail")
+	var pf: Dictionary = CFleet.fleet(sf, 950)
+	pf["ships"] = [{"t": "lembos", "h": 100, "c": 100}]
+	CAIFleet._pw = {}
+	_check(CAIFleet._ferry_safe(sf, syr, ours, [CFleet.cell(ours)]), "sea garrison: a weaker one does not stop it")
+	CAIFleet._pw = {}
 	CData.use_pack("rome")
 
 

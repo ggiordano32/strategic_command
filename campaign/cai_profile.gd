@@ -176,7 +176,16 @@ const COMMIT_WIN := SK_SUPPORT + 27   # (6) ... sending armies (strongest first)
 const SIEGE_WIN := SK_SUPPORT + 28    # (6) lay siege with the armies there now at this % (against the full siege kit) when more are coming
 const SCREEN_WIN := SK_SUPPORT + 29   # (6) an army screens a threatened city when its chance as the fortified defender is at least this %
 const SHELTER_WIN := SK_SUPPORT + 30  # (6) ... and shelters inside the walls when its chance there in the field is below this % (STANCES)
-const N_KNOBS := SK_SUPPORT + 31
+# Garrisons against landings (format 6 with fleets; docs/AI.md 12.2, 2026-10-23):
+# a coastal city of ours counts the troops a hostile fleet can land at its
+# beach as threat, as it counts the enemy armies that can march to it.
+const SEA_GUARD_TURNS := SK_SUPPORT + 31  # (6) hostile fleets whose voyage to the city's beach ends within this many turns after this one (-1 off); armies leaving the landmass count a turn more
+const SEA_LIFT_PCT := SK_SUPPORT + 32     # (6) ... an empty one counts this % of the strongest army of its side it can take aboard within a turn's sail
+const SEA_PEACE_PCT := SK_SUPPORT + 33    # (6) ... the fleets of a faction at peace with us (no trade, no alliance) count this % (a likely war)
+const FERRY_ODDS_PCT := SK_SUPPORT + 34   # (6) embark / sail to land only when the carrying fleet has at least this % of the power of each fleet at war within a turn's sail of the route (0 off)
+const SEA_AWAY_PCT := SK_SUPPORT + 35     # (6) an army leaves its landmass (a sea lane, a fleet) only while each threatened region of ours there that it reaches keeps this % of its threat in defence without it (0 off)
+const SEA_SCREEN := SK_SUPPORT + 36       # (6) screens and stances answer the landing threat too (1), or the armies' only (0)
+const N_KNOBS := SK_SUPPORT + 37
 
 # Deliberate mistakes (docs/AI.md 4, "Deliberate mistakes (campaign)"),
 # rolled with CState.rand at the decision point (cai.gd _mistake); each is a
@@ -315,6 +324,16 @@ const KNOBS: Array = [
 	[SIEGE_WIN, 45, 30, 35],
 	[SCREEN_WIN, 20, 30, 35],
 	[SHELTER_WIN, 20, 30, 0],
+	# Garrisons against landings (2026-10-23; docs/AI.md 12.2): Easy counts
+	# only loaded fleets that land this turn and ferries blind; Skilled counts
+	# half the fleets of a neighbour at peace and never ferries past a
+	# stronger navy.
+	[SEA_GUARD_TURNS, 0, 0, 0],
+	[SEA_LIFT_PCT, 0, 100, 100],
+	[SEA_PEACE_PCT, 0, 0, 50],
+	[FERRY_ODDS_PCT, 0, 80, 100],
+	[SEA_AWAY_PCT, 0, 150, 150],
+	[SEA_SCREEN, 0, 0, 0],
 ]
 
 ## Personality offsets [knob, CAUTIOUS, BALANCED, AGGRESSIVE] (docs/AI.md 5:
@@ -430,10 +449,13 @@ const C_SK_MERGE := "sk_merges"              # spare armies sent to merge into o
 const C_SK_RALLY := "sk_rallies"             # spare armies sent to stand within support of our main army
 const C_SK_FALLBACK := "sk_fallbacks"        # armies in danger falling back to support
 const C_SK_STORM_RELIEF := "sk_storms_before_relief"  # sieges stormed before a relief that could arrive next turn
+# Garrisons against landings (docs/AI.md 12.2).
+const C_SEA_HOLD := "sea_garrisons"          # armies kept in a coastal city of ours for a landing threat alone
+const C_FERRY_REFUSED := "ferries_refused"   # transports called off: a city of ours left uncovered, or a stronger navy near the route
 const COUNTER_KEYS: Array[String] = [C_BAD_ODDS, C_EMPTY_CITY, C_TWO_FRONTS, C_TRICKLED,
 	C_MK_EMPTY_CITY, C_MK_BAD_ODDS, C_MK_OVER_RECRUIT, C_MK_UNWISE_WAR, C_MK_NO_GARRISON,
 	C_SK_TWO_TO_ONE, C_SK_HUNT_DECLINED, C_SK_INTERCEPT, C_SK_TIMED, C_SK_MERGE, C_SK_RALLY, C_SK_FALLBACK,
-	C_SK_STORM_RELIEF]
+	C_SK_STORM_RELIEF, C_SEA_HOLD, C_FERRY_REFUSED]
 
 static var _counters := {}
 

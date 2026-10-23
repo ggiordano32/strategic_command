@@ -60,6 +60,13 @@ extends RefCounted
 ## armies to be away from the border (_border_weak) and a second front is
 ## closed by a peace offer (_one_front). It never shelters inside the walls
 ## (SHELTER_PCT 0: measured, the army is lost with the city).
+## Garrisons against landings (docs/AI.md 12.2, 2026-10-23; a pack with
+## ships): the threat to a coastal city of ours also counts the troops hostile
+## fleets can land at its beach (_sea_threat: carried, or an army of their side
+## that can board), so the army in it holds (_hold); an army leaves its
+## landmass (a sea lane in Rome, a fleet) only while what stays covers
+## SEA_AWAY_PCT of the threat a turn ahead (needed_home); screens and stances
+## answer the armies' threat only (SEA_SCREEN 0).
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -1388,6 +1395,9 @@ static func _hold(cx: Dictionary, st: Dictionary, f: int, a: Dictionary) -> bool
 			var r := int(a["r"])
 			var thr := int(cx["thr"][r])
 			h[id] = CState.owner(st, r) == f and thr > 0 and defence(st, r) - CState.strength(a) < thr
+			if bool(h[id]) and cx.has("sea") and not (cx["sea"] as Array).is_empty() and int(cx["sea"][r]) > 0 \
+					and defence(st, r) - CState.strength(a) >= thr - int(cx["sea"][r]):
+				CP.count(CP.C_SEA_HOLD, f)  # (held for a landing threat alone)
 		else:
 			h[id] = _must_hold(st, f, a)
 		if bool(h[id]):
@@ -1937,6 +1947,18 @@ static func _move_grid(st: Dictionary, f: int, out: Array, cx_in: Dictionary = {
 		free.append(a)
 		want[int(a["id"])] = CData.ST_DEFAULT
 	var cx := cx_in if not cx_in.is_empty() else _context6(st, f)
+	cx.erase("cover")  # (the fleet AI may have embarked armies since it was filled)
+	if kn[CP.SEA_AWAY_PCT] > 0 and cx.has("sea") and not (cx["sea"] as Array).is_empty():
+		# (Garrisons against landings, docs/AI.md 12.2) An army needed at home
+		# plans nothing on another landmass (no expedition across a sea lane).
+		for a in free:
+			if not needed_home(st, f, a, cx):
+				continue
+			var land := int(CData.REGIONS[int(a["r"])]["land"])
+			var t: Array = etas[int(a["id"])]["t"]
+			for r in nreg:
+				if int(CData.REGIONS[r]["land"]) != land:
+					t[r] = CRules.INF
 	var used := {}
 	_sieges_grid(st, f, free, etas, used, out, cx)
 	_hunt(st, f, free, used, out, cx)
@@ -2178,7 +2200,148 @@ static func _context6(st: Dictionary, f: int) -> Dictionary:
 			var d: int = (_sf[r] as PackedInt32Array)[c]
 			if d < CGrid.INF and d - int(_site_cost[r]) <= full:
 				thr[r] += s
-	return {"thr": thr, "foe": foe, "here": here, "str": sm, "hold": {}, "v6": 1}
+	var sea: Array[int] = []
+	var far: Array[int] = []
+	if CFleet.on(st):
+		# (docs/AI.md 12.2) "sea": the landings that can come within
+		# SEA_GUARD_TURNS (held against, as "thr"); "far": a turn later too
+		# (what an army leaving the landmass must leave covered: it cannot be
+		# back sooner).
+		var both := _sea_threat(st, f, CP.of(st, f)[CP.SEA_GUARD_TURNS])
+		sea = both[0]
+		var far_sea: Array[int] = both[1]
+		far.resize(n)
+		for r in n:
+			far[r] = thr[r] + far_sea[r]
+			thr[r] += sea[r]
+	var out := {"thr": thr, "foe": foe, "here": here, "str": sm, "hold": {}, "v6": 1, "sea": sea, "far": far}
+	if CP.of(st, f)[CP.SEA_SCREEN] != 0:
+		out["sea_screen"] = 1
+	return out
+
+
+## Garrisons against landings (docs/AI.md 12.2; a pack with ships): per
+## region, the troops hostile fleets can land at the beach of each coastal
+## region of ours within `turns` turns after this one (a straight-line
+## voyage at the fleet's pace, as the fleet AI estimates it: _turns), and
+## within a turn more ([near, far]). A fleet
+## counts what it carries, and SEA_LIFT_PCT of the strongest army of its side
+## that fits its free room and can board it: one beside it (CFleet.near_fleet)
+## boards and sails this turn, one within a turn's sail of it is fetched and
+## lands a turn later (the fleet AI's own transport). Fleets of the factions
+## at war with f count in full, those of a faction merely at peace with f (no
+## trade, no alliance) SEA_PEACE_PCT (Skilled: a likely war). The flota and
+## story fleets do not count.
+static func _sea_threat(st: Dictionary, f: int, turns: int) -> Array:
+	var n := CData.region_count()
+	var out: Array[int] = []
+	out.resize(n)
+	out.fill(0)
+	var out2: Array[int] = out.duplicate()
+	var kn := CP.of(st, f)
+	if turns < 0:
+		return [out, out2]
+	var beaches: Array[int] = []
+	for r in CState.regions_of(st, f):
+		if CFleet.beach(r) >= 0:
+			beaches.append(r)
+	if beaches.is_empty():
+		return [out, out2]
+	for e in CFleet.fleets(st):
+		var g := int(e["f"])
+		if g == f or g < 0 or (e["ships"] as Array).is_empty() or CSea.is_flota(e) or e.has("sto"):
+			continue
+		var pct := 0
+		if CState.at_war(st, f, g):
+			pct = 100
+		elif CState.dip(st, f, g) == CState.PEACE and not CState.friendly(st, f, g):
+			pct = kn[CP.SEA_PEACE_PCT]
+		if pct <= 0:
+			continue
+		var sp := maxi(CFleet.speed(e), 1)
+		var here := CFleet.cell(e)
+		var cargo := 0
+		for a in e["carry"]:
+			cargo += CState.strength(a)
+		var lift_now := 0   # an army beside the fleet: aboard and away this turn
+		var lift_next := 0  # one within a turn's sail: fetched, lands a turn later
+		var room := CFleet.capacity(e) - CFleet.carried_units(e)
+		if room > 0 and kn[CP.SEA_LIFT_PCT] > 0:
+			for a in st["armies"]:
+				if int(a["f"]) != g or int(a["busy"]) != 0 or CState.unit_count(a) > room:
+					continue
+				if CFleet.near_fleet(a, e):
+					lift_now = maxi(lift_now, CState.strength(a))
+				elif CGrid.octile(here, CState.cell(a)) <= sp:
+					lift_next = maxi(lift_next, CState.strength(a))
+			lift_now = lift_now * kn[CP.SEA_LIFT_PCT] / 100
+			lift_next = lift_next * kn[CP.SEA_LIFT_PCT] / 100
+		if cargo + lift_now + lift_next <= 0:
+			continue
+		for r in beaches:
+			var tt := CGrid.octile(here, CFleet.beach(r)) / sp
+			# within `turns` (held against), and a turn later ("far": what an
+			# army leaving the landmass must leave covered)
+			for k in 2:
+				var s := 0
+				if tt <= turns + k:
+					s = cargo + lift_now
+				if tt + 1 <= turns + k:
+					s = maxi(s, cargo + lift_next)
+				if k == 0:
+					out[r] += s * pct / 100
+				else:
+					out2[r] += s * pct / 100
+	return [out, out2]
+
+
+## (Garrisons against landings, docs/AI.md 12.2) Army a must not leave its
+## landmass (across a sea lane or aboard a fleet: it cannot come back within
+## the turn): a region of ours on that landmass whose settlement a reaches
+## this turn is threatened (cx "far": the enemy armies that reach it and the
+## troops hostile fleets can land there a turn later than the garrisons count)
+## beyond SEA_AWAY_PCT % of what would
+## defend it without a (its garrison, the armies in it, our other armies that
+## reach it this turn). 0: off (Easy).
+static func needed_home(st: Dictionary, f: int, a: Dictionary, cx: Dictionary) -> bool:
+	var pct := CP.of(st, f)[CP.SEA_AWAY_PCT]
+	if pct <= 0:
+		return false
+	var land := int(CData.REGIONS[int(a["r"])]["land"])
+	var tf: Array = cx["far"] if cx.has("far") and not (cx["far"] as Array).is_empty() else cx["thr"]
+	if not cx.has("cover"):
+		cx["cover"] = {}
+	var cover: Dictionary = cx["cover"]
+	for r in CState.regions_of(st, f):
+		var thr := int(tf[r])
+		if thr <= 0 or int(CData.REGIONS[r]["land"]) != land:
+			continue
+		var mine := 0
+		if int(a["r"]) == r:
+			mine = _str(cx, a)
+		elif not _reaches(a, r):
+			continue
+		elif int(a["busy"]) == 0 and CRules.siege_role(st, a) == 0:
+			mine = _str(cx, a)
+		if not cover.has(r):
+			# What defends r this turn: its garrison and the armies in it, and
+			# our free armies elsewhere that reach its settlement.
+			var d := defence(st, r)
+			for b in CState.armies_of(st, f):
+				if int(b["r"]) != r and int(b["busy"]) == 0 and CRules.siege_role(st, b) == 0 and _reaches(b, r):
+					d += _str(cx, b)
+			cover[r] = d
+		if int(cover[r]) - mine < thr * pct / 100:
+			return true
+	return false
+
+
+## Army a reaches region r's settlement this turn (the static field, its
+## default stance's points).
+static func _reaches(a: Dictionary, r: int) -> bool:
+	if _sf.is_empty():
+		site_dist(0, 0, false)
+	return site_dist(CState.cell(a), r, false) <= CState.max_mp6(_default_of(a))
 
 
 static func _attack6(st: Dictionary, f: int, tg: Dictionary, _etas: Dictionary, used: Dictionary, out: Array,
@@ -2777,6 +2940,15 @@ static func _raid6(st: Dictionary, f: int, free: Array, etas: Dictionary, used: 
 ## the strongest free army that can match SCREEN_PCT of the threat; it
 ## stands in the field next to the city (its zone covers the approaches),
 ## on a forced march if that brings it there this turn.
+## The threat a screen or a stance answers in region r: cx "thr", without
+## the landing threat ("sea") unless SEA_SCREEN (cx "sea_screen").
+static func _thr_screen(cx: Dictionary, r: int) -> int:
+	var t := int(cx["thr"][r])
+	if not cx.has("sea_screen") and cx.has("sea") and not (cx["sea"] as Array).is_empty():
+		t -= int(cx["sea"][r])
+	return t
+
+
 static func _screen6(st: Dictionary, f: int, free: Array, etas: Dictionary, used: Dictionary, out: Array, cx: Dictionary,
 		want: Dictionary) -> void:
 	var kn := CP.of(st, f)
@@ -2785,7 +2957,7 @@ static func _screen6(st: Dictionary, f: int, free: Array, etas: Dictionary, used
 	for r in CState.regions_of(st, f):
 		if not CState.siege_at(st, r).is_empty() or not CState.battle_at(st, r).is_empty():
 			continue
-		var thr := int(cx["thr"][r])
+		var thr := _thr_screen(cx, r)
 		if thr == 0:
 			continue
 		var site := CGrid.site(r)
@@ -2834,7 +3006,7 @@ static func _stances6(st: Dictionary, f: int, free: Array, used: Dictionary, cx:
 		var r := int(a["r"])
 		if CState.owner(st, r) != f:
 			continue
-		var thr := int(cx["thr"][r])
+		var thr := _thr_screen(cx, r)
 		if thr == 0:
 			continue
 		var mine := 0

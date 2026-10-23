@@ -1296,6 +1296,79 @@ at 60 % the West reads 6.61 / 5.64 (10 / 16 out) and Rome 6.72 / 2.19; at 55 % (
 `ROME_20` `91b91238`, V7 `4a93a2f1`; `campaign_input_test` (Rome) and `check_scripts` pass. Online clients compare
 the rules hash: `campaign/` changed.
 
+### 12.2 Garrisons against landings (2026-10-23)
+
+With the Rome pack's fleets (R2) Syracuse fell in 6 of 6 `campaign_sim` seeds (5 before turn 20) and the Greeks and
+Macedon more often: the AI's threat to a city counted only the enemy armies that could march to it, so a coastal city
+looked safe while a Punic fleet lay a day's sail off with an army beside it, and an army crossed a sea lane (Rome:
+`LANES_FOR_ARMIES`) or boarded a fleet leaving its cities bare. The format-6 AI (`campaign/cai.gd`,
+`campaign/cai_fleet.gd`) now counts the sea the way it counts the land; integers, the state only, index order, no RNG.
+
+- **Landing threat** (`CAI._sea_threat`, in `_context6`: cx `"sea"` added to `"thr"`): for each coastal region of
+  ours (`CFleet.beach`), every hostile fleet whose straight-line voyage to the beach at its pace (the fleet AI's
+  `_turns`) ends within `SEA_GUARD_TURNS` turns after this one adds what it can land there: the troops it carries,
+  plus `SEA_LIFT_PCT` of the strongest army of its side that fits its free room and can board, one beside it
+  (`CFleet.near_fleet`: aboard and away this turn, the fleet AI's own transport) or within a turn's sail of it (fetched,
+  lands a turn later). Fleets at war count in full; Skilled also counts `SEA_PEACE_PCT` of a fleet of a faction merely at
+  peace with it (no trade, no alliance: a likely war). The flota and story fleets do not count. The same pass gives cx
+  `"far"`: the threat a turn later still.
+- **Holding** (`_hold`): an army in a city of ours stays when the city's defence without it is below the threat,
+  now landing threat included (counted `sea_garrisons` when the landing threat alone holds it).
+- **Leaving the landmass** (`CAI.needed_home`, `SEA_AWAY_PCT`): an army may not plan anything on another landmass
+  (its etas there are set to never: no attack, siege, idle target or frontier march across a sea lane) nor be picked
+  by the fleet AI for transport, while some region of ours on its landmass that it reaches this turn would keep less
+  than `SEA_AWAY_PCT` % of its `"far"` threat in defence without it (its garrison and armies in it, plus our other
+  free armies that reach it this turn). It cannot be back sooner than the landing it leaves the city to.
+- **Ferrying** (`CAIFleet._ferry_safe`, `FERRY_ODDS_PCT`): no army boards, and a loaded fleet does not sail to land,
+  while the fleets at war that reach the fleet's cell, the embarkation point or the landing beach and the halfway
+  cell of the voyage this turn have more than 100 / `FERRY_ODDS_PCT` times the carrier's power (summed per cell; the
+  sea-battle rolls are 85-116 %). A loaded fleet with nowhere safe to land waits, or runs for port when a stronger
+  enemy is near (`_danger`, as an empty fleet). Counted `ferries_refused` (with the transports refused by
+  `needed_home`).
+- **Screens and stances** answer the armies' threat only (`SEA_SCREEN` 0, built, off): with the landing threat in
+  them every coastal city drew a screen and the West fought 52 battles a campaign instead of 56.
+
+| Knob (`cai_profile.gd`, ids 106-111) | Easy | Average | Skilled |
+|---|---|---|---|
+| `SEA_GUARD_TURNS` landings counted within this many turns after this one (`-1` off; leaving counts one more) | 0 | 0 | 0 |
+| `SEA_LIFT_PCT` an empty fleet counts this % of an army of its side that can board | 0 | 100 | 100 |
+| `SEA_PEACE_PCT` a fleet of a neighbour at peace counts this % | 0 | 0 | 50 |
+| `FERRY_ODDS_PCT` ferry only with at least this % of the power of the fleets at war near the route (0 off) | 0 | 80 | 100 |
+| `SEA_AWAY_PCT` leave the landmass only while what stays covers this % of the threat a turn ahead (0 off) | 0 | 150 | 150 |
+| `SEA_SCREEN` screens and stances answer the landing threat too | 0 | 0 | 0 |
+
+Easy keeps its habits: it holds only against a loaded fleet that can land this turn, and sails and crosses regardless.
+
+**Measured** (`campaign_sim`, all Average; 6 seeds = the pin set, 24 seeds 1000 + 77 k for the noise; eliminations with
+the turn; HEAD = the R2 commit):
+
+| | Rome HEAD | Rome after | West HEAD | West after |
+|---|---|---|---|---|
+| battles a campaign, 6 seeds (range) | 53.2 (45-58) | 49.5 (38-71) | 64.3 (48-105) | 54.5 (45-60) |
+| 24 seeds | 53.3 | 50.8 | 62.2 | 56.7 |
+| field battles, 6 seeds | 10.0 | 7.5 | 5.3 | 4.5 |
+| eliminations, 6 seeds | 20: syra 6 (11, 12, 12, 17, 18, 44), epir 5, gree 4, mace 3, rome 1, gaul 1 | 8: epir 4 (17, 34, 41, 48), mace 2 (45, 46), syra 1 (27), iber 1 (43) | 5: bret 2, itza 2, engl 1 | 8: misk 3, bret 2, engl 1, dutc 1, itza 1 |
+| eliminations, 24 seeds | 81: syra 21 (18 before turn 20), epir 20, mace 14, gaul 9, gree 7, rome 5, iber 3, cart 2 | 45: epir 18, mace 7, gaul 6, syra 5 (27-60), iber 4, rome 2, cart 2, gree 1 | 19: itza 9, bret 7, engl 2, misk 1 | 17: misk 6, bret 5, engl 2, dutc 2, itza 2 |
+| earliest elimination, 24 seeds | turn 11 (syra) | turn 11 (epir) | 24 | 21 |
+| ships launched / sea battles / landings a campaign, 6 seeds | 51.8 / 20.3 / 12.8 | 64.5 / 28.8 / 10.5 | 80.8 / 51.3 / 30.5 | 75.2 / 49.7 / 22.2 |
+
+Ablations (12 seeds, Average): the landing threat alone (holds and screens, without `SEA_AWAY_PCT` and the ferry
+rule) made Syracuse worse (12 of 12, 11 of them at turns 8-17: an army held Bruttium against the fleet while the main
+army still crossed to Africa and the capital fell by land); `SEA_AWAY_PCT` is what keeps it (3 of 12 at 150, 5 of 12 at 100 with two before turn 20,
+6 of 12 at 125); `SEA_LIFT_PCT` 50 let Syracuse fall in 9 of 12; landings counted a turn further (`SEA_GUARD_TURNS` 1)
+cost the West about 9 battles a campaign (6 seeds); screens on the landing threat 4 more. Skilled (6 seeds, all Skilled): Rome battles
+72.5 -> 57.5, eliminations 10 -> 12 (Syracuse 2 -> 0), landings 11.5 -> 5.7 a campaign; West 69.3 -> 64.5, 8 -> 7,
+landings 28.0 -> 18.5. Easy (all Easy, 6 seeds): Rome 180 -> 188 battles, 17 -> 17 eliminations; West 178 -> 200, 9 -> 9.
+
+**Not reached / open.** Rome's eliminations are now below the 15-18 the pacing aimed at (8 on the pin set, 11 per 6
+seeds over 24): Syracuse, the Greeks and Macedon survive, Epirus still falls (18 of 24, from turn 11). The root of
+Syracuse's early falls was also its money: from turn 1 a Punic fleet blockades Syracuse's harbour (cheb 3 of its
+start dock; 337 of its 910 a turn, `SEA_TRADE_PCT` 100 x `BLOCKADE_CUT_PCT` 75 of Sicilia Orientalis' wealth income)
+and its start army and fleet cost 1121 a turn against 577, so the debt rules disband half its army by turn 3 whatever the
+AI does; the garrison rules only stop it from walking the rest overseas. A Rome `SEA_TRADE_PCT` of 40 (a data change, tried
+and not kept) did not save it either (5-6 of 6 before `SEA_AWAY_PCT` existed). Frame cost: Rome about 30 ms -> 41 ms a turn mean (6
+seeds, one process; partly the larger realms and armies alive), West about 54 -> 60 ms.
+
 ## 13. As built: siege equipment and wall towers (2026-10-07)
 
 The settlement AI uses and answers the siege gear of docs/DESIGN.md
