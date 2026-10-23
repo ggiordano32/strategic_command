@@ -1009,13 +1009,7 @@ func _build_host_card() -> Control:
 	_net_line.name = "net_line"
 	_net_line.mouse_filter = Control.MOUSE_FILTER_STOP
 	_net_line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	st.add_child(_net_line)
-	var ch := Kit.button("Change", show_page.bind("server"), 0, 13)
-	ch.name = "host_server_change"
-	ch.custom_minimum_size = Vector2(70, 32)
-	Kit.nav_style(ch)
-	Kit.tip(ch, "Game server", "Pick another server for online play, or host one from this PC.")
-	st.add_child(ch)
+	st.add_child(_net_line)  # (the Change button is the Game server row's at the foot of the page, 2026-10-23: one, not two)
 	v.add_child(st)
 	_gh_select(_gh_pack)
 	return card

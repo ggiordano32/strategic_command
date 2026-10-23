@@ -273,7 +273,7 @@ func _grand_page() -> void:
 	m.show_page("grand")
 	await _frames(3)
 	_check(m._pages["grand"].is_ancestor_of(m._net_line), "the server line is on the Grand Campaign page")
-	for nm in ["home_Online_co-op", "grand_join", "grand_join_code", "grand_join_paste", "home_server", "host_pack_west", "host_pack_rome", "host_server_change"]:
+	for nm in ["home_Online_co-op", "grand_join", "grand_join_code", "grand_join_paste", "home_server", "host_pack_west", "host_pack_rome"]:
 		_check(_btn(nm) != null and _btn(nm).is_visible_in_tree() or (nm == "grand_join_code" and m._gj_edit.is_visible_in_tree()), "%s is on the Grand Campaign page" % nm)
 	_check(m._grand_cards.get_child_count() == 2 and not m._grand_cards.vertical, "the Host and Join cards sit side by side")
 	_check(m.find_child("online_empty", true, false) != null or net == null, "no campaigns: the empty line shows (the Host card is the call to action)")
@@ -310,9 +310,7 @@ func _grand_page() -> void:
 	_check(m.page == "server", "Game server opens its page")
 	m._back_btn.pressed.emit()
 	_check(m.page == "grand", "Back from Game server returns to Grand Campaign")
-	await _press("host_server_change")
-	_check(m.page == "server", "the Host card's Change opens the server page too")
-	m._back_btn.pressed.emit()
+	_check(_btn("host_server_change") == null, "the Host card has no second Change button (one Game server row, 2026-10-23)")
 	m.show_page("join")
 	_check(m.page == "join" and m._join_edit != null, "the separate join page is still reachable")
 	m._back_btn.pressed.emit()
