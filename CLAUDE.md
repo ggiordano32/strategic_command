@@ -1,9 +1,12 @@
 # Strategic Command
 
-2D co-op grand strategy game in Godot 4 (GDScript), web-first. The design and
-milestones live in `docs/DESIGN.md`; current progress, open items and how to
-run things are in `docs/STATUS.md`. Read both before making changes, and keep
-`docs/STATUS.md` up to date when a milestone lands or the plan changes.
+2D co-op grand strategy game in Godot 4 (GDScript), web-first. The design is
+indexed in `docs/DESIGN.md` (sections in `docs/design/<area>.md`); the short
+current state, open items by area and how to run things are in `docs/STATUS.md`
+(its dated history is in `docs/history/`). Read STATUS and the design area you
+touch before making changes, and keep `docs/STATUS.md` up to date when a
+milestone lands or the plan changes (new dated rows go to the top of the
+newest `docs/history/<month>.md`).
 
 ## Working model
 
@@ -20,7 +23,9 @@ run things are in `docs/STATUS.md`. Read both before making changes, and keep
   before / after, the verify suite, gallery regeneration, STATUS row
   merges from a draft. Balance passes split into a measure-and-report
   task (Haiku) and a change task (Sonnet or Opus); briefs fix the design
-  and the numbers so the builder decides little.
+  and the numbers so the builder decides little. The measuring is
+  `tools/balance` (`measure.py` plan, `table.py` before after; cached by code hash; README
+  there): the deciding agent reads its `--json` summary, never battle logs.
 
 ## Rules for battle simulation code
 
