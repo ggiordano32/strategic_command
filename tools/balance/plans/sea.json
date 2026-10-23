@@ -1,0 +1,15 @@
+{
+ "probe": "sea",
+ "layouts": [
+  "ns",
+  "we",
+  "gauge0",
+  "gauge1",
+  "camp"
+ ],
+ "modes": [
+  "ai",
+  "hold"
+ ],
+ "seeds": 24
+}

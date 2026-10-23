@@ -1,0 +1,9 @@
+{
+ "probe": "campaign_sim",
+ "packs": [
+  "rome",
+  "west"
+ ],
+ "seeds": 6,
+ "turns": 60
+}

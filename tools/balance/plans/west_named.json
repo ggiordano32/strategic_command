@@ -1,0 +1,19 @@
+{
+ "probe": "town_balance",
+ "pack": "west",
+ "towns": [
+  "havana",
+  "cartagena",
+  "port_royal",
+  "veracruz",
+  "santo_domingo",
+  "natchez",
+  "tayasal"
+ ],
+ "walls": [
+  0,
+  1,
+  2
+ ],
+ "seeds": 16
+}

@@ -1,0 +1,18 @@
+{
+ "probe": "town_balance",
+ "pack": "rome",
+ "towns": [
+  "zeugitana",
+  "attica",
+  "sicilia_or",
+  "latium",
+  "massalia",
+  "arverni"
+ ],
+ "walls": [
+  1,
+  2,
+  3
+ ],
+ "seeds": 32
+}

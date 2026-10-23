@@ -40,8 +40,11 @@ func _initialize() -> void:
 	var mixed := false
 	var trace := false
 	var walls := 0
+	var jf: FileAccess = null  # --json=PATH: one JSON line a battle (tools/balance), default off
 	for a in OS.get_cmdline_user_args():
-		if a.begins_with("--town="):
+		if a.begins_with("--json="):
+			jf = FileAccess.open(a.substr(7), FileAccess.WRITE)
+		elif a.begins_with("--town="):
 			town = a.get_slice("=", 1)
 		elif a.begins_with("--skill="):
 			skill = int(a.get_slice("=", 1))
@@ -66,6 +69,15 @@ func _initialize() -> void:
 			town, skill, s, r["win"], r["l3a"], r["l3d"], float(r["dist"]) / maxi(r["dist_n"], 1), r["dist_n"], r["inr"],
 			r["band"], ("%.1f" % (r["door"] / 600.0)) if r["door"] >= 0 else "-", r["spw"], r["held"], r["contact"] / 600.0,
 			r["t"] / 600.0, r["kia"], r["kid"]])
+		if jf != null:
+			var jr: Dictionary = r.duplicate()
+			jr["probe"] = "open_town"
+			jr["town"] = town
+			jr["skill"] = skill
+			jr["seed"] = s
+			jr["walls"] = walls
+			jf.store_line(JSON.stringify(jr))
+			jf.flush()
 		sums["win"] += r["win"]
 		for k in ["l3a", "l3d", "dist", "dist_n", "inr", "band", "spw", "t", "contact", "kia", "kid"]:
 			sums[k] += r[k]

@@ -119,8 +119,15 @@ func _init() -> void:
 	for kv in knobs:
 		CP.set_knob(int(kv[0]), int(kv[1]), int(kv[2]))
 	var ok := true
+	var jf: FileAccess = null  # --json=PATH: one JSON line a seed with its final state hash (tools/balance), default off
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--json="):
+			jf = FileAccess.open(a.substr(7), FileAccess.WRITE)
 	for sd in seeds:
 		var h1 := _run(sd, true)
+		if jf != null:
+			jf.store_line(JSON.stringify({"probe": "campaign_sim", "pack": pack, "seed": 1000 + sd * 77, "hash": h1}))
+			jf.flush()
 		if twice and _run(sd, false) != h1:
 			print("NOT DETERMINISTIC: seed %d" % (1000 + sd * 77))
 			ok = false

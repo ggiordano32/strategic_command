@@ -30,6 +30,7 @@ func _initialize() -> void:
 	var seed0 := 0
 	var old := false
 	var town := ""
+	var json_path := ""
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--town="):
 			town = a.get_slice("=", 1)
@@ -46,9 +47,12 @@ func _initialize() -> void:
 			seed0 = int(a.get_slice("=", 1))
 		elif a == "--old":
 			old = true
+		elif a.begins_with("--json="):
+			json_path = a.substr(7)  # one JSON line a battle (tools/balance), default off
 	var west := set_name.begins_with("west") or town.begins_with("west")
 	if walls_l.is_empty():
 		walls_l = [0, 1, 2] if west else [1, 2, 3]
+	var jf: FileAccess = FileAccess.open(json_path, FileAccess.WRITE) if json_path != "" else null
 	for walls in walls_l:
 		var aw := 0
 		var dr := 0
@@ -62,8 +66,11 @@ func _initialize() -> void:
 			sim.setup(sc, 53000 + s * 197)
 			if int((sim.map_info.get("city", {}) as Dictionary).get("tp", 0)) == 1:
 				builds += 1
+			var gate_tick := -1
 			while sim.tick < sim.time_limit + 10 and sim.winner < 0:
 				sim.step()
+				if gate_tick < 0 and sim.stat_gate_broken > 0:
+					gate_tick = sim.tick
 			var dt: float = (sim.decided_tick if sim.decided_tick >= 0 else sim.tick) / 600.0
 			if sim.winner == 0:
 				aw += 1
@@ -73,9 +80,18 @@ func _initialize() -> void:
 			var res := sim.result()
 			k_att += int(res["sides"][0]["killed"])
 			k_def += int(res["sides"][1]["killed"])
+			if jf != null:
+				jf.store_line(JSON.stringify({"probe": "town_balance", "set": set_name, "walls": int(walls), "seed": s,
+					"winner": sim.winner, "ticks": sim.decided_tick if sim.decided_tick >= 0 else sim.tick,
+					"killed_att": int(res["sides"][0]["killed"]), "killed_def": int(res["sides"][1]["killed"]),
+					"started_att": int(res["sides"][0]["started"]), "started_def": int(res["sides"][1]["started"]),
+					"remaining_att": int(res["sides"][0]["remaining"]), "remaining_def": int(res["sides"][1]["remaining"]),
+					"gate_tick": gate_tick, "gates_broken": sim.stat_gate_broken}))
 		print("TOWNBAL %s %s walls %d: attacker %d / %d (%d %%), draws %d, %.1f min, killed att %.0f def %.0f (plan maps %d)" % [
 			set_name, "old" if old else "plan", walls, aw, seeds, aw * 100 / maxi(seeds, 1), dr, t_sum / maxi(seeds, 1),
 			float(k_att) / maxi(seeds, 1), float(k_def) / maxi(seeds, 1), builds])
+	if jf != null:
+		jf.close()
 	quit(0)
 
 

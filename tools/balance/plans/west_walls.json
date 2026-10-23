@@ -1,0 +1,28 @@
+{
+ "probe": "town_balance",
+ "pack": "west",
+ "towns": [
+  "havana",
+  "cartagena",
+  "port_royal",
+  "veracruz",
+  "santo_domingo",
+  "campeche",
+  "portobelo",
+  "st_augustine",
+  "cumana",
+  "san_juan",
+  "maracaibo",
+  "merida",
+  "granada",
+  "santiago_de_cuba",
+  "new_orleans",
+  "puerto_principe"
+ ],
+ "walls": [
+  0,
+  1,
+  2
+ ],
+ "seeds": 16
+}

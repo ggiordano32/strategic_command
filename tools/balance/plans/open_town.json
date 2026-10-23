@@ -1,0 +1,15 @@
+{
+ "probe": "open_town",
+ "towns": [
+  "havana",
+  "cartagena",
+  "santo_domingo"
+ ],
+ "walls": [
+  0
+ ],
+ "skills": [
+  1
+ ],
+ "seeds": 8
+}
