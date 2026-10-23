@@ -253,6 +253,8 @@ func _map_row() -> Control:
 	var field := str(mp["kind"]) == "field"
 	row.add_child(_opt("Map: " + ("Field" if field else "Settlement"), func():
 		mp["kind"] = "settlement" if field else "field"
+		if field:
+			CS.fit_map(setup)
 		_changed(), ed))
 	if field:
 		row.add_child(_opt("Terrain: " + Terrain.KIND_NAMES[int(mp["terrain"])], func():
@@ -283,7 +285,7 @@ func _map_row() -> Control:
 		row.add_child(rb)
 	else:
 		row.add_child(_opt("Plan: " + MapGen.PLAN_NAMES[int(mp["plan"])], func():
-			mp["plan"] = (int(mp["plan"]) + 1) % (MapGen.PLAN_RING + 1)
+			mp["plan"] = CS.next_plan(setup, int(mp["plan"]))
 			_changed(), ed))
 		row.add_child(_opt("Site: " + Terrain.KIND_NAMES[int(mp["terrain"])], func():
 			mp["terrain"] = CS.SITE_KINDS[(CS.SITE_KINDS.find(int(mp["terrain"])) + 1) % CS.SITE_KINDS.size()]
@@ -292,7 +294,7 @@ func _map_row() -> Control:
 			mp["level"] = (int(mp["level"]) + 1) % 3
 			_changed(), ed))
 		row.add_child(_opt("Walls %d" % int(mp["walls"]), func():
-			mp["walls"] = (int(mp["walls"]) + 1) % 4
+			mp["walls"] = CS.next_walls(setup, int(mp["walls"]))
 			_changed(), ed))
 		row.add_child(_opt("Coast" if int(mp["coast"]) != 0 else "Inland", func():
 			mp["coast"] = 1 - int(mp["coast"])

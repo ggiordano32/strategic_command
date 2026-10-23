@@ -79,6 +79,38 @@ static func pack_of(st: Dictionary) -> String:
 	return str(st.get("pack", "rome"))
 
 
+## The highest wall level a settlement map of the setup's pack offers. The
+## West's towns are open towns with walls 0-2 (MapGen.is_west): walls 3 is the
+## walled plans (Rome's), whose houses cannot be held (BattleSim._setup_occ).
+static func max_walls(st: Dictionary) -> int:
+	return 2 if pack_of(st) == "west" else 3
+
+
+## The next wall level (cycling 0..max_walls) and the next plan (the West skips
+## the Oppidum, the natives' stockade: not an open town, no holdable houses).
+static func next_walls(st: Dictionary, w: int) -> int:
+	return (w + 1) % (max_walls(st) + 1)
+
+
+static func next_plan(st: Dictionary, p: int) -> int:
+	var n := (p + 1) % (MapGen.PLAN_RING + 1)
+	if pack_of(st) == "west" and n == MapGen.PLAN_OPPIDUM:
+		n = MapGen.PLAN_RING
+	return n
+
+
+## A West settlement map with walls 3 or the Oppidum plan (an old saved or
+## shared setup) is brought to the nearest open town, so Occupy works there.
+static func fit_map(st: Dictionary) -> void:
+	if pack_of(st) != "west" or not (st.get("map") is Dictionary):
+		return
+	var mp: Dictionary = st["map"]
+	if mp.has("walls"):
+		mp["walls"] = mini(int(mp["walls"]), 2)
+	if int(mp.get("plan", MapGen.PLAN_RING)) == MapGen.PLAN_OPPIDUM:
+		mp["plan"] = MapGen.PLAN_RING
+
+
 ## Switch the setup to pack `pack`: each side's armies become one army of
 ## the pack's standard layout (Player 1's at the bottom, the AI's at the top).
 static func set_pack(st: Dictionary, pack: String) -> void:
@@ -91,6 +123,7 @@ static func set_pack(st: Dictionary, pack: String) -> void:
 		st["sides"][s]["armies"] = [{"ctrl": "p1" if s == 0 else "ai", "units": army.duplicate(true)}]
 	if st.get("sea") is Dictionary:
 		st["sea"] = sea_default(pack)  # (R2: the ships on offer follow the setting)
+	fit_map(st)
 
 
 ## The picker's lines for pack `pack` (Rome: the base lines with the light
@@ -301,6 +334,7 @@ static func build(st: Dictionary, solo: bool = false) -> Dictionary:
 	var why := check(st, false)
 	if why != "":
 		return {"error": why}
+	fit_map(st)
 	var mp: Dictionary = st["map"]
 	var ctrl_of := [[], []]   # per side: per unit (in setup order) its player or -1
 	var lists := [[], []]     # per side: [ty, men]

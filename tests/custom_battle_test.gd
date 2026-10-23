@@ -197,6 +197,7 @@ func _init() -> void:
 	if not (solo["scenario"]["ai_sides"] as Array).has(1):
 		_fail("solo: Player 2's side is not the AI's")
 	_check_sea()
+	_check_occupy()
 	print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 	quit(0 if _ok else 1)
 
@@ -738,3 +739,31 @@ func _check_chars(field: Dictionary, town: Dictionary) -> void:
 			return
 		print("PASS chars (%s): six characters a side after the %d scenario units, kinds %s, Player 1 commands side %d's, the AI the other's; %d result rows with char 1 / alive 1; +%d gold a side" % [
 			str(st["map"]["kind"]), n_scn, str(kinds[0]), human + 1, rows, extra])
+
+
+## Occupy (slice 2c) is on in every West custom town (walls 0-3 and every plan
+## as set: the West offers walls 0-2 and no Oppidum, an old setup is fitted) and
+## off in Rome's.
+func _check_occupy() -> void:
+	var bad := ""
+	for pack in ["west", "rome"]:
+		for walls in 4:
+			for plan in 5:
+				var st := CS.default_setup(6)
+				CS.set_pack(st, pack)
+				st["map"]["kind"] = "settlement"
+				st["map"]["walls"] = walls
+				st["map"]["plan"] = plan
+				var b := CS.build(st)
+				if b.has("error"):
+					bad += " %s w%d p%d: %s" % [pack, walls, plan, str(b["error"])]
+					continue
+				var sim := BattleSim.new()
+				sim.setup(b["scenario"], int(b["seed"]))
+				var want := 1 if pack == "west" else 0
+				if sim.occ_on != want:
+					bad += " %s walls %d plan %d occ_on %d;" % [pack, walls, plan, sim.occ_on]
+	if bad != "":
+		_fail("occupy:" + bad)
+	else:
+		print("PASS occupy: occ_on 1 on every West custom town (walls 0-3 and plans fitted to open towns), 0 on Rome's")
