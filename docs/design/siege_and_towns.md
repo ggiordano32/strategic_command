@@ -2423,3 +2423,52 @@ it applies to plan maps only (a city with `tp`); scenario keys and custom battle
   Hard) for the attackers of a plan map with no outer gates (West walls 0-2).
 
 **Rome walls 1-2 (2026-10-22, AI.md 33).** On a walled Rome plan the defenders' street stack behind the breach holds at most `S_ROME_STACK` 4 units (the rest hold the plaza) and the storm's non-pike foot outside the houses attack at the run. Rome pooled attacker wins at 32 seeds, walls 1 / 2 / 3: 36 / 27 / 21 -> 58 / 35 / 23 % (targets 56 / 38 / 25). The West and generated maps are untouched by construction. Open: the citadel fight on the Greek and Punic plans (the plaza is the citadel), the castrum at walls 2, gate HP at walls 2.
+
+## Destruction: walls and buildings fall (plan, agreed 2026-10-23)
+
+The owner, 2026-10-23: "Cannons being able to damage and destroy walls and buildings. Occupied buildings that fall
+should kill the units that are still inside. Same with falling wall sections. This should affect both Rome and
+Caribbean sides." Gates already have hit points and break (`g_hp`, `GATE_BROKEN`); wall stretches, towers and houses
+are indestructible, and a flat shot that meets a wall or a house stops dead (`bk_*`, a puff of dust). Rome 2 lets
+onagers breach walls and artillery level buildings; this plan does the same, in the sim, deterministic, hashed.
+
+**Wall stretches.** Every walkway segment (`ws_*`) gets hit points `ws_hp` / `ws_hp0` (centi-hp like the gates) from
+the walls level: 1,200 / 2,000 / 3,000 for walls 1 / 2 / 3 (a fort trace's wall the same by its level), and a state
+`ws_state` (standing / breached) with `ws_hit_t` for the view. Damage comes from missiles with `m_obj` (what a gate
+takes: a stone 360, a culverin 450, a heavy gun 700, a bolt 80, a mortar shell as its blast stat) when a flat shot is
+stopped by the stretch's wall cells (`bk_*` records where; the shot that hits a wall damages the stretch that owns
+the cell) or an arcing shot lands on the stretch's cells; a ram at a wall is not in this plan (rams stay for gates).
+At 0 the stretch is **breached**: its cells become passable rubble at the broken gate's cost (the nav masks change as
+they do for a broken gate: look at `GATE_BROKEN`'s path), the parapet is gone (no wall height, cover or
+missile-stopping on those cells), the men on it at that moment each die with BREACH_KILL_PCT (60 %) chance (the
+sim's RNG, index order) and the rest are thrown to the nearest ground cell inside the wall, shaken (`u_hit_t`, a
+morale blow); a stretch's stairs and the towers at its ends stand (towers are not destructible in this plan). Events:
+`stat_breaches`, an event for the view (`EV_BREACH` with the stretch) for dust and rubble; the Chronicle / result
+panel counts breaches.
+
+**Buildings.** Every house of a town (`ob_*` for the holdable ones in the West; the same table extended to every
+building piece so Rome's houses count, with `ob_ok` 0 where they cannot be held) gets `ob_hp` / `ob_hp0` by its
+footprint (300 + 60 per cell, a stone house of a Rome capital 1.5x: whatever the plan records say of its material;
+keep it simple and say what was chosen) and a state (standing / rubble). The same missiles damage it (a flat shot
+stopped by the house, an arcing shot or blast landing on it; a mortar shell hurts buildings most). At 0 it
+**collapses**: the unit holding it loses COLLAPSE_KILL_PCT (70 %) of its men (each man with that chance, RNG, index
+order), the rest come out at the door shaken; the footprint becomes rubble: passable at the rubble cost, no longer
+holdable, no line-of-sight block (half if cheap: say), and the cover trait still works in it (ruins). Fire is not in
+this plan (fire pots burning a house down is a later item; note it). `stat_collapses`, `EV_COLLAPSE`.
+
+**View.** `battlekit.gd` draws a breached stretch as a gap of rubble between its towers (a new piece state like the
+gate's broken look: fallen stone, a dust haze fading over 10 s via the overlay's FX_BLAST ring at the moment) and a
+collapsed house as a rubble footprint in `city_draw.gd` / `city_layer.gd` (both styles, Low graphics too); the Paths
+overlay hatches rubble as walkable-slow; the unit card of a unit inside a building shows the building's hit points
+as a small bar when it is under fire. The result panel lists breaches and collapses.
+
+**Determinism and hashes.** All new arrays are sim state captured by `snapshot()` / `restore()` automatically and
+hashed in `state_hash()` only when `city_on` (so open-field battle hashes do not move); the fortified scenarios'
+determinism and custom battle pins move and are re-pinned. `tests/lockstep_test.gd` must pass.
+
+**AI (a follow-up, after the sim lands).** Besieging artillery aims at the stretch nearest the planned assault (or
+the gate's flanks) until it breaches, then the assault treats the breach as an entry like a broken gate; the defender
+moves men off a stretch under heavy fire and out of a building below a third of its hit points. Campaign: walls
+damaged in a battle are repaired by the next turn (no persistence in this plan; a later item: repairs cost gold).
+Balance: re-run `tools/balance` rome_walls and west_walls after; breaching should make the attacker's odds against
+walls 2-3 rise a few points, not flip them.
