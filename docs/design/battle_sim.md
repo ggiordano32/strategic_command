@@ -2187,3 +2187,12 @@ the bottom-right row becomes ability chips the selected unit's role has: `line` 
 `skirmish` Skirmish, Occupy, Grenades, Ambush; `shock` Charge, Grenades; `horse_skirmish` Caracole, Charge;
 `guns_*` Target (men / walls / buildings), Ammo. A chip cycles its three states on tap; the unit card shows the role
 badge and the chips' states; the Key's Roles page explains each role in two lines.
+
+**The asymmetry principle (owner, 2026-10-23).** "Exaggeration founded in history": each side's roles are pushed
+past the historical record in the direction history points, so the sides play differently rather than as
+re-skinned mirrors. The test case: the natives can win a fight against the Spanish if played correctly (woods,
+cover, ambush, the water, a raid and gone), and head-on in an open field the Spanish really come out on top (the
+tercio's pike and shot, the line's volleys, the horse). The roster expansion (batches 2-3) and the role behaviours
+(step 2) are judged against this: a native army should have no unit that stands in a line and trades volleys, and a
+Spanish army none that melts into the trees; the pirates sit between (boarders and marksmen, no line); England,
+France and the Dutch share the line and differ in their specialists.
