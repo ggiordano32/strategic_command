@@ -102,6 +102,11 @@ const START_FLEETS: Array = [
 ## PIRATE_TAKE_PCT %).
 const SEA_TRADE_PCT := 100
 const BLOCKADE_CELLS := 3
+## A settlement is a port when a coast cell lies within HARBOUR_MAX (1) of its
+## site (CFleet.ensure); HARBOUR_FAR gives the real ports whose site sits back
+## from the water (Nouvelle-Orleans on its river).
+const HARBOUR_MAX := 1
+const HARBOUR_FAR := {"new_orleans": 2}
 const BLOCKADE_CUT_PCT := 75
 const BLOCKADE_TAKE_PCT := 40
 const PIRATE_TAKE_PCT := 80

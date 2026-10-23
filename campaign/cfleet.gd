@@ -58,7 +58,7 @@ const FLEET_ZONE := 2
 ## towns ports); a pack's ships script may set its own HARBOUR_MAX and a
 ## Dictionary HARBOUR_FAR {region key: max distance} for a real port whose site
 ## sits back from the water (read by key only).
-const HARBOUR_MAX := 2
+const HARBOUR_MAX := 1
 ## Turns a voyage is searched ahead (players' stored voyages).
 const MAX_TURNS := 12
 const MAX_NODES := 8000
