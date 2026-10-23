@@ -41,8 +41,11 @@
 // angle), step the change since the last tick (a yaw-rate capped turn); the
 // shader interpolates yaw - step x (1 - alpha). A formed man who walks
 // sideways or backwards against his heading (re-forming, dressing the line)
-// plays the walk cycle slower (sideways: 0.7 x) and, for steps to the left
-// and backwards (0.5 x), reversed: the atlas has no strafe frames.
+// plays the atlas's "sidestep" (6 frames, a shuffle to his left, mirrored in
+// the shader for a step to the right) or "backstep" action where his set has
+// them (heavy swords, spearmen, pikemen: sets whose table rows repeat the
+// walk have none), else the walk cycle slower (sideways 0.7 x, backwards 0.5 x)
+// and, for steps to the left and backwards, reversed.
 //
 // Sprites: one atlas, SPRITES cells side by side. Each cell maps the local
 // box x (forward) -1.6..4.4 m, y (right) -1.25..1.25 m. The quad drawn per
@@ -174,7 +177,34 @@ void atlas_frame(int set, int st, vec2 vel, float ang, bool shoot, float idx, in
 	} else if (st == 2 || moved >= 20.0) {
 		act = 1;
 	}
-	int k = ((set - 1) * 4 + act) * 2;
+	// A formed man walking against his heading (re-forming, dressing the
+	// line): a set with its own frames (heavy swords, spearmen, pikemen)
+	// plays "sidestep" (rendered to his left; mirrored for a step to the
+	// right) or "backstep"; the others keep the walk, slower, and a left or
+	// backward step reversed.
+	bool mirror = false;
+	float rate = st == 2 ? 1.6 : 1.0;  // routing: running
+	float rev = 1.0;
+	if (act == 1 && st == 0 && anim_on > 0.5) {
+		vec2 fwd = vec2(cos(ang), sin(ang));
+		float along = dot(vel, fwd);
+		bool back = along < -0.5 * moved;
+		if (back || along < 0.5 * moved) {
+			bool left = dot(vel, vec2(-fwd.y, fwd.x)) < 0.0;
+			int own = ((set - 1) * ACTIONS + (back ? 5 : 4)) * 2;
+			if (frame_entry(own).x != frame_entry(((set - 1) * ACTIONS + 1) * 2).x) {
+				act = back ? 5 : 4;
+				mirror = !back && !left;
+			} else if (back) {
+				rate = 0.5;
+				rev = -1.0;
+			} else {
+				rate = 0.7;
+				rev = left ? -1.0 : 1.0;
+			}
+		}
+	}
+	int k = ((set - 1) * ACTIONS + act) * 2;
 	vec4 a = frame_entry(k);
 	vec4 b = frame_entry(k + 1);
 	float n = b.w;
@@ -186,29 +216,15 @@ void atlas_frame(int set, int st, vec2 vel, float ang, bool shoot, float idx, in
 	} else if (act == 3) {
 		fr = min(pick, n - 1.0);
 	} else if (anim_on > 0.5) {
-		float rate = st == 2 ? 1.6 : 1.0;  // routing: running
-		float rev = 1.0;
-		if (act == 1 && st == 0) {
-			// Against his heading: a side step (slower, a left step reversed)
-			// or a back step (slower still, reversed).
-			vec2 fwd = vec2(cos(ang), sin(ang));
-			float along = dot(vel, fwd);
-			if (along < -0.5 * moved) {
-				rate = 0.5;
-				rev = -1.0;
-			} else if (along < 0.5 * moved) {
-				rate = 0.7;
-				if (dot(vel, vec2(-fwd.y, fwd.x)) < 0.0) {
-					rev = -1.0;
-				}
-			}
-		}
 		float phase = fract(idx * 0.6180339);
 		float cyc = floor(now * 0.1 * action_fps(act) * rate + phase * n);
 		fr = mod(rev < 0.0 ? n - 1.0 - cyc : cyc, n);
 	}
 	vec2 px = vec2(uv.x * a.z, uv.y * a.w);  // corner in the frame, px
 	lp = (px - b.xy) / 24.0;                 // metres (ATLAS_PX_PER_M)
+	if (mirror) {
+		lp.y = -lp.y;
+	}
 	uv = (vec2(a.x + fr * b.z, a.y) + px) / ATLAS_SIZE;
 }
 

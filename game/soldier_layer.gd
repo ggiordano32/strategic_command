@@ -775,6 +775,27 @@ func drawn_yaw(i: int, a := 1.0) -> float:
 	return float(sim.facing[i])
 
 
+## Test aid: the atlas action the shader (soldiers.gdshaderinc atlas_frame)
+## picks for a formed man who moved v this tick (sim units) at heading
+## `ang` (angle units, 1024 a turn) on a set with its own re-form frames:
+## 1 walk (a march), 4 sidestep (a step to his left; `mirrored` for a step
+## to his right), 5 backstep. The same rule as the shader's, kept in step by
+## tests/soldier_facing_test.gd.
+static func step_action(v: Vector2, ang: float) -> Dictionary:
+	var moved := v.length()
+	if moved < 20.0:
+		return {"action": 0, "mirrored": false}
+	var a := ang * TAU / 1024.0
+	var fwd := Vector2(cos(a), sin(a))
+	var along := v.dot(fwd)
+	if along < -0.5 * moved:
+		return {"action": 5, "mirrored": false}
+	if along < 0.5 * moved:
+		var left := v.dot(Vector2(-fwd.y, fwd.x)) < 0.0
+		return {"action": 4, "mirrored": not left}
+	return {"action": 1, "mirrored": false}
+
+
 ## An engine's view state (see ENGINE_OK): from its sim state and, while
 ## its unit shoots, how far its reload has come.
 func _engine_view_state(e: int) -> int:

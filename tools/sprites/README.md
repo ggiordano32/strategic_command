@@ -109,7 +109,9 @@ preview's `--units=` / `--palettes=` narrow the views.
 
 Animations are code, shared: `humanoid_pose` and `horse_pose` in
 `build.py` (idle 1, walk 6, attack 4, death 3 frames; frame counts and fps
-in `spec.json` `actions`). Palettes are `spec.json` `palettes` (copied into
+in `spec.json` `actions`). Actions with a `units` list there (sidestep, backstep:
+heavy_swords, spearmen, pikemen) are rendered for those units only; the other
+sets' table rows repeat their walk (so the frame table is 6 actions a set). Palettes are `spec.json` `palettes` (copied into
 the manifest).
 
 ## Outputs and conventions

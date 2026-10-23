@@ -231,18 +231,42 @@ bits) and this tick's step (7 bits), interpolated like the positions (yaw -
 step x (1 - alpha)). **Short re-forms** (dressing the line, the snaps of 12 m
 or less, the last metres to a place) keep the facing and the shader picks
 the gait from his velocity against his heading: forward as before; a side
-step at 0.7 x the cycle rate (to the left the cycle reversed, so the
-other leg leads); a back step at 0.5 x reversed. The atlas has no strafe
-frames (a side and back set would be new action rows in `spec.json`, new
-poses for every humanoid rig and a repack, a day with the check of every set
-rather than an hour, and with six frames of walk at 12 px a man the shuffle
-reads the same); this uses the walk frames. Both shader variants share the
+step plays the **sidestep** action and a back step the **backstep** action
+(2026-10-22, below). Both shader variants share the
 code (`soldiers.gdshaderinc`); texture and CPU paths draw identical pixels
 (`tests/soldier_facing_test.gd`, 0 px differ on a marching column and a
 dressing line). Frame time, 1080p vsync off, mean over 8 s from tick 600
 (old / new, two runs): bench_2000 texture 3.06 / 3.13, 3.03 / 3.04 ms, CPU
 3.19 / 3.20, 3.00 / 3.05; bench_4000_city texture 5.33 / 5.54, 5.46 / 5.55,
 CPU 5.57 / 5.47, 5.57 / 5.60: within noise.
+
+**Side and back step frames (2026-10-22, view only plus the sprite tables).** The
+walk-cycle stand-ins for a re-form are replaced by two real action rows on
+the three humanoid foot sets (heavy swords, spearmen, pikemen; the cavalry,
+elephants, camels, missile and West sets keep the walk, and a horse does not
+side-step). `spec.json` `actions` gains `sidestep` and `backstep` (6 frames,
+8 fps, loop) with a `units` list; `build.py` renders them for those units
+only (`humanoid_pose`: sidestep = the legs open and close along y with a
+small sway and the guard held to the front, rendered as a step to the man's
+left; backstep = short steps backwards, shield tucked, the weapon forearm
+raised so the blade foreshortens from above), timeline 41-46 and 51-56, same
+scale, light and ink. `pack.py` packs them (atlas 1024 x 1804 -> 1024 x
+2016, PNG 907 -> 949 KB) and points the other sets' rows at their walk, so
+the frame table is 6 actions a set (`((set - 1) * 6 + action) * 2`, new
+`ACTIONS` constant in `sprite_frames.gdshaderinc`). The shader (`atlas_frame`)
+takes the new action for a formed man whose velocity is against his heading
+(along it less than half his speed: sideways -> sidestep, mirrored in the
+quad (lp.y negated) for a step to his right; backwards -> backstep) when his
+set's row differs from its walk row, else the old slower / reversed walk;
+the march is unchanged. Both paths share the code. `SoldierLayer.step_action`
+mirrors the choice for `tests/soldier_facing_test.gd` (lateral, mirrored
+lateral, backward, march, turned heading; a heavy swords line mid-shuffle
+and mid back step on both paths, 0 px differ). The mirror swaps his weapon
+hand for a right step (a top-down man at 12 px; accepted). Frame time, 1080p
+vsync off, mean over 8 s from tick 600 (HEAD / now, two runs): bench_2000
+texture 2.88 / 2.86, 2.82 / 2.83 ms, CPU 2.88 / 2.76, 2.79 / 2.79;
+bench_4000_city texture 5.19 / 5.27, 5.26 / 5.32, CPU 5.00 / 5.01, 5.02 /
+5.24: within 0.25 ms.
 
 **Missile sets (step 1c, 2026-10-13).** Four more sets on the shared
 humanoid rig, each with a pose variant (spec `pose`) replacing the shared

@@ -43,7 +43,17 @@ SPEC = json.load(open(os.path.join(HERE, "spec.json")))
 PPM = SPEC["px_per_m"]
 
 # Timeline: action -> first frame (frames are consecutive).
-ACT_START = {"idle": 1, "walk": 11, "attack": 21, "death": 31}
+ACT_START = {"idle": 1, "walk": 11, "attack": 21, "death": 31, "sidestep": 41, "backstep": 51}
+
+
+CUR_UID = [""]
+
+
+def action_for(act, uid):
+    """Actions with a "units" list in the spec are rendered for those units
+    only (the others alias their walk in pack.py)."""
+    us = SPEC["actions"][act].get("units")
+    return us is None or uid in us
 
 
 # ---------------------------------------------------------------- arguments
@@ -684,6 +694,33 @@ def humanoid_pose(action, i, n, mounted=False, variant="", stand=False, fall="th
         add("upper_arm.L", "y", 8 * s * k)
         add("forearm.L", "y", 6 * math.cos(2 * ph))
         add("spine", "z", 6 * s * k)
+    elif action == "sidestep":
+        # A shuffle to the man's left (the shader mirrors it for the right):
+        # feet apart and together along y, guard held to the front.
+        lead = 14.0 + 14.0 * math.sin(ph)
+        trail = 14.0 + 14.0 * math.sin(ph - 1.3)
+        add("thigh.L", "x", lead)
+        add("thigh.R", "x", trail)
+        add("shin.L", "y", 16 * max(0.0, math.cos(ph)))
+        add("shin.R", "y", 16 * max(0.0, math.cos(ph - 1.3)))
+        add("spine", "x", -3 * math.sin(ph))
+        add("spine", "z", 2 * s)
+        add("forearm.L", "y", 3 * math.cos(2 * ph))
+        loc[1] = 0.04 * math.sin(ph)
+        loc[2] = 0.02 * math.cos(2 * ph)
+    elif action == "backstep":
+        # Short steps backwards, shield tucked, weapon raised.
+        add("thigh.L", "y", 22 * s)
+        add("shin.L", "y", 26 * max(0.0, -c))
+        add("thigh.R", "y", -22 * s)
+        add("shin.R", "y", 26 * max(0.0, c))
+        add("hips", "z", 4 * s)
+        add("spine", "y", -5)
+        add("upper_arm.R", "y", -14 + 3 * s)
+        add("forearm.R", "y", -34)
+        add("upper_arm.L", "y", -6)
+        add("forearm.L", "y", 5 * math.cos(2 * ph))
+        loc[2] = 0.02 * math.cos(2 * ph)
     elif action == "attack":
         spine = [-22, 14, 26, 6][i]
         arm = [26, -34, -58, -14][i]
@@ -1003,6 +1040,8 @@ def keyframe_actions(arm, u):
     riders = riders_of(u)
     for act, info in SPEC["actions"].items():
         n = info["frames"]
+        if not action_for(act, CUR_UID[0]):
+            continue
         for i in range(n):
             if anim == "horse":
                 pose = prefixed(horse_pose(act, i, n), "")
@@ -1028,6 +1067,7 @@ def build_unit(uid):
     armature (prefix "r.", root parented to the horse's body bone, moved to
     the seat), so the rider follows the horse with no object parenting."""
     u = SPEC["units"][uid]
+    CUR_UID[0] = uid
     _mats.clear()
     DYN.clear()
     VIS.clear()
@@ -1106,6 +1146,8 @@ def render_unit(uid, out):
     os.makedirs(d, exist_ok=True)
     count = 0
     for act, info in SPEC["actions"].items():
+        if not action_for(act, uid):
+            continue
         for i in range(info["frames"]):
             sc.frame_set(ACT_START[act] + i)
             update_dynamic(act, i)
