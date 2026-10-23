@@ -360,7 +360,13 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=wp" in OS.get_cmdline_user_args():
+		_check_wp()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	_check_end()
+	_check_wp()
 	_check_deploy()
 	_check_deploy_unlimited()
 	_check_kills_by()
@@ -701,6 +707,176 @@ func _check_end() -> void:
 		_fail("end: snapshot / restore with Continue (restored %s, pursue %d, ended %d at +%d)" % [str(rok), s2.pursue, s2.ended, s2.tick - s2.decided_tick])
 	else:
 		print("PASS end: snapshot / restore carry Continue (both end at +%d ticks, the same hash every tick)" % (s2.tick - s2.decided_tick))
+
+
+## Waypoints (docs/DESIGN.md "Waypoints"; "--only=wp", also in the full
+## run): on an open field a heavy foot unit given a move and three appended
+## waypoints (ORDER_MOVE "append" 1; the second run) walks them in order:
+## at each pop its anchor stands on the last destination and the move is
+## the next one with its own run flag; at rest the queue is empty and it
+## faces the last waypoint's facing. Without an append the battle hashes as
+## before (wp_on 0); Run keeps the queue, an attack mid-chain or a Halt
+## drops it; an append with no move under way is an ordinary move; the
+## queue holds WP_MAX; snapshot / restore mid-chain runs on with the same
+## hash every tick; the same orders twice give the same hashes.
+func _wp_sc() -> Dictionary:
+	return {"width_m": 400, "height_m": 400, "ai_sides": [], "orders": [], "terrain": {"kind": 0},
+		"units": [Scenarios.unit(0, UT.HEAVY, 60, 100, 320, Scenarios.FACE_UP),
+			Scenarios.unit(1, UT.HEAVY, 60, 300, 60, Scenarios.FACE_DOWN)]}
+
+
+func _wp_orders() -> Array:
+	var w := BattleSim.files_to_width(12, UT.HEAVY)
+	var pts := [[100, 260, 768, 0], [170, 260, 0, 1], [170, 190, 768, 0], [110, 150, 512, 0]]
+	var out: Array = []
+	for i in pts.size():
+		var o := BattleSim.make_move_order(0, 0, pts[i][0] * M, pts[i][1] * M, pts[i][2], w, pts[i][3])
+		if i > 0:
+			o["append"] = 1
+		out.append(o)
+	return out
+
+
+func _check_wp() -> void:
+	var sc := _wp_sc()
+	# No append: no waypoint state in the hash.
+	var s0 := BattleSim.new()
+	s0.setup(sc, 7)
+	for o in _wp_orders().slice(0, 1):
+		s0.queue_order(o)
+	for t in 50:
+		s0.step()
+	if s0.wp_on != 0:
+		_fail("wp: wp_on set without an appended order")
+	var sim := BattleSim.new()
+	sim.setup(sc, 7)
+	var ords := _wp_orders()
+	for o in ords:
+		sim.queue_order(o)
+	sim.step()
+	if sim.u_wpn[0] != 3 or sim.u_order[0] != BattleSim.O_MOVE or sim.wp_on != 1 \
+			or sim.u_dx[0] != 100 * M or sim.u_dy[0] != 260 * M:
+		_fail("wp: a move and three appends: %d queued, order %d, dest %d,%d" % [sim.u_wpn[0], sim.u_order[0], sim.u_dx[0] / M, sim.u_dy[0] / M])
+		return
+	var hashes := PackedInt64Array([sim.state_hash()])
+	var pops: Array = []   # [tick, anchor x, anchor y, dest x, dest y, run, queued]
+	var n0 := sim.u_wpn[0]
+	var snap := PackedByteArray()
+	var snap_t := -1
+	while sim.tick < 4000 and (sim.u_wpn[0] > 0 or sim.u_order[0] != BattleSim.O_NONE):
+		sim.step()
+		hashes.append(sim.state_hash())
+		if sim.u_wpn[0] != n0:
+			pops.append([sim.tick, sim.u_ax[0], sim.u_ay[0], sim.u_dx[0], sim.u_dy[0], sim.u_run[0], sim.u_wpn[0], sim.u_dface[0]])
+			n0 = sim.u_wpn[0]
+			if n0 == 2 and snap.is_empty():
+				snap = sim.snapshot()
+				snap_t = sim.tick
+	var ok := pops.size() == 3
+	var lines := []
+	for i in pops.size():
+		var pr: Array = pops[i]
+		var prev: Dictionary = ords[i]
+		var nxt: Array = []
+		if i + 1 < ords.size():
+			var on: Dictionary = ords[i + 1]
+			nxt = [int(on["x"]), int(on["y"]), int(on["run"]), int(on["facing"])]
+		# At the pop the anchor stands on the last destination (the tick before) ...
+		var at: bool = absi(int(pr[1]) - int(prev["x"])) <= 2 * M and absi(int(pr[2]) - int(prev["y"])) <= 2 * M
+		# ... and the move is the next waypoint's, with its run flag and facing.
+		var mv: bool = not nxt.is_empty() and pr[3] == int(nxt[0]) and pr[4] == int(nxt[1]) and pr[5] == int(nxt[2]) and pr[7] == int(nxt[3])
+		ok = ok and at and mv and pr[6] == 2 - i
+		lines.append("pop %d at tick %d: anchor %.1f,%.1f m, to %d,%d run %d" % [i + 1, pr[0], pr[1] / float(M), pr[2] / float(M), pr[3] / M, pr[4] / M, pr[5]])
+	for t in 120:
+		sim.step()  # (turning to the last facing)
+	var last: Dictionary = ords[ords.size() - 1]
+	var rest_ok: bool = sim.u_order[0] == BattleSim.O_NONE and sim.u_wpn[0] == 0 and sim.u_dface[0] == int(last["facing"]) \
+		and absi(sim.u_face[0] - int(last["facing"])) <= 4 and absi(sim.u_ax[0] - int(last["x"])) <= M and absi(sim.u_ay[0] - int(last["y"])) <= M
+	if not ok or not rest_ok:
+		_fail("wp: the chain (%d pops; %s; at rest: order %d, queued %d, face %d / %d, anchor %.1f,%.1f)" % [pops.size(), "; ".join(lines),
+			sim.u_order[0], sim.u_wpn[0], sim.u_face[0], int(last["facing"]), sim.u_ax[0] / float(M), sim.u_ay[0] / float(M)])
+	else:
+		print("PASS wp: a move and 3 waypoints walked in order (%s); at rest at the last, facing its facing (%d), queue empty" % ["; ".join(lines), sim.u_face[0]])
+	# The same orders again: the same hashes.
+	var sb := BattleSim.new()
+	sb.setup(sc, 7)
+	for o in _wp_orders():
+		sb.queue_order(o)
+	sb.step()
+	var same := sb.state_hash() == hashes[0]
+	for t in range(1, hashes.size()):
+		sb.step()
+		if sb.state_hash() != hashes[t]:
+			same = false
+			break
+	if not same:
+		_fail("wp: the same waypoint orders diverged")
+	else:
+		print("PASS wp: the same orders twice: %d ticks identical" % hashes.size())
+	# Snapshot / restore mid-chain (2 waypoints still queued).
+	var sr := BattleSim.new()
+	sr.setup(sc, 7)
+	var rok := not snap.is_empty() and sr.restore(snap)
+	var sx := BattleSim.new()
+	sx.setup(sc, 7)
+	for o in _wp_orders():
+		sx.queue_order(o)
+	while sx.tick < snap_t:
+		sx.step()
+	var eq := rok and sr.u_wpn[0] == 2 and sr.state_hash() == sx.state_hash()
+	var npop := 0
+	for t in 1500:
+		if not eq:
+			break
+		sr.step()
+		sx.step()
+		eq = sr.state_hash() == sx.state_hash()
+	npop = sr.stat_wp_pop
+	if not eq or npop < 2:
+		_fail("wp: snapshot / restore mid-chain (restored %s at %d, queued %d, pops after %d)" % [str(rok), snap_t, sr.u_wpn[0], npop])
+	else:
+		print("PASS wp: snapshot at tick %d with 2 waypoints queued restores them; 1500 ticks on the same hash every tick (pops %d)" % [snap_t, npop])
+	# Run keeps the queue; an attack mid-chain drops it; a Halt drops it.
+	var sa := BattleSim.new()
+	sa.setup(sc, 7)
+	for o in _wp_orders():
+		sa.queue_order(o)
+	sa.step()
+	while sa.tick < 4000 and sa.u_wpn[0] == 3:
+		sa.step()
+	sa.queue_order(BattleSim.make_run_order(sa.tick, 0, 1))
+	sa.step()
+	var run_keep := sa.u_wpn[0] == 2 and sa.u_run[0] == 1
+	sa.queue_order(BattleSim.make_attack_order(sa.tick, 0, 1, 0))
+	sa.step()
+	var atk_drop := sa.u_wpn[0] == 0 and sa.u_order[0] == BattleSim.O_ATTACK
+	var sh := BattleSim.new()
+	sh.setup(sc, 7)
+	for o in _wp_orders():
+		sh.queue_order(o)
+	sh.step()
+	sh.queue_order(BattleSim.make_halt_order(sh.tick, 0))
+	sh.step()
+	var halt_drop := sh.u_wpn[0] == 0
+	# An append with no move under way: an ordinary move; the queue holds WP_MAX.
+	var sn := BattleSim.new()
+	sn.setup(sc, 7)
+	var ap := BattleSim.make_move_order(0, 0, 60 * M, 200 * M, 512, BattleSim.files_to_width(12, UT.HEAVY), 0)
+	ap["append"] = 1
+	sn.queue_order(ap)
+	sn.step()
+	var plain_move := sn.u_order[0] == BattleSim.O_MOVE and sn.u_dx[0] == 60 * M and sn.u_wpn[0] == 0
+	for i in BattleSim.WP_MAX + 3:
+		var o2 := ap.duplicate()
+		o2["tick"] = sn.tick
+		o2["x"] = (60 + i * 10) * M
+		sn.queue_order(o2)
+	sn.step()
+	var cap := sn.u_wpn[0] == BattleSim.WP_MAX and BattleSim.wp_queue(sn, 0)[(BattleSim.WP_MAX - 1) * BattleSim.WP_K] == (60 + (BattleSim.WP_MAX - 1) * 10) * M
+	if not (run_keep and atk_drop and halt_drop and plain_move and cap):
+		_fail("wp: rules (run keeps %s, attack drops %s, halt drops %s, append alone moves %s, holds WP_MAX %s)" % [run_keep, atk_drop, halt_drop, plain_move, cap])
+	else:
+		print("PASS wp: Run keeps the queue, an attack mid-chain and a Halt drop it, an append with no move is a move, the queue holds %d" % BattleSim.WP_MAX)
 
 
 ## Every mechanic must actually have happened somewhere in the run.

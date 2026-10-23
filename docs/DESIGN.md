@@ -5222,6 +5222,59 @@ selecting or ordering anything.
     Leave, which goes out as before). Telemetry `occupy_arm`,
     `occupy_preview`, `occupy_pick`, `occupy_cancel`. Test:
     `tests/city_read_test.gd` (desktop and `--phone`).
+- Waypoints (owner 2026-10-22: "Can we add a waypoint system for moving
+  units on the battlefield? It makes a big difference for flanking
+  manoeuvres"). **Sim** (`sim/battle_sim.gd`, hashed, snapshotted): each
+  unit has a queue of up to `WP_MAX` (8) waypoints after its current move,
+  `u_wpn` (count) and `wp_q` (`WP_K` 5 values a slot: x, y, facing, width,
+  flags `WP_RUN` / `WP_BOUND`), hashed once `wp_on` is set (the first
+  waypoint queued: a battle without one hashes as before, no golden moved).
+  `ORDER_MOVE` takes `append`: 0 (default) replaces the current order and
+  drops the queue as before; 1 appends a waypoint if the unit has a move
+  under way (or waypoints queued), else it is an ordinary move. A full
+  queue, a fixed engine and the deployment phase take no waypoint. The
+  waypoint is stored raw (x, y clamped to the field) and goes through the
+  order rules only when it becomes the move, from where the unit then is
+  (reach snaps, walls, the short re-form, the width of the order). The
+  pop (`_wp_pass`, each step after the AI's orders): a unit with
+  waypoints and no order (its move arrived: the existing arrival test, the
+  anchor on the destination) takes the next as its move, with its own
+  facing, frontage and run flag; the last one's facing is the facing at
+  rest. A unit on a stair or a ladder waits until it is up or down; a
+  broken or gone unit, or one the sim itself gave another order (an attack
+  after a climb), drops its queue. Any other order but Run, Fire,
+  Skirmish, Ammo and Stance (an attack, Halt, Withdraw, Occupy, a pick-up,
+  Deploy ...) drops the queue; the AI never appends. The rule lives in
+  `apply_order_rule` (the queue is the order fields' `wp`), so OrderPreview
+  predicts the queue of pending orders and Undo records it. **Inputs**: the
+  same lockstep path as every order (an `ORDER_MOVE` with `append` 1); the
+  view has no "remove": taking a stop out re-issues the chain without it
+  (the current move, then the remaining waypoints appended). **Undo**
+  records each unit's predicted queue with its order and re-issues it
+  after the restored order (a queue the sim popped from meanwhile comes
+  back as it was at the batch). **Mouse** (Total War): Shift + right click
+  on the ground appends a waypoint (a group: per unit, keeping the shape
+  from where each unit's chain ends), Shift + right drag appends a line
+  waypoint (position, frontage, facing); Shift + left click on a numbered
+  dot takes that stop out (dot 1, the current move's destination: the unit
+  goes on to the next). **Touch**: a Waypoints toggle on the command bar
+  (a lit plate, after Halt; hidden in the deployment and for tower
+  engines): while on, each ground tap and line drag appends instead of
+  replacing (a double tap: run to the stop the first tap added), a tap on
+  a numbered dot takes that stop out; it goes off by itself when the
+  selection changes and with the two-finger tap. **Preview**: a selected
+  unit's chain stays up, faint: numbered dots at each stop (gold ring: a
+  run to it) joined by the legs it will walk (on town maps the sim's
+  street route of each leg, dotted, red with no way; straight elsewhere),
+  the ghost footprint at the last stop; the drag / hover preview with
+  Waypoints on (or Shift) starts at the end of the chain
+  (`OrderPreview.chain` / `chain_end`, `move_route_for` with `append`).
+  Hints: the flash "Waypoint N" / "Waypoint N removed" / "At most 8
+  waypoints", the Kit tip on the toggle, the controls table row
+  `waypoints`. Telemetry: counters `wp_on`, `wp_off`, `wp_off_selection`,
+  `wp_append`, `wp_run`, `wp_remove`, `wp_full`, event `wp_toggle`. Tests:
+  `determinism_test --only=wp`, `lockstep_test --only=wp`, `input_test`
+  (the `_step_wp_*` section).
 - Campaign battles have no field result panel; they end with a choice
   (owner 2026-10-20, Rome 2's end of battle). **Battle end: End battle /
   Continue.** When a side is decided (the other has no ready unit; not a

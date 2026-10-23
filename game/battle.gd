@@ -228,6 +228,7 @@ var _rmb_pos := Vector2.ZERO
 var _rmb_drag := false      # the drag lays out a line (preview shown)
 var _rmb_pan := false       # nothing selected: the drag pans
 var _rmb_order := false     # inside _tap for a right click: never selects
+var _rmb_shift := false     # Shift held at the right press: the order adds a waypoint
 var _last_rtap_time := -10.0
 var _last_rtap_pos := Vector2.ZERO
 # Modifiers of the last left mouse press (Shift / Ctrl / Cmd add to the
@@ -385,6 +386,7 @@ func _ready() -> void:
 	hud.stance_pressed.connect(_cycle_stance)
 	hud.bounds_pressed.connect(_toggle_bounds)
 	hud.occupy_pressed.connect(_toggle_occupy)
+	hud.waypoints_pressed.connect(_toggle_waypoints)
 	hud.paths_toggled.connect(_on_paths_toggled)
 	hud.deploy_pressed.connect(_toggle_deploy)
 	hud.refill_pressed.connect(_toggle_refill)
@@ -950,6 +952,8 @@ func _process(delta: float) -> void:
 		_paths_apply()
 	# Redrawn every frame, paused or not, so order changes show at once.
 	overlay.zoom = camera.zoom.x
+	overlay.append_on = _wp_append() or (Input.is_key_pressed(KEY_SHIFT) and sim.phase == BattleSim.PHASE_BATTLE \
+		and not UiScale.is_touch())
 	overlay.queue_redraw()
 
 	if bench_mode and not _bench_done:
@@ -1323,7 +1327,7 @@ func _undo_record(order: Dictionary) -> void:
 					seen = true
 		if seen:
 			continue
-		var rec := {"u": u, "cx": sim.u_cx[u], "cy": sim.u_cy[u]}
+		var rec := {"u": u, "cx": sim.u_cx[u], "cy": sim.u_cy[u], "wp": orders.wp_of(u)}
 		for k in UNDO_KEYS:
 			rec[k] = orders.value(u, k)
 		fresh.append(rec)
@@ -1403,6 +1407,9 @@ func _undo_unit(r: Dictionary) -> void:
 		_queue(BattleSim.make_move_order(0, u, int(r["cx"]), int(r["cy"]), int(r["face"]), width, 0))
 		if run != 0:
 			_queue(BattleSim.make_run_order(0, u, run))
+	# Its waypoints after that move, as they were (the queue the sim may have
+	# popped meanwhile included).
+	_wp_requeue(u, r.get("wp", PackedInt32Array()))
 
 
 ## Deployment phase: this player is ready (solo: the battle starts).
@@ -1508,6 +1515,9 @@ func _selection_changed() -> void:
 	overlay.selected_units = ordered
 	if occupy_mode:
 		_occupy_cancel(false)
+	if waypoint_mode and _wp_sel != selection:
+		_count("wp_off_selection")
+		_waypoints_off()
 	if not selection.is_empty() and paths_on:
 		_paths_poke()
 	var flags := {}
@@ -1580,6 +1590,8 @@ func _refresh_actions() -> void:
 	hud.engine_only = only_fixed
 	hud.set_selection(selection, run, fire, skirm, deploy, refill, ammo, ammo_word, forage, dogs, release_armed, stance, bounds, occupy)
 	hud.occupy_button.set_pressed_no_signal(occupy_mode and occupy == 0)
+	hud.waypoints_button.visible = not selection.is_empty() and not only_fixed and sim.phase == BattleSim.PHASE_BATTLE
+	hud.waypoints_button.set_pressed_no_signal(waypoint_mode)
 	if occupy_mode and OccView.eligible(sim, selection).is_empty():
 		_occupy_cancel(false)
 	_sync_occupy_overlay()
@@ -1987,6 +1999,147 @@ func _occupy_send(b: int) -> void:
 
 
 ## Bounds: a view-side mode that adds "bound" to the player's move orders.
+# ------------------------------------------------------------ waypoints ---
+# docs/DESIGN.md "Waypoints": a move given with "append" 1 goes after the
+# unit's current move (the sim's queue, BattleSim.WP_MAX stops). Touch: the
+# Waypoints toggle on the command bar (off by itself when the selection
+# changes, or a two-finger tap); mouse: Shift + right click / right drag.
+# A stop is taken out by re-issuing the chain without it (ordinary orders:
+# the sim has no "remove", so lockstep and Undo see nothing new).
+
+var waypoint_mode := false
+var _wp_sel: Array[int] = []   # the selection the toggle was turned on for
+
+
+func _toggle_waypoints() -> void:
+	if not interactive:
+		return
+	if waypoint_mode:
+		_count("wp_off")
+		_waypoints_off()
+		return
+	waypoint_mode = true
+	_wp_sel = selection.duplicate()
+	_count("wp_on")
+	_t("wp_toggle", {"on": 1, "group": selection.size()})
+	if selected >= 0:
+		overlay.flash("Waypoints: each tap adds a stop", Vector2(sim.u_cx[selected], sim.u_cy[selected]) / M * PX_PER_M)
+	_refresh_actions()
+
+
+func _waypoints_off() -> void:
+	if not waypoint_mode:
+		return
+	waypoint_mode = false
+	_refresh_actions()
+
+
+## Moves issued now add a waypoint (the toggle, or Shift at a right press).
+func _wp_append() -> bool:
+	if sim == null or sim.phase != BattleSim.PHASE_BATTLE:
+		return false
+	return waypoint_mode or _rmb_shift
+
+
+## Queue move `mo` as a waypoint (at most WP_MAX a unit; at_px: where to
+## flash the stop's number).
+func _wp_queue_append(mo: Dictionary, at_px: Vector2) -> void:
+	var u := int(mo["unit"])
+	if orders.wp_of(u).size() >= BattleSim.WP_MAX * BattleSim.WP_K:
+		_count("wp_full")
+		overlay.flash("At most %d waypoints" % BattleSim.WP_MAX, at_px)
+		return
+	mo["append"] = 1
+	_queue(mo)
+	_count("wp_append")
+	if u == selected:
+		var n := orders.chain(u).size()
+		overlay.flash("Waypoint %d" % n if n > 0 else "Move", at_px)
+
+
+## The second tap of a double tap while adding waypoints: the stop the
+## first tap added (the last) is run to.
+func _wp_last_run(u: int) -> void:
+	var q := orders.wp_of(u)
+	if q.is_empty():
+		if orders.value(u, "order") == BattleSim.O_MOVE and orders.value(u, "run") == 0 \
+				and UT.cls(sim.u_type[u]) != UT.CLS_ART:
+			_queue(BattleSim.make_run_order(0, u, 1))
+		return
+	var nq := q.duplicate()
+	nq[nq.size() - 1] = nq[nq.size() - 1] | BattleSim.WP_RUN
+	_count("wp_run")
+	_wp_reissue(u, nq, false)
+
+
+## Re-issue unit u's chain: its current move (or, drop_current, the first
+## waypoint as the move), then the waypoints `q` appended.
+func _wp_reissue(u: int, q: PackedInt32Array, drop_current: bool) -> void:
+	var K := BattleSim.WP_K
+	if drop_current:
+		if q.is_empty():
+			_queue(BattleSim.make_halt_order(0, u))
+			return
+		var m0 := BattleSim.make_move_order(0, u, q[0], q[1], q[2], q[3], 1 if (q[4] & BattleSim.WP_RUN) != 0 else 0)
+		if (q[4] & BattleSim.WP_BOUND) != 0:
+			m0["bound"] = 1
+		_queue(m0)
+		_wp_requeue(u, q.slice(K))
+		return
+	var mo := BattleSim.make_move_order(0, u, orders.value(u, "dx"), orders.value(u, "dy"), orders.value(u, "dface"),
+		BattleSim.files_to_width(orders.value(u, "files"), sim.u_type[u]), orders.value(u, "run"))
+	if orders.value(u, "bound") != 0:
+		mo["bound"] = 1
+	_queue(mo)
+	_wp_requeue(u, q)
+
+
+## Append the waypoints q (WP_K values each) to unit u's orders.
+func _wp_requeue(u: int, q: PackedInt32Array) -> void:
+	var K := BattleSim.WP_K
+	for i in q.size() / K:
+		var k := i * K
+		var o := BattleSim.make_move_order(0, u, q[k], q[k + 1], q[k + 2], q[k + 3], 1 if (q[k + 4] & BattleSim.WP_RUN) != 0 else 0)
+		o["append"] = 1
+		if (q[k + 4] & BattleSim.WP_BOUND) != 0:
+			o["bound"] = 1
+		_queue(o)
+
+
+## The waypoint dot of a selected unit's chain under world point w (px):
+## (unit, stop index; 0 the current move's destination), (-1, -1) none.
+func _wp_dot_at(w: Vector2) -> Vector2i:
+	var r: float = overlay.chain_dot_r() * (2.0 if UiScale.is_touch() else 1.4)
+	var best := Vector2i(-1, -1)
+	var bd := r
+	for u in selection:
+		var ch: Array = orders.chain(u)
+		for i in ch.size():
+			var at: Vector2i = (ch[i] as Dictionary)["at"]
+			var dd := (Vector2(at) / M * PX_PER_M).distance_to(w)
+			if dd <= bd:
+				bd = dd
+				best = Vector2i(u, i)
+	return best
+
+
+## Take stop `idx` out of unit u's chain (0: the current move's destination;
+## the unit goes on to the next).
+func _wp_remove(u: int, idx: int) -> void:
+	var q := orders.wp_of(u)
+	var ch: Array = orders.chain(u)
+	var at_px := Vector2((ch[idx] as Dictionary)["at"]) / M * PX_PER_M if idx < ch.size() else Vector2.ZERO
+	if idx == 0:
+		_wp_reissue(u, q, true)
+	else:
+		var k := (idx - 1) * BattleSim.WP_K
+		var nq := q.slice(0, k)
+		nq.append_array(q.slice(k + BattleSim.WP_K))
+		_wp_reissue(u, nq, false)
+	_count("wp_remove")
+	overlay.flash("Waypoint %d removed" % (idx + 1), at_px)
+
+
 func _toggle_bounds() -> void:
 	var on := bounds_mode
 	if not on:
@@ -2511,6 +2664,11 @@ func _tap(screen_pos: Vector2, double: bool, long_press := false) -> void:
 	if occupy_mode:
 		_occupy_tap(w)
 		return
+	if waypoint_mode and not _rmb_order:
+		var hit := _wp_dot_at(w)
+		if hit.x >= 0:
+			_wp_remove(hit.x, hit.y)
+			return
 	# A tap in a gate's doorway is about the gate: it is tested before the
 	# units, so a marker floating over the gate (men on the wall above it)
 	# or a unit box cannot steal it. Outside the doorway units pick first and
@@ -2584,13 +2742,20 @@ func _tap(screen_pos: Vector2, double: bool, long_press := false) -> void:
 	var dest := w / PX_PER_M * M
 	if friend_move:
 		overlay.flash("Move", w)
+	var app := _wp_append()
+	if app and double:
+		# The second tap of a double: the stop the first tap added runs.
+		for su in selection:
+			_wp_last_run(su)
+		return
 	if selection.size() == 1:
-		# Ground: move there keeping frontage, facing the direction of travel.
-		var ax: int = orders.value(selected, "ax")
-		var ay: int = orders.value(selected, "ay")
-		var dx := dest.x - ax
-		var dy := dest.y - ay
-		var face: int = orders.value(selected, "face")
+		# Ground: move there keeping frontage, facing the direction of travel
+		# (a waypoint: from the end of its chain).
+		var ce: Vector3i = orders.chain_end(selected) if app else Vector3i(orders.value(selected, "ax"),
+			orders.value(selected, "ay"), orders.value(selected, "face"))
+		var dx := dest.x - ce.x
+		var dy := dest.y - ce.y
+		var face: int = ce.z
 		if dx * dx + dy * dy > 4.0 * M * M:
 			face = int(round(atan2(dy, dx) * 1024.0 / TAU)) & 1023
 		var width: int = BattleSim.files_to_width(orders.value(selected, "files"), sim.u_type[selected])
@@ -2599,8 +2764,12 @@ func _tap(screen_pos: Vector2, double: bool, long_press := false) -> void:
 			_count("wall_refused")
 			overlay.flash(why, w)
 			return
-		_queue(BattleSim.make_move_order(0, selected, int(dest.x), int(dest.y), face, width,
-			1 if double else orders.value(selected, "run")))
+		var mo := BattleSim.make_move_order(0, selected, int(dest.x), int(dest.y), face, width,
+			1 if double else orders.value(selected, "run"))
+		if app:
+			_wp_queue_append(mo, w)
+		else:
+			_queue(mo)
 		return
 	_group_move(dest, double)
 
@@ -2739,32 +2908,42 @@ func _tap_gate(g: int, w: Vector2) -> bool:
 ## travels (relative to the primary unit's facing).
 func _group_move(dest: Vector2, double: bool) -> void:
 	_count("group_move")
+	# (A waypoint: the group's shape and facing where its chains end.)
+	var app := _wp_append()
+	var at := {}
+	for u in selection:
+		at[u] = orders.chain_end(u) if app else Vector3i(orders.value(u, "ax"), orders.value(u, "ay"), orders.value(u, "face"))
 	var cx := 0.0
 	var cy := 0.0
 	for u in selection:
-		cx += orders.value(u, "ax")
-		cy += orders.value(u, "ay")
+		cx += (at[u] as Vector3i).x
+		cy += (at[u] as Vector3i).y
 	cx /= selection.size()
 	cy /= selection.size()
 	var d := dest - Vector2(cx, cy)
-	var ref: int = orders.value(selected, "face")
+	var ref: int = (at[selected] as Vector3i).z if at.has(selected) else orders.value(selected, "face")
 	var turn := 0
 	if d.length_squared() > 4.0 * M * M:
 		var want := int(round(atan2(d.y, d.x) * 1024.0 / TAU)) & 1023
 		turn = ((want - ref + 512) & 1023) - 512
 	var rot := turn * TAU / 1024.0
 	for u in selection:
-		var rel := Vector2(orders.value(u, "ax") - cx, orders.value(u, "ay") - cy).rotated(rot)
+		var e: Vector3i = at[u]
+		var rel := Vector2(e.x - cx, e.y - cy).rotated(rot)
 		var p := dest + rel
-		var face: int = (orders.value(u, "face") + turn) & 1023
+		var face: int = (e.z + turn) & 1023
 		var width: int = BattleSim.files_to_width(orders.value(u, "files"), sim.u_type[u])
 		var why: String = orders.wall_refusal(u, int(p.x), int(p.y))
 		if why != "":
 			_count("wall_refused")
 			overlay.flash(why, p / M * PX_PER_M)
 			continue
-		_queue(BattleSim.make_move_order(0, u, int(p.x), int(p.y), face, width,
-			1 if double else orders.value(u, "run")))
+		var mo := BattleSim.make_move_order(0, u, int(p.x), int(p.y), face, width,
+			1 if double else orders.value(u, "run"))
+		if app:
+			_wp_queue_append(mo, p / M * PX_PER_M)
+		else:
+			_queue(mo)
 
 
 func _finish_line(double_run: bool) -> void:
@@ -2780,8 +2959,12 @@ func _finish_line(double_run: bool) -> void:
 			_count("wall_refused")
 			overlay.flash(why, p["centre"])
 			continue
-		_queue(BattleSim.make_move_order(0, u, int(c.x), int(c.y), p["facing"], p["width"],
-			1 if double_run else orders.value(u, "run")))
+		var mo := BattleSim.make_move_order(0, u, int(c.x), int(c.y), p["facing"], p["width"],
+			1 if double_run else orders.value(u, "run"))
+		if _wp_append():
+			_wp_queue_append(mo, p["centre"])
+		else:
+			_queue(mo)
 
 
 ## The matchup mark: with a unit selected, the enemy unit at screen point
@@ -2905,6 +3088,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				return
 			if mb.pressed:
 				_rmb = true
+				_rmb_shift = mb.shift_pressed
 				_rmb_pos = mb.position
 				_rmb_drag = false
 				_rmb_pan = false
@@ -2974,9 +3158,11 @@ func _right_release(pos: Vector2) -> void:
 		_rmb_drag = false
 		overlay.preview_on = false
 		_finish_line(false)
+		_rmb_shift = false
 		return
 	if _rmb_pan:
 		_rmb_pan = false
+		_rmb_shift = false
 		return
 	var now := Time.get_ticks_msec() / 1000.0
 	var double := now - _last_rtap_time < DOUBLE_TAP_SEC and pos.distance_to(_last_rtap_pos) < DOUBLE_TAP_DIST
@@ -2986,11 +3172,13 @@ func _right_release(pos: Vector2) -> void:
 		_last_rtap_time = now
 		_last_rtap_pos = pos
 	if selection.is_empty() and _exit_timer <= 0.0:
+		_rmb_shift = false
 		return
 	_count("right_click")
 	_rmb_order = true
 	_tap(pos, double)
 	_rmb_order = false
+	_rmb_shift = false
 
 
 ## Left click with a real mouse: select the unit under it (shift / ctrl adds
@@ -3002,6 +3190,11 @@ func _left_click(pos: Vector2, double: bool, long_press: bool) -> void:
 	if _exit_timer > 0.0 or not interactive or armed or _gate_doorway(w) >= 0:
 		_tap(pos, double, long_press)
 		return
+	if _shift_held() or waypoint_mode:
+		var hit := _wp_dot_at(w)
+		if hit.x >= 0:
+			_wp_remove(hit.x, hit.y)
+			return
 	var u := _pick_unit(w)
 	if u >= 0:
 		if sim.u_side[u] != player_side:
@@ -3197,6 +3390,7 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 			_primary = -1
 			_count("deselect_two_finger")
 			_gm_cancel()
+			_waypoints_off()
 			_select(-1)
 			if coop_hud != null:
 				coop_hud.flash("Deselected", 1.5)

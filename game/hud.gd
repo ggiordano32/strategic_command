@@ -20,6 +20,7 @@ signal fire_pressed
 signal skirmish_pressed
 signal stance_pressed
 signal occupy_pressed
+signal waypoints_pressed
 signal bounds_pressed
 signal deploy_pressed
 signal refill_pressed
@@ -119,6 +120,7 @@ var skirm_button: Button
 var stance_button: Button
 var bounds_button: Button
 var occupy_button: Button
+var waypoints_button: Button  # Waypoints: taps and line drags add stops (battle.gd waypoint_mode; lit while on)
 var deploy_button: Button
 var refill_button: Button
 var ammo_button: Button
@@ -383,6 +385,12 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	halt_button = _button("Halt", Vector2(54, BTN_H), "cancel")
 	Kit.tip(halt_button, "Halt", "Stop where they stand and drop their orders.")
 	halt_button.pressed.connect(func(): halt_pressed.emit())
+	waypoints_button = _button("Waypoints", Vector2(0, BTN_H), "move")
+	waypoints_button.name = "waypoints"
+	waypoints_button.toggle_mode = true
+	BTheme.plate(waypoints_button, true)
+	Kit.tip(waypoints_button, "Waypoints", "While lit, each tap on the ground or line you drag adds a stop after the unit's current move: they march from one to the next (up to 8), the last one's facing kept. Tap a numbered dot to take that stop out. It goes off when the selection changes (or a two-finger tap). With a mouse: Shift + right click, Shift + right drag; Shift + left click a dot takes it out.")
+	waypoints_button.pressed.connect(func(): waypoints_pressed.emit())
 	fire_button = _button("Fire: at will", Vector2(0, BTN_H), "fire")
 	Kit.tip(fire_button, "Fire", "Missile troops fire at will, or hold fire.")
 	fire_button.pressed.connect(func(): fire_pressed.emit())
@@ -457,7 +465,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	Kit.tip(gift_button, "Gift", "Give the selected units to your ally. They can give them back.")
 	gift_button.pressed.connect(func(): gift_pressed.emit())
 	gift_button.visible = false
-	for b in [run_button, halt_button, fire_button, skirm_button, stance_button, bounds_button, occupy_button, ammo_button, deploy_button, refill_button,
+	for b in [run_button, halt_button, waypoints_button, fire_button, skirm_button, stance_button, bounds_button, occupy_button, ammo_button, deploy_button, refill_button,
 			forage_button, man_wall_button, come_down_button, drop_button, release_button,
 			char_buttons["sabotage"], char_buttons["attempt"], char_buttons["parley"], withdraw_button, gift_button]:
 		actions.add_child(b)

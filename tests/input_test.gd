@@ -350,6 +350,32 @@ func _initialize() -> void:
 		_step_ud_check_button,
 		_step_ud_empty,
 		_step_ud_check_empty,
+		# Waypoints: the touch toggle appends, a dot tap removes, the
+		# selection and a two-finger tap turn it off; Shift + right click
+		# appends, Shift + left click on a dot removes; Undo restores the
+		# queue (also one the sim has popped from); the chain preview.
+		_step_wp_start,
+		_step_wp_toggle,
+		_step_wp_tap1,
+		_step_wp_tap2,
+		_step_wp_tap3,
+		_step_wp_check_touch,
+		_step_wp_tap_dot,
+		_step_wp_check_dot,
+		_step_wp_sel_change,
+		_step_wp_check_sel_off,
+		_step_wp_two_finger,
+		_step_wp_check_two_finger,
+		_step_wp_shift_right,
+		_step_wp_check_shift_right,
+		_step_wp_shift_rdrag,
+		_step_wp_check_shift_rdrag,
+		_step_wp_shift_left_dot,
+		_step_wp_check_shift_left,
+		_step_wp_undo,
+		_step_wp_check_undo,
+		_step_wp_pop_halt,
+		_step_wp_check_pop_undo,
 		# Campaign battle Leave: ignored in the first seconds, then a modal
 		# (Stay keeps the battle, Leave exits).
 		_step_lv_start,
@@ -3259,3 +3285,226 @@ func _step_ch_check_order() -> void:
 	_check(so.size() == 1 and int(so[0]["unit"]) == _ch_a and int(so[0]["eg"]) == battle.sim.u_eg[_ch_b],
 		"a tap on the battery: the assassin is sent to sabotage it (%s)" % str(so))
 	_check(battle.char_armed == 0 and _eq_orders(BattleSim.ORDER_ATTACK).is_empty(), "the tap gave no attack order")
+
+
+# ------------------------------------------------------------ waypoints ---
+
+var _wp_u := -1
+var _wp_spots: Array = []     # window positions of empty ground
+var _wp_q0 := PackedInt32Array()
+var _wp_n0 := 0
+
+
+func _wp_count(u: int) -> int:
+	return battle.orders.wp_of(u).size() / BattleSim.WP_K
+
+
+func _wp_appends() -> int:
+	var n := 0
+	for o in battle.sim.pending_orders:
+		if int(o["type"]) == BattleSim.ORDER_MOVE and int(o.get("append", 0)) != 0:
+			n += 1
+	return n
+
+
+func _wp_dot_screen(u: int, i: int) -> Vector2:
+	var ch: Array = battle.orders.chain(u)
+	var at: Vector2i = (ch[i] as Dictionary)["at"]
+	return _world_to_screen(Vector2(at) / 1024.0 * Battle.PX_PER_M)
+
+
+func _step_wp_start() -> void:
+	if is_instance_valid(battle):
+		battle.queue_free()
+	battle = Battle.new()
+	battle.scenario_id = "skirmish"
+	battle.seed_value = 7
+	root.add_child(battle)
+
+
+func _step_wp_toggle() -> void:
+	var sim := battle.sim
+	if not battle.paused:
+		battle._toggle_pause()
+	_wp_u = -1
+	for u in sim.n_units:
+		if sim.u_side[u] == 0 and sim.u_state[u] == BattleSim.U_READY and UT.cls(sim.u_type[u]) == UT.CLS_INF:
+			_wp_u = u
+			break
+	battle._select(_wp_u)
+	_focus(sim.u_cx[_wp_u], sim.u_cy[_wp_u] - 40 * 1024)
+	_check(battle.hud.waypoints_button.visible and not battle.waypoint_mode, "waypoints: the Waypoints toggle shows on the command bar, off")
+	battle.hud.waypoints_button.pressed.emit()
+	_check(battle.waypoint_mode and battle.hud.waypoints_button.button_pressed, "waypoints: the toggle turns on, lit")
+	_wp_spots = []
+	for fx in [0.0, 0.25, 0.5]:
+		_wp_spots.append(_vp_to_window(_rm_empty_spot(fx)))
+
+
+func _wp_tap(i: int) -> void:
+	_no_double_tap()
+	var p: Vector2 = _wp_spots[i]
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_wp_tap1() -> void:
+	_wp_tap(0)
+
+
+func _step_wp_tap2() -> void:
+	_check(battle.orders.value(_wp_u, "order") == BattleSim.O_MOVE and _wp_count(_wp_u) == 0,
+		"waypoints: the first tap with no move under way is the move (%d queued)" % _wp_count(_wp_u))
+	_wp_tap(1)
+
+
+func _step_wp_tap3() -> void:
+	_wp_tap(2)
+
+
+func _step_wp_check_touch() -> void:
+	var u := _wp_u
+	_check(_wp_count(u) == 2 and _wp_appends() == 3, "waypoints: two more taps add two stops (%d queued, %d append orders)" % [_wp_count(u), _wp_appends()])
+	var ch: Array = battle.orders.chain(u)
+	_check(ch.size() == 3, "waypoints: the chain preview has a numbered stop a tap (%d)" % ch.size())
+	if ch.size() == 3:
+		var ok := true
+		for i in 3:
+			var at: Vector2i = (ch[i] as Dictionary)["at"]
+			var want: Vector2 = battle._screen_to_world(_root_from_window(_wp_spots[i])) / Battle.PX_PER_M * 1024.0
+			ok = ok and Vector2(at).distance_to(want) < 2.0 * 1024.0
+		_check(ok, "waypoints: the stops are where the taps were")
+		var lg: PackedInt32Array = (ch[2] as Dictionary)["pts"]
+		var a: Vector2i = (ch[1] as Dictionary)["at"]
+		_check(lg.size() >= 4 and lg[0] == a.x and lg[1] == a.y, "waypoints: each leg starts at the stop before")
+		# The last stop faces from the stop before (the direction of travel).
+		var b: Vector2i = (ch[2] as Dictionary)["at"]
+		var want_f := int(round(atan2(b.y - a.y, b.x - a.x) * 1024.0 / TAU)) & 1023
+		var df := absi(((int((ch[2] as Dictionary)["face"]) - want_f + 512) & 1023) - 512)
+		_check(df <= 2, "waypoints: a stop faces the way from the stop before (%d off)" % df)
+	battle.overlay.queue_redraw()
+
+
+func _step_wp_tap_dot() -> void:
+	_wp_q0 = battle.orders.wp_of(_wp_u)
+	_no_double_tap()
+	var p := _wp_dot_screen(_wp_u, 1)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_wp_check_dot() -> void:
+	var q: PackedInt32Array = battle.orders.wp_of(_wp_u)
+	_check(_wp_count(_wp_u) == 1 and q.size() == BattleSim.WP_K and q[0] == _wp_q0[BattleSim.WP_K] and q[1] == _wp_q0[BattleSim.WP_K + 1],
+		"waypoints: a tap on stop 2 with Waypoints on takes it out, stop 3 stays (%d queued)" % _wp_count(_wp_u))
+	_check(battle.orders.value(_wp_u, "order") == BattleSim.O_MOVE, "waypoints: ... the current move stays")
+
+
+func _step_wp_sel_change() -> void:
+	for u in battle.sim.n_units:
+		if battle.sim.u_side[u] == 0 and u != _wp_u and battle.sim.u_state[u] == BattleSim.U_READY:
+			battle._select(u)
+			break
+
+
+func _step_wp_check_sel_off() -> void:
+	_check(not battle.waypoint_mode and not battle.hud.waypoints_button.button_pressed, "waypoints: the toggle goes off when the selection changes")
+	battle._select(_wp_u)
+	battle.hud.waypoints_button.pressed.emit()
+
+
+func _step_wp_two_finger() -> void:
+	_check(battle.waypoint_mode, "waypoints: on again")
+	_no_double_tap()
+	var c := _vp_to_window(Vector2(500, 260))
+	_touch(0, c - Vector2(50, 0), true)
+	_touch(1, c + Vector2(50, 0), true)
+	_touch(0, c - Vector2(50, 0), false)
+	_touch(1, c + Vector2(50, 0), false)
+
+
+func _step_wp_check_two_finger() -> void:
+	_check(not battle.waypoint_mode, "waypoints: a two-finger tap turns it off")
+	battle._select(_wp_u)
+
+
+func _step_wp_shift_right() -> void:
+	_wp_n0 = _wp_count(_wp_u)
+	battle._last_rtap_time = -10.0
+	var p := _rm_empty_spot(0.6)
+	_mouse(p, true, {"shift": true}, MOUSE_BUTTON_RIGHT)
+	_mouse(p, false, {"shift": true}, MOUSE_BUTTON_RIGHT)
+
+
+func _step_wp_check_shift_right() -> void:
+	_check(_wp_count(_wp_u) == _wp_n0 + 1 and battle.orders.value(_wp_u, "order") == BattleSim.O_MOVE,
+		"waypoints: Shift + right click adds a stop (%d -> %d)" % [_wp_n0, _wp_count(_wp_u)])
+	_check(not battle._rmb_shift, "waypoints: ... and the next right click is an ordinary move again")
+	_wp_n0 = _wp_count(_wp_u)
+
+
+func _step_wp_shift_rdrag() -> void:
+	var a := _rm_empty_spot(0.3)
+	var b := a + Vector2(80, 0)
+	_mouse(a, true, {"shift": true}, MOUSE_BUTTON_RIGHT)
+	for k in range(1, 6):
+		_rm_mouse_move_r(a.lerp(b, k / 5.0), (b - a) / 5.0)
+	_check(battle.overlay.preview_on and battle._wp_append(), "waypoints: Shift + right drag shows the line preview from the chain's end")
+	_mouse(b, false, {"shift": true}, MOUSE_BUTTON_RIGHT)
+
+
+func _step_wp_check_shift_rdrag() -> void:
+	var q: PackedInt32Array = battle.orders.wp_of(_wp_u)
+	var ok := _wp_count(_wp_u) == _wp_n0 + 1
+	if ok:
+		# A line waypoint: the drag's facing (left to right on screen faces up) and its frontage.
+		var k := (_wp_count(_wp_u) - 1) * BattleSim.WP_K
+		ok = absi(((q[k + 2] - 768 + 512) & 1023) - 512) <= 8 and q[k + 3] > 4 * 1024
+	_check(ok, "waypoints: Shift + right drag adds a line stop with the line's facing and frontage (%d -> %d)" % [_wp_n0, _wp_count(_wp_u)])
+	_check(battle.orders.chain(_wp_u).size() == _wp_count(_wp_u) + 1, "waypoints: ... drawn as a stop of the chain")
+	_wp_q0 = battle.orders.wp_of(_wp_u)
+	_wp_n0 = _wp_count(_wp_u)
+
+
+func _step_wp_shift_left_dot() -> void:
+	var p := _wp_dot_screen(_wp_u, _wp_n0)  # the last stop
+	_mouse(_root_from_window(p), true, {"shift": true})
+	_mouse(_root_from_window(p), false, {"shift": true})
+
+
+func _step_wp_check_shift_left() -> void:
+	_check(_wp_count(_wp_u) == _wp_n0 - 1, "waypoints: Shift + left click on a dot takes that stop out (%d -> %d)" % [_wp_n0, _wp_count(_wp_u)])
+	_check(battle.selection == [_wp_u], "waypoints: ... and does not change the selection")
+
+
+func _step_wp_undo() -> void:
+	battle._undo()
+
+
+func _step_wp_check_undo() -> void:
+	_check(battle.orders.wp_of(_wp_u) == _wp_q0, "waypoints: Undo puts the removed stop back (%d queued)" % _wp_count(_wp_u))
+
+
+var _wp_popq := PackedInt32Array()
+
+
+func _step_wp_pop_halt() -> void:
+	# Let the sim walk to the first stop and pop it, then halt and undo.
+	var sim := battle.sim
+	var pops0: int = sim.stat_wp_pop
+	for i in 3000:
+		sim.step()
+		if sim.stat_wp_pop > pops0:
+			break
+	battle.orders.refresh()
+	_check(sim.stat_wp_pop > pops0, "waypoints: the sim popped a stop into the move")
+	_wp_popq = battle.orders.wp_of(_wp_u)
+	battle._select(_wp_u)
+	battle._halt()
+	_check(_wp_count(_wp_u) == 0, "waypoints: a Halt drops the queue (predicted)")
+	battle._undo()
+
+
+func _step_wp_check_pop_undo() -> void:
+	_check(battle.orders.wp_of(_wp_u) == _wp_popq and battle.orders.value(_wp_u, "order") == BattleSim.O_MOVE,
+		"waypoints: Undo of the Halt restores the move and the queue as it was after the pop (%d queued)" % _wp_count(_wp_u))

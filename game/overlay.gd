@@ -42,6 +42,10 @@ var works_drag := false
 ## Mouse over the field (world px; x < 0: none): the wall stretch under it
 ## is highlighted while a unit that can man the walls is selected.
 var hover_w := Vector2(-1, -1)
+## Moves now add a waypoint (the Waypoints toggle, Shift with a mouse): the
+## previews start from the end of each unit's chain.
+var append_on := false
+const COL_CHAIN := Color(0.6, 1.0, 0.6)          # a selected unit's waypoint chain (faint)
 var _icon := PackedInt32Array()  # unit -> symbol id
 ## Matchup mark: the enemy unit under the pointer / finger while a unit is
 ## selected (-1 none) and the selected unit's matchup against it (1 / 0 / -1).
@@ -648,8 +652,11 @@ func _draw_hover_route(w: Vector2, lw: float) -> void:
 	if u < 0 or u >= sim.n_units or sim.u_state[u] != BattleSim.U_READY:
 		return
 	var c := w / px_per_m * M
-	var rt: Dictionary = orders.move_route_for(u, BattleSim.make_move_order(0, u, int(c.x), int(c.y),
-		_v(u, "face"), BattleSim.files_to_width(_v(u, "files"), sim.u_type[u]), 0))
+	var ho := BattleSim.make_move_order(0, u, int(c.x), int(c.y),
+		_v(u, "face"), BattleSim.files_to_width(_v(u, "files"), sim.u_type[u]), 0)
+	if append_on:
+		ho["append"] = 1
+	var rt: Dictionary = orders.move_route_for(u, ho)
 	if rt.is_empty():
 		return
 	var no_way: bool = rt["blocked"]
@@ -1040,6 +1047,10 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 				HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), COL_FIRE)
 	elif order == BattleSim.O_WITHDRAW:
 		_draw_withdraw(u, a, COL_WITHDRAW, lw)
+	if orders != null:
+		var ch: Array = orders.chain(u)
+		if not ch.is_empty():
+			_draw_chain(u, ch, lw, primary)
 	# Artillery: firing arc between minimum and maximum range (and the full
 	# range faintly, since the battery can turn), and its current target.
 	if UT.cls(ty) == UT.CLS_ART:
@@ -1269,11 +1280,17 @@ func _draw_preview(lw: float) -> void:
 				_draw_wall_plan(u, wpl, lw, true)
 				continue
 		var no_way := false
+		var c2 := centre / px_per_m * M
+		var pmo := BattleSim.make_move_order(0, u, int(c2.x), int(c2.y), face, p["width"], 0)
+		if append_on and orders != null:
+			pmo["append"] = 1
+			if sim.city_on == 0 or orders.move_route_for(u, pmo).is_empty():
+				# A waypoint: from the end of its chain.
+				var ce: Vector3i = orders.chain_end(u)
+				_dash_outlined(to_px(ce.x, ce.y), centre, Color(COL_ROUTE, 0.8), lw, 8.0 / zoom)
 		if sim.city_on != 0 and orders != null:
 			# The streets it will take (the sim's own search), dotted; none: red.
-			var c2 := centre / px_per_m * M
-			var rt: Dictionary = orders.move_route_for(u, BattleSim.make_move_order(0, u, int(c2.x), int(c2.y),
-				face, p["width"], 0))
+			var rt: Dictionary = orders.move_route_for(u, pmo)
 			if not rt.is_empty():
 				no_way = rt["blocked"]
 				_draw_route(rt["pts"], COL_NOWAY if no_way else COL_ROUTE, lw, false)
@@ -1305,6 +1322,42 @@ func _draw_preview(lw: float) -> void:
 		var ang := face * TAU / 1024.0
 		var fwd := Vector2(cos(ang), sin(ang))
 		draw_line(centre, centre + fwd * px_per_m * 5.0, Color(1, 1, 0.6, 0.9), lw * 1.5)
+
+
+## Waypoints (docs/DESIGN.md "Waypoints"): unit u's chain (OrderPreview.chain)
+## as numbered dots at its stops joined by the legs it will walk (the street
+## search's routes in towns, dotted; red where there is no way), the ghost
+## footprint at the last stop. Faint: it stays up while the unit is selected.
+func _draw_chain(u: int, ch: Array, lw: float, primary: bool) -> void:
+	var a := 0.75 if primary else 0.5
+	for i in range(1, ch.size()):
+		var lg: Dictionary = ch[i]
+		var col := COL_NOWAY if lg["blocked"] else Color(COL_CHAIN, a)
+		var pts: PackedInt32Array = lg["pts"]
+		if pts.size() > 4 or lg["blocked"]:
+			_draw_route(pts, col, lw * 0.8, false)
+		elif pts.size() == 4:
+			_dash_outlined(to_px(pts[0], pts[1]), to_px(pts[2], pts[3]), col, lw, 8.0 / zoom)
+	var last: Dictionary = ch.back()
+	_draw_footprint(u, to_px((last["at"] as Vector2i).x, (last["at"] as Vector2i).y), int(last["face"]),
+		mini(int(last["files"]), sim.u_alive[u]), sim.u_alive[u], Color(COL_CHAIN, a), Color(COL_CHAIN, 0.1), lw)
+	var dr := chain_dot_r()
+	var fs := _font_size(11.0)
+	for i in ch.size():
+		var at: Vector2i = (ch[i] as Dictionary)["at"]
+		var c := to_px(at.x, at.y)
+		var ring := Color(1.0, 0.85, 0.35, 0.95) if int((ch[i] as Dictionary)["run"]) != 0 else Color(COL_CHAIN, 0.95)
+		draw_circle(c, dr * 1.25, Color(0, 0, 0, 0.55))
+		draw_circle(c, dr, Color(0.08, 0.14, 0.08, 0.85))
+		draw_arc(c, dr, 0, TAU, 18, ring, lw)
+		var txt := str(i + 1)
+		var tw := ThemeDB.fallback_font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		draw_string(ThemeDB.fallback_font, c + Vector2(-tw * 0.5, fs * 0.35), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 1, 0.9))
+
+
+## Radius (world px) of a waypoint dot at the current zoom (hit tests use it).
+func chain_dot_r() -> float:
+	return maxf(px_per_m * 0.9, 8.0 / zoom)
 
 
 ## A street route (sim units, x, y pairs) as a dotted line: a dark underlay dot

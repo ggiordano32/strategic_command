@@ -1376,6 +1376,19 @@ var u_bnd := PackedInt32Array()       # bounding: 0 not, 1 the even men go with 
 var u_bt := PackedInt32Array()        # ... tick the current bound began
 var u_bx := PackedInt32Array()        # ... anchor where it began
 var u_by := PackedInt32Array()
+# Waypoints (docs/DESIGN.md "Waypoints"): per unit a queue of up to WP_MAX
+# moves after its current one (ORDER_MOVE "append" 1). wp_q holds WP_K
+# values per slot, WP_MAX slots per unit: x, y, facing, width, flags
+# (WP_RUN, WP_BOUND). Hashed with wp_on: once an order queued one, so a
+# battle without such an order hashes as before.
+const WP_MAX := 8
+const WP_K := 5
+const WP_RUN := 1
+const WP_BOUND := 2
+var wp_on: int = 0
+var u_wpn := PackedInt32Array()       # waypoints queued after the current move
+var wp_q := PackedInt32Array()        # n_units * WP_MAX * WP_K
+var stat_wp_pop: int = 0              # waypoints popped into the current move (checks)
 var stat_bounds: int = 0              # bounds begun
 var stat_shove: int = 0               # ground given in the press of a lane (checks)
 var stat_street_hold: int = 0         # rear-rank searches skipped in a lane (men-ticks)
@@ -1937,6 +1950,11 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	for arr in _occ_arrays():
 		arr.resize(n_units)
 		arr.fill(0)
+	wp_on = 0
+	u_wpn.resize(n_units)
+	u_wpn.fill(0)
+	wp_q.resize(n_units * WP_MAX * WP_K)
+	wp_q.fill(0)
 	ob_u.resize(ob_ok.size())
 	ob_u.fill(0)
 	u_seen.fill(1)
@@ -6834,77 +6852,89 @@ func _apply_orders(max_player: int = 1 << 30) -> void:
 			if ws == 0 or ws == 1:
 				rsv_stop[ws] = 1  # (the reserves turn back: they stay out, unhurt)
 		for u in order_units(self, o):
-			var d := order_fields(self, u)
-			var o0 := u_order[u]  # (the order it had: an attack after an attack keeps its way)
-			apply_order_rule(self, u, d, o)
-			u_order[u] = int(d["order"])
-			u_ax[u] = int(d["ax"])
-			u_ay[u] = int(d["ay"])
-			u_face[u] = int(d["face"])
-			u_files[u] = int(d["files"])
-			u_dx[u] = int(d["dx"])
-			u_dy[u] = int(d["dy"])
-			u_dface[u] = int(d["dface"])
-			u_target[u] = int(d["target"])
-			u_run[u] = int(d["run"])
-			u_fire[u] = int(d["fire"])
-			u_skirm[u] = int(d["skirm"])
-			u_deploy[u] = int(d["deploy"])
-			u_refill[u] = int(d["refill"])
-			u_gtarget[u] = int(d["gtarget"])
-			u_pick[u] = int(d["pick"])
-			u_akind[u] = int(d["akind"])
-			u_forage[u] = int(d["forage"])
-			if int(d["occ"]) != u_ocg[u]:
-				u_ocg[u] = int(d["occ"])
-				u_oct[u] = 0
-			if occ_on != 0 and u_occ[u] > 0:
-				# Holding a building: a move, a withdrawal, an attack by men
-				# without missiles to shoot (or into another building) takes it
-				# out by the door (slice 2c).
-				var uo := u_order[u]
-				if uo == O_MOVE or uo == O_WITHDRAW or (uo == O_ATTACK and (u_cls[u] != UT.CLS_MISSILE or u_ammo[u] <= 0)):
-					_occ_leave(u)
-			if int(d["stance"]) != u_stance[u] or int(d["bound"]) != u_bound[u] or int(o["type"]) == ORDER_STANCE \
-					or (u_bnd[u] != 0 and int(o["type"]) != ORDER_RUN and int(o["type"]) != ORDER_FIRE \
-					and int(o["type"]) != ORDER_AMMO):
-				stn_on = 1  # (stances and bounds hashed from here on)
-				u_stance[u] = int(d["stance"])
-				u_bound[u] = int(d["bound"])
-				u_bnd[u] = 0  # (a new order: any bound under way ends; the teams follow their places)
-			u_dirty[u] = 1
-			u_settled[u] = 0
-			if obs_on != 0:
-				u_flt[u] = -FLOW_EVERY  # (an order: its places are laid out afresh)
-			if dog_on != 0 and u_hand[u] >= 0:
-				u_ret[u] = 0  # a pack given an order: no longer on its way back
-				u_dogt[u] = 0
-			if ch_on != 0 and u_char[u] != 0 and u_cho[u] != CHO_NONE:
-				u_cho[u] = CHO_NONE  # a character given an order: his act is called off
-				u_chk[u] = 0
-			if int(o["type"]) == ORDER_DROP:
-				var had := u_carry[u] >= 0
-				_drop(u)
-				if n_eng > 0 and u_eg[u] >= 0:
-					_drop_engines(u)
-				if phase == PHASE_DEPLOY and had:
-					_place_unit(u, 0)  # (deployment: the men stand in their ordered formation at once)
-			elif u_pick[u] >= 0:
-				_pick_check(u)
-			if int(o["type"]) == ORDER_PLACE or (phase == PHASE_DEPLOY and int(o["type"]) == ORDER_PICKUP):
-				if int(d.get("placed", 0)) != 0:
-					_place_unit(u, int(d.get("wall", 0)))
-				continue
-			if obs_on != 0:
-				if not (o0 == O_ATTACK and u_order[u] == O_ATTACK):
-					u_pn[u] = 0  # plan a new path
-				# (An attack after an attack keeps its way: _path_point plans again
-				# once the goal has moved off it. The AI retargeting every second
-				# had a unit at a corner plan from scratch, turn back to the
-				# street graph's entry node behind it, and never get on.)
-			if city_on != 0 and ws_e.size() > 0:
-				_wall_order(u, int(o["type"]), int(o.get("ground", 0)) != 0)
+			_apply_unit(u, o)
 	_placing = PackedInt32Array()
+
+
+## One unit's part of order o (_apply_orders; _wp_pass with keep_wp: the
+## next waypoint, the rest of the queue kept).
+func _apply_unit(u: int, o: Dictionary, keep_wp := false) -> void:
+	var d := order_fields(self, u)
+	var o0 := u_order[u]  # (the order it had: an attack after an attack keeps its way)
+	var wq0: PackedInt32Array = d["wp"]
+	apply_order_rule(self, u, d, o)
+	if keep_wp:
+		d["wp"] = wq0  # (a waypoint popped into the current move: the rest stay queued)
+	var wq: PackedInt32Array = d["wp"]
+	if wq != wq0:
+		_wp_set(u, wq)
+	u_order[u] = int(d["order"])
+	u_ax[u] = int(d["ax"])
+	u_ay[u] = int(d["ay"])
+	u_face[u] = int(d["face"])
+	u_files[u] = int(d["files"])
+	u_dx[u] = int(d["dx"])
+	u_dy[u] = int(d["dy"])
+	u_dface[u] = int(d["dface"])
+	u_target[u] = int(d["target"])
+	u_run[u] = int(d["run"])
+	u_fire[u] = int(d["fire"])
+	u_skirm[u] = int(d["skirm"])
+	u_deploy[u] = int(d["deploy"])
+	u_refill[u] = int(d["refill"])
+	u_gtarget[u] = int(d["gtarget"])
+	u_pick[u] = int(d["pick"])
+	u_akind[u] = int(d["akind"])
+	u_forage[u] = int(d["forage"])
+	if int(d["occ"]) != u_ocg[u]:
+		u_ocg[u] = int(d["occ"])
+		u_oct[u] = 0
+	if occ_on != 0 and u_occ[u] > 0:
+		# Holding a building: a move, a withdrawal, an attack by men
+		# without missiles to shoot (or into another building) takes it
+		# out by the door (slice 2c).
+		var uo := u_order[u]
+		if uo == O_MOVE or uo == O_WITHDRAW or (uo == O_ATTACK and (u_cls[u] != UT.CLS_MISSILE or u_ammo[u] <= 0)):
+			_occ_leave(u)
+	if int(d["stance"]) != u_stance[u] or int(d["bound"]) != u_bound[u] or int(o["type"]) == ORDER_STANCE \
+			or (u_bnd[u] != 0 and int(o["type"]) != ORDER_RUN and int(o["type"]) != ORDER_FIRE \
+			and int(o["type"]) != ORDER_AMMO):
+		stn_on = 1  # (stances and bounds hashed from here on)
+		u_stance[u] = int(d["stance"])
+		u_bound[u] = int(d["bound"])
+		u_bnd[u] = 0  # (a new order: any bound under way ends; the teams follow their places)
+	u_dirty[u] = 1
+	u_settled[u] = 0
+	if obs_on != 0:
+		u_flt[u] = -FLOW_EVERY  # (an order: its places are laid out afresh)
+	if dog_on != 0 and u_hand[u] >= 0:
+		u_ret[u] = 0  # a pack given an order: no longer on its way back
+		u_dogt[u] = 0
+	if ch_on != 0 and u_char[u] != 0 and u_cho[u] != CHO_NONE:
+		u_cho[u] = CHO_NONE  # a character given an order: his act is called off
+		u_chk[u] = 0
+	if int(o["type"]) == ORDER_DROP:
+		var had := u_carry[u] >= 0
+		_drop(u)
+		if n_eng > 0 and u_eg[u] >= 0:
+			_drop_engines(u)
+		if phase == PHASE_DEPLOY and had:
+			_place_unit(u, 0)  # (deployment: the men stand in their ordered formation at once)
+	elif u_pick[u] >= 0:
+		_pick_check(u)
+	if int(o["type"]) == ORDER_PLACE or (phase == PHASE_DEPLOY and int(o["type"]) == ORDER_PICKUP):
+		if int(d.get("placed", 0)) != 0:
+			_place_unit(u, int(d.get("wall", 0)))
+		return
+	if obs_on != 0:
+		if not (o0 == O_ATTACK and u_order[u] == O_ATTACK):
+			u_pn[u] = 0  # plan a new path
+		# (An attack after an attack keeps its way: _path_point plans again
+		# once the goal has moved off it. The AI retargeting every second
+		# had a unit at a corner plan from scratch, turn back to the
+		# street graph's entry node behind it, and never get on.)
+	if city_on != 0 and ws_e.size() > 0:
+		_wall_order(u, int(o["type"]), int(o.get("ground", 0)) != 0)
 
 
 ## The ORDER_KEYS fields of unit u as a Dictionary.
@@ -6916,7 +6946,52 @@ static func order_fields(sim, u: int) -> Dictionary:
 		"deploy": sim.u_deploy[u], "refill": sim.u_refill[u], "gtarget": sim.u_gtarget[u],
 		"pick": sim.u_pick[u], "akind": sim.u_akind[u], "forage": sim.u_forage[u],
 		"stance": sim.u_stance[u], "bound": sim.u_bound[u],
-		"occ": sim.u_ocg[u] if u < sim.u_ocg.size() else 0}
+		"occ": sim.u_ocg[u] if u < sim.u_ocg.size() else 0, "wp": wp_queue(sim, u)}
+
+
+## Unit u's waypoint queue (a copy): WP_K values a waypoint (x, y, facing,
+## width, flags), in the order they are walked.
+static func wp_queue(sim, u: int) -> PackedInt32Array:
+	if u >= sim.u_wpn.size() or sim.u_wpn[u] == 0:
+		return PackedInt32Array()
+	var k: int = u * WP_MAX * WP_K
+	return sim.wp_q.slice(k, k + sim.u_wpn[u] * WP_K)
+
+
+## Store unit u's waypoint queue (WP_K values a waypoint, at most WP_MAX).
+func _wp_set(u: int, q: PackedInt32Array) -> void:
+	var nw := mini(q.size() / WP_K, WP_MAX)
+	if nw > 0:
+		wp_on = 1  # (waypoints hashed from here on)
+	var k := u * WP_MAX * WP_K
+	for i in WP_MAX * WP_K:
+		wp_q[k + i] = q[i] if i < nw * WP_K else 0
+	u_wpn[u] = nw
+
+
+## Waypoints (after the tick's orders): a unit whose move has arrived (no
+## order now) takes the next waypoint as its move, through the order rules
+## as if it were ordered there now (snaps, walls, the short re-form); the
+## rest stay queued. Broken / gone units, and units the sim gave another
+## order (an attack after a climb), drop their queue; a unit on a stair or
+## a ladder waits until it is up or down.
+func _wp_pass() -> void:
+	for u in n_units:
+		if u_wpn[u] == 0:
+			continue
+		if u_state[u] != U_READY or (u_order[u] != O_MOVE and u_order[u] != O_NONE):
+			_wp_set(u, PackedInt32Array())
+			continue
+		if u_order[u] == O_MOVE or u_stair[u] != 0:
+			continue
+		var k := u * WP_MAX * WP_K
+		var fl := wp_q[k + 4]
+		var o := {"tick": tick, "type": ORDER_MOVE, "unit": u, "x": wp_q[k], "y": wp_q[k + 1],
+			"facing": wp_q[k + 2], "width": wp_q[k + 3], "run": 1 if (fl & WP_RUN) != 0 else 0,
+			"bound": 1 if (fl & WP_BOUND) != 0 else 0, "player": 0, "seq": 0}
+		_wp_set(u, wp_q.slice(k + WP_K, k + u_wpn[u] * WP_K))
+		stat_wp_pop += 1
+		_apply_unit(u, o, true)
 
 
 ## Units an order applies to (in index order): its unit, or every ready unit
@@ -6943,6 +7018,27 @@ static func order_units(sim, o: Dictionary) -> Array[int]:
 ## applies orders through this, and OrderPreview predicts not-yet-applied
 ## orders through the same function, so the two can never disagree.
 static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
+	var typ := int(o["type"])
+	var wq: PackedInt32Array = d["wp"] if d.has("wp") else PackedInt32Array()
+	if typ == ORDER_MOVE and int(o.get("append", 0)) != 0 and sim.phase == PHASE_BATTLE \
+			and (int(d["order"]) == O_MOVE or not wq.is_empty()):
+		# Waypoints: after the current move (or the queue's last), at most
+		# WP_MAX; the order rules apply when it becomes the move (_wp_pass).
+		# No move under way: an ordinary move (below).
+		if wq.size() < WP_MAX * WP_K and UT.stat(sim.u_type[u], "fixed") == 0:
+			var nq := wq.duplicate()
+			var fl := (WP_RUN if int(o.get("run", 0)) != 0 else 0) | (WP_BOUND if int(o.get("bound", 0)) != 0 else 0)
+			nq.append_array([clampi(int(o["x"]), 0, sim.field_w), clampi(int(o["y"]), 0, sim.field_h),
+				int(o["facing"]) & FM.ANGLE_MASK, int(o["width"]), fl])
+			d["wp"] = nq
+		return
+	_order_rule(sim, u, d, o)
+	if not wq.is_empty() and typ != ORDER_RUN and typ != ORDER_FIRE and typ != ORDER_SKIRMISH \
+			and typ != ORDER_AMMO and typ != ORDER_STANCE:
+		d["wp"] = PackedInt32Array()  # any other order: the waypoints are dropped
+
+
+static func _order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 	var typ := int(o["type"])
 	var ty: int = sim.u_type[u]
 	# Deployment phase: units are placed (ORDER_PLACE), not moved; only the
@@ -7731,6 +7827,8 @@ func step() -> void:
 	else:
 		BattleAI.think(self)
 	_apply_orders()  # AI orders are queued for this tick
+	if wp_on != 0:
+		_wp_pass()
 	if ch_on != 0:
 		_update_chars()
 	if vis_on != 0:
@@ -16758,6 +16856,10 @@ func state_hash() -> int:
 	if pursue != 0:
 		# Continue chosen after the decision (a battle without it hashes as before).
 		ctx.update(PackedInt64Array([pursue]).to_byte_array())
+	if wp_on != 0:
+		# Waypoints (a battle where no order queued one hashes as before).
+		ctx.update(u_wpn.to_byte_array())
+		ctx.update(wp_q.to_byte_array())
 	var digest := ctx.finish()
 	return digest.decode_u32(0)
 

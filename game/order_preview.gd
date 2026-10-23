@@ -363,7 +363,15 @@ func move_route_for(u: int, order: Dictionary) -> Dictionary:
 	if sim.u_wall[u] > 0 or sim.u_stair[u] != 0:
 		return {}
 	var d: Dictionary = (_view[u] as Dictionary).duplicate() if _view.has(u) else BattleSim.order_fields(sim, u)
+	var q0: PackedInt32Array = d["wp"]
 	BattleSim.apply_order_rule(sim, u, d, order)
+	if int(order.get("append", 0)) != 0 and (d["wp"] as PackedInt32Array).size() > q0.size():
+		# A waypoint: the leg from the chain's last stop to it.
+		var ch := chain_from(u, d)
+		if ch.is_empty():
+			return {}
+		var lg: Dictionary = ch.back()
+		return {"pts": lg["pts"], "blocked": lg["blocked"], "goal": lg["at"]}
 	if int(d["order"]) != BattleSim.O_MOVE:
 		return {}
 	return route_from_fields(u, d)
@@ -397,5 +405,89 @@ func route_from_fields(u: int, d: Dictionary) -> Dictionary:
 	var pts := PackedInt32Array([sim.u_cx[u], sim.u_cy[u]])
 	pts.append_array(r)
 	var out := {"pts": pts, "blocked": r.is_empty() or int(d.get("snap", 0)) == 3, "goal": Vector2i(gx, gy)}
+	_routes[key] = out
+	return out
+
+
+# ------------------------------------------------------------- waypoints ---
+# A unit's waypoint queue (BattleSim "Waypoints": ORDER_MOVE "append"), as
+# the sim will walk it: each stop through the order rule the sim applies when
+# it pops (read-only, from the last stop), the legs by the street search on
+# town maps (straight elsewhere).
+
+## Unit u's predicted waypoint queue (pending orders included): WP_K values a
+## waypoint (x, y, facing, width, flags), raw as ordered.
+func wp_of(u: int) -> PackedInt32Array:
+	if _view.has(u):
+		return (_view[u] as Dictionary)["wp"]
+	return BattleSim.wp_queue(sim, u)
+
+
+## The chain of unit u's predicted order: [] without waypoints, else one
+## entry a stop, the first the current move's destination: {"at": Vector2i
+## (where its front centre forms up), "face", "files", "run", "pts" (the leg
+## from the stop before, sim x, y pairs; empty for the first), "blocked"
+## (no way found for that leg)}.
+func chain(u: int) -> Array:
+	if sim.u_state[u] != BattleSim.U_READY:
+		return []
+	var d: Dictionary = _view[u] if _view.has(u) else BattleSim.order_fields(sim, u)
+	return chain_from(u, d)
+
+
+func chain_from(u: int, d: Dictionary) -> Array:
+	var q: PackedInt32Array = d["wp"]
+	if q.is_empty():
+		return []
+	var mv := int(d["order"]) == BattleSim.O_MOVE
+	var prev := Vector2i(int(d["dx"]), int(d["dy"])) if mv else Vector2i(int(d["ax"]), int(d["ay"]))
+	var out: Array = [{"at": prev, "face": int(d["dface"]) if mv else int(d["face"]), "files": int(d["files"]),
+		"run": int(d["run"]), "pts": PackedInt32Array(), "blocked": false}]
+	var f: Dictionary = d.duplicate()
+	f["wp"] = PackedInt32Array()
+	for i in q.size() / BattleSim.WP_K:
+		var k := i * BattleSim.WP_K
+		f["order"] = BattleSim.O_NONE
+		f["ax"] = prev.x
+		f["ay"] = prev.y
+		var o := BattleSim.make_move_order(0, u, q[k], q[k + 1], q[k + 2], q[k + 3], q[k + 4] & BattleSim.WP_RUN)
+		BattleSim.apply_order_rule(sim, u, f, o)
+		var at := Vector2i(int(f["dx"]), int(f["dy"])) if int(f["order"]) == BattleSim.O_MOVE else Vector2i(int(f["ax"]), int(f["ay"]))
+		var lg := _leg(u, prev, at)
+		out.append({"at": at, "face": int(f["dface"]), "files": int(f["files"]), "run": int(f["run"]),
+			"pts": lg["pts"], "blocked": bool(lg["blocked"]) or int(f.get("snap", 0)) == 3})
+		prev = at
+	return out
+
+
+## Where unit u ends up under its predicted order and waypoints: (x, y,
+## facing) of the last stop, the move's destination, or where it stands.
+func chain_end(u: int) -> Vector3i:
+	var ch := chain(u)
+	if not ch.is_empty():
+		var e: Dictionary = ch.back()
+		return Vector3i((e["at"] as Vector2i).x, (e["at"] as Vector2i).y, int(e["face"]))
+	if value(u, "order") == BattleSim.O_MOVE:
+		return Vector3i(value(u, "dx"), value(u, "dy"), value(u, "dface"))
+	return Vector3i(value(u, "ax"), value(u, "ay"), value(u, "face"))
+
+
+## One leg of a chain, a to b: the street route on town maps (cached like
+## the move routes), a straight line elsewhere.
+func _leg(u: int, a: Vector2i, b: Vector2i) -> Dictionary:
+	if sim.obs_on == 0 or sim.ng_x.is_empty() or sim.city_on == 0:
+		return {"pts": PackedInt32Array([a.x, a.y, b.x, b.y]), "blocked": false}
+	var key := ["leg", u, a.x >> 11, a.y >> 11, b.x >> 11, b.y >> 11, sim.nav_epoch]
+	if _routes.has(key):
+		return _routes[key]
+	if _routes.size() > 96:
+		_routes.clear()
+	var r: PackedInt32Array = sim.route_to(a.x, a.y, b.x, b.y, sim._ground_mask(u))
+	var pts := PackedInt32Array([a.x, a.y])
+	if r.is_empty():
+		pts.append_array([b.x, b.y])
+	else:
+		pts.append_array(r)
+	var out := {"pts": pts, "blocked": r.is_empty()}
 	_routes[key] = out
 	return out

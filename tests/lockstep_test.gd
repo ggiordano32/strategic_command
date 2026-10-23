@@ -94,6 +94,12 @@ extends SceneTree
 ##    decision. Every frame equal on all three, the pursue flag set on all,
 ##    the battle past END_AFTER and ended on the same tick everywhere by the
 ##    End. Run 2: A's End alone ends it at once on both.
+## 17. Waypoints (docs/DESIGN.md "Waypoints"; "--only=wp"): skirmish, two
+##    peers on side 0 against the AI; A gives one of its units a move and
+##    two appended waypoints (one run), B one of its units a move and a
+##    waypoint, then appends another mid-chain; A's append for B's unit is
+##    refused alike; a third peer joins by snapshot with waypoints queued.
+##    Every frame equal, the same pops on all three.
 ## Exits 0 on success.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -161,6 +167,11 @@ func _init() -> void:
 		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 		quit(0 if _ok else 1)
 		return
+	if OS.get_cmdline_user_args().has("--only=wp"):
+		_test_lockstep_wp()
+		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
+		quit(0 if _ok else 1)
+		return
 	_test_snapshots()
 	_test_profiles()
 	_test_lockstep()
@@ -175,6 +186,7 @@ func _init() -> void:
 	_test_lockstep_siege_deploy()
 	_test_lockstep_street()
 	_test_lockstep_occupy()
+	_test_lockstep_wp()
 	_test_lockstep_chars()
 	_test_lockstep_reinf()
 	_test_lockstep_end()
@@ -2697,3 +2709,85 @@ func _test_lockstep_occupy() -> void:
 	elif n_ab > 0 and n_ac > 0:
 		print("PASS occupy lockstep: %d frames A/B and %d A/C equal (C joined at frame %d with the building held); in %d, out %d, door blows %d, stopped %d; sim tick %d" % [
 			n_ab, n_ac, c_join, sa.stat_occ_in, sa.stat_occ_out, sa.stat_occ_door, sa.stat_occ_stop, sa.tick])
+
+
+func _test_lockstep_wp() -> void:
+	var sc: Dictionary = Scenarios.make("skirmish")
+	sc["ai_sides"] = [1]
+	var probe := BattleSim.new()
+	probe.setup(sc, 4242)
+	var home := _home_split(probe)
+	var ua := -1
+	var ub := -1
+	for u in probe.n_units:
+		if UT.stat(probe.u_type[u], "fixed") != 0 or UT.cls(probe.u_type[u]) == UT.CLS_ART:
+			continue
+		if home[u] == 0 and ua < 0:
+			ua = u
+		elif home[u] == 1 and ub < 0:
+			ub = u
+	var M := BattleSim.M
+	var w := 24 * M
+	var relay := Relay.new()
+	var a := _new_peer(sc, home, 0, "A", [0, 1])
+	var b := _new_peer(sc, home, 1, "B", [0, 1])
+	a.latency = 1
+	b.latency = 3
+	b.d = 4
+	var peers: Array[Peer] = [a, b]
+	var total := 1500
+	var c: Peer = null
+	var c_join := -1
+	var now := 0
+	while now < total * 3 and mini(a.ls.frame, b.ls.frame) < total:
+		now += 1
+		for p in peers:
+			var ps = p.ls.sim
+			if p.me == 0 and now == 15:
+				var ax: int = ps.u_ax[ua]
+				var ay: int = ps.u_ay[ua]
+				p.issue({"type": BattleSim.ORDER_MOVE, "unit": ua, "x": ax, "y": ay - 25 * M, "facing": 768, "width": w, "run": 0})
+				p.issue({"type": BattleSim.ORDER_MOVE, "unit": ua, "x": ax + 30 * M, "y": ay - 25 * M, "facing": 0, "width": w, "run": 1, "append": 1})
+				p.issue({"type": BattleSim.ORDER_MOVE, "unit": ua, "x": ax + 30 * M, "y": ay - 55 * M, "facing": 768, "width": w, "run": 0, "append": 1})
+				# (B's unit: refused alike.)
+				p.issue({"type": BattleSim.ORDER_MOVE, "unit": ub, "x": ax, "y": ay, "facing": 0, "width": w, "run": 0, "append": 1})
+			if p.me == 1 and now == 18:
+				var bx: int = ps.u_ax[ub]
+				var by: int = ps.u_ay[ub]
+				p.issue({"type": BattleSim.ORDER_MOVE, "unit": ub, "x": bx - 20 * M, "y": by - 20 * M, "facing": 768, "width": w, "run": 0})
+				p.issue({"type": BattleSim.ORDER_MOVE, "unit": ub, "x": bx - 40 * M, "y": by - 20 * M, "facing": 512, "width": w, "run": 0, "append": 1})
+			if p.me == 1 and now == 120:
+				var bx2: int = ps.u_ax[ub]
+				var by2: int = ps.u_ay[ub]
+				p.issue({"type": BattleSim.ORDER_MOVE, "unit": ub, "x": bx2 - 40 * M, "y": by2 - 50 * M, "facing": 768, "width": w, "run": 1, "append": 1})
+			p.flush(relay, now)
+			p.deliver(relay, now)
+			p.run(p.rng.randi() % 3, true)
+		if c != null:
+			c.flush(relay, now)
+			c.deliver(relay, now)
+			c.run(4, true)
+		elif now > 30 and ((a.ls.sim.stat_wp_pop >= 1 and (a.ls.sim.u_wpn[ua] > 0 or a.ls.sim.u_wpn[ub] > 0)) or now == total * 3 / 2):
+			c_join = now
+			c = _new_peer(sc, home, 1, "C", [0, 1])
+			c.online = true
+			c.latency = 2
+			if not c.ls.restore(a.ls.snapshot()):
+				_fail("waypoints lockstep: C could not restore A's snapshot")
+				return
+			c.hashes[c.ls.frame] = c.ls.state_hash()
+			c.cursor = 0
+			while c.cursor < relay.items.size() and int(relay.items[c.cursor]["s"]) <= c.ls.last_s:
+				c.cursor += 1
+			c.sent_k = 1 << 30
+	var n_ab := _compare(a, b, 0, "waypoints A/B")
+	var n_ac := _compare(a, c, c_join, "waypoints A/C") if c != null else 0
+	var sa = a.ls.sim
+	var sb = b.ls.sim
+	if n_ab < total / 2 or n_ac < 50:
+		_fail("waypoints lockstep: too few frames compared (A/B %d, A/C %d)" % [n_ab, n_ac])
+	elif sa.stat_wp_pop < 3 or sa.stat_wp_pop != sb.stat_wp_pop or sa.wp_on != 1:
+		_fail("waypoints lockstep: pops A %d B %d (wp_on %d)" % [sa.stat_wp_pop, sb.stat_wp_pop, sa.wp_on])
+	elif n_ab > 0 and n_ac > 0:
+		print("PASS waypoints lockstep: %d frames A/B and %d A/C equal (C joined at frame %d with waypoints queued); %d waypoints popped on each; rejected A %d B %d" % [
+			n_ab, n_ac, c_join, sa.stat_wp_pop, a.ls.rejected, b.ls.rejected])
