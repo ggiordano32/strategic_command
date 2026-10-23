@@ -463,6 +463,7 @@ func _build_menu() -> Control:
 	_help = help
 	_back_btn = Kit.button("< Back", go_back, 110, 16)
 	_back_btn.name = "menu_back"
+	Kit.nav_style(_back_btn)
 	_back_btn.position = Vector2(14, 10)
 	_back_btn.visible = false
 	bg.add_child(_back_btn)

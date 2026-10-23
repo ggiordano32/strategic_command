@@ -509,6 +509,22 @@ height under 520: the stack centred, a flat dim over the picture):
 Entries slide in from the left on open (0.25 s each, 0.07 s stagger) and grow 3 % on hover / press with a brighter
 label. Every sub-page has a **< Back** at the top-left (`go_back`, parent table `BACK`); Esc (`ui_cancel`) and the
 Android back request do the same. The page dim is 0.66 on sub-pages so the centred content reads over any picture.
+
+**The Back rule** (2026-10-23): every full-screen page outside a battle has **< Back** in the top-left corner and nothing
+else sits there: the menu's button, at (14, 10), 110 x 40, font 16, `Kit.nav_style` (gold edge on a dark plate). Pages
+that follow it: all the menu's sub-pages (the one `_back_btn`, `go_back`), the faction page (`new_campaign.gd`: its top
+bar is padded so the button lands on the same spot and size) and the Custom battle page (`custom_battle.gd`, node
+`custom_back`; in the online lobby it leaves the room first). Dialogs keep their bottom-row buttons, the battle screens
+keep Leave in the battle menu, and Close on books, keys and the unit picker stays a Close.
+
+**Custom battle page** (2026-10-23, house style): a fixed strip with Back and the Cinzel heading "Custom battle", then
+one line of explanation and three `Kit.trim_panel` cards with gold `Kit.title` heads. **Battle**: Template, Setting, Sea
+battle (a row), the map options as one wrapping flow with "Seed" as a label + field pair that never splits, and
+Deployment / Battle time / Funds per side as one row of label + dropdown pairs (sea battles show the wind / water / fleets
+here). **Side 1** and **Side 2**: the side cards, side by side from 900 px of width and stacked below it (`_fit` on
+resize). **Play**: the check line ("Ready to play solo."), then Play solo, Play online and the friend's code with Join in
+one wrapping row. 16 px side gutter on a phone; the page is at most 1100 wide. In the online lobby the room card sits
+under the explanation. Node names are unchanged.
 Button names are kept for the tests: `home_campaign`, `home_grand`, `home_battles`, `home_options`, `home_continue`
 are new; `home_controls`, `home_sandbox`, `home_custom`, `home_server`, `home_soldiers`, `home_quality`,
 `home_battle_look`, `home_map_style`, `home_Join`, `home_Import` live on their new pages. (After pass 2 the Options names are capsules: `home_<key>` with its segments `home_<key>_<value>`, e.g. `home_quality_low`; the in-game Menu's use `menu_<key>`; `home_Join` is the Join page's, the card's Join is `grand_join`.)

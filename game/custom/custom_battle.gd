@@ -18,6 +18,7 @@ signal play_online(session: Node, setup: Dictionary)
 const CS := preload("res://game/custom/custom_setup.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
+const MenuStyle := preload("res://game/menu/menu_style.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const MapGen := preload("res://sim/mapgen.gd")
@@ -34,6 +35,8 @@ var setup: Dictionary = {}
 var session = null            ## CoopSession while online (lobby, then the battle)
 var _tmpl := -1
 var _box: VBoxContainer
+var _sides_box: BoxContainer  ## the two side cards: side by side when wide, stacked on a phone
+var _margin: MarginContainer
 var _info: Label
 var _code_edit: LineEdit
 var _picker: PanelContainer
@@ -51,15 +54,32 @@ func _ready() -> void:
 	add_child(bg)
 	var scroll := TouchScroll.new()
 	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
-	scroll.offset_left = 12
-	scroll.offset_right = -12
-	scroll.offset_top = 8
-	scroll.offset_bottom = -8
+	scroll.offset_top = 56   # (the strip with Back and the heading stays put above the page)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	add_child(scroll)
-	_box = Kit.vbox(8)
+	_margin = MarginContainer.new()
+	_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_margin.add_theme_constant_override("margin_top", 4)
+	_margin.add_theme_constant_override("margin_bottom", 16)
+	scroll.add_child(_margin)
+	_box = Kit.vbox(10)
 	_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(_box)
+	_margin.add_child(_box)
+	# Back: the corner every page has it in (the menu's button: (14, 10), 110 wide, font 16, the nav look).
+	var bb := Kit.button("< Back", _back, 110, 16)
+	bb.name = "custom_back"
+	Kit.nav_style(bb)
+	bb.position = Vector2(14, 10)
+	add_child(bb)
+	var hd := Kit.title("Custom battle", 28)
+	MenuStyle.use_display(hd, 28)
+	hd.position = Vector2(138, 8)
+	hd.custom_minimum_size = Vector2(0, 44)
+	hd.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	hd.name = "custom_heading"
+	add_child(hd)
+	resized.connect(_fit)
+	_fit()
 	if setup.is_empty():
 		setup = CS.default_setup(int(Time.get_unix_time_from_system()) % 100000)
 	_build_picker()
@@ -70,6 +90,26 @@ func _ready() -> void:
 		elif a.begins_with("--custom-join="):
 			_code_edit.text = a.get_slice("=", 1)  # testing aid
 			_join.call_deferred()
+
+
+## Side gutters (16 px, more on a wide window: the page stays about 1100 wide) and the side cards' direction.
+func _fit() -> void:
+	if _margin == null:
+		return
+	var m := int(maxf(16.0, (size.x - 1100.0) * 0.5))
+	_margin.add_theme_constant_override("margin_left", m)
+	_margin.add_theme_constant_override("margin_right", m)
+	if _sides_box != null and is_instance_valid(_sides_box):
+		_sides_box.vertical = size.x < 900.0
+
+
+func _card(title_text: String) -> Array:
+	var p := Kit.trim_panel(Kit.PANEL_BG, 12)
+	p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var v := Kit.vbox(8)
+	p.add_child(v)
+	v.add_child(Kit.title(title_text, 20))
+	return [p, v]
 
 
 func _net() -> Node:
@@ -108,8 +148,14 @@ func _rebuild() -> void:
 		# (the setting changed, here or from the relay: the picker shows its rows)
 		_picker.queue_free()
 		_build_picker()
+	var intro := Kit.label("Pick a template or build both sides, then play solo against the AI, or online with a friend.",
+		Kit.FONT, Kit.COL_DIM, true)
+	_box.add_child(intro)
+	if session != null:
+		_box.add_child(_lobby_view())
+	var bc := _card("Battle")
+	var bv: VBoxContainer = bc[1]
 	var head := Kit.flow(8)
-	head.add_child(Kit.label("Custom battle", 22, Kit.COL_GOLD))
 	if _can_edit_all():
 		var tb := Kit.button("Template: " + (CS.template_title(CS.TEMPLATES[_tmpl]) if _tmpl >= 0 else "your own"),
 			func(): _load_template((_tmpl + 1) % CS.TEMPLATES.size()), 0, 14)
@@ -121,30 +167,6 @@ func _rebuild() -> void:
 		pb.name = "custom_pack"
 		pb.tooltip_text = "The units on offer: Rome's or the West's (pike and shot)"
 		head.add_child(pb)
-	head.add_child(Kit.button("Back", _back, 80))
-	if session == null:
-		var ps := Kit.icon_button("Play solo", "battles", _play_solo, 120, 17)
-		ps.name = "custom_play_solo"
-		head.add_child(ps)
-		var po := Kit.icon_button("Play online", "online", _create_online, 130, 17)
-		po.name = "custom_play_online"
-		po.visible = not CS.sea_on(setup)  # (sea battles: solo for now)
-		head.add_child(po)
-	_box.add_child(head)
-	if session == null:
-		var jr := Kit.flow(8)
-		jr.add_child(Kit.label("A friend's code:", Kit.FONT, Kit.COL_DIM))
-		_code_edit = Kit.text_field("ABC-DEF", "", 150, "Your friend's code", true)
-		_code_edit.name = "custom_code"
-		jr.add_child(Kit.field_box(_code_edit))
-		var jb := Kit.icon_button("Join", "online", _join, 80)
-		jb.name = "custom_join"
-		jr.add_child(jb)
-		_box.add_child(jr)
-	else:
-		_box.add_child(_lobby_view())
-	_info = Kit.label("", Kit.FONT, Kit.COL_DIM, true)
-	_box.add_child(_info)
 	if session == null:
 		# (N3a) A sea battle instead of a land battle (solo).
 		var sb := Kit.button("Sea battle: " + ("on" if CS.sea_on(setup) else "off"), func():
@@ -154,20 +176,50 @@ func _rebuild() -> void:
 				setup["sea"] = CS.sea_default(CS.pack_of(setup))
 			_changed(), 0, 14)
 		sb.name = "custom_sea"
-		sb.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 		sb.tooltip_text = "Ships in real time: sail and wind in the West, oars and rams in Rome's Mediterranean"
-		_box.add_child(sb)
-	if CS.sea_on(setup):
-		_box.add_child(_sea_view())
-		_show_check()
-		return
-	_box.add_child(_map_row())
-	var sides := HBoxContainer.new()
-	sides.add_theme_constant_override("separation", 10)
-	sides.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	for s in 2:
-		sides.add_child(_side_view(s))
-	_box.add_child(sides)
+		head.add_child(sb)
+	if head.get_child_count() > 0:
+		bv.add_child(head)
+	_info = Kit.label("", Kit.FONT, Kit.COL_DIM, true)
+	var sea_on := CS.sea_on(setup)
+	if sea_on:
+		bv.add_child(_sea_view())
+	else:
+		bv.add_child(_map_row())
+	_box.add_child(bc[0])
+	_sides_box = null
+	if not sea_on:
+		_sides_box = BoxContainer.new()
+		_sides_box.add_theme_constant_override("separation", 10)
+		_sides_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_sides_box.vertical = size.x < 900.0
+		for s in 2:
+			_sides_box.add_child(_side_view(s))
+		_box.add_child(_sides_box)
+	# The Play strip: the check line, then the actions in one wrapping row.
+	var pc := _card("Play")
+	var pv: VBoxContainer = pc[1]
+	pv.add_child(_info)
+	if session == null:
+		var act := Kit.flow(8)
+		var ps := Kit.icon_button("Play solo", "battles", _play_solo, 120, 17)
+		ps.name = "custom_play_solo"
+		act.add_child(ps)
+		var po := Kit.icon_button("Play online", "online", _create_online, 130, 17)
+		po.name = "custom_play_online"
+		po.visible = not sea_on  # (sea battles: solo for now)
+		act.add_child(po)
+		var jr := Kit.hbox(8)
+		jr.add_child(Kit.label("A friend's code:", Kit.FONT, Kit.COL_DIM))
+		_code_edit = Kit.text_field("ABC-DEF", "", 150, "Your friend's code", true)
+		_code_edit.name = "custom_code"
+		jr.add_child(Kit.field_box(_code_edit))
+		var jb := Kit.icon_button("Join", "online", _join, 80)
+		jb.name = "custom_join"
+		jr.add_child(jb)
+		act.add_child(jr)
+		pv.add_child(act)
+	_box.add_child(pc[0])
 	_show_check()
 
 
@@ -288,24 +340,32 @@ func _map_row() -> Control:
 		if nv != int(mp["mseed"]):
 			mp["mseed"] = nv
 			_changed())
-	row.add_child(Kit.label("Seed", Kit.FONT_SMALL, Kit.COL_DIM))
-	row.add_child(se)
+	var sp := Kit.hbox(6)   # (one unit: the label never parts from its field)
+	var sl := Kit.label("Seed", Kit.FONT_SMALL, Kit.COL_DIM)
+	sl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	sp.add_child(sl)
+	sp.add_child(se)
+	row.add_child(sp)
 	v.add_child(row)
 	var r2 := Kit.flow(8)
-	r2.add_child(Kit.label("Deployment", Kit.FONT_SMALL, Kit.COL_DIM))
+	var dp := Kit.hbox(6)
+	dp.add_child(_small_label("Deployment"))
 	var db := Kit.dropdown(Kit.DEPLOY_OPTIONS, int(setup.get("deploy", 60)), func(x):
 		setup["deploy"] = int(x)
 		_changed(), 0, 14)
 	db.name = "custom_deploy"
 	db.disabled = not ed
-	r2.add_child(db)
-	r2.add_child(Kit.label("Battle time", Kit.FONT_SMALL, Kit.COL_DIM))
+	dp.add_child(db)
+	r2.add_child(dp)
+	var tp := Kit.hbox(6)
+	tp.add_child(_small_label("Battle time"))
 	var tlb := Kit.dropdown(Kit.TIME_OPTIONS, int(setup.get("time", 900)), func(x):
 		setup["time"] = int(x)
 		_changed(), 0, 14)
 	tlb.name = "custom_time"
 	tlb.disabled = not ed
-	r2.add_child(tlb)
+	tp.add_child(tlb)
+	r2.add_child(tp)
 	var fi := int(setup.get("funds", 0))
 	r2.add_child(_opt("Funds per side: " + CS.FUNDS_NAMES[fi], func():
 		setup["funds"] = (fi + 1) % CS.FUNDS.size()
@@ -314,16 +374,25 @@ func _map_row() -> Control:
 	return v
 
 
+func _small_label(t: String) -> Label:
+	var l := Kit.label(t, Kit.FONT_SMALL, Kit.COL_DIM)
+	l.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	return l
+
+
 func _side_view(s: int) -> Control:
 	var sd: Dictionary = setup["sides"][s]
-	var p := Kit.panel(Color(0.08, 0.1, 0.12, 0.9), 8)
+	var p := Kit.trim_panel(Kit.PANEL_BG, 12)
 	p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var v := Kit.vbox(6)
 	p.add_child(v)
 	var cost := CS.side_cost(setup, s)
 	var budget: int = CS.FUNDS[int(setup.get("funds", 0))]
 	var h := Kit.flow(6)
-	h.add_child(Kit.label(SIDE_NAMES[s], Kit.FONT_TITLE, Color(0.55, 0.75, 1.0) if s == 0 else Color(1.0, 0.6, 0.5)))
+	var dot := Kit.dot(Color(0.55, 0.75, 1.0) if s == 0 else Color(1.0, 0.6, 0.5), 12.0)
+	dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	h.add_child(dot)
+	h.add_child(Kit.title(SIDE_NAMES[s], 20))
 	h.add_child(Kit.label(("%d / %d" % [cost, budget]) if budget > 0 else "cost %d" % cost, Kit.FONT_SMALL,
 		Kit.COL_BAD if budget > 0 and cost > budget else Kit.COL_DIM))
 	v.add_child(h)

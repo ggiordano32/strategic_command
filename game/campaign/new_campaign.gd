@@ -116,11 +116,14 @@ func _ready() -> void:
 	tsb.border_color = Color(Kit.COL_RULE, 0.7)
 	tsb.border_width_bottom = 1
 	tsb.set_content_margin_all(8)
+	tsb.content_margin_left = 14   # (the Back corner every page shares: (14, 10), 110 x 40)
+	tsb.content_margin_top = 10
+	tsb.content_margin_bottom = 10
 	top.add_theme_stylebox_override("panel", tsb)
 	top.set_anchors_preset(Control.PRESET_TOP_WIDE)
 	var head := Kit.hbox(10)
 	top.add_child(head)
-	var back_b := Kit.button("< Back", func(): back.emit(), 90 if not _narrow else 70, 15)
+	var back_b := Kit.button("< Back", func(): back.emit(), 110, 16)
 	back_b.name = "back_button"
 	Kit.nav_style(back_b)
 	Kit.tip(back_b, "Back", "Return to the menu without starting anything.")
