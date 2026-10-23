@@ -12,6 +12,8 @@ const UT := preload("res://sim/unit_types.gd")
 const Icons := preload("res://game/unit_icons.gd")
 const IconView := preload("res://game/unit_icon_view.gd")
 const UnitEntry := preload("res://game/unit_entry.gd")
+const RoleBadge := preload("res://game/role_badge.gd")
+const RoleTile := preload("res://game/role_tile.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const CBattleL := preload("res://campaign/cbattle.gd")
@@ -32,6 +34,11 @@ var close_button: Button
 ## active campaign's, at each open). A battle sets it from its units.
 var pack := ""
 var _shown := ""
+## Page ids in the list's order: unit types grouped by role (UT.ROLE_ORDER, then type index), then the
+## Terrain, Settlements and Heroes pages. Prev / Next and the arrow keys follow it.
+var _order: Array[int] = []
+## Role -> the group head (badge, name, "plays as") above its units in the list.
+var _heads: Dictionary = {}
 
 
 func _init() -> void:
@@ -66,6 +73,8 @@ func _init() -> void:
 	var list := VBoxContainer.new()
 	list.add_theme_constant_override("separation", 6)
 	lscroll.add_child(list)
+	_order = _page_order()
+	var btns: Dictionary = {}
 	for ty in UT.count():
 		var b := Button.new()
 		b.custom_minimum_size = Vector2(200, 56)
@@ -78,8 +87,19 @@ func _init() -> void:
 		ic.position = Vector2(8, 8)
 		b.add_child(ic)
 		b.pressed.connect(show_type.bind(ty))
-		list.add_child(b)
+		btns[ty] = b
 		_list.append(b)
+	var seen_role := ""
+	for ty in _order:
+		if ty >= UT.count():
+			break
+		var rk := UT.role(ty)
+		if rk != seen_role:
+			seen_role = rk
+			var rhead := _role_head(rk)
+			_heads[rk] = rhead
+			list.add_child(rhead)
+		list.add_child(btns[ty])
 	var tb := Button.new()
 	tb.custom_minimum_size = Vector2(200, 56)
 	tb.toggle_mode = true
@@ -149,6 +169,46 @@ func _init() -> void:
 
 func _pages() -> int:
 	return UT.count() + 3
+
+
+## Page ids in list order: by role (UT.ROLE_ORDER), then type index; then the three text pages.
+static func _page_order() -> Array[int]:
+	var out: Array[int] = []
+	for rk in UT.ROLE_ORDER:
+		for ty in UT.count():
+			if UT.role(ty) == rk:
+				out.append(ty)
+	for ty in UT.count():
+		if not out.has(ty):
+			out.append(ty)   # (a row without a role: kept, after the groups)
+	out.append(UT.count())
+	out.append(UT.count() + 1)
+	out.append(UT.count() + 2)
+	return out
+
+
+## A group head of the list: the role's badge and name, and its two-line "plays as" under it.
+func _role_head(rk: String) -> Control:
+	var v := VBoxContainer.new()
+	v.name = "role_head_" + rk
+	v.add_theme_constant_override("separation", 2)
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 6)
+	v.add_child(h)
+	h.add_child(RoleTile.new(rk, 22.0))
+	var nl := Label.new()
+	nl.text = str(UT.ROLES[rk]["name"]) if UT.ROLES.has(rk) else "Other"
+	nl.add_theme_font_size_override("font_size", 16)
+	nl.add_theme_color_override("font_color", RoleBadge.colour(rk).lightened(0.35))
+	h.add_child(nl)
+	var pl := Label.new()
+	pl.text = RoleBadge.plays(rk)
+	pl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	pl.custom_minimum_size.x = 196
+	pl.add_theme_font_size_override("font_size", 12)
+	pl.add_theme_color_override("font_color", Color(0.75, 0.75, 0.7))
+	v.add_child(pl)
+	return v
 
 
 ## The Heroes and agents page (docs/DESIGN.md "Heroes and agents"), with the
@@ -323,23 +383,37 @@ func open(ty: int = -1) -> void:
 	if pk != _shown:
 		# Only the setting's rows in the list (Rome: exactly as before the West rows).
 		_shown = pk
+		var any := {}
 		for t in UT.count():
 			_list[t].visible = UT.pack_of(t) == pk
+			if _list[t].visible:
+				any[UT.role(t)] = true
+		for rk in _heads:
+			(_heads[rk] as Control).visible = any.has(rk)
 		if current < UT.count() and UT.pack_of(current) != pk:
 			current = 0
-			while current < UT.count() and UT.pack_of(current) != pk:
-				current += 1
+			for t in _order:
+				if t < UT.count() and UT.pack_of(t) == pk:
+					current = t
+					break
 	show_type(current if ty < 0 else ty)
 
 
 ## The next (dir 1) or previous (-1) page shown in the list.
 func _step(dir: int) -> int:
-	var c := current
-	for k in _pages():
-		c = (c + dir + _pages()) % _pages()
+	return next_page(current, dir)
+
+
+## The page after (dir 1) or before (-1) page `from` in the list's order, skipping other settings' rows.
+func next_page(from: int, dir: int) -> int:
+	var i := _order.find(from)
+	var n := _order.size()
+	for k in n:
+		i = (i + dir + n) % n
+		var c: int = _order[i]
 		if c >= UT.count() or _list[c].visible:
 			return c
-	return current
+	return from
 
 
 func close() -> void:

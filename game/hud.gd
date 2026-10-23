@@ -58,6 +58,7 @@ const Icons := preload("res://game/unit_icons.gd")
 const UnitBook := preload("res://game/unit_book.gd")
 const Controls := preload("res://game/controls.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
+const RoleBadge := preload("res://game/role_badge.gd")
 const Traits := preload("res://game/unit_traits.gd")
 const BTheme := preload("res://game/battle_theme.gd")
 const CONFIRM_SEC := 3.0
@@ -306,21 +307,31 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	var groups := HBoxContainer.new()
 	groups.add_theme_constant_override("separation", int(GAP))
 	row.add_child(groups)
-	# All / Inf / Missile / Cav / None: one capsule (momentary segments, nothing stays lit).
-	var gsel := BTheme.capsule([["All", "all"], ["Inf", "inf"], ["Missile", "missile"], ["Cav", "cav"], ["None", "none"]],
+	# All / Line / Skirm / Shock / Horse / Guns / None: one capsule (momentary segments, nothing stays lit).
+	# The groups are the roles' filter groups (UT.FILTER_GROUPS, UT.filter_group).
+	# On a phone width the seven segments are set a size smaller with narrower margins (the row has no spare room at 844 px).
+	var compact := not BTheme.desktop(get_viewport().get_visible_rect().size.x)
+	var gsel := BTheme.capsule([["All", "all"], ["Line", "line"], ["Skirm", "skirmish"], ["Shock", "shock"], ["Horse", "horse"],
+		["Guns", "guns"], ["None", "none"]],
 		func(kind: String):
 			if kind == "none":
 				deselect_pressed.emit()
 			else:
-				group_pressed.emit(kind), "group", FONT, 50.0, BTN_H)
+				group_pressed.emit(kind), "group", FONT - 3 if compact else FONT, 30.0 if compact else 50.0, BTN_H)
 	gsel.name = "group_capsule"
-	var gtips := {"all": ["Select all", "Every unit you command."], "inf": ["Infantry", "Select all infantry units."],
-		"missile": ["Missile troops", "Select all missile units and artillery."], "cav": ["Cavalry", "Select all cavalry units."],
+	var gtips := {"all": ["Select all", "Every unit you command."],
+		"line": ["Line", "Select the line troops: swords, spears, pikes and musketeers. Generals on foot too."],
+		"skirmish": ["Skirmishers", "Select the skirmishers (loose order) and the missile troops (archers)."],
+		"shock": ["Shock", "Select the shock foot: cutlass men, rodeleros, holcan, grenadiers, war dogs."],
+		"horse": ["Horse", "Select all mounted units: shock and light horse, generals' guards, camels and elephants."],
+		"guns": ["Guns", "Select the field and siege artillery."],
 		"none": ["Deselect", "Clear the selection (Esc)."]}
 	for gb in gsel.buttons():
 		var gk: String = str(gb.get_meta("seg_value"))
 		Kit.tip(gb, gtips[gk][0], gtips[gk][1])
 		gb.disabled = not interactive
+		if compact:
+			BTheme.trim_margins(gb, 2.0)
 		if gk == "none":
 			deselect_button = gb
 			gb.name = "deselect"
@@ -496,6 +507,9 @@ func build(sim, player_side: int, interactive: bool) -> void:
 		face.general = UT.stat(sim.u_type[u], "cmd_r") > 0
 		face.char_icon = Traits.char_icon(sim.u_otype[u])  # a hero or agent: crown / dagger / scroll
 		face.side_col = Icons.SIDE_COLORS[player_side]
+		face.role = UT.role(sim.u_otype[u])   # the role badge and its colour band
+		if face.role != "":
+			Kit.tip(b, str(UT.ROLES[face.role]["name"]), RoleBadge.plays(face.role))
 		b.add_child(face)
 		cards_box.add_child(b)
 		_cards[u] = b
@@ -1471,6 +1485,8 @@ class CardFace extends Control:
 	const ST_WITHDRAW := 3
 	const ST_GONE := 4
 	var icon := 0
+	## The unit's role key (UT.ROLES; "" none): a badge beside the count and a colour band along the card's foot.
+	var role := ""
 	var side_col := Color(0.35, 0.6, 1.0)
 	var name_text := ""
 	var number_text := ""
@@ -1545,6 +1561,12 @@ class CardFace extends Control:
 		var bx := 3.0 if narrow else x0
 		var bw := sz.x - bx - 3
 		var by := sz.y - 14
+		if role != "":
+			# The role badge beside the count (the bar and the count move over), and the colour band along the foot.
+			RoleBadge.draw_badge(self, role, Rect2(bx, by - 1, 14, 14), state == ST_GONE)
+			draw_rect(Rect2(0, sz.y - 2, sz.x, 2), Color(RoleBadge.colour(role), 0.5 if state == ST_GONE else 0.9))
+			bx += 16.0
+			bw -= 16.0
 		var frac := clampf(float(alive) / maxf(count0, 1), 0.0, 1.0)
 		draw_rect(Rect2(bx, by, bw, 12), Color(1, 1, 1, 0.1))
 		draw_rect(Rect2(bx, by, bw * frac, 12), Color(bar, 0.55))

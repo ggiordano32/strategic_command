@@ -1675,12 +1675,8 @@ func _select_group(kind: String) -> void:
 	for u in hud.display_order():
 		if sim.u_side[u] != player_side or sim.u_state[u] != BattleSim.U_READY or not _mine(u):
 			continue
-		var c := UT.cls(sim.u_type[u])
-		# Artillery goes with the missile troops: both shoot, take Fire
-		# orders and stand behind the line.
-		var take := kind == "all" or (kind == "inf" and (c == UT.CLS_INF or c == UT.CLS_PIKE)) \
-			or (kind == "missile" and (c == UT.CLS_MISSILE or c == UT.CLS_ART)) \
-			or (kind == "cav" and c == UT.CLS_CAV)
+		# The role's filter group (UT.filter_group of the unit's own type: a pack of war dogs let loose stays shock).
+		var take := kind == "all" or UT.filter_group(sim.u_type[u]) == kind
 		if take:
 			selection.append(u)
 	if not selection.is_empty():
@@ -3352,12 +3348,16 @@ func _on_key(e: InputEventKey) -> void:
 			_step_speed(-1)
 		"select_all":
 			_select_group("all")
-		"select_inf":
-			_select_group("inf")
-		"select_missile":
-			_select_group("missile")
-		"select_cav":
-			_select_group("cav")
+		"select_line":
+			_select_group("line")
+		"select_skirmish":
+			_select_group("skirmish")
+		"select_shock":
+			_select_group("shock")
+		"select_horse":
+			_select_group("horse")
+		"select_guns":
+			_select_group("guns")
 		"undo":
 			_undo()
 		"deselect":

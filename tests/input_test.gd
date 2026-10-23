@@ -824,6 +824,16 @@ func _step_group_all() -> void:
 	_tap_control(battle.hud.group_buttons["all"])
 
 
+## Ready player units whose filter group (UT.filter_group) is `group`.
+func _ready_group_units(group: String) -> Array:
+	var a: Array = []
+	var sim := battle.sim
+	for u in sim.n_units:
+		if sim.u_side[u] == 0 and sim.u_state[u] == BattleSim.U_READY and UT.filter_group(sim.u_type[u]) == group:
+			a.append(u)
+	return a
+
+
 func _ready_player_units(classes: Array) -> Array:
 	var a: Array = []
 	var sim := battle.sim
@@ -839,7 +849,7 @@ func _step_check_group_all() -> void:
 
 
 func _step_group_missile() -> void:
-	_tap_control(battle.hud.group_buttons["missile"])
+	_tap_control(battle.hud.group_buttons["skirmish"])
 
 
 func _step_check_group_missile() -> void:
@@ -849,12 +859,12 @@ func _step_check_group_missile() -> void:
 
 
 func _step_group_inf() -> void:
-	_tap_control(battle.hud.group_buttons["inf"])
+	_tap_control(battle.hud.group_buttons["line"])
 
 
 func _step_check_group_inf() -> void:
-	var want := _ready_player_units([UT.CLS_INF, UT.CLS_PIKE])
-	_check(_sel_set() == want, "Inf selects infantry and pikes (%s vs %s)" % [str(_sel_set()), str(want)])
+	var want := _ready_group_units("line")
+	_check(_sel_set() == want, "Line selects the line troops (%s vs %s)" % [str(_sel_set()), str(want)])
 	_check(not battle.hud.fire_button.visible, "fire button hidden without missile troops")
 
 
@@ -868,14 +878,14 @@ func _step_add_card() -> void:
 
 func _step_check_add_card() -> void:
 	_check(battle.add_mode, "+ Add toggles add mode on")
-	var want := _ready_player_units([UT.CLS_INF, UT.CLS_PIKE])
+	var want := _ready_group_units("line")
 	want.append(u_arch)
 	want.sort()
 	_check(_sel_set() == want, "card tap in add mode adds the unit (%s)" % str(_sel_set()))
 
 
 func _step_check_remove_card() -> void:
-	var want := _ready_player_units([UT.CLS_INF, UT.CLS_PIKE])
+	var want := _ready_group_units("line")
 	_check(_sel_set() == want, "second card tap in add mode removes it (%s)" % str(_sel_set()))
 
 
@@ -1016,11 +1026,11 @@ func _step_check_missile_handover() -> void:
 
 
 func _step_group_cav() -> void:
-	_tap_control(battle.hud.group_buttons["cav"])
+	_tap_control(battle.hud.group_buttons["horse"])
 
 
 func _step_withdraw_button() -> void:
-	_check(_sel_set() == [u_cav], "Cav selects the cavalry (%s)" % str(_sel_set()))
+	_check(_sel_set() == [u_cav], "Horse selects the cavalry (%s)" % str(_sel_set()))
 	_paused_tick = battle.sim.tick
 	_tap_control(battle.hud.withdraw_button)
 
@@ -1076,7 +1086,7 @@ func _step_check_touch_targets() -> void:
 	var buttons: Array = [hud.run_button, hud.halt_button, hud.fire_button, hud.skirm_button,
 		hud.withdraw_button, hud.withdraw_all_button, hud.add_button]
 	for k in hud.group_buttons:
-		buttons.append(hud.group_buttons[k])
+		buttons.append(hud.group_buttons[k])   # (a phone's compact segments: 30 wide, see Hud's group capsule)
 	# Logical px; on a phone one is 0.88 CSS px (game/ui_scale.gd), so 40 is
 	# ~35 CSS px, ~7 mm.
 	for b in buttons:
@@ -1113,7 +1123,7 @@ func _step_book_next() -> void:
 
 func _step_check_book_next() -> void:
 	var b = battle.hud.book
-	_check(b.current == (_book_seq + 1) % (UT.count() + 3) and b.entry.unit_type == b.current,
+	_check(b.current == b.next_page(_book_seq, 1) and b.current != _book_seq and b.entry.unit_type == b.current,
 		"Next shows the next unit type (%d -> %d)" % [_book_seq, b.current])
 	# The last pages are Terrain, Settlements and Heroes and agents: Prev
 	# from the first page wraps to Heroes, then Settlements, then Terrain.
@@ -1398,14 +1408,17 @@ func _step_art_find() -> void:
 
 
 func _step_group_missile_art() -> void:
-	_tap_control(battle.hud.group_buttons["missile"])
+	_tap_control(battle.hud.group_buttons["skirmish"])
 
 
 func _step_check_group_missile_art() -> void:
-	var want := _ready_player_units([UT.CLS_MISSILE, UT.CLS_ART])
-	_check(_sel_set() == want, "Missile selects missile troops and artillery (%s vs %s)" % [str(_sel_set()), str(want)])
+	var want := _ready_group_units("skirmish")
+	_check(_sel_set() == want, "Skirm selects skirmishers and missile troops (%s vs %s)" % [str(_sel_set()), str(want)])
+	_check(battle.hud.skirm_button.visible, "Skirmish shown for the archers in the group")
+	battle._select_group("guns")
+	var gwant := _ready_group_units("guns")
+	_check(_sel_set() == gwant and not gwant.is_empty(), "Guns selects the artillery (%s vs %s)" % [str(_sel_set()), str(gwant)])
 	_check(battle.hud.deploy_button.visible, "Deploy button shown when batteries are selected")
-	_check(battle.hud.skirm_button.visible, "Skirmish still shown for the archers in the group")
 
 
 func _step_art_card() -> void:

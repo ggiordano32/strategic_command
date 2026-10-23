@@ -13,6 +13,9 @@ signal closed
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const UiKit := preload("res://game/campaign/ui_kit.gd")
 const UiScale := preload("res://game/ui_scale.gd")
+const UT := preload("res://sim/unit_types.gd")
+const RoleTile := preload("res://game/role_tile.gd")
+const RoleBadge := preload("res://game/role_badge.gd")
 
 const SECTIONS := ["battle", "campaign", "general"]
 const SECTION_NAMES := {"battle": "Battle", "campaign": "Campaign map", "general": "General"}
@@ -27,12 +30,16 @@ static var BINDINGS: Array = [
 		"touch": "+ Add, then tap units or cards", "mouse": "Shift+click or Ctrl+click", "keys": []},
 	{"id": "select_all", "s": "battle", "label": "Select all units",
 		"touch": "All button", "mouse": "All button", "keys": [KEY_A | KEY_MASK_CTRL, KEY_1]},
-	{"id": "select_inf", "s": "battle", "label": "Select infantry",
-		"touch": "Inf button", "mouse": "Inf button", "keys": [KEY_2]},
-	{"id": "select_missile", "s": "battle", "label": "Select missile troops and artillery",
-		"touch": "Missile button", "mouse": "Missile button", "keys": [KEY_3]},
-	{"id": "select_cav", "s": "battle", "label": "Select cavalry",
-		"touch": "Cav button", "mouse": "Cav button", "keys": [KEY_4]},
+	{"id": "select_line", "s": "battle", "label": "Select the line (swords, spears, pikes, musketeers)",
+		"touch": "Line button", "mouse": "Line button", "keys": [KEY_2]},
+	{"id": "select_skirmish", "s": "battle", "label": "Select skirmishers and missile troops",
+		"touch": "Skirm button", "mouse": "Skirm button", "keys": [KEY_3]},
+	{"id": "select_shock", "s": "battle", "label": "Select shock foot",
+		"touch": "Shock button", "mouse": "Shock button", "keys": [KEY_4]},
+	{"id": "select_horse", "s": "battle", "label": "Select horse (and camels, elephants)",
+		"touch": "Horse button", "mouse": "Horse button", "keys": [KEY_5]},
+	{"id": "select_guns", "s": "battle", "label": "Select artillery",
+		"touch": "Guns button", "mouse": "Guns button", "keys": [KEY_6]},
 	{"id": "deselect", "s": "battle", "label": "Deselect all",
 		"touch": "Two-finger tap, or the None button (with the group buttons)", "mouse": "None button", "keys": [KEY_ESCAPE]},
 	{"id": "undo", "s": "battle", "label": "Undo the last order (up to 5 batches)",
@@ -129,7 +136,7 @@ static var BINDINGS: Array = [
 		"touch": "Orders button", "mouse": "Orders button", "keys": [KEY_O]},
 	{"id": "unit_info", "s": "battle", "label": "Unit book page of a unit",
 		"touch": "Long press its card (lift your finger without moving)", "mouse": "Right click its card, or hold the button on it", "keys": []},
-	{"id": "card_reorder", "s": "battle", "label": "Reorder the unit cards (this battle, on your screen only; All / Inf / Missile / Cav select in this order)",
+	{"id": "card_reorder", "s": "battle", "label": "Reorder the unit cards (this battle, on your screen only; All / Line / Skirm / Shock / Horse / Guns select in this order)",
 		"touch": "Long press a card until it lifts, then drag it between two cards", "mouse": "Drag a card between two cards", "keys": []},
 	{"id": "readout", "s": "battle", "label": "Performance readout (short / full)",
 		"touch": "Tap the readout, top left", "mouse": "Click the readout", "keys": [KEY_F3]},
@@ -307,6 +314,29 @@ func _fill() -> void:
 				if c == "mouse" and not (b["keys"] as Array).is_empty():
 					text = (text + "; " if text != "-" else "") + "key " + key_text(b)
 				g.add_child(_cell(text, Color(1, 0.95, 0.8) if c == cols[0] else Color(0.8, 0.8, 0.78)))
+	_fill_roles()
+
+
+## The Roles page: the ten roles, each with its badge and the two lines of how it plays.
+func _fill_roles() -> void:
+	var head := UiKit.label("Roles", 18, UiKit.COL_GOLD)
+	head.name = "roles_head"
+	_grid_box.add_child(head)
+	_grid_box.add_child(UiKit.label("Every unit has one role: its badge sits on the unit's card, and the bar's filters select by it (Line, Skirm = skirmishers and missile troops, Shock, Horse, Guns).",
+		13, UiKit.COL_DIM, true))
+	for rk in UT.ROLE_ORDER:
+		var row := UiKit.hbox(10)
+		row.name = "role_" + rk
+		var tile := RoleTile.new(rk, 30.0)
+		tile.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		row.add_child(tile)
+		var v := UiKit.vbox(2)
+		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(v)
+		var nm := UiKit.label(str(UT.ROLES[rk]["name"]), 16, RoleBadge.colour(rk).lightened(0.35))
+		v.add_child(nm)
+		v.add_child(UiKit.label(RoleBadge.plays(rk), 14, Color(0.9, 0.9, 0.85), true))
+		_grid_box.add_child(row)
 
 
 func _cell(text: String, col: Color) -> Label:

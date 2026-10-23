@@ -2196,3 +2196,30 @@ tercio's pike and shot, the line's volleys, the horse). The roster expansion (ba
 (step 2) are judged against this: a native army should have no unit that stands in a line and trades volleys, and a
 Spanish army none that melts into the trees; the pirates sit between (boarders and marksmen, no line); England,
 France and the Dutch share the line and differ in their specialists.
+### Roles, step 1 (as built, 2026-10-23)
+
+Data and view only: no sim rule reads a role, no hash moves. `sim/unit_types.gd`: the `role` key on every row of both
+packs (tiers inherit their base row's; a tier row may state its own, as `warband`), `UT.role(ty)`, `UT.role_info(ty)`,
+`UT.ROLES` (key -> name, short, glyph, colour, two-line "plays", filter group), `UT.ROLE_ORDER`, `UT.FILTER_GROUPS`,
+`UT.filter_group(ty)`. The rows' former display text key `role` ("Line infantry") is now `what` (the unit entry's line).
+`tests/roles_test.gd` asserts every row has a role in the table and prints the roster. The view is in `ui.md`
+("Role badges ...").
+
+Choices where the plan was silent or ambiguous: the plan lists "heavy swords" under `shock` and "Rome's swords" under
+`line`; Rome's formed swordsmen (heavy, its tiers, principes, extraordinarii, scutarii, Gallic nobles) and light infantry
+are `line` (they hold a front), the Gallic Warband `shock`. Missile infantry (`missile`) selects with Skirm. Camel archers
+`horse_skirmish`; the camel riders and elephants `beast`; war dogs (handlers and the released pack) `shock`; the wagons
+`command` (no better of the ten; they select with Line); Cuirassiers `horse_skirmish` (a tier of the pistoleers).
+
+| Role | Rome | West |
+| --- | --- | --- |
+| line | heavy, heavy2, heavy3, principes, extraordinarii, scutarii, gallic_nobles, light, light2, light3, caetrati, spear, spear2, spear3, triarii, sacred_band, hoplites, picked_hoplites, pike, pike2, pike3, phalangites, silver_shields, chaonians | musketeers, musketeers2, w_pikemen, w_pikemen2 |
+| skirmish | javelin, javelin2, javelin3, slinger, balearic, rhodians, iberian_slingers | buccaneers, native_bowmen, coureurs, canoe_raiders |
+| missile | archer, archer2, archer3, cretans, gastraphetes | none |
+| shock | warband, dog_handlers, war_dogs | rodeleros, cutlass, native_warriors, grenadiers, boarding_grenadiers, holcan |
+| horse_shock | cav, cav2, cav3, companions, agema, noble_cav, bodyguard | lancers |
+| horse_skirmish | cav_jav, numidians, tarentines, gallic_horse, iberian_horse, camel_archer | pistoleers, cuirassiers, dragoons |
+| guns_field | bolt, tower_bolt, scorpions | light_gun, field_gun, fort_gun |
+| guns_siege | stone, tower_stone | heavy_gun, mortar |
+| command | general, legate, sufet, hetairoi_guard, strategos, chieftain, hero_foot, hero_missile, hero_cav, hero_siege, assassin, diplomat, wagon, wagon2, wagon3 | none |
+| beast | camel, elephant | none |

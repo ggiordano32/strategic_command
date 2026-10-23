@@ -2,7 +2,7 @@ extends SceneTree
 ## UI theme pass 2: the battle HUD, the battle modals and Menu overlay, the sea screen's bars (needs a window):
 ##   godot --resolution 1280x720 --script res://tests/battle_theme_test.gd [-- --shots=DIR]
 ## Battle HUD: the gold rule and (desktop) the emblem + name in the title face, the nav plates on the command bar,
-## All / Inf / Missile / Cav / None as one capsule (momentary: nothing stays lit; group_buttons / deselect_button
+## All / Line / Skirm / Shock / Horse / Guns / None as one capsule (momentary: nothing stays lit; group_buttons / deselect_button
 ## are its segments), a boxed tip on every button, the banner in the title face over a trim plate, the end card and the
 ## Leave confirm in the dialog frame. The Menu (custom battles): opens paused, Resume / Esc restore the pause, Options
 ## shows the settings, Controls closes it, Leave asks and then exits. Sea: the speed capsule, the sail / shot capsules,
@@ -110,13 +110,13 @@ func _battle_hud() -> void:
 		_check(t.get_theme_font_size("font_size") == 18 and t.has_theme_font_override("font") == (Kit.title_font() != null), "the name is in the title face at 18")
 	# The group capsule.
 	var cap: Node = h.find_child("group_capsule", true, false)
-	_check(cap is Kit.Segmented and (cap as Kit.Segmented).buttons().size() == 5, "All / Inf / Missile / Cav / None are one capsule")
-	_check(h.group_buttons.keys() == ["all", "inf", "missile", "cav"] and h.deselect_button.text == "None" and h.deselect_button.name == "deselect", "group_buttons keep their keys; None is the deselect button")
+	_check(cap is Kit.Segmented and (cap as Kit.Segmented).buttons().size() == 7, "All / Line / Skirm / Shock / Horse / Guns / None are one capsule")
+	_check(h.group_buttons.keys() == ["all", "line", "skirmish", "shock", "horse", "guns"] and h.deselect_button.text == "None" and h.deselect_button.name == "deselect", "group_buttons keep their keys; None is the deselect button")
 	var fired: Array = []
 	h.group_pressed.connect(func(k): fired.append(k))
-	await _tap(h.group_buttons["inf"])
+	await _tap(h.group_buttons["line"])
 	await _frames(2)
-	_check(fired == ["inf"], "a segment gives its group order (%s)" % [fired])
+	_check(fired == ["line"], "a segment gives its group order (%s)" % [fired])
 	var lit := 0
 	for sb in (cap as Kit.Segmented).buttons():
 		if (sb.get_theme_color("font_color") as Color).is_equal_approx(Kit.COL_GOLD):

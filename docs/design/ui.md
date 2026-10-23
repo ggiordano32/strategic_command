@@ -693,7 +693,7 @@ hover / press motion, a capsule of momentary segments, the top-bar title block a
   touch), the setting's emblem and the battle's name / terrain ("Battle: 2,000 soldiers - Ridge") in Cinzel 18 beside the
   readout; phones keep the row as before. Every command button is a kit button in the nav plate with the hover / press
   motion; the toggles (Orders, Add, Release, the character acts, the field works) show the lit plate when on. **All /
-  Inf / Missile / Cav / None** are one capsule (`group_capsule`): momentary, nothing stays lit, 50 x 42 touch
+  Line / Skirm / Shock / Horse / Guns / None** (2026-10-23, roles step 1: was Inf / Missile / Cav) are one capsule (`group_capsule`): momentary, nothing stays lit, 50 x 42 touch
   segments; `group_buttons` keeps its keys and `deselect_button` is the None segment (name `deselect`). Only SELECTED
   unit cards carry the trim (gold rule, corner brackets), as the campaign's command bar. Every button has a boxed
   `Kit.tip` (title and one line; the old long strings trimmed; Run and Halt, which had none, got one). **No touch
@@ -732,3 +732,26 @@ Tests: `tests/battle_theme_test.gd` (windowed; `-- --shots=DIR`, `--phone` for a
 (its Leave text check), `sea_screen_test`, `battle_screen_test`, `theme_test`. Frame time (RTX 3070, 1920x1080, vsync off,
 mean ms over 8 s from tick 600, HEAD -> now, 2 runs): bench_2000 paused 3.06 / 2.99 -> 2.94 / 2.85, running 3.19 / 3.02 ->
 2.98 / 2.86; bench_4000_city paused 4.89 / 5.43 -> 5.22 / 5.21, running 5.20 / 5.71 -> 5.54 / 5.46: within noise.
+
+### Role badges, filters, the book's groups and the Roles page (as built, 2026-10-23, roles step 1)
+
+View only: the data is the `role` key on every unit row (docs/design/battle_sim.md "Roles, step 1"); no sim change.
+- **Badge.** `game/role_badge.gd` draws a tiny tile in the role's colour with its glyph (a rank of bars, a loose scatter,
+  a bow, a sword, a horseshoe, a horseshoe with a dot, a gun on a wheel, a fatter gun with a ball, a pennant, a humped
+  back), crisp at 14 px. The unit card (`CardFace.role`) shows it at the left of the count (the headcount bar and the
+  count move over by 16 px) and a 2 px band of the role's colour along the card's foot; the card's tooltip is the role's
+  name and "plays as" text. `game/role_tile.gd` is the same badge as a Control (34 px beside the icon on the unit book's
+  page, 22 px at a book group head and on the Keys page), with the "plays as" as its tip. The entry's role line reads
+  "Role name: what the row is". (The older display text key `role` of the rows, "Line infantry", is now `what`.)
+- **Filters.** The selection bar: **All / Line / Skirm / Shock / Horse / Guns / None**, still one momentary capsule
+  (`group_capsule`, 50 x 42 segments; `group_buttons` keys `all line skirmish shock horse guns`, `deselect_button` the
+  None segment). A unit's group is `UT.filter_group(type)`: its role's group (`missile` goes with `skirmish`; `guns_field`
+  and `guns_siege` with `guns`; `horse_shock`, `horse_skirmish` and `beast` with `horse`), except `command`: a mounted
+  one (a general's guard, a mounted hero) is under Horse, a foot hero, an agent or a wagon under Line. Keys 1-6: all,
+  line, skirmish, shock, horse, guns (the actions `select_line` ... `select_guns`; the old 2 / 3 / 4 were Inf / Missile / Cav).
+- **Book.** The unit list is grouped by role in `UT.ROLE_ORDER` (a group head: badge, role name, the two-line "plays as"
+  in small type, hidden when no row of the open setting has the role); Prev / Next and the arrows follow the list's order
+  (`UnitBook.next_page`); the Terrain, Settlements and Heroes pages stay last. The entry keeps "Good against" / "Countered by".
+- **Keys.** The Keys page ends with a Roles section: the ten roles, each a badge, the name and its two lines.
+Tests: `tests/roles_test.gd` (every row has a role in the table, the roster by role, filter groups), `battle_theme_test`
+and `input_test` (the capsule and the group steps).

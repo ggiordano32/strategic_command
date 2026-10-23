@@ -276,12 +276,12 @@ const MOUNT_DOG := 4  # a dog: a man's small body (missiles, footprint), its own
 ## these; derived tier types are appended by _build_types() (see TIERS).
 const BASE: Array[Dictionary] = [
 	{
-		"key": "heavy",
+		"key": "heavy", "role": "line",
 		"sprite_set": 1,
 		"name": "Heavy Swords",
 		"short": "Heavy",
 		"icon": 0,
-		"role": "Line infantry",
+		"what": "Line infantry",
 		"desc": "Armoured swordsmen with large shields, the backbone of the line. They win most straight fights and shrug off arrows from the front.",
 		"good_vs": "Light infantry, missile troops that let them close, cavalry charging their front; about even with spearmen.",
 		"weak_vs": "Pike blocks from the front, attacks on their flank or rear, cavalry charging their back.",
@@ -301,12 +301,12 @@ const BASE: Array[Dictionary] = [
 		"cost": 6,
 	},
 	{
-		"key": "light",
+		"key": "light", "role": "line",
 		"sprite_set": 1,
 		"name": "Light Infantry",
 		"short": "Light",
 		"icon": 1,
-		"role": "Fast infantry",
+		"what": "Fast infantry",
 		"desc": "Fast, lightly armoured fighters. Cheap and quick to reach a flank, but they lose a fair fight and suffer badly from arrows.",
 		"good_vs": "Archers caught in melee, the flank and rear of engaged units, skirmishers they can run down.",
 		"weak_vs": "Heavy infantry, any formed pike front, cavalry, archers at range.",
@@ -327,12 +327,12 @@ const BASE: Array[Dictionary] = [
 		"climb": 13,
 	},
 	{
-		"key": "spear",
+		"key": "spear", "role": "line",
 		"sprite_set": 2,
 		"name": "Spearmen",
 		"short": "Spear",
 		"icon": 2,
-		"role": "Anti-cavalry infantry",
+		"what": "Anti-cavalry infantry",
 		"desc": "Steady spearmen whose second rank can also reach. Standing still in formation they brace: cavalry charging their front is thrown back.",
 		"good_vs": "Cavalry (a charge into the braced front costs the riders dearly), light infantry; about even with heavy swords.",
 		"weak_vs": "Pike blocks, archers and javelins, charges into their flank or rear.",
@@ -355,12 +355,12 @@ const BASE: Array[Dictionary] = [
 		"cost": 5,
 	},
 	{
-		"key": "pike",
+		"key": "pike", "role": "line",
 		"sprite_set": 3,
 		"name": "Pikemen",
 		"short": "Pike",
 		"icon": 3,
-		"role": "Phalanx",
+		"what": "Phalanx",
 		"desc": "A dense block whose first four ranks all strike with 5.5 m pikes. While formed and facing the enemy, attackers are held off the points and ground down. Slow to turn; once disordered or flanked they fall back on short swords and fight poorly.",
 		"good_vs": "Anything attacking its front: swords, spears, light infantry, cavalry.",
 		"weak_vs": "Flank and rear attacks (pin the front, hit the side), archers, being made to turn or run, steep ground (the wall breaks up).",
@@ -393,11 +393,11 @@ const BASE: Array[Dictionary] = [
 		"climb": 17,         # a dense block keeps its order with effort
 	},
 	{
-		"key": "archer",
+		"key": "archer", "role": "missile",
 		"name": "Archers",
 		"short": "Archer",
 		"icon": 4,
-		"role": "Missile infantry",
+		"what": "Missile infantry",
 		"desc": "Long-range bowmen who shoot over friendly units and hills and lead moving targets. Deadly to light troops, to cavalry caught in the open and to anything shot in the flank or rear; big shields stop most arrows from the front. From a hill they outrange archers below. They keep shooting their chosen target, so cavalry can slip in while they are busy. Weak in melee.",
 		"good_vs": "Light infantry, pikemen, cavalry in the open, exposed flanks.",
 		"weak_vs": "Cavalry that reaches them while they shoot at something else, heavy infantry from the front, any melee unit that closes.",
@@ -434,11 +434,11 @@ const BASE: Array[Dictionary] = [
 		"m_ak": 0,          # arrows
 	},
 	{
-		"key": "javelin",
+		"key": "javelin", "role": "skirmish",
 		"name": "Javelinmen",
 		"short": "Javelin",
 		"icon": 5,
-		"role": "Skirmishers",
+		"what": "Skirmishers",
 		"desc": "Loose-order skirmishers throwing armour-piercing javelins at short range. By default they fall back from approaching melee troops, and they need a clear line past friendly units and over the ground: they cannot throw through a crest.",
 		"good_vs": "Light infantry and archers, standing cavalry, the flanks of engaged units.",
 		"weak_vs": "Heavy infantry, spearmen and pikes that close, cavalry that catches them.",
@@ -479,12 +479,12 @@ const BASE: Array[Dictionary] = [
 		"m_ak": 1,          # javelins
 	},
 	{
-		"key": "cav",
+		"key": "cav", "role": "horse_shock",
 		"sprite_set": 4,
 		"name": "Shock Cavalry",
 		"short": "Cav",
 		"icon": 6,
-		"role": "Shock cavalry",
+		"what": "Shock cavalry",
 		"desc": "Heavy horsemen. A charge at full speed rolls on rider by rider until the whole front rank has struck, knocking soldiers down and killing them; devastating into a flank or rear, into missile troops and artillery. Into the front of steady, shielded infantry a charge hurts but does not win: the shields take much of it, the ranks behind hold the men up and they strike back at the horses. Once stuck in melee the charge is spent: pull out (turning away costs a few riders) and charge again after a good run-up. Horses are big targets for archers.",
 		"good_vs": "Missile troops, artillery, light infantry, skirmishers, the flanks and rear of engaged units, routers.",
 		"weak_vs": "Braced spears and pike fronts (the charge is turned back), the front of heavy infantry (a costly grind), charging uphill, archers shooting at them in the open, long melee with heavy infantry.",
@@ -514,11 +514,11 @@ const BASE: Array[Dictionary] = [
 		"climb": 24,         # horses labour uphill
 	},
 	{
-		"key": "bolt",
+		"key": "bolt", "role": "guns_field",
 		"name": "Bolt Throwers",
 		"short": "Bolts",
 		"icon": 7,
-		"role": "Light artillery (scorpions)",
+		"what": "Light artillery (scorpions)",
 		"sprite_set": 12, "engine_set": 13,
 		"desc": "Four torsion bolt throwers with their crews. They shoot flat, far and accurately; a bolt flies on along its line and can skewer several men in a row, so deep, dense formations such as pike blocks suffer most, while big shields and armour soak up much of it. Because the bolt flies flat it needs a clear line: friends in the way stop it or are hit, and a crest between engine and target stops it. Site them on a rise. Cannot shoot while moving; packing up and setting up take time, and dragging them uphill is very slow. When the engines run low the crews can refill them from the baggage (one more full load), standing still and silent for a minute or more. Crews are poor fighters.",
 		"good_vs": "Pike blocks and other deep formations shot along their depth, units standing in range, enemy artillery crews.",
@@ -570,11 +570,11 @@ const BASE: Array[Dictionary] = [
 		"m_ak": 2,          # bolts
 	},
 	{
-		"key": "stone",
+		"key": "stone", "role": "guns_siege",
 		"name": "Stone Throwers",
 		"short": "Stones",
 		"icon": 8,
-		"role": "Heavy artillery (onagers)",
+		"what": "Heavy artillery (onagers)",
 		"sprite_set": 12, "engine_set": 14,
 		"desc": "Three onagers lobbing heavy stones over friendly troops and hills at very long range. They aim at the near face of the target and land short rather than over, so a stone that misses still bounces on into the front ranks, knocking soldiers down, and the unit hit is shaken for a few seconds. They lead a steadily moving target a little, but small or loose targets are mostly missed. Slow to reload; when they run low the crews can refill them from the baggage (one more full load), standing still and silent for a minute or more. Cannot shoot at close range or while moving; packing up and setting up take time. Crews are poor fighters.",
 		"good_vs": "Large, dense units, standing or marching steadily, enemy artillery, wavering units (the fright can tip them).",
@@ -668,70 +668,70 @@ const TIER_SKILL := {"pike": 50}
 ## Derived rows: key, base line, tier, name, short name, role, blurb (put in
 ## front of the base description), optional extra stat changes and price.
 const TIERS: Array[Dictionary] = [
-	{"key": "heavy2", "base": HEAVY, "tier": 2, "name": "Veteran Swordsmen", "short": "Vet Heavy",
+	{"key": "heavy2", "role": "line", "base": HEAVY, "tier": 2, "name": "Veteran Swordsmen", "short": "Vet Heavy",
 		"blurb": "Trained, better-armoured swordsmen."},
-	{"key": "heavy3", "base": HEAVY, "tier": 3, "name": "Guard Swordsmen", "short": "Guard Heavy",
+	{"key": "heavy3", "role": "line", "base": HEAVY, "tier": 3, "name": "Guard Swordsmen", "short": "Guard Heavy",
 		"blurb": "Picked, heavily armoured swordsmen."},
-	{"key": "light2", "base": LIGHT, "tier": 2, "name": "Veteran Light Infantry", "short": "Vet Light",
+	{"key": "light2", "role": "line", "base": LIGHT, "tier": 2, "name": "Veteran Light Infantry", "short": "Vet Light",
 		"blurb": "Seasoned light fighters."},
-	{"key": "light3", "base": LIGHT, "tier": 3, "name": "Elite Light Infantry", "short": "Elite Light",
+	{"key": "light3", "role": "line", "base": LIGHT, "tier": 3, "name": "Elite Light Infantry", "short": "Elite Light",
 		"blurb": "The best of the light troops."},
-	{"key": "spear2", "base": SPEAR, "tier": 2, "name": "Veteran Spearmen", "short": "Vet Spear",
+	{"key": "spear2", "role": "line", "base": SPEAR, "tier": 2, "name": "Veteran Spearmen", "short": "Vet Spear",
 		"blurb": "Drilled spearmen."},
-	{"key": "spear3", "base": SPEAR, "tier": 3, "name": "Guard Spearmen", "short": "Guard Spear",
+	{"key": "spear3", "role": "line", "base": SPEAR, "tier": 3, "name": "Guard Spearmen", "short": "Guard Spear",
 		"blurb": "Elite armoured spearmen."},
-	{"key": "pike2", "base": PIKE, "tier": 2, "name": "Veteran Pikemen", "short": "Vet Pike",
+	{"key": "pike2", "role": "line", "base": PIKE, "tier": 2, "name": "Veteran Pikemen", "short": "Vet Pike",
 		"blurb": "Drilled pikemen."},
-	{"key": "pike3", "base": PIKE, "tier": 3, "name": "Guard Pikemen", "short": "Guard Pike",
+	{"key": "pike3", "role": "line", "base": PIKE, "tier": 3, "name": "Guard Pikemen", "short": "Guard Pike",
 		"blurb": "Elite pikemen."},
-	{"key": "archer2", "base": ARCHER, "tier": 2, "name": "Veteran Archers", "short": "Vet Archer",
+	{"key": "archer2", "role": "missile", "base": ARCHER, "tier": 2, "name": "Veteran Archers", "short": "Vet Archer",
 		"blurb": "Practised bowmen.", "add": {"m_damage": 3}},
-	{"key": "archer3", "base": ARCHER, "tier": 3, "name": "Elite Archers", "short": "Elite Archer",
+	{"key": "archer3", "role": "missile", "base": ARCHER, "tier": 3, "name": "Elite Archers", "short": "Elite Archer",
 		"blurb": "Master bowmen.", "add": {"m_damage": 6}},
-	{"key": "javelin2", "base": JAVELIN, "tier": 2, "name": "Veteran Javelinmen", "short": "Vet Javelin",
+	{"key": "javelin2", "role": "skirmish", "base": JAVELIN, "tier": 2, "name": "Veteran Javelinmen", "short": "Vet Javelin",
 		"blurb": "Practised skirmishers.", "add": {"m_damage": 3}},
-	{"key": "javelin3", "base": JAVELIN, "tier": 3, "name": "Elite Javelinmen", "short": "Elite Javelin",
+	{"key": "javelin3", "role": "skirmish", "base": JAVELIN, "tier": 3, "name": "Elite Javelinmen", "short": "Elite Javelin",
 		"blurb": "Expert skirmishers.", "add": {"m_damage": 6}},
-	{"key": "cav2", "base": CAVALRY, "tier": 2, "name": "Veteran Cavalry", "short": "Vet Cav",
+	{"key": "cav2", "role": "horse_shock", "base": CAVALRY, "tier": 2, "name": "Veteran Cavalry", "short": "Vet Cav",
 		"blurb": "Experienced horsemen on better horses.", "add": {"charge": 5}},
-	{"key": "cav3", "base": CAVALRY, "tier": 3, "name": "Guard Cavalry", "short": "Guard Cav",
+	{"key": "cav3", "role": "horse_shock", "base": CAVALRY, "tier": 3, "name": "Guard Cavalry", "short": "Guard Cav",
 		"blurb": "Armoured noble horsemen.", "add": {"charge": 10}},
 	# Faction elites.
-	{"key": "principes", "base": HEAVY, "tier": 2, "name": "Principes", "short": "Principes",
+	{"key": "principes", "role": "line", "base": HEAVY, "tier": 2, "name": "Principes", "short": "Principes",
 		"blurb": "Roman citizens in their prime, the second line of the legion."},
-	{"key": "extraordinarii", "base": HEAVY, "tier": 3, "name": "Extraordinarii", "short": "Extraord.",
+	{"key": "extraordinarii", "role": "line", "base": HEAVY, "tier": 3, "name": "Extraordinarii", "short": "Extraord.",
 		"blurb": "Picked men of the Italian allies, kept at the consul's hand.", "add": {"morale": 20}},
-	{"key": "triarii", "base": SPEAR, "tier": 3, "name": "Triarii", "short": "Triarii",
+	{"key": "triarii", "role": "line", "base": SPEAR, "tier": 3, "name": "Triarii", "short": "Triarii",
 		"blurb": "The legion's oldest veterans, kneeling behind their shields in the third line: 'it has come to the triarii'.",
 		"add": {"morale": 60, "defence": 2}},
-	{"key": "phalangites", "base": PIKE, "tier": 2, "name": "Phalangites", "short": "Phalangite",
+	{"key": "phalangites", "role": "line", "base": PIKE, "tier": 2, "name": "Phalangites", "short": "Phalangite",
 		"blurb": "Macedonian levy pikemen, drilled in the sarissa phalanx."},
-	{"key": "silver_shields", "base": PIKE, "tier": 3, "name": "Silver Shields", "short": "Silver Sh.",
+	{"key": "silver_shields", "role": "line", "base": PIKE, "tier": 3, "name": "Silver Shields", "short": "Silver Sh.",
 		"blurb": "The argyraspides: veteran royal pikemen with silvered shields.", "add": {"armour": 2, "morale": 40}},
-	{"key": "companions", "base": CAVALRY, "tier": 3, "name": "Companion Cavalry", "short": "Companions",
+	{"key": "companions", "role": "horse_shock", "base": CAVALRY, "tier": 3, "name": "Companion Cavalry", "short": "Companions",
 		"blurb": "The king's own heavy horse, the hammer of the Macedonian army.", "add": {"charge": 6}},
-	{"key": "chaonians", "base": PIKE, "tier": 3, "name": "Chaonian Guard", "short": "Chaonians",
+	{"key": "chaonians", "role": "line", "base": PIKE, "tier": 3, "name": "Chaonian Guard", "short": "Chaonians",
 		"blurb": "Pyrrhus's royal pikemen from Chaonia.", "add": {"attack": 2}},
-	{"key": "agema", "base": CAVALRY, "tier": 3, "name": "Agema", "short": "Agema",
+	{"key": "agema", "role": "horse_shock", "base": CAVALRY, "tier": 3, "name": "Agema", "short": "Agema",
 		"blurb": "The royal guard cavalry of Epirus.", "add": {"defence": 2}},
-	{"key": "sacred_band", "base": SPEAR, "tier": 3, "name": "Sacred Band", "short": "Sacred Band",
+	{"key": "sacred_band", "role": "line", "base": SPEAR, "tier": 3, "name": "Sacred Band", "short": "Sacred Band",
 		"blurb": "Carthage's citizen elite: wealthy, heavily armoured spearmen sworn to stand.",
 		"add": {"armour": 2, "morale": 60}, "price_add": 15},
-	{"key": "hoplites", "base": SPEAR, "tier": 2, "name": "Hoplites", "short": "Hoplites",
+	{"key": "hoplites", "role": "line", "base": SPEAR, "tier": 2, "name": "Hoplites", "short": "Hoplites",
 		"blurb": "Greek citizen spearmen with the big round aspis.", "add": {"mshield": 5}},
-	{"key": "picked_hoplites", "base": SPEAR, "tier": 3, "name": "Picked Hoplites", "short": "Picked Hopl.",
+	{"key": "picked_hoplites", "role": "line", "base": SPEAR, "tier": 3, "name": "Picked Hoplites", "short": "Picked Hopl.",
 		"blurb": "Epilektoi: the city's chosen, full-time hoplites.", "add": {"mshield": 5}},
-	{"key": "cretans", "base": ARCHER, "tier": 3, "name": "Cretan Archers", "short": "Cretans",
+	{"key": "cretans", "role": "missile", "base": ARCHER, "tier": 3, "name": "Cretan Archers", "short": "Cretans",
 		"blurb": "The most sought-after mercenary bowmen of the Greek world.", "add": {"m_damage": 8}},
-	{"key": "scutarii", "base": HEAVY, "tier": 2, "name": "Scutarii", "short": "Scutarii",
+	{"key": "scutarii", "role": "line", "base": HEAVY, "tier": 2, "name": "Scutarii", "short": "Scutarii",
 		"blurb": "Iberian swordsmen with the long scutum and the falcata."},
-	{"key": "caetrati", "base": LIGHT, "tier": 2, "name": "Caetrati", "short": "Caetrati",
+	{"key": "caetrati", "role": "line", "base": LIGHT, "tier": 2, "name": "Caetrati", "short": "Caetrati",
 		"blurb": "Iberian light swordsmen with the small round caetra.", "add": {"attack": 2}},
-	{"key": "warband", "base": LIGHT, "tier": 2, "name": "Gallic Warband", "short": "Warband",
+	{"key": "warband", "role": "shock", "base": LIGHT, "tier": 2, "name": "Gallic Warband", "short": "Warband",
 		"blurb": "Gallic warriors who come on in a furious rush.", "add": {"damage": 4, "defence": -2}},
-	{"key": "gallic_nobles", "base": HEAVY, "tier": 3, "name": "Gallic Nobles", "short": "Nobles",
+	{"key": "gallic_nobles", "role": "line", "base": HEAVY, "tier": 3, "name": "Gallic Nobles", "short": "Nobles",
 		"blurb": "Mailed Gallic nobles and their sworn retainers."},
-	{"key": "noble_cav", "base": CAVALRY, "tier": 3, "name": "Noble Cavalry", "short": "Noble Cav",
+	{"key": "noble_cav", "role": "horse_shock", "base": CAVALRY, "tier": 3, "name": "Noble Cavalry", "short": "Noble Cav",
 		"blurb": "Gallic nobles on horseback in mail shirts."},
 ]
 
@@ -743,11 +743,11 @@ const TIERS: Array[Dictionary] = [
 ## size = its crew.
 const SPECIAL: Array[Dictionary] = [
 	{
-		"key": "tower_bolt",
+		"key": "tower_bolt", "role": "guns_field",
 		"name": "Tower Bolt Thrower",
 		"short": "Tower",
 		"icon": 7,
-		"role": "Wall tower artillery (walls 2-3)",
+		"what": "Wall tower artillery (walls 2-3)",
 		"sprite_set": 12, "engine_set": 13,
 		"desc": "A bolt thrower mounted on a tower of the city wall, with a crew of four. It shoots flat bolts down at anyone approaching the wall: rams, ladder parties, men at the gate, batteries. It cannot move and turns all the way round. A fixed load of bolts (half as many again with a workshop in the city). Gone when its crew is shot down or its tower is battered by enemy artillery (a few stones, many bolts).",
 		"good_vs": "Rams and men at the gate, ladder parties, batteries in range.",
@@ -765,11 +765,11 @@ const SPECIAL: Array[Dictionary] = [
 		"m_hgain": 60, "m_apex": 2, "m_ak": 2,
 	},
 	{
-		"key": "tower_stone",
+		"key": "tower_stone", "role": "guns_siege",
 		"name": "Tower Stone Thrower",
 		"short": "Tower St.",
 		"icon": 8,
-		"role": "Wall tower artillery (walls 3)",
+		"what": "Wall tower artillery (walls 3)",
 		"sprite_set": 12, "engine_set": 14,
 		"desc": "An onager mounted on one of the two biggest towers of a walls-3 city, with a crew of six. It lobs stones far out over the approach: at batteries, at the ram, at the army forming up. It cannot move and turns all the way round. A fixed load of stones (half as many again with a workshop in the city). Gone when its crew is shot down or its tower is battered by enemy artillery.",
 		"good_vs": "Batteries and big formations standing in range, the ram.",
@@ -794,7 +794,7 @@ const SPECIAL: Array[Dictionary] = [
 ## "wagon"): unarmed but for knives, they pull, drive and guard it. The
 ## wagon itself is a piece of equipment in the battle (BattleSim EQ_WAGON).
 const WAGON_CREW := {
-	"cls": CLS_INF, "sprite": 6, "sprite_set": 12, "icon": 9, "role": "Ammunition wagon",
+	"cls": CLS_INF, "sprite": 6, "sprite_set": 12, "icon": 9, "what": "Ammunition wagon",
 	"good_vs": "Nothing in a fight: it keeps the archers, javelinmen and engines shooting.",
 	"weak_vs": "Anything that reaches it, above all from the flank or rear; fire missiles.",
 	"attack": 8, "defence": 10, "armour": 2, "shield": 0, "mshield": 0, "damage": 14, "reach": 1024,
@@ -803,11 +803,11 @@ const WAGON_CREW := {
 	"str_pct": 20,  # (its price is mostly the wagon: little fighting strength)
 }
 const WAGON_ROWS: Array[Dictionary] = [
-	{"key": "wagon", "name": "Hand Cart", "short": "Cart", "tier": 1, "wagon": 0, "size": 8, "cost": 25,
+	{"key": "wagon", "role": "command", "name": "Hand Cart", "short": "Cart", "tier": 1, "wagon": 0, "size": 8, "cost": 25,
 		"desc": "A hand cart of arrows, javelins and shot pulled by its eight men at walking pace or slower. Missile units and batteries standing near it refill from its stock (Refill). Any foot unit can take it over (tap it) and pull it, fighting badly meanwhile; it burns."},
-	{"key": "wagon2", "name": "Ammunition Wagon", "short": "Wagon", "tier": 2, "wagon": 1, "size": 8, "cost": 40,
+	{"key": "wagon2", "role": "command", "name": "Ammunition Wagon", "short": "Wagon", "tier": 2, "wagon": 1, "size": 8, "cost": 40,
 		"desc": "A one-horse wagon with half as much again: it keeps up with marching foot while the horse lives (a horse shot down leaves it at the crew's pace). Missile units and batteries standing near it refill from its stock (Refill). Any foot unit can take it over; it burns."},
-	{"key": "wagon3", "name": "Supply Train", "short": "Train", "tier": 3, "wagon": 2, "size": 10, "cost": 45,
+	{"key": "wagon3", "role": "command", "name": "Supply Train", "short": "Train", "tier": 3, "wagon": 2, "size": 10, "cost": 45,
 		"desc": "A two-horse wagon with more than twice the hand cart's stock that moves at a trot (one horse down: a marching pace). Missile units and batteries standing near it refill from its stock (Refill). Any foot unit can take it over; it burns."},
 ]
 ## Wagon tiers (the hand cart, one horse, two horses), all ints:
@@ -832,9 +832,9 @@ const WAGONS: Array[Dictionary] = [
 ## 1.6 s), not tuned; each with its reason.
 const BEASTS: Array[Dictionary] = [
 	{
-		"key": "camel", "line": "camel", "name": "Camel Riders", "short": "Camels", "icon": 10, "sprite": 9, "sprite_set": 10,
+		"key": "camel", "role": "beast", "line": "camel", "name": "Camel Riders", "short": "Camels", "icon": 10, "sprite": 9, "sprite_set": 10,
 		"size": 60, "files0": 15,
-		"role": "Anti-cavalry riders",
+		"what": "Anti-cavalry riders",
 		"desc": "Riders on camels. Slower than horsemen and weaker in the charge, but they sit high and fight foot well, and horses will not face them: enemy horsemen within 30 m lose much of their charge and turn sluggishly, losing heart while they stay, and a horse charging camels hits them weakly and shies. Slow in woods. Spears and pikes stop them like any riders.",
 		"good_vs": "Horse cavalry (the scare), skirmishers and archers they catch, the flanks of engaged foot.",
 		"weak_vs": "Braced spears and pikes, heavy infantry from the front, archers shooting at them in the open.",
@@ -859,9 +859,9 @@ const BEASTS: Array[Dictionary] = [
 		"scare_mor": 2,     # ... and lose 2 morale a second near them
 	},
 	{
-		"key": "camel_archer", "line": "camel_archer", "name": "Camel Archers", "short": "Camel Arch.",
+		"key": "camel_archer", "role": "horse_skirmish", "line": "camel_archer", "name": "Camel Archers", "short": "Camel Arch.",
 		"icon": 12, "sprite": 9, "sprite_set": 11, "size": 60, "files0": 15,
-		"role": "Mounted archers on camels",
+		"what": "Mounted archers on camels",
 		"desc": "Archers on camels: they shoot from the saddle at a fair range, ride away from what comes for them, and scare horses like any camels (enemy horsemen within 30 m lose much of their charge and turn rate and lose heart). Weak in melee; slow in woods.",
 		"good_vs": "Slow foot they can shoot and outride, horse cavalry (the scare), skirmishers.",
 		"weak_vs": "Shock cavalry or camels that catch them, archers on foot (who outrange them), anything in melee.",
@@ -878,9 +878,9 @@ const BEASTS: Array[Dictionary] = [
 		"woods_pct": 150, "scare_r": 30 * 1024, "scare_pct": 70, "scare_mor": 2,
 	},
 	{
-		"key": "elephant", "line": "elephant", "name": "War Elephants", "short": "Elephants", "icon": 11, "sprite": 10, "sprite_set": 9,
+		"key": "elephant", "role": "beast", "line": "elephant", "name": "War Elephants", "short": "Elephants", "icon": 11, "sprite": 10, "sprite_set": 9,
 		"size": 12, "files0": 6,
-		"role": "Shock beasts",
+		"what": "Shock beasts",
 		"desc": "Twelve war elephants, each a driver and two javelin men on its back. Slow to get going and to turn, but a charge at full tilt bowls over whole files and breaks formations, braced spears included (the points still hurt them); horses within 25 m lose heart fast and men somewhat. Arrows and javelins only chip them; fire is their bane. They batter down the gates of towns with walls up to level 1. When they break they run amok, trampling anyone in their way, their own side included, until they find themselves alone and calm down; their drivers can be told to kill them (Kill elephant).",
 		"good_vs": "Infantry lines (the charge), horse cavalry (the fear), the gates of small towns.",
 		"weak_vs": "Fire missiles, skirmishers and archers who chip them from a distance, being surrounded, narrow streets; when they break they are a danger to their own side.",
@@ -936,9 +936,9 @@ const BEASTS: Array[Dictionary] = [
 ## yardsticks), not tuned; each with its reason.
 const LIGHT_MISSILE: Array[Dictionary] = [
 	{
-		"key": "cav_jav", "line": "cav_missile", "name": "Light Horse", "short": "Lt Horse", "icon": 13, "sprite": 5, "sprite_set": 4,
+		"key": "cav_jav", "role": "horse_skirmish", "line": "cav_missile", "name": "Light Horse", "short": "Lt Horse", "icon": 13, "sprite": 5, "sprite_set": 4,
 		"size": 60, "files0": 15,
-		"role": "Missile cavalry",
+		"what": "Missile cavalry",
 		"desc": "Javelin riders on small, quick horses. They ride in, throw from the saddle and ride off again: by default they keep their distance from anything that comes for them, and nothing on foot can catch them. Few javelins each, so they need targets worth them. Weak in melee and no charge to speak of; horses are big targets for archers.",
 		"good_vs": "Slow foot they can circle and pelt, the flanks and rear of engaged units, artillery crews, skirmishers caught in the open.",
 		"weak_vs": "Shock cavalry and camels that catch them, archers and slingers (who outrange them), any melee.",
@@ -975,9 +975,9 @@ const LIGHT_MISSILE: Array[Dictionary] = [
 		"woods_pct": 180,   # the missile class's woods slowing x1.8 = about the cavalry's
 	},
 	{
-		"key": "slinger", "line": "sling", "name": "Slingers", "short": "Slingers", "icon": 14, "sprite": 3, "sprite_set": 7,
+		"key": "slinger", "role": "skirmish", "line": "sling", "name": "Slingers", "short": "Slingers", "icon": 14, "sprite": 3, "sprite_set": 7,
 		"size": 80, "files0": 20,
-		"role": "Missile infantry",
+		"what": "Missile infantry",
 		"desc": "Light troops with slings who outrange the bow and shoot faster. A sling stone hurts unarmoured men more than an arrow but does little against armour and big shields. They shoot over friendly units and hills, and by default fall back from melee troops that come for them. Weak in melee.",
 		"good_vs": "Light infantry, skirmishers, archers, javelin riders and other unarmoured troops, crews.",
 		"weak_vs": "Armoured and big-shielded infantry, cavalry that reaches them, any melee unit that closes.",
@@ -1012,25 +1012,25 @@ const LIGHT_MISSILE: Array[Dictionary] = [
 ## Faction variants of the LIGHT_MISSILE rows ("of": the row's key): built
 ## like TIERS (TIER_DELTA, TIER_PRICE of the line, "add", "price_add").
 const LIGHT_MISSILE_TIERS: Array[Dictionary] = [
-	{"key": "numidians", "of": "cav_jav", "tier": 2, "name": "Numidian Horse", "short": "Numidians",
+	{"key": "numidians", "role": "horse_skirmish", "of": "cav_jav", "tier": 2, "name": "Numidian Horse", "short": "Numidians",
 		"blurb": "Numidian javelin riders without saddle or bridle, the best light horse of the age.",
 		"add": {"m_damage": 3, "run": 20, "turn": 2, "m_ammo": 1}, "price_add": 10},
-	{"key": "tarentines", "of": "cav_jav", "tier": 2, "name": "Tarentine Horse", "short": "Tarentines",
+	{"key": "tarentines", "role": "horse_skirmish", "of": "cav_jav", "tier": 2, "name": "Tarentine Horse", "short": "Tarentines",
 		"blurb": "Javelin riders of the Tarentine kind, with a shield to stand off fire.",
 		"add": {"m_damage": 3, "mshield": 10}},
-	{"key": "gallic_horse", "of": "cav_jav", "tier": 2, "name": "Gallic Light Horse", "short": "Gallic Horse",
+	{"key": "gallic_horse", "role": "horse_skirmish", "of": "cav_jav", "tier": 2, "name": "Gallic Light Horse", "short": "Gallic Horse",
 		"blurb": "Young Gallic riders who throw their javelins and close in readily.",
 		"add": {"m_damage": 3, "attack": 3, "damage": 2}},
-	{"key": "iberian_horse", "of": "cav_jav", "tier": 2, "name": "Iberian Light Horse", "short": "Iberian Horse",
+	{"key": "iberian_horse", "role": "horse_skirmish", "of": "cav_jav", "tier": 2, "name": "Iberian Light Horse", "short": "Iberian Horse",
 		"blurb": "Iberian riders who skirmish with javelins and fight on foot or horse.",
 		"add": {"m_damage": 3, "defence": 2, "armour": 1}},
-	{"key": "balearic", "of": "slinger", "tier": 2, "name": "Balearic Slingers", "short": "Balearics",
+	{"key": "balearic", "role": "skirmish", "of": "slinger", "tier": 2, "name": "Balearic Slingers", "short": "Balearics",
 		"blurb": "Islanders raised to the sling from boyhood, the most famous slingers of the age.",
 		"add": {"m_damage": 3, "m_spread": -5}, "price_add": 10},
-	{"key": "rhodians", "of": "slinger", "tier": 2, "name": "Rhodian Slingers", "short": "Rhodians",
+	{"key": "rhodians", "role": "skirmish", "of": "slinger", "tier": 2, "name": "Rhodian Slingers", "short": "Rhodians",
 		"blurb": "Rhodian slingers, famed for their range.",
 		"add": {"m_damage": 2, "m_range": 10 * 1024}, "price_add": 10},
-	{"key": "iberian_slingers", "of": "slinger", "tier": 2, "name": "Iberian Slingers", "short": "Ib. Slingers",
+	{"key": "iberian_slingers", "role": "skirmish", "of": "slinger", "tier": 2, "name": "Iberian Slingers", "short": "Ib. Slingers",
 		"blurb": "Native Iberian slingers.", "add": {"m_damage": 2, "attack": 2}},
 ]
 
@@ -1045,9 +1045,9 @@ const LIGHT_MISSILE_TIERS: Array[Dictionary] = [
 ## 60 men, 1,260), not tuned; each with its reason.
 const GENERAL: Array[Dictionary] = [
 	{
-		"key": "general", "line": "general", "name": "General's Bodyguard", "short": "General", "icon": 15, "sprite": 5, "sprite_set": 4,
+		"key": "general", "role": "command", "line": "general", "name": "General's Bodyguard", "short": "General", "icon": 15, "sprite": 5, "sprite_set": 4,
 		"size": 30, "files0": 10,  # 24-32 men: half a cavalry unit, three ranks
-		"role": "The general and his guard",
+		"what": "The general and his guard",
 		"desc": "The army's commander and his picked riders. Friendly units near him stand longer under fire and in melee, and routers near him rally sooner; if he flees or falls, the whole army is shaken, the units near him most. Keep him behind the line and commit him only to finish a wavering enemy or to steady a breaking unit.",
 		"good_vs": "Wavering or engaged enemy units hit in the flank, routers; steadying his own line.",
 		"weak_vs": "Braced spears and pikes, missile fire, a long melee: losing him costs the army more than his men.",
@@ -1079,19 +1079,19 @@ const GENERAL: Array[Dictionary] = [
 ]
 ## Faction variants of the general ("of": the base row's key), tier 1.
 const GENERAL_TIERS: Array[Dictionary] = [
-	{"key": "legate", "of": "general", "tier": 1, "name": "Legate's Guard", "short": "Legate",
+	{"key": "legate", "role": "command", "of": "general", "tier": 1, "name": "Legate's Guard", "short": "Legate",
 		"blurb": "A Roman legate and the picked horsemen of his staff.", "add": {"defence": 2}},
-	{"key": "sufet", "of": "general", "tier": 1, "name": "Sufet's Guard", "short": "Sufet",
+	{"key": "sufet", "role": "command", "of": "general", "tier": 1, "name": "Sufet's Guard", "short": "Sufet",
 		"blurb": "A Carthaginian general of the great families and his Punic noble horse.", "add": {"charge": 5}},
-	{"key": "hetairoi_guard", "of": "general", "tier": 1, "name": "Royal Hetairoi", "short": "Hetairoi",
+	{"key": "hetairoi_guard", "role": "command", "of": "general", "tier": 1, "name": "Royal Hetairoi", "short": "Hetairoi",
 		"blurb": "The king and his royal squadron of Companions, who lead from the front.", "add": {"charge": 6, "attack": 2}},
-	{"key": "strategos", "of": "general", "tier": 1, "name": "Strategos' Guard", "short": "Strategos",
+	{"key": "strategos", "role": "command", "of": "general", "tier": 1, "name": "Strategos' Guard", "short": "Strategos",
 		"blurb": "An elected Greek general and his mounted guard of citizens.", "add": {"mshield": 5}},
-	{"key": "chieftain", "of": "general", "tier": 1, "name": "Chieftain's Guard", "short": "Chieftain",
+	{"key": "chieftain", "role": "command", "of": "general", "tier": 1, "name": "Chieftain's Guard", "short": "Chieftain",
 		"blurb": "A chieftain and his sworn retinue, who will die before he does.", "add": {"damage": 4, "defence": -2}},
 	# Never recruited: a second general's guard in one campaign army (CRules
 	# _one_general) serves on as these plain riders, without the aura.
-	{"key": "bodyguard", "of": "general", "tier": 1, "name": "Bodyguard Cavalry", "short": "Bodyguard",
+	{"key": "bodyguard", "role": "horse_shock", "of": "general", "tier": 1, "name": "Bodyguard Cavalry", "short": "Bodyguard",
 		"blurb": "A second general's riders, serving under the army's commander: no command of their own.", "plain": 1},
 ]
 ## The command fields a "plain" GENERAL_TIERS row clears.
@@ -1109,9 +1109,9 @@ const CMD_FIELDS: Array[String] = ["cmd_r", "cmd_mor", "cmd_rally", "cmd_loss", 
 ## yardsticks), not tuned; each with its reason.
 const DOGS: Array[Dictionary] = [
 	{
-		"key": "dog_handlers", "line": "dogs", "name": "War Dogs", "short": "Dogs", "icon": 16, "sprite": 0,
+		"key": "dog_handlers", "role": "shock", "line": "dogs", "name": "War Dogs", "short": "Dogs", "icon": 16, "sprite": 0,
 		"size": 16, "files0": 8,
-		"role": "Handlers and a pack of war dogs",
+		"what": "Handlers and a pack of war dogs",
 		"desc": "Sixteen handlers with a pack of two dogs each. Release the pack at an enemy unit within 80 m: the dogs run it down at 9 m/s, fight until nothing is left within 30 m for 5 s, then run back to their handlers (who can release them again). The pack never breaks and frightens unarmoured troops near it. Deadly to skirmishers, archers, slingers, crews and routers; useless against armoured foot and spears, and elephants ignore them. The handlers themselves are poor fighters.",
 		"good_vs": "Skirmishers, archers and slingers, artillery crews, wagons, routers (the pursuit).",
 		"weak_vs": "Armoured foot and spears (the pack), elephants, any melee unit that reaches the handlers.",
@@ -1133,9 +1133,9 @@ const DOGS: Array[Dictionary] = [
 		"pack_r": 80 * 1024,  # 80 m: twice the javelin's throw, about half the bow's range
 	},
 	{
-		"key": "war_dogs", "line": "dog_pack", "name": "War Dog Pack", "short": "Pack", "icon": 17, "sprite": 11,
+		"key": "war_dogs", "role": "shock", "line": "dog_pack", "name": "War Dog Pack", "short": "Pack", "icon": 17, "sprite": 11,
 		"size": 32, "files0": 8,
-		"role": "A released pack of war dogs",
+		"what": "A released pack of war dogs",
 		"desc": "Mastiffs let off the leash. Fast and fierce against unarmoured men and anyone running away; they never break, but a formed line of armour, shields or spears kills them. They run back to their handlers once no enemy is near.",
 		"good_vs": "Skirmishers, archers, crews, routers.",
 		"weak_vs": "Armoured foot, spears, elephants.",
@@ -1177,9 +1177,9 @@ const DOGS: Array[Dictionary] = [
 ## yardsticks), not tuned; each with its reason.
 const LIGHT_ART: Array[Dictionary] = [
 	{
-		"key": "scorpions", "line": "light_art", "name": "Scorpions", "short": "Scorpions", "icon": 18, "sprite": 6, "sprite_set": 12, "engine_set": 15,
+		"key": "scorpions", "role": "guns_field", "line": "light_art", "name": "Scorpions", "short": "Scorpions", "icon": 18, "sprite": 6, "sprite_set": 12, "engine_set": 15,
 		"size": 12, "files0": 6,
-		"role": "Light artillery (carried scorpions)",
+		"what": "Light artillery (carried scorpions)",
 		"desc": "Six small bolt engines, two men to each, light enough for the crews to carry: they march at a man's walking pace and set up or pack up in a moment, so they keep up with an assault and shoot the men on the wall above the ladders and the ram. A small bolt flies flat and true but goes through at most two men; shorter range and a lighter blow than the big bolt throwers, a faster shot, fewer bolts. Crews are poor fighters and the little engines break easily.",
 		"good_vs": "Men on a wall over the gate or the ladders, archers and skirmishers in range, enemy crews.",
 		"weak_vs": "Cavalry and any melee troops that reach them, big shields and armour, deep blocks (a bolt stops after two men), targets behind friends or a crest.",
@@ -1222,9 +1222,9 @@ const LIGHT_ART: Array[Dictionary] = [
 		"carried": 1,
 	},
 	{
-		"key": "gastraphetes", "line": "belly_bow", "name": "Gastraphetes", "short": "Belly-bows", "icon": 19, "sprite": 3, "sprite_set": 8,
+		"key": "gastraphetes", "role": "missile", "line": "belly_bow", "name": "Gastraphetes", "short": "Belly-bows", "icon": 19, "sprite": 3, "sprite_set": 8,
 		"size": 80, "files0": 20,
-		"role": "Missile infantry (belly-bows)",
+		"what": "Missile infantry (belly-bows)",
 		"desc": "Greek belly-bowmen: a composite bow on a stock, spanned by leaning on it with the belly, shot like a small bolt engine. Each shot outranges the bow and goes through armour, but loading takes a long time and the shot flies flat, so they need a clear line past friends and over the ground (no shooting over a crest). They stand their ground rather than skirmish. Weak in melee.",
 		"good_vs": "Armoured men in the open, crews and men on walls in a clear line, archers (which they outrange).",
 		"weak_vs": "Anything that closes fast (cavalry, light infantry), targets behind friends or a crest, swarms (few shots).",
@@ -1264,9 +1264,9 @@ const LIGHT_ART: Array[Dictionary] = [
 ## hero), not tuned; each with its reason.
 const CHARS: Array[Dictionary] = [
 	{
-		"key": "hero_foot", "line": "hero_foot", "name": "Champion", "short": "Champion", "icon": 20, "sprite": 0,
+		"key": "hero_foot", "role": "command", "line": "hero_foot", "name": "Champion", "short": "Champion", "icon": 20, "sprite": 0,
 		"size": 1, "files0": 1, "char": 1, "char_kind": CK_FOOT,
-		"role": "Hero: champion on foot",
+		"what": "Hero: champion on foot",
 		"desc": "A famous fighter on foot. Friendly foot within 40 m strike truer (+15 % to-hit) and stand longer (+3 morale a second). He never breaks and is cut down only by a crowd or a lucky shot; if he falls, his side near him (60 m) is shaken and the enemy heartened. Keep him in the second line.",
 		"good_vs": "Single men: he duels any of them; steadying a foot line.",
 		"weak_vs": "Being surrounded, missiles, a charge.",
@@ -1285,9 +1285,9 @@ const CHARS: Array[Dictionary] = [
 		"climb": 13,
 	},
 	{
-		"key": "hero_missile", "line": "hero_missile", "name": "Master of Archers", "short": "Archer Lord", "icon": 20, "sprite": 5,
+		"key": "hero_missile", "role": "command", "line": "hero_missile", "name": "Master of Archers", "short": "Archer Lord", "icon": 20, "sprite": 5,
 		"size": 1, "files0": 1, "char": 1, "char_kind": CK_MISSILE,
-		"role": "Hero: master of archers (mounted)",
+		"what": "Hero: master of archers (mounted)",
 		"desc": "A mounted master bowman. Friendly missile units and engines within 40 m shoot 10 % further and 20 % straighter. He shoots well himself and never breaks; if he falls, his side near him is shaken. Keep him behind the archers.",
 		"good_vs": "Anything in bow range; making the archers and engines near him count.",
 		"weak_vs": "Cavalry that reaches him, being surrounded.",
@@ -1307,9 +1307,9 @@ const CHARS: Array[Dictionary] = [
 		"fall_r": 60 * 1024, "fall_loss": 120, "fall_gain": 60,
 	},
 	{
-		"key": "hero_cav", "line": "hero_cav", "name": "Master of Horse", "short": "Horse Lord", "icon": 20, "sprite": 5,
+		"key": "hero_cav", "role": "command", "line": "hero_cav", "name": "Master of Horse", "short": "Horse Lord", "icon": 20, "sprite": 5,
 		"size": 1, "files0": 1, "char": 1, "char_kind": CK_CAV,
-		"role": "Hero: master of horse",
+		"what": "Hero: master of horse",
 		"desc": "A great horseman. Friendly mounted units within 40 m charge 20 % harder and their routers rally faster (+40 a second). He charges with them and never breaks; if he falls, his side near him is shaken. Keep him with the cavalry reserve.",
 		"good_vs": "Charging with the cavalry, rallying broken horse.",
 		"weak_vs": "Braced spears, being surrounded, missiles.",
@@ -1324,9 +1324,9 @@ const CHARS: Array[Dictionary] = [
 		"fall_r": 60 * 1024, "fall_loss": 120, "fall_gain": 60,
 	},
 	{
-		"key": "hero_siege", "line": "hero_siege", "name": "Master Engineer", "short": "Engineer", "icon": 20, "sprite": 5,
+		"key": "hero_siege", "role": "command", "line": "hero_siege", "name": "Master Engineer", "short": "Engineer", "icon": 20, "sprite": 5,
 		"size": 1, "files0": 1, "char": 1, "char_kind": CK_SIEGE,
-		"role": "Hero: master engineer (mounted)",
+		"what": "Hero: master engineer (mounted)",
 		"desc": "A master of siegecraft riding between the works. For his whole side (siege works are spread out, so not bound to a radius): ladders are climbed 25 % faster, engines reload 20 % faster, the ram and siege towers take 25 % less battering. He never breaks; if he falls, his side near him is shaken. Keep him near the batteries.",
 		"good_vs": "Sieges: assaults by ladder, ram or tower, batteries.",
 		"weak_vs": "Being caught alone, missiles (wall engines look for him).",
@@ -1341,9 +1341,9 @@ const CHARS: Array[Dictionary] = [
 		"fall_r": 60 * 1024, "fall_loss": 120, "fall_gain": 60,
 	},
 	{
-		"key": "assassin", "line": "assassin", "name": "Assassin", "short": "Assassin", "icon": 21, "sprite": 0,
+		"key": "assassin", "role": "command", "line": "assassin", "name": "Assassin", "short": "Assassin", "icon": 21, "sprite": 0,
 		"size": 1, "files0": 1, "char": 1, "char_kind": CK_ASSASSIN,
-		"role": "Agent: assassin (hidden)",
+		"what": "Agent: assassin (hidden)",
 		"desc": "A single man the enemy does not see until he acts or comes within 10 m of them in the open. Sabotage: he walks to an enemy battery and wrecks an engine every 5 s beside it, or slips over the wall by a gate and unbars it from inside in 15 s. Attempt: he walks up to an enemy hero or general and strikes once (40 % kills, 30 % wounds, 30 % fails). Once he has acted he fights as a weak light man; three enemy men around him take him.",
 		"good_vs": "Batteries left unguarded, a shut gate, an enemy general or hero.",
 		"weak_vs": "Any fight once he is seen.",
@@ -1356,9 +1356,9 @@ const CHARS: Array[Dictionary] = [
 		"hidden": 1, "climb": 13,
 	},
 	{
-		"key": "diplomat", "line": "diplomat", "name": "Diplomat", "short": "Diplomat", "icon": 22, "sprite": 0,
+		"key": "diplomat", "role": "command", "line": "diplomat", "name": "Diplomat", "short": "Diplomat", "icon": 22, "sprite": 0,
 		"size": 1, "files0": 1, "char": 1, "char_kind": CK_DIPLOMAT,
-		"role": "Agent: diplomat (unarmed)",
+		"what": "Agent: diplomat (unarmed)",
 		"desc": "An envoy under a white flag. Friendly units within 30 m lose only half the heart they would from fear (beasts, routing friends, artillery). Parley: he walks to within 20 m of a routing enemy unit, or one below a quarter of its morale; for 5 s it stops fighting (the men near it hold), then it surrenders (60 % routing, 35 % wavering) and its men are taken prisoner. A garrison on a wall surrenders only once its plaza is held. He never fights; only missiles can kill him during a parley.",
 		"good_vs": "Broken or wavering enemy units: prisoners instead of a pursuit.",
 		"weak_vs": "Anything that reaches him: he never strikes back.",
@@ -1385,10 +1385,10 @@ const CHARS: Array[Dictionary] = [
 ## full): West art is a later slice.
 const WEST: Array[Dictionary] = [
 	{
-		"key": "musketeers", "line": "musket", "pack": "west", "name": "Musketeers", "short": "Musket",
+		"key": "musketeers", "role": "line", "line": "musket", "pack": "west", "name": "Musketeers", "short": "Musket",
 		"icon": 23, "sprite": 3, "sprite_set": 16,
 		"size": 100, "files0": 25,
-		"role": "Line infantry with matchlocks",
+		"what": "Line infantry with matchlocks",
 		"desc": "Matchlock men in a close line. The whole unit fires one volley, then reloads for twelve seconds: a volley at 60 m drops a dozen men of a dense block, and every volley that lands shakes the unit it strikes (horses most of all). Armour and shields are little use against a ball. By default they hold their fire until the enemy is within about 85 m or coming on. Poor in melee: keep pikes beside them against horse and foot that close.",
 		"good_vs": "Dense blocks and armoured men in the open, cavalry charging their front (volleys shake horses), anything standing in range.",
 		"weak_vs": "Cavalry or swordsmen that reach them, a flank attack, targets behind friends (they need a clear line).",
@@ -1418,20 +1418,20 @@ const WEST: Array[Dictionary] = [
 		"climb": 14,
 	},
 	{
-		"key": "w_pikemen", "line": "pike", "pack": "west", "name": "Pikemen", "short": "Pike",
+		"key": "w_pikemen", "role": "line", "line": "pike", "pack": "west", "name": "Pikemen", "short": "Pike",
 		"icon": 3, "sprite": 2, "sprite_set": 17, "copy": "pike",
 		"size": 120, "files0": 20,
-		"role": "Pike block",
+		"what": "Pike block",
 		"desc": "A dense block of 5 m pikes, the musketeers' shield: while formed and facing the enemy no horse or foot gets past the points. A big, slow target for guns; once disordered or flanked they fall back on short swords.",
 		"good_vs": "Cavalry and foot attacking its front, guarding musketeers beside it.",
 		"weak_vs": "Musket volleys and cannon (a deep block is the best target there is), flank and rear attacks, being made to turn.",
 		"cost": 5,
 	},
 	{
-		"key": "buccaneers", "line": "buccaneer", "pack": "west", "name": "Buccaneers", "short": "Buccaneer",
+		"key": "buccaneers", "role": "skirmish", "line": "buccaneer", "pack": "west", "name": "Buccaneers", "short": "Buccaneer",
 		"icon": 26, "sprite": 4, "sprite_set": 18,
 		"size": 60, "files0": 15,
-		"role": "Skirmishing marksmen",
+		"what": "Skirmishing marksmen",
 		"desc": "Hunters of Hispaniola's wild cattle with long buccaneer muskets: the best shots in the Indies. They fight in loose order, fire further and truer than any line musketeer but reload slowly, and by default fall back from anything that comes for them. Poor in a stand-up melee.",
 		"good_vs": "Officers, gun crews, cavalry and any dense target at long range; skirmishers.",
 		"weak_vs": "Cavalry that catches them, any melee unit that closes, a long fight.",
@@ -1461,10 +1461,10 @@ const WEST: Array[Dictionary] = [
 		"climb": 13,
 	},
 	{
-		"key": "rodeleros", "line": "heavy", "pack": "west", "name": "Rodeleros", "short": "Rodelero",
+		"key": "rodeleros", "role": "shock", "line": "heavy", "pack": "west", "name": "Rodeleros", "short": "Rodelero",
 		"icon": 24, "sprite": 0, "sprite_set": 19,
 		"size": 100, "files0": 25,
-		"role": "Sword and buckler shock foot",
+		"what": "Sword and buckler shock foot",
 		"desc": "Spanish sword-and-buckler men in morion and breastplate who duck under the pikes and cut their way into the enemy line. They win most straight fights hand to hand, but their small round shields stop nothing a musket throws.",
 		"good_vs": "Musketeers and pikemen locked in melee, light foot, the flanks of a pike block.",
 		"weak_vs": "Musket volleys at range, cavalry charging their flank, formed pike fronts head on.",
@@ -1479,10 +1479,10 @@ const WEST: Array[Dictionary] = [
 		"climb": 15,
 	},
 	{
-		"key": "cutlass", "line": "heavy", "pack": "west", "name": "Cutlass Men", "short": "Cutlass",
+		"key": "cutlass", "role": "shock", "line": "heavy", "pack": "west", "name": "Cutlass Men", "short": "Cutlass",
 		"icon": 25, "sprite": 0, "sprite_set": 20,
 		"size": 100, "files0": 25,
-		"role": "Boarding-party shock foot",
+		"what": "Boarding-party shock foot",
 		"desc": "Pirates with cutlass, axe and pistol in the belt, no armour and no drill: they rush in screaming and win or run. Fast and fierce, poor against a steady front and easy meat for volleys.",
 		"good_vs": "Musketeers and gun crews they reach, light troops, routers.",
 		"weak_vs": "Formed pikes, armoured foot in a long fight, volleys and cavalry in the open.",
@@ -1498,10 +1498,10 @@ const WEST: Array[Dictionary] = [
 		"climb": 13,
 	},
 	{
-		"key": "lancers", "line": "cav", "pack": "west", "name": "Lancers", "short": "Lancers",
+		"key": "lancers", "role": "horse_shock", "line": "cav", "pack": "west", "name": "Lancers", "short": "Lancers",
 		"icon": 27, "sprite": 5, "sprite_set": 21,
 		"size": 60, "files0": 15,
-		"role": "Light lance cavalry",
+		"what": "Light lance cavalry",
 		"desc": "Spanish and Mexican lancers on quick horses. A charge at full speed is as deadly as any heavy horse's into a flank, a rear or a battery, and they ride down routers and skirmishers. Little armour: volleys and pikes cost them dearly.",
 		"good_vs": "Musketeers and gun crews caught in the open or the flank, skirmishers, routers.",
 		"weak_vs": "Pike fronts, musket volleys from the front, a long melee.",
@@ -1520,10 +1520,10 @@ const WEST: Array[Dictionary] = [
 		"climb": 24,
 	},
 	{
-		"key": "pistoleers", "line": "pistol", "pack": "west", "name": "Pistoleers", "short": "Pistols",
+		"key": "pistoleers", "role": "horse_skirmish", "line": "pistol", "pack": "west", "name": "Pistoleers", "short": "Pistols",
 		"icon": 28, "sprite": 5, "sprite_set": 22,
 		"size": 60, "files0": 15,
-		"role": "Pistol cavalry",
+		"what": "Pistol cavalry",
 		"desc": "Riders with a brace of pistols. Charging, they fire both barrels' first volley at about 25 m and crash in after it, the volley shaking the target just before the impact; then they fight with the sword. Two shots each, so a second pass needs a reload away from the fight.",
 		"good_vs": "Musketeers and crews, cavalry they shoot before contact, the flanks of engaged units.",
 		"weak_vs": "Pike fronts, musket volleys from a steady line, heavy cavalry head on.",
@@ -1550,10 +1550,10 @@ const WEST: Array[Dictionary] = [
 		"climb": 24,
 	},
 	{
-		"key": "native_warriors", "line": "light", "pack": "west", "name": "Warriors", "short": "Warriors",
+		"key": "native_warriors", "role": "shock", "line": "light", "pack": "west", "name": "Warriors", "short": "Warriors",
 		"icon": 32, "sprite": 0, "sprite_set": 23,
 		"size": 100, "files0": 25,
-		"role": "Fast shock foot",
+		"what": "Fast shock foot",
 		"desc": "Maya and Miskito warriors with obsidian-edged clubs, spears and cotton armour: fast through the forest and fierce in a rush, but no match for a volley in the open or a steady pike front.",
 		"good_vs": "Musketeers and gunners caught reloading, skirmishers, flanks; any fight in the woods.",
 		"weak_vs": "Volleys and cannon in the open, formed pikes, cavalry.",
@@ -1570,10 +1570,10 @@ const WEST: Array[Dictionary] = [
 		"cover": 1,         # ... and fight from it (slice 2b)
 	},
 	{
-		"key": "native_bowmen", "line": "archer", "pack": "west", "name": "Bowmen", "short": "Bowmen",
+		"key": "native_bowmen", "role": "skirmish", "line": "archer", "pack": "west", "name": "Bowmen", "short": "Bowmen",
 		"icon": 33, "sprite": 3, "sprite_set": 24, "copy": "archer",
 		"size": 80, "files0": 20,
-		"role": "Missile infantry",
+		"what": "Missile infantry",
 		"desc": "Native archers who shoot over friends and through the canopy. Arrows do little against breastplates but tell on unarmoured men and horses; by default they fall back from melee.",
 		"good_vs": "Light troops, buccaneers and gun crews, horses in the open.",
 		"weak_vs": "Musketeers (who outrange nothing but hit far harder), cavalry, armoured foot.",
@@ -1584,10 +1584,10 @@ const WEST: Array[Dictionary] = [
 		"cost": 4,
 	},
 	{
-		"key": "light_gun", "line": "light_gun", "pack": "west", "name": "Light Guns", "short": "Falconets",
+		"key": "light_gun", "role": "guns_field", "line": "light_gun", "pack": "west", "name": "Light Guns", "short": "Falconets",
 		"icon": 31, "sprite": 6, "sprite_set": 25, "engine_set": 26,
 		"size": 12, "files0": 4,
-		"role": "Light artillery (falconets)",
+		"what": "Light artillery (falconets)",
 		"desc": "Four small bronze guns on light carriages, three gunners each. A roundshot flies flat and fast and bounds on through the ranks behind, killing a file of men; every shot that lands shakes the unit it strikes. They need a clear line past friends and over the ground, cannot fire on the move and take a while to limber and unlimber. Gunners are poor fighters.",
 		"good_vs": "Pike blocks and deep columns shot along their depth, cavalry standing in range, enemy gunners.",
 		"weak_vs": "Cavalry and foot that reach them, targets behind friends or a crest.",
@@ -1623,10 +1623,10 @@ const WEST: Array[Dictionary] = [
 		"m_hgain": 60,
 	},
 	{
-		"key": "field_gun", "line": "field_gun", "pack": "west", "name": "Culverins", "short": "Culverins",
+		"key": "field_gun", "role": "guns_field", "line": "field_gun", "pack": "west", "name": "Culverins", "short": "Culverins",
 		"icon": 29, "sprite": 6, "sprite_set": 25, "engine_set": 26,
 		"size": 12, "files0": 3,
-		"role": "Field artillery (culverins)",
+		"what": "Field artillery (culverins)",
 		"desc": "Three long iron culverins, four gunners to each: the heaviest guns that take the field. A roundshot carries 450 m and ploughs on through eight men; it breaches gates and walls. Very slow to reload, to move and to set up; gunners are poor fighters.",
 		"good_vs": "Pike blocks and columns, batteries, gates and walls, anything standing in its long range.",
 		"weak_vs": "Cavalry and foot that reach it, targets behind friends or a crest, a war of movement.",
@@ -1670,9 +1670,9 @@ const WEST: Array[Dictionary] = [
 ## "siege", cost 0), not in the pickers.
 const FORT_ROWS: Array[Dictionary] = [
 	{
-		"key": "fort_gun", "line": "siege", "pack": "west", "name": "Fort Gun", "short": "Fort Gun",
+		"key": "fort_gun", "role": "guns_field", "line": "siege", "pack": "west", "name": "Fort Gun", "short": "Fort Gun",
 		"icon": 30, "sprite": 6, "sprite_set": 25, "engine_set": 26,
-		"role": "Fort artillery (the bastions' guns)",
+		"what": "Fort artillery (the bastions' guns)",
 		"desc": "A long iron gun on a garrison carriage behind the fort's parapet, with a crew of four. It sweeps the glacis, the ditch and the town's streets in its line with roundshot that bounds on through the ranks, and batters siege works and guns in reach. It cannot move and turns all the way round. Gone when its crew is shot down or its platform is battered by enemy guns.",
 		"good_vs": "Columns crossing the glacis, batteries, rams and ladder parties in its line.",
 		"weak_vs": "Men under the walls out of its line, skirmishers picking off its crew.",
@@ -1696,12 +1696,12 @@ const FORT_ROWS: Array[Dictionary] = [
 ## Faction variants of the WEST rows ("of": the row's key), built like
 ## LIGHT_MISSILE_TIERS (TIER_DELTA, TIER_PRICE of the line, "add", "price_add").
 const WEST_TIERS: Array[Dictionary] = [
-	{"key": "musketeers2", "of": "musketeers", "tier": 2, "name": "Veteran Musketeers", "short": "Vet Musket",
+	{"key": "musketeers2", "role": "line", "of": "musketeers", "tier": 2, "name": "Veteran Musketeers", "short": "Vet Musket",
 		"blurb": "Old soldiers of the European wars who load faster and stand their ground.",
 		"add": {"m_reload": -20, "m_spread2": -15}},
-	{"key": "w_pikemen2", "of": "w_pikemen", "tier": 2, "name": "Veteran Pikemen", "short": "Vet Pike",
+	{"key": "w_pikemen2", "role": "line", "of": "w_pikemen", "tier": 2, "name": "Veteran Pikemen", "short": "Vet Pike",
 		"blurb": "Tercio veterans who keep the hedge of points steady under fire."},
-	{"key": "cuirassiers", "of": "pistoleers", "tier": 2, "name": "Cuirassiers", "short": "Cuirassiers",
+	{"key": "cuirassiers", "role": "horse_skirmish", "of": "pistoleers", "tier": 2, "name": "Cuirassiers", "short": "Cuirassiers",
 		"blurb": "Pistol riders in three-quarter armour on heavy horses.",
 		"add": {"armour": 6, "mass": 40, "charge": 10, "run": -30}, "price_add": 10},
 ]
@@ -1710,10 +1710,10 @@ const WEST_TIERS: Array[Dictionary] = [
 ## and 3 of the Workshop are light and heavy guns in the Caribbean).
 const WEST_LATE: Array[Dictionary] = [
 	{
-		"key": "heavy_gun", "line": "field_gun", "pack": "west", "tier": 2, "name": "Heavy Guns", "short": "24-pdrs",
+		"key": "heavy_gun", "role": "guns_siege", "line": "field_gun", "pack": "west", "tier": 2, "name": "Heavy Guns", "short": "24-pdrs",
 		"icon": 29, "sprite": 6, "sprite_set": 25, "engine_set": 26,
 		"size": 12, "files0": 3,
-		"role": "Siege artillery (24-pounders)",
+		"what": "Siege artillery (24-pounders)",
 		"desc": "Three massive 24-pounders, four gunners to each: the guns that open a bastion. A roundshot carries 520 m, ploughs through ten men and splinters gates and walls in a few hits. Slowest of all to reload, to haul and to plant; gunners are poor fighters.",
 		"good_vs": "Walls, gates and bastions, batteries, blocks standing in its great range.",
 		"weak_vs": "Cavalry and foot that reach it, anything behind friends or a crest, a war of movement.",
@@ -1752,10 +1752,10 @@ const WEST_LATE: Array[Dictionary] = [
 	# batch 1"): seven rows after the heavy gun, so every earlier index is unchanged. Sprite sets 27-33
 	# (docs/design/art_pipeline.md). The grenade and the shell are AMMO kinds 11 and 12 (aoe bursts).
 	{
-		"key": "grenadiers", "line": "grenadier", "pack": "west", "tier": 1, "name": "Grenadiers", "short": "Grenadier",
+		"key": "grenadiers", "role": "shock", "line": "grenadier", "pack": "west", "tier": 1, "name": "Grenadiers", "short": "Grenadier",
 		"icon": 24, "sprite": 0, "sprite_set": 27,
 		"size": 60, "files0": 15,
-		"role": "Elite foot with hand grenades",
+		"what": "Elite foot with hand grenades",
 		"desc": "Tall picked men in fur caps who carry iron grenades and a sword. They lob a grenade over their own front into the enemy's ranks or a held house: it bursts 3 m wide, throws men down and shakes the whole unit, and four make a door give way. Four throws and they are swordsmen; stay clear of their own grenades and of any volley.",
 		"good_vs": "Pike blocks and dense columns, men holding houses or a gate, anything standing still in range 25 m.",
 		"weak_vs": "Musket volleys and cannon before they close, cavalry, being caught reloading with nothing left to throw.",
@@ -1782,10 +1782,10 @@ const WEST_LATE: Array[Dictionary] = [
 		"climb": 14,
 	},
 	{
-		"key": "dragoons", "line": "dragoon", "pack": "west", "tier": 1, "name": "Dragoons", "short": "Dragoons",
+		"key": "dragoons", "role": "horse_skirmish", "line": "dragoon", "pack": "west", "tier": 1, "name": "Dragoons", "short": "Dragoons",
 		"icon": 28, "sprite": 5, "sprite_set": 28,
 		"size": 40, "files0": 10,
-		"role": "Mounted musketeers",
+		"what": "Mounted musketeers",
 		"desc": "Foot with horses: they ride to a flank or a ford at a lancer's pace and shoot a musket volley from the saddle's side, a volley every twenty-four seconds and none on the move. Poor in a melee and thin on the ground; a charge into them ends it.",
 		"good_vs": "Gun crews and batteries, a flank no foot can reach in time, skirmishers and routers.",
 		"weak_vs": "Cavalry, any melee unit that closes, volleys from a steady line.",
@@ -1813,10 +1813,10 @@ const WEST_LATE: Array[Dictionary] = [
 		"climb": 24,
 	},
 	{
-		"key": "coureurs", "line": "buccaneer", "pack": "west", "tier": 2, "name": "Coureurs des Bois", "short": "Coureurs",
+		"key": "coureurs", "role": "skirmish", "line": "buccaneer", "pack": "west", "tier": 2, "name": "Coureurs des Bois", "short": "Coureurs",
 		"icon": 26, "sprite": 4, "sprite_set": 29,
 		"size": 50, "files0": 10,
-		"role": "Woodsmen marksmen",
+		"what": "Woodsmen marksmen",
 		"desc": "French trappers and Indian-trained runners in fringed hide, with a long musket and a knife. They go through trees and scrub nearly as if it were open ground, fire from every rock and trunk, and are gone before a line can turn. Few rounds, little taste for a stand-up fight.",
 		"good_vs": "Flanks reached through the woods, gun crews and officers, anything that cannot follow them into the trees.",
 		"weak_vs": "Cavalry in the open, any melee unit that closes, a long fight (two rounds fewer than buccaneers).",
@@ -1846,10 +1846,10 @@ const WEST_LATE: Array[Dictionary] = [
 		"climb": 13,
 	},
 	{
-		"key": "boarding_grenadiers", "line": "heavy", "pack": "west", "tier": 2, "name": "Boarding Grenadiers", "short": "Boarders",
+		"key": "boarding_grenadiers", "role": "shock", "line": "heavy", "pack": "west", "tier": 2, "name": "Boarding Grenadiers", "short": "Boarders",
 		"icon": 25, "sprite": 0, "sprite_set": 30,
 		"size": 60, "files0": 15,
-		"role": "Cutlass men with grenades",
+		"what": "Cutlass men with grenades",
 		"desc": "The Brethren's door-openers: cutlass men with a pair of grenades each, thrown at a gate or a packed deck before the rush. They burst 3 m wide and shake the whole unit they land among; after the second throw they are cutlass men, unarmoured and fierce, and brittle under fire.",
 		"good_vs": "A shut gate, men packed behind a barricade or on a deck, musketeers and gun crews they reach.",
 		"weak_vs": "Formed pikes, volleys and cannon on the approach, cavalry in the open.",
@@ -1877,10 +1877,10 @@ const WEST_LATE: Array[Dictionary] = [
 		"climb": 13,
 	},
 	{
-		"key": "canoe_raiders", "line": "light", "pack": "west", "tier": 2, "name": "Canoe Raiders", "short": "Raiders",
+		"key": "canoe_raiders", "role": "skirmish", "line": "light", "pack": "west", "tier": 2, "name": "Canoe Raiders", "short": "Raiders",
 		"icon": 32, "sprite": 4, "sprite_set": 31,
 		"size": 60, "files0": 15,
-		"role": "Amphibious javelin raiders",
+		"what": "Amphibious javelin raiders",
 		"desc": "Miskito paddlers with javelins and a club, quick as deer and at home in the shallows. On the campaign map a war party of nothing but raiders paddles the coast at a walk and lands anywhere, but a warship that sights it sinks it. On the field they throw and fall back into cover.",
 		"good_vs": "Gun crews and musketeers caught reloading, skirmishers, flanks reached through the woods.",
 		"weak_vs": "Volleys and cannon in the open, cavalry, a sustained melee.",
@@ -1902,10 +1902,10 @@ const WEST_LATE: Array[Dictionary] = [
 		"climb": 11,
 	},
 	{
-		"key": "holcan", "line": "heavy", "pack": "west", "tier": 2, "name": "Holcan Warriors", "short": "Holcan",
+		"key": "holcan", "role": "shock", "line": "heavy", "pack": "west", "tier": 2, "name": "Holcan Warriors", "short": "Holcan",
 		"icon": 32, "sprite": 0, "sprite_set": 32,
 		"size": 60, "files0": 15,
-		"role": "Shock foot",
+		"what": "Shock foot",
 		"desc": "The Itza's war-chiefs' picked men: quilted cotton, a tall fan of feathers and the great obsidian-edged macuahuitl swung in both hands. They hit a line harder than any other foot in the Indies and the sight of the charge shakes the men it falls on, but they wear no armour and give way to a volley and to horse.",
 		"good_vs": "A line or a flank in melee, men already shaken, musketeers and gun crews they reach.",
 		"weak_vs": "Volleys and cannon on the way in, pike fronts, cavalry.",
@@ -1922,10 +1922,10 @@ const WEST_LATE: Array[Dictionary] = [
 		"climb": 13,
 	},
 	{
-		"key": "mortar", "line": "mortar", "pack": "west", "tier": 1, "name": "Mortars", "short": "Mortars",
+		"key": "mortar", "role": "guns_siege", "line": "mortar", "pack": "west", "tier": 1, "name": "Mortars", "short": "Mortars",
 		"icon": 29, "sprite": 6, "sprite_set": 25, "engine_set": 33,
 		"size": 12, "files0": 3,
-		"role": "Siege artillery (mortars)",
+		"what": "Siege artillery (mortars)",
 		"desc": "Three squat iron mortars, four gunners to each. A hollow shell climbs high over walls, houses and friends and bursts 4 m wide where it lands: it kills a knot of men, wrecks what they hide behind and breaks a gate or a wall in a few hits. Hopeless against anything that moves; the shortest range of 60 m, a minute to reload, the slowest to haul.",
 		"good_vs": "Forts, walls, bastions and held houses, packed blocks and batteries standing still.",
 		"weak_vs": "Anything that moves, cavalry and foot that reach it, being counter-battered.",
@@ -2049,7 +2049,8 @@ static func _build_types() -> Array[Dictionary]:
 			for k in CMD_FIELDS:
 				row[k] = 0
 			row["icon"] = 6
-			row["role"] = "Heavy cavalry"
+			row["what"] = "Heavy cavalry"
+			row["role"] = "horse_shock"
 			row["desc"] = str(t["blurb"])
 		out.append(row)
 	first = out.size()
@@ -2133,6 +2134,8 @@ static func _derived(row0: Dictionary, b: int, line: String, size: int, t: Dicti
 	for k in ["key", "name", "short"]:
 		row[k] = t[k]
 	row["desc"] = str(t["blurb"]) + " " + str(row0["desc"])
+	if t.has("role"):
+		row["role"] = t["role"]
 	row["base"] = b
 	row["tier"] = tier
 	row["line"] = line
@@ -2198,6 +2201,59 @@ static func text(ty: int, key: String) -> String:
 
 static func cls(ty: int) -> int:
 	return stat(ty, "cls")
+
+
+## The role of a row (a key of ROLES; view and pickers only: no sim rule reads it yet).
+static func role(ty: int) -> String:
+	return str(TYPES[ty].get("role", ""))
+
+
+## The role table row of a type.
+static func role_info(ty: int) -> Dictionary:
+	return ROLES.get(role(ty), {})
+
+
+## The selection filter group of a type (a FILTER_GROUPS key): its role's group, except that a
+## mounted command row (a general's guard, a mounted hero) goes under "horse".
+static func filter_group(ty: int) -> String:
+	var r := role(ty)
+	if r == "command" and stat(ty, "mount") != MOUNT_FOOT:
+		return "horse"
+	return str(ROLES.get(r, {}).get("group", "line"))
+
+
+## The role keys in display order (the Roles page, the book's groups).
+const ROLE_ORDER: Array[String] = ["line", "skirmish", "missile", "shock", "horse_shock", "horse_skirmish",
+	"guns_field", "guns_siege", "command", "beast"]
+
+## The selection bar's filter groups, in order: key -> label. A role's "group" is one of these
+## (command: a mounted general under horse, a foot hero or agent under line; beast: horse).
+const FILTER_GROUPS := {"line": "Line", "skirmish": "Skirmish", "shock": "Shock", "horse": "Horse", "guns": "Guns"}
+
+## Role table (docs/design/battle_sim.md "Roles and abilities"). View only: colour is a hex string,
+## "plays" the two-line "plays as" text of the badge's tooltip, the book and the Keys page.
+const ROLES := {
+	"line": {"name": "Line", "short": "Line", "glyph": "line", "colour": "5b8fd6", "group": "line",
+		"plays": "Hold formation: volley or fight at will, some men ducking for partial cover, no explosives.\nThe blade when engaged; the anvil of the army."},
+	"skirmish": {"name": "Skirmishers", "short": "Skirm", "glyph": "scatter", "colour": "7fb069", "group": "skirmish",
+		"plays": "Loose order, every man to cover; occupy houses, ambush, fall back when charged.\nShort abilities: pistols, grenades, javelins."},
+	"missile": {"name": "Missile", "short": "Missile", "glyph": "bow", "colour": "d6a64b", "group": "skirmish",
+		"plays": "Formed volleys at range, no cover craft.\nHelpless in melee: keep them behind the line."},
+	"shock": {"name": "Shock", "short": "Shock", "glyph": "blade", "colour": "d65b4f", "group": "shock",
+		"plays": "The charge, a breach, a door, a gate.\nPoor at holding: send them in, do not leave them standing."},
+	"horse_shock": {"name": "Shock horse", "short": "Horse", "glyph": "horse", "colour": "b8743a", "group": "horse",
+		"plays": "Lancers and heavy horse: the charge on a flank or a loosened front.\nStopped by pikes and spears."},
+	"horse_skirmish": {"name": "Light horse", "short": "Lt horse", "glyph": "horse_dot", "colour": "c9a23a", "group": "horse",
+		"plays": "Ride in, fire, retire; charge only when ordered.\nHunt skirmishers and guns, run down the broken."},
+	"guns_field": {"name": "Field guns", "short": "Guns", "glyph": "gun", "colour": "8f8f98", "group": "guns",
+		"plays": "Shoot at men: bolts, scorpions, falconets, culverins.\nCheap and fierce behind the line, helpless if reached."},
+	"guns_siege": {"name": "Siege guns", "short": "Siege", "glyph": "gun_big", "colour": "6e6e78", "group": "guns",
+		"plays": "Shoot at walls and buildings: stone throwers, heavy guns, mortars.\nSlow to set up; pull down what men hide behind."},
+	"command": {"name": "Command", "short": "Cmd", "glyph": "flag", "colour": "e0c040", "group": "line",
+		"plays": "Generals, heroes and agents: their presence steadies or empowers the men near.\nKeep them out of the fighting; losing them hurts."},
+	"beast": {"name": "Beasts", "short": "Beast", "glyph": "beast", "colour": "a0623c", "group": "horse",
+		"plays": "Elephants and camels: terror and weight against horse and foot.\nUncontrolled when hurt: keep your own ranks clear."},
+}
 
 
 ## The content pack a row belongs to ("rome" or "west"). View and pickers only.

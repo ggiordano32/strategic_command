@@ -17,6 +17,8 @@ const IconView := preload("res://game/unit_icon_view.gd")
 const CData := preload("res://campaign/cdata.gd")
 const Traits := preload("res://game/unit_traits.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
+const RoleBadge := preload("res://game/role_badge.gd")
+const RoleTile := preload("res://game/role_tile.gd")
 
 const M := 1024.0
 const TICKS_PER_SEC := 10.0
@@ -72,6 +74,7 @@ var _box: VBoxContainer
 var _icon: IconView
 var _name: Label
 var _role: Label
+var _rbadge: RoleTile
 var _glyphs: VBoxContainer
 var _desc: Label
 var _good: Label
@@ -95,6 +98,10 @@ func _init() -> void:
 	_box.add_child(head)
 	_icon = IconView.new(0, side_color, 60.0)
 	head.add_child(_icon)
+	_rbadge = RoleTile.new("", 34.0)
+	_rbadge.name = "role_badge"
+	_rbadge.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	head.add_child(_rbadge)
 	var names := VBoxContainer.new()
 	head.add_child(names)
 	_name = _label("", 26, Color.WHITE)
@@ -132,9 +139,13 @@ func set_unit_type(ty: int, p_side_color: Color = Color(0.35, 0.6, 1.0)) -> void
 	scroll_vertical = 0
 	_icon.set_icon(Icons.icon_of(ty), side_color)
 	_name.text = str(UT.TYPES[ty]["name"])
-	var role := UT.text(ty, "role")
+	var role := UT.text(ty, "what")
 	var cname := _class_name(UT.cls(ty))
 	_role.text = role if role.to_lower() == cname else "%s  -  %s" % [role, cname]
+	var rk := UT.role(ty)
+	_rbadge.set_role(rk)
+	if rk != "":
+		_role.text = "%s: %s" % [str(UT.ROLES[rk]["name"]), _role.text]
 	_desc.text = UT.text(ty, "desc")
 	_fill_glyphs(ty)
 	_good.text = "Good against: " + UT.text(ty, "good_vs")

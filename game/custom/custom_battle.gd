@@ -557,8 +557,10 @@ func _build_picker() -> void:
 			if UT.line_of(ty) != line or (line == "general" and UT.stat(ty, "cmd_r") <= 0) or UT.pack_of(ty) != pack:
 				continue  # (not the plain bodyguard: a campaign army's second general)
 			var key := UT.key_of(ty)
-			var b := Kit.button("%s  %d" % [UT.text(ty, "name"), UT.price_of(ty)], func(): _pick(key), 0, 13)
+			var b := Kit.button("%s  %d  %s" % [UT.text(ty, "name"), UT.price_of(ty), _role_short(ty)], func(): _pick(key), 0, 13)
 			b.name = "pick_" + key
+			if UT.role(ty) != "":   # the role's "plays as" is the tip
+				Kit.tip(b, str(UT.ROLES[UT.role(ty)]["name"]), str(UT.ROLES[UT.role(ty)]["plays"]))
 			f.add_child(b)
 		list.add_child(f)
 	# Ammunition wagons (line "siege", not in UT.LINES): they refill the
@@ -573,6 +575,11 @@ func _build_picker() -> void:
 			b.tooltip_text = UT.text(ty, "desc")
 			wf.add_child(b)
 	list.add_child(wf)
+
+
+## The role's short name for the picker's buttons ("" for a row without one).
+static func _role_short(ty: int) -> String:
+	return "[%s]" % str(UT.ROLES[UT.role(ty)]["short"]) if UT.ROLES.has(UT.role(ty)) else ""
 
 
 ## Switch the setting (unit pack): standard armies of the pack, its picker.
