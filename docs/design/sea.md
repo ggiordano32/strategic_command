@@ -448,3 +448,65 @@ m INTO the sim's land: the water is drawn over sim land, never land over sim
 water, so no ship ever lies over drawn land (`SeaLook.shore_ok`, tested).
 Graphics Low: the depth colouring and a still shore wash, no animation, no
 time uniform. Tests: `tests/sea_look_test.gd`; frame times in STATUS.
+
+## Rome's navy (plan, 2026-10-23; goal 5)
+
+The Rome pack gets fleets on the Caribbean machinery. Three steps, in order;
+the first two can run side by side once the galley rows exist.
+
+**R1, galleys in the sea sim (`sim/sea_types.gd`, `sim/sea_sim.gd`).**
+Three oared rows, keyed as the campaign will key them: `lembos` (the light
+Illyrian galley: 20 m, fast, a handful of marines, no ram worth the name),
+`trireme` (37 m, 200 crew, a bronze ram, 20 marines), `quinquereme` (45 m,
+300 crew, the ram, 120 marines; Rome's carry the corvus). No guns: the
+exchange before contact is the deck lines' missiles (`DECK_LINE_SHOT`
+archers / javelins / slings) at short range, each reload. New row fields:
+`ram` (hull damage quality at full dash, 0 none), `corvus` (1: a boarding
+bridge), `marines` (built-in deck fighters, added to the unit's troops at
+build), `dash` (seconds of ramming speed before the rowers tire). Oars
+already exist (`oars` 1, the wind ignored, `drive` 100 on every heading).
+Oared pace: the sail-setting order (`O_SAILS`) becomes the stroke for a
+rowed ship, 0 rest, 1 cruise (65 % of `vmax`), 2 dash (`vmax`, draining the
+dash meter, which refills at cruise at a third of the rate; at an empty
+meter she drops to cruise). Ramming, in `_contacts`: when a ram ship's bow
+cone (30 degrees either side of her heading) meets another hull closing at
+RAM_MIN or more, the struck ship takes `ram` x closing-speed factor hull
+damage, doubled on her beam (the strike angle within 45 degrees of
+perpendicular to her heading), halved bow to bow (both take it), and the
+rammer backs water: speed zero for RAM_BACK seconds, then free; the ram has
+a cool-down so a push is not a ram. A ship at hull 0 sinks as now. The
+corvus: a `corvus` ship within grapple range of an enemy at any relative
+speed drops it and boards at once with `DECK_BONUS_PCT` for her side (the
+grapple rule today wants a low relative speed); Rome only. Oared-ship AI:
+a ram ship steers for the target's beam at a right angle and dashes for the
+last 60 m (the diekplous: when faster than the target, she passes through
+and turns for the stern), a corvus ship closes and boards, a lembos keeps
+clear of heavier ships and hunts crippled ones, galleys flee straight away
+from the enemy rather than downwind, and a tired crew (empty meter) does
+not start a ram run. State: the dash meter and the ram cool-down are ints
+in the hashed state and in the snapshot. Pins: every existing sea pin is
+unchanged (no sail-ship rule moves); new `sea_checks` cases for a ram, a
+corvus boarding and a dash; `sea_probe` learns a `--ships=` list so the
+galleys can be measured mirrored.
+
+**R2, Rome fleets on the campaign (`campaign/data/rome_ships.gd`, the view).**
+`SHIPS` for the Rome pack: the three galleys and a `corbita` (a sailing
+merchantman: carry 2, no fight, the transport), costs and upkeep scaled from
+the West rows, `yard` levels, `factions` (the corvus quinquereme Rome's; the
+Punic and Greek yards build the plain one and better crews via
+`SEA_CREWS`), `START_YARDS` at Ostia / Carthage / Syracuse / Pella /
+Alexandria, `START_FLEETS` modest (Carthage the largest), Mediterranean
+wind constants (a north-westerly, lighter than the trades), no flota, no
+pirates, no storms (Illyrian pirates later, as a lane-raid option).
+`DECK_CREWS` Rome keys (legionaries / Punic marines / Greek epibatai). The
+custom sea setup's ship list per pack, the Ship book's galley page (the
+stroke, ramming, the corvus), the rig drawing for oars (banks of oars, one
+mast with the sail furled), the sea look's Mediterranean palette (no palms;
+the tropic flag is per pack). `CFleet.init` for Rome bumps the Rome pins
+(`ROME_20`, the format-8 campaign_sim pins) and `CState.VERSION`; the
+West pins stay.
+
+**R3, Rome sea maps.** The coast and island rules are pack-agnostic; R3 is
+the look (shore colours, props) and a check of each lane's cells for a
+sensible coast mask. Done when a Rome campaign fights a sea battle from a
+lane raid with the corvus deciding it.

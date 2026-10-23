@@ -41,11 +41,13 @@ generation, cover) flow back to the Mediterranean campaign for free.
    ocean trade lanes (drawn with the map work of 2026-10-22; their trade,
    raids and blockades built the same day, row "Lane trade, raids and
    blockades") are written pack-agnostic so Rome's navy uses them as the
-   Caribbean does.
+   Caribbean does. The plan (R1 galleys in the sim, R2 Rome fleets on the
+   campaign, R3 maps) is `docs/design/sea.md` "Rome's navy (plan)"; R1
+   started 2026-10-23.
 
 ## The current list
 
-Thursday's list (2026-10-22), all landed on 2026-10-22 and committed except where noted; the original wording is in `docs/history/overview.md`.
+Thursday's list (2026-10-22), all landed on 2026-10-22 and committed (the last three in the night of the 23rd); the original wording is in `docs/history/overview.md`.
 
 | # | Item | State |
 |---|---|---|
@@ -56,9 +58,9 @@ Thursday's list (2026-10-22), all landed on 2026-10-22 and committed except wher
 | 5 | UI theme pass 2 (battle HUD, sea screen) | Landed (`3d71680`): row "In-game UI theme, pass 2" |
 | 6 | Rome walls 1-2 | Landed (`07b9d27`): row "Rome walls 1-2 balance pass" |
 | 7 | Same day, owner requests: waypoints (`f690bdf`), reading a town battle (`4fc9b9d`), men turn to their march (`1431401`), beaches and cliffs (`bd50be8`), table sea on the bathymetry (`53da70e`), ships popping while panning (`80a4376`), ambient beds (`8e7986c`, `62e1969`) | Landed |
-| 8 | Auto-resolve refit (the formula fitted to fought sieges and field battles) | Built 2026-10-22, not committed: row "Auto-resolve refit" |
-| 9 | Lane rules: trade along the sea lanes, raiding and blockading (`fraid`, `fblockade`), the flota on its lane, the AI's raids | Built 2026-10-22, not committed: row "Lane trade, raids and blockades" |
-| 10 | Campaign AI odds as win chances after the refit (attack 45 / 55 / 65 %, retreat below 20 / 30 / 35 %) | Built 2026-10-22, not committed: row "Campaign AI odds as win chances" |
+| 8 | Auto-resolve refit (the formula fitted to fought sieges and field battles) | Landed (`c94d4a9`): row "Auto-resolve refit" |
+| 9 | Lane rules: trade along the sea lanes, raiding and blockading (`fraid`, `fblockade`), the flota on its lane, the AI's raids | Landed (`630a398`): row "Lane trade, raids and blockades" |
+| 10 | Campaign AI odds as win chances after the refit (attack 45 / 55 / 65 %, retreat below 20 / 30 / 35 %) | Landed (`68a3016`): row "Campaign AI odds as win chances" |
 
 Next, in order (the open items of the list; detail in the areas below): (1) the Rome navy (goal 5), (2) device checks on the Tab S7 / phone of the week (fog look and markers, sea top bar, Game server page, `?prof-tap=3`, waypoints, the Paths overlay, crests, the raid / blockade taps and the raided-lane look), (3) Hunyuan characters wired in, (4) sea balance follow-ons, (5) auto-resolve refit to pass T and the Rome walls results.
 
