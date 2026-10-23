@@ -10,6 +10,7 @@ const Battle := preload("res://game/battle.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 
 const SoldierLayer := preload("res://game/soldier_layer.gd")
+const SpriteAtlas := preload("res://game/sprite_atlas.gd")
 
 ## A move order names the unit's front centre: this many metres ahead of a
 ## 60-man block's centre (measured on the skirmish's heavy swords).
@@ -243,5 +244,13 @@ func _run() -> void:
 	_check(shuffle > 0, "dressing the line: %d of %d men choose a sidestep or backstep" % [shuffle, sim.u_alive[u]])
 	await _both("a line dressing", c, 12.0)
 	await _shot("line_dressing")
+	# Every atlas set (the 6-bit field, ids up to 33 and the palette above it):
+	# the unit drawn with each set, both paths the same pixels.
+	var pal := 10
+	for sid in range(1, SpriteAtlas.SETS.size() + 1):
+		b.soldiers._unit_look[u] = sid + 64 * pal
+		b.soldiers._build_runs()
+		b.soldiers.upload()
+		await _both("set %d %s" % [sid, SpriteAtlas.SETS[sid - 1]], c, 12.0)
 	print("RESULT: ", "PASS" if _ok else "FAIL")
 	quit(0 if _ok else 1)

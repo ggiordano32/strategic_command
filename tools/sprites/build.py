@@ -658,10 +658,74 @@ def crew_carry(action, i, s, c, add):
     add("forearm.R", "y", 25)
 
 
+def grenade_attack(i, add):
+    """Grenadier (2026-10-23): the lit grenade in the right hand drawn back
+    over the shoulder (0), released with a step and a lean (1, the grenade
+    leaves), follow-through (2), recover (3)."""
+    add("spine", "z", [-18, 24, 20, 6][i])
+    add("spine", "y", [-6, 8, 6, 2][i])
+    add("head", "z", [10, -8, -6, -2][i])
+    add("upper_arm.R", "y", [105, -62, -70, -22][i])
+    add("forearm.R", "y", [-100, 10, 14, 10][i])
+    add("upper_arm.L", "y", [-8, -26, -30, -12][i])
+    add("thigh.L", "y", [-8, -28, -30, -12][i])
+    add("thigh.R", "y", [8, 14, 18, 8][i])
+    add("shin.R", "y", [8, 18, 22, 10][i])
+    return [[-0.06, 0, 0], [0.14, 0, 0], [0.18, 0, 0], [0.08, 0, 0]][i]
+
+
+def grenade_carry(action, i, s, c, add):
+    add("upper_arm.R", "y", -18)
+    add("forearm.R", "y", -22)
+
+
+def boarder_attack(i, add):
+    """Boarding grenadier: the cutlass cut as the shared attack, with the
+    off hand drawing back and throwing a grenade (released at frame 1)."""
+    add("spine", "z", [-22, 14, 26, 6][i])
+    add("spine", "y", [-4, 4, 8, 2][i])
+    add("upper_arm.R", "y", [26, -34, -58, -14][i])
+    add("forearm.R", "y", [-14, 30, 52, 12][i])
+    add("upper_arm.L", "y", [90, -50, -20, -4][i])
+    add("forearm.L", "y", [-90, 10, 10, 6][i])
+    add("thigh.L", "y", [-10, -25, -30, -12][i])
+    add("thigh.R", "y", [10, 15, 18, 8][i])
+    add("shin.R", "y", [10, 20, 25, 10][i])
+    return [[-0.05, 0, 0], [0.10, 0, 0], [0.20, 0, 0], [0.05, 0, 0]][i]
+
+
+def boarder_carry(action, i, s, c, add):
+    add("forearm.L", "y", -25)
+
+
+def twohand_attack(i, add):
+    """Holcan: the long club in both hands (forearms turned in to it),
+    raised overhead (0, 1) and brought down in a cut (2), recover (3)."""
+    add("forearm.L", "z", -40)
+    add("forearm.R", "z", 40)
+    add("spine", "z", [6, 0, 8, 2][i])
+    add("spine", "y", [-12, -8, 12, 4][i])
+    add("upper_arm.L", "y", [95, 70, -40, -8][i])
+    add("upper_arm.R", "y", [95, 70, -44, -10][i])
+    add("forearm.L", "y", [-30, -20, 30, 8][i])
+    add("forearm.R", "y", [-30, -20, 30, 8][i])
+    add("thigh.L", "y", [-8, -12, -28, -10][i])
+    add("thigh.R", "y", [8, 10, 16, 6][i])
+    add("shin.R", "y", [6, 8, 20, 8][i])
+    return [[-0.06, 0, 0], [-0.04, 0, 0], [0.18, 0, 0], [0.06, 0, 0]][i]
+
+
+def twohand_carry(action, i, s, c, add):
+    add("forearm.L", "z", -40)
+    add("forearm.R", "z", 40)
+
+
 MISSILE_ATTACK = {"musket": musket_attack, "pistol": pistol_attack, "archer": archer_attack, "belly": belly_attack,
-                  "javelin": javelin_attack, "sling": sling_attack, "crew": crew_attack}
+                  "javelin": javelin_attack, "sling": sling_attack, "crew": crew_attack,
+                  "grenade": grenade_attack, "boarder": boarder_attack, "twohand": twohand_attack}
 MISSILE_CARRY = {"musket": musket_carry, "pistol": pistol_carry, "archer": archer_carry, "belly": belly_carry,
-                 "javelin": javelin_carry, "sling": sling_carry, "crew": crew_carry}
+                 "javelin": javelin_carry, "sling": sling_carry, "crew": crew_carry,
+                 "grenade": grenade_carry, "boarder": boarder_carry, "twohand": twohand_carry}
 
 
 def humanoid_pose(action, i, n, mounted=False, variant="", stand=False, fall="thrown"):

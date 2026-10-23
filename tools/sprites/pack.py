@@ -408,7 +408,7 @@ def main():
                     "sets": atl["sets"], "props": props, "actions": list(SPEC["actions"].keys()),
                     "fps": [a["fps"] for a in SPEC["actions"].values()],
                     "palettes": list(SPEC["palettes"].keys()), "table": table, "prop_table": prop_tab}
-    assert len(atl["sets"]) <= 31, "sprite sets are a 5-bit field (soldiers.gdshaderinc)"
+    assert len(atl["sets"]) <= 63, "sprite sets are a 6-bit field (soldiers.gdshaderinc)"
     assert len(SPEC["palettes"]) <= 16, "palettes are a 4-bit field (soldiers.gdshaderinc)"
     print("atlas %dx%d: %d sets + %d props x %d actions" % (size[0], size[1], len(atl["sets"]), len(props), len(SPEC["actions"])))
     write_game_tables(man["atlas"], SPEC["palettes"])

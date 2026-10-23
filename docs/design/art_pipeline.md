@@ -420,3 +420,20 @@ holds the values: diorama amb 0.50, key 0.88, rim 0.22, outline 0.55, sat 1.22, 
   lit sides, a soft shadow on the table (28 falloff rings, drawn as rings only), table of planks with seams and grain
   (detail to 450 m out; the board's own span is not painted, it is under the ground).
 - Frame time bench_4000_city High GPU paused (1920x1080, mean of 8 s): 4.76 ms before, 4.8 ms after.
+
+### Seven Caribbean sets and the 6-bit set field (2026-10-23)
+
+- **The field.** Sprite set ids are 6 bits (up to 63; 33 used). Texture path: unit flags bits 12-17 set, 18-21 palette
+  (16 palettes), 22 fired, 23 gun unit (the flash bits moved up one; all below 2^24, exact in the float decode); the
+  engine-set block is masked with 63. CPU path: `INSTANCE_CUSTOM.z` = set + 64 x palette (was 32). Touched: `soldiers.gdshaderinc`,
+  `soldier_layer.gd` (`_unit_look`, `_unit_elook`, `_upload_gpu`), `pack.py` (limit 63), `spec.json` atlas `_doc`.
+  `tests/soldier_facing_test.gd` now draws every set (palette 10) on both paths and compares pixels.
+- **Sets** (ids in `atlas.sets` order): 27 grenadiers (fur-and-plate cap, turnbacks, grenade pouch, musket slung on the back;
+  pose `grenade`: attack 1 is the release, the grenade shows in frames 0-1 with an ember), 28 dragoons (mounted, round hat with
+  cockade, short musket across the saddle, rider pose `musket`, flash on frame 1), 29 coureurs (fur cap with a tail, hide
+  coat with fringes, sash, long musket, pose `musket`), 30 boarding_grenadiers (cutlass body, wide sash, grenade in the off hand;
+  pose `boarder`: the cutlass cut with the off hand throwing the grenade, released at frame 1), 31 canoe_raiders (native
+  warriors body, feather headband, a javelin in hand and two across the back; pose `javelin`), 32 holcan (quilted cotton armour,
+  a tall fan of feathers, a long macuahuitl in both hands; pose `twohand`: raised overhead, cut at frame 2), 33 mortar (engine
+  set, rig `mortar_engine`, anim `cannon`: short fat barrel elevated 65 degrees on a wooden bed with painted rails; attack 1 is
+  the recoil and flash). Atlas 1024x2156, 1.2 MB of PNG. New poses in `build.py`: `grenade`, `boarder`, `twohand`.

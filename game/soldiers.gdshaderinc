@@ -13,9 +13,9 @@
 //   0 pos_x, 1 pos_y, 2 prev_x, 3 prev_y, 4 facing, 5 state, 6 unit_of,
 //   7 unit flags (indexed by unit: bit0 side, bit1 selected, bit2 under
 //     fire, bit3 shooting, bits 4-7 sprite, bits 8-11 engine sprite,
-//     bits 12-16 sprite set, bits 17-20 palette, bit 21 fired a gun shot
-//     in the last 0.3 s, bit 22 a powder-weapon unit),
-//   8 unit engine set (indexed by unit, 5 bits; its own block: the bits above
+//     bits 12-17 sprite set (6 bits: 63 sets), bits 18-21 palette, bit 22 fired a gun shot
+//     in the last 0.3 s, bit 23 a powder-weapon unit),
+//   8 unit engine set (indexed by unit, 6 bits; its own block: the bits above
 //     24 do not survive the float decode)
 //
 // CPU-fed variant (render_mode skip_vertex_transform): the same sim ints,
@@ -23,7 +23,7 @@
 // soldier_layer.gd, read back through MODEL_MATRIX (layer node at identity):
 //   [3].xy current position, [0].xy previous position, [1].x facing,
 //   [1].y state; INSTANCE_CUSTOM.x sprite, .y side + 2 selected + 4 under
-//   fire + 8 shooting + 16 fired + 32 gun, .z sprite set (engines: engine set) + 32 x palette, .w the instance's
+//   fire + 8 shooting + 16 fired + 32 gun, .z sprite set (engines: engine set) + 64 x palette, .w the instance's
 //   index. No texture fetch, uniform array, int uniform or bit operator in
 //   the vertex stage. Both variants draw the same pixels.
 //
@@ -355,9 +355,9 @@ void vertex() {
 		bool shoot = mod(floor(fl / 8.0), 2.0) > 0.5;
 		bool fired = mod(floor(fl / 16.0), 2.0) > 0.5;
 		bool gun = mod(floor(fl / 32.0), 2.0) > 0.5;
-		float lk = floor(INSTANCE_CUSTOM.z + 0.5);  // sprite set + 32 x palette
-		int set = int(mod(lk, 32.0));
-		int pal = int(floor(lk / 32.0));
+		float lk = floor(INSTANCE_CUSTOM.z + 0.5);  // sprite set + 64 x palette
+		int set = int(mod(lk, 64.0));
+		int pal = int(floor(lk / 64.0));
 		place(MODEL_MATRIX[3].xy, MODEL_MATRIX[0].xy, MODEL_MATRIX[1].x, hd, st, spr, sprite_rect(spr),
 			side, sel, fire, set, pal, shoot, fired, gun, INSTANCE_CUSTOM.w, uv, pos, col, look);
 		// skip_vertex_transform: pos is already in the layer's (= canvas) space.
@@ -370,9 +370,9 @@ void vertex() {
 		int spr = clamp(st >= 6 ? bitfield(flags, 256, 16) : bitfield(flags, 16, 16), 0, SPRITES - 1);
 		place(cur, prv, float(fetch_int(4, i)), hd, st, spr, spr_rect[spr], bitfield(flags, 1, 2),
 			bitfield(flags, 2, 2) != 0, bitfield(flags, 4, 2) != 0,
-			st >= 6 ? bitfield(fetch_int(8, uidx), 1, 32) : bitfield(flags, 4096, 32),
-			bitfield(flags, 131072, 16), bitfield(flags, 8, 2) != 0,
-			bitfield(flags, 2097152, 2) != 0, bitfield(flags, 4194304, 2) != 0, float(i), uv, pos, col, look);
+			st >= 6 ? bitfield(fetch_int(8, uidx), 1, 64) : bitfield(flags, 4096, 64),
+			bitfield(flags, 262144, 16), bitfield(flags, 8, 2) != 0,
+			bitfield(flags, 4194304, 2) != 0, bitfield(flags, 8388608, 2) != 0, float(i), uv, pos, col, look);
 		// Instance transforms are identity; cancel whatever origin this
 		// instance has (the engine applies MODEL_MATRIX after this).
 		VERTEX = pos - MODEL_MATRIX[3].xy;

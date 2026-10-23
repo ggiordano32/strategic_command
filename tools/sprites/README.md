@@ -74,7 +74,7 @@ sling / belly, `cord` parts, `show` / `hide` frame lists). Step 1d: 9 elephant,
 10 camel, 11 camel_archer, 12 crew (every battery, tower engine and wagon
 crew row), and on artillery rows a second field `engine_set` for the
 engines (13 bolt_thrower: bolts and tower bolts, 14 stone_thrower: stones
-and tower stones, 15 scorpion). The set fields are 5 bits (31 sets). `atlas.props` (cart, wagon, draft_horse)
+and tower stones, 15 scorpion). The set fields are 6 bits (63 sets; widened 2026-10-23). `atlas.props` (cart, wagon, draft_horse)
 are packed too but not in the shaders' table: `PROPS` in sprite_atlas.gd,
 drawn by game/overlay.gd (wagons). Still procedural: dogs, characters,
 siege equipment (ladders, ram, tower, mantlets). The palette is the unit's faction's (palette keys = the
@@ -92,10 +92,14 @@ coat, pose `pistol`: both arms out, flash on frame 1), 23 native_warriors
 (feather ring, paint, shield, macuahuitl), 24 native_bowmen (archer pose), 25
 w_crew (gun crew, `crew` pose), 26 cannon (engine set, rig `cannon_engine`,
 anim `cannon`: attack 0 loaded, 1 fired and recoiled, 2 / 3 run out; carriage
-in the primary colour). The shader look is 5-bit sets (set + 32 x palette; the engine set
-in texture block 8); pack.py allows 31 sets and 16 palettes. Palettes 9-16: new_spain,
+in the primary colour). The shader look is 6-bit sets (set + 64 x palette; the engine set
+in texture block 8); pack.py allows 63 sets and 16 palettes. Palettes 9-16: new_spain,
 tierra_firme, england, france, dutch, brethren, itza, miskito. Render about
 2 s a unit, the 11 sets 25 s; atlas now 1024x1804, 913 KB of PNG.
+
+Caribbean batch 1 (2026-10-23, ids 27-33): 27 grenadiers (pose `grenade`), 28 dragoons (mounted, rider pose `musket`),
+29 coureurs (pose `musket`), 30 boarding_grenadiers (pose `boarder`), 31 canoe_raiders (pose `javelin`), 32 holcan (pose
+`twohand`), 33 mortar (engine set, rig `mortar_engine`, anim `cannon`).
 
 Rigs name their animation set (`anim`: humanoid, horse (also the camel
 rig), elephant, bolt / scorpion / onager (engines), cart / wagon (props)).
