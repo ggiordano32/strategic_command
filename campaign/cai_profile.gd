@@ -69,7 +69,7 @@ const VAL_KEY := 16             # ... for a key city
 const HUMAN_VALUE_PCT := 17     # regions of the players count this % of their value
 # Concentration of force and support (4.4).
 const ATTACK_RATIO := 18        # % of the target's defence needed to attack (formats 1-5)
-const ATTACK_RATIO6 := 19       # ... (format 6, the continuous overworld)
+const ATTACK_RATIO6 := 19       # ... (format 6 until 2026-10-22; now ATTACK_WIN: unused)
 const COMMIT_PCT := 20          # commit armies until this % of the ratio is met
 const SIEGE_RATIO_PCT := 21     # lay siege with this % of the ratio (and support near)
 const GATHER_PCT := 22          # (6) gather a march short: within this % of a turn's march of the target
@@ -167,7 +167,16 @@ const TEAM_PROPOSE := SK_SUPPORT + 23
 # CHAR_DIPLOMAT (1) raises a diplomat for the main army. Never an assassin.
 const CHAR_HERO := SK_SUPPORT + 24
 const CHAR_DIPLOMAT := SK_SUPPORT + 25
-const N_KNOBS := SK_SUPPORT + 26
+# Odds as win chances (format 6; docs/AI.md 12.1, 2026-10-22): the formula's
+# predicted chance (CBattle.odds_of, the pack's WIN_EXP curve), not a
+# strength ratio, so a threshold keeps its meaning when the curve is refitted.
+# Each is shifted 10 points by the aggression setting (cai.gd _att / _ret).
+const ATTACK_WIN := SK_SUPPORT + 26   # (6) assault / storm a siege / sally / land when the attackers' chance is at least this %
+const COMMIT_WIN := SK_SUPPORT + 27   # (6) ... sending armies (strongest first) until the chance reaches this %
+const SIEGE_WIN := SK_SUPPORT + 28    # (6) lay siege with the armies there now at this % (against the full siege kit) when more are coming
+const SCREEN_WIN := SK_SUPPORT + 29   # (6) an army screens a threatened city when its chance as the fortified defender is at least this %
+const SHELTER_WIN := SK_SUPPORT + 30  # (6) ... and shelters inside the walls when its chance there in the field is below this % (STANCES)
+const N_KNOBS := SK_SUPPORT + 31
 
 # Deliberate mistakes (docs/AI.md 4, "Deliberate mistakes (campaign)"),
 # rolled with CState.rand at the decision point (cai.gd _mistake); each is a
@@ -217,11 +226,11 @@ const KNOBS: Array = [
 	[SCREEN_NEAR, 2, 2, 2],
 	# Sieges and relief.
 	[SIEGE_PATIENCE, 0, 3, 3],
-	[SIEGE_ASSAULT_WIN, 0, 35, 50],
-	[RELIEF_WIN, 60, 60, 60],
-	[LIFT_WIN, 101, 50, 50],
+	[SIEGE_ASSAULT_WIN, 0, 30, 35],
+	[RELIEF_WIN, 45, 55, 65],
+	[LIFT_WIN, 80, 70, 65],
 	[IDLE_TURNS, 3, 3, 3],
-	[IDLE_WIN, 20, 35, 50],
+	[IDLE_WIN, 45, 55, 65],
 	# Stances: raids and hunting.
 	[RAID_WEALTH, 99, 4, 4],
 	[HUNT_COST, 13, 13, 13],
@@ -277,7 +286,7 @@ const KNOBS: Array = [
 	[SK_SUPPORT, 0, 0, 1],
 	[SK_HUNT_WIN, 0, 0, 75],
 	[SK_RALLY, 0, 0, 2],
-	[SK_SAFE_WIN, 0, 0, 70],
+	[SK_SAFE_WIN, 0, 0, 65],
 	[SK_SAFE_HOLD, 0, 0, 0],
 	[SK_SAFE_GAIN, 0, 0, 15],
 	[SK_REACH_DEF_PCT, 0, 0, 0],
@@ -285,8 +294,8 @@ const KNOBS: Array = [
 	[SK_ONE_FRONT, 0, 0, 1],
 	[SK_WAR_WEAK_PCT, 0, 0, 200],
 	[SK_WAR_GUARDED_PCT, 0, 0, 50],
-	[SK_STAGE_SAFE, 0, 0, 70],
-	[SK_INTERCEPT_WIN, 0, 0, 60],
+	[SK_STAGE_SAFE, 0, 0, 65],
+	[SK_INTERCEPT_WIN, 0, 0, 65],
 	[SK_STORM_RELIEF_WIN, 0, 0, 50],
 	[SK_COUNTER_MIX, 0, 0, 20],
 	[SK_COUNTER_SHARE, 0, 0, 25],
@@ -296,6 +305,16 @@ const KNOBS: Array = [
 	[BU_BUDGET_PCT, 0, 100, 100],
 	[BU_SAVE, 0, 1, 1],
 	[WAGON_MIN, 0, 3, 2],
+	# Odds as win chances (format 6, 2026-10-22; docs/AI.md 12.1): attack at
+	# 45 / 55 / 65 %, retreat below 20 / 30 / 35 % (LIFT_WIN, SK_SAFE_WIN and
+	# SK_STAGE_SAFE are the enemy's chance: 100 less ours). Skilled never
+	# shelters inside the walls (the refitted walls give an army inside no
+	# more than the field: measured, docs/AI.md 12.1).
+	[ATTACK_WIN, 45, 55, 65],
+	[COMMIT_WIN, 45, 85, 90],
+	[SIEGE_WIN, 45, 30, 35],
+	[SCREEN_WIN, 20, 30, 35],
+	[SHELTER_WIN, 20, 30, 0],
 ]
 
 ## Personality offsets [knob, CAUTIOUS, BALANCED, AGGRESSIVE] (docs/AI.md 5:
@@ -442,3 +461,22 @@ static func counter(key: String, f: int) -> int:
 
 static func reset_counters() -> void:
 	_counters = {}
+
+
+# ------------------------------------------------- decision log (test) ---
+# tests/ai_odds_probe.gd: every attack decision of the campaign AI with the
+# formula's predicted win chance (docs/AI.md 12.1). Outside the state like the
+# counters: never hashed, never read by a decision; off unless a test sets
+# log_on (then the extra odds are computed only for the log).
+static var log_on := false
+static var dlog: Array = []
+
+
+## Log one decision: {k kind, f, t target region, win formula %, go 1
+## launched / 0 refused, ...}; the turn is added by the caller's state.
+static func note(st: Dictionary, rec: Dictionary) -> void:
+	if not log_on:
+		return
+	rec["turn"] = int(st["turn"])
+	rec["skill"] = skill(st, int(rec["f"]))
+	dlog.append(rec)

@@ -58,6 +58,7 @@ Thursday's list (2026-10-22), all landed on 2026-10-22 and committed except wher
 | 7 | Same day, owner requests: waypoints (`f690bdf`), reading a town battle (`4fc9b9d`), men turn to their march (`1431401`), beaches and cliffs (`bd50be8`), table sea on the bathymetry (`53da70e`), ships popping while panning (`80a4376`), ambient beds (`8e7986c`, `62e1969`) | Landed |
 | 8 | Auto-resolve refit (the formula fitted to fought sieges and field battles) | Built 2026-10-22, not committed: row "Auto-resolve refit" |
 | 9 | Lane rules: trade along the sea lanes, raiding and blockading (`fraid`, `fblockade`), the flota on its lane, the AI's raids | Built 2026-10-22, not committed: row "Lane trade, raids and blockades" |
+| 10 | Campaign AI odds as win chances after the refit (attack 45 / 55 / 65 %, retreat below 20 / 30 / 35 %) | Built 2026-10-22, not committed: row "Campaign AI odds as win chances" |
 
 Next, in order (the open items of the list; detail in the areas below): (1) the Rome navy (goal 5), (2) device checks on the Tab S7 / phone of the week (fog look and markers, sea top bar, Game server page, `?prof-tap=3`, waypoints, the Paths overlay, crests, the raid / blockade taps and the raided-lane look), (3) Hunyuan characters wired in, (4) sea balance follow-ons, (5) auto-resolve refit to pass T and the Rome walls results.
 
@@ -98,7 +99,7 @@ One bullet per open item pulled from the rows' **Open:** texts; the bracket name
 - Raids: the AI raiding beside a garrisoned stack is legal but maybe too bold (an AI odds question). [paragraph "Raids on a player's city"]
 - Roads, rivers and hills: a tap on a crossing showing its name; contact across a river edge without a crossing. [row "Roads, rivers and hills on the overworld"]
 - N-player: per-army AI for AI allies on a player side; custom battles still two seats; Discord texts still say "ally". [section "Next session (week of 2026-10-13; paused 2026-10-10 midday)"]
-- Campaign AI: Skilled vs Average ~47 % (AI-competency pass); Epirus's start; the tuning backlog. [overview, "Tuning backlog"]
+- Campaign AI: Skilled vs Average ~47 % (AI-competency pass); Epirus's start; the tuning backlog. [overview, "Tuning backlog"] The AI's odds thresholds against the refitted curve: done (win chances); left: the West's Skilled margin over Average is within noise and its Average pacing sits at the band's top (60 battles a campaign over 24 seeds). [row "Campaign AI odds as win chances"]
 - Smaller: drag-to-exchange on the bar, punitive landing ship, West villages' map coverage, hill-city setup time, the 23 old test saves in this machine's user folder. [section "Where we are headed" (Immediate order paragraph)]
 
 ### Overworld view
@@ -136,12 +137,12 @@ Pinned values to compare after a change (they move only with a stated reason; th
 
 | Pin | Value | Set |
 |---|---|---|
-| `campaign_sim` 6 x 60, West pack | `7f28336f e4e63bcb fc358ea5 34b7ccb6 3bb99388 87068d07` | 2026-10-22 (row "Lane trade, raids and blockades"; were `f35b6a3a 3c4807ee 40ab341c da4ecb04 7896bb0d 5bd06f73` after the row "Auto-resolve refit") |
-| `campaign_sim` 6 x 60, Rome pack | `57ebb97a 89043efa 6baf5ad8 ccaf53f8 37693c54 5bc63aab` | 2026-10-22 (same row; were `7a4fdddc 2e06d5ab 3054d32e 658ce540 e2295baf 7f4ea2af`) |
-| `campaign_sim --format=8`, Rome | `4d21f126 1c4a86e9 286a3c80 d53713d6 605c409f 77cfbf4c` | 2026-10-17 (row "Fog of war on the overworld, rules half") |
-| `campaign_sim --format=8`, West | `d8cded2d d73b8c5d e64845ba 8eea9504 7c3efd9e 679e2092` | 2026-10-17 (same row) |
-| AI goldens as format 7 (`as_format(st, 7)`) | `e641d961`, `1508a9cb` (`tests/campaign_test.gd`) | 2026-10-22 (row "Lane trade, raids and blockades"; were `3007c1ab`, `bd76985b`) |
-| `tests/pack_test.gd` Rome AI-only campaign, seed 4242, 20 turns | `ROME_20` `244711de` (format 8); as format 7 `ROME_20_V7` `6fd1aac2` | 2026-10-22 (row "Lane trade, raids and blockades": Rome's lanes pay; were `70843c45` / `57aa56ba` after the row "Four leftovers", `3c26a0bc` / `57aa56ba` after "Auto-resolve refit", `d60c218a` / `575e23d5` before) |
+| `campaign_sim` 6 x 60, West pack | `fdcde239 666890f5 8c28a056 efc2c701 e8db9300 95dc3802` | 2026-10-22 (row "Campaign AI odds as win chances"; were `7f28336f e4e63bcb fc358ea5 34b7ccb6 3bb99388 87068d07` after the row "Lane trade, raids and blockades", `f35b6a3a 3c4807ee 40ab341c da4ecb04 7896bb0d 5bd06f73` after the row "Auto-resolve refit") |
+| `campaign_sim` 6 x 60, Rome pack | `8fbb3ce8 078cda88 fd334207 0d4b974b 52d75989 d5d71a7d` | 2026-10-22 (same row; were `57ebb97a 89043efa 6baf5ad8 ccaf53f8 37693c54 5bc63aab` after the lane rules, `7a4fdddc 2e06d5ab 3054d32e 658ce540 e2295baf 7f4ea2af`) |
+| `campaign_sim --format=8`, Rome | `d5192647 a7994873 5518a9bc 37b78b2c c573da0b f7adc767` | 2026-10-22 (row "Campaign AI odds as win chances"; HEAD before it already read `571a3d03 73d2f32a a7ef6f92 2acfa87d 4f40c97f 6dfeff56`, the 2026-10-17 pin `4d21f126 ...` was stale) |
+| `campaign_sim --format=8`, West | `d6dc8813 a2dbbf24 0bce8f44 24338e5e a25cfa32 939f4dde` | 2026-10-22 (same row; HEAD before it `26b1bc4c d628d8bc 774a2f9d d2d39259 0d7593d9 f232fb86`, the 2026-10-17 pin `d8cded2d ...` stale) |
+| AI goldens as format 7 (`as_format(st, 7)`) | `519bcec8`, `9f1555b0` (`tests/campaign_test.gd`) | 2026-10-22 (row "Campaign AI odds as win chances"; were `e641d961`, `1508a9cb` after the row "Lane trade, raids and blockades", `3007c1ab`, `bd76985b`) |
+| `tests/pack_test.gd` Rome AI-only campaign, seed 4242, 20 turns | `ROME_20` `91b91238` (format 8); as format 7 `ROME_20_V7` `4a93a2f1` | 2026-10-22 (row "Campaign AI odds as win chances"; were `244711de` / `6fd1aac2` after the row "Lane trade, raids and blockades": Rome's lanes pay; `70843c45` / `57aa56ba` after the row "Four leftovers", `3c26a0bc` / `57aa56ba` after "Auto-resolve refit", `d60c218a` / `575e23d5` before) |
 | `tests/pack_test.gd` "pack" state hash as the server sees it (also in Go `TestStateHashPack`) | `a9a7a1e4`, `a5c588a1` | 2026-10-13 |
 
 The determinism goldens (four flat digests, every `--only=` pin) are in `tests/determinism_test.gd`; rows say "goldens unmoved" when a change keeps them.

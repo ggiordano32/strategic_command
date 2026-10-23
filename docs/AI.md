@@ -1183,6 +1183,119 @@ within 3 turns of taking them) and armies destroyed.
 **UI.** New campaign: "Campaign AI: Skilled" without "(soon)"; the
 tooltip says what it does. Per-faction overrides (Advanced) are step 5.
 
+### 12.1 Addendum: odds as win chances (2026-10-22)
+
+The auto-resolve refit (`campaign/cbattle.gd`, commit c94d4a9: `WIN_EXP` Rome 10 / West 7, was 3) made the formula's
+win curve much steeper, so the strength ratios the AI attacked with no longer meant what they did on the cube law:
+130 % of the defence estimate (`ATTACK_RATIO6`, Average and Skilled) was a 69 % chance on the cube and is 93 % (Rome) /
+86 % (West) now. Format 6 (the overworld; every current campaign) now decides on the formula's own output, the
+attacker's win chance (`CBattle.odds_of`), so a threshold keeps its meaning when the curve is refitted again. Formats
+1-5 keep their ratios.
+
+**The thresholds** (`campaign/cai_profile.gd`; ids 101-105 new; a retreat threshold on the enemy's chance is 100 less
+ours):
+
+| Knob | Easy | Average | Skilled | Was (E / A / S) |
+|---|---|---|---|---|
+| `ATTACK_WIN` assault / storm a siege / sally / land from a fleet at our chance | 45 | 55 | 65 | ratio 110 / 130 / 130 % |
+| `COMMIT_WIN` armies sent (strongest first) until our chance reaches | 45 | 85 | 90 | 100 / 130 / 130 % of the ratio |
+| `SIEGE_WIN` lay siege (more armies coming) at our chance against the full kit | 45 (assaults) | 30 | 35 | 50 % of the ratio |
+| `IDLE_WIN` an idle army takes a target at | 45 | 55 | 65 | 20 / 35 / 50 |
+| `RELIEF_WIN` relieve a besieged city; hunt in our own lands at | 45 | 55 | 65 | 60 / 60 / 60 |
+| `HUNT_WIN` / `SK_HUNT_WIN` hunt a field army at (unchanged) | 50 | 70 | 75 (support counted) | same |
+| `SK_INTERCEPT_WIN` hunt a relief army at | - | - | 65 | 60 |
+| `SK_STORM_RELIEF_WIN` storm a siege before a relief at (unchanged) | - | - | 50 | same |
+| `LIFT_WIN` lift a siege when the relief's chance reaches (ours below) | 80 (20) | 70 (30) | 65 (35) | 101 / 50 / 50 |
+| `SIEGE_ASSAULT_WIN` at the end of patience storm, else lift, at | 0 (always) | 30 | 35 | 0 / 35 / 50 |
+| `SK_SAFE_WIN` / `SK_STAGE_SAFE` fall back / stage elsewhere when the enemy's chance reaches (ours below) | - | - | 65 (35) | 70 |
+| `SCREEN_WIN` an army screens a threatened city when its chance standing fortified is at least | 20 | 30 | 35 | 80 % of the threat |
+| `SHELTER_WIN` shelter inside the walls when that chance is below | 20 (no stances) | 30 | 0 (never) | 70 % of the threat |
+
+Attack at 45 / 55 / 65 %, retreat below 20 / 30 / 35 %. The aggression setting (Calm 70, Normal 100, Aggressive 130)
+shifts every threshold by 10 points (`CAI._thr`: our chance needed, -10 when aggressive; `_thr_foe`: the enemy's
+chance that makes us retreat, +10); a knob of 0 (off) or above 100 (never) is not shifted. It no longer scales a ratio.
+
+**How the chance is computed.** An attack on a settlement (`_attack6`, `CAI._odds_on`): the formula's strengths of the
+armies against the settlement's defenders (garrison, armies at the site, ground, walls against no kit: a storm on
+arrival), plus what the AI's defence estimate adds (half the hostile armies in the land neighbours, `SK_REACH_DEF_PCT`
+when on). Assault with the armies there now when their chance is at least `ATTACK_WIN`; but when a siege is possible
+(more armies a turn away or two here, at least `SIEGE_WIN` against the full kit) the AI storms on arrival only from
+`COMMIT_WIN`, else it lays siege (the old order: a siege below the overwhelming storm). Else it gathers a march short
+when the armies there and a turn away together reach `ATTACK_WIN`, and otherwise musters (holds, recruits, rallies:
+the frontier march and the mustering rule as before). A siege of ours is stormed at `ATTACK_WIN` with the kit the
+siege has built (`_storm_win`, `CBattle.kit_of`; it used the no-kit odds before), a sally from a besieged city of ours at
+`ATTACK_WIN` (field odds), a landing from a fleet (`cai_fleet.gd _landing`, was `LAND_PCT` 110) at `ATTACK_WIN` on the
+estimate. Screening and sheltering read `_stand_win`: our chance standing fortified (`FORTIFY_DEF_PCT`, the field
+defender's edge) against the threat. Easy keeps its designed habits below its threshold: the one-roll-a-turn mistake
+at bad odds (`M_BAD_ODDS`), armies sent piecemeal without gathering (the first arrives alone), and a siege at the end
+of patience is always stormed (committed).
+
+**Skilled never shelters** (`SHELTER_WIN` 0, as at step 4 before 2026-10-10): the refitted walls give the armies inside
+no more than the field (Rome `WALLS_PCT` 93 / 87 / 96 at walls 0-2), and the ablation says so: Skilled vs Average,
+24 seeds mixed, with Skilled sheltering at 35 % Rome 5.32 / 3.55 regions, West 6.07 / 6.16; never sheltering Rome
+6.04 / 2.80, West 6.33 / 5.91.
+
+**Measurement** (`tests/ai_odds_probe.gd`: AI-only campaigns as `campaign_sim` plays them, the decision log
+`CP.log_on` outside the state; every faction at one skill, 12 seeds x 60 turns, seeds 1000 + 77 n; "attacks" are the
+launched assaults, storms, hunts, idle attacks and Easy's rushes and mistakes that met a battle that turn, actual won %
+of those fought; HEAD -> after):
+
+| | Easy Rome | Easy West | Average Rome | Average West | Skilled Rome | Skilled West |
+|---|---|---|---|---|---|---|
+| attacks (fought won / lost) | 1492 / 592 -> 1398 / 680 | 1323 / 745 -> 1370 / 759 | 618 / 57 -> 569 / 45 | 643 / 30 -> 652 / 94 | 611 / 29 -> 801 / 51 | 617 / 18 -> 758 / 56 |
+| mean predicted / actual won % | 83 / 72 -> 83 / 67 | 71 / 64 -> 72 / 64 | 97 / 92 -> 96 / 93 | 94 / 96 -> 94 / 87 | 98 / 95 -> 98 / 94 | 96 / 97 -> 95 / 93 |
+| launched under 55 % predicted | 640 -> 650 | 847 -> 908 | 13 -> 0 | 37 -> 0 | 11 -> 1 | 14 -> 2 |
+| refused that the formula would win > 70 % | 113 -> 98 | 140 -> 115 | 162 -> 82 | 179 -> 42 | 91 -> 96 | 229 -> 44 |
+| sieges started / taken / lifted | 0 | 0 | 72 / 42 / 27 -> 65 / 48 / 16 | 105 / 80 / 21 -> 65 / 44 / 20 | 109 / 76 / 31 -> 38 / 23 / 14 | 94 / 83 / 9 -> 44 / 31 / 13 |
+| armies destroyed | 141 -> 85 | 72 -> 53 | 104 -> 128 | 76 -> 74 | 130 -> 66 | 74 -> 23 |
+| field battles | 1351 -> 1391 | 779 -> 944 | 157 -> 112 | 61 -> 62 | 104 -> 309 | 33 -> 217 |
+| battles a campaign | 192 -> 191 | 177 -> 184 | 57.2 -> 52.2 | 55.2 -> 62.0 | 53.7 -> 68.9 | 52.3 -> 67.7 |
+
+Predicted chances are bimodal (the
+curve is steep: 30-70 % is a strength ratio of 0.92-1.09 in Rome), so most launched attacks sit at 95-100 % at every
+level; the thresholds move the edge. By predicted band, after (launched / actual won %): Average Rome 55-64 21 / 95,
+65-79 42 / 60, 80-94 135 / 90, 95+ 791 / 94; Average West 55-64 61 / 47, 65-79 87 / 70, 80-94 215 / 82, 95+ 953 / 96.
+Average and Skilled now launch nothing under their threshold but a starving siege's storm with a relief near; Easy's
+attacks under 45 % are its mistakes and piecemeal arrivals. Skilled campaigns fight far more field battles (its armies
+stand fortified outside instead of inside), lose half the armies and fewer sieges are laid (the AI storms on arrival
+from 85-90 % where it used to lay siege up to 93 %).
+
+**Pacing at Average** (the `campaign_sim` pin set, 6 seeds x 60; 12 and 24 seeds for the noise; the band of the roads
+row: 40-60 battles a campaign, no faction out before turn 10 in more than 1 of 6, Macedon out in at most 3 of 6):
+
+| | Rome HEAD | Rome after | West HEAD | West after |
+|---|---|---|---|---|
+| battles a campaign, 6 seeds (range) | 54.2 (46-59) | 51.0 (43-69) | 58.0 (36-82) | 64.3 (48-105) |
+| 12 / 24 seeds | 57.2 / 56.5 | 52.2 / 54.1 | 55.2 / 53.8 | 62.0 / 60.0 |
+| eliminations, 6 seeds | 15: mace 5, epir 3, gaul 3, syra 2, gree 1, iber 1 | 15: epir 5, syra 5, cart 1, gaul 1, gree 1, mace 1, rome 1 | 6: bret 2, itza 2, misk 2 | 5: bret 2, itza 2, engl 1 |
+| Macedon out, 6 / 12 / 24 seeds | 5 / 8 / 14 | 1 / 6 / 11 | - | - |
+| out before turn 10 | 0 | 0 | 0 | 0 |
+| largest faction at 60 (mean) | 11.2 | 12.0 | 16.7 | 16.8 |
+
+Rome is back in the band (Macedon 1 of 6; Carthage out once in 6). West is at its top: 60.0 a campaign over 24 seeds,
+the 6-seed pin set 64.3 because of one seed (1308, 105 battles: two AIs taking one border town back and forth); the
+median is 57.5. Two variants tried for it (Average `SIEGE_WIN` 20, `COMMIT_WIN` 95) moved the 12-seed mean by less
+than its noise (about 4 battles) and were not kept.
+
+**Skilled against Average** (`ai_odds_probe --mixed`: per seed every other faction Skilled, each faction plays both;
+24 seeds, 96 faction-seeds a skill; regions at turn 60, eliminations):
+
+| | Rome Average | Rome Skilled | West Average | West Skilled |
+|---|---|---|---|---|
+| HEAD | 4.08, 36 out | 4.75, 31 out | 5.67, 10 out | 6.56, 13 out |
+| after | 2.80, 38 out | **6.04, 29 out** | 5.91, 11 out | **6.33**, 16 out |
+
+Skilled beats Average in both packs; in Rome by far more than before, in the West by less (+0.42 regions, a standard
+error of about 0.6, and more eliminations). The West's flatter curve makes Skilled's 65 % cost more tempo: with Skilled
+at 60 % the West reads 6.61 / 5.64 (10 / 16 out) and Rome 6.72 / 2.19; at 55 % (Average's) 6.46 / 5.78, Rome 4.95 /
+3.86. Kept at 65 as briefed; 60 is the lever if the West's margin should grow.
+
+**Guard rails.** `campaign_sim` 6 x 60 re-pinned (STATUS pins), `--twice` deterministic both packs; `campaign_test`
+(the Average / Easy goldens as format 7 `519bcec8` / rng 2959563086 and `9f1555b0` / 3720338208; new
+`_ai_odds_thresholds`: the table above, the aggression shift, the attack's chance is the formula's); `pack_test`
+`ROME_20` `91b91238`, V7 `4a93a2f1`; `campaign_input_test` (Rome) and `check_scripts` pass. Online clients compare
+the rules hash: `campaign/` changed.
+
 ## 13. As built: siege equipment and wall towers (2026-10-07)
 
 The settlement AI uses and answers the siege gear of docs/DESIGN.md

@@ -648,3 +648,14 @@ regions as last seen and the army as far as seen, the chronicle uses `CSight.eve
 battles, Goals the key cities as last seen. Creation: "Fog of war: on / off" button beside the other options
 (`settings.fog`); testing aid `--all-seeing`. Not covered: the town models' buildings (TownPlan) still follow the true
 state.
+
+### The campaign AI's odds as win chances (as built 2026-10-22)
+
+The campaign AI (format 6) decides attacks, sieges, sallies, landings, screens and retreats on the auto-resolve
+formula's predicted win chance (`CBattle.odds_of`, the pack's `WIN_EXP` curve) rather than on strength ratios, so the
+thresholds keep their meaning whenever the formula is refitted: Easy / Average / Skilled attack at 45 / 55 / 65 % and
+retreat (lift a siege, fall back, give up a screen, shelter) below 20 / 30 / 35 %; armies are committed until the chance
+reaches 85 / 90 % (Average / Skilled), a siege is preferred to a storm on arrival short of that, and below the threshold
+the AI gathers or musters instead. The campaign's AI aggression setting shifts every threshold by 10 points (Calm +10,
+Aggressive -10). Skilled never shelters inside the walls. Measured with `tests/ai_odds_probe.gd`; numbers, tables and
+the head-to-head in docs/AI.md 12.1.

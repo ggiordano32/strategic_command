@@ -54,7 +54,7 @@ const CLanes := preload("res://campaign/clanes.gd")
 const CP := preload("res://campaign/cai_profile.gd")
 
 const ATTACK_PCT := 140      # attack an enemy fleet with this % of its power
-const LAND_PCT := 110        # land against a region whose defence the troops beat by this %
+const LAND_PCT := 110        # (until 2026-10-22: land where the troops beat the defence by this %; now the level's ATTACK_WIN chance)
 const IDLE_TURNS := 4
 const WAR_PCT := 100         # warships while ours < this % of the strongest enemy's fleets
 const DANGER_PCT := 120      # an enemy fleet this % of ours within DANGER_CELLS sends ours home
@@ -451,7 +451,9 @@ static func _landing(st: Dictionary, f: int, fl: Dictionary) -> int:
 		if tt > MAX_TURNS or not _approach(st, fl, b) or _storm_at(st, b):
 			continue
 		var d := maxi(CAI.target_defence(st, f, t), 1)
-		if s * 100 < d * LAND_PCT:
+		# The formula's chance of the troops against the AI's defence estimate
+		# (docs/AI.md 12.1): at least the level's attack threshold.
+		if int(CAI.CBattle.odds_of(s, d)["win"]) < CAI._thr(st, CP.of(st, f), CP.ATTACK_WIN):
 			continue
 		var v := CAI.region_value(st, t, f) * 1000 / d / (1 + tt)
 		if v > bv:

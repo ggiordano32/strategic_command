@@ -3694,6 +3694,50 @@ func _teams() -> void:
 	_check(CState.state_hash(p1) == CState.state_hash(p2) and _plain(p1), "10 turns with teams: same hash through a save / load, plain data")
 
 
+## The campaign AI's odds as win chances (docs/AI.md 12.1): attack at 45 / 55 /
+## 65 % (Easy / Average / Skilled), retreat below 20 / 30 / 35 %, the
+## aggression setting shifts them 10 points, and the attack decision follows
+## the formula's chance (not a strength ratio).
+func _ai_odds_thresholds() -> void:
+	var lv_att := [45, 55, 65]
+	var lv_ret := [20, 30, 35]
+	var ok := true
+	for lv in 3:
+		var st0 := CState.new_campaign("test", 4242, [], {"ai_campaign_skill": lv})
+		var kn := CP.of(st0, 0)
+		ok = ok and kn[CP.ATTACK_WIN] == lv_att[lv] and kn[CP.IDLE_WIN] == lv_att[lv] and kn[CP.RELIEF_WIN] == lv_att[lv]
+		ok = ok and kn[CP.LIFT_WIN] == 100 - lv_ret[lv] and kn[CP.SCREEN_WIN] == lv_ret[lv]
+		ok = ok and kn[CP.HUNT_WIN] >= lv_att[lv] and kn[CP.COMMIT_WIN] >= kn[CP.ATTACK_WIN]
+		if lv == CP.SKILLED:
+			ok = ok and kn[CP.SK_SAFE_WIN] == 100 - lv_ret[lv] and kn[CP.SK_STAGE_SAFE] == 100 - lv_ret[lv] \
+				and kn[CP.SK_INTERCEPT_WIN] == lv_att[lv] and kn[CP.SK_HUNT_WIN] >= lv_att[lv] and kn[CP.SHELTER_WIN] == 0
+		else:
+			ok = ok and kn[CP.SHELTER_WIN] == lv_ret[lv]
+		# Aggression: Calm 70 +10 points to act, Aggressive 130 -10; retreats the other way for the enemy's chance.
+		for ag in [[70, 10], [100, 0], [130, -10]]:
+			var sa := CState.new_campaign("test", 4242, [], {"ai_campaign_skill": lv, "ai_aggression": ag[0]})
+			ok = ok and CAI._thr(sa, kn, CP.ATTACK_WIN) == lv_att[lv] + int(ag[1]) \
+				and CAI._thr_foe(sa, kn, CP.LIFT_WIN) == 100 - lv_ret[lv] - int(ag[1])
+	_check(ok, "odds as win chances: attack 45 / 55 / 65 %, retreat below 20 / 30 / 35 %, aggression +-10 points")
+	# The attack follows the formula: one army against a settlement attacks
+	# exactly when its chance (CAI._odds_on) reaches the threshold.
+	var st := CState.new_campaign("test", 4242, [])
+	var f := _f("rome")
+	var t := -1
+	for r in CData.region_count():
+		if CState.owner(st, r) != f and CState.owner(st, r) >= 0:
+			t = r
+			break
+	var defs := CAI._defenders6(st, t)
+	var a0: Dictionary = (CState.armies_of(st, f) as Array)[0]
+	var w := CAI._odds_on(st, t, [a0], defs, 0, 0)
+	var sx := CBattle.strengths(st, [a0], defs, t, true, -2, 0)
+	_check(w == int(CBattle.odds_of(int(sx[0]), int(sx[1]))["win"]) and w >= 0 and w <= 100,
+		"the attack's chance is the formula's (%d %%)" % w)
+	_check(CAI._stand_win(1000, 1000) > 50 and CAI._stand_win(2000, 1000) < CAI._stand_win(1000, 1000),
+		"a fortified army's chance standing in the field: above even at equal strength, lower against more")
+
+
 ## The Skilled campaign AI (docs/AI.md 12): deterministic, its behaviours
 ## run, the knobs only it has are 0 at Easy and Average, the per-faction
 ## override is read, and Average / Easy campaigns are what they were before
@@ -3711,10 +3755,12 @@ func _ai_skilled() -> void:
 	for t in 20:
 		g = CTurn.resolve_turn(g, [])
 	# (Goldens moved with the roads, rivers and hills, 2026-10-09: movement
-	# differs; (2026-10-22: the sea lanes pay, Rome's income moves: were 3007c1ab / 4197043257 and, Easy, bd76985b / 3786296811;) were 6e1095cd / 3394658370 and 08e7391a / 694925818; then 3666c3b2 / 694925818 and d517c822 / 3622865195 before the Tempe ford and the Tempe and Haliacmon roads; then caadf49a / 1570113520 and 95bb7116 / 2555935071 before the real coasts, rivers and relief, 2026-10-10.)
+	# differs; (2026-10-22: the AI's odds as win chances, docs/AI.md 12.1: it
+	# attacks at 55 % predicted instead of 130 % of its defence estimate: were
+	# e641d961 / 1208372723 and, Easy, 1508a9cb / 256607262;) (2026-10-22: the sea lanes pay, Rome's income moves: were 3007c1ab / 4197043257 and, Easy, bd76985b / 3786296811;) were 6e1095cd / 3394658370 and 08e7391a / 694925818; then 3666c3b2 / 694925818 and d517c822 / 3622865195 before the Tempe ford and the Tempe and Haliacmon roads; then caadf49a / 1570113520 and 95bb7116 / 2555935071 before the real coasts, rivers and relief, 2026-10-10.)
 	# (Format 8: hashed without the fog-of-war keys, as_format 7: the AI
 	# sees everything, so the play is the format 7 play.)
-	_check(CState.hash_text(CState.as_format(g, 7)) == "e641d961" and int(g["rng"]) == 1208372723,
+	_check(CState.hash_text(CState.as_format(g, 7)) == "519bcec8" and int(g["rng"]) == 2959563086,
 		"Average plays and draws the RNG exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(g, 7)), int(g["rng"])])
 	var ge := CState.new_campaign("test", 4242, [])
 	ge["factions"][_f("macedon")]["ai_skill"] = CP.EASY
@@ -3722,7 +3768,7 @@ func _ai_skilled() -> void:
 		ge = CTurn.resolve_turn(ge, [])
 	# (Easy golden moved 2026-10-13 with reinforcements: an army that was
 	# bounced off a full battle side now joins it; was be6e10a3, same rng.)
-	_check(CState.hash_text(CState.as_format(ge, 7)) == "1508a9cb" and int(ge["rng"]) == 256607262,
+	_check(CState.hash_text(CState.as_format(ge, 7)) == "9f1555b0" and int(ge["rng"]) == 3720338208,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(ge, 7)), int(ge["rng"])])
 	CAI.no_beasts = false
 	CBattle.old_walls = false
@@ -3737,6 +3783,7 @@ func _ai_skilled() -> void:
 				if int(r[0]) == k and int(r[1 + lv]) != 0:
 					zero = false
 	_check(zero, "the Skilled knobs (SK_*) are 0 for Easy and Average")
+	_ai_odds_thresholds()
 	# The per-faction override over the campaign setting.
 	var ov := CState.new_campaign("test", 4242, [], {"ai_campaign_skill": CP.EASY})
 	ov["factions"][2]["ai_skill"] = CP.SKILLED
