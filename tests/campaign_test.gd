@@ -3756,6 +3756,8 @@ func _ai_skilled() -> void:
 	var g := CState.new_campaign("test", 4242, [])
 	for t in 20:
 		g = CTurn.resolve_turn(g, [])
+	# (2026-10-23, SEA_AWAY_PCT 120 at Average: were ddb1d8a4 / 285535258 and, Easy, af5fa501 / 2531302968;)
+	# (2026-10-23, Rome data: Syracuse's start fleet trimmed, SEA_TRADE_PCT 50: were 1e444176 / 4029223508 and, Easy, e8a57e07 / 1561397015;)
 	# (2026-10-23, garrisons against landings, docs/AI.md 12.2: were 90d0b2cd / 2030669350 and, Easy, 75f80cd7 / 2506378597;)
 	# (2026-10-23, Rome fleets R2: were 519bcec8 / 2959563086 and, Easy, 9f1555b0 / 3720338208;) (Goldens moved with the roads, rivers and hills, 2026-10-09: movement
 	# differs; (2026-10-22: the AI's odds as win chances, docs/AI.md 12.1: it
@@ -3763,7 +3765,7 @@ func _ai_skilled() -> void:
 	# e641d961 / 1208372723 and, Easy, 1508a9cb / 256607262;) (2026-10-22: the sea lanes pay, Rome's income moves: were 3007c1ab / 4197043257 and, Easy, bd76985b / 3786296811;) were 6e1095cd / 3394658370 and 08e7391a / 694925818; then 3666c3b2 / 694925818 and d517c822 / 3622865195 before the Tempe ford and the Tempe and Haliacmon roads; then caadf49a / 1570113520 and 95bb7116 / 2555935071 before the real coasts, rivers and relief, 2026-10-10.)
 	# (Format 8: hashed without the fog-of-war keys, as_format 7: the AI
 	# sees everything, so the play is the format 7 play.)
-	_check(CState.hash_text(CState.as_format(g, 7)) == "1e444176" and int(g["rng"]) == 4029223508,
+	_check(CState.hash_text(CState.as_format(g, 7)) == "653fa85c" and int(g["rng"]) == 3934412497,
 		"Average plays and draws the RNG exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(g, 7)), int(g["rng"])])
 	var ge := CState.new_campaign("test", 4242, [])
 	ge["factions"][_f("macedon")]["ai_skill"] = CP.EASY
@@ -3771,7 +3773,7 @@ func _ai_skilled() -> void:
 		ge = CTurn.resolve_turn(ge, [])
 	# (Easy golden moved 2026-10-13 with reinforcements: an army that was
 	# bounced off a full battle side now joins it; was be6e10a3, same rng.)
-	_check(CState.hash_text(CState.as_format(ge, 7)) == "e8a57e07" and int(ge["rng"]) == 1561397015,
+	_check(CState.hash_text(CState.as_format(ge, 7)) == "123fe3e4" and int(ge["rng"]) == 662798570,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(ge, 7)), int(ge["rng"])])
 	CAI.no_beasts = false
 	CBattle.old_walls = false

@@ -332,7 +332,7 @@ const KNOBS: Array = [
 	[SEA_LIFT_PCT, 0, 100, 100],
 	[SEA_PEACE_PCT, 0, 0, 50],
 	[FERRY_ODDS_PCT, 0, 80, 100],
-	[SEA_AWAY_PCT, 0, 150, 150],
+	[SEA_AWAY_PCT, 0, 120, 150],
 	[SEA_SCREEN, 0, 0, 0],
 ]
 

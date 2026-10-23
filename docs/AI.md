@@ -1334,7 +1334,7 @@ looked safe while a Punic fleet lay a day's sail off with an army beside it, and
 | `SEA_LIFT_PCT` an empty fleet counts this % of an army of its side that can board | 0 | 100 | 100 |
 | `SEA_PEACE_PCT` a fleet of a neighbour at peace counts this % | 0 | 0 | 50 |
 | `FERRY_ODDS_PCT` ferry only with at least this % of the power of the fleets at war near the route (0 off) | 0 | 80 | 100 |
-| `SEA_AWAY_PCT` leave the landmass only while what stays covers this % of the threat a turn ahead (0 off) | 0 | 150 | 150 |
+| `SEA_AWAY_PCT` leave the landmass only while what stays covers this % of the threat a turn ahead (0 off) | 0 | 120 | 150 |
 | `SEA_SCREEN` screens and stances answer the landing threat too | 0 | 0 | 0 |
 
 Easy keeps its habits: it holds only against a loaded fleet that can land this turn, and sails and crosses regardless.
@@ -1360,7 +1360,13 @@ cost the West about 9 battles a campaign (6 seeds); screens on the landing threa
 72.5 -> 57.5, eliminations 10 -> 12 (Syracuse 2 -> 0), landings 11.5 -> 5.7 a campaign; West 69.3 -> 64.5, 8 -> 7,
 landings 28.0 -> 18.5. Easy (all Easy, 6 seeds): Rome 180 -> 188 battles, 17 -> 17 eliminations; West 178 -> 200, 9 -> 9.
 
-**Not reached / open.** Rome's eliminations are now below the 15-18 the pacing aimed at (8 on the pin set, 11 per 6
+**Final choice (same day, after the Rome data follow-up: Syracuse's start fleet 2 triremes + a lembos, Rome
+`SEA_TRADE_PCT` 50):** `SEA_AWAY_PCT` 120 at Average (Skilled 150, Easy 0). 24 seeds, Rome: battles 46.5, eliminations
+63 (15.8 per 6 seeds), Syracuse 8 of 24, none before turn 23; West: battles 60.2, eliminations 18, landings 21.7 a
+campaign (150 with the same data: Rome 51.3 battles, 61 eliminations, Syracuse 13 of 24 with three at turn 16; West
+56.7, 17). The measured tables above are for 150 before the data change.
+
+**Not reached / open (at 150, before the data change).** Rome's eliminations are now below the 15-18 the pacing aimed at (8 on the pin set, 11 per 6
 seeds over 24): Syracuse, the Greeks and Macedon survive, Epirus still falls (18 of 24, from turn 11). The root of
 Syracuse's early falls was also its money: from turn 1 a Punic fleet blockades Syracuse's harbour (cheb 3 of its
 start dock; 337 of its 910 a turn, `SEA_TRADE_PCT` 100 x `BLOCKADE_CUT_PCT` 75 of Sicilia Orientalis' wealth income)

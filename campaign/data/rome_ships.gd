@@ -83,13 +83,15 @@ const START_FLEETS: Array = [
 	["macedon", "macedonia", ["trireme", "trireme"]],
 	["epirus", "epirus", ["trireme", "lembos"]],
 	["greeks", "attica", ["trireme", "lembos"]],
-	["syracuse", "sicilia_or", ["quinquereme_p", "trireme", "trireme", "lembos"]],
+	["syracuse", "sicilia_or", ["trireme", "trireme", "lembos"]],
 	["iberians", "edetania", ["trireme", "lembos"]],
 	["gauls", "volcae", ["trireme", "lembos"]],
 ]
 
-# Trade at sea and blockades (the West's values; campaign/csea.gd, clanes.gd).
-const SEA_TRADE_PCT := 100
+# Trade at sea and blockades (campaign/csea.gd, clanes.gd). SEA_TRADE_PCT 50
+# (2026-10-23; was the West's 100): a Mediterranean port's income is not all
+# sea-borne trade, so a blockade cuts BLOCKADE_CUT_PCT (the West's) of half of it.
+const SEA_TRADE_PCT := 50
 const BLOCKADE_CELLS := 3
 const BLOCKADE_CUT_PCT := 75
 const BLOCKADE_TAKE_PCT := 40

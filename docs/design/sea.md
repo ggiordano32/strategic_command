@@ -589,7 +589,8 @@ and Syracuse at 2, Epirus, the Greeks (Athens), the Iberians (Saguntum) and the 
 in the capital if it has a *harbour* (`CFleet.harbour`, which Athens and Pella have, not only the
 regions on a sea lane) else the nearest own harbour; fleets: Carthage 2 Punic quinqueremes and 3
 triremes, Rome a corvus quinquereme and 2 triremes (no corbita: a transport at turn 1 made the early
-landings), Syracuse (yard 2, the great naval power) a Punic quinquereme, 2 triremes and a lembos, Macedon
+landings), Syracuse (yard 2, the great naval power) 2 triremes and a lembos (a Punic quinquereme too until the
+data follow-up of 2026-10-23: it started Syracuse in debt), Macedon
 2 triremes, every other faction a trireme and a lembos; Bruttium's start army has one more spear. **Off in this pack** (declared at their off value, the rules read them with
 defaults): flota (`FLOTA_PARTS` empty), pirates (`PIRATE_*` 100 %), hurricanes (`STORM_BOX` empty),
 captains (`CAPTAIN_NAMES` empty). **Conditional on data, not the pack**: `CData.SHIPS`, `CHAINS` and
@@ -615,4 +616,5 @@ the version, so a bump would have moved the West pins; a Rome save without `flee
 new one carries them, and the online rules hash separates the builds); Syracuse still falls in 6 of 6
 pin seeds (5 before turn 30; turns 11-44; it fell in 5 of 6 at HEAD): its AI sends its armies abroad
 and Carthage lands in the empty cities; see the history row. (2026-10-23: the AI's garrisons against landings,
-docs/AI.md 12.2: 1 of 6, at turn 27.)
+docs/AI.md 12.2: 1 of 6, at turn 27; with the data follow-up, Syracuse's start fleet trimmed and Rome
+`SEA_TRADE_PCT` 50, `BLOCKADE_CUT_PCT` 75 as the West: 4 of 6, at turns 16, 33, 47, 56.)
