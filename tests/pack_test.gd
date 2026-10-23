@@ -24,10 +24,10 @@ const CBattle := preload("res://campaign/cbattle.gd")
 const SeaChecks := preload("res://tests/sea_checks.gd")
 
 ## A Rome AI-only campaign (seed 4242) after 20 turns, all rules as they are.
-const ROME_20 := "244711de"  # format 8 (the sea lanes pay in the income, 2026-10-22: was 70843c45 and 57aa56ba as format 7; fog-of-war memory; was 575e23d5, 2026-10-17; d60c218a until the auto-resolve refit, 3c26a0bc until the memory gained lvl / wl, 2026-10-22)
+const ROME_20 := "91b91238"  # format 8 (the AI's odds as win chances, docs/AI.md 34, 2026-10-22: was 244711de and 6fd1aac2 as format 7; the sea lanes pay in the income, 2026-10-22: was 70843c45 and 57aa56ba as format 7; fog-of-war memory; was 575e23d5, 2026-10-17; d60c218a until the auto-resolve refit, 3c26a0bc until the memory gained lvl / wl, 2026-10-22)
 ## The same play without the fog keys (CState.as_format 7) = HEAD 1c04fbe
 ## before the pack switch existed: the fog changes no rule.
-const ROME_20_V7 := "6fd1aac2"  # (57aa56ba until the lanes paid, 2026-10-22; 575e23d5 until the auto-resolve refit, 2026-10-22)
+const ROME_20_V7 := "4a93a2f1"  # (6fd1aac2 until the AI's odds as win chances, 2026-10-22; 57aa56ba until the lanes paid, 2026-10-22; 575e23d5 until the auto-resolve refit, 2026-10-22)
 
 var fails := 0
 
@@ -162,6 +162,21 @@ func _west() -> void:
 	var r := _rome20()
 	_check(CState.hash_text(r) == ROME_20 and CState.hash_text(CState.as_format(r, 7)) == ROME_20_V7,
 		"Rome golden after a West campaign (%s)" % CState.hash_text(r))
+	# The lane caches follow the pack (CLanes' routes, tables and cell map are stamped with CData.gen).
+	var rl := CLanes.lane(0)
+	var rok := CLanes.count() == CData.SEA_LANES.size() and CLanes.total() == CData.SEA_LANES.size() and not rl.is_empty() \
+		and CLanes.lanes_at(rl[rl.size() / 2]).has(0) and CLanes.base_value(r, 0) == (int(r["regions"][CLanes.ends(0)[0]]["level"]) + int(r["regions"][CLanes.ends(0)[1]]["level"])) * CData.LANE_BASE
+	var jcell := -1
+	for c in CLanes.cells_of(0):
+		jcell = c
+	CData.use_pack("west")
+	var wl := CLanes.lane(0)
+	var wok := CLanes.count() == CData.SEA_LANES.size() and CLanes.total() == CData.SEA_LANES.size() + CData.SEA_LANE_EXITS.size() \
+		and wl != rl and not CLanes.lanes_at(wl[wl.size() / 2]).is_empty() and CLanes.exit_of(CData.region_index("havana")) >= 0
+	CData.use_pack("rome")
+	var rl2 := CLanes.lane(0)
+	_check(rok and wok and rl2 == rl and CLanes.exit_of(0) < 0 and CLanes.lanes_at(jcell).has(0) and CSea.exit_cell() < 0,
+		"the lane caches follow the pack: Rome's lanes are the same after a West switch and back")
 
 
 ## Fleets (N1, West only): Rome has none; the West start has fleets and
