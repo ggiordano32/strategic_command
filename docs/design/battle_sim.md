@@ -2048,3 +2048,49 @@ unit near obstacles `_u_obs`), so the four flat golden digests hold.
   `stat_via`, `stat_asl`, `stat_ai_wd`, `stat_stuck_r`.
 - **Measured.** See docs/STATUS.md (the pathing probe at seeds 7-10, the
   cover probe, cost).
+
+## The Caribbean roster, batch 1 (plan, agreed 2026-10-23)
+
+The owner, 2026-10-23: "The different units for different armies is exactly where I want to go with it. They
+should feel like they need to be played differently." Rome has about thirty rows, the Caribbean twelve (plus the
+heavy guns of the same day). The aim is not thirty Caribbean rows but two or three units per side that nobody else
+has, so a Spanish army, an English one, a pirate crew and a Miskito war party read differently on the field. Three
+batches; the first (six units and the mortar) is agreed, the second (mounted arquebusiers, marines, landed naval
+guns, colonial militia, maroons) and the third (a sea captain hero, a privateer, a missionary) wait for play.
+
+**Batch 1.** Every unit is a West row (`sim/unit_types.gd`, `"pack": "west"`), a sprite set through the pipeline
+(`tools/sprites/spec.json`, a pose and props each; the set id field is 5 bits with 26 of 31 used, so the pipeline
+widens it to 6 bits or shares a set where the pose allows), an AI mix entry (`campaign/data/west.gd`), a unit book
+page and a custom battle list entry. The sim already has what they need (the blast missile, the cover trait and
+ambush, arcing fire, no shooting on the move) except two small traits noted below.
+
+- **Grenadiers** (England; Barracks 3): elite foot (attack and morale between rodeleros and cutlass men, armour
+  light) with a lobbed grenade: `m_kind` arc, `m_range` 25 m, `m_min` 6 m, blast radius 3 m (the `blast` ammo stat),
+  4 grenades, reload 15 s, `m_obj` enough to hurt a door in a few throws; the answer to pike blocks, held buildings
+  and a gate's press. Played: brought up behind the shot, thrown in at the moment of contact.
+- **Dragoons** (England and France; Stables 2 + Range 1): horse-paced foot: `cls` cav for pace and footprint, a
+  musket at twice the musketeers' reload, no fire on the move (the sim's rule), weak in melee, cheap to lose. Played:
+  the flank-and-harass piece, a line of fire where the foot cannot be in time.
+- **Coureurs des bois** (France; Range 2): woodsmen with `cover`, ambush and the new trait **woods pace** (a per-type
+  factor on the move cost of woods and scrub, `t_wood_pct`, the sim's path costs; integers, deterministic, other units
+  untouched); a musket at the buccaneers' accuracy, fewer rounds. Played: through the trees where no line can follow,
+  into the flank, out again.
+- **Boarding grenadiers** (the Brethren; a haven's Barracks 2): cutlass men with two grenades each (as the grenadiers'
+  but 15 m and two), the deck bonus of `DECK_CREWS`; deadly in a melee and at a gate, brittle under fire. Played: the
+  pirates' door-opener, by sea or by land.
+- **Canoe raiders** (Miskito; Barracks 1): light foot with `cover` and javelins, fast, and the new campaign trait
+  **amphibious** (`campaign/`: an army of only amphibious units moves along coastal sea cells within one cell of land
+  at foot pace without a fleet and lands anywhere; `CGrid` / `CFleet.coastal_link`; pack-agnostic, hashed only when an
+  army has the trait). Played: raids from the water on an undefended coast, gone before the column arrives.
+- **Holcan warriors** (Itza; Barracks 2): shock foot with obsidian-edged clubs: high attack and charge, fear on the
+  charge, no armour, morale high while winning; the Itza's one unit that can break a line. Played: held back, then
+  thrown at a flank or a shaken unit.
+- **Mortars** (the nations; Workshop 3): an engine (one set) with `m_arc` high, `m_range` 300 m, `m_min` 60 m, a
+  blast shell, slow reload, poor against anything moving; fires over walls into forts and held buildings. Played:
+  the siege answer the Caribbean lacked; the player who brings none assaults bastions the hard way.
+
+**Order of work.** (1) Sprites for all seven (one agent: the set field widened to 6 bits if needed, the poses, the
+atlas rebuilt, `soldier_facing_test` on both paths); (2) the two sim traits (woods pace; the grenade is the existing
+blast missile with an arc) and the campaign's amphibious move (Opus for the hashed paths); (3) the rows, AI mixes,
+unit book, custom battle lists, recruit chains, tests and the West pins (Sonnet). Then a playtest and the AI's use of
+each piece (grenades at a gate, dragoons on a flank, mortars at a siege) as follow-ups.
