@@ -17,7 +17,8 @@ extends RefCounted
 ## the SEA_LANE_EXITS. A port-to-port lane pays (level_a + level_b) x
 ## LANE_BASE gold a turn (a SEA_LANE_TRADE row overrides), half to each end
 ## port's owner (the whole value to one owner holding both); a besieged or
-## blockaded port's half is not paid. A fleet at war with an end port's owner
+## blockaded port's half is not paid; a lane between ports whose owners are at
+## war pays neither (2026-10-23, no trade with the enemy). A fleet at war with an end port's owner
 ## lying on one of the lane's cells at the end of the turn RAIDS it: each half
 ## still paid is cut by LANE_RAID_PCT %, and the raider's owner takes
 ## LANE_RAID_TAKE % of what it cut from owners it is at war with. Everything is
@@ -409,6 +410,17 @@ static func raiders(st: Dictionary) -> Dictionary:
 	return out
 
 
+## Port lane id joins two ports whose owners are at war: it pays nothing to
+## either while the war lasts (an exit, or an unowned end, never).
+static func at_war(st: Dictionary, id: int) -> bool:
+	if is_exit(id):
+		return false
+	_ensure_tab()
+	var oa := CState.owner(st, _ea[id])
+	var ob := CState.owner(st, _eb[id])
+	return oa >= 0 and ob >= 0 and oa != ob and CState.at_war(st, oa, ob)
+
+
 ## What lane id pays now: {v (its value), oa, ob (the end owners), pa, pb (what
 ## each end's owner receives), cuta, cutb (cut by a raid), la, lb (lost to a
 ## blockade or siege of that port), rid (the raider's fleet id, -1), rf (its
@@ -422,6 +434,9 @@ static func lane_state(st: Dictionary, id: int, rt: Dictionary) -> Dictionary:
 	var ob := CState.owner(st, b) if b >= 0 else -1
 	var pa := v / 2 if oa >= 0 else 0
 	var pb := (v - v / 2) if ob >= 0 else 0
+	if oa >= 0 and ob >= 0 and CState.at_war(st, oa, ob):
+		pa = 0   # no trade with the enemy: a lane between ports at war pays nothing
+		pb = 0
 	var la := 0
 	var lb := 0
 	if pa > 0 and (int(st["regions"][a].get("bk", -1)) >= 0 or not CState.siege_at(st, a).is_empty()):

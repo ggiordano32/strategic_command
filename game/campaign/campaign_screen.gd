@@ -3556,6 +3556,8 @@ func _tap6(p: Vector2) -> void:
 	if sr >= 0:
 		select_region(sr)
 		return
+	if _lane_tap(p):
+		return
 	if _crossing_note(p):
 		return
 	var r := Geo.region_at(_map_point(p))
@@ -3563,6 +3565,40 @@ func _tap6(p: Vector2) -> void:
 		select_region(r)
 		return
 	close_side()
+
+
+## (Sea lanes) A tap on a raided lane (or its badge) or on a lane between ports at war says why: who raids it and how to
+## stop it, or that the ports at war do not trade. True when it was one.
+func _lane_tap(p: Vector2) -> bool:
+	if CData.SEA_LANES.is_empty() or not CState.grid_on(ps):
+		return false
+	var id := overlay.lane_at_info(p)
+	if id < 0:
+		return false
+	var rt := CLanes.raiders(ps)
+	var ri := overlay.raided_info(id, rt)
+	var lname := CLanes.lane_name(id)
+	if not ri.is_empty():
+		var fl: Dictionary = ri["fleet"]
+		var n := (fl["ships"] as Array).size()
+		var near := -1
+		var bd := 1 << 30
+		for r in CData.region_count():
+			var d := CGrid.octile(CFleet.cell(fl), CGrid.site(r))
+			if d < bd:
+				bd = d
+				near = r
+		var who := "%s fleet (%d ship%s)" % [CData.FACTIONS[int(ri["f"])]["adj"], n, "" if n == 1 else "s"] if bool(ri["seen"]) else "an unseen fleet"
+		show_toast("The %s lane is raided by the %s at %s: attack it with a stronger fleet, blockade its port, or make peace." % [
+			lname, who, str(CData.REGIONS[near]["city"])] if bool(ri["seen"]) else
+			"The %s lane is raided by an enemy fleet out of sight: find it and attack it with a stronger fleet, blockade its port, or make peace." % lname)
+		return true
+	if CLanes.at_war(ps, id):
+		var e := CLanes.ends(id)
+		show_toast("No trade on the %s lane: %s and %s are at war." % [lname,
+			CData.faction_name(CState.owner(ps, int(e[0]))), CData.faction_name(CState.owner(ps, int(e[1])))])
+		return true
+	return false
 
 
 ## Fog of war: what a tap on a faded last-seen marker says.

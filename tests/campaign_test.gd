@@ -3788,10 +3788,11 @@ func _ai_skilled() -> void:
 	# differs; (2026-10-22: the AI's odds as win chances, docs/AI.md 12.1: it
 	# attacks at 55 % predicted instead of 130 % of its defence estimate: were
 	# e641d961 / 1208372723 and, Easy, 1508a9cb / 256607262;) (2026-10-22: the sea lanes pay, Rome's income moves: were 3007c1ab / 4197043257 and, Easy, bd76985b / 3786296811;) were 6e1095cd / 3394658370 and 08e7391a / 694925818; then 3666c3b2 / 694925818 and d517c822 / 3622865195 before the Tempe ford and the Tempe and Haliacmon roads; then caadf49a / 1570113520 and 95bb7116 / 2555935071 before the real coasts, rivers and relief, 2026-10-10.)
+	# (2026-10-23, no trade with the enemy: were 4c8a4977 / 2580136663 and, Easy, ed0717eb / 2573862638;)
 	# (2026-10-23, Docking: the AI docks its free fleets, the repair rule splits; were 653fa85c / 3934412497 and, Easy, 123fe3e4 / 662798570;)
 	# (Format 8: hashed without the fog-of-war keys, as_format 7: the AI
 	# sees everything, so the play is the format 7 play.)
-	_check(CState.hash_text(CState.as_format(g, 7)) == "4c8a4977" and int(g["rng"]) == 2580136663,
+	_check(CState.hash_text(CState.as_format(g, 7)) == "9aca1fcc" and int(g["rng"]) == 2580136663,
 		"Average plays and draws the RNG exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(g, 7)), int(g["rng"])])
 	var ge := CState.new_campaign("test", 4242, [])
 	ge["factions"][_f("macedon")]["ai_skill"] = CP.EASY
@@ -3800,7 +3801,7 @@ func _ai_skilled() -> void:
 	# (Easy golden moved 2026-10-13 with reinforcements: an army that was
 	# bounced off a full battle side now joins it; was be6e10a3, same rng.
 	# Moved again 2026-10-23 with the port rule (HARBOUR_MAX 2); was 11d7ae9c, rng 1530193207.)
-	_check(CState.hash_text(CState.as_format(ge, 7)) == "ed0717eb" and int(ge["rng"]) == 2573862638,
+	_check(CState.hash_text(CState.as_format(ge, 7)) == "f3b40674" and int(ge["rng"]) == 1790012962,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(ge, 7)), int(ge["rng"])])
 	CAI.no_beasts = false
 	CBattle.old_walls = false
@@ -4041,8 +4042,9 @@ func _chars() -> void:
 	_check(_plain(d1) and CState.state_hash(CState.from_json(CState.to_json(d1))) == CState.state_hash(d1), "characters in the state: plain data, JSON round trip")
 	# The AI: Average raises heroes, Easy never.
 	# (Docking, 2026-10-23: seed 77 raised none after the AI's fleets began to dock; the sequence is emergent, seed 79 raises two.)
-	var avg := CState.new_campaign("t", 79, [])
-	var easy := CState.new_campaign("t", 79, [], {"ai_campaign_skill": CP.EASY})
+	# (No trade with the enemy, 2026-10-23: seed 79 raised none; seed 80 raises three.)
+	var avg := CState.new_campaign("t", 80, [])
+	var easy := CState.new_campaign("t", 80, [], {"ai_campaign_skill": CP.EASY})
 	for t in 60:
 		avg = CTurn.resolve_turn(avg, [])
 		easy = CTurn.resolve_turn(easy, [])
@@ -4631,12 +4633,21 @@ func _sea_lanes() -> void:
 	var en0 := int(CRules.income(st, eng)["lanes"])
 	var sp := CState.copy(st)
 	sp["regions"][_r("veracruz")]["owner"] = eng
+	CState.set_dip(sp, eng, ns, CState.PEACE)   # (at war the lane pays nothing: checked below)
 	var ns1 := int(CRules.income(sp, ns)["lanes"])
 	var en1 := int(CRules.income(sp, eng)["lanes"])
 	var vb := CLanes.lane_state(sp, hv, {})
 	var vtot := int(CLanes.base_value(sp, hv))
 	_check(int(vb["pa"]) + int(vb["pb"]) == vtot and ns1 < ns0 and en1 > en0 and (ns0 - ns1) + (en1 - en0) >= 0,
 		"lane trade: split by ownership (Veracruz to England: New Spain %d -> %d, England %d -> %d)" % [ns0, ns1, en0, en1])
+	# No trade with the enemy: England and New Spain are at war, so the lane between their ports pays nothing; at peace it pays.
+	var spw := CState.copy(sp)
+	CState.set_dip(spw, eng, ns, CState.WAR)
+	var vw := CLanes.lane_state(spw, hv, {})
+	_check(CLanes.at_war(spw, hv) and int(vw["pa"]) == 0 and int(vw["pb"]) == 0 and not CLanes.at_war(st, hv) and not CLanes.at_war(spw, CLanes.count()),
+		"lane at war: Havana (New Spain) - Veracruz (England) pays neither port; an all-Spanish lane and an exit are not at war")
+	var vpp := CLanes.lane_state(sp, hv, {})
+	_check(not CLanes.at_war(sp, hv) and int(vpp["pa"]) + int(vpp["pb"]) == vtot, "lane at war: pays both ports again at peace (%d)" % vtot)
 	var inc_total: Dictionary = CRules.income(st, ns)
 	_check(inc_total.has("lanes_n") and int(inc_total["lanes_n"]) > 0 and int(inc_total["total"]) >= int(inc_total["lanes"]),
 		"lane trade: the income carries the 'lanes' part and its count")

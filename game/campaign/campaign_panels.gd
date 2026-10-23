@@ -2108,6 +2108,18 @@ func _disband(id: int) -> void:
 
 # -------------------------------------------------------------- faction ---
 
+## Some lane paying faction f is cut by a raid now.
+func _lanes_raided_for(ps: Dictionary, f: int) -> bool:
+	var rt := CLanes.raiders(ps)
+	for id in CLanes.count():
+		if not rt.has(id):
+			continue
+		var ls := CLanes.lane_state(ps, id, rt)
+		if (int(ls["oa"]) == f and int(ls["cuta"]) > 0) or (int(ls["ob"]) == f and int(ls["cutb"]) > 0):
+			return true
+	return false
+
+
 func show_faction() -> void:
 	var ps: Dictionary = s.ps
 	var f: int = s.f if s.f >= 0 else int(ps["humans"][0])
@@ -2127,6 +2139,10 @@ func show_faction() -> void:
 			sea_inc += ", raiding +%d" % int(inc["lane_take"])
 	box.add_child(Kit.icon_label("Income %d (regions %d, trade %d%s, cost of a large realm -%d), upkeep %d: %+d a turn." % [
 		int(inc["total"]), int(inc["regions"]), int(inc["trade"]), sea_inc, int(inc.get("corruption", 0)), up, int(inc["total"]) - up], "income", Kit.FONT, Kit.COL_GOLD, true))
+	if inc.has("lanes") and _lanes_raided_for(ps, f):
+		var sr := Kit.label("Stop a raid: attack the raiding fleet, blockade its home port, or make peace.", Kit.FONT_SMALL, Kit.COL_BAD, true)
+		sr.name = "stop_raid_note"
+		box.add_child(sr)
 	if CFleet.on(ps):
 		_realm_sea(box, f)
 	box.add_child(Kit.label("A turn ending with less than nothing costs every unit a tenth of its men.", Kit.FONT_SMALL, Kit.COL_DIM, true))

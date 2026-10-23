@@ -127,8 +127,10 @@ var selected_fleet := -1
 var fleet_paths: Array = []
 ## (Sea lanes, 2026-10-22) The lane ids the selected fleet of ours can raid (drawn thicker: a tap on one orders the raid).
 var raid_lanes: Array = []
+var _raider_ids := {}   # fleet ids raiding a lane now (the pennant's red "raider" tag)
 const LANE_HIT := 16.0   # px: a lane's tap radius
 const COL_RAID := Color(1.0, 0.3, 0.22)
+const COL_LANE_WAR := Color(0.5, 0.2, 0.14, 0.9)   # a lane between ports at war: no trade
 const FLEET_W := 30.0
 var sea_reach: Array = []       # the selected fleet's reach this turn: outlines in map pixels
 var _sea_reach_fill: Array = []  # ... the outer ones that triangulate
@@ -947,6 +949,7 @@ func _fleets_body() -> void:
 		_flota_course(fpos)
 		for fp in fleet_paths:
 			_fleet_path(fp, fpos)
+		_raider_ids = raider_fleet_ids()
 		for fl in state["fleets"]:
 			if fpos.has(int(fl["id"])):
 				_fleet_marker(fpos[int(fl["id"])], fl)
@@ -1229,8 +1232,10 @@ static func draw_blockade(ci: CanvasItem, p: Vector2, rad: float, col: Color, m:
 	ci.draw_circle(p, 3.0 * m, col.lightened(0.3))
 
 
-## (Sea lanes) The lanes the selected fleet can raid, thicker; the lanes with a raider on them, dashed red with a
-## "raided" badge at the midpoint (shown to the owners of its ports and to whoever sees the raider).
+## (Sea lanes) The lanes the selected fleet can raid, thicker; the lanes between ports at war (no trade) redrawn in a
+## dull dark red-brown over the pale dashes (the same dash cut as MapView._draw_lanes); the lanes with a raider on them,
+## dashed red with a "raided by <adjective>" badge at the midpoint (shown to the owners of its ports and to whoever
+## sees the raider).
 func _draw_lanes(m: float) -> void:
 	for id in raid_lanes:
 		var poly := MapView.lane_poly(int(id))
@@ -1240,27 +1245,86 @@ func _draw_lanes(m: float) -> void:
 			_ci.draw_polyline(pl, Color(1.0, 0.95, 0.7, 0.8), 3.4 * m, true)
 	if CData.SEA_LANES.is_empty():
 		return
+	var tbl := MapView.table_on()
+	for id in CLanes.count():
+		if not CLanes.at_war(state, id):
+			continue
+		var wp := MapView.lane_poly(id)
+		if wp.size() < 2:
+			continue
+		var wl: PackedVector2Array = xform * wp
+		var wd := MapView.dash_polyline(wl, (MapView.LANE_TABLE_DASH if tbl else MapView.LANE_DASH),
+				(MapView.LANE_TABLE_GAP if tbl else MapView.LANE_GAP))
+		draw_war_dashes(_ci, wd, tbl)
 	var rt := CLanes.raiders(state)
 	for id in CLanes.count():
-		if not rt.has(id):
+		var ri := raided_info(id, rt)
+		if ri.is_empty():
 			continue
-		var ls := CLanes.lane_state(state, id, rt)
-		if int(ls["cuta"]) + int(ls["cutb"]) <= 0:
-			continue
-		var told: bool = player < 0 or CState.same_team(state, player, int(ls["oa"])) or CState.same_team(state, player, int(ls["ob"])) \
-				or CState.same_team(state, player, int(ls["rf"])) or FogView.fleet_seen(state, rt[id])
 		var poly2 := MapView.lane_poly(id)
-		if not told or poly2.size() < 2:
-			continue
 		var pl2: PackedVector2Array = xform * poly2
 		var dashes := MapView.dash_polyline(pl2, 9.0 * m, 6.0 * m)
 		_ci.draw_multiline(dashes, Color(0, 0, 0, 0.55), 6.0 * m, true)
 		_ci.draw_multiline(dashes, COL_RAID, 3.4 * m, true)
 		var mid := pl2[pl2.size() / 2]
 		var fs := int(round(12 * maxf(m, 0.8)))
-		var tw := text_w("raided", fs)
-		_ci.draw_rect(Rect2(mid - Vector2(tw * 0.5 + 5.0, fs * 0.5 + 3.0), Vector2(tw + 10.0, fs + 6.0)), Color(0.45, 0.07, 0.05, 0.9))
-		put(_ci, mid + Vector2(-tw * 0.5, fs * 0.38), "raided", fs, Color(1, 0.92, 0.85))
+		var txt := "raided"
+		var tcol := Color(1, 0.92, 0.85)
+		if bool(ri["seen"]):
+			txt = "raided by %s" % str(CData.FACTIONS[int(ri["f"])]["adj"])
+			tcol = CData.faction_color(int(ri["f"])).lightened(0.55)
+		var tw := text_w(txt, fs)
+		_ci.draw_rect(Rect2(mid - Vector2(tw * 0.5 + 6.0, fs * 0.5 + 3.0), Vector2(tw + 12.0, fs + 6.0)), Color(0.08, 0.03, 0.03, 0.92))
+		_ci.draw_rect(Rect2(mid - Vector2(tw * 0.5 + 6.0, fs * 0.5 + 3.0), Vector2(tw + 12.0, fs + 6.0)), COL_RAID, false, 1.4)
+		put(_ci, mid + Vector2(-tw * 0.5, fs * 0.38), txt, fs, tcol)
+
+
+## The dashes (screen px, cut as MapView cuts the pale ones) of a lane at war: dull dark red-brown, bolder than the pale.
+static func draw_war_dashes(ci: CanvasItem, dashes: PackedVector2Array, tbl: bool) -> void:
+	if dashes.size() < 2:
+		return
+	var w := (MapView.LANE_TABLE_W if tbl else MapView.LANE_W) * 2.4
+	ci.draw_multiline(dashes, Color(0, 0, 0, 0.45), w + 1.8, true)
+	ci.draw_multiline(dashes, COL_LANE_WAR, w, true)
+
+
+## Lane id when it is raided now and the player is told (an owner of its ports, the raider's team, or sees the raider):
+## {"f" raider faction, "fleet" its fleet, "seen" the raider is in sight}; {} otherwise. `rt`: CLanes.raiders(state).
+func raided_info(id: int, rt: Dictionary) -> Dictionary:
+	if not rt.has(id) or id >= CLanes.count():
+		return {}
+	var ls := CLanes.lane_state(state, id, rt)
+	if int(ls["cuta"]) + int(ls["cutb"]) <= 0:
+		return {}
+	var fl: Dictionary = rt[id]
+	var seen := FogView.fleet_seen(state, fl)
+	var told: bool = player < 0 or CState.same_team(state, player, int(ls["oa"])) or CState.same_team(state, player, int(ls["ob"])) \
+			or CState.same_team(state, player, int(ls["rf"])) or seen
+	if not told or MapView.lane_poly(id).size() < 2:
+		return {}
+	return {"f": int(ls["rf"]), "fleet": fl, "seen": seen}
+
+
+## The raiding fleets' ids (fleets named by raided_info), for the "raider" tag on their pennants.
+func raider_fleet_ids() -> Dictionary:
+	var out := {}
+	if CData.SEA_LANES.is_empty() or not state.has("fleets"):
+		return out
+	var rt := CLanes.raiders(state)
+	for id in rt:
+		if not raided_info(int(id), rt).is_empty():
+			out[int((rt[id] as Dictionary)["id"])] = true
+	return out
+
+
+## Lanes that explain themselves on a tap: raided (told) or at war.
+func lane_at_info(p: Vector2) -> int:
+	var ids: Array = []
+	var rt := CLanes.raiders(state)
+	for id in CLanes.count():
+		if CLanes.at_war(state, id) or not raided_info(id, rt).is_empty():
+			ids.append(id)
+	return lane_at(p, ids)
 
 
 ## (N2b) A hurricane at p (screen) of radius rad: a pale disc with three
@@ -1662,6 +1726,12 @@ func _fleet_marker(c: Vector2, fl: Dictionary) -> void:
 	var tp := xf * Vector2(0, -1.05 * s - (Minis.label_lift() * 0.5 if Minis.on_ships else 0.0)) + Vector2(4.0 * m, fs * 0.2)
 	_ci.draw_rect(Rect2(tp + Vector2(-3, -fs + 1), Vector2(tw + 6, fs + 3)), Color(0, 0, 0, 0.7))
 	put(_ci, tp, txt, fs, col.lightened(0.55))
+	if _raider_ids.has(int(fl["id"])):   # (lanes) the fleet raiding a lane
+		var rfs := int(round(10 * maxf(m, 0.8)))
+		var rw := text_w("raider", rfs)
+		var rp := tp + Vector2(-1.0, rfs + 4.0)
+		_ci.draw_rect(Rect2(rp + Vector2(-2, -rfs + 1), Vector2(rw + 4, rfs + 3)), Color(0.5, 0.06, 0.04, 0.92))
+		put(_ci, rp, "raider", rfs, Color(1, 0.9, 0.85))
 	if not (fl["carry"] as Array).is_empty():
 		var dp := xf * Vector2(-0.35 * s, 0.38 * s)
 		_ci.draw_circle(dp, 4.5 * m, Color(0, 0, 0, 0.85))

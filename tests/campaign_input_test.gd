@@ -2009,8 +2009,30 @@ func _j_lanes() -> void:
 	cs.overlay.queue_redraw()
 	await process_frame
 	await process_frame
+	# A tap on the raided lane (nothing selected) says who raids it; on a lane between ports at war, that there is no trade.
+	cs.deselect_all()
+	cs.close_side()
+	await process_frame
+	var tp: Vector2 = cs.overlay.to_screen(poly[poly.size() / 4])
+	_check(cs.overlay.lane_at_info(tp) == hv, "lanes: the raided lane answers a tap (lane_at_info)")
+	_tap(tp)
+	await process_frame
+	await process_frame
+	var ttxt := str(cs._toast.find_children("*", "Label", true, false)[0].text) if cs._toast != null and cs._toast.visible else ""
+	_check(ttxt.contains("lane is raided by the English fleet (1 ship) at") and ttxt.contains("make peace"), "lanes: the tap on a raided lane says who raids it: " + ttxt.substr(0, 90))
 	if rt.has(hv):
 		(ps2["fleets"] as Array).pop_back()
+	var own0 := int(ps2["regions"][CData.region_index("veracruz")]["owner"])
+	ps2["regions"][CData.region_index("veracruz")]["owner"] = cs.f
+	cs.overlay.queue_redraw()
+	await process_frame
+	_tap(tp)
+	await process_frame
+	await process_frame
+	ttxt = str(cs._toast.find_children("*", "Label", true, false)[0].text) if cs._toast != null and cs._toast.visible else ""
+	_check(ttxt.begins_with("No trade on the") and ttxt.contains("are at war"), "lanes: the tap on a lane between ports at war says there is no trade: " + ttxt.substr(0, 90))
+	ps2["regions"][CData.region_index("veracruz")]["owner"] = own0
+	# The Key lists the three lane looks.
 	cs.deselect_all()
 	hold = false
 

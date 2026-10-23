@@ -18,6 +18,7 @@ signal toggled(open: bool)
 
 const Overlay := preload("res://game/campaign/map_overlay.gd")
 const MapView := preload("res://game/campaign/map_view.gd")
+const MapOverlay := preload("res://game/campaign/map_overlay.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const CData := preload("res://campaign/cdata.gd")
@@ -428,16 +429,16 @@ func rows() -> Array:
 			MapView.draw_cliff(ci, line, ticks, 1.0, tbl)])
 	if format >= 6:
 		# (the lanes are curves through the sea, both packs, both map styles)
-		var lane_text := "Sea lane: a trade route, its gold paid to both ports (ships sail where they like)" if CData.ships_on() else "Sea lane: a trade route, its gold paid to both ports"
-		out.append([lane_text, func(ci: Control, sz: Vector2):
+		out.append(["Sea lane: a trade route, its gold paid to both ports", func(ci: Control, sz: Vector2):
 			ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.SEA)
-			var pts := PackedVector2Array()
-			for k in 21:
-				var t := float(k) / 20.0
-				pts.append(_l(sz).lerp(_r(sz), t) + Vector2(0, -sin(t * PI) * sz.y * 0.28))
-			MapView.draw_sea_lane_line(ci, pts, 1.0)])
+			MapView.draw_sea_lane_line(ci, _lane_curve(sz), 1.0)])
 		if CData.ships_on():
-			out.append(["Raided lane: an enemy fleet lies on it, the trade is cut", func(ci: Control, sz: Vector2):
+			out.append(["Sea lane at war: the ports' owners are at war, no trade", func(ci: Control, sz: Vector2):
+				ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.SEA)
+				var tbl := MapView.table_on()
+				MapOverlay.draw_war_dashes(ci, MapView.dash_polyline(_lane_curve(sz), (MapView.LANE_TABLE_DASH if tbl else MapView.LANE_DASH),
+					(MapView.LANE_TABLE_GAP if tbl else MapView.LANE_GAP)), tbl)])
+			out.append(["Raided lane: an enemy fleet lies on it (its banner is tagged raider); sink it or drive it off", func(ci: Control, sz: Vector2):
 				ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.SEA)
 				var a := _l(sz)
 				var b := _r(sz)
@@ -527,3 +528,12 @@ class Sample extends Control:
 	func _draw() -> void:
 		if painter.is_valid():
 			painter.call(self, size)
+
+
+## A lane's curve across a Key swatch.
+static func _lane_curve(sz: Vector2) -> PackedVector2Array:
+	var pts := PackedVector2Array()
+	for k in 21:
+		var t := float(k) / 20.0
+		pts.append(_l(sz).lerp(_r(sz), t) + Vector2(0, -sin(t * PI) * sz.y * 0.28))
+	return pts

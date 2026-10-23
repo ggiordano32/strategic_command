@@ -753,3 +753,26 @@ plan's own port cell (`CGrid.port`) still wins when it exists. Result: Rome 27 p
 lane port of both packs is still a port. Yards, docking, boarding from the settlement, the AI's home ports and blockade
 targets follow the rule; sea trade is a share of income at risk under blockade, so no economy change. Pins moved in both
 packs (STATUS). A fleet can no longer dock, be built or be boarded at the dropped towns.
+
+### Lanes at war and legible raids (2026-10-23)
+
+Owner, phone playtest: "The raiding looks great on the supply lines, but right now I cannot tell who is raiding what, so there
+isn't really a clear distinction on how I can stop the raid. Countries at war should not trade, so their routes should have a
+different color for 'At War' state."
+
+Rule: no trade with the enemy. `CLanes.lane_state` pays neither end of a port lane whose two owners are at war
+(`CLanes.at_war(st, id)`, false for an exit, an unowned end or one owner holding both); it pays again at peace. Lane exits are
+unaffected. A raid on a lane that pays nothing cuts nothing (no `cuta` / `cutb`, no badge, no chronicle row); the AI's
+`_lane_gold` already reads `lane_state`, so it never raids a lane that pays nothing (docs/AI.md unchanged). A war now costs
+both sides the trade between them: West pacing moved (STATUS pins); Rome has few such lanes.
+
+View (both map styles): a trading lane keeps the pale dashes; a lane at war is redrawn by `MapOverlay._draw_lanes` over them
+in a dull dark red-brown (`COL_LANE_WAR`, about twice as wide, the same dash cut so it covers the pale ones; the overlay holds
+the state, the cached coast layer does not); a raided lane stays bold red with a badge "raided by <adjective>" in the raider's
+colour on a dark plate ("raided" when the raider is out of sight), and the raiding fleet's pennant carries a small red "raider"
+tag under its ship count. A tap with nothing selected on a raided lane or its badge says "The <lane> lane is raided by the <adj>
+fleet (<n> ships) at <nearest city>: attack it with a stronger fleet, blockade its port, or make peace."; on a lane at war,
+"No trade on the <lane> lane: <A> and <B> are at war."; with a fleet selected the raid order tap is as before. Key rows: Sea
+lane (a trade route, its gold paid to both ports), Sea lane at war, Raided lane. The Realm panel adds "Stop a raid: attack the
+raiding fleet, blockade its home port, or make peace." while a lane paying us is cut. The chronicle row was left as it is
+(naming the raider's fleet size would put it in the event, hence in the hashed state).
