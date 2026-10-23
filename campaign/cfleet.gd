@@ -54,8 +54,11 @@ const INF := 1 << 30
 ## stepping into it fights it; paths avoid it unless it is the target.
 const FLEET_ZONE := 2
 ## A harbour (the coast cell ships are built and boarded at) is at most this
-## far (Chebyshev) from the settlement.
-const HARBOUR_MAX := 4
+## far (Chebyshev) from the settlement (2026-10-23: 2, was 4, which made inland
+## towns ports); a pack's ships script may set its own HARBOUR_MAX and a
+## Dictionary HARBOUR_FAR {region key: max distance} for a real port whose site
+## sits back from the water (read by key only).
+const HARBOUR_MAX := 2
 ## Turns a voyage is searched ahead (players' stored voyages).
 const MAX_TURNS := 12
 const MAX_NODES := 8000
@@ -204,6 +207,8 @@ static func ensure() -> void:
 	_harb = []
 	_dock = []
 	_beach = []
+	var hmax := int(CData.ship_const("HARBOUR_MAX", HARBOUR_MAX))
+	var hfar: Dictionary = CData.ship_const("HARBOUR_FAR", {})
 	for r in CData.region_count():
 		var s := CGrid.site(r)
 		var hb := -1
@@ -219,7 +224,7 @@ static func ensure() -> void:
 		var port := CGrid.port(r)
 		if port >= 0 and _sea_next(port) >= 0:
 			hb = port
-		if hb >= 0 and CGrid.cheb(hb, s) > HARBOUR_MAX:
+		if hb >= 0 and CGrid.cheb(hb, s) > int(hfar.get(str(CData.REGIONS[r]["key"]), hmax)):
 			hb = -1
 		_harb.append(hb)
 		var dk := -1

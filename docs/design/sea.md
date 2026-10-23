@@ -725,3 +725,17 @@ Built as planned; what the build settled or changed:
   `fmove` and a zero-step `fmove` casting off, the prize with its event and the troops destroyed, the prizes joining a docked
   fleet, a port lost without a capture, the storm, the AI docking, determinism) and `campaign_input_test._j_dock` (12
   checks: Dock at sea and the city tap, the same city cancels, Cast off / Stay, Dock at a dock, the settlement card's list).
+
+### Port rule (2026-10-23)
+
+Owner, phone playtest: "what are the anchor markers? They are on every city now." With `HARBOUR_MAX` 4 (Chebyshev, site to the
+nearest coast cell) 29 of Rome's 36 regions and 43 of the West's 49 were ports, inland towns among them (Arretium and
+Beneventum at 3; Tayasal, Chickasawhay, Barquisimeto at 4). Now `CFleet.ensure` reads `HARBOUR_MAX` from the pack's ships
+script (`CData.ship_const("HARBOUR_MAX", 2)`; default 2, so the West needs no line, `rome_ships.gd` states it) and an
+optional Dictionary `HARBOUR_FAR {region key: max distance}` for a real port whose site sits back from the water, read by
+key only (`.get(key, HARBOUR_MAX)`, never iterated): Rome's is `{"baetica": 3}` (Gades, Carthage's Atlantic port). A town
+plan's own port cell (`CGrid.port`) still wins when it exists. Result: Rome 27 ports (Arretium and Beneventum gone), the West
+37 (Tayasal, Chickasawhay, Barquisimeto, Villahermosa, Valladolid, Atakapa Bayou gone); every start yard, start fleet and
+lane port of both packs is still a port. Yards, docking, boarding from the settlement, the AI's home ports and blockade
+targets follow the rule; sea trade is a share of income at risk under blockade, so no economy change. Pins moved in both
+packs (STATUS). A fleet can no longer dock, be built or be boarded at the dropped towns.

@@ -176,6 +176,22 @@ in CAMPAIGN.md "Fleets"; no `CState.VERSION` bump.
   `tests/banner_test.gd` (West table, Rome relief; every settlement, a garrison of 3 and 1 / 3 / 8 besiegers, two zooms:
   no two banners overlap, the garrison touches its footprint, the besiegers keep to the rings).
 
+### Garrisons on the town, armies stable across zoom, a quieter port mark (2026-10-23)
+
+Phone playtest: "when an army is in a city, the marker should be on top of that actual city. Right now it is to the side
+with a small indicator and it results in weird pathing back to the city and then out again"; "the armies seem to move to
+different locations when zoomed out vs zoomed in"; "what are the anchor markers?" The 24-spot garrison ring of "Banners at
+towns" above is gone (`_garrison_spot`, and `_model_at`, which moved a free army standing at a miniature town beside it
+only while the model was drawn, i.e. with the zoom). The rule now: an army inside a settlement (`CRules.inside`) is drawn
+on it, the stack's first banner centred on the marker (relief style) or the model's footprint centre (table style,
+`_garrison_centre`), the others one banner height lower each (the name label stays above, not moved); a free army stands
+on its own cell at every zoom, armies sharing a cell side by side as before; besiegers keep their ring cells and
+`_ring_nudge` (still in screen pixels, so a nudged besieger can differ a little between zooms). The halo and the tap target
+use the same positions. The planned path of an army inside a town (`_path6`) starts at the settlement's site point, so it
+leads straight out of the town. The harbour mark is 75 % of its size with a disc alpha of 0.6, and the Key has a row for it
+("Port: an anchor beside the town; ships dock and are built here"); the port rule is in sea.md "Port rule" (27 / 37 ports
+instead of 29 / 43). `tests/banner_test.gd` still checks overlap and the besiegers' rings.
+
 ### Overworld view layers follow the pan every frame (2026-10-22)
 
 The ships (`minis_layer.gd`) are screen-space, so unlike the armies (slid by the overlay) they are redrawn; on Quality Low the 10 Hz throttle now limits only the bobbing, and a frame where the overlay transform or zoom changed always redraws (measured max lag while panning 21.6 px before, 0 after; High was 0 already: the screen sets the view in its own `_process`, a parent of the layer, so it runs first). The town and fog layers sit in the scaled world node and the figures redraw on every transform change, so they never lagged. Probe: `tests/zoom_sweep.gd -- --lag`.

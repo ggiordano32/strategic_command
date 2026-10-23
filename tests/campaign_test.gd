@@ -3775,8 +3775,9 @@ func _ai_skilled() -> void:
 	for t in 20:
 		ge = CTurn.resolve_turn(ge, [])
 	# (Easy golden moved 2026-10-13 with reinforcements: an army that was
-	# bounced off a full battle side now joins it; was be6e10a3, same rng.)
-	_check(CState.hash_text(CState.as_format(ge, 7)) == "11d7ae9c" and int(ge["rng"]) == 1530193207,
+	# bounced off a full battle side now joins it; was be6e10a3, same rng.
+	# Moved again 2026-10-23 with the port rule (HARBOUR_MAX 2); was 11d7ae9c, rng 1530193207.)
+	_check(CState.hash_text(CState.as_format(ge, 7)) == "ed0717eb" and int(ge["rng"]) == 2573862638,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(ge, 7)), int(ge["rng"])])
 	CAI.no_beasts = false
 	CBattle.old_walls = false
@@ -5122,8 +5123,8 @@ func _sight_coast(pack: String, f: int) -> void:
 			if q == r or CState.owner(one, q) == f or _near(r, q):
 				continue
 			for c in Sight._halo(q, 2):
-				if cs[1] and h3.has(c):
-					continue  # (a port's own 3-cell sea may reach another region's coast: Rome's Latium, R2)
+				if (cs[1] and h3.has(c)) or h2.has(c):
+					continue  # (a port's own 3-cell sea, or a coastal region's own 2-cell sea, may reach another region's coast: Rome's Latium, R2; the port rule of 2026-10-23 made another Rome region the coastal case)
 				if CGrid.cheb(c, CGrid.site(r)) > 8:
 					if vis[c] == 1:
 						lit += 1

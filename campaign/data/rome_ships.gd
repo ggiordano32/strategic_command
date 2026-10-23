@@ -65,6 +65,12 @@ const WIND_FROM_DEG := 315
 const WIND_STRENGTH := 55
 const WIND_PCT: Array[int] = [125, 115, 100, 75, 60]
 
+## A settlement is a port when a coast cell lies within HARBOUR_MAX (2) of its
+## site (CFleet.ensure); HARBOUR_FAR gives the real ports whose site sits back
+## from the water a longer reach: Gades, Carthage's Atlantic port.
+const HARBOUR_MAX := 2
+const HARBOUR_FAR := {"baetica": 3}
+
 ## Shipyards at the start: [region key, level]. Rome, Carthage and Macedon
 ## (the three navies, and Syracuse, the great naval power of the west) at level 2, every other faction at 1, each in its
 ## capital when that has a harbour (CFleet.harbour: a coast cell within

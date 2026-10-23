@@ -379,6 +379,9 @@ func rows() -> Array:
 			var k := sz.y * 0.4
 			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(0.05, -0.95) * k, c + Vector2(0.7, 0.05) * k, c + Vector2(0.05, 0.05) * k]), Color(0.96, 0.94, 0.86))
 			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(-1, 0.15) * k, c + Vector2(1, 0.15) * k, c + Vector2(0.62, 0.62) * k, c + Vector2(-0.7, 0.62) * k]), oc)])
+		out.append(["Port: an anchor beside the town; ships dock and are built here", func(ci: Control, sz: Vector2):
+			ci.draw_rect(Rect2(Vector2.ZERO, sz), Color(0.3, 0.36, 0.26))
+			Overlay.draw_harbour_mark(ci, sz * 0.5, 1.4)])
 		out.append(["Docked fleet: at the quay of a port city, sails furled; no storm or enemy fleet reaches it, the yard repairs it (Cast off to sail)", func(ci: Control, sz: Vector2):
 			ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.SEA)
 			var dc := sz * 0.5

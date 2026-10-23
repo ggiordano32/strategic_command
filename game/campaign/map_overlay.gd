@@ -337,19 +337,16 @@ func fleet_positions() -> Dictionary:
 	return out
 
 
-## Banners at towns (version 6; owner 2026-10-22: a garrison's banner drew far west of Veracruz, on the besiegers of
-## Orizaba). The rule, in `_army_positions6` / `_garrison_spot` / `_ring_nudge`, one pass in this order, every group's
-## rectangle added to `placed` so that no two banners (and no siege camp tent) overlap:
-##   1. armies elsewhere (a march, a replay, a field cell) stand on their cell, side by side;
-##   2. the armies inside a town, or standing at its model, make one stack (banners one under the other) on a ring
-##      round the town's footprint (the model's rectangle, or the marker with its walls in the relief style) at the
-##      footprint + a banner: 24 spots, kept when wholly on land and free of other banners and tents, the best one by
-##      distance from the nearest other settlement (the side away from the neighbours), off the harbour side, and
-##      beside the town rather than above or below it; the relief style tries the spot under the marker first. No
-##      spot: the stack goes under the model (the town's name is over it), lower by a banner while it is taken;
+## Banners at towns (version 6; owner 2026-10-22, reworked 2026-10-23: a garrison stands ON its town, and no army moves
+## with the zoom). The rule, in `_army_positions6` / `_garrison_centre` / `_ring_nudge`, one pass in this order:
+##   1. a free army (a march, a replay, a field cell, also beside a town) stands on its own cell, side by side with the
+##      others of the cell: the same place at every zoom;
+##   2. the armies inside a town make one stack, the first banner centred on the settlement's marker (relief style) or
+##      its model's footprint centre (table style), the others one banner height further down each (the name is above);
+##      the planned path of such an army starts at the settlement's site point;
 ##   3. a besieger stands on its cell of the ring of the besieged town; when that spot is taken (by the garrison, a tent
-##      or another banner: the cells of a small ring are closer than a banner is wide) it is pushed along the ring (the
-##      same radius), then along the rings a banner's height further out, to the nearest free spot wholly on land.
+##      or another banner) it is pushed along the ring (the same radius, screen pixels: not zoom-stable), then along
+##      the rings a banner's height further out, to the nearest free spot wholly on land.
 ## `banner_reach(r)` is the screen rectangle a garrison's banners touch at least (footprint + 8 px).
 var _land_cache := {}       # "tag_k" -> bool: the spot is wholly on land (world-fixed, kept per ~5 % band of zoom)
 var _spot_zoom := -99999
@@ -434,81 +431,11 @@ func _tent_rects() -> Array:
 	return out
 
 
-## Where the stack of n garrison banners of town r stands (the first banner's centre); `placed` holds the rectangles
-## taken. Also called for the armies standing at the town's model.
-func _garrison_spot(r: int, n: int, placed: Array, soft: Array, m: float) -> Vector2:
-	_land_band()
-	var base := to_screen(site_point(r))
+## Where a garrison's stack stands (2026-10-23): the first banner centred on the settlement's marker (relief style) or
+## on its model's footprint centre (table style).
+func _garrison_centre(r: int) -> Vector2:
 	var fp := _footprint(r)
-	var mc := base + fp.position + fp.size * 0.5
-	var hs := -port_side(r) if (CFleet.harbour(r) >= 0 or CFleet.dock(r) >= 0) else 0.0   # the side away from the harbour
-	var ax := fp.size.x * 0.5 + ARMY_W * 0.5 * m + 4.0
-	var ay := fp.size.y * 0.5 + ARMY_H * 0.5 * m + 2.0
-	var half_stack := (n - 1) * (ARMY_H * m * 0.9 + 3.0) * 0.5 if Minis.on_sites else 0.0
-	var near: Array = []   # the other towns within reach of the ring: [anchor, model rect, siege ring radius]
-	for q in CData.region_count():
-		if q == r:
-			continue
-		var qa := to_screen(site_point(q))
-		if qa.distance_to(base) < 520.0:
-			var qf := _footprint(q)
-			near.append([qa, Rect2(qa + qf.position, qf.size), siege_ring_radius(q) if not CState.siege_at(state, q).is_empty() else 0.0])
-	var best := Vector2.ZERO
-	var best_s := -1e18
-	var cands: Array = []   # [centre of the first banner, ring index]
-	if not Minis.on_sites:
-		cands.append([base + Vector2(0, (ARMY_H * 0.5 + 12.0) * m), 100])   # the relief style's own spot, under the marker
-	for i in RING_N:
-		var ang := TAU * i / RING_N + PI * 0.5 / RING_N
-		cands.append([mc + Vector2(cos(ang) * ax, sin(ang) * ay) - Vector2(0, half_stack), i])
-	for need_land in [true, false]:   # (an islet: a banner over the water is better than none, never over another banner)
-		var found := false
-		for cd in cands:
-			var c: Vector2 = cd[0]
-			var i: int = cd[1]
-			var rc := _group_rect(c, n, Minis.on_sites, m)
-			if not _free(rc, placed):
-				continue
-			if need_land:
-				var tag := "g%d_%d" % [r, i]
-				if not _land_cache.has(tag):
-					_land_cache[tag] = _banner_on_land(c, m)
-				if not _land_cache[tag]:
-					continue
-			var taken := 0.0   # (a besieger's own cell: it can be pushed, but better not)
-			for o in soft:
-				if rc.intersects(o):
-					taken += 120.0
-			if i == 100:
-				if taken == 0.0:
-					return c   # (the relief style's usual spot is free: as it always was)
-				continue
-			var nd := 400.0
-			var pen := taken
-			for e in near:
-				var d := c.distance_to(e[0])
-				nd = minf(nd, d)
-				if (e[1] as Rect2).intersects(rc):
-					pen += 400.0
-				if float(e[2]) > 0.0 and d < float(e[2]) + ARMY_W * 0.5 * m:
-					pen += 250.0
-			var sc := minf(nd, 300.0) - pen - 0.12 * absf(c.y - mc.y)
-			if hs != 0.0 and (c.x - base.x) * hs < 0.0:
-				sc -= 70.0   # (the harbour side: the water, the quay, the fleet)
-			if sc > best_s:
-				best_s = sc
-				best = c
-			found = true
-		if found:
-			return best
-	# no free spot round the town: under it (the name is above the model), lower by a banner while it is taken
-	var down := base.y + fp.end.y + ARMY_H * 0.5 * m + 2.0
-	var cc := Vector2(base.x, down)
-	for k in 6:
-		if _free(_group_rect(cc, n, Minis.on_sites, m), placed):
-			break
-		cc.y += ARMY_H * m * 0.9 + 3.0
-	return cc
+	return to_screen(site_point(r)) + fp.position + fp.size * 0.5
 
 
 ## A besieger's group at screen point c (n banners side by side) round town r: the cell's spot when free, else the
@@ -550,30 +477,6 @@ func _banner_on_land(c: Vector2, m: float) -> bool:
 		if Geo.region_at(inv * (c + d)) < 0:
 			return false
 	return true
-
-
-## The settlement whose miniature covers screen point p (-1 none).
-func _model_at(p: Vector2) -> int:
-	# (the towns' screen points and model rects are built once per view, not for every army asking)
-	var key := [xform, zoom, Minis.on_sites, _epoch]
-	if _mrect_key != key:
-		_mrect_key = key
-		_mrect_q = []
-		_mrect_r = []
-		for r in CData.region_count():
-			_mrect_q.append(to_screen(site_point(r)))
-			_mrect_r.append(Minis.model_rect(zoom, r))
-	for r in _mrect_q.size():
-		var q: Vector2 = _mrect_q[r]
-		var mr: Rect2 = _mrect_r[r]
-		if absf(p.x - q.x - (mr.position.x + mr.size.x * 0.5)) <= mr.size.x * 0.5 + ARMY_W * 0.4 and p.y - q.y >= mr.position.y and p.y - q.y <= mr.end.y:
-			return r
-	return -1
-
-
-var _mrect_key: Array = []
-var _mrect_q: Array = []
-var _mrect_r: Array = []
 
 
 ## -1 / +1: the side (left / right) of its town where region r's harbour lies.
@@ -689,7 +592,7 @@ func _army_positions6() -> Dictionary:
 			key = "p%d_%d" % [int(c.x / 6.0), int(c.y / 6.0)]
 		elif CRules.inside(state, a):
 			town_r = CGrid.site_region(CState.cell(a))
-			c = to_screen(site_point(town_r)) + Vector2(0, (ARMY_H * 0.5 + 12.0) * m + Minis.army_drop())
+			c = _garrison_centre(town_r)
 			key = "s%d" % town_r
 			kind = 1
 		elif besieger.has(id):
@@ -700,11 +603,6 @@ func _army_positions6() -> Dictionary:
 		else:
 			c = to_screen(cell_point(CState.cell(a)))
 			key = "c%d" % CState.cell(a)
-			var nr := _model_at(c) if Minis.on_sites else -1
-			if nr >= 0:
-				town_r = nr   # at a miniature town: beside it, not over its name
-				key = "s%d" % nr
-				kind = 1
 		if not groups.has(key):
 			groups[key] = [c, [], kind, town_r]
 			order.append(key)
@@ -728,11 +626,9 @@ func _army_positions6() -> Dictionary:
 			var c: Vector2 = g[0]
 			if pass_kind == 2:
 				c = _ring_nudge(c, n, int(g[3]), str(key), placed, m)
-			elif pass_kind == 1:
-				c = _garrison_spot(int(g[3]), n, placed, soft, m)
-			placed.append(_group_rect(c, n, pass_kind == 1 and Minis.on_sites, m))
+			placed.append(_group_rect(c, n, pass_kind == 1, m))
 			for k in n:
-				if pass_kind == 1 and Minis.on_sites:
+				if pass_kind == 1:
 					out[int(ids[k])] = c + Vector2(0, k * (ARMY_H * m * 0.9 + 3.0))
 				else:
 					out[int(ids[k])] = c + Vector2((k - (n - 1) * 0.5) * step, 0)
@@ -1259,8 +1155,8 @@ static func draw_site(ci: CanvasItem, p: Vector2, rad: float, owner_col: Color, 
 
 ## A harbour mark: a small white anchor on a dark disc (a settlement with a port).
 static func draw_harbour_mark(ci: CanvasItem, p: Vector2, m: float) -> void:
-	var s := maxf(m, 0.7) * 5.5
-	ci.draw_circle(p, s * 1.35, Color(0.06, 0.1, 0.16, 0.85))
+	var s := maxf(m, 0.7) * 4.1   # (75 % of its first size, and a quieter disc: owner 2026-10-23)
+	ci.draw_circle(p, s * 1.35, Color(0.06, 0.1, 0.16, 0.6))
 	var wc := Color(0.95, 0.96, 0.98)
 	ci.draw_arc(p + Vector2(0, -s * 0.72), s * 0.2, 0, TAU, 10, wc, 1.2, true)
 	ci.draw_line(p + Vector2(0, -s * 0.5), p + Vector2(0, s * 0.8), wc, 1.4, true)
@@ -1648,6 +1544,16 @@ func _draw_links(pos: Dictionary) -> void:
 		draw_link(_ci, pos[int(ln[0])], pos[int(ln[1])], int(ln[2]))
 
 
+## The settlement army `id` stands inside (-1 none, or the army is replayed).
+func _inside_site(id: int) -> int:
+	if replay_pos.has(id):
+		return -1
+	var a := CState.army(state, id)
+	if a.is_empty() or not CRules.inside(state, a):
+		return -1
+	return CGrid.site_region(CState.cell(a))
+
+
 ## Version 6: a planned path along cell centres: solid this turn, dashed
 ## beyond, a ring where this turn ends, the intent at the end.
 func _path6(pth: Dictionary, pos: Dictionary) -> void:
@@ -1661,7 +1567,10 @@ func _path6(pth: Dictionary, pos: Dictionary) -> void:
 	var sp: Array = []
 	for k in pts.size():
 		sp.append(to_screen(pts[k]))
-	if pos.has(id) and not pth.has("drag"):
+	var home := _inside_site(id)
+	if home >= 0:
+		sp[0] = to_screen(site_point(home))   # (an army in a town: the path leads straight out of it)
+	elif pos.has(id) and not pth.has("drag"):
 		sp[0] = pos[id]
 	var now := int(pth["now"])
 	for k in pts.size() - 1:
