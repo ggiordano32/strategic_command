@@ -820,14 +820,15 @@ static func facts(st: Dictionary, r: int) -> Dictionary:
 	return CTown.facts(st, r)
 
 
-static func sig(st: Dictionary, r: int) -> String:
-	var f := facts(st, r)
+static func sig(st: Dictionary, r: int, known: Dictionary = {}) -> String:
+	var f := known if not known.is_empty() else facts(st, r)
 	return "%d_%d_%s_%d_%d_%d_%d_%d" % [f["lvl"], f["walls"], f["style"], 1 if f["port"] else 0, f["yard"], f["market"], f["sack"], f["siege"]]
 
 
-static func plan(st: Dictionary, r: int, grid: bool) -> Dictionary:
-	var f := facts(st, r)
-	var key := "%d_%s_%d" % [r, sig(st, r), 1 if grid else 0]
+## `known`: the facts to show instead of the state's (a remembered town out of sight, FogView.town_facts).
+static func plan(st: Dictionary, r: int, grid: bool, known: Dictionary = {}) -> Dictionary:
+	var f := known if not known.is_empty() else facts(st, r)
+	var key := "%d_%s_%d" % [r, sig(st, r, known), 1 if grid else 0]
 	_sync()
 	if _plans.has(key):
 		return _plans[key]

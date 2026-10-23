@@ -153,6 +153,7 @@ func _ready() -> void:
 	add_child(_menu)
 	_menu.visibility_changed.connect(_menu_visibility)
 	get_tree().root.size_changed.connect(_layout_home)
+	get_tree().root.size_changed.connect(_fit_options_later)
 	get_tree().root.size_changed.connect(_layout_grand)
 	show_page("home")
 	_activate_bg.call_deferred()
@@ -1115,8 +1116,27 @@ func _build_options(bg: Control) -> Control:
 	panel.add_child(inner)
 	_opts = OptionsRows.new()
 	_opts.build(inner, {"prefix": "home", "narrow": narrow, "title": true, "dev": MenuPrefs.dev(), "win": get_window(),
-		"on_controls": _open_controls, "on_book": _open_book, "on_tests": _open_tests})
+		"on_controls": _open_controls, "on_book": _open_book, "on_tests": _open_tests, "on_size": _fit_options_later})
+	_options_box = vb
 	return vb.get_parent().get_parent()
+
+
+var _options_box: Control = null
+
+
+func _fit_options_later() -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_fit_options()
+
+
+## The Options page needs no scroll on a short wide window (1024x576 at UI size M): tighter rows, the audio sliders
+## side by side, then no description lines (OptionsRows.fit). Phones keep the narrow layout and scroll.
+func _fit_options() -> void:
+	if _opts == null or _options_box == null or not is_instance_valid(_options_box) or not _options_box.is_visible_in_tree():
+		return
+	var scroll: Control = _options_box.get_parent().get_parent()
+	_opts.fit(func(): return _options_box.get_combined_minimum_size().y <= scroll.size.y)
 
 
 func _open_tests() -> void:
@@ -1591,6 +1611,7 @@ func show_page(p: String) -> void:
 		_server_page.refresh()
 	if p == "options" and _opts != null:
 		_opts.refresh()
+		_fit_options_later()
 	if p == "home":
 		_update_home()
 		if _opts != null:

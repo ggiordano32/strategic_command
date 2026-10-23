@@ -1029,6 +1029,18 @@ static func campaign(check: Callable) -> void:
 		and int(scn["units"][0]["troops"]) > 0, "sea: the scenario: 4 ships, the player commands side 0, troops aboard (%d men)" % int(scn["units"][0].get("troops", 0)))
 	var built2: Dictionary = CBattle.build(s1, b, eng)
 	check.call(str(built2) == str(built), "sea: the same scenario twice")
+	# The campaign's Battle AI setting reaches the sea sim: the AI's side only, both under the AI when no human fights.
+	var sk_st: Dictionary = CState.copy(s1)
+	sk_st["settings"]["ai_battle_skill"] = 2
+	var sk_b: Dictionary = CBattle.build(sk_st, b, eng)
+	var sk_sim := SeaSim.new()
+	sk_sim.setup(sk_b["scenario"], int(sk_b["seed"]))
+	check.call(sk_b["scenario"]["ai_skill"] == [1, 2] and sk_sim.ai_skill[1] == 2 and sk_sim.ai_skill[0] == 1,
+		"sea: the campaign's Battle AI setting (Skilled) is in the scenario for the AI's side and read by the sim")
+	sk_st["settings"]["ai_battle_skill"] = 0
+	var sk_b2: Dictionary = CBattle.build(sk_st, b, -1)
+	check.call(sk_b2["scenario"]["ai_skill"] == [1, 0], "sea: as on land, a human faction's side stays Average even when the AI sails it; the AI faction's takes the setting (Easy)")
+	check.call(built["scenario"]["ai_skill"] == [1, 1], "sea: the default setting is Average")
 	# Fight it (the AI sails both sides here), then write it back.
 	scn["ai_sides"] = [1, 1]
 	var sim := SeaSim.new()

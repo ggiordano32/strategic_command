@@ -27,7 +27,9 @@ extends RefCounted
 ## region, -1 never seen], "turn": [turn of that look per region, -1],
 ## "mk": [last-seen markers {cell, f, kind (0 army / 1 fleet), units,
 ## turn, name}] sorted by cell, at most one per cell, at most MAX_MARKERS
-## (the oldest dropped first)}. A marker is written for every foreign army /
+## (the oldest dropped first); optional "lvl" / "wl": the settlement level and
+## the walls level as last seen per region (-1 never seen; the keys absent in a
+## memory written before they existed = unknown, no version bump)}. A marker is written for every foreign army /
 ## fleet in sight at the end of a turn (several on one cell: one marker, the
 ## first's faction and name, their units summed) and dropped when its cell
 ## is in sight again. Integers and index order only; no Dictionary is
@@ -263,6 +265,23 @@ static func known_turn(st: Dictionary, f: int, r: int, vis: PackedByteArray = Pa
 	return int(mem["turn"][r])
 
 
+## The settlement level of region r as f last saw it (-1 never seen or not
+## recorded); the true level when in sight (or the state has no fog).
+static func known_level(st: Dictionary, f: int, r: int, vis: PackedByteArray = PackedByteArray()) -> int:
+	var mem := _mem(st, f)
+	if mem.is_empty() or region_visible(st, f, r, vis):
+		return int(st["regions"][r]["level"])
+	return int((mem.get("lvl", []) as Array)[r]) if (mem.get("lvl", []) as Array).size() > r else -1
+
+
+## The walls level of region r as f last saw it (same rules as known_level).
+static func known_walls(st: Dictionary, f: int, r: int, vis: PackedByteArray = PackedByteArray()) -> int:
+	var mem := _mem(st, f)
+	if mem.is_empty() or region_visible(st, f, r, vis):
+		return CState.walls(st, r)
+	return int((mem.get("wl", []) as Array)[r]) if (mem.get("wl", []) as Array).size() > r else -1
+
+
 ## Last-seen army / fleet markers outside f's sight now, in cell order:
 ## [{"cell", "f", "kind" (0 army, 1 fleet), "units", "turn", "name"}]
 ## (copies; markers of f's own team are left out).
@@ -478,10 +497,20 @@ static func update_memory(st: Dictionary) -> void:
 				tn.append(-1)
 			mem = {"own": own, "turn": tn, "mk": []}
 			fs["mem"] = mem
+		if not mem.has("lvl") or (mem["lvl"] as Array).size() != nr or (mem["wl"] as Array).size() != nr:
+			var lv: Array = []
+			var wl: Array = []
+			for r in nr:
+				lv.append(-1)
+				wl.append(-1)
+			mem["lvl"] = lv
+			mem["wl"] = wl
 		for r in nr:
 			if _region_seen(vis, r):
 				mem["own"][r] = CState.owner(st, r)
 				mem["turn"][r] = turn
+				mem["lvl"][r] = int(st["regions"][r]["level"])
+				mem["wl"][r] = CState.walls(st, r)
 		var mk: Array = []
 		for m in mem["mk"]:
 			var c := int(m["cell"])

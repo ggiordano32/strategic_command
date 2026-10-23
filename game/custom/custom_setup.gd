@@ -533,5 +533,6 @@ static func build_sea(st: Dictionary) -> Dictionary:
 	if lay == "ns" and int(sea.get("water", 0)) == 2:
 		lay = "we"
 	var scn := {"sea": 1, "wind_deg": int(sea.get("wind", 90)), "wind_str": int(sea.get("str", 70)), "ai_sides": [0, 1],
-		"land": land, "layout": lay, "units": units, "time_limit": int(st.get("time", 900))}
+		"land": land, "layout": lay, "units": units, "time_limit": int(st.get("time", 900)),
+		"ai_skill": [clampi(int(st["sides"][0].get("skill", AIProfile.AVERAGE)), 0, 2), clampi(int(st["sides"][1].get("skill", AIProfile.AVERAGE)), 0, 2)]}
 	return {"sea": 1, "scenario": scn, "seed": int(st.get("seed", 1))}

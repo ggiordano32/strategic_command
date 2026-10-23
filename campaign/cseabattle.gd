@@ -35,6 +35,7 @@ const CState := preload("res://campaign/cstate.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
 const CCaptain := preload("res://campaign/ccaptain.gd")
+const CP := preload("res://campaign/cai_profile.gd")
 const SeaSim := preload("res://sim/sea_sim.gd")
 
 const FATE_AFLOAT := 0
@@ -133,7 +134,15 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1) -> Dictionar
 	var lay := "ns"
 	if (dirs >> 2) & 1 != 0 or (dirs >> 6) & 1 != 0:
 		lay = "we"
-	var scn := {"sea": 1, "width_m": SeaSim.FIELD_W, "height_m": SeaSim.FIELD_H, "wind_deg": (wind + 360) % 360,
+	# The battle AI's skill per sim side (the campaign's Battle AI setting, a faction's own when it has one); the
+	# player's side keeps the default, which the sim never reads for it.
+	var skill := [CP.AVERAGE, CP.AVERAGE]
+	for k in 2:
+		if ai[k] == 1 and not (sdz[k] as Array).is_empty():
+			var lead := int((sdz[k][0] as Dictionary)["f"])
+			if not CState.is_human(st, lead):
+				skill[k] = CP.battle_skill(st, lead)
+	var scn := {"sea": 1, "ai_skill": skill, "width_m": SeaSim.FIELD_W, "height_m": SeaSim.FIELD_H, "wind_deg": (wind + 360) % 360,
 		"wind_str": wstr, "ai_sides": ai, "land": land, "layout": lay, "units": units,
 		"time_limit": int(CData.ship_const("SEA_TIME_LIMIT", 900))}
 	var player_side := 0 if ai[0] == 0 else (1 if ai[1] == 0 else 0)

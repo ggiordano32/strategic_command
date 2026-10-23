@@ -272,7 +272,7 @@ func _page_shot() -> void:
 	_h("Chain shot  (range %d m, %d %% of round)" % [shot_range(ty, ST.SHOT_CHAIN), ST.CHAIN_RANGE_PCT])
 	_p("The rigging. Each hit takes %d off her rigging (twice the shot weight) and 1 off her hull, and kills one man for every three hits. A ship with no rigging left sails at 25 %% speed, so use it to stop a ship running or before you board. Ships engaging with chain lie about %d m off." % [gun * 2, SeaSim.RANGE_PREF[1]])
 	_h("Grape  (range %d m, %d %% of round)" % [shot_range(ty, ST.SHOT_GRAPE), ST.GRAPE_RANGE_PCT])
-	_p("The crew. Each hit kills %d men and scratches the rigging; it hardly marks the hull. Grape hits 20 %% more often than round. Use it close in on a crew you mean to board. Ships engaging with grape lie about %d m off." % [gun / 4 + 1, SeaSim.RANGE_PREF[2]])
+	_p("The crew. Each hit kills %d men and scratches the rigging; it hardly marks the hull. Grape hits 20 %% more often than round. Use it only at point-blank range: a broadside loaded with it cannot fire beyond that. Ships engaging with grape lie about %d m off." % [gun / 4 + 1, SeaSim.RANGE_PREF[2]])
 	_h("Aim and raking")
 	_p("A gun aimed at a 40 m ship hits about 88 % of the time at point-blank and 26 % at the edge of its range, scaled by the target's length (a 20 m sloop is a smaller mark) and by the gun crews' quality. The fewer the guns working (a battered hull works fewer, down to 40 %), the fewer the hits. Firing from ahead of her bow or astern, down her length (raking), kills 2 times the men with round shot, 1.5 with chain and 1.6 with grape.")
 	_h("Reload")
@@ -285,8 +285,8 @@ func _page_fight() -> void:
 	_h("Engaging")
 	_p("Tap an enemy to engage her. Your ship sails to keep her broadside on at the range of the shot she holds (round %d m, chain %d m, grape %d m, never more than four fifths of her gun range). From far off she closes by the wind (the Points of sail page): from to windward she bears down, from to leeward she makes for the enemy's lee bow. Her guns fire as the target comes into the arc." % [SeaSim.RANGE_PREF[0], SeaSim.RANGE_PREF[1], SeaSim.RANGE_PREF[2]])
 	_h("Boarding")
-	_p("Arm Board, then tap an enemy (a struck ship too). She sails alongside, coming up under the stern when far. When the two ships' centres are within 40 %% of their lengths added together plus 8 m, and they are moving slowly relative to each other (or the target is nearly stopped), she grapples; both stop. A boarded ship is taken at once if she has struck. Otherwise the boarding party (%d %% of the boarder's crew and every soldier aboard) fights the defenders on the decks; the defenders, on their own deck, fight at %d %% strength. The defenders strike when their morale is gone or they are under %d %% of the boarders; the boarders are thrown back when theirs is gone or they are under %d %% of the defenders; if both crews are spent the ships part. Cripple her with chain and thin her crew with grape first." % [
-		SeaSim.DECK_BOARD_PCT, SeaSim.DECK_BONUS_PCT, SeaSim.DECK_BREAK_DEF, SeaSim.DECK_BREAK_ATT])
+	_p("Arm Board, then tap an enemy (a struck ship too). She sails alongside, coming up under the stern when far. When the two ships' centres are within 40 %% of their lengths added together plus 8 m, and they are moving slowly relative to each other (or the target is nearly stopped), she grapples; both stop. A boarded ship is taken at once if she has struck. Otherwise the boarding party (%d %% of the boarder's crew and every soldier aboard) fights the defenders on the decks; the defenders, on their own deck, fight at %d %% strength. The defenders strike when their morale is gone or they are under %d %% of the boarders; the boarders are thrown back when theirs is gone or they are under %d %% of the defenders; if both crews are spent the ships part. Chain for a ship you mean to board (with her rigging gone she sails at a quarter speed and cannot run); round to sink her. Grape kills crew at short range only (%d %% of round shot's range), and a broadside loaded with it cannot fire beyond that, so it will not soften a ship as you close; the battle AI never loads it." % [
+		SeaSim.DECK_BOARD_PCT, SeaSim.DECK_BONUS_PCT, SeaSim.DECK_BREAK_DEF, SeaSim.DECK_BREAK_ATT, ST.GRAPE_RANGE_PCT])
 	_h("Striking")
 	_p("Hits, losses and raking lower a ship's morale; quiet time restores it. She strikes her colours at 0 morale, or when her crew is under 18 % of its full number (or her hull under 12 % with her rigging under 25 %) and an enemy lies within 400 m. A struck ship stops and is out of the fight; the winner takes her when the battle is decided. A fire ship's crew never strike: they fire her.")
 	_h("Ending")
@@ -383,7 +383,7 @@ static func order_help(key: String, ship_type: int, fire_on: bool = true) -> Dic
 				"more": "Each hit takes %d off her rigging; with none left she sails at 25 %% speed. Ships engaging with chain lie about %d m off. Loaded at the next reload." % [gun * 2, SeaSim.RANGE_PREF[1]],
 				"hint": "Chain shot: rigging and speed, range %d m. Loaded at the next reload." % ch}
 		"sea_grape":
-			return {"title": "Grape", "tip": "Grape: kills crew at short range (%d m, %s), little harm to the hull. Use it close in, on a crew you mean to board." % [gr, nm],
+			return {"title": "Grape", "tip": "Grape: kills crew at short range (%d m, %s), little harm to the hull. Use it only at point-blank range; a loaded broadside cannot fire further." % [gr, nm],
 				"more": "Each hit kills %d men and hits 20 %% more often than round. Ships engaging with grape lie about %d m off. Loaded at the next reload." % [gun / 4 + 1, SeaSim.RANGE_PREF[2]],
 				"hint": "Grape: crew only, range %d m. Loaded at the next reload." % gr}
 		"sea_fire":

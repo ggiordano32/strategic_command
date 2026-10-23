@@ -29,10 +29,17 @@ var buttons := {}        # "controls" / "book" / "tests" -> Button
 var _o := {}
 var _vals := {}          # audio key -> the value Label
 var _building := false
+var _parent: Control = null
+var _slider_h := {}      # audio key -> the slider + value box (re-parented between the stacked rows and the compact row)
+var _slider_row := {}    # audio key -> the stacked row of that slider
+var _slider_unit := {}   # audio key -> the unit of the compact row
+var _slider_compact: Control = null
+var level := 0           # fit(): 0 full, 1 tight spacing, 2 + sliders side by side, 3 + no description lines
 
 
 func build(parent: Control, o: Dictionary) -> void:
 	_o = o
+	_parent = parent
 	_building = true
 	var title: bool = bool(o.get("title", false))
 	_section(parent, "Display", false)
@@ -74,6 +81,18 @@ func build(parent: Control, o: Dictionary) -> void:
 			au.set_muted(not on))
 	for k in ["master", "effects", "ambient"]:
 		_slider(parent, k, {"master": "Master volume", "effects": "Effects", "ambient": "Ambient"}[k])
+	if not bool(o.get("narrow", false)):
+		_slider_compact = Kit.hbox(18)   # (the three sliders side by side, shown by fit() when the page is short)
+		_slider_compact.name = "audio_compact"
+		_slider_compact.visible = false
+		for k in ["master", "effects", "ambient"]:
+			var u := Kit.vbox(1)
+			u.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			u.add_child(Kit.label({"master": "Master volume", "effects": "Effects", "ambient": "Ambient"}[k], 16, Kit.COL_BONE))
+			_slider_unit[k] = u
+			_slider_compact.add_child(u)
+		parent.add_child(_slider_compact)
+		parent.move_child(_slider_compact, parent.get_child_count() - 4)   # (right after the Sound row, before the stacked sliders)
 	if bool(o.get("help", title)):
 		_section(parent, "Help", true)
 		var row := Kit.flow(8)
@@ -92,6 +111,41 @@ func build(parent: Control, o: Dictionary) -> void:
 			buttons["tests"] = tb
 	_building = false
 	refresh()
+
+
+## Fit the page to a short window (wide layout only; the narrow one scrolls): the first level that `fits` (a Callable
+## answering whether the page needs no scroll) is kept: 1 tighter row spacing, 2 the audio sliders side by side, 3 the
+## description lines gone (the controls keep their tips). Level 0 when it fits as built. Returns the level.
+func fit(fits: Callable) -> int:
+	if _parent == null or bool(_o.get("narrow", false)):
+		return 0
+	var lv := 0
+	while lv <= 3:
+		_apply_level(lv)
+		if fits.call():
+			break
+		lv += 1
+	level = mini(lv, 3)
+	if level != lv:
+		_apply_level(level)
+	return level
+
+
+func _apply_level(lv: int) -> void:
+	level = lv
+	_parent.add_theme_constant_override("separation", 8 if lv == 0 else 3)
+	for k in descs:
+		var d := descs[k] as Label
+		d.visible = lv < 3
+	var side := lv >= 2 and _slider_compact != null
+	for k in _slider_h:
+		var h := _slider_h[k] as Control
+		var home: Node = _slider_unit[k] if side else _slider_row[k]   # (the row's hbox: label on the left, the control last)
+		if h.get_parent() != home:
+			h.reparent(home, false)
+		(_slider_row[k] as Control).visible = not side
+	if _slider_compact != null:
+		_slider_compact.visible = side
 
 
 ## How many settings the page shows (capsules and sliders).
@@ -124,6 +178,7 @@ func _section(parent: Control, text: String, rule_before: bool) -> void:
 func _frame(parent: Control, key: String, label: String, desc: String, control: Control) -> void:
 	var left := Kit.vbox(1)
 	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left.alignment = BoxContainer.ALIGNMENT_CENTER   # (a label alone, its description hidden on a short page, sits level with its control)
 	var l := Kit.label(label, 16, Kit.COL_BONE)
 	left.add_child(l)
 	var d := Kit.label(desc, 13, Kit.COL_DIM, true)
@@ -192,7 +247,9 @@ func _slider(parent: Control, k: String, label: String) -> void:
 	sliders[k] = s
 	_vals[k] = vl
 	vl.text = "%d%%" % int(s.value)
+	_slider_h[k] = h
 	_frame(parent, "audio_" + k, label, "", h)
+	_slider_row[k] = parent.get_child(parent.get_child_count() - 1)
 
 
 ## The controls show the stored values again (a battle may have switched Soldiers, another page the size).

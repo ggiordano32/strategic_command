@@ -290,6 +290,24 @@ static func facts(st: Dictionary, r: int) -> Dictionary:
 		"market": CState.building(st, r, CData.MARKET), "sack": sack, "siege": int(sg["f"]) if not sg.is_empty() else -1}
 
 
+## The facts of town r as a viewer remembers it (fog): the owner, level and walls it last saw; the culture
+## (style) follows that owner, the rest is unknown and shown as nothing (no yard / market / sack / siege). A
+## haven is the pirate owner with a harbour, as in kind_of.
+static func facts_known(st: Dictionary, r: int, owner_f: int, lvl: int, walls: int) -> Dictionary:
+	var kind := "roman"
+	var port := false
+	if CData.pack == "west":
+		var cul := CData.faction_culture(owner_f) if owner_f >= 0 else CData.region_culture(r)
+		if CSea.on(st) and CSea.pirate(owner_f) and CFleet.harbour(r) >= 0:
+			kind = "haven"
+		elif cul == MapGen.CUL_CELTIC:
+			kind = "maya" if str(CData.REGIONS[r]["key"]) == "tayasal" else "native"
+		else:
+			kind = "town"
+		port = (CData.ships_on() and (kind == "haven" or CFleet.harbour(r) >= 0))
+	return {"lvl": clampi(lvl, 0, 2), "walls": walls, "style": kind, "port": port, "yard": 0, "market": 0, "sack": 0, "siege": -1}
+
+
 static func _lm_ok(lm: Dictionary, f: Dictionary) -> bool:
 	if int(lm.get("wl", 0)) > int(f["walls"]) or int(lm.get("lv", 0)) > int(f["lvl"]):
 		return false

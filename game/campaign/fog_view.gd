@@ -11,6 +11,7 @@ const CSightImpl := preload("res://campaign/csight.gd")
 const CState := preload("res://campaign/cstate.gd")
 const CData := preload("res://campaign/cdata.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
+const CTown := preload("res://campaign/ctown.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
 
 static var all_seeing := false      # testing aid --all-seeing
@@ -21,6 +22,8 @@ static var vis := PackedByteArray() # per grid cell, 1 = in sight
 static var rvis := PackedByteArray()  # per region, 1 = any cell in sight
 static var own := PackedInt32Array()  # per region: owner as last seen (-1 never seen)
 static var seen_turn := PackedInt32Array()   # per region: the turn of the last look (-1)
+static var lvl_k := PackedInt32Array()   # per region: settlement level as last seen (-1 unknown)
+static var wl_k := PackedInt32Array()    # per region: walls level as last seen (-1 unknown)
 static var marks: Array = []        # last-seen army / fleet markers outside sight
 static var _cur: Dictionary = {}
 static var _sig: Array = []
@@ -56,16 +59,22 @@ static func update(st: Dictionary, pf: int) -> bool:
 		rvis = PackedByteArray()
 		own = PackedInt32Array()
 		seen_turn = PackedInt32Array()
+		lvl_k = PackedInt32Array()
+		wl_k = PackedInt32Array()
 		return true
 	vis = CSightImpl.visible(st, pf)
 	var n := CData.region_count()
 	rvis.resize(n)
 	own.resize(n)
 	seen_turn.resize(n)
+	lvl_k.resize(n)
+	wl_k.resize(n)
 	for r in n:
 		rvis[r] = 1 if CSightImpl.region_visible(st, pf, r, vis) else 0
 		own[r] = CSightImpl.known_owner(st, pf, r, vis)
 		seen_turn[r] = CSightImpl.known_turn(st, pf, r, vis)
+		lvl_k[r] = CSightImpl.known_level(st, pf, r, vis)
+		wl_k[r] = CSightImpl.known_walls(st, pf, r, vis)
 	marks = CSightImpl.markers(st, pf, vis)
 	var armies: Array = st.get("armies", [])
 	for i in armies.size():
@@ -109,6 +118,25 @@ static func shown_owner(st: Dictionary, r: int) -> int:
 	if not on or r >= rvis.size() or rvis[r] != 0:
 		return CState.owner(st, r)
 	return own[r]
+
+
+## What town r's model shows the planner: the true facts in sight (or fog off); out of sight the last-seen
+## owner's culture, level and walls with nothing else (no yard, market, sack or siege: unknown); {} for a region
+## never seen (the layer draws no model, only an unknown marker). Level / walls missing from an old memory: the
+## smallest town (level 0, no walls) of the last-seen owner.
+static func town_facts(st: Dictionary, r: int) -> Dictionary:
+	if not on or r >= rvis.size() or rvis[r] != 0:
+		return CTown.facts(st, r)
+	if seen_turn[r] < 0:
+		return {}
+	return CTown.facts_known(st, r, own[r], maxi(int(lvl_k[r]), 0), maxi(int(wl_k[r]), 0))
+
+
+## The walls level the planner knows of region r (the real one in sight; else the last seen, 0 when unknown).
+static func shown_walls(st: Dictionary, r: int) -> int:
+	if not on or r >= rvis.size() or rvis[r] != 0:
+		return CState.walls(st, r)
+	return maxi(int(wl_k[r]), 0)
 
 
 ## The turn region r was last looked at (-1 never), or the current turn in sight.

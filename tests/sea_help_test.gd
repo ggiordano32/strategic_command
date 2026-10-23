@@ -128,6 +128,12 @@ func _process(_d: float) -> bool:
 				_shot("3_book_%d" % (page - 1))
 			if page < sb.book.PAGES.size():
 				sb.book.show_page(page)
+				if sb.book.PAGES[page] == "Fighting":
+					var ft := ""
+					for c in sb.book.find_children("*", "Label", true, false):
+						ft += (c as Label).text + "\n"
+					_check(ft.contains("Chain for a ship you mean to board") and ft.contains("cannot fire beyond that") and not ft.contains("thin her crew with grape"),
+						"the boarding advice: chain to board, round to sink, grape point-blank only (no grape first)")
 				if sb.book.PAGES[page] == "Fire":
 					var txt := ""
 					for c in sb.book.find_children("*", "Label", true, false):

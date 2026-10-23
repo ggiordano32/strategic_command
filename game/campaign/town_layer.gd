@@ -108,6 +108,8 @@ func _redraw_visible() -> void:
 		var pl: Dictionary = _plans.get(r, {})
 		if pl.is_empty():
 			_dirty.erase(r)
+			if _kids.has(r):
+				(_kids[r] as Node2D).queue_redraw()   # (a town that went unknown: clear its drawing)
 			continue
 		if rect.size.x > 0.0 and not rect.has_point(pl["c"] as Vector2):
 			continue
@@ -131,16 +133,23 @@ func refresh(st: Dictionary, grid: bool) -> void:
 	var changed := false
 	var t0 := Time.get_ticks_usec()
 	for r in CData.region_count():
-		var sig := "%d_%s" % [FogView.shown_owner(st, r), TownPlan.sig(st, r)]
+		var tf := FogView.town_facts(st, r)   # (fog: out of sight, the last-seen owner's culture, level and walls; {} never seen)
+		var sig := "%d_%s" % [FogView.shown_owner(st, r), "never" if tf.is_empty() else TownPlan.sig(st, r, tf)]
 		if _sigs.get(r, "") == sig:
 			continue
 		_sigs[r] = sig
 		var prev: Dictionary = _plans.get(r, {})
-		var pl := TownPlan.plan(st, r, grid)
-		_plans[r] = pl
+		var pl := {} if tf.is_empty() else TownPlan.plan(st, r, grid, tf)
+		if pl.is_empty():
+			_plans.erase(r)   # (never seen: no model, the overlay draws its bare marker)
+			changed = true
+		else:
+			_plans[r] = pl
 		_cmds.erase(r)
 		_info.erase(r)
 		var kid: Node2D = _kids.get(r)
+		if pl.is_empty() and kid == null:
+			continue
 		if kid == null:
 			kid = Node2D.new()
 			kid.draw.connect(_draw_town.bind(kid, r))

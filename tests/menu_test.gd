@@ -140,6 +140,7 @@ func _run() -> void:
 	await _grand_page()
 	await _battles_page()
 	await _options_page()
+	await _options_fit()
 	await _tooltips()
 	await _emblems()
 	await _backgrounds()
@@ -361,6 +362,45 @@ func _battles_page() -> void:
 
 
 # ------------------------------------------------------------ options ---
+
+## The Options page needs no scroll at 1024x576 with UI size M (tighter rows, sliders side by side, descriptions
+## dropped when short of room); a roomy window keeps the full page; 844x390 and 1280x720 L still work (the page may
+## scroll on the phone; every row and button is there).
+func _options_fit() -> void:
+	var size0 := UiScale.size_name()
+	var old := DisplayServer.window_get_size()
+	var fits := func() -> bool:
+		var box: Control = m._options_box
+		var scroll: Control = box.get_parent().get_parent()
+		return box.get_combined_minimum_size().y <= scroll.size.y + 0.5
+	for case in [[Vector2i(1024, 576), "M", true], [Vector2i(1280, 720), "L", true], [Vector2i(1280, 720), "M", true], [Vector2i(844, 390), "M", false]]:
+		DisplayServer.window_set_size(case[0])
+		root.size = case[0]
+		await _frames(10)
+		UiScale.set_size_name(root, str(case[1]))
+		await _frames(4)
+		await _new_menu()
+		m.show_page("options")
+		await _frames(8)
+		var rows = m._opts
+		var tag := "%dx%d %s" % [case[0].x, case[0].y, case[1]]
+		if bool(case[2]):
+			_check(fits.call(), "Options needs no scroll at %s (viewport %s, fit level %d)" % [tag, str(m.get_viewport_rect().size), rows.level])
+		else:
+			_check(rows.level >= 0, "Options builds at %s (fit level %d)" % [tag, rows.level])
+		_check(rows.seg.size() >= 8 and rows.sliders.size() == 3 and _btn("home_controls") != null and _btn("home_unit_book") != null,
+			"%s: every setting, the three sliders and the Help buttons are there" % tag)
+		var sl: HSlider = rows.sliders["master"]
+		_check(sl.is_visible_in_tree() and sl.get_global_rect().size.x > 40.0, "%s: the Master slider is shown and usable" % tag)
+		if str(case[1]) == "M" and case[0].x == 1024:
+			_check((rows.descs["quality"] as Label).visible == (rows.level < 3), "1024x576 M: the description lines go only when the page is short of room")
+			await _shot("options_1024x576_M")
+	DisplayServer.window_set_size(old)
+	root.size = old
+	await _frames(10)
+	UiScale.set_size_name(root, size0)
+	await _frames(4)
+	await _new_menu()
 
 func _options_page() -> void:
 	var size0 := UiScale.size_name()

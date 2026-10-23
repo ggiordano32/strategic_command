@@ -601,6 +601,12 @@ func _sea_view() -> Control:
 		_changed())
 	stb.name = "custom_sea_start"
 	row.add_child(stb)
+	var sk := clampi(int((setup["sides"][1] as Dictionary).get("skill", 1)), 0, 2)   # (the battle AI fights side 1)
+	var skb := _opt("AI: " + SKILL_NAMES[sk], func():
+		(setup["sides"][1] as Dictionary)["skill"] = (sk + 1) % 3
+		_changed())
+	skb.name = "custom_sea_ai"
+	row.add_child(skb)
 	v.add_child(row)
 	var sides := HBoxContainer.new()
 	sides.add_theme_constant_override("separation", 10)
